@@ -402,6 +402,10 @@ and image writes. Once protection starts, resume never re-enters unlock;
 host contracts exercise actual file-backed writes and interrupted preparation.
 It still leaves recovery protected and reports installation_ready=false;
 release signing, physical restoration and accepted first boot remain separate.
+A [copied-env trial preparer](ember/boards/ys-m33-a133-trial-env.md) constructs
+one normal boot preceded by a save of persistent recovery. Its byte-preservation
+and refusal contracts are host-tested; it does not write/reboot the tablet,
+execute the vendor loader or confirm first boot.
 To contribute another board, follow
 [adding a board](ember/boards/adding-a-board.md) and the
 [developer skill](https://github.com/neonix20b/Ember-Agent-Skills#add-your-board).

@@ -17,6 +17,10 @@ module A133Recovery
     'ember_restore_normal' => 'setenv hook; saveenv',
     'ember_recovery_once' => 'fdt addr ${fdtcontroladdr}; fdt set /soc@03000000/usbc0@0 usb_port_type <0>; run boot_recovery'
   }.freeze
+  TRIAL_HELPERS = {
+    'ember_trial_rearm' => 'setenv boot_normal run ember_recovery_once',
+    'ember_trial_save' => 'saveenv'
+  }.transform_values(&:freeze).freeze
   module_function
 
   def prepare(data)
@@ -46,6 +50,33 @@ module A133Recovery
     candidate
   rescue A133Env::Invalid
     raise Invalid, 'invalid_environment', cause: nil
+  end
+
+  # A single run list stops before boot_android if rearming or saveenv fails.
+  # The saved state retains both inert helpers but always selects recovery.
+  # These copied bytes do not establish vendor execution or first-boot acceptance.
+  def trial(data)
+    raise Invalid, 'invalid_environment', cause: nil unless data.is_a?(String) && data.bytesize == A133Env::SIZE
+    original = data.b.dup.freeze
+    vars = A133Env.decode(original).fetch(:entries).to_h
+    raise Invalid, 'trial_hook_already_present', cause: nil if TRIAL_HELPERS.keys.any? { |key| vars.key?(key) }
+    protected = protect(original)
+    rearmed = A133Env.patch(protected, TRIAL_HELPERS)
+    candidate = A133Env.patch(rearmed, {
+      'boot_normal' => 'run ember_trial_rearm ember_trial_save boot_android'
+    })
+    restored = A133Env.patch(candidate, {
+      'boot_normal' => PROFILE.fetch('boot_normal'), 'ember_recovery_once' => '',
+      'ember_trial_rearm' => '', 'ember_trial_save' => ''
+    })
+    raise Invalid, 'non_reversible_environment', cause: nil unless restored == original
+    {trial_env: candidate.freeze, rearmed_env: rearmed.freeze, installation_ready: false}.freeze
+  rescue A133Env::Invalid
+    raise Invalid, 'invalid_environment', cause: nil
+  rescue Invalid => error
+    reason = error.message
+    reason = 'invalid_environment' unless reason.ascii_only? && reason.match?(/\A[a-z0-9_]{1,64}\z/)
+    raise Invalid, reason, cause: nil
   end
 end
 

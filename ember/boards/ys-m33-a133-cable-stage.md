@@ -10,6 +10,9 @@ the three guarded image ranges. An outer private journal remembers when
 protection began so an interrupted run cannot accidentally re-enter unlock
 after env or boot have changed. It leaves the device in protected recovery;
 accepted first boot and the complete factory installer remain separate.
+The [copied-env trial preparer](ys-m33-a133-trial-env.md) prepares a proposed
+next step without device access; this coordinator does not adopt its trial
+or rearmed states and continues to leave recovery protected.
 
 ## Caller contract
 
