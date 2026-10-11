@@ -463,6 +463,7 @@ static void	aicwf_connect_ind(struct aicwf_softc *, const uint8_t *,
 static void	aicwf_disconnect(struct aicwf_softc *);
 static void	aicwf_disconnect_ind(struct aicwf_softc *);
 static void	aicwf_alive_lost(struct aicwf_softc *);
+static void	aicwf_alive_work(struct aicwf_softc *);
 static void	aicwf_sae_event(struct aicwf_softc *, bool,
 		    const uint8_t *, size_t);
 static void	aicwf_rx_data(struct aicwf_softc *, const uint8_t *, size_t);
@@ -1767,9 +1768,8 @@ aicwf_alive_lost(struct aicwf_softc *sc)
 }
 
 static void
-aicwf_alive_work(struct work *wk, void *arg)
+aicwf_alive_work(struct aicwf_softc *sc)
 {
-	struct aicwf_softc * const sc = arg;
 	struct ieee80211com * const ic = &sc->sc_ic;
 	int s;
 
@@ -2051,6 +2051,10 @@ aicwf_task(struct work *wk, void *arg)
 	struct aicwf_softc * const sc = arg;
 	struct aicwf_task * const t = (struct aicwf_task *)wk;
 
+	if (wk == &sc->sc_alive_work) {
+		aicwf_alive_work(sc);
+		return;
+	}
 	switch (t->t_cmd) {
 	case AICWF_TASK_NEWSTATE:
 		aicwf_newstate_cb(sc, t->t_state, t->t_arg);
