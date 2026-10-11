@@ -5,7 +5,9 @@ observes the device. A successful host contract does not establish physical
 GPU support, and the accepted hardware logs apply to their recorded kernels.
 
 The next stage, [native DRM/GEM and bounded userspace TFU](bcm2712-v3d-render.md),
-passed a separate physical acceptance. Shader submission and Mesa remain next.
+passed a separate physical acceptance. The subsequent
+[native CSD path](bcm2712-v3d-csd.md) passed 389 verified QPU dispatches.
+Mesa integration remains next.
 
 The 2026-10-11 review reproduced false success in the interrupt and fault
 experiments. It also found that the combined DMA/queue configuration continued

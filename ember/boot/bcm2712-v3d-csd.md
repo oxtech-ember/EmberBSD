@@ -1,5 +1,9 @@
 # BCM2712 native compute dispatch
 
+Status: the opt-in native CSD path passed physical CM5 acceptance on
+2026-10-11: 389 QPU dispatches with verified memory writes and 420 TFU copies
+in the same run. This is not yet a Mesa, Vulkan or desktop acceptance.
+
 ## Design and acceptance plan
 
 Continue the [accepted native GEM/TFU path](bcm2712-v3d-render.md) with
@@ -128,3 +132,49 @@ The actual-source regression reproduces the rejected hardware snapshot,
 then verifies acceptance without interpreting undocumented fields. It also
 requires rejection of stale and newly latched IRQs. Any failed stage still
 poisons the engine and retains all submitted buffers until reboot.
+
+## Physical acceptance, 2026-10-11
+
+CM5 Rev 1.0, BCM2712 D0, 4 GiB RAM and 64 GB eMMC, on Waveshare CM5-NANO-B.
+The existing UEFI was preserved; its source and carrier PCB revisions are
+unknown. GCC 16.2.0 cross-built the kernel and static C test on macOS.
+
+At 12:03:15 UTC the check exited 0 in 0.34 seconds. All 389 QPU dispatches
+wrote the expected 16 lane values: 6,224 GPU-computed integers. The test
+varied uniforms and destination offsets, checked every code/output/guard
+word, rejected cross-file handles and ran two concurrent CSD clients.
+The interleaved TFU test completed 388 normal/concurrent copies and 32
+submit/close copies. Its other 32 close races returned the expected ENOENT;
+32 busy observations confirmed submissions in progress. The final CSD run
+also passed. No CSD failure diagnostic appeared in the captured kernel log.
+This short run is neither a throughput benchmark nor a long-duration test.
+
+| Artifact | SHA256 |
+| --- | --- |
+| `netbsd-EMBERV3DRENDER` | `d920a8b28c1c65fbcebb36705d73e007cf8eac8c4f980273145a76bbdf16041e` |
+| AArch64 Image | `314164955c3355e06536d7de05a5aebc26a92a8fccfd6baf1a7540bd2930cf9f` |
+| Check from `a0f5086328ee109bfc445a9a87552d71c4ee4063` | `7b05c7014e919a6f291d2340cae5c2880d4cbf6c7c53b40aa05917abc001dfff` |
+| Full successful kernel/test log | `f90d5f48abb47867aaad10842a49820b2cdeed691ed3b4f09478aea9b1449a3f` |
+| First rejected kernel/test log | `c560bc2bfdbd128c6d28a93c1ca50cc97c3525a098256e5313a9ac4dd3132357` |
+
+ELF/Image, debuglink, CTF, source/compiler provenance, module symbols and
+the kernel builder's host contracts passed. All four board modules remain
+byte-identical to the accepted ordinary/TFU bundle. The test's 74 used
+base/compiler headers and five library/CRT files match the previously
+recorded device ABI inputs. This does not establish complete SDK provenance.
+The CSD contract passed 38,502 assertions, 46 injected register failures,
+nine causal mutants and ASan/UBSan; the unchanged TFU path passed 28,545
+assertions, 37 injected failures and eleven mutants. Independent review
+covered ownership, IRQ retirement and the generated shader's thread flags.
+
+The exact kernel source tree is `f7d2ab4b2319d797c88be6b8e50c1adb3a37f529`.
+Starting from the [accepted TFU tree](bcm2712-v3d-render.md#source-reconstruction),
+apply public commits `573566699a3`, `45a9d5a4a96`, `ee54216da58`, then
+`a0f5086328e`. An independent Git index reproduced the complete tree.
+Build metadata records local commit
+`c415ee4495ed8c815df7eae8af13186872bb5477`; it is not a separate public branch.
+
+The ordinary kernel is restored after the experiment. General CL submission,
+syncobj/fences, PRIME, Mesa/Vulkan execution, display/KMS, arbitrary-job
+recovery and an accelerated desktop remain separate steps. No capability
+bit was enabled merely because this bounded shader check passed.

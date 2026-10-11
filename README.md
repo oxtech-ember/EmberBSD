@@ -508,8 +508,11 @@ on every board in the hardware catalog.
   A native [DRM/GEM render interface](ember/boot/bcm2712-v3d-render.md) now
   passes bounded userspace TFU acceptance on CM5: 420 verified copies,
   per-file mmap isolation, counter wrap, concurrent clients and submit/close
-  races. The ordinary kernel remains a passive observer. General job recovery,
-  shaders, Mesa rendering and an accelerated desktop remain unverified.
+  races. The [native compute path](ember/boot/bcm2712-v3d-csd.md) also passed
+  389 QPU dispatches with 6,224 verified integer results, changing uniforms,
+  guarded memory, concurrent clients and CSD/TFU/CSD transitions. The ordinary
+  kernel remains a passive observer. General job recovery, Mesa rendering,
+  Vulkan and an accelerated desktop remain unverified.
 
 ### Network diagnostics kit
 

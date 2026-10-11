@@ -2,7 +2,8 @@
 
 Status: the bounded userspace path passed physical CM5 acceptance on
 2026-10-11. Native DRM/GEM buffers, mmap isolation and repeated TFU copies
-work in the opt-in kernel. General Mesa submissions remain unsupported.
+work in the opt-in kernel. The subsequent [native CSD acceptance](bcm2712-v3d-csd.md)
+adds verified QPU computation. General Mesa submissions remain unsupported.
 
 ## Design
 
@@ -23,11 +24,13 @@ references. The last reference releases the range and storage. Limit one
 BO to 16 MiB and total BO storage to 64 MiB during this stage. The engine's
 4 MiB page table and three scratch pages also count against that total.
 
-A device mutex serializes jobs. The MMU maps only the two referenced BOs:
+A device mutex serializes jobs. For TFU, the MMU maps only two referenced BOs:
 source read-only, destination writable. The first admitted payload is the
 accepted 64x64 R32F TFU copy. Validate every register, flag, reserved field,
 handle and range before touching the GPU. Unsupported formats, extensions,
-sync objects and CL/CSD submissions fail explicitly. General TFU support
+sync objects and CL submissions fail explicitly. The subsequent
+[CSD path](bcm2712-v3d-csd.md) shares the serialized engine and maps only its
+referenced BOs. General TFU support
 is not advertised to Mesa until its full contract is implemented.
 
 Each submission programs all TFU input registers and requires exactly one
@@ -58,14 +61,15 @@ The new driver lives in `sys/external/bsd/drm2/bcmv3d/`:
 
 - `bcmv3d_drv.c`: registration, capability queries and DRM ioctl routing.
 - `bcmv3d_bo.c`: DMA/GEM allocation, virtual ranges, mapping and release.
-- `bcmv3d_job.c`: serialized MMU/TFU execution and retained-failure ownership.
+- `bcmv3d_job.c`: serialized MMU/TFU/CSD execution and retained-failure ownership.
 - `bcmv3d_drv.h`: shared native structures and interfaces.
 
 `CREATE_BO`, `GET_BO_OFFSET`, `MMAP_BO`, `WAIT_BO` and the bounded
 `SUBMIT_TFU` use the standard V3D structures. BO lookup always uses the
 calling DRM file. `GET_PARAM` reports the observed hardware identifiers;
 unsupported capabilities remain zero. PRIME, general synchronization,
-shaders, KMS and a desktop are outside this initial acceptance.
+KMS and a desktop are outside this initial TFU acceptance. Shader submission
+has its own subsequent [CSD acceptance](bcm2712-v3d-csd.md).
 
 ## Implementation and acceptance plan
 
