@@ -433,6 +433,28 @@ sun60i_pck600_gpu_check(struct sun60i_pck600_softc *sc, bool initial,
 	return 0;
 }
 
+/* Read-only state of one PCK-600 domain; no writes, no diagnostics. */
+int
+sun60i_a733_pck_domain_state(int phandle, u_int id,
+    uint32_t *pwpr, uint32_t *pmer, uint32_t *pwsr)
+{
+	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
+	const bus_size_t base = id * PCK600_DOMAIN_SIZE;
+
+	if (sc == NULL || id >= PCK600_NDOMAINS)
+		return ENXIO;
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_failed[id]) {
+		mutex_exit(&sc->sc_lock);
+		return EIO;
+	}
+	*pwpr = sun60i_pck600_read(sc, base + PCK600_PWPR);
+	*pmer = sun60i_pck600_read(sc, base + PCK600_PMER);
+	*pwsr = sun60i_pck600_read(sc, base + PCK600_PWSR);
+	mutex_exit(&sc->sc_lock);
+	return 0;
+}
+
 int
 sun60i_a733_pck_gpu_reserve(int phandle, const void *owner)
 {
