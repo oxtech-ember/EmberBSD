@@ -279,6 +279,9 @@ on every board in the hardware catalog.
   configuration persistence, native Qt/kqueue file events and locale lookup.
   A [base libintl fix](ember/boot/libintl-validation.md) preserves Welsh singular
   translations and untranslated plural fallbacks, with 200 fixture checks.
+  [Current QtTools HTML dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/html.md)
+  pass 220 gumbo tests, an upstream UTF-8 test and two CSS regressions on CM5.
+  The litehtml patch fixes negative shifts; Qt Assistant and full QtTools remain unaccepted.
   Shared-cache recovery and the complete Frameworks runtime remain unaccepted.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
