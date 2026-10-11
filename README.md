@@ -261,7 +261,7 @@ on every board in the hardware catalog.
   registration pass in the AArch64 VM with GCC16; real metadata extraction
   passes on the host. Matching [Qt 6.12 cross-build generators](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/cross)
   build and pass functional checks on macOS/arm64. Target
-  [Qtbase, SVG, ShaderTools, ImageFormats and LanguageServer packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/qt-packages.md)
+  [Qtbase, SVG, ShaderTools, ImageFormats, LanguageServer and Declarative packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/qt-packages.md)
   pass cross-build, staging and sysroot installation checks. An installed
   [CM5 Core/Gui/SVG consumer](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/qt-consumer)
   passes thread signals, resources, image pixels, plugin errors and package
@@ -271,8 +271,10 @@ on every board in the hardware catalog.
   A [Qt Wayland/EGL consumer](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/qt-wayland-gl)
   also passes on CM5: both client and isolated labwc use V3D, with verified
   shader pixels, process restart, failure checks and 59 matching library hashes.
-  Quick, remaining module runtimes, playback and HDMI/remote
-  Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
+  The [Qt Quick consumer](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/qt-quick-gpu)
+  also passes compiled QML scene/layer pixels on V3D, process restart and
+  rejection checks; 75 live library hashes match the common stack.
+  Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
   CM5 still reports no HDMI hotplug in its pre-OS firmware log after a cold boot.
   Neither result establishes accelerated scanout.
