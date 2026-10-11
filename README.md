@@ -59,8 +59,8 @@ procedures live in `ember/boards`. Personal source customization stays a user
 workflow; it does not require a contribution PR.
 
 Follow the [loading instructions](https://github.com/oxtech-ember/EmberBSD-User-Skills#load-the-package)
-for your client. Both skill packages can coexist. Version 0.2.1 passed package
-consistency checks and version 0.1.0 passed native Codex discovery; these
+for your client. Both skill packages can coexist. Version 0.2.3 passed package
+consistency, native Codex discovery and plugin/skill icon path checks; these
 checks do not establish on-device agent behavior, cable-installer acceptance
 or end-to-end personal Ports maintenance. The package
 uses available tools and supplies no agent runtime or credentials.
@@ -71,7 +71,7 @@ uses available tools and supplies no agent runtime or credentials.
 provides portable Agent Skills packaged with Agent Plugins. Use the installation
 method supported by your development environment. Codex is one verified host.
 
-With a Codex CLI that supports plugins (commands checked with 0.160.1):
+With a Codex CLI that supports plugins (commands checked with 0.159.2):
 
 ```sh
 codex plugin marketplace add oxtech-ember/Ember-Agent-Skills --ref main
@@ -87,6 +87,8 @@ Start a new conversation in your project and ask:
 See the [skills installation and update guide](https://github.com/oxtech-ember/Ember-Agent-Skills#use-in-your-development-environment)
 for expected results, updates and other assistant environments. The plugin
 provides developer instructions; it does not install software on a board.
+Package 0.3.8 also passes native plugin/skill icon path checks. Desktop icon
+rendering remains unverified for both packages.
 Reusable fixes and ports are contributed through focused PRs after relevant
 testing, following the accepting project's rules.
 
@@ -609,7 +611,9 @@ on every board in the hardware catalog.
   signal and thread checks. The
   [Ports cross GCC16 recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
   also runs GCC16 on that host; cross-built C11 (plain/LTO) and C++20 DSO
-  checks pass on Zero 3W with its installed GCC16 runtime. The
+  checks pass on Zero 3W with its installed GCC16 runtime. Its `--kernel`
+  mode builds the cross frontends without an application sysroot; target
+  libc and C++ runtime inputs remain required for application builds. The
   [CTF converter](ember/boot/ctf-external-types.md) preserves GCC/Clang types
   in DWARF4/5 and both offset widths, including COMDAT type units, standalone
   DWO, indexed DWP and combined split/supplementary input. Linked multi-CU
