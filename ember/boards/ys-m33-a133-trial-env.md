@@ -51,8 +51,9 @@ separated by semicolons can continue after a failure. This distinction is stated
 in the [upstream command-line contract](https://docs.u-boot.org/en/latest/usage/cmdline.html#general-rules).
 
 `rearmed_env` encodes the proposed saved state: boot_normal becomes
-`run ember_recovery_once`; the two unused trial helpers remain. The next reset
-therefore selects recovery under the stated parser contract. This is a byte
+`run ember_recovery_once`; the two unused trial helpers remain. When the
+inspected bootcmd reaches that saved boot_normal entry, it selects recovery
+under the stated parser contract. This is a byte
 prediction, not a readback or evidence of factory saveenv formatting/durability.
 No assumption that a later reset automatically removes the helpers is made.
 
@@ -93,3 +94,35 @@ host connectivity need explicit recovery policies. The current cable stage
 continues to accept only its original/protected states and never adopts these
 new states automatically. Accepted first boot, normal-boot release, restoration
 and fleet readiness remain unimplemented by this preparer.
+
+## Independent review boundaries
+
+One fresh read-only Codex review of a0cd41bcff67..d17024700c15 found no
+Critical, Important or Minor. It independently ran the six current suites,
+syntax and diff checks. The following dispositions retain its full boundary
+list; its verdict accepts this copied-byte delta, not the historical BSP PR.
+
+| Boundary | Disposition and remaining cost |
+| --- | --- |
+| Vendor run/setenv/saveenv execution | Physical gate; upstream semantics do not prove this loader executes them. |
+| Saved env formatting | Prediction only; an unexpected real readback must stop a future transition. |
+| Cold-loss atomicity/durability | Separate gate; generated CRC is insufficient after power loss. |
+| Complete 16 MiB env tail | Future guarded write must preserve/read back it; this API only returns the prefix. |
+| Original env authenticity | Trusted capture remains caller-owned; CRC/profile cannot establish origin. |
+| setargs_mmc, preboot, alternate paths | Preserved scripts and firmware control flow require validation before physical use. |
+| Files, unlock, flash, reboot, tablet access | Absent here; no deployment result follows from preparation success. |
+| Trial journal/marker/confirmation | Future guarded stage; no release-bound acceptance receipt is produced. |
+| Partial write, failed save, interruption, lost connection | Recovery policies remain unimplemented by this builder. |
+| Watchdog/kernel-hang return | Separate runtime/physical gate; current byte tests do not validate it. |
+| Historical BSP/main/native OS build | Separate integration gate; this narrow review does not make the whole PR ready. |
+| Previous cable matrix/historical RED | Reviewer checked current GREEN; executor observed RED and the prior matrix in their owning milestones. |
+| Replaced Ruby methods/constants or hostile String subclasses | Calls assume a trusted Ruby process and ordinary byte inputs; no hostile-code isolation is provided. |
+
+The standalone image Client keeps its existing prefix policy and can accept a
+rearmed prefix with inert helpers. The stronger exact original/protected env
+restriction described above belongs to the composed A133Cable flow.
+
+An additional implementer-only check prepared both values in memory from two
+identical retained private factory prefixes with the previously checked digest.
+No output file was created and the complete backup was not reread. The reviewer
+did not inspect those private copies; this check is not new hardware acceptance.
