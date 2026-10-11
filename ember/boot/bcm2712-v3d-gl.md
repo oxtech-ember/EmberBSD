@@ -160,3 +160,20 @@ via SCM_RIGHTS to fresh DRM clients, checks duplicate imports, partial mappings,
 invalid ranges/protections and lifetime after handle/fd closure. Eighty 1 MiB
 cycles exceed the allocation quota cumulatively, detecting retained objects.
 Hardware PRIME and Mesa EGLImage acceptance are pending for this change.
+
+The first physical PRIME run transferred descriptors and validated mappings,
+but exhausted the 64 MiB quota before cycle 64. This exposed three inherited
+native DMA-BUF lifetime defects: fd export added an unowned reference, the
+GEM export-cache cycle was never broken, and final put omitted the exporter's
+release callback. Each now has an actual-source failing regression followed
+by a passing repair. The callback is mandatory at export, consistent with the
+[upstream DMA-BUF lifetime contract](https://docs.kernel.org/driver-api/dma-buf.html).
+The other in-tree fd callers (TTM and i915 GVT) also transfer their reference
+on success and retain cleanup responsibility on failure.
+
+`ruby ember/tools/drm-dmabuf-lifetime-contract.rb` exercises the actual export,
+fd, put, cache-removal and GEM release functions. It checks allocation failure,
+repeated export, 80,000 concurrent get/put pairs, internal/external reservation
+objects and exactly one final release under ASan/UBSan. Missing callbacks are
+rejected before allocation. Cppcheck retains 16/16 GEM and 9/9 dma-buf findings
+against the previous build; GCC Analyzer adds none. Physical retest is pending.

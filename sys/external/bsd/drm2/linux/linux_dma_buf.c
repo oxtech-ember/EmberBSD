@@ -71,6 +71,9 @@ dma_buf_export(struct dma_buf_export_info *info)
 {
 	struct dma_buf *dmabuf;
 
+	if (info->ops == NULL || info->ops->release == NULL)
+		return ERR_PTR(-EINVAL);
+
 	if (info->resv == NULL) {
 		dmabuf = kmem_zalloc(offsetof(struct dma_buf, db_resv_int[1]),
 		    KM_SLEEP);
@@ -100,7 +103,6 @@ dma_buf_fd(struct dma_buf *dmabuf, int flags)
 {
 	struct file *file;
 	int fd;
-	unsigned refcnt __diagused;
 	int ret;
 
 	/* XXX errno NetBSD->Linux */
@@ -108,8 +110,7 @@ dma_buf_fd(struct dma_buf *dmabuf, int flags)
 	if (ret)
 		goto out0;
 
-	refcnt = atomic_inc_uint_nv(&dmabuf->db_refcnt);
-	KASSERT(refcnt > 1);
+	/* On success the file owns the caller's reference, as on Linux. */
 
 	file->f_type = DTYPE_MISC;
 	file->f_flag = 0;	/* XXX DRM code allows only O_CLOEXEC.  */
@@ -169,6 +170,8 @@ dma_buf_put(struct dma_buf *dmabuf)
 	membar_acquire();
 
 	dma_resv_poll_fini(&dmabuf->db_resv_poll);
+	/* Release the exporter's object while the dma-buf is still valid. */
+	dmabuf->ops->release(dmabuf);
 	mutex_destroy(&dmabuf->db_lock);
 	if (dmabuf->resv == &dmabuf->db_resv_int[0]) {
 		dma_resv_fini(dmabuf->resv);
