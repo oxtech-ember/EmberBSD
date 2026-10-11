@@ -2062,7 +2062,7 @@ wpa_driver_bsd_add_scan_entry(struct bsd_driver_data *drv, struct wpa_scan_resul
 #if defined(__NetBSD__) && defined(IEEE80211_SCAN_RSSI_DBM)
 	if (sr->isr_pad[1] & IEEE80211_SCAN_RSSI_DBM) {
 		result->level = (int8_t) sr->isr_pad[2];
-		result->flags |= WPA_SCAN_LEVEL_DBM;
+		result->flags |= WPA_SCAN_LEVEL_DBM | WPA_SCAN_NOISE_INVALID;
 	}
 #endif
 

@@ -76,8 +76,9 @@ main(void)
 	sr.isr_pad[1] = IEEE80211_SCAN_RSSI_DBM;
 	scan_metadata(&drv, &result, &sr);
 	check(result.level == -42 && result.qual == 183 &&
-	    (result.flags & WPA_SCAN_LEVEL_DBM),
-	    "explicit dBm is signed while original quality is preserved");
+	    (result.flags & WPA_SCAN_LEVEL_DBM) &&
+	    (result.flags & WPA_SCAN_NOISE_INVALID),
+	    "explicit dBm preserves quality and marks unmeasured noise invalid");
 	check(result.caps == 0x11,
 	    "dBm flag alone does not validate high capabilities");
 	sr.isr_pad[1] |= IEEE80211_SCAN_CAPINFO_HI;

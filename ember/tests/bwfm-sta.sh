@@ -48,7 +48,7 @@ awk '/result->caps = sr->isr_capinfo;/ {copy=1}
     > "$work/bsd-scan-metadata.h"
 awk '/^#define[[:space:]]+IEEE80211_SCAN_(CAPINFO_HI|RSSI_DBM)[[:space:]]/ {print}' \
     "$src/sys/net80211/ieee80211_ioctl.h" > "$work/scan-flags.h"
-awk '/^#define[[:space:]]+WPA_SCAN_LEVEL_DBM[[:space:]]/ {print}' \
+awk '/^#define[[:space:]]+WPA_SCAN_(LEVEL_DBM|NOISE_INVALID)[[:space:]]/ {print}' \
     "$src/external/bsd/wpa/dist/src/drivers/driver.h" >> "$work/scan-flags.h"
 test -s "$work/bsd-scan-metadata.h"
 cp "$src/ember/tools/bwfm-sta-scan.c" "$work/scan-check.c"
