@@ -511,6 +511,20 @@ bwfm_detach(struct bwfm_softc *sc, int flags)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = ic->ic_ifp;
+	struct bwfm_task barrier;
+
+	/* Stop producers before draining work that can still reference ic. */
+	sc->sc_detaching = true;
+	sc->sc_link_generation++;
+	if (sc->sc_if_attached)
+		ifp->if_timer = 0;
+	if (sc->sc_taskq != NULL) {
+		memset(&barrier, 0, sizeof(barrier));
+		barrier.t_sc = sc;
+		barrier.t_cmd = BWFM_TASK_BARRIER;
+		workqueue_enqueue(sc->sc_taskq, (struct work *)&barrier, NULL);
+		workqueue_wait(sc->sc_taskq, (struct work *)&barrier);
+	}
 
 	if (sc->sc_if_attached) {
 		bpf_detach(ifp);
@@ -536,6 +550,8 @@ bwfm_start(struct ifnet *ifp)
 	struct mbuf *m;
 	int error;
 
+	if (sc->sc_detaching)
+		return;
 	if ((ifp->if_flags & (IFF_RUNNING | IFF_OACTIVE)) != IFF_RUNNING)
 		return;
 
@@ -588,6 +604,8 @@ bwfm_init(struct ifnet *ifp)
 	uint8_t evmask[BWFM_EVENT_MASK_LEN];
 	struct bwfm_join_pref_params join_pref[2];
 
+	if (sc->sc_detaching)
+		return ENXIO;
 	if (bwfm_fwvar_var_set_int(sc, "mpc", 1)) {
 		printf("%s: could not set mpc\n", DEVNAME(sc));
 		return EIO;
@@ -767,6 +785,8 @@ bwfm_stop(struct ifnet *ifp, int disable)
 	sc->sc_tx_timer = 0;
 	ifp->if_timer = 0;
 	ifp->if_flags &= ~(IFF_RUNNING | IFF_OACTIVE);
+	if (sc->sc_detaching)
+		return;
 
 	ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
 
@@ -794,6 +814,8 @@ bwfm_watchdog(struct ifnet *ifp)
 	struct bwfm_task *t;
 
 	ifp->if_timer = 0;
+	if (sc->sc_detaching)
+		return;
 
 	if (sc->sc_tx_timer > 0) {
 		if (--sc->sc_tx_timer == 0) {
@@ -840,7 +862,7 @@ bwfm_link_check_cb(struct bwfm_softc *sc, uint32_t generation)
 	uint8_t peer[ETHER_ADDR_LEN];
 	int error;
 
-	if (generation != sc->sc_link_generation ||
+	if (sc->sc_detaching || generation != sc->sc_link_generation ||
 	    (sc->sc_if.if_flags & (IFF_UP | IFF_RUNNING)) !=
 	    (IFF_UP | IFF_RUNNING) || ic->ic_opmode != IEEE80211_M_STA ||
 	    ic->ic_state != IEEE80211_S_RUN || ic->ic_bss == NULL)
@@ -851,7 +873,7 @@ bwfm_link_check_cb(struct bwfm_softc *sc, uint32_t generation)
 	error = bwfm_fwvar_var_get_data(sc, "sta_info", &sta, sizeof(sta));
 	sc->sc_link_checks++;
 	/* A command can sleep while an ioctl requests a different connection. */
-	if (generation != sc->sc_link_generation ||
+	if (sc->sc_detaching || generation != sc->sc_link_generation ||
 	    (sc->sc_if.if_flags & (IFF_UP | IFF_RUNNING)) !=
 	    (IFF_UP | IFF_RUNNING) || ic->ic_opmode != IEEE80211_M_STA ||
 	    ic->ic_state != IEEE80211_S_RUN || ic->ic_bss == NULL ||
@@ -884,6 +906,8 @@ bwfm_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 	struct ieee80211com *ic = &sc->sc_ic;
 	int s, error = 0, oflags;
 
+	if (sc->sc_detaching)
+		return ENXIO;
 	s = splnet();
 
 	switch (cmd) {
@@ -966,6 +990,8 @@ bwfm_key_set(struct ieee80211com *ic, const struct ieee80211_key *wk,
 	struct bwfm_softc *sc = ic->ic_ifp->if_softc;
 	struct bwfm_task *t;
 
+	if (sc->sc_detaching)
+		return 0;
 	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
 	if (t == NULL) {
 		printf("%s: no free tasks\n", DEVNAME(sc));
@@ -1061,6 +1087,8 @@ bwfm_key_delete(struct ieee80211com *ic, const struct ieee80211_key *wk)
 	struct bwfm_softc *sc = ic->ic_ifp->if_softc;
 	struct bwfm_task *t;
 
+	if (sc->sc_detaching)
+		return 0;
 	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
 	if (t == NULL) {
 		printf("%s: no free tasks\n", DEVNAME(sc));
@@ -1096,6 +1124,8 @@ bwfm_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 	struct bwfm_softc *sc = ic->ic_ifp->if_softc;
 	struct bwfm_task *t;
 
+	if (sc->sc_detaching)
+		return ENXIO;
 	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
 	if (t == NULL) {
 		printf("%s: no free tasks\n", DEVNAME(sc));
@@ -1173,6 +1203,16 @@ bwfm_task(struct work *wk, void *arg)
 	struct bwfm_task *t = (struct bwfm_task *)wk;
 	struct bwfm_softc *sc = t->t_sc;
 
+	/* The detach barrier is stack-owned and must not enter the task pool. */
+	if (t->t_cmd == BWFM_TASK_BARRIER)
+		return;
+	if (sc->sc_detaching) {
+		if (t->t_cmd == BWFM_TASK_RX_EVENT)
+			m_freem(t->t_mbuf);
+		if (t->t_cmd == BWFM_TASK_LINK_CHECK)
+			sc->sc_link_pending = false;
+		goto out;
+	}
 	switch (t->t_cmd) {
 	case BWFM_TASK_NEWSTATE:
 		bwfm_newstate_cb(sc, &t->t_newstate);
@@ -1196,6 +1236,7 @@ bwfm_task(struct work *wk, void *arg)
 		panic("bwfm: unknown task command %d", t->t_cmd);
 	}
 
+out:
 	pool_cache_put(sc->sc_freetask, t);
 }
 
@@ -1205,7 +1246,7 @@ bwfm_report(struct bwfm_softc *sc)
 {
 	struct bwfm_task *t;
 
-	if (sc->sc_taskq == NULL)
+	if (sc->sc_detaching || sc->sc_taskq == NULL)
 		return;
 	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
 	if (t == NULL)
@@ -2709,6 +2750,10 @@ bwfm_rx(struct bwfm_softc *sc, struct mbuf *m)
 	struct ifnet *ifp = ic->ic_ifp;
 	struct bwfm_event *e = mtod(m, struct bwfm_event *);
 
+	if (sc->sc_detaching) {
+		m_freem(m);
+		return;
+	}
 	if (m->m_len >= sizeof(e->ehdr) + sizeof(e->hdr) &&
 	    ntohs(e->ehdr.ether_type) == BWFM_ETHERTYPE_LINK_CTL &&
 	    memcmp(BWFM_BRCM_OUI, e->hdr.oui, sizeof(e->hdr.oui)) == 0 &&
@@ -2727,6 +2772,10 @@ bwfm_rx_event(struct bwfm_softc *sc, struct mbuf *m)
 {
 	struct bwfm_task *t;
 
+	if (sc->sc_detaching) {
+		m_freem(m);
+		return;
+	}
 	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
 	if (t == NULL) {
 		m_freem(m);

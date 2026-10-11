@@ -45,12 +45,17 @@ The watchdog only queues work. The existing non-MPSAFE work queue performs
 the sleeping query, with at most one poll pending. State-change requests
 invalidate an outstanding query before the transition executes. The radio
 report distinguishes firmware events, association queries and recoveries.
+Detach stops new work, discards queued operations and drains a concrete
+barrier before freeing net80211 state or destroying the queue. This also
+prevents an outstanding poll from using a detached interface.
 
 Run `sh ember/tests/bwfm-link-events.sh` from the checkout. It compiles the
 production station dispatch and event subscription mask, replacing only
 the net80211 boundary. `sh ember/tests/bwfm-link-check.sh` exercises the
 production watchdog, worker and state transitions with a controlled firmware
-boundary. Both run through the kernel wrapper on the build host. The original
+boundary and the production station-info layout. It also executes the driver
+task dispatcher, detach and producers to check the queue barrier and late
+work rejection. Both run through the kernel wrapper on the build host. The original
 driver fails the disconnect/recovery checks; corrected code passes, including
 ASan/UBSan. Hardware acceptance of the association poll is pending. Neither
 the reproduction nor these tests explains the AP's removal policy.

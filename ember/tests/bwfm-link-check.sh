@@ -5,10 +5,15 @@ set -eu
 src=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/bwfm-link-check.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-for fn in bwfm_watchdog bwfm_newstate bwfm_newstate_cb bwfm_link_check_cb; do
+for fn in bwfm_watchdog bwfm_newstate bwfm_newstate_cb bwfm_link_check_cb \
+    bwfm_task bwfm_detach bwfm_rx_event bwfm_report bwfm_key_set bwfm_key_delete; do
     awk -v fn="$fn" '$0 ~ "^" fn "\\(" {copy=1}
         copy {print} copy && /^}/ {exit}' "$src/sys/dev/ic/bwfm.c" > "$work/$fn.h"
 done
+awk '/^#define BWFM_(MCSSET_LEN|MAXRATES_IN_SET|ANT_MAX|VHT_CAP_MCS_MAP_NSS_MAX|HE_CAP_MCS_MAP_NSS_MAX)/ {print}
+    /^struct bwfm_sta_rateset_v5/ {copy=1}
+    /^struct bwfm_ssid/ {exit} copy {print}' \
+    "$src/sys/dev/ic/bwfmreg.h" > "$work/sta-info.h"
 # The old driver has no worker: keep the old watchdog executable for the red run.
 if [ ! -s "$work/bwfm_link_check_cb.h" ]; then
     printf 'bwfm_link_check_cb(struct bwfm_softc *sc, uint32_t gen) { (void)sc; (void)gen; }\n' > "$work/bwfm_link_check_cb.h"
@@ -23,9 +28,9 @@ cat > "$work/check.c" <<'C'
 #include <errno.h>
 #define IFF_UP 1
 #define IFF_RUNNING 2
-#define BWFM_STA_ASSOC 0x10
 #define BWFM_C_DISASSOC 52
 #define ETHER_ADDR_LEN 6
+#define IEEE80211_ADDR_LEN 6
 #define PR_NOWAIT 0
 #define if_oerrors 0
 #define DEVNAME(sc) "test-bwfm"
@@ -37,7 +42,8 @@ cat > "$work/check.c" <<'C'
 enum ieee80211_state { IEEE80211_S_INIT, IEEE80211_S_SCAN,
     IEEE80211_S_AUTH, IEEE80211_S_ASSOC, IEEE80211_S_RUN };
 enum { IEEE80211_M_STA, IEEE80211_M_HOSTAP };
-enum { BWFM_TASK_NEWSTATE, BWFM_TASK_LINK_CHECK };
+enum { BWFM_TASK_NEWSTATE, BWFM_TASK_LINK_CHECK, BWFM_TASK_BARRIER,
+    BWFM_TASK_KEY_SET, BWFM_TASK_KEY_DELETE, BWFM_TASK_RX_EVENT, BWFM_TASK_REPORT };
 struct ifnet { void *if_softc; int if_timer, if_flags; };
 struct ieee80211_node { uint8_t ni_bssid[6], ni_macaddr[6]; };
 struct ieee80211com { struct ifnet *ic_ifp; struct ieee80211_node *ic_bss;
@@ -48,27 +54,56 @@ struct bwfm_softc {
     struct ifnet sc_if; struct ieee80211com sc_ic;
     void *sc_taskq, *sc_freetask;
     int sc_tx_timer, sc_link_timer;
-    bool sc_link_pending;
+    bool sc_link_pending, sc_detaching, sc_if_attached;
+    int sc_control_lock;
     uint32_t sc_link_generation, sc_link_checks, sc_link_recoveries;
     unsigned sc_link_misses, sc_link_errors;
     int (*sc_newstate)(struct ieee80211com *, enum ieee80211_state, int);
 };
+struct mbuf { int unused; };
+struct ieee80211_key { int unused; };
+struct bwfm_cmd_key { const struct ieee80211_key *key; uint8_t mac[6]; };
 struct bwfm_task { struct work t_work; struct bwfm_softc *t_sc; int t_cmd;
-    uint32_t t_link_generation; struct bwfm_cmd_newstate t_newstate; };
-struct bwfm_sta_info { uint16_t ver, len; uint32_t flags;
-    uint8_t ea[6]; uint32_t tx_tot_pkts; };
+    uint32_t t_link_generation; struct bwfm_cmd_newstate t_newstate;
+    struct bwfm_cmd_key t_key; struct mbuf *t_mbuf; };
+#include "sta-info.h"
 static struct bwfm_task jobs[128], *queued[128];
 static struct bwfm_sta_info response;
 static unsigned allocated, head, tail, queries, transitions, checks, failures;
 static bool fail_alloc, in_watchdog;
 static int query_error, mutate;
+static bool detached;
+static unsigned mbufs_freed, discarded_reports;
 static void bwfm_link_check_cb(struct bwfm_softc *, uint32_t);
+static void drain(void);
 static void check(bool pass, const char *why)
 { checks++; if (!pass) { fprintf(stderr, "FAIL: %s\n", why); failures++; } }
 static void *pool_cache_get(void *pool, int flags)
 { (void)pool; (void)flags; return fail_alloc ? NULL : &jobs[allocated++]; }
 static void workqueue_enqueue(void *q, struct work *w, void *arg)
 { (void)q; (void)arg; queued[tail++] = (void *)w; }
+static void pool_cache_put(void *pool, void *item)
+{ (void)pool; check((uintptr_t)item >= (uintptr_t)jobs && (uintptr_t)item < (uintptr_t)(jobs + 128), "barrier is not returned to the task pool"); }
+static void pool_cache_destroy(void *pool) { (void)pool; }
+static void bpf_detach(struct ifnet *ifp) { (void)ifp; }
+static void if_detach(struct ifnet *ifp) { ifp->if_timer = 0; }
+static void ieee80211_ifdetach(struct ieee80211com *ic)
+{ (void)ic; check(head == tail, "drain queue before freeing net80211"); detached = true; }
+static void mutex_destroy(int *lock) { (void)lock; }
+static void workqueue_destroy(void *q)
+{ (void)q; check(head == tail, "destroy requires empty pending queue"); }
+void workqueue_wait(void *q, struct work *w)
+{ (void)q; check(w != NULL, "wait for a concrete barrier, NULL does not drain"); drain(); }
+static void m_freem(struct mbuf *m) { (void)m; mbufs_freed++; }
+static void panic(const char *fmt, int cmd) { (void)fmt; (void)cmd; abort(); }
+static void bwfm_key_set_cb(struct bwfm_softc *sc, struct bwfm_cmd_key *ck)
+{ (void)sc; (void)ck; check(!detached, "no key installation after detach"); }
+static void bwfm_key_delete_cb(struct bwfm_softc *sc, struct bwfm_cmd_key *ck)
+{ bwfm_key_set_cb(sc, ck); }
+static void bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m)
+{ (void)sc; check(!detached, "no event dispatch after detach"); m_freem(m); }
+static void bwfm_report_cb(struct bwfm_softc *sc)
+{ (void)sc; discarded_reports++; check(!detached, "no report after detach"); }
 static void if_statinc(struct ifnet *ifp, int stat) { (void)ifp; (void)stat; }
 static void ieee80211_watchdog(struct ieee80211com *ic) { (void)ic; }
 static int splnet(void) { return 0; }
@@ -83,6 +118,7 @@ int bwfm_fwvar_var_get_data(struct bwfm_softc *sc, const char *name,
     void *data, size_t len)
 {
     check(!in_watchdog, "firmware I/O runs in worker, never watchdog");
+    check(!detached, "firmware query cannot use detached state");
     check(strcmp(name, "sta_info") == 0, "query firmware association, not IP reachability");
     check(len == sizeof(response), "bounded station response");
     queries++;
@@ -91,6 +127,7 @@ int bwfm_fwvar_var_get_data(struct bwfm_softc *sc, const char *name,
     if (mutate == 2) sc->sc_ic.ic_bss->ni_bssid[5]++;
     if (mutate == 3) sc->sc_if.if_flags = 0;
     if (mutate == 4) sc->sc_ic.ic_state = IEEE80211_S_SCAN;
+    if (mutate == 5) sc->sc_detaching = true;
     return query_error;
 }
 int
@@ -103,14 +140,23 @@ void
 #include "bwfm_watchdog.h"
 static void
 #include "bwfm_link_check_cb.h"
+void
+#include "bwfm_task.h"
+int
+#include "bwfm_detach.h"
+void
+#include "bwfm_report.h"
+void
+#include "bwfm_rx_event.h"
+int
+#include "bwfm_key_set.h"
+int
+#include "bwfm_key_delete.h"
 static void drain(void)
 {
     while (head != tail) {
         struct bwfm_task *t = queued[head++];
-        if (t->t_cmd == BWFM_TASK_LINK_CHECK)
-            bwfm_link_check_cb(t->t_sc, t->t_link_generation);
-        else
-            bwfm_newstate_cb(t->t_sc, &t->t_newstate);
+        bwfm_task(&t->t_work, NULL);
     }
 }
 static void ticks(struct bwfm_softc *sc, unsigned n)
@@ -122,15 +168,17 @@ static void fixture(struct bwfm_softc *sc, struct ieee80211_node *bss)
     memset(sc, 0, sizeof(*sc)); memset(bss, 0, sizeof(*bss));
     bss->ni_bssid[0] = bss->ni_macaddr[0] = 2;
     memset(&response, 0, sizeof(response));
-    response.ver = 4; response.len = sizeof(response);
+    response.ver = 4; response.len = 200;
     response.flags = BWFM_STA_ASSOC;
     memcpy(response.ea, bss->ni_bssid, 6);
     allocated = head = tail = queries = transitions = 0;
     fail_alloc = in_watchdog = false; query_error = mutate = 0;
+    detached = false; mbufs_freed = discarded_reports = 0;
     sc->sc_if.if_softc = sc; sc->sc_if.if_flags = IFF_UP | IFF_RUNNING;
     sc->sc_ic.ic_ifp = &sc->sc_if; sc->sc_ic.ic_bss = bss;
     sc->sc_ic.ic_opmode = IEEE80211_M_STA;
     sc->sc_taskq = sc; sc->sc_freetask = sc; sc->sc_newstate = saved_newstate;
+    sc->sc_if_attached = true;
     ieee80211_new_state(&sc->sc_ic, IEEE80211_S_RUN, -1); drain(); transitions = 0;
 }
 static void sample(struct bwfm_softc *sc) { ticks(sc, 5); drain(); }
@@ -148,7 +196,10 @@ int main(void)
     sample(&sc); check(sc.sc_ic.ic_state == IEEE80211_S_SCAN &&
         sc.sc_link_recoveries == 1, "silent firmware loss starts host recovery");
     ticks(&sc, 20); drain(); check(sc.sc_link_recoveries == 1, "no duplicate recovery while scanning");
-    for (i = 0; i < 11; i++) {
+    check(offsetof(struct bwfm_sta_info, flags) == 8 &&
+        offsetof(struct bwfm_sta_info, ea) == 16 && sizeof(response) >= 200,
+        "production sta_info matches observed v4 response layout");
+    for (i = 0; i < 12; i++) {
         fixture(&sc, &bss); response.flags = 0; sample(&sc);
         switch (i) {
         case 0: query_error = EIO; break;
@@ -189,9 +240,23 @@ int main(void)
         "failed transition allocation is not reported as recovery");
     fail_alloc = false; sample(&sc); sample(&sc);
     check(sc.sc_link_recoveries == 1, "failed recovery transition is retried");
+    fixture(&sc, &bss); ticks(&sc, 5);
+    bwfm_report(&sc); bwfm_rx_event(&sc, (struct mbuf *)&bss);
+    bwfm_detach(&sc, 0);
+    check(sc.sc_detaching && !sc.sc_link_pending && mbufs_freed == 1 &&
+        queries == 0 && discarded_reports == 0,
+        "detach discards pending polls/reports and frees queued event mbufs");
+    i = tail;
+    ticks(&sc, 10); bwfm_report(&sc); bwfm_rx_event(&sc, (struct mbuf *)&bss);
+    check(ieee80211_new_state(&sc.sc_ic, IEEE80211_S_SCAN, -1) == ENXIO,
+        "detach rejects new state requests");
+    check(bwfm_key_set(&sc.sc_ic, NULL, bss.ni_bssid) == 0 &&
+        bwfm_key_delete(&sc.sc_ic, NULL) == 0, "detach rejects new key work");
+    check(tail == i && mbufs_freed == 2, "no producer enqueues after detach");
     printf("%s: %u production link-check assertions\n", failures ? "FAIL" : "PASS", checks);
     return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }
 C
-${CC:-cc} -std=c99 -Wall -Wextra -Werror ${CFLAGS:-} -I"$work" "$work/check.c" -o "$work/check"
+${CC:-cc} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter ${CFLAGS:-} \
+    -I"$work" "$work/check.c" -o "$work/check"
 "$work/check"

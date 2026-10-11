@@ -186,6 +186,7 @@ enum bwfm_task_cmd {
 	BWFM_TASK_RX_EVENT,
 	BWFM_TASK_REPORT,
 	BWFM_TASK_LINK_CHECK,
+	BWFM_TASK_BARRIER,
 };
 
 struct bwfm_cmd_newstate {
@@ -253,6 +254,7 @@ struct bwfm_softc {
 	uint8_t			 sc_sae_bssid[IEEE80211_ADDR_LEN];
 
 	bool			 sc_if_attached;
+	bool			 sc_detaching;
 	struct pool_cache	*sc_freetask;
 	struct workqueue	*sc_taskq;
 
