@@ -1119,7 +1119,7 @@ bsd_sta_event(struct bsd_driver_data *drv, unsigned int what,
 	    req->cookie || req->flags ||
 	    !bsd_sta_rx_body(drv, req->data, req->len))
 		return;
-	/* The driver has checked PMF integrity, replay state, and the sender. */
+	/* Firmware owns PMF checks; this event has no protection verdict. */
 	os_memset(frame, 0, 24);
 	frame[0] = WLAN_FC_STYPE_ACTION << 4;
 	os_memcpy(frame + 4, drv->sta_addr, ETH_ALEN);
