@@ -268,10 +268,14 @@ on every board in the hardware catalog.
   reinstallation; 75 live library/plugin hashes match the common sysroot. Qtbase includes
   Wayland/EGL and GBM; current networking
   dependencies pass [focused CM5 API checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/network-dependencies.md).
-  Quick, accelerated Qt, remaining module runtimes, playback and HDMI/remote
+  A [Qt Wayland/EGL consumer](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/qt-wayland-gl)
+  also passes on CM5: both client and isolated labwc use V3D, with verified
+  shader pixels, process restart, failure checks and 59 matching library hashes.
+  Quick, remaining module runtimes, playback and HDMI/remote
   Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
-  CM5 still reports no HDMI hotplug in its pre-OS firmware log after a cold boot.\n  Neither result establishes accelerated scanout.
+  CM5 still reports no HDMI hotplug in its pre-OS firmware log after a cold boot.
+  Neither result establishes accelerated scanout.
   A complete mobile shell workflow, native display and power management
   still need validation. See the [Plasma Mobile port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile).
 
