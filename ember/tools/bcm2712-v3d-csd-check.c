@@ -6,6 +6,8 @@
 #undef main
 #include "bcm2712-v3d-csd-shader.h"
 
+static bool compute_with_sync;
+
 static void
 compute(const char *node, unsigned rounds)
 {
@@ -14,8 +16,11 @@ compute(const char *node, unsigned rounds)
 	struct drm_v3d_submit_csd a,b;
 	struct drm_v3d_get_param rev={.param=DRM_V3D_PARAM_V3D_HUB_IDENT3};
 	uint32_t handles[2], saved[BO_SIZE/4];
+	struct drm_syncobj_create sync = {.flags=DRM_SYNCOBJ_CREATE_SIGNALED};
 
 	if(fd<0)err(1,"open compute node");
+	if(compute_with_sync && ioctl(fd,DRM_IOCTL_SYNCOBJ_CREATE,&sync)<0)
+		err(1,"compute SYNCOBJ_CREATE");
 	if(ioctl(fd,DRM_IOCTL_V3D_GET_PARAM,&rev)<0)err(1,"HUB_IDENT3");
 	code=allocate(fd); output=allocate(fd);
 	for(unsigned i=0;i<BO_SIZE/4;i++)code.map[i]=GUARD;
@@ -25,6 +30,7 @@ compute(const char *node, unsigned rounds)
 	    .cfg={0x10000,0x10000,0x10000,0x110,
 	        ((rev.value>>8)&255)>=6?1:0,code.gpu|CSD_SHADER_FLAGS,code.gpu+1024},
 	    .bo_handles=(uintptr_t)handles,.bo_handle_count=2};
+	a.in_sync=a.out_sync=sync.handle;
 	other=open(node,O_RDWR|O_CLOEXEC);
 	if(other<0)err(1,"open second compute file");
 	errno=0;check(ioctl(other,DRM_IOCTL_V3D_SUBMIT_CSD,&a)<0 && errno==ENOENT,
@@ -42,6 +48,11 @@ compute(const char *node, unsigned rounds)
 		memcpy(saved,code.map,sizeof(saved));
 		for(unsigned i=0;i<BO_SIZE/4;i++)output.map[i]=GUARD;
 		if(ioctl(fd,DRM_IOCTL_V3D_SUBMIT_CSD,&a)<0)err(1,"SUBMIT_CSD round %u",round);
+		if(compute_with_sync) {
+			struct drm_syncobj_wait sw={.handles=(uintptr_t)&sync.handle,
+			    .count_handles=1,.flags=DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL};
+			if(ioctl(fd,DRM_IOCTL_SYNCOBJ_WAIT,&sw)<0)err(1,"CSD fence not retired");
+		}
 		struct drm_v3d_wait_bo wait={.handle=output.handle};
 		if(ioctl(fd,DRM_IOCTL_V3D_WAIT_BO,&wait)<0)err(1,"CSD WAIT_BO");
 		for(unsigned i=0;i<BO_SIZE/4;i++) {
@@ -56,6 +67,7 @@ compute(const char *node, unsigned rounds)
 	close(fd);
 }
 
+#ifndef BCMV3D_SYNC_CHECK
 int
 main(int argc,char **argv)
 {
@@ -81,3 +93,4 @@ main(int argc,char **argv)
 	puts("PASS: 389 QPU dispatches, cross-file denial, CSD/TFU/CSD transitions");
 	return 0;
 }
+#endif

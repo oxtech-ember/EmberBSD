@@ -80,6 +80,7 @@ static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v);
 static int copyin(const void *src,void *dst,size_t n)
 { if((uintptr_t)src<4096)return EFAULT; memcpy(dst,src,n); return 0; }
 
+#include "bcm2712-v3d-sync-model.h"
 #include "job-body.h"
 
 static uint32_t core_regs[0xa00/4];

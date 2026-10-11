@@ -13,6 +13,9 @@
 #include <dev/acpi/acpi_intr.h>
 #include <arm/broadcom/bcm2712_v3d_takeover.h>
 #include <linux/err.h>
+#include <linux/dma-fence.h>
+#include <linux/slab.h>
+#include <drm/drm_syncobj.h>
 #include "bcmv3d_drv.h"
 
 #define V3D_INT_STS	0x50
@@ -41,6 +44,8 @@
 
 struct bcmv3d_job {
 	kmutex_t lock;
+	spinlock_t fence_lock;
+	uint64_t fence_context, fence_seqno;
 	struct bcmv3d_bo *pt, *scratch;
 	/* Retained on poison: never release possibly GPU-owned storage. */
 	struct bcmv3d_bo *src, *dst;
@@ -52,6 +57,103 @@ struct bcmv3d_job {
 	volatile unsigned int events, irq_error, core_events, core_error;
 	uint32_t csd_before, csd_after, csd_irq;
 };
+
+struct bcmv3d_sync {
+	struct drm_syncobj *output;
+	struct dma_fence *fence;
+};
+
+static const char *
+bcmv3d_fence_name(struct dma_fence *fence)
+{
+
+	return "bcmv3d";
+}
+
+static const struct dma_fence_ops bcmv3d_fence_ops = {
+	.use_64bit_seqno = true,
+	.get_driver_name = bcmv3d_fence_name,
+	.get_timeline_name = bcmv3d_fence_name,
+};
+
+static void
+bcmv3d_sync_fini(struct bcmv3d_sync *sync)
+{
+
+	dma_fence_put(sync->fence);
+	if (sync->output != NULL)
+		drm_syncobj_put(sync->output);
+}
+
+/* Snapshot before output replacement, and never wait with the engine locked. */
+static int
+bcmv3d_sync_prepare(struct drm_file *file, uint32_t in, uint32_t out,
+    struct bcmv3d_sync *sync)
+{
+	struct drm_syncobj *input;
+	struct dma_fence *fence = NULL;
+	long waited;
+	int error = 0, status;
+
+	if (in != 0) {
+		input = drm_syncobj_find(file, in);
+		if (input == NULL)
+			return ENOENT;
+		fence = drm_syncobj_fence_get(input);
+		drm_syncobj_put(input);
+		if (fence == NULL)
+			return EINVAL;
+	}
+	if (out != 0) {
+		sync->output = drm_syncobj_find(file, out);
+		if (sync->output == NULL) {
+			error = ENOENT;
+			goto done;
+		}
+	}
+	if (fence != NULL) {
+		waited = dma_fence_wait_timeout(fence, true, MAX(1, mstohz(1000)));
+		if (waited <= 0) {
+			error = waited == 0 ? ETIME : -waited;
+			goto done;
+		}
+		status = dma_fence_get_status(fence);
+		if (status <= 0)
+			error = status == 0 ? EIO : -status;
+	}
+done:
+	dma_fence_put(fence);
+	return error;
+}
+
+/* The job lock orders all fences on the shared TFU/CSD timeline. */
+static int
+bcmv3d_sync_publish(struct bcmv3d_job *job, struct bcmv3d_sync *sync)
+{
+
+	if (sync->output == NULL)
+		return 0;
+	if (job->fence_seqno == UINT64_MAX)
+		return EOVERFLOW;
+	sync->fence = kzalloc(sizeof(*sync->fence), GFP_KERNEL);
+	if (sync->fence == NULL)
+		return ENOMEM;
+	dma_fence_init(sync->fence, &bcmv3d_fence_ops, &job->fence_lock,
+	    job->fence_context, ++job->fence_seqno);
+	drm_syncobj_replace_fence(sync->output, sync->fence);
+	return 0;
+}
+
+static void
+bcmv3d_sync_complete(struct bcmv3d_sync *sync, int error)
+{
+
+	if (sync->fence == NULL)
+		return;
+	if (error != 0)
+		dma_fence_set_error(sync->fence, -error);
+	dma_fence_signal(sync->fence);
+}
 
 static void
 bcmv3d_core_mask(struct bcmv3d_job *job)
@@ -227,7 +329,7 @@ bcmv3d_payload(const struct drm_v3d_submit_tfu *a,
 	    a->ica != 0 || a->iua != 0 || a->coef[0] != 0 ||
 	    a->coef[1] != 0 || a->coef[2] != 0 || a->coef[3] != 0 ||
 	    a->bo_handles[2] != 0 || a->bo_handles[3] != 0 ||
-	    a->in_sync != 0 || a->out_sync != 0 || a->flags != 0 ||
+	    a->flags != 0 ||
 	    a->extensions != 0 || a->v71.pad != 0)
 		return EINVAL;
 	return 0;
@@ -350,6 +452,7 @@ bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 	struct bcmv3d_job *job = sc->job;
 	struct drm_v3d_submit_tfu *args = data;
 	struct drm_gem_object *src, *dst;
+	struct bcmv3d_sync sync = {0};
 	int error;
 
 	dst = drm_gem_object_lookup(file, args->bo_handles[0]);
@@ -363,11 +466,17 @@ bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 	error = bcmv3d_payload(args, bcmv3d_to_bo(src), bcmv3d_to_bo(dst));
 	if (error != 0)
 		goto release;
+	error = bcmv3d_sync_prepare(file, args->in_sync, args->out_sync, &sync);
+	if (error != 0)
+		goto release;
 	mutex_enter(&job->lock);
 	if (job->poisoned) {
 		error = EIO;
 		goto unlock;
 	}
+	error = bcmv3d_sync_publish(job, &sync);
+	if (error != 0)
+		goto unlock;
 	job->src = bcmv3d_to_bo(src);
 	job->dst = bcmv3d_to_bo(dst);
 	atomic_store_release(&job->src->busy, 1);
@@ -383,15 +492,19 @@ bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 		aprint_error_dev(sc->dev, "TFU engine stopped: %d; "
 		    "buffers retained until reboot\n", error);
 		/* Conservatively retain even failures before first publication. */
+		bcmv3d_sync_complete(&sync, error);
 		mutex_exit(&job->lock);
+		bcmv3d_sync_fini(&sync);
 		return -error;
 	}
 	atomic_store_release(&job->src->busy, 0);
 	atomic_store_release(&job->dst->busy, 0);
 	job->src = job->dst = NULL;
 unlock:
+	bcmv3d_sync_complete(&sync, error);
 	mutex_exit(&job->lock);
 release:
+	bcmv3d_sync_fini(&sync);
 	drm_gem_object_put_unlocked(src);
 	drm_gem_object_put_unlocked(dst);
 	return -error;
@@ -562,12 +675,13 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 	struct bcmv3d_device *sc;
 	struct bcmv3d_job *job;
 	struct drm_gem_object *objects[V3D_CSD_BO_MAX];
+	struct bcmv3d_sync sync = {0};
 	uint32_t handles[V3D_CSD_BO_MAX];
 	unsigned int i, j, count = 0;
 	int error;
 
-	/* No extensions, fences or performance objects are silently ignored. */
-	if (a->flags || a->pad || a->extensions || a->in_sync || a->out_sync ||
+	/* No extensions or performance objects are silently ignored. */
+	if (a->flags || a->pad || a->extensions ||
 	    a->perfmon_id || a->bo_handle_count == 0 ||
 	    a->bo_handle_count > V3D_CSD_BO_MAX ||
 	    a->coef[0] || a->coef[1] || a->coef[2] || a->coef[3] ||
@@ -595,6 +709,9 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 	}
 	sc = dev->dev_private;
 	job = sc->job;
+	error = bcmv3d_sync_prepare(file, a->in_sync, a->out_sync, &sync);
+	if (error != 0)
+		goto release;
 	mutex_enter(&job->lock);
 	if (job->poisoned) {
 		error = EIO;
@@ -608,6 +725,9 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 		error = EINVAL;
 		goto clear;
 	}
+	error = bcmv3d_sync_publish(job, &sync);
+	if (error != 0)
+		goto clear;
 	for (i = 0; i < count; i++)
 		atomic_store_release(&job->bos[i]->busy, 1);
 	error = bcmv3d_csd_execute(job, a);
@@ -630,8 +750,9 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 		    atomic_load_acquire(&job->core_events),
 		    atomic_load_acquire(&job->core_error),
 		    atomic_load_acquire(&job->events), count);
-		mutex_exit(&job->lock);
-		return -error;
+		/* Keep every BO reference, but complete the fence with an error. */
+		count = 0;
+		goto unlock;
 	}
 	for (i = 0; i < count; i++)
 		atomic_store_release(&job->bos[i]->busy, 0);
@@ -639,8 +760,10 @@ clear:
 	memset(job->bos, 0, sizeof(job->bos));
 	job->nbo = 0;
 unlock:
+	bcmv3d_sync_complete(&sync, error);
 	mutex_exit(&job->lock);
 release:
+	bcmv3d_sync_fini(&sync);
 	while (count != 0)
 		drm_gem_object_put_unlocked(objects[--count]);
 	return -error;
@@ -709,6 +832,7 @@ bcmv3d_job_fini(struct bcmv3d_device *sc)
 	if (job->pt != NULL)
 		drm_gem_object_put_unlocked(&job->pt->cma.base);
 	mutex_destroy(&job->lock);
+	spin_lock_destroy(&job->fence_lock);
 	kmem_free(job, sizeof(*job));
 	sc->job = NULL;
 }
@@ -733,6 +857,8 @@ bcmv3d_job_init(struct bcmv3d_device *sc)
 		return EIO;
 	job = sc->job = kmem_zalloc(sizeof(*job), KM_SLEEP);
 	mutex_init(&job->lock, MUTEX_DEFAULT, IPL_NONE);
+	spin_lock_init(&job->fence_lock);
+	job->fence_context = dma_fence_context_alloc(1);
 	bo = bcmv3d_bo_alloc(sc, V3D_PT_SIZE);
 	if (IS_ERR(bo)) {
 		error = -PTR_ERR(bo);

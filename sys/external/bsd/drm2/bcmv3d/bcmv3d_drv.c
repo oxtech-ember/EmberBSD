@@ -48,7 +48,7 @@ static const struct drm_ioctl_desc bcmv3d_ioctls[] = {
 };
 
 static struct drm_driver bcmv3d_driver = {
-	.driver_features = DRIVER_GEM | DRIVER_RENDER,
+	.driver_features = DRIVER_GEM | DRIVER_RENDER | DRIVER_SYNCOBJ,
 	.ioctls = bcmv3d_ioctls,
 	.num_ioctls = __arraycount(bcmv3d_ioctls),
 	.mmap_object = drm_gem_mmap_object,
@@ -110,7 +110,7 @@ bcmv3d_render_attach(device_t self, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	if (error != 0)
 		goto fail;
 	aprint_normal_dev(self, "native V3D render interface: GEM and "
-	    "bounded 64x64 TFU; general Mesa submissions unavailable\n");
+	    "bounded TFU/CSD with binary syncobj; general Mesa submissions unavailable\n");
 	/* Device, IRQ and MMU lifetime ends at reboot; no hot removal. */
 	return 0;
 fail:

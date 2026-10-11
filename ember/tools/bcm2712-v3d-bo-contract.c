@@ -54,7 +54,11 @@ struct drm_gem_cma_object {
 	bus_dma_tag_t dmat;
 	void *vaddr;
 };
-struct drm_file { struct drm_gem_object *handles[16]; };
+struct drm_syncobj;
+struct drm_file {
+	struct drm_gem_object *handles[16];
+	struct drm_syncobj *syncs[4];
+};
 #define to_drm_gem_cma_obj(p) container_of(p,struct drm_gem_cma_object,base)
 #include "uapi-body.h"
 #include "drv-body.h"

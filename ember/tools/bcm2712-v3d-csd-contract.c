@@ -35,6 +35,7 @@ csd_cleanup(struct bcmv3d_device *c, struct drm_file *f, bool poison)
 	j->published=false; bcmv3d_job_fini(c); empty(c);
 }
 
+#ifndef BCMV3D_SYNC_CONTRACT
 int
 main(void)
 {
@@ -64,7 +65,8 @@ main(void)
 		case 17:b.cfg[5]|=4;break;
 		case 18:b.cfg[6]|=1;break;
 		}
-		calls=reg_calls; CHECK(bcmv3d_submit_csd(&d,&b,&f)==-EINVAL);
+		calls=reg_calls;
+		CHECK(bcmv3d_submit_csd(&d,&b,&f)==(i==3 || i==4?-ENOENT:-EINVAL));
 		CHECK(reg_calls==calls);
 	}
 	b=a;b.bo_handles=1;CHECK(bcmv3d_submit_csd(&d,&b,&f)==-EFAULT);
@@ -121,3 +123,4 @@ main(void)
 	printf("PASS: %u CSD checks; %u injected register failures\n",checks,calls);
 	return 0;
 }
+#endif
