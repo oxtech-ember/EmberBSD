@@ -2516,22 +2516,28 @@ struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 	if (mpdu_len >= 24 &&
 	    (wh[0] == 0xc0 || wh[0] == 0xa0 || wh[0] == 0xd0)) {
 		/*
-		 * The association is over the moment the AP says so: a mesh
-		 * first asks to move (WNM BSS Transition Management, category
-		 * 0x0a action 7) and then deauthenticates the station.  Both a
-		 * protected deauth the firmware decrypted and a plain one end
-		 * up here; SA Query (category 0x08) still goes to the PMF
-		 * path below.  Route all of them through the single-flight
-		 * teardown, which clears the firmware association and returns
-		 * net80211 to scan for the re-association.
+		 * A mesh controller first asks the station to move (WNM BSS
+		 * Transition Management, category 0x0a action 7) and then
+		 * deauthenticates it.  Only act on frames that pass the
+		 * association's management protection: with required PMF an
+		 * unprotected deauthentication or transition request is the
+		 * classic forgery PMF exists to drop, so those keep taking
+		 * the validated PMF/SA-Query path and the RX-liveness
+		 * watchdog ends a genuinely dead link.  A frame the firmware
+		 * decrypted is authentic; so is any frame on an association
+		 * without PMF.
 		 */
-		if (wh[0] == 0xd0 && wh[24] == 0x0a && wh[25] == 7) {
+		const bool pmf = sc->sc_sae_enabled;
+		const bool authentic =
+		    !pmf || __SHIFTOUT(status, AICWF_RX_DECR) != 0;
+		if (wh[0] == 0xd0 && mpdu_len >= 26 &&
+		    wh[24] == 0x0a && wh[25] == 7 && authentic) {
 			device_printf(sc->sc_dev,
 			    "BSS transition request; roaming\n");
 			aicwf_alive_lost(sc);
 			return;
 		}
-		if (wh[0] == 0xc0 || wh[0] == 0xa0) {
+		if ((wh[0] == 0xc0 || wh[0] == 0xa0) && authentic) {
 			device_printf(sc->sc_dev,
 			    "%s from the AP, reason %u; reconnecting\n",
 			    wh[0] == 0xc0 ? "deauthentication" : "disassociation",
