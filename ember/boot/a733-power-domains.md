@@ -227,6 +227,12 @@ and quarantines the domain like a failed transition; a status timeout does
 not quarantine, keeping the read-only waiter available. An already-complete
 CORE needs no request. Ordinary `pdc_set` restrictions are unchanged.
 
+The first physical boot with this request active hung the board before
+network bring-up and reproduced after full power removal; the exact stall is
+not localizable without a serial console. See the
+[physical result](a733-gpu-identification.md#physical-result-withdraw-the-experimental-boot-until-a-console-exists);
+the experimental DTB must not be booted on hardware until a console exists.
+
 ## Provenance
 
 Register facts were checked on 2026-10-08 against these primary sources:

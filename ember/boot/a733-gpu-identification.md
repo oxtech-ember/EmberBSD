@@ -231,6 +231,23 @@ fault-tolerant peeks. A successful read publishes the real PBVNC explicitly
 marked "GPU_CORE not confirmed ON"; a fault or readiness change only prints.
 This diagnostic never authorizes further GPU access, mapping or resets.
 
+### Physical result: withdraw the experimental boot until a console exists
+
+Kernel `EMBER64 #6` from `c3fbeceb0e27bb7fced4cb7a2faae083797b2bc5` with the
+normal observe-only DTB boots and passes the full driver diagnostics. The
+same kernel with the experimental domain-request DTB reproducibly hangs the
+board before network bring-up, including after a full power removal; no
+panic output is reachable without a serial console. The stall is one of the
+two new hardware actions of this experiment — the GPU_CORE PPU delay/policy
+writes or the GPU MMIO identification peeks — and cannot be localized from
+software alone. A fault-tolerant peek bounds synchronous traps, not a bus
+transaction that never completes.
+
+Do not boot the `netbsd,experimental-domain-request` DTB on hardware until
+a serial console is attached to the board. The vendor-derived request path
+stays in the tree behind the opt-in; recovery of the hung board was done by
+restoring the normal DTB on the card from a host VM.
+
 ## Source audit: remaining cold-start boundary
 
 In Linux `0c2669a9f4a1d607e7591ae50ccf3c432a0aff08`, the
