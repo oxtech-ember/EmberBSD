@@ -21,7 +21,7 @@ Both GPU interrupt lines delivered their completions through
 TFU copy and the clear-and-store job both ran to verified images. Two
 earlier instrumented boots produced the fixes this acceptance depends
 on: handlers self-mask under a level-line storm, and the line identity
-comes from wire evidence (the table above), not from the firmware
+comes from wire evidence (the table below), not from the firmware
 header's swapped names. The board was returned to the ordinary kernel
 and rechecked. The source boot log SHA256 is
 `edc13a1e216585fd17be78f94692241c8e70740ad20453b81547c7e7e738a1e3`.

@@ -83,3 +83,25 @@ from a recorded clean commit. Preserve matching modules, source provenance
 and artifact hashes. A later physical run must use the corresponding recovery
 bundle and record its own result; previous acceptance cannot certify the
 changed guards or MMU recovery.
+
+## Recorded host validation
+
+On 2026-10-11, clean source commit
+`be475f24bb0ac4fe07beda01d73b642d9a417142` passed the portable contracts
+and cross-builds on macOS/ARM64 with GCC 16.2.0. The IRQ contract passed
+81 cases, 339 checks and 17 causal mutants; the fault contract passed
+81 cases, 134 checks and 20 causal mutants. Both also passed ASan/UBSan.
+The build-wrapper regression verified GPU contract dispatch and refusal
+to publish artifacts after a contract failure.
+
+| Configuration | ELF kernel SHA256 |
+| --- | --- |
+| `EMBERV3DQUEUE` | `eb6697b859c5ab0cfa2a68b858d179fc384d53abe84123138a91b9dcf60c31f5` |
+| `EMBERV3DIRQ` | `226675f7e58d63f885398cbae5e4e8650ff5746126f7df2b8ad08e88b0f75d7c` |
+| `EMBERV3DFAULT` | `c83216b46969b5a5ebd69cfe95b099989801cc0aa9232462be0fd5f708f97947` |
+| `EMBER64` | `00b056c8b3bc1b7800ff5c2e0fca692970ad6bdedeef6c4a0010a17a14638587` |
+
+All four builds passed artifact, matching-module and source/compiler
+provenance checks. The ordinary kernel contains the observer and no
+experimental probe entry points. These corrected kernels have not yet
+been accepted on the physical CM5; MMU recovery remains unaccepted.
