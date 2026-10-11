@@ -86,11 +86,49 @@ connection and depth=24 did not fix the failing warm boots.
 | Diagnostic probe.c used on hardware | `7ecdb5640bef04582152cef61f220488c500536a77ffe66dac6f793be95e93b5` |
 
 The subsequently published journal-error handling is covered by isolated
-checks; that revised binary has not been rerun on the board. The firmware image
+checks; that revised binary has not been rerun on this RPi5. The firmware image
 is not distributed because it contains local variables. Warm reboot after the
 successful cold boot, hotplug, CM5 HDMI, accelerated scanout and Plasma remain
 unverified. The observation narrows the failure to pre-OS display initialization;
 it does not identify its firmware, HPD or retained-state cause.
+
+## CM5 comparison after cold boot, 2026-10-11
+
+The CM5 Rev 1.0 / BCM2712 D0 (4 GiB, Waveshare CM5-NANO-B carrier) was shut
+down normally and disconnected from power for ten seconds with the monitor
+on. The user reported no signal. The same monitor and cable had just shown
+the RPi5 console; the CM5 used a different adapter. Its earlier operation
+with this exact board/monitor is unknown. Carrier PCB and UEFI source revisions
+remain unknown.
+
+The revised probe (`64cc0863c54885399f7a35f1f2f2cd812ec55e624e0f39f94bfaa1d4053d840f`)
+again found firmware geometry 0 x 0 and no GOP. It restored and chainloaded
+the original loader successfully. The installed EMBERV3DRENDER #11 kernel,
+matching modules and depth=32 configuration were unchanged; no framebuffer
+attached. This does not invalidate the separate offscreen V3D acceptance.
+
+Read-only captures of the original firmware DTB in its configured RAM region
+located `/chosen/log` and `/chosen/bootloader`. The message ring format is
+documented by Raspberry Pi's [vclog source](https://github.com/raspberrypi/utils/blob/master/vclog/vclog.c).
+Decode framed messages rather than treating binary record headers as text.
+The retained logs distinguish the two cold boots:
+
+| Board | Firmware bootloader revision | HDMI0 discovery |
+| --- | --- | --- |
+| CM5 | `5855b10b2bd22b2a116dc91f6b5b1bc4b2ea849f` (2025-06-13) | hotplug 0; no EDID read or chosen mode |
+| RPi5 | `57db150d63864d47e6c9071f6b086a5401eb4e92` (2025-11-05) | hotplug 1; EDID blocks 0/1; 1920x1080 at 60 Hz |
+
+Both report HDMI1 hotplug 0. This localizes the missing CM5 display before
+UEFI/EmberBSD; it does not identify an adapter, carrier or firmware defect.
+The firmware versions also differ, so this is not a controlled adapter-only
+comparison. The cached CM5 bootloader settings contain BOOT_UART and BOOT_ORDER,
+with no HDMI-disable override. No EEPROM update was attempted.
+
+The full DTB/log captures remain private because they can contain hardware
+identifiers and seeds. Capture SHA256: CM5 EFI log
+`f2f8888df3034882f0d2773032d11051debaa30dfefe8386ddfa37e4c317aec8`;
+CM5 firmware log `d7b35dae27269814ecd6bdf5fb8abb1cd1dcd38d55751994be9d6cb9d8f6569f`;
+RPi5 firmware log `fa6449b7784da7f83648ad59403fd082ab8ed8e2289319bdc40c17a7935010fe`.
 
 ## Analysis scope
 
