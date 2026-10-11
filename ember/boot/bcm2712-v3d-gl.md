@@ -18,8 +18,8 @@ automatic overflow allocation and arbitrary-job recovery are not promised.
 The first hardware gate is a userspace clear/store command list with guarded
 buffers. The next is real Mesa shaders and pixel readback, with explicit V3D
 identity and no software fallback. Rendering and display/KMS are separate:
-The selected presentation target is a remote desktop: a virtual Wayland output
-with hardware rendering and remote input/capture, after offscreen OpenGL passes.
+The first presentation target is now HDMI on CM5, followed by remote Plasma.
+Both require an accepted output path and the common Qt/KWin package migration.
 
 - [x] Add actual-source CL contracts for validation, both dependencies,
   completion IRQ identity/count, cache order, memory ownership and failure.
@@ -133,9 +133,9 @@ Image SHA256: `bf3963a0a0eb01714d8065eb6747a4b6ed9702b0a307531eee68cc9edb1c7f91`
 All four companion modules are byte-identical to the accepted CL bundle.
 The ordinary bundle remains preserved. The experimental driver still limits
 individual BOs to 16 MiB and total allocation to 64 MiB. Sharing buffers between
-clients passed the subsequent PRIME gate below. A virtual Wayland output,\nremote input/capture and the current common
-Qt/KWin/Plasma package migration are subsequent gates; HDMI is not required
-for the selected remote desktop scenario. No long-run desktop claim follows.
+clients passed the subsequent PRIME gate below. HDMI presentation and the
+current common Qt/KWin/Plasma package migration remain subsequent gates.
+No long-run desktop claim follows.
 
 ## Same-device PRIME integration
 
@@ -204,3 +204,22 @@ foreign-device imports, arbitrary modifiers and a desktop remain unaccepted.
 All four modules match the previous accepted Mesa bundle byte for byte;
 source-export, compiler, debuglink/CTF and module-symbol checks passed.
 The original firmware/base provenance limits and ARM64 Valgrind gap remain.
+
+## Desktop GL and HDMI discovery, 2026-10-11
+
+With the accepted PRIME kernel (`78c6715a949`, ELF
+`e3dd93954fa7fde09e9da0667cb67b7e0c3544e91719be8dfc05e478cd9deea4`),
+the common Mesa package passes desktop OpenGL 3.1 on V3D 7.1.10.2.
+Four 1280x800 shader/pixel/context lifecycles pass for both explicit render-node
+and automatic surfaceless selection. All 30 live package libraries match the
+cross sysroot; GLES regression, explicit llvmpipe comparison and rejection
+controls pass. The [Ports receipt](https://github.com/oxtech-ember/EmberBSD-Ports/blob/84701a6/profiles/common-graphics/cross/mesa-cm5.md#desktop-opengl-2026-10-11)
+contains the cross-build instructions, exact test hashes and analysis limits.
+
+A normal reboot with an attached, powered monitor did not expose a framebuffer
+in the live FDT or attach wsdisplay. The operator reported no HDMI signal even
+before OS startup. Kernel and boot configuration hashes remained unchanged.
+This localizes the missing output before desktop startup but does not identify
+its cause: firmware initialization, monitor detection and the physical link
+still need differentiation. No firmware/EEPROM downgrade was performed.
+Rendering is accepted; HDMI/KMS and a complete Plasma session are not.

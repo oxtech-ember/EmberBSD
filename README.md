@@ -263,7 +263,7 @@ on every board in the hardware catalog.
   build and pass functional checks on macOS/arm64. Target Qtbase also
   cross-configures there with Wayland/EGL and GBM enabled; current networking
   dependencies pass [focused CM5 API checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/network-dependencies.md).
-  Complete target Qt packages, playback and a remote Plasma session remain pending.
+  Complete target Qt packages, playback and HDMI/remote Plasma sessions remain pending.
   A complete mobile shell workflow, native display and power management
   still need validation. See the [Plasma Mobile port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile).
 
@@ -521,14 +521,14 @@ on every board in the hardware catalog.
   then passed 325 userspace CL pairs, 1,331,200 checked pixels and 32 TFU
   copies, including guards and binary fences. The common Ports
   [Mesa package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-cm5.md)
-  now passes real V3D 7.1.10.2 shader/pixel rendering: EGL 1.5, GLES 3.0,
-  four lifecycles at both 16x16 and 1280x800. Native platform identity
+  now passes real V3D 7.1.10.2 shader/pixel rendering: EGL 1.5, GLES 3.0
+  and desktop OpenGL 3.1, including four 1280x800 lifecycles per display path. Native platform identity
   makes this GPU discoverable without DRM master. All 38 Mesa upstream
   invocations pass with recorded internal skips; LLVM23 llvmpipe also passes.
   Same-device PRIME passes 80 cross-process lifecycles and four real
   GBM/EGLImage shader/pixel cycles after native DMA-BUF lifetime repairs.
   The ordinary kernel remains a passive observer. General job recovery,
-  foreign-device sharing, Vulkan and remote accelerated Plasma remain unverified.
+  foreign-device sharing, Vulkan, HDMI presentation and accelerated Plasma remain unverified.
 
 ### Network diagnostics kit
 
