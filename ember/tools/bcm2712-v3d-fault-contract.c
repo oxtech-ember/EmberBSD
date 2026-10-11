@@ -288,6 +288,9 @@ static struct fixture {
 	bool barrier_fault, barrier_completion, barrier_read_error;
 	bool baseline_late_irq, changed_vio_id, changed_vio_addr;
 	bool first_ownership_returned;
+	bool sink_write, late_sink_write;
+	int sink_corrupt_byte, sink_zero_guard;
+	unsigned int sink_source_offset, sink_dest_offset, sink_bytes;
 	unsigned int barriers, controller_masks;
 	char diagnostics[768];
 	char last_message[512];
@@ -308,6 +311,10 @@ static struct {
 static unsigned int hub_pokes;
 static unsigned int hub_entries; /* handler invocations */
 static unsigned int hub_latches; /* bits latched by jobs */
+static bus_addr_t default_bases[FV3D_OBJ_COUNT] = {
+	0x10000000, 0x10400000, 0x10403000, 0x10408000, 0x1040d000,
+	0x10412000
+};
 
 static bool fake_run_tfu(void);
 
@@ -385,7 +392,8 @@ fake_hub_peek(bus_size_t offset, uint32_t *value)
 		break;
 	case FV3D_MMU_VIO_ADDR:
 		/* Pinned Linux: VIO_ADDR stores the high 32 VA bits. */
-		*value = (0x10410000 + (fx.address_at_end ? FV3D_IMAGE_SIZE :
+		*value = (default_bases[FV3D_OBJ_TFU_LDST] +
+		    (fx.address_at_end ? FV3D_IMAGE_SIZE :
 		    fx.address_below ? -16 : 32)) >> (fx.va_width_field - 2);
 		if (fx.wrong_address)
 			*value = 0x01040100; /* source object, not destination alias */
@@ -527,10 +535,6 @@ fake_xc_barrier(unsigned int flags)
 /* --- bus_dma (CPU/GPU views) --------------------------------------- */
 
 static struct fake_allocation allocations[FV3D_OBJ_COUNT];
-static bus_addr_t default_bases[FV3D_OBJ_COUNT] = {
-	0x10000000, 0x10400000, 0x10401000, 0x10406000, 0x1040b000,
-	0x10410000
-};
 
 static struct fake_allocation *
 allocation_by_seg(const bus_dma_segment_t *seg)
@@ -792,6 +796,22 @@ fake_run_tfu(void)
 		if (fx.fault_touch_dst)
 			allocation_containing(
 			    default_bases[FV3D_OBJ_TFU_ADST])->dev[0] = 1;
+		if (fx.sink_write) {
+			bus_addr_t sink_pa = (bus_addr_t)(hub_illegal &
+			    ~FV3D_MMU_ILLEGAL_ENABLE) << FV3D_PAGE_SHIFT;
+			struct fake_allocation *sink = allocation_containing(sink_pa);
+			struct fake_allocation *source = allocation_containing(
+			    default_bases[FV3D_OBJ_TFU_ASRC]);
+
+			assert(sink != NULL && source != NULL);
+			/* Physical r5: last 128-byte burst goes to the sink base. */
+			memcpy(sink->dev + (sink_pa - sink->base) + fx.sink_dest_offset,
+			    source->dev + fx.sink_source_offset, fx.sink_bytes);
+			if (fx.sink_corrupt_byte >= 0)
+				sink->dev[fx.sink_corrupt_byte] ^= 0x80;
+			if (fx.sink_zero_guard >= 0)
+				memset(sink->dev + fx.sink_zero_guard, 0, 4);
+		}
 		/* Physical V3D 7.1 retires the failed conversion too. */
 		if (!fx.fault_no_count)
 			fake_tfu_count += fx.fault_two_counts ? 2 : 1;
@@ -836,6 +856,9 @@ fake_run_tfu(void)
 	}
 	if (fx.good_latch_only)
 		hub_ctl_shadow |= __BIT(20);
+	if (fx.late_sink_write)
+		memcpy(allocations[FV3D_OBJ_SCRATCH].dev + PAGE_SIZE,
+		    src->dev + FV3D_OUTPUT_DATA - 128, 128);
 	if (!fx.good_no_count)
 		fake_tfu_count += fx.good_two_counts ? 2 : 1;
 	fake_latch_hub(FV3D_HUB_TFUC |
@@ -941,6 +964,10 @@ reset_fixture(void)
 	fx.vio_id = 0x7d;
 	fx.fail_create = -1;
 	fx.corrupt_object = -1;
+	fx.sink_write = true;
+	fx.sink_corrupt_byte = fx.sink_zero_guard = -1;
+	fx.sink_bytes = 128;
+	fx.sink_source_offset = FV3D_OUTPUT_DATA - 128;
 	fx.fail_peek_offset = fx.fail_poke_offset = fx.fail_io_job = -1;
 	fx_parse_ok = 1;
 	fx_hub_gsi = 282;	/* _CRS index 0 */
@@ -1009,6 +1036,48 @@ main(void)
 
 	/* One shot only. */
 	run_case("second attempt", EBUSY);
+
+	reset_fixture();
+	fx.sink_write = true;
+	run_case("physical redirected 128-byte fault write", 0);
+	CHECK(fx.jobs == 2);
+
+	reset_fixture();
+	fx.sink_write = false;
+	run_case("unobserved sink outcome remains unsupported", EIO);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.sink_corrupt_byte = PAGE_SIZE + 15 * 4;
+	run_case("wrong middle sink word with correct endpoints", EIO);
+	CHECK(fx.jobs == 1);
+
+	for (i = 0; i < 2; i++) {
+		reset_fixture();
+		fx.sink_bytes = i == 0 ? 124 : 132;
+		run_case("wrong sink payload length", EIO);
+		CHECK(fx.jobs == 1);
+
+		reset_fixture();
+		fx.sink_zero_guard = i * 2 * PAGE_SIZE;
+		run_case("zero write in a nonzero scratch canary", EIO);
+		CHECK(fx.jobs == 1);
+	}
+
+	reset_fixture();
+	fx.sink_dest_offset = 4;
+	run_case("shifted sink payload", EIO);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.sink_source_offset = 0;
+	run_case("wrong source page in sink", EIO);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.late_sink_write = true;
+	run_case("fault payload repeated after the good job", EIO);
+	CHECK(fx.jobs == 2);
 
 	/* Resource validation. */
 	reset_fixture();

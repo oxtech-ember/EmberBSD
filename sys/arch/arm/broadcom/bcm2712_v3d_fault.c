@@ -11,6 +11,7 @@
  * payload. V3D 7.1 AXI client IDs are from torvalds/linux
  * a5ebb76233b79db01e82e061173cb73c6d2b5c6b, v3d_irq.c: use the low
  * seven bits, TFU IDs 0x7c..0x7d; the old 4.1 table does not apply.
+ * Its v3d_drv.h documents invalid MMU reads/writes redirected to scratch.
  * Also uses the wire-evidence HUB line identity from the accepted
  * interrupt experiment (_CRS index 0 / GSI 282). This native
  * implementation does not import that code. Only the explicit
@@ -97,7 +98,11 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define FV3D_OUTPUT_DATA	(FV3D_DIM * FV3D_DIM * 4)
 #define FV3D_TILE_STATE_SIZE	PAGE_SIZE
 #define FV3D_PT_SIZE		(4 * 1024 * 1024)
-#define FV3D_SCRATCH_SIZE	PAGE_SIZE
+#define FV3D_SCRATCH_SIZE	(3 * PAGE_SIZE)
+#define FV3D_SINK_OFFSET	PAGE_SIZE
+/* Fixed-payload CM5 observation: the final 128-byte burst reaches the
+ * illegal-address sink. Other fault write patterns remain unaccepted. */
+#define FV3D_FAULT_SINK_WORDS	32
 #define FV3D_DATA_PAGES		4
 
 #define FV3D_WAIT_SLICES	5
@@ -235,6 +240,8 @@ fv3d_pattern(enum fv3d_object id, uint32_t page, uint32_t word)
 {
 
 	switch (id) {
+	case FV3D_OBJ_SCRATCH:
+		return page == 1 ? 0 : 0x6b710000u + page * 0x1000u + word;
 	case FV3D_OBJ_TFU_ASRC:
 		if (page >= FV3D_DATA_PAGES)
 			return 0xcafe0000u + page * 0x1000u + word;
@@ -250,6 +257,17 @@ fv3d_pattern(enum fv3d_object id, uint32_t page, uint32_t word)
 	default:
 		return 0;
 	}
+}
+
+static void
+fv3d_fill_scratch(void)
+{
+	uint32_t *image = fv3d.obj[FV3D_OBJ_SCRATCH].kva;
+	size_t word;
+
+	for (word = 0; word < FV3D_SCRATCH_SIZE / 4; word++)
+		image[word] = fv3d_pattern(FV3D_OBJ_SCRATCH,
+		    word / (PAGE_SIZE / 4), word % (PAGE_SIZE / 4));
 }
 
 /* --- bus_dma objects and MMU publication --------------------------- */
@@ -352,7 +370,8 @@ fv3d_publish_mmu(void)
 	uint32_t pt_pfn =
 	    fv3d.obj[FV3D_OBJ_PT].map->dm_segs[0].ds_addr >> FV3D_PAGE_SHIFT;
 	uint32_t scratch_pfn =
-	    fv3d.obj[FV3D_OBJ_SCRATCH].map->dm_segs[0].ds_addr >>
+	    (fv3d.obj[FV3D_OBJ_SCRATCH].map->dm_segs[0].ds_addr +
+	    FV3D_SINK_OFFSET) >>
 	    FV3D_PAGE_SHIFT;
 	uint32_t value;
 	unsigned int i;
@@ -560,6 +579,13 @@ fv3d_verify_images(bool copied)
 				pattern_id = FV3D_OBJ_TFU_ASRC;
 			expected = fv3d_pattern(pattern_id, word / (PAGE_SIZE / 4),
 			    word % (PAGE_SIZE / 4));
+			if (!copied && id == FV3D_OBJ_SCRATCH &&
+			    word >= FV3D_SINK_OFFSET / 4 &&
+			    word < FV3D_SINK_OFFSET / 4 + FV3D_FAULT_SINK_WORDS)
+				expected = fv3d_pattern(FV3D_OBJ_TFU_ASRC,
+				    FV3D_DATA_PAGES - 1, PAGE_SIZE / 4 -
+				    FV3D_FAULT_SINK_WORDS + word -
+				    FV3D_SINK_OFFSET / 4);
 			if (image[word] != expected) {
 				if (bad++ == 0) {
 					first = word;
@@ -778,7 +804,7 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 
 	fv3d.stage = "patterns and faulting page table";
 	memset(fv3d.obj[FV3D_OBJ_PT].kva, 0, FV3D_PT_SIZE);
-	memset(fv3d.obj[FV3D_OBJ_SCRATCH].kva, 0, FV3D_SCRATCH_SIZE);
+	fv3d_fill_scratch();
 	words = FV3D_IMAGE_SIZE / 4;
 	for (i = 0; i < words; i++) {
 		uint32_t page = i / (PAGE_SIZE / 4);
@@ -908,6 +934,9 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 
 	/* Stage 2: fix the CPU-owned table and rearm every allocation. */
 	fv3d.stage = "valid destination alias";
+	/* Verify before clearing: never erase evidence of a bad fault write.
+	 * The next valid job must leave the sink and both canaries intact. */
+	fv3d_fill_scratch();
 	if ((error = fv3d_map_alias(FV3D_OBJ_TFU_LDST, FV3D_OBJ_TFU_ADST,
 	    true)) != 0)
 		goto out;

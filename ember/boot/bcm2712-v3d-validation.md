@@ -70,7 +70,7 @@ Source `f7317164ae5ecd8a306ece0bada643771b36400b`, cross-built with GCC 16.2.0,
 booted on the same CM5 with kernel SHA256
 `0f9eb0e4f90a206e84dc6dee3f4cbe6e49dc9c86e4930ac0b27007bb5faa7342`.
 The new client/address guard accepted TFU `0x7d` inside the destination alias.
-There was one fault event (PTI+WRV), no TFUC and an idle TFU, but CVTCT
+There was one fault event (PTI+WRV), no TFUC delivered to the ISR and an idle TFU, but CVTCT
 advanced from 0 to 1. The original counter guard therefore stopped before
 recovery. The saved capture SHA256 is
 `88949e69a035d5079fcf82e6acdd10df64e79a8b3487eed6fb843c4be9ba20f0`.
@@ -103,8 +103,35 @@ must accompany verified output and intact protected memory.
 
 Regressions cover the physical `0x32`, delayed terminal indication, new faults,
 changed violation identity, extra ISR deliveries and baseline/teardown races.
-350 cases, 674 checks, 24 causal mutants and ASan/UBSan pass. Physical
-acceptance of recovery with this revised retirement model remains pending.
+That revision passed 350 cases, 674 checks, 24 causal mutants and ASan/UBSan.
+
+### Fault write sink
+
+The next physical run passed those event guards, then rejected changed
+protected memory. A diagnostic kernel, source
+`fd90bcb99ebee6bb048bf28818078f9c89f64de8`, isolated the change to scratch:
+32 words at indices 0..31, endpoints `0xa5a533e0` and `0xa5a533ff`.
+These endpoints identify the last 128 bytes of the fixed source image.
+All other checked words matched. Kernel SHA256:
+`f369839f4a9e8c5dfe4bc974fe8188ddec460d5f4b8ae7566a2adf80e039e237`;
+capture SHA256:
+`0e6597952d9e81fc3a786efb573a795db9c47c8345dc4995c3f932c10c4defb1`.
+
+This matches the purpose documented in pinned Linux
+[v3d_drv.h](https://github.com/torvalds/linux/blob/a5ebb76233b79db01e82e061173cb73c6d2b5c6b/drivers/gpu/drm/v3d/v3d_drv.h):
+invalid MMU reads and writes are redirected to scratch. Expecting that sink
+to remain zero after a deliberately invalid write was wrong.
+
+The revised experiment surrounds the sink with two nonzero canary pages.
+For this payload only, the first 32 sink words must equal the final 32
+source words; every other sink word remains zero. Different fault write
+patterns are unsupported. The next physical run must verify the entire
+sequence, not just its recorded endpoints. The sink is reset only after
+successful fault verification and MMU recovery, while CPU-owned. The good
+job must leave the reset sink and both canaries intact. This is a bounded
+payload check, not a general guarantee about MMU burst size or DMA isolation.
+360 cases, 694 checks, 26 causal mutants and ASan/UBSan pass. Physical
+recovery acceptance remains pending.
 
 ## Repeat the checks
 

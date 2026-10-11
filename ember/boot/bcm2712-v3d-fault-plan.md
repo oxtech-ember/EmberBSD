@@ -52,7 +52,7 @@ The generation-specific client map uses
 A separate opt-in `BCM2712_V3D_FAULT_PROBE` and `EMBERV3DFAULT`
 configuration, after a completed takeover and with no other V3D probe
 enabled. One HUB handler (established first, storm-protected), the proven
-TFU payload, six objects: page table, scratch, actual and alias source
+TFU payload, six objects: page table, guarded three-page scratch, actual and alias source
 and destination images (alias entries per the accepted DMA experiment).
 
 Flow:
@@ -70,14 +70,18 @@ Flow:
    The conversion retires with CVTCT delta 1 and idle TFU; its terminal
    TFUC must be observed either in that ISR or under the mask within
    a bounded wait. Retirement is not successful copying. All destination
-   canaries and protected buffers must remain unchanged.
+   canaries and protected image buffers must remain unchanged. Invalid
+   writes redirect to the middle scratch page. For this fixed payload,
+   require the final 128 source bytes at its start, zeros elsewhere and
+   intact nonzero canaries on both sides; other patterns remain unsupported.
 4. Recover exactly as pinned: acknowledge the handled interrupt bits,
    clear the fault latch through the verbatim `MMU_CTL` write-back, then
    acknowledge only the captured residual HUB fault/terminal indications,
    then the bounded MMUC flush and full-value TLB clear. `MMU_CTL` must read
    back `0x060d0c01` with no fault bits.
 5. Job 2 (good): rewrite the destination alias PTEs to the actual
-   destination pages, sync the page table, repeat the bounded flush
+   destination pages, reset the verified scratch while CPU-owned,
+   sync all buffers and the page table, repeat the bounded flush
    without clearing any new fault,
    verify the destination still holds its canary (job 1 must not have
    written it), and submit the identical TFU copy again. Expect TFUC as

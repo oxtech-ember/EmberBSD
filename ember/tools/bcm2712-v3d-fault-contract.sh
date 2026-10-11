@@ -41,7 +41,7 @@ for mutation in skip-latch-clear skip-flush fixup-without-sync \
     skip-pt-postwrite skip-first-ownership-return ignore-raw-status \
     skip-final-boundary milliseconds-as-ticks skip-controller-mask \
     skip-interrupt-drain skip-terminal-wait skip-retired-ack \
-    reack-new-fault skip-baseline-drain; do
+    reack-new-fault skip-baseline-drain wrong-sink-page skip-sink-reset; do
     cp "$work/fault-good.h" "$work/fault-body.h"
     awk -v mutation="$mutation" '
         mutation == "skip-latch-clear" &&
@@ -149,6 +149,15 @@ for mutation in skip-latch-clear skip-flush fixup-without-sync \
                 next
             }
         }
+        mutation == "wrong-sink-page" {
+            changed += sub(/FV3D_SINK_OFFSET\) >>/, "0) >>")
+        }
+        mutation == "skip-sink-reset" && /fv3d_fill_scratch\(\);/ {
+            if (++fills == 2) {
+                changed = 1
+                next
+            }
+        }
         mutation == "release-always" {
 
             changed += sub(/if \(!fv3d\.published\)/, "if (1)")
@@ -173,4 +182,4 @@ for mutation in skip-latch-clear skip-flush fixup-without-sync \
         exit 1
     fi
 done
-echo "PASS: fault contract; 24 causal mutants rejected"
+echo "PASS: fault contract; 26 causal mutants rejected"
