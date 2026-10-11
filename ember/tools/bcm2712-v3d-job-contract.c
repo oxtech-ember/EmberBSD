@@ -178,6 +178,23 @@ main(void)
 	unsigned count;
 	a=setup(&c,&d,&f);
 	CHECK(bcmv3d_submit_tfu(&d,&a,&other)==-ENOENT && starts==0);
+	struct drm_v3d_wait_bo w={.handle=a.bo_handles[0]};
+	CHECK(bcmv3d_wait_bo(&d,&w,&other)==-ENOENT);
+	w.pad=1; CHECK(bcmv3d_wait_bo(&d,&w,&f)==-EINVAL); w.pad=0;
+	CHECK(bcmv3d_wait_bo(&d,&w,&f)==0);
+	struct bcmv3d_bo *waiting=bcmv3d_to_bo(f.handles[w.handle]);
+	waiting->busy=1;
+	CHECK(bcmv3d_wait_bo(&d,&w,&f)==-ETIME && sleeps==0);
+	w.timeout_ns=3000000;
+	CHECK(bcmv3d_wait_bo(&d,&w,&f)==-ETIME && sleeps==3);
+	waiting->busy=0;
+	b=a; b.bo_handles[0]=b.bo_handles[1]; b.ioa=b.iia;
+	CHECK(bcmv3d_submit_tfu(&d,&b,&f)==-EINVAL && starts==0);
+	struct drm_v3d_create_bo small={.size=PAGE_SIZE};
+	CHECK(bcmv3d_create_bo(&d,&small,&f)==0);
+	b=a; b.bo_handles[0]=small.handle; b.ioa=small.offset;
+	CHECK(bcmv3d_submit_tfu(&d,&b,&f)==-EINVAL && starts==0);
+	close_handle(&f,small.handle);
 	/* Every unsupported payload field and both addresses must be checked. */
 	for(unsigned word=0;word<sizeof(a)/4;word++) {
 		b=a; ((uint32_t *)(void *)&b)[word]^=1;
