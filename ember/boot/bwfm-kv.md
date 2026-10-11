@@ -162,6 +162,25 @@ Negative PMF/replay injection, other AP families, reverse-direction transitions,
 and long-duration roaming remain unvalidated. RRM coverage is Neighbor Reports,
 not every measurement operation. No 802.11r or radio-generation claim follows.
 
+### Final build and CM5 boundary
+
+Both boards subsequently booted source
+`0d87de7380d863ff66a2dc8395929feb0b1b68ba`, including the BSD client's
+connected-scan cancellation callback. On Pi 5, `wpa_cli scan`, `abort_scan`
+and a replacement scan completed without losing SAE/PMF. A later Neighbor
+Report succeeded after the old scan timeout had elapsed. The live ioctl
+check passed 54 assertions. All seven installed artifact hashes matched.
+Normal WPA service startup also passed after reboot.
+
+The CM5 `EMBERV3DRENDER` build passed 54 live ioctl assertions and received
+five neighbors under SAE/H2E with required PMF. It retained the V3D render
+configuration. See the [board receipt](../boards/compute-module-5.md#station-and-thermal-policy-check-2026-10-11).
+CM5 BTM acceptance/rejection was not repeated. The Pi 5 result does not
+supply that missing board check. CM5 transfer attempts on the available
+2.4 GHz link were slow and did not pass the complete iperf3 file round trip.
+An exit status of zero alone is insufficient: compare received byte counts
+and the complete destination file's hash.
+
 The common ABI is also used by the separate
 [AIC8800D80 station transport](aicwf-sae.md). Its hardware acceptance belongs
 to the Zero 3W driver; this bwfm result does not validate that radio.

@@ -101,7 +101,7 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-Status updated **2026-10-10**; linked component documents record their own
+Status updated **2026-10-12**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
 
@@ -604,10 +604,11 @@ on every board in the hardware catalog.
   [guide](ember/boot/aicwf-sae.md) and
   [hardware receipt](ember/boards/orange-pi-zero-3w.md#protected-association-recovery-2026-10-09).
 - **Consistent Wi-Fi discovery and CM5 cooling:** `bwfm` retains firmware
-  scan channels and signal ranking across both bands; the CM5 ACPI fan can
-  [remain at maximum cooling](ember/boot/thermal-fan.md) across reboot.
-  The [physical check](ember/boards/compute-module-5.md#home-mesh-and-cooling-check-2026-10-08)
-  covers 5 GHz SAE/PMF traffic and operator-confirmed continuous rotation.
+  scan channels and signal ranking across both bands. An optional
+  [ACPI fan policy](ember/boot/thermal-fan.md) uses maximum speed only when
+  cooling is needed. A physical CM5 started cooling at 50.1 °C and stopped
+  at 44.1 °C; the setting survived reboot. This avoids permanent full-speed
+  operation and unstable intermediate speeds. Start-up clicks remain unvalidated.
 - **Raspberry Pi Zero 2 W**: Wi-Fi on its BCM43436 chip.
 - **Headless base on Raspberry Pi 5:** the fork's kernel, matching board
   modules and reduced base userland are built and installed through the
@@ -748,7 +749,7 @@ listed revision; it does not imply full peripheral or long-run support.
 | Board | Architecture / SoC | Confirmed scope and main limits |
 | --- | --- | --- |
 | [Raspberry Pi 5 (C1)](ember/boards/raspberry-pi-5.md) | AArch64 / BCM2712 | microSD/UEFI boot, Ethernet, Wi-Fi, classic Bluetooth, cooling and WM8960 audio; USB and graphics not validated here |
-| [Compute Module 5 (D0)](ember/boards/compute-module-5.md) | AArch64 / BCM2712 | eMMC/UEFI boot, four cores, gigabit Ethernet, WPA2/WPA3-Personal and temperature sensing; persistent maximum cooling; other peripherals unvalidated |
+| [Compute Module 5 (D0)](ember/boards/compute-module-5.md) | AArch64 / BCM2712 | eMMC/UEFI boot, four cores, gigabit Ethernet, WPA2/WPA3-Personal and temperature sensing; temperature-controlled off/maximum cooling; see board-specific peripheral limits |
 | [Raspberry Pi Zero 2 W](ember/boards/raspberry-pi-zero-2-w.md) | AArch64 / BCM2710A1 | microSD boot, all cores, serial and 2.4 GHz Wi-Fi; large Wi-Fi transfers stall |
 | [Orange Pi Zero 4](ember/boards/orange-pi-zero-4.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Ethernet, Wi-Fi, classic Bluetooth, thermal/frequency control and USB 2.0 data; SuperSpeed unconfirmed |
 | [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry and thermal/frequency control; USB devices and Bluetooth pairing not tested |

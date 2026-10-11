@@ -77,5 +77,19 @@ sh ember/tests/acpitz-fan.sh
 
 It checks normal thresholds, hysteresis, the maximum-only policy, manual
 override, failed samples, incomplete refreshes and unchanged cooling devices.
-Physical acceptance of `fan_max_only` is pending. Start-up noise, RPM,
-suspend/resume and long-duration operation remain separate checks.
+The 2026-10-11 UTC physical CM5 check used `EMBERV3DRENDER` from
+`0d87de7380d863ff66a2dc8395929feb0b1b68ba`, GCC 16.2.0 and UEFI
+`rpi5-20260730.1`. The board and installed hashes are recorded in the
+[CM5 receipt](../boards/compute-module-5.md#station-and-thermal-policy-check-2026-10-11).
+The native production-function fixture passed 57 assertions. Four bounded
+CPU loads raised the temperature from 39.7 °C to 50.1 °C. Maximum cooling
+then entered D0. After removing load, cooling stayed on at 45.2 °C and
+entered D3 at 44.1 °C. The 54-second cycle used two-second samples.
+No undervoltage or throttle flags appeared. Both policy settings survived
+reboot; the normal WPA3 service returned with required PMF.
+
+The first `envstat` fan reading can be the initial cached sample. Fan
+refresh is asynchronous. For current ACPI state, also inspect the board's
+`hw.acpi.power.acpifanN` sysctl nodes. Neither reading measures RPM.
+Start-up noise, RPM, suspend/resume and long-duration operation remain
+separate checks. This short cycle does not establish acoustic performance.
