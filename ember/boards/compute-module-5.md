@@ -30,7 +30,7 @@ The carrier PCB revision and exact four-wire fan model were not established.
 | Voltage regulators | Not validated |
 | USB | Not validated as a running OS peripheral; USB boot/eMMC provisioning is separate |
 | Hardware random numbers | Not validated |
-| V3D GPU | Opt-in physical experiments completed reset, translated TFU DMA, bin/render and interrupt delivery. On 2026-10-11, the corrected fault probe completed one invalid-PTE fault, recovery and a verified good TFU job. Separate queue/IRQ guard revisions still need physical retests. Multi-job recovery, DRM/Mesa and an accelerated desktop remain unaccepted ([checks and limits](../boot/bcm2712-v3d-validation.md)) |
+| V3D GPU | Opt-in physical experiments completed reset, translated TFU DMA, bin/render and interrupt delivery. On 2026-10-11, corrected queue/IRQ guards passed physical repeats, and the fault probe completed one invalid-PTE fault, recovery and a verified good TFU job. Multi-job recovery, DRM/Mesa and an accelerated desktop remain unaccepted ([checks and limits](../boot/bcm2712-v3d-validation.md)) |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.

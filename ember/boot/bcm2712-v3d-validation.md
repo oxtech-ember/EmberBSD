@@ -168,6 +168,28 @@ in the same boot. It does not establish repeated or concurrent recovery,
 bin/render faults, long-run stability, DRM or Mesa rendering. The probe
 retains its allocations until reboot and remains opt-in.
 
+### Physical IRQ and queue guard repeats
+
+On 2026-10-11, the same recorded source/tree and board passed the separate
+`EMBERV3DIRQ` probe. TFUC, FLDONE and FRDONE each arrived exactly once.
+Both images, protected buffers and the final drained interrupt boundary
+passed; handlers were removed and masks restored. Kernel SHA256:
+`dd8601bcc6060cb215a86b1c6338f3fe93484e2851da7c4ed85be2d5782f2b4b`;
+capture SHA256:
+`2201942638539a4e09cfb91c6e2b5ab9d5eaa91649d11af44d1524e6e8122eb2`.
+This repeats the corrected guard path with real interrupts. Injected
+duplicate/error races remain contract evidence, not physical fault injection.
+
+The separate `EMBERV3DQUEUE` boot from that source also passed: translated
+TFU DMA with CVTCT 0 to 1, then one 64x64 tile cleared and stored through
+both control lists. Kernel SHA256:
+`e9f1a773c6e5649ba27bcf3768bcb7f778b949d78132bcd49ae555ae1066da88`;
+capture SHA256:
+`834be2a651c7407403c374121d8b81c93b7f90adc0c8260bdf7f9d8728e21881`.
+The failure-propagation branch is contract-tested; this physical run
+accepts the corrected successful DMA-to-queue chain. The ordinary kernel
+was restored after these opt-in probes.
+
 ## Repeat the checks
 
 From a clean EmberBSD checkout, run:
@@ -214,6 +236,7 @@ to publish artifacts after a contract failure.
 
 All four builds passed artifact, matching-module and source/compiler
 provenance checks. The ordinary kernel contains the observer and no
-experimental probe entry points. These exact queue/IRQ kernels still need
-physical acceptance; the later corrected fault kernel is accepted only
-within the bounded scope recorded above.
+experimental probe entry points. The physical repeats above use a later
+source on the tested Wi-Fi baseline, with unchanged queue/IRQ production
+code and the subsequent fault fixes. They accept only the bounded
+scenarios recorded above, not general DRM or Mesa operation.

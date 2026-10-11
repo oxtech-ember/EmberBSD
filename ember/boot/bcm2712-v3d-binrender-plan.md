@@ -1,7 +1,7 @@
 # BCM2712 first bin/render queue experiment: handoff design
 
-Status on 2026-10-10: **implemented, contracted, reviewed and physically
-accepted once** behind `BCM2712_V3D_QUEUE_PROBE` (`bcm2712_v3d_queue.c`,
+Status on 2026-10-11: **implemented, contracted and physically accepted,
+including the corrected stage guard** behind `BCM2712_V3D_QUEUE_PROBE` (`bcm2712_v3d_queue.c`,
 `EMBERV3DQUEUE`); the review's two packet-encoding blockers were fixed
 before the build. On the stand CM5 the kernel booted the observer, the
 takeover, the translated DMA experiment and then this queue experiment,
@@ -187,6 +187,12 @@ and the render stored the verified RGBA8 image (FRDONE) with every output
 word equal to the clear color, intact canaries, unmodified control lists
 and no MMU fault. The source boot log SHA256 is
 `c23e4d9f96ffb0d63b9624159187745ea00289bbc5369ce00a9bc5427349783a`.
+
+The [guarded chain repeat](bcm2712-v3d-validation.md#physical-irq-and-queue-guard-repeats)
+passed on 2026-10-11: the corrected observer ran translated DMA first,
+then bin/render, both with verified data. The contract separately proves
+that DMA failure prevents queue submission. The later physical run
+does not inject that failure or establish sustained queue operation.
 
 ## Bounds and next stages
 

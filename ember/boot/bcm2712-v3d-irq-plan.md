@@ -1,7 +1,7 @@
 # BCM2712 V3D interrupt experiment: handoff design
 
-Status on 2026-10-10: **implemented, contracted, reviewed by wire
-evidence and physically accepted once** on the stand CM5 (see the result
+Status on 2026-10-11: **physically accepted, including the corrected
+completion and integrity guards** on the stand CM5 (see the results
 below). This is stage B after the accepted [translated DMA](bcm2712-v3d-dma.md)
 and [bin/render queue](bcm2712-v3d-binrender-plan.md) experiments:
 real GPU interrupt delivery through ACPI instead of polled completion.
@@ -29,8 +29,12 @@ and rechecked. The source boot log SHA256 is
 The later [acceptance-guard review](bcm2712-v3d-validation.md) found missing
 production checks for duplicate events, collateral DMA writes and binning
 wait errors. The historical PASS confirms delivery and the checked images;
-it does not certify the additional guards. Rerun physical acceptance with
-the corrected kernel before extending that claim.
+it does not certify the additional guards. Their
+[physical repeat](bcm2712-v3d-validation.md#physical-irq-and-queue-guard-repeats) passed
+on 2026-10-11: TFUC=1, FLDONE=1, FRDONE=1, both images and all protected
+buffers verified, final checks after controller masking and handler drain.
+This accepts the corrected nominal path; injected error races are covered
+by the actual-source contracts.
 
 ## Interrupt identity (pinned)
 
@@ -120,8 +124,8 @@ This proves interrupt delivery, handler context and wakeup for one TFU
 and one bin/render completion on both GPU lines. It does not prove
 shared lines, threaded/deferred processing, OOM recovery work, MMU fault
 interrupt handling (bits stay masked), MSO/SPILLUSE paths, or any
-sustained rate. A following stage C (MMU fault recovery) will unmask the
-fault bits deliberately.
+sustained rate. The separate [stage C](bcm2712-v3d-fault-plan.md) now
+accepts one invalid-PTE recovery on the same board.
 
 ## Contracts and review
 
