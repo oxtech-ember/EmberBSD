@@ -125,13 +125,27 @@ to remain zero after a deliberately invalid write was wrong.
 The revised experiment surrounds the sink with two nonzero canary pages.
 For this payload only, the first 32 sink words must equal the final 32
 source words; every other sink word remains zero. Different fault write
-patterns are unsupported. The next physical run must verify the entire
-sequence, not just its recorded endpoints. The sink is reset only after
+patterns are unsupported. The sink is reset only after
 successful fault verification and MMU recovery, while CPU-owned. The good
 job must leave the reset sink and both canaries intact. This is a bounded
 payload check, not a general guarantee about MMU burst size or DMA isolation.
 360 cases, 694 checks, 26 causal mutants and ASan/UBSan pass. Physical
 recovery acceptance remains pending.
+
+The following CM5 boot, source `6d3e186a85cc0afcc212a2c958b0397c8e90b9a4`,
+verified every sink word and both canaries, recovered the MMU and passed
+the strict pre-good boundary. Its good job still faulted (two fault ISR
+deliveries, no TFUC ISR, CVTCT still 1). Kernel SHA256:
+`93a616336bd271217cd81f357da629b37e5fd27bf0035657c1aaf1d3ba6401ee`;
+capture SHA256:
+`875baa5773bdcecc2215247344736501db558b58bb14beab9b190d12ab6c9700`.
+
+The probe now reissues all eleven input fields before **each** TFU start,
+matching pinned Linux `v3d_tfu_job_run()`. Previously job 2 wrote only ICFG.
+The fixture now decodes actual submitted registers and rejects incomplete
+fresh input; the old source fails. Resubmission write failures are covered.
+374 cases, 1095 checks, 28 causal mutants and ASan/UBSan pass. The next
+hardware run must establish whether this fixes the remaining good-job fault.
 
 ## Repeat the checks
 

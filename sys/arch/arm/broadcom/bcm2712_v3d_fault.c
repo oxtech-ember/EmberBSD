@@ -727,6 +727,33 @@ fv3d_diagnostics(void)
 	    (unsigned int)fv3d.before_good_valid);
 }
 
+/* Reissue every field for every job, as in pinned v3d_tfu_job_run().
+ * A new ICFG alone does not establish a new complete TFU input payload. */
+static int
+fv3d_setup_tfu(uint32_t lsrc, uint32_t ldst)
+{
+	const struct { bus_size_t reg; uint32_t value; } setup[] = {
+		{ FV3D_TFU_IIA, lsrc }, { FV3D_TFU_IIS, FV3D_DIM },
+		{ FV3D_TFU_ICA, 0 }, { FV3D_TFU_IUA, 0 },
+		{ FV3D_TFU_IOA, ldst },
+		{ FV3D_TFU_IOC, FV3D_TFU_IOC_VALUE },
+		{ FV3D_TFU_IOS, FV3D_TFU_IOS_VALUE },
+		{ FV3D_TFU_COEF(0), 0 }, { FV3D_TFU_COEF(1), 0 },
+		{ FV3D_TFU_COEF(2), 0 }, { FV3D_TFU_COEF(3), 0 }
+	};
+	size_t i;
+	int error;
+
+	for (i = 0; i < __arraycount(setup); i++) {
+		error = bcmv3d_takeover_hub_poke(setup[i].reg, setup[i].value);
+		if (error != 0)
+			return error;
+	}
+	aprint_normal_dev(fv3d.dev, "TFU payload prepared: source=%#x "
+	    "destination=%#x\n", lsrc, ldst);
+	return 0;
+}
+
 int
 bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 {
@@ -841,24 +868,9 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		goto out;
 	}
 	fv3d.tfu_cvt_before = (ctl >> FV3D_TFU_CVTCT_SHIFT) & 0xff;
-	{
-		const struct { bus_size_t reg; uint32_t value; } setup[] = {
-			{ FV3D_TFU_IIA, lsrc }, { FV3D_TFU_IIS, FV3D_DIM },
-			{ FV3D_TFU_ICA, 0 }, { FV3D_TFU_IUA, 0 },
-			{ FV3D_TFU_IOA, ldst },
-			{ FV3D_TFU_IOC, FV3D_TFU_IOC_VALUE },
-			{ FV3D_TFU_IOS, FV3D_TFU_IOS_VALUE },
-			{ FV3D_TFU_COEF(0), 0 }, { FV3D_TFU_COEF(1), 0 },
-			{ FV3D_TFU_COEF(2), 0 }, { FV3D_TFU_COEF(3), 0 }
-		};
-
-		for (i = 0; i < __arraycount(setup); i++) {
-			error = bcmv3d_takeover_hub_poke(setup[i].reg,
-			    setup[i].value);
-			if (error != 0)
-				goto out;
-		}
-	}
+	error = fv3d_setup_tfu(lsrc, ldst);
+	if (error != 0)
+		goto out;
 	fv3d.stage = "fault interrupt wait";
 	error = bcmv3d_takeover_hub_poke(FV3D_MSK_CLR,
 	    FV3D_HUB_TFUC | FV3D_HUB_MMU_FAULTS);
@@ -950,6 +962,9 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	/* Revalidate immediately before resubmission, including CVTCT. */
 	error = fv3d_check_event(FV3D_RECOVERED, &fv3d.tfu_cs_before_good,
 	    &fv3d.before_good_valid);
+	if (error != 0)
+		goto out;
+	error = fv3d_setup_tfu(lsrc, ldst);
 	if (error != 0)
 		goto out;
 	acpi_intr_unmask(fv3d.hub_ih);

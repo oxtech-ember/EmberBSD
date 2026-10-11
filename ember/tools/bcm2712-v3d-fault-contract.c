@@ -289,6 +289,7 @@ static struct fixture {
 	bool baseline_late_irq, changed_vio_id, changed_vio_addr;
 	bool first_ownership_returned;
 	bool sink_write, late_sink_write;
+	bool incomplete_payload;
 	int sink_corrupt_byte, sink_zero_guard;
 	unsigned int sink_source_offset, sink_dest_offset, sink_bytes;
 	unsigned int barriers, controller_masks;
@@ -311,6 +312,8 @@ static struct {
 static unsigned int hub_pokes;
 static unsigned int hub_entries; /* handler invocations */
 static unsigned int hub_latches; /* bits latched by jobs */
+static uint32_t tfu_input[12];
+static unsigned int tfu_written;
 static bus_addr_t default_bases[FV3D_OBJ_COUNT] = {
 	0x10000000, 0x10400000, 0x10403000, 0x10408000, 0x1040d000,
 	0x10412000
@@ -466,9 +469,19 @@ fake_hub_poke(bus_size_t offset, uint32_t value)
 		 * The engine latches its own outcome (fault bit or TFUC);
 		 * a stall latches nothing.
 		 */
-		(void)fake_run_tfu();
+		if (tfu_written != 0xffe)
+			fx.incomplete_payload = true;
+		else
+			(void)fake_run_tfu();
+		tfu_written = 0;
 		break;
 	default:
+		if (offset >= 0x70c && offset <= 0x734 && (offset & 3) == 0) {
+			unsigned int index = (offset - 0x708) / 4;
+
+			tfu_input[index] = value;
+			tfu_written |= 1u << index;
+		}
 		break;
 	}
 	return 0;
@@ -758,12 +771,22 @@ fake_run_tfu(void)
 	 * invalid destination PTE must fault instead of writing. */
 	struct fake_allocation *src, *dst;
 	bus_addr_t src_pa, dst_pa;
+	bus_addr_t src_va = tfu_input[1], dst_va = tfu_input[6];
 	uint32_t *pt = (uint32_t *)(void *)allocation_containing(
 	    (bus_addr_t)hub_pt_base << FV3D_PAGE_SHIFT)->dev;
 	uint32_t pte;
 	unsigned int id;
 
 	fx.jobs++;
+	/* Decode the submitted payload, not an implicit fixture default. */
+	if (tfu_input[2] != 0 || tfu_input[3] != 64 || tfu_input[4] != 0 ||
+	    tfu_input[5] != 0x00400000 || tfu_input[7] != 0x00400040 ||
+	    tfu_input[8] != 0 || tfu_input[9] != 0 || tfu_input[10] != 0 ||
+	    tfu_input[11] != 0)
+		return false;
+	if (dst_va != default_bases[FV3D_OBJ_TFU_LDST] ||
+	    src_va != default_bases[FV3D_OBJ_TFU_LSRC])
+		return false;
 	if (fx.enforce_sync) {
 		for (id = 0; id < FV3D_OBJ_COUNT; id++)
 			if (!allocations[id].device_owned)
@@ -783,7 +806,7 @@ fake_run_tfu(void)
 		fake_latch_hub(FV3D_HUB_TFUC);
 		return true;
 	}
-	memcpy(&pte, pt + (default_bases[FV3D_OBJ_TFU_LDST] >>
+	memcpy(&pte, pt + (dst_va >>
 	    FV3D_PAGE_SHIFT), sizeof(pte));
 	if ((pte & FV3D_PTE_VALID) == 0) {
 		if (fx.fault_never)
@@ -839,8 +862,8 @@ fake_run_tfu(void)
 		return true;	/* good engine stalls after recovery */
 	if (mmuc_flush_writes < 2)
 		return false;	/* unflushed MMU: the good job cannot run */
-	if (!fake_translate(default_bases[FV3D_OBJ_TFU_LSRC], &src_pa) ||
-	    !fake_translate(default_bases[FV3D_OBJ_TFU_LDST], &dst_pa))
+	if (!fake_translate(src_va, &src_pa) ||
+	    !fake_translate(dst_va, &dst_pa))
 		return false;
 	src = allocation_containing(src_pa);
 	dst = allocation_containing(dst_pa);
@@ -954,6 +977,8 @@ reset_fixture(void)
 	memset(&hub_bank, 0, sizeof(hub_bank));
 	memset(&fake_handlers, 0, sizeof(fake_handlers));
 	memset(&fx, 0, sizeof(fx));
+	memset(tfu_input, 0, sizeof(tfu_input));
+	tfu_written = 0;
 	for (i = 0; i < FV3D_OBJ_COUNT; i++)
 		fx.fail_alloc[i] = false;
 	hz = 100;
@@ -1002,6 +1027,7 @@ run_case(const char *name, int expected)
 	error = bcmv3d_fault_probe(&dev, &tag, (ACPI_HANDLE)1);
 	inside_driver = false;
 	CHECK(error == expected);
+	CHECK(!fx.incomplete_payload);
 	return error;
 }
 
@@ -1335,6 +1361,12 @@ main(void)
 			reset_fixture();
 			fx.fail_poke_offset = writes[i];
 			run_case("register write failure", EIO);
+
+			reset_fixture();
+			fx.fail_poke_offset = writes[i];
+			fx.fail_io_job = 1;
+			run_case("fault handling or resubmission write failure", EIO);
+			CHECK(fx.jobs == 1);
 		}
 	}
 
