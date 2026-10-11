@@ -785,6 +785,7 @@ struct bwfm_ethhdr {
 struct bwfm_event_msg {
 	uint16_t version;
 	uint16_t flags;
+#define BWFM_EVENT_MSG_LINK		0x0001
 	uint32_t event_type;
 	uint32_t status;
 	uint32_t reason;

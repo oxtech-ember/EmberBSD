@@ -19,6 +19,7 @@ sh "$src/ember/tools/bcm2712-v3d-dma-contract.sh" "$src"
 sh "$src/ember/tools/bcm2712-v3d-queue-contract.sh" "$src"
 sh "$src/ember/tools/bcm2712-v3d-irq-contract.sh" "$src"
 sh "$src/ember/tools/bcm2712-v3d-fault-contract.sh" "$src"
+sh "$src/ember/tests/bwfm-link-events.sh" "$src"
 if [ "$mode" = all ]; then
     "$python" "$src/ember/tools/btuart-contract.py" "$src/sys/dev/bluetooth/btuart.c"
     "$python" "$src/ember/tools/bluetooth-control-contract.py" "$src/ember/tools/bluetooth-control.c"

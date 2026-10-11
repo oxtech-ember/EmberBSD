@@ -643,7 +643,9 @@ bwfm_init(struct ifnet *ifp)
 		ENABLE_EVENT(BWFM_E_AUTH);
 		ENABLE_EVENT(BWFM_E_ASSOC);
 		ENABLE_EVENT(BWFM_E_DEAUTH);
+		ENABLE_EVENT(BWFM_E_DEAUTH_IND);
 		ENABLE_EVENT(BWFM_E_DISASSOC);
+		ENABLE_EVENT(BWFM_E_DISASSOC_IND);
 		ENABLE_EVENT(BWFM_E_SET_SSID);
 		ENABLE_EVENT(BWFM_E_ESCAN_RESULT);
 		break;
@@ -1152,6 +1154,9 @@ bwfm_report_cb(struct bwfm_softc *sc)
 	    DEVNAME(sc), sc->sc_sae_enabled, sc->sc_sae_generation,
 	    sc->sc_sae_requests, sc->sc_sae_received, sc->sc_sae_sent,
 	    sc->sc_sae_dropped, sc->sc_sae_last_flags);
+	printf("%s: disconnect events %u last %u reason %u flags 0x%x\n",
+	    DEVNAME(sc), sc->sc_link_events, sc->sc_link_event,
+	    sc->sc_link_reason, sc->sc_link_flags);
 	if ((sc->sc_if.if_flags & IFF_RUNNING) == 0 || ic->ic_bss == NULL)
 		return;
 	error = bwfm_fwvar_cmd_get_data(sc, BWFM_C_GET_BSSID,
@@ -2736,16 +2741,26 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m)
 		break;
 
 	case BWFM_E_LINK:
-		if (ntohl(e->msg.status) == BWFM_E_STATUS_SUCCESS &&
-		    ntohl(e->msg.reason) == 0)
+		/* The flags, not the reason code, describe link direction. */
+		if (ntohs(e->msg.flags) & BWFM_EVENT_MSG_LINK)
 			break;
-		/* A previous BSSID may report link-down after a new join starts. */
-		if ((ic->ic_state == IEEE80211_S_AUTH ||
-		    ic->ic_state == IEEE80211_S_ASSOC) &&
-		    !IEEE80211_ADDR_EQ(&e->msg.addr, ic->ic_bss->ni_bssid))
+		/* FALLTHROUGH */
+	case BWFM_E_DEAUTH:
+	case BWFM_E_DEAUTH_IND:
+	case BWFM_E_DISASSOC:
+	case BWFM_E_DISASSOC_IND:
+		sc->sc_link_events++;
+		sc->sc_link_event = ntohl(e->msg.event_type);
+		sc->sc_link_reason = ntohl(e->msg.reason);
+		sc->sc_link_flags = ntohs(e->msg.flags);
+		if (ic->ic_opmode != IEEE80211_M_STA ||
+		    ic->ic_state <= IEEE80211_S_SCAN || ic->ic_bss == NULL)
+			break;
+		/* Ignore a previous peer even after the new join reaches RUN. */
+		if (!IEEE80211_ADDR_EQ(&e->msg.addr, ic->ic_bss->ni_bssid))
 			break;
 
-		/* Link status has changed */
+		/* Firmware already disconnected; let the host scan and rejoin. */
 		ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
 		break;
 

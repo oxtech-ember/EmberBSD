@@ -234,6 +234,11 @@ struct bwfm_softc {
 	uint32_t		 sc_sae_sent;
 	uint32_t		 sc_sae_dropped;
 	uint32_t		 sc_sae_last_flags;
+	/* Connection-event metadata only; no addresses or key material. */
+	uint32_t		 sc_link_events;
+	uint32_t		 sc_link_event;
+	uint32_t		 sc_link_reason;
+	uint16_t		 sc_link_flags;
 	bool			 sc_sae_enabled;
 	uint8_t			 sc_sae_bssid[IEEE80211_ADDR_LEN];
 
