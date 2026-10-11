@@ -418,6 +418,11 @@ struct aicwf_softc {
 		uint8_t		r0kh_len;
 		uint8_t		r0kh[45];
 	}			sc_ft_bss[4];
+	/* Host-managed 802.11k/v exchange (IEEE80211_IOC_STA_MGMT). */
+	bool			sc_sta_enabled;
+	bool			sc_sta_tx_pending;
+	uint32_t		sc_sta_generation;
+	uint32_t		sc_sta_cookie;
 	volatile u_int		sc_alive_rx;	/* ticks of last RX frame */
 	u_int			sc_alive_misses;
 	bool			sc_alive_queued;
@@ -1751,6 +1756,7 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 		sc->sc_ap = ind[10];
 		sc->sc_qos = ind[12] != 0;
 		sc->sc_connected = true;
+		sc->sc_sta_generation++;
 		sc->sc_alive_rx = ticks;
 		sc->sc_alive_misses = 0;
 		for (u_int k = 0; k < __arraycount(sc->sc_ft_bss); k++) {
@@ -1784,6 +1790,111 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 }
 
 /* The firmware lost the network or was told to leave it. */
+/* Which action bodies the host-managed exchange accepts. */
+static bool
+aicwf_sta_action_valid(const uint8_t *body, size_t len, bool to_ap)
+{
+
+	if (len < 2)
+		return false;
+	if (body[0] == 0x0a) {		/* WNM */
+		if (to_ap)
+			return len >= 4 && (body[1] == 6 /* BTM query */ ||
+			    body[1] == 7 /* BTM response */);
+		return len >= 7 && body[1] == 5; /* BTM request */
+	}
+	if (body[0] == 0x05)		/* RRM */
+		return to_ap ? body[1] == 5 /* neighbor report request */ :
+		    body[1] == 6;	/* neighbor report response */
+	return false;
+}
+
+static int
+aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
+{
+	struct aicwf_softc * const sc = ic->ic_ifp->if_softc;
+	struct ieee80211_node *ni;
+	int error = 0;
+
+	if (req->version != IEEE80211_STA_VERSION)
+		return EINVAL;
+	switch (req->op) {
+	case IEEE80211_STA_GET:
+		req->flags = 0;
+		req->generation = sc->sc_sta_generation;
+		IEEE80211_ADDR_COPY(req->bssid, ic->ic_myaddr);
+		req->len = 0;
+		req->freq = 0;
+		if (sc->sc_sta_enabled)
+			req->flags |= IEEE80211_STA_CAP_BTM |
+			    IEEE80211_STA_CAP_RRM;
+		if (sc->sc_connected && ic->ic_state == IEEE80211_S_RUN) {
+			req->flags |= IEEE80211_STA_ASSOCIATED;
+			ni = ic->ic_bss;
+			req->freq = ni->ni_chan->ic_freq;
+			IEEE80211_ADDR_COPY(req->bssid, ni->ni_bssid);
+		}
+		if (sc->sc_sta_tx_pending)
+			req->flags |= IEEE80211_STA_TX_ACK;
+		return 0;
+	case IEEE80211_STA_ENABLE:
+		sc->sc_sta_enabled = true;
+		return 0;
+	case IEEE80211_STA_DISABLE:
+		sc->sc_sta_enabled = false;
+		sc->sc_sta_tx_pending = false;
+		return 0;
+	case IEEE80211_STA_TX:
+		break;
+	default:
+		return EINVAL;
+	}
+
+	/* TX: an action body to the current peer on the current channel. */
+	if (!sc->sc_sta_enabled || !sc->sc_connected ||
+	    ic->ic_state != IEEE80211_S_RUN ||
+	    req->len < 2 || req->len > IEEE80211_STA_MAX_BODY ||
+	    !aicwf_sta_action_valid(req->data, req->len, true) ||
+	    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid))
+		return EINVAL;
+
+	uint8_t frame[IEEE80211_STA_MAX_BODY + 24];
+
+	memset(frame, 0, sizeof(frame));
+	frame[0] = 0xd0;		/* Action */
+	IEEE80211_ADDR_COPY(frame + 4, ic->ic_bss->ni_bssid);
+	IEEE80211_ADDR_COPY(frame + 10, ic->ic_myaddr);
+	IEEE80211_ADDR_COPY(frame + 16, ic->ic_bss->ni_bssid);
+	memcpy(frame + 24, req->data, req->len);
+	error = aicwf_sae_tx(sc, frame, 24 + req->len, sc->sc_sae_epoch, true);
+	/* The firmware accepts the frame into its queue; no over-the-air
+	 * acknowledgement reaches this driver, so completion is the write. */
+	if (error == 0) {
+		sc->sc_sta_tx_pending = true;
+		sc->sc_sta_cookie = req->cookie;
+	}
+	return error;
+}
+
+static void
+aicwf_sta_rx_event(struct aicwf_softc *sc, const uint8_t *body, size_t len)
+{
+	struct ieee80211com * const ic = &sc->sc_ic;
+	struct ieee80211req_sta_mgmt *ev;
+
+	ev = kmem_zalloc(sizeof(*ev), KM_SLEEP);
+	ev->version = IEEE80211_STA_VERSION;
+	ev->op = IEEE80211_STA_GET;
+	ev->generation = sc->sc_sta_generation;
+	ev->freq = ic->ic_bss->ni_chan->ic_freq;
+	ev->len = len;
+	IEEE80211_ADDR_COPY(ev->bssid, ic->ic_bss->ni_bssid);
+	memcpy(ev->data, body, len);
+	rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_RX, ev,
+	    offsetof(struct ieee80211req_sta_mgmt, data) + len);
+	kmem_free(ev, sizeof(*ev));
+}
+
 /* Pure liveness decision: the link counts as dead only while the driver
  * believes it is associated and no frame (beacons included) arrived for
  * AICWF_ALIVE_SILENT_MS. */
@@ -1868,6 +1979,7 @@ aicwf_disconnect_ind(struct aicwf_softc *sc)
 		return;
 	aicwf_sae_advance(sc);
 	sc->sc_connected = false;
+	sc->sc_sta_generation++;
 	sc->sc_sae_pending = false;
 	sc->sc_sae_authenticated = false;
 	memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
@@ -2573,6 +2685,13 @@ struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 		const bool pmf = sc->sc_sae_enabled;
 		const bool authentic =
 		    !pmf || __SHIFTOUT(status, AICWF_RX_DECR) != 0;
+		if (wh[0] == 0xd0 && sc->sc_sta_enabled &&
+		    sc->sc_connected && sc->sc_ic.ic_state == IEEE80211_S_RUN &&
+		    mpdu_len >= 26 + 2 &&
+		    aicwf_sta_action_valid(wh + 24, mpdu_len - 24, false)) {
+			aicwf_sta_rx_event(sc, wh + 24, mpdu_len - 24);
+			return;
+		}
 		if (wh[0] == 0xd0 && mpdu_len >= 26 &&
 		    wh[24] == 0x0a && wh[25] == 7 && authentic) {
 			device_printf(sc->sc_dev,
@@ -2830,6 +2949,7 @@ aicwf_ifattach(struct aicwf_softc *sc)
 	ieee80211_ifattach(ic);
 	sc->sc_newstate = ic->ic_newstate;
 	ic->ic_newstate = aicwf_newstate;
+	ic->ic_sta_mgmt = aicwf_sta_mgmt;
 	ic->ic_newassoc = aicwf_newassoc;
 	ic->ic_send_mgmt = aicwf_send_mgmt;
 	ic->ic_recv_mgmt = aicwf_recv_mgmt;

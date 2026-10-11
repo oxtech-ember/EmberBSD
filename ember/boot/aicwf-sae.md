@@ -169,6 +169,20 @@ The vendor firmware advertises SM_FT_AUTH_IND/RSP in its message enum but
 this vendor drop carries no handler or struct for them, so host-side
 control of the exchange is the planned route.
 
+## Host-managed 802.11k/v exchange
+
+The driver implements the shared `IEEE80211_IOC_STA_MGMT` station ABI that
+wpa_supplicant's BSD backend drives for bwfm: ENABLE/DISABLE/GET/TX with a
+per-association generation. When enabled, received WNM BSS Transition
+requests and RRM Neighbor Report bodies are delivered to the supplicant as
+RTM_IEEE80211_STA_RX route messages carrying the generation, peer BSSID and
+channel; the in-driver BTM roam keeps handling them when the exchange is
+disabled. TX builds the action frame on the firmware management descriptor
+with PMF protection when required - the same transport SA Query uses - and
+completion is the firmware accepting the frame; over-the-air
+acknowledgement is not visible to the driver. ASSOC_IES and firmware
+acknowledged TX remain open. Run `sh ember/tests/aicwf-sta.sh`.
+
 ## Protocol provenance
 
 The wire layout was inspected in Radxa's AIC8800 SDIO driver at revision
