@@ -2,22 +2,40 @@
 # Origin: EmberBSD (AI-assisted), kernel build orchestration regression.
 # Exercise build orchestration without substituting these fixtures for a build.
 set -eu
+# Fixtures select their own build mode and toolchain, independent of the shell.
+unset EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/ember-build-kernel.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 export TEST_ROOT="$work" TEST_LOG="$work/commands"
 mkdir -p "$work/src/ember/tools" "$work/bin" "$work/src/tools" \
+    "$work/src/ember/tests" \
     "$work/src/share/mk" "$work/src/sys/arch/evbarm/conf" \
     "$work/src/sys/external/gpl2/dts/dist"
 cp "$repo/ember/build-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
-for contract in bcm2712-v3d-contract bcm2712-v3d-takeover-contract \
-    bcm2712-v3d-dma-contract bcm2712-v3d-queue-contract \
-    bcm2712-v3d-irq-contract bcm2712-v3d-fault-contract; do
-    cat > "$work/src/ember/tools/$contract.sh" <<'SH'
+# GPU contracts are separate executables in the dispatcher. Model their
+# status here; their actual-source hardware fixtures run in their own suites.
+for contract in bcm2712-v3d bcm2712-v3d-takeover bcm2712-v3d-dma \
+    bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault; do
+    cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
 #!/bin/sh
-echo "contract $0 $*" >> "$TEST_LOG"
-[ "${FAIL_AT:-}" != contract ]
+set -eu
+echo "gpu-contract ${0##*/} $*" >> "$TEST_LOG"
+test "$#" -eq 1
+test "$1" = "$TEST_ROOT/src"
+test "${FAIL_AT:-}" != gpu-contract
+SH
+done
+for contract in bwfm-link-events bwfm-link-check; do
+cat > "$work/src/ember/tests/$contract.sh" <<'SH'
+#!/bin/sh
+set -eu
+echo "wifi-contract $*" >> "$TEST_LOG"
+test "$#" -eq 1
+test "$1" = "$TEST_ROOT/src"
+test "${FAIL_AT:-}" != wifi-contract
+test "${FAIL_AT:-}" != "${0##*/}"
 SH
 done
 : > "$work/src/tools/Makefile"
@@ -132,8 +150,10 @@ grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-test "$(grep -c '^contract ' "$TEST_LOG")" -eq 8
-for failure in tools module cpp dtb contract publish; do
+test "$(grep -c '^contract ' "$TEST_LOG")" -eq 2
+test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 6
+test "$(grep -c '^wifi-contract ' "$TEST_LOG")" -eq 2
+for failure in tools module cpp dtb contract gpu-contract wifi-contract bwfm-link-check.sh publish; do
     printf stale > "$TEST_OUT/netbsd-EMBER64"
     if FAIL_AT=$failure sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
         echo "accepted failure: $failure" >&2; exit 1
@@ -152,7 +172,9 @@ TEST_HOST=NetBSD EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$
 grep -q native-make "$TEST_LOG"
 ! grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
-test "$(grep -c '^contract ' "$TEST_LOG")" -eq 12
+test "$(grep -c '^contract ' "$TEST_LOG")" -eq 6
+test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 6
+test "$(grep -c '^wifi-contract ' "$TEST_LOG")" -eq 2
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi
@@ -167,4 +189,4 @@ fi
 grep -q 'full source' "$work/run.log"
 test ! -e "$TEST_OUT/netbsd-EMBER64"
 test ! -e "$TEST_OUT/bcm2712btcom.kmod"
-echo 'PASS: cross/native routing, matched module headers, external tools, eight portable/twelve native contracts, failed-build outputs'
+echo 'PASS: cross/native routing, matched module headers, external tools, base/GPU/Wi-Fi contract dispatch, failed-build outputs'

@@ -49,6 +49,36 @@
 typedef void *ACPI_HANDLE;
 #define PWAIT 0
 #define IPL_VM 0
+#define MUTEX_DEFAULT 0
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+static unsigned int fake_hz = 100;
+#define mstohz(ms) ((ms) * fake_hz / 1000)
+typedef struct { bool initialized, held; } kmutex_t;
+static void
+mutex_init(kmutex_t *m, int type, int ipl)
+{
+	(void)type; (void)ipl;
+	assert(!m->initialized);
+	m->initialized = true;
+}
+static void
+mutex_enter(kmutex_t *m)
+{
+	assert(m->initialized && !m->held);
+	m->held = true;
+}
+static void
+mutex_exit(kmutex_t *m)
+{
+	assert(m->initialized && m->held);
+	m->held = false;
+}
+static void
+mutex_destroy(kmutex_t *m)
+{
+	assert(m->initialized && !m->held);
+	m->initialized = false;
+}
 
 struct acpi_irq {
 	int ar_irq;
@@ -100,8 +130,9 @@ static void delay(unsigned int);
 static void _wakeup(void *);
 static unsigned int wake_count;
 #define wakeup(chan) _wakeup((void *)(uintptr_t)(chan))
-static int _tsleep(void *, int, const char *, int);
-#define tsleep(chan, pri, msg, timo) _tsleep((void *)(uintptr_t)(chan), pri, msg, timo)
+static int _mtsleep(void *, int, const char *, int, kmutex_t *);
+#define mtsleep(chan, pri, msg, timo, lock) \
+    _mtsleep((void *)(uintptr_t)(chan), pri, msg, timo, lock)
 static bool fake_takeover_complete;
 static unsigned int allocs, maps, creates, loads;
 static unsigned int frees, unmaps, destroys, unloads;
@@ -139,9 +170,13 @@ static void fake_bus_dmamap_sync(bus_dma_tag_t, bus_dmamap_t, bus_addr_t,
 #define bcmv3d_takeover_core_poke fake_core_poke
 #define acpi_intr_establish_irq fake_acpi_intr_establish_irq
 #define acpi_intr_disestablish fake_acpi_intr_disestablish
+#define acpi_intr_mask fake_acpi_intr_mask
+#define xc_barrier fake_xc_barrier
 static void *fake_acpi_intr_establish_irq(device_t, struct acpi_irq *, int,
     bool, int (*)(void *), void *, const char *);
 static void fake_acpi_intr_disestablish(void *);
+static void fake_acpi_intr_mask(void *);
+static void fake_xc_barrier(unsigned int);
 static ACPI_STATUS fake_acpi_resource_parse(device_t, ACPI_HANDLE,
     const char *, struct acpi_resources *, const void *);
 static struct acpi_irq *fake_acpi_res_irq(struct acpi_resources *, int);
@@ -162,10 +197,11 @@ bool bcmv3d_takeover_complete(void);
 struct fake_irq_handler {
 	int (*fn)(void *);
 	void *arg;
-	bool established;
+	bool established, masked;
 };
 static struct fake_irq_handler fake_handlers[2]; /* 0 = core, 1 = hub */
-static unsigned int disestablish_count;
+static unsigned int disestablish_count, controller_masks, barriers;
+static bool barrier_completed;
 static bool establish_should_fail[2];
 static bool unmasked_without_handler;
 
@@ -234,7 +270,8 @@ static void
 fake_acpi_intr_disestablish(void *ih)
 {
 
-	assert(ih != NULL);
+	assert(ih != NULL && barrier_completed && !iv3d.lock.held);
+	assert(((struct fake_irq_handler *)ih)->masked);
 	((struct fake_irq_handler *)ih)->established = false;
 	((struct fake_irq_handler *)ih)->fn = NULL;
 	disestablish_count++;
@@ -242,9 +279,20 @@ fake_acpi_intr_disestablish(void *ih)
 
 static struct fixture {
 	bool fail_alloc[IV3D_OBJ_COUNT];
-	int fail_create;
+	int fail_create, fail_hub_write, fail_core_write;
+	int delayed_irq;
+	bool fail_restore_mask;
 	bool tfu_partial, clear_bad, stall_tfu;
-	unsigned int delays, sleeps;
+	bool tfu_busy_after, duplicate_tfu, duplicate_fl, duplicate_fr;
+	bool late_tfu, late_fr;
+	bool foreign_core, extra_final_conversion, final_tfu_busy;
+	uint32_t late_hub_status, late_core_status;
+	bool binner_storm, early_frdone, tfu_initial_busy;
+	unsigned int tfu_count_step, tfu_submissions, render_submissions;
+	int corrupt_object;
+	size_t corrupt_offset;
+	unsigned int delays, sleeps, slept_ticks;
+	bool complete_tfu_on_sleep;
 	char last_message[512];
 	const char *case_name;
 } fx;
@@ -266,6 +314,37 @@ static unsigned int hub_latches, core_latches; /* bits latched by jobs */
 static bool fake_run_tfu(void);
 static bool fake_run_bcl(void);
 static bool fake_run_rcl(void);
+static void fake_corrupt_buffer(void);
+
+static void
+fake_acpi_intr_mask(void *ih)
+{
+	struct fake_irq_handler *h = ih;
+
+	assert(h != NULL && h->established && !iv3d.lock.held);
+	h->masked = true;
+	controller_masks++;
+	barrier_completed = false;
+}
+
+static void
+fake_xc_barrier(unsigned int flags)
+{
+
+	assert(flags == 0 && !iv3d.lock.held);
+	for (unsigned int i = 0; i < __arraycount(fake_handlers); i++)
+		assert(!fake_handlers[i].established || fake_handlers[i].masked);
+	/* An ISR already dispatched before the controller mask still runs. */
+	if (fx.delayed_irq == 1 && fake_handlers[1].established) {
+		hub_bank.int_sts |= IV3D_HUB_TFUC;
+		fake_handlers[1].fn(fake_handlers[1].arg);
+	} else if (fx.delayed_irq == 2 && fake_handlers[0].established) {
+		for (unsigned int i = 0; i < 5; i++)
+			fake_handlers[0].fn(fake_handlers[0].arg);
+	}
+	barriers++;
+	barrier_completed = true;
+}
 
 /* Level model: re-enter only while the bit stays unmasked, latched
  * and unacknowledged; the guard bounds a storm for diagnostics. */
@@ -276,7 +355,7 @@ fake_fire(struct fake_irq_handler *h, uint32_t *sts, uint32_t *mask,
 	int guard = 8;
 
 	while (guard-- > 0 && (*sts & bit) != 0 && (*mask & bit) == 0 &&
-	    h->established && h->fn != NULL) {
+	    h->established && !h->masked && h->fn != NULL) {
 		(*entries)++;
 		if (h->fn(h->arg) != 1)
 			break;
@@ -361,6 +440,9 @@ fake_hub_peek(bus_size_t offset, uint32_t *value)
 	case 0x1230: *value = hub_illegal; break;
 	case IV3D_TFU_CS:
 		*value = 0x100 | (fake_tfu_count << IV3D_TFU_CVTCT_SHIFT);
+		if (fx.tfu_initial_busy ||
+		    (fx.tfu_submissions != 0 && fx.tfu_busy_after))
+			*value |= IV3D_TFU_BUSY;
 		break;
 	default: *value = 0; break;
 	}
@@ -372,9 +454,23 @@ fake_hub_poke(bus_size_t offset, uint32_t value)
 {
 
 	hub_pokes++;
+	if ((int)offset == fx.fail_hub_write ||
+	    (fx.fail_restore_mask && offset == R_MSK_SET &&
+	    value == IV3D_HUB_IRQS_ALL))
+		return EIO;
 	switch (offset) {
 	case R_MSK_SET:
 		hub_bank.mask |= value;
+		if (value == IV3D_HUB_IRQS_ALL && fx.render_submissions != 0) {
+			hub_bank.int_sts |= fx.late_hub_status;
+			if (fx.extra_final_conversion)
+				fake_tfu_count = (fake_tfu_count + 1) & 0xff;
+			if (fx.final_tfu_busy)
+				fx.tfu_busy_after = true;
+		}
+
+		if (fx.late_tfu && fx.tfu_submissions != 0)
+			hub_bank.int_sts |= IV3D_HUB_TFUC;
 		break;
 	case R_MSK_CLR:
 		hub_bank.mask &= ~value;
@@ -397,6 +493,7 @@ fake_hub_poke(bus_size_t offset, uint32_t value)
 		hub_illegal = value;
 		break;
 	case IV3D_TFU_ICFG:
+		fx.tfu_submissions++;
 		/* A stalled engine never latches anything. */
 		if (fx.stall_tfu)
 			break;
@@ -404,6 +501,8 @@ fake_hub_poke(bus_size_t offset, uint32_t value)
 		if (!fake_run_tfu())
 			return 0;	/* engine stalls, no interrupt */
 		fake_latch_hub(IV3D_HUB_TFUC);
+		if (fx.duplicate_tfu)
+			fake_latch_hub(IV3D_HUB_TFUC);
 		break;
 	default:
 		break;
@@ -431,15 +530,28 @@ fake_core_poke(bus_size_t offset, uint32_t value)
 {
 
 	core_pokes++;
+	if ((int)offset == fx.fail_core_write)
+		return EIO;
 	switch (offset) {
 	case R_MSK_SET:
 		core_bank.mask |= value;
+		if (iv3d.stage != NULL &&
+		    strcmp(iv3d.stage, "verification") == 0)
+			core_bank.int_sts |= fx.late_core_status;
+		if (fx.late_fr && fx.render_submissions != 0)
+			core_bank.int_sts |= IV3D_CORE_FRDONE;
 		break;
 	case R_MSK_CLR:
 		core_bank.mask &= ~value;
 		if (!fake_handlers[0].established)
 			unmasked_without_handler = true;
-		fake_mask_changed_core();
+		if (fx.binner_storm) {
+			for (unsigned int i = 0; i < 5; i++)
+				fake_handlers[0].fn(NULL);
+		} else
+			fake_mask_changed_core();
+		if (fx.duplicate_fl)
+			fake_latch_core(IV3D_CORE_FLDONE);
 		break;
 	case R_INT_CLR:
 		core_bank.int_sts &= ~value;
@@ -448,9 +560,14 @@ fake_core_poke(bus_size_t offset, uint32_t value)
 		/* The accepted BCL: byte-compare against the expectation. */
 		if (!fake_run_bcl())
 			return 0;
+		if (fx.binner_storm)
+			break;
 		fake_latch_core(IV3D_CORE_FLDONE);
+		if (fx.early_frdone)
+			fake_latch_core(IV3D_CORE_FRDONE);
 		break;
 	case IV3D_CLE_CT1QEA:
+		fx.render_submissions++;
 		/* The TFU line must already be remasked before rendering. */
 		assert((hub_bank.mask & IV3D_HUB_TFUC) != 0);
 		/* The accepted RCL: byte-compare, then clear and store. */
@@ -458,8 +575,13 @@ fake_core_poke(bus_size_t offset, uint32_t value)
 			return 0;
 		/* A foreign masked bit latches alongside ours: a handler
 		 * may only acknowledge the bits it handles. */
-		core_bank.int_sts |= __BIT(4);	/* TRFB, stays masked */
+		if (fx.foreign_core)
+			core_bank.int_sts |= __BIT(4);	/* TRFB, stays masked */
+		if (fx.corrupt_object >= 0)
+			fake_corrupt_buffer();
 		fake_latch_core(IV3D_CORE_FRDONE);
+		if (fx.duplicate_fr)
+			fake_latch_core(IV3D_CORE_FRDONE);
 		break;
 	default:
 		break;
@@ -679,7 +801,7 @@ fake_run_tfu(void)
 	    dst->base != default_bases[IV3D_OBJ_TFU_ADST])
 		return false;
 	memcpy(dst->dev, src->dev, limit);
-	fake_tfu_count++;
+	fake_tfu_count = (fake_tfu_count + fx.tfu_count_step) & 0xff;
 	return true;
 }
 
@@ -827,6 +949,16 @@ fixture_expected_rcl(uint8_t *out, uint32_t rcl_va)
 	return at;
 }
 
+/* GPU-side corruption must be visible only through POSTREAD sync. */
+static void
+fake_corrupt_buffer(void)
+{
+	struct fake_allocation *a = &allocations[fx.corrupt_object];
+
+	assert(fx.corrupt_offset < a->size);
+	a->dev[fx.corrupt_offset] ^= 1;
+}
+
 /* --- fixture state and cases --------------------------------------- */
 
 
@@ -855,15 +987,25 @@ static void
 _wakeup(void *chan)
 {
 	(void)chan;
+	assert(iv3d.lock.held);
 	wake_count++;
 }
 
 static int
-_tsleep(void *chan, int pri, const char *wmesg, int timo)
+_mtsleep(void *chan, int pri, const char *wmesg, int timo, kmutex_t *lock)
 {
-	(void)chan; (void)pri; (void)wmesg; (void)timo;
+	(void)chan; (void)pri; (void)wmesg;
+	assert(timo > 0 && lock == &iv3d.lock && lock->held);
 	fx.sleeps++;
-	return 0;
+	fx.slept_ticks += timo;
+	mutex_exit(lock);
+	if (fx.complete_tfu_on_sleep) {
+		fx.complete_tfu_on_sleep = false;
+		assert(fake_run_tfu());
+		fake_latch_hub(IV3D_HUB_TFUC);
+	}
+	mutex_enter(lock);
+	return EWOULDBLOCK;
 }
 
 bool
@@ -909,6 +1051,10 @@ reset_fixture(void)
 	for (i = 0; i < IV3D_OBJ_COUNT; i++)
 		fx.fail_alloc[i] = false;
 	fx.fail_create = -1;
+	fx.fail_hub_write = fx.fail_core_write = -1;
+	fx.corrupt_object = -1;
+	fx.tfu_count_step = 1;
+	fake_hz = 100;
 	fx_parse_ok = 1;
 	fx_hub_gsi = 282;	/* _CRS index 0 */
 	fx_core_gsi = 281;	/* _CRS index 1 */
@@ -918,7 +1064,8 @@ reset_fixture(void)
 	hub_pokes = core_pokes = 0;
 	hub_entries = core_entries = 0;
 	hub_latches = core_latches = 0;
-	disestablish_count = 0;
+	disestablish_count = controller_masks = barriers = 0;
+	barrier_completed = false;
 	wake_count = 0;
 	establish_should_fail[0] = establish_should_fail[1] = false;
 	unmasked_without_handler = false;
@@ -972,8 +1119,6 @@ main(void)
 	CHECK(strstr(fx.last_message, "IRQ PASS") != NULL);
 	CHECK(iv3d.hub_delivered == IV3D_HUB_TFUC);
 	CHECK(iv3d.core_delivered == IV3D_CORE_DONE);
-	/* A foreign bit stays latched: the handler never acks it. */
-	CHECK((core_bank.int_sts & __BIT(4)) != 0);
 	/* The handlers must wake their waiters (ack-then-wake). */
 	CHECK(wake_count >= 3);
 	/* Exactly-once delivery per latched bit, ack included. */
@@ -982,6 +1127,7 @@ main(void)
 	/* Masks restored and handlers disestablished on success too. */
 	assert_clean_exit();
 	CHECK(disestablish_count == 2);
+	CHECK(controller_masks == 2 && barriers == 1 && barrier_completed);
 	/* Retention after publication. */
 	CHECK(frees == 0 && unmaps == 0 && destroys == 0 && unloads == 0);
 
@@ -1032,8 +1178,26 @@ main(void)
 	run_case("TFU interrupt timeout", ETIMEDOUT);
 	CHECK(strstr(fx.last_message, "hub TFUC never arrived") != NULL);
 	/* Bounded wait: the fixture's own constant, not the probe's. */
-	CHECK(fx.sleeps >= 1 && fx.sleeps <= 10);
+	CHECK(fx.sleeps == 5 && fx.slept_ticks == 50);
 	assert_clean_exit();
+
+	reset_fixture();
+	fake_hz = 1000;
+	fx.stall_tfu = true;
+	run_case("timeout at 1000 Hz", ETIMEDOUT);
+	CHECK(fx.sleeps == 5 && fx.slept_ticks == 500);
+
+	reset_fixture();
+	fake_hz = 1;
+	fx.stall_tfu = true;
+	run_case("timeout clamps sub-tick duration", ETIMEDOUT);
+	CHECK(fx.sleeps == 5 && fx.slept_ticks == 5);
+
+	reset_fixture();
+	fx.stall_tfu = true;
+	fx.complete_tfu_on_sleep = true;
+	run_case("completion while waiter releases ISR mutex", 0);
+	CHECK(fx.sleeps == 1);
 
 	/* The TFU image verification. */
 	reset_fixture();
@@ -1047,6 +1211,193 @@ main(void)
 	run_case("cleared image mismatch", EIO);
 	CHECK(strstr(fx.last_message, "cleared image mismatch") != NULL);
 
+	/* Teardown must wait for already-dispatched handlers before free. */
+	reset_fixture();
+	fx.delayed_irq = 1;
+	run_case("in-flight extra TFUC drained at teardown", EIO);
+	CHECK(iv3d.tfuc_count == 2);
+	CHECK(controller_masks == 2 && barriers == 1 && barrier_completed);
+	assert_clean_exit();
+
+	reset_fixture();
+	fx.delayed_irq = 2;
+	run_case("in-flight handler error drained at teardown", EIO);
+	CHECK(iv3d.irq_error == EIO);
+	CHECK(controller_masks == 2 && barriers == 1 && barrier_completed);
+	assert_clean_exit();
+
+	/* No failed setup/unmask write may launch the following stage. */
+	{
+		static const int hub_writes[] = {
+			IV3D_TFU_IIA, IV3D_TFU_IIS, IV3D_TFU_ICA, IV3D_TFU_IUA,
+			IV3D_TFU_IOA, IV3D_TFU_IOC, IV3D_TFU_IOS,
+			IV3D_TFU_COEF(0), IV3D_TFU_COEF(1), IV3D_TFU_COEF(2),
+			IV3D_TFU_COEF(3), IV3D_MSK_CLR
+		};
+		static const int core_writes[] = {
+			IV3D_PTB_BPOS, IV3D_CTL_L2TCACTL, IV3D_CTL_SLCACTL,
+			IV3D_CLE_CT0QMA, IV3D_CLE_CT0QMS, IV3D_CLE_CT0QTS,
+			IV3D_CLE_CT0QBA, IV3D_MSK_CLR, IV3D_CLE_CT1QBA
+		};
+
+		for (size_t n = 0; n < __arraycount(hub_writes); n++) {
+			reset_fixture();
+			fx.fail_hub_write = hub_writes[n];
+			run_case("hub setup write failure", EIO);
+			CHECK(fx.tfu_submissions == 0);
+			assert_clean_exit();
+		}
+		for (size_t n = 0; n < __arraycount(core_writes); n++) {
+			reset_fixture();
+			fx.fail_core_write = core_writes[n];
+			run_case("core setup write failure", EIO);
+			CHECK(fx.render_submissions == 0);
+			assert_clean_exit();
+		}
+	}
+	reset_fixture();
+	fx.fail_hub_write = IV3D_MSK_SET;
+	run_case("hub remask write failure", EIO);
+	CHECK(fx.render_submissions == 0);
+	CHECK(!fake_handlers[0].established && !fake_handlers[1].established);
+
+	reset_fixture();
+	fx.fail_core_write = IV3D_MSK_SET;
+	run_case("core remask write failure", EIO);
+	CHECK(!fake_handlers[0].established && !fake_handlers[1].established);
+
+	reset_fixture();
+	fx.fail_restore_mask = true;
+	run_case("final mask restore write failure", EIO);
+	CHECK(strstr(fx.last_message, "restore interrupt masks") != NULL);
+
+	/* Fail closed: no render may follow an unsuccessful binner wait. */
+	reset_fixture();
+	fx.binner_storm = true;
+	run_case("binner handler storm", EIO);
+	CHECK(fx.render_submissions == 0);
+	assert_clean_exit();
+
+	reset_fixture();
+	fx.early_frdone = true;
+	run_case("FRDONE before render submission", EIO);
+	CHECK(fx.render_submissions == 0);
+
+	reset_fixture();
+	fx.duplicate_tfu = true;
+	run_case("duplicate TFUC", EIO);
+	CHECK(fx.render_submissions == 0);
+	assert_clean_exit();
+
+	reset_fixture();
+	fx.duplicate_fl = true;
+	run_case("duplicate FLDONE", EIO);
+	CHECK(fx.render_submissions == 0);
+
+	reset_fixture();
+	fx.duplicate_fr = true;
+	run_case("duplicate FRDONE", EIO);
+	assert_clean_exit();
+
+	reset_fixture();
+	fx.late_tfu = true;
+	run_case("duplicate TFUC latched after masking", EIO);
+	assert_clean_exit();
+
+	reset_fixture();
+	fx.late_fr = true;
+	run_case("duplicate FRDONE latched after masking", EIO);
+	assert_clean_exit();
+
+	/* Masked errors also invalidate the result, without a done duplicate. */
+	reset_fixture();
+	fx.foreign_core = true;
+	run_case("unhandled core bit alongside completion", EIO);
+	CHECK((core_bank.int_sts & __BIT(4)) != 0);
+	assert_clean_exit();
+
+	reset_fixture();
+	fx.late_hub_status = __BIT(5);
+	run_case("masked hub MMU fault after verification", EIO);
+	CHECK((hub_bank.int_sts & __BIT(5)) != 0);
+
+	reset_fixture();
+	fx.late_core_status = __BIT(2);
+	run_case("masked core OUTOMEM after verification", EIO);
+	CHECK((core_bank.int_sts & __BIT(2)) != 0);
+
+	reset_fixture();
+	fx.late_core_status = __BIT(5);
+	run_case("masked core GMP violation after verification", EIO);
+	CHECK((core_bank.int_sts & __BIT(5)) != 0);
+
+	reset_fixture();
+	fx.extra_final_conversion = true;
+	run_case("extra TFU conversion after verification", EIO);
+	CHECK(strstr(fx.last_message, "TFU state changed") != NULL);
+
+	reset_fixture();
+	fx.final_tfu_busy = true;
+	run_case("TFU busy after verification", EIO);
+	CHECK(strstr(fx.last_message, "TFU state changed") != NULL);
+
+	reset_fixture();
+	fx.tfu_initial_busy = true;
+
+
+	run_case("TFU initially busy", EBUSY);
+	CHECK(fx.tfu_submissions == 0);
+
+	reset_fixture();
+	fx.tfu_busy_after = true;
+	run_case("TFUC while TFU remains busy", EIO);
+	CHECK(fx.render_submissions == 0);
+
+	reset_fixture();
+	fx.tfu_count_step = 0;
+	run_case("TFUC without CVTCT increment", EIO);
+	CHECK(fx.render_submissions == 0);
+
+	reset_fixture();
+	fx.tfu_count_step = 2;
+	run_case("TFUC with two CVTCT increments", EIO);
+	CHECK(fx.render_submissions == 0);
+
+	reset_fixture();
+	fake_tfu_count = 255;
+	run_case("CVTCT wraps modulo 256", 0);
+	CHECK(fake_tfu_count == 0);
+
+	/* Every protected object has its own negative case. */
+	{
+		static const struct {
+			int object;
+			size_t offset;
+			const char *name;
+		} corruptions[] = {
+			{ IV3D_OBJ_TFU_ASRC, 0, "actual source modified" },
+			{ IV3D_OBJ_TFU_LSRC, 0, "alias source modified" },
+			{ IV3D_OBJ_TFU_LDST, 0, "alias destination modified" },
+			{ IV3D_OBJ_TFU_ADST, IV3D_OUTPUT_DATA,
+			    "TFU destination padding modified" },
+			{ IV3D_OBJ_SCRATCH, 0, "scratch modified" },
+			{ IV3D_OBJ_BCL, 0, "BCL modified" },
+			{ IV3D_OBJ_RCL, 0, "RCL modified" },
+			{ IV3D_OBJ_BCL, IV3D_BCL_SIZE - 1, "BCL padding modified" },
+			{ IV3D_OBJ_RCL, IV3D_RCL_SIZE - 1, "RCL padding modified" },
+			{ IV3D_OBJ_OUTPUT, IV3D_OUTPUT_DATA,
+			    "render destination padding modified" }
+		};
+
+		for (size_t n = 0; n < __arraycount(corruptions); n++) {
+			reset_fixture();
+			fx.corrupt_object = corruptions[n].object;
+			fx.corrupt_offset = corruptions[n].offset;
+			run_case(corruptions[n].name, EIO);
+			assert_clean_exit();
+		}
+	}
+
 	/* Handler self-protection: a level line asserting without our bit
 	 * must be masked by the handler itself, not by the waiting thread. */
 	{
@@ -1055,6 +1406,7 @@ main(void)
 		reset_fixture();
 		fake_handlers[1].established = true;
 		fake_handlers[1].fn = iv3d_hub_intr;
+		mutex_init(&iv3d.lock, MUTEX_DEFAULT, IPL_VM);
 		hub_bank.mask = 0;	/* line unmasked, nothing latched */
 		for (i = 0; i < IV3D_STORM_LIMIT + 3; i++)
 			rc = fake_handlers[1].fn(NULL);

@@ -17,14 +17,20 @@ IRQ PASS: hub TFUC and core FLDONE+FRDONE delivered as interrupts; both images v
 ```
 
 Both GPU interrupt lines delivered their completions through
-`acpi_intr_establish_irq` handlers with exactly-once ack-then-wake; the
+`acpi_intr_establish_irq` handlers with acknowledgement and wakeup; the
 TFU copy and the clear-and-store job both ran to verified images. Two
 earlier instrumented boots produced the fixes this acceptance depends
 on: handlers self-mask under a level-line storm, and the line identity
-comes from wire evidence (the table above), not from the firmware
+comes from wire evidence (the table below), not from the firmware
 header's swapped names. The board was returned to the ordinary kernel
 and rechecked. The source boot log SHA256 is
 `edc13a1e216585fd17be78f94692241c8e70740ad20453b81547c7e7e738a1e3`.
+
+The later [acceptance-guard review](bcm2712-v3d-validation.md) found missing
+production checks for duplicate events, collateral DMA writes and binning
+wait errors. The historical PASS confirms delivery and the checked images;
+it does not certify the additional guards. Rerun physical acceptance with
+the corrected kernel before extending that claim.
 
 ## Interrupt identity (pinned)
 
@@ -67,7 +73,7 @@ INT_MSK_STS 0x5c / INT_MSK_SET 0x60 / INT_MSK_CLR 0x64`.
 ## Host API (pinned to this fork)
 
 Parse `_CRS` with `acpi_resource_parse` and take `acpi_res_irq(&res, 0)`
-(core) and index 1 (hub); establish each with
+(hub) and index 1 (core); establish each with
 `acpi_intr_establish_irq(dev, irq, IPL_VM, mpsafe=true, handler, arg,
 xname)` from `sys/dev/acpi/acpi_util.c`; disestablish via the returned
 cookie (`acpi_intr_disestablish`). GSI routing is already proven on this

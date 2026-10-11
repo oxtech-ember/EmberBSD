@@ -1,29 +1,39 @@
 # BCM2712 V3D MMU fault recovery experiment: handoff design
 
 Status on 2026-10-11: **implemented and contracted**; the first physical
-boot delivered the fault (PTI and CAP bits as one interrupt) and ran the
+boot delivered the fault (PTI and WRV bits, recorded as `0x30`) and ran the
 pinned recovery, but the following good job faulted again with the same
 bits instead of completing — the experiment honestly reported `good job
 never completed after recovery` and the board was restored. Hardware
-fault-recovery acceptance is **open**: the next iteration needs the
-post-mortem registers (MMU_CTL, TFU_CS, VIO_ID, VIO_ADDR) in the failure
-line and a TFU-busy check before resubmission; a stuck-busy TFU after an
-aborted faulting job or a W1C clear that does not stick on this silicon
-are the two leading hypotheses.
+fault-recovery acceptance is **open**. The failure path now records
+MMU_CTL, TFU_CS, VIO_ID and VIO_ADDR and rejects a busy TFU before
+resubmission. The later failed run recorded TFU_CS `0x12000` before the
+good job: the TFU was idle at that boundary, so a stuck-busy engine is not
+an established explanation. Its VIO_ID `0x7d` identifies TFU on V3D 7.1.
+The guard now uses that generation's client map; the old 4.1 map incorrectly
+rejected this real CM5 ID. The following good-job fault remains unexplained.
+The [acceptance guards](bcm2712-v3d-validation.md) add regressions for
+unexpected completion, fault identity, duplicate events and collateral
+DMA writes. These checks and richer diagnostics do not establish physical
+recovery; the failed hardware result remains open.
 This is stage C after the accepted [translated DMA](bcm2712-v3d-dma.md),
 [bin/render queue](bcm2712-v3d-binrender-plan.md) and
 [interrupt](bcm2712-v3d-irq-plan.md) experiments: a deliberately faulting
 GPU job must fail cleanly and leave the GPU usable for a following good
 job on the same boot.
 
-## Pinned facts (raspberrypi/linux 43c132e, v3d_irq.c/v3d_mmu.c/v3d_regs.h)
+## Pinned facts
+
+Register and MMU sequences use raspberrypi/linux `43c132e8863c3bff3647033b6a7d2bf87b15501c`.
+The generation-specific client map uses
+[torvalds/linux v3d_irq.c at a5ebb762](https://github.com/torvalds/linux/blob/a5ebb76233b79db01e82e061173cb73c6d2b5c6b/drivers/gpu/drm/v3d/v3d_irq.c).
 
 - HUB interrupt bits: TFUC bit1, **MMU_CAP bit3, MMU_PTI bit4, MMU_WRV
   bit5**; handler acks exactly the handled set through HUB `INT_CLR`.
 - On an MMU fault Linux reads `MMU_VIO_ID` (0x122c) and `MMU_VIO_ADDR`
-  (0x1234; address in the high `va_width-32` bits), maps `axi_id >> 5`
-  through the v4.1+ client table (L2T, PTB, PSE, TLB, CLE, **TFU**, MMU,
-  GMP), and clears the latched fault by writing `MMU_CTL` back verbatim
+  (0x1234; address in the high `va_width-32` bits). V3D 7.1 uses the low
+  seven ID bits; TFU is `0x7c` or `0x7d`. The old `axi_id >> 5` map
+  does not apply to CM5. Linux clears the latched fault by writing `MMU_CTL` back verbatim
   (`V3D_WRITE(V3D_MMU_CTL, V3D_READ(V3D_MMU_CTL))` — the fault bits are
   write-1-to-clear through this reflection).
 - Full MMU flush after the fault: `MMUC = ENABLE|FLUSH`, bounded wait for
@@ -36,7 +46,7 @@ job on the same boot.
 
 ## Scope and design
 
-A separate opt-in `BCM2712_V3D_FAULT_PROBE` and proposed `EMBERV3DFAULT`
+A separate opt-in `BCM2712_V3D_FAULT_PROBE` and `EMBERV3DFAULT`
 configuration, after a completed takeover and with no other V3D probe
 enabled. One HUB handler (established first, storm-protected), the proven
 TFU payload, six objects: page table, scratch, actual and alias source

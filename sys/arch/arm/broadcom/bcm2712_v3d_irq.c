@@ -6,7 +6,7 @@
  * Register, packet and interrupt facts: raspberrypi/linux
  * 43c132e8863c3bff3647033b6a7d2bf87b15501c (v3d_{irq,regs,sched,mmu}.c,
  * v3d_gem.c), Mesa 26.2.4 v3d_packet.xml, and the stand firmware's own
- * GPU0 interrupt map (core GSI 282 at _CRS index 0, hub GSI 281 at
+ * GPU0 interrupt map (hub GSI 282 at _CRS index 0, core GSI 281 at
  * index 1). This native implementation does not import that code. Only
  * the explicit BCM2712_V3D_IRQ_PROBE configuration includes this file,
  * after a completed takeover and with no other V3D probe enabled: the
@@ -23,7 +23,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/device.h>
+#include <sys/mutex.h>
 #include <sys/systm.h>
+#include <sys/xcall.h>
 
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/acpi_intr.h>
@@ -159,14 +161,18 @@ static struct {
 	device_t dev;
 	bus_dma_tag_t dmat;
 	struct iv3d_buffer obj[IV3D_OBJ_COUNT];
+	uint8_t bcl_copy[IV3D_BCL_SIZE], rcl_copy[IV3D_RCL_SIZE];
 	bool attempted, published;
 	const char *stage, *verdict;
 	uint8_t tfu_cvt_before;
 	void *hub_ih, *core_ih;
 	bool hub_established, core_established;
-	/* Handler state: volatile, single-word, set at IPL_VM. */
-	volatile uint32_t hub_delivered, core_delivered;
-	volatile uint32_t hub_spurious, core_spurious;
+	/* Shared with MPSAFE interrupt handlers, protected at IPL_VM. */
+	kmutex_t lock;
+	uint32_t hub_delivered, core_delivered;
+	uint32_t hub_spurious, core_spurious;
+	unsigned int tfuc_count, fldone_count, frdone_count;
+	int irq_error;
 } iv3d;
 
 int bcmv3d_irq_probe(device_t, bus_dma_tag_t, ACPI_HANDLE);
@@ -177,71 +183,133 @@ static int
 iv3d_hub_intr(void *arg)
 {
 	uint32_t status;
-	int error;
+	int error, handled = 0;
 
 	(void)arg;
-
+	mutex_enter(&iv3d.lock);
 	error = bcmv3d_takeover_hub_peek(IV3D_INT_STS, &status);
-	if (error != 0)
-		return 0;
-	if ((status & IV3D_HUB_TFUC) == 0) {
-		/* A level line we cannot handle must be masked HERE:
-		 * waiting-thread logic never runs during a livelock. */
-		if (++iv3d.hub_spurious > IV3D_STORM_LIMIT) {
-			bcmv3d_takeover_hub_poke(IV3D_MSK_SET,
-			    IV3D_HUB_TFUC);
-			wakeup(&iv3d.hub_delivered);
-		}
-		return 0;
+	if (error != 0) {
+		iv3d.irq_error = error;
+		goto done;
 	}
-	/* Level-high line: ack exactly the handled bit before waking. */
-	bcmv3d_takeover_hub_poke(IV3D_INT_CLR, IV3D_HUB_TFUC);
+	if ((status & IV3D_HUB_TFUC) == 0) {
+		if (++iv3d.hub_spurious > IV3D_STORM_LIMIT)
+			iv3d.irq_error = EIO;
+		goto done;
+	}
+	/* Ack only the handled bit, then publish the event and wake. */
+	error = bcmv3d_takeover_hub_poke(IV3D_INT_CLR, IV3D_HUB_TFUC);
+	if (error != 0)
+		iv3d.irq_error = error;
+	if (++iv3d.tfuc_count != 1)
+		iv3d.irq_error = EIO;
 	iv3d.hub_delivered |= IV3D_HUB_TFUC;
+	handled = 1;
+done:
+	/* Bound both spurious lines and repeated handled completions. */
+	if (iv3d.irq_error != 0)
+		bcmv3d_takeover_hub_poke(IV3D_MSK_SET, IV3D_HUB_TFUC);
 	wakeup(&iv3d.hub_delivered);
-	return 1;
+	mutex_exit(&iv3d.lock);
+	return handled;
 }
 
 static int
 iv3d_core_intr(void *arg)
 {
 	uint32_t status, ours;
+	int error, handled = 0;
 
 	(void)arg;
-	int error;
-
+	mutex_enter(&iv3d.lock);
 	error = bcmv3d_takeover_core_peek(IV3D_INT_STS, &status);
-	if (error != 0)
-		return 0;
+	if (error != 0) {
+		iv3d.irq_error = error;
+		goto done;
+	}
 	ours = status & IV3D_CORE_DONE;
 	if (ours == 0) {
-		if (++iv3d.core_spurious > IV3D_STORM_LIMIT) {
-			bcmv3d_takeover_core_poke(IV3D_MSK_SET,
-			    IV3D_CORE_DONE);
-			wakeup(&iv3d.core_delivered);
-		}
-		return 0;
+		if (++iv3d.core_spurious > IV3D_STORM_LIMIT)
+			iv3d.irq_error = EIO;
+		goto done;
 	}
-	bcmv3d_takeover_core_poke(IV3D_INT_CLR, ours);
+	error = bcmv3d_takeover_core_poke(IV3D_INT_CLR, ours);
+	if (error != 0)
+		iv3d.irq_error = error;
+	if ((ours & IV3D_CORE_FLDONE) != 0 && ++iv3d.fldone_count != 1)
+		iv3d.irq_error = EIO;
+	if ((ours & IV3D_CORE_FRDONE) != 0 && ++iv3d.frdone_count != 1)
+		iv3d.irq_error = EIO;
 	iv3d.core_delivered |= ours;
+	handled = 1;
+done:
+	if (iv3d.irq_error != 0)
+		bcmv3d_takeover_core_poke(IV3D_MSK_SET, IV3D_CORE_DONE);
 	wakeup(&iv3d.core_delivered);
-	return 1;
+	mutex_exit(&iv3d.lock);
+	return handled;
 }
 
-/* Wait for the handler to record `bit'; bounded, lost-wakeup safe. */
+/* mtsleep registers the waiter before releasing the ISR's spin mutex. */
 static int
-iv3d_wait_delivered(volatile uint32_t *delivered, uint32_t bit,
-    volatile uint32_t *spurious)
+iv3d_wait_delivered(uint32_t *delivered, uint32_t bit)
 {
-	int slice;
+	int slice, error = ETIMEDOUT;
 
-	for (slice = 0; slice < IV3D_WAIT_SLICES; slice++) {
-		if ((*delivered & bit) != 0)
-			return 0;
-		if (*spurious > IV3D_STORM_LIMIT)
-			return EIO;
-		tsleep(delivered, PWAIT, "v3dirq", IV3D_WAIT_SLICE_MS);
+	mutex_enter(&iv3d.lock);
+	for (slice = 0; slice <= IV3D_WAIT_SLICES; slice++) {
+		/* An error wins even if a completion was also delivered. */
+		if (iv3d.irq_error != 0) {
+			error = iv3d.irq_error;
+			break;
+		}
+		if ((*delivered & bit) != 0) {
+			error = 0;
+			break;
+		}
+		if (slice == IV3D_WAIT_SLICES)
+			break;
+		(void)mtsleep(delivered, PWAIT, "v3dirq",
+		    MAX(1, mstohz(IV3D_WAIT_SLICE_MS)), &iv3d.lock);
 	}
-	return (*delivered & bit) != 0 ? 0 : ETIMEDOUT;
+	mutex_exit(&iv3d.lock);
+	return error;
+}
+
+static int
+iv3d_check_events(uint32_t expected_core)
+{
+	int error;
+
+	mutex_enter(&iv3d.lock);
+	error = iv3d.irq_error;
+	if (error == 0 && (iv3d.tfuc_count != 1 ||
+	    iv3d.hub_delivered != IV3D_HUB_TFUC ||
+	    iv3d.core_delivered != expected_core ||
+	    iv3d.fldone_count != ((expected_core & IV3D_CORE_FLDONE) != 0) ||
+	    iv3d.frdone_count != ((expected_core & IV3D_CORE_FRDONE) != 0)))
+		error = EIO;
+	mutex_exit(&iv3d.lock);
+	return error;
+}
+
+static int
+iv3d_check_tfu(void)
+{
+	uint32_t value;
+	uint8_t expected = (iv3d.tfu_cvt_before + 1) & 0xff;
+	int error;
+
+	error = bcmv3d_takeover_hub_peek(IV3D_TFU_CS, &value);
+	if (error != 0)
+		return error;
+	if ((value & IV3D_TFU_BUSY) != 0 ||
+	    ((value >> IV3D_TFU_CVTCT_SHIFT) & 0xff) != expected)
+		return EIO;
+	error = bcmv3d_takeover_hub_peek(IV3D_MMU_CTL, &value);
+	if (error == 0 && (value & IV3D_MMU_CTL_FAULTS) != 0)
+		error = EFAULT;
+	return error;
 }
 
 /* --- packet packing (as in the queue experiment) ------------------- */
@@ -610,19 +678,29 @@ iv3d_invalidate_caches(void)
 
 /* --- the probe ------------------------------------------------------ */
 
-static void
+static int
 iv3d_remask_all(void)
 {
+	int hub_error, core_error;
 
-	/* Restore the takeover's masks on every exit path. */
-	bcmv3d_takeover_hub_poke(IV3D_MSK_SET, IV3D_HUB_IRQS_ALL);
-	bcmv3d_takeover_core_poke(IV3D_MSK_SET, IV3D_CORE_DONE);
+	/* Attempt both blocks even when one write fails. */
+	hub_error = bcmv3d_takeover_hub_poke(IV3D_MSK_SET, IV3D_HUB_IRQS_ALL);
+	core_error = bcmv3d_takeover_core_poke(IV3D_MSK_SET, IV3D_CORE_DONE);
+	return hub_error != 0 ? hub_error : core_error;
 }
 
 static void
 iv3d_disestablish(void)
 {
 
+	/* ARM PIC disestablish does not wait for an in-flight dispatcher. */
+	if (iv3d.hub_established)
+		acpi_intr_mask(iv3d.hub_ih);
+	if (iv3d.core_established)
+		acpi_intr_mask(iv3d.core_ih);
+	/* Wait below IPL_VM, without the IRQ mutex, before freeing handlers. */
+	if (iv3d.hub_established || iv3d.core_established)
+		xc_barrier(0);
 	if (iv3d.hub_established) {
 		acpi_intr_disestablish(iv3d.hub_ih);
 		iv3d.hub_established = false;
@@ -644,7 +722,7 @@ bcmv3d_irq_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	uint32_t bcl_va, rcl_va, tile_state_va;
 	const uint32_t *image;
 	size_t words, i;
-	int error;
+	int error, mask_error;
 
 	if (iv3d.attempted)
 		return EBUSY;
@@ -654,6 +732,7 @@ bcmv3d_irq_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	iv3d.stage = "awaiting completed takeover";
 	if (!bcmv3d_takeover_complete())
 		return EPERM;
+	mutex_init(&iv3d.lock, MUTEX_DEFAULT, IPL_VM);
 	iv3d.stage = "ACPI interrupt resources";
 	if (ACPI_FAILURE(acpi_resource_parse(dev, handle, "_CRS", &res,
 	    &acpi_resource_parse_ops_quiet))) {
@@ -764,6 +843,8 @@ bcmv3d_irq_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	iv3d_build_rcl(&rcl, rcl_va, out_va, tile_alloc_va);
 	KASSERT(iv3d_length(&bcl) <= IV3D_BCL_SIZE);
 	KASSERT(iv3d_length(&rcl) <= IV3D_RCL_SIZE);
+	memcpy(iv3d.bcl_copy, bcl.base, sizeof(iv3d.bcl_copy));
+	memcpy(iv3d.rcl_copy, rcl.base, sizeof(iv3d.rcl_copy));
 	/* TFU alias entries and queue identity entries share one table. */
 	if ((error = iv3d_map_alias(IV3D_OBJ_TFU_LSRC, IV3D_OBJ_TFU_ASRC,
 	    false)) != 0 ||
@@ -797,77 +878,126 @@ bcmv3d_irq_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		goto out;
 	}
 	iv3d.tfu_cvt_before = (tfu_cs >> IV3D_TFU_CVTCT_SHIFT) & 0xff;
-	bcmv3d_takeover_hub_poke(IV3D_TFU_IIA, lsrc);
-	bcmv3d_takeover_hub_poke(IV3D_TFU_IIS, IV3D_DIM);
-	bcmv3d_takeover_hub_poke(IV3D_TFU_ICA, 0);
-	bcmv3d_takeover_hub_poke(IV3D_TFU_IUA, 0);
-	bcmv3d_takeover_hub_poke(IV3D_TFU_IOA, ldst);
-	bcmv3d_takeover_hub_poke(IV3D_TFU_IOC, IV3D_TFU_IOC_VALUE);
-	bcmv3d_takeover_hub_poke(IV3D_TFU_IOS, IV3D_TFU_IOS_VALUE);
-	bcmv3d_takeover_hub_poke(IV3D_TFU_COEF(0), 0);
-	bcmv3d_takeover_hub_poke(IV3D_TFU_COEF(1), 0);
-	bcmv3d_takeover_hub_poke(IV3D_TFU_COEF(2), 0);
-	bcmv3d_takeover_hub_poke(IV3D_TFU_COEF(3), 0);
+	{
+		const struct {
+			bus_size_t offset;
+			uint32_t value;
+		} setup[] = {
+			{ IV3D_TFU_IIA, lsrc }, { IV3D_TFU_IIS, IV3D_DIM },
+			{ IV3D_TFU_ICA, 0 }, { IV3D_TFU_IUA, 0 },
+			{ IV3D_TFU_IOA, ldst }, { IV3D_TFU_IOC, IV3D_TFU_IOC_VALUE },
+			{ IV3D_TFU_IOS, IV3D_TFU_IOS_VALUE },
+			{ IV3D_TFU_COEF(0), 0 }, { IV3D_TFU_COEF(1), 0 },
+			{ IV3D_TFU_COEF(2), 0 }, { IV3D_TFU_COEF(3), 0 }
+		};
+
+		for (i = 0; i < __arraycount(setup); i++) {
+			error = bcmv3d_takeover_hub_poke(setup[i].offset,
+			    setup[i].value);
+			if (error != 0)
+				goto out;
+		}
+	}
 	iv3d.stage = "TFU interrupt wait";
-	bcmv3d_takeover_hub_poke(IV3D_MSK_CLR, IV3D_HUB_TFUC);
+	error = bcmv3d_takeover_hub_poke(IV3D_MSK_CLR, IV3D_HUB_TFUC);
+	if (error != 0)
+		goto out;
 	error = bcmv3d_takeover_hub_poke(IV3D_TFU_ICFG,
 	    IV3D_TFU_ICFG_VALUE /* starts the copy */);
 	if (error != 0)
 		goto out;
-	error = iv3d_wait_delivered(&iv3d.hub_delivered, IV3D_HUB_TFUC,
-	    &iv3d.hub_spurious);
-	bcmv3d_takeover_hub_poke(IV3D_MSK_SET, IV3D_HUB_TFUC);
+	error = iv3d_wait_delivered(&iv3d.hub_delivered, IV3D_HUB_TFUC);
+	mask_error = bcmv3d_takeover_hub_poke(IV3D_MSK_SET, IV3D_HUB_TFUC);
+	if (error == 0)
+		error = mask_error;
 	if (error == ETIMEDOUT) {
 		iv3d.verdict = "hub TFUC never arrived";
 		goto out;
 	}
-	if (error == EIO) {
-		iv3d.verdict = "hub handler storm";
+	if (error != 0) {
+		iv3d.verdict = "hub interrupt delivery failed";
+		goto out;
+	}
+
+	iv3d.stage = "TFU completion verification";
+	error = iv3d_check_events(0);
+	if (error == 0)
+		error = iv3d_check_tfu();
+	if (error != 0) {
+		iv3d.verdict = "TFU completion state is invalid";
 		goto out;
 	}
 
 	/* Stage 2: the accepted clear-and-store, FLDONE and FRDONE by IRQ. */
 	iv3d.stage = "binner submission";
-	bcmv3d_takeover_core_poke(IV3D_PTB_BPOS, 0);
+	error = bcmv3d_takeover_core_poke(IV3D_PTB_BPOS, 0);
+	if (error != 0)
+		goto out;
 	error = iv3d_invalidate_caches();
 	if (error != 0)
 		goto out;
-	bcmv3d_takeover_core_poke(IV3D_CLE_CT0QMA, tile_alloc_va);
-	bcmv3d_takeover_core_poke(IV3D_CLE_CT0QMS, IV3D_TILE_ALLOC_SIZE);
-	bcmv3d_takeover_core_poke(IV3D_CLE_CT0QTS,
-	    IV3D_CT0QTS_ENABLE | tile_state_va);
-	bcmv3d_takeover_core_poke(IV3D_CLE_CT0QBA, bcl_va);
+	{
+		const struct {
+			bus_size_t offset;
+			uint32_t value;
+		} setup[] = {
+			{ IV3D_CLE_CT0QMA, tile_alloc_va },
+			{ IV3D_CLE_CT0QMS, IV3D_TILE_ALLOC_SIZE },
+			{ IV3D_CLE_CT0QTS, IV3D_CT0QTS_ENABLE | tile_state_va },
+			{ IV3D_CLE_CT0QBA, bcl_va }
+		};
+
+		for (i = 0; i < __arraycount(setup); i++) {
+			error = bcmv3d_takeover_core_poke(setup[i].offset,
+			    setup[i].value);
+			if (error != 0)
+				goto out;
+		}
+	}
 	error = bcmv3d_takeover_core_poke(IV3D_CLE_CT0QEA,
 	    bcl_va + iv3d_length(&bcl));
 	if (error != 0)
 		goto out;
 	iv3d.stage = "FLDONE interrupt wait";
-	bcmv3d_takeover_core_poke(IV3D_MSK_CLR, IV3D_CORE_DONE);
-	error = iv3d_wait_delivered(&iv3d.core_delivered, IV3D_CORE_FLDONE,
-	    &iv3d.core_spurious);
+	error = bcmv3d_takeover_core_poke(IV3D_MSK_CLR, IV3D_CORE_DONE);
+	if (error != 0)
+		goto out;
+	error = iv3d_wait_delivered(&iv3d.core_delivered, IV3D_CORE_FLDONE);
 	if (error == ETIMEDOUT) {
 		iv3d.verdict = "core FLDONE never arrived";
+		goto out;
+	}
+	if (error != 0) {
+		iv3d.verdict = "binner interrupt delivery failed";
+		goto out;
+	}
+	error = iv3d_check_events(IV3D_CORE_FLDONE);
+	if (error != 0) {
+		iv3d.verdict = "unexpected completion before rendering";
 		goto out;
 	}
 	iv3d.stage = "render submission";
 	error = iv3d_invalidate_caches();
 	if (error != 0)
 		goto out;
-	bcmv3d_takeover_core_poke(IV3D_CLE_CT1QBA, rcl_va);
+	error = bcmv3d_takeover_core_poke(IV3D_CLE_CT1QBA, rcl_va);
+	if (error != 0)
+		goto out;
 	error = bcmv3d_takeover_core_poke(IV3D_CLE_CT1QEA,
 	    rcl_va + iv3d_length(&rcl));
 	if (error != 0)
 		goto out;
 	iv3d.stage = "FRDONE interrupt wait";
-	error = iv3d_wait_delivered(&iv3d.core_delivered, IV3D_CORE_FRDONE,
-	    &iv3d.core_spurious);
-	bcmv3d_takeover_core_poke(IV3D_MSK_SET, IV3D_CORE_DONE);
+	error = iv3d_wait_delivered(&iv3d.core_delivered, IV3D_CORE_FRDONE);
+	mask_error = bcmv3d_takeover_core_poke(IV3D_MSK_SET, IV3D_CORE_DONE);
+	if (error == 0)
+		error = mask_error;
 	if (error == ETIMEDOUT) {
 		iv3d.verdict = "core FRDONE never arrived";
 		goto out;
 	}
-	if (error == EIO) {
-		iv3d.verdict = "core handler storm";
+	if (error != 0) {
+		iv3d.verdict = "render interrupt delivery failed";
 		goto out;
 	}
 	iv3d.stage = "post-completion synchronization";
@@ -876,6 +1006,37 @@ bcmv3d_irq_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		    iv3d.obj[id].size,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 	iv3d.stage = "verification";
+	if (memcmp(iv3d.bcl_copy, iv3d.obj[IV3D_OBJ_BCL].kva,
+	    sizeof(iv3d.bcl_copy)) != 0 ||
+	    memcmp(iv3d.rcl_copy, iv3d.obj[IV3D_OBJ_RCL].kva,
+	    sizeof(iv3d.rcl_copy)) != 0) {
+		iv3d.verdict = "control list or padding modified by the GPU";
+		error = EIO;
+		goto out;
+	}
+	/* Both sources, alias destination and TFU padding must be unchanged. */
+	for (enum iv3d_object id = IV3D_OBJ_TFU_ASRC;
+	    id <= IV3D_OBJ_TFU_LDST; id++) {
+		image = iv3d.obj[id].kva;
+		i = id == IV3D_OBJ_TFU_ADST ? IV3D_OUTPUT_DATA / 4 : 0;
+		for (; i < IV3D_IMAGE_SIZE / 4; i++) {
+			uint32_t page = i / (PAGE_SIZE / 4);
+
+			if (image[i] != iv3d_pattern(id, page, i % (PAGE_SIZE / 4))) {
+				iv3d.verdict = "protected TFU buffer modified";
+				error = EIO;
+				goto out;
+			}
+		}
+	}
+	image = iv3d.obj[IV3D_OBJ_SCRATCH].kva;
+	for (i = 0; i < IV3D_SCRATCH_SIZE / 4; i++) {
+		if (image[i] != 0) {
+			iv3d.verdict = "scratch page modified";
+			error = EIO;
+			goto out;
+		}
+	}
 	image = iv3d.obj[IV3D_OBJ_TFU_ADST].kva;
 	for (i = 0; i < IV3D_OUTPUT_DATA / 4; i++) {
 		uint32_t page = i / (PAGE_SIZE / 4);
@@ -911,14 +1072,45 @@ bcmv3d_irq_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		}
 	}
 out:
-	iv3d_remask_all();
+	mask_error = iv3d_remask_all();
+	if (error == 0 && mask_error != 0) {
+		error = mask_error;
+		iv3d.verdict = "could not restore interrupt masks";
+	}
 	iv3d_disestablish();
+	/* No handler can race the final exactly-once verdict. */
+	if (error == 0) {
+		error = iv3d_check_events(IV3D_CORE_DONE);
+		if (error != 0)
+			iv3d.verdict = "interrupt lifecycle verification failed";
+	}
+	if (error == 0) {
+		uint32_t hub_sts, core_sts;
+
+		/* No completion or masked error may remain after the jobs. */
+		error = bcmv3d_takeover_hub_peek(IV3D_INT_STS, &hub_sts);
+		if (error == 0)
+			error = bcmv3d_takeover_core_peek(IV3D_INT_STS, &core_sts);
+		if (error == 0 && (hub_sts != 0 || core_sts != 0))
+			error = EIO;
+		if (error != 0)
+			iv3d.verdict = "unexpected interrupt status after masking";
+	}
+	if (error == 0) {
+		error = iv3d_check_tfu();
+		if (error != 0)
+			iv3d.verdict = "TFU state changed after verification";
+	}
+	mutex_destroy(&iv3d.lock);
+
 	if (!iv3d.published)
 		iv3d_release_unpublished();
 	if (error == 0) {
 		aprint_normal_dev(dev, "IRQ PASS: hub TFUC and core "
 		    "FLDONE+FRDONE delivered as interrupts; both images "
-		    "verified; handlers disestablished; masks restored\n");
+		    "verified; handlers disestablished; masks restored; counts "
+		    "TFUC=%u FLDONE=%u FRDONE=%u\n", iv3d.tfuc_count,
+		    iv3d.fldone_count, iv3d.frdone_count);
 	} else {
 		uint32_t hub_sts = 0, core_sts = 0, tfu = 0;
 
@@ -929,12 +1121,14 @@ out:
 		(void)bcmv3d_takeover_hub_peek(IV3D_TFU_CS, &tfu);
 		aprint_normal_dev(dev, "IRQ experiment stopped at %s: error "
 		    "%d; %s; delivered hub=%#x core=%#x; latched hub=%#x "
-		    "core=%#x spurious hub=%u core=%u TFU_CS=%#x; %s\n",
+		    "core=%#x spurious hub=%u core=%u TFU_CS=%#x; "
+		    "counts TFUC=%u FLDONE=%u FRDONE=%u; %s\n",
 		    iv3d.stage, error,
 		    iv3d.verdict != NULL ? iv3d.verdict :
 		    "no verdict recorded", iv3d.hub_delivered,
 		    iv3d.core_delivered, hub_sts, core_sts,
 		    iv3d.hub_spurious, iv3d.core_spurious, tfu,
+		    iv3d.tfuc_count, iv3d.fldone_count, iv3d.frdone_count,
 		    iv3d.published ? "GPU-exposed allocations retained until "
 		    "reboot; no retry" :
 		    "nothing published; DMA allocations released");

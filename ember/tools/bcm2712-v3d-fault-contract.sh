@@ -35,7 +35,12 @@ if [ "${V3D_FAULT_SKIP_MUTANTS:-0}" = 1 ]; then
 fi
 cp "$work/fault-body.h" "$work/fault-good.h"
 for mutation in skip-latch-clear skip-flush fixup-without-sync \
-    release-always retry-faulted-job; do
+    release-always retry-faulted-job accept-mixed-outcomes \
+    ignore-conversion-counter ignore-fault-identity wrong-vio-shift \
+    ignore-busy ignore-scratch ignore-sources ignore-alias-destination \
+    skip-pt-postwrite skip-first-ownership-return ignore-raw-status \
+    skip-final-boundary milliseconds-as-ticks skip-controller-mask \
+    skip-interrupt-drain; do
     cp "$work/fault-good.h" "$work/fault-body.h"
     awk -v mutation="$mutation" '
         mutation == "skip-latch-clear" &&
@@ -48,13 +53,86 @@ for mutation in skip-latch-clear skip-flush fixup-without-sync \
             changed += gsub(/FV3D_MMUC_ENABLE \| FV3D_MMUC_FLUSH/,
                 "FV3D_MMUC_ENABLE")
         }
-        mutation == "fixup-without-sync" {
-            changed += gsub(/fv3d.obj\[FV3D_OBJ_PT\].map/,
-                "fv3d.obj[FV3D_OBJ_SCRATCH].map")
-            changed += gsub(/fv3d.obj\[FV3D_OBJ_PT\].size/,
-                "fv3d.obj[FV3D_OBJ_SCRATCH].size")
+        mutation == "fixup-without-sync" && /fv3d_sync_all\(true\);/ {
+            if (++presyncs == 2) {
+                changed = 1
+                next
+            }
+        }
+        mutation == "accept-mixed-outcomes" {
+            changed += sub(/if \(\(atomic_load_relaxed\(&fv3d.delivered\) & FV3D_HUB_TFUC\) != 0\)/,
+                "if ((atomic_load_relaxed(\\&fv3d.delivered) \\& FV3D_HUB_TFUC) != 0 \\&\\& false)")
+            changed += sub(/atomic_load_relaxed\(&fv3d.tfuc_events\) != \(completed \? 1u : 0u\)/,
+                "(completed \\&\\& atomic_load_relaxed(\\&fv3d.tfuc_events) != 1u)")
+        }
+        mutation == "ignore-conversion-counter" {
+            changed += sub(/\(uint8_t\)\(\(cs >>/, "((uint8_t)((cs >>")
+            changed += sub(/!= \(completed \? 2 : 1\)\) \{/,
+                "!= (completed ? 2 : 1) \\&\\& false)) {")
+        }
+        mutation == "ignore-fault-identity" {
+            changed += sub(/if \(\(\(vio_id & 0x7f\) != 0x7c && \(vio_id & 0x7f\) != 0x7d\) \|\|/,
+                "if (false \\&\\& (((vio_id \\& 0x7f) != 0x7c \\&\\& (vio_id \\& 0x7f) != 0x7d) ||")
+            changed += sub(/fault_va >= \(uint64_t\)ldst \+ FV3D_IMAGE_SIZE\) \{/,
+                "fault_va >= (uint64_t)ldst + FV3D_IMAGE_SIZE)) {")
+        }
+        mutation == "wrong-vio-shift" {
+            changed += sub(/fv3d.va_width - 32/, "0")
+        }
+        mutation == "ignore-busy" {
+            changed += gsub(/& FV3D_TFU_BUSY/, "\\& (FV3D_TFU_BUSY \\& 0)")
+        }
+        mutation == "ignore-scratch" {
+            changed += sub(/if \(image\[word\] != expected\)/,
+                "if (image[word] != expected \\&\\& id != FV3D_OBJ_SCRATCH)")
+        }
+        mutation == "ignore-sources" {
+            changed += sub(/if \(image\[word\] != expected\)/,
+                "if (image[word] != expected \\&\\& id != FV3D_OBJ_TFU_ASRC \\&\\& id != FV3D_OBJ_TFU_LSRC)")
+        }
+        mutation == "ignore-alias-destination" {
+            changed += sub(/if \(image\[word\] != expected\)/,
+                "if (image[word] != expected \\&\\& id != FV3D_OBJ_TFU_LDST)")
+        }
+        mutation == "skip-pt-postwrite" {
+            changed += sub(/ops = before \? BUS_DMASYNC_PREWRITE : BUS_DMASYNC_POSTWRITE;/,
+                "ops = before ? BUS_DMASYNC_PREWRITE : 0;")
+        }
+        mutation == "skip-first-ownership-return" && /fv3d_sync_all\(false\);/ {
+            if (++postsyncs == 1) {
+                changed = 1
+                next
+            }
+        }
+        mutation == "ignore-raw-status" {
+            changed += sub(/if \(status != 0 \|\|/,
+                "if ((status != 0 \\&\\& false) ||")
+        }
+        mutation == "skip-final-boundary" &&
+        /fv3d.stage = "final masked acceptance boundary";/ {
+            skip_final = 1
+        }
+        mutation == "skip-final-boundary" && skip_final &&
+        /error = fv3d_check_event\(true, NULL, NULL\);/ {
+            changed = 1
+            next
+        }
+        mutation == "milliseconds-as-ticks" {
+            changed += sub(/MAX\(1, mstohz\(FV3D_WAIT_SLICE_MS\)\)/,
+                "FV3D_WAIT_SLICE_MS")
+        }
+        mutation == "skip-controller-mask" && /acpi_intr_mask\(fv3d.hub_ih\);/ {
+            print "\t\tif (false) acpi_intr_mask(fv3d.hub_ih);"
+            changed = 1
+            next
+        }
+        mutation == "skip-interrupt-drain" && /xc_barrier\(0\);/ {
+            print "\t\tif (false) xc_barrier(0);"
+            changed = 1
+            next
         }
         mutation == "release-always" {
+
             changed += sub(/if \(!fv3d\.published\)/, "if (1)")
         }
         mutation == "retry-faulted-job" &&
@@ -77,4 +155,4 @@ for mutation in skip-latch-clear skip-flush fixup-without-sync \
         exit 1
     fi
 done
-echo "PASS: fault contract; 5 causal mutants rejected"
+echo "PASS: fault contract; 20 causal mutants rejected"

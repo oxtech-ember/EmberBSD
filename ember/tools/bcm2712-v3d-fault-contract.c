@@ -1,12 +1,12 @@
-/* Origin: EmberBSD actual-source V3D interrupt contract, 2026-10-10. */
+/* Origin: EmberBSD actual-source V3D fault-recovery contract, 2026-10-11. */
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 
 /*
- * Host contract for the bounded BCM2712 V3D interrupt experiment.
+ * Host contract for the bounded BCM2712 V3D MMU fault experiment.
  * It compiles the production probe body and substitutes host services:
  * a fake ACPI (resource parse and interrupt establish), the sealed
- * takeover window, bus_dma with CPU/GPU memory views, the two accepted
+ * takeover window, bus_dma with CPU/GPU memory views, the faulting and recovered
  * job engines, and a level-triggered fake interrupt controller that
  * invokes the registered handlers the moment the fake hardware latches
  * an unmasked bit, re-fires while a bit stays unacknowledged and bounds
@@ -38,6 +38,18 @@
 #ifndef __arraycount
 #define __arraycount(a) (sizeof((a)) / sizeof((a)[0]))
 #endif
+
+#define atomic_load_acquire(p) (*(p))
+#define atomic_load_relaxed(p) (*(p))
+#define atomic_cas_uint(p, o, n) (*(p) == (o) ? (*(p) = (n), (o)) : *(p))
+#define atomic_inc_uint_nv(p) (++*(p))
+#define atomic_inc_uint(p) ((void)++*(p))
+#define atomic_or_uint(p, bits) ((void)(*(p) |= (bits)))
+#define membar_producer() ((void)0)
+#define membar_consumer() ((void)0)
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+static unsigned int hz = 100;
+#define mstohz(ms) (((ms) * hz) / 1000)
 
 #define PAGE_SIZE 4096
 #define KASSERT(v) assert(v)
@@ -91,6 +103,7 @@ struct fake_allocation {
 	bus_addr_t base;
 	bus_dmamap_t map;
 	bool live;
+	bool device_owned;
 };
 
 /* --- production body ---------------------------------------------- */
@@ -139,9 +152,13 @@ static void fake_bus_dmamap_sync(bus_dma_tag_t, bus_dmamap_t, bus_addr_t,
 #define bcmv3d_takeover_core_poke fake_core_poke
 #define acpi_intr_establish_irq fake_acpi_intr_establish_irq
 #define acpi_intr_disestablish fake_acpi_intr_disestablish
+#define acpi_intr_mask fake_acpi_intr_mask
+#define xc_barrier fake_xc_barrier
 static void *fake_acpi_intr_establish_irq(device_t, struct acpi_irq *, int,
     bool, int (*)(void *), void *, const char *);
 static void fake_acpi_intr_disestablish(void *);
+static void fake_acpi_intr_mask(void *);
+static void fake_xc_barrier(unsigned int);
 static ACPI_STATUS fake_acpi_resource_parse(device_t, ACPI_HANDLE,
     const char *, struct acpi_resources *, const void *);
 static struct acpi_irq *fake_acpi_res_irq(struct acpi_resources *, int);
@@ -180,6 +197,7 @@ struct fake_irq_handler {
 	int (*fn)(void *);
 	void *arg;
 	bool established;
+	bool controller_masked, drained;
 };
 static struct fake_irq_handler fake_handlers[2]; /* 0 = core, 1 = hub */
 static unsigned int disestablish_count;
@@ -233,6 +251,8 @@ fake_acpi_intr_disestablish(void *ih)
 {
 
 	assert(ih != NULL);
+	assert(((struct fake_irq_handler *)ih)->controller_masked);
+	assert(((struct fake_irq_handler *)ih)->drained);
 	((struct fake_irq_handler *)ih)->established = false;
 	((struct fake_irq_handler *)ih)->fn = NULL;
 	disestablish_count++;
@@ -243,7 +263,24 @@ static struct fixture {
 	int fail_create;
 	bool job1_valid_dst, fault_touch_dst, good_image_bad;
 	bool fault_never, good_never, sticky_latch;
-	unsigned int delays, sleeps;
+	bool fault_with_tfuc, fault_no_count, fault_two_counts;
+	bool duplicate_fault, duplicate_good;
+	bool fault_busy, initial_busy, good_busy, pre_good_busy;
+	bool good_no_count, good_two_counts, good_with_fault;
+	bool good_fault_only, good_latch_only;
+	unsigned int va_width_field;
+	uint32_t vio_id;
+	bool wrong_address, address_below, address_at_end;
+	bool enforce_sync, sync_violation, missing_latch, sticky_irq;
+	int corrupt_object, corrupt_job;
+	unsigned int corrupt_offset;
+	int fail_peek_offset, fail_poke_offset, fail_io_job;
+	unsigned int jobs;
+	unsigned int delays, sleeps, sleep_ticks;
+	bool late_good_fault, late_good_completion;
+	bool barrier_fault, barrier_completion, barrier_read_error;
+	unsigned int barriers, controller_masks;
+	char diagnostics[768];
 	char last_message[512];
 	const char *case_name;
 } fx;
@@ -319,18 +356,36 @@ static int
 fake_hub_peek(bus_size_t offset, uint32_t *value)
 {
 
+	if (fx.fail_peek_offset == (int)offset &&
+	    (fx.fail_io_job < 0 || fx.jobs == (unsigned int)fx.fail_io_job))
+		return EIO;
 	switch (offset) {
 	case R_INT_STS:
 		*value = hub_bank.int_sts;
 		break;
-	case 0x5c: *value = 0x7f; break;	/* MASK_STS: all masked */
-	case 0x1238: *value = 0x20804664; break;	/* MMU_DEBUG */
+	case 0x5c: *value = hub_bank.mask; break;	/* MASK_STS: all masked */
+	case 0x1238: *value = 0x20804604 | fx.va_width_field << 4; break;	/* MMU_DEBUG */
 	case 0x1000: *value = 0; break;		/* MMUC_CTL */
 	case 0x1200: *value = hub_ctl_shadow; break;
 	case 0x1204: *value = hub_pt_base; break;
 	case 0x1230: *value = hub_illegal; break;
+	case FV3D_MMU_VIO_ID:
+		*value = fx.vio_id;
+		break;
+	case FV3D_MMU_VIO_ADDR:
+		/* Pinned Linux: VIO_ADDR stores the high 32 VA bits. */
+		*value = (0x10410000 + (fx.address_at_end ? FV3D_IMAGE_SIZE :
+		    fx.address_below ? -16 : 32)) >> (fx.va_width_field - 2);
+		if (fx.wrong_address)
+			*value = 0x01040100; /* source object, not destination alias */
+		break;
 	case FV3D_TFU_CS:
 		*value = 0x100 | (fake_tfu_count << FV3D_TFU_CVTCT_SHIFT);
+		if ((fx.initial_busy && fx.jobs == 0) ||
+		    (fx.fault_busy && fx.jobs == 1) ||
+		    (fx.pre_good_busy && fx.jobs == 1 && mmuc_flush_writes >= 3) ||
+		    (fx.good_busy && fx.jobs == 2))
+			*value |= FV3D_TFU_BUSY;
 		break;
 	default: *value = 0; break;
 	}
@@ -342,6 +397,9 @@ fake_hub_poke(bus_size_t offset, uint32_t value)
 {
 
 	hub_pokes++;
+	if (fx.fail_poke_offset == (int)offset &&
+	    (fx.fail_io_job < 0 || fx.jobs == (unsigned int)fx.fail_io_job))
+		return EIO;
 	if (offset == 0x1000 && (value & FV3D_MMUC_FLUSH) != 0)
 		mmuc_flush_writes++;
 	switch (offset) {
@@ -356,7 +414,8 @@ fake_hub_poke(bus_size_t offset, uint32_t value)
 		fake_mask_changed_hub();
 		break;
 	case R_INT_CLR:
-		hub_bank.int_sts &= ~value;
+		if (!fx.sticky_irq)
+			hub_bank.int_sts &= ~value;
 		break;
 	case 0x1200: {
 		uint32_t latch = hub_ctl_shadow & FV3D_MMU_CTL_FAULTS;
@@ -388,6 +447,48 @@ fake_hub_poke(bus_size_t offset, uint32_t value)
 		break;
 	}
 	return 0;
+}
+
+/* The controller mask prevents new interrupts. The barrier must still
+ * wait for an ISR that entered before that mask and runs on another CPU. */
+static void
+fake_acpi_intr_mask(void *ih)
+{
+	struct fake_irq_handler *handler = ih;
+
+	assert(handler != NULL && handler->established);
+	handler->controller_masked = true;
+	handler->drained = false;
+	fx.controller_masks++;
+}
+
+static void
+fake_xc_barrier(unsigned int flags)
+{
+	struct fake_irq_handler *handler = &fake_handlers[1];
+
+	assert(flags == 0); /* low priority, below the hardware ISR */
+	assert(handler->established && handler->controller_masked);
+	fx.barriers++;
+	if (fx.jobs == 2 && (fx.barrier_fault || fx.barrier_completion ||
+	    fx.barrier_read_error)) {
+		if (fx.barrier_fault) {
+			hub_ctl_shadow |= __BIT(20);
+			hub_bank.int_sts |= FV3D_HUB_MMU_PTI;
+		}
+		if (fx.barrier_completion) {
+			fake_tfu_count++;
+			hub_bank.int_sts |= FV3D_HUB_TFUC;
+		}
+		if (fx.barrier_read_error) {
+			fx.fail_peek_offset = FV3D_INT_STS;
+			fx.fail_io_job = 2;
+		}
+		/* Already in flight: do not use the new-interrupt mask gate. */
+		hub_entries++;
+		(void)handler->fn(handler->arg);
+	}
+	handler->drained = true;
 }
 
 /* --- bus_dma (CPU/GPU views) --------------------------------------- */
@@ -556,6 +657,30 @@ fake_bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, bus_addr_t offset,
 	struct fake_allocation *allocation = &allocations[map->object];
 
 	(void)t;
+	if (fx.jobs == 2 && map->object == FV3D_OBJ_PT &&
+	    (ops & BUS_DMASYNC_POSTWRITE) != 0) {
+		if (fx.late_good_fault) {
+			hub_ctl_shadow |= __BIT(20);
+			fake_latch_hub(FV3D_HUB_MMU_PTI);
+		}
+		if (fx.late_good_completion) {
+			fake_tfu_count++;
+			fake_latch_hub(FV3D_HUB_TFUC);
+		}
+	}
+	assert(offset == 0 && length == allocation->size);
+	if (fx.enforce_sync) {
+		if ((ops & (BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE)) != 0) {
+			if (!allocation->device_owned)
+				fx.sync_violation = true;
+			allocation->device_owned = false;
+		}
+		if ((ops & (BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE)) != 0) {
+			if (allocation->device_owned)
+				fx.sync_violation = true;
+			allocation->device_owned = true;
+		}
+	}
 	if ((ops & BUS_DMASYNC_PREWRITE) != 0)
 		memcpy(allocation->dev + offset, allocation->cpu + offset, length);
 	if ((ops & BUS_DMASYNC_POSTREAD) != 0)
@@ -592,7 +717,16 @@ fake_run_tfu(void)
 	uint32_t *pt = (uint32_t *)(void *)allocation_containing(
 	    (bus_addr_t)hub_pt_base << FV3D_PAGE_SHIFT)->dev;
 	uint32_t pte;
+	unsigned int id;
 
+	fx.jobs++;
+	if (fx.enforce_sync) {
+		for (id = 0; id < FV3D_OBJ_COUNT; id++)
+			if (!allocations[id].device_owned)
+				fx.sync_violation = true;
+	}
+	if (fx.corrupt_object >= 0 && fx.jobs == (unsigned int)fx.corrupt_job)
+		allocations[fx.corrupt_object].dev[fx.corrupt_offset] ^= 0x80;
 	if (fx.job1_valid_dst) {
 		/* Anomaly mode: the fault experiment's invalid entry is
 		 * unexpectedly honoured; copy like the good job. */
@@ -612,12 +746,24 @@ fake_run_tfu(void)
 			return true;	/* engine stalls: nothing latches */
 		/* The pinned fault: latch MMU_CTL PT_INVALID and the HUB
 		 * PTI interrupt; never complete the job. */
-		hub_ctl_shadow |= __BIT(20);
+		if (!fx.missing_latch)
+			hub_ctl_shadow |= __BIT(20);
 		if (fx.sticky_latch)
 			hub_ctl_shadow |= 0;	/* latch set; W1C ignored below */
 		if (fx.fault_touch_dst)
 			allocation_containing(
 			    default_bases[FV3D_OBJ_TFU_ADST])->dev[0] = 1;
+		/* Physical V3D 7.1 retires the failed conversion too. */
+		if (!fx.fault_no_count)
+			fake_tfu_count += fx.fault_two_counts ? 2 : 1;
+		fake_latch_hub(FV3D_HUB_MMU_PTI |
+		    (fx.fault_with_tfuc ? FV3D_HUB_TFUC : 0));
+		if (fx.duplicate_fault)
+			fake_latch_hub(FV3D_HUB_MMU_PTI);
+		return true;
+	}
+	if (fx.good_fault_only) {
+		hub_ctl_shadow |= __BIT(20);
 		fake_latch_hub(FV3D_HUB_MMU_PTI);
 		return true;
 	}
@@ -640,8 +786,14 @@ fake_run_tfu(void)
 		memcpy(dst->dev + (dst_pa - dst->base), src->dev +
 		    (src_pa - src->base), FV3D_OUTPUT_DATA);
 	}
-	fake_tfu_count++;
-	fake_latch_hub(FV3D_HUB_TFUC);
+	if (fx.good_latch_only)
+		hub_ctl_shadow |= __BIT(20);
+	if (!fx.good_no_count)
+		fake_tfu_count += fx.good_two_counts ? 2 : 1;
+	fake_latch_hub(FV3D_HUB_TFUC |
+	    (fx.good_with_fault ? FV3D_HUB_MMU_PTI : 0));
+	if (fx.duplicate_good)
+		fake_latch_hub(FV3D_HUB_TFUC);
 	return true;
 }
 
@@ -658,7 +810,10 @@ fake_aprint(device_t dv, const char *fmt, ...)
 
 	(void)dv;
 	va_start(ap, fmt);
-	vsnprintf(fx.last_message, sizeof(fx.last_message), fmt, ap);
+	if (strstr(fmt, "fault post-mortem") != NULL)
+		vsnprintf(fx.diagnostics, sizeof(fx.diagnostics), fmt, ap);
+	else
+		vsnprintf(fx.last_message, sizeof(fx.last_message), fmt, ap);
 	va_end(ap);
 }
 
@@ -681,6 +836,8 @@ _tsleep(void *chan, int pri, const char *wmesg, int timo)
 {
 	(void)chan; (void)pri; (void)wmesg; (void)timo;
 	fx.sleeps++;
+	assert(timo > 0);
+	fx.sleep_ticks += timo;
 	return 0;
 }
 
@@ -725,7 +882,13 @@ reset_fixture(void)
 	memset(&fx, 0, sizeof(fx));
 	for (i = 0; i < FV3D_OBJ_COUNT; i++)
 		fx.fail_alloc[i] = false;
+	hz = 100;
+	fx.va_width_field = 6;
+	/* CM5 V3D 7.1 fault capture; the 4.1 client map is different. */
+	fx.vio_id = 0x7d;
 	fx.fail_create = -1;
+	fx.corrupt_object = -1;
+	fx.fail_peek_offset = fx.fail_poke_offset = fx.fail_io_job = -1;
 	fx_parse_ok = 1;
 	fx_hub_gsi = 282;	/* _CRS index 0 */
 	fx_core_gsi = 281;	/* _CRS index 1 */
@@ -788,6 +951,7 @@ main(void)
 	CHECK(hub_bank.mask & (FV3D_HUB_TFUC | FV3D_HUB_MMU_FAULTS));
 	CHECK(!fake_handlers[1].established);
 	CHECK(disestablish_count == 1);
+	CHECK(fx.controller_masks == 1 && fx.barriers == 1);
 	CHECK(frees == 0 && unmaps == 0 && destroys == 0 && unloads == 0);
 
 	/* One shot only. */
@@ -818,13 +982,23 @@ main(void)
 	reset_fixture();
 	fx.fault_never = true;
 	run_case("fault never arrived", ETIMEDOUT);
-	CHECK(fx.sleeps >= 1 && fx.sleeps <= 10);
+	CHECK(fx.sleeps == 5 && fx.sleep_ticks == 50);
+	CHECK(strstr(fx.diagnostics, "MMU_CTL=") != NULL);
+	CHECK(strstr(fx.diagnostics, "TFU_CS=") != NULL);
+	CHECK(strstr(fx.diagnostics, "VIO_ID=") != NULL);
+	CHECK(strstr(fx.diagnostics, "VIO_ADDR=") != NULL);
+
+	reset_fixture();
+	fx.fault_never = true;
+	hz = 1;
+	run_case("low Hz waits at least one tick", ETIMEDOUT);
+	CHECK(fx.sleeps == 5 && fx.sleep_ticks == 5);
 
 	/* A faulted job must not touch the destination. */
 	reset_fixture();
 	fx.fault_touch_dst = true;
 	run_case("fault touched destination", EIO);
-	CHECK(strstr(fx.last_message, "destination canary modified") != NULL);
+	CHECK(strstr(fx.last_message, "destination image or canary modified") != NULL);
 
 	/* Recovery that leaves the latch set. */
 	reset_fixture();
@@ -842,7 +1016,213 @@ main(void)
 	fx.good_image_bad = true;
 	run_case("good image mismatch", EIO);
 
+	/* Fault and completion must never be accepted together. */
+	reset_fixture();
+	fx.fault_with_tfuc = true;
+	run_case("fault plus TFUC", EIO);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.fault_no_count = true;
+	run_case("fault without retired conversion", EIO);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.fault_two_counts = true;
+	run_case("fault with two retired conversions", EIO);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.duplicate_fault = true;
+	run_case("duplicate fault delivery", EIO);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.duplicate_good = true;
+	run_case("duplicate completion delivery", EIO);
+
+	reset_fixture();
+	fx.good_no_count = true;
+	run_case("TFUC without counter advance", EIO);
+
+	reset_fixture();
+	fx.good_two_counts = true;
+	run_case("two conversions for one job", EIO);
+
+	reset_fixture();
+	fake_tfu_count = 255;
+	run_case("completion counter wraps once", 0);
+
+	reset_fixture();
+	fx.initial_busy = true;
+	run_case("busy before initial submission", EBUSY);
+	CHECK(fx.jobs == 0);
+
+	reset_fixture();
+	fx.fault_busy = true;
+	run_case("fault leaves TFU busy", EBUSY);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.pre_good_busy = true;
+	run_case("TFU busy before resubmission", EBUSY);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.good_busy = true;
+	run_case("completion while TFU busy", EBUSY);
+
+	reset_fixture();
+	fx.good_with_fault = true;
+	run_case("good completion plus fault", EIO);
+
+	reset_fixture();
+	fx.missing_latch = true;
+	run_case("fault without MMU latch", EIO);
+
+	/* Every V3D 7.1 client and the ignored upper ID bits. */
+	for (i = 0; i < 256; i++) {
+		bool tfu = (i & 0x7f) == 0x7c || (i & 0x7f) == 0x7d;
+
+		reset_fixture();
+		fx.vio_id = (uint32_t)i;
+		run_case("V3D 7.1 fault client identity", tfu ? 0 : EIO);
+		CHECK(fx.jobs == (tfu ? 2u : 1u));
+	}
+	reset_fixture();
+	fx.vio_id = 0xfffffffd;
+	run_case("V3D 7.1 ignores upper AXI ID bits", 0);
+
+	reset_fixture();
+	fx.wrong_address = true;
+	run_case("fault address is the source", EIO);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.address_below = true;
+	run_case("fault address below destination", EIO);
+
+	reset_fixture();
+	fx.address_at_end = true;
+	run_case("fault address at exclusive end", EIO);
+
+	/* Every image, its padding and the illegal-access scratch remain
+	 * protected across both jobs; mutate GPU memory, not CPU memory. */
+	for (int job = 1; job <= 2; job++) {
+		for (i = FV3D_OBJ_SCRATCH; i < FV3D_OBJ_COUNT; i++) {
+			reset_fixture();
+			fx.corrupt_object = i;
+			fx.corrupt_job = job;
+			fx.corrupt_offset = i == FV3D_OBJ_TFU_ADST && job == 2 ?
+			    FV3D_OUTPUT_DATA : 0;
+			run_case("protected GPU memory corrupted", EIO);
+		}
+	}
+
+	reset_fixture();
+	fx.enforce_sync = true;
+	run_case("two complete DMA ownership handoffs", 0);
+	CHECK(!fx.sync_violation);
+
+	/* Register access errors cannot leave stale values in the proof. */
+	{
+		static const int reads[] = { FV3D_TFU_CS, FV3D_MMU_VIO_ID,
+		    FV3D_MMU_VIO_ADDR, FV3D_MMU_CTL, FV3D_INT_STS };
+		static const int writes[] = { FV3D_TFU_IIA, FV3D_TFU_IIS,
+		    FV3D_TFU_ICA, FV3D_TFU_IUA, FV3D_TFU_IOA, FV3D_TFU_IOC,
+		    FV3D_TFU_IOS, FV3D_TFU_COEF(0), FV3D_TFU_COEF(1),
+		    FV3D_TFU_COEF(2), FV3D_TFU_COEF(3), FV3D_TFU_ICFG,
+		    FV3D_MSK_CLR, FV3D_INT_CLR };
+
+		for (i = 0; i < (int)__arraycount(reads); i++) {
+			reset_fixture();
+			fx.fail_peek_offset = reads[i];
+			fx.fail_io_job = 1;
+			run_case("fault register read failure", EIO);
+			CHECK(fx.jobs == 1);
+		}
+		for (i = 0; i < (int)__arraycount(writes); i++) {
+			reset_fixture();
+			fx.fail_poke_offset = writes[i];
+			run_case("register write failure", EIO);
+		}
+	}
+
+	reset_fixture();
+	fx.sticky_irq = true;
+	run_case("unacknowledgeable level fault", EIO);
+	CHECK(hub_entries <= 3);
+
+	reset_fixture();
+	fx.late_good_fault = true;
+	run_case("late MMU fault during final verification", EIO);
+
+	reset_fixture();
+	fx.late_good_completion = true;
+	run_case("late extra conversion during final verification", EIO);
+
+	reset_fixture();
+	fx.fail_poke_offset = FV3D_MSK_SET;
+	fx.fail_io_job = 2;
+	run_case("cannot restore masks after completion", EIO);
+
+	reset_fixture();
+	fx.good_fault_only = true;
+	run_case("good job faults again without completion", EIO);
+	CHECK(fx.jobs == 2);
+
+	reset_fixture();
+	fx.good_latch_only = true;
+	run_case("good completion retains MMU fault latch", EIO);
+
+	reset_fixture();
+	fx.va_width_field = 5;
+	run_case("35-bit virtual fault address", 0);
+
+	reset_fixture();
+	fx.va_width_field = 7;
+	run_case("37-bit virtual fault address", 0);
+
+	reset_fixture();
+	fx.fail_peek_offset = FV3D_TFU_CS;
+	fx.fail_io_job = 0;
+	run_case("cannot read TFU before initial job", EIO);
+	CHECK(fx.jobs == 0);
+	CHECK(strstr(fx.diagnostics, "read error 5") != NULL);
+
+	reset_fixture();
+	fx.fail_peek_offset = FV3D_TFU_CS;
+	fx.fail_io_job = 2;
+	run_case("cannot read TFU completion counter", EIO);
+
+	reset_fixture();
+	fx.fail_poke_offset = FV3D_MSK_CLR;
+	fx.fail_io_job = 1;
+	run_case("cannot rearm the good job interrupt", EIO);
+	CHECK(fx.jobs == 1);
+
+	/* Drain outstanding handler writes before accepting final evidence. */
+	reset_fixture();
+	fx.barrier_fault = true;
+	run_case("in-flight fault finishes at teardown barrier", EIO);
+	CHECK(fv3d.events == 3 && fv3d.fault_events == 2);
+	CHECK(fx.barriers == 1 && !fake_handlers[1].established);
+
+	reset_fixture();
+	fx.barrier_completion = true;
+	run_case("in-flight completion finishes at teardown barrier", EIO);
+	CHECK(fv3d.events == 3 && fv3d.tfuc_events == 2);
+
+	reset_fixture();
+	fx.barrier_read_error = true;
+	run_case("in-flight ISR fails at teardown barrier", EIO);
+	CHECK(fv3d.irq_error == EIO);
+
 	/* Allocation failures release cleanly before exposure. */
+
+
+
+
 	for (i = 0; i < FV3D_OBJ_COUNT; i++) {
 		reset_fixture();
 		fx.fail_alloc[i] = true;

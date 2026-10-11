@@ -8,7 +8,10 @@
  * fault-bit acknowledgement, MMU_VIO_ID/MMU_VIO_ADDR diagnostics and the
  * verbatim MMU_CTL write-back that clears the latched write-1-to-clear
  * fault bits; v3d_mmu.c flush), Mesa 26.2.4 v3dx_tfu.c for the accepted
- * payload, and the wire-evidence HUB line identity from the accepted
+ * payload. V3D 7.1 AXI client IDs are from torvalds/linux
+ * a5ebb76233b79db01e82e061173cb73c6d2b5c6b, v3d_irq.c: use the low
+ * seven bits, TFU IDs 0x7c..0x7d; the old 4.1 table does not apply.
+ * Also uses the wire-evidence HUB line identity from the accepted
  * interrupt experiment (_CRS index 0 / GSI 282). This native
  * implementation does not import that code. Only the explicit
  * BCM2712_V3D_FAULT_PROBE configuration includes this file, after a
@@ -16,17 +19,20 @@
  * deliberately faulting TFU job (invalid destination PTE), the pinned
  * recovery, then the identical good job must complete and verify on the
  * same GPU and MMU. Handlers self-mask under a level-line storm;
- * everything GPU-exposed is retained until reboot. Contracts and
- * physical acceptance are pending; this file must not ship in an
- * installable configuration before they pass.
+ * everything GPU-exposed is retained until reboot. Actual-source host
+ * contracts are checked; physical fault recovery remains unaccepted.
+ * This file must not ship in an installable configuration before that
+ * acceptance passes.
  */
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
+#include <sys/atomic.h>
 #include <sys/bus.h>
 #include <sys/device.h>
 #include <sys/systm.h>
+#include <sys/xcall.h>
 
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/acpi_intr.h>
@@ -120,66 +126,98 @@ static struct {
 	bool attempted, published;
 	const char *stage, *verdict;
 	uint8_t tfu_cvt_before;
+	unsigned int va_width;
 	void *hub_ih;
 	bool hub_established;
-	/* Handler state: volatile, single-word, set at IPL_VM. */
+	/* Single HUB producer: cumulative atomics, events published last. */
 	volatile uint32_t delivered;
 	volatile uint32_t spurious;
+	volatile unsigned int events, fault_events, tfuc_events;
+	volatile unsigned int irq_error;
 	uint32_t fault_bits, vio_id, vio_addr;
 	uint32_t tfu_cs_after_fault, tfu_cs_before_good;
+	bool after_fault_valid, before_good_valid;
 } fv3d;
-
-int bcmv3d_irq_probe(device_t, bus_dma_tag_t, ACPI_HANDLE);
 
 int bcmv3d_fault_probe(device_t, bus_dma_tag_t, ACPI_HANDLE);
 
 /* --- interrupt handlers: ack only what we handle, then wake -------- */
 
+static void
+fv3d_irq_fail(int error)
+{
+
+	atomic_cas_uint(&fv3d.irq_error, 0, error);
+	/* Best effort even when the register window itself is failing. */
+	if (bcmv3d_takeover_hub_poke(FV3D_MSK_SET,
+	    FV3D_HUB_IRQS_ALL) != 0)
+		atomic_cas_uint(&fv3d.irq_error, 0, EIO);
+	wakeup(&fv3d.delivered);
+}
+
 static int
 fv3d_hub_intr(void *arg)
 {
-	uint32_t status;
+	uint32_t status, ours;
 	int error;
 
 	(void)arg;
 	error = bcmv3d_takeover_hub_peek(FV3D_INT_STS, &status);
-	if (error != 0)
+	if (error != 0) {
+		fv3d_irq_fail(error);
 		return 0;
-	{
-		uint32_t ours = status & (FV3D_HUB_TFUC | FV3D_HUB_MMU_FAULTS);
-
-		if (ours == 0) {
-			/* A level line we cannot handle must be masked HERE:
-			 * waiting-thread logic never runs during a livelock. */
-			if (++fv3d.spurious > FV3D_STORM_LIMIT) {
-				bcmv3d_takeover_hub_poke(FV3D_MSK_SET,
-				    FV3D_HUB_TFUC | FV3D_HUB_MMU_FAULTS);
-				wakeup(&fv3d.delivered);
-			}
-			return 0;
-		}
-		bcmv3d_takeover_hub_poke(FV3D_INT_CLR, ours);
-		fv3d.delivered |= ours;
-		wakeup(&fv3d.delivered);
-		return 1;
 	}
+	ours = status & (FV3D_HUB_TFUC | FV3D_HUB_MMU_FAULTS);
+	if ((status & ~ours) != 0) {
+		fv3d_irq_fail(EIO);
+		return 0;
+	}
+	if (ours == 0) {
+		if (atomic_inc_uint_nv(&fv3d.spurious) > FV3D_STORM_LIMIT)
+			fv3d_irq_fail(EIO);
+		return 0;
+	}
+	/* Only one event is expected per job. Mask in the handler before
+	 * acknowledging: a stuck level or later duplicate cannot livelock
+	 * the CPU. The waiting thread checks raw status before rearming. */
+	error = bcmv3d_takeover_hub_poke(FV3D_MSK_SET, FV3D_HUB_IRQS_ALL);
+	if (error == 0)
+		error = bcmv3d_takeover_hub_poke(FV3D_INT_CLR, ours);
+	if (error != 0) {
+		fv3d_irq_fail(error);
+		return 0;
+	}
+	atomic_or_uint(&fv3d.delivered, ours);
+	if ((ours & FV3D_HUB_MMU_FAULTS) != 0)
+		atomic_inc_uint(&fv3d.fault_events);
+	if ((ours & FV3D_HUB_TFUC) != 0)
+		atomic_inc_uint(&fv3d.tfuc_events);
+	membar_producer();
+	atomic_inc_uint(&fv3d.events);
+	wakeup(&fv3d.delivered);
+	return 1;
 }
 
-/* Wait for the handler to record `bit'; bounded, lost-wakeup safe. */
+/* The argument is an event count, never an OR of already delivered bits. */
 static int
-fv3d_wait_delivered(uint32_t bits)
+fv3d_wait_events(unsigned int expected)
 {
 	int slice;
 
 	for (slice = 0; slice < FV3D_WAIT_SLICES; slice++) {
-		if ((fv3d.delivered & bits) != 0)
+		if (atomic_load_acquire(&fv3d.irq_error) != 0)
+			return atomic_load_relaxed(&fv3d.irq_error);
+		if (atomic_load_acquire(&fv3d.events) >= expected) {
+			membar_consumer();
 			return 0;
-		if (fv3d.spurious > FV3D_STORM_LIMIT)
-			return EIO;
+		}
 		tsleep(&fv3d.delivered, PWAIT, "v3dfault",
-		    FV3D_WAIT_SLICE_MS);
+		    MAX(1, mstohz(FV3D_WAIT_SLICE_MS)));
 	}
-	return (fv3d.delivered & bits) != 0 ? 0 : ETIMEDOUT;
+	if (atomic_load_acquire(&fv3d.irq_error) != 0)
+		return atomic_load_relaxed(&fv3d.irq_error);
+	membar_consumer();
+	return atomic_load_acquire(&fv3d.events) >= expected ? 0 : ETIMEDOUT;
 }
 
 /* --- packet packing (as in the queue experiment) ------------------- */
@@ -364,12 +402,12 @@ fv3d_publish_mmu(void)
 
 /* --- the probe ------------------------------------------------------ */
 
-static void
+static int
 fv3d_remask_all(void)
 {
 
 	/* Restore the takeover's masks on every exit path. */
-	bcmv3d_takeover_hub_poke(FV3D_MSK_SET, FV3D_HUB_IRQS_ALL);
+	return bcmv3d_takeover_hub_poke(FV3D_MSK_SET, FV3D_HUB_IRQS_ALL);
 }
 
 static void
@@ -377,6 +415,11 @@ fv3d_disestablish(void)
 {
 
 	if (fv3d.hub_established) {
+		/* ARM disestablish frees the PIC source without draining an
+		 * ISR already running on another CPU. Stop new deliveries,
+		 * then wait below hardware IPL before freeing its cookie. */
+		acpi_intr_mask(fv3d.hub_ih);
+		xc_barrier(0);
 		acpi_intr_disestablish(fv3d.hub_ih);
 		fv3d.hub_established = false;
 	}
@@ -431,15 +474,136 @@ fv3d_recover_mmu(void)
 	return value == FV3D_MMU_CTL_VALUE ? 0 : EIO;
 }
 
+/* Keep device ownership paired across both jobs, including read-only PT. */
+static void
+fv3d_sync_all(bool before)
+{
+	enum fv3d_object id;
+	int ops;
+
+	for (id = 0; id < FV3D_OBJ_COUNT; id++) {
+		ops = before ? BUS_DMASYNC_PREWRITE : BUS_DMASYNC_POSTWRITE;
+		if (id != FV3D_OBJ_PT)
+			ops |= before ? BUS_DMASYNC_PREREAD : BUS_DMASYNC_POSTREAD;
+		bus_dmamap_sync(fv3d.dmat, fv3d.obj[id].map, 0,
+		    fv3d.obj[id].size, ops);
+	}
+}
+
+static int
+fv3d_verify_images(bool copied)
+{
+	enum fv3d_object id;
+	size_t word;
+
+	for (id = FV3D_OBJ_SCRATCH; id < FV3D_OBJ_COUNT; id++) {
+		const uint32_t *image = fv3d.obj[id].kva;
+
+		for (word = 0; word < fv3d.obj[id].size / 4; word++) {
+			enum fv3d_object pattern_id = id;
+			uint32_t expected;
+
+			if (copied && id == FV3D_OBJ_TFU_ADST &&
+			    word < FV3D_OUTPUT_DATA / 4)
+				pattern_id = FV3D_OBJ_TFU_ASRC;
+			expected = fv3d_pattern(pattern_id, word / (PAGE_SIZE / 4),
+			    word % (PAGE_SIZE / 4));
+			if (image[word] != expected) {
+				fv3d.verdict = id == FV3D_OBJ_TFU_ADST ?
+				    "destination image or canary modified" :
+				    "protected source, alias or scratch modified";
+				return EIO;
+			}
+		}
+	}
+	return 0;
+}
+
+/* Check the hardware and handler observations together, with masks set.
+ * On V3D 7.1 CVTCT also counts the failed conversion (physical CM5).
+ * Require one retirement for the fault, two after the good job; only
+ * the latter may deliver TFUC, and it must also pass image verification. */
+static int
+fv3d_check_event(bool completed, uint32_t *snapshot, bool *valid)
+{
+	uint32_t status, cs, ctl;
+	int error;
+
+	error = fv3d_remask_all();
+	if (error != 0)
+		return error;
+	error = bcmv3d_takeover_hub_peek(FV3D_INT_STS, &status);
+	if (error != 0)
+		return error;
+	error = bcmv3d_takeover_hub_peek(FV3D_TFU_CS, &cs);
+	if (error != 0)
+		return error;
+	if (snapshot != NULL) {
+		*snapshot = cs;
+		*valid = true;
+	}
+	if (atomic_load_acquire(&fv3d.irq_error) != 0)
+		return atomic_load_relaxed(&fv3d.irq_error);
+	if (status != 0 ||
+	    atomic_load_acquire(&fv3d.events) != (completed ? 2u : 1u) ||
+	    atomic_load_relaxed(&fv3d.fault_events) != 1 ||
+	    atomic_load_relaxed(&fv3d.tfuc_events) != (completed ? 1u : 0u) ||
+	    (uint8_t)((cs >> FV3D_TFU_CVTCT_SHIFT) -
+	    fv3d.tfu_cvt_before) != (completed ? 2 : 1)) {
+		fv3d.verdict = "unexpected fault/completion event or counter";
+		return EIO;
+	}
+	if (completed) {
+		error = bcmv3d_takeover_hub_peek(FV3D_MMU_CTL, &ctl);
+		if (error != 0)
+			return error;
+		if ((ctl & FV3D_MMU_CTL_FAULTS) != 0) {
+			fv3d.verdict = "MMU fault latched after good completion";
+			return EIO;
+		}
+	}
+	if ((cs & FV3D_TFU_BUSY) != 0) {
+		fv3d.verdict = "TFU remains busy; resubmission is forbidden";
+		return EBUSY;
+	}
+	return 0;
+}
+
+/* Capture raw post-mortem values even if a later read fails. Errors are
+ * printed beside each value so unavailable registers are not evidence. */
+static void
+fv3d_diagnostics(void)
+{
+	uint32_t ctl = 0, cs = 0, id = 0, addr = 0;
+	int ctl_error, cs_error, id_error, addr_error;
+
+	ctl_error = bcmv3d_takeover_hub_peek(FV3D_MMU_CTL, &ctl);
+	cs_error = bcmv3d_takeover_hub_peek(FV3D_TFU_CS, &cs);
+	id_error = bcmv3d_takeover_hub_peek(FV3D_MMU_VIO_ID, &id);
+	addr_error = bcmv3d_takeover_hub_peek(FV3D_MMU_VIO_ADDR, &addr);
+	aprint_normal_dev(fv3d.dev, "fault post-mortem: MMU_CTL=%#x "
+	    "(read error %d) TFU_CS=%#x (read error %d) VIO_ID=%#x "
+	    "(read error %d) VIO_ADDR=%#x (read error %d); "
+	    "events=%u fault-events=%u TFUC-events=%u; after-fault "
+	    "TFU_CS=%#x (valid %u) before-good TFU_CS=%#x (valid %u)\n",
+	    ctl, ctl_error, cs, cs_error, id, id_error, addr, addr_error,
+	    atomic_load_relaxed(&fv3d.events),
+	    atomic_load_relaxed(&fv3d.fault_events),
+	    atomic_load_relaxed(&fv3d.tfuc_events), fv3d.tfu_cs_after_fault,
+	    (unsigned int)fv3d.after_fault_valid, fv3d.tfu_cs_before_good,
+	    (unsigned int)fv3d.before_good_valid);
+}
+
 int
 bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 {
 	struct acpi_resources res;
 	struct acpi_irq *hub_irq;
 	uint32_t debug, lsrc, ldst;
-	uint32_t vio_id = 0, vio_addr = 0, ctl;
+	uint32_t vio_id, vio_addr, ctl;
+	uint64_t fault_va;
 	size_t i, words;
-	int error;
+	int error, mask_error;
 
 	if (fv3d.attempted)
 		return EBUSY;
@@ -487,6 +651,8 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		error = EOPNOTSUPP;
 		goto out;
 	}
+	/* Pinned Linux v3d_drv.c and v3d_irq.c decode, V3D 7.1. */
+	fv3d.va_width = 30 + __SHIFTOUT(debug, FV3D_MMU_VA_WIDTH);
 	fv3d.stage = "clean hub interrupt status";
 	error = bcmv3d_takeover_hub_peek(FV3D_INT_STS, &ctl);
 	if (error != 0)
@@ -525,86 +691,96 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	    false)) != 0)
 		goto out;
 	fv3d.stage = "pre-publication synchronization";
-	for (enum fv3d_object id = 0; id < FV3D_OBJ_COUNT; id++)
-		bus_dmamap_sync(fv3d.dmat, fv3d.obj[id].map, 0,
-		    fv3d.obj[id].size,
-		    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	fv3d_sync_all(true);
 	fv3d.stage = "MMU publication";
 	error = fv3d_publish_mmu();
 	if (error != 0)
 		goto out;
 
-	/* Stage 1: the faulting job. */
+	/* Stage 1: the faulting job. No unchecked setup writes. */
 	fv3d.stage = "faulting TFU submission";
-	(void)bcmv3d_takeover_hub_peek(FV3D_TFU_CS, &ctl);
+	error = bcmv3d_takeover_hub_peek(FV3D_TFU_CS, &ctl);
+	if (error != 0)
+		goto out;
+	if ((ctl & FV3D_TFU_BUSY) != 0) {
+		fv3d.verdict = "TFU busy before initial submission";
+		error = EBUSY;
+		goto out;
+	}
 	fv3d.tfu_cvt_before = (ctl >> FV3D_TFU_CVTCT_SHIFT) & 0xff;
-	bcmv3d_takeover_hub_poke(FV3D_TFU_IIA, lsrc);
-	bcmv3d_takeover_hub_poke(FV3D_TFU_IIS, FV3D_DIM);
-	bcmv3d_takeover_hub_poke(FV3D_TFU_ICA, 0);
-	bcmv3d_takeover_hub_poke(FV3D_TFU_IUA, 0);
-	bcmv3d_takeover_hub_poke(FV3D_TFU_IOA, ldst);
-	bcmv3d_takeover_hub_poke(FV3D_TFU_IOC, FV3D_TFU_IOC_VALUE);
-	bcmv3d_takeover_hub_poke(FV3D_TFU_IOS, FV3D_TFU_IOS_VALUE);
-	bcmv3d_takeover_hub_poke(FV3D_TFU_COEF(0), 0);
-	bcmv3d_takeover_hub_poke(FV3D_TFU_COEF(1), 0);
-	bcmv3d_takeover_hub_poke(FV3D_TFU_COEF(2), 0);
-	bcmv3d_takeover_hub_poke(FV3D_TFU_COEF(3), 0);
+	{
+		const struct { bus_size_t reg; uint32_t value; } setup[] = {
+			{ FV3D_TFU_IIA, lsrc }, { FV3D_TFU_IIS, FV3D_DIM },
+			{ FV3D_TFU_ICA, 0 }, { FV3D_TFU_IUA, 0 },
+			{ FV3D_TFU_IOA, ldst },
+			{ FV3D_TFU_IOC, FV3D_TFU_IOC_VALUE },
+			{ FV3D_TFU_IOS, FV3D_TFU_IOS_VALUE },
+			{ FV3D_TFU_COEF(0), 0 }, { FV3D_TFU_COEF(1), 0 },
+			{ FV3D_TFU_COEF(2), 0 }, { FV3D_TFU_COEF(3), 0 }
+		};
+
+		for (i = 0; i < __arraycount(setup); i++) {
+			error = bcmv3d_takeover_hub_poke(setup[i].reg,
+			    setup[i].value);
+			if (error != 0)
+				goto out;
+		}
+	}
 	fv3d.stage = "fault interrupt wait";
-	bcmv3d_takeover_hub_poke(FV3D_MSK_CLR,
+	error = bcmv3d_takeover_hub_poke(FV3D_MSK_CLR,
 	    FV3D_HUB_TFUC | FV3D_HUB_MMU_FAULTS);
+	if (error != 0)
+		goto out;
 	error = bcmv3d_takeover_hub_poke(FV3D_TFU_ICFG,
 	    FV3D_TFU_ICFG_VALUE /* starts the faulting copy */);
 	if (error != 0)
 		goto out;
-	error = fv3d_wait_delivered(FV3D_HUB_MMU_FAULTS | FV3D_HUB_TFUC);
-	if (error == ETIMEDOUT) {
-		fv3d.verdict = "MMU fault never arrived";
+	error = fv3d_wait_events(1);
+	if (error != 0) {
+		fv3d.verdict = "MMU fault missing or handler failed";
 		goto out;
 	}
-	if (error == EIO) {
-		fv3d.verdict = "hub handler storm";
-		goto out;
-	}
-	if ((fv3d.delivered & FV3D_HUB_TFUC) != 0 &&
-	    (fv3d.delivered & FV3D_HUB_MMU_FAULTS) == 0) {
+	if ((atomic_load_relaxed(&fv3d.delivered) & FV3D_HUB_TFUC) != 0) {
 		fv3d.verdict = "faulting job completed unexpectedly";
 		error = EIO;
 		goto out;
 	}
-	/* Fault diagnostics for the receipt. */
-	(void)bcmv3d_takeover_hub_peek(FV3D_MMU_VIO_ID, &vio_id);
-	(void)bcmv3d_takeover_hub_peek(FV3D_MMU_VIO_ADDR, &vio_addr);
-	(void)bcmv3d_takeover_hub_peek(FV3D_MMU_CTL, &ctl);
+	/* Decode the fault identity before attempting any recovery. */
+	error = bcmv3d_takeover_hub_peek(FV3D_MMU_VIO_ID, &vio_id);
+	if (error != 0)
+		goto out;
+	error = bcmv3d_takeover_hub_peek(FV3D_MMU_VIO_ADDR, &vio_addr);
+	if (error != 0)
+		goto out;
+	error = bcmv3d_takeover_hub_peek(FV3D_MMU_CTL, &ctl);
+	if (error != 0)
+		goto out;
 	if ((ctl & FV3D_MMU_CTL_FAULTS) == 0) {
 		fv3d.verdict = "fault interrupt without MMU_CTL latch";
+		error = EIO;
+		goto out;
+	}
+	fault_va = (uint64_t)vio_addr << (fv3d.va_width - 32);
+	if (((vio_id & 0x7f) != 0x7c && (vio_id & 0x7f) != 0x7d) ||
+	    fault_va < ldst ||
+	    fault_va >= (uint64_t)ldst + FV3D_IMAGE_SIZE) {
+		fv3d.verdict = "fault is not TFU at the destination alias";
 		error = EIO;
 		goto out;
 	}
 	fv3d.fault_bits = ctl & FV3D_MMU_CTL_FAULTS;
 	fv3d.vio_id = vio_id;
 	fv3d.vio_addr = vio_addr;
-	(void)bcmv3d_takeover_hub_peek(FV3D_TFU_CS, &fv3d.tfu_cs_after_fault);
-	/* A faulted job must not have written the destination. */
-	bus_dmamap_sync(fv3d.dmat, fv3d.obj[FV3D_OBJ_TFU_ADST].map, 0,
-	    fv3d.obj[FV3D_OBJ_TFU_ADST].size,
-	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
-	{
-		const uint32_t *image = fv3d.obj[FV3D_OBJ_TFU_ADST].kva;
-		size_t w, n = FV3D_IMAGE_SIZE / 4;
+	error = fv3d_check_event(false, &fv3d.tfu_cs_after_fault,
+	    &fv3d.after_fault_valid);
+	if (error != 0)
+		goto out;
+	/* Only an idle engine permits ending device ownership. */
+	fv3d_sync_all(false);
+	error = fv3d_verify_images(false);
+	if (error != 0)
+		goto out;
 
-		for (w = 0; w < n; w++) {
-			uint32_t page = w / (PAGE_SIZE / 4);
-
-			if (image[w] != fv3d_pattern(FV3D_OBJ_TFU_ADST, page,
-			    w % (PAGE_SIZE / 4))) {
-				fv3d.verdict = "destination canary modified";
-				error = EIO;
-				goto out;
-			}
-		}
-	}
-
-	/* Recovery exactly as pinned. */
 	fv3d.stage = "MMU fault recovery";
 	error = fv3d_recover_mmu();
 	if (error != 0) {
@@ -612,82 +788,59 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		goto out;
 	}
 
-	/* Stage 2: the good job on the same GPU and MMU. */
+	/* Stage 2: fix the CPU-owned table and rearm every allocation. */
 	fv3d.stage = "valid destination alias";
 	if ((error = fv3d_map_alias(FV3D_OBJ_TFU_LDST, FV3D_OBJ_TFU_ADST,
 	    true)) != 0)
 		goto out;
-	bus_dmamap_sync(fv3d.dmat, fv3d.obj[FV3D_OBJ_PT].map, 0,
-	    fv3d.obj[FV3D_OBJ_PT].size, BUS_DMASYNC_PREWRITE);
+	fv3d_sync_all(true);
 	error = fv3d_recover_mmu();	/* bounded flush after the fixup */
 	if (error != 0) {
 		fv3d.verdict = "post-fixup flush failed";
 		goto out;
 	}
 	fv3d.stage = "good TFU submission";
-	(void)bcmv3d_takeover_hub_peek(FV3D_TFU_CS, &ctl);
-	fv3d.tfu_cs_before_good = ctl;
-	if ((ctl & FV3D_TFU_BUSY) != 0) {
-		fv3d.verdict = "TFU still busy after the aborted job";
-		error = EBUSY;
+	/* Revalidate immediately before resubmission, including CVTCT. */
+	error = fv3d_check_event(false, &fv3d.tfu_cs_before_good,
+	    &fv3d.before_good_valid);
+	if (error != 0)
 		goto out;
-	}
-	fv3d.tfu_cvt_before = (ctl >> FV3D_TFU_CVTCT_SHIFT) & 0xff;
-	fv3d.delivered = 0;
+	error = bcmv3d_takeover_hub_poke(FV3D_MSK_CLR,
+	    FV3D_HUB_TFUC | FV3D_HUB_MMU_FAULTS);
+	if (error != 0)
+		goto out;
 	error = bcmv3d_takeover_hub_poke(FV3D_TFU_ICFG,
 	    FV3D_TFU_ICFG_VALUE /* starts the good copy */);
 	if (error != 0)
 		goto out;
 	fv3d.stage = "good completion wait";
-	error = fv3d_wait_delivered(FV3D_HUB_TFUC);
-	bcmv3d_takeover_hub_poke(FV3D_MSK_SET,
-	    FV3D_HUB_TFUC | FV3D_HUB_MMU_FAULTS);
-	if (error == ETIMEDOUT) {
-		fv3d.verdict = "good job never completed after recovery";
+	error = fv3d_wait_events(2);
+	if (error != 0) {
+		fv3d.verdict = "good job missing or handler failed after recovery";
 		goto out;
 	}
-	if (error == EIO) {
-		fv3d.verdict = "hub handler storm (good job)";
+	error = fv3d_check_event(true, NULL, NULL);
+	if (error != 0)
 		goto out;
-	}
-	if ((fv3d.delivered & FV3D_HUB_MMU_FAULTS) != 0) {
-		fv3d.verdict = "good job faulted after recovery";
-		error = EIO;
-		goto out;
-	}
 	fv3d.stage = "post-completion synchronization";
-	for (enum fv3d_object id = 0; id < FV3D_OBJ_COUNT; id++)
-		bus_dmamap_sync(fv3d.dmat, fv3d.obj[id].map, 0,
-		    fv3d.obj[id].size,
-		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	fv3d_sync_all(false);
 	fv3d.stage = "verification";
-	{
-		const uint32_t *image = fv3d.obj[FV3D_OBJ_TFU_ADST].kva;
-
-		for (i = 0; i < FV3D_OUTPUT_DATA / 4; i++) {
-			uint32_t page = i / (PAGE_SIZE / 4);
-
-			if (image[i] != fv3d_pattern(FV3D_OBJ_TFU_ASRC, page,
-			    i % (PAGE_SIZE / 4))) {
-				fv3d.verdict = "good image mismatch";
-				error = EIO;
-				goto out;
-			}
-		}
-		for (i = FV3D_OUTPUT_DATA / 4; i < words; i++) {
-			uint32_t page = i / (PAGE_SIZE / 4);
-
-			if (image[i] != fv3d_pattern(FV3D_OBJ_TFU_ADST, page,
-			    i % (PAGE_SIZE / 4))) {
-				fv3d.verdict = "destination canary modified";
-				error = EIO;
-				goto out;
-			}
-		}
-	}
+	error = fv3d_verify_images(true);
 out:
-	fv3d_remask_all();
+	mask_error = fv3d_remask_all();
+	if (mask_error != 0) {
+		if (error == 0)
+			error = mask_error;
+		fv3d.verdict = "could not restore HUB interrupt masks";
+	}
 	fv3d_disestablish();
+	if (error == 0) {
+		/* No handler can change the final evidence after this point. */
+		fv3d.stage = "final masked acceptance boundary";
+		error = fv3d_check_event(true, NULL, NULL);
+	}
+	if (error != 0)
+		fv3d_diagnostics();
 	if (!fv3d.published)
 		fv3d_release_unpublished();
 	if (error == 0) {
@@ -698,18 +851,10 @@ out:
 		    "disestablished; masks restored\n", fv3d.fault_bits,
 		    fv3d.vio_id, fv3d.vio_addr);
 	} else {
-		uint32_t ctl2 = 0, cs = 0;
-
-		(void)bcmv3d_takeover_hub_peek(FV3D_MMU_CTL, &ctl2);
-		(void)bcmv3d_takeover_hub_peek(FV3D_TFU_CS, &cs);
 		aprint_normal_dev(dev, "fault experiment stopped at %s: "
-		    "error %d; %s; delivered=%#x; postmortem MMU_CTL=%#x "
-		    "TFU_CS=%#x after-fault TFU_CS=%#x before-good TFU_CS=%#x "
-		    "VIO_ID=%#x VIO_ADDR=%#x; %s\n", fv3d.stage, error,
+		    "error %d; %s; delivered=%#x; %s\n", fv3d.stage, error,
 		    fv3d.verdict != NULL ? fv3d.verdict :
-		    "no verdict recorded", fv3d.delivered, ctl2, cs,
-		    fv3d.tfu_cs_after_fault, fv3d.tfu_cs_before_good,
-		    fv3d.vio_id, fv3d.vio_addr,
+		    "no verdict recorded", atomic_load_relaxed(&fv3d.delivered),
 		    fv3d.published ? "GPU-exposed allocations retained until "
 		    "reboot; no retry" :
 		    "nothing published; DMA allocations released");

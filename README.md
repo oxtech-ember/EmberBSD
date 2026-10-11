@@ -495,9 +495,12 @@ on every board in the hardware catalog.
   through the published page table. A third opt-in
   [interrupt experiment](ember/boot/bcm2712-v3d-irq-plan.md) delivered the
   TFU and bin/render completions as real ACPI interrupts on both GPU lines,
-  with exactly-once acknowledgements and self-masking storm protection; the
+  with handler acknowledgements and self-masking storm protection; the
   stand firmware's swapped core/hub line names were identified by wire
-  evidence. The ordinary kernel remains a passive observer. GPU fault
+  evidence. The [acceptance guards](ember/boot/bcm2712-v3d-validation.md)
+  add failure-propagation, completion-count and DMA-integrity regressions;
+  their host checks do not replace a new physical acceptance run.
+  The ordinary kernel remains a passive observer. GPU fault
   recovery, multi-job queues, a DRM render interface, Mesa rendering and
   acceleration remain unverified.
 
@@ -712,6 +715,12 @@ tested on CM5 with CYW43455 firmware 7.45.265. The implementation also sends
 firmware disassociation on disconnect, serializes firmware commands and
 wraps the 16-bit command identifier. Three disconnect/reconnect cycles
 passed without command timeouts. No WPA3 throughput improvement is claimed.
+
+[Silent-disconnect recovery](ember/boot/bwfm-link-events.md) is physically
+checked on CM5: the driver detects a firmware association lost without an
+event, restarts host scanning and reconnects with SAE/required PMF. An 8 MiB
+Wi-Fi round trip passed afterward. Long-run stability and seamless roaming
+remain unverified.
 
 - **Host-managed 802.11v roaming in `bwfm`** remains a separate local change,
   not integrated into this tree. With WPA2-PSK, a Raspberry Pi 5 local build

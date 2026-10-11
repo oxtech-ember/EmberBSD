@@ -50,8 +50,11 @@ with required PMF; it does not implement 802.11v roaming or 802.11r.
 The [scan metadata correction](ember/boot/bwfm-scan.md) preserves firmware
 primary channels and unsigned signal-quality ranking. CM5 also provides an
 explicit [persistent maximum-cooling setting](ember/boot/thermal-fan.md).
-An access point may disconnect a station, after which NetBSD scans and
-joins again. The on-demand `hw.bwfm0.report` diagnostic includes radio
+The [disconnect recovery](ember/boot/bwfm-link-events.md) handles firmware
+events and reconciles a silently lost association with host state. On CM5,
+a reproduced stuck connection recovered automatically, followed by an
+8 MiB Wi-Fi round trip; this is a functional check, not long-run acceptance.
+The on-demand `hw.bwfm0.report` diagnostic includes radio
 authentication, PMF and station counters to distinguish this failure
 from an SDIO transmit-window stall.
 

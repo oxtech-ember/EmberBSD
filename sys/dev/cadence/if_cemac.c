@@ -58,6 +58,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_cemac.c,v 1.45 2024/10/15 00:58:15 lloyd Exp $");
 #include <sys/kernel.h>
 #include <sys/proc.h>
 #include <sys/systm.h>
+#include <sys/sysctl.h>
 #include <sys/time.h>
 
 #include <net/if.h>
@@ -180,6 +181,62 @@ cemac_gem_cfg(struct cemac_softc *sc)
 	return cfg;
 }
 
+/*
+ * Publish the driver telemetry counters as read-only sysctl nodes under
+ * hw.<device>. The counters give board diagnostics visibility beyond the
+ * generic ifnet statistics: receive overruns and buffer exhaustion,
+ * transmit underruns, retry and bus errors from the descriptors, queue
+ * stalls and watchdog resets.
+ */
+static void
+cemac_sysctl_setup(struct cemac_softc *sc)
+{
+	const struct sysctlnode *rnode, *cnode;
+	int rc;
+
+	rc = sysctl_createv(&sc->sc_sysctllog, 0, NULL, &rnode,
+	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "hw",
+	    SYSCTL_DESCR("hardware"), NULL, 0, NULL, 0,
+	    CTL_HW, CTL_EOL);
+	if (rc != 0)
+		goto fail;
+
+	rc = sysctl_createv(&sc->sc_sysctllog, 0, &rnode, &rnode,
+	    0, CTLTYPE_NODE, device_xname(sc->sc_dev),
+	    SYSCTL_DESCR("cemac driver state"), NULL, 0, NULL, 0,
+	    CTL_CREATE, CTL_EOL);
+	if (rc != 0)
+		goto fail;
+
+#define	CEMAC_SYSCTL_QUAD(name, desc)					\
+	rc = sysctl_createv(&sc->sc_sysctllog, 0, &rnode, &cnode,	\
+	    CTLFLAG_READONLY, CTLTYPE_QUAD, name,			\
+	    SYSCTL_DESCR(desc), NULL, 0, &sc->sc_stat_##name, 0,	\
+	    CTL_CREATE, CTL_EOL);						(void)cnode;
+
+	CEMAC_SYSCTL_QUAD(rx_overrun, "receiver overrun events")
+	CEMAC_SYSCTL_QUAD(rx_bufna, "receive buffer exhausted events")
+	CEMAC_SYSCTL_QUAD(rx_nombuf, "receive ring refill failures")
+	CEMAC_SYSCTL_QUAD(tx_underrun, "transmit underrun events")
+	CEMAC_SYSCTL_QUAD(tx_rle, "transmit retry limit exceeded events")
+	CEMAC_SYSCTL_QUAD(tx_coll, "transmit collision events")
+	CEMAC_SYSCTL_QUAD(tx_retry_err, "transmit descriptor retry errors")
+	CEMAC_SYSCTL_QUAD(tx_late_coll, "transmit descriptor late collisions")
+	CEMAC_SYSCTL_QUAD(tx_ahb_err, "transmit descriptor bus errors")
+	CEMAC_SYSCTL_QUAD(tx_busy, "hardware queue full on start")
+	CEMAC_SYSCTL_QUAD(tx_copy, "mbufs copied to a single cluster on send")
+	CEMAC_SYSCTL_QUAD(tx_watchdog, "watchdog resets scheduled")
+	CEMAC_SYSCTL_QUAD(tx_scoll, "last single collision counter sample")
+	CEMAC_SYSCTL_QUAD(tx_mcoll, "last multiple collision counter sample")
+	CEMAC_SYSCTL_QUAD(tx_discard, "deferred receive frame counter sample")
+#undef	CEMAC_SYSCTL_QUAD
+	return;
+
+fail:
+	aprint_error_dev(sc->sc_dev, "sysctl setup failed: %d\n", rc);
+	sysctl_teardown(&sc->sc_sysctllog);
+}
+
 void
 cemac_attach_common(struct cemac_softc *sc)
 {
@@ -227,6 +284,8 @@ cemac_attach_common(struct cemac_softc *sc)
 		memcpy(sc->sc_enaddr, hardcoded, ETHER_ADDR_LEN);
 	}
 
+	cemac_sysctl_setup(sc);
+
 	cemac_init(sc);
 }
 
@@ -236,13 +295,23 @@ cemac_gctx(struct cemac_softc *sc)
 	uint32_t tsr;
 
 	tsr = CEMAC_READ(ETH_TSR);
+	if (tsr & ETH_TSR_UND)
+		sc->sc_stat_tx_underrun++;
+	if (tsr & ETH_TSR_RLE)
+		sc->sc_stat_tx_rle++;
+	if (tsr & ETH_TSR_COL)
+		sc->sc_stat_tx_coll++;
 	if (!ISSET(sc->cemac_flags, CEMAC_FLAG_GEM)) {
 		// no space left
-		if (!(tsr & ETH_TSR_BNQ))
+		if (!(tsr & ETH_TSR_BNQ)) {
+			sc->sc_stat_tx_busy++;
 			return 0;
+		}
 	} else {
-		if (tsr & GEM_TSR_TXGO)
+		if (tsr & GEM_TSR_TXGO) {
+			sc->sc_stat_tx_busy++;
 			return 0;
+		}
 	}
 	CEMAC_WRITE(ETH_TSR, tsr);
 
@@ -255,6 +324,13 @@ cemac_gctx(struct cemac_softc *sc)
 			__FUNCTION__, bi, sc->TDSC[bi].Addr));
 		DPRINTFN(3,("%s: TDSC[%i].Info 0x%08x\n",
 			__FUNCTION__, bi, sc->TDSC[bi].Info));
+
+		if (sc->TDSC[bi].Info & ETH_TDSC_I_RETRY_ERR)
+			sc->sc_stat_tx_retry_err++;
+		if (sc->TDSC[bi].Info & ETH_TDSC_I_LATE_COLL)
+			sc->sc_stat_tx_late_coll++;
+		if (sc->TDSC[bi].Info & ETH_TDSC_I_AHB_ERR)
+			sc->sc_stat_tx_ahb_err++;
 
 		bus_dmamap_sync(sc->sc_dmat, sc->txq[bi].m_dmamap, 0,
 		    sc->txq[bi].m->m_pkthdr.len, BUS_DMASYNC_POSTWRITE);
@@ -322,6 +398,7 @@ cemac_intr(void *arg)
 	net_stat_ref_t nsr = IF_STAT_GETREF(ifp);
 	// out of receive buffers
 	if (isr & ETH_ISR_RBNA) {
+		sc->sc_stat_rx_bufna++;
 		// clear interrupt
 		CEMAC_WRITE(ETH_RSR, ETH_RSR_BNA);
 
@@ -338,6 +415,7 @@ cemac_intr(void *arg)
 		DPRINTFN(1,("%s: out of receive buffers\n", __FUNCTION__));
 	}
 	if (isr & ETH_ISR_ROVR) {
+		sc->sc_stat_rx_overrun++;
 		// clear interrupt
 		CEMAC_WRITE(ETH_RSR, ETH_RSR_OVR);
 		if_statinc_ref(ifp, nsr, if_ierrors);
@@ -410,6 +488,7 @@ cemac_intr(void *arg)
 				 * empty mbufs for the RXDQ.
 				 */
 				m_freem(m);
+				sc->sc_stat_rx_nombuf++;
 				if_statinc_ref(ifp, nsr, if_ierrors);
 			}
 			sc->rxqi++;
@@ -838,6 +917,7 @@ cemac_watchdog_tick(struct ifnet *ifp)
 	if (!sc->sc_trigger_reset && cemac_watchdog_check(sc))
 		return true;
 
+	sc->sc_stat_tx_watchdog++;
 	if (atomic_swap_uint(&sc->sc_reset_pending, 1) == 0)
 		workqueue_enqueue(sc->sc_reset_wq, &sc->sc_reset_work, NULL);
 
@@ -857,16 +937,19 @@ cemac_tick(void *arg)
 		return;
 	}
 
-	if (ISSET(sc->cemac_flags, CEMAC_FLAG_GEM))
+	if (ISSET(sc->cemac_flags, CEMAC_FLAG_GEM)) {
+		sc->sc_stat_tx_scoll = CEMAC_READ(GEM_SCOL);
+		sc->sc_stat_tx_mcoll = CEMAC_READ(GEM_MCOL);
 		if_statadd(ifp, if_collisions,
-		    CEMAC_READ(GEM_SCOL) + CEMAC_READ(GEM_MCOL));
-	else
+		    sc->sc_stat_tx_scoll + sc->sc_stat_tx_mcoll);
+	} else
 		if_statadd(ifp, if_collisions,
 		    CEMAC_READ(ETH_SCOL) + CEMAC_READ(ETH_MCOL));
 
 	/* These misses are ok, they will happen if the RAM/CPU can't keep up */
 	if (!ISSET(sc->cemac_flags, CEMAC_FLAG_GEM)) {
 		uint32_t misses = CEMAC_READ(ETH_DRFC);
+		sc->sc_stat_tx_discard = misses;
 		if (misses > 0)
 			aprint_normal_ifnet(ifp, "%d rx misses\n", misses);
 	}
@@ -975,6 +1058,7 @@ start:
 		}
 		m_copydata(m, 0, m->m_pkthdr.len, mtod(mn, void *));
 		mn->m_pkthdr.len = mn->m_len = m->m_pkthdr.len;
+		sc->sc_stat_tx_copy++;
 		IFQ_DEQUEUE(&ifp->if_snd, m);
 		m_freem(m);
 		m = mn;
