@@ -82,6 +82,9 @@ struct sun60i_gpu_softc {
 	struct sysctllog *sc_sysctllog;
 };
 
+/* Single-instance device: the sysctl handler reaches the softc through it. */
+static struct sun60i_gpu_softc *sun60i_gpu_instance;
+
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun60i-a733-gpu" },
 	DEVICE_COMPAT_EOL
@@ -474,8 +477,11 @@ static int
 sun60i_gpu_sysctl_stage(SYSCTLFN_ARGS)
 {
 	struct sysctlnode node = *rnode;
-	struct sun60i_gpu_softc *sc = node.sysctl_data;
+	struct sun60i_gpu_softc *sc = sun60i_gpu_instance;
 	u_int value;
+
+	if (sc == NULL)
+		return ENXIO;
 	int error;
 
 	value = sc->sc_run_stage;
@@ -824,6 +830,7 @@ sun60i_gpu_attach(device_t parent, device_t self, void *aux)
 	sc->sc_bst = faa->faa_bst;
 	mutex_init(&sc->sc_run_lock, MUTEX_DEFAULT, IPL_NONE);
 	sc->sc_run_pass = true;
+	sun60i_gpu_instance = sc;
 	sun60i_gpu_sysctl_setup(sc);
 	aprint_naive("\n");
 	aprint_normal(": firmware-ready GPU identification only\n");
