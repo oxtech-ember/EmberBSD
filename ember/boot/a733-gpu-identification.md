@@ -248,6 +248,29 @@ a serial console is attached to the board. The vendor-derived request path
 stays in the tree behind the opt-in; recovery of the hung board was done by
 restoring the normal DTB on the card from a host VM.
 
+### Physical result: the staged ladder localizes the stop to GPU MMIO
+
+Kernel `EMBER64 #18` from `cd0d25f9076` ran the eleven single-call stages
+twice on live hardware, watchdog-bounded per stage. Stages 0-7 all return
+success: sysctl dry run, DCDC4 regulator, GPU_TOP domain, PCK and CCU
+reservations, retention, the four CCU preparation writes and strict
+400/200 MHz inspection. Stage 8, the fresh GPU_CORE static ON request,
+is safe on hardware: it completes with a bounded ETIMEDOUT and the
+kernel keeps running, exactly like the boot-time experiments. Stage 9,
+the read-only waiter, times out the same way. Stage 10 - the first read
+of the GPU register file (RGX_CR_CORE_ID and PBVNC peeks under a powered
+GPU_TOP with open CCU gates) - reproducibly stops the kernel in both
+runs; the watchdog recovers the board. The October 10 experimental-boot
+hang is this same MMIO stall reached through the boot finalize path.
+
+The GPU register file therefore does not answer in the current
+configuration (module clock from PERIPH0-400M, bus gate open, reset
+released). The vendor binding clocks the module from PLL_GPU0; switching
+the prepared clock source is the next experiment candidate. All runtime
+staging kernels before `cd0d25f9076` panicked on a NULL softc pointer in
+the sysctl handler - sysctl_createv stores no sysctl_data for handler
+nodes - so their "provider stalls" were that bug, not hardware.
+
 ### Runtime staged diagnostics with a watchdog bound
 
 Normal board DTBs never run the experiment at boot; the same pieces are
