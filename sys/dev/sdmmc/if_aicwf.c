@@ -2515,6 +2515,30 @@ struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 	}
 	if (mpdu_len >= 24 &&
 	    (wh[0] == 0xc0 || wh[0] == 0xa0 || wh[0] == 0xd0)) {
+		/*
+		 * The association is over the moment the AP says so: a mesh
+		 * first asks to move (WNM BSS Transition Management, category
+		 * 0x0a action 7) and then deauthenticates the station.  Both a
+		 * protected deauth the firmware decrypted and a plain one end
+		 * up here; SA Query (category 0x08) still goes to the PMF
+		 * path below.  Route all of them through the single-flight
+		 * teardown, which clears the firmware association and returns
+		 * net80211 to scan for the re-association.
+		 */
+		if (wh[0] == 0xd0 && wh[24] == 0x0a && wh[25] == 7) {
+			device_printf(sc->sc_dev,
+			    "BSS transition request; roaming\n");
+			aicwf_alive_lost(sc);
+			return;
+		}
+		if (wh[0] == 0xc0 || wh[0] == 0xa0) {
+			device_printf(sc->sc_dev,
+			    "%s from the AP, reason %u; reconnecting\n",
+			    wh[0] == 0xc0 ? "deauthentication" : "disassociation",
+			    mpdu_len >= 26 ? le16dec(wh + 24) : 0);
+			aicwf_alive_lost(sc);
+			return;
+		}
 		aicwf_pmf_rx(sc, wh, mpdu_len, status, flags);
 		return;
 	}
