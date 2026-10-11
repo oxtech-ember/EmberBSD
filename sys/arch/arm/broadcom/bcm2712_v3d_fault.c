@@ -126,6 +126,7 @@ static struct {
 	volatile uint32_t delivered;
 	volatile uint32_t spurious;
 	uint32_t fault_bits, vio_id, vio_addr;
+	uint32_t tfu_cs_after_fault, tfu_cs_before_good;
 } fv3d;
 
 int bcmv3d_irq_probe(device_t, bus_dma_tag_t, ACPI_HANDLE);
@@ -582,6 +583,7 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	fv3d.fault_bits = ctl & FV3D_MMU_CTL_FAULTS;
 	fv3d.vio_id = vio_id;
 	fv3d.vio_addr = vio_addr;
+	(void)bcmv3d_takeover_hub_peek(FV3D_TFU_CS, &fv3d.tfu_cs_after_fault);
 	/* A faulted job must not have written the destination. */
 	bus_dmamap_sync(fv3d.dmat, fv3d.obj[FV3D_OBJ_TFU_ADST].map, 0,
 	    fv3d.obj[FV3D_OBJ_TFU_ADST].size,
@@ -624,6 +626,12 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	}
 	fv3d.stage = "good TFU submission";
 	(void)bcmv3d_takeover_hub_peek(FV3D_TFU_CS, &ctl);
+	fv3d.tfu_cs_before_good = ctl;
+	if ((ctl & FV3D_TFU_BUSY) != 0) {
+		fv3d.verdict = "TFU still busy after the aborted job";
+		error = EBUSY;
+		goto out;
+	}
 	fv3d.tfu_cvt_before = (ctl >> FV3D_TFU_CVTCT_SHIFT) & 0xff;
 	fv3d.delivered = 0;
 	error = bcmv3d_takeover_hub_poke(FV3D_TFU_ICFG,
@@ -690,10 +698,18 @@ out:
 		    "disestablished; masks restored\n", fv3d.fault_bits,
 		    fv3d.vio_id, fv3d.vio_addr);
 	} else {
+		uint32_t ctl2 = 0, cs = 0;
+
+		(void)bcmv3d_takeover_hub_peek(FV3D_MMU_CTL, &ctl2);
+		(void)bcmv3d_takeover_hub_peek(FV3D_TFU_CS, &cs);
 		aprint_normal_dev(dev, "fault experiment stopped at %s: "
-		    "error %d; %s; delivered=%#x; %s\n", fv3d.stage, error,
+		    "error %d; %s; delivered=%#x; postmortem MMU_CTL=%#x "
+		    "TFU_CS=%#x after-fault TFU_CS=%#x before-good TFU_CS=%#x "
+		    "VIO_ID=%#x VIO_ADDR=%#x; %s\n", fv3d.stage, error,
 		    fv3d.verdict != NULL ? fv3d.verdict :
-		    "no verdict recorded", fv3d.delivered,
+		    "no verdict recorded", fv3d.delivered, ctl2, cs,
+		    fv3d.tfu_cs_after_fault, fv3d.tfu_cs_before_good,
+		    fv3d.vio_id, fv3d.vio_addr,
 		    fv3d.published ? "GPU-exposed allocations retained until "
 		    "reboot; no retry" :
 		    "nothing published; DMA allocations released");
