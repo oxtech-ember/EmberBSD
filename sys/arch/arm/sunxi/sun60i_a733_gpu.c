@@ -245,19 +245,24 @@ sun60i_gpu_runtime_supply_top(struct sun60i_gpu_softc *sc)
 	bool enabled;
 	int error;
 
+	aprint_normal_dev(sc->sc_dev, "runtime: regulator acquire\n");
 	supply = fdtbus_regulator_acquire(sc->sc_phandle, "gpu-supply");
 	if (supply == NULL)
 		return ENXIO;
+	aprint_normal_dev(sc->sc_dev, "runtime: regulator state\n");
 	error = fdtbus_regulator_is_enabled(supply, &enabled);
 	if (error == 0 && !enabled)
 		error = EBUSY;
-	if (error == 0)
+	if (error == 0) {
+		aprint_normal_dev(sc->sc_dev, "runtime: regulator voltage\n");
 		error = fdtbus_regulator_get_voltage(supply, &sc->sc_uvol);
+	}
 	if (error == 0 && sc->sc_uvol != 800000)
 		error = EOPNOTSUPP;
 	fdtbus_regulator_release(supply);
 	if (error != 0)
 		return error;
+	aprint_normal_dev(sc->sc_dev, "runtime: GPU_TOP domain query\n");
 	error = fdtbus_powerdomain_is_enabled_index(sc->sc_phandle, 0, &enabled);
 	if (error != 0)
 		return error;
@@ -284,17 +289,24 @@ sun60i_gpu_stage_clocks(struct sun60i_gpu_softc *sc, int power_node)
 	bool retained = false;
 	int error;
 
+	aprint_normal_dev(sc->sc_dev, "runtime stage 1: supply/TOP checks\n");
 	error = sun60i_gpu_runtime_supply_top(sc);
 	if (error != 0)
 		return error;
+	aprint_normal_dev(sc->sc_dev, "runtime stage 1: clock acquire\n");
 	gpu = fdtbus_clock_get_index(sc->sc_phandle, 0);
 	if (gpu == NULL)
 		return ENXIO;
+	aprint_normal_dev(sc->sc_dev, "runtime stage 1: PCK reserve\n");
 	error = sun60i_a733_pck_gpu_reserve(power_node, sc);
-	if (error == 0)
+	if (error == 0) {
+		aprint_normal_dev(sc->sc_dev, "runtime stage 1: CCU reserve\n");
 		error = sun60i_a733_ccu_gpu_reserve(gpu, sc);
-	if (error == 0)
+	}
+	if (error == 0) {
+		aprint_normal_dev(sc->sc_dev, "runtime stage 1: PCK retain\n");
 		error = sun60i_a733_pck_gpu_retain(power_node, sc);
+	}
 	if (error != 0) {
 		if (error != EBUSY) {
 			(void)sun60i_a733_ccu_gpu_release(gpu, sc);
@@ -303,9 +315,12 @@ sun60i_gpu_stage_clocks(struct sun60i_gpu_softc *sc, int power_node)
 		clk_put(gpu);
 		return error;
 	}
+	aprint_normal_dev(sc->sc_dev, "runtime stage 1: CCU prepare\n");
 	error = sun60i_a733_ccu_gpu_prepare(gpu, sc, &retained);
-	if (error == 0)
+	if (error == 0) {
+		aprint_normal_dev(sc->sc_dev, "runtime stage 1: CCU inspect\n");
 		error = sun60i_a733_ccu_gpu_inspect(gpu, &state);
+	}
 	if (error == 0) {
 		error = state.readiness_error;
 		sc->sc_core_hz = state.core_hz;
