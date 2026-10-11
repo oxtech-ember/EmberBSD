@@ -104,6 +104,14 @@ bcmv3d_render_attach(device_t self, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		if (error != 0)
 			goto fail;
 	}
+	/* The ACPI attachment accepts BCM2850 on BCM2712 only. */
+	dev->native_platform.version = DRM_NATIVE_PLATFORM_VERSION;
+	dev->native_platform.length = sizeof(dev->native_platform);
+	dev->native_platform.bus_type = DRM_NATIVE_BUS_PLATFORM;
+	strlcpy(dev->native_platform.fullname, device_xname(self),
+	    sizeof(dev->native_platform.fullname));
+	strlcpy(dev->native_platform.compatible, "acpi:BCM2850",
+	    sizeof(dev->native_platform.compatible));
 	error = -drm_dev_set_unique(dev, device_xname(self));
 	if (error == 0)
 		error = bcmv3d_job_init(sc);

@@ -180,6 +180,7 @@ drm_sysctl_fini(struct drm_sysctl_def *def)
 struct drm_native_identity {
 	struct sysctllog *log;
 	struct drm_native_pci_record record;
+	struct drm_native_platform_record platform;
 };
 
 int
@@ -187,6 +188,10 @@ drm_sysctl_identity_register(struct drm_device *dev)
 {
 	struct drm_native_identity *identity;
 	struct drm_native_pci_record *r;
+	struct drm_native_platform_record *p;
+	void *record;
+	size_t length;
+	const char *leaf;
 	const struct sysctlnode *root = NULL;
 	const struct drm_minor *nodes[2] = { dev->primary, dev->render };
 	devmajor_t maj;
@@ -195,24 +200,45 @@ drm_sysctl_identity_register(struct drm_device *dev)
 	int error;
 
 	/* Drivers without a cached record retain existing discovery. */
-	if (dev->native_pci.version != DRM_NATIVE_PCI_VERSION)
+	if (dev->native_pci.version != DRM_NATIVE_PCI_VERSION &&
+	    dev->native_platform.version != DRM_NATIVE_PLATFORM_VERSION)
 		return 0;
 	CTASSERT(sizeof(struct drm_native_pci_record) == 68);
+	CTASSERT(sizeof(struct drm_native_platform_record) == 160);
 	KASSERT(dev->native_identity == NULL);
 	maj = cdevsw_lookup_major(&drm_cdevsw);
 	if (maj == NODEVMAJOR || dev->primary == NULL)
 		return -ENODEV;
 
 	identity = kmem_zalloc(sizeof(*identity), KM_SLEEP);
-	r = &identity->record;
-	*r = dev->native_pci;
-	r->flags |= DRM_NATIVE_PRIMARY;
-	r->primary_major = maj;
-	r->primary_minor = dev->primary->index;
-	if (dev->render != NULL) {
-		r->flags |= DRM_NATIVE_RENDER;
-		r->render_major = maj;
-		r->render_minor = dev->render->index;
+	if (dev->native_pci.version == DRM_NATIVE_PCI_VERSION) {
+		r = &identity->record;
+		*r = dev->native_pci;
+		r->flags |= DRM_NATIVE_PRIMARY;
+		r->primary_major = maj;
+		r->primary_minor = dev->primary->index;
+		if (dev->render != NULL) {
+			r->flags |= DRM_NATIVE_RENDER;
+			r->render_major = maj;
+			r->render_minor = dev->render->index;
+		}
+		record = r;
+		length = sizeof(*r);
+		leaf = "identity";
+	} else {
+		p = &identity->platform;
+		*p = dev->native_platform;
+		p->flags |= DRM_NATIVE_PRIMARY;
+		p->primary_major = maj;
+		p->primary_minor = dev->primary->index;
+		if (dev->render != NULL) {
+			p->flags |= DRM_NATIVE_RENDER;
+			p->render_major = maj;
+			p->render_minor = dev->render->index;
+		}
+		record = p;
+		length = sizeof(*p);
+		leaf = "platform";
 	}
 
 	/* The shared permanent parent belongs to the DRM core. */
@@ -224,10 +250,10 @@ drm_sysctl_identity_register(struct drm_device *dev)
 	for (i = 0; i < __arraycount(nodes); i++) {
 		if (nodes[i] == NULL)
 			continue;
-		snprintf(name, sizeof(name), "identity%d", nodes[i]->index);
+		snprintf(name, sizeof(name), "%s%d", leaf, nodes[i]->index);
 		error = sysctl_createv(&identity->log, 0, &root, NULL, 0,
-		    CTLTYPE_STRUCT, name, SYSCTL_DESCR("DRM native PCI identity"),
-		    NULL, 0, r, sizeof(*r), CTL_CREATE, CTL_EOL);
+		    CTLTYPE_STRUCT, name, SYSCTL_DESCR("DRM native identity"),
+		    NULL, 0, record, length, CTL_CREATE, CTL_EOL);
 		if (error)
 			goto fail;
 	}

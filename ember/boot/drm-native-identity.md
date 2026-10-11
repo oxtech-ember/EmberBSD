@@ -90,3 +90,19 @@ must use the matched libdrm for `drmGetDevices2`, `drmGetDevice2(render_fd)`,
 render-name and node-type lookup, with no primary master and no global PCI
 access. Retest negative KMS permission checks. These changes do not negotiate
 VIRGL, alter the classic VirtGPU ABI, relax CREATE_DUMB or promote 3D support.
+
+## Platform devices
+
+Native V3D also publishes `hw.drm2.platform<minor>`. Its separate version-1
+record is 160 bytes: version, length, flags, bus type (2), primary major/minor,
+render major/minor, then two NUL-terminated 64-byte strings. `fullname` names
+the actual autoconf instance; `compatible` is `acpi:BCM2850`, the ACPI ID
+accepted by the BCM2712 attachment. This does not fabricate a device tree.
+Flags 1 and 2 describe actual registered nodes. The PCI record is unchanged.
+
+Both leaves contain the same immutable snapshot. Platform registration uses
+the same unwind, reader-drain and unregister ordering as PCI. The host
+contract covers both schemas, independent minor indices, all three sysctl
+allocation failures and concurrent teardown. Matching Ports libdrm maps this
+record to `DRM_BUS_PLATFORM`; malformed or inaccessible metadata cannot fall
+back to legacy discovery. Physical platform enumeration remains a separate gate.

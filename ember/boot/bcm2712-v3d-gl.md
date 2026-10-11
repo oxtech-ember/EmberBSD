@@ -18,7 +18,8 @@ automatic overflow allocation and arbitrary-job recovery are not promised.
 The first hardware gate is a userspace clear/store command list with guarded
 buffers. The next is real Mesa shaders and pixel readback, with explicit V3D
 identity and no software fallback. Rendering and display/KMS are separate:
-Plasma requires a usable presentation path after offscreen OpenGL passes.
+The selected presentation target is a remote desktop: a virtual Wayland output
+with hardware rendering and remote input/capture, after offscreen OpenGL passes.
 
 - [x] Add actual-source CL contracts for validation, both dependencies,
   completion IRQ identity/count, cache order, memory ownership and failure.
