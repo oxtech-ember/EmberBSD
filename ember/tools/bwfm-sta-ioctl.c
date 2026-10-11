@@ -88,6 +88,23 @@ reject(unsigned long command, int expected, const char *name)
 }
 
 static void
+child_expect(const char *name, int result, int expected_result,
+    int expected_errno)
+{
+	int saved_errno = result < 0 ? errno : 0;
+
+	if (result == expected_result && saved_errno == expected_errno)
+		return;
+	dprintf(STDERR_FILENO,
+	    "FAIL: authorization child %s: result=%d errno=%d (%s);"
+	    " expected result=%d errno=%d; uid=%lu euid=%lu gid=%lu egid=%lu\n",
+	    name, result, saved_errno, strerror(saved_errno), expected_result,
+	    expected_errno, (unsigned long)getuid(), (unsigned long)geteuid(),
+	    (unsigned long)getgid(), (unsigned long)getegid());
+	_exit(EXIT_FAILURE);
+}
+
+static void
 get_info(void)
 {
 	const uint32_t caps = IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM;
@@ -129,9 +146,17 @@ get_info(void)
 int
 main(int argc, char **argv)
 {
-	static const uint16_t ops[] = { IEEE80211_STA_ENABLE, IEEE80211_STA_DISABLE,
-	    IEEE80211_STA_TX, IEEE80211_STA_CANCEL_TX, IEEE80211_STA_SCAN,
-	    IEEE80211_STA_CANCEL_SCAN };
+	static const struct {
+		uint16_t op;
+		const char *name;
+	} ops[] = {
+		{ IEEE80211_STA_ENABLE, "SIOCS80211 ENABLE" },
+		{ IEEE80211_STA_DISABLE, "SIOCS80211 DISABLE" },
+		{ IEEE80211_STA_TX, "SIOCS80211 TX" },
+		{ IEEE80211_STA_CANCEL_TX, "SIOCS80211 CANCEL_TX" },
+		{ IEEE80211_STA_SCAN, "SIOCS80211 SCAN" },
+		{ IEEE80211_STA_CANCEL_SCAN, "SIOCS80211 CANCEL_SCAN" }
+	};
 	int status;
 	pid_t child, waited;
 
@@ -203,25 +228,38 @@ main(int argc, char **argv)
 		size_t i;
 		gid_t group = 65534;
 
-		if (setgroups(1, &group) != 0 || setgid(group) != 0 ||
-		    setuid(65534) != 0 || geteuid() == 0)
-			_exit(2);
+		child_expect("setgroups", setgroups(1, &group), 0, 0);
+		child_expect("setgid", setgid(group), 0, 0);
+		child_expect("setuid", setuid(65534), 0, 0);
+		child_expect("getuid", (int)getuid(), 65534, 0);
+		child_expect("geteuid", (int)geteuid(), 65534, 0);
+		child_expect("getgid", (int)getgid(), (int)group, 0);
+		child_expect("getegid", (int)getegid(), (int)group, 0);
 		for (i = 0; i < sizeof(ops) / sizeof(ops[0]); i++) {
-			reset(ops[i]);
+			reset(ops[i].op);
 			/* Keep each request invalid even if authorization regresses. */
 			req.flags = UINT32_C(0x80000000);
 			req.len = 1;
-			if (ioctl(fd, SIOCS80211, &ireq) != -1 || errno != EPERM)
-				_exit(3);
+			child_expect(ops[i].name, ioctl(fd, SIOCS80211, &ireq),
+			    -1, EPERM);
 		}
 		reset(IEEE80211_STA_GET);
-		_exit(ioctl(fd, SIOCG80211, &ireq) == 0 ? 0 : 4);
+		/* sys/net/if.c gates both 80211 ioctls with SETPRIV authorization. */
+		child_expect("SIOCG80211 GET", ioctl(fd, SIOCG80211, &ireq),
+		    -1, EPERM);
+		_exit(EXIT_SUCCESS);
 	}
 	do {
 		waited = waitpid(child, &status, 0);
 	} while (waited == -1 && errno == EINTR);
-	check(waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "unprivileged GET works and all six mutations return EPERM");
+	check(waited == child, "wait for authorization child");
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS)
+		fprintf(stderr, "FAIL: authorization child exit=%d signal=%d\n",
+		    WIFEXITED(status) ? WEXITSTATUS(status) : -1,
+		    WIFSIGNALED(status) ? WTERMSIG(status) : 0);
+	errno = 0;
+	check(WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS,
+	    "unprivileged GET and all six mutations return EPERM");
 	get_info();
 	check(req.flags == before.flags && req.freq == before.freq &&
 	    req.generation == before.generation && req.len == before.len &&
