@@ -550,6 +550,14 @@ fv3d_check_event(bool completed, uint32_t *snapshot, bool *valid)
 	    atomic_load_relaxed(&fv3d.tfuc_events) != (completed ? 1u : 0u) ||
 	    (uint8_t)((cs >> FV3D_TFU_CVTCT_SHIFT) -
 	    fv3d.tfu_cvt_before) != (completed ? 2 : 1)) {
+		aprint_normal_dev(fv3d.dev, "event snapshot: good=%u "
+		    "HUB_STS=%#x TFU_CS=%#x CVTCT baseline=%u "
+		    "events=%u fault-events=%u TFUC-events=%u\n",
+		    (unsigned int)completed, status, cs,
+		    (unsigned int)fv3d.tfu_cvt_before,
+		    atomic_load_acquire(&fv3d.events),
+		    atomic_load_relaxed(&fv3d.fault_events),
+		    atomic_load_relaxed(&fv3d.tfuc_events));
 		fv3d.verdict = "unexpected fault/completion event or counter";
 		return EIO;
 	}
