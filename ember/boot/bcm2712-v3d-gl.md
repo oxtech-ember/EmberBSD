@@ -26,7 +26,7 @@ Plasma requires a usable presentation path after offscreen OpenGL passes.
 - [x] Implement CL admission/execution in the native driver and ioctl table.
   Check optional binning, repeated jobs, same-handle fences, close races and
   every failing register operation. Run static and memory analysis.
-- [ ] Cross-build a matched kernel and userspace clear/store acceptance tool.
+- [x] Cross-build a matched kernel and userspace clear/store acceptance tool.
   Review ownership and MMIO sequencing before physical execution. Preserve
   and verify the ordinary kernel/module bundle for recovery.
 - [ ] Add V3D to the canonical current Mesa recipe through EmberBSD-Ports.
@@ -56,7 +56,8 @@ binary syncobj, BO and UAPI regressions pass. Fresh review exposed a dependency
 snapshot race: closing an aliased syncobj in the first input wait prevented
 capture of the second input. The regression failed before the repair. Both
 input fences and the output reference are now retained before any wait.
-These results do not establish hardware CL or Mesa acceptance.
+The subsequent hardware CL result is recorded below; Mesa acceptance remains
+a separate gate.
 
 ## Reproduce the native CL gate
 
@@ -72,8 +73,37 @@ The builder extracts the unchanged, accepted queue-probe packet generator.
 Record the actual base headers, libraries and compiler provenance. On CM5,
 run `./cl-check /dev/dri/renderD128` with the matched kernel/module bundle.
 It checks 325 bin/render pairs, 1,331,200 pixels, command/BO guard regions,
-binary fences, two clients and CL/TFU/CL transitions. These are intended
-acceptance counts until a successful target execution is recorded.
+binary fences, two clients and CL/TFU/CL transitions.
+
+## Physical CL acceptance, 2026-10-11
+
+At 13:29:45 UTC, CM5 Rev 1.0 / BCM2712 D0 (4 GiB, 64 GB eMMC) on the
+Waveshare CM5-NANO-B passed the checker in 0.55 seconds, exit 0. The existing
+UEFI was preserved; its source and carrier PCB revisions remain unknown.
+All 325 bin/render pairs, 1,331,200 pixel values, guards, fences, two clients
+and 32 TFU copies passed. No engine-error diagnostic appeared in the log.
+This short clear/store check is not a shader, Mesa, KMS or desktop result.
+
+GCC 16.2.0 cross-built `EMBERV3DRENDER` from commit
+`246b46a2a718b7f4bba24b1e7423f6031fb95c5b` on macOS. Source export,
+compiler provenance, ELF/Image/debuglink/CTF and matching module imports
+passed verification. The ordinary kernel/module backups remain preserved.
+The checker uses the previously recorded partial device ABI inputs; the
+installed base revision remains unknown, so this is not full SDK acceptance.
+
+| Artifact | SHA256 |
+| --- | --- |
+| Kernel ELF | `faa71db5d35c65720d16e9307f6c89a3b42842dd1971ce2ab21638734c8dca30` |
+| AArch64 Image | `ea66e528e9b3f95e54c47c6da2ae09972a5209c72bd223d8b0ca580e164ed4ce` |
+| Static check | `65d19a58340099f6c3bc957a3b115e0e24537e41e5f153134792a4254308472c` |
+| Full kernel/test log | `546ffcb79e91b7b738007efb4dfd4561b0a2676a4096c29e36c1d1e5511b3e31` |
+
+Cppcheck 2.22.0 with actual target preprocessing retained 17 findings each
+in the job/driver units, with no new diagnostics against the accepted sync
+baseline. GCC 16.2 Analyzer emitted none. Apple Clang 21 retained the same
+six inherited header/macro findings. Valgrind is unavailable on these ARM64
+hosts; ASan/UBSan covered the host model instead. These tools do not prove
+device cache behavior. The hardware pixel/guard check supplies that evidence.
 
 Protocol sources: the existing queue/IRQ probes and their pinned Linux
 register references, plus the original Mesa 26.2.4 archive. Preserve licenses

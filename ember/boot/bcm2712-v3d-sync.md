@@ -20,8 +20,9 @@ and DMA ownership transfer. Uncertain execution errors signal an error fence,
 poison the shared engine and retain GPU-owned BOs until reboot. Fence context,
 sequence and lock belong to the device; hot removal remains unsupported.
 
-`DRIVER_SYNCOBJ` is enabled. Timeline syncobj, general CL, PRIME and KMS are
-not enabled. `SUPPORTS_CSD` remains zero until the complete Mesa contract is
+`DRIVER_SYNCOBJ` is enabled. The later [native CL gate](bcm2712-v3d-gl.md)
+adds serialized bin/render and retains both input fences before either wait.
+Timeline syncobj, PRIME and KMS are not enabled. `SUPPORTS_CSD` remains zero until the complete Mesa contract is
 accepted. The queue is synchronous and bounded; it is not a general scheduler.
 
 ## Shared DRM wait repairs
@@ -136,7 +137,7 @@ flag. Repair and test it before enabling consumers of that branch; timeline
 capability remains off. Unlocking the timeline WAIT descriptor is not timeline
 acceptance. Independent review found no further defect in the accepted path.
 
-Mesa/Vulkan execution, general CL, PRIME, KMS, arbitrary-job recovery and an
+Mesa/Vulkan execution, PRIME, KMS, arbitrary-job recovery and an
 accelerated desktop remain unverified. The ordinary kernel and matching
 Ethernet module are restored after the trial; GPU support there remains a
 passive observer. Restoration was verified at 12:55:15 UTC.

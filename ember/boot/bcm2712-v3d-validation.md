@@ -7,7 +7,8 @@ GPU support, and the accepted hardware logs apply to their recorded kernels.
 The next stage, [native DRM/GEM and bounded userspace TFU](bcm2712-v3d-render.md),
 passed a separate physical acceptance. The subsequent
 [native CSD path](bcm2712-v3d-csd.md) passed 389 verified QPU dispatches.
-Mesa integration remains next.
+The [native CL path](bcm2712-v3d-gl.md) then passed 325 userspace bin/render
+pairs with 1,331,200 verified pixels. Mesa integration remains next.
 
 The 2026-10-11 review reproduced false success in the interrupt and fault
 experiments. It also found that the combined DMA/queue configuration continued

@@ -513,7 +513,9 @@ on every board in the hardware catalog.
   guarded memory, concurrent clients and CSD/TFU/CSD transitions. A subsequent
   [binary synchronization check](ember/boot/bcm2712-v3d-sync.md) passed standard
   syncobj operations, finite waits, 325 CSD submissions and 64 CSD/TFU chains,
-  with 5,184 verified GPU results. The ordinary
+  with 5,184 verified GPU results. The [native bin/render interface](ember/boot/bcm2712-v3d-gl.md)
+  then passed 325 userspace CL pairs, 1,331,200 checked pixels and 32 TFU
+  copies, including guards and binary fences. The ordinary
   kernel remains a passive observer. General job recovery, Mesa rendering,
   Vulkan and an accelerated desktop remain unverified.
 

@@ -28,7 +28,9 @@ A device mutex serializes jobs. For TFU, the MMU maps only two referenced BOs:
 source read-only, destination writable. The first admitted payload is the
 accepted 64x64 R32F TFU copy. Validate every register, flag, reserved field,
 handle and range before touching the GPU. Unsupported formats, extensions,
-sync objects and CL submissions fail explicitly. The subsequent
+sync objects and CL submissions failed explicitly in the initial TFU stage.
+The later [syncobj](bcm2712-v3d-sync.md) and [CL](bcm2712-v3d-gl.md) stages
+add binary dependencies and bin/render execution. The subsequent
 [CSD path](bcm2712-v3d-csd.md) shares the serialized engine and maps only its
 referenced BOs. General TFU support
 is not advertised to Mesa until its full contract is implemented.
