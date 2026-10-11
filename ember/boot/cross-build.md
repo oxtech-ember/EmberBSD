@@ -156,15 +156,14 @@ with matching modules and typed FBT arguments from the GCC16 kernel's CTF.
 On 2026-10-11, Debian 13/x86_64 built the full `EMBER64` kernel, its image,
 four matched modules, and three DTBs with four workers. Both host GCC/G++
 and the Ports `--kernel` cross compiler were 16.2.0. The source export was
-`4b554e0b49c65a8f1b0921007624f9a34bafbbd7`. All ten portable contracts passed,
+`d3cd85dbbcce4307f156e63f87e5ec29d58d7b99`. All ten portable contracts passed,
 including the V3D causal mutants and production Wi-Fi link checks.
 All nine artifact SHA256 checks passed. The kernel SHA256 is
-`e362b8952635e14adbd3b586c01ad4d8227134b6a7c4ec7df4cac70f9adfa8df`.
+`afdea5b38fb294960efb6e0d0e1c986fdfc66b0abf7912fe8bdf2ed9652c42d4`.
 Strict compiler warnings remained enabled. Kernel mode uses no application
 sysroot and selects GCC16 explicitly.
 
-The final publication changes only contributor and board/build documentation
-relative to that tested source revision. This accepts the Linux cross-build,
+This accepts the final merged V3D changes and the Linux cross-build,
 not boot, physical-board behavior, native contracts, or a complete GCC16 userland.
 
 ## DWARF5 and CTF
