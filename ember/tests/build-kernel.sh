@@ -10,6 +10,19 @@ mkdir -p "$work/src/ember/tools" "$work/bin" "$work/src/tools" \
     "$work/src/sys/external/gpl2/dts/dist"
 cp "$repo/ember/build-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
+# GPU contracts are separate executables in the dispatcher. Model their
+# status here; their actual-source hardware fixtures run in their own suites.
+for contract in bcm2712-v3d bcm2712-v3d-takeover bcm2712-v3d-dma \
+    bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault; do
+    cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
+#!/bin/sh
+set -eu
+echo "gpu-contract ${0##*/} $*" >> "$TEST_LOG"
+test "$#" -eq 1
+test "$1" = "$TEST_ROOT/src"
+test "${FAIL_AT:-}" != gpu-contract
+SH
+done
 : > "$work/src/tools/Makefile"
 : > "$work/src/share/mk/bsd.own.mk"
 : > "$work/src/sys/arch/evbarm/conf/EMBER64"
@@ -123,7 +136,8 @@ grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
 test "$(grep -c '^contract ' "$TEST_LOG")" -eq 2
-for failure in tools module cpp dtb contract publish; do
+test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 6
+for failure in tools module cpp dtb contract gpu-contract publish; do
     printf stale > "$TEST_OUT/netbsd-EMBER64"
     if FAIL_AT=$failure sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
         echo "accepted failure: $failure" >&2; exit 1
@@ -143,6 +157,7 @@ grep -q native-make "$TEST_LOG"
 ! grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
 test "$(grep -c '^contract ' "$TEST_LOG")" -eq 6
+test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 6
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi
@@ -157,4 +172,4 @@ fi
 grep -q 'full source' "$work/run.log"
 test ! -e "$TEST_OUT/netbsd-EMBER64"
 test ! -e "$TEST_OUT/bcm2712btcom.kmod"
-echo 'PASS: cross/native routing, matched module headers, external tools, six contracts, failed-build outputs'
+echo 'PASS: cross/native routing, matched module headers, external tools, base/GPU contract dispatch, failed-build outputs'

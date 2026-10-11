@@ -1,15 +1,19 @@
 # BCM2712 V3D MMU fault recovery experiment: handoff design
 
 Status on 2026-10-11: **implemented and contracted**; the first physical
-boot delivered the fault (PTI and CAP bits as one interrupt) and ran the
+boot delivered the fault (PTI and WRV bits, recorded as `0x30`) and ran the
 pinned recovery, but the following good job faulted again with the same
 bits instead of completing — the experiment honestly reported `good job
 never completed after recovery` and the board was restored. Hardware
-fault-recovery acceptance is **open**: the next iteration needs the
-post-mortem registers (MMU_CTL, TFU_CS, VIO_ID, VIO_ADDR) in the failure
-line and a TFU-busy check before resubmission; a stuck-busy TFU after an
-aborted faulting job or a W1C clear that does not stick on this silicon
-are the two leading hypotheses.
+fault-recovery acceptance is **open**. The failure path now records
+MMU_CTL, TFU_CS, VIO_ID and VIO_ADDR and rejects a busy TFU before
+resubmission. The next physical run must distinguish a stuck-busy TFU
+after an aborted job from a W1C clear that does not stick on this silicon.
+These remain hypotheses, not an established cause.
+The [acceptance guards](bcm2712-v3d-validation.md) add regressions for
+unexpected completion, fault identity, duplicate events and collateral
+DMA writes. These checks and richer diagnostics do not establish physical
+recovery; the failed hardware result remains open.
 This is stage C after the accepted [translated DMA](bcm2712-v3d-dma.md),
 [bin/render queue](bcm2712-v3d-binrender-plan.md) and
 [interrupt](bcm2712-v3d-irq-plan.md) experiments: a deliberately faulting
@@ -36,7 +40,7 @@ job on the same boot.
 
 ## Scope and design
 
-A separate opt-in `BCM2712_V3D_FAULT_PROBE` and proposed `EMBERV3DFAULT`
+A separate opt-in `BCM2712_V3D_FAULT_PROBE` and `EMBERV3DFAULT`
 configuration, after a completed takeover and with no other V3D probe
 enabled. One HUB handler (established first, storm-protected), the proven
 TFU payload, six objects: page table, scratch, actual and alias source

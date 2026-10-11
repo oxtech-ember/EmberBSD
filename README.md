@@ -493,9 +493,12 @@ on every board in the hardware catalog.
   through the published page table. A third opt-in
   [interrupt experiment](ember/boot/bcm2712-v3d-irq-plan.md) delivered the
   TFU and bin/render completions as real ACPI interrupts on both GPU lines,
-  with exactly-once acknowledgements and self-masking storm protection; the
+  with handler acknowledgements and self-masking storm protection; the
   stand firmware's swapped core/hub line names were identified by wire
-  evidence. The ordinary kernel remains a passive observer. GPU fault
+  evidence. The [acceptance guards](ember/boot/bcm2712-v3d-validation.md)
+  add failure-propagation, completion-count and DMA-integrity regressions;
+  their host checks do not replace a new physical acceptance run.
+  The ordinary kernel remains a passive observer. GPU fault
   recovery, multi-job queues, a DRM render interface, Mesa rendering and
   acceleration remain unverified.
 
