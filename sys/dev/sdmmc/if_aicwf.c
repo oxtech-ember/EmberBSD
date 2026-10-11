@@ -412,6 +412,12 @@ struct aicwf_softc {
 	callout_t		sc_reorder_ch;
 	callout_t		sc_alive_ch;
 	struct work		sc_alive_work;
+	struct aicwf_ft_bss {
+		uint8_t		bssid[ETHER_ADDR_LEN];
+		uint16_t	mdid;
+		uint8_t		r0kh_len;
+		uint8_t		r0kh[45];
+	}			sc_ft_bss[4];
 	volatile u_int		sc_alive_rx;	/* ticks of last RX frame */
 	u_int			sc_alive_misses;
 	bool			sc_alive_queued;
@@ -1282,6 +1288,19 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 		return;
 	scan.sp_chan = scan.sp_bchan = chan;
 
+	const uint8_t *bssid = wh.i_addr3;
+	struct aicwf_ft_bss *ft = NULL;
+	u_int mdid = 0;
+
+	for (u_int k = 0; k < __arraycount(sc->sc_ft_bss); k++) {
+		if (IEEE80211_ADDR_EQ(sc->sc_ft_bss[k].bssid, bssid)) {
+			ft = &sc->sc_ft_bss[k];
+			break;
+		}
+		if (ft == NULL && sc->sc_ft_bss[k].mdid == 0)
+			ft = &sc->sc_ft_bss[k];
+	}
+
 	for (frm += fixed; efrm - frm >= 2 && efrm - frm >= 2 + frm[1];
 	    frm += 2 + frm[1]) {
 		uint8_t * const ie = __UNCONST(frm);
@@ -1302,6 +1321,20 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 		case IEEE80211_ELEMID_HTINFO:
 			if (frm[1] >= 22)
 				ht_chan = frm[2];
+			break;
+		case 54:	/* Mobility Domain, 802.11r */
+			/* 802.11r: MDID and the R0 key holder the AP offers. */
+			if (frm[1] >= 3) {
+				mdid = le16dec(frm + 2);
+				if (ft != NULL) {
+					memcpy(ft->bssid, bssid,
+					    ETHER_ADDR_LEN);
+					ft->mdid = mdid;
+					ft->r0kh_len = MIN(frm[1] - 3,
+					    sizeof(ft->r0kh));
+					memcpy(ft->r0kh, frm + 5, ft->r0kh_len);
+				}
+			}
 			break;
 		case IEEE80211_ELEMID_XRATES:
 			scan.sp_xrates = ie;
@@ -1720,6 +1753,16 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 		sc->sc_connected = true;
 		sc->sc_alive_rx = ticks;
 		sc->sc_alive_misses = 0;
+		for (u_int k = 0; k < __arraycount(sc->sc_ft_bss); k++) {
+			if (sc->sc_ft_bss[k].mdid != 0 && IEEE80211_ADDR_EQ(
+			    sc->sc_ft_bss[k].bssid, ic->ic_bss->ni_bssid)) {
+				device_printf(sc->sc_dev,
+				    "802.11r mobility domain 0x%04x, R0KH len %u\n",
+				    sc->sc_ft_bss[k].mdid,
+				    sc->sc_ft_bss[k].r0kh_len);
+				break;
+			}
+		}
 		/*
 		 * net80211 tells the supplicant about the association
 		 * only on the way from ASSOC to RUN.

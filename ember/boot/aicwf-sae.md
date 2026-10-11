@@ -151,6 +151,24 @@ driver is not associated, and a single in-flight work item bounds the
 teardown. Run `sh ember/tests/aicwf-alive.sh` for the decision math,
 miss accounting and single-flight checks.
 
+## 802.11r groundwork
+
+The mesh advertises fast transitions, so the FT groundwork landed in two
+pieces. The scan parser now records each BSSID's Mobility Domain element
+(element 54): MDID and R0KH-ID land in a small per-softc cache, and the
+driver prints the mobility domain when it associates with an 802.11r-capable
+BSS - the live marker for whether a network actually offers FT. The FT key
+hierarchy (KDF-Hash-256 with labels FT-R0/FT-R1, PMK-R0/R1 and their names
+per 802.11r clause 13) is implemented and verified in
+`ember/tools/aicwf-ft.c` against FIPS 180-2, RFC 4231 and independently
+generated cross-vectors; run `sh ember/tests/aicwf-ft.sh`.
+
+Not implemented yet: SAE-FT authentication on roaming, PMK-R0 derivation
+wired to the live SAE PMK, and the reassociation exchange with the FTIE.
+The vendor firmware advertises SM_FT_AUTH_IND/RSP in its message enum but
+this vendor drop carries no handler or struct for them, so host-side
+control of the exchange is the planned route.
+
 ## Protocol provenance
 
 The wire layout was inspected in Radxa's AIC8800 SDIO driver at revision
