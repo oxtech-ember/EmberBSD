@@ -262,10 +262,13 @@ on every board in the hardware catalog.
   passes on the host. Matching [Qt 6.12 cross-build generators](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/cross)
   build and pass functional checks on macOS/arm64. Target
   [Qtbase, SVG, ShaderTools, ImageFormats and LanguageServer packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/qt-packages.md)
-  pass cross-build, staging and sysroot installation checks. Qtbase includes
+  pass cross-build, staging and sysroot installation checks. An installed
+  [CM5 Core/Gui/SVG consumer](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/qt-consumer)
+  passes thread signals, resources, image pixels, plugin errors and package
+  reinstallation; 75 live library/plugin hashes match the common sysroot. Qtbase includes
   Wayland/EGL and GBM; current networking
   dependencies pass [focused CM5 API checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/network-dependencies.md).
-  Remaining Qt modules, target application checks, playback and HDMI/remote
+  Quick, accelerated Qt, remaining module runtimes, playback and HDMI/remote
   Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
   CM5 still reports no HDMI hotplug in its pre-OS firmware log after a cold boot.\n  Neither result establishes accelerated scanout.
