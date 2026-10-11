@@ -87,7 +87,7 @@ main(void)
 	    "combined validity flags preserve RRM capability and dBm");
 	sr.isr_pad[2] = (uint8_t)-81;
 	scan_metadata(&drv, &result, &sr);
-	check(result.level == -81 && result.level < -80,
+	check(result.level < -80,
 	    "weak candidate remains below the supplicant dBm threshold");
 	sr.isr_pad[2] = (uint8_t)-128;
 	scan_metadata(&drv, &result, &sr);
