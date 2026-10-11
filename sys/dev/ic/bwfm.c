@@ -1143,6 +1143,8 @@ bwfm_report_cb(struct bwfm_softc *sc)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct bwfm_sta_info sta;
 	uint8_t bssid[ETHER_ADDR_LEN] = { 0 };
+	uint8_t mask[4 + BWFM_EVENT_MASK_LEN] = { 1, 0, 0,
+	    BWFM_EVENT_MASK_LEN };
 	uint32_t value = 0;
 	unsigned int i;
 	int error;
@@ -1159,6 +1161,14 @@ bwfm_report_cb(struct bwfm_softc *sc)
 	    sc->sc_link_reason, sc->sc_link_flags);
 	if ((sc->sc_if.if_flags & IFF_RUNNING) == 0 || ic->ic_bss == NULL)
 		return;
+	if (sc->sc_sae_caps != 0) {
+		error = bwfm_fwvar_var_get_data(sc, "event_msgs_ext", mask,
+		    sizeof(mask));
+		printf("%s: event mask error %d version %u command %u"
+		    " length %u max %u disconnect bits %02x/%02x/%02x\n",
+		    DEVNAME(sc), error, mask[0], mask[1], mask[2], mask[3],
+		    mask[4], mask[5], mask[6]);
+	}
 	error = bwfm_fwvar_cmd_get_data(sc, BWFM_C_GET_BSSID,
 	    bssid, sizeof(bssid));
 	printf("%s: radio bssid error %d matches %d\n", DEVNAME(sc), error,
