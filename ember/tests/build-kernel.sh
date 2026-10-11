@@ -1,6 +1,9 @@
 #!/bin/sh
+# Origin: EmberBSD (AI-assisted), kernel build orchestration regression.
 # Exercise build orchestration without substituting these fixtures for a build.
 set -eu
+# Fixtures select their own build mode and toolchain, independent of the shell.
+unset EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/ember-build-kernel.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM

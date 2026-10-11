@@ -490,34 +490,36 @@ fixture_expected_rcl(uint8_t *out, uint32_t rcl_va)
 	unsigned int o, generic_start, generic_end;
 
 	memset(out, 0, QV3D_RCL_SIZE);
-#define P(op, payload) (out[at] = (op), o = (at + 1) * 8, \
-    memset(out + at + 1, 0, (payload)), at += 1 + (payload), o)
+#define P(op, payload) do { \
+	out[at] = (op); o = (at + 1) * 8; \
+	memset(out + at + 1, 0, (payload)); at += 1 + (payload); \
+} while (0)
 #define F(start, size, value) do { \
 	unsigned int _b = o + (start), _v = 0; _v = (unsigned)(value); \
 	for (unsigned int _i = 0; _i < (size); _i++) \
 		if ((_v >> _i) & 1) \
 			out[(_b + _i) / 8] |= 1 << ((_b + _i) % 8); \
 } while (0)
-	o = P(121, 8);		/* COMMON */
+	P(121, 8);		/* COMMON */
 	F(0, 3, 0); F(4, 4, 0); F(8, 16, 64); F(24, 16, 64);
 	F(44, 1, 1); F(46, 1, 1); F(52, 3, 3); F(55, 3, 3);
-	o = P(121, 8);		/* RENDER TARGET PART1 */
+	P(121, 8);		/* RENDER TARGET PART1 */
 	F(0, 3, 2); F(3, 3, 0); F(7, 11, 0); F(18, 7, 31);
 	F(25, 2, 0); F(27, 5, 8); F(32, 32, 0x305e7b4c);
-	o = P(121, 8);		/* ZS CLEAR VALUES */
+	P(121, 8);		/* ZS CLEAR VALUES */
 	F(0, 4, 1);
-	o = P(126, 1);		/* TILE LIST INITIAL BLOCK SIZE */
+	P(126, 1);		/* TILE LIST INITIAL BLOCK SIZE */
 	F(0, 2, 1); F(2, 1, 1);
-	o = P(123, 5 - 1);	/* MULTICORE TILE LIST SET BASE */
+	P(123, 5 - 1);		/* MULTICORE TILE LIST SET BASE */
 	F(0, 4, 0); F(6, 26, default_bases[QV3D_OBJ_TILE_ALLOC] >> 6);
-	o = P(122, 8);		/* MULTICORE SUPERTILE CFG */
+	P(122, 8);		/* MULTICORE SUPERTILE CFG */
 	F(0, 8, 0); F(8, 8, 0); F(16, 8, 1); F(24, 8, 1);
 	F(32, 12, 1); F(44, 12, 1); F(61, 3, 0);
 	for (unsigned int pass = 0; pass < 2; pass++) {
-		o = P(124, 3);	/* TILE COORDINATES */
+		P(124, 3);	/* TILE COORDINATES */
 		F(0, 12, 0); F(12, 12, 0);
 		P(26, 0);	/* END OF LOADS */
-		o = P(29, 12);	/* STORE NONE */
+		P(29, 12);	/* STORE NONE */
 		F(0, 4, 8);
 		P(25, 0);	/* CLEAR RENDER TARGETS */
 		P(27, 0);	/* END OF TILE MARKER */
@@ -526,23 +528,23 @@ fixture_expected_rcl(uint8_t *out, uint32_t rcl_va)
 	generic_start = at;
 	P(125, 0);		/* TILE COORDINATES IMPLICIT */
 	P(26, 0);		/* END OF LOADS */
-	o = P(56, 1);		/* PRIM LIST FORMAT: list triangles */
+	P(56, 1);		/* PRIM LIST FORMAT: list triangles */
 	F(0, 6, 2);
-	o = P(54, 4);		/* SET INSTANCEID zero */
+	P(54, 4);		/* SET INSTANCEID zero */
 	F(0, 32, 0);
-	o = P(21, 1);		/* BRANCH TO IMPLICIT TILE LIST */
+	P(21, 1);		/* BRANCH TO IMPLICIT TILE LIST */
 	F(0, 8, 0);
-	o = P(29, 12);		/* STORE RT0 raster rgba8 */
+	P(29, 12);		/* STORE RT0 raster rgba8 */
 	F(0, 4, 0); F(4, 3, 0); F(12, 6, 27);
 	F(28, 20, 256); F(48, 16, 64);
 	F(64, 32, default_bases[QV3D_OBJ_OUTPUT]);
 	P(27, 0);		/* END OF TILE MARKER */
 	P(18, 0);		/* RETURN FROM SUB LIST */
 	generic_end = at;
-	o = P(20, 8);		/* START ADDRESS OF GENERIC TILE LIST */
+	P(20, 8);		/* START ADDRESS OF GENERIC TILE LIST */
 	F(0, 32, rcl_va + generic_start);
 	F(32, 32, rcl_va + generic_end);
-	o = P(23, 2);		/* SUPERTILE COORDINATES, 8-bit fields */
+	P(23, 2);		/* SUPERTILE COORDINATES, 8-bit fields */
 	F(0, 8, 0); F(8, 8, 0);
 	P(13, 0);		/* END OF RENDERING */
 #undef P

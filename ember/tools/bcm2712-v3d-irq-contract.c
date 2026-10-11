@@ -813,19 +813,21 @@ fixture_expected_bcl(uint8_t *out)
 	unsigned int o;
 
 	memset(out, 0, IV3D_BCL_SIZE);
-#define P(op, payload) (out[at] = (op), o = (at + 1) * 8, \
-    memset(out + at + 1, 0, (payload)), at += 1 + (payload), o)
+#define P(op, payload) do { \
+	out[at] = (op); o = (at + 1) * 8; \
+	memset(out + at + 1, 0, (payload)); at += 1 + (payload); \
+} while (0)
 #define F(start, size, value) do { \
 	unsigned int _b = o + (start), _v = (unsigned)(value); \
 	for (unsigned int _i = 0; _i < (size); _i++) \
 		if ((_v >> _i) & 1) \
 			out[(_b + _i) / 8] |= 1 << ((_b + _i) % 8); \
 } while (0)
-	o = P(120, 8);
+	P(120, 8);
 	F(32, 16, 63); F(48, 16, 63); F(8, 3, 3); F(11, 3, 3);
 	F(4, 2, 1); F(2, 2, 1);
 	P(19, 0);
-	o = P(92, 4);
+	P(92, 4);
 	F(0, 32, 0);
 	P(6, 0);
 	P(4, 0);
@@ -885,34 +887,36 @@ fixture_expected_rcl(uint8_t *out, uint32_t rcl_va)
 	unsigned int o, generic_start, generic_end;
 
 	memset(out, 0, IV3D_RCL_SIZE);
-#define P(op, payload) (out[at] = (op), o = (at + 1) * 8, \
-    memset(out + at + 1, 0, (payload)), at += 1 + (payload), o)
+#define P(op, payload) do { \
+	out[at] = (op); o = (at + 1) * 8; \
+	memset(out + at + 1, 0, (payload)); at += 1 + (payload); \
+} while (0)
 #define F(start, size, value) do { \
 	unsigned int _b = o + (start), _v = (unsigned)(value); \
 	for (unsigned int _i = 0; _i < (size); _i++) \
 		if ((_v >> _i) & 1) \
 			out[(_b + _i) / 8] |= 1 << ((_b + _i) % 8); \
 } while (0)
-	o = P(121, 8);
+	P(121, 8);
 	F(0, 3, 0); F(4, 4, 0); F(8, 16, 64); F(24, 16, 64);
 	F(44, 1, 1); F(46, 1, 1); F(52, 3, 3); F(55, 3, 3);
-	o = P(121, 8);
+	P(121, 8);
 	F(0, 3, 2); F(3, 3, 0); F(7, 11, 0); F(18, 7, 31);
 	F(25, 2, 0); F(27, 5, 8); F(32, 32, 0x305e7b4c);
-	o = P(121, 8);
+	P(121, 8);
 	F(0, 4, 1);
-	o = P(126, 1);
+	P(126, 1);
 	F(0, 2, 1); F(2, 1, 1);
-	o = P(123, 4);
+	P(123, 4);
 	F(0, 4, 0); F(6, 26, default_bases[IV3D_OBJ_TILE_ALLOC] >> 6);
-	o = P(122, 8);
+	P(122, 8);
 	F(0, 8, 0); F(8, 8, 0); F(16, 8, 1); F(24, 8, 1);
 	F(32, 12, 1); F(44, 12, 1); F(61, 3, 0);
 	for (unsigned int pass = 0; pass < 2; pass++) {
-		o = P(124, 3);
+		P(124, 3);
 		F(0, 12, 0); F(12, 12, 0);
 		P(26, 0);
-		o = P(29, 12);
+		P(29, 12);
 		F(0, 4, 8);
 		P(25, 0);
 		P(27, 0);
@@ -921,23 +925,23 @@ fixture_expected_rcl(uint8_t *out, uint32_t rcl_va)
 	generic_start = at;
 	P(125, 0);
 	P(26, 0);
-	o = P(56, 1);
+	P(56, 1);
 	F(0, 6, 2);
-	o = P(54, 4);
+	P(54, 4);
 	F(0, 32, 0);
-	o = P(21, 1);
+	P(21, 1);
 	F(0, 8, 0);
-	o = P(29, 12);
+	P(29, 12);
 	F(0, 4, 0); F(4, 3, 0); F(12, 6, 27);
 	F(28, 20, 256); F(48, 16, 64);
 	F(64, 32, default_bases[IV3D_OBJ_OUTPUT]);
 	P(27, 0);
 	P(18, 0);
 	generic_end = at;
-	o = P(20, 8);
+	P(20, 8);
 	F(0, 32, rcl_va + generic_start);
 	F(32, 32, rcl_va + generic_end);
-	o = P(23, 2);
+	P(23, 2);
 	F(0, 8, 0); F(8, 8, 0);
 	P(13, 0);
 #undef P

@@ -87,7 +87,7 @@ for mutation in no-ack no-remask unbounded-wait unmask-before-establish \
         }
         mutation == "skip-scratch-check" &&
         /i < IV3D_SCRATCH_SIZE \/ 4/ {
-            sub(/IV3D_SCRATCH_SIZE \/ 4/, "0")
+            sub(/i < IV3D_SCRATCH_SIZE \/ 4/, "i != 0")
             changed = 1
         }
         mutation == "skip-list-check" &&

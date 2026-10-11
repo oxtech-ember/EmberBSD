@@ -1,4 +1,5 @@
 /*	$NetBSD: if_cemac.c,v 1.45 2024/10/15 00:58:15 lloyd Exp $	*/
+/* Origin: EmberBSD (AI-assisted), CEMAC sysctl node names. */
 
 /*
  * Copyright (c) 2015  Genetec Corporation.  All rights reserved.
