@@ -130,6 +130,27 @@ requires the matching response within 60 seconds. It changes no profile.
 Reassociation interrupts traffic; arrange recovery first on Wi-Fi-only
 boards. This positive probe does not exercise timeout recovery or RF forgery.
 
+## Link-liveness watchdog
+
+A mesh AP steers bands and may drop a silently idle station without any
+deauthentication the firmware would report as SM_DISCONNECT_IND. The driver
+now stamps the tick counter on every received frame, beacons included, and a
+2-second callout checks the stamp while the driver believes it is associated.
+After two consecutive silent checks (10 seconds without any frame from the
+air - about a hundred lost beacons) the watchdog tears the firmware
+association down through the ordinary SM_DISCONNECT_REQ path and returns
+net80211 to scan, which re-associates through the same SAE/PMF supplicant
+path as a fresh join. The firmware's own MM_CONNECTION_LOSS_IND (0x0043)
+routes to the same teardown, and the AP-mode UAPSD housekeeping request
+ME_TRAFFIC_IND_REQ (0x140b) is now recognized and ignored quietly instead of
+logging as an unexpected message.
+
+Recovery interrupts traffic for the rescan duration (observed around ten
+seconds); it does not require userland. The watchdog never fires while the
+driver is not associated, and a single in-flight work item bounds the
+teardown. Run `sh ember/tests/aicwf-alive.sh` for the decision math,
+miss accounting and single-flight checks.
+
 ## Protocol provenance
 
 The wire layout was inspected in Radxa's AIC8800 SDIO driver at revision

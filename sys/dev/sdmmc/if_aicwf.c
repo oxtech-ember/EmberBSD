@@ -141,6 +141,12 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	 AICWF_IF_STA			0
 #define	AICWF_MM_SET_RF_CALIB_REQ	0x0069
 #define	AICWF_MM_SET_RF_CALIB_CFM	0x006a
+
+/* Host-side link liveness: the AP beacons roughly every 102 ms; two
+ * consecutive silent checks at a 2 s cadence mean the association is dead
+ * even though the firmware never raised SM_DISCONNECT_IND. */
+#define	AICWF_ALIVE_PERIOD_MS	2000
+#define	AICWF_ALIVE_SILENT_MS	10000
 #define	AICWF_MM_GET_MAC_ADDR_REQ	0x0073
 #define	AICWF_MM_GET_MAC_ADDR_CFM	0x0074
 #define	AICWF_MM_SET_STACK_START_REQ	0x007b
@@ -155,6 +161,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	 AICWF_STA_NONE			0xff	/* a group key */
 #define	AICWF_MM_KEY_DEL_REQ		0x0026
 #define	AICWF_MM_KEY_DEL_CFM		0x0027
+#define	AICWF_MM_CONNECTION_LOSS_IND	0x0043
 #define	AICWF_MM_CHANNEL_SWITCH_IND	0x0044
 #define	AICWF_MM_CHANNEL_PRE_SWITCH_IND	0x0045
 #define	AICWF_MM_CHANNEL_SURVEY_IND	0x004f
@@ -184,6 +191,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_SM_EXTERNAL_AUTH_IND	0x1806
 #define	AICWF_SM_EXTERNAL_AUTH_RSP	0x1807
 #define	AICWF_SM_EXTERNAL_AUTH_CFM	0x180c
+#define	AICWF_ME_TRAFFIC_IND_REQ		0x140b
 #define	 AICWF_CONNECT_MFP		__BIT(4)
 #define	 AICWF_FEATURE_MFP		__BIT(13)
 #define	 AICWF_AUTH_SAE			3
@@ -402,6 +410,11 @@ struct aicwf_softc {
 	/* Frames of an A-MPDU waiting for the ones before them. */
 	kmutex_t		sc_reorder_lock;
 	callout_t		sc_reorder_ch;
+	callout_t		sc_alive_ch;
+	struct work		sc_alive_work;
+	volatile u_int		sc_alive_rx;	/* ticks of last RX frame */
+	u_int			sc_alive_misses;
+	bool			sc_alive_queued;
 	struct aicwf_reorder {
 		bool		started;
 		uint16_t	head;	/* next sequence number to pass */
@@ -447,6 +460,7 @@ static void	aicwf_scan_result(struct aicwf_softc *, const uint8_t *,
 static void	aicwf_scan_done(struct aicwf_softc *);
 static void	aicwf_connect_ind(struct aicwf_softc *, const uint8_t *,
 		    size_t);
+static void	aicwf_disconnect(struct aicwf_softc *);
 static void	aicwf_disconnect_ind(struct aicwf_softc *);
 static void	aicwf_sae_event(struct aicwf_softc *, bool,
 		    const uint8_t *, size_t);
@@ -665,6 +679,13 @@ aicwf_rx_msg
 	case AICWF_MM_CHANNEL_PRE_SWITCH_IND:
 	case AICWF_MM_CHANNEL_SURVEY_IND:
 		/* The radio moving between channels: nothing to do. */
+		return;
+	case AICWF_ME_TRAFFIC_IND_REQ:
+		/* AP-mode UAPSD housekeeping; a station has nothing to add. */
+		return;
+	case AICWF_MM_CONNECTION_LOSS_IND:
+		device_printf(sc->sc_dev, "firmware reported connection loss\n");
+		aicwf_alive_lost(sc);
 		return;
 	}
 
@@ -1695,6 +1716,8 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 		sc->sc_ap = ind[10];
 		sc->sc_qos = ind[12] != 0;
 		sc->sc_connected = true;
+		sc->sc_alive_rx = ticks;
+		sc->sc_alive_misses = 0;
 		/*
 		 * net80211 tells the supplicant about the association
 		 * only on the way from ASSOC to RUN.
@@ -1716,6 +1739,81 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 }
 
 /* The firmware lost the network or was told to leave it. */
+/* Pure liveness decision: the link counts as dead only while the driver
+ * believes it is associated and no frame (beacons included) arrived for
+ * AICWF_ALIVE_SILENT_MS. */
+static bool
+aicwf_alive_silent(struct aicwf_softc *sc, u_int now)
+{
+	const int delta = (int)(now - sc->sc_alive_rx);
+
+	if (!sc->sc_if_attached || !sc->sc_connected)
+		return false;
+	return delta > (int)mstohz(AICWF_ALIVE_SILENT_MS);
+}
+
+/* The teardown sleeps in the firmware roundtrip: defer it to the taskq. */
+static void
+aicwf_alive_lost(struct aicwf_softc *sc)
+{
+
+	mutex_enter(&sc->sc_lock);
+	if (!sc->sc_alive_queued) {
+		sc->sc_alive_queued = true;
+		workqueue_enqueue(sc->sc_taskq, &sc->sc_alive_work, NULL);
+	}
+	mutex_exit(&sc->sc_lock);
+}
+
+static void
+aicwf_alive_work(struct work *wk, void *arg)
+{
+	struct aicwf_softc * const sc = arg;
+	struct ieee80211com * const ic = &sc->sc_ic;
+	int s;
+
+	mutex_enter(&sc->sc_lock);
+	sc->sc_alive_queued = false;
+	const bool connected = sc->sc_connected && sc->sc_if_attached;
+	mutex_exit(&sc->sc_lock);
+	if (!connected)
+		return;
+
+	device_printf(sc->sc_dev, "no frames from the AP; reconnecting\n");
+	aicwf_disconnect(sc);
+	mutex_enter(&sc->sc_lock);
+	sc->sc_connected = false;
+	sc->sc_alive_misses = 0;
+	mutex_exit(&sc->sc_lock);
+
+	s = splnet();
+	if (ic->ic_state == IEEE80211_S_RUN)
+		ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+	splx(s);
+}
+
+static void
+aicwf_alive_tick(void *arg)
+{
+	struct aicwf_softc * const sc = arg;
+
+	mutex_enter(&sc->sc_lock);
+	if (aicwf_alive_silent(sc, ticks)) {
+		if (++sc->sc_alive_misses >= 2) {
+			sc->sc_alive_misses = 0;
+			if (!sc->sc_alive_queued) {
+				sc->sc_alive_queued = true;
+				workqueue_enqueue(sc->sc_taskq,
+				    &sc->sc_alive_work, NULL);
+			}
+		}
+	} else
+		sc->sc_alive_misses = 0;
+	mutex_exit(&sc->sc_lock);
+
+	callout_schedule(&sc->sc_alive_ch, mstohz(AICWF_ALIVE_PERIOD_MS));
+}
+
 static void
 aicwf_disconnect_ind(struct aicwf_softc *sc)
 {
@@ -2391,6 +2489,8 @@ struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 
 	if (!sc->sc_if_attached || (flags & AICWF_RX_FLAG_UPLOAD) == 0)
 		return;
+	/* Any frame from the air, beacons included, proves the link lives. */
+	sc->sc_alive_rx = ticks;
 	/* Metadata only: protected management bodies may contain key material. */
 	if (mpdu_len >= sizeof(struct ieee80211_frame) &&
 	    (wh[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_MGT &&
@@ -2711,6 +2811,10 @@ aicwf_attach(device_t parent, device_t self, void *aux)
 	mutex_init(&sc->sc_reorder_lock, MUTEX_DEFAULT, IPL_SOFTNET);
 	callout_init(&sc->sc_reorder_ch, CALLOUT_MPSAFE);
 	callout_setfunc(&sc->sc_reorder_ch, aicwf_reorder_timeout, sc);
+	callout_init(&sc->sc_alive_ch, CALLOUT_MPSAFE);
+	callout_setfunc(&sc->sc_alive_ch, aicwf_alive_tick, sc);
+	sc->sc_alive_rx = ticks;
+	callout_schedule(&sc->sc_alive_ch, mstohz(AICWF_ALIVE_PERIOD_MS));
 	evcnt_attach_dynamic(&sc->sc_ev_ampdu, EVCNT_TYPE_MISC, NULL,
 	    device_xname(self), "A-MPDU frames");
 	evcnt_attach_dynamic(&sc->sc_ev_amsdu, EVCNT_TYPE_MISC, NULL,
