@@ -41,9 +41,21 @@ struct bcmv3d_job {
 	struct bcmv3d_bo *src, *dst;
 	void *ih;
 	const char *stage;
-	bool published, poisoned;
+	bool published, poisoned, controller_masked;
 	volatile unsigned int events, irq_error;
 };
+
+static void
+bcmv3d_mask(struct bcmv3d_job *job)
+{
+
+	/* ARM PIC intr_mask/unmask is reference-counted, not idempotent. */
+	if (!job->controller_masked) {
+		acpi_intr_mask(job->ih);
+		job->controller_masked = true;
+	}
+	xc_barrier(0);
+}
 
 static void
 bcmv3d_sync(struct bcmv3d_bo *bo, int ops)
@@ -194,8 +206,7 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *a)
 	int error;
 
 	job->stage = "idle boundary";
-	acpi_intr_mask(job->ih);
-	xc_barrier(0);
+	bcmv3d_mask(job);
 	atomic_store_relaxed(&job->events, 0);
 	atomic_store_relaxed(&job->irq_error, 0);
 	error = bcmv3d_takeover_hub_peek(V3D_TFU_CS, &before);
@@ -219,7 +230,9 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *a)
 			return error;
 	}
 	job->stage = "TFU start";
+	KASSERT(job->controller_masked);
 	acpi_intr_unmask(job->ih);
+	job->controller_masked = false;
 	error = bcmv3d_takeover_hub_poke(V3D_MSK_CLR, V3D_IRQ_ALL);
 	if (error == 0)
 		error = bcmv3d_takeover_hub_poke(V3D_ICFG, a->icfg);
@@ -228,8 +241,7 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *a)
 	job->stage = "completion interrupt";
 	for (i = 0; i < 5 && atomic_load_acquire(&job->events) == 0; i++)
 		tsleep(job, PWAIT, "v3dtfu", MAX(1, mstohz(100)));
-	acpi_intr_mask(job->ih);
-	xc_barrier(0);
+	bcmv3d_mask(job);
 	error = bcmv3d_takeover_hub_poke(V3D_MSK_SET, V3D_IRQ_ALL);
 	if (error != 0)
 		return error;
@@ -323,8 +335,7 @@ bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 	if (error != 0) {
 		job->poisoned = true;
 		(void)bcmv3d_takeover_hub_poke(V3D_MSK_SET, V3D_IRQ_ALL);
-		acpi_intr_mask(job->ih);
-		xc_barrier(0);
+		bcmv3d_mask(job);
 		atomic_store_release(&job->src->error, EIO);
 		atomic_store_release(&job->dst->error, EIO);
 		bcmv3d_diagnose(sc);
@@ -395,8 +406,7 @@ bcmv3d_job_fini(struct bcmv3d_device *sc)
 		return;
 	KASSERT(!job->published && job->src == NULL && job->dst == NULL);
 	if (job->ih != NULL) {
-		acpi_intr_mask(job->ih);
-		xc_barrier(0);
+		bcmv3d_mask(job);
 		acpi_intr_disestablish(job->ih);
 	}
 	if (job->scratch != NULL)
@@ -458,8 +468,7 @@ bcmv3d_job_init(struct bcmv3d_device *sc)
 		error = ENXIO;
 		goto fail;
 	}
-	acpi_intr_mask(job->ih);
-	xc_barrier(0);
+	bcmv3d_mask(job);
 	return 0;
 fail:
 	bcmv3d_job_fini(sc);

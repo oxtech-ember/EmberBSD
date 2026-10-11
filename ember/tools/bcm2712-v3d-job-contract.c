@@ -41,6 +41,7 @@ static void acpi_resource_cleanup(struct acpi_resources *r) { }
 static int (*handler)(void *);
 static void *handler_arg;
 static bool controller_masked, drained;
+static unsigned mask_count;
 static unsigned reg_calls, fail_reg, starts, sleeps, model_case, writes;
 static unsigned flushes;
 static bool src_owned, dst_owned, scratch_owned, ptes_synced;
@@ -51,11 +52,13 @@ static uint32_t regs[0x1240/4];
 static void *acpi_intr_establish_irq(device_t d,struct acpi_irq *r,int ipl,
     bool m,int (*h)(void *),void *a,const char *n)
 { CHECK(!handler); handler=h; handler_arg=a; return &irq; }
-static void acpi_intr_mask(void *h) { controller_masked=true; drained=false; }
+static void acpi_intr_mask(void *h)
+{ mask_count++; controller_masked=true; drained=false; }
 static void xc_barrier(int n) { CHECK(controller_masked); drained=true; }
-static void acpi_intr_unmask(void *h) { CHECK(drained); controller_masked=false; }
+static void acpi_intr_unmask(void *h)
+{ CHECK(drained && mask_count>0); controller_masked=--mask_count!=0; }
 static void acpi_intr_disestablish(void *h)
-{ CHECK(controller_masked && drained); handler=NULL; handler_arg=NULL; }
+{ CHECK(controller_masked && drained); handler=NULL; handler_arg=NULL; mask_count=0; }
 static void wakeup(void *p) { }
 static void delay(unsigned n) { time_ns+=(uint64_t)n*1000; }
 static unsigned mstohz(unsigned n) { return n; }

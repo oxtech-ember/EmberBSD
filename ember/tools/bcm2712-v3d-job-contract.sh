@@ -28,7 +28,7 @@ compile
 cp "$work/job-body.h" "$work/job-good.h"
 ulimit -c 0
 for mutant in flags source-write completion-count busy unmap revoke \
-    prewrite preread postread early-return-to-cpu; do
+    prewrite preread postread early-return-to-cpu nested-mask; do
     awk -v mutant="$mutant" '
         mutant == "flags" { changed += sub(/a->flags != 0/, "false") }
         mutant == "source-write" { changed += sub(/i == 1 \?/, "true ?") }
@@ -44,6 +44,7 @@ for mutant in flags source-write completion-count busy unmap revoke \
         mutant == "early-return-to-cpu" {
             changed += sub(/bcmv3d_ptes\(job, false\);/, "bcmv3d_sync(job->dst, BUS_DMASYNC_POSTREAD); bcmv3d_ptes(job, false);")
         }
+        mutant == "nested-mask" { changed += sub(/if \(!job->controller_masked\)/, "if (true)") }
         { print }
         END { if (changed != 1) exit 1 }
     ' "$work/job-good.h" > "$work/job-body.h"
