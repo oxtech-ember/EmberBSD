@@ -1,9 +1,8 @@
 # BCM2712 native render interface
 
-Status: implemented, cross-built and under physical acceptance. The accepted
-kernel-only DMA, IRQ and single-fault probes are prerequisites. This stage
-establishes a DRM/GEM ownership boundary and a bounded userspace TFU operation
-before general Mesa submissions. It does not yet establish Mesa rendering.
+Status: the bounded userspace path passed physical CM5 acceptance on
+2026-10-11. Native DRM/GEM buffers, mmap isolation and repeated TFU copies
+work in the opt-in kernel. General Mesa submissions remain unsupported.
 
 ## Design
 
@@ -135,7 +134,35 @@ timed out on the first TFU completion. ARM PIC `intr_mask`/`intr_unmask` uses
 a nesting counter. Masking in both initialization and submission left the
 line disabled after one unmask. The driver now tracks its controller-mask
 ownership; the contract models the native counter and rejects the original
-double-mask behavior. A pending physical repeat must validate this change.
+double-mask behavior. The corrected kernel passed the physical repeat below.
+
+## Physical acceptance, 2026-10-11
+
+The board was CM5 Rev 1.0, BCM2712 D0, 4 GiB RAM and 64 GB eMMC on
+Waveshare CM5-NANO-B. Existing UEFI was preserved; its source revision and
+carrier PCB revision are unknown. The cross-build used GCC 16.2.0 on macOS.
+
+The C check completed in 0.18 seconds with exit status 0: zeroed GEM storage,
+per-file handle/mmap denial, mappings surviving handle close, 388 TFU copies,
+full data/guard verification, counter wrap and two concurrent clients.
+The 64 shared-file submit/close races reported 32 successful jobs, 32
+`ENOENT` lookup races and 32 observations of a busy BO. Thus 420 GPU copies
+completed in total. This short check is not a throughput benchmark or soak.
+
+| Artifact | SHA256 |
+| --- | --- |
+| `netbsd-EMBERV3DRENDER` | `0d2bcf8e764023f13c4689a1e7624d5e9a464fe5edc7edbe268bb183df28d76c` |
+| AArch64 Image | `82a84e9ee38113bd5e8384f438183647564d861bb2430b6ff1e71a731683d000` |
+| Check from `878c7f1c2fc4776b9dc3f8e231c5e07450fcb493` | `f027f65db5712b05f8aef9599c7d1bf21613d86cafc9c608ee88c63ca656eb7c` |
+| Captured kernel/test log | `cce678aa28feeb012e7600e55d27ea7a0acfc75606bbf2408bfacfd46a22db2c` |
+
+ELF/Image, debuglink, CTF, source/compiler provenance and matching module
+symbols passed. All four board modules matched the accepted ordinary kernel.
+The check's 67 used base headers, libc, pthread and CRT matched the installed
+CM5 bytes. This is device ABI evidence, not complete sysroot or SDK acceptance.
+The ordinary kernel is restored after the trial. Shader submission, Mesa,
+Vulkan, display modesetting, recovery of arbitrary jobs and a desktop remain
+separate acceptance steps.
 
 ## Source reconstruction
 

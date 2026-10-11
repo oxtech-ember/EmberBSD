@@ -505,9 +505,11 @@ on every board in the hardware catalog.
   passed on CM5: one invalid destination fault, bounded recovery and a
   verified good TFU copy in the same boot, with guarded scratch and intact
   protected buffers. Each submission must reprogram the complete TFU payload.
-  The ordinary kernel remains a passive observer. Multi-job recovery,
-  a DRM render interface, Mesa rendering and an accelerated desktop remain
-  unverified.
+  A native [DRM/GEM render interface](ember/boot/bcm2712-v3d-render.md) now
+  passes bounded userspace TFU acceptance on CM5: 420 verified copies,
+  per-file mmap isolation, counter wrap, concurrent clients and submit/close
+  races. The ordinary kernel remains a passive observer. General job recovery,
+  shaders, Mesa rendering and an accelerated desktop remain unverified.
 
 ### Network diagnostics kit
 

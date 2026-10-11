@@ -4,6 +4,9 @@ The CM5 experiments are separate, opt-in kernels. The ordinary kernel only
 observes the device. A successful host contract does not establish physical
 GPU support, and the accepted hardware logs apply to their recorded kernels.
 
+The next stage, [native DRM/GEM and bounded userspace TFU](bcm2712-v3d-render.md),
+passed a separate physical acceptance. Shader submission and Mesa remain next.
+
 The 2026-10-11 review reproduced false success in the interrupt and fault
 experiments. It also found that the combined DMA/queue configuration continued
 after DMA failure. The guards and regressions below are required before using
@@ -12,13 +15,13 @@ these experiments as evidence for a DRM or Mesa implementation.
 ## Stop after a failed stage
 
 The observer's actual-source contract covers the finalizer as well as register
-observation. It exercises takeover, DMA, queue, IRQ and fault configurations.
+observation. It exercises takeover, DMA, queue, IRQ, fault and render configurations.
 An observation or takeover failure must not start an experiment. A DMA failure
 must not start the queue: a timed-out TFU job can still own the current MMU.
 Repeated finalization must not rerun any stage.
 
 The compiler rejects probe options without takeover, a queue without DMA,
-and polling/IRQ/fault combinations that would share hardware ownership.
+and polling/IRQ/fault/render combinations that would share hardware ownership.
 
 ## Interrupt completion and DMA integrity
 
