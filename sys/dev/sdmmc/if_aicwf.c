@@ -462,6 +462,7 @@ static void	aicwf_connect_ind(struct aicwf_softc *, const uint8_t *,
 		    size_t);
 static void	aicwf_disconnect(struct aicwf_softc *);
 static void	aicwf_disconnect_ind(struct aicwf_softc *);
+static void	aicwf_alive_lost(struct aicwf_softc *);
 static void	aicwf_sae_event(struct aicwf_softc *, bool,
 		    const uint8_t *, size_t);
 static void	aicwf_rx_data(struct aicwf_softc *, const uint8_t *, size_t);
