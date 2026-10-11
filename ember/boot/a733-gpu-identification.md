@@ -248,6 +248,33 @@ a serial console is attached to the board. The vendor-derived request path
 stays in the tree behind the opt-in; recovery of the hung board was done by
 restoring the normal DTB on the card from a host VM.
 
+### Runtime staged diagnostics with a watchdog bound
+
+Normal board DTBs never run the experiment at boot; the same pieces are
+available on a live system, one explicit step at a time. The driver creates
+`hw.sun60igpu0.stage` (write 1..5), `hw.sun60igpu0.result` (errno of the
+last attempt) and `hw.sun60igpu0.pbvnc`:
+
+| Stage | Action |
+| --- | --- |
+| 1 | supply/TOP checks, PCK and CCU reservations, retention, CCU preparation, strict 400/200 MHz readiness |
+| 2 | the fresh GPU_CORE static ON request of `sun60i_a733_pck_gpu_request_on` |
+| 3 | the read-only CORE ON/Q waiter |
+| 4 | the bounded TOP-only identification peeks |
+| 5 | the strict PBVNC read, only after stage 3 confirmed CORE ON |
+
+Stages run strictly in order, once per boot; a result of 0 or ETIMEDOUT
+lets the sequence continue, any other value blocks it. Each stage prints
+`runtime stage N: start` and `runtime stage N: <errno>` to the log.
+
+Because a stalled bus transaction cannot be bounded in software, arm the
+hardware watchdog in external-tickle mode around every risky write:
+`wdogctl -e -p 16 sunxiwdt0; sysctl -w hw.sun60igpu0.stage=N; wdogctl -d`.
+If the stage stalls the machine, the watchdog resets the board, the normal
+DTB boots, and the invoking transcript names the stalled stage. The reset
+recovery itself was verified physically on 11 October 2026 by arming the
+watchdog and letting it expire.
+
 ## Source audit: remaining cold-start boundary
 
 In Linux `0c2669a9f4a1d607e7591ae50ccf3c432a0aff08`, the

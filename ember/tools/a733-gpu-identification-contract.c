@@ -362,6 +362,29 @@ aprint_error_dev(device_t dev, const char *fmt, ...)
 	vsnprintf(error_output, sizeof(error_output), fmt, ap);
 	va_end(ap);
 }
+/* Runtime staging stubs: the sysctl tree itself is not under test. */
+struct sysctllog;
+struct sysctlnode { void *sysctl_data; };
+#define SYSCTLFN_ARGS struct sysctllog *log, void *sname, void *nam, \
+	struct sysctlnode *rnode, const void *newp, size_t newlen
+#define SYSCTLFN_CALL(rn) (log, sname, nam, (rn), newp, newlen)
+#define sysctl_lookup(...) (0)
+static int sysctl_createv_stub(void *first, ...) { (void)first; return 0; }
+#define sysctl_createv(...) sysctl_createv_stub(__VA_ARGS__)
+#define SYSCTL_DESCR(s) (s)
+#define CTLTYPE_NODE 1
+#define CTLTYPE_UINT 2
+#define CTLTYPE_QUAD 3
+#define CTLFLAG_READWRITE 4
+#define CTLFLAG_READONLY 8
+#define CTL_HW 16
+#define CTL_CREATE 32
+#define CTL_EOL -1
+typedef int kmutex_t;
+#define MUTEX_DEFAULT 0
+#define IPL_NONE 0
+static void mutex_init(kmutex_t *m, int type, int ipl) { *m = 1; }
+#define mutex_destroy(m) ((void)0)
 #include "autoconf.h"
 static int prepare_error, reserve_error, wait_error, retain_error;
 static int request_error;
@@ -406,6 +429,7 @@ reset(void)
 	config_finalize_done = 0;
 	sc.sc_dev = &gpu_device;
 	sc.sc_phandle = 1;
+	sc.sc_run_pass = true;
 	pd[0] = swap32(2);
 	pd[1] = swap32(5);
 	clocks[0] = swap32(3);
@@ -784,6 +808,98 @@ test_domain_request(void)
 	    checks - start);
 }
 
+static void
+test_runtime_stages(void)
+{
+	unsigned start = checks;
+
+	/* Ordering: nothing runs before stage 1 or after the last stage. */
+	reset();
+	sun60i_gpu_run_stage(&sc, 0);
+	CHECK(sc.sc_run_result == EINVAL && sc.sc_run_stage == 0);
+	sun60i_gpu_run_stage(&sc, 2);
+	CHECK(sc.sc_run_result == EINVAL && sc.sc_run_stage == 0);
+	CHECK(nevents == 0 && prepares == 0 && requests == 0);
+
+	/* A precondition failure marks the stage attempted and blocks the rest. */
+	reset(); supply_on = false;
+	sun60i_gpu_run_stage(&sc, 1);
+	CHECK(sc.sc_run_result == EBUSY && sc.sc_run_stage == 1);
+	CHECK(strcmp(events, "ASs") == 0);
+	sun60i_gpu_run_stage(&sc, 1);
+	CHECK(sc.sc_run_result == EINVAL && prepares == 0);
+	sun60i_gpu_run_stage(&sc, 2);
+	CHECK(sc.sc_run_result == EINVAL && requests == 0);
+
+	/* Full success: five ordered stages with the expected provider calls. */
+	reset();
+	sun60i_gpu_run_stage(&sc, 1);
+	CHECK(sc.sc_run_result == 0 && sc.sc_run_stage == 1);
+	CHECK(strcmp(events, "ASVsPCPCHWQc") == 0);
+	CHECK(prepares == 1 && reserves == 2 && retains == 1);
+	nevents = 0;
+	sun60i_gpu_run_stage(&sc, 2);
+	CHECK(sc.sc_run_result == 0 && requests == 1);
+	CHECK(strcmp(events, "ASVsPR") == 0);
+	nevents = 0;
+	sun60i_gpu_run_stage(&sc, 3);
+	CHECK(sc.sc_run_result == 0 && waits == 1 && sc.sc_run_core_on);
+	CHECK(strcmp(events, "K") == 0);
+	nevents = 0;
+	sun60i_gpu_run_stage(&sc, 4);
+	CHECK(sc.sc_run_result == 0 && sc.sc_have_id && sc.sc_bvnc == pbvnc);
+	CHECK(strcmp(events, "ASVsPACSVPFMiIUcs") == 0);
+	nevents = 0;
+	sun60i_gpu_run_stage(&sc, 5);
+	CHECK(sc.sc_run_result == 0);
+	CHECK(strcmp(events, "ASVsPMIU") == 0);
+	nevents = 0;
+	sun60i_gpu_run_stage(&sc, 6);
+	CHECK(sc.sc_run_result == EINVAL && nevents == 0);
+
+	/* A bounded timeout keeps the sequence alive; identification still runs. */
+	reset();
+	sun60i_gpu_run_stage(&sc, 1);
+	CHECK(sc.sc_run_result == 0);
+	request_error = ETIMEDOUT;
+	sun60i_gpu_run_stage(&sc, 2);
+	CHECK(sc.sc_run_result == ETIMEDOUT && sc.sc_run_stage == 2);
+	wait_error = ETIMEDOUT;
+	sun60i_gpu_run_stage(&sc, 3);
+	CHECK(sc.sc_run_result == ETIMEDOUT && !sc.sc_run_core_on);
+	sun60i_gpu_run_stage(&sc, 4);
+	CHECK(sc.sc_run_result == 0 && sc.sc_have_id);
+	sun60i_gpu_run_stage(&sc, 5);
+	CHECK(sc.sc_run_result == EBUSY && maps == 1);
+
+	/* A hard provider failure blocks later stages until a fresh boot. */
+	reset(); power_reserve_error = EIO;
+	sun60i_gpu_run_stage(&sc, 1);
+	CHECK(sc.sc_run_result == EIO && sc.sc_run_stage == 1);
+	sun60i_gpu_run_stage(&sc, 2);
+	CHECK(sc.sc_run_result == EINVAL && requests == 0);
+
+	/* A failed CORE wait blocks both remaining stages. */
+	reset();
+	sun60i_gpu_run_stage(&sc, 1);
+	sun60i_gpu_run_stage(&sc, 2);
+	wait_error = EIO;
+	sun60i_gpu_run_stage(&sc, 3);
+	CHECK(sc.sc_run_result == EIO && !sc.sc_run_core_on);
+	sun60i_gpu_run_stage(&sc, 4);
+	CHECK(sc.sc_run_result == EINVAL && unreserves == 0);
+
+	/* A TOP-only mapping failure reports EFAULT without stopping the order. */
+	reset();
+	sun60i_gpu_run_stage(&sc, 1);
+	sun60i_gpu_run_stage(&sc, 2);
+	sun60i_gpu_run_stage(&sc, 3);
+	map_error = ENOMEM;
+	sun60i_gpu_run_stage(&sc, 4);
+	CHECK(sc.sc_run_result == EFAULT && !sc.sc_have_id);
+	printf("PASS: %u runtime GPU stage checks\n", checks - start);
+}
+
 int
 main(void)
 {
@@ -954,6 +1070,7 @@ main(void)
 
 	test_experimental_prepare();
 	test_domain_request();
+	test_runtime_stages();
 	printf("PASS: %u A733 GPU identification checks\n", checks);
 	return 0;
 }

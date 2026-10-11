@@ -82,6 +82,14 @@ mutate consumer-request-bypass "$gpu" sun60i_a733_gpu.c \
 mutate top-identify-bypass "$gpu" sun60i_a733_gpu.c \
     'if (request && error != 0 && sc->sc_retained)' \
     'if (false && request && error != 0 && sc->sc_retained)'
+mutate runtime-order-bypass "$gpu" sun60i_a733_gpu.c \
+    'stage != sc->sc_run_stage + 1 || !sc->sc_run_pass) {' \
+    'false) {'
+mutate runtime-timeout-gate "$gpu" sun60i_a733_gpu.c \
+    'sc->sc_run_pass = (error == 0 || error == ETIMEDOUT);' \
+    'sc->sc_run_pass = (error == 0);'
+mutate runtime-identify-gate "$gpu" sun60i_a733_gpu.c \
+    'if (!sc->sc_run_core_on) {' 'if (false) {'
 mutate pck-request-quarantine "$pck" sun60i_a733_pck600.c \
     'sc->sc_failed[PCK600_GPU_CORE] = true;' '(void)0;'
 mutate pck-request-success "$pck" sun60i_a733_pck600.c \
