@@ -79,10 +79,10 @@ application mode retains the target libc/header/runtime requirements.
 
 ## Acceptance is separate from host selection
 
-The wrapper retains the full twelve-contract suite. On a foreign host it
-runs the eight portable contracts and explicitly records the remaining native
+The wrapper retains the full fourteen-contract suite. On a foreign host it
+runs the ten portable contracts and explicitly records the remaining native
 contracts as pending. Copy the same pinned source export to an EmberBSD
-machine and run all twelve there before deploying the artifacts:
+machine and run all fourteen there before deploying the artifacts:
 
 ```sh
 NETBSD2_PYTHON=/path/to/python3 sh ember/tools/kernel-contracts.sh /absolute/source all
@@ -150,6 +150,22 @@ userland, a new physical-board deployment or board-module attachment.
 All six native source contracts subsequently passed with the installed
 Python 3.14 package. [Live DTrace](dtrace-dwarf.md) also passes in this VM
 with matching modules and typed FBT arguments from the GCC16 kernel's CTF.
+
+### Linux GCC16
+
+On 2026-10-11, Debian 13/x86_64 built the full `EMBER64` kernel, its image,
+four matched modules, and three DTBs with four workers. Both host GCC/G++
+and the Ports `--kernel` cross compiler were 16.2.0. The source export was
+`4b554e0b49c65a8f1b0921007624f9a34bafbbd7`. All ten portable contracts passed,
+including the V3D causal mutants and production Wi-Fi link checks.
+All nine artifact SHA256 checks passed. The kernel SHA256 is
+`e362b8952635e14adbd3b586c01ad4d8227134b6a7c4ec7df4cac70f9adfa8df`.
+Strict compiler warnings remained enabled. Kernel mode uses no application
+sysroot and selects GCC16 explicitly.
+
+The final publication changes only contributor and board/build documentation
+relative to that tested source revision. This accepts the Linux cross-build,
+not boot, physical-board behavior, native contracts, or a complete GCC16 userland.
 
 ## DWARF5 and CTF
 

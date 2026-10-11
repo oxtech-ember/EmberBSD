@@ -609,7 +609,9 @@ on every board in the hardware catalog.
   and ordinary pkgsrc builds on Zero 3W select the repaired GCC16 nb1 package;
   the base compiler remains explicit bootstrap/recovery support.
   The [cross-build wrapper](ember/boot/cross-build.md) builds an AArch64 kernel,
-  matched board modules and DTBs on Apple Silicon macOS with GCC16.2.
+  matched board modules and DTBs on Apple Silicon macOS and Debian/x86_64
+  with GCC16.2. The Linux build passes all ten portable contracts and artifact
+  checksum checks; native contracts and boot acceptance remain separate.
   The resulting kernel cold-boots in AArch64 UTM and passes FP process,
   signal and thread checks. The
   [Ports cross GCC16 recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
