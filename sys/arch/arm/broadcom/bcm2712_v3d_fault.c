@@ -520,7 +520,9 @@ fv3d_verify_images(bool copied)
 }
 
 /* Check the hardware and handler observations together, with masks set.
- * CVTCT must stay unchanged on the fault, then advance exactly once. */
+ * On V3D 7.1 CVTCT also counts the failed conversion (physical CM5).
+ * Require one retirement for the fault, two after the good job; only
+ * the latter may deliver TFUC, and it must also pass image verification. */
 static int
 fv3d_check_event(bool completed, uint32_t *snapshot, bool *valid)
 {
@@ -547,7 +549,7 @@ fv3d_check_event(bool completed, uint32_t *snapshot, bool *valid)
 	    atomic_load_relaxed(&fv3d.fault_events) != 1 ||
 	    atomic_load_relaxed(&fv3d.tfuc_events) != (completed ? 1u : 0u) ||
 	    (uint8_t)((cs >> FV3D_TFU_CVTCT_SHIFT) -
-	    fv3d.tfu_cvt_before) != (completed ? 1 : 0)) {
+	    fv3d.tfu_cvt_before) != (completed ? 2 : 1)) {
 		fv3d.verdict = "unexpected fault/completion event or counter";
 		return EIO;
 	}

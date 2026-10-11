@@ -52,7 +52,7 @@ CM5 uses the V3D 7.1 AXI client map: low seven ID bits, TFU `0x7c`/`0x7d`.
 The initial guard incorrectly used the older 4.1 map. A regression now
 replays the physical `0x7d` result, checks all 256 low-byte values and a
 high-bit variant. The old guard fails this fixture. The corrected contract
-passes 337 cases, 645 checks, 20 causal mutants and ASan/UBSan. This corrects
+initially passed 337 cases, 645 checks, 20 causal mutants and ASan/UBSan. This corrects
 fault identification; it does not establish recovery of the next GPU job.
 
 Failure diagnostics preserve raw MMU control, TFU state, violation identity
@@ -63,6 +63,27 @@ They do not establish the cause of the earlier physical failure.
 The first physical fault-recovery boot remains **unaccepted**. Its recorded
 interrupt mask `0x30` denotes PTI plus WRV (bits 4 and 5), not PTI plus CAP.
 CAP is bit 3. That correction does not identify why the following job failed.
+
+### Physical guard check on 2026-10-11
+
+Source `f7317164ae5ecd8a306ece0bada643771b36400b`, cross-built with GCC 16.2.0,
+booted on the same CM5 with kernel SHA256
+`0f9eb0e4f90a206e84dc6dee3f4cbe6e49dc9c86e4930ac0b27007bb5faa7342`.
+The new client/address guard accepted TFU `0x7d` inside the destination alias.
+There was one fault event (PTI+WRV), no TFUC and an idle TFU, but CVTCT
+advanced from 0 to 1. The original counter guard therefore stopped before
+recovery. The saved capture SHA256 is
+`88949e69a035d5079fcf82e6acdd10df64e79a8b3487eed6fb843c4be9ba20f0`.
+The board was returned to its tested ordinary kernel with Wi-Fi recovery.
+
+V3D 7.1 counts this failed conversion too. The corrected guard requires
+one retirement after the fault, then a total of two after the good job,
+including eight-bit wrap. TFUC remains forbidden for the fault and required
+exactly once for the good job. A counter alone never establishes successful
+work. Tests replay the physical counter, reject missing/extra retirements,
+and retain the event, idle, fault-latch and memory-integrity checks:
+338 cases, 647 checks, 20 causal mutants and ASan/UBSan pass. Hardware
+acceptance of recovery after this correction remains pending.
 
 ## Repeat the checks
 

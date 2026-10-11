@@ -263,7 +263,8 @@ static struct fixture {
 	int fail_create;
 	bool job1_valid_dst, fault_touch_dst, good_image_bad;
 	bool fault_never, good_never, sticky_latch;
-	bool fault_with_tfuc, fault_with_count, duplicate_fault, duplicate_good;
+	bool fault_with_tfuc, fault_no_count, fault_two_counts;
+	bool duplicate_fault, duplicate_good;
 	bool fault_busy, initial_busy, good_busy, pre_good_busy;
 	bool good_no_count, good_two_counts, good_with_fault;
 	bool good_fault_only, good_latch_only;
@@ -752,8 +753,9 @@ fake_run_tfu(void)
 		if (fx.fault_touch_dst)
 			allocation_containing(
 			    default_bases[FV3D_OBJ_TFU_ADST])->dev[0] = 1;
-		if (fx.fault_with_count)
-			fake_tfu_count++;
+		/* Physical V3D 7.1 retires the failed conversion too. */
+		if (!fx.fault_no_count)
+			fake_tfu_count += fx.fault_two_counts ? 2 : 1;
 		fake_latch_hub(FV3D_HUB_MMU_PTI |
 		    (fx.fault_with_tfuc ? FV3D_HUB_TFUC : 0));
 		if (fx.duplicate_fault)
@@ -1021,8 +1023,13 @@ main(void)
 	CHECK(fx.jobs == 1);
 
 	reset_fixture();
-	fx.fault_with_count = true;
-	run_case("fault plus completion counter", EIO);
+	fx.fault_no_count = true;
+	run_case("fault without retired conversion", EIO);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.fault_two_counts = true;
+	run_case("fault with two retired conversions", EIO);
 	CHECK(fx.jobs == 1);
 
 	reset_fixture();

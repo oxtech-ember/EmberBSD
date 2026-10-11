@@ -67,8 +67,8 @@ for mutation in skip-latch-clear skip-flush fixup-without-sync \
         }
         mutation == "ignore-conversion-counter" {
             changed += sub(/\(uint8_t\)\(\(cs >>/, "((uint8_t)((cs >>")
-            changed += sub(/!= \(completed \? 1 : 0\)\) \{/,
-                "!= (completed ? 1 : 0) \\&\\& false)) {")
+            changed += sub(/!= \(completed \? 2 : 1\)\) \{/,
+                "!= (completed ? 2 : 1) \\&\\& false)) {")
         }
         mutation == "ignore-fault-identity" {
             changed += sub(/if \(\(\(vio_id & 0x7f\) != 0x7c && \(vio_id & 0x7f\) != 0x7d\) \|\|/,
