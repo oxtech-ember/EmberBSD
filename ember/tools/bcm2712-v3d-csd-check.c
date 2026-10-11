@@ -32,7 +32,8 @@ compute(const char *node, unsigned rounds)
 	close(other);
 	b=a;b.bo_handles=1;errno=0;
 	check(ioctl(fd,DRM_IOCTL_V3D_SUBMIT_CSD,&b)<0 && errno==EFAULT,"CSD bad pointer");
-	b=a;b.cfg[5]=code.gpu+BO_SIZE;errno=0;
+	/* The end of code can equal the next BO's valid GPU address. */
+	b=a;b.cfg[5]=UINT32_MAX & ~7U;errno=0;
 	check(ioctl(fd,DRM_IOCTL_V3D_SUBMIT_CSD,&b)<0 && errno==EINVAL,"CSD code range");
 	for(unsigned round=0;round<rounds;round++) {
 		unsigned offset=256+(round%32)*128;
