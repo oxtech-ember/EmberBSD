@@ -80,7 +80,9 @@ main(void)
 	/* A failure during validation leaves the engine available. */
 	reg_calls=0;CHECK(bcmv3d_submit_csd(&d,&a,&f)==0);calls=reg_calls;
 	CHECK(csd_starts==1 && cache_phase==3 && revoked);
-	/* Counter wrap, page-table replacement, and alternating engine ownership. */
+	/* Status is diagnostic; it must not use the older counter/idle layout. */
+	core_regs[V3D_CSD_STATUS/4]=UINT32_MAX;
+	/* Page-table replacement and alternating engine ownership. */
 	for(unsigned i=0;i<260;i++)CHECK(bcmv3d_submit_csd(&d,&a,&f)==0);
 	struct drm_v3d_submit_tfu tfu={.icfg=0x001d0001,
 	    .iia=(uint32_t)bcmv3d_to_bo(f.handles[handles[0]])->gpu,
@@ -90,6 +92,10 @@ main(void)
 	CHECK(bcmv3d_submit_tfu(&d,&tfu,&f)==0);
 	CHECK(bcmv3d_submit_csd(&d,&a,&f)==0);
 	csd_cleanup(&c,&f,false);
+	a=csd_setup(&c,&d,&f,handles);
+	core_regs[V3D_INT_STS/4]=V3D_CSD_DONE;
+	CHECK(bcmv3d_submit_csd(&d,&a,&f)==-EBUSY && csd_starts==0);
+	csd_cleanup(&c,&f,true);
 	for(unsigned n=1;n<=calls;n++) {
 		a=csd_setup(&c,&d,&f,handles);reg_calls=0;fail_reg=n;
 		CHECK(bcmv3d_submit_csd(&d,&a,&f)!=0);

@@ -65,7 +65,7 @@ main(int argc,char **argv)
 	setvbuf(stdout,NULL,_IONBF,0);
 	puts("V3D 7.1 compute: 16 integer lane results per dispatch");
 	compute(argv[1],260);
-	puts("PASS: 260 QPU dispatches, changing uniforms/addresses, counter wrap and full guards");
+	puts("PASS: 260 QPU dispatches, changing uniforms/addresses and full guards");
 	for(unsigned i=0;i<2;i++) {
 		children[i]=fork();
 		if(children[i]<0)err(1,"fork");

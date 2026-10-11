@@ -50,6 +50,7 @@ struct bcmv3d_job {
 	const char *stage;
 	bool published, poisoned, controller_masked, core_masked;
 	volatile unsigned int events, irq_error, core_events, core_error;
+	uint32_t csd_before, csd_after, csd_irq;
 };
 
 static void
@@ -436,7 +437,7 @@ bcmv3d_csd_address(struct bcmv3d_job *job, uint32_t address, size_t size)
 static int
 bcmv3d_csd_execute(struct bcmv3d_job *job, struct drm_v3d_submit_csd *a)
 {
-	uint32_t before, after, state;
+	uint32_t irq_before, irq_after;
 	unsigned int i;
 	int error;
 
@@ -447,12 +448,14 @@ bcmv3d_csd_execute(struct bcmv3d_job *job, struct drm_v3d_submit_csd *a)
 	atomic_store_relaxed(&job->irq_error, 0);
 	atomic_store_relaxed(&job->core_events, 0);
 	atomic_store_relaxed(&job->core_error, 0);
-	error = bcmv3d_takeover_core_peek(V3D_CSD_STATUS, &before);
+	job->csd_before = job->csd_after = job->csd_irq = 0;
+	error = bcmv3d_takeover_core_peek(V3D_CSD_STATUS, &job->csd_before);
 	if (error == 0)
-		error = bcmv3d_takeover_core_peek(V3D_INT_STS, &state);
+		error = bcmv3d_takeover_core_peek(V3D_INT_STS, &irq_before);
 	if (error != 0)
 		return error;
-	if ((before & 15) != 0 || state != 0)
+	/* The reset takeover and this lock give us exclusive queue ownership. */
+	if (irq_before != 0)
 		return EBUSY;
 	if (job->published && (error = bcmv3d_clean()) != 0)
 		return error;
@@ -511,13 +514,19 @@ bcmv3d_csd_execute(struct bcmv3d_job *job, struct drm_v3d_submit_csd *a)
 	    atomic_load_acquire(&job->events) != 0)
 		return EIO;
 	job->stage = "CSD retirement";
-	error = bcmv3d_takeover_core_peek(V3D_CSD_STATUS, &after);
+	error = bcmv3d_takeover_core_peek(V3D_CSD_STATUS, &job->csd_after);
 	if (error == 0)
-		error = bcmv3d_takeover_core_peek(V3D_INT_STS, &state);
+		error = bcmv3d_takeover_core_peek(V3D_INT_STS, &irq_after);
 	if (error != 0)
 		return error;
-	if ((after & 15) != 0 || state != 0 ||
-	    (uint8_t)((after >> 4) - (before >> 4)) != 1)
+	job->csd_irq = irq_after;
+	/*
+	 * Linux retires CSD by CSDDONE followed by cache cleaning. Its older
+	 * CSD_STATUS counter/idle fields do not describe the observed V3D 7.1
+	 * value (0x10002080 after one job). Keep raw status for diagnostics;
+	 * do not invent a field layout or treat it as an ownership proof.
+	 */
+	if (irq_after != 0)
 		return EIO;
 	if ((error = bcmv3d_clean()) != 0)
 		return error;
@@ -614,9 +623,11 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 			atomic_store_release(&job->bos[i]->error, EIO);
 		(void)bcmv3d_takeover_core_peek(V3D_CSD_STATUS, &state);
 		aprint_error_dev(sc->dev, "%s: error=%d status=%#x "
+		    "before=%#x after=%#x irq-after=%#x "
 		    "core-events=%u core-error=%u hub-events=%u; "
 		    "%u buffers retained until reboot\n", job->stage, error,
-		    state, atomic_load_acquire(&job->core_events),
+		    state, job->csd_before, job->csd_after, job->csd_irq,
+		    atomic_load_acquire(&job->core_events),
 		    atomic_load_acquire(&job->core_error),
 		    atomic_load_acquire(&job->events), count);
 		mutex_exit(&job->lock);

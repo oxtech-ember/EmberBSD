@@ -134,12 +134,13 @@ static void csd_complete(void)
 {
  CHECK(core_mask_count==0 && core_handler);
  retired=true;
- core_regs[V3D_CSD_STATUS/4]=(core_regs[V3D_CSD_STATUS/4]+16)&0xff0;
- if(model_case==2)core_regs[V3D_CSD_STATUS/4]|=2;
- if(model_case==3)core_regs[V3D_CSD_STATUS/4]-=16;
+ /* First CM5 V3D 7.1 CSDDONE snapshot, not the V3D 4.x counter layout. */
+ core_regs[V3D_CSD_STATUS/4]=0x10002080;
  core_regs[V3D_INT_STS/4]=model_case==4?1:V3D_CSD_DONE;
  if(model_case==5)regs[V3D_MMU/4]|=1U<<12;
  core_handler(core_arg);
+ if(model_case==2)core_regs[V3D_INT_STS/4]=1;
+ if(model_case==3)regs[V3D_INT_STS/4]=1;
  if(model_case==6) { core_regs[V3D_INT_STS/4]=V3D_CSD_DONE; core_handler(core_arg); }
 }
 static void

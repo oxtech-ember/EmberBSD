@@ -24,10 +24,11 @@ compile
 [ "${V3D_SKIP_MUTANTS:-0}" != 1 ] || exit 0
 cp "$work/job-body.h" "$work/job-good.h"
 ulimit -c 0
-for mutant in csd-count csd-busy cache-clean cfg7 address pre-sync post-sync core-mask; do
+for mutant in csd-count stale-irq retire-irq cache-clean cfg7 address pre-sync post-sync core-mask; do
     awk -v mutant="$mutant" '
         mutant == "csd-count" { changed += sub(/atomic_load_acquire\(&job->core_events\) != 1/, "false") }
-        mutant == "csd-busy" { changed += sub(/\(after & 15\) != 0/, "false") }
+        mutant == "stale-irq" { changed += sub(/irq_before != 0/, "false") }
+        mutant == "retire-irq" { changed += sub(/irq_after != 0/, "false") }
         mutant == "cache-clean" { changed += sub(/error = bcmv3d_cache_wait\(5, 1\);/, "error = 0;") }
         mutant == "cfg7" { changed += sub(/i <= 7;/, "i <= 6;") }
         mutant == "address" { changed += sub(/!bcmv3d_csd_address\(job, a->cfg\[5\] & ~7U, 8\)/, "false") }
