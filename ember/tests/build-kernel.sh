@@ -24,14 +24,17 @@ test "$1" = "$TEST_ROOT/src"
 test "${FAIL_AT:-}" != gpu-contract
 SH
 done
-cat > "$work/src/ember/tests/bwfm-link-events.sh" <<'SH'
+for contract in bwfm-link-events bwfm-link-check; do
+cat > "$work/src/ember/tests/$contract.sh" <<'SH'
 #!/bin/sh
 set -eu
 echo "wifi-contract $*" >> "$TEST_LOG"
 test "$#" -eq 1
 test "$1" = "$TEST_ROOT/src"
 test "${FAIL_AT:-}" != wifi-contract
+test "${FAIL_AT:-}" != "${0##*/}"
 SH
+done
 : > "$work/src/tools/Makefile"
 : > "$work/src/share/mk/bsd.own.mk"
 : > "$work/src/sys/arch/evbarm/conf/EMBER64"
@@ -146,8 +149,8 @@ grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
 test "$(grep -c '^contract ' "$TEST_LOG")" -eq 2
 test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 6
-test "$(grep -c '^wifi-contract ' "$TEST_LOG")" -eq 1
-for failure in tools module cpp dtb contract gpu-contract wifi-contract publish; do
+test "$(grep -c '^wifi-contract ' "$TEST_LOG")" -eq 2
+for failure in tools module cpp dtb contract gpu-contract wifi-contract bwfm-link-check.sh publish; do
     printf stale > "$TEST_OUT/netbsd-EMBER64"
     if FAIL_AT=$failure sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
         echo "accepted failure: $failure" >&2; exit 1
@@ -168,7 +171,7 @@ grep -q native-make "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
 test "$(grep -c '^contract ' "$TEST_LOG")" -eq 6
 test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 6
-test "$(grep -c '^wifi-contract ' "$TEST_LOG")" -eq 1
+test "$(grep -c '^wifi-contract ' "$TEST_LOG")" -eq 2
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi

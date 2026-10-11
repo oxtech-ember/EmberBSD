@@ -27,13 +27,33 @@ LINK direction comes from the firmware flags. Only events for the selected
 peer can restart a station in AUTH, ASSOC or RUN; stale previous-peer events,
 an already stopped/scanning station and AP mode do not enter this path.
 The existing on-demand radio report includes the event count and the last
-disconnect's type, reason and flags. It records no SSID, address or keys.
+disconnect's type, reason and flags. It also reads the effective firmware
+subscription. The extended GET must request a nonzero mask length; CYW43455
+returns length, maximum and mask without overwriting version/command.
+It records no SSID, address or keys.
+
+On physical CM5, event dispatch alone did not recover the reproduced loss.
+Both extended and legacy readback retained the requested disconnect bits,
+but no disconnect reached the event handler. Firmware commands still worked.
+The driver therefore also checks the selected peer's firmware association
+every five seconds while a station is in RUN. Two consecutive valid replies
+without STA_ASSOC trigger the ordinary host scan/rejoin path. Command errors,
+short/unknown responses and a changed peer or connection generation reset
+the sequence. They do not establish a lost association.
+
+The watchdog only queues work. The existing non-MPSAFE work queue performs
+the sleeping query, with at most one poll pending. State-change requests
+invalidate an outstanding query before the transition executes. The radio
+report distinguishes firmware events, association queries and recoveries.
 
 Run `sh ember/tests/bwfm-link-events.sh` from the checkout. It compiles the
 production station dispatch and event subscription mask, replacing only
-the net80211 boundary. The kernel wrapper runs it on the build host.
-Hardware acceptance of the corrected kernel is pending; the reproduction
-above does not itself validate the fix or explain the AP's removal policy.
+the net80211 boundary. `sh ember/tests/bwfm-link-check.sh` exercises the
+production watchdog, worker and state transitions with a controlled firmware
+boundary. Both run through the kernel wrapper on the build host. The original
+driver fails the disconnect/recovery checks; corrected code passes, including
+ASan/UBSan. Hardware acceptance of the association poll is pending. Neither
+the reproduction nor these tests explains the AP's removal policy.
 
 Keep Ethernet management active during acceptance. Use a separate test peer
 with a verified host route through Wi-Fi, and the Wi-Fi source address.

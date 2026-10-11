@@ -185,6 +185,7 @@ enum bwfm_task_cmd {
 	BWFM_TASK_KEY_DELETE,
 	BWFM_TASK_RX_EVENT,
 	BWFM_TASK_REPORT,
+	BWFM_TASK_LINK_CHECK,
 };
 
 struct bwfm_cmd_newstate {
@@ -205,10 +206,12 @@ struct bwfm_task {
 		struct bwfm_cmd_newstate	newstate;
 		struct bwfm_cmd_key		key;
 		struct mbuf			*mbuf;
+		uint32_t			link_generation;
 	} t_u;
 #define	t_newstate	t_u.newstate
 #define	t_key		t_u.key
 #define	t_mbuf		t_u.mbuf
+#define	t_link_generation t_u.link_generation
 };
 
 struct bwfm_softc {
@@ -239,6 +242,13 @@ struct bwfm_softc {
 	uint32_t		 sc_link_event;
 	uint32_t		 sc_link_reason;
 	uint16_t		 sc_link_flags;
+	uint32_t		 sc_link_generation;
+	uint32_t		 sc_link_checks;
+	uint32_t		 sc_link_errors;
+	uint32_t		 sc_link_recoveries;
+	unsigned int		 sc_link_timer;
+	unsigned int		 sc_link_misses;
+	bool			 sc_link_pending;
 	bool			 sc_sae_enabled;
 	uint8_t			 sc_sae_bssid[IEEE80211_ADDR_LEN];
 

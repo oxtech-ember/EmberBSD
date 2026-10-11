@@ -80,6 +80,7 @@ void	 bwfm_newstate_cb(struct bwfm_softc *, struct bwfm_cmd_newstate *);
 void	 bwfm_newassoc(struct ieee80211_node *, int);
 void	 bwfm_task(struct work *, void *);
 static void bwfm_report_cb(struct bwfm_softc *);
+static void bwfm_link_check_cb(struct bwfm_softc *, uint32_t);
 static void bwfm_sae_probe(struct bwfm_softc *);
 static int bwfm_sae_ioctl(struct bwfm_softc *, u_long, struct ieee80211req *);
 static int bwfm_sae_connect(struct bwfm_softc *);
@@ -790,6 +791,7 @@ bwfm_watchdog(struct ifnet *ifp)
 {
 	struct bwfm_softc *sc = ifp->if_softc;
 	struct ieee80211com *ic = &sc->sc_ic;
+	struct bwfm_task *t;
 
 	ifp->if_timer = 0;
 
@@ -802,6 +804,77 @@ bwfm_watchdog(struct ifnet *ifp)
 		ifp->if_timer = 1;
 	}
 	ieee80211_watchdog(ic);
+
+	/* No sleeping firmware commands from the watchdog callback. */
+	if ((ifp->if_flags & (IFF_UP | IFF_RUNNING)) !=
+	    (IFF_UP | IFF_RUNNING) || ic->ic_opmode != IEEE80211_M_STA ||
+	    ic->ic_state != IEEE80211_S_RUN || ic->ic_bss == NULL ||
+	    sc->sc_taskq == NULL)
+		return;
+	ifp->if_timer = 1;
+	if (sc->sc_link_timer != 0 && --sc->sc_link_timer != 0)
+		return;
+	sc->sc_link_timer = 5;
+	if (sc->sc_link_pending)
+		return;
+	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
+	if (t == NULL)
+		return;
+	sc->sc_link_pending = true;
+	t->t_sc = sc;
+	t->t_cmd = BWFM_TASK_LINK_CHECK;
+	t->t_link_generation = sc->sc_link_generation;
+	workqueue_enqueue(sc->sc_taskq, (struct work *)t, NULL);
+}
+
+/*
+ * CYW43455 can clear STA_ASSOC without a subscribed disconnect event.
+ * Two valid observations recover that state without depending on an IP peer.
+ * The non-MPSAFE task queue serializes this with events and state changes.
+ */
+static void
+bwfm_link_check_cb(struct bwfm_softc *sc, uint32_t generation)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct bwfm_sta_info sta;
+	uint8_t peer[ETHER_ADDR_LEN];
+	int error;
+
+	if (generation != sc->sc_link_generation ||
+	    (sc->sc_if.if_flags & (IFF_UP | IFF_RUNNING)) !=
+	    (IFF_UP | IFF_RUNNING) || ic->ic_opmode != IEEE80211_M_STA ||
+	    ic->ic_state != IEEE80211_S_RUN || ic->ic_bss == NULL)
+		goto stale;
+	IEEE80211_ADDR_COPY(peer, ic->ic_bss->ni_bssid);
+	memset(&sta, 0, sizeof(sta));
+	memcpy(&sta, peer, sizeof(peer));
+	error = bwfm_fwvar_var_get_data(sc, "sta_info", &sta, sizeof(sta));
+	sc->sc_link_checks++;
+	/* A command can sleep while an ioctl requests a different connection. */
+	if (generation != sc->sc_link_generation ||
+	    (sc->sc_if.if_flags & (IFF_UP | IFF_RUNNING)) !=
+	    (IFF_UP | IFF_RUNNING) || ic->ic_opmode != IEEE80211_M_STA ||
+	    ic->ic_state != IEEE80211_S_RUN || ic->ic_bss == NULL ||
+	    !IEEE80211_ADDR_EQ(peer, ic->ic_bss->ni_bssid))
+		goto stale;
+	if (error != 0 || le16toh(sta.ver) < 3 || le16toh(sta.ver) > 7 ||
+	    le16toh(sta.len) < offsetof(struct bwfm_sta_info, ea) + sizeof(sta.ea) ||
+	    le16toh(sta.len) > sizeof(sta) || !IEEE80211_ADDR_EQ(sta.ea, peer)) {
+		sc->sc_link_errors++;
+		goto stale;
+	}
+	if (le32toh(sta.flags) & BWFM_STA_ASSOC)
+		goto stale;
+	if (++sc->sc_link_misses < 2)
+		goto out;
+	if (ieee80211_new_state(ic, IEEE80211_S_SCAN, -1) == 0) {
+		sc->sc_link_recoveries++;
+		printf("%s: firmware lost association; scanning\n", DEVNAME(sc));
+	}
+stale:
+	sc->sc_link_misses = 0;
+out:
+	sc->sc_link_pending = false;
 }
 
 int
@@ -1028,6 +1101,10 @@ bwfm_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 		printf("%s: no free tasks\n", DEVNAME(sc));
 		return EIO;
 	}
+	/* Invalidate an in-flight poll before the queued transition executes. */
+	sc->sc_link_generation++;
+	sc->sc_link_misses = 0;
+	sc->sc_link_timer = 5;
 
 	t->t_sc = sc;
 	t->t_cmd = BWFM_TASK_NEWSTATE;
@@ -1077,6 +1154,8 @@ bwfm_newstate_cb(struct bwfm_softc *sc, struct bwfm_cmd_newstate *cmd)
 	}
 
 	sc->sc_newstate(ic, nstate, cmd->arg);
+	if (ic->ic_state == IEEE80211_S_RUN && ic->ic_opmode == IEEE80211_M_STA)
+		ic->ic_ifp->if_timer = 1;
 
 	splx(s);
 }
@@ -1109,6 +1188,9 @@ bwfm_task(struct work *wk, void *arg)
 		break;
 	case BWFM_TASK_REPORT:
 		bwfm_report_cb(sc);
+		break;
+	case BWFM_TASK_LINK_CHECK:
+		bwfm_link_check_cb(sc, t->t_link_generation);
 		break;
 	default:
 		panic("bwfm: unknown task command %d", t->t_cmd);
@@ -1145,7 +1227,6 @@ bwfm_report_cb(struct bwfm_softc *sc)
 	uint8_t bssid[ETHER_ADDR_LEN] = { 0 };
 	uint8_t mask[4 + BWFM_EVENT_MASK_LEN] = { 1, 0,
 	    BWFM_EVENT_MASK_LEN, 0 };
-	uint8_t legacy_mask[18] = { 0 };
 	uint32_t value = 0;
 	unsigned int i;
 	int error;
@@ -1160,20 +1241,20 @@ bwfm_report_cb(struct bwfm_softc *sc)
 	printf("%s: disconnect events %u last %u reason %u flags 0x%x\n",
 	    DEVNAME(sc), sc->sc_link_events, sc->sc_link_event,
 	    sc->sc_link_reason, sc->sc_link_flags);
+	printf("%s: association checks %u errors %u misses %u recoveries %u\n",
+	    DEVNAME(sc), sc->sc_link_checks, sc->sc_link_errors,
+	    sc->sc_link_misses, sc->sc_link_recoveries);
 	if ((sc->sc_if.if_flags & IFF_RUNNING) == 0 || ic->ic_bss == NULL)
 		return;
 	if (sc->sc_sae_caps != 0) {
 		error = bwfm_fwvar_var_get_data(sc, "event_msgs_ext", mask,
 		    sizeof(mask));
-		printf("%s: event mask error %d version %u command %u"
-		    " length %u max %u disconnect bits %02x/%02x/%02x\n",
-		    DEVNAME(sc), error, mask[0], mask[1], mask[2], mask[3],
+		/* This firmware writes len/max/mask, not the version/command. */
+		printf("%s: event mask error %d length %u max %u"
+		    " disconnect bits %02x/%02x/%02x\n",
+		    DEVNAME(sc), error, mask[2], mask[3],
 		    mask[4], mask[5], mask[6]);
 	}
-	error = bwfm_fwvar_var_get_data(sc, "event_msgs", legacy_mask,
-	    sizeof(legacy_mask));
-	printf("%s: legacy event mask error %d disconnect bits %02x/%02x/%02x\n",
-	    DEVNAME(sc), error, legacy_mask[0], legacy_mask[1], legacy_mask[2]);
 	error = bwfm_fwvar_cmd_get_data(sc, BWFM_C_GET_BSSID,
 	    bssid, sizeof(bssid));
 	printf("%s: radio bssid error %d matches %d\n", DEVNAME(sc), error,
