@@ -521,8 +521,10 @@ on every board in the hardware catalog.
   four lifecycles at both 16x16 and 1280x800. Native platform identity
   makes this GPU discoverable without DRM master. All 38 Mesa upstream
   invocations pass with recorded internal skips; LLVM23 llvmpipe also passes.
+  Same-device PRIME passes 80 cross-process lifecycles and four real
+  GBM/EGLImage shader/pixel cycles after native DMA-BUF lifetime repairs.
   The ordinary kernel remains a passive observer. General job recovery,
-  PRIME buffer sharing, Vulkan and remote accelerated Plasma remain unverified.
+  foreign-device sharing, Vulkan and remote accelerated Plasma remain unverified.
 
 ### Network diagnostics kit
 

@@ -133,7 +133,7 @@ Image SHA256: `bf3963a0a0eb01714d8065eb6747a4b6ed9702b0a307531eee68cc9edb1c7f91`
 All four companion modules are byte-identical to the accepted CL bundle.
 The ordinary bundle remains preserved. The experimental driver still limits
 individual BOs to 16 MiB and total allocation to 64 MiB. Sharing buffers between
-clients, a virtual Wayland output, remote input/capture and the current common
+clients passed the subsequent PRIME gate below. A virtual Wayland output,\nremote input/capture and the current common
 Qt/KWin/Plasma package migration are subsequent gates; HDMI is not required
 for the selected remote desktop scenario. No long-run desktop claim follows.
 
@@ -159,7 +159,7 @@ CL checker, then run `prime-check /dev/dri/renderD128`. It transfers descriptors
 via SCM_RIGHTS to fresh DRM clients, checks duplicate imports, partial mappings,
 invalid ranges/protections and lifetime after handle/fd closure. Eighty 1 MiB
 cycles exceed the allocation quota cumulatively, detecting retained objects.
-Hardware PRIME and Mesa EGLImage acceptance are pending for this change.
+The initial hardware failure and the accepted repaired lifecycle are recorded below.
 
 The first physical PRIME run transferred descriptors and validated mappings,
 but exhausted the 64 MiB quota before cycle 64. This exposed three inherited
@@ -176,4 +176,31 @@ fd, put, cache-removal and GEM release functions. It checks allocation failure,
 repeated export, 80,000 concurrent get/put pairs, internal/external reservation
 objects and exactly one final release under ASan/UBSan. Missing callbacks are
 rejected before allocation. Cppcheck retains 16/16 GEM and 9/9 dma-buf findings
-against the previous build; GCC Analyzer adds none. Physical retest is pending.
+against the previous build; GCC Analyzer adds none.
+
+### Physical PRIME acceptance, 2026-10-11
+
+CM5 booted the matched `EMBERV3DRENDER` build from `78c6715a949`.
+At 14:54:15 UTC, all 80 cross-process lifecycles passed in 0.07 seconds,
+including 80 MiB cumulative allocation, SCM_RIGHTS, duplicate imports,
+nonzero mmap offsets, rejection of private/executable/out-of-range mappings,
+and retained mapping after every handle/fd closes. The test exceeds the
+64 MiB allocation quota cumulatively; the previous kernel exhausted it.
+
+Unchanged Mesa/libdrm then passed four GBM/PRIME/EGLImage/GLES cycles on
+`V3D 7.1.10.2`, comparing all 256 CPU-mapped pixels with GPU readback each
+cycle. Four subsequent 1280x800 shader/pixel lifecycles also passed. No
+software renderer was permitted. This is same-device linear buffer sharing;
+foreign-device imports, arbitrary modifiers and a desktop remain unaccepted.
+
+| Artifact | SHA256 |
+| --- | --- |
+| Kernel ELF | `e3dd93954fa7fde09e9da0667cb67b7e0c3544e91719be8dfc05e478cd9deea4` |
+| Image | `578a5efeac0e3a3e14c9b42ecc5d7852280421ab39ef24a0b7b997ee9fd8f4ef` |
+| Static PRIME checker | `8f71c8f0ec53a5ed397d2b7d87d6faa984c45b944a68599923401a92bf8322be` |
+| Native PRIME log | `353b67b8142fd31ac8359a86e514601efddb8e92cb5bc23eceb593c278d0fd1c` |
+| Mesa PRIME/1280x800 log | `f147b8050b4ad7743ea2d945056ae49855bbf9c4c987913e2194f17851df945e` |
+
+All four modules match the previous accepted Mesa bundle byte for byte;
+source-export, compiler, debuglink/CTF and module-symbol checks passed.
+The original firmware/base provenance limits and ARM64 Valgrind gap remain.
