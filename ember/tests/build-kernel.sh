@@ -1,4 +1,5 @@
 #!/bin/sh
+# Origin: EmberBSD (AI-assisted), kernel build orchestration regression.
 # Exercise build orchestration without substituting these fixtures for a build.
 set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -10,6 +11,15 @@ mkdir -p "$work/src/ember/tools" "$work/bin" "$work/src/tools" \
     "$work/src/sys/external/gpl2/dts/dist"
 cp "$repo/ember/build-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
+for contract in bcm2712-v3d-contract bcm2712-v3d-takeover-contract \
+    bcm2712-v3d-dma-contract bcm2712-v3d-queue-contract \
+    bcm2712-v3d-irq-contract bcm2712-v3d-fault-contract; do
+    cat > "$work/src/ember/tools/$contract.sh" <<'SH'
+#!/bin/sh
+echo "contract $0 $*" >> "$TEST_LOG"
+[ "${FAIL_AT:-}" != contract ]
+SH
+done
 : > "$work/src/tools/Makefile"
 : > "$work/src/share/mk/bsd.own.mk"
 : > "$work/src/sys/arch/evbarm/conf/EMBER64"
@@ -122,7 +132,7 @@ grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-test "$(grep -c '^contract ' "$TEST_LOG")" -eq 2
+test "$(grep -c '^contract ' "$TEST_LOG")" -eq 8
 for failure in tools module cpp dtb contract publish; do
     printf stale > "$TEST_OUT/netbsd-EMBER64"
     if FAIL_AT=$failure sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
@@ -142,7 +152,7 @@ TEST_HOST=NetBSD EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$
 grep -q native-make "$TEST_LOG"
 ! grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
-test "$(grep -c '^contract ' "$TEST_LOG")" -eq 6
+test "$(grep -c '^contract ' "$TEST_LOG")" -eq 12
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi
@@ -157,4 +167,4 @@ fi
 grep -q 'full source' "$work/run.log"
 test ! -e "$TEST_OUT/netbsd-EMBER64"
 test ! -e "$TEST_OUT/bcm2712btcom.kmod"
-echo 'PASS: cross/native routing, matched module headers, external tools, six contracts, failed-build outputs'
+echo 'PASS: cross/native routing, matched module headers, external tools, eight portable/twelve native contracts, failed-build outputs'

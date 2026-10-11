@@ -74,13 +74,15 @@ EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/cross-prefix \
 This parameter selects tools; it does not fetch or build a GCC16 cross
 compiler. The [Ports cross recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
 provides the host compiler and preserves its current source adaptations.
+Its `--kernel` mode builds frontends without an application sysroot; the
+application mode retains the target libc/header/runtime requirements.
 
 ## Acceptance is separate from host selection
 
-The wrapper retains the native six-contract suite. On a foreign host it
-runs the two portable contracts and explicitly records the remaining native
+The wrapper retains the full twelve-contract suite. On a foreign host it
+runs the eight portable contracts and explicitly records the remaining native
 contracts as pending. Copy the same pinned source export to an EmberBSD
-machine and run all six there before deploying the artifacts:
+machine and run all twelve there before deploying the artifacts:
 
 ```sh
 NETBSD2_PYTHON=/path/to/python3 sh ember/tools/kernel-contracts.sh /absolute/source all
