@@ -46,7 +46,7 @@ for mutant in flags source-write completion-count busy unmap revoke \
         }
         mutant == "nested-mask" { changed += sub(/if \(!job->controller_masked\)/, "if (true)") }
         { print }
-        END { if (changed != 1) exit 1 }
+        END { expected = mutant == "unmap" || mutant == "early-return-to-cpu" ? 2 : 1; if (changed != expected) exit 1 }
     ' "$work/job-good.h" > "$work/job-body.h"
     compile
     if "$work/contract" > "$work/mutant.log" 2>&1; then

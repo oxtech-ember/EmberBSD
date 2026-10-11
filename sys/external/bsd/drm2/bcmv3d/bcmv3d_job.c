@@ -1,4 +1,4 @@
-/* Origin: EmberBSD native BCM2712 TFU submission, 2026-10-11. */
+/* Origin: EmberBSD native BCM2712 TFU/CSD submission, 2026-10-11. */
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Register facts and accepted payload: bcm2712_v3d_fault.c and its pins. */
@@ -33,17 +33,56 @@
 #define V3D_PT_SIZE	(4 * 1024 * 1024)
 #define V3D_PTE_VALID	(1U << 28)
 #define V3D_PTE_WRITE	(1U << 29)
+#define V3D_CSD_STATUS	0x900
+#define V3D_CSD_CFG0	0x930
+#define V3D_CSD_DONE	0x40
+#define V3D_CORE_IRQ_ALL	0x0fff007f
+#define V3D_CSD_BO_MAX	64
 
 struct bcmv3d_job {
 	kmutex_t lock;
 	struct bcmv3d_bo *pt, *scratch;
 	/* Retained on poison: never release possibly GPU-owned storage. */
 	struct bcmv3d_bo *src, *dst;
-	void *ih;
+	struct bcmv3d_bo *bos[V3D_CSD_BO_MAX];
+	unsigned int nbo;
+	void *ih, *core_ih;
 	const char *stage;
-	bool published, poisoned, controller_masked;
-	volatile unsigned int events, irq_error;
+	bool published, poisoned, controller_masked, core_masked;
+	volatile unsigned int events, irq_error, core_events, core_error;
 };
+
+static void
+bcmv3d_core_mask(struct bcmv3d_job *job)
+{
+
+	if (!job->core_masked) {
+		acpi_intr_mask(job->core_ih);
+		job->core_masked = true;
+	}
+	xc_barrier(0);
+}
+
+static int
+bcmv3d_core_intr(void *arg)
+{
+	struct bcmv3d_job *job = arg;
+	uint32_t status;
+	int error;
+
+	error = bcmv3d_takeover_core_poke(V3D_MSK_SET, V3D_CORE_IRQ_ALL);
+	if (error == 0)
+		error = bcmv3d_takeover_core_peek(V3D_INT_STS, &status);
+	if (error == 0 && status != V3D_CSD_DONE)
+		error = EIO;
+	if (error == 0)
+		error = bcmv3d_takeover_core_poke(V3D_INT_CLR, V3D_CSD_DONE);
+	if (error != 0)
+		atomic_cas_uint(&job->core_error, 0, error);
+	atomic_inc_uint(&job->core_events);
+	wakeup(job);
+	return 1;
+}
 
 static void
 bcmv3d_mask(struct bcmv3d_job *job)
@@ -136,13 +175,14 @@ bcmv3d_ptes(struct bcmv3d_job *job, bool map)
 	struct bcmv3d_bo *objects[] = { job->src, job->dst };
 	unsigned int i, page;
 
-	for (i = 0; i < __arraycount(objects); i++) {
-		struct bcmv3d_bo *bo = objects[i];
+	for (i = 0; i < (job->nbo ? job->nbo : __arraycount(objects)); i++) {
+		struct bcmv3d_bo *bo = job->nbo ? job->bos[i] : objects[i];
 		uint32_t pfn = bo->cma.dmamap->dm_segs[0].ds_addr >> 12;
+		size_t length = job->nbo ? bo->cma.dmasize : V3D_COPY_SIZE;
 
-		for (page = 0; page < V3D_COPY_SIZE / PAGE_SIZE; page++)
+		for (page = 0; page < length / PAGE_SIZE; page++)
 			pt[(bo->gpu >> 12) + page] = map ? (pfn + page) |
-			    V3D_PTE_VALID | (i == 1 ? V3D_PTE_WRITE : 0) : 0;
+			    V3D_PTE_VALID | (job->nbo || i == 1 ? V3D_PTE_WRITE : 0) : 0;
 	}
 	bcmv3d_sync(job->pt, BUS_DMASYNC_PREWRITE);
 }
@@ -356,6 +396,245 @@ release:
 	return -error;
 }
 
+/* V3D 7.1 cache protocol, checked against Mesa and Linux V3D registers. */
+static int
+bcmv3d_cache_wait(uint32_t value, uint32_t busy)
+{
+	uint32_t state;
+	unsigned int n;
+	int error;
+
+	error = bcmv3d_takeover_core_poke(0x30, value);
+	if (error != 0)
+		return error;
+	for (n = 0; n < 1000; n++) {
+		error = bcmv3d_takeover_core_peek(0x30, &state);
+		if (error != 0)
+			return error;
+		if ((state & busy) == 0)
+			return 0;
+		delay(100);
+	}
+	return ETIMEDOUT;
+}
+
+static bool
+bcmv3d_csd_address(struct bcmv3d_job *job, uint32_t address, size_t size)
+{
+	unsigned int i;
+
+	for (i = 0; i < job->nbo; i++) {
+		struct bcmv3d_bo *bo = job->bos[i];
+
+		if (address >= bo->gpu &&
+		    (uint64_t)address + size <= bo->gpu + bo->cma.dmasize)
+			return true;
+	}
+	return false;
+}
+
+static int
+bcmv3d_csd_execute(struct bcmv3d_job *job, struct drm_v3d_submit_csd *a)
+{
+	uint32_t before, after, state;
+	unsigned int i;
+	int error;
+
+	job->stage = "CSD idle boundary";
+	bcmv3d_mask(job);
+	bcmv3d_core_mask(job);
+	atomic_store_relaxed(&job->events, 0);
+	atomic_store_relaxed(&job->irq_error, 0);
+	atomic_store_relaxed(&job->core_events, 0);
+	atomic_store_relaxed(&job->core_error, 0);
+	error = bcmv3d_takeover_core_peek(V3D_CSD_STATUS, &before);
+	if (error == 0)
+		error = bcmv3d_takeover_core_peek(V3D_INT_STS, &state);
+	if (error != 0)
+		return error;
+	if ((before & 15) != 0 || state != 0)
+		return EBUSY;
+	if (job->published && (error = bcmv3d_clean()) != 0)
+		return error;
+	for (i = 0; i < job->nbo; i++)
+		bcmv3d_sync(job->bos[i], BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+	bcmv3d_sync(job->scratch, BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+	bcmv3d_ptes(job, true);
+	job->stage = "CSD MMU publication";
+	error = bcmv3d_publish(job);
+	if (error != 0)
+		return error;
+	/* All addresses, then outer-to-inner invalidation before any fetch. */
+	job->stage = "CSD cache invalidate";
+	error = bcmv3d_takeover_core_poke(0x34, 0);
+	if (error == 0)
+		error = bcmv3d_takeover_core_poke(0x38, UINT32_MAX);
+	if (error == 0)
+		error = bcmv3d_cache_wait(1, 1);
+	if (error == 0)
+		error = bcmv3d_takeover_core_poke(0x24, 0x0f0f0f0f);
+	if (error != 0)
+		return error;
+	job->stage = "CSD register setup";
+	for (i = 1; i <= 7; i++) {
+		error = bcmv3d_takeover_core_poke(V3D_CSD_CFG0 + 4 * i,
+		    i == 7 ? 0 : a->cfg[i]);
+		if (error != 0)
+			return error;
+	}
+	job->stage = "CSD start";
+	KASSERT(job->controller_masked && job->core_masked);
+	acpi_intr_unmask(job->ih);
+	job->controller_masked = false;
+	acpi_intr_unmask(job->core_ih);
+	job->core_masked = false;
+	error = bcmv3d_takeover_hub_poke(V3D_MSK_CLR, V3D_IRQ_ALL);
+	if (error == 0)
+		error = bcmv3d_takeover_core_poke(V3D_MSK_CLR, V3D_CORE_IRQ_ALL);
+	if (error == 0)
+		error = bcmv3d_takeover_core_poke(V3D_CSD_CFG0, a->cfg[0]);
+	if (error != 0)
+		return error;
+	job->stage = "CSD completion interrupt";
+	for (i = 0; i < 5 && atomic_load_acquire(&job->core_events) == 0 &&
+	    atomic_load_acquire(&job->events) == 0; i++)
+		tsleep(job, PWAIT, "v3dcsd", MAX(1, mstohz(100)));
+	bcmv3d_mask(job);
+	bcmv3d_core_mask(job);
+	error = bcmv3d_takeover_core_poke(V3D_MSK_SET, V3D_CORE_IRQ_ALL);
+	if (error == 0)
+		error = bcmv3d_takeover_hub_poke(V3D_MSK_SET, V3D_IRQ_ALL);
+	if (error != 0)
+		return error;
+	if (atomic_load_acquire(&job->core_events) != 1 ||
+	    atomic_load_acquire(&job->core_error) != 0 ||
+	    atomic_load_acquire(&job->events) != 0)
+		return EIO;
+	job->stage = "CSD retirement";
+	error = bcmv3d_takeover_core_peek(V3D_CSD_STATUS, &after);
+	if (error == 0)
+		error = bcmv3d_takeover_core_peek(V3D_INT_STS, &state);
+	if (error != 0)
+		return error;
+	if ((after & 15) != 0 || state != 0 ||
+	    (uint8_t)((after >> 4) - (before >> 4)) != 1)
+		return EIO;
+	if ((error = bcmv3d_clean()) != 0)
+		return error;
+	/* CSDDONE does not mean the shader's writes have reached memory. */
+	job->stage = "CSD cache clean";
+	error = bcmv3d_cache_wait(0x100, 0x100);
+	if (error == 0)
+		error = bcmv3d_cache_wait(5, 1);
+	if (error != 0)
+		return error;
+	job->stage = "CSD scratch integrity";
+	bcmv3d_sync(job->scratch, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	for (i = 0; i < 3 * PAGE_SIZE / sizeof(uint32_t); i++) {
+		uint32_t expected = i < PAGE_SIZE / 4 || i >= PAGE_SIZE / 2 ?
+		    0xa5c35a3c : 0;
+
+		if (((uint32_t *)job->scratch->cma.vaddr)[i] != expected)
+			return EIO;
+	}
+	job->stage = "CSD PTE revocation";
+	bcmv3d_ptes(job, false);
+	if ((error = bcmv3d_flush()) != 0)
+		return error;
+	for (i = 0; i < job->nbo; i++)
+		bcmv3d_sync(job->bos[i], BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
+	return 0;
+}
+
+int
+bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
+{
+	struct drm_v3d_submit_csd *a = data;
+	struct bcmv3d_device *sc;
+	struct bcmv3d_job *job;
+	struct drm_gem_object *objects[V3D_CSD_BO_MAX];
+	uint32_t handles[V3D_CSD_BO_MAX];
+	unsigned int i, j, count = 0;
+	int error;
+
+	/* No extensions, fences or performance objects are silently ignored. */
+	if (a->flags || a->pad || a->extensions || a->in_sync || a->out_sync ||
+	    a->perfmon_id || a->bo_handle_count == 0 ||
+	    a->bo_handle_count > V3D_CSD_BO_MAX ||
+	    a->coef[0] || a->coef[1] || a->coef[2] || a->coef[3] ||
+	    (a->cfg[0] >> 16) == 0 || (a->cfg[1] >> 16) == 0 ||
+	    (a->cfg[2] >> 16) == 0 || (a->cfg[3] & 0xfc000000) != 0 ||
+	    a->cfg[4] == UINT32_MAX || (a->cfg[5] & 4) || (a->cfg[6] & 3))
+		return -EINVAL;
+	error = copyin((const void *)(uintptr_t)a->bo_handles, handles,
+	    a->bo_handle_count * sizeof(handles[0]));
+	if (error != 0)
+		return -error;
+	for (i = 0; i < a->bo_handle_count; i++) {
+		objects[count] = drm_gem_object_lookup(file, handles[i]);
+		if (objects[count] == NULL) {
+			error = ENOENT;
+			goto release;
+		}
+		count++;
+		for (j = 0; j < i; j++) {
+			if (objects[j] == objects[i]) {
+				error = EINVAL;
+				goto release;
+			}
+		}
+	}
+	sc = dev->dev_private;
+	job = sc->job;
+	mutex_enter(&job->lock);
+	if (job->poisoned) {
+		error = EIO;
+		goto unlock;
+	}
+	job->nbo = count;
+	for (i = 0; i < count; i++)
+		job->bos[i] = bcmv3d_to_bo(objects[i]);
+	if (!bcmv3d_csd_address(job, a->cfg[5] & ~7U, 8) ||
+	    !bcmv3d_csd_address(job, a->cfg[6], 4)) {
+		error = EINVAL;
+		goto clear;
+	}
+	for (i = 0; i < count; i++)
+		atomic_store_release(&job->bos[i]->busy, 1);
+	error = bcmv3d_csd_execute(job, a);
+	if (error != 0) {
+		uint32_t state = 0;
+
+		job->poisoned = true;
+		(void)bcmv3d_takeover_hub_poke(V3D_MSK_SET, V3D_IRQ_ALL);
+		(void)bcmv3d_takeover_core_poke(V3D_MSK_SET, V3D_CORE_IRQ_ALL);
+		bcmv3d_mask(job);
+		bcmv3d_core_mask(job);
+		for (i = 0; i < count; i++)
+			atomic_store_release(&job->bos[i]->error, EIO);
+		(void)bcmv3d_takeover_core_peek(V3D_CSD_STATUS, &state);
+		aprint_error_dev(sc->dev, "%s: error=%d status=%#x "
+		    "core-events=%u core-error=%u hub-events=%u; "
+		    "%u buffers retained until reboot\n", job->stage, error,
+		    state, atomic_load_acquire(&job->core_events),
+		    atomic_load_acquire(&job->core_error),
+		    atomic_load_acquire(&job->events), count);
+		mutex_exit(&job->lock);
+		return -error;
+	}
+	for (i = 0; i < count; i++)
+		atomic_store_release(&job->bos[i]->busy, 0);
+clear:
+	memset(job->bos, 0, sizeof(job->bos));
+	job->nbo = 0;
+unlock:
+	mutex_exit(&job->lock);
+release:
+	while (count != 0)
+		drm_gem_object_put_unlocked(objects[--count]);
+	return -error;
+}
+
 int
 bcmv3d_wait_bo(struct drm_device *dev, void *data, struct drm_file *file)
 {
@@ -404,10 +683,15 @@ bcmv3d_job_fini(struct bcmv3d_device *sc)
 
 	if (job == NULL)
 		return;
-	KASSERT(!job->published && job->src == NULL && job->dst == NULL);
+	KASSERT(!job->published && job->src == NULL && job->dst == NULL &&
+	    job->nbo == 0);
 	if (job->ih != NULL) {
 		bcmv3d_mask(job);
 		acpi_intr_disestablish(job->ih);
+	}
+	if (job->core_ih != NULL) {
+		bcmv3d_core_mask(job);
+		acpi_intr_disestablish(job->core_ih);
 	}
 	if (job->scratch != NULL)
 		drm_gem_object_put_unlocked(&job->scratch->cma.base);
@@ -463,12 +747,18 @@ bcmv3d_job_init(struct bcmv3d_device *sc)
 	    irq->ar_type == ACPI_LEVEL_SENSITIVE)
 		job->ih = acpi_intr_establish_irq(sc->dev, irq, IPL_VM, true,
 		    bcmv3d_hub_intr, job, "v3d render");
+	irq = acpi_res_irq(&res, 1);
+	if (irq != NULL && irq->ar_irq == 281 &&
+	    irq->ar_type == ACPI_LEVEL_SENSITIVE)
+		job->core_ih = acpi_intr_establish_irq(sc->dev, irq, IPL_VM, true,
+		    bcmv3d_core_intr, job, "v3d compute");
 	acpi_resource_cleanup(&res);
-	if (job->ih == NULL) {
+	if (job->ih == NULL || job->core_ih == NULL) {
 		error = ENXIO;
 		goto fail;
 	}
 	bcmv3d_mask(job);
+	bcmv3d_core_mask(job);
 	return 0;
 fail:
 	bcmv3d_job_fini(sc);

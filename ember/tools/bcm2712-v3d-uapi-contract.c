@@ -27,6 +27,9 @@ _Static_assert(offsetof(struct drm_v3d_submit_tfu, extensions) == 72,
     "TFU extensions ABI");
 _Static_assert(offsetof(struct drm_v3d_submit_tfu, v71.ioc) == 80,
     "V3D 7.1 IOC ABI");
+_Static_assert(sizeof(struct drm_v3d_submit_csd) == 88, "CSD ABI");
+_Static_assert(offsetof(struct drm_v3d_submit_csd, bo_handles) == 48, "CSD handles ABI");
+_Static_assert(offsetof(struct drm_v3d_submit_csd, extensions) == 72, "CSD extensions ABI");
 _Static_assert(DRM_V3D_PARAM_SUPPORTS_TFU == 7, "capability ABI");
 _Static_assert(DRM_V3D_PARAM_SUPPORTS_MULTISYNC_EXT == 11,
     "extension capability ABI");

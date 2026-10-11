@@ -18,7 +18,7 @@ cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
 # status here; their actual-source hardware fixtures run in their own suites.
 for contract in bcm2712-v3d bcm2712-v3d-takeover bcm2712-v3d-dma \
     bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault \
-    bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-job; do
+    bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-job bcm2712-v3d-csd; do
     cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
 #!/bin/sh
 set -eu
@@ -152,7 +152,7 @@ grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
 test "$(grep -c '^contract ' "$TEST_LOG")" -eq 2
-test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 9
+test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 10
 test "$(grep -c '^wifi-contract ' "$TEST_LOG")" -eq 2
 for failure in tools module cpp dtb contract gpu-contract wifi-contract bwfm-link-check.sh publish; do
     printf stale > "$TEST_OUT/netbsd-EMBER64"
@@ -174,7 +174,7 @@ grep -q native-make "$TEST_LOG"
 ! grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
 test "$(grep -c '^contract ' "$TEST_LOG")" -eq 6
-test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 9
+test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 10
 test "$(grep -c '^wifi-contract ' "$TEST_LOG")" -eq 2
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1

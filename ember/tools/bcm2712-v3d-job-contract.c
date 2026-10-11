@@ -30,16 +30,20 @@ struct acpi_resources { int dummy; };
 struct acpi_irq { int ar_irq, ar_type; };
 static const int acpi_resource_parse_ops_quiet;
 static struct acpi_irq irq={282,ACPI_LEVEL_SENSITIVE};
+static struct acpi_irq core_irq={281,ACPI_LEVEL_SENSITIVE};
 static void mutex_init(kmutex_t *m,int a,int b) { *m=0; }
 static void mutex_destroy(kmutex_t *m) { CHECK(*m==0); }
 static void aprint_error_dev(device_t d,const char *fmt,...) { }
 static void aprint_normal_dev(device_t d,const char *fmt,...) { }
 static int acpi_resource_parse(device_t d,ACPI_HANDLE h,const char *s,
     struct acpi_resources *r,const int *p) { return 0; }
-static struct acpi_irq *acpi_res_irq(struct acpi_resources *r,int n) { return &irq; }
+static struct acpi_irq *acpi_res_irq(struct acpi_resources *r,int n) { return n?&core_irq:&irq; }
 static void acpi_resource_cleanup(struct acpi_resources *r) { }
 static int (*handler)(void *);
 static void *handler_arg;
+static int (*core_handler)(void *);
+static void *core_arg;
+static unsigned core_mask_count;
 static bool controller_masked, drained;
 static unsigned mask_count;
 static unsigned reg_calls, fail_reg, starts, sleeps, model_case, writes;
@@ -51,14 +55,14 @@ static uint64_t time_ns;
 static uint32_t regs[0x1240/4];
 static void *acpi_intr_establish_irq(device_t d,struct acpi_irq *r,int ipl,
     bool m,int (*h)(void *),void *a,const char *n)
-{ CHECK(!handler); handler=h; handler_arg=a; return &irq; }
+{ if(r==&core_irq) { CHECK(!core_handler); core_handler=h; core_arg=a; return &core_irq; } CHECK(!handler); handler=h; handler_arg=a; return &irq; }
 static void acpi_intr_mask(void *h)
-{ mask_count++; controller_masked=true; drained=false; }
+{ if(h==&core_irq) { core_mask_count++; return; } mask_count++; controller_masked=true; drained=false; }
 static void xc_barrier(int n) { CHECK(controller_masked); drained=true; }
 static void acpi_intr_unmask(void *h)
-{ CHECK(drained && mask_count>0); controller_masked=--mask_count!=0; }
+{ if(h==&core_irq) { CHECK(core_mask_count>0); --core_mask_count; return; } CHECK(drained && mask_count>0); controller_masked=--mask_count!=0; }
 static void acpi_intr_disestablish(void *h)
-{ CHECK(controller_masked && drained); handler=NULL; handler_arg=NULL; mask_count=0; }
+{ if(h==&core_irq) { CHECK(core_mask_count>0); core_handler=NULL; core_arg=NULL; core_mask_count=0; return; } CHECK(controller_masked && drained); handler=NULL; handler_arg=NULL; mask_count=0; }
 static void wakeup(void *p) { }
 static void delay(unsigned n) { time_ns+=(uint64_t)n*1000; }
 static unsigned mstohz(unsigned n) { return n; }
@@ -71,13 +75,96 @@ static void bus_dmamap_sync(bus_dma_tag_t t,bus_dmamap_t m,size_t o,size_t n,int
 static int bcmv3d_takeover_hub_peek(bus_size_t r,uint32_t *v);
 static int bcmv3d_takeover_hub_poke(bus_size_t r,uint32_t v);
 static int tsleep(void *p,int f,const char *n,int ticks);
+static int bcmv3d_takeover_core_peek(bus_size_t r,uint32_t *v);
+static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v);
+static int copyin(const void *src,void *dst,size_t n)
+{ if((uintptr_t)src<4096)return EFAULT; memcpy(dst,src,n); return 0; }
+
 #include "job-body.h"
 
+static uint32_t core_regs[0xa00/4];
+static unsigned csd_starts, csd_writes, cache_phase, csd_owned;
+static bool csd_model;
+static void csd_complete(void);
+static int bcmv3d_takeover_core_peek(bus_size_t r,uint32_t *v)
+{
+ if(++reg_calls==fail_reg)return EIO;
+ CHECK(r/4<__arraycount(core_regs)); *v=core_regs[r/4];
+ if(r==0x30 && model_case==20 && cache_phase==1)*v|=1;
+ if(r==0x30 && model_case==21 && cache_phase==2)*v|=0x100;
+ if(r==0x30 && model_case==22 && cache_phase==3)*v|=1;
+ return 0;
+}
+static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v)
+{
+ if(++reg_calls==fail_reg)return EIO;
+ CHECK(r/4<__arraycount(core_regs));
+ if(r==V3D_INT_CLR)core_regs[V3D_INT_STS/4]&=~v;
+ else core_regs[r/4]=v;
+ if(r==0x30) {
+  if(v==1) { CHECK(ptes_synced && csd_owned>0); cache_phase=1; }
+  else if(v==0x100) { CHECK(retired && cache_phase==1); cache_phase=2; }
+  else if(v==5) { CHECK(retired && cache_phase==2); cache_phase=3; }
+  else CHECK(false);
+  core_regs[r/4]=0;
+ }
+ if(r>V3D_CSD_CFG0 && r<=V3D_CSD_CFG0+28)csd_writes++;
+ if(r==V3D_CSD_CFG0) {
+  struct bcmv3d_job *j=core_arg;
+  CHECK(csd_writes==7 && core_regs[(V3D_CSD_CFG0+28)/4]==0);
+  CHECK(core_mask_count==0 && !controller_masked && cache_phase==1);
+  CHECK(csd_owned==j->nbo && scratch_owned && ptes_synced);
+  for(unsigned i=0;i<j->nbo;i++) {
+   struct bcmv3d_bo *bo=j->bos[i]; uint32_t *pt=j->pt->cma.vaddr;
+   CHECK(bo->busy && bo->cma.base.refs>=2);
+   for(unsigned p=0;p<bo->cma.dmasize/PAGE_SIZE;p++)
+    CHECK((pt[(bo->gpu>>12)+p]&(V3D_PTE_VALID|V3D_PTE_WRITE))==(V3D_PTE_VALID|V3D_PTE_WRITE));
+  }
+  if(close_during_submit) {
+   for(unsigned h=1;h<16;h++)if(close_during_submit->handles[h])close_handle(close_during_submit,h);
+   for(unsigned i=0;i<j->nbo;i++)CHECK(j->bos[i]->cma.base.refs==1);
+   close_during_submit=NULL;
+  }
+  csd_writes=0; csd_starts++; core_regs[V3D_CSD_STATUS/4]|=2;
+  if(model_case!=1 && model_case!=11)csd_complete();
+ }
+ return 0;
+}
+static void csd_complete(void)
+{
+ CHECK(core_mask_count==0 && core_handler);
+ retired=true;
+ core_regs[V3D_CSD_STATUS/4]=(core_regs[V3D_CSD_STATUS/4]+16)&0xff0;
+ if(model_case==2)core_regs[V3D_CSD_STATUS/4]|=2;
+ if(model_case==3)core_regs[V3D_CSD_STATUS/4]-=16;
+ core_regs[V3D_INT_STS/4]=model_case==4?1:V3D_CSD_DONE;
+ if(model_case==5)regs[V3D_MMU/4]|=1U<<12;
+ core_handler(core_arg);
+ if(model_case==6) { core_regs[V3D_INT_STS/4]=V3D_CSD_DONE; core_handler(core_arg); }
+}
 static void
-bus_dmamap_sync(bus_dma_tag_t t,bus_dmamap_t m,size_t o,size_t n,int ops)
+bus_dmamap_sync
+(bus_dma_tag_t t,bus_dmamap_t m,size_t o,size_t n,int ops)
 {
 	struct bcmv3d_job *j=handler_arg;
 	CHECK(o==0 && n==m->dm_segs[0].ds_len && j!=NULL);
+ if(j->nbo) {
+  if(m==j->pt->cma.dmamap) {
+   uint32_t *pt=j->pt->cma.vaddr; CHECK(ops==1 && csd_owned==j->nbo);
+   if(pt[j->bos[0]->gpu>>12]) { CHECK(!retired && scratch_owned); ptes_synced=true; }
+   else { CHECK(retired && cache_phase==3 && !scratch_owned); revoke_synced=true; }
+  } else if(m==j->scratch->cma.dmamap) {
+   if(ops==3) { CHECK(!scratch_owned && csd_owned==j->nbo); scratch_owned=true; }
+   else { CHECK(ops==12 && scratch_owned && cache_phase==3 && retired); scratch_owned=false; }
+  } else {
+   bool found=false; for(unsigned i=0;i<j->nbo;i++)if(m==j->bos[i]->cma.dmamap)found=true;
+   CHECK(found);
+   if(ops==3) { if(csd_owned==0)retired=revoke_synced=revoked=ptes_synced=false; csd_owned++; }
+   else { CHECK(ops==12 && csd_owned>0 && revoked && cache_phase==3); csd_owned--; }
+  }
+  return;
+ }
+
 	if(m==j->src->cma.dmamap && ops==BUS_DMASYNC_PREWRITE) {
 		CHECK(!src_owned && !dst_owned && !scratch_owned);
 		src_owned=true; retired=revoke_synced=revoked=ptes_synced=false;
@@ -173,7 +260,7 @@ bcmv3d_takeover_hub_poke(bus_size_t r,uint32_t v)
 static int tsleep(void *p,int f,const char *n,int ticks)
 {
 	time_ns+=1000000; sleeps++;
-	if(model_case==11 && sleeps==5)complete();
+	if(model_case==11 && sleeps==5) { if(csd_model)csd_complete(); else complete(); }
 	return EWOULDBLOCK;
 }
 
@@ -183,7 +270,7 @@ setup(struct bcmv3d_device *c,struct drm_device *d,struct drm_file *f)
 	struct drm_v3d_create_bo a={.size=V3D_COPY_SIZE},b=a;
 	*c=(struct bcmv3d_device){.drm=d};
 	*d=(struct drm_device){.dev_private=c}; *f=(struct drm_file){0};
-	memset(regs,0,sizeof(regs)); regs[V3D_MMU_DEBUG/4]=0x550;
+	memset(regs,0,sizeof(regs)); memset(core_regs,0,sizeof(core_regs)); regs[V3D_MMU_DEBUG/4]=0x550; csd_model=false; csd_starts=csd_writes=cache_phase=csd_owned=0;
 	reg_calls=fail_reg=starts=sleeps=writes=flushes=model_case=0;
 	src_owned=dst_owned=scratch_owned=ptes_synced=false;
 	retired=revoke_synced=revoked=false;

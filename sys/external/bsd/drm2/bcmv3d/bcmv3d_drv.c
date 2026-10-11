@@ -43,6 +43,8 @@ static const struct drm_ioctl_desc bcmv3d_ioctls[] = {
 	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(V3D_SUBMIT_TFU, bcmv3d_submit_tfu,
 	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+	DRM_IOCTL_DEF_DRV(V3D_SUBMIT_CSD, bcmv3d_submit_csd,
+	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
 };
 
 static struct drm_driver bcmv3d_driver = {
