@@ -41,8 +41,8 @@ produce a successful result.
 
 ## Fault identity and recovery
 
-The deliberately invalid destination mapping must cause a fault without a
-TFU completion. The VIO client and decoded address must identify TFU accessing
+The deliberately invalid destination mapping must cause a real MMU fault.
+The VIO client and decoded address must identify TFU accessing
 that alias range. A fault flag alone is insufficient. The following valid
 job must complete once, with an idle TFU, correct data and intact protected
 buffers. DMA synchronization separates device ownership from CPU inspection
@@ -78,12 +78,33 @@ The board was returned to its tested ordinary kernel with Wi-Fi recovery.
 
 V3D 7.1 counts this failed conversion too. The corrected guard requires
 one retirement after the fault, then a total of two after the good job,
-including eight-bit wrap. TFUC remains forbidden for the fault and required
-exactly once for the good job. A counter alone never establishes successful
-work. Tests replay the physical counter, reject missing/extra retirements,
-and retain the event, idle, fault-latch and memory-integrity checks:
-338 cases, 647 checks, 20 causal mutants and ASan/UBSan pass. Hardware
-acceptance of recovery after this correction remains pending.
+including eight-bit wrap. A counter alone never establishes successful work.
+
+A diagnostic follow-up on the same network-driver baseline, source
+`5a9111e68aa41cc1b5469d8dc038778184596b84`, recorded `HUB_STS=0x32`:
+the fault ISR received PTI+WRV (`0x30`), then TFUC appeared under the mask.
+TFU was idle, CVTCT advanced once and only one ISR ran. This disproves the
+earlier assumption that a faulted conversion cannot signal terminal TFUC.
+Kernel SHA256:
+`fb5b28df57fd1c7fe2141363e5f366d58430ac8709b09fc2869901c3692a749e`;
+capture SHA256:
+`8a975671dada9cbf1ea2748cd737bda7660db5a93e13a498c058d23710975ba8`.
+The board returned to its tested ordinary kernel after this failed probe.
+
+The corrected contract requires the failed job's terminal TFUC before rearm,
+either in its first ISR or in masked status within a bounded wait. The
+controller mask and cross-call barrier freeze the first-job event baseline.
+Only this initial phase permits the recorded fault bits and an undelivered
+TFUC. The fault identity, unchanged buffers, idle TFU and one retirement
+are still mandatory. Source MMU W1C precedes the final owned HUB acknowledge.
+The post-fixup flush cannot acknowledge a new fault. Before job 2, HUB and MMU
+must be clean; afterwards exactly one new ISR/TFUC and a second retirement
+must accompany verified output and intact protected memory.
+
+Regressions cover the physical `0x32`, delayed terminal indication, new faults,
+changed violation identity, extra ISR deliveries and baseline/teardown races.
+350 cases, 674 checks, 24 causal mutants and ASan/UBSan pass. Physical
+acceptance of recovery with this revised retirement model remains pending.
 
 ## Repeat the checks
 

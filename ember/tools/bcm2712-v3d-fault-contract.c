@@ -153,11 +153,13 @@ static void fake_bus_dmamap_sync(bus_dma_tag_t, bus_dmamap_t, bus_addr_t,
 #define acpi_intr_establish_irq fake_acpi_intr_establish_irq
 #define acpi_intr_disestablish fake_acpi_intr_disestablish
 #define acpi_intr_mask fake_acpi_intr_mask
+#define acpi_intr_unmask fake_acpi_intr_unmask
 #define xc_barrier fake_xc_barrier
 static void *fake_acpi_intr_establish_irq(device_t, struct acpi_irq *, int,
     bool, int (*)(void *), void *, const char *);
 static void fake_acpi_intr_disestablish(void *);
 static void fake_acpi_intr_mask(void *);
+static void fake_acpi_intr_unmask(void *);
 static void fake_xc_barrier(unsigned int);
 static ACPI_STATUS fake_acpi_resource_parse(device_t, ACPI_HANDLE,
     const char *, struct acpi_resources *, const void *);
@@ -264,6 +266,10 @@ static struct fixture {
 	bool job1_valid_dst, fault_touch_dst, good_image_bad;
 	bool fault_never, good_never, sticky_latch;
 	bool fault_with_tfuc, fault_no_count, fault_two_counts;
+	bool fault_level, fault_pending_tfuc, delayed_fault_tfuc;
+	bool new_fault_after_recovery;
+	uint32_t foreign_pending;
+	uint32_t fault_raw_status;
 	bool duplicate_fault, duplicate_good;
 	bool fault_busy, initial_busy, good_busy, pre_good_busy;
 	bool good_no_count, good_two_counts, good_with_fault;
@@ -277,8 +283,11 @@ static struct fixture {
 	int fail_peek_offset, fail_poke_offset, fail_io_job;
 	unsigned int jobs;
 	unsigned int delays, sleeps, sleep_ticks;
+	unsigned int terminal_on_sleep;
 	bool late_good_fault, late_good_completion;
 	bool barrier_fault, barrier_completion, barrier_read_error;
+	bool baseline_late_irq, changed_vio_id, changed_vio_addr;
+	bool first_ownership_returned;
 	unsigned int barriers, controller_masks;
 	char diagnostics[768];
 	char last_message[512];
@@ -311,7 +320,7 @@ fake_fire(struct fake_irq_handler *h, uint32_t *sts, uint32_t *mask,
 	int guard = 8;
 
 	while (guard-- > 0 && (*sts & bit) != 0 && (*mask & bit) == 0 &&
-	    h->established && h->fn != NULL) {
+	    h->established && !h->controller_masked && h->fn != NULL) {
 		(*entries)++;
 		if (h->fn(h->arg) != 1)
 			break;
@@ -371,6 +380,8 @@ fake_hub_peek(bus_size_t offset, uint32_t *value)
 	case 0x1230: *value = hub_illegal; break;
 	case FV3D_MMU_VIO_ID:
 		*value = fx.vio_id;
+		if (fx.changed_vio_id && fx.first_ownership_returned)
+			*value ^= 1;
 		break;
 	case FV3D_MMU_VIO_ADDR:
 		/* Pinned Linux: VIO_ADDR stores the high 32 VA bits. */
@@ -378,6 +389,8 @@ fake_hub_peek(bus_size_t offset, uint32_t *value)
 		    fx.address_below ? -16 : 32)) >> (fx.va_width_field - 2);
 		if (fx.wrong_address)
 			*value = 0x01040100; /* source object, not destination alias */
+		if (fx.changed_vio_addr && fx.first_ownership_returned)
+			*value ^= 1;
 		break;
 	case FV3D_TFU_CS:
 		*value = 0x100 | (fake_tfu_count << FV3D_TFU_CVTCT_SHIFT);
@@ -416,6 +429,10 @@ fake_hub_poke(bus_size_t offset, uint32_t value)
 	case R_INT_CLR:
 		if (!fx.sticky_irq)
 			hub_bank.int_sts &= ~value;
+		/* CM5 retains the source until MMU W1C, even under a mask. */
+		if (fx.fault_level &&
+		    (hub_ctl_shadow & FV3D_MMU_CTL_FAULTS) != 0)
+			hub_bank.int_sts |= FV3D_HUB_MMU_PTI | FV3D_HUB_MMU_WRV;
 		break;
 	case 0x1200: {
 		uint32_t latch = hub_ctl_shadow & FV3D_MMU_CTL_FAULTS;
@@ -463,6 +480,17 @@ fake_acpi_intr_mask(void *ih)
 }
 
 static void
+fake_acpi_intr_unmask(void *ih)
+{
+	struct fake_irq_handler *handler = ih;
+
+	assert(handler->controller_masked && handler->drained);
+	handler->controller_masked = false;
+	handler->drained = false;
+	fake_mask_changed_hub();
+}
+
+static void
 fake_xc_barrier(unsigned int flags)
 {
 	struct fake_irq_handler *handler = &fake_handlers[1];
@@ -470,6 +498,11 @@ fake_xc_barrier(unsigned int flags)
 	assert(flags == 0); /* low priority, below the hardware ISR */
 	assert(handler->established && handler->controller_masked);
 	fx.barriers++;
+	if (fx.jobs == 1 && fx.baseline_late_irq) {
+		hub_bank.int_sts |= FV3D_HUB_MMU_PTI;
+		hub_entries++;
+		(void)handler->fn(handler->arg);
+	}
 	if (fx.jobs == 2 && (fx.barrier_fault || fx.barrier_completion ||
 	    fx.barrier_read_error)) {
 		if (fx.barrier_fault) {
@@ -669,6 +702,8 @@ fake_bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, bus_addr_t offset,
 		}
 	}
 	assert(offset == 0 && length == allocation->size);
+	if (fx.jobs == 1 && (ops & BUS_DMASYNC_POSTWRITE) != 0)
+		fx.first_ownership_returned = true;
 	if (fx.enforce_sync) {
 		if ((ops & (BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE)) != 0) {
 			if (!allocation->device_owned)
@@ -683,6 +718,11 @@ fake_bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, bus_addr_t offset,
 	}
 	if ((ops & BUS_DMASYNC_PREWRITE) != 0)
 		memcpy(allocation->dev + offset, allocation->cpu + offset, length);
+	if (fx.new_fault_after_recovery && fx.jobs == 1 &&
+	    (ops & BUS_DMASYNC_PREWRITE) != 0) {
+		hub_ctl_shadow |= __BIT(20);
+		hub_bank.int_sts |= FV3D_HUB_MMU_PTI;
+	}
 	if ((ops & BUS_DMASYNC_POSTREAD) != 0)
 		memcpy(allocation->cpu + offset, allocation->dev + offset, length);
 }
@@ -744,10 +784,9 @@ fake_run_tfu(void)
 	if ((pte & FV3D_PTE_VALID) == 0) {
 		if (fx.fault_never)
 			return true;	/* engine stalls: nothing latches */
-		/* The pinned fault: latch MMU_CTL PT_INVALID and the HUB
-		 * PTI interrupt; never complete the job. */
+		/* Physical CM5: PTI+WRV, then a terminal TFUC under the mask. */
 		if (!fx.missing_latch)
-			hub_ctl_shadow |= __BIT(20);
+			hub_ctl_shadow |= __BIT(20) | __BIT(12);
 		if (fx.sticky_latch)
 			hub_ctl_shadow |= 0;	/* latch set; W1C ignored below */
 		if (fx.fault_touch_dst)
@@ -756,10 +795,19 @@ fake_run_tfu(void)
 		/* Physical V3D 7.1 retires the failed conversion too. */
 		if (!fx.fault_no_count)
 			fake_tfu_count += fx.fault_two_counts ? 2 : 1;
-		fake_latch_hub(FV3D_HUB_MMU_PTI |
+		fake_latch_hub(FV3D_HUB_MMU_PTI | FV3D_HUB_MMU_WRV |
 		    (fx.fault_with_tfuc ? FV3D_HUB_TFUC : 0));
-		if (fx.duplicate_fault)
-			fake_latch_hub(FV3D_HUB_MMU_PTI);
+		if (fx.fault_pending_tfuc && !fx.fault_with_tfuc &&
+		    !fx.delayed_fault_tfuc)
+			hub_bank.int_sts |= FV3D_HUB_TFUC;
+		hub_bank.int_sts |= fx.foreign_pending;
+		fx.fault_raw_status = hub_bank.int_sts;
+		if (fx.duplicate_fault) {
+			/* A second ISR, not a source reasserting under its mask. */
+			hub_bank.int_sts |= FV3D_HUB_MMU_PTI;
+			hub_entries++;
+			(void)fake_handlers[1].fn(fake_handlers[1].arg);
+		}
 		return true;
 	}
 	if (fx.good_fault_only) {
@@ -836,6 +884,9 @@ _tsleep(void *chan, int pri, const char *wmesg, int timo)
 {
 	(void)chan; (void)pri; (void)wmesg; (void)timo;
 	fx.sleeps++;
+	if (fx.delayed_fault_tfuc && fx.jobs == 1 &&
+	    fx.sleeps == fx.terminal_on_sleep)
+		hub_bank.int_sts |= FV3D_HUB_TFUC;
 	assert(timo > 0);
 	fx.sleep_ticks += timo;
 	return 0;
@@ -884,6 +935,8 @@ reset_fixture(void)
 		fx.fail_alloc[i] = false;
 	hz = 100;
 	fx.va_width_field = 6;
+	fx.terminal_on_sleep = 2;
+	fx.fault_pending_tfuc = true;
 	/* CM5 V3D 7.1 fault capture; the 4.1 client map is different. */
 	fx.vio_id = 0x7d;
 	fx.fail_create = -1;
@@ -941,7 +994,7 @@ main(void)
 	reset_fixture();
 	run_case("fault then recovered good job", 0);
 	CHECK(strstr(fx.last_message, "fault-recovery PASS") != NULL);
-	/* delivered resets before the good job: TFUC of job 2 remains. */
+	/* Cumulative handler evidence includes TFUC from the good job. */
 	CHECK((fv3d.delivered & FV3D_HUB_TFUC) != 0);
 	/* Exactly-once delivery per latched bit. */
 	CHECK(hub_latches == 2 && hub_entries == 2);
@@ -951,7 +1004,7 @@ main(void)
 	CHECK(hub_bank.mask & (FV3D_HUB_TFUC | FV3D_HUB_MMU_FAULTS));
 	CHECK(!fake_handlers[1].established);
 	CHECK(disestablish_count == 1);
-	CHECK(fx.controller_masks == 1 && fx.barriers == 1);
+	CHECK(fx.controller_masks == 2 && fx.barriers == 2);
 	CHECK(frees == 0 && unmaps == 0 && destroys == 0 && unloads == 0);
 
 	/* One shot only. */
@@ -976,7 +1029,7 @@ main(void)
 	fx.job1_valid_dst = true;
 	run_case("faulting job completed", EIO);
 	CHECK(strstr(fx.last_message,
-	    "faulting job completed unexpectedly") != NULL);
+	    "faulting job retired without a fault interrupt") != NULL);
 
 	/* The fault never arrives: bounded timeout. */
 	reset_fixture();
@@ -1016,10 +1069,78 @@ main(void)
 	fx.good_image_bad = true;
 	run_case("good image mismatch", EIO);
 
-	/* Fault and completion must never be accepted together. */
+	/* A faulted conversion can retire with TFUC. This is not success:
+	 * the MMU identity, single retirement and all canaries still apply. */
 	reset_fixture();
 	fx.fault_with_tfuc = true;
-	run_case("fault plus TFUC", EIO);
+	run_case("fault plus TFUC in first interrupt", 0);
+	CHECK(fx.jobs == 2 && fv3d.tfuc_events == 2);
+
+	reset_fixture();
+	fx.fault_with_tfuc = true;
+	fx.foreign_pending = FV3D_HUB_TFUC;
+	run_case("second terminal TFUC before recovery", EIO);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.fault_level = fx.fault_pending_tfuc = true;
+	run_case("CM5 fault level and masked retirement TFUC", 0);
+	CHECK(fx.fault_raw_status == 0x32);
+	CHECK(fx.jobs == 2 && hub_entries == 2);
+	CHECK(hub_bank.int_sts == 0);
+
+	reset_fixture();
+	fx.fault_level = true;
+	fx.fault_pending_tfuc = false;
+	run_case("fault level without terminal TFUC", ETIMEDOUT);
+	CHECK(fx.jobs == 1 && fx.sleeps == 5);
+
+	reset_fixture();
+	fx.fault_level = fx.delayed_fault_tfuc = true;
+	run_case("wait for masked fault retirement before rearm", 0);
+	CHECK(fx.sleeps == 2);
+
+	reset_fixture();
+	fx.delayed_fault_tfuc = true;
+	fx.terminal_on_sleep = FV3D_WAIT_SLICES;
+	run_case("terminal TFUC in last permitted interval", 0);
+	CHECK(fx.sleeps == FV3D_WAIT_SLICES);
+
+	reset_fixture();
+	fx.delayed_fault_tfuc = true;
+	fx.terminal_on_sleep = FV3D_WAIT_SLICES + 1;
+	run_case("terminal TFUC outside permitted interval", ETIMEDOUT);
+	CHECK(fx.jobs == 1 && fx.sleeps == FV3D_WAIT_SLICES);
+
+	reset_fixture();
+	fx.foreign_pending = FV3D_HUB_MMU_CAP;
+	run_case("new fault kind under mask", EIO);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.foreign_pending = __BIT(6);
+	run_case("foreign interrupt under mask", EIO);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.new_fault_after_recovery = true;
+	run_case("new fault before post-fixup flush", EIO);
+	CHECK(fx.jobs == 1);
+	CHECK((hub_ctl_shadow & FV3D_MMU_CTL_FAULTS) != 0);
+
+	reset_fixture();
+	fx.baseline_late_irq = true;
+	run_case("in-flight extra fault at baseline barrier", EIO);
+	CHECK(fx.jobs == 1 && fv3d.events > 1);
+
+	reset_fixture();
+	fx.changed_vio_id = true;
+	run_case("fault client changed before source acknowledge", EIO);
+	CHECK(fx.jobs == 1);
+
+	reset_fixture();
+	fx.changed_vio_addr = true;
+	run_case("fault address changed before source acknowledge", EIO);
 	CHECK(fx.jobs == 1);
 
 	reset_fixture();
@@ -1206,7 +1327,7 @@ main(void)
 	fx.barrier_fault = true;
 	run_case("in-flight fault finishes at teardown barrier", EIO);
 	CHECK(fv3d.events == 3 && fv3d.fault_events == 2);
-	CHECK(fx.barriers == 1 && !fake_handlers[1].established);
+	CHECK(fx.barriers == 2 && !fake_handlers[1].established);
 
 	reset_fixture();
 	fx.barrier_completion = true;

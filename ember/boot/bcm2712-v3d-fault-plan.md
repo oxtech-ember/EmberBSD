@@ -12,8 +12,11 @@ good job: the TFU was idle at that boundary, so a stuck-busy engine is not
 an established explanation. Its VIO_ID `0x7d` identifies TFU on V3D 7.1.
 The guard now uses that generation's client map; the old 4.1 map incorrectly
 rejected this real CM5 ID. The following good-job fault remains unexplained.
+Later physical diagnostics also show that a failed conversion advances
+CVTCT and can signal TFUC after its fault IRQ. The revised probe drains
+that terminal indication before rearming for the following job.
 The [acceptance guards](bcm2712-v3d-validation.md) add regressions for
-unexpected completion, fault identity, duplicate events and collateral
+retirement ordering, fault identity, duplicate events and collateral
 DMA writes. These checks and richer diagnostics do not establish physical
 recovery; the failed hardware result remains open.
 This is stage C after the accepted [translated DMA](bcm2712-v3d-dma.md),
@@ -60,24 +63,30 @@ Flow:
    (valid, read-only) and the **destination alias deliberately invalid**
    (zero PTE).
 3. Submit the TFU copy. The destination write must fault: expect exactly
-   one HUB interrupt with a fault bit (PTI/WRV/CAP), no TFUC, `MMU_CTL`
+   one HUB interrupt with a fault bit (PTI/WRV/CAP), `MMU_CTL`
    fault bit latched, and `VIO_ID`/`VIO_ADDR` read for the receipt
    (client expectation: TFU, address inside the destination alias page
-   range). The faulted job never completes; the wait is bounded and the
-   experiment does not retry it.
+   range). Freeze ISR evidence with a controller mask and barrier.
+   The conversion retires with CVTCT delta 1 and idle TFU; its terminal
+   TFUC must be observed either in that ISR or under the mask within
+   a bounded wait. Retirement is not successful copying. All destination
+   canaries and protected buffers must remain unchanged.
 4. Recover exactly as pinned: acknowledge the handled interrupt bits,
    clear the fault latch through the verbatim `MMU_CTL` write-back, then
-   the bounded MMUC flush and full-value TLB clear. `MMU_CTL` must read
+   acknowledge only the captured residual HUB fault/terminal indications,
+   then the bounded MMUC flush and full-value TLB clear. `MMU_CTL` must read
    back `0x060d0c01` with no fault bits.
 5. Job 2 (good): rewrite the destination alias PTEs to the actual
-   destination pages, sync the page table, repeat the bounded flush,
+   destination pages, sync the page table, repeat the bounded flush
+   without clearing any new fault,
    verify the destination still holds its canary (job 1 must not have
    written it), and submit the identical TFU copy again. Expect TFUC as
    an interrupt within the bound, then verify the copied image word by
    word, both sources, canaries and scratch, exactly as the DMA
-   experiment.
+   experiment. Require a clean HUB/MMU before rearm, exactly one new
+   ISR/TFUC and total CVTCT delta 2 afterwards.
 6. PASS requires both halves: a clean fault (interrupt + latch + no
-   completion + untouched destination) and a verified good job afterwards
+   successful writes + untouched destination) and a verified good job afterwards
    on the same GPU, same MMU, same boot. Every exit path remasks the HUB
    line to the takeover state, disestablishes the handler, and retains
    everything GPU-exposed until reboot.

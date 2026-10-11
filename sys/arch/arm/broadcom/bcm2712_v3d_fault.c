@@ -111,6 +111,10 @@ enum fv3d_object {
 	FV3D_OBJ_TFU_LDST, FV3D_OBJ_COUNT
 };
 
+enum fv3d_phase {
+	FV3D_FAULT_RETIRED, FV3D_RECOVERED, FV3D_GOOD_RETIRED
+};
+
 struct fv3d_buffer {
 	bus_dma_segment_t seg;
 	bus_dmamap_t map;
@@ -135,6 +139,8 @@ static struct {
 	volatile unsigned int events, fault_events, tfuc_events;
 	volatile unsigned int irq_error;
 	uint32_t fault_bits, vio_id, vio_addr;
+	uint32_t fault_hub_bits;
+	unsigned int fault_tfuc_events;
 	uint32_t tfu_cs_after_fault, tfu_cs_before_good;
 	bool after_fault_valid, before_good_valid;
 } fv3d;
@@ -425,21 +431,63 @@ fv3d_disestablish(void)
 	}
 }
 
-/* The pinned recovery: verbatim MMU_CTL write-back clears the latched
- * W1C fault bits, then the bounded MMUC flush and full-value TLB clear. */
-static int
-fv3d_recover_mmu(void)
+/* Only the first recovery may acknowledge the captured fault. CM5 can
+ * retain its HUB level and report TFUC after that failed conversion has
+ * retired. Clear the source before acknowledging these owned indications.
+ * The later PTE flush must never consume a new fault. */
+static uint32_t
+fv3d_retired_status(void)
 {
-	uint32_t value;
+
+	return fv3d.fault_hub_bits |
+	    (fv3d.fault_tfuc_events == 0 ? FV3D_HUB_TFUC : 0);
+}
+
+static int
+fv3d_recover_mmu(bool acknowledge)
+{
+	uint32_t value, status, id, addr;
 	unsigned int i;
 	int error;
 
 	error = bcmv3d_takeover_hub_peek(FV3D_MMU_CTL, &value);
 	if (error != 0)
 		return error;
-	error = bcmv3d_takeover_hub_poke(FV3D_MMU_CTL, value);
+	if (acknowledge) {
+		if (value != (FV3D_MMU_CTL_VALUE | fv3d.fault_bits))
+			return EIO;
+		error = bcmv3d_takeover_hub_peek(FV3D_MMU_VIO_ID, &id);
+		if (error != 0)
+			return error;
+		error = bcmv3d_takeover_hub_peek(FV3D_MMU_VIO_ADDR, &addr);
+		if (error != 0)
+			return error;
+		if (id != fv3d.vio_id || addr != fv3d.vio_addr)
+			return EIO;
+		error = bcmv3d_takeover_hub_poke(FV3D_MMU_CTL, value);
+		if (error != 0)
+			return error;
+		error = bcmv3d_takeover_hub_peek(FV3D_MMU_CTL, &value);
+		if (error != 0)
+			return error;
+	}
+	if ((value & FV3D_MMU_CTL_FAULTS) != 0)
+		return EIO;
+	if (acknowledge) {
+		error = bcmv3d_takeover_hub_peek(FV3D_INT_STS, &status);
+		if (error != 0)
+			return error;
+		if ((status & ~fv3d_retired_status()) != 0)
+			return EIO;
+		error = bcmv3d_takeover_hub_poke(FV3D_INT_CLR, status);
+		if (error != 0)
+			return error;
+	}
+	error = bcmv3d_takeover_hub_peek(FV3D_INT_STS, &status);
 	if (error != 0)
 		return error;
+	if (status != 0)
+		return EIO;
 	error = bcmv3d_takeover_hub_poke(FV3D_MMUC_CTL,
 	    FV3D_MMUC_ENABLE | FV3D_MMUC_FLUSH);
 	if (error != 0)
@@ -519,14 +567,43 @@ fv3d_verify_images(bool copied)
 	return 0;
 }
 
+/* Drain the failed job's terminal indication before job 2 exists. A late
+ * TFUC from job 1 must not impersonate job 2's completion after rearm. */
+static int
+fv3d_wait_fault_terminal(void)
+{
+	uint32_t status;
+	int error, slice;
+
+	/* Read once more after the last permitted sleep interval. */
+	for (slice = 0; slice <= FV3D_WAIT_SLICES; slice++) {
+		error = bcmv3d_takeover_hub_peek(FV3D_INT_STS, &status);
+		if (error != 0)
+			return error;
+		if ((status & ~fv3d_retired_status()) != 0)
+			return EIO;
+		if (fv3d.fault_tfuc_events != 0 ||
+		    (status & FV3D_HUB_TFUC) != 0)
+			return 0;
+		if (slice == FV3D_WAIT_SLICES)
+			break;
+		tsleep(&fv3d.delivered, PWAIT, "v3dretire",
+		    MAX(1, mstohz(FV3D_WAIT_SLICE_MS)));
+	}
+	return ETIMEDOUT;
+}
+
 /* Check the hardware and handler observations together, with masks set.
  * On V3D 7.1 CVTCT also counts the failed conversion (physical CM5).
- * Require one retirement for the fault, two after the good job; only
- * the latter may deliver TFUC, and it must also pass image verification. */
+ * Require one retirement for the fault, two after the good job. The failed
+ * conversion may also signal TFUC, before or after its fault interrupt.
+ * Only the initial phase permits those owned indications under the mask;
+ * recovery and good completion require clean HUB and MMU state. */
 static int
-fv3d_check_event(bool completed, uint32_t *snapshot, bool *valid)
+fv3d_check_event(enum fv3d_phase phase, uint32_t *snapshot, bool *valid)
 {
-	uint32_t status, cs, ctl;
+	const bool completed = phase == FV3D_GOOD_RETIRED;
+	uint32_t status, cs, ctl, allowed = 0;
 	int error;
 
 	error = fv3d_remask_all();
@@ -544,10 +621,13 @@ fv3d_check_event(bool completed, uint32_t *snapshot, bool *valid)
 	}
 	if (atomic_load_acquire(&fv3d.irq_error) != 0)
 		return atomic_load_relaxed(&fv3d.irq_error);
-	if (status != 0 ||
+	if (phase == FV3D_FAULT_RETIRED)
+		allowed = fv3d_retired_status();
+	if ((status & ~allowed) != 0 || fv3d.fault_tfuc_events > 1 ||
 	    atomic_load_acquire(&fv3d.events) != (completed ? 2u : 1u) ||
 	    atomic_load_relaxed(&fv3d.fault_events) != 1 ||
-	    atomic_load_relaxed(&fv3d.tfuc_events) != (completed ? 1u : 0u) ||
+	    atomic_load_relaxed(&fv3d.tfuc_events) !=
+	    fv3d.fault_tfuc_events + (completed ? 1u : 0u) ||
 	    (uint8_t)((cs >> FV3D_TFU_CVTCT_SHIFT) -
 	    fv3d.tfu_cvt_before) != (completed ? 2 : 1)) {
 		aprint_normal_dev(fv3d.dev, "event snapshot: good=%u "
@@ -561,12 +641,12 @@ fv3d_check_event(bool completed, uint32_t *snapshot, bool *valid)
 		fv3d.verdict = "unexpected fault/completion event or counter";
 		return EIO;
 	}
-	if (completed) {
+	if (phase != FV3D_FAULT_RETIRED) {
 		error = bcmv3d_takeover_hub_peek(FV3D_MMU_CTL, &ctl);
 		if (error != 0)
 			return error;
 		if ((ctl & FV3D_MMU_CTL_FAULTS) != 0) {
-			fv3d.verdict = "MMU fault latched after good completion";
+			fv3d.verdict = "MMU fault latched after recovery";
 			return EIO;
 		}
 	}
@@ -748,8 +828,14 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		fv3d.verdict = "MMU fault missing or handler failed";
 		goto out;
 	}
-	if ((atomic_load_relaxed(&fv3d.delivered) & FV3D_HUB_TFUC) != 0) {
-		fv3d.verdict = "faulting job completed unexpectedly";
+	/* Freeze handler evidence before saving the first-job baseline. */
+	acpi_intr_mask(fv3d.hub_ih);
+	xc_barrier(0);
+	fv3d.fault_hub_bits = atomic_load_relaxed(&fv3d.delivered) &
+	    FV3D_HUB_MMU_FAULTS;
+	fv3d.fault_tfuc_events = atomic_load_relaxed(&fv3d.tfuc_events);
+	if (fv3d.fault_hub_bits == 0) {
+		fv3d.verdict = "faulting job retired without a fault interrupt";
 		error = EIO;
 		goto out;
 	}
@@ -779,7 +865,12 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	fv3d.fault_bits = ctl & FV3D_MMU_CTL_FAULTS;
 	fv3d.vio_id = vio_id;
 	fv3d.vio_addr = vio_addr;
-	error = fv3d_check_event(false, &fv3d.tfu_cs_after_fault,
+	error = fv3d_wait_fault_terminal();
+	if (error != 0) {
+		fv3d.verdict = "fault terminal indication missing or foreign";
+		goto out;
+	}
+	error = fv3d_check_event(FV3D_FAULT_RETIRED, &fv3d.tfu_cs_after_fault,
 	    &fv3d.after_fault_valid);
 	if (error != 0)
 		goto out;
@@ -790,7 +881,7 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		goto out;
 
 	fv3d.stage = "MMU fault recovery";
-	error = fv3d_recover_mmu();
+	error = fv3d_recover_mmu(true);
 	if (error != 0) {
 		fv3d.verdict = "recovery left the MMU unhealthy";
 		goto out;
@@ -802,17 +893,18 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	    true)) != 0)
 		goto out;
 	fv3d_sync_all(true);
-	error = fv3d_recover_mmu();	/* bounded flush after the fixup */
+	error = fv3d_recover_mmu(false);	/* flush only, no new fault W1C */
 	if (error != 0) {
 		fv3d.verdict = "post-fixup flush failed";
 		goto out;
 	}
 	fv3d.stage = "good TFU submission";
 	/* Revalidate immediately before resubmission, including CVTCT. */
-	error = fv3d_check_event(false, &fv3d.tfu_cs_before_good,
+	error = fv3d_check_event(FV3D_RECOVERED, &fv3d.tfu_cs_before_good,
 	    &fv3d.before_good_valid);
 	if (error != 0)
 		goto out;
+	acpi_intr_unmask(fv3d.hub_ih);
 	error = bcmv3d_takeover_hub_poke(FV3D_MSK_CLR,
 	    FV3D_HUB_TFUC | FV3D_HUB_MMU_FAULTS);
 	if (error != 0)
@@ -827,7 +919,7 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		fv3d.verdict = "good job missing or handler failed after recovery";
 		goto out;
 	}
-	error = fv3d_check_event(true, NULL, NULL);
+	error = fv3d_check_event(FV3D_GOOD_RETIRED, NULL, NULL);
 	if (error != 0)
 		goto out;
 	fv3d.stage = "post-completion synchronization";
@@ -845,7 +937,7 @@ out:
 	if (error == 0) {
 		/* No handler can change the final evidence after this point. */
 		fv3d.stage = "final masked acceptance boundary";
-		error = fv3d_check_event(true, NULL, NULL);
+		error = fv3d_check_event(FV3D_GOOD_RETIRED, NULL, NULL);
 	}
 	if (error != 0)
 		fv3d_diagnostics();

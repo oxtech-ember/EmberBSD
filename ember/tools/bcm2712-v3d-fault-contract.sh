@@ -35,12 +35,13 @@ if [ "${V3D_FAULT_SKIP_MUTANTS:-0}" = 1 ]; then
 fi
 cp "$work/fault-body.h" "$work/fault-good.h"
 for mutation in skip-latch-clear skip-flush fixup-without-sync \
-    release-always retry-faulted-job accept-mixed-outcomes \
+    release-always retry-faulted-job ignore-fault-event-count \
     ignore-conversion-counter ignore-fault-identity wrong-vio-shift \
     ignore-busy ignore-scratch ignore-sources ignore-alias-destination \
     skip-pt-postwrite skip-first-ownership-return ignore-raw-status \
     skip-final-boundary milliseconds-as-ticks skip-controller-mask \
-    skip-interrupt-drain; do
+    skip-interrupt-drain skip-terminal-wait skip-retired-ack \
+    reack-new-fault skip-baseline-drain; do
     cp "$work/fault-good.h" "$work/fault-body.h"
     awk -v mutation="$mutation" '
         mutation == "skip-latch-clear" &&
@@ -59,11 +60,9 @@ for mutation in skip-latch-clear skip-flush fixup-without-sync \
                 next
             }
         }
-        mutation == "accept-mixed-outcomes" {
-            changed += sub(/if \(\(atomic_load_relaxed\(&fv3d.delivered\) & FV3D_HUB_TFUC\) != 0\)/,
-                "if ((atomic_load_relaxed(\\&fv3d.delivered) \\& FV3D_HUB_TFUC) != 0 \\&\\& false)")
-            changed += sub(/atomic_load_relaxed\(&fv3d.tfuc_events\) != \(completed \? 1u : 0u\)/,
-                "(completed \\&\\& atomic_load_relaxed(\\&fv3d.tfuc_events) != 1u)")
+        mutation == "ignore-fault-event-count" {
+            changed += sub(/atomic_load_relaxed\(&fv3d.fault_events\) != 1/,
+                "(atomic_load_relaxed(\\&fv3d.fault_events) != 1 \\&\\& false)")
         }
         mutation == "ignore-conversion-counter" {
             changed += sub(/\(uint8_t\)\(\(cs >>/, "((uint8_t)((cs >>")
@@ -105,15 +104,15 @@ for mutation in skip-latch-clear skip-flush fixup-without-sync \
             }
         }
         mutation == "ignore-raw-status" {
-            changed += sub(/if \(status != 0 \|\|/,
-                "if ((status != 0 \\&\\& false) ||")
+            changed += sub(/if \(\(status & ~allowed\) != 0 \|\|/,
+                "if (((status \\& ~allowed) != 0 \\&\\& false) ||")
         }
         mutation == "skip-final-boundary" &&
         /fv3d.stage = "final masked acceptance boundary";/ {
             skip_final = 1
         }
         mutation == "skip-final-boundary" && skip_final &&
-        /error = fv3d_check_event\(true, NULL, NULL\);/ {
+        /error = fv3d_check_event\(FV3D_GOOD_RETIRED, NULL, NULL\);/ {
             changed = 1
             next
         }
@@ -130,6 +129,25 @@ for mutation in skip-latch-clear skip-flush fixup-without-sync \
             print "\t\tif (false) xc_barrier(0);"
             changed = 1
             next
+        }
+        mutation == "skip-terminal-wait" {
+            changed += sub(/error = fv3d_wait_fault_terminal\(\);/,
+                "error = false ? fv3d_wait_fault_terminal() : 0;")
+        }
+        mutation == "skip-retired-ack" {
+            changed += sub(/error = bcmv3d_takeover_hub_poke\(FV3D_INT_CLR, status\);/,
+                "error = 0;")
+        }
+        mutation == "reack-new-fault" && /if \(acknowledge\) \{/ {
+            print "\tif (!acknowledge) (void)bcmv3d_takeover_hub_poke(FV3D_MMU_CTL, value);"
+            changed = 1
+        }
+        mutation == "skip-baseline-drain" && /xc_barrier\(0\);/ {
+            if (++barriers == 2) {
+                print "\tif (false) xc_barrier(0);"
+                changed = 1
+                next
+            }
         }
         mutation == "release-always" {
 
@@ -155,4 +173,4 @@ for mutation in skip-latch-clear skip-flush fixup-without-sync \
         exit 1
     fi
 done
-echo "PASS: fault contract; 20 causal mutants rejected"
+echo "PASS: fault contract; 24 causal mutants rejected"
