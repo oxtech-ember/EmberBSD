@@ -420,6 +420,13 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 	int power_node, error = EINVAL;
 
 	mutex_enter(&sc->sc_run_lock);
+	/* Stage 0 is a dry run of the sysctl machinery: no provider calls. */
+	if (stage == 0) {
+		aprint_normal_dev(sc->sc_dev, "runtime stage 0: dry run OK\n");
+		sc->sc_run_result = 0;
+		mutex_exit(&sc->sc_run_lock);
+		return;
+	}
 	/* Strictly ordered single sequence; a replay needs a fresh boot. */
 	if (stage < A733_GPU_STAGE_CLOCKS || stage > A733_GPU_STAGE_IDENTIFY ||
 	    stage != sc->sc_run_stage + 1 || !sc->sc_run_pass) {
@@ -427,6 +434,7 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 		    "expected %u\n", stage, sc->sc_run_stage + 1);
 		goto out;
 	}
+	aprint_normal_dev(sc->sc_dev, "runtime stage %u: power node\n", stage);
 	power_node = sun60i_gpu_power_node(sc);
 	if (power_node < 0)
 		goto out;
@@ -470,11 +478,14 @@ sun60i_gpu_sysctl_stage(SYSCTLFN_ARGS)
 	u_int value;
 	int error;
 
+	if (newp != NULL)
+		aprint_normal_dev(sc->sc_dev, "runtime sysctl write enter\n");
 	value = sc->sc_run_stage;
 	node.sysctl_data = &value;
 	error = sysctl_lookup(SYSCTLFN_CALL(&node));
 	if (error != 0 || newp == NULL)
 		return error;
+	aprint_normal_dev(sc->sc_dev, "runtime sysctl dispatch %u\n", value);
 	sun60i_gpu_run_stage(sc, value);
 	return sc->sc_run_result;
 }

@@ -813,10 +813,10 @@ test_runtime_stages(void)
 {
 	unsigned start = checks;
 
-	/* Ordering: nothing runs before stage 1 or after the last stage. */
+	/* Ordering: the dry run passes; nothing else runs before stage 1. */
 	reset();
 	sun60i_gpu_run_stage(&sc, 0);
-	CHECK(sc.sc_run_result == EINVAL && sc.sc_run_stage == 0);
+	CHECK(sc.sc_run_result == 0 && sc.sc_run_stage == 0);
 	sun60i_gpu_run_stage(&sc, 2);
 	CHECK(sc.sc_run_result == EINVAL && sc.sc_run_stage == 0);
 	CHECK(nevents == 0 && prepares == 0 && requests == 0);
