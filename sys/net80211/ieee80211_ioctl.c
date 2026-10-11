@@ -1102,6 +1102,8 @@ ieee80211_ioctl_getscanresults(struct ieee80211com *ic, struct ieee80211req *ire
 			continue;
 		if (ic->ic_sta_mgmt != NULL && ni->ni_scan_epoch != nt->nt_scan_epoch)
 			continue;
+		/* Clear alignment padding before copyout. */
+		memset(&u, 0, sizeof(u));
 		get_scan_result(sr, ni);
 		if (sr->isr_len > sizeof(u))
 			continue;		/* XXX */
