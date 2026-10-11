@@ -940,6 +940,12 @@ bsd_sta_tx_status(struct bsd_driver_data *drv, int ack, int notify)
 	drv->sta_tx_frame = NULL;
 	drv->sta_tx_len = 0;
 	if (notify) {
+		wpa_printf(MSG_DEBUG,
+			   "BSD: STA TX status cookie=%u generation=%u freq=%u category=%d action=%d token=%d ack=%d",
+			   drv->sta_cookie, drv->sta_tx_generation, drv->sta_tx_freq,
+			   len >= 27 ? frame[24] : -1,
+			   len >= 27 ? frame[25] : -1,
+			   len >= 27 ? frame[26] : -1, ack);
 		os_memset(&event, 0, sizeof(event));
 		event.tx_status.type = WLAN_FC_TYPE_MGMT;
 		event.tx_status.stype = WLAN_FC_STYPE_ACTION;

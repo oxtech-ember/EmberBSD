@@ -24,7 +24,8 @@
 #define os_memcmp memcmp
 #define os_free free
 #define MSG_DEBUG 0
-#define wpa_printf(...) do { } while (0)
+#define wpa_printf(level, ...) do { (void)(level); \
+    (void)snprintf(debug_log, sizeof(debug_log), __VA_ARGS__); } while (0)
 #define ELOOP_ALL_CTX ((void *)-1)
 #include "abi.h"
 #include "routes.h"
@@ -50,6 +51,7 @@ union wpa_event_data {
 static struct ieee80211req_sta_mgmt current, cancelled;
 static unsigned checks, failures, rx, tx, scans, disconnects, cancellations;
 static int info_error, last_ack, last_aborted;
+static char debug_log[256];
 static void check(bool pass, const char *why)
 { checks++; if (!pass) { fprintf(stderr,"FAIL: %s\n",why); failures++; } }
 static void eloop_cancel_timeout(void (*fn)(void *,void *), void *a, void *b)
@@ -118,6 +120,7 @@ static void fixture(struct bsd_driver_data *drv)
     memcpy(drv->sta_scan_bssid,current.bssid,6);
     rx = tx = scans = disconnects = cancellations = 0; info_error = 0;
     last_ack = last_aborted = 0;
+    debug_log[0] = '\0';
 }
 static struct ieee80211req_sta_mgmt event_request(void)
 {
@@ -132,6 +135,9 @@ static void pending_tx(struct bsd_driver_data *drv)
     drv->sta_tx_len = 29; drv->sta_tx_frame = calloc(1,29);
     if (drv->sta_tx_frame == NULL) abort();
     memcpy(drv->sta_tx_frame+4,current.bssid,6);
+    drv->sta_tx_frame[24] = WLAN_ACTION_WNM;
+    drv->sta_tx_frame[25] = WNM_BSS_TRANS_MGMT_RESP;
+    drv->sta_tx_frame[26] = 7;
 }
 int main(void)
 {
@@ -196,6 +202,8 @@ int main(void)
     fixture(&drv); pending_tx(&drv); req = event_request(); req.len = 0; req.cookie = 42; req.op = IEEE80211_STA_TX; req.flags = IEEE80211_STA_TX_ACK;
     bsd_sta_event(&drv,RTM_IEEE80211_STA_TX,&req,header);
     check(tx == 1 && last_ack && drv.sta_tx_frame == NULL,"matching TX completion notifies ACK and releases frame");
+    check(strstr(debug_log,"cookie=42 generation=40 freq=5300 category=10 action=8 token=7 ack=1") != NULL,
+        "TX diagnostic identifies the acknowledged action without its payload");
     bsd_sta_event(&drv,RTM_IEEE80211_STA_TX,&req,header); check(tx == 1,"duplicate TX event ignored");
     fixture(&drv); pending_tx(&drv); bsd_sta_tx_timeout(&drv,(void *)(uintptr_t)41);
     check(tx == 0 && drv.sta_tx_frame != NULL,"old TX timeout cannot cancel a replacement");
@@ -203,6 +211,8 @@ int main(void)
     check(tx == 1 && !last_ack && cancellations == 1 && cancelled.cookie == 42 &&
         cancelled.generation == 40 && cancelled.op == IEEE80211_STA_CANCEL_TX,
         "TX timeout cancels original epoch and cookie and reports failure");
+    check(strstr(debug_log,"token=7 ack=0") != NULL,
+        "TX diagnostic distinguishes timeout from ACK");
     for (i = 0; i < 7; i++) {
         fixture(&drv); drv.sta_scan_pending = 1; req = event_request();
         req.len = 0; req.op = IEEE80211_STA_SCAN; req.cookie = drv.sta_scan_cookie;
