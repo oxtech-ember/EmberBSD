@@ -1039,6 +1039,10 @@ get_scan_result(struct ieee80211req_scan_result *sr,
 		ielen += 2+ni->ni_wme_ie[1];
 	if (ni->ni_rsnx_ie != NULL)
 		ielen += 2+ni->ni_rsnx_ie[1];
+	if (ni->ni_extcap_ie != NULL)
+		ielen += 2+ni->ni_extcap_ie[1];
+	if (ni->ni_rrm_ie != NULL)
+		ielen += 2+ni->ni_rrm_ie[1];
 
 	/*
 	 * The value sr->isr_ie_len is defined as a uint8_t, so we
@@ -1059,6 +1063,12 @@ get_scan_result(struct ieee80211req_scan_result *sr,
 	sr->isr_rssi = ic->ic_node_getrssi(ni);
 	sr->isr_intval = ni->ni_intval;
 	sr->isr_capinfo = ni->ni_capinfo;
+	sr->isr_pad[0] = ni->ni_capinfo >> 8;
+	sr->isr_pad[1] = IEEE80211_SCAN_CAPINFO_HI;
+	if (ni->ni_rssi_dbm_valid) {
+		sr->isr_pad[1] |= IEEE80211_SCAN_RSSI_DBM;
+		sr->isr_pad[2] = (uint8_t)ni->ni_rssi_dbm;
+	}
 	sr->isr_erp = ni->ni_erp;
 	IEEE80211_ADDR_COPY(sr->isr_bssid, ni->ni_bssid);
 	sr->isr_nrates = ni->ni_rates.rs_nrates;
@@ -1090,6 +1100,8 @@ ieee80211_ioctl_getscanresults(struct ieee80211com *ic, struct ieee80211req *ire
 		/* NB: skip pre-scan node state */ 
 		if (ni->ni_chan == IEEE80211_CHAN_ANYC)
 			continue;
+		if (ic->ic_sta_mgmt != NULL && ni->ni_scan_epoch != nt->nt_scan_epoch)
+			continue;
 		get_scan_result(sr, ni);
 		if (sr->isr_len > sizeof(u))
 			continue;		/* XXX */
@@ -1109,6 +1121,14 @@ ieee80211_ioctl_getscanresults(struct ieee80211com *ic, struct ieee80211req *ire
 		if (sr->isr_ie_len > 0 && ni->ni_rsnx_ie != NULL) {
 			memcpy(cp, ni->ni_rsnx_ie, 2+ni->ni_rsnx_ie[1]);
 			cp += 2+ni->ni_rsnx_ie[1];
+		}
+		if (sr->isr_ie_len > 0 && ni->ni_extcap_ie != NULL) {
+			memcpy(cp, ni->ni_extcap_ie, 2+ni->ni_extcap_ie[1]);
+			cp += 2+ni->ni_extcap_ie[1];
+		}
+		if (sr->isr_ie_len > 0 && ni->ni_rrm_ie != NULL) {
+			memcpy(cp, ni->ni_rrm_ie, 2+ni->ni_rrm_ie[1]);
+			cp += 2+ni->ni_rrm_ie[1];
 		}
 		error = copyout(sr, p, sr->isr_len);
 		if (error)
@@ -1409,6 +1429,40 @@ ieee80211_ioctl_get80211_fbsd(struct ieee80211com *ic, u_long cmd,
 }
 #endif /* COMPAT_FREEBSD_NET80211 */
 
+static int
+ieee80211_ioctl_sta_mgmt(struct ieee80211com *ic, struct ieee80211req *ireq,
+    bool set)
+{
+	struct ieee80211req_sta_mgmt *req;
+	int error;
+
+	if (ic->ic_sta_mgmt == NULL)
+		return EOPNOTSUPP;
+	if (ireq->i_len != sizeof(*req))
+		return EINVAL;
+	req = malloc(sizeof(*req), M_TEMP, M_WAITOK | M_ZERO);
+	if (set) {
+		error = copyin(ireq->i_data, req, sizeof(*req));
+		if (error)
+			goto out;
+		if (req->version != IEEE80211_STA_VERSION || req->reserved ||
+		    req->flags || req->len > sizeof(req->data) ||
+		    req->op == IEEE80211_STA_GET) {
+			error = EINVAL;
+			goto out;
+		}
+	} else {
+		req->version = IEEE80211_STA_VERSION;
+		req->op = IEEE80211_STA_GET;
+	}
+	error = ic->ic_sta_mgmt(ic, req);
+	if (!error && !set)
+		error = copyout(req, ireq->i_data, sizeof(*req));
+out:
+	free(req, M_TEMP);
+	return error;
+}
+
 /*
  * When building the kernel with -O2 on the i386 architecture, gcc
  * seems to want to inline this function into ieee80211_ioctl()
@@ -1437,6 +1491,8 @@ ieee80211_ioctl_get80211(struct ieee80211com *ic, u_long cmd,
 	u_int m;
 
 	switch (ireq->i_type) {
+	case IEEE80211_IOC_STA_MGMT:
+		return ieee80211_ioctl_sta_mgmt(ic, ireq, false);
 	case IEEE80211_IOC_AUTHMODE:
 		if (ic->ic_flags & IEEE80211_F_WPA)
 			ireq->i_val = IEEE80211_AUTH_WPA;
@@ -2061,6 +2117,8 @@ ieee80211_ioctl_set80211(struct ieee80211com *ic, u_long cmd,
 
 	error = 0;
 	switch (ireq->i_type) {
+	case IEEE80211_IOC_STA_MGMT:
+		return ieee80211_ioctl_sta_mgmt(ic, ireq, true);
 #if defined(__FreeBSD__) || defined(COMPAT_FREEBSD_NET80211)
 	case IEEE80211_IOC_SSID:
 		if (ireq->i_val != 0 ||

@@ -2163,6 +2163,13 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 			/* no length check needed */
 			scan.sp_wpa = frm;
 			break;
+		case IEEE80211_ELEMID_RRM:
+			if (frm[1] == 5)
+				scan.sp_rrm = frm;
+			break;
+		case IEEE80211_ELEMID_EXTCAP:
+			scan.sp_extcap = frm;
+			break;
 		case IEEE80211_ELEMID_RSNX:
 			if (frm[1] >= 1 && frm[1] <= 16 &&
 			    (frm[2] & 0x0f) + 1 == frm[1])

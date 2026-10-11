@@ -4,7 +4,11 @@
 set -eu
 src=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/bwfm-link-check.XXXXXXXX")
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+if [ "${BWFM_TEST_KEEP:-0}" != 1 ]; then
+    trap 'rm -rf "$work"' EXIT HUP INT TERM
+else
+    printf 'Test sources: %s\n' "$work"
+fi
 for fn in bwfm_watchdog bwfm_newstate bwfm_newstate_cb bwfm_link_check_cb \
     bwfm_task bwfm_detach bwfm_rx_event bwfm_report bwfm_key_set bwfm_key_delete; do
     awk -v fn="$fn" '$0 ~ "^" fn "\\(" {copy=1}
@@ -37,13 +41,14 @@ cat > "$work/check.c" <<'C'
 #define DPRINTF(x) do { } while (0)
 #define IEEE80211_ADDR_EQ(a, b) (memcmp((a), (b), 6) == 0)
 #define IEEE80211_ADDR_COPY(a, b) memcpy((a), (b), 6)
+#define explicit_memset memset
 #define le16toh(x) (x)
 #define le32toh(x) (x)
 enum ieee80211_state { IEEE80211_S_INIT, IEEE80211_S_SCAN,
     IEEE80211_S_AUTH, IEEE80211_S_ASSOC, IEEE80211_S_RUN };
 enum { IEEE80211_M_STA, IEEE80211_M_HOSTAP };
 enum { BWFM_TASK_NEWSTATE, BWFM_TASK_LINK_CHECK, BWFM_TASK_BARRIER,
-    BWFM_TASK_KEY_SET, BWFM_TASK_KEY_DELETE, BWFM_TASK_RX_EVENT, BWFM_TASK_REPORT };
+    BWFM_TASK_KEY_SET, BWFM_TASK_KEY_DELETE, BWFM_TASK_RX_EVENT, BWFM_TASK_REPORT, BWFM_TASK_STA_MGMT };
 struct ifnet { void *if_softc; int if_timer, if_flags; };
 struct ieee80211_node { uint8_t ni_bssid[6], ni_macaddr[6]; };
 struct ieee80211com { struct ifnet *ic_ifp; struct ieee80211_node *ic_bss;
@@ -54,18 +59,19 @@ struct bwfm_softc {
     struct ifnet sc_if; struct ieee80211com sc_ic;
     void *sc_taskq, *sc_freetask;
     int sc_tx_timer, sc_link_timer;
-    bool sc_link_pending, sc_detaching, sc_if_attached;
+    bool sc_link_pending, sc_detaching, sc_if_attached, sc_sta_enabled; unsigned sc_sta_assoc_len;
     int sc_control_lock;
-    uint32_t sc_link_generation, sc_link_checks, sc_link_recoveries;
+    uint32_t sc_link_generation, sc_link_checks, sc_link_recoveries, sc_sta_generation;
     unsigned sc_link_misses, sc_link_errors;
     int (*sc_newstate)(struct ieee80211com *, enum ieee80211_state, int);
 };
 struct mbuf { int unused; };
 struct ieee80211_key { int unused; };
-struct bwfm_cmd_key { const struct ieee80211_key *key; uint8_t mac[6]; };
+struct bwfm_cmd_key { struct ieee80211_key key; uint8_t mac[6]; };
+struct ieee80211req_sta_mgmt { int unused; };
 struct bwfm_task { struct work t_work; struct bwfm_softc *t_sc; int t_cmd;
-    uint32_t t_link_generation; struct bwfm_cmd_newstate t_newstate;
-    struct bwfm_cmd_key t_key; struct mbuf *t_mbuf; };
+    uint32_t t_link_generation, t_generation; struct bwfm_cmd_newstate t_newstate;
+    struct bwfm_cmd_key t_key; struct mbuf *t_mbuf; struct ieee80211req_sta_mgmt t_sta; };
 #include "sta-info.h"
 static struct bwfm_task jobs[128], *queued[128];
 static struct bwfm_sta_info response;
@@ -96,20 +102,34 @@ void workqueue_wait(void *q, struct work *w)
 { (void)q; check(w != NULL, "wait for a concrete barrier, NULL does not drain"); drain(); }
 static void m_freem(struct mbuf *m) { (void)m; mbufs_freed++; }
 static void panic(const char *fmt, int cmd) { (void)fmt; (void)cmd; abort(); }
+static bool bwfm_key_snapshot(struct bwfm_softc *sc, struct bwfm_cmd_key *ck,
+    const struct ieee80211_key *wk)
+{ (void)sc; (void)ck; (void)wk; check(!detached, "no key snapshot after detach"); return true; }
 static void bwfm_key_set_cb(struct bwfm_softc *sc, struct bwfm_cmd_key *ck)
 { (void)sc; (void)ck; check(!detached, "no key installation after detach"); }
 static void bwfm_key_delete_cb(struct bwfm_softc *sc, struct bwfm_cmd_key *ck)
 { bwfm_key_set_cb(sc, ck); }
-static void bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m)
-{ (void)sc; check(!detached, "no event dispatch after detach"); m_freem(m); }
+static void bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m, uint32_t generation)
+{ (void)sc; (void)generation; check(!detached, "no event dispatch after detach"); m_freem(m); }
 static void bwfm_report_cb(struct bwfm_softc *sc)
 { (void)sc; discarded_reports++; check(!detached, "no report after detach"); }
 static void if_statinc(struct ifnet *ifp, int stat) { (void)ifp; (void)stat; }
 static void ieee80211_watchdog(struct ieee80211com *ic) { (void)ic; }
 static int splnet(void) { return 0; }
 static void splx(int s) { (void)s; }
-static void bwfm_scan(struct bwfm_softc *sc) { (void)sc; }
-static void bwfm_connect(struct bwfm_softc *sc) { (void)sc; }
+static int bwfm_scan(struct bwfm_softc *sc, const uint16_t *freqs, size_t n)
+{ (void)sc; (void)freqs; (void)n; return 0; }
+static int bwfm_connect(struct bwfm_softc *sc) { (void)sc; return 0; }
+static void bwfm_sta_assoc_ies(struct bwfm_softc *sc) { (void)sc; }
+static void bwfm_sta_scan_cancel(struct bwfm_softc *sc) { (void)sc; }
+static void bwfm_sta_tx_done(struct bwfm_softc *sc, bool ack)
+{ (void)sc; (void)ack; }
+static int bwfm_sta_wnm(struct bwfm_softc *sc, bool enable)
+{ (void)sc; (void)enable; return 0; }
+static void bwfm_sta_mgmt_cb(struct bwfm_softc *sc, struct ieee80211req_sta_mgmt *req)
+{ (void)sc; (void)req; check(!detached, "no station management after detach"); }
+static void bwfm_stop(struct ifnet *ifp, int disable)
+{ (void)disable; ifp->if_flags &= ~IFF_RUNNING; }
 static int bwfm_fwvar_cmd_set_data(struct bwfm_softc *sc, int c, void *p, size_t n)
 { (void)sc; (void)c; (void)p; (void)n; return 0; }
 static int saved_newstate(struct ieee80211com *ic, enum ieee80211_state s, int a)
