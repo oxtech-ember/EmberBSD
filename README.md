@@ -255,7 +255,7 @@ on every board in the hardware catalog.
 - **Current KDE/Qt integration:** KWin 6.7.5 runs a nested Qt Wayland window
   with software rendering and tested keyboard input. Plasma Mobile 6.7.5
   builds and installs with checked library loading and QML components.
-  Common [Qt 6.12 / Frameworks 6.30 source recipes](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit)
+  Common [Qt 6.12 / Frameworks 6.31 source recipes](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit)
   and [shared FFmpeg9 recipes](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media)
   have checked source/dependency selection. The FFmpeg audio API and device
   registration pass in the AArch64 VM with GCC16; real metadata extraction
