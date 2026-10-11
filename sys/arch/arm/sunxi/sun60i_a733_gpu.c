@@ -54,11 +54,17 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define A733_GPU_EXPECTED	UINT64_C(0x00240038006800b7)
 
 /* Runtime diagnostic stages, run one sysctl write at a time. */
-#define A733_GPU_STAGE_CLOCKS	1
-#define A733_GPU_STAGE_REQUEST	2
-#define A733_GPU_STAGE_WAIT	3
-#define A733_GPU_STAGE_TOP_ID	4
-#define A733_GPU_STAGE_IDENTIFY	5
+#define A733_GPU_STAGE_SUPPLY	1
+#define A733_GPU_STAGE_TOP	2
+#define A733_GPU_STAGE_RESERVE_PCK	3
+#define A733_GPU_STAGE_RESERVE_CCU	4
+#define A733_GPU_STAGE_RETAIN	5
+#define A733_GPU_STAGE_PREPARE	6
+#define A733_GPU_STAGE_INSPECT	7
+#define A733_GPU_STAGE_REQUEST	8
+#define A733_GPU_STAGE_WAIT	9
+#define A733_GPU_STAGE_TOP_ID	10
+#define A733_GPU_STAGE_IDENTIFY	11
 
 struct sun60i_gpu_softc {
 	device_t sc_dev;
@@ -184,7 +190,7 @@ sun60i_gpu_clock_terminal(struct sun60i_gpu_softc *sc, struct clk *gpu)
  */
 static void
 sun60i_gpu_top_identify(struct sun60i_gpu_softc *sc, bus_addr_t addr,
-    struct fdtbus_regulator *supply, struct clk *gpu)
+    struct fdtbus_regulator *supply, struct clk *gpu, bool quiet)
 {
 	bus_space_handle_t bsh;
 	u_int core_hz, bus_hz;
@@ -198,25 +204,27 @@ sun60i_gpu_top_identify(struct sun60i_gpu_softc *sc, bus_addr_t addr,
 	    fdtbus_powerdomain_is_enabled_index(sc->sc_phandle, 0, &enabled) != 0 ||
 	    !enabled || sun60i_a733_ccu_gpu_ready(gpu, &core_hz, &bus_hz) != 0 ||
 	    core_hz != 400000000 || bus_hz != 200000000) {
-		aprint_normal_dev(sc->sc_dev, "TOP-only identification "
+		if (!quiet) aprint_normal_dev(sc->sc_dev, "TOP-only identification "
 		    "skipped: supply, GPU_TOP or clock readiness changed\n");
 		return;
 	}
 	if (bus_space_map(sc->sc_bst, addr, A733_GPU_ID_SIZE, 0, &bsh) != 0) {
-		aprint_normal_dev(sc->sc_dev, "TOP-only identification "
+		if (!quiet) aprint_normal_dev(sc->sc_dev, "TOP-only identification "
 		    "unavailable: mapping\n");
 		return;
 	}
 	if (bus_space_peek_4(sc->sc_bst, bsh, A733_GPU_CORE_ID, &core) != 0)
-		aprint_normal_dev(sc->sc_dev, "TOP-only CORE_ID read failed\n");
+		if (!quiet) aprint_normal_dev(sc->sc_dev, "TOP-only CORE_ID read failed\n");
 	if (bus_space_peek_8(sc->sc_bst, bsh, A733_GPU_PBVNC, &id) != 0) {
-		aprint_normal_dev(sc->sc_dev, "TOP-only PBVNC read failed\n");
+		if (!quiet)
+			aprint_normal_dev(sc->sc_dev,
+			    "TOP-only PBVNC read failed\n");
 		bus_space_unmap(sc->sc_bst, bsh, A733_GPU_ID_SIZE);
 		return;
 	}
 	sc->sc_bvnc = id;
 	sc->sc_have_id = true;
-	aprint_normal_dev(sc->sc_dev, "TOP-only identification: CORE_ID "
+	if (!quiet) aprint_normal_dev(sc->sc_dev, "TOP-only identification: CORE_ID "
 	    "0x%08x, PBVNC 0x%016llx: %u.%u.%u.%u%s\n", core,
 	    (unsigned long long)id,
 	    (u_int)(id >> 48),
@@ -239,34 +247,47 @@ sun60i_gpu_top_identify(struct sun60i_gpu_softc *sc, bus_addr_t addr,
  * transcript names the stalled stage.
  */
 static int
-sun60i_gpu_runtime_supply_top(struct sun60i_gpu_softc *sc)
+sun60i_gpu_runtime_supply(struct sun60i_gpu_softc *sc)
 {
 	struct fdtbus_regulator *supply;
 	bool enabled;
 	int error;
 
-	aprint_normal_dev(sc->sc_dev, "runtime: regulator acquire\n");
 	supply = fdtbus_regulator_acquire(sc->sc_phandle, "gpu-supply");
 	if (supply == NULL)
 		return ENXIO;
-	aprint_normal_dev(sc->sc_dev, "runtime: regulator state\n");
 	error = fdtbus_regulator_is_enabled(supply, &enabled);
 	if (error == 0 && !enabled)
 		error = EBUSY;
-	if (error == 0) {
-		aprint_normal_dev(sc->sc_dev, "runtime: regulator voltage\n");
+	if (error == 0)
 		error = fdtbus_regulator_get_voltage(supply, &sc->sc_uvol);
-	}
 	if (error == 0 && sc->sc_uvol != 800000)
 		error = EOPNOTSUPP;
 	fdtbus_regulator_release(supply);
-	if (error != 0)
-		return error;
-	aprint_normal_dev(sc->sc_dev, "runtime: GPU_TOP domain query\n");
+	return error;
+}
+
+static int
+sun60i_gpu_powerdomain_top(struct sun60i_gpu_softc *sc)
+{
+	bool enabled;
+	int error;
+
 	error = fdtbus_powerdomain_is_enabled_index(sc->sc_phandle, 0, &enabled);
 	if (error != 0)
 		return error;
 	return enabled ? 0 : EBUSY;
+}
+
+static int
+sun60i_gpu_runtime_supply_top(struct sun60i_gpu_softc *sc)
+{
+	int error;
+
+	error = sun60i_gpu_runtime_supply(sc);
+	if (error != 0)
+		return error;
+	return sun60i_gpu_powerdomain_top(sc);
 }
 
 static int
@@ -282,58 +303,6 @@ sun60i_gpu_power_node(struct sun60i_gpu_softc *sc)
 }
 
 static int
-sun60i_gpu_stage_clocks(struct sun60i_gpu_softc *sc, int power_node)
-{
-	struct sun60i_a733_gpu_state state;
-	struct clk *gpu;
-	bool retained = false;
-	int error;
-
-	aprint_normal_dev(sc->sc_dev, "runtime stage 1: supply/TOP checks\n");
-	error = sun60i_gpu_runtime_supply_top(sc);
-	if (error != 0)
-		return error;
-	aprint_normal_dev(sc->sc_dev, "runtime stage 1: clock acquire\n");
-	gpu = fdtbus_clock_get_index(sc->sc_phandle, 0);
-	if (gpu == NULL)
-		return ENXIO;
-	aprint_normal_dev(sc->sc_dev, "runtime stage 1: PCK reserve\n");
-	error = sun60i_a733_pck_gpu_reserve(power_node, sc);
-	if (error == 0) {
-		aprint_normal_dev(sc->sc_dev, "runtime stage 1: CCU reserve\n");
-		error = sun60i_a733_ccu_gpu_reserve(gpu, sc);
-	}
-	if (error == 0) {
-		aprint_normal_dev(sc->sc_dev, "runtime stage 1: PCK retain\n");
-		error = sun60i_a733_pck_gpu_retain(power_node, sc);
-	}
-	if (error != 0) {
-		if (error != EBUSY) {
-			(void)sun60i_a733_ccu_gpu_release(gpu, sc);
-			(void)sun60i_a733_pck_gpu_release(power_node, sc);
-		}
-		clk_put(gpu);
-		return error;
-	}
-	aprint_normal_dev(sc->sc_dev, "runtime stage 1: CCU prepare\n");
-	error = sun60i_a733_ccu_gpu_prepare(gpu, sc, &retained);
-	if (error == 0) {
-		aprint_normal_dev(sc->sc_dev, "runtime stage 1: CCU inspect\n");
-		error = sun60i_a733_ccu_gpu_inspect(gpu, &state);
-	}
-	if (error == 0) {
-		error = state.readiness_error;
-		sc->sc_core_hz = state.core_hz;
-		sc->sc_bus_hz = state.bus_hz;
-	}
-	if (error == 0 && (sc->sc_core_hz != 400000000 ||
-	    sc->sc_bus_hz != 200000000))
-		error = EBUSY;
-	clk_put(gpu);
-	return error;
-}
-
-static int
 sun60i_gpu_stage_request(struct sun60i_gpu_softc *sc, int power_node)
 {
 	int error;
@@ -341,14 +310,7 @@ sun60i_gpu_stage_request(struct sun60i_gpu_softc *sc, int power_node)
 	error = sun60i_gpu_runtime_supply_top(sc);
 	if (error != 0)
 		return error;
-	return sun60i_a733_pck_gpu_request_on(power_node, sc);
-}
-
-static int
-sun60i_gpu_stage_wait(struct sun60i_gpu_softc *sc, int power_node)
-{
-
-	return sun60i_a733_pck_gpu_wait(power_node, sc);
+	return sun60i_a733_pck_gpu_request_on(power_node, sc, true);
 }
 
 static int
@@ -374,7 +336,7 @@ sun60i_gpu_stage_top_id(struct sun60i_gpu_softc *sc)
 		fdtbus_regulator_release(supply);
 		return ENXIO;
 	}
-	sun60i_gpu_top_identify(sc, addr, supply, gpu);
+	sun60i_gpu_top_identify(sc, addr, supply, gpu, true);
 	clk_put(gpu);
 	fdtbus_regulator_release(supply);
 	return sc->sc_have_id ? 0 : EFAULT;
@@ -404,13 +366,6 @@ sun60i_gpu_stage_identify(struct sun60i_gpu_softc *sc)
 		return EFAULT;
 	sc->sc_bvnc = id;
 	sc->sc_have_id = true;
-	aprint_normal_dev(sc->sc_dev, "runtime PBVNC 0x%016llx: %u.%u.%u.%u%s\n",
-	    (unsigned long long)id,
-	    (u_int)(id >> 48),
-	    (u_int)((id >> 32) & 0xffff),
-	    (u_int)((id >> 16) & 0xffff),
-	    (u_int)(id & 0xffff),
-	    id == A733_GPU_EXPECTED ? " (expected A733 GPU)" : " (unexpected)");
 	return id == A733_GPU_EXPECTED ? 0 : ENODEV;
 }
 
@@ -422,32 +377,78 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 	mutex_enter(&sc->sc_run_lock);
 	/* Stage 0 is a dry run of the sysctl machinery: no provider calls. */
 	if (stage == 0) {
-		aprint_normal_dev(sc->sc_dev, "runtime stage 0: dry run OK\n");
 		sc->sc_run_result = 0;
 		mutex_exit(&sc->sc_run_lock);
 		return;
 	}
 	/* Strictly ordered single sequence; a replay needs a fresh boot. */
-	if (stage < A733_GPU_STAGE_CLOCKS || stage > A733_GPU_STAGE_IDENTIFY ||
+	if (stage < A733_GPU_STAGE_SUPPLY || stage > A733_GPU_STAGE_IDENTIFY ||
 	    stage != sc->sc_run_stage + 1 || !sc->sc_run_pass) {
-		aprint_error_dev(sc->sc_dev, "runtime stage %u refused: "
-		    "expected %u\n", stage, sc->sc_run_stage + 1);
-		goto out;
+		sc->sc_run_result = EINVAL;
+		mutex_exit(&sc->sc_run_lock);
+		return;
 	}
-	aprint_normal_dev(sc->sc_dev, "runtime stage %u: power node\n", stage);
 	power_node = sun60i_gpu_power_node(sc);
 	if (power_node < 0)
 		goto out;
-	aprint_normal_dev(sc->sc_dev, "runtime stage %u: start\n", stage);
 	switch (stage) {
-	case A733_GPU_STAGE_CLOCKS:
-		error = sun60i_gpu_stage_clocks(sc, power_node);
+	case A733_GPU_STAGE_SUPPLY:
+		error = sun60i_gpu_runtime_supply(sc);
 		break;
+	case A733_GPU_STAGE_TOP:
+		error = sun60i_gpu_powerdomain_top(sc);
+		break;
+	case A733_GPU_STAGE_RESERVE_PCK:
+		error = sun60i_a733_pck_gpu_reserve(power_node, sc);
+		break;
+	case A733_GPU_STAGE_RESERVE_CCU: {
+		struct clk *gpu = fdtbus_clock_get_index(sc->sc_phandle, 0);
+
+		if (gpu == NULL) {
+			error = ENXIO;
+			break;
+		}
+		error = sun60i_a733_ccu_gpu_reserve(gpu, sc);
+		clk_put(gpu);
+		break;
+	}
+	case A733_GPU_STAGE_RETAIN:
+		error = sun60i_a733_pck_gpu_retain(power_node, sc);
+		break;
+	case A733_GPU_STAGE_PREPARE: {
+		struct clk *gpu = fdtbus_clock_get_index(sc->sc_phandle, 0);
+		bool retained = false;
+
+		if (gpu == NULL) {
+			error = ENXIO;
+			break;
+		}
+		error = sun60i_a733_ccu_gpu_prepare(gpu, sc, &retained);
+		clk_put(gpu);
+		break;
+	}
+	case A733_GPU_STAGE_INSPECT: {
+		struct sun60i_a733_gpu_state state;
+		struct clk *gpu = fdtbus_clock_get_index(sc->sc_phandle, 0);
+
+		if (gpu == NULL) {
+			error = ENXIO;
+			break;
+		}
+		error = sun60i_a733_ccu_gpu_inspect(gpu, &state);
+		if (error == 0) {
+			error = state.readiness_error;
+			sc->sc_core_hz = state.core_hz;
+			sc->sc_bus_hz = state.bus_hz;
+		}
+		clk_put(gpu);
+		break;
+	}
 	case A733_GPU_STAGE_REQUEST:
 		error = sun60i_gpu_stage_request(sc, power_node);
 		break;
 	case A733_GPU_STAGE_WAIT:
-		error = sun60i_gpu_stage_wait(sc, power_node);
+		error = sun60i_a733_pck_gpu_wait(power_node, sc, true);
 		sc->sc_run_core_on = (error == 0);
 		break;
 	case A733_GPU_STAGE_TOP_ID:
@@ -461,7 +462,6 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 		error = sun60i_gpu_stage_identify(sc);
 		break;
 	}
-	aprint_normal_dev(sc->sc_dev, "runtime stage %u: %d\n", stage, error);
 	/* A bounded timeout still allows the read-only waiter afterwards. */
 	sc->sc_run_pass = (error == 0 || error == ETIMEDOUT);
 	sc->sc_run_stage = stage;
@@ -478,14 +478,13 @@ sun60i_gpu_sysctl_stage(SYSCTLFN_ARGS)
 	u_int value;
 	int error;
 
-	if (newp != NULL)
-		aprint_normal_dev(sc->sc_dev, "runtime sysctl write enter\n");
 	value = sc->sc_run_stage;
 	node.sysctl_data = &value;
 	error = sysctl_lookup(SYSCTLFN_CALL(&node));
 	if (error != 0 || newp == NULL)
 		return error;
-	aprint_normal_dev(sc->sc_dev, "runtime sysctl dispatch %u\n", value);
+	/* No console output from this handler: printing under the sysctl
+	 * dispatch recurses into console/msgbuf locks and stalls the kernel. */
 	sun60i_gpu_run_stage(sc, value);
 	return sc->sc_run_result;
 }
@@ -702,12 +701,12 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 		}
 		if (request) {
 			sc->sc_stage = "experimental domain request";
-			error = sun60i_a733_pck_gpu_request_on(power_node, sc);
+			error = sun60i_a733_pck_gpu_request_on(power_node, sc, false);
 			if (error != 0)
 				goto out;
 		}
 		sc->sc_stage = "experimental CORE ON/Q acceptance";
-		error = sun60i_a733_pck_gpu_wait(power_node, sc);
+		error = sun60i_a733_pck_gpu_wait(power_node, sc, false);
 		if (error != 0)
 			goto out;
 		/* No GPU mapping is permitted on a lost supply or domain check. */
@@ -727,7 +726,7 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 			goto out;
 		}
 		sc->sc_stage = "experimental final CORE check";
-		error = sun60i_a733_pck_gpu_wait(power_node, sc);
+		error = sun60i_a733_pck_gpu_wait(power_node, sc, false);
 		if (error != 0)
 			goto out;
 		sc->sc_stage = "experimental final clock check";
@@ -760,7 +759,7 @@ out:
 	if (prepare && sc->sc_retained && error == ETIMEDOUT)
 		sun60i_gpu_clock_terminal(sc, gpu);
 	if (request && error != 0 && sc->sc_retained)
-		sun60i_gpu_top_identify(sc, addr, supply, gpu);
+		sun60i_gpu_top_identify(sc, addr, supply, gpu, false);
 	if (!sc->sc_retained) {
 		if (clock_reserved)
 			(void)sun60i_a733_ccu_gpu_release(gpu, sc);

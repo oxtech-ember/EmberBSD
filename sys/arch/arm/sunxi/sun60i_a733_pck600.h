@@ -5,8 +5,8 @@
 
 int	sun60i_a733_pck_gpu_reserve(int, const void *);
 int	sun60i_a733_pck_gpu_retain(int, const void *);
-int	sun60i_a733_pck_gpu_request_on(int, const void *);
-int	sun60i_a733_pck_gpu_wait(int, const void *);
+int	sun60i_a733_pck_gpu_request_on(int, const void *, bool);
+int	sun60i_a733_pck_gpu_wait(int, const void *, bool);
 int	sun60i_a733_pck_gpu_release(int, const void *);
 
 #endif

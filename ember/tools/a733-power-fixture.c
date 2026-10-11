@@ -726,7 +726,7 @@ test_gpu_lease(void)
 		case 5: registers[0x603c / 4] = 1; break;
 		case 6: registers[0x6008 / 4] = 8; break; /* No Q acceptance. */
 		}
-		int error = sun60i_a733_pck_gpu_wait(1, &owner);
+		int error = sun60i_a733_pck_gpu_wait(1, &owner, false);
 		assert(error == (test == 0 ? 0 : test == 2 ? EFAULT :
 		    test == 3 ? EOPNOTSUPP : test == 4 || test == 5 ? EIO : ETIMEDOUT));
 		assert(writes == 0 && sc.sc_gpu_retained && sc.sc_gpu_owner == &owner);
@@ -749,12 +749,12 @@ test_gpu_request_on(void)
 	lease_test = true;
 	/* Ownership and provider errors. */
 	lease_fixture();
-	assert(sun60i_a733_pck_gpu_request_on(99, &owner) == ENXIO);
-	assert(sun60i_a733_pck_gpu_request_on(1, &owner) == EINVAL);
+	assert(sun60i_a733_pck_gpu_request_on(99, &owner, false) == ENXIO);
+	assert(sun60i_a733_pck_gpu_request_on(1, &owner, false) == EINVAL);
 	assert(writes == 0);
 	assert(sun60i_a733_pck_gpu_reserve(1, &owner) == 0);
-	assert(sun60i_a733_pck_gpu_request_on(1, &owner) == EINVAL);
-	assert(sun60i_a733_pck_gpu_request_on(1, NULL) == EINVAL);
+	assert(sun60i_a733_pck_gpu_request_on(1, &owner, false) == EINVAL);
+	assert(sun60i_a733_pck_gpu_request_on(1, NULL, false) == EINVAL);
 	assert(sun60i_a733_pck_gpu_retain(1, &other) == EBUSY);
 	assert(writes == 0);
 	checks += 7;
@@ -765,7 +765,7 @@ test_gpu_request_on(void)
 	assert(sun60i_a733_pck_gpu_retain(1, &owner) == 0);
 	registers[0x6008 / 4] = 8;
 	registers[0x6014 / 4] = 0x100;
-	assert(sun60i_a733_pck_gpu_request_on(1, &owner) == 0);
+	assert(sun60i_a733_pck_gpu_request_on(1, &owner, false) == 0);
 	assert(writes == 0);
 	checks += 4;
 
@@ -786,7 +786,7 @@ test_gpu_request_on(void)
 		case 5: registers[0x6014 / 4] = 0x100; break; /* Not stalled. */
 		case 6: registers[0x5020 / 4] = 0; break; /* TOP unhealthy. */
 		}
-		int error = sun60i_a733_pck_gpu_request_on(1, &owner);
+		int error = sun60i_a733_pck_gpu_request_on(1, &owner, false);
 		assert(error == (test == 0 ? 0 : test == 1 ? ETIMEDOUT :
 		    test == 2 || test == 3 ? EIO :
 		    test == 4 ? EFAULT : test == 5 ? EBUSY : EOPNOTSUPP));
@@ -795,12 +795,12 @@ test_gpu_request_on(void)
 			assert(writes == 6); /* Five delays and the policy. */
 			/* Q acceptance arrives after; the waiter sees it. */
 			registers[0x6014 / 4] = 0x100;
-			assert(sun60i_a733_pck_gpu_wait(1, &owner) == 0);
+			assert(sun60i_a733_pck_gpu_wait(1, &owner, false) == 0);
 		}
 		if (test == 1) {
 			/* Timeout keeps the domain available to the waiter. */
 			assert(writes == 6 && !sc.sc_failed[6]);
-			assert(sun60i_a733_pck_gpu_wait(1, &owner) == ETIMEDOUT);
+			assert(sun60i_a733_pck_gpu_wait(1, &owner, false) == ETIMEDOUT);
 			assert(writes == 6);
 		}
 		if (error == EIO)

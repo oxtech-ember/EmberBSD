@@ -489,7 +489,7 @@ sun60i_a733_pck_gpu_retain(int phandle, const void *owner)
 }
 
 int
-sun60i_a733_pck_gpu_wait(int phandle, const void *owner)
+sun60i_a733_pck_gpu_wait(int phandle, const void *owner, bool quiet)
 {
 	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
 	uint32_t last[3] = { UINT32_MAX, UINT32_MAX, UINT32_MAX };
@@ -512,16 +512,17 @@ sun60i_a733_pck_gpu_wait(int phandle, const void *owner)
 		}
 		delay(PCK600_POLL_US);
 	}
-	aprint_normal_dev(sc->sc_dev, "experimental CORE wait: %d; last "
-	    "PWPR/PWSR/MISR 0x%08x/0x%08x/0x%08x\n", error,
-	    last[0], last[1], last[2]);
+	if (!quiet)
+		aprint_normal_dev(sc->sc_dev, "experimental CORE wait: %d; last "
+		    "PWPR/PWSR/MISR 0x%08x/0x%08x/0x%08x\n", error,
+		    last[0], last[1], last[2]);
 out:
 	mutex_exit(&sc->sc_lock);
 	return error;
 }
 
 int
-sun60i_a733_pck_gpu_request_on(int phandle, const void *owner)
+sun60i_a733_pck_gpu_request_on(int phandle, const void *owner, bool quiet)
 {
 	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
 	const bus_size_t base = PCK600_GPU_CORE * PCK600_DOMAIN_SIZE;
@@ -582,8 +583,9 @@ sun60i_a733_pck_gpu_request_on(int phandle, const void *owner)
 failed:
 	sc->sc_failed[PCK600_GPU_CORE] = true;
 out:
-	aprint_normal_dev(sc->sc_dev, "experimental CORE request: %d; last "
-	    "PWPR/PWSR 0x%08x/0x%08x\n", error, policy, status);
+	if (!quiet)
+		aprint_normal_dev(sc->sc_dev, "experimental CORE request: %d; "
+		    "last PWPR/PWSR 0x%08x/0x%08x\n", error, policy, status);
 	mutex_exit(&sc->sc_lock);
 	return error;
 }
