@@ -1,6 +1,15 @@
 # BCM2712 V3D MMU fault recovery experiment: handoff design
 
-Status on 2026-10-11: researched design, **not implemented or executed**.
+Status on 2026-10-11: **implemented and contracted**; the first physical
+boot delivered the fault (PTI and CAP bits as one interrupt) and ran the
+pinned recovery, but the following good job faulted again with the same
+bits instead of completing — the experiment honestly reported `good job
+never completed after recovery` and the board was restored. Hardware
+fault-recovery acceptance is **open**: the next iteration needs the
+post-mortem registers (MMU_CTL, TFU_CS, VIO_ID, VIO_ADDR) in the failure
+line and a TFU-busy check before resubmission; a stuck-busy TFU after an
+aborted faulting job or a W1C clear that does not stick on this silicon
+are the two leading hypotheses.
 This is stage C after the accepted [translated DMA](bcm2712-v3d-dma.md),
 [bin/render queue](bcm2712-v3d-binrender-plan.md) and
 [interrupt](bcm2712-v3d-irq-plan.md) experiments: a deliberately faulting
