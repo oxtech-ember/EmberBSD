@@ -5,13 +5,34 @@
 #include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/kmem.h>
+#include <sys/mman.h>
 #include <sys/systm.h>
 #include <arm/broadcom/bcm2712_v3d_takeover.h>
 #include <linux/err.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_ioctl.h>
 #include <drm/drm_gem.h>
+#include <drm/drm_prime.h>
 #include "bcmv3d_drv.h"
+
+/* A PRIME fd authorizes this BO; the offset remains relative, in bytes. */
+static int
+bcmv3d_prime_mmap(struct drm_gem_object *obj, off_t *offp, size_t size,
+    int prot, int *flagsp, int *advicep, struct uvm_object **uobjp,
+    int *maxprotp)
+{
+	if (*offp < 0 || (*offp & (PAGE_SIZE - 1)) != 0 || size == 0 ||
+	    (size & (PAGE_SIZE - 1)) != 0 || (uint64_t)*offp > obj->size ||
+	    size > obj->size - (size_t)*offp ||
+	    (prot & ~(PROT_READ | PROT_WRITE)) != 0 ||
+	    (*flagsp & MAP_SHARED) == 0 || (*flagsp & MAP_PRIVATE) != 0)
+		return -EINVAL;
+	/* The CMA pager drops this reference when the mapping is destroyed. */
+	drm_gem_object_get(obj);
+	*uobjp = &obj->gemo_uvmobj;
+	*maxprotp = PROT_READ | PROT_WRITE;
+	return 0;
+}
 
 static int
 bcmv3d_get_param(struct drm_device *dev, void *data, struct drm_file *file)
@@ -55,6 +76,10 @@ static struct drm_driver bcmv3d_driver = {
 	.num_ioctls = __arraycount(bcmv3d_ioctls),
 	.mmap_object = drm_gem_mmap_object,
 	.gem_uvm_ops = &drm_gem_cma_uvm_ops,
+	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
+	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
+	.gem_prime_mmap = bcmv3d_prime_mmap,
+	/* Core self-import retains our BO; foreign imports have no SG hook. */
 	.name = "v3d",
 	.desc = "EmberBSD BCM2712 bounded render interface",
 	.date = "20261011",

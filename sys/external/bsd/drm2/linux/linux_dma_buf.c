@@ -288,7 +288,8 @@ dmabuf_fop_mmap(struct file *file, off_t *offp, size_t size, int prot,
 	if (size > dmabuf->size || *offp < 0 || *offp > dmabuf->size - size)
 		return EINVAL;
 
-	return dmabuf->ops->mmap(dmabuf, offp, size, prot, flagsp, advicep,
+	/* DRM callbacks use negative Linux errno; fileops use native errno. */
+	return -dmabuf->ops->mmap(dmabuf, offp, size, prot, flagsp, advicep,
 	    uobjp, maxprotp);
 }
 

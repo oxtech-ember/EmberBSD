@@ -758,10 +758,17 @@ struct sg_table *drm_gem_map_dma_buf(struct dma_buf_attachment *attach,
 	if (WARN_ON(dir == DMA_NONE))
 		return ERR_PTR(-EINVAL);
 
-	if (obj->funcs)
+	if (obj->funcs && obj->funcs->get_sg_table)
 		sgt = obj->funcs->get_sg_table(obj);
-	else
+	else if (obj->dev->driver->gem_prime_get_sg_table)
 		sgt = obj->dev->driver->gem_prime_get_sg_table(obj);
+	else
+		return ERR_PTR(-ENOSYS);
+
+	if (IS_ERR(sgt))
+		return sgt;
+	if (sgt == NULL)
+		return ERR_PTR(-ENOMEM);
 
 	if (!dma_map_sg_attrs(attach->dev, sgt->sgl, sgt->nents, dir,
 			      DMA_ATTR_SKIP_CPU_SYNC)) {

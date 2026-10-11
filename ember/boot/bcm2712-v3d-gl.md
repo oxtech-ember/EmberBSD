@@ -136,3 +136,27 @@ individual BOs to 16 MiB and total allocation to 64 MiB. Sharing buffers between
 clients, a virtual Wayland output, remote input/capture and the current common
 Qt/KWin/Plasma package migration are subsequent gates; HDMI is not required
 for the selected remote desktop scenario. No long-run desktop claim follows.
+
+## Same-device PRIME integration
+
+The next native interface enables the core GEM handle/fd conversion helpers.
+Self-import preserves the actual `bcmv3d_bo`, including its VA and DMA memory.
+Foreign-device import has no SG hook and is rejected before attachment. The
+exported object has no foreign DMA mapping provider; the common helper now
+rejects missing/error providers rather than dereferencing them.
+
+The native fd-mmap callback keeps offsets in bytes within the BO, validates
+page alignment, length and read/write protection, and permits shared mappings
+only. It holds one GEM reference for the existing CMA pager. It does not use
+the generic legacy fake-offset path. Native dma-buf fileops translate callback
+errors to positive native errno. Both former error paths fail the actual-source
+regression before repair; the new mmap passes 1,260 ASan/UBSan boundary cases.
+
+Run `ruby ember/tools/drm-prime-map-contract.rb` and
+`ruby ember/tools/bcm2712-v3d-prime-contract.rb` on the host. Cross-build
+`bcm2712-v3d-prime-check-build.sh` with the same `CC`/`SYSROOT` convention as the
+CL checker, then run `prime-check /dev/dri/renderD128`. It transfers descriptors
+via SCM_RIGHTS to fresh DRM clients, checks duplicate imports, partial mappings,
+invalid ranges/protections and lifetime after handle/fd closure. Eighty 1 MiB
+cycles exceed the allocation quota cumulatively, detecting retained objects.
+Hardware PRIME and Mesa EGLImage acceptance are pending for this change.
