@@ -10,6 +10,10 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <sched.h>
+#include <stdatomic.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +28,12 @@ struct buffer {
 	uint32_t handle, gpu;
 	uint64_t offset;
 	uint32_t *map;
+};
+
+struct close_race {
+	int fd, result, error;
+	atomic_bool go, done;
+	struct drm_v3d_submit_tfu tfu;
 };
 
 static void
@@ -128,6 +138,78 @@ copy_test(int fd, unsigned int count)
 	    "munmap GEM failed");
 }
 
+static void *
+race_submit(void *arg)
+{
+	struct close_race *race = arg;
+
+	while (!atomic_load_explicit(&race->go, memory_order_acquire))
+		sched_yield();
+	race->result = ioctl(race->fd, DRM_IOCTL_V3D_SUBMIT_TFU, &race->tfu);
+	race->error = errno;
+	atomic_store_explicit(&race->done, true, memory_order_release);
+	return NULL;
+}
+
+static void
+close_race_test(int fd)
+{
+	unsigned int n, completed = 0, missed = 0, observed_busy = 0;
+	size_t i;
+
+	for (n = 0; n < 64; n++) {
+		struct buffer src = allocate(fd), dst = allocate(fd);
+		struct close_race race = {
+			.fd = fd, .go = ATOMIC_VAR_INIT(false),
+			.done = ATOMIC_VAR_INIT(false),
+			.tfu = { .icfg = 0x001d0001, .iia = src.gpu, .iis = 64,
+			    .ioa = dst.gpu, .ios = 0x00400040,
+			    .bo_handles = { dst.handle, src.handle },
+			    .v71 = { .ioc = 0x00400000 } }
+		};
+		struct drm_v3d_wait_bo wait = { .handle = dst.handle };
+		pthread_t thread;
+
+		for (i = 0; i < BO_SIZE / sizeof(uint32_t); i++) {
+			src.map[i] = i < WORDS ? pattern(n, i) : GUARD;
+			dst.map[i] = GUARD;
+		}
+		check(pthread_create(&thread, NULL, race_submit, &race) == 0,
+		    "pthread_create failed");
+		atomic_store_explicit(&race.go, true, memory_order_release);
+		/* Alternate lookup races and closing after an observed busy BO. */
+		if ((n & 1) != 0) {
+			while (!atomic_load_explicit(&race.done, memory_order_acquire)) {
+				if (ioctl(fd, DRM_IOCTL_V3D_WAIT_BO, &wait) == -1) {
+					check(errno == ETIME, "WAIT_BO in close race failed");
+					observed_busy++;
+					break;
+				}
+				sched_yield();
+			}
+		}
+		close_handle(fd, src.handle);
+		close_handle(fd, dst.handle);
+		check(pthread_join(thread, NULL) == 0, "pthread_join failed");
+		check(race.result == 0 || (race.result == -1 && race.error == ENOENT),
+		    "unexpected submit/close result");
+		if (race.result == 0)
+			completed++;
+		else
+			missed++;
+		for (i = 0; i < BO_SIZE / sizeof(uint32_t); i++) {
+			check(src.map[i] == (i < WORDS ? pattern(n, i) : GUARD),
+			    "source changed in close race");
+			check(dst.map[i] == (race.result == 0 && i < WORDS ?
+			    pattern(n, i) : GUARD), "destination/guard changed in close race");
+		}
+		check(munmap(src.map, BO_SIZE) == 0 && munmap(dst.map, BO_SIZE) == 0,
+		    "race munmap failed");
+	}
+	printf("submit/close: %u completed, %u closed before lookup, "
+	    "%u busy observations\n", completed, missed, observed_busy);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -176,6 +258,7 @@ main(int argc, char **argv)
 	    "mapped BO did not survive handle close");
 	close(other);
 	copy_test(fd, 260); /* Includes conversion-counter wrap. */
+	close_race_test(fd);
 	close(fd);
 	fflush(stdout);
 	for (i = 0; i < 2; i++) {

@@ -41,7 +41,10 @@ static int (*handler)(void *);
 static void *handler_arg;
 static bool controller_masked, drained;
 static unsigned reg_calls, fail_reg, starts, sleeps, model_case, writes;
-static unsigned post_sync, flushes;
+static unsigned flushes;
+static bool src_owned, dst_owned, scratch_owned, ptes_synced;
+static bool retired, revoke_synced, revoked;
+static struct drm_file *close_during_submit;
 static uint64_t time_ns;
 static uint32_t regs[0x1240/4];
 static void *acpi_intr_establish_irq(device_t d,struct acpi_irq *r,int ipl,
@@ -60,12 +63,41 @@ static void getnanouptime(struct timespec *t)
 #define timespecsub(a,b,r) do { \
  (r)->tv_sec=(a)->tv_sec-(b)->tv_sec; (r)->tv_nsec=(a)->tv_nsec-(b)->tv_nsec; \
  if((r)->tv_nsec<0) { --(r)->tv_sec; (r)->tv_nsec+=1000000000; } } while(0)
-static void bus_dmamap_sync(bus_dma_tag_t t,bus_dmamap_t m,size_t o,size_t n,int ops)
-{ CHECK(o==0 && n==m->dm_segs[0].ds_len); if(ops&12)post_sync++; }
+static void bus_dmamap_sync(bus_dma_tag_t t,bus_dmamap_t m,size_t o,size_t n,int ops);
 static int bcmv3d_takeover_hub_peek(bus_size_t r,uint32_t *v);
 static int bcmv3d_takeover_hub_poke(bus_size_t r,uint32_t v);
 static int tsleep(void *p,int f,const char *n,int ticks);
 #include "job-body.h"
+
+static void
+bus_dmamap_sync(bus_dma_tag_t t,bus_dmamap_t m,size_t o,size_t n,int ops)
+{
+	struct bcmv3d_job *j=handler_arg;
+	CHECK(o==0 && n==m->dm_segs[0].ds_len && j!=NULL);
+	if(m==j->src->cma.dmamap && ops==BUS_DMASYNC_PREWRITE) {
+		CHECK(!src_owned && !dst_owned && !scratch_owned);
+		src_owned=true; retired=revoke_synced=revoked=ptes_synced=false;
+	} else if(m==j->dst->cma.dmamap && ops==BUS_DMASYNC_PREREAD) {
+		CHECK(src_owned && !dst_owned); dst_owned=true;
+	} else if(m==j->scratch->cma.dmamap && ops==3) {
+		CHECK(src_owned && dst_owned && !scratch_owned); scratch_owned=true;
+	} else if(m==j->scratch->cma.dmamap && ops==12) {
+		CHECK(retired && src_owned && dst_owned && scratch_owned);
+		scratch_owned=false;
+	} else if(m==j->pt->cma.dmamap && ops==BUS_DMASYNC_PREWRITE) {
+		uint32_t *pt=j->pt->cma.vaddr;
+		CHECK(src_owned && dst_owned);
+		if(pt[j->src->gpu>>12] || pt[j->dst->gpu>>12]) {
+			CHECK(!retired && scratch_owned); ptes_synced=true;
+		} else {
+			CHECK(retired && !scratch_owned); revoke_synced=true;
+		}
+	} else if(m==j->src->cma.dmamap && ops==BUS_DMASYNC_POSTWRITE) {
+		CHECK(retired && revoke_synced && revoked && src_owned); src_owned=false;
+	} else if(m==j->dst->cma.dmamap && ops==BUS_DMASYNC_POSTREAD) {
+		CHECK(retired && revoke_synced && revoked && dst_owned); dst_owned=false;
+	} else CHECK(false);
+}
 
 static int
 bcmv3d_takeover_hub_peek(bus_size_t r,uint32_t *v)
@@ -75,6 +107,8 @@ bcmv3d_takeover_hub_peek(bus_size_t r,uint32_t *v)
 	*v=regs[r/4];
 	if (r==V3D_MMUC && model_case==7) *v|=4;
 	if (r==V3D_MMU && model_case==8) *v|=128;
+	if (r==V3D_MMU && revoke_synced && *v==V3D_MMU_VALUE)
+		revoked=true;
 	return 0;
 }
 
@@ -82,6 +116,7 @@ static void
 complete(void)
 {
 	CHECK(!controller_masked && handler!=NULL);
+	retired=true;
 	regs[V3D_TFU_CS/4]=(regs[V3D_TFU_CS/4]+0x10000)&0xff0000;
 	if(model_case==2)regs[V3D_TFU_CS/4]|=1;
 	if(model_case==3)regs[V3D_TFU_CS/4]-=0x10000;
@@ -112,12 +147,19 @@ bcmv3d_takeover_hub_poke(bus_size_t r,uint32_t v)
 		struct bcmv3d_job *j=handler_arg;
 		uint32_t *pt=j->pt->cma.vaddr;
 		CHECK(writes==11); writes=0;
+		CHECK(src_owned && dst_owned && scratch_owned && ptes_synced);
 		CHECK(j->src->cma.base.refs>=2 && j->dst->cma.base.refs>=2);
 		CHECK(j->src->busy && j->dst->busy);
 		CHECK((pt[j->src->gpu>>12]&V3D_PTE_VALID)!=0);
 		CHECK((pt[j->src->gpu>>12]&V3D_PTE_WRITE)==0);
 		CHECK((pt[j->dst->gpu>>12]&V3D_PTE_WRITE)!=0);
 		CHECK(pt[(j->dst->gpu>>12)+4]==0);
+		if(close_during_submit!=NULL) {
+			for(unsigned h=1;h<16;h++)
+				if(close_during_submit->handles[h])close_handle(close_during_submit,h);
+			CHECK(j->src->cma.base.refs==1 && j->dst->cma.base.refs==1);
+			CHECK(gems==4); close_during_submit=NULL;
+		}
 		starts++; regs[V3D_TFU_CS/4]|=1;
 		if(model_case==10)((uint32_t *)j->scratch->cma.vaddr)[0]^=1;
 		if(model_case!=1 && model_case!=11)complete();
@@ -138,7 +180,10 @@ setup(struct bcmv3d_device *c,struct drm_device *d,struct drm_file *f)
 	*c=(struct bcmv3d_device){.drm=d};
 	*d=(struct drm_device){.dev_private=c}; *f=(struct drm_file){0};
 	memset(regs,0,sizeof(regs)); regs[V3D_MMU_DEBUG/4]=0x550;
-	reg_calls=fail_reg=starts=sleeps=writes=post_sync=flushes=model_case=0;
+	reg_calls=fail_reg=starts=sleeps=writes=flushes=model_case=0;
+	src_owned=dst_owned=scratch_owned=ptes_synced=false;
+	retired=revoke_synced=revoked=false;
+	close_during_submit=NULL;
 	time_ns=0;
 	CHECK(bcmv3d_job_init(c)==0);
 	CHECK(bcmv3d_create_bo(d,&a,f)==0);
@@ -157,6 +202,7 @@ cleanup(struct bcmv3d_device *c,struct drm_file *f,bool poisoned)
 		CHECK(j->src->cma.base.refs==2 && j->dst->cma.base.refs==2);
 		CHECK(controller_masked && drained);
 	}
+	else CHECK(!src_owned && !dst_owned && !scratch_owned);
 	for(h=1;h<16;h++)if(f->handles[h])close_handle(f,h);
 	if(poisoned) {
 		CHECK(gems==4); /* PT, scratch and both failed-job objects survive close. */
@@ -206,6 +252,9 @@ main(void)
 		CHECK(((uint32_t *)c.job->pt->cma.vaddr)[a.iia>>12]==0);
 		CHECK(((uint32_t *)c.job->pt->cma.vaddr)[a.ioa>>12]==0);
 	}
+	cleanup(&c,&f,false);
+	a=setup(&c,&d,&f); close_during_submit=&f;
+	CHECK(bcmv3d_submit_tfu(&d,&a,&f)==0 && gems==2);
 	cleanup(&c,&f,false);
 	a=setup(&c,&d,&f); reg_calls=0;
 	CHECK(bcmv3d_submit_tfu(&d,&a,&f)==0); count=reg_calls;
