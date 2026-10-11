@@ -275,8 +275,11 @@ on every board in the hardware catalog.
   also passes compiled QML scene/layer pixels on V3D, process restart and
   rejection checks; 75 live library hashes match the common stack.
   [KI18n, KCoreAddons and KConfig 6.31 packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/frameworks.md)
-  also pass cross packaging and sysroot installation, with a checked native
-  KConfig generator. Their installed runtime remains unaccepted.
+  also pass cross packaging and sysroot installation. CM5 checks cover generated
+  configuration persistence, native Qt/kqueue file events and locale lookup.
+  A [base libintl fix](ember/boot/libintl-validation.md) preserves Welsh singular
+  translations and untranslated plural fallbacks, with 200 fixture checks.
+  Shared-cache recovery and the complete Frameworks runtime remain unaccepted.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
   CM5 still reports no HDMI hotplug in its pre-OS firmware log after a cold boot.

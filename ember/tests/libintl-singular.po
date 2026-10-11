@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD, AI-assisted fixture, not an upstream translation catalog.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: cy\n"
+"Plural-Forms: nplurals=6; plural=(n==0) ? 0 : (n==1) ? 1 : (n==2) ? 2 : (n==3) ? 3 : (n==6) ? 4 : 5;\n"
+
+msgid "Norway"
+msgstr "Norwy"
+
+msgctxt "country"
+msgid "Norway"
+msgstr "Context Norwy"
+
+msgid "Empty"
+msgstr ""
+
+msgid "item"
+msgid_plural "items"
+msgstr[0] "zero"
+msgstr[1] "one"
+msgstr[2] "two"
+msgstr[3] "three"
+msgstr[4] "six"
+msgstr[5] "many"
+
+msgctxt "count"
+msgid "item"
+msgid_plural "items"
+msgstr[0] "zero"
+msgstr[1] "one"
+msgstr[2] "two"
+msgstr[3] "three"
+msgstr[4] "six"
+msgstr[5] "many"
