@@ -136,3 +136,16 @@ a nesting counter. Masking in both initialization and submission left the
 line disabled after one unmask. The driver now tracks its controller-mask
 ownership; the contract models the native counter and rejects the original
 double-mask behavior. A pending physical repeat must validate this change.
+
+## Source reconstruction
+
+The isolated render source starts from the complete tree
+`63ba4c53e3fc9397e5a1a5730e9b9b32f95ff49c`, reconstructed from public commits
+as described in [the fault receipt](bcm2712-v3d-fault-plan.md).
+Apply, in order, the changes from public commits `d5e5a378957`,
+`fe7a2ad5783`, `7eb32a28867`, `878c7f1c2fc`, `404efe26b34` and `9315242ee76`.
+The complete resulting tree is `cf53cace35b196521e1ccb1617115cbab78d5ef1`;
+this reconstruction was checked using an independent Git index.
+The build records `BUILDINFO=EmberBSD:635b0902c5624fd5a1aeaab27bb9e72b884efc42`.
+That local commit is not a separate public branch. The tree and public changes
+identify all sources; artifact hashes identify the actual physical trial.
