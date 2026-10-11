@@ -712,6 +712,12 @@ firmware disassociation on disconnect, serializes firmware commands and
 wraps the 16-bit command identifier. Three disconnect/reconnect cycles
 passed without command timeouts. No WPA3 throughput improvement is claimed.
 
+[Silent-disconnect recovery](ember/boot/bwfm-link-events.md) is physically
+checked on CM5: the driver detects a firmware association lost without an
+event, restarts host scanning and reconnects with SAE/required PMF. An 8 MiB
+Wi-Fi round trip passed afterward. Long-run stability and seamless roaming
+remain unverified.
+
 - **Host-managed 802.11v roaming in `bwfm`** remains a separate local change,
   not integrated into this tree. With WPA2-PSK, a Raspberry Pi 5 local build
   moved from 2.4 to 5 GHz at the access point's request, reconnecting in

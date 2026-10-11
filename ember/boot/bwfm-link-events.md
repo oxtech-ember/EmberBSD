@@ -57,8 +57,42 @@ boundary and the production station-info layout. It also executes the driver
 task dispatcher, detach and producers to check the queue barrier and late
 work rejection. Both run through the kernel wrapper on the build host. The original
 driver fails the disconnect/recovery checks; corrected code passes, including
-ASan/UBSan. Hardware acceptance of the association poll is pending. Neither
-the reproduction nor these tests explains the AP's removal policy.
+ASan/UBSan. Neither the reproduction nor these tests explains the AP's
+removal policy.
+
+## Physical CM5 check
+
+On 2026-10-11, an EMBER64 kernel cross-built on macOS with GCC 16.2.0 from
+`1123c71918530a86b21122ea58cb3ba0e288f766` ran on Compute Module 5 Rev 1.0,
+BCM2712 D0, 4 GiB, with a Waveshare CM5-NANO-B carrier. The existing UEFI
+was retained; its source revision is unknown. CYW43455 firmware was
+7.45.265, FWID 01-b677b91b. Kernel SHA256:
+`42444c607589a48fb6f078877258119a172e7fd5f84676a2e8c89760decacf43`.
+The four matching board modules were byte-identical to the installed files.
+
+With the external interface-reset watcher disabled, the AP removed the
+2.4 GHz association at 08:10:24 UTC. The driver detected missing STA_ASSOC,
+started scanning, and rejoined on 5 GHz with SAE/required PMF. The AP recorded
+association at 08:10:47; the first successful Wi-Fi probe followed at
+08:11:03. All subsequent probes passed through 08:15:28. The 150-sample
+run had 139 replies, nine losses and two samples without a Wi-Fi address.
+The association recovery counter increased once, with no query errors.
+
+A separate temporary 2.4 GHz selection reconnected and passed 63 consecutive
+probes through 08:19:54; it did not reproduce another unsolicited loss.
+After clearing the selection, an 8 MiB upload and download over a verified
+Wi-Fi host route matched byte for byte and by SHA256. Temporary routes were
+removed, Ethernet management restored, and the interface-reset watcher
+remained disabled. There were no SDIO control timeouts. This accepts recovery
+of the reproduced stuck connection, not uninterrupted roaming or a long soak.
+
+Evidence hashes: recovery log
+`c1dfdfed52925fd2787187903368ed47376402fa2f12434f722da0f85f0d7d1b`,
+repeat log `00b1da785e69310ddc7670fbb50f41cb02d04f05e8a24571d1102cb856d2ba46`,
+transfer route/counters `fbe99f593283e014551d24b1056b7a2301db54a4af56992830ea17699d73530d`.
+Raw logs contain private network configuration and are not published.
+
+## Repeat hardware acceptance
 
 Keep Ethernet management active during acceptance. Use a separate test peer
 with a verified host route through Wi-Fi, and the Wi-Fi source address.

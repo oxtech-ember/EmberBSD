@@ -16,7 +16,7 @@ The carrier PCB revision and exact four-wire fan model were not established.
 | Serial console | Previously published as tested; not repeated in this check |
 | All CPU cores | Four cores online; 850 atomic compare-and-swap cases passed |
 | Ethernet | Gigabit link and SSH/file transfer tested; see lifecycle limitation below |
-| Wi-Fi | WPA2-PSK and WPA3-Personal SAE group 19/H2E with required PMF tested |
+| Wi-Fi | WPA2-PSK and WPA3-Personal SAE group 19/H2E with required PMF tested; silent firmware disconnect recovered automatically, followed by an 8 MiB Wi-Fi round trip ([receipt](../boot/bwfm-link-events.md#physical-cm5-check)) |
 | Bluetooth | Not validated |
 | Temperature sensor | ACPI and VideoCore readings checked; no undervoltage/throttle flags during the short check |
 | Fan control | Persistent maximum cooling and reboot tested; low/intermediate PWM cycles on this fan ([control](../boot/thermal-fan.md)) |
@@ -30,7 +30,7 @@ The carrier PCB revision and exact four-wire fan model were not established.
 | Voltage regulators | Not validated |
 | USB | Not validated as a running OS peripheral; USB boot/eMMC provisioning is separate |
 | Hardware random numbers | Not validated |
-| V3D GPU | Physical V3D 7.1 identification and one opt-in native SMS/PM reset completed with matched GCC16 kernels. GPU commands, DMA/MMU operation, rendering and acceleration remain unverified ([identification](../boot/bcm2712-v3d.md#physical-cm5-result), [reset](../boot/bcm2712-v3d-takeover.md#physical-cm5-acceptance)) |
+| V3D GPU | Opt-in physical experiments completed reset, translated TFU DMA, bin/render and interrupt delivery. Later acceptance guards require another hardware run. MMU fault recovery, DRM/Mesa and an accelerated desktop remain unaccepted ([checks and limits](../boot/bcm2712-v3d-validation.md)) |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.
