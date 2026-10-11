@@ -1,61 +1,81 @@
-# Keep an ACPI fan at maximum cooling
+# ACPI fan policies
 
-Some four-wire fans fitted to a CM5 carrier stall or repeatedly restart at
-low PWM duty. The thermal-zone driver provides an explicit maximum-cooling
-setting for this case. Automatic temperature control remains the default.
+Some four-wire fans fitted to a CM5 carrier stall or restart at intermediate
+PWM levels. The thermal-zone driver offers two optional policies for this
+case. Both default to `0` and require a maximum cooling list (`_AL0`).
+Check the thermal-zone and fan names on the actual board.
 
-This control is available only for an ACPI thermal zone that supplies its
-maximum active-cooling list (`_AL0`). Check the thermal-zone and fan names
-on the actual board; numbering and wiring are firmware-specific.
+| Setting | Behaviour |
+| --- | --- |
+| Both settings `0` | Use the firmware's normal temperature and cooling levels. |
+| `fan_max_only=1` | Stay off below the first cooling threshold. Use maximum cooling when the temperature requires cooling. |
+| `force_fan=1` | Keep maximum cooling enabled. This overrides `fan_max_only`. |
+
+## Temperature-controlled maximum cooling
+
+Use this policy when intermediate speeds do not work, but permanent maximum
+cooling is too noisy:
 
 ```sh
-sysctl hw.acpitz0.force_fan
-sysctl -w hw.acpitz0.force_fan=1
+sysctl -w hw.acpitz0.fan_max_only=1
+sysctl -w hw.acpitz0.force_fan=0
 envstat -d acpitz0
 ```
 
-A value of `1` keeps the zone's maximum active cooling enabled even below
-its usual temperature threshold. Values other than `0` and `1` are rejected.
-Temperature monitoring and hot/critical reporting remain enabled. The
-request is applied through the ACPI worker, including after the driver
-refreshes the cooling-zone description. It does not change the firmware's
-PWM frequency or redefine the speed of the maximum level.
+The firmware still supplies the temperature thresholds. The driver retains
+5 °C of hysteresis. With the tested CM5 firmware, cooling starts at 50 °C
+and stops below 45 °C. This policy does not wait for the firmware's 75 °C
+maximum-speed threshold. It uses the maximum level for every active request.
+A failed or invalid temperature sample selects maximum cooling.
 
-To keep this policy after reboot, add one line to `/etc/sysctl.conf`:
+To keep this policy after reboot, use these lines in `/etc/sysctl.conf`.
+Replace any earlier `force_fan=1` entry:
 
 ```conf
-hw.acpitz0.force_fan=1
+hw.acpitz0.fan_max_only=1
+hw.acpitz0.force_fan=0
 ```
 
-To restore automatic operation, remove that persistent setting and run:
+This policy avoids intermediate PWM levels. It does not repair a fan that
+jerks or clicks while starting. Maximum cooling can still be loud under load.
+The temperature-controlled policy requires physical acceptance on each setup.
+
+## Constant maximum cooling
 
 ```sh
-sysctl -w hw.acpitz0.force_fan=0
+sysctl -w hw.acpitz0.force_fan=1
 ```
 
-Check actual continuous rotation, temperature and undervoltage indicators.
-An ACPI `D0` state confirms the requested power state, not fan RPM.
-On the CM5 UEFI used in the hardware check, `_AL0` drives `acpifan0` at
-250/255 PWM. Other carriers, fans and firmware require their own check.
-This setting does not establish that intermediate PWM levels work.
+Add `hw.acpitz0.force_fan=1` to `/etc/sysctl.conf` if this policy must persist.
+To restore normal automatic operation, remove both persistent entries and
+set both controls to `0`. Each control rejects values other than `0` and `1`.
+
+Temperature monitoring and hot/critical reporting remain enabled. Policy
+changes run in the ACPI worker. A zone refresh retains active cooling when
+the cooling devices are unchanged. An incomplete refresh retains the previous
+working description. It does not pulse the fan merely to reload its settings.
+
+Check actual rotation, temperature and undervoltage indicators. An ACPI `D0`
+state reports power state, not RPM. On the checked CM5 firmware, `_AL0`
+drives `acpifan0` at 250/255 PWM. Neither policy changes PWM frequency.
+Other carriers, fans and firmware require their own check.
 
 ## Validation
 
-On 2026-10-08 a CM5 on Waveshare CM5-NANO-B booted revision
-`72c00a3bbc19` with `force_fan=1` applied from sysctl.conf. Its operator
-confirmed continuous rotation. Values -1 and 2 were rejected; switching
-0/1 returned acpifan0 to D3/D0. Nineteen samples over 18 minutes retained
-D0 at 37.5–41.3 °C, including a zone-refresh interval. The setting also
-returned after booting the later `b78f10c721f7` kernel. Matching modules were
-cross-built on macOS.
+On 2026-10-08, a CM5 on Waveshare CM5-NANO-B booted revision `72c00a3bbc19`
+with `force_fan=1` from sysctl.conf. Its operator confirmed continuous rotation.
+Nineteen samples over 18 minutes retained D0 at 37.5–41.3 °C. The setting
+also returned after booting the later `b78f10c721f7` kernel. The exact fan model
+was not established. These checks do not validate intermediate speeds.
 
-The notification regression executes the actual zone-refresh callback with
-controlled ACPI providers; it failed before the callback reapplied the policy:
+The source regression executes the driver's thermal selection, sysctl and
+zone-refresh functions with controlled ACPI providers:
 
 ```sh
 sh ember/tests/acpitz-fan.sh
 ```
 
-This contract passes on macOS and an EmberBSD AArch64 VM. It does not
-measure fan RPM or replace a physical check. Suspend/resume, other fans and
-long-duration operation have not been tested.
+It checks normal thresholds, hysteresis, the maximum-only policy, manual
+override, failed samples, incomplete refreshes and unchanged cooling devices.
+Physical acceptance of `fan_max_only` is pending. Start-up noise, RPM,
+suspend/resume and long-duration operation remain separate checks.
