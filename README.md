@@ -499,10 +499,14 @@ on every board in the hardware catalog.
   stand firmware's swapped core/hub line names were identified by wire
   evidence. The [acceptance guards](ember/boot/bcm2712-v3d-validation.md)
   add failure-propagation, completion-count and DMA-integrity regressions;
-  their host checks do not replace a new physical acceptance run.
-  The ordinary kernel remains a passive observer. GPU fault
-  recovery, multi-job queues, a DRM render interface, Mesa rendering and
-  acceleration remain unverified.
+  their host checks do not replace physical acceptance. On 2026-10-11,
+  the corrected [MMU fault experiment](ember/boot/bcm2712-v3d-fault-plan.md)
+  passed on CM5: one invalid destination fault, bounded recovery and a
+  verified good TFU copy in the same boot, with guarded scratch and intact
+  protected buffers. Each submission must reprogram the complete TFU payload.
+  The ordinary kernel remains a passive observer. Multi-job recovery,
+  a DRM render interface, Mesa rendering and an accelerated desktop remain
+  unverified.
 
 ### Network diagnostics kit
 

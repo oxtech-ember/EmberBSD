@@ -1,29 +1,47 @@
 # BCM2712 V3D MMU fault recovery experiment: handoff design
 
-Status on 2026-10-11: **implemented and contracted**; the first physical
-boot delivered the fault (PTI and WRV bits, recorded as `0x30`) and ran the
-pinned recovery, but the following good job faulted again with the same
-bits instead of completing — the experiment honestly reported `good job
-never completed after recovery` and the board was restored. Hardware
-fault-recovery acceptance is **open**. The failure path now records
-MMU_CTL, TFU_CS, VIO_ID and VIO_ADDR and rejects a busy TFU before
-resubmission. The later failed run recorded TFU_CS `0x12000` before the
-good job: the TFU was idle at that boundary, so a stuck-busy engine is not
-an established explanation. Its VIO_ID `0x7d` identifies TFU on V3D 7.1.
-The guard now uses that generation's client map; the old 4.1 map incorrectly
-rejected this real CM5 ID. The following good-job fault remains unexplained.
-Later physical diagnostics also show that a failed conversion advances
-CVTCT and can signal TFUC after its fault IRQ. The revised probe drains
-that terminal indication before rearming for the following job.
-The [acceptance guards](bcm2712-v3d-validation.md) add regressions for
-retirement ordering, fault identity, duplicate events and collateral
-DMA writes. These checks and richer diagnostics do not establish physical
-recovery; the failed hardware result remains open.
+Status on 2026-10-11: **one bounded physical recovery passed on CM5**.
+An invalid destination produced PTI+WRV, the failed conversion retired,
+and a valid copy completed after recovery in the same boot. Its full
+output and protected buffers passed verification. Source, kernel and
+capture hashes are in the [acceptance receipt](bcm2712-v3d-validation.md#accepted-bounded-recovery-on-cm5).
+
+Earlier boots failed. Corrections cover the V3D 7.1 AXI map, retirement
+of a failed conversion, its terminal TFUC and redirected writes to a
+guarded scratch page. The final fix programs all TFU input fields before
+each submission; writing only a second ICFG caused another hardware fault.
+The actual-source contracts reject incomplete fresh payloads, duplicate
+events, incomplete recovery and collateral DMA writes. This is one fixed
+payload on one board, not production recovery or a sustained test.
 This is stage C after the accepted [translated DMA](bcm2712-v3d-dma.md),
 [bin/render queue](bcm2712-v3d-binrender-plan.md) and
 [interrupt](bcm2712-v3d-irq-plan.md) experiments: a deliberately faulting
 GPU job must fail cleanly and leave the GPU usable for a following good
 job on the same boot.
+
+## Reconstruct the accepted source
+
+The isolated build kept the already tested network drivers while main
+continued to receive unrelated changes. Its local commit
+`96b5d24810a125ae5edbc8b076d01c0e66f09f5f` is not a separately published
+branch. Reconstruct its complete source from published commits: start
+with `863618f0e8365e2670e2f8b1bffa1e33a54f854d`, then replace exactly these
+files with their versions in `7ad68c825217a5d0bc1ddeea5f1437bff58861d3`:
+
+```text
+ember/boot/bcm2712-v3d-fault-plan.md
+ember/boot/bcm2712-v3d-validation.md
+ember/tools/bcm2712-v3d-fault-contract.c
+ember/tools/bcm2712-v3d-fault-contract.sh
+sys/arch/arm/broadcom/bcm2712_v3d_fault.c
+```
+
+The complete Git tree must be `63ba4c53e3fc9397e5a1a5730e9b9b32f95ff49c`;
+this reconstruction was verified with an independent index. Cross-build
+`EMBERV3DFAULT` with GCC 16.2.0 using the normal EmberBSD kernel builder.
+The tested kernel records `BUILDINFO=EmberBSD:96b5d24810a125ae5edbc8b076d01c0e66f09f5f`.
+The accepted ELF and capture hashes identify the actual hardware run;
+another build or board needs its own acceptance.
 
 ## Pinned facts
 
@@ -84,7 +102,8 @@ Flow:
    sync all buffers and the page table, repeat the bounded flush
    without clearing any new fault,
    verify the destination still holds its canary (job 1 must not have
-   written it), and submit the identical TFU copy again. Expect TFUC as
+   written it), reprogram all eleven TFU input fields, then submit the
+   identical TFU copy through ICFG again. Expect TFUC as
    an interrupt within the bound, then verify the copied image word by
    word, both sources, canaries and scratch, exactly as the DMA
    experiment. Require a clean HUB/MMU before rearm, exactly one new
@@ -101,8 +120,8 @@ One fault kind per boot (invalid destination PTE, whichever fault bit the
 silicon raises first), one recovery, one good job. Not covered: binner/
 render queue faults, OUTOMEM spill work, fault while multiple jobs are
 in flight, GMP violations, sustained fault rates, and any userspace
-interface. Stage D (DRM render interface) builds on the recovered-GPU
-guarantee this experiment establishes.
+interface. Stage D (DRM render interface) must add job ownership, lifetime
+and failure handling beyond this bounded recovery result.
 
 ## Contracts and review
 

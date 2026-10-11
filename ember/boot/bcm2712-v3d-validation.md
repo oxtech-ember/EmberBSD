@@ -129,8 +129,8 @@ patterns are unsupported. The sink is reset only after
 successful fault verification and MMU recovery, while CPU-owned. The good
 job must leave the reset sink and both canaries intact. This is a bounded
 payload check, not a general guarantee about MMU burst size or DMA isolation.
-360 cases, 694 checks, 26 causal mutants and ASan/UBSan pass. Physical
-recovery acceptance remains pending.
+That revision passed 360 cases, 694 checks, 26 causal mutants and ASan/UBSan;
+it had not yet established physical recovery.
 
 The following CM5 boot, source `6d3e186a85cc0afcc212a2c958b0397c8e90b9a4`,
 verified every sink word and both canaries, recovered the MMU and passed
@@ -144,8 +144,29 @@ The probe now reissues all eleven input fields before **each** TFU start,
 matching pinned Linux `v3d_tfu_job_run()`. Previously job 2 wrote only ICFG.
 The fixture now decodes actual submitted registers and rejects incomplete
 fresh input; the old source fails. Resubmission write failures are covered.
-374 cases, 1095 checks, 28 causal mutants and ASan/UBSan pass. The next
-hardware run must establish whether this fixes the remaining good-job fault.
+374 cases, 1095 checks, 28 causal mutants and ASan/UBSan pass.
+
+### Accepted bounded recovery on CM5
+
+Source `96b5d24810a125ae5edbc8b076d01c0e66f09f5f`, containing the published
+TFU fix `7ad68c825217a5d0bc1ddeea5f1437bff58861d3` on the same tested
+network baseline, passed on 2026-10-11 after a normal reboot. Board:
+CM5 Rev 1.0, BCM2712 D0, 4 GiB, Waveshare CM5-NANO-B carrier. The existing
+UEFI was retained; its precise source revision is unknown.
+
+Both submissions used source `0x9654000` and destination `0x965e000`.
+The first fault was TFU `0x7d`, VIO_ADDR `0x9661f8`, MMU fault bits `0x101000`.
+The terminal/event guards, complete sink pattern, MMU recovery, following
+good image, protected buffers and final masked boundary all passed.
+Kernel SHA256:
+`b091f9852cb4fa3605397175b12733f15e25056d543b41e11efc56bba54eb7b1`;
+capture SHA256:
+`7bc467d82fb9b721cd2750393e4f9d2f5e3fe663e5a464f8aaede125c5408de9`.
+
+This accepts one invalid-destination fault and one following fixed TFU copy
+in the same boot. It does not establish repeated or concurrent recovery,
+bin/render faults, long-run stability, DRM or Mesa rendering. The probe
+retains its allocations until reboot and remains opt-in.
 
 ## Repeat the checks
 
@@ -193,5 +214,6 @@ to publish artifacts after a contract failure.
 
 All four builds passed artifact, matching-module and source/compiler
 provenance checks. The ordinary kernel contains the observer and no
-experimental probe entry points. These corrected kernels have not yet
-been accepted on the physical CM5; MMU recovery remains unaccepted.
+experimental probe entry points. These exact queue/IRQ kernels still need
+physical acceptance; the later corrected fault kernel is accepted only
+within the bounded scope recorded above.

@@ -21,9 +21,9 @@
  * recovery, then the identical good job must complete and verify on the
  * same GPU and MMU. Handlers self-mask under a level-line storm;
  * everything GPU-exposed is retained until reboot. Actual-source host
- * contracts are checked; physical fault recovery remains unaccepted.
- * This file must not ship in an installable configuration before that
- * acceptance passes.
+ * contracts are checked; one physical invalid-PTE recovery passed on
+ * CM5 on 2026-10-11. Keep this bounded experiment opt-in: it provides
+ * neither production job lifetime management nor a userspace interface.
  */
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
