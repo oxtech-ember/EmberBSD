@@ -71,8 +71,8 @@ for mutation in skip-latch-clear skip-flush fixup-without-sync \
                 "!= (completed ? 1 : 0) \\&\\& false)) {")
         }
         mutation == "ignore-fault-identity" {
-            changed += sub(/if \(\(vio_id >> 5\) != 5 \|\| fault_va < ldst \|\|/,
-                "if (false \\&\\& ((vio_id >> 5) != 5 || fault_va < ldst ||")
+            changed += sub(/if \(\(\(vio_id & 0x7f\) != 0x7c && \(vio_id & 0x7f\) != 0x7d\) \|\|/,
+                "if (false \\&\\& (((vio_id \\& 0x7f) != 0x7c \\&\\& (vio_id \\& 0x7f) != 0x7d) ||")
             changed += sub(/fault_va >= \(uint64_t\)ldst \+ FV3D_IMAGE_SIZE\) \{/,
                 "fault_va >= (uint64_t)ldst + FV3D_IMAGE_SIZE)) {")
         }

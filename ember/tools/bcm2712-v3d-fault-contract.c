@@ -268,7 +268,8 @@ static struct fixture {
 	bool good_no_count, good_two_counts, good_with_fault;
 	bool good_fault_only, good_latch_only;
 	unsigned int va_width_field;
-	bool wrong_client, wrong_address, address_below, address_at_end;
+	uint32_t vio_id;
+	bool wrong_address, address_below, address_at_end;
 	bool enforce_sync, sync_violation, missing_latch, sticky_irq;
 	int corrupt_object, corrupt_job;
 	unsigned int corrupt_offset;
@@ -368,7 +369,7 @@ fake_hub_peek(bus_size_t offset, uint32_t *value)
 	case 0x1204: *value = hub_pt_base; break;
 	case 0x1230: *value = hub_illegal; break;
 	case FV3D_MMU_VIO_ID:
-		*value = fx.wrong_client ? 1 << 5 : (5 << 5) | 0x1f;
+		*value = fx.vio_id;
 		break;
 	case FV3D_MMU_VIO_ADDR:
 		/* Pinned Linux: VIO_ADDR stores the high 32 VA bits. */
@@ -881,6 +882,8 @@ reset_fixture(void)
 		fx.fail_alloc[i] = false;
 	hz = 100;
 	fx.va_width_field = 6;
+	/* CM5 V3D 7.1 fault capture; the 4.1 client map is different. */
+	fx.vio_id = 0x7d;
 	fx.fail_create = -1;
 	fx.corrupt_object = -1;
 	fx.fail_peek_offset = fx.fail_poke_offset = fx.fail_io_job = -1;
@@ -1070,10 +1073,18 @@ main(void)
 	fx.missing_latch = true;
 	run_case("fault without MMU latch", EIO);
 
+	/* Every V3D 7.1 client and the ignored upper ID bits. */
+	for (i = 0; i < 256; i++) {
+		bool tfu = (i & 0x7f) == 0x7c || (i & 0x7f) == 0x7d;
+
+		reset_fixture();
+		fx.vio_id = (uint32_t)i;
+		run_case("V3D 7.1 fault client identity", tfu ? 0 : EIO);
+		CHECK(fx.jobs == (tfu ? 2u : 1u));
+	}
 	reset_fixture();
-	fx.wrong_client = true;
-	run_case("fault client is not TFU", EIO);
-	CHECK(fx.jobs == 1);
+	fx.vio_id = 0xfffffffd;
+	run_case("V3D 7.1 ignores upper AXI ID bits", 0);
 
 	reset_fixture();
 	fx.wrong_address = true;

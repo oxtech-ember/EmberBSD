@@ -8,7 +8,10 @@
  * fault-bit acknowledgement, MMU_VIO_ID/MMU_VIO_ADDR diagnostics and the
  * verbatim MMU_CTL write-back that clears the latched write-1-to-clear
  * fault bits; v3d_mmu.c flush), Mesa 26.2.4 v3dx_tfu.c for the accepted
- * payload, and the wire-evidence HUB line identity from the accepted
+ * payload. V3D 7.1 AXI client IDs are from torvalds/linux
+ * a5ebb76233b79db01e82e061173cb73c6d2b5c6b, v3d_irq.c: use the low
+ * seven bits, TFU IDs 0x7c..0x7d; the old 4.1 table does not apply.
+ * Also uses the wire-evidence HUB line identity from the accepted
  * interrupt experiment (_CRS index 0 / GSI 282). This native
  * implementation does not import that code. Only the explicit
  * BCM2712_V3D_FAULT_PROBE configuration includes this file, after a
@@ -756,7 +759,8 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		goto out;
 	}
 	fault_va = (uint64_t)vio_addr << (fv3d.va_width - 32);
-	if ((vio_id >> 5) != 5 || fault_va < ldst ||
+	if (((vio_id & 0x7f) != 0x7c && (vio_id & 0x7f) != 0x7d) ||
+	    fault_va < ldst ||
 	    fault_va >= (uint64_t)ldst + FV3D_IMAGE_SIZE) {
 		fv3d.verdict = "fault is not TFU at the destination alias";
 		error = EIO;

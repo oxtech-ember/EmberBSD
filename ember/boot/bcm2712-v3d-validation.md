@@ -48,6 +48,13 @@ job must complete once, with an idle TFU, correct data and intact protected
 buffers. DMA synchronization separates device ownership from CPU inspection
 and page-table changes.
 
+CM5 uses the V3D 7.1 AXI client map: low seven ID bits, TFU `0x7c`/`0x7d`.
+The initial guard incorrectly used the older 4.1 map. A regression now
+replays the physical `0x7d` result, checks all 256 low-byte values and a
+high-bit variant. The old guard fails this fixture. The corrected contract
+passes 337 cases, 645 checks, 20 causal mutants and ASan/UBSan. This corrects
+fault identification; it does not establish recovery of the next GPU job.
+
 Failure diagnostics preserve raw MMU control, TFU state, violation identity
 and violation address, including register-read failures. They help distinguish
 a stuck engine, repeated fault and bad mapping on the next hardware run.
