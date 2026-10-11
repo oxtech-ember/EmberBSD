@@ -274,6 +274,9 @@ on every board in the hardware catalog.
   The [Qt Quick consumer](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/qt-quick-gpu)
   also passes compiled QML scene/layer pixels on V3D, process restart and
   rejection checks; 75 live library hashes match the common stack.
+  [KI18n, KCoreAddons and KConfig 6.31 packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/frameworks.md)
+  also pass cross packaging and sysroot installation, with a checked native
+  KConfig generator. Their installed runtime remains unaccepted.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
   CM5 still reports no HDMI hotplug in its pre-OS firmware log after a cold boot.
