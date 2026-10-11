@@ -105,4 +105,6 @@ the same unwind, reader-drain and unregister ordering as PCI. The host
 contract covers both schemas, independent minor indices, all three sysctl
 allocation failures and concurrent teardown. Matching Ports libdrm maps this
 record to `DRM_BUS_PLATFORM`; malformed or inaccessible metadata cannot fall
-back to legacy discovery. Physical platform enumeration remains a separate gate.
+back to legacy discovery. Physical CM5 enumeration, render-node folding and
+automatic Mesa V3D selection passed on 2026-10-11; see the
+[installed Mesa receipt](bcm2712-v3d-gl.md#physical-mesa-acceptance-2026-10-11).

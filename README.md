@@ -316,7 +316,7 @@ on every board in the hardware catalog.
   Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/wayland-utm),
   with native DSO-lifetime/numeric regressions under GCC 16.2 and
   common-toolchain staging rules. A [common graphics source profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-graphics)
-  supplies canonical MesaLib 26.2.4nb2/libdrm 2.4.134nb1 packages with one
+  supplies canonical MesaLib 26.2.4nb3/libdrm 2.4.134nb2 packages with one
   shared LLVM 23.1.2 provider. The complete selected Mesa package cross-builds
   with GCC16 on macOS and is installed normally on Orange Pi Zero 3W (A733).
   [Installed-package acceptance](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-package.md)
@@ -515,9 +515,14 @@ on every board in the hardware catalog.
   syncobj operations, finite waits, 325 CSD submissions and 64 CSD/TFU chains,
   with 5,184 verified GPU results. The [native bin/render interface](ember/boot/bcm2712-v3d-gl.md)
   then passed 325 userspace CL pairs, 1,331,200 checked pixels and 32 TFU
-  copies, including guards and binary fences. The ordinary
-  kernel remains a passive observer. General job recovery, Mesa rendering,
-  Vulkan and an accelerated desktop remain unverified.
+  copies, including guards and binary fences. The common Ports
+  [Mesa package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-cm5.md)
+  now passes real V3D 7.1.10.2 shader/pixel rendering: EGL 1.5, GLES 3.0,
+  four lifecycles at both 16x16 and 1280x800. Native platform identity
+  makes this GPU discoverable without DRM master. All 38 Mesa upstream
+  invocations pass with recorded internal skips; LLVM23 llvmpipe also passes.
+  The ordinary kernel remains a passive observer. General job recovery,
+  PRIME buffer sharing, Vulkan and remote accelerated Plasma remain unverified.
 
 ### Network diagnostics kit
 
@@ -682,7 +687,7 @@ on every board in the hardware catalog.
   package passes normal package checks and installed C API/bitcode plus four
   default ORC JITLink lifecycles on Zero 3W. Upstream lit passes installed
   launcher and PASS/XFAIL/FAIL checks in AArch64 UTM. Clang/LLD packages and
-  Mesa26/TinyGo consumers remain pending. See the [LLVM family contract](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
+  TinyGo consumer acceptance remains pending; Mesa26 uses the common LLVM23 provider. See the [LLVM family contract](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
   Ports also owns the [Mac cross-package workflow](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-build-tools/cross):
   pkgconf 3.0.7, GNU M4 1.4.21, Libtool 2.6.2 and
   [Binutils 2.47nb1](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/binutils.md) pass normal package checks

@@ -30,10 +30,10 @@ with hardware rendering and remote input/capture, after offscreen OpenGL passes.
 - [x] Cross-build a matched kernel and userspace clear/store acceptance tool.
   Review ownership and MMIO sequencing before physical execution. Preserve
   and verify the ordinary kernel/module bundle for recovery.
-- [ ] Add V3D to the canonical current Mesa recipe through EmberBSD-Ports.
+- [x] Add V3D to the canonical current Mesa recipe through EmberBSD-Ports.
   Repair actual portability failures and keep existing VirGL/LLVM consumers.
   Build and test the package using recorded EmberBSD sysroot provenance.
-- [ ] Test real EGL/GL V3D rendering on CM5. Fix the first causal failure,
+- [x] Test real EGL/GL V3D rendering on CM5. Fix the first causal failure,
   retaining logs and regressions. Rendering success must include pixel checks.
 - [ ] Connect presentation, then current KWin/Plasma; check renderer identity,
   input, repaint and repeated session lifecycle. Keep unaccepted stages explicit.
@@ -110,3 +110,29 @@ Protocol sources: the existing queue/IRQ probes and their pinned Linux
 register references, plus the original Mesa 26.2.4 archive. Preserve licenses
 and attribution. The ordinary kernel remains unchanged until an accepted
 integration is explicitly installed; experimental bundles are identified.
+
+## Physical Mesa acceptance, 2026-10-11
+
+The matched `EMBERV3DRENDER` build from `47953f7f97c` and Ports
+MesaLib 26.2.4nb3/libdrm 2.4.134nb2 pass installed V3D OpenGL on the same
+CM5 after normal reboot. Native platform metadata removes the earlier
+`eglInitialize` failure. Both explicit render-node and default surfaceless
+discovery select `V3D 7.1.10.2`, reporting EGL 1.5 and GLES 3.0.
+
+The consumer rejects invalid GLSL, compiles real vertex/fragment shaders,
+checks clear/triangle/outside pixels and destroys objects/context. Four cycles
+pass at 16x16 and four at 1280x800; the latter take 0.19 seconds total.
+This duration is a short lifecycle check, not a desktop frame-rate benchmark.
+All 38 selected Mesa upstream invocations pass, with one internal utility skip
+and nine disabled NIR cases. Explicit software comparison also passes four
+llvmpipe/LLVM23 cycles. See the Ports
+[package receipt and commands](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-cm5.md).
+
+Kernel ELF SHA256: `889fc52e3b083486414a5473e1626dd035b3093ac295600031d476b6a2872553`.
+Image SHA256: `bf3963a0a0eb01714d8065eb6747a4b6ed9702b0a307531eee68cc9edb1c7f91`.
+All four companion modules are byte-identical to the accepted CL bundle.
+The ordinary bundle remains preserved. The experimental driver still limits
+individual BOs to 16 MiB and total allocation to 64 MiB. Sharing buffers between
+clients, a virtual Wayland output, remote input/capture and the current common
+Qt/KWin/Plasma package migration are subsequent gates; HDMI is not required
+for the selected remote desktop scenario. No long-run desktop claim follows.
