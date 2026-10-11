@@ -25,6 +25,7 @@ sh "$src/ember/tools/bcm2712-v3d-job-contract.sh" "$src"
 sh "$src/ember/tools/bcm2712-v3d-csd-contract.sh" "$src"
 sh "$src/ember/tools/bcm2712-v3d-sync-contract.sh" "$src"
 sh "$src/ember/tools/drm-syncobj-wait-contract.sh" "$src"
+sh "$src/ember/tools/drm-jiffies-contract.sh" "$src"
 sh "$src/ember/tests/bwfm-link-events.sh" "$src"
 sh "$src/ember/tests/bwfm-link-check.sh" "$src"
 if [ "$mode" = all ]; then

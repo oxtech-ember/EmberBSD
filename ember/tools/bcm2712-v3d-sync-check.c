@@ -65,8 +65,12 @@ core_sync(int fd)
 		    .count_handles=round%2?2:1};
 		if(ioctl(fd,DRM_IOCTL_SYNCOBJ_SIGNAL,&signal)<0)err(1,"SIGNAL");
 		check(pthread_join(thread,NULL)==0,"join sync waiter");
-		check(round%2?w.result==0:(w.result<0 && w.error==ETIME),"WAIT_ALL progress");
+		if(!(round%2?w.result==0:(w.result<0 && w.error==ETIME)))
+			errx(1,"WAIT_ALL round %u result=%d errno=%d expected=%d deadline-delta=%lld ns",
+			    round,w.result,w.error,ETIME,(long long)(monotonic_ns()-w.args.timeout_nsec));
 		check(monotonic_ns()-w.args.timeout_nsec<1000000000,"wait exceeded deadline");
+		if(round%2==0)
+			check(monotonic_ns()+20000000>=w.args.timeout_nsec,"wait expired before deadline");
 	}
 	if(ioctl(fd,DRM_IOCTL_SYNCOBJ_SIGNAL,&array)<0)err(1,"SIGNAL both");
 	struct drm_syncobj_handle exported={.handle=handles[0]};
