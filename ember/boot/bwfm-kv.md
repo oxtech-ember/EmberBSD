@@ -106,13 +106,62 @@ the transition, and verify normal service startup after reboot.
 Keep credentials and complete debug logs private. Do not enable key dumps.
 
 ## Validation boundary
+The source checks execute 463 station assertions, 100 BSD callback assertions,
+8 scan-metadata assertions, 28 padding assertions, 204 key-epoch assertions,
+and 286 association-check assertions. ASan/UBSan passed on macOS AArch64.
+Valgrind is unavailable on that host; sanitizer results are not Memcheck results.
+Full translation-unit analysis used GCC 16.2, Cppcheck 2.22 and Clang 21.
+Baseline findings and analyzer complexity limits were retained separately.
 
-The userland components compile with GCC 16. Production-function regressions
-pass with ASan/UBSan. A clean EMBER64 kernel and its four board modules built
-from revision `6700432be`. The final build includes the scan-padding fix and
-action-TX diagnostics; that rebuild and physical k/v acceptance are pending.
-The earlier WPA2-only prototype does not establish SAE/PMF interoperability.
+### Physical Raspberry Pi 5 check
 
-The common net80211 ABI and BSD client changes also build for other drivers.
-The RRM/BTM firmware transport in this change belongs to bwfm. It does not
-establish k/v support on the Zero 3W AIC8800D80 driver.
+The 2026-10-11 UTC check used a Pi 5 Model B, DMI `D04170`, UEFI
+`rpi5-20260730.1`, CYW43455 firmware 7.45.265 (FWID `01-b677b91b`), and a
+KeeneticOS 5.1.6 mesh. Kernel, four board modules and WPA clients came from
+`8518dbd9e4f832e1c3d5dab6b587d638c3b99f4d`, cross-built with GCC 16.2.
+The live ioctl tool from `67585a1ca` passed 54 checks under both security profiles.
+
+Both WPA2-PSK and SAE/H2E group 19 with required PMF passed these checks:
+
+- A Neighbor Report request received a matching response with five neighbors.
+- A temporary BSSID constraint rejected two AP transition requests with status 7.
+  Each response had firmware TX acknowledgement. The association remained active.
+- After removing the constraint, a fresh scan selected the 5 GHz candidate.
+  The host sent status 0, received TX acknowledgement, and associated with it.
+- Firmware diagnostics retained `roam_off=1` and `wnm=0` after the transition.
+  SAE retained required PMF and firmware `mfp=2`.
+
+| Bounded transition run | WPA2-PSK | SAE/required PMF |
+| --- | --- | --- |
+| Request to target connection | 4.293 s | 4.559 s |
+| Response TX ACK to target connection | 0.205 s | 0.438 s |
+| Largest ICMP reply gap during the transition window | 1.265 s | 1.155 s |
+| Largest ICMP reply gap in the complete run | 1.331 s | 1.155 s |
+| ICMP replies/sent | 300/303 | 293/301 |
+| TCP received over 60 seconds | 13,107,200 bytes | 136,183,808 bytes |
+| Average TCP receive rate during that run | 1.747 Mbit/s | 18.155 Mbit/s |
+
+An iperf3 TCP connection survived each transition. ICMP probes ran every
+200 ms; the capture reported zero kernel drops. Captures stopped before the
+final queued replies, so capture counts differ from the ping summaries.
+An 8 MiB file passed a post-transition iperf3 `-F` round trip with identical
+SHA256 in both directions. These rates are not a WPA2/WPA3 benchmark:
+clients shared a busy wireless network and the runs occurred at different times.
+The measured gaps do not establish seamless roaming.
+
+Use iperf3 between the station and a known peer to repeat the data-plane check.
+Bind the path to Wi-Fi, for example with IPv6 link-local addresses and interface
+scopes. Keep management access separate where available. Save JSON summaries.
+Use an ICMP capture to measure reply gaps; TCP throughput alone cannot show them.
+With a tcpdump package that drops privileges and enters a chroot, write pcap to
+stdout and let the shell open the private output file before the chroot.
+
+BTM Query transmission received an ACK, but this AP did not answer it.
+Its actual band-steering requests supplied the BTM acceptance test instead.
+Negative PMF/replay injection, other AP families, reverse-direction transitions,
+and long-duration roaming remain unvalidated. RRM coverage is Neighbor Reports,
+not every measurement operation. No 802.11r or radio-generation claim follows.
+
+The common ABI is also used by the separate
+[AIC8800D80 station transport](aicwf-sae.md). Its hardware acceptance belongs
+to the Zero 3W driver; this bwfm result does not validate that radio.

@@ -583,13 +583,15 @@ on every board in the hardware catalog.
   regression and automatic reconnection after reboot. See the
   [configuration guide](ember/boot/bwfm-sae.md) and
   [hardware receipt](ember/boards/compute-module-5.md#hardware-check-2026-10-08).
-  Other boards, access-point combinations and long-run operation need
-  separate acceptance; this is not an 802.11r/802.11v roaming claim.
+  Access-point combinations and long-run operation need separate acceptance.
+  Host-managed k/v has the separate Pi 5 check below; 802.11r remains unsupported.
 - **Host-controlled Wi-Fi transitions:** the `bwfm` station transport adds
   802.11k Neighbor Reports and 802.11v BSS Transition Management to the BSD
   supplicant backend. Regression checks cover stale events, scan cancellation,
-  malformed replies and connection-scoped keys. This supplies the OS path
-  for roaming policy; [physical k/v acceptance](ember/boot/bwfm-kv.md) is pending.
+  malformed replies and connection-scoped keys. A physical Pi 5 passed Neighbor
+  Reports and BTM acceptance/rejection under WPA2 and SAE/required PMF. TCP
+  survived the transitions; [measured reply gaps and limits](ember/boot/bwfm-kv.md)
+  distinguish this result from seamless roaming.
 - **Zero 3W WPA3 and recovery:** the AIC8800D80 path supports SAE/H2E
   with required PMF. Protected SA Query recovers an AP/client state mismatch
   through the normal supplicant. Physical checks cover query/response,
@@ -776,10 +778,10 @@ remain unverified.
   exchange and BSS Transition Management to wpa_supplicant. The versioned
   station transport checks operation cookies, association generations and
   peers. It supports WPA2-PSK/CCMP and SAE with required PMF, while keeping
-  autonomous firmware WNM disabled. Production-function regressions pass;
-  physical acceptance of the current implementation is pending. The earlier
-  WPA2-only prototype does not prove SAE/PMF interoperability. See the
-  [implementation, checks and limits](ember/boot/bwfm-kv.md).
+  autonomous firmware WNM disabled. Physical Pi 5 checks passed Neighbor Reports,
+  BTM acceptance/rejection and data transfer under both security profiles on
+  one Keenetic mesh. Other radios, AP families and PMF injection require their
+  own acceptance. See the [implementation, measurements and limits](ember/boot/bwfm-kv.md).
 - **802.11r fast transition** is not implemented by the external-SAE work.
 - **Zero 3W Wi-Fi:** the AIC8800D80 connected-scan recovery is fixed and
   physically checked. [External SAE/H2E with required PMF](ember/boot/aicwf-sae.md)

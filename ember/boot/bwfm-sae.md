@@ -28,8 +28,9 @@ and [CM5 datasheet, Wireless](https://datasheets.raspberrypi.com/cm5/cm5-datashe
 separate from the PHY generation and stream count. An AP capability label
 does not validate their complete operation. The published driver disables
 firmware WNM transitions. A separate [host-managed station transport](bwfm-kv.md)
-implements Neighbor Reports and BSS Transition Management. Its source checks
-pass; current WPA2 and SAE/PMF physical k/v acceptance is pending.
+implements Neighbor Reports and BSS Transition Management. A physical Pi 5
+passed Neighbor Reports, BTM acceptance/rejection and traffic under WPA2 and
+SAE/required PMF. The linked guide identifies the tested mesh and limits.
 802.11ax 2x2 needs another radio, two antenna paths, and a supported host
 interface, driver, and firmware. No such adapter is validated by this guide.
 
