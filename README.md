@@ -260,8 +260,10 @@ on every board in the hardware catalog.
   have checked source/dependency selection. The FFmpeg audio API and device
   registration pass in the AArch64 VM with GCC16; real metadata extraction
   passes on the host. Matching [Qt 6.12 cross-build generators](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/cross)
-  build and pass functional checks on macOS/arm64. Complete target packages
-  and Qt playback remain pending.
+  build and pass functional checks on macOS/arm64. Target Qtbase also
+  cross-configures there with Wayland/EGL and GBM enabled; current networking
+  dependencies pass [focused CM5 API checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/network-dependencies.md).
+  Complete target Qt packages, playback and a remote Plasma session remain pending.
   A complete mobile shell workflow, native display and power management
   still need validation. See the [Plasma Mobile port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile).
 
