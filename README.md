@@ -581,6 +581,11 @@ on every board in the hardware catalog.
   [hardware receipt](ember/boards/compute-module-5.md#hardware-check-2026-10-08).
   Other boards, access-point combinations and long-run operation need
   separate acceptance; this is not an 802.11r/802.11v roaming claim.
+- **Host-controlled Wi-Fi transitions:** the `bwfm` station transport adds
+  802.11k Neighbor Reports and 802.11v BSS Transition Management to the BSD
+  supplicant backend. Regression checks cover stale events, scan cancellation,
+  malformed replies and connection-scoped keys. This supplies the OS path
+  for roaming policy; [physical k/v acceptance](ember/boot/bwfm-kv.md) is pending.
 - **Zero 3W WPA3 and recovery:** the AIC8800D80 path supports SAE/H2E
   with required PMF. Protected SA Query recovers an AP/client state mismatch
   through the normal supplicant. Physical checks cover query/response,
@@ -763,12 +768,14 @@ event, restarts host scanning and reconnects with SAE/required PMF. An 8 MiB
 Wi-Fi round trip passed afterward. Long-run stability and seamless roaming
 remain unverified.
 
-- **Host-managed 802.11v roaming in `bwfm`** remains a separate local change,
-  not integrated into this tree. With WPA2-PSK, a Raspberry Pi 5 local build
-  moved from 2.4 to 5 GHz at the access point's request, reconnecting in
-  0.20 s (4.22 s with the scan), and refused a prohibited transition.
-  The published driver disables autonomous firmware WNM transitions.
-  A seamless handover is not claimed.
+- **Host-managed 802.11k/v in `bwfm`:** the tree now connects Neighbor Report
+  exchange and BSS Transition Management to wpa_supplicant. The versioned
+  station transport checks operation cookies, association generations and
+  peers. It supports WPA2-PSK/CCMP and SAE with required PMF, while keeping
+  autonomous firmware WNM disabled. Production-function regressions pass;
+  physical acceptance of the current implementation is pending. The earlier
+  WPA2-only prototype does not prove SAE/PMF interoperability. See the
+  [implementation, checks and limits](ember/boot/bwfm-kv.md).
 - **802.11r fast transition** is not implemented by the external-SAE work.
 - **Zero 3W Wi-Fi:** the AIC8800D80 connected-scan recovery is fixed and
   physically checked. [External SAE/H2E with required PMF](ember/boot/aicwf-sae.md)

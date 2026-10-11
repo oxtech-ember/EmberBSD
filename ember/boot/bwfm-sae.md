@@ -27,8 +27,9 @@ and [CM5 datasheet, Wireless](https://datasheets.raspberrypi.com/cm5/cm5-datashe
 802.11k radio measurements and 802.11v BSS transition management are
 separate from the PHY generation and stream count. An AP capability label
 does not validate their complete operation. The published driver disables
-firmware WNM transitions. Host-managed BSS transitions need separate
-WPA2 and SAE/PMF acceptance before they can be enabled by default.
+firmware WNM transitions. A separate [host-managed station transport](bwfm-kv.md)
+implements Neighbor Reports and BSS Transition Management. Its source checks
+pass; current WPA2 and SAE/PMF physical k/v acceptance is pending.
 802.11ax 2x2 needs another radio, two antenna paths, and a supported host
 interface, driver, and firmware. No such adapter is validated by this guide.
 
