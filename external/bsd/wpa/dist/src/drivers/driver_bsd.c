@@ -925,6 +925,24 @@ bsd_sta_scan_timeout(void *eloop_ctx, void *timeout_ctx)
 	wpa_supplicant_event(drv->ctx, EVENT_SCAN_RESULTS, &event);
 }
 
+static int
+bsd_sta_abort_scan(void *priv, u64 scan_cookie)
+{
+	struct bsd_driver_data *drv = priv;
+	struct ieee80211req_sta_mgmt req;
+
+	/* BSD uses its stored operation cookie, not a vendor scan cookie. */
+	if (scan_cookie || (!drv->sta_btm && !drv->sta_rrm) ||
+	    !drv->sta_scan_pending)
+		return -1;
+	os_memset(&req, 0, sizeof(req));
+	req.generation = drv->sta_scan_epoch;
+	req.cookie = drv->sta_scan_cookie;
+	os_memcpy(req.bssid, drv->sta_scan_bssid, ETH_ALEN);
+	/* The matching kernel completion releases scan work and the timeout. */
+	return bsd_sta_set(drv, &req, IEEE80211_STA_CANCEL_SCAN);
+}
+
 static void bsd_sta_tx_timeout(void *eloop_ctx, void *timeout_ctx);
 
 static void
@@ -2485,6 +2503,7 @@ const struct wpa_driver_ops wpa_driver_bsd_ops = {
 #if defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 	.send_action = bsd_send_action,
 	.signal_poll = bsd_sta_signal_poll,
+	.abort_scan = bsd_sta_abort_scan,
 #endif
 #if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 	.send_mlme = bsd_sae_send_mlme,

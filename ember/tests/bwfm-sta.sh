@@ -28,7 +28,7 @@ cp "$src/ember/tools/bwfm-sta-contract.c" "$work/check.c"
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter ${CFLAGS:-} \
     -I"$work" "$work/check.c" -o "$work/check"
 "$work/check"
-for fn in bsd_sta_scan_clear bsd_sta_scan_timeout bsd_sta_tx_status \
+for fn in bsd_sta_scan_clear bsd_sta_scan_timeout bsd_sta_abort_scan bsd_sta_tx_status \
     bsd_sta_disconnected bsd_sta_tx_timeout bsd_sta_tx_body bsd_sta_rx_body \
     bsd_sta_event; do
     awk -v fn="$fn" '$0 ~ "^" fn "\\(" {copy=1}
@@ -38,6 +38,9 @@ for fn in bsd_sta_scan_clear bsd_sta_scan_timeout bsd_sta_tx_status \
 done
 awk '/^#define[[:space:]]+RTM_IEEE80211_STA_(RX|TX|SCAN)[[:space:]]/ {print}' \
     "$src/sys/net80211/ieee80211_netbsd.h" > "$work/routes.h"
+awk '/^[[:space:]]*\.abort_scan[[:space:]]*=/ {print}' \
+    "$src/external/bsd/wpa/dist/src/drivers/driver_bsd.c" > "$work/bsd-scan-ops.h"
+test -s "$work/bsd-scan-ops.h"
 cp "$src/ember/tools/bwfm-sta-bsd.c" "$work/bsd-check.c"
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter ${CFLAGS:-} \
     -I"$work" "$work/bsd-check.c" -o "$work/bsd-check"

@@ -30,6 +30,7 @@
 #include "abi.h"
 #include "routes.h"
 typedef uint8_t u8;
+typedef uint64_t u64;
 enum { EVENT_SCAN_RESULTS, EVENT_TX_STATUS, EVENT_DISASSOC, EVENT_RX_MGMT };
 struct os_reltime { unsigned sec, usec; };
 struct bsd_driver_data {
@@ -50,7 +51,7 @@ union wpa_event_data {
 };
 static struct ieee80211req_sta_mgmt current, cancelled;
 static unsigned checks, failures, rx, tx, scans, disconnects, cancellations;
-static int info_error, last_ack, last_aborted;
+static int info_error, set_error, last_ack, last_aborted;
 static char debug_log[256];
 static void check(bool pass, const char *why)
 { checks++; if (!pass) { fprintf(stderr,"FAIL: %s\n",why); failures++; } }
@@ -62,7 +63,7 @@ static int bsd_sta_info(struct bsd_driver_data *drv, struct ieee80211req_sta_mgm
 static int bsd_sta_set(struct bsd_driver_data *drv, const struct ieee80211req_sta_mgmt *req, unsigned op)
 {
     (void)drv; cancelled = *req; cancelled.op = (uint16_t)op;
-    cancellations++; return 0;
+    cancellations++; return set_error;
 }
 static void wpa_supplicant_event(void *ctx, int event, union wpa_event_data *data)
 {
@@ -95,6 +96,8 @@ static void
 #include "bsd_sta_scan_clear.h"
 static void
 #include "bsd_sta_scan_timeout.h"
+static int
+#include "bsd_sta_abort_scan.h"
 static void
 #include "bsd_sta_tx_status.h"
 static void
@@ -107,6 +110,11 @@ static int
 #include "bsd_sta_rx_body.h"
 static void
 #include "bsd_sta_event.h"
+static const struct {
+    int (*abort_scan)(void *, u64);
+} bsd_scan_ops = {
+#include "bsd-scan-ops.h"
+};
 static void fixture(struct bsd_driver_data *drv)
 {
     memset(drv,0,sizeof(*drv)); memset(&current,0,sizeof(current));
@@ -118,7 +126,7 @@ static void fixture(struct bsd_driver_data *drv)
     drv->sta_scan_cookie = 50; drv->sta_scan_epoch = current.generation;
     drv->sta_scan_generation = 100;
     memcpy(drv->sta_scan_bssid,current.bssid,6);
-    rx = tx = scans = disconnects = cancellations = 0; info_error = 0;
+    rx = tx = scans = disconnects = cancellations = 0; info_error = set_error = 0;
     last_ack = last_aborted = 0;
     debug_log[0] = '\0';
 }
@@ -241,6 +249,53 @@ int main(void)
         cancelled.generation == 40 && cancelled.op == IEEE80211_STA_CANCEL_SCAN,
         "current scan timeout cancels exact operation and emits aborted result");
     bsd_sta_scan_timeout(&drv,(void *)(uintptr_t)100); check(scans == 1,"expired timeout cannot complete twice");
+fixture(&drv);
+check(bsd_scan_ops.abort_scan(&drv,0) == -1 && cancellations == 0,
+    "no pending station scan remains unsupported");
+drv.sta_scan_pending = 1; drv.sta_btm = drv.sta_rrm = 0;
+check(bsd_scan_ops.abort_scan(&drv,0) == -1 && cancellations == 0 && drv.sta_scan_pending,
+    "legacy drivers cannot issue station scan cancellation");
+drv.sta_rrm = 1;
+check(bsd_scan_ops.abort_scan(&drv,1) == -1 && cancellations == 0 && drv.sta_scan_pending,
+    "a vendor scan cookie cannot cancel the BSD operation");
+set_error = -1; current.generation++;
+check(bsd_scan_ops.abort_scan(&drv,0) == -1 && drv.sta_scan_pending &&
+    drv.sta_scan_generation == 100 && scans == 0,
+    "failed cancellation retains pending state and its watchdog");
+check(cancelled.op == IEEE80211_STA_CANCEL_SCAN && cancelled.cookie == 50 &&
+    cancelled.generation == 40 && memcmp(cancelled.bssid,drv.sta_scan_bssid,6) == 0 &&
+    cancelled.len == 0 && cancelled.flags == 0 && cancelled.reserved == 0,
+    "cancellation is bound to the original operation rather than a newer association");
+current.generation--; set_error = 0;
+check(bsd_scan_ops.abort_scan(&drv,0) == 0 && cancellations == 2 &&
+    drv.sta_scan_pending && drv.sta_scan_generation == 100 && scans == 0,
+    "successful ioctl waits for kernel completion before releasing scan work");
+req = event_request(); req.len = 0; req.op = IEEE80211_STA_SCAN;
+req.cookie = 50; req.flags = IEEE80211_STA_SCAN_ABORTED;
+bsd_sta_event(&drv,RTM_IEEE80211_STA_SCAN,&req,header);
+check(scans == 1 && last_aborted && !drv.sta_scan_pending && drv.sta_scan_generation == 101,
+    "matching cancellation completion releases scan work exactly once");
+bsd_sta_event(&drv,RTM_IEEE80211_STA_SCAN,&req,header);
+bsd_sta_scan_timeout(&drv,(void *)(uintptr_t)100);
+check(scans == 1 && cancellations == 2,
+    "duplicate abort completion and old timeout cannot complete twice");
+check(bsd_scan_ops.abort_scan(&drv,0) == -1 && cancellations == 2,
+    "abort after completion does not issue another ioctl");
+drv.sta_scan_pending = 1; drv.sta_scan_cookie = 51;
+bsd_sta_event(&drv,RTM_IEEE80211_STA_SCAN,&req,header);
+bsd_sta_scan_timeout(&drv,(void *)(uintptr_t)100);
+check(scans == 1 && cancellations == 2 && drv.sta_scan_pending &&
+    drv.sta_scan_generation == 101,
+    "late cancelled scan events and timers cannot release a replacement scan");
+req.cookie = 51; req.flags = 0;
+bsd_sta_event(&drv,RTM_IEEE80211_STA_SCAN,&req,header);
+check(scans == 2 && !last_aborted && !drv.sta_scan_pending,
+    "a replacement scan completes normally after cancellation");
+fixture(&drv); drv.sta_scan_pending = 1; set_error = -1;
+check(bsd_scan_ops.abort_scan(&drv,0) == -1,"ioctl failure is returned to the caller");
+bsd_sta_scan_timeout(&drv,(void *)(uintptr_t)100);
+check(scans == 1 && last_aborted && !drv.sta_scan_pending && cancellations == 2,
+    "watchdog still releases scan work if cancellation ioctl fails");
     fixture(&drv); drv.sta_scan_pending = 1; pending_tx(&drv);
     bsd_sta_disconnected(&drv);
     check(disconnects == 1 && scans == 1 && last_aborted && tx == 0 && drv.sta_tx_frame == NULL,
