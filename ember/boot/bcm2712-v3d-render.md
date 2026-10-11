@@ -1,9 +1,9 @@
 # BCM2712 native render interface
 
-Status: implementation in progress. The accepted kernel-only DMA, IRQ and
-single-fault probes are prerequisites, not a userspace rendering driver.
-This stage establishes a real DRM/GEM ownership boundary and a bounded
-userspace TFU operation before general Mesa submissions.
+Status: implemented, cross-built and under physical acceptance. The accepted
+kernel-only DMA, IRQ and single-fault probes are prerequisites. This stage
+establishes a DRM/GEM ownership boundary and a bounded userspace TFU operation
+before general Mesa submissions. It does not yet establish Mesa rendering.
 
 ## Design
 
@@ -21,7 +21,8 @@ Buffer objects use native contiguous DMA storage and the existing CMA UVM
 pager. Each has a separately allocated GPU virtual range; GPU addresses
 are not physical addresses. GEM handles, mappings and submitted jobs own
 references. The last reference releases the range and storage. Limit one
-BO to 16 MiB and total BO storage to 64 MiB during this stage.
+BO to 16 MiB and total BO storage to 64 MiB during this stage. The engine's
+4 MiB page table and three scratch pages also count against that total.
 
 A device mutex serializes jobs. The MMU maps only the two referenced BOs:
 source read-only, destination writable. The first admitted payload is the
@@ -96,3 +97,42 @@ ordinary kernel and compare matching modules before each physical install.
 
 Tests must distinguish a registered DRM node, mapped CPU memory, real GPU
 execution and Mesa rendering. None is an alias for the next level.
+
+## Reproduce the userspace check
+
+Build `EMBERV3DRENDER` with the normal kernel builder and a pinned EmberBSD
+checkout. Preserve the tested ordinary kernel and matching module bundle.
+This configuration owns GPU0 until reboot; it cannot coexist with boot probes.
+
+Cross-compile the check using the same checkout's V3D UAPI, a selected cross
+compiler and an EmberBSD sysroot whose used headers, libc, pthread and CRT
+provenance are recorded:
+
+```sh
+"$CC" --sysroot="$SYSROOT" -std=c11 -O2 -Wall -Wextra -Werror \
+    -pthread -static -I sys/external/bsd/drm2/dist/include/uapi/drm \
+    ember/tools/bcm2712-v3d-render-check.c -o "$OUTPUT/render-check"
+```
+
+On the CM5 running that kernel, select the render node registered as `v3d`
+and run `./render-check /dev/dri/renderD128` with access to that node.
+The check validates per-file handles and mmap authorization, zeroed storage,
+388 repeated/concurrent TFU copies, guard pages, conversion-counter wrap,
+mapping lifetime after handle close and 64 submit/close races on a shared fd.
+It reports successful submissions, lookup races returning `ENOENT`, and
+observed busy BOs separately. Each successful operation verifies every word.
+Record the kernel and test hashes, output, duration and kernel log.
+
+Host contracts compile the actual production sources with modeled services.
+The job contract exercises 37 register failures, DMA ownership and PTE revoke
+ordering, retained failure references, close during execution, wait boundaries,
+counter wrap and completion at the final wait slice. Eleven causal mutants must
+fail, including missing DMA sync and premature return of ownership. These
+checks do not emulate a physical V3D or establish cache coherency on hardware.
+
+The first physical trial registered DRM and passed buffer/mmap isolation but
+timed out on the first TFU completion. ARM PIC `intr_mask`/`intr_unmask` uses
+a nesting counter. Masking in both initialization and submission left the
+line disabled after one unmask. The driver now tracks its controller-mask
+ownership; the contract models the native counter and rejects the original
+double-mask behavior. A pending physical repeat must validate this change.
