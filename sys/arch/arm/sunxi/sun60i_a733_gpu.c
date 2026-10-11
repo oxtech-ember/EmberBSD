@@ -473,26 +473,26 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 	name = device_xname(sc->sc_dev);
 	if (sysctl_createv(&sc->sc_sysctllog, 0, NULL, &rnode, 0,
 	    CTLTYPE_NODE, name, NULL, NULL, 0,
-	    CTL_HW, CTL_CREATE, CTL_EOL) != 0) {
+	    NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL) != 0) {
 		aprint_error_dev(sc->sc_dev, "cannot create sysctl node\n");
 		return;
 	}
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
-	    CTLTYPE_UINT, "stage",
+	    CTLTYPE_INT, "stage",
 		    SYSCTL_DESCR("run runtime diagnostic stage 1..5"),
 		    sun60i_gpu_sysctl_stage, 0, NULL, 0,
 		    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create stage node\n");
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
-	    CTLTYPE_UINT, "result",
+	    CTLTYPE_INT, "result",
 		    SYSCTL_DESCR("errno of the last runtime stage"),
-		    NULL, 0, &sc->sc_run_result, 0,
+		    NULL, 0, (int *)&sc->sc_run_result, 0,
 		    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create result node\n");
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_QUAD, "pbvnc",
 		    SYSCTL_DESCR("last read GPU PBVNC value"),
-		    NULL, 0, &sc->sc_bvnc, 0,
+		    NULL, 0, (int64_t *)&sc->sc_bvnc, 0,
 		    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create pbvnc node\n");
 }

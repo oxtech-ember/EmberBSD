@@ -373,7 +373,7 @@ static int sysctl_createv_stub(void *first, ...) { (void)first; return 0; }
 #define sysctl_createv(...) sysctl_createv_stub(__VA_ARGS__)
 #define SYSCTL_DESCR(s) (s)
 #define CTLTYPE_NODE 1
-#define CTLTYPE_UINT 2
+#define CTLTYPE_INT 2
 #define CTLTYPE_QUAD 3
 #define CTLFLAG_READWRITE 4
 #define CTLFLAG_READONLY 8
