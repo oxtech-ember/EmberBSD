@@ -23,7 +23,7 @@ compute(const char *node, unsigned rounds)
 	handles[0]=code.handle; handles[1]=output.handle;
 	a=(struct drm_v3d_submit_csd){
 	    .cfg={0x10000,0x10000,0x10000,0x110,
-	        ((rev.value>>8)&255)>=6?1:0,code.gpu|3,code.gpu+1024},
+	        ((rev.value>>8)&255)>=6?1:0,code.gpu|CSD_SHADER_FLAGS,code.gpu+1024},
 	    .bo_handles=(uintptr_t)handles,.bo_handle_count=2};
 	other=open(node,O_RDWR|O_CLOEXEC);
 	if(other<0)err(1,"open second compute file");
