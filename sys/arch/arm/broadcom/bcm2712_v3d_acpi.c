@@ -47,6 +47,17 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #ifdef BCM2712_V3D_TAKEOVER
 int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
 #endif
+#if defined(BCM2712_V3D_RENDER) && !defined(BCM2712_V3D_TAKEOVER)
+#error "V3D render requires BCM2712_V3D_TAKEOVER"
+#endif
+#if defined(BCM2712_V3D_RENDER) && (defined(BCM2712_V3D_DMA_PROBE) || \
+    defined(BCM2712_V3D_QUEUE_PROBE) || defined(BCM2712_V3D_IRQ_PROBE) || \
+    defined(BCM2712_V3D_FAULT_PROBE))
+#error "V3D render and boot probes cannot share one boot"
+#endif
+#ifdef BCM2712_V3D_RENDER
+int bcmv3d_render_attach(device_t, bus_dma_tag_t, ACPI_HANDLE);
+#endif
 #if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_DMA_PROBE)
 int bcmv3d_dma_probe(device_t, bus_dma_tag_t);
 #endif
@@ -357,6 +368,13 @@ bcmv3d_finalize(device_t dev)
 		if (error == 0)
 			error = bcmv3d_fault_probe(dev, sc->sc_dmat,
 			    sc->sc_handle);
+#endif
+#ifdef BCM2712_V3D_RENDER
+		if (error == 0) {
+			error = bcmv3d_render_attach(dev, sc->sc_dmat, sc->sc_handle);
+			if (error != 0)
+				aprint_error_dev(dev, "render attachment failed: %d\n", error);
+		}
 #endif
 	}
 #endif

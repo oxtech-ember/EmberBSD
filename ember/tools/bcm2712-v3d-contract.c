@@ -89,7 +89,7 @@ static struct acpi_mem resources[3];
 static int (*finalizer)(device_t);
 enum probe_stage {
 	PROBE_TAKEOVER, PROBE_DMA, PROBE_QUEUE, PROBE_IRQ, PROBE_FAULT,
-	PROBE_COUNT
+	PROBE_RENDER, PROBE_COUNT
 };
 static unsigned int probe_calls[PROBE_COUNT], probe_order[PROBE_COUNT];
 static unsigned int probe_count;
@@ -170,6 +170,14 @@ bcmv3d_fault_probe(device_t device, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 {
 	assert(dmat == aa.aa_dmat && handle == node.ad_handle);
 	return probe_result(device, PROBE_FAULT);
+}
+#endif
+#ifdef BCM2712_V3D_RENDER
+int
+bcmv3d_render_attach(device_t device, bus_dma_tag_t dmat, ACPI_HANDLE handle)
+{
+	assert(dmat == aa.aa_dmat && handle == node.ad_handle);
+	return probe_result(device, PROBE_RENDER);
 }
 #endif
 #endif
@@ -396,6 +404,9 @@ finalize_contract(void)
 #endif
 #ifdef BCM2712_V3D_FAULT_PROBE
 		PROBE_FAULT,
+#endif
+#ifdef BCM2712_V3D_RENDER
+		PROBE_RENDER,
 #endif
 	};
 	static const int failures[] = { EIO, ETIMEDOUT, EFAULT };

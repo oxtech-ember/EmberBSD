@@ -17,7 +17,8 @@ cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
 # GPU contracts are separate executables in the dispatcher. Model their
 # status here; their actual-source hardware fixtures run in their own suites.
 for contract in bcm2712-v3d bcm2712-v3d-takeover bcm2712-v3d-dma \
-    bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault; do
+    bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault \
+    bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-job; do
     cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
 #!/bin/sh
 set -eu

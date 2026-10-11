@@ -40,13 +40,14 @@ if [ "${V3D_COMPILE_ONLY:-0}" = 1 ]; then
     exit 0
 fi
 run_contract "$work/contract"
-for experiment in takeover dma queue irq fault; do
+for experiment in takeover dma queue irq fault render; do
     case "$experiment" in
         takeover) probe_flags= ;;
         dma) probe_flags=-DBCM2712_V3D_DMA_PROBE ;;
         queue) probe_flags='-DBCM2712_V3D_DMA_PROBE -DBCM2712_V3D_QUEUE_PROBE' ;;
         irq) probe_flags=-DBCM2712_V3D_IRQ_PROBE ;;
         fault) probe_flags=-DBCM2712_V3D_FAULT_PROBE ;;
+        render) probe_flags=-DBCM2712_V3D_RENDER ;;
     esac
     # shellcheck disable=SC2086
     compile_contract "$work/contract-$experiment" \
@@ -71,9 +72,14 @@ reject_config()
     echo "BCM2712 V3D unsafe configuration rejected: $invalid"
 }
 for probe in DMA QUEUE IRQ FAULT; do
+    reject_config "render with $probe" 'render and boot probes cannot share one boot' \
+        -DBCM2712_V3D_TAKEOVER -DBCM2712_V3D_RENDER \
+        "-DBCM2712_V3D_${probe}_PROBE"
     reject_config "$probe without takeover" 'experiments require BCM2712_V3D_TAKEOVER' \
         "-DBCM2712_V3D_${probe}_PROBE"
 done
+reject_config 'render without takeover' 'render requires BCM2712_V3D_TAKEOVER' \
+    -DBCM2712_V3D_RENDER
 reject_config 'queue without DMA' 'QUEUE_PROBE requires BCM2712_V3D_DMA_PROBE' \
     -DBCM2712_V3D_TAKEOVER -DBCM2712_V3D_QUEUE_PROBE
 for probe in IRQ FAULT; do

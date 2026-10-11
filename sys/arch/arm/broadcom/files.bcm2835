@@ -54,6 +54,12 @@ defflag opt_bcmv3d.h	BCM2712_V3D_IRQ_PROBE: BCM2712_V3D_TAKEOVER
 file	arch/arm/broadcom/bcm2712_v3d_irq.c	bcmv3d_acpi & bcm2712_v3d_irq_probe
 defflag opt_bcmv3d.h	BCM2712_V3D_FAULT_PROBE: BCM2712_V3D_TAKEOVER
 file	arch/arm/broadcom/bcm2712_v3d_fault.c	bcmv3d_acpi & bcm2712_v3d_fault_probe
+define bcmv3drender: drmkms
+defflag opt_bcmv3d.h BCM2712_V3D_RENDER: BCM2712_V3D_TAKEOVER, bcmv3drender
+makeoptions bcmv3drender "CPPFLAGS.bcmv3drender"+="${CPPFLAGS.drmkms}"
+file external/bsd/drm2/bcmv3d/bcmv3d_drv.c bcmv3drender
+file external/bsd/drm2/bcmv3d/bcmv3d_bo.c bcmv3drender
+file external/bsd/drm2/bcmv3d/bcmv3d_job.c bcmv3drender
 endif
 
 # Random number generator (BCM2835_RNG_BASE)
