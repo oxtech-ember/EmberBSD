@@ -743,6 +743,11 @@ Add a catalog row and a board page; keep detailed feature matrices on those page
 
 ## Wi-Fi status and remaining work
 
+The built-in CYW43455 on Pi 5 and wireless CM5 has an 802.11ac 1x1 radio
+with channels up to 80 MHz. Wi-Fi 6 (802.11ax) and 2x2 require another
+radio; a firmware update cannot add them. See the
+[hardware and roaming limits](ember/boot/bwfm-sae.md#built-in-radio-limits).
+
 [External SAE with required PMF](ember/boot/bwfm-sae.md) is integrated and
 tested on CM5 with CYW43455 firmware 7.45.265. The implementation also sends
 firmware disassociation on disconnect, serializes firmware commands and
