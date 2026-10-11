@@ -1,4 +1,4 @@
-/* Origin: EmberBSD native BCM2712 TFU/CSD submission, 2026-10-11. */
+/* Origin: EmberBSD native BCM2712 CL/TFU/CSD submission, 2026-10-11. */
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Register facts and accepted payload: bcm2712_v3d_fault.c and its pins. */
@@ -55,12 +55,12 @@ struct bcmv3d_job {
 	const char *stage;
 	bool published, poisoned, controller_masked, core_masked;
 	volatile unsigned int events, irq_error, core_events, core_error;
-	uint32_t csd_before, csd_after, csd_irq;
+	uint32_t csd_before, csd_after, csd_irq, core_expected;
 };
 
 struct bcmv3d_sync {
 	struct drm_syncobj *output;
-	struct dma_fence *fence;
+	struct dma_fence *input, *fence;
 };
 
 static const char *
@@ -80,53 +80,63 @@ static void
 bcmv3d_sync_fini(struct bcmv3d_sync *sync)
 {
 
+	dma_fence_put(sync->input);
 	dma_fence_put(sync->fence);
 	if (sync->output != NULL)
 		drm_syncobj_put(sync->output);
 }
 
-/* Snapshot before output replacement, and never wait with the engine locked. */
+/* Retain all dependencies before waiting or replacing any output fence. */
 static int
-bcmv3d_sync_prepare(struct drm_file *file, uint32_t in, uint32_t out,
+bcmv3d_sync_capture(struct drm_file *file, uint32_t in, uint32_t out,
     struct bcmv3d_sync *sync)
 {
 	struct drm_syncobj *input;
-	struct dma_fence *fence = NULL;
-	long waited;
-	int error = 0, status;
 
 	if (in != 0) {
 		input = drm_syncobj_find(file, in);
 		if (input == NULL)
 			return ENOENT;
-		fence = drm_syncobj_fence_get(input);
+		sync->input = drm_syncobj_fence_get(input);
 		drm_syncobj_put(input);
-		if (fence == NULL)
+		if (sync->input == NULL)
 			return EINVAL;
 	}
 	if (out != 0) {
 		sync->output = drm_syncobj_find(file, out);
-		if (sync->output == NULL) {
-			error = ENOENT;
-			goto done;
-		}
+		if (sync->output == NULL)
+			return ENOENT;
 	}
-	if (fence != NULL) {
-		waited = dma_fence_wait_timeout(fence, true, MAX(1, mstohz(1000)));
-		if (waited <= 0) {
-			error = waited == 0 ? ETIME : -waited;
-			goto done;
-		}
-		status = dma_fence_get_status(fence);
-		if (status <= 0)
-			error = status == 0 ? EIO : -status;
-	}
-done:
-	dma_fence_put(fence);
-	return error;
+	return 0;
 }
 
-/* The job lock orders all fences on the shared TFU/CSD timeline. */
+/* Never wait with the engine locked: a producer must be able to enter. */
+static int
+bcmv3d_sync_wait(struct bcmv3d_sync *sync)
+{
+	long waited;
+	int status;
+
+	if (sync->input == NULL)
+		return 0;
+	waited = dma_fence_wait_timeout(sync->input, true, MAX(1, mstohz(1000)));
+	if (waited <= 0)
+		return waited == 0 ? ETIME : -waited;
+	status = dma_fence_get_status(sync->input);
+	return status > 0 ? 0 : status == 0 ? EIO : -status;
+}
+
+static int
+bcmv3d_sync_prepare(struct drm_file *file, uint32_t in, uint32_t out,
+    struct bcmv3d_sync *sync)
+{
+	int error;
+
+	error = bcmv3d_sync_capture(file, in, out, sync);
+	return error != 0 ? error : bcmv3d_sync_wait(sync);
+}
+
+/* The job lock orders all fences on the shared CL/TFU/CSD timeline. */
 static int
 bcmv3d_sync_publish(struct bcmv3d_job *job, struct bcmv3d_sync *sync)
 {
@@ -176,10 +186,10 @@ bcmv3d_core_intr(void *arg)
 	error = bcmv3d_takeover_core_poke(V3D_MSK_SET, V3D_CORE_IRQ_ALL);
 	if (error == 0)
 		error = bcmv3d_takeover_core_peek(V3D_INT_STS, &status);
-	if (error == 0 && status != V3D_CSD_DONE)
+	if (error == 0 && (job->core_expected == 0 || status != job->core_expected))
 		error = EIO;
 	if (error == 0)
-		error = bcmv3d_takeover_core_poke(V3D_INT_CLR, V3D_CSD_DONE);
+		error = bcmv3d_takeover_core_poke(V3D_INT_CLR, job->core_expected);
 	if (error != 0)
 		atomic_cas_uint(&job->core_error, 0, error);
 	atomic_inc_uint(&job->core_events);
@@ -599,6 +609,7 @@ bcmv3d_csd_execute(struct bcmv3d_job *job, struct drm_v3d_submit_csd *a)
 			return error;
 	}
 	job->stage = "CSD start";
+	job->core_expected = V3D_CSD_DONE;
 	KASSERT(job->controller_masked && job->core_masked);
 	acpi_intr_unmask(job->ih);
 	job->controller_masked = false;
@@ -763,6 +774,242 @@ unlock:
 	bcmv3d_sync_complete(&sync, error);
 	mutex_exit(&job->lock);
 release:
+	bcmv3d_sync_fini(&sync);
+	while (count != 0)
+		drm_gem_object_put_unlocked(objects[--count]);
+	return -error;
+}
+
+/* Each CL phase has one completion IRQ; errors never transfer BO ownership. */
+static int
+bcmv3d_cl_phase(struct bcmv3d_job *job, const struct drm_v3d_submit_cl *a,
+    bool bin)
+{
+	uint32_t status;
+	unsigned int i;
+	int error;
+
+	bcmv3d_mask(job);
+	bcmv3d_core_mask(job);
+	atomic_store_relaxed(&job->core_events, 0);
+	atomic_store_relaxed(&job->core_error, 0);
+	job->core_expected = bin ? 2 : 1; /* FLDONE / FRDONE, V3D 7.1. */
+	job->stage = bin ? "CL bin boundary" : "CL render boundary";
+	error = bcmv3d_takeover_core_peek(V3D_INT_STS, &status);
+	if (error != 0 || status != 0)
+		return error != 0 ? error : EBUSY;
+	if ((error = bcmv3d_clean()) != 0)
+		return error;
+	/* Invalidate before both phases, including render-only submissions. */
+	error = bcmv3d_takeover_core_poke(0x34, 0);
+	if (error == 0)
+		error = bcmv3d_takeover_core_poke(0x38, UINT32_MAX);
+	if (error == 0)
+		error = bcmv3d_cache_wait(1, 1);
+	if (error == 0)
+		error = bcmv3d_takeover_core_poke(0x24, 0x0f0f0f0f);
+	if (error != 0)
+		return error;
+	if (bin) {
+		/* No stale overflow allocation may survive from a previous job. */
+		error = bcmv3d_takeover_core_poke(0x30c, 0);
+		if (error == 0)
+			error = bcmv3d_takeover_core_poke(0x170, a->qma);
+		if (error == 0)
+			error = bcmv3d_takeover_core_poke(0x174, a->qms);
+		if (error == 0)
+			error = bcmv3d_takeover_core_poke(0x15c, a->qts | 2);
+		if (error != 0)
+			return error;
+	}
+	error = bcmv3d_takeover_core_poke(bin ? 0x160 : 0x164,
+	    bin ? a->bcl_start : a->rcl_start);
+	if (error != 0)
+		return error;
+	KASSERT(job->controller_masked && job->core_masked);
+	acpi_intr_unmask(job->ih);
+	job->controller_masked = false;
+	acpi_intr_unmask(job->core_ih);
+	job->core_masked = false;
+	error = bcmv3d_takeover_hub_poke(V3D_MSK_CLR, V3D_IRQ_ALL);
+	if (error == 0)
+		error = bcmv3d_takeover_core_poke(V3D_MSK_CLR, V3D_CORE_IRQ_ALL);
+	job->stage = bin ? "CL bin execution" : "CL render execution";
+	if (error == 0)
+		error = bcmv3d_takeover_core_poke(bin ? 0x168 : 0x16c,
+		    bin ? a->bcl_end : a->rcl_end);
+	if (error != 0)
+		return error;
+	for (i = 0; i < 5 && atomic_load_acquire(&job->core_events) == 0 &&
+	    atomic_load_acquire(&job->events) == 0; i++)
+		tsleep(job, PWAIT, "v3dcl", MAX(1, mstohz(100)));
+	bcmv3d_mask(job);
+	bcmv3d_core_mask(job);
+	error = bcmv3d_takeover_core_poke(V3D_MSK_SET, V3D_CORE_IRQ_ALL);
+	if (error == 0)
+		error = bcmv3d_takeover_hub_poke(V3D_MSK_SET, V3D_IRQ_ALL);
+	if (error != 0)
+		return error;
+	if (atomic_load_acquire(&job->core_events) != 1 ||
+	    atomic_load_acquire(&job->core_error) != 0 ||
+	    atomic_load_acquire(&job->events) != 0)
+		return EIO;
+	error = bcmv3d_takeover_core_peek(V3D_INT_STS, &status);
+	if (error != 0 || status != 0)
+		return error != 0 ? error : EIO;
+	return bcmv3d_clean();
+}
+
+static int
+bcmv3d_cl_execute(struct bcmv3d_job *job, const struct drm_v3d_submit_cl *a)
+{
+	unsigned int i;
+	int error;
+
+	job->stage = "CL MMU publication";
+	bcmv3d_mask(job);
+	bcmv3d_core_mask(job);
+	atomic_store_relaxed(&job->events, 0);
+	atomic_store_relaxed(&job->irq_error, 0);
+	for (i = 0; i < job->nbo; i++)
+		bcmv3d_sync(job->bos[i], BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+	bcmv3d_sync(job->scratch, BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+	bcmv3d_ptes(job, true);
+	if ((error = bcmv3d_publish(job)) != 0)
+		return error;
+	if (a->bcl_start != a->bcl_end &&
+	    (error = bcmv3d_cl_phase(job, a, true)) != 0)
+		return error;
+	if ((error = bcmv3d_cl_phase(job, a, false)) != 0)
+		return error;
+	/* Always clean TMU writes; FLUSH_CACHE requires at least this guarantee. */
+	job->stage = "CL cache clean";
+	error = bcmv3d_cache_wait(0x100, 0x100);
+	if (error == 0)
+		error = bcmv3d_cache_wait(5, 1);
+	if (error != 0)
+		return error;
+	job->stage = "CL scratch integrity";
+	bcmv3d_sync(job->scratch, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	for (i = 0; i < 3 * PAGE_SIZE / sizeof(uint32_t); i++) {
+		uint32_t expected = i < PAGE_SIZE / 4 || i >= PAGE_SIZE / 2 ?
+		    0xa5c35a3c : 0;
+
+		if (((uint32_t *)job->scratch->cma.vaddr)[i] != expected)
+			return EIO;
+	}
+	job->stage = "CL PTE revocation";
+	bcmv3d_ptes(job, false);
+	if ((error = bcmv3d_flush()) != 0)
+		return error;
+	for (i = 0; i < job->nbo; i++)
+		bcmv3d_sync(job->bos[i], BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
+	return 0;
+}
+
+int
+bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
+{
+	const struct drm_v3d_submit_cl *a = data;
+	struct bcmv3d_device *sc = dev->dev_private;
+	struct bcmv3d_job *job = sc->job;
+	struct drm_gem_object *objects[V3D_CSD_BO_MAX];
+	struct bcmv3d_sync sync = {0}, render_sync = {0};
+	uint32_t handles[V3D_CSD_BO_MAX];
+	unsigned int i, j, count = 0;
+	bool bin = a->bcl_start != a->bcl_end;
+	int error;
+
+	if ((a->flags & ~DRM_V3D_SUBMIT_CL_FLUSH_CACHE) || a->pad ||
+	    a->perfmon_id || a->extensions || a->bo_handle_count == 0 ||
+	    a->bo_handle_count > V3D_CSD_BO_MAX || a->rcl_end == 0 ||
+	    a->rcl_start == a->rcl_end ||
+	    (bin && (a->bcl_end == 0 || !a->qms ||
+	    ((a->qma | a->qms | a->qts) & (PAGE_SIZE - 1)))))
+		return -EINVAL;
+	error = copyin((const void *)(uintptr_t)a->bo_handles, handles,
+	    a->bo_handle_count * sizeof(handles[0]));
+	if (error != 0)
+		return -error;
+	for (i = 0; i < a->bo_handle_count; i++) {
+		objects[count] = drm_gem_object_lookup(file, handles[i]);
+		if (objects[count] == NULL) {
+			error = ENOENT;
+			goto release;
+		}
+		count++;
+		for (j = 0; j < i; j++) {
+			if (objects[j] == objects[i]) {
+				error = EINVAL;
+				goto release;
+			}
+		}
+	}
+	/* Snapshot both dependencies before replacing an aliased output fence. */
+	error = bcmv3d_sync_capture(file, a->in_sync_bcl, a->out_sync, &sync);
+	if (error == 0)
+		error = bcmv3d_sync_capture(file, a->in_sync_rcl, 0, &render_sync);
+	if (error == 0)
+		error = bcmv3d_sync_wait(&sync);
+	if (error == 0)
+		error = bcmv3d_sync_wait(&render_sync);
+	if (error != 0)
+		goto release;
+	mutex_enter(&job->lock);
+	if (job->poisoned) {
+		error = EIO;
+		goto unlock;
+	}
+	job->nbo = count;
+	for (i = 0; i < count; i++)
+		job->bos[i] = bcmv3d_to_bo(objects[i]);
+	/* Lists may branch between BOs; validate endpoints, not a linear span. */
+	if (!bcmv3d_csd_address(job, a->rcl_start, 1) ||
+	    !bcmv3d_csd_address(job, a->rcl_end - 1, 1) ||
+	    (bin && (!bcmv3d_csd_address(job, a->bcl_start, 1) ||
+	    !bcmv3d_csd_address(job, a->bcl_end - 1, 1) ||
+	    !bcmv3d_csd_address(job, a->qma, a->qms) ||
+	    !bcmv3d_csd_address(job, a->qts, 64)))) {
+		error = EINVAL;
+		goto clear;
+	}
+	error = bcmv3d_sync_publish(job, &sync);
+	if (error != 0)
+		goto clear;
+	for (i = 0; i < count; i++)
+		atomic_store_release(&job->bos[i]->busy, 1);
+	error = bcmv3d_cl_execute(job, a);
+	if (error != 0) {
+		uint32_t irq = 0, pcs = 0;
+
+		job->poisoned = true;
+		(void)bcmv3d_takeover_hub_poke(V3D_MSK_SET, V3D_IRQ_ALL);
+		(void)bcmv3d_takeover_core_poke(V3D_MSK_SET, V3D_CORE_IRQ_ALL);
+		bcmv3d_mask(job);
+		bcmv3d_core_mask(job);
+		for (i = 0; i < count; i++)
+			atomic_store_release(&job->bos[i]->error, EIO);
+		(void)bcmv3d_takeover_core_peek(V3D_INT_STS, &irq);
+		(void)bcmv3d_takeover_core_peek(0x08, &pcs);
+		aprint_error_dev(sc->dev, "%s: error=%d irq=%#x pcs=%#x "
+		    "core-events=%u core-error=%u hub-events=%u; "
+		    "%u buffers retained until reboot\n", job->stage, error, irq, pcs,
+		    atomic_load_acquire(&job->core_events),
+		    atomic_load_acquire(&job->core_error),
+		    atomic_load_acquire(&job->events), count);
+		count = 0;
+		goto unlock;
+	}
+	for (i = 0; i < count; i++)
+		atomic_store_release(&job->bos[i]->busy, 0);
+clear:
+	memset(job->bos, 0, sizeof(job->bos));
+	job->nbo = 0;
+unlock:
+	bcmv3d_sync_complete(&sync, error);
+	mutex_exit(&job->lock);
+release:
+	bcmv3d_sync_fini(&render_sync);
 	bcmv3d_sync_fini(&sync);
 	while (count != 0)
 		drm_gem_object_put_unlocked(objects[--count]);

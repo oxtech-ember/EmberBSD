@@ -31,6 +31,8 @@ bcmv3d_get_param(struct drm_device *dev, void *data, struct drm_file *file)
 }
 
 static const struct drm_ioctl_desc bcmv3d_ioctls[] = {
+	DRM_IOCTL_DEF_DRV(V3D_SUBMIT_CL, bcmv3d_submit_cl,
+	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(V3D_CREATE_BO, bcmv3d_create_bo,
 	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(V3D_MMAP_BO, bcmv3d_mmap_bo,
@@ -110,7 +112,7 @@ bcmv3d_render_attach(device_t self, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	if (error != 0)
 		goto fail;
 	aprint_normal_dev(self, "native V3D render interface: GEM and "
-	    "bounded TFU/CSD with binary syncobj; general Mesa submissions unavailable\n");
+	    "serialized CL/TFU/CSD with binary syncobj; experimental render interface\n");
 	/* Device, IRQ and MMU lifetime ends at reboot; no hot removal. */
 	return 0;
 fail:

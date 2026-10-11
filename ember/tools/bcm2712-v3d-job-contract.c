@@ -86,7 +86,10 @@ static int copyin(const void *src,void *dst,size_t n)
 static uint32_t core_regs[0xa00/4];
 static unsigned csd_starts, csd_writes, cache_phase, csd_owned;
 static bool csd_model;
+static bool cl_model, cl_render;
+static unsigned cl_bins, cl_renders;
 static void csd_complete(void);
+static void cl_complete(void);
 static int bcmv3d_takeover_core_peek(bus_size_t r,uint32_t *v)
 {
  if(++reg_calls==fail_reg)return EIO;
@@ -109,6 +112,29 @@ static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v)
   else CHECK(false);
   core_regs[r/4]=0;
  }
+ if(cl_model && (r==0x168 || r==0x16c)) {
+  struct bcmv3d_job *j=core_arg;
+  CHECK(core_mask_count==0 && !controller_masked && cache_phase==1);
+  CHECK(csd_owned==j->nbo && scratch_owned && ptes_synced);
+  for(unsigned i=0;i<j->nbo;i++) {
+   struct bcmv3d_bo *bo=j->bos[i]; uint32_t *pt=j->pt->cma.vaddr;
+   CHECK(bo->busy && bo->cma.base.refs>=1);
+   for(unsigned p=0;p<bo->cma.dmasize/PAGE_SIZE;p++)
+    CHECK((pt[(bo->gpu>>12)+p]&(V3D_PTE_VALID|V3D_PTE_WRITE))==(V3D_PTE_VALID|V3D_PTE_WRITE));
+  }
+  cl_render=r==0x16c;
+  if(cl_render)cl_renders++;else {
+   cl_bins++;
+   CHECK(core_regs[0x30c/4]==0 && core_regs[0x170/4]!=0 &&
+       core_regs[0x174/4]!=0 && (core_regs[0x15c/4]&2)!=0);
+  }
+  if(close_during_submit) {
+   for(unsigned h=1;h<16;h++)if(close_during_submit->handles[h])close_handle(close_during_submit,h);
+   for(unsigned i=0;i<j->nbo;i++)CHECK(j->bos[i]->cma.base.refs==1);
+   close_during_submit=NULL;
+  }
+  if(model_case!=1 && model_case!=11)cl_complete();
+ }
  if(r>V3D_CSD_CFG0 && r<=V3D_CSD_CFG0+28)csd_writes++;
  if(r==V3D_CSD_CFG0) {
   struct bcmv3d_job *j=core_arg;
@@ -130,6 +156,20 @@ static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v)
   if(model_case!=1 && model_case!=11)csd_complete();
  }
  return 0;
+}
+static void cl_complete(void)
+{
+ struct bcmv3d_job *j=core_arg;
+ uint32_t expected=cl_render?1:2;
+ CHECK(core_mask_count==0 && core_handler);
+ if(cl_render)retired=true;
+ core_regs[V3D_INT_STS/4]=model_case==31?expected^3:expected;
+ if(model_case==32)regs[V3D_MMU/4]|=1U<<12;
+ if(model_case==33 && cl_render)((uint32_t *)j->scratch->cma.vaddr)[0]^=1;
+ core_handler(core_arg);
+ if(model_case==34) { core_regs[V3D_INT_STS/4]=expected;core_handler(core_arg); }
+ if(model_case==35)core_regs[V3D_INT_STS/4]=expected;
+ if(model_case==36)regs[V3D_INT_STS/4]=1;
 }
 static void csd_complete(void)
 {
@@ -262,7 +302,7 @@ bcmv3d_takeover_hub_poke(bus_size_t r,uint32_t v)
 static int tsleep(void *p,int f,const char *n,int ticks)
 {
 	time_ns+=1000000; sleeps++;
-	if(model_case==11 && sleeps==5) { if(csd_model)csd_complete(); else complete(); }
+	if(model_case==11 && sleeps%5==0) { if(cl_model)cl_complete(); else if(csd_model)csd_complete(); else complete(); }
 	return EWOULDBLOCK;
 }
 
@@ -273,6 +313,7 @@ setup(struct bcmv3d_device *c,struct drm_device *d,struct drm_file *f)
 	*c=(struct bcmv3d_device){.drm=d};
 	*d=(struct drm_device){.dev_private=c}; *f=(struct drm_file){0};
 	memset(regs,0,sizeof(regs)); memset(core_regs,0,sizeof(core_regs)); regs[V3D_MMU_DEBUG/4]=0x550; csd_model=false; csd_starts=csd_writes=cache_phase=csd_owned=0;
+	cl_model=cl_render=false;cl_bins=cl_renders=0;
 	reg_calls=fail_reg=starts=sleeps=writes=flushes=model_case=0;
 	src_owned=dst_owned=scratch_owned=ptes_synced=false;
 	retired=revoke_synced=revoked=false;

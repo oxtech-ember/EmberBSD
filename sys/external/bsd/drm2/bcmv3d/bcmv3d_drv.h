@@ -54,6 +54,7 @@ int bcmv3d_get_bo_offset(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_wait_bo(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_submit_tfu(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_submit_csd(struct drm_device *, void *, struct drm_file *);
+int bcmv3d_submit_cl(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_job_init(struct bcmv3d_device *);
 void bcmv3d_job_fini(struct bcmv3d_device *);
 int bcmv3d_render_attach(device_t, bus_dma_tag_t, ACPI_HANDLE);

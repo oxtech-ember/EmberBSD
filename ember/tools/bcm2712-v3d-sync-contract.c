@@ -43,6 +43,7 @@ static void cleanup_sync(struct drm_file *f)
     if(f->syncs[1]) { drm_syncobj_put(f->syncs[1]); f->syncs[1]=NULL; }
     CHECK(!fence_count && !sync_count); on_wait=NULL; on_signal=NULL;
 }
+#ifndef BCMV3D_CL_CONTRACT
 int main(void)
 {
     struct bcmv3d_device c; struct drm_device d; struct drm_file f;
@@ -73,3 +74,4 @@ int main(void)
     printf("PASS: %u binary syncobj ownership checks\n",checks);
     return 0;
 }
+#endif

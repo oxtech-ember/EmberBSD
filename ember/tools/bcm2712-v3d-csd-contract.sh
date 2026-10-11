@@ -26,6 +26,8 @@ cp "$work/job-body.h" "$work/job-good.h"
 ulimit -c 0
 for mutant in csd-count stale-irq retire-irq cache-clean cfg7 address pre-sync post-sync core-mask; do
     awk -v mutant="$mutant" '
+        /^bcmv3d_cl_phase\(/ { cl = 1 }
+        cl { print; next }
         mutant == "csd-count" { changed += sub(/atomic_load_acquire\(&job->core_events\) != 1/, "false") }
         mutant == "stale-irq" { changed += sub(/irq_before != 0/, "false") }
         mutant == "retire-irq" { changed += sub(/irq_after != 0/, "false") }

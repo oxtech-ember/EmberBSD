@@ -30,6 +30,8 @@ ulimit -c 0
 for mutant in flags source-write completion-count busy unmap revoke \
     prewrite preread postread early-return-to-cpu nested-mask; do
     awk -v mutant="$mutant" '
+        /^bcmv3d_cl_phase\(/ { cl = 1 }
+        cl { print; next }
         mutant == "flags" { changed += sub(/a->flags != 0/, "false") }
         mutant == "source-write" { changed += sub(/i == 1 \?/, "true ?") }
         mutant == "completion-count" {
