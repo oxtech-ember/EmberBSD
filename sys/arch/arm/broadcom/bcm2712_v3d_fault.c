@@ -543,9 +543,13 @@ fv3d_verify_images(bool copied)
 {
 	enum fv3d_object id;
 	size_t word;
+	int error = 0;
 
 	for (id = FV3D_OBJ_SCRATCH; id < FV3D_OBJ_COUNT; id++) {
 		const uint32_t *image = fv3d.obj[id].kva;
+		size_t bad = 0, first = 0, last = 0;
+		uint32_t first_value = 0, first_expected = 0;
+		uint32_t last_value = 0, last_expected = 0;
 
 		for (word = 0; word < fv3d.obj[id].size / 4; word++) {
 			enum fv3d_object pattern_id = id;
@@ -557,14 +561,29 @@ fv3d_verify_images(bool copied)
 			expected = fv3d_pattern(pattern_id, word / (PAGE_SIZE / 4),
 			    word % (PAGE_SIZE / 4));
 			if (image[word] != expected) {
+				if (bad++ == 0) {
+					first = word;
+					first_value = image[word];
+					first_expected = expected;
+				}
+				last = word;
+				last_value = image[word];
+				last_expected = expected;
 				fv3d.verdict = id == FV3D_OBJ_TFU_ADST ?
 				    "destination image or canary modified" :
 				    "protected source, alias or scratch modified";
-				return EIO;
+				error = EIO;
 			}
 		}
+		if (bad != 0)
+			aprint_normal_dev(fv3d.dev, "image difference: copied=%u "
+			    "object=%u words=%zu first=%zu value=%#x expected=%#x "
+			    "last=%zu value=%#x expected=%#x\n",
+			    (unsigned int)copied, (unsigned int)id, bad, first,
+			    first_value, first_expected, last, last_value,
+			    last_expected);
 	}
-	return 0;
+	return error;
 }
 
 /* Drain the failed job's terminal indication before job 2 exists. A late
