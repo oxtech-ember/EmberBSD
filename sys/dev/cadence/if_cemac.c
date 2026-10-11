@@ -1,4 +1,5 @@
 /*	$NetBSD: if_cemac.c,v 1.45 2024/10/15 00:58:15 lloyd Exp $	*/
+/* Origin: EmberBSD (AI-assisted), CEMAC sysctl node names. */
 
 /*
  * Copyright (c) 2015  Genetec Corporation.  All rights reserved.
@@ -210,7 +211,7 @@ cemac_sysctl_setup(struct cemac_softc *sc)
 
 #define	CEMAC_SYSCTL_QUAD(name, desc)					\
 	rc = sysctl_createv(&sc->sc_sysctllog, 0, &rnode, &cnode,	\
-	    CTLFLAG_READONLY, CTLTYPE_QUAD, name,			\
+	    CTLFLAG_READONLY, CTLTYPE_QUAD, #name,			\
 	    SYSCTL_DESCR(desc), NULL, 0, &sc->sc_stat_##name, 0,	\
 	    CTL_CREATE, CTL_EOL);						(void)cnode;
 
