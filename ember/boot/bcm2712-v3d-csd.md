@@ -14,7 +14,8 @@ Use the existing serialized engine and per-submission MMU table. Accept
 1–64 distinct, file-owned BOs; copy the handle array once and retain every
 reference until cache cleaning and PTE revocation complete. Map only these
 objects. Unlike TFU, arbitrary shader access needs both DMA directions.
-Reject unknown flags, extensions, synchronization and performance objects.
+Reject unknown flags, extensions and performance objects. Binary input/output
+syncobj is now covered by the subsequent [synchronization acceptance](bcm2712-v3d-sync.md).
 Keep `SUPPORTS_CSD` zero until the complete Mesa synchronization contract
 exists. This experimental path is synchronous and is not a Mesa driver.
 
@@ -174,7 +175,8 @@ apply public commits `573566699a3`, `45a9d5a4a96`, `ee54216da58`, then
 Build metadata records local commit
 `c415ee4495ed8c815df7eae8af13186872bb5477`; it is not a separate public branch.
 
-The ordinary kernel is restored after the experiment. General CL submission,
-syncobj/fences, PRIME, Mesa/Vulkan execution, display/KMS, arbitrary-job
+The ordinary kernel is restored after the experiment. Binary syncobj/fences
+passed a [subsequent physical check](bcm2712-v3d-sync.md). General CL submission,
+timelines, PRIME, Mesa/Vulkan execution, display/KMS, arbitrary-job
 recovery and an accelerated desktop remain separate steps. No capability
 bit was enabled merely because this bounded shader check passed.

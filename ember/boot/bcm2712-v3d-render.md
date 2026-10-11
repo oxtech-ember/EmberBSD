@@ -70,6 +70,8 @@ calling DRM file. `GET_PARAM` reports the observed hardware identifiers;
 unsupported capabilities remain zero. PRIME, general synchronization,
 KMS and a desktop are outside this initial TFU acceptance. Shader submission
 has its own subsequent [CSD acceptance](bcm2712-v3d-csd.md).
+Binary TFU/CSD syncobj and finite waits passed a later
+[physical synchronization check](bcm2712-v3d-sync.md).
 
 ## Implementation and acceptance plan
 

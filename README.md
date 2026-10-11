@@ -35,7 +35,7 @@ are maintained in the related repositories below.
 | [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) | Standalone applications and reproducible demonstrations | Local AI, robotics and desktop scenarios with requirements and checks |
 | [EmberBSD-Runtime](https://github.com/oxtech-ember/EmberBSD-Runtime) | Application execution, lifecycle, permissions and shared device operations | Design stage; no released runtime implementation |
 | [EmberBSD-SDK](https://github.com/oxtech-ember/EmberBSD-SDK) | Application interfaces, package contracts, developer tools and compatibility checks | Design stage; no stable application API or released SDK tools |
-| [Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills) | Instructions for developers and their AI assistants | Application development, board bring-up, shared ports and tested contributions |
+| [Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills) | Instructions for developers and their AI assistants | Application development, board bring-up, shared ports and tested contributions; source analysis and memory checks for own and ported code |
 | [EmberBSD-User-Skills](https://github.com/oxtech-ember/EmberBSD-User-Skills) | Instructions for users and their local or remote AI assistants | OS installation onto boards, desktop VMs and USB-cabled phones, applications, device diagnostics, personal Ports and GitHub workflows; package checks and client discovery verified |
 
 Runtime will execute applications on the device; SDK will define their
@@ -510,7 +510,10 @@ on every board in the hardware catalog.
   per-file mmap isolation, counter wrap, concurrent clients and submit/close
   races. The [native compute path](ember/boot/bcm2712-v3d-csd.md) also passed
   389 QPU dispatches with 6,224 verified integer results, changing uniforms,
-  guarded memory, concurrent clients and CSD/TFU/CSD transitions. The ordinary
+  guarded memory, concurrent clients and CSD/TFU/CSD transitions. A subsequent
+  [binary synchronization check](ember/boot/bcm2712-v3d-sync.md) passed standard
+  syncobj operations, finite waits, 325 CSD submissions and 64 CSD/TFU chains,
+  with 5,184 verified GPU results. The ordinary
   kernel remains a passive observer. General job recovery, Mesa rendering,
   Vulkan and an accelerated desktop remain unverified.
 

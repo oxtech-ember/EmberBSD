@@ -30,7 +30,7 @@ The carrier PCB revision and exact four-wire fan model were not established.
 | Voltage regulators | Not validated |
 | USB | Not validated as a running OS peripheral; USB boot/eMMC provisioning is separate |
 | Hardware random numbers | Not validated |
-| V3D GPU | Opt-in physical experiments completed reset, translated TFU DMA, bin/render, IRQ delivery and one fault/recovery cycle ([checks](../boot/bcm2712-v3d-validation.md)). The [native DRM/GEM path](../boot/bcm2712-v3d-render.md) passed 420 userspace TFU copies and mmap/lifetime checks. The [native CSD path](../boot/bcm2712-v3d-csd.md) passed 389 QPU dispatches with verified integer writes, guards, concurrent clients and TFU transitions on 2026-10-11. General job recovery, Mesa, Vulkan and an accelerated desktop remain unaccepted |
+| V3D GPU | Opt-in physical experiments completed reset, translated TFU DMA, bin/render, IRQ delivery and one fault/recovery cycle ([checks](../boot/bcm2712-v3d-validation.md)). The [native DRM/GEM path](../boot/bcm2712-v3d-render.md) passed 420 userspace TFU copies and mmap/lifetime checks. The [native CSD path](../boot/bcm2712-v3d-csd.md) passed 389 QPU dispatches with verified integer writes, guards, concurrent clients and TFU transitions on 2026-10-11. A later [binary syncobj check](../boot/bcm2712-v3d-sync.md) passed finite waits, 325 CSD submissions and 64 CSD/TFU chains. General job recovery, Mesa, Vulkan and an accelerated desktop remain unaccepted |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.
