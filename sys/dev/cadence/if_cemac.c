@@ -468,7 +468,7 @@ cemac_intr(void *arg)
 					break;
 				}
 				sc->rxq[bi].m->m_pkthdr.csum_flags = csum;
-				DPRINTFN(2,("received %u bytes packet\n", fl));
+				DPRINTFN(2,("received %u bytes packet\n", (unsigned)fl));
 				if_percpuq_enqueue(ifp->if_percpuq,
 						   sc->rxq[bi].m);
 				if (mtod(m, intptr_t) & 3)
