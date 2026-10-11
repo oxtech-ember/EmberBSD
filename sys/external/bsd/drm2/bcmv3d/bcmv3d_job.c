@@ -40,6 +40,7 @@ struct bcmv3d_job {
 	/* Retained on poison: never release possibly GPU-owned storage. */
 	struct bcmv3d_bo *src, *dst;
 	void *ih;
+	const char *stage;
 	bool published, poisoned;
 	volatile unsigned int events, irq_error;
 };
@@ -192,6 +193,7 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *a)
 	unsigned int i;
 	int error;
 
+	job->stage = "idle boundary";
 	acpi_intr_mask(job->ih);
 	xc_barrier(0);
 	atomic_store_relaxed(&job->events, 0);
@@ -206,20 +208,24 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *a)
 	bcmv3d_sync(job->dst, BUS_DMASYNC_PREREAD);
 	bcmv3d_sync(job->scratch, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	bcmv3d_ptes(job, true);
+	job->stage = "MMU publication";
 	error = bcmv3d_publish(job);
 	if (error != 0)
 		return error;
+	job->stage = "TFU register setup";
 	for (i = 0; i < __arraycount(payload); i++) {
 		error = bcmv3d_takeover_hub_poke(payload[i].reg, payload[i].value);
 		if (error != 0)
 			return error;
 	}
+	job->stage = "TFU start";
 	acpi_intr_unmask(job->ih);
 	error = bcmv3d_takeover_hub_poke(V3D_MSK_CLR, V3D_IRQ_ALL);
 	if (error == 0)
 		error = bcmv3d_takeover_hub_poke(V3D_ICFG, a->icfg);
 	if (error != 0)
 		return error;
+	job->stage = "completion interrupt";
 	for (i = 0; i < 5 && atomic_load_acquire(&job->events) == 0; i++)
 		tsleep(job, PWAIT, "v3dtfu", MAX(1, mstohz(100)));
 	acpi_intr_mask(job->ih);
@@ -230,6 +236,7 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *a)
 	if (atomic_load_acquire(&job->events) != 1 ||
 	    atomic_load_acquire(&job->irq_error) != 0)
 		return EIO;
+	job->stage = "completion boundary";
 	error = bcmv3d_takeover_hub_peek(V3D_TFU_CS, &after);
 	if (error != 0)
 		return error;
@@ -239,6 +246,7 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *a)
 	error = bcmv3d_clean();
 	if (error != 0)
 		return error;
+	job->stage = "scratch integrity";
 	bcmv3d_sync(job->scratch, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 	for (i = 0; i < 3 * PAGE_SIZE / sizeof(uint32_t); i++) {
 		uint32_t expected = i < PAGE_SIZE / 4 || i >= PAGE_SIZE / 2 ?
@@ -248,6 +256,7 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *a)
 			return EIO;
 	}
 	/* Retirement alone does not revoke access through the MMU. */
+	job->stage = "PTE revocation";
 	bcmv3d_ptes(job, false);
 	error = bcmv3d_flush();
 	if (error != 0)
@@ -255,6 +264,30 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *a)
 	bcmv3d_sync(job->src, BUS_DMASYNC_POSTWRITE);
 	bcmv3d_sync(job->dst, BUS_DMASYNC_POSTREAD);
 	return 0;
+}
+
+static void
+bcmv3d_diagnose(struct bcmv3d_device *sc)
+{
+	struct bcmv3d_job *job = sc->job;
+	static const uint32_t regs[] = {
+		V3D_INT_STS, 0x5c, V3D_TFU_CS, V3D_MMUC, V3D_MMU,
+		V3D_PT_BASE, V3D_ILLEGAL, 0x122c, 0x1234
+	};
+	uint32_t value;
+	unsigned int i;
+	int error;
+
+	aprint_normal_dev(sc->dev, "TFU stopped at %s: events=%u irq-error=%u "
+	    "source=%#x destination=%#x\n", job->stage,
+	    atomic_load_acquire(&job->events), atomic_load_acquire(&job->irq_error),
+	    (uint32_t)job->src->gpu, (uint32_t)job->dst->gpu);
+	for (i = 0; i < __arraycount(regs); i++) {
+		value = 0;
+		error = bcmv3d_takeover_hub_peek(regs[i], &value);
+		aprint_normal_dev(sc->dev, "HUB[%#x]=%#x read-error=%d\n",
+		    regs[i], value, error);
+	}
 }
 
 int
@@ -294,6 +327,7 @@ bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 		xc_barrier(0);
 		atomic_store_release(&job->src->error, EIO);
 		atomic_store_release(&job->dst->error, EIO);
+		bcmv3d_diagnose(sc);
 		aprint_error_dev(sc->dev, "TFU engine stopped: %d; "
 		    "buffers retained until reboot\n", error);
 		/* Conservatively retain even failures before first publication. */

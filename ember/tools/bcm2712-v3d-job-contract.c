@@ -33,6 +33,7 @@ static struct acpi_irq irq={282,ACPI_LEVEL_SENSITIVE};
 static void mutex_init(kmutex_t *m,int a,int b) { *m=0; }
 static void mutex_destroy(kmutex_t *m) { CHECK(*m==0); }
 static void aprint_error_dev(device_t d,const char *fmt,...) { }
+static void aprint_normal_dev(device_t d,const char *fmt,...) { }
 static int acpi_resource_parse(device_t d,ACPI_HANDLE h,const char *s,
     struct acpi_resources *r,const int *p) { return 0; }
 static struct acpi_irq *acpi_res_irq(struct acpi_resources *r,int n) { return &irq; }
