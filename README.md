@@ -314,6 +314,11 @@ on every board in the hardware catalog.
   package-library hashes match the common sysroot. Quick3D's complete package
   and native asset generators also pass their build checks; target 3D scenes,
   physical media output and full Plasma remain unaccepted.
+  [Complete speech packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/speech.md)
+  also pass language, PCM and shutdown regressions on CM5. Qt TextToSpeech
+  runs both installed Flite and speech-dispatcher/eSpeak engines; KCMUtils
+  passes its generated-settings test after native cross tooling was added.
+  These bounded checks do not establish physical sound or a complete desktop.
   [PulseAudio 17.0 and its TDB/libdaemon dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/pulseaudio.md)
   now cross-package with bounded installed CM5 checks. Locale and caller-buffer
   fixes restore client startup; private null-sink playback/capture preserves
