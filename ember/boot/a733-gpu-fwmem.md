@@ -79,7 +79,32 @@ sysctl hw.sun60igpuid0.result hw.sun60igpuid0.memory_state
 The stage is single-use per boot. The returned sizes and DMA addresses describe
 prepared memory. They do not prove a GPU transfer or firmware execution.
 
+## Physical preparation result
+
+On 2026-10-12, stage 13 passed on a 4 GiB Orange Pi Zero 3W.
+The GCC 16.2 `EMBER64 #5` bundle used source `30b1549f61cb9ba607d2a39def9a9d2f68717883`.
+All stages 1 through 13 returned zero with PLL_GPU0 selected.
+The native allocator prepared 102400 code bytes, 20480 data bytes,
+and a 16384-byte MIPS page table. Five ELF loads passed validation.
+The entry was `0xbfc00001`; boot-code and stack DMA addresses were
+`0x4011c000` and `0x40121000` in this run.
+These addresses are observations, not fixed allocation requirements.
+
+The four modules came from the same build. The existing observe-only DTB,
+boot firmware and startup configuration were preserved. Wi-Fi/SSH returned;
+the existing NPU probe still reported stage 4 and errno zero.
+The explicit sequence took under one second at the log's timestamp resolution.
+Its 16-second hardware watchdog did not fire and was disarmed afterwards.
+No firmware execution, device DMA, display output, or long run was tested.
+
+| Artifact | SHA256 |
+| --- | --- |
+| ELF kernel | `29c14cbe458d2266b563b26b225002093310e68bb0cffd5837f8aeedc4171880` |
+| Native image | `201796fd9112955fe4d3300f191eeace51c055ba448022b50aadaeaff609ff69` |
+| Preserved board DTB | `6e3e92e251a617066a54634394e65d3463df96fdd5920753056cb0c2e4e78d4e` |
+
 ## Reproduce the contract
+
 
 
 [The contract](../tools/a733-gpu-fwmem-contract.sh) executes the production
