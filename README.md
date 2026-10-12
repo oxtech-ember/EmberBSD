@@ -294,7 +294,12 @@ on every board in the hardware catalog.
   The [GStreamer 1.28.8 core](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/gstreamer.md)
   passes 106 unchanged upstream checks and a finite installed pipeline on CM5.
   Its complete plugin family, media output and desktop integration remain unaccepted.
-  The complete desktop session remains pending.
+  [Current Plasma prerequisites](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/plasma-prerequisites.md)
+  now cross-package KWayland, KDecoration, layer-shell-qt and KNightTime 6.7.5.
+  Installed KWayland passes 56 exact button events on CM5, with an original-patch
+  failure control. [libsecret 0.21.8.2](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/libsecret.md)
+  retains GIR, Vala and documentation; 50 upstream tests and a native peer-credential
+  regression pass on CM5. KIO/KWallet and the complete desktop session remain pending.
   [KItemModels, ThreadWeaver and KCrash](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/models-and-jobs.md)
   pass installed CM5 model/QML, worker-queue and crash-recovery checks:
   500, 77 and 16 QtTest cases respectively, with six upstream model skips.
