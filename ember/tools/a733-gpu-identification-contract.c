@@ -9,6 +9,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/queue.h>
+#include <sys/types.h>
+#include "sun60i_a733_gpu_fwinfo.h"
 
 typedef unsigned int u_int;
 typedef struct device *device_t;
@@ -415,7 +417,162 @@ int sun60i_a733_pck_gpu_wait(int node, const void *owner, bool quiet)
 { waits++; record('K'); return waits == 2 ? second_wait_error : wait_error; }
 int sun60i_a733_ccu_gpu_ready(struct clk *c, u_int *core, u_int *bus)
 { record('F'); *core = core_hz; *bus = bus_hz; return final_ready_error; }
+/* Exercise firmware I/O failures with the real metadata parser. */
+struct firmware_handle { bool open; };
+typedef struct firmware_handle *firmware_handle_t;
+static struct firmware_handle fw_handle;
+static int fw_open_error, fw_read_error, fw_close_error;
+static bool fw_alloc_fail, fw_bad_bvnc;
+static off_t fw_file_size = 8192;
+static void *fw_memory;
+static size_t fw_memory_size;
+static unsigned fw_opens, fw_sizes, fw_allocs, fw_reads, fw_parses;
+static unsigned fw_closes, fw_frees;
+static const char *fw_cached_state;
+
+static void
+fw_not_published(void)
+{
+	if (fw_cached_state != NULL)
+		assert(strstr(fw_cached_state, "error=0") == NULL);
+}
+
+static void
+fw_put32(uint8_t *p, uint32_t value)
+{
+	for (unsigned n = 0; n < 4; n++)
+		p[n] = (uint8_t)(value >> (8 * n));
+}
+
+static void
+fw_put64(uint8_t *p, uint64_t value)
+{
+	fw_put32(p, (uint32_t)value);
+	fw_put32(p + 4, (uint32_t)(value >> 32));
+}
+
+static void
+fw_valid_metadata(uint8_t *bytes, size_t size)
+{
+	uint8_t *info = bytes + size - 4096;
+	uint8_t *device = info - 128;
+	uint8_t *layout = info + 48;
+
+	memset(bytes, 0, size);
+	fw_put32(info, 3);
+	fw_put32(info + 4, 48);
+	fw_put32(info + 8, 1);
+	fw_put32(info + 12, 24);
+	fw_put64(info + 16, UINT64_C(0x00240038006800b7) ^ fw_bad_bvnc);
+	fw_put32(info + 24, 4096);
+	fw_put32(info + 28, 1);
+	info[32] = info[34] = 1;
+	fw_put32(info + 36, 1);
+	fw_put32(info + 40, 128);
+	fw_put32(layout, 4);
+	fw_put32(layout + 4, 1);
+	fw_put32(layout + 8, UINT32_C(0xc0000000));
+	fw_put32(layout + 12, 4096);
+	fw_put32(layout + 16, 4096);
+	fw_put64(device + 16, 1);
+	fw_put64(device + 32, UINT64_C(1) << 27);
+}
+
+static int
+firmware_open(const char *driver, const char *name, firmware_handle_t *fh)
+{
+	assert(strcmp(driver, "powervr") == 0);
+	assert(strcmp(name, "rogue_36.56.104.183_v1.fw") == 0);
+	assert(!fw_handle.open);
+	fw_not_published();
+	fw_opens++;
+	record('o');
+	if (fw_open_error != 0)
+		return fw_open_error;
+	fw_handle.open = true;
+	*fh = &fw_handle;
+	return 0;
+}
+
+static off_t
+firmware_get_size(firmware_handle_t fh)
+{
+	assert(fh == &fw_handle && fh->open);
+	fw_sizes++;
+	record('z');
+	return fw_file_size;
+}
+
+static void *
+firmware_malloc(size_t size)
+{
+	assert(fw_handle.open && fw_memory == NULL);
+	assert(size >= 4096 && size <= 1024 * 1024);
+	fw_allocs++;
+	record('a');
+	if (fw_alloc_fail)
+		return NULL;
+	fw_memory = malloc(size);
+	assert(fw_memory != NULL);
+	fw_memory_size = size;
+	return fw_memory;
+}
+
+static int
+firmware_read(firmware_handle_t fh, off_t offset, void *bytes, size_t size)
+{
+	assert(fh == &fw_handle && fh->open && offset == 0);
+	assert(bytes == fw_memory && size == fw_memory_size);
+	fw_not_published();
+	fw_reads++;
+	record('r');
+	if (fw_read_error != 0)
+		return fw_read_error;
+	if (size >= 8192)
+		fw_valid_metadata(bytes, size);
+	else
+		memset(bytes, 0, size);
+	return 0;
+}
+
+static int
+fw_parse(const void *bytes, size_t size, uint64_t expected,
+    struct sun60i_a733_gpu_fwinfo *info)
+{
+	assert(fw_handle.open && bytes == fw_memory && size == fw_memory_size);
+	assert(fw_reads == 1 && fw_closes == 0);
+	fw_not_published();
+	fw_parses++;
+	record('v');
+	return sun60i_a733_gpu_fwinfo_parse(bytes, size, expected, info);
+}
+
+static int
+firmware_close(firmware_handle_t fh)
+{
+	assert(fh == &fw_handle && fh->open);
+	fw_not_published();
+	fw_closes++;
+	record('c');
+	fh->open = false;
+	return fw_close_error;
+}
+
+static void
+firmware_free(void *bytes, size_t size)
+{
+	assert(!fw_handle.open && bytes == fw_memory && size == fw_memory_size);
+	fw_not_published();
+	fw_frees++;
+	record('f');
+	free(bytes);
+	fw_memory = NULL;
+	fw_memory_size = 0;
+}
+
+#define sun60i_a733_gpu_fwinfo_parse fw_parse
 #include "driver.h"
+#undef sun60i_a733_gpu_fwinfo_parse
 #define CHECK(c) do { assert(c); checks++; } while (0)
 static struct sun60i_gpu_softc sc;
 
@@ -423,6 +580,7 @@ static void
 reset(void)
 {
 	assert(!regulator.acquired && !clock_fixture.acquired);
+	assert(!fw_handle.open && fw_memory == NULL);
 	assert(TAILQ_EMPTY(&config_pending));
 	assert(TAILQ_EMPTY(&deferred_config_queue));
 	assert(TAILQ_EMPTY(&config_finalize_list));
@@ -434,6 +592,12 @@ reset(void)
 	sc.sc_dev = &gpu_device;
 	sc.sc_phandle = 1;
 	sc.sc_run_pass = true;
+	fw_open_error = fw_read_error = fw_close_error = 0;
+	fw_alloc_fail = fw_bad_bvnc = false;
+	fw_file_size = 8192;
+	fw_opens = fw_sizes = fw_allocs = fw_reads = fw_parses = 0;
+	fw_closes = fw_frees = 0;
+	fw_cached_state = sc.sc_fw_state;
 	pd[0] = swap32(2);
 	pd[1] = swap32(5);
 	clocks[0] = swap32(3);
@@ -869,7 +1033,7 @@ test_runtime_stages(void)
 	CHECK(sc.sc_run_result == 0);
 	CHECK(strcmp(events, seq[11]) == 0);
 	nevents = 0;
-	sun60i_gpu_run_stage(&sc, 12);
+	sun60i_gpu_run_stage(&sc, 13);
 	CHECK(sc.sc_run_result == EINVAL && nevents == 0);
 
 	/* A wait timeout keeps the sequence; identification still runs. */
@@ -926,6 +1090,116 @@ test_runtime_stages(void)
 	reset(); sc.sc_retained = true;
 	CHECK(sun60i_gpu_clock_source(&sc, 1) == EBUSY);
 	printf("PASS: %u runtime GPU stage checks\n", checks - start);
+}
+
+static void
+fw_ready(void)
+{
+	reset();
+	for (u_int stage = 1; stage <= 11; stage++) {
+		sun60i_gpu_run_stage(&sc, stage);
+		CHECK(sc.sc_run_result == 0);
+	}
+	CHECK(sc.sc_have_id && sc.sc_bvnc == A733_GPU_EXPECTED);
+	nevents = 0;
+	events[0] = '\0';
+}
+
+static void
+fw_finished(int error, const char *order)
+{
+	CHECK(sc.sc_run_result == (u_int)error && sc.sc_run_stage == 12);
+	CHECK(strcmp(events, order) == 0);
+	CHECK(!fw_handle.open && fw_memory == NULL);
+	CHECK(maps == 2 && peeks == 2 && unmaps == 2);
+	CHECK(strstr(sc.sc_fw_state, "metadata only") != NULL);
+	if (error != 0) {
+		char expected[64];
+
+		snprintf(expected, sizeof(expected), "metadata only error=%d", error);
+		CHECK(strcmp(sc.sc_fw_state, expected) == 0);
+	}
+}
+
+static void
+test_fwinfo_stage(void)
+{
+	const off_t invalid_sizes[] = { -1, 0, 4095, 1048577, INT64_MAX };
+	unsigned start = checks;
+
+	/* Normal boot and a premature stage cannot open any firmware. */
+	reset(); observe_len = 0;
+	CHECK(sun60i_gpu_identify(&sc) == 0);
+	CHECK(fw_opens == 0 && maps == 0);
+	reset();
+	sun60i_gpu_run_stage(&sc, 12);
+	CHECK(sc.sc_run_result == EINVAL && fw_opens == 0);
+	for (unsigned n = 0; n < 5; n++) {
+		fw_ready();
+		switch (n) {
+		case 0: sc.sc_run_stage = 10; break;
+		case 1: sc.sc_run_result = EFAULT; break;
+		case 2: sc.sc_run_pass = false; break;
+		case 3: sc.sc_have_id = false; break;
+		case 4: sc.sc_bvnc ^= 1; break;
+		}
+		CHECK(sun60i_gpu_stage_fwinfo(&sc) == EBUSY);
+		CHECK(fw_opens == 0 && nevents == 0);
+	}
+	/* Stage 0 cannot turn a failed strict identity into permission. */
+	reset();
+	for (u_int stage = 1; stage <= 10; stage++)
+		sun60i_gpu_run_stage(&sc, stage);
+	peek_error = 1;
+	sun60i_gpu_run_stage(&sc, 11);
+	CHECK(sc.sc_run_result == EFAULT && !sc.sc_run_pass);
+	sun60i_gpu_run_stage(&sc, 0);
+	sun60i_gpu_run_stage(&sc, 12);
+	CHECK(sc.sc_run_result == EINVAL && fw_opens == 0);
+
+	fw_ready(); fw_open_error = ENOENT;
+	sun60i_gpu_run_stage(&sc, 12);
+	fw_finished(ENOENT, "o");
+	CHECK(fw_sizes == 0 && fw_allocs == 0 && fw_closes == 0);
+	for (unsigned n = 0; n < __arraycount(invalid_sizes); n++) {
+		fw_ready(); fw_file_size = invalid_sizes[n];
+		sun60i_gpu_run_stage(&sc, 12);
+		fw_finished(EINVAL, "ozc");
+		CHECK(fw_allocs == 0 && fw_reads == 0 && fw_closes == 1);
+	}
+	fw_ready(); fw_alloc_fail = true;
+	sun60i_gpu_run_stage(&sc, 12);
+	fw_finished(ENOMEM, "ozac");
+	CHECK(fw_reads == 0 && fw_frees == 0 && fw_closes == 1);
+	fw_ready(); fw_read_error = EIO; fw_close_error = EACCES;
+	sun60i_gpu_run_stage(&sc, 12);
+	fw_finished(EIO, "ozarcf");
+	CHECK(fw_parses == 0 && fw_frees == 1);
+	fw_ready(); fw_bad_bvnc = true; fw_close_error = EIO;
+	sun60i_gpu_run_stage(&sc, 12);
+	fw_finished(ENODEV, "ozarvcf");
+	CHECK(fw_parses == 1 && fw_frees == 1);
+	fw_ready(); fw_file_size = 4096;
+	sun60i_gpu_run_stage(&sc, 12);
+	fw_finished(EOPNOTSUPP, "ozarvcf");
+	fw_ready(); fw_close_error = EIO;
+	sun60i_gpu_run_stage(&sc, 12);
+	fw_finished(EIO, "ozarvcf");
+	for (unsigned n = 0; n < 2; n++) {
+		fw_ready(); fw_file_size = n == 0 ? 8192 : 1048576;
+		sun60i_gpu_run_stage(&sc, 12);
+		fw_finished(0, "ozarvcf");
+		CHECK(fw_parses == 1 && fw_closes == 1 && fw_frees == 1);
+		CHECK(strstr(sc.sc_fw_state, "version=1.1.1") != NULL);
+		CHECK(strstr(sc.sc_fw_state, "bvnc=0x00240038006800b7") != NULL);
+		CHECK(strstr(sc.sc_fw_state, "layouts=1 code=4096 data=0") != NULL);
+		unsigned calls = fw_opens;
+		sun60i_gpu_run_stage(&sc, 0);
+		sun60i_gpu_run_stage(&sc, 12);
+		CHECK(sc.sc_run_result == EINVAL && fw_opens == calls);
+	}
+	reset();
+	printf("PASS: %u firmware metadata consumer checks\n", checks - start);
 }
 
 int
@@ -1099,6 +1373,7 @@ main(void)
 	test_experimental_prepare();
 	test_domain_request();
 	test_runtime_stages();
+	test_fwinfo_stage();
 	printf("PASS: %u A733 GPU identification checks\n", checks);
 	return 0;
 }

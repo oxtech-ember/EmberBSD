@@ -9,7 +9,8 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 sed '/^#include /d; /^__KERNEL_RCSID(/d' \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu.c" > "$work/driver.h"
 cp "$src/sys/arch/arm/sunxi/sun60i_a733_ccu.h" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_pck600.h" "$work/"
+    "$src/sys/arch/arm/sunxi/sun60i_a733_pck600.h" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.h" "$work/"
 # Exercise the real parent-specific queue and finalization dispatch as well.
 autoconf="$src/sys/kern/subr_autoconf.c"
 sed -n '1,/^#include /p' "$autoconf" | sed '/^#include /d' \
@@ -27,5 +28,6 @@ for name in config_defer config_process_deferred config_finalize_register \
 done
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
     ${GPU_ID_TEST_CFLAGS:-} -I"$work" \
-    "$tools/a733-gpu-identification-contract.c" -o "$work/test"
+    "$tools/a733-gpu-identification-contract.c" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" -o "$work/test"
 "$work/test"

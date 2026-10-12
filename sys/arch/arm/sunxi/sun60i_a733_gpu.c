@@ -43,6 +43,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/systm.h>
 
 #include <dev/fdt/fdtvar.h>
+#include <dev/firmload.h>
+#include <arm/sunxi/sun60i_a733_gpu_fwinfo.h>
 #include <arm/sunxi/sun60i_a733_ccu.h>
 #include <arm/sunxi/sun60i_a733_pck600.h>
 
@@ -65,6 +67,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define A733_GPU_STAGE_WAIT	9
 #define A733_GPU_STAGE_TOP_ID	10
 #define A733_GPU_STAGE_IDENTIFY	11
+#define A733_GPU_STAGE_FWINFO	12
+#define A733_GPU_FW_MAX_SIZE	(1024 * 1024)
 
 struct sun60i_gpu_softc {
 	device_t sc_dev;
@@ -75,12 +79,13 @@ struct sun60i_gpu_softc {
 	u_int sc_core_hz, sc_bus_hz, sc_uvol;
 	u_int sc_clock_source;	/* runtime: 0 PERIPH0/400, 1 PLL_GPU0/600 */
 	char sc_clock_state[160];	/* last complete stage-7 observation */
+	char sc_fw_state[256];	/* metadata only; no firmware execution */
 	bool sc_have_id, sc_probed, sc_retained;
 	kmutex_t sc_run_lock;
 	u_int sc_run_stage;	/* last completed stage */
 	u_int sc_run_result;	/* errno of the last attempt */
 	bool sc_run_pass;	/* sequence may continue */
-	bool sc_run_core_on;	/* stage 3 confirmed CORE ON */
+	bool sc_run_core_on;	/* stage 9 confirmed CORE ON */
 	struct sysctllog *sc_sysctllog;
 };
 
@@ -380,6 +385,66 @@ sun60i_gpu_stage_identify(struct sun60i_gpu_softc *sc)
 	return id == A733_GPU_EXPECTED ? 0 : ENODEV;
 }
 
+/* Read and validate file metadata. Never transfer firmware to the GPU. */
+static int
+sun60i_gpu_stage_fwinfo(struct sun60i_gpu_softc *sc)
+{
+	struct sun60i_a733_gpu_fwinfo info;
+	firmware_handle_t fh = NULL;
+	void *bytes = NULL;
+	off_t file_size;
+	size_t size = 0;
+	int error, close_error;
+
+	if (sc->sc_run_stage != A733_GPU_STAGE_IDENTIFY ||
+	    sc->sc_run_result != 0 || !sc->sc_run_pass ||
+	    !sc->sc_have_id || sc->sc_bvnc != A733_GPU_EXPECTED) {
+		error = EBUSY;
+		goto out;
+	}
+	error = firmware_open("powervr", "rogue_36.56.104.183_v1.fw", &fh);
+	if (error != 0)
+		goto out;
+	file_size = firmware_get_size(fh);
+	if (file_size < A733_GPU_FW_BLOCK_SIZE ||
+	    file_size > A733_GPU_FW_MAX_SIZE) {
+		error = EINVAL;
+		goto out;
+	}
+	size = (size_t)file_size;
+	bytes = firmware_malloc(size);
+	if (bytes == NULL) {
+		error = ENOMEM;
+		goto out;
+	}
+	error = firmware_read(fh, 0, bytes, size);
+	if (error == 0)
+		error = sun60i_a733_gpu_fwinfo_parse(bytes, size, sc->sc_bvnc,
+		    &info);
+out:
+	if (fh != NULL) {
+		close_error = firmware_close(fh);
+		if (error == 0)
+			error = close_error;
+	}
+	if (bytes != NULL)
+		firmware_free(bytes, size);
+	/* Publish only the final result, after parsing and all cleanup. */
+	if (error != 0) {
+		snprintf(sc->sc_fw_state, sizeof(sc->sc_fw_state),
+		    "metadata only error=%d", error);
+	} else {
+		snprintf(sc->sc_fw_state, sizeof(sc->sc_fw_state),
+		    "metadata only error=0 version=%u.%u.%u "
+		    "bvnc=0x%016llx layouts=%u code=%u data=%u payload=%zu",
+		    (u_int)info.version_major, (u_int)info.version_minor,
+		    info.version_build, (unsigned long long)info.bvnc,
+		    info.layout_count, info.allocation_size[A733_GPU_FW_CODE],
+		    info.allocation_size[A733_GPU_FW_DATA], info.payload_size);
+	}
+	return error;
+}
+
 static void
 sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 {
@@ -393,7 +458,7 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 		return;
 	}
 	/* Strictly ordered single sequence; a replay needs a fresh boot. */
-	if (stage < A733_GPU_STAGE_SUPPLY || stage > A733_GPU_STAGE_IDENTIFY ||
+	if (stage < A733_GPU_STAGE_SUPPLY || stage > A733_GPU_STAGE_FWINFO ||
 	    stage != sc->sc_run_stage + 1 || !sc->sc_run_pass) {
 		sc->sc_run_result = EINVAL;
 		mutex_exit(&sc->sc_run_lock);
@@ -486,6 +551,9 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 		}
 		error = sun60i_gpu_stage_identify(sc);
 		break;
+	case A733_GPU_STAGE_FWINFO:
+		error = sun60i_gpu_stage_fwinfo(sc);
+		break;
 	}
 	/* A bounded timeout still allows the read-only waiter afterwards. */
 	sc->sc_run_pass = (error == 0 || error == ETIMEDOUT);
@@ -567,7 +635,7 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 	}
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
 	    CTLTYPE_INT, "stage",
-		    SYSCTL_DESCR("run runtime diagnostic stage 0..11"),
+		    SYSCTL_DESCR("run runtime diagnostic stage 0..12"),
 		    sun60i_gpu_sysctl_stage, 0, NULL, 0,
 		    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create stage node\n");
@@ -583,6 +651,12 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 	    NULL, 0, sc->sc_clock_state, sizeof(sc->sc_clock_state),
 	    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create clock state node\n");
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRING, "fw_state",
+	    SYSCTL_DESCR("cached firmware metadata result; no GPU transfer"),
+	    NULL, 0, sc->sc_fw_state, sizeof(sc->sc_fw_state),
+	    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create firmware state node\n");
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_INT, "result",
 		    SYSCTL_DESCR("errno of the last runtime stage"),

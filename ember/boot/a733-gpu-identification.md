@@ -274,7 +274,7 @@ nodes - so their "provider stalls" were that bug, not hardware.
 ### Runtime staged diagnostics with a watchdog bound
 
 Normal board DTBs do not run this experiment at boot. The live driver exposes
-`hw.sun60igpuid0.stage`, `result`, `pbvnc`, `clock_source` and `clock_state`.
+`hw.sun60igpuid0.stage`, `result`, `pbvnc`, `clock_source`, `clock_state` and `fw_state`.
 Run one stage per sysctl write. Each stage runs once in the following order:
 
 | Stage | Action |
@@ -291,6 +291,10 @@ Run one stage per sysctl write. Each stage runs once in the following order:
 | 9 | Wait for CORE ON/Q readiness |
 | 10 | Read TOP-only CORE_ID and PBVNC after supply/TOP/clock checks |
 | 11 | Read strict PBVNC, only after stage 9 confirmed CORE ON |
+| 12 | Load firmware through firmload and validate metadata against the live BVNC; no GPU transfer |
+
+Stage 12 is a [firmware metadata preflight](a733-gpu-fwinfo.md). It requires
+successful strict identification. It does not load or execute code on the GPU.
 
 `result` records the last errno. A bounded timeout permits the next stage;
 other failures stop the sequence. Reading these sysctls accesses cached data,

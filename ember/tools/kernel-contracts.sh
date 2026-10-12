@@ -13,6 +13,10 @@ python=${NETBSD2_PYTHON:-$(command -v python3 || true)}
 }
 "$python" "$src/ember/tools/bluetooth-uart-contract.py" "$src/sys/dev/ic/bcm2712btcom.c"
 "$python" "$src/ember/tools/bluetooth-rc-contract.py"
+sh "$src/ember/tools/a733-accelerator-clock-contract.sh"
+sh "$src/ember/tools/a733-power-contract.sh"
+sh "$src/ember/tools/a733-gpu-identification-contract.sh"
+sh "$src/ember/tools/a733-gpu-fwinfo-contract.sh"
 sh "$src/ember/tools/bcm2712-v3d-contract.sh" "$src"
 sh "$src/ember/tools/bcm2712-v3d-takeover-contract.sh" "$src"
 sh "$src/ember/tools/bcm2712-v3d-dma-contract.sh" "$src"
