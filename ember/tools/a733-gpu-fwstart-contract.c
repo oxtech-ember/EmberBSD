@@ -34,7 +34,7 @@ static uint64_t registers[8192];
 static unsigned checks, ntrace, fail_at, ndelay, release_delay;
 static bool fail_after_write, write_barrier_due, read_barrier_ready;
 static uint32_t barrier_reg;
-static unsigned barrier_width, nwrite, secure_prefix;
+static unsigned barrier_width, nwrite, secure_prefix, reset2_extra;
 static struct sun60i_a733_gpu_fwstart_result observed;
 
 static int
@@ -136,7 +136,7 @@ delay(unsigned us)
 	CHECK(us == 3);
 	CHECK(!write_barrier_due && !read_barrier_ready);
 	CHECK(ndelay < 2);
-	CHECK(ntrace == secure_prefix + (ndelay == 0 ? 20U : 22U));
+	CHECK(ntrace == secure_prefix + reset2_extra + (ndelay == 0 ? 20U : 22U));
 	ndelay++;
 }
 #include "driver.h"
@@ -148,21 +148,34 @@ feature(struct sun60i_a733_gpu_fwinfo *info, unsigned id, uint64_t value)
 	info->feature_value[id] = value;
 }
 
+/* Exact metadata from the pinned 36.56.104.183 image; no firmware payload. */
+static const struct sun60i_a733_gpu_fwinfo pinned_profile = {
+	.bvnc = UINT64_C(0x00240038006800b7),
+	.brn_mask = UINT64_C(0x201),
+	.ern_mask = UINT64_C(0xf5),
+	.feature_mask = { UINT64_C(0x92d9ff57fdbf7cdb), UINT64_C(0x1f) },
+	.feature_value = {
+		1, 1, 0, 19456, 1, 0, 1, 1, 0, 0,
+		50, 50, 7, 0, 0, 0, 1, 1, 1, 1,
+		6, 1, 0, 1, 12, 0, 0, 1, 1, 6,
+		8, 1, 1, 1, 1, 0, 36, 0, 1, 0,
+		1, 1, 2, 1, 512, 1, 16, 1, 1, 0,
+		0, 16, 16, 0, 1, 1, 0, 2, 0, 0,
+		40, 0, 0, 1, 1, 1, 19, 3, 1, 0, 0
+	}
+};
+
 static void
 reset(struct sun60i_a733_gpu_fwinfo *info)
 {
-	memset(info, 0, sizeof(*info));
+	*info = pinned_profile;
 	memset(registers, 0, sizeof(registers));
 	memset(trace, 0, sizeof(trace));
 	observed = (struct sun60i_a733_gpu_fwstart_result){ UINT32_MAX, UINT32_MAX, true, true };
-	ntrace = fail_at = ndelay = release_delay = nwrite = secure_prefix = 0;
+	ntrace = fail_at = ndelay = release_delay = nwrite = 0;
+	secure_prefix = 2;
+	reset2_extra = 6;
 	fail_after_write = write_barrier_due = read_barrier_ready = false;
-	info->bvnc = UINT64_C(0x00240038006800b7);
-	info->brn_mask = UINT64_C(1) << 9;
-	feature(info, A733_GPU_FW_FEATURE_MIPS, 1);
-	feature(info, A733_GPU_FW_FEATURE_PBE2_IN_XE, 1);
-	feature(info, A733_GPU_FW_FEATURE_PHYS_BUS_WIDTH, 36);
-	feature(info, A733_GPU_FW_FEATURE_SLC_CACHE_LINE_SIZE_BITS, 512);
 	registers[0x3800 / 8] = UINT64_C(0x76543210dead0002);
 }
 
@@ -179,49 +192,74 @@ run(const struct sun60i_a733_gpu_fwinfo *info)
  * Reads fence writes; their value field is the fixture's initial read input.
  */
 static const struct operation upstream_default[] = {
+	{ true, 4, 0xa100, UINT64_C(0x0000000000000000) },
+	{ false, 4, 0xa100, 0 },
 	{ true, 8, 0x0100, UINT64_C(0xffeffffffffffc3d) },
+	{ true, 8, 0x0108, UINT64_C(0x00000000001fffff) },
 	{ false, 8, 0x0100, 0 },
+	{ false, 8, 0x0108, 0 },
 	{ true, 8, 0x0100, UINT64_C(0xffeffe071ffffc3d) },
+	{ true, 8, 0x0108, UINT64_C(0x0000000000000000) },
 	{ false, 8, 0x0100, 0 },
-	{ true, 8, 0x0100, UINT64_C(0x100000000) },
+	{ false, 8, 0x0108, 0 },
+	{ true, 8, 0x0100, UINT64_C(0x0000000100000000) },
+	{ true, 8, 0x0108, UINT64_C(0x0000000000000000) },
 	{ false, 8, 0x0100, 0 },
+	{ false, 8, 0x0108, 0 },
 	{ false, 4, 0x3800, 0 },
-	{ true, 4, 0x3800, 0x00200003 },
-	{ true, 4, 0x0810, 0x0001cf80 },
-	{ true, 8, 0x0818, 0x1fc00001 },
-	{ true, 8, 0x0820, 0x4001800c },
-	{ true, 8, 0x0858, 1 },
-	{ true, 8, 0x0860, 0x4001800c },
-	{ true, 8, 0x0828, 0x1fc01001 },
-	{ true, 8, 0x0830, 0x4001c00c },
-	{ true, 8, 0x0838, 0x1fc02001 },
-	{ true, 8, 0x0840, 0x4001700c },
-	{ true, 8, 0x0b50, 0 },
-	{ true, 4, 0x08c8, 0 },
-	{ true, 8, 0x38c0, 0x8882af00 },
-	{ true, 8, 0x0100, 0 },
+	{ true, 4, 0x3800, UINT64_C(0x0000000000200003) },
+	{ true, 4, 0x0810, UINT64_C(0x000000000001cf80) },
+	{ true, 8, 0x0818, UINT64_C(0x000000001fc00001) },
+	{ true, 8, 0x0820, UINT64_C(0x000000004001800c) },
+	{ true, 8, 0x0858, UINT64_C(0x0000000000000001) },
+	{ true, 8, 0x0860, UINT64_C(0x000000004001800c) },
+	{ true, 8, 0x0828, UINT64_C(0x000000001fc01001) },
+	{ true, 8, 0x0830, UINT64_C(0x000000004001c00c) },
+	{ true, 8, 0x0838, UINT64_C(0x000000001fc02001) },
+	{ true, 8, 0x0840, UINT64_C(0x000000004001700c) },
+	{ true, 8, 0x0b50, UINT64_C(0x0000000000000000) },
+	{ true, 4, 0x08c8, UINT64_C(0x0000000000000000) },
+	{ true, 8, 0x38c0, UINT64_C(0x000000008882af00) },
+	{ true, 8, 0x0100, UINT64_C(0x0000000000000000) },
 	{ false, 8, 0x0100, 0 }
 };
 
+static void
+clear_feature(struct sun60i_a733_gpu_fwinfo *info, unsigned id)
+{
+	info->feature_mask[id / 64] &= ~(UINT64_C(1) << (id % 64));
+	info->feature_value[id] = 0;
+}
+
+/* Bits: secure reset, BRN71242, XE_TPU2, GPU multicore. */
 static unsigned
 prepare(struct sun60i_a733_gpu_fwinfo *info, struct operation *golden,
     unsigned variant)
 {
-	unsigned offset = variant & 1 ? 2 : 0;
+	unsigned count = 0;
 
 	reset(info);
-	secure_prefix = offset;
-	if (offset != 0) {
-		feature(info, A733_GPU_FW_FEATURE_SYS_BUS_SECURE_RESET, 1);
-		golden[0] = (struct operation){ true, 4, 0xa100, 0 };
-		golden[1] = (struct operation){ false, 4, 0xa100, 0 };
-	}
-	memcpy(golden + offset, upstream_default, sizeof(upstream_default));
-	if (variant & 2) {
+	secure_prefix = variant & 1 ? 2 : 0;
+	reset2_extra = variant & 4 ? 6 : 0;
+	if ((variant & 1) == 0)
+		clear_feature(info, A733_GPU_FW_FEATURE_SYS_BUS_SECURE_RESET);
+	if (variant & 2)
 		info->brn_mask |= UINT64_C(1) << 11;
-		golden[offset + 7].value |= 0x01000000;
+	if ((variant & 4) == 0)
+		clear_feature(info, A733_GPU_FW_FEATURE_XE_TPU2);
+	if ((variant & 8) == 0)
+		clear_feature(info, A733_GPU_FW_FEATURE_GPU_MULTICORE_SUPPORT);
+	for (unsigned i = 0; i < __arraycount(upstream_default); i++) {
+		struct operation op = upstream_default[i];
+		if ((op.reg == 0xa100 && (variant & 1) == 0) ||
+		    (op.reg == 0x0108 && (variant & 4) == 0))
+			continue;
+		if (op.reg == 0x3800 && op.write &&
+		    (variant & 2) != 0 && (variant & 8) == 0)
+			op.value |= 0x01000000;
+		golden[count++] = op;
 	}
-	return offset + __arraycount(upstream_default);
+	return count;
 }
 
 static void
@@ -241,16 +279,16 @@ static void
 test_sequence(void)
 {
 	struct sun60i_a733_gpu_fwinfo info;
-	struct operation golden[24];
-	for (unsigned variant = 0; variant < 4; variant++) {
+	struct operation golden[30];
+	for (unsigned variant = 0; variant < 16; variant++) {
 		unsigned count = prepare(&info, golden, variant);
 		CHECK(run(&info) == 0);
 		check_trace(golden, count);
 		CHECK(observed.touched && observed.released && observed.writes == nwrite);
-		CHECK(observed.writes == 17 + (variant & 1));
+		CHECK(observed.writes == 17 + (variant & 1) + (variant & 4 ? 3 : 0));
 		CHECK(ndelay == 2 && release_delay == 1);
 		CHECK(registers[0x3800 / 8] == (UINT64_C(0x7654321000200003) |
-		    (variant & 2 ? UINT64_C(0x1000000) : 0)));
+		    ((variant & 2) != 0 && (variant & 8) == 0 ? UINT64_C(0x1000000) : 0)));
 		for (unsigned after = 0; after < 2; after++) {
 			for (unsigned failure = 1; failure <= count; failure++) {
 				prepare(&info, golden, variant);
@@ -287,19 +325,17 @@ test_preflight(void)
 	};
 	uint64_t addresses[3];
 
-	for (unsigned bad = 0; bad < 10; bad++) {
+	for (unsigned bad = 0; bad < 8; bad++) {
 		reset(&info);
 		switch (bad) {
 		case 0: info.bvnc++; break;
 		case 1: info.brn_mask = 0; break;
-		case 2: feature(&info, A733_GPU_FW_FEATURE_XE_TPU2, 1); break;
-		case 3: feature(&info, A733_GPU_FW_FEATURE_GPU_MULTICORE_SUPPORT, 1); break;
-		case 4: feature(&info, A733_GPU_FW_FEATURE_PHYS_BUS_WIDTH, 32); break;
-		case 5: feature(&info, A733_GPU_FW_FEATURE_SLC_CACHE_LINE_SIZE_BITS, 1024); break;
-		case 6: info.feature_mask[0] &= ~(UINT64_C(1) << A733_GPU_FW_FEATURE_MIPS); break;
-		case 7: info.feature_mask[0] &= ~(UINT64_C(1) << A733_GPU_FW_FEATURE_PBE2_IN_XE); break;
-		case 8: info.feature_mask[0] &= ~(UINT64_C(1) << A733_GPU_FW_FEATURE_PHYS_BUS_WIDTH); break;
-		case 9: info.feature_mask[0] &= ~(UINT64_C(1) << A733_GPU_FW_FEATURE_SLC_CACHE_LINE_SIZE_BITS); break;
+		case 2: feature(&info, A733_GPU_FW_FEATURE_PHYS_BUS_WIDTH, 32); break;
+		case 3: feature(&info, A733_GPU_FW_FEATURE_SLC_CACHE_LINE_SIZE_BITS, 1024); break;
+		case 4: info.feature_mask[0] &= ~(UINT64_C(1) << A733_GPU_FW_FEATURE_MIPS); break;
+		case 5: info.feature_mask[0] &= ~(UINT64_C(1) << A733_GPU_FW_FEATURE_PBE2_IN_XE); break;
+		case 6: info.feature_mask[0] &= ~(UINT64_C(1) << A733_GPU_FW_FEATURE_PHYS_BUS_WIDTH); break;
+		case 7: info.feature_mask[0] &= ~(UINT64_C(1) << A733_GPU_FW_FEATURE_SLC_CACHE_LINE_SIZE_BITS); break;
 		}
 		CHECK(run(&info) == EOPNOTSUPP && ntrace == 0 && !observed.touched);
 		CHECK(!observed.released && observed.writes == 0 && ndelay == 0);
@@ -343,9 +379,51 @@ test_preflight(void)
 	CHECK(ntrace == 0);
 }
 
-int
-main(void)
+static void
+test_firmware(const char *path)
 {
+	struct sun60i_a733_gpu_fwinfo parsed, info;
+	uint8_t *bytes = malloc(131072);
+	FILE *file = fopen(path, "rb");
+	const unsigned count = __arraycount(upstream_default);
+
+	CHECK(bytes != NULL && file != NULL);
+	CHECK(fread(bytes, 1, 131072, file) == 131072);
+	CHECK(fgetc(file) == EOF && !ferror(file));
+	CHECK(fclose(file) == 0);
+	CHECK(sun60i_a733_gpu_fwinfo_parse(bytes, 131072,
+	    pinned_profile.bvnc, &parsed) == 0);
+	free(bytes);
+	CHECK(parsed.bvnc == pinned_profile.bvnc);
+	CHECK(parsed.brn_mask == pinned_profile.brn_mask);
+	CHECK(parsed.ern_mask == pinned_profile.ern_mask);
+	CHECK(memcmp(parsed.feature_mask, pinned_profile.feature_mask,
+	    sizeof(parsed.feature_mask)) == 0);
+	CHECK(memcmp(parsed.feature_value, pinned_profile.feature_value,
+	    sizeof(parsed.feature_value)) == 0);
+	/* Execute the parsed profile, including every fault prefix. */
+	for (unsigned after = 0; after < 2; after++) {
+		for (unsigned failure = 0; failure <= count; failure++) {
+			reset(&info);
+			info = parsed;
+			fail_at = failure;
+			fail_after_write = after != 0;
+			CHECK(run(&info) == (failure == 0 ? 0 : EFAULT));
+			check_trace(upstream_default, failure == 0 ? count : failure);
+			CHECK(observed.touched && observed.writes == nwrite);
+			CHECK(observed.released == (failure == 0 || failure == count));
+			CHECK(ndelay == (failure == 0 ? 2U : failure >= count - 1 ? 1U : 0U));
+		}
+	}
+	puts("PASS: pinned firmware profile matches the default fixture and upstream trace");
+}
+
+int
+main(int argc, char **argv)
+{
+	CHECK(argc == 1 || argc == 2);
+	if (argc == 2)
+		test_firmware(argv[1]);
 	test_sequence();
 	test_preflight();
 	printf("PASS: %u firmware startup order/fault checks\n", checks);

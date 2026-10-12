@@ -33,7 +33,9 @@ A valid address range does not prove allocation ownership or DMA coherency.
 
 Preflight accepts the identified MIPS/PBE2 core with BRN63553,
 a 36-bit physical bus, and 512-bit SLC cache lines.
-It rejects `xe_tpu2` and `gpu_multicore_support` configurations.
+The pinned firmware has `xe_tpu2`, `gpu_multicore_support`, and `sys_bus_secure_reset`.
+These features are presence bits, not nonzero parameter tests.
+The implementation follows the corresponding upstream branches.
 All remap addresses must be page-aligned, fit the 36-bit bus, and differ.
 They must avoid physical addresses `0x1fc00000` through `0x1fc03fff`.
 These checks complete before the first register access.
@@ -43,7 +45,7 @@ These checks complete before the first register access.
 The pinned upstream sequence is preserved:
 
 1. Clear optional system-bus protection and fence that write.
-2. Apply the PBE2 reset mask, then release Rascal and Dust.
+2. Apply the PBE2 reset mask and optional `SOFT_RESET2`, then release Rascal and Dust.
 3. Keep the firmware processor in reset while releasing the other blocks.
 4. Configure the low 32 bits of SLC control. Preserve upper scramble bits.
 5. Configure the MIPS wrapper and boot, data, exception, and BRN63553 remaps.
@@ -52,9 +54,12 @@ The pinned upstream sequence is preserved:
 
 Each normal write receives a write barrier.
 Each read receives a read/write barrier before access.
-The default sequence has 17 writes and 22 total register accesses.
-System-bus protection adds one write and one read.
-BRN71242 sets the SLC lazy-writeback override when present in validated metadata.
+The pinned profile requires 21 writes and 30 total register accesses.
+This includes one system-bus write/read pair and three `SOFT_RESET2` write/read pairs.
+The `SOFT_RESET2` values are `0x001fffff`, zero, and zero, in that order.
+Each reset phase writes both registers before reading either register.
+Without these optional features, the sequence has 17 writes and 22 accesses.
+BRN71242 enables the SLC lazy-writeback override only when GPU multicore support is absent.
 A register fault stops the sequence immediately. No later access is attempted.
 
 A non-NULL result is cleared before validation, including an invalid `info` pointer value of `NULL`.
@@ -89,29 +94,44 @@ Run the [production-source contract](../tools/a733-gpu-fwstart-contract.sh):
 sh ember/tools/a733-gpu-fwstart-contract.sh
 CC=clang FWSTART_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
     sh ember/tools/a733-gpu-fwstart-contract.sh
+# Optional: verify and parse the pinned image, then test its actual profile.
+CC=clang FWSTART_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
+    sh ember/tools/a733-gpu-fwstart-contract.sh /path/to/rogue_36.56.104.183_v1.fw
 ```
 
 The test records MMIO calls. It does not execute firmware.
 Its literal golden trace comes from the pinned upstream start and MIPS-wrapper functions.
 It is independent of the native function's successful output.
-The tests cover all combinations of optional system-bus reset and BRN71242.
+The default fixture contains the pinned image's complete feature masks and decoded values.
+Its masks are `0x92d9ff57fdbf7cdb` and `0x1f`, with BRN mask `0x201` and ERN mask `0xf5`.
+The optional image test checks SHA256 before compilation:
+`1db1c399c17401d1f79d46c880db81c724d748c784d4639433b076aba2f9c0d2`.
+It runs the real metadata parser, compares every decoded feature, and exercises the parsed result.
+Firmware acquisition and licensing are described in [firmware inspection](a733-gpu-fwinfo.md).
+The tests cover all 16 combinations of system-bus reset, XE_TPU2, GPU multicore support, and BRN71242.
 They inject faults before and after each access, including reset release.
 They check barrier order, delay placement, upper SLC bits, full 36-bit addresses,
 invalid input, and the ownership flags seen by each accessor.
 
-On 2026-10-12, the host ASan/UBSan run passed **39123 checks**.
-Six deliberate defects were detected: late `touched`, incorrect AXI configuration,
-incorrect remap order, premature `released`, a missing write barrier,
-and physical-address truncation.
-A failing-before regression also detects stale result flags for `info == NULL`.
+On 2026-10-12, ASan/UBSan passed **196788 checks** without the image and **213086 checks** with it.
+The real-image test failed before the fix: `EOPNOTSUPP`, no register access, and `touched == false`.
+The corrected implementation accepts that profile and preserves the fault-state contract.
+An independent harness applied the original `pvr_device_info_set_features()` to the image metadata.
+All 71 feature flags and values, plus BRN/ERN mappings, matched the native parser.
+The unchanged upstream startup functions produced identical native traces for all 16 variants.
+
+Nine deliberate defects were detected: omitted reset2, a wrong reset2 mask, a wrong access width,
+a missing reset2 read fence, reversed fence order, a missing reset2 clear, incorrect multicore handling,
+late `touched`, and premature `released`.
+The invalid-`info` test also protects against stale result flags.
 
 GCC 16.2 compiled the production source with actual EmberBSD `EMBER64` headers.
 GCC `-fanalyzer` and host/target Clang Static Analyzer reported no diagnostics.
 Cppcheck 2.22 reported no startup-source findings.
 Two unchanged const-parameter suggestions remain in the included `sys/bus.h`.
-The host contract passed Cppcheck after local scope and naming cleanup.
-An upstream branch harness has expected constant-condition and const-style findings.
-Its hardware access and feature lookups are test boundaries, not a Linux runtime.
+The host contract passed Cppcheck. Before/after target findings are unchanged.
+The independent upstream harness replaces hardware access and the device container.
+It preserves the original metadata mapping and startup functions. It is not a Linux runtime.
 No diagnostic category was disabled to obtain these results.
 
 Valgrind does not support the macOS arm64 host used for this check.
@@ -135,3 +155,6 @@ The native adaptation and tests were developed with AI assistance.
 | [pvr_rogue_defs.h](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_rogue_defs.h) | `7c4c6902f7e456694bd3d64608eae48cdfccc223750773f07648de712e2d4ced` |
 | [pvr_rogue_mips.h](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_rogue_mips.h) | `c2a89bd580c94506179c6dccc29dbd04f3bea1994b7788395058a040c69416db` |
 | [pvr_rogue_fwif_dev_info.h](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_rogue_fwif_dev_info.h) | `d3d9c39a514a0b90dcd8756e9058e89e059fc51c19670766ed30d9d0cc4c84a5` |
+| [pvr_device_info.c](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_device_info.c) | `8fa613f77f42c651135fa208a74c0d68ec01f827976bf895ef277139a0fc6ac2` |
+| [pvr_device_info.h](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_device_info.h) | `a1ee656dab1e405d1cc10fbf08ac1168eb59e42d3ffc6d1945abc6aa2db0413b` |
+| [pvr_device.h](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_device.h) | `f1b64893aa153280e5826ee45ef2e64f2ca38fadeb87c4a2e161974ad889eb83` |

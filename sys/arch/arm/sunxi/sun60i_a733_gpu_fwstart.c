@@ -36,6 +36,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 /* Exact upstream register constants; no unrelated register map is imported. */
 #define ROGUE_CR_SYS_BUS_SECURE 0xA100U
 #define ROGUE_CR_SOFT_RESET 0x0100U
+#define ROGUE_CR_SOFT_RESET2 0x0108U
+#define ROGUE_CR_SOFT_RESET2_MASKFULL 0x00000000001FFFFFULL
 #define ROGUE_CR_SOFT_RESET__PBE2_XE__MASKFULL 0xFFEFFFFFFFFFFC3DULL
 #define ROGUE_CR_SOFT_RESET_GARTEN_EN 0x0000000100000000ULL
 #define ROGUE_CR_SLC_CTRL_MISC 0x3800U
@@ -160,6 +162,7 @@ sun60i_a733_gpu_fwstart(bus_space_tag_t bst, bus_space_handle_t bsh,
 	    (UINT64_C(2) << ROGUE_CR_AXI_ACE_LITE_CONFIGURATION_ARCACHE_COHERENT_SHIFT) |
 	    (UINT64_C(2) << ROGUE_CR_AXI_ACE_LITE_CONFIGURATION_ARCACHE_CACHE_MAINTENANCE_SHIFT);
 	uint64_t value, width, line_size;
+	bool has_reset2;
 	int error;
 
 	if (result == NULL)
@@ -170,8 +173,6 @@ sun60i_a733_gpu_fwstart(bus_space_tag_t bst, bus_space_handle_t bsh,
 	if (info->bvnc != UINT64_C(0x00240038006800b7) ||
 	    !sun60i_gpu_fwstart_has(info, A733_GPU_FW_FEATURE_MIPS) ||
 	    !sun60i_gpu_fwstart_has(info, A733_GPU_FW_FEATURE_PBE2_IN_XE) ||
-	    sun60i_gpu_fwstart_has(info, A733_GPU_FW_FEATURE_XE_TPU2) ||
-	    sun60i_gpu_fwstart_has(info, A733_GPU_FW_FEATURE_GPU_MULTICORE_SUPPORT) ||
 	    (info->brn_mask & (UINT64_C(1) << 9)) == 0)
 		return EOPNOTSUPP;
 	if (sun60i_a733_gpu_fwinfo_feature(info,
@@ -188,21 +189,35 @@ sun60i_a733_gpu_fwstart(bus_space_tag_t bst, bus_space_handle_t bsh,
 			if (remap[i] == remap[j])
 				return EINVAL;
 	}
+	has_reset2 = sun60i_gpu_fwstart_has(info, A733_GPU_FW_FEATURE_XE_TPU2);
 	if (sun60i_gpu_fwstart_has(info, A733_GPU_FW_FEATURE_SYS_BUS_SECURE_RESET)) {
 		WRITE(ROGUE_CR_SYS_BUS_SECURE, 4, 0);
 		READ(ROGUE_CR_SYS_BUS_SECURE, 4);
 	}
 	WRITE(ROGUE_CR_SOFT_RESET, 8, reset);
+	if (has_reset2)
+		WRITE(ROGUE_CR_SOFT_RESET2, 8, ROGUE_CR_SOFT_RESET2_MASKFULL);
 	READ(ROGUE_CR_SOFT_RESET, 8);
+	if (has_reset2)
+		READ(ROGUE_CR_SOFT_RESET2, 8);
 	WRITE(ROGUE_CR_SOFT_RESET, 8, reset ^ RASCAL_DUSTS);
+	if (has_reset2)
+		WRITE(ROGUE_CR_SOFT_RESET2, 8, 0);
 	READ(ROGUE_CR_SOFT_RESET, 8);
+	if (has_reset2)
+		READ(ROGUE_CR_SOFT_RESET2, 8);
 	WRITE(ROGUE_CR_SOFT_RESET, 8, ROGUE_CR_SOFT_RESET_GARTEN_EN);
+	if (has_reset2)
+		WRITE(ROGUE_CR_SOFT_RESET2, 8, 0);
 	READ(ROGUE_CR_SOFT_RESET, 8);
+	if (has_reset2)
+		READ(ROGUE_CR_SOFT_RESET2, 8);
 	READ(ROGUE_CR_SLC_CTRL_MISC, 4);
 	value = (value & ROGUE_CR_SLC_CTRL_MISC_ENABLE_PSG_HAZARD_CHECK_EN) |
 	    ROGUE_CR_SLC_CTRL_MISC_ADDR_DECODE_MODE_PVR_HASH1 |
 	    ROGUE_CR_SLC_CTRL_MISC_BYPASS_BURST_COMBINER_EN;
-	if (info->brn_mask & (UINT64_C(1) << 11))
+	if ((info->brn_mask & (UINT64_C(1) << 11)) != 0 &&
+	    !sun60i_gpu_fwstart_has(info, A733_GPU_FW_FEATURE_GPU_MULTICORE_SUPPORT))
 		value |= ROGUE_CR_SLC_CTRL_MISC_LAZYWB_OVERRIDE_EN;
 	WRITE(ROGUE_CR_SLC_CTRL_MISC, 4, value);
 	WRITE(ROGUE_CR_MIPS_WRAPPER_CONFIG, 4,
