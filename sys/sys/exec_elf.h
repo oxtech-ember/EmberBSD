@@ -887,6 +887,7 @@ typedef struct {
 #define AT_ICACHEBSIZE	11	/* Instruction cache block size */
 #define AT_UCACHEBSIZE	12	/* Unified cache block size */
 #define AT_STACKBASE	13	/* Base address of the main thread */
+#define AT_HWCAP	16	/* Processor capability bits (Linux ABI) */
 
 	/* Vendor specific */
 #define AT_MIPS_NOTELF	10	/* XXX a_val != 0 -> MIPS XCOFF executable */
@@ -1413,7 +1414,7 @@ typedef Elf32_Versym	Elf64_Versym;
 #define ELF_MAXSHNUM	32768
 #define ELF_MAXNOTESIZE	1024
 
-#define ELF_AUX_ENTRIES 15	/* Max size of aux array passed to loader */
+#define ELF_AUX_ENTRIES 16	/* Max size of aux array passed to loader */
 #define ELF32_NO_ADDR	(~(Elf32_Addr)0) /* Indicates addr. not yet filled in */
 #define ELF32_LINK_ADDR ((Elf32_Addr)-2) /* advises to use link address */
 #define ELF64_NO_ADDR	(~(Elf64_Addr)0) /* Indicates addr. not yet filled in */
