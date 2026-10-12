@@ -583,7 +583,11 @@ on every board in the hardware catalog.
   hardware/firmware BVNC through direct coherent memory. The
   [native LOGTYPE and MMUCACHE commands](ember/boot/a733-gpu-fwprobe.md#physical-command-result)
   also complete on this board: return words, queue progress and the executed
-  counter agree. Rogue GPU [page-table encoders](ember/boot/a733-gpu-mmu.md)
+  counter agree. Diagnostic [stage 18](ember/boot/a733-gpu-fwcompute.md#physical-stage-18-result)
+  then loads the packed Mesa-generated compute image through firmload and
+  serializes the real USC/PDS/CDM packet on the board CPU; its 33 KiB image
+  digest matches the host packer byte for byte, without mapping or
+  publication. Rogue GPU [page-table encoders](ember/boot/a733-gpu-mmu.md)
   and [CPU-owned VM preparation](ember/boot/a733-gpu-vm.md) pass source contracts;
   GPU translation and rendering remain unverified. A PowerVR render interface,
   Mesa Vulkan/Zink and accelerated Plasma still require porting. These are
