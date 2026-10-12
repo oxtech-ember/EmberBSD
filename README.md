@@ -325,6 +325,9 @@ on every board in the hardware catalog.
   [Current Noto fonts](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/fonts.md)
   pass payload, target indexing and Cyrillic/CJK selection checks. These remain
   component results; the complete accelerated KWin/Plasma session is pending.
+  [ConsoleKit session launching](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-session.md)
+  now preserves application failures and passes real-session checks on CM5;
+  ordinary-user login and device ownership remain unverified.
   [PulseAudio 17.0 and its TDB/libdaemon dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/pulseaudio.md)
   now cross-package with bounded installed CM5 checks. Locale and caller-buffer
   fixes restore client startup; private null-sink playback/capture preserves
