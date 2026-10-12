@@ -928,6 +928,7 @@ sun60i_gpu_stage_fwcompute(struct sun60i_gpu_softc *sc)
 	/* The kernel owns the typed command, as in the upstream submission. */
 	inputs.command.regs.cdm_ctrl_stream_base =
 	    role[2]->va;
+	inputs.command.regs.cdm_resume_pds1 = role[1]->va | UINT64_C(1);
 	inputs.command.regs.cdm_context_state_base_addr =
 	    file.context_state_va;
 	inputs.priority = file.priority;
@@ -1066,6 +1067,12 @@ sun60i_gpu_compute_load(struct sun60i_gpu_softc *sc,
 	memcpy(&inputs.static_state, bytes + file->header_bytes +
 	    file->static_offset, A733_GPU_FWCOMPUTE_STATE_BYTES);
 	inputs.command.regs.cdm_ctrl_stream_base = role[2]->va;
+	/* The generator emits no resume PDS or border table; the resume code
+	 * lives in the PDS program region. Point CDM at its base. */
+	inputs.command.regs.cdm_resume_pds1 =
+	    file->resource[
+	    a733_gpu_fwcompute_file_role_index(file,
+	    A733_GPU_FWCOMPUTE_PDS_PROGRAMS)].va | UINT64_C(1);
 	inputs.command.regs.cdm_context_state_base_addr =
 	    file->context_state_va;
 	inputs.priority = file->priority;
@@ -1372,6 +1379,20 @@ out:
 	if (bytes != NULL)
 		kmem_free(bytes, file.payload_bytes + file.header_bytes);
 	return error;
+}
+
+/* Index of one required role in a parsed file. */
+static uint32_t
+a733_gpu_fwcompute_file_role_index(const struct a733_gpu_fwcompute_file *file,
+    uint16_t role)
+{
+	uint32_t i;
+
+	for (i = 0; i < A733_GPU_FWCOMPUTE_RESOURCES; i++) {
+		if (file->resource[i].role == role)
+			return i;
+	}
+	return A733_GPU_FWCOMPUTE_RESOURCES;
 }
 
 /* Gate shared by the heap, VM, and kick stages after stage 18. */
