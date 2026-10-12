@@ -115,6 +115,7 @@ file	arch/arm/sunxi/sun60i_a733_gpu_fwinit.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwstart.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwboot.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwprobe.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_mmu.c	sun60i_a733_gpu
 
 # Origin: EmberBSD; read-only firmware-ready A733 NPU identification.
 device	sun60inpuid
