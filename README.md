@@ -291,6 +291,12 @@ on every board in the hardware catalog.
   action-widget cases. Its full cross package retains the target Designer plugin.
   KDBusAddons passes unique-instance activation
   and dead-service recovery against the [corrected default D-Bus session policy](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/desktop-support.md).
+  [KArchive](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/archive.md)
+  passes 153 selected CM5 archive/filter cases; the 2-GiB 7z case remains
+  unaccepted after reaching the board's memory limit.
+  [GnuPG 2.5.24](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/security-dependencies.md)
+  passes an isolated installed encryption/decryption check. KWallet and live
+  desktop authorization remain unaccepted.
   Shared-cache recovery and the complete Frameworks runtime remain unaccepted.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
