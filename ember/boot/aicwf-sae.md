@@ -13,7 +13,9 @@ The firmware key command has no initial IGTK packet-number field. The
 client therefore rejects a nonzero initial IPN instead of silently losing
 the replay boundary. Networks/rekeys supplying such an IPN cannot complete
 this path yet. On a physical Zero 3W, required PMF negotiation, SAE/H2E,
-IGTK installation and bidirectional traffic pass. Management-frame forgery
+IGTK installation and bidirectional traffic pass with an accepted initial IPN.
+A separate [VHT80 trial](aicwf-vht.md#physical-vht80-check) reproduces the
+nonzero-IPN failure after successful H2E authentication. Management-frame forgery
 and replay injection remain untested; this is not a WPA3 certification claim.
 
 SAE configuration is privileged. A generation and peer bind commands to one
@@ -32,7 +34,7 @@ unredacted logs outside source control. `vmstat -e` shows the driver's SAE
 start, received, sent and rejected counters without displaying credentials.
 
 This work does not add 802.11r fast transition, 802.11v BSS transition
-management, 802.11ac/ax or host AP mode. The [Zero 3W board page](../boards/orange-pi-zero-3w.md)
+management, 802.11ax or host AP mode. VHT80 has a separate WPA2 check. The [Zero 3W board page](../boards/orange-pi-zero-3w.md)
 records actual physical results separately.
 See the [VHT80 and roaming status](aicwf-vht.md) for the `11ac/k/v 1x1 80 MHz` target.
 

@@ -661,14 +661,13 @@ on every board in the hardware catalog.
   Reports and BTM acceptance/rejection under WPA2 and SAE/required PMF. TCP
   survived the transitions; [measured reply gaps and limits](ember/boot/bwfm-kv.md)
   distinguish this result from seamless roaming.
-- **Zero 3W WPA3 and recovery:** the AIC8800D80 path supports SAE/H2E
-  with required PMF. Protected SA Query recovers an AP/client state mismatch
-  through the normal supplicant. Physical checks cover query/response,
-  automatic reconnection and an 8 MiB transfer each way; see the
-  [guide](ember/boot/aicwf-sae.md) and
-  [hardware receipt](ember/boards/orange-pi-zero-3w.md#protected-association-recovery-2026-10-09).
-  VHT80 capability setup and bounded association diagnostics pass source tests.\n  The [VHT80 and roaming status](ember/boot/aicwf-vht.md) records the remaining
-  work for `11ac/k/v, 1x1, 80 MHz`; radio capability alone does not complete this path.
+- **Zero 3W Wi-Fi:** AIC8800D80 now has a physical WPA2 check for 802.11ac,
+  one stream and 80 MHz, with bidirectional TCP and verified file transfers.
+  The [VHT80 results](ember/boot/aicwf-vht.md) give throughput and test limits.
+  SAE/H2E and required PMF have separate physical checks, but a nonzero initial
+  IGTK IPN still prevents key installation on affected APs. Host-managed k/v
+  remains incomplete. Protected SA Query and recovery checks are documented
+  in the [SAE guide](ember/boot/aicwf-sae.md).
 - **Consistent Wi-Fi discovery and CM5 cooling:** `bwfm` retains firmware
   scan channels and signal ranking across both bands. The configurable
   [ACPI minimum fan level](ember/boot/thermal-fan.md) skips a stalled low

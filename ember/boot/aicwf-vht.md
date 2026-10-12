@@ -6,12 +6,12 @@ Hardware capability, firmware capability and accepted driver behavior are separa
 
 | Component | Current evidence | Remaining work |
 |---|---|---|
-| Radio | AIC8800D80 supports one spatial stream and channels up to 80 MHz | Verify the selected board, antenna and regulatory channels |
-| Firmware | A saved Zero 3W report has VHT support, one stream and an 80 MHz PHY limit | This does not establish the negotiated association width |
-| `aicwf` PHY setup | `ME_CONFIG` enables VHT MCS 0-9, one stream and at most 80 MHz for the checked firmware ABI | Accept negotiated capabilities and bidirectional data transfer on hardware |
+| Radio | Zero 3W has a physical WPA2 VHT80 check with one spatial stream | Other boards, antennas and regulatory channels need separate acceptance |
+| Firmware | Connection metadata and the AP independently confirm 80 MHz with the checked revision | Accept other firmware revisions separately |
+| `aicwf` PHY setup | `ME_CONFIG` enables VHT MCS 0-9, one stream and at most 80 MHz for the checked firmware ABI | WPA2 VHT80 unicast is accepted; SAE/PMF and longer loads remain separate |
 | 802.11k | Full host Neighbor Report exchange is not available | Association capabilities, protected actions and complete station transport |
 | 802.11v | Reconnection after loss is not BSS Transition Management | Candidate handling, connected scans, real TX completion and directed transitions |
-| WPA3/PMF | SAE/H2E, required PMF and protected SA Query have separate physical checks | Repeat those checks with VHT and the completed k/v path |
+| WPA3/PMF | SAE/H2E, required PMF and protected SA Query have separate physical checks | Support nonzero initial IGTK IPNs, then accept VHT80 with PMF and the completed k/v path |
 
 See the [SAE guide](aicwf-sae.md) and [board results](../boards/orange-pi-zero-3w.md).
 The `bwfm` results on Pi 5 and CM5 do not validate the AIC firmware protocol.
@@ -69,7 +69,7 @@ presented as negotiated link rates. The net80211 channel ABI is unchanged.
 The production builder and decoder pass 1703 ASan/UBSan checks.
 The management-frame suite still passes 79 checks. A separate source review
 checked the request and indication layouts against the pinned vendor ABI.
-These software results do not establish VHT80 data transfer on a board.
+The physical WPA2 result below provides a separate data-transfer check.
 
 ## Software validation
 
@@ -79,10 +79,49 @@ initialization. The previous source fails the corresponding ABI, action-code
 and bounds regressions. Existing SAE, PMF and link-recovery contracts also pass.
 
 GCC16 built the complete `EMBER64` kernel, four matched modules and board DTBs
-from `ab10eef7df39b1854bc0e94195816bbf713710d2`. The portable kernel suite passes.
-Target static analysis adds no findings relative to the baseline; inherited
+from `df0fdc105b9336eda2eeb3c7dcf20be3aaab9196`. The portable kernel suite passes.
+Target static analysis adds no new functional findings; one helper has a
+new variable-scope style warning. Inherited
 findings and GCC path-complexity limits remain. This is a host build and software
-validation. It does not establish board operation, VHT80 or completed k/v.
+validation. It does not establish completed k/v or replace the hardware checks.
+
+## Physical VHT80 check
+
+An Orange Pi Zero 3W with 4 GiB RAM ran the `df0fdc105` kernel and its four
+matched modules on 2026-10-12. Its existing DTB and NPU configuration were
+preserved. The radio used the firmware revision above.
+
+Both firmware metadata and the AP confirm 802.11ac, one stream and 80 MHz
+under WPA2-CCMP. The primary frequency was 5260 MHz; the center was 5290 MHz.
+The station advertised RX/TX MCS maps `0xfffe`. The AP used a 160 MHz radio
+channel, but this station correctly negotiated 80 MHz.
+An 8 MiB file transfer passed SHA256 verification in both directions.
+The observed data path was not limited to broadcast frames.
+
+An initial 20-second `iperf3` run measured 95.5 Mbit/s from the board and
+70.2 Mbit/s to it. Both the board and the Mac peer used Wi-Fi.
+This is application throughput through two wireless links, not a PHY rate
+or a measurement against a wired peer. The earlier 2.4 GHz HT40 baseline
+measured 61.1/60.1 Mbit/s under different radio conditions.
+
+Two further 60-second TCP checks passed after authentication recovery.
+An 8 MiB file check overlapped part of the reverse load. Input errors stayed
+at zero; the output-error counter stayed at the value of 18 recorded before
+the load. Neither test added interface errors. These short checks do not
+establish long-duration reliability.
+
+SAE/H2E authentication succeeds on the same AP, but the connection then
+fails when its IGTK has a nonzero initial IPN. The kernel reports
+`nonzero initial IGTK IPN is unsupported`; the supplicant reports
+`Failed to configure IGTK`. This existing key-installation limit remains.
+The board returned to its saved WPA2 policy automatically. No AP settings
+or credentials were changed. VHT80 traffic with SAE/PMF is not accepted.
+
+The installed supplicant and CLI are version 2.11. A Neighbor Report request
+returns `FAIL`; this CLI does not include `wnm_bss_query`. The kernel also
+returns no k/v capabilities and rejects incomplete station operations.
+An AP's `k` label therefore does not establish a working host exchange.
+Complete k/v needs the remaining driver transport and a matching client build.
 
 ## Acceptance after implementation
 
