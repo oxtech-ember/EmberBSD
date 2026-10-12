@@ -308,7 +308,12 @@ on every board in the hardware catalog.
   produces NEON/scalar H.265 streams with independently verified lossless pixels.
   The [full FFmpeg 9.0.2 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/ffmpeg-runtime.md)
   now passes four video codecs, scalar AV1/VP9, MP3/Opus, Unicode metadata and
-  filter checks on CM5. Qt Multimedia playback remains unaccepted.
+  filter checks on CM5. The complete [Qt Multimedia 6.12 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/tests/qt-multimedia/README.md)
+  also passes software playback through the installed FFmpeg plugin: exact
+  frames, end of media, process restart and failure controls. All 111 loaded
+  package-library hashes match the common sysroot. Quick3D's complete package
+  and native asset generators also pass their build checks; target 3D scenes,
+  physical media output and full Plasma remain unaccepted.
   [PulseAudio 17.0 and its TDB/libdaemon dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/pulseaudio.md)
   now cross-package with bounded installed CM5 checks. Locale and caller-buffer
   fixes restore client startup; private null-sink playback/capture preserves
