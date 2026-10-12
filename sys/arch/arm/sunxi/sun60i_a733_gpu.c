@@ -979,6 +979,12 @@ out:
 	return error;
 }
 
+static uint32_t
+a733_gpu_fwcompute_file_role_index(const struct a733_gpu_fwcompute_file *,
+    uint16_t);
+
+/* Gate shared by the heap, VM, and kick stages after stage 18. */
+
 /*
  * Shared loader for the later compute stages: read the packed file,
  * verify its payload digest and the pinned firmware profile, serialize
