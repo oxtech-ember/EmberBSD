@@ -2,7 +2,7 @@
 
 The stock fan connector uses A733 PWM0 channel 5 on PD5.
 EmberBSD provides a native PWM controller and temperature-based `pwmfan` control.
-The controller and policy have executable software checks.
+The controller and policy passed an EMBER64 cross-build and executable software checks.
 Physical speed control and the fan's lowest reliable starting duty remain unverified.
 
 ## Hardware interface and provenance
@@ -118,3 +118,15 @@ Physical acceptance must cover stopped starts, each useful duty, sustained load,
 hysteresis, reboot persistence and storage/network regression.
 The separate [power-off result](../boards/orange-pi-zero-3w.md#hardware-notes)
 does not establish speed control.
+
+## Verified software scope
+
+Revision `6df2097ae6fce66e7c1439919bb0443ccc0fe7b1` built with GCC 16.2.0.
+The official cross-build produced the kernel, four matched modules and A733 DTBs.
+Portable kernel contracts passed; the native-only suite remains pending.
+ASan/UBSan passed 253 PWM, 351 fan, 71 thermal and 18,261 clock checks.
+The checks execute production functions with simulated providers and registers.
+GCC `-fanalyzer` found no issue in the five affected driver translation units.
+Cppcheck found no error or warning in those units; style findings remain recorded.
+Clang retained earlier dead-store diagnostics from `sys/sys/bitops.h`.
+These results do not establish physical fan operation.
