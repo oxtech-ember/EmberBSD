@@ -28,6 +28,8 @@ typedef struct { bus_addr_t ds_addr; bus_size_t ds_len; } bus_dma_segment_t;
 #include "sun60i_a733_gpu_fwstart.h"
 #include "sun60i_a733_gpu_fwboot.h"
 #include "sun60i_a733_gpu_fwprobe.h"
+#include "sun60i_a733_gpu_fwcompute.h"
+#include "sun60i_a733_gpu_fwcompute_file.h"
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
@@ -74,6 +76,14 @@ static struct device root_device, soc_device, gpu_device;
 
 static unsigned getticks(void) { return 0; }
 static int aprint_get_error_count(void) { return 0; }
+/* Stage-18 digest only runs on hardware; the fixture compiles, never digests. */
+#define SHA256_DIGEST_LENGTH 32
+typedef struct { unsigned unused; } SHA256_CTX;
+static int SHA256_Init(SHA256_CTX *c) { (void)c; return 0; }
+static int SHA256_Update(SHA256_CTX *c, const uint8_t *data, size_t len)
+{ (void)c; (void)data; (void)len; return 0; }
+static int SHA256_Final(uint8_t digest[32], SHA256_CTX *c)
+{ (void)c; memset(digest, 0, 32); return 0; }
 static void *kmem_alloc(size_t size, int flags) { return calloc(1, size); }
 static void kmem_free(void *ptr, size_t size) { free(ptr); }
 static void panic(const char *msg) { assert(!msg); }

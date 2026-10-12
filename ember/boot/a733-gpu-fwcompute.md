@@ -11,7 +11,43 @@ The API is in
 [`sun60i_a733_gpu_fwcompute.h`](../../sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.h).
 It requires a 64-bit little-endian host.
 The kernel source list and portable contract runner include this helper.
-A diagnostic stage does not call it yet. This change does not establish a full kernel-build or hardware milestone.
+Diagnostic stage 18 loads a packed compiler image and calls this helper on target;
+see the stage section below.
+
+## Stage 18: packed compiler image on target
+
+Stage 18 (`hw.sun60igpuid0.stage=18`) is the first serializer consumer.
+It runs only on the CPU after a fully successful stage 17.
+The file format lives in
+[`sun60i_a733_gpu_fwcompute_file.h`](../../sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.h):
+one 104-byte little-endian header with magic `0x314d4337`, version 1,
+the exact BVNC, four-byte-aligned payload spans for the USC, PDS, and CDM-stream
+bytes and the 56-byte static state, their GPU addresses, the context-state
+address, priority, and identifiers. The parser validates every bound,
+alignment, and overlap and keeps the total file at most 256 KiB.
+The production parser, span derivation, packer, and digest cross-check run in
+[`a733-gpu-fwfile-contract.sh`](../tools/a733-gpu-fwfile-contract.sh).
+
+The typed 96-byte command is kernel-owned, as in the upstream submission:
+the stage fills only the CDM control-stream base and the context-state base
+address from the file header and leaves every other field zero.
+The six firmware object spans are declared in the fixed window
+`0xc0800000..0xc0808138`, which lies between the firmware code heap end
+(`0xc0000000` plus the parsed code allocation, 102400 bytes in the accepted
+image) and the fixed config pages at `0xc0fd0000`.
+The stage verifies at runtime that this window stays clear of the live
+code and work mappings.
+Nothing in that window is allocated by the firmware heap, backed, or
+page-table mapped: the serialized image is a CPU artifact only.
+
+The stage digests the complete 33 KiB serialized image with the in-kernel
+SHA-256 and reports it through `hw.sun60igpuid0.compute_state`.
+The expected digest comes from the packer
+[`a733-gpu-compute-firmware`](../tools/a733-gpu-compute-firmware.c),
+which packs the same artifacts, runs the same serializer with the same
+spans and command fields, and prints both the file and image digests.
+The packed file installs as `a733-compute.bin` in the `powervr` firmware
+directory. No KCCB publication, DMA mapping, or GPU execution happens.
 
 ## Input and ownership contract
 
