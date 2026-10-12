@@ -34,6 +34,7 @@ start, received, sent and rejected counters without displaying credentials.
 This work does not add 802.11r fast transition, 802.11v BSS transition
 management, 802.11ac/ax or host AP mode. The [Zero 3W board page](../boards/orange-pi-zero-3w.md)
 records actual physical results separately.
+See the [VHT80 and roaming status](aicwf-vht.md) for the `11ac/k/v 1x1 80 MHz` target.
 
 ## Band steering and acceptance
 
@@ -148,7 +149,10 @@ logging as an unexpected message.
 Recovery interrupts traffic for the rescan duration (observed around ten
 seconds); it does not require userland. The watchdog never fires while the
 driver is not associated, and a single in-flight work item bounds the
-teardown. Run `sh ember/tests/aicwf-alive.sh` for the decision math,
+teardown. The queued recovery work is not yet bound to the association lifetime.
+A pending reassociation can therefore race with recovery from the previous link.
+This earlier limitation needs a separate queue-lifetime regression and fix.
+Run `sh ember/tests/aicwf-alive.sh` for the decision math,
 miss accounting and single-flight checks.
 
 ## 802.11r groundwork
@@ -169,19 +173,31 @@ The vendor firmware advertises SM_FT_AUTH_IND/RSP in its message enum but
 this vendor drop carries no handler or struct for them, so host-side
 control of the exchange is the planned route.
 
-## Host-managed 802.11k/v exchange
+## Host-managed 802.11k/v boundary
 
-The driver implements the shared `IEEE80211_IOC_STA_MGMT` station ABI that
-wpa_supplicant's BSD backend drives for bwfm: ENABLE/DISABLE/GET/TX with a
-per-association generation. When enabled, received WNM BSS Transition
-requests and RRM Neighbor Report bodies are delivered to the supplicant as
-RTM_IEEE80211_STA_RX route messages carrying the generation, peer BSSID and
-channel; the in-driver BTM roam keeps handling them when the exchange is
-disabled. TX builds the action frame on the firmware management descriptor
-with PMF protection when required - the same transport SA Query uses - and
-completion is the firmware accepting the frame; over-the-air
-acknowledgement is not visible to the driver. ASSOC_IES and firmware
-acknowledged TX remain open. Run `sh ember/tests/aicwf-sta.sh`.
+The shared `IEEE80211_IOC_STA_MGMT` GET returns the station MAC in its data
+field and the current peer separately. Its generation follows the association
+lifetime used by SAE and keys. The driver reports no BTM or RRM capability.
+ENABLE, TX and scan operations return `EOPNOTSUPP` until the complete path exists.
+
+The incomplete implementation used incorrect WNM/RRM action codes and treated
+queue submission as a transmit acknowledgement. Its receive copy also lacked
+a bound for the fixed-size event buffer. The corrected path does not
+report that false acknowledgement or disconnect merely because a BTM request
+arrives. Link-loss recovery and validated AP disconnects remain separate paths.
+
+Management reception checks the current peer, interface, frame bounds and
+protection state. Protected frames also require the current pairwise key,
+successful CCMP status and a fresh packet number. Unprotected reasons 6/7
+still enter the existing SA Query path. These source checks do not replace
+forged-frame testing over the air.
+
+Complete k/v support needs actual association IEs, connected scan completion,
+cookie-bound firmware TX status and supplicant integration. See the
+[VHT80 and roaming acceptance](aicwf-vht.md#acceptance-after-implementation).
+Run `sh ember/tests/aicwf-sta.sh` for the production management dispatcher and
+the actual BSD client initialization contract. The test also checks that
+protected SA Query delivery survives the management dispatch changes.
 
 ## Protocol provenance
 

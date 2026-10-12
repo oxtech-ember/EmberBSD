@@ -420,9 +420,6 @@ struct aicwf_softc {
 	}			sc_ft_bss[4];
 	/* Host-managed 802.11k/v exchange (IEEE80211_IOC_STA_MGMT). */
 	bool			sc_sta_enabled;
-	bool			sc_sta_tx_pending;
-	uint32_t		sc_sta_generation;
-	uint32_t		sc_sta_cookie;
 	volatile u_int		sc_alive_rx;	/* ticks of last RX frame */
 	u_int			sc_alive_misses;
 	bool			sc_alive_queued;
@@ -1756,7 +1753,6 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 		sc->sc_ap = ind[10];
 		sc->sc_qos = ind[12] != 0;
 		sc->sc_connected = true;
-		sc->sc_sta_generation++;
 		sc->sc_alive_rx = ticks;
 		sc->sc_alive_misses = 0;
 		for (u_int k = 0; k < __arraycount(sc->sc_ft_bss); k++) {
@@ -1789,23 +1785,26 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 	splx(s);
 }
 
-/* The firmware lost the network or was told to leave it. */
-/* Which action bodies the host-managed exchange accepts. */
+/* Action codes and minimum bodies from IEEE 802.11 RRM and WNM. */
 static bool
 aicwf_sta_action_valid(const uint8_t *body, size_t len, bool to_ap)
 {
 
-	if (len < 2)
+	if (len < 3 || len > IEEE80211_STA_MAX_BODY)
 		return false;
-	if (body[0] == 0x0a) {		/* WNM */
+	if (body[0] == 10) {		/* WNM */
 		if (to_ap)
-			return len >= 4 && (body[1] == 6 /* BTM query */ ||
-			    body[1] == 7 /* BTM response */);
-		return len >= 7 && body[1] == 5; /* BTM request */
+			return (body[1] == 6 && len >= 4) || /* BTM query */
+			    (body[1] == 8 && len >= 5 && /* BTM response */
+			    (body[3] != 0 || len >= 11));
+		return body[1] == 7 && len >= 7; /* BTM request */
 	}
-	if (body[0] == 0x05)		/* RRM */
-		return to_ap ? body[1] == 5 /* neighbor report request */ :
-		    body[1] == 6;	/* neighbor report response */
+	if (body[0] == 5) {		/* RRM */
+		if (to_ap)
+			return body[1] == 4 || body[1] == 1; /* NR request, RM report */
+		return body[1] == 5 || /* Neighbor Report response */
+		    (body[1] == 0 && len >= 5); /* measurement request */
+	}
 	return false;
 }
 
@@ -1813,85 +1812,129 @@ static int
 aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 {
 	struct aicwf_softc * const sc = ic->ic_ifp->if_softc;
-	struct ieee80211_node *ni;
-	int error = 0;
+	const struct ieee80211_node *ni;
 
-	if (req->version != IEEE80211_STA_VERSION)
+	if (req->version != IEEE80211_STA_VERSION || req->reserved != 0)
 		return EINVAL;
 	switch (req->op) {
 	case IEEE80211_STA_GET:
+		mutex_enter(&sc->sc_lock);
 		req->flags = 0;
-		req->generation = sc->sc_sta_generation;
-		IEEE80211_ADDR_COPY(req->bssid, ic->ic_myaddr);
-		req->len = 0;
+		/* The same lifetime retires SAE, keys and station events. */
+		req->generation = (uint32_t)sc->sc_sae_epoch;
+		memset(req->bssid, 0, sizeof(req->bssid));
+		IEEE80211_ADDR_COPY(req->data, ic->ic_myaddr);
+		req->len = IEEE80211_ADDR_LEN;
 		req->freq = 0;
-		if (sc->sc_sta_enabled)
-			req->flags |= IEEE80211_STA_CAP_BTM |
-			    IEEE80211_STA_CAP_RRM;
 		if (sc->sc_connected && ic->ic_state == IEEE80211_S_RUN) {
 			req->flags |= IEEE80211_STA_ASSOCIATED;
 			ni = ic->ic_bss;
 			req->freq = ni->ni_chan->ic_freq;
 			IEEE80211_ADDR_COPY(req->bssid, ni->ni_bssid);
 		}
-		if (sc->sc_sta_tx_pending)
-			req->flags |= IEEE80211_STA_TX_ACK;
-		return 0;
-	case IEEE80211_STA_ENABLE:
-		sc->sc_sta_enabled = true;
+		mutex_exit(&sc->sc_lock);
 		return 0;
 	case IEEE80211_STA_DISABLE:
+		mutex_enter(&sc->sc_lock);
 		sc->sc_sta_enabled = false;
-		sc->sc_sta_tx_pending = false;
+		mutex_exit(&sc->sc_lock);
 		return 0;
+	case IEEE80211_STA_ENABLE:
 	case IEEE80211_STA_TX:
-		break;
+	case IEEE80211_STA_CANCEL_TX:
+	case IEEE80211_STA_SCAN:
+	case IEEE80211_STA_CANCEL_SCAN:
+		/*
+		 * Do not advertise k/v or accept partial exchanges. The shared
+		 * client needs actual association IEs, connected scan completion
+		 * and cookie-bound firmware TX status. An SDIO write is no ACK.
+		 */
+		return EOPNOTSUPP;
 	default:
 		return EINVAL;
 	}
+}
 
-	/* TX: an action body to the current peer on the current channel. */
-	if (!sc->sc_sta_enabled || !sc->sc_connected ||
+/* Validate one unicast management body while the association lock is held. */
+static const uint8_t *
+aicwf_mgmt_body(struct aicwf_softc *sc, const uint8_t *frame, size_t len,
+    uint32_t status, uint32_t flags, size_t *body_len, uint64_t *pn)
+{
+	struct ieee80211com * const ic = &sc->sc_ic;
+	const uint8_t *peer = ic->ic_bss->ni_bssid;
+	const bool pmf = sc->sc_sae_enabled;
+	size_t hdr = 24;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+	if (!sc->sc_if_attached || !sc->sc_connected ||
 	    ic->ic_state != IEEE80211_S_RUN ||
-	    req->len < 2 || req->len > IEEE80211_STA_MAX_BODY ||
-	    !aicwf_sta_action_valid(req->data, req->len, true) ||
-	    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid))
-		return EINVAL;
-
-	uint8_t frame[IEEE80211_STA_MAX_BODY + 24];
-
-	memset(frame, 0, sizeof(frame));
-	frame[0] = 0xd0;		/* Action */
-	IEEE80211_ADDR_COPY(frame + 4, ic->ic_bss->ni_bssid);
-	IEEE80211_ADDR_COPY(frame + 10, ic->ic_myaddr);
-	IEEE80211_ADDR_COPY(frame + 16, ic->ic_bss->ni_bssid);
-	memcpy(frame + 24, req->data, req->len);
-	error = aicwf_sae_tx(sc, frame, 24 + req->len, sc->sc_sae_epoch, true);
-	/* The firmware accepts the frame into its queue; no over-the-air
-	 * acknowledgement reaches this driver, so completion is the write. */
-	if (error == 0) {
-		sc->sc_sta_tx_pending = true;
-		sc->sc_sta_cookie = req->cookie;
+	    ((flags >> 8) & 0xff) != sc->sc_vif ||
+	    !aicwf_pmf_header_valid(frame, len, ic->ic_myaddr, peer, peer,
+	    pmf ? 0x40 : 0) || (status & 0x7e0) != 0 ||
+	    (status & 0x6000) != 0x6000)
+		return NULL;
+	*pn = sc->sc_pmf_rx_pn;
+	if (pmf) {
+		if (!sc->sc_ptk_valid || !sc->sc_sae_authenticated ||
+		    !IEEE80211_ADDR_EQ(peer, sc->sc_sae_bssid) || len < 32 ||
+		    (status & 0x02000000) == 0 ||
+		    ((status >> 2) & 7) != 3 ||
+		    sc->sc_hwkey[AICWF_KEY_SLOT_PAIRWISE] == AICWF_HWKEY_NONE ||
+		    ((status >> 15) & 0x3ff) !=
+		    sc->sc_hwkey[AICWF_KEY_SLOT_PAIRWISE] ||
+		    frame[26] != 0 || frame[27] != 0x20)
+			return NULL;
+		*pn = (uint64_t)frame[24] | (uint64_t)frame[25] << 8 |
+		    (uint64_t)frame[28] << 16 | (uint64_t)frame[29] << 24 |
+		    (uint64_t)frame[30] << 32 | (uint64_t)frame[31] << 40;
+		if (*pn <= sc->sc_pmf_rx_pn)
+			return NULL;
+		/* The firmware strips the MIC but retains the CCMP header. */
+		hdr += 8;
+	} else if (((status >> 2) & 7) != 0) {
+		return NULL;
 	}
-	return error;
+	*body_len = len - hdr;
+	return frame + hdr;
 }
 
 static void
-aicwf_sta_rx_event(struct aicwf_softc *sc, const uint8_t *body, size_t len)
+aicwf_sta_rx_event(struct aicwf_softc *sc, const uint8_t *frame, size_t len,
+    uint32_t status, uint32_t flags)
 {
 	struct ieee80211com * const ic = &sc->sc_ic;
 	struct ieee80211req_sta_mgmt *ev;
+	const uint64_t epoch = sc->sc_sae_epoch;
+	const uint8_t *body;
+	size_t body_len;
+	uint64_t pn;
 
-	ev = kmem_zalloc(sizeof(*ev), KM_SLEEP);
+	if (len < 27 || len > 32 + IEEE80211_STA_MAX_BODY || frame[0] != 0xd0)
+		return;
+	ev = kmem_zalloc(sizeof(*ev), KM_NOSLEEP);
+	if (ev == NULL)
+		return;
+	mutex_enter(&sc->sc_lock);
+	if (!sc->sc_sta_enabled || epoch != sc->sc_sae_epoch)
+		goto drop;
+	body = aicwf_mgmt_body(sc, frame, len, status, flags, &body_len, &pn);
+	if (body == NULL || !aicwf_sta_action_valid(body, body_len, false))
+		goto drop;
+	sc->sc_pmf_rx_pn = pn;
 	ev->version = IEEE80211_STA_VERSION;
 	ev->op = IEEE80211_STA_GET;
-	ev->generation = sc->sc_sta_generation;
+	ev->generation = (uint32_t)epoch;
 	ev->freq = ic->ic_bss->ni_chan->ic_freq;
-	ev->len = len;
+	ev->len = body_len;
 	IEEE80211_ADDR_COPY(ev->bssid, ic->ic_bss->ni_bssid);
-	memcpy(ev->data, body, len);
+	memcpy(ev->data, body, body_len);
+	mutex_exit(&sc->sc_lock);
 	rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_RX, ev,
-	    offsetof(struct ieee80211req_sta_mgmt, data) + len);
+	    offsetof(struct ieee80211req_sta_mgmt, data) + body_len);
+	kmem_free(ev, sizeof(*ev));
+	return;
+drop:
+	mutex_exit(&sc->sc_lock);
 	kmem_free(ev, sizeof(*ev));
 }
 
@@ -1979,7 +2022,6 @@ aicwf_disconnect_ind(struct aicwf_softc *sc)
 		return;
 	aicwf_sae_advance(sc);
 	sc->sc_connected = false;
-	sc->sc_sta_generation++;
 	sc->sc_sae_pending = false;
 	sc->sc_sae_authenticated = false;
 	memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
@@ -2633,6 +2675,41 @@ drop:
 	kmem_free(req, sizeof(*req));
 }
 
+/* Keep BTM policy in the supplicant; only valid disconnects retire the link. */
+static void
+aicwf_mgmt_rx(struct aicwf_softc *sc, const uint8_t *frame, size_t len,
+    uint32_t status, uint32_t flags)
+{
+	const uint8_t *body;
+	size_t body_len;
+	uint64_t pn;
+	bool disconnected = false;
+
+	if (len < 24)
+		return;
+	if (frame[0] == 0xd0) {
+		aicwf_sta_rx_event(sc, frame, len, status, flags);
+		aicwf_pmf_rx(sc, frame, len, status, flags);
+		return;
+	}
+	if (frame[0] != 0xc0 && frame[0] != 0xa0)
+		return;
+	/* Unprotected reasons 6/7 still start the validated SA Query path. */
+	if ((frame[1] & 0x40) == 0 && sc->sc_sae_enabled) {
+		aicwf_pmf_rx(sc, frame, len, status, flags);
+		return;
+	}
+	mutex_enter(&sc->sc_lock);
+	body = aicwf_mgmt_body(sc, frame, len, status, flags, &body_len, &pn);
+	if (body != NULL && body_len >= 2) {
+		sc->sc_pmf_rx_pn = pn;
+		disconnected = true;
+	}
+	mutex_exit(&sc->sc_lock);
+	if (disconnected)
+		aicwf_alive_lost(sc);
+}
+
 static void
 aicwf_rx_data(
 struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
@@ -2670,44 +2747,7 @@ struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 	}
 	if (mpdu_len >= 24 &&
 	    (wh[0] == 0xc0 || wh[0] == 0xa0 || wh[0] == 0xd0)) {
-		/*
-		 * A mesh controller first asks the station to move (WNM BSS
-		 * Transition Management, category 0x0a action 7) and then
-		 * deauthenticates it.  Only act on frames that pass the
-		 * association's management protection: with required PMF an
-		 * unprotected deauthentication or transition request is the
-		 * classic forgery PMF exists to drop, so those keep taking
-		 * the validated PMF/SA-Query path and the RX-liveness
-		 * watchdog ends a genuinely dead link.  A frame the firmware
-		 * decrypted is authentic; so is any frame on an association
-		 * without PMF.
-		 */
-		const bool pmf = sc->sc_sae_enabled;
-		const bool authentic =
-		    !pmf || __SHIFTOUT(status, AICWF_RX_DECR) != 0;
-		if (wh[0] == 0xd0 && sc->sc_sta_enabled &&
-		    sc->sc_connected && sc->sc_ic.ic_state == IEEE80211_S_RUN &&
-		    mpdu_len >= 26 + 2 &&
-		    aicwf_sta_action_valid(wh + 24, mpdu_len - 24, false)) {
-			aicwf_sta_rx_event(sc, wh + 24, mpdu_len - 24);
-			return;
-		}
-		if (wh[0] == 0xd0 && mpdu_len >= 26 &&
-		    wh[24] == 0x0a && wh[25] == 7 && authentic) {
-			device_printf(sc->sc_dev,
-			    "BSS transition request; roaming\n");
-			aicwf_alive_lost(sc);
-			return;
-		}
-		if ((wh[0] == 0xc0 || wh[0] == 0xa0) && authentic) {
-			device_printf(sc->sc_dev,
-			    "%s from the AP, reason %u; reconnecting\n",
-			    wh[0] == 0xc0 ? "deauthentication" : "disassociation",
-			    mpdu_len >= 26 ? le16dec(wh + 24) : 0);
-			aicwf_alive_lost(sc);
-			return;
-		}
-		aicwf_pmf_rx(sc, wh, mpdu_len, status, flags);
+		aicwf_mgmt_rx(sc, wh, mpdu_len, status, flags);
 		return;
 	}
 	/* Beacons and data frames without a body come up too. */

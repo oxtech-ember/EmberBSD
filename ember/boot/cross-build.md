@@ -79,10 +79,11 @@ application mode retains the target libc/header/runtime requirements.
 
 ## Acceptance is separate from host selection
 
-The wrapper retains the full fourteen-contract suite. On a foreign host it
-runs the ten portable contracts and explicitly records the remaining native
-contracts as pending. Copy the same pinned source export to an EmberBSD
-machine and run all fourteen there before deploying the artifacts:
+The wrapper runs the portable contracts listed in `ember/tools/kernel-contracts.sh`.
+They include the AIC station and management-frame regression. On a foreign
+host, four additional Bluetooth/audio contracts remain pending. Copy the
+same pinned source export to an EmberBSD machine and run the complete suite
+before deploying the artifacts:
 
 ```sh
 NETBSD2_PYTHON=/path/to/python3 sh ember/tools/kernel-contracts.sh /absolute/source all
