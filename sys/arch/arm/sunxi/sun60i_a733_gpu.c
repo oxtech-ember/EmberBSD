@@ -927,8 +927,7 @@ sun60i_gpu_stage_fwcompute(struct sun60i_gpu_softc *sc)
 	    file.static_offset, A733_GPU_FWCOMPUTE_STATE_BYTES);
 	sun60i_a733_gpu_fwcompute_file_relocate(
 	    (uint8_t *)&inputs.static_state, UINT64_C(0x10000000));
-	sun60i_a733_gpu_fwcompute_file_relocate_stream((uint32_t *)(uintptr_t)inputs.program[2].bytes,
-	    role[2]->bytes / 4, UINT64_C(0x10000000));
+
 	/* The kernel owns the typed command, as in the upstream submission. */
 	inputs.command.regs.cdm_ctrl_stream_base =
 	    role[2]->va;
@@ -1073,8 +1072,7 @@ sun60i_gpu_compute_load(struct sun60i_gpu_softc *sc,
 	    file->static_offset, A733_GPU_FWCOMPUTE_STATE_BYTES);
 	sun60i_a733_gpu_fwcompute_file_relocate(
 	    (uint8_t *)&inputs.static_state, UINT64_C(0x10000000));
-	sun60i_a733_gpu_fwcompute_file_relocate_stream((uint32_t *)(uintptr_t)inputs.program[2].bytes,
-	    role[2]->bytes / 4, UINT64_C(0x10000000));
+
 	inputs.command.regs.cdm_ctrl_stream_base = role[2]->va;
 	inputs.command.regs.cdm_context_state_base_addr =
 	    file->context_state_va;
