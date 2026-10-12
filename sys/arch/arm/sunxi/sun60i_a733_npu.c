@@ -43,7 +43,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/device.h>
 #include <sys/conf.h>
 #include <sys/fcntl.h>
-#include <sys/filedesc.h>
 #include <sys/kauth.h>
 #include <sys/mutex.h>
 #include <sys/sysctl.h>
@@ -140,6 +139,7 @@ struct sun60i_npu_softc {
 };
 
 static struct sun60i_npu_softc *sun60i_npu_instance;
+static devmajor_t sun60i_npu_cmajor = -1;
 
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun60i-a733-npu" },
@@ -420,12 +420,17 @@ sun60i_npu_vip_command(struct sun60i_npu_softc *sc, uint32_t command,
 	}
 }
 
+/*
+ * The vendor picked a plain number (30000) as the ioctl command; its
+ * NetBSD decode has a zero data size, so the framework hands the raw
+ * user pointer through instead of copying. Copy the envelope explicitly.
+ */
 static int
 sun60i_npu_vip_ioctl(dev_t dev, u_long cmd, void *vdata, int flags,
     struct lwp *l)
 {
 	struct sun60i_npu_softc *sc = sun60i_npu_instance;
-	struct vip_drv_envelope *env = vdata;
+	struct vip_drv_envelope env_s, *env = &env_s;
 	uint8_t buf[VIP_DRV_BUF_MAX];
 	void *data;
 	uint32_t bytes;
@@ -436,6 +441,8 @@ sun60i_npu_vip_ioctl(dev_t dev, u_long cmd, void *vdata, int flags,
 		return ENOTTY;
 	if ((flags & FWRITE) == 0)
 		return EACCES;
+	if (copyin(vdata, env, sizeof(*env)) != 0)
+		return EFAULT;
 	if (env->command > VIP_DRV_CMD_MAX || env->bytes > VIP_DRV_BUF_MAX)
 		return EINVAL;
 	bytes = env->bytes;
@@ -449,6 +456,8 @@ sun60i_npu_vip_ioctl(dev_t dev, u_long cmd, void *vdata, int flags,
 		if (copyout(buf, (void *)(uintptr_t)env->buffer, bytes) != 0)
 			return EFAULT;
 	}
+	if (copyout(env, vdata, sizeof(*env)) != 0)
+		return EFAULT;
 	return 0;
 }
 
@@ -570,15 +579,22 @@ sun60i_npu_attach(device_t parent, device_t self, void *aux)
 	    addr != A733_NPU_BASE || size < A733_NPU_ID_SIZE)
 		aprint_error_dev(self, "unexpected register window\n");
 	sun60i_npu_sysctl_setup(sc);
-	if (devsw_attach("vipcore", NULL, NULL, &sun60i_npu_cdevsw,
-	    &sc->sc_cmajor) != 0) {
-		aprint_error_dev(self, "cannot attach vipcore devsw\n");
-	} else {
+	if (sun60i_npu_cmajor == -1) {
+		devmajor_t bmajor = -1, cmajor = -1;
+
+		if (devsw_attach("vipcore", NULL, &bmajor,
+		    &sun60i_npu_cdevsw, &cmajor) != 0) {
+			aprint_error_dev(self,
+			    "cannot attach vipcore devsw\n");
+		} else {
+			sun60i_npu_cmajor = cmajor;
+			sc->sc_cdev_attached = true;
+		}
+	} else
 		sc->sc_cdev_attached = true;
-		aprint_normal(": A733 NPU, /dev/vipcore major %d\n",
-		    sc->sc_cmajor);
-	}
+	sc->sc_cmajor = sun60i_npu_cmajor;
 	aprint_naive("\n");
+	aprint_normal(": A733 NPU, /dev/vipcore major %d\n", sc->sc_cmajor);
 }
 
 CFATTACH_DECL_NEW(sun60i_a733_npu, sizeof(struct sun60i_npu_softc),
