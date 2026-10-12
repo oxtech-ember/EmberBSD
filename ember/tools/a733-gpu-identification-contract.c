@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <sys/queue.h>
 #include <sys/types.h>
+#include "powervr/pvr_rogue_fwif.h"
 #include "sun60i_a733_gpu_fwinfo.h"
 
 typedef unsigned int u_int;

@@ -232,3 +232,24 @@ sysctl -w hw.sun60igpuid0.clock_source=1
 sysctl -w hw.sun60igpuid0.stage=18   # after stages 1..17
 sysctl hw.sun60igpuid0.result hw.sun60igpuid0.compute_state
 ```
+
+## Version-2 packed file and profile guard
+
+The packed file now carries the complete nine-resource r2 manifest:
+header magic `0x324d4337`, version 2, the BVNC, priority and identifiers,
+the context-state address, a 32-byte payload digest, and one 24-byte
+entry per resource (virtual address, payload span, role, read-only and
+SLC-bypass flags). The payload holds the whole general, PDS and USC
+artifacts plus the 56-byte static state. Version 1 carried only three
+program spans; the accepted 2026-10-12 result above used it, and version
+2 supersedes it. The parser requires each of the nine roles exactly once,
+four-kilobyte-aligned page-disjoint addresses, and nonoverlapping spans.
+The kernel stage verifies the payload digest with the in-kernel SHA-256
+and rejects the file with `EAUTH` on any mismatch. It also pins the
+firmware profile: BVNC equality, feature masks `0x92d9ff57fdbf7cdb` and
+`0x1f`, and BRN mask `0x201` from the parsed firmware metadata must hold
+before any compiler byte is used.
+
+The packer emits the version-2 file and additionally runs the portable
+compute VM encoder over the resource table (three windows, three
+directories, seventeen leaves) before printing both digests.

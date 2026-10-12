@@ -433,8 +433,7 @@ fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
 		error = fwprobe_chain_valid(previous, slot);
 		if (error != 0)
 			return error;
-	} else if (slot != 0)
-		return EINVAL;
+	}
 	if (slot >= A733_GPU_FWINIT_KCCB_COUNT)
 		return EINVAL;
 	memset(out, 0, sizeof(*out));

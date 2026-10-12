@@ -24,12 +24,14 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     -o "$work/fwfile"
 "$work/fwfile" self
 
-# Build the packer and run it end to end on synthetic compiler artifacts.
+# Build the v2 packer and run it end to end on synthetic compiler artifacts.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -I"$src/sys/arch/arm/sunxi" \
     -I"$tools" \
     "$tools/a733-gpu-compute-firmware.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_vm.c" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mmu.c" \
     -o "$work/packer"
 if "$work/packer" "$work" >/dev/null 2>&1; then
     echo 'packer accepted wrong argument count' >&2
@@ -37,14 +39,14 @@ if "$work/packer" "$work" >/dev/null 2>&1; then
 fi
 "$work/fwfile" artifacts "$work"
 "$work/packer" "$work/a733-compute.bin" 0x00240038006800b7 \
-    USC="$work/usc.bin:0:1744:0xe000000000" \
-    PDS="$work/pds.bin:40960:720:0xda0000a000" \
-    STREAM="$work/general.bin:16384:116:0x8000004000" \
-    STATE="$work/static-state.bin" CTX_VA=0xda00000000 \
-    > "$work/packer.out"
+    "$work/general.bin" "$work/pds.bin" "$work/usc.bin" \
+    "$work/static-state.bin" 0xda00000000 > "$work/packer.out"
 image=$(sed -n 's/^image_sha256=\([0-9a-f]*\) used=184$/\1/p' "$work/packer.out")
-file=$(sed -n 's/^file_sha256=\([0-9a-f]*\) bytes=2740$/\1/p' "$work/packer.out")
-[ -n "$image" ] && [ -n "$file" ] || { echo 'packer output incomplete' >&2; exit 1; }
+file=$(sed -n 's/^file_sha256=\([0-9a-f]*\) bytes=60292$/\1/p' "$work/packer.out")
+vm=$(sed -n 's/^vm_check=windows=3 directories=3 leaves=17$/ok/p' "$work/packer.out")
+[ -n "$image" ] && [ -n "$file" ] && [ "$vm" = ok ] || {
+    echo 'packer output incomplete' >&2; exit 1;
+}
 [ "$(sha256_file "$work/a733-compute.bin")" = "$file" ] || {
     echo 'file digest mismatch' >&2; exit 1;
 }

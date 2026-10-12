@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* Packed compute-image firmware file. See ember/boot/a733-gpu-fwcompute.md. */
+/* Packed compute-image firmware file, version 2. See a733-gpu-fwcompute.md. */
 #ifndef _SUN60I_A733_GPU_FWCOMPUTE_FILE_H
 #define _SUN60I_A733_GPU_FWCOMPUTE_FILE_H
 
@@ -11,67 +11,91 @@
 
 #include "sun60i_a733_gpu_fwcompute.h"
 
-/* "7CM1" in native little-endian byte order. */
-#define A733_GPU_FWCOMPUTE_FILE_MAGIC	UINT32_C(0x314d4337)
-#define A733_GPU_FWCOMPUTE_FILE_VERSION	1
-#define A733_GPU_FWCOMPUTE_FILE_HEADER	UINT32_C(104)
-#define A733_GPU_FWCOMPUTE_FILE_MAX	(256 * 1024)
+/* "7CM2" in native little-endian byte order. */
+#define A733_GPU_FWCOMPUTE_FILE_MAGIC	UINT32_C(0x324d4337)
+#define A733_GPU_FWCOMPUTE_FILE_VERSION	2
+#define A733_GPU_FWCOMPUTE_FILE_PREFIX	UINT32_C(96)
+#define A733_GPU_FWCOMPUTE_ENTRY	UINT32_C(24)
+#define A733_GPU_FWCOMPUTE_FILE_MAX	(96 * 1024)
 #define A733_GPU_FWCOMPUTE_STATE_BYTES	UINT32_C(56)
+#define A733_GPU_FWCOMPUTE_RESOURCES	9
+
+#define A733_GPU_FWCOMPUTE_FLAG_RO	UINT16_C(0x0001)
+#define A733_GPU_FWCOMPUTE_FLAG_BYPASS	UINT16_C(0x0002)
+
+/* Exactly one resource of each role must be present. */
+enum a733_gpu_fwcompute_role {
+	A733_GPU_FWCOMPUTE_SCRATCH = 0,
+	A733_GPU_FWCOMPUTE_RESUME,
+	A733_GPU_FWCOMPUTE_IDFWDF_TEXTURE,
+	A733_GPU_FWCOMPUTE_IDFWDF_SHAREDS,
+	A733_GPU_FWCOMPUTE_CDM_STREAM,
+	A733_GPU_FWCOMPUTE_CTX_STATE_A,
+	A733_GPU_FWCOMPUTE_CTX_STATE_B,
+	A733_GPU_FWCOMPUTE_PDS_PROGRAMS,
+	A733_GPU_FWCOMPUTE_USC_PROGRAMS
+};
 
 /*
- * Declared firmware-window placement for CPU-only serialization. The six
+ * Declared firmware-window placement for the CPU-side objects. The six
  * objects sit between the firmware code heap end and the fixed config
- * pages. Nothing backs or maps this window yet; publication needs a real
- * firmware-heap and page-table stage. Keep both producers identical.
+ * pages. Nothing backs or maps this window until the heap stage runs.
  */
 #define A733_GPU_FWCOMPUTE_SPAN_BASE	UINT32_C(0xc0800000)
 /* Six eight-aligned objects: 232 + 32 + 32768 + 4 + 4 + 32, padded. */
 #define A733_GPU_FWCOMPUTE_SPAN_BYTES	UINT32_C(33080)
 
-/* Wire layout, little-endian, no implicit padding. */
+/* Wire layouts, little-endian, no implicit padding. */
 struct a733_gpu_fwcompute_file_header {
 	uint32_t magic;
 	uint32_t version;
 	uint64_t bvnc;
 	uint32_t payload_bytes;
 	uint32_t header_bytes;
-	uint32_t usc_offset, usc_bytes;
-	uint32_t pds_offset, pds_bytes;
-	uint32_t stream_offset, stream_bytes;
-	uint32_t state_offset;
-	uint32_t reserved;
-	uint64_t usc_va;
-	uint64_t pds_va;
-	uint64_t stream_va;
-	uint64_t context_state_va;
+	uint32_t resources;
+	uint32_t static_offset;
+	uint32_t static_bytes;
 	uint32_t priority;
 	uint32_t pid;
 	uint32_t context_id;
 	uint32_t job_id;
+	uint32_t reserved;
+	uint64_t context_state_va;
+	uint8_t payload_digest[32];
+};
+struct a733_gpu_fwcompute_file_entry {
+	uint64_t va;
+	uint32_t offset;
+	uint32_t bytes;
+	uint16_t role;
+	uint16_t flags;
 };
 
 /* Validated view of one packed compute image. */
-struct a733_gpu_fwcompute_file_spans {
-	uint32_t usc_offset, usc_bytes;
-	uint32_t pds_offset, pds_bytes;
-	uint32_t stream_offset, stream_bytes;
-	uint32_t state_offset;
-	uint64_t usc_va, pds_va, stream_va, context_state_va;
+struct a733_gpu_fwcompute_file {
+	uint32_t header_bytes;
+	uint32_t payload_bytes;
+	uint32_t static_offset;
+	uint64_t context_state_va;
 	uint32_t priority, pid, context_id, job_id;
+	uint8_t payload_digest[32];
+	struct a733_gpu_fwcompute_file_entry
+	    resource[A733_GPU_FWCOMPUTE_RESOURCES];
 };
 
 /*
- * Validate one complete file image for the expected BVNC and return its
- * spans. The buffer needs no alignment. Every span stays inside the
- * payload, starts four-byte aligned, and keeps a nonzero multiple-of-four
- * length; the state span holds exactly 56 bytes. Program GPU addresses
- * stay nonzero, below 40 bits, distinct, and correctly aligned. Return
- * positive errno; leave *out untouched on every error.
+ * Validate one complete version-2 file for the expected BVNC. The buffer
+ * needs no alignment. Requirements: the exact nine roles once each, four-
+ * byte-aligned nonoverlapping payload spans, four-kilobyte-aligned virtual
+ * addresses below 40 bits with page-disjoint ranges, a 56-byte static
+ * state, and a nonzero multiple-of-four length for every resource. The
+ * payload digest is copied out, not verified here. Return positive errno;
+ * leave *out untouched on every error.
  */
 int sun60i_a733_gpu_fwcompute_file_parse(const void *, size_t, uint64_t,
-    struct a733_gpu_fwcompute_file_spans *);
+    struct a733_gpu_fwcompute_file *);
 
-/* Deterministic six-object firmware spans for CPU-only serialization. */
+/* Deterministic six-object firmware spans for the CPU objects. */
 void sun60i_a733_gpu_fwcompute_file_fwspans(
     struct sun60i_a733_gpu_fwcompute_fwspan *);
 

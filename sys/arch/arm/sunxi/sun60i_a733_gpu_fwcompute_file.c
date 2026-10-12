@@ -15,11 +15,14 @@
 #include "sun60i_a733_gpu_fwcompute_file.h"
 
 _Static_assert(sizeof(struct a733_gpu_fwcompute_file_header) ==
-    A733_GPU_FWCOMPUTE_FILE_HEADER, "packed compute file header");
-_Static_assert(offsetof(struct a733_gpu_fwcompute_file_header, usc_va) == 56,
-    "compute file header alignment");
-_Static_assert(A733_GPU_FWCOMPUTE_FILE_MAX >= A733_GPU_FWCOMPUTE_FILE_HEADER,
-    "compute file bound");
+    A733_GPU_FWCOMPUTE_FILE_PREFIX, "packed compute file prefix");
+_Static_assert(offsetof(struct a733_gpu_fwcompute_file_header,
+    payload_digest) == 64, "compute file digest offset");
+_Static_assert(sizeof(struct a733_gpu_fwcompute_file_entry) ==
+    A733_GPU_FWCOMPUTE_ENTRY, "packed compute file entry");
+_Static_assert(A733_GPU_FWCOMPUTE_FILE_PREFIX +
+    A733_GPU_FWCOMPUTE_RESOURCES * A733_GPU_FWCOMPUTE_ENTRY == 312,
+    "nine-entry compute file header");
 
 /* Inclusive ends avoid overflow for spans ending at the type limit. */
 static bool
@@ -28,97 +31,93 @@ fwfile_overlap(uint64_t a, uint64_t asize, uint64_t b, uint64_t bsize)
 	return a <= b + bsize - 1 && b <= a + asize - 1;
 }
 
-/* Nonzero span below the 40-bit GPU limit, within the given alignment. */
-static bool
-fwfile_gpu_span(uint64_t va, uint64_t bytes, uint64_t alignment)
-{
-	return va != 0 && va < (UINT64_C(1) << 40) &&
-	    (va & (alignment - 1)) == 0 &&
-	    bytes <= (UINT64_C(1) << 40) - va;
-}
-
 int
 sun60i_a733_gpu_fwcompute_file_parse(const void *data, size_t size,
-    uint64_t bvnc, struct a733_gpu_fwcompute_file_spans *out)
+    uint64_t bvnc, struct a733_gpu_fwcompute_file *out)
 {
 	struct a733_gpu_fwcompute_file_header header;
-	struct {
-		uint32_t offset, bytes;
-	} span[4];
-	uint64_t va[4], alignment[4];
-	uint32_t payload;
+	struct a733_gpu_fwcompute_file_entry
+	    entry[A733_GPU_FWCOMPUTE_RESOURCES];
+	uint32_t payload, base;
+	bool seen_role[A733_GPU_FWCOMPUTE_RESOURCES] = { false };
 	size_t i, j;
+	int k;
 
-	if (data == NULL || out == NULL || size < A733_GPU_FWCOMPUTE_FILE_HEADER ||
+	if (data == NULL || out == NULL || size < A733_GPU_FWCOMPUTE_FILE_PREFIX +
+	    A733_GPU_FWCOMPUTE_RESOURCES * A733_GPU_FWCOMPUTE_ENTRY ||
 	    size > A733_GPU_FWCOMPUTE_FILE_MAX)
 		return EINVAL;
 	memcpy(&header, data, sizeof(header));
 	if (header.magic != A733_GPU_FWCOMPUTE_FILE_MAGIC ||
 	    header.version != A733_GPU_FWCOMPUTE_FILE_VERSION ||
-	    header.header_bytes != A733_GPU_FWCOMPUTE_FILE_HEADER ||
-	    header.reserved != 0 || header.bvnc != bvnc)
+	    header.reserved != 0 || header.bvnc != bvnc ||
+	    header.resources != A733_GPU_FWCOMPUTE_RESOURCES)
+		return EINVAL;
+	if (header.header_bytes != A733_GPU_FWCOMPUTE_FILE_PREFIX +
+	    A733_GPU_FWCOMPUTE_RESOURCES * A733_GPU_FWCOMPUTE_ENTRY)
 		return EINVAL;
 	payload = header.payload_bytes;
-	if ((size_t)payload != size - A733_GPU_FWCOMPUTE_FILE_HEADER)
+	if ((size_t)payload != size - header.header_bytes ||
+	    header.static_bytes != A733_GPU_FWCOMPUTE_STATE_BYTES ||
+	    header.priority > 2)
 		return EINVAL;
+	base = header.header_bytes;
+	if (header.static_offset % 4 != 0 ||
+	    header.static_offset > payload ||
+	    A733_GPU_FWCOMPUTE_STATE_BYTES > payload - header.static_offset)
+		return EINVAL;
+	if (header.context_state_va == 0 ||
+	    header.context_state_va >= (UINT64_C(1) << 40) ||
+	    (header.context_state_va & 15) != 0)
+		return EINVAL;
+	memcpy(entry, (const uint8_t *)data + sizeof(header), sizeof(entry));
+	for (i = 0; i < A733_GPU_FWCOMPUTE_RESOURCES; i++) {
+		const struct a733_gpu_fwcompute_file_entry *e = &entry[i];
 
-	span[0].offset = header.usc_offset;
-	span[0].bytes = header.usc_bytes;
-	span[1].offset = header.pds_offset;
-	span[1].bytes = header.pds_bytes;
-	span[2].offset = header.stream_offset;
-	span[2].bytes = header.stream_bytes;
-	span[3].offset = header.state_offset;
-	span[3].bytes = A733_GPU_FWCOMPUTE_STATE_BYTES;
-	for (i = 0; i < sizeof(span) / sizeof(span[0]); i++) {
-		if (span[i].offset > payload || span[i].bytes > payload ||
-		    span[i].offset % 4 != 0 ||
-		    (i < 3 && (span[i].bytes < 4 || span[i].bytes % 4 != 0)) ||
-		    span[i].bytes > payload - span[i].offset)
+		if (e->role >= A733_GPU_FWCOMPUTE_RESOURCES ||
+		    seen_role[e->role] ||
+		    (e->flags & ~(A733_GPU_FWCOMPUTE_FLAG_RO |
+		    A733_GPU_FWCOMPUTE_FLAG_BYPASS)) != 0)
 			return EINVAL;
+		seen_role[e->role] = true;
+		if (e->offset % 4 != 0 || e->bytes < 4 || e->bytes % 4 != 0 ||
+		    e->offset > payload || e->bytes > payload ||
+		    e->bytes > payload - e->offset)
+			return EINVAL;
+		if (e->va == 0 || e->va >= (UINT64_C(1) << 40) ||
+		    (e->va & 4095) != 0 ||
+		    e->bytes > (UINT64_C(1) << 40) - e->va)
+			return EINVAL;
+		/*
+		 * Page-aligned virtual addresses make byte-range overlap
+		 * equivalent to sharing a page: whole distinct pages only.
+		 */
 		for (j = 0; j < i; j++) {
-			if (fwfile_overlap(span[i].offset, span[i].bytes,
-			    span[j].offset, span[j].bytes))
+			if (fwfile_overlap(e->va, e->bytes, entry[j].va,
+			    entry[j].bytes) ||
+			    fwfile_overlap(base + e->offset, e->bytes,
+			    base + entry[j].offset, entry[j].bytes))
 				return EINVAL;
 		}
-	}
-
-	va[0] = header.usc_va;
-	va[1] = header.pds_va;
-	va[2] = header.stream_va;
-	alignment[0] = 16;
-	alignment[1] = 16;
-	alignment[2] = 4;
-	for (i = 0; i < 3; i++) {
-		if (!fwfile_gpu_span(va[i], span[i].bytes, alignment[i]))
+		if (fwfile_overlap(base + e->offset, e->bytes,
+		    base + header.static_offset, header.static_bytes))
 			return EINVAL;
-		for (j = 0; j < i; j++) {
-			if (fwfile_overlap(va[i], span[i].bytes, va[j],
-			    span[j].bytes))
-				return EINVAL;
-		}
 	}
-	if (!fwfile_gpu_span(header.context_state_va, 16, 16) ||
-	    header.priority > 2 ||
-	    fwfile_overlap(header.context_state_va, 16, header.stream_va,
-	    span[2].bytes))
-		return EINVAL;
+	for (k = 0; k < A733_GPU_FWCOMPUTE_RESOURCES; k++) {
+		if (!seen_role[k])
+			return EINVAL;
+	}
 
-	out->usc_offset = header.usc_offset;
-	out->usc_bytes = header.usc_bytes;
-	out->pds_offset = header.pds_offset;
-	out->pds_bytes = header.pds_bytes;
-	out->stream_offset = header.stream_offset;
-	out->stream_bytes = header.stream_bytes;
-	out->state_offset = header.state_offset;
-	out->usc_va = header.usc_va;
-	out->pds_va = header.pds_va;
-	out->stream_va = header.stream_va;
+	out->header_bytes = header.header_bytes;
+	out->payload_bytes = payload;
+	out->static_offset = header.static_offset;
 	out->context_state_va = header.context_state_va;
 	out->priority = header.priority;
 	out->pid = header.pid;
 	out->context_id = header.context_id;
 	out->job_id = header.job_id;
+	memcpy(out->payload_digest, header.payload_digest, 32);
+	memcpy(out->resource, entry, sizeof(entry));
 	return 0;
 }
 

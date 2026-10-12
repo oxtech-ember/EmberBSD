@@ -804,7 +804,8 @@ sun60i_gpu_stage_fwcompute(struct sun60i_gpu_softc *sc)
 	const struct sun60i_a733_gpu_fwprobe_result *cache = &sc->sc_cache_result;
 	struct sun60i_a733_gpu_fwmem *mem = sc->sc_fw_memory;
 	struct sun60i_a733_gpu_fwcompute_inputs inputs;
-	struct a733_gpu_fwcompute_file_spans spans;
+	struct a733_gpu_fwcompute_file file;
+	const struct a733_gpu_fwcompute_file_entry *role[3];
 	struct sun60i_a733_gpu_fwcompute_image *image = NULL;
 	firmware_handle_t fh = NULL;
 	uint8_t *bytes = NULL;
@@ -850,7 +851,8 @@ sun60i_gpu_stage_fwcompute(struct sun60i_gpu_softc *sc)
 	if (error != 0)
 		goto out;
 	file_size = firmware_get_size(fh);
-	if (file_size < A733_GPU_FWCOMPUTE_FILE_HEADER + 3 * 4 +
+	if (file_size < A733_GPU_FWCOMPUTE_FILE_PREFIX +
+	    A733_GPU_FWCOMPUTE_RESOURCES * A733_GPU_FWCOMPUTE_ENTRY +
 	    A733_GPU_FWCOMPUTE_STATE_BYTES ||
 	    file_size > A733_GPU_FWCOMPUTE_FILE_MAX) {
 		error = EINVAL;
@@ -862,35 +864,64 @@ sun60i_gpu_stage_fwcompute(struct sun60i_gpu_softc *sc)
 	if (error != 0)
 		goto out;
 	error = sun60i_a733_gpu_fwcompute_file_parse(bytes, size, sc->sc_bvnc,
-	    &spans);
+	    &file);
 	if (error != 0)
 		goto out;
+	/* Integrity and profile guards before any compiler bytes are used. */
+	SHA256_Init(&ctx);
+	SHA256_Update(&ctx, bytes + file.header_bytes, file.payload_bytes);
+	SHA256_Final(digest, &ctx);
+	if (memcmp(digest, file.payload_digest, sizeof(digest)) != 0) {
+		error = EAUTH;
+		goto out;
+	}
+	if (mem->image.info.feature_mask[0] !=
+	    UINT64_C(0x92d9ff57fdbf7cdb) ||
+	    mem->image.info.feature_mask[1] != UINT64_C(0x0000001f) ||
+	    mem->image.info.brn_mask != UINT64_C(0x0000201)) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	{
+		static const uint16_t program_role[3] = {
+			A733_GPU_FWCOMPUTE_USC_PROGRAMS,
+			A733_GPU_FWCOMPUTE_PDS_PROGRAMS,
+			A733_GPU_FWCOMPUTE_CDM_STREAM
+		};
+		size_t j, k;
+
+		for (j = 0; j < 3; j++) {
+			for (k = 0; k < A733_GPU_FWCOMPUTE_RESOURCES; k++) {
+				if (file.resource[k].role == program_role[j])
+					break;
+			}
+			if (k == A733_GPU_FWCOMPUTE_RESOURCES) {
+				error = EINVAL;
+				goto out;
+			}
+			role[j] = &file.resource[k];
+		}
+	}
 	image = kmem_alloc(sizeof(*image), KM_SLEEP);
 	memset(&inputs, 0, sizeof(inputs));
 	sun60i_a733_gpu_fwcompute_file_fwspans(inputs.fw);
-	inputs.program[A733_GPU_FWCOMPUTE_USC].bytes =
-	    bytes + A733_GPU_FWCOMPUTE_FILE_HEADER + spans.usc_offset;
-	inputs.program[A733_GPU_FWCOMPUTE_USC].size = spans.usc_bytes;
-	inputs.program[A733_GPU_FWCOMPUTE_USC].gpu_va = spans.usc_va;
-	inputs.program[A733_GPU_FWCOMPUTE_PDS].bytes =
-	    bytes + A733_GPU_FWCOMPUTE_FILE_HEADER + spans.pds_offset;
-	inputs.program[A733_GPU_FWCOMPUTE_PDS].size = spans.pds_bytes;
-	inputs.program[A733_GPU_FWCOMPUTE_PDS].gpu_va = spans.pds_va;
-	inputs.program[A733_GPU_FWCOMPUTE_STREAM].bytes =
-	    bytes + A733_GPU_FWCOMPUTE_FILE_HEADER + spans.stream_offset;
-	inputs.program[A733_GPU_FWCOMPUTE_STREAM].size = spans.stream_bytes;
-	inputs.program[A733_GPU_FWCOMPUTE_STREAM].gpu_va = spans.stream_va;
-	memcpy(&inputs.static_state,
-	    bytes + A733_GPU_FWCOMPUTE_FILE_HEADER + spans.state_offset,
-	    A733_GPU_FWCOMPUTE_STATE_BYTES);
+	for (i = 0; i < 3; i++) {
+		inputs.program[i].bytes = bytes + file.header_bytes +
+		    role[i]->offset;
+		inputs.program[i].size = role[i]->bytes;
+		inputs.program[i].gpu_va = role[i]->va;
+	}
+	memcpy(&inputs.static_state, bytes + file.header_bytes +
+	    file.static_offset, A733_GPU_FWCOMPUTE_STATE_BYTES);
 	/* The kernel owns the typed command, as in the upstream submission. */
-	inputs.command.regs.cdm_ctrl_stream_base = spans.stream_va;
+	inputs.command.regs.cdm_ctrl_stream_base =
+	    role[2]->va;
 	inputs.command.regs.cdm_context_state_base_addr =
-	    spans.context_state_va;
-	inputs.priority = spans.priority;
-	inputs.pid = spans.pid;
-	inputs.context_id = spans.context_id;
-	inputs.job_id = spans.job_id;
+	    file.context_state_va;
+	inputs.priority = file.priority;
+	inputs.pid = file.pid;
+	inputs.context_id = file.context_id;
+	inputs.job_id = file.job_id;
 	error = sun60i_a733_gpu_fwcompute_prepare(&inputs, image, sizeof(*image));
 	if (error != 0)
 		goto out;
@@ -909,19 +940,19 @@ out:
 		snprintf(sc->sc_compute_state, sizeof(sc->sc_compute_state),
 		    "cpu-only serialization error=0 used=%u kick_context=0x%08x "
 		    "wrap=%u usc=0x%llx+%u pds=0x%llx+%u stream=0x%llx+%u "
-		    "ctx_state=0x%llx spans=0x%08x..0x%08x digest=%s "
-		    "declared-unmapped no-publication",
+		    "ctx_state=0x%llx spans=0x%08x..0x%08x payload=%u "
+		    "digest=%s verified=1 declared-unmapped no-publication",
 		    (u_int)image->used_bytes,
 		    (u_int)image->kick.cmd_data.cmd_kick_data.context_fw_addr,
 		    (u_int)image->ctl.wrap_mask,
-		    (unsigned long long)spans.usc_va, (u_int)spans.usc_bytes,
-		    (unsigned long long)spans.pds_va, (u_int)spans.pds_bytes,
-		    (unsigned long long)spans.stream_va,
-		    (u_int)spans.stream_bytes,
-		    (unsigned long long)spans.context_state_va,
+		    (unsigned long long)role[0]->va, (u_int)role[0]->bytes,
+		    (unsigned long long)role[1]->va, (u_int)role[1]->bytes,
+		    (unsigned long long)role[2]->va, (u_int)role[2]->bytes,
+		    (unsigned long long)file.context_state_va,
 		    (u_int)A733_GPU_FWCOMPUTE_SPAN_BASE,
 		    (u_int)(A733_GPU_FWCOMPUTE_SPAN_BASE +
-		    A733_GPU_FWCOMPUTE_SPAN_BYTES), hex);
+		    A733_GPU_FWCOMPUTE_SPAN_BYTES), (u_int)file.payload_bytes,
+		    hex);
 	}
 	if (fh != NULL) {
 		close_error = firmware_close(fh);
