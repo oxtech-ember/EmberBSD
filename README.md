@@ -750,12 +750,12 @@ on every board in the hardware catalog.
   explicit interpreter/LLVM selection have source checks. Focused native
   macro/selection and GCC16 metadata checks pass. The complete LLVM 23.1.3 core
   passes cross-package checks, sysroot installation and 15 metadata/refusal checks.
-  The previous 23.1.2 core passes installed C API/bitcode plus four
-  default ORC JITLink lifecycles on Zero 3W. Upstream lit passes installed
+  Installed 23.1.3 also passes [C API/bitcode and four default ORC JITLink lifecycles on CM5](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/llvm-api-tests.md#cm5-llvm-2313-2026-10-12),
+  with 16 actual metadata query groups and 21 sealed-tool integrity checks.
+  The previous 23.1.2 core has its own Zero 3W receipt. Upstream lit passes installed
   launcher and PASS/XFAIL/FAIL checks in AArch64 UTM. The complete Clang 23.1.3 package
   passes normal cross-package checks and sysroot installation. The [full LLD package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/lld.md)
-  also passes these checks with both upstream test executables built; renewed
-  23.1.3 runtime, installed Clang/LLD and
+  also passes these checks with both upstream test executables built; installed Clang/LLD and
   TinyGo consumer acceptance remain pending; Mesa26 uses the common LLVM23 provider. See the [LLVM family contract](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
   Ports also owns the [Mac cross-package workflow](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-build-tools/cross):
   pkgconf 3.0.7, GNU M4 1.4.21, Libtool 2.6.2 and
