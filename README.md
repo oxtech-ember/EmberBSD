@@ -319,6 +319,12 @@ on every board in the hardware catalog.
   runs both installed Flite and speech-dispatcher/eSpeak engines; KCMUtils
   passes its generated-settings test after native cross tooling was added.
   These bounded checks do not establish physical sound or a complete desktop.
+  [Plasma shell libraries](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/libplasma.md)
+  now pass installed plugin, theme and shared-QML-engine checks on CM5, with
+  native KPackage tooling and the common Mesa EGL provider preserved.
+  [Current Noto fonts](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/fonts.md)
+  pass payload, target indexing and Cyrillic/CJK selection checks. These remain
+  component results; the complete accelerated KWin/Plasma session is pending.
   [PulseAudio 17.0 and its TDB/libdaemon dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/pulseaudio.md)
   now cross-package with bounded installed CM5 checks. Locale and caller-buffer
   fixes restore client startup; private null-sink playback/capture preserves
