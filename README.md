@@ -281,10 +281,14 @@ on every board in the hardware catalog.
   translations and untranslated plural fallbacks, with 200 fixture checks.
   [Current QtTools HTML dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/html.md)
   pass 220 gumbo tests, an upstream UTF-8 test and two CSS regressions on CM5.
-  The litehtml patch fixes negative shifts; Qt Assistant and full QtTools remain unaccepted.
+  The litehtml patch fixes negative shifts. [Full QtTools 6.12](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/qt-packages.md#full-qttools-package)
+  now cross-packages with shared litehtml, Designer and QDoc; target runtime and
+  the LLVM 23.1.3 consumer update remain pending.
   [KItemModels, ThreadWeaver and KCrash](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/models-and-jobs.md)
   pass installed CM5 model/QML, worker-queue and crash-recovery checks:
-  500, 77 and 16 assertions respectively, with six upstream model skips.
+  500, 77 and 16 QtTest cases respectively, with six upstream model skips.
+  KColorScheme also passes 12 cases. KDBusAddons passes unique-instance activation
+  and dead-service recovery against the [corrected default D-Bus session policy](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/desktop-support.md).
   Shared-cache recovery and the complete Frameworks runtime remain unaccepted.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
