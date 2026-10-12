@@ -559,7 +559,10 @@ on every board in the hardware catalog.
   [validates its metadata](ember/boot/a733-gpu-fwinfo.md#physical-preflight-result)
   against the live GPU on Zero 3W. The [native memory preparer](ember/boot/a733-gpu-fwmem.md#physical-preparation-result)
   also passes on this board: code, data and MIPS page tables occupy checked
-  DMA allocations that remain CPU-owned. Firmware execution, device DMA, a PowerVR render interface,
+  DMA allocations. The [native firmware bootstrap](ember/boot/a733-gpu-fwboot.md#physical-bootstrap-result)
+  now runs on Zero 3W: firmware sets its boot flag and returns the expected
+  hardware/firmware BVNC through direct coherent memory. This establishes
+  firmware execution, not command or graphics completion. A PowerVR render interface,
   Mesa Vulkan/Zink and accelerated Plasma still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
   driver/DMA integration, compatible runtime and real model execution must

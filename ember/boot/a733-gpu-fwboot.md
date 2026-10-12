@@ -88,6 +88,41 @@ These fields form a non-atomic diagnostic snapshot.
 They do not establish compatibility acceptance or a live connection handshake.
 Reading the cached result later performs no DMA or MMIO.
 
+## Physical bootstrap result
+
+On 2026-10-12, GCC16.2 `EMBER64 #7` from
+`85748b59d8619b066c01e3f113826afd6527f057` booted on a 4 GiB Orange Pi Zero 3W.
+The board revision was not recorded. Four modules came from the same build.
+Vendor boot0/U-Boot, the installed board DTB, and startup configuration were preserved.
+HDMI was connected; no native display path or UART capture was available.
+
+Explicit stages 1 through 15 completed successfully with `clock_source=1`.
+The clock provider confirmed 600 MHz core and 200 MHz bus at the programmed 800 mV supply.
+These values were not measured externally.
+Work/config allocations passed the loaded-map checks for direct coherent access without bounce buffers.
+The corrected [actual-profile reset sequence](a733-gpu-fwstart.md) completed 21 writes.
+Firmware set `firmware_started=1` on the second observation.
+Its compatibility record reported both hardware and firmware BVNC `36.56.104.183`,
+`updated=1`, and DDK build `6976702`. Connection states were firmware 2 and OS 0.
+The successful observation confirms firmware execution and its writes to native DMA memory.
+It does not establish a command queue or graphics execution.
+
+The preparation window was 13:14:15–13:14:37 UTC. Bootstrap returned within the final second.
+A 16-second hardware watchdog protected each stage; no watchdog reset occurred.
+The watchdog was disarmed after the result. SSH remained available, and the existing NPU stage-4 check stayed successful.
+All firmware memory remains device-owned and retained until reboot.
+No repeated start or reclamation was attempted.
+
+| Component | SHA256 |
+| --- | --- |
+| ELF kernel | `03cd867fd3864ccc45b85f549a15e8fab18d5c6de508176f329d943f46729d61` |
+| Native image | `cb11f816cf3f24f230d9999746ef227934972ff71e5aeaa1628706df4d4d44a0` |
+| Preserved board DTB | `6e3e92e251a617066a54634394e65d3463df96fdd5920753056cb0c2e4e78d4e` |
+| Firmware | `1db1c399c17401d1f79d46c880db81c724d748c784d4639433b076aba2f9c0d2` |
+
+Command completion, Rogue GPU page tables, rendering, DRM, Mesa Vulkan/Zink,
+HDMI presentation, accelerated Plasma, and sustained operation remain unverified.
+
 ## Verification
 
 Run the [real-source contract](../tools/a733-gpu-fwboot-contract.sh):
