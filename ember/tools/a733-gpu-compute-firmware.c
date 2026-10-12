@@ -115,15 +115,15 @@ main(int argc, char **argv)
 	struct a733_gpu_fwcompute_file_header header;
 	struct sun60i_a733_gpu_fwcompute_inputs inputs;
 	struct sun60i_a733_gpu_fwcompute_image *image;
-	struct a733_gpu_fwcompute_vm_region regions[10];
+	struct a733_gpu_fwcompute_vm_region regions[11];
 	struct a733_gpu_fwcompute_vm_summary summary;
 	struct sha256_ctx ctx;
 	uint8_t digest[32], *payload, *whole, state_bytes[56];
-	uint8_t vm_pc[4096], vm_pd[4][4096], vm_pt[4][4096], vm_fwc[32];
-	void *vm_pdv[4] = { vm_pd[0], vm_pd[1], vm_pd[2], vm_pd[3] };
-	void *vm_ptv[4] = { vm_pt[0], vm_pt[1], vm_pt[2], vm_pt[3] };
-	uint64_t vm_pdpa[4] = { 0x500000, 0x501000, 0x502000, 0x503000 };
-	uint64_t vm_ptpa[4] = { 0x510000, 0x511000, 0x512000, 0x513000 };
+	uint8_t vm_pc[4096], vm_pd[5][4096], vm_pt[5][4096], vm_fwc[32];
+	void *vm_pdv[5] = { vm_pd[0], vm_pd[1], vm_pd[2], vm_pd[3], vm_pd[4] };
+	void *vm_ptv[5] = { vm_pt[0], vm_pt[1], vm_pt[2], vm_pt[3], vm_pt[4] };
+	uint64_t vm_pdpa[5] = { 0x500000, 0x501000, 0x502000, 0x503000, 0x504000 };
+	uint64_t vm_ptpa[5] = { 0x510000, 0x511000, 0x512000, 0x513000, 0x514000 };
 	uint64_t bvnc, ctx_va;
 	uint32_t priority = 0, pid = 1, context_id = 0, job_id = 1;
 	uint32_t area_base[3], payload_bytes;
@@ -290,13 +290,17 @@ main(int argc, char **argv)
 	regions[9].pa = regions[7].pa;
 	regions[9].pages = 1;
 	regions[9].flags = regions[7].flags;
+	regions[10].va = UINT64_C(0x2000);
+	regions[10].pa = regions[8].pa;
+	regions[10].pages = 1;
+	regions[10].flags = regions[8].flags;
 	memset(vm_pc, 0, sizeof(vm_pc));
 	memset(vm_pd, 0, sizeof(vm_pd));
 	memset(vm_pt, 0, sizeof(vm_pt));
 	memset(vm_fwc, 0, sizeof(vm_fwc));
-	if (sun60i_a733_gpu_fwcompute_vm_encode(regions, 10, vm_pc, vm_pdv,
+	if (sun60i_a733_gpu_fwcompute_vm_encode(regions, 11, vm_pc, vm_pdv,
 	    vm_ptv, vm_pdpa, vm_ptpa, 0x500000, vm_fwc, &summary) != 0 ||
-	    summary.windows != 4 || summary.leaves != 18)
+	    summary.windows != 5 || summary.leaves != 19)
 		die("resource table failed VM encoding");
 	printf("vm_check=windows=%u directories=%u leaves=%u\n",
 	    summary.windows, summary.directories, summary.leaves);
