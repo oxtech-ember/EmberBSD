@@ -545,7 +545,9 @@ on every board in the hardware catalog.
   The [physical PLL result](ember/boot/a733-gpu-identification.md#physical-pll-result)
   supersedes the earlier PERIPH0-400M timeout and GPU MMIO stall. Normal
   board DTBs remain observe-only; the working cold start is an explicit
-  runtime experiment. Firmware execution, DMA/MMU, a PowerVR render interface,
+  runtime experiment. Native `firmload` now reads the exact firmware and
+  [validates its metadata](ember/boot/a733-gpu-fwinfo.md#physical-preflight-result)
+  against the live GPU on Zero 3W. Firmware execution, DMA/MMU, a PowerVR render interface,
   Mesa Vulkan/Zink and accelerated Plasma still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
   driver/DMA integration, compatible runtime and real model execution must

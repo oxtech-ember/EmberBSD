@@ -86,7 +86,31 @@ change is needed. A successful result starts with `metadata only error=0`.
 Stage 12 is single-use per boot. Stage 0 cannot restart a failed sequence.
 Normal observe-only boot does not open the firmware file.
 
+## Physical preflight result
+
+On 2026-10-12, a 4 GiB Orange Pi Zero 3W booted GCC16.2 `EMBER64 #4`
+from `a7bbb4ed91b99cdeafa8a9232ac9839a2855c544` with four matching modules.
+Board revision was not recorded. Vendor boot files and the existing
+observe-only DTB were preserved. The NPU identity probe completed first.
+All twelve explicit GPU runtime stages returned zero. The hardware watchdog
+covered each stage and did not reset the board. The stage sequence completed
+within one second in the timestamped transcript.
+
+```text
+metadata only error=0 version=1.1.6976702 bvnc=0x00240038006800b7
+layouts=6 code=102400 data=20480 payload=122880
+```
+
+Both installed firmware files match the pinned hashes below.
+Kernel ELF SHA256: `94ac9937aa77c228fe1441bd6b3f7be19b9cad45e23a49bca6c53544f1c42f62`.
+Native image SHA256: `1ba57e2a325aed359d81108bbd87b477fe03da87862142db3874e8a15bb1e0d6`.
+Preserved DTB SHA256: `6e3e92e251a617066a54634394e65d3463df96fdd5920753056cb0c2e4e78d4e`.
+The normal boot leaves GPU execution disabled. This result validates file
+loading and metadata compatibility, not firmware execution, DMA, rendering,
+HDMI output, or accelerated Plasma.
+
 ## Reproduce the checks
+
 
 The [contract](../tools/a733-gpu-fwinfo-contract.sh) compiles the production
 parser directly. It has no synthetic implementation of the parser.
