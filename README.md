@@ -287,7 +287,9 @@ on every board in the hardware catalog.
   [KItemModels, ThreadWeaver and KCrash](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/models-and-jobs.md)
   pass installed CM5 model/QML, worker-queue and crash-recovery checks:
   500, 77 and 16 QtTest cases respectively, with six upstream model skips.
-  KColorScheme also passes 12 cases. KDBusAddons passes unique-instance activation
+  KColorScheme also passes 12 cases, and KWidgetsAddons passes 54 date/time and
+  action-widget cases. Its full cross package retains the target Designer plugin.
+  KDBusAddons passes unique-instance activation
   and dead-service recovery against the [corrected default D-Bus session policy](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/desktop-support.md).
   Shared-cache recovery and the complete Frameworks runtime remain unaccepted.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
