@@ -6,6 +6,28 @@ It uses the [exact native FWIF declarations](../../sys/arch/arm/sunxi/powervr/RE
 It performs no allocation, DMA, MMIO, clock change, queue submission, or execution.
 Successful initialization does not establish firmware boot or GPU acceleration.
 
+## Physical interface preparation
+
+On 2026-10-12, explicit stage 14 passed on a 4 GiB Orange Pi Zero 3W.
+The GCC 16.2 `EMBER64 #6` kernel used source
+`b812c3a828ff9e858dd0de9fa0ba1327894fa73f` and four matching modules.
+The native memory owner prepared 139264 work bytes and 12288 config bytes.
+All 19 interface objects and their page-table mappings were prepared.
+Inputs came from the validated firmware: one cluster and 16 KiB SLC.
+The observed core clock was 600 MHz.
+
+This result establishes CPU preparation only. The first stage-15 attempt
+returned `EOPNOTSUPP` before MMIO because the initial startup helper rejected
+this firmware's XE_TPU2 and GPU_MULTICORE_SUPPORT flags.
+No register writes or firmware polling occurred. Memory remained CPU-owned.
+The watchdog did not fire. Wi-Fi/SSH and the prior NPU probe remained available.
+The [bootstrap guide](a733-gpu-fwboot.md) records execution separately.
+
+SHA256: kernel
+`ea82fc4814f51218f2d143c59fdafc24edd505a5776adebff1480ad38c2a33c4`;
+image `40904d70b52782ec9ddc905b4b284af6cd3f95c4895c713d1b19cf8bb617bf45`.
+The existing boot firmware, DTB and startup configuration were preserved.
+
 ## Interface and ownership
 
 Include [sun60i_a733_gpu_fwinit.h](../../sys/arch/arm/sunxi/sun60i_a733_gpu_fwinit.h).
