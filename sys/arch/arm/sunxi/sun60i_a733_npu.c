@@ -434,13 +434,8 @@ sun60i_npu_vip_ioctl(dev_t dev, u_long cmd, void *vdata, int flags,
 		return ENXIO;
 	if (cmd != VIP_DRV_IOCTL)
 		return ENOTTY;
-	if ((flags & FKIOCTL) == 0) {
-		error = kauth_authorize_device_passthru(
-		    kauth_cred_get(), KAUTH_REQ_DEVICE_RAWIO_PASSTHRW,
-            NULL, NULL);
-		if (error != 0)
-			return error;
-	}
+	if ((flags & FWRITE) == 0)
+		return EACCES;
 	if (env->command > VIP_DRV_CMD_MAX || env->bytes > VIP_DRV_BUF_MAX)
 		return EINVAL;
 	bytes = env->bytes;
