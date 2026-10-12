@@ -309,6 +309,10 @@ on every board in the hardware catalog.
   The [full FFmpeg 9.0.2 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/ffmpeg-runtime.md)
   now passes four video codecs, scalar AV1/VP9, MP3/Opus, Unicode metadata and
   filter checks on CM5. Qt Multimedia playback remains unaccepted.
+  [PulseAudio 17.0 and its TDB/libdaemon dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/pulseaudio.md)
+  now cross-package with bounded installed CM5 checks. Locale and caller-buffer
+  fixes restore client startup; private null-sink playback/capture preserves
+  all 12,000 test samples. Physical audio and Plasma integration remain unaccepted.
   [Current Plasma prerequisites](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/plasma-prerequisites.md)
   now cross-package KWayland, KDecoration, layer-shell-qt and KNightTime 6.7.5.
   Installed KWayland passes 56 exact button events on CM5, with an original-patch
