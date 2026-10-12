@@ -282,8 +282,8 @@ on every board in the hardware catalog.
   [Current QtTools HTML dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/html.md)
   pass 220 gumbo tests, an upstream UTF-8 test and two CSS regressions on CM5.
   The litehtml patch fixes negative shifts. [Full QtTools 6.12](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/qt-packages.md#full-qttools-package)
-  now cross-packages with shared litehtml, Designer and QDoc; target runtime and
-  the LLVM 23.1.3 consumer update remain pending.
+  now cross-packages against LLVM/Clang 23.1.3 with shared litehtml, Designer
+  and QDoc; installed target runtime remains pending.
   [Native KDocTools](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/doctools.md)
   now generates KDE documentation during Mac cross builds. Full KConfigWidgets
   and KCompletion packages retain [Designer plugins](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/designer-plugins.md).
