@@ -369,8 +369,8 @@ on every board in the hardware catalog.
   Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/wayland-utm),
   with native DSO-lifetime/numeric regressions under GCC 16.2 and
   common-toolchain staging rules. A [common graphics source profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-graphics)
-  supplies canonical MesaLib 26.2.4nb3/libdrm 2.4.134nb2 packages with one
-  shared LLVM 23.1.2 provider. The complete selected Mesa package cross-builds
+  supplies canonical MesaLib 26.2.4nb4/libdrm 2.4.134nb2 packages with one
+  shared LLVM 23.1.3 provider. The complete selected Mesa package cross-builds
   with GCC16 on macOS and is installed normally on Orange Pi Zero 3W (A733).
   [Installed-package acceptance](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-package.md)
   verifies the package files, links and library closure, then passes four
@@ -574,6 +574,7 @@ on every board in the hardware catalog.
   and desktop OpenGL 3.1, including four 1280x800 lifecycles per display path. Native platform identity
   makes this GPU discoverable without DRM master. All 38 Mesa upstream
   invocations pass with recorded internal skips; LLVM23 llvmpipe also passes.
+  The [LLVM 23.1.3 migration](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-llvm2313.md) repeats all 38 invocations and 20 additional large V3D lifecycles. One transient large-BO allocation failure remains unresolved.
   Same-device PRIME passes 80 cross-process lifecycles and four real
   GBM/EGLImage shader/pixel cycles after native DMA-BUF lifetime repairs.
   The ordinary kernel remains a passive observer. General job recovery,
