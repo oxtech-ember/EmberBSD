@@ -255,6 +255,8 @@ main(int argc, char **argv)
 	}
 	memcpy(&inputs.static_state, whole + header.header_bytes +
 	    header.static_offset, A733_GPU_FWCOMPUTE_STATE_BYTES);
+	sun60i_a733_gpu_fwcompute_file_relocate(
+	    (uint8_t *)&inputs.static_state, UINT64_C(0x10000000));
 	inputs.command.regs.cdm_ctrl_stream_base =
 	    find_role(A733_GPU_FWCOMPUTE_CDM_STREAM)->va;
 	inputs.command.regs.cdm_context_state_base_addr = ctx_va;

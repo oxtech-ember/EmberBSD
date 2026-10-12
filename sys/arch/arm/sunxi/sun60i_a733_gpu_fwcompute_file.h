@@ -95,6 +95,9 @@ struct a733_gpu_fwcompute_file {
 int sun60i_a733_gpu_fwcompute_file_parse(const void *, size_t, uint64_t,
     struct a733_gpu_fwcompute_file *);
 
+/* Add the PDS region base to the context-switch address pairs in place. */
+void sun60i_a733_gpu_fwcompute_file_relocate(uint8_t state[56], uint64_t);
+
 /* Deterministic six-object firmware spans for the CPU objects. */
 void sun60i_a733_gpu_fwcompute_file_fwspans(
     struct sun60i_a733_gpu_fwcompute_fwspan *);

@@ -144,3 +144,28 @@ sun60i_a733_gpu_fwcompute_file_fwspans(
 		offset += sizes[i];
 	}
 }
+
+/* Address-bearing u64s of the context-switch state: PDS0-style pairs
+ * hold (data_addr, code_addr) with a four-bit shift; the PDS1 words are
+ * flag registers and stay untouched. Offsets are relative to the PDS
+ * region base; add it so the hardware fetches mapped addresses. */
+void
+sun60i_a733_gpu_fwcompute_file_relocate(uint8_t state[56], uint64_t base)
+{
+	static const size_t pair[5] = { 0, 16, 32, 40, 48 };
+	const uint64_t field = 0x0fffffffULL, delta = base >> 4;
+	size_t i;
+
+	for (i = 0; i < sizeof(pair) / sizeof(pair[0]); i++) {
+		uint64_t word, code, data, mask;
+
+		memcpy(&word, state + pair[i], sizeof(word));
+		code = word >> 4 & field;
+		data = word >> 36 & field;
+		code += delta;
+		data += delta;
+		mask = (field << 4 | field << 36);
+		word = (word & ~mask) | (code << 4) | (data << 36);
+		memcpy(state + pair[i], &word, sizeof(word));
+	}
+}
