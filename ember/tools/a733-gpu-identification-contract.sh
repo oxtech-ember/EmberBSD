@@ -13,9 +13,11 @@ cp "$src/sys/arch/arm/sunxi/sun60i_a733_ccu.h" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.h" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwimage.h" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinit.h" "$work/"
-# Stage 18 needs the serializer ABI and the packed compute-image format.
+# Stage 18 needs the serializer ABI and the packed compute-image format;
+# stages 19-21 add the firmware-heap submission provider API.
 cp "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.h" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.h" "$work/"
+sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwheap.h"     > "$work/sun60i_a733_gpu_fwheap.h"
 mkdir "$work/powervr"
 cp "$src/sys/arch/arm/sunxi/powervr/"*.h "$work/powervr/"
 # Keep the production memory interface. Only native bus-DMA types are stubbed.

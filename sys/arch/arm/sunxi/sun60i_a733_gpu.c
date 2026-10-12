@@ -43,6 +43,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/sha2.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
+#include <sys/time.h>
 
 #include <dev/fdt/fdtvar.h>
 #include <dev/firmload.h>
@@ -52,6 +53,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arm/sunxi/sun60i_a733_gpu_fwprobe.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwcompute.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwcompute_file.h>
+#include <arm/sunxi/sun60i_a733_gpu_fwheap.h>
 #include <arm/sunxi/sun60i_a733_ccu.h>
 #include <arm/sunxi/sun60i_a733_pck600.h>
 
@@ -81,6 +83,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define A733_GPU_STAGE_FWPROBE	16
 #define A733_GPU_STAGE_FWCACHE	17
 #define A733_GPU_STAGE_FWCOMPUTE	18
+#define A733_GPU_STAGE_FWHEAP	19
+#define A733_GPU_STAGE_FWVM	20
+#define A733_GPU_STAGE_FWKICK	21
 #define A733_GPU_FW_MAX_SIZE	(1024 * 1024)
 #define A733_GPU_COMPUTE_FW_NAME	"a733-compute.bin"
 
@@ -105,7 +110,14 @@ struct sun60i_gpu_softc {
 	char sc_probe_state[1024]; /* cached stage-16 command observation */
 	char sc_cache_state[1024]; /* cached stage-17 MMUCACHE observation */
 	char sc_compute_state[768]; /* cached stage-18 CPU serialization */
+	char sc_heap_state[512];	/* cached stage-19 heap mapping */
+	char sc_vm_state[512];		/* cached stage-20 VM preparation */
+	char sc_kick_state[1024];	/* cached stage-21 submission */
+	struct sun60i_a733_gpu_fwheap *sc_fwheap;
+	struct sun60i_a733_gpu_fwvm *sc_fwvm;
+	struct sun60i_a733_gpu_fwprobe_result sc_heap_result, sc_kick_result;
 	bool sc_have_id, sc_probed, sc_retained, sc_compute_done;
+	bool sc_heap_done, sc_vm_done, sc_kick_done;
 	kmutex_t sc_run_lock;
 	u_int sc_run_stage;	/* last completed stage */
 	u_int sc_run_result;	/* errno of the last attempt */
@@ -966,6 +978,379 @@ out:
 	return error;
 }
 
+/*
+ * Shared loader for the later compute stages: read the packed file,
+ * verify its payload digest and the pinned firmware profile, serialize
+ * the image, and hand the caller both the file view and the bytes.
+ * The caller frees *image and *bytes and closes nothing else.
+ */
+static int
+sun60i_gpu_compute_load(struct sun60i_gpu_softc *sc,
+    struct a733_gpu_fwcompute_file *file, uint8_t **bytes_out,
+    struct sun60i_a733_gpu_fwcompute_image **image_out)
+{
+	struct sun60i_a733_gpu_fwmem *mem = sc->sc_fw_memory;
+	struct sun60i_a733_gpu_fwcompute_inputs inputs;
+	struct sun60i_a733_gpu_fwcompute_image *image;
+	const struct a733_gpu_fwcompute_file_entry *role[3];
+	firmware_handle_t fh = NULL;
+	uint8_t *bytes = NULL;
+	SHA256_CTX ctx;
+	uint8_t digest[SHA256_DIGEST_LENGTH];
+	off_t file_size;
+	size_t size = 0, i, j, k;
+	int error;
+
+	*bytes_out = NULL;
+	*image_out = NULL;
+	error = firmware_open("powervr", A733_GPU_COMPUTE_FW_NAME, &fh);
+	if (error != 0)
+		return error;
+	file_size = firmware_get_size(fh);
+	if (file_size < A733_GPU_FWCOMPUTE_FILE_PREFIX +
+	    A733_GPU_FWCOMPUTE_RESOURCES * A733_GPU_FWCOMPUTE_ENTRY ||
+	    file_size > A733_GPU_FWCOMPUTE_FILE_MAX) {
+		error = EINVAL;
+		goto out;
+	}
+	size = (size_t)file_size;
+	bytes = kmem_alloc(size, KM_SLEEP);
+	error = firmware_read(fh, 0, bytes, size);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_gpu_fwcompute_file_parse(bytes, size, sc->sc_bvnc,
+	    file);
+	if (error != 0)
+		goto out;
+	SHA256_Init(&ctx);
+	SHA256_Update(&ctx, bytes + file->header_bytes, file->payload_bytes);
+	SHA256_Final(digest, &ctx);
+	if (memcmp(digest, file->payload_digest, sizeof(digest)) != 0) {
+		error = EAUTH;
+		goto out;
+	}
+	if (mem->image.info.feature_mask[0] != UINT64_C(0x92d9ff57fdbf7cdb) ||
+	    mem->image.info.feature_mask[1] != UINT64_C(0x0000001f) ||
+	    mem->image.info.brn_mask != UINT64_C(0x0000201)) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	{
+		static const uint16_t program_role[3] = {
+			A733_GPU_FWCOMPUTE_USC_PROGRAMS,
+			A733_GPU_FWCOMPUTE_PDS_PROGRAMS,
+			A733_GPU_FWCOMPUTE_CDM_STREAM
+		};
+
+		for (j = 0; j < 3; j++) {
+			for (k = 0; k < A733_GPU_FWCOMPUTE_RESOURCES; k++) {
+				if (file->resource[k].role == program_role[j])
+					break;
+			}
+			if (k == A733_GPU_FWCOMPUTE_RESOURCES) {
+				error = EINVAL;
+				goto out;
+			}
+			role[j] = &file->resource[k];
+		}
+	}
+	image = kmem_alloc(sizeof(*image), KM_SLEEP);
+	memset(&inputs, 0, sizeof(inputs));
+	sun60i_a733_gpu_fwcompute_file_fwspans(inputs.fw);
+	for (i = 0; i < 3; i++) {
+		inputs.program[i].bytes = bytes + file->header_bytes +
+		    role[i]->offset;
+		inputs.program[i].size = role[i]->bytes;
+		inputs.program[i].gpu_va = role[i]->va;
+	}
+	memcpy(&inputs.static_state, bytes + file->header_bytes +
+	    file->static_offset, A733_GPU_FWCOMPUTE_STATE_BYTES);
+	inputs.command.regs.cdm_ctrl_stream_base = role[2]->va;
+	inputs.command.regs.cdm_context_state_base_addr =
+	    file->context_state_va;
+	inputs.priority = file->priority;
+	inputs.pid = file->pid;
+	inputs.context_id = file->context_id;
+	inputs.job_id = file->job_id;
+	error = sun60i_a733_gpu_fwcompute_prepare(&inputs, image,
+	    sizeof(*image));
+	if (error != 0) {
+		kmem_free(image, sizeof(*image));
+		goto out;
+	}
+	*bytes_out = bytes;
+	*image_out = image;
+out:
+	if (fh != NULL) {
+		int close_error = firmware_close(fh);
+
+		if (error == 0)
+			error = close_error;
+	}
+	if (*image_out == NULL && bytes != NULL)
+		kmem_free(bytes, size);
+	return error;
+}
+
+static bool sun60i_gpu_compute_chain_ready(const struct sun60i_gpu_softc *,
+    const struct sun60i_a733_gpu_fwboot_result *,
+    const struct sun60i_a733_gpu_fwprobe_result *,
+    const struct sun60i_a733_gpu_fwprobe_result *);
+
+/*
+ * Stage 19: place the serialized objects in a real coherent firmware-heap
+ * buffer, map its pages into the live wrapper table, and re-sync the
+ * firmware MMU caches through a second MMUCACHE command in slot 2.
+ */
+static int
+sun60i_gpu_stage_fwheap(struct sun60i_gpu_softc *sc, int power_node)
+{
+	const struct sun60i_a733_gpu_fwboot_result *boot = &sc->sc_boot_result;
+	const struct sun60i_a733_gpu_fwprobe_result *probe = &sc->sc_probe_result;
+	const struct sun60i_a733_gpu_fwprobe_result *cache = &sc->sc_cache_result;
+	struct sun60i_a733_gpu_fwprobe_result *r = &sc->sc_heap_result;
+	struct rogue_fwif_kccb_cmd cmd;
+	struct a733_gpu_fwcompute_file file;
+	struct sun60i_a733_gpu_fwcompute_image *image = NULL;
+	uint8_t *bytes = NULL;
+	bus_space_handle_t bsh;
+	bus_addr_t addr;
+	bus_size_t size;
+	uint32_t heap_pa;
+	int error;
+
+	if (sc->sc_run_stage != A733_GPU_STAGE_FWCOMPUTE ||
+	    !sun60i_gpu_compute_chain_ready(sc, boot, probe, cache) ||
+	    !sc->sc_compute_done || sc->sc_fwheap != NULL || r->attempted) {
+		error = EBUSY;
+		goto out;
+	}
+	error = sun60i_gpu_compute_load(sc, &file, &bytes, &image);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_gpu_fwheap_prepare(sc->sc_dmat, sc->sc_fw_memory,
+	    image, &sc->sc_fwheap);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_gpu_fwheap_map(sc->sc_fwheap, sc->sc_fw_memory);
+	if (error != 0)
+		goto out;
+	/* The mapping becomes visible to the firmware only after this sync. */
+	error = sun60i_gpu_boot_ready(sc, power_node);
+	if (error != 0)
+		goto out;
+	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
+	if (error != 0 || addr != A733_GPU_BASE ||
+	    size < A733_GPU_FWSTART_REG_SIZE) {
+		error = EINVAL;
+		goto out;
+	}
+	error = bus_space_map(sc->sc_bst, addr, A733_GPU_FWSTART_REG_SIZE,
+	    0, &bsh);
+	if (error != 0)
+		goto out;
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.cmd_type = ROGUE_FWIF_KCCB_CMD_MMUCACHE;
+	cmd.cmd_data.mmu_cache_data.cache_flags = 0x0400001f;
+	cmd.cmd_data.mmu_cache_data.mmu_cache_sync_fw_addr =
+	    sc->sc_fw_memory->interface_layout.object[
+	    A733_GPU_FWINIT_MMUCACHE_SYNC].fw_addr;
+	cmd.cmd_data.mmu_cache_data.mmu_cache_sync_update_value = 0;
+	error = sun60i_a733_gpu_fwprobe_cmd(sc->sc_bst, bsh, sc->sc_fw_memory,
+	    boot, cache, &cmd, 2, r);
+	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
+out:
+	sc->sc_heap_done = true;
+	heap_pa = sc->sc_fwheap != NULL ?
+	    (uint32_t)sc->sc_fwheap->heap.address : 0;
+	if (error != 0) {
+		snprintf(sc->sc_heap_state, sizeof(sc->sc_heap_state),
+		    "heap error=%d mapped=%u sync_rtn=0x%x", error,
+		    (u_int)(sc->sc_fwheap != NULL && sc->sc_fwheap->mapped),
+		    (u_int)r->after.rtn);
+	} else {
+		snprintf(sc->sc_heap_state, sizeof(sc->sc_heap_state),
+		    "heap error=0 fw=0x%08x pa=0x%08x pages=%u mapped=1 "
+		    "sync=slot%u rtn=0x%x polls=%u kicked=%u",
+		    (u_int)A733_GPU_FWCOMPUTE_SPAN_BASE, heap_pa,
+		    (u_int)A733_GPU_FWHEAP_PAGES, (u_int)r->slot,
+		    (u_int)r->after.rtn, (u_int)r->polls, (u_int)r->kicked);
+	}
+	if (image != NULL)
+		kmem_free(image, sizeof(*image));
+	if (bytes != NULL)
+		kmem_free(bytes, file.payload_bytes + file.header_bytes);
+	return error;
+}
+
+/* Stage 20: back all nine resources, build the VM tables, set the context. */
+static int
+sun60i_gpu_stage_fwvm(struct sun60i_gpu_softc *sc)
+{
+	const struct sun60i_a733_gpu_fwboot_result *boot = &sc->sc_boot_result;
+	const struct sun60i_a733_gpu_fwprobe_result *probe = &sc->sc_probe_result;
+	const struct sun60i_a733_gpu_fwprobe_result *cache = &sc->sc_cache_result;
+	struct a733_gpu_fwcompute_file file;
+	struct sun60i_a733_gpu_fwcompute_image *image = NULL;
+	uint8_t *bytes = NULL;
+	int error;
+
+	if (sc->sc_run_stage != A733_GPU_STAGE_FWHEAP ||
+	    !sun60i_gpu_compute_chain_ready(sc, boot, probe, cache) ||
+	    !sc->sc_heap_done || sc->sc_run_result != 0 ||
+	    sc->sc_fwheap == NULL || !sc->sc_fwheap->mapped ||
+	    sc->sc_fwvm != NULL) {
+		error = EBUSY;
+		goto out;
+	}
+	error = sun60i_gpu_compute_load(sc, &file, &bytes, &image);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_gpu_fwvm_prepare(sc->sc_dmat, &file, bytes,
+	    sc->sc_fwheap, &sc->sc_fwvm);
+	if (error != 0)
+		goto out;
+out:
+	sc->sc_vm_done = true;
+	if (error != 0) {
+		snprintf(sc->sc_vm_state, sizeof(sc->sc_vm_state),
+		    "vm error=%d", error);
+	} else {
+		snprintf(sc->sc_vm_state, sizeof(sc->sc_vm_state),
+		    "vm error=0 pc_pa=0x%08llx windows=%u dirs=%u leaves=%u "
+		    "resources=%u vm_context=0x%08x",
+		    (unsigned long long)sc->sc_fwvm->catalog_address,
+		    (u_int)sc->sc_fwvm->windows, (u_int)sc->sc_fwvm->directories,
+		    (u_int)sc->sc_fwvm->leaves,
+		    (u_int)A733_GPU_FWCOMPUTE_RESOURCES,
+		    (u_int)A733_GPU_FWCOMPUTE_SPAN_BASE +
+		    A733_GPU_FWHEAP_VM_CONTEXT_OFF);
+	}
+	if (image != NULL)
+		kmem_free(image, sizeof(*image));
+	if (bytes != NULL)
+		kmem_free(bytes, file.payload_bytes + file.header_bytes);
+	return error;
+}
+
+/*
+ * Stage 21: publish the compute KICK in slot 3 and wait for the client
+ * queue to drain and the timeline word to complete. KCCB acceptance is
+ * not compute completion; the CCCB and timeline observations are.
+ */
+static int
+sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
+{
+	const struct sun60i_a733_gpu_fwboot_result *boot = &sc->sc_boot_result;
+	const struct sun60i_a733_gpu_fwprobe_result *probe = &sc->sc_probe_result;
+	const struct sun60i_a733_gpu_fwprobe_result *cache = &sc->sc_cache_result;
+	const struct sun60i_a733_gpu_fwprobe_result *heap = &sc->sc_heap_result;
+	struct sun60i_a733_gpu_fwprobe_result *r = &sc->sc_kick_result;
+	struct a733_gpu_fwcompute_file file;
+	struct sun60i_a733_gpu_fwcompute_image *image = NULL;
+	uint8_t *bytes = NULL;
+	bus_space_handle_t bsh;
+	bus_addr_t addr;
+	bus_size_t size;
+	uint32_t read_off = 0, write_off = 0, timeline = 0;
+	uint32_t scratch_before = 0, scratch_after = 0;
+	struct timespec start, now, elapsed;
+	int error;
+
+	if (sc->sc_run_stage != A733_GPU_STAGE_FWVM ||
+	    !sun60i_gpu_compute_chain_ready(sc, boot, probe, cache) ||
+	    !heap->attempted || !heap->kicked || heap->error != 0 ||
+	    sc->sc_fwvm == NULL || !sc->sc_fwvm->prepared ||
+	    r->attempted) {
+		error = EBUSY;
+		goto out;
+	}
+	error = sun60i_gpu_compute_load(sc, &file, &bytes, &image);
+	if (error != 0)
+		goto out;
+	scratch_before = *(const volatile uint32_t *)sc->sc_fwvm->resource[0].cpu;
+	error = sun60i_gpu_boot_ready(sc, power_node);
+	if (error != 0)
+		goto out;
+	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
+	if (error != 0 || addr != A733_GPU_BASE ||
+	    size < A733_GPU_FWSTART_REG_SIZE) {
+		error = EINVAL;
+		goto out;
+	}
+	error = bus_space_map(sc->sc_bst, addr, A733_GPU_FWSTART_REG_SIZE,
+	    0, &bsh);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_gpu_fwprobe_cmd(sc->sc_bst, bsh, sc->sc_fw_memory,
+	    boot, heap, &image->kick, 3, r);
+	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
+	if (error != 0)
+		goto out;
+	/* Bounded completion wait: client queue drains and timeline updates. */
+	sun60i_a733_gpu_fwheap_observe(sc->sc_fwheap, &read_off, &write_off,
+	    &timeline);
+	getnanouptime(&start);
+	while (read_off != A733_GPU_FWCOMPUTE_USED_BYTES || timeline != 1) {
+		delay(100);
+		sun60i_a733_gpu_fwheap_observe(sc->sc_fwheap, &read_off,
+		    &write_off, &timeline);
+		getnanouptime(&now);
+		timespecsub(&now, &start, &elapsed);
+		if (elapsed.tv_sec >= 4) {
+			error = ETIMEDOUT;
+			break;
+		}
+	}
+	scratch_after = *(const volatile uint32_t *)sc->sc_fwvm->resource[0].cpu;
+out:
+	sc->sc_kick_done = true;
+	if (sc->sc_fwheap != NULL)
+		sun60i_a733_gpu_fwheap_observe(sc->sc_fwheap, &read_off,
+		    &write_off, &timeline);
+	if (sc->sc_fwvm == NULL)
+		scratch_after = 0;
+	{
+		uint32_t kick_rtn = r->after.rtn;
+
+		snprintf(sc->sc_kick_state, sizeof(sc->sc_kick_state),
+		    "kick error=%d rtn=0x%x polls=%u ccb_read=%u ccb_write=%u "
+		    "timeline=%u scratch=0x%x->0x%x context=0x%08x",
+		    error, (u_int)kick_rtn, (u_int)r->polls,
+		    (u_int)read_off, (u_int)write_off, (u_int)timeline,
+		    (u_int)scratch_before, (u_int)scratch_after,
+		    (u_int)A733_GPU_FWCOMPUTE_SPAN_BASE);
+	}
+	if (image != NULL)
+		kmem_free(image, sizeof(*image));
+	if (bytes != NULL)
+		kmem_free(bytes, file.payload_bytes + file.header_bytes);
+	return error;
+}
+
+/* Gate shared by the heap, VM, and kick stages after stage 18. */
+static bool
+sun60i_gpu_compute_chain_ready(const struct sun60i_gpu_softc *sc,
+    const struct sun60i_a733_gpu_fwboot_result *boot,
+    const struct sun60i_a733_gpu_fwprobe_result *probe,
+    const struct sun60i_a733_gpu_fwprobe_result *cache)
+{
+	const struct sun60i_a733_gpu_fwmem *mem = sc->sc_fw_memory;
+
+	return sc->sc_run_result == 0 && sc->sc_run_pass && sc->sc_run_core_on &&
+	    sc->sc_have_id && sc->sc_bvnc == A733_GPU_EXPECTED &&
+	    mem != NULL && mem->image.info.bvnc == sc->sc_bvnc &&
+	    mem->interface_prepared && boot->attempted && boot->device_owned &&
+	    boot->error == 0 && boot->start.touched && boot->start.released &&
+	    boot->snapshot_valid && boot->firmware_started == 1 &&
+	    probe->attempted && probe->published && probe->kick_attempted &&
+	    probe->kicked && probe->error == 0 &&
+	    cache->attempted && cache->published && cache->kick_attempted &&
+	    cache->kicked && cache->error == 0 &&
+	    cache->command == A733_GPU_FWPROBE_MMUCACHE && cache->slot == 1 &&
+	    cache->after.rtn == 1;
+}
+
 static void
 sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 {
@@ -979,7 +1364,7 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 		return;
 	}
 	/* Strictly ordered single sequence; a replay needs a fresh boot. */
-	if (stage < A733_GPU_STAGE_SUPPLY || stage > A733_GPU_STAGE_FWCOMPUTE ||
+	if (stage < A733_GPU_STAGE_SUPPLY || stage > A733_GPU_STAGE_FWKICK ||
 	    stage != sc->sc_run_stage + 1 || !sc->sc_run_pass) {
 		sc->sc_run_result = EINVAL;
 		mutex_exit(&sc->sc_run_lock);
@@ -1093,6 +1478,15 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 	case A733_GPU_STAGE_FWCOMPUTE:
 		error = sun60i_gpu_stage_fwcompute(sc);
 		break;
+	case A733_GPU_STAGE_FWHEAP:
+		error = sun60i_gpu_stage_fwheap(sc, power_node);
+		break;
+	case A733_GPU_STAGE_FWVM:
+		error = sun60i_gpu_stage_fwvm(sc);
+		break;
+	case A733_GPU_STAGE_FWKICK:
+		error = sun60i_gpu_stage_fwkick(sc, power_node);
+		break;
 	}
 	/* A bounded timeout still allows the read-only waiter afterwards. */
 	sc->sc_run_pass = (error == 0 || error == ETIMEDOUT);
@@ -1174,7 +1568,7 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 	}
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
 	    CTLTYPE_INT, "stage",
-		    SYSCTL_DESCR("run runtime diagnostic stage 0..18"),
+		    SYSCTL_DESCR("run runtime diagnostic stage 0..21"),
 		    sun60i_gpu_sysctl_stage, 0, NULL, 0,
 		    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create stage node\n");
@@ -1237,6 +1631,27 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 		    NULL, 0, sc->sc_compute_state, sizeof(sc->sc_compute_state),
 		    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create compute state node\n");
+
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRING, "heap_state",
+		    SYSCTL_DESCR("cached firmware-heap mapping and MMUCACHE resync"),
+		    NULL, 0, sc->sc_heap_state, sizeof(sc->sc_heap_state),
+		    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create heap state node\n");
+
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRING, "vm_state",
+		    SYSCTL_DESCR("cached compute VM preparation"),
+		    NULL, 0, sc->sc_vm_state, sizeof(sc->sc_vm_state),
+		    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create vm state node\n");
+
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRING, "kick_state",
+		    SYSCTL_DESCR("cached compute KICK submission and completion"),
+		    NULL, 0, sc->sc_kick_state, sizeof(sc->sc_kick_state),
+		    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create kick state node\n");
 
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_INT, "result",

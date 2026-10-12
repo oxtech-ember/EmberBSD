@@ -9,6 +9,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/queue.h>
+#include <time.h>
 #include <sys/types.h>
 #include "powervr/pvr_rogue_fwif.h"
 #include "sun60i_a733_gpu_fwinfo.h"
@@ -31,6 +32,7 @@ typedef struct { bus_addr_t ds_addr; bus_size_t ds_len; } bus_dma_segment_t;
 #include "sun60i_a733_gpu_fwprobe.h"
 #include "sun60i_a733_gpu_fwcompute.h"
 #include "sun60i_a733_gpu_fwcompute_file.h"
+#include "sun60i_a733_gpu_fwheap.h"
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
@@ -76,6 +78,11 @@ struct pdevinit pdevinit[] = { { NULL, 0 } };
 static struct device root_device, soc_device, gpu_device;
 
 static unsigned getticks(void) { return 0; }
+static void getnanouptime(struct timespec *t) { t->tv_sec = 0; t->tv_nsec = 0; }
+static void delay(unsigned int us) { (void)us; }
+#ifndef timespecsub
+#define timespecsub(tsp, usp, vsp) do { 	(vsp)->tv_sec = (tsp)->tv_sec - (usp)->tv_sec; 	(vsp)->tv_nsec = (tsp)->tv_nsec - (usp)->tv_nsec; 	if ((vsp)->tv_nsec < 0) { (vsp)->tv_sec--; (vsp)->tv_nsec += 1000000000L; } } while (0)
+#endif
 static int aprint_get_error_count(void) { return 0; }
 /* Stage-18 digest only runs on hardware; the fixture compiles, never digests. */
 #define SHA256_DIGEST_LENGTH 32
@@ -794,6 +801,80 @@ sun60i_a733_gpu_fwprobe(bus_space_tag_t tag, bus_space_handle_t handle,
 	record('L');
 	*out = probe_reply;
 	return fw_probe_error;
+}
+
+int
+/* Stages 19-21 publish caller-built KCCB commands on real hardware only. */
+static unsigned fwprobe_cmd_calls;
+int
+sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
+    struct sun60i_a733_gpu_fwmem *mem,
+    const struct sun60i_a733_gpu_fwboot_result *boot,
+    const struct sun60i_a733_gpu_fwprobe_result *previous,
+    const struct rogue_fwif_kccb_cmd *cmd, unsigned int slot,
+    struct sun60i_a733_gpu_fwprobe_result *out)
+{
+	fwprobe_cmd_calls++;
+	assert(cmd != NULL && slot >= 2 && previous != NULL);
+	return ENOSYS;
+}
+
+/* The submission provider allocates device memory; never in this fixture. */
+static unsigned fwheap_calls, fwvm_calls;
+int
+sun60i_a733_gpu_fwheap_prepare(bus_dma_tag_t tag,
+    struct sun60i_a733_gpu_fwmem *mem,
+    const struct sun60i_a733_gpu_fwcompute_image *image,
+    struct sun60i_a733_gpu_fwheap **out)
+{
+	fwheap_calls++;
+	return ENOSYS;
+}
+
+int
+sun60i_a733_gpu_fwheap_map(struct sun60i_a733_gpu_fwheap *heap,
+    struct sun60i_a733_gpu_fwmem *mem)
+{
+	return ENOSYS;
+}
+
+int
+sun60i_a733_gpu_fwheap_set_vm_context(struct sun60i_a733_gpu_fwheap *heap,
+    const uint8_t context[32])
+{
+	return ENOSYS;
+}
+
+void
+sun60i_a733_gpu_fwheap_observe(const struct sun60i_a733_gpu_fwheap *heap,
+    uint32_t *read_offset, uint32_t *write_offset, uint32_t *timeline)
+{
+	if (read_offset != NULL)
+		*read_offset = 0;
+	if (write_offset != NULL)
+		*write_offset = 0;
+	if (timeline != NULL)
+		*timeline = 0;
+}
+
+void
+sun60i_a733_gpu_fwheap_destroy(struct sun60i_a733_gpu_fwheap **out)
+{
+}
+
+int
+sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t tag,
+    const struct a733_gpu_fwcompute_file *file, const uint8_t *bytes,
+    struct sun60i_a733_gpu_fwheap *heap,
+    struct sun60i_a733_gpu_fwvm **out)
+{
+	fwvm_calls++;
+	return ENOSYS;
+}
+
+void
+sun60i_a733_gpu_fwvm_destroy(struct sun60i_a733_gpu_fwvm **out)
+{
 }
 
 int

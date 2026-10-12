@@ -118,6 +118,7 @@ file	arch/arm/sunxi/sun60i_a733_gpu_fwprobe.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute_vm.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwheap.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_mmu.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_vm.c	sun60i_a733_gpu
 
