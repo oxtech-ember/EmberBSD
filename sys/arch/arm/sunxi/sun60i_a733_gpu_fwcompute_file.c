@@ -169,3 +169,23 @@ sun60i_a733_gpu_fwcompute_file_relocate(uint8_t state[56], uint64_t base)
 		memcpy(state + pair[i], &word, sizeof(word));
 	}
 }
+
+/* CDM-2 kernel blocks carry their PDS data/code addresses in the same
+ * 28-bit shifted fields as the context registers. Values inside the
+ * PDS program page window (offsets 0xa000..0xafff) move to the dual-
+ * mapped low page by adding the low base to the whole aligned word. */
+void
+sun60i_a733_gpu_fwcompute_file_relocate_stream(uint32_t *words, size_t count,
+    uint64_t base)
+{
+	const uint32_t lo = 0x00000a00, hi = 0x00000b00;
+	uint32_t delta = (uint32_t)(base >> 4) << 4;
+	size_t i;
+
+	for (i = 0; i < count; i++) {
+		uint32_t w = words[i];
+
+		if ((w & 0xf) == 0 && (w >> 4) >= lo && (w >> 4) < hi)
+			words[i] = w + delta;
+	}
+}
