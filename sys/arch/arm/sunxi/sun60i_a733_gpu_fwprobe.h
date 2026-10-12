@@ -32,6 +32,7 @@
 #include <sys/types.h>
 #include <sys/bus.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwboot.h>
+#include <arm/sunxi/powervr/pvr_rogue_fwif.h>
 
 #define A733_GPU_FWPROBE_LOGTYPE		UINT32_C(0x2abc00ce)
 #define A733_GPU_FWPROBE_MMUCACHE		UINT32_C(0x2abc0066)
