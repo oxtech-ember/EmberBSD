@@ -284,6 +284,12 @@ on every board in the hardware catalog.
   The litehtml patch fixes negative shifts. [Full QtTools 6.12](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/qt-packages.md#full-qttools-package)
   now cross-packages with shared litehtml, Designer and QDoc; target runtime and
   the LLVM 23.1.3 consumer update remain pending.
+  [Native KDocTools](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/doctools.md)
+  now generates KDE documentation during Mac cross builds. Full KConfigWidgets
+  and KCompletion packages retain [Designer plugins](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/designer-plugins.md).
+  [Breeze generator repairs](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/breeze.md)
+  preserve SVG inputs and reject malformed XML, with native regression,
+  ASan/UBSan and focused static-analysis checks. Installed desktop acceptance remains pending.
   [KItemModels, ThreadWeaver and KCrash](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/models-and-jobs.md)
   pass installed CM5 model/QML, worker-queue and crash-recovery checks:
   500, 77 and 16 QtTest cases respectively, with six upstream model skips.
@@ -735,13 +741,14 @@ on every board in the hardware catalog.
   in that VM with explicit current GNU as/ld. [Perl 5.44](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/perl.md)
   also cross-packages on Mac and passes 74 selected upstream assertions plus
   four native XS-extension assertions on CM5. The profile prepares matching
-  LLVM/Clang/LLD 23.1.2 with upstream lit. Portability patches, generated-header declarations and
+  LLVM/Clang/LLD 23.1.3 with upstream lit. Portability patches, generated-header declarations and
   explicit interpreter/LLVM selection have source checks. Focused native
-  macro/selection and GCC16 metadata checks pass. The complete LLVM23 core
-  package passes normal package checks and installed C API/bitcode plus four
+  macro/selection and GCC16 metadata checks pass. The complete LLVM 23.1.3 core
+  passes cross-package checks, sysroot installation and 15 metadata/refusal checks.
+  The previous 23.1.2 core passes installed C API/bitcode plus four
   default ORC JITLink lifecycles on Zero 3W. Upstream lit passes installed
-  launcher and PASS/XFAIL/FAIL checks in AArch64 UTM. The complete Clang package
-  passes normal cross-package checks; installed Clang, LLD and
+  launcher and PASS/XFAIL/FAIL checks in AArch64 UTM. The complete Clang 23.1.2 package
+  passes normal cross-package checks; renewed 23.1.3 runtime, installed Clang, LLD and
   TinyGo consumer acceptance remain pending; Mesa26 uses the common LLVM23 provider. See the [LLVM family contract](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
   Ports also owns the [Mac cross-package workflow](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-build-tools/cross):
   pkgconf 3.0.7, GNU M4 1.4.21, Libtool 2.6.2 and
