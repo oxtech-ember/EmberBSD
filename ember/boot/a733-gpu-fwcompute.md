@@ -283,3 +283,13 @@ were set: the firmware dispatched the context and then reset it,
 notifying the host. The next step is reading the reset notification
 payload (the FWCCB slot) and tracing why the CDM execution asked for the
 reset — suspected stream or fetch details, not the submission plumbing.
+
+The decoded notification names the failure precisely: our context
+(server id 0, job 1, DM 4 CDM, page catalog `0x40165000`) was reset as
+GUILTY_LOCKUP with the page-fault flag and fault address `0x2400`. The
+static state bytes are (CDM register offset, packed value) pairs and are
+well-formed, so the near-zero fault address points at the kernel-owned
+command fields the bounded generator does not emit: `cdm_resume_pds1`
+and the TPU border-colour table are zero in our submission. Filling the
+resume PDS address from the manifest PDS program and the border-table
+address is the next experiment.
