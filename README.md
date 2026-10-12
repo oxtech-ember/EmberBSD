@@ -273,7 +273,8 @@ on every board in the hardware catalog.
   shader pixels, process restart, failure checks and 59 matching library hashes.
   The [Qt Quick consumer](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/qt-quick-gpu)
   also passes compiled QML scene/layer pixels on V3D, process restart and
-  rejection checks; 75 live library hashes match the common stack.
+  rejection checks; 75 live library hashes match the common stack. The same
+  regression passes with Mesa 26.2.4nb4 / LLVM 23.1.3 after the fan kernel update.
   [KI18n, KCoreAddons and KConfig 6.31 packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/frameworks.md)
   also pass cross packaging and sysroot installation. CM5 checks cover generated
   configuration persistence, native Qt/kqueue file events and locale lookup.
@@ -283,7 +284,8 @@ on every board in the hardware catalog.
   pass 220 gumbo tests, an upstream UTF-8 test and two CSS regressions on CM5.
   The litehtml patch fixes negative shifts. [Full QtTools 6.12](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/qt-packages.md#full-qttools-package)
   now cross-packages against LLVM/Clang 23.1.3 with shared litehtml, Designer
-  and QDoc; installed target runtime remains pending.
+  and QDoc. Installed QDoc generates C++ documentation through Clang on CM5;
+  Assistant and Designer windows remain unaccepted.
   [Native KDocTools](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/doctools.md)
   now generates KDE documentation during Mac cross builds. Full KConfigWidgets
   and KCompletion packages retain [Designer plugins](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/designer-plugins.md).
@@ -299,7 +301,10 @@ on every board in the hardware catalog.
   Installed KWayland passes 56 exact button events on CM5, with an original-patch
   failure control. [libsecret 0.21.8.2](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/libsecret.md)
   retains GIR, Vala and documentation; 50 upstream tests and a native peer-credential
-  regression pass on CM5. KIO/KWallet and the complete desktop session remain pending.
+  regression pass on CM5.
+  [Installed KIO and KGlobalAccelD](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-frameworks.md)
+  pass 53 and 28 upstream cases on CM5, with two KIO skips. Shortcut tests use
+  a dummy input plugin; physical keys and full KWin/Plasma remain unaccepted.
   [KItemModels, ThreadWeaver and KCrash](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/models-and-jobs.md)
   pass installed CM5 model/QML, worker-queue and crash-recovery checks:
   500, 77 and 16 QtTest cases respectively, with six upstream model skips.
@@ -311,8 +316,10 @@ on every board in the hardware catalog.
   passes 153 selected CM5 archive/filter cases; the 2-GiB 7z case remains
   unaccepted after reaching the board's memory limit.
   [GnuPG 2.5.24](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/security-dependencies.md)
-  passes an isolated installed encryption/decryption check. KWallet and live
-  desktop authorization remain unaccepted.
+  passes an isolated installed encryption/decryption check.
+  [QCA and KWallet](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/qca.md)
+  pass installed crypto tests and private D-Bus activation on CM5; wallet storage
+  in the upstream test is mocked. Interactive desktop authorization remains unaccepted.
   Shared-cache recovery and the complete Frameworks runtime remain unaccepted.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
