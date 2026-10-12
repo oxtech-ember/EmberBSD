@@ -564,7 +564,8 @@ on every board in the hardware catalog.
   hardware/firmware BVNC through direct coherent memory. The
   [first native KCCB command](ember/boot/a733-gpu-fwprobe.md#physical-command-result)
   also completes on this board: its return word, queue progress and executed
-  counter agree. Rogue GPU page-table encoders pass source contracts;
+  counter agree. Rogue GPU [page-table encoders](ember/boot/a733-gpu-mmu.md)
+  and [CPU-owned VM preparation](ember/boot/a733-gpu-vm.md) pass source contracts;
   GPU translation and rendering remain unverified. A PowerVR render interface,
   Mesa Vulkan/Zink and accelerated Plasma still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
