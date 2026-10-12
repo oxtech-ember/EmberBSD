@@ -291,6 +291,9 @@ on every board in the hardware catalog.
   preserve SVG inputs and reject malformed XML, with native regression,
   ASan/UBSan and focused static-analysis checks. The installed Breeze package
   also passes KDE resource-byte comparisons and missing-reference rejection on CM5.
+  The [GStreamer 1.28.8 core](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/gstreamer.md)
+  passes 106 unchanged upstream checks and a finite installed pipeline on CM5.
+  Its complete plugin family, media output and desktop integration remain unaccepted.
   The complete desktop session remains pending.
   [KItemModels, ThreadWeaver and KCrash](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/models-and-jobs.md)
   pass installed CM5 model/QML, worker-queue and crash-recovery checks:
