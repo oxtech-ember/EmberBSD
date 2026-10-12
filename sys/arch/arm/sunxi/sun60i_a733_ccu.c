@@ -1110,7 +1110,6 @@ out:
 int
 sun60i_a733_ccu_npu_prepare(struct clk *npu, const void *owner, bool *retained)
 {
-	struct sun60i_a733_gpu_state state;
 	struct sunxi_ccu_softc *sc = sun60i_gpu_lease.sc;
 
 	if (npu != &sun60i_a733_ccu_clks[A733_CLK_NPU].base || owner == NULL ||
