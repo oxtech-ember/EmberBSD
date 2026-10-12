@@ -1102,6 +1102,33 @@ out:
 	return error;
 }
 
+/*
+ * Select a running parent for the NPU module clock before any enable:
+ * after reset the mux points at pll-npu, which firmware left off and the
+ * accel PLL protection refuses to turn on. PERIPH0-600M runs at boot.
+ */
+int
+sun60i_a733_ccu_npu_prepare(struct clk *npu, const void *owner, bool *retained)
+{
+	struct sunxi_ccu_softc *sc = sun60i_gpu_lease.sc;
+
+	if (npu != &sun60i_a733_ccu_clks[A733_CLK_NPU].base || owner == NULL ||
+	    retained == NULL || sc == NULL)
+		return EINVAL;
+	mutex_enter(&sun60i_gpu_lease.lock);
+	if (sun60i_gpu_lease.owner != NULL && sun60i_gpu_lease.owner != owner) {
+		mutex_exit(&sun60i_gpu_lease.lock);
+		return EBUSY;
+	}
+	sun60i_gpu_lease.attempted = true;
+	*retained = true;
+	/* npu_parents[2] = pll-periph0-600M; GPU uses index 3 = 400M. */
+	int error = sun60i_a733_accel_write(sc, NPU_CLK_REG,
+	    ACCEL_CLK_SEL | __BITS(3,0), __SHIFTIN(2, ACCEL_CLK_SEL));
+	mutex_exit(&sun60i_gpu_lease.lock);
+	return error;
+}
+
 static int
 sun60i_a733_ccu_match(device_t parent, cfdata_t cf, void *aux)
 {

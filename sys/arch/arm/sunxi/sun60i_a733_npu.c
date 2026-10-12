@@ -179,8 +179,19 @@ sun60i_npu_stage_power_id(struct sun60i_npu_softc *sc)
 		"clk_ahb_gate", "clk_mbus_gate", "clk_bus", "clk_npu",
 	};
 	struct fdtbus_reset *rst;
-	struct clk *clk;
+	struct clk *clk, *mod;
+	bool retained = false;
 	int error;
+
+	/* The module clock's reset parent is the dead pll-npu: move the
+	 * mux to the running PERIPH0-600M before any enable walks up. */
+	mod = fdtbus_clock_get(sc->sc_phandle, "clk_npu");
+	if (mod == NULL)
+		return ENODEV;
+	error = sun60i_a733_ccu_npu_prepare(mod, sc, &retained);
+	clk_put(mod);
+	if (error != 0)
+		return error;
 
 	for (u_int i = 0; i < __arraycount(resets); i++) {
 		rst = fdtbus_reset_get(sc->sc_phandle, resets[i]);
