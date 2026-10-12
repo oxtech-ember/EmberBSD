@@ -1,4 +1,4 @@
-# Firmware-ready A733 GPU identification
+# A733 GPU staged diagnostics
 
 The native `sun60igpuid` consumer can identify an already prepared A733 GPU.
 The current A733 DT enables its diagnostic `netbsd,observe-only` stage, which
@@ -10,7 +10,10 @@ and physical attachment on Zero 3W are verified. The explicit runtime
 PLL600 cold start now identifies the physical GPU; see the
 [current hardware result](#physical-pll-result). Normal board DTBs remain
 observe-only. The earlier PERIPH0-400M path times out at GPU_CORE and can
-stall on GPU register access. Neither path supplies GPU command execution.
+stall on GPU register access. Explicit stage 15 has separately
+[booted the pinned firmware on Zero 3W](a733-gpu-fwboot.md#physical-bootstrap-result).
+Stage 16 adds a software-checked command probe. Physical command acceptance
+and graphics acceleration remain unverified.
 
 ## Physical result
 
@@ -274,7 +277,7 @@ nodes - so their "provider stalls" were that bug, not hardware.
 ### Runtime staged diagnostics with a watchdog bound
 
 Normal board DTBs do not run this experiment at boot. The live driver exposes
-`hw.sun60igpuid0.stage`, `result`, `pbvnc`, `clock_source`, `clock_state` and `fw_state`.
+`hw.sun60igpuid0.stage`, `result`, `pbvnc`, `clock_source`, `clock_state`, and the cached firmware state nodes.
 Run one stage per sysctl write. Each stage runs once in the following order:
 
 | Stage | Action |
@@ -295,6 +298,7 @@ Run one stage per sysctl write. Each stage runs once in the following order:
 | 13 | Prepare CPU-owned firmware memory and page tables; no GPU execution ([guide](a733-gpu-fwmem.md)) |
 | 14 | Prepare the full CPU-owned firmware interface and extend page tables atomically; no device access ([guide](a733-gpu-fwinit.md)) |
 | 15 | Revalidate hardware, transfer DMA ownership, release the MIPS reset and wait at most five seconds for firmware startup ([guide](a733-gpu-fwboot.md)) |
+| 16 | Revalidate hardware and submit one bounded `LOGTYPE_UPDATE` command after successful firmware startup ([guide](a733-gpu-fwprobe.md)) |
 
 Stage 14 obtains cluster count and SLC size from the validated firmware metadata.
 It uses the observed core clock rate and prepares work/config buffers.
@@ -313,6 +317,21 @@ The bootstrap result includes attempted writes, firmware-start status,
 connection fields and firmware compatibility values. The shared-memory
 snapshot is not an atomic firmware transaction. Firmware startup alone
 does not establish interrupt delivery, command processing or acceleration.
+
+Stage 16 requires successful stage 15 and its unchanged device-owned memory.
+It also requires a valid startup snapshot and released MIPS reset.
+It repeats the supply, GPU_TOP, strict CORE, clock, and live BVNC checks.
+The core and bus clocks must still match the prepared values.
+Only then does it map the register bank and call the command probe.
+The probe waits for compatibility data and one KCCB command within one second.
+It never writes connection states or performs an OS handshake.
+Success requires both the command return word and queue progress.
+`probe_state` exposes cached publication, kick, queue, and compatibility results.
+The driver publishes this report after it unmaps the CPU register window.
+It retains all DMA allocations on success, error, and timeout.
+A failed stage cannot be retried, including after writing stage zero.
+Command completion does not establish rendering, interrupts, or accelerated Plasma.
+
 Normal boot never runs these stages. Keep the external hardware watchdog
 active during each explicit stage when no serial recovery is available.
 
@@ -459,6 +478,7 @@ warnings; Clang analysis has inherited header dead-store findings.
 No new production defect was identified. These are not clean analyses
 or a Valgrind result; Valgrind does not support the macOS/arm64 test host.
 
-This establishes native power/clock bring-up and physical identity.
-Firmware execution, memory isolation, IRQ completion, PowerVR DRM,
-Mesa Vulkan/Zink, display output and accelerated Plasma remain unverified.
+This PLL result establishes native power/clock bring-up and physical identity.
+A separate [physical bootstrap result](a733-gpu-fwboot.md#physical-bootstrap-result)
+confirms firmware startup. Command completion, memory isolation, IRQ completion,
+PowerVR DRM, Mesa Vulkan/Zink, display output, and accelerated Plasma remain unverified.

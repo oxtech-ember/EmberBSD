@@ -27,6 +27,7 @@ typedef struct { bus_addr_t ds_addr; bus_size_t ds_len; } bus_dma_segment_t;
 #include "sun60i_a733_gpu_fwmem.h"
 #include "sun60i_a733_gpu_fwstart.h"
 #include "sun60i_a733_gpu_fwboot.h"
+#include "sun60i_a733_gpu_fwprobe.h"
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
@@ -142,7 +143,8 @@ static bool full_mapping, fixture_device_owned;
 static bool later_publication;
 static const char *later_memory_state, *later_interface_state, *later_boot_state;
 static char later_memory_before[256], later_interface_before[256];
-static char later_boot_before[512];
+static char later_boot_before[512], later_probe_before[1024];
+static const char *later_probe_state;
 static int *consumer_lock;
 
 static void
@@ -153,6 +155,7 @@ later_not_published(void)
 	assert(strcmp(later_memory_state, later_memory_before) == 0);
 	assert(strcmp(later_interface_state, later_interface_before) == 0);
 	assert(strcmp(later_boot_state, later_boot_before) == 0);
+	assert(strcmp(later_probe_state, later_probe_before) == 0);
 }
 
 static void
@@ -492,6 +495,9 @@ static int fw_interface_error, fw_boot_error;
 static uint64_t expected_interface_hz;
 static uint32_t expected_clusters, expected_slc;
 static struct sun60i_a733_gpu_fwboot_result boot_reply;
+static struct sun60i_a733_gpu_fwprobe_result probe_reply;
+static unsigned fw_probes;
+static int fw_probe_error;
 
 /* Independent buffer storage makes accidental consumer writes observable. */
 static void
@@ -753,6 +759,27 @@ sun60i_a733_gpu_fwboot(bus_space_tag_t tag, bus_space_handle_t handle,
 	return fw_boot_error;
 }
 
+int
+sun60i_a733_gpu_fwprobe(bus_space_tag_t tag, bus_space_handle_t handle,
+    struct sun60i_a733_gpu_fwmem *mem,
+    const struct sun60i_a733_gpu_fwboot_result *boot,
+    struct sun60i_a733_gpu_fwprobe_result *out)
+{
+	assert(handle == 0x5678 && full_mapping);
+	assert(mem == fwmem_live && mem->interface_prepared && fixture_device_owned);
+	assert(consumer_lock != NULL && *consumer_lock);
+	assert(boot->attempted && boot->device_owned && boot->error == 0);
+	assert(boot->start.touched && boot->start.released);
+	assert(boot->snapshot_valid && boot->firmware_started == 1);
+	assert(!out->attempted && !out->published && !out->kick_attempted && !out->kicked);
+	assert(!fw_handle.open && fw_memory == NULL);
+	later_not_published();
+	fw_probes++;
+	record('L');
+	*out = probe_reply;
+	return fw_probe_error;
+}
+
 #define sun60i_a733_gpu_fwinfo_parse fw_parse
 #include "driver.h"
 #undef sun60i_a733_gpu_fwinfo_parse
@@ -788,8 +815,8 @@ reset(void)
 	fw_expected_memory = NULL;
 	fwmem_prepare_error = 0;
 	fwmem_prepares = fwmem_destroys = fwmem_null_destroys = 0;
-	fw_interfaces = fw_boots = 0;
-	fw_interface_error = fw_boot_error = full_map_error = 0;
+	fw_interfaces = fw_boots = fw_probes = 0;
+	fw_interface_error = fw_boot_error = full_map_error = fw_probe_error = 0;
 	full_maps = full_unmaps = 0;
 	assert(!full_mapping && !fixture_device_owned);
 	later_publication = false;
@@ -798,6 +825,7 @@ reset(void)
 	expected_clusters = 2;
 	expected_slc = 16;
 	memset(&boot_reply, 0, sizeof(boot_reply));
+	memset(&probe_reply, 0, sizeof(probe_reply));
 	pd[0] = swap32(2);
 	pd[1] = swap32(5);
 	clocks[0] = swap32(3);
@@ -1660,10 +1688,12 @@ later_begin(void)
 	later_memory_state = sc.sc_memory_state;
 	later_interface_state = sc.sc_interface_state;
 	later_boot_state = sc.sc_boot_state;
+	later_probe_state = sc.sc_probe_state;
 	memcpy(later_memory_before, sc.sc_memory_state, sizeof(later_memory_before));
 	memcpy(later_interface_before, sc.sc_interface_state,
 	    sizeof(later_interface_before));
 	memcpy(later_boot_before, sc.sc_boot_state, sizeof(later_boot_before));
+	memcpy(later_probe_before, sc.sc_probe_state, sizeof(later_probe_before));
 	later_publication = true;
 }
 
@@ -1696,25 +1726,31 @@ static void
 later_no_replay(u_int stage)
 {
 	struct sun60i_a733_gpu_fwboot_result saved_result = sc.sc_boot_result;
+	struct sun60i_a733_gpu_fwprobe_result saved_probe = sc.sc_probe_result;
+	unsigned probe_calls = fw_probes;
 	unsigned init_calls = fw_interfaces, boot_calls = fw_boots;
 	unsigned mmap_calls = full_maps, destroy_calls = fwmem_destroys;
-	char memory[256], interface[256], boot[512];
+	char memory[256], interface[256], boot[512], probe[1024];
 	size_t count = nevents;
 
 	memcpy(memory, sc.sc_memory_state, sizeof(memory));
 	memcpy(interface, sc.sc_interface_state, sizeof(interface));
 	memcpy(boot, sc.sc_boot_state, sizeof(boot));
+	memcpy(probe, sc.sc_probe_state, sizeof(probe));
 	for (unsigned i = 0; i < 2; i++) {
 		if (i != 0)
 			sun60i_gpu_run_stage(&sc, 0);
 		sun60i_gpu_run_stage(&sc, stage);
 		CHECK(sc.sc_run_result == EINVAL && sc.sc_run_stage == stage);
 		CHECK(fw_interfaces == init_calls && fw_boots == boot_calls);
+		CHECK(fw_probes == probe_calls);
 		CHECK(full_maps == mmap_calls && fwmem_destroys == destroy_calls);
 		CHECK(nevents == count && !full_mapping);
 		CHECK(memcmp(memory, sc.sc_memory_state, sizeof(memory)) == 0);
 		CHECK(memcmp(interface, sc.sc_interface_state, sizeof(interface)) == 0);
 		CHECK(memcmp(boot, sc.sc_boot_state, sizeof(boot)) == 0);
+		CHECK(memcmp(probe, sc.sc_probe_state, sizeof(probe)) == 0);
+		CHECK(memcmp(&saved_probe, &sc.sc_probe_result, sizeof(saved_probe)) == 0);
 		CHECK(memcmp(&saved_result, &sc.sc_boot_result, sizeof(saved_result)) == 0);
 	}
 }
@@ -1983,6 +2019,200 @@ test_fwboot_stage(void)
 	printf("PASS: %u firmware bootstrap consumer checks\n", checks - start);
 }
 
+static void
+fwprobe_ready(void)
+{
+	fwboot_ready();
+	boot_reply.attempted = boot_reply.device_owned = true;
+	boot_reply.start.touched = boot_reply.start.released = true;
+	boot_reply.snapshot_valid = true;
+	boot_reply.firmware_started = 1;
+	sun60i_gpu_run_stage(&sc, 15);
+	CHECK(sc.sc_run_result == 0 && sc.sc_run_stage == 15);
+	CHECK(fw_boots == 1 && fixture_device_owned);
+	snprintf(sc.sc_probe_state, sizeof(sc.sc_probe_state),
+	    "command not yet published");
+	full_maps = full_unmaps = 0;
+	later_begin();
+}
+
+static void
+probe_stopped(int wanted, const char *order, unsigned mmap_calls,
+    unsigned munmap_calls, unsigned probe_calls)
+{
+	char prefix[160];
+	const struct sun60i_a733_gpu_fwprobe_result *r = &sc.sc_probe_result;
+
+	CHECK(sc.sc_run_result == (u_int)wanted && sc.sc_run_stage == 16);
+	CHECK(strcmp(events, order) == 0);
+	snprintf(prefix, sizeof(prefix),
+	    "error=%d attempted=%u published=%u kick_attempted=%u kicked=%u device_owned=1 ",
+	    wanted, r->attempted, r->published, r->kick_attempted, r->kicked);
+	CHECK(strncmp(sc.sc_probe_state, prefix, strlen(prefix)) == 0);
+	CHECK(full_maps == mmap_calls && full_unmaps == munmap_calls);
+	CHECK(fw_probes == probe_calls && !full_mapping);
+	CHECK(fw_boots == 1 && fw_interfaces == 1 && fwmem_destroys == 0);
+	CHECK(fixture_device_owned && sc.sc_boot_result.device_owned);
+	CHECK(!regulator.acquired && !clock_fixture.acquired);
+	CHECK(strcmp(sc.sc_memory_state, later_memory_before) == 0);
+	CHECK(strcmp(sc.sc_interface_state, later_interface_before) == 0);
+	CHECK(strcmp(sc.sc_boot_state, later_boot_before) == 0);
+}
+
+static void
+test_fwprobe_stage(void)
+{
+	static const struct { int error; const char *order; } failure[] = {
+		{ ENXIO, "A" }, { EIO, "ASs" }, { EBUSY, "ASs" },
+		{ EIO, "ASVs" }, { EOPNOTSUPP, "ASVs" },
+		{ EIO, "ASVsP" }, { EBUSY, "ASVsP" },
+		{ ETIMEDOUT, "ASVsPK" }, { ENXIO, "ASVsPKC" },
+		{ EIO, "ASVsPKCFc" }, { EBUSY, "ASVsPKCFc" },
+		{ EBUSY, "ASVsPKCFc" }, { EIO, "ASVsPKCFcASs" },
+		{ EINVAL, "ASVsPKCFcASVsP" },
+		{ EINVAL, "ASVsPKCFcASVsP" },
+		{ EINVAL, "ASVsPKCFcASVsP" },
+		{ ENOMEM, "ASVsPKCFcASVsPM" },
+		{ EFAULT, "ASVsPKCFcASVsPMIU" },
+		{ ENODEV, "ASVsPKCFcASVsPMIU" },
+		{ EINVAL, "ASVsPKCFcASVsPMIU" },
+		{ ENOMEM, "ASVsPKCFcASVsPMIUX" }
+	};
+	static const struct {
+		int error;
+		bool attempted, published, kick_attempted, kicked;
+	} reply[] = {
+		{ EINVAL, false, false, false, false },
+		{ EOPNOTSUPP, true, false, false, false },
+		{ EBUSY, true, false, false, false },
+		{ EPROTO, true, false, false, false },
+		{ EFAULT, true, true, true, false },
+		{ ETIMEDOUT, true, true, true, true },
+		{ EPROTO, true, true, true, true },
+		{ 0, true, true, true, true }
+	};
+	struct sun60i_a733_gpu_fwboot_result saved_boot;
+	struct sun60i_a733_gpu_fwprobe_result saved_probe;
+	struct memory_snapshot snap;
+	unsigned start = checks;
+
+	reset();
+	sun60i_gpu_run_stage(&sc, 16);
+	CHECK(sc.sc_run_result == EINVAL && nevents == 0 && fw_probes == 0);
+	fwboot_ready();
+	sun60i_gpu_run_stage(&sc, 16);
+	CHECK(sc.sc_run_result == EINVAL && fw_boots == 0 && full_maps == 0);
+	later_teardown();
+	for (unsigned n = 0; n < 21; n++) {
+		fwprobe_ready();
+		switch (n) {
+		case 0: sc.sc_run_stage = 14; break;
+		case 1: sc.sc_run_result = EIO; break;
+		case 2: sc.sc_run_pass = false; break;
+		case 3: sc.sc_run_core_on = false; break;
+		case 4: sc.sc_have_id = false; break;
+		case 5: sc.sc_bvnc ^= 1; break;
+		case 6: sc.sc_fw_memory = NULL; break;
+		case 7: fwmem_live->image.info.bvnc ^= 1; break;
+		case 8: fwmem_live->interface_prepared = false; break;
+		case 9: sc.sc_boot_result.attempted = false; break;
+		case 10: sc.sc_boot_result.device_owned = false; break;
+		case 11: sc.sc_boot_result.error = EIO; break;
+		case 12: sc.sc_boot_result.start.touched = false; break;
+		case 13: sc.sc_boot_result.start.released = false; break;
+		case 14: sc.sc_boot_result.snapshot_valid = false; break;
+		case 15: sc.sc_boot_result.firmware_started = 0; break;
+		case 16: sc.sc_boot_result.firmware_started = 2; break;
+		case 17: sc.sc_probe_result.attempted = true; break;
+		case 18: sc.sc_probe_result.published = true; break;
+		case 19: sc.sc_probe_result.kick_attempted = true; break;
+		case 20: sc.sc_probe_result.kicked = true; break;
+		}
+		saved_boot = sc.sc_boot_result;
+		saved_probe = sc.sc_probe_result;
+		memory_snapshot_take(&snap);
+		CHECK(sun60i_gpu_stage_fwprobe(&sc, 2) == EBUSY);
+		CHECK(fw_probes == 0 && full_maps == 0 && nevents == 0);
+		CHECK(memcmp(&saved_boot, &sc.sc_boot_result, sizeof(saved_boot)) == 0);
+		CHECK(memcmp(&saved_probe, &sc.sc_probe_result, sizeof(saved_probe)) == 0);
+		sc.sc_fw_memory = fwmem_live;
+		memory_snapshot_check(&snap, false);
+		later_teardown();
+	}
+	for (size_t n = 0; n < __arraycount(failure); n++) {
+		fwprobe_ready();
+		switch (n) {
+		case 0: missing_supply = true; break;
+		case 1: state_error = EIO; break;
+		case 2: supply_on = false; break;
+		case 3: voltage_error = EIO; break;
+		case 4: voltage = 900000; break;
+		case 5: power_error = EIO; break;
+		case 6: power_on = false; break;
+		case 7: wait_error = ETIMEDOUT; break;
+		case 8: missing_clock = true; break;
+		case 9: final_ready_error = EIO; break;
+		case 10: core_hz++; break;
+		case 11: bus_hz++; break;
+		case 12: fail_supply_call = supply_calls + 2; break;
+		case 13: reg_error = EIO; break;
+		case 14: binding_addr += 4096; break;
+		case 15: binding_size = 0x27; break;
+		case 16: map_error = ENOMEM; break;
+		case 17: peek_error = EFAULT; break;
+		case 18: pbvnc ^= 1; break;
+		case 19: binding_size = A733_GPU_FWSTART_REG_SIZE - 1; break;
+		case 20: full_map_error = ENOMEM; break;
+		}
+		saved_boot = sc.sc_boot_result;
+		memory_snapshot_take(&snap);
+		sun60i_gpu_run_stage(&sc, 16);
+		probe_stopped(failure[n].error, failure[n].order, n == 20, 0, 0);
+		CHECK(memcmp(&saved_boot, &sc.sc_boot_result, sizeof(saved_boot)) == 0);
+		CHECK(!sc.sc_probe_result.attempted && !sc.sc_probe_result.published);
+		memory_snapshot_check(&snap, false);
+		later_no_replay(16);
+		later_teardown();
+	}
+	for (size_t n = 0; n < __arraycount(reply); n++) {
+		fwprobe_ready();
+		fw_probe_error = probe_reply.error = reply[n].error;
+		probe_reply.attempted = reply[n].attempted;
+		probe_reply.published = reply[n].published;
+		probe_reply.kick_attempted = reply[n].kick_attempted;
+		probe_reply.kicked = reply[n].kicked;
+		probe_reply.slot = 0;
+		probe_reply.polls = 19;
+		probe_reply.before.cmds_executed = 21;
+		probe_reply.after = (struct sun60i_a733_gpu_fwprobe_snapshot){
+			.read_offset = 1, .write_offset = 1, .rtn = 0x2,
+			.fw_read_offset = 2, .fw_write_offset = 3, .fw_command = 0x1234,
+			.cmds_executed = 22, .pow_state = 1, .hwr_state = 0x20,
+			.fw_faults = 7, .log_type = 0, .firmware_started = 1,
+			.fw_state = 2, .os_state = 3, .alive_fw_token = 45, .alive_os_token = 67,
+			.compchecks_updated = 1, .hw_bvnc = UINT64_C(0x00240038006800b7),
+			.fw_bvnc = UINT64_C(0x00240038006800b7), .ddk_build = 6976702
+		};
+		saved_boot = sc.sc_boot_result;
+		memory_snapshot_take(&snap);
+		sun60i_gpu_run_stage(&sc, 16);
+		probe_stopped(reply[n].error, "ASVsPKCFcASVsPMIUXLZ", 1, 1, 1);
+		CHECK(memcmp(&saved_boot, &sc.sc_boot_result, sizeof(saved_boot)) == 0);
+		CHECK(memcmp(&probe_reply, &sc.sc_probe_result, sizeof(probe_reply)) == 0);
+		CHECK(maps == 1 && peeks == 1 && unmaps == 1);
+		CHECK(strstr(sc.sc_probe_state, "slot=0 polls=19 before_read=0 before_write=0 after_read=1 after_write=1 rtn=0x2") != NULL);
+		CHECK(strstr(sc.sc_probe_state, "fw_read=2 fw_write=3 fw_command=0x1234 executed_before=21 executed_after=22") != NULL);
+		CHECK(strstr(sc.sc_probe_state, "power=1 hwr=0x20 faults=7 log=0x0 started=1") != NULL);
+		CHECK(strstr(sc.sc_probe_state, "fw_state=2 os_state=3 alive_fw=45 alive_os=67 compchecks=1") != NULL);
+		CHECK(strstr(sc.sc_probe_state, "hw_bvnc=0x00240038006800b7 fw_bvnc=0x00240038006800b7 ddk_build=6976702") != NULL);
+		memory_snapshot_check(&snap, false);
+		later_no_replay(16);
+		later_teardown();
+	}
+	reset();
+	printf("PASS: %u firmware command consumer checks\n", checks - start);
+}
+
 int
 main(void)
 {
@@ -2161,6 +2391,7 @@ main(void)
 	test_fwmem_stage();
 	test_fwinit_stage();
 	test_fwboot_stage();
+	test_fwprobe_stage();
 	printf("PASS: %u A733 GPU identification checks\n", checks);
 	return 0;
 }

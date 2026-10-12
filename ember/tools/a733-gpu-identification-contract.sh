@@ -14,7 +14,7 @@ cp "$src/sys/arch/arm/sunxi/sun60i_a733_ccu.h" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwimage.h" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinit.h" "$work/"
 # Keep the production memory interface. Only native bus-DMA types are stubbed.
-for header in fwmem fwstart fwboot; do
+for header in fwmem fwstart fwboot fwprobe; do
     sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_$header.h" \
         > "$work/sun60i_a733_gpu_$header.h"
 done
