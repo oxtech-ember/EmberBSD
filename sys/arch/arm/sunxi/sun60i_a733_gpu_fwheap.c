@@ -305,10 +305,10 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 		    vm->resource[i].size, BUS_DMASYNC_PREWRITE);
 		/* CR_CDM_CONTEXT_PDS0-style registers address only 32 bits;
 		 * the context-switch PDS programs need a low-window mapping. */
-		if (e->role == A733_GPU_FWCOMPUTE_PDS_PROGRAMS)
-			regions[i].va = UINT64_C(0x10000000) + e->offset;
-		else
-			regions[i].va = e->va;
+		/* Pinned r2 layout: PDS programs occupy artifact page 0xa000;
+		 * CR context-PDS registers address only the low 32 bits. */
+		regions[i].va = e->role == A733_GPU_FWCOMPUTE_PDS_PROGRAMS ?
+		    UINT64_C(0x1000a000) : e->va;
 		regions[i].pa = vm->resource[i].address;
 		regions[i].pages = (uint32_t)(size / 4096);
 		regions[i].flags = ((e->flags & A733_GPU_FWCOMPUTE_FLAG_RO) != 0 ?
