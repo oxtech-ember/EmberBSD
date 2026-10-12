@@ -27,7 +27,7 @@
  */
 
 /*
- * Origin: EmberBSD; firmware-ready A733 GPU identification only.
+ * Origin: EmberBSD; A733 GPU identification and explicit bootstrap diagnostics.
  * Hardware facts: Orange Pi BSP 2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f.
  * The explicit experimental binding may prepare GPU-local clocks and reset.
  */
@@ -46,6 +46,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/firmload.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwinfo.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwmem.h>
+#include <arm/sunxi/sun60i_a733_gpu_fwboot.h>
 #include <arm/sunxi/sun60i_a733_ccu.h>
 #include <arm/sunxi/sun60i_a733_pck600.h>
 
@@ -70,6 +71,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define A733_GPU_STAGE_IDENTIFY	11
 #define A733_GPU_STAGE_FWINFO	12
 #define A733_GPU_STAGE_FWMEM	13
+#define A733_GPU_STAGE_FWINIT	14
+#define A733_GPU_STAGE_FWBOOT	15
 #define A733_GPU_FW_MAX_SIZE	(1024 * 1024)
 
 struct sun60i_gpu_softc {
@@ -78,13 +81,16 @@ struct sun60i_gpu_softc {
 	bus_space_tag_t sc_bst;
 	bus_dma_tag_t sc_dmat;
 	struct sun60i_a733_gpu_fwmem *sc_fw_memory;
+	struct sun60i_a733_gpu_fwboot_result sc_boot_result;
 	const char *sc_stage;
 	uint64_t sc_bvnc;
 	u_int sc_core_hz, sc_bus_hz, sc_uvol;
 	u_int sc_clock_source;	/* runtime: 0 PERIPH0/400, 1 PLL_GPU0/600 */
 	char sc_clock_state[160];	/* last complete stage-7 observation */
 	char sc_fw_state[256];	/* metadata only; no firmware execution */
-	char sc_memory_state[256]; /* CPU-owned memory; no GPU DMA */
+	char sc_memory_state[256]; /* cached stage-13 preparation */
+	char sc_interface_state[256]; /* cached stage-14 interface preparation */
+	char sc_boot_state[512];	/* cached stage-15 bootstrap observation */
 	bool sc_have_id, sc_probed, sc_retained;
 	kmutex_t sc_run_lock;
 	u_int sc_run_stage;	/* last completed stage */
@@ -512,6 +518,134 @@ out:
 	return error;
 }
 
+/* Prepare the complete firmware interface without publishing any DMA address. */
+static int
+sun60i_gpu_stage_fwinit(struct sun60i_gpu_softc *sc)
+{
+	struct sun60i_a733_gpu_fwmem *mem = sc->sc_fw_memory;
+	uint64_t clusters, slc_kib;
+	int error;
+
+	if (sc->sc_run_stage != A733_GPU_STAGE_FWMEM ||
+	    sc->sc_run_result != 0 || !sc->sc_run_pass ||
+	    !sc->sc_have_id || sc->sc_bvnc != A733_GPU_EXPECTED ||
+	    mem == NULL || mem->image.info.bvnc != sc->sc_bvnc) {
+		error = EBUSY;
+		goto out;
+	}
+	error = sun60i_a733_gpu_fwinfo_feature(&mem->image.info,
+	    A733_GPU_FW_FEATURE_NUM_CLUSTERS, &clusters);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_gpu_fwinfo_feature(&mem->image.info,
+	    A733_GPU_FW_FEATURE_SLC_SIZE_IN_KILOBYTES, &slc_kib);
+	if (error != 0)
+		goto out;
+	if (clusters == 0 || clusters > UINT32_MAX ||
+	    slc_kib == 0 || slc_kib > UINT32_MAX) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	error = sun60i_a733_gpu_fwmem_interface(mem, sc->sc_core_hz,
+	    (uint32_t)clusters, (uint32_t)slc_kib);
+out:
+	if (error != 0) {
+		snprintf(sc->sc_interface_state, sizeof(sc->sc_interface_state),
+		    "CPU-owned interface only error=%d", error);
+	} else {
+		snprintf(sc->sc_interface_state, sizeof(sc->sc_interface_state),
+		    "CPU-owned interface only error=0 work=%zu config=%zu "
+		    "objects=%u core_hz=%u clusters=%u slc_kib=%u",
+		    mem->work.size, mem->config.size,
+		    (u_int)A733_GPU_FWINIT_OBJECT_COUNT, sc->sc_core_hz,
+		    (u_int)clusters, (u_int)slc_kib);
+	}
+	return error;
+}
+
+/* Revalidate providers before any bootstrap register access. */
+static int
+sun60i_gpu_boot_ready(struct sun60i_gpu_softc *sc, int power_node)
+{
+	struct clk *gpu;
+	u_int core_hz, bus_hz;
+	int error;
+
+	error = sun60i_gpu_runtime_supply_top(sc);
+	if (error != 0)
+		return error;
+	error = sun60i_a733_pck_gpu_wait(power_node, sc, true);
+	if (error != 0)
+		return error;
+	gpu = fdtbus_clock_get_index(sc->sc_phandle, 0);
+	if (gpu == NULL)
+		return ENXIO;
+	error = sun60i_a733_ccu_gpu_ready(gpu, &core_hz, &bus_hz);
+	clk_put(gpu);
+	if (error != 0)
+		return error;
+	if (core_hz != sc->sc_core_hz || bus_hz != sc->sc_bus_hz)
+		return EBUSY;
+	return sun60i_gpu_stage_identify(sc);
+}
+
+static int
+sun60i_gpu_stage_fwboot(struct sun60i_gpu_softc *sc, int power_node)
+{
+	struct sun60i_a733_gpu_fwboot_result *r = &sc->sc_boot_result;
+	struct sun60i_a733_gpu_fwmem *mem = sc->sc_fw_memory;
+	bus_space_handle_t bsh;
+	bus_addr_t addr;
+	bus_size_t size;
+	int error;
+
+	if (sc->sc_run_stage != A733_GPU_STAGE_FWINIT ||
+	    sc->sc_run_result != 0 || !sc->sc_run_pass || !sc->sc_run_core_on ||
+	    !sc->sc_have_id || sc->sc_bvnc != A733_GPU_EXPECTED ||
+	    mem == NULL || mem->image.info.bvnc != sc->sc_bvnc ||
+	    !mem->interface_prepared || r->attempted || r->device_owned) {
+		error = EBUSY;
+		goto out;
+	}
+	error = sun60i_gpu_boot_ready(sc, power_node);
+	if (error != 0)
+		goto out;
+	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
+	if (error != 0 || addr != A733_GPU_BASE ||
+	    size < A733_GPU_FWSTART_REG_SIZE) {
+		error = EINVAL;
+		goto out;
+	}
+	error = bus_space_map(sc->sc_bst, addr, A733_GPU_FWSTART_REG_SIZE,
+	    0, &bsh);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_gpu_fwboot(sc->sc_bst, bsh, mem, r);
+	/* This is only the CPU register mapping, never a DMA allocation. */
+	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
+out:
+	if (r->device_owned) {
+		/* Do not leave the earlier CPU-ownership reports visible as current. */
+		snprintf(sc->sc_memory_state, sizeof(sc->sc_memory_state),
+		    "device-owned; retained until hardware reset; see boot_state");
+		snprintf(sc->sc_interface_state, sizeof(sc->sc_interface_state),
+		    "device-owned; retained until hardware reset; see boot_state");
+	}
+	snprintf(sc->sc_boot_state, sizeof(sc->sc_boot_state),
+	    "error=%d attempted=%u device_owned=%u touched=%u released=%u "
+	    "register=0x%x writes=%u polls=%u snapshot=%u started=%u "
+	    "timestamp=%u fw_state=%u os_state=%u alive_fw=%u alive_os=%u "
+	    "compchecks=%u hw_bvnc=0x%016llx fw_bvnc=0x%016llx ddk_build=%u",
+	    error, r->attempted, r->device_owned, r->start.touched,
+	    r->start.released, r->start.last_register, r->start.writes,
+	    r->polls, r->snapshot_valid, (u_int)r->firmware_started,
+	    r->firmware_started_timestamp, r->fw_state, r->os_state,
+	    r->alive_fw_token, r->alive_os_token, (u_int)r->compchecks_updated,
+	    (unsigned long long)r->hw_bvnc, (unsigned long long)r->fw_bvnc,
+	    r->ddk_build);
+	return error;
+}
+
 static void
 sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 {
@@ -525,7 +659,7 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 		return;
 	}
 	/* Strictly ordered single sequence; a replay needs a fresh boot. */
-	if (stage < A733_GPU_STAGE_SUPPLY || stage > A733_GPU_STAGE_FWMEM ||
+	if (stage < A733_GPU_STAGE_SUPPLY || stage > A733_GPU_STAGE_FWBOOT ||
 	    stage != sc->sc_run_stage + 1 || !sc->sc_run_pass) {
 		sc->sc_run_result = EINVAL;
 		mutex_exit(&sc->sc_run_lock);
@@ -624,6 +758,12 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 	case A733_GPU_STAGE_FWMEM:
 		error = sun60i_gpu_stage_fwmem(sc);
 		break;
+	case A733_GPU_STAGE_FWINIT:
+		error = sun60i_gpu_stage_fwinit(sc);
+		break;
+	case A733_GPU_STAGE_FWBOOT:
+		error = sun60i_gpu_stage_fwboot(sc, power_node);
+		break;
 	}
 	/* A bounded timeout still allows the read-only waiter afterwards. */
 	sc->sc_run_pass = (error == 0 || error == ETIMEDOUT);
@@ -705,7 +845,7 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 	}
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
 	    CTLTYPE_INT, "stage",
-		    SYSCTL_DESCR("run runtime diagnostic stage 0..13"),
+		    SYSCTL_DESCR("run runtime diagnostic stage 0..15"),
 		    sun60i_gpu_sysctl_stage, 0, NULL, 0,
 		    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create stage node\n");
@@ -729,10 +869,24 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 		aprint_error_dev(sc->sc_dev, "cannot create firmware state node\n");
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_STRING, "memory_state",
-	    SYSCTL_DESCR("cached CPU-owned firmware memory; no GPU DMA"),
+	    SYSCTL_DESCR("cached firmware memory ownership; no device access"),
 	    NULL, 0, sc->sc_memory_state, sizeof(sc->sc_memory_state),
 	    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create memory state node\n");
+
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRING, "interface_state",
+	    SYSCTL_DESCR("cached firmware interface preparation; no register access"),
+	    NULL, 0, sc->sc_interface_state, sizeof(sc->sc_interface_state),
+	    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create interface state node\n");
+
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRING, "boot_state",
+	    SYSCTL_DESCR("cached firmware bootstrap result; no device access"),
+	    NULL, 0, sc->sc_boot_state, sizeof(sc->sc_boot_state),
+	    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create boot state node\n");
 
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_INT, "result",

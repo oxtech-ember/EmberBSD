@@ -293,6 +293,28 @@ Run one stage per sysctl write. Each stage runs once in the following order:
 | 11 | Read strict PBVNC, only after stage 9 confirmed CORE ON |
 | 12 | Load firmware through firmload and validate metadata against the live BVNC; no GPU transfer |
 | 13 | Prepare CPU-owned firmware memory and page tables; no GPU execution ([guide](a733-gpu-fwmem.md)) |
+| 14 | Prepare the full CPU-owned firmware interface and extend page tables atomically; no device access ([guide](a733-gpu-fwinit.md)) |
+| 15 | Revalidate hardware, transfer DMA ownership, release the MIPS reset and wait at most five seconds for firmware startup ([guide](a733-gpu-fwboot.md)) |
+
+Stage 14 obtains cluster count and SLC size from the validated firmware metadata.
+It uses the observed core clock rate and prepares work/config buffers.
+Stage 15 requires the unchanged prepared object and a successful stage 14.
+It rechecks supply, GPU_TOP, strict CORE readiness, clocks and live BVNC.
+The observed clocks must still match the values used for firmware initialization.
+Only then does it map the complete register window and call the bootstrap helper.
+The helper synchronizes all five allocations before device access.
+After a possible register side effect, it retains all DMA memory until reset,
+including on faults or timeout. Releasing the CPU register mapping does not
+release any DMA allocation. The sequence remains single-use per boot.
+
+`interface_state` and `boot_state` expose cached results without device reads.
+`memory_state` and `interface_state` change to device-owned after handoff.
+The bootstrap result includes attempted writes, firmware-start status,
+connection fields and firmware compatibility values. The shared-memory
+snapshot is not an atomic firmware transaction. Firmware startup alone
+does not establish interrupt delivery, command processing or acceleration.
+Normal boot never runs these stages. Keep the external hardware watchdog
+active during each explicit stage when no serial recovery is available.
 
 Stage 12 is a [firmware metadata preflight](a733-gpu-fwinfo.md). It requires
 successful strict identification. It does not load or execute code on the GPU.
