@@ -43,7 +43,7 @@ fi
     "$work/static-state.bin" 0xda00000000 > "$work/packer.out"
 image=$(sed -n 's/^image_sha256=\([0-9a-f]*\) used=184$/\1/p' "$work/packer.out")
 file=$(sed -n 's/^file_sha256=\([0-9a-f]*\) bytes=60292$/\1/p' "$work/packer.out")
-vm=$(sed -n 's/^vm_check=windows=4 directories=4 leaves=17$/ok/p' "$work/packer.out")
+vm=$(sed -n 's/^vm_check=windows=4 directories=4 leaves=18$/ok/p' "$work/packer.out")
 [ -n "$image" ] && [ -n "$file" ] && [ "$vm" = ok ] || {
     echo 'packer output incomplete' >&2; exit 1;
 }

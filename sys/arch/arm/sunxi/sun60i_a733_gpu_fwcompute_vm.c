@@ -147,6 +147,11 @@ sun60i_a733_gpu_fwcompute_vm_encode(
 					if (regions[j].va + (uint64_t)q *
 					    A733_GPU_FWCOMPUTE_VM_PAGE == va)
 						return EINVAL;
+					/* Identical whole backing is an
+					 * intentional dual mapping. */
+					if (regions[j].pa == regions[i].pa &&
+					    regions[j].pages == regions[i].pages)
+						continue;
 					if (regions[j].pa + (uint64_t)q *
 					    A733_GPU_FWCOMPUTE_VM_PAGE == pa)
 						return EINVAL;

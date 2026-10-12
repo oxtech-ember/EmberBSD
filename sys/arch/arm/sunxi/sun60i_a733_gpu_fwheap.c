@@ -265,7 +265,7 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
     struct sun60i_a733_gpu_fwheap *heap,
     struct sun60i_a733_gpu_fwvm **out)
 {
-	struct a733_gpu_fwcompute_vm_region regions[9];
+	struct a733_gpu_fwcompute_vm_region regions[10];
 	struct a733_gpu_fwcompute_vm_summary summary;
 	struct sun60i_a733_gpu_fwvm *vm;
 	void *directory[A733_GPU_FWCOMPUTE_VM_WINDOWS], *table[A733_GPU_FWCOMPUTE_VM_WINDOWS];
@@ -305,16 +305,33 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 		    vm->resource[i].size, BUS_DMASYNC_PREWRITE);
 		/* CR_CDM_CONTEXT_PDS0-style registers address only 32 bits;
 		 * the context-switch PDS programs need a low-window mapping. */
-		/* Pinned r2 layout: PDS programs occupy artifact page 0xa000;
-		 * CR context-PDS registers address only the low 32 bits. */
-		regions[i].va = e->role == A733_GPU_FWCOMPUTE_PDS_PROGRAMS ?
-		    UINT64_C(0x1000a000) : e->va;
+		regions[i].va = e->va;
 		regions[i].pa = vm->resource[i].address;
 		regions[i].pages = (uint32_t)(size / 4096);
 		regions[i].flags = ((e->flags & A733_GPU_FWCOMPUTE_FLAG_RO) != 0 ?
 		    A733_GPU_FWCOMPUTE_VM_RO : 0) |
 		    ((e->flags & A733_GPU_FWCOMPUTE_FLAG_BYPASS) != 0 ?
 		    A733_GPU_FWCOMPUTE_VM_BYPASS : 0);
+	}
+	/* The stream resolves PDS offsets against the context-state base
+	 * while the context-PDS CR registers need the low window: add a
+	 * dual mapping of the PDS program page. */
+	{
+		uint32_t k;
+
+		for (k = 0; k < 9; k++) {
+			if (file->resource[k].role ==
+			    A733_GPU_FWCOMPUTE_PDS_PROGRAMS)
+				break;
+		}
+		if (k == 9) {
+			error = EINVAL;
+			goto fail;
+		}
+		regions[9].va = UINT64_C(0x1000a000);
+		regions[9].pa = vm->resource[k].address;
+		regions[9].pages = 1;
+		regions[9].flags = regions[k].flags;
 	}
 	error = fwheap_dma_alloc(dmat, 4096, &vm->catalog);
 	if (error != 0)
@@ -343,7 +360,7 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 		table_pa[i] = vm->table[i].address;
 	}
 	memset(&summary, 0, sizeof(summary));
-	error = sun60i_a733_gpu_fwcompute_vm_encode(regions, 9,
+	error = sun60i_a733_gpu_fwcompute_vm_encode(regions, 10,
 	    vm->catalog.cpu, directory, table, directory_pa, table_pa,
 	    vm->catalog.address, context, &summary);
 	if (error != 0)
