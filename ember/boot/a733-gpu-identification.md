@@ -12,7 +12,8 @@ PLL600 cold start now identifies the physical GPU; see the
 observe-only. The earlier PERIPH0-400M path times out at GPU_CORE and can
 stall on GPU register access. Explicit stage 15 has separately
 [booted the pinned firmware on Zero 3W](a733-gpu-fwboot.md#physical-bootstrap-result).
-Stage 16 adds a software-checked command probe. Physical command acceptance
+Stage 16 has [completed one firmware command](a733-gpu-fwprobe.md#physical-command-result).
+Stage 17 adds a software-checked MMUCACHE probe. GPU memory isolation
 and graphics acceleration remain unverified.
 
 ## Physical result
@@ -299,6 +300,7 @@ Run one stage per sysctl write. Each stage runs once in the following order:
 | 14 | Prepare the full CPU-owned firmware interface and extend page tables atomically; no device access ([guide](a733-gpu-fwinit.md)) |
 | 15 | Revalidate hardware, transfer DMA ownership, release the MIPS reset and wait at most five seconds for firmware startup ([guide](a733-gpu-fwboot.md)) |
 | 16 | Revalidate hardware and submit one bounded `LOGTYPE_UPDATE` command after successful firmware startup ([guide](a733-gpu-fwprobe.md)) |
+| 17 | Revalidate hardware and submit one bounded `MMUCACHE` command after successful stage 16; no page-table changes ([guide](a733-gpu-fwprobe.md)) |
 
 Stage 14 obtains cluster count and SLC size from the validated firmware metadata.
 It uses the observed core clock rate and prepares work/config buffers.
@@ -331,6 +333,19 @@ The driver publishes this report after it unmaps the CPU register window.
 It retains all DMA allocations on success, error, and timeout.
 A failed stage cannot be retried, including after writing stage zero.
 Command completion does not establish rendering, interrupts, or accelerated Plasma.
+
+Stage 17 requires the unchanged successful stage-16 `LOGTYPE_UPDATE` result.
+It checks publication, kick, return word one, and read/write offsets one.
+The previous command must use slot zero and have no MMUCACHE payload.
+It repeats all stage-16 hardware readiness checks before mapping registers.
+The helper uses slot one and the existing MMUCACHE synchronization object.
+It requires return word one and read/write offsets two within one second.
+The synchronization value is diagnostic data, not a completion token.
+`cache_state` records this separate result and the command payload.
+`probe_state` and its persistent result remain unchanged.
+No page table, VM context, connection state, or DMA ownership changes.
+All memory stays retained, and the same no-replay rule applies.
+This stage has software checks; physical acceptance requires a separate record.
 
 Normal boot never runs these stages. Keep the external hardware watchdog
 active during each explicit stage when no serial recovery is available.
@@ -480,5 +495,6 @@ or a Valgrind result; Valgrind does not support the macOS/arm64 test host.
 
 This PLL result establishes native power/clock bring-up and physical identity.
 A separate [physical bootstrap result](a733-gpu-fwboot.md#physical-bootstrap-result)
-confirms firmware startup. Command completion, memory isolation, IRQ completion,
+confirms firmware startup. The [first command result](a733-gpu-fwprobe.md#physical-command-result)
+confirms one KCCB completion. GPU memory isolation, IRQ completion,
 PowerVR DRM, Mesa Vulkan/Zink, display output, and accelerated Plasma remain unverified.
