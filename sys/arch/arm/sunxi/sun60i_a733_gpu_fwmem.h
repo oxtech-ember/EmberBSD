@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/bus.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwimage.h>
+#include <arm/sunxi/sun60i_a733_gpu_fwinit.h>
 
 struct sun60i_a733_gpu_dma {
 	bus_dma_segment_t segment;
@@ -20,9 +21,11 @@ struct sun60i_a733_gpu_dma {
 
 struct sun60i_a733_gpu_fwmem {
 	bus_dma_tag_t dmat;
-	struct sun60i_a733_gpu_dma code, data, table;
+	struct sun60i_a733_gpu_dma code, data, table, work, config;
 	struct sun60i_a733_gpu_fwimage image;
 	bus_addr_t boot_code, boot_data, exception_code, stack;
+	struct sun60i_a733_gpu_fwinit_layout interface_layout;
+	bool interface_prepared;
 };
 
 /*
@@ -38,6 +41,18 @@ struct sun60i_a733_gpu_fwmem {
  */
 int sun60i_a733_gpu_fwmem_prepare(bus_dma_tag_t, const void *, size_t,
     uint64_t, struct sun60i_a733_gpu_fwmem **);
+/*
+ * Add FWIF work/config arenas to a successfully prepared, CPU-owned object.
+ * The caller serializes access and supplies verified hardware values.
+ * This sleepable operation publishes no device address and performs no DMA
+ * sync. Use a heap shadow of the page table until every initialization and
+ * mapping succeeds. On failure, keep all existing buffers and fields intact.
+ * Retry after failure is allowed. A successful call is single-use: EBUSY.
+ * Return EINVAL for an incomplete owner; propagate allocator/helper errors.
+ */
+int sun60i_a733_gpu_fwmem_interface(struct sun60i_a733_gpu_fwmem *,
+    uint64_t, uint32_t, uint32_t);
+
 void sun60i_a733_gpu_fwmem_destroy(struct sun60i_a733_gpu_fwmem *);
 
 #endif

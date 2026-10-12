@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "sun60i_a733_gpu_fwimage.h"
+#include "sun60i_a733_gpu_fwinit.h"
+#include "powervr/pvr_rogue_fwif.h"
 #include "sun60i_a733_gpu_mips.h"
 
 #define CHECK(c) do { \
@@ -41,15 +43,28 @@ typedef struct {
 enum fault {
 	FAULT_NONE, FAULT_NSEGS, FAULT_LENGTH, FAULT_ALIGNMENT, FAULT_WIDTH,
 	FAULT_REMAP_WINDOW, FAULT_CODE_DATA_ALIAS, FAULT_CODE_TABLE_ALIAS,
-	FAULT_DATA_TABLE_ALIAS, FAULT_PARTIAL_ALIAS
+	FAULT_DATA_TABLE_ALIAS, FAULT_PARTIAL_ALIAS, FAULT_INTERFACE_ADDRESS
 };
 
 static unsigned int checks, operations, fail_at;
 static unsigned int live_allocs, live_maps, live_kmem;
 static unsigned int mapped, loaded, unloaded;
 static enum fault fault_kind;
-static uint64_t next_address, data_address;
+static uint64_t next_address, data_address, interface_address;
+static unsigned int interface_load;
 static int test_dmat;
+
+static void *
+kmem_alloc(size_t n, int flags)
+{
+	void *p;
+
+	CHECK(flags == KM_SLEEP);
+	p = malloc(n);
+	CHECK(p != NULL);
+	live_kmem++;
+	return p;
+}
 
 static void *
 kmem_zalloc(size_t n, int flags)
@@ -85,7 +100,7 @@ bus_dmamem_alloc(bus_dma_tag_t tag, size_t n, size_t alignment,
 	CHECK(max == 1 && flags == BUS_DMA_WAITOK);
 	if (fail())
 		return ENOMEM;
-	seg->memory = malloc(n);
+	seg->memory = aligned_alloc(alignment, n);
 	CHECK(seg->memory != NULL);
 	seg->ds_len = n;
 	seg->ds_addr = next_address;
@@ -170,6 +185,10 @@ bus_dmamap_load(bus_dma_tag_t tag, bus_dmamap_t map, void *cpu,
 	case FAULT_PARTIAL_ALIAS:
 		if (loaded == 1)
 			map->dm_segs[0].ds_addr = DMA_BASE - PAGE_SIZE;
+		break;
+	case FAULT_INTERFACE_ADDRESS:
+		if (loaded == interface_load)
+			map->dm_segs[0].ds_addr = interface_address;
 		break;
 	case FAULT_NONE:
 		break;
@@ -436,6 +455,208 @@ argument_tests(void)
 	sun60i_a733_gpu_fwmem_destroy(NULL);
 }
 
+static struct sun60i_a733_gpu_fwmem *
+interface_owner(void)
+{
+	struct sun60i_a733_gpu_fwmem *mem = NULL;
+
+	fixture();
+	reset(0, FAULT_NONE);
+	CHECK(sun60i_a733_gpu_fwmem_prepare(&test_dmat, blob, sizeof(blob),
+	    BVNC, &mem) == 0);
+	CHECK(mem != NULL && !mem->interface_prepared);
+	CHECK(live_allocs == 3 && live_maps == 3 && loaded == 3);
+	return mem;
+}
+
+static void
+interface_error(struct sun60i_a733_gpu_fwmem *mem, uint64_t hz,
+    uint32_t clusters, uint32_t slc_kib, int wanted)
+{
+	struct sun60i_a733_gpu_fwmem before;
+	const struct sun60i_a733_gpu_dma *areas[] = {
+		&mem->code, &mem->data, &mem->table, &mem->work, &mem->config
+	};
+	uint8_t *copies[5] = { NULL };
+	unsigned int alloc_count = live_allocs, map_count = live_maps;
+	unsigned int kmem_count = live_kmem, load_count = loaded;
+	unsigned int cpu_map_count = mapped;
+	int error;
+
+	memcpy(&before, mem, sizeof(before));
+	for (size_t i = 0; i < __arraycount(areas); i++) {
+		if (areas[i]->size == 0)
+			continue;
+		copies[i] = malloc(areas[i]->size);
+		CHECK(copies[i] != NULL);
+		memcpy(copies[i], areas[i]->cpu, areas[i]->size);
+	}
+	error = sun60i_a733_gpu_fwmem_interface(mem, hz, clusters, slc_kib);
+	if (error != wanted)
+		fprintf(stderr, "interface error=%d wanted=%d operation=%u\n",
+		    error, wanted, operations);
+	CHECK(error == wanted);
+	CHECK(memcmp(&before, mem, sizeof(before)) == 0);
+	for (size_t i = 0; i < __arraycount(areas); i++) {
+		if (copies[i] != NULL) {
+			CHECK(memcmp(copies[i], areas[i]->cpu, areas[i]->size) == 0);
+			free(copies[i]);
+		}
+	}
+	CHECK(live_allocs == alloc_count && live_maps == map_count);
+	CHECK(live_kmem == kmem_count && loaded == load_count);
+	CHECK(mapped == cpu_map_count);
+}
+
+static void
+pte_expected(uint8_t *table, size_t index, uint64_t pa)
+{
+	uint32_t pte = (uint32_t)(pa >> 6) | 0x17;
+
+	for (unsigned int i = 0; i < 4; i++)
+		table[index * 4 + i] = (uint8_t)(pte >> (i * 8));
+}
+
+static void
+interface_success(struct sun60i_a733_gpu_fwmem *mem)
+{
+	const struct rogue_fwif_ccb_ctl *kccb;
+	const struct rogue_fwif_osinit *osinit;
+	const struct rogue_fwif_sysinit *sysinit;
+	const struct sun60i_a733_gpu_fwinit_region *region;
+	uint8_t expected[16384];
+	unsigned int previous_operations;
+
+	memcpy(expected, mem->table.cpu, sizeof(expected));
+	CHECK(sun60i_a733_gpu_fwmem_interface(mem, UINT64_C(600000000),
+	    1, 128) == 0);
+	CHECK(mem->interface_prepared);
+	CHECK(mem->work.size == 139264 && mem->config.size == 12288);
+	CHECK(mem->interface_layout.total_work_size == 139264);
+	CHECK(live_allocs == 5 && live_maps == 5 && loaded == 5);
+	CHECK(live_kmem == 1 && mapped == 5);
+	for (size_t i = 0; i < 34; i++)
+		pte_expected(expected, 0x100 + i, mem->work.address + i * 4096);
+	pte_expected(expected, 0xfd0, mem->config.address);
+	pte_expected(expected, 0xfe0, mem->config.address + 4096);
+	pte_expected(expected, 0xff0, mem->config.address + 8192);
+	CHECK(memcmp(expected, mem->table.cpu, sizeof(expected)) == 0);
+	kccb = mem->work.cpu;
+	CHECK(kccb->wrap_mask == 127 && kccb->cmd_size == 88);
+	osinit = (const void *)((const uint8_t *)mem->config.cpu + 4096);
+	CHECK(osinit->kernel_ccbctl_fw_addr == UINT32_C(0xc0100000));
+	sysinit = (const void *)((const uint8_t *)mem->config.cpu + 8192);
+	CHECK(sysinit->initial_core_clock_speed == 600000000);
+	region = &mem->interface_layout.object[A733_GPU_FWINIT_FAULT];
+	CHECK(sysinit->fault_phys_addr == mem->work.address + region->offset);
+	CHECK(region->offset == 24576 && region->size == 4096);
+	previous_operations = operations;
+	interface_error(mem, 600000000, 1, 128, EBUSY);
+	CHECK(operations == previous_operations);
+}
+
+static void
+interface_tests(void)
+{
+	static const uint32_t occupied_va[] = {
+		A733_GPU_FWINIT_WORK_VA, A733_GPU_FWINIT_CONNECTION_VA,
+		A733_GPU_FWINIT_OSINIT_VA, A733_GPU_FWINIT_SYSINIT_VA
+	};
+	struct sun60i_a733_gpu_fwmem empty = { 0 };
+	struct sun60i_a733_gpu_fwmem *mem;
+	uint64_t unrelated_page = UINT64_C(0x70000000);
+	uint64_t saved_address;
+	unsigned int previous_operations;
+
+	CHECK(sun60i_a733_gpu_fwmem_interface(NULL, 600000000, 1, 128) == EINVAL);
+	CHECK(sun60i_a733_gpu_fwmem_interface(&empty, 600000000, 1, 128) == EINVAL);
+	mem = interface_owner();
+	previous_operations = operations;
+	mem->code.loaded = false;
+	interface_error(mem, 600000000, 1, 128, EINVAL);
+	mem->code.loaded = true;
+	mem->work.size = 4096;
+	CHECK(sun60i_a733_gpu_fwmem_interface(mem, 600000000, 1, 128) == EINVAL);
+	CHECK(mem->work.size == 4096);
+	mem->work.size = 0;
+	CHECK(operations == previous_operations);
+	interface_success(mem);
+	sun60i_a733_gpu_fwmem_destroy(mem);
+
+	/* Every new allocation/map/load failure preserves all existing state. */
+	for (unsigned int i = 1; i <= 8; i++) {
+		mem = interface_owner();
+		fail_at = operations + i;
+		interface_error(mem, 600000000, 1, 128,
+		    i % 4 == 0 ? EIO : ENOMEM);
+		fail_at = 0;
+		interface_success(mem);
+		sun60i_a733_gpu_fwmem_destroy(mem);
+	}
+	/* The real initializer rejects these values after the allocations. */
+	mem = interface_owner();
+	interface_error(mem, 0, 1, 128, EINVAL);
+	interface_error(mem, UINT64_C(1) << 32, 1, 128, EINVAL);
+	interface_error(mem, 600000000, 0, 128, EINVAL);
+	interface_error(mem, 600000000, 1, 0, EINVAL);
+	interface_success(mem);
+	sun60i_a733_gpu_fwmem_destroy(mem);
+
+	/* Test each late map failure, including the last sparse config page. */
+	for (size_t i = 0; i < __arraycount(occupied_va); i++) {
+		mem = interface_owner();
+		CHECK(sun60i_a733_gpu_mips_map(mem->table.cpu, mem->table.size,
+		    occupied_va[i], &unrelated_page, 1) == 0);
+		interface_error(mem, 600000000, 1, 128, EEXIST);
+		sun60i_a733_gpu_fwmem_destroy(mem);
+	}
+
+	/* Malformed backend ranges must not overlap any existing allocation. */
+	for (unsigned int new_area = 3; new_area <= 4; new_area++) {
+		for (unsigned int old_area = 0; old_area < 3; old_area++) {
+			const struct sun60i_a733_gpu_dma *area;
+
+			mem = interface_owner();
+			area = old_area == 0 ? &mem->code :
+			    old_area == 1 ? &mem->data : &mem->table;
+			fault_kind = FAULT_INTERFACE_ADDRESS;
+			interface_load = new_area;
+			interface_address = area->address + area->size - 4096;
+			interface_error(mem, 600000000, 1, 128, EEXIST);
+			fault_kind = FAULT_NONE;
+			interface_success(mem);
+			sun60i_a733_gpu_fwmem_destroy(mem);
+		}
+	}
+	mem = interface_owner();
+	fault_kind = FAULT_INTERFACE_ADDRESS;
+	interface_load = 4;
+	interface_address = next_address; /* The forthcoming work range. */
+	interface_error(mem, 600000000, 1, 128, EEXIST);
+	fault_kind = FAULT_NONE;
+	interface_success(mem);
+	sun60i_a733_gpu_fwmem_destroy(mem);
+	mem = interface_owner();
+	saved_address = mem->code.address;
+	mem->code.address = mem->data.address;
+	interface_error(mem, 600000000, 1, 128, EEXIST);
+	mem->code.address = saved_address;
+	sun60i_a733_gpu_fwmem_destroy(mem);
+
+	/* Work or a later config page enters the sensitive wrapper window. */
+	for (unsigned int new_area = 3; new_area <= 4; new_area++) {
+		mem = interface_owner();
+		fault_kind = FAULT_INTERFACE_ADDRESS;
+		interface_load = new_area;
+		interface_address = UINT64_C(0x1fbff000);
+		interface_error(mem, 600000000, 1, 128, EOPNOTSUPP);
+		fault_kind = FAULT_NONE;
+		interface_success(mem);
+		sun60i_a733_gpu_fwmem_destroy(mem);
+	}
+	reset(0, FAULT_NONE);
+}
+
 static void
 pinned_blob_test(const char *path)
 {
@@ -455,6 +676,15 @@ pinned_blob_test(const char *path)
 	CHECK(fclose(f) == 0);
 	reset(0, FAULT_NONE);
 	run(bytes, (size_t)size, 0);
+	{
+		struct sun60i_a733_gpu_fwmem *mem = NULL;
+
+		reset(0, FAULT_NONE);
+		CHECK(sun60i_a733_gpu_fwmem_prepare(&test_dmat, bytes,
+		    (size_t)size, BVNC, &mem) == 0);
+		interface_success(mem);
+		sun60i_a733_gpu_fwmem_destroy(mem);
+	}
 	free(bytes);
 }
 
@@ -498,6 +728,7 @@ main(int argc, char **argv)
 	run(blob, sizeof(blob), EINVAL);
 	CHECK(operations == 0);
 	fixture();
+	interface_tests();
 	if (argc == 2)
 		pinned_blob_test(argv[1]);
 	printf("PASS: %u native firmware DMA owner checks\n", checks);

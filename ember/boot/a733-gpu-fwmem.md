@@ -61,6 +61,29 @@ All earlier allocations are released when a later operation fails.
 `sun60i_a733_gpu_fwmem_destroy()` accepts `NULL`.
 Destroying a prepared object is legal only while the CPU still owns every buffer.
 
+## CPU-owned FWIF extension
+
+`sun60i_a733_gpu_fwmem_interface()` extends a prepared memory owner.
+It takes the verified core frequency in Hz, cluster count, and SLC size in KiB.
+The caller keeps exclusive access to the owner throughout this sleepable call.
+The [FWIF initializer](a733-gpu-fwinit.md) creates the actual interface structures.
+The helper allocates a 139264-byte work arena and a 12288-byte configuration buffer.
+All five loaded DMA ranges must be disjoint.
+
+The work arena maps at `0xc0100000` in the MIPS heap.
+The three configuration pages map separately at `0xc0fd0000`, `0xc0fe0000`,
+and `0xc0ff0000`. These pages hold the connection, OS-init, and system-init data.
+The helper copies the existing table into a 16 KiB heap shadow.
+It changes only that shadow until initialization and every mapping succeed.
+It then copies the table back and retains both new buffers and the interface layout.
+
+On error, only the new allocations are released.
+All existing buffers and owner fields remain unchanged, including the page table.
+The caller can retry after an error. A repeated successful call returns `EBUSY`.
+`sun60i_a733_gpu_fwmem_destroy()` also releases the two new buffers.
+The extension performs no MMIO, DMA synchronization, or device-address publication.
+Successful host checks do not establish physical FWIF acceptance or firmware execution.
+
 ## Explicit runtime preparation
 
 After [runtime stages 1 through 12](a733-gpu-identification.md#runtime-staged-diagnostics-with-a-watchdog-bound)
@@ -105,11 +128,9 @@ No firmware execution, device DMA, display output, or long run was tested.
 
 ## Reproduce the contract
 
-
-
 [The contract](../tools/a733-gpu-fwmem-contract.sh) executes the production
 owner functions with simulated `bus_dma` and `kmem` callbacks.
-It links the real metadata parser, ELF preparer, and MIPS encoders.
+It links the real metadata parser, ELF preparer, FWIF initializer, and MIPS encoders.
 Only kernel include lines and `__KERNEL_RCSID` are removed for the host harness.
 No hardware allocation or GPU execution is simulated as a successful physical test.
 
@@ -126,15 +147,23 @@ Tests cover all twelve fallible allocation/map/load operations,
 malformed segment results, unsupported layouts, sensitive physical addresses,
 DMA aliases, unchanged input/output pointers, and complete cleanup.
 They compare encoded PTEs and the boot structure with independent expected values.
+The extension tests all eight new allocation/map/load failures and successful retries.
+They reject invalid hardware values through the real FWIF initializer.
+They check conflicts at each new virtual range, including the last configuration page.
+They inject malformed backend aliases against all five DMA ranges.
+A sensitive physical address in a later configuration page tests partial shadow updates.
+Each error checks byte-for-byte preservation of the old owner and every existing buffer.
+Successful checks compare the full table and selected actual FWIF fields.
 
 The larger exception/boot-data layouts and table/code alias regressions fail
 against the saved pre-fix owner and pass after the validation changes.
 The alias fault deliberately violates the backend contract.
 It is a defensive check, not a reproduction on native hardware.
 
-On 2026-10-12, the pinned-input host contract passed 1195 checks with ASan/UBSan.
+On 2026-10-12, the pinned-input host contract passed 4566 checks with ASan/UBSan.
 GCC 16.2 compiled the owner with actual EmberBSD AArch64 kernel headers.
-Its preparation frame was 1072 bytes; the page-map helper used 528 bytes.
+Its preparation frame was 1072 bytes; the interface frame used 1136 bytes.
+The page-map helper used 528 bytes.
 Clang 21 Static Analyzer found no diagnostics in the target owner or host harness.
 GCC path analysis exceeded its default graph budget.
 It completed without diagnostics with `-fanalyzer -Wanalyzer-too-complex`,

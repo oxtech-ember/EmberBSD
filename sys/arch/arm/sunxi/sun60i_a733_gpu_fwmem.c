@@ -126,6 +126,8 @@ sun60i_a733_gpu_fwmem_destroy(struct sun60i_a733_gpu_fwmem *mem)
 	if (mem == NULL)
 		return;
 	/* No device has seen these addresses. CPU ownership needs no DMA sync. */
+	sun60i_gpu_dma_free(mem->dmat, &mem->config);
+	sun60i_gpu_dma_free(mem->dmat, &mem->work);
 	sun60i_gpu_dma_free(mem->dmat, &mem->table);
 	sun60i_gpu_dma_free(mem->dmat, &mem->data);
 	sun60i_gpu_dma_free(mem->dmat, &mem->code);
@@ -133,7 +135,7 @@ sun60i_a733_gpu_fwmem_destroy(struct sun60i_a733_gpu_fwmem *mem)
 }
 
 static int
-sun60i_gpu_fwmem_map(struct sun60i_a733_gpu_fwmem *mem,
+sun60i_gpu_fwmem_map(void *table, size_t table_size,
     const struct sun60i_a733_gpu_dma *dma, uint32_t va)
 {
 	uint64_t pages[A733_FWMEM_MAX / A733_FWMEM_PAGE];
@@ -143,7 +145,7 @@ sun60i_gpu_fwmem_map(struct sun60i_a733_gpu_fwmem *mem,
 		return EINVAL;
 	for (size_t i = 0; i < count; i++)
 		pages[i] = dma->address + i * A733_FWMEM_PAGE;
-	return sun60i_a733_gpu_mips_map(mem->table.cpu, mem->table.size,
+	return sun60i_a733_gpu_mips_map(table, table_size,
 	    va, pages, count);
 }
 
@@ -227,10 +229,12 @@ sun60i_a733_gpu_fwmem_prepare(bus_dma_tag_t dmat, const void *bytes,
 		error = EOPNOTSUPP;
 		goto fail;
 	}
-	error = sun60i_gpu_fwmem_map(mem, &mem->code, main_code->base_addr);
+	error = sun60i_gpu_fwmem_map(mem->table.cpu, mem->table.size,
+	    &mem->code, main_code->base_addr);
 	if (error != 0)
 		goto fail;
-	error = sun60i_gpu_fwmem_map(mem, &mem->data, private_data->base_addr);
+	error = sun60i_gpu_fwmem_map(mem->table.cpu, mem->table.size,
+	    &mem->data, private_data->base_addr);
 	if (error != 0)
 		goto fail;
 	mem->boot_code = mem->code.address + boot->alloc_offset;
@@ -248,5 +252,104 @@ sun60i_a733_gpu_fwmem_prepare(bus_dma_tag_t dmat, const void *bytes,
 	return 0;
 fail:
 	sun60i_a733_gpu_fwmem_destroy(mem);
+	return error;
+}
+
+static bool
+sun60i_gpu_dma_ready(const struct sun60i_a733_gpu_dma *dma)
+{
+	return dma->loaded && dma->cpu != NULL && dma->map != NULL &&
+	    dma->nsegments == 1 && dma->size != 0 &&
+	    dma->size <= A733_FWMEM_MAX &&
+	    (dma->size & (A733_FWMEM_PAGE - 1)) == 0 &&
+	    (dma->address & (A733_FWMEM_PAGE - 1)) == 0 &&
+	    dma->address <= (UINT64_C(1) << 36) - dma->size;
+}
+
+static bool
+sun60i_gpu_dma_empty(const struct sun60i_a733_gpu_dma *dma)
+{
+	return !dma->loaded && dma->cpu == NULL && dma->map == NULL &&
+	    dma->nsegments == 0 && dma->size == 0 && dma->address == 0;
+}
+
+int
+sun60i_a733_gpu_fwmem_interface(struct sun60i_a733_gpu_fwmem *mem,
+    uint64_t core_hz, uint32_t clusters, uint32_t slc_kib)
+{
+	static const uint32_t config_va[] = {
+		A733_GPU_FWINIT_CONNECTION_VA, A733_GPU_FWINIT_OSINIT_VA,
+		A733_GPU_FWINIT_SYSINIT_VA
+	};
+	struct sun60i_a733_gpu_dma work = { 0 }, config = { 0 };
+	struct sun60i_a733_gpu_fwinit_layout layout;
+	const struct sun60i_a733_gpu_dma *areas[5];
+	void *shadow = NULL;
+	int error;
+
+	if (mem == NULL || mem->dmat == NULL ||
+	    !sun60i_gpu_dma_ready(&mem->code) ||
+	    !sun60i_gpu_dma_ready(&mem->data) ||
+	    !sun60i_gpu_dma_ready(&mem->table) ||
+	    mem->table.size != A733_FWMEM_TABLE)
+		return EINVAL;
+	if (mem->interface_prepared)
+		return EBUSY;
+	if (!sun60i_gpu_dma_empty(&mem->work) ||
+	    !sun60i_gpu_dma_empty(&mem->config))
+		return EINVAL;
+	error = sun60i_gpu_dma_alloc(mem->dmat,
+	    sun60i_a733_gpu_fwinit_work_size(), &work);
+	if (error != 0)
+		goto fail;
+	error = sun60i_gpu_dma_alloc(mem->dmat, A733_GPU_FWINIT_CONFIG_SIZE,
+	    &config);
+	if (error != 0)
+		goto fail;
+	areas[0] = &mem->code;
+	areas[1] = &mem->data;
+	areas[2] = &mem->table;
+	areas[3] = &work;
+	areas[4] = &config;
+	for (size_t i = 0; i < __arraycount(areas); i++) {
+		for (size_t j = 0; j < i; j++) {
+			if (sun60i_gpu_dma_overlap(areas[i], areas[j])) {
+				error = EEXIST;
+				goto fail;
+			}
+		}
+	}
+	error = sun60i_a733_gpu_fwinit(work.cpu, work.size, config.cpu,
+	    config.size, work.address, core_hz, clusters, slc_kib, &layout);
+	if (error != 0)
+		goto fail;
+	shadow = kmem_alloc(A733_FWMEM_TABLE, KM_SLEEP);
+	memcpy(shadow, mem->table.cpu, A733_FWMEM_TABLE);
+	error = sun60i_gpu_fwmem_map(shadow, A733_FWMEM_TABLE, &work,
+	    A733_GPU_FWINIT_WORK_VA);
+	if (error != 0)
+		goto fail;
+	for (size_t i = 0; i < __arraycount(config_va); i++) {
+		uint64_t pa = config.address + i * A733_FWMEM_PAGE;
+
+		error = sun60i_a733_gpu_mips_map(shadow, A733_FWMEM_TABLE,
+		    config_va[i], &pa, 1);
+		if (error != 0)
+			goto fail;
+	}
+
+	/* No failure can follow. All addresses still belong to the CPU. */
+	memcpy(mem->table.cpu, shadow, A733_FWMEM_TABLE);
+	kmem_free(shadow, A733_FWMEM_TABLE);
+	mem->work = work;
+	mem->config = config;
+	mem->interface_layout = layout;
+	mem->interface_prepared = true;
+	return 0;
+fail:
+	if (shadow != NULL)
+		kmem_free(shadow, A733_FWMEM_TABLE);
+	sun60i_gpu_dma_free(mem->dmat, &config);
+	sun60i_gpu_dma_free(mem->dmat, &work);
 	return error;
 }
