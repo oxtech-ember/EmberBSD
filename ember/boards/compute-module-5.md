@@ -19,7 +19,7 @@ The carrier PCB revision and exact four-wire fan model were not established.
 | Wi-Fi | WPA2-PSK and WPA3-Personal SAE group 19/H2E with required PMF tested; silent firmware disconnect recovered automatically, followed by an 8 MiB Wi-Fi round trip ([receipt](../boot/bwfm-link-events.md#physical-cm5-check)) |
 | Bluetooth | Not validated |
 | Temperature sensor | ACPI and VideoCore readings checked; no undervoltage/throttle flags during the short check |
-| Fan control | Temperature-controlled off/maximum policy and persistence after reboot tested; cooling on at 50.1 °C and off at 44.1 °C. The operator reports rapid starts without jerking. Intermediate PWM remains unvalidated ([control](../boot/thermal-fan.md)) |
+| Fan control | Automatic 125/255 minimum level tested on one fan; cooling starts at 50.1 °C. The operator reports quieter, steady rotation. Higher thermal transitions and long runs remain unvalidated ([control](../boot/thermal-fan.md)) |
 | Watchdog | Not validated |
 | Power button | BCM2712 GPIO20 fallback loads; physical PSW shutdown/power-on pending ([setup](../../sys/modules/rpi5button/README.md)) |
 | I2C | Not validated |
@@ -141,17 +141,38 @@ verified; repeated Ethernet down/up and its interaction with Wi-Fi are not.
 
 The carrier's [official schematic](https://files.waveshare.com/wiki/CM5-NANO-B/CM5-NANO-B-Sch.pdf)
 shows switched 5 V power, PWM and tachometer on its four-pin fan connector.
-The installed fan's exact model is unknown. The operator observed repeated
-stops at low and 175/255 PWM, and continuous rotation at maximum 250/255.
-Tachometer edges in an earlier short probe did not establish steady rotation.
+The fan was reported as MiiBestOD; its exact model and voltage are unknown.
+A 75/255 duty trial almost stalled it. Trials at 125/255 and higher showed
+rotation. Three stopped-rotor starts at 125/255 succeeded without a maximum
+boost. These short trials do not qualify cold power-on or every compatible fan.
 
-The [temperature-controlled policy](../boot/thermal-fan.md) uses the existing
-ACPI `_AL0` devices only when cooling is needed. It replaces permanent
-maximum operation on this installation and persists through sysctl.conf.
-The firmware thresholds and 5 °C hysteresis remain active. This policy
-does not establish working intermediate speeds. The operator reports no
-jerking during starts in this mode on the installed fan.
-No UEFI update or raw MMIO utility is required.
+The installed `EMBERV3DRENDER` kernel is
+`ab6f88f04ca73c6958adb39d0e1c717f629e7901`, built with GCC 16.2.0.
+Its SHA256 is `c8600af1c6a31404fe6b3a3995196a910efda594c708194369925adb54ff1886`.
+The four matching board modules were rebuilt; their hashes match the
+[station receipt](#station-and-thermal-policy-check-2026-10-11) above.
+The firmware remains `rpi5-20260730.1`; its exact source pin is unknown.
+
+The [minimum-level policy](../boot/thermal-fan.md#minimum-active-cooling-level)
+uses index `2`, with both maximum-only and forced-maximum controls disabled.
+Its expected rising curve is 125/255 at 50 °C, 175/255 at 67.5 °C and
+250/255 at 75 °C, with 5 °C hysteresis. These are PWM values, not RPM percentages.
+
+The 2026-10-12 physical check started automatic cooling at 50.1 °C.
+A 300-second sampled interval included 120 seconds of bounded CPU load.
+All 272 active tachometer windows showed rotation; no maximum-duty sample
+occurred. ACPI temperature peaked at 57.8 °C; undervoltage/throttle flags
+remained clear. The operator reported quieter, steady rotation.
+At the end, 50.1 °C remained above the falling shutdown threshold.
+The run did not exercise the higher thermal transitions or shutdown after cooling.
+The native production-function fixture passed 136 assertions.
+All three policy values persisted after a normal reboot. Ten post-boot
+windows again measured 125/255 PWM and tachometer pulses. WPA3/PMF returned.
+The V3D regression passed 325 CL pairs,
+1,331,200 verified pixels, 32 TFU copies and binary fences.
+
+Absolute RPM, sound pressure, cold power-on and long-duration operation
+remain unvalidated. Short sampled windows cannot prove rotation between samples.
 
 ## Home mesh and cooling check, 2026-10-08
 

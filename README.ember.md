@@ -53,12 +53,12 @@ PMF on one Keenetic mesh. The guide records measured gaps and remaining limits.
 802.11r fast transition remains unsupported.
 The [scan metadata correction](ember/boot/bwfm-scan.md) preserves firmware
 primary channels and unsigned signal-quality ranking. CM5 also provides an
-optional [temperature-controlled off/maximum fan policy](ember/boot/thermal-fan.md).
-A physical heat/cool cycle and persistent settings after reboot passed.
-The operator reports rapid starts without jerking in this mode.
-The same driver offers a configurable minimum active cooling level, with
-136 source regression assertions. Physical acceptance of this new policy,
-measured noise and long-duration operation remain separate checks.
+optional [minimum active fan level](ember/boot/thermal-fan.md).
+On one CM5 fan, automatic cooling started at 50.1 °C using 125/255 PWM.
+All 272 active tachometer windows in a five-minute check showed rotation.
+The operator reports quieter, steady rotation. The source regression passes
+136 assertions on the host and CM5. Higher thermal transitions, measured
+noise and long-duration operation have separate validation limits.
 The [disconnect recovery](ember/boot/bwfm-link-events.md) handles firmware
 events and reconciles a silently lost association with host state. On CM5,
 a reproduced stuck connection recovered automatically, followed by an

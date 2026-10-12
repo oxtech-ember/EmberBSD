@@ -1,9 +1,9 @@
 # ACPI fan policies
 
-The tested CM5 setup showed stops at intermediate PWM levels. The cause
-was not established. The thermal-zone driver offers two optional fallback
-policies for this case and a configurable minimum active level. The boolean
-policies default to `0`; `fan_min_level` defaults to `-1`. The controls require
+The tested CM5 fan almost stopped at 75/255 PWM. It started and ran at
+125/255 without a maximum-speed boost. The thermal-zone driver offers a
+configurable minimum active level and two optional fallback policies.
+The boolean policies default to `0`; `fan_min_level` defaults to `-1`. The controls require
 a maximum cooling list (`_AL0`).
 Check the thermal-zone and fan names on the actual board.
 
@@ -70,7 +70,7 @@ A failed or invalid temperature sample selects maximum cooling.
 Add the same three assignments to `/etc/sysctl.conf` after validating
 that the selected level starts and runs on the installed fan.
 This is stepped temperature control. It does not add a timed PWM ramp.
-Physical acceptance of this new policy is pending.
+A bounded physical CM5 check passed; see the validation limits below.
 
 ## Temperature-controlled maximum cooling
 
@@ -124,12 +124,6 @@ Other carriers, fans and firmware require their own check.
 
 ## Validation
 
-On 2026-10-08, a CM5 on Waveshare CM5-NANO-B booted revision `72c00a3bbc19`
-with `force_fan=1` from sysctl.conf. Its operator confirmed continuous rotation.
-Nineteen samples over 18 minutes retained D0 at 37.5–41.3 °C. The setting
-also returned after booting the later `b78f10c721f7` kernel. The exact fan model
-was not established. These checks do not validate intermediate speeds.
-
 The source regression executes the driver's thermal selection, sysctl and
 zone-refresh functions with controlled ACPI providers:
 
@@ -140,23 +134,57 @@ sh ember/tests/acpitz-fan.sh
 It checks normal thresholds, hysteresis, the minimum-level and maximum-only
 policies, manual override, failed samples, queue rollback, and zone refreshes.
 The minimum-level extension passes 136 production-function assertions under
-ASan/UBSan on macOS. Physical acceptance of the extension is pending.
-The 2026-10-11 UTC physical CM5 check used `EMBERV3DRENDER` from
-`0d87de7380d863ff66a2dc8395929feb0b1b68ba`, GCC 16.2.0 and UEFI
-`rpi5-20260730.1`. The board and installed hashes are recorded in the
-[CM5 receipt](../boards/compute-module-5.md#station-and-thermal-policy-check-2026-10-11).
-The native production-function fixture passed 57 assertions. Four bounded
-CPU loads raised the temperature from 39.7 °C to 50.1 °C. Maximum cooling
-then entered D0. After removing load, cooling stayed on at 45.2 °C and
-entered D3 at 44.1 °C. The 54-second cycle used two-second samples.
-No undervoltage or throttle flags appeared. Both policy settings survived
-reboot; the normal WPA3 service returned with required PMF.
+ASan/UBSan on macOS and natively on CM5. GCC 16.2 path analysis found no
+issues. Clang retained four inherited `bitops.h` dead-store findings.
+Cppcheck reported 609 style findings and one information diagnostic, with
+no errors or warnings. Eleven added style findings concern unnamed KNF
+prototype parameters. Its narrow atomic model excludes alignment assertions;
+GCC and Clang use the production atomics. Valgrind is unavailable on this
+macOS arm64 host. The sanitizer run is not a Valgrind result.
+
+### Minimum-level check
+
+The 2026-10-12 check used CM5 Rev 1.0, BCM2712 D0, 4 GiB, Waveshare
+CM5-NANO-B and UEFI `rpi5-20260730.1`. The four-wire fan was reported as
+MiiBestOD; its model and voltage rating remain unknown.
+Twenty-second duty trials on kernel `0d87de738` showed tachometer activity
+at 125, 150, 175, 200, 220 and 250/255. At 75/255, 90 of 100 settled
+30 ms windows had no tachometer pulse despite a stable PWM signal.
+Three starts from a stopped rotor at 125/255 succeeded without a maximum
+boost. These were starts on a warm board, not cold power-on qualification.
+
+Kernel `ab6f88f04ca73c6958adb39d0e1c717f629e7901`, built with GCC 16.2.0
+as `EMBERV3DRENDER`, then ran with `fan_min_level=2`, `fan_max_only=0`
+and `force_fan=0`. Cooling started at 50.1 °C with measured PWM duty
+125/255. Four bounded SHA256 CPU workloads ran for 120 seconds.
+During the 300-second sampled interval, all 272 active 30 ms windows
+had tachometer pulses; the mean pulse frequency was 64.7 Hz.
+No maximum-duty sample occurred. Peak ACPI temperature was 57.8 °C.
+There were no undervoltage or throttle flags. The operator reported quieter,
+steady rotation. This was a functional check on a shared board.
+All three policy values persisted after a normal reboot; WPA3/PMF returned.
+Ten post-boot windows again measured 125/255 PWM and tachometer pulses.
+
+Cooling remained active at the end, at 50.1 °C. The run did not reach
+its falling shutdown threshold or the rising 67.5/75 °C transitions.
+The source fixture checks those transitions; direct duty trials check
+rotation at the stronger steps. Neither is a physical higher-temperature
+transition test. The probe only read PWM/GPIO during the automatic run.
+It was unloaded afterward. See the [installed receipt](../boards/compute-module-5.md#cooling).
+
+Tachometer pulses per revolution are unknown, so no absolute RPM is claimed.
+Sampled windows do not establish continuous rotation between samples.
+Measured noise, cold power-on, suspend/resume and long-duration operation
+remain unvalidated.
+
+### Off/maximum fallback check
+
+The earlier [CM5 receipt](../boards/compute-module-5.md#station-and-thermal-policy-check-2026-10-11)
+records the fallback on kernel `0d87de738`, GCC 16.2.0 and the same UEFI.
+A 54-second heat/cool cycle entered maximum cooling at 50.1 °C, retained
+it at 45.2 °C and stopped at 44.1 °C. Its settings survived reboot.
+That result validates the separate fallback, not the minimum-level policy.
 
 The first `envstat` fan reading can be the initial cached sample. Fan
 refresh is asynchronous. For current ACPI state, also inspect the board's
 `hw.acpi.power.acpifanN` sysctl nodes. Neither reading measures RPM.
-The operator later confirmed that the fan stops and reaches full speed
-quickly when it starts, without jerking. This observation applies to the
-installed fan and the off/maximum policy. It does not validate intermediate
-speeds, cold-start behavior or measured noise. RPM, suspend/resume and
-long-duration operation remain separate checks.
