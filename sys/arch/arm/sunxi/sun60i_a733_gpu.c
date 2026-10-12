@@ -1254,6 +1254,9 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 	bus_size_t size;
 	uint32_t read_off = 0, write_off = 0, timeline = 0;
 	uint32_t scratch_before = 0, scratch_after = 0;
+	uint32_t reset_reason = 0, reset_dm = 0, reset_job = 0;
+	uint32_t reset_ctx = 0, reset_flags = 0;
+	uint64_t reset_pc = 0, reset_fault = 0;
 	struct timespec start, now, elapsed;
 	int error;
 
@@ -1310,6 +1313,33 @@ out:
 		    &write_off, &timeline);
 	if (sc->sc_fwvm == NULL)
 		scratch_after = 0;
+	/* Decode a pending firmware response; a context reset explains EIO. */
+	if (r->after.fw_write_offset > r->after.fw_read_offset &&
+	    r->after.fw_command == 0x2abc0069 && sc->sc_fw_memory != NULL) {
+		const struct sun60i_a733_gpu_fwmem *m = sc->sc_fw_memory;
+		size_t off = m->interface_layout.object[
+		    A733_GPU_FWINIT_FWCCB_CMDS].offset +
+		    r->after.fw_read_offset *
+		    sizeof(struct rogue_fwif_fwccb_cmd);
+		const struct rogue_fwif_fwccb_cmd *cmd;
+
+		bus_dmamap_sync(m->dmat, m->work.map, off,
+		    sizeof(*cmd), BUS_DMASYNC_POSTREAD);
+		cmd = (const struct rogue_fwif_fwccb_cmd *)
+		    ((const uint8_t *)m->work.cpu + off);
+		reset_reason = cmd->cmd_data.cmd_context_reset_notification.
+		    reset_reason;
+		reset_dm = cmd->cmd_data.cmd_context_reset_notification.dm;
+		reset_job = cmd->cmd_data.cmd_context_reset_notification.
+		    reset_job_ref;
+		reset_ctx = cmd->cmd_data.cmd_context_reset_notification.
+		    server_common_context_id;
+		reset_flags = cmd->cmd_data.cmd_context_reset_notification.flags;
+		reset_pc = cmd->cmd_data.cmd_context_reset_notification.
+		    pc_address;
+		reset_fault = cmd->cmd_data.cmd_context_reset_notification.
+		    fault_address;
+	}
 	{
 		uint32_t kick_rtn = r->after.rtn;
 
@@ -1318,7 +1348,8 @@ out:
 		    "timeline=%u scratch=0x%x->0x%x context=0x%08x "
 		    "pow=%u hwr=0x%x faults=%u log=0x%x kexec=%u "
 		    "fw_read=%u fw_write=%u fw_cmd=0x%x fw_state=%u os_state=%u "
-		    "compchecks=%u",
+		    "compchecks=%u reset_ctx=%u reason=%u dm=%u job=%u "
+		    "rflags=0x%x rpc=0x%llx rfault=0x%llx",
 		    error, (u_int)kick_rtn, (u_int)r->polls,
 		    (u_int)read_off, (u_int)write_off, (u_int)timeline,
 		    (u_int)scratch_before, (u_int)scratch_after,
@@ -1330,7 +1361,11 @@ out:
 		    (u_int)r->after.fw_write_offset,
 		    (u_int)r->after.fw_command,
 		    (u_int)r->after.fw_state, (u_int)r->after.os_state,
-		    (u_int)r->after.compchecks_updated);
+		    (u_int)r->after.compchecks_updated,
+		    (u_int)reset_ctx, (u_int)reset_reason, (u_int)reset_dm,
+		    (u_int)reset_job, (u_int)reset_flags,
+		    (unsigned long long)reset_pc,
+		    (unsigned long long)reset_fault);
 	}
 	if (image != NULL)
 		kmem_free(image, sizeof(*image));

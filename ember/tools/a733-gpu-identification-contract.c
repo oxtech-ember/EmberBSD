@@ -80,6 +80,9 @@ static struct device root_device, soc_device, gpu_device;
 static unsigned getticks(void) { return 0; }
 static void getnanouptime(struct timespec *t) { t->tv_sec = 0; t->tv_nsec = 0; }
 static void delay(unsigned int us) { (void)us; }
+#define BUS_DMASYNC_POSTREAD 2
+static void bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t m, bus_addr_t o,
+    bus_size_t s, int op) { (void)t; (void)m; (void)o; (void)s; (void)op; }
 #ifndef timespecsub
 #define timespecsub(tsp, usp, vsp) do { 	(vsp)->tv_sec = (tsp)->tv_sec - (usp)->tv_sec; 	(vsp)->tv_nsec = (tsp)->tv_nsec - (usp)->tv_nsec; 	if ((vsp)->tv_nsec < 0) { (vsp)->tv_sec--; (vsp)->tv_nsec += 1000000000L; } } while (0)
 #endif
