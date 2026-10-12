@@ -1315,11 +1315,22 @@ out:
 
 		snprintf(sc->sc_kick_state, sizeof(sc->sc_kick_state),
 		    "kick error=%d rtn=0x%x polls=%u ccb_read=%u ccb_write=%u "
-		    "timeline=%u scratch=0x%x->0x%x context=0x%08x",
+		    "timeline=%u scratch=0x%x->0x%x context=0x%08x "
+		    "pow=%u hwr=0x%x faults=%u log=0x%x kexec=%u "
+		    "fw_read=%u fw_write=%u fw_cmd=0x%x fw_state=%u os_state=%u "
+		    "compchecks=%u",
 		    error, (u_int)kick_rtn, (u_int)r->polls,
 		    (u_int)read_off, (u_int)write_off, (u_int)timeline,
 		    (u_int)scratch_before, (u_int)scratch_after,
-		    (u_int)A733_GPU_FWCOMPUTE_SPAN_BASE);
+		    (u_int)A733_GPU_FWCOMPUTE_SPAN_BASE,
+		    (u_int)r->after.pow_state, (u_int)r->after.hwr_state,
+		    (u_int)r->after.fw_faults, (u_int)r->after.log_type,
+		    (u_int)r->after.cmds_executed,
+		    (u_int)r->after.fw_read_offset,
+		    (u_int)r->after.fw_write_offset,
+		    (u_int)r->after.fw_command,
+		    (u_int)r->after.fw_state, (u_int)r->after.os_state,
+		    (u_int)r->after.compchecks_updated);
 	}
 	if (image != NULL)
 		kmem_free(image, sizeof(*image));
