@@ -70,8 +70,9 @@ struct sun60i_a733_gpu_fwboot_result {
  * pairs POST sync and returns CPU ownership. Any possible hardware touch
  * retains device ownership, including a faulting reset-release write.
  * Success, timeout, and malformed firmware_started also retain ownership.
- * Never free/unmap or write the buffers while device_owned is true. This
- * helper never frees, unmaps, or writes firmware buffers after handoff.
+ * Never free/unmap the buffers while device_owned is true. Further writes
+ * require a separately validated shared-memory protocol, such as fwprobe.
+ * This helper never frees, unmaps, or writes firmware buffers after handoff.
  *
  * Poll config through POSTREAD/read-only observation/PREREAD cycles. Accept
  * only raw firmware_started byte 0 or 1; another value returns EPROTO.

@@ -57,7 +57,9 @@ An inconsistent leaf-helper result also fails closed.
 
 Success, timeout, and an invalid firmware flag all retain device ownership.
 While `device_owned` is true, the caller must keep every DMA allocation,
-map, and backing page. It must not call the memory destructor or write the buffers.
+map, and backing page. It must not call the memory destructor.
+Further writes require a separately validated shared-memory protocol, such as
+[the first-command probe](a733-gpu-fwprobe.md). This bootstrap helper remains read-only after handoff.
 A cached error does not prove that the GPU stopped accessing memory.
 A separate verified device-stop protocol is required before reclamation.
 This helper does not implement that protocol.
