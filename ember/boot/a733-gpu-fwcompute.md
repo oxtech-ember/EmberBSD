@@ -273,3 +273,13 @@ claimed. The runtime snapshot that produced the EIO (hardware watchdog
 or firmware fault counters) is not yet part of the kick report; adding
 it is the immediate next step, together with the CDM-stream execution
 trace. No board hang occurred; Wi-Fi and SSH survived the run.
+
+The diagnostic rerun identified the EIO source: the runtime check treats
+an unconsumed firmware response as an error (`fw_write=1, fw_read=0`),
+and the pending FWCCB command is `0x2abc0069` — CONTEXT_RESET
+NOTIFICATION. With `kexec=4` the KICK executed, the client queue drained
+to 184 bytes, power stayed ON, and no watchdog or firmware-fault bits
+were set: the firmware dispatched the context and then reset it,
+notifying the host. The next step is reading the reset notification
+payload (the FWCCB slot) and tracing why the CDM execution asked for the
+reset — suspected stream or fetch details, not the submission plumbing.
