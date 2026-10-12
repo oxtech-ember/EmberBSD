@@ -204,7 +204,8 @@ sun60i_a733_gpu_fwheap_set_vm_context(struct sun60i_a733_gpu_fwheap *heap,
 
 	if (heap == NULL || !heap->prepared || !fwheap_dma_valid(&heap->heap))
 		return EINVAL;
-	memcpy(heap->heap.cpu + A733_GPU_FWHEAP_VM_CONTEXT_OFF, context, 32);
+	memcpy((uint8_t *)heap->heap.cpu + A733_GPU_FWHEAP_VM_CONTEXT_OFF,
+	    context, 32);
 	bus_dmamap_sync(heap->dmat, heap->heap.map,
 	    A733_GPU_FWHEAP_VM_CONTEXT_OFF, 32, BUS_DMASYNC_PREWRITE);
 	return 0;
