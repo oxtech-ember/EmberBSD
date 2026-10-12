@@ -13,8 +13,8 @@ awk '
 /^acpitz_(get_zone_quiet|get_status|set_active|power_off|get_zone|sane_temp)\(/ {
     print "static void"; copy = 1
 }
-/^acpitz_same_cooling\(/ { print "static bool"; copy = 1 }
-/^acpitz_sysctl_fan\(/ { print "static int"; copy = 1 }
+/^acpitz_(same_cooling|valid_level)\(/ { print "static bool"; copy = 1 }
+/^acpitz_sysctl_fan(_min)?\(/ { print "static int"; copy = 1 }
 copy { print }
 copy && /^}/ { copy = 0 }' "$input" > "$work/acpitz-control.h"
 ${CC:-cc} ${CFLAGS:-} -std=c99 -Wall -Wextra -Werror -I"$work" \

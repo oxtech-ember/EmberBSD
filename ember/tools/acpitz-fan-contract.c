@@ -59,7 +59,8 @@ struct sysctlnode {
 #include "acpitz-types.h"
 
 static unsigned int checks, allocations, power_on, power_off;
-static unsigned int bad_list, bad_trip;
+static unsigned int bad_list, bad_trip, changed_level;
+static int lookup_error, read_value;
 static bool failed_sample, failed_queue, changed_resource;
 static uint32_t sample;
 static int devices[ATZ_NLEVELS + 1];
@@ -142,7 +143,7 @@ acpi_eval_struct(ACPI_HANDLE handle, const char *name, ACPI_BUFFER *buffer)
 	obj->Type = ACPI_TYPE_PACKAGE;
 	obj->Package.Count = 1;
 	obj->Package.Elements = obj + 1;
-	obj[1].reference = &devices[changed_resource && i == 0 ? 10 : i];
+	obj[1].reference = &devices[changed_resource && i == changed_level ? 10 : i];
 	buffer->Pointer = obj;
 	return 0;
 }
@@ -168,8 +169,12 @@ acpitz_power_zone(struct acpitz_softc *sc, int i, int on)
 static int
 sysctl_lookup(SYSCTLFN_ARGS)
 {
+	if (lookup_error != 0)
+		return lookup_error;
 	if (newp != NULL)
 		*(int *)rnode->sysctl_data = *newp;
+	else
+		read_value = *(int *)rnode->sysctl_data;
 	return 0;
 }
 
@@ -193,6 +198,7 @@ acpitz_celcius_string(int value)
 static void acpitz_get_status(void *);
 static void acpitz_get_zone(void *, int);
 static void acpitz_set_active(struct acpitz_softc *, int);
+static bool acpitz_valid_level(const struct acpitz_zone *, int);
 static void acpitz_sane_temp(uint32_t *);
 static void acpitz_power_off(struct acpitz_softc *);
 
@@ -211,6 +217,8 @@ policy(struct acpitz_softc *sc, const char *name, int value)
 {
 	struct sysctlnode ctl = { name, sc };
 
+	if (strcmp(name, "fan_min_level") == 0)
+		return acpitz_sysctl_fan_min(&ctl, &value);
 	return acpitz_sysctl_fan(&ctl, &value);
 }
 
@@ -225,6 +233,7 @@ main(void)
 	sc.sc_node = &node;
 	sc.sc_first = true;
 	sc.sc_active = ATZ_ACTIVE_NONE;
+	sc.sc_fan_min_level = -1;
 	sc.sc_zone.tzp = 10;
 	sc.sc_zone_expire = ATZ_ZONE_EXPIRE / 10;
 	sample = ATZ_ZEROC + 400;
@@ -328,6 +337,151 @@ main(void)
 	CHECK(policy(&sc, "force_fan", 0) == 0);
 	at(&sc, 500, 3);
 	at(&sc, 400, ATZ_ACTIVE_NONE);
+	/* A minimum level retains the firmware's off threshold and higher steps. */
+	CHECK(policy(&sc, "fan_min_level", -2) == EINVAL);
+	CHECK(policy(&sc, "fan_min_level", ATZ_NLEVELS) == EINVAL);
+	CHECK(policy(&sc, "fan_min_level", 4) == EINVAL);
+	CHECK(sc.sc_fan_min_level == -1);
+	lookup_error = EFAULT;
+	CHECK(policy(&sc, "fan_min_level", 2) == EFAULT);
+	CHECK(sc.sc_fan_min_level == -1);
+	lookup_error = 0;
+	failed_queue = true;
+	CHECK(policy(&sc, "fan_min_level", 2) == EIO);
+	CHECK(sc.sc_fan_min_level == -1);
+	failed_queue = false;
+	CHECK(policy(&sc, "fan_min_level", 2) == 0);
+	{
+		struct sysctlnode ctl = { "fan_min_level", &sc };
+
+		CHECK(acpitz_sysctl_fan_min(&ctl, NULL) == 0 && read_value == 2);
+	}
+	at(&sc, 499, ATZ_ACTIVE_NONE);
+	at(&sc, 500, 2);
+	at(&sc, 600, 2);
+	at(&sc, 625, 2);
+	at(&sc, 674, 2);
+	at(&sc, 675, 1);
+	at(&sc, 625, 1);
+	at(&sc, 624, 2);
+	at(&sc, 749, 1);
+	at(&sc, 750, 0);
+	at(&sc, 700, 0);
+	at(&sc, 699, 1);
+	at(&sc, 500, 2);
+	at(&sc, 450, 2);
+	at(&sc, 449, ATZ_ACTIVE_NONE);
+	at(&sc, 480, ATZ_ACTIVE_NONE);
+	at(&sc, 500, 2);
+	at(&sc, 480, 2);
+
+	/* Refreshing the same resources must not pulse a floor-controlled fan. */
+	on = power_on;
+	off = power_off;
+	acpitz_get_zone_quiet(&sc);
+	CHECK(sc.sc_active == 2 && sc.sc_fan_latched);
+	CHECK(power_on == on && power_off == off && allocations == 4);
+	sc.sc_zone_expire = 1;
+	at(&sc, 470, 2);
+	CHECK(power_on == on && power_off == off && allocations == 4);
+	changed_level = 2;
+	changed_resource = true;
+	acpitz_get_zone_quiet(&sc);
+	CHECK(sc.sc_active == 2 && sc.sc_fan_latched && power_on == on + 1);
+	changed_resource = false;
+	acpitz_get_zone_quiet(&sc);
+	CHECK(sc.sc_active == 2 && sc.sc_fan_latched);
+
+	/* A replacement also retains hysteresis above the configured floor. */
+	at(&sc, 675, 1);
+	at(&sc, 650, 1);
+	changed_level = 1;
+	changed_resource = true;
+	acpitz_get_zone_quiet(&sc);
+	CHECK(sc.sc_active == 1 && sc.sc_fan_latched);
+	changed_resource = false;
+	acpitz_get_zone_quiet(&sc);
+	CHECK(sc.sc_active == 1 && sc.sc_fan_latched);
+	at(&sc, 624, 2);
+	at(&sc, 470, 2);
+
+	/* Keep the whole working zone if its floor or lowest trip disappears. */
+	on = power_on;
+	off = power_off;
+	bad_list = 1U << 2;
+	acpitz_get_zone_quiet(&sc);
+	CHECK(sc.sc_active == 2 && power_off == off && power_on == on);
+	CHECK(allocations == 4 && acpitz_valid_level(&sc.sc_zone, 2));
+	bad_list = 0;
+	bad_trip = 1U << 3;
+	acpitz_get_zone_quiet(&sc);
+	CHECK(sc.sc_active == 2 && power_off == off && power_on == on);
+	CHECK(sc.sc_zone.ac[3] == trips[3]);
+	bad_trip = 0;
+	at(&sc, 440, ATZ_ACTIVE_NONE);
+	failed_sample = true;
+	acpitz_get_status(&sc);
+	CHECK(sc.sc_active == 0 && sc.sc_fan_latched);
+	CHECK(sc.sc_temp_sensor.state == ENVSYS_SINVALID);
+	failed_sample = false;
+	at(&sc, 470, 2);
+	at(&sc, 440, ATZ_ACTIVE_NONE);
+	sample = ATZ_TMP_INVALID;
+	acpitz_get_status(&sc);
+	CHECK(sc.sc_active == 0 && sc.sc_temp_sensor.state == ENVSYS_SINVALID);
+	at(&sc, 440, ATZ_ACTIVE_NONE);
+	sample = ATZ_ZEROC - 1;
+	acpitz_get_status(&sc);
+	CHECK(sc.sc_active == 0 && sc.sc_temp_sensor.state == ENVSYS_SINVALID);
+	at(&sc, 400, ATZ_ACTIVE_NONE);
+
+	/* Both existing maximum overrides remain stronger than the floor. */
+	CHECK(policy(&sc, "fan_max_only", 1) == 0);
+	at(&sc, 500, 0);
+	CHECK(policy(&sc, "fan_max_only", 0) == 0);
+	CHECK(sc.sc_active == 2 && sc.sc_fan_min_level == 2);
+	CHECK(policy(&sc, "force_fan", 1) == 0);
+	at(&sc, 400, 0);
+	CHECK(policy(&sc, "force_fan", 0) == 0);
+	CHECK(sc.sc_active == ATZ_ACTIVE_NONE && sc.sc_fan_min_level == 2);
+	CHECK(policy(&sc, "fan_min_level", 0) == 0);
+	at(&sc, 500, 0);
+	at(&sc, 450, 0);
+	at(&sc, 449, ATZ_ACTIVE_NONE);
+	CHECK(policy(&sc, "fan_min_level", 3) == 0);
+	at(&sc, 500, 3);
+	at(&sc, 600, 2);
+	at(&sc, 400, ATZ_ACTIVE_NONE);
+
+	/* If a configured floor becomes unavailable, active requests use maximum. */
+	sc.sc_fan_min_level = ATZ_NLEVELS;
+	at(&sc, 500, 0);
+	at(&sc, 400, ATZ_ACTIVE_NONE);
+
+	/* Disabling the floor restores legacy selection and failed-sample handling. */
+	CHECK(policy(&sc, "fan_min_level", -1) == 0);
+	at(&sc, 500, 3);
+	at(&sc, 400, ATZ_ACTIVE_NONE);
+	failed_sample = true;
+	acpitz_get_status(&sc);
+	CHECK(sc.sc_active == ATZ_ACTIVE_NONE);
+	failed_sample = false;
+
+	/* Reject missing maximum and invalid floor trips without changing policy. */
+	{
+		ACPI_BUFFER max = sc.sc_zone.al[0];
+		uint32_t trip = sc.sc_zone.ac[2];
+
+		sc.sc_zone.al[0].Pointer = NULL;
+		CHECK(policy(&sc, "fan_min_level", 2) == EINVAL);
+		CHECK(sc.sc_fan_min_level == -1);
+		sc.sc_zone.al[0] = max;
+		sc.sc_zone.ac[2] = ATZ_TMP_INVALID;
+		CHECK(policy(&sc, "fan_min_level", 2) == EINVAL);
+		CHECK(sc.sc_fan_min_level == -1);
+		sc.sc_zone.ac[2] = trip;
+	}
+
 	for (i = 0; i < ATZ_NLEVELS; i++) {
 		if (sc.sc_zone.al[i].Pointer != NULL)
 			ACPI_FREE(sc.sc_zone.al[i].Pointer);

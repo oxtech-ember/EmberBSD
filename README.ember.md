@@ -56,7 +56,9 @@ primary channels and unsigned signal-quality ranking. CM5 also provides an
 optional [temperature-controlled off/maximum fan policy](ember/boot/thermal-fan.md).
 A physical heat/cool cycle and persistent settings after reboot passed.
 The operator reports rapid starts without jerking in this mode.
-Intermediate speeds, measured noise and long-duration operation remain unvalidated.
+The same driver offers a configurable minimum active cooling level, with
+136 source regression assertions. Physical acceptance of this new policy,
+measured noise and long-duration operation remain separate checks.
 The [disconnect recovery](ember/boot/bwfm-link-events.md) handles firmware
 events and reconciles a silently lost association with host state. On CM5,
 a reproduced stuck connection recovered automatically, followed by an
