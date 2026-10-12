@@ -532,22 +532,17 @@ on every board in the hardware catalog.
   [GPU identification consumer](ember/boot/a733-gpu-identification.md) now
   attaches on Zero 3W. A stable physical CCU snapshot shows the GPU module
   and bus clocks gated and reset asserted, with DCDC4 programmed to 800 mV.
-  A subsequent matched boot classifies the physical DCXO as 26 MHz while
-  preserving the nominal DT clock. GPU_CORE's ON policy disagrees with its
-  status, so the strict reader refuses readiness. The matched #7 kernel
-  reads stable power-controller snapshots and identifies both GPU domains
-  as single-Q-Channel PPUs; the inconsistent CORE state remains unresolved.
-  The corrected [clock-only experiment](ember/boot/a733-gpu-identification.md#physical-result)
-  completed GPU_CLK UPDATE on physical Zero 3W. CCU reported
-  400/200 MHz configuration, but CORE ON/Q still timed out before GPU MMIO.
-  Reboot with the restored normal DTB returned gated clocks and SSH.
-  The observed post-PLL gates were open before preparation and after timeout.
-  A [read-only preboot snapshot](ember/boot/a733-preboot-snapshot.md) finds
-  CORE's ON-policy/OFF-status mismatch before the final firmware handoff and
-  kernel entry. It persists through a confirmed power removal and the clock-only
-  experiment. Its origin, GPU identity and acceleration remain unverified.
-  The missing power handshake, general shared resource management, DMA/MMU
-  and command submission still require porting. These are
+  The native PLL cold-start path now passes two physical Zero 3W runs with
+  GCC16 kernel `498c0028e`. It locks PLL_GPU0, completes GPU_CLK UPDATE
+  and confirms 600/200 MHz configuration at the programmed 800 mV supply.
+  GPU_CORE reaches strict ON/Q readiness. Both register reads identify
+  PowerVR BXM BVNC `36.56.104.183`; Wi-Fi and the existing NPU probe return
+  after a normal reboot. Frequencies and voltage were not measured externally.
+  The [physical PLL result](ember/boot/a733-gpu-identification.md#physical-pll-result)
+  supersedes the earlier PERIPH0-400M timeout and GPU MMIO stall. Normal
+  board DTBs remain observe-only; the working cold start is an explicit
+  runtime experiment. Firmware execution, DMA/MMU, a PowerVR render interface,
+  Mesa Vulkan/Zink and accelerated Plasma still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
   driver/DMA integration, compatible runtime and real model execution must
   all pass before an accelerated AI workflow is claimed.

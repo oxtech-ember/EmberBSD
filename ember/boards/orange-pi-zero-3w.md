@@ -31,9 +31,9 @@ Board revision: not recorded in the original support table.
 | Voltage regulators | All outputs of the AXP8191 read at boot; not measured |
 | USB | Controllers and the Type-C controller attach; no device tried |
 | Hardware random numbers | Tested |
-| GPU/NPU power domains | Native PCK600 provider passes software contracts and GCC16 cross object builds; physical transitions and acceleration unverified ([guide](../boot/a733-power-domains.md)) |
-| GPU/NPU clocks and resets | Native main CCU providers pass 199 software assertions and GCC12/GCC16 object builds; firmware PLLs stay unchanged, physical sequencing unverified ([guide](../boot/a733-accelerator-clocks.md)) |
-| GPU identification | The opt-in completes GPU clock UPDATE with observed post-PLL gates open; CORE ON/Q still times out before GPU MMIO. Normal observation and recovery boot pass; identity and acceleration remain unverified ([physical result](../boot/a733-gpu-identification.md#physical-result)) |
+| GPU/NPU power domains | Native PCK600 provider; GPU_CORE ON/Q readiness passes with the dedicated GPU PLL. Command execution has separate acceptance ([guide](../boot/a733-power-domains.md)) |
+| GPU/NPU clocks and resets | Native main CCU providers; the opt-in GPU PLL cold start locks and confirms 600/200 MHz on this board. Normal boot preserves firmware state ([guide](../boot/a733-gpu-identification.md#physical-pll-result)) |
+| GPU identification | Two explicit runtime runs read BVNC `36.56.104.183` after PLL600 and strict CORE ON/Q readiness. Firmware execution, GPU rendering and accelerated Plasma remain unverified ([physical result](../boot/a733-gpu-identification.md#physical-pll-result)) |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.

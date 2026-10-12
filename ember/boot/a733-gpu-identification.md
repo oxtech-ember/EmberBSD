@@ -6,11 +6,11 @@ never maps or reads GPU registers, even when the queried providers are ready.
 This default mode provides no GPU initialization, DMA, submission or acceleration.
 The [driver](https://github.com/oxtech-ember/EmberBSD/blob/main/sys/arch/arm/sunxi/sun60i_a733_gpu.c)
 is owned by EmberBSD. Software contracts, the complete GCC16 kernel build
-and physical attachment on Zero 3W are verified. Physical GPU identification
-has not yet been accepted. Read-only provider observations are verified;
-the current experiment completed GPU_CLK UPDATE with the observed post-PLL
-gates open, but GPU_CORE still
-failed its strict ON/Q readiness check. No GPU register was accessed.
+and physical attachment on Zero 3W are verified. The explicit runtime
+PLL600 cold start now identifies the physical GPU; see the
+[current hardware result](#physical-pll-result). Normal board DTBs remain
+observe-only. The earlier PERIPH0-400M path times out at GPU_CORE and can
+stall on GPU register access. Neither path supplies GPU command execution.
 
 ## Physical result
 
@@ -144,7 +144,7 @@ is not requested by the pinned BSP GPU binding or operated by the normal path.
 The PCK provider separately reports its raw state at attachment. That earlier
 observation is not consumed as a GPU readiness guarantee or power capability.
 The pinned DDK selects a live `USE_FPGA` path that operates CORE6 directly;
-the experimental path below preserves that handshake instead of copying the write.
+the experimental paths preserve that handshake instead of copying the write.
 
 ## Experimental clock preparation
 
@@ -266,7 +266,7 @@ hang is this same MMIO stall reached through the boot finalize path.
 The GPU register file therefore does not answer in the current
 configuration (module clock from PERIPH0-400M, bus gate open, reset
 released). The vendor binding clocks the module from PLL_GPU0; switching
-the prepared clock source is the next experiment candidate. All runtime
+the prepared clock source was the next experiment candidate, now tested below. All runtime
 staging kernels before `cd0d25f9076` panicked on a NULL softc pointer in
 the sysctl handler - sysctl_createv stores no sysctl_data for handler
 nodes - so their "provider stalls" were that bug, not hardware.
@@ -382,3 +382,56 @@ identity errors, cleanup, the late `/soc` queue hazard and repeated finalizers.
 Diagnostics cover acquisition/readiness errors, voltage and raw samples;
 observe-only requires zero GPU mappings/reads with ready or unready providers.
 These checks do not prove physical GPU identity or acceleration.
+
+## Physical PLL result
+
+On 2026-10-12, a 4 GiB Orange Pi Zero 3W ran all eleven runtime stages
+successfully on GCC16.2 `EMBER64 #3` from
+`498c0028e4f61eed940835ed77bc7ff7fd63296f`. Board revision was not recorded.
+The vendor boot0, U-Boot, boot script and existing observe-only board DTB
+were preserved. Four modules came from the same complete kernel build.
+
+Both the first run and a second run after a normal reboot returned zero
+for every stage. The second boot also completed the existing NPU identity
+probe before the GPU sequence. No watchdog reset occurred during either
+GPU run. The hardware watchdog was armed for each hardware stage and
+was disarmed when the stage returned.
+
+The cached stage-7 snapshot reports:
+
+```text
+error=0 reason=0 pll=0xf9204a00 module=0x80000000 bus=0x00010001
+core_hz=600000000 bus_hz=200000000
+```
+
+GPU_CORE request and strict ON/Q wait both succeed. TOP-only and strict
+PBVNC reads return `0x00240038006800b7`, BVNC `36.56.104.183`.
+No PWCR override or weakened power-readiness check was needed.
+The two short sequences completed within one second each, excluding
+setup and the separate first-run identity calls. The first identity
+calls finished 23 seconds after the initial stages. GPU temperature
+samples after the runs were 45.632 and 44.764 degC. These are idle bring-up
+samples, not load, stability, performance or power-consumption results.
+
+PLL lock, register readback and UPDATE completion are hardware observations.
+Decoded rates and the 800000-microvolt regulator setting were not measured
+externally. The successful path changes PLL enable and the module source
+and rate together; this does not isolate which internal clock dependency
+caused the previous stall.
+
+| Artifact | SHA256 |
+| --- | --- |
+| Kernel ELF | `5ea327094fc755c251982b09c3d9abb691f5c9a951b1c0381dc752c7f269f324` |
+| Native kernel image | `f4fef33c10807deec27473fed13cbda0314ebf5c7f148a5b9a64ec72e8035c02` |
+| Preserved board DTB | `6e3e92e251a617066a54634394e65d3463df96fdd5920753056cb0c2e4e78d4e` |
+
+The real-source clock fixture passes 53,475 assertions with ASan/UBSan;
+the GPU consumer fixture passes 1,372. Cppcheck retains style, macro and
+fixture findings. GCC16 path analysis has six CCU complexity-limit
+warnings; Clang analysis has inherited header dead-store findings.
+No new production defect was identified. These are not clean analyses
+or a Valgrind result; Valgrind does not support the macOS/arm64 test host.
+
+This establishes native power/clock bring-up and physical identity.
+Firmware execution, memory isolation, IRQ completion, PowerVR DRM,
+Mesa Vulkan/Zink, display output and accelerated Plasma remain unverified.
