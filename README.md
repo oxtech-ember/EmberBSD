@@ -568,8 +568,8 @@ on every board in the hardware catalog.
   DMA allocations. The [native firmware bootstrap](ember/boot/a733-gpu-fwboot.md#physical-bootstrap-result)
   now runs on Zero 3W: firmware sets its boot flag and returns the expected
   hardware/firmware BVNC through direct coherent memory. The
-  [first native KCCB command](ember/boot/a733-gpu-fwprobe.md#physical-command-result)
-  also completes on this board: its return word, queue progress and executed
+  [native LOGTYPE and MMUCACHE commands](ember/boot/a733-gpu-fwprobe.md#physical-command-result)
+  also complete on this board: return words, queue progress and the executed
   counter agree. Rogue GPU [page-table encoders](ember/boot/a733-gpu-mmu.md)
   and [CPU-owned VM preparation](ember/boot/a733-gpu-vm.md) pass source contracts;
   GPU translation and rendering remain unverified. A PowerVR render interface,

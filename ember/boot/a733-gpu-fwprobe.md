@@ -179,26 +179,41 @@ It checks exact command bytes, the second slot, retained first-command bytes,
 invalid or aliased previous results, stale completion, and foreign shared fields.
 It distinguishes KCCB completion from the unchanged zero sync value.
 It also covers queue regression, late completion, MMIO faults, and timeout retention.
-Physical MMUCACHE acceptance remains pending.
+The physical acceptance below confirms both commands on Zero 3W.
 
 ## Physical command result
 
-Orange Pi Zero 3W completed the first LOGTYPE command on 2026-10-12 at 13:35:05 UTC.
-The source was `2fd3f53f620f458af748214221aa81ff3e7be2f4`.
-The kernel was GCC 16.2 `EMBER64 #8`.
-The call completed within one second and used three observations.
-The result had `error = 0`; all four attempt/publication/kick flags were true.
-Slot zero changed KCCB offsets from `0/0` to `1/1`, with return word one.
-The executed-command counter changed from zero to one.
-FWCCB stayed empty. Power state was `3` (idle), HWR state was `1`, and faults were zero.
-Firmware remained started, BVNC matched, and DDK build was `6976702`.
-SSH remained available. The existing NPU stage-4 check stayed successful.
-The watchdog was disarmed without a reset.
+Orange Pi Zero 3W completed LOGTYPE and MMUCACHE on 2026-10-12.
+The source was `f1b4b39a84c3d926c03445cc3e76fd2ebee85392`.
+The kernel was GCC 16.2 `EMBER64 #9`, with its four matching modules.
+Stages 1 through 16 passed at 13:57:09–13:57:10 UTC.
+Stage 17 completed at 13:58:59 UTC, within the recorded second.
 
-The kernel SHA256 was
-`95ac4a5f4b3094334ddd714047f121fc8373fd15d668caf11bc13f8093f23dcb`.
-The boot image SHA256 was
-`818612b4bcee8b74fecea3add2970ed7018a5ea5d465f8d568a0d51888b65be4`.
+| Observation | LOGTYPE | MMUCACHE |
+| --- | --- | --- |
+| Opcode | `0x2abc00ce` | `0x2abc0066` |
+| Slot | 0 | 1 |
+| Read/write offsets | `0/0` to `1/1` | `1/1` to `2/2` |
+| Return word | 1 | 1 |
+| Executed counter | 0 to 1 | 1 to 2 |
+| Observations | 3 | 3 |
+
+Both results reported error zero and all four attempt/publication/kick flags.
+MMUCACHE used flags `0x0400001f`, sync address `0xc0104400`, and update value zero.
+The sync word remained zero; completion was established by the return slot and queue offsets.
+The cached LOGTYPE result remained intact after stage 17.
+FWCCB stayed empty. Power state was `3` (idle), HWR state was `1`, and firmware faults were zero.
+Firmware remained started with matching BVNC and DDK build `6976702`.
+A 16-second hardware watchdog protected each stage. It was disarmed without a reset.
+SSH remained available. The existing NPU stage-4 check stayed successful.
+All firmware allocations remain retained until reboot.
+
+| Component | SHA256 |
+| --- | --- |
+| ELF kernel | `833a795643215a41d8476e2896e68f08876f8fa57354fa96a7d20443b31e77f7` |
+| Native image | `8c7e16238c810f94291d82ae837e871125fc6df57b455a0f98fbaad5c6b30a97` |
+| Preserved DTB | `6e3e92e251a617066a54634394e65d3463df96fdd5920753056cb0c2e4e78d4e` |
+
 The pinned firmware was unchanged.
-This record establishes one LOGTYPE command only. It does not establish MMUCACHE,
-GPU virtual memory, IRQ handling, DRM, or accelerated Plasma.
+This record establishes two firmware commands. No Rogue GPU translation or graphics task was submitted.
+GPU read/write completion, IRQ handling, DRM, HDMI presentation, and accelerated Plasma remain unverified.

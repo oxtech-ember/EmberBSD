@@ -122,7 +122,7 @@ No repeated start or reclamation was attempted.
 | Preserved board DTB | `6e3e92e251a617066a54634394e65d3463df96fdd5920753056cb0c2e4e78d4e` |
 | Firmware | `1db1c399c17401d1f79d46c880db81c724d748c784d4639433b076aba2f9c0d2` |
 
-A later [physical command result](a733-gpu-fwprobe.md#physical-command-result) confirms one KCCB completion.
+A later [physical command result](a733-gpu-fwprobe.md#physical-command-result) confirms LOGTYPE and MMUCACHE completion.
 Rogue GPU translation, rendering, DRM, Mesa Vulkan/Zink,
 HDMI presentation, accelerated Plasma, and sustained operation remain unverified.
 

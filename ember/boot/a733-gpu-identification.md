@@ -495,6 +495,6 @@ or a Valgrind result; Valgrind does not support the macOS/arm64 test host.
 
 This PLL result establishes native power/clock bring-up and physical identity.
 A separate [physical bootstrap result](a733-gpu-fwboot.md#physical-bootstrap-result)
-confirms firmware startup. The [first command result](a733-gpu-fwprobe.md#physical-command-result)
-confirms one KCCB completion. GPU memory isolation, IRQ completion,
+confirms firmware startup. The [firmware command result](a733-gpu-fwprobe.md#physical-command-result)
+confirms LOGTYPE and MMUCACHE completion. GPU memory isolation, IRQ completion,
 PowerVR DRM, Mesa Vulkan/Zink, display output, and accelerated Plasma remain unverified.
