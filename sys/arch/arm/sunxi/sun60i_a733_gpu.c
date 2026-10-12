@@ -45,6 +45,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/fdt/fdtvar.h>
 #include <dev/firmload.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwinfo.h>
+#include <arm/sunxi/sun60i_a733_gpu_fwmem.h>
 #include <arm/sunxi/sun60i_a733_ccu.h>
 #include <arm/sunxi/sun60i_a733_pck600.h>
 
@@ -68,18 +69,22 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define A733_GPU_STAGE_TOP_ID	10
 #define A733_GPU_STAGE_IDENTIFY	11
 #define A733_GPU_STAGE_FWINFO	12
+#define A733_GPU_STAGE_FWMEM	13
 #define A733_GPU_FW_MAX_SIZE	(1024 * 1024)
 
 struct sun60i_gpu_softc {
 	device_t sc_dev;
 	int sc_phandle;
 	bus_space_tag_t sc_bst;
+	bus_dma_tag_t sc_dmat;
+	struct sun60i_a733_gpu_fwmem *sc_fw_memory;
 	const char *sc_stage;
 	uint64_t sc_bvnc;
 	u_int sc_core_hz, sc_bus_hz, sc_uvol;
 	u_int sc_clock_source;	/* runtime: 0 PERIPH0/400, 1 PLL_GPU0/600 */
 	char sc_clock_state[160];	/* last complete stage-7 observation */
 	char sc_fw_state[256];	/* metadata only; no firmware execution */
+	char sc_memory_state[256]; /* CPU-owned memory; no GPU DMA */
 	bool sc_have_id, sc_probed, sc_retained;
 	kmutex_t sc_run_lock;
 	u_int sc_run_stage;	/* last completed stage */
@@ -445,6 +450,68 @@ out:
 	return error;
 }
 
+/* Prepare native DMA allocations, but keep every address private to the CPU. */
+static int
+sun60i_gpu_stage_fwmem(struct sun60i_gpu_softc *sc)
+{
+	struct sun60i_a733_gpu_fwmem *mem = NULL;
+	firmware_handle_t fh = NULL;
+	void *bytes = NULL;
+	off_t file_size;
+	size_t size = 0;
+	int error, close_error;
+
+	if (sc->sc_run_stage != A733_GPU_STAGE_FWINFO ||
+	    sc->sc_run_result != 0 || !sc->sc_run_pass ||
+	    !sc->sc_have_id || sc->sc_bvnc != A733_GPU_EXPECTED ||
+	    sc->sc_fw_memory != NULL) {
+		error = EBUSY;
+		goto out;
+	}
+	error = firmware_open("powervr", "rogue_36.56.104.183_v1.fw", &fh);
+	if (error != 0)
+		goto out;
+	file_size = firmware_get_size(fh);
+	if (file_size < A733_GPU_FW_BLOCK_SIZE ||
+	    file_size > A733_GPU_FW_MAX_SIZE) {
+		error = EINVAL;
+		goto out;
+	}
+	size = (size_t)file_size;
+	bytes = firmware_malloc(size);
+	if (bytes == NULL) {
+		error = ENOMEM;
+		goto out;
+	}
+	error = firmware_read(fh, 0, bytes, size);
+	if (error == 0)
+		error = sun60i_a733_gpu_fwmem_prepare(sc->sc_dmat, bytes, size,
+		    sc->sc_bvnc, &mem);
+out:
+	if (fh != NULL) {
+		close_error = firmware_close(fh);
+		if (error == 0)
+			error = close_error;
+	}
+	if (bytes != NULL)
+		firmware_free(bytes, size);
+	if (error != 0) {
+		sun60i_a733_gpu_fwmem_destroy(mem);
+		snprintf(sc->sc_memory_state, sizeof(sc->sc_memory_state),
+		    "CPU-owned memory only error=%d", error);
+	} else {
+		sc->sc_fw_memory = mem;
+		snprintf(sc->sc_memory_state, sizeof(sc->sc_memory_state),
+		    "CPU-owned memory only error=0 code=%zu data=%zu table=%zu "
+		    "loads=%u entry=0x%08x boot=0x%llx stack=0x%llx",
+		    mem->code.size, mem->data.size, mem->table.size,
+		    mem->image.load_count, mem->image.entry,
+		    (unsigned long long)mem->boot_code,
+		    (unsigned long long)mem->stack);
+	}
+	return error;
+}
+
 static void
 sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 {
@@ -458,7 +525,7 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 		return;
 	}
 	/* Strictly ordered single sequence; a replay needs a fresh boot. */
-	if (stage < A733_GPU_STAGE_SUPPLY || stage > A733_GPU_STAGE_FWINFO ||
+	if (stage < A733_GPU_STAGE_SUPPLY || stage > A733_GPU_STAGE_FWMEM ||
 	    stage != sc->sc_run_stage + 1 || !sc->sc_run_pass) {
 		sc->sc_run_result = EINVAL;
 		mutex_exit(&sc->sc_run_lock);
@@ -554,6 +621,9 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 	case A733_GPU_STAGE_FWINFO:
 		error = sun60i_gpu_stage_fwinfo(sc);
 		break;
+	case A733_GPU_STAGE_FWMEM:
+		error = sun60i_gpu_stage_fwmem(sc);
+		break;
 	}
 	/* A bounded timeout still allows the read-only waiter afterwards. */
 	sc->sc_run_pass = (error == 0 || error == ETIMEDOUT);
@@ -635,7 +705,7 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 	}
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
 	    CTLTYPE_INT, "stage",
-		    SYSCTL_DESCR("run runtime diagnostic stage 0..12"),
+		    SYSCTL_DESCR("run runtime diagnostic stage 0..13"),
 		    sun60i_gpu_sysctl_stage, 0, NULL, 0,
 		    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create stage node\n");
@@ -657,6 +727,13 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 	    NULL, 0, sc->sc_fw_state, sizeof(sc->sc_fw_state),
 	    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create firmware state node\n");
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRING, "memory_state",
+	    SYSCTL_DESCR("cached CPU-owned firmware memory; no GPU DMA"),
+	    NULL, 0, sc->sc_memory_state, sizeof(sc->sc_memory_state),
+	    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create memory state node\n");
+
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_INT, "result",
 		    SYSCTL_DESCR("errno of the last runtime stage"),
@@ -971,6 +1048,7 @@ sun60i_gpu_attach(device_t parent, device_t self, void *aux)
 	sc->sc_dev = self;
 	sc->sc_phandle = faa->faa_phandle;
 	sc->sc_bst = faa->faa_bst;
+	sc->sc_dmat = faa->faa_dmat;
 	mutex_init(&sc->sc_run_lock, MUTEX_DEFAULT, IPL_NONE);
 	sc->sc_run_pass = true;
 	sun60i_gpu_instance = sc;

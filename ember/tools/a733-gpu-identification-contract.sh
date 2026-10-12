@@ -10,7 +10,11 @@ sed '/^#include /d; /^__KERNEL_RCSID(/d' \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu.c" > "$work/driver.h"
 cp "$src/sys/arch/arm/sunxi/sun60i_a733_ccu.h" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_pck600.h" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.h" "$work/"
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.h" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwimage.h" "$work/"
+# Keep the production memory interface. Only native bus-DMA types are stubbed.
+sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwmem.h" \
+    > "$work/sun60i_a733_gpu_fwmem.h"
 # Exercise the real parent-specific queue and finalization dispatch as well.
 autoconf="$src/sys/kern/subr_autoconf.c"
 sed -n '1,/^#include /p' "$autoconf" | sed '/^#include /d' \

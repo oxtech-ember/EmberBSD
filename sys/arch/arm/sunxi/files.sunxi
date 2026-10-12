@@ -108,6 +108,9 @@ device	sun60igpuid: firmload
 attach	sun60igpuid at fdt with sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwimage.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_mips.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwmem.c	sun60i_a733_gpu
 
 # Origin: EmberBSD; read-only firmware-ready A733 NPU identification.
 device	sun60inpuid

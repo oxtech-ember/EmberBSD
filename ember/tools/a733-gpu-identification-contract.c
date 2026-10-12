@@ -19,6 +19,11 @@ typedef void *bus_space_tag_t;
 typedef uintptr_t bus_space_handle_t;
 typedef uintptr_t bus_addr_t;
 typedef size_t bus_size_t;
+typedef void *bus_dma_tag_t;
+typedef void *bus_dmamap_t;
+typedef struct { bus_addr_t ds_addr; bus_size_t ds_len; } bus_dma_segment_t;
+#include "sun60i_a733_gpu_fwimage.h"
+#include "sun60i_a733_gpu_fwmem.h"
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
@@ -90,7 +95,12 @@ config_pending_decr(device_t dev)
 	if (--dev->dv_pending == 0)
 		TAILQ_REMOVE(&config_pending, dev, dv_pending_list);
 }
-struct fdt_attach_args { int faa_phandle; bus_space_tag_t faa_bst; };
+struct fdt_attach_args {
+	int faa_phandle;
+	bus_space_tag_t faa_bst;
+	bus_dma_tag_t faa_dmat;
+};
+static int dma_tag_cookie;
 struct device_compatible_entry { const char *compat; };
 struct fdtbus_regulator { int acquired; };
 struct clk { int acquired; };
@@ -429,10 +439,21 @@ static size_t fw_memory_size;
 static unsigned fw_opens, fw_sizes, fw_allocs, fw_reads, fw_parses;
 static unsigned fw_closes, fw_frees;
 static const char *fw_cached_state;
+static bool fw_strict_publication;
+static char fw_before_state[256];
+static struct sun60i_a733_gpu_fwmem **fw_public_memory;
+static struct sun60i_a733_gpu_fwmem *fw_expected_memory;
+static struct sun60i_a733_gpu_fwmem *fwmem_live;
+static int fwmem_prepare_error;
+static unsigned fwmem_prepares, fwmem_destroys, fwmem_null_destroys;
 
 static void
 fw_not_published(void)
 {
+	if (fw_strict_publication) {
+		assert(strcmp(fw_cached_state, fw_before_state) == 0);
+		assert(*fw_public_memory == fw_expected_memory);
+	}
 	if (fw_cached_state != NULL)
 		assert(strstr(fw_cached_state, "error=0") == NULL);
 }
@@ -570,6 +591,56 @@ firmware_free(void *bytes, size_t size)
 	fw_memory_size = 0;
 }
 
+/*
+ * Explicit consumer boundary. The real fwmem implementation has a separate
+ * production-source contract. These stubs test calls, ownership, and ordering;
+ * they do not claim to validate ELF loading, bus DMA, or page-table contents.
+ */
+int
+sun60i_a733_gpu_fwmem_prepare(bus_dma_tag_t tag, const void *bytes, size_t size,
+    uint64_t expected, struct sun60i_a733_gpu_fwmem **out)
+{
+	assert(tag == &dma_tag_cookie);
+	assert(bytes == fw_memory && size == fw_memory_size);
+	assert(expected == UINT64_C(0x00240038006800b7));
+	assert(fw_handle.open && fw_reads == 1 && fw_closes == 0);
+	assert(out != NULL && *out == NULL && fwmem_live == NULL);
+	fw_not_published();
+	fwmem_prepares++;
+	record('m');
+	if (fwmem_prepare_error != 0)
+		return fwmem_prepare_error;
+	fwmem_live = calloc(1, sizeof(*fwmem_live));
+	assert(fwmem_live != NULL);
+	fwmem_live->dmat = tag;
+	fwmem_live->code.size = 102400;
+	fwmem_live->data.size = 20480;
+	fwmem_live->table.size = 16384;
+	fwmem_live->image.load_count = 5;
+	fwmem_live->image.entry = UINT32_C(0xbfc00001);
+	fwmem_live->boot_code = UINT32_C(0x20000000);
+	fwmem_live->stack = UINT32_C(0x30004000);
+	*out = fwmem_live;
+	return 0;
+}
+
+void
+sun60i_a733_gpu_fwmem_destroy(struct sun60i_a733_gpu_fwmem *mem)
+{
+	fw_not_published();
+	/* Both firmware resources must be released before error cleanup. */
+	assert(!fw_handle.open && fw_memory == NULL);
+	if (mem == NULL) {
+		fwmem_null_destroys++;
+		return;
+	}
+	assert(mem == fwmem_live);
+	fwmem_destroys++;
+	record('d');
+	free(mem);
+	fwmem_live = NULL;
+}
+
 #define sun60i_a733_gpu_fwinfo_parse fw_parse
 #include "driver.h"
 #undef sun60i_a733_gpu_fwinfo_parse
@@ -581,6 +652,7 @@ reset(void)
 {
 	assert(!regulator.acquired && !clock_fixture.acquired);
 	assert(!fw_handle.open && fw_memory == NULL);
+	assert(fwmem_live == NULL);
 	assert(TAILQ_EMPTY(&config_pending));
 	assert(TAILQ_EMPTY(&deferred_config_queue));
 	assert(TAILQ_EMPTY(&config_finalize_list));
@@ -591,6 +663,7 @@ reset(void)
 	config_finalize_done = 0;
 	sc.sc_dev = &gpu_device;
 	sc.sc_phandle = 1;
+	sc.sc_dmat = &dma_tag_cookie;
 	sc.sc_run_pass = true;
 	fw_open_error = fw_read_error = fw_close_error = 0;
 	fw_alloc_fail = fw_bad_bvnc = false;
@@ -598,6 +671,11 @@ reset(void)
 	fw_opens = fw_sizes = fw_allocs = fw_reads = fw_parses = 0;
 	fw_closes = fw_frees = 0;
 	fw_cached_state = sc.sc_fw_state;
+	fw_strict_publication = false;
+	fw_public_memory = &sc.sc_fw_memory;
+	fw_expected_memory = NULL;
+	fwmem_prepare_error = 0;
+	fwmem_prepares = fwmem_destroys = fwmem_null_destroys = 0;
 	pd[0] = swap32(2);
 	pd[1] = swap32(5);
 	clocks[0] = swap32(3);
@@ -1202,10 +1280,190 @@ test_fwinfo_stage(void)
 	printf("PASS: %u firmware metadata consumer checks\n", checks - start);
 }
 
+static void
+fwmem_ready(void)
+{
+	fw_ready();
+	sun60i_gpu_run_stage(&sc, 12);
+	fw_finished(0, "ozarvcf");
+	CHECK(fwmem_prepares == 0 && fwmem_live == NULL);
+	fw_opens = fw_sizes = fw_allocs = fw_reads = fw_parses = 0;
+	fw_closes = fw_frees = 0;
+	nevents = 0;
+	events[0] = '\0';
+	fw_cached_state = sc.sc_memory_state;
+	snprintf(sc.sc_memory_state, sizeof(sc.sc_memory_state),
+	    "unchanged before stage 13");
+	memcpy(fw_before_state, sc.sc_memory_state, sizeof(fw_before_state));
+	fw_strict_publication = true;
+}
+
+static void
+fwmem_finished(int error, const char *order)
+{
+	CHECK(sc.sc_run_result == (u_int)error && sc.sc_run_stage == 13);
+	CHECK(strcmp(events, order) == 0);
+	CHECK(!fw_handle.open && fw_memory == NULL);
+	CHECK(maps == 2 && peeks == 2 && unmaps == 2);
+	CHECK(fw_parses == 0);
+	CHECK(strstr(sc.sc_fw_state, "metadata only error=0") != NULL);
+	if (error != 0) {
+		char expected[64];
+
+		snprintf(expected, sizeof(expected), "CPU-owned memory only error=%d",
+		    error);
+		CHECK(strcmp(sc.sc_memory_state, expected) == 0);
+		CHECK(sc.sc_fw_memory == NULL && fwmem_live == NULL);
+	} else {
+		CHECK(sc.sc_fw_memory != NULL && sc.sc_fw_memory == fwmem_live);
+		CHECK(strcmp(sc.sc_memory_state,
+		    "CPU-owned memory only error=0 code=102400 data=20480 table=16384 "
+		    "loads=5 entry=0xbfc00001 boot=0x20000000 stack=0x30004000") == 0);
+	}
+}
+
+static void
+fwmem_no_replay(void)
+{
+	unsigned calls = fw_opens;
+	unsigned prep = fwmem_prepares, destroyed = fwmem_destroys;
+	const struct sun60i_a733_gpu_fwmem *saved = sc.sc_fw_memory;
+	char cached[sizeof(sc.sc_memory_state)];
+
+	memcpy(cached, sc.sc_memory_state, sizeof(cached));
+	for (unsigned n = 0; n < 2; n++) {
+		if (n != 0)
+			sun60i_gpu_run_stage(&sc, 0);
+		sun60i_gpu_run_stage(&sc, 13);
+		CHECK(sc.sc_run_result == EINVAL && fw_opens == calls);
+		CHECK(fwmem_prepares == prep && fwmem_destroys == destroyed);
+		CHECK(sc.sc_fw_memory == saved);
+		CHECK(memcmp(cached, sc.sc_memory_state, sizeof(cached)) == 0);
+	}
+}
+
+static void
+fwmem_teardown(void)
+{
+	/* Only the test owns this teardown. No real GPU has these addresses. */
+	fw_strict_publication = false;
+	fw_cached_state = NULL;
+	sun60i_a733_gpu_fwmem_destroy(sc.sc_fw_memory);
+	sc.sc_fw_memory = NULL;
+	CHECK(fwmem_live == NULL);
+}
+
+static void
+test_fwmem_stage(void)
+{
+	const off_t invalid_sizes[] = { -1, 0, 4095, 1048577, INT64_MAX };
+	const int preparation_errors[] = {
+		EINVAL, ENODEV, EOPNOTSUPP, ENOMEM, EFBIG, ENOSPC, EIO
+	};
+	struct sun60i_a733_gpu_fwmem existing;
+	unsigned start = checks;
+
+	reset(); observe_len = 0;
+	CHECK(sun60i_gpu_identify(&sc) == 0);
+	CHECK(fw_opens == 0 && fwmem_prepares == 0 && maps == 0);
+	reset();
+	sun60i_gpu_run_stage(&sc, 13);
+	CHECK(sc.sc_run_result == EINVAL && fw_opens == 0);
+	fw_ready();
+	sun60i_gpu_run_stage(&sc, 13);
+	CHECK(sc.sc_run_result == EINVAL && fwmem_prepares == 0);
+	/* Every direct helper precondition also blocks file and DMA preparation. */
+	for (unsigned n = 0; n < 6; n++) {
+		fwmem_ready();
+		switch (n) {
+		case 0: sc.sc_run_stage = 11; break;
+		case 1: sc.sc_run_result = EFAULT; break;
+		case 2: sc.sc_run_pass = false; break;
+		case 3: sc.sc_have_id = false; break;
+		case 4: sc.sc_bvnc ^= 1; break;
+		case 5:
+			sc.sc_fw_memory = &existing;
+			fw_expected_memory = &existing;
+			break;
+		}
+		CHECK(sun60i_gpu_stage_fwmem(&sc) == EBUSY);
+		CHECK(fw_opens == 0 && fwmem_prepares == 0 && nevents == 0);
+		CHECK(sc.sc_fw_memory == fw_expected_memory);
+		CHECK(fwmem_destroys == 0 && fwmem_null_destroys == 1);
+		sc.sc_fw_memory = NULL;
+	}
+	/* A failed metadata stage cannot be bypassed through dry-run stage 0. */
+	fw_ready(); fw_read_error = EIO;
+	sun60i_gpu_run_stage(&sc, 12);
+	CHECK(sc.sc_run_result == EIO && !sc.sc_run_pass);
+	sun60i_gpu_run_stage(&sc, 0);
+	sun60i_gpu_run_stage(&sc, 13);
+	CHECK(sc.sc_run_result == EINVAL && fw_opens == 1);
+	CHECK(fwmem_prepares == 0);
+
+	fwmem_ready(); fw_open_error = ENOENT;
+	sun60i_gpu_run_stage(&sc, 13);
+	fwmem_finished(ENOENT, "o");
+	CHECK(fw_sizes == 0 && fw_allocs == 0 && fw_closes == 0);
+	CHECK(fwmem_prepares == 0);
+	fwmem_no_replay();
+	for (unsigned n = 0; n < __arraycount(invalid_sizes); n++) {
+		fwmem_ready(); fw_file_size = invalid_sizes[n]; fw_close_error = EIO;
+		sun60i_gpu_run_stage(&sc, 13);
+		fwmem_finished(EINVAL, "ozc");
+		CHECK(fw_allocs == 0 && fw_reads == 0 && fw_closes == 1);
+		CHECK(fwmem_prepares == 0);
+	}
+	fwmem_ready(); fw_alloc_fail = true; fw_close_error = EIO;
+	sun60i_gpu_run_stage(&sc, 13);
+	fwmem_finished(ENOMEM, "ozac");
+	CHECK(fw_reads == 0 && fw_frees == 0 && fw_closes == 1);
+	CHECK(fwmem_prepares == 0);
+	fwmem_ready(); fw_read_error = EIO; fw_close_error = EACCES;
+	sun60i_gpu_run_stage(&sc, 13);
+	fwmem_finished(EIO, "ozarcf");
+	CHECK(fwmem_prepares == 0 && fw_frees == 1);
+	for (unsigned n = 0; n < __arraycount(preparation_errors); n++) {
+		fwmem_ready(); fwmem_prepare_error = preparation_errors[n];
+		fw_close_error = EACCES;
+		sun60i_gpu_run_stage(&sc, 13);
+		fwmem_finished(preparation_errors[n], "ozarmcf");
+		CHECK(fwmem_prepares == 1 && fw_frees == 1 && fw_closes == 1);
+		CHECK(fwmem_destroys == 0 && fwmem_null_destroys == 1);
+		fwmem_no_replay();
+	}
+	/* The lower bound is accepted for preparation, which can reject content. */
+	fwmem_ready(); fw_file_size = 4096; fwmem_prepare_error = EOPNOTSUPP;
+	sun60i_gpu_run_stage(&sc, 13);
+	fwmem_finished(EOPNOTSUPP, "ozarmcf");
+	CHECK(fwmem_prepares == 1);
+	/* Close failure after success must free the prepared CPU-only allocation. */
+	fwmem_ready(); fw_close_error = EIO;
+	sun60i_gpu_run_stage(&sc, 13);
+	fwmem_finished(EIO, "ozarmcfd");
+	CHECK(fwmem_prepares == 1 && fwmem_destroys == 1);
+	CHECK(fwmem_null_destroys == 0 && fw_frees == 1);
+	fwmem_no_replay();
+	for (unsigned n = 0; n < 2; n++) {
+		fwmem_ready(); fw_file_size = n == 0 ? 8192 : 1048576;
+		sun60i_gpu_run_stage(&sc, 13);
+		fwmem_finished(0, "ozarmcf");
+		CHECK(fwmem_prepares == 1 && fwmem_destroys == 0);
+		CHECK(fwmem_null_destroys == 0 && fw_frees == 1);
+		CHECK(sc.sc_fw_memory->dmat == &dma_tag_cookie);
+		fwmem_no_replay();
+		fwmem_teardown();
+	}
+	reset();
+	printf("PASS: %u CPU-owned firmware memory consumer checks\n", checks - start);
+}
+
 int
 main(void)
 {
-	const struct fdt_attach_args faa = { .faa_phandle = 1 };
+	const struct fdt_attach_args faa = {
+		.faa_phandle = 1, .faa_dmat = &dma_tag_cookie
+	};
 	const int failures[] = { ENXIO, EIO, ETIMEDOUT, EOPNOTSUPP, EINVAL };
 	const int bad_lengths[] = { -1, 0, 3, 4, 7, 12 };
 	const u_int bad_rates[] = { 0, 300000000, 401000000, 800000000 };
@@ -1233,6 +1491,7 @@ main(void)
 	missing_supply = true;
 	config_process_deferred(&deferred_config_queue, &soc_device);
 	sun60i_gpu_attach(&soc_device, &gpu_device, (void *)&faa);
+	CHECK(sc.sc_dmat == faa.faa_dmat);
 	config_process_deferred(&deferred_config_queue, &gpu_device);
 	config_process_deferred(&deferred_config_queue, &root_device);
 	CHECK(!TAILQ_EMPTY(&config_finalize_list) && nevents == 0);
@@ -1374,6 +1633,7 @@ main(void)
 	test_domain_request();
 	test_runtime_stages();
 	test_fwinfo_stage();
+	test_fwmem_stage();
 	printf("PASS: %u A733 GPU identification checks\n", checks);
 	return 0;
 }
