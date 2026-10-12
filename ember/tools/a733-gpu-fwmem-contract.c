@@ -21,6 +21,9 @@
 #define KASSERT(c) CHECK(c)
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #define BUS_DMA_WAITOK 0
+#define BUS_DMA_COHERENT 0x004
+#define _BUS_DMAMAP_COHERENT 0x10000
+#define _BUS_DMAMAP_IS_BOUNCING 0x20000
 #define KM_SLEEP 0
 #define BVNC UINT64_C(0x00240038006800b7)
 #define LAYOUT(n, field) (8240 + (n) * 24 + (field))
@@ -36,6 +39,7 @@ typedef struct {
 } bus_dma_segment_t;
 typedef struct {
 	unsigned int dm_nsegs;
+	int _dm_flags;
 	bus_dma_segment_t dm_segs[1];
 	bool loaded;
 } *bus_dmamap_t;
@@ -43,7 +47,8 @@ typedef struct {
 enum fault {
 	FAULT_NONE, FAULT_NSEGS, FAULT_LENGTH, FAULT_ALIGNMENT, FAULT_WIDTH,
 	FAULT_REMAP_WINDOW, FAULT_CODE_DATA_ALIAS, FAULT_CODE_TABLE_ALIAS,
-	FAULT_DATA_TABLE_ALIAS, FAULT_PARTIAL_ALIAS, FAULT_INTERFACE_ADDRESS
+	FAULT_DATA_TABLE_ALIAS, FAULT_PARTIAL_ALIAS, FAULT_INTERFACE_ADDRESS,
+	FAULT_INTERFACE_NOT_COHERENT, FAULT_INTERFACE_BOUNCING
 };
 
 static unsigned int checks, operations, fail_at;
@@ -53,6 +58,14 @@ static enum fault fault_kind;
 static uint64_t next_address, data_address, interface_address;
 static unsigned int interface_load;
 static int test_dmat;
+
+struct cpu_mapping {
+	void *cpu;
+	size_t size;
+	int flags;
+};
+static struct cpu_mapping cpu_mappings[5];
+
 
 static void *
 kmem_alloc(size_t n, int flags)
@@ -114,11 +127,26 @@ static int
 bus_dmamem_map(bus_dma_tag_t tag, bus_dma_segment_t *seg, int count,
     size_t n, void **cpu, int flags)
 {
+	struct cpu_mapping *mapping = NULL;
+
 	CHECK(tag == &test_dmat && count == 1 && n == seg->ds_len);
-	CHECK(flags == BUS_DMA_WAITOK);
+	/* Only the last two arenas request coherency before their map loads. */
+	CHECK(flags == (BUS_DMA_WAITOK |
+	    (loaded >= 3 ? BUS_DMA_COHERENT : 0)));
 	if (fail())
 		return ENOMEM;
+	for (size_t i = 0; i < __arraycount(cpu_mappings); i++) {
+		if (cpu_mappings[i].cpu == NULL) {
+			mapping = &cpu_mappings[i];
+			break;
+		}
+	}
+	CHECK(mapping != NULL);
+	mapping->cpu = seg->memory;
+	mapping->size = n;
+	mapping->flags = flags;
 	*cpu = seg->memory;
+
 	mapped++;
 	return 0;
 }
@@ -143,10 +171,24 @@ static int
 bus_dmamap_load(bus_dma_tag_t tag, bus_dmamap_t map, void *cpu,
     size_t n, void *proc, int flags)
 {
+	const struct cpu_mapping *mapping = NULL;
+
 	CHECK(tag == &test_dmat && cpu != NULL && proc == NULL);
 	CHECK(flags == BUS_DMA_WAITOK);
+	for (size_t i = 0; i < __arraycount(cpu_mappings); i++) {
+		if (cpu_mappings[i].cpu == cpu) {
+			mapping = &cpu_mappings[i];
+			break;
+		}
+	}
+	CHECK(mapping != NULL && mapping->size == n);
+	CHECK(!map->loaded && map->_dm_flags == 0);
+
 	if (fail())
 		return EIO;
+	/* Model the native load result from the earlier CPU mapping. */
+	map->_dm_flags = (mapping->flags & BUS_DMA_COHERENT) != 0 ?
+	    _BUS_DMAMAP_COHERENT : 0;
 	map->dm_nsegs = 1;
 	map->dm_segs[0].ds_len = n;
 	map->dm_segs[0].ds_addr = next_address - n;
@@ -190,6 +232,14 @@ bus_dmamap_load(bus_dma_tag_t tag, bus_dmamap_t map, void *cpu,
 		if (loaded == interface_load)
 			map->dm_segs[0].ds_addr = interface_address;
 		break;
+	case FAULT_INTERFACE_NOT_COHERENT:
+		if (loaded == interface_load)
+			map->_dm_flags &= ~_BUS_DMAMAP_COHERENT;
+		break;
+	case FAULT_INTERFACE_BOUNCING:
+		if (loaded == interface_load)
+			map->_dm_flags |= _BUS_DMAMAP_IS_BOUNCING;
+		break;
 	case FAULT_NONE:
 		break;
 	}
@@ -222,8 +272,19 @@ bus_dmamap_destroy(bus_dma_tag_t tag, bus_dmamap_t map)
 static void
 bus_dmamem_unmap(bus_dma_tag_t tag, void *cpu, size_t size)
 {
+	struct cpu_mapping *mapping = NULL;
+
 	CHECK(tag == &test_dmat && cpu != NULL && size != 0 && mapped != 0);
+	for (size_t i = 0; i < __arraycount(cpu_mappings); i++) {
+		if (cpu_mappings[i].cpu == cpu) {
+			mapping = &cpu_mappings[i];
+			break;
+		}
+	}
+	CHECK(mapping != NULL && mapping->size == size);
+	memset(mapping, 0, sizeof(*mapping));
 	mapped--;
+
 }
 
 // cppcheck-suppress-end constParameterPointer
@@ -465,6 +526,7 @@ interface_owner(void)
 	CHECK(sun60i_a733_gpu_fwmem_prepare(&test_dmat, blob, sizeof(blob),
 	    BVNC, &mem) == 0);
 	CHECK(mem != NULL && !mem->interface_prepared);
+	CHECK(!mem->code.coherent && !mem->data.coherent && !mem->table.coherent);
 	CHECK(live_allocs == 3 && live_maps == 3 && loaded == 3);
 	return mem;
 }
@@ -531,6 +593,9 @@ interface_success(struct sun60i_a733_gpu_fwmem *mem)
 	CHECK(sun60i_a733_gpu_fwmem_interface(mem, UINT64_C(600000000),
 	    1, 128) == 0);
 	CHECK(mem->interface_prepared);
+	CHECK(mem->work.coherent && mem->config.coherent);
+	CHECK(mem->work.map->_dm_flags == _BUS_DMAMAP_COHERENT);
+	CHECK(mem->config.map->_dm_flags == _BUS_DMAMAP_COHERENT);
 	CHECK(mem->work.size == 139264 && mem->config.size == 12288);
 	CHECK(mem->interface_layout.total_work_size == 139264);
 	CHECK(live_allocs == 5 && live_maps == 5 && loaded == 5);
@@ -593,7 +658,21 @@ interface_tests(void)
 		interface_success(mem);
 		sun60i_a733_gpu_fwmem_destroy(mem);
 	}
+	/* A successful load must confirm coherency and must not use a bounce. */
+	for (unsigned int new_area = 3; new_area <= 4; new_area++) {
+		for (enum fault kind = FAULT_INTERFACE_NOT_COHERENT;
+		    kind <= FAULT_INTERFACE_BOUNCING; kind++) {
+			mem = interface_owner();
+			fault_kind = kind;
+			interface_load = new_area;
+			interface_error(mem, 600000000, 1, 128, EOPNOTSUPP);
+			fault_kind = FAULT_NONE;
+			interface_success(mem);
+			sun60i_a733_gpu_fwmem_destroy(mem);
+		}
+	}
 	/* The real initializer rejects these values after the allocations. */
+
 	mem = interface_owner();
 	interface_error(mem, 0, 1, 128, EINVAL);
 	interface_error(mem, UINT64_C(1) << 32, 1, 128, EINVAL);

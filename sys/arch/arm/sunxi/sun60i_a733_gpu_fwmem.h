@@ -17,6 +17,8 @@ struct sun60i_a733_gpu_dma {
 	bus_addr_t address;
 	int nsegments;
 	bool loaded;
+	/* Requested and verified coherent mapping, with no bounce buffer. */
+	bool coherent;
 };
 
 struct sun60i_a733_gpu_fwmem {
@@ -48,6 +50,10 @@ int sun60i_a733_gpu_fwmem_prepare(bus_dma_tag_t, const void *, size_t,
  * sync. Use a heap shadow of the page table until every initialization and
  * mapping succeeds. On failure, keep all existing buffers and fields intact.
  * Retry after failure is allowed. A successful call is single-use: EBUSY.
+ * Work/config require BUS_DMA_COHERENT at CPU mapping time. Their loaded
+ * maps must report _BUS_DMAMAP_COHERENT and no _BUS_DMAMAP_IS_BOUNCING.
+ * Missing coherency or a bounce returns EOPNOTSUPP before publication.
+ * No live mapping is replaced. Code/data/table keep their original mapping.
  * Return EINVAL for an incomplete owner; propagate allocator/helper errors.
  */
 int sun60i_a733_gpu_fwmem_interface(struct sun60i_a733_gpu_fwmem *,

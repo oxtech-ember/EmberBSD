@@ -57,7 +57,7 @@ sun60i_gpu_dma_free(bus_dma_tag_t dmat, struct sun60i_a733_gpu_dma *dma)
 }
 
 static int
-sun60i_gpu_dma_alloc(bus_dma_tag_t dmat, size_t size,
+sun60i_gpu_dma_alloc(bus_dma_tag_t dmat, size_t size, bool coherent,
     struct sun60i_a733_gpu_dma *dma)
 {
 	int error;
@@ -77,7 +77,7 @@ sun60i_gpu_dma_alloc(bus_dma_tag_t dmat, size_t size,
 		goto fail;
 	}
 	error = bus_dmamem_map(dmat, &dma->segment, 1, size, &dma->cpu,
-	    BUS_DMA_WAITOK);
+	    BUS_DMA_WAITOK | (coherent ? BUS_DMA_COHERENT : 0));
 	if (error != 0) {
 		dma->cpu = NULL;
 		goto fail;
@@ -93,6 +93,14 @@ sun60i_gpu_dma_alloc(bus_dma_tag_t dmat, size_t size,
 	if (error != 0)
 		goto fail;
 	dma->loaded = true;
+	/* The mapping hint alone does not establish direct coherent access. */
+	if (coherent && (dma->map->_dm_flags &
+	    (_BUS_DMAMAP_COHERENT | _BUS_DMAMAP_IS_BOUNCING)) !=
+	    _BUS_DMAMAP_COHERENT) {
+		error = EOPNOTSUPP;
+		goto fail;
+	}
+	dma->coherent = coherent;
 	if (dma->map->dm_nsegs != 1 ||
 	    dma->map->dm_segs[0].ds_len != size) {
 		error = EINVAL;
@@ -172,15 +180,15 @@ sun60i_a733_gpu_fwmem_prepare(bus_dma_tag_t dmat, const void *bytes,
 		return EOPNOTSUPP;
 	mem = kmem_zalloc(sizeof(*mem), KM_SLEEP);
 	mem->dmat = dmat;
-	error = sun60i_gpu_dma_alloc(dmat, info.allocation_size[A733_GPU_FW_CODE],
-	    &mem->code);
+	error = sun60i_gpu_dma_alloc(dmat,
+	    info.allocation_size[A733_GPU_FW_CODE], false, &mem->code);
 	if (error != 0)
 		goto fail;
-	error = sun60i_gpu_dma_alloc(dmat, info.allocation_size[A733_GPU_FW_DATA],
-	    &mem->data);
+	error = sun60i_gpu_dma_alloc(dmat,
+	    info.allocation_size[A733_GPU_FW_DATA], false, &mem->data);
 	if (error != 0)
 		goto fail;
-	error = sun60i_gpu_dma_alloc(dmat, A733_FWMEM_TABLE, &mem->table);
+	error = sun60i_gpu_dma_alloc(dmat, A733_FWMEM_TABLE, false, &mem->table);
 	if (error != 0)
 		goto fail;
 	/* Reject malformed backend results before publishing any DMA address. */
@@ -269,7 +277,8 @@ sun60i_gpu_dma_ready(const struct sun60i_a733_gpu_dma *dma)
 static bool
 sun60i_gpu_dma_empty(const struct sun60i_a733_gpu_dma *dma)
 {
-	return !dma->loaded && dma->cpu == NULL && dma->map == NULL &&
+	return !dma->loaded && !dma->coherent &&
+	    dma->cpu == NULL && dma->map == NULL &&
 	    dma->nsegments == 0 && dma->size == 0 && dma->address == 0;
 }
 
@@ -299,11 +308,11 @@ sun60i_a733_gpu_fwmem_interface(struct sun60i_a733_gpu_fwmem *mem,
 	    !sun60i_gpu_dma_empty(&mem->config))
 		return EINVAL;
 	error = sun60i_gpu_dma_alloc(mem->dmat,
-	    sun60i_a733_gpu_fwinit_work_size(), &work);
+	    sun60i_a733_gpu_fwinit_work_size(), true, &work);
 	if (error != 0)
 		goto fail;
 	error = sun60i_gpu_dma_alloc(mem->dmat, A733_GPU_FWINIT_CONFIG_SIZE,
-	    &config);
+	    true, &config);
 	if (error != 0)
 		goto fail;
 	areas[0] = &mem->code;

@@ -69,6 +69,14 @@ The caller keeps exclusive access to the owner throughout this sleepable call.
 The [FWIF initializer](a733-gpu-fwinit.md) creates the actual interface structures.
 The helper allocates a 139264-byte work arena and a 12288-byte configuration buffer.
 All five loaded DMA ranges must be disjoint.
+Work and configuration use `BUS_DMA_COHERENT` when their CPU mappings are created.
+After loading each DMA map, the helper requires `_BUS_DMAMAP_COHERENT` and rejects
+`_BUS_DMAMAP_IS_BOUNCING`. An unsupported result returns `EOPNOTSUPP` and releases
+the new allocation. The check happens before initialization or publication.
+Each area's `coherent` field records this requested and verified guarantee.
+A false field means the guarantee was not requested; it does not classify the mapping.
+Code, data, and page-table mappings retain their original policy.
+No live buffer is remapped. Coherence does not remove DMA ordering requirements.
 
 The work arena maps at `0xc0100000` in the MIPS heap.
 The three configuration pages map separately at `0xc0fd0000`, `0xc0fe0000`,
@@ -154,13 +162,17 @@ They inject malformed backend aliases against all five DMA ranges.
 A sensitive physical address in a later configuration page tests partial shadow updates.
 Each error checks byte-for-byte preservation of the old owner and every existing buffer.
 Successful checks compare the full table and selected actual FWIF fields.
+The callbacks check CPU mapping flags before DMA loading.
+Separate faults remove actual coherence or add a bounce buffer for work and configuration.
+Each rejection preserves the old owner and buffers, releases new resources, and permits retry.
+The saved pre-change owner fails the coherent mapping flag regression.
 
 The larger exception/boot-data layouts and table/code alias regressions fail
 against the saved pre-fix owner and pass after the validation changes.
 The alias fault deliberately violates the backend contract.
 It is a defensive check, not a reproduction on native hardware.
 
-On 2026-10-12, the pinned-input host contract passed 4566 checks with ASan/UBSan.
+On 2026-10-12, the pinned-input host contract passed 6192 checks with ASan/UBSan.
 GCC 16.2 compiled the owner with actual EmberBSD AArch64 kernel headers.
 Its preparation frame was 1072 bytes; the interface frame used 1136 bytes.
 The page-map helper used 528 bytes.
@@ -184,6 +196,12 @@ These tests do not establish native DMA correctness or firmware execution.
 ## Provenance
 
 The native allocation and cleanup implementation is BSD-2-Clause.
+Coherent mapping and loaded-map flags follow the native ARM implementation in
+[`bus_dma.c`](../../sys/arch/arm/arm32/bus_dma.c) and
+[`bus_defs.h`](../../sys/arch/arm/include/bus_defs.h).
+`_bus_dmamem_map()` honors the CPU mapping request before `_bus_dmamap_load()`
+checks page coherency. The load path records coherence and bounce status separately.
+The AArch64 kernel uses this ARM implementation.
 MIPS heap placement and boot-data requirements were checked against Linux PowerVR,
 revision `7b63ef2d55f24519e7e9e5f4d15dbea03f126e40`:
 
