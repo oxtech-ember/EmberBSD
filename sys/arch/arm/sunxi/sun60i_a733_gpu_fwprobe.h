@@ -104,4 +104,17 @@ int sun60i_a733_gpu_fwprobe_mmucache(bus_space_tag_t, bus_space_handle_t,
     const struct sun60i_a733_gpu_fwprobe_result *,
     struct sun60i_a733_gpu_fwprobe_result *);
 
+/*
+ * Publish one caller-prepared KCCB command in the slot after the given
+ * fully successful predecessor result. Allowed types are a repeated
+ * MMUCACHE sync or one compute KICK. All lifetime, coherence, exclusion,
+ * timeout, and retention rules of the probes above apply unchanged.
+ * The command payload is copied before any shared-memory write.
+ */
+int sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t, bus_space_handle_t,
+    struct sun60i_a733_gpu_fwmem *, const struct sun60i_a733_gpu_fwboot_result *,
+    const struct sun60i_a733_gpu_fwprobe_result *,
+    const struct rogue_fwif_kccb_cmd *, unsigned int,
+    struct sun60i_a733_gpu_fwprobe_result *);
+
 #endif /* _SUN60I_A733_GPU_FWPROBE_H */

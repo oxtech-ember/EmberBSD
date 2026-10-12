@@ -357,33 +357,25 @@ fwprobe_previous_valid(const struct sun60i_a733_gpu_fwmem *mem,
 /* Only these exact CPU-owned ranges are written. Other FW fields stay live. */
 static void
 fwprobe_publish(struct sun60i_a733_gpu_fwmem *mem,
+    const struct rogue_fwif_kccb_cmd *cmd,
     struct sun60i_a733_gpu_fwprobe_result *out)
 {
 	const struct sun60i_a733_gpu_fwinit_layout *l = &mem->interface_layout;
-	struct rogue_fwif_kccb_cmd cmd = { 0 };
 	const size_t command = l->object[A733_GPU_FWINIT_KCCB_CMDS].offset +
-	    out->slot * sizeof(cmd);
+	    out->slot * sizeof(*cmd);
 	const size_t rtn = l->object[A733_GPU_FWINIT_KCCB_RTN].offset +
 	    out->slot * sizeof(uint32_t);
 	const size_t write = l->object[A733_GPU_FWINIT_KCCB_CTL].offset +
 	    offsetof(struct rogue_fwif_ccb_ctl, write_offset);
 	uint8_t *bytes = mem->work.cpu;
-
-	cmd.cmd_type = out->command;
-	if (out->command == A733_GPU_FWPROBE_MMUCACHE) {
-		cmd.cmd_data.mmu_cache_data.cache_flags = out->cache_flags;
-		cmd.cmd_data.mmu_cache_data.mmu_cache_sync_fw_addr = out->sync_fw_addr;
-		cmd.cmd_data.mmu_cache_data.mmu_cache_sync_update_value =
-		    out->sync_update_value;
-	}
 	/* The validated empty queue gives the host ownership of this slot. */
-	bus_dmamap_sync(mem->dmat, mem->work.map, command, sizeof(cmd),
+	bus_dmamap_sync(mem->dmat, mem->work.map, command, sizeof(*cmd),
 	    BUS_DMASYNC_POSTWRITE);
-	memcpy(bytes + command, &cmd, sizeof(cmd));
+	memcpy(bytes + command, cmd, sizeof(*cmd));
 	bus_dmamap_sync(mem->dmat, mem->work.map, rtn, sizeof(uint32_t),
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 	*(volatile uint32_t *)(bytes + rtn) = ROGUE_FWIF_KCCB_RTN_SLOT_NO_RESPONSE;
-	bus_dmamap_sync(mem->dmat, mem->work.map, command, sizeof(cmd),
+	bus_dmamap_sync(mem->dmat, mem->work.map, command, sizeof(*cmd),
 	    BUS_DMASYNC_PREWRITE);
 	bus_dmamap_sync(mem->dmat, mem->work.map, rtn, sizeof(uint32_t),
 	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
@@ -396,13 +388,30 @@ fwprobe_publish(struct sun60i_a733_gpu_fwmem *mem,
 	    BUS_DMASYNC_PREWRITE);
 }
 
+/* A later command chains onto the fully successful predecessor result. */
+static int
+fwprobe_chain_valid(const struct sun60i_a733_gpu_fwprobe_result *previous,
+    unsigned int slot)
+{
+	if (previous == NULL || !previous->attempted || !previous->published ||
+	    !previous->kick_attempted || !previous->kicked ||
+	    previous->error != 0 || previous->slot + 1 != slot ||
+	    previous->after.read_offset != slot ||
+	    previous->after.write_offset != slot ||
+	    previous->after.rtn != ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED)
+		return EINVAL;
+	return 0;
+}
+
 static int
 fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
     struct sun60i_a733_gpu_fwmem *mem,
     const struct sun60i_a733_gpu_fwboot_result *boot,
     const struct sun60i_a733_gpu_fwprobe_result *previous,
-    unsigned int slot, struct sun60i_a733_gpu_fwprobe_result *out)
+    const struct rogue_fwif_kccb_cmd *cmd, unsigned int slot,
+    struct sun60i_a733_gpu_fwprobe_result *out)
 {
+	struct rogue_fwif_kccb_cmd built;
 	struct timespec start, now, elapsed;
 	int error;
 
@@ -420,17 +429,43 @@ fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
 		error = fwprobe_previous_valid(mem, boot, previous, out);
 		if (error != 0)
 			return error;
-	}
+	} else if (slot >= 2) {
+		error = fwprobe_chain_valid(previous, slot);
+		if (error != 0)
+			return error;
+	} else if (slot != 0)
+		return EINVAL;
+	if (slot >= A733_GPU_FWINIT_KCCB_COUNT)
+		return EINVAL;
 	memset(out, 0, sizeof(*out));
 	out->slot = slot;
-	out->command = slot == 0 ? A733_GPU_FWPROBE_LOGTYPE : A733_GPU_FWPROBE_MMUCACHE;
-	if (slot == 1) {
-		out->cache_flags = A733_MMUCACHE_FLAGS;
-		out->sync_fw_addr = mem->interface_layout.object[
-		    A733_GPU_FWINIT_MMUCACHE_SYNC].fw_addr;
-		/* Pinned upstream uses zero. The KCCB return proves completion. */
-		out->sync_update_value = 0;
+	if (cmd == NULL) {
+		memset(&built, 0, sizeof(built));
+		built.cmd_type = slot == 0 ? A733_GPU_FWPROBE_LOGTYPE :
+		    A733_GPU_FWPROBE_MMUCACHE;
+		if (slot == 1) {
+			built.cmd_data.mmu_cache_data.cache_flags =
+			    A733_MMUCACHE_FLAGS;
+			built.cmd_data.mmu_cache_data.mmu_cache_sync_fw_addr =
+			    mem->interface_layout.object[
+			    A733_GPU_FWINIT_MMUCACHE_SYNC].fw_addr;
+			/* Pinned upstream uses zero. The return proves completion. */
+			built.cmd_data.mmu_cache_data.
+			    mmu_cache_sync_update_value = 0;
+		}
+		cmd = &built;
+		if (slot == 1) {
+			out->cache_flags = A733_MMUCACHE_FLAGS;
+			out->sync_fw_addr = built.cmd_data.mmu_cache_data.
+			    mmu_cache_sync_fw_addr;
+			out->sync_update_value = 0;
+		}
 	}
+	if (cmd->cmd_type != A733_GPU_FWPROBE_LOGTYPE &&
+	    cmd->cmd_type != A733_GPU_FWPROBE_MMUCACHE &&
+	    cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_KICK)
+		return EINVAL;
+	out->command = cmd->cmd_type;
 	out->attempted = true;
 	getnanouptime(&start);
 	error = ETIMEDOUT;
@@ -477,7 +512,7 @@ fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
 			if (elapsed.tv_sec >= 1 ||
 			    out->polls == A733_GPU_FWPROBE_MAX_POLLS)
 				break;
-			fwprobe_publish(mem, out);
+			fwprobe_publish(mem, cmd, out);
 			out->kick_attempted = true;
 			bus_space_barrier(bst, bsh, A733_MTS_SCHEDULE,
 			    sizeof(uint32_t),
@@ -515,7 +550,7 @@ sun60i_a733_gpu_fwprobe(bus_space_tag_t bst, bus_space_handle_t bsh,
     const struct sun60i_a733_gpu_fwboot_result *boot,
     struct sun60i_a733_gpu_fwprobe_result *out)
 {
-	return fwprobe_run(bst, bsh, mem, boot, NULL, 0, out);
+	return fwprobe_run(bst, bsh, mem, boot, NULL, NULL, 0, out);
 }
 
 int
@@ -525,5 +560,18 @@ sun60i_a733_gpu_fwprobe_mmucache(bus_space_tag_t bst, bus_space_handle_t bsh,
     const struct sun60i_a733_gpu_fwprobe_result *logtype,
     struct sun60i_a733_gpu_fwprobe_result *out)
 {
-	return fwprobe_run(bst, bsh, mem, boot, logtype, 1, out);
+	return fwprobe_run(bst, bsh, mem, boot, logtype, NULL, 1, out);
+}
+
+int
+sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t bst, bus_space_handle_t bsh,
+    struct sun60i_a733_gpu_fwmem *mem,
+    const struct sun60i_a733_gpu_fwboot_result *boot,
+    const struct sun60i_a733_gpu_fwprobe_result *previous,
+    const struct rogue_fwif_kccb_cmd *cmd, unsigned int slot,
+    struct sun60i_a733_gpu_fwprobe_result *out)
+{
+	if (cmd == NULL)
+		return EINVAL;
+	return fwprobe_run(bst, bsh, mem, boot, previous, cmd, slot, out);
 }
