@@ -296,6 +296,9 @@ on every board in the hardware catalog.
   The [GStreamer 1.28.8 core](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/gstreamer.md)
   passes 106 unchanged upstream checks and a finite installed pipeline on CM5.
   Its complete plugin family, media output and desktop integration remain unaccepted.
+  The [complete LAME 4.0 MP3 dependency](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/lame.md)
+  cross-builds with GCC 16 and passes installed CM5 encoding, Unicode-tag and
+  decoded-signal checks. Full FFmpeg and Qt Multimedia playback remain unaccepted.
   [Current Plasma prerequisites](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/plasma-prerequisites.md)
   now cross-package KWayland, KDecoration, layer-shell-qt and KNightTime 6.7.5.
   Installed KWayland passes 56 exact button events on CM5, with an original-patch
