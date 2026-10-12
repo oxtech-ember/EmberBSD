@@ -67,6 +67,11 @@ The on-demand `hw.bwfm0.report` diagnostic includes radio
 authentication, PMF and station counters to distinguish this failure
 from an SDIO transmit-window stall.
 
+The Zero 3W [PWM cooling path](ember/boot/a733-fan.md) uses the board's
+fan connector and all five temperature sensors. Source contracts cover
+stepped cooling, hysteresis, hardware errors and shared PWM clocks.
+Physical speed and noise acceptance remains pending.
+
 ## Building
 
 Cross-compilation on the development host is the preferred path. The wrapper

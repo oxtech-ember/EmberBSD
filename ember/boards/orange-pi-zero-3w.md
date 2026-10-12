@@ -19,8 +19,8 @@ Board revision: not recorded in the original support table.
 | Wi-Fi | Tested: WPA2 on 2.4 and 5 GHz with 802.11n, 32 MiB transfers each way with matching checksums; WPA3-SAE/H2E on 5 GHz with required PMF and 8 MiB each way also passes; needs vendor firmware; see Wi-Fi limits below |
 | Bluetooth | Classic: inquiry Tested, pairing not tried; BLE: No; needs the vendor patch files |
 | Temperature sensor | Tested (five sensors) |
-| Fan control | No |
-| Full power-off | `shutdown -p now` stops the stock kit fan through the firmware power-off path; physically confirmed with `EMBER64 #4`. Plain `halt` keeps power applied. PWM speed control is not implemented. |
+| Fan control | Native PWM and thermal policy with software contracts; physical speed control remains unverified ([guide](../boot/a733-fan.md)) |
+| Full power-off | `shutdown -p now` stops the stock kit fan through the firmware power-off path; physically confirmed with `EMBER64 #4`. Plain `halt` keeps power applied. PWM speed control has separate software checks; physical acceptance is pending. |
 | Watchdog | Tested: resets the board |
 | Power button | No |
 | I2C | Tested (power management chip, Type-C controller) |

@@ -88,6 +88,7 @@ sun60i_a733_dcxo_query(int phandle, struct sunxi_rtc_dcxo_state *state)
 #define	AHB_MASTER_GATE_REG	0x5c0
 #define	MBUS_MASTER_GATE_REG	0x5e0
 #define	MBUS_GATE_REG		0x5e4
+#define	PWM0_BGR_REG		0x784
 #define	CE_CLK_REG		0xac0
 #define	CE_BGR_REG		0xac4
 #define	NPU_CLK_REG		0xb00
@@ -140,6 +141,7 @@ CFATTACH_DECL_NEW(sunxi_a733_ccu, sizeof(struct sunxi_ccu_softc),
 	sun60i_a733_ccu_match, sun60i_a733_ccu_attach, NULL, NULL);
 
 static struct sunxi_ccu_reset sun60i_a733_ccu_resets[] = {
+	SUNXI_CCU_RESET(A733_RST_BUS_PWM0, PWM0_BGR_REG, 16),
 	SUNXI_CCU_RESET(A733_RST_BUS_CE, CE_BGR_REG, 16),
 	SUNXI_CCU_RESET(A733_RST_BUS_CE_SYS, CE_BGR_REG, 17),
 	SUNXI_CCU_RESET(A733_RST_BUS_NPU_CORE, NPU_BGR_REG, 16),
@@ -468,7 +470,24 @@ sun60i_a733_accel_set_rate(struct sunxi_ccu_softc *sc,
 	    __BIT(31),		/* enable */				\
 	    SUNXI_CCU_NM_ROUND_DOWN | SUNXI_CCU_NM_DIVIDE_BY_TWO)
 
+/* PWM0 uses DCXO directly, not the normalized 24 MHz PLL_REF output. */
+static u_int
+sun60i_a733_pwm_rate(struct sunxi_ccu_softc *sc, struct sunxi_ccu_clk *clk)
+{
+	struct sunxi_rtc_dcxo_state state;
+	int node;
+
+	if (OF_getproplen(sc->sc_phandle, "netbsd,dcxo-source") != 4)
+		return 0;
+	node = fdtbus_get_phandle(sc->sc_phandle, "netbsd,dcxo-source");
+	if (node <= 0 || !of_compatible_match(node, sun60i_a733_dcxo_compat) ||
+	    sun60i_a733_dcxo_query(node, &state) != 0)
+		return 0;
+	return state.rate_hz;
+}
+
 static struct sunxi_ccu_clk sun60i_a733_ccu_clks[] = {
+
 	/*
 	 * PLL_REF turns a 19.2, 24 or 26 MHz crystal into 24 MHz. Boards
 	 * with a 24 MHz crystal run it one to one, which is all that is
@@ -550,6 +569,15 @@ static struct sunxi_ccu_clk sun60i_a733_ccu_clks[] = {
 
 	SUNXI_CCU_GATE(A733_CLK_MBUS_GMAC0, "mbus-gmac0", "ahb",
 	    MBUS_GATE_REG, 11),
+
+	[A733_CLK_BUS_PWM0] = {
+		.type = SUNXI_CCU_GATE,
+		.base.name = "bus-pwm0",
+		.u.gate.reg = PWM0_BGR_REG,
+		.u.gate.mask = __BIT(0),
+		.enable = sunxi_ccu_gate_enable,
+		.get_rate = sun60i_a733_pwm_rate,
+	},
 
 	SUNXI_CCU_GATE(A733_CLK_MBUS_CE, "mbus-ce", "ahb",
 	    MBUS_GATE_REG, 2),

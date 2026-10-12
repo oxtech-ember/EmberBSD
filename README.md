@@ -619,6 +619,8 @@ on every board in the hardware catalog.
   system has no support for: eight cores, the card at SDR104 speed,
   gigabit Ethernet, the AIC8800 Wi-Fi and Bluetooth module, processor
   frequency control, temperature sensors, watchdog and clock.
+  Zero 3W also has a native [PWM fan and thermal policy](ember/boot/a733-fan.md)
+  with production-source checks; physical fan speed control is pending.
 - **ESP32-S31**, a 32-bit RISC-V chip with 16 MB of memory and a new
   platform for NetBSD: the system boots from flash and works over Wi-Fi.
 - **Raspberry Pi 5 and Compute Module 5**: UEFI firmware built from

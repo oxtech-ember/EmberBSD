@@ -1019,7 +1019,32 @@ main(void)
 		missing_hosc = false;
 	}
 	CHECK(writes == 0 && barriers == 0);
+	/* PWM follows raw DCXO; the old fixed 24 MHz provider is unrelated. */
+	reset();
+	for (u_int rate = 19200000; rate <= 26000000;
+	    rate = rate == 19200000 ? 24000000 : rate + 2000000) {
+		dcxo_rate = rate;
+		dcxo_queries = 0;
+		CHECK(clk_get_rate(CLOCK(A733_CLK_BUS_PWM0)) == rate);
+		CHECK(hosc_rate == 24000000 && writes == 0);
+	}
+	dcxo_queries = 0; dcxo_error = EBUSY;
+	CHECK(clk_get_rate(CLOCK(A733_CLK_BUS_PWM0)) == 0);
+	dcxo_error = 0; dcxo_len = 8;
+	CHECK(clk_get_rate(CLOCK(A733_CLK_BUS_PWM0)) == 0);
+	dcxo_len = 4; bad_dcxo = true;
+	CHECK(clk_get_rate(CLOCK(A733_CLK_BUS_PWM0)) == 0);
+	bad_dcxo = false; dcxo_node = 0;
+	CHECK(clk_get_rate(CLOCK(A733_CLK_BUS_PWM0)) == 0);
+	reset();
+	REG(PWM0_BGR_REG) = 0xa5a400a4;
+	CHECK(clk_enable(CLOCK(A733_CLK_BUS_PWM0)) == 0);
+	CHECK(REG(PWM0_BGR_REG) == 0xa5a400a5);
+	CHECK(sunxi_ccu_reset_deassert(&state,
+	    &state.sc_resets[A733_RST_BUS_PWM0]) == 0);
+	CHECK(REG(PWM0_BGR_REG) == 0xa5a500a5);
 	test_gpu_ready();
+
 	test_gpu_inspect();
 	test_dcxo();
 	test_periph_gates();

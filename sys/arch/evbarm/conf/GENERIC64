@@ -272,6 +272,7 @@ gpio*		at gpiobus?
 mesonpwm*	at fdt? pass 3		# Amlogic PWM
 rkpwm*		at fdt? pass 3		# Rockchip PWM
 sunxipwm*	at fdt? pass 3		# Allwinner PWM
+sun60ia733pwm*	at fdt? pass 5		# Allwinner A733 PWM
 
 # MPIO / Pinmux
 imxiomux*	at fdt? pass 2		# IMX IOMUX

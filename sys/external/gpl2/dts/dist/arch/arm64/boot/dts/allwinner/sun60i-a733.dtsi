@@ -812,6 +812,17 @@
 			#thermal-sensor-cells = <1>;
 		};
 
+		/* Native continuous PWM binding; capture is not implemented. */
+		pwm0: pwm@2527000 {
+			compatible = "allwinner,sun60i-a733-pwm";
+			reg = <0x02527000 0x400>;
+			clocks = <&ccu CLK_BUS_PWM0>, <&ccu CLK_BUS_PWM0>;
+			clock-names = "bus", "hosc";
+			resets = <&ccu RST_BUS_PWM0>;
+			#pwm-cells = <3>;
+			status = "disabled";
+		};
+
 		/* Not an upstream binding yet. */
 		sid: efuse@3006000 {
 			compatible = "allwinner,sun60i-a733-sid";

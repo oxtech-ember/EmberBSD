@@ -115,6 +115,7 @@ int	sun60i_a733_ccu_gpu_ready(struct clk *, u_int *, u_int *);
 #define	A733_CLK_MBUS_NPU		78
 #define	A733_CLK_MBUS_CE		86
 #define	A733_CLK_MBUS_GMAC0		91
+#define	A733_CLK_BUS_PWM0		98
 #define	A733_CLK_CE			127
 #define	A733_CLK_BUS_CE		128
 #define	A733_CLK_BUS_CE_SYS		129
@@ -157,6 +158,7 @@ int	sun60i_a733_ccu_gpu_ready(struct clk *, u_int *, u_int *);
 #define	A733_CLK_GMAC0_PHY		227
 #define	A733_CLK_BUS_GMAC0		228
 
+#define	A733_RST_BUS_PWM0		13
 #define	A733_RST_BUS_CE		25
 #define	A733_RST_BUS_CE_SYS		26
 #define	A733_RST_BUS_NPU_CORE		27
