@@ -9,6 +9,7 @@
 #include <arm/sunxi/sun60i_a733_gpu_fwmem.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwcompute.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwcompute_file.h>
+#include <arm/sunxi/sun60i_a733_gpu_fwcompute_vm.h>
 
 #define A733_GPU_FWHEAP_PAGES	9
 #define A733_GPU_FWHEAP_BYTES	(A733_GPU_FWHEAP_PAGES * 4096)
@@ -31,7 +32,7 @@ struct sun60i_a733_gpu_fwheap {
 struct sun60i_a733_gpu_fwvm {
 	bus_dma_tag_t dmat;
 	struct sun60i_a733_gpu_dma resource[9];
-	struct sun60i_a733_gpu_dma catalog, directory[3], table[3];
+	struct sun60i_a733_gpu_dma catalog, directory[4], table[4];
 	uint64_t catalog_address;
 	uint32_t windows, directories, leaves;
 	bool prepared;

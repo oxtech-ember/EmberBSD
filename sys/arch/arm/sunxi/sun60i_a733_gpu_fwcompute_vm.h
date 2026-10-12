@@ -12,7 +12,7 @@
 #include "sun60i_a733_gpu_mmu.h"
 
 /* Initial compute scope: the pinned manifest uses three distinct windows. */
-#define A733_GPU_FWCOMPUTE_VM_WINDOWS	3
+#define A733_GPU_FWCOMPUTE_VM_WINDOWS	4
 #define A733_GPU_FWCOMPUTE_VM_PAGE	4096
 #define A733_GPU_FWCOMPUTE_VM_WINDOW_VA	(2 * 1024 * 1024)
 

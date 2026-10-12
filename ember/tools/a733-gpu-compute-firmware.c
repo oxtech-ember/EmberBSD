@@ -119,11 +119,11 @@ main(int argc, char **argv)
 	struct a733_gpu_fwcompute_vm_summary summary;
 	struct sha256_ctx ctx;
 	uint8_t digest[32], *payload, *whole, state_bytes[56];
-	uint8_t vm_pc[4096], vm_pd[3][4096], vm_pt[3][4096], vm_fwc[32];
-	void *vm_pdv[3] = { vm_pd[0], vm_pd[1], vm_pd[2] };
-	void *vm_ptv[3] = { vm_pt[0], vm_pt[1], vm_pt[2] };
-	uint64_t vm_pdpa[3] = { 0x500000, 0x501000, 0x502000 };
-	uint64_t vm_ptpa[3] = { 0x510000, 0x511000, 0x512000 };
+	uint8_t vm_pc[4096], vm_pd[4][4096], vm_pt[4][4096], vm_fwc[32];
+	void *vm_pdv[4] = { vm_pd[0], vm_pd[1], vm_pd[2], vm_pd[3] };
+	void *vm_ptv[4] = { vm_pt[0], vm_pt[1], vm_pt[2], vm_pt[3] };
+	uint64_t vm_pdpa[4] = { 0x500000, 0x501000, 0x502000, 0x503000 };
+	uint64_t vm_ptpa[4] = { 0x510000, 0x511000, 0x512000, 0x513000 };
 	uint64_t bvnc, ctx_va;
 	uint32_t priority = 0, pid = 1, context_id = 0, job_id = 1;
 	uint32_t area_base[3], payload_bytes;
@@ -275,7 +275,9 @@ main(int argc, char **argv)
 
 	memset(regions, 0, sizeof(regions));
 	for (i = 0; i < sizeof(table) / sizeof(table[0]); i++) {
-		regions[i].va = table[i].va;
+		regions[i].va = table[i].role ==
+		    A733_GPU_FWCOMPUTE_PDS_PROGRAMS ?
+		    UINT64_C(0x1000a000) : table[i].va;
 		/* Distinct synthetic pages keep the encoding check honest. */
 		regions[i].pa = UINT64_C(0x40000000) + (uint64_t)i * 0x10000;
 		regions[i].pages = (table[i].bytes + 4095) / 4096;
@@ -291,7 +293,7 @@ main(int argc, char **argv)
 	memset(vm_fwc, 0, sizeof(vm_fwc));
 	if (sun60i_a733_gpu_fwcompute_vm_encode(regions, 9, vm_pc, vm_pdv,
 	    vm_ptv, vm_pdpa, vm_ptpa, 0x500000, vm_fwc, &summary) != 0 ||
-	    summary.windows != 3 || summary.leaves != 17)
+	    summary.windows != 4 || summary.leaves != 17)
 		die("resource table failed VM encoding");
 	printf("vm_check=windows=%u directories=%u leaves=%u\n",
 	    summary.windows, summary.directories, summary.leaves);

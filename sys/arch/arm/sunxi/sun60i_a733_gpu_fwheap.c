@@ -268,8 +268,8 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 	struct a733_gpu_fwcompute_vm_region regions[9];
 	struct a733_gpu_fwcompute_vm_summary summary;
 	struct sun60i_a733_gpu_fwvm *vm;
-	void *directory[3], *table[3];
-	uint64_t directory_pa[3], table_pa[3];
+	void *directory[A733_GPU_FWCOMPUTE_VM_WINDOWS], *table[A733_GPU_FWCOMPUTE_VM_WINDOWS];
+	uint64_t directory_pa[A733_GPU_FWCOMPUTE_VM_WINDOWS], table_pa[A733_GPU_FWCOMPUTE_VM_WINDOWS];
 	uint8_t context[32];
 	const uint8_t *payload;
 	size_t i, j;
@@ -319,7 +319,7 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 	error = fwheap_dma_alloc(dmat, 4096, &vm->catalog);
 	if (error != 0)
 		goto fail;
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < A733_GPU_FWCOMPUTE_VM_WINDOWS; i++) {
 		error = fwheap_dma_alloc(dmat, 4096, &vm->directory[i]);
 		if (error != 0)
 			goto fail;
@@ -331,7 +331,7 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 		error = EINVAL;
 		goto fail;
 	}
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < A733_GPU_FWCOMPUTE_VM_WINDOWS; i++) {
 		if (!fwheap_dma_valid(&vm->directory[i]) ||
 		    !fwheap_dma_valid(&vm->table[i])) {
 			error = EINVAL;
@@ -349,7 +349,7 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 	if (error != 0)
 		goto fail;
 	bus_dmamap_sync(dmat, vm->catalog.map, 0, 4096, BUS_DMASYNC_PREWRITE);
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < A733_GPU_FWCOMPUTE_VM_WINDOWS; i++) {
 		bus_dmamap_sync(dmat, vm->directory[i].map, 0, 4096,
 		    BUS_DMASYNC_PREWRITE);
 		bus_dmamap_sync(dmat, vm->table[i].map, 0, 4096,
@@ -369,7 +369,7 @@ fail:
 	for (i = 0; i < 9; i++)
 		fwheap_dma_free(dmat, &vm->resource[i]);
 	fwheap_dma_free(dmat, &vm->catalog);
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < A733_GPU_FWCOMPUTE_VM_WINDOWS; i++) {
 		fwheap_dma_free(dmat, &vm->directory[i]);
 		fwheap_dma_free(dmat, &vm->table[i]);
 	}
@@ -389,7 +389,7 @@ sun60i_a733_gpu_fwvm_destroy(struct sun60i_a733_gpu_fwvm **out)
 	for (i = 0; i < 9; i++)
 		fwheap_dma_free(vm->dmat, &vm->resource[i]);
 	fwheap_dma_free(vm->dmat, &vm->catalog);
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < A733_GPU_FWCOMPUTE_VM_WINDOWS; i++) {
 		fwheap_dma_free(vm->dmat, &vm->directory[i]);
 		fwheap_dma_free(vm->dmat, &vm->table[i]);
 	}
