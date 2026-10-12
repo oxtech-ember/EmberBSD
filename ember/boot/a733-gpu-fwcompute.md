@@ -199,3 +199,35 @@ Before hardware use, require a manifest from the real Mesa compiler and generato
 That manifest must bind the source revision, target BVNC, shader input, binary hashes,
 USC/PDS/CDM lengths, relocation addresses, resource map, and actual static compute state.
 No compute dispatch, firmware submission, output-buffer result, or rendering is proved here.
+
+## Physical stage-18 result
+
+On 2026-10-12, stage 18 passed on a 4 GiB Orange Pi Zero 3W.
+The GCC 16.2 `EMBER64 #0` bundle used source
+`6b5248109ecf7576eb9e17e34e00105cc42ec718` and includes the accepted
+fan-control commits. All stages 1 through 18 returned zero with PLL_GPU0
+selected, on the second run after renaming the packed file into place
+(the first run correctly returned `ENOENT`).
+The MMUCACHE gate observed slot 1, return word 1, read/write offsets 2/2,
+flags `0x0400001f`, sync object `0xc0104400`, and both BVNC readings
+`0x00240038006800b7`.
+
+The packed image came from the r2 bounded Mesa generator with the corrected
+IDFWDF sampler window: USC `0xe000000000+1744`, PDS `0xda0000a000+720`,
+CDM stream `0x8000004000+116`, context state `0xda00000000`, 56-byte static
+state. The kernel serialized it to the exact 184-byte client ring and the
+KICK template, and its SHA-256 over the complete 33 KiB image matched the
+host packer digest byte for byte:
+`9e611c516dafb8886088ee4690c0d92f153a76a7b624a0a215c074a446161e3a`.
+
+The run stayed CPU-only: no firmware-heap allocation, page-table entry,
+DMA, KCCB publication, or GPU execution. The board kept running normally
+after the stage. The declared span window stays unmapped; a future mapping
+and submission stage must allocate from a real firmware heap before any
+hardware compute.
+
+```sh
+sysctl -w hw.sun60igpuid0.clock_source=1
+sysctl -w hw.sun60igpuid0.stage=18   # after stages 1..17
+sysctl hw.sun60igpuid0.result hw.sun60igpuid0.compute_state
+```
