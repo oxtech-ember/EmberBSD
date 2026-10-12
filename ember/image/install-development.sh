@@ -30,12 +30,16 @@ $2 ~ /^gdb-[0-9]/ {
     debuggers++
     if ($2 !~ /^gdb-18[.]1(nb[0-9]+)?[.]tgz$/) bad=1
 }
+$2 ~ /^gcc16-[0-9]/ {
+    compilers++
+    if ($2 !~ /^gcc16-16[.]2[.]0(nb[0-9]+)?[.]tgz$/) bad=1
+}
 $2 ~ /^llvm-[0-9]/ {
     providers++
     if ($2 !~ /^llvm-23[.]1[.]2(nb[0-9]+)?[.]tgz$/) bad=1
 }
 END {
-    if (bad || NR == 0 || debuggers != 1 || providers > 1) exit 1
+    if (bad || NR == 0 || debuggers != 1 || compilers != 1 || providers > 1) exit 1
     print NR
 }
 ' packages.sha256)
@@ -66,7 +70,8 @@ for entry in ./* ./.[!.]* ./..?*; do
 	}
 	case "${entry#./}" in
 	packages.sha256|ports-revision|installed-packages.sha256|\
-	installed-packages.sha256.new|gdb-version.txt|gdb.sha256) ;;
+	installed-packages.sha256.new|gdb-version.txt|gdb.sha256|\
+	cc-version.txt) ;;
 	*.tgz) archive_count=$((archive_count + 1)) ;;
 	*) echo "Unexpected package bundle entry: $entry" >&2; exit 1 ;;
 	esac
@@ -96,6 +101,19 @@ grep -q '^GNU gdb (GDB) 18\.1$' gdb-version.txt
 [ "$(command -v gdb)" = /usr/bin/gdb ]
 [ ! -e /usr/bin/gdbtui ] && [ ! -L /usr/bin/gdbtui ]
 sha256 -q /usr/pkg/bin/gdb > gdb.sha256
+# The system compiler must resolve to the packaged GCC16 on first use.
+for tool in cc c++ cpp g++ gcc; do
+    [ -L "/usr/bin/$tool" ] && [ "$(readlink "/usr/bin/$tool")" = "/usr/pkg/gcc16/bin/$tool" ]
+done
+/usr/bin/cc --version > cc-version.txt
+head -1 cc-version.txt | grep -q '^cc (GCC) 16\.2\.0$'
+printf 'int main(void) { return 0; }\n' > /tmp/ember-cc-smoke.c
+/usr/bin/cc /tmp/ember-cc-smoke.c -o /tmp/ember-cc-smoke
+/tmp/ember-cc-smoke
+printf 'int main() { return 0; }\n' > /tmp/ember-cxx-smoke.cpp
+/usr/bin/c++ /tmp/ember-cxx-smoke.cpp -o /tmp/ember-cxx-smoke
+/tmp/ember-cxx-smoke
+rm -f /tmp/ember-cc-smoke.c /tmp/ember-cc-smoke /tmp/ember-cxx-smoke.cpp /tmp/ember-cxx-smoke
 cp packages.sha256 installed-packages.sha256.new
 mv -f installed-packages.sha256.new installed-packages.sha256
 echo 'EmberBSD development package bundle installed and verified'
