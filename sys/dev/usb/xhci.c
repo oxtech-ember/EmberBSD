@@ -2379,9 +2379,14 @@ xhci_rhpsc(struct xhci_softc * const sc, u_int ctlrport)
 	DPRINTFN(4, "xhci%jd: bus %jd bp %ju xfer %#jx status change",
 	    device_unit(sc->sc_dev), bn, rhp, (uintptr_t)xfer);
 
-	if (xfer == NULL)
+	if (xfer == NULL || xfer->ux_status != USBD_IN_PROGRESS) {
+		/* The controller will not repeat this event: latch it and
+		 * deliver when the root intr xfer is armed again. */
+		DPRINTFN(4, "xhci%jd: bus %jd bp %ju latched (no armed xfer)",
+		    device_unit(sc->sc_dev), bn, rhp, 0);
+		sc->sc_rhpend[bn][rhp / 8] |= (uint8_t)(1U << (rhp % 8));
 		return;
-	KASSERT(xfer->ux_status == USBD_IN_PROGRESS);
+	}
 
 	uint8_t *p = xfer->ux_buf;
 	if (!xhci_polling_p(sc) || !sc->sc_intrxfer_deferred[bn])
@@ -4379,6 +4384,30 @@ xhci_root_intr_start(struct usbd_xfer *xfer)
 	KASSERT(sc->sc_intrxfer[bn] == NULL);
 	sc->sc_intrxfer[bn] = xfer;
 	xfer->ux_status = USBD_IN_PROGRESS;
+
+	/* Deliver port changes latched while no xfer was armed. */
+	{
+		size_t i;
+
+		for (i = 0; i < sizeof(sc->sc_rhpend[bn]); i++) {
+			if (sc->sc_rhpend[bn][i] != 0)
+				break;
+		}
+		if (i < sizeof(sc->sc_rhpend[bn])) {
+			uint8_t *p = xfer->ux_buf;
+
+			memset(p, 0, xfer->ux_length);
+			for (i = 0; i < xfer->ux_length && i < sizeof(sc->sc_rhpend[bn]); i++) {
+				p[i] = sc->sc_rhpend[bn][i];
+				sc->sc_rhpend[bn][i] = 0;
+			}
+			DPRINTFN(4, "xhci%jd: bus %jd delivering latched changes",
+			    device_unit(sc->sc_dev), bn, 0, 0);
+			xfer->ux_actlen = xfer->ux_length;
+			xfer->ux_status = USBD_NORMAL_COMPLETION;
+			usb_transfer_complete(xfer);
+		}
+	}
 
 	return USBD_IN_PROGRESS;
 }

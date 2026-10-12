@@ -2012,6 +2012,12 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 			return EINVAL;
 		break;
 	}
+	case USB_ABORT_REQUEST:
+		/* Abort an in-flight control request on the default pipe. */
+		if (endpt != USB_CONTROL_ENDPOINT)
+			return EINVAL;
+		usbd_abort_default_pipe(sc->sc_udev);
+		break;
 	case USB_DO_REQUEST:
 	{
 		struct usb_ctl_request *ur = (void *)addr;
@@ -2058,7 +2064,20 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		xerr = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
 			  ptr, ur->ucr_flags, &ur->ucr_actlen, sce->timeout);
 		if (xerr) {
-			error = EIO;
+			switch (xerr) {
+			case USBD_STALLED:
+				error = EPIPE;
+				break;
+			case USBD_TIMEOUT:
+				error = ETIMEDOUT;
+				break;
+			case USBD_CANCELLED:
+				error = ECANCELED;
+				break;
+			default:
+				error = EIO;
+				break;
+			}
 			goto ret;
 		}
 		if (len != 0) {
