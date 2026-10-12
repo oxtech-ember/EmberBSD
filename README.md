@@ -152,8 +152,12 @@ on every board in the hardware catalog.
   transforms, and a real gpsd process receiving synthetic GNSS data.
   These are [experimental source builds](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/robotics-foundations);
   physical cameras/GNSS receivers and accelerated vision remain unverified.
-- **Video processing for applications:** FFmpeg 9.0.2, GStreamer 1.28.7 and
-  OpenCV 5.0.0 videoio share one tested media installation. AArch64 VM checks
+- **Video processing for applications:** the complete [FFmpeg 9.0.2 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/ffmpeg-runtime.md)
+  passes CM5 H.264/H.265/AV1/VP9 file-codec checks, including repaired AArch64
+  dispatch and scalar controls. [GStreamer 1.28.8 base/bad packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/gstreamer-plugins.md)
+  pass installed introspection, conversion and parser checks on the same board.
+  The earlier FFmpeg 9.0.2 / GStreamer 1.28.7 / OpenCV 5.0.0 videoio probe remains
+  a separate, limited validation record. Its AArch64 VM checks
   cover exact decoded frames and timestamps, application-buffer pipelines,
   file capture through both OpenCV backends, seeking, image processing and
   lossless output. NetBSD filesystem support and FFmpeg compatibility fixes
@@ -295,10 +299,16 @@ on every board in the hardware catalog.
   also passes KDE resource-byte comparisons and missing-reference rejection on CM5.
   The [GStreamer 1.28.8 core](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/gstreamer.md)
   passes 106 unchanged upstream checks and a finite installed pipeline on CM5.
-  Its complete plugin family, media output and desktop integration remain unaccepted.
+  [Base/bad plugin packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/gstreamer-plugins.md)
+  also pass 20 typelib loads, real GType resolution and exact video/parser pixels.
+  Other plugin packages, physical media output and desktop integration remain unaccepted.
   The [complete LAME 4.0 MP3 dependency](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/lame.md)
   cross-builds with GCC 16 and passes installed CM5 encoding, Unicode-tag and
-  decoded-signal checks. Full FFmpeg and Qt Multimedia playback remain unaccepted.
+  decoded-signal checks. [x265 4.2](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/x265.md)
+  produces NEON/scalar H.265 streams with independently verified lossless pixels.
+  The [full FFmpeg 9.0.2 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/ffmpeg-runtime.md)
+  now passes four video codecs, scalar AV1/VP9, MP3/Opus, Unicode metadata and
+  filter checks on CM5. Qt Multimedia playback remains unaccepted.
   [Current Plasma prerequisites](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/plasma-prerequisites.md)
   now cross-package KWayland, KDecoration, layer-shell-qt and KNightTime 6.7.5.
   Installed KWayland passes 56 exact button events on CM5, with an original-patch
