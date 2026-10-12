@@ -21,6 +21,9 @@ cat > "$work/input.dts" <<'DTS'
 	netbsd,experimental-clock-prepare;
 	netbsd,experimental-domain-request;
 };
+&npu {
+	status = "okay";
+};
 DTS
 base=$src/sys/external/gpl2/dts/dist
 "${CPP:-cpp}" -P -xassembler-with-cpp -I "$base/include" \
