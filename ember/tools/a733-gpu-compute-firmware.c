@@ -115,7 +115,7 @@ main(int argc, char **argv)
 	struct a733_gpu_fwcompute_file_header header;
 	struct sun60i_a733_gpu_fwcompute_inputs inputs;
 	struct sun60i_a733_gpu_fwcompute_image *image;
-	struct a733_gpu_fwcompute_vm_region regions[11];
+	struct a733_gpu_fwcompute_vm_region regions[12];
 	struct a733_gpu_fwcompute_vm_summary summary;
 	struct sha256_ctx ctx;
 	uint8_t digest[32], *payload, *whole, state_bytes[56];
@@ -294,13 +294,17 @@ main(int argc, char **argv)
 	regions[10].pa = regions[8].pa;
 	regions[10].pages = 1;
 	regions[10].flags = regions[8].flags;
+	regions[11].va = UINT64_C(0xe000002000);
+	regions[11].pa = regions[8].pa;
+	regions[11].pages = 1;
+	regions[11].flags = regions[8].flags;
 	memset(vm_pc, 0, sizeof(vm_pc));
 	memset(vm_pd, 0, sizeof(vm_pd));
 	memset(vm_pt, 0, sizeof(vm_pt));
 	memset(vm_fwc, 0, sizeof(vm_fwc));
-	if (sun60i_a733_gpu_fwcompute_vm_encode(regions, 11, vm_pc, vm_pdv,
+	if (sun60i_a733_gpu_fwcompute_vm_encode(regions, 12, vm_pc, vm_pdv,
 	    vm_ptv, vm_pdpa, vm_ptpa, 0x500000, vm_fwc, &summary) != 0 ||
-	    summary.windows != 5 || summary.leaves != 19)
+	    summary.windows != 5 || summary.leaves != 20)
 		die("resource table failed VM encoding");
 	printf("vm_check=windows=%u directories=%u leaves=%u\n",
 	    summary.windows, summary.directories, summary.leaves);

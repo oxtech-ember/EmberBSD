@@ -265,7 +265,7 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
     struct sun60i_a733_gpu_fwheap *heap,
     struct sun60i_a733_gpu_fwvm **out)
 {
-	struct a733_gpu_fwcompute_vm_region regions[11];
+	struct a733_gpu_fwcompute_vm_region regions[12];
 	struct a733_gpu_fwcompute_vm_summary summary;
 	struct sun60i_a733_gpu_fwvm *vm;
 	void *directory[A733_GPU_FWCOMPUTE_VM_WINDOWS], *table[A733_GPU_FWCOMPUTE_VM_WINDOWS];
@@ -351,6 +351,12 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 		regions[10].pa = vm->resource[k].address;
 		regions[10].pages = 1;
 		regions[10].flags = regions[k].flags;
+		/* The execution offset resolves against the mapped USC page
+		 * base; cover the second page of that base too. */
+		regions[11].va = UINT64_C(0xe000002000);
+		regions[11].pa = vm->resource[k].address;
+		regions[11].pages = 1;
+		regions[11].flags = regions[k].flags;
 	}
 	error = fwheap_dma_alloc(dmat, 4096, &vm->catalog);
 	if (error != 0)
@@ -379,7 +385,7 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 		table_pa[i] = vm->table[i].address;
 	}
 	memset(&summary, 0, sizeof(summary));
-	error = sun60i_a733_gpu_fwcompute_vm_encode(regions, 11,
+	error = sun60i_a733_gpu_fwcompute_vm_encode(regions, 12,
 	    vm->catalog.cpu, directory, table, directory_pa, table_pa,
 	    vm->catalog.address, context, &summary);
 	if (error != 0)
