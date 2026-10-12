@@ -325,6 +325,16 @@ on every board in the hardware catalog.
   [Current Noto fonts](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/fonts.md)
   pass payload, target indexing and Cyrillic/CJK selection checks. These remain
   component results; the complete accelerated KWin/Plasma session is pending.
+  The complete [KWin Wayland package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/kwin.md)
+  now cross-builds with the full feature set and a payload that matches the
+  common sysroot file for file. On Orange Pi Zero 3W (A733) it passes a
+  private virtual-backend session: the compositor stays active on QPainter
+  while Qt Quick clients render real pixel phases through software EGL
+  (llvmpipe) and exit cleanly. Hardware GL compositing still needs the DRM
+  render node, so acceleration stays unclaimed. The fixed
+  [Milou](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/milou)
+  package passes its fresh-board acceptance on the same board, and
+  libksysguard 6.7.5 is ported for the upcoming plasma-workspace build.
   [ConsoleKit session launching](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-session.md)
   now preserves application failures and passes real-session checks on CM5;
   ordinary-user login and device ownership remain unverified.
