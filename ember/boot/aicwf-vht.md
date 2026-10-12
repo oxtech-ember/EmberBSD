@@ -58,6 +58,19 @@ width at 826 and the first center frequency at 828.
 Validate indication lengths before using any fixed offset or IE length.
 Expose actual association information before treating an AP status label as proof.
 
+## Software validation
+
+The management-frame fix in `8a3e2338d` passes 79 source-derived checks with
+ASan/UBSan. The tests exercise the production RX dispatcher and BSD client
+initialization. The previous source fails the corresponding ABI, action-code
+and bounds regressions. Existing SAE, PMF and link-recovery contracts also pass.
+
+GCC16 built the complete `EMBER64` kernel, four matched modules and board DTBs
+from `ab10eef7df39b1854bc0e94195816bbf713710d2`. The portable kernel suite passes.
+Target static analysis adds no findings relative to the baseline; inherited
+findings and GCC path-complexity limits remain. This is a host build and software
+validation. It does not establish board operation, VHT80 or completed k/v.
+
 ## Acceptance after implementation
 
 Use a recoverable board with exclusive access to its network interface.
