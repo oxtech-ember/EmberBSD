@@ -185,7 +185,7 @@ sun60i_npu_stage_power_id(struct sun60i_npu_softc *sc)
 	for (u_int i = 0; i < __arraycount(resets); i++) {
 		rst = fdtbus_reset_get(sc->sc_phandle, resets[i]);
 		if (rst == NULL)
-			return ENXIO;
+			return ENOENT;
 		error = fdtbus_reset_deassert(rst);
 		fdtbus_reset_put(rst);
 		if (error != 0)
@@ -194,7 +194,7 @@ sun60i_npu_stage_power_id(struct sun60i_npu_softc *sc)
 	for (u_int i = 0; i < __arraycount(gates); i++) {
 		clk = fdtbus_clock_get(sc->sc_phandle, gates[i]);
 		if (clk == NULL)
-			return ENXIO;
+			return ENODEV;
 		error = clk_enable(clk);
 		clk_put(clk);
 		if (error != 0)
