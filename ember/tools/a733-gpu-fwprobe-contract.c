@@ -54,7 +54,9 @@ static unsigned int assertions;
 
 static struct sun60i_a733_gpu_fwmem owner;
 static struct sun60i_a733_gpu_fwboot_result booted;
-static struct sun60i_a733_gpu_fwprobe_result result;
+static struct sun60i_a733_gpu_fwprobe_result result, previous, previous_saved;
+static unsigned int test_slot;
+static bool skip_sync_update;
 static struct fake_map maps[5];
 static const size_t sizes[] = {16384, 16384, 16384, 139264, 12288};
 static uint8_t *cpu[5], *expected[5], *saved[5];
@@ -97,6 +99,7 @@ test_timespecsub(const struct timespec *a, const struct timespec *b,
 /* Independent pinned ABI literals; do not derive the oracle from the helper. */
 #define KCOMMAND 192
 #define KRETURN 11456
+#define MMUSYNC 17408
 #define FCONTROL 11968
 #define FCOMMAND 12160
 #define SYSDATA 17472
@@ -144,6 +147,8 @@ fw8(unsigned int area, size_t offset, uint8_t value)
 static void
 unchanged_foreign(void)
 {
+	if (test_slot == 1)
+		CHECK(memcmp(&previous, &previous_saved, sizeof(previous)) == 0);
 	for (unsigned int i = 0; i < 5; i++)
 		CHECK(memcmp(cpu[i], expected[i], sizes[i]) == 0);
 }
@@ -154,7 +159,8 @@ foreign_activity(void)
 	if (!foreign_updates)
 		return;
 	/* Different owners within one cache line: never overwrite these. */
-	fw32(3, KRETURN + 4, get32(cpu[3] + KRETURN + 4) + 1);
+	fw32(3, KRETURN + (test_slot + 1) * 4,
+	    get32(cpu[3] + KRETURN + (test_slot + 1) * 4) + 1);
 	fw32(4, 8, get32(cpu[4] + 8) + 1);
 	/* Other byte in the KCCB producer's cache line, not ours to clear. */
 	fw32(3, 4, get32(cpu[3] + 4) + 1);
@@ -163,9 +169,11 @@ foreign_activity(void)
 static void
 complete_command(void)
 {
-	fw32(3, KRETURN, response);
+	fw32(3, KRETURN + test_slot * 4, response);
+	if (test_slot == 1 && !skip_sync_update)
+		fw32(3, MMUSYNC, 0);
 	if (!response_without_read)
-		fw32(3, 128, 1);
+		fw32(3, 128, test_slot + 1);
 	fw32(3, OSDATA + 568, get32(cpu[3] + OSDATA + 568) + 1);
 }
 
@@ -178,19 +186,20 @@ firmware_tick(void)
 	if (result.published) {
 		completions++;
 		if (read_only_progress)
-			fw32(3, 128, 1);
+			fw32(3, 128, test_slot + 1);
 		if (complete_at != 0 && completions == complete_at)
 			complete_command();
 		switch (firmware_failure) {
 		case 1: fw8(4, STARTED, 0); break;
 		case 2: fw8(4, COMPCHECKS + 56, 0); break;
 		case 3: fw32(3, 128, 128); break;
-		case 4: fw32(3, 0, 2); break;
+		case 4: fw32(3, 0, test_slot + 2); break;
 		case 5: fw32(3, FCONTROL, 1);
 			fw32(3, FCOMMAND, 0x2abc0101); break;
 		case 6: fw32(3, SYSDATA + 3576, 1U << 6); break;
 		case 7: fw32(3, SYSDATA + 3536, 1); break;
 		case 8: fw32(3, SYSDATA + 8, 2); break;
+		case 9: fw32(3, 128, 0); break;
 		default: break;
 		}
 	}
@@ -210,7 +219,15 @@ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, bus_addr_t offset,
 	CHECK((map->_dm_flags & 0x30000) == 0x10000);
 	CHECK(offset <= sizes[id] && size <= sizes[id] - offset);
 	syncs++;
-	put32(golden, 0x2abc00ce);
+	put32(golden, test_slot == 0 ? 0x2abc00ce : 0x2abc0066);
+	if (test_slot == 1) {
+		put32(golden + 8, 0x0400001f);
+		put32(golden + 12, 0xc0104400);
+		/* Zero sync update is not a sequence number. */
+		put32(golden + 16, 0);
+	}
+	CHECK(result.slot == test_slot);
+	CHECK(result.command == (test_slot == 0 ? 0x2abc00ceU : 0x2abc0066U));
 	if (size == sizes[id] && offset == 0) {
 		CHECK(op == BUS_DMASYNC_POSTREAD || op == BUS_DMASYNC_PREREAD);
 		CHECK(id == (read_phase == 0 || read_phase == 3 ? 3U : 4U));
@@ -239,39 +256,39 @@ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, bus_addr_t offset,
 	CHECK(read_phase == 0 && id == 3 && !result.kick_attempted);
 	switch (phase++) {
 	case 0:
-		CHECK(offset == KCOMMAND && size == 88 && op == BUS_DMASYNC_POSTWRITE);
+		CHECK(offset == (KCOMMAND + test_slot * 88) && size == 88 && op == BUS_DMASYNC_POSTWRITE);
 		CHECK(!result.published && cpu[4][COMPCHECKS + 56] == 1);
 		foreign_activity();
 		unchanged_foreign();
 		break;
 	case 1:
-		CHECK(offset == KRETURN && size == 4 &&
+		CHECK(offset == (KRETURN + test_slot * 4) && size == 4 &&
 		    op == (BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE));
-		CHECK(memcmp(cpu[3] + KCOMMAND, golden, 88) == 0);
-		memcpy(expected[3] + KCOMMAND, golden, 88);
+		CHECK(memcmp(cpu[3] + (KCOMMAND + test_slot * 88), golden, 88) == 0);
+		memcpy(expected[3] + (KCOMMAND + test_slot * 88), golden, 88);
 		unchanged_foreign();
 		break;
 	case 2:
-		CHECK(offset == KCOMMAND && size == 88 && op == BUS_DMASYNC_PREWRITE);
-		CHECK(get32(cpu[3] + KRETURN) == 0);
-		put32(expected[3] + KRETURN, 0);
+		CHECK(offset == (KCOMMAND + test_slot * 88) && size == 88 && op == BUS_DMASYNC_PREWRITE);
+		CHECK(get32(cpu[3] + (KRETURN + test_slot * 4)) == 0);
+		put32(expected[3] + (KRETURN + test_slot * 4), 0);
 		unchanged_foreign();
 		break;
 	case 3:
-		CHECK(offset == KRETURN && size == 4 &&
+		CHECK(offset == (KRETURN + test_slot * 4) && size == 4 &&
 		    op == (BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD));
-		CHECK(get32(cpu[3]) == 0 && !result.published);
+		CHECK(get32(cpu[3]) == test_slot && !result.published);
 		foreign_activity();
 		unchanged_foreign();
 		break;
 	case 4:
 		CHECK(offset == 0 && size == 4 && op == BUS_DMASYNC_POSTWRITE);
-		CHECK(!result.published && get32(cpu[3]) == 0);
+		CHECK(!result.published && get32(cpu[3]) == test_slot);
 		break;
 	case 5:
 		CHECK(offset == 0 && size == 4 && op == BUS_DMASYNC_PREWRITE);
-		CHECK(result.published && get32(cpu[3]) == 1);
-		put32(expected[3], 1);
+		CHECK(result.published && get32(cpu[3]) == test_slot + 1);
+		put32(expected[3], test_slot + 1);
 		unchanged_foreign();
 		break;
 	default: CHECK(false);
@@ -298,8 +315,8 @@ bus_space_poke_4(bus_space_tag_t tag, bus_space_handle_t handle,
 	CHECK(offset == 0x0b00 && value == 0);
 	CHECK(phase == 6 && barriers == 1 && writes == 0);
 	CHECK(result.attempted && result.published && result.kick_attempted);
-	CHECK(!result.kicked && get32(cpu[3]) == 1);
-	CHECK(get32(cpu[3] + KRETURN) == 0);
+	CHECK(!result.kicked && get32(cpu[3]) == test_slot + 1);
+	CHECK(get32(cpu[3] + (KRETURN + test_slot * 4)) == 0);
 	unchanged_foreign();
 	writes++;
 	if (poke_fault && fault_after_execution)
@@ -329,6 +346,10 @@ delay(unsigned int us)
 static void
 reset(void)
 {
+	test_slot = 0;
+	skip_sync_update = false;
+	memset(&previous, 0, sizeof(previous));
+	memset(&previous_saved, 0, sizeof(previous_saved));
 	memset(&owner, 0, sizeof(owner));
 	memset(&booted, 0, sizeof(booted));
 	memset(&result, 0, sizeof(result));
@@ -396,6 +417,9 @@ reset(void)
 static int
 run(void)
 {
+	if (test_slot == 1)
+		return sun60i_a733_gpu_fwprobe_mmucache(&owner, 0x12340000,
+		    &owner, &booted, &previous, &result);
 	return sun60i_a733_gpu_fwprobe(&owner, 0x12340000, &owner, &booted, &result);
 }
 
@@ -418,6 +442,8 @@ runtime_tests(void)
 	reset();
 	CHECK(run() == 0);
 	CHECK(result.error == 0 && result.polls == 2 && result.slot == 0);
+	CHECK(result.command == 0x2abc00ce && result.cache_flags == 0);
+	CHECK(result.sync_fw_addr == 0 && result.sync_update_value == 0);
 	CHECK(result.published && result.kick_attempted && result.kicked);
 	CHECK(result.before.rtn == 0xdeadbeef && result.after.rtn == 1);
 	CHECK(result.after.read_offset == 1 && result.after.write_offset == 1);
@@ -554,7 +580,7 @@ compatibility_tests(void)
 	reset(); fw32(4, COMPCHECKS + 8, 1); runtime_reject(ENODEV);
 	reset(); fw32(4, COMPCHECKS + 24, 1); runtime_reject(ENODEV);
 	reset(); fw32(3, 0, 1); runtime_reject(EBUSY);
-	reset(); fw32(3, 128, 1); runtime_reject(EBUSY);
+	reset(); fw32(3, 128, test_slot + 1); runtime_reject(EBUSY);
 	reset(); fw32(3, 132, 255); runtime_reject(EPROTO);
 	reset(); fw32(3, 136, 80); runtime_reject(EPROTO);
 	reset(); fw32(3, FCONTROL + 132, 63); runtime_reject(EPROTO);
@@ -654,6 +680,160 @@ structural_tests(void)
 	CHECK(run() == EBUSY && syncs == 0 && !result.attempted);
 }
 
+/* A real successful first command authorizes the distinct second operation. */
+static void
+prepare_cache(void)
+{
+	reset();
+	CHECK(run() == 0);
+	previous = previous_saved = result;
+	memset(&result, 0, sizeof(result));
+	test_slot = 1;
+	syncs = writes = barriers = waits = observations = completions = 0;
+	phase = read_phase = 0;
+	clock_ns = total_wait_us = jump_ns = 0;
+	last_wait = 0;
+	/* Deliberately stale completion in the new slot. It must be cleared. */
+	fw32(3, KRETURN + 4, 1);
+}
+
+static void
+cache_reject(int error, const struct sun60i_a733_gpu_fwprobe_result *prior,
+    struct sun60i_a733_gpu_fwprobe_result *out)
+{
+	struct sun60i_a733_gpu_fwprobe_result old = result, old_previous = previous;
+	struct sun60i_a733_gpu_fwmem old_owner = owner;
+	struct sun60i_a733_gpu_fwboot_result old_boot = booted;
+
+	for (unsigned int i = 0; i < 5; i++)
+		memcpy(saved[i], cpu[i], sizes[i]);
+	CHECK(sun60i_a733_gpu_fwprobe_mmucache(&owner, 0x12340000,
+	    &owner, &booted, prior, out) == error);
+	CHECK(syncs == 0 && writes == 0 && observations == 0);
+	CHECK(memcmp(&result, &old, sizeof(result)) == 0);
+	CHECK(memcmp(&previous, &old_previous, sizeof(previous)) == 0);
+	CHECK(memcmp(&owner, &old_owner, sizeof(owner)) == 0);
+	CHECK(memcmp(&booted, &old_boot, sizeof(booted)) == 0);
+	for (unsigned int i = 0; i < 5; i++)
+		CHECK(memcmp(cpu[i], saved[i], sizes[i]) == 0);
+}
+
+#define CACHE_REJECT(error, statement) do { prepare_cache(); statement; \
+	cache_reject(error, &previous, &result); } while (0)
+
+static void
+cache_tests(void)
+{
+	prepare_cache();
+	CHECK(run() == 0);
+	CHECK(result.error == 0 && result.slot == 1 && result.polls == 2);
+	CHECK(result.command == 0x2abc0066 && result.cache_flags == 0x0400001f);
+	CHECK(result.sync_fw_addr == 0xc0104400 && result.sync_update_value == 0);
+	CHECK(result.before.read_offset == 1 && result.before.write_offset == 1);
+	CHECK(result.before.rtn == 1 && result.after.rtn == 1);
+	CHECK(result.after.read_offset == 2 && result.after.write_offset == 2);
+	CHECK(result.before.mmucache_sync == 0 && result.after.mmucache_sync == 0);
+	CHECK(writes == 1 && barriers == 2);
+	retained();
+
+	prepare_cache();
+	fw32(3, MMUSYNC, 0xa5a5a5a5);
+	skip_sync_update = true;
+	CHECK(run() == 0 && result.after.mmucache_sync == 0xa5a5a5a5);
+	retained();
+	prepare_cache();
+	complete_at = 4;
+	CHECK(run() == 0 && result.polls == 5 && waits == 3);
+	retained();
+	prepare_cache();
+	fw8(4, COMPCHECKS + 56, 0);
+	ready_at = 3;
+	CHECK(run() == 0 && result.polls == 4);
+	retained();
+
+	for (unsigned int mode = 0; mode < 4; mode++) {
+		prepare_cache();
+		complete_at = 0;
+		if (mode == 1)
+			read_only_progress = true;
+		if (mode == 2) {
+			response_without_read = true;
+			complete_at = 1;
+		}
+		if (mode == 3)
+			freeze_clock = true;
+		CHECK(run() == ETIMEDOUT && result.polls == 10001);
+		CHECK(result.after.mmucache_sync == 0);
+		retained();
+	}
+	for (unsigned int after = 0; after < 2; after++) {
+		prepare_cache();
+		poke_fault = true;
+		fault_after_execution = after != 0;
+		CHECK(run() == EFAULT && result.published && result.kick_attempted);
+		CHECK(!result.kicked && writes == 1 && barriers == 1);
+		retained();
+	}
+	for (unsigned int failure = 1; failure <= 9; failure++) {
+		prepare_cache();
+		firmware_failure = failure;
+		int error = failure <= 4 || failure == 9 ? EPROTO :
+		    (failure == 8 ? EBUSY : EIO);
+
+		CHECK(run() == error);
+		retained();
+	}
+	for (unsigned int value = 2; value <= 7; value++) {
+		prepare_cache(); response = value;
+		CHECK(run() == EPROTO && result.after.rtn == value);
+		retained();
+	}
+	prepare_cache(); fw32(3, 128, 0); runtime_reject(EBUSY);
+	prepare_cache(); fw32(3, 0, 0); runtime_reject(EBUSY);
+	prepare_cache(); fw32(3, 128, 2); runtime_reject(EBUSY);
+	prepare_cache(); fw32(3, 0, 2); runtime_reject(EBUSY);
+	prepare_cache(); jump_ns = 1000000000;
+	CHECK(run() == ETIMEDOUT && !result.published); retained();
+
+	CACHE_REJECT(EINVAL, previous.attempted = false);
+	CACHE_REJECT(EINVAL, previous.published = false);
+	CACHE_REJECT(EINVAL, previous.kick_attempted = false);
+	CACHE_REJECT(EINVAL, previous.kicked = false);
+	CACHE_REJECT(EINVAL, previous.error = ETIMEDOUT);
+	CACHE_REJECT(EINVAL, previous.command = 0x2abc0066);
+	CACHE_REJECT(EINVAL, previous.slot = 1);
+	CACHE_REJECT(EINVAL, previous.cache_flags = 1);
+	CACHE_REJECT(EINVAL, previous.sync_fw_addr = 0xc0104400);
+	CACHE_REJECT(EINVAL, previous.sync_update_value = 1);
+	CACHE_REJECT(EINVAL, previous.polls = 1);
+	CACHE_REJECT(EINVAL, previous.polls = 10002);
+	CACHE_REJECT(EINVAL, previous.before.read_offset = 1);
+	CACHE_REJECT(EINVAL, previous.before.write_offset = 1);
+	CACHE_REJECT(EINVAL, previous.after.read_offset = 0);
+	CACHE_REJECT(EINVAL, previous.after.write_offset = 0);
+	CACHE_REJECT(EINVAL, previous.after.rtn = 0);
+	CACHE_REJECT(EINVAL, previous.after.rtn = 3);
+	CACHE_REJECT(EINVAL, previous.before.hw_bvnc++);
+	CACHE_REJECT(EINVAL, previous.after.fw_faults = 1);
+	CACHE_REJECT(EOPNOTSUPP, owner.work.coherent = false);
+	CACHE_REJECT(EOPNOTSUPP, maps[4]._dm_flags |= _BUS_DMAMAP_IS_BOUNCING);
+	CACHE_REJECT(EINVAL, owner.interface_layout.object[A733_GPU_FWINIT_MMUCACHE_SYNC].offset++);
+	CACHE_REJECT(EINVAL, owner.interface_layout.object[A733_GPU_FWINIT_MMUCACHE_SYNC].size++);
+	CACHE_REJECT(EINVAL, owner.interface_layout.object[A733_GPU_FWINIT_MMUCACHE_SYNC].fw_addr++);
+	prepare_cache(); cache_reject(EINVAL, NULL, &result);
+	prepare_cache(); cache_reject(EINVAL, (void *)((uint8_t *)&previous + 1), &result);
+	prepare_cache(); cache_reject(EINVAL, (void *)(UINTPTR_MAX - 7), &result);
+	prepare_cache(); cache_reject(EINVAL, &result, &result);
+	prepare_cache(); cache_reject(EBUSY, &previous, &previous);
+	prepare_cache(); cache_reject(EINVAL, (void *)&owner, &result);
+	prepare_cache(); cache_reject(EINVAL, (void *)&booted, &result);
+	prepare_cache(); cache_reject(EINVAL, (void *)cpu[3], &result);
+	prepare_cache();
+	memset(cpu[4], 0, sizeof(result));
+	cache_reject(EINVAL, &previous, (void *)cpu[4]);
+	prepare_cache(); cache_reject(EINVAL, &previous, NULL);
+}
+
 int
 main(void)
 {
@@ -670,6 +850,7 @@ main(void)
 	runtime_tests();
 	compatibility_tests();
 	structural_tests();
+	cache_tests();
 	/* No real device ran. The test alone owns final reclamation. */
 	for (unsigned int i = 0; i < 5; i++) {
 		free(cpu[i]);

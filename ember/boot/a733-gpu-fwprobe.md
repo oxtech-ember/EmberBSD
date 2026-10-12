@@ -140,3 +140,65 @@ The native boot path does not require host writes to connection states or tokens
 
 The source retains the MIT license option and upstream attribution.
 The native helper and regression contract are AI-assisted EmberBSD work.
+
+## MMUCACHE continuation
+
+`sun60i_a733_gpu_fwprobe_mmucache()` accepts the unchanged successful LOGTYPE result
+and a separate persistent result. Both results belong to the same memory owner
+and firmware boot. The common publisher, observer, validation, and deadline
+serve both entry points. Neither entry point is a general queue API.
+
+The continuation requires current KCCB read and write offsets of one.
+It submits one `MMUCACHE` command in slot one, then publishes write offset two.
+Its return word must become exactly one, with read and write offsets two.
+The first command and its return word remain unchanged.
+
+The 88-byte command has opcode `0x2abc0066` and zero command flags.
+Its payload contains these exact pinned upstream values:
+
+- `cache_flags = 0x0400001f`: PC, PD, PT, both TLB flags, and interrupt request.
+- `mmu_cache_sync_fw_addr`: the validated existing `MMUCACHE_SYNC` object's address.
+- `mmu_cache_sync_update_value = 0`.
+
+`CTX_ALL` is not added. The sync word is observed but never written by the host.
+Zero in this word does not prove completion. The pinned `pvr_mmu_flush_exec()`
+waits for the KCCB return slot even on its first attempt with `wait = false`.
+The native continuation polls the same completion evidence. It does not retry
+or adopt the upstream reset path on failure.
+
+Cached `command`, `slot`, `cache_flags`, `sync_fw_addr`, and `sync_update_value`
+distinguish both operations. Each snapshot also records the current `mmucache_sync`.
+The coherent mapping, lifetime, publication, and fault rules above still apply.
+The only host writes are command one, return word one, and KCCB `write_offset`.
+No GPU page table, firmware memory context, or job is created or modified.
+A successful cache command would prove this firmware operation completed.
+It would not prove a GPU page walk, GPU read/write job, or graphics acceleration.
+
+The contract runs the real LOGTYPE operation before testing the continuation.
+It checks exact command bytes, the second slot, retained first-command bytes,
+invalid or aliased previous results, stale completion, and foreign shared fields.
+It distinguishes KCCB completion from the unchanged zero sync value.
+It also covers queue regression, late completion, MMIO faults, and timeout retention.
+Physical MMUCACHE acceptance remains pending.
+
+## Physical command result
+
+Orange Pi Zero 3W completed the first LOGTYPE command on 2026-10-12 at 13:35:05 UTC.
+The source was `2fd3f53f620f458af748214221aa81ff3e7be2f4`.
+The kernel was GCC 16.2 `EMBER64 #8`.
+The call completed within one second and used three observations.
+The result had `error = 0`; all four attempt/publication/kick flags were true.
+Slot zero changed KCCB offsets from `0/0` to `1/1`, with return word one.
+The executed-command counter changed from zero to one.
+FWCCB stayed empty. Power state was `3` (idle), HWR state was `1`, and faults were zero.
+Firmware remained started, BVNC matched, and DDK build was `6976702`.
+SSH remained available. The existing NPU stage-4 check stayed successful.
+The watchdog was disarmed without a reset.
+
+The kernel SHA256 was
+`95ac4a5f4b3094334ddd714047f121fc8373fd15d668caf11bc13f8093f23dcb`.
+The boot image SHA256 was
+`818612b4bcee8b74fecea3add2970ed7018a5ea5d465f8d568a0d51888b65be4`.
+The pinned firmware was unchanged.
+This record establishes one LOGTYPE command only. It does not establish MMUCACHE,
+GPU virtual memory, IRQ handling, DRM, or accelerated Plasma.

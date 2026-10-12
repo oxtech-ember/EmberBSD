@@ -33,6 +33,9 @@
 #include <sys/bus.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwboot.h>
 
+#define A733_GPU_FWPROBE_LOGTYPE		UINT32_C(0x2abc00ce)
+#define A733_GPU_FWPROBE_MMUCACHE		UINT32_C(0x2abc0066)
+
 #define A733_GPU_FWPROBE_TIMEOUT_US	1000000
 #define A733_GPU_FWPROBE_POLL_US		100
 #define A733_GPU_FWPROBE_MAX_POLLS	10001
@@ -42,6 +45,7 @@ struct sun60i_a733_gpu_fwprobe_snapshot {
 	uint32_t fw_read_offset, fw_write_offset, fw_wrap_mask, fw_cmd_size;
 	uint32_t fw_command, cmds_executed, pow_state, hwr_state, fw_faults;
 	uint32_t log_type, fw_state, os_state, alive_fw_token, alive_os_token;
+	uint32_t mmucache_sync;
 	uint8_t firmware_started, compchecks_updated, os_count_support;
 	uint32_t hw_layout_version, fw_layout_version;
 	uint64_t hw_bvnc, fw_bvnc;
@@ -52,6 +56,7 @@ struct sun60i_a733_gpu_fwprobe_result {
 	bool attempted, published, kick_attempted, kicked;
 	int error;
 	uint32_t slot, polls;
+	uint32_t command, cache_flags, sync_fw_addr, sync_update_value;
 	struct sun60i_a733_gpu_fwprobe_snapshot before, after;
 };
 
@@ -81,6 +86,22 @@ struct sun60i_a733_gpu_fwprobe_result {
  */
 int sun60i_a733_gpu_fwprobe(bus_space_tag_t, bus_space_handle_t,
     struct sun60i_a733_gpu_fwmem *, const struct sun60i_a733_gpu_fwboot_result *,
+    struct sun60i_a733_gpu_fwprobe_result *);
+
+/*
+ * One MMUCACHE command in slot 1, after the unchanged successful LOGTYPE
+ * result from the same owner and boot. Keep a separate persistent result.
+ * Require current read/write offsets 1. Publish write offset 2 and require
+ * return word 1 == CMD_EXECUTED and read/write offsets 2 for success.
+ * Use the existing MMUCACHE_SYNC object, exact flags 0x0400001f, and value 0.
+ * The sync value is not a completion token. No page table or context changes.
+ * All lifetime, coherence, exclusion, timeout, and retention rules above apply.
+ * CPU writes are limited to command 1, return word 1, and KCCB write_offset.
+ * command and payload fields identify the operation in the cached result.
+ */
+int sun60i_a733_gpu_fwprobe_mmucache(bus_space_tag_t, bus_space_handle_t,
+    struct sun60i_a733_gpu_fwmem *, const struct sun60i_a733_gpu_fwboot_result *,
+    const struct sun60i_a733_gpu_fwprobe_result *,
     struct sun60i_a733_gpu_fwprobe_result *);
 
 #endif /* _SUN60I_A733_GPU_FWPROBE_H */
