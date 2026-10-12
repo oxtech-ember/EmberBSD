@@ -925,6 +925,8 @@ sun60i_gpu_stage_fwcompute(struct sun60i_gpu_softc *sc)
 	}
 	memcpy(&inputs.static_state, bytes + file.header_bytes +
 	    file.static_offset, A733_GPU_FWCOMPUTE_STATE_BYTES);
+	sun60i_a733_gpu_fwcompute_file_relocate(
+	    (uint8_t *)&inputs.static_state, UINT64_C(0x10000000));
 	/* The kernel owns the typed command, as in the upstream submission. */
 	inputs.command.regs.cdm_ctrl_stream_base =
 	    role[2]->va;
