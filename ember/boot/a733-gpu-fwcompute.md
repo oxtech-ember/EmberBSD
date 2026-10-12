@@ -204,7 +204,8 @@ No compute dispatch, firmware submission, output-buffer result, or rendering is 
 
 On 2026-10-12, stage 18 passed on a 4 GiB Orange Pi Zero 3W.
 The GCC 16.2 `EMBER64 #0` bundle used source
-`6b5248109ecf7576eb9e17e34e00105cc42ec718` and includes the accepted
+`b09cd6a4c38a68657e7f4d1e4028b6f28849c967` (built from the identical
+pre-rebase tree `6b5248109ecf`) and includes the accepted
 fan-control commits. All stages 1 through 18 returned zero with PLL_GPU0
 selected, on the second run after renaming the packed file into place
 (the first run correctly returned `ENOENT`).
