@@ -253,3 +253,23 @@ before any compiler byte is used.
 The packer emits the version-2 file and additionally runs the portable
 compute VM encoder over the resource table (three windows, three
 directories, seventeen leaves) before printing both digests.
+
+## Physical stages 19-21 result
+
+On 2026-10-12 the ladder ran to stage 21 on the 4 GiB Orange Pi Zero 3W
+(kernel from `75fabfc55aa`). Stages 1 through 20 returned zero:
+stage 19 mapped the nine-page heap at `0xc0800000` (PA `0x4014b000`),
+edited the live wrapper table, and the second MMUCACHE command in slot 2
+executed with return word 1; stage 20 built the three-window VM
+(catalog PA `0x40165000`, 3 directories, 17 leaves) and placed the
+firmware memory context at `0xc0808118`.
+
+Stage 21 published the KICK in slot 3 and returned `EIO`: the KCCB
+return word stayed zero, but the firmware advanced the client-queue read
+offset to exactly 184 bytes — both the CDM and the UPDATE commands were
+consumed by the dispatched compute context. The timeline word stayed
+zero and the scratch word did not change, so no compute completion is
+claimed. The runtime snapshot that produced the EIO (hardware watchdog
+or firmware fault counters) is not yet part of the kick report; adding
+it is the immediate next step, together with the CDM-stream execution
+trace. No board hang occurred; Wi-Fi and SSH survived the run.
