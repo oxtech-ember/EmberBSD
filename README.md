@@ -320,6 +320,10 @@ on every board in the hardware catalog.
   [QCA and KWallet](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/qca.md)
   pass installed crypto tests and private D-Bus activation on CM5; wallet storage
   in the upstream test is mocked. Interactive desktop authorization remains unaccepted.
+  [Spelling dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/spelling.md)
+  now cross-package Aspell, Hunspell and full Sonnet. CM5 tests confirm the
+  Aspell dictionary-suffix repair, 172 Hunspell cases and matching native/target
+  language-model bytes; desktop dictionary integration remains unaccepted.
   Shared-cache recovery and the complete Frameworks runtime remain unaccepted.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
