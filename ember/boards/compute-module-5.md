@@ -19,7 +19,7 @@ The carrier PCB revision and exact four-wire fan model were not established.
 | Wi-Fi | WPA2-PSK and WPA3-Personal SAE group 19/H2E with required PMF tested; silent firmware disconnect recovered automatically, followed by an 8 MiB Wi-Fi round trip ([receipt](../boot/bwfm-link-events.md#physical-cm5-check)) |
 | Bluetooth | Not validated |
 | Temperature sensor | ACPI and VideoCore readings checked; no undervoltage/throttle flags during the short check |
-| Fan control | Temperature-controlled off/maximum policy and persistence after reboot tested; cooling on at 50.1 °C and off at 44.1 °C. Intermediate PWM and start-up noise remain unresolved ([control](../boot/thermal-fan.md)) |
+| Fan control | Temperature-controlled off/maximum policy and persistence after reboot tested; cooling on at 50.1 °C and off at 44.1 °C. The operator reports rapid starts without jerking. Intermediate PWM remains unvalidated ([control](../boot/thermal-fan.md)) |
 | Watchdog | Not validated |
 | Power button | BCM2712 GPIO20 fallback loads; physical PSW shutdown/power-on pending ([setup](../../sys/modules/rpi5button/README.md)) |
 | I2C | Not validated |
@@ -71,8 +71,9 @@ WPA2/WPA3 comparison or a diagnosis of the throughput problem.
 The [fan policy](../boot/thermal-fan.md#validation) passed 57 native fixture
 checks and a 54-second physical heat/cool cycle. Maximum cooling started
 at 50.1 °C and stopped at 44.1 °C. Settings survived a second boot.
-No undervoltage or throttle flags appeared. Start-up clicks and RPM were
-not accepted by this test.
+No undervoltage or throttle flags appeared. In a follow-up observation, the
+operator confirmed that the fan stops and reaches full speed quickly when
+it starts, without jerking. RPM and acoustic levels were not measured.
 
 The existing native V3D CL checker from `246b46a2a718b7f4bba24b1e7423f6031fb95c5b`
 passed 325 bin/render pairs, 1,331,200 verified pixels, 32 TFU copies and
@@ -148,7 +149,8 @@ The [temperature-controlled policy](../boot/thermal-fan.md) uses the existing
 ACPI `_AL0` devices only when cooling is needed. It replaces permanent
 maximum operation on this installation and persists through sysctl.conf.
 The firmware thresholds and 5 °C hysteresis remain active. This policy
-does not establish working intermediate speeds or eliminate start-up clicks.
+does not establish working intermediate speeds. The operator reports no
+jerking during starts in this mode on the installed fan.
 No UEFI update or raw MMIO utility is required.
 
 ## Home mesh and cooling check, 2026-10-08

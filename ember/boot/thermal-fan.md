@@ -36,8 +36,8 @@ hw.acpitz0.fan_max_only=1
 hw.acpitz0.force_fan=0
 ```
 
-This policy avoids intermediate PWM levels. It does not repair a fan that
-jerks or clicks while starting. Maximum cooling can still be loud under load.
+This policy avoids intermediate PWM levels. Maximum cooling can still be
+loud under load. It does not change the fan's electrical interface.
 The temperature-controlled policy requires physical acceptance on each setup.
 
 ## Constant maximum cooling
@@ -91,5 +91,8 @@ reboot; the normal WPA3 service returned with required PMF.
 The first `envstat` fan reading can be the initial cached sample. Fan
 refresh is asynchronous. For current ACPI state, also inspect the board's
 `hw.acpi.power.acpifanN` sysctl nodes. Neither reading measures RPM.
-Start-up noise, RPM, suspend/resume and long-duration operation remain
-separate checks. This short cycle does not establish acoustic performance.
+The operator later confirmed that the fan stops and reaches full speed
+quickly when it starts, without jerking. This observation applies to the
+installed fan and the off/maximum policy. It does not validate intermediate
+speeds, cold-start behavior or measured noise. RPM, suspend/resume and
+long-duration operation remain separate checks.

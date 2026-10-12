@@ -641,7 +641,8 @@ on every board in the hardware catalog.
   [ACPI fan policy](ember/boot/thermal-fan.md) uses maximum speed only when
   cooling is needed. A physical CM5 started cooling at 50.1 °C and stopped
   at 44.1 °C; the setting survived reboot. This avoids permanent full-speed
-  operation and unstable intermediate speeds. Start-up clicks remain unvalidated.
+  operation and unstable intermediate speeds. The operator reports starts
+  without jerking on this setup.
 - **Raspberry Pi Zero 2 W**: Wi-Fi on its BCM43436 chip.
 - **Headless base on Raspberry Pi 5:** the fork's kernel, matching board
   modules and reduced base userland are built and installed through the

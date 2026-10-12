@@ -55,7 +55,8 @@ The [scan metadata correction](ember/boot/bwfm-scan.md) preserves firmware
 primary channels and unsigned signal-quality ranking. CM5 also provides an
 optional [temperature-controlled off/maximum fan policy](ember/boot/thermal-fan.md).
 A physical heat/cool cycle and persistent settings after reboot passed.
-Intermediate speeds and start-up noise remain unvalidated.
+The operator reports rapid starts without jerking in this mode.
+Intermediate speeds, measured noise and long-duration operation remain unvalidated.
 The [disconnect recovery](ember/boot/bwfm-link-events.md) handles firmware
 events and reconciles a silently lost association with host state. On CM5,
 a reproduced stuck connection recovered automatically, followed by an
