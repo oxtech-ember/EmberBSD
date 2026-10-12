@@ -282,6 +282,9 @@ on every board in the hardware catalog.
   [Current QtTools HTML dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/html.md)
   pass 220 gumbo tests, an upstream UTF-8 test and two CSS regressions on CM5.
   The litehtml patch fixes negative shifts; Qt Assistant and full QtTools remain unaccepted.
+  [KItemModels, ThreadWeaver and KCrash](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/models-and-jobs.md)
+  pass installed CM5 model/QML, worker-queue and crash-recovery checks:
+  500, 77 and 16 assertions respectively, with six upstream model skips.
   Shared-cache recovery and the complete Frameworks runtime remain unaccepted.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
@@ -717,14 +720,17 @@ on every board in the hardware catalog.
   extension loading and 21 selected upstream suites, including TLS and SQLite.
   Meson 1.12.1 and Ninja 1.13.2 cross packages also pass installed C/C++
   builds, Python embedding, incremental/error handling and install-RPATH checks
-  in that VM with explicit current GNU as/ld. The profile prepares matching
+  in that VM with explicit current GNU as/ld. [Perl 5.44](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/perl.md)
+  also cross-packages on Mac and passes 74 selected upstream assertions plus
+  four native XS-extension assertions on CM5. The profile prepares matching
   LLVM/Clang/LLD 23.1.2 with upstream lit. Portability patches, generated-header declarations and
   explicit interpreter/LLVM selection have source checks. Focused native
   macro/selection and GCC16 metadata checks pass. The complete LLVM23 core
   package passes normal package checks and installed C API/bitcode plus four
   default ORC JITLink lifecycles on Zero 3W. Upstream lit passes installed
-  launcher and PASS/XFAIL/FAIL checks in AArch64 UTM. Clang/LLD packages and
-  TinyGo consumer acceptance remains pending; Mesa26 uses the common LLVM23 provider. See the [LLVM family contract](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
+  launcher and PASS/XFAIL/FAIL checks in AArch64 UTM. The complete Clang package
+  passes normal cross-package checks; installed Clang, LLD and
+  TinyGo consumer acceptance remain pending; Mesa26 uses the common LLVM23 provider. See the [LLVM family contract](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
   Ports also owns the [Mac cross-package workflow](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-build-tools/cross):
   pkgconf 3.0.7, GNU M4 1.4.21, Libtool 2.6.2 and
   [Binutils 2.47nb1](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/binutils.md) pass normal package checks
