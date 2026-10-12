@@ -114,6 +114,19 @@ fwheap_dma_valid(const struct sun60i_a733_gpu_dma *dma)
 	    (UINT64_C(1) << 36) - dma->size;
 }
 
+/* The firmware wrapper table is regular memory owned by fwmem; only its
+ * shape matters here, not its cache attributes. */
+static bool
+fwheap_table_valid(const struct sun60i_a733_gpu_dma *dma)
+{
+
+	return dma->loaded && dma->cpu != NULL && dma->map != NULL &&
+	    dma->map->dm_nsegs == 1 &&
+	    dma->map->dm_segs[0].ds_addr == dma->address &&
+	    (dma->address & 4095) == 0 &&
+	    dma->address <= (UINT64_C(1) << 36) - dma->size;
+}
+
 static bool
 fwheap_dma_overlap(const struct sun60i_a733_gpu_dma *a,
     const struct sun60i_a733_gpu_dma *b)
@@ -183,7 +196,7 @@ sun60i_a733_gpu_fwheap_map(struct sun60i_a733_gpu_fwheap *heap,
 	int error;
 
 	if (heap == NULL || mem == NULL || !heap->prepared || heap->mapped ||
-	    !fwheap_dma_valid(&heap->heap) || !fwheap_dma_valid(&mem->table))
+	    !fwheap_dma_valid(&heap->heap) || !fwheap_table_valid(&mem->table))
 		return EINVAL;
 	for (i = 0; i < A733_GPU_FWHEAP_PAGES; i++)
 		pages[i] = heap->heap.address + i * 4096;
