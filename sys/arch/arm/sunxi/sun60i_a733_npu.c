@@ -42,6 +42,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/bus.h>
 #include <sys/device.h>
 #include <sys/conf.h>
+#include <sys/fcntl.h>
 #include <sys/filedesc.h>
 #include <sys/kauth.h>
 #include <sys/mutex.h>
@@ -428,7 +429,6 @@ sun60i_npu_vip_ioctl(dev_t dev, u_long cmd, void *vdata, int flags,
 	uint8_t buf[VIP_DRV_BUF_MAX];
 	void *data;
 	uint32_t bytes;
-	int error;
 
 	if (sc == NULL)
 		return ENXIO;
