@@ -41,6 +41,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/device.h>
+#include <sys/conf.h>
+#include <sys/filedesc.h>
+#include <sys/kauth.h>
 #include <sys/mutex.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
@@ -63,6 +66,61 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define A733_NPU_STAGE_RAW_ID	3
 #define A733_NPU_STAGE_POWER_ID	4
 
+/*
+ * VIPLite dispatch ABI (BSP vip2, dual MIT/GPL): one ioctl number with a
+ * four-word envelope {command, error, bytes, buffer}. Commands 0..29 carry
+ * their own structures; this first native subset covers the handshake a
+ * user-space library performs: INIT, DESTROY, READ_REG, WRITE_REG,
+ * QUERY_DATABASE, QUERY_DRIVER_STATUS.
+ */
+#define VIP_DRV_IOCTL		30000
+#define VIP_DRV_CMD_MAX		29
+#define VIP_DRV_BUF_MAX		1024
+#define VIP_STATUS_SUCCESS	0
+#define VIP_STATUS_IO		(-2)
+#define VIP_STATUS_TIMEOUT	(-1)
+#define VIP_STATUS_INVALID	(-3)
+#define VIP_STATUS_NOTSUP	(-4)
+#define VIP_VERSION		((2u << 16) | (0u << 8) | 0u)
+/* The silicon entry this driver answers for: VIP9000NANODI_PLUS. */
+#define VIP_DB_PID		0x1000003b
+#define VIP_DB_REV		0x9202
+#define VIP_DB_NN_CORES		8
+#define VIP_DB_VIP_CORES	1
+#define VIP_DB_SRAM		(512 * 1024)
+
+struct vip_drv_envelope {
+	uint32_t command;
+	int32_t error;
+	uint32_t bytes;
+	uint64_t buffer;
+};
+struct vip_drv_init {
+	uint32_t video_mem_size;
+	uint32_t version;
+};
+struct vip_drv_reg {
+	uint64_t address_unused;
+	uint32_t offset;
+	uint32_t value;
+};
+struct vip_drv_database {
+	uint32_t logical_vip_count;
+	uint32_t core_count;
+	uint32_t core_id;
+	uint32_t nn_core_count;
+	uint32_t tp_core_count;
+	uint32_t vip_sram_size;
+	uint32_t axi_sram_size;
+	uint32_t axi_bus_width;
+};
+struct vip_drv_driver_status {
+	uint32_t user_signal_count;
+	uint32_t user_commit_count;
+	uint32_t power_state;
+	uint32_t init_counter;
+};
+
 struct sun60i_npu_softc {
 	device_t sc_dev;
 	int sc_phandle;
@@ -73,6 +131,11 @@ struct sun60i_npu_softc {
 	u_int sc_run_result;
 	uint64_t sc_pid, sc_rev, sc_date;
 	bool sc_run_pass;
+	/* VIPLite dispatch state */
+	devmajor_t sc_cmajor;
+	bool sc_cdev_attached;
+	bool sc_vip_initialized;
+	uint32_t sc_vip_processes;
 };
 
 static struct sun60i_npu_softc *sun60i_npu_instance;
@@ -256,6 +319,173 @@ out:
 	mutex_exit(&sc->sc_run_lock);
 }
 
+/* One bounded register access through the powered NPU window. */
+static int
+sun60i_npu_vip_read_reg(struct sun60i_npu_softc *sc,
+    struct vip_drv_reg *reg)
+{
+	bus_space_handle_t bsh;
+	uint32_t value;
+	int error;
+
+	if (reg->offset == 0 || reg->offset > A733_NPU_ID_SIZE - 4 ||
+	    (reg->offset & 3) != 0)
+		return VIP_STATUS_INVALID;
+	error = bus_space_map(sc->sc_bst, A733_NPU_BASE,
+	    A733_NPU_ID_SIZE, 0, &bsh);
+	if (error != 0)
+		return VIP_STATUS_IO;
+	if (bus_space_peek_4(sc->sc_bst, bsh, reg->offset, &value) != 0) {
+		bus_space_unmap(sc->sc_bst, bsh, A733_NPU_ID_SIZE);
+		return VIP_STATUS_IO;
+	}
+	bus_space_unmap(sc->sc_bst, bsh, A733_NPU_ID_SIZE);
+	reg->value = value;
+	return VIP_STATUS_SUCCESS;
+}
+
+static int
+sun60i_npu_vip_write_reg(struct sun60i_npu_softc *sc,
+    const struct vip_drv_reg *reg)
+{
+
+	/* Register writes need the accepted task model; not in this stage. */
+	return VIP_STATUS_NOTSUP;
+}
+
+static int
+sun60i_npu_vip_command(struct sun60i_npu_softc *sc, uint32_t command,
+    void *data, uint32_t bytes)
+{
+	struct vip_drv_init *init;
+	struct vip_drv_database *db;
+	struct vip_drv_driver_status *st;
+
+	switch (command) {
+	case 0:	/* INIT */
+		if (bytes < sizeof(*init))
+			return VIP_STATUS_INVALID;
+		init = data;
+		if (init->version != VIP_VERSION)
+			return VIP_STATUS_NOTSUP;
+		mutex_enter(&sc->sc_run_lock);
+		sc->sc_vip_initialized = true;
+		sc->sc_vip_processes++;
+		mutex_exit(&sc->sc_run_lock);
+		return VIP_STATUS_SUCCESS;
+	case 1:	/* DESTROY */
+		mutex_enter(&sc->sc_run_lock);
+		if (sc->sc_vip_processes > 0)
+			sc->sc_vip_processes--;
+		sc->sc_vip_initialized = sc->sc_vip_processes > 0;
+		mutex_exit(&sc->sc_run_lock);
+		return VIP_STATUS_SUCCESS;
+	case 2:	/* READ_REG */
+		if (bytes < sizeof(struct vip_drv_reg))
+			return VIP_STATUS_INVALID;
+		return sun60i_npu_vip_read_reg(sc, data);
+	case 3:	/* WRITE_REG */
+		if (bytes < sizeof(struct vip_drv_reg))
+			return VIP_STATUS_INVALID;
+		return sun60i_npu_vip_write_reg(sc, data);
+	case 10: /* QUERY_DATABASE */
+		if (bytes < sizeof(*db))
+			return VIP_STATUS_INVALID;
+		db = data;
+		memset(db, 0, sizeof(*db));
+		db->logical_vip_count = 1;
+		db->core_count = VIP_DB_VIP_CORES;
+		db->core_id = VIP_DB_PID;
+		db->nn_core_count = VIP_DB_NN_CORES;
+		db->tp_core_count = 0;
+		db->vip_sram_size = VIP_DB_SRAM;
+		db->axi_sram_size = 0;
+		db->axi_bus_width = 128;
+		return VIP_STATUS_SUCCESS;
+	case 21: /* QUERY_DRIVER_STATUS */
+		if (bytes < sizeof(*st))
+			return VIP_STATUS_INVALID;
+		st = data;
+		memset(st, 0, sizeof(*st));
+		mutex_enter(&sc->sc_run_lock);
+		st->init_counter = sc->sc_vip_processes;
+		st->power_state = sc->sc_vip_initialized ? 1 : 0;
+		mutex_exit(&sc->sc_run_lock);
+		return VIP_STATUS_SUCCESS;
+	default:
+		/* Memory, cache, task and wrap commands come with the
+		 * full engine bring-up; fail closed until then. */
+		return VIP_STATUS_NOTSUP;
+	}
+}
+
+static int
+sun60i_npu_vip_ioctl(dev_t dev, u_long cmd, void *vdata, int flags,
+    struct lwp *l)
+{
+	struct sun60i_npu_softc *sc = sun60i_npu_instance;
+	struct vip_drv_envelope *env = vdata;
+	uint8_t buf[VIP_DRV_BUF_MAX];
+	void *data;
+	uint32_t bytes;
+	int error;
+
+	if (sc == NULL)
+		return ENXIO;
+	if (cmd != VIP_DRV_IOCTL)
+		return ENOTTY;
+	if ((flags & FKIOCTL) == 0) {
+		error = kauth_authorize_device_passthru(
+		    kauth_cred_get(), KAUTH_REQ_DEVICE_RAWIO_PASSTHRW,
+            NULL, NULL);
+		if (error != 0)
+			return error;
+	}
+	if (env->command > VIP_DRV_CMD_MAX || env->bytes > VIP_DRV_BUF_MAX)
+		return EINVAL;
+	bytes = env->bytes;
+	data = bytes > 0 ? buf : NULL;
+	if (bytes > 0) {
+		if (copyin((void *)(uintptr_t)env->buffer, buf, bytes) != 0)
+			return EFAULT;
+	}
+	env->error = sun60i_npu_vip_command(sc, env->command, data, bytes);
+	if (bytes > 0 && env->error == VIP_STATUS_SUCCESS) {
+		if (copyout(buf, (void *)(uintptr_t)env->buffer, bytes) != 0)
+			return EFAULT;
+	}
+	return 0;
+}
+
+static int
+sun60i_npu_vip_open(dev_t dev, int flags, int fmt, struct lwp *l)
+{
+
+	return sun60i_npu_instance == NULL ? ENXIO : 0;
+}
+
+static int
+sun60i_npu_vip_close(dev_t dev, int flags, int fmt, struct lwp *l)
+{
+
+	return 0;
+}
+
+const struct cdevsw sun60i_npu_cdevsw = {
+	.d_open = sun60i_npu_vip_open,
+	.d_close = sun60i_npu_vip_close,
+	.d_read = noread,
+	.d_write = nowrite,
+	.d_ioctl = sun60i_npu_vip_ioctl,
+	.d_stop = nostop,
+	.d_tty = notty,
+	.d_poll = nopoll,
+	.d_mmap = nommap,
+	.d_kqfilter = nokqfilter,
+	.d_discard = nodiscard,
+	.d_flag = D_OTHER
+};
+
 static int
 sun60i_npu_sysctl_stage(SYSCTLFN_ARGS)
 {
@@ -311,6 +541,12 @@ sun60i_npu_sysctl_setup(struct sun60i_npu_softc *sc)
 		    NULL, 0, (int64_t *)&sc->sc_rev, 0,
 		    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create revision node\n");
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_INT, "vipmajor",
+		    SYSCTL_DESCR("character device major of /dev/vipcore"),
+		    NULL, 0, &sc->sc_cmajor, 0,
+		    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create vipmajor node\n");
 }
 
 static int
@@ -339,8 +575,15 @@ sun60i_npu_attach(device_t parent, device_t self, void *aux)
 	    addr != A733_NPU_BASE || size < A733_NPU_ID_SIZE)
 		aprint_error_dev(self, "unexpected register window\n");
 	sun60i_npu_sysctl_setup(sc);
+	if (devsw_attach("vipcore", NULL, NULL, &sun60i_npu_cdevsw,
+	    &sc->sc_cmajor) != 0) {
+		aprint_error_dev(self, "cannot attach vipcore devsw\n");
+	} else {
+		sc->sc_cdev_attached = true;
+		aprint_normal(": A733 NPU, /dev/vipcore major %d\n",
+		    sc->sc_cmajor);
+	}
 	aprint_naive("\n");
-	aprint_normal(": A733 NPU staged identification\n");
 }
 
 CFATTACH_DECL_NEW(sun60i_a733_npu, sizeof(struct sun60i_npu_softc),
