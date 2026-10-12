@@ -104,7 +104,7 @@ The firmware key interface has no initial IGTK packet-number field.
 Nonzero initial IPNs are rejected; networks or rekeys requiring them are
 not supported yet. Protected-management replay/forgery injection and a
 long-duration run remain unverified. This AIC path does not implement
-802.11r FT, 802.11v BSS transition management, 802.11ac/ax or host AP mode.
+802.11r FT, 802.11v BSS transition management, 802.11ax or host AP mode.\nVHT80 capability setup has source tests; physical 802.11ac acceptance is pending.
 The [VHT80 and roaming audit](../boot/aicwf-vht.md) separates radio capabilities from driver support.
 CM5 bwfm results do not validate these features on AIC8800D80.
 

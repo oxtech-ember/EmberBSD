@@ -68,6 +68,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/firmload.h>
 #include <dev/ic/fullmac_sae.h>
 #include <dev/sdmmc/if_aicwf_sae.h>
+#include <dev/sdmmc/if_aicwf_vht.h>
 #include <dev/sdmmc/sdmmcchip.h>
 #include <dev/sdmmc/sdmmcvar.h>
 
@@ -239,24 +240,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_SEQ_SUB(a, b)		(((a) - (b)) & AICWF_SEQ_MASK)
 #define	AICWF_SEQ_BEFORE(a, b)		(AICWF_SEQ_SUB(a, b) >= 0x800)
 
-/* ME_CONFIG_REQ: what the station announces. */
-#define	AICWF_ME_CONFIG_LEN		112
-#define	AICWF_ME_CONFIG_HT_INFO		0	/* 16 bits */
-#define	AICWF_ME_CONFIG_HT_AMPDU	2
-#define	AICWF_ME_CONFIG_HT_MCS		3	/* 16 bytes */
-#define	AICWF_ME_CONFIG_TX_LIFETIME	100	/* 16 bits, TU */
-#define	AICWF_ME_CONFIG_BW_MAX		102
-#define	AICWF_ME_CONFIG_HT_SUPP		103
-/*
- * LDPC, 40 MHz channels, no SM power save, short guard interval at
- * either width, STBC receive.
- */
-#define	AICWF_HT_INFO			\
-	(0x0001 | 0x0002 | 0x000c | 0x0020 | 0x0040 | 0x0100)
-#define	AICWF_BW_40			1
-#define	AICWF_HT_AMPDU			0x1f	/* 64 KiB, 16 us apart */
-#define	AICWF_TX_LIFETIME		100
-
 #define	AICWF_SCAN_INTERVAL_MS		3000
 
 /* A channel as the firmware describes it: 6 bytes. */
@@ -393,6 +376,7 @@ struct aicwf_softc {
 
 	uint8_t			sc_enaddr[ETHER_ADDR_LEN];
 	bool			sc_5ghz;
+	uint32_t		sc_fw_version;
 	uint8_t			sc_vif;
 
 	struct ieee80211com	sc_ic;
@@ -1157,6 +1141,7 @@ aicwf_fw_init(struct aicwf_softc *sc)
 	    le32dec(cfm + 12), le32dec(cfm + 16), le32dec(cfm + 20),
 	    le16dec(cfm + 24), cfm[26]);
 
+	sc->sc_fw_version = le32dec(cfm);
 	if (le32dec(cfm) == 0x06090101 &&
 	    (le32dec(cfm + 20) & AICWF_FEATURE_MFP) != 0) {
 		sc->sc_sae_caps = IEEE80211_SAE_CAP_EXTERNAL |
@@ -1164,19 +1149,11 @@ aicwf_fw_init(struct aicwf_softc *sc)
 		aprint_normal_dev(sc->sc_dev, "external SAE and firmware PMF available\n");
 	}
 
-	/*
-	 * Capabilities: 802.11n with one stream in channels up to 40 MHz
-	 * wide. The firmware builds the association request from them.
-	 * 802.11ac is left out: with it announced the station associates
-	 * and then exchanges only broadcast frames with the access point.
-	 */
-	memset(req, 0, sizeof(req));
-	le16enc(req + AICWF_ME_CONFIG_HT_INFO, AICWF_HT_INFO);
-	req[AICWF_ME_CONFIG_HT_AMPDU] = AICWF_HT_AMPDU;
-	req[AICWF_ME_CONFIG_HT_MCS] = 0xff;		/* MCS 0-7 */
-	le16enc(req + AICWF_ME_CONFIG_TX_LIFETIME, AICWF_TX_LIFETIME);
-	req[AICWF_ME_CONFIG_HT_SUPP] = 1;
-	req[AICWF_ME_CONFIG_BW_MAX] = AICWF_BW_40;
+	/* Firmware builds association capabilities from this bounded request. */
+	if (aicwf_me_config_build(req, le32dec(cfm), le32dec(cfm + 12),
+	    le32dec(cfm + 20), sc->sc_5ghz))
+		aprint_normal_dev(sc->sc_dev,
+		    "VHT enabled: 1 stream, MCS 0-9, maximum width 80 MHz\n");
 	error = aicwf_cmd(sc, AICWF_ME_CONFIG_REQ, req, AICWF_ME_CONFIG_LEN,
 	    AICWF_ME_CONFIG_CFM, NULL, 0);
 	if (error != 0)
@@ -1727,6 +1704,39 @@ aicwf_connect(struct aicwf_softc *sc)
 	}
 }
 
+/* Print only protocol metadata from the successful current-peer indication. */
+static void
+aicwf_assoc_report(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
+{
+	struct aicwf_assoc_info info;
+
+	if (sc->sc_fw_version != 0x06090101 || len < 13 ||
+	    ind[9] != sc->sc_vif ||
+	    !IEEE80211_ADDR_EQ(ind + 2, sc->sc_ic.ic_bss->ni_bssid))
+		return;
+	if (!aicwf_assoc_parse(ind, len, &info)) {
+		device_printf(sc->sc_dev, "association metadata unavailable: len %zu\n",
+		    len);
+		return;
+	}
+	device_printf(sc->sc_dev,
+	    "association VHT IEs: request %u cap 0x%08x RX/TX 0x%04x/0x%04x; "
+	    "response %u cap 0x%08x RX/TX 0x%04x/0x%04x\n",
+	    info.req.vht, info.req.cap, info.req.rx_map, info.req.tx_map,
+	    info.rsp.vht, info.rsp.cap, info.rsp.rx_map, info.rsp.tx_map);
+	if (info.rsp.operation)
+		device_printf(sc->sc_dev,
+		    "association VHT operation: width %u, center segments %u/%u\n",
+		    info.rsp.op_width, info.rsp.seg0, info.rsp.seg1);
+	if (info.channel)
+		device_printf(sc->sc_dev,
+		    "association firmware channel: band %u, primary %u MHz, "
+		    "width code %u, centers %u/%u MHz\n",
+		    info.band, info.primary, info.width, info.center1, info.center2);
+	else
+		device_printf(sc->sc_dev, "association firmware channel unavailable\n");
+}
+
 static void
 aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 {
@@ -1750,6 +1760,7 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 		return;
 	}
 	if (status == 0) {
+		aicwf_assoc_report(sc, ind, len);
 		sc->sc_ap = ind[10];
 		sc->sc_qos = ind[12] != 0;
 		sc->sc_connected = true;

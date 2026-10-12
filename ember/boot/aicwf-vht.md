@@ -8,7 +8,7 @@ Hardware capability, firmware capability and accepted driver behavior are separa
 |---|---|---|
 | Radio | AIC8800D80 supports one spatial stream and channels up to 80 MHz | Verify the selected board, antenna and regulatory channels |
 | Firmware | A saved Zero 3W report has VHT support, one stream and an 80 MHz PHY limit | This does not establish the negotiated association width |
-| `aicwf` PHY setup | `ME_CONFIG` enables HT MCS 0-7 and limits width to 40 MHz; VHT is disabled | Implement and accept complete VHT capabilities and data transfer |
+| `aicwf` PHY setup | `ME_CONFIG` enables VHT MCS 0-9, one stream and at most 80 MHz for the checked firmware ABI | Accept negotiated capabilities and bidirectional data transfer on hardware |
 | 802.11k | Full host Neighbor Report exchange is not available | Association capabilities, protected actions and complete station transport |
 | 802.11v | Reconnection after loss is not BSS Transition Management | Candidate handling, connected scans, real TX completion and directed transitions |
 | WPA3/PMF | SAE/H2E, required PMF and protected SA Query have separate physical checks | Repeat those checks with VHT and the completed k/v path |
@@ -57,6 +57,19 @@ The pinned ABI places IE lengths at 14 and 16, IE bytes at 20,
 width at 826 and the first center frequency at 828.
 Validate indication lengths before using any fixed offset or IE length.
 Expose actual association information before treating an AP status label as proof.
+
+## VHT implementation
+
+The driver gates VHT80 on firmware `0x06090101`, VHT feature bits, PHY bandwidth
+and spatial-stream limits, and the available 5 GHz band. Other combinations
+retain the existing HT40 request. Successful connection indications report
+bounded VHT IEs and firmware channel metadata. Capability rates are not
+presented as negotiated link rates. The net80211 channel ABI is unchanged.
+
+The production builder and decoder pass 1703 ASan/UBSan checks.
+The management-frame suite still passes 79 checks. A separate source review
+checked the request and indication layouts against the pinned vendor ABI.
+These software results do not establish VHT80 data transfer on a board.
 
 ## Software validation
 

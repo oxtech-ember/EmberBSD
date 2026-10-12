@@ -35,6 +35,7 @@ sh "$src/ember/tests/bwfm-link-events.sh" "$src"
 sh "$src/ember/tests/bwfm-link-check.sh" "$src"
 sh "$src/ember/tests/bwfm-sta.sh" "$src"
 sh "$src/ember/tests/aicwf-sta.sh"
+sh "$src/ember/tests/aicwf-vht.sh"
 sh "$src/ember/tests/bwfm-scan-padding.sh" "$src"
 sh "$src/ember/tests/bwfm-key-epoch.sh" "$src"
 if [ "$mode" = all ]; then

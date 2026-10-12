@@ -48,14 +48,14 @@ test "$1" = "$TEST_ROOT/src"
 test "${FAIL_AT:-}" != gpu-contract
 SH
 done
-for contract in bwfm-link-events bwfm-link-check bwfm-sta aicwf-sta \
+for contract in bwfm-link-events bwfm-link-check bwfm-sta aicwf-sta aicwf-vht \
     bwfm-scan-padding bwfm-key-epoch; do
 cat > "$work/src/ember/tests/$contract.sh" <<'SH'
 #!/bin/sh
 set -eu
 echo "wifi-contract ${0##*/} $*" >> "$TEST_LOG"
 case ${0##*/} in
-    aicwf-sta.sh) test "$#" -eq 0;;
+    aicwf-sta.sh|aicwf-vht.sh) test "$#" -eq 0;;
     *) test "$#" -eq 1; test "$1" = "$TEST_ROOT/src";;
 esac
 if [ "${FAIL_AT:-}" = wifi-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; then
@@ -181,7 +181,7 @@ check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
     test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 15
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 3
-    test "$(grep -c '^wifi-contract ' "$TEST_LOG")" -eq 6
+    test "$(grep -c '^wifi-contract ' "$TEST_LOG")" -eq 7
 }
 export TEST_OUT="$work/cross"
 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
@@ -200,7 +200,7 @@ sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
 if_cemac_acpi.kmod bcm2712btcom.kmod rp1wmcodec.kmod rpi5button.kmod'
 for failure in tools module cpp dtb contract gpu-contract ruby-contract \
     bcm2712-v3d-prime-contract.rb wifi-contract bwfm-link-check.sh \
-    aicwf-sta.sh publish; do
+    aicwf-sta.sh aicwf-vht.sh publish; do
     : > "$TEST_LOG"
     for output in $outputs; do
         printf stale > "$TEST_OUT/$output"
@@ -211,11 +211,13 @@ for failure in tools module cpp dtb contract gpu-contract ruby-contract \
     for output in $outputs; do
         test ! -e "$TEST_OUT/$output"
     done
-    if [ "$failure" = aicwf-sta.sh ]; then
-        grep -q '^wifi-contract aicwf-sta.sh $' "$TEST_LOG"
-        grep -q '^injected contract failure: aicwf-sta.sh$' "$TEST_OUT/contracts.log"
+    case "$failure" in
+    aicwf-sta.sh|aicwf-vht.sh)
+        grep -Fq "wifi-contract $failure " "$TEST_LOG"
+        grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
         ! grep -q '^wifi-contract bwfm-scan-padding.sh ' "$TEST_LOG"
-    fi
+        ;;
+    esac
 done
 : > "$TEST_LOG"
 TEST_HOST=NetBSD EMBER_EXTERNAL_TOOLCHAIN=/cross/gcc16 \

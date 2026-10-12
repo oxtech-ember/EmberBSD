@@ -37,7 +37,7 @@ The following accessory and protocol limits also apply:
 | ELM327 | Testing with a physical adapter is still pending |
 | BLE | Not implemented in the added Bluetooth management tools |
 | CM5: WPA3-Personal | SAE group 19/H2E, required PMF, file transfer, reconnect, wrong-password rejection and WPA2 regression pass on CYW43455 7.45.265; [configuration and limits](ember/boot/bwfm-sae.md) |
-| Zero 3W: WPA3-Personal | AIC8800D80 SAE group 19/H2E, required PMF, protected SA Query and automatic recovery after AP removal are physically checked; nonzero initial IGTK IPN remains unsupported ([configuration and limits](ember/boot/aicwf-sae.md)); VHT80 and complete k/v remain [driver work](ember/boot/aicwf-vht.md) |
+| Zero 3W: WPA3-Personal | AIC8800D80 SAE group 19/H2E, required PMF, protected SA Query and automatic recovery after AP removal are physically checked; nonzero initial IGTK IPN remains unsupported ([configuration and limits](ember/boot/aicwf-sae.md)); VHT80 setup has source tests but needs board acceptance; complete k/v remains [driver work](ember/boot/aicwf-vht.md) |
 | CAN FD | Raw sockets, virtual canlo interfaces and canconfig mode control pass native rump checks; physical drivers and data-phase timing are not implemented ([guide](ember/can/README.md)) |
 
 The `bwfm` driver leaves roaming and WPA authentication to the host.

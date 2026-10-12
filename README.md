@@ -657,7 +657,7 @@ on every board in the hardware catalog.
   automatic reconnection and an 8 MiB transfer each way; see the
   [guide](ember/boot/aicwf-sae.md) and
   [hardware receipt](ember/boards/orange-pi-zero-3w.md#protected-association-recovery-2026-10-09).
-  The [VHT80 and roaming status](ember/boot/aicwf-vht.md) records the remaining
+  VHT80 capability setup and bounded association diagnostics pass source tests.\n  The [VHT80 and roaming status](ember/boot/aicwf-vht.md) records the remaining
   work for `11ac/k/v, 1x1, 80 MHz`; radio capability alone does not complete this path.
 - **Consistent Wi-Fi discovery and CM5 cooling:** `bwfm` retains firmware
   scan channels and signal ranking across both bands. The configurable
