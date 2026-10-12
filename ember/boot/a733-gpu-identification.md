@@ -273,30 +273,73 @@ nodes - so their "provider stalls" were that bug, not hardware.
 
 ### Runtime staged diagnostics with a watchdog bound
 
-Normal board DTBs never run the experiment at boot; the same pieces are
-available on a live system, one explicit step at a time. The driver creates
-`hw.sun60igpu0.stage` (write 1..5), `hw.sun60igpu0.result` (errno of the
-last attempt) and `hw.sun60igpu0.pbvnc`:
+Normal board DTBs do not run this experiment at boot. The live driver exposes
+`hw.sun60igpuid0.stage`, `result`, `pbvnc`, `clock_source` and `clock_state`.
+Run one stage per sysctl write. Each stage runs once in the following order:
 
 | Stage | Action |
 | --- | --- |
-| 1 | supply/TOP checks, PCK and CCU reservations, retention, CCU preparation, strict 400/200 MHz readiness |
-| 2 | the fresh GPU_CORE static ON request of `sun60i_a733_pck_gpu_request_on` |
-| 3 | the read-only CORE ON/Q waiter |
-| 4 | the bounded TOP-only identification peeks |
-| 5 | the strict PBVNC read, only after stage 3 confirmed CORE ON |
+| 0 | Test the sysctl path without hardware access; this does not reset the sequence |
+| 1 | Check DCDC4 at 800000 microvolts |
+| 2 | Check GPU_TOP |
+| 3 | Reserve GPU power domains |
+| 4 | Reserve GPU clocks |
+| 5 | Retain power ownership until reboot |
+| 6 | Prepare the selected GPU clock |
+| 7 | Inspect clocks and cache the complete result in `clock_state` |
+| 8 | Reissue the static GPU_CORE ON request |
+| 9 | Wait for CORE ON/Q readiness |
+| 10 | Read TOP-only CORE_ID and PBVNC after supply/TOP/clock checks |
+| 11 | Read strict PBVNC, only after stage 9 confirmed CORE ON |
 
-Stages run strictly in order, once per boot; a result of 0 or ETIMEDOUT
-lets the sequence continue, any other value blocks it. Each stage prints
-`runtime stage N: start` and `runtime stage N: <errno>` to the log.
+`result` records the last errno. A bounded timeout permits the next stage;
+other failures stop the sequence. Reading these sysctls accesses cached data,
+not GPU registers. The CORE_ID failure path unmaps immediately. It does not
+read PBVNC or print an uninitialized CORE_ID after a failed first read.
 
-Because a stalled bus transaction cannot be bounded in software, arm the
-hardware watchdog in external-tickle mode around every risky write:
-`wdogctl -e -p 16 sunxiwdt0; sysctl -w hw.sun60igpu0.stage=N; wdogctl -d`.
-If the stage stalls the machine, the watchdog resets the board, the normal
-DTB boots, and the invoking transcript names the stalled stage. The reset
-recovery itself was verified physically on 11 October 2026 by arming the
-watchdog and letting it expire.
+A stalled bus transaction cannot be bounded in software. Arm the hardware
+watchdog in external-tickle mode around each hardware stage:
+
+```sh
+wdogctl -e -p 16 sunxiwdt0
+sysctl -w hw.sun60igpuid0.stage=1
+wdogctl -d
+sysctl hw.sun60igpuid0.result
+```
+
+Save and sync a transcript before each stage. Check that no other test uses
+the watchdog. After a stall it resets the board into the normal DTB. This
+reset recovery was verified on 11 October 2026. No risky stage runs on reboot
+unless an operator separately installed an automatic test script.
+
+### Optional dedicated PLL experiment
+
+Before stage 1, set `hw.sun60igpuid0.clock_source=1` to select PLL_GPU0 at
+600 MHz for stage 6. The default `0` preserves PERIPH0 at 400 MHz. Selection
+changes after the sequence starts return `EBUSY`; stage 0 cannot unlock it.
+This selection does not change the boot-time DT experiment.
+
+The new provider API starts only a stopped, reserved PLL. It rejects running
+or unstable state, SDM and automatic or disabled post-PLL gating. It preserves
+reserved register fields. With the observed 24 MHz PLL_REF, N=75 and M=3 give
+600 MHz. The consumer rechecks the 800000-microvolt supply before preparation.
+The provider enables LDO, PLL and lock detection in the BSP order. Three
+consecutive lock samples and a settling interval precede output enable.
+Readback, UPDATE completion and a real CCU observation must confirm 600/200 MHz.
+Every failure after the first attempted write retains ownership until reboot.
+PLL_REF, PLL_PERIPH0, PLL_NPU, PPU policy and voltage are not changed.
+
+This is an explicit hardware experiment, not GPU acceleration. The pinned BSP
+always enables the dedicated PLL, but selects PERIPH0 for rates up to 800 MHz.
+The new path tests one remaining clock hypothesis. It does not establish that
+PLL selection causes the existing CORE timeout. Do not infer readiness from
+a successful clock operation or substitute an expected GPU identity.
+
+The register sequence comes from Orange Pi BSP `2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f`,
+`bsp/drivers/clk/sunxi-ng/ccu-sun60iw2.c`, `ccu_gate.c` and `ccu_common.c`.
+A733 User Manual V1.00 sections 4.1.6.16 and 4.1.6.252 define the PLL and
+manual post-PLL gate fields. The implementation is new BSD-2-Clause code,
+with AI assistance. The upstream sources retain their licenses and authorship.
 
 ## Source audit: remaining cold-start boundary
 

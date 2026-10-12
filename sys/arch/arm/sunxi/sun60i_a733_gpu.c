@@ -73,6 +73,8 @@ struct sun60i_gpu_softc {
 	const char *sc_stage;
 	uint64_t sc_bvnc;
 	u_int sc_core_hz, sc_bus_hz, sc_uvol;
+	u_int sc_clock_source;	/* runtime: 0 PERIPH0/400, 1 PLL_GPU0/600 */
+	char sc_clock_state[160];	/* last complete stage-7 observation */
 	bool sc_have_id, sc_probed, sc_retained;
 	kmutex_t sc_run_lock;
 	u_int sc_run_stage;	/* last completed stage */
@@ -206,7 +208,9 @@ sun60i_gpu_top_identify(struct sun60i_gpu_softc *sc, bus_addr_t addr,
 	    sc->sc_uvol != 800000 ||
 	    fdtbus_powerdomain_is_enabled_index(sc->sc_phandle, 0, &enabled) != 0 ||
 	    !enabled || sun60i_a733_ccu_gpu_ready(gpu, &core_hz, &bus_hz) != 0 ||
-	    core_hz != 400000000 || bus_hz != 200000000) {
+	    (core_hz != 400000000 &&
+	    !(quiet && sc->sc_clock_source == 1 && core_hz == 600000000)) ||
+	    bus_hz != 200000000) {
 		if (!quiet) aprint_normal_dev(sc->sc_dev, "TOP-only identification "
 		    "skipped: supply, GPU_TOP or clock readiness changed\n");
 		return;
@@ -216,8 +220,12 @@ sun60i_gpu_top_identify(struct sun60i_gpu_softc *sc, bus_addr_t addr,
 		    "unavailable: mapping\n");
 		return;
 	}
-	if (bus_space_peek_4(sc->sc_bst, bsh, A733_GPU_CORE_ID, &core) != 0)
-		if (!quiet) aprint_normal_dev(sc->sc_dev, "TOP-only CORE_ID read failed\n");
+	if (bus_space_peek_4(sc->sc_bst, bsh, A733_GPU_CORE_ID, &core) != 0) {
+		if (!quiet)
+			aprint_normal_dev(sc->sc_dev, "TOP-only CORE_ID read failed\n");
+		bus_space_unmap(sc->sc_bst, bsh, A733_GPU_ID_SIZE);
+		return;
+	}
 	if (bus_space_peek_8(sc->sc_bst, bsh, A733_GPU_PBVNC, &id) != 0) {
 		if (!quiet)
 			aprint_normal_dev(sc->sc_dev,
@@ -426,7 +434,14 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 			error = ENXIO;
 			break;
 		}
-		error = sun60i_a733_ccu_gpu_prepare(gpu, sc, &retained);
+		if (sc->sc_clock_source == 1) {
+			error = sun60i_gpu_runtime_supply_top(sc);
+			if (error == 0)
+				error = sun60i_a733_ccu_gpu_prepare_pll(gpu, sc,
+				    &retained);
+		} else {
+			error = sun60i_a733_ccu_gpu_prepare(gpu, sc, &retained);
+		}
 		clk_put(gpu);
 		break;
 	}
@@ -443,6 +458,13 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 			error = state.readiness_error;
 			sc->sc_core_hz = state.core_hz;
 			sc->sc_bus_hz = state.bus_hz;
+			snprintf(sc->sc_clock_state, sizeof(sc->sc_clock_state),
+			    "error=%d reason=%u pll=0x%08x module=0x%08x "
+			    "bus=0x%08x core_hz=%u bus_hz=%u", error,
+			    (u_int)state.reason, state.sample[0][A733_GPU_PLL],
+			    state.sample[0][A733_GPU_MODULE],
+			    state.sample[0][A733_GPU_BUS],
+			    state.core_hz, state.bus_hz);
 		}
 		clk_put(gpu);
 		break;
@@ -471,6 +493,41 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 out:
 	sc->sc_run_result = error;
 	mutex_exit(&sc->sc_run_lock);
+}
+
+/* Select the experiment before it acquires any hardware resource. */
+static int
+sun60i_gpu_clock_source(struct sun60i_gpu_softc *sc, u_int source)
+{
+	int error = 0;
+
+	mutex_enter(&sc->sc_run_lock);
+	if (source > 1)
+		error = EINVAL;
+	else if (sc->sc_run_stage != 0 || sc->sc_retained)
+		error = EBUSY;
+	else
+		sc->sc_clock_source = source;
+	mutex_exit(&sc->sc_run_lock);
+	return error;
+}
+
+static int
+sun60i_gpu_sysctl_clock_source(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct sun60i_gpu_softc *sc = sun60i_gpu_instance;
+	u_int value;
+	int error;
+
+	if (sc == NULL)
+		return ENXIO;
+	value = sc->sc_clock_source;
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	return sun60i_gpu_clock_source(sc, value);
 }
 
 static int
@@ -510,10 +567,22 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 	}
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
 	    CTLTYPE_INT, "stage",
-		    SYSCTL_DESCR("run runtime diagnostic stage 1..5"),
+		    SYSCTL_DESCR("run runtime diagnostic stage 0..11"),
 		    sun60i_gpu_sysctl_stage, 0, NULL, 0,
 		    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create stage node\n");
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
+	    CTLTYPE_INT, "clock_source",
+	    SYSCTL_DESCR("runtime clock: 0 PERIPH0 400MHz, 1 PLL_GPU0 600MHz"),
+	    sun60i_gpu_sysctl_clock_source, 0, NULL, 0,
+	    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create clock source node\n");
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRING, "clock_state",
+	    SYSCTL_DESCR("cached stage-7 clock observation; no register access"),
+	    NULL, 0, sc->sc_clock_state, sizeof(sc->sc_clock_state),
+	    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create clock state node\n");
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_INT, "result",
 		    SYSCTL_DESCR("errno of the last runtime stage"),

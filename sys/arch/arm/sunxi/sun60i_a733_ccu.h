@@ -77,6 +77,8 @@ int	sun60i_a733_ccu_gpu_inspect(struct clk *,
 int	sun60i_a733_ccu_gpu_reserve(struct clk *, const void *);
 /* Local writes, then bounded UPDATE completion; timeout retains ownership. */
 int	sun60i_a733_ccu_gpu_prepare(struct clk *, const void *, bool *);
+/* Opt-in PLL600 cold start; caller must first establish its operating voltage. */
+int	sun60i_a733_ccu_gpu_prepare_pll(struct clk *, const void *, bool *);
 int	sun60i_a733_ccu_npu_prepare(struct clk *, const void *, bool *);
 int	sun60i_a733_ccu_gpu_release(struct clk *, const void *);
 

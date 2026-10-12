@@ -375,6 +375,7 @@ static int sysctl_createv_stub(void *first, ...) { (void)first; return 0; }
 #define CTLTYPE_NODE 1
 #define CTLTYPE_INT 2
 #define CTLTYPE_QUAD 3
+#define CTLTYPE_STRING 5
 #define CTLFLAG_READWRITE 4
 #define CTLFLAG_READONLY 8
 #define CTL_HW 16
@@ -388,6 +389,7 @@ static void mutex_init(kmutex_t *m, int type, int ipl) { *m = 1; }
 #include "autoconf.h"
 static int prepare_error, reserve_error, wait_error, retain_error;
 static int request_error;
+static unsigned pll_prepares;
 static int power_reserve_error, second_wait_error, final_ready_error;static unsigned prepares, reserves, waits, retains, unreserves, requests;
 int sun60i_a733_ccu_gpu_reserve(struct clk *c, const void *owner)
 { reserves++; record('C'); return reserve_error; }
@@ -407,6 +409,8 @@ int sun60i_a733_ccu_gpu_prepare(struct clk *c, const void *owner, bool *held)
 	preparation_timed_out = prepare_error == ETIMEDOUT;
 	return prepare_error;
 }
+int sun60i_a733_ccu_gpu_prepare_pll(struct clk *c, const void *owner, bool *held)
+{ pll_prepares++; record('L'); *held = true; return prepare_error; }
 int sun60i_a733_pck_gpu_wait(int node, const void *owner, bool quiet)
 { waits++; record('K'); return waits == 2 ? second_wait_error : wait_error; }
 int sun60i_a733_ccu_gpu_ready(struct clk *c, u_int *core, u_int *bus)
@@ -440,6 +444,7 @@ reset(void)
 	observe_len = prepare_len = request_len = -1;
 	prepare_error = reserve_error = wait_error = retain_error = 0;
 	request_error = 0;
+	pll_prepares = 0;
 	power_reserve_error = second_wait_error = final_ready_error = 0;
 	inspect_calls = 0; terminal_error = initial_error = 0;
 	preparation_timed_out = false;
@@ -792,7 +797,7 @@ test_domain_request(void)
 	reset(); prepare_len = request_len = 0; request_error = EIO;
 	coreid_peek_error = 1; core_id = 0x10300;
 	CHECK(sun60i_gpu_identify(&sc) == EIO);
-	CHECK(sc.sc_have_id && sc.sc_bvnc == pbvnc);
+	CHECK(!sc.sc_have_id && peeks == 0 && unmaps == 1);
 	CHECK(strstr(normal_output, "TOP-only CORE_ID read failed") != NULL);
 	CHECK(strstr(normal_output, "CORE_ID 0x00000000") == NULL);
 	reset(); prepare_len = request_len = 0; request_error = EIO;
@@ -885,6 +890,41 @@ test_runtime_stages(void)
 	CHECK(sc.sc_run_result == EBUSY && sc.sc_run_stage == 1);
 	sun60i_gpu_run_stage(&sc, 2);
 	CHECK(sc.sc_run_result == EINVAL);
+	/* Clock selection is explicit and cannot change an acquired sequence. */
+	reset();
+	CHECK(sc.sc_clock_source == 0);
+	CHECK(sun60i_gpu_clock_source(&sc, 2) == EINVAL);
+	CHECK(sc.sc_clock_source == 0 && nevents == 0);
+	CHECK(sun60i_gpu_clock_source(&sc, 1) == 0);
+	CHECK(sc.sc_clock_source == 1 && nevents == 0);
+	for (stage = 1; stage <= 5; stage++)
+		sun60i_gpu_run_stage(&sc, stage);
+	CHECK(sun60i_gpu_clock_source(&sc, 0) == EBUSY);
+	sun60i_gpu_run_stage(&sc, 0);
+	CHECK(sun60i_gpu_clock_source(&sc, 0) == EBUSY);
+	sun60i_gpu_run_stage(&sc, 6);
+	CHECK(sc.sc_run_result == 0 && pll_prepares == 1 && prepares == 0);
+	clock_observation.core_hz = core_hz = 600000000;
+	clock_observation.bus_hz = bus_hz = 200000000;
+	clock_observation.sample[0][A733_GPU_PLL] = 0xf9204a00;
+	sun60i_gpu_run_stage(&sc, 7);
+	CHECK(sc.sc_run_result == 0 && sc.sc_core_hz == 600000000);
+	CHECK(strstr(sc.sc_clock_state, "pll=0xf9204a00") != NULL);
+	CHECK(strstr(sc.sc_clock_state, "core_hz=600000000") != NULL);
+	for (stage = 8; stage <= 11; stage++)
+		sun60i_gpu_run_stage(&sc, stage);
+	CHECK(sc.sc_run_result == 0 && sc.sc_have_id && sc.sc_bvnc == pbvnc);
+	/* The PLL experiment rechecks voltage immediately before its writes. */
+	reset();
+	CHECK(sun60i_gpu_clock_source(&sc, 1) == 0);
+	for (stage = 1; stage <= 5; stage++)
+		sun60i_gpu_run_stage(&sc, stage);
+	voltage = 810000;
+	sun60i_gpu_run_stage(&sc, 6);
+	CHECK(sc.sc_run_result == EOPNOTSUPP && pll_prepares == 0);
+	CHECK(!sc.sc_run_pass && maps == 0);
+	reset(); sc.sc_retained = true;
+	CHECK(sun60i_gpu_clock_source(&sc, 1) == EBUSY);
 	printf("PASS: %u runtime GPU stage checks\n", checks - start);
 }
 
