@@ -113,9 +113,11 @@ struct sun60i_gpu_softc {
 	char sc_heap_state[512];	/* cached stage-19 heap mapping */
 	char sc_vm_state[512];		/* cached stage-20 VM preparation */
 	char sc_kick_state[1024];	/* cached stage-21 submission */
+	char sc_trace_state[1024];	/* cached stage-21 firmware trace */
 	struct sun60i_a733_gpu_fwheap *sc_fwheap;
 	struct sun60i_a733_gpu_fwvm *sc_fwvm;
 	struct sun60i_a733_gpu_fwprobe_result sc_heap_result, sc_kick_result;
+	struct sun60i_a733_gpu_fwprobe_result sc_trace_result;
 	bool sc_have_id, sc_probed, sc_retained, sc_compute_done;
 	bool sc_heap_done, sc_vm_done, sc_kick_done;
 	kmutex_t sc_run_lock;
@@ -1262,6 +1264,7 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 	bus_size_t size;
 	uint32_t read_off = 0, write_off = 0, timeline = 0;
 	uint32_t scratch_before = 0, scratch_after = 0;
+	struct rogue_fwif_kccb_cmd cmd;
 	uint32_t reset_reason = 0, reset_dm = 0, reset_job = 0;
 	uint32_t reset_ctx = 0, reset_flags = 0;
 	uint64_t reset_pc = 0, reset_fault = 0;
@@ -1293,8 +1296,34 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 	    0, &bsh);
 	if (error != 0)
 		goto out;
+	/* Turn on firmware tracing first: the command rereads TRACE_CTL. */
+	{
+		struct sun60i_a733_gpu_fwmem *m = sc->sc_fw_memory;
+		size_t off = m->interface_layout.object[
+		    A733_GPU_FWINIT_TRACE_CTL].offset;
+		struct rogue_fwif_tracebuf *tc;
+
+		bus_dmamap_sync(m->dmat, m->work.map, off, sizeof(*tc),
+		    BUS_DMASYNC_POSTREAD);
+		tc = (struct rogue_fwif_tracebuf *)((uint8_t *)m->work.cpu +
+		    off);
+		tc->log_type = 0x3f;
+		bus_dmamap_sync(m->dmat, m->work.map, off, sizeof(*tc),
+		    BUS_DMASYNC_PREWRITE);
+	}
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.cmd_type = ROGUE_FWIF_KCCB_CMD_LOGTYPE_UPDATE;
 	error = sun60i_a733_gpu_fwprobe_cmd(sc->sc_bst, bsh, sc->sc_fw_memory,
-	    boot, heap, &image->kick, 3, r);
+	    boot, heap, &cmd, 3, &sc->sc_trace_result);
+	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
+	if (error != 0)
+		goto out;
+	error = bus_space_map(sc->sc_bst, addr, A733_GPU_FWSTART_REG_SIZE,
+	    0, &bsh);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_gpu_fwprobe_cmd(sc->sc_bst, bsh, sc->sc_fw_memory,
+	    boot, &sc->sc_trace_result, &image->kick, 4, r);
 	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
 	if (error != 0)
 		goto out;
@@ -1379,7 +1408,35 @@ out:
 		kmem_free(image, sizeof(*image));
 	if (bytes != NULL)
 		kmem_free(bytes, file.payload_bytes + file.header_bytes);
-	return error;
+	
+	/* Dump the first firmware trace buffer words for offline decode. */
+	if (sc->sc_fw_memory != NULL) {
+		const struct sun60i_a733_gpu_fwmem *m = sc->sc_fw_memory;
+		size_t off = m->interface_layout.object[
+		    A733_GPU_FWINIT_TRACE_CTL].offset;
+		const struct rogue_fwif_tracebuf *tc =
+		    (const struct rogue_fwif_tracebuf *)
+		    ((const uint8_t *)m->work.cpu + off);
+		const uint32_t *t0 = (const uint32_t *)((const uint8_t *)
+		    m->work.cpu + m->interface_layout.object[
+		    A733_GPU_FWINIT_TRACE0].offset);
+		size_t used = 0, k;
+
+		bus_dmamap_sync(m->dmat, m->work.map, 0, m->work.size,
+		    BUS_DMASYNC_POSTREAD);
+		used = snprintf(sc->sc_trace_state,
+		    sizeof(sc->sc_trace_state),
+		    "log=0x%x ptr0=%u ptr1=%u trace_rtn=0x%x:",
+		    tc->log_type, tc->tracebuf[0].trace_pointer,
+		    tc->tracebuf[1].trace_pointer,
+		    (u_int)sc->sc_trace_result.after.rtn);
+		for (k = 0; k < 64 && used + 9 <
+		    sizeof(sc->sc_trace_state); k++)
+			used += snprintf(sc->sc_trace_state + used,
+			    sizeof(sc->sc_trace_state) - used, "%08x",
+			    t0[k]);
+	}
+return error;
 }
 
 
@@ -1700,6 +1757,13 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 		    NULL, 0, sc->sc_vm_state, sizeof(sc->sc_vm_state),
 		    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create vm state node\n");
+
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRING, "trace_state",
+		    SYSCTL_DESCR("cached firmware trace words after the kick"),
+		    NULL, 0, sc->sc_trace_state, sizeof(sc->sc_trace_state),
+		    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create trace state node\n");
 
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_STRING, "kick_state",

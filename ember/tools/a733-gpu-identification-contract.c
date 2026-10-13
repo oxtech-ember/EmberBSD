@@ -81,6 +81,7 @@ static unsigned getticks(void) { return 0; }
 static void getnanouptime(struct timespec *t) { t->tv_sec = 0; t->tv_nsec = 0; }
 static void delay(unsigned int us) { (void)us; }
 #define BUS_DMASYNC_POSTREAD 2
+#define BUS_DMASYNC_PREWRITE 4
 static void bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t m, bus_addr_t o,
     bus_size_t s, int op) { (void)t; (void)m; (void)o; (void)s; (void)op; }
 #ifndef timespecsub
