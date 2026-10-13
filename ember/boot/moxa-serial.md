@@ -45,6 +45,7 @@ transfer replay occurs automatically.
 
 Termios encodes 50..921600 baud, 5..8 data bits, no/odd/even parity, one/two
 stop bits and RTS/CTS. `CDTRCTS` and `MDMBUF` are rejected before USB I/O.
+`B0` hangup is not implemented and returns `EINVAL`, preserving modem lines.
 Software XON/XOFF stays in the TTY layer; device offload is disabled.
 The opt-in `ucom_methods.ucom_param_strict` serializes setting ioctls,
 commits TTY settings after parent acceptance, retries a rejected identical

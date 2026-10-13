@@ -72,6 +72,10 @@ static int unsupported_flow_rejected(void) {
  for(i=0;i<2;i++) {struct umoxa1150_softc sc;struct fake_device d;struct usbd_device u;struct termios t;
  init(&sc,&d,&u,0);attach(&d,&u);memset(&t,0,sizeof(t));t.c_ospeed=9600;t.c_cflag=CS8|flags[i];
  CHECK(umoxa1150_param(&sc,0,&t)==EINVAL && fixture.requests==0);
+ CHECK(umoxa1150_detach(&d,0)==0);}
+ {struct umoxa1150_softc sc;struct fake_device d;struct usbd_device u;struct termios t;
+ init(&sc,&d,&u,0);attach(&d,&u);memset(&t,0,sizeof(t));t.c_cflag=CS8;
+ CHECK(umoxa1150_param(&sc,0,&t)==EINVAL && fixture.requests==0 && sc.sc_mcr==0x30);
  CHECK(umoxa1150_detach(&d,0)==0);}return 1;
 }
 static int settings_failure_not_committed(void) {

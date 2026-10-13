@@ -325,7 +325,7 @@ umoxa1150_param(void *arg, int port, struct termios *t)
 		error = EINVAL;
 		goto done;
 	}
-	s.baud = t->c_ospeed ? t->c_ospeed : 9600;
+	s.baud = t->c_ospeed;
 	s.bits = (t->c_cflag & CSIZE) == CS5 ? 5 :
 	    (t->c_cflag & CSIZE) == CS6 ? 6 : (t->c_cflag & CSIZE) == CS7 ? 7 : 8;
 	s.parity = !(t->c_cflag & PARENB) ? 0 : (t->c_cflag & PARODD) ? 1 : 2;
@@ -333,7 +333,7 @@ umoxa1150_param(void *arg, int port, struct termios *t)
 	s.rtscts = (t->c_cflag & (CRTS_IFLOW | CCTS_OFLOW)) != 0;
 	/* Legacy ucom only supplies speed/cflag; TTY owns software flow. */
 	s.ixon = s.ixoff = 0;
-	mcr = t->c_ospeed ? sc->sc_mcr : 0;
+	mcr = sc->sc_mcr;
 	error = umoxa1150_config(&s, probe);
 	if (error == 0)
 		error = umoxa1150_apply(&sc->sc_io, &s, mcr);
