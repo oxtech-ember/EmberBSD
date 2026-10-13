@@ -245,20 +245,20 @@ MSG_MD+=	msg.entropy.${SYSINSTLANG}
 msg.def: msg.mi.${SYSINSTLANG} ${MSG_MD} msgtouch
 	${_MKTARGET_CREATE}
 	${TOOL_SED} "s/@@VERSION@@/${DISTRIBVER}/" ${.ALLSRC} | \
-	${TOOL_SED} -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
+	${TOOL_SED} -e "s/@@EMBER_VERSION@@/${EMBER_VERSION}/" -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
 	${TOOL_AWK} -f ${UNIF_AWK} -v defines="${MD_OPTIONS}" > ${.TARGET}
 
 menus.def: ${MENUS_MI} ${MENUS_MD} msgtouch
 	${_MKTARGET_CREATE}
 	${TOOL_SED} "s/@@VERSION@@/${DISTRIBVER}/" ${.ALLSRC} | \
-	${TOOL_SED} -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
+	${TOOL_SED} -e "s/@@EMBER_VERSION@@/${EMBER_VERSION}/" -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
 	${TOOL_AWK} -f ${UNIF_AWK} -v defines="${MD_OPTIONS}" > ${.TARGET}
 
 sysinstmsgs.fmtcnt: msg.mi.${SYSINSTLANG} ${MSG_MD} msgtouch msg_defs.h
 	${_MKTARGET_CREATE}
 	${TOOL_SED} "s/@@VERSION@@/${DISTRIBVER}/" \
 		${.ALLSRC:M*.${SYSINSTLANG}} | \
-	${TOOL_SED} -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
+	${TOOL_SED} -e "s/@@EMBER_VERSION@@/${EMBER_VERSION}/" -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
 	${TOOL_AWK} -f ${UNIF_AWK} -v defines="${MD_OPTIONS}" | \
 	${HOST_SH} ${MSG_XLAT_SH} -c > ${.TARGET}
 
@@ -266,7 +266,7 @@ sysinstmsgs.fmtcnt: msg.mi.${SYSINSTLANG} ${MSG_MD} msgtouch msg_defs.h
 sysinstmsgs.${LANG}: msg.mi.${LANG} ${MSG_MD:S/.${SYSINSTLANG}$/.${LANG}/} msgtouch msg_defs.h sysinstmsgs.fmtcnt
 	${_MKTARGET_CREATE}
 	${TOOL_SED} "s/@@VERSION@@/${DISTRIBVER}/" ${.ALLSRC:M*.${LANG}} | \
-	${TOOL_SED} -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
+	${TOOL_SED} -e "s/@@EMBER_VERSION@@/${EMBER_VERSION}/" -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
 	${TOOL_AWK} -f ${UNIF_AWK} -v defines="${MD_OPTIONS}" | \
 	${HOST_SH} ${MSG_XLAT_SH} -f sysinstmsgs.fmtcnt > ${.TARGET}
 
@@ -279,7 +279,7 @@ FILESDIR_sysinstmsgs.${LANG}=	${CATALOGDIR}
 check-lang:	msg.def msg_defs.h
 	${_MKTARGET_CREATE}
 	${TOOL_SED} "s/@@VERSION@@/${DISTRIBVER}/" msg.def | \
-	${TOOL_SED} -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
+	${TOOL_SED} -e "s/@@EMBER_VERSION@@/${EMBER_VERSION}/" -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
 	${TOOL_AWK} -f ${UNIF_AWK} -v defines="${MD_OPTIONS}" | \
 	${HOST_SH} ${MSG_XLAT_SH} -i > /tmp/sysinst.en
 	${HOST_SH} ${MSG_CMP_SH} msg_defs.h /tmp/sysinst.en sysinstmsgs.${LANG}

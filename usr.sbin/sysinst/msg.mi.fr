@@ -68,7 +68,7 @@ message upgrade
 {mise à jour}
 
 message hello
-{Bienvenue dans Sysinst, l'outil d'installation de EmberBSD-@@VERSION@@.
+{Bienvenue dans Sysinst, l'outil d'installation de EmberBSD-@@EMBER_VERSION@@.
 Build: @@BUILD@@
 Cet utilitaire a été conçu pour vous aider à installer ou mettre à jour
 EmberBSD sur votre disque dur avec un minimum de travail.
@@ -447,7 +447,7 @@ message mountfail
 }
 
 message extractcomplete
-{L'extraction des composants sélectionnés de EmberBSD-@@VERSION@@
+{L'extraction des composants sélectionnés de EmberBSD-@@EMBER_VERSION@@
 est complète.
 Le système peut désormais démarrer directement depuis le disque.
 Pour compléter l'installation, Sysinst va maintenant vous
@@ -455,7 +455,7 @@ permettre d'effectuer quelques réglages essentiels.
 }
 
 message instcomplete
-{L'installation de EmberBSD-@@VERSION@@ est terminée. L'ordinateur va
+{L'installation de EmberBSD-@@EMBER_VERSION@@ est terminée. L'ordinateur va
 redémarrer depuis le disque dur. Veuillez consulter le document
 d'installation (INSTALL) pour apprendre à bien configurer votre
 système.
@@ -467,7 +467,7 @@ au besoin.
 }
 
 message unpackcomplete
-{La mise à jour de EmberBSD-@@VERSION@@ est terminée.
+{La mise à jour de EmberBSD-@@EMBER_VERSION@@ est terminée.
 Veuillez consulter le document d'installation (INSTALL) pour apprendre
 à bien configurer votre système.
 
@@ -476,7 +476,7 @@ Vous devez éditer /etc/rc.conf et ajouter la ligne
 }
 
 message upgrcomplete
-{L'installation des composants supplémentaires de EmberBSD-@@VERSION@@ est
+{L'installation des composants supplémentaires de EmberBSD-@@EMBER_VERSION@@ est
 terminée.
 Veuillez consulter le document d'installation (INSTALL) pour apprendre
 à bien configurer votre système.
@@ -1119,7 +1119,7 @@ message Finished {Terminée}
 message Command_failed {Échec}
 message Command_ended_on_signal {Commande terminée par un signal}
 
-message NetBSD_VERSION_Install_System {EmberBSD-@@VERSION@@ Programme d'installation}
+message NetBSD_VERSION_Install_System {EmberBSD-@@EMBER_VERSION@@ Programme d'installation}
 message Exit_Install_System {Quitter le programme d'installation}
 message Install_NetBSD_to_hard_disk {Installation de EmberBSD sur disque dur}
 message Upgrade_NetBSD_on_a_hard_disk {Mise à jour de EmberBSD sur disque dur}
@@ -1129,7 +1129,7 @@ message Utility_menu {Utilitaires}
 message Config_menu {Configuration}
 message exit_utility_menu {Quitter}
 message exit_menu_generic {Quitter}
-message NetBSD_VERSION_Utilities {Utilitaires EmberBSD-@@VERSION@@}
+message NetBSD_VERSION_Utilities {Utilitaires EmberBSD-@@EMBER_VERSION@@}
 message Run_bin_sh {Exécuter /bin/sh}
 message Set_timezone {Configurer le fuseau horaire}
 message Configure_network {Configurer le réseau}

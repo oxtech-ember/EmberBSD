@@ -2,7 +2,7 @@
 
 .include <bsd.own.mk>
 
-INSTIMGBASE=	EmberBSD-${DISTRIBVER}-amd64-bios-install	# gives ${IMGBASE}.img
+INSTIMGBASE=	EmberBSD-${EMBER_VERSION}-amd64-bios-install	# gives ${IMGBASE}.img
 
 .include "../installimage/installimage.mk"
 

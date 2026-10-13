@@ -19,7 +19,7 @@ CLEANFILES+=	boot.cfg
 prepare_md_post:
 	${TOOL_SED}							\
 	    -e "s/@@MACHINE@@/${MACHINE}/"				\
-	    -e "s/@@VERSION@@/${DISTRIBVER}/"				\
+	    -e "s/@@EMBER_VERSION@@/${EMBER_VERSION}/"				\
 	    < ${.CURDIR}/boot.cfg.in > boot.cfg
 
 DISTRIBDIR!= cd ${.CURDIR}/../.. ; pwd

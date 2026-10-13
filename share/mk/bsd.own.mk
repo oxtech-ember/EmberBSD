@@ -11,6 +11,9 @@ _BSD_OWN_MK_=1
 MAKECONF?=	/etc/mk.conf
 .-include "${MAKECONF}"
 
+# Product version is independent of the NetBSD compatibility version.
+EMBER_VERSION?=	Development
+
 #
 # CPU model, derived from MACHINE_ARCH
 #

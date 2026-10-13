@@ -2,7 +2,10 @@
 
 The x86 BIOS, PXE and UEFI loaders identify the product as EmberBSD.
 The installation menus and sysinst catalogs use the same identity.
-The version number comes from this source tree's `sys/conf/osrelease.sh`.
+`EMBER_VERSION` is the product version. It defaults to `Development`.
+Set it only when an EmberBSD release version has been assigned.
+The NetBSD compatibility version still comes from `sys/conf/osrelease.sh`.
+It controls ABI and package paths, not the product version shown on installation screens.
 `EMBER_BUILD_ID` identifies the source commit used for an installation build.
 Set it to the full commit ID when building a release.
 An unset ID is shown as `development`, not as a published release.
@@ -70,7 +73,7 @@ It checks the eyes, smile, printable bytes, line width and full stock-menu heigh
 It also checks palette hooks, attribute restoration and unchanged fallback text.
 The optional third check reproduces the grid from the source logo.
 The fourth reads the actual complete amd64 ISO.
-It checks the media menu, set archives, compiled server and catalog build identity.
+It checks the media menu, set archives, compiled server, product version and catalog build identity.
 CD and DVD builders apply media boot.cfg after copying base sets.
 The base set's installed-system boot.cfg must not replace the installation menu.
 These checks do not prove that a release image boots or installs.

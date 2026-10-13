@@ -9,7 +9,7 @@ CDRELEASE_NODEBUG=	true
 CLEANFILES+=	boot.cfg
 
 prepare_md_post:
-	${TOOL_SED} "s/@@VERSION@@/${DISTRIBVER}/" \
+	${TOOL_SED} "s/@@EMBER_VERSION@@/${EMBER_VERSION}/" \
 		< ${.CURDIR}/boot.cfg.in > boot.cfg
 
 .include "${.CURDIR}/../../common/Makefile.bootcd"

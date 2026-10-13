@@ -69,7 +69,7 @@ message upgrade
 {Aktualisierung}
 
 message hello
-{Willkommen bei Sysinst, dem Installationsprogramm von EmberBSD-@@VERSION@@.
+{Willkommen bei Sysinst, dem Installationsprogramm von EmberBSD-@@EMBER_VERSION@@.
 Build: @@BUILD@@
 Dieses Programm hilft Ihnen, EmberBSD auf eine Festplatte zu installieren
 oder aber eine bereits bestehende Installation von EmberBSD zu aktualisieren.
@@ -455,14 +455,14 @@ message mountfail
 }
 
 message extractcomplete
-{Das Extrahieren der ausgewählten Sets für EmberBSD-@@VERSION@@ ist abgeschlossen.
+{Das Extrahieren der ausgewählten Sets für EmberBSD-@@EMBER_VERSION@@ ist abgeschlossen.
 Das System ist damit bereit, von der ausgewählten Partition zu starten. Um die
 Installation zu vervollständigen, gibt Ihnen Sysinst die Möglichkeit, eine
 grundlegende Konfiguration vorzunehmen.
 }
 
 message instcomplete
-{Die Installation von EmberBSD-@@VERSION@@ ist jetzt abgeschlossen. Das System
+{Die Installation von EmberBSD-@@EMBER_VERSION@@ ist jetzt abgeschlossen. Das System
 sollte von der Festplatte starten können. Beachten Sie die INSTALL-Anleitung,
 um sich über die weitere Konfiguration zu informieren.
 Auch die afterboot(8) Manpage ist weiterzuempfehlen; Sie enthält eine Liste
@@ -474,7 +474,7 @@ die Vorgaben für diese Datei finden.
 }
 
 message upgrcomplete
-{Die Installation von EmberBSD-@@VERSION@@ ist jetzt abgeschlossen. Sie müssen
+{Die Installation von EmberBSD-@@EMBER_VERSION@@ ist jetzt abgeschlossen. Sie müssen
 nun die Anweisungen im INSTALL-Dokument beachten, damit Ihr System -
 entsprechend Ihrer Situation - neu konfiguriert werden kann.
 Lesen Sie (erneut) die afterboot(8) Manpage, da diese seit Ihrer letzten
@@ -487,7 +487,7 @@ Modus (Einbenutzermodus) startet.
 
 
 message unpackcomplete
-{Das Entpacken der zusätzlichen Releasesets von EmberBSD-@@VERSION@@ ist nun
+{Das Entpacken der zusätzlichen Releasesets von EmberBSD-@@EMBER_VERSION@@ ist nun
 beendet.
 Sie sollten nun die Anweisungen im INSTALL-Dokument beachten, um
 Ihr System Ihrer Konfiguration entsprechend einzurichten. Die afterboot(8)
@@ -1112,7 +1112,7 @@ message Finished {fertig}
 message Command_failed {fehlgeschlagen}
 message Command_ended_on_signal {abgebrochen}
 
-message NetBSD_VERSION_Install_System {EmberBSD-@@VERSION@@ Installationsprogramm}
+message NetBSD_VERSION_Install_System {EmberBSD-@@EMBER_VERSION@@ Installationsprogramm}
 message Exit_Install_System {Installationsprogramm beenden}
 message Install_NetBSD_to_hard_disk {EmberBSD auf die Festplatte installieren}
 message Upgrade_NetBSD_on_a_hard_disk {Aktualisierung einer bestehenden EmberBSD-Installation}
@@ -1122,7 +1122,7 @@ message Utility_menu {Extras}
 message Config_menu {Konfigurationsmenü}
 message exit_utility_menu {Zurück zum Hauptmenü}
 message exit_menu_generic {Zurück}
-message NetBSD_VERSION_Utilities {EmberBSD-@@VERSION@@ Extras}
+message NetBSD_VERSION_Utilities {EmberBSD-@@EMBER_VERSION@@ Extras}
 message Run_bin_sh {Ausführen von /bin/sh}
 message Set_timezone {Setzen der Zeitzone}
 message Configure_network {Netzwerkkonfiguration}
