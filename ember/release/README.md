@@ -41,6 +41,8 @@ The in-tree GCC12.5 compiler is a host bootstrap.
 Native GCC12 commands are omitted from the target sets.
 Modern native development tools belong to the
 [Ports development profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain).
+That GCC16 profile currently records AArch64 acceptance.
+This amd64 candidate does not qualify an installed native development compiler.
 This installer profile does not establish a complete GCC16 userland or a desktop image.
 
 ## Prepare the exact files

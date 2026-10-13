@@ -154,6 +154,7 @@ module EmberRelease
       Profile: no X11, no rump, GENERIC kernel and matching modules/base.
       The build uses the in-tree host bootstrap compiler. It does not establish a complete GCC16 userland.
       Native GCC12 commands are excluded. Modern native development tools belong to the Ports profile.
+      The current GCC16 profile records AArch64 acceptance, not an installed amd64 development compiler.
 
       #{q ? 'UEFI local installation, HTTPS installation and certificate rejection passed in an isolated QEMU VM.' : 'VM qualification is pending. Do not publish this candidate.'}
       Physical amd64 machines, AArch64 boards and Orange Pi 6 Plus are not accepted by this candidate.
