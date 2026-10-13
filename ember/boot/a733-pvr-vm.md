@@ -139,6 +139,7 @@ All tables remain CPU-owned and unpublished to firmware.
 The future execution interface must add firmware memory contexts and TLB invalidation.
 It must retain VMs and buffers until jobs complete or recovery quiesces the GPU.
 Do not reuse the current destruction path while hardware owns a table.
-Runtime queries, synchronization, execution contexts, and DRM submission remain required.
+[Runtime queries](a733-pvr-queries.md) and [CPU-issued synchronization](drm-syncobj.md)
+now pass on Zero 3W. Execution contexts, GPU job fences, and DRM submission remain required.
 The separate compute probe does not execute these userspace VM mappings.
 HDMI/KMS and accelerated Plasma remain separate, unaccepted paths.

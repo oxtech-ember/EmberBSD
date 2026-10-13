@@ -2,7 +2,7 @@
 
 The common DRM layer provides binary and timeline synchronization objects.
 A driver enables their capability bits only when its selected contract passes.
-The PowerVR candidate enables both bits for CPU-issued synchronization.
+The PowerVR driver enables both bits for CPU-issued synchronization.
 This does not establish GPU job completion, Vulkan execution, or a desktop.
 
 ## Publication and callback lifetime
@@ -75,4 +75,8 @@ entry time; the source fixture covers that interleaving deterministically.
 
 Timeline SIGNAL supplies completed CPU fences. This tool does not test a
 pending GPU fence. GPU completion requires a separate driver's job test.
-Physical acceptance of this candidate remains pending.
+On 2026-10-13, the tool passed 1,712 checks on Orange Pi Zero 3W.
+The kernel and static utility used commit `0e89a6ffb4d726c64cf402049758f960d29a9655`.
+The test used the native PowerVR render node after explicit firmware preparation.
+It completed without a watchdog reset. GPU-issued fences and sustained SMP
+workloads remain outside this result. This kernel was not tested on CM5.

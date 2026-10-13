@@ -89,7 +89,11 @@ They check arithmetic bounds, missing features, version rejection, two-phase
 queries, short objects, array capacity, padding, extension bytes, and copy faults.
 The [render-node acceptance utility](a733-pvr-render.md#source-checks-and-board-acceptance)
 checks the running kernel against these derived values.
-Host contracts do not establish physical acceptance or working Vulkan.
+On 2026-10-13, the utility passed all 115 identity/runtime checks on Zero 3W
+with kernel `0e89a6ffb4d726c64cf402049758f960d29a9655`.
+It checked the values above through the native render node.
+Registration before firmware preparation correctly returned `EBUSY`.
+This result establishes the query ABI on the tested board, not Vulkan execution.
 
 Mesa 26.2.4 still requires a real global free list during device creation.
 Each queue creates transfer, compute, query-compute, and render contexts.

@@ -636,13 +636,17 @@ on every board in the hardware catalog.
   Client queue completion, timeline, DMA output, and fresh fault/HWR checks
   agree. This check also passes after a second kernel update and fresh boot.
   A native [PowerVR DRM/GEM interface](ember/boot/a733-pvr-render.md)
-  opens on Zero 3W and passes 72 device-query checks. It reports the measured
+  opens on Zero 3W and passes 115 identity/runtime checks. It reports the measured
   BVNC through a real render node. Native GEM allocation and CPU mapping of
   an 8 MiB buffer also pass, including file isolation and mapping lifetime
   after handle and file closure. [Native per-file VM operations](ember/boot/a733-pvr-vm.md)
   pass 586 physical checks, including 128 additional VMs, sparse DMA tables,
   heap queries, and buffer retention through unmap and file closure.
-  These tables remain CPU-owned. Firmware VM publication, job submission,
+  [Firmware-derived queries](ember/boot/a733-pvr-queries.md) report runtime limits
+  and compatibility lists. [Native DRM synchronization](ember/boot/drm-syncobj.md)
+  passes 1,712 binary/timeline checks, including delayed publication transfers.
+  These tests use CPU-issued fences. The VM tables remain CPU-owned.
+  Firmware VM publication, GPU job fences and submission,
   Mesa Vulkan/Zink, display output, and accelerated Plasma still require porting.
   Repeated submission within one boot and long-duration GPU stability remain
   untested.
