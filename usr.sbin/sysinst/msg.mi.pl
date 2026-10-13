@@ -468,11 +468,11 @@ zatrzyma sie na trybie jednego-uzytkownika.
 }
 
 message distmedium
-{Twoj dysk jest teraz gotowy na zainstalowanie jadra oraz pakietow
-dystrybucyjnych. Jak napisano w pliku INSTALL masz tez kilka opcji. Dla
-ftp lub nfs, musisz byc podlaczony do sieci z dostepem do odpowidnich maszyn.
+{Wybierz rozruchowy USB lub obraz z zestawami instalacyjnymi.
+EmberBSD CDN bedzie dostepny po uruchomieniu uslugi. Instalacja sieciowa
+wymaga polaczenia. Dodatkowe zrodla umozliwiaja reczne sciezki.
 
-%d wybranych pakietow, %d zainstalowanych. Nastepnym pakietem jest %s.
+Zestawy wybrane %d, przetworzone %d, nastepny %s.
 
 }
 
@@ -522,15 +522,14 @@ znajdowac sie w glownym katalogu dyskietki.
  *  $0 = sets suffix			.tgz
  */
 message cdromsource
-{Podaj urzadzenie CDROM oraz katalog na CDROMie, w ktorym znajduje sie
-dystrybucja. 
-Pamietaj, ze katalog musi zawierac pliki $0.
+{Podaj urzadzenie instalacyjne i katalog zawierajacy
+zestawy $0.
 
 }
 
 message No_cd_found
-{Could not locate a CD medium in any drive with the distribution sets! 
-Enter the correct data manually, or insert a disk and retry. 
+{Nie znaleziono nosnika z zestawami. Sprawdz USB/obraz lub wybierz
+urzadzenie i katalog w menu Dodatkowe zrodla.
 }
 
 message abort_install
@@ -540,15 +539,14 @@ message source_sel_retry
 {Back to source selection & retry}
 
 message Available_cds
-{Dostepne napedy CD}
+{Dostepne nosniki instalacyjne}
 
 message ask_cd
-{Znaleziono kilka napedow CD, prosze wybrac ten, ktory zawiera
-nosnik instalacyjny.}
+{Wybierz nosnik zawierajacy zestawy.}
 
 message cd_path_not_found
-{Zbiory instalacyjne nie zostaly znalezione w domyslnym polozeniu na tym
-CD. Prosze sprawdzic urzadzenie i sciezke.}
+{Brak zestawow w domyslnym katalogu.
+Sprawdz urzadzenie instalacyjne i katalog.}
 
 /* Called with: 			Example
  *  $0 = sets suffix			.tgz
@@ -1098,11 +1096,9 @@ message ftp {FTP}
 message http {HTTP}
 message https {HTTPS}
 message nfs {NFS}
-.if HAVE_INSTALL_IMAGE
-message cdrom {CD-ROM / DVD / nosnik instalacyjny}
-.else
-message cdrom {CD-ROM / DVD}
-.endif
+message cdrom {Rozruchowy USB / obraz}
+message ember_cdn {EmberBSD CDN}
+message additional_sources {Dodatkowe zrodla}
 message floppy {Dyskietka}
 message local_fs {Niezamontowany system plikow}
 message local_dir {Lokalny katalog}

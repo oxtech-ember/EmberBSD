@@ -2,6 +2,10 @@
 
 **Unix for intelligent devices.**
 
+The product version is **EmberBSD 1.0** for the current kernel state.
+This version is separate from the NetBSD 11.0 compatibility identifiers.
+See the validation limits below before selecting a hardware target.
+
 EmberBSD is an independent fork of [NetBSD](https://github.com/NetBSD/src),
 based on version 11, for single-board computers and embedded systems.
 It adds hardware support for Raspberry Pi 5 and related boards, for
@@ -28,6 +32,8 @@ are maintained in the related repositories below.
 
 - For installation screens and compatible set sources, see
   [installer identity](ember/boot/installer-branding.md).
+  The installer offers bootable USB/image sets and an EmberBSD CDN source.
+  The CDN service is planned. Use a complete image until it is available.
 
 ## EmberBSD ecosystem
 

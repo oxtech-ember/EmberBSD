@@ -1,9 +1,9 @@
 # Origin: EmberBSD complete amd64 ISO artifact regression, 2026-10-13.
 # SPDX-License-Identifier: BSD-2-Clause
 require 'open3'
-image = ARGV.fetch(0) { abort 'Usage: ruby ember/tests/installer-image.rb full-amd64.iso [build-id]' }
+image = ARGV.fetch(0) { abort 'Usage: ruby ember/tests/installer-image.rb full-amd64.iso [build-id] [product-version]' }
 build = ARGV[1]
-product_version = ARGV[2] || 'Development'
+product_version = ARGV[2] || '1.0'
 extract = lambda do |path|
   data, error, status = Open3.capture3('tar', '-xOf', image, path)
   abort "#{path}: #{error}" unless status.success?
@@ -11,7 +11,8 @@ extract = lambda do |path|
 end
 config = extract.call('boot.cfg')
 abort 'ISO lost its EmberBSD installation banner' unless config.match?(/^banner=EmberBSD/)
-abort 'ISO presents the base version as an EmberBSD release' unless config.include?("banner=EmberBSD #{product_version} installation CD") || config.include?("banner=EmberBSD #{product_version} installation DVD")
+abort 'ISO presents the wrong EmberBSD product version' unless config.include?("banner=EmberBSD #{product_version} installation")
+abort 'ISO presents optical media as the installation method' if config.match?(/^banner=.*\b(?:CD|DVD)\b/)
 abort 'ISO lost its installation menu' unless config.lines.include?("menu=Install EmberBSD:boot netbsd\n")
 abort 'ISO does not clear the mascot screen' unless config.lines.include?("clear=1\n")
 abort 'ISO shows a prominent upstream banner' if config.match?(/^banner=.*NetBSD/)
@@ -23,6 +24,10 @@ end
 binary = extract.call('usr/sbin/sysinst')
 abort 'ISO installer has no own set source' unless binary.include?('cdn.emberbsd.oxteam.me')
 abort 'ISO installer has the wrong EmberBSD product version' unless binary.include?("EmberBSD/amd64 #{product_version}")
+['Bootable USB / image', 'EmberBSD CDN', 'Additional sources'].each do |label|
+  abort "ISO installer is missing source choice: #{label}" unless binary.include?(label)
+end
+abort 'ISO installer retains the optical source label' if binary.include?('CD-ROM / DVD')
 if build
   %w[de es fr pl].each do |lang|
     data = extract.call("usr/share/sysinst/catalog/sysinstmsgs.#{lang}")

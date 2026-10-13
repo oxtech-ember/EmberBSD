@@ -2,8 +2,9 @@
 
 The x86 BIOS, PXE and UEFI loaders identify the product as EmberBSD.
 The installation menus and sysinst catalogs use the same identity.
-`EMBER_VERSION` is the product version. It defaults to `Development`.
-Set it only when an EmberBSD release version has been assigned.
+`EMBER_VERSION` is the product version. It defaults to `1.0`.
+The project owner assigned this version to the current kernel state.
+The number does not extend the hardware or toolchain validation described below.
 The NetBSD compatibility version still comes from `sys/conf/osrelease.sh`.
 It controls ABI and package paths, not the product version shown on installation screens.
 `EMBER_BUILD_ID` identifies the source commit used for an installation build.
@@ -36,6 +37,18 @@ https://cdn.emberbsd.oxteam.me/releases/<EMBER_BUILD_ID>/<architecture>/binary/s
 
 This is the EmberBSD channel contract. The service is not yet available.
 Use an image containing the sets until the channel is published and checked.
+The main source menu offers `Bootable USB / image` and `EmberBSD CDN`.
+Use a complete USB image for installation without a network connection.
+ISO files remain available for virtual machines. Screens use the term installation image.
+The CDN submenu offers HTTPS where the installation environment supports it.
+HTTP remains an explicit transport choice for environments without TLS support.
+It provides no transport authentication. Use only a trusted installation network.
+`Additional sources` contains manual filesystem paths, other transports and set skips.
+Leaving either submenu returns to source selection without unpacking a set.
+
+For a patched build, publish a new immutable directory and select its build path.
+Update the boot image too when a patch changes the kernel or modules.
+Changing a download path alone does not update the running installer kernel.
 The installer does not fall back to NetBSD servers for OS sets.
 Release builders must publish the exact compatible kernel, modules and base sets.
 Use a new immutable build directory for each source revision.
@@ -64,7 +77,7 @@ The original source licences remain in each adapted loader and sysinst file.
 ruby ember/tests/installer-branding.rb
 sh ember/tests/boot-logo.sh
 ruby ember/tools/boot-logo.rb --check
-ruby ember/tests/installer-image.rb full-amd64.iso source-commit-id
+ruby ember/tests/installer-image.rb full-amd64.iso source-commit-id 1.0
 ```
 
 The first check detects product-name regressions while allowing compatibility names.
@@ -74,7 +87,7 @@ It also checks palette hooks, attribute restoration and unchanged fallback text.
 The optional third check reproduces the grid from the source logo.
 The fourth reads the actual complete amd64 ISO.
 It checks the media menu, set archives, compiled server, product version and catalog build identity.
-CD and DVD builders apply media boot.cfg after copying base sets.
+ISO builders apply media boot.cfg after copying base sets.
 The base set's installed-system boot.cfg must not replace the installation menu.
 These checks do not prove that a release image boots or installs.
 Build the loaders, language catalogs and complete image from a clean source commit.
