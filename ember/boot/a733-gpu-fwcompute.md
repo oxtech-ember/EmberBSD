@@ -49,6 +49,9 @@ spans and command fields, and prints both the file and image digests.
 The packed file installs as `a733-compute.bin` in the `powervr` firmware
 directory. No KCCB publication, DMA mapping, or GPU execution happens.
 
+The [compute VM encoder contract](a733-gpu-fwcompute-vm.md) checks all firmware-context bytes.
+It includes a poisoned-buffer regression for unused breakpoint and control fields.
+
 ## Input and ownership contract
 
 Allocate `sun60i_a733_gpu_fwcompute_image` from caller-owned heap memory.

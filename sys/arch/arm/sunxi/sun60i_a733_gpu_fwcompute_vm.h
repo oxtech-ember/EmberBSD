@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* GPU VM tables for the compute submission. See a733-gpu-fwheap.md. */
+/* GPU VM tables for compute submission. See a733-gpu-fwcompute-vm.md. */
 #ifndef _SUN60I_A733_GPU_FWCOMPUTE_VM_H
 #define _SUN60I_A733_GPU_FWCOMPUTE_VM_H
 
@@ -51,8 +51,9 @@ struct a733_gpu_fwcompute_vm_summary {
  * the buffer array order. Regions must be four-kilobyte aligned, nonempty,
  * inside the 40-bit space, fit one 2 MiB window each, stay within 36-bit
  * physical space, and must not overlap in VA or PA. At most WINDOWS
- * distinct windows and directories are supported. Writes are idempotent;
- * on any validation error every output byte stays unchanged.
+ * distinct windows and directories are supported. Writes are idempotent.
+ * On failure, fw_context stays unchanged. Discard all other output
+ * buffers and the summary; table encoding can fail after partial writes.
  * The return is a positive errno. This encodes representation only: no
  * allocation, sync, publication, or device acceptance is implied.
  */
