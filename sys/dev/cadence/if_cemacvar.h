@@ -32,6 +32,7 @@
 #include <net/if_media.h>
 #include <net/if_ether.h>
 #include <net/if_media.h>
+#include <sys/sysctl.h>
 
 #include <dev/mii/miivar.h>
 
@@ -89,6 +90,29 @@ struct cemac_softc {
 	struct workqueue *sc_reset_wq;
 	struct work sc_reset_work;	/* i */
 	volatile unsigned sc_reset_pending;
+
+	/*
+	 * Driver telemetry, exported read-only under hw.<device>. The
+	 * counters are updated under sc_intr_lock; sysctl reads without
+	 * the lock observe last whole 64-bit values, which is enough
+	 * for diagnostics.
+	 */
+	struct sysctllog *sc_sysctllog;
+	uint64_t sc_stat_rx_overrun;	/* i: receiver overrun (RSR.OVR) */
+	uint64_t sc_stat_rx_bufna;	/* i: receive buffer exhausted (RSR.BNA) */
+	uint64_t sc_stat_rx_nombuf;	/* i: no mbuf to refill the ring */
+	uint64_t sc_stat_tx_underrun;	/* i: transmit underrun (TSR.UND) */
+	uint64_t sc_stat_tx_rle;	/* i: retry limit exceeded (TSR.RLE) */
+	uint64_t sc_stat_tx_coll;	/* i: collision seen (TSR.COL) */
+	uint64_t sc_stat_tx_retry_err;	/* i: descriptor retry error */
+	uint64_t sc_stat_tx_late_coll;	/* i: descriptor late collision */
+	uint64_t sc_stat_tx_ahb_err;	/* i: descriptor bus error */
+	uint64_t sc_stat_tx_busy;	/* i: hardware queue full on start */
+	uint64_t sc_stat_tx_copy;	/* i: mbuf copied to a single cluster */
+	uint64_t sc_stat_tx_watchdog;	/* i: watchdog reset scheduled */
+	uint64_t sc_stat_tx_scoll;	/* last GEM_SCOL sample */
+	uint64_t sc_stat_tx_mcoll;	/* last GEM_MCOL sample */
+	uint64_t sc_stat_tx_discard;	/* non-GEM deferred rx frame count */
 };
 
 int cemac_intr(void *);

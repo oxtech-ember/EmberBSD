@@ -19,8 +19,8 @@ Board revision: not recorded in the original support table.
 | Wi-Fi | Tested: WPA2 on 2.4 and 5 GHz with 802.11n, 32 MiB transfers each way with matching checksums; WPA3-SAE/H2E on 5 GHz with required PMF and 8 MiB each way also passes; needs vendor firmware; see Wi-Fi limits below |
 | Bluetooth | Classic: inquiry Tested, pairing not tried; BLE: No; needs the vendor patch files |
 | Temperature sensor | Tested (five sensors) |
-| Fan control | No |
-| Full power-off | `shutdown -p now` stops the stock kit fan through the firmware power-off path; physically confirmed with `EMBER64 #4`. Plain `halt` keeps power applied. PWM speed control is not implemented. |
+| Fan control | Native PWM and thermal policy with software contracts; physical speed control remains unverified ([guide](../boot/a733-fan.md)) |
+| Full power-off | `shutdown -p now` stops the stock kit fan through the firmware power-off path; physically confirmed with `EMBER64 #4`. Plain `halt` keeps power applied. PWM speed control has separate software checks; physical acceptance is pending. |
 | Watchdog | Tested: resets the board |
 | Power button | No |
 | I2C | Tested (power management chip, Type-C controller) |
@@ -31,9 +31,11 @@ Board revision: not recorded in the original support table.
 | Voltage regulators | All outputs of the AXP8191 read at boot; not measured |
 | USB | Controllers and the Type-C controller attach; no device tried |
 | Hardware random numbers | Tested |
-| GPU/NPU power domains | Native PCK600 provider passes software contracts and GCC16 cross object builds; physical transitions and acceleration unverified ([guide](../boot/a733-power-domains.md)) |
-| GPU/NPU clocks and resets | Native main CCU providers pass 199 software assertions and GCC12/GCC16 object builds; firmware PLLs stay unchanged, physical sequencing unverified ([guide](../boot/a733-accelerator-clocks.md)) |
-| GPU identification | The opt-in completes GPU clock UPDATE with observed post-PLL gates open; CORE ON/Q still times out before GPU MMIO. Normal observation and recovery boot pass; identity and acceleration remain unverified ([physical result](../boot/a733-gpu-identification.md#physical-result)) |
+| GPU/NPU power domains | Native PCK600 provider; GPU_CORE ON/Q readiness passes with the dedicated GPU PLL. Command execution has separate acceptance ([guide](../boot/a733-power-domains.md)) |
+| GPU/NPU clocks and resets | Native main CCU providers; the opt-in GPU PLL cold start locks and confirms 600/200 MHz on this board. Normal boot preserves firmware state ([guide](../boot/a733-gpu-identification.md#physical-pll-result)) |
+| GPU identification | Two explicit runtime runs read BVNC `36.56.104.183` after PLL600 and strict CORE ON/Q readiness ([physical result](../boot/a733-gpu-identification.md#physical-pll-result)) |
+| GPU firmware and compute | Native firmware bootstrap, LOGTYPE, MMUCACHE, and a Mesa-generated compute shader pass. The output is `0x13579bdf`, the client queue reaches 184/184, and timeline reaches 1 without fresh faults or HWR. The check repeats after fresh kernel boots. Repeated submissions within one boot remain untested ([compute check](../boot/a733-gpu-fwcompute.md#physical-stages-19-21-result)) |
+| PowerVR DRM/GEM | Native render-node identification, installed libdrm discovery, and CPU mapping of an 8 MiB GEM buffer pass. Mapping lifetime and file isolation are checked. GPU VM, DRM submission, Vulkan/Zink, HDMI/KMS, and accelerated Plasma remain unaccepted ([interface and checks](../boot/a733-pvr-render.md)) |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.
@@ -104,7 +106,15 @@ The firmware key interface has no initial IGTK packet-number field.
 Nonzero initial IPNs are rejected; networks or rekeys requiring them are
 not supported yet. Protected-management replay/forgery injection and a
 long-duration run remain unverified. This AIC path does not implement
-802.11r FT, 802.11v BSS transition management, 802.11ac/ax or host AP mode.
+802.11r FT, 802.11ax or host AP mode. The new
+[host-managed k/v transport](../boot/aicwf-kv.md) has software regressions and
+physical connected-scan, ioctl and management TX/RX checks. The AP returned
+an empty neighbor response. Neighbor-list and BTM acceptance remain pending.
+VHT80 with one stream is physically checked under WPA2-CCMP. TCP and 8 MiB
+file transfers pass in both directions; see the [current results](../boot/aicwf-vht.md#physical-vht80-check).
+On an AP with a nonzero initial IGTK IPN, SAE/H2E succeeds but key installation
+fails. VHT80 with SAE/PMF remains unaccepted.
+The [VHT80 and roaming audit](../boot/aicwf-vht.md) separates radio capabilities from driver support.
 CM5 bwfm results do not validate these features on AIC8800D80.
 
 Bundle SHA256: ELF

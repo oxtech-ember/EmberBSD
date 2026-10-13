@@ -14,6 +14,26 @@ offload or multi-link operation. Other SAE groups/modes need separate checks.
 Existing WPA2 connections keep their host handshake. Unsupported radios,
 old kernels and clients built without CONFIG_SAE do not advertise SAE.
 
+## Built-in radio limits
+
+The built-in CYW43455 on Raspberry Pi 5 and wireless CM5 supports
+802.11ac, one spatial stream (1x1), and channel widths up to 80 MHz.
+These are hardware limits. OS, UEFI, and radio firmware updates cannot
+add 802.11ax or a second spatial stream. The CM5 external antenna connector
+selects an alternative antenna; it does not provide a second MIMO chain.
+See the [CYW43455 specification](https://www.infineon.com/part/CYW43455)
+and [CM5 datasheet, Wireless](https://datasheets.raspberrypi.com/cm5/cm5-datasheet.pdf).
+
+802.11k radio measurements and 802.11v BSS transition management are
+separate from the PHY generation and stream count. An AP capability label
+does not validate their complete operation. The published driver disables
+firmware WNM transitions. A separate [host-managed station transport](bwfm-kv.md)
+implements Neighbor Reports and BSS Transition Management. A physical Pi 5
+passed Neighbor Reports, BTM acceptance/rejection and traffic under WPA2 and
+SAE/required PMF. The linked guide identifies the tested mesh and limits.
+802.11ax 2x2 needs another radio, two antenna paths, and a supported host
+interface, driver, and firmware. No such adapter is validated by this guide.
+
 ## Configuration and verification
 
 Install the updated kernel, matching modules and base wpa_supplicant together.
@@ -54,6 +74,21 @@ On the tested firmware the driver report also shows `wsec=0x604`,
 `wpa_auth=0x40000` and `mfp=2`. Verify the firmware state after traffic-key
 installation: a successful SAE exchange alone does not prove PMF stayed on.
 Raw interface diagnostics may expose keys; redact private logs before sharing.
+
+If a capable station uses WPA2, check its active profile before replacing the kernel:
+
+```sh
+wpa_cli -i bwfm0 status
+wpa_cli -i bwfm0 get_capability key_mgmt
+# Replace NETWORK_ID with the id reported by status.
+wpa_cli -i bwfm0 get_network NETWORK_ID key_mgmt
+wpa_cli -i bwfm0 get_network NETWORK_ID ieee80211w
+```
+
+A profile that permits only `WPA-PSK WPA-EAP` cannot select SAE.
+Installing a new kernel does not rewrite that profile.
+A reported client capability does not prove that the active profile enables it.
+Use the explicit SAE profile above and verify the resulting SAE and PMF status.
 
 If Ethernet and Wi-Fi share a subnet, an SSH connection to the Wi-Fi address
 alone does not establish the return path. Check the route to the test peer

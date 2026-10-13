@@ -103,10 +103,34 @@ device	sun60ipck
 attach	sun60ipck at fdt with sun60i_a733_pck
 file	arch/arm/sunxi/sun60i_a733_pck600.c	sun60i_a733_pck
 
-# Origin: EmberBSD; read-only firmware-ready A733 GPU identification.
-device	sun60igpuid
+# Origin: EmberBSD; observe-only A733 GPU attach and opt-in bootstrap.
+define	sun60ipvr: drmkms
+makeoptions sun60ipvr "CPPFLAGS.sun60ipvr"+="${CPPFLAGS.drmkms}"
+file	external/bsd/drm2/powervr/pvr_drv.c	sun60ipvr
+file	external/bsd/drm2/powervr/pvr_bo.c	sun60ipvr
+device	sun60igpuid: firmload, sun60ipvr
 attach	sun60igpuid at fdt with sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwimage.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_mips.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwmem.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwinit.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwstart.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwboot.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwprobe.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute_vm.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwheap.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_mmu.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_vm.c	sun60i_a733_gpu
+
+# Origin: EmberBSD; read-only firmware-ready A733 NPU identification.
+device	sun60inpuid
+attach	sun60inpuid at fdt with sun60i_a733_npu
+file	arch/arm/sunxi/sun60i_a733_npu.c	sun60i_a733_npu
 
 # A733 processor clocks
 device	sun60icpupll
@@ -191,6 +215,9 @@ file	arch/arm/sunxi/sun50i_a100_gpio.c	sunxi_gpio & soc_sun50i_a100
 device	sunxipwm: pwm
 attach	sunxipwm at fdt with sunxi_pwm
 file	arch/arm/sunxi/sunxi_pwm.c		sunxi_pwm
+device	sun60ia733pwm: pwm
+attach	sun60ia733pwm at fdt with sun60i_a733_pwm
+file	arch/arm/sunxi/sun60i_a733_pwm.c	sun60i_a733_pwm
 
 # SD/MMC
 device	sunximmc: sdmmcbus

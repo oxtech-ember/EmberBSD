@@ -64,9 +64,14 @@ password; SSH is disabled. Configure access for the deployment before use.
   contains regular files `ctfconvert`, `libdwarf.so.2.2`, `libdwarf.a`,
   `libdwarf_p.a`, `libdwarf_pic.a`, `libdwarf.h`, and `dwarf.h` from the same build.
   Follow the [CTF build and target checks](../boot/dtrace-dwarf.md).
-- GDB 18.1, optional common LLVM 23.1.2 and their complete package dependency closure,
-  plus the full Ports source commit ID. Exactly one debugger archive is allowed,
-  including its pkgsrc `nb` revision; obsolete or parallel debugger versions fail.
+- GDB 18.1, the GCC 16.2 system compiler package, optional common LLVM 23.1.2
+  and their complete package dependency closure,
+  plus the full Ports source commit ID. Exactly one debugger archive and one
+  `gcc16-16.2.0*` archive are allowed, each including its pkgsrc `nb`
+  revision; obsolete or parallel versions fail. The image replaces the base
+  `cc`, `c++`, `cpp`, `g++` and `gcc` entry points with links to
+  `/usr/pkg/gcc16/bin`; the first-boot installer verifies the links, the
+  reported compiler version, and a C and C++ compile-and-run smoke check.
 - NetBSD host tools `nbmakefs`, `nbgpt`, and host `qemu-img`, `tar`, `shasum`.
   The builder uses absolute paths without whitespace or shell metacharacters.
 

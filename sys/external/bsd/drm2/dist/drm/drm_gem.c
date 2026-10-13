@@ -247,13 +247,11 @@ static void drm_gem_object_handle_free(struct drm_gem_object *obj)
 
 static void drm_gem_object_exported_dma_buf_free(struct drm_gem_object *obj)
 {
-#ifndef __NetBSD__
 	/* Unbreak the reference cycle if we have an exported dma_buf. */
 	if (obj->dma_buf) {
 		dma_buf_put(obj->dma_buf);
 		obj->dma_buf = NULL;
 	}
-#endif
 }
 
 static void

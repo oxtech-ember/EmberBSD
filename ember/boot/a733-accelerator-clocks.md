@@ -12,7 +12,7 @@ The implementation is in `sys/arch/arm/sunxi/sun60i_a733_ccu.c` and its header.
 
 | Resource | Register | Behavior |
 | --- | --- | --- |
-| PLL GPU0 / NPU | `0x0e0` / `0x2a0` | Report a running integer PLL left by firmware; no PLL writes |
+| PLL GPU0 / NPU | `0x0e0` / `0x2a0` | Normal clock API only observes firmware state; the reserved GPU experiment can start PLL_GPU0 at 600 MHz |
 | GPU0 module | `0xb20` | Six parents, gate bit 31, update bit 27, fractional M field |
 | NPU module | `0xb00` | Seven parent selectors, gate bit 31, divisor 1 through 32 |
 | AHB NPU / GPU0 | `0x5c0` | Bits 6 / 7; other gates remain unchanged |
@@ -42,7 +42,7 @@ reference-count shared parents. Optional provider guards now arbitrate
 mutations. The experimental GPU reservation counts in-flight writers before
 acquisition,
 then blocks GPU-local/reset mutations and shared source changes. Its dedicated
-prepare writes only the local mux/gates/reset. Shared ancestor enable is a
+PERIPH0 prepare writes only the local mux/gates/reset. Shared ancestor enable is a
 write-free success while borrowed; recursive writes never run on that path.
 Without a lease, existing clock and reset operations retain their behavior.
 This is not general GPU/NPU power management.
@@ -59,8 +59,12 @@ PLL handoff checks enable, LDO, lock detection, lock and output bits, the two SD
 enables, and an integer multiplier of at least 11. It accounts for both
 the output divider and the input divider. Disabled, unlocked, SDM or
 unrepresentable states report zero and fail enable with `ENXIO`. Retuning
-returns `ENXIO`; disable returns `EBUSY`. There is no PLL startup wait,
-because this provider never starts or reconfigures an accelerator PLL.
+returns `ENXIO`; disable returns `EBUSY` through the normal clock API.
+The separate `sun60i_a733_ccu_gpu_prepare_pll` experiment requires a GPU lease,
+a stopped PLL and open manual post-PLL gating. It starts PLL_GPU0 at 600 MHz,
+checks consecutive lock samples and settling, then prepares local GPU clocks.
+It retains ownership after any write attempt. It does not change PLL_NPU or
+shared PLL_REF/PERIPH0. See the [runtime selection and bounds](a733-gpu-identification.md#optional-dedicated-pll-experiment).
 
 PLL_NPU can also feed DRAM, MBUS and video engines. The current CCU cannot
 account for all these consumers. A future PLL/DVFS implementation needs
@@ -82,14 +86,14 @@ runtime power. These paths are not one interchangeable cold-start recipe.
 This is source evidence, not a validated native sequence; the BSP does not
 sequence the new SRAM reset.
 
-The [experimental identification consumer](a733-gpu-identification.md#experimental-clock-preparation)
-attempts a bounded clock-only preparation. On physical Zero 3W, matched
-`EMBER64 #8` passed all four GPU-local write/readback checks, then timed out
-waiting for CORE ON/Q acceptance. Clock-only preparation was insufficient
-in that observed state; the failed PCSM or Q-Channel phase is not established.
-Broader power management still needs ownership of supplies and shared clocks,
-plus a protocol-safe release sequence. Identification precedes IRQ, MMU/DMA
-and workload work. Clock provider registration alone does not establish it.
+The [dedicated PLL experiment](a733-gpu-identification.md#physical-pll-result)
+passes two short physical Zero 3W runs with GCC16 kernel `498c0028e`.
+PLL lock and GPU_CLK UPDATE complete. CCU decodes 600/200 MHz, CORE reaches
+strict ON/Q readiness, and the real PBVNC is `36.56.104.183`.
+The older PERIPH0-400M experiment timed out and stalled on GPU register reads.
+The new path changes both PLL enable and module source/rate; the individual
+internal dependency was not isolated. General DVFS, IRQ, DMA, firmware
+execution and application rendering remain outside this acceptance.
 
 ## Sources and validation
 
@@ -138,5 +142,6 @@ The extended 15,188-check contract also passed natively on physical Zero 3W
 under kernel #7. It executes real CPU instructions with fake MMIO, not GPU
 clock hardware. The complete GCC16.2 #8 kernel subsequently booted with the
 separate experimental DTB; see the [physical result](a733-gpu-identification.md#physical-result).
-That bounded clock/reset attempt did not reach GPU identification. Neither
-GPU rendering nor NPU inference is established.
+That earlier attempt did not reach identification. The current 53,475-check
+fixture and physical PLL result above extend it. GPU rendering and NPU
+inference have separate acceptance.

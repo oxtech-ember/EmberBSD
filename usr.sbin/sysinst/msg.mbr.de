@@ -48,7 +48,7 @@ Das System wird nicht von dieser Festplatte starten können.}
 
 message fixactivepart
 {
-Soll die NetBSD-Partition der Festplatte als aktiv markiert werden?}
+Soll die EmberBSD-Partition der Festplatte als aktiv markiert werden?}
 
 message setbiosgeom
 {

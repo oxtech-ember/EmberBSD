@@ -16,7 +16,7 @@ Board revision: C1 in the earlier support record.
 | Serial console | Tested |
 | All CPU cores | Tested |
 | Ethernet | Tested |
-| Wi-Fi | Tested |
+| Wi-Fi | WPA2 and SAE/required PMF; Neighbor Reports and host-managed BTM acceptance/rejection passed on one Keenetic mesh ([measurements and limits](../boot/bwfm-kv.md#physical-raspberry-pi-5-check)) |
 | Bluetooth | Classic: Tested; BLE: No |
 | Temperature sensor | Tested |
 | Fan control | Tested |

@@ -1325,6 +1325,9 @@ wpas_rrm_handle_msr_req_element(
 		goto reject;
 	}
 
+	if (wpa_s->drv_rrm_flags & WPA_DRIVER_FLAGS_RRM_NEIGHBOR_REPORT_ONLY)
+		goto reject;
+
 	duration_mandatory =
 		!!(req->mode & MEASUREMENT_REQUEST_MODE_DURATION_MANDATORY);
 

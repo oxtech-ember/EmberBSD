@@ -39,6 +39,8 @@
 typedef uint64_t bus_addr_t;
 typedef size_t bus_size_t;
 typedef unsigned int bus_space_tag_t;
+typedef void *ACPI_HANDLE;
+typedef unsigned int bus_dma_tag_t;
 typedef unsigned int bus_space_handle_t;
 typedef void *cfdata_t;
 typedef uint64_t ACPI_INTEGER;
@@ -56,6 +58,7 @@ struct acpi_node {
 struct acpi_attach_args {
 	struct acpi_node *aa_node;
 	bus_space_tag_t aa_memt;
+	bus_dma_tag_t aa_dmat;
 };
 struct acpi_mem { bus_addr_t ar_base; bus_size_t ar_length; };
 struct acpi_resources { int parsed; };
@@ -84,6 +87,13 @@ static bool active[3];
 static ACPI_INTEGER sta, cca;
 static struct acpi_mem resources[3];
 static int (*finalizer)(device_t);
+enum probe_stage {
+	PROBE_TAKEOVER, PROBE_DMA, PROBE_QUEUE, PROBE_IRQ, PROBE_FAULT,
+	PROBE_RENDER, PROBE_COUNT
+};
+static unsigned int probe_calls[PROBE_COUNT], probe_order[PROBE_COUNT];
+static unsigned int probe_count;
+static int probe_errors[PROBE_COUNT];
 
 static int bcmmbox_request(uint8_t, void *, size_t, uint32_t *);
 static int bus_space_map(bus_space_tag_t, bus_addr_t, bus_size_t, int,
@@ -108,7 +118,69 @@ static struct device dev = { &sc };
 static struct bcm2835pmwdog_softc pm = { 1, 100 };
 static ACPI_DEVICE_INFO info = { ACPI_VALID_HID, { "BCM2712" }, "BCM2850" };
 static struct acpi_node node = { ACPI_TYPE_DEVICE, &node, &info };
-static struct acpi_attach_args aa = { &node, 1 };
+static struct acpi_attach_args aa = { &node, 1, 2 };
+
+#ifdef BCM2712_V3D_TAKEOVER
+/* Keep the production finalizer; substitute only its hardware experiments. */
+static int
+probe_result(device_t device, enum probe_stage stage)
+{
+	assert(device == &dev && sc.sc_observed);
+	assert(requests == 2 && maps == 3 && unmaps == 3);
+	assert(probe_count < PROBE_COUNT);
+	probe_order[probe_count++] = stage;
+	probe_calls[stage]++;
+	return probe_errors[stage];
+}
+
+int
+bcmv3d_takeover_probe(device_t device, bus_space_tag_t bst)
+{
+	assert(bst == aa.aa_memt);
+	return probe_result(device, PROBE_TAKEOVER);
+}
+
+#ifdef BCM2712_V3D_DMA_PROBE
+int
+bcmv3d_dma_probe(device_t device, bus_dma_tag_t dmat)
+{
+	assert(dmat == aa.aa_dmat);
+	return probe_result(device, PROBE_DMA);
+}
+#endif
+#ifdef BCM2712_V3D_QUEUE_PROBE
+int
+bcmv3d_queue_probe(device_t device, bus_dma_tag_t dmat)
+{
+	assert(dmat == aa.aa_dmat);
+	return probe_result(device, PROBE_QUEUE);
+}
+#endif
+#ifdef BCM2712_V3D_IRQ_PROBE
+int
+bcmv3d_irq_probe(device_t device, bus_dma_tag_t dmat, ACPI_HANDLE handle)
+{
+	assert(dmat == aa.aa_dmat && handle == node.ad_handle);
+	return probe_result(device, PROBE_IRQ);
+}
+#endif
+#ifdef BCM2712_V3D_FAULT_PROBE
+int
+bcmv3d_fault_probe(device_t device, bus_dma_tag_t dmat, ACPI_HANDLE handle)
+{
+	assert(dmat == aa.aa_dmat && handle == node.ad_handle);
+	return probe_result(device, PROBE_FAULT);
+}
+#endif
+#ifdef BCM2712_V3D_RENDER
+int
+bcmv3d_render_attach(device_t device, bus_dma_tag_t dmat, ACPI_HANDLE handle)
+{
+	assert(dmat == aa.aa_dmat && handle == node.ad_handle);
+	return probe_result(device, PROBE_RENDER);
+}
+#endif
+#endif
 
 static void
 contract_print(const char *format, ...)
@@ -274,6 +346,12 @@ reset(void)
 	memset(&sc, 0, sizeof(sc));
 	sc.sc_dev = &dev;
 	sc.sc_bst = 1;
+	sc.sc_dmat = aa.aa_dmat;
+	sc.sc_handle = node.ad_handle;
+	memset(probe_calls, 0, sizeof(probe_calls));
+	memset(probe_order, 0, sizeof(probe_order));
+	memset(probe_errors, 0, sizeof(probe_errors));
+	probe_count = 0;
 	requests = maps = unmaps = reads = gpu_reads = 0;
 	fail_map = fail_read = malformed_word = malformed_call = 0;
 	malformed_value = 0;
@@ -308,6 +386,70 @@ denied(void)
 	assert(maps == 0 && gpu_reads == 0 && unmaps == 0);
 	return error;
 }
+
+#ifdef BCM2712_V3D_TAKEOVER
+static void
+finalize_contract(void)
+{
+	static const enum probe_stage sequence[] = {
+		PROBE_TAKEOVER,
+#ifdef BCM2712_V3D_DMA_PROBE
+		PROBE_DMA,
+#endif
+#ifdef BCM2712_V3D_QUEUE_PROBE
+		PROBE_QUEUE,
+#endif
+#ifdef BCM2712_V3D_IRQ_PROBE
+		PROBE_IRQ,
+#endif
+#ifdef BCM2712_V3D_FAULT_PROBE
+		PROBE_FAULT,
+#endif
+#ifdef BCM2712_V3D_RENDER
+		PROBE_RENDER,
+#endif
+	};
+	static const int failures[] = { EIO, ETIMEDOUT, EFAULT };
+	const unsigned int count = sizeof(sequence) / sizeof(sequence[0]);
+	unsigned int i, j, f;
+
+	/* Observation failures must never reach even the takeover. */
+	for (i = 0; i < 3; i++) {
+		reset();
+		if (i == 0)
+			mailbox_error = ETIMEDOUT;
+		else if (i == 1)
+			fail_map = 1;
+		else
+			ident1 = 0xffffffff;
+		assert(bcmv3d_finalize(&dev) == 0 && probe_count == 0);
+		assert(bcmv3d_finalize(&dev) == 0 && probe_count == 0);
+	}
+	reset();
+	assert(bcmv3d_finalize(&dev) == 0 && probe_count == count);
+	for (i = 0; i < count; i++) {
+		assert(probe_order[i] == (unsigned int)sequence[i]);
+		assert(probe_calls[sequence[i]] == 1);
+	}
+	assert(bcmv3d_finalize(&dev) == 0 && probe_count == count);
+
+	/* An uncertain or failed stage must prevent all subsequent work. */
+	for (i = 0; i < count; i++)
+		for (f = 0; f < sizeof(failures) / sizeof(failures[0]); f++) {
+			reset();
+			probe_errors[sequence[i]] = failures[f];
+			assert(bcmv3d_finalize(&dev) == 0);
+			assert(probe_count == i + 1);
+			for (j = 0; j < count; j++) {
+				assert(probe_calls[sequence[j]] == (j <= i));
+				if (j <= i)
+					assert(probe_order[j] ==
+					    (unsigned int)sequence[j]);
+			}
+			assert(bcmv3d_finalize(&dev) == 0 && probe_count == i + 1);
+		}
+}
+#endif
 
 int
 main(void)
@@ -551,6 +693,9 @@ main(void)
 	reset(); mailbox_error = ETIMEDOUT;
 	assert(bcmv3d_finalize(&dev) == 0);
 	assert(bcmv3d_finalize(&dev) == 0 && requests == 1);
+#ifdef BCM2712_V3D_TAKEOVER
+	finalize_contract();
+#endif
 	printf("PASS: %u BCM2712 V3D observation failure/cleanup cases\n", cases);
 	return 0;
 }

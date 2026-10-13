@@ -26,6 +26,9 @@ are maintained in the related repositories below.
 - For an AI assistant, choose [user skills](#connect-user-skills) for device use
   or [developer skills](#connect-developer-skills) for development.
 
+- For installation screens and compatible set sources, see
+  [installer identity](ember/boot/installer-branding.md).
+
 ## EmberBSD ecosystem
 
 | Repository | Purpose | Current scope |
@@ -35,7 +38,7 @@ are maintained in the related repositories below.
 | [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) | Standalone applications and reproducible demonstrations | Local AI, robotics and desktop scenarios with requirements and checks |
 | [EmberBSD-Runtime](https://github.com/oxtech-ember/EmberBSD-Runtime) | Application execution, lifecycle, permissions and shared device operations | Design stage; no released runtime implementation |
 | [EmberBSD-SDK](https://github.com/oxtech-ember/EmberBSD-SDK) | Application interfaces, package contracts, developer tools and compatibility checks | Design stage; no stable application API or released SDK tools |
-| [Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills) | Instructions for developers and their AI assistants | Application development, board bring-up, shared ports and tested contributions |
+| [Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills) | Instructions for developers and their AI assistants | Application development, board bring-up, shared ports and tested contributions; source analysis and memory checks for own and ported code |
 | [EmberBSD-User-Skills](https://github.com/oxtech-ember/EmberBSD-User-Skills) | Instructions for users and their local or remote AI assistants | OS installation onto boards, desktop VMs and USB-cabled phones, applications, device diagnostics, personal Ports and GitHub workflows; package checks and client discovery verified |
 
 Runtime will execute applications on the device; SDK will define their
@@ -59,8 +62,8 @@ procedures live in `ember/boards`. Personal source customization stays a user
 workflow; it does not require a contribution PR.
 
 Follow the [loading instructions](https://github.com/oxtech-ember/EmberBSD-User-Skills#load-the-package)
-for your client. Both skill packages can coexist. Version 0.2.1 passed package
-consistency checks and version 0.1.0 passed native Codex discovery; these
+for your client. Both skill packages can coexist. Version 0.2.3 passed package
+consistency, native Codex discovery and plugin/skill icon path checks; these
 checks do not establish on-device agent behavior, cable-installer acceptance
 or end-to-end personal Ports maintenance. The package
 uses available tools and supplies no agent runtime or credentials.
@@ -71,7 +74,7 @@ uses available tools and supplies no agent runtime or credentials.
 provides portable Agent Skills packaged with Agent Plugins. Use the installation
 method supported by your development environment. Codex is one verified host.
 
-With a Codex CLI that supports plugins (commands checked with 0.160.1):
+With a Codex CLI that supports plugins (commands checked with 0.159.2):
 
 ```sh
 codex plugin marketplace add oxtech-ember/Ember-Agent-Skills --ref main
@@ -87,6 +90,8 @@ Start a new conversation in your project and ask:
 See the [skills installation and update guide](https://github.com/oxtech-ember/Ember-Agent-Skills#use-in-your-development-environment)
 for expected results, updates and other assistant environments. The plugin
 provides developer instructions; it does not install software on a board.
+Package 0.3.8 also passes native plugin/skill icon path checks. Desktop icon
+rendering remains unverified for both packages.
 Reusable fixes and ports are contributed through focused PRs after relevant
 testing, following the accepting project's rules.
 
@@ -99,7 +104,7 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-Status updated **2026-10-08**; linked component documents record their own
+Status updated **2026-10-13**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
 
@@ -150,8 +155,12 @@ on every board in the hardware catalog.
   transforms, and a real gpsd process receiving synthetic GNSS data.
   These are [experimental source builds](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/robotics-foundations);
   physical cameras/GNSS receivers and accelerated vision remain unverified.
-- **Video processing for applications:** FFmpeg 9.0.2, GStreamer 1.28.7 and
-  OpenCV 5.0.0 videoio share one tested media installation. AArch64 VM checks
+- **Video processing for applications:** the complete [FFmpeg 9.0.2 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/ffmpeg-runtime.md)
+  passes CM5 H.264/H.265/AV1/VP9 file-codec checks, including repaired AArch64
+  dispatch and scalar controls. [GStreamer 1.28.8 base/bad packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/gstreamer-plugins.md)
+  pass installed introspection, conversion and parser checks on the same board.
+  The earlier FFmpeg 9.0.2 / GStreamer 1.28.7 / OpenCV 5.0.0 videoio probe remains
+  a separate, limited validation record. Its AArch64 VM checks
   cover exact decoded frames and timestamps, application-buffer pipelines,
   file capture through both OpenCV backends, seeking, image processing and
   lossless output. NetBSD filesystem support and FFmpeg compatibility fixes
@@ -253,11 +262,149 @@ on every board in the hardware catalog.
 - **Current KDE/Qt integration:** KWin 6.7.5 runs a nested Qt Wayland window
   with software rendering and tested keyboard input. Plasma Mobile 6.7.5
   builds and installs with checked library loading and QML components.
-  Common [Qt 6.12 / Frameworks 6.30 source recipes](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit)
+  Common [Qt 6.12 / Frameworks 6.31 source recipes](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit)
   and [shared FFmpeg9 recipes](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media)
   have checked source/dependency selection. The FFmpeg audio API and device
   registration pass in the AArch64 VM with GCC16; real metadata extraction
-  passes on the host. Complete native packages and Qt playback remain pending.
+  passes on the host. Matching [Qt 6.12 cross-build generators](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/cross)
+  build and pass functional checks on macOS/arm64. Target
+  [Qtbase, SVG, ShaderTools, ImageFormats, LanguageServer and Declarative packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/qt-packages.md)
+  pass cross-build, staging and sysroot installation checks. An installed
+  [CM5 Core/Gui/SVG consumer](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/qt-consumer)
+  passes thread signals, resources, image pixels, plugin errors and package
+  reinstallation; 75 live library/plugin hashes match the common sysroot. Qtbase includes
+  Wayland/EGL and GBM; current networking
+  dependencies pass [focused CM5 API checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/network-dependencies.md).
+  A [Qt Wayland/EGL consumer](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/qt-wayland-gl)
+  also passes on CM5: both client and isolated labwc use V3D, with verified
+  shader pixels, process restart, failure checks and 59 matching library hashes.
+  The [Qt Quick consumer](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/qt-quick-gpu)
+  also passes compiled QML scene/layer pixels on V3D, process restart and
+  rejection checks; 75 live library hashes match the common stack. The same
+  regression passes with Mesa 26.2.4nb4 / LLVM 23.1.3 after the fan kernel update.
+  [KI18n, KCoreAddons and KConfig 6.31 packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/frameworks.md)
+  also pass cross packaging and sysroot installation. CM5 checks cover generated
+  configuration persistence, native Qt/kqueue file events and locale lookup.
+  A [base libintl fix](ember/boot/libintl-validation.md) preserves Welsh singular
+  translations and untranslated plural fallbacks, with 200 fixture checks.
+  [Current QtTools HTML dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/html.md)
+  pass 220 gumbo tests, an upstream UTF-8 test and two CSS regressions on CM5.
+  The litehtml patch fixes negative shifts. [Full QtTools 6.12](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/qt-packages.md#full-qttools-package)
+  now cross-packages against LLVM/Clang 23.1.3 with shared litehtml, Designer
+  and QDoc. Installed QDoc generates C++ documentation through Clang on CM5;
+  Assistant and Designer windows remain unaccepted.
+  [Native KDocTools](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/doctools.md)
+  now generates KDE documentation during Mac cross builds. Full KConfigWidgets
+  and KCompletion packages retain [Designer plugins](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/designer-plugins.md).
+  [Breeze generator repairs](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/breeze.md)
+  preserve SVG inputs and reject malformed XML, with native regression,
+  ASan/UBSan and focused static-analysis checks. The installed Breeze package
+  also passes KDE resource-byte comparisons and missing-reference rejection on CM5.
+  The [GStreamer 1.28.8 core](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/gstreamer.md)
+  passes 106 unchanged upstream checks and a finite installed pipeline on CM5.
+  [Base/bad plugin packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/gstreamer-plugins.md)
+  also pass 20 typelib loads, real GType resolution and exact video/parser pixels.
+  Other plugin packages, physical media output and desktop integration remain unaccepted.
+  The [complete LAME 4.0 MP3 dependency](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/lame.md)
+  cross-builds with GCC 16 and passes installed CM5 encoding, Unicode-tag and
+  decoded-signal checks. [x265 4.2](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/x265.md)
+  produces NEON/scalar H.265 streams with independently verified lossless pixels.
+  The [full FFmpeg 9.0.2 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/ffmpeg-runtime.md)
+  now passes four video codecs, scalar AV1/VP9, MP3/Opus, Unicode metadata and
+  filter checks on CM5. The complete [Qt Multimedia 6.12 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/tests/qt-multimedia/README.md)
+  also passes software playback through the installed FFmpeg plugin: exact
+  frames, end of media, process restart and failure controls. All 111 loaded
+  package-library hashes match the common sysroot. Quick3D's complete package
+  and native asset generators also pass their build checks; target 3D scenes,
+  physical media output and full Plasma remain unaccepted.
+  [Complete speech packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/speech.md)
+  also pass language, PCM and shutdown regressions on CM5. Qt TextToSpeech
+  runs both installed Flite and speech-dispatcher/eSpeak engines; KCMUtils
+  passes its generated-settings test after native cross tooling was added.
+  These bounded checks do not establish physical sound or a complete desktop.
+  [Plasma shell libraries](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/libplasma.md)
+  now pass installed plugin, theme and shared-QML-engine checks on CM5, with
+  native KPackage tooling and the common Mesa EGL provider preserved.
+  [Current Noto fonts](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/fonts.md)
+  pass payload, target indexing and Cyrillic/CJK selection checks. These remain
+  component results; the complete accelerated Plasma Desktop remains pending.
+  The complete [KWin Wayland package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/kwin.md)
+  now cross-builds with the full feature set and a payload that matches the
+  common sysroot file for file. On Orange Pi Zero 3W (A733) it passes a
+  private virtual-backend session: the compositor stays active on QPainter
+  while Qt Quick clients render real pixel phases through software EGL
+  (llvmpipe) and exit cleanly. Hardware GL compositing still needs the DRM
+  render node on A733. On physical CM5, KWin 6.7.5nb2 passes
+  [OpenGL/V3D selection and Qt Quick pixel checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
+  on a virtual output under an existing non-root user. Its missing Vulkan
+  loader dependency is repaired. This does not establish HDMI presentation
+  or the complete Plasma Desktop. The fixed
+  [Milou](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/milou)
+  package passes its fresh-board acceptance on the same board.
+  plasma-workspace 6.7.5 itself now cross-builds completely (BROKEN
+  removed, the Wayland KWin package replaces kwin-x11, 6121-file payload
+  matching the sysroot) together with its full dependency chain:
+  Poppler with boost-libs and NSS ported for cross building, exiv2,
+  libkexiv2, phonon-qt6/PulseAudio, kirigami-addons, kio-extras, kpty,
+  syntax-highlighting with a native indexer, kded, taglib and the
+  kfilemetadata extractors. Orange Pi Zero 3W carries the complete set
+  (365 packages): plasmashell, krunner, ksmserver and startplasma-wayland
+  are installed with clean dynamic dependencies, and the private KWin
+  session acceptance still passes. A startplasma session on the virtual
+  output is the next acceptance step. CM5 runtime testing also identifies
+  the separate, still absent Plasma Desktop shell package; Workspace alone
+  cannot start `org.kde.plasma.desktop`. Its current xdg-user-dirs 0.20
+  dependency now cross-builds and passes private-profile checks on CM5.
+  [Current desktop providers](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-providers.md)
+  include SDL3 game-controller code with eight CM5 checks and a UBSan repeat.
+  Event sounds keep the same core library without mandatory GTK. The Desktop
+  source recipe selects current Fcitx5/Qt6; target input and the full shell
+  still require acceptance. KIO MTP/audio plugins are installed and linked on CM5.
+  Input prerequisites pass 264 UnitTest++ cases, 295 JSON assertions, and
+  Enchant's 434 main and 25 Hunspell tests. Physical MTP remains unverified.
+  [Gettext 1.0](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/tests/gettext-runtime/README.md)
+  passes 27 installed CM5 checks, including Fcitx's original translation function.
+  The autopoint archive test skips because target Autoconf is absent.
+  [ConsoleKit session launching](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-session.md)
+  now preserves application failures and passes real-session checks on CM5;
+  ordinary-user login and device ownership remain unverified.
+  [PulseAudio 17.0 and its TDB/libdaemon dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/pulseaudio.md)
+  now cross-package with bounded installed CM5 checks. Locale and caller-buffer
+  fixes restore client startup; private null-sink playback/capture preserves
+  all 12,000 test samples. Physical audio and Plasma integration remain unaccepted.
+  [Current Plasma prerequisites](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/plasma-prerequisites.md)
+  now cross-package KWayland, KDecoration, layer-shell-qt and KNightTime 6.7.5.
+  Installed KWayland passes 56 exact button events on CM5, with an original-patch
+  failure control. [libsecret 0.21.8.2](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/libsecret.md)
+  retains GIR, Vala and documentation; 50 upstream tests and a native peer-credential
+  regression pass on CM5.
+  [Installed KIO and KGlobalAccelD](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-frameworks.md)
+  pass 53 and 28 upstream cases on CM5, with two KIO skips. Shortcut tests use
+  a dummy input plugin; physical keys and full KWin/Plasma remain unaccepted.
+  [KItemModels, ThreadWeaver and KCrash](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/models-and-jobs.md)
+  pass installed CM5 model/QML, worker-queue and crash-recovery checks:
+  500, 77 and 16 QtTest cases respectively, with six upstream model skips.
+  KColorScheme also passes 12 cases, and KWidgetsAddons passes 54 date/time and
+  action-widget cases. Its full cross package retains the target Designer plugin.
+  KDBusAddons passes unique-instance activation
+  and dead-service recovery against the [corrected default D-Bus session policy](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/desktop-support.md).
+  [KArchive](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/archive.md)
+  passes 153 selected CM5 archive/filter cases; the 2-GiB 7z case remains
+  unaccepted after reaching the board's memory limit.
+  [GnuPG 2.5.24](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/security-dependencies.md)
+  passes an isolated installed encryption/decryption check.
+  [QCA and KWallet](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/qca.md)
+  pass installed crypto tests and private D-Bus activation on CM5; wallet storage
+  in the upstream test is mocked. Interactive desktop authorization remains unaccepted.
+  [Spelling dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/spelling.md)
+  now cross-package Aspell, Hunspell and full Sonnet. CM5 tests confirm the
+  Aspell dictionary-suffix repair, 172 Hunspell cases and matching native/target
+  language-model bytes; desktop dictionary integration remains unaccepted.
+  Shared-cache recovery and the complete Frameworks runtime remain unaccepted.
+  Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
+  confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
+  CM5 still reports no HDMI hotplug in its pre-OS firmware log after a cold boot.
+  Neither result establishes accelerated scanout.
   A complete mobile shell workflow, native display and power management
   still need validation. See the [Plasma Mobile port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile).
 
@@ -314,8 +461,8 @@ on every board in the hardware catalog.
   Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/wayland-utm),
   with native DSO-lifetime/numeric regressions under GCC 16.2 and
   common-toolchain staging rules. A [common graphics source profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-graphics)
-  supplies canonical MesaLib 26.2.4nb2/libdrm 2.4.134nb1 packages with one
-  shared LLVM 23.1.2 provider. The complete selected Mesa package cross-builds
+  supplies canonical MesaLib 26.2.4nb4/libdrm 2.4.134nb2 packages with one
+  shared LLVM 23.1.3 provider. The complete selected Mesa package cross-builds
   with GCC16 on macOS and is installed normally on Orange Pi Zero 3W (A733).
   [Installed-package acceptance](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-package.md)
   verifies the package files, links and library closure, then passes four
@@ -448,25 +595,43 @@ on every board in the hardware catalog.
   [GPU identification consumer](ember/boot/a733-gpu-identification.md) now
   attaches on Zero 3W. A stable physical CCU snapshot shows the GPU module
   and bus clocks gated and reset asserted, with DCDC4 programmed to 800 mV.
-  A subsequent matched boot classifies the physical DCXO as 26 MHz while
-  preserving the nominal DT clock. GPU_CORE's ON policy disagrees with its
-  status, so the strict reader refuses readiness. The matched #7 kernel
-  reads stable power-controller snapshots and identifies both GPU domains
-  as single-Q-Channel PPUs; the inconsistent CORE state remains unresolved.
-  The corrected [clock-only experiment](ember/boot/a733-gpu-identification.md#physical-result)
-  completed GPU_CLK UPDATE on physical Zero 3W. CCU reported
-  400/200 MHz configuration, but CORE ON/Q still timed out before GPU MMIO.
-  Reboot with the restored normal DTB returned gated clocks and SSH.
-  The observed post-PLL gates were open before preparation and after timeout.
-  A [read-only preboot snapshot](ember/boot/a733-preboot-snapshot.md) finds
-  CORE's ON-policy/OFF-status mismatch before the final firmware handoff and
-  kernel entry. It persists through a confirmed power removal and the clock-only
-  experiment. Its origin, GPU identity and acceleration remain unverified.
-  The missing power handshake, general shared resource management, DMA/MMU
-  and command submission still require porting. These are
-  porting targets, not available EmberBSD acceleration. Board bring-up,
-  driver/DMA integration, compatible runtime and real model execution must
-  all pass before an accelerated AI workflow is claimed.
+  The native PLL cold-start path now passes two physical Zero 3W runs with
+  GCC16 kernel `498c0028e`. It locks PLL_GPU0, completes GPU_CLK UPDATE
+  and confirms 600/200 MHz configuration at the programmed 800 mV supply.
+  GPU_CORE reaches strict ON/Q readiness. Both register reads identify
+  PowerVR BXM BVNC `36.56.104.183`; Wi-Fi and the existing NPU probe return
+  after a normal reboot. Frequencies and voltage were not measured externally.
+  The [physical PLL result](ember/boot/a733-gpu-identification.md#physical-pll-result)
+  supersedes the earlier PERIPH0-400M timeout and GPU MMIO stall. Normal
+  board DTBs remain observe-only; the working cold start is an explicit
+  runtime experiment. Native `firmload` now reads the exact firmware and
+  [validates its metadata](ember/boot/a733-gpu-fwinfo.md#physical-preflight-result)
+  against the live GPU on Zero 3W. The [native memory preparer](ember/boot/a733-gpu-fwmem.md#physical-preparation-result)
+  also passes on this board: code, data and MIPS page tables occupy checked
+  DMA allocations. The [native firmware bootstrap](ember/boot/a733-gpu-fwboot.md#physical-bootstrap-result)
+  now runs on Zero 3W: firmware sets its boot flag and returns the expected
+  hardware/firmware BVNC through direct coherent memory. The
+  [native LOGTYPE and MMUCACHE commands](ember/boot/a733-gpu-fwprobe.md#physical-command-result)
+  also complete on this board: return words, queue progress and the executed
+  counter agree. Diagnostic [stage 18](ember/boot/a733-gpu-fwcompute.md#physical-stage-18-result)
+  then loads the packed Mesa-generated compute image through firmload and
+  serializes the real USC/PDS/CDM packet on the board CPU; its 33 KiB image
+  digest matches the host packer byte for byte, without mapping or
+  publication. Rogue GPU [page-table encoders](ember/boot/a733-gpu-mmu.md)
+  and [CPU-owned VM preparation](ember/boot/a733-gpu-vm.md) pass source contracts;
+  On Zero 3W, the [native compute check](ember/boot/a733-gpu-fwcompute.md#physical-stages-19-21-result)
+  now passes all 21 stages with a Mesa 26.2.4 compiler packet. A guarded
+  PowerVR shader writes `0x13579bdf` through the native GPU page tables.
+  Client queue completion, timeline, DMA output, and fresh fault/HWR checks
+  agree. This check also passes after a second kernel update and fresh boot.
+  A native [PowerVR DRM/GEM interface](ember/boot/a733-pvr-render.md)
+  opens on Zero 3W and passes 72 device-query checks. It reports the measured
+  BVNC through a real render node. Native GEM allocation and CPU mapping of
+  an 8 MiB buffer also pass, including file isolation and mapping lifetime
+  after handle and file closure. GPU VM, job submission, Mesa Vulkan/Zink,
+  display output, and accelerated Plasma still require porting.
+  Repeated submission within one boot and long-duration GPU stability remain
+  untested.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,
@@ -483,8 +648,68 @@ on every board in the hardware catalog.
   reads HUB/CORE/MMU registers after validated clock/reset and stable idle SMS
   checks. A separate opt-in [native reset probe](ember/boot/bcm2712-v3d-takeover.md)
   completes SMS and PM reset on that CM5 and validates the post-reset inventory.
-  The ordinary kernel remains a passive observer. GPU DMA/MMU operation, interrupts,
-  command submission, Mesa rendering and acceleration remain unverified.
+  A further opt-in [first DMA/TFU experiment](ember/boot/bcm2712-v3d-dma.md)
+  published the GPU MMU on that CM5 and executed one translated 64x64 R32F
+  TFU copy through alias addresses with verified destination data, untouched
+  canaries and an exactly-once completion counter. A second opt-in
+  [bin/render queue experiment](ember/boot/bcm2712-v3d-binrender-plan.md)
+  then executed both control lists on that CM5: the binner completed and the
+  render stage cleared one 64x64 tile and stored the verified RGBA8 image
+  through the published page table. A third opt-in
+  [interrupt experiment](ember/boot/bcm2712-v3d-irq-plan.md) delivered the
+  TFU and bin/render completions as real ACPI interrupts on both GPU lines,
+  with handler acknowledgements and self-masking storm protection; the
+  stand firmware's swapped core/hub line names were identified by wire
+  evidence. The [acceptance guards](ember/boot/bcm2712-v3d-validation.md)
+  add failure-propagation, completion-count and DMA-integrity regressions;
+  their corrected DMA/queue and IRQ paths passed physical CM5 repeats
+  on 2026-10-11. On the same board,
+  the corrected [MMU fault experiment](ember/boot/bcm2712-v3d-fault-plan.md)
+  passed on CM5: one invalid destination fault, bounded recovery and a
+  verified good TFU copy in the same boot, with guarded scratch and intact
+  protected buffers. Each submission must reprogram the complete TFU payload.
+  A native [DRM/GEM render interface](ember/boot/bcm2712-v3d-render.md) now
+  passes bounded userspace TFU acceptance on CM5: 420 verified copies,
+  per-file mmap isolation, counter wrap, concurrent clients and submit/close
+  races. The [native compute path](ember/boot/bcm2712-v3d-csd.md) also passed
+  389 QPU dispatches with 6,224 verified integer results, changing uniforms,
+  guarded memory, concurrent clients and CSD/TFU/CSD transitions. A subsequent
+  [binary synchronization check](ember/boot/bcm2712-v3d-sync.md) passed standard
+  syncobj operations, finite waits, 325 CSD submissions and 64 CSD/TFU chains,
+  with 5,184 verified GPU results. The [native bin/render interface](ember/boot/bcm2712-v3d-gl.md)
+  then passed 325 userspace CL pairs, 1,331,200 checked pixels and 32 TFU
+  copies, including guards and binary fences. The common Ports
+  [Mesa package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-cm5.md)
+  now passes real V3D 7.1.10.2 shader/pixel rendering: EGL 1.5, GLES 3.0
+  and desktop OpenGL 3.1, including four 1280x800 lifecycles per display path. Native platform identity
+  makes this GPU discoverable without DRM master. All 38 Mesa upstream
+  invocations pass with recorded internal skips; LLVM23 llvmpipe also passes.
+  The [LLVM 23.1.3 migration](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-llvm2313.md) repeats all 38 invocations and 20 additional large V3D lifecycles. One transient large-BO allocation failure remains unresolved.
+  Same-device PRIME passes 80 cross-process lifecycles and four real
+  GBM/EGLImage shader/pixel cycles after native DMA-BUF lifetime repairs.
+  The ordinary kernel remains a passive observer. General job recovery,
+  foreign-device sharing, Vulkan, HDMI presentation and accelerated Plasma remain unverified.
+
+### Network diagnostics kit
+
+- **Board-side capture, analysis and load tools:** EmberBSD-Ports carries a
+  [network diagnostics profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/network-diagnostics)
+  with libpcap 1.10.7, tcpdump 4.99.6, iperf3 3.21 and the Wireshark 4.6.8
+  CLI set (dumpcap, tshark, capinfos, editcap, mergecap), cross-built from
+  binary packages on the development host. On Raspberry Pi 5 (EmberBSD
+  11.0, board `ember-rpi5-01`) tcpdump captured live Wi-Fi traffic through
+  BPF without kernel drops, iperf3 measured TCP, reverse TCP and zero-loss
+  UDP jitter against a LAN peer, and dumpcap completed a three-file
+  ring-buffer capture under load with per-interface drop accounting.
+- **Native Bluetooth HCI recording:** the `hcisnoop` recorder in the same
+  profile reads the netbt HCI socket tap (direction from
+  `SCM_HCI_DIRECTION`, timestamps from `SO_TIMESTAMP`) and writes BTSnoop
+  traces that Wireshark opens as "Bluetooth HCI H4" without any Linux
+  BlueZ dependency. It recorded a real controller inquiry on the same
+  board with correct host/controller directions. Wi-Fi monitor mode with
+  Radiotap, Lua dissectors, the Wireshark GUI on boards and Ethernet
+  MAC/PHY telemetry remain separate queue items; see the profile README
+  for the current boundaries.
 
 ### Board support and system builds
 
@@ -492,6 +717,8 @@ on every board in the hardware catalog.
   system has no support for: eight cores, the card at SDR104 speed,
   gigabit Ethernet, the AIC8800 Wi-Fi and Bluetooth module, processor
   frequency control, temperature sensors, watchdog and clock.
+  Zero 3W also has a native [PWM fan and thermal policy](ember/boot/a733-fan.md)
+  with production-source checks; physical fan speed control is pending.
 - **ESP32-S31**, a 32-bit RISC-V chip with 16 MB of memory and a new
   platform for NetBSD: the system boots from flash and works over Wi-Fi.
 - **Raspberry Pi 5 and Compute Module 5**: UEFI firmware built from
@@ -506,19 +733,32 @@ on every board in the hardware catalog.
   regression and automatic reconnection after reboot. See the
   [configuration guide](ember/boot/bwfm-sae.md) and
   [hardware receipt](ember/boards/compute-module-5.md#hardware-check-2026-10-08).
-  Other boards, access-point combinations and long-run operation need
-  separate acceptance; this is not an 802.11r/802.11v roaming claim.
-- **Zero 3W WPA3 and recovery:** the AIC8800D80 path supports SAE/H2E
-  with required PMF. Protected SA Query recovers an AP/client state mismatch
-  through the normal supplicant. Physical checks cover query/response,
-  automatic reconnection and an 8 MiB transfer each way; see the
-  [guide](ember/boot/aicwf-sae.md) and
-  [hardware receipt](ember/boards/orange-pi-zero-3w.md#protected-association-recovery-2026-10-09).
+  Access-point combinations and long-run operation need separate acceptance.
+  Host-managed k/v has the separate Pi 5 check below; 802.11r remains unsupported.
+- **Host-controlled Wi-Fi transitions:** the `bwfm` station transport adds
+  802.11k Neighbor Reports and 802.11v BSS Transition Management to the BSD
+  supplicant backend. Regression checks cover stale events, scan cancellation,
+  malformed replies and connection-scoped keys. A physical Pi 5 passed Neighbor
+  Reports and BTM acceptance/rejection under WPA2 and SAE/required PMF. TCP
+  survived the transitions; [measured reply gaps and limits](ember/boot/bwfm-kv.md)
+  distinguish this result from seamless roaming.
+- **Zero 3W Wi-Fi:** AIC8800D80 now has a physical WPA2 check for 802.11ac,
+  one stream and 80 MHz, with bidirectional TCP and verified file transfers.
+  The [VHT80 results](ember/boot/aicwf-vht.md) give throughput and test limits.
+  SAE/H2E and required PMF have separate physical checks, but a nonzero initial
+  IGTK IPN still prevents key installation on affected APs. The new
+  [host-managed k/v transport](ember/boot/aicwf-kv.md) has physical connected-scan,
+  ioctl, directed reassociation and management TX/RX checks. Neighbor-list and BTM acceptance remain pending.
+  Protected SA Query and recovery checks are documented
+  in the [SAE guide](ember/boot/aicwf-sae.md).
 - **Consistent Wi-Fi discovery and CM5 cooling:** `bwfm` retains firmware
-  scan channels and signal ranking across both bands; the CM5 ACPI fan can
-  [remain at maximum cooling](ember/boot/thermal-fan.md) across reboot.
-  The [physical check](ember/boards/compute-module-5.md#home-mesh-and-cooling-check-2026-10-08)
-  covers 5 GHz SAE/PMF traffic and operator-confirmed continuous rotation.
+  scan channels and signal ranking across both bands. The configurable
+  [ACPI minimum fan level](ember/boot/thermal-fan.md) skips a stalled low
+  level and retains stronger temperature steps. On CM5, 125/255 PWM started
+  at 50.1 °C without a maximum-speed boost. A five-minute check observed
+  rotation in all 272 active tachometer windows. The operator reports quieter,
+  steady rotation. The source regression passes 136 assertions on the host
+  and CM5. See the guide for higher-step, acoustic and long-run limits.
 - **Raspberry Pi Zero 2 W**: Wi-Fi on its BCM43436 chip.
 - **Headless base on Raspberry Pi 5:** the fork's kernel, matching board
   modules and reduced base userland are built and installed through the
@@ -577,12 +817,16 @@ on every board in the hardware catalog.
   and ordinary pkgsrc builds on Zero 3W select the repaired GCC16 nb1 package;
   the base compiler remains explicit bootstrap/recovery support.
   The [cross-build wrapper](ember/boot/cross-build.md) builds an AArch64 kernel,
-  matched board modules and DTBs on Apple Silicon macOS with GCC16.2.
+  matched board modules and DTBs on Apple Silicon macOS and Debian/x86_64
+  with GCC16.2. The Linux build passes all ten portable contracts and artifact
+  checksum checks; native contracts and boot acceptance remain separate.
   The resulting kernel cold-boots in AArch64 UTM and passes FP process,
   signal and thread checks. The
   [Ports cross GCC16 recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
   also runs GCC16 on that host; cross-built C11 (plain/LTO) and C++20 DSO
-  checks pass on Zero 3W with its installed GCC16 runtime. The
+  checks pass on Zero 3W with its installed GCC16 runtime. Its `--kernel`
+  mode builds the cross frontends without an application sysroot; target
+  libc and C++ runtime inputs remain required for application builds. The
   [CTF converter](ember/boot/ctf-external-types.md) preserves GCC/Clang types
   in DWARF4/5 and both offset widths, including COMDAT type units, standalone
   DWO, indexed DWP and combined split/supplementary input. Linked multi-CU
@@ -624,14 +868,20 @@ on every board in the hardware catalog.
   extension loading and 21 selected upstream suites, including TLS and SQLite.
   Meson 1.12.1 and Ninja 1.13.2 cross packages also pass installed C/C++
   builds, Python embedding, incremental/error handling and install-RPATH checks
-  in that VM with explicit current GNU as/ld. The profile prepares matching
-  LLVM/Clang/LLD 23.1.2 with upstream lit. Portability patches, generated-header declarations and
+  in that VM with explicit current GNU as/ld. [Perl 5.44](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/perl.md)
+  also cross-packages on Mac and passes 74 selected upstream assertions plus
+  four native XS-extension assertions on CM5. The profile prepares matching
+  LLVM/Clang/LLD 23.1.3 with upstream lit. Portability patches, generated-header declarations and
   explicit interpreter/LLVM selection have source checks. Focused native
-  macro/selection and GCC16 metadata checks pass. The complete LLVM23 core
-  package passes normal package checks and installed C API/bitcode plus four
-  default ORC JITLink lifecycles on Zero 3W. Upstream lit passes installed
-  launcher and PASS/XFAIL/FAIL checks in AArch64 UTM. Clang/LLD packages and
-  Mesa26/TinyGo consumers remain pending. See the [LLVM family contract](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
+  macro/selection and GCC16 metadata checks pass. The complete LLVM 23.1.3 core
+  passes cross-package checks, sysroot installation and 15 metadata/refusal checks.
+  Installed 23.1.3 also passes [C API/bitcode and four default ORC JITLink lifecycles on CM5](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/llvm-api-tests.md#cm5-llvm-2313-2026-10-12),
+  with 16 actual metadata query groups and 21 sealed-tool integrity checks.
+  The previous 23.1.2 core has its own Zero 3W receipt. Upstream lit passes installed
+  launcher and PASS/XFAIL/FAIL checks in AArch64 UTM. The complete Clang 23.1.3 package
+  passes normal cross-package checks and sysroot installation. The [full LLD package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/lld.md)
+  also passes these checks with both upstream test executables built; installed Clang/LLD and
+  TinyGo consumer acceptance remain pending; Mesa26 uses the common LLVM23 provider. See the [LLVM family contract](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
   Ports also owns the [Mac cross-package workflow](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-build-tools/cross):
   pkgconf 3.0.7, GNU M4 1.4.21, Libtool 2.6.2 and
   [Binutils 2.47nb1](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/binutils.md) pass normal package checks
@@ -662,10 +912,10 @@ listed revision; it does not imply full peripheral or long-run support.
 | Board | Architecture / SoC | Confirmed scope and main limits |
 | --- | --- | --- |
 | [Raspberry Pi 5 (C1)](ember/boards/raspberry-pi-5.md) | AArch64 / BCM2712 | microSD/UEFI boot, Ethernet, Wi-Fi, classic Bluetooth, cooling and WM8960 audio; limited USB 2.0 control recovery; graphics not validated here |
-| [Compute Module 5 (D0)](ember/boards/compute-module-5.md) | AArch64 / BCM2712 | eMMC/UEFI boot, four cores, gigabit Ethernet, WPA2/WPA3-Personal and temperature sensing; persistent maximum cooling; other peripherals unvalidated |
+| [Compute Module 5 (D0)](ember/boards/compute-module-5.md) | AArch64 / BCM2712 | eMMC/UEFI boot, four cores, gigabit Ethernet, WPA2/WPA3-Personal and temperature sensing; automatic fan control with a configurable minimum level; see board-specific peripheral limits |
 | [Raspberry Pi Zero 2 W](ember/boards/raspberry-pi-zero-2-w.md) | AArch64 / BCM2710A1 | microSD boot, all cores, serial and 2.4 GHz Wi-Fi; large Wi-Fi transfers stall |
 | [Orange Pi Zero 4](ember/boards/orange-pi-zero-4.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Ethernet, Wi-Fi, classic Bluetooth, thermal/frequency control and USB 2.0 data; SuperSpeed unconfirmed |
-| [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry and thermal/frequency control; USB devices and Bluetooth pairing not tested |
+| [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry, thermal/frequency control, and PowerVR compute/GEM; accelerated GUI, USB devices, and Bluetooth pairing not tested |
 | [ESP32-S31 development board](ember/boards/esp32-s31.md) | RISC-V 32 / ESP32-S31 | Flash boot, Ethernet and WPA2 Wi-Fi in 16 MB; one core, vendor radio libraries, no BLE/USB |
 
 The [board catalog](ember/boards/README.md) defines validation terms and links
@@ -676,25 +926,41 @@ Add a catalog row and a board page; keep detailed feature matrices on those page
 
 ## Wi-Fi status and remaining work
 
+The built-in CYW43455 on Pi 5 and wireless CM5 has an 802.11ac 1x1 radio
+with channels up to 80 MHz. Wi-Fi 6 (802.11ax) and 2x2 require another
+radio; a firmware update cannot add them. See the
+[hardware and roaming limits](ember/boot/bwfm-sae.md#built-in-radio-limits).
+
 [External SAE with required PMF](ember/boot/bwfm-sae.md) is integrated and
 tested on CM5 with CYW43455 firmware 7.45.265. The implementation also sends
 firmware disassociation on disconnect, serializes firmware commands and
 wraps the 16-bit command identifier. Three disconnect/reconnect cycles
 passed without command timeouts. No WPA3 throughput improvement is claimed.
 
-- **Host-managed 802.11v roaming in `bwfm`** remains a separate local change,
-  not integrated into this tree. With WPA2-PSK, a Raspberry Pi 5 local build
-  moved from 2.4 to 5 GHz at the access point's request, reconnecting in
-  0.20 s (4.22 s with the scan), and refused a prohibited transition.
-  The published driver disables autonomous firmware WNM transitions.
-  A seamless handover is not claimed.
+[Silent-disconnect recovery](ember/boot/bwfm-link-events.md) is physically
+checked on CM5: the driver detects a firmware association lost without an
+event, restarts host scanning and reconnects with SAE/required PMF. An 8 MiB
+Wi-Fi round trip passed afterward. Long-run stability and seamless roaming
+remain unverified.
+
+- **Host-managed 802.11k/v in `bwfm`:** the tree now connects Neighbor Report
+  exchange and BSS Transition Management to wpa_supplicant. The versioned
+  station transport checks operation cookies, association generations and
+  peers. It supports WPA2-PSK/CCMP and SAE with required PMF, while keeping
+  autonomous firmware WNM disabled. Physical Pi 5 checks passed Neighbor Reports,
+  BTM acceptance/rejection and data transfer under both security profiles on
+  one Keenetic mesh. Other radios, AP families and PMF injection require their
+  own acceptance. See the [implementation, measurements and limits](ember/boot/bwfm-kv.md).
 - **802.11r fast transition** is not implemented by the external-SAE work.
 - **Zero 3W Wi-Fi:** the AIC8800D80 connected-scan recovery is fixed and
   physically checked. [External SAE/H2E with required PMF](ember/boot/aicwf-sae.md)
   connects on 5 GHz and passes an 8 MiB transfer each way. Nonzero initial
   IGTK packet numbers are rejected. Protected SA Query and automatic recovery
-  after an AP removes the station are physically checked; 802.11r/v and long-duration acceptance
-  remain outside this result. The [board page](ember/boards/orange-pi-zero-3w.md#wi-fi-limits-and-connected-scan-regression)
+  after an AP removes the station are physically checked. The separate
+  [k/v transport](ember/boot/aicwf-kv.md) adds actual association IEs,
+  firmware TX status and connected scans. Physical checks confirm scan continuity
+  and real management acknowledgements. A usable neighbor list, BTM acceptance,
+  802.11r and long-duration operation remain outside this result. The [board page](ember/boards/orange-pi-zero-3w.md#wi-fi-limits-and-connected-scan-regression)
   records the firmware, bundle and tests.
 - **Short firmware replies** still need a command-transport fix and regression.
 

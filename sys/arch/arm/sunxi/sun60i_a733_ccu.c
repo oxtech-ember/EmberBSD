@@ -88,6 +88,7 @@ sun60i_a733_dcxo_query(int phandle, struct sunxi_rtc_dcxo_state *state)
 #define	AHB_MASTER_GATE_REG	0x5c0
 #define	MBUS_MASTER_GATE_REG	0x5e0
 #define	MBUS_GATE_REG		0x5e4
+#define	PWM0_BGR_REG		0x784
 #define	CE_CLK_REG		0xac0
 #define	CE_BGR_REG		0xac4
 #define	NPU_CLK_REG		0xb00
@@ -99,6 +100,11 @@ sun60i_a733_dcxo_query(int phandle, struct sunxi_rtc_dcxo_state *state)
 #define	GPU_CLK_UPDATE		__BIT(27)
 #define	GPU_UPDATE_POLL_US	10
 #define	GPU_UPDATE_TIMEOUT_US	10000
+#define	GPU_PLL_LOCK_POLL_US	3
+#define	GPU_PLL_LOCK_POLLS	100
+#define	GPU_PLL_SETTLE_US	20
+#define	GPUPLL_GATE_EN_REG	0x1914
+#define	GPUPLL_GATE_MANUAL	(__BIT(16) | __BIT(0))
 /* A733 User Manual V1.00, sections 4.1.6.249 and 4.1.6.258. */
 #define	PERI0PLL_GATE_EN_REG	0x1908
 #define	PERI0PLL_GATE_STAT_REG	0x1988
@@ -140,6 +146,7 @@ CFATTACH_DECL_NEW(sunxi_a733_ccu, sizeof(struct sunxi_ccu_softc),
 	sun60i_a733_ccu_match, sun60i_a733_ccu_attach, NULL, NULL);
 
 static struct sunxi_ccu_reset sun60i_a733_ccu_resets[] = {
+	SUNXI_CCU_RESET(A733_RST_BUS_PWM0, PWM0_BGR_REG, 16),
 	SUNXI_CCU_RESET(A733_RST_BUS_CE, CE_BGR_REG, 16),
 	SUNXI_CCU_RESET(A733_RST_BUS_CE_SYS, CE_BGR_REG, 17),
 	SUNXI_CCU_RESET(A733_RST_BUS_NPU_CORE, NPU_BGR_REG, 16),
@@ -468,7 +475,24 @@ sun60i_a733_accel_set_rate(struct sunxi_ccu_softc *sc,
 	    __BIT(31),		/* enable */				\
 	    SUNXI_CCU_NM_ROUND_DOWN | SUNXI_CCU_NM_DIVIDE_BY_TWO)
 
+/* PWM0 uses DCXO directly, not the normalized 24 MHz PLL_REF output. */
+static u_int
+sun60i_a733_pwm_rate(struct sunxi_ccu_softc *sc, struct sunxi_ccu_clk *clk)
+{
+	struct sunxi_rtc_dcxo_state state;
+	int node;
+
+	if (OF_getproplen(sc->sc_phandle, "netbsd,dcxo-source") != 4)
+		return 0;
+	node = fdtbus_get_phandle(sc->sc_phandle, "netbsd,dcxo-source");
+	if (node <= 0 || !of_compatible_match(node, sun60i_a733_dcxo_compat) ||
+	    sun60i_a733_dcxo_query(node, &state) != 0)
+		return 0;
+	return state.rate_hz;
+}
+
 static struct sunxi_ccu_clk sun60i_a733_ccu_clks[] = {
+
 	/*
 	 * PLL_REF turns a 19.2, 24 or 26 MHz crystal into 24 MHz. Boards
 	 * with a 24 MHz crystal run it one to one, which is all that is
@@ -550,6 +574,15 @@ static struct sunxi_ccu_clk sun60i_a733_ccu_clks[] = {
 
 	SUNXI_CCU_GATE(A733_CLK_MBUS_GMAC0, "mbus-gmac0", "ahb",
 	    MBUS_GATE_REG, 11),
+
+	[A733_CLK_BUS_PWM0] = {
+		.type = SUNXI_CCU_GATE,
+		.base.name = "bus-pwm0",
+		.u.gate.reg = PWM0_BGR_REG,
+		.u.gate.mask = __BIT(0),
+		.enable = sunxi_ccu_gate_enable,
+		.get_rate = sun60i_a733_pwm_rate,
+	},
 
 	SUNXI_CCU_GATE(A733_CLK_MBUS_CE, "mbus-ce", "ahb",
 	    MBUS_GATE_REG, 2),
@@ -938,7 +971,7 @@ sun60i_a733_gpu_guard_enter(struct sunxi_ccu_softc *sc, struct clk *clk,
 			    (id >= A733_CLK_PLL_PERIPH0_4X &&
 			    id <= A733_CLK_PLL_PERIPH0_150M) || id == A733_CLK_AHB;
 			local = id == A733_CLK_GPU0 || id == A733_CLK_BUS_GPU0 ||
-			    id == A733_CLK_AHB_GPU0;
+			    id == A733_CLK_AHB_GPU0 || id == A733_CLK_PLL_GPU0;
 			break;
 		}
 	}
@@ -1098,6 +1131,165 @@ sun60i_a733_ccu_gpu_prepare(struct clk *gpu, const void *owner, bool *retained)
 		delay(GPU_UPDATE_POLL_US);
 	}
 out:
+	mutex_exit(&sun60i_gpu_lease.lock);
+	return error;
+}
+
+/*
+ * Opt-in cold start of the dedicated GPU PLL. The pinned A733 BSP permits
+ * N=53..105: 24 MHz * 75 / 3 gives 600 MHz without changing PLL_REF.
+ * The caller must establish the 600 MHz operating voltage before this call.
+ * This does not change the existing PERIPH0-400M preparation policy.
+ */
+int
+sun60i_a733_ccu_gpu_prepare_pll(struct clk *gpu, const void *owner,
+    bool *retained)
+{
+	const uint32_t active = ACCEL_PLL_ENABLE | ACCEL_PLL_LOCK_ENABLE |
+	    ACCEL_PLL_LOCK | ACCEL_PLL_OUTPUT;
+	const uint32_t factors = __SHIFTIN(74, ACCEL_PLL_N) |
+	    __SHIFTIN(2, ACCEL_PLL_M);
+	const uint32_t stable = ACCEL_PLL_ENABLE | ACCEL_PLL_LDO |
+	    ACCEL_PLL_LOCK_ENABLE | ACCEL_PLL_LOCK;
+	const uint32_t verify = stable | ACCEL_PLL_OUTPUT | ACCEL_PLL_N |
+	    ACCEL_PLL_M | ACCEL_PLL_P;
+	struct sun60i_a733_gpu_state state;
+	struct sunxi_ccu_softc *sc = sun60i_gpu_lease.sc;
+	uint32_t gate;
+	u_int locked = 0;
+	int error;
+
+	if (gpu != &sun60i_a733_ccu_clks[A733_CLK_GPU0].base || owner == NULL ||
+	    retained == NULL || sc == NULL)
+		return EINVAL;
+	mutex_enter(&sun60i_gpu_lease.lock);
+	if (sun60i_gpu_lease.owner != owner || sun60i_gpu_lease.attempted) {
+		error = EBUSY;
+		goto out;
+	}
+	gate = CCU_READ(sc, GPUPLL_GATE_EN_REG);
+	error = sun60i_a733_ccu_gpu_inspect(gpu, &state);
+	if (error != 0)
+		goto out;
+	/* GPU0 is the only functional consumer of this dedicated PLL. */
+	if (!sun60i_a733_gpu_same(&sun60i_gpu_lease.before, &state) ||
+	    state.sample[0][A733_GPU_MODULE] != 0 ||
+	    (state.sample[0][A733_GPU_BUS] & (__BIT(16) | __BIT(0))) != 0 ||
+	    (state.sample[0][A733_GPU_PLL] & active) != 0 ||
+	    gate != CCU_READ(sc, GPUPLL_GATE_EN_REG)) {
+		error = EBUSY;
+		goto out;
+	}
+	/* Manual section 4.1.6.252: bit 0=1 disables automatic gating. */
+	if ((gate & GPUPLL_GATE_MANUAL) != GPUPLL_GATE_MANUAL ||
+	    (state.sample[0][A733_GPU_PLL] & ACCEL_PLL_P) != 0 ||
+	    (state.sample[0][A733_GPU_PAT0] & __BIT(31)) != 0 ||
+	    (state.sample[0][A733_GPU_PAT1] & __BIT(27)) != 0) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	/* Preserve reserved fields, including the firmware's bit 24 value. */
+	sun60i_gpu_lease.attempted = true;
+	*retained = true;
+	error = sun60i_a733_accel_write(sc, PLL_GPU0_CTRL_REG,
+	    ACCEL_PLL_N | ACCEL_PLL_M, factors);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_accel_write(sc, PLL_GPU0_CTRL_REG,
+	    ACCEL_PLL_LDO, ACCEL_PLL_LDO);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_accel_write(sc, PLL_GPU0_CTRL_REG,
+	    ACCEL_PLL_ENABLE, ACCEL_PLL_ENABLE);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_accel_write(sc, PLL_GPU0_CTRL_REG,
+	    ACCEL_PLL_LOCK_ENABLE, ACCEL_PLL_LOCK_ENABLE);
+	if (error != 0)
+		goto out;
+	/* The BSP requires three consecutive lock samples, then settling. */
+	for (u_int n = 0; n < GPU_PLL_LOCK_POLLS; n++) {
+		if ((CCU_READ(sc, PLL_GPU0_CTRL_REG) & ACCEL_PLL_LOCK) != 0)
+			locked++;
+		else
+			locked = 0;
+		delay(GPU_PLL_LOCK_POLL_US);
+		if (locked == 3)
+			break;
+	}
+	if (locked != 3) {
+		error = ETIMEDOUT;
+		goto out;
+	}
+	delay(GPU_PLL_SETTLE_US);
+	if ((CCU_READ(sc, PLL_GPU0_CTRL_REG) & verify) != (stable | factors) ||
+	    CCU_READ(sc, GPUPLL_GATE_EN_REG) != gate) {
+		error = EIO;
+		goto out;
+	}
+	error = sun60i_a733_accel_write(sc, PLL_GPU0_CTRL_REG,
+	    ACCEL_PLL_OUTPUT, ACCEL_PLL_OUTPUT);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_accel_write(sc, GPU0_CLK_REG,
+	    ACCEL_CLK_SEL | __BITS(3,0), 0);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_accel_write(sc, GPU0_BGR_REG, __BIT(16), __BIT(16));
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_accel_write(sc, GPU0_BGR_REG, __BIT(0), __BIT(0));
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_accel_write(sc, GPU0_CLK_REG,
+	    ACCEL_CLK_ENABLE, ACCEL_CLK_ENABLE);
+	if (error != 0)
+		goto out;
+	for (u_int elapsed = 0;; elapsed += GPU_UPDATE_POLL_US) {
+		if ((CCU_READ(sc, GPU0_CLK_REG) & GPU_CLK_UPDATE) == 0)
+			break;
+		if (elapsed == GPU_UPDATE_TIMEOUT_US) {
+			error = ETIMEDOUT;
+			goto out;
+		}
+		delay(GPU_UPDATE_POLL_US);
+	}
+	/* Only the actual post-write observation can establish readiness. */
+	error = sun60i_a733_ccu_gpu_inspect(gpu, &state);
+	if (error != 0)
+		goto out;
+	error = state.readiness_error;
+	if (error == 0 && (state.core_hz != 600000000 ||
+	    state.bus_hz != 200000000 || CCU_READ(sc, GPUPLL_GATE_EN_REG) != gate))
+		error = EIO;
+out:
+	mutex_exit(&sun60i_gpu_lease.lock);
+	return error;
+}
+
+/*
+ * Select a running parent for the NPU module clock before any enable:
+ * after reset the mux points at pll-npu, which firmware left off and the
+ * accel PLL protection refuses to turn on. PERIPH0-600M runs at boot.
+ */
+int
+sun60i_a733_ccu_npu_prepare(struct clk *npu, const void *owner, bool *retained)
+{
+	struct sunxi_ccu_softc *sc = sun60i_gpu_lease.sc;
+
+	if (npu != &sun60i_a733_ccu_clks[A733_CLK_NPU].base || owner == NULL ||
+	    retained == NULL || sc == NULL)
+		return EINVAL;
+	mutex_enter(&sun60i_gpu_lease.lock);
+	if (sun60i_gpu_lease.owner != NULL && sun60i_gpu_lease.owner != owner) {
+		mutex_exit(&sun60i_gpu_lease.lock);
+		return EBUSY;
+	}
+	sun60i_gpu_lease.attempted = true;
+	*retained = true;
+	/* npu_parents[2] = pll-periph0-600M; GPU uses index 3 = 400M. */
+	int error = sun60i_a733_accel_write(sc, NPU_CLK_REG,
+	    ACCEL_CLK_SEL | __BITS(3,0), __SHIFTIN(2, ACCEL_CLK_SEL));
 	mutex_exit(&sun60i_gpu_lease.lock);
 	return error;
 }

@@ -12,7 +12,7 @@ Identify the intended first scenario, such as boot to multi-user with Ethernet.
 Inspect current EmberBSD and upstream NetBSD sources before writing a driver.
 Preserve upstream identifiers, licenses, revision and authorship when adapting code.
 
-Read [the build guide](../../README.ember.md) and the checkout's `AGENTS.md`.
+Read [the build guide](../../README.ember.md) and the relevant board page.
 Use a contributor branch or fork and the target's current submission rules.
 The [developer skill](https://github.com/oxtech-ember/Ember-Agent-Skills#add-your-board)
 can guide an assistant through the same public workflow.
@@ -35,7 +35,7 @@ Adaptations already present in this fork are applied to the sources. Do not
 reapply `ember/patches`. Firmware's ordered series is a separate input to its
 builder. Keep fixes in versioned sources, not only in a build VM.
 
-The current native AArch64 builder accepts a kernel configuration, but explicitly
+The current AArch64 kernel wrapper accepts a configuration, but explicitly
 lists its device trees and modules. Adding a DTS or a configuration alone does
 not add its outputs to a bootable bundle. Extend the relevant build, image and
 selection paths and their checks. Existing native contracts use upstream Python;

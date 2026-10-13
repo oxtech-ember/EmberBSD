@@ -72,7 +72,10 @@ static unsigned reject_write_number;
 static bus_size_t write_regs[64];
 static uint32_t write_vals[64];
 static unsigned writes, barriers, checks, reads;
-static bool update_model;
+static bool update_model, pll_model;
+static unsigned pll_delay_us, pll_lock_after_us, pll_lock_reads;
+static bool pll_glitch, pll_settle_loss, pll_output_loss, pll_gate_change;
+static bool pll_factor_change, pll_settled;
 static unsigned update_clear_us, update_delay_us, update_reads;
 static unsigned unstable_read, hosc_reads, parent_queries;
 static uint32_t unstable_mask;
@@ -131,6 +134,19 @@ bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, bus_size_t off)
 	if (reads < __arraycount(read_regs))
 		read_regs[reads] = off;
 	reads++;
+	if (pll_model && off == 0xe0 &&
+	    (registers[off / 4] & 0xe0000000) == 0xe0000000) {
+		pll_lock_reads++;
+		bool locked = pll_delay_us >= pll_lock_after_us;
+		if ((pll_glitch && pll_delay_us == pll_lock_after_us + 3) ||
+		    (pll_settle_loss && pll_settled) ||
+		    (pll_output_loss && (registers[off / 4] & __BIT(27)) != 0))
+			locked = false;
+		if (locked)
+			registers[off / 4] |= __BIT(28);
+		else
+			registers[off / 4] &= ~__BIT(28);
+	}
 	if (update_model && off == 0xb20 &&
 	    (registers[off / 4] & __BIT(31)) != 0) {
 		update_reads++;
@@ -152,17 +168,36 @@ bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
 	}
 	writes++;
 	last_write = val;
-	if (!reject_write && writes != reject_write_number)
+	if (!reject_write && writes != reject_write_number) {
+		/* PLL LOCK is read-only. Production writes cannot manufacture it. */
+		if (pll_model && off == 0xe0)
+			val = (val & ~__BIT(28)) | (registers[off / 4] & __BIT(28));
 		registers[off / 4] = off == 0xb20 && !update_model ?
 		    val & ~__BIT(27) : val;
+		if (pll_model && pll_factor_change && off == 0xb20 &&
+		    (val & __BIT(31)) != 0)
+			registers[0xe0 / 4] ^= __BIT(8);
+	}
 }
 static void
 delay(unsigned us)
 {
+	if (pll_model && (registers[0xb20 / 4] & __BIT(31)) == 0) {
+		assert(us == 3 || us == 20);
+		assert((registers[0xe0 / 4] & __BIT(27)) == 0);
+		pll_delay_us += us;
+		if (us == 20) {
+			pll_settled = true;
+			if (pll_gate_change)
+				registers[0x1914 / 4] ^= __BIT(0);
+		}
+		return;
+	}
 	if (!update_model)
 		return;
 	/* UPDATE cannot finish until the last existing local write. */
-	assert(writes == 4 && (registers[0xb20 / 4] & __BIT(31)) != 0);
+	assert((pll_model || writes == 4) &&
+	    (registers[0xb20 / 4] & __BIT(31)) != 0);
 	assert((registers[0xb24 / 4] & 0x10001) == 0x10001);
 	assert(us == 10 && update_delay_us < 10000);
 	update_delay_us += us;
@@ -258,7 +293,10 @@ reset(void)
 	memset(registers, 0, sizeof(registers));
 	memset(&sun60i_gpu_lease, 0, sizeof(sun60i_gpu_lease));
 	writes = barriers = reads = hosc_reads = dcxo_queries = 0;
-	update_model = false;
+	update_model = pll_model = false;
+	pll_delay_us = pll_lock_after_us = pll_lock_reads = 0;
+	pll_glitch = pll_settle_loss = pll_output_loss = pll_gate_change = false;
+	pll_factor_change = pll_settled = false;
 	update_clear_us = update_delay_us = update_reads = 0;
 	reject_write_number = 0;
 	prepare_test = false;
@@ -746,7 +784,7 @@ test_gpu_prepare(void)
 {
 	const int owner = 1, other = 2;
 	const u_int protected[] = { A733_CLK_GPU0, A733_CLK_BUS_GPU0,
-	    A733_CLK_AHB_GPU0, A733_CLK_PLL_REF, A733_CLK_SYS_24M,
+	    A733_CLK_AHB_GPU0, A733_CLK_PLL_GPU0, A733_CLK_PLL_REF, A733_CLK_SYS_24M,
 	    A733_CLK_PLL_PERIPH0_4X, A733_CLK_PLL_PERIPH0_2X,
 	    A733_CLK_PLL_PERIPH0_800M, A733_CLK_PLL_PERIPH0_480M,
 	    A733_CLK_PLL_PERIPH0_600M, A733_CLK_PLL_PERIPH0_400M,
@@ -762,7 +800,7 @@ test_gpu_prepare(void)
 	for (u_int n = 0; n < __arraycount(protected); n++) {
 		struct clk *c = CLOCK(protected[n]);
 		parent_queries = 0;
-		CHECK(clk_enable(c) == (n < 3 ? EBUSY : 0));
+		CHECK(clk_enable(c) == (n < 4 ? EBUSY : 0));
 		CHECK(parent_queries == 0); /* Guard precedes parent recursion. */
 		CHECK(sunxi_ccu_clock_disable(&state, c) == EBUSY);
 		CHECK(clk_set_rate(c, 400000000) == EBUSY);
@@ -880,6 +918,177 @@ test_gpu_update_completion(void)
 	}
 	prepare_test = false;
 	printf("A733 GPU UPDATE completion: %u checks passed\n", checks - start);
+}
+
+static void
+pll_fixture(void)
+{
+	prepare_fixture();
+	pll_model = true;
+	REG(GPUPLL_GATE_EN_REG) = 0xa5010001;
+	/* The concurrent NPU uses PERIPH0-600M; preserve its live state. */
+	REG(NPU_CLK_REG) = 0x82000000;
+	REG(NPU_BGR_REG) = 0x00070001;
+	REG(PLL_NPU_CTRL_REG) = 0x41104500;
+}
+
+static void
+test_gpu_prepare_pll(void)
+{
+	const int owner = 1, other = 2;
+	const unsigned locks[] = { 0, 9, 291, 294, UINT_MAX };
+	uint32_t saved[__arraycount(registers)];
+	bool retained;
+	unsigned start = checks;
+	u_int core, bus;
+
+	pll_fixture(); retained = false;
+	CHECK(sun60i_a733_ccu_gpu_prepare_pll(NULL, &owner, &retained) == EINVAL);
+	CHECK(sun60i_a733_ccu_gpu_prepare_pll(CLOCK(A733_CLK_NPU), &owner,
+	    &retained) == EINVAL);
+	CHECK(sun60i_a733_ccu_gpu_prepare_pll(CLOCK(A733_CLK_GPU0), NULL,
+	    &retained) == EINVAL);
+	CHECK(sun60i_a733_ccu_gpu_prepare_pll(CLOCK(A733_CLK_GPU0), &owner,
+	    NULL) == EINVAL);
+	CHECK(sun60i_a733_ccu_gpu_prepare_pll(CLOCK(A733_CLK_GPU0), &owner,
+	    &retained) == EBUSY);
+	CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == 0);
+	CHECK(sun60i_a733_ccu_gpu_prepare_pll(CLOCK(A733_CLK_GPU0), &other,
+	    &retained) == EBUSY);
+	CHECK(!retained && writes == 0);
+	CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0), &owner) == 0);
+
+	/* Unsupported initial states fail before the first hardware write. */
+	for (unsigned n = 0; n < 9; n++) {
+		pll_fixture(); retained = false;
+		switch (n) {
+		case 0: REG(PLL_GPU0_CTRL_REG) |= ACCEL_PLL_ENABLE; break;
+		case 1: REG(PLL_GPU0_CTRL_REG) |= ACCEL_PLL_LOCK_ENABLE; break;
+		case 2: REG(PLL_GPU0_CTRL_REG) |= ACCEL_PLL_LOCK; break;
+		case 3: REG(PLL_GPU0_CTRL_REG) |= ACCEL_PLL_OUTPUT; break;
+		case 4: REG(PLL_GPU0_CTRL_REG) |= ACCEL_PLL_P; break;
+		case 5: REG(PLL_GPU0_CTRL_REG + 8) |= __BIT(31); break;
+		case 6: REG(PLL_GPU0_CTRL_REG + 12) |= __BIT(27); break;
+		case 7: REG(GPUPLL_GATE_EN_REG) &= ~__BIT(0); break;
+		case 8: REG(GPUPLL_GATE_EN_REG) &= ~__BIT(16); break;
+		}
+		CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == 0);
+		CHECK(sun60i_a733_ccu_gpu_prepare_pll(CLOCK(A733_CLK_GPU0), &owner,
+		    &retained) == (n < 4 ? EBUSY : EOPNOTSUPP));
+		CHECK(!retained && writes == 0);
+		CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0), &owner) == 0);
+	}
+	for (unsigned n = 0; n < 5; n++) {
+		pll_fixture(); retained = false;
+		CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == 0);
+		switch (n) {
+		case 0: REG(PLL_GPU0_CTRL_REG) ^= __BIT(8); break;
+		case 1: REG(GPU0_CLK_REG) = ACCEL_CLK_ENABLE; break;
+		case 2: REG(GPU0_BGR_REG) |= __BIT(16); break;
+		case 3: dcxo_error = ENXIO; break;
+		case 4:
+			unstable_reg = GPUPLL_GATE_EN_REG;
+			unstable_read = reads + 28; /* Second gate sample. */
+			break;
+		}
+		CHECK(sun60i_a733_ccu_gpu_prepare_pll(CLOCK(A733_CLK_GPU0), &owner,
+		    &retained) == (n == 3 ? ENXIO : EBUSY));
+		CHECK(!retained && writes == 0);
+		CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0), &owner) == 0);
+	}
+
+	/* Both initial LDO states work; every actual write can fail. */
+	for (unsigned ldo = 0; ldo < 2; ldo++) {
+		const unsigned total = ldo == 0 ? 8 : 7;
+		const unsigned output = total - 4;
+
+		for (unsigned fail = 0; fail <= total; fail++) {
+			pll_fixture(); retained = false;
+			if (ldo == 0)
+				REG(PLL_GPU0_CTRL_REG) &= ~ACCEL_PLL_LDO;
+			memcpy(saved, registers, sizeof(saved));
+			CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == 0);
+			reject_write_number = fail;
+			CHECK(sun60i_a733_ccu_gpu_prepare_pll(CLOCK(A733_CLK_GPU0),
+			    &owner, &retained) == (fail == 0 ? 0 : EIO));
+			CHECK(retained && writes == (fail == 0 ? total : fail));
+			CHECK(barriers == writes);
+			/* No shared, automatic gate, SDM, or NPU register changes. */
+			for (u_int r = 0; r < __arraycount(registers); r++) {
+				if (r != PLL_GPU0_CTRL_REG / 4 && r != GPU0_CLK_REG / 4 &&
+				    r != GPU0_BGR_REG / 4)
+					CHECK(registers[r] == saved[r]);
+			}
+			CHECK((REG(PLL_GPU0_CTRL_REG) & __BIT(24)) != 0);
+			CHECK((REG(GPU0_BGR_REG) & __BIT(7)) != 0);
+			CHECK(write_regs[0] == PLL_GPU0_CTRL_REG);
+			CHECK((write_vals[0] & (ACCEL_PLL_N | ACCEL_PLL_M)) ==
+			    ((74 << 8) | (2 << 20)));
+			for (unsigned w = 0; w < writes && w < output; w++) {
+				CHECK(write_regs[w] == PLL_GPU0_CTRL_REG);
+				CHECK((write_vals[w] & ACCEL_PLL_OUTPUT) == 0);
+			}
+			if (fail == 0) {
+				CHECK(pll_settled && pll_delay_us == 29);
+				CHECK(REG(PLL_GPU0_CTRL_REG) == 0xf9204a00);
+				CHECK(REG(GPU0_CLK_REG) == ACCEL_CLK_ENABLE);
+				CHECK(write_regs[output] == PLL_GPU0_CTRL_REG);
+				CHECK((write_vals[output] & ACCEL_PLL_OUTPUT) != 0);
+				CHECK(sun60i_a733_ccu_gpu_ready(CLOCK(A733_CLK_GPU0),
+				    &core, &bus) == 0 && core == 600000000 && bus == 200000000);
+			}
+			CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0), &owner) == EBUSY);
+			unsigned count = writes;
+			CHECK(sun60i_a733_ccu_gpu_prepare_pll(CLOCK(A733_CLK_GPU0),
+			    &owner, &retained) == EBUSY && writes == count);
+		}
+	}
+
+	for (u_int n = 0; n < __arraycount(locks); n++) {
+		pll_fixture(); retained = false;
+		pll_lock_after_us = locks[n];
+		CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == 0);
+		CHECK(sun60i_a733_ccu_gpu_prepare_pll(CLOCK(A733_CLK_GPU0), &owner,
+		    &retained) == (n < 3 ? 0 : ETIMEDOUT));
+		CHECK(retained && pll_delay_us == (n < 3 ? locks[n] + 29 : 300));
+		if (n >= 3) {
+			CHECK((REG(PLL_GPU0_CTRL_REG) & ACCEL_PLL_OUTPUT) == 0);
+			CHECK(REG(GPU0_CLK_REG) == 0 && writes == 3);
+		}
+	}
+	/* A false lock sample resets the consecutive sample count. */
+	pll_fixture(); retained = false; pll_glitch = true;
+	CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == 0);
+	CHECK(sun60i_a733_ccu_gpu_prepare_pll(CLOCK(A733_CLK_GPU0), &owner,
+	    &retained) == 0 && pll_delay_us == 35);
+
+	for (unsigned n = 0; n < 5; n++) {
+		pll_fixture(); retained = false;
+		switch (n) {
+		case 0: pll_settle_loss = true; break;
+		case 1: pll_gate_change = true; break;
+		case 2: pll_output_loss = true; break;
+		case 3: pll_factor_change = true; break;
+		case 4: dcxo_error = ENXIO; dcxo_fail_query = 7; break;
+		}
+		CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == 0);
+		CHECK(sun60i_a733_ccu_gpu_prepare_pll(CLOCK(A733_CLK_GPU0), &owner,
+		    &retained) == (n == 2 ? EBUSY : n == 4 ? ENXIO : EIO));
+		CHECK(retained);
+		if (n < 2)
+			CHECK(writes == 3 && (REG(PLL_GPU0_CTRL_REG) & ACCEL_PLL_OUTPUT) == 0);
+		CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0), &owner) == EBUSY);
+	}
+	for (unsigned n = 0; n < 2; n++) {
+		pll_fixture(); retained = false; update_model = true;
+		update_clear_us = n == 0 ? 30 : UINT_MAX;
+		CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == 0);
+		CHECK(sun60i_a733_ccu_gpu_prepare_pll(CLOCK(A733_CLK_GPU0), &owner,
+		    &retained) == (n == 0 ? 0 : ETIMEDOUT));
+		CHECK(retained && update_delay_us == (n == 0 ? 30 : 10000));
+	}
+	prepare_test = false;
+	printf("A733 opt-in GPU PLL600: %u checks passed\n", checks - start);
 }
 
 int
@@ -1019,12 +1228,38 @@ main(void)
 		missing_hosc = false;
 	}
 	CHECK(writes == 0 && barriers == 0);
+	/* PWM follows raw DCXO; the old fixed 24 MHz provider is unrelated. */
+	reset();
+	for (u_int rate = 19200000; rate <= 26000000;
+	    rate = rate == 19200000 ? 24000000 : rate + 2000000) {
+		dcxo_rate = rate;
+		dcxo_queries = 0;
+		CHECK(clk_get_rate(CLOCK(A733_CLK_BUS_PWM0)) == rate);
+		CHECK(hosc_rate == 24000000 && writes == 0);
+	}
+	dcxo_queries = 0; dcxo_error = EBUSY;
+	CHECK(clk_get_rate(CLOCK(A733_CLK_BUS_PWM0)) == 0);
+	dcxo_error = 0; dcxo_len = 8;
+	CHECK(clk_get_rate(CLOCK(A733_CLK_BUS_PWM0)) == 0);
+	dcxo_len = 4; bad_dcxo = true;
+	CHECK(clk_get_rate(CLOCK(A733_CLK_BUS_PWM0)) == 0);
+	bad_dcxo = false; dcxo_node = 0;
+	CHECK(clk_get_rate(CLOCK(A733_CLK_BUS_PWM0)) == 0);
+	reset();
+	REG(PWM0_BGR_REG) = 0xa5a400a4;
+	CHECK(clk_enable(CLOCK(A733_CLK_BUS_PWM0)) == 0);
+	CHECK(REG(PWM0_BGR_REG) == 0xa5a400a5);
+	CHECK(sunxi_ccu_reset_deassert(&state,
+	    &state.sc_resets[A733_RST_BUS_PWM0]) == 0);
+	CHECK(REG(PWM0_BGR_REG) == 0xa5a500a5);
 	test_gpu_ready();
+
 	test_gpu_inspect();
 	test_dcxo();
 	test_periph_gates();
 	test_gpu_prepare();
 	test_gpu_update_completion();
+	test_gpu_prepare_pll();
 	printf("A733 accelerator clocks: %u production checks passed\n", checks);
 	return 0;
 }

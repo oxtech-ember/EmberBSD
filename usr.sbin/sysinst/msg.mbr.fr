@@ -46,7 +46,7 @@ Cela peut empêcher votre système de démarrer correctement.}
 
 message fixactivepart
 {
-Dois-je marquer la partition NetBSD comme active ?}
+Dois-je marquer la partition EmberBSD comme active ?}
 
 message setbiosgeom
 {

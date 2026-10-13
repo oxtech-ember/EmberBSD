@@ -554,8 +554,55 @@ struct ieee80211req_sae {
  */
 
 /*
- * Scan result data returned for IEEE80211_IOC_SCAN_RESULTS.
+ * Versioned station action exchange. All integers use host byte order.
+ * SET requires privileged SIOCS80211 authorization. GET does not enable it.
+ * GET returns capabilities, the association epoch, and the local MAC in data.
+ * With ASSOC_IES, data adds little-endian uint16_t request/response IE lengths
+ * after the MAC, followed by the actual firmware request and response IEs.
+ * TX, SCAN and cancellation bind to this epoch and the selected BSSID.
+ * An association epoch changes across disconnect, including same-BSSID joins.
+ * TX accepts an action body on the current channel. Cookies identify completion.
+ * SCAN and CANCEL_SCAN use a nonzero scan cookie, independent of TX cookies.
+ * SCAN data contains uint16_t frequencies (MHz); an empty list means all channels.
  */
+#define IEEE80211_IOC_STA_MGMT           75
+#define IEEE80211_STA_VERSION           2
+#define IEEE80211_STA_MAX_BODY          1024
+#define IEEE80211_STA_MAX_CHANNELS      32
+#define IEEE80211_STA_GET               0
+#define IEEE80211_STA_ENABLE            1
+#define IEEE80211_STA_DISABLE           2
+#define IEEE80211_STA_TX                3
+#define IEEE80211_STA_CANCEL_TX         4
+#define IEEE80211_STA_SCAN              5
+#define IEEE80211_STA_CANCEL_SCAN       6
+#define IEEE80211_STA_CAP_BTM           0x0001
+#define IEEE80211_STA_ASSOCIATED        0x0002
+#define IEEE80211_STA_TX_ACK            0x0004
+#define IEEE80211_STA_CAP_RRM           0x0008
+#define IEEE80211_STA_ASSOC_IES         0x0010
+#define IEEE80211_STA_SCAN_ABORTED      0x0020
+struct ieee80211req_sta_mgmt {
+	uint16_t version;
+	uint16_t op;
+	uint32_t cookie;
+	uint32_t generation;
+	uint32_t flags;
+	uint16_t freq;
+	uint16_t len;
+	uint8_t bssid[IEEE80211_ADDR_LEN];
+	uint16_t reserved;
+	uint8_t data[IEEE80211_STA_MAX_BODY];
+};
+
+/*
+ * Scan result data returned for IEEE80211_IOC_SCAN_RESULTS.
+ * isr_pad[1] holds extension-validity flags. CAPINFO_HI validates pad[0].
+ * RSSI_DBM validates the signed dBm byte in pad[2]. isr_rssi stays unsigned.
+ * This preserves the structure size and the original low capabilities byte.
+ */
+#define IEEE80211_SCAN_CAPINFO_HI 0x01
+#define IEEE80211_SCAN_RSSI_DBM 0x02
 struct ieee80211req_scan_result {
 	u_int16_t	isr_len;		/* length (mult of 4) */
 	u_int16_t	isr_freq;		/* MHz */

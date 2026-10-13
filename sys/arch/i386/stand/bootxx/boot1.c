@@ -73,7 +73,7 @@ boot1(uint32_t biosdev, uint64_t *sector)
 	bios_sector = *sector;
 	d.dev = biosdev;
 
-	putstr("\r\nNetBSD/x86 " STR(FS) " Primary Bootstrap\r\n");
+	putstr("\r\nEmberBSD/x86 " STR(FS) " Primary Bootstrap\r\n");
 
 	if (set_geometry(&d, NULL))
 		return "set_geometry\r\n";

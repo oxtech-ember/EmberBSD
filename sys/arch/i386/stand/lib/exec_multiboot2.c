@@ -481,7 +481,7 @@ mbi_boot_loader_name(struct multiboot_package *mbp, void *buf)
 	struct multiboot_tag_string *mbt = buf;
 	size_t len;
 	size_t strlen;
-	const char fmt[] = "%s, Revision %s (from NetBSD %s)";
+	const char fmt[] = "%s, Revision %s (EmberBSD; NetBSD base %s)";
 
 
 	/* +1 for trailing \0 */

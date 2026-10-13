@@ -75,6 +75,11 @@ sh "$here/install-development.sh" --verify "$bundle"
 # Both base debugger entry points must stop selecting the old executable.
 rm -f "$root/usr/bin/gdb" "$root/usr/bin/gdbtui"
 ln -s /usr/pkg/bin/gdb "$root/usr/bin/gdb"
+# The system compiler is the packaged GCC16; the base comp set ships GCC 12.
+for tool in cc c++ cpp g++ gcc; do
+	rm -f "$root/usr/bin/$tool"
+	ln -s /usr/pkg/gcc16/bin/$tool "$root/usr/bin/$tool"
+done
 cp "$kernel" "$root/netbsd"
 cp "$kernel" "$work/boot/netbsd"
 cp "$root/usr/mdec/bootaa64.efi" "$work/boot/EFI/BOOT/bootaa64.efi"
@@ -136,8 +141,10 @@ $1 ~ /^\.\/usr\/lib\/libdwarf[._]/ { next }
 $1 == "./usr/bin/ctfconvert" || $1 == "./usr/include/libdwarf.h" ||
     $1 == "./usr/include/dwarf.h" { next }
 $1 == "./usr/bin/gdb" || $1 == "./usr/bin/gdbtui" ||
-    $1 == "./etc/fstab" || $1 == "./etc/rc.conf" ||
-    $1 == "./sbin/fsck_ffs" || $1 == "./rescue/fsck_ffs" { next }
+$1 == "./usr/bin/cc" || $1 == "./usr/bin/c++" || $1 == "./usr/bin/cpp" ||
+$1 == "./usr/bin/g++" || $1 == "./usr/bin/gcc" ||
+$1 == "./etc/fstab" || $1 == "./etc/rc.conf" ||
+$1 == "./sbin/fsck_ffs" || $1 == "./rescue/fsck_ffs" { next }
 { print }
 ' "$root/etc/mtree/NetBSD.dist" "$root/etc/mtree/set.base" \
     "$root/etc/mtree/set.etc" "$root/etc/mtree/set.comp" > "$work/spec"
@@ -154,6 +161,11 @@ cat >> "$work/spec" <<'EOF'
 ./etc/rc.conf type=file uname=root gname=wheel mode=0644
 ./etc/rc.d/ember_development type=file uname=root gname=wheel mode=0555
 ./usr/bin/gdb type=link uname=root gname=wheel mode=0755 link=/usr/pkg/bin/gdb
+./usr/bin/cc type=link uname=root gname=wheel mode=0755 link=/usr/pkg/gcc16/bin/cc
+./usr/bin/c++ type=link uname=root gname=wheel mode=0755 link=/usr/pkg/gcc16/bin/c++
+./usr/bin/cpp type=link uname=root gname=wheel mode=0755 link=/usr/pkg/gcc16/bin/cpp
+./usr/bin/g++ type=link uname=root gname=wheel mode=0755 link=/usr/pkg/gcc16/bin/g++
+./usr/bin/gcc type=link uname=root gname=wheel mode=0755 link=/usr/pkg/gcc16/bin/gcc
 ./usr/bin/ctfconvert type=file uname=root gname=wheel mode=0555
 ./usr/include/libdwarf.h type=file uname=root gname=wheel mode=0444
 ./usr/include/dwarf.h type=file uname=root gname=wheel mode=0444

@@ -48,7 +48,7 @@ sistema no arrancase correctamente.}
 
 message fixactivepart
 {
-¿Debe marcarse como activa la partición NetBSD del disco?}
+¿Debe marcarse como activa la partición EmberBSD del disco?}
 
 message setbiosgeom
 {

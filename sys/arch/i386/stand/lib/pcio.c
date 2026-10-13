@@ -32,6 +32,7 @@
  */
 
 #include <lib/libsa/stand.h>
+#include <lib/libsa/bootcfg.h>
 #include <lib/libkern/libkern.h>
 #include <sys/bootblock.h>
 
@@ -41,6 +42,8 @@
 extern struct x86_boot_params boot_params;
 
 struct btinfo_console btinfo_console;
+
+static int logo_attribute = -1;
 
 #ifdef SUPPORT_SERIAL
 static int iodev;
@@ -228,6 +231,34 @@ nocom:
 #endif /* SUPPORT_SERIAL */
 }
 
+/* Serial terminals retain plain ASCII without assumed ANSI support. */
+void
+bios_bootcfg_color(int event)
+{
+	static int saved;
+
+	switch (event) {
+	case BOOTCFG_COLOR_SAVE:
+		saved = logo_attribute;
+		break;
+	case BOOTCFG_COLOR_FLAME:
+		logo_attribute = 0x0e;
+		break;
+	case BOOTCFG_COLOR_OUTER:
+		logo_attribute = 0x0c;
+		break;
+	case BOOTCFG_COLOR_INNER:
+		logo_attribute = 0x06;
+		break;
+	case BOOTCFG_COLOR_WORDMARK:
+		logo_attribute = 0x0f;
+		break;
+	case BOOTCFG_COLOR_RESTORE:
+		logo_attribute = saved;
+		break;
+	}
+}
+
 static inline void internal_putchar(int);
 
 static inline void
@@ -237,7 +268,10 @@ internal_putchar(int c)
 	switch (iodev) {
 	case CONSDEV_PC:
 #endif
-		conputc(c);
+		if (logo_attribute >= 0 && c >= ' ' && c <= '~')
+			conputc_color(c, logo_attribute);
+		else
+			conputc(c);
 #ifdef SUPPORT_SERIAL
 		break;
 	case CONSDEV_COM0:

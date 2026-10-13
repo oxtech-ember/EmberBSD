@@ -516,6 +516,8 @@ enum {
 	IEEE80211_ELEMID_TPC		= 150,
 	IEEE80211_ELEMID_CCKM		= 156,
 	IEEE80211_ELEMID_VENDOR		= 221,	/* vendor private */
+	IEEE80211_ELEMID_RRM		= 70,	/* RRM enabled capabilities */
+	IEEE80211_ELEMID_EXTCAP		= 127,	/* extended capabilities */
 	IEEE80211_ELEMID_RSNX		= 244	/* RSN extension */
 };
 

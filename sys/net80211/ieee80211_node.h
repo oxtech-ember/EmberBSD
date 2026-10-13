@@ -97,6 +97,9 @@ struct ieee80211_node {
 	LIST_ENTRY(ieee80211_node)	ni_hash;
 	u_int			ni_refcnt;
 	u_int			ni_scangen;	/* gen# for timeout scan */
+	u_int			ni_scan_epoch;	/* last actual radio scan */
+	int8_t			ni_rssi_dbm;	/* optional absolute signal level */
+	bool			ni_rssi_dbm_valid;
 	u_int8_t		ni_authmode;	/* authentication algorithm */
 	u_int16_t		ni_flags;	/* special-purpose state */
 #define	IEEE80211_NODE_AUTH	0x0001		/* authorized for data */
@@ -110,6 +113,8 @@ struct ieee80211_node {
 	u_int16_t		ni_vlan;	/* vlan tag */
 	u_int32_t		*ni_challenge;	/* shared-key challenge */
 	u_int8_t		*ni_wpa_ie;	/* captured WPA/RSN ie */
+	u_int8_t		*ni_rrm_ie;	/* captured RRM capabilities */
+	u_int8_t		*ni_extcap_ie;	/* captured extended capabilities */
 	u_int8_t		*ni_rsnx_ie;	/* captured RSNX ie */
 	u_int8_t		*ni_wme_ie;	/* captured WME ie */
 	u_int16_t		ni_txseqs[17];	/* tx seq per-tid */
@@ -201,6 +206,7 @@ struct ieee80211_node_table {
 	const char		*nt_name;	/* for debugging */
 	ieee80211_scan_lock_t	nt_scanlock;	/* on nt_scangen */
 	u_int			nt_scangen;	/* gen# for timeout scan */
+	u_int			nt_scan_epoch;	/* actual radio scans only */
 	int			nt_inact_timer;	/* inactivity timer */
 	int			nt_inact_init;	/* initial node inact setting */
 	struct ieee80211_node	**nt_keyixmap;	/* key ix -> node map */
@@ -313,6 +319,10 @@ struct ieee80211_scanparams {
 	u_int8_t	*sp_rates;
 	u_int8_t	*sp_xrates;
 	u_int8_t	*sp_wpa;
+	int8_t		sp_rssi_dbm;
+	bool		sp_rssi_dbm_valid;
+	u_int8_t	*sp_rrm;
+	u_int8_t	*sp_extcap;
 	u_int8_t	*sp_rsnx;
 	u_int8_t	*sp_wme;
 };

@@ -1,0 +1,5 @@
+# Origin: EmberBSD opt-in BCM2712 V3D first DMA/TFU experiment, 2026-10-10.
+# One bounded translated TFU copy after takeover; no DRM or user submission.
+include "arch/evbarm/conf/EMBER64"
+options BCM2712_V3D_TAKEOVER
+options BCM2712_V3D_DMA_PROBE

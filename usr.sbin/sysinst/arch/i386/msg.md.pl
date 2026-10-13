@@ -119,7 +119,7 @@ message pickdisk
 {Wybierz dysk: }
 
 message partabovechs
-{Czesc NetBSD dysku lezy poza obszarem, ktory BIOS w twojej maszynie moze
+{Czesc EmberBSD dysku lezy poza obszarem, ktory BIOS w twojej maszynie moze
 zaadresowac. Nie mozliwe bedzie bootowanie z tego dysku. Jestes pewien, ze
 chcesz to zrobic?
 
@@ -128,7 +128,7 @@ chcesz to zrobic?
 message missing_bootmenu_text
 {Masz wiecej niz jeden system operacyjny na tym dysku, ale nie
 zostalo wskazane menu ani dla aktywnej partycji ani dla partycji
-NetBSD, ktora bedzie zainstalowana.
+EmberBSD, ktora bedzie zainstalowana.
 
 Chcesz zmienic partycje, aby dodac wpis do menu?}
 
@@ -141,7 +141,7 @@ Czy na pewno chcesz tak zrobic?
 (Odpowiedz 'nie' przeniesie z powrotem do menu zmiany partycji.)}
 
 message installbootsel
-{Twoje konfiguracja wymaga kodu rozruchowego NetBSD, aby
+{Twoje konfiguracja wymaga kodu rozruchowego EmberBSD, aby
 wybierac, ktorego systemu operacyjnego uzywac.
 
 Nie jest on obecnie zainstalowany. Czy zainstalowac go teraz?}
@@ -149,11 +149,11 @@ Nie jest on obecnie zainstalowany. Czy zainstalowac go teraz?}
 message installmbr
 {Kod rozruchowy w MBR nie wyglada na poprawny.
 
-Chcesz zainstalowac kod rozruchowy NetBSD?}
+Chcesz zainstalowac kod rozruchowy EmberBSD?}
 
 message updatembr
 {Chcesz uaktualnic kod rozruchowy w MBR do najnowszej wersji
-kodu rozruchowego NetBSD?}
+kodu rozruchowego EmberBSD?}
 
 message set_kernel_1	{Kernel (GENERIC)}
 message set_kernel_2	{Kernel (GENERIC_KASLR)}

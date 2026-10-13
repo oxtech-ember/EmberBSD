@@ -46,7 +46,7 @@ jetzt und wählen dann die Option "Erneut testen".}
 
 message entropy_add_manually		{Zufallsdaten manuell eingeben}
 message entropy_download_raw		{Rohe binäre Zufallsdaten laden}
-message	entropy_download_seed		{NetBSD-Entropie-Datei laden}
+message	entropy_download_seed		{EmberBSD-Entropie-Datei laden}
 message entropy_retry			{Erneut testen}
 
 message entropy_enter_manual1
@@ -116,10 +116,10 @@ message entropy_data_hdr
 können Sie zufällige Binärdaten z.B. so erzeugen:}
 
 message entropy_seed
-{NetBSD-Entropie-Datei}
+{EmberBSD-Entropie-Datei}
 
 message entropy_seed_hdr
-{Auf einem NetBSD-System mit kryptographisch starkem Zufallszahlengenerator
+{Auf einem EmberBSD-System mit kryptographisch starkem Zufallszahlengenerator
 können Sie einen Entropie-Schnappschuss folgendermaßen erstellen:}
 
 message entropy_path_and_file

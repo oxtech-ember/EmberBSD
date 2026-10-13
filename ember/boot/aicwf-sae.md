@@ -13,7 +13,9 @@ The firmware key command has no initial IGTK packet-number field. The
 client therefore rejects a nonzero initial IPN instead of silently losing
 the replay boundary. Networks/rekeys supplying such an IPN cannot complete
 this path yet. On a physical Zero 3W, required PMF negotiation, SAE/H2E,
-IGTK installation and bidirectional traffic pass. Management-frame forgery
+IGTK installation and bidirectional traffic pass with an accepted initial IPN.
+A separate [VHT80 trial](aicwf-vht.md#physical-vht80-check) reproduces the
+nonzero-IPN failure after successful H2E authentication. Management-frame forgery
 and replay injection remain untested; this is not a WPA3 certification claim.
 
 SAE configuration is privileged. A generation and peer bind commands to one
@@ -31,9 +33,11 @@ path before replacing the only network connection. Keep credentials and
 unredacted logs outside source control. `vmstat -e` shows the driver's SAE
 start, received, sent and rejected counters without displaying credentials.
 
-This work does not add 802.11r fast transition, 802.11v BSS transition
-management, 802.11ac/ax or host AP mode. The [Zero 3W board page](../boards/orange-pi-zero-3w.md)
+This SAE path does not add 802.11r fast transition, 802.11ax or host AP mode.
+Host-managed Neighbor Reports and BSS transitions use the separate
+[station transport](aicwf-kv.md). VHT80 has a separate WPA2 check. The [Zero 3W board page](../boards/orange-pi-zero-3w.md)
 records actual physical results separately.
+See the [VHT80 and roaming status](aicwf-vht.md) for the `11ac/k/v 1x1 80 MHz` target.
 
 ## Band steering and acceptance
 
@@ -129,6 +133,55 @@ The probe observes the new SAE generation, sends a protected query and
 requires the matching response within 60 seconds. It changes no profile.
 Reassociation interrupts traffic; arrange recovery first on Wi-Fi-only
 boards. This positive probe does not exercise timeout recovery or RF forgery.
+
+## Link-liveness watchdog
+
+A mesh AP steers bands and may drop a silently idle station without any
+deauthentication the firmware would report as SM_DISCONNECT_IND. The driver
+now stamps the tick counter on every received frame, beacons included, and a
+2-second callout checks the stamp while the driver believes it is associated.
+After two consecutive silent checks (10 seconds without any frame from the
+air - about a hundred lost beacons) the watchdog tears the firmware
+association down through the ordinary SM_DISCONNECT_REQ path and returns
+net80211 to scan, which re-associates through the same SAE/PMF supplicant
+path as a fresh join. The firmware's own MM_CONNECTION_LOSS_IND (0x0043)
+routes to the same teardown, and the AP-mode UAPSD housekeeping request
+ME_TRAFFIC_IND_REQ (0x140b) is now recognized and ignored quietly instead of
+logging as an unexpected message.
+
+Recovery interrupts traffic for the rescan duration (observed around ten
+seconds); it does not require userland. The watchdog never fires while the
+driver is not associated, and a single in-flight work item bounds the
+teardown. Queued recovery records the association lifetime. A stale work item
+cannot tear down a replacement association.
+Run `sh ember/tests/aicwf-alive.sh` for the decision math,
+miss accounting and single-flight checks.
+
+## 802.11r groundwork
+
+The mesh advertises fast transitions, so the FT groundwork landed in two
+pieces. The scan parser now records each BSSID's Mobility Domain element
+(element 54): MDID and R0KH-ID land in a small per-softc cache, and the
+driver prints the mobility domain when it associates with an 802.11r-capable
+BSS - the live marker for whether a network actually offers FT. The FT key
+hierarchy (KDF-Hash-256 with labels FT-R0/FT-R1, PMK-R0/R1 and their names
+per 802.11r clause 13) is implemented and verified in
+`ember/tools/aicwf-ft.c` against FIPS 180-2, RFC 4231 and independently
+generated cross-vectors; run `sh ember/tests/aicwf-ft.sh`.
+
+Not implemented yet: SAE-FT authentication on roaming, PMK-R0 derivation
+wired to the live SAE PMK, and the reassociation exchange with the FTIE.
+The vendor firmware advertises SM_FT_AUTH_IND/RSP in its message enum but
+this vendor drop carries no handler or struct for them, so host-side
+control of the exchange is the planned route.
+
+## Host-managed 802.11k/v boundary
+
+The [AIC station transport](aicwf-kv.md) connects actual association IEs,
+firmware TX confirmations and connected scans to the common BSD client.
+Its software checks do not establish on-air acceptance.
+The initial IGTK IPN restriction above also applies to protected k/v.
+The independent [BIP verifier](aicwf-bip.md) is not integrated into the driver.
 
 ## Protocol provenance
 

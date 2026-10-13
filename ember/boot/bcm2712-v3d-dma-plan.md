@@ -1,6 +1,9 @@
 # BCM2712 first DMA/TFU experiment: handoff design
 
-Status on 2026-10-09: reviewed proposal, **not implemented or executed**.
+Status on 2026-10-10: **implemented** in the opt-in `EMBERV3DDMA`
+configuration with actual-source contracts; see
+[the experiment page](bcm2712-v3d-dma.md) for the implementation and
+the physical acceptance guide. Physical acceptance is pending.
 The prerequisite [native reset probe](bcm2712-v3d-takeover.md#physical-cm5-acceptance)
 passed once on physical CM5. That result establishes neither DMA nor rendering.
 This design incorporates the review corrections below and supersedes earlier

@@ -1020,7 +1020,8 @@ dcngettext(const char *domainname, const char *msgid1, const char *msgid2,
 		strlcpy(olpath, lpath, sizeof(olpath));
 
 found:
-	if (db->mohandle.mo.mo_plural) {
+	/* Singular gettext calls do not select a language's plural form. */
+	if (msgid2 != NULL && db->mohandle.mo.mo_plural) {
 		plural_index =
 		    _gettext_calculate_plural(db->mohandle.mo.mo_plural, n);
 		if (plural_index >= db->mohandle.mo.mo_nplurals)
@@ -1034,7 +1035,7 @@ found:
 
 	v = lookup(msgid, db, &len);
 	if (v) {
-		if (db->mohandle.mo.mo_plural)
+		if (msgid2 != NULL && db->mohandle.mo.mo_plural)
 			v = get_indexed_string(v, len, plural_index);
 		/*
 		 * convert the translated message's encoding.
@@ -1053,6 +1054,8 @@ found:
 		 */
 
 		msgid = v;
+	} else {
+		msgid = _NGETTEXT_DEFAULT(msgid1, msgid2, n);
 	}
 
 	return (char *)__UNCONST(msgid);

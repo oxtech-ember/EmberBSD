@@ -74,13 +74,16 @@ EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/cross-prefix \
 This parameter selects tools; it does not fetch or build a GCC16 cross
 compiler. The [Ports cross recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
 provides the host compiler and preserves its current source adaptations.
+Its `--kernel` mode builds frontends without an application sysroot; the
+application mode retains the target libc/header/runtime requirements.
 
 ## Acceptance is separate from host selection
 
-The wrapper retains the native six-contract suite. On a foreign host it
-runs the two portable contracts and explicitly records the remaining native
-contracts as pending. Copy the same pinned source export to an EmberBSD
-machine and run all six there before deploying the artifacts:
+The wrapper runs the portable contracts listed in `ember/tools/kernel-contracts.sh`.
+They include the AIC station and management-frame regression. On a foreign
+host, four additional Bluetooth/audio contracts remain pending. Copy the
+same pinned source export to an EmberBSD machine and run the complete suite
+before deploying the artifacts:
 
 ```sh
 NETBSD2_PYTHON=/path/to/python3 sh ember/tools/kernel-contracts.sh /absolute/source all
@@ -107,6 +110,16 @@ are not a kernel build. For underlying build options see [BUILDING](../../BUILDI
 and the [NetBSD cross-build guide](https://www.netbsd.org/docs/guide/en/chap-build.html).
 
 ## Verified scope
+
+On 2026-10-10, the same cross path on Apple Silicon macOS also built the
+complete reduced base set (not only the kernel) following
+[aarch64-base-update.md](aarch64-base-update.md). The strict `checkflist`
+validation passed after correcting a stale `libdwarf` entry in the set lists,
+and the kernel, modules and base installed and passed their on-board
+acceptance on a physical Pi 5. One transient host `cc1` SIGTRAP under `-j8`
+did not reproduce; the build continued at `-j6`. The kernel wrapper itself
+does not yet pass `BUILDINFO`; the update guide requires the explicit
+`-V BUILDINFO=...` relink to record the source revision.
 
 On Apple Silicon macOS, the wrapper built the in-tree host tools, full
 `EMBER64`, four board modules and all three DTBs. The two portable contracts
@@ -138,6 +151,21 @@ userland, a new physical-board deployment or board-module attachment.
 All six native source contracts subsequently passed with the installed
 Python 3.14 package. [Live DTrace](dtrace-dwarf.md) also passes in this VM
 with matching modules and typed FBT arguments from the GCC16 kernel's CTF.
+
+### Linux GCC16
+
+On 2026-10-11, Debian 13/x86_64 built the full `EMBER64` kernel, its image,
+four matched modules, and three DTBs with four workers. Both host GCC/G++
+and the Ports `--kernel` cross compiler were 16.2.0. The source export was
+`d3cd85dbbcce4307f156e63f87e5ec29d58d7b99`. All ten portable contracts passed,
+including the V3D causal mutants and production Wi-Fi link checks.
+All nine artifact SHA256 checks passed. The kernel SHA256 is
+`afdea5b38fb294960efb6e0d0e1c986fdfc66b0abf7912fe8bdf2ed9652c42d4`.
+Strict compiler warnings remained enabled. Kernel mode uses no application
+sysroot and selects GCC16 explicitly.
+
+This accepts the final merged V3D changes and the Linux cross-build,
+not boot, physical-board behavior, native contracts, or a complete GCC16 userland.
 
 ## DWARF5 and CTF
 

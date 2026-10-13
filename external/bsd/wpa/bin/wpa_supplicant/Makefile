@@ -19,6 +19,7 @@ rrm.c \
 robust_av.c \
 scan.c \
 wmm_ac.c \
+wnm_sta.c \
 wpa_supplicant.c \
 wpas_glue.c
 
@@ -95,6 +96,12 @@ config_line.c: ${WPA_DISTDIR}/src/utils/config.c
 	${WPA_DISTDIR}/src/rsn_supp \
 	${COMMON_PATH} \
 
+# Native builds against a newer kernel may stage its net80211 headers here.
+# Keep CFLAGS (including PIE and platform hardening) supplied by bsd.prog.mk.
+.if defined(NET80211_INCLUDES)
+CPPFLAGS+= -I${NET80211_INCLUDES}
+.endif
+
 CPPFLAGS+= \
 	-I${WPA_SUPPLICANT_DISTDIR} \
 	-I${WPA_DISTDIR}/src/drivers \
@@ -121,7 +128,7 @@ CPPFLAGS+=-DCONFIG_DEBUG_SYSLOG
 
 #CPPFLAGS+=-DCONFIG_ACS
 #CPPFLAGS+=-DCONFIG_MBO
-#CPPFLAGS+=-DCONFIG_WNM 
+CPPFLAGS+=-DCONFIG_WNM
 #CPPFLAGS+=-DCONFIG_AP
 #SRCS+=ap.c \
 #gas.c \

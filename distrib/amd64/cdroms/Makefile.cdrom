@@ -48,6 +48,9 @@ ${EFIBOOTIMG}: ${DESTDIR}/usr/mdec/bootx64.efi ${DESTDIR}/usr/mdec/bootia32.efi
 		-t msdos -o F=12,c=1 ${EFIBOOTIMG} efiboot
 
 image_md_pre: ${EFIBOOTIMG}
+	# Base sets contain the installed-system boot.cfg. Apply media policy last.
+	${RM} -f cdrom/boot.cfg
+	${INSTALL} ${COPY} -m 0644 boot.cfg cdrom/boot.cfg
 	${RM} -f cdrom/etc/gettytab cdrom/etc/ttys cdrom/etc/rc
 	${HOST_LN} -fs /tmp/gettytab cdrom/etc/gettytab
 	${INSTALL} ${COPY} ${.CURDIR}/../etc.ttys cdrom/etc/ttys

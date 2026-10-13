@@ -1,15 +1,82 @@
 #!/bin/sh
+# Origin: EmberBSD (AI-assisted), kernel build orchestration regression.
 # Exercise build orchestration without substituting these fixtures for a build.
 set -eu
+# Fixtures select their own build mode and toolchain, independent of the shell.
+unset EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/ember-build-kernel.XXXXXX")
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+show_failure_logs() {
+    for log in "$work/run.log" "${TEST_OUT:-$work}/build.log" \
+        "${TEST_OUT:-$work}/contracts.log"; do
+        if [ -f "$log" ]; then
+            printf '\n%s\n' "$log" >&2
+            cat "$log" >&2
+        fi
+    done
+}
+cleanup() {
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        show_failure_logs
+    fi
+    rm -rf "$work"
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 export TEST_ROOT="$work" TEST_LOG="$work/commands"
 mkdir -p "$work/src/ember/tools" "$work/bin" "$work/src/tools" \
+    "$work/src/ember/tests" \
     "$work/src/share/mk" "$work/src/sys/arch/evbarm/conf" \
     "$work/src/sys/external/gpl2/dts/dist"
 cp "$repo/ember/build-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
+# Model only dispatcher arguments and exit status. These fixtures do not
+# execute GPU, Ruby, or Wi-Fi production-code contracts.
+for contract in bcm2712-v3d bcm2712-v3d-takeover bcm2712-v3d-dma \
+    bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault \
+    bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-job bcm2712-v3d-csd \
+    bcm2712-v3d-cl bcm2712-v3d-sync drm-syncobj-wait \
+    drm-syncobj-dispatch drm-jiffies; do
+    cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
+#!/bin/sh
+set -eu
+echo "gpu-contract ${0##*/} $*" >> "$TEST_LOG"
+test "$#" -eq 1
+test "$1" = "$TEST_ROOT/src"
+test "${FAIL_AT:-}" != gpu-contract
+SH
+done
+for contract in bwfm-link-events bwfm-link-check bwfm-sta aicwf-sta aicwf-vht \
+    bwfm-scan-padding bwfm-key-epoch; do
+cat > "$work/src/ember/tests/$contract.sh" <<'SH'
+#!/bin/sh
+set -eu
+echo "wifi-contract ${0##*/} $*" >> "$TEST_LOG"
+case ${0##*/} in
+    aicwf-sta.sh|aicwf-vht.sh) test "$#" -eq 0;;
+    *) test "$#" -eq 1; test "$1" = "$TEST_ROOT/src";;
+esac
+if [ "${FAIL_AT:-}" = wifi-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; then
+    echo "injected contract failure: ${0##*/}" >&2
+    exit 1
+fi
+SH
+done
+for contract in drm-prime-map drm-dmabuf-lifetime bcm2712-v3d-prime; do
+    : > "$work/src/ember/tools/$contract-contract.rb"
+done
+cat > "$work/bin/ruby" <<'SCRIPT'
+#!/bin/sh
+set -eu
+echo "ruby-contract $*" >> "$TEST_LOG"
+test "$#" -eq 1
+case $1 in "$TEST_ROOT/src/ember/tools/"*-contract.rb) ;; *) exit 1;; esac
+test -f "$1"
+test "${FAIL_AT:-}" != ruby-contract
+test "${FAIL_AT:-}" != "${1##*/}"
+SCRIPT
 : > "$work/src/tools/Makefile"
 : > "$work/src/share/mk/bsd.own.mk"
 : > "$work/src/sys/arch/evbarm/conf/EMBER64"
@@ -109,10 +176,15 @@ fi
 SCRIPT
 chmod +x "$work/bin/"* "$work/src/build.sh"
 export PATH="$work/bin:$PATH" NETBSD2_PYTHON="$work/bin/python3" NETBSD2_JOBS=2
-export TEST_OUT="$work/cross"
-sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1 || {
-    cat "$work/run.log"; exit 1;
+export RUBY="$work/bin/ruby"
+check_contract_counts() {
+    test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
+    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 15
+    test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 3
+    test "$(grep -c '^wifi-contract ' "$TEST_LOG")" -eq 7
 }
+export TEST_OUT="$work/cross"
+sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 test -s "$TEST_OUT/netbsd-EMBER64"
 test -s "$TEST_OUT/rpi5button.kmod"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w.dtb"
@@ -122,13 +194,30 @@ grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-test "$(grep -c '^contract ' "$TEST_LOG")" -eq 2
-for failure in tools module cpp dtb contract publish; do
-    printf stale > "$TEST_OUT/netbsd-EMBER64"
+check_contract_counts 2
+outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
+sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
+if_cemac_acpi.kmod bcm2712btcom.kmod rp1wmcodec.kmod rpi5button.kmod'
+for failure in tools module cpp dtb contract gpu-contract ruby-contract \
+    bcm2712-v3d-prime-contract.rb wifi-contract bwfm-link-check.sh \
+    aicwf-sta.sh aicwf-vht.sh publish; do
+    : > "$TEST_LOG"
+    for output in $outputs; do
+        printf stale > "$TEST_OUT/$output"
+    done
     if FAIL_AT=$failure sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
         echo "accepted failure: $failure" >&2; exit 1
     fi
-    test ! -e "$TEST_OUT/netbsd-EMBER64"
+    for output in $outputs; do
+        test ! -e "$TEST_OUT/$output"
+    done
+    case "$failure" in
+    aicwf-sta.sh|aicwf-vht.sh)
+        grep -Fq "wifi-contract $failure " "$TEST_LOG"
+        grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
+        ! grep -q '^wifi-contract bwfm-scan-padding.sh ' "$TEST_LOG"
+        ;;
+    esac
 done
 : > "$TEST_LOG"
 TEST_HOST=NetBSD EMBER_EXTERNAL_TOOLCHAIN=/cross/gcc16 \
@@ -136,13 +225,14 @@ TEST_HOST=NetBSD EMBER_EXTERNAL_TOOLCHAIN=/cross/gcc16 \
 grep -q 'EXTERNAL_TOOLCHAIN=/cross/gcc16' "$TEST_LOG"
 grep -q 'TOOLCHAIN_MISSING=yes' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
+check_contract_counts 6
 export TEST_OUT="$work/native"
 : > "$TEST_LOG"
 TEST_HOST=NetBSD EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 grep -q native-make "$TEST_LOG"
 ! grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
-test "$(grep -c '^contract ' "$TEST_LOG")" -eq 6
+check_contract_counts 6
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi
@@ -157,4 +247,4 @@ fi
 grep -q 'full source' "$work/run.log"
 test ! -e "$TEST_OUT/netbsd-EMBER64"
 test ! -e "$TEST_OUT/bcm2712btcom.kmod"
-echo 'PASS: cross/native routing, matched module headers, external tools, six contracts, failed-build outputs'
+echo 'PASS: cross/native routing, matched module headers, external tools, base/GPU/Ruby/Wi-Fi contract dispatch, AIC failure cleanup'

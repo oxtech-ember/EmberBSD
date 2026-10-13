@@ -16,6 +16,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/device.h>
 #include <sys/systm.h>
 #include <arm/broadcom/bcm2835_pmwdogvar.h>
+#include <arm/broadcom/bcm2712_v3d_takeover.h>
 
 #define TV3D_HUB	0
 #define TV3D_CORE	1
@@ -347,4 +348,51 @@ out:
 		    "ownership/maps retained until reboot; no retry" :
 		    "no writes attempted; claim/maps released");
 	return error;
+}
+
+bool
+bcmv3d_takeover_complete(void)
+{
+
+	return tv3d.complete;
+}
+
+/*
+ * HUB access for the opt-in DMA probe. The probe may only observe and
+ * program the GPU through the takeover's sealed, persistent mappings.
+ */
+int
+bcmv3d_takeover_hub_peek(bus_size_t offset, uint32_t *value)
+{
+
+	if (!tv3d.complete)
+		return EPERM;
+	return tv3d_read(TV3D_HUB, offset, value);
+}
+
+int
+bcmv3d_takeover_hub_poke(bus_size_t offset, uint32_t value)
+{
+
+	if (!tv3d.complete)
+		return EPERM;
+	return tv3d_write(TV3D_HUB, offset, value);
+}
+
+int
+bcmv3d_takeover_core_peek(bus_size_t offset, uint32_t *value)
+{
+
+	if (!tv3d.complete)
+		return EPERM;
+	return tv3d_read(TV3D_CORE, offset, value);
+}
+
+int
+bcmv3d_takeover_core_poke(bus_size_t offset, uint32_t value)
+{
+
+	if (!tv3d.complete)
+		return EPERM;
+	return tv3d_write(TV3D_CORE, offset, value);
 }

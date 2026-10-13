@@ -68,6 +68,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/firmload.h>
 #include <dev/ic/fullmac_sae.h>
 #include <dev/sdmmc/if_aicwf_sae.h>
+#include <dev/sdmmc/if_aicwf_vht.h>
+#include <dev/sdmmc/if_aicwf_sta.h>
 #include <dev/sdmmc/sdmmcchip.h>
 #include <dev/sdmmc/sdmmcvar.h>
 
@@ -105,6 +107,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_HDR_LEN			4
 #define	AICWF_TYPE_CFG			0x10	/* bit: not a data frame */
 #define	AICWF_TYPE_MSG			0x11
+#define	AICWF_TYPE_TX_CFM		0x12
 #define	AICWF_TYPE_DATA			0x01	/* to the chip */
 #define	AICWF_TX_MSG_OFFSET		8
 #define	AICWF_RX_MSG_OFFSET		4
@@ -141,6 +144,12 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	 AICWF_IF_STA			0
 #define	AICWF_MM_SET_RF_CALIB_REQ	0x0069
 #define	AICWF_MM_SET_RF_CALIB_CFM	0x006a
+
+/* Host-side link liveness: the AP beacons roughly every 102 ms; two
+ * consecutive silent checks at a 2 s cadence mean the association is dead
+ * even though the firmware never raised SM_DISCONNECT_IND. */
+#define	AICWF_ALIVE_PERIOD_MS	2000
+#define	AICWF_ALIVE_SILENT_MS	10000
 #define	AICWF_MM_GET_MAC_ADDR_REQ	0x0073
 #define	AICWF_MM_GET_MAC_ADDR_CFM	0x0074
 #define	AICWF_MM_SET_STACK_START_REQ	0x007b
@@ -155,6 +164,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	 AICWF_STA_NONE			0xff	/* a group key */
 #define	AICWF_MM_KEY_DEL_REQ		0x0026
 #define	AICWF_MM_KEY_DEL_CFM		0x0027
+#define	AICWF_MM_CONNECTION_LOSS_IND	0x0043
 #define	AICWF_MM_CHANNEL_SWITCH_IND	0x0044
 #define	AICWF_MM_CHANNEL_PRE_SWITCH_IND	0x0045
 #define	AICWF_MM_CHANNEL_SURVEY_IND	0x004f
@@ -164,6 +174,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_SCANU_START_CFM		0x1001	/* the scan is over */
 #define	AICWF_SCANU_RESULT_IND		0x1004
 #define	AICWF_SCANU_START_ACK		0x1009	/* the scan has begun */
+#define	AICWF_SCANU_CANCEL_REQ		0x100a
+#define	AICWF_SCANU_CANCEL_CFM		0x100b
 
 /* Management entity task. */
 #define	AICWF_ME_CONFIG_REQ		0x1400
@@ -184,7 +196,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_SM_EXTERNAL_AUTH_IND	0x1806
 #define	AICWF_SM_EXTERNAL_AUTH_RSP	0x1807
 #define	AICWF_SM_EXTERNAL_AUTH_CFM	0x180c
+#define	AICWF_ME_TRAFFIC_IND_REQ		0x140b
 #define	 AICWF_CONNECT_MFP		__BIT(4)
+#define	 AICWF_CONNECT_REASSOC		__BIT(5)
 #define	 AICWF_FEATURE_MFP		__BIT(13)
 #define	 AICWF_AUTH_SAE			3
 #define	 AICWF_CONNECT_PORT_HOST	__BIT(0) /* the host opens the port */
@@ -230,24 +244,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_SEQ_MASK			0xfff
 #define	AICWF_SEQ_SUB(a, b)		(((a) - (b)) & AICWF_SEQ_MASK)
 #define	AICWF_SEQ_BEFORE(a, b)		(AICWF_SEQ_SUB(a, b) >= 0x800)
-
-/* ME_CONFIG_REQ: what the station announces. */
-#define	AICWF_ME_CONFIG_LEN		112
-#define	AICWF_ME_CONFIG_HT_INFO		0	/* 16 bits */
-#define	AICWF_ME_CONFIG_HT_AMPDU	2
-#define	AICWF_ME_CONFIG_HT_MCS		3	/* 16 bytes */
-#define	AICWF_ME_CONFIG_TX_LIFETIME	100	/* 16 bits, TU */
-#define	AICWF_ME_CONFIG_BW_MAX		102
-#define	AICWF_ME_CONFIG_HT_SUPP		103
-/*
- * LDPC, 40 MHz channels, no SM power save, short guard interval at
- * either width, STBC receive.
- */
-#define	AICWF_HT_INFO			\
-	(0x0001 | 0x0002 | 0x000c | 0x0020 | 0x0040 | 0x0100)
-#define	AICWF_BW_40			1
-#define	AICWF_HT_AMPDU			0x1f	/* 64 KiB, 16 us apart */
-#define	AICWF_TX_LIFETIME		100
 
 #define	AICWF_SCAN_INTERVAL_MS		3000
 
@@ -341,6 +337,9 @@ enum aicwf_task_cmd {
 	AICWF_TASK_NEWSTATE,
 	AICWF_TASK_KEY_SET,
 	AICWF_TASK_KEY_DELETE,
+	AICWF_TASK_STA_MGMT,
+	AICWF_TASK_STA_CANCEL_SCAN,
+	AICWF_TASK_RECOVER_SCAN,
 };
 
 struct aicwf_task {
@@ -352,8 +351,11 @@ struct aicwf_task {
 	u_int			t_keyix;
 	bool			t_group;
 	uint64_t		t_epoch;
+	uint64_t		t_join_serial;
+	uint64_t		t_configure_serial;
 	u_int			t_keylen;
 	uint8_t			t_key[IEEE80211_KEYBUF_SIZE];
+	struct ieee80211req_sta_mgmt t_sta;
 };
 
 #define	AICWF_TASK_COUNT		16
@@ -385,6 +387,7 @@ struct aicwf_softc {
 
 	uint8_t			sc_enaddr[ETHER_ADDR_LEN];
 	bool			sc_5ghz;
+	uint32_t		sc_fw_version;
 	uint8_t			sc_vif;
 
 	struct ieee80211com	sc_ic;
@@ -402,6 +405,35 @@ struct aicwf_softc {
 	/* Frames of an A-MPDU waiting for the ones before them. */
 	kmutex_t		sc_reorder_lock;
 	callout_t		sc_reorder_ch;
+	callout_t		sc_alive_ch;
+	struct work		sc_alive_work;
+	struct aicwf_ft_bss {
+		uint8_t		bssid[ETHER_ADDR_LEN];
+		uint16_t	mdid;
+		uint8_t		r0kh_len;
+		uint8_t		r0kh[45];
+	}			sc_ft_bss[4];
+	/* Host-managed 802.11k/v exchange (IEEE80211_IOC_STA_MGMT). */
+	/* Station requests and firmware ownership are protected by sc_lock. */
+	bool			sc_sta_enabled;
+	bool			sc_sta_tx_pending, sc_sta_tx_sent;
+	bool			sc_sta_tx_mismatch_reported;
+	uint32_t		sc_sta_token;
+	struct ieee80211req_sta_mgmt sc_sta_tx;
+	bool			sc_sta_scan_pending, sc_sta_scan_started;
+	bool			sc_scan_published, sc_sta_scan_draining;
+	bool			sc_sta_cancel_queued;
+	uint32_t		sc_sta_scan_serial;
+	struct ieee80211req_sta_mgmt sc_sta_scan;
+	uint16_t		sc_sta_assoc_len;
+	uint8_t			sc_sta_assoc[804];
+	volatile u_int		sc_alive_rx;	/* ticks of last RX frame */
+	u_int			sc_alive_misses;
+	bool			sc_alive_queued;
+	uint64_t		sc_alive_epoch;
+	uint64_t		sc_join_serial;	/* sc_epoch_lock */
+	uint64_t		sc_configure_serial; /* sc_epoch_lock */
+	uint64_t		sc_alive_join_serial;
 	struct aicwf_reorder {
 		bool		started;
 		uint16_t	head;	/* next sequence number to pass */
@@ -444,15 +476,26 @@ static int	aicwf_intr(void *);
 static void	aicwf_ifattach(struct aicwf_softc *);
 static void	aicwf_scan_result(struct aicwf_softc *, const uint8_t *,
 		    size_t);
-static void	aicwf_scan_done(struct aicwf_softc *);
+static void	aicwf_scan_done(struct aicwf_softc *, const uint8_t *, size_t);
 static void	aicwf_connect_ind(struct aicwf_softc *, const uint8_t *,
 		    size_t);
-static void	aicwf_disconnect_ind(struct aicwf_softc *);
+static void	aicwf_disconnect(struct aicwf_softc *);
+static void	aicwf_disconnect_ind(struct aicwf_softc *, const uint8_t *, size_t);
+static void	aicwf_alive_lost(struct aicwf_softc *);
+static void	aicwf_alive_work(struct aicwf_softc *);
+static uint64_t aicwf_recover_disconnect(struct aicwf_softc *, uint64_t);
 static void	aicwf_sae_event(struct aicwf_softc *, bool,
 		    const uint8_t *, size_t);
 static void	aicwf_rx_data(struct aicwf_softc *, const uint8_t *, size_t);
 static void	aicwf_reorder_flush(struct aicwf_softc *, int, bool);
 static void	aicwf_reorder_timeout(void *);
+
+static void	aicwf_sta_tx_cfm(struct aicwf_softc *, const uint8_t *, size_t);
+static bool	aicwf_sta_ready(struct aicwf_softc *);
+static bool	aicwf_sta_scan_finish_locked(struct aicwf_softc *, bool, void *);
+static void	aicwf_sta_retire_locked(struct aicwf_softc *, uint8_t *, bool *,
+		    uint8_t *, bool *);
+static int	aicwf_newstate(struct ieee80211com *, enum ieee80211_state, int);
 
 CFATTACH_DECL_NEW(aicwf, sizeof(struct aicwf_softc),
     aicwf_match, aicwf_attach, NULL, NULL);
@@ -536,7 +579,8 @@ aicwf_tx_wait(struct aicwf_softc *sc, size_t len, u_int reserve)
  * a frame that ends inside a block gets a zero word after it.
  */
 static int
-aicwf_write(struct aicwf_softc *sc, size_t len, u_int reserve)
+aicwf_write_attempted(struct aicwf_softc *sc, size_t len, u_int reserve,
+    bool *attempted)
 {
 	uint8_t * const buf = sc->sc_txbuf;
 	size_t total;
@@ -549,14 +593,24 @@ aicwf_write(struct aicwf_softc *sc, size_t len, u_int reserve)
 		total = roundup(total + AICWF_HDR_LEN, AICWF_BLOCK_SIZE);
 	memset(buf + len, 0, total - len);
 
+	if (attempted != NULL)
+		*attempted = false;
 	error = aicwf_tx_wait(sc, total, reserve);
 	if (error == 0) {
 		mutex_enter(&sc->sc_bus_lock);
+		if (attempted != NULL)
+			*attempted = true;
 		error = aicwf_fifo(sc, true, buf, total);
 		mutex_exit(&sc->sc_bus_lock);
 	}
 
 	return error;
+}
+
+static int
+aicwf_write(struct aicwf_softc *sc, size_t len, u_int reserve)
+{
+	return aicwf_write_attempted(sc, len, reserve, NULL);
 }
 
 /*
@@ -582,6 +636,15 @@ aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id, const void *param,
 		mutex_exit(&sc->sc_lock);
 		return ESTALE;
 	}
+	if ((id == AICWF_SCANU_START_REQ && epoch != 0 &&
+	    (!sc->sc_sta_scan_pending || !sc->sc_sta_scan_started ||
+	    !aicwf_sta_ready(sc))) ||
+	    (id == AICWF_SCANU_CANCEL_REQ &&
+	    (!sc->sc_sta_scan_started || !sc->sc_sta_scan_draining ||
+	    !sc->sc_scanning))) {
+		mutex_exit(&sc->sc_lock);
+		return ECANCELED;
+	}
 	sc->sc_cmd_busy = true;
 
 	len = AICWF_TX_MSG_OFFSET + AICWF_MSG_HDR_LEN + param_len;
@@ -600,7 +663,8 @@ aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id, const void *param,
 	sc->sc_cfm_id = cfm_id;
 	sc->sc_cfm_done = false;
 
-	error = aicwf_write(sc, len, 0);
+	error = aicwf_write_attempted(sc, len, 0,
+	    id == AICWF_SCANU_START_REQ ? &sc->sc_scan_published : NULL);
 	if (strict)
 		explicit_memset(buf + AICWF_TX_MSG_OFFSET +
 		    AICWF_MSG_HDR_LEN, 0, param_len);
@@ -650,7 +714,7 @@ aicwf_rx_msg
 		aicwf_scan_result(sc, msg + AICWF_RX_MSG_PARAM, param_len);
 		return;
 	case AICWF_SCANU_START_CFM:
-		aicwf_scan_done(sc);
+		aicwf_scan_done(sc, msg + AICWF_RX_MSG_PARAM, param_len);
 		return;
 	case AICWF_SM_EXTERNAL_AUTH_IND:
 		aicwf_sae_event(sc, true, msg + AICWF_RX_MSG_PARAM, param_len);
@@ -659,12 +723,19 @@ aicwf_rx_msg
 		aicwf_connect_ind(sc, msg + AICWF_RX_MSG_PARAM, param_len);
 		return;
 	case AICWF_SM_DISCONNECT_IND:
-		aicwf_disconnect_ind(sc);
+		aicwf_disconnect_ind(sc, msg + AICWF_RX_MSG_PARAM, param_len);
 		return;
 	case AICWF_MM_CHANNEL_SWITCH_IND:
 	case AICWF_MM_CHANNEL_PRE_SWITCH_IND:
 	case AICWF_MM_CHANNEL_SURVEY_IND:
 		/* The radio moving between channels: nothing to do. */
+		return;
+	case AICWF_ME_TRAFFIC_IND_REQ:
+		/* AP-mode UAPSD housekeeping; a station has nothing to add. */
+		return;
+	case AICWF_MM_CONNECTION_LOSS_IND:
+		device_printf(sc->sc_dev, "firmware reported connection loss\n");
+		aicwf_alive_lost(sc);
 		return;
 	}
 
@@ -707,6 +778,8 @@ aicwf_rx(struct aicwf_softc *sc, const uint8_t *buf, size_t len)
 		}
 		if (frame_len > len - AICWF_RX_MSG_OFFSET)
 			break;
+		if ((type & 0x7f) == AICWF_TYPE_TX_CFM)
+			aicwf_sta_tx_cfm(sc, buf + AICWF_RX_MSG_OFFSET, frame_len);
 		if ((type & 0x7f) == AICWF_TYPE_MSG)
 			aicwf_rx_msg(sc, buf + AICWF_RX_MSG_OFFSET,
 			    frame_len);
@@ -1126,6 +1199,7 @@ aicwf_fw_init(struct aicwf_softc *sc)
 	    le32dec(cfm + 12), le32dec(cfm + 16), le32dec(cfm + 20),
 	    le16dec(cfm + 24), cfm[26]);
 
+	sc->sc_fw_version = le32dec(cfm);
 	if (le32dec(cfm) == 0x06090101 &&
 	    (le32dec(cfm + 20) & AICWF_FEATURE_MFP) != 0) {
 		sc->sc_sae_caps = IEEE80211_SAE_CAP_EXTERNAL |
@@ -1133,19 +1207,11 @@ aicwf_fw_init(struct aicwf_softc *sc)
 		aprint_normal_dev(sc->sc_dev, "external SAE and firmware PMF available\n");
 	}
 
-	/*
-	 * Capabilities: 802.11n with one stream in channels up to 40 MHz
-	 * wide. The firmware builds the association request from them.
-	 * 802.11ac is left out: with it announced the station associates
-	 * and then exchanges only broadcast frames with the access point.
-	 */
-	memset(req, 0, sizeof(req));
-	le16enc(req + AICWF_ME_CONFIG_HT_INFO, AICWF_HT_INFO);
-	req[AICWF_ME_CONFIG_HT_AMPDU] = AICWF_HT_AMPDU;
-	req[AICWF_ME_CONFIG_HT_MCS] = 0xff;		/* MCS 0-7 */
-	le16enc(req + AICWF_ME_CONFIG_TX_LIFETIME, AICWF_TX_LIFETIME);
-	req[AICWF_ME_CONFIG_HT_SUPP] = 1;
-	req[AICWF_ME_CONFIG_BW_MAX] = AICWF_BW_40;
+	/* Firmware builds association capabilities from this bounded request. */
+	if (aicwf_me_config_build(req, le32dec(cfm), le32dec(cfm + 12),
+	    le32dec(cfm + 20), sc->sc_5ghz))
+		aprint_normal_dev(sc->sc_dev,
+		    "VHT enabled: 1 stream, MCS 0-9, maximum width 80 MHz\n");
 	error = aicwf_cmd(sc, AICWF_ME_CONFIG_REQ, req, AICWF_ME_CONFIG_LEN,
 	    AICWF_ME_CONFIG_CFM, NULL, 0);
 	if (error != 0)
@@ -1210,12 +1276,25 @@ aicwf_scan(struct aicwf_softc *sc)
 	req[chans + 115] = n2g + n5g;
 	req[chans + 116] = nssid;
 
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_scanning || sc->sc_sta_scan_pending ||
+	    sc->sc_sta_cancel_queued) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
 	sc->sc_scanning = true;
+	sc->sc_scan_published = false;
 	sc->sc_scan_ticks = getticks();
+	mutex_exit(&sc->sc_lock);
 	if (aicwf_cmd(sc, AICWF_SCANU_START_REQ, req, sizeof(req),
 	    AICWF_SCANU_START_ACK, NULL, 0) != 0) {
-		device_printf(sc->sc_dev, "scan request failed\n");
-		sc->sc_scanning = false;
+		mutex_enter(&sc->sc_lock);
+		if (!sc->sc_scan_published)
+			sc->sc_scanning = false;
+		device_printf(sc->sc_dev,
+		    "scan request failed; FIFO attempted %u, pending %u\n",
+		    sc->sc_scan_published, sc->sc_scanning);
+		mutex_exit(&sc->sc_lock);
 	}
 }
 
@@ -1232,10 +1311,20 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 	u_int ds_chan = 0, ht_chan = 0, primary;
 	int rssi, s;
 
-	if (!sc->sc_if_attached || len < hdr + sizeof(wh) + fixed)
+	if (!sc->sc_if_attached || !sc->sc_scanning ||
+	    !aicwf_sta_scan_result_valid(ind, len, sc->sc_vif))
+		return;
+	mutex_enter(&sc->sc_lock);
+	const bool admitted = !sc->sc_sta_scan_started ||
+	    (sc->sc_sta_scan_pending && !sc->sc_sta_scan_draining &&
+	    sc->sc_sta_scan.generation == (uint32_t)sc->sc_sae_epoch);
+	const uint64_t epoch = sc->sc_sae_epoch;
+	const uint32_t serial = sc->sc_sta_scan_serial;
+	mutex_exit(&sc->sc_lock);
+	if (!admitted)
 		return;
 	const uint8_t * const frame = ind + hdr;
-	const size_t frame_len = MIN(le16dec(ind), len - hdr);
+	const size_t frame_len = le16dec(ind);
 	if (frame_len < sizeof(wh) + fixed)
 		return;
 
@@ -1255,9 +1344,13 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 	scan.sp_bintval = le16dec(frm + 8);
 	scan.sp_capinfo = le16dec(frm + 10);
 	const u_int chan = ieee80211_mhz2ieee(le16dec(ind + 4), 0);
-	if (chan > IEEE80211_CHAN_MAX || ic->ic_channels[chan].ic_freq == 0)
+	if (chan > IEEE80211_CHAN_MAX ||
+	    ic->ic_channels[chan].ic_freq != le16dec(ind + 4) ||
+	    !isset(ic->ic_chan_active, chan))
 		return;
 	scan.sp_chan = scan.sp_bchan = chan;
+
+	const uint8_t *mdie = NULL;
 
 	for (frm += fixed; efrm - frm >= 2 && efrm - frm >= 2 + frm[1];
 	    frm += 2 + frm[1]) {
@@ -1280,6 +1373,10 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 			if (frm[1] >= 22)
 				ht_chan = frm[2];
 			break;
+		case 54:	/* Mobility Domain, 802.11r */
+			if (frm[1] >= 3)
+				mdie = frm;
+			break;
 		case IEEE80211_ELEMID_XRATES:
 			scan.sp_xrates = ie;
 			break;
@@ -1294,6 +1391,13 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 			if (frm[1] == 1)
 				scan.sp_erp = frm[2];
 			break;
+		case IEEE80211_ELEMID_EXTCAP:
+			scan.sp_extcap = ie;
+			break;
+		case IEEE80211_ELEMID_RRM:
+			if (frm[1] == 5)
+				scan.sp_rrm = ie;
+			break;
 		case IEEE80211_ELEMID_RSN:
 			scan.sp_wpa = ie;
 			break;
@@ -1304,7 +1408,7 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 			break;
 		}
 	}
-	if (scan.sp_ssid == NULL || scan.sp_rates == NULL)
+	if (frm != efrm || scan.sp_ssid == NULL || scan.sp_rates == NULL)
 		return;
 
 	/* A 2.4 GHz beacon can be received on an adjacent scan channel. */
@@ -1312,6 +1416,7 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 	    ht_chan != 0 ? ht_chan : chan;
 	if (primary > IEEE80211_CHAN_MAX ||
 	    ic->ic_channels[primary].ic_freq == 0 ||
+	    !isset(ic->ic_chan_active, primary) ||
 	    (ic->ic_channels[primary].ic_freq < 3000) !=
 	    (ic->ic_channels[chan].ic_freq < 3000))
 		return;
@@ -1321,44 +1426,120 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 	scan.sp_chan = primary;
 
 	/* The firmware reports dBm; net80211 compares a positive scale. */
+	scan.sp_rssi_dbm = (int8_t)ind[9];
+	scan.sp_rssi_dbm_valid = true;
 	rssi = (int8_t)ind[9] + 100;
 	rssi = MAX(1, MIN(rssi, 100));
 
+	mutex_enter(&sc->sc_lock);
 	s = splnet();
-	if ((ic->ic_flags & IEEE80211_F_SCAN) != 0)
+	if (sc->sc_scanning && epoch == sc->sc_sae_epoch &&
+	    serial == sc->sc_sta_scan_serial &&
+	    (!sc->sc_sta_scan_started || (sc->sc_sta_scan_pending &&
+	    !sc->sc_sta_scan_draining)) && (ic->ic_flags & IEEE80211_F_SCAN) != 0) {
+		if (mdie != NULL) {
+			struct aicwf_ft_bss *ft = NULL;
+			for (u_int k = 0; k < __arraycount(sc->sc_ft_bss); k++) {
+				if (IEEE80211_ADDR_EQ(sc->sc_ft_bss[k].bssid, wh.i_addr3)) {
+					ft = &sc->sc_ft_bss[k];
+					break;
+				}
+				if (ft == NULL && sc->sc_ft_bss[k].mdid == 0)
+					ft = &sc->sc_ft_bss[k];
+			}
+			if (ft != NULL) {
+				memcpy(ft->bssid, wh.i_addr3, ETHER_ADDR_LEN);
+				ft->mdid = le16dec(mdie + 2);
+				ft->r0kh_len = MIN(mdie[1] - 3, sizeof(ft->r0kh));
+				memcpy(ft->r0kh, mdie + 5, ft->r0kh_len);
+			}
+		}
 		ieee80211_add_scan(ic, &scan, &wh, subtype, rssi, 0);
+	}
 	splx(s);
+	mutex_exit(&sc->sc_lock);
 }
 
 static void
-aicwf_scan_done(struct aicwf_softc *sc)
+aicwf_scan_done(struct aicwf_softc *sc, const uint8_t *p, size_t len)
 {
 	struct ieee80211com * const ic = &sc->sc_ic;
+	uint8_t event[AICWF_STA_NOTICE_LEN];
+	bool background, notify = false;
 	int s;
 
-	if (!sc->sc_if_attached || !sc->sc_scanning)
+	if (!sc->sc_if_attached || !aicwf_sta_scan_complete_valid(p, len, sc->sc_vif))
 		return;
-	sc->sc_scanning = false;
-
+	mutex_enter(&sc->sc_lock);
+	if (!sc->sc_scanning) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
+	background = sc->sc_sta_scan_started;
+	if (background) {
+		device_printf(sc->sc_dev,
+		    "station scan complete: generation %u cookie %u serial %u status %u results %u draining %u\n",
+		    sc->sc_sta_scan.generation, sc->sc_sta_scan.cookie, sc->sc_sta_scan_serial,
+		    p[1], p[2], sc->sc_sta_scan_draining);
+		notify = aicwf_sta_scan_finish_locked(sc, p[1] != 0 ||
+		    sc->sc_sta_scan.generation != (uint32_t)sc->sc_sae_epoch, event);
+		sc->sc_sta_scan_started = false;
+		sc->sc_scan_published = false;
+		sc->sc_sta_scan_draining = false;
+	}
+	/* Clear the cache admission flag before releasing radio ownership. */
 	s = splnet();
-	if (ic->ic_state == IEEE80211_S_SCAN)
-		ieee80211_end_scan(ic);
+	if (background && ic->ic_state == IEEE80211_S_RUN)
+		ieee80211_cancel_scan(ic);
 	splx(s);
+	sc->sc_scanning = false;
+	mutex_exit(&sc->sc_lock);
+	s = splnet();
+	if (ic->ic_state == IEEE80211_S_SCAN) {
+		if (background)
+			(void)aicwf_newstate(ic, IEEE80211_S_SCAN, -1);
+		else
+			ieee80211_end_scan(ic);
+	}
+	splx(s);
+	if (notify)
+		rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_SCAN, event, sizeof(event));
 }
 
 /* Serialize retirement with the final check and write of a bound command. */
-static void
-aicwf_sae_advance(struct aicwf_softc *sc)
+static uint64_t
+aicwf_sae_advance_if(struct aicwf_softc *sc, uint64_t expected)
 {
+	uint8_t tx[AICWF_STA_NOTICE_LEN], scan[AICWF_STA_NOTICE_LEN];
+	bool tx_event, scan_event;
+	uint64_t epoch;
+
 	mutex_enter(&sc->sc_lock);
+	if (expected != 0 && expected != sc->sc_sae_epoch) {
+		mutex_exit(&sc->sc_lock);
+		return 0;
+	}
+	aicwf_sta_retire_locked(sc, tx, &tx_event, scan, &scan_event);
 	sc->sc_ptk_valid = false;
 	sc->sc_pmf_rx_pn = 0;
 	explicit_memset(sc->sc_ptk, 0, sizeof(sc->sc_ptk));
 	mutex_spin_enter(&sc->sc_epoch_lock);
 	if (++sc->sc_sae_epoch == 0)
 		sc->sc_sae_epoch++;
+	epoch = sc->sc_sae_epoch;
 	mutex_spin_exit(&sc->sc_epoch_lock);
 	mutex_exit(&sc->sc_lock);
+	if (tx_event)
+		rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_TX, tx, sizeof(tx));
+	if (scan_event)
+		rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_SCAN, scan, sizeof(scan));
+	return epoch;
+}
+
+static void
+aicwf_sae_advance(struct aicwf_softc *sc)
+{
+	(void)aicwf_sae_advance_if(sc, 0);
 }
 
 /*
@@ -1376,6 +1557,7 @@ aicwf_sae_event(struct aicwf_softc *sc, bool start, const uint8_t *data,
 	sc->sc_ev_sae_drop.ev_count++;
 	if (!sc->sc_if_attached || !sc->sc_sae_enabled ||
 	    !sc->sc_connecting || ic->ic_state != IEEE80211_S_AUTH ||
+	    ic->ic_bss == NULL ||
 	    !IEEE80211_ADDR_EQ(ic->ic_bss->ni_bssid, sc->sc_sae_bssid))
 		return;
 	if (start) {
@@ -1508,6 +1690,9 @@ aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
 			goto out;
 		}
 		aicwf_sae_advance(sc);
+		mutex_spin_enter(&sc->sc_epoch_lock);
+		sc->sc_configure_serial++;
+		mutex_spin_exit(&sc->sc_epoch_lock);
 		sc->sc_sae_enabled = req->data[0] != 0;
 		sc->sc_sae_pending = false;
 		sc->sc_sae_authenticated = false;
@@ -1622,9 +1807,13 @@ aicwf_connect(struct aicwf_softc *sc)
 	struct ieee80211_node * const ni = ic->ic_bss;
 	uint8_t req[320], cfm[1] = { 0xff };
 	uint32_t flags = 0;
+	uint64_t epoch;
+	bool reassoc;
 	int error;
 
-	if (ni->ni_esslen == 0 || ni->ni_esslen > 32)
+	KASSERT(IFNET_LOCKED(&sc->sc_if));
+	if (ni == NULL || ni->ni_esslen == 0 || ni->ni_esslen > 32 ||
+	    ni->ni_chan == IEEE80211_CHAN_ANYC)
 		return;
 
 	memset(req, 0, sizeof(req));
@@ -1643,30 +1832,119 @@ aicwf_connect(struct aicwf_softc *sc)
 		}
 	}
 	if (sc->sc_sae_enabled) {
-		if (!fullmac_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
+		if (ic->ic_opt_ie == NULL ||
+		    !fullmac_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
 		    !IEEE80211_ADDR_EQ(sc->sc_sae_bssid, ni->ni_bssid)) {
 			device_printf(sc->sc_dev, "SAE requires CCMP, required PMF and the selected peer\n");
 			return;
 		}
 		flags |= AICWF_CONNECT_MFP;
 	}
-	le32enc(req + 48, flags);
 	req[59] = sc->sc_sae_enabled ? AICWF_AUTH_SAE : IEEE80211_AUTH_ALG_OPEN;
 	req[61] = sc->sc_vif;
 
-	aicwf_sae_advance(sc);
+	mutex_enter(&sc->sc_lock);
+	reassoc = sc->sc_connected;
+	mutex_exit(&sc->sc_lock);
+	/* The native firmware protocol retains the old AP until reassociation. */
+	if (reassoc)
+		flags |= AICWF_CONNECT_REASSOC;
+	le32enc(req + 48, flags);
+	epoch = aicwf_sae_advance_if(sc, 0);
+	mutex_enter(&sc->sc_lock);
+	if (epoch != sc->sc_sae_epoch) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
 	sc->sc_sae_pending = false;
 	sc->sc_sae_authenticated = false;
 	sc->sc_connecting = true;
-	const uint64_t epoch = sc->sc_sae_epoch;
+	mutex_exit(&sc->sc_lock);
 	error = aicwf_cmd_reply(sc, AICWF_SM_CONNECT_REQ, req, sizeof(req),
 	    AICWF_SM_CONNECT_CFM, cfm, sizeof(cfm), true, epoch);
+	mutex_enter(&sc->sc_lock);
+	if (epoch != sc->sc_sae_epoch) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
 	if (error != 0 || cfm[0] != 0) {
 		/* net80211 times the join out and scans again. */
 		device_printf(sc->sc_dev, "connect request failed: %d, %u\n",
 		    error, cfm[0]);
 		sc->sc_connecting = false;
+	} else
+		/* New IGTK requests cannot run until IFNET is released. */
+		memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
+	mutex_exit(&sc->sc_lock);
+}
+
+/* Print only protocol metadata from the successful current-peer indication. */
+static void
+aicwf_assoc_report(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
+{
+	struct aicwf_assoc_info info;
+
+	if (sc->sc_fw_version != 0x06090101 || len < 13 ||
+	    ind[9] != sc->sc_vif ||
+	    !IEEE80211_ADDR_EQ(ind + 2, sc->sc_ic.ic_bss->ni_bssid))
+		return;
+	if (!aicwf_assoc_parse(ind, len, &info)) {
+		device_printf(sc->sc_dev, "association metadata unavailable: len %zu\n",
+		    len);
+		return;
 	}
+	device_printf(sc->sc_dev,
+	    "association VHT IEs: request %u cap 0x%08x RX/TX 0x%04x/0x%04x; "
+	    "response %u cap 0x%08x RX/TX 0x%04x/0x%04x\n",
+	    info.req.vht, info.req.cap, info.req.rx_map, info.req.tx_map,
+	    info.rsp.vht, info.rsp.cap, info.rsp.rx_map, info.rsp.tx_map);
+	if (info.rsp.operation)
+		device_printf(sc->sc_dev,
+		    "association VHT operation: width %u, center segments %u/%u\n",
+		    info.rsp.op_width, info.rsp.seg0, info.rsp.seg1);
+	if (info.channel)
+		device_printf(sc->sc_dev,
+		    "association firmware channel: band %u, primary %u MHz, "
+		    "width code %u, centers %u/%u MHz\n",
+		    info.band, info.primary, info.width, info.center1, info.center2);
+	else
+		device_printf(sc->sc_dev, "association firmware channel unavailable\n");
+}
+
+static void
+aicwf_sta_assoc(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
+{
+	struct ieee80211com * const ic = &sc->sc_ic;
+	struct aicwf_assoc_info info;
+	size_t request, response;
+	u_int channel;
+
+	mutex_enter(&sc->sc_lock);
+	sc->sc_sta_assoc_len = 0;
+	if (len < 20 || ind[9] != sc->sc_vif || le16dec(ind) != 0 ||
+	    ic->ic_bss == NULL || !IEEE80211_ADDR_EQ(ind + 2, ic->ic_bss->ni_bssid) ||
+	    !aicwf_assoc_parse(ind, len, &info))
+		goto out;
+	request = le16dec(ind + 14);
+	response = le16dec(ind + 16);
+	if (request == 0 || response == 0)
+		goto out;
+	le16enc(sc->sc_sta_assoc, request);
+	le16enc(sc->sc_sta_assoc + 2, response);
+	memcpy(sc->sc_sta_assoc + 4, ind + 20, request + response);
+	sc->sc_sta_assoc_len = 4 + request + response;
+	if (info.channel && info.band <= 1 &&
+	    (info.band == 0 ? info.primary < 3000 : info.primary >= 4000)) {
+		channel = ieee80211_mhz2ieee(info.primary, 0);
+		if (channel > 0 && channel <= IEEE80211_CHAN_MAX &&
+		    ic->ic_channels[channel].ic_freq == info.primary &&
+		    isset(ic->ic_chan_active, channel))
+			ic->ic_bss->ni_chan = &ic->ic_channels[channel];
+	}
+	device_printf(sc->sc_dev, "station association IEs: request %zu response %zu generation %u\n",
+	    request, response, (uint32_t)sc->sc_sae_epoch);
+out:
+	mutex_exit(&sc->sc_lock);
 }
 
 static void
@@ -1675,10 +1953,19 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 	struct ieee80211com * const ic = &sc->sc_ic;
 	int s;
 
-	if (!sc->sc_if_attached || len < 13 || !sc->sc_connecting)
+	if (!sc->sc_if_attached || len < 13 || ind[9] != sc->sc_vif)
 		return;
-	if (sc->sc_sae_enabled && (ind[9] != sc->sc_vif ||
-	    !IEEE80211_ADDR_EQ(ind + 2, sc->sc_sae_bssid)))
+	if ((!sc->sc_connecting || ic->ic_bss == NULL ||
+	    !IEEE80211_ADDR_EQ(ind + 2, ic->ic_bss->ni_bssid)) && le16dec(ind) == 0) {
+		if (sc->sc_connected) {
+			device_printf(sc->sc_dev, "unsolicited firmware association: roamed %u; reconnecting through host\n", ind[8]);
+			aicwf_alive_lost(sc);
+		}
+		return;
+	}
+	if (!sc->sc_connecting || ic->ic_bss == NULL ||
+	    !IEEE80211_ADDR_EQ(ind + 2, ic->ic_bss->ni_bssid) ||
+	    (sc->sc_sae_enabled && !IEEE80211_ADDR_EQ(ind + 2, sc->sc_sae_bssid)))
 		return;
 	sc->sc_connecting = false;
 
@@ -1692,9 +1979,25 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 		return;
 	}
 	if (status == 0) {
+		/* An indication can precede CONNECT_CFM; no new key is installed yet. */
+		memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
+		aicwf_assoc_report(sc, ind, len);
+		aicwf_sta_assoc(sc, ind, len);
 		sc->sc_ap = ind[10];
 		sc->sc_qos = ind[12] != 0;
 		sc->sc_connected = true;
+		sc->sc_alive_rx = ticks;
+		sc->sc_alive_misses = 0;
+		for (u_int k = 0; k < __arraycount(sc->sc_ft_bss); k++) {
+			if (sc->sc_ft_bss[k].mdid != 0 && IEEE80211_ADDR_EQ(
+			    sc->sc_ft_bss[k].bssid, ic->ic_bss->ni_bssid)) {
+				device_printf(sc->sc_dev,
+				    "802.11r mobility domain 0x%04x, R0KH len %u\n",
+				    sc->sc_ft_bss[k].mdid,
+				    sc->sc_ft_bss[k].r0kh_len);
+				break;
+			}
+		}
 		/*
 		 * net80211 tells the supplicant about the association
 		 * only on the way from ASSOC to RUN.
@@ -1715,26 +2018,733 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 	splx(s);
 }
 
-/* The firmware lost the network or was told to leave it. */
-static void
-aicwf_disconnect_ind(struct aicwf_softc *sc)
+/* Action codes and minimum bodies from IEEE 802.11 RRM and WNM. */
+static bool
+aicwf_sta_action_valid(const uint8_t *body, size_t len, bool to_ap)
+{
+
+	if (len < 3 || len > IEEE80211_STA_MAX_BODY)
+		return false;
+	if (body[0] == 10) {		/* WNM */
+		if (to_ap)
+			return (body[1] == 6 && len >= 4) || /* BTM query */
+			    (body[1] == 8 && len >= 5 && /* BTM response */
+			    (body[3] != 0 || len >= 11));
+		return body[1] == 7 && len >= 7; /* BTM request */
+	}
+	if (body[0] == 5) {		/* RRM */
+		if (to_ap)
+			return body[1] == 4 || body[1] == 1; /* NR request, RM report */
+		return body[1] == 5 || /* Neighbor Report response */
+		    (body[1] == 0 && len >= 5); /* measurement request */
+	}
+	return false;
+}
+
+/* The checked SDIO firmware ABI is separate from the current security mode. */
+static bool
+aicwf_sta_supported(struct aicwf_softc *sc)
+{
+	return sc->sc_if_attached && sc->sc_fw_version == 0x06090101 &&
+	    sc->sc_ic.ic_opmode == IEEE80211_M_STA;
+}
+
+static bool
+aicwf_sta_security(struct aicwf_softc *sc)
 {
 	struct ieee80211com * const ic = &sc->sc_ic;
-	int s;
 
-	if (!sc->sc_if_attached || !sc->sc_connected)
+	if (sc->sc_sae_enabled)
+		return ic->ic_opt_ie != NULL &&
+		    (sc->sc_sae_caps & IEEE80211_SAE_CAP_PMF) != 0 &&
+		    fullmac_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len);
+	return (ic->ic_flags & IEEE80211_F_WPA) == IEEE80211_F_WPA2 &&
+	    aicwf_sta_psk_valid(ic->ic_opt_ie, ic->ic_opt_ie_len);
+}
+
+static bool
+aicwf_sta_ready(struct aicwf_softc *sc)
+{
+	struct ieee80211com * const ic = &sc->sc_ic;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+	return aicwf_sta_supported(sc) && sc->sc_sta_enabled &&
+	    sc->sc_connected && !sc->sc_connecting &&
+	    ic->ic_state == IEEE80211_S_RUN && ic->ic_bss != NULL &&
+	    ic->ic_bss->ni_chan != IEEE80211_CHAN_ANYC &&
+	    (sc->sc_if.if_flags & IFF_RUNNING) != 0 &&
+	    sc->sc_sta_assoc_len != 0 && aicwf_sta_security(sc) &&
+	    sc->sc_ptk_valid && (!sc->sc_sae_enabled || sc->sc_sae_authenticated);
+}
+
+/* Capture only the fixed ABI header. Deliver it after dropping sc_lock. */
+static bool
+aicwf_sta_tx_finish_locked(struct aicwf_softc *sc, bool ack, void *event)
+{
+	KASSERT(mutex_owned(&sc->sc_lock));
+	if (!sc->sc_sta_tx_pending)
+		return false;
+	sc->sc_sta_tx_pending = false;
+	sc->sc_sta_tx_sent = false;
+	sc->sc_sta_tx.flags = ack ? IEEE80211_STA_TX_ACK : 0;
+	sc->sc_sta_tx.len = 0;
+	memcpy(event, &sc->sc_sta_tx, AICWF_STA_NOTICE_LEN);
+	return true;
+}
+
+static bool
+aicwf_sta_scan_finish_locked(struct aicwf_softc *sc, bool aborted, void *event)
+{
+	KASSERT(mutex_owned(&sc->sc_lock));
+	if (!sc->sc_sta_scan_pending)
+		return false;
+	sc->sc_sta_scan_pending = false;
+	/* Keep a published scan owned until its real firmware completion. */
+	if (sc->sc_sta_scan_started)
+		sc->sc_sta_scan_draining = true;
+	sc->sc_sta_scan.flags = aborted ? IEEE80211_STA_SCAN_ABORTED : 0;
+	sc->sc_sta_scan.len = 0;
+	memcpy(event, &sc->sc_sta_scan, AICWF_STA_NOTICE_LEN);
+	return true;
+}
+
+/* Cancel is best effort. A missing reply never releases radio ownership. */
+static void
+aicwf_sta_scan_cancel_locked(struct aicwf_softc *sc)
+{
+	struct aicwf_task *t;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+	if (!sc->sc_sta_scan_started || sc->sc_sta_cancel_queued)
 		return;
-	aicwf_sae_advance(sc);
+	t = pool_cache_get(sc->sc_taskpool, PR_NOWAIT);
+	if (t == NULL) {
+		device_printf(sc->sc_dev, "station scan cancellation allocation failed\n");
+		return;
+	}
+	sc->sc_sta_cancel_queued = true;
+	t->t_cmd = AICWF_TASK_STA_CANCEL_SCAN;
+	t->t_sta.flags = sc->sc_sta_scan_serial;
+	workqueue_enqueue(sc->sc_taskq, &t->t_work, NULL);
+}
+
+/* Called with sc_lock held before the association epoch changes. */
+static void
+aicwf_sta_retire_locked(struct aicwf_softc *sc, uint8_t *tx, bool *tx_event,
+    uint8_t *scan, bool *scan_event)
+{
+	KASSERT(mutex_owned(&sc->sc_lock));
+	*tx_event = aicwf_sta_tx_finish_locked(sc, false, tx);
+	*scan_event = aicwf_sta_scan_finish_locked(sc, true, scan);
+	if (sc->sc_sta_scan_draining)
+		aicwf_sta_scan_cancel_locked(sc);
+	sc->sc_sta_assoc_len = 0;
+}
+
+static void
+aicwf_sta_tx_cfm(struct aicwf_softc *sc, const uint8_t *p, size_t len)
+{
+	uint8_t event[AICWF_STA_NOTICE_LEN];
+	uint32_t status, token;
+	bool notify = false;
+
+	if (!aicwf_sta_cfm_decode(p, len, &status, &token))
+		return;
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_sta_tx_pending && sc->sc_sta_tx_sent &&
+	    token != sc->sc_sta_token && !sc->sc_sta_tx_mismatch_reported) {
+		sc->sc_sta_tx_mismatch_reported = true;
+		device_printf(sc->sc_dev,
+		    "station TX confirmation mismatch: cookie %u expected %u "
+		    "raw 0x%08x status 0x%08x\n", sc->sc_sta_tx.cookie,
+		    sc->sc_sta_token, le32dec(p + 4), status);
+	}
+	if (sc->sc_sta_tx_pending && sc->sc_sta_tx_sent &&
+	    token == sc->sc_sta_token &&
+	    sc->sc_sta_tx.generation == (uint32_t)sc->sc_sae_epoch &&
+	    aicwf_sta_ready(sc) &&
+	    IEEE80211_ADDR_EQ(sc->sc_sta_tx.bssid, sc->sc_ic.ic_bss->ni_bssid)) {
+		device_printf(sc->sc_dev,
+		    "station TX confirmation: cookie %u token %u raw 0x%08x "
+		    "status 0x%08x ACK %u\n", sc->sc_sta_tx.cookie, token,
+		    le32dec(p + 4), status, (status & AICWF_STA_CFM_ACK) != 0);
+		notify = aicwf_sta_tx_finish_locked(sc,
+		    (status & AICWF_STA_CFM_ACK) != 0, event);
+	}
+	mutex_exit(&sc->sc_lock);
+	if (notify)
+		rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_TX, event, sizeof(event));
+}
+
+/* Check each requested frequency before queuing a command that can sleep. */
+static int
+aicwf_sta_scan_request(struct aicwf_softc *sc,
+    const struct ieee80211req_sta_mgmt *req, uint8_t *wire)
+{
+	struct ieee80211com * const ic = &sc->sc_ic;
+	uint16_t freqs[AICWF_STA_SCAN_CHANNELS], f;
+	size_t count = 0, i, j;
+	u_int channel;
+
+	if ((req->len & 1) != 0 || req->len > IEEE80211_STA_MAX_CHANNELS * 2)
+		return EINVAL;
+	if (req->len != 0) {
+		for (i = 0; i < req->len / 2; i++) {
+			memcpy(&f, req->data + i * 2, sizeof(f));
+			channel = ieee80211_mhz2ieee(f, 0);
+			if (channel == 0 || channel > IEEE80211_CHAN_MAX ||
+			    ic->ic_channels[channel].ic_freq != f ||
+			    !isset(ic->ic_chan_active, channel))
+				return EINVAL;
+			for (j = 0; j < count; j++)
+				if (freqs[j] == f)
+					return EINVAL;
+			freqs[count++] = f;
+		}
+	} else {
+		for (channel = 1; channel <= IEEE80211_CHAN_MAX; channel++) {
+			if (!isset(ic->ic_chan_active, channel) ||
+			    ic->ic_channels[channel].ic_freq == 0)
+				continue;
+			if (count == __arraycount(freqs))
+				return E2BIG;
+			freqs[count++] = ic->ic_channels[channel].ic_freq;
+		}
+	}
+	return aicwf_sta_scan_build(wire, freqs, count, sc->sc_vif,
+	    AICWF_TX_POWER_DBM) ? 0 : EINVAL;
+}
+
+static int
+aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
+{
+	struct aicwf_softc * const sc = ic->ic_ifp->if_softc;
+	struct aicwf_task *t;
+	uint8_t event[AICWF_STA_NOTICE_LEN], scan_event[AICWF_STA_NOTICE_LEN];
+	uint8_t scan_wire[AICWF_STA_SCAN_LEN];
+	bool tx_notify = false, scan_notify = false;
+	int error = 0;
+
+	if (req->version != IEEE80211_STA_VERSION || req->reserved != 0 ||
+	    req->len > sizeof(req->data) ||
+	    (req->op != IEEE80211_STA_GET && req->flags != 0))
+		return EINVAL;
+	mutex_enter(&sc->sc_lock);
+	if (!aicwf_sta_supported(sc)) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	if (req->op >= IEEE80211_STA_TX &&
+	    (req->generation != (uint32_t)sc->sc_sae_epoch || ic->ic_bss == NULL ||
+	    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid))) {
+		error = ESTALE;
+		goto out;
+	}
+	switch (req->op) {
+	case IEEE80211_STA_GET:
+		req->flags = IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM;
+		req->generation = (uint32_t)sc->sc_sae_epoch;
+		memset(req->bssid, 0, sizeof(req->bssid));
+		IEEE80211_ADDR_COPY(req->data, ic->ic_myaddr);
+		req->len = IEEE80211_ADDR_LEN;
+		req->freq = 0;
+		if (sc->sc_connected && ic->ic_state == IEEE80211_S_RUN &&
+		    ic->ic_bss != NULL && ic->ic_bss->ni_chan != IEEE80211_CHAN_ANYC) {
+			if (!aicwf_sta_security(sc))
+				req->flags = 0;
+			req->flags |= IEEE80211_STA_ASSOCIATED;
+			req->freq = ic->ic_bss->ni_chan->ic_freq;
+			IEEE80211_ADDR_COPY(req->bssid, ic->ic_bss->ni_bssid);
+			if (sc->sc_sta_assoc_len != 0) {
+				req->flags |= IEEE80211_STA_ASSOC_IES;
+				memcpy(req->data + 6, sc->sc_sta_assoc, sc->sc_sta_assoc_len);
+				req->len += sc->sc_sta_assoc_len;
+			}
+		}
+		break;
+	case IEEE80211_STA_ENABLE:
+	case IEEE80211_STA_DISABLE:
+		if (req->len != 0) {
+			error = EINVAL;
+			break;
+		}
+		sc->sc_sta_enabled = req->op == IEEE80211_STA_ENABLE;
+		if (!sc->sc_sta_enabled) {
+			tx_notify = aicwf_sta_tx_finish_locked(sc, false, event);
+			scan_notify = aicwf_sta_scan_finish_locked(sc, true, scan_event);
+			if (sc->sc_sta_scan_draining)
+				aicwf_sta_scan_cancel_locked(sc);
+		}
+		break;
+	case IEEE80211_STA_CANCEL_TX:
+		if (req->len != 0 || req->cookie == 0) {
+			error = EINVAL;
+			break;
+		}
+		if (sc->sc_sta_tx_pending && req->cookie == sc->sc_sta_tx.cookie)
+			tx_notify = aicwf_sta_tx_finish_locked(sc, false, event);
+		else
+			error = ESTALE;
+		break;
+	case IEEE80211_STA_CANCEL_SCAN:
+		if (req->cookie == 0 || !sc->sc_sta_scan_pending ||
+		    req->cookie != sc->sc_sta_scan.cookie) {
+			error = ESTALE;
+			break;
+		}
+		if (req->len != 0) {
+			error = EINVAL;
+			break;
+		}
+		scan_notify = aicwf_sta_scan_finish_locked(sc, true, scan_event);
+		aicwf_sta_scan_cancel_locked(sc);
+		break;
+	case IEEE80211_STA_TX:
+	case IEEE80211_STA_SCAN:
+		if (!aicwf_sta_ready(sc) || req->freq != ic->ic_bss->ni_chan->ic_freq) {
+			error = ENOTCONN;
+			break;
+		}
+		if (req->cookie == 0 || (req->op == IEEE80211_STA_TX &&
+		    !aicwf_sta_action_valid(req->data, req->len, true))) {
+			error = EINVAL;
+			break;
+		}
+		if (req->op == IEEE80211_STA_TX) {
+			if (sc->sc_sta_tx_pending || sc->sc_scanning || sc->sc_sta_scan_pending) {
+				error = EBUSY;
+				break;
+			}
+			if (sc->sc_sta_token == AICWF_STA_TOKEN_MAX) {
+				error = EOVERFLOW;
+				break;
+			}
+		} else {
+			if (sc->sc_scanning || sc->sc_sta_scan_pending || sc->sc_sta_cancel_queued ||
+			    sc->sc_sta_tx_pending || (ic->ic_flags & IEEE80211_F_SCAN) != 0) {
+				error = EBUSY;
+				break;
+			}
+			if (sc->sc_sta_scan_serial == UINT32_MAX) {
+				error = EOVERFLOW;
+				break;
+			}
+			error = aicwf_sta_scan_request(sc, req, scan_wire);
+			if (error != 0)
+				break;
+		}
+		t = pool_cache_get(sc->sc_taskpool, PR_NOWAIT);
+		if (t == NULL) {
+			error = ENOBUFS;
+			break;
+		}
+		t->t_cmd = AICWF_TASK_STA_MGMT;
+		t->t_epoch = sc->sc_sae_epoch;
+		t->t_sta = *req;
+		if (req->op == IEEE80211_STA_TX) {
+			sc->sc_sta_tx_pending = true;
+			sc->sc_sta_tx_sent = false;
+			sc->sc_sta_tx_mismatch_reported = false;
+			sc->sc_sta_tx = *req;
+			t->t_sta.flags = ++sc->sc_sta_token;
+		} else {
+			sc->sc_sta_scan_pending = true;
+			sc->sc_sta_scan = *req;
+			t->t_sta.flags = ++sc->sc_sta_scan_serial;
+		}
+		workqueue_enqueue(sc->sc_taskq, &t->t_work, NULL);
+		break;
+	default:
+		error = EOPNOTSUPP;
+		break;
+	}
+out:
+	mutex_exit(&sc->sc_lock);
+	if (tx_notify)
+		rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_TX, event, sizeof(event));
+	if (scan_notify)
+		rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_SCAN, scan_event, sizeof(scan_event));
+	return error;
+}
+
+static void
+aicwf_sta_mgmt_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
+{
+	struct ieee80211com * const ic = &sc->sc_ic;
+	const struct ieee80211req_sta_mgmt * const req = &t->t_sta;
+	uint8_t event[AICWF_STA_NOTICE_LEN], wire[AICWF_STA_SCAN_LEN];
+	uint8_t *buf, *desc, *frame;
+	bool notify = false;
+	int error = 0, s;
+
+	mutex_enter(&sc->sc_lock);
+	if (req->op == IEEE80211_STA_TX) {
+		if (!sc->sc_sta_tx_pending || req->flags != sc->sc_sta_token)
+			goto out;
+	} else if (!sc->sc_sta_scan_pending || req->flags != sc->sc_sta_scan_serial)
+		goto out;
+	if (!aicwf_sta_ready(sc) || t->t_epoch != sc->sc_sae_epoch ||
+	    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)) {
+		error = ESTALE;
+		goto failed;
+	}
+	if (req->op == IEEE80211_STA_TX) {
+		buf = sc->sc_txbuf;
+		desc = buf + AICWF_HDR_LEN;
+		frame = desc + AICWF_TXDESC_LEN;
+		le16enc(buf, AICWF_TXDESC_LEN + 24 + req->len);
+		buf[2] = AICWF_TYPE_DATA;
+		buf[3] = aicwf_crc8(buf, 3);
+		memset(desc, 0, AICWF_TXDESC_LEN + 24);
+		le16enc(desc, 24 + req->len);
+		le32enc(desc + 4, AICWF_STA_CFM_REQUEST | req->flags);
+		memcpy(desc + 8, req->bssid, ETHER_ADDR_LEN);
+		memcpy(desc + 14, ic->ic_myaddr, ETHER_ADDR_LEN);
+		desc[22] = AICWF_HWQ_VO;
+		desc[23] = AICWF_TID_NONE;
+		desc[24] = sc->sc_vif;
+		desc[25] = sc->sc_ap;
+		le16enc(desc + 26, AICWF_TX_MGMT | (sc->sc_sae_enabled ? __BIT(7) : 0));
+		frame[0] = 0xd0;
+		memcpy(frame + 4, req->bssid, ETHER_ADDR_LEN);
+		memcpy(frame + 10, ic->ic_myaddr, ETHER_ADDR_LEN);
+		memcpy(frame + 16, req->bssid, ETHER_ADDR_LEN);
+		memcpy(frame + 24, req->data, req->len);
+		sc->sc_sta_tx_sent = true;
+		error = aicwf_write(sc, AICWF_HDR_LEN + AICWF_TXDESC_LEN + 24 + req->len,
+		    AICWF_TX_RESERVE);
+		device_printf(sc->sc_dev,
+		    "station TX: generation %u cookie %u token %u category %u action %u error %d\n",
+		    req->generation, req->cookie, req->flags, req->data[0], req->data[1], error);
+		if (error != 0)
+			goto failed;
+		goto out;
+	}
+	error = aicwf_sta_scan_request(sc, req, wire);
+	if (error != 0)
+		goto failed;
+	sc->sc_scanning = true;
+	sc->sc_sta_scan_started = true;
+	sc->sc_scan_published = false;
+	sc->sc_sta_scan_draining = false;
+	sc->sc_scan_ticks = getticks();
+	s = splnet();
+	ic->ic_scan.nt_scan_epoch++;
+	ic->ic_flags |= IEEE80211_F_SCAN;
+	splx(s);
+	mutex_exit(&sc->sc_lock);
+	error = aicwf_cmd_reply(sc, AICWF_SCANU_START_REQ, wire, sizeof(wire),
+	    AICWF_SCANU_START_ACK, NULL, 0, true, t->t_epoch);
+	mutex_enter(&sc->sc_lock);
+	device_printf(sc->sc_dev,
+	    "station scan start: generation %u cookie %u serial %u channels %u error %d\n",
+	    req->generation, req->cookie, req->flags, wire[AICWF_STA_SCAN_COUNT], error);
+	if (req->flags != sc->sc_sta_scan_serial || !sc->sc_sta_scan_started)
+		goto out;
+	if (error != 0) {
+		if (!sc->sc_scan_published) {
+			sc->sc_sta_scan_started = false;
+			sc->sc_scanning = false;
+			sc->sc_sta_scan_draining = false;
+		}
+		goto failed;
+	}
+	goto out;
+failed:
+	device_printf(sc->sc_dev,
+	    "station request aborted: generation %u cookie %u op %u error %d\n",
+	    req->generation, req->cookie, req->op, error);
+	if (req->op == IEEE80211_STA_TX)
+		notify = aicwf_sta_tx_finish_locked(sc, false, event);
+	else {
+		notify = aicwf_sta_scan_finish_locked(sc, true, event);
+		if (sc->sc_sta_scan_draining)
+			aicwf_sta_scan_cancel_locked(sc);
+		if (!sc->sc_scanning) {
+			s = splnet();
+			ieee80211_cancel_scan(ic);
+			splx(s);
+		}
+	}
+out:
+	mutex_exit(&sc->sc_lock);
+	if (notify)
+		rt_ieee80211msg(&sc->sc_if, req->op == IEEE80211_STA_TX ?
+		    RTM_IEEE80211_STA_TX : RTM_IEEE80211_STA_SCAN, event, sizeof(event));
+}
+
+static void
+aicwf_sta_cancel_scan_cb(struct aicwf_softc *sc, uint32_t serial)
+{
+	uint8_t status = 0xff;
+	int error;
+
+	mutex_enter(&sc->sc_lock);
+	if (serial != sc->sc_sta_scan_serial || !sc->sc_sta_scan_started ||
+	    !sc->sc_sta_scan_draining) {
+		sc->sc_sta_cancel_queued = false;
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
+	mutex_exit(&sc->sc_lock);
+	error = aicwf_cmd_reply(sc, AICWF_SCANU_CANCEL_REQ, NULL, 0,
+	    AICWF_SCANU_CANCEL_CFM, &status, sizeof(status), true, 0);
+	mutex_enter(&sc->sc_lock);
+	sc->sc_sta_cancel_queued = false;
+	mutex_exit(&sc->sc_lock);
+	device_printf(sc->sc_dev, "station scan cancel: serial %u error %d status %u; completion required\n",
+	    serial, error, status);
+}
+
+/* Validate one unicast management body while the association lock is held. */
+static const uint8_t *
+aicwf_mgmt_body(struct aicwf_softc *sc, const uint8_t *frame, size_t len,
+    uint32_t status, uint32_t flags, size_t *body_len, uint64_t *pn)
+{
+	struct ieee80211com * const ic = &sc->sc_ic;
+	const uint8_t *peer = ic->ic_bss->ni_bssid;
+	const bool pmf = sc->sc_sae_enabled;
+	size_t hdr = 24;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+	if (!sc->sc_if_attached || !sc->sc_connected ||
+	    ic->ic_state != IEEE80211_S_RUN ||
+	    ((flags >> 8) & 0xff) != sc->sc_vif ||
+	    !aicwf_pmf_header_valid(frame, len, ic->ic_myaddr, peer, peer,
+	    pmf ? 0x40 : 0) || (status & 0x7e0) != 0 ||
+	    (status & 0x6000) != 0x6000)
+		return NULL;
+	*pn = sc->sc_pmf_rx_pn;
+	if (pmf) {
+		if (!sc->sc_ptk_valid || !sc->sc_sae_authenticated ||
+		    !IEEE80211_ADDR_EQ(peer, sc->sc_sae_bssid) || len < 32 ||
+		    (status & 0x02000000) == 0 ||
+		    ((status >> 2) & 7) != 3 ||
+		    sc->sc_hwkey[AICWF_KEY_SLOT_PAIRWISE] == AICWF_HWKEY_NONE ||
+		    ((status >> 15) & 0x3ff) !=
+		    sc->sc_hwkey[AICWF_KEY_SLOT_PAIRWISE] ||
+		    frame[26] != 0 || frame[27] != 0x20)
+			return NULL;
+		*pn = (uint64_t)frame[24] | (uint64_t)frame[25] << 8 |
+		    (uint64_t)frame[28] << 16 | (uint64_t)frame[29] << 24 |
+		    (uint64_t)frame[30] << 32 | (uint64_t)frame[31] << 40;
+		if (*pn <= sc->sc_pmf_rx_pn)
+			return NULL;
+		/* The firmware strips the MIC but retains the CCMP header. */
+		hdr += 8;
+	} else if (((status >> 2) & 7) != 0) {
+		return NULL;
+	}
+	*body_len = len - hdr;
+	return frame + hdr;
+}
+
+static void
+aicwf_sta_rx_event(struct aicwf_softc *sc, const uint8_t *frame, size_t len,
+    uint32_t status, uint32_t flags)
+{
+	struct ieee80211com * const ic = &sc->sc_ic;
+	struct ieee80211req_sta_mgmt *ev;
+	const uint64_t epoch = sc->sc_sae_epoch;
+	const uint8_t *body;
+	size_t body_len;
+	uint64_t pn;
+
+	if (len < 27 || len > 32 + IEEE80211_STA_MAX_BODY || frame[0] != 0xd0)
+		return;
+	ev = kmem_zalloc(sizeof(*ev), KM_NOSLEEP);
+	if (ev == NULL)
+		return;
+	mutex_enter(&sc->sc_lock);
+	if (!aicwf_sta_ready(sc) || epoch != sc->sc_sae_epoch)
+		goto drop;
+	body = aicwf_mgmt_body(sc, frame, len, status, flags, &body_len, &pn);
+	if (body == NULL || !aicwf_sta_action_valid(body, body_len, false))
+		goto drop;
+	sc->sc_pmf_rx_pn = pn;
+	device_printf(sc->sc_dev, "station RX: generation %u category %u action %u length %zu PMF %u\n",
+	    (uint32_t)epoch, body[0], body[1], body_len, sc->sc_sae_enabled);
+	ev->version = IEEE80211_STA_VERSION;
+	ev->op = IEEE80211_STA_GET;
+	ev->generation = (uint32_t)epoch;
+	ev->freq = ic->ic_bss->ni_chan->ic_freq;
+	ev->len = body_len;
+	IEEE80211_ADDR_COPY(ev->bssid, ic->ic_bss->ni_bssid);
+	memcpy(ev->data, body, body_len);
+	mutex_exit(&sc->sc_lock);
+	rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_RX, ev,
+	    offsetof(struct ieee80211req_sta_mgmt, data) + body_len);
+	kmem_free(ev, sizeof(*ev));
+	return;
+drop:
+	mutex_exit(&sc->sc_lock);
+	kmem_free(ev, sizeof(*ev));
+}
+
+/* Pure liveness decision: the link counts as dead only while the driver
+ * believes it is associated and no frame (beacons included) arrived for
+ * AICWF_ALIVE_SILENT_MS. */
+static bool
+aicwf_alive_silent(struct aicwf_softc *sc, u_int now)
+{
+	const int delta = (int)(now - sc->sc_alive_rx);
+
+	if (!sc->sc_if_attached || !sc->sc_connected || sc->sc_connecting ||
+	    (sc->sc_if.if_flags & IFF_RUNNING) == 0 ||
+	    sc->sc_ic.ic_state != IEEE80211_S_RUN)
+		return false;
+	return delta > (int)mstohz(AICWF_ALIVE_SILENT_MS);
+}
+
+/* The teardown sleeps in the firmware roundtrip: defer it to the taskq. */
+static void
+aicwf_alive_lost(struct aicwf_softc *sc)
+{
+
+	mutex_enter(&sc->sc_lock);
+	if (!sc->sc_if_attached) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
+	if (!sc->sc_alive_queued) {
+		sc->sc_alive_queued = true;
+		sc->sc_alive_epoch = sc->sc_sae_epoch;
+		mutex_spin_enter(&sc->sc_epoch_lock);
+		sc->sc_alive_join_serial = sc->sc_join_serial;
+		mutex_spin_exit(&sc->sc_epoch_lock);
+		workqueue_enqueue(sc->sc_taskq, &sc->sc_alive_work, NULL);
+	}
+	mutex_exit(&sc->sc_lock);
+}
+
+/* Both watchdog and firmware loss events queue generation-bound recovery. */
+static void
+aicwf_recover_scan(struct aicwf_softc *sc, uint64_t epoch, uint64_t serial)
+{
+	struct aicwf_task *t;
+
+	t = pool_cache_get(sc->sc_taskpool, PR_NOWAIT);
+	if (t == NULL) {
+		device_printf(sc->sc_dev, "no free task for recovery scan\n");
+		return;
+	}
+	t->t_cmd = AICWF_TASK_RECOVER_SCAN;
+	t->t_epoch = epoch;
+	t->t_join_serial = serial;
+	workqueue_enqueue(sc->sc_taskq, &t->t_work, NULL);
+}
+
+static void
+aicwf_alive_work(struct aicwf_softc *sc)
+{
+	struct ifnet * const ifp = &sc->sc_if;
+	uint64_t expected, serial, epoch;
+	bool current;
+
+	if (!sc->sc_if_attached)
+		return;
+	/* CONFIGURE and MLME use this same sleepable interface lock. */
+	IFNET_LOCK(ifp);
+	mutex_enter(&sc->sc_lock);
+	expected = sc->sc_alive_epoch;
+	serial = sc->sc_alive_join_serial;
+	sc->sc_alive_queued = false;
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	current = serial == sc->sc_join_serial;
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	current = current && sc->sc_connected && !sc->sc_connecting &&
+	    sc->sc_if_attached && (ifp->if_flags & IFF_RUNNING) != 0 &&
+	    sc->sc_ic.ic_state == IEEE80211_S_RUN &&
+	    expected == sc->sc_sae_epoch;
+	mutex_exit(&sc->sc_lock);
+	if (!current)
+		goto out;
+
+	device_printf(sc->sc_dev, "no frames from the AP; reconnecting\n");
+	epoch = aicwf_recover_disconnect(sc, expected);
+	if (epoch == 0)
+		goto out;
+	aicwf_recover_scan(sc, epoch, serial);
+out:
+	IFNET_UNLOCK(ifp);
+}
+
+static void
+aicwf_alive_tick(void *arg)
+{
+	struct aicwf_softc * const sc = arg;
+
+	mutex_enter(&sc->sc_lock);
+	if (aicwf_alive_silent(sc, ticks)) {
+		if (++sc->sc_alive_misses >= 2) {
+			sc->sc_alive_misses = 0;
+			if (!sc->sc_alive_queued) {
+				sc->sc_alive_queued = true;
+				sc->sc_alive_epoch = sc->sc_sae_epoch;
+				mutex_spin_enter(&sc->sc_epoch_lock);
+				sc->sc_alive_join_serial = sc->sc_join_serial;
+				mutex_spin_exit(&sc->sc_epoch_lock);
+				workqueue_enqueue(sc->sc_taskq,
+				    &sc->sc_alive_work, NULL);
+			}
+		}
+	} else
+		sc->sc_alive_misses = 0;
+	mutex_exit(&sc->sc_lock);
+
+	callout_schedule(&sc->sc_alive_ch, mstohz(AICWF_ALIVE_PERIOD_MS));
+}
+
+static void
+aicwf_disconnect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
+{
+	struct ieee80211com * const ic = &sc->sc_ic;
+	uint64_t expected, epoch, serial;
+	bool recover, old_ap;
+
+	/* reason (u16), VIF, FT-over-DS, reassociation, alignment byte. */
+	if (len < 6 || ind[2] != sc->sc_vif || !sc->sc_if_attached)
+		return;
+	mutex_enter(&sc->sc_lock);
+	/* An old AP departure does not terminate the configured join. */
+	if (ind[4] != 0 || sc->sc_connecting) {
+		old_ap = sc->sc_connecting;
+		if (old_ap) {
+			sc->sc_connected = false;
+			memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
+		}
+		mutex_exit(&sc->sc_lock);
+		if (old_ap)
+			aicwf_reorder_flush(sc, -1, false);
+		return;
+	}
+	if (!sc->sc_connected) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
+	expected = sc->sc_sae_epoch;
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	serial = sc->sc_join_serial;
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	mutex_exit(&sc->sc_lock);
+	epoch = aicwf_sae_advance_if(sc, expected);
+	if (epoch == 0)
+		return;
+	mutex_enter(&sc->sc_lock);
+	if (epoch != sc->sc_sae_epoch) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
 	sc->sc_connected = false;
+	sc->sc_connecting = false;
 	sc->sc_sae_pending = false;
 	sc->sc_sae_authenticated = false;
 	memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
+	recover = ic->ic_state == IEEE80211_S_RUN;
+	mutex_exit(&sc->sc_lock);
 	aicwf_reorder_flush(sc, -1, false);
-
-	s = splnet();
-	if (ic->ic_state == IEEE80211_S_RUN)
-		ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
-	splx(s);
+	if (recover)
+		aicwf_recover_scan(sc, epoch, serial);
 }
 
 /* Delete management keys before the firmware can reuse their hardware slots. */
@@ -1756,6 +2766,52 @@ aicwf_sae_clear_keys(struct aicwf_softc *sc)
 		if (sc->sc_igtk[i] == key)
 			sc->sc_igtk[i] = AICWF_HWKEY_NONE;
 	}
+}
+
+/* Retire only the association that queued watchdog recovery. */
+static uint64_t
+aicwf_recover_disconnect(struct aicwf_softc *sc, uint64_t expected)
+{
+	uint8_t keys[2], req[4];
+	uint64_t epoch;
+	bool disconnect, current;
+
+	KASSERT(IFNET_LOCKED(&sc->sc_if));
+	epoch = aicwf_sae_advance_if(sc, expected);
+	if (epoch == 0)
+		return 0;
+	mutex_enter(&sc->sc_lock);
+	if (epoch != sc->sc_sae_epoch) {
+		mutex_exit(&sc->sc_lock);
+		return 0;
+	}
+	memcpy(keys, sc->sc_igtk, sizeof(keys));
+	memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
+	disconnect = sc->sc_connected || sc->sc_connecting;
+	sc->sc_connected = sc->sc_connecting = false;
+	sc->sc_sae_pending = sc->sc_sae_authenticated = false;
+	sc->sc_alive_misses = 0;
+	mutex_exit(&sc->sc_lock);
+	aicwf_reorder_flush(sc, -1, false);
+	for (size_t i = 0; i < __arraycount(keys); i++) {
+		if (keys[i] == AICWF_HWKEY_NONE)
+			continue;
+		if (aicwf_cmd_reply(sc, AICWF_MM_KEY_DEL_REQ, &keys[i], 1,
+		    AICWF_MM_KEY_DEL_CFM, NULL, 0, true, epoch) == ESTALE)
+			return 0;
+	}
+	if (disconnect) {
+		memset(req, 0, sizeof(req));
+		le16enc(req, IEEE80211_REASON_AUTH_LEAVE);
+		req[2] = sc->sc_vif;
+		if (aicwf_cmd_reply(sc, AICWF_SM_DISCONNECT_REQ, req, sizeof(req),
+		    AICWF_SM_DISCONNECT_CFM, NULL, 0, true, epoch) == ESTALE)
+			return 0;
+	}
+	mutex_enter(&sc->sc_lock);
+	current = epoch == sc->sc_sae_epoch;
+	mutex_exit(&sc->sc_lock);
+	return current ? epoch : 0;
 }
 
 static void
@@ -1832,14 +2888,6 @@ aicwf_newstate_cb(struct aicwf_softc *sc, enum ieee80211_state nstate,
 			aicwf_scan(sc);
 		break;
 
-	case IEEE80211_S_AUTH:
-		/* Firmware may request SAE before CONNECT_CFM arrives. */
-		s = splnet();
-		sc->sc_newstate(ic, nstate, arg);
-		splx(s);
-		aicwf_connect(sc);
-		return;
-
 	default:
 		break;
 	}
@@ -1847,6 +2895,61 @@ aicwf_newstate_cb(struct aicwf_softc *sc, enum ieee80211_state nstate,
 	s = splnet();
 	sc->sc_newstate(ic, nstate, arg);
 	splx(s);
+}
+
+/* Serialize queued transitions with CONFIGURE and replacement MLME requests. */
+static void
+aicwf_state_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
+{
+	struct ifnet * const ifp = &sc->sc_if;
+	bool current;
+	int s;
+
+	if (!sc->sc_if_attached)
+		return;
+	IFNET_LOCK(ifp);
+	mutex_enter(&sc->sc_lock);
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	current = t->t_join_serial == sc->sc_join_serial &&
+	    (t->t_state != IEEE80211_S_AUTH ||
+	    t->t_configure_serial == sc->sc_configure_serial);
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	current = current &&
+	    (t->t_state == IEEE80211_S_INIT || (ifp->if_flags & IFF_RUNNING) != 0);
+	mutex_exit(&sc->sc_lock);
+	if (current && t->t_state == IEEE80211_S_AUTH) {
+		/* Firmware may request SAE before CONNECT_CFM arrives. */
+		s = splnet();
+		sc->sc_newstate(&sc->sc_ic, IEEE80211_S_AUTH, t->t_arg);
+		splx(s);
+		aicwf_connect(sc);
+	} else if (current)
+		aicwf_newstate_cb(sc, t->t_state, t->t_arg);
+	IFNET_UNLOCK(ifp);
+}
+
+/* The interface lock excludes a new ioctl across this sleeping transition. */
+static void
+aicwf_recover_scan_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
+{
+	struct ifnet * const ifp = &sc->sc_if;
+	bool current;
+
+	if (!sc->sc_if_attached)
+		return;
+	IFNET_LOCK(ifp);
+	mutex_enter(&sc->sc_lock);
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	current = t->t_join_serial == sc->sc_join_serial;
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	current = current && t->t_epoch == sc->sc_sae_epoch &&
+	    sc->sc_if_attached && !sc->sc_connecting &&
+	    (ifp->if_flags & IFF_RUNNING) != 0 &&
+	    sc->sc_ic.ic_state == IEEE80211_S_RUN;
+	mutex_exit(&sc->sc_lock);
+	if (current)
+		aicwf_newstate_cb(sc, IEEE80211_S_SCAN, -1);
+	IFNET_UNLOCK(ifp);
 }
 
 static void
@@ -1952,15 +3055,28 @@ aicwf_task(struct work *wk, void *arg)
 	struct aicwf_softc * const sc = arg;
 	struct aicwf_task * const t = (struct aicwf_task *)wk;
 
+	if (wk == &sc->sc_alive_work) {
+		aicwf_alive_work(sc);
+		return;
+	}
 	switch (t->t_cmd) {
 	case AICWF_TASK_NEWSTATE:
-		aicwf_newstate_cb(sc, t->t_state, t->t_arg);
+		aicwf_state_cb(sc, t);
 		break;
 	case AICWF_TASK_KEY_SET:
 		aicwf_key_set_cb(sc, t);
 		break;
 	case AICWF_TASK_KEY_DELETE:
 		aicwf_key_delete_cb(sc, t);
+		break;
+	case AICWF_TASK_STA_MGMT:
+		aicwf_sta_mgmt_cb(sc, t);
+		break;
+	case AICWF_TASK_STA_CANCEL_SCAN:
+		aicwf_sta_cancel_scan_cb(sc, t->t_sta.flags);
+		break;
+	case AICWF_TASK_RECOVER_SCAN:
+		aicwf_recover_scan_cb(sc, t);
 		break;
 	}
 
@@ -1975,11 +3091,22 @@ aicwf_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 	struct aicwf_softc * const sc = ic->ic_ifp->if_softc;
 	struct aicwf_task *t;
 
+	if (nstate == IEEE80211_S_AUTH &&
+	    (sc->sc_if.if_flags & IFF_RUNNING) == 0)
+		return ENETDOWN;
 	t = pool_cache_get(sc->sc_taskpool, PR_NOWAIT);
 	if (t == NULL) {
 		device_printf(sc->sc_dev, "no free tasks\n");
 		return EIO;
 	}
+	/* A raw MLME association can queue AUTH without SAE CONFIGURE. */
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	if (nstate == IEEE80211_S_AUTH)
+		sc->sc_join_serial++;
+	t->t_join_serial = sc->sc_join_serial;
+	t->t_configure_serial = sc->sc_configure_serial;
+	t->t_epoch = sc->sc_sae_epoch;
+	mutex_spin_exit(&sc->sc_epoch_lock);
 	t->t_cmd = AICWF_TASK_NEWSTATE;
 	t->t_state = nstate;
 	t->t_arg = arg;
@@ -2375,6 +3502,41 @@ drop:
 	kmem_free(req, sizeof(*req));
 }
 
+/* Keep BTM policy in the supplicant; only valid disconnects retire the link. */
+static void
+aicwf_mgmt_rx(struct aicwf_softc *sc, const uint8_t *frame, size_t len,
+    uint32_t status, uint32_t flags)
+{
+	const uint8_t *body;
+	size_t body_len;
+	uint64_t pn;
+	bool disconnected = false;
+
+	if (len < 24)
+		return;
+	if (frame[0] == 0xd0) {
+		aicwf_sta_rx_event(sc, frame, len, status, flags);
+		aicwf_pmf_rx(sc, frame, len, status, flags);
+		return;
+	}
+	if (frame[0] != 0xc0 && frame[0] != 0xa0)
+		return;
+	/* Unprotected reasons 6/7 still start the validated SA Query path. */
+	if ((frame[1] & 0x40) == 0 && sc->sc_sae_enabled) {
+		aicwf_pmf_rx(sc, frame, len, status, flags);
+		return;
+	}
+	mutex_enter(&sc->sc_lock);
+	body = aicwf_mgmt_body(sc, frame, len, status, flags, &body_len, &pn);
+	if (body != NULL && body_len >= 2) {
+		sc->sc_pmf_rx_pn = pn;
+		disconnected = true;
+	}
+	mutex_exit(&sc->sc_lock);
+	if (disconnected)
+		aicwf_alive_lost(sc);
+}
+
 static void
 aicwf_rx_data(
 struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
@@ -2391,6 +3553,8 @@ struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 
 	if (!sc->sc_if_attached || (flags & AICWF_RX_FLAG_UPLOAD) == 0)
 		return;
+	/* Any frame from the air, beacons included, proves the link lives. */
+	sc->sc_alive_rx = ticks;
 	/* Metadata only: protected management bodies may contain key material. */
 	if (mpdu_len >= sizeof(struct ieee80211_frame) &&
 	    (wh[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_MGT &&
@@ -2410,7 +3574,7 @@ struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 	}
 	if (mpdu_len >= 24 &&
 	    (wh[0] == 0xc0 || wh[0] == 0xa0 || wh[0] == 0xd0)) {
-		aicwf_pmf_rx(sc, wh, mpdu_len, status, flags);
+		aicwf_mgmt_rx(sc, wh, mpdu_len, status, flags);
 		return;
 	}
 	/* Beacons and data frames without a body come up too. */
@@ -2652,6 +3816,7 @@ aicwf_ifattach(struct aicwf_softc *sc)
 	ieee80211_ifattach(ic);
 	sc->sc_newstate = ic->ic_newstate;
 	ic->ic_newstate = aicwf_newstate;
+	ic->ic_sta_mgmt = aicwf_sta_mgmt;
 	ic->ic_newassoc = aicwf_newassoc;
 	ic->ic_send_mgmt = aicwf_send_mgmt;
 	ic->ic_recv_mgmt = aicwf_recv_mgmt;
@@ -2711,6 +3876,10 @@ aicwf_attach(device_t parent, device_t self, void *aux)
 	mutex_init(&sc->sc_reorder_lock, MUTEX_DEFAULT, IPL_SOFTNET);
 	callout_init(&sc->sc_reorder_ch, CALLOUT_MPSAFE);
 	callout_setfunc(&sc->sc_reorder_ch, aicwf_reorder_timeout, sc);
+	callout_init(&sc->sc_alive_ch, CALLOUT_MPSAFE);
+	callout_setfunc(&sc->sc_alive_ch, aicwf_alive_tick, sc);
+	sc->sc_alive_rx = ticks;
+	callout_schedule(&sc->sc_alive_ch, mstohz(AICWF_ALIVE_PERIOD_MS));
 	evcnt_attach_dynamic(&sc->sc_ev_ampdu, EVCNT_TYPE_MISC, NULL,
 	    device_xname(self), "A-MPDU frames");
 	evcnt_attach_dynamic(&sc->sc_ev_amsdu, EVCNT_TYPE_MISC, NULL,

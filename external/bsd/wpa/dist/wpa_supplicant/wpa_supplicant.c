@@ -3950,6 +3950,26 @@ mscs_end:
 		wpa_ie_len += multi_ap_ie_len;
 	}
 
+#ifndef CONFIG_NO_RRM
+	/* A full-MAC driver may expose only host-managed neighbor reports. */
+	if ((wpa_s->drv_rrm_flags & WPA_DRIVER_FLAGS_SUPPORT_RRM) &&
+	    (wpa_s->drv_rrm_flags & WPA_DRIVER_FLAGS_RRM_NEIGHBOR_REPORT_ONLY) &&
+	    bss && (bss->caps & IEEE80211_CAP_RRM)) {
+		const u8 *rrm = wpa_bss_get_ie(bss, WLAN_EID_RRM_ENABLED_CAPABILITIES);
+
+		if (rrm && rrm[1] == 5 && max_wpa_ie_len - wpa_ie_len >= 7) {
+			u8 *pos = wpa_ie + wpa_ie_len;
+
+			os_memset(pos, 0, 7);
+			pos[0] = WLAN_EID_RRM_ENABLED_CAPABILITIES;
+			pos[1] = 5;
+			pos[2] = WLAN_RRM_CAPS_NEIGHBOR_REPORT;
+			wpa_ie_len += 7;
+			params->rrm_used = 1;
+		}
+	}
+#endif /* CONFIG_NO_RRM */
+
 	params->wpa_ie = wpa_ie;
 	params->wpa_ie_len = wpa_ie_len;
 	params->auth_alg = algs;
@@ -4215,6 +4235,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 	wpa_sm_set_assoc_wpa_ie(wpa_s->wpa, NULL, 0);
 	wpa_sm_set_assoc_rsnxe(wpa_s->wpa, NULL, 0);
 	wpa_s->rsnxe_len = 0;
+	wpa_s->rrm.rrm_used = 0;
 #ifndef CONFIG_NO_ROBUST_AV
 	wpa_s->mscs_setup_done = false;
 #endif /* CONFIG_NO_ROBUST_AV */
