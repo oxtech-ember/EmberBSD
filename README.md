@@ -668,8 +668,10 @@ on every board in the hardware catalog.
   Vulkan 1.2.354 through the native render node. Mesa's experimental
   conformance gate remains enabled. The same package passes four llvmpipe
   EGL/pixel cycles and 38 upstream invocations, with recorded internal skips.
-  Firmware VM publication, GPU job fences and submission, Vulkan device
-  execution, Zink, display output, and accelerated Plasma still require porting.
+  The [experimental execution path](ember/boot/a733-pvr-execution.md) now adds
+  firmware VM publication, contexts, free lists, and synchronous compute submission.
+  Its production-source contracts pass. Physical Vulkan execution, graphics jobs,
+  Zink, display output, and accelerated Plasma remain unaccepted.
   Repeated submission within one boot and long-duration GPU stability remain
   untested.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)

@@ -5,6 +5,7 @@
 #include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/kmem.h>
+#include <sys/mutex.h>
 #include <sys/systm.h>
 #include <linux/err.h>
 #include <linux/slab.h>
@@ -13,14 +14,26 @@
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_ioctl.h>
 #include "pvr_drm.h"
+#include "pvr_backend.h"
 #include "pvr_drv.h"
+#include "pvr_exec.h"
 #include "pvr_heap.h"
 #include "pvr_query.h"
 
 /* Mesa 26.2.4 BXM-4-64 profile: one cluster, one phantom. */
 #define PVR_A733_BVNC	UINT64_C(0x00240038006800b7)
 
+struct pvr_orphan {
+	struct pvr_orphan *next;
+	void *owner;
+};
+
 struct pvr_device {
+	struct pvr_orphan *orphans;
+	uint32_t next_id;
+	kmutex_t gate;
+	struct pvr_backend backend;
+	bool execution;
 	uint64_t bvnc;
 	struct pvr_query_profile profile;
 };
@@ -79,8 +92,10 @@ pvr_release(struct drm_device *dev)
 {
 	struct pvr_device *sc = dev->dev_private;
 
-	if (sc != NULL)
+	if (sc != NULL) {
+		mutex_destroy(&sc->gate);
 		kmem_free(sc, sizeof(*sc));
+	}
 	drm_dev_fini(dev);
 	kfree(dev);
 }
@@ -99,7 +114,17 @@ static const struct drm_ioctl_desc pvr_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(PVR_VM_MAP, pvr_vm_map_ioctl,
 	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(PVR_VM_UNMAP, pvr_vm_unmap_ioctl,
-	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+	    DRM_RENDER_ALLOW | DRM_UNLOCKED),DRM_IOCTL_DEF_DRV(PVR_CREATE_CONTEXT, pvr_create_context,
+    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+DRM_IOCTL_DEF_DRV(PVR_DESTROY_CONTEXT, pvr_destroy_context,
+    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+DRM_IOCTL_DEF_DRV(PVR_CREATE_FREE_LIST, pvr_create_free_list,
+    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+DRM_IOCTL_DEF_DRV(PVR_DESTROY_FREE_LIST, pvr_destroy_free_list,
+    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+DRM_IOCTL_DEF_DRV(PVR_SUBMIT_JOBS, pvr_submit_jobs,
+    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+
 };
 
 static struct drm_driver pvr_driver = {
@@ -146,6 +171,7 @@ pvr_render_attach(device_t self, bus_dma_tag_t dmat, uint64_t bvnc,
 	if (IS_ERR(dev))
 		return -PTR_ERR(dev);
 	sc = kmem_zalloc(sizeof(*sc), KM_SLEEP);
+	mutex_init(&sc->gate, MUTEX_DEFAULT, IPL_NONE);
 	sc->bvnc = bvnc;
 	sc->profile = profile;
 	dev->dev_private = sc;
@@ -164,5 +190,80 @@ pvr_render_attach(device_t self, bus_dma_tag_t dmat, uint64_t bvnc,
 		return error;
 	}
 	*owner = dev;
+	return 0;
+}
+
+int
+pvr_backend_attach(struct drm_device *dev, const struct pvr_backend *backend)
+{
+	struct pvr_device *sc;
+	int error = 0;
+
+	if (dev == NULL || dev->dev_private == NULL || backend == NULL ||
+	    backend->cookie == NULL || backend->enter == NULL ||
+	    backend->leave == NULL || backend->alloc == NULL ||
+	    backend->free == NULL || backend->sync == NULL ||
+	    backend->command == NULL || backend->flush == NULL ||
+	    backend->check == NULL || backend->fail == NULL)
+		return EINVAL;
+	sc = dev->dev_private;
+	mutex_enter(&sc->gate);
+	if (sc->execution) {
+		error = EALREADY;
+	} else {
+		sc->backend = *backend;
+		sc->execution = true;
+	}
+	mutex_exit(&sc->gate);
+	return error;
+}
+
+const struct pvr_backend *
+pvr_device_enter(struct drm_device *dev)
+{
+	struct pvr_device *sc = dev->dev_private;
+
+	mutex_enter(&sc->gate);
+	if (!sc->execution)
+		return NULL;
+	sc->backend.enter(sc->backend.cookie);
+	return &sc->backend;
+}
+
+void
+pvr_device_leave(struct drm_device *dev)
+{
+	struct pvr_device *sc = dev->dev_private;
+
+	if (sc->execution)
+		sc->backend.leave(sc->backend.cookie);
+	mutex_exit(&sc->gate);
+}
+
+void
+pvr_device_retain(struct drm_device *dev, void *owner)
+{
+	struct pvr_device *sc = dev->dev_private;
+	struct pvr_orphan *orphan;
+
+	KASSERT(mutex_owned(&sc->gate));
+	KASSERT(owner != NULL);
+	orphan = kmem_zalloc(sizeof(*orphan), KM_SLEEP);
+	orphan->owner = owner;
+	orphan->next = sc->orphans;
+	sc->orphans = orphan;
+	/* An unacknowledged DMA reference cannot outlive its device owner. */
+	drm_dev_get(dev);
+}
+
+int
+pvr_device_next_id(struct drm_device *dev, uint32_t *id)
+{
+	struct pvr_device *sc = dev->dev_private;
+
+	KASSERT(mutex_owned(&sc->gate));
+	if (sc->next_id == UINT32_MAX)
+		return EOVERFLOW;
+	*id = ++sc->next_id;
 	return 0;
 }

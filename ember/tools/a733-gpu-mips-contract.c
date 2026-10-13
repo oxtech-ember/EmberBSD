@@ -295,11 +295,59 @@ boot_tests(void)
 	CHECK(get32(table + 56) == 0 && get32(table + 60) == 0);
 }
 
+static void
+unmap_tests(void)
+{
+	uint64_t base = A733_GPU_MIPS_HEAP_BASE;
+	size_t i;
+
+	reset();
+	CHECK(sun60i_a733_gpu_mips_map(table, 16384, base, pages, 4) == 0);
+	memcpy(before, storage.bytes, sizeof(before));
+	pages[3] += 4096;
+	CHECK(sun60i_a733_gpu_mips_unmap(table, 16384, base, pages, 4) == ENOENT);
+	CHECK(memcmp(before, storage.bytes, sizeof(before)) == 0);
+	pages[3] -= 4096;
+	CHECK(sun60i_a733_gpu_mips_unmap(table, 16384, base + 4096, pages + 1, 2) == 0);
+	CHECK(get32(table) == 0x048d1417);
+	CHECK(get32(table + 4) == 0 && get32(table + 8) == 0);
+	CHECK(get32(table + 12) == 0x048d14d7);
+	CHECK(sun60i_a733_gpu_mips_unmap(table, 16384, base + 4096, pages + 1, 2) == ENOENT);
+	CHECK(sun60i_a733_gpu_mips_map(table, 16384, base + 4096, pages + 1, 2) == 0);
+	CHECK(memcmp(before, storage.bytes, sizeof(before)) == 0);
+	CHECK(sun60i_a733_gpu_mips_unmap(table, 16384, base, pages, 4) == 0);
+	for (i = 0; i < 16384; i++)
+		CHECK(table[i] == 0);
+	for (i = 0; i < 8; i++)
+		CHECK(storage.bytes[i] == 0xa5);
+	for (i = 16392; i < sizeof(storage.bytes); i++)
+		CHECK(storage.bytes[i] == 0xa5);
+	CHECK(sun60i_a733_gpu_mips_map(table, 16384,
+	    A733_GPU_MIPS_HEAP_END - 4096, pages, 1) == 0);
+	CHECK(sun60i_a733_gpu_mips_unmap(table, 16384,
+	    A733_GPU_MIPS_HEAP_END - 4096, pages, 1) == 0);
+	CHECK(sun60i_a733_gpu_mips_unmap(NULL, 16384, base, pages, 1) == EINVAL);
+	CHECK(sun60i_a733_gpu_mips_unmap(table, 16384, base, NULL, 1) == EINVAL);
+	CHECK(sun60i_a733_gpu_mips_unmap(table, 16383, base, pages, 1) == EINVAL);
+	CHECK(sun60i_a733_gpu_mips_unmap(table, 16384, base, pages, 0) == EINVAL);
+	CHECK(sun60i_a733_gpu_mips_unmap(table, 16384, base, pages, SIZE_MAX) == EINVAL);
+	CHECK(sun60i_a733_gpu_mips_unmap(table, 16384, base + 1, pages, 1) == EINVAL);
+	CHECK(sun60i_a733_gpu_mips_unmap(table, 16384,
+	    A733_GPU_MIPS_HEAP_END - 4096, pages, 2) == EINVAL);
+	CHECK(sun60i_a733_gpu_mips_unmap(table, 16384, base,
+	    (const uint64_t *)table, 1) == EINVAL);
+	CHECK(sun60i_a733_gpu_mips_unmap((void *)(UINTPTR_MAX - 7), 16384,
+	    base, pages, 1) == EINVAL);
+	CHECK(sun60i_a733_gpu_mips_unmap(table, 16384, base,
+	    (const uint64_t *)(UINTPTR_MAX - 7), 2) == EINVAL);
+}
+
 int
 main(void)
 {
 	map_tests();
 	boot_tests();
+	unmap_tests();
 	printf("a733-gpu-mips-contract: PASS %u checks\n", checks);
 	return 0;
 }

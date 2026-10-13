@@ -14,8 +14,8 @@
 
 /* Same discipline as the firmware memory owner: coherent, single segment,
  * page-aligned, inside 36 bits, zeroed by the allocator. */
-static int
-fwheap_dma_alloc(bus_dma_tag_t dmat, size_t size,
+int
+sun60i_a733_gpu_dma_alloc_coherent(bus_dma_tag_t dmat, size_t size,
     struct sun60i_a733_gpu_dma *dma)
 {
 	int error;
@@ -88,8 +88,8 @@ fail:
 	return error;
 }
 
-static void
-fwheap_dma_free(bus_dma_tag_t dmat, struct sun60i_a733_gpu_dma *dma)
+void
+sun60i_a733_gpu_dma_free(bus_dma_tag_t dmat, struct sun60i_a733_gpu_dma *dma)
 {
 
 	if (dma->loaded)
@@ -151,7 +151,7 @@ sun60i_a733_gpu_fwheap_prepare(bus_dma_tag_t dmat,
 		return EINVAL;
 	heap = kmem_zalloc(sizeof(*heap), KM_SLEEP);
 	heap->dmat = dmat;
-	error = fwheap_dma_alloc(dmat, A733_GPU_FWHEAP_BYTES, &heap->heap);
+	error = sun60i_a733_gpu_dma_alloc_coherent(dmat, A733_GPU_FWHEAP_BYTES, &heap->heap);
 	if (error != 0)
 		goto fail;
 	if (!fwheap_dma_valid(&heap->heap) ||
@@ -182,7 +182,7 @@ sun60i_a733_gpu_fwheap_prepare(bus_dma_tag_t dmat,
 	*out = heap;
 	return 0;
 fail:
-	fwheap_dma_free(dmat, &heap->heap);
+	sun60i_a733_gpu_dma_free(dmat, &heap->heap);
 	kmem_free(heap, sizeof(*heap));
 	return error;
 }
@@ -264,7 +264,7 @@ sun60i_a733_gpu_fwheap_destroy(struct sun60i_a733_gpu_fwheap **out)
 		*out = NULL;
 		return;
 	}
-	fwheap_dma_free(heap->dmat, &heap->heap);
+	sun60i_a733_gpu_dma_free(heap->dmat, &heap->heap);
 	kmem_free(heap, sizeof(*heap));
 	*out = NULL;
 }
@@ -296,7 +296,7 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 		    &file->resource[i];
 		size_t size = ((size_t)e->bytes + 4095) & ~4095U;
 
-		error = fwheap_dma_alloc(dmat, size, &vm->resource[i]);
+		error = sun60i_a733_gpu_dma_alloc_coherent(dmat, size, &vm->resource[i]);
 		if (error != 0)
 			goto fail;
 		if (!fwheap_dma_valid(&vm->resource[i])) {
@@ -370,14 +370,14 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 		regions[A733_GPU_FWCOMPUTE_RESOURCES + 2].pages = regions[k].pages;
 		regions[A733_GPU_FWCOMPUTE_RESOURCES + 2].flags = regions[k].flags;
 	}
-	error = fwheap_dma_alloc(dmat, 4096, &vm->catalog);
+	error = sun60i_a733_gpu_dma_alloc_coherent(dmat, 4096, &vm->catalog);
 	if (error != 0)
 		goto fail;
 	for (i = 0; i < A733_GPU_FWCOMPUTE_VM_WINDOWS; i++) {
-		error = fwheap_dma_alloc(dmat, 4096, &vm->directory[i]);
+		error = sun60i_a733_gpu_dma_alloc_coherent(dmat, 4096, &vm->directory[i]);
 		if (error != 0)
 			goto fail;
-		error = fwheap_dma_alloc(dmat, 4096, &vm->table[i]);
+		error = sun60i_a733_gpu_dma_alloc_coherent(dmat, 4096, &vm->table[i]);
 		if (error != 0)
 			goto fail;
 	}
@@ -422,11 +422,11 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 	return 0;
 fail:
 	for (i = 0; i < A733_GPU_FWCOMPUTE_RESOURCES; i++)
-		fwheap_dma_free(dmat, &vm->resource[i]);
-	fwheap_dma_free(dmat, &vm->catalog);
+		sun60i_a733_gpu_dma_free(dmat, &vm->resource[i]);
+	sun60i_a733_gpu_dma_free(dmat, &vm->catalog);
 	for (i = 0; i < A733_GPU_FWCOMPUTE_VM_WINDOWS; i++) {
-		fwheap_dma_free(dmat, &vm->directory[i]);
-		fwheap_dma_free(dmat, &vm->table[i]);
+		sun60i_a733_gpu_dma_free(dmat, &vm->directory[i]);
+		sun60i_a733_gpu_dma_free(dmat, &vm->table[i]);
 	}
 	kmem_free(vm, sizeof(*vm));
 	return error;
@@ -442,11 +442,11 @@ sun60i_a733_gpu_fwvm_destroy(struct sun60i_a733_gpu_fwvm **out)
 		return;
 	vm = *out;
 	for (i = 0; i < A733_GPU_FWCOMPUTE_RESOURCES; i++)
-		fwheap_dma_free(vm->dmat, &vm->resource[i]);
-	fwheap_dma_free(vm->dmat, &vm->catalog);
+		sun60i_a733_gpu_dma_free(vm->dmat, &vm->resource[i]);
+	sun60i_a733_gpu_dma_free(vm->dmat, &vm->catalog);
 	for (i = 0; i < A733_GPU_FWCOMPUTE_VM_WINDOWS; i++) {
-		fwheap_dma_free(vm->dmat, &vm->directory[i]);
-		fwheap_dma_free(vm->dmat, &vm->table[i]);
+		sun60i_a733_gpu_dma_free(vm->dmat, &vm->directory[i]);
+		sun60i_a733_gpu_dma_free(vm->dmat, &vm->table[i]);
 	}
 	kmem_free(vm, sizeof(*vm));
 	*out = NULL;

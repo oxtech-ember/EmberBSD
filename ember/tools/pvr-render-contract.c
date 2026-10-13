@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/types.h>
 
+typedef int32_t __s32;
 typedef uint16_t __u16;
 typedef uint32_t __u32;
 typedef uint64_t __u64;
@@ -18,6 +19,7 @@ typedef uint64_t __u64;
 #define DRM_IOW(n, t) (0x80000000U | (sizeof(t) << 16) | ('d' << 8) | (n))
 #define DRM_IOCTL_NR(n) ((n) & 0xff)
 #include "pvr-uapi-body.h"
+#include "pvr_backend.h"
 #include "pvr-query.h-body.h"
 #define CTASSERT(e) _Static_assert(e, #e)
 
@@ -158,6 +160,10 @@ test_strlcpy(char *to, const char *from, size_t size)
 	}
 	return n;
 }
+/* Darwin can provide strlcpy as a fortified macro. Use the boundary model. */
+#ifdef strlcpy
+#undef strlcpy
+#endif
 #define strlcpy test_strlcpy
 
 static const char *
@@ -187,6 +193,8 @@ drm_dev_alloc(struct drm_driver *driver, device_t parent)
 		return (void *)(intptr_t)-ENOMEM;
 	dev = calloc(1, sizeof(*dev));
 	assert(dev != NULL);
+	/* A host allocation cannot be a kernel ERR_PTR encoding. */
+	CHECK(!IS_ERR(dev));
 	dev->driver = driver;
 	dev->refs = 1;
 	allocs++;
@@ -245,6 +253,16 @@ static int pvr_vm_map_ioctl(struct drm_device *d, void *a, struct drm_file *f)
 { abort(); }
 static int pvr_vm_unmap_ioctl(struct drm_device *d, void *a, struct drm_file *f)
 { abort(); }
+static int pvr_create_context(struct drm_device *d, void *a, struct drm_file *f)
+{ abort(); }
+static int pvr_destroy_context(struct drm_device *d, void *a, struct drm_file *f)
+{ abort(); }
+static int pvr_create_free_list(struct drm_device *d, void *a, struct drm_file *f)
+{ abort(); }
+static int pvr_destroy_free_list(struct drm_device *d, void *a, struct drm_file *f)
+{ abort(); }
+static int pvr_submit_jobs(struct drm_device *d, void *a, struct drm_file *f)
+{ abort(); }
 /* The separate heap contract tests the actual query and user-copy behavior. */
 static int pvr_heap_query(uint32_t type, struct drm_pvr_ioctl_dev_query_args *a)
 {
@@ -253,6 +271,17 @@ static int pvr_heap_query(uint32_t type, struct drm_pvr_ioctl_dev_query_args *a)
 	return -EINTR; /* Distinguish routing from a generic unsupported return. */
 }
 
+#define KASSERT(e) CHECK(e)
+#define MUTEX_DEFAULT 0
+#define IPL_NONE 0
+typedef struct { bool held; } kmutex_t;
+static void mutex_init(kmutex_t *m, int type, int level)
+{ CHECK(type == 0 && level == 0); m->held = false; }
+static void mutex_enter(kmutex_t *m) { CHECK(!m->held); m->held = true; }
+static void mutex_exit(kmutex_t *m) { CHECK(m->held); m->held = false; }
+static void mutex_destroy(kmutex_t *m) { CHECK(!m->held); }
+static bool mutex_owned(kmutex_t *m) { return m->held; }
+static void drm_dev_get(struct drm_device *dev) { CHECK(dev->refs != 0); dev->refs++; }
 #include "pvr-drv-body.h"
 
 _Static_assert(sizeof(struct drm_pvr_ioctl_dev_query_args) == 16, "query ABI");
@@ -332,6 +361,104 @@ queries(struct drm_device *dev)
 	fail_copy = 0;
 }
 
+static bool platform_held;
+static unsigned platform_entries, platform_leaves;
+static void
+backend_enter(void *cookie)
+{
+	struct pvr_device *sc = cookie;
+	CHECK(mutex_owned(&sc->gate) && !platform_held);
+	platform_held = true;
+	platform_entries++;
+}
+static void
+backend_leave(void *cookie)
+{
+	struct pvr_device *sc = cookie;
+	CHECK(mutex_owned(&sc->gate) && platform_held);
+	platform_held = false;
+	platform_leaves++;
+}
+static int backend_alloc(void *c, size_t n, struct pvr_fw_object *o)
+{ CHECK(false); return EIO; }
+static int backend_free(void *c, struct pvr_fw_object *o)
+{ CHECK(false); return EIO; }
+static void backend_sync(void *c, struct pvr_fw_object *o, int flags)
+{ CHECK(false); }
+static int backend_command(void *c, const struct rogue_fwif_kccb_cmd *cmd, uint32_t *result)
+{ CHECK(false); return EIO; }
+static int backend_check(void *c)
+{ CHECK(false); return EIO; }
+static void backend_fail(void *c)
+{ CHECK(false); }
+
+static void
+backend_lifetime(struct drm_device *dev)
+{
+	struct pvr_device *sc = dev->dev_private;
+	struct pvr_backend backend = {
+		.cookie = sc, .enter = backend_enter, .leave = backend_leave,
+		.alloc = backend_alloc, .free = backend_free, .sync = backend_sync,
+		.command = backend_command, .flush = backend_check,
+		.check = backend_check, .fail = backend_fail,
+	};
+	struct pvr_backend invalid;
+	struct pvr_orphan *orphan;
+	const struct pvr_backend *selected;
+	unsigned refs;
+	uint32_t id;
+	int retained_owner;
+
+	CHECK(pvr_device_enter(dev) == NULL);
+	CHECK(mutex_owned(&sc->gate));
+	CHECK(pvr_device_next_id(dev, &id) == 0 && id == 1);
+	CHECK(pvr_device_next_id(dev, &id) == 0 && id == 2);
+	sc->next_id = UINT32_MAX;
+	CHECK(pvr_device_next_id(dev, &id) == EOVERFLOW && id == 2);
+	pvr_device_leave(dev);
+	CHECK(!mutex_owned(&sc->gate));
+	CHECK(pvr_backend_attach(NULL, &backend) == EINVAL);
+	CHECK(pvr_backend_attach(dev, NULL) == EINVAL);
+	for (unsigned n = 0; n < 10; n++) {
+		invalid = backend;
+		switch (n) {
+		case 0: invalid.cookie = NULL; break;
+		case 1: invalid.enter = NULL; break;
+		case 2: invalid.leave = NULL; break;
+		case 3: invalid.alloc = NULL; break;
+		case 4: invalid.free = NULL; break;
+		case 5: invalid.sync = NULL; break;
+		case 6: invalid.command = NULL; break;
+		case 7: invalid.flush = NULL; break;
+		case 8: invalid.check = NULL; break;
+		case 9: invalid.fail = NULL; break;
+		}
+		CHECK(pvr_backend_attach(dev, &invalid) == EINVAL);
+		CHECK(!sc->execution && !mutex_owned(&sc->gate));
+	}
+	CHECK(pvr_backend_attach(dev, &backend) == 0);
+	CHECK(pvr_backend_attach(dev, &backend) == EALREADY);
+	/* Registration copies the immutable callbacks into device-owned storage. */
+	backend.cookie = NULL;
+	backend.enter = NULL;
+	selected = pvr_device_enter(dev);
+	CHECK(selected == &sc->backend && selected->cookie == sc);
+	CHECK(platform_held && mutex_owned(&sc->gate));
+	refs = dev->refs;
+	pvr_device_retain(dev, &retained_owner);
+	CHECK(dev->refs == refs + 1 && sc->orphans != NULL);
+	CHECK(sc->orphans->owner == &retained_owner);
+	pvr_device_leave(dev);
+	CHECK(!platform_held && !mutex_owned(&sc->gate));
+	CHECK(platform_entries == 1 && platform_leaves == 1);
+	/* A model reset ends reachability. The production driver has no reset API. */
+	orphan = sc->orphans;
+	sc->orphans = orphan->next;
+	kmem_free(orphan, sizeof(*orphan));
+	drm_dev_put(dev);
+	CHECK(dev->refs == refs);
+}
+
 int
 main(void)
 {
@@ -379,7 +506,7 @@ main(void)
 	CHECK(strcmp(owner->driver->name, "powervr") == 0);
 	CHECK(owner->driver->driver_features == (DRIVER_GEM | DRIVER_RENDER |
 	    DRIVER_SYNCOBJ | DRIVER_SYNCOBJ_TIMELINE));
-	CHECK(owner->driver->num_ioctls == 7);
+	CHECK(owner->driver->num_ioctls == 14);
 	CHECK(owner->driver->open == pvr_file_open);
 	CHECK(owner->driver->postclose == pvr_file_close);
 	CHECK(owner->driver->ioctls[3].func == pvr_create_vm_context);
@@ -393,6 +520,7 @@ main(void)
 	CHECK(pvr_render_attach(parent, dmat, PVR_A733_BVNC, &input, &owner) == EALREADY);
 	CHECK(registered == calls);
 	queries(owner);
+	backend_lifetime(owner);
 	drm_dev_put(owner);
 	CHECK(allocs == frees && private_allocs == private_frees);
 	printf("PASS: %u native PowerVR registration/query checks\n", checks);

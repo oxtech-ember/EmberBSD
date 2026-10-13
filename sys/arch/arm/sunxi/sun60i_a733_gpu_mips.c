@@ -149,6 +149,42 @@ sun60i_a733_gpu_mips_map(void *table, size_t table_size, uint64_t va,
 	return 0;
 }
 
+/* The caller must invalidate live translations before releasing the pages. */
+int
+sun60i_a733_gpu_mips_unmap(void *table, size_t table_size, uint64_t va,
+    const uint64_t *pages, size_t page_count)
+{
+	uint8_t *bytes = table;
+	size_t first, i;
+	int error;
+
+	if (table_size != A733_GPU_MIPS_PT_SIZE || page_count == 0 ||
+	    page_count > MIPS_PTE_COUNT || va < A733_GPU_MIPS_HEAP_BASE ||
+	    va >= A733_GPU_MIPS_HEAP_END ||
+	    (va & (A733_GPU_MIPS_PAGE_SIZE - 1)) != 0 ||
+	    page_count > (A733_GPU_MIPS_HEAP_END - va) /
+	    A733_GPU_MIPS_PAGE_SIZE)
+		return EINVAL;
+	error = mips_buffers_check(table, table_size, pages,
+	    page_count * sizeof(*pages));
+	if (error != 0)
+		return error;
+	first = (size_t)((va - A733_GPU_MIPS_HEAP_BASE) /
+	    A733_GPU_MIPS_PAGE_SIZE);
+	/* Validate every owner before clearing any entry. */
+	for (i = 0; i < page_count; i++) {
+		error = mips_pa_check(pages[i]);
+		if (error != 0)
+			return error;
+		if (mips_get32(bytes + (first + i) * 4) !=
+		    ((uint32_t)(pages[i] >> 6) | MIPS_PTE_FLAGS))
+			return ENOENT;
+	}
+	for (i = 0; i < page_count; i++)
+		mips_put32(bytes + (first + i) * 4, 0);
+	return 0;
+}
+
 int
 sun60i_a733_gpu_mips_boot_data(void *out, size_t out_size, uint64_t stack_pa,
     uint64_t register_pa, const uint64_t pt_pa[A733_GPU_MIPS_PT_PAGES])

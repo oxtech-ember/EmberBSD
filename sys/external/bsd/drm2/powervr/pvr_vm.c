@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /*
- * Native ownership for CPU-only Rogue translation tables.
+ * Native ownership for Rogue translation tables and deferred retirement.
  * Hardware entries use the existing MIT-licensed A733 MMU encoders.
  * Their Linux PowerVR source pin is recorded in sun60i_a733_gpu_mmu.h.
  */
@@ -25,15 +25,17 @@ struct pvr_vm_dma {
 	void *cpu;
 	uint64_t pa;
 	int nsegments;
-	bool loaded;
+	bool loaded, synced;
 };
 
 struct pvr_vm_pt {
+	struct pvr_vm_pt *retired_next;
 	struct pvr_vm_dma dma;
 	unsigned int used;
 };
 
 struct pvr_vm_pd {
+	struct pvr_vm_pd *retired_next;
 	struct pvr_vm_dma dma;
 	struct pvr_vm_pt *tables[A733_GPU_MMU_PD_ENTRIES];
 	unsigned int used;
@@ -49,12 +51,20 @@ struct pvr_vm {
 	struct pvr_vm_dma catalogue;
 	struct pvr_vm_pd *dirs[A733_GPU_MMU_PC_ENTRIES];
 	struct pvr_vm_range *ranges;
+	struct pvr_vm_pd *retired_dirs;
+	struct pvr_vm_pt *retired_tables;
+	int (*invalidate)(void *);
+	void *invalidate_cookie;
+	bool failed;
 };
 
 static void
 pvr_vm_dma_free(struct pvr_vm *vm, struct pvr_vm_dma *dma)
 {
 
+	if (dma->loaded && dma->synced)
+		bus_dmamap_sync(vm->dmat, dma->map, 0, PVR_VM_PAGE,
+		    BUS_DMASYNC_POSTWRITE);
 	if (dma->loaded)
 		bus_dmamap_unload(vm->dmat, dma->map);
 	if (dma->map != NULL)
@@ -72,6 +82,7 @@ pvr_vm_dma_sync(struct pvr_vm *vm, struct pvr_vm_dma *dma)
 
 	bus_dmamap_sync(vm->dmat, dma->map, 0, PVR_VM_PAGE,
 	    BUS_DMASYNC_PREWRITE);
+	dma->synced = true;
 }
 
 static int
@@ -165,6 +176,72 @@ pvr_vm_root_pa(const struct pvr_vm *vm)
 	return vm->catalogue.pa;
 }
 
+/* Cache invalidation must finish before a detached table becomes reusable. */
+static void
+pvr_vm_collect(struct pvr_vm *vm)
+{
+	struct pvr_vm_pd *pd;
+	struct pvr_vm_pt *pt;
+
+	while ((pt = vm->retired_tables) != NULL) {
+		vm->retired_tables = pt->retired_next;
+		pvr_vm_dma_free(vm, &pt->dma);
+		kmem_free(pt, sizeof(*pt));
+	}
+	while ((pd = vm->retired_dirs) != NULL) {
+		vm->retired_dirs = pd->retired_next;
+		pvr_vm_dma_free(vm, &pd->dma);
+		kmem_free(pd, sizeof(*pd));
+	}
+}
+
+int
+pvr_vm_flush(struct pvr_vm *vm)
+{
+	int error;
+
+	if (vm == NULL)
+		return EINVAL;
+	if (vm->failed)
+		return EIO;
+	if (vm->invalidate != NULL) {
+		error = vm->invalidate(vm->invalidate_cookie);
+		if (error != 0) {
+			vm->failed = true;
+			return error;
+		}
+	}
+	pvr_vm_collect(vm);
+	return 0;
+}
+
+int
+pvr_vm_publish(struct pvr_vm *vm, int (*invalidate)(void *), void *cookie)
+{
+
+	if (vm == NULL || invalidate == NULL)
+		return EINVAL;
+	if (vm->invalidate != NULL || vm->failed)
+		return EBUSY;
+	vm->invalidate = invalidate;
+	vm->invalidate_cookie = cookie;
+	return pvr_vm_flush(vm);
+}
+
+/* The owner first drains every job and retires all firmware contexts. */
+int
+pvr_vm_quiesce(struct pvr_vm *vm)
+{
+	int error;
+
+	error = pvr_vm_flush(vm);
+	if (error != 0)
+		return error;
+	vm->invalidate = NULL;
+	vm->invalidate_cookie = NULL;
+	return 0;
+}
+
 /* Free only provisional empty tables. No hardware entry was written yet. */
 static void
 pvr_vm_rollback(struct pvr_vm *vm, uint64_t va, uint64_t size)
@@ -211,6 +288,8 @@ pvr_vm_map(struct pvr_vm *vm, uint64_t va, uint64_t pa, uint64_t size,
 	unsigned int n, count, pc;
 	int error;
 
+	if (vm != NULL && vm->failed)
+		return EIO;
 	if (vm == NULL || !pvr_vm_range_valid(va, size) ||
 	    pa >= PVR_VM_PA_END || size > PVR_VM_PA_END - pa ||
 	    sun60i_a733_gpu_mmu_pte(pa, flags, &value) != 0)
@@ -302,6 +381,8 @@ pvr_vm_unmap(struct pvr_vm *vm, uint64_t va, uint64_t size)
 	unsigned int n, count;
 	int error;
 
+	if (vm != NULL && vm->failed)
+		return EIO;
 	if (vm == NULL || !pvr_vm_range_valid(va, size))
 		return EINVAL;
 	for (slot = &vm->ranges; *slot != NULL; slot = &(*slot)->next)
@@ -331,16 +412,19 @@ pvr_vm_unmap(struct pvr_vm *vm, uint64_t va, uint64_t size)
 		pvr_vm_dma_sync(vm, &pd->dma);
 		pd->tables[idx.pd] = NULL;
 		pd->used--;
-		pvr_vm_dma_free(vm, &pt->dma);
-		kmem_free(pt, sizeof(*pt));
+		pt->retired_next = vm->retired_tables;
+		vm->retired_tables = pt;
 		if (pd->used != 0)
 			continue;
 		((uint32_t *)vm->catalogue.cpu)[idx.pc] = 0;
 		pvr_vm_dma_sync(vm, &vm->catalogue);
 		vm->dirs[idx.pc] = NULL;
-		pvr_vm_dma_free(vm, &pd->dma);
-		kmem_free(pd, sizeof(*pd));
+		pd->retired_next = vm->retired_dirs;
+		vm->retired_dirs = pd;
 	}
+	error = pvr_vm_flush(vm);
+	if (error != 0)
+		return error;
 	*slot = range->next;
 	kmem_free(range, sizeof(*range));
 	return 0;
@@ -353,6 +437,7 @@ pvr_vm_destroy(struct pvr_vm *vm)
 
 	if (vm == NULL)
 		return;
+	KASSERT(vm->invalidate == NULL && !vm->failed);
 	while (vm->ranges != NULL) {
 		error = pvr_vm_unmap(vm, vm->ranges->va, vm->ranges->size);
 		KASSERT(error == 0);

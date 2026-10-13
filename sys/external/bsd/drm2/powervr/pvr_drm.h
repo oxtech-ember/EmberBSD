@@ -4,7 +4,7 @@
  * Origin: Linux 7b63ef2d55f24519e7e9e5f4d15dbea03f126e40,
  * include/uapi/drm/pvr_drm.h. This subset selects the MIT alternative.
  * EmberBSD retains the query, buffer-object and GPU VM ABI below.
- * Execution contexts and submission are not implemented.
+ * Unsupported job types return EOPNOTSUPP. They do not submit firmware work.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -178,5 +178,181 @@ struct drm_pvr_ioctl_vm_unmap_args {
 	__u64 device_addr;
 	__u64 size;
 };
+
+#define DRM_IOCTL_PVR_CREATE_CONTEXT \
+	DRM_IOWR(DRM_COMMAND_BASE + 0x07, struct drm_pvr_ioctl_create_context_args)
+#define DRM_IOCTL_PVR_DESTROY_CONTEXT \
+	DRM_IOW(DRM_COMMAND_BASE + 0x08, struct drm_pvr_ioctl_destroy_context_args)
+#define DRM_IOCTL_PVR_CREATE_FREE_LIST \
+	DRM_IOWR(DRM_COMMAND_BASE + 0x09, struct drm_pvr_ioctl_create_free_list_args)
+#define DRM_IOCTL_PVR_DESTROY_FREE_LIST \
+	DRM_IOW(DRM_COMMAND_BASE + 0x0a, struct drm_pvr_ioctl_destroy_free_list_args)
+#define DRM_IOCTL_PVR_SUBMIT_JOBS \
+	DRM_IOWR(DRM_COMMAND_BASE + 0x0d, struct drm_pvr_ioctl_submit_jobs_args)
+
+enum drm_pvr_ctx_priority {
+
+	DRM_PVR_CTX_PRIORITY_LOW = -512,
+
+	DRM_PVR_CTX_PRIORITY_NORMAL = 0,
+
+	DRM_PVR_CTX_PRIORITY_HIGH = 512,
+};
+
+enum drm_pvr_ctx_type {
+
+	DRM_PVR_CTX_TYPE_RENDER = 0,
+
+	DRM_PVR_CTX_TYPE_COMPUTE,
+
+	DRM_PVR_CTX_TYPE_TRANSFER_FRAG,
+};
+
+struct drm_pvr_ioctl_create_context_args {
+
+	__u32 type;
+
+	__u32 flags;
+
+	__s32 priority;
+
+	__u32 handle;
+
+	__u64 static_context_state;
+
+	__u32 static_context_state_len;
+
+	__u32 vm_context_handle;
+
+	__u64 callstack_addr;
+};
+
+struct drm_pvr_ioctl_destroy_context_args {
+
+	__u32 handle;
+
+	__u32 _padding_4;
+};
+
+struct drm_pvr_ioctl_create_free_list_args {
+
+	__u64 free_list_gpu_addr;
+
+	__u32 initial_num_pages;
+
+	__u32 max_num_pages;
+
+	__u32 grow_num_pages;
+
+	__u32 grow_threshold;
+
+	__u32 vm_context_handle;
+
+	__u32 handle;
+};
+
+struct drm_pvr_ioctl_destroy_free_list_args {
+
+	__u32 handle;
+
+	__u32 _padding_4;
+};
+
+
+#define DRM_PVR_SYNC_OP_FLAG_HANDLE_TYPE_MASK 0xf
+#define DRM_PVR_SYNC_OP_FLAG_HANDLE_TYPE_SYNCOBJ 0
+#define DRM_PVR_SYNC_OP_FLAG_HANDLE_TYPE_TIMELINE_SYNCOBJ 1
+#define DRM_PVR_SYNC_OP_FLAG_SIGNAL (1ULL << 31)
+#define DRM_PVR_SYNC_OP_FLAG_WAIT 0
+
+#define DRM_PVR_SYNC_OP_FLAGS_MASK (DRM_PVR_SYNC_OP_FLAG_HANDLE_TYPE_MASK | \
+				    DRM_PVR_SYNC_OP_FLAG_SIGNAL)
+
+struct drm_pvr_sync_op {
+
+	__u32 handle;
+
+	__u32 flags;
+
+	__u64 value;
+};
+
+#define DRM_PVR_SUBMIT_JOB_GEOM_CMD_FIRST (1ULL << 0)
+#define DRM_PVR_SUBMIT_JOB_GEOM_CMD_LAST (1ULL << 1)
+#define DRM_PVR_SUBMIT_JOB_GEOM_CMD_SINGLE_CORE (1ULL << 2)
+#define DRM_PVR_SUBMIT_JOB_GEOM_CMD_FLAGS_MASK                                 \
+	(DRM_PVR_SUBMIT_JOB_GEOM_CMD_FIRST |                                   \
+	 DRM_PVR_SUBMIT_JOB_GEOM_CMD_LAST |                                    \
+	 DRM_PVR_SUBMIT_JOB_GEOM_CMD_SINGLE_CORE)
+
+#define DRM_PVR_SUBMIT_JOB_FRAG_CMD_SINGLE_CORE (1ULL << 0)
+#define DRM_PVR_SUBMIT_JOB_FRAG_CMD_DEPTHBUFFER (1ULL << 1)
+#define DRM_PVR_SUBMIT_JOB_FRAG_CMD_STENCILBUFFER (1ULL << 2)
+#define DRM_PVR_SUBMIT_JOB_FRAG_CMD_PREVENT_CDM_OVERLAP (1ULL << 3)
+#define DRM_PVR_SUBMIT_JOB_FRAG_CMD_SCRATCHBUFFER (1ULL << 4)
+#define DRM_PVR_SUBMIT_JOB_FRAG_CMD_GET_VIS_RESULTS (1ULL << 5)
+#define DRM_PVR_SUBMIT_JOB_FRAG_CMD_PARTIAL_RENDER (1ULL << 6)
+#define DRM_PVR_SUBMIT_JOB_FRAG_CMD_DISABLE_PIXELMERGE (1ULL << 7)
+#define DRM_PVR_SUBMIT_JOB_FRAG_CMD_FLAGS_MASK                                 \
+	(DRM_PVR_SUBMIT_JOB_FRAG_CMD_SINGLE_CORE |                             \
+	 DRM_PVR_SUBMIT_JOB_FRAG_CMD_DEPTHBUFFER |                             \
+	 DRM_PVR_SUBMIT_JOB_FRAG_CMD_STENCILBUFFER |                           \
+	 DRM_PVR_SUBMIT_JOB_FRAG_CMD_PREVENT_CDM_OVERLAP |                     \
+	 DRM_PVR_SUBMIT_JOB_FRAG_CMD_SCRATCHBUFFER |                           \
+	 DRM_PVR_SUBMIT_JOB_FRAG_CMD_GET_VIS_RESULTS |                         \
+	 DRM_PVR_SUBMIT_JOB_FRAG_CMD_PARTIAL_RENDER |                          \
+	 DRM_PVR_SUBMIT_JOB_FRAG_CMD_DISABLE_PIXELMERGE)
+
+#define DRM_PVR_SUBMIT_JOB_COMPUTE_CMD_PREVENT_ALL_OVERLAP (1ULL << 0)
+#define DRM_PVR_SUBMIT_JOB_COMPUTE_CMD_SINGLE_CORE (1ULL << 1)
+#define DRM_PVR_SUBMIT_JOB_COMPUTE_CMD_FLAGS_MASK         \
+	(DRM_PVR_SUBMIT_JOB_COMPUTE_CMD_PREVENT_ALL_OVERLAP | \
+	 DRM_PVR_SUBMIT_JOB_COMPUTE_CMD_SINGLE_CORE)
+
+#define DRM_PVR_SUBMIT_JOB_TRANSFER_CMD_SINGLE_CORE (1ULL << 0)
+
+#define DRM_PVR_SUBMIT_JOB_TRANSFER_CMD_FLAGS_MASK \
+	DRM_PVR_SUBMIT_JOB_TRANSFER_CMD_SINGLE_CORE
+
+enum drm_pvr_job_type {
+
+	DRM_PVR_JOB_TYPE_GEOMETRY = 0,
+
+	DRM_PVR_JOB_TYPE_FRAGMENT,
+
+	DRM_PVR_JOB_TYPE_COMPUTE,
+
+	DRM_PVR_JOB_TYPE_TRANSFER_FRAG,
+};
+
+struct drm_pvr_hwrt_data_ref {
+
+	__u32 set_handle;
+
+	__u32 data_index;
+};
+
+struct drm_pvr_job {
+
+	__u32 type;
+
+	__u32 context_handle;
+
+	__u32 flags;
+
+	__u32 cmd_stream_len;
+
+	__u64 cmd_stream;
+
+	struct drm_pvr_obj_array sync_ops;
+
+	struct drm_pvr_hwrt_data_ref hwrt;
+};
+
+struct drm_pvr_ioctl_submit_jobs_args {
+
+	struct drm_pvr_obj_array jobs;
+};
+
 
 #endif /* _PVR_DRM_UAPI_H_ */
