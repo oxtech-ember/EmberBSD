@@ -122,3 +122,58 @@ Build a clean committed source export, then test the resulting image in a dispos
 Record the image hashes, kernel identity, source failures, review, completion and disk-only boot.
 The image build uses the tree's GCC 12.5 bootstrap profile; GCC16 migration is separate.
 The general [VM walkthrough](amd64-vm-install.md) describes the surrounding build and boot setup.
+
+## Build a desktop candidate
+
+The no-X11 release wrapper is a separate profile. To build the desktop media,
+export a clean OS commit and use its own X11 makefiles. Obtain the original
+[NetBSD 11.0 xsrc.tgz](https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.0/source/sets/xsrc.tgz)
+from the upstream source sets and verify its SHA512:
+
+```text
+c46c9e62d225732b3d8d30d2c5f95b992b434826276f8b66fc04439a309b13e4b751d33366f5c39010f2e309ad70a7bdc7a130fe5ea735792be26ea7c13e2dd5
+```
+
+Prepare the frozen bundle through the
+[Ports desktop recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/installer-desktop).
+Keep package source and archive hashes with the candidate. They do not replace
+the OS build identity. Use an unused absolute build directory without spaces:
+
+```sh
+set -e
+revision=FULL_OS_COMMIT
+out=/absolute/new-desktop-build
+timestamp=RECORDED_REPRO_TIMESTAMP
+mkdir "$out" "$out/source" "$out/x11"
+git archive -o "$out/source.tar" "$revision"
+tar -xf "$out/source.tar" -C "$out/source"
+tar -xzf /absolute/verified-xsrc.tgz -C "$out/x11"
+cd "$out/source"
+export MAKECONF=/dev/null
+unset EXTERNAL_TOOLCHAIN MAKEFLAGS MFLAGS MAKEOBJDIR MAKEOBJDIRPREFIX
+unset NETBSDOBJDIR NETBSDOBJROOT
+set -- -U -u -m amd64 -j4 -O "$out/obj" -T "$out/tools" \
+    -D "$out/dest" -R "$out/release" \
+    -V MKRUMP=no -V MKX11=yes -V MKGCCCMDS=no \
+    -V "X11SRCDIR=$out/x11/usr/xsrc" \
+    -V KERNEL_SETS=GENERIC -V BUILD_KERNELS=INSTALL \
+    -V 'MAKEFLAGS=KERNEL_SETS=GENERIC BUILD_KERNELS=INSTALL' \
+    -V "EMBER_BUILD_ID=$revision" -V "BUILDINFO=EmberBSD:$revision" \
+    -V MKREPRO=yes -V "MKREPRO_TIMESTAMP=$timestamp"
+sh build.sh "$@" tools kernel=GENERIC kernel=INSTALL release
+```
+
+Stop if export, extraction or compilation fails. Record the complete arguments
+and successful log. The timestamp is a fixed input, not the current wall clock.
+Copy the verified desktop-xfce.tar.xz beside the resulting binary sets. Rebuild
+their SHA512 manifest with all actual set archives and the desktop bundle.
+Keep the generated BUILDID unchanged. Then run the same pinned build arguments
+with install-image and iso-image. Do not rebuild release after adding the bundle
+without regenerating its manifest. Test both the desktop and console profiles
+from the resulting media in separate disposable guests.
+
+Network defaults can be supplied through SYSINST_HTTP_HOST, SYSINST_FTP_DIR and
+SYSINST_FTP_SET_DIR_BIN. An empty binary prefix selects a flat release directory.
+The direct wizard path honors these values and retains a custom URL on retry.
+Use a directory containing this candidate's own BUILDID, sets and bundle.
+An older published kit cannot supply matching sets for a newly compiled boot image.
