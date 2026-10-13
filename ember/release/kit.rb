@@ -132,7 +132,8 @@ module EmberRelease
     kernel = command('tar', '-xOf', File.join(dir, 'kern-GENERIC.tar.xz'), './netbsd')
     check_native_compiler(File.join(dir, 'comp.tar.xz'))
     buildinfo = "EmberBSD:#{sha}"
-    check(kernel.include?(buildinfo + "\0"), 'Installed kernel does not report the full build source')
+    # newvers.sh terminates each buildinfo source line with a newline.
+    check(kernel.include?(buildinfo + "\n\0"), 'Installed kernel does not report the full build source')
     boot = command('tar', '-xOf', iso, 'netbsd')
     boot = Zlib::GzipReader.new(StringIO.new(boot)).read if boot.start_with?("\x1f\x8b".b)
     kernel_sha = Digest::SHA256.hexdigest(kernel)
