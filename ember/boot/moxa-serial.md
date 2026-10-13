@@ -398,3 +398,16 @@ For the next RS-232 loopback trial, connect DB9 pin 2 (RxD) to pin 3 (TxD),
 using the connector's pin numbers. The supplied terminal block has a different
 mapping; this instruction is for the DB9 connector. Pinout:
 [MOXA UPort 1100 QIG, page 3](https://moxa.com/getmedia/f21cfe09-4f59-4241-a93a-aaa207e2f003/moxa-uport-1100-series-qig-v8.2.pdf).
+
+With the owner-installed DB9 2–3 jumper, a physical RS-232 test on the corrected
+trial kernel opened `/dev/dtyU0` and compared all 4096 binary bytes without a
+mismatch: 2048 at 9600 baud and 2048 at 115200 baud, both 8N1 with software
+and hardware flow disabled. All 256 byte values were covered; the retained
+parent fault was 0. This is a bounded local loopback, not an independent peer,
+flow-control/modem, RS-485, unplug/power-loss or sustained-use acceptance.
+
+The native test source is `ember/tools/umoxa1150-loopback-test.c`; it uses
+`<dev/usb/umoxa1150io.h>`. Compile it with the matching NetBSD/EmberBSD userland
+compiler and headers, then run on the isolated target only after the DB9 jumper
+is installed. It targets `/dev/dtyU0`, sets RS-232 mode, bounds reads with poll
+deadlines and has a 30-second alarm. Hardware tests are not run by host CI.
