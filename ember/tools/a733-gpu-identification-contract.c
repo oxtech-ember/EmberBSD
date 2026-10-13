@@ -474,6 +474,18 @@ struct sysctlnode { void *sysctl_data; };
 #define sysctl_lookup(...) (0)
 static int sysctl_createv_stub(void *first, ...) { (void)first; return 0; }
 #define sysctl_createv(...) sysctl_createv_stub(__VA_ARGS__)
+
+/* The separate render-attach contract owns these new handler paths. */
+struct drm_device;
+static int
+pvr_render_attach(device_t dev, bus_dma_tag_t dmat, uint64_t bvnc,
+    struct drm_device **owner)
+{
+
+	abort();
+}
+static void sysctl_unlock(void) { abort(); }
+static void sysctl_relock(void) { abort(); }
 #define SYSCTL_DESCR(s) (s)
 #define CTLTYPE_NODE 1
 #define CTLTYPE_INT 2
