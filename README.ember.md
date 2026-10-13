@@ -18,6 +18,10 @@ Record the origin of base libraries and headers in cross sysroots; see the
 [Ports provenance requirements](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/sysroot.md).
 Component acceptance does not establish a complete current base release.
 
+For target selection and installation, follow [Quick Start](ember/quick-start.md).
+Use the [User Guide](ember/user-guide.md) for first login, network access, applications, updates and recovery.
+The [amd64 VM walkthrough](ember/boot/amd64-vm-install.md) describes a full local-set development ISO.
+
 ## Hardware support and validation
 
 The [board catalog](ember/boards/README.md) is the maintained hardware index.
@@ -157,7 +161,7 @@ Kernel filenames and partition types
 retain their NetBSD compatibility names. OS sets select the EmberBSD channel;
 that service is not yet published, so use the sets on the installation medium.
 Source, ASCII and ISO contracts are separate from boot and installation acceptance.
-The product version defaults to `Development`. The NetBSD base version remains separate.
+The product version defaults to `1.0`. The NetBSD base version remains separate.
 An amd64 CD image passed UEFI and BIOS boot and a UEFI installation to a disposable VM disk.
 The installed system then booted without the CD image. Physical installation is a separate check.
 

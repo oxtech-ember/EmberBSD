@@ -18,6 +18,8 @@ drivers, board adaptations, boot and firmware integration, system builds
 and OS validation. Application dependencies, examples and developer tools
 are maintained in the related repositories below.
 
+- To choose a device, install and check first boot, follow [Quick Start](ember/quick-start.md).
+  Continue with the [User Guide](ember/user-guide.md) for network access, applications, updates and recovery.
 - For a board or OS build, start with
   [hardware support and build instructions](README.ember.md).
 - For an application, start with
