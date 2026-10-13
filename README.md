@@ -333,8 +333,18 @@ on every board in the hardware catalog.
   (llvmpipe) and exit cleanly. Hardware GL compositing still needs the DRM
   render node, so acceleration stays unclaimed. The fixed
   [Milou](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/milou)
-  package passes its fresh-board acceptance on the same board, and
-  libksysguard 6.7.5 is ported for the upcoming plasma-workspace build.
+  package passes its fresh-board acceptance on the same board.
+  plasma-workspace 6.7.5 itself now cross-builds completely (BROKEN
+  removed, the Wayland KWin package replaces kwin-x11, 6121-file payload
+  matching the sysroot) together with its full dependency chain:
+  Poppler with boost-libs and NSS ported for cross building, exiv2,
+  libkexiv2, phonon-qt6/PulseAudio, kirigami-addons, kio-extras, kpty,
+  syntax-highlighting with a native indexer, kded, taglib and the
+  kfilemetadata extractors. Orange Pi Zero 3W carries the complete set
+  (365 packages): plasmashell, krunner, ksmserver and startplasma-wayland
+  are installed with clean dynamic dependencies, and the private KWin
+  session acceptance still passes. A startplasma session on the virtual
+  output is the next acceptance step.
   [ConsoleKit session launching](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-session.md)
   now preserves application failures and passes real-session checks on CM5;
   ordinary-user login and device ownership remain unverified.
