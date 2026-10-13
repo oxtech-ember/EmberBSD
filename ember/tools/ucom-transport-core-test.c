@@ -15,6 +15,17 @@
 	} \
 } while (0)
 
+/* Padding is not state and need not be initialized by a field-wise init. */
+static int
+same_state(const struct ucom_transport_core *a,
+    const struct ucom_transport_core *b)
+{
+
+	return a->state == b->state && a->epoch == b->epoch &&
+	    a->cookie == b->cookie && a->tx_length == b->tx_length &&
+	    a->tx_pending == b->tx_pending && a->error == b->error;
+}
+
 static int
 test_open_close_epoch(void)
 {
@@ -52,7 +63,7 @@ test_duplicate_done(void)
 	CHECK(ucom_transport_core_begin(&s, 16, &second) == 0 && second == cookie + 1);
 	memcpy(&before, &s, sizeof(s));
 	CHECK(ucom_transport_core_done(&s, epoch, cookie, 8, 0, &consumed) == 0);
-	CHECK(consumed == 0 && memcmp(&s, &before, sizeof(s)) == 0);
+	CHECK(consumed == 0 && same_state(&s, &before));
 	CHECK(ucom_transport_core_done(&s, epoch, second, 16, 0, &consumed) == 1);
 	CHECK(consumed == 16);
 	CHECK(ucom_transport_core_done(&s, epoch, second, 16, 0, &consumed) == 0);
@@ -78,7 +89,7 @@ test_old_epoch(void)
 	CHECK(!ucom_transport_core_accept(&s, old_epoch));
 	CHECK(ucom_transport_core_done(&s, old_epoch, old_cookie, 8, 0,
 	    &consumed) == 0);
-	CHECK(consumed == 0 && memcmp(&s, &before, sizeof(s)) == 0);
+	CHECK(consumed == 0 && same_state(&s, &before));
 	CHECK(ucom_transport_core_done(&s, old_epoch, old_cookie, 0, EIO,
 	    &consumed) == 0 && s.state == UCT_OPEN);
 	return 1;
@@ -133,7 +144,7 @@ test_four_port_isolation(void)
 	for (i = 0; i < 4; i++) {
 		if (i == 1)
 			continue;
-		CHECK(memcmp(&s[i], &before[i], sizeof(s[i])) == 0);
+		CHECK(same_state(&s[i], &before[i]));
 		CHECK(ucom_transport_core_done(&s[i], epoch[i], cookie[i],
 		    i + 1, 0, &consumed) == 1 && consumed == i + 1);
 	}
@@ -157,9 +168,9 @@ test_detach_final(void)
 	ucom_transport_core_close(&s);
 	ucom_transport_core_fault(&s, EIO);
 	ucom_transport_core_detach(&s);
-	CHECK(memcmp(&s, &before, sizeof(s)) == 0);
+	CHECK(same_state(&s, &before));
 	CHECK(ucom_transport_core_done(&s, epoch, cookie, 8, 0, &consumed) == 0);
-	CHECK(consumed == 0 && memcmp(&s, &before, sizeof(s)) == 0);
+	CHECK(consumed == 0 && same_state(&s, &before));
 	CHECK(ucom_transport_core_open(&s, &epoch) == ENXIO && epoch == 0);
 	CHECK(ucom_transport_core_begin(&s, 8, &cookie) == ENXIO && cookie == 0);
 	return 1;
@@ -213,10 +224,10 @@ test_invalid_states(void)
 	CHECK(ucom_transport_core_begin(&s, SIZE_MAX, &cookie) == 0);
 	memcpy(&before, &s, sizeof(s));
 	CHECK(ucom_transport_core_done(&s, epoch, cookie, 8, 0, NULL) == 0);
-	CHECK(memcmp(&s, &before, sizeof(s)) == 0);
+	CHECK(same_state(&s, &before));
 	CHECK(ucom_transport_core_begin(&s, 8, &cookie) == EBUSY && cookie == 0);
 	CHECK(ucom_transport_core_done(&s, epoch, s.cookie + 1, 8, 0, &consumed) == 0);
-	CHECK(consumed == 0 && memcmp(&s, &before, sizeof(s)) == 0);
+	CHECK(consumed == 0 && same_state(&s, &before));
 	ucom_transport_core_fault(&s, 0);
 	CHECK(s.state == UCT_FAULT && s.error == EIO && !s.tx_pending);
 	ucom_transport_core_fault(&s, -1);
