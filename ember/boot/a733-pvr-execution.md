@@ -44,7 +44,8 @@ A busy cleanup has a bounded retry. Uncertain cleanup retains the owner until re
 One firmware free list can own a BO at a time, including aliases through other VMs.
 The owning mapping cannot be removed while the free list is live.
 The firmware's maximum page count remains the allocation limit; allocation may fail.
-Free-list growth and reconstruction requests are not implemented in this slice.
+Two-phase free-list growth primitives have source checks. Firmware event dispatch
+is not yet integrated. Reconstruction requests are not implemented in this slice.
 Such requests stop the firmware service instead of reporting false completion.
 
 `SUBMIT_JOBS` supports only the fixed BXM compute stream.
@@ -100,6 +101,7 @@ A successful compute check does not establish Vulkan conformance or rendering.
 
 ## Remaining rendering path
 
+The [graphics checkpoint](a733-pvr-graphics.md) records prepared primitives and missing UAPI integration.
 Zink needs working graphics jobs and HWRT datasets in addition to compute.
 Native A733 display support also needs DE/TCON/HDMI, KMS, and shared-buffer ownership.
 Accelerated KWin and a complete Plasma Desktop session require separate physical acceptance.

@@ -70,6 +70,12 @@ struct allocation {
 	unsigned pre;
 	bool exposed;
 };
+struct graphics_queue_model {
+	struct pvr_fw_object *ring, *control, *timeline;
+	uint32_t context_address, read, value;
+	unsigned ufo_delay, read_delay;
+	bool pending, ufo_ready, read_ready;
+};
 struct model {
 	struct allocation objects[16];
 	struct pvr_backend backend;
@@ -84,6 +90,14 @@ struct model {
 	int command_error;
 	uint32_t command_result;
 	bool failed, pending, reset;
+	bool graphics, graphics_transfer;
+	struct graphics_queue_model graphics_queue[2];
+	struct rogue_fwif_cmd_geom expected_geometry;
+	struct rogue_fwif_cmd_frag expected_fragment;
+	struct rogue_fwif_cmd_transfer expected_transfer;
+	uint32_t graphics_id[2], graphics_type[2], graphics_sequence[2];
+	uint32_t timeline_address[2], expected_cleanup;
+	unsigned exposed_mask, cleaned_mask, combined_kicks, cleanup_busy_at, cleanup_bad_at;
 };
 static struct model *active;
 
@@ -173,7 +187,25 @@ model_sync(void *cookie, struct pvr_fw_object *obj, int operations)
 		a->pre &= ~BUS_DMASYNC_PREWRITE;
 	}
 	if (operations & BUS_DMASYNC_POSTREAD) {
+		unsigned i;
 		CHECK(a->pre & BUS_DMASYNC_PREREAD);
+		/* Simulated device writes become CPU-visible only on POSTREAD. */
+		if (m->graphics) {
+			m->pending = false;
+			for (i = 0; i < 2; i++) {
+				struct graphics_queue_model *q = &m->graphics_queue[i];
+				if (!q->pending)
+					continue;
+				if (obj == q->timeline && q->ufo_ready)
+					*(uint32_t *)obj->cpu = q->value;
+				if (obj == q->control && q->read_ready)
+					((struct rogue_fwif_cccb_ctl *)obj->cpu)->read_offset = q->read;
+				if (*(uint32_t *)q->timeline->cpu == q->value &&
+				    ((struct rogue_fwif_cccb_ctl *)q->control->cpu)->read_offset == q->read)
+					q->pending = false;
+				m->pending |= q->pending;
+			}
+		}
 		a->pre &= ~BUS_DMASYNC_PREREAD;
 	}
 }
@@ -261,15 +293,146 @@ parse_kick(struct model *m, const struct rogue_fwif_kccb_cmd *cmd)
 			m->objects[i].exposed = true;
 }
 
+/* Parse published bytes independently of the CPU queue's written field. */
+static void
+parse_graphics_queue(struct model *m,
+    const struct rogue_fwif_kccb_cmd_kick_data *kick, unsigned index,
+    bool dependency, struct rogue_fwif_kccb_cmd_kick_data *expected)
+{
+	struct graphics_queue_model *q = &m->graphics_queue[index];
+	struct pvr_fw_object *firmware = m->objects[0].slot;
+	struct rogue_fwif_fwcommoncontext *common;
+	struct rogue_fwif_cccb_ctl *control;
+	struct rogue_fwif_ccb_cmd_header header;
+	struct rogue_fwif_ufo ufo;
+	struct rogue_fwif_cmd_geom geometry;
+	const void *payload;
+	size_t payload_size;
+	uint32_t cursor, job_type = m->graphics_type[index];
+	unsigned commands = 0, i;
+
+	CHECK(index < 2 && !q->pending);
+	CHECK(kick->context_fw_addr == firmware->address + index * 152U);
+	common = address_cpu(m, kick->context_fw_addr, sizeof(*common));
+	CHECK(common->dm == (m->graphics_transfer || index == 1 ? PVR_FWIF_DM_FRAG : PVR_FWIF_DM_GEOM));
+	q->context_address = kick->context_fw_addr;
+	q->ring = find_address(m, common->ccb_fw_addr, 32768);
+	q->control = find_address(m, common->ccbctl_fw_addr, sizeof(*control));
+	q->timeline = find_address(m, m->timeline_address[index], sizeof(uint32_t));
+	control = q->control->cpu;
+	CHECK(control->wrap_mask == 32767 && kick->client_woff_update < 32768);
+	CHECK(find_slot(m, q->ring)->pre & BUS_DMASYNC_PREWRITE);
+	CHECK(find_slot(m, q->control)->pre & BUS_DMASYNC_PREREAD);
+	CHECK(find_slot(m, q->timeline)->pre & BUS_DMASYNC_PREREAD);
+	CHECK(find_slot(m, firmware)->pre & BUS_DMASYNC_PREWRITE);
+	cursor = control->read_offset;
+	while (cursor != kick->client_woff_update) {
+		CHECK(cursor + sizeof(header) <= q->ring->size);
+		memcpy(&header, (uint8_t *)q->ring->cpu + cursor, sizeof(header));
+		CHECK(header.cmd_size <= q->ring->size - cursor - sizeof(header));
+		CHECK((header.cmd_size & 7) == 0);
+		if (header.cmd_type == ROGUE_FWIF_CCB_CMD_TYPE_PADDING) {
+			CHECK(commands == 0 && cursor != 0);
+			CHECK(cursor + sizeof(header) + header.cmd_size == q->ring->size);
+			m->pads++;
+			cursor = 0;
+			continue;
+		}
+		payload = (uint8_t *)q->ring->cpu + cursor + sizeof(header);
+		if (commands == 0 && dependency) {
+			CHECK(header.cmd_type == ROGUE_FWIF_CCB_CMD_TYPE_FENCE_PR);
+			CHECK(header.cmd_size == sizeof(ufo));
+			CHECK(header.ext_job_ref == 0 && header.int_job_ref == 0);
+			memcpy(&ufo, payload, sizeof(ufo));
+			CHECK(ufo.addr == m->timeline_address[0]);
+			CHECK(ufo.value == m->graphics_sequence[0]);
+		} else if (commands == (dependency ? 1U : 0U)) {
+			CHECK(header.cmd_type == job_type);
+			CHECK(header.ext_job_ref == m->graphics_id[index]);
+			CHECK(header.int_job_ref == m->graphics_id[index]);
+			if (job_type == ROGUE_FWIF_CCB_CMD_TYPE_GEOM) {
+				geometry = m->expected_geometry;
+				geometry.partial_render_geom_frag_fence.addr = m->timeline_address[0];
+				geometry.partial_render_geom_frag_fence.value = m->graphics_sequence[0];
+				payload_size = sizeof(geometry);
+				CHECK(header.cmd_size == payload_size);
+				CHECK(memcmp(payload, &geometry, payload_size) == 0);
+			} else if (job_type == ROGUE_FWIF_CCB_CMD_TYPE_TQ_3D) {
+				CHECK(header.cmd_size == sizeof(m->expected_transfer));
+				CHECK(memcmp(payload, &m->expected_transfer, sizeof(m->expected_transfer)) == 0);
+			} else {
+				CHECK(header.cmd_size == sizeof(m->expected_fragment));
+				CHECK(memcmp(payload, &m->expected_fragment, sizeof(m->expected_fragment)) == 0);
+			}
+		} else {
+			CHECK(commands == (dependency ? 2U : 1U));
+			CHECK(header.cmd_type == ROGUE_FWIF_CCB_CMD_TYPE_UPDATE);
+			CHECK(header.cmd_size == sizeof(ufo));
+			CHECK(header.ext_job_ref == 0 && header.int_job_ref == 0);
+			memcpy(&ufo, payload, sizeof(ufo));
+			CHECK(ufo.addr == m->timeline_address[index]);
+			CHECK(ufo.value == m->graphics_sequence[index] + 1);
+			m->graphics_sequence[index] = q->value = ufo.value;
+		}
+		commands++;
+		cursor += sizeof(header) + header.cmd_size;
+	}
+	CHECK(commands == (dependency ? 3U : 2U));
+	memset(expected, 0, sizeof(*expected));
+	expected->context_fw_addr = q->context_address;
+	expected->client_woff_update = cursor;
+	expected->client_wrap_mask_update = 32767;
+	if (!m->graphics_transfer && !(index == 1 && job_type == ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR)) {
+		expected->num_cleanup_ctl = 1;
+		expected->cleanup_ctl_fw_addr[0] = m->expected_cleanup;
+	}
+	CHECK(memcmp(kick, expected, sizeof(*expected)) == 0);
+	q->read = cursor;
+	q->pending = true;
+	q->ufo_ready = q->read_ready = false;
+	m->exposed_mask |= 1U << index;
+	for (i = 0; i < __arraycount(m->objects); i++)
+		if (m->objects[i].slot != NULL)
+			m->objects[i].exposed = true;
+}
+
+static void
+parse_graphics_kick(struct model *m, const struct rogue_fwif_kccb_cmd *cmd)
+{
+	struct rogue_fwif_kccb_cmd expected;
+	CHECK(!m->pending);
+	memset(&expected, 0, sizeof(expected));
+	expected.cmd_type = cmd->cmd_type;
+	if (cmd->cmd_type == ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK) {
+		CHECK(!m->graphics_transfer);
+		parse_graphics_queue(m, &cmd->cmd_data.combined_geom_frag_cmd_kick_data.geom_cmd_kick_data,
+		    0, false, &expected.cmd_data.combined_geom_frag_cmd_kick_data.geom_cmd_kick_data);
+		parse_graphics_queue(m, &cmd->cmd_data.combined_geom_frag_cmd_kick_data.frag_cmd_kick_data,
+		    1, true, &expected.cmd_data.combined_geom_frag_cmd_kick_data.frag_cmd_kick_data);
+		m->combined_kicks++;
+	} else {
+		CHECK(cmd->cmd_type == ROGUE_FWIF_KCCB_CMD_KICK);
+		parse_graphics_queue(m, &cmd->cmd_data.cmd_kick_data, m->graphics_transfer ? 0 : 1,
+		    false, &expected.cmd_data.cmd_kick_data);
+	}
+	CHECK(memcmp(cmd, &expected, sizeof(expected)) == 0);
+	m->pending = true;
+	m->sleeps = 0;
+}
+
 static int
 model_command(void *cookie, const struct rogue_fwif_kccb_cmd *cmd, uint32_t *result)
 {
 	struct model *m = cookie;
 	unsigned i;
 	CHECK(!m->failed && result != NULL);
-	if (cmd->cmd_type == ROGUE_FWIF_KCCB_CMD_KICK) {
+	if (cmd->cmd_type == ROGUE_FWIF_KCCB_CMD_KICK ||
+	    cmd->cmd_type == ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK) {
 		m->kicks++;
-		parse_kick(m, cmd);
+		if (m->graphics)
+			parse_graphics_kick(m, cmd);
+		else
+			parse_kick(m, cmd);
 	} else {
 		CHECK(cmd->cmd_type == ROGUE_FWIF_KCCB_CMD_CLEANUP);
 		CHECK(cmd->cmd_data.cleanup_data.cleanup_type == ROGUE_FWIF_CLEANUP_FWCOMMONCONTEXT);
@@ -277,14 +440,35 @@ model_command(void *cookie, const struct rogue_fwif_kccb_cmd *cmd, uint32_t *res
 		    sizeof(struct rogue_fwif_fwcommoncontext));
 		CHECK(!m->pending);
 		m->cleanups++;
+		if (m->cleanups == m->cleanup_bad_at) {
+			*result = 0;
+			return 0;
+		}
+		if (m->cleanups == m->cleanup_busy_at) {
+			*result = ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED | 2;
+			return EBUSY;
+		}
 		if (m->busy != 0) {
 			m->busy--;
 			*result = ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED | 2;
 			return EBUSY;
 		}
-		if (m->command_error == 0 && m->command_result == ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED)
-			for (i = 0; i < __arraycount(m->objects); i++)
-				m->objects[i].exposed = false;
+		if (m->command_error == 0 && m->command_result == ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED) {
+			if (m->graphics) {
+				uint32_t address = cmd->cmd_data.cleanup_data.cleanup_data.context_fw_addr;
+				unsigned mask = 0;
+				for (i = 0; i < 2; i++)
+					if ((m->exposed_mask & (1U << i)) != 0 &&
+					    address == m->graphics_queue[i].context_address)
+						mask |= 1U << i;
+				CHECK(mask != 0 && (m->cleaned_mask & mask) == 0);
+				m->cleaned_mask |= mask;
+			}
+			/* No backing is free until every exposed common context has ACKed. */
+			if (!m->graphics || m->cleaned_mask == m->exposed_mask)
+				for (i = 0; i < __arraycount(m->objects); i++)
+					m->objects[i].exposed = false;
+		}
 	}
 	*result = m->command_result;
 	return m->command_error;
@@ -297,6 +481,17 @@ kpause(const char *name, bool interruptible, int ticks, void *lock)
 	CHECK(strcmp(name, "pvrjob") == 0 && !interruptible && ticks > 0 && lock == NULL);
 	CHECK(m != NULL && m->pending);
 	m->sleeps++;
+	if (m->graphics) {
+		unsigned i;
+		for (i = 0; i < 2; i++) {
+			struct graphics_queue_model *q = &m->graphics_queue[i];
+			if (m->sleeps == q->ufo_delay)
+				q->ufo_ready = true;
+			if (m->sleeps == q->read_delay)
+				q->read_ready = true;
+		}
+		return 0;
+	}
 	if (m->sleeps == m->ufo_delay)
 		*m->pending_ufo = m->pending_value;
 	if (m->sleeps == m->read_delay)
@@ -576,6 +771,252 @@ invalid_inputs(void)
 	CHECK(pvr_context_destroy(&ctx) == 0);
 }
 
+static struct pvr_context *
+graphics_context(struct model *m, uint32_t type)
+{
+	struct pvr_context *ctx;
+	uint8_t bytes[384] = { 0 };
+	unsigned i;
+
+	init_model(m);
+	ctx = create_context(m, type);
+	m->graphics = true;
+	m->graphics_transfer = type == DRM_PVR_CTX_TYPE_TRANSFER_FRAG;
+	m->expected_cleanup = 0xc0900040;
+	for (i = 0; i < ctx->count; i++) {
+		m->timeline_address[i] = ctx->queue[i].timeline.address;
+		m->graphics_queue[i].ufo_delay = i == 0 ? 2 : 3;
+		m->graphics_queue[i].read_delay = i == 0 ? 4 : 7;
+	}
+	put32(bytes, 40);
+	put32(bytes + 8, 0x4000);
+	put32(bytes + 16, 0x8000);
+	put32(bytes + 24, 0x3456);
+	CHECK(pvr_stream_geometry(PVR_STREAM_BVNC, bytes, 40, 7, &m->expected_geometry) == 0);
+	memset(bytes, 0, sizeof(bytes));
+	put32(bytes, 384);
+	for (i = 8; i < 368; i += 4)
+		put32(bytes + i, 0x10000 + i);
+	CHECK(pvr_stream_fragment(PVR_STREAM_BVNC, bytes, 384, 255,
+	    &m->expected_fragment, &m->graphics_type[1]) == 0);
+	memset(bytes, 0, sizeof(bytes));
+	put32(bytes, 176);
+	for (i = 8; i < 176; i += 4)
+		put32(bytes + i, 0x20000 + i);
+	CHECK(pvr_stream_transfer(PVR_STREAM_BVNC, bytes, 176, 1, &m->expected_transfer) == 0);
+	m->expected_geometry.cmd_shared.hwrt_data_fw_addr = 0xc0900000;
+	m->expected_fragment.cmd_shared.hwrt_data_fw_addr = 0xc0900000;
+	m->expected_geometry.cmd_shared.cmn.frame_num = 11;
+	m->expected_fragment.cmd_shared.cmn.frame_num = 12;
+	m->expected_transfer.common.frame_num = 13;
+	/* The queue owns this fence. It must replace both caller-provided words. */
+	m->expected_geometry.partial_render_geom_frag_fence.addr = 0x11111111;
+	m->expected_geometry.partial_render_geom_frag_fence.value = 0x22222222;
+	m->graphics_type[0] = m->graphics_transfer ? ROGUE_FWIF_CCB_CMD_TYPE_TQ_3D : ROGUE_FWIF_CCB_CMD_TYPE_GEOM;
+	m->graphics_id[0] = 101;
+	m->graphics_id[1] = 102;
+	return ctx;
+}
+
+static int
+render_pair(struct model *m, struct pvr_context *ctx, uint32_t type)
+{
+	m->graphics_type[1] = type;
+	return pvr_context_render_pair(ctx, &m->expected_geometry,
+	    &m->expected_fragment, type, m->expected_cleanup,
+	    m->graphics_id[0], m->graphics_id[1]);
+}
+
+static void
+graphics_jobs(void)
+{
+	struct model m;
+	struct pvr_context *ctx;
+	struct rogue_fwif_cmd_geom original;
+	unsigned i, pads;
+
+	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
+	original = m.expected_geometry;
+	for (i = 0; i < 250; i++) {
+		m.graphics_id[0] = 101 + i * 2;
+		m.graphics_id[1] = 102 + i * 2;
+		if (i == 100) {
+			/* Reverse completion order; neither queue alone is completion. */
+			m.graphics_queue[0].ufo_delay = 7;
+			m.graphics_queue[0].read_delay = 3;
+			m.graphics_queue[1].ufo_delay = 2;
+			m.graphics_queue[1].read_delay = 4;
+		}
+		CHECK(render_pair(&m, ctx, i & 1 ? ROGUE_FWIF_CCB_CMD_TYPE_FRAG :
+		    ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == 0);
+		CHECK(memcmp(&m.expected_geometry, &original, sizeof(original)) == 0);
+		CHECK(!m.pending && !m.failed && !ctx->failed && m.sleeps == 7);
+		CHECK(m.graphics_sequence[0] == i + 1 && m.graphics_sequence[1] == i + 1);
+	}
+	CHECK(m.pads >= 5 && m.combined_kicks == 250 && m.kicks == 250);
+	pads = m.pads;
+	m.graphics_type[1] = ROGUE_FWIF_CCB_CMD_TYPE_FRAG;
+	CHECK(pvr_context_fragment(ctx, &m.expected_fragment, m.expected_cleanup, m.graphics_id[1]) == 0);
+	CHECK(m.graphics_sequence[0] == 250 && m.graphics_sequence[1] == 251);
+	CHECK(m.pads >= pads && m.kicks == 251 && !m.pending);
+	/* One cleanup ACK must not release either queue or their shared image. */
+	m.cleanup_busy_at = 2;
+	CHECK(pvr_context_destroy(&ctx) == EBUSY);
+	CHECK(ctx != NULL && m.live == 9 && m.frees == 0);
+	CHECK(m.cleaned_mask == 1 && m.exposed_mask == 3);
+	CHECK(ctx->queue[0].cleaned && !ctx->queue[1].cleaned);
+	CHECK(pvr_context_destroy(&ctx) == 0);
+	CHECK(ctx == NULL && m.live == 0 && m.frees == 9 && m.cleanups == 3);
+
+	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
+	m.graphics_type[1] = ROGUE_FWIF_CCB_CMD_TYPE_FRAG;
+	CHECK(pvr_context_fragment(ctx, &m.expected_fragment, m.expected_cleanup, 102) == 0);
+	CHECK(m.exposed_mask == 2 && m.combined_kicks == 0);
+	CHECK(pvr_context_destroy(&ctx) == 0);
+	CHECK(m.cleanups == 1 && m.live == 0);
+
+	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_TRANSFER_FRAG);
+	for (i = 0; i < 250; i++) {
+		m.graphics_id[0] = 300 + i;
+		CHECK(pvr_context_transfer(ctx, &m.expected_transfer, m.graphics_id[0]) == 0);
+		CHECK(!m.pending && !m.failed && m.sleeps == 4);
+	}
+	CHECK(m.pads >= 2 && m.kicks == 250 && m.combined_kicks == 0);
+	CHECK(pvr_context_destroy(&ctx) == 0);
+	CHECK(ctx == NULL && m.live == 0 && m.cleanups == 1);
+}
+
+static void
+graphics_failures(void)
+{
+	struct model m;
+	struct pvr_context *ctx;
+	unsigned scenario, kicks;
+	int expected;
+
+	for (scenario = 0; scenario < 8; scenario++) {
+		ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
+		expected = ETIMEDOUT;
+		switch (scenario) {
+		case 0: m.graphics_queue[0].ufo_delay = 0; break;
+		case 1: m.graphics_queue[0].read_delay = 0; break;
+		case 2: m.graphics_queue[1].ufo_delay = 0; break;
+		case 3: m.graphics_queue[1].read_delay = 0; break;
+		case 4: m.command_error = ETIMEDOUT; break;
+		case 5: m.command_result = 0; expected = EIO; break;
+		case 6:
+			m.check_fail = m.health + 3;
+			m.graphics_queue[1].read_delay = 20;
+			expected = EIO;
+			break;
+		case 7:
+			/* Both queues complete before the last health observation fails. */
+			m.check_fail = m.health + 3;
+			expected = EIO;
+			break;
+		}
+		CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == expected);
+		CHECK(ctx->failed && m.failed && m.live == 9 && m.frees == 0);
+		if (scenario < 4)
+			CHECK(m.sleeps == 1000);
+		if (scenario == 6)
+			CHECK(!m.graphics_queue[0].pending && m.graphics_queue[1].pending);
+		if (scenario == 7)
+			CHECK(!m.pending);
+		kicks = m.kicks;
+		CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == EIO);
+		CHECK(pvr_context_destroy(&ctx) == EIO);
+		CHECK(m.kicks == kicks && m.live == 9 && m.frees == 0);
+		reset_model(&m, &ctx);
+	}
+	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == 0);
+	m.cleanup_bad_at = 2;
+	CHECK(pvr_context_destroy(&ctx) == EIO);
+	CHECK(m.failed && m.cleaned_mask == 1 && m.live == 9 && m.frees == 0);
+	CHECK(pvr_context_destroy(&ctx) == EIO);
+	reset_model(&m, &ctx);
+
+	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
+	m.graphics_type[1] = ROGUE_FWIF_CCB_CMD_TYPE_FRAG;
+	m.graphics_queue[1].ufo_delay = 0;
+	CHECK(pvr_context_fragment(ctx, &m.expected_fragment, m.expected_cleanup, 102) == ETIMEDOUT);
+	CHECK(ctx->failed && m.failed && m.live == 9 && m.frees == 0);
+	reset_model(&m, &ctx);
+	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_TRANSFER_FRAG);
+	m.graphics_queue[0].read_delay = 0;
+	CHECK(pvr_context_transfer(ctx, &m.expected_transfer, 101) == ETIMEDOUT);
+	CHECK(ctx->failed && m.failed && m.live == 5 && m.frees == 0);
+	reset_model(&m, &ctx);
+}
+
+static void
+graphics_admission(void)
+{
+	struct model m;
+	struct pvr_context *ctx;
+	struct rogue_fwif_cccb_ctl *ctl;
+	uint32_t saved;
+
+	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
+	m.graphics_type[1] = ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR;
+	CHECK(pvr_context_render_pair(NULL, &m.expected_geometry, &m.expected_fragment,
+	    m.graphics_type[1], m.expected_cleanup, 101, 102) == EINVAL);
+	CHECK(pvr_context_render_pair(ctx, NULL, &m.expected_fragment,
+	    m.graphics_type[1], m.expected_cleanup, 101, 102) == EINVAL);
+	CHECK(pvr_context_render_pair(ctx, &m.expected_geometry, NULL,
+	    m.graphics_type[1], m.expected_cleanup, 101, 102) == EINVAL);
+	saved = m.expected_cleanup;
+	m.expected_cleanup = 0;
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == EINVAL);
+	m.expected_cleanup = saved + 8;
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == EINVAL);
+	m.expected_cleanup = saved;
+	m.expected_fragment.cmd_shared.hwrt_data_fw_addr++;
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == EINVAL);
+	m.expected_fragment.cmd_shared.hwrt_data_fw_addr--;
+	saved = m.expected_geometry.cmd_shared.hwrt_data_fw_addr;
+	m.expected_geometry.cmd_shared.hwrt_data_fw_addr = 0;
+	m.expected_fragment.cmd_shared.hwrt_data_fw_addr = 0;
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == EINVAL);
+	m.expected_geometry.cmd_shared.hwrt_data_fw_addr = saved;
+	m.expected_fragment.cmd_shared.hwrt_data_fw_addr = saved;
+	m.graphics_id[0] = 0;
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == EINVAL);
+	m.graphics_id[0] = 101; m.graphics_id[1] = 0;
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == EINVAL);
+	m.graphics_id[1] = 102;
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_CDM) == EOPNOTSUPP);
+	CHECK(pvr_context_transfer(ctx, &m.expected_transfer, 101) == EOPNOTSUPP);
+	CHECK(pvr_context_fragment(ctx, NULL, m.expected_cleanup, 102) == EINVAL);
+	CHECK(pvr_context_fragment(ctx, &m.expected_fragment, 0, 102) == EINVAL);
+	CHECK(pvr_context_fragment(ctx, &m.expected_fragment, m.expected_cleanup + 8, 102) == EINVAL);
+	CHECK(pvr_context_fragment(ctx, &m.expected_fragment, m.expected_cleanup, 0) == EINVAL);
+	ctl = ctx->queue[1].control.cpu;
+	ctl->read_offset = 8;
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == EIO);
+	ctl->read_offset = 0;
+	ctx->queue[1].sequence = UINT32_MAX;
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == EOVERFLOW);
+	ctx->queue[1].sequence = 0;
+	ctx->queue[1].cleaned = true;
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == EOVERFLOW);
+	ctx->queue[1].cleaned = false;
+	CHECK(m.kicks == 0 && ctx->queue[0].written == 0 && ctx->queue[1].written == 0);
+	CHECK(ctx->queue[0].sequence == 0 && ctx->queue[1].sequence == 0);
+	CHECK(!ctx->failed && !m.failed);
+	CHECK(pvr_context_destroy(&ctx) == 0);
+	CHECK(m.cleanups == 0 && m.live == 0);
+
+	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_TRANSFER_FRAG);
+	CHECK(pvr_context_transfer(NULL, &m.expected_transfer, 1) == EINVAL);
+	CHECK(pvr_context_transfer(ctx, NULL, 1) == EINVAL);
+	CHECK(pvr_context_transfer(ctx, &m.expected_transfer, 0) == EINVAL);
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == EOPNOTSUPP);
+	CHECK(pvr_context_fragment(ctx, &m.expected_fragment, m.expected_cleanup, 1) == EOPNOTSUPP);
+	CHECK(pvr_context_destroy(&ctx) == 0);
+}
+
 int
 main(void)
 {
@@ -584,6 +1025,9 @@ main(void)
 	jobs_and_cleanup();
 	retained_failures();
 	invalid_inputs();
+	graphics_jobs();
+	graphics_failures();
+	graphics_admission();
 	CHECK(heap_objects == 0);
 	printf("PowerVR native context contract: PASS (%u checks)\n", checks);
 	return 0;

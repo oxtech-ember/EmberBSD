@@ -354,6 +354,237 @@ failed:
 	return error;
 }
 
+/* The caller validates both queues before publishing either half of a pair. */
+static int
+pvr_context_queue_idle(struct pvr_context *ctx, unsigned index)
+{
+	const struct pvr_backend *be = ctx->backend;
+	struct pvr_context_queue *queue = &ctx->queue[index];
+	struct rogue_fwif_cccb_ctl *control = queue->control.cpu;
+	uint32_t read;
+
+	if (queue->cleaned || queue->sequence == UINT32_MAX)
+		return EOVERFLOW;
+	be->sync(be->cookie, &queue->control, BUS_DMASYNC_POSTREAD);
+	read = control->read_offset;
+	be->sync(be->cookie, &queue->control, BUS_DMASYNC_PREREAD);
+	return read == queue->written ? 0 : EIO;
+}
+
+static void
+pvr_context_graphics_write(struct pvr_context *ctx, unsigned index,
+    uint32_t type, const void *data, size_t size, uint32_t id,
+    const struct rogue_fwif_ufo *dependency)
+{
+	const struct pvr_backend *be = ctx->backend;
+	struct pvr_context_queue *queue = &ctx->queue[index];
+	struct rogue_fwif_ccb_cmd_header padding;
+	struct rogue_fwif_ufo update;
+	size_t used, remaining;
+
+	used = 2 * sizeof(padding) + roundup2(size, 8) + sizeof(update);
+	if (dependency != NULL)
+		used += sizeof(padding) + sizeof(*dependency);
+	remaining = PVR_CONTEXT_RING_SIZE - queue->written;
+	if (remaining < used + sizeof(padding)) {
+		memset(&padding, 0, sizeof(padding));
+		padding.cmd_type = ROGUE_FWIF_CCB_CMD_TYPE_PADDING;
+		padding.cmd_size = (uint32_t)(remaining - sizeof(padding));
+		memcpy((uint8_t *)queue->ring.cpu + queue->written,
+		    &padding, sizeof(padding));
+		queue->written = 0;
+	}
+	if (dependency != NULL)
+		pvr_context_write(queue, ROGUE_FWIF_CCB_CMD_TYPE_FENCE_PR,
+		    dependency, sizeof(*dependency), 0);
+	pvr_context_write(queue, type, data, size, id);
+	update.addr = queue->timeline.address;
+	update.value = ++queue->sequence;
+	pvr_context_write(queue, ROGUE_FWIF_CCB_CMD_TYPE_UPDATE,
+	    &update, sizeof(update), 0);
+	be->sync(be->cookie, &queue->ring, BUS_DMASYNC_PREWRITE);
+}
+
+static void
+pvr_context_graphics_kick(struct pvr_context *ctx, unsigned index,
+    uint32_t cleanup, struct rogue_fwif_kccb_cmd_kick_data *kick)
+{
+	struct pvr_context_queue *queue = &ctx->queue[index];
+
+	kick->context_fw_addr = ctx->firmware.address + queue->offset;
+	kick->client_woff_update = queue->written;
+	kick->client_wrap_mask_update = PVR_CONTEXT_RING_SIZE - 1;
+	if (cleanup != 0) {
+		kick->num_cleanup_ctl = 1;
+		kick->cleanup_ctl_fw_addr[0] = cleanup;
+	}
+	queue->exposed = true;
+}
+
+/* Wait for all queues together. Geometry may need a partial render to finish. */
+static int
+pvr_context_graphics_wait(struct pvr_context *ctx, unsigned mask)
+{
+	const struct pvr_backend *be = ctx->backend;
+	struct pvr_context_queue *queue;
+	struct rogue_fwif_cccb_ctl *control;
+	uint32_t read, value;
+	unsigned i, j, done = 0;
+	int error;
+
+	for (i = 0; i < PVR_CONTEXT_POLL_COUNT; i++) {
+		for (j = 0; j < ctx->count; j++) {
+			if ((mask & (1U << j)) == 0)
+				continue;
+			queue = &ctx->queue[j];
+			control = queue->control.cpu;
+			be->sync(be->cookie, &queue->timeline, BUS_DMASYNC_POSTREAD);
+			value = *(const uint32_t *)queue->timeline.cpu;
+			be->sync(be->cookie, &queue->timeline, BUS_DMASYNC_PREREAD);
+			be->sync(be->cookie, &queue->control, BUS_DMASYNC_POSTREAD);
+			read = control->read_offset;
+			be->sync(be->cookie, &queue->control, BUS_DMASYNC_PREREAD);
+			if (value == queue->sequence && read == queue->written)
+				done |= 1U << j;
+		}
+		if (done == mask) {
+			error = be->check(be->cookie);
+			if (error != 0)
+				return error;
+			for (j = 0; j < ctx->count; j++)
+				if ((mask & (1U << j)) != 0)
+					be->sync(be->cookie, &ctx->queue[j].ring,
+					    BUS_DMASYNC_POSTWRITE);
+			return 0;
+		}
+		if (i % 10 == 0) {
+			error = be->check(be->cookie);
+			if (error != 0)
+				return error;
+		}
+		(void)kpause("pvrjob", false, MAX(1, hz / 100), NULL);
+	}
+	return ETIMEDOUT;
+}
+
+static int
+pvr_context_graphics_send(struct pvr_context *ctx,
+    const struct rogue_fwif_kccb_cmd *kick, unsigned mask)
+{
+	const struct pvr_backend *be = ctx->backend;
+	uint32_t result;
+	int error;
+
+	error = be->command(be->cookie, kick, &result);
+	if (error == 0 && result != ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED)
+		error = EIO;
+	if (error == 0)
+		error = pvr_context_graphics_wait(ctx, mask);
+	if (error != 0) {
+		ctx->failed = true;
+		be->fail(be->cookie);
+	}
+	return error;
+}
+
+int
+pvr_context_render_pair(struct pvr_context *ctx,
+    const struct rogue_fwif_cmd_geom *geometry,
+    const struct rogue_fwif_cmd_frag *fragment, uint32_t fragment_type,
+    uint32_t cleanup, uint32_t geometry_id, uint32_t fragment_id)
+{
+	struct rogue_fwif_cmd_geom command;
+	struct rogue_fwif_kccb_cmd kick;
+	struct rogue_fwif_ufo dependency;
+	int error;
+
+	if (ctx == NULL || geometry == NULL || fragment == NULL ||
+	    cleanup == 0 || (cleanup & 63) != 0 ||
+	    geometry->cmd_shared.hwrt_data_fw_addr == 0 ||
+	    geometry->cmd_shared.hwrt_data_fw_addr != fragment->cmd_shared.hwrt_data_fw_addr ||
+	    geometry_id == 0 || fragment_id == 0)
+		return EINVAL;
+	if (ctx->type != DRM_PVR_CTX_TYPE_RENDER ||
+	    (fragment_type != ROGUE_FWIF_CCB_CMD_TYPE_FRAG &&
+	    fragment_type != ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR))
+		return EOPNOTSUPP;
+	if (ctx->failed)
+		return EIO;
+	error = ctx->backend->check(ctx->backend->cookie);
+	if (error == 0)
+		error = pvr_context_queue_idle(ctx, 0);
+	if (error == 0)
+		error = pvr_context_queue_idle(ctx, 1);
+	if (error != 0)
+		return error;
+	command = *geometry;
+	command.partial_render_geom_frag_fence.addr = ctx->queue[0].timeline.address;
+	command.partial_render_geom_frag_fence.value = ctx->queue[0].sequence;
+	pvr_context_graphics_write(ctx, 0, ROGUE_FWIF_CCB_CMD_TYPE_GEOM,
+	    &command, sizeof(command), geometry_id, NULL);
+	dependency.addr = ctx->queue[0].timeline.address;
+	dependency.value = ctx->queue[0].sequence;
+	pvr_context_graphics_write(ctx, 1, fragment_type,
+	    fragment, sizeof(*fragment), fragment_id, &dependency);
+	memset(&kick, 0, sizeof(kick));
+	kick.cmd_type = ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK;
+	pvr_context_graphics_kick(ctx, 0, cleanup,
+	    &kick.cmd_data.combined_geom_frag_cmd_kick_data.geom_cmd_kick_data);
+	/* A partial render uses the resources already held by geometry. */
+	pvr_context_graphics_kick(ctx, 1,
+	    fragment_type == ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR ? 0 : cleanup,
+	    &kick.cmd_data.combined_geom_frag_cmd_kick_data.frag_cmd_kick_data);
+	return pvr_context_graphics_send(ctx, &kick, 3);
+}
+
+static int
+pvr_context_graphics_single(struct pvr_context *ctx, unsigned index,
+    uint32_t type, const void *command, size_t size, uint32_t cleanup, uint32_t id)
+{
+	struct rogue_fwif_kccb_cmd kick;
+	int error;
+
+	if (ctx->failed)
+		return EIO;
+	error = ctx->backend->check(ctx->backend->cookie);
+	if (error == 0)
+		error = pvr_context_queue_idle(ctx, index);
+	if (error != 0)
+		return error;
+	pvr_context_graphics_write(ctx, index, type, command, size, id, NULL);
+	memset(&kick, 0, sizeof(kick));
+	kick.cmd_type = ROGUE_FWIF_KCCB_CMD_KICK;
+	pvr_context_graphics_kick(ctx, index, cleanup, &kick.cmd_data.cmd_kick_data);
+	return pvr_context_graphics_send(ctx, &kick, 1U << index);
+}
+
+int
+pvr_context_fragment(struct pvr_context *ctx,
+    const struct rogue_fwif_cmd_frag *command, uint32_t cleanup, uint32_t id)
+{
+
+	if (ctx == NULL || command == NULL || cleanup == 0 || (cleanup & 63) != 0 ||
+	    command->cmd_shared.hwrt_data_fw_addr == 0 || id == 0)
+		return EINVAL;
+	if (ctx->type != DRM_PVR_CTX_TYPE_RENDER)
+		return EOPNOTSUPP;
+	return pvr_context_graphics_single(ctx, 1, ROGUE_FWIF_CCB_CMD_TYPE_FRAG,
+	    command, sizeof(*command), cleanup, id);
+}
+
+int
+pvr_context_transfer(struct pvr_context *ctx,
+    const struct rogue_fwif_cmd_transfer *command, uint32_t id)
+{
+
+	if (ctx == NULL || command == NULL || id == 0)
+		return EINVAL;
+	if (ctx->type != DRM_PVR_CTX_TYPE_TRANSFER_FRAG)
+		return EOPNOTSUPP;
+	return pvr_context_graphics_single(ctx, 0, ROGUE_FWIF_CCB_CMD_TYPE_TQ_3D,
+	    command, sizeof(*command), 0, id);
+}
+
 uint32_t
 pvr_context_type(const struct pvr_context *ctx)
 {
