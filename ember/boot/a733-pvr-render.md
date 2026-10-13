@@ -90,7 +90,7 @@ CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' \
 The contract compiles the actual query and registration code with boundary
 stubs. It checks short objects, output bounds, padding, copy faults, unsupported
 queries, duplicate registration, and last-reference cleanup after failed attach.
-These checks do not exercise the kernel DRM core, device nodes, or hardware.
+These host checks do not exercise the running kernel, device nodes, or hardware.
 The BO contract also compiles the real GEM close and pager reference helpers.
 It checks 4 KiB and 16 KiB host-page cases and allocation failure cleanup.
 The mmap contract rejects a missing driver callback before changing outputs.
@@ -144,3 +144,26 @@ The final unmap completed without a fault or watchdog reset.
 
 This accepts native GEM and CPU mappings only. GPU cache coherency for these
 BOs, GPU VM, DRM job submission, Vulkan, display, and Plasma remain unaccepted.
+
+## Next Mesa contracts
+
+The Mesa 26.2.4 PowerVR winsys creates a VM before it reports a physical device.
+It queries heap and static-area layouts, then maps three internal BOs.
+The next native interface therefore needs real per-file VM ownership,
+nonoverlapping GPU mappings, page-table updates, and BO references through unmap.
+The diagnostic compute VM is not a general userspace VM manager.
+GPU, runtime, quirk, and enhancement queries must report the pinned hardware
+and firmware profile. Placeholder values cannot satisfy this contract.
+
+Device creation also allocates a global free list and creates compute, render,
+and transfer contexts, even for a compute-only application.
+The current Mesa null-job path calls `drmSyncobjTransfer` for binary waits.
+The native DRM implementation requires timeline support for that ioctl.
+The known [timeline wait lifetime issue](bcm2712-v3d-sync.md) must be resolved
+before advertising that capability. Existing binary syncobj support is not
+sufficient evidence for the full PowerVR path.
+
+Mesa includes BVNC `36.56.104.183` but excludes it from its conformant allowlist.
+Retain its explicit `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1` experimental gate.
+The display path additionally needs native A733 DE/TCON/HDMI support and KMS.
+Neither a render node nor the accepted compute packet establishes that path.

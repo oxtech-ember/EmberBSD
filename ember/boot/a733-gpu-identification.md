@@ -497,4 +497,6 @@ This PLL result establishes native power/clock bring-up and physical identity.
 A separate [physical bootstrap result](a733-gpu-fwboot.md#physical-bootstrap-result)
 confirms firmware startup. The [firmware command result](a733-gpu-fwprobe.md#physical-command-result)
 confirms LOGTYPE and MMUCACHE completion. GPU memory isolation, IRQ completion,
-PowerVR DRM, Mesa Vulkan/Zink, display output, and accelerated Plasma remain unverified.
+Native [PowerVR DRM identity and CPU GEM mappings](a733-pvr-render.md) now have
+separate physical acceptance. GPU VM and DRM submission, Mesa Vulkan/Zink,
+display output, and accelerated Plasma remain unverified.
