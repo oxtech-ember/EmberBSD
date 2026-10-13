@@ -2,6 +2,10 @@
 
 **Unix for intelligent devices.**
 
+The product version is **EmberBSD 1.0** for the current kernel state.
+This version is separate from the NetBSD 11.0 compatibility identifiers.
+See the validation limits below before selecting a hardware target.
+
 EmberBSD is an independent fork of [NetBSD](https://github.com/NetBSD/src),
 based on version 11, for single-board computers and embedded systems.
 It adds hardware support for Raspberry Pi 5 and related boards, for
@@ -23,11 +27,17 @@ are maintained in the related repositories below.
 - For an application, start with
   [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) and its
   documented dependencies in [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports).
+- For a kernel fix, board port or shared change, follow
+  [CONTRIBUTING](CONTRIBUTING.md), then the [kernel guide](ember/development/kernel.md)
+  or [board-change worksheet](ember/development/board-change.md).
+  The same acceptance procedure applies to maintainers and agent-assisted development.
 - For an AI assistant, choose [user skills](#connect-user-skills) for device use
   or [developer skills](#connect-developer-skills) for development.
 
 - For installation screens and compatible set sources, see
   [installer identity](ember/boot/installer-branding.md).
+  The installer offers bootable USB/image sets and an EmberBSD CDN source.
+  The CDN service is planned. Use a complete image until it is available.
 
 ## EmberBSD ecosystem
 
@@ -61,12 +71,11 @@ GitHub repository. Installation methods stay device-general; per-board
 procedures live in `ember/boards`. Personal source customization stays a user
 workflow; it does not require a contribution PR.
 
-Follow the [loading instructions](https://github.com/oxtech-ember/EmberBSD-User-Skills#load-the-package)
-for your client. Both skill packages can coexist. Version 0.2.3 passed package
-consistency, native Codex discovery and plugin/skill icon path checks; these
-checks do not establish on-device agent behavior, cable-installer acceptance
-or end-to-end personal Ports maintenance. The package
-uses available tools and supplies no agent runtime or credentials.
+Follow the [installation instructions](https://github.com/oxtech-ember/EmberBSD-User-Skills#install-the-package-or-a-skill)
+for your client. Version 0.4.0 provides ten task skills. Both skill packages can coexist.
+Read the package's current check results and limits. Package consistency and client discovery
+do not establish on-device agent behavior, cable-installer acceptance or end-to-end personal Ports maintenance.
+The package uses available tools and supplies no agent runtime or credentials.
 
 ## Connect developer skills
 
@@ -90,10 +99,12 @@ Start a new conversation in your project and ask:
 See the [skills installation and update guide](https://github.com/oxtech-ember/Ember-Agent-Skills#use-in-your-development-environment)
 for expected results, updates and other assistant environments. The plugin
 provides developer instructions; it does not install software on a board.
-Package 0.3.8 also passes native plugin/skill icon path checks. Desktop icon
-rendering remains unverified for both packages.
+Package 0.4.3 provides eight task skills; its README records package and client checks.
+Desktop icon rendering remains unverified for both packages.
 Reusable fixes and ports are contributed through focused PRs after relevant
 testing, following the accepting project's rules.
+The [shared change procedure](CONTRIBUTING.md#development-through-agents)
+maps EmberBSD Development skills to preparation, validation, and submission.
 
 ## What this fork adds to NetBSD 11
 
@@ -980,6 +991,8 @@ personalized device images are not published in this repository.
 
 The original NetBSD reference follows below. Links to official binary
 releases refer to upstream NetBSD and do not include this fork's changes.
+Report EmberBSD-specific problems through [its own issue tracker](https://github.com/oxtech-ember/EmberBSD/issues)
+and [contribution procedure](CONTRIBUTING.md). The channels below belong to NetBSD.
 
 NetBSD
 ======

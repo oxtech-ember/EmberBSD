@@ -499,13 +499,12 @@ rc_configured=YES umzustellen.
 }
 
 message distmedium
-{Ihre Festplatte ist nun bereit für die Installation der Kernel- und
-Distributionspakete. Wie im INSTALL-Dokument beschrieben, haben Sie nun
-mehrere Optionen.
-Für FTP oder NFS müssen Sie mit einem Netzwerk verbunden sein und
-Zugriff auf die entsprechenden Server haben.
+{Waehlen Sie den USB-Stick oder das Installationsabbild mit den Sets.
+EmberBSD CDN ist erst nach Bereitstellung des Dienstes verfuegbar.
+Netzwerkinstallation braucht eine Verbindung. Weitere Quellen erlauben
+manuelle Pfade.
 
-Insgesamt %d Pakete ausgewählt, %d installiert. Nächstes Set: %s.
+Sets ausgewaehlt %d, verarbeitet %d, naechstes Set %s.
 
 }
 
@@ -555,16 +554,14 @@ Verzeichnis der Diskette liegen.
  *  $0 = sets suffix			.tgz
  */
 message cdromsource
-{Geben Sie das CD-Laufwerk und das entsprechende Verzeichnis an, in dem
-die Distribution zu finden ist.
-(Das Verzeichnis muss $0-Dateien enthalten.)
+{Geben Sie das Installationsmedium und das Verzeichnis mit den
+$0-Sets an.
 
 }
 
 message No_cd_found
-{Kein CD Laufwerk enthält eine CD mit den Distributions-Dateien!
-Geben Sie die korrekten Daten manuell ein, oder legen Sie eine CD
-ein und versuchen Sie es erneut.
+{Kein Installationsmedium mit Sets gefunden. Pruefen Sie USB-Stick/Abbild
+oder waehlen Sie Geraet und Verzeichnis unter Weitere Quellen.
 }
 
 message abort_install
@@ -574,14 +571,14 @@ message source_sel_retry
 {Zurück zur Quellauswahl}
 
 message Available_cds
-{Verfügbare CDs}
+{Verfuegbare Installationsmedien}
 
 message ask_cd
-{Es wurden mehrere CDs gefunden. Bitte wählen Sie die Installations-CD aus.}
+{Waehlen Sie das Installationsmedium mit den Sets.}
 
 message cd_path_not_found
-{Die Installationsdateien wurden auf der ausgewählten CD nicht gefunden. Bitte
-prüfen Sie den Gerätenamen und Pfad der Installationsdateien.}
+{Keine Sets am Standardort gefunden.
+Pruefen Sie Geraet und Verzeichnis des Installationsmediums.}
 
 /* Called with: 			Example
  *  $0 = sets suffix			.tgz
@@ -739,8 +736,8 @@ Optionale Pakete sind:
  test mit automatischen Testprogrammen
  manhtml mit Anleitung im html Format
 
-Für einige Architekturen stehen unterschiedliche ISO Dateien für CD und DVD Laufwerke
-zur verfügung, auf der DVD Version sind alle Installations-Pakete enthalten. 
+Installationsabbilder enthalten unterschiedliche Sets. Verwenden Sie ein
+vollstaendiges Abbild oder Netzwerk-Sets derselben Build-Version.
 }
 .endif
 
@@ -1175,11 +1172,9 @@ message ftp {FTP}
 message http {HTTP}
 message https {HTTPS}
 message nfs {NFS}
-.if HAVE_INSTALL_IMAGE
-message cdrom {CD-ROM / DVD / Medium mit Abbilddatei}
-.else
-message cdrom {CD-ROM / DVD}
-.endif
+message cdrom {Bootfaehiger USB-Stick / Abbild}
+message ember_cdn {EmberBSD CDN}
+message additional_sources {Weitere Quellen}
 message floppy {Diskette}
 message local_fs {Ungemountetes Dateisysytem}
 message local_dir {Lokales Verzeichnis}

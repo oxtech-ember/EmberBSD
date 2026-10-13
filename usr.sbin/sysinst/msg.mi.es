@@ -489,12 +489,12 @@ en modo de usuario único.
 }
 
 message distmedium
-{Su disco está ahora preparado para la instalación el nucleo y los conjuntos
-de la distribución.  Como se apunta en las notas INSTALL, tiene diversas
-opciones.  Para ftp o nfs, tiene que estar conectado a una red con acceso
-a las maquinas apropiadas.
+{Seleccione el USB o la imagen de instalacion con los conjuntos.
+EmberBSD CDN solo estara disponible cuando se publique el servicio.
+La instalacion por red necesita una conexion. Las fuentes adicionales
+permiten rutas manuales.
 
-Conjuntos seleccionados: %d, procesados: %d. Siguiente conjunto: %s.
+Conjuntos seleccionados %d, procesados %d, siguiente %s.
 
 }
 
@@ -544,15 +544,14 @@ en el directorio raíz de los disquetes.
  *  $0 = sets suffix			.tgz
  */
 message cdromsource
-{Introduzca el dispositivo de CDROM a usar y el directorio del CDROM
-donde se encuentre la distribución.
-Recuerde, el directorio debe contener los archivos $0.
+{Introduzca el dispositivo de instalacion y el directorio que contiene
+los conjuntos $0.
 
 }
 
 message No_cd_found
-{Could not locate a CD medium in any drive with the distribution sets! 
-Enter the correct data manually, or insert a disk and retry. 
+{No se encontro un medio de instalacion con conjuntos. Compruebe el USB
+o la imagen, o seleccione dispositivo y directorio en Fuentes adicionales.
 }
 
 message abort_install
@@ -562,14 +561,14 @@ message source_sel_retry
 {Back to source selection & retry}
 
 message Available_cds
-{Available CDs}
+{Medios de instalacion disponibles}
 
 message ask_cd
-{Multiple CDs found, please select the one containing the install CD.}
+{Seleccione el medio que contiene los conjuntos.}
 
 message cd_path_not_found
-{The installation sets have not been found at the default location on this
-CD. Please check device and path name.}
+{No se encontraron conjuntos en la ruta predeterminada.
+Compruebe el dispositivo y el directorio de instalacion.}
 
 /* Called with: 			Example
  *  $0 = sets suffix			.tgz
@@ -721,8 +720,8 @@ Optional sets are:
  test containing automatic test programs
  manhtml containing man pages in html format
 
-Some architectures offer different CD vs. DVD ISO images, the DVD images
-are complete and contain all sets. 
+Installation images can contain different sets. Use a matching complete
+image or the same build's network sets to add optional components.
 }
 .endif
 
@@ -1131,11 +1130,9 @@ message ftp {FTP}
 message http {HTTP}
 message https {HTTPS}
 message nfs {NFS}
-.if HAVE_INSTALL_IMAGE
-message cdrom {CD-ROM / DVD / install image media}	/* XXX translation */
-.else
-message cdrom {CD-ROM / DVD}
-.endif
+message cdrom {USB de arranque / imagen}
+message ember_cdn {EmberBSD CDN}
+message additional_sources {Fuentes adicionales}
 message floppy {Disquete}
 message local_fs {Sistema de archivos desmontado}
 message local_dir {Directorio Local}

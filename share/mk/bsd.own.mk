@@ -12,7 +12,7 @@ MAKECONF?=	/etc/mk.conf
 .-include "${MAKECONF}"
 
 # Product version is independent of the NetBSD compatibility version.
-EMBER_VERSION?=	Development
+EMBER_VERSION?=	1.0
 
 #
 # CPU model, derived from MACHINE_ARCH

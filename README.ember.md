@@ -25,6 +25,9 @@ Select a board there for its capability table, boot path, detailed notes and
 validation limits. The [short board selector](README.md#supported-boards) stays
 in the root README; detailed support is maintained on each board page.
 See [adding a board](ember/boards/adding-a-board.md) for external contributions.
+All shared changes follow [CONTRIBUTING](CONTRIBUTING.md).
+The [kernel guide](ember/development/kernel.md) and
+[board-change worksheet](ember/development/board-change.md) define the relevant evidence.
 
 The following accessory and protocol limits also apply:
 

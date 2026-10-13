@@ -480,10 +480,9 @@ to rc_configured=YES.
 }
 
 message distmedium
-{Your disk is now ready for installing the kernel and the distribution
-sets.  As noted in your INSTALL notes, you have several options.  For
-ftp or nfs, you must be connected to a network with access to the proper
-machines.
+{Choose the bootable USB or installation image that contains the sets.
+Use EmberBSD CDN only after the service has been published. Network
+installation requires a connection. Additional sources allow manual paths.
 
 Sets selected %d, processed %d, Next set %s.
 
@@ -533,15 +532,14 @@ file system.  The set files must be in the root directory of the floppies.
  *  $0 = sets suffix			.tgz
  */
 message cdromsource
-{Enter the CDROM device to be used and directory on the CDROM where
-the distribution is located. 
-Remember, the directory should contain the $0 files.
+{Enter the installation media device and the directory containing the
+$0 distribution sets.
 
 }
 
 message No_cd_found
-{Could not locate a CD medium in any drive with the distribution sets! 
-Enter the correct data manually, or insert a disk and retry. 
+{No installation media with sets was found. Check the bootable USB/image,
+or select a device and directory under Additional sources.
 }
 
 message abort_install
@@ -551,14 +549,14 @@ message source_sel_retry
 {Back to source selection & retry}
 
 message Available_cds
-{Available CDs }
+{Available installation media}
 
 message ask_cd
-{Multiple CDs found.  Please select the one containing the install CD.}
+{Select the installation media containing the sets.}
 
 message cd_path_not_found
-{The installation sets have not been found at the default location on this
-CD.  Please check the device and path name.}
+{No installation sets were found at the default location.
+Check the installation media device and directory.}
 
 /* Called with: 			Example
  *  $0 = sets suffix			.tgz
@@ -710,8 +708,8 @@ Optional sets are:
  test containing automatic test programs
  manhtml containing man pages in html format
 
-Some architectures offer different CD vs. DVD ISO images, the DVD images
-are complete and contain all sets. 
+Installation images can contain different sets. Use a matching complete
+image or the same build's network sets to add optional components.
 }
 .endif
 
@@ -1110,11 +1108,9 @@ message ftp {FTP}
 message http {HTTP}
 message https {HTTPS}
 message nfs {NFS}
-.if HAVE_INSTALL_IMAGE
-message cdrom {CD-ROM / DVD / install image media}
-.else
-message cdrom {CD-ROM / DVD}
-.endif
+message cdrom {Bootable USB / image}
+message ember_cdn {EmberBSD CDN}
+message additional_sources {Additional sources}
 message floppy {Floppy}
 message local_fs {Unmounted fs}
 message local_dir {Local directory}

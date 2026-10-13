@@ -1,4 +1,4 @@
-banner=EmberBSD @@EMBER_VERSION@@ installation DVD
+banner=EmberBSD @@EMBER_VERSION@@ installation image
 banner=Unix for intelligent devices
 banner=
 banner=https://github.com/oxtech-ember/EmberBSD
