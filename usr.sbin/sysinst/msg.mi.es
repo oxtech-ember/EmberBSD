@@ -69,7 +69,7 @@ message upgrade
 
 message hello
 {Bienvenido a sysinst, la herramienta de instalación de EmberBSD-@@VERSION@@.
-Build: @@BUILD@@ (NetBSD base)
+Build: @@BUILD@@
 Esta herramienta guiada por menús está diseñada para ayudarle a instalar
 EmberBSD en un disco duro, o actualizar un sistema EmberBSD existente con
 un trabajo mínimo. 

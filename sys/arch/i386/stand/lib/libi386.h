@@ -130,6 +130,8 @@ int congetc(void);
 int conisshift(void);
 int coniskey(void);
 __compactcall void conputc(int);
+__compactcall void conputc_color(int, int);
+void bios_bootcfg_color(int);
 void conclr(void);
 
 int getextmem2(int *);

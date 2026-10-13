@@ -9,6 +9,7 @@ check = ->(ok, what) { failures << what unless ok }
 Dir.glob("#{root}/distrib/{amd64,i386,evbarm}/**/boot.cfg*").each do |path|
   rendered = File.binread(path).gsub('@@VERSION@@', '11.0').gsub('@@MACHINE@@', 'amd64')
   visible = rendered.lines.grep(/^(banner|menu)=/).map { |line| line.split(':', 2).first }.join
+  check.call(!visible.match?(/based on NetBSD/i), "prominent upstream banner: #{path}")
   check.call(!visible.match?(/(?:Welcome to|Install|Boot) (?:the )?NetBSD/), path)
   check.call(rendered.include?('boot netbsd'), "kernel command changed: #{path}") if rendered.include?('Install ')
 end
@@ -18,7 +19,7 @@ Dir.glob("#{root}/usr.sbin/sysinst/{msg.*,arch/{amd64,i386}/msg.*}").each do |pa
     next if partition_messages.include?(id)
     # URLs and addresses refer to upstream documentation and authors.
     text = body.gsub(%r{https?://\S+|[\w.@/-]+\.org\S*}, '')
-    check.call(!text.gsub('(NetBSD base)', '').include?('NetBSD'), "#{path}: #{id}")
+    check.call(!text.include?('NetBSD'), "#{path}: #{id}")
   end
 end
 Dir.mktmpdir('ember-branding') do |dir|

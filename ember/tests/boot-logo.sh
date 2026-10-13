@@ -8,6 +8,8 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 "${CC:-cc}" -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined \
     "$root/ember/tests/boot-logo.c" -o "$tmp/logo-test"
 "$tmp/logo-test" > "$tmp/logo.txt"
+"$tmp/logo-test" color > "$tmp/logo-color.txt"
+cmp "$tmp/logo.txt" "$tmp/logo-color.txt"
 ruby - "$tmp/logo.txt" "$root" <<'RUBY'
 logo = File.binread(ARGV[0])
 raise 'logo contains terminal controls or non-ASCII bytes' unless logo.bytes.all? { |b| b == 10 || (32..126).cover?(b) }
@@ -24,6 +26,6 @@ Dir.glob(File.join(ARGV[1], 'distrib/{amd64,i386,evbarm}/**/boot.cfg*')).each do
   lines = rows.size + banner + menu + 3
   raise "#{path}: #{lines} rows exceed the 25-line menu budget" if lines > 25
 end
-puts 'PASS: printable ASCII, large wordmark, 80x25 installation menu budget'
+puts 'PASS: printable ASCII, large wordmark, color hook and restore, 80x25 menu budget'
 RUBY
 cat "$tmp/logo.txt"

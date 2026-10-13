@@ -65,7 +65,7 @@ message upgrade
 
 message hello
 {EmberBSD/@@MACHINE@@ @@VERSION@@
-Build: @@BUILD@@ (NetBSD base)
+Build: @@BUILD@@
 
 This menu-driven tool is designed to help you install EmberBSD to a hard
 disk, or upgrade an existing EmberBSD system, with a minimum of work.

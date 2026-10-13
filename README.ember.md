@@ -148,7 +148,7 @@ case: `python3 ember/tools/firmware-contract.py`.
 The [installer branding](ember/boot/installer-branding.md) keeps the x86
 BIOS, PXE, UEFI and sysinst screens consistent with EmberBSD.
 A large ASCII flame and wordmark share the text console with the keyboard menu.
-The same mark works in BIOS, UEFI, PXE and serial console banners. Kernel filenames and partition types
+BIOS and UEFI show a yellow flame and a white wordmark.\nSerial console banners use the same mark in plain ASCII. Kernel filenames and partition types
 retain their NetBSD compatibility names. OS sets select the EmberBSD channel;
 that service is not yet published, so use the sets on the installation medium.
 Source contracts and ASCII console checks are separate from image acceptance.

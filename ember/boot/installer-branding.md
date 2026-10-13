@@ -11,7 +11,11 @@ BIOS, PXE and UEFI keep a text console and a keyboard menu.
 A large ASCII flame and EMBERBSD wordmark use the shared libsa banner renderer.
 The mark uses eight art rows and one blank row, with a maximum width of 72 columns.
 The stock installation menus fit an 80-column, 25-line screen.
-The same printable ASCII works on serial consoles and firmware without GOP.
+BIOS uses VGA cell attributes. UEFI uses firmware text attributes.
+The flame is bright yellow; the wordmark is bright white.
+The renderer restores the previous console attribute before the menu.
+Serial consoles and other platforms retain the same printable ASCII without color.
+UEFI color does not require GOP.
 It needs no ANSI escape support, image decoder, graphical mode or external asset.
 Custom boot.cfg banners appear below the mark. Keep their total menu height in mind.
 
@@ -43,7 +47,7 @@ These NetBSD names remain intentionally:
 - MBR/GPT partition types, disklabel names and diagnostic type descriptions.
 - The compatibility path `EFI/NetBSD/boot.cfg` and existing installation paths.
 - URLs for NetBSD documentation and the upstream pkgsrc package service.
-- The explicit `based on NetBSD` attribution and the upstream base version.
+- The documented NetBSD origin and the base version in the loader version command.
 
 The ASCII mark is supplied under BSD-2-Clause.
 The original source licences remain in each adapted loader and sysinst file.
@@ -57,7 +61,7 @@ sh ember/tests/boot-logo.sh
 
 The first check detects product-name regressions while allowing compatibility names.
 The second executes the actual ASCII renderer under ASan/UBSan.
-It checks printable bytes, line width and the stock installation menu height.
+It checks printable bytes, line width and the stock installation menu height.\nIt also checks color-hook order, attribute restoration and unchanged fallback text.
 These checks do not prove that a release image boots or installs.
 Build the loaders, language catalogs and complete image from a clean source commit.
 Check real UEFI and BIOS screens and install onto a disposable virtual disk.

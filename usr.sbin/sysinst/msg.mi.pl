@@ -75,7 +75,7 @@ message mount_failed
 
 message hello
 {Witaj w sysinst, systemie instalacyjnym EmberBSD-@@VERSION@@.
-Build: @@BUILD@@ (NetBSD base)
+Build: @@BUILD@@
 To oparte na menu narzedzie (sysinst) zostalo zaprojektowane w celu
 ulatwienia instalacji EmberBSD na dysku twardym, lub uaktualnienia istniejacego
 systemu EmberBSD przy minimalnym nakladzie pracy. W ponizszych menu, aby wybrac

@@ -70,7 +70,7 @@ message upgrade
 
 message hello
 {Willkommen bei Sysinst, dem Installationsprogramm von EmberBSD-@@VERSION@@.
-Build: @@BUILD@@ (NetBSD base)
+Build: @@BUILD@@
 Dieses Programm hilft Ihnen, EmberBSD auf eine Festplatte zu installieren
 oder aber eine bereits bestehende Installation von EmberBSD zu aktualisieren.
 In den folgenden Menüs können Sie mit den Buchstaben (a, b, c, ...)

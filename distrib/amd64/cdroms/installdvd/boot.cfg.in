@@ -1,5 +1,5 @@
 banner=EmberBSD @@VERSION@@ installation DVD
-banner=Unix for intelligent devices | based on NetBSD
+banner=Unix for intelligent devices
 banner=
 banner=https://github.com/oxtech-ember/EmberBSD
 menu=Install EmberBSD:boot netbsd
