@@ -19,6 +19,10 @@ CPPFLAGS+=-DNO_EDITCOMPLETE -DNO_ABOUT -DNO_AUTH -DNO_HELP -DNO_STATUS -DNO_DEBU
 .else
 LDADD+=	-ledit -lterminfo
 DPADD+=	${LIBEDIT} ${LIBTERMINFO}
+.endif
+
+# Installation media can retain the small client and enable verified TLS.
+.if !defined(SMALLPROG) || defined(SMALLPROG_HTTPS)
 CPPFLAGS+= -DWITH_SSL
 LDADD+= -lssl -lcrypto
 DPADD+= ${LIBSSL} ${LIBCRYPTO}

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Use the pinned Mozilla server trust list for read-only installation media.
+CA_BUNDLE=	https-certs.pem
+MOZCERTDIR=	${NETBSDSRCDIR}/external/mpl/mozilla-certdata/share
+TRUSTED_CERTS!=	cat ${MOZCERTDIR:Q}/server.trust
+CA_CERTS=	${TRUSTED_CERTS:@.CERT.@${MOZCERTDIR}/certs/${.CERT.}.pem@}
+
+${CA_BUNDLE}: .NOTMAIN ${MOZCERTDIR}/server.trust ${CA_CERTS}
+	${TOOL_CAT} ${CA_CERTS} > ${.TARGET}.tmp
+	${MV} ${.TARGET}.tmp ${.TARGET}
+
+CLEANFILES+=	${CA_BUNDLE} ${CA_BUNDLE}.tmp

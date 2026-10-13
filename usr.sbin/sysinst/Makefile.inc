@@ -163,7 +163,9 @@ COPTS.net.c	+= -Wno-error=maybe-uninitialized
 .else
 .if defined(SMALLPROG)
 COPTS += -Os
+.if !defined(SMALLPROG_HTTPS)
 CPPFLAGS+=	-DNO_HTTPS
+.endif
 .endif
 .endif
 
@@ -188,6 +190,11 @@ CPPFLAGS+= -DSYSINST_HTTP_HOST=\"${SYSINST_HTTP_HOST}\"
 #
 .if defined(SYSINST_FTP_DIR)
 CPPFLAGS+=	-DSYSINST_FTP_DIR=\"${SYSINST_FTP_DIR}\"
+.endif
+
+# Remote binary sets can use a flat release without changing media paths.
+.if defined(SYSINST_FTP_SET_DIR_BIN)
+CPPFLAGS+=	-DSYSINST_FTP_SET_DIR_BIN=\"${SYSINST_FTP_SET_DIR_BIN}\"
 .endif
 
 # Top-level CDROM directory.  Default:

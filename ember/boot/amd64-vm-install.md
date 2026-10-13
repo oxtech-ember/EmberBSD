@@ -16,6 +16,7 @@ TCG can take several minutes to boot or extract sets.
 There is no general published release image yet.
 Use a complete local-set ISO from an identified build, or prepare one from this public source tree.
 The following **host** recipe uses the source tree's own bootstrap compiler.
+The [release builder](../release/README.md) supplies verified HTTPS and a pinned GitHub set path.
 Read [BUILDING](../../BUILDING), [UPDATING](../../UPDATING) and `tools/compat/README` for host requirements.
 Install host C/C++ compilers and development headers first.
 The image validator also needs host Ruby and a libarchive `tar` that can read ISO files.
@@ -33,35 +34,22 @@ revision=FULL_COMMIT_ID
 out=/absolute/new-amd64-build
 git fetch origin
 git cat-file -e "$revision^{commit}"
-mkdir "$out"
-git archive -o "$out/source.tar" "$revision"
-mkdir "$out/source"
-tar -xf "$out/source.tar" -C "$out/source"
-cd "$out/source"
-export MAKECONF=/dev/null
-unset EXTERNAL_TOOLCHAIN
-sh ./build.sh -U -m amd64 -j4 \
-    -O "$out/obj" -T "$out/tools" -D "$out/dest" -R "$out/release" \
-    -V MKX11=no -V MKRUMP=no \
-    -V KERNEL_SETS=GENERIC -V BUILD_KERNELS=INSTALL \
-    -V EMBER_VERSION=Development \
-    -V "EMBER_BUILD_ID=$revision" -V "BUILDINFO=EmberBSD:$revision" \
-    tools release install-image iso-image
+sh ember/release/build-amd64.sh "$revision" "$out"
 ```
 
 Stop on a failed archive export or build; never accept an earlier image from a reused output directory.
-The complete CD is `$out/release/amd64/installation/cdrom/amd64cd.iso`.
+The complete CD is `$out/release/images/EmberBSD-1.0-amd64.iso`.
 A boot-only CD is insufficient for this offline walkthrough.
 Use the sets from this completed release, not sets from another source revision.
 Check the resulting image with the OS-owned validator:
 
 ```sh
 ruby ember/tests/installer-image.rb \
-    "$out/release/amd64/installation/cdrom/amd64cd.iso" "$revision" Development
-shasum -a 256 "$out/release/amd64/installation/cdrom/amd64cd.iso"
+    "$out/release/images/EmberBSD-1.0-amd64.iso" "$revision" 1.0 github.com
+shasum -a 256 "$out/release/images/EmberBSD-1.0-amd64.iso"
 ```
 
-Run those commands from the exported source directory.
+Run those commands from the source repository.
 Keep the source ID, successful log, tool versions and output hashes together.
 The checked development image below used the in-tree GCC 12.5 bootstrap.
 It is not a complete GCC16-built release.
@@ -131,7 +119,7 @@ Setting the hostname and disabling unused Postfix avoids its empty-hostname star
 
 Source-menu labels can vary by image revision.
 Choose the medium containing the matching sets, not the unavailable Internet channel.
-The current product default is `1.0`; the build example explicitly selects `Development` for an experimental artifact.
+The current product default and the release builder use `1.0`.
 Both labels are separate from the NetBSD 11 compatibility version.
 Current images offer `Bootable USB / image`; the older checked ISO uses the earlier CD-ROM source menu.
 Use the image's recorded revision to determine which menu applies.

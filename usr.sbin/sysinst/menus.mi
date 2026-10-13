@@ -401,8 +401,8 @@ menu ftpsource, y=-4, x=0, w=70, no box, no clear,
 		(uintptr_t)((arg_rv*)arg)->arg)]); };
 	option {src_legend(menu, MSG_Base_dir, ftp.dir);},
 		action { src_prompt(MSG_Base_dir, ftp.dir, sizeof ftp.dir); };
-	option {src_legend(menu, MSG_Set_dir_bin, set_dir_bin);},
-		action { src_prompt(MSG_Set_dir_bin, set_dir_bin, sizeof set_dir_bin); };
+	option {src_legend(menu, MSG_Set_dir_bin, ftp_set_dir_bin);},
+		action { src_prompt(MSG_Set_dir_bin, ftp_set_dir_bin, sizeof ftp_set_dir_bin); };
 	option {src_legend(menu, MSG_Set_dir_src, set_dir_src);},
 		action { src_prompt(MSG_Set_dir_src, set_dir_src, sizeof set_dir_src); };
 	option {src_legend(menu, MSG_Dist_postfix, dist_postfix);},
