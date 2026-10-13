@@ -748,8 +748,10 @@ on every board in the hardware catalog.
 
 - **MOXA UPort 1150 driver preparation:** experimental `umoxa` USB/ucom parent,
   external firmware upload, serial settings and mode/status controls. Twelve
-  protocol and twelve actual-parent host groups plus a strict TTY-parameter
-  regression pass; physical USB/firmware/serial validation remains pending
+  protocol and twenty-two actual-parent host groups plus a strict TTY-parameter
+  regression pass. Automatic cold firmware upload/warm attachment and 4096-byte
+  RS-232 loopback passed in a Mac/QEMU trial requiring a process-local passthrough
+  workaround; bare-metal and broader serial acceptance remain pending
   ([guide](ember/boot/moxa-serial.md)).
 - **MOXA G2 driver preparation:** [framing, shared TX, state and bounded RX helpers](ember/boot/moxa-serial.md)
   pass 33 host C contract groups. An opt-in `ucom` backend passes sixteen native
