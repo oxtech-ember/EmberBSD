@@ -10,6 +10,7 @@
 #include <linux/slab.h>
 #include <drm/drm_device.h>
 #include <drm/drm_drv.h>
+#include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_ioctl.h>
 #include "pvr_drm.h"
 #include "pvr_drv.h"
@@ -78,15 +79,21 @@ pvr_release(struct drm_device *dev)
 static const struct drm_ioctl_desc pvr_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(PVR_DEV_QUERY, pvr_dev_query,
 	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+	DRM_IOCTL_DEF_DRV(PVR_CREATE_BO, pvr_create_bo,
+	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+	DRM_IOCTL_DEF_DRV(PVR_GET_BO_MMAP_OFFSET, pvr_get_bo_mmap_offset,
+	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
 };
 
 static struct drm_driver pvr_driver = {
-	.driver_features = DRIVER_RENDER,
+	.driver_features = DRIVER_GEM | DRIVER_RENDER,
 	.ioctls = pvr_ioctls,
 	.num_ioctls = __arraycount(pvr_ioctls),
 	.release = pvr_release,
+	.mmap_object = pvr_mmap_object,
+	.gem_uvm_ops = &drm_gem_cma_uvm_ops,
 	.name = "powervr",
-	.desc = "EmberBSD experimental PowerVR identity interface",
+	.desc = "EmberBSD experimental PowerVR GEM interface",
 	.date = "20261013",
 	.major = 1,
 	.minor = 0,

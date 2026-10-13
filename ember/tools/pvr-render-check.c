@@ -99,6 +99,6 @@ main(int argc, char **argv)
 	    errno == EOPNOTSUPP, "reject display capability without modesetting");
 	check(close(fd) == 0, "close render node");
 	printf("PASS: %u PowerVR identity checks; BVNC=0x%016" PRIx64
-	    "; GEM/VM/submission remain unsupported\n", checks, info.gpu_id);
+	    "; GEM/VM/submission are outside this check\n", checks, info.gpu_id);
 	return 0;
 }

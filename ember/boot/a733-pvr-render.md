@@ -1,9 +1,9 @@
-# A733 native PowerVR render identity
+# A733 native PowerVR render interface
 
 The experimental native driver registers the upstream DRM name `powervr`.
 It exposes the measured GPU identity through `DRM_IOCTL_PVR_DEV_QUERY`.
-This is a render-node identity interface. It does not provide Mesa rendering.
-It does not allocate GPU buffers, virtual machines, contexts, or job handles.
+It also allocates native DMA-backed GEM buffer objects with CPU mappings.
+It does not provide Mesa rendering, GPU mappings, contexts, or job handles.
 
 ## Ownership and registration
 
@@ -49,9 +49,30 @@ Inaccessible destinations return `EFAULT`. A failed copy may have written an
 earlier output prefix; the caller must discard that output.
 The argument size changes only after successful copying.
 
-Other device queries return `EOPNOTSUPP`. No other PowerVR ioctl is registered.
-The driver advertises `DRIVER_RENDER` only. GEM, PRIME, syncobj, display modes,
-GPU mappings, and submission remain unsupported.
+Other device queries return `EOPNOTSUPP`.
+The driver advertises `DRIVER_RENDER` and `DRIVER_GEM`.
+PRIME, syncobj, display modes, GPU mappings, and submission remain unsupported.
+
+## Buffer objects and CPU mappings
+
+`CREATE_BO` creates a per-file GEM handle for zeroed native DMA memory.
+The request must have a nonzero 4096-byte-aligned size and zero reserved fields.
+The allocator rounds backing memory to the host page size and clears it all.
+It rejects arithmetic overflow and sizes outside the native allocator's range.
+Physical allocation can fail with `ENOMEM`; no GPU address is assigned.
+
+The three upstream flags retain their values. Unknown bits are rejected.
+`PM_FW_PROTECT` cannot be combined with `ALLOW_CPU_USERSPACE_ACCESS`.
+GPU cache and firmware protection flags are stored for future GPU mappings.
+This stage does not claim that those mappings already exist.
+
+`GET_BO_MMAP_OFFSET` returns a real GEM VMA offset for a handle owned by the file.
+CPU `mmap` requires `ALLOW_CPU_USERSPACE_ACCESS` and the object's starting offset.
+A shorter page-aligned mapping is allowed. Oversized and executable mappings
+are rejected. Another file cannot use the offset without an allowed handle.
+Closing the handle and file does not invalidate a live CPU mapping.
+The last reference releases the GEM object, DMA memory, and device reference.
+Native `GEM_CLOSE` provides handle release; there is no private close ioctl.
 
 ## Source checks and board acceptance
 

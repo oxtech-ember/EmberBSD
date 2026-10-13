@@ -3,7 +3,8 @@
 /*
  * Origin: Linux 7b63ef2d55f24519e7e9e5f4d15dbea03f126e40,
  * include/uapi/drm/pvr_drm.h. This subset selects the MIT alternative.
- * EmberBSD retains the DEV_QUERY ABI. Other ioctls are not implemented.
+ * EmberBSD retains the DEV_QUERY and buffer-object ABI below.
+ * VM, context and submission ioctls are not implemented.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -30,6 +31,10 @@
 
 #define DRM_IOCTL_PVR_DEV_QUERY \
 	DRM_IOWR(DRM_COMMAND_BASE + 0x00, struct drm_pvr_ioctl_dev_query_args)
+#define DRM_IOCTL_PVR_CREATE_BO \
+	DRM_IOWR(DRM_COMMAND_BASE + 0x01, struct drm_pvr_ioctl_create_bo_args)
+#define DRM_IOCTL_PVR_GET_BO_MMAP_OFFSET \
+	DRM_IOWR(DRM_COMMAND_BASE + 0x02, struct drm_pvr_ioctl_get_bo_mmap_offset_args)
 
 enum drm_pvr_dev_query {
 	DRM_PVR_DEV_QUERY_GPU_INFO_GET = 0,
@@ -50,6 +55,26 @@ struct drm_pvr_ioctl_dev_query_args {
 	__u32 type;
 	__u32 size;
 	__u64 pointer;
+};
+
+/* Device cache and access restrictions are retained for future GPU mappings. */
+#define DRM_PVR_BO_BYPASS_DEVICE_CACHE		((__u64)1 << 0)
+#define DRM_PVR_BO_PM_FW_PROTECT			((__u64)1 << 1)
+#define DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS	((__u64)1 << 2)
+#define DRM_PVR_BO_FLAGS_MASK	(DRM_PVR_BO_BYPASS_DEVICE_CACHE | \
+	DRM_PVR_BO_PM_FW_PROTECT | DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS)
+
+struct drm_pvr_ioctl_create_bo_args {
+	__u64 size;
+	__u32 handle;
+	__u32 _padding_c;
+	__u64 flags;
+};
+
+struct drm_pvr_ioctl_get_bo_mmap_offset_args {
+	__u32 handle;
+	__u32 _padding_4;
+	__u64 offset;
 };
 
 #endif /* _PVR_DRM_UAPI_H_ */

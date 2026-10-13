@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 
 typedef uint32_t __u32;
 typedef uint64_t __u64;
@@ -21,6 +22,7 @@ typedef uint64_t __u64;
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
 #define DRIVER_RENDER 1
+#define DRIVER_GEM 8
 #define DRM_RENDER_ALLOW 2
 #define DRM_UNLOCKED 4
 #define DRM_NATIVE_PLATFORM_VERSION 1
@@ -31,6 +33,11 @@ typedef uint64_t __u64;
 typedef void *device_t;
 typedef void *bus_dma_tag_t;
 struct drm_file { int unused; };
+struct file;
+struct uvm_object;
+#ifndef __NetBSD__
+typedef uint64_t voff_t;
+#endif
 struct drm_device;
 struct drm_ioctl_desc {
 	unsigned long cmd;
@@ -45,6 +52,9 @@ struct drm_driver {
 	const struct drm_ioctl_desc *ioctls;
 	size_t num_ioctls;
 	void (*release)(struct drm_device *);
+	int (*mmap_object)(struct drm_device *, off_t, size_t, int,
+	    struct uvm_object **, voff_t *, struct file *);
+	const void *gem_uvm_ops;
 	const char *name, *desc, *date;
 	unsigned int major, minor, patchlevel;
 };
@@ -192,6 +202,16 @@ drm_dev_register(struct drm_device *dev, unsigned int flags)
 	return mode >= 3 ? -EIO : 0;
 }
 
+/* BO behavior has a separate production-source contract. */
+static const int drm_gem_cma_uvm_ops;
+static int pvr_create_bo(struct drm_device *d, void *a, struct drm_file *f)
+{ abort(); }
+static int pvr_get_bo_mmap_offset(struct drm_device *d, void *a, struct drm_file *f)
+{ abort(); }
+static int pvr_mmap_object(struct drm_device *d, off_t o, size_t n, int p,
+    struct uvm_object **u, voff_t *vo, struct file *f)
+{ abort(); }
+
 #include "pvr-drv-body.h"
 
 _Static_assert(sizeof(struct drm_pvr_ioctl_dev_query_args) == 16, "query ABI");
@@ -304,8 +324,10 @@ main(void)
 	CHECK(strcmp(owner->native_platform.compatible,
 	    "allwinner,sun60i-a733-gpu") == 0);
 	CHECK(strcmp(owner->driver->name, "powervr") == 0);
-	CHECK(owner->driver->driver_features == DRIVER_RENDER);
-	CHECK(owner->driver->num_ioctls == 1);
+	CHECK(owner->driver->driver_features == (DRIVER_GEM | DRIVER_RENDER));
+	CHECK(owner->driver->num_ioctls == 3);
+	CHECK(owner->driver->mmap_object == pvr_mmap_object);
+	CHECK(owner->driver->gem_uvm_ops == &drm_gem_cma_uvm_ops);
 	CHECK(owner->driver->ioctls[0].flags == (DRM_RENDER_ALLOW | DRM_UNLOCKED));
 	calls = registered;
 	CHECK(pvr_render_attach(parent, dmat, PVR_A733_BVNC, &owner) == EALREADY);
