@@ -39,17 +39,8 @@ LISTS+=		${DISTRIBDIR}/common/list.sysinst
 LISTS+=		${AMD64COMMON}/list.https
 CRUNCHENV+=	SMALLPROG_HTTPS=1
 
-# Use the pinned Mozilla server trust list, not every certificate in all/.
-MOZCERTDIR=	${NETBSDSRCDIR}/external/mpl/mozilla-certdata/share
-TRUSTED_CERTS!=	cat ${MOZCERTDIR:Q}/server.trust
-CA_CERTS=	${TRUSTED_CERTS:@.CERT.@${MOZCERTDIR}/certs/${.CERT.}.pem@}
-IMAGEDEPENDS+=	https-certs.pem
-
-https-certs.pem: ${MOZCERTDIR}/server.trust ${CA_CERTS}
-	${TOOL_CAT} ${CA_CERTS} > ${.TARGET}.tmp
-	${MV} ${.TARGET}.tmp ${.TARGET}
-
-CLEANFILES+=	https-certs.pem https-certs.pem.tmp
+.include "${NETBSDSRCDIR}/distrib/common/Makefile.https-certs"
+IMAGEDEPENDS+=	${CA_BUNDLE}
 MAKEFS_FLAGS+=	-f 14
 .endif
 

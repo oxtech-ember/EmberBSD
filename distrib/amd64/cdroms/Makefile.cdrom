@@ -2,6 +2,7 @@
 
 .include <bsd.own.mk>
 .include <bsd.endian.mk>
+.include "${NETBSDSRCDIR}/distrib/common/Makefile.https-certs"
 
 SYSINSTDIR!= cd ${.CURDIR}/../../../../usr.sbin/sysinst/arch/${MACHINE} && ${PRINTOBJDIR}
 
@@ -47,7 +48,7 @@ ${EFIBOOTIMG}: ${DESTDIR}/usr/mdec/bootx64.efi ${DESTDIR}/usr/mdec/bootia32.efi
 	${TOOL_MAKEFS} -M 1m -m 1m -B ${TARGET_ENDIANNESS} ${MAKEFS_TIMESTAMP} \
 		-t msdos -o F=12,c=1 ${EFIBOOTIMG} efiboot
 
-image_md_pre: ${EFIBOOTIMG}
+image_md_pre: ${EFIBOOTIMG} ${CA_BUNDLE}
 	# Base sets contain the installed-system boot.cfg. Apply media policy last.
 	${RM} -f cdrom/boot.cfg
 	${INSTALL} ${COPY} -m 0644 boot.cfg cdrom/boot.cfg
@@ -56,6 +57,7 @@ image_md_pre: ${EFIBOOTIMG}
 	${INSTALL} ${COPY} ${.CURDIR}/../etc.ttys cdrom/etc/ttys
 	${INSTALL} ${COPY} ${.CURDIR}/../etc.rc cdrom/etc/rc
 	${INSTALL} ${COPY} -m 0555 ${.CURDIR}/../install.sh cdrom/install.sh
+	${INSTALL} ${COPY} -m 0444 ${CA_BUNDLE} cdrom/etc/openssl/cert.pem
 	${MKDIR} ${MKDIRPERM} cdrom/mnt2 cdrom/targetroot
 	${INSTALL} ${COPY} ${SYSINSTDIR}/sysinstmsgs.?? cdrom/usr/share/sysinst/catalog/
 	${MKDIR} ${MKDIRPERM} cdrom/var

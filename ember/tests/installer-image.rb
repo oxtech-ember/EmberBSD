@@ -11,6 +11,8 @@ extract = lambda do |path|
   data
 end
 config = extract.call('boot.cfg')
+trust = extract.call('etc/openssl/cert.pem')
+abort 'ISO has no HTTPS trust anchors' unless trust.include?('-----BEGIN CERTIFICATE-----')
 abort 'ISO lost its EmberBSD installation banner' unless config.match?(/^banner=EmberBSD/)
 abort 'ISO presents the wrong EmberBSD product version' unless config.include?("banner=EmberBSD #{product_version} installation")
 abort 'ISO presents optical media as the installation method' if config.match?(/^banner=.*\b(?:CD|DVD)\b/)
