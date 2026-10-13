@@ -123,6 +123,11 @@ struct xhci_softc {
 	struct usbd_xfer *sc_intrxfer[2];
 	bool sc_intrxfer_deferred[2];
 
+	/* Port changes that arrived while the root intr xfer was not
+	 * armed; delivered when uhub re-arms it (events are not repeated
+	 * by the controller once consumed from the event ring). */
+	uint8_t sc_rhpend[2][(255 / 8) + 1];
+
 	struct xhci_slot * sc_slots;
 
 	struct xhci_ring *sc_cr;	/* command ring */

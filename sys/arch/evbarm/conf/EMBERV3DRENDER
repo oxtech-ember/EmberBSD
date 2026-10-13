@@ -1,0 +1,5 @@
+# Origin: EmberBSD native BCM2712 render acceptance, 2026-10-11.
+# SPDX-License-Identifier: BSD-2-Clause
+include "arch/evbarm/conf/EMBER64"
+options BCM2712_V3D_TAKEOVER
+options BCM2712_V3D_RENDER

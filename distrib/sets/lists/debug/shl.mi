@@ -104,7 +104,7 @@
 ./usr/libdata/debug/usr/lib/libdns.so.26.0.debug 		comp-bind-debug debug,compatfile
 ./usr/libdata/debug/usr/lib/libdns_sd.so.0.0.debug		comp-mdns-debug	debug,compatfile,mdns
 ./usr/libdata/debug/usr/lib/libdtrace.so.3.0.debug		comp-sys-debug	debug,compatfile,dtrace
-./usr/libdata/debug/usr/lib/libdwarf.so.2.1.debug		comp-sys-debug	debug,compatfile
+./usr/libdata/debug/usr/lib/libdwarf.so.2.2.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libedit.so.3.1.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libelf.so.2.0.debug			comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libevent.so.5.0.debug		comp-sys-debug	debug,compatfile

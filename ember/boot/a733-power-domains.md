@@ -216,6 +216,23 @@ remains unknown. The separate post-PLL gates are open before preparation and
 after timeout. See the
 [physical result](a733-gpu-identification.md#physical-result).
 
+`sun60i_a733_pck_gpu_request_on` re-issues the static GPU_CORE ON request for
+the reserved owner. The vendor's own writers motivated it: the SCP
+standby-resume loop ORs 8 into every PWPR while skipping only the domain-6
+wait, and the BSP `pck600_domains.c` power-on writes COMMAND_ON unconditionally
+and polls PWSR. The request programs the five A733 delay values, rewrites the
+already-requested ON policy with readback, then polls PWSR for at most 10000
+microseconds. A readback mismatch or a reverted policy is treated as a denial
+and quarantines the domain like a failed transition; a status timeout does
+not quarantine, keeping the read-only waiter available. An already-complete
+CORE needs no request. Ordinary `pdc_set` restrictions are unchanged.
+
+The first physical boot with this request active hung the board before
+network bring-up and reproduced after full power removal; the exact stall is
+not localizable without a serial console. See the
+[physical result](a733-gpu-identification.md#physical-result-withdraw-the-experimental-boot-until-a-console-exists);
+the experimental DTB must not be booted on hardware until a console exists.
+
 ## Provenance
 
 Register facts were checked on 2026-10-08 against these primary sources:

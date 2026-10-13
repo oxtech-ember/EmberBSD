@@ -105,8 +105,7 @@ sun60i_pck600_write(struct sun60i_pck600_softc *sc, bus_size_t reg,
 }
 
 static int
-sun60i_pck600_transition(struct sun60i_pck600_softc *sc, u_int id,
-    bool enable)
+sun60i_pck600_program_delays(struct sun60i_pck600_softc *sc, bus_size_t base)
 {
 	static const struct {
 		bus_size_t reg;
@@ -118,6 +117,22 @@ sun60i_pck600_transition(struct sun60i_pck600_softc *sc, u_int id,
 		{ PCK600_SWITCH1, 0x0808 },
 		{ PCK600_OFF2ON, 0x08 },
 	};
+	int error;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+	for (u_int n = 0; n < __arraycount(delays); n++) {
+		error = sun60i_pck600_write(sc, base + delays[n].reg,
+		    delays[n].value);
+		if (error != 0)
+			return error;
+	}
+	return 0;
+}
+
+static int
+sun60i_pck600_transition(struct sun60i_pck600_softc *sc, u_int id,
+    bool enable)
+{
 	const bus_size_t base = id * PCK600_DOMAIN_SIZE;
 	const uint32_t mode = enable ? PCK600_ON : PCK600_OFF;
 	uint32_t policy, status;
@@ -144,12 +159,9 @@ sun60i_pck600_transition(struct sun60i_pck600_softc *sc, u_int id,
 	if ((status & PCK600_MODE) == mode)
 		return 0;
 
-	for (u_int n = 0; n < __arraycount(delays); n++) {
-		error = sun60i_pck600_write(sc, base + delays[n].reg,
-		    delays[n].value);
-		if (error != 0)
-			goto failed;
-	}
+	error = sun60i_pck600_program_delays(sc, base);
+	if (error != 0)
+		goto failed;
 	policy = (policy & ~PCK600_MODE) | mode;
 	error = sun60i_pck600_write(sc, base + PCK600_PWPR, policy);
 	if (error != 0)
@@ -421,6 +433,28 @@ sun60i_pck600_gpu_check(struct sun60i_pck600_softc *sc, bool initial,
 	return 0;
 }
 
+/* Read-only state of one PCK-600 domain; no writes, no diagnostics. */
+int
+sun60i_a733_pck_domain_state(int phandle, u_int id,
+    uint32_t *pwpr, uint32_t *pmer, uint32_t *pwsr)
+{
+	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
+	const bus_size_t base = id * PCK600_DOMAIN_SIZE;
+
+	if (sc == NULL || id >= PCK600_NDOMAINS)
+		return ENXIO;
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_failed[id]) {
+		mutex_exit(&sc->sc_lock);
+		return EIO;
+	}
+	*pwpr = sun60i_pck600_read(sc, base + PCK600_PWPR);
+	*pmer = sun60i_pck600_read(sc, base + PCK600_PMER);
+	*pwsr = sun60i_pck600_read(sc, base + PCK600_PWSR);
+	mutex_exit(&sc->sc_lock);
+	return 0;
+}
+
 int
 sun60i_a733_pck_gpu_reserve(int phandle, const void *owner)
 {
@@ -477,7 +511,7 @@ sun60i_a733_pck_gpu_retain(int phandle, const void *owner)
 }
 
 int
-sun60i_a733_pck_gpu_wait(int phandle, const void *owner)
+sun60i_a733_pck_gpu_wait(int phandle, const void *owner, bool quiet)
 {
 	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
 	uint32_t last[3] = { UINT32_MAX, UINT32_MAX, UINT32_MAX };
@@ -500,10 +534,80 @@ sun60i_a733_pck_gpu_wait(int phandle, const void *owner)
 		}
 		delay(PCK600_POLL_US);
 	}
-	aprint_normal_dev(sc->sc_dev, "experimental CORE wait: %d; last "
-	    "PWPR/PWSR/MISR 0x%08x/0x%08x/0x%08x\n", error,
-	    last[0], last[1], last[2]);
+	if (!quiet)
+		aprint_normal_dev(sc->sc_dev, "experimental CORE wait: %d; last "
+		    "PWPR/PWSR/MISR 0x%08x/0x%08x/0x%08x\n", error,
+		    last[0], last[1], last[2]);
 out:
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+int
+sun60i_a733_pck_gpu_request_on(int phandle, const void *owner, bool quiet)
+{
+	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
+	const bus_size_t base = PCK600_GPU_CORE * PCK600_DOMAIN_SIZE;
+	uint32_t policy = 0, status = 0;
+	int error;
+
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->sc_lock);
+	if (owner == NULL || sc->sc_gpu_owner != owner || !sc->sc_gpu_retained) {
+		error = EINVAL;
+		goto out;
+	}
+	policy = sun60i_pck600_read(sc, base + PCK600_PWPR);
+	status = sun60i_pck600_read(sc, base + PCK600_PWSR);
+	if ((policy & PCK600_MODE) == PCK600_ON &&
+	    (status & PCK600_MODE) == PCK600_ON) {
+		error = 0;
+		goto out;
+	}
+	/* The observed stalled policy-ON/status-OFF state is the only base. */
+	error = sun60i_pck600_gpu_check(sc, true, NULL);
+	if (error != 0)
+		goto out;
+	/*
+	 * Allwinner's own writers re-issue the static ON request without
+	 * comparing policy and status first: the SCP resume loop masks OR 8
+	 * into every PWPR, and Linux's always-on genpd path writes COMMAND_ON
+	 * and polls PWSR.  A write that never lands or a policy that reverts
+	 * (a denial) quarantines the domain like an ordinary transition; a
+	 * status timeout does not, so the read-only waiter stays usable.
+	 */
+	error = sun60i_pck600_program_delays(sc, base);
+	if (error != 0)
+		goto failed;
+	policy = (policy & ~PCK600_MODE) | PCK600_ON;
+	error = sun60i_pck600_write(sc, base + PCK600_PWPR, policy);
+	if (error != 0)
+		goto failed;
+
+	for (u_int elapsed = 0; ; elapsed += PCK600_POLL_US) {
+		/* A denied static request can revert PWPR (Arm DEN0051E). */
+		if (sun60i_pck600_read(sc, base + PCK600_PWPR) != policy) {
+			error = EIO;
+			goto failed;
+		}
+		status = sun60i_pck600_read(sc, base + PCK600_PWSR);
+		if ((status & PCK600_MODE) == PCK600_ON) {
+			error = 0;
+			goto out;
+		}
+		if (elapsed == PCK600_TIMEOUT_US) {
+			error = ETIMEDOUT;
+			goto out;
+		}
+		delay(PCK600_POLL_US);
+	}
+failed:
+	sc->sc_failed[PCK600_GPU_CORE] = true;
+out:
+	if (!quiet)
+		aprint_normal_dev(sc->sc_dev, "experimental CORE request: %d; "
+		    "last PWPR/PWSR 0x%08x/0x%08x\n", error, policy, status);
 	mutex_exit(&sc->sc_lock);
 	return error;
 }

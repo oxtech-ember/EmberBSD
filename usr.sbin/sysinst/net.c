@@ -827,7 +827,7 @@ done:
 		scripting_fprintf(NULL, "cat <<EOF >/etc/resolv.conf\n");
 		time(&now);
 		scripting_fprintf(f, ";\n; BIND data file\n; %s %s;\n",
-		    "Created by NetBSD sysinst on", safectime(&now));
+		    "Created by EmberBSD sysinst on", safectime(&now));
 		if (net_domain[0] != '\0')
 			scripting_fprintf(f, "search %s\n", net_domain);
 		if (net_namesvr[0] != '\0')
@@ -1104,7 +1104,7 @@ static void
 write_etc_hosts(FILE *f)
 {
 	scripting_fprintf(f, "#\n");
-	scripting_fprintf(f, "# Added by NetBSD sysinst\n");
+	scripting_fprintf(f, "# Added by EmberBSD sysinst\n");
 	scripting_fprintf(f, "#\n");
 
 	if (net_domain[0] != '\0')
@@ -1246,7 +1246,7 @@ config_wlan(char *inter)
 	    "cat <<EOF >>%s/etc/wpa_supplicant.conf\n",
 	    target_prefix());
 	scripting_fprintf(wpa_conf, "\n#\n");
-	scripting_fprintf(wpa_conf, "# Added by NetBSD sysinst\n");
+	scripting_fprintf(wpa_conf, "# Added by EmberBSD sysinst\n");
 	scripting_fprintf(wpa_conf, "#\n");
 	scripting_fprintf(wpa_conf, "network={\n");
 	scripting_fprintf(wpa_conf,

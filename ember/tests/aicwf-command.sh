@@ -23,14 +23,19 @@ cat > "$work/check.c" <<'C'
 #define AICWF_TASK(id) ((id) >> 10)
 #define AICWF_TASK_DRIVER 100
 #define AICWF_CMD_TIMEOUT_MS 2000
+#define AICWF_SCANU_START_REQ 0x1000
+#define AICWF_SCANU_CANCEL_REQ 0x100a
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define explicit_memset memset
 struct aicwf_softc {
     uint8_t sc_txbuf[2048], sc_cfm[1032];
     int sc_lock, sc_cv; uint64_t sc_sae_epoch;
     bool sc_cmd_busy, sc_cfm_done;
+    bool sc_sta_scan_pending, sc_sta_scan_started, sc_sta_scan_draining;
+    bool sc_scanning, sc_scan_published;
     uint16_t sc_cfm_len, sc_cfm_id;
 };
+static bool aicwf_sta_ready(struct aicwf_softc *sc) { (void)sc; return true; }
 static int write_error, reply_len, writes; static struct aicwf_softc *waiting;
 static int mutex_owned(int *p) { return *p; }
 static void mutex_enter(int *p) { assert(!*p); *p = 1; }
@@ -44,9 +49,10 @@ static void le16enc(void *p, unsigned n)
 { uint8_t *b = p; b[0] = n; b[1] = n >> 8; }
 static uint8_t aicwf_crc8(const void *p, size_t n)
 { (void)p; (void)n; return 0; }
-static int aicwf_write(struct aicwf_softc *sc, size_t len, unsigned reserve)
+static int aicwf_write_attempted(struct aicwf_softc *sc, size_t len, unsigned reserve, bool *attempted)
 {
     assert(mutex_owned(&sc->sc_lock));
+    if (attempted != NULL) *attempted = true;
     assert(len == 20 && reserve == 0); writes++;
     sc->sc_cfm_done = reply_len >= 0;
     sc->sc_cfm_len = reply_len >= 0 ? reply_len : 0;
@@ -98,5 +104,5 @@ int main(void)
     return 0;
 }
 C
-${CC:-cc} -std=c99 -Wall -Wextra -Werror "$work/check.c" -o "$work/check"
+${CC:-cc} -std=c99 -Wall -Wextra -Werror ${AICWF_COMMAND_CFLAGS:-} "$work/check.c" -o "$work/check"
 "$work/check"

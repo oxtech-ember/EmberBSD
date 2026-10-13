@@ -1,12 +1,9 @@
-banner=Welcome to the NetBSD @@VERSION@@ boot-only install CD
-banner================================================================================
+banner=EmberBSD @@EMBER_VERSION@@ network installation image
+banner=Unix for intelligent devices
+banner=Sets are not included. Use a full installation image, or a published
+banner=EmberBSD set server for network installation.
 banner=
-banner=This media contains only the installation program.  Binary sets to complete the
-banner=installation must be downloaded separately.  The installer can download them
-banner=if this machine has a working internet connection.
-banner=
-banner=If you encounter a problem while booting, report a bug at
-banner=https://www.NetBSD.org/.
-menu=Install NetBSD:boot netbsd
+menu=Install EmberBSD:boot netbsd
 menu=Drop to boot prompt:prompt
 timeout=30
+clear=1

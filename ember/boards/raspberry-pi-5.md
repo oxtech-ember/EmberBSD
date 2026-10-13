@@ -16,7 +16,7 @@ Board revision: C1 in the earlier support record.
 | Serial console | Tested |
 | All CPU cores | Tested |
 | Ethernet | Tested |
-| Wi-Fi | Tested |
+| Wi-Fi | WPA2 and SAE/required PMF; Neighbor Reports and host-managed BTM acceptance/rejection passed on one Keenetic mesh ([measurements and limits](../boot/bwfm-kv.md#physical-raspberry-pi-5-check)) |
 | Bluetooth | Classic: Tested; BLE: No |
 | Temperature sensor | Tested |
 | Fan control | Tested |
@@ -28,13 +28,28 @@ Board revision: C1 in the earlier support record.
 | Real-time clock | Not validated |
 | Processor frequency control | Tested |
 | Voltage regulators | Not validated |
-| USB | Not validated |
+| USB | Limited USB 2.0 control reads and STALL recovery validated; other transfer types and power management not validated |
 | Hardware random numbers | Not validated |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.
 
 ## Evidence
+
+### USB control recovery, 2026-10-13
+
+A Pi 5 Model B with 8 GiB RAM and DMI version `D04170` used UEFI/ACPI.
+The test preserved its existing firmware; DMI alone does not establish a silicon revision.
+Kernel `EMBER64 #6` was cross-built with GCC 16.2.0 from `294614ed81a`.
+Its SHA256 was `853199b026f3f5512324032afe04bf7819823441d8c5efd11efb4ea2b0bd9fc9`.
+The matching board modules were installed and their hashes checked after reboot.
+
+An Apple USB DFU device, VID `05ac`, PID `1227`, connected at high speed to a root port.
+The [control probe](../boot/usb-control-recovery.md#physical-control-probe) passed
+1024 descriptor reads in about 512 ms and 1024 STALL requests in about 256 ms.
+Both series ended with a valid standard device descriptor.
+The previous kernel had the same approximate latency; the synchronization fix did not improve throughput.
+These short tests do not validate sustained load, bulk, isochronous transfers, power management or phone boot.
 
 ### Headless base update, 2026-10-07
 

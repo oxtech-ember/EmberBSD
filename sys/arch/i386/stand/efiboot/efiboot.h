@@ -72,6 +72,7 @@ int utf8_to_ucs2(const char *, CHAR16 **, size_t *);
 int cninit(void);
 void efi_consinit(int, int, int);
 void efi_cons_show(void);
+void efi_bootcfg_color(int);
 void command_text(char *);
 void command_gop(char *);
 

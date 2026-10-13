@@ -74,7 +74,7 @@ fi
 if ${add_name}; then
 	extra=${1:+" $1"}
 
-	echo "const char bootprog_name[] = \"NetBSD/${machine}${extra}\";" >> vers.c
+	echo "const char bootprog_name[] = \"EmberBSD/${machine}${extra}\";" >> vers.c
 fi
 
 if ${add_kernrev}; then

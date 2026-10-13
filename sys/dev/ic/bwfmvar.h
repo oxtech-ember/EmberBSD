@@ -31,6 +31,7 @@
 #include <net/if_ether.h>
 
 #include <net80211/ieee80211.h>
+#include <net80211/ieee80211_ioctl.h>
 #include <net80211/ieee80211_proto.h>
 #include <net80211/ieee80211_var.h>
 
@@ -185,6 +186,9 @@ enum bwfm_task_cmd {
 	BWFM_TASK_KEY_DELETE,
 	BWFM_TASK_RX_EVENT,
 	BWFM_TASK_REPORT,
+	BWFM_TASK_STA_MGMT,
+	BWFM_TASK_LINK_CHECK,
+	BWFM_TASK_BARRIER,
 };
 
 struct bwfm_cmd_newstate {
@@ -193,22 +197,31 @@ struct bwfm_cmd_newstate {
 };
 
 struct bwfm_cmd_key {
-	const struct ieee80211_key *key;
+	struct ieee80211_key	 key;
 	uint8_t			 mac[IEEE80211_ADDR_LEN];
+	uint8_t			 peer[IEEE80211_ADDR_LEN];
+	uint32_t		 generation;
+	bool			 station;
+	bool			 sae;
 };
 
 struct bwfm_task {
 	struct work		 t_work;
 	struct bwfm_softc	*t_sc;
 	enum bwfm_task_cmd	 t_cmd;
+	uint32_t		 t_generation;
 	union {
 		struct bwfm_cmd_newstate	newstate;
 		struct bwfm_cmd_key		key;
 		struct mbuf			*mbuf;
+		struct ieee80211req_sta_mgmt sta;
+		uint32_t			link_generation;
 	} t_u;
 #define	t_newstate	t_u.newstate
 #define	t_key		t_u.key
 #define	t_mbuf		t_u.mbuf
+#define	t_sta		t_u.sta
+#define	t_link_generation t_u.link_generation
 };
 
 struct bwfm_softc {
@@ -234,15 +247,42 @@ struct bwfm_softc {
 	uint32_t		 sc_sae_sent;
 	uint32_t		 sc_sae_dropped;
 	uint32_t		 sc_sae_last_flags;
+	/* Connection-event metadata only; no addresses or key material. */
+	uint32_t		 sc_link_events;
+	uint32_t		 sc_link_event;
+	uint32_t		 sc_link_reason;
+	uint16_t		 sc_link_flags;
+	uint32_t		 sc_link_generation;
+	uint32_t		 sc_link_checks;
+	uint32_t		 sc_link_errors;
+	uint32_t		 sc_link_recoveries;
+	unsigned int		 sc_link_timer;
+	unsigned int		 sc_link_misses;
+	bool			 sc_link_pending;
 	bool			 sc_sae_enabled;
 	uint8_t			 sc_sae_bssid[IEEE80211_ADDR_LEN];
 
 	bool			 sc_if_attached;
+	bool			 sc_detaching;
 	struct pool_cache	*sc_freetask;
 	struct workqueue	*sc_taskq;
 
 	int			(*sc_newstate)(struct ieee80211com *,
 				    enum ieee80211_state, int);
+
+	bool			 sc_sta_enabled;
+	bool			 sc_sta_wnm_maybe_enabled;
+	bool			 sc_sta_tx_pending;
+	bool			 sc_sta_bgscan;
+	uint32_t		 sc_sta_packetid;
+	uint32_t		 sc_sta_generation;
+	uint32_t		 sc_sta_scan_generation;
+	uint32_t		 sc_sta_rx;
+	uint16_t		 sc_scan_id;
+	uint16_t		 sc_sta_assoc_len;
+	uint8_t			 sc_sta_assoc[IEEE80211_STA_MAX_BODY - 6];
+	struct ieee80211req_sta_mgmt sc_sta_tx;
+	struct ieee80211req_sta_mgmt sc_sta_scan;
 
 	kmutex_t		 sc_control_lock;
 	uint16_t		 sc_bcdc_reqid;

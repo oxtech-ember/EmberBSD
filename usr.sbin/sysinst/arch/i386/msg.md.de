@@ -124,7 +124,7 @@ message pickdisk
 {Festplatte auswählen: }
 
 message partabovechs
-{Der NetBSD Teil der Festplatte liegt außerhalb der vom BIOS dieser Maschine
+{Der EmberBSD Teil der Festplatte liegt außerhalb der vom BIOS dieser Maschine
 adressierbaren Bereich. Eventuell können Sie von dieser Partition nicht
 booten. Sind Sie sicher, dass Sie fortfahren möchten?
 
@@ -133,8 +133,8 @@ booten. Sind Sie sicher, dass Sie fortfahren möchten?
 
 message missing_bootmenu_text
 {Sie haben mehr als ein Betriebssystem auf dieser Festplatte; allerdings ist kein
-'bootmenu' (Eintrag für den NetBSD Bootloader) für die aktive Partition und/oder
-der Partition vorhanden, auf die NetBSD installiert werden soll.
+'bootmenu' (Eintrag für den EmberBSD Bootloader) für die aktive Partition und/oder
+der Partition vorhanden, auf die EmberBSD installiert werden soll.
 
 Wollen Sie die Partition zum Hinzufügen eines 'bootmenu' Eintrages
 editieren?}
@@ -150,7 +150,7 @@ Sind Sie sicher, dass Sie dennoch fortfahren möchten?
 gelangen.)}
 
 message installbootsel
-{Ihre Konfiguration benötigt den NetBSD Bootselect (Bootauswahl) Code, um
+{Ihre Konfiguration benötigt den EmberBSD Bootselect (Bootauswahl) Code, um
 das zu startende Betriebssystem beim Start des Computers zu wählen.
 
 Dieser ist gegenwärtig noch nicht installiert; wollen Sie dies jetzt tun?}
@@ -158,11 +158,11 @@ Dieser ist gegenwärtig noch nicht installiert; wollen Sie dies jetzt tun?}
 message installmbr
 {Der Bootcode im Master Boot Record scheint nicht gültig zu sein.
 
-Wollen Sie den NetBSD Bootcode installieren?}
+Wollen Sie den EmberBSD Bootcode installieren?}
 
 message updatembr
 {Wollen Sie den Bootcode im Master Boot Record auf die letzte Version des
-NetBSD Bootcodes updaten?}
+EmberBSD Bootcodes updaten?}
 
 message set_kernel_1	{Kernel (GENERIC)}
 message set_kernel_2	{Kernel (GENERIC_KASLR)}

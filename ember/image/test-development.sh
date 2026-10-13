@@ -16,6 +16,7 @@ work=$(CDPATH= cd -- "$work" && pwd)
 mkdir "$work/bundle"
 bundle=$work/bundle
 printf 'debugger fixture\n' > "$bundle/gdb-18.1.tgz"
+printf 'compiler fixture\n' > "$bundle/gcc16-16.2.0nb1.tgz"
 printf 'dependency fixture\n' > "$bundle/gmp-6.3.0.tgz"
 printf '%040d\n' 1 > "$bundle/ports-revision"
 (cd "$bundle"; shasum -a 256 ./*.tgz | sed 's,  ./,  ,') > "$bundle/packages.sha256"
@@ -65,6 +66,15 @@ sed 's/gdb-18[.]1[.]tgz/gdb-15.1.tgz/' "$work/good-manifest" > "$bundle/packages
 expect fail 'obsolete debugger'
 mv "$bundle/gdb-15.1.tgz" "$bundle/gdb-18.1.tgz"
 cp "$work/good-manifest" "$bundle/packages.sha256"
+cp "$bundle/gcc16-16.2.0nb1.tgz" "$bundle/gcc16-16.2.0.tgz"
+(cd "$bundle"; shasum -a 256 ./*.tgz | sed 's,  ./,  ,') > "$bundle/packages.sha256"
+expect fail 'parallel compiler revisions'
+rm "$bundle/gcc16-16.2.0.tgz"
+mv "$bundle/gcc16-16.2.0nb1.tgz" "$bundle/gcc16-14.1.0.tgz"
+sed 's/gcc16-16[.]2[.]0nb1[.]tgz/gcc16-14.1.0.tgz/' "$work/good-manifest" > "$bundle/packages.sha256"
+expect fail 'obsolete compiler'
+mv "$bundle/gcc16-14.1.0.tgz" "$bundle/gcc16-16.2.0nb1.tgz"
+cp "$work/good-manifest" "$bundle/packages.sha256"
 sed '/gdb-18[.]1[.]tgz$/d' "$work/good-manifest" > "$bundle/packages.sha256"
 expect fail 'unlisted root debugger'
 sed '/gmp-6[.]3[.]0[.]tgz$/d' "$work/good-manifest" > "$bundle/packages.sha256"
@@ -102,7 +112,7 @@ printf 'corrupted\n' >> "$bundle/gmp-6.3.0.tgz"
 expect fail 'last checksum without final newline'
 printf 'dependency fixture\n' > "$bundle/gmp-6.3.0.tgz"
 cp "$work/good-manifest" "$bundle/packages.sha256"
-for receipt in installed-packages.sha256 installed-packages.sha256.new gdb-version.txt gdb.sha256; do
+for receipt in installed-packages.sha256 installed-packages.sha256.new gdb-version.txt gdb.sha256 cc-version.txt; do
 	touch "$bundle/$receipt"
 done
 expect pass 'retry with prior receipts'
@@ -127,6 +137,9 @@ ln "$work/base/rescue/cat" "$work/base/rescue/fsck_ffs"
 printf 'omitted manual\n' > "$work/base/usr/share/man/man1/example.1"
 printf 'old debugger\n' > "$work/comp/usr/bin/gdb"
 printf 'old TUI debugger\n' > "$work/comp/usr/bin/gdbtui"
+for tool in cc c++ cpp g++ gcc; do
+	printf 'old compiler %s\n' "$tool" > "$work/comp/usr/bin/$tool"
+done
 printf 'restricted directory payload\n' > "$work/base/var/spool/ftp/hidden/nested/payload"
 printf 'rc_configured=NO\n' > "$work/etc/etc/rc.conf"
 printf 'root:*:0:0::0:0:root:/root:/bin/sh\n_nsd:*:32:32::0:0:nsd:/var/empty:/sbin/nologin\n' \
@@ -182,6 +195,11 @@ EOF
 cat > "$work/comp/etc/mtree/set.comp" <<'EOF'
 ./usr/bin/gdb type=file uname=root gname=wheel mode=0555 size=13
 ./usr/bin/gdbtui type=file uname=root gname=wheel mode=0555 size=17
+./usr/bin/cc type=file uname=root gname=wheel mode=0555
+./usr/bin/c++ type=file uname=root gname=wheel mode=0555
+./usr/bin/cpp type=file uname=root gname=wheel mode=0555
+./usr/bin/g++ type=file uname=root gname=wheel mode=0555
+./usr/bin/gcc type=file uname=root gname=wheel mode=0555
 EOF
 cat > "$work/etc/dev/MAKEDEV" <<'EOF'
 #!/bin/sh
@@ -242,6 +260,10 @@ grep '^./usr/bin/gdb ' "$work/normalized.spec" | grep -q 'type=link'
 ! grep -q 'size=' "$work/normalized.spec"
 [ "$(readlink "$root/usr/bin/gdb")" = /usr/pkg/bin/gdb ]
 [ ! -e "$root/usr/bin/gdbtui" ]
+for tool in cc c++ cpp g++ gcc; do
+    [ "$(readlink "$root/usr/bin/$tool")" = "/usr/pkg/gcc16/bin/$tool" ]
+    grep -q "^./usr/bin/$tool " "$work/normalized.spec"
+done
 cmp "$work/ctf/ctfconvert" "$root/usr/bin/ctfconvert"
 cmp "$work/ctf/libdwarf.so.2.2" "$root/usr/lib/libdwarf.so.2.2"
 cmp "$work/ctf/libdwarf.h" "$root/usr/include/libdwarf.h"

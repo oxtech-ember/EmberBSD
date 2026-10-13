@@ -140,6 +140,22 @@ temporary build storage.
 
 ## Validation
 
+On 2026-10-10, the full update profile was cross-built on Apple Silicon macOS
+with the in-tree GCC 12.5 bootstrap: `EMBER64` with recorded `BUILDINFO`, the
+four board modules and the reduced base set. The strict `checkflist` caught a
+stale `libdwarf` entry in the set lists, fixed before building the sets. The
+kernel, modules and base were installed on a physical Pi 5 in the documented
+order (kernel and modules, reboot, base, reboot). Post-install acceptance on
+the board passed: kernel `kern.buildinfo` matched the pinned revision, all
+four modules loaded, 16 memfd and three FP-state checks passed, and the
+installed libc passed the smoke, 850-case CAS, binary128 (one `invalid_traps`
+skip remains a Cortex-A76 IOE limitation) and 27 libc/pthread checks. The
+accepted radio firmware overlay kept its hashes, `etcupdate -a -l` merged the
+etc set, and the SAE network block parsed again with the updated
+wpa_supplicant. Wi-Fi association was not verifiable at that bench: no
+configured network was in range. A single transient host `cc1` SIGTRAP under
+`-j8` did not reproduce; the remainder of the build ran at `-j6`.
+
 On 2026-10-07, the matching kernel booted on physical Pi 5 hardware and
 passed 16 memfd and three FP-state checks. The reduced base passed strict
 file-list validation, candidate libc contracts and a chroot command check.

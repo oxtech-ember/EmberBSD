@@ -37,6 +37,7 @@ struct drm_driver {
 struct drm_device {
     struct drm_native_identity *native_identity;
     struct drm_native_pci_record native_pci;
+    struct drm_native_platform_record native_platform;
     struct drm_minor *primary, *render;
     struct drm_driver *driver;
     bool registered;
@@ -46,6 +47,7 @@ static int cdevsw_lookup_major(const int *p) { assert(p==&drm_cdevsw); return 18
 static int allocated, create_count, fail_at, load_error;
 static bool active[192];
 static struct drm_native_pci_record *leaves[192];
+static struct drm_native_platform_record *platform_leaves[192];
 static pthread_rwlock_t tree=PTHREAD_RWLOCK_INITIALIZER;
 static pthread_mutex_t gate=PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t ready=PTHREAD_COND_INITIALIZER;
@@ -53,7 +55,7 @@ static bool teardown_waiting;
 static void *kmem_zalloc(size_t n, int flags) { assert(!flags); allocated++; return calloc(1,n); }
 static void kmem_free(void *p, size_t n) {
     (void)n;
-    for (unsigned i=0; i<192; i++) assert(leaves[i]==NULL);
+    for (unsigned i=0; i<192; i++) assert(leaves[i]==NULL && platform_leaves[i]==NULL);
     allocated--; free(p);
 }
 static int sysctl_createv(struct sysctllog **log, int cf,
@@ -71,12 +73,14 @@ static int sysctl_createv(struct sysctllog **log, int cf,
         *result=&root; return 0;
     }
     assert(type==CTLTYPE_STRUCT && parent && *parent==&root && !flags);
-    assert(len==68 && sscanf(name,"identity%d", &minor)==1 && active[minor]);
+bool platform = strncmp(name,"platform",8)==0;
+assert(len==(platform ? 160U : 68U));
+assert(sscanf(name,platform ? "platform%d" : "identity%d",&minor)==1 && active[minor]);
     assert(pthread_rwlock_wrlock(&tree)==0);
-    assert(!leaves[minor]);
+    assert(!leaves[minor] && !platform_leaves[minor]);
     if (!*log) *log=calloc(1,sizeof(**log));
     (*log)->minor[(*log)->n++]=minor;
-    leaves[minor]=data;
+    if (platform) platform_leaves[minor]=data; else leaves[minor]=data;
     assert(pthread_rwlock_unlock(&tree)==0);
     return 0;
 }
@@ -88,7 +92,7 @@ static void sysctl_teardown(struct sysctllog **log)
     assert(pthread_mutex_unlock(&gate)==0);
     assert(pthread_rwlock_wrlock(&tree)==0);
     if (*log) {
-        for (unsigned i=0; i<(*log)->n; i++) leaves[(*log)->minor[i]]=NULL;
+        for (unsigned i=0; i<(*log)->n; i++) { leaves[(*log)->minor[i]]=NULL; platform_leaves[(*log)->minor[i]]=NULL; }
         free(*log); *log=NULL;
     }
     assert(pthread_rwlock_unlock(&tree)==0);
@@ -105,7 +109,7 @@ static int drm_minor_register(struct drm_device *d, unsigned type) {
 }
 static void drm_minor_unregister(struct drm_device *d, unsigned type) {
     struct drm_minor *m= type==DRM_MINOR_PRIMARY ? d->primary : d->render;
-    if (m) { assert(!leaves[m->index]); active[m->index]=false; }
+    if (m) { assert(!leaves[m->index] && !platform_leaves[m->index]); active[m->index]=false; }
 }
 static int create_compat_control_link(struct drm_device *d) { (void)d; return 0; }
 static void remove_compat_control_link(struct drm_device *d) { (void)d; }

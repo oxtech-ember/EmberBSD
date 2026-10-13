@@ -791,3 +791,56 @@ cpu_hatch(struct cpu_info *ci)
 	cpu_clr_mbox(device_unit(ci->ci_dev));
 }
 #endif /* MULTIPROCESSOR */
+
+/*
+ * Linux-compatible AT_HWCAP value for the aarch64 ELF auxv.
+ * OpenCV and other userspace CPU feature detection reads this
+ * entry from /proc/self/auxv. Without it, any library built with
+ * a NEON/FP16 baseline aborts at initialization on NetBSD.
+ * Bit assignment follows arch/arm64/include/uapi/asm/hwcap.h.
+ */
+uint64_t
+cpu_elf_hwcap(void)
+{
+	struct cpu_info *ci = curcpu();
+	uint64_t isar0, pfr0;
+	uint64_t hwcap = 0;
+
+	isar0 = ci->ci_id.ac_aa64isar0;
+	pfr0 = ci->ci_id.ac_aa64pfr0;
+
+#define SO_EQ(reg, mask, val)	(__SHIFTOUT((reg), (mask)) == (val))
+#define SO_NE(reg, mask, val)	(__SHIFTOUT((reg), (mask)) != (val))
+
+	if (SO_NE(pfr0, ID_AA64PFR0_EL1_FP, ID_AA64PFR0_EL1_FP_NONE))
+		hwcap |= __BIT(0);	/* HWCAP_FP */
+	if (SO_NE(pfr0, ID_AA64PFR0_EL1_ADVSIMD, ID_AA64PFR0_EL1_ADV_SIMD_NONE))
+		hwcap |= __BIT(1);	/* HWCAP_ASIMD */
+	if (SO_NE(isar0, ID_AA64ISAR0_EL1_AES, 0))
+		hwcap |= __BIT(3);	/* HWCAP_AES */
+	if (SO_EQ(isar0, ID_AA64ISAR0_EL1_AES, ID_AA64ISAR0_EL1_AES_PMUL))
+		hwcap |= __BIT(4);	/* HWCAP_PMULL */
+	if (SO_EQ(isar0, ID_AA64ISAR0_EL1_SHA1, ID_AA64ISAR0_EL1_SHA1_SHA1CPMHSU))
+		hwcap |= __BIT(5);	/* HWCAP_SHA1 */
+	if (SO_NE(isar0, ID_AA64ISAR0_EL1_SHA2, 0))
+		hwcap |= __BIT(6);	/* HWCAP_SHA2 */
+	if (SO_EQ(isar0, ID_AA64ISAR0_EL1_SHA2,
+	    ID_AA64ISAR0_EL1_SHA2_SHA512HSU))
+		hwcap |= __BIT(21);	/* HWCAP_SHA512 */
+	if (SO_EQ(isar0, ID_AA64ISAR0_EL1_CRC32, ID_AA64ISAR0_EL1_CRC32_CRC32X))
+		hwcap |= __BIT(7);	/* HWCAP_CRC32 */
+	if (SO_EQ(isar0, ID_AA64ISAR0_EL1_ATOMIC, ID_AA64ISAR0_EL1_ATOMIC_SWP))
+		hwcap |= __BIT(8);	/* HWCAP_ATOMICS */
+	if (SO_EQ(pfr0, ID_AA64PFR0_EL1_FP, ID_AA64PFR0_EL1_FP_HP))
+		hwcap |= __BIT(9);	/* HWCAP_FPHP */
+	if (SO_EQ(pfr0, ID_AA64PFR0_EL1_ADVSIMD, ID_AA64PFR0_EL1_ADV_SIMD_HP))
+		hwcap |= __BIT(10);	/* HWCAP_ASIMDHP */
+	if (SO_EQ(isar0, ID_AA64ISAR0_EL1_RDM, ID_AA64ISAR0_EL1_RDM_SQRDML))
+		hwcap |= __BIT(28);	/* HWCAP_ASIMDRDM */
+	if (SO_EQ(isar0, ID_AA64ISAR0_EL1_DP, ID_AA64ISAR0_EL1_DP_UDOT))
+		hwcap |= __BIT(20);	/* HWCAP_ASIMDDP */
+
+#undef SO_NE
+#undef SO_EQ
+	return hwcap;
+}

@@ -2432,6 +2432,8 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_FLAGS_SUPPORT_SET_SCAN_DWELL		0x00000020
 /** Driver supports Beacon Report Measurement */
 #define WPA_DRIVER_FLAGS_SUPPORT_BEACON_REPORT		0x00000040
+/** Driver supports neighbor reports but not host radio measurements. */
+#define WPA_DRIVER_FLAGS_RRM_NEIGHBOR_REPORT_ONLY		0x00000080
 
 	u32 rrm_flags;
 

@@ -82,7 +82,10 @@ int main(void)
     assert(delivered.generation == 42 && delivered.bssid[5] == 1);
     assert(delivered.len == 3 && memcmp(delivered.data, "old", 3) == 0);
     assert(sc.sc_ev_sae_drop.ev_count == 1 && sc.sc_ev_sae_start.ev_count == 1);
-    puts("PASS: SAE event identity and allocation failure recovery");
+    sc.sc_ic.ic_bss = NULL;
+    aicwf_sae_event(&sc, true, wire, sizeof(wire));
+    assert(deliveries == 1 && sc.sc_ev_sae_drop.ev_count == 2);
+    puts("PASS: SAE event identity, missing BSS and allocation failure recovery");
     return 0;
 }
 C

@@ -366,14 +366,19 @@ static void sme_auth_handle_rrm(struct wpa_supplicant *wpa_s,
 	*pos++ = rrm_ie_len;
 
 	/* Set supported capabilities flags */
-	if (wpa_s->drv_rrm_flags & WPA_DRIVER_FLAGS_TX_POWER_INSERTION)
+	if ((wpa_s->drv_rrm_flags & WPA_DRIVER_FLAGS_TX_POWER_INSERTION) &&
+	    !(wpa_s->drv_rrm_flags & WPA_DRIVER_FLAGS_RRM_NEIGHBOR_REPORT_ONLY))
 		*pos |= WLAN_RRM_CAPS_LINK_MEASUREMENT;
 
-	*pos |= WLAN_RRM_CAPS_BEACON_REPORT_PASSIVE |
-		WLAN_RRM_CAPS_BEACON_REPORT_ACTIVE |
-		WLAN_RRM_CAPS_BEACON_REPORT_TABLE;
+	if (wpa_s->drv_rrm_flags & WPA_DRIVER_FLAGS_RRM_NEIGHBOR_REPORT_ONLY)
+		*pos |= WLAN_RRM_CAPS_NEIGHBOR_REPORT;
+	else
+		*pos |= WLAN_RRM_CAPS_BEACON_REPORT_PASSIVE |
+			WLAN_RRM_CAPS_BEACON_REPORT_ACTIVE |
+			WLAN_RRM_CAPS_BEACON_REPORT_TABLE;
 
-	if (wpa_s->lci)
+	if (wpa_s->lci &&
+	    !(wpa_s->drv_rrm_flags & WPA_DRIVER_FLAGS_RRM_NEIGHBOR_REPORT_ONLY))
 		pos[1] |= WLAN_RRM_CAPS_LCI_MEASUREMENT;
 
 	wpa_s->sme.assoc_req_ie_len += rrm_ie_len + 2;

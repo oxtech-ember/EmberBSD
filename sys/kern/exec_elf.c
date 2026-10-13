@@ -205,6 +205,12 @@ elf_populate_auxv(struct lwp *l, struct exec_package *pack, char **stackp)
 		a->a_v = l->l_proc->p_stackbase;
 		a++;
 
+#ifdef __aarch64__
+		a->a_type = AT_HWCAP;
+		a->a_v = cpu_elf_hwcap();
+		a++;
+#endif
+
 		a->a_type = AT_EUID;
 		if (vap->va_mode & S_ISUID)
 			a->a_v = vap->va_uid;

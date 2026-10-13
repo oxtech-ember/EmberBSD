@@ -81,6 +81,43 @@ int main(void)
     dev.native_pci.version=0;
     assert(drm_dev_register(&dev, 0)==0 && !dev.native_identity);
     drm_dev_unregister(&dev);
+/* Platform identity has the same ownership, but no fabricated PCI IDs. */
+dev.render=&render;
+dev.native_platform=(struct drm_native_platform_record) {
+    .version=1, .length=160, .bus_type=DRM_NATIVE_BUS_PLATFORM,
+    .fullname="bcmv3d0", .compatible="acpi:BCM2850"
+};
+for (fail_at=1; fail_at<=3; fail_at++) {
+    create_count=0;
+    assert(drm_dev_register(&dev,0)==-ENOMEM);
+    assert(!dev.native_identity && !platform_leaves[3] && !platform_leaves[140]);
+    assert(!active[3] && !active[140]);
+}
+fail_at=0;
+assert(drm_dev_register(&dev,0)==0);
+assert(!leaves[3] && !leaves[140]);
+assert(platform_leaves[3] && platform_leaves[140]);
+struct drm_native_platform_record platform_saved=*platform_leaves[140];
+assert(platform_saved.primary_minor==3 && platform_saved.render_minor==140);
+assert(platform_saved.primary_major==180 && platform_saved.render_major==180);
+assert(platform_saved.flags==3 && platform_saved.length==160);
+dev.native_platform.fullname[0]='x';
+assert(!strcmp(platform_leaves[140]->fullname,"bcmv3d0"));
+assert(pthread_rwlock_rdlock(&tree)==0);
+teardown_waiting=false;
+assert(pthread_create(&thread,NULL,unregister_thread,&dev)==0);
+assert(pthread_mutex_lock(&gate)==0);
+while (!teardown_waiting) assert(pthread_cond_wait(&ready,&gate)==0);
+assert(!memcmp(platform_leaves[140],&platform_saved,sizeof(platform_saved)));
+assert(pthread_mutex_unlock(&gate)==0);
+assert(pthread_rwlock_unlock(&tree)==0);
+assert(pthread_join(thread,NULL)==0);
+assert(!platform_leaves[3] && !platform_leaves[140] && allocated==0);
+dev.render=NULL;
+assert(drm_dev_register(&dev,0)==0);
+assert(platform_leaves[3]->flags==DRM_NATIVE_PRIMARY);
+assert(!platform_leaves[140]);
+drm_dev_unregister(&dev);
     /* File identity is checked before any foreign f_data dereference. */
     assert(sync_file_get_fence(-1)==NULL && held==0);
     for (int type=1; type<=3; type++) {

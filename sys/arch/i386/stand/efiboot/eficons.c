@@ -35,6 +35,7 @@
 #include "efiboot.h"
 
 #include "bootinfo.h"
+#include "bootcfg.h"
 #include "vbe.h"
 
 #ifndef DEFAULT_GOP_MODE
@@ -402,6 +403,42 @@ clear_pc_screen(void)
 {
 
 	uefi_call_wrapper(ST->ConOut->ClearScreen, 1, ST->ConOut);
+}
+
+/* Keep firmware colors local to the mark and preserve the menu attribute. */
+void
+efi_bootcfg_color(int event)
+{
+	static UINTN saved;
+	UINTN attribute;
+
+	if (iodev != CONSDEV_PC || internal_putchar != efi_cons_putc ||
+	    ST->ConOut == NULL || ST->ConOut->Mode == NULL)
+		return;
+	switch (event) {
+	case BOOTCFG_COLOR_SAVE:
+		saved = ST->ConOut->Mode->Attribute;
+		return;
+	case BOOTCFG_COLOR_FLAME:
+		attribute = (saved & 0x70) | EFI_YELLOW;
+		break;
+	case BOOTCFG_COLOR_OUTER:
+		attribute = (saved & 0x70) | EFI_LIGHTRED;
+		break;
+	case BOOTCFG_COLOR_INNER:
+		attribute = (saved & 0x70) | EFI_BROWN;
+		break;
+	case BOOTCFG_COLOR_WORDMARK:
+		attribute = (saved & 0x70) | EFI_WHITE;
+		break;
+	case BOOTCFG_COLOR_RESTORE:
+		attribute = saved;
+		break;
+	default:
+		return;
+	}
+	(void)uefi_call_wrapper(ST->ConOut->SetAttribute, 2, ST->ConOut,
+	    attribute);
 }
 
 static uint8_t

@@ -56,6 +56,30 @@ ENTRY(conputc)
 	popa
 	ret
 
+/* Set the cell attribute, then use the normal teletype cursor handling. */
+ENTRY(conputc_color)
+	pusha
+
+	call	_C_LABEL(prot_to_real)
+	.code16
+
+	pushw	%ax
+	movb	%dl, %bl	/* second compactcall argument: VGA attribute */
+	xorb	%bh, %bh
+	movw	$1, %cx
+	movb	$0x09, %ah
+	int	$0x10
+	popw	%ax
+	movw	$1, %bx
+	movb	$0x0e, %ah
+	int	$0x10
+
+	calll	_C_LABEL(real_to_prot)
+	.code32
+
+	popa
+	ret
+
 /**************************************************************************
 GETC - Get a character
 **************************************************************************/

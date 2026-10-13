@@ -39,6 +39,16 @@
 #define BOOTCFG_CMD_RNDSEED	"rndseed"
 #define BOOTCFG_CMD_USERCONF	"userconf"
 
+/* Console attributes apply only while the logo is printed. */
+enum bootcfg_color_event {
+	BOOTCFG_COLOR_SAVE,
+	BOOTCFG_COLOR_FLAME,
+	BOOTCFG_COLOR_WORDMARK,
+	BOOTCFG_COLOR_RESTORE,
+	BOOTCFG_COLOR_OUTER,
+	BOOTCFG_COLOR_INNER
+};
+
 typedef void (*bootcfg_command)(const char *cmd, char *arg);
 
 struct bootcfg_def {
@@ -58,5 +68,6 @@ extern struct bootcfg_def bootcfg_info;
 int perform_bootcfg(const char *, bootcfg_command, const off_t);
 void bootcfg_do_noop(const char *, char *);
 void print_bootcfg_banner(const char *, const char *);
+void print_bootcfg_banner_color(const char *, const char *, void (*)(int));
 
 #endif /* !_BOOTCFG_H */

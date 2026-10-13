@@ -18,6 +18,10 @@ Record the origin of base libraries and headers in cross sysroots; see the
 [Ports provenance requirements](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/sysroot.md).
 Component acceptance does not establish a complete current base release.
 
+For target selection and installation, follow [Quick Start](ember/quick-start.md).
+Use the [User Guide](ember/user-guide.md) for first login, network access, applications, updates and recovery.
+The [amd64 VM walkthrough](ember/boot/amd64-vm-install.md) describes a full local-set development ISO.
+
 ## Hardware support and validation
 
 The [board catalog](ember/boards/README.md) is the maintained hardware index.
@@ -25,6 +29,9 @@ Select a board there for its capability table, boot path, detailed notes and
 validation limits. The [short board selector](README.md#supported-boards) stays
 in the root README; detailed support is maintained on each board page.
 See [adding a board](ember/boards/adding-a-board.md) for external contributions.
+All shared changes follow [CONTRIBUTING](CONTRIBUTING.md).
+The [kernel guide](ember/development/kernel.md) and
+[board-change worksheet](ember/development/board-change.md) define the relevant evidence.
 
 The following accessory and protocol limits also apply:
 
@@ -37,7 +44,7 @@ The following accessory and protocol limits also apply:
 | ELM327 | Testing with a physical adapter is still pending |
 | BLE | Not implemented in the added Bluetooth management tools |
 | CM5: WPA3-Personal | SAE group 19/H2E, required PMF, file transfer, reconnect, wrong-password rejection and WPA2 regression pass on CYW43455 7.45.265; [configuration and limits](ember/boot/bwfm-sae.md) |
-| Zero 3W: WPA3-Personal | AIC8800D80 SAE group 19/H2E, required PMF, protected SA Query and automatic recovery after AP removal are physically checked; nonzero initial IGTK IPN remains unsupported ([configuration and limits](ember/boot/aicwf-sae.md)) |
+| Zero 3W: WPA3-Personal | AIC8800D80 SAE group 19/H2E, required PMF, protected SA Query and automatic recovery after AP removal are physically checked; nonzero initial IGTK IPN remains unsupported ([configuration and limits](ember/boot/aicwf-sae.md)); VHT80 1SS has a physical WPA2 data-transfer check; SAE/PMF with nonzero IGTK IPN and complete k/v remain [driver work](ember/boot/aicwf-vht.md) |
 | CAN FD | Raw sockets, virtual canlo interfaces and canconfig mode control pass native rump checks; physical drivers and data-phase timing are not implemented ([guide](ember/can/README.md)) |
 | MOXA four-port G2 | Framing/shared-TX/state/RX helpers pass 33 host groups; opt-in ucom/TTY backend passes sixteen native rump groups with test-only USB. Real USB parent, firmware and hardware checks remain pending ([guide](ember/boot/moxa-serial.md)) |
 
@@ -47,14 +54,31 @@ CYW43455 firmware 7.45.265 can otherwise select SAE after a band-steering
 request in a mixed WPA2/WPA3 network while the host still holds WPA2 keys.
 This WNM mitigation remains in place. The separate
 [external-SAE implementation](ember/boot/bwfm-sae.md) adds WPA3-Personal
-with required PMF; it does not implement 802.11v roaming or 802.11r.
+with required PMF. The [host-managed station transport](ember/boot/bwfm-kv.md)
+adds Neighbor Report exchange and BSS Transition Management. Physical Pi 5
+checks passed acceptance, rejection and traffic under WPA2 and SAE/required
+PMF on one Keenetic mesh. The guide records measured gaps and remaining limits.
+802.11r fast transition remains unsupported.
 The [scan metadata correction](ember/boot/bwfm-scan.md) preserves firmware
 primary channels and unsigned signal-quality ranking. CM5 also provides an
-explicit [persistent maximum-cooling setting](ember/boot/thermal-fan.md).
-An access point may disconnect a station, after which NetBSD scans and
-joins again. The on-demand `hw.bwfm0.report` diagnostic includes radio
+optional [minimum active fan level](ember/boot/thermal-fan.md).
+On one CM5 fan, automatic cooling started at 50.1 °C using 125/255 PWM.
+All 272 active tachometer windows in a five-minute check showed rotation.
+The operator reports quieter, steady rotation. The source regression passes
+136 assertions on the host and CM5. Higher thermal transitions, measured
+noise and long-duration operation have separate validation limits.
+The [disconnect recovery](ember/boot/bwfm-link-events.md) handles firmware
+events and reconciles a silently lost association with host state. On CM5,
+a reproduced stuck connection recovered automatically, followed by an
+8 MiB Wi-Fi round trip; this is a functional check, not long-run acceptance.
+The on-demand `hw.bwfm0.report` diagnostic includes radio
 authentication, PMF and station counters to distinguish this failure
 from an SDIO transmit-window stall.
+
+The Zero 3W [PWM cooling path](ember/boot/a733-fan.md) uses the board's
+fan connector and all five temperature sensors. Source contracts cover
+stepped cooling, hysteresis, hardware errors and shared PWM clocks.
+Physical speed and noise acceptance remains pending.
 
 ## Building
 
@@ -126,6 +150,21 @@ Starting a UEFI rebuild removes the previous output for the selected
 variant. If Docker or compilation fails, an image builder will stop because
 the required input is missing. The host-side contract check covers this
 case: `python3 ember/tools/firmware-contract.py`.
+
+## Installation identity
+
+The [installer branding](ember/boot/installer-branding.md) keeps the x86
+BIOS, PXE, UEFI and sysinst screens consistent with EmberBSD.
+The colored ASCII mascot follows the project's flame, capsule eyes and smile.
+BIOS and UEFI use red, amber, yellow and white text attributes.
+Serial console banners use the same mascot in plain ASCII.
+Kernel filenames and partition types
+retain their NetBSD compatibility names. OS sets select the EmberBSD channel;
+that service is not yet published, so use the sets on the installation medium.
+Source, ASCII and ISO contracts are separate from boot and installation acceptance.
+The product version defaults to `1.0`. The NetBSD base version remains separate.
+An amd64 CD image passed UEFI and BIOS boot and a UEFI installation to a disposable VM disk.
+The installed system then booted without the CD image. Physical installation is a separate check.
 
 ## Deploying to a device
 

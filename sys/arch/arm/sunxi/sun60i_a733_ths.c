@@ -124,6 +124,7 @@ struct sun60i_a733_ths_softc {
 
 	callout_t		sc_tick;
 	bool			sc_throttled;
+	bool			sc_calibrated;
 };
 
 #define	RD4(sc, reg)		\
@@ -180,6 +181,39 @@ sun60i_a733_ths_calibrate(struct sun60i_a733_ths_softc *sc)
 
 	return done;
 }
+
+/* Index 5 is the hottest of all five sensors in this local binding. */
+static int
+sun60i_a733_ths_get_temp(device_t dev, const void *data, size_t len, int *mc)
+{
+	struct sun60i_a733_ths_softc * const sc = device_private(dev);
+	const uint32_t *spec = data;
+	uint32_t index, code;
+	u_int first, last, n;
+	int hottest = INT_MIN;
+
+	if (len != sizeof(*spec) || data == NULL || mc == NULL)
+		return EINVAL;
+	index = be32toh(spec[0]);
+	if (index > THS_NSENSORS)
+		return EINVAL;
+	if (!sc->sc_calibrated)
+		return EIO;
+	first = index == THS_NSENSORS ? 0 : index;
+	last = index == THS_NSENSORS ? THS_NSENSORS : index + 1;
+	for (n = first; n < last; n++) {
+		code = RD4(sc, THS_DATA(n)) & THS_CODE_MASK;
+		if (code == 0 || code == THS_CODE_MASK)
+			return EIO;
+		hottest = MAX(hottest, sun60i_a733_ths_to_mc(code));
+	}
+	*mc = hottest;
+	return 0;
+}
+
+static const struct fdtbus_thermal_controller_func sun60i_a733_ths_funcs = {
+	.get_temp = sun60i_a733_ths_get_temp,
+};
 
 static void
 sun60i_a733_ths_refresh(struct sysmon_envsys *sme, envsys_data_t *edata)
@@ -280,6 +314,7 @@ sun60i_a733_ths_attach(device_t parent, device_t self, void *aux)
 	aprint_normal(": Thermal sensor controller\n");
 
 	const u_int calibrated = sun60i_a733_ths_calibrate(sc);
+	sc->sc_calibrated = calibrated == THS_NSENSORS;
 	if (calibrated != THS_NSENSORS)
 		aprint_error_dev(self,
 		    "%u of %u sensors have no factory calibration\n",
@@ -311,6 +346,10 @@ sun60i_a733_ths_attach(device_t parent, device_t self, void *aux)
 	}
 	if (sysmon_envsys_register(sc->sc_sme) != 0)
 		goto fail;
+
+	if (fdtbus_register_thermal_controller(self, phandle,
+	    &sun60i_a733_ths_funcs) != 0)
+		aprint_error_dev(self, "couldn't register thermal provider\n");
 
 	callout_init(&sc->sc_tick, CALLOUT_MPSAFE);
 	callout_setfunc(&sc->sc_tick, sun60i_a733_ths_tick, sc);

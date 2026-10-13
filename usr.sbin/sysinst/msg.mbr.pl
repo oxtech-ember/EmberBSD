@@ -46,7 +46,7 @@ uruchomi sie prawidlowo.}
 
 message fixactivepart
 {
-Czy partycja NetBSD ma zostac zaznaczona jako aktywna?}
+Czy partycja EmberBSD ma zostac zaznaczona jako aktywna?}
 
 message setbiosgeom
 {

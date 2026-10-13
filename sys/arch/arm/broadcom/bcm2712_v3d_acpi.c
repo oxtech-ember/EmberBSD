@@ -27,8 +27,48 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arch/evbarm/rpi/vcprop.h>
 #include <arch/evbarm/rpi/vcio.h>
 
+/* Each experiment owns the same MMU and interrupt state until reboot. */
+#if (defined(BCM2712_V3D_DMA_PROBE) || defined(BCM2712_V3D_QUEUE_PROBE) || \
+    defined(BCM2712_V3D_IRQ_PROBE) || defined(BCM2712_V3D_FAULT_PROBE)) && \
+    !defined(BCM2712_V3D_TAKEOVER)
+#error "V3D experiments require BCM2712_V3D_TAKEOVER"
+#endif
+#if defined(BCM2712_V3D_QUEUE_PROBE) && !defined(BCM2712_V3D_DMA_PROBE)
+#error "BCM2712_V3D_QUEUE_PROBE requires BCM2712_V3D_DMA_PROBE"
+#endif
+#if (defined(BCM2712_V3D_IRQ_PROBE) || defined(BCM2712_V3D_FAULT_PROBE)) && \
+    (defined(BCM2712_V3D_DMA_PROBE) || defined(BCM2712_V3D_QUEUE_PROBE))
+#error "V3D polling and interrupt experiments cannot share one boot"
+#endif
+#if defined(BCM2712_V3D_IRQ_PROBE) && defined(BCM2712_V3D_FAULT_PROBE)
+#error "V3D IRQ and fault experiments cannot share one boot"
+#endif
+
 #ifdef BCM2712_V3D_TAKEOVER
 int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
+#endif
+#if defined(BCM2712_V3D_RENDER) && !defined(BCM2712_V3D_TAKEOVER)
+#error "V3D render requires BCM2712_V3D_TAKEOVER"
+#endif
+#if defined(BCM2712_V3D_RENDER) && (defined(BCM2712_V3D_DMA_PROBE) || \
+    defined(BCM2712_V3D_QUEUE_PROBE) || defined(BCM2712_V3D_IRQ_PROBE) || \
+    defined(BCM2712_V3D_FAULT_PROBE))
+#error "V3D render and boot probes cannot share one boot"
+#endif
+#ifdef BCM2712_V3D_RENDER
+int bcmv3d_render_attach(device_t, bus_dma_tag_t, ACPI_HANDLE);
+#endif
+#if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_DMA_PROBE)
+int bcmv3d_dma_probe(device_t, bus_dma_tag_t);
+#endif
+#if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_QUEUE_PROBE)
+int bcmv3d_queue_probe(device_t, bus_dma_tag_t);
+#endif
+#if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_IRQ_PROBE)
+int bcmv3d_irq_probe(device_t, bus_dma_tag_t, ACPI_HANDLE);
+#endif
+#if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_FAULT_PROBE)
+int bcmv3d_fault_probe(device_t, bus_dma_tag_t, ACPI_HANDLE);
 #endif
 
 #define BCMV3D_HUB	0
@@ -69,6 +109,8 @@ struct bcmv3d_clock_result {
 struct bcmv3d_softc {
 	device_t sc_dev;
 	bus_space_tag_t sc_bst;
+	bus_dma_tag_t sc_dmat;
+	ACPI_HANDLE sc_handle;
 	const char *sc_stage;
 	struct bcmv3d_clock_result sc_clock_state, sc_clock_rate;
 	uint32_t sc_pm;
@@ -303,8 +345,38 @@ bcmv3d_finalize(device_t dev)
 		aprint_normal_dev(dev, "observation stopped at %s: error %d; "
 		    "GPU state unchanged\n", sc->sc_stage, error);
 #ifdef BCM2712_V3D_TAKEOVER
-	else
-		(void)bcmv3d_takeover_probe(dev, sc->sc_bst);
+	else {
+		error = bcmv3d_takeover_probe(dev, sc->sc_bst);
+#ifdef BCM2712_V3D_DMA_PROBE
+		/* The bounded DMA experiment runs only after a full takeover. */
+		if (error == 0)
+			error = bcmv3d_dma_probe(dev, sc->sc_dmat);
+#endif
+#ifdef BCM2712_V3D_QUEUE_PROBE
+		/* A failed DMA job may still be active: stop the entire chain. */
+		if (error == 0)
+			error = bcmv3d_queue_probe(dev, sc->sc_dmat);
+#endif
+#ifdef BCM2712_V3D_IRQ_PROBE
+		/* The interrupt experiment owns the jobs; no polling probe. */
+		if (error == 0)
+			error = bcmv3d_irq_probe(dev, sc->sc_dmat,
+			    sc->sc_handle);
+#endif
+#ifdef BCM2712_V3D_FAULT_PROBE
+		/* The fault experiment owns the jobs; no polling probe. */
+		if (error == 0)
+			error = bcmv3d_fault_probe(dev, sc->sc_dmat,
+			    sc->sc_handle);
+#endif
+#ifdef BCM2712_V3D_RENDER
+		if (error == 0) {
+			error = bcmv3d_render_attach(dev, sc->sc_dmat, sc->sc_handle);
+			if (error != 0)
+				aprint_error_dev(dev, "render attachment failed: %d\n", error);
+		}
+#endif
+	}
 #endif
 	return 0;
 }
@@ -337,6 +409,9 @@ bcmv3d_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_dev = self;
 	sc->sc_bst = aa->aa_memt;
+	/* GPU0's own ACPI DMA tag: the 32-bit window honoring _CCA=0. */
+	sc->sc_dmat = aa->aa_dmat;
+	sc->sc_handle = aa->aa_node->ad_handle;
 	aprint_naive("\n");
 	aprint_normal(": BCM2712 V3D passive observer\n");
 	if (ACPI_FAILURE(acpi_eval_integer(aa->aa_node->ad_handle,

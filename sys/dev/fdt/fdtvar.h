@@ -231,6 +231,10 @@ struct fdtbus_pwm_controller_func {
 };
 
 
+struct fdtbus_thermal_controller_func {
+	int (*get_temp)(device_t, const void *, size_t, int *);
+};
+
 struct fdtbus_regulator_controller;
 
 struct fdtbus_regulator {
@@ -386,6 +390,9 @@ int		fdtbus_register_phy_controller(device_t, int,
 		    const struct fdtbus_phy_controller_func *);
 int		fdtbus_register_pwm_controller(device_t, int,
 		    const struct fdtbus_pwm_controller_func *);
+int		fdtbus_register_thermal_controller(device_t, int,
+		    const struct fdtbus_thermal_controller_func *);
+int		fdtbus_thermal_get_temp(int, const char *, int *);
 int		fdtbus_register_regulator_controller(device_t, int,
 		    const struct fdtbus_regulator_controller_func *);
 int		fdtbus_register_reset_controller(device_t, int,

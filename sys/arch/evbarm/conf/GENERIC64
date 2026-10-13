@@ -246,6 +246,7 @@ sun60ia733rccu*	at fdt? pass 2		# Allwinner A733 CCU (always-on)
 sun60ipck*	at fdt? pass 3		# Allwinner A733 power domains
 # Origin: EmberBSD; observe firmware-ready A733 GPU identity only.
 sun60igpuid*	at fdt?			# No rendering or power transitions
+sun60inpuid*	at fdt?			# NPU staged identification
 sun60icpupll*	at fdt? pass 2		# Allwinner A733 processor clocks
 sunxide2ccu*	at fdt? pass 3		# Allwinner DE2 clock controller
 sunxiresets*	at fdt? pass 1		# Allwinner misc. resets
@@ -271,6 +272,7 @@ gpio*		at gpiobus?
 mesonpwm*	at fdt? pass 3		# Amlogic PWM
 rkpwm*		at fdt? pass 3		# Rockchip PWM
 sunxipwm*	at fdt? pass 3		# Allwinner PWM
+sun60ia733pwm*	at fdt? pass 5		# Allwinner A733 PWM
 
 # MPIO / Pinmux
 imxiomux*	at fdt? pass 2		# IMX IOMUX

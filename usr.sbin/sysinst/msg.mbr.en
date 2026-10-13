@@ -48,7 +48,7 @@ start up properly.}
 
 message fixactivepart
 {
-Should the NetBSD partition of the disk be marked active?}
+Should the EmberBSD partition of the disk be marked active?}
 
 message setbiosgeom
 {
