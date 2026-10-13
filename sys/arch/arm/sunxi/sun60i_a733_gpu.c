@@ -56,6 +56,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arm/sunxi/sun60i_a733_gpu_fwheap.h>
 #include <arm/sunxi/sun60i_a733_ccu.h>
 #include <arm/sunxi/sun60i_a733_pck600.h>
+#include <external/bsd/drm2/powervr/pvr_drv.h>
 
 #define A733_GPU_BASE		0x01800000
 #define A733_GPU_CORE_ID	0x18
@@ -101,6 +102,8 @@ struct sun60i_gpu_softc {
 	struct sun60i_a733_gpu_fwprobe_result sc_cache_result;
 	const char *sc_stage;
 	uint64_t sc_bvnc;
+	struct drm_device *sc_render_device;
+	bool sc_render_pending;
 	u_int sc_core_hz, sc_bus_hz, sc_uvol;
 	u_int sc_clock_source;	/* runtime: 0 PERIPH0/400, 1 PLL_GPU0/600 */
 	char sc_clock_state[160];	/* last complete stage-7 observation */
@@ -1853,6 +1856,66 @@ sun60i_gpu_sysctl_stage(SYSCTLFN_ARGS)
 	return sc->sc_run_result;
 }
 
+/* Reserve registration without holding either lock during DRM publication. */
+static int
+sun60i_gpu_render_attach(struct sun60i_gpu_softc *sc)
+{
+	struct drm_device *dev = NULL;
+	uint64_t bvnc;
+	int error;
+
+	mutex_enter(&sc->sc_run_lock);
+	if (sc->sc_render_device != NULL) {
+		mutex_exit(&sc->sc_run_lock);
+		return 0;
+	}
+	if (sc->sc_render_pending) {
+		mutex_exit(&sc->sc_run_lock);
+		return EBUSY;
+	}
+	if (!sc->sc_have_id || sc->sc_bvnc != A733_GPU_EXPECTED) {
+		mutex_exit(&sc->sc_run_lock);
+		return ENODEV;
+	}
+	bvnc = sc->sc_bvnc;
+	sc->sc_render_pending = true;
+	mutex_exit(&sc->sc_run_lock);
+
+	error = pvr_render_attach(sc->sc_dev, sc->sc_dmat, bvnc, &dev);
+
+	mutex_enter(&sc->sc_run_lock);
+	if (error == 0)
+		sc->sc_render_device = dev;
+	sc->sc_render_pending = false;
+	mutex_exit(&sc->sc_run_lock);
+	return error;
+}
+
+static int
+sun60i_gpu_sysctl_render_attach(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct sun60i_gpu_softc *sc = sun60i_gpu_instance;
+	int value, error;
+
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->sc_run_lock);
+	value = sc->sc_render_device != NULL;
+	mutex_exit(&sc->sc_run_lock);
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	if (value != 1)
+		return EINVAL;
+	/* This parent has no hot detach. Its softc outlives the unlocked call. */
+	sysctl_unlock();
+	error = sun60i_gpu_render_attach(sc);
+	sysctl_relock();
+	return error;
+}
+
 static void
 sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 {
@@ -1866,6 +1929,12 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 		aprint_error_dev(sc->sc_dev, "cannot create sysctl node\n");
 		return;
 	}
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
+	    CTLTYPE_INT, "render_attach",
+	    SYSCTL_DESCR("register cached PowerVR identity; write 1 after identification"),
+	    sun60i_gpu_sysctl_render_attach, 0, NULL, 0,
+	    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create render attach node\n");
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
 	    CTLTYPE_INT, "stage",
 		    SYSCTL_DESCR("run runtime diagnostic stage 0..21"),

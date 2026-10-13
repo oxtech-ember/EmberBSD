@@ -625,16 +625,19 @@ on every board in the hardware catalog.
   digest matches the host packer byte for byte, without mapping or
   publication. Rogue GPU [page-table encoders](ember/boot/a733-gpu-mmu.md)
   and [CPU-owned VM preparation](ember/boot/a733-gpu-vm.md) pass source contracts;
-  On Zero 3W, [later tracing and KICK](ember/boot/a733-gpu-fwcompute.md#physical-stages-19-21-result)
-  now reach the firmware. The compute context resets with a page fault at
-  `0x2400`; the timeline stays zero. Corrected CCCB diagnostics show that
-  the client queue had not drained; the earlier labels were interchanged.
-  The new DMA snapshot confirms an unchanged output word; the old error path did not sample it.
-  Compute completion and rendering remain unverified. A PowerVR render
-  interface, Mesa Vulkan/Zink and accelerated Plasma still require porting. These are
-  porting targets, not available EmberBSD acceleration. Board bring-up,
-  driver/DMA integration, compatible runtime and real model execution must
-  all pass before an accelerated AI workflow is claimed.
+  On Zero 3W, the [native compute check](ember/boot/a733-gpu-fwcompute.md#physical-stages-19-21-result)
+  now passes all 21 stages with a Mesa 26.2.4 compiler packet. A guarded
+  PowerVR shader writes `0x13579bdf` through the native GPU page tables.
+  Client queue completion, timeline, DMA output, and fresh fault/HWR checks
+  agree. This check also passes after a second kernel update and fresh boot.
+  A native [PowerVR DRM/GEM interface](ember/boot/a733-pvr-render.md)
+  opens on Zero 3W and passes 72 device-query checks. It reports the measured
+  BVNC through a real render node. Native GEM allocation and CPU mapping of
+  an 8 MiB buffer also pass, including file isolation and mapping lifetime
+  after handle and file closure. GPU VM, job submission, Mesa Vulkan/Zink,
+  display output, and accelerated Plasma still require porting.
+  Repeated submission within one boot and long-duration GPU stability remain
+  untested.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,
@@ -911,7 +914,7 @@ listed revision; it does not imply full peripheral or long-run support.
 | [Compute Module 5 (D0)](ember/boards/compute-module-5.md) | AArch64 / BCM2712 | eMMC/UEFI boot, four cores, gigabit Ethernet, WPA2/WPA3-Personal and temperature sensing; automatic fan control with a configurable minimum level; see board-specific peripheral limits |
 | [Raspberry Pi Zero 2 W](ember/boards/raspberry-pi-zero-2-w.md) | AArch64 / BCM2710A1 | microSD boot, all cores, serial and 2.4 GHz Wi-Fi; large Wi-Fi transfers stall |
 | [Orange Pi Zero 4](ember/boards/orange-pi-zero-4.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Ethernet, Wi-Fi, classic Bluetooth, thermal/frequency control and USB 2.0 data; SuperSpeed unconfirmed |
-| [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry and thermal/frequency control; USB devices and Bluetooth pairing not tested |
+| [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry, thermal/frequency control, and PowerVR compute/GEM; accelerated GUI, USB devices, and Bluetooth pairing not tested |
 | [ESP32-S31 development board](ember/boards/esp32-s31.md) | RISC-V 32 / ESP32-S31 | Flash boot, Ethernet and WPA2 Wi-Fi in 16 MB; one core, vendor radio libraries, no BLE/USB |
 
 The [board catalog](ember/boards/README.md) defines validation terms and links
