@@ -42,6 +42,16 @@ paths. Build logs remain in the output directory.
 host Python executable; there is no fixed Python 3.13 requirement. These
 legacy Python source contracts have not yet been replaced.
 
+Darwin host tools retain `-no-cpp-precomp` only for Clang. Modern GNU GCC
+rejects that legacy Apple flag. The actual Makefile/compiler regression covers
+six tool paths, GCC/Clang and both host-selector values. Its 24 cases pass on
+macOS; the Linux selector is simulated, not a Linux execution claim.
+
+```sh
+sh ember/tests/darwin-host-flags.sh /absolute/source /absolute/nbmake-evbarm \
+    /absolute/host-gcc /absolute/host-clang /absolute/SDK /absolute/new-work
+```
+
 ## Compiler selection
 
 The fork's in-tree bootstrap compiler is currently GCC 12.5. Building it as
