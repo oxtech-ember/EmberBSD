@@ -307,6 +307,16 @@ static const struct sunxi_mmc_config sun50i_h6_emmc_config = {
 	.flags = SUNXI_MMC_FLAG_CALIB_REG,
 };
 
+/* A100/A133 DMA descriptors use word addresses, unlike H6. */
+static const struct sunxi_mmc_config sun50i_a100_emmc_config = {
+	.idma_xferlen = 0x2000,
+	.idma_shift = 2,
+	.dma_ftrglevel = 0x20070008,
+	.delays = NULL,
+	.flags = SUNXI_MMC_FLAG_CALIB_REG |
+		 SUNXI_MMC_FLAG_NEW_TIMINGS,
+};
+
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun4i-a10-mmc",
 	  .data = &sun4i_a10_mmc_config },
@@ -337,7 +347,7 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun50i-a100-mmc",
 	  .data = &sun50i_h6_mmc_config },
 	{ .compat = "allwinner,sun50i-a100-emmc",
-	  .data = &sun50i_h6_emmc_config },
+	  .data = &sun50i_a100_emmc_config },
 
 	DEVICE_COMPAT_EOL
 };

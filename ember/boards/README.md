@@ -11,6 +11,7 @@ adds a row and a page, without adding columns to a project-wide feature matrix.
 | --- | --- |
 | Broadcom / AArch64 | [Raspberry Pi 5](raspberry-pi-5.md), [Compute Module 5](compute-module-5.md), [Raspberry Pi Zero 2 W](raspberry-pi-zero-2-w.md) |
 | Allwinner A733 / AArch64 | [Orange Pi Zero 4](orange-pi-zero-4.md), [Orange Pi Zero 3W](orange-pi-zero-3w.md) |
+| Allwinner A133 / AArch64 | [YS-M33 tablet](ys-m33-a133.md) |
 | Espressif / RV32 | [ESP32-S31 development board](esp32-s31.md) |
 
 ## Read a support claim

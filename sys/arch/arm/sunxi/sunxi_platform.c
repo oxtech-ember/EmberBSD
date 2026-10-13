@@ -1,3 +1,4 @@
+/* Origin: EmberBSD - adapt the A133 vendor boot path. */
 /* $NetBSD: sunxi_platform.c,v 1.47 2023/04/07 08:55:30 skrll Exp $ */
 
 /*-
@@ -545,3 +546,25 @@ static const struct fdt_platform sun50i_h6_platform = {
 };
 
 FDT_PLATFORM(sun50i_h6, "allwinner,sun50i-h6", &sun50i_h6_platform);
+
+static void
+sun50i_a100_platform_bootstrap(void)
+{
+
+	sunxi_platform_bootstrap();
+}
+
+static const struct fdt_platform sun50i_a100_platform = {
+	.fp_devmap = sunxi_platform_devmap,
+	.fp_bootstrap = sun50i_a100_platform_bootstrap,
+	.fp_init_attach_args = sunxi_platform_init_attach_args,
+	.fp_device_register = sunxi_platform_device_register,
+	.fp_reset = psci_fdt_reset,
+	.fp_delay = gtmr_delay,
+	.fp_uart_freq = sunxi_platform_uart_freq,
+	.fp_mpstart = arm_fdt_cpu_mpstart,
+};
+
+FDT_PLATFORM(sun50i_a100, "allwinner,sun50i-a100", &sun50i_a100_platform);
+FDT_PLATFORM(sun50i_a133, "allwinner,sun50i-a133", &sun50i_a100_platform);
+FDT_PLATFORM(sun50i_a133_vendor, "allwinner,a133", &sun50i_a100_platform);
