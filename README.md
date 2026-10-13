@@ -617,10 +617,13 @@ on every board in the hardware catalog.
   now passes all 21 stages with a Mesa 26.2.4 compiler packet. A guarded
   PowerVR shader writes `0x13579bdf` through the native GPU page tables.
   Client queue completion, timeline, DMA output, and fresh fault/HWR checks
-  agree. The accepted run is one dispatch after a fresh boot. A user-facing
-  PowerVR render interface, Mesa Vulkan/Zink, display output, and accelerated
-  Plasma still require porting. Repeated submission and long-duration GPU
-  stability remain untested.
+  agree. This check also passes after a second kernel update and fresh boot.
+  A native [PowerVR DRM identity interface](ember/boot/a733-pvr-render.md)
+  opens on Zero 3W and passes 72 device-query checks. It reports the measured
+  BVNC through a real render node. GEM/VM, job submission, Mesa Vulkan/Zink,
+  display output, and accelerated Plasma still require porting.
+  Repeated submission within one boot and long-duration GPU stability remain
+  untested.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,

@@ -88,3 +88,23 @@ Mesa initialization additionally needs real VM, GEM, synchronization, heap and
 runtime queries. Accelerated Plasma also requires the display path.
 The separate [bounded compute experiment](a733-gpu-fwcompute.md) is not a DRM
 submission API.
+
+## Physical identity result
+
+On 2026-10-13, Zero 3W passed registration on kernel `e25e95dd908`.
+The compute experiment first passed all 21 stages again after a fresh boot.
+The registered nodes were `card0` and `renderD128`, with device major 180.
+Both native platform records described `allwinner,sun60i-a733-gpu`.
+The identity utility from `9ccdadbfe10` passed all 72 checks.
+It verified BVNC `36.56.104.183`, bounded outputs, invalid pointers, unsupported
+queries, and absent synchronization and modesetting capabilities.
+A repeated registration request returned success without another device.
+The installed libdrm 2.4.134nb2 also passed platform discovery and node folding.
+Both its shared library and a diagnostic archive from the same build passed.
+The [Ports checker](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/libdrm-platform-check.c)
+accepts the explicit `allwinner,sun60i-a733-gpu` profile.
+
+The original utility expected zero for the absent modesetting capability.
+The native DRM core correctly returns `EOPNOTSUPP` without `DRIVER_MODESET`.
+The corrected utility tests that error. The driver did not need this change.
+No GEM allocation, DRM job submission, Vulkan, or display was accepted here.
