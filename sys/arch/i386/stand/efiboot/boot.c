@@ -329,8 +329,8 @@ boot(void)
 		command_consdev(bootcfg_info.consdev);
 	} else {
 		clearit();
-		print_bootcfg_banner(bootprog_name, bootprog_rev);
 		efi_boot_logo();
+		print_bootcfg_banner(bootprog_name, bootprog_rev);
 	}
 
 	/* Display the menu, if applicable */
@@ -607,8 +607,8 @@ command_consdev(char *arg)
 			}
 			efi_consinit(cdp->tag, ioport, speed);
 			clearit();
-			print_bootcfg_banner(bootprog_name, bootprog_rev);
 			efi_boot_logo();
+			print_bootcfg_banner(bootprog_name, bootprog_rev);
 			return;
 		}
 	}

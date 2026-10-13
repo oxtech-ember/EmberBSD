@@ -7,7 +7,6 @@
 int
 main(void)
 {
-
 	unsigned x = 123, y = 456;
 	bool visible;
 
@@ -26,6 +25,9 @@ main(void)
 	visible = ember_logo_origin(1920, 1080, 100, 31, &x, &y);
 	assert(visible);
 	assert(x == 1856 && y == 8);
+	/* Text begins below the image, even with eight-pixel glyphs. */
+	assert(EMBER_LOGO_TEXT_ROW * 8 >= y + EMBER_LOGO_HEIGHT);
+	assert(EMBER_LOGO_TEXT_ROW < 25);
 	assert(sizeof(ember_logo_pixels) == EMBER_LOGO_WIDTH * EMBER_LOGO_HEIGHT);
 	for (size_t i = 0; i < sizeof(ember_logo_pixels); i++)
 		assert(ember_logo_pixels[i] < sizeof(ember_logo_palette) /

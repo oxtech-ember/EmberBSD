@@ -432,6 +432,11 @@ efi_boot_logo(void)
 		pixels[i].Blue = rgb[2];
 		pixels[i].Reserved = 0;
 	}
+	/* Draw before text; firmware scrolling may erase the optional logo. */
+	status = uefi_call_wrapper(ST->ConOut->SetCursorPosition, 3,
+	    ST->ConOut, 0, EMBER_LOGO_TEXT_ROW);
+	if (EFI_ERROR(status))
+		return;
 	(void)uefi_call_wrapper(efi_gop->Blt, 10, efi_gop, pixels,
 	    EfiBltBufferToVideo, 0, 0, x, y,
 	    EMBER_LOGO_WIDTH, EMBER_LOGO_HEIGHT, 0);
