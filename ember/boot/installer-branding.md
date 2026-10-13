@@ -81,3 +81,18 @@ Build the loaders, language catalogs and complete image from a clean source comm
 Check real UEFI and BIOS screens and install onto a disposable virtual disk.
 Record the source commit, tools, image hashes, screenshots and installation result.
 VM acceptance does not establish physical-device acceptance.
+
+## Checked development image
+
+The amd64 image from source `4a65cc07247c558e88665ca134d67543cac52e5d`
+passed UEFI and BIOS boot in QEMU 11.1.1 with amd64 TCG on an arm64 Mac.
+Both paths reached sysinst with the product version `Development`.
+UEFI installation used the image's sets on a fresh 32 GiB GPT disk without X11.
+The optional `base32` set was absent and skipped with the installer's notice.
+The completion screen and a boot from the installed disk without an attached ISO were checked.
+The root filesystem was mounted from the installed FFS partition.
+The isolated guest had no network adapter; passwords and network configuration were skipped.
+An empty hostname caused the existing Postfix startup check to fail; this service was not accepted.
+Generic getty and motd remain outside the loader/sysinst branding scope.
+Their upstream greeting and diagnostic `uname` still identify the NetBSD base.
+No physical device or general release is accepted by these VM checks.

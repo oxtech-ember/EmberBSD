@@ -155,6 +155,8 @@ retain their NetBSD compatibility names. OS sets select the EmberBSD channel;
 that service is not yet published, so use the sets on the installation medium.
 Source, ASCII and ISO contracts are separate from boot and installation acceptance.
 The product version defaults to `Development`. The NetBSD base version remains separate.
+An amd64 CD image passed UEFI and BIOS boot and a UEFI installation to a disposable VM disk.
+The installed system then booted without the CD image. Physical installation is a separate check.
 
 ## Deploying to a device
 
