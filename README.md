@@ -366,7 +366,13 @@ on every board in the hardware catalog.
   session acceptance still passes. A startplasma session on the virtual
   output is the next acceptance step. CM5 runtime testing also identifies
   the separate, still absent Plasma Desktop shell package; Workspace alone
-  cannot start `org.kde.plasma.desktop`. Its current xdg-user-dirs 0.20
+  cannot start `org.kde.plasma.desktop`.
+  [Desktop package preparation](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-package-set.md)
+  now covers Activities, current Xwayland/libei/basu, correct target XKB paths
+  and native QtDBus generators that retain KWin's complex property signatures.
+  Offline package and full-session runner host controls pass; board startup,
+  V3D shell rendering and normal logout still require acceptance.
+  Its current xdg-user-dirs 0.20
   dependency now cross-builds and passes private-profile checks on CM5.
   [Current desktop providers](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-providers.md)
   include SDL3 game-controller code with eight CM5 checks and a UBSan repeat.
@@ -422,9 +428,10 @@ on every board in the hardware catalog.
   language-model bytes; desktop dictionary integration remains unaccepted.
   Shared-cache recovery and the complete Frameworks runtime remain unaccepted.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
-  confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
-  CM5 still reports no HDMI hotplug in its pre-OS firmware log after a cold boot.
-  Neither result establishes accelerated scanout.
+  confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle.
+  The current [CM5 display boundary](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
+  is an HDMI-to-VGA EDID that selects 1080p for a 1280x1024 monitor.
+  Native BCM2712 KMS mode setting and accelerated scanout remain unaccepted.
   A complete mobile shell workflow, native display and power management
   still need validation. See the [Plasma Mobile port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile).
 
