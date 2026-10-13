@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD actual installer allocation and guided-language regression, prepared with AI assistance.
 # Run the real language-selection ownership code with allocation failures.
 require 'open3'
 require 'tmpdir'
@@ -67,6 +68,13 @@ Dir.mktmpdir('ember-installer-memory') do |dir|
     #define MSG_hello 3
     #define MC_NOEXITOPT 0
     static bool foreign;
+    static bool wizard_active;
+    static bool cancel_language;
+    static int wizard_initial_choice(const char *title, const char *const *items, int n, int selected) {
+      (void)title; (void)selected;
+      assert(n > 1 && items[0] && items[n - 1]);
+      return cancel_language ? -1 : n - 1;
+    }
     static const char *msg_string(int id) {
       return id == 1 ? (foreign ? "Fixture language" : "English") : NULL;
     }
@@ -87,11 +95,15 @@ Dir.mktmpdir('ember-installer-memory') do |dir|
     #{language}
     int main(int argc, char **argv) {
       assert(argc == 2);
-      for (fail_at = 0; fail_at <= 50; fail_at++) {
-        calls = 0;
-        foreign = false;
-        select_language(argv[1]);
-        assert(count == 0);
+      for (int mode = 0; mode < 3; mode++) {
+        wizard_active = mode != 0;
+        cancel_language = mode == 2;
+        for (fail_at = 0; fail_at <= 50; fail_at++) {
+          calls = 0;
+          foreign = false;
+          select_language(argv[1]);
+          assert(count == 0);
+        }
       }
       return 0;
     }
