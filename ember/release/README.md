@@ -25,6 +25,7 @@ It does not use uncommitted files or an existing output directory.
 It builds `tools`, `release`, `install-image` and `iso-image`.
 The profile sets `MKX11=no`, `MKRUMP=no`, `MKGCCCMDS=no`, `MKREPRO=yes`,
 `KERNEL_SETS=GENERIC` and `BUILD_KERNELS=INSTALL`.
+These two values also enter `MAKEFLAGS` as command variables to override the machine defaults.
 `EMBER_BUILD_ID` and kernel `BUILDINFO` contain the same full source commit.
 `EMBER_RELEASE_JOBS` selects the worker count; its default is four.
 The wrapper raises the host process stack limit to at least 65520 KiB.

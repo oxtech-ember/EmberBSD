@@ -40,6 +40,16 @@ Dir.mktmpdir('ember-release-build') do |dir|
    "SYSINST_FTP_DIR=oxtech-ember/EmberBSD/releases/download/build-#{sha}-amd64-no-x11"].each do |value|
     abort "FAIL: missing pinned build value #{value}" unless args.include?(value)
   end
+  if ARGV[0]
+    # Evaluate the real machine defaults. Environment-only -V settings do
+    # not override their assignments; command variables in MAKEFLAGS do.
+    variables = args.each_cons(2).select { |a, _| a == '-V' }.map { |_, v| v.split('=', 2) }.to_h
+    machine = File.expand_path('../../etc/etc.amd64/Makefile.inc', __dir__)
+    actual, error, result = Open3.capture3(variables, ARGV[0], '-f', machine,
+      '-V', '${KERNEL_SETS}', '-V', '${BUILD_KERNELS}')
+    abort "FAIL: make profile could not be evaluated: #{error}" unless result.success?
+    abort "FAIL: real make ignores kernel profile: #{actual}" unless actual.lines.map(&:strip) == %w[GENERIC INSTALL]
+  end
   abort 'FAIL: incomplete build operations' unless args.last(4) == %w[tools release install-image iso-image]
   _, _, status = Open3.capture3('sh', builder, sha, output)
   abort 'FAIL: existing output was accepted' if status.success?
