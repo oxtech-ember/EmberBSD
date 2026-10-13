@@ -139,7 +139,7 @@ fwprobe_layout_valid(const struct sun60i_a733_gpu_fwmem *mem)
 static int
 fwprobe_validate(const struct sun60i_a733_gpu_fwmem *mem,
     const struct sun60i_a733_gpu_fwboot_result *boot,
-    const struct sun60i_a733_gpu_fwprobe_result *out)
+    const void *out, size_t out_size)
 {
 	const struct sun60i_a733_gpu_dma *dma[5];
 	size_t i, j;
@@ -148,8 +148,8 @@ fwprobe_validate(const struct sun60i_a733_gpu_fwmem *mem,
 	    !fwprobe_span(boot, sizeof(*boot),
 	    _Alignof(struct sun60i_a733_gpu_fwboot_result)) ||
 	    mem->dmat == NULL || !mem->interface_prepared ||
-	    fwprobe_overlap(mem, sizeof(*mem), out, sizeof(*out)) ||
-	    fwprobe_overlap(boot, sizeof(*boot), out, sizeof(*out)) ||
+	    fwprobe_overlap(mem, sizeof(*mem), out, out_size) ||
+	    fwprobe_overlap(boot, sizeof(*boot), out, out_size) ||
 	    fwprobe_overlap(mem, sizeof(*mem), boot, sizeof(*boot)))
 		return EINVAL;
 	if (!boot->attempted || !boot->device_owned || boot->error != 0 ||
@@ -167,7 +167,7 @@ fwprobe_validate(const struct sun60i_a733_gpu_fwmem *mem,
 		if (!fwprobe_dma_valid(dma[i]) ||
 		    fwprobe_overlap(dma[i]->cpu, dma[i]->size, mem, sizeof(*mem)) ||
 		    fwprobe_overlap(dma[i]->cpu, dma[i]->size, boot, sizeof(*boot)) ||
-		    fwprobe_overlap(dma[i]->cpu, dma[i]->size, out, sizeof(*out)))
+		    fwprobe_overlap(dma[i]->cpu, dma[i]->size, out, out_size))
 			return EINVAL;
 		if (i >= 3 && (!dma[i]->coherent ||
 		    (dma[i]->map->_dm_flags & (_BUS_DMAMAP_COHERENT |
@@ -317,6 +317,39 @@ fwprobe_runtime_valid(const struct sun60i_a733_gpu_fwprobe_snapshot *s,
 	return 0;
 }
 
+int
+sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *mem,
+    const struct sun60i_a733_gpu_fwboot_result *boot, unsigned int slot,
+    uint32_t expected_log_type,
+    struct sun60i_a733_gpu_fwprobe_observation *out)
+{
+	struct sun60i_a733_gpu_fwprobe_observation observation;
+	int error;
+
+	if (!fwprobe_span(out, sizeof(*out), _Alignof(struct sun60i_a733_gpu_fwprobe_observation)) ||
+	    slot >= A733_GPU_FWINIT_KCCB_COUNT ||
+	    (expected_log_type & ~ROGUE_FWIF_LOG_TYPE_MASK) != 0 ||
+	    (expected_log_type != 0 &&
+	    ((expected_log_type & ROGUE_FWIF_LOG_TYPE_TRACE) == 0 ||
+	    (expected_log_type & ROGUE_FWIF_LOG_TYPE_GROUP_MASK) == 0)))
+		return EINVAL;
+	error = fwprobe_validate(mem, boot, out, sizeof(*out));
+	if (error != 0)
+		return error;
+	memset(&observation, 0, sizeof(observation));
+	fwprobe_observe(mem, slot, &observation.state);
+	observation.valid = true;
+	error = fwprobe_runtime_valid(&observation.state, expected_log_type);
+	if (error == 0 &&
+	    (observation.state.read_offset != slot + 1 ||
+	    observation.state.write_offset != slot + 1 ||
+	    observation.state.rtn != ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED))
+		error = EPROTO;
+	observation.error = error;
+	*out = observation;
+	return error;
+}
+
 /* The first successful result is immutable and belongs to this boot's owner. */
 static int
 fwprobe_previous_valid(const struct sun60i_a733_gpu_fwmem *mem,
@@ -424,7 +457,7 @@ fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
 		return EBUSY;
 	if (bst == NULL)
 		return EINVAL;
-	error = fwprobe_validate(mem, boot, out);
+	error = fwprobe_validate(mem, boot, out, sizeof(*out));
 	if (error != 0)
 		return error;
 	if (slot == 1) {

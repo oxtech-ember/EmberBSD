@@ -526,6 +526,7 @@ static uint8_t *compute_file_data;
 static size_t compute_file_size;
 static struct sun60i_a733_gpu_dma *compute_scratch_dma;
 static bool compute_scratch_unavailable;
+static unsigned compute_completion_mode, compute_observe_calls;
 static int fw_open_error, fw_read_error, fw_close_error;
 static bool fw_alloc_fail, fw_bad_bvnc;
 static off_t fw_file_size = 8192;
@@ -873,9 +874,37 @@ sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
 		scratch_on_sync = compute_scratch_dma->cpu;
 		if (compute_scratch_unavailable)
 			compute_scratch_dma->loaded = false;
+		if (compute_completion_mode != 0) {
+			out->attempted = out->published = out->kick_attempted = true;
+			out->kicked = true;
+			out->slot = 4;
+			out->after.rtn = 1;
+			return 0;
+		}
 		return EIO;
 	}
 	return ENOSYS;
+}
+
+int
+sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *mem,
+    const struct sun60i_a733_gpu_fwboot_result *boot, unsigned int slot,
+    uint32_t log_type, struct sun60i_a733_gpu_fwprobe_observation *out)
+{
+	assert(compute_completion_mode != 0 && slot == 4 && log_type == 0x3f);
+	compute_observe_calls++;
+	memset(out, 0, sizeof(*out));
+	out->valid = true;
+	out->state.rtn = 1;
+	if (compute_completion_mode == 2 ||
+	    (compute_completion_mode == 3 && compute_observe_calls == 2)) {
+		if (compute_completion_mode == 3)
+			assert(scratch_sync_calls == 2);
+		out->state.fw_write_offset = 1;
+		out->state.fw_command = 0x2abc0069;
+		out->error = EIO;
+	}
+	return out->error;
 }
 
 /* The submission provider allocates device memory; never in this fixture. */
@@ -914,6 +943,10 @@ sun60i_a733_gpu_fwheap_observe(const struct sun60i_a733_gpu_fwheap *heap,
 		*write_offset = 0;
 	if (timeline != NULL)
 		*timeline = 0;
+	if (compute_completion_mode != 0 && compute_completion_mode != 4) {
+		*read_offset = *write_offset = A733_GPU_FWCOMPUTE_USED_BYTES;
+		*timeline = 1;
+	}
 }
 
 void
@@ -2960,8 +2993,12 @@ test_scratch_error_snapshot(void)
 	swap = entry[0];
 	entry[0] = entry[8];
 	entry[8] = swap;
-	for (unsigned unavailable = 0; unavailable < 2; unavailable++) {
+	for (unsigned scenario = 0; scenario < 6; scenario++) {
+		const bool unavailable = scenario == 1;
+
 		fwcache_ready();
+		compute_completion_mode = scenario < 2 ? 0 : scenario - 1;
+		compute_observe_calls = 0;
 		compute_file_size = h.header_bytes + h.payload_bytes;
 		compute_file_data = calloc(1, compute_file_size);
 		assert(compute_file_data != NULL);
@@ -3021,9 +3058,23 @@ test_scratch_error_snapshot(void)
 		scratch_sync_calls = 0;
 		calls = fwprobe_cmd_calls;
 		sun60i_gpu_run_stage(&sc, A733_GPU_STAGE_FWKICK);
-		CHECK(sc.sc_run_result == EIO);
+		CHECK(sc.sc_run_result == (scenario == 2 ? 0 :
+		    scenario == 5 ? ETIMEDOUT : EIO));
 		CHECK(fwprobe_cmd_calls == calls + 2);
-		CHECK(strstr(sc.sc_kick_state, "kick error=5 ") != NULL);
+		if (scenario == 0 || scenario == 1 || scenario == 3 || scenario == 4)
+			CHECK(strstr(sc.sc_kick_state, "kick error=5 ") != NULL);
+		if (scenario >= 2) {
+			CHECK(sc.sc_kick_result.error == 0 && sc.sc_kick_result.after.rtn == 1);
+			CHECK(sc.sc_kick_result.after.fw_command == 0);
+			CHECK(strstr(sc.sc_kick_state, "fresh_valid=1 ") != NULL);
+			if (scenario == 3 || scenario == 4) {
+				CHECK(strstr(sc.sc_kick_state, "timeline=1 ") != NULL);
+				CHECK(strstr(sc.sc_kick_state, "fresh_fw_cmd=0x2abc0069 ") != NULL);
+				CHECK(strstr(sc.sc_kick_state, "fresh_error=5 ") != NULL);
+			}
+			CHECK(compute_observe_calls == (scenario == 3 ? 1U :
+			    scenario == 5 ? 40001U : 2U));
+		}
 		if (unavailable) {
 			CHECK(strstr(sc.sc_kick_state, "scratch_valid=1/0 ") != NULL);
 			CHECK(scratch_sync_calls == 1 && scratch == UINT32_C(0x12345678));
@@ -3036,6 +3087,7 @@ test_scratch_error_snapshot(void)
 		scratch_on_sync = NULL;
 		scratch_sync_map = NULL;
 		compute_scratch_dma = NULL;
+		compute_completion_mode = 0;
 		sc.sc_fwvm = NULL;
 		free(compute_file_data);
 		compute_file_data = NULL;

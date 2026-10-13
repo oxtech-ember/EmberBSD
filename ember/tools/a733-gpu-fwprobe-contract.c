@@ -931,6 +931,85 @@ trace_tests(void)
 	    assertions - start);
 }
 
+static void
+observation_tests(void)
+{
+	struct sun60i_a733_gpu_fwprobe_observation out, keep;
+	struct sun60i_a733_gpu_fwprobe_result acceptance;
+	unsigned int start = assertions, old_syncs, old_writes, old_barriers;
+
+	prepare_trace();
+	CHECK(run() == 0);
+	next_command(ROGUE_FWIF_KCCB_CMD_KICK, 0x3f);
+	CHECK(run() == 0);
+	acceptance = result;
+	foreign_updates = false;
+	old_writes = writes;
+	old_barriers = barriers;
+	for (unsigned int i = 0; i < 5; i++)
+		memcpy(saved[i], cpu[i], sizes[i]);
+	memset(&out, 0, sizeof(out));
+	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4, 0x3f,
+	    &out) == 0);
+	CHECK(out.valid && out.error == 0 && out.state.rtn == 1);
+	CHECK(writes == old_writes && barriers == old_barriers);
+	CHECK(memcmp(&result, &acceptance, sizeof(result)) == 0);
+	for (unsigned int i = 0; i < 5; i++)
+		CHECK(memcmp(saved[i], cpu[i], sizes[i]) == 0);
+	/* Firmware queues RESET only after the successful KCCB return. */
+	fw32(3, FCONTROL, 1);
+	fw32(3, FCOMMAND, 0x2abc0069);
+	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4, 0x3f,
+	    &out) == EIO);
+	CHECK(out.valid && out.error == EIO && out.state.fw_command == 0x2abc0069);
+	CHECK(out.state.fw_read_offset == 0 && out.state.fw_write_offset == 1);
+	CHECK(get32(cpu[3] + FCONTROL + 128) == 0);
+	CHECK(memcmp(&result, &acceptance, sizeof(result)) == 0);
+	CHECK(writes == old_writes && barriers == old_barriers);
+	fw32(3, FCONTROL, 0);
+	fw32(3, SYSDATA + 3536, 1);
+	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4, 0x3f,
+	    &out) == EIO);
+	fw32(3, SYSDATA + 3536, 0);
+	fw32(3, SYSDATA + 3576, 1U << 6);
+	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4, 0x3f,
+	    &out) == EIO);
+	fw32(3, SYSDATA + 3576, 1);
+	fw32(3, FCONTROL + 128, UINT32_MAX);
+	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4, 0x3f,
+	    &out) == EPROTO);
+	CHECK(out.state.fw_command == 0);
+	fw32(3, FCONTROL + 128, 0);
+	fw32(3, TRACECTL, 0);
+	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4, 0x3f,
+	    &out) == EPROTO);
+	fw32(3, TRACECTL, 0x3f);
+	fw32(3, KRETURN + 16, 0);
+	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4, 0x3f,
+	    &out) == EPROTO);
+
+	/* Structural rejection precedes every DMA read and preserves output. */
+	memset(&keep, 0xa5, sizeof(keep));
+	out = keep;
+	old_syncs = syncs;
+	CHECK(sun60i_a733_gpu_fwprobe_observe(NULL, &booted, 4, 0x3f,
+	    &out) == EINVAL);
+	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted,
+	    A733_GPU_FWINIT_KCCB_COUNT, 0x3f, &out) == EINVAL);
+	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4, 0x80003f,
+	    &out) == EINVAL);
+	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4, 0x3f,
+	    (void *)cpu[3]) == EINVAL);
+	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4, 0x3f,
+	    (void *)&owner) == EINVAL);
+	owner.interface_layout.object[A733_GPU_FWINIT_FWCCB_CMDS].size++;
+	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4, 0x3f,
+	    &out) == EINVAL);
+	CHECK(syncs == old_syncs && memcmp(&out, &keep, sizeof(out)) == 0);
+	printf("a733-gpu-fwprobe fresh observation: PASS %u checks\n",
+	    assertions - start);
+}
+
 int
 main(void)
 {
@@ -949,6 +1028,7 @@ main(void)
 	structural_tests();
 	cache_tests();
 	trace_tests();
+	observation_tests();
 	/* No real device ran. The test alone owns final reclamation. */
 	for (unsigned int i = 0; i < 5; i++) {
 		free(cpu[i]);

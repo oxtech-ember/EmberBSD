@@ -230,15 +230,25 @@ sun60i_a733_gpu_fwheap_observe(const struct sun60i_a733_gpu_fwheap *heap,
 {
 	const uint8_t *bytes = heap->heap.cpu;
 
+	bus_dmamap_sync(heap->dmat, heap->heap.map, A733_GPU_FWHEAP_CTL_OFF,
+	    sizeof(struct rogue_fwif_cccb_ctl), BUS_DMASYNC_POSTREAD);
+	bus_dmamap_sync(heap->dmat, heap->heap.map,
+	    A733_GPU_FWHEAP_TIMELINE_OFF, sizeof(uint32_t), BUS_DMASYNC_POSTREAD);
 	if (read_offset != NULL)
 		*read_offset = *(const volatile uint32_t *)(bytes +
-		    A733_GPU_FWHEAP_CTL_OFF);
+		    A733_GPU_FWHEAP_CTL_OFF +
+		    offsetof(struct rogue_fwif_cccb_ctl, read_offset));
 	if (write_offset != NULL)
 		*write_offset = *(const volatile uint32_t *)(bytes +
-		    A733_GPU_FWHEAP_CTL_OFF + 4);
+		    A733_GPU_FWHEAP_CTL_OFF +
+		    offsetof(struct rogue_fwif_cccb_ctl, write_offset));
 	if (timeline != NULL)
 		*timeline = *(const volatile uint32_t *)(bytes +
 		    A733_GPU_FWHEAP_TIMELINE_OFF);
+	bus_dmamap_sync(heap->dmat, heap->heap.map, A733_GPU_FWHEAP_CTL_OFF,
+	    sizeof(struct rogue_fwif_cccb_ctl), BUS_DMASYNC_PREREAD);
+	bus_dmamap_sync(heap->dmat, heap->heap.map,
+	    A733_GPU_FWHEAP_TIMELINE_OFF, sizeof(uint32_t), BUS_DMASYNC_PREREAD);
 }
 
 void

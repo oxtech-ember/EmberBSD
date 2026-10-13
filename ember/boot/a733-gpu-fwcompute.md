@@ -293,6 +293,21 @@ A validity value of zero means that word is unavailable, not a measured zero.
 Host contracts cover malformed spans, DMA synchronization, and the failed-command path.
 The physical run below accepted these diagnostics; compute execution still failed.
 
+## Completion acceptance
+
+Stage 21 refreshes firmware state after every client queue and timeline observation.
+It checks it again after the final scratch DMA read.
+A pending CONTEXT_RESET, HWR record, or firmware fault rejects completion even when recovery updates the timeline.
+The wait is bounded by four seconds and 40001 observations.
+`kick_state` keeps the initial KICK result and reports the later `fresh_*` fields separately.
+The CCCB observer uses the ABI fields: write offset at byte 0, read offset at byte 4.
+It synchronizes the control and timeline DMA spans before and after each observation.
+
+Run `ember/tools/a733-gpu-fwheap-observe-contract.sh` for the actual-source CCCB regression.
+The provider and identification contracts cover a reset after acknowledgment and after scratch acquisition.
+ASan/UBSan checks passed. Target GCC16, Clang, and Cppcheck found no added safety defects.
+Existing analysis path limits remain. These checks do not establish hardware completion.
+
 ## Physical stages 19-21 result
 
 On 2026-10-13 the ladder ran through stage 21 on the 4 GiB Orange Pi Zero 3W.
@@ -302,7 +317,8 @@ The VM contained five windows, four directories, and twenty leaves.
 
 The trace LOGTYPE command in slot 3 returned 1 with log type `0x3f`.
 The following KICK in slot 4 reached the firmware (`kexec=5`).
-The client queue drained to 184 bytes. At the failure exit, the timeline and scratch word were zero.
+That kernel interchanged the CCCB read and write labels. The actual write offset was 184; the read offset was zero.
+The queue had not drained. At the failure exit, the timeline and scratch word were zero.
 `scratch_valid=1/1` now confirms actual DMA-synchronized reads before and after submission.
 The earlier `0782feab5d5` error path did not read scratch; its printed zero was unavailable data.
 The firmware reported CONTEXT_RESET, GUILTY_LOCKUP, and page-fault address `0x2400`.
