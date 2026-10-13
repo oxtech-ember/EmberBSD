@@ -44,7 +44,7 @@
 #define A733_GPU_MIPS_REGISTER_PA	UINT64_C(0x01800000)
 
 /*
- * Pure initial-boot encoders. No allocation, I/O, DMA, or cache operations.
+ * Pure page-table and initial-boot encoders. No allocation, I/O, DMA, or cache operations.
  * The caller owns real buffers and serializes all access to them. Inputs
  * must remain stable for the entire call. Byte outputs may be unaligned;
  * native uint64_t input arrays must be aligned. Sizes must match exactly.
@@ -59,9 +59,19 @@
  * Write 1..4096 little-endian PTEs for 4K pages in the 16 MiB firmware heap.
  * PAs must fit 36 bits. Prior entries must be zero or use the same encoding.
  * New pages must not alias each other or any prior mapped physical page.
- * The caller must initially zero the table. There is no replacement/unmap.
+ * The caller must initially zero the table. This function does not replace existing entries.
  */
 int sun60i_a733_gpu_mips_map(void *, size_t, uint64_t, const uint64_t *,
+    size_t);
+
+/*
+ * Clear exactly the specified mappings after checking every expected PA.
+ * ENOENT means an entry does not match its expected owner. Other validation
+ * errors match map(). All failures preserve the table. This edits CPU bytes
+ * only. The caller must exclude firmware users, synchronize the table and
+ * complete MMUCACHE invalidation before freeing or reusing the physical RAM.
+ */
+int sun60i_a733_gpu_mips_unmap(void *, size_t, uint64_t, const uint64_t *,
     size_t);
 
 /*

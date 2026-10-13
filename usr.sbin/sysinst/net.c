@@ -295,6 +295,10 @@ get_ifconfig_info(struct net_desc *devs)
 	}
 
 	buf = malloc (STRSIZE * sizeof(char));
+	if (buf == NULL) {
+		free(buf_in);
+		err(EXIT_FAILURE, "malloc");
+	}
 	for (i = 0, buf_tmp = buf_in; i < MAX_NETS && strlen(buf_tmp) > 0
 	    && buf_tmp < buf_in + strlen(buf_in);) {
 		tmp = stpncpy(buf, buf_tmp, strcspn(buf_tmp," \n"));
@@ -1004,7 +1008,8 @@ do_ftp_fetch(const char *set_name, bool force_tgz, struct ftpinfo *f, bool in_ch
 		}
 	}
 
-	make_url(url, f, set_dir_for_set(set_name));
+	make_url(url, f, f == &ftp && !set_is_source(set_name) ?
+	    ftp_set_dir_bin : set_dir_for_set(set_name));
 	rval = run_program(RUN_DISPLAY | RUN_PROGRESS | RUN_XFER_DIR | (in_chroot?RUN_CHROOT:0),
 		    "/usr/bin/ftp %s%s/%s%s",
 		    ftp_opt, url, set_name,

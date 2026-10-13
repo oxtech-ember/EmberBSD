@@ -49,6 +49,7 @@ struct sun60i_a733_gpu_fwprobe_snapshot {
 	uint32_t log_type, fw_state, os_state, alive_fw_token, alive_os_token;
 	uint32_t mmucache_sync;
 	uint8_t firmware_started, compchecks_updated, os_count_support;
+	uint32_t firmware_started_timestamp;
 	uint32_t hw_layout_version, fw_layout_version;
 	uint64_t hw_bvnc, fw_bvnc;
 	uint32_t fw_processor_version, ddk_version, ddk_build, build_options;
@@ -145,5 +146,58 @@ int sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t, bus_space_handle_t,
     const struct sun60i_a733_gpu_fwprobe_result *,
     const struct rogue_fwif_kccb_cmd *, unsigned int, uint32_t,
     struct sun60i_a733_gpu_fwprobe_result *);
+
+/*
+ * Reusable, synchronous KCCB service. Keep this state for one firmware boot.
+ * The caller holds one adaptive mutex at IPL_NONE across attach, cmd and
+ * observe. Exclude reset, suspend, IRQ queue users and DMA reclamation.
+ * Zero the state once before attach. Never clear a failed or attached state.
+ * The identities and last result are private copies, not caller aliases.
+ */
+struct sun60i_a733_gpu_fwqueue {
+	bool attached, failed;
+	uint32_t expected_log_type;
+	const struct sun60i_a733_gpu_fwmem *owner;
+	const struct sun60i_a733_gpu_fwboot_result *boot;
+	struct sun60i_a733_gpu_fwmem mem_identity;
+	struct sun60i_a733_gpu_fwboot_result boot_identity;
+	struct sun60i_a733_gpu_fwprobe_result last;
+};
+
+/*
+ * Adopt one successful probe from the same unchanged owner and boot.
+ * Validate a fresh, drained queue and preserve the diagnostic result.
+ * Structural failures do no I/O. A runtime failure freezes this state.
+ * There is no detach or retry after a failed attach in this API.
+ */
+int sun60i_a733_gpu_fwqueue_attach(struct sun60i_a733_gpu_fwmem *,
+    const struct sun60i_a733_gpu_fwboot_result *,
+    const struct sun60i_a733_gpu_fwprobe_result *,
+    struct sun60i_a733_gpu_fwqueue *);
+
+/*
+ * Submit one sanitized LOGTYPE, MMUCACHE, KICK or CLEANUP packet. CLEANUP
+ * supports FWCOMMONCONTEXT, FREELIST and HWRTDATA. Unsupported types and
+ * flags fail before I/O. Supply the shared log type explicitly. Only
+ * LOGTYPE can change it; the caller writes it before that command.
+ * Clear the per-call result and return fresh observations on runtime errors.
+ * A consumed CLEANUP_BUSY returns EBUSY and permits a later retry. It does
+ * not release the referenced resource. Other runtime errors freeze service.
+ * Advance last only after verified consumption and required completion.
+ * KICK consumption is not CCCB or job completion. Check job completion and
+ * then call observe before accepting that job. All DMA remains owned by
+ * hardware until a separate validated cleanup or quiescent reset protocol.
+ * Outputs, commands and service state must be separate from all live DMA.
+ */
+int sun60i_a733_gpu_fwqueue_cmd(bus_space_tag_t, bus_space_handle_t,
+    struct sun60i_a733_gpu_fwmem *, const struct sun60i_a733_gpu_fwboot_result *,
+    struct sun60i_a733_gpu_fwqueue *, const struct rogue_fwif_kccb_cmd *,
+    uint32_t, struct sun60i_a733_gpu_fwprobe_result *);
+
+/* Read fresh fault state without consuming FWCCB or changing last. */
+int sun60i_a733_gpu_fwqueue_observe(struct sun60i_a733_gpu_fwmem *,
+    const struct sun60i_a733_gpu_fwboot_result *,
+    struct sun60i_a733_gpu_fwqueue *,
+    struct sun60i_a733_gpu_fwprobe_observation *);
 
 #endif /* _SUN60I_A733_GPU_FWPROBE_H */

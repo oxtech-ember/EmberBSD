@@ -1,4 +1,4 @@
-# Install an amd64 development VM
+# Install an amd64 UEFI VM
 
 This route installs a full EmberBSD development ISO onto a new virtual disk.
 It uses UEFI and local sets, then boots the installed system without the ISO.
@@ -13,9 +13,17 @@ Use TCG for this cross-architecture example.
 The checked host used QEMU 11.1.1 on Apple Silicon macOS.
 TCG can take several minutes to boot or extract sets.
 
-There is no general published release image yet.
-Use a complete local-set ISO from an identified build, or prepare one from this public source tree.
+Download the full ISO, `SHA256` and `manifest.json` from the
+[published candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11).
+Verify the ISO before attaching it. Its SHA256 is
+`7ca271e2be317e2204fb28eff1ecb80e8baab2ac23d0f909b24239225c28fdb7`.
+Read the release notes for the no-X11 profile and compiler/hardware limits.
+Continue at [Create an isolated VM](#create-an-isolated-vm).
+
+## Optional: build the image from source
+
 The following **host** recipe uses the source tree's own bootstrap compiler.
+The [release builder](../release/README.md) supplies verified HTTPS and a pinned GitHub set path.
 Read [BUILDING](../../BUILDING), [UPDATING](../../UPDATING) and `tools/compat/README` for host requirements.
 Install host C/C++ compilers and development headers first.
 The image validator also needs host Ruby and a libarchive `tar` that can read ISO files.
@@ -33,39 +41,25 @@ revision=FULL_COMMIT_ID
 out=/absolute/new-amd64-build
 git fetch origin
 git cat-file -e "$revision^{commit}"
-mkdir "$out"
-git archive -o "$out/source.tar" "$revision"
-mkdir "$out/source"
-tar -xf "$out/source.tar" -C "$out/source"
-cd "$out/source"
-export MAKECONF=/dev/null
-unset EXTERNAL_TOOLCHAIN
-sh ./build.sh -U -m amd64 -j4 \
-    -O "$out/obj" -T "$out/tools" -D "$out/dest" -R "$out/release" \
-    -V MKX11=no -V MKRUMP=no \
-    -V KERNEL_SETS=GENERIC -V BUILD_KERNELS=INSTALL \
-    -V EMBER_VERSION=Development \
-    -V "EMBER_BUILD_ID=$revision" -V "BUILDINFO=EmberBSD:$revision" \
-    tools release install-image iso-image
+sh ember/release/build-amd64.sh "$revision" "$out"
 ```
 
 Stop on a failed archive export or build; never accept an earlier image from a reused output directory.
-The complete CD is `$out/release/amd64/installation/cdrom/amd64cd.iso`.
+The complete CD is `$out/release/images/EmberBSD-1.0-amd64.iso`.
 A boot-only CD is insufficient for this offline walkthrough.
 Use the sets from this completed release, not sets from another source revision.
 Check the resulting image with the OS-owned validator:
 
 ```sh
 ruby ember/tests/installer-image.rb \
-    "$out/release/amd64/installation/cdrom/amd64cd.iso" "$revision" Development
-shasum -a 256 "$out/release/amd64/installation/cdrom/amd64cd.iso"
+    "$out/release/images/EmberBSD-1.0-amd64.iso" "$revision" 1.0 github.com
+shasum -a 256 "$out/release/images/EmberBSD-1.0-amd64.iso"
 ```
 
-Run those commands from the exported source directory.
+Run those commands from the source repository.
 Keep the source ID, successful log, tool versions and output hashes together.
 The checked development image below used the in-tree GCC 12.5 bootstrap.
 It is not a complete GCC16-built release.
-The build flags are checked against the source build interface; this documentation work does not repeat a clean full-source build.
 Each newly built image needs its own installation acceptance.
 
 ## Create an isolated VM
@@ -82,8 +76,10 @@ qemu-system-x86_64 \
     -machine q35,accel=tcg -cpu max -m 2048 -smp 2 \
     -drive if=pflash,format=raw,readonly=on,file=/absolute/qemu/uefi-code.fd \
     -drive if=pflash,format=raw,file=vars.fd \
-    -drive file=disk.qcow2,format=qcow2,if=ide \
-    -cdrom /absolute/amd64cd.iso -boot once=d -nic none
+    -drive file=disk.qcow2,format=qcow2,if=none,id=target \
+    -device ide-hd,drive=target,bus=ide.0,bootindex=2 \
+    -drive file=/absolute/EmberBSD-1.0-amd64.iso,format=raw,media=cdrom,if=none,id=media \
+    -device ide-cd,drive=media,bus=ide.2,bootindex=1 -nic none
 ```
 
 Do not attach host disks, shared directories or another VM's writable disk.
@@ -92,6 +88,8 @@ QEMU's default display provides the keyboard and screen.
 Firmware filenames depend on the host package.
 For the checked Homebrew package, code was `edk2-x86_64-code.fd` and variables were `edk2-i386-vars.fd`.
 Use the pair supplied by the same package.
+The explicit disk boot priority prevents the firmware from preferring a stale
+installation-medium entry after that medium is removed.
 
 ## Install from local sets
 
@@ -104,10 +102,18 @@ Letters select menu items; Enter activates them.
 1. Select the new disk. This configuration shows `wd0`, `32G`, `QEMU HARDDISK`.
 2. Use GPT and the full disposable disk. Keep the proposed EFI, root and swap partitions unless testing another layout.
 3. Review the final disk and partition summary before allowing writes.
-4. Select **Installation without X11**. This matches the image's `MKX11=no` profile.
+4. Select **Custom installation** for the ISO and HTTPS profile. Set **Yes** for
+   GENERIC, kernel modules, base, configuration files, compiler tools, games,
+   graphics firmware, both manual-page sets, miscellaneous, recovery tools,
+   tests and text tools. Leave GENERIC_KASLR, 32-bit compatibility, X11 and
+   source/debug sets unselected. Select **Install selected sets**: 13 sets.
+   The `comp` set supplies headers and tools; this profile omits native GCC commands.
 5. Select the local CD-ROM/installation-medium sets. Keep the ISO attached until extraction completes.
 6. Use the architecture and set directory already supplied for that medium.
-7. If the optional `base32` set is absent, acknowledge the notice and continue without it.
+7. If the manifest lists optional `base32` as absent, acknowledge its notice.
+   For an HTTPS 404 on that set, select **Additional sources → Skip set**,
+   then return to **EmberBSD CDN → HTTPS** for the remaining sets.
+   Do not skip a required set or a certificate error.
 8. Set the timezone. Configure console passwords for a connected deployment.
 9. Leave network configuration and SSH disabled for this isolated exercise.
 10. Set the hostname as described below, then complete installation and return to the main menu.
@@ -131,16 +137,45 @@ Setting the hostname and disabling unused Postfix avoids its empty-hostname star
 
 Source-menu labels can vary by image revision.
 Choose the medium containing the matching sets, not the unavailable Internet channel.
-The current product default is `1.0`; the build example explicitly selects `Development` for an experimental artifact.
+The current product default and the release builder use `1.0`.
 Both labels are separate from the NetBSD 11 compatibility version.
 Current images offer `Bootable USB / image`; the older checked ISO uses the earlier CD-ROM source menu.
 Use the image's recorded revision to determine which menu applies.
+
+## Install from GitHub HTTPS
+
+Use the same fresh VM and candidate ISO. Replace `-nic none` with
+`-nic user,model=e1000`; do not add a host port forward.
+Use the same GPT layout and custom selection of 13 sets above.
+Choose **EmberBSD CDN → HTTPS** instead of the local medium.
+Choose `wm0`, keep the automatic media type and accept autoconfiguration.
+Enter a hostname and review the DHCP address, default route and DNS resolver.
+
+The release builder supplies the server and exact candidate path:
+
+```text
+Host: github.com
+Base directory: oxtech-ember/EmberBSD/releases/download/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11
+Binary set directory: empty
+```
+
+Keep those values for this candidate and choose **Get Distribution**.
+The client follows GitHub's HTTPS redirect and verifies its certificate.
+All 13 selected sets must unpack without errors.
+Complete configuration and boot without media as described below.
+The fresh installed system creates its own trust store from the base-set roots.
+
+For a certificate failure, check the clock, exact hostname and trust anchors.
+Do not disable certificate verification or substitute sets from another build.
+A missing optional set can be omitted only when the manifest records it as absent.
+For a required set's 404 or failed extraction, stop and check the release.
 
 ## Boot the installed disk
 
 At the installer's main menu, choose **Exit Install System** and return to its shell.
 Run `halt -p` and wait for guest power-off before stopping QEMU.
-Restart the same command with the same `disk.qcow2` and `vars.fd`, removing `-cdrom` and `-boot once=d`.
+Restart with the same `disk.qcow2` and `vars.fd`, removing the media drive
+and its `ide-cd` device. Keep the target disk's explicit boot priority.
 The installed system must start without installation media.
 Log in on the guest console, then follow [first-login configuration](../user-guide.md#first-login-and-local-configuration).
 Set `postfix=NO` in `/etc/rc.conf` if this VM does not use a mail service.
@@ -151,6 +186,7 @@ Run as **root inside the guest**:
 uname -srm
 sysctl kern.version
 sysctl kern.buildinfo
+sha256 /netbsd
 mount
 df -h
 printf 'EmberBSD first-boot check\n' > /root/first-boot-check
@@ -170,15 +206,28 @@ For an experimental update, preserve the powered-off disk and variables together
 
 ## Checked boundary
 
-The development ISO's assembly/catalog source is `4a65cc07247c558e88665ca134d67543cac52e5d`; it includes local sets.
-Its SHA256 is `6a9791d56e7dfa6c500cf6ba4471057ba73d088f352f6c8d3b7aef9163e7435c`.
-The [installer identity guide](installer-branding.md#earlier-development-image) records its original UEFI/BIOS and disk-installation acceptance.
-Its GENERIC kernel reports `kern.buildinfo=EmberBSD-95a2bc9bad05`.
-The kernel extracted from its set has SHA256 `5cdd6eeb1a3ef07f9cd148bbc98bed608f8995d95c804e4bfc5ec3b1a2585432`.
-That older identity differs from the assembly commit; these checks do not accept a uniform whole-OS rebuild of that commit.
-Record the actual component identities when preparing a new image, not just the installation banner.
-On 2026-10-13, this walkthrough installed that ISO onto a fresh 32 GiB GPT disk in the isolated QEMU profile above.
-An independent check booted without the ISO, created a normal account, logged in and used `su` successfully.
-A normal reboot retained both user and root test files; the installed kernel hash matched its set on both boots.
-That artifact is a checked development input, not a publicly downloadable release promise.
-Network, SSH, physical hardware and long-duration operation need their own acceptance.
+The published candidate pins image, kernel, modules and base to
+`a0674c0d2c1b067339b9436cf6148426546649ef`.
+Its ISO SHA256 is `7ca271e2be317e2204fb28eff1ecb80e8baab2ac23d0f909b24239225c28fdb7`.
+Its compressed UEFI USB SHA256 is `3f485b5dbb9ec1bf7a6d91392db666f01f26b587682e4e25f635e98d41f13c03`.
+Its installed GENERIC kernel SHA256 is `3cf50410b2aa1c5fac4f4d0b822e1dcd2be5d457ceb362e7b4e8099a14ba2bbc`.
+
+On 2026-10-13, three fresh 32 GiB GPT guests installed from USB, a controlled
+HTTPS fixture and the published GitHub HTTPS path.
+All booted without media and retained a test file after a normal reboot.
+The installed kernel matched its set on both boots in each guest.
+The GitHub route installed the 13-set custom profile without errors or skips;
+all downloaded set hashes matched the public manifest.
+Saved DHCP configuration and default-trust HTTPS worked after its reboot.
+Both normal and minimal FTP clients rejected unknown CAs, wrong certificate
+names, missing anchors and HTTP 404. GitHub redirects and resume passed.
+The temporary fixture CA did not enter the installed trust store.
+
+An external client downloaded the public ISO with its exact hash and checked
+HTTP 206 resume and a missing release's 404.
+The release is an immutable prerelease with 20 verified assets.
+The build uses the in-tree GCC12.5 host bootstrap and excludes native GCC commands.
+It does not qualify an installed amd64 GCC16 compiler, X11, physical hardware,
+BIOS installation, SSH deployment, automatic OS updates or long-duration operation.
+The [earlier development image](installer-branding.md#earlier-development-image)
+has its own historical component identities and acceptance.

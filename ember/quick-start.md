@@ -12,7 +12,7 @@ Choose the functions you need before choosing an installation route.
 
 | Target | Start with | Installation boundary |
 | --- | --- | --- |
-| amd64 desktop VM | [UEFI VM installation](boot/amd64-vm-install.md) | Full local-set development ISO; disposable-disk installation checked in QEMU |
+| amd64 installation VM | [UEFI VM installation](boot/amd64-vm-install.md) | Published no-X11 candidate; local and HTTPS installation on disposable QEMU disks |
 | AArch64 desktop VM | [Development image](image/README.md), then [UTM display setup](boot/utm-framebuffer.md) | Requires the listed verified inputs; VM image, not a board image |
 | Raspberry Pi 5 or CM5 | [Board catalog](boards/README.md) | Board firmware, boot medium and compatible base must be prepared; kernel support alone is not an installer |
 | Zero 2 W, Orange Pi Zero 4 or Zero 3W | [Board catalog](boards/README.md) | Follow that board's device-tree and boot-loader path; images are not interchangeable |
@@ -21,11 +21,13 @@ Choose the functions you need before choosing an installation route.
 
 ## 2. Obtain a compatible image
 
-As of 2026-10-13, no general installation release is published on
-[GitHub Releases](https://github.com/oxtech-ember/EmberBSD/releases).
-The [EmberBSD set channel](boot/installer-branding.md#distribution-sets) is not yet available.
-Use the source-build route linked above or an identified development artifact with its build record.
-The amd64 guide provides a full-ISO build command and a checked installation profile.
+Download the [amd64 UEFI installation candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11).
+For a first VM, choose `EmberBSD-1.0-amd64.iso` and download `SHA256` and `manifest.json` beside it.
+The release also contains a compressed UEFI USB image and matching binary sets.
+Read its release notes: this candidate has no X11 and does not qualify physical machines or boards.
+Its source is `a0674c0d2c1b067339b9436cf6148426546649ef`; all OS components use that same pin.
+The [VM guide](boot/amd64-vm-install.md) covers installation with local sets or GitHub HTTPS.
+Other architectures still require their specific source-build or documented development-image route.
 
 Keep the source commit, architecture, image type, compiler profile and checksum manifest with the image.
 Kernel, modules and base sets must belong to a compatible, recorded build.
@@ -72,7 +74,8 @@ After decompression, verify an uncompressed digest too when the manifest supplie
 
 For a first experiment, follow the [amd64 VM walkthrough](boot/amd64-vm-install.md#install-from-local-sets).
 It uses a new virtual disk and the ISO's local sets.
-Do not select an Internet OS-set source while the EmberBSD channel is unavailable.
+For network installation of this candidate, follow [GitHub HTTPS installation](boot/amd64-vm-install.md#install-from-github-https).
+Keep the exact release path and the custom selection of 13 included sets.
 
 For a physical board, identify its model, revision, firmware and boot medium first.
 Back up the medium and retain a working console and recovery path.

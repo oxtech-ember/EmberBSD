@@ -112,6 +112,11 @@ file	external/bsd/drm2/powervr/pvr_file.c	sun60ipvr
 file	external/bsd/drm2/powervr/pvr_heap.c	sun60ipvr
 file	external/bsd/drm2/powervr/pvr_query.c	sun60ipvr
 file	external/bsd/drm2/powervr/pvr_vm.c	sun60ipvr
+file	external/bsd/drm2/powervr/pvr_stream.c	sun60ipvr
+file	external/bsd/drm2/powervr/pvr_context.c	sun60ipvr
+file	external/bsd/drm2/powervr/pvr_freelist.c	sun60ipvr
+file	external/bsd/drm2/powervr/pvr_exec.c	sun60ipvr
+file	external/bsd/drm2/powervr/pvr_submit.c	sun60ipvr
 device	sun60igpuid: firmload, sun60ipvr
 attach	sun60igpuid at fdt with sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu.c	sun60i_a733_gpu
@@ -123,6 +128,8 @@ file	arch/arm/sunxi/sun60i_a733_gpu_fwinit.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwstart.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwboot.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwprobe.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwservice.c	sun60i_a733_gpu
+file	arch/arm/sunxi/sun60i_a733_gpu_fwbridge.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.c	sun60i_a733_gpu

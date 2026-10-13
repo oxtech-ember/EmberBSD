@@ -19,6 +19,9 @@
 #define BUS_DMA_NOWAIT 1
 #define BUS_DMA_PREFETCHABLE 2
 #define BUS_DMASYNC_PREWRITE 4
+#define BUS_DMASYNC_PREREAD 1
+#define BUS_DMASYNC_POSTREAD 2
+#define BUS_DMASYNC_POSTWRITE 8
 #define _BUS_DMAMAP_IS_BOUNCING 8
 #define PROT_READ 1
 #define PROT_WRITE 2
@@ -29,6 +32,7 @@
 #define ERR_PTR(e) ((void *)(intptr_t)(e))
 #define PTR_ERR(p) ((int)(intptr_t)(p))
 #define IS_ERR(p) ((uintptr_t)(p) >= (uintptr_t)-4095)
+typedef int32_t __s32;
 typedef uint16_t __u16;
 typedef uint32_t __u32;
 typedef uint64_t __u64;
@@ -38,7 +42,8 @@ typedef void *bus_dma_tag_t;
 typedef struct { void *memory; size_t ds_len; uint64_t ds_addr; } bus_dma_segment_t;
 typedef struct {
 	void *memory;
-	bool loaded;
+	bool loaded, initialized;
+	unsigned int device_owned;
 	unsigned int _dm_flags, dm_nsegs;
 	size_t dm_mapsize;
 	bus_dma_segment_t dm_segs[1];
@@ -91,6 +96,7 @@ static struct drm_vma_offset_manager manager;
 #define CHECK(e) do { checks++; if (!(e)) { \
 	fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #e); abort(); \
 } } while (0)
+#define KASSERT(e) CHECK(e)
 
 static void *kmem_zalloc(size_t n, int flags)
 { void *p = calloc(1, n); CHECK(p != NULL); structures++; return p; }
@@ -147,13 +153,27 @@ static int bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t map, void *p,
 	loaded++; return 0;
 }
 static void bus_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t map)
-{ CHECK(loaded != 0 && map->loaded); loaded--; map->loaded = false; }
+{ CHECK(loaded != 0 && map->loaded && map->device_owned == 0); loaded--; map->loaded = false; }
 static void bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map,
     size_t off, size_t len, int flags)
 {
-	CHECK(map->loaded && off == 0 && flags == BUS_DMASYNC_PREWRITE);
-	for (size_t n = 0; n < len; n++)
-		CHECK(((uint8_t *)map->memory)[n] == 0);
+	CHECK(map->loaded && off == 0 && len == map->dm_mapsize);
+	CHECK(flags != 0 && (flags & ~15) == 0);
+	if (!map->initialized) {
+		CHECK(flags == BUS_DMASYNC_PREWRITE);
+		for (size_t n = 0; n < len; n++)
+			CHECK(((uint8_t *)map->memory)[n] == 0);
+		map->initialized = true;
+	}
+	if (flags & BUS_DMASYNC_POSTWRITE) {
+		CHECK(map->device_owned & BUS_DMASYNC_PREWRITE);
+		map->device_owned &= ~BUS_DMASYNC_PREWRITE;
+	}
+	if (flags & BUS_DMASYNC_POSTREAD) {
+		CHECK(map->device_owned & BUS_DMASYNC_PREREAD);
+		map->device_owned &= ~BUS_DMASYNC_PREREAD;
+	}
+	map->device_owned |= flags & (BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	syncs++;
 }
 static void drm_dev_get(struct drm_device *dev)
@@ -317,6 +337,59 @@ mapping_contract(struct drm_gem_object *obj, unsigned int flags)
 	map->dm_segs[0].ds_addr = UINT64_C(0x10000000);
 }
 
+static void
+cpu_and_dma_contract(struct drm_gem_object *obj)
+{
+	struct pvr_bo *bo = pvr_to_bo(obj);
+	struct drm_gem_object foreign = *obj;
+	void *cpu = (void *)(uintptr_t)0xa5;
+	unsigned before;
+
+	CHECK(pvr_bo_cpu(NULL, 0, 1, 0, &cpu) == EINVAL);
+	CHECK(pvr_bo_cpu(obj, 0, 1, 0, NULL) == EINVAL);
+	CHECK(pvr_bo_cpu(obj, 0, 0, 0, &cpu) == EINVAL);
+	CHECK(pvr_bo_cpu(obj, obj->size, 1, 0, &cpu) == EINVAL);
+	CHECK(pvr_bo_cpu(obj, UINT64_MAX, 1, 0, &cpu) == EINVAL);
+	CHECK(pvr_bo_cpu(obj, 1, obj->size, 0, &cpu) == EINVAL);
+	CHECK(pvr_bo_cpu(obj, 0, 1, bo->flags | 0x1000, &cpu) == EACCES);
+	foreign.funcs = NULL;
+	CHECK(pvr_bo_cpu(&foreign, 0, 1, 0, &cpu) == EINVAL);
+	CHECK(cpu == (void *)(uintptr_t)0xa5);
+	CHECK(pvr_bo_cpu(obj, 64, 32, bo->flags, &cpu) == 0);
+	CHECK(cpu == (uint8_t *)bo->cma.vaddr + 64);
+	memset(cpu, 0x7d, 32);
+	CHECK(pvr_bo_cpu(obj, obj->size - 1, 1, 0, &cpu) == 0);
+	CHECK(cpu == (uint8_t *)bo->cma.vaddr + obj->size - 1);
+	CHECK(pvr_bo_pin(NULL) == EINVAL);
+	CHECK(pvr_bo_pin(&foreign) == EINVAL);
+	CHECK(!bo->firmware_pinned);
+	CHECK(pvr_bo_pin(obj) == 0 && bo->firmware_pinned);
+	CHECK(pvr_bo_pin(obj) == EBUSY && bo->firmware_pinned);
+	pvr_bo_unpin(obj);
+	CHECK(!bo->firmware_pinned);
+	CHECK(pvr_bo_pin(obj) == 0);
+	pvr_bo_unpin(obj);
+	CHECK(!bo->firmware_pinned);
+	/* Duplicate aliases close each DMA direction once. */
+	before = syncs;
+	pvr_bo_sync(obj, BUS_DMASYNC_POSTREAD);
+	CHECK(syncs == before);
+	pvr_bo_sync(obj, BUS_DMASYNC_POSTWRITE);
+	CHECK(syncs == before + 1 && bo->dma_owned == 0);
+	pvr_bo_sync(obj, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	CHECK(syncs == before + 1);
+	pvr_bo_sync(obj, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	pvr_bo_sync(obj, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	CHECK(bo->dma_owned == (BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE));
+	pvr_bo_sync(obj, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	CHECK(bo->dma_owned == 0);
+	before = syncs;
+	pvr_bo_sync(obj, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	CHECK(syncs == before);
+	/* The last GEM put must close this pair before unloading DMA. */
+	pvr_bo_sync(obj, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+}
+
 int
 main(void)
 {
@@ -368,6 +441,7 @@ main(void)
 		CHECK(obj->size == PAGE_SIZE && obj->refcount.refs == 1 && dev.refs == 2);
 		CHECK(pvr_to_bo(obj)->flags == flags);
 		mapping_contract(obj, flags);
+		cpu_and_dma_contract(obj);
 		mmap_args = (struct drm_pvr_ioctl_get_bo_mmap_offset_args){ create.handle, 0, 0xdead };
 		CHECK(pvr_get_bo_mmap_offset(&dev, &mmap_args, &a) == 0);
 		CHECK(mmap_args.offset != 0 && mmap_args.offset != 0xdead);
@@ -433,7 +507,7 @@ main(void)
 	drm_gem_pager_detach(uobj);
 	CHECK(dev.refs == 0 && objects == 0 && structures == 0);
 	CHECK(allocated == 0 && mapped == 0 && maps == 0 && loaded == 0);
-	printf("PASS: %u PowerVR BO checks (page=%zu, zero-syncs=%u)\n",
+	printf("PASS: %u PowerVR BO checks (page=%zu, syncs=%u)\n",
 	    checks, PAGE_SIZE, syncs);
 	return 0;
 }

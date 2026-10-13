@@ -29,6 +29,8 @@ struct pvr_bo {
 	/* The native CMA pager reaches this member from the GEM object. */
 	struct drm_gem_cma_object cma;
 	uint64_t flags;
+	int dma_owned;
+	bool firmware_pinned;
 };
 
 static struct pvr_bo *
@@ -45,7 +47,14 @@ pvr_bo_free(struct drm_gem_object *obj)
 	struct pvr_bo *bo = pvr_to_bo(obj);
 	struct drm_gem_cma_object *cma = &bo->cma;
 
+	KASSERT(!bo->firmware_pinned);
 	drm_gem_object_release(obj);
+	if (bo->dma_owned != 0)
+		bus_dmamap_sync(cma->dmat, cma->dmamap, 0, cma->dmasize,
+		    ((bo->dma_owned & BUS_DMASYNC_PREWRITE) != 0 ?
+		    BUS_DMASYNC_POSTWRITE : 0) |
+		    ((bo->dma_owned & BUS_DMASYNC_PREREAD) != 0 ?
+		    BUS_DMASYNC_POSTREAD : 0));
 	bus_dmamap_unload(cma->dmat, cma->dmamap);
 	bus_dmamap_destroy(cma->dmat, cma->dmamap);
 	bus_dmamem_unmap(cma->dmat, cma->vaddr, cma->dmasize);
@@ -126,6 +135,7 @@ pvr_bo_alloc(struct drm_device *dev, size_t size, uint64_t flags)
 	memset(cma->vaddr, 0, size);
 	bus_dmamap_sync(cma->dmat, cma->dmamap, 0, size,
 	    BUS_DMASYNC_PREWRITE);
+	bo->dma_owned = BUS_DMASYNC_PREWRITE;
 	drm_dev_get(dev);
 	drm_gem_private_object_init(dev, &cma->base, size);
 	cma->base.funcs = &pvr_bo_funcs;
@@ -233,4 +243,66 @@ pvr_mmap_object(struct drm_device *dev, off_t byte_offset, size_t size,
 	}
 	drm_gem_object_put_unlocked(obj);
 	return error;
+}
+
+int
+pvr_bo_cpu(struct drm_gem_object *obj, uint64_t offset, size_t size,
+    uint64_t flags, void **cpu)
+{
+	struct pvr_bo *bo;
+
+	if (obj == NULL || obj->funcs != &pvr_bo_funcs || cpu == NULL ||
+	    size == 0 || offset > obj->size || size > obj->size - offset)
+		return EINVAL;
+	bo = pvr_to_bo(obj);
+	if ((bo->flags & flags) != flags)
+		return EACCES;
+	*cpu = (uint8_t *)bo->cma.vaddr + offset;
+	return 0;
+}
+
+void
+pvr_bo_sync(struct drm_gem_object *obj, int operations)
+{
+	struct pvr_bo *bo = pvr_to_bo(obj);
+	int active = operations;
+
+	KASSERT(obj->funcs == &pvr_bo_funcs);
+	/* A BO can have several VM mappings. Close each DMA direction once. */
+	if ((bo->dma_owned & BUS_DMASYNC_PREWRITE) == 0)
+		active &= ~BUS_DMASYNC_POSTWRITE;
+	if ((bo->dma_owned & BUS_DMASYNC_PREREAD) == 0)
+		active &= ~BUS_DMASYNC_POSTREAD;
+	if (active == 0)
+		return;
+	bus_dmamap_sync(bo->cma.dmat, bo->cma.dmamap, 0, bo->cma.dmasize,
+	    active);
+	if ((active & BUS_DMASYNC_POSTWRITE) != 0)
+		bo->dma_owned &= ~BUS_DMASYNC_PREWRITE;
+	if ((active & BUS_DMASYNC_POSTREAD) != 0)
+		bo->dma_owned &= ~BUS_DMASYNC_PREREAD;
+	bo->dma_owned |= active & (BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+}
+
+int
+pvr_bo_pin(struct drm_gem_object *obj)
+{
+	struct pvr_bo *bo;
+
+	if (obj == NULL || obj->funcs != &pvr_bo_funcs)
+		return EINVAL;
+	bo = pvr_to_bo(obj);
+	if (bo->firmware_pinned)
+		return EBUSY;
+	bo->firmware_pinned = true;
+	return 0;
+}
+
+void
+pvr_bo_unpin(struct drm_gem_object *obj)
+{
+	struct pvr_bo *bo = pvr_to_bo(obj);
+
+	KASSERT(obj->funcs == &pvr_bo_funcs && bo->firmware_pinned);
+	bo->firmware_pinned = false;
 }

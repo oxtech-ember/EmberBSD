@@ -36,6 +36,11 @@ PARSELISTENV+=	BOOTMODEL=${BOOTMODEL:Q}
 
 .if defined(USE_SYSINST)
 LISTS+=		${DISTRIBDIR}/common/list.sysinst
+LISTS+=		${AMD64COMMON}/list.https
+CRUNCHENV+=	SMALLPROG_HTTPS=1
+
+.include "${NETBSDSRCDIR}/distrib/common/Makefile.https-certs"
+IMAGEDEPENDS+=	${CA_BUNDLE}
 MAKEFS_FLAGS+=	-f 14
 .endif
 

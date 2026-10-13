@@ -39,7 +39,10 @@ are maintained in the related repositories below.
 - For installation screens and compatible set sources, see
   [installer identity](ember/boot/installer-branding.md).
   The installer offers bootable USB/image sets and an EmberBSD CDN source.
-  The CDN service is planned. Use a complete image until it is available.
+  An [amd64 UEFI VM candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11)
+  supplies complete local media and a pinned GitHub HTTPS set source.
+  The [release procedure](ember/release/README.md) verifies composition, VM qualification,
+  remote file hashes and immutable publication. The custom domain remains deferred.
 
 ## EmberBSD ecosystem
 
@@ -366,7 +369,13 @@ on every board in the hardware catalog.
   session acceptance still passes. A startplasma session on the virtual
   output is the next acceptance step. CM5 runtime testing also identifies
   the separate, still absent Plasma Desktop shell package; Workspace alone
-  cannot start `org.kde.plasma.desktop`. Its current xdg-user-dirs 0.20
+  cannot start `org.kde.plasma.desktop`.
+  [Desktop package preparation](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-package-set.md)
+  now covers Activities, current Xwayland/libei/basu, correct target XKB paths
+  and native QtDBus generators that retain KWin's complex property signatures.
+  Offline package and full-session runner host controls pass; board startup,
+  V3D shell rendering and normal logout still require acceptance.
+  Its current xdg-user-dirs 0.20
   dependency now cross-builds and passes private-profile checks on CM5.
   [Current desktop providers](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-providers.md)
   include SDL3 game-controller code with eight CM5 checks and a UBSan repeat.
@@ -422,9 +431,10 @@ on every board in the hardware catalog.
   language-model bytes; desktop dictionary integration remains unaccepted.
   Shared-cache recovery and the complete Frameworks runtime remain unaccepted.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
-  confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle;
-  CM5 still reports no HDMI hotplug in its pre-OS firmware log after a cold boot.
-  Neither result establishes accelerated scanout.
+  confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle.
+  The current [CM5 display boundary](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
+  is an HDMI-to-VGA EDID that selects 1080p for a 1280x1024 monitor.
+  Native BCM2712 KMS mode setting and accelerated scanout remain unaccepted.
   A complete mobile shell workflow, native display and power management
   still need validation. See the [Plasma Mobile port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile).
 
@@ -661,8 +671,10 @@ on every board in the hardware catalog.
   Vulkan 1.2.354 through the native render node. Mesa's experimental
   conformance gate remains enabled. The same package passes four llvmpipe
   EGL/pixel cycles and 38 upstream invocations, with recorded internal skips.
-  Firmware VM publication, GPU job fences and submission, Vulkan device
-  execution, Zink, display output, and accelerated Plasma still require porting.
+  The [experimental execution path](ember/boot/a733-pvr-execution.md) now adds
+  firmware VM publication, contexts, free lists, and synchronous compute submission.
+  Its production-source contracts pass. Physical Vulkan execution, graphics jobs,
+  Zink, display output, and accelerated Plasma remain unaccepted.
   Repeated submission within one boot and long-duration GPU stability remain
   untested.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
@@ -942,7 +954,8 @@ on every board in the hardware catalog.
   contributions. [User skills](#connect-user-skills) guide OS installation, application use,
   device diagnosis and personal Ports maintenance with the available tools;
   package checks are verified, while on-device agent behavior remains untested.
-  A general validated installation image is not yet released.
+  A pinned amd64 UEFI installation candidate is published through GitHub Releases.
+  It has no X11 and does not establish a general hardware or GCC16 userland release.
 
 The costs are equally plain. Fixes from upstream are merged by hand.
 Only what the linked board pages mark "Tested" is claimed on physical
@@ -1024,8 +1037,8 @@ personalized device images are not published in this repository.
 
 The original NetBSD reference follows below. Links to official binary
 releases refer to upstream NetBSD and do not include this fork's changes.
-Report EmberBSD-specific problems through [its own issue tracker](https://github.com/oxtech-ember/EmberBSD/issues)
-and [contribution procedure](CONTRIBUTING.md). The channels below belong to NetBSD.
+Use the [contribution procedure](CONTRIBUTING.md) for EmberBSD-specific reports and proposals.
+The channels below belong to NetBSD.
 
 NetBSD
 ======

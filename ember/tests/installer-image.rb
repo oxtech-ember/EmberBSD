@@ -4,12 +4,15 @@ require 'open3'
 image = ARGV.fetch(0) { abort 'Usage: ruby ember/tests/installer-image.rb full-amd64.iso [build-id] [product-version]' }
 build = ARGV[1]
 product_version = ARGV[2] || '1.0'
+set_host = ARGV[3] || 'cdn.emberbsd.oxteam.me'
 extract = lambda do |path|
   data, error, status = Open3.capture3('tar', '-xOf', image, path)
   abort "#{path}: #{error}" unless status.success?
   data
 end
 config = extract.call('boot.cfg')
+trust = extract.call('etc/openssl/cert.pem')
+abort 'ISO has no HTTPS trust anchors' unless trust.include?('-----BEGIN CERTIFICATE-----')
 abort 'ISO lost its EmberBSD installation banner' unless config.match?(/^banner=EmberBSD/)
 abort 'ISO presents the wrong EmberBSD product version' unless config.include?("banner=EmberBSD #{product_version} installation")
 abort 'ISO presents optical media as the installation method' if config.match?(/^banner=.*\b(?:CD|DVD)\b/)
@@ -22,7 +25,7 @@ abort error unless status.success?
   abort "ISO has no #{set} set" unless list.lines.include?("amd64/binary/sets/#{set}.tar.xz\n")
 end
 binary = extract.call('usr/sbin/sysinst')
-abort 'ISO installer has no own set source' unless binary.include?('cdn.emberbsd.oxteam.me')
+abort 'ISO installer has the wrong set source' unless binary.include?(set_host)
 abort 'ISO installer has the wrong EmberBSD product version' unless binary.include?("EmberBSD/amd64 #{product_version}")
 ['Bootable USB / image', 'EmberBSD CDN', 'Additional sources'].each do |label|
   abort "ISO installer is missing source choice: #{label}" unless binary.include?(label)

@@ -58,7 +58,8 @@ static struct sun60i_a733_gpu_fwprobe_result result, previous, previous_saved;
 static unsigned int test_slot;
 static uint32_t test_log_type;
 static struct rogue_fwif_kccb_cmd test_command;
-static bool skip_sync_update;
+static bool skip_sync_update, queue_mode;
+static struct sun60i_a733_gpu_fwqueue service;
 static struct fake_map maps[5];
 static const size_t sizes[] = {16384, 16384, 16384, 139264, 12288};
 static uint8_t *cpu[5], *expected[5], *saved[5];
@@ -161,8 +162,8 @@ foreign_activity(void)
 	if (!foreign_updates)
 		return;
 	/* Different owners within one cache line: never overwrite these. */
-	fw32(3, KRETURN + (test_slot + 1) * 4,
-	    get32(cpu[3] + KRETURN + (test_slot + 1) * 4) + 1);
+	fw32(3, KRETURN + ((test_slot + 1) & 127) * 4,
+	    get32(cpu[3] + KRETURN + ((test_slot + 1) & 127) * 4) + 1);
 	fw32(4, 8, get32(cpu[4] + 8) + 1);
 	/* Other byte in the KCCB producer's cache line, not ours to clear. */
 	fw32(3, 4, get32(cpu[3] + 4) + 1);
@@ -175,7 +176,7 @@ complete_command(void)
 	if (test_slot == 1 && !skip_sync_update)
 		fw32(3, MMUSYNC, 0);
 	if (!response_without_read)
-		fw32(3, 128, test_slot + 1);
+		fw32(3, 128, (test_slot + 1) & 127);
 	fw32(3, OSDATA + 568, get32(cpu[3] + OSDATA + 568) + 1);
 }
 
@@ -188,7 +189,7 @@ firmware_tick(void)
 	if (result.published) {
 		completions++;
 		if (read_only_progress)
-			fw32(3, 128, test_slot + 1);
+			fw32(3, 128, (test_slot + 1) & 127);
 		if (complete_at != 0 && completions == complete_at)
 			complete_command();
 		switch (firmware_failure) {
@@ -223,9 +224,9 @@ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, bus_addr_t offset,
 	CHECK(offset <= sizes[id] && size <= sizes[id] - offset);
 	syncs++;
 	put32(golden, test_slot == 0 ? 0x2abc00ce : 0x2abc0066);
-	if (test_slot >= 2)
+	if (test_slot >= 2 || queue_mode)
 		memcpy(golden, &test_command, sizeof(test_command));
-	if (test_slot == 1) {
+	if (test_slot == 1 && !queue_mode) {
 		put32(golden + 8, 0x0400001f);
 		put32(golden + 12, 0xc0104400);
 		/* Zero sync update is not a sequence number. */
@@ -292,8 +293,8 @@ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, bus_addr_t offset,
 		break;
 	case 5:
 		CHECK(offset == 0 && size == 4 && op == BUS_DMASYNC_PREWRITE);
-		CHECK(result.published && get32(cpu[3]) == test_slot + 1);
-		put32(expected[3], test_slot + 1);
+		CHECK(result.published && get32(cpu[3]) == ((test_slot + 1) & 127));
+		put32(expected[3], (test_slot + 1) & 127);
 		unchanged_foreign();
 		break;
 	default: CHECK(false);
@@ -320,7 +321,7 @@ bus_space_poke_4(bus_space_tag_t tag, bus_space_handle_t handle,
 	CHECK(offset == 0x0b00 && value == 0);
 	CHECK(phase == 6 && barriers == 1 && writes == 0);
 	CHECK(result.attempted && result.published && result.kick_attempted);
-	CHECK(!result.kicked && get32(cpu[3]) == test_slot + 1);
+	CHECK(!result.kicked && get32(cpu[3]) == ((test_slot + 1) & 127));
 	CHECK(get32(cpu[3] + (KRETURN + test_slot * 4)) == 0);
 	unchanged_foreign();
 	writes++;
@@ -352,6 +353,7 @@ static void
 reset(void)
 {
 	test_slot = 0;
+	queue_mode = false;
 	skip_sync_update = false;
 	memset(&previous, 0, sizeof(previous));
 	memset(&previous_saved, 0, sizeof(previous_saved));
@@ -589,7 +591,7 @@ compatibility_tests(void)
 	reset(); fw32(4, COMPCHECKS + 8, 1); runtime_reject(ENODEV);
 	reset(); fw32(4, COMPCHECKS + 24, 1); runtime_reject(ENODEV);
 	reset(); fw32(3, 0, 1); runtime_reject(EBUSY);
-	reset(); fw32(3, 128, test_slot + 1); runtime_reject(EBUSY);
+	reset(); fw32(3, 128, (test_slot + 1) & 127); runtime_reject(EBUSY);
 	reset(); fw32(3, 132, 255); runtime_reject(EPROTO);
 	reset(); fw32(3, 136, 80); runtime_reject(EPROTO);
 	reset(); fw32(3, FCONTROL + 132, 63); runtime_reject(EPROTO);
@@ -1072,6 +1074,215 @@ kick_consumption_tests(void)
 	    assertions - start);
 }
 
+/* Retain the real boot and queue across several full KCCB revolutions. */
+static void
+prepare_service(void)
+{
+	reset();
+	CHECK(run() == 0);
+	memset(&service, 0, sizeof(service));
+	CHECK(sun60i_a733_gpu_fwqueue_attach(&owner, &booted, &result,
+	    &service) == 0);
+	CHECK(service.attached && !service.failed);
+	CHECK(memcmp(&service.last, &result, sizeof(result)) == 0);
+	CHECK(sun60i_a733_gpu_fwqueue_attach(&owner, &booted, &result,
+	    &service) == EBUSY);
+	queue_mode = true;
+}
+
+static void
+next_service(uint32_t type)
+{
+	next_command(type, service.expected_log_type);
+	test_slot &= 127;
+	if (type == 0x2abc0066) {
+		test_command.cmd_data.mmu_cache_data.cache_flags = 0x0400001f;
+		test_command.cmd_data.mmu_cache_data.mmu_cache_sync_fw_addr = 0xc0104400;
+	} else if (type == 0x2abc0065) {
+		test_command.cmd_data.cmd_kick_data.context_fw_addr = 0xc0200100;
+	} else if (type == 0x2abc006a) {
+		test_command.cmd_data.cleanup_data.cleanup_type =
+		    ROGUE_FWIF_CLEANUP_FWCOMMONCONTEXT;
+		test_command.cmd_data.cleanup_data.cleanup_data.context_fw_addr = 0xc0200100;
+	}
+}
+
+static int
+run_service(void)
+{
+	return sun60i_a733_gpu_fwqueue_cmd(&owner, 0x12340000, &owner,
+	    &booted, &service, &test_command, test_log_type, &result);
+}
+
+static void
+service_frozen(void)
+{
+	struct sun60i_a733_gpu_fwprobe_result accepted = service.last;
+	struct sun60i_a733_gpu_fwprobe_observation out;
+	unsigned int old_syncs = syncs, old_writes = writes;
+
+	CHECK(service.failed && booted.device_owned);
+	CHECK(run_service() == EIO && result.error == EIO && !result.attempted);
+	CHECK(sun60i_a733_gpu_fwqueue_observe(&owner, &booted, &service, &out) == EIO);
+	CHECK(!out.valid && out.error == EIO);
+	CHECK(syncs == old_syncs && writes == old_writes);
+	CHECK(memcmp(&accepted, &service.last, sizeof(accepted)) == 0);
+}
+
+static void
+service_tests(void)
+{
+	struct sun60i_a733_gpu_fwprobe_result accepted;
+	struct sun60i_a733_gpu_fwprobe_observation out;
+	unsigned int start = assertions, old_syncs;
+
+	prepare_service();
+	for (unsigned int i = 1; i <= 400; i++) {
+		next_service(i % 2 == 0 ? 0x2abc0066 : 0x2abc00ce);
+		CHECK(run_service() == 0);
+		CHECK(result.slot == (i & 127));
+		CHECK(result.after.read_offset == ((i + 1) & 127));
+		CHECK(result.after.write_offset == ((i + 1) & 127));
+		CHECK(service.last.slot == result.slot && !service.failed);
+		CHECK(sun60i_a733_gpu_fwqueue_observe(&owner, &booted, &service, &out) == 0);
+	}
+	/* The service owns a deep result copy. Reuse does not alter it. */
+	accepted = service.last;
+	memset(&result, 0xa5, sizeof(result));
+	CHECK(memcmp(&accepted, &service.last, sizeof(accepted)) == 0);
+	result = accepted;
+
+	/* All three cleanup classes can report BUSY, then succeed on retry. */
+	for (unsigned int type = 0; type < 3; type++) {
+		prepare_service();
+		next_service(0x2abc006a);
+		test_command.cmd_data.cleanup_data.cleanup_type = type;
+		response = 3;
+		CHECK(run_service() == EBUSY && !service.failed);
+		CHECK(result.after.rtn == 3 && result.after.read_offset == 2);
+		CHECK(service.last.error == EBUSY && service.last.slot == 1);
+		CHECK(sun60i_a733_gpu_fwqueue_observe(&owner, &booted, &service, &out) == 0);
+		next_service(0x2abc006a);
+		test_command.cmd_data.cleanup_data.cleanup_type = type;
+		response = 1;
+		CHECK(run_service() == 0 && !service.failed && service.last.slot == 2);
+	}
+	/* KICK needs consumption but must not invent a return-word completion. */
+	prepare_service(); next_service(0x2abc0065); response = 0;
+	CHECK(run_service() == 0 && result.after.rtn == 0 && !service.failed);
+	CHECK(sun60i_a733_gpu_fwqueue_observe(&owner, &booted, &service, &out) == 0);
+	fw32(3, SYSDATA + 3536, 1);
+	CHECK(sun60i_a733_gpu_fwqueue_observe(&owner, &booted, &service, &out) == EIO);
+	CHECK(out.valid && out.state.fw_faults == 1);
+	service_frozen();
+
+	/* POLL_FAILURE, unknown bits and BUSY on other commands are fatal. */
+	for (unsigned int type = 0; type < 4; type++) {
+		static const uint32_t types[] = { 0x2abc006a, 0x2abc0066, 0x2abc0065, 0x2abc00ce };
+		for (unsigned int bits = 4; bits <= 8; bits++) {
+			prepare_service(); next_service(types[type]); response = bits;
+			accepted = service.last;
+			CHECK(run_service() == EPROTO);
+			CHECK(memcmp(&accepted, &service.last, sizeof(accepted)) == 0);
+			service_frozen();
+		}
+		if (type != 0) {
+			prepare_service(); next_service(types[type]); response = 3;
+			CHECK(run_service() == EPROTO); service_frozen();
+		}
+	}
+	/* A BUSY word without the consumed command cannot permit retry. */
+	prepare_service(); next_service(0x2abc006a); response = 3;
+	response_without_read = true;
+	CHECK(run_service() == ETIMEDOUT); service_frozen();
+	prepare_service(); next_service(0x2abc006a); response = 2;
+	CHECK(run_service() == ETIMEDOUT); service_frozen();
+	prepare_service(); next_service(0x2abc0065); response_without_read = true;
+	CHECK(run_service() == ETIMEDOUT); service_frozen();
+	prepare_service(); next_service(0x2abc0066); complete_at = 0;
+	CHECK(run_service() == ETIMEDOUT); service_frozen();
+	for (unsigned int after = 0; after < 2; after++) {
+		prepare_service(); next_service(0x2abc0066);
+		poke_fault = true; fault_after_execution = after != 0;
+		CHECK(run_service() == EFAULT); service_frozen();
+	}
+	for (unsigned int failure = 1; failure <= 10; failure++) {
+		prepare_service(); next_service(0x2abc0066);
+		firmware_failure = failure;
+		CHECK(run_service() != 0 && result.published); service_frozen();
+	}
+	/* Busy power or a foreign queue update is not CLEANUP_BUSY. */
+	prepare_service(); next_service(0x2abc006a);
+	fw32(3, SYSDATA + 8, 2);
+	CHECK(run_service() == EBUSY && !result.published); service_frozen();
+	prepare_service(); next_service(0x2abc006a); fw32(3, 0, 2);
+	CHECK(run_service() == EBUSY && !result.published); service_frozen();
+
+	/* A new firmware boot or compatibility identity cannot inherit queue state. */
+	for (unsigned int which = 0; which < 4; which++) {
+		prepare_service(); next_service(0x2abc0066);
+		if (which == 0) fw32(4, STARTED + 8, 1);
+		if (which == 1) fw32(4, COMPCHECKS + 40, 0x99999999);
+		if (which == 2) fw32(4, COMPCHECKS + 44, 0x99999999);
+		if (which == 3) fw32(4, COMPCHECKS + 32, 0x99999999);
+		CHECK(run_service() == EPROTO && !result.published); service_frozen();
+	}
+	prepare_service(); next_service(0x2abc0066); booted.polls++;
+	CHECK(run_service() == EINVAL && !result.attempted); service_frozen();
+
+	/* The packet copy drops inactive bytes without changing the caller. */
+	for (unsigned int which = 0; which < 3; which++) {
+		struct rogue_fwif_kccb_cmd dirty, saved_command;
+		static const uint32_t types[] = { 0x2abc00ce, 0x2abc0066, 0x2abc006a };
+		static const size_t used[] = { 8, 20, 16 };
+
+		prepare_service(); next_service(types[which]);
+		dirty = test_command;
+		memset((uint8_t *)&dirty + used[which], 0xa5, sizeof(dirty) - used[which]);
+		saved_command = dirty;
+		CHECK(sun60i_a733_gpu_fwqueue_cmd(&owner, 0x12340000, &owner, &booted,
+		    &service, &dirty, test_log_type, &result) == 0);
+		CHECK(memcmp(&dirty, &saved_command, sizeof(dirty)) == 0);
+	}
+	/* Caller-owned structural mistakes perform no I/O and can be corrected. */
+
+	prepare_service(); next_service(0x2abc006a);
+	test_command.cmd_data.cleanup_data.cleanup_type = 3;
+	CHECK(run_service() == EOPNOTSUPP && !service.failed && syncs == 0);
+	test_command.cmd_data.cleanup_data.cleanup_type = 0;
+	test_command.kccb_flags = 1;
+	CHECK(run_service() == EOPNOTSUPP && !service.failed && syncs == 0);
+	test_command.kccb_flags = 0;
+	test_command.cmd_data.cleanup_data.cleanup_data.context_fw_addr = 0;
+	CHECK(run_service() == EINVAL && !service.failed && syncs == 0);
+	test_command.cmd_type = 0;
+	CHECK(run_service() == EOPNOTSUPP && !service.failed && syncs == 0);
+	prepare_service(); next_service(0x2abc0066);
+	test_log_type = 0x3f;
+	CHECK(run_service() == EINVAL && !service.failed && syncs == 0);
+	prepare_service(); next_service(0x2abc00ce); test_log_type = 0x3f;
+	fw32(3, TRACECTL, 0x3f);
+	CHECK(run_service() == 0 && service.expected_log_type == 0x3f);
+	next_service(0x2abc0066); CHECK(run_service() == 0);
+	old_syncs = syncs;
+	CHECK(sun60i_a733_gpu_fwqueue_cmd(&owner, 0x12340000, &owner, &booted,
+	    &service, &test_command, 0x3f, &service.last) == EINVAL);
+	CHECK(sun60i_a733_gpu_fwqueue_observe(&owner, &booted, &service,
+	    (void *)&service.last) == EINVAL);
+	CHECK(syncs == old_syncs && !service.failed);
+
+	/* Reject stale adoption, and freeze on a fresh attach-time fault. */
+	reset(); CHECK(run() == 0); memset(&service, 0, sizeof(service));
+	result.after.firmware_started_timestamp++;
+	CHECK(sun60i_a733_gpu_fwqueue_attach(&owner, &booted, &result, &service) == EINVAL);
+	CHECK(!service.attached);
+	reset(); CHECK(run() == 0); memset(&service, 0, sizeof(service));
+	fw32(3, SYSDATA + 3536, 1);
+	CHECK(sun60i_a733_gpu_fwqueue_attach(&owner, &booted, &result, &service) == EIO);
+	CHECK(service.attached && service.failed);
+	printf("a733-gpu-fwqueue: PASS %u checks\n", assertions - start);
+}
+
 int
 main(void)
 {
@@ -1085,13 +1296,16 @@ main(void)
 		CHECK(expected[i] != NULL && saved[i] != NULL);
 		allocations += 3;
 	}
-	runtime_tests();
-	compatibility_tests();
-	structural_tests();
-	cache_tests();
-	trace_tests();
-	observation_tests();
-	kick_consumption_tests();
+	if (getenv("FWQUEUE_ONLY") == NULL) {
+		runtime_tests();
+		compatibility_tests();
+		structural_tests();
+		cache_tests();
+		trace_tests();
+		observation_tests();
+		kick_consumption_tests();
+	}
+	service_tests();
 	/* No real device ran. The test alone owns final reclamation. */
 	for (unsigned int i = 0; i < 5; i++) {
 		free(cpu[i]);

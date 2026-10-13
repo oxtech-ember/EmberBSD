@@ -1,0 +1,35 @@
+ARM64 platform-register backport
+================================
+
+The imported GMP version remains 6.2.1.
+Its ARM64 assembly uses x18 as a loop counter in ten routines.
+Apple reserves this register for platform use.
+The affected routines can fail intermittently in a Darwin host compiler.
+Such a failure can read across the stack guard while the stack pointer remains near its normal location.
+Increasing the stack size does not correct the register violation.
+
+This tree backports the register changes from Torbjorn Granlund's GMP changeset f4ff6ff711ed:
+https://gmplib.org/list-archives/gmp-commit/2020-November/003062.html
+The mainline changeset is 5f32dbc41afc:
+https://gmplib.org/list-archives/gmp-commit/2020-November/003063.html
+
+The register allocation was also checked against the official GMP 6.3.0 release:
+https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz
+Archive SHA256: a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898
+Only the register changes are backported. Performance comments and other release changes are excluded.
+The original authorship and GNU LGPL/GPL notices remain unchanged.
+
+Apple ABI reference:
+https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms
+
+Checks
+------
+
+From the EmberBSD source root:
+
+    ruby ember/tests/gmp-darwin-registers.rb
+
+On a Darwin ARM64 host, also pass freshly built GMP object files or its static archive.
+The check inspects the actual object instructions with otool.
+Run the upstream GMP make check suite in a separate native build directory.
+Do not accept a compiler or target objects from the failing bootstrap build.

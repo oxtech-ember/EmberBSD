@@ -28,15 +28,16 @@ Custom boot.cfg banners appear below the mark. Keep their total menu height in m
 
 ## Distribution sets
 
-The default HTTPS host is `cdn.emberbsd.oxteam.me`.
-Its intended layout is:
+The [release builder](../release/README.md) pins the published amd64 candidate to GitHub HTTPS:
 
 ```text
-https://cdn.emberbsd.oxteam.me/releases/<EMBER_BUILD_ID>/<architecture>/binary/sets/
+https://github.com/oxtech-ember/EmberBSD/releases/download/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11/
 ```
 
-This is the EmberBSD channel contract. The service is not yet available.
-Use an image containing the sets until the channel is published and checked.
+This flat directory contains matching binary sets and their manifests.
+See the [VM installation guide](amd64-vm-install.md) for the selected 13-set profile.
+Generic source-tree defaults still name `cdn.emberbsd.oxteam.me`; that domain is not connected.
+Use the release builder or the published candidate for the verified GitHub path.
 The main source menu offers `Bootable USB / image` and `EmberBSD CDN`.
 Use a complete USB image for installation without a network connection.
 Identify the target disk by its model and capacity before confirming the layout.
@@ -101,6 +102,9 @@ Record the source commit, tools, image hashes, screenshots and installation resu
 VM acceptance does not establish physical-device acceptance.
 
 ## Checked 1.0 image
+
+This is a historical development-image receipt. The current published candidate
+has its own [uniform-source VM acceptance](amd64-vm-install.md#checked-boundary).
 
 The amd64 image from source `e7d3b9f994a4f0992b7bba4e545076edece45eef`
 passed a complete UEFI USB installation in QEMU 11.1.1 on an arm64 Mac.
