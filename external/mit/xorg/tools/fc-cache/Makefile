@@ -1,4 +1,5 @@
 #	$NetBSD: Makefile,v 1.23.2.2 2026/06/16 08:55:54 martin Exp $
+# Origin: EmberBSD host FreeType system-zlib selection, prepared with AI assistance.
 
 .include <bsd.hostinit.mk>
 
@@ -114,7 +115,8 @@ HOST_CPPFLAGS=	-DFONTCONFIG_PATH='"${DESTDIR}/etc/X11/fonts"' \
 		-DHAVE_SCANDIR \
 		-DFLEXIBLE_ARRAY_MEMBER="/**/" \
 		-DHAVE_DIRENT_H -DHAVE_UNISTD_H
-HOST_CPPFLAGS+=	-DFT_CONFIG_OPTION_DISABLE_BZIP2
+HOST_CPPFLAGS+=	-DFT_CONFIG_OPTION_DISABLE_BZIP2 \
+		-DFT_CONFIG_OPTION_SYSTEM_ZLIB
 HOST_CPPFLAGS+=	-I${FONTCONFIG} -I${FREETYPE} \
 		-I${FREETYPE}/include -I${FREETYPE}/include/freetype \
 		-I${EXPAT}/lib -I${EXPAT}/../lib/libexpat \
