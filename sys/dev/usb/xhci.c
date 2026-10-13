@@ -4512,8 +4512,27 @@ xhci_device_ctrl_start(struct usbd_xfer *xfer)
 
 	KASSERT((xfer->ux_rqflags & URQ_REQUEST) != 0);
 
-	if (tr->is_halted)
-		goto out;
+	if (tr->is_halted) {
+		struct xhci_pipe * const xp =
+		    container_of(xfer->ux_pipe, struct xhci_pipe, xp_pipe);
+
+		if (usb_in_event_thread(sc->sc_dev))
+			goto out;
+
+		/*
+		 * Process context (a ugen control request): retire the
+		 * halted endpoint ring now instead of waiting for the
+		 * async restart task.  Device bring-up loops issue many
+		 * stalled requests in a row and cannot afford the task
+		 * latency between them.  A stall in a data phase leaves
+		 * the ring dequeue stuck mid-TD, so use the full restart
+		 * with Set TR Dequeue.
+		 */
+		usb_rem_task_wait(xfer->ux_pipe->up_dev, &xp->xp_async_task,
+		    USB_TASKQ_HC, &sc->sc_lock);
+		xhci_pipe_restart(xfer->ux_pipe);
+		tr->is_halted = false;
+	}
 
 	i = 0;
 
