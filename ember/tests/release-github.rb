@@ -93,6 +93,30 @@ Dir.mktmpdir('ember-github') do |dir|
   result = EmberRelease::GitHub.new(dir, runner: pending_runner).preflight
   abort 'FAIL: exact source draft rejected before its tag is published' unless result['target_commitish'] == sha
   puts 'PASS: pending draft tag remains bound to the full source commit'
+  # The tag endpoint can omit a draft until its tag is published. Locate it
+  # through the authenticated, paginated release list and refresh by ID.
+  hidden_runner = lambda do |*args|
+    abort 'FAIL: draft lookup performed a mutation' unless args.first == 'api'
+    endpoint = args.last
+    next "HTTP/2.0 404 Not Found\r\n\r\n{}" if endpoint.match?(%r{releases/tags/})
+    data = case endpoint
+    when /immutable-releases$/ then { 'enabled' => true }
+    when /compare\// then { 'status' => 'ahead' }
+    when /matching-refs/ then []
+    when /releases\?per_page=100&page=1$/
+      Array.new(100) { |i| { 'id' => i, 'tag_name' => "unrelated-#{i}" } }
+    when /releases\?per_page=100&page=2$/
+      [{ 'id' => 200, 'tag_name' => manifest['release_tag'] }]
+    when /releases\/200$/
+      { 'id' => 200, 'tag_name' => manifest['release_tag'], 'draft' => true,
+        'target_commitish' => sha, 'assets' => [] }
+    else abort "Unexpected hidden draft API: #{endpoint}"
+    end
+    "HTTP/2.0 200 OK\r\n\r\n#{JSON.generate(data)}"
+  end
+  result = EmberRelease::GitHub.new(dir, runner: hidden_runner).preflight
+  abort 'FAIL: draft omitted by tag endpoint was lost' unless result && result['id'] == 200
+  puts 'PASS: authenticated paginated lookup recovers the exact pending draft'
   calls = []
   begin
     EmberRelease::GitHub.new(dir, runner: ->(*args) { calls << args }).publish
