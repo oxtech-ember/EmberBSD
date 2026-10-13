@@ -1264,7 +1264,7 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 	bus_size_t size;
 	uint32_t read_off = 0, write_off = 0, timeline = 0;
 	uint32_t scratch_before = 0, scratch_after = 0;
-	struct rogue_fwif_kccb_cmd cmd;
+	struct rogue_fwif_kccb_cmd kcmd;
 	uint32_t reset_reason = 0, reset_dm = 0, reset_job = 0;
 	uint32_t reset_ctx = 0, reset_flags = 0;
 	uint64_t reset_pc = 0, reset_fault = 0;
