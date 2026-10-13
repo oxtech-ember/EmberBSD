@@ -739,6 +739,16 @@ on every board in the hardware catalog.
   The ordinary kernel remains a passive observer. General job recovery,
   foreign-device sharing, Vulkan, HDMI presentation and accelerated Plasma remain unverified.
 
+### Optional command shells
+
+[dash 0.5.13.5](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/shells/dash.md)
+and [mksh R59c](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/shells/mksh.md)
+have GCC16 control builds. dash uses current libedit and ncurses. Ports
+carries parser, trap, history, allocation and arithmetic repairs, with
+Linux behavior, terminal, static-analysis and memory checks. These checks
+do not establish EmberBSD package or ARM64 login acceptance.
+The base system shell is unchanged.
+
 ### Network diagnostics kit
 
 - **Board-side capture, analysis and load tools:** EmberBSD-Ports carries a
