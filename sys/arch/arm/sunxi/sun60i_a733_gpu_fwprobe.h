@@ -71,14 +71,16 @@ struct sun60i_a733_gpu_fwprobe_observation {
 /*
  * Read current firmware state after a previously accepted slot. Revalidate
  * the exact DMA layout and boot ownership before every observation. Require
- * the queue to remain drained at slot + 1 and the return word to remain 1.
+ * the queue to remain drained at slot + 1. Supply the accepted command kind.
+ * LOGTYPE/MMUCACHE require return word 1. KICK has no return-slot completion;
+ * its consumption only permits the caller to check CCCB/UFO completion.
  * Use the same caller exclusion and DMA lifetime as command submission.
  * Never publish, consume a queue, write MMIO, or modify acceptance metadata.
  * Structural errors leave *out unchanged and perform no I/O. Otherwise set
  * valid, retain the snapshot even on a runtime error, and return that error.
  */
 int sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *,
-    const struct sun60i_a733_gpu_fwboot_result *, unsigned int, uint32_t,
+    const struct sun60i_a733_gpu_fwboot_result *, unsigned int, uint32_t, uint32_t,
     struct sun60i_a733_gpu_fwprobe_observation *);
 
 /*
@@ -135,6 +137,8 @@ int sun60i_a733_gpu_fwprobe_mmucache(bus_space_tag_t, bus_space_handle_t,
  * least one valid group. Only LOGTYPE_UPDATE can change the previous mode.
  * The caller updates the shared log type before LOGTYPE_UPDATE publication.
  * The command payload is copied before any shared-memory write.
+ * KICK succeeds here when firmware consumes its KCCB entry. It does not
+ * require a return word. CCCB, UFO, and fresh fault checks remain separate.
  */
 int sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t, bus_space_handle_t,
     struct sun60i_a733_gpu_fwmem *, const struct sun60i_a733_gpu_fwboot_result *,

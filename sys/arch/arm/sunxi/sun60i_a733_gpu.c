@@ -1518,7 +1518,8 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 		completion_polls++;
 		memset(&fresh, 0, sizeof(fresh));
 		error = sun60i_a733_gpu_fwprobe_observe(sc->sc_fw_memory,
-		    boot, 4, A733_GPU_FWPROBE_TRACE_LOGTYPE, &fresh);
+		    boot, 4, ROGUE_FWIF_KCCB_CMD_KICK,
+		    A733_GPU_FWPROBE_TRACE_LOGTYPE, &fresh);
 		fresh.error = error;
 		if (error != 0)
 			break;
@@ -1545,7 +1546,8 @@ out:
 	if (error == 0 && fresh.valid) {
 		memset(&fresh, 0, sizeof(fresh));
 		error = sun60i_a733_gpu_fwprobe_observe(sc->sc_fw_memory,
-		    boot, 4, A733_GPU_FWPROBE_TRACE_LOGTYPE, &fresh);
+		    boot, 4, ROGUE_FWIF_KCCB_CMD_KICK,
+		    A733_GPU_FWPROBE_TRACE_LOGTYPE, &fresh);
 		fresh.error = error;
 	}
 	if (fresh.valid)

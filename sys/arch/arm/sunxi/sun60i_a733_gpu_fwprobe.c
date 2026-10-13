@@ -317,10 +317,27 @@ fwprobe_runtime_valid(const struct sun60i_a733_gpu_fwprobe_snapshot *s,
 	return 0;
 }
 
+/*
+ * Linux pvr_cccb_send_kccb_kick() submits KICK with no return-slot waiter.
+ * Firmware consumes the KCCB entry, then finishes work through CCCB/UFOs.
+ * Keep synchronous LOGTYPE/MMUCACHE return checks and reject status errors.
+ */
+static bool
+fwprobe_return_valid(uint32_t command, uint32_t rtn)
+{
+	if (command != A733_GPU_FWPROBE_LOGTYPE &&
+	    command != A733_GPU_FWPROBE_MMUCACHE &&
+	    command != ROGUE_FWIF_KCCB_CMD_KICK)
+		return false;
+	return (rtn & ~ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED) == 0 &&
+	    (command == ROGUE_FWIF_KCCB_CMD_KICK ||
+	    rtn == ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED);
+}
+
 int
 sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *mem,
     const struct sun60i_a733_gpu_fwboot_result *boot, unsigned int slot,
-    uint32_t expected_log_type,
+    uint32_t command, uint32_t expected_log_type,
     struct sun60i_a733_gpu_fwprobe_observation *out)
 {
 	struct sun60i_a733_gpu_fwprobe_observation observation;
@@ -328,6 +345,7 @@ sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *mem,
 
 	if (!fwprobe_span(out, sizeof(*out), _Alignof(struct sun60i_a733_gpu_fwprobe_observation)) ||
 	    slot >= A733_GPU_FWINIT_KCCB_COUNT ||
+	    !fwprobe_return_valid(command, ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED) ||
 	    (expected_log_type & ~ROGUE_FWIF_LOG_TYPE_MASK) != 0 ||
 	    (expected_log_type != 0 &&
 	    ((expected_log_type & ROGUE_FWIF_LOG_TYPE_TRACE) == 0 ||
@@ -343,7 +361,7 @@ sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *mem,
 	if (error == 0 &&
 	    (observation.state.read_offset != slot + 1 ||
 	    observation.state.write_offset != slot + 1 ||
-	    observation.state.rtn != ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED))
+	    !fwprobe_return_valid(command, observation.state.rtn)))
 		error = EPROTO;
 	observation.error = error;
 	*out = observation;
@@ -432,7 +450,7 @@ fwprobe_chain_valid(const struct sun60i_a733_gpu_fwprobe_result *previous,
 	    previous->error != 0 || previous->slot + 1 != slot ||
 	    previous->after.read_offset != slot ||
 	    previous->after.write_offset != slot ||
-	    previous->after.rtn != ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED)
+	    !fwprobe_return_valid(previous->command, previous->after.rtn))
 		return EINVAL;
 	return 0;
 }
@@ -534,7 +552,7 @@ fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
 				error = EPROTO;
 				break;
 			}
-			if (out->after.rtn == ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED &&
+			if (fwprobe_return_valid(out->command, out->after.rtn) &&
 			    out->after.read_offset == slot + 1) {
 				error = 0;
 				break;
