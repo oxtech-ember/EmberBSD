@@ -1,3 +1,4 @@
+/* Origin: EmberBSD - adapt the A133 vendor boot path. */
 /* $NetBSD: fdt_machdep.c,v 1.109 2025/03/08 14:30:05 jmcneill Exp $ */
 
 /*-
@@ -36,6 +37,7 @@ __KERNEL_RCSID(0, "$NetBSD: fdt_machdep.c,v 1.109 2025/03/08 14:30:05 jmcneill E
 #include "opt_efi.h"
 #include "opt_machdep.h"
 #include "opt_multiprocessor.h"
+#include "opt_soc.h"
 
 #include "genfb.h"
 #include "pci.h"
@@ -272,6 +274,15 @@ initarm(void *arg)
 	if (error != 0)
 		panic("fdt_move failed: %s", fdt_strerror(error));
 
+#ifdef SOC_SUN50I_A100
+	{
+		int sun50i_a133_fdt_fixup(void *);
+
+		error = sun50i_a133_fdt_fixup(fdt_data);
+		if (error != 0)
+			panic("A133 FDT fixup: %s", fdt_strerror(error));
+	}
+#endif
 	fdtbus_init(fdt_data);
 
 	/* Lookup platform specific backend */

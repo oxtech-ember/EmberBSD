@@ -267,6 +267,10 @@ pmapboot_enter(vaddr_t va, paddr_t pa, psize_t size, psize_t blocksize,
 		    aarch64_addressspace(va), va);
 	}
 
+	idx0 = l0pde_index(va);
+	VPRINTF("l0=%lx idx0=%d\n", (unsigned long)l0, idx0);
+	VPRINTF("l0e=%lx\n", (unsigned long)l0[idx0]);
+
 	while (va < va_end) {
 #ifdef OPTIMIZE_TLB_CONTIG
 		ll = NULL;
@@ -284,6 +288,7 @@ pmapboot_enter(vaddr_t va, paddr_t pa, psize_t size, psize_t blocksize,
 
 			pte = (uint64_t)l1 | L0_TABLE;
 			l0[idx0] = pte;
+			uartputc('1');
 			PMAPBOOT_DPRINTF("TTBR%d[%d] (new)\t= %016lx:",
 			    ttbr, idx0, pte);
 			PMAPBOOT_DPRINT_PTE(pte, 0);
@@ -329,6 +334,7 @@ pmapboot_enter(vaddr_t va, paddr_t pa, psize_t size, psize_t blocksize,
 
 			pte = (uint64_t)l2 | L1_TABLE;
 			l1[idx1] = pte;
+			uartputc('2');
 			PMAPBOOT_DPRINTF("TTBR%d[%d][%d] (new)\t= %016lx:",
 			    ttbr, idx0, idx1, pte);
 			PMAPBOOT_DPRINT_PTE(pte, 1);
@@ -373,6 +379,7 @@ pmapboot_enter(vaddr_t va, paddr_t pa, psize_t size, psize_t blocksize,
 
 			pte = (uint64_t)l3 | L2_TABLE;
 			l2[idx2] = pte;
+			uartputc('3');
 			PMAPBOOT_DPRINTF("TTBR%d[%d][%d][%d] (new)\t= %016lx:",
 			    ttbr, idx0, idx1, idx2, pte);
 			PMAPBOOT_DPRINT_PTE(pte, 2);
@@ -401,6 +408,7 @@ pmapboot_enter(vaddr_t va, paddr_t pa, psize_t size, psize_t blocksize,
 		}
 
 		l3[idx3] = pte;
+		uartputc('4');
 		PMAPBOOT_DPRINTF("TTBR%d[%d][%d][%d][%d]\t= %lx:", ttbr,
 		    idx0, idx1, idx2, idx3, pte);
 		PMAPBOOT_DPRINT_PTE(pte, 3);
@@ -442,13 +450,17 @@ pmapboot_enter(vaddr_t va, paddr_t pa, psize_t size, psize_t blocksize,
 		}
 	}
 
+	uartputc('D');
 	dsb(ish);
+	uartputc('#');
 
 	if (nskip != 0)
 		panic("%s: overlapping/incompatible mappings (%d)", __func__, nskip);
 }
 
 paddr_t pmapboot_pagebase __attribute__((__section__(".data")));
+
+void uartputc(int);
 
 pd_entry_t *
 pmapboot_pagealloc(void)
@@ -460,12 +472,14 @@ pmapboot_pagealloc(void)
 
 	paddr_t pa = pmapboot_pagebase + kernend_extra;
 	kernend_extra += PAGE_SIZE;
+	uartputc('A');
 
-	char *s = (char *)pa;
-	char *e = s + PAGE_SIZE;
+	volatile char *s = (volatile char *)pa;
+	volatile char *e = s + PAGE_SIZE;
 
 	while (s < e)
 		*s++ = 0;
+	uartputc('Z');
 
 	return (pd_entry_t *)pa;
 }

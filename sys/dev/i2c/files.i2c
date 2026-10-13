@@ -1,3 +1,4 @@
+# Origin: EmberBSD - add the verified YS-M33 Goodix pointer driver.
 #	$NetBSD: files.i2c,v 1.133 2025/06/03 19:22:22 rjs Exp $
 
 obsolete defflag	opt_i2cbus.h		I2C_SCAN
@@ -327,6 +328,13 @@ attach	asms at iic
 file	dev/i2c/asms.c				asms
 
 # HID over i2c
+# Goodix GT9271 touch pointer on the YS-M33 vendor FDT route
+device gt9xx: wsmousedev
+attach gt9xx at iic
+file dev/i2c/gt9xx.c gt9xx
+file dev/i2c/gt9xx_frame.c gt9xx
+file dev/i2c/gt9xx_ys_m33.c gt9xx
+
 # HID "bus"
 define  ihidbus {[ reportid = -1 ]}
 

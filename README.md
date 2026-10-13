@@ -979,9 +979,51 @@ listed revision; it does not imply full peripheral or long-run support.
 | [Orange Pi Zero 4](ember/boards/orange-pi-zero-4.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Ethernet, Wi-Fi, classic Bluetooth, thermal/frequency control and USB 2.0 data; SuperSpeed unconfirmed |
 | [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry, thermal/frequency control, and PowerVR compute/GEM; accelerated GUI, USB devices, and Bluetooth pairing not tested |
 | [ESP32-S31 development board](ember/boards/esp32-s31.md) | RISC-V 32 / ESP32-S31 | Flash boot, Ethernet and WPA2 Wi-Fi in 16 MB; one core, vendor radio libraries, no BLE/USB |
+| [YS-M33 tablet](ember/boards/ys-m33-a133.md) | AArch64 / Allwinner A133 | Experimental eMMC boot, Ethernet and upright awesomeWM on two samples; physical touch, audible audio(4) playback, intelligible captured speech and USB-A/Pixhawk6X tested on the first; [USB-only installation and recovery](ember/boards/ys-m33-a133-cable-install.md) on one unopened factory sample; [U-Boot 2026.10 second-stage RAM kernel handoff](ember/boards/validation/2026-10-08-a133-uboot-ram.md) on the first through its FFS root, followed by a prearmed 16-second watchdog return; permanent loader installation and direct recovery through it unverified; cold cycles, factory restoration, fleet and sustained use unverified; opt-in SDIO RAM diagnostic verifies register reads and function enable/ready/restore; Wi-Fi radio initialization/association unimplemented |
 
 The [board catalog](ember/boards/README.md) defines validation terms and links
-to VM and research targets. To contribute another board, follow
+to VM and research targets. YS-M33 cable-installation development includes
+[host-tested guarded USB range transfers](ember/boards/ys-m33-a133-usb-transfer.md)
+with full readback hashes; this is an API primitive, with physical acceptance
+and a released fleet installer still pending. A [capture checker](ember/boards/ys-m33-a133-backup-recovery.md#bind-a-trusted-capture-record-and-critical-copies)
+freshly verifies full backup and critical copies against recorded serial/CID;
+trusted provenance and live device binding remain separate checks.
+A [read-only USB backup collector](ember/boards/ys-m33-a133-usb-backup.md)
+acquires full/critical/hardware boot copies into private storage, tested through
+actual-dd source files. A separate [recovery mutable-data collector](ember/boards/ys-m33-a133-mutable-backup.md)
+retains complete UDISK/metadata copies with unmounted-source checks and two matching
+reads on host fixtures; coherent Android and physical restoration remain unaccepted.
+A [persistent recovery env transition](ember/boards/ys-m33-a133-recovery-protection.md)
+uses fresh caller-verified backup evidence, changes only the env prefix and
+checks the full env tail and retained recovery; actual-dd fixture tests do not
+prove bootloader execution, power-loss recovery or physical cable return.
+A [guarded factory recovery entry](ember/boards/ys-m33-a133-recovery-entry.md)
+binds one-shot Android env writes and known-state restoration to fresh full-backup
+GPT/critical hashes. The [guarded factory USB reboot](ember/boards/ys-m33-a133-recovery-reboot.md)
+verifies the prepared source, submits one normal reboot and checks whole critical
+images/env on return through the selected USB identity. Its host contract leaves
+unlock, accepted trial boot and physical round-trip acceptance to later integration.
+A [copied-env unlock preparer](ember/boards/ys-m33-a133-unlock-env.md) encodes
+the observed vendor unlock/reset/recovery hook with exact env reversibility.
+Its copied-file contract does not execute unlock or accept a physical transition.
+The [journaled unlock stage](ember/boards/ys-m33-a133-unlock-stage.md) records
+possible effects before guarded prefix writes/reboot, verifies unlocked USB
+recovery and restores known env. Its host resume contract never replays a
+recorded reboot; physical vendor/data-preservation acceptance remains separate.
+A [private session coordinator](ember/boards/ys-m33-a133-install-session.md)
+rechecks live ranges on repeat and keeps recovery protected after failed writes;
+its filesystem/resume contract is tested on a file-backed host fixture.
+The [composed cable write stage](ember/boards/ys-m33-a133-cable-stage.md) binds
+the release before unlock and resumes through persistent recovery protection
+and image writes. Once protection starts, resume never re-enters unlock;
+host contracts exercise actual file-backed writes and interrupted preparation.
+It still leaves recovery protected and reports installation_ready=false;
+release signing, physical restoration and accepted first boot remain separate.
+A [copied-env trial preparer](ember/boards/ys-m33-a133-trial-env.md) constructs
+one normal boot preceded by a save of persistent recovery. Its byte-preservation
+and refusal contracts are host-tested; it does not write/reboot the tablet,
+execute the vendor loader or confirm first boot.
+To contribute another board, follow
 [adding a board](ember/boards/adding-a-board.md) and the
 [developer skill](https://github.com/oxtech-ember/Ember-Agent-Skills#add-your-board).
 Add a catalog row and a board page; keep detailed feature matrices on those pages.
