@@ -3,7 +3,8 @@
 The experimental native driver registers the upstream DRM name `powervr`.
 It exposes the measured GPU identity through `DRM_IOCTL_PVR_DEV_QUERY`.
 It also allocates native DMA-backed GEM buffer objects with CPU mappings.
-It does not provide Mesa rendering, GPU mappings, contexts, or job handles.
+It builds CPU-owned GPU VM tables and reports heap and static-area layouts.
+It does not provide Mesa rendering, execution contexts, or job handles.
 
 ## Ownership and registration
 
@@ -49,9 +50,10 @@ Inaccessible destinations return `EFAULT`. A failed copy may have written an
 earlier output prefix; the caller must discard that output.
 The argument size changes only after successful copying.
 
+Heap and static-area queries follow the [native VM contract](a733-pvr-vm.md).
 Other device queries return `EOPNOTSUPP`.
 The driver advertises `DRIVER_RENDER` and `DRIVER_GEM`.
-PRIME, syncobj, display modes, GPU mappings, and submission remain unsupported.
+PRIME, syncobj, display modes, and submission remain unsupported.
 
 ## Buffer objects and CPU mappings
 
@@ -63,8 +65,8 @@ Physical allocation can fail with `ENOMEM`; no GPU address is assigned.
 
 The three upstream flags retain their values. Unknown bits are rejected.
 `PM_FW_PROTECT` cannot be combined with `ALLOW_CPU_USERSPACE_ACCESS`.
-GPU cache and firmware protection flags are stored for future GPU mappings.
-This stage does not claim that those mappings already exist.
+VM mapping translates cache and firmware protection flags into Rogue PTE bits.
+No execution context publishes these tables to firmware yet.
 
 `GET_BO_MMAP_OFFSET` returns a real GEM VMA offset for a handle owned by the file.
 CPU `mmap` requires `ALLOW_CPU_USERSPACE_ACCESS` and the object's starting offset.
@@ -149,9 +151,10 @@ BOs, GPU VM, DRM job submission, Vulkan, display, and Plasma remain unaccepted.
 
 The Mesa 26.2.4 PowerVR winsys creates a VM before it reports a physical device.
 It queries heap and static-area layouts, then maps three internal BOs.
-The next native interface therefore needs real per-file VM ownership,
-nonoverlapping GPU mappings, page-table updates, and BO references through unmap.
-The diagnostic compute VM is not a general userspace VM manager.
+The [native VM interface](a733-pvr-vm.md) supplies per-file ownership,
+nonoverlapping mappings, page-table updates, and BO references through unmap.
+It is separate from the diagnostic compute VM. Firmware publication, TLB
+invalidation, and GPU ownership during execution remain missing.
 GPU, runtime, quirk, and enhancement queries must report the pinned hardware
 and firmware profile. Placeholder values cannot satisfy this contract.
 

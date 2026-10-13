@@ -19,6 +19,7 @@
 #define BUS_DMA_NOWAIT 1
 #define BUS_DMA_PREFETCHABLE 2
 #define BUS_DMASYNC_PREWRITE 4
+#define _BUS_DMAMAP_IS_BOUNCING 8
 #define PROT_READ 1
 #define PROT_WRITE 2
 #define PROT_EXEC 4
@@ -28,13 +29,20 @@
 #define ERR_PTR(e) ((void *)(intptr_t)(e))
 #define PTR_ERR(p) ((int)(intptr_t)(p))
 #define IS_ERR(p) ((uintptr_t)(p) >= (uintptr_t)-4095)
+typedef uint16_t __u16;
 typedef uint32_t __u32;
 typedef uint64_t __u64;
 /* UVM exports this kernel type in uvm_param.h, not user sys/types.h. */
 typedef off_t voff_t;
 typedef void *bus_dma_tag_t;
-typedef struct { void *memory; size_t ds_len; } bus_dma_segment_t;
-typedef struct { void *memory; bool loaded; } *bus_dmamap_t;
+typedef struct { void *memory; size_t ds_len; uint64_t ds_addr; } bus_dma_segment_t;
+typedef struct {
+	void *memory;
+	bool loaded;
+	unsigned int _dm_flags, dm_nsegs;
+	size_t dm_mapsize;
+	bus_dma_segment_t dm_segs[1];
+} *bus_dmamap_t;
 struct uvm_object { int unused; };
 struct kref { unsigned int refs; };
 struct drm_file;
@@ -75,6 +83,7 @@ struct drm_gem_close { uint32_t handle, pad; };
 struct file { struct drm_file *f_data; };
 #define to_drm_gem_cma_obj(p) container_of(p, struct drm_gem_cma_object, base)
 #include "pvr-uapi-body.h"
+#include "pvr-mmu-body.h"
 
 static unsigned int checks, fail, attempts, allocated, mapped, maps, loaded;
 static unsigned int objects, structures, syncs;
@@ -131,7 +140,11 @@ static int bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t map, void *p,
 {
 	CHECK(flags == BUS_DMA_NOWAIT);
 	if (fail == 4) return EIO;
-	map->loaded = true; map->memory = p; loaded++; return 0;
+	map->loaded = true; map->memory = p;
+	map->dm_nsegs = 1; map->dm_mapsize = n;
+	map->dm_segs[0].ds_len = n;
+	map->dm_segs[0].ds_addr = UINT64_C(0x10000000);
+	loaded++; return 0;
 }
 static void bus_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t map)
 { CHECK(loaded != 0 && map->loaded); loaded--; map->loaded = false; }
@@ -267,6 +280,43 @@ reject_map(struct drm_device *dev, struct file *file, off_t off, size_t size,
 	CHECK(uobj == &dummy && uoffset == 0xabc && !manager.locked);
 }
 
+static void
+mapping_contract(struct drm_gem_object *obj, unsigned int flags)
+{
+	bus_dmamap_t map = pvr_to_bo(obj)->cma.dmamap;
+	uint64_t pa = 0xdead, bits = 0xbeef, wanted = 0;
+	const uint64_t limit = UINT64_C(1) << A733_GPU_MMU_PA_BITS;
+
+	if (flags & 1) wanted |= A733_GPU_MMU_PTE_SLC_BYPASS;
+	if (flags & 2) wanted |= A733_GPU_MMU_PTE_PM_FW_PROTECT;
+	CHECK(pvr_bo_mapping(obj, 0, PAGE_SIZE, &pa, &bits) == 0);
+	CHECK(pa == map->dm_segs[0].ds_addr && bits == wanted);
+	pa = 0xdead; bits = 0xbeef;
+	CHECK(pvr_bo_mapping(NULL, 0, PAGE_SIZE, &pa, &bits) == EINVAL);
+	CHECK(pvr_bo_mapping(obj, 0, 0, &pa, &bits) == EINVAL);
+	CHECK(pvr_bo_mapping(obj, 1, PAGE_SIZE, &pa, &bits) == EINVAL);
+	CHECK(pvr_bo_mapping(obj, 0, PAGE_SIZE - 1, &pa, &bits) == EINVAL);
+	CHECK(pvr_bo_mapping(obj, PAGE_SIZE, PAGE_SIZE, &pa, &bits) == EINVAL);
+	CHECK(pvr_bo_mapping(obj, UINT64_MAX, PAGE_SIZE, &pa, &bits) == EINVAL);
+	map->_dm_flags = _BUS_DMAMAP_IS_BOUNCING;
+	CHECK(pvr_bo_mapping(obj, 0, PAGE_SIZE, &pa, &bits) == EOPNOTSUPP);
+	map->_dm_flags = 0; map->dm_nsegs = 2;
+	CHECK(pvr_bo_mapping(obj, 0, PAGE_SIZE, &pa, &bits) == EOPNOTSUPP);
+	map->dm_nsegs = 1; map->dm_mapsize--;
+	CHECK(pvr_bo_mapping(obj, 0, PAGE_SIZE, &pa, &bits) == EOPNOTSUPP);
+	map->dm_mapsize++; map->dm_segs[0].ds_len--;
+	CHECK(pvr_bo_mapping(obj, 0, PAGE_SIZE, &pa, &bits) == EOPNOTSUPP);
+	map->dm_segs[0].ds_len++; map->dm_segs[0].ds_addr++;
+	CHECK(pvr_bo_mapping(obj, 0, PAGE_SIZE, &pa, &bits) == EINVAL);
+	map->dm_segs[0].ds_addr = limit;
+	CHECK(pvr_bo_mapping(obj, 0, PAGE_SIZE, &pa, &bits) == EINVAL);
+	CHECK(pa == 0xdead && bits == 0xbeef);
+	map->dm_segs[0].ds_addr = limit - PAGE_SIZE;
+	CHECK(pvr_bo_mapping(obj, 0, PAGE_SIZE, &pa, &bits) == 0);
+	CHECK(pa == limit - PAGE_SIZE && bits == wanted);
+	map->dm_segs[0].ds_addr = UINT64_C(0x10000000);
+}
+
 int
 main(void)
 {
@@ -317,6 +367,7 @@ main(void)
 		obj = a.handles[create.handle];
 		CHECK(obj->size == PAGE_SIZE && obj->refcount.refs == 1 && dev.refs == 2);
 		CHECK(pvr_to_bo(obj)->flags == flags);
+		mapping_contract(obj, flags);
 		mmap_args = (struct drm_pvr_ioctl_get_bo_mmap_offset_args){ create.handle, 0, 0xdead };
 		CHECK(pvr_get_bo_mmap_offset(&dev, &mmap_args, &a) == 0);
 		CHECK(mmap_args.offset != 0 && mmap_args.offset != 0xdead);
@@ -337,6 +388,11 @@ main(void)
 	create._padding_c = 0;
 	CHECK(pvr_create_bo(&dev, &create, &a) == 0);
 	obj = a.handles[create.handle];
+	{
+		uint64_t pa, bits;
+		CHECK(pvr_bo_mapping(obj, PAGE_SIZE, PAGE_SIZE, &pa, &bits) == 0);
+		CHECK(pa == UINT64_C(0x10000000) + PAGE_SIZE && bits == 0);
+	}
 	mmap_args = (struct drm_pvr_ioctl_get_bo_mmap_offset_args){ create.handle, 1, 0xdead };
 	CHECK(pvr_get_bo_mmap_offset(&dev, &mmap_args, &a) == -EINVAL && mmap_args.offset == 0xdead);
 	mmap_args._padding_4 = 0; fail = 6;
