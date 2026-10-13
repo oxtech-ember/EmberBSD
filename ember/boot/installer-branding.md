@@ -61,6 +61,7 @@ The original source licences remain in each adapted loader and sysinst file.
 ruby ember/tests/installer-branding.rb
 sh ember/tests/boot-logo.sh
 ruby ember/tools/boot-logo.rb --check
+ruby ember/tests/installer-image.rb full-amd64.iso source-commit-id
 ```
 
 The first check detects product-name regressions while allowing compatibility names.
@@ -68,6 +69,10 @@ The second executes the actual ASCII renderer under ASan/UBSan.
 It checks the eyes, smile, printable bytes, line width and full stock-menu height.
 It also checks palette hooks, attribute restoration and unchanged fallback text.
 The optional third check reproduces the grid from the source logo.
+The fourth reads the actual complete amd64 ISO.
+It checks the media menu, set archives, compiled server and catalog build identity.
+CD and DVD builders apply media boot.cfg after copying base sets.
+The base set's installed-system boot.cfg must not replace the installation menu.
 These checks do not prove that a release image boots or installs.
 Build the loaders, language catalogs and complete image from a clean source commit.
 Check real UEFI and BIOS screens and install onto a disposable virtual disk.

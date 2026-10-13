@@ -153,7 +153,7 @@ Serial console banners use the same mascot in plain ASCII.
 Kernel filenames and partition types
 retain their NetBSD compatibility names. OS sets select the EmberBSD channel;
 that service is not yet published, so use the sets on the installation medium.
-Source contracts and ASCII console checks are separate from image acceptance.
+Source, ASCII and ISO contracts are separate from boot and installation acceptance.
 
 ## Deploying to a device
 

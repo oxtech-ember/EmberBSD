@@ -24,6 +24,9 @@ SPEC_EXTRA:=${.PARSEDIR}/spec.in
 .endif
 
 image_md_pre:
+	# Base sets contain the installed-system boot.cfg. Apply media policy last.
+	${RM} -f cdrom/boot.cfg
+	${INSTALL} ${COPY} -m 0644 boot.cfg cdrom/boot.cfg
 	${RM} -f cdrom/etc/gettytab cdrom/etc/ttys cdrom/etc/rc cdrom/install.sh
 	${HOST_LN} -fs /tmp/gettytab cdrom/etc/gettytab
 	${INSTALL} ${COPY} ${.CURDIR}/../etc.ttys cdrom/etc/ttys
