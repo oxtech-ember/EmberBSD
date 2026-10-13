@@ -39,7 +39,10 @@ are maintained in the related repositories below.
 - For installation screens and compatible set sources, see
   [installer identity](ember/boot/installer-branding.md).
   The installer offers bootable USB/image sets and an EmberBSD CDN source.
-  The CDN service is planned. Use a complete image until it is available.
+  An [amd64 UEFI VM candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11)
+  supplies complete local media and a pinned GitHub HTTPS set source.
+  The [release procedure](ember/release/README.md) verifies composition, VM qualification,
+  remote file hashes and immutable publication. The custom domain remains deferred.
 
 ## EmberBSD ecosystem
 
@@ -939,7 +942,8 @@ on every board in the hardware catalog.
   contributions. [User skills](#connect-user-skills) guide OS installation, application use,
   device diagnosis and personal Ports maintenance with the available tools;
   package checks are verified, while on-device agent behavior remains untested.
-  A general validated installation image is not yet released.
+  A pinned amd64 UEFI installation candidate is published through GitHub Releases.
+  It has no X11 and does not establish a general hardware or GCC16 userland release.
 
 The costs are equally plain. Fixes from upstream are merged by hand.
 Only what the linked board pages mark "Tested" is claimed on physical
@@ -1021,8 +1025,8 @@ personalized device images are not published in this repository.
 
 The original NetBSD reference follows below. Links to official binary
 releases refer to upstream NetBSD and do not include this fork's changes.
-Report EmberBSD-specific problems through [its own issue tracker](https://github.com/oxtech-ember/EmberBSD/issues)
-and [contribution procedure](CONTRIBUTING.md). The channels below belong to NetBSD.
+Use the [contribution procedure](CONTRIBUTING.md) for EmberBSD-specific reports and proposals.
+The channels below belong to NetBSD.
 
 NetBSD
 ======

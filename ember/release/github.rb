@@ -42,12 +42,31 @@ module EmberRelease
         object = ref.fetch('object')
         EmberRelease.check(object['type'] == 'commit' && object['sha'] == @sha, 'Existing tag has another source; do not replace it')
       end
-      release = api("releases/tags/#{@tag}", missing: true)
+      release = find_release
       EmberRelease.check(!ref || release, 'Tag exists without the matching draft release')
       if release && !ref
         EmberRelease.check(release['draft'] == true && release['target_commitish'] == @sha,
           'Pending release tag is not bound to the exact source')
       end
+      release
+    end
+
+    def find_release
+      release = api("releases/tags/#{@tag}", missing: true)
+      return release if release
+      matches = []
+      page = 1
+      loop do
+        batch = api("releases?per_page=100&page=#{page}")
+        EmberRelease.check(batch.is_a?(Array), 'Invalid release list')
+        matches.concat(batch.select { |r| r['tag_name'] == @tag })
+        break if batch.length < 100
+        page += 1
+      end
+      EmberRelease.check(matches.length <= 1, 'Multiple releases reserve the same tag')
+      return nil if matches.empty?
+      release = api("releases/#{matches.first.fetch('id')}")
+      EmberRelease.check(release['tag_name'] == @tag, 'Release tag changed during lookup')
       release
     end
 
@@ -101,7 +120,8 @@ module EmberRelease
     end
 
     def verify_remote
-      release = api("releases/tags/#{@tag}")
+      release = find_release
+      EmberRelease.check(release, 'Release is missing')
       check_assets(release, complete: true)
       puts 'Download the full release and verify every file'
       Dir.mktmpdir('ember-release-download') do |dir|
@@ -131,7 +151,7 @@ module EmberRelease
         check_draft(release)
         puts 'Publish the verified immutable prerelease'
         @runner.call('release', 'edit', @tag, '--repo', @repo, '--draft=false', '--prerelease', '--latest=false')
-        release = api("releases/tags/#{@tag}")
+        release = find_release
       end
       EmberRelease.check(release['draft'] == false && release['immutable'] == true, 'Immutable publication is not confirmed')
       @runner.call('release', 'verify', @tag, '--repo', @repo)

@@ -165,7 +165,10 @@ Do not treat that receipt as acceptance on another board or of a complete genera
 9. Reboot normally; verify source identity, network, SSH and the same useful application operation.
 
 Do not extract an `etc` archive over your live configuration.
-Do not use the installer's Internet OS-set source while the EmberBSD channel is unavailable.
+The [published amd64 candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11)
+provides an exact HTTPS source for installation. Use its matching media and manifest.
+This channel does not establish a general in-place OS upgrade or automatic rollback service.
+Changing the source URL does not update the running installer kernel or its modules.
 For a VM installation, preserve a powered-off disk and its UEFI variables together before an experimental upgrade.
 A qcow2 copy is a backup, not a validated automatic rollback mechanism.
 An update with no accepted device-specific recipe needs preparation through [CONTRIBUTING](../CONTRIBUTING.md).
