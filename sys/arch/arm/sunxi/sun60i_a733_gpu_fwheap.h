@@ -31,7 +31,7 @@ struct sun60i_a733_gpu_fwheap {
 
 struct sun60i_a733_gpu_fwvm {
 	bus_dma_tag_t dmat;
-	struct sun60i_a733_gpu_dma resource[9];
+	struct sun60i_a733_gpu_dma resource[A733_GPU_FWCOMPUTE_RESOURCES];
 	struct sun60i_a733_gpu_dma catalog, directory[5], table[5];
 	uint64_t catalog_address;
 	uint32_t windows, directories, leaves;

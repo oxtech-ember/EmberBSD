@@ -526,6 +526,7 @@ static uint8_t *compute_file_data;
 static size_t compute_file_size;
 static struct sun60i_a733_gpu_dma *compute_scratch_dma;
 static bool compute_scratch_unavailable;
+static unsigned compute_completion_mode, compute_observe_calls;
 static int fw_open_error, fw_read_error, fw_close_error;
 static bool fw_alloc_fail, fw_bad_bvnc;
 static off_t fw_file_size = 8192;
@@ -873,9 +874,37 @@ sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
 		scratch_on_sync = compute_scratch_dma->cpu;
 		if (compute_scratch_unavailable)
 			compute_scratch_dma->loaded = false;
+		if (compute_completion_mode != 0) {
+			out->attempted = out->published = out->kick_attempted = true;
+			out->kicked = true;
+			out->slot = 4;
+			out->after.rtn = 1;
+			return 0;
+		}
 		return EIO;
 	}
 	return ENOSYS;
+}
+
+int
+sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *mem,
+    const struct sun60i_a733_gpu_fwboot_result *boot, unsigned int slot,
+    uint32_t log_type, struct sun60i_a733_gpu_fwprobe_observation *out)
+{
+	assert(compute_completion_mode != 0 && slot == 4 && log_type == 0x3f);
+	compute_observe_calls++;
+	memset(out, 0, sizeof(*out));
+	out->valid = true;
+	out->state.rtn = 1;
+	if (compute_completion_mode == 2 ||
+	    (compute_completion_mode == 3 && compute_observe_calls == 2)) {
+		if (compute_completion_mode == 3)
+			assert(scratch_sync_calls == 2);
+		out->state.fw_write_offset = 1;
+		out->state.fw_command = 0x2abc0069;
+		out->error = EIO;
+	}
+	return out->error;
 }
 
 /* The submission provider allocates device memory; never in this fixture. */
@@ -914,6 +943,10 @@ sun60i_a733_gpu_fwheap_observe(const struct sun60i_a733_gpu_fwheap *heap,
 		*write_offset = 0;
 	if (timeline != NULL)
 		*timeline = 0;
+	if (compute_completion_mode != 0 && compute_completion_mode != 4) {
+		*read_offset = *write_offset = A733_GPU_FWCOMPUTE_USED_BYTES;
+		*timeline = 1;
+	}
 }
 
 void
@@ -2926,7 +2959,7 @@ static void
 test_scratch_error_snapshot(void)
 {
 	struct a733_gpu_fwcompute_file_header h = { 0 };
-	struct a733_gpu_fwcompute_file_entry entry[9] = { 0 }, swap;
+	struct a733_gpu_fwcompute_file_entry entry[A733_GPU_FWCOMPUTE_RESOURCES] = { 0 }, swap;
 	struct sun60i_a733_gpu_fwvm vm = { 0 };
 	uint32_t scratch, decoy;
 	unsigned start = checks, calls;
@@ -2935,10 +2968,13 @@ test_scratch_error_snapshot(void)
 	h.magic = A733_GPU_FWCOMPUTE_FILE_MAGIC;
 	h.version = A733_GPU_FWCOMPUTE_FILE_VERSION;
 	h.bvnc = UINT64_C(0x00240038006800b7);
-	h.header_bytes = 312;
-	h.payload_bytes = 9 * 512 + 56;
-	h.resources = 9;
-	h.static_offset = 9 * 512;
+	h.header_bytes = A733_GPU_FWCOMPUTE_FILE_PREFIX +
+	    A733_GPU_FWCOMPUTE_RESOURCES * A733_GPU_FWCOMPUTE_ENTRY;
+	h.payload_bytes = 9 * 512 + A733_GPU_FWCOMPUTE_BORDER_BYTES + 56 + 48;
+	h.resources = A733_GPU_FWCOMPUTE_RESOURCES;
+	h.static_offset = 9 * 512 + A733_GPU_FWCOMPUTE_BORDER_BYTES;
+	h.command_offset = h.static_offset + 56;
+	h.command_bytes = A733_GPU_FWCOMPUTE_COMMAND_BYTES;
 	h.static_bytes = 56;
 	h.context_state_va = UINT64_C(0x8000001000);
 	for (unsigned i = 0; i < 9; i++) {
@@ -2948,17 +2984,35 @@ test_scratch_error_snapshot(void)
 		entry[i].flags = A733_GPU_FWCOMPUTE_FLAG_BYPASS;
 		entry[i].va = UINT64_C(0x8000000000) + i * 4096;
 	}
+	entry[9].role = A733_GPU_FWCOMPUTE_BORDER_TABLE;
+	entry[9].offset = 9 * 512;
+	entry[9].bytes = A733_GPU_FWCOMPUTE_BORDER_BYTES;
+	entry[9].flags = A733_GPU_FWCOMPUTE_FLAG_RO;
+	entry[9].va = UINT64_C(0x8000010000);
 	/* SCRATCH deliberately follows all programs in the manifest. */
 	swap = entry[0];
 	entry[0] = entry[8];
 	entry[8] = swap;
-	for (unsigned unavailable = 0; unavailable < 2; unavailable++) {
+	for (unsigned scenario = 0; scenario < 6; scenario++) {
+		const bool unavailable = scenario == 1;
+
 		fwcache_ready();
+		compute_completion_mode = scenario < 2 ? 0 : scenario - 1;
+		compute_observe_calls = 0;
 		compute_file_size = h.header_bytes + h.payload_bytes;
 		compute_file_data = calloc(1, compute_file_size);
 		assert(compute_file_data != NULL);
 		memcpy(compute_file_data, &h, sizeof(h));
 		memcpy(compute_file_data + sizeof(h), entry, sizeof(entry));
+		{
+			const uint32_t command[12] = { 44, 0, 0x4000, 0x20,
+			    0x4000, 0x80, 0x1000, 0x80,
+			    (4U << 21) | (1U << 20) | (1U << 11) | (4U << 1),
+			    0, 0, 0 };
+
+			memcpy(compute_file_data + h.header_bytes + h.command_offset,
+			    command, sizeof(command));
+		}
 		memset(compute_file_data + h.header_bytes + h.static_offset,
 		    0xa5, h.static_bytes);
 		sc.sc_run_stage = A733_GPU_STAGE_FWVM;
@@ -2972,6 +3026,23 @@ test_scratch_error_snapshot(void)
 		sc.sc_fw_memory->image.info.feature_mask[0] = UINT64_C(0x92d9ff57fdbf7cdb);
 		sc.sc_fw_memory->image.info.feature_mask[1] = UINT64_C(0x1f);
 		sc.sc_fw_memory->image.info.brn_mask = UINT64_C(0x201);
+		{
+			struct a733_gpu_fwcompute_file parsed;
+			struct sun60i_a733_gpu_fwcompute_image *image;
+			struct rogue_fwif_cmd_compute command;
+			uint8_t *bytes;
+
+			CHECK(sun60i_gpu_compute_load(&sc, &parsed, &bytes, &image) == 0);
+			memcpy(&command, image->cccb +
+			    sizeof(struct rogue_fwif_ccb_cmd_header), sizeof(command));
+			CHECK(command.regs.tpu_border_colour_table ==
+			    (UINT64_C(0x8000010000) >> 2));
+			CHECK(command.regs.cdm_resume_pds1 ==
+			    ((4U << 21) | (1U << 20) | (1U << 11) | (4U << 1)));
+			CHECK(command.regs.cdm_context_state_base_addr == h.context_state_va);
+			kmem_free(image, sizeof(*image));
+			kmem_free(bytes, compute_file_size);
+		}
 		vm.prepared = true;
 		scratch = UINT32_C(0x12345678);
 		decoy = UINT32_C(0xaabbccdd);
@@ -2987,9 +3058,23 @@ test_scratch_error_snapshot(void)
 		scratch_sync_calls = 0;
 		calls = fwprobe_cmd_calls;
 		sun60i_gpu_run_stage(&sc, A733_GPU_STAGE_FWKICK);
-		CHECK(sc.sc_run_result == EIO);
+		CHECK(sc.sc_run_result == (scenario == 2 ? 0 :
+		    scenario == 5 ? ETIMEDOUT : EIO));
 		CHECK(fwprobe_cmd_calls == calls + 2);
-		CHECK(strstr(sc.sc_kick_state, "kick error=5 ") != NULL);
+		if (scenario == 0 || scenario == 1 || scenario == 3 || scenario == 4)
+			CHECK(strstr(sc.sc_kick_state, "kick error=5 ") != NULL);
+		if (scenario >= 2) {
+			CHECK(sc.sc_kick_result.error == 0 && sc.sc_kick_result.after.rtn == 1);
+			CHECK(sc.sc_kick_result.after.fw_command == 0);
+			CHECK(strstr(sc.sc_kick_state, "fresh_valid=1 ") != NULL);
+			if (scenario == 3 || scenario == 4) {
+				CHECK(strstr(sc.sc_kick_state, "timeline=1 ") != NULL);
+				CHECK(strstr(sc.sc_kick_state, "fresh_fw_cmd=0x2abc0069 ") != NULL);
+				CHECK(strstr(sc.sc_kick_state, "fresh_error=5 ") != NULL);
+			}
+			CHECK(compute_observe_calls == (scenario == 3 ? 1U :
+			    scenario == 5 ? 40001U : 2U));
+		}
 		if (unavailable) {
 			CHECK(strstr(sc.sc_kick_state, "scratch_valid=1/0 ") != NULL);
 			CHECK(scratch_sync_calls == 1 && scratch == UINT32_C(0x12345678));
@@ -3002,6 +3087,7 @@ test_scratch_error_snapshot(void)
 		scratch_on_sync = NULL;
 		scratch_sync_map = NULL;
 		compute_scratch_dma = NULL;
+		compute_completion_mode = 0;
 		sc.sc_fwvm = NULL;
 		free(compute_file_data);
 		compute_file_data = NULL;

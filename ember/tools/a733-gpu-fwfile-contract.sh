@@ -20,6 +20,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     -I"$src/sys/arch/arm/sunxi" -I"$tools" \
     "$tools/a733-gpu-fwfile-contract.c" \
     "${FWFILE_SOURCE:-$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c}" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c" \
     -o "$work/fwfile"
 "$work/fwfile" self
@@ -27,12 +28,13 @@ if [ -n "${FWFILE_REJECT_IMAGE:-}" ]; then
     "$work/fwfile" reject "$FWFILE_REJECT_IMAGE"
 fi
 
-# Build the v2 packer and run it end to end on synthetic compiler artifacts.
+# Build the v3 packer and run it end to end on synthetic compiler artifacts.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -I"$src/sys/arch/arm/sunxi" \
     ${FWFILE_TEST_CFLAGS:--fsanitize=address,undefined} \
     -I"$tools" \
     "$tools/a733-gpu-compute-firmware.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_vm.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mmu.c" \
@@ -47,7 +49,7 @@ for bad_context in 0xda00000000 0xda00005000 0x8000000000 0x8000001040 \
     0x8000001000junk 0xffffffffffffffffffffffff; do
     if "$work/packer" "$work/rejected.bin" 0x00240038006800b7 \
         "$work/general.bin" "$work/pds.bin" "$work/usc.bin" \
-        "$work/static-state.bin" "$bad_context" > "$work/rejected.out" 2>&1; then
+        "$work/static-state.bin" "$work/border.bin" "$work/command.bin" "$bad_context" > "$work/rejected.out" 2>&1; then
         echo "packer accepted invalid context: $bad_context" >&2
         exit 1
     fi
@@ -63,10 +65,10 @@ for bad_context in 0xda00000000 0xda00005000 0x8000000000 0x8000001040 \
 done
 "$work/packer" "$work/a733-compute.bin" 0x00240038006800b7 \
     "$work/general.bin" "$work/pds.bin" "$work/usc.bin" \
-    "$work/static-state.bin" 0x8000001000 > "$work/packer.out"
+    "$work/static-state.bin" "$work/border.bin" "$work/command.bin" 0x8000001000 > "$work/packer.out"
 image=$(sed -n 's/^image_sha256=\([0-9a-f]*\) used=184$/\1/p' "$work/packer.out")
-file=$(sed -n 's/^file_sha256=\([0-9a-f]*\) bytes=60292$/\1/p' "$work/packer.out")
-vm=$(sed -n 's/^vm_check=windows=5 directories=4 leaves=20$/ok/p' "$work/packer.out")
+file=$(sed -n 's/^file_sha256=\([0-9a-f]*\) bytes=322516$/\1/p' "$work/packer.out")
+vm=$(sed -n 's/^vm_check=windows=5 directories=4 leaves=84$/ok/p' "$work/packer.out")
 [ -n "$image" ] && [ -n "$file" ] && [ "$vm" = ok ] || {
     echo 'packer output incomplete' >&2; exit 1;
 }
@@ -75,3 +77,31 @@ vm=$(sed -n 's/^vm_check=windows=5 directories=4 leaves=20$/ok/p' "$work/packer.
 }
 "$work/fwfile" check "$work/a733-compute.bin" 0x00240038006800b7 "$image"
 echo 'PASS: packer, file digest, and cross-checked image digest agree'
+
+# The compiler owns program sizes. Exercise multi-page program aliases too.
+"$work/fwfile" artifacts-variable "$work"
+"$work/packer" "$work/variable.bin" 0x00240038006800b7 \
+    "$work/general.bin" "$work/pds.bin" "$work/usc.bin" \
+    "$work/static-state.bin" "$work/border.bin" "$work/command.bin" \
+    0x8000001000 > "$work/variable.out"
+image=$(sed -n 's/^image_sha256=\([0-9a-f]*\) used=184$/\1/p' "$work/variable.out")
+file=$(sed -n 's/^file_sha256=\([0-9a-f]*\) bytes=330712$/\1/p' "$work/variable.out")
+vm=$(sed -n 's/^vm_check=windows=5 directories=4 leaves=89$/ok/p' "$work/variable.out")
+[ -n "$image" ] && [ -n "$file" ] && [ "$vm" = ok ] || {
+    cat "$work/variable.out" >&2; exit 1;
+}
+[ "$(sha256_file "$work/variable.bin")" = "$file" ] || exit 1
+"$work/fwfile" check "$work/variable.bin" 0x00240038006800b7 "$image"
+# An incomplete command or table must never produce an output file.
+for artifact in command border; do
+    : > "$work/$artifact.bin"
+    if "$work/packer" "$work/rejected.bin" 0x00240038006800b7 \
+        "$work/general.bin" "$work/pds.bin" "$work/usc.bin" \
+        "$work/static-state.bin" "$work/border.bin" "$work/command.bin" \
+        0x8000001000 > "$work/rejected.out" 2>&1; then
+        echo "packer accepted empty $artifact" >&2; exit 1
+    fi
+    [ ! -e "$work/rejected.bin" ] || exit 1
+    "$work/fwfile" artifacts "$work" > /dev/null
+done
+echo 'PASS: variable program sizes and incomplete command/table rejection'

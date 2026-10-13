@@ -20,17 +20,21 @@ Stage 18 (`hw.sun60igpuid0.stage=18`) is the first serializer consumer.
 It runs only on the CPU after a fully successful stage 17.
 The file format lives in
 [`sun60i_a733_gpu_fwcompute_file.h`](../../sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.h):
-a 96-byte little-endian prefix and nine 24-byte resource entries.
-The 312-byte header uses magic `0x324d4337` and version 2.
+a 104-byte little-endian prefix and ten 24-byte resource entries.
+The 344-byte header uses magic `0x334d4337` and version 3.
 It carries the exact BVNC, resource spans and addresses, the static-state span,
-context-state address, priority, identifiers, and payload digest.
-The parser validates bounds, alignment, and overlap. The complete file is at most 96 KiB.
+context-state address, command span, priority, identifiers, and payload digest.
+The parser validates bounds, alignment, and overlap. The complete file is at most 512 KiB.
 The production parser, span derivation, packer, and digest cross-check run in
 [`a733-gpu-fwfile-contract.sh`](../tools/a733-gpu-fwfile-contract.sh).
 
-The typed 96-byte command is kernel-owned, as in the upstream submission:
-the stage fills only the CDM control-stream base and the context-state base
-address from the file header and leaves every other field zero.
+The typed 96-byte command is kernel-owned, as in the upstream submission.
+The [native decoder](../../sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.c)
+reads the exact 44-byte Mesa KMD stream and four-byte DRM flags from the payload.
+It binds the stream, resume-state, and border-table addresses to their manifest roles.
+The resume PDS allocation fields come from the actual Mesa producer and generated load program.
+The decoder rejects other profiles, unsupported extension fields, invalid flags, and mismatched addresses.
+It never substitutes zero for a missing producer field.
 The six firmware object spans are declared in the fixed window
 `0xc0800000..0xc0808138`, which lies between the firmware code heap end
 (`0xc0000000` plus the parsed code allocation, 102400 bytes in the accepted
@@ -236,31 +240,30 @@ sysctl -w hw.sun60igpuid0.stage=18   # after stages 1..17
 sysctl hw.sun60igpuid0.result hw.sun60igpuid0.compute_state
 ```
 
-## Version-2 packed file and profile guard
+## Version-3 packed file and profile guard
 
-The packed file now carries the complete nine-resource r2 manifest:
-header magic `0x324d4337`, version 2, the BVNC, priority and identifiers,
-the context-state address, a 32-byte payload digest, and one 24-byte
-entry per resource (virtual address, payload span, role, read-only and
-SLC-bypass flags). The payload holds the whole general, PDS and USC
-artifacts plus the 56-byte static state. Version 1 carried only three
-program spans; the accepted 2026-10-12 result above used it, and version
-2 supersedes it. The parser requires each of the nine roles exactly once,
-four-kilobyte-aligned page-disjoint addresses, and nonoverlapping spans.
+The packed file carries ten resource roles, including the complete read-only border table.
+Each role appears once, with a page-aligned, page-disjoint GPU span and a nonoverlapping payload span.
+The payload holds all six compiler artifacts: general memory, PDS, USC, static state, border table, and command.
+The command and static-state payload spans cannot overlap any resource or each other.
+Version 3 supersedes version 2, which lacked the command and border table.
+Older packets require regeneration; changing their version number cannot make them valid.
+
 The context-state address must equal the RESUME resource base.
 That resource must be writable, SLC-bypassed, and at least 512 bytes.
 The shared-register save areas are separate PDS resources.
 The packer's `CTX_VA_HEX` argument asserts the RESUME address; it cannot select another resource.
-The parser rejects older version-2 packets that violate this binding.
-The kernel stage verifies the payload digest with the in-kernel SHA-256
-and rejects the file with `EAUTH` on any mismatch. It also pins the
-firmware profile: BVNC equality, feature masks `0x92d9ff57fdbf7cdb` and
-`0x1f`, and BRN mask `0x201` from the parsed firmware metadata must hold
-before any compiler byte is used.
+The border table contains all 64 Mesa entries, totaling 262144 bytes.
+The packer derives USC, PDS-program, and CDM lengths from the actual artifacts.
+It does not inherit shader lengths from an older compiler output.
 
-The packer emits the version-2 file and additionally runs the portable
-compute VM encoder over the resource table (three windows, three
-directories, seventeen leaves) before printing both digests.
+The kernel verifies the payload digest with SHA-256 and rejects mismatches with `EAUTH`.
+It pins BVNC `36.56.104.183`, feature masks `0x92d9ff57fdbf7cdb` and `0x1f`, and BRN mask `0x201`.
+The decoder follows the corresponding pinned Linux stream layout and maps DRM flags into firmware flags.
+The packer and both kernel serializer consumers use the same decoded command.
+The portable contracts check malformed commands, resource order, old versions, and full border bounds.
+They also encode the VM tables before an output file is written.
+These CPU checks do not prove GPU execution.
 
 ## Stage 21 trace capture
 
@@ -290,6 +293,21 @@ A validity value of zero means that word is unavailable, not a measured zero.
 Host contracts cover malformed spans, DMA synchronization, and the failed-command path.
 The physical run below accepted these diagnostics; compute execution still failed.
 
+## Completion acceptance
+
+Stage 21 refreshes firmware state after every client queue and timeline observation.
+It checks it again after the final scratch DMA read.
+A pending CONTEXT_RESET, HWR record, or firmware fault rejects completion even when recovery updates the timeline.
+The wait is bounded by four seconds and 40001 observations.
+`kick_state` keeps the initial KICK result and reports the later `fresh_*` fields separately.
+The CCCB observer uses the ABI fields: write offset at byte 0, read offset at byte 4.
+It synchronizes the control and timeline DMA spans before and after each observation.
+
+Run `ember/tools/a733-gpu-fwheap-observe-contract.sh` for the actual-source CCCB regression.
+The provider and identification contracts cover a reset after acknowledgment and after scratch acquisition.
+ASan/UBSan checks passed. Target GCC16, Clang, and Cppcheck found no added safety defects.
+Existing analysis path limits remain. These checks do not establish hardware completion.
+
 ## Physical stages 19-21 result
 
 On 2026-10-13 the ladder ran through stage 21 on the 4 GiB Orange Pi Zero 3W.
@@ -299,7 +317,8 @@ The VM contained five windows, four directories, and twenty leaves.
 
 The trace LOGTYPE command in slot 3 returned 1 with log type `0x3f`.
 The following KICK in slot 4 reached the firmware (`kexec=5`).
-The client queue drained to 184 bytes. At the failure exit, the timeline and scratch word were zero.
+That kernel interchanged the CCCB read and write labels. The actual write offset was 184; the read offset was zero.
+The queue had not drained. At the failure exit, the timeline and scratch word were zero.
 `scratch_valid=1/1` now confirms actual DMA-synchronized reads before and after submission.
 The earlier `0782feab5d5` error path did not read scratch; its printed zero was unavailable data.
 The firmware reported CONTEXT_RESET, GUILTY_LOCKUP, and page-fault address `0x2400`.

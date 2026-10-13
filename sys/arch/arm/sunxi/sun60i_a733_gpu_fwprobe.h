@@ -62,6 +62,25 @@ struct sun60i_a733_gpu_fwprobe_result {
 	struct sun60i_a733_gpu_fwprobe_snapshot before, after;
 };
 
+struct sun60i_a733_gpu_fwprobe_observation {
+	bool valid;
+	int error;
+	struct sun60i_a733_gpu_fwprobe_snapshot state;
+};
+
+/*
+ * Read current firmware state after a previously accepted slot. Revalidate
+ * the exact DMA layout and boot ownership before every observation. Require
+ * the queue to remain drained at slot + 1 and the return word to remain 1.
+ * Use the same caller exclusion and DMA lifetime as command submission.
+ * Never publish, consume a queue, write MMIO, or modify acceptance metadata.
+ * Structural errors leave *out unchanged and perform no I/O. Otherwise set
+ * valid, retain the snapshot even on a runtime error, and return that error.
+ */
+int sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *,
+    const struct sun60i_a733_gpu_fwboot_result *, unsigned int, uint32_t,
+    struct sun60i_a733_gpu_fwprobe_observation *);
+
 /*
  * One LOGTYPE_UPDATE command in initial KCCB slot 0. This proves command
  * execution only. It does not start a graphics context or an OS handshake.

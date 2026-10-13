@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* Packed compute-image firmware file, version 2. See a733-gpu-fwcompute.md. */
+/* Packed compute-image firmware file, version 3. See a733-gpu-fwcompute.md. */
 #ifndef _SUN60I_A733_GPU_FWCOMPUTE_FILE_H
 #define _SUN60I_A733_GPU_FWCOMPUTE_FILE_H
 
@@ -10,15 +10,18 @@
 #endif
 
 #include "sun60i_a733_gpu_fwcompute.h"
+#include "sun60i_a733_gpu_fwcompute_cmd.h"
 
-/* "7CM2" in native little-endian byte order. */
-#define A733_GPU_FWCOMPUTE_FILE_MAGIC	UINT32_C(0x324d4337)
-#define A733_GPU_FWCOMPUTE_FILE_VERSION	2
-#define A733_GPU_FWCOMPUTE_FILE_PREFIX	UINT32_C(96)
+/* "7CM3" in native little-endian byte order. */
+#define A733_GPU_FWCOMPUTE_FILE_MAGIC	UINT32_C(0x334d4337)
+#define A733_GPU_FWCOMPUTE_FILE_VERSION	3
+#define A733_GPU_FWCOMPUTE_FILE_PREFIX	UINT32_C(104)
 #define A733_GPU_FWCOMPUTE_ENTRY	UINT32_C(24)
-#define A733_GPU_FWCOMPUTE_FILE_MAX	(96 * 1024)
+#define A733_GPU_FWCOMPUTE_FILE_MAX	(512 * 1024)
 #define A733_GPU_FWCOMPUTE_STATE_BYTES	UINT32_C(56)
-#define A733_GPU_FWCOMPUTE_RESOURCES	9
+#define A733_GPU_FWCOMPUTE_RESOURCES	10
+#define A733_GPU_FWCOMPUTE_VM_REGIONS	(A733_GPU_FWCOMPUTE_RESOURCES + 3)
+#define A733_GPU_FWCOMPUTE_BORDER_BYTES	UINT32_C(262144)
 /* Mesa 26.2.4: align 72 bytes to a 64-byte cache line, then allow 4 cores. */
 #define A733_GPU_FWCOMPUTE_RESUME_BYTES	UINT32_C(512)
 
@@ -35,7 +38,8 @@ enum a733_gpu_fwcompute_role {
 	A733_GPU_FWCOMPUTE_CTX_STATE_A,
 	A733_GPU_FWCOMPUTE_CTX_STATE_B,
 	A733_GPU_FWCOMPUTE_PDS_PROGRAMS,
-	A733_GPU_FWCOMPUTE_USC_PROGRAMS
+	A733_GPU_FWCOMPUTE_USC_PROGRAMS,
+	A733_GPU_FWCOMPUTE_BORDER_TABLE
 };
 
 /*
@@ -64,6 +68,8 @@ struct a733_gpu_fwcompute_file_header {
 	uint32_t reserved;
 	uint64_t context_state_va;
 	uint8_t payload_digest[32];
+	uint32_t command_offset;
+	uint32_t command_bytes;
 };
 struct a733_gpu_fwcompute_file_entry {
 	uint64_t va;
@@ -78,6 +84,8 @@ struct a733_gpu_fwcompute_file {
 	uint32_t header_bytes;
 	uint32_t payload_bytes;
 	uint32_t static_offset;
+	uint32_t command_offset;
+	struct rogue_fwif_cmd_compute command;
 	uint64_t context_state_va;
 	uint32_t priority, pid, context_id, job_id;
 	uint8_t payload_digest[32];
@@ -86,13 +94,15 @@ struct a733_gpu_fwcompute_file {
 };
 
 /*
- * Validate one complete version-2 file for the expected BVNC. The buffer
- * needs no alignment. Requirements: the exact nine roles once each, four-
+ * Validate one complete version-3 file for the expected BVNC. The buffer
+ * needs no alignment. Requirements: the exact ten roles once each, four-
  * byte-aligned nonoverlapping payload spans, four-kilobyte-aligned virtual
  * addresses below 40 bits with page-disjoint ranges, a 56-byte static
  * state, and a nonzero multiple-of-four length for every resource. The
  * context-state address must equal the RESUME resource base. That resource
  * must be writable, SLC-bypassed, and at least RESUME_BYTES long. The
+ * read-only border table holds all 64 Mesa entries. Decode the 48-byte
+ * command payload and bind its three addresses to the resource roles. The
  * payload digest is copied out, not verified here. Return positive errno;
  * leave *out untouched on every error.
  */

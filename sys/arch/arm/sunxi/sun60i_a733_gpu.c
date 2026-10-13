@@ -933,10 +933,7 @@ sun60i_gpu_stage_fwcompute(struct sun60i_gpu_softc *sc)
 	    (uint8_t *)&inputs.static_state, UINT64_C(0x10000000));
 
 	/* The kernel owns the typed command, as in the upstream submission. */
-	inputs.command.regs.cdm_ctrl_stream_base =
-	    role[2]->va;
-	inputs.command.regs.cdm_context_state_base_addr =
-	    file.context_state_va;
+	inputs.command = file.command;
 	inputs.priority = file.priority;
 	inputs.pid = file.pid;
 	inputs.context_id = file.context_id;
@@ -1077,9 +1074,7 @@ sun60i_gpu_compute_load(struct sun60i_gpu_softc *sc,
 	sun60i_a733_gpu_fwcompute_file_relocate(
 	    (uint8_t *)&inputs.static_state, UINT64_C(0x10000000));
 
-	inputs.command.regs.cdm_ctrl_stream_base = role[2]->va;
-	inputs.command.regs.cdm_context_state_base_addr =
-	    file->context_state_va;
+	inputs.command = file->command;
 	inputs.priority = file->priority;
 	inputs.pid = file->pid;
 	inputs.context_id = file->context_id;
@@ -1195,7 +1190,7 @@ out:
 	return error;
 }
 
-/* Stage 20: back all nine resources, build the VM tables, set the context. */
+/* Stage 20: back all ten resources, build the VM tables, set the context. */
 static int
 sun60i_gpu_stage_fwvm(struct sun60i_gpu_softc *sc)
 {
@@ -1424,7 +1419,8 @@ sun60i_gpu_scratch_snapshot(const struct sun60i_a733_gpu_fwvm *vm,
 /*
  * Stage 21: publish the compute KICK in slot 4 and wait for the client
  * queue to drain and the timeline word to complete. KCCB acceptance is
- * not compute completion; the CCCB and timeline observations are.
+ * not compute completion. Recovery can update the timeline after a fault.
+ * Revalidate live firmware state throughout the wait and after the DMA read.
  */
 static int
 sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
@@ -1434,6 +1430,8 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 	const struct sun60i_a733_gpu_fwprobe_result *cache = &sc->sc_cache_result;
 	const struct sun60i_a733_gpu_fwprobe_result *heap = &sc->sc_heap_result;
 	struct sun60i_a733_gpu_fwprobe_result *r = &sc->sc_kick_result;
+	struct sun60i_a733_gpu_fwprobe_observation fresh = { 0 };
+	const struct sun60i_a733_gpu_fwprobe_snapshot *last = &r->after;
 	struct a733_gpu_fwcompute_file file;
 	struct sun60i_a733_gpu_fwcompute_image *image = NULL;
 	uint8_t *bytes = NULL;
@@ -1441,6 +1439,7 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 	bus_addr_t addr;
 	bus_size_t size;
 	uint32_t read_off = 0, write_off = 0, timeline = 0;
+	uint32_t completion_polls = 0;
 	uint32_t scratch_before = 0, scratch_after = 0;
 	bool file_loaded = false, scratch_before_valid = false;
 	bool scratch_after_valid = false;
@@ -1511,20 +1510,28 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
 	if (error != 0)
 		goto out;
-	/* Bounded completion wait: client queue drains and timeline updates. */
-	sun60i_a733_gpu_fwheap_observe(sc->sc_fwheap, &read_off, &write_off,
-	    &timeline);
+	/* Check firmware after every client observation, including immediate completion. */
 	getnanouptime(&start);
-	while (read_off != A733_GPU_FWCOMPUTE_USED_BYTES || timeline != 1) {
-		delay(100);
+	for (;;) {
 		sun60i_a733_gpu_fwheap_observe(sc->sc_fwheap, &read_off,
 		    &write_off, &timeline);
+		completion_polls++;
+		memset(&fresh, 0, sizeof(fresh));
+		error = sun60i_a733_gpu_fwprobe_observe(sc->sc_fw_memory,
+		    boot, 4, A733_GPU_FWPROBE_TRACE_LOGTYPE, &fresh);
+		fresh.error = error;
+		if (error != 0)
+			break;
+		if (read_off == A733_GPU_FWCOMPUTE_USED_BYTES &&
+		    write_off == A733_GPU_FWCOMPUTE_USED_BYTES && timeline == 1)
+			break;
 		getnanouptime(&now);
 		timespecsub(&now, &start, &elapsed);
-		if (elapsed.tv_sec >= 4) {
+		if (elapsed.tv_sec >= 4 || completion_polls >= 40001) {
 			error = ETIMEDOUT;
 			break;
 		}
+		delay(100);
 	}
 out:
 	sc->sc_kick_done = true;
@@ -1534,13 +1541,23 @@ out:
 	if (sc->sc_fwheap != NULL)
 		sun60i_a733_gpu_fwheap_observe(sc->sc_fwheap, &read_off,
 		    &write_off, &timeline);
+	/* Acquire current firmware state after the final result DMA reads. */
+	if (error == 0 && fresh.valid) {
+		memset(&fresh, 0, sizeof(fresh));
+		error = sun60i_a733_gpu_fwprobe_observe(sc->sc_fw_memory,
+		    boot, 4, A733_GPU_FWPROBE_TRACE_LOGTYPE, &fresh);
+		fresh.error = error;
+	}
+	if (fresh.valid)
+		last = &fresh.state;
 	/* Decode a pending firmware response; a context reset explains EIO. */
-	if (r->after.fw_write_offset > r->after.fw_read_offset &&
-	    r->after.fw_command == 0x2abc0069 && sc->sc_fw_memory != NULL) {
+	if (last->fw_write_offset != last->fw_read_offset &&
+	    last->fw_read_offset < A733_GPU_FWINIT_FWCCB_COUNT &&
+	    last->fw_command == 0x2abc0069 && sc->sc_fw_memory != NULL) {
 		const struct sun60i_a733_gpu_fwmem *m = sc->sc_fw_memory;
 		size_t off = m->interface_layout.object[
 		    A733_GPU_FWINIT_FWCCB_CMDS].offset +
-		    r->after.fw_read_offset *
+		    last->fw_read_offset *
 		    sizeof(struct rogue_fwif_fwccb_cmd);
 		const struct rogue_fwif_fwccb_cmd *cmd;
 
@@ -1571,7 +1588,10 @@ out:
 		    "pow=%u hwr=0x%x faults=%u log=0x%x kexec=%u "
 		    "fw_read=%u fw_write=%u fw_cmd=0x%x fw_state=%u os_state=%u "
 		    "compchecks=%u reset_ctx=%u reason=%u dm=%u job=%u "
-		    "rflags=0x%x rpc=0x%llx rfault=0x%llx",
+		    "rflags=0x%x rpc=0x%llx rfault=0x%llx "
+		    "completion_polls=%u fresh_valid=%u fresh_error=%d "
+		    "fresh_fw_read=%u fresh_fw_write=%u fresh_fw_cmd=0x%x "
+		    "fresh_hwr=0x%x fresh_faults=%u",
 		    error, (u_int)kick_rtn, (u_int)r->polls,
 		    (u_int)read_off, (u_int)write_off, (u_int)timeline,
 		    (u_int)scratch_before, (u_int)scratch_after,
@@ -1588,7 +1608,12 @@ out:
 		    (u_int)reset_ctx, (u_int)reset_reason, (u_int)reset_dm,
 		    (u_int)reset_job, (u_int)reset_flags,
 		    (unsigned long long)reset_pc,
-		    (unsigned long long)reset_fault);
+		    (unsigned long long)reset_fault,
+		    (u_int)completion_polls, (u_int)fresh.valid, fresh.error,
+		    (u_int)fresh.state.fw_read_offset,
+		    (u_int)fresh.state.fw_write_offset,
+		    (u_int)fresh.state.fw_command,
+		    (u_int)fresh.state.hwr_state, (u_int)fresh.state.fw_faults);
 	}
 	if (image != NULL)
 		kmem_free(image, sizeof(*image));

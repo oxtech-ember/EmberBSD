@@ -1,4 +1,4 @@
-/* Origin: EmberBSD; contract for the version-2 packed A733 compute file. */
+/* Origin: EmberBSD; contract for the version-3 packed A733 compute file. */
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
  * mode "self": structural validation, role table, and parse mutations.
@@ -29,7 +29,7 @@ static int checks;
 
 #define BVNC	UINT64_C(0x00240038006800b7)
 
-/* The pinned r2 nine-resource layout used by the packer. */
+/* The pinned ten-resource layout used by the packer. */
 static const struct {
 	uint16_t role, flags;
 	uint32_t offset, bytes;
@@ -53,9 +53,26 @@ static const struct {
 	  16500 + 40960, 720, UINT64_C(0xda0000a000) },
 	{ A733_GPU_FWCOMPUTE_USC_PROGRAMS, A733_GPU_FWCOMPUTE_FLAG_RO,
 	  16500 + 41680, 1744, UINT64_C(0xe000000000) },
+	{ A733_GPU_FWCOMPUTE_BORDER_TABLE, A733_GPU_FWCOMPUTE_FLAG_RO,
+	  16500 + 41680 + 1744, A733_GPU_FWCOMPUTE_BORDER_BYTES,
+	  UINT64_C(0x8000010000) },
 };
-#define PAYLOAD_BYTES	(16500 + 41680 + 1744 + 56)
-#define STATIC_OFFSET	(16500 + 41680 + 1744)
+#define PAYLOAD_BYTES	(COMMAND_OFFSET + A733_GPU_FWCOMPUTE_COMMAND_BYTES)
+#define STATIC_OFFSET	(16500 + 41680 + 1744 + A733_GPU_FWCOMPUTE_BORDER_BYTES)
+#define COMMAND_OFFSET	(STATIC_OFFSET + 56)
+
+/* XML-defined fields, separate from the production decoder. */
+static void
+command_bytes(uint8_t bytes[A733_GPU_FWCOMPUTE_COMMAND_BYTES])
+{
+	uint32_t words[12] = {
+		44, 0, 0x4000, 0x20, 0x4000, 0x80, 0x1000, 0x80,
+		(4U << 21) | (1U << 20) | (1U << 11) | (4U << 1),
+		0, 0, 3
+	};
+
+	memcpy(bytes, words, sizeof(words));
+}
 
 static void
 build(uint8_t *file)
@@ -78,6 +95,8 @@ build(uint8_t *file)
 	header.resources = A733_GPU_FWCOMPUTE_RESOURCES;
 	header.static_offset = STATIC_OFFSET;
 	header.static_bytes = A733_GPU_FWCOMPUTE_STATE_BYTES;
+	header.command_offset = COMMAND_OFFSET;
+	header.command_bytes = A733_GPU_FWCOMPUTE_COMMAND_BYTES;
 	header.priority = 0;
 	header.pid = 1;
 	header.context_id = 0;
@@ -90,6 +109,7 @@ build(uint8_t *file)
 		memcpy(file + header.header_bytes + STATIC_OFFSET + 4 +
 		    4 * i, &reg, sizeof(reg));
 	}
+	command_bytes(file + header.header_bytes + COMMAND_OFFSET);
 	sha256_init(&ctx);
 	sha256_update(&ctx, file + header.header_bytes, PAYLOAD_BYTES);
 	sha256_final(&ctx, digest);
@@ -130,15 +150,116 @@ find(const struct a733_gpu_fwcompute_file *file, uint16_t role)
 }
 
 static void
-reject(const uint8_t *bytes, size_t size)
+reject_errno(const uint8_t *bytes, size_t size, int error)
 {
 	struct a733_gpu_fwcompute_file parsed, keep;
 
 	memset(&keep, 0x5a, sizeof(keep));
 	memcpy(&parsed, &keep, sizeof(parsed));
 	CHECK(sun60i_a733_gpu_fwcompute_file_parse(bytes, size, BVNC,
-	    &parsed) == EINVAL);
+	    &parsed) == error);
 	CHECK(memcmp(&parsed, &keep, sizeof(parsed)) == 0);
+}
+
+static void
+reject(const uint8_t *bytes, size_t size)
+{
+	reject_errno(bytes, size, EINVAL);
+}
+
+static void
+command_contract(uint8_t *file)
+{
+	struct a733_gpu_fwcompute_file parsed;
+	struct a733_gpu_fwcompute_file_header h;
+	struct a733_gpu_fwcompute_file_entry e;
+	const size_t head = A733_GPU_FWCOMPUTE_FILE_PREFIX +
+	    A733_GPU_FWCOMPUTE_RESOURCES * A733_GPU_FWCOMPUTE_ENTRY;
+	const size_t border = sizeof(h) +
+	    A733_GPU_FWCOMPUTE_BORDER_TABLE * sizeof(e);
+	uint32_t word;
+	uint64_t addr;
+	size_t i;
+
+	build(file);
+	CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, file_size(), BVNC,
+	    &parsed) == 0);
+	CHECK(parsed.command.regs.tpu_border_colour_table ==
+	    (UINT64_C(0x8000010000) >> 2));
+	CHECK(parsed.command.regs.cdm_ctrl_stream_base == UINT64_C(0x8000004000));
+	CHECK(parsed.command.regs.cdm_context_state_base_addr ==
+	    UINT64_C(0x8000001000));
+	CHECK(parsed.command.regs.cdm_resume_pds1 ==
+	    ((4U << 21) | (1U << 20) | (1U << 11) | (4U << 1)));
+	CHECK(parsed.command.flags == (ROGUE_COMPUTE_FLAG_SINGLE_CORE |
+	    ROGUE_COMPUTE_FLAG_PREVENT_ALL_OVERLAP));
+	for (i = 0; i < 10; i++) {
+		build(file);
+		memcpy(&h, file, sizeof(h));
+		switch (i) {
+		case 0: h.command_offset++; break;
+		case 1: h.command_offset = PAYLOAD_BYTES; break;
+		case 2: h.command_offset = h.static_offset; break;
+		case 3: h.command_offset = 0; break;
+		case 4: h.command_bytes--; break;
+		case 5: h.command_bytes += 4; break;
+		case 6: h.static_offset = h.command_offset; break;
+		case 7: h.command_offset = UINT32_MAX - 3; break;
+		case 8: h.version = 2; break;
+		case 9: h.magic = UINT32_C(0x324d4337); break;
+		}
+		memcpy(file, &h, sizeof(h));
+		reject(file, file_size());
+	}
+	for (i = 0; i < 4; i++) {
+		build(file);
+		memcpy(&e, file + border, sizeof(e));
+		switch (i) {
+		case 0: e.bytes -= 4096; break;
+		case 1: e.flags = 0; break;
+		case 2: e.flags |= A733_GPU_FWCOMPUTE_FLAG_BYPASS; break;
+		case 3: e.offset = COMMAND_OFFSET; break;
+		}
+		memcpy(file + border, &e, sizeof(e));
+		reject(file, file_size());
+	}
+	for (i = 0; i < 12; i++) {
+		build(file);
+		memcpy(&word, file + head + COMMAND_OFFSET + i * 4, 4);
+		word ^= 1;
+		memcpy(file + head + COMMAND_OFFSET + i * 4, &word, 4);
+		if (i == 11) {
+			/* All four supported DRM flag combinations have semantics. */
+			CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, file_size(),
+			    BVNC, &parsed) == 0);
+			CHECK(parsed.command.flags == ROGUE_COMPUTE_FLAG_SINGLE_CORE);
+		} else {
+			reject_errno(file, file_size(), i == 9 || i == 10 ?
+			    EOPNOTSUPP : EINVAL);
+		}
+	}
+	/* A raw GPU address in the border register is not the packed value. */
+	build(file);
+	addr = UINT64_C(0x8000010000);
+	memcpy(file + head + COMMAND_OFFSET + 8, &addr, 8);
+	reject(file, file_size());
+	/* The previous consumer supplied no resume PDS state or border table. */
+	build(file);
+	memset(file + head + COMMAND_OFFSET + 32, 0, 4);
+	reject(file, file_size());
+	build(file);
+	memset(file + head + COMMAND_OFFSET + 8, 0, 8);
+	reject(file, file_size());
+	build(file);
+	word = 4;
+	memcpy(file + head + COMMAND_OFFSET + 44, &word, 4);
+	reject(file, file_size());
+	build(file);
+	memcpy(&h, file, sizeof(h));
+	h.bvnc ^= 1;
+	memcpy(file, &h, sizeof(h));
+	CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, file_size(), h.bvnc,
+	    &parsed) == EOPNOTSUPP);
 }
 
 static void
@@ -153,6 +274,7 @@ self(void)
 	size_t i;
 
 	CHECK(file != NULL);
+	command_contract(file);
 	build(file);
 	CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, file_size(), BVNC,
 	    &parsed) == 0);
@@ -240,6 +362,7 @@ self(void)
 	memcpy(&saved, file + entry_base, sizeof(saved));
 	memcpy(file + entry_base, &e, sizeof(e));
 	memcpy(file + resume_offset, &saved, sizeof(saved));
+	memcpy(file + h.header_bytes + COMMAND_OFFSET + 24, &e.va, sizeof(e.va));
 	CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, file_size(), BVNC,
 	    &parsed) == 0);
 	CHECK(parsed.context_state_va == e.va);
@@ -251,7 +374,7 @@ self(void)
 	reject(NULL, file_size());
 	CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, file_size(), BVNC ^ 1,
 	    &parsed) == EINVAL);
-	printf("PASS: %d checks; version-2 parser and RESUME role contract\n",
+	printf("PASS: %d checks; version-3 parser and RESUME role contract\n",
 	    checks);
 	free(file);
 }
@@ -296,7 +419,8 @@ check(const char *path, uint64_t bvnc, const char *expected)
 	CHECK(f != NULL);
 	CHECK(fseek(f, 0, SEEK_END) == 0);
 	size = (size_t)ftell(f);
-	CHECK(size > 312);
+	CHECK(size > A733_GPU_FWCOMPUTE_FILE_PREFIX +
+	    A733_GPU_FWCOMPUTE_RESOURCES * A733_GPU_FWCOMPUTE_ENTRY);
 	CHECK(fseek(f, 0, SEEK_SET) == 0);
 	bytes = malloc(size);
 	CHECK(bytes != NULL);
@@ -330,9 +454,7 @@ check(const char *path, uint64_t bvnc, const char *expected)
 	    file.static_offset, A733_GPU_FWCOMPUTE_STATE_BYTES);
 	sun60i_a733_gpu_fwcompute_file_relocate(
 	    (uint8_t *)&inputs.static_state, UINT64_C(0x10000000));
-	inputs.command.regs.cdm_ctrl_stream_base = role[2]->va;
-	inputs.command.regs.cdm_context_state_base_addr =
-	    file.context_state_va;
+	inputs.command = file.command;
 	inputs.priority = file.priority;
 	inputs.pid = file.pid;
 	inputs.context_id = file.context_id;
@@ -354,17 +476,23 @@ check(const char *path, uint64_t bvnc, const char *expected)
 
 /* Deterministic synthetic artifacts for the packer run. */
 static void
-artifacts(const char *dir)
+artifacts(const char *dir, int variable)
 {
 	struct { const char *name; size_t size; } list[] = {
 		{ "general.bin", 16500 }, { "pds.bin", 41680 },
-		{ "usc.bin", 1744 }
+		{ "usc.bin", 1744 },
+		{ "border.bin", A733_GPU_FWCOMPUTE_BORDER_BYTES }
 	};
-	uint8_t state[56];
+	uint8_t state[56], cmd[A733_GPU_FWCOMPUTE_COMMAND_BYTES];
 	char path[512];
 	size_t i, j;
 	FILE *f;
 
+	if (variable) {
+		list[0].size += 4;
+		list[1].size += 4096;
+		list[2].size += 4096;
+	}
 	for (i = 0; i < sizeof(list) / sizeof(list[0]); i++) {
 		snprintf(path, sizeof(path), "%s/%s", dir, list[i].name);
 		f = fopen(path, "wb");
@@ -387,6 +515,12 @@ artifacts(const char *dir)
 	CHECK(f != NULL);
 	CHECK(fwrite(state, 1, sizeof(state), f) == sizeof(state));
 	CHECK(fclose(f) == 0);
+	command_bytes(cmd);
+	snprintf(path, sizeof(path), "%s/command.bin", dir);
+	f = fopen(path, "wb");
+	CHECK(f != NULL);
+	CHECK(fwrite(cmd, 1, sizeof(cmd), f) == sizeof(cmd));
+	CHECK(fclose(f) == 0);
 	printf("PASS: synthetic artifacts written to %s\n", dir);
 }
 
@@ -402,7 +536,11 @@ main(int argc, char **argv)
 		return 0;
 	}
 	if (argc == 3 && strcmp(argv[1], "artifacts") == 0) {
-		artifacts(argv[2]);
+		artifacts(argv[2], 0);
+		return 0;
+	}
+	if (argc == 3 && strcmp(argv[1], "artifacts-variable") == 0) {
+		artifacts(argv[2], 1);
 		return 0;
 	}
 	if (argc == 5 && strcmp(argv[1], "check") == 0) {

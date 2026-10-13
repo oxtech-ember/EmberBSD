@@ -230,15 +230,25 @@ sun60i_a733_gpu_fwheap_observe(const struct sun60i_a733_gpu_fwheap *heap,
 {
 	const uint8_t *bytes = heap->heap.cpu;
 
+	bus_dmamap_sync(heap->dmat, heap->heap.map, A733_GPU_FWHEAP_CTL_OFF,
+	    sizeof(struct rogue_fwif_cccb_ctl), BUS_DMASYNC_POSTREAD);
+	bus_dmamap_sync(heap->dmat, heap->heap.map,
+	    A733_GPU_FWHEAP_TIMELINE_OFF, sizeof(uint32_t), BUS_DMASYNC_POSTREAD);
 	if (read_offset != NULL)
 		*read_offset = *(const volatile uint32_t *)(bytes +
-		    A733_GPU_FWHEAP_CTL_OFF);
+		    A733_GPU_FWHEAP_CTL_OFF +
+		    offsetof(struct rogue_fwif_cccb_ctl, read_offset));
 	if (write_offset != NULL)
 		*write_offset = *(const volatile uint32_t *)(bytes +
-		    A733_GPU_FWHEAP_CTL_OFF + 4);
+		    A733_GPU_FWHEAP_CTL_OFF +
+		    offsetof(struct rogue_fwif_cccb_ctl, write_offset));
 	if (timeline != NULL)
 		*timeline = *(const volatile uint32_t *)(bytes +
 		    A733_GPU_FWHEAP_TIMELINE_OFF);
+	bus_dmamap_sync(heap->dmat, heap->heap.map, A733_GPU_FWHEAP_CTL_OFF,
+	    sizeof(struct rogue_fwif_cccb_ctl), BUS_DMASYNC_PREREAD);
+	bus_dmamap_sync(heap->dmat, heap->heap.map,
+	    A733_GPU_FWHEAP_TIMELINE_OFF, sizeof(uint32_t), BUS_DMASYNC_PREREAD);
 }
 
 void
@@ -265,7 +275,7 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
     struct sun60i_a733_gpu_fwheap *heap,
     struct sun60i_a733_gpu_fwvm **out)
 {
-	struct a733_gpu_fwcompute_vm_region regions[12];
+	struct a733_gpu_fwcompute_vm_region regions[A733_GPU_FWCOMPUTE_VM_REGIONS];
 	struct a733_gpu_fwcompute_vm_summary summary;
 	struct sun60i_a733_gpu_fwvm *vm;
 	void *directory[A733_GPU_FWCOMPUTE_VM_WINDOWS], *table[A733_GPU_FWCOMPUTE_VM_WINDOWS];
@@ -281,7 +291,7 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 	payload = file_bytes + file->header_bytes;
 	vm = kmem_zalloc(sizeof(*vm), KM_SLEEP);
 	vm->dmat = dmat;
-	for (i = 0; i < 9; i++) {
+	for (i = 0; i < A733_GPU_FWCOMPUTE_RESOURCES; i++) {
 		const struct a733_gpu_fwcompute_file_entry *e =
 		    &file->resource[i];
 		size_t size = ((size_t)e->bytes + 4095) & ~4095U;
@@ -319,44 +329,46 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 	{
 		uint32_t k;
 
-		for (k = 0; k < 9; k++) {
+		for (k = 0; k < A733_GPU_FWCOMPUTE_RESOURCES; k++) {
 			if (file->resource[k].role ==
 			    A733_GPU_FWCOMPUTE_PDS_PROGRAMS)
 				break;
 		}
-		if (k == 9) {
+		if (k == A733_GPU_FWCOMPUTE_RESOURCES) {
 			error = EINVAL;
 			goto fail;
 		}
-		regions[9].va = UINT64_C(0x1000a000);
-		regions[9].pa = vm->resource[k].address;
-		regions[9].pages = 1;
-		regions[9].flags = regions[k].flags;
+		regions[A733_GPU_FWCOMPUTE_RESOURCES + 0].va = UINT64_C(0x1000a000);
+		regions[A733_GPU_FWCOMPUTE_RESOURCES + 0].pa = vm->resource[k].address;
+		regions[A733_GPU_FWCOMPUTE_RESOURCES + 0].pages = regions[k].pages;
+		regions[A733_GPU_FWCOMPUTE_RESOURCES + 0].flags = regions[k].flags;
 	}
-	/* The generator encodes the USC execution offset in the low 32-bit
-	 * space; alias the USC page so 0x2400-class fetches resolve. */
+	/*
+	 * Keep the inherited diagnostic USC aliases for this packet change.
+	 * Their removal needs proof from the compiler-produced addresses.
+	 * The observed 0x2400 write fault does not prove an instruction fetch.
+	 */
 	{
 		uint32_t k;
 
-		for (k = 0; k < 9; k++) {
+		for (k = 0; k < A733_GPU_FWCOMPUTE_RESOURCES; k++) {
 			if (file->resource[k].role ==
 			    A733_GPU_FWCOMPUTE_USC_PROGRAMS)
 				break;
 		}
-		if (k == 9) {
+		if (k == A733_GPU_FWCOMPUTE_RESOURCES) {
 			error = EINVAL;
 			goto fail;
 		}
-		regions[10].va = UINT64_C(0x2000);
-		regions[10].pa = vm->resource[k].address;
-		regions[10].pages = 1;
-		regions[10].flags = regions[k].flags;
-		/* The execution offset resolves against the mapped USC page
-		 * base; cover the second page of that base too. */
-		regions[11].va = UINT64_C(0xe000002000);
-		regions[11].pa = vm->resource[k].address;
-		regions[11].pages = 1;
-		regions[11].flags = regions[k].flags;
+		regions[A733_GPU_FWCOMPUTE_RESOURCES + 1].va = UINT64_C(0x2000);
+		regions[A733_GPU_FWCOMPUTE_RESOURCES + 1].pa = vm->resource[k].address;
+		regions[A733_GPU_FWCOMPUTE_RESOURCES + 1].pages = regions[k].pages;
+		regions[A733_GPU_FWCOMPUTE_RESOURCES + 1].flags = regions[k].flags;
+		/* Keep the inherited high alias under the same ownership. */
+		regions[A733_GPU_FWCOMPUTE_RESOURCES + 2].va = UINT64_C(0xe000002000);
+		regions[A733_GPU_FWCOMPUTE_RESOURCES + 2].pa = vm->resource[k].address;
+		regions[A733_GPU_FWCOMPUTE_RESOURCES + 2].pages = regions[k].pages;
+		regions[A733_GPU_FWCOMPUTE_RESOURCES + 2].flags = regions[k].flags;
 	}
 	error = fwheap_dma_alloc(dmat, 4096, &vm->catalog);
 	if (error != 0)
@@ -385,7 +397,8 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 		table_pa[i] = vm->table[i].address;
 	}
 	memset(&summary, 0, sizeof(summary));
-	error = sun60i_a733_gpu_fwcompute_vm_encode(regions, 12,
+	error = sun60i_a733_gpu_fwcompute_vm_encode(regions,
+	    A733_GPU_FWCOMPUTE_VM_REGIONS,
 	    vm->catalog.cpu, directory, table, directory_pa, table_pa,
 	    vm->catalog.address, context, &summary);
 	if (error != 0)
@@ -408,7 +421,7 @@ sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t dmat,
 	*out = vm;
 	return 0;
 fail:
-	for (i = 0; i < 9; i++)
+	for (i = 0; i < A733_GPU_FWCOMPUTE_RESOURCES; i++)
 		fwheap_dma_free(dmat, &vm->resource[i]);
 	fwheap_dma_free(dmat, &vm->catalog);
 	for (i = 0; i < A733_GPU_FWCOMPUTE_VM_WINDOWS; i++) {
@@ -428,7 +441,7 @@ sun60i_a733_gpu_fwvm_destroy(struct sun60i_a733_gpu_fwvm **out)
 	if (out == NULL || *out == NULL)
 		return;
 	vm = *out;
-	for (i = 0; i < 9; i++)
+	for (i = 0; i < A733_GPU_FWCOMPUTE_RESOURCES; i++)
 		fwheap_dma_free(vm->dmat, &vm->resource[i]);
 	fwheap_dma_free(vm->dmat, &vm->catalog);
 	for (i = 0; i < A733_GPU_FWCOMPUTE_VM_WINDOWS; i++) {
