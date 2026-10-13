@@ -21,6 +21,23 @@ and cancellation or timeout while Reset Endpoint or Set TR Dequeue is pending.
 The earlier implementation fails the soft interrupt and cancellation interleavings.
 These tests verify synchronization. They do not model controller hardware or USB timing.
 
+## Abort contract
+
+`USB_ABORT_REQUEST` requires a writable endpoint-zero descriptor.
+It cancels the active default-pipe request and preserves queued requests.
+Concurrent abort callers wait for the current abort to finish.
+The call succeeds without work when no request is active.
+`USB_DO_REQUEST` accepts only `USBD_SHORT_XFER_OK` in `ucr_flags`.
+Other bits return `EINVAL`; kernel transfer flags are not a user interface.
+
+```sh
+sh ember/tests/usb-abort-request.sh sys/dev/usb/usbdi.c sys/dev/usb/ugen.c /absolute/work/abort-check
+```
+
+This regression extracts the actual abort functions and ioctl validation.
+It covers access checks, request flags, queued requests, concurrent cancellation,
+and serialization with the existing whole-pipe abort operation.
+
 ## Physical control probe
 
 Build `ember/tools/ugen-control-probe.c` with the matching EmberBSD headers and libc.

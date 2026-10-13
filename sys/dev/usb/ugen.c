@@ -2016,7 +2016,9 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		/* Abort an in-flight control request on the default pipe. */
 		if (endpt != USB_CONTROL_ENDPOINT)
 			return EINVAL;
-		usbd_abort_default_pipe(sc->sc_udev);
+		if (!(flag & FWRITE))
+			return EPERM;
+		usbd_abort_default_request(sc->sc_udev);
 		break;
 	case USB_DO_REQUEST:
 	{
@@ -2031,6 +2033,9 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 
 		if (!(flag & FWRITE))
 			return EPERM;
+		/* ugen(4) exposes only the short-transfer flag to userland. */
+		if (ur->ucr_flags & ~USBD_SHORT_XFER_OK)
+			return EINVAL;
 		/* Avoid requests that would damage the bus integrity. */
 		if ((ur->ucr_request.bmRequestType == UT_WRITE_DEVICE &&
 		     ur->ucr_request.bRequest == UR_SET_ADDRESS) ||
