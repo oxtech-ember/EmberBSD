@@ -5,7 +5,7 @@ EmberBSD provides preparatory C helpers for a shared four-port MOXA G2 USB
 transport, plus an opt-in `ucom` backend that connects external transports to
 the existing TTY lifecycle. They let developers exercise framing, completion,
 queueing and TTY faults before attaching a device. The separate experimental `umoxa` USB parent supports the 1150 protocol below.
-The G2 USB parent and Ethernet NPort implementation remain pending. Physical serial validation remains pending for all models. The isolated 1150
+The G2 USB parent and Ethernet NPort implementation remain pending. Bounded 1150 RS-232 loopback is recorded below; broader physical serial validation remains pending. The isolated 1150
 USB/firmware trial below does not establish G2 or native board support.
 
 ## Experimental UPort 1150 parent
@@ -29,9 +29,9 @@ the owner's cold `110a:1150` (bcdDevice `0x0200`): configuration 1, interface
 0, one bulk-out endpoint `0x01`, maximum packet 64. A later firmware trial confirmed a warm device descriptor with one configuration
 whose value is 2: bulk-in `0x81`, bulk-out `0x01`, interrupt-in `0x83` (2 bytes).
 The parent selects the state by configuration values, not their count.
-Firmware upload completed 255 transfers (16287 bytes), but reset returned an
-I/O error through macOS/QEMU. Automatic re-enumeration and the serial line
-remain unchecked; manual warm attachment is recorded below. The driver rejects other
+The initial firmware trial completed 255 transfers (16287 bytes), but reset
+returned an I/O error through macOS/QEMU. The repaired automatic transition
+and its host requirements are recorded below. The driver rejects other
 configurations and malformed status packets.
 Data uses the existing one-port USB/TTY path, without G2 multiplexed framing.
 
@@ -44,8 +44,15 @@ short and failed firmware operations log an error and attach no TTY.
 Firmware loading runs synchronously inside post-root attach, whose lifetime is
 pinned by autoconf. Cold attach before root mount does no deferred work and
 logs a request to reconnect after boot. This avoids holding the boot-time
-configuration semaphore across a root-mount dependency. No retry or uncertain
-transfer replay occurs automatically.
+configuration semaphore across a root-mount dependency. The cold xfer/pipe close
+before reset. Reset acknowledgement is separate from complete bulk transport:
+the parent checks configuration index 0/value 2 using at most five requests
+(250ms timeout, 100ms delay), then selects the fresh configuration and validates
+all endpoints before attaching ucom. A reset-related IOERROR/cancellation stops
+probing the stale handle and leaves no TTY, awaiting normal warm enumeration.
+Only a subsequent validated warm attach establishes readiness. Missing warm
+state on an otherwise responding device remains a reported failure. No retry
+or uncertain transfer replay occurs automatically.
 
 Termios encodes 50..921600 baud, 5..8 data bits, no/odd/even parity, one/two
 stop bits and RTS/CTS. `CDTRCTS` and `MDMBUF` are rejected before USB I/O.
@@ -65,7 +72,7 @@ DTR/RTS/break ioctls; failures are logged and retained, and do not establish
 physical control success. Partial USB command acceptance is not rolled back.
 Hardware flow, mode changes, carrier reporting and UART drain are unaccepted.
 
-Run the 12 wire/lifecycle groups, 16 actual-parent groups, and the actual
+Run the 12 wire/lifecycle groups, 22 actual-parent groups, and the actual
 `ucomparam`/initial-parameter-section regression on Linux/macOS:
 
 ```sh
@@ -391,8 +398,8 @@ with SHA256 `c6c4c0920b5866ee721ae931cc481158e7d38452327846aa4607016667de1bcb`.
 After manual QEMU detach/restart and host configuration 2, the physical warm
 adapter attached as `umoxa0` with `ucom0` and `/dev/dtyU0`. The warm trial
 issued no firmware bulk writes. Reset acknowledgement and automatic transition
-from cold to warm remain unresolved through this host backend. Serial data,
-carrier/modem events, native concurrency and sustained operation remain pending.
+from cold to warm were unresolved in this initial trial. Carrier/modem events,
+native concurrency and sustained operation remain pending.
 
 For the next RS-232 loopback trial, connect DB9 pin 2 (RxD) to pin 3 (TxD),
 using the connector's pin numbers. The supplied terminal block has a different
@@ -411,3 +418,32 @@ The native test source is `ember/tools/umoxa1150-loopback-test.c`; it uses
 compiler and headers, then run on the isolated target only after the DB9 jumper
 is installed. It targets `/dev/dtyU0`, sets RS-232 mode, bounds reads with poll
 deadlines and has a 30-second alarm. Hardware tests are not run by host CI.
+
+### Automatic cold-to-warm trial
+
+Kernel source `8bdb1d1da76ab20fb0c689591b9255769188ff3f` booted with SHA256
+`f56e1967ccce145e740046cc48e7d5e22773eeff760dceb048e0ed21be664bf6`.
+The owner power-cycled the adapter; its actual configuration index 0/value 1
+was captured before the single post-root USB attachment. All 255 firmware
+blocks completed, with the same 16287-byte wire SHA256
+`3723acacfab187ef61bb33f7a34efcf5c630dbd1f5f74135dba2c3ad97de4c88`.
+Reset still returned guest EIO, followed by device disconnect. The parent
+reported waiting for warm USB attachment; automatic enumeration then validated
+configuration 2 and attached `umoxa0 → ucom0`. No repeated stale-handle probes,
+manual detach, VM restart, firmware replay or manual configuration 2 intervened.
+The bounded RS-232 test then matched 4096 bytes at 9600/115200 8N1 with fault0.
+The port closed normally after the test.
+
+This complete trial required a process-local Darwin libusb configuration bridge
+and `usb-host,guest-reset=off`. Stock
+[QEMU 11.1.1](https://github.com/qemu/qemu/blob/v11.1.1/hw/usb/host-libusb.c)
+skips `libusb_set_configuration` for a device reporting one configuration.
+A separate stock-backend trial automatically enumerated the warm child but
+left host configuration0: open succeeded and serial data timed out. The temporary
+bridge selected the actual cold1/warm2 configuration on the host. QEMU's extra
+bus reset also cleared that configuration, so it was disabled only for this
+passed-through device; the driver's firmware reset command remained enabled.
+The bridge is trial infrastructure outside this repository, not an EmberBSD
+feature or an upstream QEMU/libusb fix. No system QEMU installation changed.
+Bare-metal USB, repeated power cycles, serial modes/flow/modem and sustained
+operation still need separate acceptance.
