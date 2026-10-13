@@ -145,7 +145,8 @@ static inline int usbd_do_request_flags(struct usbd_device *u,usb_device_request
  fixture.requests++;
  if(r->bRequest==12){fixture.reset++;fixture.reset_with_pipe=fixture.pipes!=0;}
  if(fixture.short_request==fixture.requests)(*actual)--;
- if(fixture.fail_request==fixture.requests)return EIO;return 0;
+ if(fixture.fail_request==fixture.requests)return EIO;
+ return 0;
 }
 static inline void usbd_delay_ms(struct usbd_device *u,unsigned n){(void)u;fixture.delay+=n;}
 static inline int usbd_open_pipe(struct usbd_interface *i,uint8_t a,uint8_t f,struct usbd_pipe **p){(void)i;(void)a;(void)f;*p=malloc(sizeof(**p));fixture.pipes++;return 0;}
