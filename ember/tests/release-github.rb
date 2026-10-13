@@ -102,4 +102,49 @@ Dir.mktmpdir('ember-github') do |dir|
   else
     abort 'FAIL: unqualified publication accepted'
   end
+
+  q = { 'source_commit' => sha, 'image_sha256' => hash, 'usb_image_sha256' => hash,
+    'installed_kernel_sha256' => hash, 'checks' => EmberRelease::VM_CHECKS.to_h { |n| [n, true] } }
+  File.write(File.join(dir, 'qualification.json'), JSON.pretty_generate(q) + "\n")
+  manifest['qualification'] = q
+  manifest['files'] << { 'name' => 'qualification.json', 'size' => File.size(File.join(dir, 'qualification.json')),
+    'sha256' => Digest::SHA256.file(File.join(dir, 'qualification.json')).hexdigest }
+  File.write(File.join(dir, 'manifest.json'), JSON.pretty_generate(manifest) + "\n")
+  File.write(File.join(dir, 'SHA256'), EmberRelease.checksum_text(dir, manifest['files'].map { |f| f['name'] } + ['manifest.json']))
+  %w[name body prerelease].each do |field|
+    mutated = false
+    runner = lambda do |*args|
+      if args.first != 'api'
+        mutated = true if args[0, 2] == %w[release edit]
+        if args[0, 2] == %w[release download]
+          destination = args[args.index('--dir') + 1]
+          Dir.children(dir).each { |n| FileUtils.cp(File.join(dir, n), File.join(destination, n)) }
+        end
+        next ''
+      end
+      data = case args.last
+      when /immutable-releases$/ then { 'enabled' => true }
+      when /compare\// then { 'status' => 'ahead' }
+      when /matching-refs/ then [{ 'ref' => "refs/tags/#{manifest['release_tag']}", 'object' => { 'type' => 'commit', 'sha' => sha } }]
+      when /releases\/tags\//
+        release = { 'draft' => !mutated, 'immutable' => mutated, 'prerelease' => true,
+          'name' => "EmberBSD 1.0 amd64 #{sha[0, 12]} (no X11 VM candidate)", 'body' => 'abc',
+          'assets' => Dir.children(dir).map { |n| { 'name' => n, 'state' => 'uploaded',
+            'size' => File.size(File.join(dir, n)), 'digest' => "sha256:#{Digest::SHA256.file(File.join(dir, n)).hexdigest}" } } }
+        release[field] = field == 'prerelease' ? false : 'Foreign unverified metadata'
+        release
+      else abort "Unexpected publish API: #{args.last}"
+      end
+      "HTTP/2.0 200 OK\r\n\r\n#{JSON.generate(data)}"
+    end
+    begin
+      EmberRelease::GitHub.new(dir, runner: runner).publish
+    rescue EmberRelease::Error => e
+      abort "FAIL: wrong metadata error: #{e.message}" unless e.message == 'Existing draft does not belong to this kit'
+    else
+      abort "FAIL: foreign draft #{field} was published"
+    end
+    abort 'FAIL: draft metadata was checked after publication' if mutated
+    puts "PASS: changed draft #{field} stops publication"
+  end
 end

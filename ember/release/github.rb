@@ -76,15 +76,14 @@ module EmberRelease
     def draft
       release = preflight
       if release
-        EmberRelease.check(release['draft'] == true, 'Release is already published; no asset writes are allowed')
-        EmberRelease.check(release['prerelease'] == true && release['name'] == title &&
-          release['body'] == File.read(File.join(@dir, 'release-notes.md')), 'Existing draft does not belong to this kit')
+        check_draft(release)
       else
         puts "Create private draft #{@tag}"
         @runner.call('release', 'create', @tag, '--repo', @repo, '--target', @sha, '--draft',
           '--prerelease', '--latest=false', '--title', title, '--notes-file', File.join(@dir, 'release-notes.md'))
         release = preflight
         EmberRelease.check(release && release['draft'] == true, 'Draft creation is not confirmed')
+        check_draft(release)
       end
       missing = check_assets(release, complete: false)
       unless missing.empty?
@@ -93,6 +92,12 @@ module EmberRelease
       end
       verify_remote
       "https://github.com/#{REPOSITORY}/releases/tag/#{@tag}"
+    end
+
+    def check_draft(release)
+      EmberRelease.check(release['draft'] == true, 'Release is already published; no asset writes are allowed')
+      EmberRelease.check(release['prerelease'] == true && release['name'] == title &&
+        release['body'] == File.read(File.join(@dir, 'release-notes.md')), 'Existing draft does not belong to this kit')
     end
 
     def verify_remote
@@ -120,8 +125,10 @@ module EmberRelease
       EmberRelease.require_qualification(@manifest)
       release = preflight
       EmberRelease.check(release, 'Create and verify the draft first')
-      verify_remote
+      check_draft(release) if release['draft'] == true
+      release = verify_remote
       if release['draft'] == true
+        check_draft(release)
         puts 'Publish the verified immutable prerelease'
         @runner.call('release', 'edit', @tag, '--repo', @repo, '--draft=false', '--prerelease', '--latest=false')
         release = api("releases/tags/#{@tag}")

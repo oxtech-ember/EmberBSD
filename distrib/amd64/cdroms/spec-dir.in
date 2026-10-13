@@ -7,3 +7,4 @@
 ./netbsd/kernel.gdb 	type=file uname=root gname=wheel mode=644
 ./targetroot 		type=dir  uname=root gname=wheel mode=755
 ./etc/gettytab 		type=link uname=root gname=wheel mode=755
+./etc/openssl/cert.pem type=file uname=root gname=wheel mode=644
