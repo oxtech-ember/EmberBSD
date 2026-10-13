@@ -81,7 +81,7 @@ typedef struct { uint8_t bNumEndpoints; } usb_interface_descriptor_t;
 typedef struct { uint8_t bEndpointAddress,bmAttributes,wMaxPacketSize[2]; } usb_endpoint_descriptor_t;
 typedef struct { uint8_t bmRequestType,bRequest,wValue[2],wIndex[2],wLength[2]; } usb_device_request_t;
 struct usbd_interface { usb_interface_descriptor_t id; usb_endpoint_descriptor_t ep[4]; };
-struct usbd_device { usb_device_descriptor_t dd; usb_config_descriptor_t cd; struct usbd_interface iface; };
+struct usbd_device { usb_device_descriptor_t dd; usb_config_descriptor_t cd, configs[2]; struct usbd_interface iface; };
 struct usb_attach_arg { uint16_t uaa_vendor,uaa_product; struct usbd_device *uaa_device; };
 struct ucom_methods {
  void (*ucom_get_status)(void *,int,u_char *,u_char *);
@@ -96,7 +96,7 @@ struct fake_firmware { const uint8_t *data; size_t size; };
 typedef struct fake_firmware *firmware_handle_t;
 static struct {
  unsigned requests,reset,created,destroyed,pipes,allocs,child_attach,child_detach,errors,delay;
- unsigned fail_request,short_request; int missing_firmware,short_bulk,fail_intr,fail_child;
+ unsigned fail_request,short_request; int missing_firmware,short_bulk,fail_intr,fail_child,fail_config_desc;
  struct fake_firmware firmware; struct fake_device child;void (*hook)(device_t);
 } fixture;
 static inline void mutex_init(kmutex_t *m,int t,int i){(void)t;(void)i;*m=0;}
@@ -116,6 +116,7 @@ static inline void config_mountroot(device_t d,void(*f)(device_t)){(void)d;fixtu
 static inline void usbd_add_drv_event(int e,struct usbd_device *u,device_t d){(void)e;(void)u;(void)d;}
 static inline usb_device_descriptor_t *usbd_get_device_descriptor(struct usbd_device *u){return &u->dd;}
 static inline usb_config_descriptor_t *usbd_get_config_descriptor(struct usbd_device *u){return &u->cd;}
+static inline int usbd_get_config_desc(struct usbd_device *u,int i,usb_config_descriptor_t *d){if(fixture.fail_config_desc || i<0 || i>=u->dd.bNumConfigurations)return EIO;*d=u->configs[i];return 0;}
 static inline int usbd_set_config_no(struct usbd_device *u,int c,int msg){(void)msg;u->cd.bConfigurationValue=c;return 0;}
 static inline int usbd_device2interface_handle(struct usbd_device *u,uint8_t i,struct usbd_interface **p){(void)i;*p=&u->iface;return 0;}
 static inline usb_interface_descriptor_t *usbd_get_interface_descriptor(struct usbd_interface *i){return &i->id;}

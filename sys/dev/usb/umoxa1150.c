@@ -149,7 +149,8 @@ umoxa1150_attach(device_t parent, device_t self, void *aux)
 	struct umoxa1150_softc *sc = device_private(self);
 	struct ucom_attach_args ucaa;
 	usb_device_descriptor_t *dd;
-	int cold_layout, error;
+	usb_config_descriptor_t cd;
+	int cold_layout, config_no = 0, error, i;
 
 	aprint_naive("\n");
 	aprint_normal("\n");
@@ -164,8 +165,17 @@ umoxa1150_attach(device_t parent, device_t self, void *aux)
 	dd = usbd_get_device_descriptor(sc->sc_udev);
 	if (dd->bNumConfigurations != 1 && dd->bNumConfigurations != 2)
 		goto bad;
-	cold_layout = dd->bNumConfigurations == 1;
-	error = usbd_set_config_no(sc->sc_udev, cold_layout ? 1 : 2, 1);
+	/* A warm 1150 can expose only one configuration, with value 2. */
+	for (i = 0; i < dd->bNumConfigurations; i++) {
+		if (usbd_get_config_desc(sc->sc_udev, i, &cd) !=
+		    USBD_NORMAL_COMPLETION || cd.bNumInterface != 1 ||
+		    (cd.bConfigurationValue != 1 && cd.bConfigurationValue != 2))
+			goto bad;
+		if (cd.bConfigurationValue > config_no)
+			config_no = cd.bConfigurationValue;
+	}
+	cold_layout = config_no == 1;
+	error = usbd_set_config_no(sc->sc_udev, config_no, 1);
 	if (error != USBD_NORMAL_COMPLETION || umoxa1150_layout(sc, cold_layout) != 0)
 		goto bad;
 	if (cold_layout) {

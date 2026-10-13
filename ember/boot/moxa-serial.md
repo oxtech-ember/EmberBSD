@@ -26,8 +26,12 @@ Cold configuration 1 must have one firmware bulk-out endpoint; warm configuratio
 addresses come from descriptors. Those shapes still require capture on a real
 1150. On 2026-10-13, read-only cached descriptor capture on macOS confirmed
 the owner's cold `110a:1150` (bcdDevice `0x0200`): configuration 1, interface
-0, one bulk-out endpoint `0x01`, maximum packet 64. Warm descriptors,
-firmware and the serial line remain unchecked. The driver rejects other
+0, one bulk-out endpoint `0x01`, maximum packet 64. A later firmware trial confirmed a warm device descriptor with one configuration
+whose value is 2: bulk-in `0x81`, bulk-out `0x01`, interrupt-in `0x83` (2 bytes).
+The parent selects the state by configuration values, not their count.
+Firmware upload completed 255 transfers (16287 bytes), but reset returned an
+I/O error through macOS/QEMU. Automatic re-enumeration and the serial line
+remain unchecked. The driver rejects other
 configurations and malformed status packets.
 Data uses the existing one-port USB/TTY path, without G2 multiplexed framing.
 
@@ -61,7 +65,7 @@ DTR/RTS/break ioctls; failures are logged and retained, and do not establish
 physical control success. Partial USB command acceptance is not rolled back.
 Hardware flow, mode changes, carrier reporting and UART drain are unaccepted.
 
-Run the 12 wire/lifecycle groups, 12 actual-parent groups, and the actual
+Run the 12 wire/lifecycle groups, 15 actual-parent groups, and the actual
 `ucomparam`/initial-parameter-section regression on Linux/macOS:
 
 ```sh
@@ -360,3 +364,24 @@ This matrix does not link a kernel; run the full kernel wrapper separately
 from that same pinned source for the configured link and matched modules.
 GitHub CI runs the 33 host groups on Linux/macOS; it does not run the native
 fixture or kernel build. Keep those separate receipts with a published change.
+
+## macOS USB trial boundary
+
+The isolated QEMU 11.1.1 AArch64 trial booted the exact EmberBSD kernel at
+`5ddc0e1d982343d217fa6baa88c7b1a5e2d44771` over the existing NetBSD 11 lab
+userland. Kernel SHA256 was
+`4989c280ac4651a47f7beed2bca986591bbbb93ea79afdfd9c2918dc231dd6bd`.
+Module autoload was disabled; this is not full distribution acceptance.
+
+Two host prerequisites were observed: run QEMU without `-daemonize` to avoid
+Darwin Objective-C initialization after fork; configure the cold adapter to
+USB configuration 1 before QEMU initializes its libusb context. QEMU skips
+`libusb_set_configuration` for a single-configuration device, and an existing
+Darwin libusb context retained stale configuration metadata after an external
+configuration change. A fresh context then issued all firmware bulk writes.
+These are host trial workarounds, not EmberBSD USB controller guarantees.
+
+The external asset from linux-firmware tag `20250211` is 12462 bytes with SHA256
+`5a7a87085584c4ccf8de63249934fb6b5129e2a42aa6efda2f740f0af2978f8b`.
+Its [MOXA license](https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git/+/refs/tags/20250211/LICENCE.moxa)
+allows use on MOXA devices. The opaque file and license remain outside Git.
