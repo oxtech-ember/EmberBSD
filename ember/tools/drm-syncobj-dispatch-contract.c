@@ -25,6 +25,8 @@ static int drm_syncobj_wait_ioctl(struct drm_device *d,void *a,struct drm_file *
 }
 static int drm_syncobj_timeline_wait_ioctl(struct drm_device *d,void *a,struct drm_file *f)
 { return drm_syncobj_wait_ioctl(d,a,f); }
+static int drm_syncobj_transfer_ioctl(struct drm_device *d,void *a,struct drm_file *f)
+{ return drm_syncobj_wait_ioctl(d,a,f); }
 static int legacy_ioctl(struct drm_device *d,void *a,struct drm_file *f)
 { CHECK(entered && drm_global_mutex); return 0; }
 #define DRM_IOCTL_DEF(cmd,fn,flags) {flags,fn}
@@ -42,17 +44,17 @@ static void dispatch(struct drm_device *dev,const struct drm_ioctl_desc *ioctl)
 }
 int main(void)
 {
-    CHECK(sizeof(waits)/sizeof(waits[0])==2);
+    CHECK(sizeof(waits)/sizeof(waits[0])==3);
     struct drm_device dev={0};
     for(unsigned mode=0;mode<2;mode++) {
         dev.features=mode?DRIVER_MODESET:0;
-        for(unsigned i=0;i<2;i++) {
+        for(unsigned i=0;i<3;i++) {
             CHECK(waits[i].flags&DRM_RENDER_ALLOW);
             dispatch(&dev,&waits[i]);
         }
         const struct drm_ioctl_desc legacy={0,legacy_ioctl};
         dispatch(&dev,&legacy);
     }
-    puts("PASS: native binary/timeline waits release the legacy DRM mutex; other core ioctls retain it");
+    puts("PASS: native binary/timeline waits and transfer release the legacy DRM mutex; other core ioctls retain it");
     return 0;
 }

@@ -129,13 +129,11 @@ the extreme-HZ division in `sched.h` (not reached at CM5's `hz=100`), and the ze
 `log2.h` require caller/impact analysis. Macro sentinel, sizeof and dead-store
 reports also remain to be classified. No broad suppressions were added.
 
-Review also identified an inherited, separate
-`drm_syncobj_find_fence(WAIT_FOR_SUBMIT)` defect: the syncobj reference is
-dropped before callback use, and native callback lock/wakeup fields are not
-initialized. The accepted binary path does not call this helper with that
-flag. Repair and test it before enabling consumers of that branch; timeline
-capability remains off. Unlocking the timeline WAIT descriptor is not timeline
-acceptance. Independent review found no further defect in the accepted path.
+The later [common DRM synchronization repair](drm-syncobj.md) retains the
+`drm_syncobj_find_fence(WAIT_FOR_SUBMIT)` object and initializes its callback
+state. It also repairs native fence-chain callback registration. The binary
+CM5 acceptance above does not call the find helper with this flag and does
+not establish timeline support for V3D. The V3D capability remains off.
 
 Mesa/Vulkan execution, PRIME, KMS, arbitrary-job recovery and an
 accelerated desktop remain unverified. The ordinary kernel and matching
