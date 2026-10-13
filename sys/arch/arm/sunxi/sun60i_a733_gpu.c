@@ -1426,7 +1426,14 @@ out:
 		    BUS_DMASYNC_POSTREAD);
 		used = snprintf(sc->sc_trace_state,
 		    sizeof(sc->sc_trace_state),
+		    "err=%d polls=%u pre=%u/%u post=%u/%u kexec=%u "
 		    "log=0x%x ptr0=%u ptr1=%u trace_rtn=0x%x:",
+		    sc->sc_trace_result.error, sc->sc_trace_result.polls,
+		    sc->sc_trace_result.before.read_offset,
+		    sc->sc_trace_result.before.write_offset,
+		    sc->sc_trace_result.after.read_offset,
+		    sc->sc_trace_result.after.write_offset,
+		    sc->sc_trace_result.after.cmds_executed,
 		    tc->log_type, tc->tracebuf[0].trace_pointer,
 		    tc->tracebuf[1].trace_pointer,
 		    (u_int)sc->sc_trace_result.after.rtn);
