@@ -76,7 +76,8 @@ typedef int kmutex_t;
 struct usbd_pipe { int kind; };
 struct usbd_xfer { uint8_t buffer[64]; uint32_t actual; };
 typedef struct { uint8_t bNumConfigurations; } usb_device_descriptor_t;
-typedef struct { uint8_t bConfigurationValue,bNumInterface; } usb_config_descriptor_t;
+#define USB_CONFIG_DESCRIPTOR_SIZE 9
+typedef struct { uint8_t bLength,bDescriptorType,wTotalLength[2],bNumInterface,bConfigurationValue,iConfiguration,bmAttributes,bMaxPower; } usb_config_descriptor_t;
 typedef struct { uint8_t bNumEndpoints; } usb_interface_descriptor_t;
 typedef struct { uint8_t bEndpointAddress,bmAttributes,wMaxPacketSize[2]; } usb_endpoint_descriptor_t;
 typedef struct { uint8_t bmRequestType,bRequest,wValue[2],wIndex[2],wLength[2]; } usb_device_request_t;

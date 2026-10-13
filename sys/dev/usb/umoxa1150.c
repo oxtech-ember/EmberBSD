@@ -168,7 +168,9 @@ umoxa1150_attach(device_t parent, device_t self, void *aux)
 	/* A warm 1150 can expose only one configuration, with value 2. */
 	for (i = 0; i < dd->bNumConfigurations; i++) {
 		if (usbd_get_config_desc(sc->sc_udev, i, &cd) !=
-		    USBD_NORMAL_COMPLETION || cd.bNumInterface != 1 ||
+		    USBD_NORMAL_COMPLETION ||
+		    cd.bLength < USB_CONFIG_DESCRIPTOR_SIZE ||
+		    UGETW(cd.wTotalLength) < cd.bLength || cd.bNumInterface != 1 ||
 		    (cd.bConfigurationValue != 1 && cd.bConfigurationValue != 2))
 			goto bad;
 		if (cd.bConfigurationValue > config_no)
