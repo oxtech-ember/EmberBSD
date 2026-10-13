@@ -95,7 +95,8 @@ Legacy expert tools keep their existing dialogs.
 
 Select the CDN/network source and provide the immutable directory for the boot image's build.
 The default channel is described in [installer identity](installer-branding.md#distribution-sets).
-The public CDN is planned. Use your own verified server until that service is available.
+Published candidates supply matching sets through GitHub HTTPS. The custom CDN domain
+is separate. Use a verified set server until your newly built candidate is published.
 The directory must contain BUILDID, SHA512 and all selected binary sets.
 BUILDID must contain the full EMBER_BUILD_ID used to build the boot image.
 SHA512 uses the release builder's SHA512 (filename) = digest format.

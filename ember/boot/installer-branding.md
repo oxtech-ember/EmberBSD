@@ -36,8 +36,10 @@ https://github.com/oxtech-ember/EmberBSD/releases/download/build-a0674c0d2c1b067
 
 This flat directory contains matching binary sets and their manifests.
 See the [VM installation guide](amd64-vm-install.md) for the selected 13-set profile.
-Generic source-tree defaults still name `cdn.emberbsd.oxteam.me`; that domain is not connected.
-Use the release builder or the published candidate for the verified GitHub path.
+Generic amd64 defaults select the first accepted GitHub candidate. Other architectures
+retain their own `cdn.emberbsd.oxteam.me` directory; that domain is not connected.
+Pinned builders override these defaults with their candidate's own source directory.
+A newly built guided installer requires its matching BUILDID and complete selected sets.
 The main source menu offers `Bootable USB / image` and `EmberBSD CDN`.
 Use a complete USB image for installation without a network connection.
 Identify the target disk by its model and capacity before confirming the layout.
