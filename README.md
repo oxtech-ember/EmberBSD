@@ -352,6 +352,11 @@ on every board in the hardware catalog.
   the separate, still absent Plasma Desktop shell package; Workspace alone
   cannot start `org.kde.plasma.desktop`. Its current xdg-user-dirs 0.20
   dependency now cross-builds and passes private-profile checks on CM5.
+  [Current desktop providers](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-providers.md)
+  include SDL3 game-controller code with eight CM5 checks and a UBSan repeat.
+  Event sounds keep the same core library without mandatory GTK. The Desktop
+  source recipe selects current Fcitx5/Qt6; target input and the full shell
+  still require acceptance.
   [ConsoleKit session launching](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-session.md)
   now preserves application failures and passes real-session checks on CM5;
   ordinary-user login and device ownership remain unverified.
