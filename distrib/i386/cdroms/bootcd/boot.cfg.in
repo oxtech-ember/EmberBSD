@@ -1,4 +1,4 @@
-banner=EmberBSD @@EMBER_VERSION@@ boot-only install CD
+banner=EmberBSD @@EMBER_VERSION@@ network installation image
 banner=Unix for intelligent devices
 banner=Sets are not included. Use a full installation image, or a published
 banner=EmberBSD set server for network installation.

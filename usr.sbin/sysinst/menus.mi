@@ -341,17 +341,19 @@ menu ptnsize_replace_existing_partition, sub menu, y=0,
 	option MSG_cancel, exit, action { *((int*)arg) = 0; };
 
 menu distmedium, title MSG_Select_medium, y=-5;
+	option MSG_cdrom, exit, action { *(int *)arg = get_via_cdrom(); };
+	option MSG_ember_cdn, exit, action { process_menu(MENU_cdnsources, arg); };
+	option MSG_additional_sources, exit, action { process_menu(MENU_additionalsources, arg); };
+	option MSG_Abandon, exit, action { *(int *)arg = SET_ABANDON; };
+
+menu cdnsources, title MSG_ember_cdn, y=-5,
+	    exitstring MSG_source_sel_retry;
 	display action {
-		/*
-		 * In some installers we can not use https early,
-		 * so disable the menu item.
-		 * Later, after installing the base sets,
-		 * we an use it in a target chroot, so
-		 * enable it again.
-		 */
+		/* Some installation environments cannot use HTTPS yet. */
 		char *env_opt = getenv("FTPSSLNOVERIFY");
 		bool disable = env_opt && strcmp(env_opt, "1") == 0;
 
+		*(int *)arg = SET_RETRY;
 		for (int i = 0; i < menu->numopts; i++) {
 			if (menu->opts[i].opt_name != MSG_https)
 				continue;
@@ -359,19 +361,23 @@ menu distmedium, title MSG_Select_medium, y=-5;
 				menu->opts[i].opt_flags |= OPT_IGNORE;
 			else
 				menu->opts[i].opt_flags &= ~OPT_IGNORE;
+			if (disable && menu->cursel == i)
+				menu->cursel = i + 1;
 		}
 	    };
-	option MSG_cdrom,     exit, action { *(int *)arg = get_via_cdrom(); };
-	option MSG_https,     exit, action { *(int *)arg = get_via_ftp(XFER_HTTPS); };
-	option MSG_http,      exit, action { *(int *)arg = get_via_ftp(XFER_HTTP); };
-	option MSG_ftp,	      exit, action { *(int *)arg = get_via_ftp(XFER_FTP); };
-	option MSG_nfs,	      exit, action { *(int *)arg = get_via_nfs(); };
-	option MSG_floppy,    exit, action { *(int *)arg = get_via_floppy(); };
+	option MSG_https, exit, action { *(int *)arg = get_via_ftp(XFER_HTTPS); };
+	option MSG_http, exit, action { *(int *)arg = get_via_ftp(XFER_HTTP); };
+
+menu additionalsources, title MSG_additional_sources, y=-5,
+	    exitstring MSG_source_sel_retry;
+	display action { *(int *)arg = SET_RETRY; };
 	option MSG_local_fs,  exit, action { *(int *)arg = get_via_localfs(); };
-	option MSG_local_dir, exit, action { *(int *)arg = get_via_localdir();};
+	option MSG_local_dir, exit, action { *(int *)arg = get_via_localdir(); };
+	option MSG_ftp,       exit, action { *(int *)arg = get_via_ftp(XFER_FTP); };
+	option MSG_nfs,       exit, action { *(int *)arg = get_via_nfs(); };
+	option MSG_floppy,    exit, action { *(int *)arg = get_via_floppy(); };
 	option MSG_Skip_set,  exit, action { *(int *)arg = SET_SKIP; };
 	option MSG_Skip_group,exit, action { *(int *)arg = SET_SKIP_GROUP; };
-	option MSG_Abandon,   exit, action { *(int *)arg = SET_ABANDON; };
 
 menu distset, title MSG_Select_your_distribution, exit,
 	    no default exit, exitstring MSG_Abandon;
