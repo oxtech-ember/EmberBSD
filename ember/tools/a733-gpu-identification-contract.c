@@ -475,11 +475,17 @@ struct sysctlnode { void *sysctl_data; };
 static int sysctl_createv_stub(void *first, ...) { (void)first; return 0; }
 #define sysctl_createv(...) sysctl_createv_stub(__VA_ARGS__)
 
+typedef uint16_t __u16;
+typedef uint32_t __u32;
+typedef uint64_t __u64;
+#include "pvr-drm.h-body.h"
+#include "pvr-query.h-body.h"
+
 /* The separate render-attach contract owns these new handler paths. */
 struct drm_device;
 static int
 pvr_render_attach(device_t dev, bus_dma_tag_t dmat, uint64_t bvnc,
-    struct drm_device **owner)
+    const struct pvr_query_input *input, struct drm_device **owner)
 {
 
 	abort();

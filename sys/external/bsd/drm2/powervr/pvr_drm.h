@@ -59,6 +59,29 @@ struct drm_pvr_dev_query_gpu_info {
 	__u32 _padding_c;
 };
 
+struct drm_pvr_dev_query_runtime_info {
+	__u64 free_list_min_pages;
+	__u64 free_list_max_pages;
+	__u32 common_store_alloc_region_size;
+	__u32 common_store_partition_space_size;
+	__u32 max_coeffs;
+	__u32 cdm_max_local_mem_size_regs;
+};
+
+struct drm_pvr_dev_query_quirks {
+	__u64 quirks;
+	__u16 count;
+	__u16 musthave_count;
+	__u32 _padding_c;
+};
+
+struct drm_pvr_dev_query_enhancements {
+	__u64 enhancements;
+	__u16 count;
+	__u16 _padding_a;
+	__u32 _padding_c;
+};
+
 struct drm_pvr_ioctl_dev_query_args {
 	__u32 type;
 	__u32 size;

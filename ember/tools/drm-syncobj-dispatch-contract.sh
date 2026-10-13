@@ -6,7 +6,7 @@ src=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/drm-sync-dispatch.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 file="$src/sys/external/bsd/drm2/dist/drm/drm_ioctl.c"
-awk '/DRM_IOCTL_DEF\(DRM_IOCTL_SYNCOBJ_(WAIT|TIMELINE_WAIT),/ { print; getline; print }' \
+awk '/DRM_IOCTL_DEF\(DRM_IOCTL_SYNCOBJ_(WAIT|TIMELINE_WAIT|TRANSFER),/ { print; getline; print }' \
     "$file" > "$work/wait-descriptors.h"
 awk '/^drm_ioctl\(struct file \*fp,/ { native=1 }
     native && /drm_ioctl_enter\(dev\);/ { take=1 }

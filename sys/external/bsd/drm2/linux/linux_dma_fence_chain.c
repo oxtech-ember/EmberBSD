@@ -122,8 +122,8 @@ dma_fence_chain_enable_signaling(struct dma_fence *fence)
 		f1 = (chain1 = to_dma_fence_chain(f)) ? chain1->dfc_fence : f;
 
 		dma_fence_get(f1);
-		if (dma_fence_add_callback(f, &chain->dfc_callback,
-			dma_fence_chain_callback) != 0) {
+		if (dma_fence_add_callback(f1, &chain->dfc_callback,
+			dma_fence_chain_callback) == 0) {
 			dma_fence_put(f);
 			return true;
 		}

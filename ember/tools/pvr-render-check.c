@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/* Origin: EmberBSD native PowerVR render-node identity acceptance. */
+/* Origin: EmberBSD native PowerVR identity and firmware-query acceptance. */
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -24,6 +24,85 @@ check(bool pass, const char *what)
 		fprintf(stderr, "FAIL: %s (errno=%d)\n", what, errno);
 		exit(1);
 	}
+}
+
+static void
+check_device_queries(int fd)
+{
+	const struct drm_pvr_dev_query_runtime_info expected = {
+		25, 524288, 11264, 6144, 4096, 4096
+	};
+	struct drm_pvr_ioctl_dev_query_args args;
+	struct drm_pvr_dev_query_quirks quirks = { 0 };
+	struct drm_pvr_dev_query_enhancements enhancements = { 0 };
+	struct drm_pvr_dev_query_runtime_info runtime;
+	uint32_t values[2] = { UINT32_MAX, UINT32_MAX };
+	uint8_t bytes[64];
+	unsigned int i;
+
+	args = (struct drm_pvr_ioctl_dev_query_args){
+	    DRM_PVR_DEV_QUERY_RUNTIME_INFO_GET, 0, 0 };
+	check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == 0 &&
+	    args.size == sizeof(runtime), "RUNTIME_INFO size discovery");
+	memset(bytes, 0xa5, sizeof(bytes));
+	args.pointer = (uintptr_t)bytes;
+	args.size = sizeof(bytes);
+	check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == 0 &&
+	    args.size == sizeof(runtime), "RUNTIME_INFO extended output");
+	memcpy(&runtime, bytes, sizeof(runtime));
+	check(memcmp(&runtime, &expected, sizeof(runtime)) == 0,
+	    "firmware-derived runtime limits");
+	for (i = sizeof(runtime); i < sizeof(bytes); i++)
+		check(bytes[i] == 0, "runtime extension cleared");
+	args.size = sizeof(runtime) - 1;
+	errno = 0;
+	check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == -1 && errno == EINVAL,
+	    "reject short runtime object");
+	args = (struct drm_pvr_ioctl_dev_query_args){
+	    DRM_PVR_DEV_QUERY_QUIRKS_GET, 0, 0 };
+	check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == 0 &&
+	    args.size == sizeof(quirks), "QUIRKS size discovery");
+	args.pointer = (uintptr_t)&quirks;
+	check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == 0 &&
+	    quirks.count == 0 && quirks.musthave_count == 0, "QUIRKS count discovery");
+	quirks.quirks = (uintptr_t)values;
+	quirks.count = 2;
+	check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == 0 &&
+	    quirks.count == 0 && quirks.musthave_count == 0 && values[0] == UINT32_MAX,
+	    "empty exported quirk set");
+	quirks._padding_c = 1;
+	errno = 0;
+	check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == -1 && errno == EINVAL,
+	    "reject quirk reserved fields");
+	args = (struct drm_pvr_ioctl_dev_query_args){
+	    DRM_PVR_DEV_QUERY_ENHANCEMENTS_GET, 0, 0 };
+	check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == 0 &&
+	    args.size == sizeof(enhancements), "ENHANCEMENTS size discovery");
+	args.pointer = (uintptr_t)&enhancements;
+	check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == 0 &&
+	    enhancements.count == 1, "ENHANCEMENTS count discovery");
+	enhancements.enhancements = (uintptr_t)values;
+	enhancements.count = 0;
+	errno = 0;
+	check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == -1 && errno == E2BIG,
+	    "reject short enhancement array");
+	enhancements.count = 2;
+	check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == 0 &&
+	    enhancements.count == 1 && values[0] == 35421 && values[1] == UINT32_MAX,
+	    "firmware enhancement ERN35421");
+	memset(bytes, 0, sizeof(bytes));
+	memcpy(bytes, &enhancements, sizeof(enhancements));
+	bytes[sizeof(enhancements)] = 1;
+	args.pointer = (uintptr_t)bytes;
+	args.size = sizeof(bytes);
+	errno = 0;
+	check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == -1 && errno == E2BIG,
+	    "reject nonzero unknown enhancement fields");
+	printf("Runtime: PM pages=%" PRIu64 "..%" PRIu64
+	    "; common store allocation=%u partition=%u; coefficients=%u local=%u dwords\n",
+	    (uint64_t)runtime.free_list_min_pages, (uint64_t)runtime.free_list_max_pages,
+	    runtime.common_store_alloc_region_size, runtime.common_store_partition_space_size,
+	    runtime.max_coeffs, runtime.cdm_max_local_mem_size_regs);
 }
 
 int
@@ -84,10 +163,10 @@ main(int argc, char **argv)
 	errno = 0;
 	check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == -1 &&
 	    errno == EFAULT, "reject inaccessible output");
-	for (i = 1; i <= 6; i++) {
+	check_device_queries(fd);
+	for (i = 4; i <= 6; i++) {
 		args = (struct drm_pvr_ioctl_dev_query_args){ i, 0, 0 };
-		if (i == DRM_PVR_DEV_QUERY_HEAP_INFO_GET ||
-		    i == DRM_PVR_DEV_QUERY_STATIC_DATA_AREAS_GET) {
+		if (i <= 5) {
 			check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == 0 &&
 			    args.size == 16, "heap/static query discovery");
 			continue;
@@ -97,14 +176,18 @@ main(int argc, char **argv)
 		    errno == EOPNOTSUPP, "unsupported device query");
 	}
 	cap = (struct drm_get_cap){ .capability = DRM_CAP_SYNCOBJ };
-	check(ioctl(fd, DRM_IOCTL_GET_CAP, &cap) == 0 && cap.value == 0,
-	    "no syncobj capability");
+	check(ioctl(fd, DRM_IOCTL_GET_CAP, &cap) == 0 && cap.value == 1,
+	    "native syncobj capability");
+	cap = (struct drm_get_cap){ .capability = DRM_CAP_SYNCOBJ_TIMELINE };
+	check(ioctl(fd, DRM_IOCTL_GET_CAP, &cap) == 0 && cap.value == 1,
+	    "native timeline syncobj capability");
 	cap = (struct drm_get_cap){ .capability = DRM_CAP_DUMB_BUFFER };
+
 	errno = 0;
 	check(ioctl(fd, DRM_IOCTL_GET_CAP, &cap) == -1 &&
 	    errno == EOPNOTSUPP, "reject display capability without modesetting");
 	check(close(fd) == 0, "close render node");
-	printf("PASS: %u PowerVR identity checks; BVNC=0x%016" PRIx64
+	printf("PASS: %u PowerVR identity/runtime checks; BVNC=0x%016" PRIx64
 	    "; GEM/VM/submission are outside this check\n", checks, info.gpu_id);
 	return 0;
 }

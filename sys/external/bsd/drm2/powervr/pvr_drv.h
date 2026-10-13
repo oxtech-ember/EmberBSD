@@ -7,18 +7,20 @@
 #include <sys/device.h>
 
 struct drm_device;
+struct pvr_query_input;
 struct drm_file;
 struct drm_gem_object;
 struct file;
 struct uvm_object;
 
 /*
- * Call after hardware identification, from a serialized sleepable context.
+ * Call with metadata from prepared firmware, from a serialized sleepable context.
  * Do not hold the sysctl tree lock. Pass an initially NULL owner slot.
  * Success retains one device reference in that slot until reboot.
  * Failure leaves the slot unchanged. No hot removal is implemented.
  */
-int pvr_render_attach(device_t, bus_dma_tag_t, uint64_t, struct drm_device **);
+int pvr_render_attach(device_t, bus_dma_tag_t, uint64_t,
+    const struct pvr_query_input *, struct drm_device **);
 int pvr_create_bo(struct drm_device *, void *, struct drm_file *);
 int pvr_get_bo_mmap_offset(struct drm_device *, void *, struct drm_file *);
 /* The caller retains a GEM reference. Return positive native errno. */

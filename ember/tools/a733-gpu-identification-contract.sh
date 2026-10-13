@@ -19,6 +19,10 @@ cp "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.h" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.h" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.h" "$work/"
 sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwheap.h"     > "$work/sun60i_a733_gpu_fwheap.h"
+for name in drm.h query.h; do
+    sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_$name" \
+        > "$work/pvr-$name-body.h"
+done
 mkdir "$work/powervr"
 cp "$src/sys/arch/arm/sunxi/powervr/"*.h "$work/powervr/"
 # Keep the production memory interface. Only native bus-DMA types are stubbed.

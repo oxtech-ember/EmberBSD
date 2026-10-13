@@ -15,12 +15,14 @@
 #include "pvr_drm.h"
 #include "pvr_drv.h"
 #include "pvr_heap.h"
+#include "pvr_query.h"
 
 /* Mesa 26.2.4 BXM-4-64 profile: one cluster, one phantom. */
 #define PVR_A733_BVNC	UINT64_C(0x00240038006800b7)
 
 struct pvr_device {
 	uint64_t bvnc;
+	struct pvr_query_profile profile;
 };
 
 static int
@@ -34,6 +36,9 @@ pvr_dev_query(struct drm_device *dev, void *data, struct drm_file *file)
 	size_t copied, count;
 	int error;
 
+	if (args->type >= DRM_PVR_DEV_QUERY_RUNTIME_INFO_GET &&
+	    args->type <= DRM_PVR_DEV_QUERY_ENHANCEMENTS_GET)
+		return pvr_query(&sc->profile, args->type, args);
 	if (args->type == DRM_PVR_DEV_QUERY_HEAP_INFO_GET ||
 	    args->type == DRM_PVR_DEV_QUERY_STATIC_DATA_AREAS_GET)
 		return pvr_heap_query(args->type, args);
@@ -52,7 +57,7 @@ pvr_dev_query(struct drm_device *dev, void *data, struct drm_file *file)
 		return -EFAULT;
 	address = (uintptr_t)args->pointer;
 	info.gpu_id = sc->bvnc;
-	info.num_phantoms = 1;
+	info.num_phantoms = sc->profile.num_phantoms;
 	copied = MIN(args->size, sizeof(info));
 	error = copyout(&info, (void *)address, copied);
 	if (error != 0)
@@ -98,7 +103,8 @@ static const struct drm_ioctl_desc pvr_ioctls[] = {
 };
 
 static struct drm_driver pvr_driver = {
-	.driver_features = DRIVER_GEM | DRIVER_RENDER,
+	.driver_features = DRIVER_GEM | DRIVER_RENDER |
+	    DRIVER_SYNCOBJ | DRIVER_SYNCOBJ_TIMELINE,
 	.ioctls = pvr_ioctls,
 	.num_ioctls = __arraycount(pvr_ioctls),
 	.open = pvr_file_open,
@@ -116,19 +122,23 @@ static struct drm_driver pvr_driver = {
 
 int
 pvr_render_attach(device_t self, bus_dma_tag_t dmat, uint64_t bvnc,
-    struct drm_device **owner)
+    const struct pvr_query_input *input, struct drm_device **owner)
 {
 	struct pvr_device *sc;
 	struct drm_device *dev;
+	struct pvr_query_profile profile;
 	extern int drm_guarantee_initialized(void);
 	int error;
 
-	if (owner == NULL || self == NULL || dmat == NULL)
+	if (owner == NULL || self == NULL || dmat == NULL || input == NULL)
 		return EINVAL;
 	if (*owner != NULL)
 		return EALREADY;
-	if (bvnc != PVR_A733_BVNC)
+	if (bvnc != PVR_A733_BVNC || input->bvnc != bvnc)
 		return ENODEV;
+	error = pvr_query_profile_init(input, &profile);
+	if (error != 0)
+		return error;
 	error = drm_guarantee_initialized();
 	if (error != 0)
 		return error;
@@ -137,6 +147,7 @@ pvr_render_attach(device_t self, bus_dma_tag_t dmat, uint64_t bvnc,
 		return -PTR_ERR(dev);
 	sc = kmem_zalloc(sizeof(*sc), KM_SLEEP);
 	sc->bvnc = bvnc;
+	sc->profile = profile;
 	dev->dev_private = sc;
 	dev->bus_dmat = dev->bus_dmat32 = dev->dmat = dmat;
 	dev->native_platform.version = DRM_NATIVE_PLATFORM_VERSION;
