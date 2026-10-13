@@ -628,8 +628,11 @@ on every board in the hardware catalog.
   opens on Zero 3W and passes 72 device-query checks. It reports the measured
   BVNC through a real render node. Native GEM allocation and CPU mapping of
   an 8 MiB buffer also pass, including file isolation and mapping lifetime
-  after handle and file closure. GPU VM, job submission, Mesa Vulkan/Zink,
-  display output, and accelerated Plasma still require porting.
+  after handle and file closure. [Native per-file VM operations](ember/boot/a733-pvr-vm.md)
+  pass 586 physical checks, including 128 additional VMs, sparse DMA tables,
+  heap queries, and buffer retention through unmap and file closure.
+  These tables remain CPU-owned. Firmware VM publication, job submission,
+  Mesa Vulkan/Zink, display output, and accelerated Plasma still require porting.
   Repeated submission within one boot and long-duration GPU stability remain
   untested.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)

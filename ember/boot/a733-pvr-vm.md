@@ -110,6 +110,29 @@ It closes the GEM handle before unmapping and leaves mappings for `postclose`.
 The final CPU mapping must remain writable after both files close.
 Record the source revision, tool hash, kernel hash, and output.
 
+## Physical result
+
+On 2026-10-13, Zero 3W passed 586 VM checks on kernel `9b2ded0e10b2`.
+The board used BVNC `36.56.104.183`, 4 KiB host pages, and the existing DTB.
+The VM, identity, and BO tools completed between 13:40:26 and 13:40:27 UTC.
+The identity tool passed 72 checks. The BO tool passed 2,105,411 checks.
+The separate compute probe also passed all 21 stages after this kernel boot.
+It wrote `0x13579bdf`, reached queue 184/184 and timeline 1, with no fresh fault/HWR.
+The watchdog remained disarmed after the checks; SSH remained available.
+
+The VM utility hash is `728c3685b565bbc3db0b9b6275994d62a1266a6c10ab878523033c794b20f1db`.
+The kernel hash is `4d2746be9afbee9ee874fe734a1c444884df0a6dc18019bd59ed96dfba1d7503`.
+The boot-image hash is `d73cd563dc8038b59e082aa46a67d3a80830c551959967de3d9c25db5fbf272f`.
+The matching module set came from the same clean GCC16 build.
+The utility used the recorded EmberBSD libc sysroot; this is not a complete SDK audit.
+
+Source contracts passed 30,564 table checks, 596 file checks, and 3,688 heap checks.
+The unsupported 16 KiB VM profile passed 101 file checks.
+Twelve table, nine file, and seven heap causal mutations failed as expected.
+GCC16, Clang22, and Cppcheck2.22 analysis found no new confirmed safety defect.
+Path-budget limits and inherited header/model diagnostics remain recorded separately.
+These short checks do not establish long-duration stability or GPU access to the VMs.
+
 ## Execution boundary
 
 All tables remain CPU-owned and unpublished to firmware.

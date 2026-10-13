@@ -144,8 +144,10 @@ Both mappings stayed accessible after closing the handle and both files.
 The prefix remained writable after unmapping the complete buffer.
 The final unmap completed without a fault or watchdog reset.
 
-This accepts native GEM and CPU mappings only. GPU cache coherency for these
-BOs, GPU VM, DRM job submission, Vulkan, display, and Plasma remain unaccepted.
+These results accept native GEM and CPU mappings. The later
+[VM acceptance](a733-pvr-vm.md#physical-result) adds CPU-owned GPU tables,
+per-file VM operations, and heap queries on kernel `9b2ded0e10b2`.
+GPU access to these BOs, DRM job submission, Vulkan, display, and Plasma remain unaccepted.
 
 ## Next Mesa contracts
 
