@@ -522,6 +522,9 @@ drm_fop_mmap(struct file *fp, off_t *offp, size_t len, int prot, int *flagsp,
 	KASSERT(fp == file->filp);
 	KASSERT(len > 0);
 
+	if (dev->driver->mmap_object == NULL)
+		return EOPNOTSUPP;
+
 	/* XXX errno Linux->NetBSD */
 	error = -(*dev->driver->mmap_object)(dev, *offp, len, prot, uobjp,
 	    offp, file->filp);
