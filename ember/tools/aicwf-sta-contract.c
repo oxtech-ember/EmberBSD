@@ -373,6 +373,15 @@ abi_checks(void)
     req.version++;CHECK(aicwf_sta_mgmt(&sc.sc_ic,&req)==EINVAL);req.version--;
     req.reserved=1;CHECK(aicwf_sta_mgmt(&sc.sc_ic,&req)==EINVAL);req.reserved=0;
     sc.sc_fw_version=0;CHECK(aicwf_sta_mgmt(&sc.sc_ic,&req)==EOPNOTSUPP);
+    /* Unknown operations retain the shared backend's identity-check order. */
+    reset();memset(&req,0,sizeof(req));req.version=IEEE80211_STA_VERSION;
+    req.op=UINT16_MAX;req.generation=sc.sc_sae_epoch;
+    memcpy(req.bssid,ni.ni_bssid,sizeof(req.bssid));
+    CHECK(aicwf_sta_mgmt(&sc.sc_ic,&req)==EOPNOTSUPP);
+    req.generation++;CHECK(aicwf_sta_mgmt(&sc.sc_ic,&req)==ESTALE);req.generation--;
+    req.bssid[5]^=1;CHECK(aicwf_sta_mgmt(&sc.sc_ic,&req)==ESTALE);req.bssid[5]^=1;
+    req.flags=1;CHECK(aicwf_sta_mgmt(&sc.sc_ic,&req)==EINVAL);
+    CHECK(writes==0 && tasks_count==0 && deliveries==0 && !sc.sc_sta_enabled);
     reset();sc.sc_ic.ic_opt_ie=NULL;sc.sc_ic.ic_opt_ie_len=0;
     CHECK(bsd_sta_info(&drv,&req)==0 && !(req.flags&caps));
 }
@@ -580,6 +589,57 @@ request_make(unsigned op, unsigned cookie)
 		req.data[2] = 19;
 	}
 	return req;
+}
+
+static void
+ioctl_rejection_checks(void)
+{
+	struct ieee80211req_sta_mgmt req;
+
+	/* Driver-level cases from the shared live bwfm-sta-ioctl checker. */
+	reset(); sc.sc_sta_enabled = true;
+	req = request_make(IEEE80211_STA_TX, 1); req.version++;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
+	req = request_make(IEEE80211_STA_TX, 1); req.reserved = 1;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
+	req = request_make(IEEE80211_STA_TX, 1); req.flags = UINT32_C(0x80000000);
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
+	req = request_make(IEEE80211_STA_TX, 1); req.len = sizeof(req.data) + 1;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
+	req = request_make(UINT16_MAX, 1);
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EOPNOTSUPP);
+	req = request_make(IEEE80211_STA_TX, 1); req.generation ^= UINT32_C(0x80000000);
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == ESTALE);
+	req = request_make(IEEE80211_STA_TX, 1); req.bssid[5] ^= 1;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == ESTALE);
+	req = request_make(IEEE80211_STA_TX, 1); req.len = 2;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
+	req = request_make(IEEE80211_STA_TX, 1); req.len = 4;
+	req.data[0] = 10; req.data[1] = 7;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
+	req = request_make(IEEE80211_STA_TX, 1); req.len = 10;
+	req.data[0] = 10; req.data[1] = 8; req.data[3] = 0;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
+	req = request_make(IEEE80211_STA_ENABLE, 1); req.len = 1;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
+	req = request_make(IEEE80211_STA_DISABLE, 1); req.len = 1;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
+	req = request_make(IEEE80211_STA_CANCEL_TX, 1); req.len = 1;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
+	req = request_make(IEEE80211_STA_SCAN, 1); req.len = 1;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
+	req = request_make(IEEE80211_STA_SCAN, 1);
+	req.len = 2 * (IEEE80211_STA_MAX_CHANNELS + 1);
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
+	req = request_make(IEEE80211_STA_CANCEL_SCAN, 0); req.len = 1;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == ESTALE);
+	CHECK(writes == 0 && tasks_count == 0 && deliveries == 0);
+	CHECK(sc.sc_sta_enabled && sc.sc_connected && sc.sc_ptk_valid &&
+	    sc.sc_sae_epoch == 39);
+	/* A valid scan cookie must still reject a nonempty cancellation. */
+	sc.sc_sta_scan_pending = true; sc.sc_sta_scan.cookie = 1; req.cookie = 1;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
+	CHECK(sc.sc_sta_scan_pending && deliveries == 0 && tasks_count == 0);
 }
 
 static void
@@ -942,6 +1002,7 @@ main(int argc, char **argv)
 {
 	const char *group = argc > 1 ? argv[1] : "all";
 	if (!strcmp(group, "all") || !strcmp(group, "abi")) abi_checks();
+	if (!strcmp(group, "all") || !strcmp(group, "ioctl")) ioctl_rejection_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "actions")) action_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "rx")) rx_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "oversize")) oversize_check();

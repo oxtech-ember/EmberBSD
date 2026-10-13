@@ -2255,12 +2255,13 @@ aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 			error = ESTALE;
 		break;
 	case IEEE80211_STA_CANCEL_SCAN:
-		if (req->len != 0 || req->cookie == 0) {
-			error = EINVAL;
+		if (req->cookie == 0 || !sc->sc_sta_scan_pending ||
+		    req->cookie != sc->sc_sta_scan.cookie) {
+			error = ESTALE;
 			break;
 		}
-		if (!sc->sc_sta_scan_pending || req->cookie != sc->sc_sta_scan.cookie) {
-			error = ESTALE;
+		if (req->len != 0) {
+			error = EINVAL;
 			break;
 		}
 		scan_notify = aicwf_sta_scan_finish_locked(sc, true, scan_event);
@@ -2322,7 +2323,7 @@ aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 		workqueue_enqueue(sc->sc_taskq, &t->t_work, NULL);
 		break;
 	default:
-		error = EINVAL;
+		error = EOPNOTSUPP;
 		break;
 	}
 out:
