@@ -888,6 +888,9 @@ on every board in the hardware catalog.
   checks pass on Zero 3W with its installed GCC16 runtime. Its `--kernel`
   mode builds the cross frontends without an application sysroot; target
   libc and C++ runtime inputs remain required for application builds. The
+  fork's [readelf split-string repair](ember/boot/readelf-split-strings.md)
+  passes 24 GCC/Clang DWARF4/5 cases on macOS, including standalone DWO files.
+  The
   [CTF converter](ember/boot/ctf-external-types.md) preserves GCC/Clang types
   in DWARF4/5 and both offset widths, including COMDAT type units, standalone
   DWO, indexed DWP and combined split/supplementary input. Linked multi-CU
