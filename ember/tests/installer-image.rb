@@ -28,6 +28,7 @@ abort 'ISO installer has the wrong EmberBSD product version' unless binary.inclu
   abort "ISO installer is missing source choice: #{label}" unless binary.include?(label)
 end
 abort 'ISO installer retains the optical source label' if binary.include?('CD-ROM / DVD')
+abort 'ISO installer recommends optical images for missing sets' if binary.include?('CD vs. DVD')
 if build
   %w[de es fr pl].each do |lang|
     data = extract.call("usr/share/sysinst/catalog/sysinstmsgs.#{lang}")

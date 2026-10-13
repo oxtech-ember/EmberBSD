@@ -736,8 +736,8 @@ Optionale Pakete sind:
  test mit automatischen Testprogrammen
  manhtml mit Anleitung im html Format
 
-Für einige Architekturen stehen unterschiedliche ISO Dateien für CD und DVD Laufwerke
-zur verfügung, auf der DVD Version sind alle Installations-Pakete enthalten. 
+Installationsabbilder enthalten unterschiedliche Sets. Verwenden Sie ein
+vollstaendiges Abbild oder Netzwerk-Sets derselben Build-Version.
 }
 .endif
 

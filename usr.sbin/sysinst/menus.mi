@@ -349,11 +349,11 @@ menu distmedium, title MSG_Select_medium, y=-5;
 menu cdnsources, title MSG_ember_cdn, y=-5,
 	    exitstring MSG_source_sel_retry;
 	display action {
-		*(int *)arg = SET_RETRY;
 		/* Some installation environments cannot use HTTPS yet. */
 		char *env_opt = getenv("FTPSSLNOVERIFY");
 		bool disable = env_opt && strcmp(env_opt, "1") == 0;
 
+		*(int *)arg = SET_RETRY;
 		for (int i = 0; i < menu->numopts; i++) {
 			if (menu->opts[i].opt_name != MSG_https)
 				continue;
@@ -361,6 +361,8 @@ menu cdnsources, title MSG_ember_cdn, y=-5,
 				menu->opts[i].opt_flags |= OPT_IGNORE;
 			else
 				menu->opts[i].opt_flags &= ~OPT_IGNORE;
+			if (disable && menu->cursel == i)
+				menu->cursel = i + 1;
 		}
 	    };
 	option MSG_https, exit, action { *(int *)arg = get_via_ftp(XFER_HTTPS); };

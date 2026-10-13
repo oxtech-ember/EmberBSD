@@ -702,8 +702,8 @@ Optional sets are:
  test containing automatic test programs
  manhtml containing man pages in html format
 
-Some architectures offer different CD vs. DVD ISO images, the DVD images
-are complete and contain all sets. 
+Installation images can contain different sets. Use a matching complete
+image or the same build's network sets to add optional components.
 }
 .endif
 
