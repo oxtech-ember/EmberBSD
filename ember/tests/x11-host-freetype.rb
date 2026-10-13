@@ -14,7 +14,8 @@ abort 'Missing FreeType source' unless File.file?(gzip)
 Dir.mktmpdir('ember-x11-host') do |work|
   %w[fc-cache mkfontscale].each do |tool|
     dir = File.join(root, 'external/mit/xorg/tools', tool)
-    flags, status = Open3.capture2(make, '-C', dir, "X11SRCDIR=#{xsrc}", '-v', 'HOST_CPPFLAGS')
+    flags, status = Open3.capture2(make, '-C', dir,
+      "X11SRCDIR=#{xsrc}", '-v', 'HOST_CPPFLAGS')
     abort "Cannot evaluate #{tool} flags" unless status.success?
     compiler = Shellwords.split(ENV.fetch('HOST_CC', 'cc'))
     output, status = Open3.capture2e(*compiler, '-std=gnu99', *Shellwords.split(flags),
