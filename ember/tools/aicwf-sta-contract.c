@@ -17,12 +17,13 @@ typedef uint8_t u8;
 #define ETH_ALEN 6
 #define IEEE80211_ADDR_EQ(a, b) (memcmp((a), (b), 6) == 0)
 #define IEEE80211_ADDR_COPY(d, s) memcpy((d), (s), 6)
-#define IEEE80211_S_RUN 4
-#define IEEE80211_S_SCAN 1
-#define IEEE80211_S_AUTH 2
-enum ieee80211_state { FIXTURE_STATE = 0 };
-#define AICWF_SM_DISCONNECT_REQ 0x1802
-#define AICWF_SM_DISCONNECT_CFM 0x1803
+enum ieee80211_state {
+	IEEE80211_S_INIT, IEEE80211_S_SCAN, IEEE80211_S_AUTH,
+	IEEE80211_S_ASSOC, IEEE80211_S_RUN
+};
+#define IEEE80211_AUTH_ALG_OPEN 0
+#define ETHERTYPE_PAE 0x888e
+#define IEEE80211_IS_CHAN_5GHZ(c) ((c)->ic_freq >= 4000)
 #define AICWF_MM_KEY_DEL_REQ 0x16
 #define AICWF_MM_KEY_DEL_CFM 0x17
 #define IEEE80211_REASON_AUTH_LEAVE 3
@@ -54,6 +55,7 @@ enum ieee80211_state { FIXTURE_STATE = 0 };
 #define AICWF_TASK(id) ((id) >> 10)
 #define AICWF_TASK_DRIVER 100
 #define AICWF_CMD_TIMEOUT_MS 2000
+#define AICWF_SCAN_INTERVAL_MS 3000
 #define AICWF_SCANU_START_REQ 0x1000
 #define AICWF_SCANU_START_ACK 0x1009
 #define AICWF_SCANU_CANCEL_REQ 0x100a
@@ -89,6 +91,7 @@ struct ifnet { void *if_softc; int if_flags, ioctl_locked; };
 struct ieee80211_chan { uint16_t ic_freq; };
 struct ieee80211_node {
 	uint8_t ni_bssid[6];
+	uint8_t ni_essid[32], ni_esslen;
 	struct ieee80211_chan *ni_chan;
 };
 struct ieee80211com {
@@ -107,7 +110,7 @@ struct mbuf { int unused; };
 struct work { unsigned unused; };
 enum aicwf_task_cmd { AICWF_TASK_STA_MGMT, AICWF_TASK_STA_CANCEL_SCAN, AICWF_TASK_NEWSTATE, AICWF_TASK_RECOVER_SCAN };
 struct aicwf_task { struct work t_work; enum aicwf_task_cmd t_cmd;
-    uint64_t t_epoch, t_join_serial; enum ieee80211_state t_state; int t_arg; struct ieee80211req_sta_mgmt t_sta; };
+    uint64_t t_epoch, t_join_serial, t_configure_serial; enum ieee80211_state t_state; int t_arg; struct ieee80211req_sta_mgmt t_sta; };
 struct aicwf_softc {
 	struct ieee80211com sc_ic;
 	struct ifnet sc_if;
@@ -117,9 +120,10 @@ struct aicwf_softc {
 	bool sc_sae_enabled, sc_sae_pending, sc_sae_authenticated, sc_ptk_valid;
 	uint8_t sc_sae_bssid[6], sc_hwkey[5], sc_vif;
 	uint32_t sc_sae_generation;
-	uint64_t sc_sae_epoch, sc_pmf_rx_pn, sc_join_serial;
+	uint64_t sc_sae_epoch, sc_pmf_rx_pn, sc_join_serial, sc_configure_serial;
 	uint64_t sc_alive_epoch, sc_alive_join_serial;
 	bool sc_alive_queued; unsigned sc_alive_misses;
+	int (*sc_newstate)(struct ieee80211com *, enum ieee80211_state, int);
 	uint8_t sc_igtk[2];
 	u_int sc_alive_rx;
 	/* Keep the baseline layout usable for pre-fix regression checks. */
@@ -144,7 +148,7 @@ static struct ieee80211_chan chan;
 static unsigned checks, deliveries, disconnects, allocs;
 static unsigned writes, tasks_count, scans_cancelled, scans_ended, state_calls;
 static struct aicwf_task *tasks[64];
-static int write_error, pre_fifo_error, reply_len = 1;
+static int write_error, pre_fifo_error, reply_len = 1, reply_status;
 static uint8_t written[2048];
 static size_t written_len;
 static void (*wait_hook)(void), (*reply_hook)(void), (*unlock_hook)(void);
@@ -214,6 +218,8 @@ static void le32enc(void *v, uint32_t x)
 #endif
 static void le16enc(void *v, uint16_t x)
 { uint8_t *p=v; p[0]=x; p[1]=x>>8; }
+static void be16enc(void *v, uint16_t x)
+{ uint8_t *p=v; p[0]=x>>8; p[1]=x; }
 #include "fullmac_sae.h"
 #include "if_aicwf_vht.h"
 #include "if_aicwf_sta.h"
@@ -228,8 +234,12 @@ static void ieee80211_cancel_scan(struct ieee80211com *ic)
 static void ieee80211_end_scan(struct ieee80211com *ic)
 { (void)ic; scans_ended++; }
 static int aicwf_newstate(struct ieee80211com *, enum ieee80211_state, int);
-static void aicwf_newstate_cb(struct aicwf_softc *s, enum ieee80211_state state, int arg)
-{ (void)arg; assert(s->sc_if.ioctl_locked); state_calls++; s->sc_ic.ic_state = state; }
+static int net80211_state(struct ieee80211com *ic, enum ieee80211_state state, int arg)
+{ (void)arg; assert(sc.sc_if.ioctl_locked); state_calls++; ic->ic_state = state; return 0; }
+static void ieee80211_sta_leave(struct ieee80211com *ic, struct ieee80211_node *node)
+{ assert(ic->ic_bss == node); }
+static void kpause(const char *name, bool intr, int delay, void *lock)
+{ (void)name; (void)intr; (void)delay; (void)lock; }
 static void aicwf_reorder_flush(struct aicwf_softc *s, int tid, bool deliver)
 { (void)s; assert(tid == -1 && !deliver); }
 static void *pool_cache_get(void *pool, int flags)
@@ -257,6 +267,7 @@ static int aicwf_fifo(struct aicwf_softc *s, bool write, uint8_t *data, size_t n
 		s->sc_cfm_done = reply_len >= 0;
 		s->sc_cfm_len = reply_len >= 0 ? reply_len : 0;
 		memset(s->sc_cfm, 0, sizeof(s->sc_cfm));
+		s->sc_cfm[0] = reply_status;
 	}
 	return write_error;
 }
@@ -326,11 +337,13 @@ reset(void)
 	sc.sc_sta_assoc[4]=0;sc.sc_sta_assoc[6]=0;
 	sc.sc_ic.ic_channels[36].ic_freq=5180;setbit(sc.sc_ic.ic_chan_active,36);
 	sc.sc_ic.ic_channels[40].ic_freq=5200;setbit(sc.sc_ic.ic_chan_active,40);
-	writes=write_error=pre_fifo_error=0;reply_len=1;failtask=false;wait_hook=reply_hook=unlock_hook=NULL;
+	writes=write_error=pre_fifo_error=reply_status=0;reply_len=1;failtask=false;wait_hook=reply_hook=unlock_hook=NULL;
 	memset(sc.sc_igtk, AICWF_HWKEY_NONE, sizeof(sc.sc_igtk));
 	scans_cancelled=scans_ended=state_calls=0;
 	chan.ic_freq = 5180;
 	ni.ni_chan = &chan;
+	ni.ni_esslen = 4; memcpy(ni.ni_essid, "test", 4);
+	sc.sc_newstate = net80211_state;
 	memcpy(ni.ni_bssid, "\x02\x01\x02\x03\x04\x05", 6);
 	sc.sc_if.if_softc = &sc;
 	sc.sc_ic.ic_ifp = &sc.sc_if;
@@ -654,11 +667,8 @@ run_task(void)
 		aicwf_sta_cancel_scan_cb(&sc, t->t_sta.flags);
 	else if (t->t_cmd == AICWF_TASK_RECOVER_SCAN)
 		aicwf_recover_scan_cb(&sc, t);
-	else {
-		IFNET_LOCK(&sc.sc_if);
-		aicwf_newstate_cb(&sc, t->t_state, t->t_arg);
-		IFNET_UNLOCK(&sc.sc_if);
-	}
+	else
+		aicwf_state_cb(&sc, t);
 	free(t);
 }
 
@@ -899,6 +909,134 @@ assoc_checks(void)
 }
 
 static void
+run_auth_task(void)
+{
+	CHECK(tasks_count != 0);
+	struct aicwf_task *t = tasks[0];
+	memmove(tasks, tasks + 1, --tasks_count * sizeof(*tasks));
+	CHECK(t->t_cmd == AICWF_TASK_NEWSTATE && t->t_state == IEEE80211_S_AUTH);
+	aicwf_state_cb(&sc, t);
+	free(t);
+}
+
+static void
+reassoc_departure(void)
+{
+	const uint8_t ind[6] = {0, 0, sc.sc_vif, 0, 1, 0};
+	const uint64_t epoch = sc.sc_sae_epoch;
+
+	sc.sc_sae_pending = sc.sc_sae_authenticated = true;
+	aicwf_disconnect_ind(&sc, ind, sizeof(ind));
+	CHECK(sc.sc_sae_epoch == epoch && sc.sc_connecting && !sc.sc_connected);
+	CHECK(sc.sc_sae_pending && sc.sc_sae_authenticated);
+}
+
+static void
+join_disconnect(void)
+{
+	const uint8_t ind[6] = {0, 0, sc.sc_vif, 0, 0, 0};
+	aicwf_disconnect_ind(&sc, ind, sizeof(ind));
+}
+
+static void
+reassoc_checks(void)
+{
+	uint8_t ind[6] = {0};
+
+	reset();
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	CHECK(tasks[0]->t_epoch == 39 && tasks[0]->t_join_serial == 1);
+	run_auth_task();
+	CHECK(writes == 1 && le16dec(written + 8) == AICWF_SM_CONNECT_REQ);
+	CHECK((le32dec(written + 16 + 48) & (1U << 5)) != 0);
+	CHECK(sc.sc_connecting && sc.sc_sae_epoch == 40);
+	CHECK(sc.sc_sae_generation == 41 && sc.sc_ic.ic_state == IEEE80211_S_AUTH);
+	/* A delayed old-AP indication cannot clear the newly associated keys. */
+	sc.sc_connecting = false; sc.sc_connected = sc.sc_ptk_valid = true;
+	sc.sc_igtk[0] = 7; ind[2] = sc.sc_vif; ind[4] = 1;
+	aicwf_disconnect_ind(&sc, ind, sizeof(ind) - 1);
+	CHECK(sc.sc_connected && sc.sc_sae_epoch == 40);
+	ind[2]++; aicwf_disconnect_ind(&sc, ind, sizeof(ind)); ind[2]--;
+	CHECK(sc.sc_connected && sc.sc_sae_epoch == 40);
+	aicwf_disconnect_ind(&sc, ind, sizeof(ind));
+	CHECK(sc.sc_connected && sc.sc_ptk_valid && sc.sc_igtk[0] == 7);
+	CHECK(sc.sc_sae_epoch == 40 && tasks_count == 0);
+	/* First association must not ask the firmware to reuse an old AP. */
+	reset(); sc.sc_connected = false;
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	run_auth_task();
+	CHECK(writes == 1 && (le32dec(written + 16 + 48) & (1U << 5)) == 0);
+	CHECK(sc.sc_connecting);
+	/* SAE CONFIGURE survives both the native request and old-AP departure. */
+	reset(); sc.sc_sae_enabled = true;
+	sc.sc_ic.ic_opt_ie[19] = 8; sc.sc_ic.ic_opt_ie[20] = 0xc0;
+	sc.sc_igtk[0] = 7; reply_len = -1; reply_hook = reassoc_departure;
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	run_auth_task();
+	CHECK(writes == 1 && (le32dec(written + 16 + 48) & 0x30) == 0x30);
+	CHECK(written[16 + 59] == AICWF_AUTH_SAE && sc.sc_sae_enabled);
+	CHECK(sc.sc_sae_generation == 41 && memcmp(sc.sc_sae_bssid, ni.ni_bssid, 6) == 0);
+	CHECK(sc.sc_sae_epoch == 40 && sc.sc_igtk[0] == AICWF_HWKEY_NONE);
+	/* Admission failure leaves the old physical link and key handles owned. */
+	reset(); sc.sc_igtk[0] = 7; pre_fifo_error = EBUSY;
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	run_auth_task();
+	CHECK(writes == 0 && sc.sc_connected && !sc.sc_connecting && sc.sc_igtk[0] == 7);
+	pre_fifo_error = 0; aicwf_disconnect(&sc);
+	CHECK(writes == 2 && le16dec(written + 8) == AICWF_SM_DISCONNECT_REQ);
+	CHECK(!sc.sc_connected && sc.sc_igtk[0] == AICWF_HWKEY_NONE);
+	reset(); sc.sc_igtk[0] = 7; reply_status = 9;
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	run_auth_task();
+	CHECK(writes == 1 && sc.sc_connected && !sc.sc_connecting && sc.sc_igtk[0] == 7);
+	/* A queued AUTH cannot outlive a replacement CONFIGURE or raw MLME. */
+	reset();
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	aicwf_sae_advance(&sc); sc.sc_configure_serial++; run_auth_task();
+	CHECK(writes == 0 && state_calls == 0 && sc.sc_sae_epoch == 40);
+	reset();
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	run_auth_task(); CHECK(writes == 0 && state_calls == 0);
+	run_auth_task(); CHECK(writes == 1 && state_calls == 1);
+	/* An old AP departure cannot retire a CONNECT already being published. */
+	reset(); sc.sc_cmd_busy = true; wait_hook = join_disconnect;
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	run_auth_task();
+	CHECK(writes == 1 && sc.sc_sae_epoch == 40 && sc.sc_connecting);
+	CHECK(tasks_count == 0);
+	/* Physical departure before AUTH must not discard the newer host intent. */
+	reset();
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	join_disconnect(); CHECK(sc.sc_sae_epoch == 40 && tasks_count == 2);
+	run_auth_task(); CHECK(writes == 1 && sc.sc_sae_epoch == 41 && sc.sc_connecting);
+	run_task(); CHECK(state_calls == 1);
+	/* An earlier queued SCAN cannot retire a later configured AUTH. */
+	reset();
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_SCAN, -1) == 0);
+	aicwf_sae_advance(&sc); sc.sc_configure_serial++;
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	run_task(); CHECK(writes == 0 && sc.sc_sae_epoch == 40);
+	run_auth_task(); CHECK(writes == 1 && sc.sc_sae_epoch == 41 && sc.sc_connecting);
+	/* An inadmissible join cannot suppress the queued down transition. */
+	reset(); sc.sc_if.if_flags = 0;
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_INIT, -1) == 0);
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == ENETDOWN);
+	CHECK(sc.sc_join_serial == 0 && tasks_count == 1);
+	run_task(); CHECK(!sc.sc_connected && sc.sc_ic.ic_state == IEEE80211_S_INIT);
+	/* Delayed flagged departures never retire a newer CONFIGURE or its keys. */
+	reset(); sc.sc_connecting = true; sc.sc_sae_epoch = 41;
+	aicwf_sae_advance(&sc);
+	sc.sc_connecting = false; sc.sc_igtk[0] = 8; sc.sc_sae_pending = true;
+	aicwf_disconnect_ind(&sc, ind, sizeof(ind));
+	CHECK(sc.sc_sae_epoch == 42 && sc.sc_sae_pending && sc.sc_igtk[0] == 8);
+	/* Invalid optional-IE state cannot dereference NULL through SAE parsing. */
+	reset(); sc.sc_sae_enabled = true; sc.sc_ic.ic_opt_ie = NULL;
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	run_auth_task(); CHECK(writes == 0 && sc.sc_sae_epoch == 39);
+}
+
+static void
 recovery_prepare(void)
 {
 	reset();
@@ -922,6 +1060,7 @@ new_user_association(void)
 		return;
 	}
 	aicwf_sae_advance(&sc);
+	sc.sc_configure_serial++;
 	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
 }
 
@@ -1010,6 +1149,7 @@ main(int argc, char **argv)
 	if (!strcmp(group, "all") || !strcmp(group, "scan")) scan_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "retire")) retirement_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "assoc")) assoc_checks();
+	if (!strcmp(group, "all") || !strcmp(group, "reassoc")) reassoc_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "recovery")) recovery_checks();
 	reset();
 	CHECK(checks != 0);

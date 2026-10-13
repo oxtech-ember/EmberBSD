@@ -726,8 +726,9 @@ on every board in the hardware catalog.
   The [VHT80 results](ember/boot/aicwf-vht.md) give throughput and test limits.
   SAE/H2E and required PMF have separate physical checks, but a nonzero initial
   IGTK IPN still prevents key installation on affected APs. The new
-  [host-managed k/v transport](ember/boot/aicwf-kv.md) has software regressions;
-  its physical acceptance is pending. Protected SA Query and recovery checks are documented
+  [host-managed k/v transport](ember/boot/aicwf-kv.md) has physical connected-scan,
+  ioctl and management TX/RX checks. Neighbor-list and BTM acceptance remain pending.
+  Protected SA Query and recovery checks are documented
   in the [SAE guide](ember/boot/aicwf-sae.md).
 - **Consistent Wi-Fi discovery and CM5 cooling:** `bwfm` retains firmware
   scan channels and signal ranking across both bands. The configurable
@@ -929,8 +930,9 @@ remain unverified.
   IGTK packet numbers are rejected. Protected SA Query and automatic recovery
   after an AP removes the station are physically checked. The separate
   [k/v transport](ember/boot/aicwf-kv.md) adds actual association IEs,
-  firmware TX status and connected scans. Its physical acceptance, 802.11r
-  and long-duration operation remain outside this result. The [board page](ember/boards/orange-pi-zero-3w.md#wi-fi-limits-and-connected-scan-regression)
+  firmware TX status and connected scans. Physical checks confirm scan continuity
+  and real management acknowledgements. A usable neighbor list, BTM acceptance,
+  802.11r and long-duration operation remain outside this result. The [board page](ember/boards/orange-pi-zero-3w.md#wi-fi-limits-and-connected-scan-regression)
   records the firmware, bundle and tests.
 - **Short firmware replies** still need a command-transport fix and regression.
 

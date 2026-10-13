@@ -106,8 +106,9 @@ Nonzero initial IPNs are rejected; networks or rekeys requiring them are
 not supported yet. Protected-management replay/forgery injection and a
 long-duration run remain unverified. This AIC path does not implement
 802.11r FT, 802.11ax or host AP mode. The new
-[host-managed k/v transport](../boot/aicwf-kv.md) has software regressions;
-its physical Neighbor Report and BTM acceptance is pending.
+[host-managed k/v transport](../boot/aicwf-kv.md) has software regressions and
+physical connected-scan, ioctl and management TX/RX checks. The AP returned
+an empty neighbor response. Neighbor-list and BTM acceptance remain pending.
 VHT80 with one stream is physically checked under WPA2-CCMP. TCP and 8 MiB
 file transfers pass in both directions; see the [current results](../boot/aicwf-vht.md#physical-vht80-check).
 On an AP with a nonzero initial IGTK IPN, SAE/H2E succeeds but key installation

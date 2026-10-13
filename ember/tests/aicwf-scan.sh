@@ -53,7 +53,6 @@ static void aicwf_disconnect(struct aicwf_softc *sc)
 }
 static void aicwf_scan(struct aicwf_softc *sc)
 { sc->sc_scanning = true; scans++; }
-static void aicwf_connect(struct aicwf_softc *sc) { (void)sc; }
 /* The relevant generic transition: RUN leaves; INIT begins a fresh scan. */
 static int net80211_state(struct ieee80211com *ic,
     enum ieee80211_state state, int arg)

@@ -23,7 +23,7 @@ awk '/^#define WLAN_ACTION_(WNM|RADIO_MEASUREMENT) / {print}
         gsub(/[,=]/, ""); print "#define " $1 " " $2
     }' "$defs" \
     > "$work/actions.h"
-awk '/^#define[[:space:]]+AICWF_(RXHDR_|RX_FLAG_UPLOAD|RX_DECR[[:space:]]|KEY_SLOT_PAIRWISE|HWKEY_NONE)/ {print}' \
+awk '/^#define[[:space:]]+AICWF_(RXHDR_|RX_FLAG_UPLOAD|RX_DECR[[:space:]]|KEY_SLOT_PAIRWISE|HWKEY_NONE|SM_(CONNECT|DISCONNECT)|CONNECT_|AUTH_SAE|BAND_)/ {print}' \
     "$driver" > "$work/aicwf-defs.h"
 cp "$src/sys/dev/sdmmc/if_aicwf_sae.h" "$src/sys/dev/sdmmc/if_aicwf_vht.h" "$src/sys/dev/sdmmc/if_aicwf_sta.h" "$src/sys/dev/ic/fullmac_sae.h" "$work/"
 : > "$work/driver.h"
@@ -32,7 +32,8 @@ for spec in aicwf_sta_action_valid:bool aicwf_sta_supported:bool \
     aicwf_write:int aicwf_cmd_reply:int aicwf_cmd:int aicwf_scan:void \
     aicwf_sta_tx_finish_locked:bool aicwf_sta_scan_finish_locked:bool \
     aicwf_sta_scan_cancel_locked:void aicwf_sta_retire_locked:void aicwf_sae_advance_if:uint64_t \
-    aicwf_sae_advance:void \
+    aicwf_sae_advance:void aicwf_chan_set:void aicwf_connect:void \
+    aicwf_sae_clear_keys:void aicwf_disconnect:void aicwf_newstate_cb:void aicwf_state_cb:void \
     aicwf_sta_tx_cfm:void aicwf_sta_scan_request:int aicwf_sta_mgmt:int \
     aicwf_sta_mgmt_cb:void aicwf_sta_cancel_scan_cb:void aicwf_scan_done:void \
     aicwf_sta_assoc:void aicwf_rx:void aicwf_newstate:int \

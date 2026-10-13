@@ -4,8 +4,8 @@ The native `aicwf` driver connects Neighbor Reports and host-managed BSS
 transitions to the common BSD wpa_supplicant backend.
 The transport uses `IEEE80211_IOC_STA_MGMT` version 2.
 It requires D80 firmware `0x06090101` and a matching kernel and WPA client.
-This document describes the implementation and software checks.
-Physical k/v acceptance on Zero 3W is still pending.
+This document describes the implementation, software checks and physical transport results.
+Complete Neighbor Report and BTM acceptance on Zero 3W is still pending.
 
 ## Security and ownership
 
@@ -17,6 +17,12 @@ Do not disable PMF or omit its replay boundary to bypass that limitation.
 
 The host selects the candidate through upstream RRM and WNM policy.
 The driver submits a directed association and validates the reported peer.
+A directed join from a connected station sets the firmware REASSOCIATION flag.
+It does not substitute a forced disconnect for that operation.
+A rejected CONNECT retains the previous firmware-link state.
+Queued host configuration and physical association events have separate lifetimes.
+A late departure cannot erase a newer join or its keys.
+Older queued state work cannot cancel a newer AUTH request.
 Unexpected successful connection indications do not authorize a host transition.
 The pinned firmware interface has no documented WNM-disable readback.
 Its autonomous behavior therefore requires a separate physical check.
@@ -84,6 +90,41 @@ A stopped interface or a newer join cancels the old recovery task.
 ASan and UBSan check the host executions. They are not Valgrind Memcheck results.
 Kernel translation-unit analysis uses the actual target compilation configuration.
 Inherited findings and analyzer path-complexity limits must remain visible in its receipt.
+
+## Physical transport boundary
+
+A 4 GiB Zero 3W used firmware `0x06090101` on 2026-10-13.
+The kernel and four modules were built with GCC 16.2 from recorded clean revisions.
+The existing board DTB was preserved.
+The WNM-enabled WPA clients were built from `117904bf6aa7`.
+Their source and shared station headers remain unchanged in the tested kernel revisions.
+
+On `6b9ebde32c47`, a connected scan of 38 channels completed in 5.55 seconds.
+The BSSID and association generation stayed unchanged, and SSH remained available.
+An aborted scan retained radio ownership until its terminal indication arrived.
+The next scan completed after that drain.
+On `1fc69e1dc077`, all 54 live station-ioctl checks passed on both radio bands.
+Unprivileged mutation requests were rejected.
+
+Neighbor Report requests received matching firmware TX confirmations with the ACK bit set.
+The AP replied with category 5, action 5 and a three-byte body.
+That body contains no neighbor entries; the supplicant reported the request as failed.
+The result proves request/response transport, not a usable neighbor list.
+A WNM query also received a real transmit ACK, but no BTM request was observed.
+Enabling band steering for 120 seconds did not produce a BTM request in this trial.
+The AP settings were restored after the test.
+
+Actual association request IEs contain two RRM capability elements:
+firmware `70 00 00 00 00` and host `02 00 00 00 00`.
+The first advertises beacon measurement capabilities; the second advertises Neighbor Reports.
+The known CONNECT ABI appends host IEs and exposes no documented RRM replacement control.
+The duplicate needs a firmware-interface solution; rewriting local GET data would not fix the transmitted request.
+This defect is not established as the cause of the empty neighbor response.
+Use an AP with a known nonempty neighbor table for the next positive check.
+
+SAE authentication and complete WPA3/PMF operation remain separate results.
+The nonzero initial IGTK IPN restriction still prevents affected WPA3 associations.
+No PMF replay check was removed for these WPA2 transport tests.
 
 ## Physical acceptance
 
