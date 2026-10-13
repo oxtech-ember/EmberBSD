@@ -180,6 +180,7 @@ dwarf_die_link
 dwarf_diename
 dwarf_dieoffset
 dwarf_elf_init
+dwarf_elf_init_section
 dwarf_end_macro_file
 dwarf_errmsg_
 dwarf_expand_frame_instructions
@@ -326,6 +327,7 @@ dwarf_set_frame_rule_table_size
 dwarf_set_frame_same_value
 dwarf_set_frame_undefined_value
 dwarf_set_reloc_application
+dwarf_set_tied_dbg
 dwarf_seterrarg
 dwarf_seterrhand
 dwarf_siblingof

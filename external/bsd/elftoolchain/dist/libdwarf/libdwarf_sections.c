@@ -214,6 +214,7 @@ _dwarf_find_section(Dwarf_Debug dbg, const char *name)
 {
 	Dwarf_Section *ds;
 	Dwarf_Half i;
+	size_t len = strlen(name);
 
 	assert(dbg != NULL && name != NULL);
 
@@ -223,6 +224,14 @@ _dwarf_find_section(Dwarf_Debug dbg, const char *name)
 			return (ds);
 	}
 
+	/* Origin: EmberBSD (AI-assisted), DWARF5 split section aliases. */
+	for (i = 0; i < dbg->dbg_seccnt; i++) {
+		ds = &dbg->dbg_section[i];
+		if (ds->ds_name != NULL &&
+		    strncmp(ds->ds_name, name, len) == 0 &&
+		    strcmp(ds->ds_name + len, ".dwo") == 0)
+			return (ds);
+	}
 	return (NULL);
 }
 

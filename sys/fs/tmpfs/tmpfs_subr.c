@@ -498,7 +498,7 @@ void
 tmpfs_dir_attach(tmpfs_node_t *dnode, tmpfs_dirent_t *de, tmpfs_node_t *node)
 {
 	vnode_t *dvp = dnode->tn_vnode;
-	int events = NOTE_WRITE;
+	/* Origin: EmberBSD (AI-assisted), remove an unused notification mask. */
 
 	KASSERT(dvp != NULL);
 	KASSERT(VOP_ISLOCKED(dvp));
@@ -534,7 +534,6 @@ tmpfs_dir_attach(tmpfs_node_t *dnode, tmpfs_dirent_t *de, tmpfs_node_t *node)
 		/* Increase the link count of parent. */
 		KASSERT(dnode->tn_links < LINK_MAX);
 		dnode->tn_links++;
-		events |= NOTE_LINK;
 
 		TMPFS_VALIDATE_DIR(node);
 	}

@@ -293,6 +293,7 @@ void
 ieee80211_begin_scan(struct ieee80211com *ic, int reset)
 {
 	ic->ic_scan.nt_scangen++;
+	ic->ic_scan.nt_scan_epoch++;
 
 	/*
 	 * In all but hostap mode scanning starts off in
@@ -1021,6 +1022,10 @@ node_free(struct ieee80211_node *ni)
 		free(ni->ni_wpa_ie, M_DEVBUF);
 	if (ni->ni_wme_ie != NULL)
 		free(ni->ni_wme_ie, M_DEVBUF);
+	if (ni->ni_extcap_ie != NULL)
+		free(ni->ni_extcap_ie, M_DEVBUF);
+	if (ni->ni_rrm_ie != NULL)
+		free(ni->ni_rrm_ie, M_DEVBUF);
 	if (ni->ni_rsnx_ie != NULL)
 		free(ni->ni_rsnx_ie, M_DEVBUF);
 	IEEE80211_NODE_SAVEQ_DESTROY(ni);
@@ -1251,10 +1256,13 @@ static void
 saveie(u_int8_t **iep, const u_int8_t *ie)
 {
 
-	if (ie == NULL)
+	if (ie == NULL) {
+		if (*iep != NULL)
+			free(*iep, M_DEVBUF);
 		*iep = NULL;
-	else
+	} else {
 		ieee80211_saveie(iep, ie);
+	}
 }
 
 /*
@@ -1305,9 +1313,11 @@ ieee80211_add_scan(struct ieee80211com *ic,
 		memcpy(ni->ni_essid, sp->sp_ssid + 2, sp->sp_ssid[1]);
 	}
 
-	ni->ni_scangen = ic->ic_scan.nt_scangen;
+	ni->ni_scan_epoch = ic->ic_scan.nt_scan_epoch;
 	IEEE80211_ADDR_COPY(ni->ni_bssid, wh->i_addr3);
 	ni->ni_rssi = rssi;
+	ni->ni_rssi_dbm = sp->sp_rssi_dbm;
+	ni->ni_rssi_dbm_valid = sp->sp_rssi_dbm_valid;
 	ni->ni_rstamp = rstamp;
 	memcpy(ni->ni_tstamp.data, sp->sp_tstamp, sizeof(ni->ni_tstamp));
 	ni->ni_intval = sp->sp_bintval;
@@ -1339,6 +1349,8 @@ ieee80211_add_scan(struct ieee80211com *ic,
 	 */
 	saveie(&ni->ni_wme_ie, sp->sp_wme);
 	saveie(&ni->ni_wpa_ie, sp->sp_wpa);
+	saveie(&ni->ni_extcap_ie, sp->sp_extcap);
+	saveie(&ni->ni_rrm_ie, sp->sp_rrm);
 	if (sp->sp_rsnx != NULL)
 		ieee80211_saveie(&ni->ni_rsnx_ie, sp->sp_rsnx);
 	else if (ni->ni_rsnx_ie != NULL) {
@@ -1375,6 +1387,8 @@ ieee80211_init_neighbor(struct ieee80211com *ic, struct ieee80211_node *ni,
 		ieee80211_saveie(&ni->ni_wme_ie, sp->sp_wme);
 	if (sp->sp_wpa != NULL)
 		ieee80211_saveie(&ni->ni_wpa_ie, sp->sp_wpa);
+	saveie(&ni->ni_extcap_ie, sp->sp_extcap);
+	saveie(&ni->ni_rrm_ie, sp->sp_rrm);
 	if (sp->sp_rsnx != NULL)
 		ieee80211_saveie(&ni->ni_rsnx_ie, sp->sp_rsnx);
 	else if (ni->ni_rsnx_ie != NULL) {

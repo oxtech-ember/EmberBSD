@@ -57,6 +57,7 @@ global:
 	dwarf_diename;
 	dwarf_dieoffset;
 	dwarf_elf_init;
+	dwarf_elf_init_section;
 	dwarf_end_macro_file;
 	dwarf_errmsg_;
 	dwarf_expand_frame_instructions;

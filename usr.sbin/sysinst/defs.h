@@ -522,26 +522,26 @@ struct part_entry {
 extern char xfer_dir[STRSIZE];
 extern int  clean_xfer_dir;
 
+/* OS sets come from EmberBSD. Package defaults below retain pkgsrc provenance. */
+#ifndef EMBER_BUILD_ID
+#define EMBER_BUILD_ID "development"
+#endif
 #if !defined(SYSINST_FTP_HOST)
-#define SYSINST_FTP_HOST	"ftp.NetBSD.org"
+#define SYSINST_FTP_HOST "cdn.emberbsd.oxteam.me"
 #endif
-
 #if !defined(SYSINST_HTTP_HOST)
-#define SYSINST_HTTP_HOST	"cdn.NetBSD.org"
+#define SYSINST_HTTP_HOST "cdn.emberbsd.oxteam.me"
 #endif
-
 #if !defined(SYSINST_FTP_DIR)
-#if defined(NETBSD_OFFICIAL_RELEASE)
-#define SYSINST_FTP_DIR		"pub/NetBSD/NetBSD-" REL
-#elif defined(REL_PATH)
-#define SYSINST_FTP_DIR		"pub/NetBSD-daily/" REL_PATH "/latest"
-#else
-#define SYSINST_FTP_DIR		"pub/NetBSD/NetBSD-" REL
-#endif
+#define SYSINST_FTP_DIR "releases/" EMBER_BUILD_ID
 #endif
 
 #if !defined(ARCH_SUBDIR)
 #define	ARCH_SUBDIR	MACH
+#endif
+
+#ifndef SYSINST_FTP_SET_DIR_BIN
+#define SYSINST_FTP_SET_DIR_BIN "/" ARCH_SUBDIR "/binary/sets"
 #endif
 #if !defined(PKG_ARCH_SUBDIR)
 #define	PKG_ARCH_SUBDIR	MACH
@@ -590,6 +590,7 @@ extern char ext_dir_pkgsrc[STRSIZE];
 
 /* Place we look for binary sets in all fs types */
 extern char set_dir_bin[STRSIZE];
+extern char ftp_set_dir_bin[STRSIZE];
 
 /* Place we look for source sets in all fs types */
 extern char set_dir_src[STRSIZE];

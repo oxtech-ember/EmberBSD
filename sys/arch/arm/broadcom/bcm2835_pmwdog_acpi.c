@@ -44,9 +44,12 @@
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 
+#include "opt_bcmv3d.h"
+
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/device.h>
+#include <sys/mutex.h>
 #include <sys/systm.h>
 
 #include <dev/acpi/acpireg.h>
@@ -56,6 +59,14 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 /* A cell the boot loader did not report. */
 #define	PM_ACPI_UNREPORTED	0xffffffff
+
+/* Origin: EmberBSD BCM2712 PM observation and opt-in reset owner, 2026-10-09. */
+#define BCM2712_PM_GRAFX	0x304
+static struct bcm2835pmwdog_softc *bcmpmwdog_v3d_sc;
+#ifdef BCM2712_V3D_TAKEOVER
+static void bcmpmwdog_v3d_register(struct bcm2835pmwdog_softc *,
+    bus_addr_t, bus_size_t);
+#endif
 
 /*
  * Why the PMIC was reset, bit by bit, as the Raspberry Pi configuration
@@ -116,6 +127,12 @@ bcmpmwdog_acpi_attach(device_t parent, device_t self, void *aux)
 
 	aprint_normal_dev(self, "power management, reset and watchdog\n");
 	bcmpmwdog_attach_common(sc);
+	if (mem->ar_length >= BCM2712_PM_GRAFX + sizeof(uint32_t) &&
+	    bcmpmwdog_v3d_sc == NULL)
+		bcmpmwdog_v3d_sc = sc;
+#ifdef BCM2712_V3D_TAKEOVER
+	bcmpmwdog_v3d_register(sc, mem->ar_base, mem->ar_length);
+#endif
 	bcmpmwdog_acpi_power_source(self);
 done:
 	acpi_resource_cleanup(&res);
@@ -162,3 +179,163 @@ bcmpmwdog_acpi_power_source(device_t self)
 		aprint_normal(", USB over-current at boot");
 	aprint_normal("\n");
 }
+
+int
+bcmpmwdog_v3d_status(uint32_t *value)
+{
+	struct bcm2835pmwdog_softc *sc = bcmpmwdog_v3d_sc;
+
+	if (sc == NULL)
+		return ENXIO;
+	return bus_space_peek_4(sc->sc_iot, sc->sc_ioh,
+	    BCM2712_PM_GRAFX, value);
+}
+
+#ifdef BCM2712_V3D_TAKEOVER
+#define BCM2712_PM_BASE		UINT64_C(0x107d200000)
+#define BCM2712_PM_SIZE		0x308
+#define BCM2712_PM_PASSWORD	0x5a000000
+#define BCM2712_PM_RESET_N	__BIT(6)
+#define BCM2712_PM_ENABLE		__BIT(12)
+
+static struct {
+	kmutex_t lock;
+	bool ready, sealed, attempted;
+	device_t owner;
+	uint32_t baseline;
+} bcmpmwdog_v3d_claimed;
+
+static void
+bcmpmwdog_v3d_register(struct bcm2835pmwdog_softc *sc, bus_addr_t base,
+    bus_size_t size)
+{
+	/* Only the original, exact ACPI PM owner can offer this interface. */
+	if (sc != bcmpmwdog_v3d_sc || base != BCM2712_PM_BASE ||
+	    size != BCM2712_PM_SIZE || bcmpmwdog_v3d_claimed.ready)
+		return;
+	mutex_init(&bcmpmwdog_v3d_claimed.lock, MUTEX_DEFAULT, IPL_NONE);
+	bcmpmwdog_v3d_claimed.ready = true;
+}
+
+int
+bcmpmwdog_v3d_claim(device_t owner)
+{
+	uint32_t value;
+	int error;
+
+	if (owner == NULL || !bcmpmwdog_v3d_claimed.ready)
+		return ENXIO;
+	mutex_enter(&bcmpmwdog_v3d_claimed.lock);
+	if (bcmpmwdog_v3d_claimed.owner != NULL) {
+		error = EBUSY;
+		goto out;
+	}
+	error = bcmpmwdog_v3d_status(&value);
+	if (error != 0)
+		goto out;
+	if ((value & 0xff000000) != 0 ||
+	    (value & (BCM2712_PM_RESET_N | BCM2712_PM_ENABLE)) !=
+	    (BCM2712_PM_RESET_N | BCM2712_PM_ENABLE)) {
+		error = EBUSY;
+		goto out;
+	}
+	bcmpmwdog_v3d_claimed.baseline = value;
+	bcmpmwdog_v3d_claimed.owner = owner;
+out:
+	mutex_exit(&bcmpmwdog_v3d_claimed.lock);
+	return error;
+}
+
+int
+bcmpmwdog_v3d_seal(device_t owner)
+{
+	int error = 0;
+
+	if (!bcmpmwdog_v3d_claimed.ready || owner == NULL)
+		return ENXIO;
+	mutex_enter(&bcmpmwdog_v3d_claimed.lock);
+	if (bcmpmwdog_v3d_claimed.owner != owner)
+		error = EPERM;
+	else if (bcmpmwdog_v3d_claimed.sealed)
+		error = EBUSY;
+	else
+		bcmpmwdog_v3d_claimed.sealed = true;
+	mutex_exit(&bcmpmwdog_v3d_claimed.lock);
+	return error;
+}
+
+int
+bcmpmwdog_v3d_release(device_t owner)
+{
+	int error = 0;
+
+	if (!bcmpmwdog_v3d_claimed.ready || owner == NULL)
+		return ENXIO;
+	mutex_enter(&bcmpmwdog_v3d_claimed.lock);
+	if (bcmpmwdog_v3d_claimed.owner != owner)
+		error = EPERM;
+	else if (bcmpmwdog_v3d_claimed.sealed)
+		error = EBUSY;
+	else
+		bcmpmwdog_v3d_claimed.owner = NULL;
+	mutex_exit(&bcmpmwdog_v3d_claimed.lock);
+	return error;
+}
+
+int
+bcmpmwdog_v3d_reset(device_t owner)
+{
+	struct bcm2835pmwdog_softc *sc = bcmpmwdog_v3d_sc;
+	uint32_t baseline, value;
+	int error;
+
+	if (!bcmpmwdog_v3d_claimed.ready || sc == NULL || owner == NULL)
+		return ENXIO;
+	mutex_enter(&bcmpmwdog_v3d_claimed.lock);
+	if (bcmpmwdog_v3d_claimed.owner != owner ||
+	    !bcmpmwdog_v3d_claimed.sealed) {
+		error = EPERM;
+		goto out;
+	}
+	if (bcmpmwdog_v3d_claimed.attempted) {
+		error = EBUSY;
+		goto out;
+	}
+	bcmpmwdog_v3d_claimed.attempted = true;
+	baseline = bcmpmwdog_v3d_claimed.baseline;
+	error = bcmpmwdog_v3d_status(&value);
+	if (error != 0)
+		goto out;
+	if (value != baseline) {
+		error = EIO;
+		goto out;
+	}
+	error = bus_space_poke_4(sc->sc_iot, sc->sc_ioh, BCM2712_PM_GRAFX,
+	    BCM2712_PM_PASSWORD | (baseline & ~BCM2712_PM_RESET_N));
+	if (error != 0)
+		goto out;
+	bus_space_barrier(sc->sc_iot, sc->sc_ioh, BCM2712_PM_GRAFX, 4,
+	    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+	error = bcmpmwdog_v3d_status(&value);
+	if (error != 0)
+		goto out;
+	if (value != (baseline & ~BCM2712_PM_RESET_N)) {
+		error = EIO;
+		goto out;
+	}
+	/* BCM2712 has no ASB or domain clock; keep the enabled clock running. */
+	delay(1);
+	error = bus_space_poke_4(sc->sc_iot, sc->sc_ioh, BCM2712_PM_GRAFX,
+	    BCM2712_PM_PASSWORD | baseline);
+	if (error != 0)
+		goto out;
+	bus_space_barrier(sc->sc_iot, sc->sc_ioh, BCM2712_PM_GRAFX, 4,
+	    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+	error = bcmpmwdog_v3d_status(&value);
+	if (error == 0 && value != baseline)
+		error = EIO;
+out:
+	mutex_exit(&bcmpmwdog_v3d_claimed.lock);
+	return error;
+}
+#endif

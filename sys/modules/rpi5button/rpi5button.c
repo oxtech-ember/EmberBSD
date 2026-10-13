@@ -2,7 +2,7 @@
 /* Origin: deployed EmberBSD Pi 5 fallback, source recorded in README.md. */
 /*
  * The Raspberry Pi 5 firmware used with ACPI does not expose its power
- * button. GPIO20 in BCM2712's main bank is active low on both C1 and D0.
+ * button. GPIO20 in BCM2712's main bank is active low on Pi 5 and CM5.
  * Use device mappings and the standard power-switch event path. Polling
  * does not take ownership of the GPIO interrupt controller or change pins.
  */
@@ -84,7 +84,8 @@ rpi5button_modcmd(modcmd_t cmd, void *arg)
 	case MODULE_CMD_INIT:
 		product = pmf_get_platform("system-product");
 		if (product == NULL ||
-		    strcmp(product, "Raspberry Pi 5 Model B") != 0)
+		    (strcmp(product, "Raspberry Pi 5 Model B") != 0 &&
+		    strcmp(product, "Raspberry Pi Compute Module 5") != 0))
 			return ENXIO;
 		error = bus_space_map(bst, RPI5BUTTON_GPIO_BASE,
 		    RPI5BUTTON_GPIO_SIZE, 0, &gpio);

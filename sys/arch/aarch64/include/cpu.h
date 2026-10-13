@@ -224,6 +224,8 @@ static __inline struct cpu_info *lwp_getcpu(struct lwp *);
 void	cpu_signotify(struct lwp *l);
 void	cpu_need_proftick(struct lwp *l);
 
+uint64_t cpu_elf_hwcap(void);
+
 void	cpu_hatch(struct cpu_info *);
 
 extern struct cpu_info *cpu_info[];

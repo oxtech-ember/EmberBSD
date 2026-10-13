@@ -40,6 +40,7 @@ __KERNEL_RCSID(0, "$NetBSD: sunxi_rtc.c,v 1.10 2021/01/27 03:10:20 thorpej Exp $
 #include <dev/clk/clk_backend.h>
 
 #include <dev/fdt/fdtvar.h>
+#include <arm/sunxi/sunxi_rtcvar.h>
 
 #define	SUN4I_RTC_YY_MM_DD_REG	0x04
 #define	 SUN4I_RTC_LEAP		__BIT(22)
@@ -297,6 +298,7 @@ struct sunxi_rtc_softc {
 	const struct sunxi_rtc_config *sc_conf;
 
 	int sc_phandle;
+	struct sunxi_rtc_softc *sc_dcxo_next;
 
 	struct clk *sc_parent_clk;	/* external oscillator */
 
@@ -325,6 +327,83 @@ struct sunxi_rtc_softc {
     bus_space_read_4((sc)->sc_bst, (sc)->sc_bsh, (reg))
 #define RTC_WRITE(sc, reg, val) \
     bus_space_write_4((sc)->sc_bst, (sc)->sc_bsh, (reg), (val))
+
+/*
+ * Origin: EmberBSD; read-only A733 DCXO status, BSP 2ac08e8c7cdc and
+ * Linux 0a136efc0fc2. See ember/boot/a733-provider-state.md.
+ * Registration runs during serialized boot attachment; there is no detach.
+ */
+#define A733_RTC_DCXO_REG		0x160
+#define A733_RTC_DCXO_STATUS	__BITS(15,14)
+static struct sunxi_rtc_softc *sunxi_rtc_dcxo_providers;
+static const struct device_compatible_entry dcxo_compat[] = {
+	{ .compat = "allwinner,sun60i-a733-rtc" },
+	DEVICE_COMPAT_EOL
+};
+
+static int
+sunxi_rtc_dcxo_register(struct sunxi_rtc_softc *sc, bus_size_t size)
+{
+	struct sunxi_rtc_softc *provider;
+
+	if (sc->sc_phandle <= 0 || size < A733_RTC_DCXO_REG + sizeof(uint32_t))
+		return EINVAL;
+	if (sc->sc_conf != &sun60i_a733_rtc_config ||
+	    !of_compatible_match(sc->sc_phandle, dcxo_compat))
+		return EOPNOTSUPP;
+	for (provider = sunxi_rtc_dcxo_providers; provider != NULL;
+	    provider = provider->sc_dcxo_next) {
+		if (provider->sc_phandle == sc->sc_phandle)
+			return EEXIST;
+	}
+	sc->sc_dcxo_next = sunxi_rtc_dcxo_providers;
+	sunxi_rtc_dcxo_providers = sc;
+	return 0;
+}
+
+int
+sunxi_rtc_dcxo_query(int phandle, struct sunxi_rtc_dcxo_state *result)
+{
+	static const u_int rates[] = { 24000000, 19200000, 26000000, 24000000 };
+	struct sunxi_rtc_dcxo_state state;
+	struct sunxi_rtc_softc *sc;
+
+	if (phandle <= 0 || result == NULL)
+		return EINVAL;
+	for (sc = sunxi_rtc_dcxo_providers; sc != NULL; sc = sc->sc_dcxo_next) {
+		if (sc->sc_phandle == phandle)
+			break;
+	}
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->sc_clk_mutex);
+	state.sample[0] = RTC_READ(sc, A733_RTC_DCXO_REG);
+	state.sample[1] = RTC_READ(sc, A733_RTC_DCXO_REG);
+	mutex_exit(&sc->sc_clk_mutex);
+	if (state.sample[0] != state.sample[1])
+		return EBUSY;
+	state.rate_hz = rates[__SHIFTOUT(state.sample[0], A733_RTC_DCXO_STATUS)];
+	*result = state;
+	return 0;
+}
+
+static void
+sunxi_rtc_dcxo_report(struct sunxi_rtc_softc *sc, bus_size_t size)
+{
+	struct sunxi_rtc_dcxo_state state;
+	int error;
+
+	error = sunxi_rtc_dcxo_register(sc, size);
+	if (error == 0)
+		error = sunxi_rtc_dcxo_query(sc->sc_phandle, &state);
+	if (error != 0)
+		aprint_error_dev(sc->sc_dev, "DCXO observation unavailable: %d\n",
+		    error);
+	else
+		aprint_normal_dev(sc->sc_dev, "DCXO status 0x%08x / 0x%08x, "
+		    "%u Hz (hardware classification)\n", state.sample[0],
+		    state.sample[1], state.rate_hz);
+}
 
 static int	sunxi_rtc_match(device_t, cfdata_t, void *);
 static void	sunxi_rtc_attach(device_t, device_t, void *);
@@ -412,6 +491,8 @@ sunxi_rtc_attach(device_t parent, device_t self, void *aux)
 	aprint_normal(": RTC\n");
 
 	mutex_init(&sc->sc_clk_mutex, MUTEX_DEFAULT, IPL_HIGH);
+	if (sc->sc_conf == &sun60i_a733_rtc_config)
+		sunxi_rtc_dcxo_report(sc, size);
 
 	sc->sc_todr.cookie = sc;
 	sc->sc_todr.todr_gettime_ymdhms = sunxi_rtc_gettime;

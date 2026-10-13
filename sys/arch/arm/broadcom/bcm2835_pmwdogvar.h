@@ -1,3 +1,4 @@
+/* Origin: EmberBSD BCM2712 V3D observation, 2026-10-09. */
 /*	$NetBSD: bcm2835_pmwdogvar.h,v 1.1 2017/12/10 21:38:26 skrll Exp $	*/
 
 /*-
@@ -47,6 +48,11 @@ struct bcm2835pmwdog_softc {
 };
 
 void bcmpmwdog_attach_common(struct bcm2835pmwdog_softc *);
+int bcmpmwdog_v3d_status(uint32_t *);
+int bcmpmwdog_v3d_claim(device_t);
+int bcmpmwdog_v3d_seal(device_t);
+int bcmpmwdog_v3d_release(device_t);
+int bcmpmwdog_v3d_reset(device_t);
 void bcm2835_system_reset(void);
 
 #endif	/* _ARM_BROADCOM_BCM2835_PMWDOG_VAR_H_ */

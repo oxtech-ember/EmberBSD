@@ -820,7 +820,7 @@ ptree_remove_node(pt_tree_t *pt, void *item)
 	uintptr_t node;
 	uintptr_t *removep;
 	uintptr_t *nodep;
-	pt_bitoff_t bitoff;
+	/* Origin: EmberBSD (AI-assisted), remove the unused traversal bit count. */
 	pt_slot_t parent_slot;
 #ifndef PTNOMASK
 	bool at_mask;
@@ -831,7 +831,6 @@ ptree_remove_node(pt_tree_t *pt, void *item)
 		return;
 	}
 
-	bitoff = 0;
 	removep = NULL;
 	nodep = NULL;
 	parent = &pt->pt_rootnode;
@@ -881,7 +880,6 @@ ptree_remove_node(pt_tree_t *pt, void *item)
 		 */
 		parent = ptn;
 		parent_slot = ptree_testnode(pt, target, parent);
-		bitoff += PTN_BRANCH_BITLEN(parent);
 	}
 
 	/*

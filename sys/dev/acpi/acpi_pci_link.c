@@ -738,7 +738,7 @@ acpi_pci_link_srs_from_crs(struct acpi_pci_link_softc *sc, ACPI_BUFFER *srsbuf)
 	ACPI_RESOURCE *end, *res;
 	ACPI_STATUS status;
 	struct link *link;
-	int i, in_dpf;
+	int in_dpf;
 
 	/* Fetch the _CRS. */
 	srsbuf->Pointer = NULL;
@@ -752,9 +752,9 @@ acpi_pci_link_srs_from_crs(struct acpi_pci_link_softc *sc, ACPI_BUFFER *srsbuf)
 		return status;
 	}
 
+	/* Origin: EmberBSD (AI-assisted), remove unused IRQ resource counters. */
 	/* Fill in IRQ resources via link structures. */
 	link = sc->pl_links;
-	i = 0;
 	in_dpf = DPF_OUTSIDE;
 	res = (ACPI_RESOURCE *)srsbuf->Pointer;
 	end = (ACPI_RESOURCE *)((char *)srsbuf->Pointer + srsbuf->Length);
@@ -789,7 +789,6 @@ acpi_pci_link_srs_from_crs(struct acpi_pci_link_softc *sc, ACPI_BUFFER *srsbuf)
 			} else
 				res->Data.Irq.Interrupts[0] = 0;
 			link++;
-			i++;
 			break;
 		case ACPI_RESOURCE_TYPE_EXTENDED_IRQ:
 			res->Data.ExtendedIrq.InterruptCount = 1;
@@ -802,7 +801,6 @@ acpi_pci_link_srs_from_crs(struct acpi_pci_link_softc *sc, ACPI_BUFFER *srsbuf)
 			} else
 				res->Data.ExtendedIrq.Interrupts[0] = 0;
 			link++;
-			i++;
 			break;
 		}
 		if (res->Type == ACPI_RESOURCE_TYPE_END_TAG)
@@ -900,7 +898,7 @@ acpi_pci_link_route_irqs(struct acpi_pci_link_softc *sc, int *irq, int *pol,
 	ACPI_BUFFER srsbuf;
 	ACPI_STATUS status;
 	struct link *link;
-	int i, is_ext = 0;
+	int is_ext = 0;
 
 	status = acpi_pci_link_srs(sc, &srsbuf);
 	if (ACPI_FAILURE(status)) {
@@ -913,7 +911,6 @@ acpi_pci_link_route_irqs(struct acpi_pci_link_softc *sc, int *irq, int *pol,
 	 * routed for the first time.
 	 */
 	link = sc->pl_links;
-	i = 0;
 	resource = (ACPI_RESOURCE *)srsbuf.Pointer;
 	end = (ACPI_RESOURCE *)((char *)srsbuf.Pointer + srsbuf.Length);
 	for (;;) {
@@ -945,7 +942,6 @@ acpi_pci_link_route_irqs(struct acpi_pci_link_softc *sc, int *irq, int *pol,
 				    link->l_references;
 			}
 			link++;
-			i++;
 			break;
 		}
 		resource = ACPI_NEXT_RESOURCE(resource);

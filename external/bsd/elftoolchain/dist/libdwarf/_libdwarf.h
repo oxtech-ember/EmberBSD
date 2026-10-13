@@ -404,6 +404,8 @@ typedef struct {
 } Dwarf_Elf_Object;
 
 struct _Dwarf_Debug {
+	/* Origin: EmberBSD (AI-assisted); borrowed, caller-owned supplement. */
+	Dwarf_Debug	dbg_tied;
 	Dwarf_Obj_Access_Interface *dbg_iface;
 	Dwarf_Section	*dbg_section;	/* Dwarf section list. */
 	Dwarf_Section	*dbg_info_sec;	/* Pointer to info section. */
@@ -536,7 +538,7 @@ int		_dwarf_die_parse(Dwarf_Debug, Dwarf_Section *, Dwarf_CU, int,
 		    uint64_t, uint64_t, Dwarf_Die *, int, Dwarf_Error *);
 void		_dwarf_die_pro_cleanup(Dwarf_P_Debug);
 void		_dwarf_elf_deinit(Dwarf_Debug);
-int		_dwarf_elf_init(Dwarf_Debug, Elf *, Dwarf_Error *);
+int		_dwarf_elf_init(Dwarf_Debug, Elf *, Dwarf_Unsigned, Dwarf_Error *);
 int		_dwarf_elf_load_section(void *, Dwarf_Half, Dwarf_Small **,
 		    int *);
 Dwarf_Endianness _dwarf_elf_get_byte_order(void *);

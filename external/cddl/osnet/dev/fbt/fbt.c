@@ -65,6 +65,7 @@
 #include <sys/dtrace_impl.h>
 
 #include "fbt.h"
+#include "fbt_ctf.h"
 
 mod_ctf_t *modptr;
 
@@ -453,12 +454,19 @@ fbt_ctfoff_init(modctl_t *mod, mod_ctf_t *mc)
 	uint32_t *ctfoff;
 	uint32_t objtoff = hp->cth_objtoff;
 	uint32_t funcoff = hp->cth_funcoff;
-	ushort_t info;
-	ushort_t vlen;
+	uint32_t info, vlen;
+	size_t width = fbt_ctf_width(hp->cth_version);
 	int nsyms = (mc->nmap != NULL) ? mc->nmapsize : mc->nsym;
 
 	/* Sanity check. */
-	if (hp->cth_magic != CTF_MAGIC) {
+	if (mc->ctfcnt < sizeof(*hp) || hp->cth_magic != CTF_MAGIC ||
+	    (hp->cth_version != CTF_VERSION_2 &&
+	    hp->cth_version != CTF_VERSION_3) ||
+	    hp->cth_objtoff > hp->cth_funcoff ||
+	    hp->cth_funcoff > hp->cth_typeoff ||
+	    hp->cth_typeoff > hp->cth_stroff ||
+	    hp->cth_stroff > mc->ctfcnt - sizeof(*hp) ||
+	    hp->cth_strlen > mc->ctfcnt - sizeof(*hp) - hp->cth_stroff) {
 		printf("Bad magic value in CTF data of '%s'\n",
 		    module_name(mod));
 		return (EINVAL);
@@ -470,14 +478,17 @@ fbt_ctfoff_init(modctl_t *mod, mod_ctf_t *mc)
 	}
 
 	ctfoff = malloc(sizeof(uint32_t) * nsyms, M_FBT, M_WAITOK);
+	memset(ctfoff, 0xff, sizeof(uint32_t) * nsyms);
 	mc->ctfoffp = ctfoff;
 
 	for (i = 0; i < nsyms; i++, ctfoff++, symp++) {
 	   	if (mc->nmap != NULL) {
-			if (mc->nmap[i] == 0) {
+			if (mc->nmap[i] == 0 || mc->nmap[i] > mc->nsym) {
 				printf("%s.%d: Error! Got zero nmap!\n",
 					__func__, __LINE__);
-				continue;
+				free(mc->ctfoffp, M_FBT);
+				mc->ctfoffp = NULL;
+				return EINVAL;
 			}
 
 			/*
@@ -507,36 +518,43 @@ fbt_ctfoff_init(modctl_t *mod, mod_ctf_t *mc)
 
 		switch (ELF_ST_TYPE(symp->st_info)) {
 		case STT_OBJECT:
-			if (objtoff >= hp->cth_funcoff ||
+			if (objtoff > hp->cth_funcoff ||
+			    width > hp->cth_funcoff - objtoff ||
                             (symp->st_shndx == SHN_ABS && symp->st_value == 0)) {
 				*ctfoff = 0xffffffff;
                                 break;
                         }
 
                         *ctfoff = objtoff;
-                        objtoff += sizeof (ushort_t);
+                        objtoff += width;
 			break;
 
 		case STT_FUNC:
-			if (funcoff >= hp->cth_typeoff) {
+			if (funcoff > hp->cth_typeoff ||
+			    width > hp->cth_typeoff - funcoff) {
 				*ctfoff = 0xffffffff;
 				break;
 			}
 
 			*ctfoff = funcoff;
 
-			info = *((const ushort_t *)(ctfdata + funcoff));
-			vlen = CTF_INFO_VLEN(info);
+			info = fbt_ctf_word(ctfdata + funcoff, width);
+			vlen = fbt_ctf_vlen(hp->cth_version, info);
 
 			/*
 			 * If we encounter a zero pad at the end, just skip it.
 			 * Otherwise skip over the function and its return type
 			 * (+2) and the argument list (vlen).
 			 */
-			if (CTF_INFO_KIND(info) == CTF_K_UNKNOWN && vlen == 0)
-				funcoff += sizeof (ushort_t); /* skip pad */
-			else
-				funcoff += sizeof (ushort_t) * (vlen + 2);
+			if (fbt_ctf_kind(hp->cth_version, info) == CTF_K_UNKNOWN && vlen == 0)
+				funcoff += width; /* skip pad */
+			else if (fbt_ctf_kind(hp->cth_version, info) != CTF_K_FUNCTION ||
+			    vlen + 2 > (hp->cth_typeoff - funcoff) / width) {
+				free(mc->ctfoffp, M_FBT);
+				mc->ctfoffp = NULL;
+				return EINVAL;
+			} else
+				funcoff += width * (vlen + 2);
 			break;
 
 		default:
@@ -548,207 +566,30 @@ fbt_ctfoff_init(modctl_t *mod, mod_ctf_t *mc)
 	return (0);
 }
 
-static ssize_t
-fbt_get_ctt_size(uint8_t version, const ctf_type_t *tp, ssize_t *sizep,
-    ssize_t *incrementp)
-{
-	ssize_t size, increment;
-
-	if (version > CTF_VERSION_1 &&
-	    tp->ctt_size == CTF_LSIZE_SENT) {
-		size = CTF_TYPE_LSIZE(tp);
-		increment = sizeof (ctf_type_t);
-	} else {
-		size = tp->ctt_size;
-		increment = sizeof (ctf_stype_t);
-	}
-
-	if (sizep)
-		*sizep = size;
-	if (incrementp)
-		*incrementp = increment;
-
-	return (size);
-}
-
+/* Origin: EmberBSD (AI-assisted), index CTF2 and CTF3 without ABI casts. */
 static int
 fbt_typoff_init(mod_ctf_t *mc)
 {
-	const ctf_header_t *hp = (const ctf_header_t *) mc->ctftab;
-	const ctf_type_t *tbuf;
-	const ctf_type_t *tend;
-	const ctf_type_t *tp;
-	const uint8_t *ctfdata = mc->ctftab + sizeof(ctf_header_t);
-	int ctf_typemax = 0;
-	uint32_t *xp;
-	ulong_t pop[CTF_K_MAX + 1] = { 0 };
+	const ctf_header_t *hp = (const ctf_header_t *)mc->ctftab;
+	const uint8_t *data = mc->ctftab + sizeof(*hp);
+	struct fbt_ctf_type t;
+	size_t off, count = 1, i;
 
-
-	/* Sanity check. */
-	if (hp->cth_magic != CTF_MAGIC)
-		return (EINVAL);
-
-	tbuf = (const ctf_type_t *) (ctfdata + hp->cth_typeoff);
-	tend = (const ctf_type_t *) (ctfdata + hp->cth_stroff);
-
-	int child = hp->cth_parname != 0;
-
-	/*
-	 * We make two passes through the entire type section.  In this first
-	 * pass, we count the number of each type and the total number of types.
-	 */
-	for (tp = tbuf; tp < tend; ctf_typemax++) {
-		ushort_t kind = CTF_INFO_KIND(tp->ctt_info);
-		ulong_t vlen = CTF_INFO_VLEN(tp->ctt_info);
-		ssize_t size, increment;
-
-		size_t vbytes;
-		uint_t n;
-
-		(void) fbt_get_ctt_size(hp->cth_version, tp, &size, &increment);
-
-		switch (kind) {
-		case CTF_K_INTEGER:
-		case CTF_K_FLOAT:
-			vbytes = sizeof (uint_t);
-			break;
-		case CTF_K_ARRAY:
-			vbytes = sizeof (ctf_array_t);
-			break;
-		case CTF_K_FUNCTION:
-			vbytes = sizeof (ushort_t) * (vlen + (vlen & 1));
-			break;
-		case CTF_K_STRUCT:
-		case CTF_K_UNION:
-			if (size < CTF_LSTRUCT_THRESH) {
-				ctf_member_t *mp = (ctf_member_t *)
-				    ((uintptr_t)tp + increment);
-
-				vbytes = sizeof (ctf_member_t) * vlen;
-				for (n = vlen; n != 0; n--, mp++)
-					child |= CTF_TYPE_ISCHILD(mp->ctm_type);
-			} else {
-				ctf_lmember_t *lmp = (ctf_lmember_t *)
-				    ((uintptr_t)tp + increment);
-
-				vbytes = sizeof (ctf_lmember_t) * vlen;
-				for (n = vlen; n != 0; n--, lmp++)
-					child |=
-					    CTF_TYPE_ISCHILD(lmp->ctlm_type);
-			}
-			break;
-		case CTF_K_ENUM:
-			vbytes = sizeof (ctf_enum_t) * vlen;
-			break;
-		case CTF_K_FORWARD:
-			/*
-			 * For forward declarations, ctt_type is the CTF_K_*
-			 * kind for the tag, so bump that population count too.
-			 * If ctt_type is unknown, treat the tag as a struct.
-			 */
-			if (tp->ctt_type == CTF_K_UNKNOWN ||
-			    tp->ctt_type >= CTF_K_MAX)
-				pop[CTF_K_STRUCT]++;
-			else
-				pop[tp->ctt_type]++;
-			/*FALLTHRU*/
-		case CTF_K_UNKNOWN:
-			vbytes = 0;
-			break;
-		case CTF_K_POINTER:
-		case CTF_K_TYPEDEF:
-		case CTF_K_VOLATILE:
-		case CTF_K_CONST:
-		case CTF_K_RESTRICT:
-			child |= CTF_TYPE_ISCHILD(tp->ctt_type);
-			vbytes = 0;
-			break;
-		default:
-			printf("%s(%d): detected invalid CTF kind -- %u\n",
-			       __func__, __LINE__, kind);
-			return (EIO);
-		}
-		tp = (ctf_type_t *)((uintptr_t)tp + increment + vbytes);
-		pop[kind]++;
+	for (off = hp->cth_typeoff; off < hp->cth_stroff; off += t.reclen) {
+		if (fbt_ctf_decode(hp->cth_version, data + off,
+		    hp->cth_stroff - off, &t) != 0)
+			return EINVAL;
+		count++;
 	}
-
-	/* account for a sentinel value below */
-	ctf_typemax++;
-	mc->typlen = ctf_typemax;
-
-	xp = malloc(sizeof(uint32_t) * ctf_typemax, M_FBT, M_ZERO | M_WAITOK);
-
-	mc->typoffp = xp;
-
-	/* type id 0 is used as a sentinel value */
-	*xp++ = 0;
-
-	/*
-	 * In the second pass, fill in the type offset.
-	 */
-	for (tp = tbuf; tp < tend; xp++) {
-		ushort_t kind = CTF_INFO_KIND(tp->ctt_info);
-		ulong_t vlen = CTF_INFO_VLEN(tp->ctt_info);
-		ssize_t size, increment;
-
-		size_t vbytes;
-		uint_t n;
-
-		(void) fbt_get_ctt_size(hp->cth_version, tp, &size, &increment);
-
-		switch (kind) {
-		case CTF_K_INTEGER:
-		case CTF_K_FLOAT:
-			vbytes = sizeof (uint_t);
-			break;
-		case CTF_K_ARRAY:
-			vbytes = sizeof (ctf_array_t);
-			break;
-		case CTF_K_FUNCTION:
-			vbytes = sizeof (ushort_t) * (vlen + (vlen & 1));
-			break;
-		case CTF_K_STRUCT:
-		case CTF_K_UNION:
-			if (size < CTF_LSTRUCT_THRESH) {
-				ctf_member_t *mp = (ctf_member_t *)
-				    ((uintptr_t)tp + increment);
-
-				vbytes = sizeof (ctf_member_t) * vlen;
-				for (n = vlen; n != 0; n--, mp++)
-					child |= CTF_TYPE_ISCHILD(mp->ctm_type);
-			} else {
-				ctf_lmember_t *lmp = (ctf_lmember_t *)
-				    ((uintptr_t)tp + increment);
-
-				vbytes = sizeof (ctf_lmember_t) * vlen;
-				for (n = vlen; n != 0; n--, lmp++)
-					child |=
-					    CTF_TYPE_ISCHILD(lmp->ctlm_type);
-			}
-			break;
-		case CTF_K_ENUM:
-			vbytes = sizeof (ctf_enum_t) * vlen;
-			break;
-		case CTF_K_FORWARD:
-		case CTF_K_UNKNOWN:
-			vbytes = 0;
-			break;
-		case CTF_K_POINTER:
-		case CTF_K_TYPEDEF:
-		case CTF_K_VOLATILE:
-		case CTF_K_CONST:
-		case CTF_K_RESTRICT:
-			vbytes = 0;
-			break;
-		default:
-			printf("%s(%d): detected invalid CTF kind -- %u\n", __func__, __LINE__, kind);
-			return (EIO);
-		}
-		*xp = (uint32_t)((uintptr_t) tp - (uintptr_t) ctfdata);
-		tp = (ctf_type_t *)((uintptr_t)tp + increment + vbytes);
+	mc->typoffp = malloc(sizeof(uint32_t) * count, M_FBT, M_ZERO | M_WAITOK);
+	mc->typlen = count;
+	for (off = hp->cth_typeoff, i = 1; i < count; i++) {
+		(void)fbt_ctf_decode(hp->cth_version, data + off,
+		    hp->cth_stroff - off, &t);
+		mc->typoffp[i] = off;
+		off += t.reclen;
 	}
-
-	return (0);
+	return 0;
 }
 
 /*
@@ -883,57 +724,46 @@ ctf_decl_fini(ctf_decl_t *cd)
 	}
 }
 
-static const ctf_type_t *
-ctf_lookup_by_id(mod_ctf_t *mc, ctf_id_t type)
+static const uint8_t *
+ctf_lookup_by_id(mod_ctf_t *mc, ctf_id_t type, struct fbt_ctf_type *t)
 {
-	const ctf_type_t *tp;
-	uint32_t offset;
-	uint32_t *typoff = mc->typoffp;
+	const ctf_header_t *hp = (const ctf_header_t *)mc->ctftab;
+	const uint8_t *p;
+	uint32_t off;
 
-	if (type >= mc->typlen) {
-		printf("%s(%d): type %d exceeds max %ld\n",__func__,__LINE__,(int) type,mc->typlen);
-		return(NULL);
-	}
-
-	/* Check if the type isn't cross-referenced. */
-	if ((offset = typoff[type]) == 0) {
-		printf("%s(%d): type %d isn't cross referenced\n",__func__,__LINE__, (int) type);
-		return(NULL);
-	}
-
-	tp = (const ctf_type_t *)(mc->ctftab + offset + sizeof(ctf_header_t));
-
-	return (tp);
+	if (type <= 0 || type >= mc->typlen)
+		return NULL;
+	off = mc->typoffp[type];
+	if (off < hp->cth_typeoff || off >= hp->cth_stroff)
+		return NULL;
+	p = mc->ctftab + sizeof(*hp) + off;
+	if (fbt_ctf_decode(hp->cth_version, p, hp->cth_stroff - off, t) != 0)
+		return NULL;
+	return p;
 }
 
 static void
 fbt_array_info(mod_ctf_t *mc, ctf_id_t type, ctf_arinfo_t *arp)
 {
-	const ctf_header_t *hp = (const ctf_header_t *) mc->ctftab;
-	const ctf_type_t *tp;
-	const ctf_array_t *ap;
-	ssize_t increment;
+	const ctf_header_t *hp = (const ctf_header_t *)mc->ctftab;
+	const uint8_t *p;
+	struct fbt_ctf_type t;
+	size_t width = fbt_ctf_width(hp->cth_version);
 
 	bzero(arp, sizeof(*arp));
-
-	if ((tp = ctf_lookup_by_id(mc, type)) == NULL)
+	p = ctf_lookup_by_id(mc, type, &t);
+	if (p == NULL || t.kind != CTF_K_ARRAY)
 		return;
-
-	if (CTF_INFO_KIND(tp->ctt_info) != CTF_K_ARRAY)
-		return;
-
-	(void) fbt_get_ctt_size(hp->cth_version, tp, NULL, &increment);
-
-	ap = (const ctf_array_t *)((uintptr_t)tp + increment);
-	arp->ctr_contents = ap->cta_contents;
-	arp->ctr_index = ap->cta_index;
-	arp->ctr_nelems = ap->cta_nelems;
+	p += t.hdrlen;
+	arp->ctr_contents = fbt_ctf_word(p, width);
+	arp->ctr_index = fbt_ctf_word(p + width, width);
+	arp->ctr_nelems = fbt_ctf_word(p + 2 * width, 4);
 }
 
 static const char *
 ctf_strptr(mod_ctf_t *mc, int name)
 {
-	const ctf_header_t *hp = (const ctf_header_t *) mc->ctftab;;
+	const ctf_header_t *hp = (const ctf_header_t *) mc->ctftab;
 	const char *strp = "";
 
 	if (name < 0 || name >= hp->cth_strlen)
@@ -941,6 +771,8 @@ ctf_strptr(mod_ctf_t *mc, int name)
 
 	strp = (const char *)(mc->ctftab + hp->cth_stroff + name + sizeof(ctf_header_t));
 
+	if (memchr(strp, 0, hp->cth_strlen - name) == NULL)
+		return "";
 	return (strp);
 }
 
@@ -952,15 +784,15 @@ ctf_decl_push(ctf_decl_t *cd, mod_ctf_t *mc, ctf_id_t type)
 	uint_t kind, n = 1;
 	int is_qual = 0;
 
-	const ctf_type_t *tp;
+	struct fbt_ctf_type t;
 	ctf_arinfo_t ar;
 
-	if ((tp = ctf_lookup_by_id(mc, type)) == NULL) {
+	if (ctf_lookup_by_id(mc, type, &t) == NULL) {
 		cd->cd_err = ENOENT;
 		return;
 	}
 
-	switch (kind = CTF_INFO_KIND(tp->ctt_info)) {
+	switch (kind = t.kind) {
 	case CTF_K_ARRAY:
 		fbt_array_info(mc, type, &ar);
 		ctf_decl_push(cd, mc, ar.ctr_contents);
@@ -969,27 +801,27 @@ ctf_decl_push(ctf_decl_t *cd, mod_ctf_t *mc, ctf_id_t type)
 		break;
 
 	case CTF_K_TYPEDEF:
-		if (ctf_strptr(mc, tp->ctt_name)[0] == '\0') {
-			ctf_decl_push(cd, mc, tp->ctt_type);
+		if (ctf_strptr(mc, t.name)[0] == '\0') {
+			ctf_decl_push(cd, mc, t.ref);
 			return;
 		}
 		prec = CTF_PREC_BASE;
 		break;
 
 	case CTF_K_FUNCTION:
-		ctf_decl_push(cd, mc, tp->ctt_type);
+		ctf_decl_push(cd, mc, t.ref);
 		prec = CTF_PREC_FUNCTION;
 		break;
 
 	case CTF_K_POINTER:
-		ctf_decl_push(cd, mc, tp->ctt_type);
+		ctf_decl_push(cd, mc, t.ref);
 		prec = CTF_PREC_POINTER;
 		break;
 
 	case CTF_K_VOLATILE:
 	case CTF_K_CONST:
 	case CTF_K_RESTRICT:
-		ctf_decl_push(cd, mc, tp->ctt_type);
+		ctf_decl_push(cd, mc, t.ref);
 		prec = cd->cd_qualp;
 		is_qual++;
 		break;
@@ -1078,9 +910,14 @@ fbt_type_name(mod_ctf_t *mc, ctf_id_t type, char *buf, size_t len)
 		for (cdp = ctf_list_next(&cd.cd_nodes[prec]);
 		    cdp != NULL; cdp = ctf_list_next(cdp)) {
 
-			const ctf_type_t *tp =
-			    ctf_lookup_by_id(mc, cdp->cd_type);
-			const char *name = ctf_strptr(mc, tp->ctt_name);
+			struct fbt_ctf_type t;
+			const char *name;
+
+			if (ctf_lookup_by_id(mc, cdp->cd_type, &t) == NULL) {
+				ctf_decl_fini(&cd);
+				return -1;
+			}
+			name = ctf_strptr(mc, t.name);
 
 			if (k != CTF_K_POINTER && k != CTF_K_ARRAY)
 				ctf_decl_sprintf(&cd, " ");
@@ -1140,7 +977,9 @@ fbt_type_name(mod_ctf_t *mc, ctf_id_t type, char *buf, size_t len)
 static void
 fbt_getargdesc(void *arg __unused, dtrace_id_t id __unused, void *parg, dtrace_argdesc_t *desc)
 {
-	const ushort_t *dp;
+	const uint8_t *dp;
+	const ctf_header_t *hp;
+	size_t width;
 	fbt_probe_t *fbt = parg;
 	mod_ctf_t *mc;
 	modctl_t *ctl = fbt->fbtp_ctl;
@@ -1148,7 +987,7 @@ fbt_getargdesc(void *arg __unused, dtrace_id_t id __unused, void *parg, dtrace_a
 	int symindx = fbt->fbtp_symindx;
 	uint32_t *ctfoff;
 	uint32_t offset;
-	ushort_t info, kind, n;
+	uint32_t info, kind, n;
 	int nsyms;
 
 	if (fbt->fbtp_roffset != 0 && desc->dtargd_ndx == 0) {
@@ -1181,10 +1020,10 @@ fbt_getargdesc(void *arg __unused, dtrace_id_t id __unused, void *parg, dtrace_a
 		if (fbt_ctfoff_init(ctl, mc) != 0)
 			return;
 
-		/* Initialise the CTF type to byte offset array. */
-		if (fbt_typoff_init(mc) != 0)
-			return;
 	}
+	/* A failed type-table initialization must remain retryable. */
+	if (mc->typoffp == NULL && fbt_typoff_init(mc) != 0)
+		return;
 
 	ctfoff = mc->ctfoffp;
 
@@ -1200,11 +1039,13 @@ fbt_getargdesc(void *arg __unused, dtrace_id_t id __unused, void *parg, dtrace_a
 	if ((offset = ctfoff[symindx]) == 0xffffffff)
 		return;
 
-	dp = (const ushort_t *)(mc->ctftab + offset + sizeof(ctf_header_t));
-
-	info = *dp++;
-	kind = CTF_INFO_KIND(info);
-	n = CTF_INFO_VLEN(info);
+	hp = (const ctf_header_t *)mc->ctftab;
+	width = fbt_ctf_width(hp->cth_version);
+	dp = mc->ctftab + offset + sizeof(*hp);
+	info = fbt_ctf_word(dp, width);
+	dp += width;
+	kind = fbt_ctf_kind(hp->cth_version, info);
+	n = fbt_ctf_vlen(hp->cth_version, info);
 
 	if (kind == CTF_K_UNKNOWN && n == 0) {
 		printf("%s(%d): Unknown function %s!\n",__func__,__LINE__,
@@ -1229,10 +1070,10 @@ fbt_getargdesc(void *arg __unused, dtrace_id_t id __unused, void *parg, dtrace_a
 			return;
 
 		/* Skip the return type and arguments up to the one requested. */
-		dp += ndx + 1;
+		dp += width * (ndx + 1);
 	}
 
-	if (fbt_type_name(mc, *dp, desc->dtargd_native, sizeof(desc->dtargd_native)) > 0)
+	if (fbt_type_name(mc, fbt_ctf_word(dp, width), desc->dtargd_native, sizeof(desc->dtargd_native)) > 0)
 		desc->dtargd_ndx = ndx;
 
 	return;

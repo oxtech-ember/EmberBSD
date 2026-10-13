@@ -27,10 +27,70 @@
 #ifndef _SUN60I_A733_CCU_H
 #define _SUN60I_A733_CCU_H
 
+struct clk;
+
+enum sun60i_a733_gpu_reg {
+	A733_GPU_REF, A733_GPU_PERIPH, A733_GPU_PERIPH_PAT0,
+	A733_GPU_PERIPH_PAT1, A733_GPU_PLL, A733_GPU_PAT0, A733_GPU_PAT1,
+	A733_GPU_MODULE, A733_GPU_BUS, A733_GPU_AHB, A733_GPU_MASTER,
+	A733_GPU_PERIPH_GATE_EN, A733_GPU_PERIPH_GATE_STAT,
+	A733_GPU_NREGS
+};
+
+enum sun60i_a733_gpu_reason {
+	A733_GPU_READY, A733_GPU_SNAPSHOT_CHANGED, A733_GPU_HOSC_CHANGED,
+	A733_GPU_MODULE_GATED, A733_GPU_UPDATE_PENDING, A733_GPU_BUS_GATED,
+	A733_GPU_RESET_ASSERTED, A733_GPU_MASTER_GATED, A733_GPU_REF_FLAGS,
+	A733_GPU_REF_RATE, A733_GPU_CORE_PARENT, A733_GPU_CORE_PLL,
+	A733_GPU_CORE_DIVIDER, A733_GPU_AHB_PARENT, A733_GPU_AHB_PLL,
+	A733_GPU_AHB_DIVIDER, A733_GPU_DCXO_CHANGED
+};
+
+/*
+ * Inspection success means a complete observation, not GPU readiness.
+ * A nonzero API return leaves the caller's state unchanged.
+ */
+struct sun60i_a733_gpu_state {
+	uint32_t sample[2][A733_GPU_NREGS];
+	uint32_t changed;	/* One bit per register whose samples differ. */
+	/*
+	 * Diagnostic only: bits 0..11 correspond to PERI0 gates 16..27.
+	 * 400M=1, 400M_ALL=2, 600M=9, 800M=10; one means enabled,
+	 * except no_auto where one means automatic gating is disabled.
+	 * These observations do not change readiness or reserve the gates.
+	 */
+	struct {
+		uint32_t configured, no_auto, effective;
+	} periph_gates[2];
+	u_int hosc_hz[2];
+	uint32_t dcxo_sample[2][2];	/* Queries bracketing the CCU reads. */
+	u_int dcxo_hz[2];
+	enum sun60i_a733_gpu_reason reason;
+	int readiness_error;
+	u_int core_hz, bus_hz;	/* Valid only when readiness_error is zero. */
+};
+
+int	sun60i_a733_ccu_gpu_inspect(struct clk *,
+	    struct sun60i_a733_gpu_state *);
+
+/* Experimental boot ownership; release is forbidden after any attempted write. */
+int	sun60i_a733_ccu_gpu_reserve(struct clk *, const void *);
+/* Local writes, then bounded UPDATE completion; timeout retains ownership. */
+int	sun60i_a733_ccu_gpu_prepare(struct clk *, const void *, bool *);
+/* Opt-in PLL600 cold start; caller must first establish its operating voltage. */
+int	sun60i_a733_ccu_gpu_prepare_pll(struct clk *, const void *, bool *);
+int	sun60i_a733_ccu_npu_prepare(struct clk *, const void *, bool *);
+int	sun60i_a733_ccu_gpu_release(struct clk *, const void *);
+
+/* Read-only readiness observation, not a reservation against future writers. */
+int	sun60i_a733_ccu_gpu_ready(struct clk *, u_int *, u_int *);
+
 /*
  * Clock and reset numbers follow the device tree binding
  * allwinner,sun60i-a733-ccu as posted for Linux (v3, September 2026).
  * Only the clocks this driver implements are listed.
+ * Origin: EmberBSD; AI-assisted accelerator providers, see
+ * ember/boot/a733-accelerator-clocks.md for the pinned hardware sources.
  */
 
 #define	A733_CLK_PLL_REF		0
@@ -45,15 +105,26 @@
 #define	A733_CLK_PLL_PERIPH0_200M	10
 #define	A733_CLK_PLL_PERIPH0_160M	11
 #define	A733_CLK_PLL_PERIPH0_150M	12
+#define	A733_CLK_PLL_GPU0		23
+#define	A733_CLK_PLL_NPU		39
 #define	A733_CLK_AHB			43
 #define	A733_CLK_APB0			44
 #define	A733_CLK_APB1			45
 #define	A733_CLK_APB_UART		46
+#define	A733_CLK_AHB_NPU		65
+#define	A733_CLK_AHB_GPU0		66
+#define	A733_CLK_MBUS_GPU0		77
+#define	A733_CLK_MBUS_NPU		78
 #define	A733_CLK_MBUS_CE		86
 #define	A733_CLK_MBUS_GMAC0		91
+#define	A733_CLK_BUS_PWM0		98
 #define	A733_CLK_CE			127
 #define	A733_CLK_BUS_CE		128
 #define	A733_CLK_BUS_CE_SYS		129
+#define	A733_CLK_NPU			130
+#define	A733_CLK_BUS_NPU		131
+#define	A733_CLK_GPU0			132
+#define	A733_CLK_BUS_GPU0		133
 #define	A733_CLK_MMC0			139
 #define	A733_CLK_BUS_MMC0		140
 #define	A733_CLK_MMC1			141
@@ -89,8 +160,14 @@
 #define	A733_CLK_GMAC0_PHY		227
 #define	A733_CLK_BUS_GMAC0		228
 
+#define	A733_RST_BUS_PWM0		13
 #define	A733_RST_BUS_CE		25
 #define	A733_RST_BUS_CE_SYS		26
+#define	A733_RST_BUS_NPU_CORE		27
+#define	A733_RST_BUS_NPU_AXI		28
+#define	A733_RST_BUS_NPU_AHB		29
+#define	A733_RST_BUS_NPU_SRAM		30
+#define	A733_RST_BUS_GPU0		31
 #define	A733_RST_BUS_MMC0		34
 #define	A733_RST_BUS_MMC1		35
 #define	A733_RST_BUS_MMC2		36

@@ -38,12 +38,15 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_tz.c,v 1.91 2022/05/22 11:27:35 andvar Exp $");
 #include <sys/kernel.h>
 #include <sys/module.h>
 #include <sys/systm.h>
+#include <sys/atomic.h>
+#include <sys/sysctl.h>
 #include <sys/kmem.h>
 #include <sys/cpu.h>
 
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/acpi_power.h>
+#include <dev/sysmon/sysmon_taskq.h>
 
 #define _COMPONENT		ACPI_TZ_COMPONENT
 ACPI_MODULE_NAME		("acpi_tz")
@@ -114,6 +117,11 @@ struct acpitz_softc {
 	envsys_data_t		 sc_temp_sensor;
 	envsys_data_t		 sc_fan_sensor;
 	int			 sc_active;
+	unsigned int		 sc_force_fan;
+	unsigned int		 sc_fan_max_only;
+	int			 sc_fan_min_level;
+	bool			 sc_fan_latched;
+	struct sysctllog	*sc_sysctllog;
 	int			 sc_flags;
 	int			 sc_zone_expire;
 	bool			 sc_first;
@@ -126,6 +134,12 @@ static int		acpitz_match(device_t, cfdata_t, void *);
 static void		acpitz_attach(device_t, device_t, void *);
 static int		acpitz_detach(device_t, int);
 static void		acpitz_get_status(void *);
+static void		acpitz_set_active(struct acpitz_softc *, int);
+static void		acpitz_init_sysctl(device_t);
+static int		acpitz_sysctl_fan(SYSCTLFN_PROTO);
+static int		acpitz_sysctl_fan_min(SYSCTLFN_PROTO);
+static bool		acpitz_valid_level(const struct acpitz_zone *, int);
+static bool		acpitz_same_cooling(ACPI_BUFFER *, ACPI_BUFFER *);
 static void		acpitz_get_zone(void *, int);
 static void		acpitz_get_zone_quiet(void *);
 static char	       *acpitz_celcius_string(int);
@@ -178,6 +192,7 @@ acpitz_attach(device_t parent, device_t self, void *aux)
 	sc->sc_first = true;
 	sc->sc_have_fan = false;
 	sc->sc_active = ATZ_ACTIVE_NONE;
+	sc->sc_fan_min_level = -1;
 	sc->sc_node = aa->aa_node;
 	sc->sc_zone.tzp = ATZ_TZP_RATE;
 
@@ -220,6 +235,7 @@ acpitz_attach(device_t parent, device_t self, void *aux)
 	callout_setfunc(&sc->sc_callout, acpitz_tick, self);
 
 	acpitz_init_envsys(self);
+	acpitz_init_sysctl(self);
 
 	callout_schedule(&sc->sc_callout, sc->sc_zone.tzp * hz / 10);
 }
@@ -233,11 +249,15 @@ acpitz_detach(device_t self, int flags)
 	ACPI_STATUS rv;
 	int i;
 
+	sysctl_teardown(&sc->sc_sysctllog);
 	callout_halt(&sc->sc_callout, NULL);
 	callout_destroy(&sc->sc_callout);
 
 	pmf_device_deregister(self);
 	acpi_deregister_notify(sc->sc_node);
+
+	/* Drain queued thermal callbacks after stopping all their producers. */
+	sysmon_task_queue_barrier(0);
 
 	/*
 	 * Although the device itself should not contain any power
@@ -275,6 +295,7 @@ static void
 acpitz_get_zone_quiet(void *opaque)
 {
 	acpitz_get_zone(opaque, 0);
+	acpitz_get_status(opaque);
 }
 
 static void
@@ -283,7 +304,8 @@ acpitz_get_status(void *opaque)
 	device_t dv = opaque;
 	struct acpitz_softc *sc = device_private(dv);
 	uint32_t tmp, fmin, fmax, fcurrent;
-	int active, changed, flags, i;
+	int active, changed, flags, i, min_level;
+	bool max_only, managed;
 
 	sc->sc_zone_expire--;
 
@@ -296,8 +318,28 @@ acpitz_get_status(void *opaque)
 		acpitz_get_zone(dv, 0);
 	}
 
-	if (acpitz_get_integer(dv, "_TMP", &tmp) != 0)
+	/* A manual maximum remains useful even if the sensor stops responding. */
+	if (atomic_load_relaxed(&sc->sc_force_fan) != 0 &&
+	    sc->sc_zone.al[0].Pointer != NULL)
+		acpitz_set_active(sc, 0);
+
+	max_only = atomic_load_relaxed(&sc->sc_fan_max_only) != 0 &&
+	    sc->sc_zone.al[0].Pointer != NULL;
+	min_level = atomic_load_relaxed(&sc->sc_fan_min_level);
+	managed = (max_only || min_level >= 0) &&
+	    sc->sc_zone.al[0].Pointer != NULL;
+	/* An unavailable floor must not silently reduce required cooling. */
+	if (min_level >= 0 && !acpitz_valid_level(&sc->sc_zone, min_level))
+		min_level = 0;
+	if (acpitz_get_integer(dv, "_TMP", &tmp) != 0 ||
+	    (managed && (tmp < ATZ_ZEROC || tmp > ATZ_ZEROC + 1500))) {
+		if (managed) {
+			sc->sc_fan_latched = true;
+			acpitz_set_active(sc, 0);
+			sc->sc_temp_sensor.state = ENVSYS_SINVALID;
+		}
 		return;
+	}
 
 	sc->sc_zone.prevtmp = sc->sc_zone.tmp;
 	sc->sc_zone.tmp = tmp;
@@ -338,17 +380,33 @@ acpitz_get_status(void *opaque)
 	for (i = ATZ_NLEVELS - 1; i >= 0; i--) {
 		uint32_t ac;
 
-		if (sc->sc_zone.ac[i] == ATZ_TMP_INVALID)
+		if (sc->sc_zone.ac[i] == ATZ_TMP_INVALID ||
+		    (managed && sc->sc_zone.al[i].Pointer == NULL))
 			continue;
 
 		ac = sc->sc_zone.ac[i];
-		if (sc->sc_active != ATZ_ACTIVE_NONE && i >= sc->sc_active &&
+		if (((sc->sc_active != ATZ_ACTIVE_NONE &&
+		    i >= sc->sc_active) || (managed && sc->sc_fan_latched &&
+		    (max_only || i >= min_level))) &&
 		    ac > ATZ_HYSTERESIS)
 			ac -= ATZ_HYSTERESIS;
 
 		if (ac <= tmp)
 			active = i;
 	}
+
+	if (active != ATZ_ACTIVE_NONE) {
+		if (max_only)
+			active = 0;
+		else if (managed && active > min_level)
+			active = min_level;
+	}
+
+	if (atomic_load_relaxed(&sc->sc_force_fan) != 0 &&
+	    sc->sc_zone.al[0].Pointer != NULL)
+		active = 0;
+
+	sc->sc_fan_latched = managed && active != ATZ_ACTIVE_NONE;
 
 	flags = sc->sc_flags & ~(ATZ_F_CRITICAL | ATZ_F_HOT | ATZ_F_PASSIVE);
 
@@ -380,20 +438,126 @@ acpitz_get_status(void *opaque)
 		}
 	}
 
-	/* Power on the fans. */
+	acpitz_set_active(sc, active);
+}
+
+static void
+acpitz_set_active(struct acpitz_softc *sc, int active)
+{
 	if (sc->sc_active != active) {
 
 		if (sc->sc_active != ATZ_ACTIVE_NONE)
 			acpitz_power_zone(sc, sc->sc_active, 0);
 
 		ACPI_DEBUG_PRINT((ACPI_DB_INFO, "%s: active cooling "
-			"level %d\n", device_xname(dv), active));
+			"level %d\n", acpi_name(sc->sc_node->ad_handle), active));
 
 		if (active != ATZ_ACTIVE_NONE)
 			acpitz_power_zone(sc, active, 1);
 
 		sc->sc_active = active;
 	}
+}
+
+/* These policies require a maximum active-cooling list. */
+static void
+acpitz_init_sysctl(device_t dv)
+{
+	struct acpitz_softc *sc = device_private(dv);
+	const struct sysctlnode *node;
+	int error;
+
+	if (sc->sc_zone.al[0].Pointer == NULL)
+		return;
+
+	error = sysctl_createv(&sc->sc_sysctllog, 0, NULL, &node,
+	    0, CTLTYPE_NODE, device_xname(dv), NULL, NULL, 0, NULL, 0,
+	    CTL_HW, CTL_CREATE, CTL_EOL);
+	if (error == 0)
+		error = sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
+		    CTLFLAG_READWRITE, CTLTYPE_INT, "force_fan",
+		    SYSCTL_DESCR("Keep maximum active cooling enabled"),
+		    acpitz_sysctl_fan, 0, (void *)dv, 0, CTL_CREATE, CTL_EOL);
+	if (error == 0)
+		error = sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
+		    CTLFLAG_READWRITE, CTLTYPE_INT, "fan_max_only",
+		    SYSCTL_DESCR("Use maximum cooling for active thermal requests"),
+		    acpitz_sysctl_fan, 0, (void *)dv, 0, CTL_CREATE, CTL_EOL);
+	if (error == 0)
+		error = sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
+		    CTLFLAG_READWRITE, CTLTYPE_INT, "fan_min_level",
+		    SYSCTL_DESCR("Minimum active cooling level (-1 uses firmware)"),
+		    acpitz_sysctl_fan_min, 0, (void *)dv, 0, CTL_CREATE, CTL_EOL);
+	if (error != 0) {
+		aprint_error_dev(dv, "could not create fan control: %d\n", error);
+		sysctl_teardown(&sc->sc_sysctllog);
+	}
+}
+
+static int
+acpitz_sysctl_fan(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	device_t dv = rnode->sysctl_data;
+	struct acpitz_softc *sc = device_private(dv);
+	unsigned int *control, previous;
+	int error, value;
+
+	control = strcmp(rnode->sysctl_name, "fan_max_only") == 0 ?
+	    &sc->sc_fan_max_only : &sc->sc_force_fan;
+	previous = atomic_load_relaxed(control);
+	value = previous;
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	if (value != 0 && value != 1)
+		return EINVAL;
+
+	atomic_store_relaxed(control, (unsigned int)value);
+	if (ACPI_FAILURE(AcpiOsExecute(OSL_NOTIFY_HANDLER,
+	    acpitz_get_status, dv))) {
+		atomic_store_relaxed(control, previous);
+		return EIO;
+	}
+	return 0;
+}
+
+/* Lower _AC/_AL indices request stronger cooling. */
+static bool
+acpitz_valid_level(const struct acpitz_zone *zone, int level)
+{
+
+	return level >= 0 && level < ATZ_NLEVELS &&
+	    zone->ac[level] != ATZ_TMP_INVALID &&
+	    zone->al[level].Pointer != NULL;
+}
+
+static int
+acpitz_sysctl_fan_min(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	device_t dv = rnode->sysctl_data;
+	struct acpitz_softc *sc = device_private(dv);
+	int error, previous, value;
+
+	previous = atomic_load_relaxed(&sc->sc_fan_min_level);
+	value = previous;
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	if (value != -1 && (!acpitz_valid_level(&sc->sc_zone, 0) ||
+	    !acpitz_valid_level(&sc->sc_zone, value)))
+		return EINVAL;
+
+	atomic_store_relaxed(&sc->sc_fan_min_level, value);
+	if (ACPI_FAILURE(AcpiOsExecute(OSL_NOTIFY_HANDLER,
+	    acpitz_get_status, dv))) {
+		atomic_store_relaxed(&sc->sc_fan_min_level, previous);
+		return EIO;
+	}
+	return 0;
 }
 
 static char *
@@ -475,17 +639,46 @@ acpitz_power_off(struct acpitz_softc *sc)
 	sc->sc_flags &= ~(ATZ_F_CRITICAL | ATZ_F_HOT | ATZ_F_PASSIVE);
 }
 
+/* Compare resolved cooling devices, not addresses in fresh AML objects. */
+static bool
+acpitz_same_cooling(ACPI_BUFFER *old, ACPI_BUFFER *fresh)
+{
+	ACPI_OBJECT *a = old->Pointer, *b = fresh->Pointer;
+	ACPI_HANDLE ah, bh;
+	unsigned int i;
+
+	if (a == NULL || b == NULL || a->Package.Count != b->Package.Count)
+		return false;
+	for (i = 0; i < a->Package.Count; i++) {
+		if (ACPI_FAILURE(acpi_eval_reference_handle(&a->Package.Elements[i],
+		    &ah)) ||
+		    ACPI_FAILURE(acpi_eval_reference_handle(&b->Package.Elements[i],
+		    &bh)) || ah != bh)
+			return false;
+	}
+	return true;
+}
+
 static void
 acpitz_get_zone(void *opaque, int verbose)
 {
 	device_t dv = opaque;
 	struct acpitz_softc *sc = device_private(dv);
+	struct acpitz_zone old_zone, new_zone;
+	bool preserve, complete;
 	int comma, i, valid_levels;
 	ACPI_OBJECT *obj;
 	ACPI_STATUS rv;
 	char buf[5];
 
-	if (sc->sc_first != true) {
+	preserve = !sc->sc_first && sc->sc_zone.al[0].Pointer != NULL &&
+	    (atomic_load_relaxed(&sc->sc_force_fan) != 0 ||
+	    atomic_load_relaxed(&sc->sc_fan_max_only) != 0 ||
+	    atomic_load_relaxed(&sc->sc_fan_min_level) >= 0);
+	if (preserve) {
+		old_zone = sc->sc_zone;
+		memset(sc->sc_zone.al, 0, sizeof(sc->sc_zone.al));
+	} else if (sc->sc_first != true) {
 		acpitz_power_off(sc);
 
 		for (i = 0; i < ATZ_NLEVELS; i++) {
@@ -599,7 +792,50 @@ acpitz_get_zone(void *opaque, int verbose)
 	for (i = 0; i < ATZ_NLEVELS; i++)
 		acpitz_sane_temp(&sc->sc_zone.ac[i]);
 
-	acpitz_power_off(sc);
+	if (preserve) {
+		/* Do not discard working cooling after an incomplete refresh. */
+		complete = true;
+		for (i = 0; i < ATZ_NLEVELS; i++) {
+			if (old_zone.al[i].Pointer != NULL &&
+			    (sc->sc_zone.al[i].Pointer == NULL ||
+			    sc->sc_zone.ac[i] == ATZ_TMP_INVALID))
+				complete = false;
+		}
+		if ((old_zone.crt != ATZ_TMP_INVALID &&
+		    sc->sc_zone.crt == ATZ_TMP_INVALID) ||
+		    (old_zone.hot != ATZ_TMP_INVALID &&
+		    sc->sc_zone.hot == ATZ_TMP_INVALID) ||
+		    (old_zone.psv != ATZ_TMP_INVALID &&
+		    sc->sc_zone.psv == ATZ_TMP_INVALID))
+			complete = false;
+		if (!complete) {
+			for (i = 0; i < ATZ_NLEVELS; i++) {
+				if (sc->sc_zone.al[i].Pointer != NULL)
+					ACPI_FREE(sc->sc_zone.al[i].Pointer);
+			}
+			sc->sc_zone = old_zone;
+			return;
+		}
+
+		/* A periodic refresh must not pulse an unchanged running fan. */
+		if (sc->sc_active != ATZ_ACTIVE_NONE &&
+		    !acpitz_same_cooling(&old_zone.al[sc->sc_active],
+		    &sc->sc_zone.al[sc->sc_active])) {
+			int active = sc->sc_active;
+
+			new_zone = sc->sc_zone;
+			sc->sc_zone = old_zone;
+			acpitz_power_off(sc);
+			sc->sc_zone = new_zone;
+			acpitz_set_active(sc, active);
+		}
+		for (i = 0; i < ATZ_NLEVELS; i++) {
+			if (old_zone.al[i].Pointer != NULL)
+				ACPI_FREE(old_zone.al[i].Pointer);
+		}
+	} else {
+		acpitz_power_off(sc);
+	}
 	sc->sc_first = false;
 }
 

@@ -3,6 +3,7 @@
 .include <bsd.hostinit.mk>
 
 MODULE=		binutils
+MAKE_PROGRAM=	${TOOL_GMAKE}
 
 GNUHOSTDIST=	${.CURDIR}/../../external/gpl3/${EXTERNAL_BINUTILS_SUBDIR}/dist
 

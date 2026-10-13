@@ -13,6 +13,7 @@
 #include <drm/drm_gem_shmem_helper.h>
 #include "virtgpu_drv.h"
 #include "locators.h"
+#include "opt_virtgpu_virgl.h"
 
 struct virtiodrm_softc {
 	device_t sc_dev;
@@ -62,13 +63,20 @@ virtiodrm_attach(device_t parent, device_t self, void *aux)
 	static const char * const names[] = { "control", "cursor" };
 	struct virtiodrm_softc *sc = device_private(self);
 	struct virtio_softc *vsc = device_private(parent);
+	uint64_t features = 0;
 	int error;
 
 	aprint_naive("\n");
+#ifdef VIRTGPU_VIRGL
+	features = UINT64_C(1) << VIRTIO_GPU_F_VIRGL;
+	aprint_normal(": experimental VirtIO GPU DRM (classic VirGL requested)\n");
+#else
 	aprint_normal(": experimental VirtIO GPU DRM (2D only)\n");
+#endif
 	sc->sc_dev = self;
-	/* No VIRGL, EDID, blob or context-init feature is negotiated yet. */
-	virtio_child_attach_start(vsc, self, IPL_VM, 0, VIRTIO_COMMON_FLAG_BITS);
+	/* EDID, blob and context-init remain outside this opt-in. */
+	virtio_child_attach_start(vsc, self, IPL_VM, features,
+	    VIRTIO_COMMON_FLAG_BITS);
 	if (!virtio_version_1(vsc)) {
 		aprint_error_dev(self, "requires modern VirtIO\n");
 		virtio_child_attach_failed(vsc);

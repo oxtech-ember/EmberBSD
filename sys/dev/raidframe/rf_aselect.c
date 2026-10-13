@@ -128,7 +128,8 @@ rf_SelectAlgorithm(RF_RaidAccessDesc_t *desc, RF_RaidAccessFlags_t flags)
 	RF_VoidFuncPtr bFunc;
 	int     numStripesBailed = 0, cantCreateDAGs = RF_FALSE;
 	int     numStripeUnitsBailed = 0;
-	int     stripeNum, stripeUnitNum, numBlockDags = 0;
+	/* Origin: EmberBSD (AI-assisted), remove the unused block-DAG count. */
+	int     stripeNum, stripeUnitNum;
 	RF_StripeNum_t numStripeUnits;
 	RF_SectorNum_t numBlocks;
 	RF_RaidAddr_t address;
@@ -225,7 +226,6 @@ rf_SelectAlgorithm(RF_RaidAccessDesc_t *desc, RF_RaidAccessFlags_t flags)
 					 * stripe unit */
 
 					numBlocks = physPtr->numSector;
-					numBlockDags += numBlocks;
 
 					/* lookup array of blockFuncs for this
 					 * stripe unit */

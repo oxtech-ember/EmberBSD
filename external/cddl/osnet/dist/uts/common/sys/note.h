@@ -39,7 +39,10 @@
 #ifndef	_SYS_NOTE_H
 #define	_SYS_NOTE_H
 
+/* Origin: EmberBSD (AI-assisted), preserve Sun compiler identification only. */
+#if defined(__SUNPRO_C) || defined(__SUNPRO_CC)
 #pragma ident	"%Z%%M%	%I%	%E% SMI"
+#endif
 
 #ifdef	__cplusplus
 extern "C" {

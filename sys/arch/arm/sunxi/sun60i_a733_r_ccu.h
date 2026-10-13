@@ -36,6 +36,7 @@
 #define	A733_R_CLK_BUS_I2C0		16
 #define	A733_R_CLK_BUS_I2C1		17
 #define	A733_R_CLK_BUS_I2C2		18
+#define	A733_R_CLK_BUS_PPU		19
 #define	A733_R_CLK_BUS_RTC		24
 
 #define	A733_R_RST_BUS_UART0		4

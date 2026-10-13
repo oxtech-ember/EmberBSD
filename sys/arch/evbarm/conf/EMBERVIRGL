@@ -1,0 +1,4 @@
+# Origin: EmberBSD experimental classic VirGL opt-in, 2026-10-08.
+# This separate test configuration does not establish accelerated rendering.
+include "arch/evbarm/conf/EMBERGPU"
+options VIRTGPU_VIRGL

@@ -37,6 +37,7 @@
 #include <sys/kobj_impl.h>
 #include <sys/kobj.h>
 #include <sys/kern_ctf.h>
+#include <sys/param.h>
 
 #define _KSYMS_PRIVATE
 #include <sys/ksyms.h>
@@ -133,7 +134,7 @@ mod_ctf_get(struct module *mod, mod_ctf_t **mcp)
 		mc->nsym   = mod->mod_kobj->ko_symcnt;
 	}
 
-	if (ctfaddr == NULL) {
+	if (ctfaddr == NULL || ctfsize < CTF_HDR_SIZE) {
 	    	error = ENOENT;
 		goto out;
 	}
@@ -162,7 +163,12 @@ mod_ctf_get(struct module *mod, mod_ctf_t **mcp)
 		 * information to determine the decompressed CTF data
 		 * buffer required.
 		 */
-		sz = u32[CTF_HDR_STRTAB_U32] + u32[CTF_HDR_STRLEN_U32] +
+		if ((uint64_t)u32[CTF_HDR_STRTAB_U32] +
+		    u32[CTF_HDR_STRLEN_U32] + CTF_HDR_SIZE > INT_MAX) {
+			error = EOVERFLOW;
+			goto out;
+		}
+		sz = (size_t)u32[CTF_HDR_STRTAB_U32] + u32[CTF_HDR_STRLEN_U32] +
 		    CTF_HDR_SIZE;
 
 		compressed = 1;
@@ -172,6 +178,11 @@ mod_ctf_get(struct module *mod, mod_ctf_t **mcp)
 		 * size is the same as the buffer size required.
 		 */
 		sz = ctfsize;
+	}
+	/* The public module CTF extent is an int. */
+	if (sz > INT_MAX) {
+		error = EOVERFLOW;
+		goto out;
 	}
 
 	/*
@@ -215,7 +226,10 @@ mod_ctf_get(struct module *mod, mod_ctf_t **mcp)
 		zs.avail_out = sz - CTF_HDR_SIZE;
 		zs.next_out = ((uint8_t *) ctftab) + CTF_HDR_SIZE;
 		inflateReset(&zs);
-		if ((ret = inflate(&zs, Z_FINISH)) != Z_STREAM_END) {
+		ret = inflate(&zs, Z_FINISH);
+		/* Origin: EmberBSD (AI-assisted), retain the decoded CTF extent. */
+		inflateEnd(&zs);
+		if (ret != Z_STREAM_END || zs.total_out != sz - CTF_HDR_SIZE) {
 			printf("%s(%d): zlib inflate returned %d\n", __func__, __LINE__, ret);
 			error = EIO;
 			goto out;
@@ -223,7 +237,7 @@ mod_ctf_get(struct module *mod, mod_ctf_t **mcp)
 	}
 
 	/* Got the CTF data! */
-	mc->ctfcnt = ctfsize;
+	mc->ctfcnt = sz;
 	mc->ctftab = ctftab;
 	ctfbuf = NULL;
 

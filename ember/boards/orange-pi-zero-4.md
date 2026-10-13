@@ -29,6 +29,8 @@ Board revision: not recorded in the original support table.
 | Voltage regulators | Tested: all outputs of the AXP8191 read; the two core supplies are driven; the chip's own switch for the card pins is driven |
 | USB | Type-C data port at USB 2.0 rates: a flash drive reads at 22 MB/s, the port is powered only while a device is plugged in (FUSB302, polled); the serdes starts and clocks the controller, SuperSpeed itself not tried (no USB 3 device, one plug orientation only); the two USB 2.0 hosts attach, no device tried |
 | Hardware random numbers | Tested: the crypto engine's generator seeds the kernel at boot |
+| GPU/NPU power domains | Native PCK600 provider passes software contracts and GCC16 cross object builds; physical transitions and acceleration unverified ([guide](../boot/a733-power-domains.md)) |
+| GPU/NPU clocks and resets | Native main CCU providers pass 199 software assertions and GCC12/GCC16 object builds; firmware PLLs stay unchanged, physical sequencing unverified ([guide](../boot/a733-accelerator-clocks.md)) |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.
@@ -95,8 +97,8 @@ must stay at 24 MHz: it counts its frames from it
 
 ## Evidence
 
-Results were migrated from the [published support matrix](https://github.com/apovalixin/EmberBSD/blob/fe2727f6ef675868eba642efa73c5a0e33f92191/README.md#supported-boards)
-and [hardware notes](https://github.com/apovalixin/EmberBSD/blob/fe2727f6ef675868eba642efa73c5a0e33f92191/README.ember.md#hardware-support-and-validation)
+Results were migrated from the [published support matrix](https://github.com/oxtech-ember/EmberBSD/blob/fe2727f6ef675868eba642efa73c5a0e33f92191/README.md#supported-boards)
+and [hardware notes](https://github.com/oxtech-ember/EmberBSD/blob/fe2727f6ef675868eba642efa73c5a0e33f92191/README.ember.md#hardware-support-and-validation)
 on 2026-10-07. These sources do not supply a complete per-check receipt
 with tested OS/firmware revisions and dates. The source commit identifies
 the documentation snapshot, not the kernel used in every original test.

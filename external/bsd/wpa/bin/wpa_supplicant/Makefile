@@ -19,6 +19,7 @@ rrm.c \
 robust_av.c \
 scan.c \
 wmm_ac.c \
+wnm_sta.c \
 wpa_supplicant.c \
 wpas_glue.c
 
@@ -95,6 +96,12 @@ config_line.c: ${WPA_DISTDIR}/src/utils/config.c
 	${WPA_DISTDIR}/src/rsn_supp \
 	${COMMON_PATH} \
 
+# Native builds against a newer kernel may stage its net80211 headers here.
+# Keep CFLAGS (including PIE and platform hardening) supplied by bsd.prog.mk.
+.if defined(NET80211_INCLUDES)
+CPPFLAGS+= -I${NET80211_INCLUDES}
+.endif
+
 CPPFLAGS+= \
 	-I${WPA_SUPPLICANT_DISTDIR} \
 	-I${WPA_DISTDIR}/src/drivers \
@@ -121,7 +128,7 @@ CPPFLAGS+=-DCONFIG_DEBUG_SYSLOG
 
 #CPPFLAGS+=-DCONFIG_ACS
 #CPPFLAGS+=-DCONFIG_MBO
-#CPPFLAGS+=-DCONFIG_WNM 
+CPPFLAGS+=-DCONFIG_WNM
 #CPPFLAGS+=-DCONFIG_AP
 #SRCS+=ap.c \
 #gas.c \
@@ -145,6 +152,13 @@ CPPFLAGS+=-DEAP_OTP
 CPPFLAGS+=-DEAP_LEAP
 CPPFLAGS+=-DEAP_PSK
 CPPFLAGS+=-DEAP_TLS_OPENSSL
+
+# SAE runs in the upstream SME; full-MAC drivers forward external auth frames.
+CPPFLAGS+=-DCONFIG_SAE -DCONFIG_SME -DCONFIG_ECC -DCONFIG_SHA256
+CPPFLAGS+=-DCONFIG_HMAC_SHA256_KDF
+SRCS+=sae.c dragonfly.c sme.c dh_groups.c sha256-kdf.c
+# CONFIG_SHA256 uses OpenSSL HMAC, avoiding duplicate internal symbols.
+SRCS:= ${SRCS:Nsha256.c}
 SRCS+= \
 chap.c \
 crypto_openssl.c \
@@ -187,6 +201,9 @@ SRCS+= sha1-pbkdf2.c sha1.c md5.c
 .endif
 
 .endif
+
+# GCC 16 diagnoses the packed RRM report with the default SSP heuristic.
+COPTS.rrm.c+= -fstack-protector-all
 
 COPTS.crypto_openssl.c+= -Wno-error=deprecated-declarations
 COPTS.tls_openssl.c+= -Wno-error=deprecated-declarations

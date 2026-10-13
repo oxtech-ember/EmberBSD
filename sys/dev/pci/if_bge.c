@@ -5050,16 +5050,14 @@ static inline int
 bge_compact_dma_runt(struct mbuf *pkt)
 {
 	struct mbuf	*m, *prev;
-	int		totlen;
 
+	/* Origin: EmberBSD (AI-assisted), remove the unused packet-length sum. */
 	prev = NULL;
-	totlen = 0;
 
 	for (m = pkt; m != NULL; prev = m, m = m->m_next) {
 		int mlen = m->m_len;
 		int shortfall = 8 - mlen ;
 
-		totlen += mlen;
 		if (mlen == 0)
 			continue;
 		if (mlen >= 8)

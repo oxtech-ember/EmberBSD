@@ -48,6 +48,7 @@ __KERNEL_RCSID(1, "$NetBSD$");
 #define	R_APB1_CFG_REG		0x010
 #define	R_UART_BGR_REG		0x18c
 #define	R_I2C_BGR_REG		0x19c
+#define	R_PPU_BGR_REG		0x1ac
 #define	R_RTC_BGR_REG		0x20c
 
 static int sun60i_a733_r_ccu_match(device_t, cfdata_t, void *);
@@ -104,6 +105,9 @@ static struct sunxi_ccu_clk sun60i_a733_r_ccu_clks[] = {
 	    R_I2C_BGR_REG, 1),
 	SUNXI_CCU_GATE(A733_R_CLK_BUS_I2C2, "bus-r-i2c2", "r-apb1",
 	    R_I2C_BGR_REG, 2),
+	/* A733 has a PPU gate, but no PPU reset in this register. */
+	SUNXI_CCU_GATE(A733_R_CLK_BUS_PPU, "bus-r-ppu", "hosc",
+	    R_PPU_BGR_REG, 0),
 	SUNXI_CCU_GATE(A733_R_CLK_BUS_RTC, "bus-r-rtc", "r-ahb",
 	    R_RTC_BGR_REG, 0),
 };

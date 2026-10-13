@@ -139,8 +139,20 @@ inspection confirmed its internal calls resolved to that same libc. A test
 executable linked to GCC16 can interpose those old calls, so direct `dladdr`
 identity alone is insufficient for a baseline comparison.
 
-The compiler-rt Makefile include selects the opt-in only for hard-float
-AArch64. A full libc Makefile command, complete libc link and installation
-are still unverified. LLVM23 native compilation and the full compiler suite
-also remain outside this candidate result. For a native test build that
-overrides `CFLAGS`, retain the platform's `-fPIE` when linking the default PIE.
+On physical Orange Pi Zero 3W, native GCC 12.5 and the normal libc Makefiles
+built the complete static/PIC/shared library from `cffffd40`. The final shared
+library, SHA256 `5dff821f1a1b42845e642cedd16375b310b78d04fa624bb21472d33b0fc14130`,
+preserves all 4,587 defined dynamic exports and the comparison aliases.
+It passes the masked matrix and all 16 FP modes through the original exports;
+the installed baseline failed 1,255 rows. IOE is unavailable on this board,
+so physical trap cases skip. The complete PIC comparison text is present in
+the final DSO without public-helper calls or new undefined symbols.
+
+That shared library and its matching static archive are now installed on the
+board. A fresh masked-matrix run passes all 3,600 rows through normal installed
+library resolution, without `LD_LIBRARY_PATH`. Startup/final receipts confirm
+one selected libc mapping. The build used installed platform headers plus
+source-local headers; this is not a complete fresh userland/header release.
+LLVM23 compilation, original GCC LTO regressions against the installed pair
+and full compiler-suite acceptance remain separate. For a native test build
+that overrides `CFLAGS`, retain `-fPIE` when linking the default PIE.

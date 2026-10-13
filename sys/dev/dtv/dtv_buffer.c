@@ -236,7 +236,8 @@ dtv_buffer_read(struct dtv_softc *sc, struct uio *uio, int flags)
 	struct dtv_buffer *db;
 	struct dtv_scatter_io sio;
 	off_t offset;
-	size_t len, bread = 0;
+	/* Origin: EmberBSD (AI-assisted), use the existing stream byte count. */
+	size_t len;
 	int error;
 
 	while (uio->uio_resid > 0) {
@@ -277,7 +278,6 @@ retry:
 			if (error == EFAULT)
 				return EFAULT;
 			ds->ds_bytesread += (len - sio.sio_resid);
-			bread += (len - sio.sio_resid);
 		}
 
 		if (ds->ds_bytesread >= db->db_bytesused) {

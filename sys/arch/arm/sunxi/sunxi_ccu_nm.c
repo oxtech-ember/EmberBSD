@@ -104,7 +104,9 @@ sunxi_ccu_nm_set_rate(struct sunxi_ccu_softc *sc,
 {
 	struct sunxi_ccu_nm *nm = &clk->u.nm;
 	struct clk *clkp, *clkp_parent;
-	u_int parent_rate, best_rate, best_n, best_m, best_parent;
+	u_int parent_rate, best_rate;
+	/* Origin: EmberBSD (AI-assisted), initialize the guarded best-rate tuple. */
+	u_int best_n = 0, best_m = 0, best_parent = 0;
 	u_int n, m, pindex, rate;
 	int best_diff;
 	uint32_t val;

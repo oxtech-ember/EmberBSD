@@ -301,7 +301,8 @@ int
 ixgbe_mq_start_locked(struct ifnet *ifp, struct tx_ring *txr)
 {
 	struct mbuf    *next;
-	int            enqueued = 0, err = 0;
+	/* Origin: EmberBSD (AI-assisted), remove the unused enqueue count. */
+	int            err = 0;
 
 	if (txr->sc->link_active != LINK_STATE_UP) {
 		/*
@@ -323,7 +324,6 @@ ixgbe_mq_start_locked(struct ifnet *ifp, struct tx_ring *txr)
 			/* All errors are counted in ixgbe_xmit() */
 			break;
 		}
-		enqueued++;
 #if __FreeBSD_version >= 1100036
 		/*
 		 * Since we're looking at the tx ring, we can check

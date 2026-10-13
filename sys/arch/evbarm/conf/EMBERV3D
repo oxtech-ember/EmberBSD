@@ -1,0 +1,4 @@
+# Origin: EmberBSD opt-in BCM2712 V3D reset takeover probe, 2026-10-09.
+# No DMA, GPU jobs or DRM. The driver retains its claim until reboot.
+include "arch/evbarm/conf/EMBER64"
+options BCM2712_V3D_TAKEOVER

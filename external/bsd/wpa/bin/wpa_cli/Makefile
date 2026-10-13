@@ -8,7 +8,7 @@ PROG=	wpa_cli
 SRCS=	wpa_cli.c wpa_ctrl.c os_unix.c eloop.c edit.c wpa_debug.c common.c
 SRCS+=	cli.c
 
-CPPFLAGS+=-DCONFIG_READLINE
+CPPFLAGS+=-DCONFIG_READLINE -DCONFIG_WNM
 LDADD+=-ledit -lterminfo
 DPADD+=${LIBEDIT} ${LIBTERMINFO}
 

@@ -61,6 +61,7 @@ struct drm_device {
 	/* Owned until sysctl readers drain during unregister. */
 	struct drm_native_identity *native_identity;
 	struct drm_native_pci_record native_pci;
+	struct drm_native_platform_record native_platform;
 #endif
 	/**
 	 * @legacy_dev_list:

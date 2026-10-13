@@ -280,7 +280,7 @@ acpimcfg_probe(struct acpi_softc *sc)
 	ACPI_MCFG_ALLOCATION *ama;
 	ACPI_STATUS status;
 	uint32_t offset;
-	int i, nsegs;
+	int nsegs;
 
 	if (acpi_sc != NULL)
 		panic("acpi_sc != NULL");
@@ -295,8 +295,8 @@ acpimcfg_probe(struct acpi_softc *sc)
 	nsegs = 0;
 	offset = sizeof(ACPI_TABLE_MCFG);
 	ama = ACPI_ADD_PTR(ACPI_MCFG_ALLOCATION, mcfg, offset);
-	for (i = 0; offset + sizeof(ACPI_MCFG_ALLOCATION) <=
-	    mcfg->Header.Length; i++) {
+	/* Origin: EmberBSD (AI-assisted), make MCFG iteration and cleanup explicit. */
+	while (offset + sizeof(ACPI_MCFG_ALLOCATION) <= mcfg->Header.Length) {
 		aprint_debug_dev(sc->sc_dev,
 		    "MCFG: segment %d, bus %d-%d, address 0x%016" PRIx64 "\n",
 		    ama->PciSegment, ama->StartBusNumber, ama->EndBusNumber,
@@ -780,7 +780,7 @@ acpimcfg_configure_bus(device_t self, pci_chipset_tag_t pc, ACPI_HANDLE handle,
     int bus, bool mapcfgspace)
 {
 	struct acpimcfg_configure_bus_context context, *C = &context;
-	struct mcfg_segment *seg;
+	struct mcfg_segment *seg = NULL;
 	struct mcfg_bus *mb;
 	bus_space_handle_t bsh[256];
 	bool bsh_mapped[256];
@@ -863,7 +863,7 @@ acpimcfg_configure_bus(device_t self, pci_chipset_tag_t pc, ACPI_HANDLE handle,
 	pci_resource_init(&C->pciinfo);
 
 cleanup:
-	if (mapcfgspace) {
+	if (seg != NULL) {
 		/*
 		 * Unmap config space for the segment's busses. Valid devices
 		 * will be re-mapped later on by acpimcfg_map_bus.

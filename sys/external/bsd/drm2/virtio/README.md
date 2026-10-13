@@ -10,10 +10,14 @@ GEM/PRIME mapping lifetimes (one page and 8 MiB), malformed size/handle
 rejection and visible 800x600 KMS color bars passed. labwc/Pixman displayed
 a native Kate window without Xorg. The subsequent Ports input adaptation
 passed physical pointer, keyboard and file-save checks documented in the
-[runtime probes](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
+[runtime probes](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/desktop/wayland-utm).
 This does not establish VirGL, reset stress or physical-board support.
 Retest against each exact kernel and
 virtual hardware configuration.
+The [complete cross build and isolated QEMU boot](kernel-boot.md) on
+2026-10-07 covers revision `c6aba7d1e240`, current libdrm PCI enumeration and
+32 GEM/PRIME lifetime cycles. It excludes the firmware console handoff,
+the UTM desktop and 3D acceleration.
 The configuration disables default module autoload. Its VirtGPU, DRM,
 Linux compatibility and VirtIO dependencies are built into the kernel;
 do not load modules from a different build during the experiment.
@@ -32,8 +36,9 @@ base GCC 12.5 and normal `-Werror`. The linked
 legacy ATTACH/uploads and orders private kernel copies. Private GETFB refusal
 precedes handle/VMA publication. All 57 new and 268 existing contract groups
 pass natively with GCC 16.2, and fourteen fresh objects pass with base GCC 12.5
-and normal `-Werror`. Focused host ASan/UBSan also passes. No full kernel has
-been linked or booted for this stage. Stable writable ordinary host RAM must
+and normal `-Werror`. Focused host ASan/UBSan also passes. The complete kernel
+now links and boots in the bounded [isolated check](kernel-boot.md).
+Stable writable ordinary host RAM must
 be qualified separately;
 retained host bounce mappings remain unsupported. Complete 3D request bounds
 and live qualification remain required before VIRGL can be enabled and tested.
@@ -88,7 +93,8 @@ Format-aware access and truthful
 host errors remain [activation obligations](exec-framing.md#host-obligations-before-activation).
 The whole-context EXEC contract's 47 new and 132 prior groups pass natively
 with GCC 16.2; fourteen fresh driver objects compile with base GCC 12.5 and normal
-`-Werror`. Full kernel, live DMA and graphics qualification remain pending.
+`-Werror`. Full kernel linkage now passes; live DMA and graphics qualification
+remain pending beyond the isolated memory/ABI check.
 
 All synchronous control operations request and validate a GPU fence,
 including create, attach, transfer, scanout and flush. A returned descriptor
@@ -122,7 +128,7 @@ seals the device and uses normal reset retirement without wrapping IDs.
 The [range and exhaustion contract](classic-fence-range.md) passes 25 new
 and 179 prior groups on the host and NetBSD/AArch64 with GCC 16.2. Fourteen
 fresh objects compile with base GCC 12.5 and normal `-Werror`; full kernel
-and live reset qualification remain pending.
+linkage now passes, while live reset qualification remains pending.
 
 ## Classic capset queries
 
@@ -165,8 +171,9 @@ copyout failure and both aggregate limits. Host checks pass, including address
 and undefined-behavior sanitizers. The five capset groups and nine existing
 VirtGPU groups also pass on NetBSD 11/aarch64. The three affected kernel
 objects compile with native GCC 12.5 and the normal `-Werror` flags; the KMS
-object was rebuilt after the discovery/reset fix. A full clean kernel build,
-boot and live host capset checks remain pending. These checks do not prove 3D
+object was rebuilt after the discovery/reset fix. A full clean kernel build
+and isolated 2D boot now pass; live host capset checks remain pending.
+These checks do not prove 3D
 support or permit linking the partially updated object directory.
 
 ## Classic context lifetime

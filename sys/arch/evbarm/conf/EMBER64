@@ -1,3 +1,4 @@
+# Origin: EmberBSD BCM2712 V3D observation, 2026-10-09.
 #	Our aarch64 kernel: NetBSD 11.0 GENERIC64 plus what the Raspberry Pi 5
 #	needs (patches in ../patches).
 #
@@ -18,6 +19,7 @@ options 	INSECURE
 #	The BCM2712's power management, reset and watchdog block, which our
 #	firmware describes in ACPI (../firmware/pm-watchdog.diff).
 bcmpmwdog*	at acpi?
+bcmv3d*		at acpi?		# Passive identification, no GPU commands
 
 #	The Raspberry Pi 4 on its own device tree: the PCIe bridge its USB-A
 #	ports sit behind, and the hardware random number generator

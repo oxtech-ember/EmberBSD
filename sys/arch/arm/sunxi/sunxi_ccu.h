@@ -473,6 +473,12 @@ struct sunxi_ccu_clk {
 				      const char *);
 };
 
+/* Origin: EmberBSD; optional scoped mutation arbitration for a CCU provider. */
+enum sunxi_ccu_mutation {
+	SUNXI_CCU_ENABLE, SUNXI_CCU_DISABLE, SUNXI_CCU_SET_RATE,
+	SUNXI_CCU_SET_PARENT, SUNXI_CCU_ASSERT, SUNXI_CCU_DEASSERT
+};
+
 struct sunxi_ccu_softc {
 	device_t		sc_dev;
 	int			sc_phandle;
@@ -486,6 +492,11 @@ struct sunxi_ccu_softc {
 
 	struct sunxi_ccu_clk	*sc_clks;
 	u_int			sc_nclks;
+
+	/* enter counts an unhandled writer; exit balances it after dispatch. */
+	int (*sc_guard_enter)(struct sunxi_ccu_softc *, struct clk *,
+	    struct sunxi_ccu_reset *, enum sunxi_ccu_mutation, bool *);
+	void (*sc_guard_exit)(struct sunxi_ccu_softc *);
 };
 
 int	sunxi_ccu_attach(struct sunxi_ccu_softc *);

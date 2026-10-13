@@ -1,5 +1,6 @@
 # Origin: EmberBSD experimental native VirtGPU, 2026-10-06.
 defflag opt_virtgpu_console.h VIRTGPU_CONSOLE
+defflag opt_virtgpu_virgl.h VIRTGPU_VIRGL
 define virtiodrmfbbus { }
 device virtiodrm: drmkms, virtiodrmfbbus
 attach virtiodrm at virtio

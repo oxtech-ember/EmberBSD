@@ -774,12 +774,12 @@ virtio_pci_setup_queue_10(struct virtio_softc *sc, uint16_t idx, uint64_t addr)
 {
 	struct virtio_pci_softc * const psc = container_of(sc,
 	    struct virtio_pci_softc, sc_sc);
-	struct virtqueue *vq = &sc->sc_vqs[idx];
+	struct virtqueue *vq;
 	bus_space_tag_t iot = psc->sc_iot;
 	bus_space_handle_t ioh = psc->sc_ioh;
-	KASSERT(vq->vq_index == idx);
 
-	bus_space_write_2(iot, ioh, VIRTIO_CONFIG1_QUEUE_SELECT, vq->vq_index);
+	/* Queue teardown may follow virtio_child_detach(), which clears sc_vqs. */
+	bus_space_write_2(iot, ioh, VIRTIO_CONFIG1_QUEUE_SELECT, idx);
 	if (addr == 0) {
 		bus_space_write_2(iot, ioh, VIRTIO_CONFIG1_QUEUE_ENABLE, 0);
 		virtio_pci_bus_space_write_8(iot, ioh,
@@ -789,6 +789,9 @@ virtio_pci_setup_queue_10(struct virtio_softc *sc, uint16_t idx, uint64_t addr)
 		virtio_pci_bus_space_write_8(iot, ioh,
 		    VIRTIO_CONFIG1_QUEUE_USED, 0);
 	} else {
+		vq = &sc->sc_vqs[idx];
+		KASSERT(vq->vq_index == idx);
+
 		virtio_pci_bus_space_write_8(iot, ioh,
 		    VIRTIO_CONFIG1_QUEUE_DESC, addr);
 		virtio_pci_bus_space_write_8(iot, ioh,

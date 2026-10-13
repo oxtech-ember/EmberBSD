@@ -1,5 +1,7 @@
 /*	$NetBSD: bcm2835_mbox.h,v 1.6 2019/12/30 18:43:38 jmcneill Exp $	*/
 
+/* Origin: EmberBSD bounded mailbox transactions, 2026-10-08. */
+
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -54,9 +56,18 @@ struct bcm2835mbox_softc {
 
 	kmutex_t sc_lock;
 	kmutex_t sc_intr_lock;
+	kmutex_t sc_chan_lock[BCM2835_MBOX_NUMCHANNELS];
 	kcondvar_t sc_chan[BCM2835_MBOX_NUMCHANNELS];
 	uint32_t sc_mbox[BCM2835_MBOX_NUMCHANNELS];
+	bool sc_quarantined[BCM2835_MBOX_NUMCHANNELS];
+	bool sc_overflow[BCM2835_MBOX_NUMCHANNELS];
+	/* Firmware may still access these after an unanswered request. */
+	bus_dmamap_t sc_retained_map[BCM2835_MBOX_NUMCHANNELS];
+	void *sc_retained_buf[BCM2835_MBOX_NUMCHANNELS];
 };
+
+int bcm2835_mbox_trywrite(bus_space_tag_t, bus_space_handle_t, uint8_t,
+    uint32_t);
 
 void bcm2835_mbox_read(bus_space_tag_t, bus_space_handle_t, uint8_t,
     uint32_t *);

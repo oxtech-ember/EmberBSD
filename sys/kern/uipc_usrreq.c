@@ -1314,6 +1314,9 @@ unp_connect2(struct socket *so, struct socket *so2)
 	case SOCK_SEQPACKET: /* FALLTHROUGH */
 	case SOCK_STREAM:
 		unp2->unp_conn = unp;
+		/* Origin: EmberBSD; cache the pair creator's peer credentials. */
+		unp_connid(curlwp, unp, UNP_EIDSVALID);
+		unp_connid(curlwp, unp2, UNP_EIDSVALID);
 		soisconnected(so);
 		soisconnected(so2);
 		break;

@@ -1,6 +1,6 @@
 # VirtIO-GPU acceleration for EmberBSD in UTM
 
-Status: experimental native 2D implementation; VirGL remains disabled.
+Status: native 2D, four offscreen guest GLES lifecycles and four accelerated DRM frames verified; the separate [classic VirGL opt-in](utm-virgl-optin.md) still needs application surfaces, complete Wayland-session and recovery acceptance.
 Reviewed on 2026-10-06 against EmberBSD `b1d21397dca` and UTM 4.7.5.
 Target: the current NetBSD 11/aarch64-based EmberBSD installation.
 
@@ -13,9 +13,9 @@ builds and contract tests also pass; visible VT handoff and exit/crash recovery
 still need runtime acceptance. These results do not establish GPU rendering.
 Rapid UI injection is not a reliable physical-input acceptance test. Reproducible
 third-party recipes and patches live in
-[EmberBSD Ports](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/wayland-utm),
+[EmberBSD Ports](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/wayland-utm),
 and runtime probes live in
-[EmberBSD Examples](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
+[EmberBSD Examples](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/desktop/wayland-utm).
 
 ## Outcome and scope
 
@@ -26,10 +26,11 @@ The path is Mesa VirGL, the standard VirtGPU DRM ABI, VirtIO, UTM's
 virglrenderer, and an accelerated ANGLE backend. Keep one display initially.
 Preserve the working framebuffer kernel, display configuration and login.
 
-Keep the existing GNOME/Xorg session as a working recovery and comparison
-path. Native GNOME Wayland remains a subsequent integration result: the
-installed Mutter disables Wayland and its native backend. A successful labwc
-test does not complete GNOME Wayland support. Physical-board GPUs,
+The former GNOME/Xorg demonstration VM has been removed; its acceptance is
+historical, not an available recovery session. Preserve matched framebuffer
+kernels and use isolated test roots. Native GNOME Wayland remains a later
+integration result; the earlier Mutter build disabled its native backend.
+A successful labwc test does not complete GNOME Wayland support. Physical-board GPUs,
 Vulkan/Venus, compute, multi-head and live driver unloading remain outside
 the first result. A nested Wayland client does not establish KMS or GPU support.
 
@@ -150,8 +151,11 @@ Select current supported common dependencies and carry compatibility fixes
 in Ports. Its Mesa 26.2.4 source recipe selects classic VirGL, softpipe and
 llvmpipe with common LLVM 23.1.2/GCC 16.2, EGL/GBM, GLES, X11 and Wayland.
 ORC JIT is our selected current LLVM path, not an AArch64 upstream requirement.
-The complete new build and software/JIT runtime remain pending. Existing
-Mesa 21 software results apply only to the temporary recovery/comparison stack.
+The complete package, software/JIT runtime and installed libepoxy consumer
+pass on AArch64. The [GBM DMA-BUF consumer](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/gbm.md)
+also passes with native VirtGPU 2D and llvmpipe. Current wlroots/labwc and
+the accelerated session still need acceptance. Existing Mesa 21 software
+results apply only to the temporary recovery/comparison stack.
 Remove that prefix after current Mesa and rebuilt wlroots/labwc pass the same
 lifecycle and native-input/session checks. Do not keep older per-application
 LLVM or disable llvmpipe to bypass compatibility failures.

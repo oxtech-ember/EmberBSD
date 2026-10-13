@@ -1,4 +1,5 @@
 # $NetBSD: mi,v 1.485.2.13 2026/08/25 19:51:32 martin Exp $
+# Origin: EmberBSD; include the CAN FD regression debug companion.
 #
 ./etc/mtree/set.debug                           comp-sys-root
 ./usr/lib					comp-sys-usr		compatdir
@@ -2498,6 +2499,7 @@
 ./usr/libdata/debug/usr/tests/net/bpfjit/t_extmem.debug		tests-net-debug		debug,atf,sljit,rump
 ./usr/libdata/debug/usr/tests/net/bpfjit/t_mbuf.debug		tests-net-debug		debug,atf,sljit,rump
 ./usr/libdata/debug/usr/tests/net/can/t_can.debug		tests-net-debug		debug,atf,rump
+./usr/libdata/debug/usr/tests/net/can/t_canfd.debug		tests-net-debug		debug,atf,rump
 ./usr/libdata/debug/usr/tests/net/can/t_canfilter.debug		tests-net-debug		debug,atf,rump
 ./usr/libdata/debug/usr/tests/net/carp/t_basic.debug		tests-net-debug		debug,atf,rump,obsolete
 ./usr/libdata/debug/usr/tests/net/fdpass/fdpass32.debug		tests-net-debug		debug,atf,compattestfile

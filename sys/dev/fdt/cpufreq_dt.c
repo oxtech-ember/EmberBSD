@@ -410,7 +410,7 @@ cpufreq_dt_parse_opp_v2(struct cpufreq_dt_softc *sc)
 	const struct fdt_opp_info *opp_info;
 	const u_int *opp_uv;
 	uint64_t opp_hz;
-	int opp_node, len, i, index;
+	int opp_node, len, index;
 
 	const int opp_table = fdtbus_get_phandle(phandle, "operating-points-v2");
 	if (opp_table < 0)
@@ -438,7 +438,8 @@ cpufreq_dt_parse_opp_v2(struct cpufreq_dt_softc *sc)
 
 	sc->sc_opp = kmem_zalloc(sizeof(*sc->sc_opp) * sc->sc_nopp, KM_SLEEP);
 	index = sc->sc_nopp - 1;
-	for (opp_node = OF_child(opp_table), i = 0; opp_node; opp_node = OF_peer(opp_node), i++) {
+	/* Origin: EmberBSD (AI-assisted), remove the unused OPP counter. */
+	for (opp_node = OF_child(opp_table); opp_node; opp_node = OF_peer(opp_node)) {
 		if (!cpufreq_dt_node_supported(opp_info, opp_table, opp_node))
 			continue;
 		if (of_getprop_uint64(opp_node, "opp-hz", &opp_hz) != 0)

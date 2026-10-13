@@ -3,6 +3,9 @@
 This guide is for developers contributing another physical board. Start from
 the closest implemented platform, then establish what is actually reusable.
 A matching CPU or SoC does not establish matching firmware, wiring or peripherals.
+Follow [CONTRIBUTING](../../CONTRIBUTING.md) and open a board-change proposal first.
+Use [the common worksheet](../development/board-change.md) to agree scope and acceptance.
+These requirements also apply when the project owner implements the port or an agent writes the patch.
 
 ## Identify the target and existing support
 
@@ -12,9 +15,9 @@ Identify the intended first scenario, such as boot to multi-user with Ethernet.
 Inspect current EmberBSD and upstream NetBSD sources before writing a driver.
 Preserve upstream identifiers, licenses, revision and authorship when adapting code.
 
-Read [the build guide](../../README.ember.md) and the checkout's `AGENTS.md`.
+Read [the build guide](../../README.ember.md) and the relevant board page.
 Use a contributor branch or fork and the target's current submission rules.
-The [developer skill](https://github.com/neonix20b/Ember-Agent-Skills#add-your-board)
+The [developer skill](https://github.com/oxtech-ember/Ember-Agent-Skills#add-your-board)
 can guide an assistant through the same public workflow.
 
 ## Integrate with the actual source tree
@@ -28,14 +31,14 @@ can guide an assistant through the same public workflow.
 | Raspberry Pi UEFI adaptation | Pinned firmware inputs and ordered patches in `ember/firmware/`; this is not a generic firmware builder for all boards |
 | Build and regression checks | Applicable build entry point and `ember/tools/` |
 | Board instructions and evidence | A page in `ember/boards/`, linked from the catalog and root README |
-| Third-party application dependencies | [EmberBSD-Ports](https://github.com/neonix20b/EmberBSD-Ports) |
-| Standalone device demonstration | [EmberBSD-Examples](https://github.com/neonix20b/EmberBSD-Examples) |
+| Third-party application dependencies | [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports) |
+| Standalone device demonstration | [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) |
 
 Adaptations already present in this fork are applied to the sources. Do not
 reapply `ember/patches`. Firmware's ordered series is a separate input to its
 builder. Keep fixes in versioned sources, not only in a build VM.
 
-The current native AArch64 builder accepts a kernel configuration, but explicitly
+The current AArch64 kernel wrapper accepts a configuration, but explicitly
 lists its device trees and modules. Adding a DTS or a configuration alone does
 not add its outputs to a bootable bundle. Extend the relevant build, image and
 selection paths and their checks. Existing native contracts use upstream Python;
@@ -88,8 +91,9 @@ that guest file alone does not identify the running kernel.
 
 ## Submit the contribution
 
-After relevant checks, open a focused PR with code, build integration, regression
-coverage and board instructions. Update the catalog and short README entry in
+After relevant checks, submit a focused change for independent review through CONTRIBUTING,
+with code, build integration, regression coverage and board instructions.
+Update the catalog and short README entry in
 the same contribution. Explain the resulting scenario, provenance, tests and
 remaining gaps. If required hardware validation is unavailable, describe it
 plainly and use a draft when the target workflow permits one.

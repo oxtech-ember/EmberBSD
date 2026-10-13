@@ -23,6 +23,7 @@
 #include <sys/buf.h>
 #include <sys/device.h>
 #include <sys/kernel.h>
+#include <sys/kauth.h>
 #include <sys/kmem.h>
 #include <sys/pool.h>
 #include <sys/queue.h>
@@ -35,6 +36,7 @@
 #include <net/if_dl.h>
 #include <net/if_ether.h>
 #include <net/if_media.h>
+#include <net/route.h>
 
 #include <netinet/in.h>
 
@@ -44,6 +46,9 @@
 
 #include <dev/ic/bwfmreg.h>
 #include <dev/ic/bwfmvar.h>
+#include <dev/ic/bwfm_sae.h>
+#include <dev/ic/bwfm_sta.h>
+#include <dev/ic/bwfm_scan.h>
 
 /* #define BWFM_DEBUG */
 #ifdef BWFM_DEBUG
@@ -76,6 +81,12 @@ void	 bwfm_newstate_cb(struct bwfm_softc *, struct bwfm_cmd_newstate *);
 void	 bwfm_newassoc(struct ieee80211_node *, int);
 void	 bwfm_task(struct work *, void *);
 static void bwfm_report_cb(struct bwfm_softc *);
+static void bwfm_link_check_cb(struct bwfm_softc *, uint32_t);
+static void bwfm_sae_probe(struct bwfm_softc *);
+static int bwfm_sae_ioctl(struct bwfm_softc *, u_long, struct ieee80211req *);
+static int bwfm_sae_connect(struct bwfm_softc *);
+static int bwfm_set_mfp(struct bwfm_softc *, uint32_t);
+static void bwfm_sae_event(struct bwfm_softc *, const struct bwfm_event *, size_t);
 
 int	 bwfm_chip_attach(struct bwfm_softc *);
 int	 bwfm_chip_detach(struct bwfm_softc *, int);
@@ -117,13 +128,21 @@ int	 bwfm_fwvar_var_get_int(struct bwfm_softc *, const char *, uint32_t *);
 int	 bwfm_fwvar_var_set_int(struct bwfm_softc *, const char *, uint32_t);
 
 struct ieee80211_channel *bwfm_bss2chan(struct bwfm_softc *, struct bwfm_bss_info *);
-void	 bwfm_scan(struct bwfm_softc *);
-void	 bwfm_connect(struct bwfm_softc *);
+int	 bwfm_scan(struct bwfm_softc *, const uint16_t *, size_t);
+static int bwfm_sta_mgmt(struct ieee80211com *, struct ieee80211req_sta_mgmt *);
+static void bwfm_sta_mgmt_cb(struct bwfm_softc *, struct ieee80211req_sta_mgmt *);
+static void bwfm_sta_tx_done(struct bwfm_softc *, bool);
+static bool bwfm_sta_ready(struct bwfm_softc *);
+static void bwfm_sta_scan_cancel(struct bwfm_softc *);
+static void bwfm_sta_scan_done(struct bwfm_softc *, bool);
+int	 bwfm_connect(struct bwfm_softc *);
+static int bwfm_sta_wnm(struct bwfm_softc *, bool);
+static void bwfm_sta_assoc_ies(struct bwfm_softc *);
 void	 bwfm_get_sta_info(struct bwfm_softc *, struct ifmediareq *);
 
 void	 bwfm_rx(struct bwfm_softc *, struct mbuf *);
 void	 bwfm_rx_event(struct bwfm_softc *, struct mbuf *);
-void	 bwfm_rx_event_cb(struct bwfm_softc *, struct mbuf *);
+void	 bwfm_rx_event_cb(struct bwfm_softc *, struct mbuf *, uint32_t);
 void	 bwfm_scan_node(struct bwfm_softc *, struct bwfm_bss_info *, size_t);
 
 static const uint8_t bwfm_2ghz_channels[] = {
@@ -342,6 +361,7 @@ bwfm_attach(struct bwfm_softc *sc)
 		printf("%s: could not create workqueue\n", DEVNAME(sc));
 		return;
 	}
+	mutex_init(&sc->sc_control_lock, MUTEX_DEFAULT, IPL_NONE);
 	sc->sc_freetask = pool_cache_init(sizeof(struct bwfm_task), 0, 0, 0,
 	    "bwfmtask", NULL, IPL_NET /* XXX IPL_SOFTNET? */,
 	    NULL, NULL, NULL);
@@ -385,6 +405,8 @@ bwfm_attach(struct bwfm_softc *sc)
 	memset(fw_version, 0, sizeof(fw_version));
 	if (bwfm_fwvar_var_get_data(sc, "ver", fw_version, sizeof(fw_version)) == 0)
 		printf("%s: %s", DEVNAME(sc), fw_version);
+
+	bwfm_sae_probe(sc);
 
 	ic->ic_ifp = ifp;
 	ic->ic_phytype = IEEE80211_T_OFDM;
@@ -477,6 +499,7 @@ bwfm_attach(struct bwfm_softc *sc)
 	ieee80211_ifattach(ic);
 	sc->sc_newstate = ic->ic_newstate;
 	ic->ic_newstate = bwfm_newstate;
+	ic->ic_sta_mgmt = bwfm_sta_mgmt;
 	ic->ic_newassoc = bwfm_newassoc;
 	ic->ic_send_mgmt = bwfm_send_mgmt;
 	ic->ic_recv_mgmt = bwfm_recv_mgmt;
@@ -498,6 +521,20 @@ bwfm_detach(struct bwfm_softc *sc, int flags)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = ic->ic_ifp;
+	struct bwfm_task barrier;
+
+	/* Stop producers before draining work that can still reference ic. */
+	sc->sc_detaching = true;
+	sc->sc_link_generation++;
+	if (sc->sc_if_attached)
+		ifp->if_timer = 0;
+	if (sc->sc_taskq != NULL) {
+		memset(&barrier, 0, sizeof(barrier));
+		barrier.t_sc = sc;
+		barrier.t_cmd = BWFM_TASK_BARRIER;
+		workqueue_enqueue(sc->sc_taskq, (struct work *)&barrier, NULL);
+		workqueue_wait(sc->sc_taskq, (struct work *)&barrier);
+	}
 
 	if (sc->sc_if_attached) {
 		bpf_detach(ifp);
@@ -505,8 +542,10 @@ bwfm_detach(struct bwfm_softc *sc, int flags)
 		if_detach(ifp);
 	}
 
-	if (sc->sc_taskq)
+	if (sc->sc_taskq) {
 		workqueue_destroy(sc->sc_taskq);
+		mutex_destroy(&sc->sc_control_lock);
+	}
 	if (sc->sc_freetask)
 		pool_cache_destroy(sc->sc_freetask);
 
@@ -521,6 +560,8 @@ bwfm_start(struct ifnet *ifp)
 	struct mbuf *m;
 	int error;
 
+	if (sc->sc_detaching)
+		return;
 	if ((ifp->if_flags & (IFF_RUNNING | IFF_OACTIVE)) != IFF_RUNNING)
 		return;
 
@@ -573,6 +614,8 @@ bwfm_init(struct ifnet *ifp)
 	uint8_t evmask[BWFM_EVENT_MASK_LEN];
 	struct bwfm_join_pref_params join_pref[2];
 
+	if (sc->sc_detaching)
+		return ENXIO;
 	if (bwfm_fwvar_var_set_int(sc, "mpc", 1)) {
 		printf("%s: could not set mpc\n", DEVNAME(sc));
 		return EIO;
@@ -611,12 +654,18 @@ bwfm_init(struct ifnet *ifp)
 	 * firmware 7.45.265.  A request from a mixed WPA2/WPA3 AP can
 	 * change wpa_auth to SAE without a host join or new keys,
 	 * leaving net80211 in RUN with no data traffic.  We do not
-	 * implement 802.11v transitions; do not advertise or offload
-	 * them.  The host handles a subsequent link loss and rejoins.
+	 * offload transitions.  An opted-in station supplicant may briefly
+	 * enable WNM to build the association IE, then handle BTM itself.
 	 */
-	if (ic->ic_opmode == IEEE80211_M_STA &&
-	    bwfm_fwvar_var_set_int(sc, "wnm", 0))
-		printf("%s: could not disable firmware WNM\n", DEVNAME(sc));
+	if (ic->ic_opmode == IEEE80211_M_STA) {
+		sc->sc_sta_wnm_maybe_enabled = true;
+		if (bwfm_sta_wnm(sc, false)) {
+			printf("%s: could not disable firmware WNM\n", DEVNAME(sc));
+			if (sc->sc_chip.ch_chip == BRCM_CC_4345_CHIP_ID)
+				return EIO;
+			sc->sc_sta_wnm_maybe_enabled = false;
+		}
+	}
 
 	memset(evmask, 0, sizeof(evmask));
 
@@ -629,9 +678,13 @@ bwfm_init(struct ifnet *ifp)
 		ENABLE_EVENT(BWFM_E_AUTH);
 		ENABLE_EVENT(BWFM_E_ASSOC);
 		ENABLE_EVENT(BWFM_E_DEAUTH);
+		ENABLE_EVENT(BWFM_E_DEAUTH_IND);
 		ENABLE_EVENT(BWFM_E_DISASSOC);
+		ENABLE_EVENT(BWFM_E_DISASSOC_IND);
 		ENABLE_EVENT(BWFM_E_SET_SSID);
 		ENABLE_EVENT(BWFM_E_ESCAN_RESULT);
+		ENABLE_EVENT(BWFM_E_ACTION_FRAME_RX);
+		ENABLE_EVENT(BWFM_E_ACTION_FRAME_COMPLETE);
 		break;
 #ifndef IEEE80211_STA_ONLY
 	case IEEE80211_M_HOSTAP:
@@ -653,7 +706,19 @@ bwfm_init(struct ifnet *ifp)
 	memset(evmask, 0xff, sizeof(evmask));
 #endif
 
-	if (bwfm_fwvar_var_set_data(sc, "event_msgs", evmask, sizeof(evmask))) {
+	if (sc->sc_sae_caps != 0) {
+		uint8_t extmask[4 + BWFM_EVENT_MASK_LEN];
+
+		evmask[BWFM_E_EXT_AUTH_REQ / 8] |= 1 << (BWFM_E_EXT_AUTH_REQ % 8);
+		evmask[BWFM_E_EXT_AUTH_FRAME_RX / 8] |= 1 << (BWFM_E_EXT_AUTH_FRAME_RX % 8);
+		memset(extmask, 0, sizeof(extmask));
+		extmask[0] = 1;
+		extmask[1] = 3;
+		extmask[2] = sizeof(evmask);
+		memcpy(extmask + 4, evmask, sizeof(evmask));
+		if (bwfm_fwvar_var_set_data(sc, "event_msgs_ext", extmask, sizeof(extmask)))
+			return EIO;
+	} else if (bwfm_fwvar_var_set_data(sc, "event_msgs", evmask, 18)) {
 		printf("%s: could not set event mask\n", DEVNAME(sc));
 		return EIO;
 	}
@@ -733,9 +798,13 @@ bwfm_stop(struct ifnet *ifp, int disable)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct bwfm_join_params join;
 
+	sc->sc_sae_enabled = false;
+	sc->sc_sae_generation++;
 	sc->sc_tx_timer = 0;
 	ifp->if_timer = 0;
 	ifp->if_flags &= ~(IFF_RUNNING | IFF_OACTIVE);
+	if (sc->sc_detaching)
+		return;
 
 	ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
 
@@ -760,8 +829,11 @@ bwfm_watchdog(struct ifnet *ifp)
 {
 	struct bwfm_softc *sc = ifp->if_softc;
 	struct ieee80211com *ic = &sc->sc_ic;
+	struct bwfm_task *t;
 
 	ifp->if_timer = 0;
+	if (sc->sc_detaching)
+		return;
 
 	if (sc->sc_tx_timer > 0) {
 		if (--sc->sc_tx_timer == 0) {
@@ -772,6 +844,77 @@ bwfm_watchdog(struct ifnet *ifp)
 		ifp->if_timer = 1;
 	}
 	ieee80211_watchdog(ic);
+
+	/* No sleeping firmware commands from the watchdog callback. */
+	if ((ifp->if_flags & (IFF_UP | IFF_RUNNING)) !=
+	    (IFF_UP | IFF_RUNNING) || ic->ic_opmode != IEEE80211_M_STA ||
+	    ic->ic_state != IEEE80211_S_RUN || ic->ic_bss == NULL ||
+	    sc->sc_taskq == NULL)
+		return;
+	ifp->if_timer = 1;
+	if (sc->sc_link_timer != 0 && --sc->sc_link_timer != 0)
+		return;
+	sc->sc_link_timer = 5;
+	if (sc->sc_link_pending)
+		return;
+	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
+	if (t == NULL)
+		return;
+	sc->sc_link_pending = true;
+	t->t_sc = sc;
+	t->t_cmd = BWFM_TASK_LINK_CHECK;
+	t->t_link_generation = sc->sc_link_generation;
+	workqueue_enqueue(sc->sc_taskq, (struct work *)t, NULL);
+}
+
+/*
+ * CYW43455 can clear STA_ASSOC without a subscribed disconnect event.
+ * Two valid observations recover that state without depending on an IP peer.
+ * The non-MPSAFE task queue serializes this with events and state changes.
+ */
+static void
+bwfm_link_check_cb(struct bwfm_softc *sc, uint32_t generation)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct bwfm_sta_info sta;
+	uint8_t peer[ETHER_ADDR_LEN];
+	int error;
+
+	if (sc->sc_detaching || generation != sc->sc_link_generation ||
+	    (sc->sc_if.if_flags & (IFF_UP | IFF_RUNNING)) !=
+	    (IFF_UP | IFF_RUNNING) || ic->ic_opmode != IEEE80211_M_STA ||
+	    ic->ic_state != IEEE80211_S_RUN || ic->ic_bss == NULL)
+		goto stale;
+	IEEE80211_ADDR_COPY(peer, ic->ic_bss->ni_bssid);
+	memset(&sta, 0, sizeof(sta));
+	memcpy(&sta, peer, sizeof(peer));
+	error = bwfm_fwvar_var_get_data(sc, "sta_info", &sta, sizeof(sta));
+	sc->sc_link_checks++;
+	/* A command can sleep while an ioctl requests a different connection. */
+	if (sc->sc_detaching || generation != sc->sc_link_generation ||
+	    (sc->sc_if.if_flags & (IFF_UP | IFF_RUNNING)) !=
+	    (IFF_UP | IFF_RUNNING) || ic->ic_opmode != IEEE80211_M_STA ||
+	    ic->ic_state != IEEE80211_S_RUN || ic->ic_bss == NULL ||
+	    !IEEE80211_ADDR_EQ(peer, ic->ic_bss->ni_bssid))
+		goto stale;
+	if (error != 0 || le16toh(sta.ver) < 3 || le16toh(sta.ver) > 7 ||
+	    le16toh(sta.len) < offsetof(struct bwfm_sta_info, ea) + sizeof(sta.ea) ||
+	    le16toh(sta.len) > sizeof(sta) || !IEEE80211_ADDR_EQ(sta.ea, peer)) {
+		sc->sc_link_errors++;
+		goto stale;
+	}
+	if (le32toh(sta.flags) & BWFM_STA_ASSOC)
+		goto stale;
+	if (++sc->sc_link_misses < 2)
+		goto out;
+	if (ieee80211_new_state(ic, IEEE80211_S_SCAN, -1) == 0) {
+		sc->sc_link_recoveries++;
+		printf("%s: firmware lost association; scanning\n", DEVNAME(sc));
+	}
+stale:
+	sc->sc_link_misses = 0;
+out:
+	sc->sc_link_pending = false;
 }
 
 int
@@ -781,9 +924,19 @@ bwfm_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 	struct ieee80211com *ic = &sc->sc_ic;
 	int s, error = 0, oflags;
 
+	if (sc->sc_detaching)
+		return ENXIO;
 	s = splnet();
 
 	switch (cmd) {
+	case SIOCG80211:
+	case SIOCS80211:
+		if (((struct ieee80211req *)data)->i_type == IEEE80211_IOC_SAE)
+			error = bwfm_sae_ioctl(sc, cmd, data);
+		else
+			error = ieee80211_ioctl(ic, cmd, data);
+		break;
+
 	case SIOCSIFFLAGS:
 		oflags = ifp->if_flags;
 		if ((error = ifioctl_common(ifp, cmd, data)) != 0)
@@ -848,6 +1001,71 @@ bwfm_recv_mgmt(struct ieee80211com *ic, struct mbuf *m0,
 {
 }
 
+static bool
+bwfm_key_snapshot(struct bwfm_softc *sc, struct bwfm_cmd_key *ck,
+    const struct ieee80211_key *wk)
+{
+	const struct ieee80211com *ic = &sc->sc_ic;
+
+	memset(ck, 0, sizeof(*ck));
+	ck->key = *wk;
+	ck->generation = sc->sc_sta_generation;
+	ck->sae = sc->sc_sae_enabled;
+	ck->station = ic->ic_opmode == IEEE80211_M_STA &&
+	    wk->wk_cipher->ic_cipher != IEEE80211_CIPHER_WEP;
+	if (ck->station) {
+		if (ic->ic_bss == NULL)
+			return false;
+		IEEE80211_ADDR_COPY(ck->peer, ic->ic_bss->ni_bssid);
+	}
+	return true;
+}
+
+static bool
+bwfm_key_current(struct bwfm_softc *sc, const struct bwfm_cmd_key *ck)
+{
+	const struct ieee80211com *ic = &sc->sc_ic;
+
+	if (sc->sc_detaching)
+		return false;
+	if (!ck->station)
+		return true;
+	return ic->ic_opmode == IEEE80211_M_STA && ic->ic_bss != NULL &&
+	    ck->generation == sc->sc_sta_generation &&
+	    ck->sae == sc->sc_sae_enabled &&
+	    IEEE80211_ADDR_EQ(ck->peer, ic->ic_bss->ni_bssid);
+}
+
+/* Check the epoch after waiting for exclusive firmware command ownership. */
+static int
+bwfm_key_write(struct bwfm_softc *sc, const struct bwfm_cmd_key *ck,
+    const char *name, const void *data, size_t len)
+{
+	uint8_t buf[sizeof(struct bwfm_wsec_key) + sizeof("wpa_auth")];
+	size_t offset = strlen(name) + 1;
+	int error = ESTALE;
+
+	if (offset > sizeof(buf) || len > sizeof(buf) - offset)
+		return EINVAL;
+	memcpy(buf, name, offset);
+	memcpy(buf + offset, data, len);
+	mutex_enter(&sc->sc_control_lock);
+	if (bwfm_key_current(sc, ck))
+		error = sc->sc_proto_ops->proto_set_dcmd(sc, 0, BWFM_C_SET_VAR,
+		    (char *)buf, offset + len);
+	mutex_exit(&sc->sc_control_lock);
+	explicit_memset(buf, 0, sizeof(buf));
+	return error;
+}
+
+static int
+bwfm_key_write_int(struct bwfm_softc *sc, const struct bwfm_cmd_key *ck,
+    const char *name, uint32_t value)
+{
+	value = htole32(value);
+	return bwfm_key_write(sc, ck, name, &value, sizeof(value));
+}
+
 int
 bwfm_key_set(struct ieee80211com *ic, const struct ieee80211_key *wk,
     const uint8_t mac[IEEE80211_ADDR_LEN])
@@ -855,6 +1073,8 @@ bwfm_key_set(struct ieee80211com *ic, const struct ieee80211_key *wk,
 	struct bwfm_softc *sc = ic->ic_ifp->if_softc;
 	struct bwfm_task *t;
 
+	if (sc->sc_detaching)
+		return 0;
 	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
 	if (t == NULL) {
 		printf("%s: no free tasks\n", DEVNAME(sc));
@@ -863,7 +1083,11 @@ bwfm_key_set(struct ieee80211com *ic, const struct ieee80211_key *wk,
 
 	t->t_sc = sc;
 	t->t_cmd = BWFM_TASK_KEY_SET;
-	t->t_key.key = wk;
+	if (!bwfm_key_snapshot(sc, &t->t_key, wk)) {
+		explicit_memset(&t->t_key, 0, sizeof(t->t_key));
+		pool_cache_put(sc->sc_freetask, t);
+		return 0;
+	}
 	memcpy(t->t_key.mac, mac, sizeof(t->t_key.mac));
 	workqueue_enqueue(sc->sc_taskq, (struct work *)t, NULL);
 	return 1;
@@ -872,33 +1096,31 @@ bwfm_key_set(struct ieee80211com *ic, const struct ieee80211_key *wk,
 static void
 bwfm_key_set_cb(struct bwfm_softc *sc, struct bwfm_cmd_key *ck)
 {
-	const struct ieee80211_key *wk = ck->key;
+	const struct ieee80211_key *wk = &ck->key;
 	const uint8_t *mac = ck->mac;
 	struct bwfm_wsec_key wsec_key;
 	uint32_t wsec_enable, wsec;
 	bool ext_key;
 
-#ifdef BWFM_DEBUG
-	printf("key_set: key cipher %s len %d: ", wk->wk_cipher->ic_name, wk->wk_keylen);
-	for (int j = 0; j < sizeof(wk->wk_key); j++)
-		printf("%02x", wk->wk_key[j]);
-#endif
-
+	memset(&wsec_key, 0, sizeof(wsec_key));
+	if (!bwfm_key_current(sc, ck))
+		goto out;
 	if ((wk->wk_flags & IEEE80211_KEY_GROUP) == 0 &&
 	    wk->wk_cipher->ic_cipher != IEEE80211_CIPHER_WEP) {
 		ext_key = true;
 	} else {
 		ext_key = false;
 	}
+	if (ck->station && ext_key && !IEEE80211_ADDR_EQ(mac, ck->peer))
+		goto out;
 
 #ifdef BWFM_DEBUG
-	printf(", ext_key = %d", ext_key);
+	printf("%s: set key, pairwise = %d", DEVNAME(sc), ext_key);
 	printf(", mac = %02x:%02x:%02x:%02x:%02x:%02x",
 	    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 	printf("\n");
 #endif
 
-	memset(&wsec_key, 0, sizeof(wsec_key));
 	if (ext_key && !IEEE80211_IS_MULTICAST(mac))
 		memcpy(wsec_key.ea, mac, sizeof(wsec_key.ea));
 	wsec_key.index = htole32(wk->wk_keyix);
@@ -914,7 +1136,7 @@ bwfm_key_set_cb(struct bwfm_softc *sc, struct bwfm_cmd_key *ck)
 		else if (wk->wk_keylen == 13)
 			wsec_key.algo = htole32(BWFM_CRYPTO_ALGO_WEP128);
 		else
-			return;
+			goto out;
 		wsec_enable = BWFM_WSEC_WEP;
 		break;
 	case IEEE80211_CIPHER_TKIP:
@@ -928,17 +1150,27 @@ bwfm_key_set_cb(struct bwfm_softc *sc, struct bwfm_cmd_key *ck)
 	default:
 		printf("%s: %s: cipher %s not supported\n", DEVNAME(sc),
 		    __func__, wk->wk_cipher->ic_name);
-		return;
+		goto out;
 	}
 
-	if (bwfm_fwvar_var_set_data(sc, "wsec_key", &wsec_key, sizeof(wsec_key)))
-		return;
+	if (bwfm_key_write(sc, ck, "wsec_key", &wsec_key, sizeof(wsec_key)) ||
+	    !bwfm_key_current(sc, ck))
+		goto out;
 
-	bwfm_fwvar_var_set_int(sc, "wpa_auth", BWFM_WPA_AUTH_WPA2_PSK);
+	/* SAE already configured CCMP/PMF; rewriting wsec clears the MFP mode. */
+	if (ck->sae)
+		goto out;
+	if (bwfm_key_write_int(sc, ck, "wpa_auth", BWFM_WPA_AUTH_WPA2_PSK) ||
+	    !bwfm_key_current(sc, ck))
+		goto out;
 
-	bwfm_fwvar_var_get_int(sc, "wsec", &wsec);
+	if (bwfm_fwvar_var_get_int(sc, "wsec", &wsec) ||
+	    !bwfm_key_current(sc, ck))
+		goto out;
 	wsec |= wsec_enable;
-	bwfm_fwvar_var_set_int(sc, "wsec", wsec);
+	(void)bwfm_key_write_int(sc, ck, "wsec", wsec);
+out:
+	explicit_memset(&wsec_key, 0, sizeof(wsec_key));
 }
 
 int
@@ -947,6 +1179,8 @@ bwfm_key_delete(struct ieee80211com *ic, const struct ieee80211_key *wk)
 	struct bwfm_softc *sc = ic->ic_ifp->if_softc;
 	struct bwfm_task *t;
 
+	if (sc->sc_detaching)
+		return 0;
 	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
 	if (t == NULL) {
 		printf("%s: no free tasks\n", DEVNAME(sc));
@@ -955,7 +1189,11 @@ bwfm_key_delete(struct ieee80211com *ic, const struct ieee80211_key *wk)
 
 	t->t_sc = sc;
 	t->t_cmd = BWFM_TASK_KEY_DELETE;
-	t->t_key.key = wk;
+	if (!bwfm_key_snapshot(sc, &t->t_key, wk)) {
+		explicit_memset(&t->t_key, 0, sizeof(t->t_key));
+		pool_cache_put(sc->sc_freetask, t);
+		return 0;
+	}
 	memset(t->t_key.mac, 0, sizeof(t->t_key.mac));
 	workqueue_enqueue(sc->sc_taskq, (struct work *)t, NULL);
 
@@ -965,15 +1203,15 @@ bwfm_key_delete(struct ieee80211com *ic, const struct ieee80211_key *wk)
 static void
 bwfm_key_delete_cb(struct bwfm_softc *sc, struct bwfm_cmd_key *ck)
 {
-	const struct ieee80211_key *wk = ck->key;
+	const struct ieee80211_key *wk = &ck->key;
 	struct bwfm_wsec_key wsec_key;
 
 	memset(&wsec_key, 0, sizeof(wsec_key));
 	wsec_key.index = htole32(wk->wk_keyix);
 	wsec_key.flags = htole32(BWFM_WSEC_PRIMARY_KEY);
 
-	if (bwfm_fwvar_var_set_data(sc, "wsec_key", &wsec_key, sizeof(wsec_key)))
-		return;
+	(void)bwfm_key_write(sc, ck, "wsec_key", &wsec_key, sizeof(wsec_key));
+	explicit_memset(&wsec_key, 0, sizeof(wsec_key));
 }
 
 int
@@ -982,11 +1220,24 @@ bwfm_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 	struct bwfm_softc *sc = ic->ic_ifp->if_softc;
 	struct bwfm_task *t;
 
+	if (sc->sc_detaching)
+		return ENXIO;
 	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
 	if (t == NULL) {
 		printf("%s: no free tasks\n", DEVNAME(sc));
 		return EIO;
 	}
+	/* Invalidate management work before a state-change command can sleep. */
+	if (nstate != IEEE80211_S_RUN && nstate != IEEE80211_S_ASSOC) {
+		if (++sc->sc_sta_generation == 0)
+			sc->sc_sta_generation++;
+		bwfm_sta_tx_done(sc, false);
+		sc->sc_sta_assoc_len = 0;
+	}
+	/* Invalidate an in-flight poll before the queued transition executes. */
+	sc->sc_link_generation++;
+	sc->sc_link_misses = 0;
+	sc->sc_link_timer = 5;
 
 	t->t_sc = sc;
 	t->t_cmd = BWFM_TASK_NEWSTATE;
@@ -1009,30 +1260,53 @@ bwfm_newstate_cb(struct bwfm_softc *sc, struct bwfm_cmd_newstate *cmd)
 
 	s = splnet();
 
+	if (nstate != IEEE80211_S_RUN && nstate != IEEE80211_S_ASSOC) {
+		bwfm_sta_scan_cancel(sc);
+		if (bwfm_sta_wnm(sc, false))
+			goto abort;
+	}
 	switch (nstate) {
 	case IEEE80211_S_INIT:
+		if (ostate >= IEEE80211_S_AUTH)
+			bwfm_fwvar_cmd_set_data(sc, BWFM_C_DISASSOC, NULL, 0);
 		break;
 
 	case IEEE80211_S_SCAN:
+		if (ostate >= IEEE80211_S_AUTH)
+			bwfm_fwvar_cmd_set_data(sc, BWFM_C_DISASSOC, NULL, 0);
 		if (ostate != IEEE80211_S_SCAN) {
 			/* Start of scanning */
-			bwfm_scan(sc);
+			(void)bwfm_scan(sc, NULL, 0);
 		}
 		break;
 
 	case IEEE80211_S_AUTH:
-		bwfm_connect(sc);
+		if (bwfm_connect(sc))
+			goto abort;
 		break;
 
 	case IEEE80211_S_ASSOC:
 		break;
 
 	case IEEE80211_S_RUN:
+		if (bwfm_sta_wnm(sc, false))
+			goto abort;
+		if (sc->sc_sta_enabled)
+			bwfm_sta_assoc_ies(sc);
 		break;
 	}
 
 	sc->sc_newstate(ic, nstate, cmd->arg);
+	if (ic->ic_state == IEEE80211_S_RUN && ic->ic_opmode == IEEE80211_M_STA)
+		ic->ic_ifp->if_timer = 1;
 
+	splx(s);
+	return;
+abort:
+	printf("%s: cannot establish host control of BSS transitions\n", DEVNAME(sc));
+	if (sc->sc_if.if_flags & IFF_RUNNING)
+		bwfm_stop(&sc->sc_if, 1);
+	sc->sc_newstate(ic, IEEE80211_S_INIT, -1);
 	splx(s);
 }
 
@@ -1049,6 +1323,16 @@ bwfm_task(struct work *wk, void *arg)
 	struct bwfm_task *t = (struct bwfm_task *)wk;
 	struct bwfm_softc *sc = t->t_sc;
 
+	/* The detach barrier is stack-owned and must not enter the task pool. */
+	if (t->t_cmd == BWFM_TASK_BARRIER)
+		return;
+	if (sc->sc_detaching) {
+		if (t->t_cmd == BWFM_TASK_RX_EVENT)
+			m_freem(t->t_mbuf);
+		if (t->t_cmd == BWFM_TASK_LINK_CHECK)
+			sc->sc_link_pending = false;
+		goto out;
+	}
 	switch (t->t_cmd) {
 	case BWFM_TASK_NEWSTATE:
 		bwfm_newstate_cb(sc, &t->t_newstate);
@@ -1060,15 +1344,24 @@ bwfm_task(struct work *wk, void *arg)
 		bwfm_key_delete_cb(sc, &t->t_key);
 		break;
 	case BWFM_TASK_RX_EVENT:
-		bwfm_rx_event_cb(sc, t->t_mbuf);
+		bwfm_rx_event_cb(sc, t->t_mbuf, t->t_generation);
+		break;
+	case BWFM_TASK_STA_MGMT:
+		bwfm_sta_mgmt_cb(sc, &t->t_sta);
 		break;
 	case BWFM_TASK_REPORT:
 		bwfm_report_cb(sc);
+		break;
+	case BWFM_TASK_LINK_CHECK:
+		bwfm_link_check_cb(sc, t->t_link_generation);
 		break;
 	default:
 		panic("bwfm: unknown task command %d", t->t_cmd);
 	}
 
+out:
+	if (t->t_cmd == BWFM_TASK_KEY_SET || t->t_cmd == BWFM_TASK_KEY_DELETE)
+		explicit_memset(&t->t_key, 0, sizeof(t->t_key));
 	pool_cache_put(sc->sc_freetask, t);
 }
 
@@ -1078,7 +1371,7 @@ bwfm_report(struct bwfm_softc *sc)
 {
 	struct bwfm_task *t;
 
-	if (sc->sc_taskq == NULL)
+	if (sc->sc_detaching || sc->sc_taskq == NULL)
 		return;
 	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
 	if (t == NULL)
@@ -1092,12 +1385,14 @@ static void
 bwfm_report_cb(struct bwfm_softc *sc)
 {
 	static const char * const vars[] = {
-		"chanspec", "mpc", "roam_off", "wnm", "wsec", "wpa_auth",
-		"ampdu", "ampdu_hostreorder"
+		"chanspec", "mpc", "roam_off", "wnm", "wsec", "wpa_auth", "auth", "mfp",
+		"ampdu", "ampdu_hostreorder", "rrm", "wnm_bsstrans_resp"
 	};
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct bwfm_sta_info sta;
 	uint8_t bssid[ETHER_ADDR_LEN] = { 0 };
+	uint8_t mask[4 + BWFM_EVENT_MASK_LEN] = { 1, 0,
+	    BWFM_EVENT_MASK_LEN, 0 };
 	uint32_t value = 0;
 	unsigned int i;
 	int error;
@@ -1105,8 +1400,29 @@ bwfm_report_cb(struct bwfm_softc *sc)
 	printf("%s: radio state %u ifflags 0x%x pm wanted %d pending %d\n",
 	    DEVNAME(sc), ic->ic_state, sc->sc_if.if_flags, sc->sc_pm,
 	    sc->sc_setpm);
+	printf("%s: station management enabled %u epoch %u received %u\n",
+	    DEVNAME(sc), sc->sc_sta_enabled, sc->sc_sta_generation, sc->sc_sta_rx);
+	printf("%s: SAE enabled %u generation %u requests %u rx %u tx %u dropped %u flags 0x%x\n",
+	    DEVNAME(sc), sc->sc_sae_enabled, sc->sc_sae_generation,
+	    sc->sc_sae_requests, sc->sc_sae_received, sc->sc_sae_sent,
+	    sc->sc_sae_dropped, sc->sc_sae_last_flags);
+	printf("%s: disconnect events %u last %u reason %u flags 0x%x\n",
+	    DEVNAME(sc), sc->sc_link_events, sc->sc_link_event,
+	    sc->sc_link_reason, sc->sc_link_flags);
+	printf("%s: association checks %u errors %u misses %u recoveries %u\n",
+	    DEVNAME(sc), sc->sc_link_checks, sc->sc_link_errors,
+	    sc->sc_link_misses, sc->sc_link_recoveries);
 	if ((sc->sc_if.if_flags & IFF_RUNNING) == 0 || ic->ic_bss == NULL)
 		return;
+	if (sc->sc_sae_caps != 0) {
+		error = bwfm_fwvar_var_get_data(sc, "event_msgs_ext", mask,
+		    sizeof(mask));
+		/* This firmware writes len/max/mask, not the version/command. */
+		printf("%s: event mask error %d length %u max %u"
+		    " disconnect bits %02x/%02x/%02x\n",
+		    DEVNAME(sc), error, mask[2], mask[3],
+		    mask[4], mask[5], mask[6]);
+	}
 	error = bwfm_fwvar_cmd_get_data(sc, BWFM_C_GET_BSSID,
 	    bssid, sizeof(bssid));
 	printf("%s: radio bssid error %d matches %d\n", DEVNAME(sc), error,
@@ -1830,11 +2146,13 @@ bwfm_proto_bcdc_query_dcmd(struct bwfm_softc *sc, int ifidx,
     int cmd, char *buf, size_t *len)
 {
 	struct bwfm_proto_bcdc_dcmd *dcmd;
-	size_t size = sizeof(dcmd->hdr) + *len;
+	size_t size;
 	int reqid;
 	int ret = 1;
 
-	reqid = sc->sc_bcdc_reqid++;
+	/* One request owns the shared reply queue until its response arrives. */
+	reqid = sc->sc_bcdc_reqid;
+	sc->sc_bcdc_reqid = (reqid + 1) & 0xffff;
 
 	dcmd = kmem_zalloc(sizeof(*dcmd), KM_SLEEP);
 	if (*len > sizeof(dcmd->buf))
@@ -1855,24 +2173,24 @@ bwfm_proto_bcdc_query_dcmd(struct bwfm_softc *sc, int ifidx,
 	}
 
 	do {
+		/* A stale, shorter response must not shrink the next read. */
+		size = sizeof(*dcmd);
 		if (sc->sc_bus_ops->bs_rxctl(sc, (void *)dcmd, &size)) {
 			DPRINTF(("%s: rx failed\n", DEVNAME(sc)));
 			goto err;
 		}
+		if (size < sizeof(dcmd->hdr))
+			goto err;
 		dcmd->hdr.cmd = le32toh(dcmd->hdr.cmd);
 		dcmd->hdr.len = le32toh(dcmd->hdr.len);
 		dcmd->hdr.flags = le32toh(dcmd->hdr.flags);
 		dcmd->hdr.status = le32toh(dcmd->hdr.status);
 	} while (BWFM_BCDC_DCMD_ID_GET(dcmd->hdr.flags) != reqid);
 
-	if (BWFM_BCDC_DCMD_ID_GET(dcmd->hdr.flags) != reqid) {
-		printf("%s: unexpected request id\n", DEVNAME(sc));
-		goto err;
-	}
 
-	if (buf) {
-		if (size < *len)
-			*len = size;
+	if ((dcmd->hdr.flags & BWFM_BCDC_DCMD_ERROR) == 0 && buf) {
+		size -= sizeof(dcmd->hdr);
+		*len = MIN(*len, size);
 		memcpy(buf, dcmd->buf, *len);
 	}
 
@@ -1881,6 +2199,7 @@ bwfm_proto_bcdc_query_dcmd(struct bwfm_softc *sc, int ifidx,
 	else
 		ret = 0;
 err:
+	explicit_memset(dcmd, 0, sizeof(*dcmd));
 	kmem_free(dcmd, sizeof(*dcmd));
 	return ret;
 }
@@ -1890,10 +2209,12 @@ bwfm_proto_bcdc_set_dcmd(struct bwfm_softc *sc, int ifidx,
     int cmd, char *buf, size_t len)
 {
 	struct bwfm_proto_bcdc_dcmd *dcmd;
-	size_t size = sizeof(dcmd->hdr) + len;
+	size_t size;
 	int ret = 1, reqid;
 
-	reqid = sc->sc_bcdc_reqid++;
+	/* One request owns the shared reply queue until its response arrives. */
+	reqid = sc->sc_bcdc_reqid;
+	sc->sc_bcdc_reqid = (reqid + 1) & 0xffff;
 
 	dcmd = kmem_zalloc(sizeof(*dcmd), KM_SLEEP);
 	if (len > sizeof(dcmd->buf))
@@ -1907,32 +2228,34 @@ bwfm_proto_bcdc_set_dcmd(struct bwfm_softc *sc, int ifidx,
 	dcmd->hdr.flags = htole32(dcmd->hdr.flags);
 	memcpy(&dcmd->buf, buf, len);
 
-	if (sc->sc_bus_ops->bs_txctl(sc, (void *)dcmd, size)) {
+	if (sc->sc_bus_ops->bs_txctl(sc, (void *)dcmd,
+	    sizeof(dcmd->hdr) + len)) {
 		DPRINTF(("%s: tx failed\n", DEVNAME(sc)));
 		goto err;
 	}
 
 	do {
+		/* A stale, shorter response must not shrink the next read. */
+		size = sizeof(*dcmd);
 		if (sc->sc_bus_ops->bs_rxctl(sc, (void *)dcmd, &size)) {
 			DPRINTF(("%s: rx failed\n", DEVNAME(sc)));
 			goto err;
 		}
+		if (size < sizeof(dcmd->hdr))
+			goto err;
 		dcmd->hdr.cmd = le32toh(dcmd->hdr.cmd);
 		dcmd->hdr.len = le32toh(dcmd->hdr.len);
 		dcmd->hdr.flags = le32toh(dcmd->hdr.flags);
 		dcmd->hdr.status = le32toh(dcmd->hdr.status);
 	} while (BWFM_BCDC_DCMD_ID_GET(dcmd->hdr.flags) != reqid);
 
-	if (BWFM_BCDC_DCMD_ID_GET(dcmd->hdr.flags) != reqid) {
-		printf("%s: unexpected request id\n", DEVNAME(sc));
-		goto err;
-	}
 
 	if (dcmd->hdr.flags & BWFM_BCDC_DCMD_ERROR)
 		ret = dcmd->hdr.status;
 	else
 		ret = 0;
 err:
+	explicit_memset(dcmd, 0, sizeof(*dcmd));
 	kmem_free(dcmd, sizeof(*dcmd));
 	return ret;
 }
@@ -1985,13 +2308,23 @@ bwfm_process_blob(struct bwfm_softc *sc, const char *var, uint8_t **blob,
 int
 bwfm_fwvar_cmd_get_data(struct bwfm_softc *sc, int cmd, void *data, size_t len)
 {
-	return sc->sc_proto_ops->proto_query_dcmd(sc, 0, cmd, data, &len);
+	int error;
+
+	mutex_enter(&sc->sc_control_lock);
+	error = sc->sc_proto_ops->proto_query_dcmd(sc, 0, cmd, data, &len);
+	mutex_exit(&sc->sc_control_lock);
+	return error;
 }
 
 int
 bwfm_fwvar_cmd_set_data(struct bwfm_softc *sc, int cmd, void *data, size_t len)
 {
-	return sc->sc_proto_ops->proto_set_dcmd(sc, 0, cmd, data, len);
+	int error;
+
+	mutex_enter(&sc->sc_control_lock);
+	error = sc->sc_proto_ops->proto_set_dcmd(sc, 0, cmd, data, len);
+	mutex_exit(&sc->sc_control_lock);
+	return error;
 }
 
 int
@@ -2057,51 +2390,398 @@ bwfm_fwvar_var_set_int(struct bwfm_softc *sc, const char *name, uint32_t data)
 	return bwfm_fwvar_var_set_data(sc, name, &data, sizeof(data));
 }
 
-/* 802.11 code */
-void
-bwfm_scan(struct bwfm_softc *sc)
+/* Reject a reply that does not contain every byte consumed by the caller. */
+static int
+bwfm_fwvar_var_get_checked(struct bwfm_softc *sc, const char *name,
+    void *data, size_t len)
 {
+	char *buf;
+	size_t buflen = strlen(name) + 1 + len;
+	size_t received = buflen;
+	int error;
+
+	buf = kmem_zalloc(buflen, KM_SLEEP);
+	memcpy(buf, name, strlen(name) + 1);
+	mutex_enter(&sc->sc_control_lock);
+	error = sc->sc_proto_ops->proto_query_dcmd(sc, 0, BWFM_C_GET_VAR,
+	    buf, &received);
+	mutex_exit(&sc->sc_control_lock);
+	if (error == 0 && received < len)
+		error = EIO;
+	if (error == 0)
+		memcpy(data, buf, len);
+	explicit_memset(buf, 0, buflen);
+	kmem_free(buf, buflen);
+	return error;
+}
+
+/*
+ * FullMAC uses the selected RSN IE, not net80211's software cipher defaults.
+ * Allow PSK/CCMP without PMF, or SAE/CCMP with required firmware PMF.
+ */
+static bool
+bwfm_sta_security(struct bwfm_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	const uint8_t *ie = ic->ic_opt_ie;
+	static const uint8_t ccmp[] = { 0x00, 0x0f, 0xac, 4 };
+	static const uint8_t psk[] = { 0x00, 0x0f, 0xac, 2 };
+
+	if (sc->sc_sae_enabled)
+		return fullmac_sae_rsn_valid(ie, ic->ic_opt_ie_len);
+	return (ic->ic_flags & IEEE80211_F_WPA) == IEEE80211_F_WPA2 &&
+	    ie != NULL && ic->ic_opt_ie_len >= 20 &&
+	    ie[0] == IEEE80211_ELEMID_RSN && ie[1] >= 18 &&
+	    ie[1] + 2 <= ic->ic_opt_ie_len && le16dec(ie + 2) == 1 &&
+	    memcmp(ie + 4, ccmp, 4) == 0 && le16dec(ie + 8) == 1 &&
+	    memcmp(ie + 10, ccmp, 4) == 0 && le16dec(ie + 14) == 1 &&
+	    memcmp(ie + 16, psk, 4) == 0 &&
+	    (ie[1] < 20 || (le16dec(ie + 20) & 0x00c0) == 0);
+}
+
+/* A missing SET reply does not prove that firmware ignored the command. */
+static int
+bwfm_sta_wnm(struct bwfm_softc *sc, bool enable)
+{
+	uint32_t value = 0;
+	if (!enable && !sc->sc_sta_wnm_maybe_enabled)
+		return 0;
+	if (enable)
+		sc->sc_sta_wnm_maybe_enabled = true;
+	if (bwfm_fwvar_var_set_int(sc, "wnm", enable ? 1 : 0) ||
+	    bwfm_fwvar_var_get_checked(sc, "wnm", &value, sizeof(value)) ||
+	    le32toh(value) != (enable ? 1U : 0U))
+		return EIO;
+	sc->sc_sta_wnm_maybe_enabled = enable;
+	return 0;
+}
+
+/* The firmware lengths include the fixed association headers. */
+static void
+bwfm_sta_assoc_ies(struct bwfm_softc *sc)
+{
+	uint8_t info[28] = { 0 };
+	uint8_t *buf;
+	size_t request, response, fixed;
+	uint32_t generation = sc->sc_sta_generation;
+
+	sc->sc_sta_assoc_len = 0;
+	if (bwfm_fwvar_var_get_checked(sc, "assoc_info", info, sizeof(info)))
+		return;
+	request = le32dec(info);
+	response = le32dec(info + 4);
+	fixed = (le32dec(info + 8) & 1) ? 10 : 4;
+	if (request < fixed || response < 6)
+		return;
+	request -= fixed;
+	response -= 6;
+	if (request == 0 || response == 0 ||
+	    request > sizeof(sc->sc_sta_assoc) - 4 ||
+	    response > sizeof(sc->sc_sta_assoc) - 4 - request)
+		return;
+	buf = kmem_zalloc(IEEE80211_STA_MAX_BODY, KM_SLEEP);
+	if (bwfm_fwvar_var_get_checked(sc, "assoc_req_ies", buf, request) ||
+	    !bwfm_sta_ies_valid(buf, request))
+		goto out;
+	memcpy(sc->sc_sta_assoc + 4, buf, request);
+	memset(buf, 0, IEEE80211_STA_MAX_BODY);
+	if (bwfm_fwvar_var_get_checked(sc, "assoc_resp_ies", buf, response) ||
+	    !bwfm_sta_ies_valid(buf, response) ||
+	    generation != sc->sc_sta_generation)
+		goto out;
+	memcpy(sc->sc_sta_assoc + 4 + request, buf, response);
+	le16enc(sc->sc_sta_assoc, request);
+	le16enc(sc->sc_sta_assoc + 2, response);
+	sc->sc_sta_assoc_len = 4 + request + response;
+out:
+	kmem_free(buf, IEEE80211_STA_MAX_BODY);
+}
+
+/* Host-managed BSS transitions: policy remains in wpa_supplicant. */
+static bool
+bwfm_sta_ready(struct bwfm_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+
+	return sc->sc_sta_enabled && ic->ic_opmode == IEEE80211_M_STA &&
+	    !sc->sc_detaching && ic->ic_bss != NULL &&
+	    ic->ic_state == IEEE80211_S_RUN &&
+	    bwfm_sta_security(sc) &&
+	    ic->ic_bss->ni_chan != IEEE80211_CHAN_ANYC &&
+	    (sc->sc_if.if_flags & IFF_RUNNING) != 0;
+}
+
+static void
+bwfm_sta_tx_done(struct bwfm_softc *sc, bool ack)
+{
+	if (!sc->sc_sta_tx_pending)
+		return;
+	sc->sc_sta_tx_pending = false;
+	sc->sc_sta_tx.flags = ack ? IEEE80211_STA_TX_ACK : 0;
+	sc->sc_sta_tx.len = 0;
+	rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_TX, &sc->sc_sta_tx,
+	    offsetof(struct ieee80211req_sta_mgmt, data));
+}
+
+static void
+bwfm_sta_scan_done(struct bwfm_softc *sc, bool aborted)
+{
+	if (!sc->sc_sta_bgscan)
+		return;
+	sc->sc_sta_bgscan = false;
+	ieee80211_cancel_scan(&sc->sc_ic);
+	sc->sc_sta_scan.flags = aborted ? IEEE80211_STA_SCAN_ABORTED : 0;
+	sc->sc_sta_scan.len = 0;
+	rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_SCAN, &sc->sc_sta_scan,
+	    offsetof(struct ieee80211req_sta_mgmt, data));
+}
+
+static void
+bwfm_sta_scan_cancel(struct bwfm_softc *sc)
+{
+	struct bwfm_escan_params params;
+
+	if (!sc->sc_sta_bgscan)
+		return;
+	memset(&params, 0, sizeof(params));
+	params.version = htole32(BWFM_ESCAN_REQ_VERSION);
+	params.action = htole16(WL_ESCAN_ACTION_ABORT);
+	params.sync_id = htole16(sc->sc_scan_id);
+	/* Invalidate queued work before the firmware command can sleep. */
+	sc->sc_sta_scan_generation++;
+	bwfm_sta_scan_done(sc, true);
+	sc->sc_scan_id++; /* Ignore the completion of the cancelled operation. */
+	bwfm_fwvar_var_set_data(sc, "escan", &params, sizeof(params));
+}
+
+static int
+bwfm_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
+{
+	struct bwfm_softc *sc = ic->ic_ifp->if_softc;
+	struct bwfm_task *t;
+	int s, error = 0;
+
+	if (sc->sc_detaching)
+		return ENXIO;
+	if (req->op >= IEEE80211_STA_TX &&
+	    (req->generation != sc->sc_sta_generation ||
+	    ic->ic_bss == NULL ||
+	    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)))
+		return ESTALE;
+	/* This firmware protocol has been exercised on CYW43455 only. */
+	if (sc->sc_chip.ch_chip != BRCM_CC_4345_CHIP_ID ||
+	    ic->ic_opmode != IEEE80211_M_STA)
+		return EOPNOTSUPP;
+	s = splnet();
+	switch (req->op) {
+	case IEEE80211_STA_GET:
+		req->flags = IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM;
+		req->generation = sc->sc_sta_generation;
+		req->len = IEEE80211_ADDR_LEN;
+		IEEE80211_ADDR_COPY(req->data, ic->ic_myaddr);
+		if (bwfm_sta_ready(sc)) {
+			req->flags |= IEEE80211_STA_ASSOCIATED;
+			req->freq = ic->ic_bss->ni_chan->ic_freq;
+			IEEE80211_ADDR_COPY(req->bssid, ic->ic_bss->ni_bssid);
+			if (sc->sc_sta_assoc_len != 0) {
+				req->flags |= IEEE80211_STA_ASSOC_IES;
+				memcpy(req->data + 6, sc->sc_sta_assoc, sc->sc_sta_assoc_len);
+				req->len += sc->sc_sta_assoc_len;
+			}
+		}
+		goto out;
+	case IEEE80211_STA_ENABLE:
+	case IEEE80211_STA_DISABLE:
+		if (req->len != 0) {
+			error = EINVAL;
+			goto out;
+		}
+		sc->sc_sta_enabled = req->op == IEEE80211_STA_ENABLE;
+		if (!sc->sc_sta_enabled) {
+			bwfm_sta_tx_done(sc, false);
+			bwfm_sta_scan_cancel(sc);
+			error = bwfm_sta_wnm(sc, false);
+			if (error && (sc->sc_if.if_flags & IFF_RUNNING))
+				bwfm_stop(&sc->sc_if, 1);
+		}
+		goto out;
+	case IEEE80211_STA_CANCEL_SCAN:
+		if (req->cookie == 0 || req->cookie != sc->sc_sta_scan.cookie) {
+			error = ESTALE;
+			goto out;
+		}
+		if (req->len != 0) {
+			error = EINVAL;
+			goto out;
+		}
+		bwfm_sta_scan_cancel(sc);
+		goto out;
+	case IEEE80211_STA_CANCEL_TX:
+		if (req->len != 0) {
+			error = EINVAL;
+			goto out;
+		}
+		if (sc->sc_sta_tx_pending && req->cookie == sc->sc_sta_tx.cookie)
+			bwfm_sta_tx_done(sc, false);
+		goto out;
+	case IEEE80211_STA_TX:
+		if (req->cookie == 0 || !bwfm_sta_action_valid(req->data, req->len, false)) {
+			error = EINVAL;
+			goto out;
+		}
+		if (sc->sc_sta_tx_pending) {
+			error = EBUSY;
+			goto out;
+		}
+		break;
+	case IEEE80211_STA_SCAN:
+		if (req->cookie == 0 || (req->len & 1) != 0 || req->len > IEEE80211_STA_MAX_CHANNELS * 2) {
+			error = EINVAL;
+			goto out;
+		}
+		if (ic->ic_flags & IEEE80211_F_SCAN || sc->sc_sta_bgscan) {
+			error = EBUSY;
+			goto out;
+		}
+		break;
+	default:
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	if (!bwfm_sta_ready(sc) || req->freq != ic->ic_bss->ni_chan->ic_freq ||
+	    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)) {
+		error = ENOTCONN;
+		goto out;
+	}
+	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
+	if (t == NULL) {
+		error = ENOBUFS;
+		goto out;
+	}
+	t->t_sc = sc;
+	t->t_cmd = BWFM_TASK_STA_MGMT;
+	t->t_sta = *req;
+	if (req->op == IEEE80211_STA_TX) {
+		sc->sc_sta_tx_pending = true;
+		sc->sc_sta_tx = *req;
+		if (++sc->sc_sta_packetid == 0)
+			sc->sc_sta_packetid++;
+		t->t_sta.flags = sc->sc_sta_packetid;
+	} else {
+		sc->sc_sta_bgscan = true;
+		t->t_sta.flags = ++sc->sc_sta_scan_generation;
+		sc->sc_sta_scan = *req;
+	}
+	workqueue_enqueue(sc->sc_taskq, (struct work *)t, NULL);
+out:
+	splx(s);
+	return error;
+}
+
+static void
+bwfm_sta_mgmt_cb(struct bwfm_softc *sc, struct ieee80211req_sta_mgmt *req)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	uint8_t *af;
+	size_t len;
+	int error, s;
+
+	s = splnet();
+	if (req->op == IEEE80211_STA_TX) {
+		if (!sc->sc_sta_tx_pending || req->flags != sc->sc_sta_packetid)
+			goto out;
+		if (!bwfm_sta_ready(sc) || req->generation != sc->sc_sta_generation ||
+		    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)) {
+			bwfm_sta_tx_done(sc, false);
+			goto out;
+		}
+		/* actframe v1: channel, dwell, BSSID, padding, DA, length, ID, body. */
+		len = 28 + req->len;
+		af = kmem_zalloc(len, KM_SLEEP);
+		if (!sc->sc_sta_tx_pending || req->flags != sc->sc_sta_packetid ||
+		    !bwfm_sta_ready(sc) || req->generation != sc->sc_sta_generation ||
+		    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)) {
+			kmem_free(af, len);
+			goto out;
+		}
+		le32enc(af, ieee80211_chan2ieee(ic, ic->ic_bss->ni_chan));
+		le32enc(af + 4, 100);
+		memcpy(af + 8, req->bssid, IEEE80211_ADDR_LEN);
+		memcpy(af + 16, req->bssid, IEEE80211_ADDR_LEN);
+		le16enc(af + 22, req->len);
+		le32enc(af + 24, req->flags);
+		memcpy(af + 28, req->data, req->len);
+		error = bwfm_fwvar_var_set_data(sc, "actframe", af, len);
+		kmem_free(af, len);
+		if (error && req->flags == sc->sc_sta_packetid)
+			bwfm_sta_tx_done(sc, false);
+	} else if (sc->sc_sta_bgscan && req->flags == sc->sc_sta_scan_generation) {
+		if (!bwfm_sta_ready(sc) || req->generation != sc->sc_sta_generation ||
+		    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)) {
+			bwfm_sta_scan_done(sc, true);
+			goto out;
+		}
+		/* Preserve ic_state, ic_bss and traffic while updating the scan cache. */
+		ic->ic_scan.nt_scan_epoch++;
+		ic->ic_flags |= IEEE80211_F_SCAN;
+		error = bwfm_scan(sc, (const uint16_t *)req->data, req->len / 2);
+		if (error && req->flags == sc->sc_sta_scan_generation) {
+			bwfm_sta_scan_done(sc, true);
+		}
+	}
+out:
+	splx(s);
+}
+
+/* 802.11 code */
+int
+bwfm_scan(struct bwfm_softc *sc, const uint16_t *freqs, size_t nchannel)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
 	struct bwfm_escan_params *params;
-	uint32_t nssid = 0, nchannel = 0;
-	size_t params_size;
+	size_t params_size, i;
+	int error, chan;
+	uint32_t epoch = sc->sc_sta_generation, scan = sc->sc_sta_scan_generation;
+	bool background = sc->sc_sta_bgscan;
 
-#if 0
-	/* Active scan is used for scanning for an SSID */
-	bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_PASSIVE_SCAN, 0);
-#endif
-	bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_PASSIVE_SCAN, 1);
-
-	params_size = sizeof(*params);
-	params_size += sizeof(uint32_t) * ((nchannel + 1) / 2);
-	params_size += sizeof(struct bwfm_ssid) * nssid;
-
+	params_size = sizeof(*params) + sizeof(uint16_t) * ((nchannel + 1) & ~1);
 	params = kmem_zalloc(params_size, KM_SLEEP);
-	memset(params->scan_params.bssid, 0xff,
-	    sizeof(params->scan_params.bssid));
+	if (background && (!sc->sc_sta_bgscan || epoch != sc->sc_sta_generation ||
+	    scan != sc->sc_sta_scan_generation || !bwfm_sta_ready(sc))) {
+		kmem_free(params, params_size);
+		return ECANCELED;
+	}
+	memset(params->scan_params.bssid, 0xff, sizeof(params->scan_params.bssid));
 	params->scan_params.bss_type = 2;
 	params->scan_params.nprobes = htole32(-1);
 	params->scan_params.active_time = htole32(-1);
 	params->scan_params.passive_time = htole32(-1);
 	params->scan_params.home_time = htole32(-1);
+	params->scan_params.channel_num = htole32(nchannel);
+	for (i = 0; i < nchannel; i++) {
+		chan = ieee80211_mhz2ieee(freqs[i], 0);
+		if (chan <= 0 || chan > IEEE80211_CHAN_MAX ||
+		    ic->ic_channels[chan].ic_freq != freqs[i] ||
+		    !isset(ic->ic_chan_active, chan)) {
+			kmem_free(params, params_size);
+			return EINVAL;
+		}
+		params->scan_params.channel_list[i] = htole16(chan |
+		    BWFM_CHANSPEC_D11AC_BW_20 | (freqs[i] > 4000 ?
+		    BWFM_CHANSPEC_D11AC_BND_5G : BWFM_CHANSPEC_D11AC_BND_2G));
+	}
 	params->version = htole32(BWFM_ESCAN_REQ_VERSION);
 	params->action = htole16(WL_ESCAN_ACTION_START);
-	params->sync_id = htole16(0x1234);
-
-#if 0
-	/* Scan a specific channel */
-	params->scan_params.channel_list[0] = htole16(
-	    (1 & 0xff) << 0 |
-	    (3 & 0x3) << 8 |
-	    (2 & 0x3) << 10 |
-	    (2 & 0x3) << 12
-	    );
-	params->scan_params.channel_num = htole32(
-	    (1 & 0xffff) << 0
-	    );
-#endif
-
-	bwfm_fwvar_var_set_data(sc, "escan", params, params_size);
+	params->sync_id = htole16(++sc->sc_scan_id);
+	error = bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_PASSIVE_SCAN, 1);
+	if (!error && background && (!sc->sc_sta_bgscan ||
+	    epoch != sc->sc_sta_generation || scan != sc->sc_sta_scan_generation ||
+	    !bwfm_sta_ready(sc)))
+		error = ECANCELED;
+	if (!error)
+		error = bwfm_fwvar_var_set_data(sc, "escan", params, params_size);
 	kmem_free(params, params_size);
+	return error ? EIO : 0;
 }
 
 static __inline int
@@ -2160,14 +2840,296 @@ bwfm_get_wsec(struct bwfm_softc *sc)
 	}
 }
 
-void
+/*
+ * External SAE firmware ABI follows Raspberry Pi brcmfmac (ISC),
+ * revision 43c132e8863c3bff3647033b6a7d2bf87b15501c, cfg80211.c and
+ * fwil_types.h. See ember/boot/bwfm-sae.md for provenance and limits.
+ */
+static void
+bwfm_sae_probe(struct bwfm_softc *sc)
+{
+	char caps[1024];
+	uint8_t mask[4 + BWFM_EVENT_MASK_LEN] = { 1, 0, 0,
+	    BWFM_EVENT_MASK_LEN };
+	uint32_t mfp = 0;
+
+	memset(caps, 0, sizeof(caps));
+	if (bwfm_fwvar_var_get_data(sc, "cap", caps, sizeof(caps) - 1) ||
+	    (!bwfm_sae_cap_token(caps, "sae_ext") &&
+	    !bwfm_sae_cap_token(caps, "extsae")) ||
+	    bwfm_fwvar_var_get_int(sc, "mfp", &mfp) ||
+	    bwfm_fwvar_var_get_data(sc, "event_msgs_ext", mask, sizeof(mask)))
+		return;
+	sc->sc_sae_caps = IEEE80211_SAE_CAP_EXTERNAL | IEEE80211_SAE_CAP_PMF;
+	printf("%s: external SAE and firmware PMF available\n", DEVNAME(sc));
+}
+
+static int
+bwfm_sae_ioctl(struct bwfm_softc *sc, u_long cmd, struct ieee80211req *ireq)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ieee80211req_sae *req;
+	struct bwfm_wsec_key key;
+	uint8_t status[60], *frame;
+	size_t len;
+	uint16_t index;
+	int error;
+
+	if (cmd == SIOCG80211) {
+		if (ireq->i_len != 0)
+			return EINVAL;
+		ireq->i_val = sc->sc_sae_caps;
+		return 0;
+	}
+	error = kauth_authorize_network(kauth_cred_get(),
+	    KAUTH_NETWORK_INTERFACE, KAUTH_REQ_NETWORK_INTERFACE_SETPRIV,
+	    ic->ic_ifp, (void *)cmd, NULL);
+	if (error)
+		return error;
+	if (ireq->i_len != sizeof(*req))
+		return EINVAL;
+	req = kmem_zalloc(sizeof(*req), KM_SLEEP);
+	error = copyin(ireq->i_data, req, sizeof(*req));
+	if (error)
+		goto out;
+	error = EINVAL;
+	if (req->version != IEEE80211_SAE_VERSION ||
+	    req->reserved[0] != 0 || req->reserved[1] != 0 ||
+	    req->len > sizeof(req->data))
+		goto out;
+	if (req->op == IEEE80211_SAE_CONFIGURE) {
+		if (req->len != 1 || req->data[0] > 1 ||
+		    (req->data[0] && (req->generation == 0 ||
+		    IEEE80211_IS_MULTICAST(req->bssid) ||
+		    memcmp(req->bssid, "\0\0\0\0\0\0", 6) == 0)))
+			goto out;
+		if (req->data[0] && (sc->sc_sae_caps == 0 ||
+		    ic->ic_opmode != IEEE80211_M_STA)) {
+			error = EOPNOTSUPP;
+			goto out;
+		}
+		sc->sc_sae_enabled = req->data[0] != 0;
+		sc->sc_sae_generation = req->generation;
+		memcpy(sc->sc_sae_bssid, req->bssid, 6);
+		error = 0;
+		goto out;
+	}
+	if (!sc->sc_sae_enabled || req->generation != sc->sc_sae_generation ||
+	    !IEEE80211_ADDR_EQ(req->bssid, sc->sc_sae_bssid) ||
+	    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)) {
+		error = ESTALE;
+		goto out;
+	}
+	switch (req->op) {
+	case IEEE80211_SAE_AUTH_STATUS:
+		if (req->len != 2 || ic->ic_state != IEEE80211_S_AUTH)
+			break;
+		memset(status, 0, sizeof(status));
+		le16enc(status, le16dec(req->data) == 0 ? 4 : 3);
+		memcpy(status + 2, req->bssid, 6);
+		le32enc(status + 8, ic->ic_bss->ni_esslen);
+		memcpy(status + 12, ic->ic_bss->ni_essid, ic->ic_bss->ni_esslen);
+		error = bwfm_fwvar_var_set_data(sc, "auth_status", status,
+		    sizeof(status)) ? EIO : 0;
+		break;
+	case IEEE80211_SAE_TX_FRAME:
+		if (req->len < 30 || ic->ic_state != IEEE80211_S_AUTH ||
+		    le16dec(req->data) != 0xb0 || le16dec(req->data + 24) != 3 ||
+		    !IEEE80211_ADDR_EQ(req->data + 4, req->bssid) ||
+		    !IEEE80211_ADDR_EQ(req->data + 10, ic->ic_myaddr) ||
+		    !IEEE80211_ADDR_EQ(req->data + 16, req->bssid))
+			break;
+		/* brcmf_mf_params_le: two padding bytes precede the packet ID. */
+		len = 32 + req->len - 24;
+		frame = kmem_zalloc(len, KM_SLEEP);
+		le32enc(frame + 4, 4000);
+		le16enc(frame + 8, req->len - 24);
+		le16enc(frame + 10, 0xb0);
+		le16enc(frame + 12, ieee80211_chan2ieee(ic, ic->ic_bss->ni_chan));
+		memcpy(frame + 14, req->bssid, 6);
+		memcpy(frame + 20, req->bssid, 6);
+		le32enc(frame + 28, ++sc->sc_sae_packet_id);
+		memcpy(frame + 32, req->data + 24, req->len - 24);
+		error = bwfm_fwvar_var_set_data(sc, "mgmt_frame", frame, len) ? EIO : 0;
+		if (error == 0)
+			sc->sc_sae_sent++;
+		kmem_free(frame, len);
+		break;
+	case IEEE80211_SAE_SET_IGTK:
+	case IEEE80211_SAE_DELETE_IGTK:
+		if (req->len != (req->op == IEEE80211_SAE_SET_IGTK ? 24 : 2))
+			break;
+		index = le16dec(req->data);
+		if (index != 4 && index != 5)
+			break;
+		memset(&key, 0, sizeof(key));
+		key.index = htole32(index);
+		key.flags = htole32(BWFM_WSEC_PRIMARY_KEY);
+		if (req->op == IEEE80211_SAE_SET_IGTK) {
+			key.len = htole32(16);
+			key.algo = htole32(BWFM_CRYPTO_ALGO_AES_CCM);
+			memcpy(key.data, req->data + 8, 16);
+			key.rxiv.hi = htole32(le32dec(req->data + 4));
+			key.rxiv.lo = htole16(le16dec(req->data + 2));
+			key.iv_initialized = htole32(1);
+		}
+		error = bwfm_fwvar_var_set_data(sc, "wsec_key", &key,
+		    sizeof(key)) ? EIO : 0;
+		explicit_memset(&key, 0, sizeof(key));
+		break;
+	default:
+		break;
+	}
+out:
+	explicit_memset(req, 0, sizeof(*req));
+	kmem_free(req, sizeof(*req));
+	return error;
+}
+
+static int
+bwfm_set_mfp(struct bwfm_softc *sc, uint32_t mode)
+{
+	uint32_t current = 0;
+	int error, up_error;
+
+	error = bwfm_fwvar_var_get_int(sc, "mfp", &current);
+	if (error == 0 && current == mode)
+		return 0;
+	error = bwfm_fwvar_var_set_int(sc, "mfp", mode);
+	if (error == -5) { /* BCME_NOTDOWN: mode changes require the radio down. */
+		if (bwfm_fwvar_cmd_set_int(sc, BWFM_C_DOWN, 1))
+			return EIO;
+		error = bwfm_fwvar_var_set_int(sc, "mfp", mode);
+		up_error = bwfm_fwvar_cmd_set_int(sc, BWFM_C_UP, 1);
+		if (up_error)
+			return EIO;
+	}
+	if (error || bwfm_fwvar_var_get_int(sc, "mfp", &current) || current != mode)
+		return EIO;
+	return 0;
+}
+
+static int
+bwfm_sae_connect(struct bwfm_softc *sc)
+{
+	static const struct {
+		const char *name;
+		uint32_t value;
+	} settings[] = {
+		{ "sup_wpa", 0 },
+		{ "auth", BWFM_AUTH_SAE },
+		{ "wsec", BWFM_WSEC_AES },
+		{ "wpa_auth", BWFM_WPA_AUTH_SAE }
+	};
+	struct ieee80211com *ic = &sc->sc_ic;
+	size_t i;
+	int error;
+
+	if (!fullmac_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
+	    !IEEE80211_ADDR_EQ(sc->sc_sae_bssid, ic->ic_bss->ni_bssid)) {
+		printf("%s: SAE requires CCMP, required PMF and the selected peer\n",
+		    DEVNAME(sc));
+		return EINVAL;
+	}
+	error = bwfm_fwvar_var_set_data(sc, "wpaie", ic->ic_opt_ie, ic->ic_opt_ie_len);
+	if (error) {
+		printf("%s: SAE wpaie failed: %d\n", DEVNAME(sc), error);
+		return EIO;
+	}
+	for (i = 0; i < __arraycount(settings); i++) {
+		error = bwfm_fwvar_var_set_int(sc, settings[i].name, settings[i].value);
+		/* Firmware without a supplicant cannot offload the host handshake. */
+		if (i == 0 && error == -23) /* BCME_UNSUPPORTED */
+			continue;
+		if (error) {
+			printf("%s: SAE %s failed: %d\n", DEVNAME(sc), settings[i].name, error);
+			return EIO;
+		}
+	}
+	/* Changing wsec clears MFP, so establish and verify PMF last. */
+	if (bwfm_set_mfp(sc, BWFM_MFP_REQUIRED)) {
+		printf("%s: SAE required PMF setup failed\n", DEVNAME(sc));
+		return EIO;
+	}
+	return 0;
+}
+
+static void
+bwfm_sae_event(struct bwfm_softc *sc, const struct bwfm_event *event, size_t len)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ieee80211req_sae *req;
+	const uint8_t *data = (const void *)(event + 1);
+	uint32_t type = ntohl(event->msg.event_type);
+	size_t size;
+
+	if (type == BWFM_E_EXT_AUTH_REQ)
+		sc->sc_sae_requests++;
+	else
+		sc->sc_sae_received++;
+	sc->sc_sae_dropped++;
+	if (!sc->sc_sae_enabled || ic->ic_state != IEEE80211_S_AUTH ||
+	    len < sizeof(*event) || ntohl(event->msg.datalen) > len - sizeof(*event))
+		return;
+	size = ntohl(event->msg.datalen);
+	req = kmem_zalloc(sizeof(*req), KM_SLEEP);
+	req->version = IEEE80211_SAE_VERSION;
+	req->generation = sc->sc_sae_generation;
+	memcpy(req->bssid, sc->sc_sae_bssid, 6);
+	if (type == BWFM_E_EXT_AUTH_REQ) {
+		if (size >= 2)
+			sc->sc_sae_last_flags = le16dec(data);
+		if (!bwfm_sae_request_valid(data, size, req->bssid,
+		    ic->ic_bss->ni_essid, ic->ic_bss->ni_esslen))
+			goto out;
+		req->op = IEEE80211_SAE_START;
+		req->len = le32dec(data + 8);
+		memcpy(req->data, data + 12, req->len);
+	} else {
+		/* Firmware supplies a 16-byte RX prefix followed by a MAC frame. */
+		if (size < 16 + 30 || size - 16 > sizeof(req->data) ||
+		    !IEEE80211_ADDR_EQ(&event->msg.addr, req->bssid))
+			goto out;
+		req->op = IEEE80211_SAE_RX_FRAME;
+		req->len = size - 16;
+		memcpy(req->data, data + 16, req->len);
+		le16enc(req->data, 0xb0);
+		memcpy(req->data + 4, ic->ic_myaddr, 6);
+		memcpy(req->data + 10, req->bssid, 6);
+		memcpy(req->data + 16, req->bssid, 6);
+		if (le16dec(req->data + 24) != 3)
+			goto out;
+	}
+	sc->sc_sae_dropped--;
+	rt_ieee80211msg(ic->ic_ifp, RTM_IEEE80211_SAE, req,
+	    offsetof(struct ieee80211req_sae, data) + req->len);
+out:
+	kmem_free(req, sizeof(*req));
+}
+
+int
 bwfm_connect(struct bwfm_softc *sc)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_node *ni = ic->ic_bss;
 	struct bwfm_ext_join_params *params;
+	size_t params_size = sizeof(*params);
+	uint16_t chanspec = 0;
 
-	if (ic->ic_flags & IEEE80211_F_WPA) {
+	if (!sc->sc_sae_enabled && sc->sc_sae_caps != 0 &&
+	    bwfm_set_mfp(sc, BWFM_MFP_NONE)) {
+		printf("%s: could not reset PMF for legacy association\n", DEVNAME(sc));
+		ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+		return EIO;
+	}
+	if (sc->sc_sae_enabled) {
+		if (bwfm_sae_connect(sc) != 0) {
+			printf("%s: external SAE security setup failed\n", DEVNAME(sc));
+			sc->sc_sae_enabled = false;
+			ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+			return EIO;
+		}
+	} else if (ic->ic_flags & IEEE80211_F_WPA) {
 		uint32_t wsec = 0;
 		uint32_t wpa = 0;
 
@@ -2191,11 +3153,27 @@ bwfm_connect(struct bwfm_softc *sc)
 		bwfm_fwvar_var_set_int(sc, "wsec", BWFM_WSEC_NONE);
 	}
 
-	bwfm_fwvar_var_set_int(sc, "auth", BWFM_AUTH_OPEN);
-	bwfm_fwvar_var_set_int(sc, "mfp", BWFM_MFP_NONE);
+	if (!sc->sc_sae_enabled) {
+		bwfm_fwvar_var_set_int(sc, "auth", BWFM_AUTH_OPEN);
+		if (sc->sc_sae_caps == 0)
+			bwfm_fwvar_var_set_int(sc, "mfp", BWFM_MFP_NONE);
+	}
 
-	if (ni->ni_esslen && ni->ni_esslen < BWFM_MAX_SSID_LEN) {
-		params = kmem_zalloc(sizeof(*params), KM_SLEEP);
+	if (sc->sc_sta_enabled && bwfm_sta_security(sc) &&
+	    bwfm_sta_btm_requested(ic->ic_opt_ie, ic->ic_opt_ie_len)) {
+		if (bwfm_fwvar_var_set_int(sc, "wnm_bsstrans_resp", 3) ||
+		    bwfm_sta_wnm(sc, true))
+			return EIO;
+	}
+	if (sc->sc_sta_enabled && ni->ni_chan != IEEE80211_CHAN_ANYC &&
+	    ni->ni_chan->ic_freq != 0) {
+		chanspec = ieee80211_chan2ieee(ic, ni->ni_chan) |
+		    BWFM_CHANSPEC_D11AC_BW_20 | (ni->ni_chan->ic_freq > 4000 ?
+		    BWFM_CHANSPEC_D11AC_BND_5G : BWFM_CHANSPEC_D11AC_BND_2G);
+		params_size += sizeof(uint16_t);
+	}
+	if (ni->ni_esslen && ni->ni_esslen <= BWFM_MAX_SSID_LEN) {
+		params = kmem_zalloc(params_size, KM_SLEEP);
 		memcpy(params->ssid.ssid, ni->ni_essid, ni->ni_esslen);
 		params->ssid.len = htole32(ni->ni_esslen);
 		memcpy(params->assoc.bssid, ni->ni_bssid, sizeof(params->assoc.bssid));
@@ -2204,7 +3182,11 @@ bwfm_connect(struct bwfm_softc *sc)
 		params->scan.active_time = htole32(-1);
 		params->scan.passive_time = htole32(-1);
 		params->scan.home_time = htole32(-1);
-		if (bwfm_fwvar_var_set_data(sc, "join", params, sizeof(*params))) {
+		if (chanspec != 0) {
+			params->assoc.chanspec_num = htole32(1);
+			params->assoc.chanspec_list[0] = htole16(chanspec);
+		}
+		if (bwfm_fwvar_var_set_data(sc, "join", params, params_size)) {
 			struct bwfm_join_params join;
 			memset(&join, 0, sizeof(join));
 			memcpy(join.ssid.ssid, ni->ni_essid, ni->ni_esslen);
@@ -2213,8 +3195,9 @@ bwfm_connect(struct bwfm_softc *sc)
 			bwfm_fwvar_cmd_set_data(sc, BWFM_C_SET_SSID, &join,
 			    sizeof(join));
 		}
-		kmem_free(params, sizeof(*params));
+		kmem_free(params, params_size);
 	}
+	return 0;
 }
 
 void
@@ -2268,7 +3251,11 @@ bwfm_rx(struct bwfm_softc *sc, struct mbuf *m)
 	struct ifnet *ifp = ic->ic_ifp;
 	struct bwfm_event *e = mtod(m, struct bwfm_event *);
 
-	if (m->m_len >= sizeof(e->ehdr) &&
+	if (sc->sc_detaching) {
+		m_freem(m);
+		return;
+	}
+	if (m->m_len >= sizeof(e->ehdr) + sizeof(e->hdr) &&
 	    ntohs(e->ehdr.ether_type) == BWFM_ETHERTYPE_LINK_CTL &&
 	    memcmp(BWFM_BRCM_OUI, e->hdr.oui, sizeof(e->hdr.oui)) == 0 &&
 	    ntohs(e->hdr.usr_subtype) == BWFM_BRCM_SUBTYPE_EVENT) {
@@ -2286,6 +3273,10 @@ bwfm_rx_event(struct bwfm_softc *sc, struct mbuf *m)
 {
 	struct bwfm_task *t;
 
+	if (sc->sc_detaching) {
+		m_freem(m);
+		return;
+	}
 	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
 	if (t == NULL) {
 		m_freem(m);
@@ -2295,17 +3286,25 @@ bwfm_rx_event(struct bwfm_softc *sc, struct mbuf *m)
 
 	t->t_sc = sc;
 	t->t_cmd = BWFM_TASK_RX_EVENT;
+	t->t_generation = sc->sc_sta_generation;
 	t->t_mbuf = m;
 	workqueue_enqueue(sc->sc_taskq, (struct work*)t, NULL);
 }
 
 void
-bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m)
+bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m, uint32_t generation)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct bwfm_event *e = mtod(m, void *);
 	size_t len = m->m_len;
 	int s;
+
+	if (len < sizeof(*e) || ntohl(e->msg.datalen) > len - sizeof(*e)) {
+		m_freem(m);
+		return;
+	}
+
+	len = sizeof(*e) + ntohl(e->msg.datalen);
 
 	DPRINTF(("%s: event %p len %lu datalen %u code %u status %u"
 	    " reason %u\n", __func__, e, len, ntohl(e->msg.datalen),
@@ -2318,47 +3317,86 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m)
 	}
 
 	switch (ntohl(e->msg.event_type)) {
+	case BWFM_E_EXT_AUTH_REQ:
+	case BWFM_E_EXT_AUTH_FRAME_RX:
+		bwfm_sae_event(sc, e, len);
+		break;
+	case BWFM_E_ACTION_FRAME_RX: {
+		const uint8_t *body = (const void *)&e[1];
+		size_t n = len - sizeof(*e);
+		struct ieee80211req_sta_mgmt *ev;
+
+		/* RX metadata is 16 bytes in network order, followed by the body. */
+		if (!bwfm_sta_ready(sc) || generation != sc->sc_sta_generation || n < 19 || n > 16 + IEEE80211_STA_MAX_BODY ||
+		    be16dec(body) != 1 || !bwfm_sta_action_valid(body + 16, n - 16, true) ||
+		    bwfm_scan_channel(0, be16dec(body + 2), sc->sc_io_type) !=
+		    ieee80211_chan2ieee(ic, ic->ic_bss->ni_chan) ||
+		    !IEEE80211_ADDR_EQ(&e->msg.addr, ic->ic_bss->ni_bssid))
+			break;
+		sc->sc_sta_rx++;
+		ev = kmem_zalloc(sizeof(*ev), KM_SLEEP);
+		if (!bwfm_sta_ready(sc) || generation != sc->sc_sta_generation ||
+		    !IEEE80211_ADDR_EQ(&e->msg.addr, ic->ic_bss->ni_bssid)) {
+			kmem_free(ev, sizeof(*ev));
+			break;
+		}
+		ev->version = IEEE80211_STA_VERSION;
+		ev->generation = sc->sc_sta_generation;
+		ev->freq = ic->ic_bss->ni_chan->ic_freq;
+		ev->len = n - 16;
+		IEEE80211_ADDR_COPY(ev->bssid, ic->ic_bss->ni_bssid);
+		memcpy(ev->data, body + 16, ev->len);
+		rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_RX, ev,
+		    offsetof(struct ieee80211req_sta_mgmt, data) + ev->len);
+		kmem_free(ev, sizeof(*ev));
+		break;
+	}
+	case BWFM_E_ACTION_FRAME_COMPLETE:
+		/* Firmware echoes the little-endian packet ID, not the user cookie. */
+		if (sc->sc_sta_tx_pending && len - sizeof(*e) >= 4 &&
+		    le32dec(&e[1]) == sc->sc_sta_packetid)
+			bwfm_sta_tx_done(sc, ntohl(e->msg.status) == BWFM_E_STATUS_SUCCESS);
+		break;
 	case BWFM_E_ESCAN_RESULT: {
 		struct bwfm_escan_results *res = (void *)&e[1];
-		struct bwfm_bss_info *bss;
+		const uint8_t *pos;
+		size_t remaining, blen;
 		int i;
+
+		if (len - sizeof(*e) < sizeof(*res) ||
+		    le16toh(res->sync_id) != sc->sc_scan_id)
+			break;
 		if (ntohl(e->msg.status) != BWFM_E_STATUS_PARTIAL) {
-			/* Scan complete */
 			s = splnet();
-			if (ic->ic_opmode != IEEE80211_M_MONITOR)
+			if (sc->sc_sta_bgscan) {
+				bwfm_sta_scan_done(sc, ntohl(e->msg.status) != BWFM_E_STATUS_SUCCESS);
+			} else if (ic->ic_opmode != IEEE80211_M_MONITOR &&
+			    ic->ic_state == IEEE80211_S_SCAN) {
 				ieee80211_end_scan(ic);
+			}
 			splx(s);
 			break;
 		}
-		len -= sizeof(*e);
-		if (len < sizeof(*res) || len < le32toh(res->buflen)) {
-			m_freem(m);
-			printf("%s: results too small\n", DEVNAME(sc));
-			return;
-		}
-		len -= sizeof(*res);
-		if (len < le16toh(res->bss_count) * sizeof(struct bwfm_bss_info)) {
-			m_freem(m);
-			printf("%s: results too small\n", DEVNAME(sc));
-			return;
-		}
-		bss = &res->bss_info[0];
+		remaining = le32toh(res->buflen);
+		if (remaining < sizeof(*res) || remaining > len - sizeof(*e))
+			break;
+		remaining -= sizeof(*res);
+		pos = (const void *)res->bss_info;
 		for (i = 0; i < le16toh(res->bss_count); i++) {
-			/* Fix alignment of bss_info */
-			if (len > sizeof(sc->sc_bss_buf)) {
-				printf("%s: bss_info buffer too big\n", DEVNAME(sc));
-			} else {
-				memcpy(&sc->sc_bss_buf, &res->bss_info[i], len);
-				bwfm_scan_node(sc, &sc->sc_bss_buf.bss_info,
-				    len);
-			}
-			len -= sizeof(*bss) + le32toh(bss->length);
-			bss = (void *)(((uintptr_t)bss) + le32toh(bss->length));
-			if (len <= 0)
+			if (remaining < sizeof(struct bwfm_bss_info))
 				break;
+			blen = le32dec(pos + offsetof(struct bwfm_bss_info, length));
+			if (blen < sizeof(struct bwfm_bss_info) || blen > remaining)
+				break;
+			if (blen <= sizeof(sc->sc_bss_buf)) {
+				memcpy(&sc->sc_bss_buf, pos, blen);
+				bwfm_scan_node(sc, &sc->sc_bss_buf.bss_info, blen);
+			}
+			pos += blen;
+			remaining -= blen;
 		}
 		break;
-		}
+	}
 
 	case BWFM_E_SET_SSID:
 		/*
@@ -2387,16 +3425,26 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m)
 		break;
 
 	case BWFM_E_LINK:
-		if (ntohl(e->msg.status) == BWFM_E_STATUS_SUCCESS &&
-		    ntohl(e->msg.reason) == 0)
+		/* The flags, not the reason code, describe link direction. */
+		if (ntohs(e->msg.flags) & BWFM_EVENT_MSG_LINK)
 			break;
-		/* A previous BSSID may report link-down after a new join starts. */
-		if ((ic->ic_state == IEEE80211_S_AUTH ||
-		    ic->ic_state == IEEE80211_S_ASSOC) &&
-		    !IEEE80211_ADDR_EQ(&e->msg.addr, ic->ic_bss->ni_bssid))
+		/* FALLTHROUGH */
+	case BWFM_E_DEAUTH:
+	case BWFM_E_DEAUTH_IND:
+	case BWFM_E_DISASSOC:
+	case BWFM_E_DISASSOC_IND:
+		sc->sc_link_events++;
+		sc->sc_link_event = ntohl(e->msg.event_type);
+		sc->sc_link_reason = ntohl(e->msg.reason);
+		sc->sc_link_flags = ntohs(e->msg.flags);
+		if (ic->ic_opmode != IEEE80211_M_STA ||
+		    ic->ic_state <= IEEE80211_S_SCAN || ic->ic_bss == NULL)
+			break;
+		/* Ignore a previous peer even after the new join reaches RUN. */
+		if (!IEEE80211_ADDR_EQ(&e->msg.addr, ic->ic_bss->ni_bssid))
 			break;
 
-		/* Link status has changed */
+		/* Firmware already disconnected; let the host scan and rejoin. */
 		ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
 		break;
 
@@ -2418,6 +3466,12 @@ bwfm_scan_node(struct bwfm_softc *sc, struct bwfm_bss_info *bss, size_t len)
 	uint8_t *frm, *sfrm, *efrm;
 	uint64_t tsf;
 
+	if (len < sizeof(*bss) || bss->ssid_len > sizeof(bss->ssid) ||
+	    le32toh(bss->nrates) > sizeof(bss->rates) ||
+	    le16toh(bss->ie_offset) < sizeof(*bss) ||
+	    le16toh(bss->ie_offset) > len ||
+	    le32toh(bss->ie_length) > len - le16toh(bss->ie_offset))
+		return;
 	tsf = 0;
 	sfrm = ((uint8_t *)bss) + le16toh(bss->ie_offset);
 	efrm = sfrm + le32toh(bss->ie_length);
@@ -2445,10 +3499,18 @@ bwfm_scan_node(struct bwfm_softc *sc, struct bwfm_bss_info *bss, size_t len)
 	scan.sp_tstamp  = (uint8_t *)&tsf;
 	scan.sp_bintval = le16toh(bss->beacon_period);
 	scan.sp_capinfo = le16toh(bss->capability);
-	scan.sp_bchan   = ieee80211_chan2ieee(ic, ic->ic_curchan);
+	scan.sp_bchan   = bwfm_scan_channel(bss->ctl_ch,
+	    le16toh(bss->chanspec), sc->sc_io_type);
 	scan.sp_chan    = scan.sp_bchan;
 	scan.sp_rates   = rates;
 	scan.sp_ssid    = ssid;
+/* Keep the historical quality byte; export dBm with a separate marker. */
+if ((int16_t)le16toh(bss->rssi) >= -128 &&
+    (int16_t)le16toh(bss->rssi) < 0) {
+	scan.sp_rssi_dbm = (int16_t)le16toh(bss->rssi);
+	scan.sp_rssi_dbm_valid = true;
+}
+
 
 	for (frm = sfrm; frm + 1 < efrm; frm += frm[1] + 2) {
 		if (frm[1] + 2 > efrm - frm) {
@@ -2494,6 +3556,14 @@ bwfm_scan_node(struct bwfm_softc *sc, struct bwfm_bss_info *bss, size_t len)
 		case IEEE80211_ELEMID_RSN:
 			scan.sp_wpa = frm;
 			break;
+		case 70: /* Radio Measurement Enabled Capabilities */
+			if (frm[1] == 5)
+				scan.sp_rrm = frm;
+			break;
+		case 127: /* Extended Capabilities */
+			if (frm[1] > 0 && frm[1] <= 32)
+				scan.sp_extcap = frm;
+			break;
 		case IEEE80211_ELEMID_RSNX:
 			if (frm[1] >= 1 && frm[1] <= 16 &&
 			    (frm[2] & 0x0f) + 1 == frm[1])
@@ -2512,7 +3582,14 @@ bwfm_scan_node(struct bwfm_softc *sc, struct bwfm_bss_info *bss, size_t len)
 			break;
 	}
 
+	if (scan.sp_chan == 0 ||
+	    scan.sp_chan >= __arraycount(ic->ic_channels) ||
+	    ic->ic_channels[scan.sp_chan].ic_freq == 0) {
+		ic->ic_stats.is_rx_badchan++;
+		return;
+	}
+
 	if (ic->ic_flags & IEEE80211_F_SCAN)
 		ieee80211_add_scan(ic, &scan, &wh, IEEE80211_FC0_SUBTYPE_BEACON,
-		    le32toh(bss->rssi), 0);
+		    bwfm_scan_rssi((int16_t)le16toh(bss->rssi)), 0);
 }

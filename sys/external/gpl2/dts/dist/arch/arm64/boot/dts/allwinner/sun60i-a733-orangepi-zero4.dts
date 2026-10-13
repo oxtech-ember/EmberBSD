@@ -152,6 +152,12 @@
 	};
 };
 
+/* Origin: EmberBSD; enable the read-only firmware-ready GPU identity probe. */
+&gpu {
+	gpu-supply = <&reg_dcdc4>;
+	status = "okay";
+};
+
 &combophy {
 	status = "okay";
 };

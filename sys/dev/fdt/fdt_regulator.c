@@ -148,6 +148,27 @@ fdtbus_regulator_disable(struct fdtbus_regulator *reg)
 	return rc->rc_funcs->enable(rc->rc_dev, false);
 }
 
+/* Origin: EmberBSD; observe regulator state without changing ownership. */
+int
+fdtbus_regulator_is_enabled(struct fdtbus_regulator *reg, bool *enabled)
+{
+	struct fdtbus_regulator_controller *rc = REGULATOR_TO_RC(reg);
+	bool state;
+	int error;
+
+	if (enabled == NULL)
+		return EINVAL;
+	if (rc->rc_funcs->is_enabled == NULL)
+		return EOPNOTSUPP;
+
+	error = rc->rc_funcs->is_enabled(rc->rc_dev, &state);
+	if (error != 0)
+		return error;
+
+	*enabled = state;
+	return 0;
+}
+
 int
 fdtbus_regulator_set_voltage(struct fdtbus_regulator *reg, u_int min_uvol,
     u_int max_uvol)

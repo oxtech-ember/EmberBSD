@@ -1746,8 +1746,9 @@ static void drm_setup_crtcs_fb(struct drm_fb_helper *fb_helper)
 	struct drm_connector_list_iter conn_iter;
 	struct fb_info *info = fb_helper->fbdev;
 	struct drm_connector *connector;
-#endif
+	/* Origin: EmberBSD (AI-assisted), compute fbcon hints only with fb_info. */
 	unsigned int rotation, sw_rotations = 0;
+#endif
 	struct drm_mode_set *modeset;
 
 	mutex_lock(&client->modeset_mutex);
@@ -1757,11 +1758,13 @@ static void drm_setup_crtcs_fb(struct drm_fb_helper *fb_helper)
 
 		modeset->fb = fb_helper->fb;
 
+#ifndef __NetBSD__		/* XXX fb info */
 		if (drm_client_rotation(modeset, &rotation))
 			/* Rotating in hardware, fbcon should not rotate */
 			sw_rotations |= DRM_MODE_ROTATE_0;
 		else
 			sw_rotations |= rotation;
+#endif
 	}
 	mutex_unlock(&client->modeset_mutex);
 

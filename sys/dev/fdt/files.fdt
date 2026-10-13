@@ -85,6 +85,7 @@ file	dev/fdt/fdt_phy.c			fdt
 file	dev/fdt/fdt_power.c			fdt
 file	dev/fdt/fdt_powerdomain.c		fdt
 file	dev/fdt/fdt_pwm.c			fdt
+file	dev/fdt/fdt_thermal.c			fdt
 file	dev/fdt/fdt_regulator.c			fdt
 file	dev/fdt/fdt_reset.c			fdt
 file	dev/fdt/fdt_rtc.c			fdt

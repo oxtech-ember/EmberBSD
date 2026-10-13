@@ -1,4 +1,5 @@
 /*	$NetBSD: setup.c,v 1.111 2025/06/23 15:07:33 christos Exp $	*/
+/* Origin: EmberBSD (AI-assisted), reject alternate superblocks during search. */
 
 /*
  * Copyright (c) 1980, 1986, 1993
@@ -720,6 +721,16 @@ detect_byteorder(struct fs *fs, int sblockoff)
 		return -1;
 	if (fs->fs_magic == FS_UFS1_MAGIC || fs->fs_magic == FS_UFS2_MAGIC ||
 	    fs->fs_magic == FS_UFS2EA_MAGIC) {
+		/*
+		 * makefs can put a UFS2 primary at 8K and its first alternate
+		 * at 64K.  Match the kernel's primary-location check when
+		 * searching, but allow an explicitly requested -b backup.
+		 * Old UFS1 superblocks have no defined fs_sblockloc.
+		 */
+		if (sblockoff >= 0 && (fs->fs_magic != FS_UFS1_MAGIC ||
+		    (fs->fs_old_flags & FS_FLAGS_UPDATED) != 0) &&
+		    fs->fs_sblockloc != sblockoff)
+			return -1;
 #ifndef NO_FFS_EI
 		if (endian == 0 || BYTE_ORDER == endian) {
 			needswap = 0;
@@ -735,6 +746,10 @@ detect_byteorder(struct fs *fs, int sblockoff)
 	else if (fs->fs_magic == FS_UFS1_MAGIC_SWAPPED ||
 		 fs->fs_magic == FS_UFS2_MAGIC_SWAPPED ||
 		 fs->fs_magic == FS_UFS2EA_MAGIC_SWAPPED) {
+		if (sblockoff >= 0 && (fs->fs_magic != FS_UFS1_MAGIC_SWAPPED ||
+		    (fs->fs_old_flags & FS_FLAGS_UPDATED) != 0) &&
+		    bswap64(fs->fs_sblockloc) != (uint64_t)sblockoff)
+			return -1;
 		if (endian == 0 || BYTE_ORDER != endian) {
 			needswap = 1;
 			doswap = do_blkswap = do_dirswap = 0;

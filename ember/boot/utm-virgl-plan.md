@@ -61,8 +61,10 @@ in EmberBSD-Ports; session/probe scripts in EmberBSD-Examples
 `desktop/wayland-utm`. OS notes reference those repositories.
 
 Pin pkgsrc dependencies and build labwc/wlroots with NetBSD input and seatd.
-Keep a private, documented graphics prefix where a Mesa replacement is
-needed. Run the compositor as the existing user from a console entry.
+Stage the single common Mesa/LLVM stack in an isolated sysroot and rebuild
+its consumers through Ports. Promote it after target acceptance; do not add
+per-application library versions. Run the compositor as the existing user
+from a console entry.
 Verify KMS without an X parent, keyboard/modifiers/pointer, VT handoff,
 normal exit and crash recovery. Expected: a saved client file and working
 input; X11 recovery still works. Record versions and library paths.

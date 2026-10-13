@@ -87,6 +87,26 @@ It records source, dependency, binary and runtime-library hashes plus build
 and test logs. Nothing is installed globally and the running kernel is not
 changed. Keep the evidence you need, then remove the chosen work directory.
 
+The CAN FD executable and its optional debug companion are listed in the
+system release sets. Check their packaging separately:
+
+```sh
+sh ember/tools/canfd-sets-contract.sh /absolute/EmberBSD /new/absolute/set-check
+```
+
+This runner uses the checkout's real make install metadata and `makeflist`
+in 11 configurations, including ATF/rump/debug switches and compat builds.
+It also verifies that the compat build traversal excludes CAN tests.
+On a non-NetBSD host, set `SETLIST_MAKE` to an absolute path to a compatible
+`bmake`; the default is `/usr/bin/make`. A complete source checkout is required.
+
+For AArch64 with and without debug files, the runner checks a minimal
+`DESTDIR` using the real `checkflist -m`. Removing the CAN FD set entries
+reproduces the extra-file failure; both configurations pass with the entries.
+The `-m` option permits unrelated missing files, so this is a scoped
+packaging regression, not a complete release check. A full release check
+requires the complete installed `DESTDIR`. No socket or hardware test runs here.
+
 Validation on 2026-10-07 used NetBSD 11.0/AArch64 and GCC 12.5.0:
 
 - 15 existing CAN/filter cases pass both before and after the extension.

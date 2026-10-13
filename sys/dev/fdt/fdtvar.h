@@ -219,6 +219,10 @@ struct fdtbus_powerdomain_controller;
 
 struct fdtbus_powerdomain_controller_func {
 	void 	(*pdc_enable)(device_t, const uint32_t *, bool);
+	/* Optional checked operation; takes precedence over pdc_enable. */
+	int	(*pdc_set)(device_t, const uint32_t *, bool);
+	/* Optional observation; output is valid only on success. */
+	int	(*pdc_get)(device_t, const uint32_t *, bool *);
 };
 
 
@@ -226,6 +230,10 @@ struct fdtbus_pwm_controller_func {
 	pwm_tag_t (*get_tag)(device_t, const void *, size_t);
 };
 
+
+struct fdtbus_thermal_controller_func {
+	int (*get_temp)(device_t, const void *, size_t, int *);
+};
 
 struct fdtbus_regulator_controller;
 
@@ -239,6 +247,8 @@ struct fdtbus_regulator_controller_func {
 	int	(*enable)(device_t, bool);
 	int	(*set_voltage)(device_t, u_int, u_int);
 	int	(*get_voltage)(device_t, u_int *);
+	/* Optional observation; output is valid only on success. */
+	int	(*is_enabled)(device_t, bool *);
 };
 
 
@@ -380,6 +390,9 @@ int		fdtbus_register_phy_controller(device_t, int,
 		    const struct fdtbus_phy_controller_func *);
 int		fdtbus_register_pwm_controller(device_t, int,
 		    const struct fdtbus_pwm_controller_func *);
+int		fdtbus_register_thermal_controller(device_t, int,
+		    const struct fdtbus_thermal_controller_func *);
+int		fdtbus_thermal_get_temp(int, const char *, int *);
 int		fdtbus_register_regulator_controller(device_t, int,
 		    const struct fdtbus_regulator_controller_func *);
 int		fdtbus_register_reset_controller(device_t, int,
@@ -500,6 +513,8 @@ struct fdtbus_regulator *
 void		fdtbus_regulator_release(struct fdtbus_regulator *);
 int		fdtbus_regulator_enable(struct fdtbus_regulator *);
 int		fdtbus_regulator_disable(struct fdtbus_regulator *);
+/* The result is unchanged on error, including unsupported providers. */
+int		fdtbus_regulator_is_enabled(struct fdtbus_regulator *, bool *);
 int		fdtbus_regulator_set_voltage(struct fdtbus_regulator *,
 		    u_int, u_int);
 int		fdtbus_regulator_get_voltage(struct fdtbus_regulator *,
@@ -524,6 +539,10 @@ int		fdtbus_powerdomain_enable(int);
 int		fdtbus_powerdomain_enable_index(int, int);
 int		fdtbus_powerdomain_disable(int);
 int		fdtbus_powerdomain_disable_index(int, int);
+/* Strict query: missing providers are errors; output survives errors. */
+int		fdtbus_powerdomain_is_enabled_index(int, int, bool *);
+/* Origin: EmberBSD; checked power and regulator state interfaces. */
+int		fdtbus_powerdomain_enable_on_attach(int);
 
 struct syscon *	fdtbus_syscon_acquire(int, const char *);
 struct syscon *	fdtbus_syscon_lookup(int);

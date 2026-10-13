@@ -50,7 +50,8 @@ mra_Y_AX1_BX2_C(const int *y, int ys,
 	int i;
 	int64_t X1a, X2a, Ya;
 	int64_t X1X1s, X2X2s, X1X2s;
-	int64_t YYs, X1Ys, X2Ys;
+	/* Origin: EmberBSD (AI-assisted), preserve the disabled debug statistic. */
+	int64_t YYs __unused, X1Ys, X2Ys;
 	int64_t S11, S22, S12;
 //	int64_t SYY;
 	int64_t S1Y, S2Y;

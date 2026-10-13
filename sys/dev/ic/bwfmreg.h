@@ -195,6 +195,7 @@
 #define BWFM_AUTH_OPEN				0
 #define BWFM_AUTH_SHARED_KEY			1
 #define BWFM_AUTH_AUTO				2
+#define BWFM_AUTH_SAE				3
 #define BWFM_CRYPTO_ALGO_OFF			0
 #define BWFM_CRYPTO_ALGO_WEP1			1
 #define BWFM_CRYPTO_ALGO_TKIP			2
@@ -211,6 +212,7 @@
 #define BWFM_WPA_AUTH_WPA_PSK			(1 << 2)
 #define BWFM_WPA_AUTH_WPA2_UNSPECIFIED		(1 << 6)
 #define BWFM_WPA_AUTH_WPA2_PSK			(1 << 7)
+#define BWFM_WPA_AUTH_SAE			0x40000
 #define BWFM_WPA_AUTH_WPA2_1X_SHA256		(1 << 12)
 #define BWFM_WPA_AUTH_WPA2_PSK_SHA256		(1 << 15)
 #define BWFM_WSEC_NONE				(0 << 0)
@@ -745,7 +747,9 @@ enum bwfm_fweh_event_code {
 	BWFM_E_ACTION_FRAME_RX = 75,
 	BWFM_E_TDLS_PEER_EVENT = 92,
 	BWFM_E_BCMC_CREDIT_SUPPORT = 127,
-	BWFM_E_LAST = 139
+	BWFM_E_EXT_AUTH_REQ = 187,
+	BWFM_E_EXT_AUTH_FRAME_RX = 188,
+	BWFM_E_LAST = 197
 };
 #define BWFM_EVENT_MASK_LEN		(roundup(BWFM_E_LAST, 8) / 8)
 
@@ -781,6 +785,7 @@ struct bwfm_ethhdr {
 struct bwfm_event_msg {
 	uint16_t version;
 	uint16_t flags;
+#define BWFM_EVENT_MSG_LINK		0x0001
 	uint32_t event_type;
 	uint32_t status;
 	uint32_t reason;

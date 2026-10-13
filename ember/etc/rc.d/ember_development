@@ -1,0 +1,21 @@
+#!/bin/sh
+# Origin: EmberBSD (AI-assisted), complete the offline development image.
+# PROVIDE: ember_development
+# REQUIRE: DAEMON
+# BEFORE: LOGIN
+
+. /etc/rc.subr
+name=ember_development
+rcvar=$name
+start_cmd=ember_development_start
+stop_cmd=:
+
+ember_development_start()
+{
+	bundle=/var/ember/packages
+	if ! cmp -s "$bundle/packages.sha256" "$bundle/installed-packages.sha256"; then
+		/bin/sh /usr/libexec/ember/install-development "$bundle" || return 1
+	fi
+}
+load_rc_config "$name"
+run_rc_command "$1"

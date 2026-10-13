@@ -26,6 +26,8 @@
  * SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD; guard provider mutations before recursive parent writes. */
+
 #include "opt_soc.h"
 #include "opt_multiprocessor.h"
 #include "opt_console.h"
@@ -71,7 +73,7 @@ sunxi_ccu_reset_release(device_t dev, void *priv)
 }
 
 static int
-sunxi_ccu_reset_assert(device_t dev, void *priv)
+sunxi_ccu_reset_assert_unguarded(device_t dev, void *priv)
 {
 	struct sunxi_ccu_softc * const sc = device_private(dev);
 	struct sunxi_ccu_reset * const reset = priv;
@@ -83,7 +85,26 @@ sunxi_ccu_reset_assert(device_t dev, void *priv)
 }
 
 static int
-sunxi_ccu_reset_deassert(device_t dev, void *priv)
+sunxi_ccu_reset_assert(device_t dev, void *priv)
+{
+	struct sunxi_ccu_softc * const sc = device_private(dev);
+	bool handled = false;
+	int error;
+
+	if (sc->sc_guard_enter != NULL) {
+		error = sc->sc_guard_enter(sc, NULL, priv,
+		    SUNXI_CCU_ASSERT, &handled);
+		if (error != 0 || handled)
+			return error;
+	}
+	error = sunxi_ccu_reset_assert_unguarded(dev, priv);
+	if (sc->sc_guard_exit != NULL)
+		sc->sc_guard_exit(sc);
+	return error;
+}
+
+static int
+sunxi_ccu_reset_deassert_unguarded(device_t dev, void *priv)
 {
 	struct sunxi_ccu_softc * const sc = device_private(dev);
 	struct sunxi_ccu_reset * const reset = priv;
@@ -92,6 +113,25 @@ sunxi_ccu_reset_deassert(device_t dev, void *priv)
 	CCU_WRITE(sc, reset->reg, val | reset->mask);
 
 	return 0;
+}
+
+static int
+sunxi_ccu_reset_deassert(device_t dev, void *priv)
+{
+	struct sunxi_ccu_softc * const sc = device_private(dev);
+	bool handled = false;
+	int error;
+
+	if (sc->sc_guard_enter != NULL) {
+		error = sc->sc_guard_enter(sc, NULL, priv,
+		    SUNXI_CCU_DEASSERT, &handled);
+		if (error != 0 || handled)
+			return error;
+	}
+	error = sunxi_ccu_reset_deassert_unguarded(dev, priv);
+	if (sc->sc_guard_exit != NULL)
+		sc->sc_guard_exit(sc);
+	return error;
 }
 
 static const struct fdtbus_reset_controller_func sunxi_ccu_fdtreset_funcs = {
@@ -164,7 +204,7 @@ sunxi_ccu_clock_get_rate(void *priv, struct clk *clkp)
 }
 
 static int
-sunxi_ccu_clock_set_rate(void *priv, struct clk *clkp, u_int rate)
+sunxi_ccu_clock_set_rate_unguarded(void *priv, struct clk *clkp, u_int rate)
 {
 	struct sunxi_ccu_softc * const sc = priv;
 	struct sunxi_ccu_clk *clk = (struct sunxi_ccu_clk *)clkp;
@@ -183,6 +223,25 @@ sunxi_ccu_clock_set_rate(void *priv, struct clk *clkp, u_int rate)
 		return clk->set_rate(sc, clk, rate);
 
 	return ENXIO;
+}
+
+static int
+sunxi_ccu_clock_set_rate(void *priv, struct clk *clkp, u_int rate)
+{
+	struct sunxi_ccu_softc * const sc = priv;
+	bool handled = false;
+	int error;
+
+	if (sc->sc_guard_enter != NULL) {
+		error = sc->sc_guard_enter(sc, clkp, NULL,
+		    SUNXI_CCU_SET_RATE, &handled);
+		if (error != 0 || handled)
+			return error;
+	}
+	error = sunxi_ccu_clock_set_rate_unguarded(priv, clkp, rate);
+	if (sc->sc_guard_exit != NULL)
+		sc->sc_guard_exit(sc);
+	return error;
 }
 
 static u_int
@@ -208,7 +267,7 @@ sunxi_ccu_clock_round_rate(void *priv, struct clk *clkp, u_int rate)
 }
 
 static int
-sunxi_ccu_clock_enable(void *priv, struct clk *clkp)
+sunxi_ccu_clock_enable_unguarded(void *priv, struct clk *clkp)
 {
 	struct sunxi_ccu_softc * const sc = priv;
 	struct sunxi_ccu_clk *clk = (struct sunxi_ccu_clk *)clkp;
@@ -229,7 +288,26 @@ sunxi_ccu_clock_enable(void *priv, struct clk *clkp)
 }
 
 static int
-sunxi_ccu_clock_disable(void *priv, struct clk *clkp)
+sunxi_ccu_clock_enable(void *priv, struct clk *clkp)
+{
+	struct sunxi_ccu_softc * const sc = priv;
+	bool handled = false;
+	int error;
+
+	if (sc->sc_guard_enter != NULL) {
+		error = sc->sc_guard_enter(sc, clkp, NULL,
+		    SUNXI_CCU_ENABLE, &handled);
+		if (error != 0 || handled)
+			return error;
+	}
+	error = sunxi_ccu_clock_enable_unguarded(priv, clkp);
+	if (sc->sc_guard_exit != NULL)
+		sc->sc_guard_exit(sc);
+	return error;
+}
+
+static int
+sunxi_ccu_clock_disable_unguarded(void *priv, struct clk *clkp)
 {
 	struct sunxi_ccu_softc * const sc = priv;
 	struct sunxi_ccu_clk *clk = (struct sunxi_ccu_clk *)clkp;
@@ -242,7 +320,26 @@ sunxi_ccu_clock_disable(void *priv, struct clk *clkp)
 }
 
 static int
-sunxi_ccu_clock_set_parent(void *priv, struct clk *clkp,
+sunxi_ccu_clock_disable(void *priv, struct clk *clkp)
+{
+	struct sunxi_ccu_softc * const sc = priv;
+	bool handled = false;
+	int error;
+
+	if (sc->sc_guard_enter != NULL) {
+		error = sc->sc_guard_enter(sc, clkp, NULL,
+		    SUNXI_CCU_DISABLE, &handled);
+		if (error != 0 || handled)
+			return error;
+	}
+	error = sunxi_ccu_clock_disable_unguarded(priv, clkp);
+	if (sc->sc_guard_exit != NULL)
+		sc->sc_guard_exit(sc);
+	return error;
+}
+
+static int
+sunxi_ccu_clock_set_parent_unguarded(void *priv, struct clk *clkp,
     struct clk *clkp_parent)
 {
 	struct sunxi_ccu_softc * const sc = priv;
@@ -252,6 +349,26 @@ sunxi_ccu_clock_set_parent(void *priv, struct clk *clkp,
 		return EINVAL;
 
 	return clk->set_parent(sc, clk, clkp_parent->name);
+}
+
+static int
+sunxi_ccu_clock_set_parent(void *priv, struct clk *clkp,
+    struct clk *clkp_parent)
+{
+	struct sunxi_ccu_softc * const sc = priv;
+	bool handled = false;
+	int error;
+
+	if (sc->sc_guard_enter != NULL) {
+		error = sc->sc_guard_enter(sc, clkp, NULL,
+		    SUNXI_CCU_SET_PARENT, &handled);
+		if (error != 0 || handled)
+			return error;
+	}
+	error = sunxi_ccu_clock_set_parent_unguarded(priv, clkp, clkp_parent);
+	if (sc->sc_guard_exit != NULL)
+		sc->sc_guard_exit(sc);
+	return error;
 }
 
 static struct clk *

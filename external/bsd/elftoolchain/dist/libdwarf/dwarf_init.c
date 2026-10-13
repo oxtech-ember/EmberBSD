@@ -32,12 +32,32 @@
 __RCSID("$NetBSD: dwarf_init.c,v 1.5 2024/03/03 17:37:31 christos Exp $");
 ELFTC_VCSID("Id: dwarf_init.c 2073 2011-10-27 03:30:47Z jkoshy");
 
+/* Origin: EmberBSD (AI-assisted), explicit caller-owned supplementary data. */
 int
-dwarf_elf_init(Elf *elf, int mode, Dwarf_Handler errhand, Dwarf_Ptr errarg,
-    Dwarf_Debug *ret_dbg, Dwarf_Error *error)
+dwarf_set_tied_dbg(Dwarf_Debug dbg, Dwarf_Debug tied, Dwarf_Error *error)
+{
+	if (dbg == NULL || dbg == tied || (tied != NULL &&
+	    (tied->dbg_tied != NULL || (dbg->dbg_machine != 0 && tied->dbg_machine != 0 &&
+	    dbg->dbg_machine != tied->dbg_machine) ||
+	    dbg->dbg_pointer_size != tied->dbg_pointer_size))) {
+		DWARF_SET_ERROR(dbg, error, DW_DLE_ARGUMENT);
+		return (DW_DLV_ERROR);
+	}
+	dbg->dbg_tied = tied;
+	return (DW_DLV_OK);
+}
+
+int
+dwarf_elf_init_section(Elf *elf, int mode, Dwarf_Unsigned section,
+    Dwarf_Handler errhand, Dwarf_Ptr errarg, Dwarf_Debug *ret_dbg,
+    Dwarf_Error *error)
 {
 	Dwarf_Debug dbg;
 	int ret;
+	Elf_Scn *scn;
+	GElf_Shdr sh;
+	size_t names;
+	const char *name;
 
 	if (elf == NULL || ret_dbg == NULL) {
 		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
@@ -49,10 +69,21 @@ dwarf_elf_init(Elf *elf, int mode, Dwarf_Handler errhand, Dwarf_Ptr errarg,
 		return (DW_DLV_ERROR);
 	}
 
+	/* Origin: EmberBSD (AI-assisted), select one relocatable debug section. */
+	if (section != 0 &&
+	    ((scn = elf_getscn(elf, section)) == NULL ||
+	    gelf_getshdr(scn, &sh) == NULL || !elf_getshstrndx(elf, &names) ||
+	    (name = elf_strptr(elf, names, sh.sh_name)) == NULL ||
+	    (strcmp(name, ".debug_info") && strcmp(name, ".debug_info.dwo") &&
+	    strcmp(name, ".debug_types") && strcmp(name, ".debug_types.dwo")))) {
+		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
+		return (DW_DLV_ERROR);
+	}
+
 	if (_dwarf_alloc(&dbg, mode, error) != DW_DLE_NONE)
 		return (DW_DLV_ERROR);
 
-	if (_dwarf_elf_init(dbg, elf, error) != DW_DLE_NONE) {
+	if (_dwarf_elf_init(dbg, elf, section, error) != DW_DLE_NONE) {
 		free(dbg);
 		return (DW_DLV_ERROR);
 	}
@@ -70,6 +101,15 @@ dwarf_elf_init(Elf *elf, int mode, Dwarf_Handler errhand, Dwarf_Ptr errarg,
 	*ret_dbg = dbg;
 
 	return (DW_DLV_OK);
+}
+
+/* Retain the all-sections entry point. */
+int
+dwarf_elf_init(Elf *elf, int mode, Dwarf_Handler errhand, Dwarf_Ptr errarg,
+    Dwarf_Debug *ret_dbg, Dwarf_Error *error)
+{
+	return (dwarf_elf_init_section(elf, mode, 0, errhand, errarg,
+	    ret_dbg, error));
 }
 
 int
@@ -119,7 +159,7 @@ dwarf_init(int fd, int mode, Dwarf_Handler errhand, Dwarf_Ptr errarg,
 	if (_dwarf_alloc(&dbg, mode, error) != DW_DLE_NONE)
 		return (DW_DLV_ERROR);
 
-	if (_dwarf_elf_init(dbg, elf, error) != DW_DLE_NONE) {
+	if (_dwarf_elf_init(dbg, elf, 0, error) != DW_DLE_NONE) {
 		free(dbg);
 		return (DW_DLV_ERROR);
 	}

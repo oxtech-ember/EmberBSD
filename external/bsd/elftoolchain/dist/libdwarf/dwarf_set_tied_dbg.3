@@ -1,0 +1,53 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Origin: EmberBSD (AI-assisted), supplementary DWARF attachment API.
+.Dd October 8, 2026
+.Dt DWARF_SET_TIED_DBG 3
+.Os
+.Sh NAME
+.Nm dwarf_set_tied_dbg
+.Nd attach caller-owned supplementary DWARF data
+.Sh LIBRARY
+.Lb libdwarf
+.Sh SYNOPSIS
+.In libdwarf.h
+.Ft int
+.Fn dwarf_set_tied_dbg "Dwarf_Debug dbg" "Dwarf_Debug tied" "Dwarf_Error *error"
+.Sh DESCRIPTION
+The function associates the supplementary debug object
+.Fa tied
+with
+.Fa dbg .
+.Fn dwarf_formstring
+uses its string section for
+.Dv DW_FORM_strp_sup .
+The caller must validate the ELF identity and matching
+.Pa .debug_sup
+metadata before attaching it.
+.Fn dwarf_global_formref
+returns supplementary reference offsets without rebasing them into the
+main object; the caller must resolve those offsets in the supplementary object.
+.Pp
+No ownership is transferred.
+Keep
+.Fa tied
+alive until all accesses through
+.Fa dbg
+are complete.
+Passing NULL as
+.Fa tied
+detaches the association.
+Self-attachment, nested attachments and architecture/address-size mismatches
+are rejected.
+This API does not automatically search files or implement a DWP index.
+.Sh RETURN VALUES
+Returns
+.Dv DW_DLV_OK
+on success, or
+.Dv DW_DLV_ERROR
+with
+.Dv DW_DLE_ARGUMENT
+for an invalid association.
+.Sh SEE ALSO
+.Xr dwarf_elf_init 3 ,
+.Xr dwarf_formstring 3 ,
+.Xr dwarf_global_formref 3

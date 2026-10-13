@@ -233,6 +233,12 @@ struct ieee80211_michael_event {
 #define	RTM_IEEE80211_REPLAY	106	/* sequence counter replay detected */
 #define	RTM_IEEE80211_MICHAEL	107	/* Michael MIC failure detected */
 #define	RTM_IEEE80211_REJOIN	108	/* station re-associate (ap mode) */
+#define	RTM_IEEE80211_SAE	109	/* external SAE request/frame */
+
+/* Payload is the STA_MGMT header followed by exactly len body bytes. */
+#define RTM_IEEE80211_STA_RX     112
+#define RTM_IEEE80211_STA_TX     113
+#define RTM_IEEE80211_STA_SCAN   114
 
 #ifdef _KERNEL
 #define	ticks	getticks()

@@ -3479,7 +3479,14 @@ static u8 * wpas_populate_assoc_ies(
 		if (wpa_key_mgmt_fils(ssid->key_mgmt))
 			cache_id = wpa_bss_get_fils_cache_id(bss);
 #endif /* CONFIG_FILS */
-		if (pmksa_cache_set_current(wpa_s->wpa, NULL, addr,
+		/* Select a cached PMKSA only when the driver can reuse it. */
+		if ((wpa_s->drv_flags2 & WPA_DRIVER_FLAGS2_SAE_NO_PMKSA) &&
+		    wpa_key_mgmt_sae(ssid->key_mgmt)) {
+			/* The external-auth ABI always negotiates a new SAE PMK.
+			 * Do not put an old PMKID into the association RSNE.
+			 * Mixed profiles allowing SAE follow the same policy. */
+			pmksa_cache_clear_current(wpa_s->wpa);
+		} else if (pmksa_cache_set_current(wpa_s->wpa, NULL, addr,
 					    ssid, try_opportunistic,
 					    cache_id, 0, false) == 0) {
 			eapol_sm_notify_pmkid_attempt(wpa_s->eapol);
@@ -3943,6 +3950,26 @@ mscs_end:
 		wpa_ie_len += multi_ap_ie_len;
 	}
 
+#ifndef CONFIG_NO_RRM
+	/* A full-MAC driver may expose only host-managed neighbor reports. */
+	if ((wpa_s->drv_rrm_flags & WPA_DRIVER_FLAGS_SUPPORT_RRM) &&
+	    (wpa_s->drv_rrm_flags & WPA_DRIVER_FLAGS_RRM_NEIGHBOR_REPORT_ONLY) &&
+	    bss && (bss->caps & IEEE80211_CAP_RRM)) {
+		const u8 *rrm = wpa_bss_get_ie(bss, WLAN_EID_RRM_ENABLED_CAPABILITIES);
+
+		if (rrm && rrm[1] == 5 && max_wpa_ie_len - wpa_ie_len >= 7) {
+			u8 *pos = wpa_ie + wpa_ie_len;
+
+			os_memset(pos, 0, 7);
+			pos[0] = WLAN_EID_RRM_ENABLED_CAPABILITIES;
+			pos[1] = 5;
+			pos[2] = WLAN_RRM_CAPS_NEIGHBOR_REPORT;
+			wpa_ie_len += 7;
+			params->rrm_used = 1;
+		}
+	}
+#endif /* CONFIG_NO_RRM */
+
 	params->wpa_ie = wpa_ie;
 	params->wpa_ie_len = wpa_ie_len;
 	params->auth_alg = algs;
@@ -4208,6 +4235,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 	wpa_sm_set_assoc_wpa_ie(wpa_s->wpa, NULL, 0);
 	wpa_sm_set_assoc_rsnxe(wpa_s->wpa, NULL, 0);
 	wpa_s->rsnxe_len = 0;
+	wpa_s->rrm.rrm_used = 0;
 #ifndef CONFIG_NO_ROBUST_AV
 	wpa_s->mscs_setup_done = false;
 #endif /* CONFIG_NO_ROBUST_AV */

@@ -74,7 +74,8 @@ platform_init(void)
 	struct smbios_chassis *pchassis;
 	struct smbios_processor *pproc;
 	struct smbios_slot *pslot;
-	int nisa, nother;
+	/* Origin: EmberBSD (AI-assisted), slot counts are used only on ISA hosts. */
+	int nisa __unused, nother __unused;
 
 	if (smbios_entry.hdrphys) {
 		int err;

@@ -129,6 +129,8 @@ fail:
 struct xhci_pipe {
 	struct usbd_pipe xp_pipe;
 	struct usb_task xp_async_task;
+	kcondvar_t xp_restart_cv;
+	bool xp_restarting;	/* protected by sc_lock */
 	int16_t xp_isoc_next; /* next frame */
 	uint8_t xp_maxb; /* max burst */
 	uint8_t xp_mult;
@@ -154,7 +156,7 @@ static usbd_status xhci_new_device(device_t, struct usbd_bus *, int, int, int,
 static int xhci_roothub_ctrl(struct usbd_bus *, usb_device_request_t *,
     void *, int);
 
-static void xhci_pipe_restart(struct usbd_pipe *);
+static bool xhci_pipe_restart(struct usbd_pipe *, bool);
 static void xhci_pipe_restart_async_task(void *);
 static void xhci_pipe_restart_async(struct usbd_pipe *);
 
@@ -2116,8 +2118,14 @@ xhci_open(struct usbd_pipe *pipe)
 		return err;
 	}
 
-	if (ed->bEndpointAddress != USB_CONTROL_ENDPOINT)
-		return xhci_configure_endpoint(pipe);
+	if (ed->bEndpointAddress != USB_CONTROL_ENDPOINT) {
+		err = xhci_configure_endpoint(pipe);
+		if (err)
+			return err;
+	}
+
+	cv_init(&xpipe->xp_restart_cv, "xhcirestart");
+	xpipe->xp_restarting = false;
 
 	return USBD_NORMAL_COMPLETION;
 }
@@ -2143,6 +2151,8 @@ xhci_close_pipe(struct usbd_pipe *pipe)
 
 	usb_rem_task_wait(pipe->up_dev, &xp->xp_async_task, USB_TASKQ_HC,
 	    &sc->sc_lock);
+	KASSERT(!xp->xp_restarting);
+	cv_destroy(&xp->xp_restart_cv);
 
 	if (sc->sc_dying)
 		return;
@@ -2219,7 +2229,7 @@ xhci_abortx(struct usbd_xfer *xfer)
 		xfer->ux_status == USBD_TIMEOUT),
 	    "bad abort status: %d", xfer->ux_status);
 
-	xhci_pipe_restart(xfer->ux_pipe);
+	(void)xhci_pipe_restart(xfer->ux_pipe, true);
 
 	DPRINTFN(14, "end", 0, 0, 0, 0);
 }
@@ -2242,19 +2252,33 @@ xhci_host_dequeue(struct xhci_ring * const xr)
  * xHCI 1.1 sect 4.10.2.1
  * Issue RESET_EP to recover halt condition and SET_TR_DEQUEUE to remove
  * all transfers on transfer ring.
+ * A forced restart aborts an active pipe.  Other callers only recover a
+ * halted ring.  Return false if another caller already recovered it.
  */
-static void
-xhci_pipe_restart(struct usbd_pipe *pipe)
+static bool
+xhci_pipe_restart(struct usbd_pipe *pipe, bool force)
 {
+	struct xhci_pipe * const xp =
+	    container_of(pipe, struct xhci_pipe, xp_pipe);
 	struct xhci_softc * const sc = XHCI_PIPE2SC(pipe);
 	struct xhci_slot * const xs = pipe->up_dev->ud_hcpriv;
 	const u_int dci = xhci_ep_get_dci(pipe->up_endpoint->ue_edesc);
+	struct xhci_ring * const tr = xs->xs_xr[dci];
 
 	XHCIHIST_FUNC();
 	XHCIHIST_CALLARGS("pipe %#jx slot %ju dci %ju",
 	    (uintptr_t)pipe, xs->xs_idx, dci, 0);
 
-	KASSERT(xhci_polling_p(sc) || mutex_owned(&sc->sc_lock));
+	KASSERT(!cpu_intr_p() && !cpu_softintr_p());
+	KASSERT(!xhci_polling_p(sc));
+	KASSERT(mutex_owned(&sc->sc_lock));
+
+	/* Commands drop sc_lock.  Keep one owner until the ring is retired. */
+	while (xp->xp_restarting)
+		cv_wait(&xp->xp_restart_cv, &sc->sc_lock);
+	if (!force && !tr->is_halted)
+		return false;
+	xp->xp_restarting = true;
 
 	/*
 	 * - If the endpoint is halted, indicating a stall, reset it.
@@ -2288,8 +2312,12 @@ xhci_pipe_restart(struct usbd_pipe *pipe)
 	}
 
 	xhci_set_dequeue(pipe);
+	tr->is_halted = false;
+	xp->xp_restarting = false;
+	cv_broadcast(&xp->xp_restart_cv);
 
 	DPRINTFN(4, "ends", 0, 0, 0, 0);
+	return true;
 }
 
 static void
@@ -2297,9 +2325,6 @@ xhci_pipe_restart_async_task(void *cookie)
 {
 	struct usbd_pipe * const pipe = cookie;
 	struct xhci_softc * const sc = XHCI_PIPE2SC(pipe);
-	struct xhci_slot * const xs = pipe->up_dev->ud_hcpriv;
-	const u_int dci = xhci_ep_get_dci(pipe->up_endpoint->ue_edesc);
-	struct xhci_ring * const tr = xs->xs_xr[dci];
 	struct usbd_xfer *xfer;
 
 	XHCIHIST_FUNC();
@@ -2308,13 +2333,12 @@ xhci_pipe_restart_async_task(void *cookie)
 
 	mutex_enter(&sc->sc_lock);
 
-	xhci_pipe_restart(pipe);
+	if (!xhci_pipe_restart(pipe, false))
+		goto out;
 
 	/*
-	 * We halted our own queue because it stalled.  Mark it no
-	 * longer halted and start issuing queued transfers again.
+	 * The halted ring is now retired.  Start queued transfers again.
 	 */
-	tr->is_halted = false;
 	xfer = SIMPLEQ_FIRST(&pipe->up_queue);
 	if (xfer) {
 		/*
@@ -2325,10 +2349,10 @@ xhci_pipe_restart_async_task(void *cookie)
 		 * reacquire the pipe (bus) lock.  So only restart the
 		 * xfer if it's still USBD_IN_PROGRESS.
 		 *
-		 * Either way, xfers on the queue can't be in
-		 * USBD_NOT_STARTED.
+		 * Completion drops the lock for callbacks before starting
+		 * the next queued xfer.  Leave USBD_NOT_STARTED to its
+		 * usbd_start_next call after the callback returns.
 		 */
-		KASSERT(xfer->ux_status != USBD_NOT_STARTED);
 		if (xfer->ux_status == USBD_IN_PROGRESS) {
 			(*pipe->up_methods->upm_start)(xfer);
 		} else {
@@ -2337,7 +2361,7 @@ xhci_pipe_restart_async_task(void *cookie)
 		}
 	}
 
-	mutex_exit(&sc->sc_lock);
+out:	mutex_exit(&sc->sc_lock);
 }
 
 static void
@@ -2356,6 +2380,7 @@ xhci_pipe_restart_async(struct usbd_pipe *pipe)
 	KASSERT(xhci_polling_p(sc) || mutex_owned(&sc->sc_lock));
 
 	tr->is_halted = true;
+	/* Retire cached TDs even if no further transfer arrives (4.6.10). */
 	usb_add_task(pipe->up_dev, &xp->xp_async_task, USB_TASKQ_HC);
 
 	DPRINTFN(4, "ends", 0, 0, 0, 0);
@@ -2379,9 +2404,14 @@ xhci_rhpsc(struct xhci_softc * const sc, u_int ctlrport)
 	DPRINTFN(4, "xhci%jd: bus %jd bp %ju xfer %#jx status change",
 	    device_unit(sc->sc_dev), bn, rhp, (uintptr_t)xfer);
 
-	if (xfer == NULL)
+	if (xfer == NULL || xfer->ux_status != USBD_IN_PROGRESS) {
+		/* The controller will not repeat this event: latch it and
+		 * deliver when the root intr xfer is armed again. */
+		DPRINTFN(4, "xhci%jd: bus %jd bp %ju latched (no armed xfer)",
+		    device_unit(sc->sc_dev), bn, rhp, 0);
+		sc->sc_rhpend[bn][rhp / 8] |= (uint8_t)(1U << (rhp % 8));
 		return;
-	KASSERT(xfer->ux_status == USBD_IN_PROGRESS);
+	}
 
 	uint8_t *p = xfer->ux_buf;
 	if (!xhci_polling_p(sc) || !sc->sc_intrxfer_deferred[bn])
@@ -4380,6 +4410,30 @@ xhci_root_intr_start(struct usbd_xfer *xfer)
 	sc->sc_intrxfer[bn] = xfer;
 	xfer->ux_status = USBD_IN_PROGRESS;
 
+	/* Deliver port changes latched while no xfer was armed. */
+	{
+		size_t i;
+
+		for (i = 0; i < sizeof(sc->sc_rhpend[bn]); i++) {
+			if (sc->sc_rhpend[bn][i] != 0)
+				break;
+		}
+		if (i < sizeof(sc->sc_rhpend[bn])) {
+			uint8_t *p = xfer->ux_buf;
+
+			memset(p, 0, xfer->ux_length);
+			for (i = 0; i < xfer->ux_length && i < sizeof(sc->sc_rhpend[bn]); i++) {
+				p[i] = sc->sc_rhpend[bn][i];
+				sc->sc_rhpend[bn][i] = 0;
+			}
+			DPRINTFN(4, "xhci%jd: bus %jd delivering latched changes",
+			    device_unit(sc->sc_dev), bn, 0, 0);
+			xfer->ux_actlen = xfer->ux_length;
+			xfer->ux_status = USBD_NORMAL_COMPLETION;
+			usb_transfer_complete(xfer);
+		}
+	}
+
 	return USBD_IN_PROGRESS;
 }
 
@@ -4456,6 +4510,9 @@ xhci_device_ctrl_transfer(struct usbd_xfer *xfer)
 static usbd_status
 xhci_device_ctrl_start(struct usbd_xfer *xfer)
 {
+	struct usbd_pipe * const pipe = xfer->ux_pipe;
+	struct xhci_pipe * const xp =
+	    container_of(pipe, struct xhci_pipe, xp_pipe);
 	struct xhci_softc * const sc = XHCI_XFER2SC(xfer);
 	struct xhci_slot * const xs = xfer->ux_pipe->up_dev->ud_hcpriv;
 	const u_int dci = xhci_ep_get_dci(xfer->ux_pipe->up_endpoint->ue_edesc);
@@ -4483,8 +4540,34 @@ xhci_device_ctrl_start(struct usbd_xfer *xfer)
 
 	KASSERT((xfer->ux_rqflags & URQ_REQUEST) != 0);
 
-	if (tr->is_halted)
-		goto out;
+	/* Abort must see an active xfer before a command drops sc_lock. */
+	if (xfer->ux_status == USBD_NOT_STARTED) {
+		xfer->ux_status = USBD_IN_PROGRESS;
+		usbd_xfer_schedule_timeout(xfer);
+	}
+	KASSERT(xfer->ux_status == USBD_IN_PROGRESS);
+
+	if (tr->is_halted) {
+		/*
+		 * Completion can start the next queued xfer in softintr
+		 * context.  Polling and enumeration also keep the deferred
+		 * path.  Never wait for another owner here: it may submit
+		 * and complete this xfer before we reacquire sc_lock.
+		 */
+		if (polling || cpu_intr_p() || cpu_softintr_p() ||
+		    usb_in_event_thread(XHCI_XFER2BUS(xfer)->ub_usbctl) ||
+		    xp->xp_restarting) {
+			usb_add_task(pipe->up_dev, &xp->xp_async_task,
+			    USB_TASKQ_HC);
+			return USBD_IN_PROGRESS;
+		}
+
+		(void)xhci_pipe_restart(pipe, false);
+		/* A concurrent abort claims the status before waiting for us. */
+		if (xfer->ux_status != USBD_IN_PROGRESS ||
+		    xfer != SIMPLEQ_FIRST(&pipe->up_queue))
+			return USBD_IN_PROGRESS;
+	}
 
 	i = 0;
 
@@ -4529,17 +4612,6 @@ xhci_device_ctrl_start(struct usbd_xfer *xfer)
 		mutex_exit(&tr->xr_lock);
 
 	xhci_db_write_4(sc, XHCI_DOORBELL(xs->xs_idx), dci);
-
-out:	if (xfer->ux_status == USBD_NOT_STARTED) {
-		xfer->ux_status = USBD_IN_PROGRESS;
-		usbd_xfer_schedule_timeout(xfer);
-	} else {
-		/*
-		 * We must be coming from xhci_pipe_restart -- timeout
-		 * already set up, nothing to do.
-		 */
-	}
-	KASSERT(xfer->ux_status == USBD_IN_PROGRESS);
 
 	return USBD_IN_PROGRESS;
 }

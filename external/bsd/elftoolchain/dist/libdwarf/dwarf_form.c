@@ -151,6 +151,8 @@ dwarf_global_formref(Dwarf_Attribute at, Dwarf_Off *return_offset,
 
 	switch (at->at_form) {
 	case DW_FORM_ref_addr:
+	case DW_FORM_ref_sup4:
+	case DW_FORM_ref_sup8:
 	case DW_FORM_sec_offset:
 		*return_offset = (Dwarf_Off) at->u[0].u64;
 		ret = DW_DLV_OK;
@@ -241,6 +243,7 @@ dwarf_formudata(Dwarf_Attribute at, Dwarf_Unsigned *return_uvalue,
 	case DW_FORM_data4:
 	case DW_FORM_data8:
 	case DW_FORM_udata:
+	case DW_FORM_implicit_const:
 		*return_uvalue = at->u[0].u64;
 		ret = DW_DLV_OK;
 		break;
@@ -281,6 +284,7 @@ dwarf_formsdata(Dwarf_Attribute at, Dwarf_Signed *return_svalue,
 		break;
 	case DW_FORM_data8:
 	case DW_FORM_sdata:
+	case DW_FORM_implicit_const:
 		*return_svalue = at->u[0].s64;
 		ret = DW_DLV_OK;
 		break;
@@ -370,12 +374,93 @@ dwarf_formexprloc(Dwarf_Attribute at, Dwarf_Unsigned *return_exprlen,
 	return (DW_DLV_OK);
 }
 
+/* Origin: EmberBSD (AI-assisted), resolve DWARF5 indexed strings safely. */
+static int
+_dwarf_form_indexed_string(Dwarf_Attribute at, char **strp, Dwarf_Error *error)
+{
+	Dwarf_Debug dbg = at->at_die->die_dbg;
+	Dwarf_CU cu = at->at_die->die_cu;
+	Dwarf_Die root;
+	Dwarf_Attribute baseattr;
+	Dwarf_Section *offsets, *strings;
+	uint64_t base, index, offset, length, limit;
+	unsigned int width = cu->cu_dwarf_size;
+	int ret;
+
+	/* GNU DWARF4 uses a headerless, contribution-relative offset table. */
+	if (at->at_form == DW_FORM_GNU_str_index) {
+		offsets = _dwarf_find_section(dbg, ".debug_str_offsets");
+		strings = _dwarf_find_section(dbg, ".debug_str");
+		index = at->u[0].u64;
+		if (cu->cu_version != 4 || offsets == NULL || strings == NULL ||
+		    (width != 4 && width != 8) || offsets->ds_size % width != 0 ||
+		    index >= offsets->ds_size / width)
+			goto invalid;
+		offset = index * width;
+		goto read_string;
+	}
+
+	/* Resolve after the root's attributes have all been parsed. */
+	ret = dwarf_offdie_b(dbg, cu->cu_1st_offset, cu->cu_is_info,
+	    &root, error);
+	if (ret != DW_DLV_OK)
+		return (ret);
+	baseattr = _dwarf_attr_find(root, DW_AT_str_offsets_base);
+	if (baseattr == NULL && (cu->cu_unit_type == DW_UT_split_compile ||
+	    cu->cu_unit_type == DW_UT_split_type)) {
+		/* DWARF5 7.26: a standalone .dwo has an implicit first base. */
+		base = width == 4 ? 8 : 16;
+	} else if (baseattr == NULL || baseattr->at_form != DW_FORM_sec_offset) {
+		dwarf_dealloc(dbg, root, DW_DLA_DIE);
+		goto invalid;
+	} else
+		base = baseattr->u[0].u64;
+	dwarf_dealloc(dbg, root, DW_DLA_DIE);
+	offsets = _dwarf_find_section(dbg, ".debug_str_offsets");
+	strings = _dwarf_find_section(dbg, ".debug_str");
+	index = at->u[0].u64;
+	if (offsets == NULL || strings == NULL ||
+	    (width != 4 && width != 8) || base > offsets->ds_size ||
+	    base < (width == 4 ? 8U : 16U))
+		goto invalid;
+	/* DWARF5 7.26: base points just past this contribution's header. */
+	offset = base - (width == 4 ? 8 : 16);
+	length = dbg->read(offsets->ds_data, &offset, 4);
+	if (width == 8) {
+		if (length != 0xffffffff)
+			goto invalid;
+		length = dbg->read(offsets->ds_data, &offset, 8);
+	} else if (length >= 0xfffffff0) {
+		goto invalid;
+	}
+	if (length < 4 || length > offsets->ds_size - offset ||
+	    (length - 4) % width != 0)
+		goto invalid;
+	limit = offset + length;
+	if (dbg->read(offsets->ds_data, &offset, 2) != 5 ||
+	    dbg->read(offsets->ds_data, &offset, 2) != 0 ||
+	    index >= (limit - base) / width)
+		goto invalid;
+	offset = base + index * width;
+read_string:
+	offset = dbg->read(offsets->ds_data, &offset, width);
+	if (offset >= strings->ds_size || memchr(strings->ds_data + offset,
+	    '\0', strings->ds_size - offset) == NULL)
+		goto invalid;
+	*strp = (char *)strings->ds_data + offset;
+	return (DW_DLV_OK);
+invalid:
+	DWARF_SET_ERROR(dbg, error, DW_DLE_ATTR_FORM_BAD);
+	return (DW_DLV_ERROR);
+}
+
 int
 dwarf_formstring(Dwarf_Attribute at, char **return_string,
     Dwarf_Error *error)
 {
 	int ret;
 	Dwarf_Debug dbg;
+	Dwarf_Section *strings;
 
 	dbg = at != NULL ? at->at_die->die_dbg : NULL;
 
@@ -385,6 +470,18 @@ dwarf_formstring(Dwarf_Attribute at, char **return_string,
 	}
 
 	switch (at->at_form) {
+	case DW_FORM_strp_sup:
+		/* Resolve lazily, after the consumer has attached its supplement. */
+		strings = dbg->dbg_tied == NULL ? NULL :
+		    _dwarf_find_section(dbg->dbg_tied, ".debug_str");
+		if (strings == NULL || at->u[0].u64 >= strings->ds_size ||
+		    memchr(strings->ds_data + at->u[0].u64, 0,
+		    strings->ds_size - at->u[0].u64) == NULL) {
+			DWARF_SET_ERROR(dbg, error, DW_DLE_ATTR_FORM_BAD);
+			return (DW_DLV_ERROR);
+		}
+		*return_string = (char *)strings->ds_data + at->u[0].u64;
+		return (DW_DLV_OK);
 	case DW_FORM_string:
 		*return_string = (char *) at->u[0].s;
 		ret = DW_DLV_OK;
@@ -394,6 +491,13 @@ dwarf_formstring(Dwarf_Attribute at, char **return_string,
 		*return_string = (char *) at->u[1].s;
 		ret = DW_DLV_OK;
 		break;
+	case DW_FORM_GNU_str_index:
+	case DW_FORM_strx:
+	case DW_FORM_strx1:
+	case DW_FORM_strx2:
+	case DW_FORM_strx3:
+	case DW_FORM_strx4:
+		return (_dwarf_form_indexed_string(at, return_string, error));
 	default:
 		DWARF_SET_ERROR(dbg, error, DW_DLE_ATTR_FORM_BAD);
 		ret = DW_DLV_ERROR;

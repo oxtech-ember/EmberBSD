@@ -7562,6 +7562,7 @@
 ./usr/share/man/cat3/dwarf_diename.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_dieoffset.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_elf_init.0	comp-c-catman	.cat
+./usr/share/man/cat3/dwarf_elf_init_section.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_end_macro_file.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_errmsg.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_errno.0	comp-c-catman	.cat
@@ -7698,6 +7699,7 @@
 ./usr/share/man/cat3/dwarf_set_frame_same_value.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_set_frame_undefined_value.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_set_reloc_application.0	comp-c-catman	.cat
+./usr/share/man/cat3/dwarf_set_tied_dbg.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_seterrarg.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_seterrhand.0 comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_siblingof.0	comp-c-catman	.cat
@@ -16536,6 +16538,7 @@
 ./usr/share/man/html3/dwarf_diename.html	comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_dieoffset.html	comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_elf_init.html	comp-c-htmlman	html
+./usr/share/man/html3/dwarf_elf_init_section.html	comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_end_macro_file.html comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_errmsg.html comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_errno.html	comp-c-htmlman	html
@@ -16672,6 +16675,7 @@
 ./usr/share/man/html3/dwarf_set_frame_same_value.html	comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_set_frame_undefined_value.html	comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_set_reloc_application.html	comp-c-htmlman	html
+./usr/share/man/html3/dwarf_set_tied_dbg.html	comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_seterrarg.html	comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_seterrhand.html	comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_siblingof.html	comp-c-htmlman	html
@@ -25448,6 +25452,7 @@
 ./usr/share/man/man3/dwarf_diename.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_dieoffset.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_elf_init.3	comp-c-man	.man
+./usr/share/man/man3/dwarf_elf_init_section.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_end_macro_file.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_errmsg.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_errno.3	comp-c-man	.man
@@ -25584,6 +25589,7 @@
 ./usr/share/man/man3/dwarf_set_frame_same_value.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_set_frame_undefined_value.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_set_reloc_application.3	comp-c-man	.man
+./usr/share/man/man3/dwarf_set_tied_dbg.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_seterrarg.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_seterrhand.3 comp-c-man	.man
 ./usr/share/man/man3/dwarf_siblingof.3	comp-c-man	.man

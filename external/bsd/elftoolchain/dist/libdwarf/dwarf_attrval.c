@@ -68,6 +68,8 @@ dwarf_attrval_string(Dwarf_Die die, Dwarf_Half attr, const char **strp, Dwarf_Er
 {
 	Dwarf_Attribute at;
 	Dwarf_Debug dbg;
+	char *value;
+	int ret;
 
 	dbg = die != NULL ? die->die_dbg : NULL;
 
@@ -83,19 +85,11 @@ dwarf_attrval_string(Dwarf_Die die, Dwarf_Half attr, const char **strp, Dwarf_Er
 		return (DW_DLV_NO_ENTRY);
 	}
 
-	switch (at->at_form) {
-	case DW_FORM_strp:
-		*strp = at->u[1].s;
-		break;
-	case DW_FORM_string:
-		*strp = at->u[0].s;
-		break;
-	default:
-		DWARF_SET_ERROR(dbg, err, DW_DLE_ATTR_FORM_BAD);
-		return (DW_DLV_ERROR);
-	}
-
-	return (DW_DLV_OK);
+	/* Origin: EmberBSD (AI-assisted), share all supported string forms. */
+	ret = dwarf_formstring(at, &value, err);
+	if (ret == DW_DLV_OK)
+		*strp = value;
+	return (ret);
 }
 
 int
@@ -130,6 +124,7 @@ dwarf_attrval_signed(Dwarf_Die die, Dwarf_Half attr, Dwarf_Signed *valp, Dwarf_E
 		break;
 	case DW_FORM_data8:
 	case DW_FORM_sdata:
+	case DW_FORM_implicit_const:
 		*valp = at->u[0].s64;
 		break;
 	default:
@@ -203,6 +198,7 @@ dwarf_attrval_unsigned(Dwarf_Die die, Dwarf_Half attr, Dwarf_Unsigned *valp, Dwa
 	case DW_FORM_data4:
 	case DW_FORM_data8:
 	case DW_FORM_udata:
+	case DW_FORM_implicit_const:
 	case DW_FORM_ref1:
 	case DW_FORM_ref2:
 	case DW_FORM_ref4:

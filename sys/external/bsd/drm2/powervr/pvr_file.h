@@ -1,0 +1,26 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 EmberBSD contributors. AI-assisted native interface. */
+#ifndef _PVR_FILE_H_
+#define _PVR_FILE_H_
+#include <sys/types.h>
+struct drm_file;
+struct pvr_backend;
+struct pvr_file_vm;
+/* All calls require the device gate and, if present, the platform gate. */
+struct pvr_file_vm *pvr_file_vm_get(struct drm_file *, uint32_t);
+void pvr_file_vm_put(struct pvr_file_vm *);
+int pvr_file_vm_publish(struct pvr_file_vm *, const struct pvr_backend *, uint32_t *);
+int pvr_file_vm_prepare(struct pvr_file_vm *);
+void pvr_file_vm_complete(struct pvr_file_vm *);
+void pvr_file_vm_fail(struct pvr_file_vm *);
+int pvr_file_vm_buffer(struct pvr_file_vm *, uint64_t, size_t, uint64_t, void **);
+/* A pin requires a live VM reference and prevents removal of its mapping. */
+struct pvr_file_pin {
+	void *mapping;
+	void *cpu;
+	uint64_t physical;
+};
+int pvr_file_vm_pin(struct pvr_file_vm *, uint64_t, size_t, uint64_t, struct pvr_file_pin *);
+void pvr_file_pin_sync(void *, int);
+void pvr_file_unpin(struct pvr_file_pin *);
+#endif /* _PVR_FILE_H_ */

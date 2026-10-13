@@ -51,13 +51,19 @@ retained or delayed query/output paths and all downstream narrow copy helpers.
 Framing supplies none of this semantic proof; a second guest format table or
 partial command decoder is not part of this change.
 
-Host qualification must also repair truthful error delivery: QEMU's ignored
-CREATE/transfer/EXEC renderer results and the renderer's overlong-packet
-break-then-success path. Partial command execution is not atomic rollback.
+The Ports classic profile now propagates reported CREATE/transfer/EXEC results
+through its source-tested lifecycle barrier. The full
+[host renderer recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host/host)
+also rejects the overlong-packet break-then-success path with EINVAL; native
+Metal decoder checks pass. Its classic profile also propagates reported surface/GL
+errors and rejects poisoned current contexts; full native checks pass with and
+without upstream GL error checking. This does not cover unreported errors or
+delayed query writes. Live error delivery through QEMU remains unqualified.
+Partial command execution is not atomic rollback.
 Terminal errors must reach the guest fence/reset contract. Delayed query writes
 need bounds and lifetime checks at the eventual write; UNREF/reset must quiesce
-guest IOV access before backing reuse. The known swallowed-error and narrowing
-defects still block VIRGL. Legitimate Mesa traffic and actual runtime acceptance
+guest IOV access before backing reuse. Remaining silent backend errors and
+unchecked narrowing still block VIRGL. Legitimate Mesa traffic and actual runtime acceptance
 must pass against the selected patched host, with its feature limits recorded.
 
 ## Reproduction and evidence

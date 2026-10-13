@@ -104,7 +104,10 @@ dwarf_next_cu_header_d(Dwarf_Debug dbg, Dwarf_Bool is_info,
 	if (cu_next_offset)
 		*cu_next_offset	= cu->cu_next_offset;
 
-	if (!is_info) {
+	/* Origin: EmberBSD (AI-assisted), signatures also belong to DWARF5 CUs. */
+	if (!is_info || cu->cu_unit_type == DW_UT_skeleton ||
+	    cu->cu_unit_type == DW_UT_split_compile ||
+	    cu->cu_unit_type == DW_UT_type || cu->cu_unit_type == DW_UT_split_type) {
 		if (type_signature)
 			*type_signature = cu->cu_type_sig;
 		if (type_offset)

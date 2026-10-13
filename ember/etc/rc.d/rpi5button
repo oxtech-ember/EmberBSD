@@ -1,0 +1,40 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# PROVIDE: rpi5button
+# REQUIRE: powerd
+# BEFORE: LOGIN
+# KEYWORD: shutdown
+
+$_rc_subr_loaded . /etc/rc.subr
+
+name="rpi5button"
+rcvar=$name
+extra_commands="status"
+start_cmd="rpi5button_start"
+stop_cmd="rpi5button_stop"
+status_cmd="rpi5button_status"
+
+rpi5button_status()
+{
+	/sbin/modstat | awk '$1 == "rpi5button" {found = 1} END {exit !found}'
+}
+
+rpi5button_start()
+{
+	if ! /etc/rc.d/powerd onestatus >/dev/null 2>&1; then
+		warn "Start powerd before loading the power-button fallback"
+		return 1
+	fi
+	rpi5button_status || /sbin/modload rpi5button
+}
+
+rpi5button_stop()
+{
+	if rpi5button_status; then
+		/sbin/modunload rpi5button
+	fi
+}
+
+load_rc_config "$name"
+: ${rpi5button:=NO}
+run_rc_command "$1"

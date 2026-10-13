@@ -31,6 +31,7 @@
 
 #include <lib/libsa/stand.h>
 #include <lib/libsa/bootcfg.h>
+#include <lib/libsa/ember_boot_logo.h>
 #include <lib/libkern/libkern.h>
 
 #define MENUFORMAT_AUTO   0
@@ -280,22 +281,22 @@ perform_bootcfg(const char *conf, bootcfg_command command, const off_t maxsz)
 void
 print_bootcfg_banner(const char *bootprog_name, const char *bootprog_rev)
 {
+	print_bootcfg_banner_color(bootprog_name, bootprog_rev, NULL);
+}
+
+void
+print_bootcfg_banner_color(const char *bootprog_name, const char *bootprog_rev,
+    void (*color)(int))
+{
 	int n = 0;
 
+	ember_boot_logo(color);
 	if (bootcfg_info.banner[0]) {  
 		for (; n < BOOTCFG_MAXBANNER && bootcfg_info.banner[n]; n++) 
 			printf("%s\n", bootcfg_info.banner[n]);
 		return;
 	}
 
-	/* If the user has not specified a banner, print a default one. */
-
-	printf("\n");
-	printf("  \\\\-__,------,___.\n");
-	printf("   \\\\        __,---`  %s\n", bootprog_name);
-	printf("    \\\\       `---,_.  Revision %s\n", bootprog_rev);
-	printf("     \\\\-,_____,.---`\n");
-	printf("      \\\\\n");
-	printf("       \\\\\n");
-	printf("        \\\\\n\n");
+	printf("EmberBSD | Unix for intelligent devices\n");
+	printf("%s, loader revision %s\n\n", bootprog_name, bootprog_rev);
 }

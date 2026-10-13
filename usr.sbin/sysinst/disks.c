@@ -1468,7 +1468,7 @@ make_fstab(struct install_partition_desc *install)
 #endif
 	}
 
-	scripting_fprintf(f, "# NetBSD /etc/fstab\n# See /usr/share/examples/"
+	scripting_fprintf(f, "# EmberBSD /etc/fstab\n# See /usr/share/examples/"
 			"fstab/ for more examples.\n");
 
 	if (pm->no_part) {

@@ -578,7 +578,11 @@ static void dwc2_init_isoc_dma_desc(struct dwc2_hsotg *hsotg,
 {
 	struct dwc2_qtd *qtd;
 	u32 max_xfer_size;
-	u16 idx, inc, n_desc = 0, ntd_max = 0;
+	u16 idx, inc, ntd_max = 0;
+	/* Origin: EmberBSD (AI-assisted), count descriptors only for delayed IOC. */
+#ifndef ISOC_URB_GIVEBACK_ASAP
+	u16 n_desc = 0;
+#endif
 	u16 cur_idx;
 	u16 next_idx;
 
@@ -627,7 +631,9 @@ static void dwc2_init_isoc_dma_desc(struct dwc2_hsotg *hsotg,
 			dwc2_fill_host_isoc_dma_desc(hsotg, qtd, qh,
 						     max_xfer_size, idx);
 			idx = dwc2_desclist_idx_inc(idx, inc, qh->dev_speed);
+#ifndef ISOC_URB_GIVEBACK_ASAP
 			n_desc++;
+#endif
 		}
 		qtd->isoc_td_last = idx;
 		qtd->in_process = 1;

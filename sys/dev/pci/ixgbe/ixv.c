@@ -1283,7 +1283,8 @@ ixv_handle_timer(struct work *wk, void *context)
 	struct ixgbe_softc *sc = context;
 	device_t	dev = sc->dev;
 	struct ix_queue	*que = sc->queues;
-	u64		queues = 0;
+	/* Origin: EmberBSD (AI-assisted), retain the disabled soft-IRQ diagnostic. */
+	u64		queues __unused = 0;
 	u64		v0, v1, v2, v3, v4, v5, v6, v7;
 	int		hung = 0;
 	int		i;

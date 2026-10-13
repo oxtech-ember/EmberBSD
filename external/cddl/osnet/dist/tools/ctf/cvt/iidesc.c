@@ -82,6 +82,11 @@ iidesc_cmp(void *arg1, void *arg2)
 	    !streq(src->ii_name, tgt->ii_name))
 		return (0);
 
+	/* Origin: EmberBSD (AI-assisted), CU-local names have distinct owners. */
+	if ((src->ii_type == II_SFUN || src->ii_type == II_SVAR) &&
+	    !streq(src->ii_owner, tgt->ii_owner))
+		return (0);
+
 	find->iif_ret = src;
 
 	return (-1);

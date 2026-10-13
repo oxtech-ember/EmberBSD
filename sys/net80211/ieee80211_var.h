@@ -93,6 +93,8 @@ struct ieee80211_aclator;
 
 #define	IEEE80211_PS_MAX_QUEUE	50	/* maximum saved packets */
 
+struct ieee80211req_sta_mgmt;
+
 struct ieee80211com {
 	SLIST_ENTRY(ieee80211com) ic_next;
 	struct ifnet		*ic_ifp;	/* associated device */
@@ -111,6 +113,8 @@ struct ieee80211com {
 				    struct ieee80211_node *, int, int);
 	int			(*ic_newstate)(struct ieee80211com *,
 				    enum ieee80211_state, int);
+	int			(*ic_sta_mgmt)(struct ieee80211com *,
+				    struct ieee80211req_sta_mgmt *);
 	void			(*ic_newassoc)(struct ieee80211_node *, int);
 	void			(*ic_updateslot)(struct ifnet *);
 	void			(*ic_set_tim)(struct ieee80211_node *, int);

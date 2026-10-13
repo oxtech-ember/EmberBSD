@@ -162,17 +162,17 @@ It should point to a location that will be set to 4 for normal
 objects and to 0 for non-standard ones.
 Argument
 .Fa type_signature
-and
-.Fa type_offset
-is only needed for processing type units.
-Argument
-.Fa type_signature
 should point to a location that will be set to the 64-bit unique signature
 of the type described in the type unit.
+For DWARF5 skeleton and split compilation units it receives the eight raw
+bytes of the
+.Va dwo_id
+field, allowing the consumer to verify the split object identity.
 Argument
 .Fa type_offset
 should point to a location that will be set to the offset of the debugging
 information entry that describes the type.
+It is only needed for processing type units.
 Argument
 .Fa cu_next_offset
 should point to a location that will be set to the

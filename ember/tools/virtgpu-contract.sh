@@ -784,6 +784,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror "$work/dumb.c" -o "$work/dumb"
 cat > "$work/attach.c" <<'C'
 #include <assert.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <errno.h>
 #define IPL_VM 1
@@ -793,13 +794,13 @@ cat > "$work/attach.c" <<'C'
 #endif
 struct netbsd_virtqueue { int unused; };
 typedef void vq_callback_t(struct netbsd_virtqueue *);
-struct virtio_softc { int finished; };
-struct virtio_device { int initialized; };
+struct virtio_softc { uint64_t offered, requested, negotiated; int modern; };
+struct virtio_device { uint64_t features; int initialized; };
 struct virtiodrm_softc {
     void *sc_dev; struct virtio_device sc_vdev; struct netbsd_virtqueue *sc_vqs[2];
 };
 typedef void *device_t;
-static int stage, fail_queues, failures, finalized, deferred;
+static int stage, fail_init, fail_queues, failures, finalized, deferred;
 static struct netbsd_virtqueue queues[2];
 static void *device_private(void *p) { return p; }
 static void aprint_naive(const char *s) { (void)s; }
@@ -812,16 +813,20 @@ static void virtiodrm_config_changed(struct virtio_device *v) { (void)v; }
 static void virtio_gpu_cancel_vbuf(void *p) { (void)p; }
 static void virtiodrm_attach_deferred(device_t d) { (void)d; }
 static void virtio_child_attach_start(struct virtio_softc *v, device_t self,
-    int ipl, unsigned long features, const char *bits) {
-    (void)v; (void)self; (void)bits; assert(ipl == IPL_VM && features == 0); stage++;
+    int ipl, uint64_t features, const char *bits) {
+    (void)self; (void)bits;
+    assert(ipl == IPL_VM && features == VIRGL_TEST_EXPECTED);
+    v->requested = features; v->negotiated = v->offered & features; stage++;
 }
-static int virtio_version_1(struct virtio_softc *v) { (void)v; return 1; }
+static int virtio_version_1(struct virtio_softc *v) { return v->modern; }
 static void virtio_child_attach_failed(struct virtio_softc *v) { (void)v; failures++; }
 static int linux_virtio_init(struct virtio_device *v, struct virtio_softc *n,
     device_t d, int ipl, size_t bytes, int (*bridge)(struct virtio_softc *),
     void (*changed)(struct virtio_device *), void (*cancel)(void *)) {
-    (void)n; (void)d; (void)bridge; (void)changed; (void)cancel;
+    (void)d; (void)bridge; (void)changed; (void)cancel;
     assert(stage == 1 && ipl == IPL_VM && bytes == 1024 * 1024);
+    if (fail_init) return -ENOMEM;
+    v->features = n->negotiated;
     v->initialized = 1; stage++; return 0;
 }
 static int virtio_find_vqs(struct virtio_device *v, unsigned int n,
@@ -840,22 +845,54 @@ static void config_interrupts(device_t d, void (*fn)(device_t)) {
 }
 C
 autoconf="$src/sys/external/bsd/drm2/virtio/virtgpu_autoconf.c"
+sed -n '/^#define VIRTIO_GPU_F_VIRGL /p' \
+    "$src/sys/external/bsd/drm2/include/linux/virtio_gpu.h" >> "$work/attach.c"
 extract virtiodrm_attach "$autoconf" void >> "$work/attach.c"
 cat >> "$work/attach.c" <<'C'
 int main(void) {
-    struct virtio_softc parent = { 0 }; struct virtiodrm_softc child = { 0 };
-    virtiodrm_attach(&parent, &child, NULL);
-    assert(deferred == 1 && failures == 0 && finalized == 0);
-    stage = 0; deferred = 0; fail_queues = 1;
-    virtiodrm_attach(&parent, &child, NULL);
-    assert(deferred == 0 && failures == 1 && finalized == 1);
-    puts("VirtGPU production attach finishes transport before deferring DRM queries");
+    for (unsigned int offered = 0; offered < 32; offered++) {
+        for (unsigned int fault = 0; fault < 4; fault++) {
+            struct virtio_softc parent = { .offered = offered, .modern = fault != 1 };
+            struct virtiodrm_softc child = { 0 };
+            stage = failures = finalized = deferred = 0;
+            fail_init = fault == 2; fail_queues = fault == 3;
+            virtiodrm_attach(&parent, &child, NULL);
+            assert(parent.requested == VIRGL_TEST_EXPECTED);
+            assert(parent.negotiated == (offered & VIRGL_TEST_EXPECTED));
+            assert(deferred == (fault == 0) && failures == (fault != 0));
+            assert(finalized == (fault == 3));
+            assert(child.sc_vdev.initialized == (fault == 0 || fault == 3));
+            if (child.sc_vdev.initialized)
+                assert(child.sc_vdev.features == parent.negotiated);
+        }
+    }
+    puts("VirtGPU production attach: 128 feature-offer/failure cases passed");
     return 0;
 }
 C
-${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
-    "$work/attach.c" -o "$work/attach"
-"$work/attach"
+for enabled in 0 1; do
+    option=
+    if [ "$enabled" = 1 ]; then option=-DVIRTGPU_VIRGL; fi
+    ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
+        ${VIRTGPU_ATTACH_TEST_CFLAGS:-} $option -DVIRGL_TEST_EXPECTED="$enabled" \
+        "$work/attach.c" -o "$work/attach-$enabled"
+    "$work/attach-$enabled"
+done
+# Causal negatives: the old zero request and accidentally enabling EDID.
+for mask in 0 3; do
+    sed "s/features = UINT64_C(1) << VIRTIO_GPU_F_VIRGL;/features = UINT64_C($mask);/" \
+        "$work/attach.c" > "$work/attach-mutant.c"
+    grep -q "features = UINT64_C($mask);" "$work/attach-mutant.c"
+    ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
+        -DVIRTGPU_VIRGL -DVIRGL_TEST_EXPECTED=1 \
+        "$work/attach-mutant.c" -o "$work/attach-mutant"
+    if (ulimit -c 0; "$work/attach-mutant") > "$work/attach-mutant.log" 2>&1; then
+        echo "VirtGPU feature-mask mutant $mask unexpectedly passed" >&2
+        exit 1
+    fi
+    grep -q 'features == VIRGL_TEST_EXPECTED' "$work/attach-mutant.log"
+done
+echo 'VirtGPU zero-mask and extra-feature mutants rejected'
 cat > "$work/busid.c" <<'C'
 #include <assert.h>
 #include <stdio.h>

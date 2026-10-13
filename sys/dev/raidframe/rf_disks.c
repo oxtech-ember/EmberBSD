@@ -241,9 +241,8 @@ rf_ConfigureSpareDisks(RF_ShutdownList_t **listp, RF_Raid_t *raidPtr,
 	int     i, ret;
 	unsigned int bs;
 	RF_RaidDisk_t *disks;
-	int     num_spares_done;
+	/* Origin: EmberBSD (AI-assisted), remove the unused configured-spare count. */
 
-	num_spares_done = 0;
 
 	/* The space for the spares should have already been allocated by
 	 * ConfigureDisks() */
@@ -266,7 +265,6 @@ rf_ConfigureSpareDisks(RF_ShutdownList_t **listp, RF_Raid_t *raidPtr,
 			    (long int) disks[i].numBlocks *
 				 disks[i].blockSize / 1024 / 1024);
 		}
-		num_spares_done++;
 	}
 
 	/* check sizes and block sizes on spare disks */

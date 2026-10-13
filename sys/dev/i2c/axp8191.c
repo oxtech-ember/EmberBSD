@@ -248,6 +248,23 @@ axp8191reg_enable(device_t dev, bool enable)
 	return axp8191_write(sc->sc_pmic, c->c_enable_reg, val);
 }
 
+/* Origin: EmberBSD; read the existing regulator enable bit without writes. */
+static int
+axp8191reg_is_enabled(device_t dev, bool *enabled)
+{
+	struct axp8191reg_softc * const sc = device_private(dev);
+	const struct axp8191_ctrl *c = sc->sc_ctrl;
+	uint8_t val;
+	int error;
+
+	error = axp8191_read(sc->sc_pmic, c->c_enable_reg, &val);
+	if (error != 0)
+		return error;
+
+	*enabled = (val & c->c_enable_mask) != 0;
+	return 0;
+}
+
 static int
 axp8191reg_get_voltage(device_t dev, u_int *uvol)
 {
@@ -326,6 +343,7 @@ static const struct fdtbus_regulator_controller_func axp8191reg_funcs = {
 	.enable = axp8191reg_enable,
 	.set_voltage = axp8191reg_set_voltage,
 	.get_voltage = axp8191reg_get_voltage,
+	.is_enabled = axp8191reg_is_enabled,
 };
 
 static int

@@ -139,7 +139,7 @@
     "sys/dev/i2c/nxp75areg.h",
     "sys/dev/ic/bq4802reg.h"
   ],
-  "adaptationSourceRepository": "https://github.com/apovalixin/EmberBSD",
+  "adaptationSourceRepository": "https://github.com/oxtech-ember/EmberBSD",
   "adaptationSourceCommit": "eec188ba620dfb4f43dc8c3eb60fa67cd4e4ce52",
   "kernelPatches": [
     "aarch64-idle-resched.diff",

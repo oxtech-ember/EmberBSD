@@ -694,7 +694,8 @@ sysmon_envsys_register(struct sysmon_envsys *sme)
 	prop_dictionary_t dict, dict2;
 	envsys_data_t *edata = NULL;
 	sme_event_drv_t *this_evdrv;
-	int nevent;
+	/* Origin: EmberBSD (AI-assisted), preserve optional event diagnostics. */
+	int nevent __unused;
 	int error = 0;
 	char rnd_name[sizeof(edata->rnd_src.name)];
 

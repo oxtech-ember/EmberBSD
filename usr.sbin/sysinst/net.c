@@ -295,6 +295,10 @@ get_ifconfig_info(struct net_desc *devs)
 	}
 
 	buf = malloc (STRSIZE * sizeof(char));
+	if (buf == NULL) {
+		free(buf_in);
+		err(EXIT_FAILURE, "malloc");
+	}
 	for (i = 0, buf_tmp = buf_in; i < MAX_NETS && strlen(buf_tmp) > 0
 	    && buf_tmp < buf_in + strlen(buf_in);) {
 		tmp = stpncpy(buf, buf_tmp, strcspn(buf_tmp," \n"));
@@ -827,7 +831,7 @@ done:
 		scripting_fprintf(NULL, "cat <<EOF >/etc/resolv.conf\n");
 		time(&now);
 		scripting_fprintf(f, ";\n; BIND data file\n; %s %s;\n",
-		    "Created by NetBSD sysinst on", safectime(&now));
+		    "Created by EmberBSD sysinst on", safectime(&now));
 		if (net_domain[0] != '\0')
 			scripting_fprintf(f, "search %s\n", net_domain);
 		if (net_namesvr[0] != '\0')
@@ -1004,7 +1008,8 @@ do_ftp_fetch(const char *set_name, bool force_tgz, struct ftpinfo *f, bool in_ch
 		}
 	}
 
-	make_url(url, f, set_dir_for_set(set_name));
+	make_url(url, f, f == &ftp && !set_is_source(set_name) ?
+	    ftp_set_dir_bin : set_dir_for_set(set_name));
 	rval = run_program(RUN_DISPLAY | RUN_PROGRESS | RUN_XFER_DIR | (in_chroot?RUN_CHROOT:0),
 		    "/usr/bin/ftp %s%s/%s%s",
 		    ftp_opt, url, set_name,
@@ -1104,7 +1109,7 @@ static void
 write_etc_hosts(FILE *f)
 {
 	scripting_fprintf(f, "#\n");
-	scripting_fprintf(f, "# Added by NetBSD sysinst\n");
+	scripting_fprintf(f, "# Added by EmberBSD sysinst\n");
 	scripting_fprintf(f, "#\n");
 
 	if (net_domain[0] != '\0')
@@ -1246,7 +1251,7 @@ config_wlan(char *inter)
 	    "cat <<EOF >>%s/etc/wpa_supplicant.conf\n",
 	    target_prefix());
 	scripting_fprintf(wpa_conf, "\n#\n");
-	scripting_fprintf(wpa_conf, "# Added by NetBSD sysinst\n");
+	scripting_fprintf(wpa_conf, "# Added by EmberBSD sysinst\n");
 	scripting_fprintf(wpa_conf, "#\n");
 	scripting_fprintf(wpa_conf, "network={\n");
 	scripting_fprintf(wpa_conf,

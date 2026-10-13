@@ -35,8 +35,8 @@ AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.
 
 ## Evidence
 
-Results were migrated from the [published support matrix](https://github.com/apovalixin/EmberBSD/blob/fe2727f6ef675868eba642efa73c5a0e33f92191/README.md#supported-boards)
-and [hardware notes](https://github.com/apovalixin/EmberBSD/blob/fe2727f6ef675868eba642efa73c5a0e33f92191/README.ember.md#hardware-support-and-validation)
+Results were migrated from the [published support matrix](https://github.com/oxtech-ember/EmberBSD/blob/fe2727f6ef675868eba642efa73c5a0e33f92191/README.md#supported-boards)
+and [hardware notes](https://github.com/oxtech-ember/EmberBSD/blob/fe2727f6ef675868eba642efa73c5a0e33f92191/README.ember.md#hardware-support-and-validation)
 on 2026-10-07. These sources do not supply a complete per-check receipt
 with tested OS/firmware revisions and dates. The source commit identifies
 the documentation snapshot, not the kernel used in every original test.

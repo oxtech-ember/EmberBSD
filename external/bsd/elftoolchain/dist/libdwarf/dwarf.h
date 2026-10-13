@@ -420,6 +420,12 @@
  */
 
 	/* Reserved: 0x01, 0x02. */
+/* Origin: EmberBSD (AI-assisted), GNU DWARF4 split-object encodings. */
+#define DW_AT_GNU_dwo_name 0x2130
+#define DW_AT_GNU_dwo_id 0x2131
+#define DW_FORM_GNU_addr_index 0x1f01
+#define DW_FORM_GNU_str_index 0x1f02
+
 #define	DW_OP_addr			0x03
 	/* Reserved: 0x04, 0x05. */
 #define	DW_OP_deref			0x06

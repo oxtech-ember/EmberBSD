@@ -11,6 +11,7 @@
 #include <dt-bindings/clock/allwinner,sun60i-a733-r-ccu.h>
 #include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
 #include <dt-bindings/reset/allwinner,sun60i-a733-r-ccu.h>
+#include <dt-bindings/power/allwinner,sun60i-a733-pck-600.h>
 
 / {
 	interrupt-parent = <&gic>;
@@ -720,8 +721,46 @@
 			};
 		};
 
+		/* Origin: EmberBSD; GPU identity only, no automatic power-on. */
+		gpu: gpu@1800000 {
+			compatible = "allwinner,sun60i-a733-gpu",
+				     "img,img-bxm-4-64", "img,img-rogue";
+			reg = <0x01800000 0x8ffff>;
+			interrupts = <GIC_SPI 63 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&ccu CLK_GPU0>;
+			clock-names = "core";
+			resets = <&ccu RST_BUS_GPU0>;
+			power-domains = <&pck600 PD_GPU_TOP>;
+			netbsd,consumer-managed-power;
+			/* Local diagnostic stage: never map or read GPU registers. */
+			netbsd,observe-only;
+			status = "disabled";
+		};
+
+		/* Origin: EmberBSD; NPU identity only, no automatic power-on. */
+		npu: npu@3600000 {
+			compatible = "allwinner,sun60i-a733-npu";
+			reg = <0x03600000 0x1000>;
+			interrupts = <GIC_SPI 65 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&ccu CLK_NPU>, <&ccu CLK_PLL_NPU>,
+				 <&ccu CLK_BUS_NPU>, <&ccu CLK_MBUS_NPU>,
+				 <&ccu CLK_AHB_NPU>;
+			clock-names = "clk_npu", "clk_parent", "clk_bus",
+				"clk_mbus_gate", "clk_ahb_gate";
+			resets = <&ccu RST_BUS_NPU_AHB>,
+				 <&ccu RST_BUS_NPU_AXI>,
+				 <&ccu RST_BUS_NPU_CORE>;
+			reset-names = "npu_ahb_rst", "npu_axi_rst", "npu_rst";
+			power-domains = <&pck600 4>;
+			netbsd,consumer-managed-power;
+			netbsd,observe-only;
+			status = "disabled";
+		};
+
 		ccu: clock-controller@2002000 {
 			compatible = "allwinner,sun60i-a733-ccu";
+			/* Local read-only hardware oscillator observation source. */
+			netbsd,dcxo-source = <&rtc>;
 			reg = <0x02002000 0x2000>;
 			clocks = <&osc24M>, <&osc32k>, <&iosc>, <&osc32k>;
 			clock-names = "hosc", "losc", "iosc", "losc-fanout";
@@ -771,6 +810,17 @@
 			clock-names = "bus", "gpadc";
 			resets = <&ccu RST_BUS_THS0>;
 			#thermal-sensor-cells = <1>;
+		};
+
+		/* Native continuous PWM binding; capture is not implemented. */
+		pwm0: pwm@2527000 {
+			compatible = "allwinner,sun60i-a733-pwm";
+			reg = <0x02527000 0x400>;
+			clocks = <&ccu CLK_BUS_PWM0>, <&ccu CLK_BUS_PWM0>;
+			clock-names = "bus", "hosc";
+			resets = <&ccu RST_BUS_PWM0>;
+			#pwm-cells = <3>;
+			status = "disabled";
 		};
 
 		/* Not an upstream binding yet. */
@@ -1007,6 +1057,14 @@
 			clock-names = "hosc", "losc", "iosc";
 			#clock-cells = <1>;
 			#reset-cells = <1>;
+		};
+
+		/* No consumer is powered merely by attaching this provider. */
+		pck600: power-controller@7060000 {
+			compatible = "allwinner,sun60i-a733-pck-600";
+			reg = <0x07060000 0xb000>;
+			clocks = <&r_ccu CLK_BUS_R_PPU>;
+			#power-domain-cells = <1>;
 		};
 
 		/* Pins of the always-on domain. */

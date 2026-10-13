@@ -1436,7 +1436,7 @@ ac97_attach_type(struct ac97_host_if *host_if, device_t sc_dev, int type, kmutex
 		const struct sysctlnode *node_line1;
 		const struct sysctlnode *node_line2;
 		uint16_t xrate = 8000;
-		uint16_t xval, reg;
+		uint16_t reg;
 		int err;
 
 		ac97_read(as, AC97_REG_EXT_MODEM_ID, &as->ext_mid);
@@ -1476,23 +1476,14 @@ setup_modem:
 		/* reset */
 		ac97_write(as, AC97_REG_EXT_MODEM_ID, 1);
 
+		/* Origin: EmberBSD (AI-assisted), remove the unused modem power mask. */
 		/* program rates */
-		xval = 0xff00 & ~AC97_EXT_MODEM_CTRL_PRA;
-		if (as->ext_mid & AC97_EXT_MODEM_LINE1) {
+		if (as->ext_mid & AC97_EXT_MODEM_LINE1)
 			ac97_write(as, AC97_REG_LINE1_RATE, xrate);
-			xval &= ~(AC97_EXT_MODEM_CTRL_PRC |
-			       AC97_EXT_MODEM_CTRL_PRD);
-		}
-		if (as->ext_mid & AC97_EXT_MODEM_LINE2) {
+		if (as->ext_mid & AC97_EXT_MODEM_LINE2)
 			ac97_write(as, AC97_REG_LINE2_RATE, xrate);
-			xval &= ~(AC97_EXT_MODEM_CTRL_PRE |
-			       AC97_EXT_MODEM_CTRL_PRF);
-		}
-		if (as->ext_mid & AC97_EXT_MODEM_HANDSET) {
+		if (as->ext_mid & AC97_EXT_MODEM_HANDSET)
 			ac97_write(as, AC97_REG_HANDSET_RATE, xrate);
-			xval &= ~(AC97_EXT_MODEM_CTRL_PRG |
-			       AC97_EXT_MODEM_CTRL_PRH);
-		}
 
 		/* power-up everything */
 		ac97_write(as, AC97_REG_EXT_MODEM_CTRL, 0);

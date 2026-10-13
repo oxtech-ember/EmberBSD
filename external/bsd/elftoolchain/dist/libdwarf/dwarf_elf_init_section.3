@@ -1,0 +1,58 @@
+.\" Origin: EmberBSD (AI-assisted), explicit ELF debug-section selection.
+.Dd October 8, 2026
+.Dt DWARF_ELF_INIT_SECTION 3
+.Os
+.Sh NAME
+.Nm dwarf_elf_init_section
+.Nd initialize a reader for one ELF debug information section
+.Sh LIBRARY
+.Lb libdwarf
+.Sh SYNOPSIS
+.In libdwarf.h
+.Ft int
+.Fn dwarf_elf_init_section "Elf *elf" "int mode" "Dwarf_Unsigned section" "Dwarf_Handler errhand" "Dwarf_Ptr errarg" "Dwarf_Debug *dbg" "Dwarf_Error *error"
+.Sh DESCRIPTION
+The function initializes a reader like
+.Xr dwarf_elf_init 3 ,
+including application of ELF relocations.
+A nonzero
+.Fa section
+selects an ELF section index whose name is
+.Dq .debug_info ,
+.Dq .debug_info.dwo ,
+.Dq .debug_types
+or
+.Dq .debug_types.dwo .
+Other sections with these four names are excluded from the reader.
+Shared abbreviation, string and other debug sections remain available.
+The abbreviation, string, string-offset and line tables must match the
+selected section's ordinary or
+.Dq .dwo
+namespace; tables from the other namespace are excluded.
+Duplicate auxiliary debug section names are rejected as ambiguous.
+Grouped private abbreviation tables are not selected automatically.
+.Pp
+Offsets returned by this reader are relative to the selected section.
+Applications combining multiple readers must keep their offset namespaces
+separate and resolve type signatures themselves.
+The ELF descriptor and its data must remain alive until
+.Xr dwarf_finish 3 .
+.Pp
+A zero section index is equivalent to
+.Xr dwarf_elf_init 3
+and retains its historical all-sections behavior.
+Only
+.Dv DW_DLC_READ
+is supported.
+.Sh RETURN VALUES
+The return values follow
+.Xr dwarf_elf_init 3 .
+An invalid index, a non-debug section, an unsupported mode or ambiguous
+auxiliary sections produce
+.Dv DW_DLV_ERROR
+with
+.Dv DW_DLE_ARGUMENT .
+.Sh SEE ALSO
+.Xr dwarf_elf_init 3 ,
+.Xr dwarf_next_cu_header_d 3 ,
+.Xr dwarf_object_init 3

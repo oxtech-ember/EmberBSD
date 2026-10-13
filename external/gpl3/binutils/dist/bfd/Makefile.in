@@ -2366,77 +2366,77 @@ dwarf2.lo: dwarf2.c Makefile
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC)$(LTCOMPILE) -c -o $@ -DDEBUGDIR=\"$(DEBUGDIR)\" $(srcdir)/dwarf2.c
 
-# change IMPSRC ($<) to ALLSRC ($>) in the following rules so they work with
-# bmake
+# Origin: EmberBSD; AI-assisted portable BFD generator inputs.
+# Explicit source paths work with GNU make and bmake, including separate builds.
 elf32-target.h : elfxx-target.h
-	$(AM_V_GEN)$(SED) -e s/NN/32/g < $> > $@
+	$(AM_V_GEN)$(SED) -e s/NN/32/g < "$(srcdir)/elfxx-target.h" > $@
 
 elf64-target.h : elfxx-target.h
-	$(AM_V_GEN)$(SED) -e s/NN/64/g < $> > $@
+	$(AM_V_GEN)$(SED) -e s/NN/64/g < "$(srcdir)/elfxx-target.h" > $@
 
 elf32-aarch64.c : elfnn-aarch64.c
 	$(AM_V_at)echo "#line 1 \"elfnn-aarch64.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/NN/32/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/NN/32/g < "$(srcdir)/elfnn-aarch64.c" >> $@
 
 elf64-aarch64.c : elfnn-aarch64.c
 	$(AM_V_at)echo "#line 1 \"elfnn-aarch64.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/NN/64/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/NN/64/g < "$(srcdir)/elfnn-aarch64.c" >> $@
 
 elf32-ia64.c : elfnn-ia64.c
 	$(AM_V_at)echo "#line 1 \"elfnn-ia64.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/NN/32/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/NN/32/g < "$(srcdir)/elfnn-ia64.c" >> $@
 
 elf64-ia64.c : elfnn-ia64.c
 	$(AM_V_at)echo "#line 1 \"elfnn-ia64.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/NN/64/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/NN/64/g < "$(srcdir)/elfnn-ia64.c" >> $@
 
 elf32-kvx.c : elfnn-kvx.c
 	$(AM_V_at)echo "#line 1 \"elfnn-kvx.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/NN/32/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/NN/32/g < "$(srcdir)/elfnn-kvx.c" >> $@
 
 elf64-kvx.c : elfnn-kvx.c
 	$(AM_V_at)echo "#line 1 \"elfnn-kvx.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/NN/64/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/NN/64/g < "$(srcdir)/elfnn-kvx.c" >> $@
 
 elf32-loongarch.c : elfnn-loongarch.c
 	$(AM_V_at)echo "#line 1 \"elfnn-loongarch.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/NN/32/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/NN/32/g < "$(srcdir)/elfnn-loongarch.c" >> $@
 
 elf64-loongarch.c : elfnn-loongarch.c
 	$(AM_V_at)echo "#line 1 \"elfnn-loongarch.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/NN/64/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/NN/64/g < "$(srcdir)/elfnn-loongarch.c" >> $@
 
 elf32-riscv.c : elfnn-riscv.c
 	$(AM_V_at)echo "#line 1 \"elfnn-riscv.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/NN/32/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/NN/32/g < "$(srcdir)/elfnn-riscv.c" >> $@
 
 elf64-riscv.c : elfnn-riscv.c
 	$(AM_V_at)echo "#line 1 \"elfnn-riscv.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/NN/64/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/NN/64/g < "$(srcdir)/elfnn-riscv.c" >> $@
 
 peigen.c : peXXigen.c
 	$(AM_V_at)echo "#line 1 \"peXXigen.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/XX/pe/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/XX/pe/g < "$(srcdir)/peXXigen.c" >> $@
 
 pepigen.c : peXXigen.c
 	$(AM_V_at)echo "#line 1 \"peXXigen.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/XX/pep/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/XX/pep/g < "$(srcdir)/peXXigen.c" >> $@
 
 pex64igen.c: peXXigen.c
 	$(AM_V_at)echo "#line 1 \"peXXigen.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/XX/pex64/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/XX/pex64/g < "$(srcdir)/peXXigen.c" >> $@
 
 pe-aarch64igen.c: peXXigen.c
 	$(AM_V_at)echo "#line 1 \"peXXigen.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/XX/peAArch64/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/XX/peAArch64/g < "$(srcdir)/peXXigen.c" >> $@
 
 pe-loongarch64igen.c: peXXigen.c
 	$(AM_V_at)echo "#line 1 \"peXXigen.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/XX/peLoongArch64/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/XX/peLoongArch64/g < "$(srcdir)/peXXigen.c" >> $@
 
 pe-riscv64igen.c: peXXigen.c
 	$(AM_V_at)echo "#line 1 \"peXXigen.c\"" > $@
-	$(AM_V_GEN)$(SED) -e s/XX/peRiscV64/g < $> >> $@
+	$(AM_V_GEN)$(SED) -e s/XX/peRiscV64/g < "$(srcdir)/peXXigen.c" >> $@
 
 host-aout.lo: Makefile
 

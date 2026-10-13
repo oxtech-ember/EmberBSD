@@ -78,7 +78,8 @@ decode_funce_common(struct sdmmc_function *sf, struct sdmmc_cis *cis,
 	static const int speed_unit[] = { 10, 100, 1000, 10000, };
 	struct sdmmc_function *sf0 = sf->sc->sc_fn0;
 	device_t dev = sf->sc->sc_dev;
-	int fn0_blk_size, max_tran_speed;
+	/* Origin: EmberBSD (AI-assisted), retain register reads used for debug. */
+	int fn0_blk_size __unused, max_tran_speed;
 
 	if (sf->number != 0) {
 		aprint_error_dev(dev,
@@ -136,7 +137,7 @@ decode_funce_function(struct sdmmc_function *sf, struct sdmmc_cis *cis,
 {
 	struct sdmmc_function *sf0 = sf->sc->sc_fn0;
 	device_t dev = sf->sc->sc_dev;
-	int sdiox_cccrx, sdiox, max_blk_size;
+	int sdiox_cccrx, sdiox, max_blk_size __unused;
 
 	sdiox_cccrx = sdmmc_io_read_1(sf0, SD_IO_CCCR_CCCR_SDIO_REV);
 	sdiox = SD_IO_CCCR_SDIO_REV(sdiox_cccrx);

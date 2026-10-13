@@ -108,9 +108,23 @@ libc baseline failed 140 checks through those same direct bindings. Startup
 receipts confirmed one selected libc mapping and every helper's device/inode.
 The same private candidate passed a bounded allocator/string/stdio smoke and
 27 existing libc/libpthread ATF cases covering memory, streams, fork, signals,
-TLS/dlopen, locale, time and threads. The installed files were unchanged.
+TLS/dlopen, locale, time and threads before installation.
+The matching static archive passed the same 850 CAS checks and allocator/stdio
+smoke; link maps identified all twenty helpers in that archive.
+
+The shared/static pair was then installed on that board with retained rollback
+copies. Fresh processes using ordinary installed-library resolution passed the
+smoke and all 850 CAS checks without `LD_LIBRARY_PATH`. Existing processes may
+retain the old mapping until their next exec. This is not a VM libc update or
+acceptance of the original full GCC suite.
 The build used installed platform headers plus source-local headers; this
 does not establish a complete fresh userland/header release or sustained use.
+
+On 2026-10-09 the same accepted static archive was used in an EmberBSD cross
+sysroot. This contract was freshly compiled with GCC 16.2 on macOS. On CM5,
+the repaired archive passed 850 checks; the old archive failed 140 using the
+same test objects. No libc rebuild or board installation was performed.
+Ports records the [sysroot repair and provenance limits](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/sysroot.md).
 
 All existing acquire/release instructions, retry branches and barriers
 remain unchanged. Functional coverage of the five suffixes does not prove

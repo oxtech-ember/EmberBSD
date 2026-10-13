@@ -177,11 +177,18 @@ _dwarf_info_load(Dwarf_Debug dbg, Dwarf_Bool load_all, Dwarf_Bool is_info,
 		cu->cu_is_info = is_info;
 		cu->cu_offset = offset;
 
+		/* Origin: EmberBSD (AI-assisted), bound every CU header read. */
+		if (ds->ds_size - offset < 4)
+			goto bad_length;
 		length = dbg->read(ds->ds_data, &offset, 4);
 		if (length == 0xffffffff) {
+			if (ds->ds_size - offset < 8)
+				goto bad_length;
 			length = dbg->read(ds->ds_data, &offset, 8);
 			dwarf_size = 8;
-		} else
+		} else if (length >= 0xfffffff0)
+			goto bad_length;
+		else
 			dwarf_size = 4;
 		cu->cu_dwarf_size = dwarf_size;
 
@@ -190,11 +197,8 @@ _dwarf_info_load(Dwarf_Debug dbg, Dwarf_Bool load_all, Dwarf_Bool is_info,
 		 * that libelf gives us the entire section in one Elf_Data
 		 * object.
 		 */
-		if (length > ds->ds_size - offset) {
-			free(cu);
-			DWARF_SET_ERROR(dbg, error, DW_DLE_CU_LENGTH_ERROR);
-			return (DW_DLE_CU_LENGTH_ERROR);
-		}
+		if (length > ds->ds_size - offset || length < 3 + dwarf_size)
+			goto bad_length;
 
 		/* Compute the offset to the next compilation unit: */
 		next_offset = offset + length;
@@ -216,6 +220,8 @@ _dwarf_info_load(Dwarf_Debug dbg, Dwarf_Bool load_all, Dwarf_Bool is_info,
 		}
 
 		if (cu->cu_version == 5) {
+			if (next_offset - offset < 2 + dwarf_size)
+				goto bad_length;
 			/*
 			 * DWARF5 has unit_type, abbrev_offset and pointer_size
 			 * fields are reordered.
@@ -240,13 +246,17 @@ _dwarf_info_load(Dwarf_Debug dbg, Dwarf_Bool load_all, Dwarf_Bool is_info,
 		/* DWARF5 Section 7.5.1.2 defines the dwo_id field. */
 		if (cu->cu_unit_type == DW_UT_skeleton ||
 		    cu->cu_unit_type == DW_UT_split_compile) {
-			/* TODO: the ID is implementation defined. */
+			if (next_offset - offset < 8)
+				goto bad_length;
+			memcpy(cu->cu_type_sig.signature, ds->ds_data + offset, 8);
 			cu->cu_dwo_id = dbg->read(ds->ds_data, &offset, 8);
 		}
 
 		/* .debug_types extra fields. */
 		if (!is_info || cu->cu_unit_type == DW_UT_type ||
 		    cu->cu_unit_type == DW_UT_split_type) {
+			if (next_offset - offset < 8 + dwarf_size)
+				goto bad_length;
 			memcpy(cu->cu_type_sig.signature,
 			    (char *) ds->ds_data + offset, 8);
 			offset += 8;
@@ -277,6 +287,10 @@ _dwarf_info_load(Dwarf_Debug dbg, Dwarf_Bool load_all, Dwarf_Bool is_info,
 	}
 
 	return (ret);
+bad_length:
+	free(cu);
+	DWARF_SET_ERROR(dbg, error, DW_DLE_CU_LENGTH_ERROR);
+	return (DW_DLE_CU_LENGTH_ERROR);
 }
 
 void

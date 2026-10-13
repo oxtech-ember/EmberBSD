@@ -81,7 +81,9 @@ dwarf_siblingof_b(Dwarf_Debug dbg, Dwarf_Die die, Dwarf_Die *ret_die,
 	}
 
 	ds = is_info ? dbg->dbg_info_sec : dbg->dbg_types_sec;
-	cu = is_info ? dbg->dbg_cu_current : dbg->dbg_tu_current;
+	/* Origin: EmberBSD (AI-assisted), DIE traversal keeps its own CU. */
+	cu = die != NULL ? die->die_cu :
+	    (is_info ? dbg->dbg_cu_current : dbg->dbg_tu_current);
 
 	if (cu == NULL) {
 		DWARF_SET_ERROR(dbg, error, DW_DLE_DIE_NO_CU_CONTEXT);
@@ -97,7 +99,7 @@ dwarf_siblingof_b(Dwarf_Debug dbg, Dwarf_Die die, Dwarf_Die *ret_die,
 	 * Check if the `is_info' flag matches the debug section the
 	 * DIE belongs to.
 	 */
-	if (is_info != die->die_cu->cu_is_info) {
+	if (dbg != die->die_dbg || is_info != die->die_cu->cu_is_info) {
 		DWARF_SET_ERROR(dbg, error, DW_DLE_ARGUMENT);
 		return (DW_DLV_ERROR);
 	}

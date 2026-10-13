@@ -2166,21 +2166,17 @@ kqueue_printit(struct kqueue *kq, bool full, void (*pr)(const char *, ...))
 {
 	const struct knote *kn;
 	u_int count;
-	int nmarker;
 	char buf[128];
 
 	count = 0;
-	nmarker = 0;
 
 	(*pr)("kqueue %p (restart=%d count=%u):\n", kq,
 	    !!(kq->kq_count & KQ_RESTART), KQ_COUNT(kq));
 	(*pr)("  Queued knotes:\n");
 	TAILQ_FOREACH(kn, &kq->kq_head, kn_tqe) {
-		if (kn->kn_status & KN_MARKER) {
-			nmarker++;
-		} else {
+		/* Origin: EmberBSD (AI-assisted), count only queued non-marker notes. */
+		if ((kn->kn_status & KN_MARKER) == 0)
 			count++;
-		}
 		(*pr)("    knote %p: kq=%p status=%s\n",
 		    kn, kn->kn_kq, KN_FMT(buf, kn));
 		(*pr)("      id=0x%lx (%lu) filter=%d\n",

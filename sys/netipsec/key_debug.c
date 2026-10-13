@@ -609,17 +609,17 @@ void
 kdebug_mbuf(const char *msg, const struct mbuf *m0)
 {
 	const struct mbuf *m = m0;
-	int i, j;
+	/* Origin: EmberBSD (AI-assisted), remove the unused total-byte counter. */
+	int i;
 
 	printf("%s:", msg);
-	for (j = 0; m; m = m->m_next) {
+	for (; m; m = m->m_next) {
 		kdebug_mbufhdr(m);
 		printf(" m_data:");
 		for (i = 0; i < m->m_len; i++) {
 			if (i % 4 == 0)
 				printf(" ");
 			printf("%02x", mtod(m, u_char *)[i]);
-			j++;
 		}
 	}
 	printf("\n");

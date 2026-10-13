@@ -345,31 +345,50 @@ int drm_syncobj_find_fence(struct drm_file *file_private,
 	u64 timeout = nsecs_to_jiffies64(DRM_SYNCOBJ_WAIT_FOR_SUBMIT_TIMEOUT);
 	int ret;
 
+#ifdef __NetBSD__
+	*fence = NULL;
+#endif
 	if (!syncobj)
 		return -ENOENT;
 
 	*fence = drm_syncobj_fence_get(syncobj);
+#ifndef __NetBSD__
 	drm_syncobj_put(syncobj);
+#endif
 
 	if (*fence) {
 		ret = dma_fence_chain_find_seqno(fence, point);
-		if (!ret)
+		if (!ret) {
+#ifdef __NetBSD__
+			drm_syncobj_put(syncobj);
+#endif
 			return 0;
+		}
 		dma_fence_put(*fence);
+#ifdef __NetBSD__
+		*fence = NULL;
+#endif
 	} else {
 		ret = -EINVAL;
 	}
 
-	if (!(flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT))
+	if (!(flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT)) {
+#ifdef __NetBSD__
+		drm_syncobj_put(syncobj);
+#endif
 		return ret;
+	}
 
 	memset(&wait, 0, sizeof(wait));
 #ifdef __NetBSD__
 	kmutex_t lock;
 	kcondvar_t cv;
+	bool signalled = false;
 	mutex_init(&lock, MUTEX_DEFAULT, IPL_VM);
 	cv_init(&cv, "drmfnfnc");
+	wait.lock = &lock;
 	wait.cv = &cv;
+	wait.signalledp = &signalled;
 #else
 	wait.task = current;
 #endif
@@ -414,6 +433,12 @@ int drm_syncobj_find_fence(struct drm_file *file_private,
 	spin_unlock(&syncobj->lock);
 	cv_destroy(&cv);
 	mutex_destroy(&lock);
+	/* Keep the object alive until its callback no longer uses wait. */
+	drm_syncobj_put(syncobj);
+	if (ret) {
+		dma_fence_put(*fence);
+		*fence = NULL;
+	}
 #else
 	do {
 		set_current_state(TASK_INTERRUPTIBLE);
@@ -987,7 +1012,8 @@ drm_syncobj_transfer_ioctl(struct drm_device *dev, void *data,
 	if (!drm_core_check_feature(dev, DRIVER_SYNCOBJ_TIMELINE))
 		return -EOPNOTSUPP;
 
-	if (args->pad)
+	if (args->pad ||
+	    (args->flags & ~DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT))
 		return -EINVAL;
 
 	if (args->dst_point)
@@ -1037,6 +1063,7 @@ static void syncobj_wait_syncobj_func(struct drm_syncobj *syncobj,
 #ifdef __NetBSD__
 	KASSERT(spin_is_locked(&syncobj->lock));
 	mutex_enter(wait->lock);
+	*wait->signalledp = true;
 	cv_broadcast(wait->cv);
 	mutex_exit(wait->lock);
 #else
@@ -1066,8 +1093,10 @@ static signed long drm_syncobj_array_wait_timeout(struct drm_syncobj **syncobjs,
 #endif
 
 	points = kmalloc_array(count, sizeof(*points), GFP_KERNEL);
-	if (points == NULL)
-		return -ENOMEM;
+	if (points == NULL) {
+		timeout = -ENOMEM;
+		goto err_free_points;
+	}
 
 	if (!user_points) {
 		memset(points, 0, count * sizeof(uint64_t));
@@ -1178,6 +1207,8 @@ static signed long drm_syncobj_array_wait_timeout(struct drm_syncobj **syncobjs,
 #ifdef __NetBSD__
 		mutex_spin_enter(&lock);
 		if (signalled) {
+			/* Consume the wakeup; WAIT_ALL may still need other fences. */
+			signalled = false;
 			ret = 0;
 		} else {
 			unsigned start, end;

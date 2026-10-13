@@ -451,7 +451,8 @@ AcpiNsLookup (
     ACPI_NAMESPACE_NODE     *CurrentNode = NULL;
     ACPI_NAMESPACE_NODE     *ThisNode = NULL;
     UINT32                  NumSegments;
-    UINT32                  NumCarats;
+    /* Origin: EmberBSD (AI-assisted), keep tracing state only in debug builds. */
+    ACPI_DEBUG_ONLY_MEMBERS (UINT32 NumCarats;)
     ACPI_NAME               SimpleName;
     ACPI_OBJECT_TYPE        TypeToCheckFor;
     ACPI_OBJECT_TYPE        ThisSearchType;
@@ -575,7 +576,7 @@ AcpiNsLookup (
              * the parent node for each prefix instance.
              */
             ThisNode = PrefixNode;
-            NumCarats = 0;
+            ACPI_DEBUG_EXEC (NumCarats = 0);
             while (*Path == (UINT8) AML_PARENT_PREFIX)
             {
                 /* Name is fully qualified, no search rules apply */
@@ -590,7 +591,7 @@ AcpiNsLookup (
 
                 /* Backup to the parent node */
 
-                NumCarats++;
+                ACPI_DEBUG_EXEC (NumCarats++);
                 ThisNode = ThisNode->Parent;
                 if (!ThisNode)
                 {

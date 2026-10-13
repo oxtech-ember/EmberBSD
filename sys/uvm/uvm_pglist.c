@@ -616,7 +616,7 @@ uvm_pglistalloc_simple(int num, paddr_t low, paddr_t high,
 {
 	int fl, error;
 	uvm_physseg_t psi;
-	int count = 0;
+	/* Origin: EmberBSD (AI-assisted), remove the unused allocation retry count. */
 
 	/* Default to "lose". */
 	error = ENOMEM;
@@ -627,7 +627,6 @@ again:
 	 * Block all memory allocation and lock the free list.
 	 */
 	uvm_pgfl_lock();
-	count++;
 
 	/* Are there even any free pages? */
 	if (uvm_availmem(false) <=

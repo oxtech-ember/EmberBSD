@@ -1495,6 +1495,7 @@ wsdisplay_cfg_ioctl(struct wsdisplay_softc *sc, u_long cmd, void *data,
 	char *type, typebuf[16], *emul, emulbuf[16];
 	void *tbuf;
 	u_int fontsz;
+	struct wsdisplay_font font;
 #if defined(COMPAT_14) && NWSKBD > 0
 	struct wsmux_device wsmuxdata;
 #endif
@@ -1530,7 +1531,9 @@ wsdisplay_cfg_ioctl(struct wsdisplay_softc *sc, u_long cmd, void *data,
 		return wsdisplay_delscreen(sc, d->idx, d->flags);
 #undef d
 	case WSDISPLAYIO_LDFONT:
-#define d ((struct wsdisplay_font *)data)
+		/* Origin: EmberBSD (AI-assisted), keep temporary font pointers local. */
+		font = *(struct wsdisplay_font *)data;
+#define d (&font)
 		if (!sc->sc_accessops->load_font)
 			return EINVAL;
 		if (d->name) {

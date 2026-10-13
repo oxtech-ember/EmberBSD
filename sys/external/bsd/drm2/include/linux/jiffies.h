@@ -56,11 +56,9 @@ static inline uint64_t
 nsecs_to_jiffies64(uint64_t nsec)
 {
 
-	/* XXX Arbitrary cutoff, should review the arithmetic.  */
-	if (((1000000000 % hz) == 0) || (nsec >= 20000000000ul))
-		return (nsec/1000000000)*hz;
-	else
-		return (nsec*hz)/1000000000;
+	/* Preserve subsecond ticks without overflowing the nsec * hz product. */
+	return (nsec / 1000000000) * hz +
+	    ((nsec % 1000000000) * hz) / 1000000000;
 }
 
 static inline uint32_t

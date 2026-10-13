@@ -329,7 +329,8 @@ boot(void)
 		command_consdev(bootcfg_info.consdev);
 	} else {
 		clearit();
-		print_bootcfg_banner(bootprog_name, bootprog_rev);
+		print_bootcfg_banner_color(bootprog_name, bootprog_rev,
+		    efi_bootcfg_color);
 	}
 
 	/* Display the menu, if applicable */
@@ -606,7 +607,8 @@ command_consdev(char *arg)
 			}
 			efi_consinit(cdp->tag, ioport, speed);
 			clearit();
-			print_bootcfg_banner(bootprog_name, bootprog_rev);
+			print_bootcfg_banner_color(bootprog_name, bootprog_rev,
+			    efi_bootcfg_color);
 			return;
 		}
 	}
@@ -744,7 +746,7 @@ command_version(char *arg)
 	}
 
 	printf("\n"
-	    ">> %s, Revision %s (from NetBSD %s)\n"
+	    ">> %s, Revision %s (EmberBSD; NetBSD base %s)\n"
 	    ">> Memory: %d/%d k\n",
 	    bootprog_name, bootprog_rev, bootprog_kernrev,
 	    getbasemem(), getextmem());

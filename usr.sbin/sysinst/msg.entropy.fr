@@ -47,7 +47,7 @@ the "Re-test" option.}
 
 message entropy_add_manually		{Manually input random characters}
 message entropy_download_raw		{Load raw binary random data}
-message	entropy_download_seed		{Import a NetBSD entropy file}
+message	entropy_download_seed		{Import a EmberBSD entropy file}
 message entropy_retry			{Re-test}
 
 message entropy_enter_manual1
@@ -115,10 +115,10 @@ message entropy_data_hdr
 you can create a file with random binary data like this:}
 
 message entropy_seed
-{NetBSD entropy seed file}
+{EmberBSD entropy seed file}
 
 message entropy_seed_hdr
-{On a NetBSD system with cryptographically strong pseudo random number
+{On a EmberBSD system with cryptographically strong pseudo random number
 generator you can create an entropy snapshot like this:}
 
 message entropy_path_and_file

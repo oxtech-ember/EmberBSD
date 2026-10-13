@@ -15,11 +15,12 @@ SECONDARY_BOOT=		boot
 SECONDARY_BOOT_ARG=	# unnecessary
 
 CLEANFILES+=	boot.cfg
+.include "${NETBSDSRCDIR}/distrib/common/Makefile.https-certs"
 
-prepare_md_post:
+prepare_md_post: ${CA_BUNDLE}
 	${TOOL_SED}							\
 	    -e "s/@@MACHINE@@/${MACHINE}/"				\
-	    -e "s/@@VERSION@@/${DISTRIBVER}/"				\
+	    -e "s/@@EMBER_VERSION@@/${EMBER_VERSION}/"				\
 	    < ${.CURDIR}/boot.cfg.in > boot.cfg
 
 DISTRIBDIR!= cd ${.CURDIR}/../.. ; pwd
@@ -29,4 +30,5 @@ IMGFILE_EXTRA=								\
 	${.CURDIR}/etc.ttys		etc/ttys			\
 	${.CURDIR}/etc.rc		etc/rc				\
 	${.CURDIR}/install.sh		.				\
-	${.OBJDIR}/boot.cfg		.
+	${.OBJDIR}/boot.cfg		.				\
+	${.OBJDIR}/${CA_BUNDLE}		etc/openssl/cert.pem

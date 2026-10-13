@@ -80,9 +80,9 @@ ctf_hash_compute(const char *key, size_t len)
 {
 	ulong_t g, h = 0;
 	const char *p, *q = key + len;
-	size_t n = 0;
 
-	for (p = key; p < q; p++, n++) {
+	/* Origin: EmberBSD (AI-assisted), drop an unused iteration counter. */
+	for (p = key; p < q; p++) {
 		h = (h << 4) + *p;
 
 		if ((g = (h & 0xf0000000)) != 0) {

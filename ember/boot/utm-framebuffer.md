@@ -68,4 +68,4 @@ This establishes neither physical-board graphics support nor 3D support.
 
 See [NetBSD's QEMU ARM guide](https://wiki.netbsd.org/ports/evbarm/qemu_arm/),
 [UEFI wsfb notes](https://wiki.netbsd.org/tutorials/x11/how_to_use_wsfb_uefi_bios_framebuffer/),
-and the [standalone desktop example](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/kde-utm).
+and the [standalone desktop example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/desktop/kde-utm).

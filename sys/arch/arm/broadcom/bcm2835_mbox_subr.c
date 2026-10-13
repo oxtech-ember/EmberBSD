@@ -1,5 +1,7 @@
 /*	$NetBSD: bcm2835_mbox_subr.c,v 1.5 2017/12/10 21:38:26 skrll Exp $	*/
 
+/* Origin: EmberBSD mailbox 1 transmit status check, 2026-10-08. */
+
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -43,6 +45,29 @@ __KERNEL_RCSID(0, "$NetBSD: bcm2835_mbox_subr.c,v 1.5 2017/12/10 21:38:26 skrll 
 #include <arm/broadcom/bcm2835_mboxreg.h>
 #include <arm/broadcom/bcm2835reg.h>
 
+/* The caller serializes the transmit FIFO check and write. */
+int
+bcm2835_mbox_trywrite(bus_space_tag_t iot, bus_space_handle_t ioh,
+    uint8_t chan, uint32_t data)
+{
+
+	KASSERT(BCM2835_MBOX_CHAN(chan) == chan);
+	KASSERT(BCM2835_MBOX_CHAN(data) == 0);
+
+	bus_space_barrier(iot, ioh, 0, BCM2835_MBOX_SIZE,
+	    BUS_SPACE_BARRIER_READ);
+	if (bus_space_read_4(iot, ioh, BCM2835_MBOX1_STATUS) &
+	    BCM2835_MBOX_STATUS_FULL)
+		return EAGAIN;
+
+	bus_space_write_4(iot, ioh, BCM2835_MBOX1_WRITE,
+	    BCM2835_MBOX_MSG(chan, data));
+	bus_space_barrier(iot, ioh, 0, BCM2835_MBOX_SIZE,
+	    BUS_SPACE_BARRIER_WRITE);
+
+	return 0;
+}
+
 void
 bcm2835_mbox_read(bus_space_tag_t iot, bus_space_handle_t ioh, uint8_t chan,
     uint32_t *data)
@@ -78,23 +103,8 @@ void
 bcm2835_mbox_write(bus_space_tag_t iot, bus_space_handle_t ioh, uint8_t chan,
     uint32_t data)
 {
-	uint32_t rdata;
 
-	KASSERT((chan & 0xf) == chan);
-	KASSERT((data & 0xf) == 0);
-	for (;;) {
-
-		bus_space_barrier(iot, ioh, 0, BCM2835_MBOX_SIZE,
-		    BUS_SPACE_BARRIER_READ);
-
-		if ((rdata = bus_space_read_4(iot, ioh,
-		    BCM2835_MBOX0_STATUS) & BCM2835_MBOX_STATUS_FULL) == 0)
-			break;
-	}
-
-	bus_space_write_4(iot, ioh, BCM2835_MBOX1_WRITE,
-	    BCM2835_MBOX_MSG(chan, data));
-
-	bus_space_barrier(iot, ioh, 0, BCM2835_MBOX_SIZE,
-	    BUS_SPACE_BARRIER_WRITE);
+	/* Early boot has no attached mailbox or guaranteed delay provider. */
+	while (bcm2835_mbox_trywrite(iot, ioh, chan, data) == EAGAIN)
+		continue;
 }

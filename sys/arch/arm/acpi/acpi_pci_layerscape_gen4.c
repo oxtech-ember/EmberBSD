@@ -214,7 +214,6 @@ acpi_pci_layerscape_win_base(ACPI_INTEGER seg)
 	ACPI_MCFG_ALLOCATION *ama;
 	ACPI_STATUS rv;
 	uint32_t off;
-	int i;
 
 	rv = AcpiGetTable(ACPI_SIG_MCFG, 0, (ACPI_TABLE_HEADER **)&mcfg);
 	if (ACPI_FAILURE(rv))
@@ -222,7 +221,8 @@ acpi_pci_layerscape_win_base(ACPI_INTEGER seg)
 
 	off = sizeof(ACPI_TABLE_MCFG);
 	ama = ACPI_ADD_PTR(ACPI_MCFG_ALLOCATION, mcfg, off);
-	for (i = 0; off + sizeof(ACPI_MCFG_ALLOCATION) <= mcfg->Header.Length; i++) {
+	/* Origin: EmberBSD (AI-assisted), drop the unused MCFG entry counter. */
+	while (off + sizeof(ACPI_MCFG_ALLOCATION) <= mcfg->Header.Length) {
 		if (ama->PciSegment == seg)
 			return ama->Address;
 		off += sizeof(ACPI_MCFG_ALLOCATION);

@@ -523,8 +523,8 @@ armgic_cpu_init_priorities(struct armgic_softc *sc)
 static void
 armgic_cpu_update_priorities(struct armgic_softc *sc)
 {
-	uint32_t enabled = sc->sc_enabled_local;
-	for (size_t i = 0; i < sc->sc_pic.pic_maxsources; i += 4, enabled >>= 4) {
+	/* Origin: EmberBSD (AI-assisted), remove the unused enable-mask copy. */
+	for (size_t i = 0; i < sc->sc_pic.pic_maxsources; i += 4) {
 		const bus_size_t priority_reg = GICD_IPRIORITYRn(i / 4);
 		uint32_t priority = gicd_read(sc, priority_reg);
 		uint32_t byte_mask = 0xff;

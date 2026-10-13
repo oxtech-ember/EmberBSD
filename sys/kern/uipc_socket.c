@@ -975,7 +975,8 @@ sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		}
 		if (space < resid + clen &&
 		    (atomic || space < so->so_snd.sb_lowat || space < clen)) {
-			if ((so->so_state & SS_NBIO) || (flags & MSG_NBIO)) {
+			if ((so->so_state & SS_NBIO) ||
+			    (flags & (MSG_DONTWAIT|MSG_NBIO))) {
 				error = SET_ERROR(EWOULDBLOCK);
 				goto release;
 			}
