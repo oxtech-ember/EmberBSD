@@ -30,5 +30,6 @@ int umoxa1150_endpoints(const struct umoxa1150_endpoint *, size_t, int,
 int umoxa1150_apply(const struct umoxa1150_io *, const struct umoxa1150_settings *, uint8_t);
 int umoxa1150_start(const struct umoxa1150_io *, const struct umoxa1150_settings *, uint8_t);
 int umoxa1150_stop(const struct umoxa1150_io *);
+/* Complete bulk transport only; reset acknowledgement does not prove readiness. */
 int umoxa1150_upload(const struct umoxa1150_io *, const uint8_t *, size_t);
 #endif

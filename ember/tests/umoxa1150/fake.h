@@ -58,9 +58,12 @@ typedef int kmutex_t;
 #define UMATCH_VENDOR_PRODUCT 10
 #define UMATCH_NONE 0
 #define UT_WRITE_VENDOR_DEVICE 0x40
+#define UT_READ_DEVICE 0x80
+#define UR_GET_DESCRIPTOR 6
+#define UDESC_CONFIG 2
 #define UE_GET_XFERTYPE(a) ((a)&3)
 #define UGETW(a) ((uint16_t)(a)[0]|((uint16_t)(a)[1]<<8))
-#define USETW(a,v) do { (a)[0]=(v);(a)[1]=(v)>>8; } while(0)
+#define USETW(a,v) do { (a)[0]=(uint8_t)(v);(a)[1]=(uint8_t)((v)>>8); } while(0)
 #define CFATTACH_DECL2_NEW(...)
 #define CFARGS(...) 0
 #define UCOM_SET_DTR 1
@@ -98,6 +101,9 @@ typedef struct fake_firmware *firmware_handle_t;
 static struct {
  unsigned requests,reset,created,destroyed,pipes,allocs,child_attach,child_detach,errors,delay;
  unsigned fail_request,short_request; int missing_firmware,short_bulk,fail_intr,fail_child,fail_config_desc;
+ unsigned warm_reads, warm_delay_reads, bulk_calls; size_t bulk_bytes;
+ int warm_after_reset, reset_bad_header, reset_bad_endpoint, reset_read_error,
+     reset_short_descriptor, fail_warm_config, reset_with_pipe;
  struct fake_firmware firmware; struct fake_device child;void (*hook)(device_t);
 } fixture;
 static inline void mutex_init(kmutex_t *m,int t,int i){(void)t;(void)i;*m=0;}
@@ -118,11 +124,29 @@ static inline void usbd_add_drv_event(int e,struct usbd_device *u,device_t d){(v
 static inline usb_device_descriptor_t *usbd_get_device_descriptor(struct usbd_device *u){return &u->dd;}
 static inline usb_config_descriptor_t *usbd_get_config_descriptor(struct usbd_device *u){return &u->cd;}
 static inline int usbd_get_config_desc(struct usbd_device *u,int i,usb_config_descriptor_t *d){if(fixture.fail_config_desc || i<0 || i>=u->dd.bNumConfigurations)return EIO;*d=u->configs[i];return 0;}
-static inline int usbd_set_config_no(struct usbd_device *u,int c,int msg){(void)msg;u->cd.bConfigurationValue=c;return 0;}
+static inline int usbd_set_config_no(struct usbd_device *u,int c,int msg){(void)msg;if(c==2 && fixture.fail_warm_config)return EIO;u->cd.bConfigurationValue=c;return 0;}
 static inline int usbd_device2interface_handle(struct usbd_device *u,uint8_t i,struct usbd_interface **p){(void)i;*p=&u->iface;return 0;}
 static inline usb_interface_descriptor_t *usbd_get_interface_descriptor(struct usbd_interface *i){return &i->id;}
 static inline usb_endpoint_descriptor_t *usbd_interface2endpoint_descriptor(struct usbd_interface *i,uint8_t n){return &i->ep[n];}
-static inline int usbd_do_request_flags(struct usbd_device *u,usb_device_request_t *r,void *b,uint16_t f,int *actual,uint32_t timeout){(void)u;(void)b;(void)f;(void)timeout;fixture.requests++;*actual=UGETW(r->wLength);if(fixture.short_request==fixture.requests)(*actual)--;if(fixture.fail_request==fixture.requests)return EIO;if(r->bRequest==12)fixture.reset++;return 0;}
+static inline int usbd_do_request_flags(struct usbd_device *u,usb_device_request_t *r,void *b,uint16_t f,int *actual,uint32_t timeout){
+ (void)f;*actual=UGETW(r->wLength);
+ if(r->bmRequestType==UT_READ_DEVICE){
+  assert(r->bRequest==UR_GET_DESCRIPTOR && UGETW(r->wValue)==0x200 && UGETW(r->wIndex)==0 && *actual==9 && timeout<=250);
+  fixture.warm_reads++;
+  if(fixture.reset_read_error)return EIO;
+  if(fixture.warm_after_reset && fixture.warm_reads>fixture.warm_delay_reads){
+   u->configs[0]=(usb_config_descriptor_t){9,2,{39,0},1,2,0,0x80,50};
+   u->iface.id.bNumEndpoints=3;u->iface.ep[0]=(usb_endpoint_descriptor_t){1,2,{64,0}};
+   if(fixture.reset_bad_header)u->configs[0].bLength=8;
+   if(fixture.reset_bad_endpoint)u->iface.ep[2].wMaxPacketSize[0]=1;
+  }
+  memcpy(b,&u->configs[0],9);if(fixture.reset_short_descriptor)(*actual)--;return 0;
+ }
+ fixture.requests++;
+ if(r->bRequest==12){fixture.reset++;fixture.reset_with_pipe=fixture.pipes!=0;}
+ if(fixture.short_request==fixture.requests)(*actual)--;
+ if(fixture.fail_request==fixture.requests)return EIO;return 0;
+}
 static inline void usbd_delay_ms(struct usbd_device *u,unsigned n){(void)u;fixture.delay+=n;}
 static inline int usbd_open_pipe(struct usbd_interface *i,uint8_t a,uint8_t f,struct usbd_pipe **p){(void)i;(void)a;(void)f;*p=malloc(sizeof(**p));fixture.pipes++;return 0;}
 static inline int usbd_open_pipe_intr(struct usbd_interface *i,uint8_t a,uint8_t f,struct usbd_pipe **p,void *priv,void *buf,uint32_t n,void(*cb)(struct usbd_xfer*,void*,usbd_status),int interval){(void)priv;(void)buf;(void)n;(void)cb;(void)interval;if(fixture.fail_intr)return EIO;return usbd_open_pipe(i,a,f,p);}
@@ -131,7 +155,7 @@ static inline void usbd_close_pipe(struct usbd_pipe *p){assert(fixture.pipes);fi
 static inline int usbd_create_xfer(struct usbd_pipe *p,size_t n,unsigned f,unsigned frames,struct usbd_xfer **x){(void)p;(void)n;(void)f;(void)frames;*x=calloc(1,sizeof(**x));fixture.created++;return 0;}
 static inline void usbd_destroy_xfer(struct usbd_xfer *x){fixture.destroyed++;free(x);}
 static inline void *usbd_get_buffer(struct usbd_xfer *x){return x->buffer;}
-static inline int usbd_bulk_transfer(struct usbd_xfer *x,struct usbd_pipe *p,int f,int timeout,void *buf,uint32_t *n){(void)x;(void)p;(void)f;(void)timeout;(void)buf;if(fixture.short_bulk)(*n)--;return 0;}
+static inline int usbd_bulk_transfer(struct usbd_xfer *x,struct usbd_pipe *p,int f,int timeout,void *buf,uint32_t *n){(void)x;(void)p;(void)f;(void)timeout;(void)buf;fixture.bulk_calls++;if(fixture.short_bulk)(*n)--;fixture.bulk_bytes+=*n;return 0;}
 static inline void usbd_get_xfer_status(struct usbd_xfer *x,void **priv,void **buffer,uint32_t *n,usbd_status *s){(void)priv;(void)buffer;(void)s;*n=x->actual;}
 static inline int firmware_open(const char *driver,const char *name,firmware_handle_t *h){(void)driver;(void)name;if(fixture.missing_firmware)return ENOENT;*h=&fixture.firmware;return 0;}
 static inline off_t firmware_get_size(firmware_handle_t h){return h->size;}

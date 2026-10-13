@@ -38,7 +38,8 @@ static int umoxa1150_match(device_t, cfdata_t, void *);
 static void umoxa1150_attach(device_t, device_t, void *);
 static int umoxa1150_detach(device_t, int);
 static void umoxa1150_childdet(device_t, device_t);
-static void umoxa1150_firmware_hook(device_t);
+static int umoxa1150_load_firmware(struct umoxa1150_softc *);
+static int umoxa1150_wait_warm(struct umoxa1150_softc *);
 static int umoxa1150_control(void *, uint8_t, uint16_t, uint16_t,
     const uint8_t *, size_t);
 static int umoxa1150_bulk(void *, const uint8_t *, size_t, size_t *);
@@ -150,7 +151,7 @@ umoxa1150_attach(device_t parent, device_t self, void *aux)
 	struct ucom_attach_args ucaa;
 	usb_device_descriptor_t *dd;
 	usb_config_descriptor_t cd;
-	int cold_layout, config_no = 0, error, i;
+	int cold_layout, config_no = 0, error, reset_error, i;
 
 	aprint_naive("\n");
 	aprint_normal("\n");
@@ -182,11 +183,30 @@ umoxa1150_attach(device_t parent, device_t self, void *aux)
 		goto bad;
 	if (cold_layout) {
 		/* Attach itself pins softc; do not queue an unowned root hook. */
-		if (!root_is_mounted)
+		if (!root_is_mounted) {
 			aprint_error_dev(self, "reconnect after root mount to load firmware\n");
+			return;
+		}
+		error = umoxa1150_load_firmware(sc);
+		if (error) {
+			aprint_error_dev(self,
+			    "firmware load failed (%d); no tty attached\n", error);
+			return;
+		}
+		/* A reset can run firmware without acknowledging its status stage. */
+		reset_error = umoxa1150_control(sc, 12, 0, 0, NULL, 0);
+		error = umoxa1150_wait_warm(sc);
+		if (error) {
+			aprint_error_dev(self, "firmware transferred; reset status %d, "
+			    "warm transition failed (%d); no tty attached\n",
+			    reset_error, error);
+			return;
+		}
+		if (reset_error)
+			aprint_normal_dev(self, "reset acknowledgement unavailable (%d); "
+			    "warm configuration confirmed\n", reset_error);
 		else
-			umoxa1150_firmware_hook(self);
-		return;
+			aprint_normal_dev(self, "firmware transferred; warm configuration confirmed\n");
 	}
 	memset(&ucaa, 0, sizeof(ucaa));
 	ucaa.ucaa_portno = 0;
@@ -208,10 +228,47 @@ bad:
 	aprint_error_dev(self, "unsupported or unavailable UPort 1150 USB layout\n");
 }
 
-static void
-umoxa1150_firmware_hook(device_t self)
+static int
+umoxa1150_wait_warm(struct umoxa1150_softc *sc)
 {
-	struct umoxa1150_softc *sc = device_private(self);
+	usb_device_request_t req;
+	usb_config_descriptor_t cd;
+	int attempt, actual;
+	usbd_status status;
+
+	/* Actual UPort 1150 warm firmware exposes configuration index 0/value 2. */
+	memset(&req, 0, sizeof(req));
+	req.bmRequestType = UT_READ_DEVICE;
+	req.bRequest = UR_GET_DESCRIPTOR;
+	USETW(req.wValue, UDESC_CONFIG << 8);
+	USETW(req.wLength, USB_CONFIG_DESCRIPTOR_SIZE);
+	for (attempt = 0; attempt < 5; attempt++) {
+		usbd_delay_ms(sc->sc_udev, 100);
+		actual = 0;
+		status = usbd_do_request_flags(sc->sc_udev, &req, &cd,
+		    0, &actual, 250);
+		if (status != USBD_NORMAL_COMPLETION)
+			continue;
+		if (actual != USB_CONFIG_DESCRIPTOR_SIZE ||
+		    cd.bLength < USB_CONFIG_DESCRIPTOR_SIZE ||
+		    cd.bDescriptorType != UDESC_CONFIG ||
+		    UGETW(cd.wTotalLength) < cd.bLength || cd.bNumInterface != 1 ||
+		    (cd.bConfigurationValue != 1 && cd.bConfigurationValue != 2))
+			return EPROTO;
+		if (cd.bConfigurationValue != 2)
+			continue;
+		/* Closing the cold pipe preceded reset; rebuilding interfaces is safe. */
+		sc->sc_iface = NULL;
+		if (usbd_set_config_no(sc->sc_udev, 2, 1) != USBD_NORMAL_COMPLETION)
+			return EIO;
+		return umoxa1150_layout(sc, 0);
+	}
+	return ETIMEDOUT;
+}
+
+static int
+umoxa1150_load_firmware(struct umoxa1150_softc *sc)
+{
 	firmware_handle_t fw;
 	uint8_t *raw = NULL, *image = NULL;
 	off_t size;
@@ -251,10 +308,7 @@ free:
 close:
 	firmware_close(fw);
 done:
-	if (error)
-		aprint_error_dev(self, "firmware load failed (%d); no tty attached\n", error);
-	else
-		aprint_normal_dev(self, "firmware transferred; waiting for USB re-enumeration\n");
+	return error;
 }
 
 static void

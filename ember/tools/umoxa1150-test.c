@@ -115,7 +115,8 @@ static int upload_complete(void) {
  uint8_t raw[4]={0,0,0,1},*image=malloc(UMOXA1150_IMAGE_SIZE);struct trace t={0};struct umoxa1150_io io={&t,control,bulk};CHECK(image!=NULL);
  CHECK(umoxa1150_firmware(raw,4,image,UMOXA1150_IMAGE_SIZE)==0);
  CHECK(umoxa1150_upload(&io,image,UMOXA1150_IMAGE_SIZE)==0);
- CHECK(t.bulk_n==255 && t.bytes==16287 && t.n==1 && t.req[0]==12 && t.index[0]==0);
+ /* Bulk completion is distinct from reset acknowledgement and warm readiness. */
+ CHECK(t.bulk_n==255 && t.bytes==16287 && t.n==0);
  free(image);return 1;
 }
 static int upload_failure(void) {

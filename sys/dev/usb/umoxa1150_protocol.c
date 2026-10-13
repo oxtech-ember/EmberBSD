@@ -201,5 +201,6 @@ umoxa1150_upload(const struct umoxa1150_io *io, const uint8_t *image, size_t siz
 		if (actual != n)
 			return EIO;
 	}
-	return io->control(io->arg, 12, 0, 0, NULL, 0);
+	/* The parent resets only after closing the cold pipe, then verifies warm. */
+	return 0;
 }
