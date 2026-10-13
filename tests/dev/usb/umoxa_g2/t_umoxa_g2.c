@@ -49,7 +49,7 @@ static void blocked(void) { for(unsigned i=0;i<300;i++){if(snapshot().blocked)re
 int main(void) {
  pthread_t threads[4],thread;int fd,peer,mode=1,fault=0,error=-1;struct g2_record r;
  setvbuf(stdout,NULL,_IOLBF,0);alarm(60);CHECK(!rump_init());r=snapshot();CHECK(r.ready && r.pipes==3 && r.xfers==3);
- if(!getenv("G2_SKIP_CARRIER")) {
+ {
   CHECK(!pthread_create(&thread,NULL,carrier,NULL));
   for(unsigned i=0;i<300;i++){int done;pthread_mutex_lock(&carrier_lock);done=carrier_done;pthread_mutex_unlock(&carrier_lock);if(done)break;delay();}
   pthread_mutex_lock(&carrier_lock);CHECK(carrier_done);pthread_mutex_unlock(&carrier_lock);CHECK(!pthread_join(thread,NULL));puts("PASS native initial DCD blocking open without events");
@@ -57,7 +57,7 @@ int main(void) {
  for(unsigned p=0;p<4;p++)CHECK(!pthread_create(&threads[p],NULL,parallel,(void *)(uintptr_t)p));
  for(unsigned p=0;p<4;p++)CHECK(!pthread_join(threads[p],NULL));
  puts("PASS native four-port parallel framed loopback/credit");
- if(!getenv("G2_SKIP_MODE")) {
+ {
  fd=openport(0);CHECK(!rump_sys_ioctl(fd,UMOXA_G2_SET_MODE,&mode));CHECK(!rump_sys_close(fd));fd=openport(0);
  CHECK(!rump_sys_ioctl(fd,UMOXA_G2_GET_FAULT,&fault) && !fault);CHECK(rump_sys_ioctl(fd,TIOCSDTR,NULL)<0 && errno==EOPNOTSUPP);CHECK(!rump_sys_close(fd));puts("PASS native mode ioctl and nonRS232 reopen");
  }
@@ -69,7 +69,8 @@ int main(void) {
  CHECK(!rump_sys_ioctl(fd,UMOXA_G2_SET_MODE,&mode));CHECK(!rump_sys_ioctl(fd,TIOCGETA,&t) && (t.c_cflag&CRTSCTS));mode=1;CHECK(rump_sys_ioctl(fd,UMOXA_G2_SET_MODE,&mode)<0 && errno==EINVAL); }
  CHECK(!rump_sys_close(fd));puts("PASS native mode preserves advertised RTSCTS");
  close_fd=openport(1);peer=openport(2);KERNEL(rump_g2_gate(1));CHECK(rump_sys_write(close_fd,"x",1)==1);blocked();CHECK(!pthread_create(&thread,NULL,closer,NULL));
- for(unsigned i=0;i<10;i++)delay();
+ for(unsigned i=0;i<300;i++){if(snapshot().closing)break;delay();}
+ CHECK(snapshot().closing);
  pthread_mutex_lock(&close_lock);CHECK(!close_done);pthread_mutex_unlock(&close_lock);KERNEL(rump_g2_gate(0));CHECK(!pthread_join(thread,NULL));echo(peer,2,32);CHECK(!rump_sys_close(peer));puts("PASS native close waits active worker and preserves peer");
  fd=openport(3);KERNEL(rump_g2_short());CHECK(rump_sys_write(fd,"fault",5)==5);
  for(unsigned i=0;i<300;i++){if(rump_sys_ioctl(fd,TIOCGETA,&(struct termios){0})<0 && errno==EIO)break;delay();}

@@ -25,5 +25,5 @@ static void attach(device_t p,device_t self,void *arg) {
 static int detach(device_t self,int flags) { int e=umoxag_ca.ca_detach(self,flags);if(!e){mock=NULL;mock_device=NULL;}return e; }
 static void childdet(device_t self,device_t child) { umoxag_ca.ca_childdetached(self,child); }
 CFATTACH_DECL2_NEW(ug2mock,sizeof(struct umoxa_g2_softc),match,attach,detach,NULL,NULL,childdet);
-void rump_g2_ready(struct g2_record *r) { if(mock){mutex_enter(&mock->sc_lock);r->ready=mock->sc_ready;mutex_exit(&mock->sc_lock);}else r->ready=0; }
+void rump_g2_ready(struct g2_record *r) { if(mock){mutex_enter(&mock->sc_lock);r->ready=mock->sc_ready;r->closing=mock->sc_gate && !mock->sc_port[1].sc_open && mock->sc_txq.active && mock->sc_txq.flight.port==1;mutex_exit(&mock->sc_lock);}else r->ready=r->closing=0; }
 int rump_g2_remove(void) { return mock_device?config_detach(mock_device,DETACH_FORCE):ENXIO; }
