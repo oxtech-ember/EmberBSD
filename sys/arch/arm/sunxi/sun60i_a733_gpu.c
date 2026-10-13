@@ -1119,7 +1119,7 @@ sun60i_gpu_stage_fwheap(struct sun60i_gpu_softc *sc, int power_node)
 	const struct sun60i_a733_gpu_fwprobe_result *probe = &sc->sc_probe_result;
 	const struct sun60i_a733_gpu_fwprobe_result *cache = &sc->sc_cache_result;
 	struct sun60i_a733_gpu_fwprobe_result *r = &sc->sc_heap_result;
-	struct rogue_fwif_kccb_cmd cmd;
+	struct rogue_fwif_kccb_cmd kcmd;
 	struct a733_gpu_fwcompute_file file;
 	struct sun60i_a733_gpu_fwcompute_image *image = NULL;
 	uint8_t *bytes = NULL;
@@ -1311,10 +1311,10 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 		bus_dmamap_sync(m->dmat, m->work.map, off, sizeof(*tc),
 		    BUS_DMASYNC_PREWRITE);
 	}
-	memset(&cmd, 0, sizeof(cmd));
-	cmd.cmd_type = ROGUE_FWIF_KCCB_CMD_LOGTYPE_UPDATE;
+	memset(&kcmd, 0, sizeof(kcmd));
+	kcmd.cmd_type = ROGUE_FWIF_KCCB_CMD_LOGTYPE_UPDATE;
 	error = sun60i_a733_gpu_fwprobe_cmd(sc->sc_bst, bsh, sc->sc_fw_memory,
-	    boot, heap, &cmd, 3, &sc->sc_trace_result);
+	    boot, heap, &kcmd, 3, &sc->sc_trace_result);
 	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
 	if (error != 0)
 		goto out;
