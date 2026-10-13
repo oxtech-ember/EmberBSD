@@ -36,6 +36,8 @@ The [UTM framebuffer workflow](../boot/utm-framebuffer.md) describes a virtual
 AArch64 platform. It is separate from the physical-board catalog.
 [GPU and NPU porting targets](../../README.md#gpu-foundations-and-npu-direction)
 are research directions, not additional supported boards.
+The [common board-change worksheet](../development/board-change.md#applying-the-procedure-to-orange-pi-6-plus)
+uses Orange Pi 6 Plus as a first-port example. It has no accepted EmberBSD board profile yet.
 
 ## Contribute a board
 

@@ -1062,6 +1062,7 @@ struct usb_event30 {
 #define USB_SET_BULK_RA		_IOW ('U', 115, int)
 #define USB_SET_BULK_WB		_IOW ('U', 116, int)
 #define USB_SET_BULK_RA_OPT	_IOW ('U', 117, struct usb_bulk_ra_wb_opt)
+#define USB_ABORT_REQUEST	_IO  ('U', 118)
 #define USB_SET_BULK_WB_OPT	_IOW ('U', 118, struct usb_bulk_ra_wb_opt)
 
 /* Modem device */

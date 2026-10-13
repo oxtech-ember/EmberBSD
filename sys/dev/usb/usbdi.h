@@ -124,6 +124,7 @@ usb_endpoint_descriptor_t *usbd_interface2endpoint_descriptor
 
 void usbd_abort_pipe(struct usbd_pipe *);
 void usbd_abort_default_pipe(struct usbd_device *);
+void usbd_abort_default_request(struct usbd_device *);
 
 void usbd_suspend_pipe(struct usbd_pipe *);
 void usbd_resume_pipe(struct usbd_pipe *);

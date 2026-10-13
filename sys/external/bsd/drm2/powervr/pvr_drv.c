@@ -14,6 +14,7 @@
 #include <drm/drm_ioctl.h>
 #include "pvr_drm.h"
 #include "pvr_drv.h"
+#include "pvr_heap.h"
 
 /* Mesa 26.2.4 BXM-4-64 profile: one cluster, one phantom. */
 #define PVR_A733_BVNC	UINT64_C(0x00240038006800b7)
@@ -33,6 +34,9 @@ pvr_dev_query(struct drm_device *dev, void *data, struct drm_file *file)
 	size_t copied, count;
 	int error;
 
+	if (args->type == DRM_PVR_DEV_QUERY_HEAP_INFO_GET ||
+	    args->type == DRM_PVR_DEV_QUERY_STATIC_DATA_AREAS_GET)
+		return pvr_heap_query(args->type, args);
 	if (args->type != DRM_PVR_DEV_QUERY_GPU_INFO_GET)
 		return -EOPNOTSUPP;
 	if (args->pointer == 0) {
@@ -83,17 +87,27 @@ static const struct drm_ioctl_desc pvr_ioctls[] = {
 	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(PVR_GET_BO_MMAP_OFFSET, pvr_get_bo_mmap_offset,
 	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+	DRM_IOCTL_DEF_DRV(PVR_CREATE_VM_CONTEXT, pvr_create_vm_context,
+	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+	DRM_IOCTL_DEF_DRV(PVR_DESTROY_VM_CONTEXT, pvr_destroy_vm_context,
+	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+	DRM_IOCTL_DEF_DRV(PVR_VM_MAP, pvr_vm_map_ioctl,
+	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+	DRM_IOCTL_DEF_DRV(PVR_VM_UNMAP, pvr_vm_unmap_ioctl,
+	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
 };
 
 static struct drm_driver pvr_driver = {
 	.driver_features = DRIVER_GEM | DRIVER_RENDER,
 	.ioctls = pvr_ioctls,
 	.num_ioctls = __arraycount(pvr_ioctls),
+	.open = pvr_file_open,
+	.postclose = pvr_file_close,
 	.release = pvr_release,
 	.mmap_object = pvr_mmap_object,
 	.gem_uvm_ops = &drm_gem_cma_uvm_ops,
 	.name = "powervr",
-	.desc = "EmberBSD experimental PowerVR GEM interface",
+	.desc = "EmberBSD experimental PowerVR GEM and VM interface",
 	.date = "20261013",
 	.major = 1,
 	.minor = 0,

@@ -86,6 +86,12 @@ main(int argc, char **argv)
 	    errno == EFAULT, "reject inaccessible output");
 	for (i = 1; i <= 6; i++) {
 		args = (struct drm_pvr_ioctl_dev_query_args){ i, 0, 0 };
+		if (i == DRM_PVR_DEV_QUERY_HEAP_INFO_GET ||
+		    i == DRM_PVR_DEV_QUERY_STATIC_DATA_AREAS_GET) {
+			check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == 0 &&
+			    args.size == 16, "heap/static query discovery");
+			continue;
+		}
 		errno = 0;
 		check(ioctl(fd, DRM_IOCTL_PVR_DEV_QUERY, &args) == -1 &&
 		    errno == EOPNOTSUPP, "unsupported device query");

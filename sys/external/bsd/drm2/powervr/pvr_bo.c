@@ -19,6 +19,7 @@
 #include <drm/drm_gem.h>
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_vma_manager.h>
+#include <arm/sunxi/sun60i_a733_gpu_mmu.h>
 #include "pvr_drm.h"
 #include "pvr_drv.h"
 
@@ -57,6 +58,41 @@ pvr_bo_free(struct drm_gem_object *obj)
 static const struct drm_gem_object_funcs pvr_bo_funcs = {
 	.free = pvr_bo_free,
 };
+
+int
+pvr_bo_mapping(struct drm_gem_object *obj, uint64_t offset, uint64_t size,
+    uint64_t *address, uint64_t *flags)
+{
+	struct pvr_bo *bo;
+	bus_dmamap_t map;
+	uint64_t pa, options = 0;
+	const uint64_t limit = UINT64_C(1) << A733_GPU_MMU_PA_BITS;
+
+	if (obj == NULL || obj->funcs != &pvr_bo_funcs ||
+	    address == NULL || flags == NULL || size == 0 ||
+	    ((offset | size) & (PAGE_SIZE - 1)) != 0 ||
+	    offset > obj->size || size > obj->size - offset)
+		return EINVAL;
+	bo = pvr_to_bo(obj);
+	map = bo->cma.dmamap;
+	/* A bounce buffer cannot preserve CPU/GPU identity across future jobs. */
+	if ((map->_dm_flags & _BUS_DMAMAP_IS_BOUNCING) != 0 ||
+	    map->dm_nsegs != 1 || map->dm_mapsize < obj->size ||
+	    map->dm_segs[0].ds_len < obj->size)
+		return EOPNOTSUPP;
+	pa = map->dm_segs[0].ds_addr;
+	if ((pa & (A733_GPU_MMU_PAGE_SIZE - 1)) != 0 ||
+	    pa >= limit || offset >= limit - pa ||
+	    size > limit - pa - offset)
+		return EINVAL;
+	if ((bo->flags & DRM_PVR_BO_BYPASS_DEVICE_CACHE) != 0)
+		options |= A733_GPU_MMU_PTE_SLC_BYPASS;
+	if ((bo->flags & DRM_PVR_BO_PM_FW_PROTECT) != 0)
+		options |= A733_GPU_MMU_PTE_PM_FW_PROTECT;
+	*address = pa + offset;
+	*flags = options;
+	return 0;
+}
 
 static struct pvr_bo *
 pvr_bo_alloc(struct drm_device *dev, size_t size, uint64_t flags)

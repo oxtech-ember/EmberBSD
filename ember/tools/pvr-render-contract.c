@@ -10,10 +10,12 @@
 #include <string.h>
 #include <sys/types.h>
 
+typedef uint16_t __u16;
 typedef uint32_t __u32;
 typedef uint64_t __u64;
 #define DRM_COMMAND_BASE 0x40
 #define DRM_IOWR(n, t) (0xc0000000U | (sizeof(t) << 16) | ('d' << 8) | (n))
+#define DRM_IOW(n, t) (0x80000000U | (sizeof(t) << 16) | ('d' << 8) | (n))
 #define DRM_IOCTL_NR(n) ((n) & 0xff)
 #include "pvr-uapi-body.h"
 
@@ -50,6 +52,8 @@ struct drm_driver {
 	unsigned int driver_features;
 	const struct drm_ioctl_desc *ioctls;
 	size_t num_ioctls;
+	int (*open)(struct drm_device *, struct drm_file *);
+	void (*postclose)(struct drm_device *, struct drm_file *);
 	void (*release)(struct drm_device *);
 	int (*mmap_object)(struct drm_device *, off_t, size_t, int,
 	    struct uvm_object **, voff_t *, struct file *);
@@ -210,6 +214,25 @@ static int pvr_get_bo_mmap_offset(struct drm_device *d, void *a, struct drm_file
 static int pvr_mmap_object(struct drm_device *d, off_t o, size_t n, int p,
     struct uvm_object **u, voff_t *vo, struct file *f)
 { abort(); }
+static int pvr_file_open(struct drm_device *d, struct drm_file *f)
+{ abort(); }
+static void pvr_file_close(struct drm_device *d, struct drm_file *f)
+{ abort(); }
+static int pvr_create_vm_context(struct drm_device *d, void *a, struct drm_file *f)
+{ abort(); }
+static int pvr_destroy_vm_context(struct drm_device *d, void *a, struct drm_file *f)
+{ abort(); }
+static int pvr_vm_map_ioctl(struct drm_device *d, void *a, struct drm_file *f)
+{ abort(); }
+static int pvr_vm_unmap_ioctl(struct drm_device *d, void *a, struct drm_file *f)
+{ abort(); }
+/* The separate heap contract tests the actual query and user-copy behavior. */
+static int pvr_heap_query(uint32_t type, struct drm_pvr_ioctl_dev_query_args *a)
+{
+	CHECK(type == 4 || type == 5);
+	CHECK(a->type == type);
+	return -EINTR; /* Distinguish routing from a generic unsupported return. */
+}
 
 #include "pvr-drv-body.h"
 
@@ -263,7 +286,8 @@ queries(struct drm_device *dev)
 	for (i = 1; i <= 7; i++) {
 		args = (struct drm_pvr_ioctl_dev_query_args){ i, 16, 0 };
 		saved = args;
-		CHECK(pvr_dev_query(dev, &args, NULL) == -EOPNOTSUPP);
+		CHECK(pvr_dev_query(dev, &args, NULL) ==
+		    ((i == 4 || i == 5) ? -EINTR : -EOPNOTSUPP));
 		CHECK(memcmp(&args, &saved, sizeof(args)) == 0);
 	}
 	args = (struct drm_pvr_ioctl_dev_query_args){ 0, 16, UINT64_MAX - 2 };
@@ -324,7 +348,13 @@ main(void)
 	    "allwinner,sun60i-a733-gpu") == 0);
 	CHECK(strcmp(owner->driver->name, "powervr") == 0);
 	CHECK(owner->driver->driver_features == (DRIVER_GEM | DRIVER_RENDER));
-	CHECK(owner->driver->num_ioctls == 3);
+	CHECK(owner->driver->num_ioctls == 7);
+	CHECK(owner->driver->open == pvr_file_open);
+	CHECK(owner->driver->postclose == pvr_file_close);
+	CHECK(owner->driver->ioctls[3].func == pvr_create_vm_context);
+	CHECK(owner->driver->ioctls[4].func == pvr_destroy_vm_context);
+	CHECK(owner->driver->ioctls[5].func == pvr_vm_map_ioctl);
+	CHECK(owner->driver->ioctls[6].func == pvr_vm_unmap_ioctl);
 	CHECK(owner->driver->mmap_object == pvr_mmap_object);
 	CHECK(owner->driver->gem_uvm_ops == &drm_gem_cma_uvm_ops);
 	CHECK(owner->driver->ioctls[0].flags == (DRM_RENDER_ALLOW | DRM_UNLOCKED));

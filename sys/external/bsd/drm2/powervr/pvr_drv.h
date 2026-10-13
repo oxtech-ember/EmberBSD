@@ -8,6 +8,7 @@
 
 struct drm_device;
 struct drm_file;
+struct drm_gem_object;
 struct file;
 struct uvm_object;
 
@@ -20,6 +21,15 @@ struct uvm_object;
 int pvr_render_attach(device_t, bus_dma_tag_t, uint64_t, struct drm_device **);
 int pvr_create_bo(struct drm_device *, void *, struct drm_file *);
 int pvr_get_bo_mmap_offset(struct drm_device *, void *, struct drm_file *);
+/* The caller retains a GEM reference. Return positive native errno. */
+int pvr_bo_mapping(struct drm_gem_object *, uint64_t, uint64_t,
+    uint64_t *, uint64_t *);
+int pvr_file_open(struct drm_device *, struct drm_file *);
+void pvr_file_close(struct drm_device *, struct drm_file *);
+int pvr_create_vm_context(struct drm_device *, void *, struct drm_file *);
+int pvr_destroy_vm_context(struct drm_device *, void *, struct drm_file *);
+int pvr_vm_map_ioctl(struct drm_device *, void *, struct drm_file *);
+int pvr_vm_unmap_ioctl(struct drm_device *, void *, struct drm_file *);
 int pvr_mmap_object(struct drm_device *, off_t, size_t, int,
     struct uvm_object **, voff_t *, struct file *);
 

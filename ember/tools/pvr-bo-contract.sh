@@ -9,6 +9,8 @@ sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_drm.h" \
     > "$work/pvr-uapi-body.h"
 sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_bo.c" \
     > "$work/pvr-bo-body.h"
+sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mmu.h" \
+    > "$work/pvr-mmu-body.h"
 printf 'int\n' > "$work/pvr-gem-core-body.h"
 sed -n '/^drm_gem_close_ioctl(/,/^}/p' \
     "$src/sys/external/bsd/drm2/dist/drm/drm_gem.c" >> "$work/pvr-gem-core-body.h"
