@@ -1,5 +1,8 @@
 # Board catalog
 
+Use [Quick Start](../quick-start.md) for target selection and image availability.
+The [User Guide](../user-guide.md) continues from an installed system's console.
+
 Start with the [board selector](../../README.md#supported-boards). Each board
 has its own capability table, boot path, limitations and evidence. A new board
 adds a row and a page, without adding columns to a project-wide feature matrix.

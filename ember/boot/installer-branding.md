@@ -113,6 +113,9 @@ Selecting the matching build directory then downloaded and unpacked the kernel, 
 This was a three-set re-installation, not a complete fresh network installation.
 The installed disk booted without installation media and mounted its FFS root.
 Its kernel SHA256 matched the kernel from the pinned set archive.
+That kernel's SHA256 is `5cdd6eeb1a3ef07f9cd148bbc98bed608f8995d95c804e4bfc5ec3b1a2585432`.
+The same kernel in the earlier development ISO reports `EmberBSD-95a2bc9bad05` as its build information.
+The image's source label identifies assembly and catalogs; it does not establish a fresh, uniform rebuild of every component.
 The full image build used the tree's GCC 12.5.0 bootstrap profile.
 It does not validate the separate GCC16 migration or later source revisions.
 The HTTP fixture does not establish public CDN, DNS or HTTPS acceptance.
@@ -134,3 +137,6 @@ An empty hostname caused the existing Postfix startup check to fail; this servic
 Generic getty and motd remain outside the loader/sysinst branding scope.
 Their upstream greeting and diagnostic `uname` still identify the NetBSD base.
 No physical device or general release is accepted by these VM checks.
+
+The [VM walkthrough](amd64-vm-install.md#checked-boundary) records the development ISO's separate kernel identity and hash.
+Compare installed files and reported component identities with the build record during first boot.
