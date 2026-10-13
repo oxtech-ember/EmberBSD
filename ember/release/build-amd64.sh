@@ -38,7 +38,8 @@ unset EXTERNAL_TOOLCHAIN MAKEFLAGS MFLAGS MAKEOBJDIR MAKEOBJDIRPREFIX NETBSDOBJD
 printf 'Build log: %s/build.log\n' "$out"
 sh ./build.sh -U -m amd64 -j"$jobs" \
 	-O "$out/obj" -T "$out/tools" -D "$out/dest" -R "$out/release" \
-	-V MKX11=no -V MKRUMP=no -V MKREPRO=yes -V "MKREPRO_TIMESTAMP=$timestamp" \
+	-V MKX11=no -V MKRUMP=no -V MKGCCCMDS=no \
+	-V MKREPRO=yes -V "MKREPRO_TIMESTAMP=$timestamp" \
 	-V KERNEL_SETS=GENERIC -V BUILD_KERNELS=INSTALL \
 	-V EMBER_VERSION=1.0 -V "EMBER_BUILD_ID=$revision" -V "BUILDINFO=EmberBSD:$revision" \
 	-V SYSINST_HTTP_HOST=github.com -V SYSINST_FTP_HOST=github.com \

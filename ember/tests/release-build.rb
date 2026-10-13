@@ -33,7 +33,7 @@ Dir.mktmpdir('ember-release-build') do |dir|
   abort "FAIL: pinned build should succeed: #{out}#{err}" unless status.success?
   args = File.readlines(File.join(output, 'build-arguments'), chomp: true)
   ["EMBER_BUILD_ID=#{sha}", "BUILDINFO=EmberBSD:#{sha}", 'KERNEL_SETS=GENERIC',
-   'BUILD_KERNELS=INSTALL', 'SYSINST_HTTP_HOST=github.com', 'SYSINST_FTP_SET_DIR_BIN=',
+   'BUILD_KERNELS=INSTALL', 'MKGCCCMDS=no', 'SYSINST_HTTP_HOST=github.com', 'SYSINST_FTP_SET_DIR_BIN=',
    "SYSINST_FTP_DIR=oxtech-ember/EmberBSD/releases/download/build-#{sha}-amd64-no-x11"].each do |value|
     abort "FAIL: missing pinned build value #{value}" unless args.include?(value)
   end
