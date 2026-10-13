@@ -108,6 +108,9 @@ CPPFLAGS+=	-DHAVE_DTB
 CPPFLAGS+=	-DHAVE_MODULES
 .endif
 
+EMBER_BUILD_ID?=development
+CPPFLAGS+= -DEMBER_BUILD_ID=\"${EMBER_BUILD_ID}\"
+
 CATALOGDIR=	/usr/share/sysinst/catalog
 CPPFLAGS+=	-I. -I${.CURDIR}/../.. -I${.CURDIR} \
 		-I${.CURDIR}/../../../../sbin/fsck \
@@ -127,13 +130,10 @@ CPPFLAGS+=	-DPKG_ARCH_SUBDIR="\"${MACHINE_ARCH}\""
 .endif
 
 .if defined(NETBSD_OFFICIAL_RELEASE) && ${NETBSD_OFFICIAL_RELEASE} == "yes"
-CPPFLAGS+= -DSYSINST_FTP_HOST=\"ftp.NetBSD.org\" -DNETBSD_OFFICIAL_RELEASE
-CPPFLAGS+= -DSYSINST_HTTP_HOST=\"cdn.NetBSD.org\" -DNETBSD_OFFICIAL_RELEASE
+CPPFLAGS+= -DNETBSD_OFFICIAL_RELEASE
 CPPFLAGS+= -DREL_PATH=\"netbsd-${DISTRIBVER:C/\.[0-9][_A-Z]*[0-9]*$//:S/./-/}\"
 CPPFLAGS+= -DPKG_SUBDIR="\"${DISTRIBVER:C/_.*$//}\""
 .else
-CPPFLAGS+= -DSYSINST_FTP_HOST=\"nyftp.NetBSD.org\"
-CPPFLAGS+= -DSYSINST_HTTP_HOST=\"nycdn.NetBSD.org\"
 .if (${DISTRIBVER:M*.99.*})
 CPPFLAGS+= -DREL_PATH=\"HEAD\"
 CPPFLAGS+= -DPKG_SUBDIR="\"${DISTRIBVER:C/\.99\.[0-9]*[_A-Z]*$//}.0\""
@@ -174,15 +174,17 @@ CPPFLAGS+=-DINET6
 COPTS+=	${CC_WNO_FORMAT_TRUNCATION}
 COPTS.disklabel.c+= ${CC_WNO_STRINGOP_TRUNCATION}
 
-# Host to ftp from.  Default:
-#	"ftp.NetBSD.org"
+# OS set host. Default: cdn.emberbsd.oxteam.me.
+# A release builder can select a separately verified server.
 #
 .if defined(SYSINST_FTP_HOST)
-CPPFLAGS+=	-DSYSINST_FTP_HOST=\"${SYSINST_FTP_HOST}\"
+CPPFLAGS+= -DSYSINST_FTP_HOST=\"${SYSINST_FTP_HOST}\"
+.endif
+.if defined(SYSINST_HTTP_HOST)
+CPPFLAGS+= -DSYSINST_HTTP_HOST=\"${SYSINST_HTTP_HOST}\"
 .endif
 
-# Top-level ftp directory.  Default:
-#	"pub/NetBSD/NetBSD-" + VER + "/" + MACH
+# Top-level set directory. Default: releases/<EMBER_BUILD_ID>.
 #
 .if defined(SYSINST_FTP_DIR)
 CPPFLAGS+=	-DSYSINST_FTP_DIR=\"${SYSINST_FTP_DIR}\"
@@ -243,20 +245,20 @@ MSG_MD+=	msg.entropy.${SYSINSTLANG}
 msg.def: msg.mi.${SYSINSTLANG} ${MSG_MD} msgtouch
 	${_MKTARGET_CREATE}
 	${TOOL_SED} "s/@@VERSION@@/${DISTRIBVER}/" ${.ALLSRC} | \
-	${TOOL_SED} "s/@@MACHINE@@/${MACHINE}/" | \
+	${TOOL_SED} -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
 	${TOOL_AWK} -f ${UNIF_AWK} -v defines="${MD_OPTIONS}" > ${.TARGET}
 
 menus.def: ${MENUS_MI} ${MENUS_MD} msgtouch
 	${_MKTARGET_CREATE}
 	${TOOL_SED} "s/@@VERSION@@/${DISTRIBVER}/" ${.ALLSRC} | \
-	${TOOL_SED} "s/@@MACHINE@@/${MACHINE}/" | \
+	${TOOL_SED} -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
 	${TOOL_AWK} -f ${UNIF_AWK} -v defines="${MD_OPTIONS}" > ${.TARGET}
 
 sysinstmsgs.fmtcnt: msg.mi.${SYSINSTLANG} ${MSG_MD} msgtouch msg_defs.h
 	${_MKTARGET_CREATE}
 	${TOOL_SED} "s/@@VERSION@@/${DISTRIBVER}/" \
 		${.ALLSRC:M*.${SYSINSTLANG}} | \
-	${TOOL_SED} "s/@@MACHINE@@/${MACHINE}/" | \
+	${TOOL_SED} -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
 	${TOOL_AWK} -f ${UNIF_AWK} -v defines="${MD_OPTIONS}" | \
 	${HOST_SH} ${MSG_XLAT_SH} -c > ${.TARGET}
 
@@ -264,7 +266,7 @@ sysinstmsgs.fmtcnt: msg.mi.${SYSINSTLANG} ${MSG_MD} msgtouch msg_defs.h
 sysinstmsgs.${LANG}: msg.mi.${LANG} ${MSG_MD:S/.${SYSINSTLANG}$/.${LANG}/} msgtouch msg_defs.h sysinstmsgs.fmtcnt
 	${_MKTARGET_CREATE}
 	${TOOL_SED} "s/@@VERSION@@/${DISTRIBVER}/" ${.ALLSRC:M*.${LANG}} | \
-	${TOOL_SED} "s/@@MACHINE@@/${MACHINE}/" | \
+	${TOOL_SED} -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
 	${TOOL_AWK} -f ${UNIF_AWK} -v defines="${MD_OPTIONS}" | \
 	${HOST_SH} ${MSG_XLAT_SH} -f sysinstmsgs.fmtcnt > ${.TARGET}
 
@@ -277,7 +279,7 @@ FILESDIR_sysinstmsgs.${LANG}=	${CATALOGDIR}
 check-lang:	msg.def msg_defs.h
 	${_MKTARGET_CREATE}
 	${TOOL_SED} "s/@@VERSION@@/${DISTRIBVER}/" msg.def | \
-	${TOOL_SED} "s/@@MACHINE@@/${MACHINE}/" | \
+	${TOOL_SED} -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
 	${TOOL_AWK} -f ${UNIF_AWK} -v defines="${MD_OPTIONS}" | \
 	${HOST_SH} ${MSG_XLAT_SH} -i > /tmp/sysinst.en
 	${HOST_SH} ${MSG_CMP_SH} msg_defs.h /tmp/sysinst.en sysinstmsgs.${LANG}

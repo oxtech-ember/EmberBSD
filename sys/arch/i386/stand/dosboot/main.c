@@ -195,7 +195,7 @@ print_banner(void)
 	clear_pc_screen();
 
 	printf("\n"
-	       ">> %s, Revision %s (from NetBSD %s)\n"
+	       ">> %s, Revision %s (EmberBSD; NetBSD base %s)\n"
 	       ">> Memory: %d/%d k\n",
 	       bootprog_name, bootprog_rev, bootprog_kernrev,
 	       getbasemem(), extmem);

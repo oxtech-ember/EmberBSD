@@ -423,7 +423,7 @@ disklabel_write_to_disk(struct disk_partitions *arg)
 
 	lp = parts->l.d_partitions;
 	scripting_fprintf(NULL, "cat <<EOF >%s\n", fname);
-	scripting_fprintf(f, "%s|NetBSD installation generated:\\\n",
+	scripting_fprintf(f, "%s|EmberBSD installation generated:\\\n",
 	    disktype);
 	scripting_fprintf(f, "\t:nc#%d:nt#%d:ns#%d:\\\n",
 	    parts->l.d_ncylinders, parts->l.d_ntracks, parts->l.d_nsectors);

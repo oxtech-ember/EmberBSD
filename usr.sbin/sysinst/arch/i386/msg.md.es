@@ -123,7 +123,7 @@ message pickdisk
 {Escoja disco: }
 
 message partabovechs
-{La parte NetBSD del disco está fuera del rango que la BIOS de su maquina
+{La parte EmberBSD del disco está fuera del rango que la BIOS de su maquina
 puede acceder.
 Puede que no sea posible iniciar desde ahi.
 ¿Está seguro de que quiere hacer eso?
@@ -132,7 +132,7 @@ Puede que no sea posible iniciar desde ahi.
 
 message missing_bootmenu_text
 {Tiene mas de un sistema operativo en el disco, pero no ha especificado
-un 'menu de arranque' para la partición activa o la partición de NetBSD
+un 'menu de arranque' para la partición activa o la partición de EmberBSD
 en la que lo va a instalar.
 
 ¿Quiere re-editar la partición para añadir una entrada en el menu de
@@ -147,7 +147,7 @@ usado por esa versión del código del menu de arranque.
 (Seleccionando 'no' le devolverá al menú de edición de particiones.)}
 
 message installbootsel
-{Su configuración requiere el código de bootselect de NetBSD
+{Su configuración requiere el código de bootselect de EmberBSD
 para seleccionar que sistema usar.
 
 Actualmente no está instalado, ¿lo quiere instalar ahora?}
@@ -155,11 +155,11 @@ Actualmente no está instalado, ¿lo quiere instalar ahora?}
 message installmbr
 {El código de arranque del Master Boot Record no parece ser válido.
 
-¿Quiere instalar el código de arranque de NetBSD?}
+¿Quiere instalar el código de arranque de EmberBSD?}
 
 message updatembr
 {¿Quiere actualizar el código de arranque en el Master Boot
-Record a la ultima versión del código de arranque de NetBSD?}
+Record a la ultima versión del código de arranque de EmberBSD?}
 
 message set_kernel_1  {Núcleo (GENERIC)}
 message set_kernel_2	{Kernel (GENERIC_KASLR)}

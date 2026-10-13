@@ -121,7 +121,7 @@ message pickdisk
 {Choisissez un disque : }
 
 message partabovechs
-{La partition de votre disque réservée à NetBSD se trouve en-dehors de l'espace
+{La partition de votre disque réservée à EmberBSD se trouve en-dehors de l'espace
 que le BIOS de votre machine peut adresser. L'amorçage depuis cette partition
 ne sera peut-être pas possible. Voulez-vous réellement faire ceci ?
 
@@ -130,7 +130,7 @@ ne sera peut-être pas possible. Voulez-vous réellement faire ceci ?
 message missing_bootmenu_text
 {Vous avez plus d'un système d'exploitation sur ce disque, mais vous n'avez
 pas spécifié d'entrée dans le menu de boot pour la partition active ou la
-partition NetBSD sur laquelle vous allez installer.
+partition EmberBSD sur laquelle vous allez installer.
 
 Voulez-vous réediter la partition pour ajouter une entrée dans le menu de boot ?}
 
@@ -143,18 +143,18 @@ Voulez-vous vraiment faire ceci ?
 ('non' vous ramènera au menu d'édition des partitions.)}
 
 message installbootsel
-{Votre configuration nécessite le selecteur de boot de NetBSD pour choisir
+{Votre configuration nécessite le selecteur de boot de EmberBSD pour choisir
 le système d'exploitation à démarrer.
 Il n'est pour l'instant pas installé, voulez-vous l'installer maintenant ?}
 
 message installmbr
 {Le code d'amorçage dans le secteur de boot ne semble pas être valide.
 
-Voulez-vous installer le code d'amorçage de NetBSD ?}
+Voulez-vous installer le code d'amorçage de EmberBSD ?}
 
 message updatembr
 {Voulez-vous mettre à jour le code d'amorçage dans le secteur de boot
-avec la dernière version du code d'amorçage de NetBSD ?}
+avec la dernière version du code d'amorçage de EmberBSD ?}
 
 message set_kernel_1	{Kernel (GENERIC)}
 message set_kernel_2	{Kernel (GENERIC_KASLR)}

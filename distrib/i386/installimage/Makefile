@@ -2,7 +2,7 @@
 
 .include <bsd.own.mk>
 
-INSTIMGBASE=	NetBSD-${DISTRIBVER}-i386-install	# gives ${IMGBASE}.img
+INSTIMGBASE=	EmberBSD-${DISTRIBVER}-i386-install	# gives ${IMGBASE}.img
 
 INSTIMAGEMB?=	3000			# for all installation binaries
 

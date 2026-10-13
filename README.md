@@ -26,6 +26,9 @@ are maintained in the related repositories below.
 - For an AI assistant, choose [user skills](#connect-user-skills) for device use
   or [developer skills](#connect-developer-skills) for development.
 
+- For installation screens and compatible set sources, see
+  [installer identity](ember/boot/installer-branding.md).
+
 ## EmberBSD ecosystem
 
 | Repository | Purpose | Current scope |

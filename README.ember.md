@@ -143,6 +143,16 @@ variant. If Docker or compilation fails, an image builder will stop because
 the required input is missing. The host-side contract check covers this
 case: `python3 ember/tools/firmware-contract.py`.
 
+## Installation identity
+
+The [installer branding](ember/boot/installer-branding.md) keeps the x86
+BIOS, PXE, UEFI and sysinst screens consistent with EmberBSD.
+UEFI displays a small flame when a suitable graphical console exists.
+Text consoles keep the keyboard menu. Kernel filenames and partition types
+retain their NetBSD compatibility names. OS sets select the EmberBSD channel;
+that service is not yet published, so use the sets on the installation medium.
+Source contracts and logo placement checks are separate from image acceptance.
+
 ## Deploying to a device
 
 This repository provides OS sources, hardware adaptations, and build tools.

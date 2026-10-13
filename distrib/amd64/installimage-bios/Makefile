@@ -2,7 +2,7 @@
 
 .include <bsd.own.mk>
 
-INSTIMGBASE=	NetBSD-${DISTRIBVER}-amd64-bios-install	# gives ${IMGBASE}.img
+INSTIMGBASE=	EmberBSD-${DISTRIBVER}-amd64-bios-install	# gives ${IMGBASE}.img
 
 .include "../installimage/installimage.mk"
 
