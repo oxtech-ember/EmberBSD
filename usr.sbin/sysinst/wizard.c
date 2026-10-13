@@ -433,10 +433,14 @@ select_source(void)
 		strlcpy(set_dir_src, "/source/sets", sizeof(set_dir_src));
 		return get_via_cdrom();
 	}
-	if (source_url[0] == '\0')
+	if (source_url[0] == '\0') {
+		const char *prefix = SYSINST_FTP_SET_DIR_BIN;
+		while (*prefix == '/')
+			prefix++;
 		snprintf(source_url, sizeof(source_url),
-		    "https://%s/%s/%s/binary/sets", SYSINST_HTTP_HOST,
-		    SYSINST_FTP_DIR, ARCH_SUBDIR);
+		    "https://%s/%s%s%s", SYSINST_HTTP_HOST,
+		    SYSINST_FTP_DIR, *prefix ? "/" : "", prefix);
+	}
 	if (!input("Set directory URL (an immutable build)", source_url,
 	    sizeof(source_url)))
 		return SET_RETRY;
