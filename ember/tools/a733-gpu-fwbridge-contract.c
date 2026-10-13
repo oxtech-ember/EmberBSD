@@ -336,7 +336,7 @@ static void event_tests(void)
 {
 	const struct pvr_backend *b;
 	struct pvr_fw_events events = {&device, test_grow, test_complete};
-	reset(); b = start(); b->enter(b->cookie);
+	reset(); b = start();
 	CHECK(b->set_events != NULL);
 	CHECK(b->set_events(b->cookie, NULL) == EINVAL);
 	CHECK(b->set_events(b->cookie, &events) == 0);

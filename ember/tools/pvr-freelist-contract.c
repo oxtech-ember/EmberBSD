@@ -666,6 +666,43 @@ growth_failures(void)
 	CHECK(pvr_freelist_destroy(&fl) == 0);
 }
 
+/* Current pages exclude the ready reserve; zero unless ready and quiet. */
+static void
+current_pages_tests(void)
+{
+	struct pvr_freelist *fl = NULL;
+	struct pvr_freelist_config c;
+	struct rogue_fwif_freelist_gs_data response;
+	uint32_t before, grown;
+
+	CHECK(pvr_freelist_current_pages(NULL) == 0);
+	reset_state(); c = config(512, 1024, 256, 13);
+	CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0 && fl != NULL);
+	/* Ready owner: the getter reports exactly the current page count. */
+	CHECK(fl->ready && !fl->grow_prepared && !fl->failed && !fl->cleaned);
+	before = pvr_freelist_current_pages(fl);
+	CHECK(before != 0 && before == fl->current_pages);
+	/* Pending growth blocks the report until completion. */
+	CHECK(pvr_freelist_grow_prepare(fl, &response) == 0);
+	CHECK(fl->grow_prepared);
+	CHECK(pvr_freelist_current_pages(fl) == 0);
+	CHECK(pvr_freelist_grow_complete(fl, 0) == 0);
+	grown = pvr_freelist_current_pages(fl);
+	CHECK(grown > before && grown == fl->current_pages);
+	/* Failed, cleaned and not-ready owners report zero. */
+	fl->failed = true;
+	CHECK(pvr_freelist_current_pages(fl) == 0);
+	fl->failed = false;
+	fl->cleaned = true;
+	CHECK(pvr_freelist_current_pages(fl) == 0);
+	fl->cleaned = false;
+	fl->ready = false;
+	CHECK(pvr_freelist_current_pages(fl) == 0);
+	fl->ready = true;
+	CHECK(pvr_freelist_current_pages(fl) == grown);
+	CHECK(pvr_freelist_destroy(&fl) == 0 && fl == NULL);
+}
+
 int
 main(void)
 {

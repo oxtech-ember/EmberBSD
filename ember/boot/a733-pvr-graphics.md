@@ -101,18 +101,23 @@ It also adds `pvr_freelist_current_pages()` for a ready, quiet owner.
 The device-wide registry and installation of its callbacks are not implemented.
 Reconstruction requests remain unsupported.
 
-Start with these known fixture problems:
+The former fixture blockers are resolved (2026-10-14):
 
-- `pvr-freelist-contract.c` calls `current_pages_tests()` without its definition.
-  Test ready/current counts, pending growth, completed growth, failed owners,
-  cleaned owners, and NULL before accepting the getter.
-- `a733-gpu-fwbridge-contract.c` calls `enter` after `start()` already holds the gate.
-  Correct that duplicate acquisition in the fixture.
-- The new fwprobe fixture failed `result.command == get32(golden)`.
-  Its `prepare_service()` setup was changed afterward but was not rerun.
+- `pvr-freelist-contract.c` gained `current_pages_tests()`: NULL, ready
+  equivalence with the internal count, zero during pending growth, the raised
+  count after completion, zero for failed, cleaned and not-ready owners, and
+  recovery after restoring each condition. The full contract passes.
+- `a733-gpu-fwbridge-contract.c` no longer re-enters the gate that `start()`
+  already holds in `event_tests()`. The full contract passes.
+- The fwprobe fixture rerun after its `prepare_service()` change passes
+  15,548,668 checks; the service and queue contracts also pass.
 
-New service and bridge contracts, getter checks, causal regressions, and target
-analysis have not run for this draft. Review them before claiming a complete dispatcher.
+Target analysis for the draft: Clang Static Analyzer is clean on the service,
+bridge and freelist sources; Cppcheck reports three variable-scope style notes
+in the service and one false-positive `uninitvar` at the post-loop read of
+`error` (the loop body always assigns it first). GCC16 `-fanalyzer` still needs
+the next full kernel build from this branch. The getter checks assert exact
+equivalence, so any mutation of the five gating conditions fails them. Review them before claiming a complete dispatcher.
 The earlier passing growth receipt does not cover this later getter change.
 Physical firmware must also establish whether KICK consumption precedes the
 request/response dependency. Keep bounded failure if that assumption does not hold.
