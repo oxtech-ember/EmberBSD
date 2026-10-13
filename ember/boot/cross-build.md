@@ -202,3 +202,11 @@ native CTF execution and live tracing. The [external type-unit guide](ctf-extern
 extends conversion to GNU/standard split objects, DWP v2/v5, combined
 supplements and multiple primary CUs, with explicit ownership limits. General
 DWARF5 location-list evaluation is not established by type conversion.
+
+For GNU host sub-makes on Darwin, an explicit `SDKROOT` is retained through
+`env -i`. The owning wrapper still requires the selected GCC16 toolchain;
+this does not select a fallback compiler. Exercise the actual build environment:
+
+```sh
+ruby ember/tests/darwin-gnuhost-sdk.rb SOURCE NBMAKE GCC SDK NEW_WORK
+```
