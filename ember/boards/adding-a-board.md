@@ -3,6 +3,9 @@
 This guide is for developers contributing another physical board. Start from
 the closest implemented platform, then establish what is actually reusable.
 A matching CPU or SoC does not establish matching firmware, wiring or peripherals.
+Follow [CONTRIBUTING](../../CONTRIBUTING.md) and open a board-change proposal first.
+Use [the common worksheet](../development/board-change.md) to agree scope and acceptance.
+These requirements also apply when the project owner implements the port or an agent writes the patch.
 
 ## Identify the target and existing support
 
@@ -88,8 +91,9 @@ that guest file alone does not identify the running kernel.
 
 ## Submit the contribution
 
-After relevant checks, open a focused PR with code, build integration, regression
-coverage and board instructions. Update the catalog and short README entry in
+After relevant checks, submit a focused change for independent review through CONTRIBUTING,
+with code, build integration, regression coverage and board instructions.
+Update the catalog and short README entry in
 the same contribution. Explain the resulting scenario, provenance, tests and
 remaining gaps. If required hardware validation is unavailable, describe it
 plainly and use a draft when the target workflow permits one.
