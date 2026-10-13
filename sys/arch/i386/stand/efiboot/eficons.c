@@ -422,6 +422,12 @@ efi_bootcfg_color(int event)
 	case BOOTCFG_COLOR_FLAME:
 		attribute = (saved & 0x70) | EFI_YELLOW;
 		break;
+	case BOOTCFG_COLOR_OUTER:
+		attribute = (saved & 0x70) | EFI_LIGHTRED;
+		break;
+	case BOOTCFG_COLOR_INNER:
+		attribute = (saved & 0x70) | EFI_BROWN;
+		break;
 	case BOOTCFG_COLOR_WORDMARK:
 		attribute = (saved & 0x70) | EFI_WHITE;
 		break;

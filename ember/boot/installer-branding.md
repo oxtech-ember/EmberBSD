@@ -8,15 +8,18 @@ Set it to the full commit ID when building a release.
 An unset ID is shown as `development`, not as a published release.
 
 BIOS, PXE and UEFI keep a text console and a keyboard menu.
-A large ASCII flame and EMBERBSD wordmark use the shared libsa banner renderer.
-The mark uses eight art rows and one blank row, with a maximum width of 72 columns.
-The stock installation menus fit an 80-column, 25-line screen.
+The shared libsa renderer shows the EmberBSD mascot and a large EMBERBSD wordmark.
+The character grid follows [the project's flame logo](../branding/emberbsd-logo.png).
+The capsule eyes and smile remain readable at console resolution.
+The mark uses thirteen art rows and one blank row, with a maximum width of 76 columns.
+The stock installation menus fit an 80-column, 25-line screen, including the countdown.
 BIOS uses VGA cell attributes. UEFI uses firmware text attributes.
-The flame is bright yellow; the wordmark is bright white.
+The flame uses red, amber and yellow; the eyes, smile and wordmark use white.
 The renderer restores the previous console attribute before the menu.
 Serial consoles and other platforms retain the same printable ASCII without color.
 UEFI color does not require GOP.
-It needs no ANSI escape support, image decoder, graphical mode or external asset.
+Boot needs no ANSI escape support, image decoder, graphical mode or external asset.
+The optional source generator uses ImageMagick; normal OS builds do not need it.
 Custom boot.cfg banners appear below the mark. Keep their total menu height in mind.
 
 ## Distribution sets
@@ -57,11 +60,14 @@ The original source licences remain in each adapted loader and sysinst file.
 ```sh
 ruby ember/tests/installer-branding.rb
 sh ember/tests/boot-logo.sh
+ruby ember/tools/boot-logo.rb --check
 ```
 
 The first check detects product-name regressions while allowing compatibility names.
 The second executes the actual ASCII renderer under ASan/UBSan.
-It checks printable bytes, line width and the stock installation menu height.\nIt also checks color-hook order, attribute restoration and unchanged fallback text.
+It checks the eyes, smile, printable bytes, line width and full stock-menu height.
+It also checks palette hooks, attribute restoration and unchanged fallback text.
+The optional third check reproduces the grid from the source logo.
 These checks do not prove that a release image boots or installs.
 Build the loaders, language catalogs and complete image from a clean source commit.
 Check real UEFI and BIOS screens and install onto a disposable virtual disk.

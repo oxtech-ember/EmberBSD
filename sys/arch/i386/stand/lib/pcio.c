@@ -244,6 +244,12 @@ bios_bootcfg_color(int event)
 	case BOOTCFG_COLOR_FLAME:
 		logo_attribute = 0x0e;
 		break;
+	case BOOTCFG_COLOR_OUTER:
+		logo_attribute = 0x0c;
+		break;
+	case BOOTCFG_COLOR_INNER:
+		logo_attribute = 0x06;
+		break;
 	case BOOTCFG_COLOR_WORDMARK:
 		logo_attribute = 0x0f;
 		break;

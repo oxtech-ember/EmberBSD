@@ -44,7 +44,9 @@ enum bootcfg_color_event {
 	BOOTCFG_COLOR_SAVE,
 	BOOTCFG_COLOR_FLAME,
 	BOOTCFG_COLOR_WORDMARK,
-	BOOTCFG_COLOR_RESTORE
+	BOOTCFG_COLOR_RESTORE,
+	BOOTCFG_COLOR_OUTER,
+	BOOTCFG_COLOR_INNER
 };
 
 typedef void (*bootcfg_command)(const char *cmd, char *arg);
