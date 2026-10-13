@@ -36,7 +36,6 @@
 
 #include "bootinfo.h"
 #include "vbe.h"
-#include "ember_logo.h"
 
 #ifndef DEFAULT_GOP_MODE
 #define DEFAULT_GOP_MODE	"1024x768"
@@ -403,43 +402,6 @@ clear_pc_screen(void)
 {
 
 	uefi_call_wrapper(ST->ConOut->ClearScreen, 1, ST->ConOut);
-}
-
-/* The menu remains a firmware text console. A failed BLT is optional. */
-void
-efi_boot_logo(void)
-{
-	static EFI_GRAPHICS_OUTPUT_BLT_PIXEL pixels[
-	    EMBER_LOGO_WIDTH * EMBER_LOGO_HEIGHT];
-	EFI_STATUS status;
-	UINTN cols, rows;
-	unsigned x, y, i;
-	const uint8_t *rgb;
-
-	if (iodev != CONSDEV_PC || efi_gop == NULL ||
-	    efi_gop->Mode == NULL || efi_gop->Mode->Info == NULL)
-		return;
-	status = uefi_call_wrapper(ST->ConOut->QueryMode, 4, ST->ConOut,
-	    ST->ConOut->Mode->Mode, &cols, &rows);
-	if (EFI_ERROR(status) || !ember_logo_origin(
-	    efi_gop->Mode->Info->HorizontalResolution,
-	    efi_gop->Mode->Info->VerticalResolution, cols, rows, &x, &y))
-		return;
-	for (i = 0; i < __arraycount(pixels); i++) {
-		rgb = ember_logo_palette[ember_logo_pixels[i]];
-		pixels[i].Red = rgb[0];
-		pixels[i].Green = rgb[1];
-		pixels[i].Blue = rgb[2];
-		pixels[i].Reserved = 0;
-	}
-	/* Draw before text; firmware scrolling may erase the optional logo. */
-	status = uefi_call_wrapper(ST->ConOut->SetCursorPosition, 3,
-	    ST->ConOut, 0, EMBER_LOGO_TEXT_ROW);
-	if (EFI_ERROR(status))
-		return;
-	(void)uefi_call_wrapper(efi_gop->Blt, 10, efi_gop, pixels,
-	    EfiBltBufferToVideo, 0, 0, x, y,
-	    EMBER_LOGO_WIDTH, EMBER_LOGO_HEIGHT, 0);
 }
 
 static uint8_t

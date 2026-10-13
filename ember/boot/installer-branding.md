@@ -7,12 +7,13 @@ The version number comes from this source tree's `sys/conf/osrelease.sh`.
 Set it to the full commit ID when building a release.
 An unset ID is shown as `development`, not as a published release.
 
-UEFI keeps the firmware text console and keyboard menu.
-A small flame appears beside the heading when GOP and a suitable screen exist.
-Serial consoles, small displays and missing GOP retain the text menu.
-The checked-in raster needs no image decoder or external files at boot.
-Its source is [the EmberBSD flame](../branding/emberbsd-logo.png).
-The optional generator uses ImageMagick; normal OS builds do not need it.
+BIOS, PXE and UEFI keep a text console and a keyboard menu.
+A large ASCII flame and EMBERBSD wordmark use the shared libsa banner renderer.
+The mark uses eight art rows and one blank row, with a maximum width of 72 columns.
+The stock installation menus fit an 80-column, 25-line screen.
+The same printable ASCII works on serial consoles and firmware without GOP.
+It needs no ANSI escape support, image decoder, graphical mode or external asset.
+Custom boot.cfg banners appear below the mark. Keep their total menu height in mind.
 
 ## Distribution sets
 
@@ -44,22 +45,19 @@ These NetBSD names remain intentionally:
 - URLs for NetBSD documentation and the upstream pkgsrc package service.
 - The explicit `based on NetBSD` attribution and the upstream base version.
 
-The flame asset and its generated raster are supplied under BSD-2-Clause.
+The ASCII mark is supplied under BSD-2-Clause.
 The original source licences remain in each adapted loader and sysinst file.
 
 ## Checks
 
 ```sh
 ruby ember/tests/installer-branding.rb
-cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    ember/tests/boot-logo.c -o /tmp/ember-boot-logo-test
-/tmp/ember-boot-logo-test
-ruby ember/tools/boot-logo.rb --check
+sh ember/tests/boot-logo.sh
 ```
 
 The first check detects product-name regressions while allowing compatibility names.
-The second executes the real logo placement logic and checks every palette index.
-The optional third check reproduces the checked-in raster.
+The second executes the actual ASCII renderer under ASan/UBSan.
+It checks printable bytes, line width and the stock installation menu height.
 These checks do not prove that a release image boots or installs.
 Build the loaders, language catalogs and complete image from a clean source commit.
 Check real UEFI and BIOS screens and install onto a disposable virtual disk.
