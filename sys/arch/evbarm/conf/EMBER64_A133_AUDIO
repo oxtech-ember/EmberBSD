@@ -1,0 +1,3 @@
+# Origin: EmberBSD - compile the experimental audio API with disabled routes.
+include "arch/evbarm/conf/EMBER64_A133_EMMC"
+a133codec* at fdt?

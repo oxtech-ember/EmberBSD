@@ -1,0 +1,6 @@
+# Origin: EmberBSD - attach the Goodix sensor and its wscons pointer.
+ioconf gt9xx
+include "conf/files"
+pseudo-root iic*
+gt9xx* at iic? addr 0x5d
+wsmouse* at gt9xx? mux 1

@@ -1,3 +1,4 @@
+/* Origin: EmberBSD - add the A100/A133 USB PHY power-up sequence. */
 /* $NetBSD: sunxi_usbphy.c,v 1.18 2024/08/13 07:20:23 skrll Exp $ */
 
 /*-
@@ -31,6 +32,7 @@
 __KERNEL_RCSID(0, "$NetBSD: sunxi_usbphy.c,v 1.18 2024/08/13 07:20:23 skrll Exp $");
 
 #include <sys/param.h>
+#include <sys/gpio.h>
 #include <sys/bus.h>
 #include <sys/device.h>
 #include <sys/intr.h>
@@ -83,6 +85,7 @@ enum sunxi_usbphy_type {
 	USBPHY_A20,
 	USBPHY_A31,
 	USBPHY_A64,
+	USBPHY_A100,
 	USBPHY_A83T,
 	USBPHY_D1,
 	USBPHY_H3,
@@ -100,6 +103,7 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun8i-v3s-usb-phy",	.value = USBPHY_H3 },
 	{ .compat = "allwinner,sun20i-d1-usb-phy",	.value = USBPHY_D1 },
 	{ .compat = "allwinner,sun50i-a64-usb-phy",	.value = USBPHY_A64 },
+	{ .compat = "allwinner,sun50i-a100-usb-phy",	.value = USBPHY_A100 },
 	{ .compat = "allwinner,sun50i-h6-usb-phy",	.value = USBPHY_H6 },
 	{ .compat = "allwinner,sun60i-a733-usb-phy",	.value = USBPHY_A733 },
 	DEVICE_COMPAT_EOL
@@ -124,6 +128,7 @@ struct sunxi_usbphy_softc {
 
 	struct fdtbus_gpio_pin	*sc_gpio_id_det;
 	struct fdtbus_gpio_pin	*sc_gpio_vbus_det;
+	struct fdtbus_gpio_pin	*sc_gpio_usb1_power[4];
 };
 
 #define	PHYCTL_READ(sc, reg)				\
@@ -159,6 +164,7 @@ sunxi_usbphy_write(struct sunxi_usbphy_softc *sc,
 		reg = PHYCTL_A10;
 		break;
 	case USBPHY_D1:
+	case USBPHY_A100:
 	case USBPHY_H3:
 	case USBPHY_H6:
 	case USBPHY_A64:
@@ -231,6 +237,12 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
 	bool phy0_reroute;
 	uint32_t val;
 
+	if (phy->phy_index == 1) {
+		for (u_int i = 0; i < __arraycount(sc->sc_gpio_usb1_power); i++)
+			if (sc->sc_gpio_usb1_power[i] != NULL)
+				fdtbus_gpio_write(sc->sc_gpio_usb1_power[i], enable);
+	}
+
 	switch (sc->sc_type) {
 	case USBPHY_A13:
 		disc_thresh = 0x2;
@@ -243,6 +255,7 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
 		phy0_reroute = false;
 		break;
 	case USBPHY_A64:
+	case USBPHY_A100:
 	case USBPHY_D1:
 	case USBPHY_H3:
 	case USBPHY_H6:
@@ -282,6 +295,7 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
 			PMU_WRITE(sc, phy->phy_index, PMU_UNK_H3, val);
 		}
 		break;
+	case USBPHY_A100:
 	case USBPHY_A733:
 		/* The boot loader leaves the PHY powered down. */
 		if (enable && phy->phy_bsh) {
@@ -415,6 +429,17 @@ sunxi_usbphy_attach(device_t parent, device_t self, void *aux)
 			aprint_error(": couldn't de-assert reset #%d\n", n);
 			return;
 		}
+
+	if (of_hasprop(phandle, "usb1-power-gpios")) {
+		for (n = 0; n < __arraycount(sc->sc_gpio_usb1_power); n++) {
+			sc->sc_gpio_usb1_power[n] = fdtbus_gpio_acquire_index(phandle,
+			    "usb1-power-gpios", n, GPIO_PIN_OUTPUT);
+			if (sc->sc_gpio_usb1_power[n] == NULL) {
+				aprint_error(": couldn't acquire USB1 power GPIO #%u\n", n);
+				return;
+			}
+		}
+	}
 
 	aprint_naive("\n");
 	aprint_normal(": USB PHY\n");

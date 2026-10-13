@@ -1,0 +1,24 @@
+#!/bin/sh
+# Origin: EmberBSD - start YS-M33 watchdog servicing before entropy waits.
+# SPDX-License-Identifier: BSD-2-Clause
+# PROVIDE: mcu7502_keepalive
+# REQUIRE: mountcritlocal
+# BEFORE: random_seed
+
+. /etc/rc.subr
+
+name="mcu7502_keepalive"
+rcvar="$name"
+command="/usr/sbin/mcu7502-keepalive"
+pidfile="/var/run/mcu7502_keepalive.pid"
+command_args="--daemon /dev/iic0"
+start_precmd="mcu7502_prepare"
+
+mcu7502_prepare()
+{
+	[ "$(/sbin/sysctl -n hw.model)" = "allwinner,a133" ] || return 1
+	[ -c /dev/iic0 ] || (cd /dev && /bin/sh MAKEDEV iic0)
+}
+
+load_rc_config "$name"
+run_rc_command "$1"
