@@ -18,6 +18,8 @@ typedef uint64_t __u64;
 #define DRM_IOW(n, t) (0x80000000U | (sizeof(t) << 16) | ('d' << 8) | (n))
 #define DRM_IOCTL_NR(n) ((n) & 0xff)
 #include "pvr-uapi-body.h"
+#include "pvr-query.h-body.h"
+#define CTASSERT(e) _Static_assert(e, #e)
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #ifndef __arraycount
@@ -25,6 +27,8 @@ typedef uint64_t __u64;
 #endif
 #define DRIVER_RENDER 1
 #define DRIVER_GEM 8
+#define DRIVER_SYNCOBJ 16
+#define DRIVER_SYNCOBJ_TIMELINE 32
 #define DRM_RENDER_ALLOW 2
 #define DRM_UNLOCKED 4
 #define DRM_NATIVE_PLATFORM_VERSION 1
@@ -98,6 +102,21 @@ copyout(const void *from, void *to, size_t size)
 	memcpy(to, from, size);
 	return 0;
 }
+
+static int
+copyin(const void *from, void *to, size_t size)
+{
+	uintptr_t p = (uintptr_t)from, base = (uintptr_t)user_memory;
+
+	copy_calls++;
+	if (copy_calls == fail_copy || p < base || p - base > user_size ||
+	    size > user_size - (p - base))
+		return EFAULT;
+	memcpy(to, from, size);
+	return 0;
+}
+
+#include "pvr-query.c-body.h"
 
 static void *
 kmem_zalloc(size_t size, int flags)
@@ -286,9 +305,14 @@ queries(struct drm_device *dev)
 	for (i = 1; i <= 7; i++) {
 		args = (struct drm_pvr_ioctl_dev_query_args){ i, 16, 0 };
 		saved = args;
-		CHECK(pvr_dev_query(dev, &args, NULL) ==
-		    ((i == 4 || i == 5) ? -EINTR : -EOPNOTSUPP));
-		CHECK(memcmp(&args, &saved, sizeof(args)) == 0);
+		if (i <= 3) {
+			CHECK(pvr_dev_query(dev, &args, NULL) == 0);
+			CHECK(args.size == (i == 1 ? 32 : 16));
+		} else {
+			CHECK(pvr_dev_query(dev, &args, NULL) ==
+			    ((i == 4 || i == 5) ? -EINTR : -EOPNOTSUPP));
+			CHECK(memcmp(&args, &saved, sizeof(args)) == 0);
+		}
 	}
 	args = (struct drm_pvr_ioctl_dev_query_args){ 0, 16, UINT64_MAX - 2 };
 	saved = args;
@@ -311,18 +335,24 @@ queries(struct drm_device *dev)
 int
 main(void)
 {
+	struct pvr_query_input input = {
+		.bvnc = UINT64_C(0x00240038006800b7),
+		.brn_mask = 0x201, .ern_mask = 0xf5,
+		.fw_major = 1, .fw_minor = 1, .fw_build = 6976702,
+		.feature = {19456, 12, 16, 16, 2, 1, 6, 1, 1},
+	};
 	struct drm_device *owner = NULL;
 	device_t parent = (void *)(uintptr_t)1;
 	bus_dma_tag_t dmat = (void *)(uintptr_t)2;
 	unsigned int calls;
 
-	CHECK(pvr_render_attach(parent, dmat, 0, &owner) == ENODEV);
-	CHECK(pvr_render_attach(NULL, dmat, PVR_A733_BVNC, &owner) == EINVAL);
-	CHECK(pvr_render_attach(parent, NULL, PVR_A733_BVNC, &owner) == EINVAL);
-	CHECK(pvr_render_attach(parent, dmat, PVR_A733_BVNC, NULL) == EINVAL);
+	CHECK(pvr_render_attach(parent, dmat, 0, &input, &owner) == ENODEV);
+	CHECK(pvr_render_attach(NULL, dmat, PVR_A733_BVNC, &input, &owner) == EINVAL);
+	CHECK(pvr_render_attach(parent, NULL, PVR_A733_BVNC, &input, &owner) == EINVAL);
+	CHECK(pvr_render_attach(parent, dmat, PVR_A733_BVNC, &input, NULL) == EINVAL);
 	CHECK(init_calls == 0 && allocs == 0 && owner == NULL);
 	for (mode = 1; mode <= 4; mode++) {
-		CHECK(pvr_render_attach(parent, dmat, PVR_A733_BVNC, &owner) ==
+		CHECK(pvr_render_attach(parent, dmat, PVR_A733_BVNC, &input, &owner) ==
 		    (mode <= 2 ? ENOMEM : EIO));
 		CHECK(owner == NULL);
 		if (mode == 4) {
@@ -336,7 +366,7 @@ main(void)
 		CHECK(finalized == frees);
 	}
 	mode = 0;
-	CHECK(pvr_render_attach(parent, dmat, PVR_A733_BVNC, &owner) == 0);
+	CHECK(pvr_render_attach(parent, dmat, PVR_A733_BVNC, &input, &owner) == 0);
 	CHECK(owner != NULL && owner->refs == 1);
 	CHECK(owner->dmat == dmat && owner->bus_dmat == dmat &&
 	    owner->bus_dmat32 == dmat);
@@ -347,7 +377,8 @@ main(void)
 	CHECK(strcmp(owner->native_platform.compatible,
 	    "allwinner,sun60i-a733-gpu") == 0);
 	CHECK(strcmp(owner->driver->name, "powervr") == 0);
-	CHECK(owner->driver->driver_features == (DRIVER_GEM | DRIVER_RENDER));
+	CHECK(owner->driver->driver_features == (DRIVER_GEM | DRIVER_RENDER |
+	    DRIVER_SYNCOBJ | DRIVER_SYNCOBJ_TIMELINE));
 	CHECK(owner->driver->num_ioctls == 7);
 	CHECK(owner->driver->open == pvr_file_open);
 	CHECK(owner->driver->postclose == pvr_file_close);
@@ -359,7 +390,7 @@ main(void)
 	CHECK(owner->driver->gem_uvm_ops == &drm_gem_cma_uvm_ops);
 	CHECK(owner->driver->ioctls[0].flags == (DRM_RENDER_ALLOW | DRM_UNLOCKED));
 	calls = registered;
-	CHECK(pvr_render_attach(parent, dmat, PVR_A733_BVNC, &owner) == EALREADY);
+	CHECK(pvr_render_attach(parent, dmat, PVR_A733_BVNC, &input, &owner) == EALREADY);
 	CHECK(registered == calls);
 	queries(owner);
 	drm_dev_put(owner);

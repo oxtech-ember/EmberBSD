@@ -57,6 +57,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arm/sunxi/sun60i_a733_ccu.h>
 #include <arm/sunxi/sun60i_a733_pck600.h>
 #include <external/bsd/drm2/powervr/pvr_drv.h>
+#include <external/bsd/drm2/powervr/pvr_query.h>
 
 #define A733_GPU_BASE		0x01800000
 #define A733_GPU_CORE_ID	0x18
@@ -1856,11 +1857,49 @@ sun60i_gpu_sysctl_stage(SYSCTLFN_ARGS)
 	return sc->sc_run_result;
 }
 
+/* Convert parsed firmware metadata into the device-independent query input. */
+static int
+sun60i_gpu_query_input(const struct sun60i_a733_gpu_fwinfo *info,
+    struct pvr_query_input *out)
+{
+	static const enum sun60i_a733_gpu_fw_feature fields[] = {
+		[PVR_QUERY_COMMON_STORE] = A733_GPU_FW_FEATURE_COMMON_STORE_SIZE_IN_DWORDS,
+		[PVR_QUERY_MAX_PARTITIONS] = A733_GPU_FW_FEATURE_MAX_PARTITIONS,
+		[PVR_QUERY_TILE_X] = A733_GPU_FW_FEATURE_TILE_SIZE_X,
+		[PVR_QUERY_TILE_Y] = A733_GPU_FW_FEATURE_TILE_SIZE_Y,
+		[PVR_QUERY_MIN_OUTPUT_REGS] = A733_GPU_FW_FEATURE_USC_MIN_OUTPUT_REGISTERS_PER_PIX,
+		[PVR_QUERY_NUM_CLUSTERS] = A733_GPU_FW_FEATURE_NUM_CLUSTERS,
+		[PVR_QUERY_TILES_IN_FLIGHT] = A733_GPU_FW_FEATURE_ISP_MAX_TILES_IN_FLIGHT,
+		[PVR_QUERY_ROGUEXE] = A733_GPU_FW_FEATURE_ROGUEXE,
+		[PVR_QUERY_COMPUTE_OVERLAP] = A733_GPU_FW_FEATURE_COMPUTE_OVERLAP,
+	};
+	struct pvr_query_input input = { 0 };
+	size_t i;
+	int error;
+
+	input.bvnc = info->bvnc;
+	input.fw_major = info->version_major;
+	input.fw_minor = info->version_minor;
+	input.fw_build = info->version_build;
+	input.brn_mask = info->brn_mask;
+	input.ern_mask = info->ern_mask;
+	for (i = 0; i < __arraycount(fields); i++) {
+		error = sun60i_a733_gpu_fwinfo_feature(info, fields[i], &input.feature[i]);
+		if (error == ENOENT && i >= PVR_QUERY_ROGUEXE)
+			continue;
+		if (error != 0)
+			return error;
+	}
+	*out = input;
+	return 0;
+}
+
 /* Reserve registration without holding either lock during DRM publication. */
 static int
 sun60i_gpu_render_attach(struct sun60i_gpu_softc *sc)
 {
 	struct drm_device *dev = NULL;
+	struct pvr_query_input input;
 	uint64_t bvnc;
 	int error;
 
@@ -1877,11 +1916,20 @@ sun60i_gpu_render_attach(struct sun60i_gpu_softc *sc)
 		mutex_exit(&sc->sc_run_lock);
 		return ENODEV;
 	}
+	if (sc->sc_fw_memory == NULL) {
+		mutex_exit(&sc->sc_run_lock);
+		return EBUSY;
+	}
+	error = sun60i_gpu_query_input(&sc->sc_fw_memory->image.info, &input);
+	if (error != 0) {
+		mutex_exit(&sc->sc_run_lock);
+		return error;
+	}
 	bvnc = sc->sc_bvnc;
 	sc->sc_render_pending = true;
 	mutex_exit(&sc->sc_run_lock);
 
-	error = pvr_render_attach(sc->sc_dev, sc->sc_dmat, bvnc, &dev);
+	error = pvr_render_attach(sc->sc_dev, sc->sc_dmat, bvnc, &input, &dev);
 
 	mutex_enter(&sc->sc_run_lock);
 	if (error == 0)

@@ -4,14 +4,17 @@ The experimental native driver registers the upstream DRM name `powervr`.
 It exposes the measured GPU identity through `DRM_IOCTL_PVR_DEV_QUERY`.
 It also allocates native DMA-backed GEM buffer objects with CPU mappings.
 It builds CPU-owned GPU VM tables and reports heap and static-area layouts.
+It derives runtime limits and compatibility lists from prepared firmware metadata.
 It does not provide Mesa rendering, execution contexts, or job handles.
 
 ## Ownership and registration
 
 The A733 consumer must first identify BVNC `36.56.104.183` on hardware.
-`pvr_render_attach()` accepts only that supported profile.
+`pvr_render_attach()` also requires the prepared firmware metadata from stage 13.
+It accepts BVNC `36.56.104.183` and firmware `1.1.6976702`.
+The driver copies an immutable [query profile](a733-pvr-queries.md).
 The BXM-4-64 profile has one phantom. Its four-core limit is a different field.
-The driver copies the measured BVNC. Queries do not access GPU registers.
+Queries do not access GPU registers or reload firmware.
 
 Call registration from a serialized sleepable context without the sysctl tree
 lock. Registration creates the native DRM platform metadata and acquires that
@@ -29,9 +32,9 @@ The existing native DRM platform record identifies the parent device and
 read this record. No BCM-specific enumeration alias is required.
 
 The integration exposes `hw.sun60igpuid0.render_attach`.
-Write `1` after a successful identification stage to register the device.
+Write `1` after successful firmware preparation, stage 13, to register the device.
 Reading returns `1` once registration succeeds. Repeated writes are idempotent.
-An in-progress request returns `EBUSY`. Missing or unsupported identity returns
+An in-progress request or missing prepared firmware returns `EBUSY`.\nMissing or unsupported identity returns
 `ENODEV`. Writing `0` does not detach the device; it returns `EINVAL`.
 The handler releases the sysctl tree lock before registration.
 
@@ -51,9 +54,11 @@ earlier output prefix; the caller must discard that output.
 The argument size changes only after successful copying.
 
 Heap and static-area queries follow the [native VM contract](a733-pvr-vm.md).
-Other device queries return `EOPNOTSUPP`.
-The driver advertises `DRIVER_RENDER` and `DRIVER_GEM`.
-PRIME, syncobj, display modes, and submission remain unsupported.
+Runtime, quirk, and enhancement queries follow the [firmware-derived contract](a733-pvr-queries.md).
+Unknown device queries return `EOPNOTSUPP`.
+The candidate advertises `DRIVER_RENDER`, `DRIVER_GEM`, and binary and timeline syncobjs.
+Native syncobj source contracts passed. Physical acceptance of this candidate is pending.
+GPU job fences, PRIME, display modes, and submission remain unsupported.
 
 ## Buffer objects and CPU mappings
 
@@ -118,7 +123,7 @@ native DRM platform record. Pass its path and the independently measured BVNC:
 Keep the kernel revision, node identity, tool hash, and output with the board
 receipt. A successful identity query does not establish GPU buffer execution.
 Mesa initialization additionally needs GPU VM, synchronization, heap and
-runtime queries. Accelerated Plasma also requires the display path.
+runtime queries and real execution contexts. Accelerated Plasma also requires the display path.
 The separate [bounded compute experiment](a733-gpu-fwcompute.md) is not a DRM
 submission API.
 
@@ -157,16 +162,17 @@ The [native VM interface](a733-pvr-vm.md) supplies per-file ownership,
 nonoverlapping mappings, page-table updates, and BO references through unmap.
 It is separate from the diagnostic compute VM. Firmware publication, TLB
 invalidation, and GPU ownership during execution remain missing.
-GPU, runtime, quirk, and enhancement queries must report the pinned hardware
-and firmware profile. Placeholder values cannot satisfy this contract.
+The new [runtime and compatibility queries](a733-pvr-queries.md) derive their values
+from the parsed metadata of the prepared firmware image. These queries describe
+hardware limits; they do not implement free lists or GPU execution contexts.
 
 Device creation also allocates a global free list and creates compute, render,
 and transfer contexts, even for a compute-only application.
 The current Mesa null-job path calls `drmSyncobjTransfer` for binary waits.
 The native DRM implementation requires timeline support for that ioctl.
-The known [timeline wait lifetime issue](bcm2712-v3d-sync.md) must be resolved
-before advertising that capability. Existing binary syncobj support is not
-sufficient evidence for the full PowerVR path.
+The candidate includes native timeline lookup, transfer, and chain lifetime fixes.
+Their source contracts passed; native ioctl acceptance is still required.
+These synchronization operations do not connect GPU completions to job fences yet.
 
 Mesa includes BVNC `36.56.104.183` but excludes it from its conformant allowlist.
 Retain its explicit `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1` experimental gate.
