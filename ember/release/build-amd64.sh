@@ -28,6 +28,14 @@ jobs=${EMBER_RELEASE_JOBS:-4}
 case "$jobs" in
 	*[!0-9]*|''|0) echo 'Use a positive worker count.' >&2; exit 1 ;;
 esac
+# GCC's MPFR constant folding can exceed the Darwin default 8 MiB stack.
+# Raise only this build process limit. Keep an existing larger limit.
+stack_limit=$(ulimit -s)
+case "$stack_limit" in
+	unlimited) ;;
+	*[!0-9]*|'') echo 'Cannot read the host compiler stack limit.' >&2; exit 1 ;;
+	*) [ "$stack_limit" -ge 65520 ] || ulimit -s 65520 ;;
+esac
 mkdir "$out"
 git -C "$root" archive -o "$out/source.tar" "$revision"
 mkdir "$out/source"

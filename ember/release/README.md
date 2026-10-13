@@ -27,6 +27,9 @@ The profile sets `MKX11=no`, `MKRUMP=no`, `MKGCCCMDS=no`, `MKREPRO=yes`,
 `KERNEL_SETS=GENERIC` and `BUILD_KERNELS=INSTALL`.
 `EMBER_BUILD_ID` and kernel `BUILDINFO` contain the same full source commit.
 `EMBER_RELEASE_JOBS` selects the worker count; its default is four.
+The wrapper raises the host process stack limit to at least 65520 KiB.
+This prevents bootstrap GCC/MPFR stack exhaustion on a Darwin host with the default 8 MiB limit.
+It preserves an existing larger limit and stops if the host cannot raise a smaller limit.
 The successful build writes `build-success`. A failed build preserves its log and remains unqualified.
 
 The in-tree GCC12.5 compiler is a host bootstrap.

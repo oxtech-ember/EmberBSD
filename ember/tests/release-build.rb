@@ -13,6 +13,7 @@ Dir.mktmpdir('ember-release-build') do |dir|
     #!/bin/sh
     printf '%s\n' "$@" > ../build-arguments
     printf 'clean committed source\n' > ../source-proof
+    ulimit -s > ../stack-proof
   SH
   File.write(File.join(repo, 'build.sh'), script)
   %w[init add commit].each do |action|
@@ -32,6 +33,8 @@ Dir.mktmpdir('ember-release-build') do |dir|
   out, err, status = Open3.capture3('sh', File.join(repo, 'ember/release/build-amd64.sh'), sha, output)
   abort "FAIL: pinned build should succeed: #{out}#{err}" unless status.success?
   args = File.readlines(File.join(output, 'build-arguments'), chomp: true)
+  stack = File.read(File.join(output, 'stack-proof')).strip
+  abort "FAIL: bootstrap compiler stack limit is too small: #{stack} KiB" unless stack == 'unlimited' || stack.to_i >= 65520
   ["EMBER_BUILD_ID=#{sha}", "BUILDINFO=EmberBSD:#{sha}", 'KERNEL_SETS=GENERIC',
    'BUILD_KERNELS=INSTALL', 'MKGCCCMDS=no', 'SYSINST_HTTP_HOST=github.com', 'SYSINST_FTP_SET_DIR_BIN=',
    "SYSINST_FTP_DIR=oxtech-ember/EmberBSD/releases/download/build-#{sha}-amd64-no-x11"].each do |value|
