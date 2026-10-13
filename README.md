@@ -377,7 +377,9 @@ on every board in the hardware catalog.
   Ports fixes missing-signature parsing, lost keyboard models/options and CMake exports
   for cross-built Qt consumers. The complete Qt6 adapter passes five installed
   [input-plugin and metadata checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/recipes/inputmethod/fcitx5-qt/tests/runtime.md).
-  Graphical input and the full shell still require acceptance. KIO MTP/audio plugins are installed and linked on CM5.
+  [Configtool also has a complete cross package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/recipes/inputmethod/fcitx5-configtool/tests/runtime.md);
+  its target execution remains pending. Graphical input and the full shell still
+  require acceptance. KIO MTP/audio plugins are installed and linked on CM5.
   Input prerequisites pass 264 UnitTest++ cases, 295 JSON assertions, and
   Enchant's 434 main and 25 Hunspell tests. Physical MTP remains unverified.
   [Gettext 1.0](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/tests/gettext-runtime/README.md)
