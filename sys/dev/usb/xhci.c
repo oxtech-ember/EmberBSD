@@ -2349,10 +2349,10 @@ xhci_pipe_restart_async_task(void *cookie)
 		 * reacquire the pipe (bus) lock.  So only restart the
 		 * xfer if it's still USBD_IN_PROGRESS.
 		 *
-		 * Either way, xfers on the queue can't be in
-		 * USBD_NOT_STARTED.
+		 * Completion drops the lock for callbacks before starting
+		 * the next queued xfer.  Leave USBD_NOT_STARTED to its
+		 * usbd_start_next call after the callback returns.
 		 */
-		KASSERT(xfer->ux_status != USBD_NOT_STARTED);
 		if (xfer->ux_status == USBD_IN_PROGRESS) {
 			(*pipe->up_methods->upm_start)(xfer);
 		} else {
@@ -2380,10 +2380,7 @@ xhci_pipe_restart_async(struct usbd_pipe *pipe)
 	KASSERT(xhci_polling_p(sc) || mutex_owned(&sc->sc_lock));
 
 	tr->is_halted = true;
-	/* The next control start chooses inline or deferred recovery. */
-	if (UE_GET_XFERTYPE(pipe->up_endpoint->ue_edesc->bmAttributes) ==
-	    UE_CONTROL)
-		return;
+	/* Retire cached TDs even if no further transfer arrives (4.6.10). */
 	usb_add_task(pipe->up_dev, &xp->xp_async_task, USB_TASKQ_HC);
 
 	DPRINTFN(4, "ends", 0, 0, 0, 0);

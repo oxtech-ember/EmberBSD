@@ -527,6 +527,13 @@ on every board in the hardware catalog.
   The [board receipt](ember/boards/raspberry-pi-5.md#headless-base-update-2026-10-07)
   records operator-reported Ethernet access after the final reboot;
   Wi-Fi recovery and post-reboot library acceptance remain open.
+- **USB control recovery:** xHCI serializes stalled-ring recovery with request
+  cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the
+  active control request and preserves queued requests. Actual-function
+  regressions cover interrupt context, concurrent recovery and cancellation.
+  A physical Pi 5 passed 1024 descriptor reads and 1024 STALL recovery requests.
+  This validates a limited control-transfer scenario, not phone boot or all USB
+  transfer types. See the [contract and checks](ember/boot/usb-control-recovery.md).
 - **Kernel fixes found on these boards** that are not specific to
   them: the `bwfm` Wi-Fi driver stalling on large transfers and after
   an access point asks the client to change band, idle cores on
@@ -654,7 +661,7 @@ listed revision; it does not imply full peripheral or long-run support.
 
 | Board | Architecture / SoC | Confirmed scope and main limits |
 | --- | --- | --- |
-| [Raspberry Pi 5 (C1)](ember/boards/raspberry-pi-5.md) | AArch64 / BCM2712 | microSD/UEFI boot, Ethernet, Wi-Fi, classic Bluetooth, cooling and WM8960 audio; USB and graphics not validated here |
+| [Raspberry Pi 5 (C1)](ember/boards/raspberry-pi-5.md) | AArch64 / BCM2712 | microSD/UEFI boot, Ethernet, Wi-Fi, classic Bluetooth, cooling and WM8960 audio; limited USB 2.0 control recovery; graphics not validated here |
 | [Compute Module 5 (D0)](ember/boards/compute-module-5.md) | AArch64 / BCM2712 | eMMC/UEFI boot, four cores, gigabit Ethernet, WPA2/WPA3-Personal and temperature sensing; persistent maximum cooling; other peripherals unvalidated |
 | [Raspberry Pi Zero 2 W](ember/boards/raspberry-pi-zero-2-w.md) | AArch64 / BCM2710A1 | microSD boot, all cores, serial and 2.4 GHz Wi-Fi; large Wi-Fi transfers stall |
 | [Orange Pi Zero 4](ember/boards/orange-pi-zero-4.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Ethernet, Wi-Fi, classic Bluetooth, thermal/frequency control and USB 2.0 data; SuperSpeed unconfirmed |

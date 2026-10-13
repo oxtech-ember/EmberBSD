@@ -1,6 +1,8 @@
 # USB control request recovery
 
 The xHCI driver recovers a stalled control ring in process context.
+Every control STALL queues recovery, even if no new request arrives.
+A process-context start can recover the ring before that task runs.
 Queued transfers started by completion use the USB task queue.
 One restart owner protects the ring while controller commands release the lock.
 The transfer becomes active before recovery can sleep, so cancellation can complete it.
@@ -16,9 +18,10 @@ CC=clang CFLAGS='-O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined' \
 ```
 
 The test extracts the actual driver functions and supplies pthread-based kernel doubles.
-It checks process and soft interrupt starts, deferred recovery, concurrent restart,
-and cancellation or timeout while Reset Endpoint or Set TR Dequeue is pending.
+It checks process and soft interrupt starts, terminal STALL with no next request,
+concurrent task/start recovery, and cancellation or timeout during either recovery command.
 The earlier implementation fails the soft interrupt and cancellation interleavings.
+Recovery that depends on a later request fails the terminal STALL check.
 These tests verify synchronization. They do not model controller hardware or USB timing.
 
 ## Abort contract

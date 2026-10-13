@@ -28,13 +28,28 @@ Board revision: C1 in the earlier support record.
 | Real-time clock | Not validated |
 | Processor frequency control | Tested |
 | Voltage regulators | Not validated |
-| USB | Not validated |
+| USB | Limited USB 2.0 control reads and STALL recovery validated; other transfer types and power management not validated |
 | Hardware random numbers | Not validated |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.
 
 ## Evidence
+
+### USB control recovery, 2026-10-13
+
+A Pi 5 Model B with 8 GiB RAM and DMI version `D04170` used UEFI/ACPI.
+The test preserved its existing firmware; DMI alone does not establish a silicon revision.
+Kernel `EMBER64 #5` was cross-built with GCC 16.2.0 from `f9e7019a729`.
+Its SHA256 was `16f469cc64c7d9abde44f170413f7b69dd3875f21c94af0cf112b5826b0edf42`.
+The matching board modules were installed and their hashes checked after reboot.
+
+An Apple USB DFU device, VID `05ac`, PID `1227`, connected at high speed to a root port.
+The [control probe](../boot/usb-control-recovery.md#physical-control-probe) passed
+1024 descriptor reads in about 512 ms and 1024 STALL requests in about 256 ms.
+Both series ended with a valid standard device descriptor.
+The previous kernel had the same approximate latency; the synchronization fix did not improve throughput.
+These short tests do not validate sustained load, bulk, isochronous transfers, power management or phone boot.
 
 ### Headless base update, 2026-10-07
 

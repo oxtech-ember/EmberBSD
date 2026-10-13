@@ -372,8 +372,9 @@ static void
 inline_and_stale_task(void)
 {
 	reset();
-	test_pipe.xp_async_task.pending = true;
 	mutex_enter(&controller.sc_lock);
+	xhci_pipe_restart_async(&test_pipe.xp_pipe);
+	assert(test_pipe.xp_async_task.pending);
 	assert(xhci_device_ctrl_start(&transfer.xx_xfer) == USBD_IN_PROGRESS);
 	mutex_exit(&controller.sc_lock);
 	assert(resets == 1 && dequeues == 1 && submissions == 1);
@@ -386,13 +387,55 @@ static void
 stall_schedule(void)
 {
 	reset();
+	test_pipe.xp_pipe.up_queue.first = NULL;
+	ring.is_halted = false;
+	softintr = true;
 	mutex_enter(&controller.sc_lock);
 	xhci_pipe_restart_async(&test_pipe.xp_pipe);
-	assert(ring.is_halted && !test_pipe.xp_async_task.pending);
+	assert(ring.is_halted && test_pipe.xp_async_task.pending);
+	mutex_exit(&controller.sc_lock);
+	softintr = false;
+	/* Retire the stalled TD even if no further request arrives. */
+	run_task();
+	assert(resets == 1 && dequeues == 1 && stops == 0);
+	assert(!ring.is_halted && ring.state == XHCI_EPSTATE_STOPPED);
+	assert(submissions == 0 && bells == 0 && timeouts == 0);
+	assert(test_pipe.xp_pipe.up_queue.first == NULL);
+
+	mutex_enter(&controller.sc_lock);
 	descriptor.bmAttributes = UE_BULK;
 	xhci_pipe_restart_async(&test_pipe.xp_pipe);
 	assert(test_pipe.xp_async_task.pending);
 	mutex_exit(&controller.sc_lock);
+}
+
+static void
+callback_window(void)
+{
+	reset();
+	softintr = true;
+	mutex_enter(&controller.sc_lock);
+	xhci_pipe_restart_async(&test_pipe.xp_pipe);
+	/* Completion removed the stalled xfer. The next xfer is not started. */
+	assert(transfer.xx_xfer.ux_status == USBD_NOT_STARTED);
+	/* The completion callback runs without sc_lock. */
+	mutex_exit(&controller.sc_lock);
+	softintr = false;
+	run_task();
+	assert(resets == 1 && dequeues == 1 && stops == 0);
+	assert(!ring.is_halted);
+	assert(transfer.xx_xfer.ux_status == USBD_NOT_STARTED);
+	assert(submissions == 0 && bells == 0 && timeouts == 0);
+
+	/* After the callback, usbd_start_next owns the next transfer's start. */
+	softintr = true;
+	mutex_enter(&controller.sc_lock);
+	assert(methods.upm_start(&transfer.xx_xfer) == USBD_IN_PROGRESS);
+	mutex_exit(&controller.sc_lock);
+	softintr = false;
+	assert(resets == 1 && dequeues == 1 && submissions == 1);
+	assert(timeouts == 1 && bells == 1);
+	assert(!test_pipe.xp_async_task.pending);
 }
 
 static void *
@@ -496,6 +539,52 @@ task_during_inline(void)
 	assert(timeouts == 1 && bells == 1);
 }
 
+static void
+start_during_task(void)
+{
+	unsigned phase;
+
+	for (phase = 1; phase <= 2; phase++) {
+		pthread_t worker;
+
+		reset();
+		test_pipe.xp_pipe.up_queue.first = NULL;
+		pause_command = phase;
+		reset_entered = release_reset = recovery_waiting = false;
+		mutex_enter(&controller.sc_lock);
+		xhci_pipe_restart_async(&test_pipe.xp_pipe);
+		assert(test_pipe.xp_async_task.pending);
+		mutex_exit(&controller.sc_lock);
+		assert(pthread_create(&worker, NULL, task_thread, NULL) == 0);
+		assert(pthread_mutex_lock(&gate) == 0);
+		while (!reset_entered)
+			assert(pthread_cond_wait(&gate_cv, &gate) == 0);
+		assert(pthread_mutex_unlock(&gate) == 0);
+
+		/* A request arrives while the task owns recovery. */
+		mutex_enter(&controller.sc_lock);
+		test_pipe.xp_pipe.up_queue.first = &transfer.xx_xfer;
+		assert(xhci_device_ctrl_start(&transfer.xx_xfer) ==
+		    USBD_IN_PROGRESS);
+		assert(transfer.xx_xfer.ux_status == USBD_IN_PROGRESS);
+		assert(submissions == 0 && timeouts == 1);
+		assert(test_pipe.xp_async_task.pending);
+		mutex_exit(&controller.sc_lock);
+
+		assert(pthread_mutex_lock(&gate) == 0);
+		release_reset = true;
+		assert(pthread_cond_broadcast(&gate_cv) == 0);
+		assert(pthread_mutex_unlock(&gate) == 0);
+		assert(pthread_join(worker, NULL) == 0);
+		assert(resets == 1 && dequeues == 1 && submissions == 1);
+		assert(timeouts == 1 && bells == 1);
+		/* The task queued by start must not repeat recovery or submit. */
+		run_task();
+		assert(resets == 1 && dequeues == 1 && submissions == 1);
+		assert(timeouts == 1 && bells == 1);
+	}
+}
+
 int
 main(int argc, char **argv)
 {
@@ -508,10 +597,14 @@ main(int argc, char **argv)
 		inline_and_stale_task();
 	if (!strcmp(which, "all") || !strcmp(which, "stall"))
 		stall_schedule();
+	if (!strcmp(which, "all") || !strcmp(which, "callback"))
+		callback_window();
 	if (!strcmp(which, "all") || !strcmp(which, "abort"))
 		cancel_during_reset();
 	if (!strcmp(which, "all") || !strcmp(which, "concurrent-task"))
 		task_during_inline();
+	if (!strcmp(which, "all") || !strcmp(which, "concurrent-start"))
+		start_during_task();
 #ifdef XHCI_HAVE_RESTART_CV
 	assert(pthread_cond_destroy(&test_pipe.xp_restart_cv) == 0);
 #endif
