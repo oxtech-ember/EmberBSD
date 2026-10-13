@@ -38,7 +38,7 @@ The handler releases the sysctl tree lock before registration.
 
 The local header retains a subset of the MIT-licensed PowerVR UAPI from
 [Linux `7b63ef2`](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/include/uapi/drm/pvr_drm.h).
-Both ioctl arguments and the GPU information structure are 16 bytes.
+The DEV_QUERY arguments and GPU information structure are 16 bytes.
 The BVNC occupies bits B:63..48, V:47..32, N:31..16, and C:15..0.
 
 `GPU_INFO_GET` supports null-pointer size discovery.
@@ -105,7 +105,7 @@ native DRM platform record. Pass its path and the independently measured BVNC:
 
 Keep the kernel revision, node identity, tool hash, and output with the board
 receipt. A successful identity query does not establish GPU buffer execution.
-Mesa initialization additionally needs real VM, GEM, synchronization, heap and
+Mesa initialization additionally needs GPU VM, synchronization, heap and
 runtime queries. Accelerated Plasma also requires the display path.
 The separate [bounded compute experiment](a733-gpu-fwcompute.md) is not a DRM
 submission API.

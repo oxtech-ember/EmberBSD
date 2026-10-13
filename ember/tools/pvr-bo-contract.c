@@ -30,9 +30,8 @@
 #define IS_ERR(p) ((uintptr_t)(p) >= (uintptr_t)-4095)
 typedef uint32_t __u32;
 typedef uint64_t __u64;
-#ifndef __NetBSD__
-typedef uint64_t voff_t;
-#endif
+/* UVM exports this kernel type in uvm_param.h, not user sys/types.h. */
+typedef off_t voff_t;
 typedef void *bus_dma_tag_t;
 typedef struct { void *memory; size_t ds_len; } bus_dma_segment_t;
 typedef struct { void *memory; bool loaded; } *bus_dmamap_t;

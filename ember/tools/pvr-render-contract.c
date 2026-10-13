@@ -35,9 +35,8 @@ typedef void *bus_dma_tag_t;
 struct drm_file { int unused; };
 struct file;
 struct uvm_object;
-#ifndef __NetBSD__
-typedef uint64_t voff_t;
-#endif
+/* UVM exports this kernel type in uvm_param.h, not user sys/types.h. */
+typedef off_t voff_t;
 struct drm_device;
 struct drm_ioctl_desc {
 	unsigned long cmd;
