@@ -889,9 +889,11 @@ sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
 int
 sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *mem,
     const struct sun60i_a733_gpu_fwboot_result *boot, unsigned int slot,
-    uint32_t log_type, struct sun60i_a733_gpu_fwprobe_observation *out)
+    uint32_t command, uint32_t log_type,
+    struct sun60i_a733_gpu_fwprobe_observation *out)
 {
 	assert(compute_completion_mode != 0 && slot == 4 && log_type == 0x3f);
+	assert(command == ROGUE_FWIF_KCCB_CMD_KICK);
 	compute_observe_calls++;
 	memset(out, 0, sizeof(*out));
 	out->valid = true;

@@ -617,8 +617,9 @@ on every board in the hardware catalog.
   publication. Rogue GPU [page-table encoders](ember/boot/a733-gpu-mmu.md)
   and [CPU-owned VM preparation](ember/boot/a733-gpu-vm.md) pass source contracts;
   On Zero 3W, [later tracing and KICK](ember/boot/a733-gpu-fwcompute.md#physical-stages-19-21-result)
-  now reach the firmware. The client queue drains, but the compute context
-  resets with a page fault at `0x2400`; the timeline stays zero.
+  now reach the firmware. The compute context resets with a page fault at
+  `0x2400`; the timeline stays zero. Corrected CCCB diagnostics show that
+  the client queue had not drained; the earlier labels were interchanged.
   The new DMA snapshot confirms an unchanged output word; the old error path did not sample it.
   Compute completion and rendering remain unverified. A PowerVR render
   interface, Mesa Vulkan/Zink and accelerated Plasma still require porting. These are

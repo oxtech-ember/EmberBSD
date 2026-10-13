@@ -295,6 +295,12 @@ The physical run below accepted these diagnostics; compute execution still faile
 
 ## Completion acceptance
 
+KICK uses asynchronous completion. Its KCCB consumption does not require a return word of 1.
+The provider requires exact queue advancement and rejects unknown return bits and firmware errors.
+LOGTYPE and MMUCACHE retain their synchronous return-word checks.
+This follows pinned Linux [`pvr_cccb_send_kccb_kick()`](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_cccb.c#L224), which passes no return-slot waiter.
+The caller must still verify client queue completion and the UFO timeline.
+
 Stage 21 refreshes firmware state after every client queue and timeline observation.
 It checks it again after the final scratch DMA read.
 A pending CONTEXT_RESET, HWR record, or firmware fault rejects completion even when recovery updates the timeline.
