@@ -70,7 +70,8 @@ qemu-system-x86_64 \
     -machine q35,accel=tcg -cpu max -m 2048 -smp 2 \
     -drive if=pflash,format=raw,readonly=on,file=/absolute/qemu/uefi-code.fd \
     -drive if=pflash,format=raw,file=vars.fd \
-    -drive file=disk.qcow2,format=qcow2,if=ide \
+    -drive file=disk.qcow2,format=qcow2,if=none,id=target \
+    -device ide-hd,drive=target,bus=ide.0,bootindex=2 \
     -cdrom /absolute/amd64cd.iso -boot once=d -nic none
 ```
 
@@ -80,6 +81,8 @@ QEMU's default display provides the keyboard and screen.
 Firmware filenames depend on the host package.
 For the checked Homebrew package, code was `edk2-x86_64-code.fd` and variables were `edk2-i386-vars.fd`.
 Use the pair supplied by the same package.
+The explicit disk boot priority prevents the firmware from preferring a stale
+installation-medium entry after that medium is removed.
 
 ## Install from local sets
 
@@ -95,7 +98,10 @@ Letters select menu items; Enter activates them.
 4. Select **Installation without X11**. This matches the image's `MKX11=no` profile.
 5. Select the local CD-ROM/installation-medium sets. Keep the ISO attached until extraction completes.
 6. Use the architecture and set directory already supplied for that medium.
-7. If the optional `base32` set is absent, acknowledge the notice and continue without it.
+7. If the manifest lists optional `base32` as absent, acknowledge its notice.
+   For an HTTPS 404 on that set, select **Additional sources → Skip set**,
+   then return to **EmberBSD CDN → HTTPS** for the remaining sets.
+   Do not skip a required set or a certificate error.
 8. Set the timezone. Configure console passwords for a connected deployment.
 9. Leave network configuration and SSH disabled for this isolated exercise.
 10. Set the hostname as described below, then complete installation and return to the main menu.
