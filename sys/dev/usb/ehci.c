@@ -2285,10 +2285,18 @@ ehci_sync_hc(ehci_softc_t *sc)
 
 	/*
 	 * Wait until any concurrent ehci_sync_hc has completed so we
-	 * have exclusive access to the doorbell.
+	 * have exclusive access to the doorbell.  A wedged owner must
+	 * not block every follower forever: give up on exclusivity
+	 * within the same one-second budget the doorbell itself uses.
 	 */
-	while (sc->sc_doorbelllwp)
-		cv_wait(&sc->sc_doorbell, &sc->sc_lock);
+	while (sc->sc_doorbelllwp) {
+		now = getticks();
+		if (now - starttime >= delta) {
+			DPRINTF("doorbell owner stuck", 0, 0, 0, 0);
+			return;
+		}
+		cv_timedwait(&sc->sc_doorbell, &sc->sc_lock, endtime - now);
+	}
 	sc->sc_doorbelllwp = curlwp;
 
 	/* ask for doorbell */
