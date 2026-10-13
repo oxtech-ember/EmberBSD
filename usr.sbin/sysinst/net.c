@@ -984,6 +984,7 @@ int
 wizard_network_source(const char *url)
 {
 	char host[STRSIZE], path[STRSIZE];
+	size_t len;
 	int secure;
 
 	if (!wizard_parse_url(url, host, sizeof(host), path, sizeof(path), &secure))
@@ -1002,7 +1003,12 @@ wizard_network_source(const char *url)
 	ftp.dir[0] = '\0';
 	strlcpy(ftp.user, "ftp", sizeof(ftp.user));
 	ftp.pass[0] = '\0';
+	/* Set downloads append their own slash after this directory. */
+	len = strlen(path);
+	while (len != 0 && path[len - 1] == '/')
+		path[--len] = '\0';
 	strlcpy(set_dir_bin, path, sizeof(set_dir_bin));
+	strlcpy(ftp_set_dir_bin, path, sizeof(ftp_set_dir_bin));
 	fetch_fn = ftp_fetch;
 	snprintf(ext_dir_bin, sizeof(ext_dir_bin), "%s/%s", target_prefix(),
 	    xfer_dir + (*xfer_dir == '/'));
