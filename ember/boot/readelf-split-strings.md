@@ -38,7 +38,15 @@ fixing inline strings; the final parser passes all 28 and the 24 producer cases.
 The repair consumes a bounded inline string terminator and resolves indirect
 forms before reading or skipping the explicit base. Analysis retains inherited
 Binutils warnings; this is not a claim of a clean entire parser or supported
-split-type units.
+split-type units. Instrumenting the actual changed `dwarf.c` with ASan/UBSan
+passes all 28 boundary cases. With LeakSanitizer enabled, the producer matrix
+passes 16/24: eight followed split objects expose an inherited section-buffer
+leak (one 82-byte Clang or 116-byte GCC allocation per process). The baseline
+consumer reproduces exactly the same eight leak sizes and allocation stacks
+through `load_debug_section_with_follow` / `load_cu_tu_indexes`. No leak
+suppressions were used. Other reader objects and libraries are uninstrumented;
+this scoped repair does not close that ownership issue or the inherited
+static-analyzer warnings. The OS host-tool owner must handle those separately.
 
 ## Provenance
 
