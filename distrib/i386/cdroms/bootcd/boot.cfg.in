@@ -6,3 +6,4 @@ banner=
 menu=Install EmberBSD:boot netbsd
 menu=Drop to boot prompt:prompt
 timeout=30
+clear=1

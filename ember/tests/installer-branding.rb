@@ -9,6 +9,7 @@ check = ->(ok, what) { failures << what unless ok }
 Dir.glob("#{root}/distrib/{amd64,i386,evbarm}/**/boot.cfg*").each do |path|
   rendered = File.binread(path).gsub('@@VERSION@@', '11.0').gsub('@@MACHINE@@', 'amd64')
   visible = rendered.lines.grep(/^(banner|menu)=/).map { |line| line.split(':', 2).first }.join
+  check.call(rendered.lines.include?("clear=1\n"), "installation banner must start on a clear console: #{path}") unless path.include?('/evbarm/')
   check.call(!visible.match?(/based on NetBSD/i), "prominent upstream banner: #{path}")
   check.call(!visible.match?(/(?:Welcome to|Install|Boot) (?:the )?NetBSD/), path)
   check.call(rendered.include?('boot netbsd'), "kernel command changed: #{path}") if rendered.include?('Install ')
