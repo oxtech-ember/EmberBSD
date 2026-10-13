@@ -58,3 +58,28 @@ cp "$src/ember/tools/bwfm-sta-scan.c" "$work/scan-check.c"
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror ${CFLAGS:-} \
     -I"$work" "$work/scan-check.c" -o "$work/scan-check"
 "$work/scan-check"
+
+# Use the upstream driver parameter types and the production association and
+# scan callbacks. The fixture replaces only the ioctl, timer and event edges.
+for fn in bsd_sta_associate wpa_driver_bsd_associate wpa_driver_bsd_scan; do
+    awk -v fn="$fn" '$0 ~ "^" fn "\\(" {copy=1}
+        copy {print} copy && /^}/ {exit}' \
+        "$src/external/bsd/wpa/dist/src/drivers/driver_bsd.c" > "$work/$fn.h"
+    test -s "$work/$fn.h"
+done
+awk '/case RTM_IEEE80211_ASSOC:/ {copy=1}
+    copy && /case RTM_IEEE80211_DISASSOC:/ {exit}
+    copy {print}' "$src/external/bsd/wpa/dist/src/drivers/driver_bsd.c" \
+    > "$work/bsd-assoc-event.h"
+test -s "$work/bsd-assoc-event.h"
+awk '/^#define[[:space:]]+IEEE80211_(STA|SAE|IOC_(STA_MGMT|SAE|MLME|PRIVACY|WPA|ROAMING|SCAN_REQ))[[:space:]_]/ {print}
+    /^struct ieee80211req_(sta_mgmt|mlme) / {copy=1}
+    copy {print} copy && /^};/ {copy=0}' \
+    "$src/sys/net80211/ieee80211_ioctl.h" > "$work/assoc-abi.h"
+awk '/^#define[[:space:]]+RTM_IEEE80211_(ASSOC|REASSOC)[[:space:]]/ {print}' \
+    "$src/sys/net80211/ieee80211_netbsd.h" > "$work/assoc-routes.h"
+cp "$src/ember/tools/bwfm-sta-bsd-assoc.c" "$work/assoc-check.c"
+${CC:-cc} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter ${CFLAGS:-} \
+    -D_DEFAULT_SOURCE -I"$src/external/bsd/wpa/dist/src" -I"$work" \
+    "$work/assoc-check.c" -o "$work/assoc-check"
+"$work/assoc-check"
