@@ -83,8 +83,30 @@ static void delay(unsigned int us) { (void)us; }
 #define BUS_DMASYNC_POSTREAD 2
 #define BUS_DMASYNC_PREWRITE 4
 static unsigned trace_sync_calls;
+static bus_addr_t trace_sync_offset;
+static bus_size_t trace_sync_size;
+static int trace_sync_op;
+static struct rogue_fwif_hwrinfobuf *hwr_on_sync;
+static uint32_t *scratch_on_sync;
+static bus_dmamap_t scratch_sync_map;
+static unsigned scratch_sync_calls;
 static void bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t m, bus_addr_t o,
-    bus_size_t s, int op) { (void)t; (void)m; (void)o; (void)s; (void)op; trace_sync_calls++; }
+    bus_size_t s, int op)
+{
+	(void)t;
+	(void)m;
+	trace_sync_offset = o;
+	trace_sync_size = s;
+	trace_sync_op = op;
+	trace_sync_calls++;
+	if (hwr_on_sync != NULL)
+		hwr_on_sync->hwr_counter = UINT32_C(0x87654321);
+	if (m == scratch_sync_map && scratch_sync_map != NULL) {
+		scratch_sync_calls++;
+		if (scratch_on_sync != NULL)
+			*scratch_on_sync = UINT32_C(0x11223344);
+	}
+}
 #ifndef timespecsub
 #define timespecsub(tsp, usp, vsp) do { 	(vsp)->tv_sec = (tsp)->tv_sec - (usp)->tv_sec; 	(vsp)->tv_nsec = (tsp)->tv_nsec - (usp)->tv_nsec; 	if ((vsp)->tv_nsec < 0) { (vsp)->tv_sec--; (vsp)->tv_nsec += 1000000000L; } } while (0)
 #endif
@@ -500,6 +522,10 @@ int sun60i_a733_ccu_gpu_ready(struct clk *c, u_int *core, u_int *bus)
 struct firmware_handle { bool open; };
 typedef struct firmware_handle *firmware_handle_t;
 static struct firmware_handle fw_handle;
+static uint8_t *compute_file_data;
+static size_t compute_file_size;
+static struct sun60i_a733_gpu_dma *compute_scratch_dma;
+static bool compute_scratch_unavailable;
 static int fw_open_error, fw_read_error, fw_close_error;
 static bool fw_alloc_fail, fw_bad_bvnc;
 static off_t fw_file_size = 8192;
@@ -593,6 +619,12 @@ static int
 firmware_open(const char *driver, const char *name, firmware_handle_t *fh)
 {
 	assert(strcmp(driver, "powervr") == 0);
+	if (compute_file_data != NULL) {
+		assert(strcmp(name, "a733-compute.bin") == 0 && !fw_handle.open);
+		fw_handle.open = true;
+		*fh = &fw_handle;
+		return 0;
+	}
 	assert(strcmp(name, "rogue_36.56.104.183_v1.fw") == 0);
 	assert(!fw_handle.open);
 	fw_not_published();
@@ -609,6 +641,8 @@ static off_t
 firmware_get_size(firmware_handle_t fh)
 {
 	assert(fh == &fw_handle && fh->open);
+	if (compute_file_data != NULL)
+		return (off_t)compute_file_size;
 	fw_sizes++;
 	record('z');
 	return fw_file_size;
@@ -633,6 +667,11 @@ static int
 firmware_read(firmware_handle_t fh, off_t offset, void *bytes, size_t size)
 {
 	assert(fh == &fw_handle && fh->open && offset == 0);
+	if (compute_file_data != NULL) {
+		assert(size == compute_file_size);
+		memcpy(bytes, compute_file_data, size);
+		return 0;
+	}
 	assert(bytes == fw_memory && size == fw_memory_size);
 	fw_not_published();
 	fw_reads++;
@@ -662,6 +701,10 @@ static int
 firmware_close(firmware_handle_t fh)
 {
 	assert(fh == &fw_handle && fh->open);
+	if (compute_file_data != NULL) {
+		fh->open = false;
+		return 0;
+	}
 	fw_not_published();
 	fw_closes++;
 	record('c');
@@ -822,6 +865,16 @@ sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
 {
 	fwprobe_cmd_calls++;
 	assert(cmd != NULL && slot >= 2 && previous != NULL);
+	if (compute_file_data != NULL) {
+		assert(slot == 3 || slot == 4);
+		if (slot == 3)
+			return 0;
+		assert(compute_scratch_dma != NULL);
+		scratch_on_sync = compute_scratch_dma->cpu;
+		if (compute_scratch_unavailable)
+			compute_scratch_dma->loaded = false;
+		return EIO;
+	}
 	return ENOSYS;
 }
 
@@ -2737,6 +2790,227 @@ test_trace_report(void)
 	printf("PASS: %u bounded firmware trace capture checks\n", checks - start);
 }
 
+/* Exercise the real cached HWR capture, not a separate record decoder. */
+static void
+test_hwr_report(void)
+{
+	struct sun60i_a733_gpu_fwmem mem = { 0 }, saved;
+	struct sun60i_a733_gpu_fwinit_region *region;
+	struct sun60i_gpu_softc *owner, *previous;
+	struct rogue_fwif_hwrinfobuf *hwr;
+	uint8_t *arena, *copy;
+	char expected[160];
+	const char *last;
+	size_t events_before;
+	unsigned commands_before, start = checks;
+
+	owner = calloc(1, sizeof(*owner));
+	previous = malloc(sizeof(*previous));
+	arena = calloc(1, 2432);
+	copy = malloc(2432);
+	assert(owner != NULL && previous != NULL && arena != NULL && copy != NULL);
+	mem.interface_prepared = true;
+	mem.work.cpu = arena;
+	mem.work.size = 2432;
+	mem.work.loaded = true;
+	mem.work.map = &mem;
+	region = &mem.interface_layout.object[A733_GPU_FWINIT_HWR];
+	*region = (struct sun60i_a733_gpu_fwinit_region){
+		.buffer = A733_GPU_FWINIT_WORK, .offset = 64, .size = 2336
+	};
+	owner->sc_fw_memory = &mem;
+	hwr = (struct rogue_fwif_hwrinfobuf *)(arena + 64);
+	memcpy(copy, arena, 2432);
+	trace_sync_calls = 0;
+	sun60i_gpu_hwr_report(owner);
+	CHECK(strstr(owner->sc_hwr_state,
+	    "capture_error=0 captured=16 counter=0 write_index=0") != NULL);
+	CHECK(strstr(owner->sc_hwr_state, "slot=15 number=0 type=0") != NULL);
+	CHECK(memcmp(copy, arena, 2432) == 0);
+	CHECK(trace_sync_calls == 1);
+	CHECK(trace_sync_offset == 64 && trace_sync_size == 2336 &&
+	    trace_sync_op == BUS_DMASYNC_POSTREAD);
+
+	/* Fill every field to its maximum: counters must not become bounds. */
+	memset(hwr, 0xff, sizeof(*hwr));
+	hwr->hwr_info[0].hwr_type = ROGUE_HWRTYPE_BIF0FAULT;
+	hwr->hwr_info[0].hwr_data.bif_info.bif_req_status =
+	    UINT64_C(0x123456789abcdef0);
+	hwr->hwr_info[0].hwr_data.bif_info.bif_mmu_status = UINT64_C(0x15);
+	hwr->hwr_info[0].hwr_data.bif_info.pc_address = UINT64_C(0x40165000);
+	hwr->hwr_info[1].hwr_type = ROGUE_HWRTYPE_MMUFAULT;
+	hwr->hwr_info[1].hwr_data.mmu_info.mmu_status[0] =
+	    UINT64_C(0xabcdef0012345678);
+	hwr->hwr_info[1].hwr_data.mmu_info.mmu_status[1] = UINT64_C(0x13579);
+	hwr->hwr_info[1].hwr_data.mmu_info.pc_address = UINT64_C(0x40165000);
+	hwr->hwr_info[2].hwr_type = ROGUE_HWRTYPE_POLLFAILURE;
+	hwr->hwr_counter = 0;
+	memcpy(copy, arena, 2432);
+	((struct rogue_fwif_hwrinfobuf *)(copy + 64))->hwr_counter =
+	    UINT32_C(0x87654321);
+	*previous = *owner;
+	commands_before = fwprobe_cmd_calls;
+	events_before = nevents;
+	hwr_on_sync = hwr;
+	trace_sync_calls = 0;
+	sun60i_gpu_hwr_report(owner);
+	hwr_on_sync = NULL;
+	CHECK(trace_sync_calls == 1);
+	CHECK(strstr(owner->sc_hwr_state,
+	    "counter=2271560481 write_index=4294967295") != NULL);
+	CHECK(strstr(owner->sc_hwr_state,
+	    "req=0x123456789abcdef0 mmu=0x15 pc=0x40165000;") != NULL);
+	CHECK(strstr(owner->sc_hwr_state,
+	    "mmu0=0xabcdef0012345678 mmu1=0x13579 pc=0x40165000;") != NULL);
+	CHECK(strstr(owner->sc_hwr_state,
+	    "raw0=0xffffffffffffffff raw1=0xffffffffffffffff "
+	    "raw2=0xffffffffffffffff;") != NULL);
+	CHECK(strstr(owner->sc_hwr_state, "dm=4294967295 core=4294967295 "
+	    "pid=4294967295 frame=4294967295 hwrt=0xffffffff") != NULL);
+	last = strstr(owner->sc_hwr_state, "slot=15 number=4294967295");
+	CHECK(last != NULL && strstr(last, "raw2=0xffffffffffffffff;") != NULL);
+	CHECK(strlen(owner->sc_hwr_state) < sizeof(owner->sc_hwr_state) - 1);
+	CHECK(owner->sc_hwr_state[strlen(owner->sc_hwr_state) - 1] == ';');
+	CHECK(memcmp(copy, arena, 2432) == 0);
+	CHECK(commands_before == fwprobe_cmd_calls && events_before == nevents);
+	memcpy(previous->sc_hwr_state, owner->sc_hwr_state,
+	    sizeof(previous->sc_hwr_state));
+	CHECK(memcmp(previous, owner, sizeof(*owner)) == 0);
+
+	saved = mem;
+	for (unsigned n = 0; n < 14; n++) {
+		mem = saved;
+		owner->sc_fw_memory = &mem;
+		switch (n) {
+		case 0: owner->sc_fw_memory = NULL; break;
+		case 1: mem.interface_prepared = false; break;
+		case 2: mem.work.cpu = NULL; break;
+		case 3: mem.work.map = NULL; break;
+		case 4: mem.work.loaded = false; break;
+		case 5: mem.work.cpu = arena + 1; break;
+		case 6: region->buffer = A733_GPU_FWINIT_CONFIG; break;
+		case 7: region->offset = 1; break;
+		case 8: region->size = 2335; break;
+		case 9: region->offset = UINT32_MAX - 7; break;
+		case 10: region->size = UINT32_MAX; break;
+		case 11: region->size = 0; break;
+		case 12: mem.work.size = 2399; break;
+		case 13: region->offset = 2432; break;
+		}
+		trace_sync_calls = 0;
+		memcpy(copy, arena, 2432);
+		sun60i_gpu_hwr_report(owner);
+		snprintf(expected, sizeof(expected), "capture_error=%d captured=0:", EINVAL);
+		CHECK(strcmp(owner->sc_hwr_state, expected) == 0);
+		CHECK(trace_sync_calls == 0);
+		CHECK(memcmp(copy, arena, 2432) == 0);
+		CHECK(commands_before == fwprobe_cmd_calls && events_before == nevents);
+	}
+
+	/* The stage-21 error exit refreshes the cache without another command. */
+	owner->sc_fw_memory = NULL;
+	owner->sc_run_stage = 0;
+	memset(owner->sc_hwr_state, 0, sizeof(owner->sc_hwr_state));
+	CHECK(sun60i_gpu_stage_fwkick(owner, 0) == EBUSY);
+	snprintf(expected, sizeof(expected), "capture_error=%d captured=0:", EINVAL);
+	CHECK(strcmp(owner->sc_hwr_state, expected) == 0);
+	CHECK(commands_before == fwprobe_cmd_calls && events_before == nevents);
+	free(copy);
+	free(arena);
+	free(previous);
+	free(owner);
+	printf("PASS: %u bounded firmware HWR capture checks\n", checks - start);
+}
+
+static void
+test_scratch_error_snapshot(void)
+{
+	struct a733_gpu_fwcompute_file_header h = { 0 };
+	struct a733_gpu_fwcompute_file_entry entry[9] = { 0 }, swap;
+	struct sun60i_a733_gpu_fwvm vm = { 0 };
+	uint32_t scratch, decoy;
+	unsigned start = checks, calls;
+
+	/* Minimal valid wire image; the existing digest stub returns zero. */
+	h.magic = A733_GPU_FWCOMPUTE_FILE_MAGIC;
+	h.version = A733_GPU_FWCOMPUTE_FILE_VERSION;
+	h.bvnc = UINT64_C(0x00240038006800b7);
+	h.header_bytes = 312;
+	h.payload_bytes = 9 * 512 + 56;
+	h.resources = 9;
+	h.static_offset = 9 * 512;
+	h.static_bytes = 56;
+	h.context_state_va = UINT64_C(0x8000001000);
+	for (unsigned i = 0; i < 9; i++) {
+		entry[i].role = i;
+		entry[i].offset = i * 512;
+		entry[i].bytes = i == A733_GPU_FWCOMPUTE_RESUME ? 512 : 4;
+		entry[i].flags = A733_GPU_FWCOMPUTE_FLAG_BYPASS;
+		entry[i].va = UINT64_C(0x8000000000) + i * 4096;
+	}
+	/* SCRATCH deliberately follows all programs in the manifest. */
+	swap = entry[0];
+	entry[0] = entry[8];
+	entry[8] = swap;
+	for (unsigned unavailable = 0; unavailable < 2; unavailable++) {
+		fwcache_ready();
+		compute_file_size = h.header_bytes + h.payload_bytes;
+		compute_file_data = calloc(1, compute_file_size);
+		assert(compute_file_data != NULL);
+		memcpy(compute_file_data, &h, sizeof(h));
+		memcpy(compute_file_data + sizeof(h), entry, sizeof(entry));
+		memset(compute_file_data + h.header_bytes + h.static_offset,
+		    0xa5, h.static_bytes);
+		sc.sc_run_stage = A733_GPU_STAGE_FWVM;
+		sc.sc_cache_result = (struct sun60i_a733_gpu_fwprobe_result){
+		    .attempted = true, .published = true, .kick_attempted = true,
+		    .kicked = true, .command = A733_GPU_FWPROBE_MMUCACHE,
+		    .slot = 1, .after.rtn = 1
+		};
+		sc.sc_heap_result.attempted = true;
+		sc.sc_heap_result.kicked = true;
+		sc.sc_fw_memory->image.info.feature_mask[0] = UINT64_C(0x92d9ff57fdbf7cdb);
+		sc.sc_fw_memory->image.info.feature_mask[1] = UINT64_C(0x1f);
+		sc.sc_fw_memory->image.info.brn_mask = UINT64_C(0x201);
+		vm.prepared = true;
+		scratch = UINT32_C(0x12345678);
+		decoy = UINT32_C(0xaabbccdd);
+		vm.resource[0].cpu = &decoy;
+		vm.resource[8] = (struct sun60i_a733_gpu_dma){
+		    .cpu = &scratch, .size = 4, .map = &scratch, .loaded = true
+		};
+		sc.sc_fwvm = &vm;
+		compute_scratch_dma = &vm.resource[8];
+		compute_scratch_unavailable = unavailable;
+		scratch_sync_map = &scratch;
+		scratch_on_sync = NULL;
+		scratch_sync_calls = 0;
+		calls = fwprobe_cmd_calls;
+		sun60i_gpu_run_stage(&sc, A733_GPU_STAGE_FWKICK);
+		CHECK(sc.sc_run_result == EIO);
+		CHECK(fwprobe_cmd_calls == calls + 2);
+		CHECK(strstr(sc.sc_kick_state, "kick error=5 ") != NULL);
+		if (unavailable) {
+			CHECK(strstr(sc.sc_kick_state, "scratch_valid=1/0 ") != NULL);
+			CHECK(scratch_sync_calls == 1 && scratch == UINT32_C(0x12345678));
+		} else {
+			CHECK(strstr(sc.sc_kick_state,
+			    "scratch=0x12345678->0x11223344 scratch_valid=1/1 ") != NULL);
+			CHECK(scratch_sync_calls == 2 && scratch == UINT32_C(0x11223344));
+		}
+		CHECK(decoy == UINT32_C(0xaabbccdd));
+		scratch_on_sync = NULL;
+		scratch_sync_map = NULL;
+		compute_scratch_dma = NULL;
+		sc.sc_fwvm = NULL;
+		free(compute_file_data);
+		compute_file_data = NULL;
+		later_teardown();
+	}
+	reset();
+	printf("PASS: %u scratch error-path snapshot checks\n", checks - start);
+}
+
 
 int
 main(void)
@@ -2920,6 +3194,8 @@ main(void)
 	test_fwcache_stage();
 	test_probe_report_capacity();
 	test_trace_report();
+	test_hwr_report();
+	test_scratch_error_snapshot();
 	printf("PASS: %u A733 GPU identification checks\n", checks);
 	return 0;
 }

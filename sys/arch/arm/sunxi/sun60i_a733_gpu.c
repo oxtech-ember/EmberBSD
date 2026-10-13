@@ -115,6 +115,7 @@ struct sun60i_gpu_softc {
 	char sc_vm_state[512];		/* cached stage-20 VM preparation */
 	char sc_kick_state[1024];	/* cached stage-21 submission */
 	char sc_trace_state[4096];	/* cached stage-21 firmware trace */
+	char sc_hwr_state[8192];	/* cached stage-21 firmware HWR records */
 	struct sun60i_a733_gpu_fwheap *sc_fwheap;
 	struct sun60i_a733_gpu_fwvm *sc_fwvm;
 	struct sun60i_a733_gpu_fwprobe_result sc_heap_result, sc_kick_result;
@@ -1309,6 +1310,117 @@ report:
 	}
 }
 
+/* Copy existing HWR DMA data. Firmware counters never select RAM offsets. */
+static void
+sun60i_gpu_hwr_report(struct sun60i_gpu_softc *sc)
+{
+	const struct sun60i_a733_gpu_fwmem *m = sc->sc_fw_memory;
+	const struct sun60i_a733_gpu_fwinit_region *region;
+	struct rogue_fwif_hwrinfobuf snapshot;
+	size_t used, i;
+	int count, error = EINVAL;
+
+	_Static_assert(sizeof(snapshot) == 2336, "firmware HWR buffer ABI");
+	_Static_assert(sizeof(snapshot.hwr_info[0]) == 136,
+	    "firmware HWR record ABI");
+	if (m == NULL || !m->interface_prepared || m->work.cpu == NULL ||
+	    m->work.map == NULL || !m->work.loaded ||
+	    (uintptr_t)m->work.cpu % 8 != 0)
+		goto fail;
+	region = &m->interface_layout.object[A733_GPU_FWINIT_HWR];
+	if (region->buffer != A733_GPU_FWINIT_WORK ||
+	    region->offset % 8 != 0 || region->size < sizeof(snapshot) ||
+	    region->offset > m->work.size ||
+	    region->size > m->work.size - region->offset)
+		goto fail;
+	bus_dmamap_sync(m->dmat, m->work.map, region->offset,
+	    sizeof(snapshot), BUS_DMASYNC_POSTREAD);
+	memcpy(&snapshot, (const uint8_t *)m->work.cpu + region->offset,
+	    sizeof(snapshot));
+	count = snprintf(sc->sc_hwr_state, sizeof(sc->sc_hwr_state),
+	    "capture_error=0 captured=%u counter=%u write_index=%u "
+	    "dd_req_count=%u flags=0x%x:",
+	    (u_int)__arraycount(snapshot.hwr_info), snapshot.hwr_counter,
+	    snapshot.write_index, snapshot.dd_req_count,
+	    snapshot.hwr_info_buf_flags);
+	if (count < 0 || (size_t)count >= sizeof(sc->sc_hwr_state))
+		goto full;
+	used = (size_t)count;
+	for (i = 0; i < __arraycount(snapshot.hwr_info); i++) {
+		const struct rogue_hwrinfo *h = &snapshot.hwr_info[i];
+		const char *name0 = "raw0", *name1 = "raw1", *name2 = "raw2";
+		uint64_t raw[3];
+
+		/* Keep unrecognized union variants raw for offline decoding. */
+		memcpy(raw, &h->hwr_data, sizeof(raw));
+		switch (h->hwr_type) {
+		case ROGUE_HWRTYPE_BIF0FAULT:
+		case ROGUE_HWRTYPE_BIF1FAULT:
+		case ROGUE_HWRTYPE_TEXASBIF0FAULT:
+			name0 = "req";
+			name1 = "mmu";
+			name2 = "pc";
+			break;
+		case ROGUE_HWRTYPE_MMUFAULT:
+		case ROGUE_HWRTYPE_MMUMETAFAULT:
+			name0 = "mmu0";
+			name1 = "mmu1";
+			name2 = "pc";
+			break;
+		default:
+			break;
+		}
+		count = snprintf(sc->sc_hwr_state + used,
+		    sizeof(sc->sc_hwr_state) - used,
+		    " slot=%u number=%u type=%u dm=%u core=%u pid=%u "
+		    "frame=%u hwrt=0x%x event=0x%x flags=0x%x "
+		    "%s=0x%llx %s=0x%llx %s=0x%llx;",
+		    (u_int)i, h->hwr_number, (u_int)h->hwr_type, h->dm,
+		    h->core_id, h->pid, h->frame_num, h->active_hwrt_data,
+		    h->event_status, h->hwr_recovery_flags,
+		    name0, (unsigned long long)raw[0],
+		    name1, (unsigned long long)raw[1],
+		    name2, (unsigned long long)raw[2]);
+		if (count < 0 || (size_t)count >= sizeof(sc->sc_hwr_state) - used)
+			goto full;
+		used += (size_t)count;
+	}
+	return;
+full:
+	error = ENOSPC;
+fail:
+	snprintf(sc->sc_hwr_state, sizeof(sc->sc_hwr_state),
+	    "capture_error=%d captured=0:", error);
+}
+
+/* Sample the manifest's SCRATCH backing after device-to-host DMA sync. */
+static int
+sun60i_gpu_scratch_snapshot(const struct sun60i_a733_gpu_fwvm *vm,
+    const struct a733_gpu_fwcompute_file *file, uint32_t *value)
+{
+	const struct sun60i_a733_gpu_dma *dma;
+	size_t i;
+
+	if (vm == NULL || !vm->prepared || file == NULL || value == NULL)
+		return EINVAL;
+	for (i = 0; i < __arraycount(file->resource); i++) {
+		if (file->resource[i].role == A733_GPU_FWCOMPUTE_SCRATCH)
+			break;
+	}
+	if (i == __arraycount(file->resource))
+		return ENOENT;
+	dma = &vm->resource[i];
+	if (dma->cpu == NULL || dma->map == NULL || !dma->loaded ||
+	    (uintptr_t)dma->cpu % sizeof(*value) != 0 ||
+	    file->resource[i].bytes < sizeof(*value) ||
+	    file->resource[i].bytes > dma->size)
+		return EINVAL;
+	bus_dmamap_sync(vm->dmat, dma->map, 0, sizeof(*value),
+	    BUS_DMASYNC_POSTREAD);
+	memcpy(value, dma->cpu, sizeof(*value));
+	return 0;
+}
+
 /*
  * Stage 21: publish the compute KICK in slot 4 and wait for the client
  * queue to drain and the timeline word to complete. KCCB acceptance is
@@ -1330,6 +1442,8 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 	bus_size_t size;
 	uint32_t read_off = 0, write_off = 0, timeline = 0;
 	uint32_t scratch_before = 0, scratch_after = 0;
+	bool file_loaded = false, scratch_before_valid = false;
+	bool scratch_after_valid = false;
 	struct rogue_fwif_kccb_cmd kcmd;
 	uint32_t reset_reason = 0, reset_dm = 0, reset_job = 0;
 	uint32_t reset_ctx = 0, reset_flags = 0;
@@ -1348,7 +1462,9 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 	error = sun60i_gpu_compute_load(sc, &file, &bytes, &image);
 	if (error != 0)
 		goto out;
-	scratch_before = *(const volatile uint32_t *)sc->sc_fwvm->resource[0].cpu;
+	file_loaded = true;
+	scratch_before_valid = sun60i_gpu_scratch_snapshot(sc->sc_fwvm,
+	    &file, &scratch_before) == 0;
 	error = sun60i_gpu_boot_ready(sc, power_node);
 	if (error != 0)
 		goto out;
@@ -1410,14 +1526,14 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 			break;
 		}
 	}
-	scratch_after = *(const volatile uint32_t *)sc->sc_fwvm->resource[0].cpu;
 out:
 	sc->sc_kick_done = true;
+	if (file_loaded)
+		scratch_after_valid = sun60i_gpu_scratch_snapshot(sc->sc_fwvm,
+		    &file, &scratch_after) == 0;
 	if (sc->sc_fwheap != NULL)
 		sun60i_a733_gpu_fwheap_observe(sc->sc_fwheap, &read_off,
 		    &write_off, &timeline);
-	if (sc->sc_fwvm == NULL)
-		scratch_after = 0;
 	/* Decode a pending firmware response; a context reset explains EIO. */
 	if (r->after.fw_write_offset > r->after.fw_read_offset &&
 	    r->after.fw_command == 0x2abc0069 && sc->sc_fw_memory != NULL) {
@@ -1450,7 +1566,8 @@ out:
 
 		snprintf(sc->sc_kick_state, sizeof(sc->sc_kick_state),
 		    "kick error=%d rtn=0x%x polls=%u ccb_read=%u ccb_write=%u "
-		    "timeline=%u scratch=0x%x->0x%x context=0x%08x "
+		    "timeline=%u scratch=0x%x->0x%x scratch_valid=%u/%u "
+		    "context=0x%08x "
 		    "pow=%u hwr=0x%x faults=%u log=0x%x kexec=%u "
 		    "fw_read=%u fw_write=%u fw_cmd=0x%x fw_state=%u os_state=%u "
 		    "compchecks=%u reset_ctx=%u reason=%u dm=%u job=%u "
@@ -1458,6 +1575,7 @@ out:
 		    error, (u_int)kick_rtn, (u_int)r->polls,
 		    (u_int)read_off, (u_int)write_off, (u_int)timeline,
 		    (u_int)scratch_before, (u_int)scratch_after,
+		    (u_int)scratch_before_valid, (u_int)scratch_after_valid,
 		    (u_int)A733_GPU_FWCOMPUTE_SPAN_BASE,
 		    (u_int)r->after.pow_state, (u_int)r->after.hwr_state,
 		    (u_int)r->after.fw_faults, (u_int)r->after.log_type,
@@ -1478,6 +1596,7 @@ out:
 		kmem_free(bytes, file.payload_bytes + file.header_bytes);
 	
 	sun60i_gpu_trace_report(sc);
+	sun60i_gpu_hwr_report(sc);
 return error;
 }
 
@@ -1806,6 +1925,13 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 		    NULL, 0, sc->sc_trace_state, sizeof(sc->sc_trace_state),
 		    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create trace state node\n");
+
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRING, "hwr_state",
+	    SYSCTL_DESCR("cached firmware HWR records after the kick"),
+	    NULL, 0, sc->sc_hwr_state, sizeof(sc->sc_hwr_state),
+	    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create HWR state node\n");
 
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_STRING, "kick_state",

@@ -20,11 +20,11 @@ Stage 18 (`hw.sun60igpuid0.stage=18`) is the first serializer consumer.
 It runs only on the CPU after a fully successful stage 17.
 The file format lives in
 [`sun60i_a733_gpu_fwcompute_file.h`](../../sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.h):
-one 104-byte little-endian header with magic `0x314d4337`, version 1,
-the exact BVNC, four-byte-aligned payload spans for the USC, PDS, and CDM-stream
-bytes and the 56-byte static state, their GPU addresses, the context-state
-address, priority, and identifiers. The parser validates every bound,
-alignment, and overlap and keeps the total file at most 256 KiB.
+a 96-byte little-endian prefix and nine 24-byte resource entries.
+The 312-byte header uses magic `0x324d4337` and version 2.
+It carries the exact BVNC, resource spans and addresses, the static-state span,
+context-state address, priority, identifiers, and payload digest.
+The parser validates bounds, alignment, and overlap. The complete file is at most 96 KiB.
 The production parser, span derivation, packer, and digest cross-check run in
 [`a733-gpu-fwfile-contract.sh`](../tools/a733-gpu-fwfile-contract.sh).
 
@@ -270,6 +270,21 @@ This bounded prefix is diagnostic evidence. It is not a complete wrapped-ring du
 The identification contract executes the production formatter with short and malformed spans.
 It also checks the observed 118-word case and maximum metadata values.
 
+## Stage 21 fault and output snapshots
+
+`hw.sun60igpuid0.hwr_state` reports a bounded copy of the firmware HWR buffer.
+It validates the DMA span, performs POSTREAD synchronization, and copies all 16 records.
+Counter and index fields remain metadata; they never control the copy bounds.
+`capture_error` reports invalid spans. `captured=16` confirms the copy.
+Firmware can update memory during the copy, so this snapshot is not atomic.
+The diagnostic neither consumes the firmware queue nor reads new hardware registers.
+
+`kick_state` reads the SCRATCH resource before submission and on the common exit path, including command failure.
+It reports `scratch_valid=<before>/<after>` beside the numeric words.
+A validity value of zero means that word is unavailable, not a measured zero.
+Host contracts cover malformed spans, DMA synchronization, and the failed-command path.
+Physical acceptance of these diagnostics is separate.
+
 ## Physical stages 19-21 result
 
 On 2026-10-13 the ladder ran through stage 21 on the 4 GiB Orange Pi Zero 3W.
@@ -279,7 +294,8 @@ The VM contained five windows, four directories, and twenty leaves.
 
 The trace LOGTYPE command in slot 3 now returned 1 with log type `0x3f`.
 The following KICK in slot 4 reached the firmware (`kexec=5`).
-The client queue drained to 184 bytes, but the timeline and scratch word stayed zero.
+The client queue drained to 184 bytes, but the timeline stayed zero.
+The old error path skipped the scratch read. Its printed zero is not an output-buffer observation.
 The firmware reported a CONTEXT_RESET notification with GUILTY_LOCKUP and page-fault address `0x2400`.
 Wi-Fi and SSH survived the run. No compute completion or GPU rendering is claimed.
 The previous 64-word trace capture omitted the end of the observed trace (`ptr0=118`).
