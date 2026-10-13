@@ -1,0 +1,4 @@
+# EmberBSD verified HTTPS for amd64 installation media.
+# SPDX-License-Identifier: BSD-2-Clause
+LIBS -lssl -lcrypto
+COPY ${OBJDIR}/https-certs.pem etc/openssl/cert.pem

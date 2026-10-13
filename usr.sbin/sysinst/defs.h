@@ -539,6 +539,10 @@ extern int  clean_xfer_dir;
 #if !defined(ARCH_SUBDIR)
 #define	ARCH_SUBDIR	MACH
 #endif
+
+#ifndef SYSINST_FTP_SET_DIR_BIN
+#define SYSINST_FTP_SET_DIR_BIN "/" ARCH_SUBDIR "/binary/sets"
+#endif
 #if !defined(PKG_ARCH_SUBDIR)
 #define	PKG_ARCH_SUBDIR	MACH
 #endif
@@ -586,6 +590,7 @@ extern char ext_dir_pkgsrc[STRSIZE];
 
 /* Place we look for binary sets in all fs types */
 extern char set_dir_bin[STRSIZE];
+extern char ftp_set_dir_bin[STRSIZE];
 
 /* Place we look for source sets in all fs types */
 extern char set_dir_src[STRSIZE];

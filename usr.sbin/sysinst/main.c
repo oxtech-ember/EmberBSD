@@ -39,6 +39,7 @@
 #include <sys/syslimits.h>
 #include <sys/uio.h>
 #include <stdio.h>
+#include <err.h>
 #include <signal.h>
 #include <curses.h>
 #include <unistd.h>
@@ -71,6 +72,7 @@ char ext_dir_bin[STRSIZE];
 char ext_dir_src[STRSIZE];
 char ext_dir_pkgsrc[STRSIZE];
 char set_dir_bin[STRSIZE];
+char ftp_set_dir_bin[STRSIZE];
 char set_dir_src[STRSIZE];
 char pkg_dir[STRSIZE];
 char pkgsrc_dir[STRSIZE];
@@ -97,9 +99,6 @@ __dead static void miscsighandler(int);
 static void ttysighandler(int);
 static void cleanup(void);
 static void process_f_flag(char *);
-#ifndef NO_HTTPS
-static bool no_openssl_trust_anchors_available(void);
-#endif
 
 static int exit_cleanly = 0;	/* Did we finish nicely? */
 FILE *logfp;			/* log file */
@@ -137,7 +136,8 @@ static const struct f_arg fflagopts[] = {
 	{"ftp host", SYSINST_FTP_HOST, ftp.xfer_host[XFER_HOST(XFER_FTP)], sizeof ftp.xfer_host[XFER_HOST(XFER_FTP)]},
 	{"http host", SYSINST_HTTP_HOST, ftp.xfer_host[XFER_HOST(XFER_HTTP)], sizeof ftp.xfer_host[XFER_HOST(XFER_HTTP)]},
 	{"ftp dir", SYSINST_FTP_DIR, ftp.dir, sizeof ftp.dir},
-	{"ftp prefix", "/" ARCH_SUBDIR "/binary/sets", set_dir_bin, sizeof set_dir_bin},
+	{"ftp prefix", SYSINST_FTP_SET_DIR_BIN, ftp_set_dir_bin, sizeof ftp_set_dir_bin},
+	{"local prefix", "/" ARCH_SUBDIR "/binary/sets", set_dir_bin, sizeof set_dir_bin},
 	{"ftp src prefix", "/source/sets", set_dir_src, sizeof set_dir_src},
 	{"ftp user", "ftp", ftp.user, sizeof ftp.user},
 	{"ftp pass", "", ftp.pass, sizeof ftp.pass},
@@ -183,6 +183,8 @@ init(void)
 	pm_head = (struct pm_head_t) SLIST_HEAD_INITIALIZER(pm_head);
 	SLIST_INIT(&pm_head);
 	pm_new = malloc(sizeof (struct pm_devs));
+	if (pm_new == NULL)
+		err(EXIT_FAILURE, "malloc");
 	memset(pm_new, 0, sizeof *pm_new);
 
 	for (arg = fflagopts; arg->name != NULL; arg++) {
@@ -272,15 +274,12 @@ main(int argc, char **argv)
 	/* Initialize the partitioning subsystem */
 	partitions_init();
 
-	/*
-	 * Do we need to tell ftp(1) to avoid checking certificate chains?
-	 * Does the ftp(1) that comes with this installer support https
-	 * at all?
-	 */
-#ifndef NO_HTTPS
-	if (no_openssl_trust_anchors_available())
+	/* Missing trust anchors must not disable TLS verification. */
+#ifdef NO_HTTPS
+	setenv("FTPSSLNOVERIFY", "1", 1);
+#else
+	unsetenv("FTPSSLNOVERIFY");
 #endif
-		setenv("FTPSSLNOVERIFY", "1", 1);
 
 	/* Prevent kernel conole messages from messing up the display */
 	discard_console_output();
@@ -370,9 +369,9 @@ find_language_files(const char *path, struct found_msgs *res)
 	DIR *dir;
 	struct dirent *dirent;
 	char fname[PATH_MAX];
+	char *name, *message;
 	const char *cp;
 
-	res->num_lang = 0;
 	dir = opendir(path);
 	if (!dir)
 		return;
@@ -381,14 +380,14 @@ find_language_files(const char *path, struct found_msgs *res)
 		if (memcmp(dirent->d_name, "sysinstmsgs.", 12))
 			continue;
 
-		if (res->num_lang == 0)
-			res->num_lang = 1;
 		strcpy(fname, path);
 		strcat(fname, "/");
 		strcat(fname, dirent->d_name);
 		if (msg_file(fname))
 			continue;
 		cp = msg_string(MSG_sysinst_message_language);
+		if (cp == NULL)
+			continue;
 		if (!strcmp(cp, res->lang_msg[0]))
 			continue;
 		if (res->num_lang == res->max_lang) {
@@ -405,8 +404,16 @@ find_language_files(const char *path, struct found_msgs *res)
 				break;
 			res->fnames = new;
 		}
-		res->fnames[res->num_lang] = strdup(fname);
-		res->lang_msg[res->num_lang++] = strdup(cp);
+		name = strdup(fname);
+		message = strdup(cp);
+		if (name == NULL || message == NULL) {
+			free(name);
+			free(message);
+			break;
+		}
+		res->fnames[res->num_lang] = name;
+		res->lang_msg[res->num_lang] = message;
+		res->num_lang++;
 	}
 
 	closedir(dir);
@@ -429,13 +436,16 @@ select_language(const char *msg_cat_path)
 		goto done;
 	found.lang_msg[0] = strdup(msg_string(MSG_sysinst_message_language));
 	found.fnames[0] = NULL;
+	if (found.lang_msg[0] == NULL)
+		goto done;
+	found.num_lang = 1;
 
 	if (msg_cat_path != NULL)
 		find_language_files(msg_cat_path, &found);
-	if (found.num_lang == 0)
+	if (found.num_lang == 1)
 		find_language_files(".", &found);
 #ifdef CATALOG_DIR
-	if (found.num_lang == 0)
+	if (found.num_lang == 1)
 		find_language_files(CATALOG_DIR, &found);
 #endif
 
@@ -587,7 +597,8 @@ cleanup(void)
 	restore_etc();
 #endif
 	/* Ensure we aren't inside the target tree */
-	chdir(getenv("HOME"));
+	if (chdir("/") != 0)
+		warn("chdir");
 	unwind_mounts();
 	umount_mnt2();
 	clear_swap();
@@ -658,48 +669,3 @@ process_f_flag(char *f_name)
 
 	fclose(fp);
 }
-
-#ifndef NO_HTTPS
-/*
- * return true if we do not have any root certificates installed,
- * so can not verify any trust chain.
- * We rely on /etc/openssl being the OPENSSLDIR and test the
- * "all in one" /etc/openssl/cert.pem first, if that is not found
- * check if there are multiple regular files or symlinks in
- * /etc/openssl/certs/.
- */
-static bool
-no_openssl_trust_anchors_available(void)
-{
-	struct stat sb;
-	DIR *dir;
-	struct dirent *ent;
-	size_t cnt;
-
-	/* check the omnibus single file variant first */
-	if (stat("/etc/openssl/cert.pem", &sb) == 0 &&
-	    S_ISREG(sb.st_mode) && sb.st_size > 0)
-		return false;	/* exists and is a non-empty file */
-
-	/* look for files/symlinks in the certs subdirectory */
-	dir = opendir("/etc/openssl/certs");
-	if (dir == NULL)
-		return true;
-	for (cnt = 0; cnt < 2; ) {
-		ent = readdir(dir);
-		if (ent == NULL)
-			break;
-		switch (ent->d_type) {
-		case DT_REG:
-		case DT_LNK:
-			cnt++;
-			break;
-		default:
-			break;
-		}
-	}
-	closedir(dir);
-
-	return cnt < 2;
-}
-#endif
