@@ -869,6 +869,7 @@
 ./usr/include/dev/usb/umcpmio_hid_reports.h	comp-c-include
 ./usr/include/dev/usb/umcpmio_io.h		comp-c-include
 ./usr/include/dev/usb/umoxa1150io.h		comp-c-include
+./usr/include/dev/usb/umoxa_g2io.h			comp-c-include
 ./usr/include/dev/usb/urio.h			comp-obsolete		obsolete
 ./usr/include/dev/usb/usb.h			comp-c-include
 ./usr/include/dev/usb/usbcdc.h			comp-obsolete		obsolete

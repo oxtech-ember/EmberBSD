@@ -447,3 +447,5 @@ The bridge is trial infrastructure outside this repository, not an EmberBSD
 feature or an upstream QEMU/libusb fix. No system QEMU installation changed.
 Bare-metal USB, repeated power cycles, serial modes/flow/modem and sustained
 operation still need separate acceptance.
+
+The experimental four-port USB parent is described in [moxa-g2.md](moxa-g2.md).

@@ -589,3 +589,11 @@ device	umoxa: ucombus, firmload
 attach	umoxa at usbdevif
 file	dev/usb/umoxa1150.c		umoxa
 file	dev/usb/umoxa1150_protocol.c	umoxa
+
+# MOXA UPort 1450-G2 four-port shared USB transport
+device	umoxag: ucombus, firmload
+attach	umoxag at usbdevif
+file	dev/usb/umoxa_g2.c		umoxag
+file	dev/usb/umoxa_g2_io.c		umoxag
+file	dev/usb/umoxa_g2_tty.c		umoxag
+file	dev/usb/umoxa_g2_protocol.c	umoxag
