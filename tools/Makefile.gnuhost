@@ -70,6 +70,11 @@ CONFIGURE_ENV+= \
 		RANLIB=${HOST_RANLIB:Q} \
 		YACC=${YACC:Q}
 
+# GNU sub-makes use env -i below.  Keep an explicitly selected Darwin SDK.
+.if ${BUILD_OSTYPE} == "Darwin" && defined(SDKROOT)
+CONFIGURE_ENV+= SDKROOT=${SDKROOT:Q}
+.endif
+
 BUILD_ENV+=	${CONFIGURE_ENV}
 
 CONFIGURE_ARGS+=--prefix=${TOOLDIR}
