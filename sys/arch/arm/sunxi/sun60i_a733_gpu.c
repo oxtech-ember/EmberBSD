@@ -1159,7 +1159,7 @@ sun60i_gpu_stage_fwheap(struct sun60i_gpu_softc *sc, int power_node)
 	    0, &bsh);
 	if (error != 0)
 		goto out;
-	memset(&kcmd, 0, sizeof(cmd));
+	memset(&kcmd, 0, sizeof(kcmd));
 	kcmd.cmd_type = ROGUE_FWIF_KCCB_CMD_MMUCACHE;
 	kcmd.cmd_data.mmu_cache_data.cache_flags = 0x0400001f;
 	kcmd.cmd_data.mmu_cache_data.mmu_cache_sync_fw_addr =
