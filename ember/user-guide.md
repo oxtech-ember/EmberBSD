@@ -103,6 +103,7 @@ As root, generate missing host keys, validate the server, and start it:
 ```sh
 ssh-keygen -A
 /usr/sbin/sshd -t
+ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
 Set `sshd=YES` in `/etc/rc.conf`, then run `/etc/rc.d/sshd start`.

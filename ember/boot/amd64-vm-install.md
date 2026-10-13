@@ -18,6 +18,9 @@ Use a complete local-set ISO from an identified build, or prepare one from this 
 The following **host** recipe uses the source tree's own bootstrap compiler.
 Read [BUILDING](../../BUILDING), [UPDATING](../../UPDATING) and `tools/compat/README` for host requirements.
 Install host C/C++ compilers and development headers first.
+The image validator also needs host Ruby and a libarchive `tar` that can read ISO files.
+The checked macOS host supplies that `tar`; GNU tar cannot read this format.
+On another host, make the ISO-capable libarchive tool available as `tar` in the validator's `PATH`.
 Use a case-sensitive source/build volume when the host filesystem has colliding names.
 Reserve space for the full source tree, tools, destination, object and release directories.
 The 32 GiB guest disk below is separate from that build storage.
@@ -100,14 +103,31 @@ Letters select menu items; Enter activates them.
 
 1. Select the new disk. This configuration shows `wd0`, `32G`, `QEMU HARDDISK`.
 2. Use GPT and the full disposable disk. Keep the proposed EFI, root and swap partitions unless testing another layout.
-3. Select **Installation without X11**. This matches the image's `MKX11=no` profile.
-4. Review the final disk and partition summary before allowing writes.
+3. Review the final disk and partition summary before allowing writes.
+4. Select **Installation without X11**. This matches the image's `MKX11=no` profile.
 5. Select the local CD-ROM/installation-medium sets. Keep the ISO attached until extraction completes.
 6. Use the architecture and set directory already supplied for that medium.
 7. If the optional `base32` set is absent, acknowledge the notice and continue without it.
-8. Set the timezone and a hostname, such as `ember-vm`. Configure console passwords for a connected deployment.
+8. Set the timezone. Configure console passwords for a connected deployment.
 9. Leave network configuration and SSH disabled for this isolated exercise.
-10. Complete installation and return to the main menu.
+10. Set the hostname as described below, then complete installation and return to the main menu.
+
+The no-network profile has no interface through which sysinst can configure a hostname.
+In the final configuration menu, choose **Run /bin/sh**.
+Run `mount` and confirm the installed FFS root is mounted at `/targetroot`.
+Read `/targetroot/etc/rc.conf` and preserve its defaults include.
+For this fresh installation, add the following only if neither assignment is already present:
+
+```sh
+echo 'hostname="ember-vm"' >> /targetroot/etc/rc.conf
+echo 'postfix=NO' >> /targetroot/etc/rc.conf
+exit
+```
+
+If either assignment exists, edit it instead of appending a conflicting value.
+Then select **Finished configuring**.
+This headless exercise does not configure a mail service.
+Setting the hostname and disabling unused Postfix avoids its empty-hostname startup failure.
 
 Source-menu labels can vary by image revision.
 Choose the medium containing the matching sets, not the unavailable Internet channel.
@@ -124,7 +144,7 @@ The installed system must start without installation media.
 Log in on the guest console, then follow [first-login configuration](../user-guide.md#first-login-and-local-configuration).
 Set `postfix=NO` in `/etc/rc.conf` if this VM does not use a mail service.
 
-Run inside the **guest**:
+Run as **root inside the guest**:
 
 ```sh
 uname -srm
