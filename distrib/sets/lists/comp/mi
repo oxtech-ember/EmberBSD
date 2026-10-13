@@ -7562,6 +7562,7 @@
 ./usr/share/man/cat3/dwarf_diename.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_dieoffset.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_elf_init.0	comp-c-catman	.cat
+./usr/share/man/cat3/dwarf_elf_init_section.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_end_macro_file.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_errmsg.0	comp-c-catman	.cat
 ./usr/share/man/cat3/dwarf_errno.0	comp-c-catman	.cat
@@ -16537,6 +16538,7 @@
 ./usr/share/man/html3/dwarf_diename.html	comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_dieoffset.html	comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_elf_init.html	comp-c-htmlman	html
+./usr/share/man/html3/dwarf_elf_init_section.html	comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_end_macro_file.html comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_errmsg.html comp-c-htmlman	html
 ./usr/share/man/html3/dwarf_errno.html	comp-c-htmlman	html
@@ -25450,6 +25452,7 @@
 ./usr/share/man/man3/dwarf_diename.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_dieoffset.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_elf_init.3	comp-c-man	.man
+./usr/share/man/man3/dwarf_elf_init_section.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_end_macro_file.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_errmsg.3	comp-c-man	.man
 ./usr/share/man/man3/dwarf_errno.3	comp-c-man	.man
