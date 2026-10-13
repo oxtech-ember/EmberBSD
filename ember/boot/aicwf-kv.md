@@ -106,6 +106,17 @@ The next scan completed after that drain.
 On `1fc69e1dc077`, all 54 live station-ioctl checks passed on both radio bands.
 Unprivileged mutation requests were rejected.
 
+On `08f7388fe605`, directed WPA2 reassociation completed in both band directions.
+The interval from the association request to key completion was 0.328 and 0.346 seconds.
+The largest reply gaps were 0.614 and 0.615 seconds during 0.2-second ping sampling.
+Each 30-second run received 148 of 150 replies.
+The first reverse command was rejected by the client before association started.
+It succeeded after a fresh connected scan populated the target BSS entry.
+That scan preserved the current BSSID and association generation.
+All 54 live ABI checks passed on both bands with the final kernel.
+An 8 MiB round trip passed SHA256 and byte comparison after the transitions.
+These were two directed `wpa_cli roam` checks, not AP-initiated BTM acceptance.
+
 Neighbor Report requests received matching firmware TX confirmations with the ACK bit set.
 The AP replied with category 5, action 5 and a three-byte body.
 That body contains no neighbor entries; the supplicant reported the request as failed.

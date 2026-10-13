@@ -727,7 +727,7 @@ on every board in the hardware catalog.
   SAE/H2E and required PMF have separate physical checks, but a nonzero initial
   IGTK IPN still prevents key installation on affected APs. The new
   [host-managed k/v transport](ember/boot/aicwf-kv.md) has physical connected-scan,
-  ioctl and management TX/RX checks. Neighbor-list and BTM acceptance remain pending.
+  ioctl, directed reassociation and management TX/RX checks. Neighbor-list and BTM acceptance remain pending.
   Protected SA Query and recovery checks are documented
   in the [SAE guide](ember/boot/aicwf-sae.md).
 - **Consistent Wi-Fi discovery and CM5 cooling:** `bwfm` retains firmware

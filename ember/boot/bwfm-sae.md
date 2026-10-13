@@ -75,6 +75,21 @@ On the tested firmware the driver report also shows `wsec=0x604`,
 installation: a successful SAE exchange alone does not prove PMF stayed on.
 Raw interface diagnostics may expose keys; redact private logs before sharing.
 
+If a capable station uses WPA2, check its active profile before replacing the kernel:
+
+```sh
+wpa_cli -i bwfm0 status
+wpa_cli -i bwfm0 get_capability key_mgmt
+# Replace NETWORK_ID with the id reported by status.
+wpa_cli -i bwfm0 get_network NETWORK_ID key_mgmt
+wpa_cli -i bwfm0 get_network NETWORK_ID ieee80211w
+```
+
+A profile that permits only `WPA-PSK WPA-EAP` cannot select SAE.
+Installing a new kernel does not rewrite that profile.
+A reported client capability does not prove that the active profile enables it.
+Use the explicit SAE profile above and verify the resulting SAE and PMF status.
+
 If Ethernet and Wi-Fi share a subnet, an SSH connection to the Wi-Fi address
 alone does not establish the return path. Check the route to the test peer
 and verify it uses bwfm0 in both directions. Do not disable the management
