@@ -24,6 +24,22 @@ Update the readelf copied into the external compiler prefix and rerun its
 installed split-DWARF check. Do not bypass that check or lower DWARF versions.
 This validates the reader and compiler probe, not kernel boot or hardware.
 
+## Explicit-base boundaries
+
+`ruby ember/tests/readelf-string-bases.rb CROSS_CC READELF NEW_WORK` creates
+28 real ELF cases for both offset widths and ordinary/split units. It checks
+late bases, inline strings before the base, indirect forms, duplicate bases
+and unsupported forms. Duplicate/unsupported inputs must retain the child DIE
+and emit their expected diagnostic. Explicit-zero cases use a compatibility
+layout without a contribution header; they assert preservation, not DWARF5
+conformance. The first 20 cases reproduced 8 review findings, then 4 after
+fixing inline strings; the final parser passes all 28 and the 24 producer cases.
+
+The repair consumes a bounded inline string terminator and resolves indirect
+forms before reading or skipping the explicit base. Analysis retains inherited
+Binutils warnings; this is not a claim of a clean entire parser or supported
+split-type units.
+
 ## Provenance
 
 The repair adapts Tom de Vries's
