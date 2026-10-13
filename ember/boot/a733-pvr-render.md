@@ -81,12 +81,19 @@ Run the production-source contract:
 ```sh
 CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' \
     sh ember/tools/pvr-render-contract.sh
+CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' \
+    sh ember/tools/pvr-bo-contract.sh
+CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' \
+    sh ember/tools/drm-mmap-contract.sh
 ```
 
 The contract compiles the actual query and registration code with boundary
 stubs. It checks short objects, output bounds, padding, copy faults, unsupported
 queries, duplicate registration, and last-reference cleanup after failed attach.
 These checks do not exercise the kernel DRM core, device nodes, or hardware.
+The BO contract also compiles the real GEM close and pager reference helpers.
+It checks 4 KiB and 16 KiB host-page cases and allocation failure cleanup.
+The mmap contract rejects a missing driver callback before changing outputs.
 
 Build the native acceptance utility with the selected GCC16 compiler and a
 recorded EmberBSD sysroot. Do not substitute upstream NetBSD libraries.
@@ -94,6 +101,8 @@ recorded EmberBSD sysroot. Do not substitute upstream NetBSD libraries.
 ```sh
 CC=/path/to/aarch64--netbsd-gcc SYSROOT=/path/to/emberbsd-sysroot \
     sh ember/tools/pvr-render-check-build.sh /path/to/EmberBSD /new/output
+CC=/path/to/aarch64--netbsd-gcc SYSROOT=/path/to/emberbsd-sysroot \
+    sh ember/tools/pvr-bo-check-build.sh /path/to/EmberBSD /new/bo-output
 ```
 
 After explicit registration, select the actual render device reported by the
@@ -101,6 +110,7 @@ native DRM platform record. Pass its path and the independently measured BVNC:
 
 ```sh
 /path/to/pvr-render-check /dev/dri/renderD128 0x00240038006800b7
+/path/to/pvr-bo-check /dev/dri/renderD128
 ```
 
 Keep the kernel revision, node identity, tool hash, and output with the board
@@ -110,13 +120,13 @@ runtime queries. Accelerated Plasma also requires the display path.
 The separate [bounded compute experiment](a733-gpu-fwcompute.md) is not a DRM
 submission API.
 
-## Physical identity result
+## Physical result
 
-On 2026-10-13, Zero 3W passed registration on kernel `e25e95dd908`.
+On 2026-10-13, Zero 3W passed registration on kernel `2b8bd199f829`.
 The compute experiment first passed all 21 stages again after a fresh boot.
 The registered nodes were `card0` and `renderD128`, with device major 180.
 Both native platform records described `allwinner,sun60i-a733-gpu`.
-The identity utility from `9ccdadbfe10` passed all 72 checks.
+The identity utility from the same commit passed all 72 checks.
 It verified BVNC `36.56.104.183`, bounded outputs, invalid pointers, unsupported
 queries, and absent synchronization and modesetting capabilities.
 A repeated registration request returned success without another device.
@@ -125,7 +135,12 @@ Both its shared library and a diagnostic archive from the same build passed.
 The [Ports checker](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/libdrm-platform-check.c)
 accepts the explicit `allwinner,sun60i-a733-gpu` profile.
 
-The original utility expected zero for the absent modesetting capability.
-The native DRM core correctly returns `EOPNOTSUPP` without `DRIVER_MODESET`.
-The corrected utility tests that error. The driver did not need this change.
-No GEM allocation, DRM job submission, Vulkan, or display was accepted here.
+The BO utility passed 2,105,411 checks, including an 8 MiB allocation.
+It checked zeroed pages, six valid flag combinations, invalid requests,
+foreign-file rejection, stable offsets, and complete and prefix mappings.
+Both mappings stayed accessible after closing the handle and both files.
+The prefix remained writable after unmapping the complete buffer.
+The final unmap completed without a fault or watchdog reset.
+
+This accepts native GEM and CPU mappings only. GPU cache coherency for these
+BOs, GPU VM, DRM job submission, Vulkan, display, and Plasma remain unaccepted.
