@@ -219,3 +219,11 @@ its generated scanner are tested without replacing m4:
 ```sh
 sh ember/tests/lex-host-filter.sh /absolute/nblex HOST_CC SDK NEW_WORK
 ```
+
+The flex caller repair has independent spec/quality/security approval. Original
+and patched actual `main.c` compiler analysis each retain one GCC warning
+(imprecise floating-point statistics) and one Clang warning (m4 allocation
+ownership). Cppcheck could not parse this Darwin configuration: the compilation
+database reached a NAME_MAX header guard; actual GCC preprocessing then exposed
+an SDK errno typedef syntax limitation. Both inputs fail identically. These
+failures are recorded, not a clean Cppcheck claim or a full flex audit.
