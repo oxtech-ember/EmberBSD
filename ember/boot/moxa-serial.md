@@ -5,8 +5,8 @@ EmberBSD provides preparatory C helpers for a shared four-port MOXA G2 USB
 transport, plus an opt-in `ucom` backend that connects external transports to
 the existing TTY lifecycle. They let developers exercise framing, completion,
 queueing and TTY faults before attaching a device. The separate experimental `umoxa` USB parent supports the 1150 protocol below.
-The G2 USB parent and Ethernet NPort implementation remain pending. Physical
-USB, firmware and serial validation remain pending for all models.
+The G2 USB parent and Ethernet NPort implementation remain pending. Physical serial validation remains pending for all models. The isolated 1150
+USB/firmware trial below does not establish G2 or native board support.
 
 ## Experimental UPort 1150 parent
 
@@ -23,7 +23,7 @@ B812A68A776EFC345FB34ACCFA57C928268278BBCCEA674D7A6ED24FDA674FD7A6064FDE23818CA3
 
 Cold configuration 1 must have one firmware bulk-out endpoint; warm configuration
 2 must have bulk-in, bulk-out and interrupt-in endpoints. Actual endpoint
-addresses come from descriptors. Those shapes still require capture on a real
+addresses come from descriptors. The shapes were captured on the owner's physical
 1150. On 2026-10-13, read-only cached descriptor capture on macOS confirmed
 the owner's cold `110a:1150` (bcdDevice `0x0200`): configuration 1, interface
 0, one bulk-out endpoint `0x01`, maximum packet 64. A later firmware trial confirmed a warm device descriptor with one configuration
@@ -31,7 +31,7 @@ whose value is 2: bulk-in `0x81`, bulk-out `0x01`, interrupt-in `0x83` (2 bytes)
 The parent selects the state by configuration values, not their count.
 Firmware upload completed 255 transfers (16287 bytes), but reset returned an
 I/O error through macOS/QEMU. Automatic re-enumeration and the serial line
-remain unchecked. The driver rejects other
+remain unchecked; manual warm attachment is recorded below. The driver rejects other
 configurations and malformed status packets.
 Data uses the existing one-port USB/TTY path, without G2 multiplexed framing.
 
@@ -65,7 +65,7 @@ DTR/RTS/break ioctls; failures are logged and retained, and do not establish
 physical control success. Partial USB command acceptance is not rolled back.
 Hardware flow, mode changes, carrier reporting and UART drain are unaccepted.
 
-Run the 12 wire/lifecycle groups, 15 actual-parent groups, and the actual
+Run the 12 wire/lifecycle groups, 16 actual-parent groups, and the actual
 `ucomparam`/initial-parameter-section regression on Linux/macOS:
 
 ```sh
@@ -385,3 +385,16 @@ The external asset from linux-firmware tag `20250211` is 12462 bytes with SHA256
 `5a7a87085584c4ccf8de63249934fb6b5129e2a42aa6efda2f740f0af2978f8b`.
 Its [MOXA license](https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git/+/refs/tags/20250211/LICENCE.moxa)
 allows use on MOXA devices. The opaque file and license remain outside Git.
+
+The corrected kernel at `f50dd3b10fe00501141fd1636951180eba37f329` also booted
+with SHA256 `c6c4c0920b5866ee721ae931cc481158e7d38452327846aa4607016667de1bcb`.
+After manual QEMU detach/restart and host configuration 2, the physical warm
+adapter attached as `umoxa0` with `ucom0` and `/dev/dtyU0`. The warm trial
+issued no firmware bulk writes. Reset acknowledgement and automatic transition
+from cold to warm remain unresolved through this host backend. Serial data,
+carrier/modem events, native concurrency and sustained operation remain pending.
+
+For the next RS-232 loopback trial, connect DB9 pin 2 (RxD) to pin 3 (TxD),
+using the connector's pin numbers. The supplied terminal block has a different
+mapping; this instruction is for the DB9 connector. Pinout:
+[MOXA UPort 1100 QIG, page 3](https://moxa.com/getmedia/f21cfe09-4f59-4241-a93a-aaa207e2f003/moxa-uport-1100-series-qig-v8.2.pdf).
