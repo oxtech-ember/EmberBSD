@@ -85,3 +85,38 @@ Mesa 26.2.4nb6 with Zink and the Vulkan compute consumer are prepared in
 Their installation does not establish GPU execution.
 Native PRIME ownership and the A733 DE3.52/TCON/HDMI/KMS path remain separate work.
 An offscreen result does not establish a visible accelerated Plasma session.
+
+## Unfinished dispatcher snapshot
+
+This branch also preserves a later, unaccepted firmware-event dispatcher.
+The tested primitives commit is `795a20d364e6f7c32c161ce787bd57890cde2e22`.
+The dispatcher changes are a separate WIP commit after that revision.
+They must pass review and testing before integration into `main` or deployment.
+The source-contract command above applies to the tested primitives commit.
+The WIP free-list fixture currently does not compile.
+
+The draft adds validated GROW dequeue and GROW_UPDATE transport, a bounded
+32-event service drain, and `pvr_fw_events` / `set_events` callbacks.
+It also adds `pvr_freelist_current_pages()` for a ready, quiet owner.
+The device-wide registry and installation of its callbacks are not implemented.
+Reconstruction requests remain unsupported.
+
+Start with these known fixture problems:
+
+- `pvr-freelist-contract.c` calls `current_pages_tests()` without its definition.
+  Test ready/current counts, pending growth, completed growth, failed owners,
+  cleaned owners, and NULL before accepting the getter.
+- `a733-gpu-fwbridge-contract.c` calls `enter` after `start()` already holds the gate.
+  Correct that duplicate acquisition in the fixture.
+- The new fwprobe fixture failed `result.command == get32(golden)`.
+  Its `prepare_service()` setup was changed afterward but was not rerun.
+
+New service and bridge contracts, getter checks, causal regressions, and target
+analysis have not run for this draft. Review them before claiming a complete dispatcher.
+The earlier passing growth receipt does not cover this later getter change.
+Physical firmware must also establish whether KICK consumption precedes the
+request/response dependency. Keep bounded failure if that assumption does not hold.
+
+HWRT UAPI/handle integration and graphics `SUBMIT_JOBS` integration were designed
+but not started. Existing `pvr_exec.c`, `pvr_submit.c`, and their contracts remain unchanged.
+Use the prepared primitive APIs; do not assume the proposed handle APIs already exist.

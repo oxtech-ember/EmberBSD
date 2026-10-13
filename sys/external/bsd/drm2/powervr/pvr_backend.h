@@ -6,6 +6,21 @@
 #include <sys/types.h>
 
 struct rogue_fwif_kccb_cmd;
+struct rogue_fwif_freelist_gs_data;
+
+/*
+ * Install once while both gates are held. Keep cookie alive until reboot.
+ * Callbacks run after a copied FWCCB event is consumed and its read confirmed.
+ * They must not acquire either gate or call backend operations. Complete
+ * may call fail(), which only marks state without locking or transport.
+ * A successful prepare always receives one complete, including delta0 and
+ * uncertain response completion. Nonzero callback returns are fatal.
+ */
+struct pvr_fw_events {
+	void *cookie;
+	int (*grow_prepare)(void *, uint32_t, struct rogue_fwif_freelist_gs_data *);
+	int (*grow_complete)(void *, uint32_t, int);
+};
 
 struct pvr_fw_object {
 	void *cpu;
@@ -37,6 +52,7 @@ struct pvr_backend {
 	int (*flush)(void *);
 	int (*check)(void *);
 	void (*fail)(void *);
+	int (*set_events)(void *, const struct pvr_fw_events *);
 };
 
 struct drm_device;

@@ -154,6 +154,19 @@ fwbridge_check(void *cookie)
 	return error;
 }
 
+static int
+fwbridge_set_events(void *cookie, const struct pvr_fw_events *events)
+{
+	struct sun60i_a733_gpu_fwbridge *bridge = cookie;
+
+	if (!fwbridge_ready(bridge))
+		return EIO;
+	if (events == NULL)
+		return EINVAL;
+	return sun60i_a733_gpu_fwservice_set_events(&bridge->service,
+	    events->cookie, events->grow_prepare, events->grow_complete);
+}
+
 static void
 fwbridge_fail(void *cookie)
 {
@@ -196,6 +209,7 @@ sun60i_a733_gpu_fwbridge_prepare(struct sun60i_a733_gpu_fwbridge *bridge,
 		.flush = fwbridge_flush,
 		.check = fwbridge_check,
 		.fail = fwbridge_fail,
+		.set_events = fwbridge_set_events,
 	};
 	return 0;
 }

@@ -679,6 +679,6 @@ main(void)
 	invalid_cases(); allocation_failures(); retained_failures();
 	growth_cases(); growth_failures(); reset_state();
 	free(backing.cpu); free(backing.visible);
-	printf("pvr FreeList: %u checks passed\n", checks);
+	current_pages_tests(); printf("pvr FreeList: %u checks passed\n", checks);
 	return 0;
 }

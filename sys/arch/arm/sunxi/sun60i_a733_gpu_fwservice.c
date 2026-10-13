@@ -53,27 +53,134 @@ sun60i_a733_gpu_fwservice_attach(struct sun60i_a733_gpu_fwservice *service,
 }
 
 int
+sun60i_a733_gpu_fwservice_set_events(struct sun60i_a733_gpu_fwservice *service,
+    void *cookie,
+    int (*prepare)(void *, uint32_t, struct rogue_fwif_freelist_gs_data *),
+    int (*complete)(void *, uint32_t, int))
+{
+
+	if (cookie == NULL || prepare == NULL || complete == NULL)
+		return EINVAL;
+	if (!fwservice_ready(service))
+		return EIO;
+	if (service->events_set || service->dispatching)
+		return EBUSY;
+	service->event_cookie = cookie;
+	service->grow_prepare = prepare;
+	service->grow_complete = complete;
+	service->events_set = true;
+	return 0;
+}
+
+/* No callback may recursively enter the transport while it owns an event. */
+static int
+fwservice_drain(struct sun60i_a733_gpu_fwservice *service,
+    struct sun60i_a733_gpu_fwprobe_observation *observation)
+{
+	struct sun60i_a733_gpu_fwprobe_result result;
+	struct rogue_fwif_kccb_cmd command;
+	uint32_t id;
+	unsigned int count;
+	int error, completion;
+
+	if (service->dispatching) {
+		service->queue.failed = true;
+		return EDEADLK;
+	}
+	service->dispatching = true;
+	for (count = 0; count < A733_GPU_FWINIT_FWCCB_COUNT; count++) {
+		error = sun60i_a733_gpu_fwqueue_event(service->memory, service->boot,
+		    &service->queue, &id);
+		if (error == ENOENT) {
+			error = 0;
+			break;
+		}
+		if (error != 0)
+			break;
+		if (!service->events_set) {
+			error = EOPNOTSUPP;
+			break;
+		}
+		memset(&command, 0, sizeof(command));
+		command.cmd_type = ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE;
+		error = service->grow_prepare(service->event_cookie, id,
+		    &command.cmd_data.free_list_gs_data);
+		if (error != 0)
+			break;
+		memset(&result, 0, sizeof(result));
+		error = sun60i_a733_gpu_fwqueue_cmd(service->bst, service->bsh,
+		    service->memory, service->boot, &service->queue, &command,
+		    service->queue.expected_log_type, &result);
+		if (error == 0)
+			error = sun60i_a733_gpu_fwqueue_observe(service->memory,
+			    service->boot, &service->queue, observation);
+		completion = service->grow_complete(service->event_cookie, id, error);
+		if (error == 0)
+			error = completion;
+		if (error == 0 && service->queue.failed)
+			error = EIO;
+		if (error != 0)
+			break;
+	}
+	if (error == 0) {
+		error = sun60i_a733_gpu_fwqueue_observe(service->memory,
+		    service->boot, &service->queue, observation);
+		if (error == 0 && observation->state.fw_read_offset !=
+		    observation->state.fw_write_offset)
+			error = ELOOP;
+	}
+	service->dispatching = false;
+	if (error != 0)
+		service->queue.failed = true;
+	return error > 0 ? error : error == 0 ? 0 : EPROTO;
+}
+
+int
 sun60i_a733_gpu_fwservice_command(struct sun60i_a733_gpu_fwservice *service,
     const struct rogue_fwif_kccb_cmd *command,
     struct sun60i_a733_gpu_fwprobe_result *result)
 {
+	struct sun60i_a733_gpu_fwprobe_observation observation;
+	int error, dispatch_error;
 
 	if (!fwservice_ready(service))
 		return EIO;
-	return sun60i_a733_gpu_fwqueue_cmd(service->bst, service->bsh,
+	if (service->dispatching) {
+		service->queue.failed = true;
+		return EDEADLK;
+	}
+	error = sun60i_a733_gpu_fwqueue_cmd(service->bst, service->bsh,
 	    service->memory, service->boot, &service->queue, command,
 	    service->queue.expected_log_type, result);
+	if (error != 0 && (error != EBUSY || service->queue.failed))
+		return error;
+	dispatch_error = fwservice_drain(service, &observation);
+	if (dispatch_error != 0) {
+		result->error = dispatch_error;
+		return dispatch_error;
+	}
+	return error;
 }
 
 int
 sun60i_a733_gpu_fwservice_observe(struct sun60i_a733_gpu_fwservice *service,
     struct sun60i_a733_gpu_fwprobe_observation *result)
 {
+	int error;
 
 	if (!fwservice_ready(service))
 		return EIO;
-	return sun60i_a733_gpu_fwqueue_observe(service->memory, service->boot,
+	if (service->dispatching) {
+		service->queue.failed = true;
+		return EDEADLK;
+	}
+	error = sun60i_a733_gpu_fwqueue_observe(service->memory, service->boot,
 	    &service->queue, result);
+	if (error != 0)
+		return error;
+	error = fwservice_drain(service, result);
+	result->error = error;
+	return error;
 }
 
 int

@@ -357,6 +357,14 @@ pvr_freelist_grow_complete(struct pvr_freelist *fl, int error)
 }
 
 uint32_t
+pvr_freelist_current_pages(const struct pvr_freelist *fl)
+{
+
+	return fl != NULL && fl->ready && !fl->failed && !fl->cleaned &&
+	    !fl->grow_prepared ? fl->current_pages : 0;
+}
+
+uint32_t
 pvr_freelist_fw_address(const struct pvr_freelist *fl)
 {
 
