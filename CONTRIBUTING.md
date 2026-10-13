@@ -25,10 +25,13 @@ SDK and Runtime names do not establish released APIs.
 
 ## 2. Describe the change before implementation
 
-Search [EmberBSD issues](https://github.com/oxtech-ember/EmberBSD/issues) and existing pull requests.
-Use the owning repository's issue tracker for a component change.
-Open or update an issue for a new board, substantial feature, or interface change.
+Search the accepting repository's existing pull requests and its enabled discussion channels.
+Use its issue tracker when issues are enabled. EmberBSD currently has issues disabled.
+For a new board, substantial feature or interface change in this repository, open a
+draft pull request containing a short public proposal in the relevant documentation directory.
+Include the fields below and state that implementation and hardware acceptance are pending.
 Discuss its scope and acceptance scenario before implementation.
+Keep internal task cards, coordination plans and personal data outside the public proposal.
 A small repair can put the same information directly in its pull request.
 
 Record these fields in the change description:
@@ -187,7 +190,7 @@ Reading a skill manually does not install it or prove agent behavior.
 Start the task with the same problem, baseline, acceptance scenario, and deployment scope used above.
 For example:
 
-> Use emberbsd-repository-guide and emberbsd-add-board for the approved board-change issue.
+> Use emberbsd-repository-guide and emberbsd-add-board for the approved board-change request.
 > Follow CONTRIBUTING.md. Record source/build/VM/hardware separately.
 > Preserve parallel boot work. Prepare the patch and evidence for independent review.
 > Do not flash or restart the board outside the agreed scope.
