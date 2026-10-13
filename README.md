@@ -371,8 +371,13 @@ on every board in the hardware catalog.
   [Current desktop providers](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-providers.md)
   include SDL3 game-controller code with eight CM5 checks and a UBSan repeat.
   Event sounds keep the same core library without mandatory GTK. The Desktop
-  source recipe selects current Fcitx5/Qt6; target input and the full shell
-  still require acceptance. KIO MTP/audio plugins are installed and linked on CM5.
+  recipe selects current Fcitx5/Qt6. The complete
+  [Fcitx5 core package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/recipes/inputmethod/fcitx5/tests/runtime/README.md)
+  passes all 51 installed upstream cases on CM5, including a stronger XKB data check.
+  Ports fixes missing-signature parsing, lost keyboard models/options and CMake exports
+  for cross-built Qt consumers. The complete Qt6 adapter passes five installed
+  [input-plugin and metadata checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/recipes/inputmethod/fcitx5-qt/tests/runtime.md).
+  Graphical input and the full shell still require acceptance. KIO MTP/audio plugins are installed and linked on CM5.
   Input prerequisites pass 264 UnitTest++ cases, 295 JSON assertions, and
   Enchant's 434 main and 25 Hunspell tests. Physical MTP remains unverified.
   [Gettext 1.0](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/tests/gettext-runtime/README.md)
