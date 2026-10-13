@@ -31,6 +31,9 @@ typedef unsigned long u_long;
 #define IEEE80211_SAE_DELETE_IGTK 4
 #define IEEE80211_SAE_TX_SA_QUERY 6
 #define AICWF_HWKEY_NONE 255
+#define AICWF_STA_NOTICE_LEN 28
+#define RTM_IEEE80211_STA_TX 1
+#define RTM_IEEE80211_STA_SCAN 2
 #define AICWF_SM_EXTERNAL_AUTH_RSP 10
 #define AICWF_SM_EXTERNAL_AUTH_CFM 11
 #define AICWF_MM_KEY_DEL_REQ 12
@@ -52,7 +55,7 @@ struct ieee80211_node {uint8_t ni_bssid[6];};
 struct ieee80211com {void *ic_ifp; int ic_opmode, ic_state; struct ieee80211_node *ic_bss; uint8_t ic_myaddr[6];};
 struct ieee80211req_sae {uint32_t generation; uint16_t version, op, len, reserved[2]; uint8_t bssid[6], data[1536];};
 struct ieee80211req {int i_len,i_val; void *i_data;};
-struct aicwf_softc {struct ieee80211com sc_ic; int sc_dev, sc_vif, sc_lock, sc_epoch_lock; uint16_t sc_sae_caps; bool sc_if_attached,sc_sae_enabled,sc_sae_pending,sc_sae_authenticated,sc_connecting,sc_connected; uint32_t sc_sae_generation; uint64_t sc_sae_epoch; bool sc_ptk_valid; uint64_t sc_pmf_rx_pn; uint8_t sc_ptk[16]; uint8_t sc_sae_bssid[6],sc_igtk[2];};
+struct aicwf_softc {struct ieee80211com sc_ic; int sc_dev, sc_vif, sc_lock, sc_epoch_lock, sc_if; uint16_t sc_sae_caps; bool sc_if_attached,sc_sae_enabled,sc_sae_pending,sc_sae_authenticated,sc_connecting,sc_connected; uint32_t sc_sae_generation; uint64_t sc_sae_epoch; bool sc_ptk_valid; uint64_t sc_pmf_rx_pn; uint8_t sc_ptk[16]; uint8_t sc_sae_bssid[6],sc_igtk[2];};
 static void mutex_enter(int *p) { assert(!*p); *p = 1; }
 static void mutex_exit(int *p) { assert(*p); *p = 0; }
 #define mutex_spin_enter mutex_enter
@@ -71,7 +74,11 @@ static int aicwf_sae_tx(struct aicwf_softc *sc,const uint8_t *p,size_t n,uint64_
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
-static void aicwf_disconnect_ind(struct aicwf_softc *);
+static void aicwf_disconnect_ind(struct aicwf_softc *, const uint8_t *, size_t);
+static void aicwf_sta_retire_locked(struct aicwf_softc *sc, uint8_t *tx, bool *a, uint8_t *scan, bool *b)
+{ assert(sc->sc_lock); (void)tx; (void)scan; *a = *b = false; }
+static void rt_ieee80211msg(void *ifp, int code, void *p, size_t n)
+{ (void)ifp; (void)code; (void)p; (void)n; assert(false); }
 static void aicwf_disconnect(struct aicwf_softc *);
 static int aicwf_sae_ioctl(struct aicwf_softc *, u_long, struct ieee80211req *);
 static int interruption, disconnect_requests;
@@ -99,9 +106,10 @@ static int aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id,
         struct ieee80211req ireq = {.i_len=sizeof(req), .i_data=&req};
         assert(aicwf_sae_ioctl(sc, SIOCS80211, &ireq) == 0);
     } else if (mode) {
-        if (sc->sc_connected)
-            aicwf_disconnect_ind(sc);
-        else
+        if (sc->sc_connected) {
+            uint8_t ind[6] = {0}; ind[2] = sc->sc_vif;
+            aicwf_disconnect_ind(sc, ind, sizeof(ind));
+        } else
             aicwf_disconnect(sc);
         if (mode == 2) {
 
@@ -195,11 +203,27 @@ int main(void)
     aicwf_disconnect(&sc);
     assert(sc.sc_sae_generation == 43 && !sc.sc_connected);
     assert(disconnect_requests == 1 && sc.sc_igtk[0] == AICWF_HWKEY_NONE);
-    puts("PASS: 13 SAE lifetime cases, including CONFIGURE during requested leave");
+    /* Foreign or short disconnect indications cannot retire this link. */
+    uint8_t ind[6] = {0};
+    sc.sc_connected = sc.sc_sae_authenticated = true;
+    sc.sc_ic.ic_state = IEEE80211_S_RUN;
+    sc.sc_vif = 1;
+    const uint64_t epoch = sc.sc_sae_epoch;
+    aicwf_disconnect_ind(&sc, ind, sizeof(ind));
+    assert(sc.sc_connected && sc.sc_sae_epoch == epoch);
+    ind[2] = 1;
+    for (size_t n = 0; n < sizeof(ind); n++) {
+        aicwf_disconnect_ind(&sc, ind, n);
+        assert(sc.sc_connected && sc.sc_sae_epoch == epoch);
+    }
+    aicwf_disconnect_ind(&sc, ind, sizeof(ind));
+    assert(!sc.sc_connected && sc.sc_sae_epoch == epoch + 1);
+    puts("PASS: 21 SAE lifetime and disconnect VIF/bounds cases");
+
 
     return 0;
 }
 C
-${CC:-cc} -std=c99 -Wall -Wextra -Werror -I"$src/sys/dev/sdmmc" \
+${CC:-cc} -std=c99 -Wall -Wextra -Werror ${AICWF_SAE_LIFETIME_CFLAGS:-} -I"$src/sys/dev/sdmmc" \
     "$work/check.c" -o "$work/check"
 "$work/check"

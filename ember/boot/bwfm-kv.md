@@ -182,5 +182,5 @@ An exit status of zero alone is insufficient: compare received byte counts
 and the complete destination file's hash.
 
 The common ABI is also used by the separate
-[AIC8800D80 station transport](aicwf-sae.md). Its hardware acceptance belongs
+[AIC8800D80 station transport](aicwf-kv.md). Its hardware acceptance belongs
 to the Zero 3W driver; this bwfm result does not validate that radio.

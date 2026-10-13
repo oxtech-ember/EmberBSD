@@ -33,8 +33,9 @@ path before replacing the only network connection. Keep credentials and
 unredacted logs outside source control. `vmstat -e` shows the driver's SAE
 start, received, sent and rejected counters without displaying credentials.
 
-This work does not add 802.11r fast transition, 802.11v BSS transition
-management, 802.11ax or host AP mode. VHT80 has a separate WPA2 check. The [Zero 3W board page](../boards/orange-pi-zero-3w.md)
+This SAE path does not add 802.11r fast transition, 802.11ax or host AP mode.
+Host-managed Neighbor Reports and BSS transitions use the separate
+[station transport](aicwf-kv.md). VHT80 has a separate WPA2 check. The [Zero 3W board page](../boards/orange-pi-zero-3w.md)
 records actual physical results separately.
 See the [VHT80 and roaming status](aicwf-vht.md) for the `11ac/k/v 1x1 80 MHz` target.
 
@@ -151,9 +152,8 @@ logging as an unexpected message.
 Recovery interrupts traffic for the rescan duration (observed around ten
 seconds); it does not require userland. The watchdog never fires while the
 driver is not associated, and a single in-flight work item bounds the
-teardown. The queued recovery work is not yet bound to the association lifetime.
-A pending reassociation can therefore race with recovery from the previous link.
-This earlier limitation needs a separate queue-lifetime regression and fix.
+teardown. Queued recovery records the association lifetime. A stale work item
+cannot tear down a replacement association.
 Run `sh ember/tests/aicwf-alive.sh` for the decision math,
 miss accounting and single-flight checks.
 
@@ -177,29 +177,11 @@ control of the exchange is the planned route.
 
 ## Host-managed 802.11k/v boundary
 
-The shared `IEEE80211_IOC_STA_MGMT` GET returns the station MAC in its data
-field and the current peer separately. Its generation follows the association
-lifetime used by SAE and keys. The driver reports no BTM or RRM capability.
-ENABLE, TX and scan operations return `EOPNOTSUPP` until the complete path exists.
-
-The incomplete implementation used incorrect WNM/RRM action codes and treated
-queue submission as a transmit acknowledgement. Its receive copy also lacked
-a bound for the fixed-size event buffer. The corrected path does not
-report that false acknowledgement or disconnect merely because a BTM request
-arrives. Link-loss recovery and validated AP disconnects remain separate paths.
-
-Management reception checks the current peer, interface, frame bounds and
-protection state. Protected frames also require the current pairwise key,
-successful CCMP status and a fresh packet number. Unprotected reasons 6/7
-still enter the existing SA Query path. These source checks do not replace
-forged-frame testing over the air.
-
-Complete k/v support needs actual association IEs, connected scan completion,
-cookie-bound firmware TX status and supplicant integration. See the
-[VHT80 and roaming acceptance](aicwf-vht.md#acceptance-after-implementation).
-Run `sh ember/tests/aicwf-sta.sh` for the production management dispatcher and
-the actual BSD client initialization contract. The test also checks that
-protected SA Query delivery survives the management dispatch changes.
+The [AIC station transport](aicwf-kv.md) connects actual association IEs,
+firmware TX confirmations and connected scans to the common BSD client.
+Its software checks do not establish on-air acceptance.
+The initial IGTK IPN restriction above also applies to protected k/v.
+The independent [BIP verifier](aicwf-bip.md) is not integrated into the driver.
 
 ## Protocol provenance
 

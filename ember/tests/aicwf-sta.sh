@@ -4,6 +4,7 @@
 set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 driver=${AICWF_STA_SOURCE:-$src/sys/dev/sdmmc/if_aicwf.c}
+defs=${AICWF_STA_DEFS:-$src/external/bsd/wpa/dist/src/common/ieee802_11_defs.h}
 work=$(mktemp -d "${TMPDIR:-/tmp}/aicwf-sta.XXXXXXXX")
 if [ "${AICWF_STA_KEEP:-0}" = 1 ]; then
     printf 'Test sources: %s\n' "$work"
@@ -20,13 +21,20 @@ awk '/^#define WLAN_ACTION_(WNM|RADIO_MEASUREMENT) / {print}
     /^#define WLAN_RRM_/ {print}
     /WNM_BSS_TRANS_MGMT_(QUERY|REQ|RESP) =/ {
         gsub(/[,=]/, ""); print "#define " $1 " " $2
-    }' "$src/external/bsd/wpa/dist/src/common/ieee802_11_defs.h" \
+    }' "$defs" \
     > "$work/actions.h"
 awk '/^#define[[:space:]]+AICWF_(RXHDR_|RX_FLAG_UPLOAD|RX_DECR[[:space:]]|KEY_SLOT_PAIRWISE|HWKEY_NONE)/ {print}' \
     "$driver" > "$work/aicwf-defs.h"
-cp "$src/sys/dev/sdmmc/if_aicwf_sae.h" "$work/"
+cp "$src/sys/dev/sdmmc/if_aicwf_sae.h" "$src/sys/dev/sdmmc/if_aicwf_vht.h" "$src/sys/dev/sdmmc/if_aicwf_sta.h" "$src/sys/dev/ic/fullmac_sae.h" "$work/"
 : > "$work/driver.h"
-for spec in aicwf_sta_action_valid:bool aicwf_sta_mgmt:int \
+for spec in aicwf_sta_action_valid:bool aicwf_sta_supported:bool \
+    aicwf_sta_security:bool aicwf_sta_ready:bool aicwf_write_attempted:int \
+    aicwf_write:int aicwf_cmd_reply:int aicwf_cmd:int aicwf_scan:void \
+    aicwf_sta_tx_finish_locked:bool aicwf_sta_scan_finish_locked:bool \
+    aicwf_sta_scan_cancel_locked:void aicwf_sta_retire_locked:void aicwf_sae_advance:void \
+    aicwf_sta_tx_cfm:void aicwf_sta_scan_request:int aicwf_sta_mgmt:int \
+    aicwf_sta_mgmt_cb:void aicwf_sta_cancel_scan_cb:void aicwf_scan_done:void \
+    aicwf_sta_assoc:void aicwf_rx:void \
     'aicwf_mgmt_body:const uint8_t *' aicwf_sta_rx_event:void \
     aicwf_pmf_rx:void aicwf_mgmt_rx:void; do
     fn=${spec%%:*}; type=${spec#*:}

@@ -9,8 +9,8 @@ Hardware capability, firmware capability and accepted driver behavior are separa
 | Radio | Zero 3W has a physical WPA2 VHT80 check with one spatial stream | Other boards, antennas and regulatory channels need separate acceptance |
 | Firmware | Connection metadata and the AP independently confirm 80 MHz with the checked revision | Accept other firmware revisions separately |
 | `aicwf` PHY setup | `ME_CONFIG` enables VHT MCS 0-9, one stream and at most 80 MHz for the checked firmware ABI | WPA2 VHT80 unicast is accepted; SAE/PMF and longer loads remain separate |
-| 802.11k | Full host Neighbor Report exchange is not available | Association capabilities, protected actions and complete station transport |
-| 802.11v | Reconnection after loss is not BSS Transition Management | Candidate handling, connected scans, real TX completion and directed transitions |
+| 802.11k | The native station transport exposes actual association IEs and management actions | Physical Neighbor Report request/response acceptance |
+| 802.11v | The transport connects firmware TX status and connected scans to host policy | Physical BTM acceptance/rejection and directed-transition checks |
 | WPA3/PMF | SAE/H2E, required PMF and protected SA Query have separate physical checks | Support nonzero initial IGTK IPNs, then accept VHT80 with PMF and the completed k/v path |
 
 See the [SAE guide](aicwf-sae.md) and [board results](../boards/orange-pi-zero-3w.md).
@@ -117,11 +117,12 @@ fails when its IGTK has a nonzero initial IPN. The kernel reports
 The board returned to its saved WPA2 policy automatically. No AP settings
 or credentials were changed. VHT80 traffic with SAE/PMF is not accepted.
 
-The installed supplicant and CLI are version 2.11. A Neighbor Report request
+The supplicant and CLI in that VHT80 trial were version 2.11. A Neighbor Report request
 returns `FAIL`; this CLI does not include `wnm_bss_query`. The kernel also
 returns no k/v capabilities and rejects incomplete station operations.
 An AP's `k` label therefore does not establish a working host exchange.
-Complete k/v needs the remaining driver transport and a matching client build.
+The new [station transport](aicwf-kv.md) addresses that software boundary.
+It requires a matching client build and separate physical acceptance.
 
 ## Acceptance after implementation
 
