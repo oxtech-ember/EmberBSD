@@ -8,7 +8,6 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 awk '
 /^aicwf_alive_silent\(/ {copy=1; print "static bool"}
 /^aicwf_alive_lost\(/ {copy=1; print "static void"}
-/^aicwf_alive_work\(/ {copy=1; print "static void"}
 /^aicwf_alive_tick\(/ {copy=1; print "static void"}
 copy {print} copy && /^}/ {copy=0}
 ' "$src/sys/dev/sdmmc/if_aicwf.c" > "$work/alive.h"
@@ -21,40 +20,40 @@ cat > "$work/check.c" <<'C'
 #define mstohz(ms) ((ms) / 10)
 typedef unsigned int u_int;
 unsigned int ticks = 100000;
-static int enqueued, scheduled, disconnects, states;
-static int prints;
+static int enqueued, scheduled;
+
 struct workqueue { int dummy; };
 static struct workqueue thetaskq;
 struct callout { int dummy; };
 struct work { int dummy; };
 struct ieee80211com { int ic_state; };
+struct ifnet { int if_flags; };
 struct aicwf_softc {
-	int sc_lock;
-	uint64_t sc_sae_epoch, sc_alive_epoch;
+	int sc_lock, sc_epoch_lock;
+	uint64_t sc_sae_epoch, sc_alive_epoch, sc_join_serial, sc_alive_join_serial;
 	struct ieee80211com sc_ic;
+	struct ifnet sc_if;
 	void *sc_taskq;
 	struct callout sc_alive_ch;
 	struct work sc_alive_work;
 	volatile u_int sc_alive_rx;
 	u_int sc_alive_misses;
-	bool sc_alive_queued, sc_connected, sc_if_attached;
+	bool sc_alive_queued, sc_connected, sc_connecting, sc_if_attached;
 };
 static struct aicwf_softc sc = { .sc_taskq = &thetaskq };
 
 static void mutex_enter(int *p) { assert(!*p); *p = 1; }
 static void mutex_exit(int *p) { assert(*p); *p = 0; }
+#define mutex_spin_enter mutex_enter
+#define mutex_spin_exit mutex_exit
 static void workqueue_enqueue(struct workqueue *q, struct work *w, void *unused) { enqueued++; }
 static void callout_schedule(struct callout *c, int t) { scheduled++; assert(t == 200); }
-#define device_printf(...) prints++
+#define device_printf(...) ((void)0)
 #define AICWF_ALIVE_PERIOD_MS 2000
 #define AICWF_ALIVE_SILENT_MS 10000
 #define IEEE80211_S_RUN 4
 #define IEEE80211_S_SCAN 1
-static int splnet(void) { return 0; }
-static void splx(int s) { (void)s; }
-static void aicwf_disconnect(struct aicwf_softc *s) { (void)s; disconnects++; }
-static void ieee80211_new_state(void *ic, int state, int arg)
-{ (void)ic; (void)arg; assert(state == IEEE80211_S_SCAN); states++; }
+#define IFF_RUNNING 0x40
 #include "alive.h"
 
 int
@@ -62,6 +61,8 @@ main(void)
 {
 	unsigned checks = 0;
 
+	sc.sc_ic.ic_state = IEEE80211_S_RUN;
+	sc.sc_if.if_flags = IFF_RUNNING;
 	/* Decision: only a believed association can count as silent. */
 	sc.sc_if_attached = false; sc.sc_connected = true; sc.sc_alive_rx = ticks;
 	assert(!aicwf_alive_silent(&sc, ticks + 2000)); checks++;
@@ -77,6 +78,14 @@ main(void)
 	assert(!aicwf_alive_silent(&sc, 100)); checks++;
 	assert(aicwf_alive_silent(&sc, 2000)); checks++;
 
+	sc.sc_ic.ic_state = 2;
+	assert(!aicwf_alive_silent(&sc, 2000)); checks++;
+	sc.sc_ic.ic_state = IEEE80211_S_RUN; sc.sc_connecting = true;
+	assert(!aicwf_alive_silent(&sc, 2000)); checks++;
+	sc.sc_connecting = false;
+	sc.sc_if.if_flags = 0;
+	assert(!aicwf_alive_silent(&sc, 2000)); checks++;
+	sc.sc_if.if_flags = IFF_RUNNING;
 	/* Tick: two silent checks enqueue exactly one work item. */
 	sc.sc_alive_rx = ticks - 3000;
 	sc.sc_alive_misses = 0; enqueued = 0; scheduled = 0;
@@ -98,15 +107,10 @@ main(void)
 	aicwf_alive_lost(&sc);
 	assert(enqueued == 1); checks++;
 
-	/* Work from a former association must not disconnect its replacement. */
-	sc.sc_ic.ic_state = IEEE80211_S_RUN;
-	sc.sc_alive_epoch = 19; sc.sc_sae_epoch = 20;
-	aicwf_alive_work(&sc);
-	assert(disconnects == 0 && states == 0 && !sc.sc_alive_queued); checks++;
+	/* The queued work captures both association and MLME intent. */
+	sc.sc_alive_queued = false; sc.sc_sae_epoch = 20; sc.sc_join_serial = 3;
 	aicwf_alive_lost(&sc);
-	assert(sc.sc_alive_epoch == 20 && sc.sc_alive_queued); checks++;
-	aicwf_alive_work(&sc);
-	assert(disconnects == 1 && states == 1 && !sc.sc_alive_queued); checks++;
+	assert(sc.sc_alive_epoch == 20 && sc.sc_alive_join_serial == 3); checks++;
 	printf("PASS: %u link-liveness watchdog checks\n", checks);
 	return 0;
 }

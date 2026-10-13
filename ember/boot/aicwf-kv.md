@@ -78,6 +78,9 @@ The fixtures execute production functions with controlled firmware, queue and io
 They cover real TX status, stale tokens, scan cancellation and late completion.
 They also cover failures before FIFO publication and scan-cache admission.
 The shared client tests exercise actual association, scan and route-event callbacks.
+Recovery tests replace the association while teardown or a recovery scan is queued.
+The interface lock, association generation and AUTH serial protect both operations.
+A stopped interface or a newer join cancels the old recovery task.
 ASan and UBSan check the host executions. They are not Valgrind Memcheck results.
 Kernel translation-unit analysis uses the actual target compilation configuration.
 Inherited findings and analyzer path-complexity limits must remain visible in its receipt.

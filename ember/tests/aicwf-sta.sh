@@ -31,10 +31,12 @@ for spec in aicwf_sta_action_valid:bool aicwf_sta_supported:bool \
     aicwf_sta_security:bool aicwf_sta_ready:bool aicwf_write_attempted:int \
     aicwf_write:int aicwf_cmd_reply:int aicwf_cmd:int aicwf_scan:void \
     aicwf_sta_tx_finish_locked:bool aicwf_sta_scan_finish_locked:bool \
-    aicwf_sta_scan_cancel_locked:void aicwf_sta_retire_locked:void aicwf_sae_advance:void \
+    aicwf_sta_scan_cancel_locked:void aicwf_sta_retire_locked:void aicwf_sae_advance_if:uint64_t \
+    aicwf_sae_advance:void \
     aicwf_sta_tx_cfm:void aicwf_sta_scan_request:int aicwf_sta_mgmt:int \
     aicwf_sta_mgmt_cb:void aicwf_sta_cancel_scan_cb:void aicwf_scan_done:void \
-    aicwf_sta_assoc:void aicwf_rx:void \
+    aicwf_sta_assoc:void aicwf_rx:void aicwf_newstate:int \
+    aicwf_recover_disconnect:uint64_t aicwf_recover_scan:void aicwf_alive_work:void aicwf_recover_scan_cb:void aicwf_disconnect_ind:void \
     'aicwf_mgmt_body:const uint8_t *' aicwf_sta_rx_event:void \
     aicwf_pmf_rx:void aicwf_mgmt_rx:void; do
     fn=${spec%%:*}; type=${spec#*:}

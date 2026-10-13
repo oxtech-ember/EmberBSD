@@ -19,6 +19,13 @@ typedef uint8_t u8;
 #define IEEE80211_ADDR_COPY(d, s) memcpy((d), (s), 6)
 #define IEEE80211_S_RUN 4
 #define IEEE80211_S_SCAN 1
+#define IEEE80211_S_AUTH 2
+enum ieee80211_state { FIXTURE_STATE = 0 };
+#define AICWF_SM_DISCONNECT_REQ 0x1802
+#define AICWF_SM_DISCONNECT_CFM 0x1803
+#define AICWF_MM_KEY_DEL_REQ 0x16
+#define AICWF_MM_KEY_DEL_CFM 0x17
+#define IEEE80211_REASON_AUTH_LEAVE 3
 #define IEEE80211_M_STA 1
 #define IEEE80211_CHAN_ANYC NULL
 #define IEEE80211_CHAN_MAX 255
@@ -78,7 +85,7 @@ static void device_printf(void *dev, const char *fmt, ...)
 #include "aicwf-defs.h"
 #include "if_aicwf_sae.h"
 
-struct ifnet { void *if_softc; int if_flags; };
+struct ifnet { void *if_softc; int if_flags, ioctl_locked; };
 struct ieee80211_chan { uint16_t ic_freq; };
 struct ieee80211_node {
 	uint8_t ni_bssid[6];
@@ -98,19 +105,22 @@ struct ieee80211com {
 struct ieee80211_frame { uint8_t bytes[24]; };
 struct mbuf { int unused; };
 struct work { unsigned unused; };
-enum aicwf_task_cmd { AICWF_TASK_STA_MGMT, AICWF_TASK_STA_CANCEL_SCAN };
+enum aicwf_task_cmd { AICWF_TASK_STA_MGMT, AICWF_TASK_STA_CANCEL_SCAN, AICWF_TASK_NEWSTATE, AICWF_TASK_RECOVER_SCAN };
 struct aicwf_task { struct work t_work; enum aicwf_task_cmd t_cmd;
-    uint64_t t_epoch; struct ieee80211req_sta_mgmt t_sta; };
+    uint64_t t_epoch, t_join_serial; enum ieee80211_state t_state; int t_arg; struct ieee80211req_sta_mgmt t_sta; };
 struct aicwf_softc {
 	struct ieee80211com sc_ic;
 	struct ifnet sc_if;
 	int sc_lock, sc_epoch_lock, sc_bus_lock;
 	uint8_t sc_ptk[16];
 	bool sc_if_attached, sc_connected, sc_sta_enabled;
-	bool sc_sae_enabled, sc_sae_authenticated, sc_ptk_valid;
+	bool sc_sae_enabled, sc_sae_pending, sc_sae_authenticated, sc_ptk_valid;
 	uint8_t sc_sae_bssid[6], sc_hwkey[5], sc_vif;
 	uint32_t sc_sae_generation;
-	uint64_t sc_sae_epoch, sc_pmf_rx_pn;
+	uint64_t sc_sae_epoch, sc_pmf_rx_pn, sc_join_serial;
+	uint64_t sc_alive_epoch, sc_alive_join_serial;
+	bool sc_alive_queued; unsigned sc_alive_misses;
+	uint8_t sc_igtk[2];
 	u_int sc_alive_rx;
 	/* Keep the baseline layout usable for pre-fix regression checks. */
 	bool sc_sta_tx_pending;
@@ -137,7 +147,13 @@ static struct aicwf_task *tasks[64];
 static int write_error, pre_fifo_error, reply_len = 1;
 static uint8_t written[2048];
 static size_t written_len;
-static void (*wait_hook)(void);
+static void (*wait_hook)(void), (*reply_hook)(void), (*unlock_hook)(void);
+static void ifnet_lock(struct ifnet *ifp) { assert(!ifp->ioctl_locked); ifp->ioctl_locked = 1; }
+static void ifnet_unlock(struct ifnet *ifp)
+{ assert(ifp->ioctl_locked); ifp->ioctl_locked = 0; if (unlock_hook) { void (*hook)(void) = unlock_hook; unlock_hook = NULL; hook(); } }
+#define IFNET_LOCK ifnet_lock
+#define IFNET_UNLOCK ifnet_unlock
+#define IFNET_LOCKED(ifp) ((ifp)->ioctl_locked)
 static bool failalloc, retire_on_alloc, failtask;
 static int event_type;
 static uint8_t event_data[sizeof(struct ieee80211req_sae)];
@@ -211,8 +227,11 @@ static void ieee80211_cancel_scan(struct ieee80211com *ic)
 { scans_cancelled++; ic->ic_flags &= ~IEEE80211_F_SCAN; }
 static void ieee80211_end_scan(struct ieee80211com *ic)
 { (void)ic; scans_ended++; }
-static int aicwf_newstate(struct ieee80211com *ic, int state, int arg)
-{ (void)ic;(void)state;(void)arg;state_calls++;return 0; }
+static int aicwf_newstate(struct ieee80211com *, enum ieee80211_state, int);
+static void aicwf_newstate_cb(struct aicwf_softc *s, enum ieee80211_state state, int arg)
+{ (void)arg; assert(s->sc_if.ioctl_locked); state_calls++; s->sc_ic.ic_state = state; }
+static void aicwf_reorder_flush(struct aicwf_softc *s, int tid, bool deliver)
+{ (void)s; assert(tid == -1 && !deliver); }
 static void *pool_cache_get(void *pool, int flags)
 { (void)pool;assert(flags==PR_NOWAIT);return failtask?NULL:calloc(1,sizeof(struct aicwf_task)); }
 static void workqueue_enqueue(void *q, struct work *w, void *arg)
@@ -244,7 +263,16 @@ static int aicwf_fifo(struct aicwf_softc *s, bool write, uint8_t *data, size_t n
 static void cv_wait(int *cv, int *lock)
 { (void)cv;assert(*lock && wait_hook);mutex_exit(lock);wait_hook();mutex_enter(lock);sc.sc_cmd_busy=false; }
 static int cv_timedwait(int *cv, int *lock, int delay)
-{ (void)cv;assert(*lock && delay==2000);return ETIMEDOUT; }
+{
+	(void)cv; assert(*lock && delay == 2000);
+	if (reply_hook != NULL) {
+		void (*hook)(void) = reply_hook; reply_hook = NULL;
+		mutex_exit(lock); hook(); mutex_enter(lock);
+		sc.sc_cfm_done = true; sc.sc_cfm_len = 1;
+		return 0;
+	}
+	return ETIMEDOUT;
+}
 static void cv_broadcast(int *cv) { (void)cv; }
 static void aicwf_rx_data(struct aicwf_softc *, const uint8_t *, size_t);
 static void aicwf_scan_done(struct aicwf_softc *, const uint8_t *, size_t);
@@ -298,7 +326,8 @@ reset(void)
 	sc.sc_sta_assoc[4]=0;sc.sc_sta_assoc[6]=0;
 	sc.sc_ic.ic_channels[36].ic_freq=5180;setbit(sc.sc_ic.ic_chan_active,36);
 	sc.sc_ic.ic_channels[40].ic_freq=5200;setbit(sc.sc_ic.ic_chan_active,40);
-	writes=write_error=pre_fifo_error=0;reply_len=1;failtask=false;wait_hook=NULL;
+	writes=write_error=pre_fifo_error=0;reply_len=1;failtask=false;wait_hook=reply_hook=unlock_hook=NULL;
+	memset(sc.sc_igtk, AICWF_HWKEY_NONE, sizeof(sc.sc_igtk));
 	scans_cancelled=scans_ended=state_calls=0;
 	chan.ic_freq = 5180;
 	ni.ni_chan = &chan;
@@ -561,8 +590,15 @@ run_task(void)
 	memmove(tasks, tasks + 1, --tasks_count * sizeof(*tasks));
 	if (t->t_cmd == AICWF_TASK_STA_MGMT)
 		aicwf_sta_mgmt_cb(&sc, t);
-	else
+	else if (t->t_cmd == AICWF_TASK_STA_CANCEL_SCAN)
 		aicwf_sta_cancel_scan_cb(&sc, t->t_sta.flags);
+	else if (t->t_cmd == AICWF_TASK_RECOVER_SCAN)
+		aicwf_recover_scan_cb(&sc, t);
+	else {
+		IFNET_LOCK(&sc.sc_if);
+		aicwf_newstate_cb(&sc, t->t_state, t->t_arg);
+		IFNET_UNLOCK(&sc.sc_if);
+	}
 	free(t);
 }
 
@@ -802,6 +838,105 @@ assoc_checks(void)
 	aicwf_sta_assoc(&sc, ind, sizeof(ind)); CHECK(sc.sc_sta_assoc_len == 0);
 }
 
+static void
+recovery_prepare(void)
+{
+	reset();
+	sc.sc_alive_epoch = sc.sc_sae_epoch;
+	sc.sc_alive_join_serial = sc.sc_join_serial;
+	sc.sc_alive_queued = true;
+}
+
+static void
+retire_wait_hook(void)
+{
+	aicwf_sae_advance(&sc);
+}
+
+static void
+new_user_association(void)
+{
+	/* ioctl serialization defers CONFIGURE and MLME while recovery sleeps. */
+	if (IFNET_LOCKED(&sc.sc_if)) {
+		unlock_hook = new_user_association;
+		return;
+	}
+	aicwf_sae_advance(&sc);
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+}
+
+static void
+recovery_checks(void)
+{
+	uint8_t ind[6] = {0};
+	recovery_prepare();
+	CHECK(aicwf_sae_advance_if(&sc, sc.sc_sae_epoch - 1) == 0);
+	CHECK(sc.sc_sae_epoch == 39 && sc.sc_ptk_valid);
+	/* A raw MLME request changes intent before the queued AUTH executes. */
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	CHECK(sc.sc_join_serial == 1 && sc.sc_sae_epoch == 39);
+	aicwf_alive_work(&sc);
+	CHECK(writes == 0 && tasks_count == 1 && !sc.sc_alive_queued);
+	CHECK(sc.sc_connected && sc.sc_ptk_valid && !sc.sc_if.ioctl_locked);
+	/* An old connected flag cannot make in-progress AUTH a recovery target. */
+	recovery_prepare(); sc.sc_connecting = true; aicwf_alive_work(&sc);
+	CHECK(writes == 0 && tasks_count == 0 && sc.sc_ptk_valid);
+	recovery_prepare(); sc.sc_ic.ic_state = IEEE80211_S_AUTH; aicwf_alive_work(&sc);
+	CHECK(writes == 0 && tasks_count == 0 && sc.sc_ptk_valid);
+	/* ifconfig down clears RUNNING before its queued INIT can execute. */
+	recovery_prepare(); sc.sc_if.if_flags &= ~IFF_RUNNING; aicwf_alive_work(&sc);
+	CHECK(writes == 0 && tasks_count == 0 && sc.sc_ptk_valid);
+	recovery_prepare(); aicwf_alive_work(&sc);
+	sc.sc_if.if_flags &= ~IFF_RUNNING; run_task();
+	CHECK(state_calls == 0 && sc.sc_ic.ic_state == IEEE80211_S_RUN);
+	/* Normal recovery writes a bound DISCONNECT and queues its own epoch. */
+	recovery_prepare(); aicwf_alive_work(&sc);
+	CHECK(writes == 1 && le16dec(written + 8) == AICWF_SM_DISCONNECT_REQ);
+	CHECK(tasks_count == 1 && tasks[0]->t_cmd == AICWF_TASK_RECOVER_SCAN);
+	CHECK(tasks[0]->t_epoch == 40 && !sc.sc_connected && sc.sc_sae_epoch == 40);
+	run_task(); CHECK(state_calls == 1 && sc.sc_ic.ic_state == IEEE80211_S_SCAN);
+	/* A generation change before command publication prevents DISCONNECT. */
+	recovery_prepare(); sc.sc_cmd_busy = true; wait_hook = retire_wait_hook;
+	aicwf_alive_work(&sc);
+	CHECK(sc.sc_sae_epoch == 41 && writes == 0 && tasks_count == 0);
+	CHECK(!sc.sc_if.ioctl_locked);
+	/* An RX retirement during a reply wait cannot queue stale recovery. */
+	recovery_prepare(); reply_len = -1; reply_hook = retire_wait_hook;
+	aicwf_alive_work(&sc);
+	CHECK(writes == 1 && tasks_count == 0 && sc.sc_sae_epoch == 41);
+	/* Key deletion is also bound. A later DISCONNECT cannot cross epochs. */
+	recovery_prepare(); sc.sc_igtk[0] = 7;
+	reply_len = -1; reply_hook = retire_wait_hook;
+	aicwf_alive_work(&sc);
+	CHECK(writes == 1 && le16dec(written + 8) == AICWF_MM_KEY_DEL_REQ);
+	CHECK(tasks_count == 0 && sc.sc_sae_epoch == 41);
+	/* CONFIGURE/MLME waits for IFNET, then supersedes the queued recovery. */
+	recovery_prepare(); reply_len = -1; reply_hook = new_user_association;
+	aicwf_alive_work(&sc);
+	CHECK(writes == 1 && tasks_count == 2 && sc.sc_sae_epoch == 41);
+	CHECK(tasks[0]->t_cmd == AICWF_TASK_RECOVER_SCAN && tasks[1]->t_cmd == AICWF_TASK_NEWSTATE);
+	run_task(); CHECK(state_calls == 0);
+	run_task(); CHECK(state_calls == 1 && sc.sc_ic.ic_state == IEEE80211_S_AUTH);
+	/* Raw MLME without CONFIGURE must also invalidate a queued SCAN. */
+	recovery_prepare(); aicwf_alive_work(&sc);
+	CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == 0);
+	CHECK(sc.sc_sae_epoch == 40 && sc.sc_join_serial == 1);
+	run_task(); CHECK(state_calls == 0);
+	run_task(); CHECK(state_calls == 1 && sc.sc_ic.ic_state == IEEE80211_S_AUTH);
+	/* Firmware loss takes the same guarded queue, without IFNET in RX. */
+	recovery_prepare(); ind[2] = sc.sc_vif;
+	aicwf_disconnect_ind(&sc, ind, sizeof(ind));
+	CHECK(writes == 0 && tasks_count == 1 && !sc.sc_connected);
+	CHECK(tasks[0]->t_cmd == AICWF_TASK_RECOVER_SCAN && tasks[0]->t_epoch == 40);
+	new_user_association();
+	run_task(); CHECK(state_calls == 0);
+	run_task(); CHECK(state_calls == 1 && sc.sc_ic.ic_state == IEEE80211_S_AUTH);
+	/* A pre-attachment event never touches the uninitialized IFNET lock. */
+	recovery_prepare(); sc.sc_if_attached = false;
+	aicwf_alive_work(&sc);
+	CHECK(writes == 0 && tasks_count == 0 && !sc.sc_if.ioctl_locked);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -814,6 +949,7 @@ main(int argc, char **argv)
 	if (!strcmp(group, "all") || !strcmp(group, "scan")) scan_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "retire")) retirement_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "assoc")) assoc_checks();
+	if (!strcmp(group, "all") || !strcmp(group, "recovery")) recovery_checks();
 	reset();
 	CHECK(checks != 0);
 	printf("PASS: %u AIC station/client and management RX checks\n", checks);

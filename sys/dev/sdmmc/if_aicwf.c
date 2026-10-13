@@ -338,6 +338,7 @@ enum aicwf_task_cmd {
 	AICWF_TASK_KEY_DELETE,
 	AICWF_TASK_STA_MGMT,
 	AICWF_TASK_STA_CANCEL_SCAN,
+	AICWF_TASK_RECOVER_SCAN,
 };
 
 struct aicwf_task {
@@ -349,6 +350,7 @@ struct aicwf_task {
 	u_int			t_keyix;
 	bool			t_group;
 	uint64_t		t_epoch;
+	uint64_t		t_join_serial;
 	u_int			t_keylen;
 	uint8_t			t_key[IEEE80211_KEYBUF_SIZE];
 	struct ieee80211req_sta_mgmt t_sta;
@@ -427,6 +429,8 @@ struct aicwf_softc {
 	u_int			sc_alive_misses;
 	bool			sc_alive_queued;
 	uint64_t		sc_alive_epoch;
+	uint64_t		sc_join_serial;	/* sc_epoch_lock */
+	uint64_t		sc_alive_join_serial;
 	struct aicwf_reorder {
 		bool		started;
 		uint16_t	head;	/* next sequence number to pass */
@@ -476,6 +480,7 @@ static void	aicwf_disconnect(struct aicwf_softc *);
 static void	aicwf_disconnect_ind(struct aicwf_softc *, const uint8_t *, size_t);
 static void	aicwf_alive_lost(struct aicwf_softc *);
 static void	aicwf_alive_work(struct aicwf_softc *);
+static uint64_t aicwf_recover_disconnect(struct aicwf_softc *, uint64_t);
 static void	aicwf_sae_event(struct aicwf_softc *, bool,
 		    const uint8_t *, size_t);
 static void	aicwf_rx_data(struct aicwf_softc *, const uint8_t *, size_t);
@@ -1499,13 +1504,18 @@ aicwf_scan_done(struct aicwf_softc *sc, const uint8_t *p, size_t len)
 }
 
 /* Serialize retirement with the final check and write of a bound command. */
-static void
-aicwf_sae_advance(struct aicwf_softc *sc)
+static uint64_t
+aicwf_sae_advance_if(struct aicwf_softc *sc, uint64_t expected)
 {
 	uint8_t tx[AICWF_STA_NOTICE_LEN], scan[AICWF_STA_NOTICE_LEN];
 	bool tx_event, scan_event;
+	uint64_t epoch;
 
 	mutex_enter(&sc->sc_lock);
+	if (expected != 0 && expected != sc->sc_sae_epoch) {
+		mutex_exit(&sc->sc_lock);
+		return 0;
+	}
 	aicwf_sta_retire_locked(sc, tx, &tx_event, scan, &scan_event);
 	sc->sc_ptk_valid = false;
 	sc->sc_pmf_rx_pn = 0;
@@ -1513,12 +1523,20 @@ aicwf_sae_advance(struct aicwf_softc *sc)
 	mutex_spin_enter(&sc->sc_epoch_lock);
 	if (++sc->sc_sae_epoch == 0)
 		sc->sc_sae_epoch++;
+	epoch = sc->sc_sae_epoch;
 	mutex_spin_exit(&sc->sc_epoch_lock);
 	mutex_exit(&sc->sc_lock);
 	if (tx_event)
 		rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_TX, tx, sizeof(tx));
 	if (scan_event)
 		rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_SCAN, scan, sizeof(scan));
+	return epoch;
+}
+
+static void
+aicwf_sae_advance(struct aicwf_softc *sc)
+{
+	(void)aicwf_sae_advance_if(sc, 0);
 }
 
 /*
@@ -2538,7 +2556,9 @@ aicwf_alive_silent(struct aicwf_softc *sc, u_int now)
 {
 	const int delta = (int)(now - sc->sc_alive_rx);
 
-	if (!sc->sc_if_attached || !sc->sc_connected)
+	if (!sc->sc_if_attached || !sc->sc_connected || sc->sc_connecting ||
+	    (sc->sc_if.if_flags & IFF_RUNNING) == 0 ||
+	    sc->sc_ic.ic_state != IEEE80211_S_RUN)
 		return false;
 	return delta > (int)mstohz(AICWF_ALIVE_SILENT_MS);
 }
@@ -2549,39 +2569,71 @@ aicwf_alive_lost(struct aicwf_softc *sc)
 {
 
 	mutex_enter(&sc->sc_lock);
+	if (!sc->sc_if_attached) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
 	if (!sc->sc_alive_queued) {
 		sc->sc_alive_queued = true;
 		sc->sc_alive_epoch = sc->sc_sae_epoch;
+		mutex_spin_enter(&sc->sc_epoch_lock);
+		sc->sc_alive_join_serial = sc->sc_join_serial;
+		mutex_spin_exit(&sc->sc_epoch_lock);
 		workqueue_enqueue(sc->sc_taskq, &sc->sc_alive_work, NULL);
 	}
 	mutex_exit(&sc->sc_lock);
 }
 
+/* Both watchdog and firmware loss events queue generation-bound recovery. */
+static void
+aicwf_recover_scan(struct aicwf_softc *sc, uint64_t epoch, uint64_t serial)
+{
+	struct aicwf_task *t;
+
+	t = pool_cache_get(sc->sc_taskpool, PR_NOWAIT);
+	if (t == NULL) {
+		device_printf(sc->sc_dev, "no free task for recovery scan\n");
+		return;
+	}
+	t->t_cmd = AICWF_TASK_RECOVER_SCAN;
+	t->t_epoch = epoch;
+	t->t_join_serial = serial;
+	workqueue_enqueue(sc->sc_taskq, &t->t_work, NULL);
+}
+
 static void
 aicwf_alive_work(struct aicwf_softc *sc)
 {
-	struct ieee80211com * const ic = &sc->sc_ic;
-	int s;
+	struct ifnet * const ifp = &sc->sc_if;
+	uint64_t expected, serial, epoch;
+	bool current;
 
-	mutex_enter(&sc->sc_lock);
-	sc->sc_alive_queued = false;
-	const bool connected = sc->sc_connected && sc->sc_if_attached &&
-	    sc->sc_alive_epoch == sc->sc_sae_epoch;
-	mutex_exit(&sc->sc_lock);
-	if (!connected)
+	if (!sc->sc_if_attached)
 		return;
+	/* CONFIGURE and MLME use this same sleepable interface lock. */
+	IFNET_LOCK(ifp);
+	mutex_enter(&sc->sc_lock);
+	expected = sc->sc_alive_epoch;
+	serial = sc->sc_alive_join_serial;
+	sc->sc_alive_queued = false;
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	current = serial == sc->sc_join_serial;
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	current = current && sc->sc_connected && !sc->sc_connecting &&
+	    sc->sc_if_attached && (ifp->if_flags & IFF_RUNNING) != 0 &&
+	    sc->sc_ic.ic_state == IEEE80211_S_RUN &&
+	    expected == sc->sc_sae_epoch;
+	mutex_exit(&sc->sc_lock);
+	if (!current)
+		goto out;
 
 	device_printf(sc->sc_dev, "no frames from the AP; reconnecting\n");
-	aicwf_disconnect(sc);
-	mutex_enter(&sc->sc_lock);
-	sc->sc_connected = false;
-	sc->sc_alive_misses = 0;
-	mutex_exit(&sc->sc_lock);
-
-	s = splnet();
-	if (ic->ic_state == IEEE80211_S_RUN)
-		ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
-	splx(s);
+	epoch = aicwf_recover_disconnect(sc, expected);
+	if (epoch == 0)
+		goto out;
+	aicwf_recover_scan(sc, epoch, serial);
+out:
+	IFNET_UNLOCK(ifp);
 }
 
 static void
@@ -2596,6 +2648,9 @@ aicwf_alive_tick(void *arg)
 			if (!sc->sc_alive_queued) {
 				sc->sc_alive_queued = true;
 				sc->sc_alive_epoch = sc->sc_sae_epoch;
+				mutex_spin_enter(&sc->sc_epoch_lock);
+				sc->sc_alive_join_serial = sc->sc_join_serial;
+				mutex_spin_exit(&sc->sc_epoch_lock);
 				workqueue_enqueue(sc->sc_taskq,
 				    &sc->sc_alive_work, NULL);
 			}
@@ -2611,23 +2666,39 @@ static void
 aicwf_disconnect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 {
 	struct ieee80211com * const ic = &sc->sc_ic;
-	int s;
+	uint64_t expected, epoch, serial;
+	bool recover;
 
 	/* reason (u16), VIF, FT-over-DS, reassociation, alignment byte. */
-	if (len < 6 || ind[2] != sc->sc_vif ||
-	    !sc->sc_if_attached || !sc->sc_connected)
+	if (len < 6 || ind[2] != sc->sc_vif || !sc->sc_if_attached)
 		return;
-	aicwf_sae_advance(sc);
+	mutex_enter(&sc->sc_lock);
+	if (!sc->sc_connected) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
+	expected = sc->sc_sae_epoch;
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	serial = sc->sc_join_serial;
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	mutex_exit(&sc->sc_lock);
+	epoch = aicwf_sae_advance_if(sc, expected);
+	if (epoch == 0)
+		return;
+	mutex_enter(&sc->sc_lock);
+	if (epoch != sc->sc_sae_epoch) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
 	sc->sc_connected = false;
 	sc->sc_sae_pending = false;
 	sc->sc_sae_authenticated = false;
 	memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
+	recover = ic->ic_state == IEEE80211_S_RUN;
+	mutex_exit(&sc->sc_lock);
 	aicwf_reorder_flush(sc, -1, false);
-
-	s = splnet();
-	if (ic->ic_state == IEEE80211_S_RUN)
-		ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
-	splx(s);
+	if (recover)
+		aicwf_recover_scan(sc, epoch, serial);
 }
 
 /* Delete management keys before the firmware can reuse their hardware slots. */
@@ -2649,6 +2720,52 @@ aicwf_sae_clear_keys(struct aicwf_softc *sc)
 		if (sc->sc_igtk[i] == key)
 			sc->sc_igtk[i] = AICWF_HWKEY_NONE;
 	}
+}
+
+/* Retire only the association that queued watchdog recovery. */
+static uint64_t
+aicwf_recover_disconnect(struct aicwf_softc *sc, uint64_t expected)
+{
+	uint8_t keys[2], req[4];
+	uint64_t epoch;
+	bool disconnect, current;
+
+	KASSERT(IFNET_LOCKED(&sc->sc_if));
+	epoch = aicwf_sae_advance_if(sc, expected);
+	if (epoch == 0)
+		return 0;
+	mutex_enter(&sc->sc_lock);
+	if (epoch != sc->sc_sae_epoch) {
+		mutex_exit(&sc->sc_lock);
+		return 0;
+	}
+	memcpy(keys, sc->sc_igtk, sizeof(keys));
+	memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
+	disconnect = sc->sc_connected || sc->sc_connecting;
+	sc->sc_connected = sc->sc_connecting = false;
+	sc->sc_sae_pending = sc->sc_sae_authenticated = false;
+	sc->sc_alive_misses = 0;
+	mutex_exit(&sc->sc_lock);
+	aicwf_reorder_flush(sc, -1, false);
+	for (size_t i = 0; i < __arraycount(keys); i++) {
+		if (keys[i] == AICWF_HWKEY_NONE)
+			continue;
+		if (aicwf_cmd_reply(sc, AICWF_MM_KEY_DEL_REQ, &keys[i], 1,
+		    AICWF_MM_KEY_DEL_CFM, NULL, 0, true, epoch) == ESTALE)
+			return 0;
+	}
+	if (disconnect) {
+		memset(req, 0, sizeof(req));
+		le16enc(req, IEEE80211_REASON_AUTH_LEAVE);
+		req[2] = sc->sc_vif;
+		if (aicwf_cmd_reply(sc, AICWF_SM_DISCONNECT_REQ, req, sizeof(req),
+		    AICWF_SM_DISCONNECT_CFM, NULL, 0, true, epoch) == ESTALE)
+			return 0;
+	}
+	mutex_enter(&sc->sc_lock);
+	current = epoch == sc->sc_sae_epoch;
+	mutex_exit(&sc->sc_lock);
+	return current ? epoch : 0;
 }
 
 static void
@@ -2740,6 +2857,30 @@ aicwf_newstate_cb(struct aicwf_softc *sc, enum ieee80211_state nstate,
 	s = splnet();
 	sc->sc_newstate(ic, nstate, arg);
 	splx(s);
+}
+
+/* The interface lock excludes a new ioctl across this sleeping transition. */
+static void
+aicwf_recover_scan_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
+{
+	struct ifnet * const ifp = &sc->sc_if;
+	bool current;
+
+	if (!sc->sc_if_attached)
+		return;
+	IFNET_LOCK(ifp);
+	mutex_enter(&sc->sc_lock);
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	current = t->t_join_serial == sc->sc_join_serial;
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	current = current && t->t_epoch == sc->sc_sae_epoch &&
+	    sc->sc_if_attached && !sc->sc_connecting &&
+	    (ifp->if_flags & IFF_RUNNING) != 0 &&
+	    sc->sc_ic.ic_state == IEEE80211_S_RUN;
+	mutex_exit(&sc->sc_lock);
+	if (current)
+		aicwf_newstate_cb(sc, IEEE80211_S_SCAN, -1);
+	IFNET_UNLOCK(ifp);
 }
 
 static void
@@ -2865,6 +3006,9 @@ aicwf_task(struct work *wk, void *arg)
 	case AICWF_TASK_STA_CANCEL_SCAN:
 		aicwf_sta_cancel_scan_cb(sc, t->t_sta.flags);
 		break;
+	case AICWF_TASK_RECOVER_SCAN:
+		aicwf_recover_scan_cb(sc, t);
+		break;
 	}
 
 	explicit_memset(t->t_key, 0, sizeof(t->t_key));
@@ -2882,6 +3026,12 @@ aicwf_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 	if (t == NULL) {
 		device_printf(sc->sc_dev, "no free tasks\n");
 		return EIO;
+	}
+	/* A raw MLME association can queue AUTH without SAE CONFIGURE. */
+	if (nstate == IEEE80211_S_AUTH) {
+		mutex_spin_enter(&sc->sc_epoch_lock);
+		sc->sc_join_serial++;
+		mutex_spin_exit(&sc->sc_epoch_lock);
 	}
 	t->t_cmd = AICWF_TASK_NEWSTATE;
 	t->t_state = nstate;
