@@ -1126,9 +1126,24 @@ ucom_do_ioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 
 	DPRINTF("cmd=0x%08jx", cmd, 0, 0, 0);
 	error = ucom_transport_error(sc);
-	if (error)
+	if (error) {
+		/* A parent may expose a read-only fault diagnostic, never recovery. */
+		if (sc->sc_transport != NULL && sc->sc_methods->ucom_fault_ioctl != NULL) {
+			int diagnostic = sc->sc_methods->ucom_fault_ioctl(sc->sc_parent,
+			    sc->sc_portno, cmd, data, flag, l->l_proc);
+			if (diagnostic != EPASSTHROUGH)
+				return diagnostic;
+		}
 		return error;
+	}
 
+	/* Private transport diagnostics/controls need no TTY compat module. */
+	if (sc->sc_transport != NULL && sc->sc_methods->ucom_ioctl != NULL) {
+		error = sc->sc_methods->ucom_ioctl(sc->sc_parent,
+		    sc->sc_portno, cmd, data, flag, l->l_proc);
+		if (error != EPASSTHROUGH)
+			return error;
+	}
 	error = (*tp->t_linesw->l_ioctl)(tp, cmd, data, flag, l);
 	if (error != EPASSTHROUGH)
 		return error;
@@ -1137,7 +1152,7 @@ ucom_do_ioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 	if (error != EPASSTHROUGH)
 		return error;
 
-	if (sc->sc_methods->ucom_ioctl != NULL) {
+	if (sc->sc_transport == NULL && sc->sc_methods->ucom_ioctl != NULL) {
 		error = sc->sc_methods->ucom_ioctl(sc->sc_parent,
 		    sc->sc_portno, cmd, data, flag, l->l_proc);
 		if (error != EPASSTHROUGH)
@@ -1966,6 +1981,22 @@ ucom_transport_fail(struct ucom_softc *sc, int error)
 	atomic_store_release(&sc->sc_terror, sc->sc_tcore.error);
 	sc->sc_tnotify = true;
 	ucom_transport_schedule(sc);
+}
+
+bool
+ucom_transport_idle(struct ucom_softc *sc)
+{
+	struct tty *tp = sc->sc_tty;
+	bool idle;
+
+	mutex_enter(&sc->sc_lock);
+	ttylock(tp);
+	idle = !sc->sc_dying && sc->sc_transport != NULL && sc->sc_tstarted &&
+	    sc->sc_tcore.state == UCT_OPEN && !sc->sc_tcore.tx_pending &&
+	    sc->sc_tdone == 0 && tp->t_outq.c_cc == 0;
+	ttyunlock(tp);
+	mutex_exit(&sc->sc_lock);
+	return idle;
 }
 
 int

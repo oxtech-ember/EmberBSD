@@ -765,13 +765,15 @@ on every board in the hardware catalog.
   RS-232 loopback passed in a Mac/QEMU trial requiring a process-local passthrough
   workaround; bare-metal and broader serial acceptance remain pending
   ([guide](ember/boot/moxa-serial.md)).
-- **MOXA G2 driver preparation:** [framing, shared TX, state and bounded RX helpers](ember/boot/moxa-serial.md)
-  pass 33 host C contract groups. An opt-in `ucom` backend passes sixteen native
-  rump groups with test-only USB, including TTY exchange, close barriers,
-  stale completions, per-port SEND_NEXT timeout, shared-stream faults and
-  concurrent control. All 17 existing serial
-  method-table owners cross-compile. A real MOXA USB parent, firmware and
-  physical serial checks remain pending.
+- **MOXA UPort 1450-G2:** experimental `umoxag` parent for `110a:1452`,
+  three shared bulk pipes and four external-transport `ucom` children.
+  Thirteen protocol and 31 actual-parent host groups pass with sanitizers;
+  eight native rump groups execute the actual parent/workqueue/ucom/TTY with
+  test-only USB, including initial DCD, parallel ports, control, fault query,
+  close and detach. Existing foundation regressions remain separate.
+  Firmware is an external licensed asset; physical descriptor, firmware,
+  controller and electrical acceptance remain pending
+  ([guide](ember/boot/moxa-g2.md)).
 - **Allwinner A733** (Orange Pi Zero 4 and Zero 3W), a chip the base
   system has no support for: eight cores, the card at SDR104 speed,
   gigabit Ethernet, the AIC8800 Wi-Fi and Bluetooth module, processor

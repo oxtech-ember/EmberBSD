@@ -151,6 +151,8 @@ struct ucom_methods {
 	const struct ucom_transport_methods *ucom_transport;
 	/* Opt-in legacy params: accept before TTY commit; fail initial open. */
 	bool ucom_param_strict;
+	/* Read-only diagnostics after transport fault; others return EPASSTHROUGH. */
+	int (*ucom_fault_ioctl)(void *, int, u_long, void *, int, proc_t *);
 };
 
 /* modem control register */
@@ -202,3 +204,5 @@ void ucom_status_change(struct ucom_softc *);
 int ucom_transport_input(struct ucom_softc *, uint64_t, const void *, size_t);
 void ucom_transport_done(struct ucom_softc *, uint64_t, uint64_t, size_t, int);
 void ucom_transport_fault(struct ucom_softc *, uint64_t, int);
+/* Includes TTY output queued before parent submission; no sleep or I/O. */
+bool ucom_transport_idle(struct ucom_softc *);

@@ -19,6 +19,7 @@ on:
       - 'distrib/sets/lists/comp/mi'
       - 'sys/rump/dev/lib/libucom/**'
       - 'tests/dev/usb/ucom_transport/**'
+      - 'tests/dev/usb/umoxa_g2/**'
       - 'ember/tools/umoxa-frame-test.*'
       - 'ember/tools/umoxa-g2*'
       - 'ember/tests/umoxa-g2/**'
@@ -50,6 +51,7 @@ on:
       - 'distrib/sets/lists/comp/mi'
       - 'sys/rump/dev/lib/libucom/**'
       - 'tests/dev/usb/ucom_transport/**'
+      - 'tests/dev/usb/umoxa_g2/**'
       - 'ember/tools/umoxa-frame-test.*'
       - 'ember/tools/umoxa-g2*'
       - 'ember/tests/umoxa-g2/**'
@@ -95,3 +97,15 @@ jobs:
           cat "$RUNNER_TEMP/moxa-rx/sources.sha256"
           cat "$RUNNER_TEMP/moxa-txq/sources.sha256"
           echo 'Host contracts only; kernel/native/USB acceptance is separate.'
+
+      - name: Linux Valgrind software contracts
+        if: runner.os == 'Linux'
+        shell: sh
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes valgrind
+          for suite in moxa-1150-protocol moxa-1150-parent ucom-strict-params moxa-txq moxa-g2-protocol moxa-g2-parent moxa-frame moxa-state moxa-rx; do
+            binary="$RUNNER_TEMP/$suite/test-plain"
+            [ -f "$binary" ] || binary="$RUNNER_TEMP/$suite/test"
+            valgrind --error-exitcode=1 --track-origins=yes --leak-check=full --errors-for-leak-kinds=all "$binary"
+          done

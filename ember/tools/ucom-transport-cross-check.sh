@@ -34,7 +34,7 @@ for file in "$src"/sys/dev/usb/*.c; do
         basename "$file" .c
     fi
 done | sort > "$out/parents.txt"
-[ "$(wc -l < "$out/parents.txt" | tr -d ' ')" -eq 18 ] || fail 'method-table inventory changed; review matrix scope'
+[ "$(wc -l < "$out/parents.txt" | tr -d ' ')" -eq 19 ] || fail 'method-table inventory changed; review matrix scope'
 { printf '%s\n' ucom ucom_transport_core ucom_transport_rx; cat "$out/parents.txt"; } > "$out/units.txt"
 while IFS= read -r unit; do
     # Generated flags contain no quoting or whitespace-bearing paths. Split
@@ -60,4 +60,4 @@ hash() {
         sort -u | while IFS= read -r file; do hash "$file"; done
 ) > "$out/kernel-dependencies.sha256"
 for file in "$out"/*.o; do hash "$file"; done > "$out/outputs.sha256"
-printf '21 kernel objects including 18 legacy method-table owners; no link/native/USB claim\n' > "$out/scope.txt"
+printf '22 kernel objects including 19 method-table owners (17 legacy and 2 MOXA); no link/native/USB claim\n' > "$out/scope.txt"

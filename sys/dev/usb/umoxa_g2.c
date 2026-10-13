@@ -76,14 +76,14 @@ umoxag_firmware(struct umoxa_g2_softc *sc)
 {
 	firmware_handle_t fw;
 	uint8_t *image;
-	uint32_t version, expected;
+	uint32_t fw_version, expected;
 	off_t size;
 	int error, remap, stop_error, attempt;
 
-	error = umoxa_g2_probe(&sc->sc_io, &version, &remap);
+	error = umoxa_g2_probe(&sc->sc_io, &fw_version, &remap);
 	if (error)
 		return error;
-	if (remap == 2 && version != 0 && version != 0xffffff)
+	if (remap == 2 && fw_version != 0 && fw_version != 0xffffff)
 		return 0;
 	if (!root_is_mounted)
 		return EWOULDBLOCK;
@@ -107,12 +107,12 @@ umoxag_firmware(struct umoxa_g2_softc *sc)
 		return error;
 	for (attempt = 0; attempt < 5; attempt++) {
 		usbd_delay_ms(sc->sc_udev, 100);
-		error = umoxa_g2_probe(&sc->sc_io, &version, &remap);
+		error = umoxa_g2_probe(&sc->sc_io, &fw_version, &remap);
 		if (error == EIO || error == ENXIO)
 			return EAGAIN;
 		if (error)
 			return error;
-		if (remap == 2 && version == expected) {
+		if (remap == 2 && fw_version == expected) {
 			if (stop_error)
 				aprint_normal_dev(sc->sc_dev,
 				    "STOP status %d; firmware version/SRAM confirmed\n", stop_error);

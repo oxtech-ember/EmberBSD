@@ -131,7 +131,7 @@ static int credit_timeout_local(void) {
 static int credit_and_status_events(void) {
  struct umoxa_g2_softc sc;struct fake_device d;struct usbd_device u;uint8_t b[600]={0};u_char l,m;init(&sc,&d,&u);attach(&d,&u);CHECK(!openport(&sc,2,1));
  CHECK(!umoxag_uct_submit(&sc,2,1,1,b,sizeof(b)));pump(&sc);CHECK(!umoxag_uct_submit(&sc,2,1,2,b,1));pump(&sc);CHECK(!umoxag_uct_submit(&sc,2,1,3,b,1));pump(&sc);CHECK(fixture.out_count==2);event(2,2);pump(&sc);pump(&sc);CHECK(fixture.done[2]==3 && fixture.actual[2]==1 && fixture.out_count==3);
- event(2,3);fixture.event[6]=0xb0;pump(&sc);event(2,4);fixture.event[4]=0x12;pump(&sc);umoxag_status(&sc,2,&l,&m);CHECK(m==0xb0 && l==0x12 && fixture.status[2]==2);return clean(&d);
+ event(2,3);fixture.event[6]=0xb0;pump(&sc);event(2,4);fixture.event[4]=0x12;pump(&sc);umoxag_status(&sc,2,&l,&m);CHECK(m==0xb0 && l==0x12 && fixture.status[2]==3);return clean(&d);
 }
 static int soft_flow_deferred(void) {
  struct umoxa_g2_softc sc;struct fake_device d;struct usbd_device u;unsigned n;init(&sc,&d,&u);attach(&d,&u);CHECK(!openport(&sc,0,1));n=fixture.requests;
@@ -143,6 +143,28 @@ static int params_atomic_cache(void) {
  CHECK(umoxag_param(&sc,0,&t)==EINVAL && fixture.requests==n);t.c_ospeed=t.c_ispeed=115200;t.c_cflag=CS8|MDMBUF;CHECK(umoxag_param(&sc,0,&t)==EINVAL && fixture.requests==n);
  t.c_cflag=CS7|PARENB|PARODD|CSTOPB;CHECK(!umoxag_param(&sc,0,&t));CHECK(sc.sc_port[0].sc_settings.baud==115200 && sc.sc_port[0].sc_settings.bits==7 && sc.sc_port[0].sc_settings.parity==1 && sc.sc_port[0].sc_settings.stops==2);
  t.c_ospeed=t.c_ispeed=9600;fixture.fail_request=fixture.requests+4;CHECK(umoxag_param(&sc,0,&t)==EIO);CHECK(sc.sc_port[0].sc_settings.baud==115200 && fixture.fault[0]==1);return clean(&d);
+}
+static int no_poll_recovery(void) {
+ struct umoxa_g2_softc sc;struct fake_device d;struct usbd_device u;init(&sc,&d,&u);attach(&d,&u);CHECK(!openport(&sc,0,1));CHECK(fixture.recoveries==0);return clean(&d);
+}
+static int initial_status_published(void) {
+ struct umoxa_g2_softc sc;struct fake_device d;struct usbd_device u;init(&sc,&d,&u);attach(&d,&u);CHECK(!openport(&sc,0,1));CHECK(fixture.status[0]==1);return clean(&d);
+}
+static int tty_pending_mode_busy(void) {
+ struct umoxa_g2_softc sc;struct fake_device d;struct usbd_device u;int mode=1;init(&sc,&d,&u);attach(&d,&u);CHECK(!openport(&sc,0,1));fixture.tty_pending[0]=1;
+ CHECK(umoxag_ioctl(&sc,0,UMOXA_G2_SET_MODE,&mode,0,NULL)==EBUSY);fixture.tty_pending[0]=0;return clean(&d);
+}
+static int mode_keeps_termios_flow(void) {
+ struct umoxa_g2_softc sc;struct fake_device d;struct usbd_device u;struct termios t={0};int mode=0;unsigned n;
+ init(&sc,&d,&u);attach(&d,&u);CHECK(!openport(&sc,0,1));t.c_ospeed=t.c_ispeed=9600;t.c_cflag=CS8|CRTSCTS;CHECK(!umoxag_param(&sc,0,&t));
+ CHECK(!umoxag_ioctl(&sc,0,UMOXA_G2_SET_MODE,&mode,0,NULL) && sc.sc_port[0].sc_settings.rtscts);mode=1;n=fixture.requests;
+ CHECK(umoxag_ioctl(&sc,0,UMOXA_G2_SET_MODE,&mode,0,NULL)==EINVAL && sc.sc_port[0].sc_settings.mode==0 && fixture.requests==n);return clean(&d);
+}
+static int mode_after_credit_busy(void) {
+ struct umoxa_g2_softc sc;struct fake_device d;struct usbd_device u;uint8_t b[600]={0};int mode=1;
+ init(&sc,&d,&u);attach(&d,&u);CHECK(!openport(&sc,0,1));CHECK(!umoxag_uct_submit(&sc,0,1,1,b,600));pump(&sc);
+ CHECK(!umoxag_uct_submit(&sc,0,1,2,b,1));pump(&sc);event(0,2);pump(&sc);CHECK(sc.sc_txq.ports[0].sent==0);
+ CHECK(umoxag_ioctl(&sc,0,UMOXA_G2_SET_MODE,&mode,0,NULL)==EBUSY);return clean(&d);
 }
 static int non_rs232_preopen_modem(void) {
  struct umoxa_g2_softc sc;struct fake_device d;struct usbd_device u;int mode=1;unsigned n;init(&sc,&d,&u);attach(&d,&u);
@@ -176,7 +198,7 @@ static int detach_queued_quiesced(void) {
  CHECK(clean(&d));CHECK(fixture.out_count==0 && fixture.detaches==4 && !fixture.done[0]);return 1;
 }
 int main(void) {
- struct {const char *name;int(*fn)(void);} cases[]={{"non_rs232_preopen_modem",non_rs232_preopen_modem},{"idle_open_mode_change",idle_open_mode_change},{"four_port_copy_demux",four_port_copy_demux},{"malformed_rx_atomic_shared_fault",malformed_rx_atomic_shared_fault},{"overflow_local_fault",overflow_local_fault},{"short_tx_no_replay",short_tx_no_replay},{"credit_timeout_local",credit_timeout_local},{"credit_and_status_events",credit_and_status_events},{"soft_flow_deferred",soft_flow_deferred},{"params_atomic_cache",params_atomic_cache},{"modem_mode_controls",modem_mode_controls},{"close_reopen_drains_old_credit",close_reopen_drains_old_credit},{"busy_drain_bounded",busy_drain_bounded},{"detach_queued_quiesced",detach_queued_quiesced},{"match_exact_g2",match_exact_g2},{"warm_four_children",warm_four_children},{"warm_no_asset_needed",warm_no_asset_needed},{"unknown_layout_rejected",unknown_layout_rejected},{"short_and_failed_readiness",short_and_failed_readiness},{"cold_missing_and_preroot",cold_missing_and_preroot},{"firmware_verified_and_stop_eio",firmware_verified_and_stop_eio},{"short_firmware_no_stop",short_firmware_no_stop},{"firmware_not_warm_no_children",firmware_not_warm_no_children},{"invalid_firmware_metadata",invalid_firmware_metadata},{"resource_failure_cleanup",resource_failure_cleanup},{"partial_child_cleanup",partial_child_cleanup}};
+ struct {const char *name;int(*fn)(void);} cases[]={{"no_poll_recovery",no_poll_recovery},{"initial_status_published",initial_status_published},{"tty_pending_mode_busy",tty_pending_mode_busy},{"mode_keeps_termios_flow",mode_keeps_termios_flow},{"mode_after_credit_busy",mode_after_credit_busy},{"non_rs232_preopen_modem",non_rs232_preopen_modem},{"idle_open_mode_change",idle_open_mode_change},{"four_port_copy_demux",four_port_copy_demux},{"malformed_rx_atomic_shared_fault",malformed_rx_atomic_shared_fault},{"overflow_local_fault",overflow_local_fault},{"short_tx_no_replay",short_tx_no_replay},{"credit_timeout_local",credit_timeout_local},{"credit_and_status_events",credit_and_status_events},{"soft_flow_deferred",soft_flow_deferred},{"params_atomic_cache",params_atomic_cache},{"modem_mode_controls",modem_mode_controls},{"close_reopen_drains_old_credit",close_reopen_drains_old_credit},{"busy_drain_bounded",busy_drain_bounded},{"detach_queued_quiesced",detach_queued_quiesced},{"match_exact_g2",match_exact_g2},{"warm_four_children",warm_four_children},{"warm_no_asset_needed",warm_no_asset_needed},{"unknown_layout_rejected",unknown_layout_rejected},{"short_and_failed_readiness",short_and_failed_readiness},{"cold_missing_and_preroot",cold_missing_and_preroot},{"firmware_verified_and_stop_eio",firmware_verified_and_stop_eio},{"short_firmware_no_stop",short_firmware_no_stop},{"firmware_not_warm_no_children",firmware_not_warm_no_children},{"invalid_firmware_metadata",invalid_firmware_metadata},{"resource_failure_cleanup",resource_failure_cleanup},{"partial_child_cleanup",partial_child_cleanup}};
  unsigned n=sizeof(cases)/sizeof(cases[0]),i,ok=0;for(i=0;i<n;i++){int pass=cases[i].fn();printf("%s %s\n",pass?"PASS":"FAIL",cases[i].name);ok+=pass;}
  printf("%u/%u actual G2 parent groups passed\n",ok,n);return ok==n?0:1;
 }

@@ -5,6 +5,7 @@
 #include <sys/systm.h>
 #include <sys/device.h>
 #include <sys/mutex.h>
+#include <sys/termios.h>
 #include <sys/time.h>
 #include <dev/usb/usb.h>
 #include <dev/usb/usbdi.h>
@@ -109,6 +110,22 @@ umoxa_g2_event(void *arg, uint16_t p, uint16_t event, const uint8_t *detail)
 		ucom_status_change(child);
 }
 
+static usbd_status
+umoxa_g2_transfer(struct umoxa_g2_softc *sc, unsigned pipe, uint16_t flags,
+    uint32_t timeout, uint32_t *actual)
+{
+	usbd_status status;
+
+	/* The bulk helper clears STALL even for TIMEOUT, with an unbounded extra
+	 * control request. Empty polling must not reset endpoint data toggles. */
+	usbd_setup_xfer(sc->sc_xfer[pipe], NULL, sc->sc_buf[pipe], *actual,
+	    flags, timeout, NULL);
+	status = usbd_sync_transfer(sc->sc_xfer[pipe]);
+	usbd_get_xfer_status(sc->sc_xfer[pipe], NULL, NULL, actual, NULL);
+	/* STALL faults the shared stream; recovery requires close/reconnect. */
+	return status;
+}
+
 static int
 umoxa_g2_read(struct umoxa_g2_softc *sc, unsigned pipe, uint32_t *actual)
 {
@@ -117,8 +134,7 @@ umoxa_g2_read(struct umoxa_g2_softc *sc, unsigned pipe, uint32_t *actual)
 	int error;
 
 	*actual = sc->sc_layout.packet;
-	status = usbd_bulk_transfer(sc->sc_xfer[pipe], sc->sc_pipe[pipe],
-	    USBD_SHORT_XFER_OK, 10, sc->sc_buf[pipe], actual);
+	status = umoxa_g2_transfer(sc, pipe, USBD_SHORT_XFER_OK, 10, actual);
 	if (status == USBD_TIMEOUT && *actual == 0)
 		return 0;
 	if (status != USBD_NORMAL_COMPLETION || *actual > sc->sc_layout.packet) {
@@ -246,9 +262,7 @@ umoxa_g2_worker(struct work *w, void *arg)
 	umoxa_g2_notify(sc, x.fault_mask);
 	if (!picked) {
 		actual = x.len;
-		status = usbd_bulk_transfer(sc->sc_xfer[UMOXA_G2_PIPE_TX],
-		    sc->sc_pipe[UMOXA_G2_PIPE_TX], 0, 1000,
-		    sc->sc_buf[UMOXA_G2_PIPE_TX], &actual);
+		status = umoxa_g2_transfer(sc, UMOXA_G2_PIPE_TX, 0, 1000, &actual);
 		/* Partial shared writes can desynchronise framing for every port. */
 		error = status != USBD_NORMAL_COMPLETION || actual != x.len ? EIO : 0;
 		mutex_enter(&sc->sc_lock);

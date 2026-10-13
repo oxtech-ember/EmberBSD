@@ -15,7 +15,7 @@ struct umoxa_g2_uart {
 	struct umoxa_g2_settings sc_settings;
 	uint64_t sc_epoch;
 	u_char sc_lsr, sc_msr;
-	bool sc_open, sc_paused;
+	bool sc_open, sc_paused, sc_submitted;
 	int sc_fault;
 };
 struct umoxa_g2_softc {

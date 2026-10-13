@@ -14,9 +14,10 @@ mkdir "$out"
 cc=${CC:-cc}
 "$cc" --version > "$out/compiler.txt"
 find "$src/ember/tests/umoxa-g2" -type f -exec shasum -a 256 '{}' + > "$out/sources.sha256"
-for f in umoxa_g2.c umoxa_g2_io.c umoxa_g2_tty.c umoxa_g2var.h umoxa_g2io.h umoxa_g2_protocol.c umoxa_g2_protocol.h umoxa_frame.c umoxa_g2_txq.c; do
+for f in umoxa_g2.c umoxa_g2_io.c umoxa_g2_tty.c umoxa_g2var.h umoxa_g2io.h umoxa_g2_protocol.c umoxa_g2_protocol.h umoxa_frame.c umoxa_frame.h umoxa_g2_txq.c umoxa_g2_txq.h; do
  shasum -a 256 "$src/sys/dev/usb/$f" >> "$out/sources.sha256"
 done
+shasum -a 256 "$src/ember/tools/umoxa-g2-driver-test.c" "$src/ember/tools/umoxa-g2-driver-test.sh" >> "$out/sources.sha256"
 for mode in plain sanitized; do
  flags='-O2'
  [ "$mode" = plain ] || flags='-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined'

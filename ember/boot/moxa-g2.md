@@ -40,13 +40,16 @@ Cold pre-root attachment reports the need to reconnect after root mount.
 
 - Defaults: 9600 8N1 RS232, DTR/RTS logically asserted. Supported software
   settings are baud 50..921600, 5..8 bits, none/odd/even parity, one/two stop bits.
-  These bounds and modes still need physical acceptance. B0, CDTRCTS and MDMBUF
+  These bounds and modes still need physical acceptance. Initial MSR/DCD is
+  published at start, including blocking dial-in open without a new event. B0, CDTRCTS and MDMBUF
   are rejected before any control operation; TTY owns XON/XOFF processing.
 - A private per-device workqueue owns synchronous transfers on all three pipes.
   Submission copies at most `OUT packet size - 4` bytes and schedules work;
   soft-context RX-flow updates only flags. Neither path blocks or calls children.
   Polling is nominally 20ms, read timeouts 10ms, TX/credit deadlines 1000ms.
   Latency, throughput and host-controller behavior are unmeasured.
+  Explicit synchronous transfers avoid the bulk helper's hidden CLEAR_FEATURE
+  on empty polls; STALL faults the stream rather than silently recovering.
 - A complete USB write retires a payload once. Short/failed shared writes and
   malformed whole RX/event batches fault all open ports, with no uncertain
   replay. Credit timeout, local RX overflow or per-port control failure faults
@@ -56,7 +59,7 @@ Cold pre-root attachment reports the need to reconnect after root mount.
   Child callbacks run outside the parent's state mutex.
 - Process controls gate and wait for the worker. Close first invalidates the
   owner's queue epoch; USB resources and child pointers remain alive through
-  physical completion. Detach aborts pipes, waits for work, then releases children.
+  physical USB completion. Detach aborts pipes, waits for work, then releases children.
 - Reopen purges the owner and drains **both** shared RX/event streams while its
   queue is closed. At most eight paired reads forward valid peer traffic and
   discard old-owner data/credits. Continuous traffic returns EBUSY. Untagged
@@ -66,8 +69,10 @@ Cold pre-root attachment reports the need to reconnect after root mount.
 The installed `<dev/usb/umoxa_g2io.h>` provides `UMOXA_G2_GET_FAULT` (int) and
 `UMOXA_G2_SET_MODE` (int: 0 RS232, 1 RS485 two-wire, 2 RS422, 3 RS485 four-wire).
 Select mode immediately after opening an idle TTY, before transmitting bytes.
-Mode change after queued/sent data returns EBUSY; close and reopen before trying
-again. A mode persists across reopen. Initial logical DTR/RTS setup is cached
+Mode change after queued/sent data returns EBUSY, including bytes still in
+the TTY queue and previous transmissions after credit reset; close and reopen before trying
+again. A mode persists across reopen. RTS/CTS is retained in RS232; selecting a
+non-RS232 mode while RTS/CTS remains enabled returns EINVAL. Initial logical DTR/RTS setup is cached
 until start, allowing non-RS232 opens; explicit modem controls while open in
 non-RS232 mode return EOPNOTSUPP. RTS-off under RTS/CTS returns EBUSY.
 Bias, termination, automatic direction timing and electrical wiring are not
@@ -89,8 +94,31 @@ four-child attach, RAM readiness, short/failing requests, resource cleanup,
 framed multiport exchange, local/shared faults, credit deadline, copied data,
 flow deferral, cached settings, modem/mode controls, reopen drain and queued
 detach. It does **not** prove native workqueue concurrency, real USB execution,
-firmware licensing or electrical support. Existing native real-ucom/TTY tests
-exercise the shared transport foundation; they are a separate boundary.
+firmware licensing or electrical support. The separate native fixture in `tests/dev/usb/umoxa_g2` compiles the actual
+parent, worker, controls, ucom and TTY against target headers and libraries;
+only USB/firmload and the attachment root are doubled. Eight groups exercise
+initial DCD, four concurrent ports/credits, mode reopening, TTY bytes queued
+before dispatch, retained RTS/CTS, close waiting for an active worker, fault
+query through ioctl admission and detach aborting an active worker.
+
+```sh
+sh ember/tools/umoxa-g2-rump-test.sh /absolute/source /tmp/g2-native
+# Or cross-build, then execute test on the matching NetBSD 11 runtime:
+sh ember/tools/umoxa-g2-rump-cross-build.sh /absolute/source /absolute/build /absolute/target-runtime /tmp/g2-cross
+RUMP_NCPU=4 /tmp/g2-cross/test
+```
+
+The native fixture uses real kernel scheduling/locking and TTY operations in
+rump; it does not prove the USB controller or DMA boundary. Existing native
+real-ucom/TTY regressions protect the shared foundation separately.
+
+The ucom private kernel methods add an optional **read-only** fault-ioctl
+callback. Only GET_FAULT is admitted by this parent after fault; mutating and
+normal TTY operations retain their original error. For opt-in transports,
+private parent ioctls are tried before TTY compatibility hooks; legacy USB
+parents retain their original routing. A new non-blocking idle query includes
+TTY output not yet submitted to the parent. Rebuild kernel and affected
+modules together; this is not a binary ABI guarantee for old modules.
 
 ## Physical handoff and recovery
 

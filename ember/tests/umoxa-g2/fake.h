@@ -88,7 +88,7 @@ struct usbd_interface { usb_interface_descriptor_t id;usb_endpoint_descriptor_t 
 struct usbd_device { usb_device_descriptor_t dd;usb_config_descriptor_t cd;struct usbd_interface iface; };
 struct usb_attach_arg { uint16_t uaa_vendor,uaa_product;struct usbd_device *uaa_device; };
 struct usbd_pipe { uint8_t endpoint; };
-struct usbd_xfer { uint8_t buffer[1024]; };
+struct usbd_xfer { uint8_t buffer[1024];struct usbd_pipe *pipe;void *data;uint32_t actual,timeout;int flags,status; };
 struct work { void *wk_dummy; };
 struct workqueue { void(*fn)(struct work *,void *);void *arg;struct work *queued;int running; };
 typedef struct { void(*fn)(void *);void *arg;int scheduled; } callout_t;
@@ -104,6 +104,7 @@ struct ucom_methods {
  int(*ucom_open)(void *,int);void(*ucom_close)(void *,int);
  void(*ucom_read)(void *,int,u_char **,uint32_t *);void(*ucom_write)(void *,int,u_char *,u_char *,uint32_t *);
  const struct ucom_transport_methods *ucom_transport;bool ucom_param_strict;
+ int(*ucom_fault_ioctl)(void *,int,u_long,void *,int,proc_t *);
 };
 struct ucom_attach_args { int ucaa_portno,ucaa_bulkin,ucaa_bulkout;u_int ucaa_ibufsize,ucaa_ibufsizepad,ucaa_obufsize,ucaa_opkthdrlen;const char *ucaa_info;struct usbd_device *ucaa_device;struct usbd_interface *ucaa_iface;const struct ucom_methods *ucaa_methods;void *ucaa_arg; };
 struct fake_firmware { const uint8_t *data;size_t size; };
@@ -111,9 +112,10 @@ typedef struct fake_firmware *firmware_handle_t;
 struct fake_request { uint8_t type,command;uint16_t value,index;size_t length;uint8_t data[64]; };
 static struct {
  unsigned requests,fail_request,short_request,errors,resources,fail_resource,pipes,xfers,allocs,children,detaches,fail_child,waits;
- unsigned fw_blocks,fw_bytes,fw_open,fw_closed,stops,delay,data_reads,event_reads,out_count;
+ unsigned fw_blocks,fw_bytes,fw_open,fw_closed,stops,delay,data_reads,event_reads,out_count,recoveries;
  int missing_firmware,fw_read_error,stop_runs,stop_disconnect,disconnected,short_out,rx_error,event_error,event_repeat,overflow_port;
  uint8_t version[4],reg[4],data[1024],event[1024],out[16][1024];size_t data_len,event_len,out_len[16];
+ int tty_pending[4];
  unsigned done[4],fault[4],status[4],inputs[4];size_t actual[4];int fault_errno[4];uint8_t received[4][1024];size_t received_len[4];
  struct fake_request request[128];struct fake_firmware firmware;struct fake_device child[4];struct ucom_softc tty[4];
  const struct ucom_methods *methods[4];kmutex_t *state_lock;uint64_t now_ms;struct workqueue *wq;
@@ -132,7 +134,8 @@ static inline void kmem_free(void *p,size_t n){(void)n;assert(fixture.allocs);fi
 #define aprint_naive(...) ((void)0)
 #define aprint_normal(...) ((void)0)
 #define aprint_normal_dev(...) ((void)0)
-#define aprint_error_dev(...) ((void)fixture.errors++)
+static inline void fake_aprint_error_dev(device_t d,const char *format,...) { (void)d;(void)format;fixture.errors++; }
+#define aprint_error_dev fake_aprint_error_dev
 static inline void usbd_add_drv_event(int e,struct usbd_device *u,device_t d){(void)e;(void)u;(void)d;}
 static inline usb_device_descriptor_t *usbd_get_device_descriptor(struct usbd_device *u){return &u->dd;}
 static inline usb_config_descriptor_t *usbd_get_config_descriptor(struct usbd_device *u){return &u->cd;}
@@ -159,13 +162,13 @@ static inline int usbd_do_request_flags(struct usbd_device *u,usb_device_request
  return 0;
 }
 static inline void usbd_delay_ms(struct usbd_device *u,unsigned ms){(void)u;fixture.delay+=ms;}
-static inline int usbd_open_pipe(struct usbd_interface *i,uint8_t endpoint,uint8_t flags,struct usbd_pipe **p){(void)i;(void)flags;if(resource_failure())return USBD_NOMEM;*p=malloc(sizeof(**p));(*p)->endpoint=endpoint;fixture.pipes++;return 0;}
-static inline int usbd_create_xfer(struct usbd_pipe *p,size_t size,unsigned flags,unsigned frames,struct usbd_xfer **x){(void)p;(void)flags;(void)frames;assert(size<=1024);if(resource_failure())return USBD_NOMEM;*x=calloc(1,sizeof(**x));fixture.xfers++;return 0;}
+static inline int usbd_open_pipe(struct usbd_interface *i,uint8_t endpoint,uint8_t flags,struct usbd_pipe **p){(void)i;(void)flags;if(resource_failure())return USBD_NOMEM;*p=malloc(sizeof(**p));if(!*p)return USBD_NOMEM;(*p)->endpoint=endpoint;fixture.pipes++;return 0;}
+static inline int usbd_create_xfer(struct usbd_pipe *p,size_t size,unsigned flags,unsigned frames,struct usbd_xfer **x){(void)p;(void)flags;(void)frames;assert(size<=1024);if(resource_failure())return USBD_NOMEM;*x=calloc(1,sizeof(**x));if(!*x)return ENOMEM;(*x)->pipe=p;fixture.xfers++;return 0;}
 static inline void *usbd_get_buffer(struct usbd_xfer *x){return x->buffer;}
 static inline void usbd_destroy_xfer(struct usbd_xfer *x){assert(fixture.xfers);fixture.xfers--;free(x);}
 static inline void usbd_abort_pipe(struct usbd_pipe *p){(void)p;}
 static inline void usbd_close_pipe(struct usbd_pipe *p){assert(fixture.pipes);fixture.pipes--;free(p);}
-static inline int usbd_bulk_transfer(struct usbd_xfer *x,struct usbd_pipe *p,int flags,int timeout,void *data,uint32_t *n){
+static inline int fake_bulk(struct usbd_xfer *x,struct usbd_pipe *p,int flags,int timeout,void *data,uint32_t *n){
  size_t count;(void)x;(void)flags;assert(timeout<=1000);
  if(!(p->endpoint&0x80)){
   unsigned index=fixture.out_count++;assert(index<16 && *n<=1024);memcpy(fixture.out[index],data,*n);fixture.out_len[index]=*n;
@@ -176,7 +179,14 @@ static inline int usbd_bulk_transfer(struct usbd_xfer *x,struct usbd_pipe *p,int
  else {fixture.event_reads++;count=fixture.event_len;if(fixture.event_error){*n=0;return fixture.event_error;}if(count){assert(count<=*n);memcpy(data,fixture.event,count);if(!fixture.event_repeat)fixture.event_len=0;*n=(uint32_t)count;return 0;}}
  *n=0;return USBD_TIMEOUT;
 }
-static inline int workqueue_create(struct workqueue **w,const char *name,void(*fn)(struct work *,void *),void *arg,pri_t pri,int ipl,int flags){(void)name;(void)pri;(void)ipl;(void)flags;if(resource_failure())return ENOMEM;*w=calloc(1,sizeof(**w));(*w)->fn=fn;(*w)->arg=arg;fixture.wq=*w;return 0;}
+static inline int usbd_bulk_transfer(struct usbd_xfer *x,struct usbd_pipe *p,int flags,int timeout,void *data,uint32_t *n) {
+ int e=fake_bulk(x,p,flags,timeout,data,n);if(e)fixture.recoveries++;return e;
+}
+static inline void usbd_setup_xfer(struct usbd_xfer *x,void *priv,void *data,uint32_t n,int flags,uint32_t timeout,void *cb) { (void)priv;(void)cb;x->data=data;x->actual=n;x->flags=flags;x->timeout=timeout; }
+static inline int usbd_sync_transfer(struct usbd_xfer *x) { x->status=fake_bulk(x,x->pipe,x->flags,x->timeout,x->data,&x->actual);return x->status; }
+static inline void usbd_get_xfer_status(struct usbd_xfer *x,void **priv,void **buf,uint32_t *n,int *status) { (void)priv;(void)buf;if(n)*n=x->actual;if(status)*status=x->status; }
+static inline bool ucom_transport_idle(struct ucom_softc *c) {return !fixture.tty_pending[c->port]; }
+static inline int workqueue_create(struct workqueue **w,const char *name,void(*fn)(struct work *,void *),void *arg,pri_t pri,int ipl,int flags){(void)name;(void)pri;(void)ipl;(void)flags;if(resource_failure())return ENOMEM;*w=calloc(1,sizeof(**w));if(!*w)return ENOMEM;(*w)->fn=fn;(*w)->arg=arg;fixture.wq=*w;return 0;}
 static inline void workqueue_enqueue(struct workqueue *q,struct work *w,void *cpu){(void)cpu;assert(!q->queued);q->queued=w;}
 static inline void run_work(void){struct workqueue *q=fixture.wq;struct work *w;if(q && q->queued){w=q->queued;q->queued=NULL;assert(!q->running);q->running=1;q->fn(w,q->arg);q->running=0;}}
 static inline void workqueue_wait(struct workqueue *q,struct work *w){(void)w;fixture.waits++;assert(!q->running);run_work();}

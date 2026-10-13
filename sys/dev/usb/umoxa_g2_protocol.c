@@ -95,12 +95,12 @@ umoxa_g2_endpoints(const struct umoxa_g2_endpoint *ep, size_t count,
 }
 
 int
-umoxa_g2_probe(const struct umoxa_g2_io *io, uint32_t *version, int *remap)
+umoxa_g2_probe(const struct umoxa_g2_io *io, uint32_t *fw_version, int *remap)
 {
 	uint8_t v[4] = {0}, r[4] = {0};
 	int error;
 
-	if (version == NULL || remap == NULL)
+	if (fw_version == NULL || remap == NULL)
 		return EINVAL;
 	error = umoxa_g2_request(io, 1, 0x81, 0, 0, v, sizeof(v));
 	if (error == 0)
@@ -109,24 +109,24 @@ umoxa_g2_probe(const struct umoxa_g2_io *io, uint32_t *version, int *remap)
 		return error;
 	if ((r[0] & 3) == 3)
 		return EPROTO;
-	*version = ((uint32_t)v[0] << 16) | ((uint32_t)v[1] << 8) | v[2];
+	*fw_version = ((uint32_t)v[0] << 16) | ((uint32_t)v[1] << 8) | v[2];
 	*remap = r[0] & 3;
 	return 0;
 }
 
 int
-umoxa_g2_firmware_version(const uint8_t *image, size_t size, uint32_t *version)
+umoxa_g2_firmware_version(const uint8_t *image, size_t size, uint32_t *fw_version)
 {
 	uint32_t v;
 
-	if (image == NULL || version == NULL || size < 0x8b ||
+	if (image == NULL || fw_version == NULL || size < 0x8b ||
 	    size > UMOXA_G2_FIRMWARE_MAX)
 		return EINVAL;
 	v = ((uint32_t)image[0x86] << 16) |
 	    ((uint32_t)image[0x88] << 8) | image[0x8a];
 	if (v == 0 || v == 0xffffff)
 		return EPROTO;
-	*version = v;
+	*fw_version = v;
 	return 0;
 }
 
@@ -135,7 +135,7 @@ umoxa_g2_download(const struct umoxa_g2_io *io, const uint8_t *image,
     size_t size, int *stop_error)
 {
 	uint8_t block[64];
-	uint32_t version;
+	uint32_t fw_version;
 	size_t pos, n;
 	int error;
 
@@ -144,7 +144,7 @@ umoxa_g2_download(const struct umoxa_g2_io *io, const uint8_t *image,
 	*stop_error = 0;
 	if (io == NULL || io->control == NULL)
 		return EINVAL;
-	error = umoxa_g2_firmware_version(image, size, &version);
+	error = umoxa_g2_firmware_version(image, size, &fw_version);
 	if (error)
 		return error;
 	error = umoxa_g2_request(io, 0, 0x0c, 0, 0, NULL, 0);
@@ -162,7 +162,7 @@ umoxa_g2_download(const struct umoxa_g2_io *io, const uint8_t *image,
 			io->delay(io->arg, 1);
 	}
 	*stop_error = umoxa_g2_request(io, 0, 0x0d, 0, 0, NULL, 0);
-	/* Even STOP success does not establish the firmware's version or remap. */
+	/* Even STOP success does not establish the firmware's fw_version or remap. */
 	return 0;
 }
 

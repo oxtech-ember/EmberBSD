@@ -73,6 +73,7 @@ umoxag_uct_start(void *arg, int p, uint64_t epoch)
 		sc->sc_port[p].sc_epoch = epoch;
 		sc->sc_port[p].sc_open = true;
 		sc->sc_port[p].sc_paused = false;
+		sc->sc_port[p].sc_submitted = false;
 		sc->sc_port[p].sc_fault = 0;
 		sc->sc_port[p].sc_lsr = 0;
 		sc->sc_port[p].sc_msr = msr & 0xf0;
@@ -80,6 +81,8 @@ umoxag_uct_start(void *arg, int p, uint64_t epoch)
 	mutex_exit(&sc->sc_lock);
 	if (error)
 		(void)umoxa_g2_quiesce(&sc->sc_io, p);
+	else
+		ucom_status_change(sc->sc_port[p].sc_child);
 out:
 	umoxa_g2_ungate(sc);
 	mutex_exit(&sc->sc_ctl_lock);
@@ -129,8 +132,10 @@ umoxag_uct_submit(void *arg, int p, uint64_t epoch, uint64_t cookie,
 	mutex_enter(&sc->sc_lock);
 	error = !sc->sc_ready || sc->sc_dying ? ENXIO :
 	    umoxa_g2_txq_submit(&sc->sc_txq, p, epoch, cookie, data, size);
-	if (error == 0)
+	if (error == 0) {
+		sc->sc_port[p].sc_submitted = true;
 		umoxa_g2_kick(sc);
+	}
 	mutex_exit(&sc->sc_lock);
 	return error;
 }
@@ -264,11 +269,14 @@ umoxag_ioctl(void *arg, int p, u_long cmd, void *data, int flags, proc_t *proc)
 	if (sc->sc_dying)
 		error = ENXIO;
 	else if (open && (sc->sc_txq.ports[p].state != UMOXA_OPEN ||
-	    sc->sc_txq.ports[p].job != UMOXA_EMPTY || sc->sc_txq.ports[p].sent != 0))
+	    sc->sc_txq.ports[p].job != UMOXA_EMPTY || sc->sc_port[p].sc_submitted))
 		error = EBUSY;
 	mutex_exit(&sc->sc_lock);
 	settings.mode = mode;
-	settings.rtscts = 0;
+	if (!error && open && !ucom_transport_idle(sc->sc_port[p].sc_child))
+		error = EBUSY;
+	if (!error && mode != 0 && settings.rtscts)
+		error = EINVAL;
 	if (!error && open)
 		error = umoxa_g2_prepare(&sc->sc_io, p, &settings);
 	if (!error) {
@@ -283,6 +291,20 @@ umoxag_ioctl(void *arg, int p, u_long cmd, void *data, int flags, proc_t *proc)
 	return error;
 }
 
+static int
+umoxag_fault_ioctl(void *arg, int p, u_long cmd, void *data, int flags, proc_t *proc)
+{
+	struct umoxa_g2_softc *sc = arg;
+	bool dying;
+
+	if (cmd != UMOXA_G2_GET_FAULT)
+		return EPASSTHROUGH;
+	mutex_enter(&sc->sc_lock);
+	dying = sc->sc_dying;
+	mutex_exit(&sc->sc_lock);
+	return dying ? ENXIO : umoxag_ioctl(arg, p, cmd, data, flags, proc);
+}
+
 static const struct ucom_transport_methods umoxag_transport = {
 	.uct_attach = umoxag_uct_attach, .uct_start = umoxag_uct_start,
 	.uct_stop = umoxag_uct_stop, .uct_submit = umoxag_uct_submit,
@@ -292,5 +314,5 @@ static const struct ucom_transport_methods umoxag_transport = {
 const struct ucom_methods umoxag_methods = {
 	.ucom_get_status = umoxag_status, .ucom_param = umoxag_param,
 	.ucom_ioctl = umoxag_ioctl, .ucom_transport = &umoxag_transport,
-	.ucom_param_strict = true
+	.ucom_param_strict = true, .ucom_fault_ioctl = umoxag_fault_ioctl
 };
