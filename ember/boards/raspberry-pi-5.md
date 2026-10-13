@@ -40,8 +40,8 @@ AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.
 
 A Pi 5 Model B with 8 GiB RAM and DMI version `D04170` used UEFI/ACPI.
 The test preserved its existing firmware; DMI alone does not establish a silicon revision.
-Kernel `EMBER64 #5` was cross-built with GCC 16.2.0 from `f9e7019a729`.
-Its SHA256 was `16f469cc64c7d9abde44f170413f7b69dd3875f21c94af0cf112b5826b0edf42`.
+Kernel `EMBER64 #6` was cross-built with GCC 16.2.0 from `294614ed81a`.
+Its SHA256 was `853199b026f3f5512324032afe04bf7819823441d8c5efd11efb4ea2b0bd9fc9`.
 The matching board modules were installed and their hashes checked after reboot.
 
 An Apple USB DFU device, VID `05ac`, PID `1227`, connected at high speed to a root port.
