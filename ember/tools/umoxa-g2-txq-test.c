@@ -319,6 +319,32 @@ clock_token_overflow(void)
 	return 0;
 }
 
+static int
+explicit_local_fault(void)
+{
+	struct umoxa_g2_txq q;
+	struct umoxa_g2_xfer x;
+	struct umoxa_g2_result r;
+	uint8_t saved[36];
+
+	CHECK(setup(&q) == 0);
+	CHECK(umoxa_g2_txq_submit(&q, 0, 1, 1, payload, 32) == 0);
+	CHECK(umoxa_g2_txq_submit(&q, 1, 1, 1, payload, 8) == 0);
+	CHECK(umoxa_g2_txq_pick(&q, 0, &x) == 0 && x.port == 0);
+	memcpy(saved, x.data, sizeof(saved));
+	CHECK(umoxa_g2_txq_fault_port(&q, 0, ENOBUFS) == 1);
+	CHECK(q.ports[0].state == UMOXA_FAULT && q.ports[0].error == ENOBUFS);
+	CHECK(q.ports[1].state == UMOXA_OPEN && q.ports[1].job == UMOXA_QUEUED);
+	CHECK(q.active && !memcmp(x.data, saved, sizeof(saved)));
+	CHECK(umoxa_g2_txq_fault_port(&q, 0, EIO) == 0);
+	CHECK(umoxa_g2_txq_fault_port(&q, 4, EIO) == 0);
+	CHECK(umoxa_g2_txq_fault_port(NULL, 0, EIO) == 0);
+	CHECK(umoxa_g2_txq_done(&q, x.token, x.len, 0, &r) == 1 && !r.deliver);
+	CHECK(umoxa_g2_txq_pick(&q, 1, &x) == 0 && x.port == 1);
+	CHECK(umoxa_g2_txq_done(&q, x.token, x.len, 0, &r) == 1 && r.deliver && r.actual == 8);
+	return 0;
+}
+
 int
 main(void)
 {
@@ -337,6 +363,7 @@ main(void)
 		{ "stale_done", stale_done },
 		{ "malformed_events", malformed_events },
 		{ "clock_token_overflow", clock_token_overflow },
+		{ "explicit_local_fault", explicit_local_fault },
 	};
 	size_t i;
 
@@ -346,6 +373,6 @@ main(void)
 			return 1;
 		printf("PASS %s\n", tests[i].name);
 	}
-	puts("11 shared G2 TX groups, 0 failures");
+	puts("12 shared G2 TX groups, 0 failures");
 	return 0;
 }

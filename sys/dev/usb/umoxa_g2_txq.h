@@ -72,5 +72,6 @@ int umoxa_g2_txq_events(struct umoxa_g2_txq *, const uint8_t *, size_t,
     uint32_t *);
 int umoxa_g2_txq_tick(struct umoxa_g2_txq *, uint64_t, uint32_t *);
 uint32_t umoxa_g2_txq_fault_all(struct umoxa_g2_txq *, int);
+uint32_t umoxa_g2_txq_fault_port(struct umoxa_g2_txq *, unsigned int, int);
 
 #endif /* _DEV_USB_UMOXA_G2_TXQ_H_ */

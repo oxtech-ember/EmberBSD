@@ -43,6 +43,14 @@ umoxa_g2_txq_fault_all(struct umoxa_g2_txq *q, int error)
 	return mask;
 }
 
+uint32_t
+umoxa_g2_txq_fault_port(struct umoxa_g2_txq *q, unsigned int port, int error)
+{
+	if (q == NULL || port >= UMOXA_G2_PORTS)
+		return 0;
+	return umoxa_g2_fault_port(q, port, error);
+}
+
 int
 umoxa_g2_txq_init(struct umoxa_g2_txq *q, size_t budget, uint64_t timeout)
 {
