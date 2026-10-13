@@ -659,7 +659,7 @@ ucomopen(dev_t dev, int flag, int mode, struct lwp *l)
 		sc->sc_state = UCOM_OPENING;
 		mutex_exit(&sc->sc_lock);
 
-		if (sc->sc_transport != NULL) {
+		if (sc->sc_transport != NULL || sc->sc_methods->ucom_param_strict) {
 			ttylock(tp);
 			saved = tp->t_termios;
 			ttyunlock(tp);
@@ -697,7 +697,7 @@ ucomopen(dev_t dev, int flag, int mode, struct lwp *l)
 		if (ISSET(sc->sc_swflags, TIOCFLAG_MDMBUF))
 			SET(t.c_cflag, MDMBUF);
 		/* Make sure ucomparam() will do something. */
-		if (sc->sc_transport == NULL) {
+		if (sc->sc_transport == NULL && !sc->sc_methods->ucom_param_strict) {
 			tp->t_ospeed = 0;
 			(void)ucomparam(tp, &t);
 		} else {
@@ -813,7 +813,7 @@ bad:
 	 */
 	if (firstopen) {
 		ucom_cleanup(sc, flag);
-		if (sc->sc_transport != NULL) {
+		if (sc->sc_transport != NULL || sc->sc_methods->ucom_param_strict) {
 			ttylock(tp);
 			tp->t_termios = saved;
 			ttyunlock(tp);
@@ -1084,7 +1084,7 @@ ucomioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 	int error;
 	bool serialize;
 
-	if (sc->sc_transport == NULL)
+	if (sc->sc_transport == NULL && !sc->sc_methods->ucom_param_strict)
 		return ucom_do_ioctl(dev, cmd, data, flag, l);
 	/* Leave progress/query operations available while a setting drains. */
 	switch (cmd) {
@@ -1417,7 +1417,7 @@ ucomparam(struct tty *tp, struct termios *t)
 		CLR(t->c_cflag, HUPCL);
 	}
 
-	if (sc->sc_transport != NULL) {
+	if (sc->sc_transport != NULL || sc->sc_methods->ucom_param_strict) {
 		bool opening, changed;
 		bool owned = mutex_owned(&sc->sc_tctl);
 		u_char msr;

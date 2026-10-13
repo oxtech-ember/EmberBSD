@@ -1,14 +1,90 @@
 <!-- Origin: EmberBSD MOXA serial-core development guide, 2026-10-09. -->
-# MOXA G2 preparation and external ucom transports
+# MOXA UPort 1150 preparation and G2 transports
 
 EmberBSD provides preparatory C helpers for a shared four-port MOXA G2 USB
 transport, plus an opt-in `ucom` backend that connects external transports to
 the existing TTY lifecycle. They let developers exercise framing, completion,
-queueing and TTY faults before attaching a device. A real MOXA USB parent,
-firmware, hardware termios/control and physical RS-485 validation remain
-pending. UPort 1150 and Ethernet NPort require separate implementations.
+queueing and TTY faults before attaching a device. The separate experimental `umoxa` USB parent supports the 1150 protocol below.
+The G2 USB parent and Ethernet NPort implementation remain pending. Physical
+USB, firmware and serial validation remain pending for all models.
 
-## Source and validation
+## Experimental UPort 1150 parent
+
+`umoxa` binds only VID/PID `110a:1150` and attaches one legacy USB `ucom` child.
+It is software preparation, not accepted device support. The independent
+BSD protocol encoder was checked against the wire facts in MOXA's official
+[UPort 1100 Linux driver v6.0](https://www.moxa.com/getmedia/c7a1d4ee-ff6f-46fe-b707-e6e2c6fcc152/moxa-uport-1100-series-linux-kernel-6.x-driver-v6.0.tgz),
+`mxu11x0/driver/mxu11x0.{c,h}`. Its SHA512 matches the
+[official catalog](https://www.moxa.com/en/support/product-support/software-and-documentation?psid=114473):
+
+```text
+B812A68A776EFC345FB34ACCFA57C928268278BBCCEA674D7A6ED24FDA674FD7A6064FDE23818CA34A760E97229C4F832E78B5C9F9AC273D4932583CF3E27DFE
+```
+
+Cold configuration 1 must have one firmware bulk-out endpoint; warm configuration
+2 must have bulk-in, bulk-out and interrupt-in endpoints. Actual endpoint
+addresses come from descriptors. Those shapes still require capture on a real
+1150. The driver rejects other configurations and malformed status packets.
+Data uses the existing one-port USB/TTY path, without G2 multiplexed framing.
+
+Firmware is a separately supplied, appropriately licensed `moxa/moxa-1150.fw`
+asset under a configured `hw.firmware.path` directory. It is not embedded or
+redistributed here. The uploader skips the asset's three transport bytes,
+pads payload to 16284 bytes with `0xff`, reconstructs length/checksum, and
+requires complete 64-byte bulk transfers before reset. Missing, oversized,
+short and failed firmware operations log an error and attach no TTY.
+Firmware loading runs synchronously inside post-root attach, whose lifetime is
+pinned by autoconf. Cold attach before root mount does no deferred work and
+logs a request to reconnect after boot. This avoids holding the boot-time
+configuration semaphore across a root-mount dependency. No retry or uncertain
+transfer replay occurs automatically.
+
+Termios encodes 50..921600 baud, 5..8 data bits, no/odd/even parity, one/two
+stop bits and RTS/CTS. `CDTRCTS` and `MDMBUF` are rejected before USB I/O.
+Software XON/XOFF stays in the TTY layer; device offload is disabled.
+The opt-in `ucom_methods.ucom_param_strict` serializes setting ioctls,
+commits TTY settings after parent acceptance, retries a rejected identical
+setting, and returns initial parameter failure from open. Other parents
+leave the flag zero. Rebuild all affected drivers and rump components together.
+
+The installed `<dev/usb/umoxa1150io.h>` provides `UMOXA1150_SET_MODE` with an
+`int`: `UMOXA1150_MODE_RS232` (default), `UMOXA1150_MODE_RS485_2W`, or
+`UMOXA1150_MODE_RS422_4W` (also the protocol's four-wire RS485 mode).
+`UMOXA1150_GET_FAULT` returns the retained configuration/modem errno, cleared
+by a successful new parent open. Legacy `ucom_set` cannot return errno for
+DTR/RTS/break ioctls; failures are logged and retained, and do not establish
+physical control success. Partial USB command acceptance is not rolled back.
+Hardware flow, mode changes, carrier reporting and UART drain are unaccepted.
+
+Run the 12 wire/lifecycle groups, 12 actual-parent groups, and the actual
+`ucomparam`/initial-parameter-section regression on Linux/macOS:
+
+```sh
+sh ember/tools/umoxa1150-test.sh /absolute/new-1150-protocol-output
+sh ember/tools/umoxa1150-driver-test.sh /absolute/new-1150-parent-output
+sh ember/tools/ucom-strict-param-test.sh /absolute/new-strict-param-output
+```
+
+All three run plain and ASan/UBSan binaries. The parent compiles the actual
+source with external USB/kernel doubles; the strict regression extracts the
+unmodified parameter sections from `ucom.c`. Neither executes native USB/TTY
+concurrency. The 33 prior G2/transport host groups remain separate.
+With a clean whitespace-free source export and prepared fork tools:
+
+```sh
+sh ember/tools/umoxa1150-cross-check.sh /absolute/clean-source \
+    /absolute/prepared-kernel-build /absolute/new-1150-cross-output
+```
+
+This creates fresh EMBER64 configuration headers and compiles two AArch64
+objects using that configuration's real make flags. Compiler version is
+recorded; the check does not imply GCC16, a full linked kernel, boot or USB
+acceptance. The compatibility matrix now includes 18 parent method owners.
+First physical step is USB descriptor capture. Firmware/re-enumeration comes
+next on an isolated test OS; a serial loopback or NPort peer follows only
+once USB attachment is accepted. No jumper is needed for descriptor capture.
+
+## G2 source and validation
 
 - `sys/dev/usb/umoxa_frame.{c,h}` validates G2 data/event transfers and
   builds TX headers. Its host contract has eight named groups.

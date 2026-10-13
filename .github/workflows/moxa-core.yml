@@ -10,6 +10,13 @@ on:
       - 'sys/dev/usb/ucom.c'
       - 'sys/dev/usb/ucomvar.h'
       - 'sys/dev/usb/files.usb'
+      - 'sys/dev/usb/usbdevices.config'
+      - 'sys/dev/usb/Makefile'
+      - 'sys/dev/usb/umoxa1150*'
+      - 'ember/tests/umoxa1150/**'
+      - 'ember/tools/umoxa1150*'
+      - 'ember/tools/ucom-strict-param-test.sh'
+      - 'distrib/sets/lists/comp/mi'
       - 'sys/rump/dev/lib/libucom/**'
       - 'tests/dev/usb/ucom_transport/**'
       - 'ember/tools/umoxa-frame-test.*'
@@ -32,6 +39,13 @@ on:
       - 'sys/dev/usb/ucom.c'
       - 'sys/dev/usb/ucomvar.h'
       - 'sys/dev/usb/files.usb'
+      - 'sys/dev/usb/usbdevices.config'
+      - 'sys/dev/usb/Makefile'
+      - 'sys/dev/usb/umoxa1150*'
+      - 'ember/tests/umoxa1150/**'
+      - 'ember/tools/umoxa1150*'
+      - 'ember/tools/ucom-strict-param-test.sh'
+      - 'distrib/sets/lists/comp/mi'
       - 'sys/rump/dev/lib/libucom/**'
       - 'tests/dev/usb/ucom_transport/**'
       - 'ember/tools/umoxa-frame-test.*'
@@ -62,6 +76,9 @@ jobs:
       - name: Host framing, shared TX, state and bounded RX contracts
         shell: sh
         run: |
+          sh ember/tools/umoxa1150-test.sh "$RUNNER_TEMP/moxa-1150-protocol"
+          sh ember/tools/umoxa1150-driver-test.sh "$RUNNER_TEMP/moxa-1150-parent"
+          sh ember/tools/ucom-strict-param-test.sh "$RUNNER_TEMP/ucom-strict-params"
           sh ember/tools/umoxa-g2-txq-test.sh "$RUNNER_TEMP/moxa-txq"
           sh ember/tools/umoxa-frame-test.sh "$RUNNER_TEMP/moxa-frame"
           sh ember/tools/ucom-transport-core-test.sh "$RUNNER_TEMP/moxa-state"

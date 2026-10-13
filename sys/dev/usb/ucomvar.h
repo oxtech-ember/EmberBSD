@@ -149,6 +149,8 @@ struct ucom_methods {
 	void (*ucom_write)(void *, int, u_char *, u_char *, uint32_t *);
 	/* NULL retains the existing USB path; rebuild all affected consumers. */
 	const struct ucom_transport_methods *ucom_transport;
+	/* Opt-in legacy params: accept before TTY commit; fail initial open. */
+	bool ucom_param_strict;
 };
 
 /* modem control register */

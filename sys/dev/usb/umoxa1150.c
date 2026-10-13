@@ -29,7 +29,7 @@ struct umoxa1150_softc {
 	struct umoxa1150_settings sc_settings;
 	struct umoxa1150_io sc_io;
 	kmutex_t sc_lock, sc_status_lock;
-	bool sc_dying, sc_fw_pending, sc_open;
+	bool sc_dying, sc_open;
 	uint8_t sc_mcr, sc_msr, sc_lsr;
 	int sc_fault;
 };
@@ -50,7 +50,7 @@ static void umoxa1150_set(void *, int, int, int);
 static void umoxa1150_get_status(void *, int, u_char *, u_char *);
 static void umoxa1150_intr(struct usbd_xfer *, void *, usbd_status);
 
-CFATTACH_DECL2_NEW(umoxa1150, sizeof(struct umoxa1150_softc),
+CFATTACH_DECL2_NEW(umoxa, sizeof(struct umoxa1150_softc),
     umoxa1150_match, umoxa1150_attach, umoxa1150_detach, NULL, NULL,
     umoxa1150_childdet);
 
@@ -61,6 +61,7 @@ static const struct ucom_methods umoxa1150_methods = {
 	.ucom_ioctl = umoxa1150_ioctl,
 	.ucom_open = umoxa1150_open,
 	.ucom_close = umoxa1150_close,
+	.ucom_param_strict = true,
 };
 
 static int
@@ -114,7 +115,7 @@ umoxa1150_bulk(void *arg, const uint8_t *bytes, size_t size, size_t *actual)
 }
 
 static int
-umoxa1150_layout(struct umoxa1150_softc *sc, int cold)
+umoxa1150_layout(struct umoxa1150_softc *sc, int cold_layout)
 {
 	struct umoxa1150_endpoint ep[3];
 	usb_endpoint_descriptor_t *ed;
@@ -123,12 +124,12 @@ umoxa1150_layout(struct umoxa1150_softc *sc, int cold)
 	unsigned i;
 
 	cd = usbd_get_config_descriptor(sc->sc_udev);
-	if (cd == NULL || cd->bConfigurationValue != (cold ? 1 : 2) ||
+	if (cd == NULL || cd->bConfigurationValue != (cold_layout ? 1 : 2) ||
 	    cd->bNumInterface != 1 || usbd_device2interface_handle(sc->sc_udev,
 	    0, &sc->sc_iface) != USBD_NORMAL_COMPLETION)
 		return EPROTO;
 	id = usbd_get_interface_descriptor(sc->sc_iface);
-	if (id == NULL || id->bNumEndpoints != (cold ? 1 : 3))
+	if (id == NULL || id->bNumEndpoints != (cold_layout ? 1 : 3))
 		return EPROTO;
 	for (i = 0; i < id->bNumEndpoints; i++) {
 		ed = usbd_interface2endpoint_descriptor(sc->sc_iface, i);
@@ -138,7 +139,7 @@ umoxa1150_layout(struct umoxa1150_softc *sc, int cold)
 		ep[i].type = UE_GET_XFERTYPE(ed->bmAttributes);
 		ep[i].packet = UGETW(ed->wMaxPacketSize);
 	}
-	return umoxa1150_endpoints(ep, id->bNumEndpoints, cold, &sc->sc_layout);
+	return umoxa1150_endpoints(ep, id->bNumEndpoints, cold_layout, &sc->sc_layout);
 }
 
 static void
@@ -148,7 +149,7 @@ umoxa1150_attach(device_t parent, device_t self, void *aux)
 	struct umoxa1150_softc *sc = device_private(self);
 	struct ucom_attach_args ucaa;
 	usb_device_descriptor_t *dd;
-	int cold, error;
+	int cold_layout, error;
 
 	aprint_naive("\n");
 	aprint_normal("\n");
@@ -163,15 +164,16 @@ umoxa1150_attach(device_t parent, device_t self, void *aux)
 	dd = usbd_get_device_descriptor(sc->sc_udev);
 	if (dd->bNumConfigurations != 1 && dd->bNumConfigurations != 2)
 		goto bad;
-	cold = dd->bNumConfigurations == 1;
-	error = usbd_set_config_no(sc->sc_udev, cold ? 1 : 2, 1);
-	if (error != USBD_NORMAL_COMPLETION || umoxa1150_layout(sc, cold) != 0)
+	cold_layout = dd->bNumConfigurations == 1;
+	error = usbd_set_config_no(sc->sc_udev, cold_layout ? 1 : 2, 1);
+	if (error != USBD_NORMAL_COMPLETION || umoxa1150_layout(sc, cold_layout) != 0)
 		goto bad;
-	if (cold) {
-		/* Pending configuration pins softc through the entire mountroot hook. */
-		sc->sc_fw_pending = true;
-		config_pending_incr(self);
-		config_mountroot(self, umoxa1150_firmware_hook);
+	if (cold_layout) {
+		/* Attach itself pins softc; do not queue an unowned root hook. */
+		if (!root_is_mounted)
+			aprint_error_dev(self, "reconnect after root mount to load firmware\n");
+		else
+			umoxa1150_firmware_hook(self);
 		return;
 	}
 	memset(&ucaa, 0, sizeof(ucaa));
@@ -241,8 +243,6 @@ done:
 		aprint_error_dev(self, "firmware load failed (%d); no tty attached\n", error);
 	else
 		aprint_normal_dev(self, "firmware transferred; waiting for USB re-enumeration\n");
-	sc->sc_fw_pending = false;
-	config_pending_decr(self);
 }
 
 static void
@@ -321,8 +321,7 @@ umoxa1150_param(void *arg, int port, struct termios *t)
 		goto done;
 	}
 	if ((t->c_ispeed != 0 && t->c_ispeed != t->c_ospeed) ||
-	    ((t->c_cflag & (CRTS_IFLOW | CCTS_OFLOW)) != 0 &&
-	    (t->c_cflag & (CRTS_IFLOW | CCTS_OFLOW)) != (CRTS_IFLOW | CCTS_OFLOW))) {
+	    (t->c_cflag & (CDTRCTS | MDMBUF)) != 0) {
 		error = EINVAL;
 		goto done;
 	}
@@ -332,9 +331,8 @@ umoxa1150_param(void *arg, int port, struct termios *t)
 	s.parity = !(t->c_cflag & PARENB) ? 0 : (t->c_cflag & PARODD) ? 1 : 2;
 	s.stops = (t->c_cflag & CSTOPB) ? 2 : 1;
 	s.rtscts = (t->c_cflag & (CRTS_IFLOW | CCTS_OFLOW)) != 0;
-	s.ixon = (t->c_iflag & IXON) != 0;
-	s.ixoff = (t->c_iflag & IXOFF) != 0;
-	s.xon = t->c_cc[VSTART]; s.xoff = t->c_cc[VSTOP];
+	/* Legacy ucom only supplies speed/cflag; TTY owns software flow. */
+	s.ixon = s.ixoff = 0;
 	mcr = t->c_ospeed ? sc->sc_mcr : 0;
 	error = umoxa1150_config(&s, probe);
 	if (error == 0)
@@ -469,9 +467,6 @@ umoxa1150_detach(device_t self, int flags)
 	struct umoxa1150_softc *sc = device_private(self);
 	int error = 0;
 
-	/* Autoconf normally waits for pending work before calling detach. */
-	if (sc->sc_fw_pending)
-		return EBUSY;
 	mutex_enter(&sc->sc_lock);
 	sc->sc_dying = true;
 	umoxa1150_close_intr(sc);

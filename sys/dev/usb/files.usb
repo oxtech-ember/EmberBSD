@@ -585,7 +585,7 @@ file    dev/usb/umcpmio.c		umcpmio			needs-flag
 file	dev/usb/umcpmio_subr.c		umcpmio
 
 # MOXA UPort 1150 single-port USB serial and external firmware
-device	umoxa1150: ucombus, firmload
-attach	umoxa1150 at usbdevif
-file	dev/usb/umoxa1150.c		umoxa1150
-file	dev/usb/umoxa1150_protocol.c	umoxa1150
+device	umoxa: ucombus, firmload
+attach	umoxa at usbdevif
+file	dev/usb/umoxa1150.c		umoxa
+file	dev/usb/umoxa1150_protocol.c	umoxa

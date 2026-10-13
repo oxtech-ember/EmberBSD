@@ -3,7 +3,7 @@
 #include "../../sys/dev/usb/umoxa1150.c"
 #define CHECK(x) do {if(!(x)){fprintf(stderr,"%s:%d: %s\n",__func__,__LINE__,#x);return 0;}}while(0)
 static void init(struct umoxa1150_softc *sc,struct fake_device *dev,struct usbd_device *usb,int cold) {
- memset(&fixture,0,sizeof(fixture));memset(sc,0,sizeof(*sc));memset(dev,0,sizeof(*dev));memset(usb,0,sizeof(*usb));dev->softc=sc;
+ root_is_mounted=true;memset(&fixture,0,sizeof(fixture));memset(sc,0,sizeof(*sc));memset(dev,0,sizeof(*dev));memset(usb,0,sizeof(*usb));dev->softc=sc;
  usb->dd.bNumConfigurations=cold?1:2;usb->cd.bNumInterface=1;
  usb->iface.id.bNumEndpoints=cold?1:3;
  usb->iface.ep[0]=(usb_endpoint_descriptor_t){2,2,{64,0}};
@@ -40,25 +40,38 @@ static int short_control_error(void) {
 }
 static int cold_missing_firmware(void) {
  struct umoxa1150_softc sc;struct fake_device d;struct usbd_device u;
- init(&sc,&d,&u,1);attach(&d,&u);CHECK(d.pending==1 && fixture.child_attach==0);
- fixture.missing_firmware=1;fixture.hook(&d);
- CHECK(d.pending==0 && fixture.errors && fixture.reset==0 && fixture.allocs==0);
+ init(&sc,&d,&u,1);fixture.missing_firmware=1;attach(&d,&u);
+ CHECK(d.pending==0 && fixture.child_attach==0 && fixture.errors && fixture.reset==0 && fixture.allocs==0);
  CHECK(umoxa1150_detach(&d,0)==0);return 1;
 }
 static int cold_upload_cleanup(void) {
  int shorted;for(shorted=0;shorted<=1;shorted++) {
  const uint8_t fw[]={0,0,0,1};struct umoxa1150_softc sc;struct fake_device d;struct usbd_device u;
  init(&sc,&d,&u,1);fixture.firmware.data=fw;fixture.firmware.size=sizeof(fw);fixture.short_bulk=shorted;
- attach(&d,&u);fixture.hook(&d);CHECK(d.pending==0 && fixture.child_attach==0 && fixture.allocs==0 && fixture.pipes==0 && fixture.created==fixture.destroyed);
+ attach(&d,&u);CHECK(d.pending==0 && fixture.child_attach==0 && fixture.allocs==0 && fixture.pipes==0 && fixture.created==fixture.destroyed);
  CHECK(fixture.reset==(shorted?0U:1U));CHECK(umoxa1150_detach(&d,0)==0);}
  return 1;
 }
 static int detach_pending_and_open(void) {
  struct umoxa1150_softc sc;struct fake_device d;struct usbd_device u;
- init(&sc,&d,&u,1);attach(&d,&u);CHECK(umoxa1150_detach(&d,0)==EBUSY);
- fixture.missing_firmware=1;fixture.hook(&d);CHECK(umoxa1150_detach(&d,0)==0);
+ init(&sc,&d,&u,1);root_is_mounted=false;attach(&d,&u);
+ CHECK(d.pending==0 && fixture.hook==NULL && fixture.reset==0 && fixture.errors);
+ CHECK(umoxa1150_detach(&d,0)==0);
  init(&sc,&d,&u,0);attach(&d,&u);CHECK(umoxa1150_open(&sc,0)==0);
  CHECK(umoxa1150_detach(&d,0)==0 && fixture.pipes==0 && fixture.allocs==0 && fixture.child_detach==1);return 1;
+}
+static int tty_flow_only(void) {
+ struct umoxa1150_softc sc;struct fake_device d;struct usbd_device u;struct termios t;
+ init(&sc,&d,&u,0);attach(&d,&u);memset(&t,0xa5,sizeof(t));t.c_ispeed=0;t.c_ospeed=9600;t.c_cflag=CS8|CLOCAL;
+ CHECK(umoxa1150_param(&sc,0,&t)==0 && sc.sc_settings.ixon==0 && sc.sc_settings.ixoff==0 && sc.sc_settings.xon==0x11 && sc.sc_settings.xoff==0x13);
+ CHECK(umoxa1150_detach(&d,0)==0);return 1;
+}
+static int unsupported_flow_rejected(void) {
+ const unsigned flags[]={CDTRCTS,MDMBUF};unsigned i;
+ for(i=0;i<2;i++) {struct umoxa1150_softc sc;struct fake_device d;struct usbd_device u;struct termios t;
+ init(&sc,&d,&u,0);attach(&d,&u);memset(&t,0,sizeof(t));t.c_ospeed=9600;t.c_cflag=CS8|flags[i];
+ CHECK(umoxa1150_param(&sc,0,&t)==EINVAL && fixture.requests==0);
+ CHECK(umoxa1150_detach(&d,0)==0);}return 1;
 }
 static int settings_failure_not_committed(void) {
  struct umoxa1150_softc sc;struct fake_device d;struct usbd_device u;struct termios t;
@@ -89,7 +102,7 @@ static int mode_and_modem_transaction(void) {
 }
 
 int main(void) {
- struct {const char *n;int(*f)(void);} cases[]={{"warm_attach_open_close",warm_attach_open_close},{"bad_endpoints_no_child",bad_endpoints_no_child},{"open_error_cleanup",open_error_cleanup},{"short_control_error",short_control_error},{"cold_missing_firmware",cold_missing_firmware},{"cold_upload_cleanup",cold_upload_cleanup},{"detach_pending_and_open",detach_pending_and_open},{"settings_failure_not_committed",settings_failure_not_committed},{"interrupt_status_validation",interrupted_status_validation},{"mode_and_modem_transaction",mode_and_modem_transaction}};
- unsigned i,ok=0;for(i=0;i<10;i++){int pass=cases[i].f();printf("%s %s\n",pass?"PASS":"FAIL",cases[i].n);ok+=pass;}
- printf("%u/10 actual-parent groups passed\n",ok);return ok==10?0:1;
+ struct {const char *n;int(*f)(void);} cases[]={{"tty_flow_only",tty_flow_only},{"unsupported_flow_rejected",unsupported_flow_rejected},{"warm_attach_open_close",warm_attach_open_close},{"bad_endpoints_no_child",bad_endpoints_no_child},{"open_error_cleanup",open_error_cleanup},{"short_control_error",short_control_error},{"cold_missing_firmware",cold_missing_firmware},{"cold_upload_cleanup",cold_upload_cleanup},{"detach_pending_and_open",detach_pending_and_open},{"settings_failure_not_committed",settings_failure_not_committed},{"interrupt_status_validation",interrupted_status_validation},{"mode_and_modem_transaction",mode_and_modem_transaction}};
+ unsigned i,ok=0;for(i=0;i<12;i++){int pass=cases[i].f();printf("%s %s\n",pass?"PASS":"FAIL",cases[i].n);ok+=pass;}
+ printf("%u/12 actual-parent groups passed\n",ok);return ok==12?0:1;
 }

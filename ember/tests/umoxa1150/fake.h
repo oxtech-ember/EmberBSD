@@ -21,6 +21,9 @@ struct termios { uint32_t c_iflag,c_oflag,c_cflag,c_lflag; uint8_t c_cc[20]; uin
 #define CLOCAL 0x8000
 #define CRTS_IFLOW 0x10000
 #define CCTS_OFLOW 0x10000
+#define CDTRCTS 0x20000
+#define MDMBUF 0x100000
+static bool root_is_mounted = true;
 #define IXON 0x200
 #define IXOFF 0x400
 #define VSTART 12
@@ -85,6 +88,7 @@ struct ucom_methods {
  void (*ucom_set)(void *,int,int,int);
  int (*ucom_param)(void *,int,struct termios *);
  int (*ucom_ioctl)(void *,int,u_long,void *,int,proc_t *);
+ bool ucom_param_strict;
  int (*ucom_open)(void *,int); void (*ucom_close)(void *,int);
 };
 struct ucom_attach_args { int ucaa_portno,ucaa_bulkin,ucaa_bulkout; unsigned ucaa_ibufsize,ucaa_ibufsizepad,ucaa_obufsize,ucaa_opkthdrlen; const char *ucaa_info;struct usbd_device *ucaa_device;struct usbd_interface *ucaa_iface;const struct ucom_methods *ucaa_methods;void *ucaa_arg; };

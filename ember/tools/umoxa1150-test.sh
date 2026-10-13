@@ -12,6 +12,14 @@ parent=$(CDPATH= cd -- "$(dirname -- "$1")" && pwd -P)
 out=$parent/$(basename -- "$1")
 case "$out/" in "$src/"*) echo 'output must be outside source tree' >&2; exit 1 ;; esac
 mkdir "$out"
+python3 - "$src" "$out" <<'HASH'
+import hashlib,pathlib,sys
+src,out=map(pathlib.Path,sys.argv[1:])
+files=[src/'sys/dev/usb/umoxa1150.c',src/'sys/dev/usb/umoxa1150_protocol.c',src/'sys/dev/usb/umoxa1150_protocol.h',src/'sys/dev/usb/umoxa1150io.h',src/'sys/dev/usb/ucom.c',src/'sys/dev/usb/ucomvar.h']
+files+=list((src/'ember/tests/umoxa1150').rglob('*'))
+files+=list((src/'ember/tools').glob('umoxa1150*'))+[src/'ember/tools/ucom-strict-param-test.sh']
+(out/'sources.sha256').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+str(p.relative_to(src))+'\n' for p in sorted(set(files)) if p.is_file()))
+HASH
 cc=${CC:-cc}
 "$cc" --version > "$out/compiler.txt"
 for mode in plain sanitized; do
