@@ -137,3 +137,25 @@ cover both C files with target GNU-EFI headers. Cppcheck reads GCC-preprocessed
 C with `--platform=unix64`; parsing raw compiler builtins was unsupported.
 The checks are supplemental, not proof of the UEFI ABI or all error paths.
 There is no Valgrind execution path for this freestanding EFI program.
+
+## CM5 mode rejection, 2026-10-13
+
+A later CM5 check used an HP L1950 monitor through an HDMI-to-VGA adapter.
+The firmware now sees HDMI0 hotplug and reads two EDID blocks. The base block
+identifies the 1280x1024 panel, while the extension advertises CEA 1080p.
+The installed EEPROM bootloader `5855b10b2bd22b2a116dc91f6b5b1bc4b2ea849f`
+(2025-06-13) selects 1920x1080 at 60 Hz. EmberBSD attaches a 32-bpp genfb with
+stride 7680. The operator reports an unsupported monitor mode.
+
+Adding only `hdmi_max_pixel_freq=108000000` did not change the firmware mode
+or framebuffer after reboot. The saved original configuration was restored.
+The kernel and fan settings were unchanged. This differs from the earlier
+hotplug-zero result: the current failure is mode selection, not absent HPD.
+
+Raspberry Pi's [maintainer guidance](https://github.com/raspberrypi/firmware/issues/1966)
+states that legacy HDMI settings are not supported on Pi 5; the operating
+system's DRM driver performs mode selection. EmberBSD's current native V3D
+render interface does not supply BCM2712 HDMI KMS. GOP framebuffer sizing or
+a KWin virtual-output size does not prove a change of physical HDMI timing.
+The [KWin/V3D receipt](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
+records separate compositor rendering acceptance and its display boundary.

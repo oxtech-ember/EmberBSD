@@ -331,7 +331,11 @@ on every board in the hardware catalog.
   private virtual-backend session: the compositor stays active on QPainter
   while Qt Quick clients render real pixel phases through software EGL
   (llvmpipe) and exit cleanly. Hardware GL compositing still needs the DRM
-  render node, so acceleration stays unclaimed. The fixed
+  render node on A733. On physical CM5, the same full compositor now passes
+  [OpenGL/V3D selection and Qt Quick pixel checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
+  on a virtual output under an existing non-root user. Its missing Vulkan
+  loader dependency is repaired. This does not establish HDMI presentation
+  or the complete Plasma Desktop. The fixed
   [Milou](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/milou)
   package passes its fresh-board acceptance on the same board.
   plasma-workspace 6.7.5 itself now cross-builds completely (BROKEN
@@ -344,7 +348,9 @@ on every board in the hardware catalog.
   (365 packages): plasmashell, krunner, ksmserver and startplasma-wayland
   are installed with clean dynamic dependencies, and the private KWin
   session acceptance still passes. A startplasma session on the virtual
-  output is the next acceptance step.
+  output is the next acceptance step. CM5 runtime testing also identifies
+  the separate, still absent Plasma Desktop shell package; Workspace alone
+  cannot start `org.kde.plasma.desktop`.
   [ConsoleKit session launching](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-session.md)
   now preserves application failures and passes real-session checks on CM5;
   ordinary-user login and device ownership remain unverified.
