@@ -247,6 +247,11 @@ artifacts plus the 56-byte static state. Version 1 carried only three
 program spans; the accepted 2026-10-12 result above used it, and version
 2 supersedes it. The parser requires each of the nine roles exactly once,
 four-kilobyte-aligned page-disjoint addresses, and nonoverlapping spans.
+The context-state address must equal the RESUME resource base.
+That resource must be writable, SLC-bypassed, and at least 512 bytes.
+The shared-register save areas are separate PDS resources.
+The packer's `CTX_VA_HEX` argument asserts the RESUME address; it cannot select another resource.
+The parser rejects older version-2 packets that violate this binding.
 The kernel stage verifies the payload digest with the in-kernel SHA-256
 and rejects the file with `EAUTH` on any mismatch. It also pins the
 firmware profile: BVNC equality, feature masks `0x92d9ff57fdbf7cdb` and

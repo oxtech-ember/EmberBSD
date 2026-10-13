@@ -19,6 +19,8 @@
 #define A733_GPU_FWCOMPUTE_FILE_MAX	(96 * 1024)
 #define A733_GPU_FWCOMPUTE_STATE_BYTES	UINT32_C(56)
 #define A733_GPU_FWCOMPUTE_RESOURCES	9
+/* Mesa 26.2.4: align 72 bytes to a 64-byte cache line, then allow 4 cores. */
+#define A733_GPU_FWCOMPUTE_RESUME_BYTES	UINT32_C(512)
 
 #define A733_GPU_FWCOMPUTE_FLAG_RO	UINT16_C(0x0001)
 #define A733_GPU_FWCOMPUTE_FLAG_BYPASS	UINT16_C(0x0002)
@@ -89,6 +91,8 @@ struct a733_gpu_fwcompute_file {
  * byte-aligned nonoverlapping payload spans, four-kilobyte-aligned virtual
  * addresses below 40 bits with page-disjoint ranges, a 56-byte static
  * state, and a nonzero multiple-of-four length for every resource. The
+ * context-state address must equal the RESUME resource base. That resource
+ * must be writable, SLC-bypassed, and at least RESUME_BYTES long. The
  * payload digest is copied out, not verified here. Return positive errno;
  * leave *out untouched on every error.
  */

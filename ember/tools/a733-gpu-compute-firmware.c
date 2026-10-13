@@ -10,6 +10,8 @@
  * usage: a733-gpu-compute-firmware OUT BVNC GENERAL.bin PDS.bin USC.bin
  *          STATE.bin CTX_VA_HEX [PRIORITY=N] [PID=N] [CONTEXT_ID=N]
  *          [JOB_ID=N]
+ * CTX_VA_HEX asserts the RESUME resource address. It cannot select another
+ * resource. The packer derives the command address from its role table.
  */
 
 #include <errno.h>
@@ -33,7 +35,7 @@ static const struct pack_resource table[] = {
 	{ A733_GPU_FWCOMPUTE_SCRATCH, A733_GPU_FWCOMPUTE_FLAG_BYPASS,
 	  0, 0, 4, UINT64_C(0x8000000000) },
 	{ A733_GPU_FWCOMPUTE_RESUME, A733_GPU_FWCOMPUTE_FLAG_BYPASS,
-	  0, 4096, 512, UINT64_C(0x8000001000) },
+	  0, 4096, A733_GPU_FWCOMPUTE_RESUME_BYTES, UINT64_C(0x8000001000) },
 	{ A733_GPU_FWCOMPUTE_IDFWDF_TEXTURE, 0,
 	  0, 8192, 128, UINT64_C(0x8000002000) },
 	{ A733_GPU_FWCOMPUTE_IDFWDF_SHAREDS, A733_GPU_FWCOMPUTE_FLAG_RO,
@@ -131,6 +133,7 @@ main(int argc, char **argv)
 	uint8_t *area[3];
 	FILE *out, *state;
 	char hex[65];
+	char *ctx_end;
 
 	if (argc < 8 || argc > 12)
 		die("usage: OUT BVNC GENERAL PDS USC STATE CTX_VA [KEY=N ...]");
@@ -149,9 +152,11 @@ main(int argc, char **argv)
 	if (priority > 2)
 		die("priority must be 0..2");
 	bvnc = strtoull(argv[2], NULL, 0);
-	ctx_va = strtoull(argv[7], NULL, 0);
-	if (ctx_va == 0 || ctx_va >= (1ULL << 40) || (ctx_va & 15) != 0)
-		die("context-state GPU address invalid");
+	ctx_va = find_role(A733_GPU_FWCOMPUTE_RESUME)->va;
+	errno = 0;
+	if (strtoull(argv[7], &ctx_end, 0) != ctx_va || errno != 0 ||
+	    ctx_end == argv[7] || *ctx_end != '\0')
+		die("context-state GPU address must equal the RESUME resource");
 
 	area[0] = read_file(argv[3], &area_size[0]);
 	area[1] = read_file(argv[4], &area_size[1]);

@@ -19,13 +19,17 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     ${FWFILE_TEST_CFLAGS:--fsanitize=address,undefined} \
     -I"$src/sys/arch/arm/sunxi" -I"$tools" \
     "$tools/a733-gpu-fwfile-contract.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c" \
+    "${FWFILE_SOURCE:-$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c}" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c" \
     -o "$work/fwfile"
 "$work/fwfile" self
+if [ -n "${FWFILE_REJECT_IMAGE:-}" ]; then
+    "$work/fwfile" reject "$FWFILE_REJECT_IMAGE"
+fi
 
 # Build the v2 packer and run it end to end on synthetic compiler artifacts.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -I"$src/sys/arch/arm/sunxi" \
+    ${FWFILE_TEST_CFLAGS:--fsanitize=address,undefined} \
     -I"$tools" \
     "$tools/a733-gpu-compute-firmware.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c" \
@@ -38,9 +42,28 @@ if "$work/packer" "$work" >/dev/null 2>&1; then
     exit 1
 fi
 "$work/fwfile" artifacts "$work"
+# The old shared-register VA is mapped, but it has the wrong ownership role.
+for bad_context in 0xda00000000 0xda00005000 0x8000000000 0x8000001040 \
+    0x8000001000junk 0xffffffffffffffffffffffff; do
+    if "$work/packer" "$work/rejected.bin" 0x00240038006800b7 \
+        "$work/general.bin" "$work/pds.bin" "$work/usc.bin" \
+        "$work/static-state.bin" "$bad_context" > "$work/rejected.out" 2>&1; then
+        echo "packer accepted invalid context: $bad_context" >&2
+        exit 1
+    fi
+    [ ! -e "$work/rejected.bin" ] || {
+        echo 'packer wrote output for an invalid context' >&2; exit 1;
+    }
+    rg='context-state GPU address must equal the RESUME resource'
+    if ! grep -q "$rg" "$work/rejected.out"; then
+        cat "$work/rejected.out" >&2
+        echo 'packer failed for an unrelated reason' >&2
+        exit 1
+    fi
+done
 "$work/packer" "$work/a733-compute.bin" 0x00240038006800b7 \
     "$work/general.bin" "$work/pds.bin" "$work/usc.bin" \
-    "$work/static-state.bin" 0xda00000000 > "$work/packer.out"
+    "$work/static-state.bin" 0x8000001000 > "$work/packer.out"
 image=$(sed -n 's/^image_sha256=\([0-9a-f]*\) used=184$/\1/p' "$work/packer.out")
 file=$(sed -n 's/^file_sha256=\([0-9a-f]*\) bytes=60292$/\1/p' "$work/packer.out")
 vm=$(sed -n 's/^vm_check=windows=5 directories=4 leaves=20$/ok/p' "$work/packer.out")
