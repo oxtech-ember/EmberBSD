@@ -2874,6 +2874,9 @@ read_and_display_attr_value (unsigned long attribute,
  	  break;
 
 	case DW_AT_str_offsets_base:
+	  /* DWARF5 top-DIE bases are read before indexed attributes.  */
+	  if (dwarf_version >= 5 && level == 0)
+	    break;
 	  if (debug_info_p->str_offsets_base)
 	    warn (_("CU @ %#" PRIx64 " has multiple str_offsets_base values "
 		    "%#" PRIx64 " and %#" PRIx64 ")"),
@@ -3681,9 +3684,11 @@ read_bases (abbrev_entry *   entry,
 	    int64_t          pointer_size,
 	    uint64_t         offset_size,
 	    int              dwarf_version,
+	    bool             split_unit,
 	    debug_info *     debug_info_p)
 {
   abbrev_attr *attr;
+  bool str_base_seen = false;
 
   for (attr = entry->first_attr;
        attr && attr->attribute;
@@ -3711,10 +3716,36 @@ read_bases (abbrev_entry *   entry,
 	  else
 	    warn (_("Unexpected form of DW_AT_addr_base in the top DIE\n"));
 	}
+      else if (attr->attribute == DW_AT_str_offsets_base)
+	{
+	  if (attr->form == DW_FORM_sec_offset)
+	    {
+	      SAFE_BYTE_GET_AND_INC (uvalue, data, offset_size, end);
+	      if (str_base_seen)
+		warn (_("CU @ %#" PRIx64 " has multiple str_offsets_base values "
+			"%#" PRIx64 " and %#" PRIx64 ")"),
+		      debug_info_p->cu_offset,
+		      debug_info_p->str_offsets_base, uvalue);
+	      debug_info_p->str_offsets_base = uvalue;
+	      str_base_seen = true;
+	    }
+	  else
+	    {
+	      warn (_("Unexpected form of DW_AT_str_offsets_base in the top DIE\n"));
+	      data = skip_attribute (attr->form, data, end, pointer_size,
+			     offset_size, dwarf_version);
+	    }
+	}
       else
 	data = skip_attribute (attr->form, data, end, pointer_size,
 			       offset_size, dwarf_version);
     }
+
+  /* Split DWARF5 string indices start after the contribution header.
+     An explicit base, including zero, takes precedence.  */
+  if (split_unit && dwarf_version >= 5 && !str_base_seen
+      && debug_info_p->str_offsets_base == 0)
+    debug_info_p->str_offsets_base = offset_size == 4 ? 8 : 16;
 }
 
 /* Process the contents of a .debug_info section.
@@ -4231,8 +4262,8 @@ process_debug_info (struct dwarf_section * section,
 		      == debug_info_p->num_loc_views));
 
 	  /* Look ahead so that the values of DW_AT_rnglists_base,
-	     DW_AT_[GNU_]addr_base are available before attributes that
-	     reference them are parsed in the same DIE.
+	     DW_AT_[GNU_]addr_base and DW_AT_str_offsets_base are available
+	     before attributes that reference them are parsed in the same DIE.
 	     Only needed for the top DIE on DWARFv5+.
 	     No simiar treatment for loclists_base because there should
 	     be no loclist attributes in top DIE.  */
@@ -4246,6 +4277,8 @@ process_debug_info (struct dwarf_section * section,
 			  compunit.cu_pointer_size,
 			  offset_size,
 			  compunit.cu_version,
+			  compunit.cu_unit_type == DW_UT_split_compile
+			    || compunit.cu_unit_type == DW_UT_split_type,
 			  debug_info_p);
 
 	      /* This check was in place before, keep it.  */
