@@ -94,8 +94,9 @@ main(int argc, char **argv)
 	check(ioctl(fd, DRM_IOCTL_GET_CAP, &cap) == 0 && cap.value == 0,
 	    "no syncobj capability");
 	cap = (struct drm_get_cap){ .capability = DRM_CAP_DUMB_BUFFER };
-	check(ioctl(fd, DRM_IOCTL_GET_CAP, &cap) == 0 && cap.value == 0,
-	    "no display buffer capability");
+	errno = 0;
+	check(ioctl(fd, DRM_IOCTL_GET_CAP, &cap) == -1 &&
+	    errno == EOPNOTSUPP, "reject display capability without modesetting");
 	check(close(fd) == 0, "close render node");
 	printf("PASS: %u PowerVR identity checks; BVNC=0x%016" PRIx64
 	    "; GEM/VM/submission remain unsupported\n", checks, info.gpu_id);
