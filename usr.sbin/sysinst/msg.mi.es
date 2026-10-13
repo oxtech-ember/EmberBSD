@@ -68,9 +68,10 @@ message upgrade
 {actualizar}
 
 message hello
-{Bienvenido a sysinst, la herramienta de instalación de NetBSD-@@VERSION@@.
+{Bienvenido a sysinst, la herramienta de instalación de EmberBSD-@@EMBER_VERSION@@.
+Build: @@BUILD@@
 Esta herramienta guiada por menús está diseñada para ayudarle a instalar
-NetBSD en un disco duro, o actualizar un sistema NetBSD existente con
+EmberBSD en un disco duro, o actualizar un sistema EmberBSD existente con
 un trabajo mínimo. 
 En los siguientes menús teclee la letra de referencia (a, b, c, ...) para
 seleccionar una opción, o teclee CTRL+N/CTRL+P para seleccionar la opción
@@ -80,11 +81,11 @@ Active la selección actual desde el menú pulsando la tecla Intro.
 }
 
 message thanks
-{¡Gracias por usar NetBSD!
+{¡Gracias por usar EmberBSD!
 }
 
 message installusure
-{Ha escogido instalar NetBSD en su disco duro.  Esto cambiará información
+{Ha escogido instalar EmberBSD en su disco duro.  Esto cambiará información
 de su disco duro.  ¡Debería haber hecho una copia de seguridad completa
 antes de este procedimiento!  Este procedimiento realizará las siguientes
 operaciones:
@@ -100,15 +101,15 @@ su disco sea cambiado, tendrá la oportunidad de salir del programa.)
 }
 
 message upgradeusure
-{Se va a actualizar NetBSD en su disco duro.  Sin embargo, esto
+{Se va a actualizar EmberBSD en su disco duro.  Sin embargo, esto
 cambiará información de su disco duro.  ¡Debería hacer una copia de seguridad
-completa antes de este procedimiento!  ¿Realmente desea actualizar NetBSD?
+completa antes de este procedimiento!  ¿Realmente desea actualizar EmberBSD?
 (Éste es su último aviso antes de que el programa empiece a modificar
 sus discos.)
 }
 
 message reinstallusure
-{Se va a desempaquetar los conjuntos de distribución de NetBSD
+{Se va a desempaquetar los conjuntos de distribución de EmberBSD
 a un disco duro marcado como arrancable.  Este procedimiento solamente
 descarga y desempaqueta los conjuntos en un disco arrancable preparticionado.
 No pone nombre a los discos, ni actualiza los bloques de arranque, ni guarda
@@ -116,7 +117,7 @@ ninguna información de configuración.  (Salga y escoja `instalar' o
 `actualizar' si quiere esas opciones.)  ¡Ya debería haber hecho un
 `instalar' o `actualizar' antes de iniciar este procedimiento!
 
-¿Realmente quiere reinstalar los conjuntos de la distribución NetBSD?
+¿Realmente quiere reinstalar los conjuntos de la distribución EmberBSD?
 (Éste es su último aviso antes de que el programa empiece a modificar
 sus discos.)
 }
@@ -126,17 +127,17 @@ message mount_failed
 }
 
 message nodisk
-{No se ha podido encontrar ningún disco duro para ser usado por NetBSD.
+{No se ha podido encontrar ningún disco duro para ser usado por EmberBSD.
 Se le volverá a llevar al menú original.
 }
 
 message onedisk
 {Solamente se ha encontrado un disco, %s. 
-Por tanto se entiende que quiere %s NetBSD en él.
+Por tanto se entiende que quiere %s EmberBSD en él.
 }
 
 message ask_disk
-{¿En cuál disco quiere %s NetBSD? }
+{¿En cuál disco quiere %s EmberBSD? }
 
 message Available_disks
 {Discos disponibles}
@@ -173,7 +174,7 @@ message gigname
  *  $5 = install with X min.		427M
  */
 message	layout_prologue_none
-{You can use a simple editor to set the sizes of the NetBSD partitions,
+{You can use a simple editor to set the sizes of the EmberBSD partitions,
 or apply the default partition sizes and contents.}
 
 /* Called with:				Example
@@ -187,7 +188,7 @@ or apply the default partition sizes and contents.}
 
 message	layout_prologue_existing
 {If you do not want to use the existing partitions, you can
-use a simple editor to set the sizes of the NetBSD partitions,
+use a simple editor to set the sizes of the EmberBSD partitions,
 or remove existing ones and apply the default partition sizes.}
 
 /* Called with:				Example
@@ -203,7 +204,7 @@ message layout_main
 You will then be given the opportunity to change any of the partition
 details.
 
-The NetBSD (or free) part of your disk ($0) is $3.
+The EmberBSD (or free) part of your disk ($0) is $3.
 
 A full installation requires at least $4 without X and
 at least $5 if the X sets are included.}
@@ -407,10 +408,10 @@ message invalid_sector_number
 {Número mal formado}
 
 message packname
-{Por favor entroduzca un nombre para el disco NetBSD}
+{Por favor entroduzca un nombre para el disco EmberBSD}
 
 message lastchance
-{Bien, todo está preparado para instalar NetBSD en su disco duro (%s).
+{Bien, todo está preparado para instalar EmberBSD en su disco duro (%s).
 Todavía no se ha escrito nada.  Ésta es su última oportunidad para salir
 del proceso antes de que se cambie nada.
 
@@ -443,14 +444,14 @@ message mountfail
 }
 
 message extractcomplete
-{La extracción de los conjuntos seleccionados para NetBSD-@@VERSION@@ ha
+{La extracción de los conjuntos seleccionados para EmberBSD-@@EMBER_VERSION@@ ha
 finalizado.  El sistema es ahora capaz de arrancar desde el disco duro
 seleccionado.  Para completar la instalación, sysinst le dará la
 oportunidad de configurar antes algunos aspectos esenciales.
 }
 
 message instcomplete
-{La instalación de NetBSD-@@VERSION@@ ha finalizado.  El sistema debería
+{La instalación de EmberBSD-@@EMBER_VERSION@@ ha finalizado.  El sistema debería
 arrancar desde el disco duro.  Siga las instrucciones del documento
 INSTALL sobre la configuración final del sistema.  La pagina de manual
 de afterboot(8) es otra lectura recomendada; contiene una lista de
@@ -461,7 +462,7 @@ Vea en /etc/defaults/rc.conf los valores predefinidos.
 }
 
 message upgrcomplete
-{Actualización a NetBSD-@@VERSION@@ completada.  Ahora tendrá que
+{Actualización a EmberBSD-@@EMBER_VERSION@@ completada.  Ahora tendrá que
 seguir las instrucciones del documento INSTALL para hacer lo que
 necesite para conseguir tener el sistema configurado para su
 situación.
@@ -477,7 +478,7 @@ versión) si estuviera usando ficheros de contraseñas locales.
 
 
 message unpackcomplete
-{Finalizado el desempaquetamiento de conjuntos adicionales de NetBSD-@@VERSION@@.
+{Finalizado el desempaquetamiento de conjuntos adicionales de EmberBSD-@@EMBER_VERSION@@.
 Ahora necesitará seguir las instrucciones del documento INSTALL para
 tener su sistema reconfigurado para su situación.
 La página de manual de afterboot(8) también puede serle de ayuda.
@@ -498,7 +499,7 @@ Conjuntos seleccionados: %d, procesados: %d. Siguiente conjunto: %s.
 }
 
 message distset
-{La distribución NetBSD está dividida en una colección de conjuntos de
+{La distribución EmberBSD está dividida en una colección de conjuntos de
 distribución.  Hay algunos conjuntos básicos que son necesarios para todas
 las instalaciones, y otros conjuntos que no son necesarios para todas las
 instalaciones.  Puede escoger para instalar sólo los conjuntos esenciales
@@ -593,7 +594,7 @@ message filesys
 {sistema de archivos}
 
 message nonet
-{No se ha podido encontrar ninguna interfaz de red para ser usada por NetBSD.
+{No se ha podido encontrar ninguna interfaz de red para ser usada por EmberBSD.
 Se le devolverá al menú anterior.
 }
 
@@ -712,7 +713,7 @@ distribution medium.
 
 This is not critical and installation will continue. 
 You can add this set later, e.g. by downloading it via
-https from the NetBSD CDN. 
+https from the EmberBSD CDN.
 
 Optional sets are: 
  debug/debug32 containing debug information 
@@ -1067,17 +1068,17 @@ message Finished {Acabado   }
 message Command_failed {Orden fallida}
 message Command_ended_on_signal {Orden terminada en señal}
 
-message NetBSD_VERSION_Install_System {Sistema de instalación de NetBSD-@@VERSION@@}
+message NetBSD_VERSION_Install_System {Sistema de instalación de EmberBSD-@@EMBER_VERSION@@}
 message Exit_Install_System {Salir del sistema de instalación}
-message Install_NetBSD_to_hard_disk {Instalar NetBSD en el disco duro}
-message Upgrade_NetBSD_on_a_hard_disk {Actualizar NetBSD en un disco duro}
+message Install_NetBSD_to_hard_disk {Instalar EmberBSD en el disco duro}
+message Upgrade_NetBSD_on_a_hard_disk {Actualizar EmberBSD en un disco duro}
 message Re_install_sets_or_install_additional_sets {Reinstalar conjuntos o instalar conjuntos adicionales}
 message Reboot_the_computer {Reiniciar la computadora}
 message Utility_menu {Menú de utilidades}
 message Config_menu {Menu de configuración}
 message exit_menu_generic {atrás}
 message exit_utility_menu {Exit}
-message NetBSD_VERSION_Utilities {Utilidades de NetBSD-@@VERSION@@}
+message NetBSD_VERSION_Utilities {Utilidades de EmberBSD-@@EMBER_VERSION@@}
 message Run_bin_sh {Ejecutar /bin/sh}
 message Set_timezone {Establecer la zona horaria}
 message Configure_network {Configurar la red}
@@ -1099,7 +1100,7 @@ message Keep_existing_partitions
  *  $0 = partitioning name		Master Boot Record (MBR)
  *  $1 = short version of $0		MBR
  */
-message Set_Sizes {Establecer los tamaños de las particiones NetBSD}
+message Set_Sizes {Establecer los tamaños de las particiones EmberBSD}
 
 /* Called with:				Example
  *  $0 = partitioning name		Master Boot Record (MBR)
@@ -1205,7 +1206,7 @@ message localfsbadmount
 .endif
 
 message oldsendmail
-{Sendmail ya no está disponible en esta versión de NetBSD; el MTA por defecto
+{Sendmail ya no está disponible en esta versión de EmberBSD; el MTA por defecto
 es ahora postfix.  El fichero /etc/mailer.conf aún está configurado para usar
 el sendmail eliminado.  ¿Desea actualizar el fichero /etc/mailer.conf
 automáticamente para que apunte a postfix?  Si escoge "No" tendrá que
@@ -1456,20 +1457,20 @@ message reeditpart
  *  $6 = size needed to build NetBSD	15G
  */
 message fullpart
-{Se va a instalar NetBSD en el disco $0.
+{Se va a instalar EmberBSD en el disco $0.
 
-NetBSD requiere una sola partición en la tabla de particiones $1 del disco,
+EmberBSD requiere una sola partición en la tabla de particiones $1 del disco,
 que es subsiguientemente dividida por el $2.
-NetBSD también puede acceder a sistemas de ficheros de otras particiones $3.
+EmberBSD también puede acceder a sistemas de ficheros de otras particiones $3.
 
 Si selecciona 'Usar todo el disco', se sobreescribirá el contenido anterior
 del disco, y se usará una sola partición $3 para cubrir todo el disco. 
 Si desea instalar más de un sistema operativo, edite la tabla de particiones
-$3 y cree una partición para NetBSD.
+$3 y cree una partición para EmberBSD.
 
 Para una instalación básica bastan unos pocos $5, pero deberá
 dejar espacio extra para programas adicionales y los ficheros de usuario. 
-Proporcione al menos $6 si quiere construir el propio NetBSD.}
+Proporcione al menos $6 si quiere construir el propio EmberBSD.}
 
 message Select_your_choice
 {¿Que le gustaría hacer?}
@@ -1523,8 +1524,8 @@ message multbsdpart
 Debería marcar la opción "instalar" en la que quiera usar. }
 
 message ovrwrite
-{Su disco tiene actualmente una partición que no es de NetBSD. ¿Realmente
-quiere sobreescribir dicha partición con NetBSD?
+{Su disco tiene actualmente una partición que no es de EmberBSD. ¿Realmente
+quiere sobreescribir dicha partición con EmberBSD?
 }
 
 message Partition_OK

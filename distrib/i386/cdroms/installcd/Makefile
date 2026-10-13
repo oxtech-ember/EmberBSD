@@ -31,6 +31,6 @@ CDRELEASE_EXCLUDE+=	-s ',./binary/kernel/netbsd-INSTALL.gz,,gp'
 CDRELEASE_EXCLUDE+=	-s ',./binary/kernel/netbsd-MONOLITHIC.gz,,gp'
 
 prepare_md_post:
-	${TOOL_SED} "s/@@VERSION@@/${DISTRIBVER}/" < ${.CURDIR}/boot.cfg.in > boot.cfg
+	${TOOL_SED} "s/@@EMBER_VERSION@@/${EMBER_VERSION}/" < ${.CURDIR}/boot.cfg.in > boot.cfg
 
 .include "${.CURDIR}/../../../common/Makefile.bootcd"

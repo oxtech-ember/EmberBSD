@@ -26,6 +26,9 @@ are maintained in the related repositories below.
 - For an AI assistant, choose [user skills](#connect-user-skills) for device use
   or [developer skills](#connect-developer-skills) for development.
 
+- For installation screens and compatible set sources, see
+  [installer identity](ember/boot/installer-branding.md).
+
 ## EmberBSD ecosystem
 
 | Repository | Purpose | Current scope |
@@ -359,6 +362,9 @@ on every board in the hardware catalog.
   still require acceptance. KIO MTP/audio plugins are installed and linked on CM5.
   Input prerequisites pass 264 UnitTest++ cases, 295 JSON assertions, and
   Enchant's 434 main and 25 Hunspell tests. Physical MTP remains unverified.
+  [Gettext 1.0](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/tests/gettext-runtime/README.md)
+  passes 27 installed CM5 checks, including Fcitx's original translation function.
+  The autopoint archive test skips because target Autoconf is absent.
   [ConsoleKit session launching](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-session.md)
   now preserves application failures and passes real-session checks on CM5;
   ordinary-user login and device ownership remain unverified.

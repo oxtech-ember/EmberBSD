@@ -143,6 +143,21 @@ variant. If Docker or compilation fails, an image builder will stop because
 the required input is missing. The host-side contract check covers this
 case: `python3 ember/tools/firmware-contract.py`.
 
+## Installation identity
+
+The [installer branding](ember/boot/installer-branding.md) keeps the x86
+BIOS, PXE, UEFI and sysinst screens consistent with EmberBSD.
+The colored ASCII mascot follows the project's flame, capsule eyes and smile.
+BIOS and UEFI use red, amber, yellow and white text attributes.
+Serial console banners use the same mascot in plain ASCII.
+Kernel filenames and partition types
+retain their NetBSD compatibility names. OS sets select the EmberBSD channel;
+that service is not yet published, so use the sets on the installation medium.
+Source, ASCII and ISO contracts are separate from boot and installation acceptance.
+The product version defaults to `Development`. The NetBSD base version remains separate.
+An amd64 CD image passed UEFI and BIOS boot and a UEFI installation to a disposable VM disk.
+The installed system then booted without the CD image. Physical installation is a separate check.
+
 ## Deploying to a device
 
 This repository provides OS sources, hardware adaptations, and build tools.

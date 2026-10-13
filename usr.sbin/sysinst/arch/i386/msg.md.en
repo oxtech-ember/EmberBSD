@@ -123,7 +123,7 @@ message pickdisk
 {Choose disk: }
 
 message partabovechs
-{The NetBSD part of the disk lies outside of the range that the BIOS on
+{The EmberBSD part of the disk lies outside of the range that the BIOS on
 your machine can address.
 Booting from it may not be possible. 
 Are you sure you that you want to do this?
@@ -133,7 +133,7 @@ Are you sure you that you want to do this?
 message missing_bootmenu_text
 {You have more than one operating system on this disk, but have not
 specified a 'bootmenu' for either the active partition, or the
-NetBSD partition that you are going to install into.
+EmberBSD partition that you are going to install into.
 
 Do you want to re-edit the partition to add a bootmenu entry?}
 
@@ -146,7 +146,7 @@ Are you sure you that you want to do this?
 (Answering 'no' will take you back to the partition edit menu.)}
 
 message installbootsel
-{Your configuration requires the NetBSD bootselect code to
+{Your configuration requires the EmberBSD bootselect code to
 select which operating system to use.
 
 It is not currently installed, do you want to install it now?}
@@ -154,11 +154,11 @@ It is not currently installed, do you want to install it now?}
 message installmbr
 {The bootcode in the Master Boot Record does not appear to be valid.
 
-Do you want to install the NetBSD bootcode?}
+Do you want to install the EmberBSD bootcode?}
 
 message updatembr
 {Do you want to update the bootcode in the Master Boot Record to
-the latest version of the NetBSD bootcode?}
+the latest version of the EmberBSD bootcode?}
 
 message set_kernel_1	{Kernel (GENERIC)}
 message set_kernel_2	{Kernel (GENERIC_KASLR)}

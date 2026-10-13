@@ -1596,7 +1596,8 @@ mbr_info_to_partitition(const struct disk_part_info *info,
 	if (info->flags & PTI_INSTALL_TARGET) {
 		mp->mbrp_flag |= MBR_PFLAG_ACTIVE;
 #ifdef BOOTSEL
-		strcpy(mb->mbrb.mbrbs_nametab[index], "NetBSD");
+		strlcpy(mb->mbrb.mbrbs_nametab[index], "EmberBSD",
+		    sizeof(mb->mbrb.mbrbs_nametab[index]));
 #endif
 	}
 

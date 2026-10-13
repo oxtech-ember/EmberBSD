@@ -94,8 +94,8 @@ SETS_DIR?=	${RELEASEDIR}/${RELEASEMACHINEDIR}/binary/sets
 DISTRIBVER!=	${HOST_SH} ${KERNSRCDIR}/conf/osrelease.sh
 DISTRIBREV!=	${HOST_SH} ${KERNSRCDIR}/conf/osrelease.sh -s
 CUROBJDIR!=	cd ${.CURDIR} && ${PRINTOBJDIR}
-ISO_VOLID!=	echo NETBSD_${DISTRIBREV} | tr a-z A-Z
-PUBLISHER?= The_NetBSD_Project
+ISO_VOLID!=	echo EMBERBSD_${EMBER_VERSION} | tr a-z A-Z
+PUBLISHER?= EmberBSD
 .if defined(CDMAKEFSOPTIONS)
 _CDMAKEFSOPTIONS=	rockridge,label=${ISO_VOLID},publisher=${PUBLISHER},${CDMAKEFSOPTIONS}
 .else
@@ -125,9 +125,9 @@ ECHO?=		echo
 .if ${CDRELEASE} == false
 CDIMAGE=	${CDBASE}.iso
 .elif ${CDBASE:M*dvd}
-CDIMAGE=	NetBSD-${DISTRIBVER}-${CDBASE:S/dvd$//}-dvd.iso
+CDIMAGE=	EmberBSD-${EMBER_VERSION}-${CDBASE:S/dvd$//}-dvd.iso
 .else
-CDIMAGE=	NetBSD-${DISTRIBVER}-${CDBASE:S/cd$//}.iso
+CDIMAGE=	EmberBSD-${EMBER_VERSION}-${CDBASE:S/cd$//}.iso
 .endif
 WORKSPEC=	fs.spec
 

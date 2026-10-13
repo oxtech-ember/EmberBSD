@@ -350,7 +350,8 @@ boot2(int biosdev, uint64_t biossector)
 		command_consdev(bootcfg_info.consdev);
 	} else {
 		clearit();
-		print_bootcfg_banner(bootprog_name, bootprog_rev);
+		print_bootcfg_banner_color(bootprog_name, bootprog_rev,
+		    bios_bootcfg_color);
 	}
 
 	/* Display the menu, if applicable */
@@ -363,7 +364,8 @@ boot2(int biosdev, uint64_t biossector)
 #else
 	twiddle_toggle = 0;
 	clearit();
-	print_bootcfg_banner(bootprog_name, bootprog_rev);
+	print_bootcfg_banner_color(bootprog_name, bootprog_rev,
+	    bios_bootcfg_color);
 #endif
 
 	printf("Press return to boot now, any other key for boot menu\n");
@@ -604,7 +606,8 @@ command_consdev(char *arg)
 
 		initio(cdp->tag);
 		clearit();
-		print_bootcfg_banner(bootprog_name, bootprog_rev);
+		print_bootcfg_banner_color(bootprog_name, bootprog_rev,
+		    bios_bootcfg_color);
 		return;
 	}
 error:
