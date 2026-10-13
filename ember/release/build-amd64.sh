@@ -44,7 +44,7 @@ cd "$out/source"
 export MAKECONF=/dev/null
 unset EXTERNAL_TOOLCHAIN MAKEFLAGS MFLAGS MAKEOBJDIR MAKEOBJDIRPREFIX NETBSDOBJDIR NETBSDOBJROOT
 printf 'Build log: %s/build.log\n' "$out"
-sh ./build.sh -U -m amd64 -j"$jobs" \
+sh ./build.sh -U -u -m amd64 -j"$jobs" \
 	-O "$out/obj" -T "$out/tools" -D "$out/dest" -R "$out/release" \
 	-V MKX11=no -V MKRUMP=no -V MKGCCCMDS=no \
 	-V MKREPRO=yes -V "MKREPRO_TIMESTAMP=$timestamp" \

@@ -17,4 +17,13 @@ Dir.mktmpdir('ember-trust-mtree') do |dir|
     abort "FAIL: #{name} omits the trust bundle: #{out}#{err}" unless status.success?
     puts "PASS: #{name} accepts the trust bundle with strict makefs"
   end
+  generated, error, status = Open3.capture3({ 'CRUNCHBIN' => 'ramdiskbin', 'OBJDIR' => dir }, 'awk',
+    '-f', File.join(root, 'distrib/common/parselist.awk'), '-v', 'mode=mtree',
+    File.join(root, 'distrib/amd64/ramdisks/common/list.https'))
+  abort error unless status.success?
+  spec = File.join(dir, 'ramdisk.spec')
+  File.write(spec, ". type=dir mode=0755 uname=root gname=wheel\n./etc type=dir mode=0755 uname=root gname=wheel\n" + generated)
+  out, err, status = Open3.capture3(tool, '-t', 'ffs', '-s', '1m', '-xx', '-F', spec, File.join(dir, 'ramdisk-image'), tree)
+  abort "FAIL: generated ramdisk trust specification: #{out}#{err}" unless status.success?
+  puts 'PASS: real ramdisk list parser supplies the trust directory and file'
 end

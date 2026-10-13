@@ -22,6 +22,8 @@ sh ember/release/build-amd64.sh FULL_SOURCE_COMMIT /absolute/new-build
 
 The wrapper exports the committed tree.
 It does not use uncommitted files or an existing output directory.
+The upstream `-u` option avoids discarding tools built earlier in this same invocation.
+The source, object and destination directories still start empty.
 It builds `tools`, `release`, `install-image` and `iso-image`.
 The profile sets `MKX11=no`, `MKRUMP=no`, `MKGCCCMDS=no`, `MKREPRO=yes`,
 `KERNEL_SETS=GENERIC` and `BUILD_KERNELS=INSTALL`.

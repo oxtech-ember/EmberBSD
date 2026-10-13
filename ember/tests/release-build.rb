@@ -33,6 +33,7 @@ Dir.mktmpdir('ember-release-build') do |dir|
   out, err, status = Open3.capture3('sh', File.join(repo, 'ember/release/build-amd64.sh'), sha, output)
   abort "FAIL: pinned build should succeed: #{out}#{err}" unless status.success?
   args = File.readlines(File.join(output, 'build-arguments'), chomp: true)
+  abort 'FAIL: release rebuilds the freshly built host tools' unless args.include?('-u')
   stack = File.read(File.join(output, 'stack-proof')).strip
   abort "FAIL: bootstrap compiler stack limit is too small: #{stack} KiB" unless stack == 'unlimited' || stack.to_i >= 65520
   ["EMBER_BUILD_ID=#{sha}", "BUILDINFO=EmberBSD:#{sha}", 'KERNEL_SETS=GENERIC',
