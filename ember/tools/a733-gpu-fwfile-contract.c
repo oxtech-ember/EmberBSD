@@ -82,7 +82,7 @@ build(uint8_t *file)
 	header.pid = 1;
 	header.context_id = 0;
 	header.job_id = 1;
-	header.context_state_va = UINT64_C(0xda00000000);
+	header.context_state_va = UINT64_C(0x8000001000);
 	/* The static state needs nonzero context-switch PDS registers. */
 	for (i = 0; i < 7; i++) {
 		uint32_t reg = UINT32_C(0x0da00000) + (uint32_t)(16 * i);
@@ -130,100 +130,153 @@ find(const struct a733_gpu_fwcompute_file *file, uint16_t role)
 }
 
 static void
-self(void)
+reject(const uint8_t *bytes, size_t size)
 {
 	struct a733_gpu_fwcompute_file parsed, keep;
+
+	memset(&keep, 0x5a, sizeof(keep));
+	memcpy(&parsed, &keep, sizeof(parsed));
+	CHECK(sun60i_a733_gpu_fwcompute_file_parse(bytes, size, BVNC,
+	    &parsed) == EINVAL);
+	CHECK(memcmp(&parsed, &keep, sizeof(parsed)) == 0);
+}
+
+static void
+self(void)
+{
+	struct a733_gpu_fwcompute_file parsed;
+	struct a733_gpu_fwcompute_file_header h;
+	struct a733_gpu_fwcompute_file_entry e, saved;
+	const size_t entry_base = sizeof(h);
+	const size_t resume_offset = entry_base + sizeof(e);
 	uint8_t *file = malloc(file_size());
 	size_t i;
 
 	CHECK(file != NULL);
 	build(file);
-	memset(&keep, 0x5a, sizeof(keep));
-#define REJECT() do { \
-	CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, file_size(), BVNC, \
-	    &parsed) == EINVAL); \
-	CHECK(memcmp(&parsed, &keep, sizeof(parsed)) == 0); \
-} while (0)
-
 	CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, file_size(), BVNC,
 	    &parsed) == 0);
 	CHECK(parsed.payload_bytes == PAYLOAD_BYTES);
 	CHECK(parsed.static_offset == STATIC_OFFSET);
 	CHECK(parsed.priority == 0 && parsed.pid == 1);
-	CHECK(parsed.context_state_va == UINT64_C(0xda00000000));
+	CHECK(parsed.context_state_va == UINT64_C(0x8000001000));
 	for (i = 0; i < sizeof(table) / sizeof(table[0]); i++) {
-		const struct a733_gpu_fwcompute_file_entry *e =
+		const struct a733_gpu_fwcompute_file_entry *r =
 		    find(&parsed, table[i].role);
 
-		CHECK(e != NULL);
-		CHECK(e->va == table[i].va && e->bytes == table[i].bytes);
-		CHECK(e->offset == table[i].offset);
-		CHECK(e->flags == table[i].flags);
+		CHECK(r != NULL);
+		CHECK(r->va == table[i].va && r->bytes == table[i].bytes);
+		CHECK(r->offset == table[i].offset);
+		CHECK(r->flags == table[i].flags);
 	}
-	memcpy(&keep, &parsed, sizeof(keep));
 
-	/* Mutations: every one must fail without touching the output. */
-	((uint32_t *)file)[0]++;
-	REJECT();
-	((uint32_t *)file)[0]--;
-	((uint32_t *)file)[1] = 1;
-	REJECT();
-	((uint32_t *)file)[1] = 2;
-	((uint32_t *)file)[4] = 100;
-	REJECT();
-	((uint32_t *)file)[4] = A733_GPU_FWCOMPUTE_FILE_PREFIX +
-	    A733_GPU_FWCOMPUTE_RESOURCES * A733_GPU_FWCOMPUTE_ENTRY;
-	((uint32_t *)file)[5] = 8;
-	REJECT();
-	((uint32_t *)file)[5] = 9;
-	((uint16_t *)(file + 96 + 2 * 24))[0] = /* duplicate scratch role */
-	    A733_GPU_FWCOMPUTE_SCRATCH;
-	REJECT();
-	((uint16_t *)(file + 96 + 2 * 24))[0] = A733_GPU_FWCOMPUTE_RESUME;
-	((uint64_t *)(file + 96 + 1 * 24))[0] = /* resume overlaps scratch */
-	    UINT64_C(0x8000000000);
-	REJECT();
-	((uint64_t *)(file + 96 + 1 * 24))[0] = UINT64_C(0x8000001000);
-	((uint32_t *)(file + 96 + 1 * 24 + 8))[0] = 4092;
-	REJECT();
-	((uint32_t *)(file + 96 + 1 * 24 + 8))[0] = 4096;
-	((uint64_t *)(file + 96 + 3 * 24))[0] = UINT64_C(0x8000003004);
-	REJECT();
-	((uint64_t *)(file + 96 + 3 * 24))[0] = UINT64_C(0x8000003000);
-	((uint16_t *)(file + 96 + 3 * 24 + 20))[0] = 0x0004;
-	REJECT();
-	((uint16_t *)(file + 96 + 3 * 24 + 20))[0] =
-	    A733_GPU_FWCOMPUTE_FLAG_RO;
-	/* Payload span overlap between two resources. */
-	{
-		uint32_t save = ((uint32_t *)(file + 96 + 2 * 24 + 8))[0];
-
-		((uint32_t *)(file + 96 + 2 * 24 + 8))[0] =
-		    ((uint32_t *)(file + 96 + 3 * 24 + 8))[0];
-		REJECT();
-		/* cppcheck-suppress selfAssignment restore after the mutation */
-		((uint32_t *)(file + 96 + 2 * 24 + 8))[0] = save;
+	/* Isolate each header mutation so no earlier error masks it. */
+	for (i = 0; i < 15; i++) {
+		build(file);
+		memcpy(&h, file, sizeof(h));
+		switch (i) {
+		case 0: h.magic++; break;
+		case 1: h.version = 1; break;
+		case 2: h.payload_bytes -= 4; break;
+		case 3: h.header_bytes -= 4; break;
+		case 4: h.resources--; break;
+		case 5: h.static_offset = PAYLOAD_BYTES; break;
+		case 6: h.static_bytes--; break;
+		case 7: h.priority = 3; break;
+		case 8: h.reserved = 1; break;
+		case 9: h.context_state_va = 0; break;
+		case 10: h.context_state_va++; break;
+		case 11: h.context_state_va = UINT64_C(1) << 40; break;
+		case 12: h.context_state_va = UINT64_C(0x9000000000); break;
+		case 13: h.context_state_va += 64; break;
+		case 14: h.static_offset++; break;
+		}
+		memcpy(file, &h, sizeof(h));
+		reject(file, file_size());
 	}
-	((uint32_t *)file)[9] = 55;
-	REJECT();
-	((uint32_t *)file)[9] = 56;
-	((uint32_t *)file)[8] = 3;
-	REJECT();
-	((uint32_t *)file)[8] = 0;
-	((uint64_t *)file)[7] = 16;
-	REJECT();
-	((uint64_t *)file)[7] = UINT64_C(0xda00000000);
-	CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, file_size() - 4,
-	    BVNC, &parsed) == EINVAL);
-	CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, 0, BVNC,
-	    &parsed) == EINVAL);
-	CHECK(sun60i_a733_gpu_fwcompute_file_parse(NULL, file_size(), BVNC,
-	    &parsed) == EINVAL);
+
+	/* A mapped shared-register buffer is not the CDM resume buffer. */
+	for (i = 0; i < sizeof(table) / sizeof(table[0]); i++) {
+		if (table[i].role == A733_GPU_FWCOMPUTE_RESUME)
+			continue;
+		build(file);
+		memcpy(&h, file, sizeof(h));
+		h.context_state_va = table[i].va;
+		memcpy(file, &h, sizeof(h));
+		reject(file, file_size());
+	}
+
+	/* Every entry mutation starts from an otherwise valid image. */
+	for (i = 0; i < 13; i++) {
+		build(file);
+		memcpy(&e, file + resume_offset, sizeof(e));
+		switch (i) {
+		case 0: e.role = A733_GPU_FWCOMPUTE_SCRATCH; break;
+		case 1: e.role = A733_GPU_FWCOMPUTE_RESOURCES; break;
+		case 2: e.flags |= 4; break;
+		case 3: e.flags |= A733_GPU_FWCOMPUTE_FLAG_RO; break;
+		case 4: e.flags = 0; break;
+		case 5: e.bytes = 508; break;
+		case 6: e.bytes = 0; break;
+		case 7: e.bytes--; break;
+		case 8: e.offset++; break;
+		case 9: e.offset = 0; break;
+		case 10: e.va = UINT64_C(0x8000000000); break;
+		case 11: e.va++; break;
+		case 12: e.offset = STATIC_OFFSET; break;
+		}
+		memcpy(file + resume_offset, &e, sizeof(e));
+		reject(file, file_size());
+	}
+
+	/* Bind by resource role, not table position or a fixed GPU address. */
+	build(file);
+	memcpy(&h, file, sizeof(h));
+	memcpy(&e, file + resume_offset, sizeof(e));
+	e.va = UINT64_C(0x9000001000);
+	e.bytes = 516;
+	h.context_state_va = e.va;
+	memcpy(file, &h, sizeof(h));
+	memcpy(&saved, file + entry_base, sizeof(saved));
+	memcpy(file + entry_base, &e, sizeof(e));
+	memcpy(file + resume_offset, &saved, sizeof(saved));
+	CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, file_size(), BVNC,
+	    &parsed) == 0);
+	CHECK(parsed.context_state_va == e.va);
+	CHECK(find(&parsed, A733_GPU_FWCOMPUTE_RESUME)->va == e.va);
+
+	build(file);
+	reject(file, file_size() - 4);
+	reject(file, 0);
+	reject(NULL, file_size());
 	CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, file_size(), BVNC ^ 1,
 	    &parsed) == EINVAL);
-	printf("PASS: %d checks; version-2 parser and pinned role table\n",
+	printf("PASS: %d checks; version-2 parser and RESUME role contract\n",
 	    checks);
 	free(file);
+}
+
+static void
+reject_file(const char *path)
+{
+	uint8_t *bytes;
+	long size;
+	FILE *f;
+
+	f = fopen(path, "rb");
+	CHECK(f != NULL);
+	CHECK(fseek(f, 0, SEEK_END) == 0);
+	size = ftell(f);
+	CHECK(size > 0 && size <= A733_GPU_FWCOMPUTE_FILE_MAX);
+	CHECK(fseek(f, 0, SEEK_SET) == 0);
+	bytes = malloc((size_t)size);
+	CHECK(bytes != NULL);
+	CHECK(fread(bytes, 1, (size_t)size, f) == (size_t)size);
+	CHECK(fclose(f) == 0);
+	reject(bytes, (size_t)size);
+	free(bytes);
+	printf("PASS: %d checks; invalid packed file rejected before mapping\n",
+	    checks);
 }
 
 static void
@@ -344,6 +397,10 @@ main(int argc, char **argv)
 		self();
 		return 0;
 	}
+	if (argc == 3 && strcmp(argv[1], "reject") == 0) {
+		reject_file(argv[2]);
+		return 0;
+	}
 	if (argc == 3 && strcmp(argv[1], "artifacts") == 0) {
 		artifacts(argv[2]);
 		return 0;
@@ -352,7 +409,7 @@ main(int argc, char **argv)
 		check(argv[2], strtoull(argv[3], NULL, 0), argv[4]);
 		return 0;
 	}
-	fprintf(stderr, "usage: %s self | artifacts DIR | check FILE BVNC HEXDIGEST\n",
+	fprintf(stderr, "usage: %s self | reject FILE | artifacts DIR | check FILE BVNC HEXDIGEST\n",
 	    argv[0]);
 	return 2;
 }

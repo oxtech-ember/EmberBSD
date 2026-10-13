@@ -213,6 +213,8 @@ sun60i_a733_gpu_fwcompute_vm_encode(
 	summary->windows = used;
 	summary->directories = directories;
 	summary->leaves = leaves;
+	/* Clear unused breakpoint fields, context flags, and padding. */
+	memset(fw_context, 0, 32);
 	fwvm_put64(fw_context, page_catalog_pa);
 	fwvm_put32(fw_context + 8, ROGUE_FW_BIF_INVALID_PCSET);
 	return 0;

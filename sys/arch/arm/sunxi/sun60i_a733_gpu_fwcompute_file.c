@@ -88,6 +88,12 @@ sun60i_a733_gpu_fwcompute_file_parse(const void *data, size_t size,
 		    (e->va & 4095) != 0 ||
 		    e->bytes > (UINT64_C(1) << 40) - e->va)
 			return EINVAL;
+		/* CDM hardware state is separate from shared-register state. */
+		if (e->role == A733_GPU_FWCOMPUTE_RESUME &&
+		    (header.context_state_va != e->va ||
+		    e->flags != A733_GPU_FWCOMPUTE_FLAG_BYPASS ||
+		    e->bytes < A733_GPU_FWCOMPUTE_RESUME_BYTES))
+			return EINVAL;
 		/*
 		 * Page-aligned virtual addresses make byte-range overlap
 		 * equivalent to sharing a page: whole distinct pages only.

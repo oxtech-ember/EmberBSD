@@ -20,11 +20,11 @@ Stage 18 (`hw.sun60igpuid0.stage=18`) is the first serializer consumer.
 It runs only on the CPU after a fully successful stage 17.
 The file format lives in
 [`sun60i_a733_gpu_fwcompute_file.h`](../../sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.h):
-one 104-byte little-endian header with magic `0x314d4337`, version 1,
-the exact BVNC, four-byte-aligned payload spans for the USC, PDS, and CDM-stream
-bytes and the 56-byte static state, their GPU addresses, the context-state
-address, priority, and identifiers. The parser validates every bound,
-alignment, and overlap and keeps the total file at most 256 KiB.
+a 96-byte little-endian prefix and nine 24-byte resource entries.
+The 312-byte header uses magic `0x324d4337` and version 2.
+It carries the exact BVNC, resource spans and addresses, the static-state span,
+context-state address, priority, identifiers, and payload digest.
+The parser validates bounds, alignment, and overlap. The complete file is at most 96 KiB.
 The production parser, span derivation, packer, and digest cross-check run in
 [`a733-gpu-fwfile-contract.sh`](../tools/a733-gpu-fwfile-contract.sh).
 
@@ -48,6 +48,9 @@ which packs the same artifacts, runs the same serializer with the same
 spans and command fields, and prints both the file and image digests.
 The packed file installs as `a733-compute.bin` in the `powervr` firmware
 directory. No KCCB publication, DMA mapping, or GPU execution happens.
+
+The [compute VM encoder contract](a733-gpu-fwcompute-vm.md) checks all firmware-context bytes.
+It includes a poisoned-buffer regression for unused breakpoint and control fields.
 
 ## Input and ownership contract
 
@@ -244,6 +247,11 @@ artifacts plus the 56-byte static state. Version 1 carried only three
 program spans; the accepted 2026-10-12 result above used it, and version
 2 supersedes it. The parser requires each of the nine roles exactly once,
 four-kilobyte-aligned page-disjoint addresses, and nonoverlapping spans.
+The context-state address must equal the RESUME resource base.
+That resource must be writable, SLC-bypassed, and at least 512 bytes.
+The shared-register save areas are separate PDS resources.
+The packer's `CTX_VA_HEX` argument asserts the RESUME address; it cannot select another resource.
+The parser rejects older version-2 packets that violate this binding.
 The kernel stage verifies the payload digest with the in-kernel SHA-256
 and rejects the file with `EAUTH` on any mismatch. It also pins the
 firmware profile: BVNC equality, feature masks `0x92d9ff57fdbf7cdb` and
@@ -254,42 +262,55 @@ The packer emits the version-2 file and additionally runs the portable
 compute VM encoder over the resource table (three windows, three
 directories, seventeen leaves) before printing both digests.
 
+## Stage 21 trace capture
+
+`hw.sun60igpuid0.trace_state` caches the first 256 words of trace buffer 0.
+The capture validates both object spans against the actual work allocation.
+It rejects an advertised ring size larger than the allocated trace object.
+`total` is the declared ring capacity in words, not the number of written words.
+`captured` gives the number of stored words; `truncated` marks an omitted suffix.
+The `ptr0` and `ptr1` fields are firmware ring indices, not cumulative counters.
+`capture_error` reports a malformed or unavailable trace span separately from command errors.
+This bounded prefix is diagnostic evidence. It is not a complete wrapped-ring dump.
+The identification contract executes the production formatter with short and malformed spans.
+It also checks the observed 118-word case and maximum metadata values.
+
+## Stage 21 fault and output snapshots
+
+`hw.sun60igpuid0.hwr_state` reports a bounded copy of the firmware HWR buffer.
+It validates the DMA span, performs POSTREAD synchronization, and copies all 16 records.
+Counter and index fields remain metadata; they never control the copy bounds.
+`capture_error` reports invalid spans. `captured=16` confirms the copy.
+Firmware can update memory during the copy, so this snapshot is not atomic.
+The diagnostic neither consumes the firmware queue nor reads new hardware registers.
+
+`kick_state` reads the SCRATCH resource before submission and on the common exit path, including command failure.
+It reports `scratch_valid=<before>/<after>` beside the numeric words.
+A validity value of zero means that word is unavailable, not a measured zero.
+Host contracts cover malformed spans, DMA synchronization, and the failed-command path.
+Physical acceptance of these diagnostics is separate.
+
 ## Physical stages 19-21 result
 
-On 2026-10-12 the ladder ran to stage 21 on the 4 GiB Orange Pi Zero 3W
-(kernel from `75fabfc55aa`). Stages 1 through 20 returned zero:
-stage 19 mapped the nine-page heap at `0xc0800000` (PA `0x4014b000`),
-edited the live wrapper table, and the second MMUCACHE command in slot 2
-executed with return word 1; stage 20 built the three-window VM
-(catalog PA `0x40165000`, 3 directories, 17 leaves) and placed the
-firmware memory context at `0xc0808118`.
+On 2026-10-13 the ladder ran through stage 21 on the 4 GiB Orange Pi Zero 3W.
+Kernel `0782feab5d5` accepted stages 1 through 20.
+The heap MMUCACHE command in slot 2 returned 1.
+The VM contained five windows, four directories, and twenty leaves.
 
-Stage 21 published the KICK in slot 3 and returned `EIO`: the KCCB
-return word stayed zero, but the firmware advanced the client-queue read
-offset to exactly 184 bytes — both the CDM and the UPDATE commands were
-consumed by the dispatched compute context. The timeline word stayed
-zero and the scratch word did not change, so no compute completion is
-claimed. The runtime snapshot that produced the EIO (hardware watchdog
-or firmware fault counters) is not yet part of the kick report; adding
-it is the immediate next step, together with the CDM-stream execution
-trace. No board hang occurred; Wi-Fi and SSH survived the run.
+The trace LOGTYPE command in slot 3 now returned 1 with log type `0x3f`.
+The following KICK in slot 4 reached the firmware (`kexec=5`).
+The client queue drained to 184 bytes, but the timeline stayed zero.
+The old error path skipped the scratch read. Its printed zero is not an output-buffer observation.
+The firmware reported a CONTEXT_RESET notification with GUILTY_LOCKUP and page-fault address `0x2400`.
+Wi-Fi and SSH survived the run. No compute completion or GPU rendering is claimed.
+The previous 64-word trace capture omitted the end of the observed trace (`ptr0=118`).
+The expanded capture has host contract coverage; its physical acceptance is separate.
 
-The diagnostic rerun identified the EIO source: the runtime check treats
-an unconsumed firmware response as an error (`fw_write=1, fw_read=0`),
-and the pending FWCCB command is `0x2abc0069` — CONTEXT_RESET
-NOTIFICATION. With `kexec=4` the KICK executed, the client queue drained
-to 184 bytes, power stayed ON, and no watchdog or firmware-fault bits
-were set: the firmware dispatched the context and then reset it,
-notifying the host. The next step is reading the reset notification
-payload (the FWCCB slot) and tracing why the CDM execution asked for the
-reset — suspected stream or fetch details, not the submission plumbing.
-
-The decoded notification names the failure precisely: our context
-(server id 0, job 1, DM 4 CDM, page catalog `0x40165000`) was reset as
-GUILTY_LOCKUP with the page-fault flag and fault address `0x2400`. The
-static state bytes are (CDM register offset, packed value) pairs and are
-well-formed, so the near-zero fault address points at the kernel-owned
-command fields the bounded generator does not emit: `cdm_resume_pds1`
-and the TPU border-colour table are zero in our submission. Filling the
-resume PDS address from the manifest PDS program and the border-table
-address is the next experiment.
+The fault does not establish which compute field is wrong.
+In Mesa 26.2.4, `CR_CDM_CONTEXT_PDS1` packs allocation sizes and control flags.
+It is not a PDS program address.
+See [`pvr_arch_job_compute.c`, lines 80–103](https://gitlab.freedesktop.org/mesa/mesa/-/blob/mesa-26.2.4/src/imagination/vulkan/pvr_arch_job_compute.c#L80).
+Pinned Linux maps that stream field to `regs.cdm_resume_pds1` in
+[`pvr_stream_defs.c`](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_stream_defs.c#L188).
+The next command comparison must use those producers and the actual compiler resource requirements.
+A raw address or an unexplained constant is not a valid replacement.
