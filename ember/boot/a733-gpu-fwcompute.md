@@ -288,23 +288,37 @@ The diagnostic neither consumes the firmware queue nor reads new hardware regist
 It reports `scratch_valid=<before>/<after>` beside the numeric words.
 A validity value of zero means that word is unavailable, not a measured zero.
 Host contracts cover malformed spans, DMA synchronization, and the failed-command path.
-Physical acceptance of these diagnostics is separate.
+The physical run below accepted these diagnostics; compute execution still failed.
 
 ## Physical stages 19-21 result
 
 On 2026-10-13 the ladder ran through stage 21 on the 4 GiB Orange Pi Zero 3W.
-Kernel `0782feab5d5` accepted stages 1 through 20.
+Kernel `9f3236bd648` accepted stages 1 through 20 with the same compiler packet used in the prior run.
 The heap MMUCACHE command in slot 2 returned 1.
 The VM contained five windows, four directories, and twenty leaves.
 
-The trace LOGTYPE command in slot 3 now returned 1 with log type `0x3f`.
+The trace LOGTYPE command in slot 3 returned 1 with log type `0x3f`.
 The following KICK in slot 4 reached the firmware (`kexec=5`).
-The client queue drained to 184 bytes, but the timeline stayed zero.
-The old error path skipped the scratch read. Its printed zero is not an output-buffer observation.
-The firmware reported a CONTEXT_RESET notification with GUILTY_LOCKUP and page-fault address `0x2400`.
-Wi-Fi and SSH survived the run. No compute completion or GPU rendering is claimed.
-The previous 64-word trace capture omitted the end of the observed trace (`ptr0=118`).
-The expanded capture has host contract coverage; its physical acceptance is separate.
+The client queue drained to 184 bytes. At the failure exit, the timeline and scratch word were zero.
+`scratch_valid=1/1` now confirms actual DMA-synchronized reads before and after submission.
+The earlier `0782feab5d5` error path did not read scratch; its printed zero was unavailable data.
+The firmware reported CONTEXT_RESET, GUILTY_LOCKUP, and page-fault address `0x2400`.
+HWR record 0 reported BIF0 fault type 3, DM 4, request `0x100000002400`, MMU status `0x1011`, and page catalog `0x40165000`.
+Wi-Fi and SSH survived. No compute completion or GPU rendering is claimed.
+
+The expanded capture stored 256 words and decoded the compute kick and GPU lockup.
+The separately sampled ring index was 118; copied data included later recovery updates through word 127.
+Those updates include a timeline notification after the fault. They do not prove successful compute.
+The pointer and data snapshot are not atomic. The remaining copied words were zero.
+HWR capture returned all 16 bounded records with no span error.
+
+The compiler-input audit found another reproducible defect in the old packet.
+Its IDFWDF shader reads address slots 5 and 6, but the patched host generator writes slots 8 and 9.
+In that packet, slots 5 and 6 encode `0x2400`, matching the observed fault address.
+The selected probe was a query-availability shader rather than the intended guarded store.
+[Checked shader generation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/a733-accelerators/host-tools)
+binds the common ABI header, actual SPIR-V, compiler output, and host generator.
+A corrected packet still requires physical acceptance.
 
 The fault does not establish which compute field is wrong.
 In Mesa 26.2.4, `CR_CDM_CONTEXT_PDS1` packs allocation sizes and control flags.

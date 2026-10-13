@@ -327,7 +327,7 @@ on every board in the hardware catalog.
   native KPackage tooling and the common Mesa EGL provider preserved.
   [Current Noto fonts](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/fonts.md)
   pass payload, target indexing and Cyrillic/CJK selection checks. These remain
-  component results; the complete accelerated KWin/Plasma session is pending.
+  component results; the complete accelerated Plasma Desktop remains pending.
   The complete [KWin Wayland package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/kwin.md)
   now cross-builds with the full feature set and a payload that matches the
   common sysroot file for file. On Orange Pi Zero 3W (A733) it passes a
@@ -359,7 +359,9 @@ on every board in the hardware catalog.
   include SDL3 game-controller code with eight CM5 checks and a UBSan repeat.
   Event sounds keep the same core library without mandatory GTK. The Desktop
   source recipe selects current Fcitx5/Qt6; target input and the full shell
-  still require acceptance.
+  still require acceptance. KIO MTP/audio plugins are installed and linked on CM5.
+  Input prerequisites pass 264 UnitTest++ cases, 295 JSON assertions, and
+  Enchant's 434 main and 25 Hunspell tests. Physical MTP remains unverified.
   [ConsoleKit session launching](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-session.md)
   now preserves application failures and passes real-session checks on CM5;
   ordinary-user login and device ownership remain unverified.
@@ -617,7 +619,7 @@ on every board in the hardware catalog.
   On Zero 3W, [later tracing and KICK](ember/boot/a733-gpu-fwcompute.md#physical-stages-19-21-result)
   now reach the firmware. The client queue drains, but the compute context
   resets with a page fault at `0x2400`; the timeline stays zero.
-  The old error path did not sample the output buffer.
+  The new DMA snapshot confirms an unchanged output word; the old error path did not sample it.
   Compute completion and rendering remain unverified. A PowerVR render
   interface, Mesa Vulkan/Zink and accelerated Plasma still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
