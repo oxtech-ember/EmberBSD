@@ -383,7 +383,7 @@ void check_options (void)
 			}
 		}
 	}
-    filter_create_ext(output_chain, m4, "-P", 0);
+    filter_create_ext(output_chain, m4, "-P", (const char *) NULL);
     filter_create_int(output_chain, filter_fix_linedirs, NULL);
 
     /* For debugging, only run the requested number of filters. */
