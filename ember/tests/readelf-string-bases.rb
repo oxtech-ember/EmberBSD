@@ -24,15 +24,15 @@ passed = failed = 0
       base_form = {'indirect'=>0x16, 'indirect-zero'=>0x16, 'unsupported'=>0x06}.fetch(kind, 0x17)
       root_attrs = kind == 'inline' ? '.uleb128 3,8\n' : ''
       root_attrs += '.uleb128 0x25,0x25\n.uleb128 0x72,' + base_form.to_s + '\n'
-      root_attrs += '.uleb128 0x72,0x17\n' if kind == 'duplicate'
+      root_attrs += '.uleb128 0x72,0x17\n' if %w[duplicate unsupported].include?(kind)
       root_values = kind == 'inline' ? '.asciz "INLINE"\n' : ''
       root_values += '.byte 0\n'
       root_values += '.uleb128 0x17\n' if kind.start_with?('indirect')
       root_values += kind == 'unsupported' ? '.long 0x12345678\n' : "#{offset} #{kind == 'duplicate' ? (width == 32 ? 8 : 16) : base}\n"
-      root_values += "#{offset} #{base}\n" if kind == 'duplicate'
-      # Unsupported form is deliberately malformed. Its skip must not consume
-      # the next DIE; split uses the default contribution, plain base stays 0.
-      expected = kind == 'unsupported' ? (split ? 'FIRST_TYPE' : nil) : (zero ? 'FIRST_TYPE' : 'SECOND_TYPE')
+      root_values += "#{offset} #{base}\n" if %w[duplicate unsupported].include?(kind)
+      # Unsupported form is deliberately malformed. A valid base follows it,
+      # so pre-reading must skip exactly its value and apply the next base.
+      expected = zero ? 'FIRST_TYPE' : 'SECOND_TYPE'
       asm = <<~ASM
         .section .debug_abbrev#{suffix},"",%progbits
         .uleb128 1,0x11
