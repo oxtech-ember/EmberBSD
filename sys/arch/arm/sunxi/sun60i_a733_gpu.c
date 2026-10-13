@@ -1159,15 +1159,15 @@ sun60i_gpu_stage_fwheap(struct sun60i_gpu_softc *sc, int power_node)
 	    0, &bsh);
 	if (error != 0)
 		goto out;
-	memset(&cmd, 0, sizeof(cmd));
-	cmd.cmd_type = ROGUE_FWIF_KCCB_CMD_MMUCACHE;
-	cmd.cmd_data.mmu_cache_data.cache_flags = 0x0400001f;
-	cmd.cmd_data.mmu_cache_data.mmu_cache_sync_fw_addr =
+	memset(&kcmd, 0, sizeof(cmd));
+	kcmd.cmd_type = ROGUE_FWIF_KCCB_CMD_MMUCACHE;
+	kcmd.cmd_data.mmu_cache_data.cache_flags = 0x0400001f;
+	kcmd.cmd_data.mmu_cache_data.mmu_cache_sync_fw_addr =
 	    sc->sc_fw_memory->interface_layout.object[
 	    A733_GPU_FWINIT_MMUCACHE_SYNC].fw_addr;
-	cmd.cmd_data.mmu_cache_data.mmu_cache_sync_update_value = 0;
+	kcmd.cmd_data.mmu_cache_data.mmu_cache_sync_update_value = 0;
 	error = sun60i_a733_gpu_fwprobe_cmd(sc->sc_bst, bsh, sc->sc_fw_memory,
-	    boot, cache, &cmd, 2, r);
+	    boot, cache, &kcmd, 2, r);
 	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
 out:
 	sc->sc_heap_done = true;
