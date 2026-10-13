@@ -291,7 +291,7 @@ The diagnostic neither consumes the firmware queue nor reads new hardware regist
 It reports `scratch_valid=<before>/<after>` beside the numeric words.
 A validity value of zero means that word is unavailable, not a measured zero.
 Host contracts cover malformed spans, DMA synchronization, and the failed-command path.
-The physical run below accepted these diagnostics; compute execution still failed.
+The physical run below verifies the output and completion checks on the board.
 
 ## Completion acceptance
 
@@ -316,40 +316,42 @@ Existing analysis path limits remain. These checks do not establish hardware com
 
 ## Physical stages 19-21 result
 
-On 2026-10-13 the ladder ran through stage 21 on the 4 GiB Orange Pi Zero 3W.
-Kernel `9f3236bd648` accepted stages 1 through 20 with the same compiler packet used in the prior run.
-The heap MMUCACHE command in slot 2 returned 1.
-The VM contained five windows, four directories, and twenty leaves.
+On 2026-10-13 all 21 stages passed on the 4 GiB Orange Pi Zero 3W.
+The kernel source was `7cde8f93b68604b789803b19a2812536110dea41`, built with GCC 16.2 as `EMBER64`.
+The board retained its installed DTB and used matching kernel modules.
+The GPU and firmware BVNC were `36.56.104.183`.
 
-The trace LOGTYPE command in slot 3 returned 1 with log type `0x3f`.
-The following KICK in slot 4 reached the firmware (`kexec=5`).
-That kernel interchanged the CCCB read and write labels. The actual write offset was 184; the read offset was zero.
-The queue had not drained. At the failure exit, the timeline and scratch word were zero.
-`scratch_valid=1/1` now confirms actual DMA-synchronized reads before and after submission.
-The earlier `0782feab5d5` error path did not read scratch; its printed zero was unavailable data.
-The firmware reported CONTEXT_RESET, GUILTY_LOCKUP, and page-fault address `0x2400`.
-HWR record 0 reported BIF0 fault type 3, DM 4, request `0x100000002400`, MMU status `0x1011`, and page catalog `0x40165000`.
-Wi-Fi and SSH survived. No compute completion or GPU rendering is claimed.
+The compiler packet came from Ports `5134eaecd8a6141477d51c1c48a07bfa24b91383` and Mesa 26.2.4.
+Its SHA256 was `301729754358fbb07e8a04dd9ea280bdc3d2640ad7d3feb9f9fe689b3b1bef2f`.
+The 322452-byte version-3 file contains the guarded store and complete Mesa command.
+The real producer and parser agree on all ten resources and the command fields.
+The VM contained five windows, four directories, and 84 mapped pages.
 
-The expanded capture stored 256 words and decoded the compute kick and GPU lockup.
-The separately sampled ring index was 118; copied data included later recovery updates through word 127.
-Those updates include a timeline notification after the fault. They do not prove successful compute.
-The pointer and data snapshot are not atomic. The remaining copied words were zero.
-HWR capture returned all 16 bounded records with no span error.
+KICK consumed its KCCB entry with return word zero, as permitted by the asynchronous protocol.
+The client queue read and write offsets both reached 184. The timeline became 1.
+The DMA-synchronized scratch value changed from zero to `0x13579bdf`, with validity `1/1`.
+The final fresh firmware snapshot had no pending command, fault, or context reset.
+The 16-record HWR capture reported counter zero. The trace contained `Compute finished` followed by the timeline update.
+Stage 21 returned zero. Wi-Fi and SSH remained available; the watchdog did not fire.
 
-The compiler-input audit found another reproducible defect in the old packet.
-Its IDFWDF shader reads address slots 5 and 6, but the patched host generator writes slots 8 and 9.
-In that packet, slots 5 and 6 encode `0x2400`, matching the observed fault address.
-The selected probe was a query-availability shader rather than the intended guarded store.
+The same packet had produced the correct store on the preceding kernel.
+That run exposed an incorrect requirement for a synchronous KICK return word.
+The current contract separately checks KCCB consumption, CCCB completion, the timeline, and fresh faults.
+The completed run is one dispatch after a fresh boot. Repeated submission and long-duration stability remain untested.
+
+The old packet had two shader defects: mismatched IDFWDF address slots and an incorrect probe selection.
 [Checked shader generation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/a733-accelerators/host-tools)
-binds the common ABI header, actual SPIR-V, compiler output, and host generator.
-A corrected packet still requires physical acceptance.
+now binds the common ABI header, validated SPIR-V, actual PCO output, and host generator.
+The guarded probe uses Mesa's native DMA-store intrinsic because the pinned PCO compiler rejects generic 64-bit pointer stores.
+No validation check is disabled.
 
-The fault does not establish which compute field is wrong.
 In Mesa 26.2.4, `CR_CDM_CONTEXT_PDS1` packs allocation sizes and control flags.
 It is not a PDS program address.
 See [`pvr_arch_job_compute.c`, lines 80–103](https://gitlab.freedesktop.org/mesa/mesa/-/blob/mesa-26.2.4/src/imagination/vulkan/pvr_arch_job_compute.c#L80).
 Pinned Linux maps that stream field to `regs.cdm_resume_pds1` in
 [`pvr_stream_defs.c`](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_stream_defs.c#L188).
-The next command comparison must use those producers and the actual compiler resource requirements.
-A raw address or an unexplained constant is not a valid replacement.
+The accepted command uses those producers and the actual compiler resource requirements, including `PDS1=0x900808`.
+
+This result establishes native firmware submission and a real GPU memory write.
+It does not establish a user-facing Vulkan interface, graphics rendering, display output, or accelerated Plasma.
+The diagnostic retains its GPU-owned allocations until hardware reset.

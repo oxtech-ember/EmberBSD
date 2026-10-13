@@ -613,16 +613,14 @@ on every board in the hardware catalog.
   digest matches the host packer byte for byte, without mapping or
   publication. Rogue GPU [page-table encoders](ember/boot/a733-gpu-mmu.md)
   and [CPU-owned VM preparation](ember/boot/a733-gpu-vm.md) pass source contracts;
-  On Zero 3W, [later tracing and KICK](ember/boot/a733-gpu-fwcompute.md#physical-stages-19-21-result)
-  now reach the firmware. The compute context resets with a page fault at
-  `0x2400`; the timeline stays zero. Corrected CCCB diagnostics show that
-  the client queue had not drained; the earlier labels were interchanged.
-  The new DMA snapshot confirms an unchanged output word; the old error path did not sample it.
-  Compute completion and rendering remain unverified. A PowerVR render
-  interface, Mesa Vulkan/Zink and accelerated Plasma still require porting. These are
-  porting targets, not available EmberBSD acceleration. Board bring-up,
-  driver/DMA integration, compatible runtime and real model execution must
-  all pass before an accelerated AI workflow is claimed.
+  On Zero 3W, the [native compute check](ember/boot/a733-gpu-fwcompute.md#physical-stages-19-21-result)
+  now passes all 21 stages with a Mesa 26.2.4 compiler packet. A guarded
+  PowerVR shader writes `0x13579bdf` through the native GPU page tables.
+  Client queue completion, timeline, DMA output, and fresh fault/HWR checks
+  agree. The accepted run is one dispatch after a fresh boot. A user-facing
+  PowerVR render interface, Mesa Vulkan/Zink, display output, and accelerated
+  Plasma still require porting. Repeated submission and long-duration GPU
+  stability remain untested.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,
