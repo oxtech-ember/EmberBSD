@@ -2926,7 +2926,7 @@ static void
 test_scratch_error_snapshot(void)
 {
 	struct a733_gpu_fwcompute_file_header h = { 0 };
-	struct a733_gpu_fwcompute_file_entry entry[9] = { 0 }, swap;
+	struct a733_gpu_fwcompute_file_entry entry[A733_GPU_FWCOMPUTE_RESOURCES] = { 0 }, swap;
 	struct sun60i_a733_gpu_fwvm vm = { 0 };
 	uint32_t scratch, decoy;
 	unsigned start = checks, calls;
@@ -2935,10 +2935,13 @@ test_scratch_error_snapshot(void)
 	h.magic = A733_GPU_FWCOMPUTE_FILE_MAGIC;
 	h.version = A733_GPU_FWCOMPUTE_FILE_VERSION;
 	h.bvnc = UINT64_C(0x00240038006800b7);
-	h.header_bytes = 312;
-	h.payload_bytes = 9 * 512 + 56;
-	h.resources = 9;
-	h.static_offset = 9 * 512;
+	h.header_bytes = A733_GPU_FWCOMPUTE_FILE_PREFIX +
+	    A733_GPU_FWCOMPUTE_RESOURCES * A733_GPU_FWCOMPUTE_ENTRY;
+	h.payload_bytes = 9 * 512 + A733_GPU_FWCOMPUTE_BORDER_BYTES + 56 + 48;
+	h.resources = A733_GPU_FWCOMPUTE_RESOURCES;
+	h.static_offset = 9 * 512 + A733_GPU_FWCOMPUTE_BORDER_BYTES;
+	h.command_offset = h.static_offset + 56;
+	h.command_bytes = A733_GPU_FWCOMPUTE_COMMAND_BYTES;
 	h.static_bytes = 56;
 	h.context_state_va = UINT64_C(0x8000001000);
 	for (unsigned i = 0; i < 9; i++) {
@@ -2948,6 +2951,11 @@ test_scratch_error_snapshot(void)
 		entry[i].flags = A733_GPU_FWCOMPUTE_FLAG_BYPASS;
 		entry[i].va = UINT64_C(0x8000000000) + i * 4096;
 	}
+	entry[9].role = A733_GPU_FWCOMPUTE_BORDER_TABLE;
+	entry[9].offset = 9 * 512;
+	entry[9].bytes = A733_GPU_FWCOMPUTE_BORDER_BYTES;
+	entry[9].flags = A733_GPU_FWCOMPUTE_FLAG_RO;
+	entry[9].va = UINT64_C(0x8000010000);
 	/* SCRATCH deliberately follows all programs in the manifest. */
 	swap = entry[0];
 	entry[0] = entry[8];
@@ -2959,6 +2967,15 @@ test_scratch_error_snapshot(void)
 		assert(compute_file_data != NULL);
 		memcpy(compute_file_data, &h, sizeof(h));
 		memcpy(compute_file_data + sizeof(h), entry, sizeof(entry));
+		{
+			const uint32_t command[12] = { 44, 0, 0x4000, 0x20,
+			    0x4000, 0x80, 0x1000, 0x80,
+			    (4U << 21) | (1U << 20) | (1U << 11) | (4U << 1),
+			    0, 0, 0 };
+
+			memcpy(compute_file_data + h.header_bytes + h.command_offset,
+			    command, sizeof(command));
+		}
 		memset(compute_file_data + h.header_bytes + h.static_offset,
 		    0xa5, h.static_bytes);
 		sc.sc_run_stage = A733_GPU_STAGE_FWVM;
@@ -2972,6 +2989,23 @@ test_scratch_error_snapshot(void)
 		sc.sc_fw_memory->image.info.feature_mask[0] = UINT64_C(0x92d9ff57fdbf7cdb);
 		sc.sc_fw_memory->image.info.feature_mask[1] = UINT64_C(0x1f);
 		sc.sc_fw_memory->image.info.brn_mask = UINT64_C(0x201);
+		{
+			struct a733_gpu_fwcompute_file parsed;
+			struct sun60i_a733_gpu_fwcompute_image *image;
+			struct rogue_fwif_cmd_compute command;
+			uint8_t *bytes;
+
+			CHECK(sun60i_gpu_compute_load(&sc, &parsed, &bytes, &image) == 0);
+			memcpy(&command, image->cccb +
+			    sizeof(struct rogue_fwif_ccb_cmd_header), sizeof(command));
+			CHECK(command.regs.tpu_border_colour_table ==
+			    (UINT64_C(0x8000010000) >> 2));
+			CHECK(command.regs.cdm_resume_pds1 ==
+			    ((4U << 21) | (1U << 20) | (1U << 11) | (4U << 1)));
+			CHECK(command.regs.cdm_context_state_base_addr == h.context_state_va);
+			kmem_free(image, sizeof(*image));
+			kmem_free(bytes, compute_file_size);
+		}
 		vm.prepared = true;
 		scratch = UINT32_C(0x12345678);
 		decoy = UINT32_C(0xaabbccdd);

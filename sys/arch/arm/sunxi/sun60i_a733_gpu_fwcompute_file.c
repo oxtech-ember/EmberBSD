@@ -21,8 +21,8 @@ _Static_assert(offsetof(struct a733_gpu_fwcompute_file_header,
 _Static_assert(sizeof(struct a733_gpu_fwcompute_file_entry) ==
     A733_GPU_FWCOMPUTE_ENTRY, "packed compute file entry");
 _Static_assert(A733_GPU_FWCOMPUTE_FILE_PREFIX +
-    A733_GPU_FWCOMPUTE_RESOURCES * A733_GPU_FWCOMPUTE_ENTRY == 312,
-    "nine-entry compute file header");
+    A733_GPU_FWCOMPUTE_RESOURCES * A733_GPU_FWCOMPUTE_ENTRY == 344,
+    "ten-entry compute file header");
 
 /* Inclusive ends avoid overflow for spans ending at the type limit. */
 static bool
@@ -38,10 +38,12 @@ sun60i_a733_gpu_fwcompute_file_parse(const void *data, size_t size,
 	struct a733_gpu_fwcompute_file_header header;
 	struct a733_gpu_fwcompute_file_entry
 	    entry[A733_GPU_FWCOMPUTE_RESOURCES];
+	struct rogue_fwif_cmd_compute command;
+	uint64_t stream_va = 0, border_va = 0;
 	uint32_t payload, base;
 	bool seen_role[A733_GPU_FWCOMPUTE_RESOURCES] = { false };
 	size_t i, j;
-	int k;
+	int error, k;
 
 	if (data == NULL || out == NULL || size < A733_GPU_FWCOMPUTE_FILE_PREFIX +
 	    A733_GPU_FWCOMPUTE_RESOURCES * A733_GPU_FWCOMPUTE_ENTRY ||
@@ -65,6 +67,13 @@ sun60i_a733_gpu_fwcompute_file_parse(const void *data, size_t size,
 	if (header.static_offset % 4 != 0 ||
 	    header.static_offset > payload ||
 	    A733_GPU_FWCOMPUTE_STATE_BYTES > payload - header.static_offset)
+		return EINVAL;
+	if (header.command_bytes != A733_GPU_FWCOMPUTE_COMMAND_BYTES ||
+	    header.command_offset % 4 != 0 ||
+	    header.command_offset > payload ||
+	    header.command_bytes > payload - header.command_offset ||
+	    fwfile_overlap(header.command_offset, header.command_bytes,
+	    header.static_offset, header.static_bytes))
 		return EINVAL;
 	if (header.context_state_va == 0 ||
 	    header.context_state_va >= (UINT64_C(1) << 40) ||
@@ -94,6 +103,14 @@ sun60i_a733_gpu_fwcompute_file_parse(const void *data, size_t size,
 		    e->flags != A733_GPU_FWCOMPUTE_FLAG_BYPASS ||
 		    e->bytes < A733_GPU_FWCOMPUTE_RESUME_BYTES))
 			return EINVAL;
+		if (e->role == A733_GPU_FWCOMPUTE_BORDER_TABLE) {
+			if (e->flags != A733_GPU_FWCOMPUTE_FLAG_RO ||
+			    e->bytes != A733_GPU_FWCOMPUTE_BORDER_BYTES)
+				return EINVAL;
+			border_va = e->va;
+		}
+		if (e->role == A733_GPU_FWCOMPUTE_CDM_STREAM)
+			stream_va = e->va;
 		/*
 		 * Page-aligned virtual addresses make byte-range overlap
 		 * equivalent to sharing a page: whole distinct pages only.
@@ -106,17 +123,26 @@ sun60i_a733_gpu_fwcompute_file_parse(const void *data, size_t size,
 				return EINVAL;
 		}
 		if (fwfile_overlap(base + e->offset, e->bytes,
-		    base + header.static_offset, header.static_bytes))
+		    base + header.static_offset, header.static_bytes) ||
+		    fwfile_overlap(e->offset, e->bytes,
+		    header.command_offset, header.command_bytes))
 			return EINVAL;
 	}
 	for (k = 0; k < A733_GPU_FWCOMPUTE_RESOURCES; k++) {
 		if (!seen_role[k])
 			return EINVAL;
 	}
+	error = sun60i_a733_gpu_fwcompute_cmd_decode((const uint8_t *)data +
+	    base + header.command_offset, header.command_bytes, bvnc,
+	    stream_va, header.context_state_va, border_va, &command);
+	if (error != 0)
+		return error;
 
 	out->header_bytes = header.header_bytes;
 	out->payload_bytes = payload;
 	out->static_offset = header.static_offset;
+	out->command_offset = header.command_offset;
+	out->command = command;
 	out->context_state_va = header.context_state_va;
 	out->priority = header.priority;
 	out->pid = header.pid;

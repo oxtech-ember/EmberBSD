@@ -933,10 +933,7 @@ sun60i_gpu_stage_fwcompute(struct sun60i_gpu_softc *sc)
 	    (uint8_t *)&inputs.static_state, UINT64_C(0x10000000));
 
 	/* The kernel owns the typed command, as in the upstream submission. */
-	inputs.command.regs.cdm_ctrl_stream_base =
-	    role[2]->va;
-	inputs.command.regs.cdm_context_state_base_addr =
-	    file.context_state_va;
+	inputs.command = file.command;
 	inputs.priority = file.priority;
 	inputs.pid = file.pid;
 	inputs.context_id = file.context_id;
@@ -1077,9 +1074,7 @@ sun60i_gpu_compute_load(struct sun60i_gpu_softc *sc,
 	sun60i_a733_gpu_fwcompute_file_relocate(
 	    (uint8_t *)&inputs.static_state, UINT64_C(0x10000000));
 
-	inputs.command.regs.cdm_ctrl_stream_base = role[2]->va;
-	inputs.command.regs.cdm_context_state_base_addr =
-	    file->context_state_va;
+	inputs.command = file->command;
 	inputs.priority = file->priority;
 	inputs.pid = file->pid;
 	inputs.context_id = file->context_id;
@@ -1195,7 +1190,7 @@ out:
 	return error;
 }
 
-/* Stage 20: back all nine resources, build the VM tables, set the context. */
+/* Stage 20: back all ten resources, build the VM tables, set the context. */
 static int
 sun60i_gpu_stage_fwvm(struct sun60i_gpu_softc *sc)
 {
