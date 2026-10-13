@@ -36,6 +36,7 @@
 
 #define A733_GPU_FWPROBE_LOGTYPE		UINT32_C(0x2abc00ce)
 #define A733_GPU_FWPROBE_MMUCACHE		UINT32_C(0x2abc0066)
+#define A733_GPU_FWPROBE_TRACE_LOGTYPE	UINT32_C(0x0000003f)
 
 #define A733_GPU_FWPROBE_TIMEOUT_US	1000000
 #define A733_GPU_FWPROBE_POLL_US		100
@@ -107,15 +108,19 @@ int sun60i_a733_gpu_fwprobe_mmucache(bus_space_tag_t, bus_space_handle_t,
 
 /*
  * Publish one caller-prepared KCCB command in the slot after the given
- * fully successful predecessor result. Allowed types are a repeated
- * MMUCACHE sync or one compute KICK. All lifetime, coherence, exclusion,
- * timeout, and retention rules of the probes above apply unchanged.
+ * fully successful predecessor result. Allowed types are LOGTYPE_UPDATE,
+ * a repeated MMUCACHE sync, or one compute KICK. All lifetime, coherence,
+ * exclusion, timeout, and retention rules of the probes above apply unchanged.
+ * Supply the exact expected shared log type for every runtime observation.
+ * Initial probes always require zero. Later tracing requires TRACE and at
+ * least one valid group. Only LOGTYPE_UPDATE can change the previous mode.
+ * The caller updates the shared log type before LOGTYPE_UPDATE publication.
  * The command payload is copied before any shared-memory write.
  */
 int sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t, bus_space_handle_t,
     struct sun60i_a733_gpu_fwmem *, const struct sun60i_a733_gpu_fwboot_result *,
     const struct sun60i_a733_gpu_fwprobe_result *,
-    const struct rogue_fwif_kccb_cmd *, unsigned int,
+    const struct rogue_fwif_kccb_cmd *, unsigned int, uint32_t,
     struct sun60i_a733_gpu_fwprobe_result *);
 
 #endif /* _SUN60I_A733_GPU_FWPROBE_H */

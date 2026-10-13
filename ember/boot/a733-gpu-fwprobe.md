@@ -56,7 +56,7 @@ KCCB must be in its initial state: read offset zero, write offset zero,
 wrap mask 127, and command size 88 bytes.
 FWCCB must have valid offsets, wrap mask 31, its native command size,
 and no pending command. The probe observes FWCCB but never consumes it.
-The trace log type must remain zero.
+The initial LOGTYPE and MMUCACHE probes require the trace log type to remain zero.
 Firmware fault and restart indications cause failure.
 The power state must be `ROGUE_FWIF_POW_ON` or `ROGUE_FWIF_POW_IDLE`.
 The probe never writes a firmware power state or connection token.
@@ -121,6 +121,9 @@ It checks every byte outside the three allowed write ranges.
 It also checks publication barriers, a stale return word, MMIO faults before
 and after possible execution, delayed compatibility, deadlines, malformed layouts,
 coherence and bounce rejection, foreign fields, and one-shot behavior.
+The later-command tests execute slots zero through four with the real helper.
+They enable trace mode before LOGTYPE in slot three, then submit KICK in slot four.
+They reject unknown log bits, unexpected mode changes, and the existing runtime faults.
 
 These checks do not perform hardware MMIO, native cache maintenance, or firmware execution.
 Target compilation and static analysis cover the native kernel source separately.
@@ -140,6 +143,21 @@ The native boot path does not require host writes to connection states or tokens
 
 The source retains the MIT license option and upstream attribution.
 The native helper and regression contract are AI-assisted EmberBSD work.
+
+## Later diagnostic commands and tracing
+
+`sun60i_a733_gpu_fwprobe_cmd()` takes an explicit expected log type after the slot argument.
+Every runtime observation must match that exact value.
+Zero keeps tracing disabled. A nonzero value requires `TRACE` and at least one valid log group.
+Only `LOGTYPE_UPDATE` can change the predecessor's mode.
+The caller writes and synchronizes the shared setting before it sends that command.
+Other commands retain the mode from the successful predecessor.
+
+Stage 21 selects `0x3f`: `TRACE`, `MAIN`, `MTS`, `CLEANUP`, `CSW`, and `BIF`.
+It sends LOGTYPE in slot three, then KICK in slot four with the same expected setting.
+Stages 16 and 17 keep their strict zero-log requirement.
+Tracing does not bypass compatibility, queue, power, fault, or completion checks.
+An unexpected firmware response still fails without consuming the response.
 
 ## MMUCACHE continuation
 

@@ -816,6 +816,7 @@ sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
     const struct sun60i_a733_gpu_fwboot_result *boot,
     const struct sun60i_a733_gpu_fwprobe_result *previous,
     const struct rogue_fwif_kccb_cmd *cmd, unsigned int slot,
+    uint32_t expected_log_type,
     struct sun60i_a733_gpu_fwprobe_result *out)
 {
 	fwprobe_cmd_calls++;

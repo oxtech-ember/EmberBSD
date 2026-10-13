@@ -56,6 +56,8 @@ static struct sun60i_a733_gpu_fwmem owner;
 static struct sun60i_a733_gpu_fwboot_result booted;
 static struct sun60i_a733_gpu_fwprobe_result result, previous, previous_saved;
 static unsigned int test_slot;
+static uint32_t test_log_type;
+static struct rogue_fwif_kccb_cmd test_command;
 static bool skip_sync_update;
 static struct fake_map maps[5];
 static const size_t sizes[] = {16384, 16384, 16384, 139264, 12288};
@@ -147,7 +149,7 @@ fw8(unsigned int area, size_t offset, uint8_t value)
 static void
 unchanged_foreign(void)
 {
-	if (test_slot == 1)
+	if (test_slot >= 1)
 		CHECK(memcmp(&previous, &previous_saved, sizeof(previous)) == 0);
 	for (unsigned int i = 0; i < 5; i++)
 		CHECK(memcmp(cpu[i], expected[i], sizes[i]) == 0);
@@ -200,6 +202,7 @@ firmware_tick(void)
 		case 7: fw32(3, SYSDATA + 3536, 1); break;
 		case 8: fw32(3, SYSDATA + 8, 2); break;
 		case 9: fw32(3, 128, 0); break;
+		case 10: fw32(3, TRACECTL, test_log_type ^ 4); break;
 		default: break;
 		}
 	}
@@ -220,6 +223,8 @@ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, bus_addr_t offset,
 	CHECK(offset <= sizes[id] && size <= sizes[id] - offset);
 	syncs++;
 	put32(golden, test_slot == 0 ? 0x2abc00ce : 0x2abc0066);
+	if (test_slot >= 2)
+		memcpy(golden, &test_command, sizeof(test_command));
 	if (test_slot == 1) {
 		put32(golden + 8, 0x0400001f);
 		put32(golden + 12, 0xc0104400);
@@ -227,7 +232,7 @@ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, bus_addr_t offset,
 		put32(golden + 16, 0);
 	}
 	CHECK(result.slot == test_slot);
-	CHECK(result.command == (test_slot == 0 ? 0x2abc00ceU : 0x2abc0066U));
+	CHECK(result.command == get32(golden));
 	if (size == sizes[id] && offset == 0) {
 		CHECK(op == BUS_DMASYNC_POSTREAD || op == BUS_DMASYNC_PREREAD);
 		CHECK(id == (read_phase == 0 || read_phase == 3 ? 3U : 4U));
@@ -417,6 +422,10 @@ reset(void)
 static int
 run(void)
 {
+	if (test_slot >= 2)
+		return sun60i_a733_gpu_fwprobe_cmd(&owner, 0x12340000,
+		    &owner, &booted, &previous, &test_command, test_slot,
+		    test_log_type, &result);
 	if (test_slot == 1)
 		return sun60i_a733_gpu_fwprobe_mmucache(&owner, 0x12340000,
 		    &owner, &booted, &previous, &result);
@@ -834,6 +843,94 @@ cache_tests(void)
 	prepare_cache(); cache_reject(EINVAL, &previous, NULL);
 }
 
+/* Continue the real queue without recreating the owner or firmware state. */
+static void
+next_command(uint32_t command, uint32_t log_type)
+{
+	previous = previous_saved = result;
+	memset(&result, 0, sizeof(result));
+	test_slot++;
+	test_log_type = log_type;
+	memset(&test_command, 0, sizeof(test_command));
+	test_command.cmd_type = command;
+	syncs = writes = barriers = waits = observations = completions = 0;
+	phase = read_phase = 0;
+	clock_ns = total_wait_us = jump_ns = 0;
+	last_wait = 0;
+}
+
+static void
+prepare_trace(void)
+{
+	prepare_cache();
+	CHECK(run() == 0);
+	next_command(0x2abc0066, 0);
+	CHECK(run() == 0 && result.slot == 2);
+	next_command(0x2abc00ce, 0x3f);
+	/* This is the stage-21 host write, before LOGTYPE_UPDATE. */
+	fw32(3, TRACECTL, 0x3f);
+}
+
+static void
+trace_tests(void)
+{
+	static const uint32_t invalid[] = { 1, 2, 0x3e, 0x8000, 0x80003f };
+	unsigned int start = assertions;
+
+	prepare_trace();
+	CHECK(run() == 0 && result.slot == 3);
+	CHECK(result.published && result.kicked && result.after.rtn == 1);
+	CHECK(result.before.log_type == 0x3f && result.after.log_type == 0x3f);
+	CHECK(result.after.read_offset == 4 && result.after.write_offset == 4);
+	retained();
+	next_command(0x2abc0065, 0x3f);
+	CHECK(run() == 0 && result.slot == 4);
+	CHECK(result.command == 0x2abc0065 && result.published && result.kicked);
+	CHECK(result.after.read_offset == 5 && result.after.write_offset == 5);
+	CHECK(result.after.log_type == 0x3f && result.after.rtn == 1);
+	retained();
+
+	for (unsigned int i = 0; i < __arraycount(invalid); i++) {
+		prepare_trace();
+		test_log_type = invalid[i];
+		CHECK(run() == EINVAL && !result.attempted && syncs == 0);
+		unchanged_foreign();
+	}
+	prepare_trace();
+	fw32(3, TRACECTL, 0);
+	CHECK(run() == EPROTO && !result.published && writes == 0);
+	retained();
+	prepare_trace();
+	firmware_failure = 10;
+	CHECK(run() == EPROTO && result.published && result.after.rtn == 1);
+	retained();
+
+	/* Tracing never bypasses the established runtime failure checks. */
+	for (unsigned int failure = 1; failure <= 9; failure++) {
+		prepare_trace();
+		firmware_failure = failure;
+		int error = failure <= 4 || failure == 9 ? EPROTO :
+		    (failure == 8 ? EBUSY : EIO);
+
+		CHECK(run() == error && result.published);
+		retained();
+	}
+	prepare_trace();
+	CHECK(run() == 0);
+	next_command(0x2abc0065, 0);
+	fw32(3, TRACECTL, 0);
+	CHECK(run() == EINVAL && !result.attempted && syncs == 0);
+	unchanged_foreign();
+
+	/* Initial MMUCACHE still forbids the valid later trace setting. */
+	prepare_cache();
+	fw32(3, TRACECTL, 0x3f);
+	CHECK(run() == EPROTO && !result.published && writes == 0);
+	retained();
+	printf("a733-gpu-fwprobe trace chain: PASS %u checks\n",
+	    assertions - start);
+}
+
 int
 main(void)
 {
@@ -851,6 +948,7 @@ main(void)
 	compatibility_tests();
 	structural_tests();
 	cache_tests();
+	trace_tests();
 	/* No real device ran. The test alone owns final reclamation. */
 	for (unsigned int i = 0; i < 5; i++) {
 		free(cpu[i]);
