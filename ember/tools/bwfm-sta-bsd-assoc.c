@@ -27,7 +27,7 @@
 struct bsd_driver_data {
 	void *ctx, *sock_xmit;
 	char ifname[16];
-	int is_ap, flags, sta_btm, sta_rrm, sta_scan_pending;
+	int is_ap, flags, sta_btm, sta_rrm, sta_enabled, sta_scan_pending;
 	struct wpa_driver_capa capa;
 	u32 sae_generation, sta_scan_cookie, sta_scan_epoch;
 	uintptr_t sta_scan_generation;
@@ -271,11 +271,13 @@ fixture(struct bsd_driver_data *drv)
 	memset(submitted, 0, sizeof(submitted));
 	memset(&selected, 0, sizeof(selected));
 	drv->sta_btm = drv->sta_rrm = 1;
+	drv->sta_enabled = 1;
 	drv->flags = IFF_UP;
 	drv->sta_scan_cookie = 40;
 	drv->sta_scan_generation = 50;
 	current.version = IEEE80211_STA_VERSION;
-	current.flags = IEEE80211_STA_ASSOCIATED;
+	current.flags = IEEE80211_STA_ASSOCIATED |
+	    IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM;
 	current.generation = 60;
 	current.freq = 5180;
 	current.bssid[0] = 2;
@@ -325,9 +327,10 @@ association_requests(void)
 
 	fixture(&drv);
 	p = parameters(ies, sizeof(ies));
+	drv.sta_enabled = 0;
 	drv.sta_scan_pending = 1;
 	check(bsd_sta_associate(&drv, &p) == 0 && set_calls == 1 &&
-	    submitted[0].op == IEEE80211_STA_ENABLE,
+	    submitted[0].op == IEEE80211_STA_ENABLE && drv.sta_enabled,
 	    "RSN/CCMP and requested BTM enable the station transport");
 	check(clear_tx_calls == 1 && cancel_calls == 1 &&
 	    !drv.sta_scan_pending && drv.sta_scan_generation == 51,
@@ -348,7 +351,7 @@ association_requests(void)
 		case 9: p.wpa_ie = trailing; p.wpa_ie_len = sizeof(trailing); break;
 		}
 		check(bsd_sta_associate(&drv, &p) == 0 && set_calls == 1 &&
-		    submitted[0].op == IEEE80211_STA_DISABLE,
+		    submitted[0].op == IEEE80211_STA_DISABLE && !drv.sta_enabled,
 		    "malformed, unsupported or absent negotiation disables transport");
 	}
 	fixture(&drv);
@@ -555,6 +558,80 @@ connected_scans(void)
 	drv.sta_btm = drv.sta_rrm = 0;
 	check(wpa_driver_bsd_scan(&drv, &p) == 0 && legacy_scans == 1 &&
 	    set_calls == 0, "old drivers retain their ordinary scan path");
+	for (i = 0; i < 2; i++) {
+		fixture(&drv);
+		current.flags = IEEE80211_STA_ASSOCIATED |
+		    (i == 0 ? IEEE80211_STA_CAP_BTM : IEEE80211_STA_CAP_RRM);
+		check(wpa_driver_bsd_scan(&drv, &p) == 0 && set_calls == 1 &&
+		    submitted[0].op == IEEE80211_STA_SCAN && legacy_scans == 0,
+		    "either current station capability permits a connected scan");
+	}
+}
+
+static void
+restricted_association_scans(void)
+{
+	struct bsd_driver_data drv;
+	struct wpa_driver_associate_params assoc;
+	struct wpa_driver_scan_params scan;
+	u8 ies[] = { WLAN_EID_RSN, 0, WLAN_EID_EXT_CAPAB, 3, 0, 0, 8 };
+	unsigned i;
+
+	memset(&scan, 0, sizeof(scan));
+	for (i = 0; i < 2; i++) {
+		fixture(&drv);
+		assoc = parameters(ies, sizeof(ies));
+		if (i == 0) {
+			assoc.wpa_ie = NULL;
+			assoc.wpa_ie_len = 0;
+			assoc.pairwise_suite = assoc.group_suite = WPA_CIPHER_NONE;
+			assoc.key_mgmt_suite = WPA_KEY_MGMT_NONE;
+		} else {
+			assoc.mgmt_frame_protection = MGMT_FRAME_PROTECTION_REQUIRED;
+		}
+		check(wpa_driver_bsd_associate(&drv, &assoc) == 0 && mlme_calls == 1,
+		    "legacy security profiles still reach the association callback");
+		/* AIC GET retains association metadata but withdraws k/v capabilities. */
+		current.flags = IEEE80211_STA_ASSOCIATED | IEEE80211_STA_ASSOC_IES;
+		set_calls = media_calls = 0;
+		set_error = -1;
+		check(wpa_driver_bsd_scan(&drv, &scan) == 0 &&
+		    drv.sta_btm && drv.sta_rrm && set_calls == 0 &&
+		    legacy_scans == 1 && media_calls == 1 && timer_calls == 0 &&
+		    !drv.sta_scan_pending && drv.sta_scan_cookie == 40,
+		    i == 0 ? "associated open security uses a legacy scan despite cached caps" :
+		    "associated WPA2-PMF uses a legacy scan despite cached caps");
+	}
+}
+
+static void
+disabled_transport_scans(void)
+{
+	struct bsd_driver_data drv;
+	struct wpa_driver_associate_params assoc;
+	struct wpa_driver_scan_params scan;
+	u8 ies[] = { WLAN_EID_RSN, 0, WLAN_EID_EXT_CAPAB, 3, 0, 0, 8 };
+	unsigned i;
+
+	memset(&scan, 0, sizeof(scan));
+	for (i = 0; i < 5; i++) {
+		fixture(&drv);
+		assoc = parameters(ies, sizeof(ies));
+		/* No BTM/RRM negotiation leaves the transport disabled. */
+		if (i == 0 || i == 3 || i == 4)
+			assoc.wpa_ie_len = 2;
+		if (i != 0) {
+			set_error = -1;
+			drv.sta_enabled = i == 2 || i == 4;
+		}
+		check(bsd_sta_associate(&drv, &assoc) == (i == 0 ? 0 : -1) &&
+		    !drv.sta_enabled && set_calls == 1,
+		    "only a successful enable permits connected scans");
+		set_calls = 0;
+		check(wpa_driver_bsd_scan(&drv, &scan) == 0 && set_calls == 0 &&
+		    legacy_scans == 1 && timer_calls == 0 && !drv.sta_scan_pending,
+		    "disabled or uncertain transport uses a legacy scan despite current caps");
+	}
 }
 
 int
@@ -564,6 +641,8 @@ main(void)
 	directed_association();
 	association_payloads();
 	connected_scans();
+	restricted_association_scans();
+	disabled_transport_scans();
 	if (failures)
 		return 1;
 	printf("PASS: %u production BSD association and scan dispatch assertions\n", checks);
