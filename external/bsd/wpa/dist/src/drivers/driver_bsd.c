@@ -551,8 +551,12 @@ static int
 bsd_configure_wpa(void *priv, struct wpa_bss_params *params)
 {
 #ifndef IEEE80211_IOC_APPIE
-	static const char *ciphernames[] =
-		{ "WEP", "TKIP", "AES-OCB", "AES-CCM", "CKIP", "NONE" };
+	static const char * const ciphernames[] = {
+		[IEEE80211_CIPHER_WEP] = "WEP",
+		[IEEE80211_CIPHER_TKIP] = "TKIP",
+		[IEEE80211_CIPHER_AES_CCM] = "AES-CCM",
+		[IEEE80211_CIPHER_NONE] = "NONE"
+	};
 	int v;
 
 	switch (params->wpa_group) {
