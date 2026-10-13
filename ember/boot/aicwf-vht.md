@@ -9,8 +9,8 @@ Hardware capability, firmware capability and accepted driver behavior are separa
 | Radio | Zero 3W has a physical WPA2 VHT80 check with one spatial stream | Other boards, antennas and regulatory channels need separate acceptance |
 | Firmware | Connection metadata and the AP independently confirm 80 MHz with the checked revision | Accept other firmware revisions separately |
 | `aicwf` PHY setup | `ME_CONFIG` enables VHT MCS 0-9, one stream and at most 80 MHz for the checked firmware ABI | WPA2 VHT80 unicast is accepted; SAE/PMF and longer loads remain separate |
-| 802.11k | The native station transport exposes actual association IEs and management actions | Physical Neighbor Report request/response acceptance |
-| 802.11v | The transport connects firmware TX status and connected scans to host policy | Physical BTM acceptance/rejection and directed-transition checks |
+| 802.11k | Real request ACK and an empty AP response are physically checked | A nonempty neighbor list and coherent RRM advertisement |
+| 802.11v | Real query ACK and connected-scan continuity are physically checked | Physical BTM acceptance/rejection and directed-transition checks |
 | WPA3/PMF | SAE/H2E, required PMF and protected SA Query have separate physical checks | Support nonzero initial IGTK IPNs, then accept VHT80 with PMF and the completed k/v path |
 
 See the [SAE guide](aicwf-sae.md) and [board results](../boards/orange-pi-zero-3w.md).
@@ -100,8 +100,10 @@ The observed data path was not limited to broadcast frames.
 
 An initial 20-second `iperf3` run measured 95.5 Mbit/s from the board and
 70.2 Mbit/s to it. Both the board and the Mac peer used Wi-Fi.
-This is application throughput through two wireless links, not a PHY rate
-or a measurement against a wired peer. The earlier 2.4 GHz HT40 baseline
+A separate 30-second run on `6b9ebde32c47` measured 97.6 Mbit/s from the board
+and 65.8 Mbit/s to it, using one TCP stream in each direction.
+Both peers again used Wi-Fi. This is application throughput through two
+wireless links, not a PHY rate or a measurement against a wired peer. The earlier 2.4 GHz HT40 baseline
 measured 61.1/60.1 Mbit/s under different radio conditions.
 
 Two further 60-second TCP checks passed after authentication recovery.

@@ -198,6 +198,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_SM_EXTERNAL_AUTH_CFM	0x180c
 #define	AICWF_ME_TRAFFIC_IND_REQ		0x140b
 #define	 AICWF_CONNECT_MFP		__BIT(4)
+#define	 AICWF_CONNECT_REASSOC		__BIT(5)
 #define	 AICWF_FEATURE_MFP		__BIT(13)
 #define	 AICWF_AUTH_SAE			3
 #define	 AICWF_CONNECT_PORT_HOST	__BIT(0) /* the host opens the port */
@@ -351,6 +352,7 @@ struct aicwf_task {
 	bool			t_group;
 	uint64_t		t_epoch;
 	uint64_t		t_join_serial;
+	uint64_t		t_configure_serial;
 	u_int			t_keylen;
 	uint8_t			t_key[IEEE80211_KEYBUF_SIZE];
 	struct ieee80211req_sta_mgmt t_sta;
@@ -430,6 +432,7 @@ struct aicwf_softc {
 	bool			sc_alive_queued;
 	uint64_t		sc_alive_epoch;
 	uint64_t		sc_join_serial;	/* sc_epoch_lock */
+	uint64_t		sc_configure_serial; /* sc_epoch_lock */
 	uint64_t		sc_alive_join_serial;
 	struct aicwf_reorder {
 		bool		started;
@@ -1687,6 +1690,9 @@ aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
 			goto out;
 		}
 		aicwf_sae_advance(sc);
+		mutex_spin_enter(&sc->sc_epoch_lock);
+		sc->sc_configure_serial++;
+		mutex_spin_exit(&sc->sc_epoch_lock);
 		sc->sc_sae_enabled = req->data[0] != 0;
 		sc->sc_sae_pending = false;
 		sc->sc_sae_authenticated = false;
@@ -1801,9 +1807,13 @@ aicwf_connect(struct aicwf_softc *sc)
 	struct ieee80211_node * const ni = ic->ic_bss;
 	uint8_t req[320], cfm[1] = { 0xff };
 	uint32_t flags = 0;
+	uint64_t epoch;
+	bool reassoc;
 	int error;
 
-	if (ni->ni_esslen == 0 || ni->ni_esslen > 32)
+	KASSERT(IFNET_LOCKED(&sc->sc_if));
+	if (ni == NULL || ni->ni_esslen == 0 || ni->ni_esslen > 32 ||
+	    ni->ni_chan == IEEE80211_CHAN_ANYC)
 		return;
 
 	memset(req, 0, sizeof(req));
@@ -1822,30 +1832,50 @@ aicwf_connect(struct aicwf_softc *sc)
 		}
 	}
 	if (sc->sc_sae_enabled) {
-		if (!fullmac_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
+		if (ic->ic_opt_ie == NULL ||
+		    !fullmac_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
 		    !IEEE80211_ADDR_EQ(sc->sc_sae_bssid, ni->ni_bssid)) {
 			device_printf(sc->sc_dev, "SAE requires CCMP, required PMF and the selected peer\n");
 			return;
 		}
 		flags |= AICWF_CONNECT_MFP;
 	}
-	le32enc(req + 48, flags);
 	req[59] = sc->sc_sae_enabled ? AICWF_AUTH_SAE : IEEE80211_AUTH_ALG_OPEN;
 	req[61] = sc->sc_vif;
 
-	aicwf_sae_advance(sc);
+	mutex_enter(&sc->sc_lock);
+	reassoc = sc->sc_connected;
+	mutex_exit(&sc->sc_lock);
+	/* The native firmware protocol retains the old AP until reassociation. */
+	if (reassoc)
+		flags |= AICWF_CONNECT_REASSOC;
+	le32enc(req + 48, flags);
+	epoch = aicwf_sae_advance_if(sc, 0);
+	mutex_enter(&sc->sc_lock);
+	if (epoch != sc->sc_sae_epoch) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
 	sc->sc_sae_pending = false;
 	sc->sc_sae_authenticated = false;
 	sc->sc_connecting = true;
-	const uint64_t epoch = sc->sc_sae_epoch;
+	mutex_exit(&sc->sc_lock);
 	error = aicwf_cmd_reply(sc, AICWF_SM_CONNECT_REQ, req, sizeof(req),
 	    AICWF_SM_CONNECT_CFM, cfm, sizeof(cfm), true, epoch);
+	mutex_enter(&sc->sc_lock);
+	if (epoch != sc->sc_sae_epoch) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
 	if (error != 0 || cfm[0] != 0) {
 		/* net80211 times the join out and scans again. */
 		device_printf(sc->sc_dev, "connect request failed: %d, %u\n",
 		    error, cfm[0]);
 		sc->sc_connecting = false;
-	}
+	} else
+		/* New IGTK requests cannot run until IFNET is released. */
+		memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
+	mutex_exit(&sc->sc_lock);
 }
 
 /* Print only protocol metadata from the successful current-peer indication. */
@@ -1949,6 +1979,8 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 		return;
 	}
 	if (status == 0) {
+		/* An indication can precede CONNECT_CFM; no new key is installed yet. */
+		memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
 		aicwf_assoc_report(sc, ind, len);
 		aicwf_sta_assoc(sc, ind, len);
 		sc->sc_ap = ind[10];
@@ -2668,12 +2700,24 @@ aicwf_disconnect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 {
 	struct ieee80211com * const ic = &sc->sc_ic;
 	uint64_t expected, epoch, serial;
-	bool recover;
+	bool recover, old_ap;
 
 	/* reason (u16), VIF, FT-over-DS, reassociation, alignment byte. */
 	if (len < 6 || ind[2] != sc->sc_vif || !sc->sc_if_attached)
 		return;
 	mutex_enter(&sc->sc_lock);
+	/* An old AP departure does not terminate the configured join. */
+	if (ind[4] != 0 || sc->sc_connecting) {
+		old_ap = sc->sc_connecting;
+		if (old_ap) {
+			sc->sc_connected = false;
+			memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
+		}
+		mutex_exit(&sc->sc_lock);
+		if (old_ap)
+			aicwf_reorder_flush(sc, -1, false);
+		return;
+	}
 	if (!sc->sc_connected) {
 		mutex_exit(&sc->sc_lock);
 		return;
@@ -2692,6 +2736,7 @@ aicwf_disconnect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 		return;
 	}
 	sc->sc_connected = false;
+	sc->sc_connecting = false;
 	sc->sc_sae_pending = false;
 	sc->sc_sae_authenticated = false;
 	memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
@@ -2843,14 +2888,6 @@ aicwf_newstate_cb(struct aicwf_softc *sc, enum ieee80211_state nstate,
 			aicwf_scan(sc);
 		break;
 
-	case IEEE80211_S_AUTH:
-		/* Firmware may request SAE before CONNECT_CFM arrives. */
-		s = splnet();
-		sc->sc_newstate(ic, nstate, arg);
-		splx(s);
-		aicwf_connect(sc);
-		return;
-
 	default:
 		break;
 	}
@@ -2858,6 +2895,37 @@ aicwf_newstate_cb(struct aicwf_softc *sc, enum ieee80211_state nstate,
 	s = splnet();
 	sc->sc_newstate(ic, nstate, arg);
 	splx(s);
+}
+
+/* Serialize queued transitions with CONFIGURE and replacement MLME requests. */
+static void
+aicwf_state_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
+{
+	struct ifnet * const ifp = &sc->sc_if;
+	bool current;
+	int s;
+
+	if (!sc->sc_if_attached)
+		return;
+	IFNET_LOCK(ifp);
+	mutex_enter(&sc->sc_lock);
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	current = t->t_join_serial == sc->sc_join_serial &&
+	    (t->t_state != IEEE80211_S_AUTH ||
+	    t->t_configure_serial == sc->sc_configure_serial);
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	current = current &&
+	    (t->t_state == IEEE80211_S_INIT || (ifp->if_flags & IFF_RUNNING) != 0);
+	mutex_exit(&sc->sc_lock);
+	if (current && t->t_state == IEEE80211_S_AUTH) {
+		/* Firmware may request SAE before CONNECT_CFM arrives. */
+		s = splnet();
+		sc->sc_newstate(&sc->sc_ic, IEEE80211_S_AUTH, t->t_arg);
+		splx(s);
+		aicwf_connect(sc);
+	} else if (current)
+		aicwf_newstate_cb(sc, t->t_state, t->t_arg);
+	IFNET_UNLOCK(ifp);
 }
 
 /* The interface lock excludes a new ioctl across this sleeping transition. */
@@ -2993,7 +3061,7 @@ aicwf_task(struct work *wk, void *arg)
 	}
 	switch (t->t_cmd) {
 	case AICWF_TASK_NEWSTATE:
-		aicwf_newstate_cb(sc, t->t_state, t->t_arg);
+		aicwf_state_cb(sc, t);
 		break;
 	case AICWF_TASK_KEY_SET:
 		aicwf_key_set_cb(sc, t);
@@ -3023,17 +3091,22 @@ aicwf_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 	struct aicwf_softc * const sc = ic->ic_ifp->if_softc;
 	struct aicwf_task *t;
 
+	if (nstate == IEEE80211_S_AUTH &&
+	    (sc->sc_if.if_flags & IFF_RUNNING) == 0)
+		return ENETDOWN;
 	t = pool_cache_get(sc->sc_taskpool, PR_NOWAIT);
 	if (t == NULL) {
 		device_printf(sc->sc_dev, "no free tasks\n");
 		return EIO;
 	}
 	/* A raw MLME association can queue AUTH without SAE CONFIGURE. */
-	if (nstate == IEEE80211_S_AUTH) {
-		mutex_spin_enter(&sc->sc_epoch_lock);
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	if (nstate == IEEE80211_S_AUTH)
 		sc->sc_join_serial++;
-		mutex_spin_exit(&sc->sc_epoch_lock);
-	}
+	t->t_join_serial = sc->sc_join_serial;
+	t->t_configure_serial = sc->sc_configure_serial;
+	t->t_epoch = sc->sc_sae_epoch;
+	mutex_spin_exit(&sc->sc_epoch_lock);
 	t->t_cmd = AICWF_TASK_NEWSTATE;
 	t->t_state = nstate;
 	t->t_arg = arg;

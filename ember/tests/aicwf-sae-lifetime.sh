@@ -55,7 +55,7 @@ struct ieee80211_node {uint8_t ni_bssid[6];};
 struct ieee80211com {void *ic_ifp; int ic_opmode, ic_state; struct ieee80211_node *ic_bss; uint8_t ic_myaddr[6];};
 struct ieee80211req_sae {uint32_t generation; uint16_t version, op, len, reserved[2]; uint8_t bssid[6], data[1536];};
 struct ieee80211req {int i_len,i_val; void *i_data;};
-struct aicwf_softc {struct ieee80211com sc_ic; int sc_dev, sc_vif, sc_lock, sc_epoch_lock, sc_if; uint16_t sc_sae_caps; bool sc_if_attached,sc_sae_enabled,sc_sae_pending,sc_sae_authenticated,sc_connecting,sc_connected; uint32_t sc_sae_generation; uint64_t sc_sae_epoch, sc_join_serial; bool sc_ptk_valid; uint64_t sc_pmf_rx_pn; uint8_t sc_ptk[16]; uint8_t sc_sae_bssid[6],sc_igtk[2];};
+struct aicwf_softc {struct ieee80211com sc_ic; int sc_dev, sc_vif, sc_lock, sc_epoch_lock, sc_if; uint16_t sc_sae_caps; bool sc_if_attached,sc_sae_enabled,sc_sae_pending,sc_sae_authenticated,sc_connecting,sc_connected; uint32_t sc_sae_generation; uint64_t sc_sae_epoch, sc_join_serial, sc_configure_serial; bool sc_ptk_valid; uint64_t sc_pmf_rx_pn; uint8_t sc_ptk[16]; uint8_t sc_sae_bssid[6],sc_igtk[2];};
 static void mutex_enter(int *p) { assert(!*p); *p = 1; }
 static void mutex_exit(int *p) { assert(*p); *p = 0; }
 #define mutex_spin_enter mutex_enter
@@ -202,6 +202,7 @@ int main(void)
     disconnect_requests = 0;
     aicwf_disconnect(&sc);
     assert(sc.sc_sae_generation == 43 && !sc.sc_connected);
+    assert(sc.sc_configure_serial == 1);
     assert(disconnect_requests == 1 && sc.sc_igtk[0] == AICWF_HWKEY_NONE);
     /* Foreign or short disconnect indications cannot retire this link. */
     uint8_t ind[6] = {0};
@@ -217,8 +218,9 @@ int main(void)
         assert(sc.sc_connected && sc.sc_sae_epoch == epoch);
     }
     aicwf_disconnect_ind(&sc, ind, sizeof(ind));
-    assert(!sc.sc_connected && sc.sc_sae_epoch == epoch + 1);
-    puts("PASS: 21 SAE lifetime and disconnect VIF/bounds cases");
+    assert(!sc.sc_connected && sc.sc_sae_epoch == epoch + 1 &&
+        sc.sc_configure_serial == 1);
+    puts("PASS: 22 SAE lifetime and disconnect VIF/bounds cases");
 
 
     return 0;

@@ -334,7 +334,7 @@ on every board in the hardware catalog.
   private virtual-backend session: the compositor stays active on QPainter
   while Qt Quick clients render real pixel phases through software EGL
   (llvmpipe) and exit cleanly. Hardware GL compositing still needs the DRM
-  render node on A733. On physical CM5, the same full compositor now passes
+  render node on A733. On physical CM5, KWin 6.7.5nb2 passes
   [OpenGL/V3D selection and Qt Quick pixel checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
   on a virtual output under an existing non-root user. Its missing Vulkan
   loader dependency is repaired. This does not establish HDMI presentation
@@ -353,7 +353,13 @@ on every board in the hardware catalog.
   session acceptance still passes. A startplasma session on the virtual
   output is the next acceptance step. CM5 runtime testing also identifies
   the separate, still absent Plasma Desktop shell package; Workspace alone
-  cannot start `org.kde.plasma.desktop`.
+  cannot start `org.kde.plasma.desktop`. Its current xdg-user-dirs 0.20
+  dependency now cross-builds and passes private-profile checks on CM5.
+  [Current desktop providers](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-providers.md)
+  include SDL3 game-controller code with eight CM5 checks and a UBSan repeat.
+  Event sounds keep the same core library without mandatory GTK. The Desktop
+  source recipe selects current Fcitx5/Qt6; target input and the full shell
+  still require acceptance.
   [ConsoleKit session launching](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-session.md)
   now preserves application failures and passes real-session checks on CM5;
   ordinary-user login and device ownership remain unverified.
@@ -728,8 +734,9 @@ on every board in the hardware catalog.
   The [VHT80 results](ember/boot/aicwf-vht.md) give throughput and test limits.
   SAE/H2E and required PMF have separate physical checks, but a nonzero initial
   IGTK IPN still prevents key installation on affected APs. The new
-  [host-managed k/v transport](ember/boot/aicwf-kv.md) has software regressions;
-  its physical acceptance is pending. Protected SA Query and recovery checks are documented
+  [host-managed k/v transport](ember/boot/aicwf-kv.md) has physical connected-scan,
+  ioctl, directed reassociation and management TX/RX checks. Neighbor-list and BTM acceptance remain pending.
+  Protected SA Query and recovery checks are documented
   in the [SAE guide](ember/boot/aicwf-sae.md).
 - **Consistent Wi-Fi discovery and CM5 cooling:** `bwfm` retains firmware
   scan channels and signal ranking across both bands. The configurable
@@ -931,8 +938,9 @@ remain unverified.
   IGTK packet numbers are rejected. Protected SA Query and automatic recovery
   after an AP removes the station are physically checked. The separate
   [k/v transport](ember/boot/aicwf-kv.md) adds actual association IEs,
-  firmware TX status and connected scans. Its physical acceptance, 802.11r
-  and long-duration operation remain outside this result. The [board page](ember/boards/orange-pi-zero-3w.md#wi-fi-limits-and-connected-scan-regression)
+  firmware TX status and connected scans. Physical checks confirm scan continuity
+  and real management acknowledgements. A usable neighbor list, BTM acceptance,
+  802.11r and long-duration operation remain outside this result. The [board page](ember/boards/orange-pi-zero-3w.md#wi-fi-limits-and-connected-scan-regression)
   records the firmware, bundle and tests.
 - **Short firmware replies** still need a command-transport fix and regression.
 
