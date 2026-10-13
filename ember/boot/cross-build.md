@@ -210,3 +210,12 @@ this does not select a fallback compiler. Exercise the actual build environment:
 ```sh
 ruby ember/tests/darwin-gnuhost-sdk.rb SOURCE NBMAKE GCC SDK NEW_WORK
 ```
+
+The imported flex host generator must terminate its variadic pointer list with
+a pointer-typed NULL. An integer zero can leave an invalid extra argument on
+Darwin ARM64 and make the generated m4 execution fail. The real host filter and
+its generated scanner are tested without replacing m4:
+
+```sh
+sh ember/tests/lex-host-filter.sh /absolute/nblex HOST_CC SDK NEW_WORK
+```
