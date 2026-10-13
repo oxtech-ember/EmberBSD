@@ -138,7 +138,8 @@ Use the image's recorded revision to determine which menu applies.
 
 ## Boot the installed disk
 
-Shut down the guest before stopping QEMU.
+At the installer's main menu, choose **Exit Install System** and return to its shell.
+Run `halt -p` and wait for guest power-off before stopping QEMU.
 Restart the same command with the same `disk.qcow2` and `vars.fd`, removing `-cdrom` and `-boot once=d`.
 The installed system must start without installation media.
 Log in on the guest console, then follow [first-login configuration](../user-guide.md#first-login-and-local-configuration).
@@ -169,8 +170,15 @@ For an experimental update, preserve the powered-off disk and variables together
 
 ## Checked boundary
 
-The development ISO from `4a65cc07247c558e88665ca134d67543cac52e5d` includes local sets.
+The development ISO's assembly/catalog source is `4a65cc07247c558e88665ca134d67543cac52e5d`; it includes local sets.
 Its SHA256 is `6a9791d56e7dfa6c500cf6ba4471057ba73d088f352f6c8d3b7aef9163e7435c`.
 The [installer identity guide](installer-branding.md#earlier-development-image) records its original UEFI/BIOS and disk-installation acceptance.
+Its GENERIC kernel reports `kern.buildinfo=EmberBSD-95a2bc9bad05`.
+The kernel extracted from its set has SHA256 `5cdd6eeb1a3ef07f9cd148bbc98bed608f8995d95c804e4bfc5ec3b1a2585432`.
+That older identity differs from the assembly commit; these checks do not accept a uniform whole-OS rebuild of that commit.
+Record the actual component identities when preparing a new image, not just the installation banner.
+On 2026-10-13, this walkthrough installed that ISO onto a fresh 32 GiB GPT disk in the isolated QEMU profile above.
+An independent check booted without the ISO, created a normal account, logged in and used `su` successfully.
+A normal reboot retained both user and root test files; the installed kernel hash matched its set on both boots.
 That artifact is a checked development input, not a publicly downloadable release promise.
 Network, SSH, physical hardware and long-duration operation need their own acceptance.

@@ -17,11 +17,12 @@ As root, set a root password interactively and create a normal account:
 
 ```sh
 passwd
-useradd -m -G wheel -s /bin/sh operator
-passwd operator
+useradd -m -G wheel -s /bin/sh emberuser
+passwd emberuser
 ```
 
-Choose your own account name if `operator` already exists.
+Choose your own unused account name if `emberuser` already exists.
+Do not reuse the base system's `operator` service account.
 The `wheel` group permits administration through `su`; it does not install `sudo`.
 Use the normal account for daily work.
 Keep passwords, keys and personalized images outside public repositories.
@@ -107,7 +108,7 @@ ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
 Set `sshd=YES` in `/etc/rc.conf`, then run `/etc/rc.d/sshd start`.
-On the client, connect with `ssh operator@DEVICE_ADDRESS` and confirm the host-key fingerprint through the console.
+On the client, connect with `ssh emberuser@DEVICE_ADDRESS` and confirm the host-key fingerprint through the console.
 Check an administrative `su -` session while console access remains available.
 For key-only access, set `PasswordAuthentication no` and `KbdInteractiveAuthentication no` in `/etc/ssh/sshd_config`.
 Set `PermitRootLogin no` after the normal user's administration path works.

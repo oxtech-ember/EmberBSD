@@ -45,8 +45,10 @@ If source foundations merge early, preserve the remaining acceptance requirement
 ## Applying the procedure to Orange Pi 6 Plus
 
 Start with a board-change proposal, then fill the worksheet from the delivered device.
-This is a first-port example, not a validated build or installation instruction.
+This is a support-assessment example, not a validated build or installation instruction.
 Its author follows the same review and acceptance stages as any other contributor.
+First test the current compatible EmberBSD build with the board's stock firmware.
+If it works, document its hardware evidence; implement a patch only for a demonstrated gap.
 
 The [vendor board definition](https://github.com/orangepi-xunlong/orangepi-build/blob/a95129bf30ea11886cc35f08ebb3e69695a26656/external/config/boards/orangepi6plus.conf)
 identifies the CIX P1 family. Do not reuse the Allwinner Zero 4 boot path.
