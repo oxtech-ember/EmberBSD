@@ -163,7 +163,14 @@ These results accept native GEM and CPU mappings. The
 [VM acceptance](a733-pvr-vm.md#physical-result) adds CPU-owned GPU tables,
 per-file VM operations, and heap queries. All 586 VM checks passed again
 on kernel `0e89a6ffb4d7`. These short checks do not establish sustained GPU operation.
-GPU access to these BOs, DRM job submission, Vulkan, display, and Plasma remain unaccepted.
+GPU access to these BOs, DRM job submission, Vulkan device execution, display, and Plasma remain unaccepted.
+
+On kernel `f46cd40a5f28` (`EMBER64 #13`), the same board also passed four
+installed Mesa PowerVR physical-device enumeration lifecycles. This kernel
+includes the current USB series, including the bounded EHCI doorbell wait.
+The 21-stage diagnostic compute check passed again after boot. Ports owns
+the [ICD package, consumer and acceptance](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/powervr.md).
+Enumeration uses native VM/BO/query operations; it creates no execution context.
 
 ## Next Mesa contracts
 

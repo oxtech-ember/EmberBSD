@@ -655,8 +655,14 @@ on every board in the hardware catalog.
   and compatibility lists. [Native DRM synchronization](ember/boot/drm-syncobj.md)
   passes 1,712 binary/timeline checks, including delayed publication transfers.
   These tests use CPU-issued fences. The VM tables remain CPU-owned.
-  Firmware VM publication, GPU job fences and submission,
-  Mesa Vulkan/Zink, display output, and accelerated Plasma still require porting.
+  The installed [Mesa PowerVR ICD](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/powervr.md)
+  now passes four physical-device enumeration lifecycles on Zero 3W with
+  kernel `f46cd40a5f28`, which includes the current USB series. It reports
+  Vulkan 1.2.354 through the native render node. Mesa's experimental
+  conformance gate remains enabled. The same package passes four llvmpipe
+  EGL/pixel cycles and 38 upstream invocations, with recorded internal skips.
+  Firmware VM publication, GPU job fences and submission, Vulkan device
+  execution, Zink, display output, and accelerated Plasma still require porting.
   Repeated submission within one boot and long-duration GPU stability remain
   untested.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
