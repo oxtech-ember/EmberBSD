@@ -162,6 +162,11 @@ module EmberRelease
       GitHub-native full installation needs its separate post-publication check.
 
       Download the full ISO or the compressed UEFI USB image. Verify SHA256 before use.
+      The binary channel omits these optional sets: #{(sha512.keys - names).join(', ')}.
+      For an absent optional base32 set, acknowledge its 404, use Additional sources -> Skip set,
+      then return to EmberBSD CDN -> HTTPS. The summary must show all 13 required sets unpacked
+      without errors; one deliberately skipped optional set is reported separately.
+      Never skip a required set or a certificate error.
       Back up the destination before writing media or installing.
       The installer uses `https://github.com/#{REPOSITORY}/releases/download/#{tag(sha)}/` for binary sets.
       Source archives are not included in this binary set channel.
