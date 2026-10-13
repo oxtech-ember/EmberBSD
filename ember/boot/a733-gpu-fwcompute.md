@@ -254,42 +254,39 @@ The packer emits the version-2 file and additionally runs the portable
 compute VM encoder over the resource table (three windows, three
 directories, seventeen leaves) before printing both digests.
 
+## Stage 21 trace capture
+
+`hw.sun60igpuid0.trace_state` caches the first 256 words of trace buffer 0.
+The capture validates both object spans against the actual work allocation.
+It rejects an advertised ring size larger than the allocated trace object.
+`total` is the declared ring capacity in words, not the number of written words.
+`captured` gives the number of stored words; `truncated` marks an omitted suffix.
+The `ptr0` and `ptr1` fields are firmware ring indices, not cumulative counters.
+`capture_error` reports a malformed or unavailable trace span separately from command errors.
+This bounded prefix is diagnostic evidence. It is not a complete wrapped-ring dump.
+The identification contract executes the production formatter with short and malformed spans.
+It also checks the observed 118-word case and maximum metadata values.
+
 ## Physical stages 19-21 result
 
-On 2026-10-12 the ladder ran to stage 21 on the 4 GiB Orange Pi Zero 3W
-(kernel from `75fabfc55aa`). Stages 1 through 20 returned zero:
-stage 19 mapped the nine-page heap at `0xc0800000` (PA `0x4014b000`),
-edited the live wrapper table, and the second MMUCACHE command in slot 2
-executed with return word 1; stage 20 built the three-window VM
-(catalog PA `0x40165000`, 3 directories, 17 leaves) and placed the
-firmware memory context at `0xc0808118`.
+On 2026-10-13 the ladder ran through stage 21 on the 4 GiB Orange Pi Zero 3W.
+Kernel `0782feab5d5` accepted stages 1 through 20.
+The heap MMUCACHE command in slot 2 returned 1.
+The VM contained five windows, four directories, and twenty leaves.
 
-Stage 21 published the KICK in slot 3 and returned `EIO`: the KCCB
-return word stayed zero, but the firmware advanced the client-queue read
-offset to exactly 184 bytes — both the CDM and the UPDATE commands were
-consumed by the dispatched compute context. The timeline word stayed
-zero and the scratch word did not change, so no compute completion is
-claimed. The runtime snapshot that produced the EIO (hardware watchdog
-or firmware fault counters) is not yet part of the kick report; adding
-it is the immediate next step, together with the CDM-stream execution
-trace. No board hang occurred; Wi-Fi and SSH survived the run.
+The trace LOGTYPE command in slot 3 now returned 1 with log type `0x3f`.
+The following KICK in slot 4 reached the firmware (`kexec=5`).
+The client queue drained to 184 bytes, but the timeline and scratch word stayed zero.
+The firmware reported a CONTEXT_RESET notification with GUILTY_LOCKUP and page-fault address `0x2400`.
+Wi-Fi and SSH survived the run. No compute completion or GPU rendering is claimed.
+The previous 64-word trace capture omitted the end of the observed trace (`ptr0=118`).
+The expanded capture has host contract coverage; its physical acceptance is separate.
 
-The diagnostic rerun identified the EIO source: the runtime check treats
-an unconsumed firmware response as an error (`fw_write=1, fw_read=0`),
-and the pending FWCCB command is `0x2abc0069` — CONTEXT_RESET
-NOTIFICATION. With `kexec=4` the KICK executed, the client queue drained
-to 184 bytes, power stayed ON, and no watchdog or firmware-fault bits
-were set: the firmware dispatched the context and then reset it,
-notifying the host. The next step is reading the reset notification
-payload (the FWCCB slot) and tracing why the CDM execution asked for the
-reset — suspected stream or fetch details, not the submission plumbing.
-
-The decoded notification names the failure precisely: our context
-(server id 0, job 1, DM 4 CDM, page catalog `0x40165000`) was reset as
-GUILTY_LOCKUP with the page-fault flag and fault address `0x2400`. The
-static state bytes are (CDM register offset, packed value) pairs and are
-well-formed, so the near-zero fault address points at the kernel-owned
-command fields the bounded generator does not emit: `cdm_resume_pds1`
-and the TPU border-colour table are zero in our submission. Filling the
-resume PDS address from the manifest PDS program and the border-table
-address is the next experiment.
+The fault does not establish which compute field is wrong.
+In Mesa 26.2.4, `CR_CDM_CONTEXT_PDS1` packs allocation sizes and control flags.
+It is not a PDS program address.
+See [`pvr_arch_job_compute.c`, lines 80–103](https://gitlab.freedesktop.org/mesa/mesa/-/blob/mesa-26.2.4/src/imagination/vulkan/pvr_arch_job_compute.c#L80).
+Pinned Linux maps that stream field to `regs.cdm_resume_pds1` in
+[`pvr_stream_defs.c`](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_stream_defs.c#L188).
+The next command comparison must use those producers and the actual compiler resource requirements.
+A raw address or an unexplained constant is not a valid replacement.

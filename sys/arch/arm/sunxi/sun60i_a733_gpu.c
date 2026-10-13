@@ -87,6 +87,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define A733_GPU_STAGE_FWVM	20
 #define A733_GPU_STAGE_FWKICK	21
 #define A733_GPU_FW_MAX_SIZE	(1024 * 1024)
+#define A733_GPU_TRACE_CAPTURE_WORDS	256U
 #define A733_GPU_COMPUTE_FW_NAME	"a733-compute.bin"
 
 struct sun60i_gpu_softc {
@@ -113,7 +114,7 @@ struct sun60i_gpu_softc {
 	char sc_heap_state[512];	/* cached stage-19 heap mapping */
 	char sc_vm_state[512];		/* cached stage-20 VM preparation */
 	char sc_kick_state[1024];	/* cached stage-21 submission */
-	char sc_trace_state[1024];	/* cached stage-21 firmware trace */
+	char sc_trace_state[4096];	/* cached stage-21 firmware trace */
 	struct sun60i_a733_gpu_fwheap *sc_fwheap;
 	struct sun60i_a733_gpu_fwvm *sc_fwvm;
 	struct sun60i_a733_gpu_fwprobe_result sc_heap_result, sc_kick_result;
@@ -1243,8 +1244,73 @@ out:
 	return error;
 }
 
+/* Cache raw trace words. The firmware pointer is a ring index, not a count. */
+static void
+sun60i_gpu_trace_report(struct sun60i_gpu_softc *sc)
+{
+	const struct sun60i_a733_gpu_fwmem *m = sc->sc_fw_memory;
+	const struct sun60i_a733_gpu_fwinit_region *ctl, *data;
+	const struct rogue_fwif_tracebuf *tc;
+	const struct sun60i_a733_gpu_fwprobe_result *r = &sc->sc_trace_result;
+	const uint32_t *words = NULL;
+	uint32_t total = 0, captured = 0, log_type = 0, pointer[2] = { 0, 0 };
+	size_t used, k;
+	int error = EINVAL, count;
+
+	if (m == NULL || !m->interface_prepared || m->work.cpu == NULL ||
+	    m->work.map == NULL || !m->work.loaded ||
+	    (uintptr_t)m->work.cpu % 8 != 0)
+		goto report;
+	ctl = &m->interface_layout.object[A733_GPU_FWINIT_TRACE_CTL];
+	data = &m->interface_layout.object[A733_GPU_FWINIT_TRACE0];
+	if (ctl->buffer != A733_GPU_FWINIT_WORK ||
+	    data->buffer != A733_GPU_FWINIT_WORK || ctl->offset % 8 != 0 ||
+	    data->offset % sizeof(uint32_t) != 0 ||
+	    ctl->size < sizeof(*tc) || ctl->offset > m->work.size ||
+	    ctl->size > m->work.size - ctl->offset ||
+	    data->offset > m->work.size ||
+	    data->size > m->work.size - data->offset ||
+	    data->size == 0 || data->size % sizeof(uint32_t) != 0)
+		goto report;
+	bus_dmamap_sync(m->dmat, m->work.map, 0, m->work.size,
+	    BUS_DMASYNC_POSTREAD);
+	tc = (const struct rogue_fwif_tracebuf *)
+	    ((const uint8_t *)m->work.cpu + ctl->offset);
+	log_type = tc->log_type;
+	pointer[0] = tc->tracebuf[0].trace_pointer;
+	pointer[1] = tc->tracebuf[1].trace_pointer;
+	total = tc->tracebuf_size_in_dwords;
+	if (total == 0 || total > data->size / sizeof(uint32_t)) {
+		error = EPROTO;
+		goto report;
+	}
+	words = (const uint32_t *)((const uint8_t *)m->work.cpu + data->offset);
+	captured = total < A733_GPU_TRACE_CAPTURE_WORDS ?
+	    total : A733_GPU_TRACE_CAPTURE_WORDS;
+	error = 0;
+report:
+	count = snprintf(sc->sc_trace_state, sizeof(sc->sc_trace_state),
+	    "err=%d polls=%u pre=%u/%u post=%u/%u kexec=%u "
+	    "log=0x%x ptr0=%u ptr1=%u trace_rtn=0x%x "
+	    "capture_error=%d total=%u captured=%u truncated=%u:",
+	    r->error, r->polls, r->before.read_offset, r->before.write_offset,
+	    r->after.read_offset, r->after.write_offset, r->after.cmds_executed,
+	    log_type, pointer[0], pointer[1], (u_int)r->after.rtn,
+	    error, total, captured, total > captured);
+	if (count < 0 || (size_t)count >= sizeof(sc->sc_trace_state))
+		return;
+	used = (size_t)count;
+	for (k = 0; k < captured && used + 8 < sizeof(sc->sc_trace_state); k++) {
+		count = snprintf(sc->sc_trace_state + used,
+		    sizeof(sc->sc_trace_state) - used, "%08x", words[k]);
+		if (count != 8)
+			return;
+		used += (size_t)count;
+	}
+}
+
 /*
- * Stage 21: publish the compute KICK in slot 3 and wait for the client
+ * Stage 21: publish the compute KICK in slot 4 and wait for the client
  * queue to drain and the timeline word to complete. KCCB acceptance is
  * not compute completion; the CCCB and timeline observations are.
  */
@@ -1411,40 +1477,7 @@ out:
 	if (bytes != NULL)
 		kmem_free(bytes, file.payload_bytes + file.header_bytes);
 	
-	/* Dump the first firmware trace buffer words for offline decode. */
-	if (sc->sc_fw_memory != NULL) {
-		const struct sun60i_a733_gpu_fwmem *m = sc->sc_fw_memory;
-		size_t off = m->interface_layout.object[
-		    A733_GPU_FWINIT_TRACE_CTL].offset;
-		const struct rogue_fwif_tracebuf *tc =
-		    (const struct rogue_fwif_tracebuf *)
-		    ((const uint8_t *)m->work.cpu + off);
-		const uint32_t *t0 = (const uint32_t *)((const uint8_t *)
-		    m->work.cpu + m->interface_layout.object[
-		    A733_GPU_FWINIT_TRACE0].offset);
-		size_t used = 0, k;
-
-		bus_dmamap_sync(m->dmat, m->work.map, 0, m->work.size,
-		    BUS_DMASYNC_POSTREAD);
-		used = snprintf(sc->sc_trace_state,
-		    sizeof(sc->sc_trace_state),
-		    "err=%d polls=%u pre=%u/%u post=%u/%u kexec=%u "
-		    "log=0x%x ptr0=%u ptr1=%u trace_rtn=0x%x:",
-		    sc->sc_trace_result.error, sc->sc_trace_result.polls,
-		    sc->sc_trace_result.before.read_offset,
-		    sc->sc_trace_result.before.write_offset,
-		    sc->sc_trace_result.after.read_offset,
-		    sc->sc_trace_result.after.write_offset,
-		    sc->sc_trace_result.after.cmds_executed,
-		    tc->log_type, tc->tracebuf[0].trace_pointer,
-		    tc->tracebuf[1].trace_pointer,
-		    (u_int)sc->sc_trace_result.after.rtn);
-		for (k = 0; k < 64 && used + 9 <
-		    sizeof(sc->sc_trace_state); k++)
-			used += snprintf(sc->sc_trace_state + used,
-			    sizeof(sc->sc_trace_state) - used, "%08x",
-			    t0[k]);
-	}
+	sun60i_gpu_trace_report(sc);
 return error;
 }
 

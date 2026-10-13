@@ -82,8 +82,9 @@ static void getnanouptime(struct timespec *t) { t->tv_sec = 0; t->tv_nsec = 0; }
 static void delay(unsigned int us) { (void)us; }
 #define BUS_DMASYNC_POSTREAD 2
 #define BUS_DMASYNC_PREWRITE 4
+static unsigned trace_sync_calls;
 static void bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t m, bus_addr_t o,
-    bus_size_t s, int op) { (void)t; (void)m; (void)o; (void)s; (void)op; }
+    bus_size_t s, int op) { (void)t; (void)m; (void)o; (void)s; (void)op; trace_sync_calls++; }
 #ifndef timespecsub
 #define timespecsub(tsp, usp, vsp) do { 	(vsp)->tv_sec = (tsp)->tv_sec - (usp)->tv_sec; 	(vsp)->tv_nsec = (tsp)->tv_nsec - (usp)->tv_nsec; 	if ((vsp)->tv_nsec < 0) { (vsp)->tv_sec--; (vsp)->tv_nsec += 1000000000L; } } while (0)
 #endif
@@ -2608,6 +2609,134 @@ test_probe_report_capacity(void)
 	    strlen(output.state));
 }
 
+/* The real stage-21 formatter must retain the observed word 117 and bounds. */
+static void
+test_trace_report(void)
+{
+	static const unsigned lengths[] = { 1, 64, 118, 256, 257, 512 };
+	struct sun60i_a733_gpu_fwmem mem = { 0 }, saved;
+	struct sun60i_a733_gpu_fwinit_region *ctl, *data;
+	struct rogue_fwif_tracebuf *tc;
+	struct sun60i_gpu_softc *owner;
+	struct sun60i_a733_gpu_fwprobe_result previous;
+	uint8_t *arena, *copy;
+	uint32_t *words;
+	char expected[128], word[9];
+	const char *payload;
+	unsigned start = checks, captured;
+
+	owner = calloc(1, sizeof(*owner));
+	arena = calloc(1, 3072);
+	copy = malloc(3072);
+	assert(owner != NULL && arena != NULL && copy != NULL);
+	mem.interface_prepared = true;
+	mem.work.cpu = arena;
+	mem.work.size = 3072;
+	mem.work.map = &mem;
+	mem.work.loaded = true;
+	mem.interface_layout.object[A733_GPU_FWINIT_TRACE_CTL] =
+	    (struct sun60i_a733_gpu_fwinit_region){
+		.buffer = A733_GPU_FWINIT_WORK, .offset = 0, .size = sizeof(*tc)
+	    };
+	mem.interface_layout.object[A733_GPU_FWINIT_TRACE0] =
+	    (struct sun60i_a733_gpu_fwinit_region){
+		.buffer = A733_GPU_FWINIT_WORK, .offset = 1024, .size = 2048
+	    };
+	owner->sc_fw_memory = &mem;
+	tc = (struct rogue_fwif_tracebuf *)arena;
+	words = (uint32_t *)(arena + 1024);
+	for (unsigned k = 0; k < 512; k++)
+		words[k] = UINT32_C(0xa5000000) + k;
+	tc->tracebuf[0].trace_pointer = 118;
+	tc->log_type = 0x3f;
+	for (unsigned n = 0; n < __arraycount(lengths); n++) {
+		tc->tracebuf_size_in_dwords = lengths[n];
+		memcpy(copy, arena, 3072);
+		trace_sync_calls = 0;
+		sun60i_gpu_trace_report(owner);
+		payload = strchr(owner->sc_trace_state, ':');
+		CHECK(payload != NULL);
+		payload++;
+		/* This assertion detects the old 64-word limit independently. */
+		if (lengths[n] >= 118)
+			CHECK(strstr(payload, "a5000075") != NULL);
+		captured = lengths[n] < 256 ? lengths[n] : 256;
+		snprintf(expected, sizeof(expected),
+		    "capture_error=0 total=%u captured=%u truncated=%u:",
+		    lengths[n], captured, lengths[n] > captured);
+		CHECK(strstr(owner->sc_trace_state, expected) != NULL);
+		CHECK(strlen(payload) == captured * 8);
+		for (unsigned k = 0; k < captured; k++) {
+			snprintf(word, sizeof(word), "%08x", UINT32_C(0xa5000000) + k);
+			CHECK(strncmp(payload + k * 8, word, 8) == 0);
+		}
+		CHECK(trace_sync_calls == 1);
+		CHECK(memcmp(arena, copy, 3072) == 0);
+	}
+	/* A wrapped or malformed firmware pointer never becomes a RAM offset. */
+	tc->tracebuf[0].trace_pointer = UINT32_MAX;
+	tc->tracebuf[1].trace_pointer = UINT32_MAX;
+	tc->log_type = UINT32_MAX;
+	owner->sc_trace_result.error = INT32_MIN;
+	owner->sc_trace_result.polls = UINT32_MAX;
+	memset(&owner->sc_trace_result.before, 0xff,
+	    sizeof(owner->sc_trace_result.before));
+	memset(&owner->sc_trace_result.after, 0xff,
+	    sizeof(owner->sc_trace_result.after));
+	previous = owner->sc_trace_result;
+	sun60i_gpu_trace_report(owner);
+	CHECK(strlen(owner->sc_trace_state) < sizeof(owner->sc_trace_state) - 1);
+	CHECK(strstr(owner->sc_trace_state,
+	    "ptr0=4294967295 ptr1=4294967295 trace_rtn=0xffffffff") != NULL);
+	CHECK(strstr(owner->sc_trace_state, "a50000ff") != NULL);
+	CHECK(memcmp(&previous, &owner->sc_trace_result, sizeof(previous)) == 0);
+	saved = mem;
+	ctl = &mem.interface_layout.object[A733_GPU_FWINIT_TRACE_CTL];
+	data = &mem.interface_layout.object[A733_GPU_FWINIT_TRACE0];
+	for (unsigned n = 0; n < 20; n++) {
+		mem = saved;
+		owner->sc_fw_memory = &mem;
+		tc->tracebuf_size_in_dwords = 512;
+		switch (n) {
+		case 0: owner->sc_fw_memory = NULL; break;
+		case 1: mem.interface_prepared = false; break;
+		case 2: mem.work.cpu = NULL; break;
+		case 3: mem.work.map = NULL; break;
+		case 4: mem.work.loaded = false; break;
+		case 5: mem.work.cpu = arena + 1; break;
+		case 6: ctl->buffer = A733_GPU_FWINIT_CONFIG; break;
+		case 7: data->buffer = A733_GPU_FWINIT_CONFIG; break;
+		case 8: ctl->offset = 1; break;
+		case 9: data->offset = 1025; break;
+		case 10: ctl->size = sizeof(*tc) - 1; break;
+		case 11: ctl->offset = UINT32_MAX - 7; break;
+		case 12: ctl->size = UINT32_MAX; break;
+		case 13: data->offset = UINT32_MAX - 3; break;
+		case 14: data->size = UINT32_MAX - 3; break;
+		case 15: data->size = 0; break;
+		case 16: data->size = 2047; break;
+		case 17: tc->tracebuf_size_in_dwords = 513; break;
+		case 18: tc->tracebuf_size_in_dwords = 0; break;
+		case 19: mem.work.size = 3071; break;
+		}
+		trace_sync_calls = 0;
+		memcpy(copy, arena, 3072);
+		sun60i_gpu_trace_report(owner);
+		snprintf(expected, sizeof(expected), "capture_error=%d ",
+		    n == 17 || n == 18 ? EPROTO : EINVAL);
+		CHECK(strstr(owner->sc_trace_state, expected) != NULL);
+		CHECK(strstr(owner->sc_trace_state, "captured=0 ") != NULL);
+		payload = strchr(owner->sc_trace_state, ':');
+		CHECK(payload != NULL && payload[1] == '\0');
+		CHECK(trace_sync_calls == (n == 17 || n == 18 ? 1U : 0U));
+		CHECK(memcmp(copy, arena, 3072) == 0);
+	}
+	free(copy);
+	free(arena);
+	free(owner);
+	printf("PASS: %u bounded firmware trace capture checks\n", checks - start);
+}
+
 
 int
 main(void)
@@ -2790,6 +2919,7 @@ main(void)
 	test_fwprobe_stage();
 	test_fwcache_stage();
 	test_probe_report_capacity();
+	test_trace_report();
 	printf("PASS: %u A733 GPU identification checks\n", checks);
 	return 0;
 }

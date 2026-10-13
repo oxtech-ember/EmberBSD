@@ -101,7 +101,7 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-Status updated **2026-10-12**; linked component documents record their own
+Status updated **2026-10-13**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
 
@@ -611,8 +611,11 @@ on every board in the hardware catalog.
   digest matches the host packer byte for byte, without mapping or
   publication. Rogue GPU [page-table encoders](ember/boot/a733-gpu-mmu.md)
   and [CPU-owned VM preparation](ember/boot/a733-gpu-vm.md) pass source contracts;
-  GPU translation and rendering remain unverified. A PowerVR render interface,
-  Mesa Vulkan/Zink and accelerated Plasma still require porting. These are
+  On Zero 3W, [later tracing and KICK](ember/boot/a733-gpu-fwcompute.md#physical-stages-19-21-result)
+  now reach the firmware. The client queue drains, but the compute context
+  resets with a page fault at `0x2400`; the timeline and output stay zero.
+  Compute completion and rendering remain unverified. A PowerVR render
+  interface, Mesa Vulkan/Zink and accelerated Plasma still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
   driver/DMA integration, compatible runtime and real model execution must
   all pass before an accelerated AI workflow is claimed.
