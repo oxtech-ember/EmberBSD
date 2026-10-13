@@ -24,7 +24,7 @@ struct termios { uint32_t c_iflag,c_oflag,c_cflag,c_lflag; uint8_t c_cc[20]; uin
 #define CCTS_OFLOW 0x10000
 #define CDTRCTS 0x20000
 #define MDMBUF 0x100000
-static bool root_is_mounted = true;
+extern bool root_is_mounted;
 #define IXON 0x200
 #define IXOFF 0x400
 #define VSTART 12

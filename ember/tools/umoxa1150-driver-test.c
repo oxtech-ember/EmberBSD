@@ -1,6 +1,7 @@
 /* Origin: EmberBSD UPort 1150 actual USB parent contracts, 2026-10-13. */
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include "../../sys/dev/usb/umoxa1150.c"
+bool root_is_mounted = true;
 #define CHECK(x) do {if(!(x)){fprintf(stderr,"%s:%d: %s\n",__func__,__LINE__,#x);return 0;}}while(0)
 static void init(struct umoxa1150_softc *sc,struct fake_device *dev,struct usbd_device *usb,int cold) {
  root_is_mounted=true;memset(&fixture,0,sizeof(fixture));memset(sc,0,sizeof(*sc));memset(dev,0,sizeof(*dev));memset(usb,0,sizeof(*usb));dev->softc=sc;
