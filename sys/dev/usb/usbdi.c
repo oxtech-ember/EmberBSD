@@ -801,6 +801,41 @@ usbd_interface2endpoint_descriptor(struct usbd_interface *iface, uint8_t index)
 	return iface->ui_endpoints[index].ue_edesc;
 }
 
+/*
+ * Cancel the active default-pipe request.  Leave queued requests alone.
+ * Concurrent abort callers join the current abort instead of cancelling
+ * the request that starts after it.  The device must remain referenced.
+ */
+void
+usbd_abort_default_request(struct usbd_device *device)
+{
+	struct usbd_pipe * const pipe = device->ud_pipe0;
+	struct usbd_xfer *xfer;
+
+	ASSERT_SLEEPABLE();
+	usbd_lock_pipe(pipe);
+	KASSERTMSG(pipe->up_abortlwp != curlwp, "recursive pipe abort");
+	if (pipe->up_abortlwp != NULL) {
+		do {
+			cv_wait(&pipe->up_callingcv,
+			    pipe->up_dev->ud_bus->ub_lock);
+		} while (pipe->up_abortlwp != NULL);
+		goto out;
+	}
+
+	xfer = SIMPLEQ_FIRST(&pipe->up_queue);
+	if (xfer != NULL && xfer->ux_status == USBD_IN_PROGRESS) {
+		/* Some HCDs drop the lock before they claim the xfer status. */
+		pipe->up_abortlwp = curlwp;
+		pipe->up_methods->upm_abort(xfer);
+		/* The abort can complete and free xfer.  Do not read it here. */
+		KASSERT(pipe->up_abortlwp == curlwp);
+		pipe->up_abortlwp = NULL;
+		cv_broadcast(&pipe->up_callingcv);
+	}
+out:	usbd_unlock_pipe(pipe);
+}
+
 /* Some drivers may wish to abort requests on the default pipe, *
  * but there is no mechanism for getting a handle on it.        */
 void
@@ -1042,8 +1077,10 @@ usbd_ar_pipe(struct usbd_pipe *pipe)
 	 * of the abort to wait for hardware completion softints to
 	 * stop using the xfer before returning.
 	 */
-	KASSERTMSG(pipe->up_abortlwp == NULL, "pipe->up_abortlwp=%p",
+	KASSERTMSG(pipe->up_abortlwp != curlwp, "pipe->up_abortlwp=%p",
 	    pipe->up_abortlwp);
+	while (pipe->up_abortlwp != NULL)
+		cv_wait(&pipe->up_callingcv, pipe->up_dev->ud_bus->ub_lock);
 	pipe->up_abortlwp = curlwp;
 
 #ifdef USB_DEBUG
@@ -1095,6 +1132,7 @@ usbd_ar_pipe(struct usbd_pipe *pipe)
 	KASSERTMSG(pipe->up_abortlwp == curlwp, "pipe->up_abortlwp=%p",
 	    pipe->up_abortlwp);
 	pipe->up_abortlwp = NULL;
+	cv_broadcast(&pipe->up_callingcv);
 
 	SDT_PROBE1(usb, device, pipe, abort__done,  pipe);
 }
