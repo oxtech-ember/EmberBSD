@@ -196,6 +196,12 @@ umoxa1150_attach(device_t parent, device_t self, void *aux)
 		/* A reset can run firmware without acknowledging its status stage. */
 		reset_error = umoxa1150_control(sc, 12, 0, 0, NULL, 0);
 		error = umoxa1150_wait_warm(sc);
+		if (error == EAGAIN) {
+			/* Do not probe a handle which reset may have disconnected. */
+			aprint_normal_dev(self, "firmware transferred; reset status %d, "
+			    "waiting for warm USB attachment\n", reset_error);
+			return;
+		}
 		if (error) {
 			aprint_error_dev(self, "firmware transferred; reset status %d, "
 			    "warm transition failed (%d); no tty attached\n",
@@ -247,6 +253,8 @@ umoxa1150_wait_warm(struct umoxa1150_softc *sc)
 		actual = 0;
 		status = usbd_do_request_flags(sc->sc_udev, &req, &cd,
 		    0, &actual, 250);
+		if (status == USBD_IOERROR || status == USBD_CANCELLED)
+			return EAGAIN;
 		if (status != USBD_NORMAL_COMPLETION)
 			continue;
 		if (actual != USB_CONFIG_DESCRIPTOR_SIZE ||

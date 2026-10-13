@@ -49,6 +49,7 @@ typedef int kmutex_t;
 #define KM_SLEEP 0
 #define USBD_NORMAL_COMPLETION 0
 #define USBD_CANCELLED 1
+#define USBD_IOERROR 13
 #define USBD_NOT_STARTED 2
 #define USBD_EXCLUSIVE_USE 1
 #define USBD_SHORT_XFER_OK 2
@@ -133,7 +134,7 @@ static inline int usbd_do_request_flags(struct usbd_device *u,usb_device_request
  if(r->bmRequestType==UT_READ_DEVICE){
   assert(r->bRequest==UR_GET_DESCRIPTOR && UGETW(r->wValue)==0x200 && UGETW(r->wIndex)==0 && *actual==9 && timeout<=250);
   fixture.warm_reads++;
-  if(fixture.reset_read_error)return EIO;
+  if(fixture.reset_read_error)return USBD_IOERROR;
   if(fixture.warm_after_reset && fixture.warm_reads>fixture.warm_delay_reads){
    u->configs[0]=(usb_config_descriptor_t){9,2,{39,0},1,2,0,0x80,50};
    u->iface.id.bNumEndpoints=3;u->iface.ep[0]=(usb_endpoint_descriptor_t){1,2,{64,0}};

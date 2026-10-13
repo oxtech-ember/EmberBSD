@@ -116,7 +116,8 @@ static int cold_transition_rejects_bad_warm(void) {
  init(&sc,&d,&u,1);fixture.firmware.data=fw;fixture.firmware.size=sizeof(fw);fixture.warm_after_reset=1;fixture.fail_request=1;
  fixture.reset_bad_header=kind==0;fixture.reset_bad_endpoint=kind==1;
  fixture.reset_read_error=kind==2;fixture.reset_short_descriptor=kind==3;fixture.fail_warm_config=kind==4;
- attach(&d,&u);CHECK(fixture.child_attach==0 && fixture.errors && fixture.reset==1 && fixture.warm_reads>=1 && fixture.warm_reads<=10);
+ attach(&d,&u);CHECK(fixture.child_attach==0 && fixture.reset==1 && fixture.warm_reads>=1 && fixture.warm_reads<=10);
+ CHECK(kind==2 ? fixture.errors==0 : fixture.errors!=0);
  CHECK(fixture.bulk_calls==255 && fixture.allocs==0 && fixture.pipes==0 && umoxa1150_detach(&d,0)==0);
  }return 1;
 }
@@ -125,6 +126,13 @@ static int incomplete_upload_never_transitions(void) {
  init(&sc,&d,&u,1);fixture.firmware.data=fw;fixture.firmware.size=sizeof(fw);fixture.warm_after_reset=1;fixture.short_bulk=1;
  attach(&d,&u);CHECK(fixture.child_attach==0 && fixture.reset==0 && fixture.warm_reads==0 && fixture.bulk_calls==1);
  CHECK(fixture.errors && fixture.allocs==0 && fixture.pipes==0 && umoxa1150_detach(&d,0)==0);return 1;
+}
+static int reset_disconnect_does_not_probe_stale_device(void) {
+ const uint8_t fw[]={0,0,0,1};struct umoxa1150_softc sc;struct fake_device d;struct usbd_device u;
+ init(&sc,&d,&u,1);fixture.firmware.data=fw;fixture.firmware.size=sizeof(fw);fixture.reset_read_error=1;fixture.fail_request=1;
+ attach(&d,&u);CHECK(fixture.warm_reads==1 && fixture.child_attach==0 && fixture.errors==0);
+ CHECK(fixture.reset==1 && fixture.bulk_calls==255 && fixture.pipes==0 && fixture.allocs==0 && d.pending==0);
+ CHECK(umoxa1150_detach(&d,0)==0);return 1;
 }
 static int detach_pending_and_open(void) {
  struct umoxa1150_softc sc;struct fake_device d;struct usbd_device u;
@@ -181,8 +189,8 @@ static int mode_and_modem_transaction(void) {
 
 int main(void) {
  struct {const char *n;int(*f)(void);} cases[]={{"malformed_unselected_header",malformed_unselected_header},{"warm_single_configuration",warm_single_configuration},{"configuration_read_failure",configuration_read_failure},{"unknown_configuration_rejected",unknown_configuration_rejected},{"tty_flow_only",tty_flow_only},{"unsupported_flow_rejected",unsupported_flow_rejected},{"warm_attach_open_close",warm_attach_open_close},{"bad_endpoints_no_child",bad_endpoints_no_child},{"open_error_cleanup",open_error_cleanup},{"short_control_error",short_control_error},{"cold_missing_firmware",cold_missing_firmware},{"cold_upload_cleanup",cold_upload_cleanup},{"detach_pending_and_open",detach_pending_and_open},{"settings_failure_not_committed",settings_failure_not_committed},{"interrupt_status_validation",interrupted_status_validation},{"mode_and_modem_transaction",mode_and_modem_transaction}};
- struct {const char *n;int(*f)(void);} transition[]={{"cold_automatic_warm",cold_automatic_warm},{"cold_delayed_warm",cold_delayed_warm},{"cold_reset_failure_stays_cold",cold_reset_failure_stays_cold},{"cold_transition_rejects_bad_warm",cold_transition_rejects_bad_warm},{"incomplete_upload_never_transitions",incomplete_upload_never_transitions}};
+ struct {const char *n;int(*f)(void);} transition[]={{"cold_automatic_warm",cold_automatic_warm},{"cold_delayed_warm",cold_delayed_warm},{"cold_reset_failure_stays_cold",cold_reset_failure_stays_cold},{"cold_transition_rejects_bad_warm",cold_transition_rejects_bad_warm},{"incomplete_upload_never_transitions",incomplete_upload_never_transitions},{"reset_disconnect_does_not_probe_stale_device",reset_disconnect_does_not_probe_stale_device}};
  unsigned i,ok=0;for(i=0;i<16;i++){int pass=cases[i].f();printf("%s %s\n",pass?"PASS":"FAIL",cases[i].n);ok+=pass;}
- for(i=0;i<5;i++){int pass=transition[i].f();printf("%s %s\n",pass?"PASS":"FAIL",transition[i].n);ok+=pass;}
- printf("%u/21 actual-parent groups passed\n",ok);return ok==21?0:1;
+ for(i=0;i<6;i++){int pass=transition[i].f();printf("%s %s\n",pass?"PASS":"FAIL",transition[i].n);ok+=pass;}
+ printf("%u/22 actual-parent groups passed\n",ok);return ok==22?0:1;
 }
