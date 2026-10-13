@@ -3648,7 +3648,9 @@ skip_attribute (unsigned long    form,
       return skip_attribute (form, data, end, pointer_size, offset_size, dwarf_version);
 
     case DW_FORM_string:
-      data += strnlen ((char *) data, end - data);    
+      data += strnlen ((char *) data, end - data);
+      if (data < end)
+        data++;
       break;
     case DW_FORM_block:
     case DW_FORM_exprloc:
@@ -3718,7 +3720,11 @@ read_bases (abbrev_entry *   entry,
 	}
       else if (attr->attribute == DW_AT_str_offsets_base)
 	{
-	  if (attr->form == DW_FORM_sec_offset)
+	  uint64_t form = attr->form;
+
+	  while (form == DW_FORM_indirect)
+	    READ_ULEB (form, data, end);
+	  if (form == DW_FORM_sec_offset)
 	    {
 	      SAFE_BYTE_GET_AND_INC (uvalue, data, offset_size, end);
 	      if (str_base_seen)
@@ -3732,7 +3738,7 @@ read_bases (abbrev_entry *   entry,
 	  else
 	    {
 	      warn (_("Unexpected form of DW_AT_str_offsets_base in the top DIE\n"));
-	      data = skip_attribute (attr->form, data, end, pointer_size,
+	      data = skip_attribute (form, data, end, pointer_size,
 			     offset_size, dwarf_version);
 	    }
 	}
