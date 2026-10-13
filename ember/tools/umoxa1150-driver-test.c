@@ -6,7 +6,7 @@ static void init(struct umoxa1150_softc *sc,struct fake_device *dev,struct usbd_
  root_is_mounted=true;memset(&fixture,0,sizeof(fixture));memset(sc,0,sizeof(*sc));memset(dev,0,sizeof(*dev));memset(usb,0,sizeof(*usb));dev->softc=sc;
  usb->dd.bNumConfigurations=cold?1:2;usb->cd.bNumInterface=1;
  usb->iface.id.bNumEndpoints=cold?1:3;
- usb->iface.ep[0]=(usb_endpoint_descriptor_t){2,2,{64,0}};
+ usb->iface.ep[0]=(usb_endpoint_descriptor_t){cold?1:2,2,{64,0}};
  usb->iface.ep[1]=(usb_endpoint_descriptor_t){0x81,2,{64,0}};
  usb->iface.ep[2]=(usb_endpoint_descriptor_t){0x83,3,{2,0}};
 }

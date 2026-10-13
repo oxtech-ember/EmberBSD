@@ -9,6 +9,7 @@
 #include <string.h>
 #include <errno.h>
 #include <stdio.h>
+#include <sys/types.h>
 struct termios { uint32_t c_iflag,c_oflag,c_cflag,c_lflag; uint8_t c_cc[20]; uint32_t c_ispeed,c_ospeed; };
 #define CSIZE 0x300
 #define CS5 0
@@ -31,7 +32,6 @@ static bool root_is_mounted = true;
 #define _IOW(g,n,t) (0x80000000UL|sizeof(t)<<16|(g)<<8|(n))
 #define _IOR(g,n,t) (0x40000000UL|sizeof(t)<<16|(g)<<8|(n))
 #include <assert.h>
-#include <sys/ioctl.h>
 #define __UNCONST(a) ((void *)(uintptr_t)(const void *)(a))
 #define EPASSTHROUGH (-2)
 typedef unsigned char u_char;

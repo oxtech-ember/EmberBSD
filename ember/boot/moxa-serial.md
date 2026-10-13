@@ -24,7 +24,11 @@ B812A68A776EFC345FB34ACCFA57C928268278BBCCEA674D7A6ED24FDA674FD7A6064FDE23818CA3
 Cold configuration 1 must have one firmware bulk-out endpoint; warm configuration
 2 must have bulk-in, bulk-out and interrupt-in endpoints. Actual endpoint
 addresses come from descriptors. Those shapes still require capture on a real
-1150. The driver rejects other configurations and malformed status packets.
+1150. On 2026-10-13, read-only cached descriptor capture on macOS confirmed
+the owner's cold `110a:1150` (bcdDevice `0x0200`): configuration 1, interface
+0, one bulk-out endpoint `0x01`, maximum packet 64. Warm descriptors,
+firmware and the serial line remain unchecked. The driver rejects other
+configurations and malformed status packets.
 Data uses the existing one-port USB/TTY path, without G2 multiplexed framing.
 
 Firmware is a separately supplied, appropriately licensed `moxa/moxa-1150.fw`
@@ -80,6 +84,11 @@ This creates fresh EMBER64 configuration headers and compiles two AArch64
 objects using that configuration's real make flags. Compiler version is
 recorded; the check does not imply GCC16, a full linked kernel, boot or USB
 acceptance. The compatibility matrix now includes 18 parent method owners.
+Separately, `6e5e17c99515787b3ce7eca03cb8c701698dbe7a` linked the complete
+configured EMBER64 AArch64 kernel and image using prepared fork GCC12.5 tools.
+The 21-object compatibility matrix passed. This configured build did not run
+the owning full wrapper or build matched board modules/DTBs, boot the kernel,
+or transfer firmware to the attached adapter.
 First physical step is USB descriptor capture. Firmware/re-enumeration comes
 next on an isolated test OS; a serial loopback or NPort peer follows only
 once USB attachment is accepted. No jumper is needed for descriptor capture.

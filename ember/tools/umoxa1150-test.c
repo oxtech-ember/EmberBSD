@@ -72,6 +72,10 @@ static int endpoint_reject(void) {
  ep[2].packet=2;ep[2].address=0x81;CHECK(umoxa1150_endpoints(ep,3,0,&l)==EPROTO);
  CHECK(umoxa1150_endpoints(ep,2,0,&l)==EPROTO);
  ep[0].address=2;CHECK(umoxa1150_endpoints(ep,1,1,&l)==0 && l.out==2 && l.in==0);
+ /* Read-only capture of the owner's cold 110a:1150 on 2026-10-13. */
+ ep[0]=(struct umoxa1150_endpoint){1,2,64};
+ CHECK(umoxa1150_endpoints(ep,1,1,&l)==0 && l.out==1);
+ ep[0].address=0x81;CHECK(umoxa1150_endpoints(ep,1,1,&l)==EPROTO);
  ep[0].address=0;CHECK(umoxa1150_endpoints(ep,1,1,&l)==EPROTO);return 1;
 }
 static int event_decode(void) {
@@ -93,7 +97,10 @@ static int open_wire(void) {
  CHECK(umoxa1150_start(&io,&settings,0x30)==0 && t.n==6);
  CHECK(!memcmp(t.req,req,6));CHECK(t.val[2]==0x89 && t.val[4]==0x80 && t.val[5]==0);
  CHECK(t.index[1]==5 && !memcmp(t.data[1],mcr,9));
- for(i=0;i<6;i++)CHECK(t.index[i]==(i==1?5:3));return 1;
+ for(i=0;i<6;i++) {
+  CHECK(t.index[i]==(i==1?5:3));
+ }
+ return 1;
 }
 static int open_failure(void) {
  unsigned n;for(n=1;n<=6;n++) {struct trace t={0};struct umoxa1150_io io={&t,control,bulk};t.fail=n;
