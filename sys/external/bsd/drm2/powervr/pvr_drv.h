@@ -26,6 +26,11 @@ int pvr_get_bo_mmap_offset(struct drm_device *, void *, struct drm_file *);
 /* The caller retains a GEM reference. Return positive native errno. */
 int pvr_bo_mapping(struct drm_gem_object *, uint64_t, uint64_t,
     uint64_t *, uint64_t *);
+int pvr_bo_cpu(struct drm_gem_object *, uint64_t, size_t, uint64_t, void **);
+void pvr_bo_sync(struct drm_gem_object *, int);
+/* Caller holds the device gate and a GEM reference for the entire pin. */
+int pvr_bo_pin(struct drm_gem_object *);
+void pvr_bo_unpin(struct drm_gem_object *);
 int pvr_file_open(struct drm_device *, struct drm_file *);
 void pvr_file_close(struct drm_device *, struct drm_file *);
 int pvr_create_vm_context(struct drm_device *, void *, struct drm_file *);

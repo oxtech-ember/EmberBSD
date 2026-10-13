@@ -3,8 +3,8 @@
 The native render driver creates per-file GPU address spaces.
 Each space has real DMA-backed Rogue page tables and retained GEM references.
 The interface also reports the BXM-4-64 heap and static-area layouts.
-These operations prepare memory for a later execution interface.
-They do not submit jobs or make Mesa Vulkan usable yet.
+The [experimental execution interface](a733-pvr-execution.md) can publish these tables to firmware.
+Physical Vulkan execution remains unaccepted.
 
 ## Source and ABI
 
@@ -14,7 +14,7 @@ EmberBSD supplies native DMA, GEM lifetime, file isolation, and table ownership.
 The implementation and regression fixtures are AI-assisted.
 
 `CREATE_VM_CONTEXT` returns a nonzero handle owned by the open DRM file.
-`DESTROY_VM_CONTEXT` removes that handle and releases its mappings.
+`DESTROY_VM_CONTEXT` removes that handle. Retained execution references can delay final release.
 Reserved fields must be zero. Unknown and foreign VM handles return `EINVAL`.
 The current table profile requires 4 KiB host pages.
 Other host page sizes return `EOPNOTSUPP` when creating a VM.
@@ -44,13 +44,15 @@ Mapping allocates all missing tables before changing existing entries.
 Allocation failure releases provisional tables and preserves existing mappings.
 Successful mapping synchronizes leaves, directories, and then the catalogue.
 Unmapping clears parent references before releasing empty child tables.
+Published VMs retain those tables until firmware TLB invalidation completes.
 Tables are allocated only for used ranges. No diagnostic window limit applies.
 
 Each mapping owns a GEM reference independently of the userspace handle.
 Closing a GEM handle therefore does not invalidate its VM mappings.
 The file mutex serializes mapping, unmapping, and VM handle removal.
 DRM closes GEM handles before the driver's `postclose` callback.
-That callback releases remaining VM tables and their retained buffer references.
+That callback first closes execution owners, then drops remaining VM handles.
+Uncertain firmware completion retains affected VMs and buffer references until reboot.
 Existing CPU mappings can survive both file closure and VM destruction.
 
 `BYPASS_DEVICE_CACHE` and `PM_FW_PROTECT` select their corresponding PTE bits.
@@ -135,11 +137,10 @@ These short checks do not establish long-duration stability or GPU access to the
 
 ## Execution boundary
 
-All tables remain CPU-owned and unpublished to firmware.
-The future execution interface must add firmware memory contexts and TLB invalidation.
-It must retain VMs and buffers until jobs complete or recovery quiesces the GPU.
-Do not reuse the current destruction path while hardware owns a table.
+The [experimental execution path](a733-pvr-execution.md) adds firmware memory contexts,
+TLB invalidation, and VM retention through job completion and cleanup.
+Its production-source contracts pass; physical execution remains unaccepted.
+The physical results above cover the earlier CPU-owned table implementation.
 [Runtime queries](a733-pvr-queries.md) and [CPU-issued synchronization](drm-syncobj.md)
-now pass on Zero 3W. Execution contexts, GPU job fences, and DRM submission remain required.
-The separate compute probe does not execute these userspace VM mappings.
+pass on Zero 3W. They do not establish firmware access to userspace VM mappings.
 HDMI/KMS and accelerated Plasma remain separate, unaccepted paths.

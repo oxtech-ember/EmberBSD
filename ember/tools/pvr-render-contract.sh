@@ -15,6 +15,6 @@ for name in query.h query.c; do
 done
 # shellcheck disable=SC2086
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
-    ${CFLAGS:-} -I"$work" "$src/ember/tools/pvr-render-contract.c" \
+    ${CFLAGS:-} -I"$work" -I"$src/sys/external/bsd/drm2/powervr" "$src/ember/tools/pvr-render-contract.c" \
     -o "$work/contract"
 "$work/contract"

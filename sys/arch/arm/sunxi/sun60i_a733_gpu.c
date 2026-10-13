@@ -51,6 +51,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arm/sunxi/sun60i_a733_gpu_fwmem.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwboot.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwprobe.h>
+#include <arm/sunxi/sun60i_a733_gpu_fwbridge.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwcompute.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwcompute_file.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwheap.h>
@@ -105,6 +106,8 @@ struct sun60i_gpu_softc {
 	uint64_t sc_bvnc;
 	struct drm_device *sc_render_device;
 	bool sc_render_pending;
+	bool sc_exec_ready;	/* successful stage 17 or completed stage 21 */
+	struct sun60i_a733_gpu_fwbridge sc_fwbridge;
 	u_int sc_core_hz, sc_bus_hz, sc_uvol;
 	u_int sc_clock_source;	/* runtime: 0 PERIPH0/400, 1 PLL_GPU0/600 */
 	char sc_clock_state[160];	/* last complete stage-7 observation */
@@ -1447,7 +1450,9 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 	uint32_t scratch_before = 0, scratch_after = 0;
 	bool file_loaded = false, scratch_before_valid = false;
 	bool scratch_after_valid = false;
-	struct rogue_fwif_kccb_cmd kcmd;
+	static const struct rogue_fwif_kccb_cmd log_command = {
+		.cmd_type = ROGUE_FWIF_KCCB_CMD_LOGTYPE_UPDATE,
+	};
 	uint32_t reset_reason = 0, reset_dm = 0, reset_job = 0;
 	uint32_t reset_ctx = 0, reset_flags = 0;
 	uint64_t reset_pc = 0, reset_fault = 0;
@@ -1496,10 +1501,8 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 		bus_dmamap_sync(m->dmat, m->work.map, off, sizeof(*tc),
 		    BUS_DMASYNC_PREWRITE);
 	}
-	memset(&kcmd, 0, sizeof(kcmd));
-	kcmd.cmd_type = ROGUE_FWIF_KCCB_CMD_LOGTYPE_UPDATE;
 	error = sun60i_a733_gpu_fwprobe_cmd(sc->sc_bst, bsh, sc->sc_fw_memory,
-	    boot, heap, &kcmd, 3, A733_GPU_FWPROBE_TRACE_LOGTYPE,
+	    boot, heap, &log_command, 3, A733_GPU_FWPROBE_TRACE_LOGTYPE,
 	    &sc->sc_trace_result);
 	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
 	if (error != 0)
@@ -1661,6 +1664,12 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 	int power_node, error = EINVAL;
 
 	mutex_enter(&sc->sc_run_lock);
+	/* The reusable service owns all live firmware state after adoption. */
+	if (sc->sc_fwbridge.attempted) {
+		sc->sc_run_result = EBUSY;
+		mutex_exit(&sc->sc_run_lock);
+		return;
+	}
 	/* Stage 0 is a dry run of the sysctl machinery: no provider calls. */
 	if (stage == 0) {
 		sc->sc_run_result = 0;
@@ -1674,6 +1683,7 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 		mutex_exit(&sc->sc_run_lock);
 		return;
 	}
+	sc->sc_exec_ready = false;
 	power_node = sun60i_gpu_power_node(sc);
 	if (power_node < 0)
 		goto out;
@@ -1792,6 +1802,8 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 		error = sun60i_gpu_stage_fwkick(sc, power_node);
 		break;
 	}
+	sc->sc_exec_ready = error == 0 &&
+	    (stage == A733_GPU_STAGE_FWCACHE || stage == A733_GPU_STAGE_FWKICK);
 	/* A bounded timeout still allows the read-only waiter afterwards. */
 	sc->sc_run_pass = (error == 0 || error == ETIMEDOUT);
 	sc->sc_run_stage = stage;
@@ -1964,6 +1976,87 @@ sun60i_gpu_sysctl_render_attach(SYSCTLFN_ARGS)
 	return error;
 }
 
+/* Adopt a completed diagnostic sequence. No job is started by this operation. */
+static int
+sun60i_gpu_exec_attach(struct sun60i_gpu_softc *sc)
+{
+	const struct sun60i_a733_gpu_fwprobe_result *previous;
+	struct drm_device *dev;
+	bus_space_handle_t bsh;
+	bus_addr_t addr;
+	bus_size_t size;
+	int error;
+
+	mutex_enter(&sc->sc_run_lock);
+	if (sc->sc_fwbridge.attempted) {
+		error = sc->sc_fwbridge.service.queue.failed ? EIO : EBUSY;
+		goto out;
+	}
+	if (sc->sc_render_device == NULL || sc->sc_render_pending ||
+	    !sc->sc_exec_ready || sc->sc_run_result != 0 || !sc->sc_run_pass ||
+	    !sc->sc_run_core_on || !sc->sc_have_id ||
+	    sc->sc_bvnc != A733_GPU_EXPECTED || sc->sc_fw_memory == NULL) {
+		error = EBUSY;
+		goto out;
+	}
+	if (sc->sc_run_stage == A733_GPU_STAGE_FWCACHE)
+		previous = &sc->sc_cache_result;
+	else if (sc->sc_run_stage == A733_GPU_STAGE_FWKICK && sc->sc_kick_done)
+		previous = &sc->sc_kick_result;
+	else {
+		error = EBUSY;
+		goto out;
+	}
+	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
+	if (error != 0)
+		goto out;
+	if (addr != A733_GPU_BASE || size < A733_GPU_FWSTART_REG_SIZE) {
+		error = EINVAL;
+		goto out;
+	}
+	error = bus_space_map(sc->sc_bst, addr, A733_GPU_FWSTART_REG_SIZE,
+	    0, &bsh);
+	if (error != 0)
+		goto out;
+	/* This mapping is retained even when adoption or publication fails. */
+	error = sun60i_a733_gpu_fwbridge_prepare(&sc->sc_fwbridge,
+	    &sc->sc_run_lock, sc->sc_bst, bsh, sc->sc_fw_memory,
+	    &sc->sc_boot_result, previous);
+	if (error != 0)
+		goto out;
+	dev = sc->sc_render_device;
+	mutex_exit(&sc->sc_run_lock);
+	return sun60i_a733_gpu_fwbridge_publish(&sc->sc_fwbridge, dev);
+out:
+	mutex_exit(&sc->sc_run_lock);
+	return error;
+}
+
+static int
+sun60i_gpu_sysctl_exec_attach(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct sun60i_gpu_softc *sc = sun60i_gpu_instance;
+	int value, error;
+
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->sc_run_lock);
+	value = sc->sc_fwbridge.registered &&
+	    !sc->sc_fwbridge.service.queue.failed;
+	mutex_exit(&sc->sc_run_lock);
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	if (value != 1)
+		return EINVAL;
+	sysctl_unlock();
+	error = sun60i_gpu_exec_attach(sc);
+	sysctl_relock();
+	return error;
+}
+
 static void
 sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 {
@@ -1983,6 +2076,12 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 	    sun60i_gpu_sysctl_render_attach, 0, NULL, 0,
 	    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev, "cannot create render attach node\n");
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
+	    CTLTYPE_INT, "exec_attach",
+	    SYSCTL_DESCR("adopt live firmware after successful stage 17 or 21; write 1"),
+	    sun60i_gpu_sysctl_exec_attach, 0, NULL, 0,
+	    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create execution attach node\n");
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
 	    CTLTYPE_INT, "stage",
 		    SYSCTL_DESCR("run runtime diagnostic stage 0..21"),

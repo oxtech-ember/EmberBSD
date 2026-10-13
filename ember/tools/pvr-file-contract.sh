@@ -17,7 +17,7 @@ printf '};\n' >> "$work/pvr-file-wire.h"
 for shift in 12 14; do
     # shellcheck disable=SC2086
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
-        ${CFLAGS:-} -pthread -DPAGE_SHIFT="$shift" -I"$work" \
+        ${CFLAGS:-} -pthread -DPAGE_SHIFT="$shift" -I"$work" -I"$src/sys/arch" -I"$src/sys/external/bsd/drm2/powervr" \
         "$src/ember/tools/pvr-file-contract.c" -o "$work/contract"
     "$work/contract"
 done

@@ -5,7 +5,8 @@ It exposes the measured GPU identity through `DRM_IOCTL_PVR_DEV_QUERY`.
 It also allocates native DMA-backed GEM buffer objects with CPU mappings.
 It builds CPU-owned GPU VM tables and reports heap and static-area layouts.
 It derives runtime limits and compatibility lists from prepared firmware metadata.
-It does not provide Mesa rendering, execution contexts, or job handles.
+The [experimental execution path](a733-pvr-execution.md) adds contexts and compute jobs.
+Its physical Vulkan execution and Mesa rendering remain unaccepted.
 
 ## Ownership and registration
 
@@ -59,8 +60,9 @@ Runtime, quirk, and enhancement queries follow the [firmware-derived contract](a
 Unknown device queries return `EOPNOTSUPP`.
 The driver advertises `DRIVER_RENDER`, `DRIVER_GEM`, and binary and timeline syncobjs.
 The [native syncobj check](drm-syncobj.md#native-api-acceptance) passes on Zero 3W.
-These capabilities cover CPU-issued synchronization; GPU job fences remain unimplemented.
-GPU job fences, PRIME, display modes, and submission remain unsupported.
+The accepted hardware results cover CPU-issued synchronization.
+The experimental compute path connects real firmware completion to these syncobjs.
+PRIME, display modes, and graphics submission remain unsupported.
 
 ## Buffer objects and CPU mappings
 
@@ -73,7 +75,7 @@ Physical allocation can fail with `ENOMEM`; no GPU address is assigned.
 The three upstream flags retain their values. Unknown bits are rejected.
 `PM_FW_PROTECT` cannot be combined with `ALLOW_CPU_USERSPACE_ACCESS`.
 VM mapping translates cache and firmware protection flags into Rogue PTE bits.
-No execution context publishes these tables to firmware yet.
+The experimental execution path publishes tables through a retained firmware memory context.
 
 `GET_BO_MMAP_OFFSET` returns a real GEM VMA offset for a handle owned by the file.
 CPU `mmap` requires `ALLOW_CPU_USERSPACE_ACCESS` and the object's starting offset.
@@ -178,8 +180,8 @@ The Mesa 26.2.4 PowerVR winsys creates a VM before it reports a physical device.
 It queries heap and static-area layouts, then maps three internal BOs.
 The [native VM interface](a733-pvr-vm.md) supplies per-file ownership,
 nonoverlapping mappings, page-table updates, and BO references through unmap.
-It is separate from the diagnostic compute VM. Firmware publication, TLB
-invalidation, and GPU ownership during execution remain missing.
+It is separate from the diagnostic compute VM. The experimental execution path
+adds firmware publication, TLB invalidation, and retained GPU ownership.
 The new [runtime and compatibility queries](a733-pvr-queries.md) derive their values
 from the parsed metadata of the prepared firmware image. These queries describe
 hardware limits; they do not implement free lists or GPU execution contexts.
@@ -190,7 +192,7 @@ The current Mesa null-job path calls `drmSyncobjTransfer` for binary waits.
 The native DRM implementation requires timeline support for that ioctl.
 Native timeline lookup, transfer, and chain lifetime fixes pass source contracts
 and the physical [CPU-issued syncobj check](drm-syncobj.md#native-api-acceptance).
-These synchronization operations do not connect GPU completions to job fences yet.
+The experimental submission path connects completed compute jobs to these fences.
 
 Mesa includes BVNC `36.56.104.183` but excludes it from its conformant allowlist.
 Retain its explicit `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1` experimental gate.

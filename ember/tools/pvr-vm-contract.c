@@ -22,6 +22,7 @@ static unsigned int checks;
 #define BUS_DMA_WAITOK 1
 #define BUS_DMA_COHERENT 2
 #define BUS_DMASYNC_PREWRITE 4
+#define BUS_DMASYNC_POSTWRITE 32
 #define _BUS_DMAMAP_COHERENT 8
 #define _BUS_DMAMAP_IS_BOUNCING 16
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
@@ -51,7 +52,7 @@ typedef struct test_dmamap {
 	size_t dm_mapsize;
 	bus_dma_segment_t dm_segs[1];
 	void *cpu;
-	bool loaded;
+	bool loaded, device_owned;
 	uint8_t synced[4096];
 } *bus_dmamap_t;
 static struct allocation *metadata, *memory;
@@ -224,7 +225,14 @@ bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, size_t off,
 	struct pvr_vm_pt *pt;
 	unsigned int pc, index;
 
-	CHECK(map->loaded && off == 0 && size == 4096 && flags == BUS_DMASYNC_PREWRITE);
+	CHECK(map->loaded && off == 0 && size == 4096);
+	if (flags == BUS_DMASYNC_POSTWRITE) {
+		CHECK(map->device_owned);
+		map->device_owned = false;
+		return;
+	}
+	CHECK(flags == BUS_DMASYNC_PREWRITE);
+	map->device_owned = true;
 	/* A parent cannot be synchronized before its current child bytes. */
 	if (active_vm != NULL) {
 		for (pc = 0; pc < 1024; pc++) {
@@ -253,7 +261,7 @@ bus_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t map)
 
 	CHECK(map != NULL);
 	pa = map->dm_segs[0].ds_addr;
-	CHECK(map->loaded && loaded != 0);
+	CHECK(map->loaded && loaded != 0 && !map->device_owned);
 	/* Removal must be synchronized before a child allocation is released. */
 	if (active_vm != NULL) {
 		for (pc = 0; pc < 1024; pc++) {
@@ -347,6 +355,79 @@ reject_map(struct pvr_vm *vm, uint64_t va, uint64_t pa, uint64_t size,
 	CHECK(metadata_count == m && memory_count == d && mapped == d &&
 	    maps == d && loaded == d);
 	check_snapshot(s);
+}
+
+struct invalidate_test {
+	struct pvr_vm *vm;
+	unsigned int calls, expected_memory;
+	bool fail, expect_retired;
+};
+
+static int
+invalidate(void *cookie)
+{
+	struct invalidate_test *state = cookie;
+
+	state->calls++;
+	CHECK(memory_count == state->expected_memory);
+	if (state->expect_retired) {
+		CHECK(state->vm->retired_tables != NULL);
+		CHECK(state->vm->retired_dirs != NULL);
+		CHECK(((uint32_t *)state->vm->catalogue.cpu)[0] == 0);
+	}
+	return state->fail ? ETIMEDOUT : 0;
+}
+
+static void
+published_tests(void)
+{
+	struct pvr_vm *vm = NULL;
+	struct invalidate_test state = { 0 };
+	struct pvr_vm_range *range;
+	unsigned int count;
+
+	CHECK(pvr_vm_create((void *)1, &vm) == 0);
+	active_vm = vm;
+	CHECK(pvr_vm_map(vm, 4096, 0x30000000, 4096, 0) == 0);
+	state.vm = vm;
+	state.expected_memory = memory_count;
+	CHECK(pvr_vm_publish(vm, invalidate, &state) == 0 && state.calls == 1);
+	CHECK(pvr_vm_publish(vm, invalidate, &state) == EBUSY);
+	state.expect_retired = true;
+	count = memory_count;
+	CHECK(pvr_vm_unmap(vm, 4096, 4096) == 0 && state.calls == 2);
+	CHECK(memory_count == count - 2);
+	CHECK(vm->retired_tables == NULL && vm->retired_dirs == NULL);
+	state.expect_retired = false;
+	state.expected_memory = memory_count;
+	CHECK(pvr_vm_quiesce(vm) == 0 && state.calls == 3);
+	pvr_vm_destroy(vm); active_vm = NULL; vm = NULL; empty();
+
+	CHECK(pvr_vm_create((void *)1, &vm) == 0);
+	active_vm = vm;
+	CHECK(pvr_vm_map(vm, 4096, 0x30000000, 4096, 0) == 0);
+	state = (struct invalidate_test){ .vm = vm,
+	    .expected_memory = memory_count };
+	CHECK(pvr_vm_publish(vm, invalidate, &state) == 0);
+	state.fail = true;
+	state.expect_retired = true;
+	count = memory_count;
+	CHECK(pvr_vm_unmap(vm, 4096, 4096) == ETIMEDOUT);
+	CHECK(memory_count == count && vm->ranges != NULL && vm->failed);
+	CHECK(pvr_vm_map(vm, 8192, 0x40000000, 4096, 0) == EIO);
+	CHECK(pvr_vm_unmap(vm, 4096, 4096) == EIO);
+	CHECK(pvr_vm_flush(vm) == EIO && pvr_vm_quiesce(vm) == EIO);
+	CHECK(state.calls == 2 && memory_count == count);
+	/* Fixture teardown after the model disconnects its device. No reset API
+	 * is claimed. Production must retain these objects on this failure. */
+	range = vm->ranges;
+	CHECK(range->next == NULL);
+	vm->ranges = NULL;
+	kmem_free(range, sizeof(*range));
+	vm->failed = false;
+	vm->invalidate = NULL;
+	pvr_vm_collect(vm);
+	pvr_vm_destroy(vm); active_vm = NULL; vm = NULL; empty();
 }
 
 int
@@ -444,6 +525,8 @@ main(void)
 	pvr_vm_destroy(vm); vm = NULL; empty();
 	next_pa = pa_end;
 	CHECK(pvr_vm_create(&vm, &vm) == EINVAL && vm == NULL); empty();
+	next_pa = UINT64_C(0x12345000);
+	published_tests();
 	printf("PASS: %u native PowerVR VM checks\n", checks);
 	return 0;
 }

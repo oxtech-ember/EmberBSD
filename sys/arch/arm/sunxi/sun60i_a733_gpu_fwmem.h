@@ -21,6 +21,11 @@ struct sun60i_a733_gpu_dma {
 	bool coherent;
 };
 
+/* CPU-owned DMA allocation. Never free while firmware can reference it. */
+int sun60i_a733_gpu_dma_alloc_coherent(bus_dma_tag_t, size_t,
+    struct sun60i_a733_gpu_dma *);
+void sun60i_a733_gpu_dma_free(bus_dma_tag_t, struct sun60i_a733_gpu_dma *);
+
 struct sun60i_a733_gpu_fwmem {
 	bus_dma_tag_t dmat;
 	struct sun60i_a733_gpu_dma code, data, table, work, config;
