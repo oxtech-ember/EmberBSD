@@ -331,7 +331,7 @@ on every board in the hardware catalog.
   private virtual-backend session: the compositor stays active on QPainter
   while Qt Quick clients render real pixel phases through software EGL
   (llvmpipe) and exit cleanly. Hardware GL compositing still needs the DRM
-  render node on A733. On physical CM5, the same full compositor now passes
+  render node on A733. On physical CM5, KWin 6.7.5nb2 passes
   [OpenGL/V3D selection and Qt Quick pixel checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
   on a virtual output under an existing non-root user. Its missing Vulkan
   loader dependency is repaired. This does not establish HDMI presentation
@@ -350,7 +350,8 @@ on every board in the hardware catalog.
   session acceptance still passes. A startplasma session on the virtual
   output is the next acceptance step. CM5 runtime testing also identifies
   the separate, still absent Plasma Desktop shell package; Workspace alone
-  cannot start `org.kde.plasma.desktop`.
+  cannot start `org.kde.plasma.desktop`. Its current xdg-user-dirs 0.20
+  dependency now cross-builds and passes private-profile checks on CM5.
   [ConsoleKit session launching](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-session.md)
   now preserves application failures and passes real-session checks on CM5;
   ordinary-user login and device ownership remain unverified.
