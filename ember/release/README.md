@@ -30,10 +30,12 @@ The profile sets `MKX11=no`, `MKRUMP=no`, `MKGCCCMDS=no`, `MKREPRO=yes`,
 These two values also enter `MAKEFLAGS` as command variables to override the machine defaults.
 `EMBER_BUILD_ID` and kernel `BUILDINFO` contain the same full source commit.
 `EMBER_RELEASE_JOBS` selects the worker count; its default is four.
-The wrapper raises the host process stack limit to at least 65520 KiB.
-This prevents bootstrap GCC/MPFR stack exhaustion on a Darwin host with the default 8 MiB limit.
-It preserves an existing larger limit and stops if the host cannot raise a smaller limit.
 The successful build writes `build-success`. A failed build preserves its log and remains unqualified.
+
+The imported ARM64 GMP routines preserve Apple's reserved `x18` register.
+See the [backport provenance](../../external/lgpl3/gmp/README.EmberBSD) and its host checks.
+An older bootstrap compiler can fail intermittently inside GMP when it uses that register.
+Increasing the process stack does not correct that ABI violation.
 
 The in-tree GCC12.5 compiler is a host bootstrap.
 Native GCC12 commands are omitted from the target sets.
