@@ -37,6 +37,7 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
+#include <sha2.h>
 #include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
@@ -55,6 +56,8 @@
 #include <dirent.h>
 #include <util.h>
 #include "defs.h"
+#include "wizard_ui.h"
+#include "wizard.h"
 #include "md.h"
 #include "defsizes.h"
 #include "msg_defs.h"
@@ -74,6 +77,8 @@ static const char *msg_yes, *msg_no, *msg_all, *msg_some, *msg_none;
 static int select_menu_width;
 
 static uint8_t set_status[SET_GROUP_END];
+static char wizard_sums[SET_GROUP_END][129];
+static uint8_t wizard_omitted[SET_GROUP_END];
 #define SET_VALID	0x01
 #define SET_SELECTED	0x02
 #define SET_SKIPPED	0x04
@@ -219,6 +224,7 @@ init_set_status(int flags)
 	unsigned int nelem_selected;
 	unsigned int i, len;
 	const char *longest;
+	memset(wizard_omitted, 0, sizeof(wizard_omitted));
 
 	if (flags & SFLAG_MINIMAL) {
 		sets_selected = sets_selected_minimal;
@@ -1097,6 +1103,11 @@ extract_file_to(distinfo *dist, int update, const char *dest_dir,
 
 	if (do_stats)
 		tarstats.nfound++;
+	if (wizard_active && !wizard_verify_set(dist, path)) {
+		free(owd);
+		hit_enter_to_continue("Set checksum failed. Choose a matching source.", NULL);
+		return SET_RETRY;
+	}
 	/* cd to the target root. */
 	target_chdir_or_die(dest_dir);
 
@@ -1186,6 +1197,95 @@ get_set_distinfo(int opt)
 	}
 
 	return NULL;
+}
+
+/* Validate the selected names before writes; verify bytes before extraction. */
+int
+wizard_check_sets(const char *manifest)
+{
+	FILE *fp = fopen(manifest, "r");
+	char name[128], path[STRSIZE];
+	bool any = false;
+	uint8_t omissions[SET_GROUP_END] = { 0 };
+
+	/* Restore requested defaults when a different source is checked. */
+	for (size_t i = 0; i < SET_GROUP_END; i++)
+		if (wizard_omitted[i])
+			set_status[i] |= SET_SELECTED;
+
+	memset(wizard_sums, 0, sizeof(wizard_sums));
+	if (fp == NULL)
+		return SET_RETRY;
+	for (distinfo *dist = dist_list; dist->set != SET_LAST; dist++) {
+		if (dist->name == NULL ||
+		    (set_status[dist->set] & (SET_VALID | SET_SELECTED)) !=
+		    (SET_VALID | SET_SELECTED))
+			continue;
+		snprintf(name, sizeof(name), "%s%s", dist->name, set_postfix(dist->name));
+		snprintf(path, sizeof(path), "%s/%s", ext_dir_for_set(dist->name), name);
+		int match = wizard_checksum_entry(fp, name, wizard_sums[dist->set]);
+		if (match < 0) {
+			fclose(fp);
+			return SET_RETRY;
+		}
+		if (match == 0 ||
+		    (fetch_fn == NULL && !file_exists_p(path))) {
+			if (!wizard_custom && (strcmp(dist->name, "base32") == 0 ||
+			    strcmp(dist->name, "base64") == 0)) {
+				omissions[dist->set] = 1;
+				continue;
+			}
+			fclose(fp);
+			return SET_RETRY;
+		}
+		any = true;
+	}
+	fclose(fp);
+	if (any) {
+		memcpy(wizard_omitted, omissions, sizeof(wizard_omitted));
+		for (size_t i = 0; i < SET_GROUP_END; i++)
+			if (omissions[i])
+				set_status[i] &= ~SET_SELECTED;
+	}
+	return any ? SET_OK : SET_RETRY;
+}
+
+void
+wizard_limit_sets(void)
+{
+	static const uint8_t source_sets[] = { SET_SOURCE };
+	for (size_t i = 0; i < __arraycount(source_sets); i++)
+		set_status[source_sets[i]] = 0;
+}
+
+unsigned
+wizard_optional_omissions(void)
+{
+	unsigned count = 0;
+	for (size_t i = 0; i < SET_GROUP_END; i++)
+		count += wizard_omitted[i];
+	return count;
+}
+
+void
+wizard_desktop_sets(bool enabled)
+{
+	for (int i = SET_X11_FIRST + 1; i < SET_X11_LAST; i++) {
+		if (enabled)
+			set_status[i] |= SET_SELECTED;
+		else if (!wizard_custom)
+			set_status[i] &= ~SET_SELECTED;
+	}
+}
+
+bool
+wizard_verify_set(distinfo *dist, const char *path)
+{
+	char sum[129];
+	if (wizard_sums[dist->set][0] == '\0' ||
+	    SHA512_File(path, sum) == NULL)
+		return false;
+	return strcmp(sum, wizard_sums[dist->set]) == 0;
 }
 
 #ifdef CHECK_ENTROPY
@@ -1500,7 +1600,7 @@ get_and_unpack_sets(int update, msg setupdone_msg, msg success_msg, msg failure_
 			tarstats.nselected++;
 	}
 
-	status = SET_RETRY;
+	status = wizard_active ? SET_OK : SET_RETRY;
 	for (dist = dist_list; (set = dist->set) != SET_LAST; dist++) {
 		if (dist->name == NULL)
 			continue;
@@ -1512,6 +1612,12 @@ get_and_unpack_sets(int update, msg setupdone_msg, msg success_msg, msg failure_
 		olderror = tarstats.nerror;
 
 		if (status != SET_OK) {
+			if (wizard_active) {
+				status = wizard_retry_source();
+				if (status != SET_OK)
+					return 1;
+				goto source_ready;
+			}
 			/* This might force a redraw.... */
 			clearok(curscr, 1);
 			touchwin(stdscr);
@@ -1545,7 +1651,10 @@ get_and_unpack_sets(int update, msg setupdone_msg, msg success_msg, msg failure_
 		if (set_status[set] & SET_NO_EXTRACT)
 			continue;
 
+source_ready:
 		/* Try to extract this set */
+		if (wizard_active)
+			wizard_progress(dist->name);
 		status = extract_file(dist, update);
 		if (status == SET_RETRY) {
 			/* do this set again */

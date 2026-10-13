@@ -1,4 +1,5 @@
 #	$NetBSD: Makefile.inc,v 1.8 2023/06/04 17:48:05 lukem Exp $
+# Origin: EmberBSD explicit LLVM host module dependencies, prepared with AI assistance.
 
 .if !defined(LLVM_TOPLEVEL_MK)
 LLVM_TOPLEVEL_MK=
@@ -34,7 +35,9 @@ HOST_CPPFLAGS+=	${CPPFLAGS}
 HOST_CXXFLAGS+=	-O2 -fno-rtti -fno-exceptions -fno-strict-aliasing
 .sinclude "${LLVM_TOOLCONF_OBJDIR}/support-modules"
 .if ${HOST_SUPPORTS_MODULES:Uno} == "yes"
-HOST_CXXFLAGS+=	${MODULES_CXXFLAGS}
+HOST_CXXFLAGS+=	${MODULES_CXXFLAGS} \
+	-fmodule-map-file=${LLVM_INCLUDE_CONFIG:Q}/llvm/module.modulemap \
+	-fmodule-map-file=${LLVM_SRCDIR:Q}/include/llvm-c/module.modulemap
 .endif
 HOST_CXXFLAGS+=	-std=c++14
 LLVM_TARGETS=	x86,powerpc,sparc,aarch64,arm,mips

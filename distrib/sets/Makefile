@@ -223,6 +223,7 @@ maketarsetup: .EXEC
 	cd ${.CURDIR}; ${MAKE} checkflist
 .endif
 	mkdir -p ${TARDIR}
+	printf '%s\n' ${EMBER_BUILD_ID:Udevelopment:Q} > ${TARDIR}/BUILDID
 	for i in MD5 SHA512; do \
 		rm -f ${TARDIR}/$$i ${TARDIR}/$$i.tmp; \
 	done

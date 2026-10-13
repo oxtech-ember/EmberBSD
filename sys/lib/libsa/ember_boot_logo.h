@@ -6,42 +6,19 @@
 #define _LIBSA_EMBER_BOOT_LOGO_H
 
 /* Palette letters select console attributes; all rendered glyphs are ASCII. */
+#include "ember_logo_data.h"
 static inline void
 ember_boot_logo(void (*color)(int))
 {
-	static const char * const mascot[] = {
-		"           #               ",
-		"           ++##            ",
-		"            r###           ",
-		"           r+####          ",
-		"          r++##### +       ",
-		"       rrr+++#####r+#      ",
-		"     r++rr+++#####++++     ",
-		"    r++#+++++####+++++rr   ",
-		"   rrr+++    +++     r+r   ",
-		"   rrr+   ||      ||  +r   ",
-		"   rrrrr  ||  \\_/ ||  rr   ",
-		"    rrrrr           rrr    ",
-		"       rrrrrrrrrrrrr       ",
-	};
-	static const char * const wordmark[] = {
-		"##### #   # ####  ##### ####  ####   #### #### ",
-		"#     ## ## #   # #     #   # #   # #     #   #",
-		"#     # # # #   # #     #   # #   # #     #   #",
-		"####  #   # ####  ####  ####  ####   ###  #   #",
-		"#     #   # #   # #     # #   #   #     # #   #",
-		"#     #   # #   # #     #  #  #   #     # #   #",
-		"##### #   # ####  ##### #   # ####  ####  #### ",
-	};
 	unsigned i, j;
 	int event, last = -1;
 	char cell, glyph;
 
 	if (color != NULL)
 		color(BOOTCFG_COLOR_SAVE);
-	for (i = 0; i < sizeof(mascot) / sizeof(mascot[0]); i++) {
-		for (j = 0; mascot[i][j] != '\0'; j++) {
-			cell = mascot[i][j];
+	for (i = 0; i < sizeof(ember_logo_mascot) / sizeof(ember_logo_mascot[0]); i++) {
+		for (j = 0; ember_logo_mascot[i][j] != '\0'; j++) {
+			cell = ember_logo_mascot[i][j];
 			if (cell == ' ') {
 				putchar(' ');
 				continue;
@@ -70,7 +47,7 @@ ember_boot_logo(void (*color)(int))
 		if (color != NULL && last != BOOTCFG_COLOR_WORDMARK)
 			color(BOOTCFG_COLOR_WORDMARK);
 		last = BOOTCFG_COLOR_WORDMARK;
-		printf("  %s\n", (i >= 4 && i < 11) ? wordmark[i - 4] : "");
+		printf("  %s\n", (i >= 4 && i < 11) ? ember_logo_wordmark[i - 4] : "");
 	}
 	if (color != NULL)
 		color(BOOTCFG_COLOR_RESTORE);

@@ -53,6 +53,8 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include "defs.h"
+#include "wizard_ui.h"
+#include "wizard.h"
 
 #include "menu_defs.h"
 #include "msg_defs.h"
@@ -365,6 +367,14 @@ show_cmd(const char *scmd, struct winsize *win)
 {
 	WINDOW *actionwin;
 	int nrow;
+	if (wizard_installing) {
+		actionwin = wizard_command_window();
+		if (actionwin != NULL) {
+			win->ws_row = 10;
+			win->ws_col = 54;
+			return actionwin;
+		}
+	}
 
 	wclear(stdscr);
 	clearok(stdscr, 1);

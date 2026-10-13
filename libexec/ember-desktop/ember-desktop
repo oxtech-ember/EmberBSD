@@ -1,0 +1,8 @@
+#!/bin/sh
+# Origin: EmberBSD optional XFCE console launcher, prepared with AI assistance.
+# SPDX-License-Identifier: BSD-2-Clause
+set -eu
+[ -x /usr/pkg/bin/startxfce4 ] || { echo 'No desktop is installed.' >&2; exit 1; }
+PATH=/usr/pkg/bin:/usr/X11R7/bin:/usr/bin:/bin
+export PATH
+exec /usr/pkg/bin/startxfce4 "$@"

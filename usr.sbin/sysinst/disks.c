@@ -68,6 +68,7 @@
 #include "msg_defs.h"
 #include "menu_defs.h"
 #include "txtwalk.h"
+#include "wizard.h"
 
 /* #define DEBUG_VERBOSE	1 */
 
@@ -713,7 +714,7 @@ get_disks_helper(void *arg, const char *dev)
 	 * Exclude a disk mounted as root partition,
 	 * in case of install-image on a USB memstick.
 	 */
-	if (is_active_rootpart(state->dd->dd_name,
+	if (!wizard_active && is_active_rootpart(state->dd->dd_name,
 	    state->dd->dd_no_part ? -1 : 0))
 		return true;
 
@@ -725,6 +726,11 @@ get_disks_helper(void *arg, const char *dev)
 
 	if (!state->dd->dd_no_part || !get_wedge_descr(state->dd))
 		get_descr(state->dd);
+	if (wizard_active && wizard_disk_is_root(state->dd->dd_name)) {
+		if (!state->dd->dd_no_part)
+			wizard_record_boot_medium(state->dd->dd_descr);
+		return true;
+	}
 	state->dd++;
 	state->numdisks++;
 	if (state->numdisks == MAX_DISKS)
@@ -988,6 +994,25 @@ find_disks(const char *doingwhat, bool allow_cur_system)
 				disk_no[dno] = -3;
 				dno++;
 			}
+			if (wizard_active) {
+				const char *names[MAX_DISKS] = { NULL };
+				int mapping[MAX_DISKS], count = 0;
+				for (int n = 0; n < dno; n++) {
+					if (disk_no[n] < 0)
+						continue;
+					names[count] = msg_string(dsk_menu[n].opt_name);
+					mapping[count++] = disk_no[n];
+				}
+				if (count == 0)
+					return -1;
+				i = wizard_disk_choice(names, count);
+				if (i < 0)
+					return -1;
+				selected_disk = mapping[i];
+				if (selected_disk < 0)
+					return -1;
+				goto disk_chosen;
+			}
 			w_menu_no = -1;
 			menu_no = new_menu(MSG_Available_disks,
 				dsk_menu, dno, -1,
@@ -1033,6 +1058,7 @@ find_disks(const char *doingwhat, bool allow_cur_system)
 				return 1;
 			}
 		}
+disk_chosen:
 		if (partman_go < 0 &&  selected_disk == -3) {
 			partman_go = 1;
 			return -2;
@@ -1097,7 +1123,8 @@ find_disks(const char *doingwhat, bool allow_cur_system)
 			pm->dlsize =
 			    disk->dd_cyl * disk->dd_head * disk->dd_sec;
 
-		pm->parts = partitions_read_disk(pm->diskdev,
+		/* The guided whole-disk plan only needs read-only geometry. */
+		pm->parts = wizard_active ? NULL : partitions_read_disk(pm->diskdev,
 		    pm->dlsize, disk->dd_secsize, disk->dd_no_mbr);
 
 again:
@@ -1129,7 +1156,7 @@ again:
 				pm->dlsize =
 				    disk->dd_cyl * disk->dd_head * disk->dd_sec;
 
-			if (pm->parts && pm->parts->pscheme->size_limit != 0
+			if (!wizard_active && pm->parts && pm->parts->pscheme->size_limit != 0
 			    && pm->dlsize > pm->parts->pscheme->size_limit
 			    && ! partman_go) {
 

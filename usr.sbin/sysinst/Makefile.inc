@@ -12,7 +12,7 @@ MAN=		sysinst.8
 WARNS=		4
 
 SRCS+=	menu_defs.c msg_defs.c main.c install.c upgrade.c \
-	txtwalk.c run.c factor.c net.c disks.c disks_lfs.c util.c geom.c \
+	wizard.c wizard_ui.c wizard_console.c txtwalk.c run.c factor.c net.c disks.c disks_lfs.c util.c geom.c \
 	label.c target.c md.c sizemultname.c configmenu.c checkrc.c \
 	disklabel.c partitions.c part_edit.c
 
@@ -109,6 +109,7 @@ CPPFLAGS+=	-DHAVE_MODULES
 .endif
 
 EMBER_BUILD_ID?=development
+CPPFLAGS+= -DEMBER_VERSION=\"${EMBER_VERSION}\"
 CPPFLAGS+= -DEMBER_BUILD_ID=\"${EMBER_BUILD_ID}\"
 
 CATALOGDIR=	/usr/share/sysinst/catalog

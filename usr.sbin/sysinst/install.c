@@ -40,6 +40,7 @@
 #include "defs.h"
 #include "msg_defs.h"
 #include "menu_defs.h"
+#include "wizard.h"
 
 /*
  * helper function: call the md pre/post disklabel callback for all involved
@@ -156,6 +157,12 @@ do_install(void)
 	int retcode = 0, res;
 	struct install_partition_desc install = {};
 
+	if (wizard_active) {
+		if (!wizard_prepare(&install))
+			goto error;
+		goto write_plan;
+	}
+
 #ifndef NO_PARTMAN
 	partman_go = -1;
 #else
@@ -215,6 +222,11 @@ do_install(void)
 		if (!ask_noyes(NULL))
 			goto error;
 
+write_plan:
+		if (wizard_active) {
+			wizard_installing = true;
+			wizard_progress("Writing partitions and creating filesystems");
+		}
 		if ((!pm->no_part && !write_all_parts(&install)) ||
 		    make_filesystems(&install) ||
 		    make_fstab(&install) != 0 ||
@@ -223,8 +235,9 @@ do_install(void)
 	}
 
 	/* Unpack the distribution. */
-	process_menu(MENU_distset, &retcode);
-	if (retcode == 0)
+	if (!wizard_active)
+		process_menu(MENU_distset, &retcode);
+	if (!wizard_active && retcode == 0)
 		goto error;
 	if (get_and_unpack_sets(0, MSG_disksetupdone,
 	    MSG_extractcomplete, MSG_abortinst) != 0)
@@ -240,7 +253,13 @@ do_install(void)
 #if CHECK_ENTROPY
 	do_add_entropy();
 #endif
-	do_configmenu(&install);
+	if (wizard_active) {
+		if (!wizard_configure()) {
+			hit_enter_to_continue(MSG_abortinst, NULL);
+			goto error;
+		}
+	} else
+		do_configmenu(&install);
 
 	sanity_check();
 

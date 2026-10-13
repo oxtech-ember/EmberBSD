@@ -28,6 +28,7 @@
  */
 
 #include "defs.h"
+#include "wizard.h"
 #include "mbr.h"
 #include "md.h"
 #include "gpt_uuid.h"
@@ -38,6 +39,7 @@
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <util.h>
+#include <unistd.h>
 #include <uuid.h>
 
 bool	gpt_parts_check(void);	/* check for needed binaries */
@@ -1603,13 +1605,41 @@ gpt_write_to_disk(struct disk_partitions *arg)
 	 */
 	if (!parts->has_gpt) {
 		char limit[30];
+		bool replace = wizard_active && wizard_automatic;
+
+		/* Only the approved whole-disk write phase may replace a table. */
+		if (replace) {
+			char resetpath[MAXPATHLEN], *zero;
+			int resetfd;
+			ssize_t written;
+			size_t sector = parts->dp.bytes_per_sector;
+			if (sector < 512 || sector > 65536)
+				return false;
+			run_program(RUN_SILENT | RUN_ERROR_OK, "gpt destroy %s",
+			    parts->dp.disk);
+			/* Also remove an MBR whose first partition starts at sector 1. */
+			zero = calloc(1, sector);
+			if (zero == NULL)
+				return false;
+			resetfd = opendisk(parts->dp.disk, O_RDWR, resetpath,
+			    sizeof(resetpath), 0);
+			if (resetfd < 0) {
+				free(zero);
+				return false;
+			}
+			written = pwrite(resetfd, zero, sector, 0);
+			free(zero);
+			close(resetfd);
+			if (written != (ssize_t)sector)
+				return false;
+		}
 
 		if (parts->max_num_parts > 0)
 			sprintf(limit, "-p %zu", parts->max_num_parts);
 		else
 			limit[0] = 0;
-		if (run_program(RUN_SILENT, "gpt create %s %s",
-		    limit, parts->dp.disk))
+		if (run_program(RUN_SILENT, "gpt create %s%s %s",
+		    replace ? "-f " : "", limit, parts->dp.disk))
 			return false;
 		parts->has_gpt = true;
 	}

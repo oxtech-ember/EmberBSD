@@ -62,6 +62,8 @@
 #include <unistd.h>
 
 #include "defs.h"
+#include "wizard_ui.h"
+#include "wizard.h"
 #include "md.h"
 #include "msg_defs.h"
 #include "menu_defs.h"
@@ -975,6 +977,37 @@ static int
 ftp_fetch(const char *set_name)
 {
 	return do_ftp_fetch(set_name, use_tgz_for_set(set_name), &ftp, false);
+}
+
+/* Configure a direct, validated HTTP(S) set directory for the wizard. */
+int
+wizard_network_source(const char *url)
+{
+	char host[STRSIZE], path[STRSIZE];
+	int secure;
+
+	if (!wizard_parse_url(url, host, sizeof(host), path, sizeof(path), &secure))
+		return SET_RETRY;
+#ifdef NO_HTTPS
+	if (secure)
+		return SET_RETRY;
+#else
+	if (secure && getenv("FTPSSLNOVERIFY") != NULL)
+		return SET_RETRY;
+#endif
+	if (!network_up && !config_network(0))
+		return SET_RETRY;
+	ftp.xfer = secure ? XFER_HTTPS : XFER_HTTP;
+	strlcpy(ftp.xfer_host[XFER_HOST(ftp.xfer)], host, STRSIZE);
+	ftp.dir[0] = '\0';
+	strlcpy(ftp.user, "ftp", sizeof(ftp.user));
+	ftp.pass[0] = '\0';
+	strlcpy(set_dir_bin, path, sizeof(set_dir_bin));
+	fetch_fn = ftp_fetch;
+	snprintf(ext_dir_bin, sizeof(ext_dir_bin), "%s/%s", target_prefix(),
+	    xfer_dir + (*xfer_dir == '/'));
+	strlcpy(ext_dir_src, ext_dir_bin, sizeof(ext_dir_src));
+	return SET_OK;
 }
 
 static int

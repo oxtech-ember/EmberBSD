@@ -1,5 +1,6 @@
 #	$NetBSD: Makefile,v 1.475.2.2 2026/08/25 19:51:33 martin Exp $
 #	from: @(#)Makefile	8.7 (Berkeley) 5/25/95
+# Origin: EmberBSD release and login identity, prepared with AI assistance.
 
 # Environment variables without default values:
 #   DESTDIR must be set before anything in this file will work.
@@ -164,21 +165,13 @@ distribution: .PHONY .MAKE check_DESTDIR distrib-dirs
 .endif	# !DISTRIBUTION_DONE
 
 
-# motd is copied from a different ${MOTD_SOURCE} depending on DISTRIBVER
-#
-.if !empty(DISTRIBVER:M*.99.*)
-MOTD_SOURCE=	motd.current
-.elif !empty(DISTRIBVER:M*BETA*)
-MOTD_SOURCE=	motd.beta
-.elif !empty(DISTRIBVER:M*RC*)
-MOTD_SOURCE=	motd.rc
-.else
-MOTD_SOURCE=	motd.default
-.endif
+# Product presentation does not use the kernel compatibility version.
+MOTD_SOURCE=	motd.ember
 CLEANFILES+= motd
 motd: ${.CURDIR}/${MOTD_SOURCE} ${_NETBSD_VERSION_DEPENDS}
 	${_MKTARGET_CREATE}
-	${HOST_INSTALL_FILE} ${.CURDIR}/${MOTD_SOURCE} ${.TARGET}
+	${TOOL_SED} 's/@EMBER_VERSION@/${EMBER_VERSION}/g' \
+	    ${.CURDIR}/${MOTD_SOURCE} > ${.TARGET}
 
 CLEANFILES+=	MAKEDEV
 MAKEDEV_MACHINE=${"${MACHINE_CPU}" == "aarch64":?${MACHINE_CPU}:${MACHINE}}
@@ -195,7 +188,7 @@ MAKEDEV: ${.CURDIR}/MAKEDEV.awk ${.CURDIR}/MAKEDEV.tmpl \
 CLEANFILES+=	etc-release
 etc-release: .EXEC .MAKE
 	${_MKTARGET_CREATE}
-	@(	echo "NetBSD ${DISTRIBVER}/${MACHINE}"; \
+	@(	echo "EmberBSD ${EMBER_VERSION}/${MACHINE}"; \
 		echo ; \
 		cat ${NETBSDSRCDIR}/sys/conf/copyright; \
 		echo ; \

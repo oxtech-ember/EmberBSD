@@ -1,7 +1,10 @@
+# Origin: EmberBSD quiet and diagnostic boot menus, 2026-10-13.
 banner=EmberBSD @@EMBER_VERSION@@ installation image
 banner=Unix for intelligent devices
 banner=
 banner=https://github.com/oxtech-ember/EmberBSD
-menu=Install EmberBSD:initrd ramdisk.fs;boot netbsd
+menu=Install EmberBSD:initrd ramdisk.fs;boot netbsd -z
+menu=Install EmberBSD (diagnostic output):initrd ramdisk.fs;boot netbsd -vx
 menu=Drop to boot prompt:prompt
-timeout=30
+default=1
+timeout=10

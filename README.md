@@ -37,8 +37,12 @@ are maintained in the related repositories below.
   or [developer skills](#connect-developer-skills) for development.
 
 - For installation screens and compatible set sources, see
-  [installer identity](ember/boot/installer-branding.md).
-  The installer offers bootable USB/image sets and an EmberBSD CDN source.
+  [text installer](ember/boot/text-installer.md) and [installer identity](ember/boot/installer-branding.md).
+  The amd64 keyboard wizard reviews automatic GPT, profiles and settings before writing.
+  Normal startup is quiet, with a separate diagnostic choice and a 10-second menu.
+  Console login uses the EmberBSD release greeting; full attribution stays in /etc/release.
+  Its optional XFCE/Wi-Fi package integration is undergoing amd64 VM acceptance;
+  SSH is enabled by default with unchanged authentication settings.
   An [amd64 UEFI VM candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11)
   supplies complete local media and a pinned GitHub HTTPS set source.
   The [release procedure](ember/release/README.md) verifies composition, VM qualification,

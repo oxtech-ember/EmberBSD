@@ -1,3 +1,4 @@
+/* Origin: EmberBSD programmable RGB bitmap console palette, 2026-10-13. */
 /*	 $NetBSD: rasops.c,v 1.128.12.1 2025/11/14 13:12:27 martin Exp $	*/
 
 /*-
@@ -1026,6 +1027,49 @@ rasops_init_devcmap(struct rasops_info *ri)
 		}
 
 		ri->ri_devcmap[i] = c;
+	}
+}
+
+/* Update packed RGB colors without changing indexed hardware palettes. */
+void
+rasops_set_cmap(struct rasops_info *ri, u_int index, u_int count,
+    const uint8_t *red, const uint8_t *green, const uint8_t *blue)
+{
+	uint32_t c;
+	u_int i;
+
+	if (index >= 256 || count > 256 - index ||
+	    (ri->ri_depth != 15 && ri->ri_depth != 16 &&
+	    ri->ri_depth != 24 && ri->ri_depth != 32) ||
+	    ri->ri_rnum <= 0 || ri->ri_gnum <= 0 || ri->ri_bnum <= 0 ||
+	    ri->ri_rnum > 10 || ri->ri_gnum > 10 || ri->ri_bnum > 10 ||
+	    ri->ri_rpos < 0 || ri->ri_gpos < 0 || ri->ri_bpos < 0 ||
+	    ri->ri_rpos + ri->ri_rnum > 32 ||
+	    ri->ri_gpos + ri->ri_gnum > 32 ||
+	    ri->ri_bpos + ri->ri_bnum > 32)
+		return;
+	for (i = 0; i < count; i++) {
+		c = (ri->ri_rnum <= 8 ? (uint32_t)(red[i] >> (8 - ri->ri_rnum)) :
+		    (uint32_t)red[i] << (ri->ri_rnum - 8)) << ri->ri_rpos;
+		c |= (ri->ri_gnum <= 8 ? (uint32_t)(green[i] >> (8 - ri->ri_gnum)) :
+		    (uint32_t)green[i] << (ri->ri_gnum - 8)) << ri->ri_gpos;
+		c |= (ri->ri_bnum <= 8 ? (uint32_t)(blue[i] >> (8 - ri->ri_bnum)) :
+		    (uint32_t)blue[i] << (ri->ri_bnum - 8)) << ri->ri_bpos;
+		if (ri->ri_depth == 15 || ri->ri_depth == 16) {
+			if (ri->ri_flg & RI_BSWAP)
+				c = bswap16(c);
+			c |= c << 16;
+		} else if (ri->ri_depth == 24) {
+#if BYTE_ORDER == LITTLE_ENDIAN
+			if (!(ri->ri_flg & RI_BSWAP))
+#else
+			if (ri->ri_flg & RI_BSWAP)
+#endif
+				c = (c & 0xff) << 16 | (c & 0xff00) | (c >> 16 & 0xff);
+			c |= (c & 0xff) << 24;
+		} else if (ri->ri_flg & RI_BSWAP)
+			c = bswap32(c);
+		ri->ri_devcmap[index + i] = c;
 	}
 }
 
