@@ -35,7 +35,7 @@ if ! MAKEOBJDIR="$out/lib" make -C "$fixture" -j2 USETOOLS=no \
 fi
 if ! gcc -std=gnu99 -O2 -Wall -Wextra -Werror -pthread -I "$fixture" -idirafter "$src/sys" \
     "$fixture/t_umoxa_g2.c" -L "$out/lib" -Wl,-rpath,"$out/lib" \
-    -Wl,--whole-archive -lrumpdev_ucom_mock -Wl,--no-whole-archive \
+    -Wl,--whole-archive -lrumpdev_umoxag_mock -Wl,--no-whole-archive \
     -lrumpkern_tty -lrumpdev -lrumpvfs -lrumpvfs_nofifofs -lrump -lrumpuser -lpthread \
     -o "$out/test" > "$out/test-build.log" 2>&1; then
     cat "$out/test-build.log" >&2
