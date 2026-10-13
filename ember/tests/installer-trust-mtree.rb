@@ -13,7 +13,7 @@ Dir.mktmpdir('ember-trust-mtree') do |dir|
     entry = File.readlines(File.join(root, name)).select { |s| s.start_with?('./etc/openssl/cert.pem ') || s.start_with?("./etc/openssl/cert.pem\t") }.join
     spec = File.join(dir, 'spec')
     File.write(spec, ". type=dir mode=0755 uname=root gname=wheel\n./etc type=dir mode=0755 uname=root gname=wheel\n./etc/openssl type=dir mode=0755 uname=root gname=wheel\n" + entry)
-    out, err, status = Open3.capture3(tool, '-t', 'ffs', '-xx', '-F', spec, File.join(dir, "image#{i}"), tree)
+    out, err, status = Open3.capture3(tool, '-t', 'ffs', '-s', '1m', '-xx', '-F', spec, File.join(dir, "image#{i}"), tree)
     abort "FAIL: #{name} omits the trust bundle: #{out}#{err}" unless status.success?
     puts "PASS: #{name} accepts the trust bundle with strict makefs"
   end
