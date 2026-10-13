@@ -111,7 +111,7 @@ module EmberRelease
     check(sha.match?(/\A[0-9a-f]{40}\z/), 'No complete pinned build')
     source = File.join(build, 'source')
     iso = File.join(build, 'release/images', IMAGES.first)
-    usb = File.join(build, 'release/amd64/installation/installimage', IMAGES.last)
+    usb = File.join(build, 'release/images', IMAGES.last)
     command('ruby', File.join(source, 'ember/tests/installer-image.rb'), iso, sha, '1.0', 'github.com')
     list = command('tar', '-tf', iso).force_encoding('UTF-8').lines.map(&:strip)
     prefix = 'amd64/binary/sets/'

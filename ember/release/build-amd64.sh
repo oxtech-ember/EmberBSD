@@ -36,7 +36,7 @@ cd "$out/source"
 export MAKECONF=/dev/null
 unset EXTERNAL_TOOLCHAIN MAKEFLAGS MFLAGS MAKEOBJDIR MAKEOBJDIRPREFIX NETBSDOBJDIR NETBSDOBJROOT
 printf 'Build log: %s/build.log\n' "$out"
-sh ./build.sh -U -u -m amd64 -j"$jobs" \
+set -- -U -u -m amd64 -j"$jobs" \
 	-O "$out/obj" -T "$out/tools" -D "$out/dest" -R "$out/release" \
 	-V MKX11=no -V MKRUMP=no -V MKGCCCMDS=no \
 	-V MKREPRO=yes -V "MKREPRO_TIMESTAMP=$timestamp" \
@@ -45,7 +45,12 @@ sh ./build.sh -U -u -m amd64 -j"$jobs" \
 	-V EMBER_VERSION=1.0 -V "EMBER_BUILD_ID=$revision" -V "BUILDINFO=EmberBSD:$revision" \
 	-V SYSINST_HTTP_HOST=github.com -V SYSINST_FTP_HOST=github.com \
 	-V "SYSINST_FTP_DIR=oxtech-ember/EmberBSD/releases/download/$tag" \
-	-V SYSINST_FTP_SET_DIR_BIN= \
-	tools release install-image iso-image > "$out/build.log" 2>&1
+	-V SYSINST_FTP_SET_DIR_BIN=
+{
+	sh ./build.sh "$@" tools release
+	"$out/tools/bin/nbmake-amd64" -C "$out/source/distrib/amd64/installimage" \
+		"INSTIMG_RELEASEDIR=$out/release/images" install_image
+	sh ./build.sh "$@" iso-image
+} > "$out/build.log" 2>&1
 printf '%s\n' "$revision" > "$out/build-success"
 printf 'Completed pinned build: %s\n' "$revision"

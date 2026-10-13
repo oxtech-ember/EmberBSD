@@ -11,8 +11,20 @@ Dir.mktmpdir('ember-release-build') do |dir|
   FileUtils.cp(builder, File.join(repo, 'ember/release/build-amd64.sh')) if File.file?(builder)
   script = <<~SH
     #!/bin/sh
-    printf '%s\n' "$@" > ../build-arguments
+    printf '%s\n' "$@" >> ../build-arguments
     printf 'clean committed source\n' > ../source-proof
+    previous=
+    for argument do
+      if [ "$previous" = -T ]; then tools=$argument; fi
+      previous=$argument
+    done
+    mkdir -p "$tools/bin"
+    cat > "$tools/bin/nbmake-amd64" <<'NBMAKE'
+    #!/bin/sh
+    out=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+    printf '%s\n' "$@" > "$out/image-arguments"
+    NBMAKE
+    chmod +x "$tools/bin/nbmake-amd64"
   SH
   File.write(File.join(repo, 'build.sh'), script)
   %w[init add commit].each do |action|
@@ -48,7 +60,11 @@ Dir.mktmpdir('ember-release-build') do |dir|
     abort "FAIL: make profile could not be evaluated: #{error}" unless result.success?
     abort "FAIL: real make ignores kernel profile: #{actual}" unless actual.lines.map(&:strip) == %w[GENERIC INSTALL]
   end
-  abort 'FAIL: incomplete build operations' unless args.last(4) == %w[tools release install-image iso-image]
+  abort 'FAIL: UEFI profile builds the additional BIOS image' if args.include?('install-image')
+  abort 'FAIL: incomplete build operations' unless %w[tools release iso-image].all? { |v| args.count(v) == 1 }
+  image = File.readlines(File.join(output, 'image-arguments'), chomp: true)
+  abort 'FAIL: wrong selected image producer' unless image == ['-C', File.join(output, 'source/distrib/amd64/installimage'),
+    "INSTIMG_RELEASEDIR=#{output}/release/images", 'install_image']
   _, _, status = Open3.capture3('sh', builder, sha, output)
   abort 'FAIL: existing output was accepted' if status.success?
   _, _, status = Open3.capture3('sh', builder, 'main', File.join(dir, 'bad-pin'))

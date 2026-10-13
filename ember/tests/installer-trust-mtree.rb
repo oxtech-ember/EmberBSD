@@ -4,7 +4,8 @@ require 'open3'
 require 'fileutils'
 root = File.expand_path('../..', __dir__)
 tool = ARGV.fetch(0)
-specs = %w[distrib/amd64/cdroms/spec.in distrib/amd64/cdroms/spec-dir.in distrib/amd64/installimage/spec.inst]
+specs = %w[distrib/amd64/cdroms/spec.in distrib/amd64/cdroms/spec-dir.in
+  distrib/amd64/installimage/spec.inst distrib/amd64/installimage-bios/spec.inst]
 Dir.mktmpdir('ember-trust-mtree') do |dir|
   tree = File.join(dir, 'tree')
   FileUtils.mkdir_p(File.join(tree, 'etc/openssl'))
