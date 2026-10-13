@@ -6,9 +6,10 @@ set -eu
 unset EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/ember-build-kernel.XXXXXX")
+work=$(CDPATH= cd -- "$work" && pwd -P)
 show_failure_logs() {
     for log in "$work/run.log" "${TEST_OUT:-$work}/build.log" \
-        "${TEST_OUT:-$work}/contracts.log"; do
+        "${TEST_OUT:-$work}/contracts.log" "$work/commands"; do
         if [ -f "$log" ]; then
             printf '\n%s\n' "$log" >&2
             cat "$log" >&2
@@ -33,7 +34,23 @@ mkdir -p "$work/src/ember/tools" "$work/bin" "$work/src/tools" \
 cp "$repo/ember/build-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
 # Model only dispatcher arguments and exit status. These fixtures do not
-# execute GPU, Ruby, or Wi-Fi production-code contracts.
+# execute A733, GPU, Ruby, or Wi-Fi production-code contracts.
+for contract in a733-accelerator-clock a733-power a733-gpu-identification \
+    a733-gpu-fwinfo a733-gpu-fwimage a733-gpu-mips a733-gpu-fwabi \
+    a733-gpu-fwmem a733-gpu-fwinit a733-gpu-fwstart a733-gpu-fwboot \
+    a733-gpu-fwprobe a733-gpu-fwcompute a733-gpu-fwfile a733-gpu-mmu \
+    a733-gpu-vm; do
+    cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
+#!/bin/sh
+set -eu
+echo "a733-contract ${0##*/} $*" >> "$TEST_LOG"
+test "$#" -eq 0
+if [ "${FAIL_AT:-}" = a733-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; then
+    echo "injected contract failure: ${0##*/}" >&2
+    exit 1
+fi
+SH
+done
 for contract in bcm2712-v3d bcm2712-v3d-takeover bcm2712-v3d-dma \
     bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault \
     bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-job bcm2712-v3d-csd \
@@ -179,6 +196,7 @@ export PATH="$work/bin:$PATH" NETBSD2_PYTHON="$work/bin/python3" NETBSD2_JOBS=2
 export RUBY="$work/bin/ruby"
 check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
+    test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 16
     test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 15
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 3
     test "$(grep -c '^wifi-contract ' "$TEST_LOG")" -eq 7
@@ -198,7 +216,8 @@ check_contract_counts 2
 outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
 if_cemac_acpi.kmod bcm2712btcom.kmod rp1wmcodec.kmod rpi5button.kmod'
-for failure in tools module cpp dtb contract gpu-contract ruby-contract \
+for failure in tools module cpp dtb contract a733-contract \
+    a733-gpu-vm-contract.sh gpu-contract ruby-contract \
     bcm2712-v3d-prime-contract.rb wifi-contract bwfm-link-check.sh \
     aicwf-sta.sh aicwf-vht.sh publish; do
     : > "$TEST_LOG"
@@ -212,6 +231,10 @@ for failure in tools module cpp dtb contract gpu-contract ruby-contract \
         test ! -e "$TEST_OUT/$output"
     done
     case "$failure" in
+    a733-contract|a733-gpu-vm-contract.sh)
+        grep -Fq 'injected contract failure: a733-' "$TEST_OUT/contracts.log"
+        ! grep -q '^gpu-contract ' "$TEST_LOG"
+        ;;
     aicwf-sta.sh|aicwf-vht.sh)
         grep -Fq "wifi-contract $failure " "$TEST_LOG"
         grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
@@ -247,4 +270,4 @@ fi
 grep -q 'full source' "$work/run.log"
 test ! -e "$TEST_OUT/netbsd-EMBER64"
 test ! -e "$TEST_OUT/bcm2712btcom.kmod"
-echo 'PASS: cross/native routing, matched module headers, external tools, base/GPU/Ruby/Wi-Fi contract dispatch, AIC failure cleanup'
+echo 'PASS: cross/native routing, matched module headers, external tools, base/A733/GPU/Ruby/Wi-Fi contract dispatch, failure cleanup'
