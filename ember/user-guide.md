@@ -150,6 +150,9 @@ Retain package inventory and application data backups before updating dependenci
 
 There is no accepted general automatic OS-update or rollback service yet.
 Choose the update recipe for the exact architecture, firmware and current installation.
+For the amd64 UEFI no-X11 VM profile, use [the complete installer upgrade and recovery recipe](boot/amd64-vm-upgrade.md).
+It installs the coherent kernel, modules and userland before the first new-system boot.
+It preserves the previous powered-off disk and UEFI variables for complete recovery.
 The [headless AArch64 base update](boot/aarch64-base-update.md) has a physical Pi 5 receipt.
 It records its in-tree GCC12 bootstrap boundary separately from the common GCC16 toolchain.
 Do not treat that receipt as acceptance on another board or of a complete general release.
@@ -159,15 +162,17 @@ Do not treat that receipt as acceptance on another board or of a complete genera
 3. Prepare and verify a coherent candidate kernel, required modules and userland from recorded sources.
 4. Back up the old kernel, complete matching module tree, boot files, base, firmware and configuration.
 5. Test reading the backup and booting the recovery medium before replacing active files.
-6. Follow the recipe's order: kernel and matching modules, reboot and check, then compatible userland.
+6. Follow the exact recipe's order. The headless AArch64 recipe checks the new kernel before installing userland.
+   The amd64 installer recipe installs the complete selected release before rebooting.
 7. Merge configuration with `etcupdate`; inspect `postinstall check` using the recipe's candidate source.
 8. Restore and verify board firmware overlays that a base-set installation can replace.
 9. Reboot normally; verify source identity, network, SSH and the same useful application operation.
 
 Do not extract an `etc` archive over your live configuration.
-The [published amd64 candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11)
+The [published amd64 candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-c5d396f5698b68e956b29ee5b256bc7877e6c517-amd64-no-x11)
 provides an exact HTTPS source for installation. Use its matching media and manifest.
-This channel does not establish a general in-place OS upgrade or automatic rollback service.
+The [amd64 VM recipe](boot/amd64-vm-upgrade.md) checks an installer upgrade between two published builds and complete backup recovery.
+There is no general automatic OS-update or rollback service.
 Changing the source URL does not update the running installer kernel or its modules.
 For a VM installation, preserve a powered-off disk and its UEFI variables together before an experimental upgrade.
 A qcow2 copy is a backup, not a validated automatic rollback mechanism.

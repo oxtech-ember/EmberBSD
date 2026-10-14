@@ -39,7 +39,7 @@ are maintained in the related repositories below.
 - For installation screens and compatible set sources, see
   [installer identity](ember/boot/installer-branding.md).
   The installer offers bootable USB/image sets and an EmberBSD CDN source.
-  An [amd64 UEFI VM candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11)
+  An [amd64 UEFI VM candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-c5d396f5698b68e956b29ee5b256bc7877e6c517-amd64-no-x11)
   supplies complete local media and a pinned GitHub HTTPS set source.
   The [release procedure](ember/release/README.md) verifies composition, VM qualification,
   remote file hashes and immutable publication. The custom domain remains deferred.
@@ -951,6 +951,8 @@ The base system shell is unchanged.
   device diagnosis and personal Ports maintenance with the available tools;
   package checks are verified, while on-device agent behavior remains untested.
   A pinned amd64 UEFI installation candidate is published through GitHub Releases.
+  Its VM profile has a checked [installer upgrade and complete backup recovery](ember/boot/amd64-vm-upgrade.md)
+  between two published builds, with configuration and user-data checks after normal reboots.
   It has no X11 and does not establish a general hardware or GCC16 userland release.
 
 The costs are equally plain. Fixes from upstream are merged by hand.
