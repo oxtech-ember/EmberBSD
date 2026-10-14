@@ -21,11 +21,11 @@ Choose the functions you need before choosing an installation route.
 
 ## 2. Obtain a compatible image
 
-Download the [amd64 UEFI installation candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11).
+Download the [amd64 UEFI installation candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-c5d396f5698b68e956b29ee5b256bc7877e6c517-amd64-no-x11).
 For a first VM, choose `EmberBSD-1.0-amd64.iso` and download `SHA256` and `manifest.json` beside it.
 The release also contains a compressed UEFI USB image and matching binary sets.
 Read its release notes: this candidate has no X11 and does not qualify physical machines or boards.
-Its source is `a0674c0d2c1b067339b9436cf6148426546649ef`; all OS components use that same pin.
+Its source is `c5d396f5698b68e956b29ee5b256bc7877e6c517`; all OS components use that same pin.
 The [VM guide](boot/amd64-vm-install.md) covers installation with local sets or GitHub HTTPS.
 Other architectures still require their specific source-build or documented development-image route.
 
@@ -110,6 +110,7 @@ Record failures and missing functions before relying on the device.
 
 Install optional applications through [Ports and Examples](user-guide.md#install-applications).
 Use the [update procedure](user-guide.md#update-emberbsd) and keep a tested recovery medium.
+For the amd64 UEFI VM profile, follow [the checked installer upgrade and backup recovery](boot/amd64-vm-upgrade.md).
 Firmware, OS base and application packages have separate update procedures.
 For agent-assisted shared development, use [EmberBSD Development](../CONTRIBUTING.md#development-through-agents)
 and the same contribution checks as a human author.

@@ -14,9 +14,9 @@ The checked host used QEMU 11.1.1 on Apple Silicon macOS.
 TCG can take several minutes to boot or extract sets.
 
 Download the full ISO, `SHA256` and `manifest.json` from the
-[published candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11).
+[published candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-c5d396f5698b68e956b29ee5b256bc7877e6c517-amd64-no-x11).
 Verify the ISO before attaching it. Its SHA256 is
-`7ca271e2be317e2204fb28eff1ecb80e8baab2ac23d0f909b24239225c28fdb7`.
+`e9b397228a5c0fc5f95b8fdb241de82c0d726f57c73d3851b05040a272270e63`.
 Read the release notes for the no-X11 profile and compiler/hardware limits.
 Continue at [Create an isolated VM](#create-an-isolated-vm).
 
@@ -155,7 +155,7 @@ The release builder supplies the server and exact candidate path:
 
 ```text
 Host: github.com
-Base directory: oxtech-ember/EmberBSD/releases/download/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11
+Base directory: oxtech-ember/EmberBSD/releases/download/build-c5d396f5698b68e956b29ee5b256bc7877e6c517-amd64-no-x11
 Binary set directory: empty
 ```
 
@@ -207,17 +207,18 @@ For an experimental update, preserve the powered-off disk and variables together
 ## Checked boundary
 
 The published candidate pins image, kernel, modules and base to
-`a0674c0d2c1b067339b9436cf6148426546649ef`.
-Its ISO SHA256 is `7ca271e2be317e2204fb28eff1ecb80e8baab2ac23d0f909b24239225c28fdb7`.
-Its compressed UEFI USB SHA256 is `3f485b5dbb9ec1bf7a6d91392db666f01f26b587682e4e25f635e98d41f13c03`.
-Its installed GENERIC kernel SHA256 is `3cf50410b2aa1c5fac4f4d0b822e1dcd2be5d457ceb362e7b4e8099a14ba2bbc`.
+`c5d396f5698b68e956b29ee5b256bc7877e6c517`.
+Its ISO SHA256 is `e9b397228a5c0fc5f95b8fdb241de82c0d726f57c73d3851b05040a272270e63`.
+Its compressed UEFI USB SHA256 is `9e0f818b501b7919efa73de7d347b093dae785103c1ba025c43e275811f67d3d`.
+Its installed GENERIC kernel SHA256 is `a64c1d2638469a394d54ef0f09ff0a5655a8c07fae93f39679fda63da6483c04`.
 
-On 2026-10-13, three fresh 32 GiB GPT guests installed from USB, a controlled
-HTTPS fixture and the published GitHub HTTPS path.
+On 2026-10-14, three fresh 32 GiB GPT guests installed from USB, a controlled
+HTTPS fixture and the published GitHub HTTPS defaults.
 All booted without media and retained a test file after a normal reboot.
 The installed kernel matched its set on both boots in each guest.
-The GitHub route installed the 13-set custom profile without errors or skips;
-all downloaded set hashes matched the public manifest.
+Both HTTPS routes installed the complete 13-set profile without errors or skips;
+all downloaded set hashes matched the candidate manifest.
+The public route retained the baked server and exact release directory, without entering a download URL.
 Saved DHCP configuration and default-trust HTTPS worked after its reboot.
 Both normal and minimal FTP clients rejected unknown CAs, wrong certificate
 names, missing anchors and HTTP 404. GitHub redirects and resume passed.
@@ -226,6 +227,9 @@ The temporary fixture CA did not enter the installed trust store.
 An external client downloaded the public ISO with its exact hash and checked
 HTTP 206 resume and a missing release's 404.
 The release is an immutable prerelease with 20 verified assets.
+The public guest matched the kernel, four critical base files and all 339 module files on both boots.
+Its configuration and test-data hashes were unchanged after reboot.
+The earlier `a0674c0d2c1b067339b9436cf6148426546649ef` release has a separate three-VM receipt dated 2026-10-13.
 The build uses the in-tree GCC12.5 host bootstrap and excludes native GCC commands.
 It does not qualify an installed amd64 GCC16 compiler, X11, physical hardware,
 BIOS installation, SSH deployment, automatic OS updates or long-duration operation.

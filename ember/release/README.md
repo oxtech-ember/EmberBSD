@@ -175,6 +175,12 @@ Binary set directory: empty
 ```
 
 The source menu permits an operator to change these values explicitly.
+An ordinary amd64 sysinst build defaults to the accepted
+`build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11` kit on `github.com`.
+This default supplies the 13-set no-X11 profile; use the documented Custom selection.
+Other architectures retain their separate set layout.
+A release build overrides the host, base directory and binary prefix together
+to select its own pinned candidate, as shown above.
 `SYSINST_FTP_SET_DIR_BIN` changes the compiled network binary prefix only.
 The sysinst configuration keys `ftp prefix` and `local prefix` are independent.
 The `ftp prefix` key now affects network OS sets; use `local prefix` for installation media.
