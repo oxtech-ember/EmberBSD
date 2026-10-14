@@ -7,6 +7,8 @@
 #include <sys/kernel.h>
 #include <sys/kmem.h>
 #include <sys/mutex.h>
+#include <sys/proc.h>
+#include <sys/systm.h>
 
 #include <linux/idr.h>
 
@@ -186,7 +188,8 @@ pvr_create_hwrt_locked(struct drm_device *dev,
 	struct pvr_exec_hwrt *hwrt;
 	struct pvr_file_vm *vm;
 	uint64_t span[5], mlist;
-	uint32_t bvnc, minpages;
+	uint64_t bvnc;
+	uint32_t minpages;
 	int error, i;
 
 	if (args->handle != 0)
