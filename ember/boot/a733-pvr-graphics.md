@@ -168,3 +168,16 @@ clean on the changed sources.
 
 Remaining before a common build: review of the full diff and the GCC16
 `-fanalyzer` pass with a complete kernel build from this branch.
+
+## Full branch build and target analysis (2026-10-14)
+
+The complete branch kernel built clean from the committed tree at
+`dd8cc15b8df1` (GCC16 `EMBER64`, four matched modules, DTBs retained);
+the build receipt with output hashes is in the incremental build root.
+The review pass before it fixed four compile-visible defects: a missing
+type for the HWRT handle drain, an unavailable `sys/limits.h`, an opaque
+free-list dereference replaced by exported identity and page-count
+getters, and the device-info width plus `kpause` declaration. GCC16
+`-fanalyzer` ran on `pvr_exec_hwrt.c`, `pvr_submit.c` and `pvr_exec.c`
+with the exact build flags: zero warnings. The step-2 code is
+build-verified only; no hardware ran it.
