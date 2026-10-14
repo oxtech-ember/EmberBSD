@@ -163,8 +163,9 @@ static int dma_fence_get_status(struct dma_fence *f)
 	}
 	return f->status;
 }
+static unsigned rendered;
 static struct dma_fence *dma_fence_get_stub(void)
-{ CHECK(gated && completed==computed && computed!=0); return dma_fence_get(&stub); }
+{ CHECK(gated && computed+rendered!=0 && completed==computed+rendered); return dma_fence_get(&stub); }
 static int dma_fence_chain_find_seqno(struct dma_fence **fp,uint64_t seqno)
 {
 	struct dma_fence *f=*fp;
@@ -248,6 +249,26 @@ int pvr_context_compute(struct pvr_context *c,const struct rogue_fwif_cmd_comput
 	if(computed==compute_error_at) return EIO;
 	return 0;
 }
+#define ROGUE_FWIF_CCB_CMD_TYPE_FRAG (203u|0x2abc0000u|0x8000u)
+#define ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR (204u|0x2abc0000u|0x8000u)
+static unsigned rendered, render_error_at;
+static uint32_t last_geom_hwrt, last_frag_hwrt, last_cleanup, last_frag_type;
+int pvr_context_render_pair(struct pvr_context *c,const struct rogue_fwif_cmd_geom *g,
+    const struct rogue_fwif_cmd_frag *f,uint32_t ftype,uint32_t cleanup,
+    uint32_t gid,uint32_t fid)
+{
+	CHECK(gated && platform && c->type==DRM_PVR_CTX_TYPE_RENDER);
+	CHECK(gid!=0 && fid!=0 && cleanup!=0 && (cleanup&63)==0);
+	CHECK(g->cmd_shared.hwrt_data_fw_addr!=0);
+	CHECK(g->cmd_shared.hwrt_data_fw_addr==f->cmd_shared.hwrt_data_fw_addr);
+	CHECK(ftype==ROGUE_FWIF_CCB_CMD_TYPE_FRAG||ftype==ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR);
+	last_geom_hwrt=g->cmd_shared.hwrt_data_fw_addr;
+	last_frag_hwrt=f->cmd_shared.hwrt_data_fw_addr;
+	last_cleanup=cleanup; last_frag_type=ftype;
+	rendered++;
+	if(rendered==render_error_at) return EIO;
+	return 0;
+}
 static struct drm_syncobj *drm_syncobj_find(struct drm_file *f,uint32_t handle)
 {
 	struct drm_syncobj *s=NULL;
@@ -283,11 +304,53 @@ static void drm_syncobj_add_point(struct drm_syncobj *s,struct dma_fence_chain *
 	s->fence=&c->base; atomic_fetch_add(&fence_count,1); signals++;
 	CHECK(pthread_mutex_unlock(&sync_lock)==0);
 }
+#include "pvr-exec-hwrt-body.h"
+#include "pvr-hwrt-body.h"
+static unsigned hwrt_gets, hwrt_puts, hwrt_targets;
+static void *last_hwrt_file;
+static uint32_t last_hwrt_handle;
+struct pvr_exec_hwrt { unsigned refs; };
+static struct pvr_exec_hwrt hwrt_model[4];
+static struct pvr_file_vm *hwrt_model_vm;
+static int hwrt_target_error;
+struct pvr_exec_hwrt *
+pvr_exec_hwrt_get(struct drm_file *file, uint32_t handle)
+{
+	hwrt_gets++;
+	last_hwrt_file = file;
+	last_hwrt_handle = handle;
+	if (handle == 0 || handle > 4)
+		return NULL;
+	return &hwrt_model[handle - 1];
+}
+void
+pvr_exec_hwrt_put(struct drm_device *dev, struct pvr_exec_hwrt *hwrt)
+{
+	hwrt_puts++;
+}
+struct pvr_file_vm *
+pvr_exec_hwrt_vm(const struct pvr_exec_hwrt *hwrt)
+{
+	return hwrt_model_vm;
+}
+int
+pvr_exec_hwrt_target(struct pvr_exec_hwrt *hwrt, unsigned index,
+    struct pvr_hwrt_target *target)
+{
+	hwrt_targets++;
+	if (hwrt_target_error != 0)
+		return hwrt_target_error;
+	if (index > 1)
+		return EINVAL;
+	target->fw_address = 0xc0aa0000;
+	target->cleanup_address = 0xc0aa0040;
+	return 0;
+}
 #include "pvr-submit-body.h"
 
 static struct drm_pvr_job jobs[3];
 static struct drm_pvr_sync_op ops[3][4];
-static uint8_t streams[3][44];
+static uint8_t streams[3][384];
 static struct drm_pvr_ioctl_submit_jobs_args arguments;
 static void put32(uint8_t *p,uint32_t v)
 { unsigned i; for(i=0;i<4;i++)p[i]=(uint8_t)(v>>(i*8)); }
@@ -302,7 +365,7 @@ static void initialize(unsigned count)
 	for(i=1;i<8;i++) { syncobjs[i].refs=1; syncobjs[i].handle_live=true; }
 	memset(jobs,0,sizeof(jobs)); memset(ops,0,sizeof(ops)); memset(streams,0,sizeof(streams));
 	allocate_calls=allocation_fault=copy_calls=copy_fault=0;
-	prepared=completed=computed=poisoned=signals=wait_calls=polls=0;
+	prepared=completed=computed=poisoned=signals=wait_calls=polls=0; rendered=hwrt_gets=hwrt_puts=hwrt_targets=0;
 	compute_error_at=next_id=0; prepare_error=backend_error=pause_error=wait_error=id_error=0;
 	backend_changed=switch_backend_on_pause=backend_absent=false; retained=NULL; concurrent=waiter_entered=waiter_released=frozen_clock=false;
 	clock_ns=0; waiting_thread=false; nranges=0;
@@ -389,6 +452,27 @@ static void preflight_cases(void)
 	}
 	initialize(1); contexts[1].firmware.type=DRM_PVR_CTX_TYPE_RENDER;
 	CHECK(submit()==-EINVAL && computed==0); finish();
+	/* Render pair through the HWRT reference and target model. */
+	initialize(2);
+	contexts[1].firmware.type=DRM_PVR_CTX_TYPE_RENDER;
+	memset(streams,0,sizeof(streams));
+	put32(streams[0],40); put64(streams[0]+8,UINT64_C(0x9000000000));
+	put32(streams[1],384); put64(streams[1]+8,UINT64_C(0x9001000000));
+	jobs[0].type=DRM_PVR_JOB_TYPE_GEOMETRY; jobs[0].hwrt.set_handle=1;
+	jobs[0].cmd_stream_len=40;
+	jobs[1].type=DRM_PVR_JOB_TYPE_FRAGMENT; jobs[1].hwrt.set_handle=1;
+	jobs[1].cmd_stream_len=384;
+	hwrt_model_vm=&contexts[1].vm;
+	CHECK(submit()==0 && rendered==1 && hwrt_gets==1 && hwrt_puts==1);
+	CHECK(last_geom_hwrt==0xc0aa0000 && last_cleanup==0xc0aa0040);
+	CHECK(last_frag_type==ROGUE_FWIF_CCB_CMD_TYPE_FRAG || last_frag_type==ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR);
+	finish();
+	/* Fragment without a preceding geometry is rejected. */
+	initialize(1);
+	contexts[1].firmware.type=DRM_PVR_CTX_TYPE_RENDER;
+	jobs[0].type=DRM_PVR_JOB_TYPE_FRAGMENT;
+	CHECK(submit()<0 && rendered==0 && hwrt_gets==0);
+	finish();
 	initialize(1); id_error=EOVERFLOW;
 	CHECK(submit()==-EOVERFLOW && computed==0); finish();
 }

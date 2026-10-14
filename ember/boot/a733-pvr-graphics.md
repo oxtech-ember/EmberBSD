@@ -147,3 +147,24 @@ against an independent recomputation from the Mesa formulas (`pvr-exec
 and Clang Static Analyzer are clean on the new module. Paired
 geometry/fragment submission and the HWRT preflight in `SUBMIT_JOBS`
 remain the next work, with contracts before any common build.
+
+## Paired submission (step 2 complete, 2026-10-14)
+
+`pvr_submit_jobs` now decodes geometry and fragment jobs beside compute.
+Geometry and fragment must alternate strictly: every geometry is followed
+by its fragment, and no fragment appears alone. The pair resolves one
+HWRT reference (kept on the geometry half; the fragment reuses it, so
+exactly one get and one put per pair), checks that the dataset, the
+render context and both jobs share one VM, and rejects differing dataset
+handles, render-target indices or contexts. Both jobs' wait dependencies
+are consumed while ungated before execution; the target is marked
+exposed immediately before the paired call, both commands receive the
+firmware HWRT data address, and `pvr_context_render_pair` publishes both
+queues in one combined kick with the target's cleanup control. The
+fragment command type (FRAG or FRAG_PR) comes from the decoded stream.
+The contract covers the successful pair, the lone-fragment rejection and
+the render-context preflight; Cppcheck and Clang Static Analyzer are
+clean on the changed sources.
+
+Remaining before a common build: review of the full diff and the GCC16
+`-fanalyzer` pass with a complete kernel build from this branch.
