@@ -193,6 +193,10 @@ on every board in the hardware catalog.
   are preserved in the [media port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/media).
   This is a CPU file-processing profile; camera capture, network streaming
   and hardware codecs remain outside its verified scope.
+  A separate [GCC16 CPU cross package](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/cross)
+  passes real dependency/package cycles, exact FFV1 pixels, timestamps,
+  inverse filters and PCM samples in AArch64 QEMU. Its current XML provider
+  passes installed contracts and preserves the libxml2.so.16 ABI.
 - **Recording experiments and finding visual markers:** MCAP C++ 2.1.3 records
   timestamped messages with indexed replay and LZ4/Zstd compression. AprilTag
   3.4.5 detects markers and estimates their pose. Installed AArch64 VM checks
@@ -228,8 +232,13 @@ on every board in the hardware catalog.
   and [RTAB-Map](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/rtabmap)
   with common current dependencies. [Ruckig](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ruckig)
   and [OSQP](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/osqp)
-  pass host numerical contracts; [OMPL](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ompl)
-  has a prepared planning profile. Native acceptance of these additions remains pending.
+  now have GCC16 cross packages accepted in EmberBSD AArch64 QEMU. Ruckig
+  passes analytic/online motion contracts and all 15 bounded upstream groups.
+  OSQP passes QP/KKT, infeasibility, derivatives, real SIGINT and all three
+  upstream programs. Both packages pass removal/reinstallation. These are
+  software contracts; physical motion and real-time reliability remain unverified.
+  [OMPL](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ompl)
+  has a prepared planning profile. Other navigation additions still need target acceptance.
 - **Ethernet SDR development:** the [Ports SDR profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/sdr)
   combines SoapySDR, libiio 1.0.0 with its official compatibility layer,
   AD9361/Pluto support and current libxml2. Synthetic IQ and loopback RX
