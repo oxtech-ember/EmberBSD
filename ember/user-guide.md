@@ -93,6 +93,11 @@ A network test on Ethernet does not validate Wi-Fi or Bluetooth.
 
 ## Enable SSH
 
+The guided amd64 installer includes and enables SSH for both console and XFCE installations.
+It creates host keys at first boot and keeps the existing authentication policy.
+Check `/etc/rc.d/sshd status` before starting another server.
+Other image profiles can explicitly disable SSH, including the isolated AArch64 development image described above.
+
 Create a key on your **client host**, or use an existing key under your control.
 Copy only its public key to the normal user's `~/.ssh/authorized_keys` on EmberBSD.
 Use owner-only permissions: `chmod 700 ~/.ssh` and `chmod 600 ~/.ssh/authorized_keys` as that user.
@@ -107,7 +112,7 @@ ssh-keygen -A
 ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-Set `sshd=YES` in `/etc/rc.conf`, then run `/etc/rc.d/sshd start`.
+For a profile which disables SSH, set `sshd=YES` in `/etc/rc.conf`, then run `/etc/rc.d/sshd start`.
 On the client, connect with `ssh emberuser@DEVICE_ADDRESS` and confirm the host-key fingerprint through the console.
 Check an administrative `su -` session while console access remains available.
 For key-only access, set `PasswordAuthentication no` and `KbdInteractiveAuthentication no` in `/etc/ssh/sshd_config`.
@@ -116,6 +121,18 @@ Run `sshd -t` again before `/etc/rc.d/sshd reload`.
 Open a second client session before closing the first one.
 
 ## Install applications
+
+The guided amd64 installer's System step can install XFCE and its Wi-Fi manager with the OS.
+After console login, run `ember-desktop` to start that session.
+The network manager appears in the panel automatically.
+Use its menu for network preferences and its wireless list when a supported radio is present.
+This option also installs X11 and enables dbus, dhcpcd and wpa_supplicant.
+Use the normal administrative account configured during installation; no graphical automatic login is created.
+KDE Plasma remains an unavailable development option.
+
+With Graphics set to None, use the base `wpa_cli`, `wpa_supplicant` and `dhcpcd` tools.
+Follow the [console Wi-Fi configuration](boot/text-installer.md#first-login) and the exact board's radio instructions.
+The console profile does not install desktop packages or enable WPA automatically.
 
 [Ports](https://github.com/oxtech-ember/EmberBSD-Ports) owns packages, dependency versions and portability patches.
 [Examples](https://github.com/oxtech-ember/EmberBSD-Examples) owns runnable application scenarios.

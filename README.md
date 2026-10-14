@@ -41,10 +41,12 @@ are maintained in the related repositories below.
   The amd64 keyboard wizard reviews automatic GPT, profiles and settings before writing.
   Normal startup is quiet, with a separate diagnostic choice and a 10-second menu.
   Console login uses the EmberBSD release greeting; full attribution stays in /etc/release.
-  Its optional XFCE/Wi-Fi package integration is undergoing amd64 VM acceptance;
+  A fresh amd64 UEFI VM passes complete USB installation with XFCE and its Wi-Fi manager.
+  A separate Minimal/None HTTP installation passes cold boot and console Wi-Fi tool checks;
   SSH is enabled by default with unchanged authentication settings.
   An [amd64 UEFI VM candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-c5d396f5698b68e956b29ee5b256bc7877e6c517-amd64-no-x11)
-  supplies complete local media and a pinned GitHub HTTPS set source.
+  supplies the separate no-X11 media and a pinned GitHub HTTPS set source.
+  The accepted desktop candidate remains local until its matching kit is published.
   The [release procedure](ember/release/README.md) verifies composition, VM qualification,
   remote file hashes and immutable publication. The custom domain remains deferred.
 

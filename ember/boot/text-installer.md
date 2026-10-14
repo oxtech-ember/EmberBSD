@@ -124,6 +124,17 @@ Record the image hashes, kernel identity, source failures, review, completion an
 The image build uses the tree's GCC 12.5 bootstrap profile; GCC16 migration is separate.
 The general [VM walkthrough](amd64-vm-install.md) describes the surrounding build and boot setup.
 
+The complete candidate at `56046a492ea498bfe2a38ae635a60bba7551c574` passes amd64 UEFI VM acceptance.
+Standard/XFCE installs from the full USB image and starts an installed XFCE session after cold boot.
+Thunar, the terminal and the automatically started dhcpcd-gtk preferences open visibly.
+Minimal/None installs five required sets over an explicit trusted HTTP source and cold-boots without media.
+Both installations pass the installed kernel hash, running SSH handshake and console Wi-Fi tool checks.
+An HTTP 404 and a damaged desktop bundle return to Source before confirmation.
+The complete 32 GiB target disk still matches its saved baseline after those failures.
+The repaired source retains the profile and network settings.
+These checks do not qualify public HTTPS delivery of this desktop kit, BIOS installation, physical radios or GPU acceleration.
+The separate published no-X11 kit has its own HTTPS acceptance record.
+
 ## Build a desktop candidate
 
 The no-X11 release wrapper is a separate profile. To build the desktop media,
@@ -178,3 +189,9 @@ SYSINST_FTP_SET_DIR_BIN. An empty binary prefix selects a flat release directory
 The direct wizard path honors these values and retains a custom URL on retry.
 Use a directory containing this candidate's own BUILDID, sets and bundle.
 An older published kit cannot supply matching sets for a newly compiled boot image.
+
+On macOS, the host font tools use system zlib and Expat's host endian/random configuration.
+Run `ruby ember/tests/x11-host-freetype.rb` and `ruby ember/tests/x11-host-expat.rb` for those actual-source regressions.
+The accepted release retains inherited SiS manual preprocessor diagnostics; its generated manual renders successfully.
+The native Wi-Fi leaf can report absent pkg_install version metadata; installation and runtime checks still pass.
+Neither diagnostic is suppressed or presented as a clean full warning log.
