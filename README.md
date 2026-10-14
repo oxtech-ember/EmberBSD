@@ -770,7 +770,10 @@ on every board in the hardware catalog.
   Thirteen protocol and 31 actual-parent host groups pass with sanitizers;
   eight native rump groups execute the actual parent/workqueue/ucom/TTY with
   test-only USB, including initial DCD, parallel ports, control, fault query,
-  close and detach. Existing foundation regressions remain separate.
+  close and detach. The GCC16.2 EMBER64 wrapper builds the kernel, four matched
+  modules and three DTBs; all 45 portable contracts pass. Its isolated VM boot
+  repeats eight G2 and sixteen foundation groups with accepted GCC12.5 test
+  binaries and NetBSD 11 userspace. This is kernel software evidence.
   Firmware is an external licensed asset; physical descriptor, firmware,
   controller and electrical acceptance remain pending
   ([guide](ember/boot/moxa-g2.md)).
