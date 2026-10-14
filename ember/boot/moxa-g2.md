@@ -120,6 +120,38 @@ parents retain their original routing. A new non-blocking idle query includes
 TTY output not yet submitted to the parent. Rebuild kernel and affected
 modules together; this is not a binary ABI guarantee for old modules.
 
+## GCC16 kernel gate — 14 October 2026
+
+The owning Ports kernel-mode recipe prepared GCC/G++16.2 with host math tests:
+GMP177 passed/1 upstream skip, MPFR198 passed, MPC75 passed. The installed
+compiler split-DWARF gate passes after rebuilding the fork host tools. Required
+unmerged repairs are proposed separately in [OS tools #4](https://github.com/oxtech-ember/EmberBSD/pull/4),
+[portable contracts #5](https://github.com/oxtech-ember/EmberBSD/pull/5) and
+[Ports #2](https://github.com/oxtech-ember/EmberBSD-Ports/pull/2). Their docs retain
+inherited analyzer/leak and host-parser limitations; no whole-toolchain-clean claim.
+
+Clean export: `d0d54ab06c6c57fa0f87618bb2e91214181d0b3b`, 192070 blobs matched.
+The public wrapper completed EMBER64, four matched modules and three DTBs;
+all 45 portable contract scripts pass. Target ucom matrix: 22 objects/all19
+owners with GCC16.2. Kernel and module input objects report GCC16 producers;
+module links discard the comment section. Native board-specific contracts remain
+outside the Darwin portable gate; this is not a complete OS release or module
+loading acceptance on their physical boards.
+
+Kernel SHA256: `0021eb035a14ea3d60c5698a1761413a82f21a8fd6346de096a00cb80b274b0b`.
+An isolated COW VM booted this kernel with matching live `kern.buildinfo`, matching
+on-disk hash and module autoload disabled. Accepted native fixtures repeated
+8 G2 and16ucom groups, zero failures. Fixture binaries were built with GCC12.5;
+the standard userspace/rump libraries remain NetBSD11. This does not establish
+GCC16 userspace or an actual G2 USB controller/firmware/electrical result.
+The previous kernel is retained for rollback and the VM is shut down after testing.
+
+Production kernel inputs equal compiled `e1ae166391772f60491ac9d22de6d5a7205e8f32`;
+later changes repair host fixtures/WPA comparison and record results. A stale
+empty generated lex output and cached vers.o were explicitly regenerated during
+qualification; old failed logs remain retained. Driver production code has not
+changed since the prior software checkpoint. No USB passthrough was used here.
+
 ## Physical handoff and recovery
 
 Connect a 1450-G2 when software review/build is complete. Record complete cold
