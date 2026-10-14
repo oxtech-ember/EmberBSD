@@ -512,7 +512,6 @@ static void sysctl_relock(void) { abort(); }
 #define CTL_HW 16
 #define CTL_CREATE 32
 #define CTL_EOL -1
-typedef int kmutex_t;
 #define MUTEX_DEFAULT 0
 #define IPL_NONE 0
 static void mutex_init(kmutex_t *m, int type, int ipl) { *m = 1; }
