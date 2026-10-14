@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800" role="img" aria-labelledby="title desc">
+  <title id="title">EmberBSD YS-M33 boot splash</title>
+  <desc id="desc">Smaller flame mascot and thin orange EmberBSD wordmark for the 1280 by 800 YS-M33 display.</desc>
+  <rect width="1280" height="800" fill="#FFFFFF"/>
+  <image href="emberbsd-boot-logo.png" x="520" y="240" width="240" height="271" preserveAspectRatio="xMidYMid meet"/>
+  <text x="640" y="545" text-anchor="middle" fill="#C2410C" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="30" font-weight="300" letter-spacing="0.4">EmberBSD</text>
+</svg>

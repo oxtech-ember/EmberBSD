@@ -7,6 +7,11 @@
 
 include "arch/evbarm/conf/EMBER64"
 
+# The panel framebuffer is 800x1280 portrait, mounted as a landscape
+# screen: the splash is the 1280x800 design rotated clockwise.
+no makeoptions SPLASHSCREEN_IMAGE
+makeoptions SPLASHSCREEN_IMAGE="${S}/../ember/boot/emberbsd-boot-splash-a133-panel.png"
+
 options EARLYCONS=sunxi,CONSADDR=0x05000000
 options VERBOSE_INIT_ARM
 
