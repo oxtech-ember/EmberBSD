@@ -21,6 +21,7 @@ typedef void *bus_space_tag_t;
 typedef uintptr_t bus_space_handle_t;
 typedef uintptr_t bus_addr_t;
 typedef size_t bus_size_t;
+typedef int kmutex_t;
 typedef void *bus_dma_tag_t;
 typedef void *bus_dmamap_t;
 typedef struct { bus_addr_t ds_addr; bus_size_t ds_len; } bus_dma_segment_t;
@@ -33,6 +34,9 @@ typedef struct { bus_addr_t ds_addr; bus_size_t ds_len; } bus_dma_segment_t;
 #include "sun60i_a733_gpu_fwcompute.h"
 #include "sun60i_a733_gpu_fwcompute_file.h"
 #include "sun60i_a733_gpu_fwheap.h"
+#include "sun60i_a733_gpu_fwservice.h"
+#include "pvr-backend.h-body.h"
+#include "sun60i_a733_gpu_fwbridge.h"
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
@@ -470,11 +474,17 @@ struct sysctllog;
 struct sysctlnode { void *sysctl_data; };
 #define SYSCTLFN_ARGS struct sysctllog *log, void *sname, void *nam, \
 	struct sysctlnode *rnode, const void *newp, size_t newlen
-#define SYSCTLFN_CALL(rn) (log, sname, nam, (rn), newp, newlen)
-#define sysctl_lookup(...) (0)
+#define SYSCTLFN_CALL(rn) log, sname, nam, (rn), newp, newlen
+static int
+sysctl_lookup(SYSCTLFN_ARGS)
+{
+	(void)rnode;
+	return 0;
+}
 static int sysctl_createv_stub(void *first, ...) { (void)first; return 0; }
 #define sysctl_createv(...) sysctl_createv_stub(__VA_ARGS__)
 
+typedef int32_t __s32;
 typedef uint16_t __u16;
 typedef uint32_t __u32;
 typedef uint64_t __u64;
@@ -870,7 +880,6 @@ sun60i_a733_gpu_fwprobe(bus_space_tag_t tag, bus_space_handle_t handle,
 	return fw_probe_error;
 }
 
-int
 /* Stages 19-21 publish caller-built KCCB commands on real hardware only. */
 static unsigned fwprobe_cmd_calls;
 int
@@ -1017,6 +1026,27 @@ sun60i_a733_gpu_fwprobe_mmucache(bus_space_tag_t tag, bus_space_handle_t handle,
 }
 
 #define sun60i_a733_gpu_fwinfo_parse fw_parse
+/* The execution bridge is outside this identification fixture. Never fake
+ * successful adoption: an unexpected call is a causal test failure. */
+int
+sun60i_a733_gpu_fwbridge_prepare(struct sun60i_a733_gpu_fwbridge *bridge,
+    kmutex_t *lock, bus_space_tag_t tag, bus_space_handle_t handle,
+    struct sun60i_a733_gpu_fwmem *mem,
+    const struct sun60i_a733_gpu_fwboot_result *boot,
+    const struct sun60i_a733_gpu_fwprobe_result *probe)
+{
+	assert(!"unexpected execution bridge in identification fixture");
+	return ENXIO;
+}
+
+int
+sun60i_a733_gpu_fwbridge_publish(struct sun60i_a733_gpu_fwbridge *bridge,
+    struct drm_device *device)
+{
+	assert(!"unexpected execution bridge publication in identification fixture");
+	return ENXIO;
+}
+
 #include "driver.h"
 #undef sun60i_a733_gpu_fwinfo_parse
 #define CHECK(c) do { assert(c); checks++; } while (0)
