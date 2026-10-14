@@ -147,6 +147,7 @@ pvr_exec_close(struct drm_device *dev, struct pvr_exec_file *ef)
 {
 	struct pvr_exec_context *ctx;
 	struct pvr_exec_freelist *fl;
+	struct pvr_exec_hwrt *hwrt;
 	int id;
 
 	for (;;) {
@@ -167,11 +168,11 @@ pvr_exec_close(struct drm_device *dev, struct pvr_exec_file *ef)
 	}
 	for (;;) {
 		id = 0;
-		ctx = idr_get_next(&ef->hwrts, &id);
-		if (ctx == NULL)
+		hwrt = idr_get_next(&ef->hwrts, &id);
+		if (hwrt == NULL)
 			break;
 		idr_remove(&ef->hwrts, id);
-		pvr_exec_hwrt_put(dev, ctx);
+		pvr_exec_hwrt_put(dev, hwrt);
 	}
 	idr_destroy(&ef->contexts);
 	idr_destroy(&ef->freelists);
