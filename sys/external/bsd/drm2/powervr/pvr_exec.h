@@ -36,6 +36,8 @@ void pvr_exec_freelist_put(struct drm_device *, struct pvr_exec_freelist *);
 int pvr_exec_freelist_info(const struct pvr_exec_freelist *,
     struct pvr_exec_freelist_info *);
 struct pvr_file_vm *pvr_exec_freelist_vm(const struct pvr_exec_freelist *);
+bool pvr_exec_freelist_same(const struct pvr_exec_freelist *,
+    const struct pvr_exec_freelist *);
 struct idr *pvr_exec_hwrt_handles(struct drm_file *);
 int pvr_exec_insert(struct idr *, void *, uint32_t *);
 #endif /* _PVR_EXEC_H_ */

@@ -435,6 +435,15 @@ pvr_exec_freelist_info(const struct pvr_exec_freelist *fl,
 	return 0;
 }
 
+bool
+pvr_exec_freelist_same(const struct pvr_exec_freelist *a,
+    const struct pvr_exec_freelist *b)
+{
+
+	return a != NULL && b != NULL &&
+	    a->firmware == b->firmware;
+}
+
 struct pvr_file_vm *
 pvr_exec_freelist_vm(const struct pvr_exec_freelist *fl)
 {

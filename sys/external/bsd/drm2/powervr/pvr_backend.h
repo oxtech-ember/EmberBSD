@@ -63,5 +63,7 @@ void pvr_device_leave(struct drm_device *);
 /* Retain unreachable device-owned state until reboot. The device gate is held. */
 void pvr_device_retain(struct drm_device *, void *);
 int pvr_device_next_id(struct drm_device *, uint32_t *);
+struct drm_device;
+int pvr_device_hwrt_info(struct drm_device *, uint64_t *, uint32_t *);
 
 #endif /* _PVR_BACKEND_H_ */

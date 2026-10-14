@@ -210,7 +210,7 @@ pvr_create_hwrt_locked(struct drm_device *dev,
 	if (pvr_exec_freelist_info(hwrt->local, &local_info) != 0 ||
 	    pvr_exec_freelist_info(hwrt->global, &global_info) != 0 ||
 	    local_info.vm != global_info.vm ||
-	    hwrt->local->firmware == hwrt->global->firmware) {
+	    pvr_exec_freelist_same(hwrt->local, hwrt->global)) {
 		error = EINVAL;
 		goto fail;
 	}
