@@ -6,7 +6,6 @@
 #include <sys/types.h>
 #include <sys/kernel.h>
 #include <sys/kmem.h>
-#include <sys/limits.h>
 #include <sys/mutex.h>
 
 #include <linux/idr.h>
