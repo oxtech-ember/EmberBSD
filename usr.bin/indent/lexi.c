@@ -116,7 +116,7 @@ static struct {
  * HP H+ "."    P  FS  -> $float;    BP B+           IS? -> $int;
  */
 /* INDENT OFF */
-static const unsigned char lex_number_state[][26] = {
+static const unsigned char lex_number_state[][27] = {
 	/*                examples:
 	                                 00
 	         s                      0xx

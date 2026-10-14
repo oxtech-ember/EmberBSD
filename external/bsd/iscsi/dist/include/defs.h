@@ -44,7 +44,7 @@
 #include <string.h>
 
 #define NEWARRAY(type,ptr,size,where,action) do {			\
-	if ((ptr = (type *) calloc(sizeof(type), (unsigned)(size))) == NULL) { \
+	if ((ptr = (type *) calloc((unsigned)(size), sizeof(type))) == NULL) { \
 		(void) fprintf(stderr, "%s: can't allocate %lu bytes\n", \
 			where, (unsigned long)(size * sizeof(type)));	\
 		action;							\

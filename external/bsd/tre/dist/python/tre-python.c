@@ -368,7 +368,7 @@ PyTrePattern_search(TrePatternObject *self, PyObject *args)
   if (PyUnicode_Check(pstring))
     {
       Py_ssize_t len = PyUnicode_GetSize(pstring);
-      wchar_t *buf = calloc(sizeof(wchar_t), len);
+      wchar_t *buf = calloc(len, sizeof(wchar_t));
       if(!buf)
         {
           Py_DECREF(mo);
@@ -506,7 +506,7 @@ PyTre_ncompile(PyObject *self, PyObject *args)
   if (upattern != NULL)
     {
       Py_ssize_t len = PyUnicode_GetSize(upattern);
-      wchar_t *buf = calloc(sizeof(wchar_t), len);
+      wchar_t *buf = calloc(len, sizeof(wchar_t));
       if(!buf)
         {
           Py_DECREF(rv);

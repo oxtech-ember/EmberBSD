@@ -603,7 +603,6 @@ si70xx_attach(device_t parent, device_t self, void *aux)
 	struct si70xx_sc *sc;
 	struct i2c_attach_args *ia;
 	int error, i;
-	int ecount = 0;
 	uint8_t buf[8];
 	uint8_t testcrcpt1[4];
 	uint8_t testcrcpt2[4];
@@ -655,7 +654,6 @@ si70xx_attach(device_t parent, device_t self, void *aux)
 	if (error) {
 		aprint_error_dev(self, "Failed to read first part of ID: %d\n",
 		    error);
-		ecount++;
 	}
 	testcrcpt1[0] = buf[0];
 	testcrcpt1[1] = buf[2];
@@ -687,7 +685,6 @@ si70xx_attach(device_t parent, device_t self, void *aux)
 	if (error != 0) {
 		aprint_error_dev(self, "Failed to read second part of ID: %d\n",
 		    error);
-		ecount++;
 	}
 	model = testcrcpt2[0] = buf[0];
 	testcrcpt2[1] = buf[1];

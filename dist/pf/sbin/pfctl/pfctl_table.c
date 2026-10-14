@@ -576,7 +576,6 @@ pfctl_show_ifaces(const char *filter, int opts)
 {
 	struct pfr_buffer	 b;
 	struct pfi_kif		*p;
-	int			 i = 0;
 
 	bzero(&b, sizeof(b));
 	b.pfrb_type = PFRB_IFACES;
@@ -589,7 +588,6 @@ pfctl_show_ifaces(const char *filter, int opts)
 		}
 		if (b.pfrb_size <= b.pfrb_msize)
 			break;
-		i++;
 	}
 	if (opts & PF_OPT_SHOWALL)
 		pfctl_print_title("INTERFACES:");

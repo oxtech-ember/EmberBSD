@@ -143,8 +143,11 @@ EXPORT_SYMBOL(drm_dp_dual_mode_write);
 
 static bool is_hdmi_adaptor(const char hdmi_id[DP_DUAL_MODE_HDMI_ID_LEN])
 {
-	static const char dp_dual_mode_hdmi_id[DP_DUAL_MODE_HDMI_ID_LEN] =
-		"DP-HDMI ADAPTOR\x04";
+	/* EmberBSD: exact 16 bytes, no terminating NUL. */
+	static const char dp_dual_mode_hdmi_id[DP_DUAL_MODE_HDMI_ID_LEN] = {
+		'D', 'P', '-', 'H', 'D', 'M', 'I', ' ',
+		'A', 'D', 'A', 'P', 'T', 'O', 'R', 0x04
+	};
 
 	return memcmp(hdmi_id, dp_dual_mode_hdmi_id,
 		      sizeof(dp_dual_mode_hdmi_id)) == 0;

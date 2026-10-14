@@ -68,18 +68,18 @@ rsa_key_insert(struct genlist *list, struct netaddr *src,
 {
 	struct rsa_key *rsa_key;
 
-	rsa_key = calloc(sizeof(struct rsa_key), 1);
+	rsa_key = calloc(1, sizeof(struct rsa_key));
 	rsa_key->rsa = rsa;
 
 	if (src)
 		rsa_key->src = src;
 	else
-		rsa_key->src = calloc(sizeof(*rsa_key->src), 1);
+		rsa_key->src = calloc(1, sizeof(*rsa_key->src));
 
 	if (dst)
 		rsa_key->dst = dst;
 	else
-		rsa_key->dst = calloc(sizeof(*rsa_key->dst), 1);
+		rsa_key->dst = calloc(1, sizeof(*rsa_key->dst));
 
 	genlist_append(list, rsa_key);
 
@@ -91,7 +91,7 @@ rsa_key_dup(struct rsa_key *key)
 {
 	struct rsa_key *new;
 
-	new = calloc(sizeof(struct rsa_key), 1);
+	new = calloc(1, sizeof(struct rsa_key));
 	if (new == NULL)
 		return NULL;
 

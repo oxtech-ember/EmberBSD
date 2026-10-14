@@ -31,7 +31,7 @@
 #define DEFS_H_
 
 #define NEWARRAY(type,ptr,size,action) do {				\
-	if ((ptr = (type *) calloc(sizeof(type), size)) == NULL) { 	\
+	if ((ptr = (type *) calloc(size, sizeof(type))) == NULL) { 	\
 		warn("can't allocate %ld bytes", (long)(size * sizeof(type))); \
 		action;							\
 	}								\

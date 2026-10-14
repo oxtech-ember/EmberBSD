@@ -92,7 +92,7 @@ char *fn			/* list of magic files */
 )
 {
         maxmagic = MAXMAGIS;
-	__f_magic = (struct magic *) calloc(sizeof(struct magic), maxmagic);
+	__f_magic = (struct magic *) calloc(maxmagic, sizeof(struct magic));
 	if (__f_magic == NULL) 
 		return -1;
 

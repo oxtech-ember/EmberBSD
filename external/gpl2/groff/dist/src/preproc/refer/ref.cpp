@@ -21,6 +21,8 @@ You should have received a copy of the GNU General Public License along
 with groff; see the file COPYING.  If not, write to the Free Software
 Foundation, 51 Franklin St - Fifth Floor, Boston, MA 02110-1301, USA. */
      
+#include <string.h>
+
 #include "refer.h"
 #include "refid.h"
 #include "ref.h"
@@ -536,9 +538,9 @@ int same_reference(const reference &r1, const reference &r2)
   if (r1.nfields != r2.nfields)
     return 0;
   int i = 0; 
-  for (i = 0; i < 256; i++)
-    if (r1.field_index != r2.field_index)
-      return 0;
+  /* EmberBSD: array comparison decayed to pointers; compare contents. */
+  if (memcmp(r1.field_index, r2.field_index, 256) != 0)
+    return 0;
   for (i = 0; i < r1.nfields; i++)
     if (r1.field[i] != r2.field[i])
       return 0;

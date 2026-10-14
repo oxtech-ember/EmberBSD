@@ -1352,7 +1352,7 @@ void
 something(int cavelevel)
 {
 	int    j;
-	int             i;
+	int             i = 0;
 	if (cavelevel < 0 || cavelevel > MAXLEVEL + MAXVLEVEL)
 		return;		/* correct level? */
 	if (rnd(101) < 8)

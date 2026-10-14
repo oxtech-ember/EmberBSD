@@ -138,8 +138,8 @@ vsnprintf_ss(char *sbuf, size_t slen, const char *fmt0, va_list ap)
 	char *tailp;		/* tail pointer for snprintf */
 	size_t len;
 
-	static const char xdigs_lower[16] = "0123456789abcdef";
-	static const char xdigs_upper[16] = "0123456789ABCDEF";
+	static const char xdigs_lower[] = "0123456789abcdef";
+	static const char xdigs_upper[] = "0123456789ABCDEF";
 
 	_DIAGASSERT(slen == 0 || sbuf != NULL);
 	_DIAGASSERT(fmt0 != NULL);

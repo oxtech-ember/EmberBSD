@@ -64,7 +64,7 @@ walk(char *buffer, size_t size, const struct lookfor *these, size_t numthese)
 {
 	size_t i = 0;
 	size_t len;
-	int line = 1;
+	int line __unused = 1;
 	int error;
 
 	while (i < size) {

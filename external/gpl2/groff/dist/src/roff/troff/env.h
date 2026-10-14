@@ -38,8 +38,8 @@ public:
   int to_points();
   int to_scaled_points();
   int to_units();
-  int operator==(font_size);
-  int operator!=(font_size);
+  int operator==(font_size) const;
+  int operator!=(font_size) const;
   static void init_size_table(int *sizes);
 };
 
@@ -47,12 +47,12 @@ inline font_size::font_size() : p(0)
 {
 }
 
-inline int font_size::operator==(font_size fs)
+inline int font_size::operator==(font_size fs) const
 {
   return p == fs.p;
 }
 
-inline int font_size::operator!=(font_size fs)
+inline int font_size::operator!=(font_size fs) const
 {
   return p != fs.p;
 }

@@ -643,8 +643,12 @@ bool dce_aux_transfer_with_retries(struct ddc_service *ddc,
 						goto fail;
 					else
 						udelay(300);
-				} else
+				} else {
+					/* EmberBSD: do not leak &reply to the caller. */
+					if (!payload_reply)
+						payload->reply = NULL;
 					return true;
+				}
 			break;
 
 			case AUX_TRANSACTION_REPLY_AUX_DEFER:

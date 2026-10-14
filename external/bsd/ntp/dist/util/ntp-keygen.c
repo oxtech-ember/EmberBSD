@@ -319,7 +319,7 @@ main(
 	int	iffkey = 0;	/* generate IFF keys */
 	int	gqkey = 0;	/* generate GQ keys */
 	int	mvkey = 0;	/* update MV keys */
-	int	mvpar = 0;	/* generate MV parameters */
+	int	mvpar __unused = 0;	/* generate MV parameters */
 	char	*sign = NULL;	/* sign key */
 	EVP_PKEY *pkey = NULL;	/* temp key */
 	const EVP_MD *ectx;	/* EVP digest */

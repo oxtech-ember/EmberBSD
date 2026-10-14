@@ -1861,8 +1861,8 @@ size_arrays(iscsi_target_t *tgt, unsigned needed)
 	if (tgt->size == 0) {
 		/* only get here first time around */
 		tgt->size = needed;
-		tgt->name = calloc(sizeof(char *), needed);
-		tgt->value = calloc(sizeof(char *), needed);
+		tgt->name = calloc(needed, sizeof(char *));
+		tgt->value = calloc(needed, sizeof(char *));
 	} else if (tgt->c == tgt->size) {
 		/* only uses 'needed' when filled array */
 		tgt->size += needed;

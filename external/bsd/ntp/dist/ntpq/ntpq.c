@@ -862,7 +862,7 @@ dump_hex_printable(
 	 *---------------
 	 *  68 bytes
 	 */
-	static const char s_xdig[16] = "0123456789ABCDEF";
+	static const char s_xdig[17] = "0123456789ABCDEF";
 
 	char lbuf[68];
 	int  ch, rowlen;

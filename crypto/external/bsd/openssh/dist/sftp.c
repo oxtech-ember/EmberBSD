@@ -1103,7 +1103,7 @@ do_df(struct sftp_conn *conn, const char *path, int hflag, int iflag)
 	struct sftp_statvfs st;
 	char s_used[FMT_SCALED_STRSIZE], s_avail[FMT_SCALED_STRSIZE];
 	char s_root[FMT_SCALED_STRSIZE], s_total[FMT_SCALED_STRSIZE];
-	char s_icapacity[16], s_dcapacity[16];
+	char s_icapacity[32], s_dcapacity[32];
 
 	if (sftp_statvfs(conn, path, &st, 1) == -1)
 		return -1;

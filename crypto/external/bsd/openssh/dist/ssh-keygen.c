@@ -343,6 +343,8 @@ do_convert_to_ssh2(struct passwd *pw, struct sshkey *k)
 	fprintf(stdout, "Comment: \"%s\"\n%s", comment, b64);
 	fprintf(stdout, "%s\n", SSH_COM_PUBLIC_END);
 	free(b64);
+	/* EmberBSD: terminate to honour __dead like portable upstream. */
+	exit(0);
 }
 
 __dead static void
@@ -362,6 +364,8 @@ do_convert_to_pkcs8(struct sshkey *k)
 	default:
 		fatal_f("unsupported key type %s", sshkey_type(k));
 	}
+	/* EmberBSD: terminate to honour __dead like portable upstream. */
+	exit(0);
 }
 
 __dead static void
@@ -381,6 +385,8 @@ do_convert_to_pem(struct sshkey *k)
 	default:
 		fatal_f("unsupported key type %s", sshkey_type(k));
 	}
+	/* EmberBSD: terminate to honour __dead like portable upstream. */
+	exit(0);
 }
 
 __dead static void
@@ -409,6 +415,8 @@ do_convert_to(struct passwd *pw)
 	default:
 		fatal_f("unknown key format %d", convert_format);
 	}
+	/* EmberBSD: terminate to honour __dead like portable upstream. */
+	exit(0);
 }
 
 /*
@@ -749,6 +757,8 @@ do_convert_from(struct passwd *pw)
 	if (!ok)
 		fatal("key write failed");
 	sshkey_free(k);
+	/* EmberBSD: terminate to honour __dead like portable upstream. */
+	exit(0);
 }
 #endif
 
@@ -1858,6 +1868,8 @@ do_ca_sign(struct passwd *pw, const char *ca_key_path, int prefer_agent,
 #ifdef ENABLE_PKCS11
 	pkcs11_terminate();
 #endif
+	/* EmberBSD: terminate to honour __dead like portable upstream. */
+	exit(0);
 }
 
 static uint64_t

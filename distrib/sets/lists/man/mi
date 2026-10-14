@@ -3076,7 +3076,7 @@
 ./usr/share/man/cat8/mbrlabel.0			man-sysutil-catman	.cat
 ./usr/share/man/cat8/mdconfig.0			man-sysutil-catman	.cat
 ./usr/share/man/cat8/mdnsd.0			man-mdns-catman		mdns,.cat
-./usr/share/man/cat8/mdsetimage.0		man-sysutil-catman	binutils,.cat
+./usr/share/man/cat8/mdsetimage.0		man-sysutil-catman	.cat
 ./usr/share/man/cat8/mfs.0			man-sys-catman		.cat
 ./usr/share/man/cat8/mipsco/MAKEDEV.0		man-obsolete		obsolete
 ./usr/share/man/cat8/mipsco/makedev.0		man-obsolete		obsolete
@@ -6676,7 +6676,7 @@
 ./usr/share/man/man8/mbrlabel.8			man-sysutil-man		.man
 ./usr/share/man/man8/mdconfig.8			man-sysutil-man		.man
 ./usr/share/man/man8/mdnsd.8			man-mdns-man		mdns,.man
-./usr/share/man/man8/mdsetimage.8		man-sysutil-man		binutils,.man
+./usr/share/man/man8/mdsetimage.8		man-sysutil-man		.man
 ./usr/share/man/man8/mfs.8			man-sys-man		.man
 ./usr/share/man/man8/mipsco/MAKEDEV.8		man-obsolete		obsolete
 ./usr/share/man/man8/mipsco/makedev.8		man-obsolete		obsolete

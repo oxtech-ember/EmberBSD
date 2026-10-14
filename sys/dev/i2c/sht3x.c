@@ -1079,7 +1079,6 @@ sht3x_attach(device_t parent, device_t self, void *aux)
 	struct sht3x_sc *sc;
 	struct i2c_attach_args *ia;
 	int error, i;
-	int ecount = 0;
 	uint8_t buf[6];
 	uint32_t serialnumber;
 	uint8_t sncrcpt1, sncrcpt2;
@@ -1150,7 +1149,6 @@ sht3x_attach(device_t parent, device_t self, void *aux)
 	if (error) {
 		aprint_error_dev(self, "Failed to clear status register: %d\n",
 		    error);
-		ecount++;
 	}
 
 	uint16_t status_reg;
@@ -1158,7 +1156,6 @@ sht3x_attach(device_t parent, device_t self, void *aux)
 	if (error) {
 		aprint_error_dev(self, "Failed to read status register: %d\n",
 		    error);
-		ecount++;
 	}
 
 	DPRINTF(sc, 2, ("%s: read status register values: %04x\n",
@@ -1168,7 +1165,6 @@ sht3x_attach(device_t parent, device_t self, void *aux)
 	if (error) {
 		aprint_error_dev(self, "Failed to read serial number: %d\n",
 		    error);
-		ecount++;
 	}
 
 	sncrcpt1 = sht3x_crc(&buf[0],2);

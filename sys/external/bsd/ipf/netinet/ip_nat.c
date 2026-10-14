@@ -5481,7 +5481,8 @@ ipf_nat_in(fr_info_t *fin, nat_t *nat, int natadd, u_32_t nflags)
 {
 	ipf_main_softc_t *softc = fin->fin_main_soft;
 	ipf_nat_softc_t *softn = softc->ipf_nat_soft;
-	u_32_t sumd, ipsumd, sum1, sum2;
+	/* EmberBSD: consumers live in non-BSD branches; dead on NetBSD. */
+	u_32_t sumd, ipsumd __unused, sum1, sum2;
 	icmphdr_t *icmp;
 	tcphdr_t *tcp;
 	ipnat_t *np;
@@ -5800,14 +5801,13 @@ ipf_nat_expire(ipf_main_softc_t *softc)
 	ipf_nat_softc_t *softn = softc->ipf_nat_soft;
 	ipftq_t *ifq, *ifqnext;
 	ipftqent_t *tqe, *tqn;
-	int i;
 	SPL_INT(s);
 
 	SPL_NET(s);
 	WRITE_ENTER(&softc->ipf_nat);
-	for (ifq = softn->ipf_nat_tcptq, i = 0; ifq != NULL;
+	for (ifq = softn->ipf_nat_tcptq; ifq != NULL;
 	     ifq = ifq->ifq_next) {
-		for (tqn = ifq->ifq_head; ((tqe = tqn) != NULL); i++) {
+		for (tqn = ifq->ifq_head; ((tqe = tqn) != NULL); ) {
 			if (tqe->tqe_die > softc->ipf_ticks)
 				break;
 			tqn = tqe->tqe_next;
@@ -5816,7 +5816,7 @@ ipf_nat_expire(ipf_main_softc_t *softc)
 	}
 
 	for (ifq = softn->ipf_nat_utqe; ifq != NULL; ifq = ifq->ifq_next) {
-		for (tqn = ifq->ifq_head; ((tqe = tqn) != NULL); i++) {
+		for (tqn = ifq->ifq_head; ((tqe = tqn) != NULL); ) {
 			if (tqe->tqe_die > softc->ipf_ticks)
 				break;
 			tqn = tqe->tqe_next;
@@ -7402,28 +7402,20 @@ ipf_nat_nextaddr(fr_info_t *fin, nat_addr_t *na, u_32_t *old, u_32_t *dst)
 {
 	ipf_main_softc_t *softc = fin->fin_main_soft;
 	ipf_nat_softc_t *softn = softc->ipf_nat_soft;
-	u_32_t amin, amax, new;
+	u_32_t new;
 	i6addr_t newip;
 	int error;
 
 	new = 0;
-	amin = na->na_addr[0].in4.s_addr;
 
 	switch (na->na_atype)
 	{
 	case FRI_RANGE :
-		amax = na->na_addr[1].in4.s_addr;
 		break;
 
 	case FRI_NETMASKED :
 	case FRI_DYNAMIC :
 	case FRI_NORMAL :
-		/*
-		 * Compute the maximum address by adding the inverse of the
-		 * netmask to the minimum address.
-		 */
-		amax = ~na->na_addr[1].in4.s_addr;
-		amax |= amin;
 		break;
 
 	case FRI_LOOKUP :

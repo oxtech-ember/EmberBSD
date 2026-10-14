@@ -8,7 +8,11 @@ UNSUPPORTED_COMPILER.clang=	# defined
 UNSUPPORTED_COMPILER.pcc=	# defined
 
 .if ${HAVE_GCC:U0} > 0
+# EmberBSD: external GCC16 toolchain ships no Objective-C frontend,
+# so libobjc itself is skipped (REQUIRETOOLS) and the test cannot link.
+.if ${TOOLCHAIN_MISSING:Uno} != "yes"
 TESTS_C=	t_threads
+.endif
 .endif
 
 SRCS.t_threads=	t_threads.m

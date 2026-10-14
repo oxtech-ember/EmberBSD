@@ -61,7 +61,7 @@ rol32(uint32_t u, unsigned c)
 	(c) += (d); (b) ^= (c); (b) = rol32((b),  7);			      \
 } while (/*CONSTCOND*/0)
 
-const uint8_t chacha_const32[16] = "expand 32-byte k";
+const uint8_t chacha_const32[17] = "expand 32-byte k";
 
 static void
 chacha_core_ref(uint8_t out[restrict static 64], const uint8_t in[static 16],

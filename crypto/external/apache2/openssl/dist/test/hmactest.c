@@ -33,7 +33,8 @@
 
 #ifndef OPENSSL_NO_MD5
 static struct test_st {
-    const char key[16];
+    /* EmberBSD: 16-byte key vectors need room for NUL. */
+    const char key[17];
     int key_len;
     const unsigned char data[64];
     int data_len;

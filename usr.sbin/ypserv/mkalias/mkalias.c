@@ -146,7 +146,7 @@ main(int argc, char *argv[])
 	int	eflag = 0;
 	int	dflag = 0;
 	int	nflag = 0;
-	int	sflag = 0;
+	int	sflag __unused = 0;
 	int	uflag = 0;
 	int	vflag = 0;
 	int	Eflag = 0;

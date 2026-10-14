@@ -1610,7 +1610,7 @@ crc32_common(const disasm_interface_t *di, uint64_t pc, uint32_t insn,
     uint64_t sf, uint64_t Rm, uint64_t sz, uint64_t Rn, uint64_t Rd,
     const char *op)
 {
-	const char bhwx[4] = "bhwx";	/* "crc32x" + SizeChar */
+	const char bhwx[5] = "bhwx";	/* "crc32x" + SizeChar */
 
 	if (((sf != 0) && (sz != 3)) ||
 	    ((sf == 0) && (sz == 3))) {

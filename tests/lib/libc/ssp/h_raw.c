@@ -45,6 +45,7 @@ poke(int *b, size_t index)
 	b[index] = 42;
 	for (i = 0; i < 10; i++) 
 		sum += b[i];
+	(void)sum;
 }
 
 int

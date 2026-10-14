@@ -117,7 +117,7 @@ static struct tag * maketagent(char *name, char *file, LINENUM linenum, char *pa
 {
 	struct tag *tp;
 
-	tp = (struct tag *) ecalloc(sizeof(struct tag), 1);
+	tp = (struct tag *) ecalloc(1, sizeof(struct tag));
 	tp->tag_file = (char *) ecalloc(strlen(file) + 1, sizeof(char));
 	strcpy(tp->tag_file, file);
 	tp->tag_linenum = linenum;

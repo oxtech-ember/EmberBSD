@@ -297,7 +297,7 @@ getaddrinfo (const char *nodename, const char *servname,
 	if (nodename == NULL && servname == NULL)
 		return (EAI_NONAME);
 	
-	ai = calloc(sizeof(struct addrinfo), 1);
+	ai = calloc(1, sizeof(struct addrinfo));
 	if (ai == NULL)
 		return (EAI_MEMORY);
 
@@ -473,7 +473,7 @@ do_nodename(
 	struct sockaddr_in6 *sockin6;
 	int errval;
 
-	ai->ai_addr = calloc(sizeof(struct sockaddr_storage), 1);
+	ai->ai_addr = calloc(1, sizeof(struct sockaddr_storage));
 	if (ai->ai_addr == NULL)
 		return (EAI_MEMORY);
 

@@ -51,7 +51,7 @@ __RCSID("$NetBSD: t_regex_att.c,v 1.4 2021/02/23 16:00:37 christos Exp $");
 #include <vis.h>
 
 static const char sep[] = "\r\n\t";
-static const char delim[3] = "\\\\\0";
+static const char delim[4] = "\\\0";
 
 
 static void

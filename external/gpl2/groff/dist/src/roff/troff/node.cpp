@@ -108,7 +108,7 @@ class track_kerning_function {
 public:
   track_kerning_function();
   track_kerning_function(units, hunits, units, hunits);
-  int operator==(const track_kerning_function &);
+  int operator==(const track_kerning_function &) const;
   int operator!=(const track_kerning_function &);
   hunits compute(int point_size);
 };
@@ -182,7 +182,7 @@ public:
   tfont_spec(symbol, int, font *, font_size, int, int);
   tfont_spec(const tfont_spec &spec) { *this = spec; }
   tfont_spec plain();
-  int operator==(const tfont_spec &);
+  int operator==(const tfont_spec &) const;
   friend tfont *font_info::get_tfont(font_size fs, int, int, int);
 };
 
@@ -459,7 +459,7 @@ tfont_spec::tfont_spec(symbol nm, int n, font *f,
     height = 0;
 }
 
-int tfont_spec::operator==(const tfont_spec &spec)
+int tfont_spec::operator==(const tfont_spec &spec) const
 {
   if (fm == spec.fm
       && size == spec.size
@@ -6315,7 +6315,7 @@ track_kerning_function::track_kerning_function(int min_s, hunits min_a,
 {
 }
 
-int track_kerning_function::operator==(const track_kerning_function &tk)
+int track_kerning_function::operator==(const track_kerning_function &tk) const
 {
   if (non_zero)
     return (tk.non_zero

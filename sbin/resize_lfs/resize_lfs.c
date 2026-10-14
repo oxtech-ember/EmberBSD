@@ -124,7 +124,7 @@ main(int argc, char **argv)
 		err(1, "open filesystem root");
 
 	/* Read the superblock, finding alternates if necessary */
-	fs = (struct lfs *)calloc(sizeof(*fs), 1);
+	fs = (struct lfs *)calloc(1, sizeof(*fs));
 	for (sboff = LFS_LABELPAD;;) {
 		pread(devfd, buf, sboff, LFS_SBPAD);
 		__CTASSERT(sizeof(struct dlfs) == sizeof(struct dlfs64));

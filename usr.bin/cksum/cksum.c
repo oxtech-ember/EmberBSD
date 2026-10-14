@@ -292,10 +292,10 @@ main(int argc, char **argv)
 		char filename[BUFSIZ];
 		char safe_filename[BUFSIZ*4+1];
 		char cksum[BUFSIZ];
-		int ok,cnt,badcnt;
+		int ok,badcnt;
 
 		rval = 0;
-		cnt = badcnt = 0;
+		badcnt = 0;
 
 		if (argc == 0) {
 			f = fdopen(STDIN_FILENO, "r");
@@ -469,7 +469,6 @@ main(int argc, char **argv)
 				printf("%s: FAILED\n", safe_filename);
 				badcnt++;
 			}
-			cnt++;
 
 		}
 		fclose(f);

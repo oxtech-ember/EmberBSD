@@ -92,7 +92,7 @@ static const char bf_cbc_448_key[57] = {
 	0
 };
 
-static const uint8_t bf_cbc_ptxt[SECSIZE] __aligned(4) =
+static const uint8_t bf_cbc_ptxt[SECSIZE + 1] __aligned(4) =
 	"                abcdefghijklmnop"
 	"                abcdefghijklmnop"
 	"                abcdefghijklmnop"

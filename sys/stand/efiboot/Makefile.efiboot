@@ -60,7 +60,10 @@ BINMODE=444
 .PATH:	${.CURDIR}/../../lib
 
 LDFLAGS+= --no-dynamic-linker --noinhibit-exec
-LDFLAGS+= -nostdlib -T${LDSCRIPT} -Bsymbolic -shared
+# EmberBSD: with binutils >= 2.39 the single LOAD segment must include the
+# program headers (see elf_aarch64_efi.lds PHDRS); -N gives the text
+# segment room for them.
+LDFLAGS+= -nostdlib -T${LDSCRIPT} -Bsymbolic -shared -N
 CPPFLAGS+= -I$S -I${.CURDIR} -I${.CURDIR}/../common -I$S/lib/libsa
 CPPFLAGS+= -I${.OBJDIR}
 CPPFLAGS+= -I${.CURDIR}/../../lib

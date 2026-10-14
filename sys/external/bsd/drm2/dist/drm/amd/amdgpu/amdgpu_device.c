@@ -4429,6 +4429,10 @@ skip_sched_resume:
 	if (hive)
 		mutex_unlock(&hive->reset_lock);
 
+	/* EmberBSD: unlink the stack list head we own in the non-hive case. */
+	if (!hive)
+		list_del_init(&adev->gmc.xgmi.head);
+
 	if (r)
 		dev_info(adev->dev, "GPU reset end with ret = %d\n", r);
 	return r;

@@ -68,7 +68,7 @@ static const char c3des_cbc_192_key[25] = {
 	0
 };
 
-static const uint8_t c3des_cbc_ptxt[SECSIZE] __aligned(4) =
+static const uint8_t c3des_cbc_ptxt[SECSIZE + 1] __aligned(4) =
 	"                abcdefghijklmnop"
 	"                abcdefghijklmnop"
 	"                abcdefghijklmnop"

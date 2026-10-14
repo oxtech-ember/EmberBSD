@@ -472,7 +472,7 @@ static INLINE void
 ipf_pr_ipv6hdr(fr_info_t *fin)
 {
 	ip6_t *ip6 = (ip6_t *)fin->fin_ip;
-	int p, go = 1, i, hdrcount;
+	int p, go = 1, i;
 	fr_ip_t *fi = &fin->fin_fi;
 
 	fin->fin_off = 0;
@@ -499,7 +499,6 @@ ipf_pr_ipv6hdr(fr_info_t *fin)
 	if (IN6_IS_ADDR_MULTICAST(&fi->fi_dst.in6))
 		fin->fin_flx |= FI_MULTICAST|FI_MBCAST;
 
-	hdrcount = 0;
 	while (go && !(fin->fin_flx & FI_SHORT)) {
 		switch (p)
 		{
@@ -577,7 +576,6 @@ ipf_pr_ipv6hdr(fr_info_t *fin)
 			go = 0;
 			break;
 		}
-		hdrcount++;
 
 		/*
 		 * It is important to note that at this point, for the

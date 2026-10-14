@@ -445,7 +445,7 @@ addidir(char *idir, struct incs **ww)
 #endif
 		ww = &w->next;
 	}
-	if ((w = calloc(sizeof(struct incs), 1)) == NULL)
+	if ((w = calloc(1, sizeof(struct incs))) == NULL)
 		error("couldn't add path %s", idir);
 	w->dir = (usch *)idir;
 	w->dev = st.st_dev;
@@ -1184,7 +1184,7 @@ if (dflag) { printf("expokb blocked: "); for (w = bl; w; w = w->next) printf("%s
 static struct blocker *
 blkget(struct symtab *sp, struct blocker *obl)
 {
-	struct blocker *bl = calloc(sizeof(*obl), 1);
+	struct blocker *bl = calloc(1, sizeof(*obl));
 
 	bl->sp = sp;
 	bl->next = obl;
@@ -1215,7 +1215,7 @@ mergeadd(struct blocker *bl, int m)
 
 	blkidx[blkidp] = bl;
 	for (w = blkidx[m]; w; w = w->next) {
-		ww = calloc(sizeof(*w), 1);
+		ww = calloc(1, sizeof(*w));
 		ww->sp = w->sp;
 		ww->next = blkidx[blkidp];
 		blkidx[blkidp] = ww;

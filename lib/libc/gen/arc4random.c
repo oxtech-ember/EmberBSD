@@ -127,7 +127,9 @@ rotate(uint32_t u, unsigned c)
 	(c) += (d); (b) ^= (c); (b) = rotate((b),  7);			      \
 } while (0)
 
-static const uint8_t crypto_core_constant32[16] = "expand 32-byte k";
+/* EmberBSD: the constant is 16 bytes without NUL; GCC16 -Werror rejects
+ * the truncating initializer under -Wpedantic-init-string. */
+static const uint8_t crypto_core_constant32[17] = "expand 32-byte k";
 
 static void
 crypto_core(uint8_t *out, const uint8_t *in, const uint8_t *k,

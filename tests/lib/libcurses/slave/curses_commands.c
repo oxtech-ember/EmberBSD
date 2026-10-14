@@ -154,10 +154,10 @@ set_scrn(const char *arg, SCREEN **x)
  * extensions, but this implementation does not support any extensions.
  */
 #define ARG_NULL() \
-	args++
+	do { args++; (void)args; } while (0)
 
 #define ARG_IGNORE() \
-	args++
+	do { args++; (void)args; } while (0)
 
 void
 cmd_DRAIN(int nargs, char **args)

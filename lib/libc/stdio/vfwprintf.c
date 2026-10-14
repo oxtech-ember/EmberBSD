@@ -699,8 +699,8 @@ WDECL(__vf,printf_unlocked_l)(FILE *fp, locale_t loc, const CHAR_T *fmt0, va_lis
 	static CHAR_T zeroes[PADSIZE] =
 	 {'0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0'};
 
-	static const char xdigs_lower[16] = "0123456789abcdef";
-	static const char xdigs_upper[16] = "0123456789ABCDEF";
+	static const char xdigs_lower[] = "0123456789abcdef";
+	static const char xdigs_upper[] = "0123456789ABCDEF";
 
 	/*
 	 * BEWARE, these `goto error' on error, PRINT uses `n2' and

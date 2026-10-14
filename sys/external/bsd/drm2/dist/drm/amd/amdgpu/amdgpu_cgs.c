@@ -220,6 +220,9 @@ static int amdgpu_cgs_get_firmware_info(struct cgs_device *cgs_device,
 		struct amdgpu_firmware_info *ucode;
 
 		id = fw_type_convert(cgs_device, type);
+		/* EmberBSD: unmapped types return the MAXIMUM sentinel. */
+		if (id == AMDGPU_UCODE_ID_MAXIMUM)
+			return -EINVAL;
 		ucode = &adev->firmware.ucode[id];
 		if (ucode->fw == NULL)
 			return -EINVAL;

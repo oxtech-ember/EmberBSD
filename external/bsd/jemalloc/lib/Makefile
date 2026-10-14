@@ -7,6 +7,9 @@ LIB=jemalloc
 
 # The symbols from the stub only exist in newer jemalloc.
 CPPFLAGS+=	-DHAVE_JEMALLOC=${HAVE_JEMALLOC:U0}
+# EmberBSD: prefer the source-tree malloc.h over the stale toolchain
+# include-fixed copy whose malloc_conf_get prototype differs.
+CPPFLAGS+=	-I${NETBSDSRCDIR}/include
 SRCS=		jemalloc_stub.c
 
 .if ${HAVE_JEMALLOC:U0} <= 100

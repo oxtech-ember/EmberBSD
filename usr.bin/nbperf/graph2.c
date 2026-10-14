@@ -53,9 +53,9 @@ SIZED2(_setup)(struct SIZED(graph) *graph, uint32_t v, uint32_t e)
 	graph->v = v;
 	graph->e = e;
 
-	graph->verts = calloc(sizeof(*graph->verts), v);
-	graph->edges = calloc(sizeof(*graph->edges), e);
-	graph->output_order = calloc(sizeof(uint32_t), e);
+	graph->verts = calloc(v, sizeof(*graph->verts));
+	graph->edges = calloc(e, sizeof(*graph->edges));
+	graph->output_order = calloc(e, sizeof(uint32_t));
 
 	if (graph->verts == NULL || graph->edges == NULL ||
 	    graph->output_order == NULL)
@@ -105,7 +105,7 @@ static int
 SIZED2(_check_duplicates)(struct nbperf *nbperf, struct SIZED(graph) *graph)
 {
 	size_t i;
-	uint32_t *key_index = calloc(sizeof(*key_index), graph->e);
+	uint32_t *key_index = calloc(graph->e, sizeof(*key_index));
 
 	if (key_index == NULL)
 		err(1, "malloc failed");

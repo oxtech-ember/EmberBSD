@@ -741,7 +741,7 @@ static const struct {
 	struct direntry dot;
 	struct direntry dotdot;
 } dosdirtemplate = {
-	{	".       ", "   ",			/* the . entry */
+	{	{ '.',' ',' ',' ',' ',' ',' ',' ' }, { ' ',' ',' ' },	/* the . entry */
 		ATTR_DIRECTORY,				/* file attribute */
 		0,	 				/* reserved */
 		0, { 0, 0 }, { 0, 0 },			/* create time & date */
@@ -751,7 +751,7 @@ static const struct {
 		{ 0, 0 },				/* startcluster */
 		{ 0, 0, 0, 0 } 				/* filesize */
 	},
-	{	"..      ", "   ",			/* the .. entry */
+	{	{ '.','.',' ',' ',' ',' ',' ',' ' }, { ' ',' ',' ' },	/* the .. entry */
 		ATTR_DIRECTORY,				/* file attribute */
 		0,	 				/* reserved */
 		0, { 0, 0 }, { 0, 0 },			/* create time & date */

@@ -108,7 +108,7 @@ iso_addr(const char *addr)
 	return (&out_addr);
 }
 
-static const char hexlist[16] = "0123456789abcdef";
+static const char hexlist[] = "0123456789abcdef";
 
 char *
 iso_ntoa(const struct iso_addr *isoa)

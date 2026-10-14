@@ -41,7 +41,7 @@
 struct genlist *
 genlist_init (void)
 {
-	struct genlist *new = calloc(sizeof(struct genlist), 1);
+	struct genlist *new = calloc(1, sizeof(struct genlist));
 	TAILQ_INIT(new);
 	return new;
 }
@@ -49,7 +49,7 @@ genlist_init (void)
 struct genlist_entry *
 genlist_insert (struct genlist *head, void *data)
 {
-	struct genlist_entry *entry = calloc(sizeof(struct genlist_entry), 1);
+	struct genlist_entry *entry = calloc(1, sizeof(struct genlist_entry));
 	entry->data = data;
 	TAILQ_INSERT_HEAD(head, entry, chain);
 	return entry;
@@ -58,7 +58,7 @@ genlist_insert (struct genlist *head, void *data)
 struct genlist_entry *
 genlist_append (struct genlist *head, void *data)
 {
-	struct genlist_entry *entry = calloc(sizeof(struct genlist_entry), 1);
+	struct genlist_entry *entry = calloc(1, sizeof(struct genlist_entry));
 	entry->data = data;
 	TAILQ_INSERT_TAIL(head, entry, chain);
 	return entry;
@@ -140,7 +140,7 @@ int main()
 	char *cp;
 	struct genlist_entry *gpb;
 
-	cf = calloc(sizeof(struct conf), 1);
+	cf = calloc(1, sizeof(struct conf));
 	cf->l1 = genlist_init();
 	cf->l2 = genlist_init();
 	

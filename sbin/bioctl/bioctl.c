@@ -692,7 +692,7 @@ bio_volops_create(int fd, int argc, char **argv)
 	struct bioc_inq 	bi;
 	struct bioc_disk	bd;
 	struct locator		location;
-	uint64_t 		total_size = 0, disksize = 0;
+	uint64_t 		disksize = 0;
 	int64_t 		volsize = 0;
 	const char 		*errstr;
 	char 			*endptr, *stripe, levelstr[32];
@@ -780,7 +780,6 @@ bio_volops_create(int fd, int argc, char **argv)
 			if (i == 0)
 				disksize = bd.bd_size;
 
-			total_size += bd.bd_size;
 			nfreedisks++;
 		}
 	}

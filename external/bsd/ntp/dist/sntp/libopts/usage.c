@@ -1153,6 +1153,7 @@ prt_prog_detail(tOptions * opts)
     if (displayEnum) {
         int        ct     = opts->optCt;
         int        optNo  = 0;
+        (void)optNo;
         tOptDesc * od     = opts->pOptDesc;
 
         fputc(NL, option_usage_fp);

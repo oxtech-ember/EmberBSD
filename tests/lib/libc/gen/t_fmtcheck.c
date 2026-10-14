@@ -90,7 +90,7 @@ ATF_TC_HEAD(fmtcheck_basic, tc)
 
 ATF_TC_BODY(fmtcheck_basic, tc)
 {
-	unsigned int	i, r;
+	unsigned int	i, r __unused;
 	const char	*f, *cf, *f1, *f2;
 
 	r = 0;

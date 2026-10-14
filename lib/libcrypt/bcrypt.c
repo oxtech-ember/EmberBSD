@@ -216,7 +216,7 @@ __bcrypt(const char *key, const char *salt)
 	u_int32_t rounds, i, k;
 	u_int16_t j;
 	u_int8_t key_len, salt_len, logr, minor;
-	u_int8_t ciphertext[4 * BCRYPT_BLOCKS] = "OrpheanBeholderScryDoubt";
+	u_int8_t ciphertext[4 * BCRYPT_BLOCKS + 1] = "OrpheanBeholderScryDoubt";
 	u_int8_t csalt[BCRYPT_MAXSALT];
 	u_int32_t cdata[BCRYPT_BLOCKS];
 	int n;

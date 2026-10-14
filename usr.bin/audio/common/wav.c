@@ -150,10 +150,10 @@ audio_wav_parse_hdr(void *hdr, size_t sz, u_int *enc, u_int *prec,
 	uint32_t len = 0;
 	u_int16_t fmttag;
 	static const char
-	    strfmt[RIFFNAMELEN] = "fmt ",
-	    strRIFF[RIFFNAMELEN] = "RIFF",
-	    strWAVE[RIFFNAMELEN] = "WAVE",
-	    strdata[RIFFNAMELEN] = "data";
+	    strfmt[RIFFNAMELEN + 1] = "fmt ",
+	    strRIFF[RIFFNAMELEN + 1] = "RIFF",
+	    strWAVE[RIFFNAMELEN + 1] = "WAVE",
+	    strdata[RIFFNAMELEN + 1] = "data";
 	bool found;
 
 	if (sz < 32)
@@ -166,12 +166,12 @@ audio_wav_parse_hdr(void *hdr, size_t sz, u_int *enc, u_int *prec,
 	remain -= (l);				\
 } while (0)
 
-	if (memcmp(where, strRIFF, sizeof strRIFF) != 0)
+	if (memcmp(where, strRIFF, RIFFNAMELEN) != 0)
 		return (AUDIO_ENOENT);
-	ADJUST(sizeof strRIFF);
+	ADJUST(RIFFNAMELEN);
 	/* XXX we ignore the RIFF length here */
 	ADJUST(4);
-	if (memcmp(where, strWAVE, sizeof strWAVE) != 0)
+	if (memcmp(where, strWAVE, RIFFNAMELEN) != 0)
 		return (AUDIO_ENOENT);
 	ADJUST(sizeof strWAVE);
 
