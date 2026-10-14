@@ -365,6 +365,20 @@ pvr_freelist_current_pages(const struct pvr_freelist *fl)
 }
 
 uint32_t
+pvr_freelist_initial_pages(const struct pvr_freelist *fl)
+{
+
+	return fl != NULL && fl->ready ? fl->config.initial_pages : 0;
+}
+
+uint32_t
+pvr_freelist_max_pages(const struct pvr_freelist *fl)
+{
+
+	return fl != NULL && fl->ready ? fl->config.max_pages : 0;
+}
+
+uint32_t
 pvr_freelist_fw_address(const struct pvr_freelist *fl)
 {
 

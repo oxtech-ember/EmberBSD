@@ -58,6 +58,8 @@ int pvr_freelist_grow_complete(struct pvr_freelist *, int);
 /* Current pages exclude the ready reserve. Zero unless ready and not pending. */
 uint32_t pvr_freelist_current_pages(const struct pvr_freelist *);
 /* Kernel-only firmware address. Zero means the object is not available. */
+uint32_t pvr_freelist_initial_pages(const struct pvr_freelist *);
+uint32_t pvr_freelist_max_pages(const struct pvr_freelist *);
 uint32_t pvr_freelist_fw_address(const struct pvr_freelist *);
 
 #endif /* _PVR_FREELIST_H_ */

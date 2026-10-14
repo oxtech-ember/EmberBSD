@@ -429,9 +429,9 @@ pvr_exec_freelist_info(const struct pvr_exec_freelist *fl,
 		return EINVAL;
 	info->vm = fl->vm;
 	info->fw_address = pvr_freelist_fw_address(fl->firmware);
-	info->initial_pages = fl->firmware->config.initial_pages;
+	info->initial_pages = pvr_freelist_initial_pages(fl->firmware);
 	info->current_pages = pvr_freelist_current_pages(fl->firmware);
-	info->max_pages = fl->firmware->config.max_pages;
+	info->max_pages = pvr_freelist_max_pages(fl->firmware);
 	return 0;
 }
 
