@@ -125,3 +125,25 @@ request/response dependency. Keep bounded failure if that assumption does not ho
 HWRT UAPI/handle integration and graphics `SUBMIT_JOBS` integration were designed
 but not started. Existing `pvr_exec.c`, `pvr_submit.c`, and their contracts remain unchanged.
 Use the prepared primitive APIs; do not assume the proposed handle APIs already exist.
+
+## HWRT execution ownership (step 2, 2026-10-14)
+
+`pvr_exec_hwrt.c` owns HWRT dataset handles and references. The pinned
+upstream UAPI (create `0x0b`, destroy `0x0c`) is now in `pvr_drm.h`.
+Create resolves two distinct free-list handles from one VM, keeps both
+references for the dataset lifetime, verifies the local initial size
+against `pvr_device_hwrt_info()`, recomputes the region-header and
+tail-pointer-cache spans from the pinned profile formulas and rejects
+user TPC size/stride mismatches, then places shared holds with the
+pinned cache policy (MLIST adds PM firmware protection). Destroy and
+the last reference put release holds only after the firmware cleanup
+acknowledgement; a failed cleanup retains the owner, both free lists,
+their VM and every hold through device orphan retention. `target` marks
+a render target exposed before the first KICK and accepts index 0 or 1.
+
+The geometry formulas live in `pvr-exec-hwrt-fixture.h` and are checked
+against an independent recomputation from the Mesa formulas (`pvr-exec
+-hwrt-contract.sh`); the MLIST input is a page count, not bytes. Cppcheck
+and Clang Static Analyzer are clean on the new module. Paired
+geometry/fragment submission and the HWRT preflight in `SUBMIT_JOBS`
+remain the next work, with contracts before any common build.

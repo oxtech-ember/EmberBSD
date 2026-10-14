@@ -17,6 +17,7 @@
 #include "pvr_backend.h"
 #include "pvr_drv.h"
 #include "pvr_exec.h"
+#include "pvr_exec_hwrt.h"
 #include "pvr_heap.h"
 #include "pvr_query.h"
 
@@ -100,6 +101,19 @@ pvr_release(struct drm_device *dev)
 	kfree(dev);
 }
 
+int
+pvr_device_hwrt_info(struct drm_device *dev, uint64_t *bvnc,
+    uint32_t *minpages)
+{
+	struct pvr_device *sc = dev->dev_private;
+
+	if (bvnc == NULL || minpages == NULL)
+		return EINVAL;
+	*bvnc = sc->bvnc;
+	*minpages = (uint32_t)sc->profile.runtime.free_list_min_pages;
+	return 0;
+}
+
 static const struct drm_ioctl_desc pvr_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(PVR_DEV_QUERY, pvr_dev_query,
 	    DRM_RENDER_ALLOW | DRM_UNLOCKED),
@@ -121,6 +135,10 @@ DRM_IOCTL_DEF_DRV(PVR_DESTROY_CONTEXT, pvr_destroy_context,
 DRM_IOCTL_DEF_DRV(PVR_CREATE_FREE_LIST, pvr_create_free_list,
     DRM_RENDER_ALLOW | DRM_UNLOCKED),
 DRM_IOCTL_DEF_DRV(PVR_DESTROY_FREE_LIST, pvr_destroy_free_list,
+    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+DRM_IOCTL_DEF_DRV(PVR_CREATE_HWRT_DATASET, pvr_create_hwrt_dataset,
+    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+DRM_IOCTL_DEF_DRV(PVR_DESTROY_HWRT_DATASET, pvr_destroy_hwrt_dataset,
     DRM_RENDER_ALLOW | DRM_UNLOCKED),
 DRM_IOCTL_DEF_DRV(PVR_SUBMIT_JOBS, pvr_submit_jobs,
     DRM_RENDER_ALLOW | DRM_UNLOCKED),

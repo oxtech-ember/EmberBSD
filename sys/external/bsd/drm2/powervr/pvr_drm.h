@@ -187,6 +187,54 @@ struct drm_pvr_ioctl_vm_unmap_args {
 	DRM_IOWR(DRM_COMMAND_BASE + 0x09, struct drm_pvr_ioctl_create_free_list_args)
 #define DRM_IOCTL_PVR_DESTROY_FREE_LIST \
 	DRM_IOW(DRM_COMMAND_BASE + 0x0a, struct drm_pvr_ioctl_destroy_free_list_args)
+#define DRM_IOCTL_PVR_CREATE_HWRT_DATASET \
+	DRM_IOWR(DRM_COMMAND_BASE + 0x0b, \
+	struct drm_pvr_ioctl_create_hwrt_dataset_args)
+#define DRM_IOCTL_PVR_DESTROY_HWRT_DATASET \
+	DRM_IOW(DRM_COMMAND_BASE + 0x0c, \
+	struct drm_pvr_ioctl_destroy_hwrt_dataset_args)
+
+/* Pinned upstream layout; local names without the ioctl_ middle word. */
+struct drm_pvr_create_hwrt_geom_data_args {
+	__u64 tpc_dev_addr;
+	__u32 tpc_size;
+	__u32 tpc_stride;
+	__u64 vheap_table_dev_addr;
+	__u64 rtc_dev_addr;
+};
+
+struct drm_pvr_create_hwrt_rt_data_args {
+	__u64 pm_mlist_dev_addr;
+	__u64 macrotile_array_dev_addr;
+	__u64 region_header_dev_addr;
+};
+
+#define DRM_PVR_HWRT_FREE_LIST_LOCAL 0
+#define DRM_PVR_HWRT_FREE_LIST_GLOBAL 1U
+
+struct drm_pvr_ioctl_create_hwrt_dataset_args {
+	struct drm_pvr_create_hwrt_geom_data_args geom_data_args;
+	struct drm_pvr_create_hwrt_rt_data_args rt_data_args[2];
+	__u32 free_list_handles[2];
+	__u32 width;
+	__u32 height;
+	__u32 samples;
+	__u32 layers;
+	__u32 isp_merge_lower_x;
+	__u32 isp_merge_lower_y;
+	__u32 isp_merge_scale_x;
+	__u32 isp_merge_scale_y;
+	__u32 isp_merge_upper_x;
+	__u32 isp_merge_upper_y;
+	__u32 region_header_size;
+	__u32 handle;
+};
+
+struct drm_pvr_ioctl_destroy_hwrt_dataset_args {
+	__u32 handle;
+	__u32 _padding_4;
+};
+
 #define DRM_IOCTL_PVR_SUBMIT_JOBS \
 	DRM_IOWR(DRM_COMMAND_BASE + 0x0d, struct drm_pvr_ioctl_submit_jobs_args)
 
