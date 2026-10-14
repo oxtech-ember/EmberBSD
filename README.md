@@ -126,16 +126,20 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-Status updated **2026-10-13**; linked component documents record their own
+Status updated **2026-10-14**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
 
 ### Local AI and robotics
 
-- **Local text and speech models:** pkgsrc recipes for llama.cpp 0.6.0 and
+- **Local text and speech models:** pkgsrc recipes for llama.cpp 0.6.0nb1 and
   whisper.cpp 1.9.4, with separately supplied models. Native AArch64 VM tests
   cover package installation, text generation, a loopback HTTP completion
-  service and WAV transcription on CPU. This is a usable starting point for
+  service and WAV transcription on CPU. Linux GCC16 cross compilation of
+  llama.cpp also passes installation, removal/reinstallation, real text and
+  HTTP generation in an EmberBSD AArch64 QEMU VM. The
+  [cross profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/ai-cpu/cross)
+  records the sysroot, model hashes and memory checks. This is a usable starting point for
   local assistants; microphone capture, image understanding and GPU/NPU
   inference still need validation. See the [AI packages](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/ai-cpu)
   and [model execution example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/ai/local-inference).
