@@ -1908,7 +1908,8 @@ int smu_v11_0_set_performance_level(struct smu_context *smu,
 				    enum amd_dpm_forced_level level)
 {
 	int ret = 0;
-	uint32_t sclk_mask, mclk_mask, soc_mask;
+	/* EmberBSD: out-params not written on every callee path. */
+	uint32_t sclk_mask = 0, mclk_mask = 0, soc_mask = 0;
 
 	switch (level) {
 	case AMD_DPM_FORCED_LEVEL_HIGH:

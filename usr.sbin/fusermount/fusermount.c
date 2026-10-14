@@ -93,7 +93,7 @@ main(int argc, char **argv)
 {
 	char	*progname;
 	char	*execme;
-	int	 flags;
+	int	 flags __unused;
 	int	 action;
 	int	 i;
 

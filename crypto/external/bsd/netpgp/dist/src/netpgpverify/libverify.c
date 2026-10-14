@@ -1103,11 +1103,10 @@ read_sig_subpackets(pgpv_t *pgp, pgpv_sigpkt_t *sigpkt, uint8_t *p, size_t pktle
 	pgpv_sigsubpkt_t	 subpkt;
 	const int		 is_subpkt = 0;
 	unsigned		 lenlen;
-	unsigned		 i;
 	uint8_t			*start;
 
 	start = p;
-	for (i = 0 ; (unsigned)(p - start) < sigpkt->subslen ; i++) {
+	while ((unsigned)(p - start) < sigpkt->subslen) {
 		memset(&subpkt, 0x0, sizeof(subpkt));
 		subpkt.s.size = get_pkt_len(1, p, 0, is_subpkt);
 		lenlen = get_pkt_len_len(1, p, is_subpkt);

@@ -76,7 +76,7 @@ ypalias_init(void)
 	if ((fp = fopen(_PATH_YPNICKNAMES, "r")) == NULL)
 		return &def_ypaliases[0];
 
-	if ((ypa = calloc(sizeof(*ypa), nypalias)) == NULL)
+	if ((ypa = calloc(nypalias, sizeof(*ypa))) == NULL)
 		goto out;
 
 	lineno = 1;

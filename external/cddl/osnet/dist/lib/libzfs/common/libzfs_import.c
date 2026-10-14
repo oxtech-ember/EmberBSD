@@ -43,6 +43,7 @@
  */
 
 #include <ctype.h>
+#include <sys/ioctl.h> /* EmberBSD: ioctl prototype for GCC16 -Werror */
 #include <devid.h>
 #include <dirent.h>
 #include <errno.h>

@@ -88,7 +88,10 @@ static void printem(int, int, struct highscore *, int, const char *);
 static char *thisuser(void);
 
 /* contents chosen to be a highly illegal username */
-static const char hsh_magic_val[HSH_MAGIC_SIZE] = "//:\0\0://";
+/* EmberBSD: explicit bytes avoid the GCC16 truncating-initializer
+ * diagnostic on the on-disk 8-byte magic (no trailing NUL by design). */
+static const char hsh_magic_val[HSH_MAGIC_SIZE] =
+    { '/', '/', ':', '\0', '\0', ':', '/', '/' };
 
 #define HSH_ENDIAN_NATIVE	0x12345678
 #define HSH_ENDIAN_OPP		0x78563412

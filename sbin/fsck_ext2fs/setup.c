@@ -113,7 +113,7 @@ setup(const char *dev)
 	struct stat statb;
 	struct m_ext2fs proto;
 	int doskipclean;
-	u_int64_t maxfilesize;
+	u_int64_t maxfilesize __unused;
 
 	havesb = 0;
 	fswritefd = -1;

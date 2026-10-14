@@ -1242,7 +1242,7 @@ static int createBuffers(buffers_t* buff, const char* const * const fileNamesTab
     size_t n;
     size_t totalSizeToLoad = (size_t)UTIL_getTotalFileSize(fileNamesTable, (U32)nbFiles);
     size_t benchedSize = MIN(BMK_findMaxMem(totalSizeToLoad * 3) / 3, totalSizeToLoad);
-    size_t* fileSizes = calloc(sizeof(size_t), nbFiles);
+    size_t* fileSizes = calloc(nbFiles, sizeof(size_t));
     void* srcBuffer = NULL;
     int ret = 0;
 
@@ -1495,7 +1495,7 @@ createMemoTableArray(const paramValues_t p,
             mtl = ((size_t)1 << memoTableLog);
         }
 
-        mtAll[i].table = (BYTE*)calloc(sizeof(BYTE), mtl);
+        mtAll[i].table = (BYTE*)calloc(mtl, sizeof(BYTE));
         mtAll[i].tableLen = mtl;
 
         if(mtAll[i].table == NULL) {

@@ -67,8 +67,8 @@ __RCSID("$NetBSD: caesar.c,v 1.24 2021/11/16 20:42:47 rillig Exp $");
  * letter frequencies (taken from some unix(tm) documentation)
  * (unix is a trademark of Bell Laboratories)
  */
-static const unsigned char upper[LETTERS] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-static const unsigned char lower[LETTERS] = "abcdefghijklmnopqrstuvwxyz";
+static const unsigned char upper[LETTERS + 1] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+static const unsigned char lower[LETTERS + 1] = "abcdefghijklmnopqrstuvwxyz";
 static double stdf[LETTERS] = {
 	7.97, 1.35, 3.61, 4.78, 12.37, 2.01, 1.46, 4.49, 6.39, 0.04,
 	0.42, 3.81, 2.69, 5.92,  6.96, 2.91, 0.08, 6.63, 8.77, 9.68,

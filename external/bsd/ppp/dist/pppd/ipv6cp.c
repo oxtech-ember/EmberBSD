@@ -696,7 +696,8 @@ ipv6cp_nakci(fsm *f, u_char *p, int len, int treat_as_reject)
     ipv6cp_options *wo = &ipv6cp_wantoptions[f->unit];
     ipv6cp_options *go = &ipv6cp_gotoptions[f->unit];
     u_char citype, cilen, *next;
-    u_short cishort;
+    /* EmberBSD: read only under IPV6CP_COMP. */
+    u_short cishort __unused;
     eui64_t ifaceid;
     ipv6cp_options no;		/* options we've seen Naks for */
     ipv6cp_options try;		/* options to request next time */
@@ -912,7 +913,8 @@ ipv6cp_reqci(fsm *f, u_char *inp, int *len, int reject_if_disagree)
     ipv6cp_options *go = &ipv6cp_gotoptions[f->unit];
     u_char *cip, *next;		/* Pointer to current and next CIs */
     u_short cilen, citype;	/* Parsed len, type */
-    u_short cishort;		/* Parsed short value */
+    /* EmberBSD: read only under IPV6CP_COMP. */
+    u_short cishort __unused;		/* Parsed short value */
     eui64_t ifaceid;		/* Parsed interface identifier */
     int rc = CONFACK;		/* Final packet return code */
     int orc;			/* Individual option return code */

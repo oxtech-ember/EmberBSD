@@ -102,7 +102,8 @@ ATF_TC_HEAD(tree_rbstress, tc)
 
 ATF_TC_BODY(tree_rbstress, tc)
 {
-	int i, fail, f;
+	int i, f;
+	int fail __unused;
 
 	srandom(4711);
 	fail = 0;

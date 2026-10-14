@@ -90,7 +90,7 @@ do_ext_keytab(krb5_principal principal, void *data)
             krb5_warnx(context, "some keys for %s are corrupted in the HDB",
                        unparsed);
         }
-	keys = calloc(sizeof(*keys), princ.n_key_data);
+	keys = calloc(princ.n_key_data, sizeof(*keys));
 	if (keys == NULL) {
 	    ret = krb5_enomem(context);
 	    goto out;
@@ -115,7 +115,7 @@ do_ext_keytab(krb5_principal principal, void *data)
 	if (ret)
 	    goto out;
 
-	keys = calloc(sizeof(*keys), n_k);
+	keys = calloc(n_k, sizeof(*keys));
 	if (keys == NULL) {
 	    ret = krb5_enomem(context);
 	    goto out;

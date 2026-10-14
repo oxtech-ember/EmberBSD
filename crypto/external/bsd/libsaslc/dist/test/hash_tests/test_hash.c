@@ -90,7 +90,7 @@ no_collision(size_t hsize, size_t hinit, size_t shift)
 	const char **used;
 	size_t hval, i;
 
-	used = calloc(sizeof(*used), hsize);
+	used = calloc(hsize, sizeof(*used));
 	if (used == NULL)
 		err(EXIT_FAILURE, "calloc");
 	for (i = 0; i < __arraycount(keys); i++) {

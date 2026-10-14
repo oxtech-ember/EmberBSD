@@ -139,7 +139,7 @@ main(int argc, char *argv[])
   char progpid_fs[PROGNAMESZ + 1 + 11];		/* room for ":pid" */
   char preopts[128];
   char *progname;
-  int forcecache = 0;
+  int forcecache __unused = 0;
   int forcefast = 0;
   int genflags = 0;
   int opt, ret;

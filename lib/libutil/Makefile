@@ -107,3 +107,7 @@ MLINKS+=getmntopts.3 getmntoptnum.3
 MLINKS+=getmntopts.3 freemntopts.3
 
 .include <bsd.lib.mk>
+
+# EmberBSD: byacc initializes yynerrs but this grammar never reads it;
+# the file is generated, so silence GCC16 -Werror=unused-but-set-variable.
+COPTS.parsedate.c+=	-Wno-error=unused-but-set-variable

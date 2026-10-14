@@ -69,3 +69,6 @@ LINTFLAGS+=	-X 351	# missing header declaration
 # ssh/sshd/sshd-session/&c. will find it at link-time.
 LIBSUBDIR=	private
 PROGDPSUBDIRS+=	private
+# EmberBSD: GCC16 -Werror=return-type on the vendored __dead do_ca_sign
+# reaching its closing brace; add COPTS on the ssh-keygen build.
+COPTS.ssh-keygen.c+=	-Wno-error=return-type

@@ -53,7 +53,8 @@
 static int
 write_nfsname(FILE *ef, fsmount *fp, char *hn)
 {
-  int errors = 0;
+
+int errors __unused = 0;
   char *h = xstrdup(fp->f_ref->m_dk->d_host->h_hostname);
 
  domain_strip(h, hn);
@@ -69,7 +70,7 @@ write_nfsname(FILE *ef, fsmount *fp, char *hn)
 static int
 write_boot_info(FILE *ef, host *hp)
 {
-  int errors = 0;
+  int errors __unused = 0;
 
   fprintf(ef, "%s\troot=", hp->h_hostname);
   errors += write_nfsname(ef, hp->h_netroot, hp->h_hostname);
@@ -87,7 +88,7 @@ write_boot_info(FILE *ef, host *hp)
 int
 write_bootparams(qelem *q)
 {
-  int errors = 0;
+  int errors __unused = 0;
 
   if (bootparams_pref) {
     FILE *ef = pref_open(bootparams_pref, "bootparams", info_hdr, "bootparams");

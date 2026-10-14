@@ -3812,8 +3812,8 @@ size_arrays(iscsi_initiator_t *ini, unsigned needed)
 	if (ini->size == 0) {
 		/* only get here first time around */
 		ini->size = needed;
-		ini->name = calloc(sizeof(char *), needed);
-		ini->value = calloc(sizeof(char *), needed);
+		ini->name = calloc(needed, sizeof(char *));
+		ini->value = calloc(needed, sizeof(char *));
 	} else if (ini->c == ini->size) {
 		/* only uses 'needed' when filled array */
 		ini->size += needed;

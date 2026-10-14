@@ -192,7 +192,7 @@ lfs_vflush(struct vnode *vp)
 	struct segment *sp;
 	struct buf *bp, *nbp, *tbp, *tnbp;
 	int error;
-	int flushed;
+	int flushed __unused;
 	int relock;
 
 	ip = VTOI(vp);
@@ -520,7 +520,7 @@ lfs_writevnodes(struct lfs *fs, struct mount *mp, struct segment *sp, int op)
 	struct vnode *vp;
 	struct vnode_iterator *marker;
 	struct lfs_writevnodes_ctx ctx;
-	int inodes_written = 0;
+	int inodes_written __unused = 0;
 	int error = 0;
 
 	/*

@@ -110,7 +110,7 @@ load_entry(FILE *file, void (*error_func)(const char *), struct passwd *pw,
 	 * of a list of minutes.
 	 */
 
-	e = calloc(sizeof(*e), sizeof(char));
+	e = calloc(1, sizeof(*e));
 
 	if (ch == '@') {
 		/* all of these should be flagged and load-limited; i.e.,

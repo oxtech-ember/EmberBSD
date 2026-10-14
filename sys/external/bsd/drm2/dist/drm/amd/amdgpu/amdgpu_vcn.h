@@ -108,6 +108,8 @@
 		else										\
 			internal_reg_offset = (0xFFFFF & addr);					\
 												\
+		/* EmberBSD: GCC16 loses the value use in nested statement exprs. */		\
+		(void)internal_reg_offset;							\
 		internal_reg_offset >>= 2;							\
 	})
 

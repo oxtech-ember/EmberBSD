@@ -26,6 +26,9 @@
  * Use is subject to license terms.
  */
 
+/* EmberBSD: ioctl lives in sys/ioctl.h; newer libc builds do not pull it
+ * in transitively under -Werror=implicit-function-declaration. */
+#include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/cred.h>

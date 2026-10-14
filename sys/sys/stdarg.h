@@ -54,15 +54,30 @@ typedef __va_list va_list;
 #define __VA_LIST_DECLARED
 #endif
 
+/*
+ * EmberBSD: guard the macros so a TU that also included the compiler's
+ * <stdarg.h> (external GCC16 resolves <stdarg.h> to its own copy) does not
+ * hit a redefinition under -Werror; the compiler forms are equivalent.
+ */
+#ifndef va_start
 #define	va_start(ap, last)	__builtin_va_start((ap), (last))
+#endif
+#ifndef va_arg
 #define	va_arg			__builtin_va_arg
+#endif
+#ifndef va_end
 #define	va_end(ap)		__builtin_va_end(ap)
+#endif
+#ifndef __va_copy
 #define	__va_copy(dest, src)	__builtin_va_copy((dest), (src))
+#endif
 
 #if !defined(_ANSI_SOURCE) && \
     (defined(_ISOC99_SOURCE) || (__STDC_VERSION__ - 0) >= 199901L || \
      defined(_NETBSD_SOURCE))
+#ifndef va_copy
 #define	va_copy(dest, src)	__va_copy((dest), (src))
+#endif
 #endif
 
 #endif /* !_SYS_STDARG_H_ */

@@ -270,7 +270,7 @@ show_vtw_v4(void (*print)(const vtw_t *))
 	fatp_ctl_t fat_tcpv4;
 	vtw_ctl_t  vtw_tcpv4[VTW_NCLASS];
 	int i;
-	int mem = 0;
+	int mem __unused = 0;
 	void *p;
 
 	if (!vtw_enabled())
@@ -378,7 +378,7 @@ show_vtw_v6(void (*print)(const vtw_t *))
 	fatp_ctl_t fat_tcpv6;
 	vtw_ctl_t  vtw_tcpv6[VTW_NCLASS];
 	int i;
-	int mem = 0;
+	int mem __unused = 0;
 	void *p;
 
 	if (!vtw_enabled())

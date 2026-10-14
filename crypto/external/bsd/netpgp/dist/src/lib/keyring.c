@@ -1116,7 +1116,7 @@ pgp_keyring_json(pgp_io_t *io, const pgp_keyring_t *keyring, mj_t *obj, const in
 	if (pgp_get_debug_level(__FILE__)) {
 		(void) fprintf(io->errs, "pgp_keyring_json: vsize %u\n", obj->size);
 	}
-	if ((obj->value.v = calloc(sizeof(*obj->value.v), obj->size)) == NULL) {
+	if ((obj->value.v = calloc(obj->size, sizeof(*obj->value.v))) == NULL) {
 		(void) fprintf(io->errs, "calloc failure\n");
 		return 0;
 	}

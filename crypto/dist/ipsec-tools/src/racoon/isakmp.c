@@ -2950,7 +2950,7 @@ vchar_t *
 isakmp_plist_set_all (struct payload_list **plist, struct ph1handle *iph1)
 {
 	struct payload_list *ptr = *plist, *first;
-	size_t tlen = sizeof (struct isakmp), n = 0;
+	size_t tlen = sizeof (struct isakmp);
 	vchar_t *buf = NULL;
 	char *p;
 
@@ -2986,7 +2986,6 @@ isakmp_plist_set_all (struct payload_list **plist, struct ph1handle *iph1)
 			vfree(first->payload);
 		racoon_free (first);
 		/* ptr->prev = NULL; first = NULL; ... omitted.  */
-		n++;
 	}
 
 	*plist = NULL;

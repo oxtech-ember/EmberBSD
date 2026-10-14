@@ -1172,9 +1172,9 @@ scsipi_test_unit_ready(struct scsipi_periph *periph, int flags)
 }
 
 static const struct scsipi_inquiry3_pattern {
-	const char vendor[8];
-	const char product[16];
-	const char revision[4];
+	const char vendor[9];
+	const char product[17];
+	const char revision[5];
 } scsipi_inquiry3_quirk[] = {
 	{ "ES-6600 ", "", "" },
 };

@@ -84,7 +84,7 @@ main(int argc, char *argv[])
 {
 	size_t	len;
 	int	ch;
-	int	iflag = 0;
+	int	iflag __unused = 0;
 	const char *defdevice = _PATH_SOUND;
 	const char *device = NULL;
 
@@ -117,7 +117,7 @@ main(int argc, char *argv[])
 			fflag = 1;
 			break;
 		case 'i':
-			iflag++;
+			/* iflag counted -i repeats, unused */
 			break;
 		case 'n':
 			nflag++;

@@ -100,7 +100,7 @@ typedef u_long	BN_ULONG;
 
 #define BN_CTX			int
 #define BN_CTX_new()		NULL
-#define BN_new()		calloc(sizeof(BIGNUM), 1)
+#define BN_new()		calloc(1, sizeof(BIGNUM))
 #define BN_free(a)		free(a)
 
 #define BN_copy(a, b)		*(a) = *(b)

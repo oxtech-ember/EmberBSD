@@ -289,11 +289,11 @@ bpz_compute(struct nbperf *nbperf)
 
 	graph3_setup(&state.graph, v, e);
 
-	state.holes64k = calloc(sizeof(uint32_t), (v + 65535) / 65536);
-	state.holes64 = calloc(sizeof(uint16_t), (v + 63) / 64 );
-	state.g = calloc(sizeof(uint32_t), v | 63);
-	state.visited = calloc(sizeof(uint32_t), v);
-	state.result_map = calloc(sizeof(uint32_t), e);
+	state.holes64k = calloc((v + 65535) / 65536, sizeof(uint32_t));
+	state.holes64 = calloc((v + 63) / 64, sizeof(uint16_t));
+	state.g = calloc(v | 63, sizeof(uint32_t));
+	state.visited = calloc(v, sizeof(uint32_t));
+	state.result_map = calloc(e, sizeof(uint32_t));
 
 	if (state.holes64k == NULL || state.holes64 == NULL ||
 	    state.g == NULL || state.visited == NULL ||

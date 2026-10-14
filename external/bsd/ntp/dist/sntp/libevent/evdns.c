@@ -1268,7 +1268,7 @@ request_parse(u8 *packet, int length, struct evdns_server_port *port, struct soc
 
 	server_req->base.flags = flags;
 	server_req->base.nquestions = 0;
-	server_req->base.questions = mm_calloc(sizeof(struct evdns_server_question *), questions);
+	server_req->base.questions = mm_calloc(questions, sizeof(struct evdns_server_question *));
 	if (server_req->base.questions == NULL)
 		goto err;
 

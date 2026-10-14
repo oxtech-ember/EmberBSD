@@ -221,10 +221,9 @@ sign_get_keys(void)
 			b64_ntop(der_pubkey, der_len, pubkey_b64, der_len*2);
 			free(der_pubkey);
 			/* try to resize memory object as needed */
-			GlobalSign.pubkey_b64 = realloc(pubkey_b64,
+			char *resized = realloc(pubkey_b64,
 							strlen(pubkey_b64)+1);
-			if (!GlobalSign.pubkey_b64)
-				GlobalSign.pubkey_b64 = pubkey_b64;
+			GlobalSign.pubkey_b64 = resized ? resized : pubkey_b64;
 		}
 	}
 #endif /* !DISABLE_TLS */
@@ -275,10 +274,9 @@ sign_get_keys(void)
 		b64_ntop(der_pubkey, der_len, pubkey_b64, der_len*2);
 		free(der_pubkey);
 		/* try to resize memory object as needed */
-		GlobalSign.pubkey_b64 = realloc(pubkey_b64,
+		char *resized = realloc(pubkey_b64,
 		    strlen(pubkey_b64) + 1);
-		if (!GlobalSign.pubkey_b64)
-			GlobalSign.pubkey_b64 = pubkey_b64;
+		GlobalSign.pubkey_b64 = resized ? resized : pubkey_b64;
 	}
 	return true;
 }

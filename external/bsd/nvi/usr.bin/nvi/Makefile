@@ -13,6 +13,10 @@ USE_BUILTIN_REGEX?=no
 
 WARNS=	5
 
+# EmberBSD: GCC16 range propagation infers an impossible memcpy bound
+# from the workspace allocation; the copy is clamped in del().
+COPTS.delete.c+=	-Wno-stringop-overflow -Wno-array-bounds \
+			-Wno-restrict
 COPTS.exf.c+=		-Wno-format-nonliteral
 COPTS.msg.c+=		-Wno-format-nonliteral
 .if ${USE_WIDECHAR} != "yes"

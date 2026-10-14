@@ -85,11 +85,11 @@ main(int argc, char *argv[])
 				    (unsigned long)lineno);
 			maxnlongopts++;		/* space for trailer */
 			longopts =
-			    (struct option *)calloc(sizeof(struct option),
-						    maxnlongopts);
+			    (struct option *)calloc(maxnlongopts,
+						    sizeof(struct option));
 			if (longopts == NULL)
 				err(1, "calloc");
-			longopt_flags = (int *)calloc(sizeof(int), maxnlongopts);
+			longopt_flags = (int *)calloc(maxnlongopts, sizeof(int));
 			if (longopt_flags == NULL)
 				err(1, "calloc");
 		} else if (strncmp(line, "longopt:", 8) == 0) {

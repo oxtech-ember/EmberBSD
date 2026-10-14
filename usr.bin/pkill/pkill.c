@@ -293,7 +293,7 @@ main(int argc, char **argv)
 	 * Allocate memory which will be used to keep track of the
 	 * selection.
 	 */
-	if ((selected = calloc(sizeof(*selected), (size_t)nproc)) == NULL)
+	if ((selected = calloc((size_t)nproc, sizeof(*selected))) == NULL)
 		err(STATUS_ERROR, "Cannot allocate memory for %d processes",
 		    nproc);
 

@@ -39,7 +39,7 @@ public int cvt_length(int len, int ops)
 public int * cvt_alloc_chpos(int len)
 {
 	int i;
-	int *chpos = (int *) ecalloc(sizeof(int), len);
+	int *chpos = (int *) ecalloc(len, sizeof(int));
 	/* Initialize all entries to an invalid position. */
 	for (i = 0;  i < len;  i++)
 		chpos[i] = -1;

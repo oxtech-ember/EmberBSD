@@ -12,7 +12,6 @@ SRCS+=	moduli.c
 .endif
 
 COPTS.ssh-keygen.c+=	-Wno-pointer-sign
-
 COPTS.ssh-keygen.c+=	${CC_WNO_FORMAT_TRUNCATION}
 COPTS.ssh-keygen.c+= -Wno-error=deprecated-declarations
 COPTS.moduli.c+= -Wno-error=deprecated-declarations

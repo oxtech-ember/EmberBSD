@@ -49,7 +49,7 @@
 #define	XCHACHA_STREAM_KEYBYTES		CHACHA_KEYBYTES
 #define	XCHACHA_STREAM_NONCEBYTES	24
 
-extern const uint8_t chacha_const32[16];
+extern const uint8_t chacha_const32[17];
 
 void	chacha_core(uint8_t[restrict static CHACHA_CORE_OUTBYTES],
 	    const uint8_t[static CHACHA_CORE_INBYTES],

@@ -7,6 +7,10 @@ WARNS?=		4
 USE_FORT?= yes
 
 CPPFLAGS+= -I${.OBJDIR}
+
+# EmberBSD: GCC16 arm_neon.h triggers -Werror=sign-compare inside vendored
+# zstd NEON paths; upstream code, disable only that diagnostic here.
+COPTS+=	-Wno-error=sign-compare -Wno-error=cast-qual -Wno-error=missing-braces
 DIST=${.CURDIR}/../dist
 SRCDIR=${DIST}/lib
 

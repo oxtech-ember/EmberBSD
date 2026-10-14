@@ -706,7 +706,7 @@ paddr_create(const char *name, parser_exec_t pexec, const char *addrkey,
 {
 	struct paddr *pa;
 
-	if ((pa = calloc(sizeof(*pa), 1)) == NULL)
+	if ((pa = calloc(1, sizeof(*pa))) == NULL)
 		return NULL;
 
 	pa->pa_parser.p_methods = &paddr_methods;
@@ -726,7 +726,7 @@ piface_create(const char *name, parser_exec_t pexec, const char *defkey,
 {
 	struct piface *pif;
 
-	if ((pif = calloc(sizeof(*pif), 1)) == NULL)
+	if ((pif = calloc(1, sizeof(*pif))) == NULL)
 		return NULL;
 
 	pif->pif_parser.p_methods = &piface_methods;

@@ -40,7 +40,8 @@
 
 const struct {
 	size_t len;
-	unsigned char plaintx[80];
+	/* EmberBSD: 80-char vector needs room for NUL. */
+	unsigned char plaintx[81];
 	unsigned char digest[16];
 } tests[] = {
 	{ 0, "",

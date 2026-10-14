@@ -1850,7 +1850,7 @@ QuoteShell(const char *str, bool quoteDollar, LazyBuf *buf)
 static char *
 Hash(const char *str)
 {
-	static const char hexdigits[16] = "0123456789abcdef";
+	static const char hexdigits[17] = "0123456789abcdef";
 	const unsigned char *ustr = (const unsigned char *)str;
 
 	uint32_t h = 0x971e137bU;

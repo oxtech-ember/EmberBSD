@@ -257,7 +257,7 @@ addr4:
 			prsaerror ("Invalid IPv4 prefix\n");
 			YYABORT;
 		}
-		$$ = calloc (sizeof(struct netaddr), 1);
+		$$ = calloc (1, sizeof(struct netaddr));
 		$$->prefix = $2;
 		sap = (struct sockaddr_in *)(&$$->sa);
 		memset(&hints, 0, sizeof(hints));
@@ -286,7 +286,7 @@ addr6:
 			prsaerror ("Invalid IPv6 prefix\n");
 			YYABORT;
 		}
-		$$ = calloc (sizeof(struct netaddr), 1);
+		$$ = calloc (1, sizeof(struct netaddr));
 		$$->prefix = $2;
 		sap = (struct sockaddr_in6 *)(&$$->sa);
 		memset(&hints, 0, sizeof(hints));

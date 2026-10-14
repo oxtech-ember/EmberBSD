@@ -37,7 +37,11 @@
 #include <crypto/cryptodev.h>
 
 unsigned char key[] = "abcdefgh";
-char plaintx[16] = "1234567890123456";
+char plaintx[16] = {
+	/* EmberBSD: exact 16 bytes, no terminating NUL. */
+	'1', '2', '3', '4', '5', '6', '7', '8',
+	'9', '0', '1', '2', '3', '4', '5', '6'
+};
 const unsigned char ciphertx[16] = {
 	0x21, 0xc6, 0x0d, 0xa5, 0x34, 0x24, 0x8b, 0xce,
 	0x95, 0x86, 0x64, 0xb3, 0x66, 0x77, 0x9b, 0x4c

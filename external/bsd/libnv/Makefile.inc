@@ -6,7 +6,9 @@ LIBNV_DIR=	${NETBSDSRCDIR}/sys/external/bsd/libnv
 LIBNV_DIST=	${LIBNV_DIR}/dist
 
 #CPPFLAGS+=	-DWITH_MSGIO
-CPPFLAGS+=	-D_VA_LIST_DEFINED -D__FBSDID\(x\)=
+# EmberBSD: drop -D_VA_LIST_DEFINED: GCC16's stdarg.h treats it as
+# "va_list already provided" and skips the typedef, breaking userspace.
+CPPFLAGS+=	-D__FBSDID\(x\)=
 CPPFLAGS+=	-I${LIBNV_DIST}
 
 .PATH:		${LIBNV_DIST}
