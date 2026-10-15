@@ -446,12 +446,17 @@ dad_event(void)
 static void
 unconfirmed_tests(void)
 {
-	const enum DHS states[] = { DHS_REBOOT, DHS_REQUEST };
+	const enum DHS states[] = { DHS_REBOOT, DHS_REQUEST, DHS_DISCOVER };
 	size_t i;
 
 	for (i = 0; i < sizeof(states) / sizeof(states[0]); i++) {
 		reset(states[i]);
+		if (states[i] == DHS_DISCOVER)
+			fixture_state.added = STATE_ADDED | STATE_FAKE;
 		dad_event();
+		if (states[i] == DHS_DISCOVER)
+			check(fixture_state.added == (STATE_ADDED | STATE_FAKE),
+			    "DAD preserves the unconfirmed saved-address flags");
 		check(binds == 0 && fixture_state.state == states[i],
 		    "DAD cannot bind a saved lease or unacknowledged offer");
 		check(fixture_state.offer == &offer && fixture_state.offer_len == sizeof(offer),

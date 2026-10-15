@@ -16,6 +16,7 @@ NAK because its state was already `DHS_BOUND`. An uncancelled timeout could
 start IPv4LL beside that unconfirmed address. mDNS could publish both addresses.
 
 The correction rejects DAD completion in `DHS_REBOOT` and `DHS_REQUEST`.
+Discovery also waits for DHCP unless an explicit expired-lease fallback is active.
 The server can still accept or reject the lease. IPv4LL remains available
 while no usable DHCP lease exists. A successful configured bind also removes
 an active fallback, including when the DHCP reply arrives after DAD.
