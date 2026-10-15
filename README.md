@@ -937,7 +937,9 @@ The base system shell is unchanged.
   flag selection; complete amd64 tools and image acceptance remain separate.
   The [variadic-header regression](ember/tests/stdarg-interop.md) covers compiler/system include
   order, C11/C23/C++20 and resource-free fallbacks. The isolated GCC16 libc assertion TU passes;
-  a complete base distribution remains a separate check.
+  a complete base distribution remains a separate check. The [stddef interoperability regression](ember/tests/stddef-interop.md)
+  covers GCC16's compiler-owned amd64 `max_align_t`, both include orders and resource-free fallbacks.
+  Its size change requires a consistent userspace rebuild; isolated libkvm and PCB checks pass.
   Incremental wrapper builds refresh the generated kernel version metadata;
   host orchestration checks cover stale `BUILDINFO` and object retention.
   The resulting kernel cold-boots in AArch64 UTM and passes FP process,
