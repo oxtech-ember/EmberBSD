@@ -81,7 +81,7 @@ if [ "${FAIL_AT:-}" = network-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; the
 fi
 SH
 done
-for contract in drm-prime-map drm-dmabuf-lifetime bcm2712-v3d-prime; do
+for contract in drm-prime-map drm-dmabuf-lifetime bcm2712-v3d-prime simplefb; do
     : > "$work/src/ember/tools/$contract-contract.rb"
 done
 cat > "$work/bin/ruby" <<'SCRIPT'
@@ -204,7 +204,7 @@ check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
     test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 16
     test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 18
-    test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 3
+    test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 4
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 8
 }
 export TEST_OUT="$work/cross"
@@ -242,7 +242,7 @@ outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
 if_cemac_acpi.kmod bcm2712btcom.kmod rp1wmcodec.kmod rpi5button.kmod'
 for failure in tools module cpp dtb contract a733-contract \
-    a733-gpu-vm-contract.sh gpu-contract ruby-contract \
+    a733-gpu-vm-contract.sh gpu-contract ruby-contract simplefb-contract.rb \
     bcm2712-v3d-prime-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
     aicwf-sta.sh aicwf-vht.sh publish; do
     : > "$TEST_LOG"

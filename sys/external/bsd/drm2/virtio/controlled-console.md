@@ -60,6 +60,10 @@ retirement pin or OPEN/CLOSING lease. No special cleanup fence ID exists.
 
 ## Kernel-private console
 
+The [firmware framebuffer contract](../../../../../ember/boot/firmware-framebuffer.md)
+keeps the existing boot reserve/commit API. Descriptor queries and cancellation
+apply only to an uncommitted reservation. They do not change runtime ownership.
+
 Only the console probe sets the immutable `private_console` creation parameter,
 before host backing exposure. Object attach clears the initial mapped BO, including
 page padding, after vmap and before ATTACH PRE. The probe never writes exposed BO
