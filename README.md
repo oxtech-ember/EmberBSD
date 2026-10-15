@@ -674,11 +674,13 @@ on every board in the hardware catalog.
   The [experimental execution path](ember/boot/a733-pvr-execution.md) now adds
   firmware VM publication, contexts, free lists, and synchronous compute submission.
   Its production-source contracts pass. The [graphics development checkpoint](ember/boot/a733-pvr-graphics.md)
-  adds tested stream, queue, HWRT, mapping-hold, and free-list growth primitives.
-  Their DRM graphics integration remains incomplete. Physical Vulkan execution, graphics jobs,
-  Zink, display output, and accelerated Plasma remain unaccepted.
-  Repeated submission within one boot and long-duration GPU stability remain
-  untested.
+  adds stream, queue, HWRT, mapping-hold, and free-list growth primitives.
+  HWRT handles and paired DRM submissions now exist in this branch.
+  GROW callback registration and paired dependency acceptance remain incomplete.
+  The free-list fixture keeps backing buffers alive through its page-count checks.
+  These graphics branch changes have no physical acceptance.
+  The native execution guide records compute evidence separately.
+  Zink, display output, and accelerated Plasma remain unaccepted on A733.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,

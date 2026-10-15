@@ -714,8 +714,8 @@ main(void)
 	valid_case(4, 8, 4, 100, 4);
 	valid_case(0, 524288, 4, 13, 0);
 	invalid_cases(); allocation_failures(); retained_failures();
-	growth_cases(); growth_failures(); reset_state();
+	growth_cases(); growth_failures(); current_pages_tests(); reset_state();
 	free(backing.cpu); free(backing.visible);
-	current_pages_tests(); printf("pvr FreeList: %u checks passed\n", checks);
+	printf("pvr FreeList: %u checks passed\n", checks);
 	return 0;
 }
