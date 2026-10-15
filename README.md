@@ -111,7 +111,8 @@ Start a new conversation in your project and ask:
 See the [skills installation and update guide](https://github.com/oxtech-ember/Ember-Agent-Skills#use-in-your-development-environment)
 for expected results, updates and other assistant environments. The plugin
 provides developer instructions; it does not install software on a board.
-Package 0.4.3 provides eight task skills; its README records package and client checks.
+Package 0.4.4 provides eight task skills, including staged port modernization and behavior checks.
+Its README records package, client, and bounded instruction checks.
 Desktop icon rendering remains unverified for both packages.
 Reusable fixes and ports are contributed through focused PRs after relevant
 testing, following the accepting project's rules.
@@ -225,9 +226,18 @@ on every board in the hardware catalog.
   translation ATE RMSE across two controlled runs and fixed-scale alignment. This enables
   recorded-data navigation experiments; live cameras, IMU fusion, boards,
   GUI, sustained operation and real-time performance remain unverified.
+- **Mapping recorded RGB-D data:** RTAB-Map 0.23.8 now has a
+  [GCC16 cross package](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/rtabmap)
+  with common OpenCV 5.0.0, PCL 1.15.1nb1, GTSAM 4.3.0 and SQLite 3.54.0.
+  The [recorded-map example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/rtabmap-recorded-map)
+  maps twelve TUM RGB-D frames using their recorded poses, saves and reopens
+  the SQLite map, and exports 10,859 independently checked colored points.
+  EmberBSD AArch64 QEMU checks pass fourteen real package lifecycles,
+  persistence/localization, invalid inputs and selected upstream tests.
+  This supplied-pose map does not establish visual odometry, physical sensors,
+  full-sequence SLAM, real-time or sustained operation.
 - **Navigation and motion software:** Ports prepares
   [OpenVINS](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/openvins)
-  and [RTAB-Map](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/rtabmap)
   with common current dependencies. [Ruckig](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ruckig)
   and [OSQP](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/osqp)
   now have GCC16 cross packages accepted in EmberBSD AArch64 QEMU. Ruckig
