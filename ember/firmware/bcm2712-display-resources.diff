@@ -1,0 +1,147 @@
+Origin: EmberBSD native BCM2712 display resource contract.
+
+Keep the legacy GPU0 memory and interrupt indices. Append each shared
+display resource once and opt in with the versioned _DSD property.
+This patch does not access MMIO, change clocks, or initialize HDMI.
+
+--- a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
++++ b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+@@ -542,6 +542,14 @@
+       Name (_UID, 0x0)
+       Name (_CCA, 0x0)
+ 
++      // Versioned EmberBSD display resources. Keep the legacy 10/4 prefix.
++      Name (_DSD, Package () {
++        ToUUID ("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
++        Package () {
++          Package () { "emberbsd,display-contract-version", One }
++        }
++      })
++
+       Method (_STA) {
+         Return (0xF)
+       }
+@@ -558,10 +566,35 @@
+           QWORDMEMORY_BUF (07, ResourceConsumer)
+           QWORDMEMORY_BUF (08, ResourceConsumer)
+           QWORDMEMORY_BUF (09, ResourceConsumer)
++          QWORDMEMORY_BUF (10, ResourceConsumer)
++          QWORDMEMORY_BUF (11, ResourceConsumer)
++          QWORDMEMORY_BUF (12, ResourceConsumer)
++          QWORDMEMORY_BUF (13, ResourceConsumer)
++          QWORDMEMORY_BUF (14, ResourceConsumer)
++          QWORDMEMORY_BUF (15, ResourceConsumer)
++          QWORDMEMORY_BUF (16, ResourceConsumer)
++          QWORDMEMORY_BUF (17, ResourceConsumer)
++          QWORDMEMORY_BUF (18, ResourceConsumer)
++          QWORDMEMORY_BUF (19, ResourceConsumer)
++          QWORDMEMORY_BUF (20, ResourceConsumer)
++          QWORDMEMORY_BUF (21, ResourceConsumer)
++          QWORDMEMORY_BUF (22, ResourceConsumer)
++          QWORDMEMORY_BUF (23, ResourceConsumer)
++          QWORDMEMORY_BUF (24, ResourceConsumer)
++          QWORDMEMORY_BUF (25, ResourceConsumer)
++          QWORDMEMORY_BUF (26, ResourceConsumer)
++          QWORDMEMORY_BUF (27, ResourceConsumer)
++          QWORDMEMORY_BUF (28, ResourceConsumer)
++          QWORDMEMORY_BUF (29, ResourceConsumer)
++          QWORDMEMORY_BUF (30, ResourceConsumer)
++          QWORDMEMORY_BUF (31, ResourceConsumer)
+           Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { BCM2712_V3D_CORE_INTERRUPT }
+           Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { BCM2712_V3D_HUB_INTERRUPT }
+           Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { BCM2712_PIXELVALVE0_INTERRUPT }
+           Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { BCM2712_PIXELVALVE1_INTERRUPT }
++          Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { BCM2712_DISP_INTR_INTERRUPT }
++          Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { BCM2712_AON_IRQ_INTERRUPT }
++          Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { BCM2712_BSC_IRQ_INTERRUPT }
+         })
+         QWORD_SET (00, BCM2712_V3D_HUB_BASE,     BCM2712_V3D_HUB_LENGTH,     0)
+         QWORD_SET (01, BCM2712_V3D_CORE0_BASE,   BCM2712_V3D_CORE0_LENGTH,   0)
+@@ -573,6 +606,28 @@
+         QWORD_SET (07, BCM2712_MOP_BASE,         BCM2712_MOP_LENGTH,         0)
+         QWORD_SET (08, BCM2712_MOPLET_BASE,      BCM2712_MOPLET_LENGTH,      0)
+         QWORD_SET (09, BCM2712_DISP_INTR_BASE,   BCM2712_DISP_INTR_LENGTH,   0)
++        QWORD_SET (10, BCM2712_DVP_CLOCK_RESET_BASE, BCM2712_DVP_CLOCK_RESET_LENGTH, 0)
++        QWORD_SET (11, BCM2712_HD_SHARED_BASE, BCM2712_HD_SHARED_LENGTH, 0)
++        QWORD_SET (12, BCM2712_AON_IRQ_BASE, BCM2712_AON_IRQ_LENGTH, 0)
++        QWORD_SET (13, BCM2712_BSC_IRQ_BASE, BCM2712_BSC_IRQ_LENGTH, 0)
++        QWORD_SET (14, BCM2712_DDC0_BASE, BCM2712_DDC0_LENGTH, 0)
++        QWORD_SET (15, BCM2712_DDC1_BASE, BCM2712_DDC1_LENGTH, 0)
++        QWORD_SET (16, BCM2712_HDMI0_CORE_BASE, BCM2712_HDMI0_CORE_LENGTH, 0)
++        QWORD_SET (17, BCM2712_HDMI0_DVP_BASE, BCM2712_HDMI0_DVP_LENGTH, 0)
++        QWORD_SET (18, BCM2712_HDMI0_PHY_BASE, BCM2712_HDMI0_PHY_LENGTH, 0)
++        QWORD_SET (19, BCM2712_HDMI0_RM_BASE, BCM2712_HDMI0_RM_LENGTH, 0)
++        QWORD_SET (20, BCM2712_HDMI0_PACKET_BASE, BCM2712_HDMI0_PACKET_LENGTH, 0)
++        QWORD_SET (21, BCM2712_HDMI0_METADATA_BASE, BCM2712_HDMI0_METADATA_LENGTH, 0)
++        QWORD_SET (22, BCM2712_HDMI0_CSC_BASE, BCM2712_HDMI0_CSC_LENGTH, 0)
++        QWORD_SET (23, BCM2712_HDMI0_CEC_BASE, BCM2712_HDMI0_CEC_LENGTH, 0)
++        QWORD_SET (24, BCM2712_HDMI1_CORE_BASE, BCM2712_HDMI1_CORE_LENGTH, 0)
++        QWORD_SET (25, BCM2712_HDMI1_DVP_BASE, BCM2712_HDMI1_DVP_LENGTH, 0)
++        QWORD_SET (26, BCM2712_HDMI1_PHY_BASE, BCM2712_HDMI1_PHY_LENGTH, 0)
++        QWORD_SET (27, BCM2712_HDMI1_RM_BASE, BCM2712_HDMI1_RM_LENGTH, 0)
++        QWORD_SET (28, BCM2712_HDMI1_PACKET_BASE, BCM2712_HDMI1_PACKET_LENGTH, 0)
++        QWORD_SET (29, BCM2712_HDMI1_METADATA_BASE, BCM2712_HDMI1_METADATA_LENGTH, 0)
++        QWORD_SET (30, BCM2712_HDMI1_CSC_BASE, BCM2712_HDMI1_CSC_LENGTH, 0)
++        QWORD_SET (31, BCM2712_HDMI1_CEC_BASE, BCM2712_HDMI1_CEC_LENGTH, 0)
+         Return (RBUF)
+       }
+ 
+--- a/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h
++++ b/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h
+@@ -100,4 +100,56 @@
+ #define BCM2712_DISP_INTR_BASE                            0x107c502000
+ #define BCM2712_DISP_INTR_LENGTH                          0x30
+ 
++//
++// Native display resource contract: shared ranges occur once.
++// Raspberry Pi Linux a1a601d4857978d810175365550c4536701df4ed.
++//
++#define BCM2712_DVP_CLOCK_RESET_BASE                      0x107c700000
++#define BCM2712_DVP_CLOCK_RESET_LENGTH                    0x10
++#define BCM2712_HD_SHARED_BASE                            0x107c720000
++#define BCM2712_HD_SHARED_LENGTH                          0x100
++#define BCM2712_AON_IRQ_BASE                              0x107d510600
++#define BCM2712_AON_IRQ_LENGTH                            0x30
++#define BCM2712_BSC_IRQ_BASE                              0x107d508380
++#define BCM2712_BSC_IRQ_LENGTH                            0x10
++#define BCM2712_DDC0_BASE                                 0x107d508200
++#define BCM2712_DDC0_LENGTH                               0x58
++#define BCM2712_DDC1_BASE                                 0x107d508280
++#define BCM2712_DDC1_LENGTH                               0x58
++#define BCM2712_HDMI0_CORE_BASE                           0x107c701400
++#define BCM2712_HDMI0_CORE_LENGTH                         0x300
++#define BCM2712_HDMI0_DVP_BASE                            0x107c701000
++#define BCM2712_HDMI0_DVP_LENGTH                          0x200
++#define BCM2712_HDMI0_PHY_BASE                            0x107c701d00
++#define BCM2712_HDMI0_PHY_LENGTH                          0x300
++#define BCM2712_HDMI0_RM_BASE                             0x107c702000
++#define BCM2712_HDMI0_RM_LENGTH                           0x80
++#define BCM2712_HDMI0_PACKET_BASE                         0x107c703800
++#define BCM2712_HDMI0_PACKET_LENGTH                       0x200
++#define BCM2712_HDMI0_METADATA_BASE                       0x107c704000
++#define BCM2712_HDMI0_METADATA_LENGTH                     0x800
++#define BCM2712_HDMI0_CSC_BASE                            0x107c700100
++#define BCM2712_HDMI0_CSC_LENGTH                          0x80
++#define BCM2712_HDMI0_CEC_BASE                            0x107d510800
++#define BCM2712_HDMI0_CEC_LENGTH                          0x100
++#define BCM2712_HDMI1_CORE_BASE                           0x107c706400
++#define BCM2712_HDMI1_CORE_LENGTH                         0x300
++#define BCM2712_HDMI1_DVP_BASE                            0x107c706000
++#define BCM2712_HDMI1_DVP_LENGTH                          0x200
++#define BCM2712_HDMI1_PHY_BASE                            0x107c706d00
++#define BCM2712_HDMI1_PHY_LENGTH                          0x300
++#define BCM2712_HDMI1_RM_BASE                             0x107c707000
++#define BCM2712_HDMI1_RM_LENGTH                           0x80
++#define BCM2712_HDMI1_PACKET_BASE                         0x107c708800
++#define BCM2712_HDMI1_PACKET_LENGTH                       0x200
++#define BCM2712_HDMI1_METADATA_BASE                       0x107c709000
++#define BCM2712_HDMI1_METADATA_LENGTH                     0x800
++#define BCM2712_HDMI1_CSC_BASE                            0x107c700180
++#define BCM2712_HDMI1_CSC_LENGTH                          0x80
++#define BCM2712_HDMI1_CEC_BASE                            0x107d511000
++#define BCM2712_HDMI1_CEC_LENGTH                          0x100
++#define BCM2712_DISP_INTR_INTERRUPT                       129   // GIC_SPI 97 + 32
++#define BCM2712_AON_IRQ_INTERRUPT                         271   // GIC_SPI 239 + 32
++#define BCM2712_BSC_IRQ_INTERRUPT                         274   // GIC_SPI 242 + 32
++
+ #endif // __BCM2712_H__

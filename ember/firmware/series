@@ -22,3 +22,4 @@ rp1-uart-shared-irq.diff
 cm5-trace-option.diff
 fan-state-fix.diff
 power-button.diff
+bcm2712-display-resources.diff
