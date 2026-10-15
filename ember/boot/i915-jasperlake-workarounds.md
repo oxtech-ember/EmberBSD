@@ -1,7 +1,7 @@
 # Jasper Lake workaround adaptation
 
 This extends the [guarded source foundation](i915-jasperlake.md).
-Native attachment remains disabled.
+Default kernels keep preliminary attachment disabled; the separate personal-trial option has a narrow exception.
 The changes are personal source adaptations, not hardware acceptance.
 All imported driver files retain Intel's MIT notices and authorship.
 The adaptation and host regression are AI-assisted with OpenAI Codex.
@@ -118,4 +118,4 @@ The baseline fails because JSL has no entry; four semantic mutations fail execut
 ASan/UBSan, native GCC16 analysis, target `-Werror` and target path analysis pass.
 The Cppcheck baseline comparison retains its documented findings and coverage limit.
 This changes metadata only; it does not activate GuC, load firmware or verify image assets.
-DMC selection and the native preliminary-hardware rejection remain unchanged.
+DMC selection stays unchanged. Default kernels keep the preliminary-hardware rejection.

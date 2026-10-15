@@ -2,7 +2,9 @@
 
 This is a source foundation for a local experimental port.
 It registers only Intel PCI device `8086:4e55` as `INTEL_JASPERLAKE`.
-It does not enable native attachment or establish working graphics.
+Default kernels and standalone modules reject preliminary JSL attachment.
+The separate `GENERIC_JSL_TRIAL` configuration permits only the exact identity described below.
+This source contract does not establish working graphics.
 
 ## Scope and provenance
 
@@ -30,7 +32,7 @@ rather than upstream's `gt/intel_sseu.c`.
 | `drivers/gpu/drm/i915/gt/intel_sseu.c` | `93fac1e3a700b603a9469553f05cbb7ba5ac7e2b366f0d7ae5c4bd9b0f925760` |
 
 The dedicated JSL device info keeps `require_force_probe = 1`.
-The unchanged native PCI lookup still rejects preliminary hardware.
+The native PCI lookup rejects preliminary hardware unless the exact personal-trial exception applies.
 The source registers Gen11 stolen-memory operations for the new ID.
 It shares SSEU geometry and PCH checks through `IS_JSL_EHL`.
 It preserves distinct `IS_ELKHARTLAKE` and `IS_JASPERLAKE` predicates.
@@ -112,14 +114,50 @@ Cppcheck retains three baseline AST errors and 48 signed-shift reports in regist
 The AST errors limit its coverage of GNU expressions in DDI, DP and display.
 The report has no new findings; it is not a clean or complete analysis result.
 
+## Personal trial configuration
+
+`sys/arch/amd64/conf/GENERIC_JSL_TRIAL` includes GENERIC and sets `EMBER_I915_JSL_4E55_TRIAL`.
+The option is off in GENERIC and INSTALL.
+The native source includes its generated option header only under `_KERNEL_OPT`.
+Manually loading the default standalone module keeps the rejection; use the separate trial kernel.
+
+The exception checks the existing function-zero, Intel-vendor and display-class gates first.
+It requires product `4e55`, an Intel table entry, platform `INTEL_JASPERLAKE`, generation 11,
+a 36-bit PPGTT size and the existing RCS0/BCS0/VCS0/VECS0 engine mask.
+The platform field is the pre-attach equivalent of the later runtime `IS_JASPERLAKE` predicate.
+Non-preliminary attachment keeps its existing behavior.
+
+Run the real guard and generated-header checks with a native NetBSD config tool:
+
+```sh
+NETBSD_CONFIG=/absolute/nbconfig ruby ember/tests/i915-jsl-trial.rb
+```
+
+Without `NETBSD_CONFIG`, the test models the option headers and states that generation was not checked.
+The test executes 2304 identity/require-flag combinations for each of GENERIC, INSTALL, trial and module states.
+The real config tool confirms default headers omit the option and only the trial header defines it.
+The baseline rejects the trial identity; eight semantic mutations fail executable assertions.
+ASan/UBSan, native GCC16 analysis and both real target TU option states pass.
+Target GCC16 `-fanalyzer` reports no diagnostics in the baseline or either candidate state.
+Cppcheck retains 180 baseline findings with the default option off.
+Trial mode adds one style report from the inherited `BIT` macro at the engine-mask check.
+That macro bounds the shift using an unsigned type width; its constant width cannot be negative.
+The four engine indices are 0, 1, 2 and 6, and their expected mask is `0x47`.
+No diagnostic suppression or register-mask change is added.
+The inherited Cppcheck reports remain with the OS i915 owner.
+
+This stage was prepared from merge `1745f04ba4063486b4eef176dbe8b7bcd853052a` with upstream `ad698a6e40ea89d72249f76d06913be29a5ab90c`.
+A planned image must offer the stock GENERIC kernel as a distinct recovery choice.
+Keep each kernel and its modules from the same pinned build.
+Boot-menu integration, the complete trial build and physical acceptance are separate stages.
+
 ## Remaining port work
 
 The [workaround adaptation](i915-jasperlake-workarounds.md) adds FBC, power, GT and firmware selection.
 GuC remains disabled by default.
-Native attachment stays closed until the adaptation and final opt-in have separate review.
-The next steps must preserve a stock recovery kernel.
-Only the final opt-in trial may permit attachment for `8086:4e55`.
-Other preliminary devices must keep the existing rejection.
+The separate trial configuration admits only `8086:4e55` with the expected JSL device information.
+Other preliminary devices keep the existing rejection.
+The image must retain a separate stock recovery kernel before a physical trial.
 
 The first physical scenario requires the actual PCI revision, subsystem IDs,
 firmware revision and internal panel interface.

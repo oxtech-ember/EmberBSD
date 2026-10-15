@@ -481,7 +481,8 @@ on every board in the hardware catalog.
   identity, eDP swing tables, link rates, PHY/clock selection, the PSR2 limit,
   FBC alignment, guarded display-power handling and GT/reset workarounds.
   Firmware metadata identifies JSL; GuC stays disabled by default.
-  Native attachment remains disabled; review, full builds and physical acceptance are pending.
+  Default kernels/modules keep preliminary attachment closed; a separate personal trial
+  configuration admits only the exact `8086:4e55` JSL identity. Full builds and physical acceptance remain pending.
 - **Native graphics infrastructure:** experimental VirtIO DRM/KMS, UVM-backed
   GEM buffers and PRIME sharing make direct Wayland sessions possible.
   UTM tests cover visible KMS output, 32 cross-process buffer-lifetime cycles

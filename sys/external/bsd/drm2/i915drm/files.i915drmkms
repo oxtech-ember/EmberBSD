@@ -2,6 +2,9 @@
 
 version	20180827
 
+# Personal trial only. Default kernels and standalone modules keep rejection.
+defflag opt_ember_i915_jsl_trial.h EMBER_I915_JSL_4E55_TRIAL
+
 define	intelfbbus	{ }
 device	i915drmkms: acpivga, drmkms, drmkms_pci, intelfbbus, agp_i810, firmload
 attach	i915drmkms at pci
