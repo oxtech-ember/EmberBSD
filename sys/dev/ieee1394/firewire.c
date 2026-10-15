@@ -1059,7 +1059,7 @@ fw_rcv(struct fw_rcv_buf *rb)
 	struct fw_pkt *fp, *resfp;
 	struct fw_bind *bind;
 	int tcode;
-	int i, len, oldstate;
+	int oldstate;
 #if 0
 	{
 		uint32_t *qld;
@@ -1182,9 +1182,6 @@ fw_rcv(struct fw_rcv_buf *rb)
 			}
 			return;
 		}
-		len = 0;
-		for (i = 0; i < rb->nvec; i++)
-			len += rb->vec[i].iov_len;
 		mutex_enter(&bind->fwb_mtx);
 		rb->xfer = STAILQ_FIRST(&bind->xferlist);
 		if (rb->xfer == NULL) {
