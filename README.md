@@ -237,7 +237,11 @@ on every board in the hardware catalog.
   upstream programs. Both packages pass removal/reinstallation. These are
   software contracts; physical motion and real-time reliability remain unverified.
   [OMPL](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ompl)
-  has a prepared planning profile. Other navigation additions still need target acceptance.
+  2.0.2 also has a GCC16 cross package with Eigen 5.0.1 and Boost 1.92.0.
+  Its installed AArch64 QEMU checks pass an independently validated obstacle
+  detour, thirteen upstream programs, archive consumers and all four package
+  lifecycles. The [CSV path example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/ompl-path)
+  uses that shared library. Other navigation additions still need target acceptance.
 - **Ethernet SDR development:** the [Ports SDR profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/sdr)
   combines SoapySDR, libiio 1.0.0 with its official compatibility layer,
   AD9361/Pluto support and current libxml2. Synthetic IQ and loopback RX
