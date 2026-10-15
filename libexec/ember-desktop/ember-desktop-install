@@ -1,0 +1,64 @@
+#!/bin/sh
+# Origin: EmberBSD verified offline desktop installation, prepared with AI assistance.
+# SPDX-License-Identifier: BSD-2-Clause
+set -eu
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+export PATH
+case ${1-} in xfce) ;; *) echo 'Supported desktop: xfce' >&2; exit 2;; esac
+[ "$(id -u)" = 0 ] || { echo 'Run inside the installed system as root.' >&2; exit 1; }
+configure_network()
+{
+	# Discover every radio, including those not used to fetch installation sets.
+	config=$(mktemp /etc/rc.conf.XXXXXX)
+	sed -e '/^[[:space:]]*dhcpcd_flags=/d' \
+	    -e '/^[[:space:]]*wpa_supplicant_flags=/d' /etc/rc.conf > "$config"
+	printf 'dhcpcd_flags="-qM"\n' >> "$config"
+	chmod 644 "$config"
+	mv "$config" /etc/rc.conf
+	for service in dbus dhcpcd wpa_supplicant; do
+		printf '%s=YES\n' "$service" >> /etc/rc.conf
+	done
+	# Preserve interfaces explicitly configured with a static address in sysinst.
+	# Their existing ifconfig files and routes remain authoritative.
+	config=$(mktemp /etc/dhcpcd.conf.XXXXXX)
+	printf 'controlgroup wheel\n' > "$config"
+	for file in /etc/ifconfig.*; do
+		[ -f "$file" ] || continue
+		interface=${file##*/ifconfig.}
+		case $interface in ''|*[!A-Za-z0-9_-]*) continue;; esac
+		if awk '/^[[:space:]]*(inet[[:space:]]+)?[0-9]+\./ { found=1 } END { exit !found }' "$file"; then
+			printf 'denyinterfaces %s\n' "$interface" >> "$config"
+		fi
+	done
+	sed '/^controlgroup wheel$/d' /etc/dhcpcd.conf >> "$config"
+	chmod 644 "$config"
+	mv "$config" /etc/dhcpcd.conf
+	chmod 600 /etc/wpa_supplicant.conf
+}
+cache=/var/cache/ember-desktop
+[ -f "$cache/ROOTS" ] && [ -f "$cache/SHA512" ] || exit 1
+
+# The outer archive is verified by sysinst. Validate the staged package bytes too.
+while IFS= read -r line; do
+	name=${line#SHA512 (}; name=${name%%) = *}
+	expected=${line##*) = }
+	case $name in ''|*[!A-Za-z0-9_+.-]*|.*) exit 1;; esac
+	case $name in *.tgz) ;; *) exit 1;; esac
+	[ "${#expected}" = 128 ] || exit 1
+	case $expected in *[!0-9a-f]*) exit 1;; esac
+	[ -f "$cache/All/$name" ] || exit 1
+	[ "$(sha512 -q "$cache/All/$name")" = "$expected" ] || exit 1
+done < "$cache/SHA512"
+
+PKG_PATH=$cache/All
+export PKG_PATH
+while IFS= read -r package; do
+	case $package in ''|*[!A-Za-z0-9_+.-]*|.*) exit 1;; esac
+	[ -f "$PKG_PATH/$package.tgz" ] || exit 1
+	pkg_add "$PKG_PATH/$package.tgz"
+done < "$cache/ROOTS"
+[ -x /usr/pkg/bin/startxfce4 ] && [ -x /usr/pkg/bin/dhcpcd-gtk ] || exit 1
+[ -f /usr/pkg/share/examples/rc.d/dbus ] || exit 1
+install -o root -g wheel -m 555 /usr/pkg/share/examples/rc.d/dbus /etc/rc.d/dbus
+configure_network
+echo 'XFCE and the Wi-Fi manager are installed. After login run: ember-desktop'

@@ -69,7 +69,7 @@ new_blk(uint8_t type, uint8_t subtype, uint16_t length)
 {
 	boot_blk_t *bb;
 
-	bb = ecalloc(sizeof(*bb), 1);
+	bb = ecalloc(1, sizeof(*bb));
 
 	if (length == 0)	/* alloc bb only */
 		return bb;

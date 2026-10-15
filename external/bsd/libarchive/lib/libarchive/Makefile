@@ -464,6 +464,10 @@ MLINKS+=	libarchive.3 archive.3
 
 COPTS.archive_acl.c+=				${CC_WNO_IMPLICIT_FALLTHROUGH}
 COPTS.archive_read.c+=				${CC_WNO_IMPLICIT_FALLTHROUGH}
+# EmberBSD: GCC16 -Wstringop-overflow false positive on the rar5
+# bit-length fill loop; the w < HUFF_BC bound already guards the region.
+COPTS.archive_read_support_format_rar5.c+=	-Wno-error=stringop-overflow
+COPTS.archive_read_support_format_rar.c+=	-Wno-error=stringop-overflow
 COPTS.archive_read_support_format_7zip.c+=	${CC_WNO_IMPLICIT_FALLTHROUGH}
 COPTS.archive_read_support_format_mtree.c+=	${CC_WNO_IMPLICIT_FALLTHROUGH}
 COPTS.archive_read_support_format_rar5.c+=	${CC_WNO_MAYBE_UNINITIALIZED}

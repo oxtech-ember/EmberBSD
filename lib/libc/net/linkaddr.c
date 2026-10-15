@@ -132,7 +132,7 @@ link_addr(const char *addr, struct sockaddr_dl *sdl)
 	return;
 }
 
-static const char hexlist[16] = "0123456789abcdef";
+static const char hexlist[] = "0123456789abcdef";
 
 char *
 link_ntoa(const struct sockaddr_dl *sdl)

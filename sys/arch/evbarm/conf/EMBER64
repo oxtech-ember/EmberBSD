@@ -8,6 +8,12 @@
 
 include	"arch/evbarm/conf/GENERIC64"
 
+#	Show the EmberBSD boot splash on genfb framebuffers. The path is
+#	relative to ${S}, so it also resolves for kernel objects built outside
+#	the source tree; a framebuffer smaller than the image keeps the console.
+options 	SPLASHSCREEN
+makeoptions	SPLASHSCREEN_IMAGE="${S}/../ember/boot/emberbsd-boot-splash.png"
+
 no vmt0	at cpu0
 
 #	The stand stays at securelevel -1 while the Ethernet driver is being

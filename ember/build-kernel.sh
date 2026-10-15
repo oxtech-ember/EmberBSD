@@ -60,6 +60,10 @@ case "$jobs" in ''|*[!0-9]*) jobs=0 ;; esac
 stage=$(mktemp -d "$out/.artifacts.XXXXXX")
 : > "$out/build.log"
 if [ "$mode" = cross ]; then
+    kernel_obj="$out/obj/kernels/$config"
+    # newvers.mk does not track BUILDINFO as a dependency under -u.
+    # Refresh only this kernel's generated identity; retain other objects.
+    rm -f "$kernel_obj/vers.c" "$kernel_obj/vers.o"
     # The wrapper retains these directories and target settings for module builds.
     # -u reuses host tools and objects; it does not run target executables on the host.
     set -- -U -u -j"$jobs" -m evbarm -a aarch64 \
@@ -72,7 +76,6 @@ if [ "$mode" = cross ]; then
     (cd "$src"; MAKECONF=/dev/null sh ./build.sh "$@" tools "kernel=$config") \
         >> "$out/build.log" 2>&1
     make="$out/tools/bin/nbmake-evbarm"
-    kernel_obj="$out/obj/kernels/$config"
     cpp=$("$make" -C "$src" -V '${CPP}')
     dtc=$("$make" -C "$src" -V '${TOOL_DTC}')
 else

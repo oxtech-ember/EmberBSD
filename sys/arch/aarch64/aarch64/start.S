@@ -55,6 +55,83 @@ start:
 	str	w17, [x16]
 	dsb	sy
 #endif
+#if defined(EARLYCONS) && defined(CONSADDR) && CONSADDR == 0x05000000
+	/* E: reached the A133 kernel before relocation and C calls. */
+	ldr	x16, =CONSADDR
+	mov	w17, #0x45
+	str	w17, [x16]
+	dsb	sy
+
+	/*
+	 * U-Boot leaves the EL2 data cache enabled. Later EL1 writes with
+	 * the cache off (BSS, page tables) would then be invisible once
+	 * the MMU turns the cache back on. Clean and invalidate first.
+	 * x0-x3 are U-Boot arguments.
+	 */
+	mov	x22, x0
+	mov	x23, x1
+	mov	x24, x2
+	mov	x25, x3
+	mrs	x16, CurrentEL
+	lsr	x16, x16, #2
+	cmp	x16, #2
+	b.ne	2f
+	mrs	x17, sctlr_el2
+	bic	x17, x17, #1		/* SCTLR_M */
+	bic	x17, x17, #4		/* SCTLR_C */
+	msr	sctlr_el2, x17
+	isb
+2:
+	mrs	x0, clidr_el1
+	lsr	x3, x0, #24
+	and	x3, x3, #7		/* LoC */
+	cbz	x3, 5f
+	mov	x10, #0			/* cache level */
+3:
+	add	x2, x10, x10, lsl #1	/* 3 * level */
+	lsr	x1, x0, x2
+	and	x1, x1, #7		/* Ctype */
+	cmp	x1, #2
+	b.lt	4f
+	lsl	x1, x10, #1
+	msr	csselr_el1, x1
+	isb
+	mrs	x1, ccsidr_el1
+	and	x2, x1, #7
+	add	x2, x2, #4		/* log2(line) */
+	ubfx	x4, x1, #3, #10		/* ways - 1 */
+	clz	w5, w4
+	ubfx	x7, x1, #13, #15	/* sets - 1 */
+6:
+	mov	x9, x4
+7:
+	lsl	x6, x9, x5
+	orr	x11, x6, x10, lsl #1
+	lsl	x6, x7, x2
+	orr	x11, x11, x6
+	dc	cisw, x11
+	subs	x9, x9, #1
+	b.ge	7b
+	subs	x7, x7, #1
+	b.ge	6b
+4:
+	add	x10, x10, #1
+	cmp	x10, x3
+	b.lt	3b
+5:
+	dsb	sy
+	ic	iallu
+	dsb	sy
+	isb
+	mov	x0, x22
+	mov	x1, x23
+	mov	x2, x24
+	mov	x3, x25
+	ldr	x16, =CONSADDR
+	mov	w17, #0x43		/* C: caches pushed out */
+	str	w17, [x16]
+	dsb	sy
+#endif
 	/* DON'T CLOBBER X0-X3 REGISTERS. THEY ARE UBOOT ARGUMENTS */
 
 	/*

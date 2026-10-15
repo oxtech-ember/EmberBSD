@@ -1,3 +1,4 @@
+/* Origin: EmberBSD RGB bitmap console palette capability, 2026-10-13. */
 /* $NetBSD: wsconsio.h,v 1.130 2025/07/26 14:18:14 martin Exp $ */
 
 /*
@@ -503,6 +504,8 @@ struct wsdisplay_param {
 #define	WSDISPLAYIO_PARAM_BACKLIGHT	1
 #define	WSDISPLAYIO_PARAM_BRIGHTNESS	2
 #define	WSDISPLAYIO_PARAM_CONTRAST	3
+/* Read-only: PUTCMAP also updates the RGB bitmap console colors. */
+#define	WSDISPLAYIO_PARAM_RGB_PALETTE	4
 	int min, max, curval;
 	int reserved[4];
 };

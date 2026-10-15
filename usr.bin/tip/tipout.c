@@ -75,7 +75,8 @@ intEMT(void)
 	char reply;
 
 	(void)read(fildes[0], &c, 1);		/* We got the message */
-	while (c != '\n' && line + sizeof line - pline > 0) {
+	while (c != '\n' && line + sizeof line - pline > 1) {
+		/* EmberBSD: keep one byte for the terminating NUL. */
 		*pline++ = c;
 		(void)read(fildes[0], &c, 1);
 	}

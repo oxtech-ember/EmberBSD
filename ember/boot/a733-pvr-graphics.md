@@ -42,7 +42,7 @@ done
 
 1. Add the device-owned free-list registry and install its `set_events` callbacks.
 2. Integrate and recheck the paired submission contracts with the execution backend.
-3. Integrate the current main compute fixes before a new graphics kernel build.
+3. Recheck the main compute guards before each graphics kernel build.
 4. Build a clean committed kernel and its matched modules with the common GCC16 tools.
 5. Recheck the compute path on the physical board before graphics.
 6. Check offscreen Vulkan rendering and Zink before native display integration.

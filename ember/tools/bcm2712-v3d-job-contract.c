@@ -189,7 +189,7 @@ bus_dmamap_sync
 (bus_dma_tag_t t,bus_dmamap_t m,size_t o,size_t n,int ops)
 {
 	struct bcmv3d_job *j=handler_arg;
-	CHECK(o==0 && n==m->dm_segs[0].ds_len && j!=NULL);
+	CHECK(o==0 && n==m->dm_mapsize && j!=NULL);
  if(j->nbo) {
   if(m==j->pt->cma.dmamap) {
    uint32_t *pt=j->pt->cma.vaddr; CHECK(ops==1 && csd_owned==j->nbo);

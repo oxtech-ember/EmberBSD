@@ -1,3 +1,4 @@
+/* Origin: EmberBSD boot identity and accent-colored product heading, 2026-10-13. */
 /*	$NetBSD: bootcfg.c,v 1.10 2025/05/06 18:16:12 pgoyette Exp $	*/
 
 /*-
@@ -292,11 +293,24 @@ print_bootcfg_banner_color(const char *bootprog_name, const char *bootprog_rev,
 
 	ember_boot_logo(color);
 	if (bootcfg_info.banner[0]) {  
-		for (; n < BOOTCFG_MAXBANNER && bootcfg_info.banner[n]; n++) 
+		for (; n < BOOTCFG_MAXBANNER && bootcfg_info.banner[n]; n++) {
+			if (n == 0 && color != NULL) {
+				color(BOOTCFG_COLOR_SAVE);
+				color(BOOTCFG_COLOR_INNER);
+			}
 			printf("%s\n", bootcfg_info.banner[n]);
+			if (n == 0 && color != NULL)
+				color(BOOTCFG_COLOR_RESTORE);
+		}
 		return;
 	}
 
+	if (color != NULL) {
+		color(BOOTCFG_COLOR_SAVE);
+		color(BOOTCFG_COLOR_INNER);
+	}
 	printf("EmberBSD | Unix for intelligent devices\n");
+	if (color != NULL)
+		color(BOOTCFG_COLOR_RESTORE);
 	printf("%s, loader revision %s\n\n", bootprog_name, bootprog_rev);
 }

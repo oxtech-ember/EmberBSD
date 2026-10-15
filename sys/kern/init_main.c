@@ -1,4 +1,5 @@
 /*	$NetBSD: init_main.c,v 1.552 2025/05/08 05:31:16 imil Exp $	*/
+/* Origin: EmberBSD quiet console product banner, prepared with AI assistance. */
 
 /*-
  * Copyright (c) 2008, 2009, 2019, 2023 The NetBSD Foundation, Inc.
@@ -1169,19 +1170,12 @@ calc_cache_size(vsize_t vsize, int pct, int va_pct)
 void
 banner(void)
 {
-	static char notice[] = " Notice: this software is "
-	    "protected by copyright";
 	char pbuf[81];
 	void (*pr)(const char *, ...) __printflike(1, 2);
-	int i;
 
 	if ((boothowto & AB_SILENT) != 0) {
-		snprintf(pbuf, sizeof(pbuf), "%s %s (%s)",
-		    ostype, osrelease, kernel_ident);
-		printf_nolog("%s", pbuf);
-		for (i = 80 - strlen(pbuf) - sizeof(notice); i > 0; i--)
-			printf(" ");
-		printf_nolog("%s\n", notice);
+		printf_nolog("EmberBSD %s (%s)\n", EMBER_VERSION,
+		    kernel_ident);
 		pr = aprint_normal;
 	} else {
 		pr = printf;

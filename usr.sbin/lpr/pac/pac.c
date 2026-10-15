@@ -255,7 +255,7 @@ dumpit(void)
 
 	hp = hashtab[0];
 	hno = 1;
-	base = calloc(sizeof hp, hcount);
+	base = calloc(hcount, sizeof(*hp));
 	if (base == NULL)
 		err(1, "calloc");
 	for (ap = base, c = hcount; c--; ap++) {
@@ -340,7 +340,7 @@ enter(const char *name)
 		return(hp);
 	h = hash(name);
 	hcount++;
-	hp = (struct hent *) calloc(sizeof *hp, 1);
+	hp = (struct hent *) calloc(1, sizeof(*hp));
 	if (hp == NULL)
 		err(1, "calloc");
 	hp->h_name = strdup(name);

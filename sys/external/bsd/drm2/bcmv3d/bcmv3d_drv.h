@@ -32,9 +32,11 @@ struct bcmv3d_device {
 	struct bcmv3d_job *job;
 };
 
-/* CMA is first for the existing native UVM pager; allocation/free are ours. */
+/* Keep the CMA base layout; allocation, segments and pager are private. */
 struct bcmv3d_bo {
 	struct drm_gem_cma_object cma;
+	bus_dma_segment_t *dmasegs;
+	int nsegs, maxsegs;
 	vmem_addr_t gpu;
 	volatile unsigned int busy;
 	volatile unsigned int error;
@@ -47,6 +49,9 @@ bcmv3d_to_bo(struct drm_gem_object *obj)
 	return container_of(to_drm_gem_cma_obj(obj), struct bcmv3d_bo, cma);
 }
 
+extern const struct uvm_pagerops bcmv3d_bo_uvm_ops;
+
+/* The engine page table and scratch require contiguous DMA storage. */
 struct bcmv3d_bo *bcmv3d_bo_alloc(struct bcmv3d_device *, uint32_t);
 int bcmv3d_create_bo(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_mmap_bo(struct drm_device *, void *, struct drm_file *);

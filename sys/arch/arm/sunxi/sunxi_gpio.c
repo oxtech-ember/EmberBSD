@@ -1,3 +1,4 @@
+/* Origin: EmberBSD - accept verified legacy input/output GPIO specifiers. */
 /* $NetBSD: sunxi_gpio.c,v 1.39 2024/08/13 07:20:23 skrll Exp $ */
 
 /*-
@@ -40,6 +41,7 @@ __KERNEL_RCSID(0, "$NetBSD: sunxi_gpio.c,v 1.39 2024/08/13 07:20:23 skrll Exp $"
 #include <sys/kmem.h>
 #include <sys/gpio.h>
 #include <sys/bitops.h>
+#include "sunxi_gpio_cells.h"
 #include <sys/lwp.h>
 
 #include <dev/fdt/fdtvar.h>
@@ -337,15 +339,12 @@ sunxi_gpio_acquire(device_t dev, const void *data, size_t len, int flags)
 	struct sunxi_gpio_softc * const sc = device_private(dev);
 	const struct sunxi_gpio_pins *pin_def;
 	struct sunxi_gpio_pin *gpin;
-	const u_int *gpio = data;
+	uint8_t port, pin;
+	bool actlo;
 	int error;
 
-	if (len != 16)
+	if (!sunxi_gpio_cells(data, len, &port, &pin, &actlo))
 		return NULL;
-
-	const uint8_t port = be32toh(gpio[1]) & 0xff;
-	const uint8_t pin = be32toh(gpio[2]) & 0xff;
-	const bool actlo = be32toh(gpio[3]) & 1;
 
 	pin_def = sunxi_gpio_lookup(sc, port, pin);
 	if (pin_def == NULL)

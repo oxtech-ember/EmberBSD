@@ -1,0 +1,19 @@
+# Origin: EmberBSD - boot and input support for the YS-M33 A133 tablet.
+# Diagnostic kernel for the YS-M33 tablet (Allwinner A133, sun50iw10).
+# UART0 is a DesignWare APB UART at 0x05000000, 32-bit registers.
+# That address sits in the sunxi core window (0x01c00000, size 0x06400000).
+# The normal EMBER64 kernel does not enable this early console, so a
+# boot on this board reaches the kernel and then prints nothing.
+
+include "arch/evbarm/conf/EMBER64"
+
+# The panel framebuffer is 800x1280 portrait, mounted as a landscape
+# screen: the splash is the 1280x800 design rotated clockwise.
+no makeoptions SPLASHSCREEN_IMAGE
+makeoptions SPLASHSCREEN_IMAGE="${S}/../ember/boot/emberbsd-boot-splash-a133-panel.png"
+
+options EARLYCONS=sunxi,CONSADDR=0x05000000
+options VERBOSE_INIT_ARM
+
+gt9xx* at iic? addr 0x5d
+wsmouse* at gt9xx? mux 1

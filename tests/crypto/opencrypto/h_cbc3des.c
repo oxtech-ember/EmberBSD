@@ -41,7 +41,11 @@ unsigned char key[] =
 	"ijklmnop" \
 	"qrstuvwx";
 unsigned char iv[8] = {0};
-char plaintx[16] = "1234567890123456";
+char plaintx[16] = {
+	/* EmberBSD: exact 16 bytes, no terminating NUL. */
+	'1', '2', '3', '4', '5', '6', '7', '8',
+	'9', '0', '1', '2', '3', '4', '5', '6'
+};
 
 const unsigned char ciphertx[16] = {
 	0xe0, 0xb9, 0xe7, 0x20, 0x6c, 0xc7, 0xb0, 0x24,

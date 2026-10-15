@@ -1252,7 +1252,7 @@ void
 dointr(int verbose)
 {
 	unsigned long *intrcnt, *ointrcnt;
-	unsigned long long inttotal, uptime;
+	unsigned long long uptime;
 	int nintr, inamlen;
 	char *intrname, *ointrname;
 
@@ -1261,7 +1261,6 @@ dointr(int verbose)
 		return;
 	}
 
-	inttotal = 0;
 	uptime = getuptime();
 	nintr = intrnl[X_EINTRCNT].n_value - intrnl[X_INTRCNT].n_value;
 	inamlen = intrnl[X_EINTRNAMES].n_value - intrnl[X_INTRNAMES].n_value;
@@ -1282,7 +1281,7 @@ dointr(int verbose)
 					     (unsigned long long)
 					     (*intrcnt / uptime));
 			intrname += strlen(intrname) + 1;
-			inttotal += *intrcnt++;
+			intrcnt++;
 		}
 		free(ointrcnt);
 		free(ointrname);

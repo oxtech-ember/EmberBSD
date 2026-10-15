@@ -1,4 +1,5 @@
 # $NetBSD: GENERIC,v 1.616.2.3 2026/02/03 20:51:23 snj Exp $
+# Origin: EmberBSD readable installer console fonts, 2026-10-13.
 #
 # GENERIC machine description file
 #
@@ -1225,6 +1226,8 @@ pseudo-device	wsfont
 # Give us a choice of fonts based on monitor size
 options 	FONT_BOLD8x16
 options 	FONT_BOLD16x32
+options 	FONT_SPLEEN12x24
+options 	FONT_SPLEEN16x32
 
 # pseudo audio device driver
 pseudo-device	pad

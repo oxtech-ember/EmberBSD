@@ -157,7 +157,7 @@ cdbw_open(void)
 	struct cdbw *cdbw;
 	size_t i;
 
-	cdbw = calloc(sizeof(*cdbw), 1);
+	cdbw = calloc(1, sizeof(*cdbw));
 	if (cdbw == NULL)
 		return NULL;
 
@@ -291,7 +291,7 @@ cdbw_put_key(struct cdbw *cdbw, const void *key, size_t keylen, uint32_t idx)
 
 	/* Try to resize the hash table, but ignore errors. */
 	new_hash_size = cdbw->hash_size * 2;
-	new_head = calloc(sizeof(*new_head), new_hash_size);
+	new_head = calloc(new_hash_size, sizeof(*new_head));
 	if (new_head == NULL)
 		return 0;
 
@@ -631,7 +631,7 @@ cdbw_output(struct cdbw *cdbw, int fd, const char *descr,
 	if (state.entries < 10)
 		state.entries = 10;
 
-#define	NALLOC(var, n)	var = calloc(sizeof(*var), n)
+#define	NALLOC(var, n)	var = calloc(n, sizeof(*var))
 	NALLOC(state.g, state.entries);
 	NALLOC(state.visited, state.entries);
 	NALLOC(state.vertices, state.entries);

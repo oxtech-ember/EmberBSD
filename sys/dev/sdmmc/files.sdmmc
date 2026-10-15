@@ -34,3 +34,10 @@ file	dev/sdmmc/if_aicwf.c		aicwf
 # Broadcom SoftMAC SDIO wireless driver
 attach bwi at sdmmc with bwi_sdio
 file	dev/sdmmc/if_bwi_sdio.c		bwi_sdio
+
+# Origin: EmberBSD - opt-in YS-M33 RTL8723DS diagnostic.
+device rtl8723dsprobe
+attach rtl8723dsprobe at sdmmc
+file	dev/sdmmc/rtl8723ds_probe.c	rtl8723dsprobe
+file	dev/sdmmc/rtl8723ds_read.c	rtl8723dsprobe
+file	dev/sdmmc/rtl8723ds_function.c	rtl8723dsprobe

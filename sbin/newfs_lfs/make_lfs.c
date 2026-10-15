@@ -292,7 +292,7 @@ static void
 make_dinode(ino_t ino, union lfs_dinode *dip, int nfrags, struct lfs *fs)
 {
 	int i;
-	int nblocks, bb, base, factor, lvl;
+	int nblocks, bb, base __unused, factor, lvl;
 	time_t t;
 
 	nblocks = howmany(nfrags, lfs_sb_getfrag(fs));

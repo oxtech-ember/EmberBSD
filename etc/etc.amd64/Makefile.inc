@@ -1,4 +1,5 @@
 #	$NetBSD: Makefile.inc,v 1.17.4.1 2025/08/27 05:56:22 martin Exp $
+# Origin: EmberBSD configurable amd64 release profile, 2026-10-13.
 #
 #	etc.amd64/Makefile.inc -- amd64-specific etc Makefile targets
 #
@@ -6,13 +7,15 @@
 # If you change the list of distributed kernels, don't forget
 # to update the release documentation in distrib/notes/common/contents
 
+.if !defined(KERNEL_SETS)
 KERNEL_SETS=		GENERIC
 KERNEL_SETS+=		GENERIC_KASLR
 KERNEL_SETS+=		XEN3_DOM0 XEN3_DOMU
 KERNEL_SETS+=		MICROVM
 # KERNEL_SETS+=		GENERIC_USERMODE
+.endif
 
-BUILD_KERNELS=		INSTALL INSTALL_XEN3_DOMU
+BUILD_KERNELS?=		INSTALL INSTALL_XEN3_DOMU
 
 INSTALLATION_DIRS+= 	installation/cdrom
 INSTALLATION_DIRS+= 	installation/misc

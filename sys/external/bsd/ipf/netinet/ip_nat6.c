@@ -3807,30 +3807,21 @@ ipf_nat6_nextaddr(fr_info_t *fin, nat_addr_t *na, i6addr_t *old, i6addr_t *dst)
 	ipf_main_softc_t *softc = fin->fin_main_soft;
 	ipf_nat_softc_t *softn = softc->ipf_nat_soft;
 	i6addr_t newip, new;
-	u_32_t amin, amax;
 	int error;
 
 	new.i6[0] = 0;
 	new.i6[1] = 0;
 	new.i6[2] = 0;
 	new.i6[3] = 0;
-	amin = na->na_addr[0].in4.s_addr;
 
 	switch (na->na_atype)
 	{
 	case FRI_RANGE :
-		amax = na->na_addr[1].in4.s_addr;
 		break;
 
 	case FRI_NETMASKED :
 	case FRI_DYNAMIC :
 	case FRI_NORMAL :
-		/*
-		 * Compute the maximum address by adding the inverse of the
-		 * netmask to the minimum address.
-		 */
-		amax = ~na->na_addr[1].in4.s_addr;
-		amax |= amin;
 		break;
 
 	case FRI_LOOKUP :

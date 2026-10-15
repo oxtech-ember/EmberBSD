@@ -241,10 +241,8 @@ sun60i_gpu_clock_terminal(struct sun60i_gpu_softc *sc, struct clk *gpu)
 }
 
 /*
- * Vendor kernels keep GPU_CORE outside the GPU binding and read this bank
- * with only GPU_TOP managed.  After a failed CORE transition the same
- * resources still allow one bounded, fault-tolerant identification peek;
- * it never authorizes further GPU access.
+ * Even identification reads require confirmed CORE ON/Q readiness.
+ * A fault-aware peek cannot bound a transaction to an unresponsive bus.
  */
 static void
 sun60i_gpu_top_identify(struct sun60i_gpu_softc *sc, bus_addr_t addr,
@@ -256,6 +254,8 @@ sun60i_gpu_top_identify(struct sun60i_gpu_softc *sc, bus_addr_t addr,
 	uint32_t core;
 	bool enabled;
 
+	if (!sc->sc_run_core_on)
+		return;
 	if (fdtbus_regulator_is_enabled(supply, &enabled) != 0 || !enabled ||
 	    fdtbus_regulator_get_voltage(supply, &sc->sc_uvol) != 0 ||
 	    sc->sc_uvol != 800000 ||
@@ -296,7 +296,7 @@ sun60i_gpu_top_identify(struct sun60i_gpu_softc *sc, bus_addr_t addr,
 	    (u_int)((id >> 16) & 0xffff),
 	    (u_int)(id & 0xffff),
 	    id == A733_GPU_EXPECTED ?
-	    " (expected A733 GPU; GPU_CORE not confirmed ON)" :
+	    " (expected A733 GPU; GPU_CORE confirmed ON)" :
 	    " (unexpected)");
 	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_ID_SIZE);
 }
@@ -386,6 +386,8 @@ sun60i_gpu_stage_top_id(struct sun60i_gpu_softc *sc)
 	struct clk *gpu;
 	int error;
 
+	if (!sc->sc_run_core_on)
+		return EBUSY;
 	error = sun60i_gpu_runtime_supply_top(sc);
 	if (error != 0)
 		return error;
@@ -415,6 +417,8 @@ sun60i_gpu_stage_identify(struct sun60i_gpu_softc *sc)
 	uint64_t id;
 	int error;
 
+	if (!sc->sc_run_core_on)
+		return EBUSY;
 	error = sun60i_gpu_runtime_supply_top(sc);
 	if (error != 0)
 		return error;
@@ -1318,12 +1322,12 @@ sun60i_gpu_hwr_report(struct sun60i_gpu_softc *sc)
 {
 	const struct sun60i_a733_gpu_fwmem *m = sc->sc_fw_memory;
 	const struct sun60i_a733_gpu_fwinit_region *region;
-	struct rogue_fwif_hwrinfobuf snapshot;
+	struct rogue_fwif_hwrinfobuf *snapshot;
 	size_t used, i;
 	int count, error = EINVAL;
 
-	_Static_assert(sizeof(snapshot) == 2336, "firmware HWR buffer ABI");
-	_Static_assert(sizeof(snapshot.hwr_info[0]) == 136,
+	_Static_assert(sizeof(*snapshot) == 2336, "firmware HWR buffer ABI");
+	_Static_assert(sizeof(snapshot->hwr_info[0]) == 136,
 	    "firmware HWR record ABI");
 	if (m == NULL || !m->interface_prepared || m->work.cpu == NULL ||
 	    m->work.map == NULL || !m->work.loaded ||
@@ -1331,25 +1335,27 @@ sun60i_gpu_hwr_report(struct sun60i_gpu_softc *sc)
 		goto fail;
 	region = &m->interface_layout.object[A733_GPU_FWINIT_HWR];
 	if (region->buffer != A733_GPU_FWINIT_WORK ||
-	    region->offset % 8 != 0 || region->size < sizeof(snapshot) ||
+	    region->offset % 8 != 0 || region->size < sizeof(*snapshot) ||
 	    region->offset > m->work.size ||
 	    region->size > m->work.size - region->offset)
 		goto fail;
+	/* Keep the full firmware snapshot off the kernel stack. */
+	snapshot = kmem_alloc(sizeof(*snapshot), KM_SLEEP);
 	bus_dmamap_sync(m->dmat, m->work.map, region->offset,
-	    sizeof(snapshot), BUS_DMASYNC_POSTREAD);
-	memcpy(&snapshot, (const uint8_t *)m->work.cpu + region->offset,
-	    sizeof(snapshot));
+	    sizeof(*snapshot), BUS_DMASYNC_POSTREAD);
+	memcpy(snapshot, (const uint8_t *)m->work.cpu + region->offset,
+	    sizeof(*snapshot));
 	count = snprintf(sc->sc_hwr_state, sizeof(sc->sc_hwr_state),
 	    "capture_error=0 captured=%u counter=%u write_index=%u "
 	    "dd_req_count=%u flags=0x%x:",
-	    (u_int)__arraycount(snapshot.hwr_info), snapshot.hwr_counter,
-	    snapshot.write_index, snapshot.dd_req_count,
-	    snapshot.hwr_info_buf_flags);
+	    (u_int)__arraycount(snapshot->hwr_info), snapshot->hwr_counter,
+	    snapshot->write_index, snapshot->dd_req_count,
+	    snapshot->hwr_info_buf_flags);
 	if (count < 0 || (size_t)count >= sizeof(sc->sc_hwr_state))
 		goto full;
 	used = (size_t)count;
-	for (i = 0; i < __arraycount(snapshot.hwr_info); i++) {
-		const struct rogue_hwrinfo *h = &snapshot.hwr_info[i];
+	for (i = 0; i < __arraycount(snapshot->hwr_info); i++) {
+		const struct rogue_hwrinfo *h = &snapshot->hwr_info[i];
 		const char *name0 = "raw0", *name1 = "raw1", *name2 = "raw2";
 		uint64_t raw[3];
 
@@ -1387,8 +1393,10 @@ sun60i_gpu_hwr_report(struct sun60i_gpu_softc *sc)
 			goto full;
 		used += (size_t)count;
 	}
+	kmem_free(snapshot, sizeof(*snapshot));
 	return;
 full:
+	kmem_free(snapshot, sizeof(*snapshot));
 	error = ENOSPC;
 fail:
 	snprintf(sc->sc_hwr_state, sizeof(sc->sc_hwr_state),
@@ -1804,8 +1812,9 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 	}
 	sc->sc_exec_ready = error == 0 &&
 	    (stage == A733_GPU_STAGE_FWCACHE || stage == A733_GPU_STAGE_FWKICK);
-	/* A bounded timeout still allows the read-only waiter afterwards. */
-	sc->sc_run_pass = (error == 0 || error == ETIMEDOUT);
+	/* Only a request timeout permits the next, read-only CORE waiter. */
+	sc->sc_run_pass = error == 0 ||
+	    (stage == A733_GPU_STAGE_REQUEST && error == ETIMEDOUT);
 	sc->sc_run_stage = stage;
 out:
 	sc->sc_run_result = error;
@@ -2415,6 +2424,12 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 		}
 	}
 
+	/* The firmware-only path has no retained owner for a strict CORE wait. */
+	if (!prepare) {
+		sc->sc_stage = "CORE ON/Q not confirmed";
+		error = EBUSY;
+		goto out;
+	}
 	sc->sc_stage = "register mapping";
 	error = bus_space_map(sc->sc_bst, addr, A733_GPU_ID_SIZE, 0, &bsh);
 	if (error != 0)
@@ -2433,8 +2448,6 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 out:
 	if (prepare && sc->sc_retained && error == ETIMEDOUT)
 		sun60i_gpu_clock_terminal(sc, gpu);
-	if (request && error != 0 && sc->sc_retained)
-		sun60i_gpu_top_identify(sc, addr, supply, gpu, false);
 	if (!sc->sc_retained) {
 		if (clock_reserved)
 			(void)sun60i_a733_ccu_gpu_release(gpu, sc);

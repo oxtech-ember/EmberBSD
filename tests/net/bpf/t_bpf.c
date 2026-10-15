@@ -318,7 +318,7 @@ ATF_TC_BODY(bpf_ioctl_GDLTLIST, tc)
 	ATF_REQUIRE(dltlist.bfl_len == 1);
 
 	/* Get an available DLT list */
-	dltlist.bfl_list = calloc(sizeof(u_int), 1);
+	dltlist.bfl_list = calloc(1, sizeof(u_int));
 	dltlist.bfl_len = 1;
 	RL(rump_sys_ioctl(bpfd, BIOCGDLTLIST, &dltlist));
 	ATF_REQUIRE(dltlist.bfl_len == 1);

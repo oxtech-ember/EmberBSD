@@ -114,8 +114,11 @@ del(SCR *sp, MARK *fm, MARK *tm, int lmode)
 	 * Copy the start partial line into place.
 	 */
 	if ((tlen = fm->cno) != 0) {
-		if (db_get(sp, fm->lno, DBG_FATAL, &p, NULL))
+		if (db_get(sp, fm->lno, DBG_FATAL, &p, &len))
 			return (1);
+		/* EmberBSD: cursor offset never exceeds the line length. */
+		if (tlen > len)
+			tlen = len;
 		GET_SPACE_RETW(sp, bp, blen, tlen + 256);
 		MEMCPYW(bp, p, tlen);
 	}

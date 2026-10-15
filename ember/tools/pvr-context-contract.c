@@ -648,6 +648,9 @@ jobs_and_cleanup(void)
 	init_model(&m);
 	ctx = create_context(&m, DRM_PVR_CTX_TYPE_COMPUTE);
 	for (i = 1; i <= 600; i++) {
+		/* KICK may consume its slot without writing a return word. */
+		m.command_result = i % 2 == 0 ?
+		    ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED : 0;
 		if (i == 300) {
 			m.ufo_delay = 4;
 			m.read_delay = 1;
@@ -655,6 +658,8 @@ jobs_and_cleanup(void)
 		run_job(&m, ctx, i);
 	}
 	CHECK(m.pads >= 3 && m.kicks == 600);
+	/* CLEANUP retains its synchronous return-word contract. */
+	m.command_result = ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED;
 	m.busy = 2;
 	CHECK(pvr_context_destroy(&ctx) == EBUSY);
 	CHECK(ctx != NULL && m.live == 5 && m.frees == 0 && !m.failed);
@@ -691,31 +696,36 @@ retained_failures(void)
 	struct model m;
 	struct pvr_context *ctx;
 	struct rogue_fwif_cmd_compute command = { 0 };
-	unsigned scenario, saved;
+	unsigned scenario, response, saved;
 	int expected;
-	for (scenario = 0; scenario < 7; scenario++) {
-		init_model(&m);
-		ctx = create_context(&m, DRM_PVR_CTX_TYPE_COMPUTE);
-		m.expected_id = 1;
-		expected = EIO;
-		switch (scenario) {
-		case 0: m.ufo_delay = 0; expected = ETIMEDOUT; break;
-		case 1: m.read_delay = 0; expected = ETIMEDOUT; break;
-		case 2: m.command_error = ETIMEDOUT; expected = ETIMEDOUT; break;
-		case 3: m.command_result = 0; break;
-		case 4: m.check_fail = m.health + 2; break;
-		case 5: m.check_fail = m.health + 3; break;
-		case 6: ((struct rogue_fwif_cccb_ctl *)ctx->queue[0].control.cpu)->read_offset = 8; break;
+	/* Exercise both permitted KICK return words on every failure path. */
+	for (response = 0; response <= 1; response++) {
+		for (scenario = 0; scenario < 8; scenario++) {
+			init_model(&m);
+			m.command_result = response;
+			ctx = create_context(&m, DRM_PVR_CTX_TYPE_COMPUTE);
+			m.expected_id = 1;
+			expected = EIO;
+			switch (scenario) {
+			case 0: m.ufo_delay = 0; expected = ETIMEDOUT; break;
+			case 1: m.read_delay = 0; expected = ETIMEDOUT; break;
+			case 2: m.command_error = ETIMEDOUT; expected = ETIMEDOUT; break;
+			case 3: m.command_result = ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED | 2; break;
+			case 4: m.check_fail = m.health + 2; break;
+			case 5: m.check_fail = m.health + 3; break;
+			case 6: ((struct rogue_fwif_cccb_ctl *)ctx->queue[0].control.cpu)->read_offset = 8; break;
+			case 7: m.command_result = UINT32_C(0x80000000); break;
+			}
+			CHECK(pvr_context_compute(ctx, &command, 1) == expected);
+			CHECK(m.failed && ctx->failed && m.live == 5 && m.frees == 0);
+			if (scenario < 2)
+				CHECK(m.sleeps == 1000);
+			saved = m.kicks;
+			CHECK(pvr_context_compute(ctx, &command, 2) == EIO);
+			CHECK(pvr_context_destroy(&ctx) == EIO);
+			CHECK(ctx != NULL && m.live == 5 && m.frees == 0 && m.kicks == saved);
+			reset_model(&m, &ctx);
 		}
-		CHECK(pvr_context_compute(ctx, &command, 1) == expected);
-		CHECK(m.failed && ctx->failed && m.live == 5 && m.frees == 0);
-		if (scenario < 2)
-			CHECK(m.sleeps == 1000);
-		saved = m.kicks;
-		CHECK(pvr_context_compute(ctx, &command, 2) == EIO);
-		CHECK(pvr_context_destroy(&ctx) == EIO);
-		CHECK(ctx != NULL && m.live == 5 && m.frees == 0 && m.kicks == saved);
-		reset_model(&m, &ctx);
 	}
 	init_model(&m);
 	ctx = create_context(&m, DRM_PVR_CTX_TYPE_COMPUTE);

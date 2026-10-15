@@ -27,7 +27,9 @@ static void insert(char *s, int x, int start, int length);
 static int wsrch(const char *w, int low, int high);
 
 /* Dictionary for integer-word translations */
-char Wp[2048][4] = {
+/* EmberBSD: entries are 3-letter codes compared with memcmp(3); the
+ * extra NUL keeps GCC16 -Wpedantic-init-string satisfied. */
+char Wp[2048][5] = {
   "A",
   "ABE",
   "ACE",

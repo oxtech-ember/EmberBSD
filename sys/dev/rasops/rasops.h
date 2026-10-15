@@ -1,3 +1,4 @@
+/* Origin: EmberBSD RGB bitmap palette interface, 2026-10-13. */
 /* 	$NetBSD: rasops.h,v 1.51.2.1 2025/11/14 13:12:27 martin Exp $ */
 
 /*-
@@ -188,6 +189,8 @@ void	rasops_unpack_attr(long, int *, int *, int *);
 void	rasops_eraserows(void *, int, int, long);
 void	rasops_erasecols(void *, int, int, int, long);
 int	rasops_get_cmap(struct rasops_info *, uint8_t *, size_t);
+void	rasops_set_cmap(struct rasops_info *, u_int, u_int,
+	    const uint8_t *, const uint8_t *, const uint8_t *);
 
 extern const uint8_t	rasops_cmap[256 * 3];
 extern uint8_t	rasops_ecmap[256 * 3];

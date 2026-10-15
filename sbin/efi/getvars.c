@@ -103,7 +103,7 @@ save_variable(efi_var_ioc_t *ev, void *vp)
 
 	assert(args->name != NULL);
 
-	elm = ecalloc(sizeof(*elm), 1);
+	elm = ecalloc(1, sizeof(*elm));
 	efi_var_cpy(&elm->v.ev, ev);
 
 	elm->v.name = args->name;

@@ -183,11 +183,11 @@ size_arrays(netpgp_t *netpgp, unsigned needed)
 	if (netpgp->size == 0) {
 		/* only get here first time around */
 		netpgp->size = needed;
-		if ((netpgp->name = calloc(sizeof(char *), needed)) == NULL) {
+		if ((netpgp->name = calloc(needed, sizeof(char *))) == NULL) {
 			(void) fprintf(stderr, "size_arrays: bad alloc\n");
 			return 0;
 		}
-		if ((netpgp->value = calloc(sizeof(char *), needed)) == NULL) {
+		if ((netpgp->value = calloc(needed, sizeof(char *))) == NULL) {
 			free(netpgp->name);
 			(void) fprintf(stderr, "size_arrays: bad alloc\n");
 			return 0;

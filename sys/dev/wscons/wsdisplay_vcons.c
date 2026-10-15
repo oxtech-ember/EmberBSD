@@ -1,3 +1,4 @@
+/* Origin: EmberBSD RGB palette updates for virtual consoles, 2026-10-13. */
 /*	$NetBSD: wsdisplay_vcons.c,v 1.70 2025/04/28 07:43:41 macallan Exp $ */
 
 /*-
@@ -658,6 +659,19 @@ vcons_do_switch(void *arg)
 
 	if (vdp->switch_cb)
 		vdp->switch_cb(vdp->switch_cb_arg, 0, 0);
+}
+
+void
+vcons_set_cmap(struct vcons_data *vd, u_int index, u_int count,
+    const uint8_t *red, const uint8_t *green, const uint8_t *blue)
+{
+	struct vcons_screen *scr;
+
+	LIST_FOREACH(scr, &vd->private->screens, next) {
+		vcons_lock(scr);
+		rasops_set_cmap(&scr->scr_ri, index, count, red, green, blue);
+		vcons_unlock(scr);
+	}
 }
 
 void

@@ -59,7 +59,7 @@ __KERNEL_RCSID(0, "$NetBSD: cd9660_rrip.c,v 1.18.56.1 2026/05/07 18:14:51 martin
 #include <fs/cd9660/iso_rrip.h>
 
 typedef struct {
-	char type[2];
+	char type[3];
 	int (*func)(void *, ISO_RRIP_ANALYZE *);
 	void (*func2)(void *, ISO_RRIP_ANALYZE *);
 	int result;

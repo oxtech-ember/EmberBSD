@@ -620,7 +620,8 @@ sockin_send(struct socket *so, struct mbuf *m, struct sockaddr *saddr,
 	size_t iov_max, i;
 	struct iovec iov_buf[32], *iov;
 	struct mbuf *m2;
-	size_t tot, n;
+	size_t n;
+	size_t tot __unused;
 	int error = 0;
 	int s;
 

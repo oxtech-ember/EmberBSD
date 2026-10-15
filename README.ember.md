@@ -73,6 +73,9 @@ a reproduced stuck connection recovered automatically, followed by an
 The on-demand `hw.bwfm0.report` diagnostic includes radio
 authentication, PMF and station counters to distinguish this failure
 from an SDIO transmit-window stall.
+The separate [DHCP reconnect correction](ember/boot/dhcpcd-dad.md) prevents
+address validation from accepting an unconfirmed lease. It keeps IPv4LL
+fallback available and removes it after a usable DHCP bind.
 
 The Zero 3W [PWM cooling path](ember/boot/a733-fan.md) uses the board's
 fan connector and all five temperature sensors. Source contracts cover
@@ -162,6 +165,10 @@ retain their NetBSD compatibility names. OS sets select the EmberBSD channel;
 that service is not yet published, so use the sets on the installation medium.
 Source, ASCII and ISO contracts are separate from boot and installation acceptance.
 The product version defaults to `1.0`. The NetBSD base version remains separate.
+The amd64 [text installer](ember/boot/text-installer.md) provides six guided steps,
+automatic GPT, binary-set profiles, source checks and a final write confirmation.
+Its controller, disk, source and renderer contracts pass with ASan/UBSan.
+Booted-image acceptance for this wizard is separate from the earlier installer below.
 An amd64 CD image passed UEFI and BIOS boot and a UEFI installation to a disposable VM disk.
 The installed system then booted without the CD image. Physical installation is a separate check.
 

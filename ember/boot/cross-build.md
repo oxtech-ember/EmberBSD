@@ -19,7 +19,8 @@ src=/absolute/source
 out=/absolute/build-output
 mkdir "$src"
 git archive "$revision" | tar -xf - -C "$src"
-NETBSD2_JOBS=6 sh "$src/ember/build-kernel.sh" "$out" EMBER64
+BUILDINFO="EmberBSD:$revision" NETBSD2_JOBS=6 \
+    sh "$src/ember/build-kernel.sh" "$out" EMBER64
 ```
 
 The output must be outside the source tree. Keep one output directory per
@@ -34,7 +35,16 @@ Cross builds keep host tools under `out/tools`, object files under `out/obj`
 and the kernel configuration's generated headers under `out/obj/kernels`.
 The four board modules use the same make wrapper, target settings and kernel
 headers. DTBs use the target preprocessor and the source-built host `nbdtc`.
-`build.sh -u` reuses tools and object files for repeated builds. A failed build
+`build.sh -u` reuses tools and object files for repeated builds. Before each
+cross build, the wrapper removes only the selected configuration's generated
+`vers.c` and `vers.o`. The version make rule does not track `BUILDINFO` changes
+as a dependency. Regeneration prevents reuse of an earlier embedded identity.
+Other objects and other configurations remain intact.
+
+Set `BUILDINFO` explicitly from the pinned revision, as above. The wrapper does
+not derive or verify a source commit. Check the linked kernel's embedded
+build information against the selected revision before installation; a new
+build log alone does not prove that the kernel has new metadata. A failed build
 returns nonzero and does not leave the previous candidate at the deliverable
 paths. Build logs remain in the output directory.
 
@@ -105,7 +115,8 @@ selection with `sh ember/tests/external-toolchain-tools.sh
 /absolute/output/tools/bin/nbmake-evbarm /absolute/source`.
 
 It checks foreign/native command routing, target tool expansion, module
-header selection, contract dispatch and failure propagation. Its fixtures
+header selection, stale-version regeneration, object retention, CEMAC/Wi-Fi
+contract dispatch and failure propagation. Its fixtures
 are not a kernel build. For underlying build options see [BUILDING](../../BUILDING)
 and the [NetBSD cross-build guide](https://www.netbsd.org/docs/guide/en/chap-build.html).
 
@@ -117,9 +128,11 @@ complete reduced base set (not only the kernel) following
 validation passed after correcting a stale `libdwarf` entry in the set lists,
 and the kernel, modules and base installed and passed their on-board
 acceptance on a physical Pi 5. One transient host `cc1` SIGTRAP under `-j8`
-did not reproduce; the build continued at `-j6`. The kernel wrapper itself
-does not yet pass `BUILDINFO`; the update guide requires the explicit
-`-V BUILDINFO=...` relink to record the source revision.
+did not reproduce; the build continued at `-j6`.
+
+The wrapper does not derive a source identity. Supply `BUILDINFO` explicitly;
+the current wrapper regenerates version metadata before an incremental cross
+build. This behavior has an orchestration regression, not a new board acceptance.
 
 On Apple Silicon macOS, the wrapper built the in-tree host tools, full
 `EMBER64`, four board modules and all three DTBs. The two portable contracts

@@ -12,7 +12,7 @@ MAN=		sysinst.8
 WARNS=		4
 
 SRCS+=	menu_defs.c msg_defs.c main.c install.c upgrade.c \
-	txtwalk.c run.c factor.c net.c disks.c disks_lfs.c util.c geom.c \
+	wizard.c wizard_ui.c wizard_console.c txtwalk.c run.c factor.c net.c disks.c disks_lfs.c util.c geom.c \
 	label.c target.c md.c sizemultname.c configmenu.c checkrc.c \
 	disklabel.c partitions.c part_edit.c
 
@@ -109,6 +109,7 @@ CPPFLAGS+=	-DHAVE_MODULES
 .endif
 
 EMBER_BUILD_ID?=development
+CPPFLAGS+= -DEMBER_VERSION=\"${EMBER_VERSION}\"
 CPPFLAGS+= -DEMBER_BUILD_ID=\"${EMBER_BUILD_ID}\"
 
 CATALOGDIR=	/usr/share/sysinst/catalog
@@ -176,8 +177,8 @@ CPPFLAGS+=-DINET6
 COPTS+=	${CC_WNO_FORMAT_TRUNCATION}
 COPTS.disklabel.c+= ${CC_WNO_STRINGOP_TRUNCATION}
 
-# OS set host. Default: cdn.emberbsd.oxteam.me.
-# A release builder can select a separately verified server.
+# OS set hosts default to the architecture's source in defs.h.
+# Release builds override the host, path and prefix together.
 #
 .if defined(SYSINST_FTP_HOST)
 CPPFLAGS+= -DSYSINST_FTP_HOST=\"${SYSINST_FTP_HOST}\"
@@ -186,7 +187,7 @@ CPPFLAGS+= -DSYSINST_FTP_HOST=\"${SYSINST_FTP_HOST}\"
 CPPFLAGS+= -DSYSINST_HTTP_HOST=\"${SYSINST_HTTP_HOST}\"
 .endif
 
-# Top-level set directory. Default: releases/<EMBER_BUILD_ID>.
+# Top-level set directory. The architecture default is in defs.h.
 #
 .if defined(SYSINST_FTP_DIR)
 CPPFLAGS+=	-DSYSINST_FTP_DIR=\"${SYSINST_FTP_DIR}\"

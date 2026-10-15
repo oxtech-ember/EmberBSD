@@ -1,3 +1,4 @@
+/* Origin: EmberBSD firmware logo colors and bounded RGB console theme, 2026-10-13. */
 /*	$NetBSD: eficons.c,v 1.15 2025/06/19 15:00:17 manu Exp $	*/
 
 /*-
@@ -37,6 +38,7 @@
 #include "bootinfo.h"
 #include "bootcfg.h"
 #include "vbe.h"
+#include <lib/libsa/ember_console_theme.h>
 
 #ifndef DEFAULT_GOP_MODE
 #define DEFAULT_GOP_MODE	"1024x768"
@@ -49,6 +51,7 @@ struct btinfo_console btinfo_console;
 
 static EFI_GRAPHICS_OUTPUT_PROTOCOL *efi_gop;
 static int efi_gop_mode = -1;
+static bool efi_theme_active, efi_theme_dirty;
 static CHAR16 keybuf[16];
 static int keybuf_read = 0;
 static int keybuf_write = 0;
@@ -73,6 +76,7 @@ static int efi_cons_getc(void);
 static int efi_cons_putc(int);
 static int efi_cons_iskey(int);
 static int efi_cons_waitforinputevent(uint64_t);
+static void efi_theme_sync(void);
 
 static void efi_com_probe(void);
 static bool efi_valid_com(int);
@@ -251,6 +255,7 @@ efi_cons_getc(void)
 	EFI_STATUS status;
 	EFI_INPUT_KEY key;
 	int c;
+	efi_theme_sync();
 
 	if (keybuf_read != keybuf_write) {
 		c = keybuf[keybuf_read];
@@ -276,6 +281,7 @@ efi_cons_putc(int c)
 	buf[0] = c;
 	buf[1] = 0;
 	Output(buf);
+	efi_theme_dirty = true;
 
 	return 1;
 }
@@ -286,6 +292,7 @@ efi_cons_iskey(int intr)
 {
 	EFI_STATUS status;
 	EFI_INPUT_KEY key;
+	efi_theme_sync();
 
 	if (keybuf_read != keybuf_write)
 		return 1;
@@ -304,6 +311,7 @@ static int
 efi_cons_waitforinputevent(uint64_t timeout)
 {
 	EFI_STATUS status;
+	efi_theme_sync();
 
 	status = WaitForSingleEvent(ST->ConIn->WaitForKey, timeout);
 	if (!EFI_ERROR(status))
@@ -403,6 +411,34 @@ clear_pc_screen(void)
 {
 
 	uefi_call_wrapper(ST->ConOut->ClearScreen, 1, ST->ConOut);
+	efi_theme_dirty = true;
+}
+
+static void
+efi_theme_sync(void)
+{
+	EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+	EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *mode;
+	bool rgb_bytes;
+
+	if (!efi_theme_active || !efi_theme_dirty || efi_gop == NULL ||
+	    iodev != CONSDEV_PC || internal_putchar != efi_cons_putc)
+		return;
+	efi_theme_dirty = false;
+	mode = efi_gop->Mode;
+	if (mode == NULL || mode->Info == NULL || mode->FrameBufferBase == 0 ||
+	    mode->FrameBufferBase > UINTPTR_MAX ||
+	    mode->FrameBufferSize > UINTPTR_MAX - mode->FrameBufferBase)
+		return;
+	info = mode->Info;
+	if (info->PixelFormat != PixelRedGreenBlueReserved8BitPerColor &&
+	    info->PixelFormat != PixelBlueGreenRedReserved8BitPerColor)
+		return;
+	rgb_bytes = info->PixelFormat == PixelRedGreenBlueReserved8BitPerColor;
+	(void)ember_console_theme_frame(
+	    (volatile uint32_t *)(uintptr_t)mode->FrameBufferBase,
+	    mode->FrameBufferSize, info->HorizontalResolution,
+	    info->VerticalResolution, info->PixelsPerScanLine, rgb_bytes);
 }
 
 /* Keep firmware colors local to the mark and preserve the menu attribute. */
@@ -417,6 +453,7 @@ efi_bootcfg_color(int event)
 		return;
 	switch (event) {
 	case BOOTCFG_COLOR_SAVE:
+		efi_theme_active = true;
 		saved = ST->ConOut->Mode->Attribute;
 		return;
 	case BOOTCFG_COLOR_FLAME:

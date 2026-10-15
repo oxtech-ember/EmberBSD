@@ -1,4 +1,5 @@
 #	$NetBSD: Makefile,v 1.17 2023/02/24 17:08:31 mrg Exp $
+# Origin: EmberBSD host FreeType system-zlib selection, prepared with AI assistance.
 
 .include <bsd.hostinit.mk>
 
@@ -84,7 +85,8 @@ HOST_CPPFLAGS=	-DFONTENC_NO_LIBFONT -DXFREE86_FT2 -DFONTENC_NO_LIBFONT \
 		-DFT2_BUILD_LIBRARY -DDARWIN_NO_CARBON \
 		-DFONT_ENCODINGS_DIRECTORY=\"${DESTDIR}${X11FONTDIR}/encodings/encodings.dir\" \
 		-DPACKAGE_STRING=\"NetBSD\ tools\ version\"
-HOST_CPPFLAGS+=	-DFT_CONFIG_OPTION_DISABLE_BZIP2
+HOST_CPPFLAGS+=	-DFT_CONFIG_OPTION_DISABLE_BZIP2 \
+		-DFT_CONFIG_OPTION_SYSTEM_ZLIB
 
 # If you make mkfontscale multithreaded, remove this and fix the
 # fontconfig atomic ops.

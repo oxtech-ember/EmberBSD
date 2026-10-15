@@ -90,7 +90,7 @@ pass5(void)
 	struct inodesc idesc[3];
 	struct bufarea *ino_bitmap = NULL, *blk_bitmap = NULL;
 	char *ibmap, *bbmap;
-	u_int32_t cs_ndir, cs_nbfree, cs_nifree;
+	u_int32_t cs_ndir __unused, cs_nbfree, cs_nifree;
 	char msg[255];
 
 	cs_ndir = 0;

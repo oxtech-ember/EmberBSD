@@ -93,6 +93,11 @@ A network test on Ethernet does not validate Wi-Fi or Bluetooth.
 
 ## Enable SSH
 
+The guided amd64 installer includes and enables SSH for both console and XFCE installations.
+It creates host keys at first boot and keeps the existing authentication policy.
+Check `/etc/rc.d/sshd status` before starting another server.
+Other image profiles can explicitly disable SSH, including the isolated AArch64 development image described above.
+
 Create a key on your **client host**, or use an existing key under your control.
 Copy only its public key to the normal user's `~/.ssh/authorized_keys` on EmberBSD.
 Use owner-only permissions: `chmod 700 ~/.ssh` and `chmod 600 ~/.ssh/authorized_keys` as that user.
@@ -107,7 +112,7 @@ ssh-keygen -A
 ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-Set `sshd=YES` in `/etc/rc.conf`, then run `/etc/rc.d/sshd start`.
+For a profile which disables SSH, set `sshd=YES` in `/etc/rc.conf`, then run `/etc/rc.d/sshd start`.
 On the client, connect with `ssh emberuser@DEVICE_ADDRESS` and confirm the host-key fingerprint through the console.
 Check an administrative `su -` session while console access remains available.
 For key-only access, set `PasswordAuthentication no` and `KbdInteractiveAuthentication no` in `/etc/ssh/sshd_config`.
@@ -116,6 +121,18 @@ Run `sshd -t` again before `/etc/rc.d/sshd reload`.
 Open a second client session before closing the first one.
 
 ## Install applications
+
+The guided amd64 installer's System step can install XFCE and its Wi-Fi manager with the OS.
+After console login, run `ember-desktop` to start that session.
+The network manager appears in the panel automatically.
+Use its menu for network preferences and its wireless list when a supported radio is present.
+This option also installs X11 and enables dbus, dhcpcd and wpa_supplicant.
+Use the normal administrative account configured during installation; no graphical automatic login is created.
+KDE Plasma remains an unavailable development option.
+
+With Graphics set to None, use the base `wpa_cli`, `wpa_supplicant` and `dhcpcd` tools.
+Follow the [console Wi-Fi configuration](boot/text-installer.md#first-login) and the exact board's radio instructions.
+The console profile does not install desktop packages or enable WPA automatically.
 
 [Ports](https://github.com/oxtech-ember/EmberBSD-Ports) owns packages, dependency versions and portability patches.
 [Examples](https://github.com/oxtech-ember/EmberBSD-Examples) owns runnable application scenarios.
@@ -150,6 +167,9 @@ Retain package inventory and application data backups before updating dependenci
 
 There is no accepted general automatic OS-update or rollback service yet.
 Choose the update recipe for the exact architecture, firmware and current installation.
+For the amd64 UEFI no-X11 VM profile, use [the complete installer upgrade and recovery recipe](boot/amd64-vm-upgrade.md).
+It installs the coherent kernel, modules and userland before the first new-system boot.
+It preserves the previous powered-off disk and UEFI variables for complete recovery.
 The [headless AArch64 base update](boot/aarch64-base-update.md) has a physical Pi 5 receipt.
 It records its in-tree GCC12 bootstrap boundary separately from the common GCC16 toolchain.
 Do not treat that receipt as acceptance on another board or of a complete general release.
@@ -159,15 +179,17 @@ Do not treat that receipt as acceptance on another board or of a complete genera
 3. Prepare and verify a coherent candidate kernel, required modules and userland from recorded sources.
 4. Back up the old kernel, complete matching module tree, boot files, base, firmware and configuration.
 5. Test reading the backup and booting the recovery medium before replacing active files.
-6. Follow the recipe's order: kernel and matching modules, reboot and check, then compatible userland.
+6. Follow the exact recipe's order. The headless AArch64 recipe checks the new kernel before installing userland.
+   The amd64 installer recipe installs the complete selected release before rebooting.
 7. Merge configuration with `etcupdate`; inspect `postinstall check` using the recipe's candidate source.
 8. Restore and verify board firmware overlays that a base-set installation can replace.
 9. Reboot normally; verify source identity, network, SSH and the same useful application operation.
 
 Do not extract an `etc` archive over your live configuration.
-The [published amd64 candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11)
+The [published amd64 candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-c5d396f5698b68e956b29ee5b256bc7877e6c517-amd64-no-x11)
 provides an exact HTTPS source for installation. Use its matching media and manifest.
-This channel does not establish a general in-place OS upgrade or automatic rollback service.
+The [amd64 VM recipe](boot/amd64-vm-upgrade.md) checks an installer upgrade between two published builds and complete backup recovery.
+There is no general automatic OS-update or rollback service.
 Changing the source URL does not update the running installer kernel or its modules.
 For a VM installation, preserve a powered-off disk and its UEFI variables together before an experimental upgrade.
 A qcow2 copy is a backup, not a validated automatic rollback mechanism.

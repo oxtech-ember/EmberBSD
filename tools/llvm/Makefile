@@ -1,4 +1,5 @@
 #	$NetBSD: Makefile,v 1.24 2021/05/30 01:57:00 joerg Exp $
+# Origin: EmberBSD LLVM host-module compatibility probe, prepared with AI assistance.
 
 .include <bsd.hostinit.mk>
 
@@ -25,9 +26,15 @@ config/config.status: ${LLVM_SRCDIR}/configure
 	    --with-python=${.OBJDIR}/config/python && \
 	cp ${LLVM_TOPLEVEL}/include/module.modulemap include/llvm/module.modulemap
 
-support-modules: module-test.cpp Makefile
+support-modules: module-test.cpp Makefile config/config.status
 	if ${HOST_CXX} -stdlib=libc++ -c -fmodules -fcxx-modules -fmodules-cache-path=./module.cache \
-	   ${.CURDIR}/module-test.cpp  3> /dev/null 2>&1; then \
+	   ${.CURDIR}/module-test.cpp > /dev/null 2>&1 && \
+	   ${HOST_CXX} -std=c++14 ${MODULES_CXXFLAGS} \
+	   -fmodule-map-file=${LLVM_INCLUDE_CONFIG:Q}/llvm/module.modulemap \
+	   -fmodule-map-file=${LLVM_SRCDIR:Q}/include/llvm-c/module.modulemap \
+	   -I${LLVM_SRCDIR:Q}/include -I${LLVM_INCLUDE_CONFIG:Q} \
+	   -fsyntax-only ${LLVM_SRCDIR:Q}/lib/Support/APFixedPoint.cpp \
+	   > support-modules.log 2>&1; then \
 		echo HOST_SUPPORTS_MODULES=yes > ${.TARGET}; \
 	else \
 		echo HOST_SUPPORTS_MODULES=no > ${.TARGET}; \

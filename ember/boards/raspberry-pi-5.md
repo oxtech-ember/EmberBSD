@@ -36,6 +36,35 @@ AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.
 
 ## Evidence
 
+### Network reconnect validation, 2026-10-15
+
+A second Pi 5 Model B had 8 GiB RAM and DMI version `D04170`.
+It booted through UEFI/ACPI from microSD. The preserved UEFI reported
+`rpi5-20260730.1`; its SHA256 was
+`e8ebdfb6c61a2e4c5317a4900660e325460b663e64fb6b0f2edc35573437a738`.
+
+Kernel `EMBERV3DRENDER #1` and four matching board modules came from
+`e9eeff8b8f25b0121a8dba9b80f1999ab951922c`, built with GCC 16.2.0.
+The installed ELF SHA256 was
+`068136d8399891d7df406330b92c4a4dcbcee12895d0a194ed150021e7e6d9cb`.
+The kernel configuration includes V3D support; this check did not test graphics.
+The existing base and supplicant were retained. Only the kernel, matching
+modules and corrected DHCP client were installed.
+
+The radio used WPA2/CCMP, 5 GHz channel 60 and VHT80 with one spatial stream.
+Sixteen 32 MiB uploads and downloads transferred 1 GiB in 227 seconds.
+Every returned file matched byte for byte. IPv6 link-local SSH and its return
+route selected Wi-Fi while Ethernet remained available for management.
+SDIO transmit errors, window failures, forced credits and timeouts remained zero.
+The interface did record receive errors; this is not a zero-error radio claim.
+
+The [DHCP correction](../boot/dhcpcd-dad.md#validation-2026-10-15) passed 77 target
+checks, six reconnects, fallback without DHCP and recovery with DHCP restored.
+IPv4LL stayed enabled. A normal reboot restored mDNS and SSH.
+A further 32 MiB upload and download passed byte comparison in 17 seconds.
+This is a bounded network check, not a long soak or WPA3/k/v acceptance
+on this unit. It does not validate GPU, audio, camera or a complete base update.
+
 ### USB control recovery, 2026-10-13
 
 A Pi 5 Model B with 8 GiB RAM and DMI version `D04170` used UEFI/ACPI.

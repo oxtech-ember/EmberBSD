@@ -57,7 +57,8 @@ typedef struct {
 	bool	m_bad_on_enum: 1;
 	bool	m_warn_if_operand_eq: 1;
 	bool	m_has_operands: 1;
-	const char m_name[8];
+	/* EmberBSD: 'constant' needs 8 chars plus NUL for op_name %s. */
+	const char m_name[9];
 } mod_t;
 
 typedef enum {

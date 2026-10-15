@@ -137,6 +137,16 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun8i-v3s-emac",		.value = EMAC_H3 },
 	{ .compat = "allwinner,sun50i-a64-emac",	.value = EMAC_A64 },
 	{ .compat = "allwinner,sun50i-h6-emac",		.value = EMAC_H6 },
+	/*
+	 * Vendor A133 trees name the same DesignWare MAC this way and
+	 * describe the PHY mode in the second register window.
+	 */
+	{ .compat = "allwinner,sunxi-gmac",		.value = EMAC_A64 },
+	DEVICE_COMPAT_EOL
+};
+
+static const struct device_compatible_entry sunxi_gmac_compat[] = {
+	{ .compat = "allwinner,sunxi-gmac" },
 	DEVICE_COMPAT_EOL
 };
 
@@ -183,6 +193,8 @@ struct sunxi_emac_softc {
 	struct fdtbus_gpio_pin	*pin_reset;
 
 	struct syscon		*syscon;
+	bool			direct_clk;
+	bus_space_handle_t	clkreg_bsh;
 
 	int			phy_id;
 
@@ -977,6 +989,8 @@ sunxi_emac_has_internal_phy(struct sunxi_emac_softc *sc)
 	return of_compatible_match(OF_parent(phy), mdio_internal_compat);
 }
 
+static void	sunxi_emac_a133_phy_reset(bus_space_tag_t);
+
 static int
 sunxi_emac_setup_phy(struct sunxi_emac_softc *sc)
 {
@@ -989,8 +1003,12 @@ sunxi_emac_setup_phy(struct sunxi_emac_softc *sc)
 
 	aprint_debug_dev(sc->dev, "PHY type: %s\n", phy_type);
 
-	syscon_lock(sc->syscon);
-	reg = syscon_read_4(sc->syscon, EMAC_CLK_REG);
+	if (sc->direct_clk)
+		reg = bus_space_read_4(sc->bst, sc->clkreg_bsh, 0);
+	else {
+		syscon_lock(sc->syscon);
+		reg = syscon_read_4(sc->syscon, EMAC_CLK_REG);
+	}
 
 	reg &= ~(EMAC_CLK_PIT | EMAC_CLK_SRC | EMAC_CLK_RMII_EN);
 	if (strncmp(phy_type, "rgmii", 5) == 0)
@@ -1037,8 +1055,18 @@ sunxi_emac_setup_phy(struct sunxi_emac_softc *sc)
 
 	aprint_debug_dev(sc->dev, "EMAC clock: 0x%08x\n", reg);
 
-	syscon_write_4(sc->syscon, EMAC_CLK_REG, reg);
-	syscon_unlock(sc->syscon);
+	if (sc->direct_clk) {
+		/* A133 uses an external PHY; the loader leaves bit 15 set. */
+		reg &= ~EMAC_CLK_EPHY_SELECT;
+		/* RMII takes its reference clock from that PHY. */
+		if (strcmp(phy_type, "rmii") == 0)
+			reg |= EMAC_CLK_SRC_EXT_RGMII;
+		bus_space_write_4(sc->bst, sc->clkreg_bsh, 0, reg);
+		sunxi_emac_a133_phy_reset(sc->bst);
+	} else {
+		syscon_write_4(sc->syscon, EMAC_CLK_REG, reg);
+		syscon_unlock(sc->syscon);
+	}
 
 	return 0;
 }
@@ -1053,7 +1081,11 @@ sunxi_emac_setup_resources(struct sunxi_emac_softc *sc)
 	if (sunxi_emac_setup_phy(sc) != 0)
 		return ENXIO;
 
-	/* Enable clocks */
+	/* Enable clocks. The vendor tree has no clock provider. */
+	if (sc->direct_clk) {
+		freq = 200000000;	/* AHB left by the boot loader */
+		goto mdc_div;
+	}
 	error = clk_enable(sc->clk_ahb);
 	if (error != 0) {
 		aprint_error_dev(sc->dev, "cannot enable ahb clock\n");
@@ -1095,6 +1127,7 @@ sunxi_emac_setup_resources(struct sunxi_emac_softc *sc)
 
 	/* Determine MDC clock divide ratio based on AHB clock */
 	freq = clk_get_rate(sc->clk_ahb);
+mdc_div:
 	if (freq == 0) {
 		aprint_error_dev(sc->dev, "cannot get AHB clock frequency\n");
 		return ENXIO;
@@ -1279,11 +1312,82 @@ sunxi_emac_setup_dma(struct sunxi_emac_softc *sc)
 	return 0;
 }
 
+/*
+ * The vendor A133 tree does not use the A100 clock or pinctrl drivers.
+ * The boot loader leaves the MAC gated. Turn the gates on, mux PH0-PH7
+ * to RMII and pulse the active-low PHY reset on PH11.
+ */
+static void
+sunxi_emac_a133_enable(bus_space_tag_t bst)
+{
+	bus_space_handle_t ccu, pio;
+	uint32_t val;
+	int pin;
+
+	if (bus_space_map(bst, 0x03001000, 0x1000, 0, &ccu) != 0)
+		return;
+	val = bus_space_read_4(bst, ccu, 0x970);
+	val |= (1U << 31) | (1U << 30);
+	bus_space_write_4(bst, ccu, 0x970, val);
+	val = bus_space_read_4(bst, ccu, 0x97c);
+	val |= (1U << 16) | (1U << 0);
+	bus_space_write_4(bst, ccu, 0x97c, val);
+	bus_space_unmap(bst, ccu, 0x1000);
+
+	if (bus_space_map(bst, 0x0300b000, 0x400, 0, &pio) != 0)
+		return;
+	val = bus_space_read_4(bst, pio, 0xfc);
+	for (pin = 0; pin < 8; pin++) {
+		val &= ~(0x7U << (pin * 4));
+		val |= (5U << (pin * 4));
+	}
+	bus_space_write_4(bst, pio, 0xfc, val);
+
+	/*
+	 * PH9 is MDC, PH10 is MDIO and PH11 is the active-low reset.
+	 * PH12/PH13 belong to the vendor TWI3 touch bus; this board does
+	 * not select the EPHY clock output. Preserve those mux fields.
+	 * MDIO is open-drain and needs its pull-up.
+	 */
+	val = bus_space_read_4(bst, pio, 0x100);
+	val &= ~((0x7U << 4) | (0x7U << 8) | (0x7U << 12));
+	val |= (5U << 4) | (5U << 8) | (1U << 12);
+	bus_space_write_4(bst, pio, 0x100, val);
+	val = bus_space_read_4(bst, pio, 0x118);
+	val &= ~(0x3U << 20);
+	val |= (1U << 20);
+	bus_space_write_4(bst, pio, 0x118, val);
+	bus_space_unmap(bst, pio, 0x400);
+}
+
+/* Pulse PH11 after the PHY clock is already running. */
+static void
+sunxi_emac_a133_phy_reset(bus_space_tag_t bst)
+{
+	bus_space_handle_t pio;
+	uint32_t val;
+
+	if (bus_space_map(bst, 0x0300b000, 0x400, 0, &pio) != 0)
+		return;
+	val = bus_space_read_4(bst, pio, 0x10c);
+	val &= ~(1U << 11);
+	bus_space_write_4(bst, pio, 0x10c, val);
+	delay(100000);
+	val |= (1U << 11);
+	bus_space_write_4(bst, pio, 0x10c, val);
+	delay(150000);
+	bus_space_unmap(bst, pio, 0x400);
+}
+
 static int
 sunxi_emac_get_resources(struct sunxi_emac_softc *sc)
 {
 	const int phandle = sc->phandle;
 	bus_addr_t addr, size;
+	const bool vendor = of_compatible_match(phandle, sunxi_gmac_compat) != 0;
+
+	if (vendor)
+		sunxi_emac_a133_enable(sc->bst);
 
 	/* Map EMAC registers */
 	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0) {
@@ -1295,12 +1399,20 @@ sunxi_emac_get_resources(struct sunxi_emac_softc *sc)
 		return ENXIO;
 	}
 
-	/* Get SYSCON registers */
+	/* Get SYSCON registers. The vendor node stores the clock word
+	 * as its second register instead of a syscon phandle. */
 	sc->syscon = fdtbus_syscon_acquire(phandle, "syscon");
-	if (sc->syscon == NULL) {
+	if (sc->syscon == NULL && vendor &&
+	    fdtbus_get_reg(phandle, 1, &addr, &size) == 0 &&
+	    bus_space_map(sc->bst, addr, size, 0, &sc->clkreg_bsh) == 0) {
+		sc->direct_clk = true;
+	} else if (sc->syscon == NULL) {
 		aprint_error_dev(sc->dev, "unable to acquire syscon\n");
 		return ENXIO;
 	}
+
+	if (vendor && sc->direct_clk)
+		return 0;
 
 	/* The "ahb"/"stmmaceth" clock and reset is required */
 	if ((sc->clk_ahb = fdtbus_clock_get(phandle, "ahb")) == NULL &&
@@ -1360,6 +1472,11 @@ static int
 sunxi_emac_match(device_t parent, cfdata_t cf, void *aux)
 {
 	struct fdt_attach_args * const faa = aux;
+	const char *status;
+
+	status = fdtbus_get_string(faa->faa_phandle, "status");
+	if (status != NULL && strncmp(status, "ok", 2) != 0)
+		return 0;
 
 	return of_compatible_match(faa->faa_phandle, compat_data);
 }
@@ -1460,8 +1577,49 @@ sunxi_emac_attach(device_t parent, device_t self, void *aux)
 	mii->mii_readreg = sunxi_emac_mii_readreg;
 	mii->mii_writereg = sunxi_emac_mii_writereg;
 	mii->mii_statchg = sunxi_emac_mii_statchg;
+	if (sc->direct_clk) {
+		uint32_t got;
+		int rst;
+
+		rst = sunxi_emac_reset(sc);
+		WR4(sc, EMAC_BASIC_CTL_0, 0x11);
+		got = RD4(sc, EMAC_BASIC_CTL_0);
+		aprint_error_dev(self, "mac rst %d ctl0 %08x\n", rst, got);
+	}
 	mii_attach(self, mii, 0xffffffff, sc->phy_id, MII_OFFSET_ANY,
 	    MIIF_DOPAUSE);
+
+	if (LIST_EMPTY(&mii->mii_phys) && sc->direct_clk) {
+		char map[33];
+		uint16_t id;
+		uint32_t clk;
+		int phy, err;
+
+		clk = bus_space_read_4(sc->bst, sc->clkreg_bsh, 0);
+		for (phy = 0; phy < 32; phy++) {
+			err = sunxi_emac_mii_readreg(self, phy, 2, &id);
+			if (err != 0)
+				map[phy] = 'T';
+			else if (id == 0xffff)
+				map[phy] = 'F';
+			else if (id == 0)
+				map[phy] = '0';
+			else
+				map[phy] = '1';
+		}
+		map[32] = '\0';
+		aprint_error_dev(self, "clk %08x mdio %s\n", clk, map);
+
+		/* External RMII did not answer. Try the internal PHY. */
+		clk |= EMAC_CLK_EPHY_SELECT;
+		clk &= ~EMAC_CLK_EPHY_SHUTDOWN;
+		clk &= ~EMAC_CLK_EPHY_ADDR;
+		clk |= (1U << EMAC_CLK_EPHY_ADDR_SHIFT);
+		bus_space_write_4(sc->bst, sc->clkreg_bsh, 0, clk);
+		delay(10000);
+		mii_attach(self, mii, 0xffffffff, MII_PHY_ANY, MII_OFFSET_ANY,
+		    MIIF_DOPAUSE);
+	}
 
 	if (LIST_EMPTY(&mii->mii_phys)) {
 		aprint_error_dev(self, "no PHY found!\n");

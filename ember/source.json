@@ -2,6 +2,8 @@
   "upstreamRepository": "https://github.com/NetBSD/src.git",
   "upstreamRevision": "03d918f6d0e81fa05b8f1160eca0628ad39988a6",
   "kernelRelease": "11.0",
+  "x11SourceUrl": "https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.0/source/sets/xsrc.tgz",
+  "x11SourceSha512": "c46c9e62d225732b3d8d30d2c5f95b992b434826276f8b66fc04439a309b13e4b751d33366f5c39010f2e309ad70a7bdc7a130fe5ea735792be26ea7c13e2dd5",
   "kernelSourceUrl": "https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.0/source/sets/syssrc.tgz",
   "kernelSourceSha512": "318d451ecc83749607d5448198c02663ea5f0b7f4cc74fb565747f86eead7b66b5809a37deee219dc6ddb2e5ee332d1cbb94c1a4e9db63620c3abd7586fb3057",
   "releaseBaselineChanges": [

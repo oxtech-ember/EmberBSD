@@ -1,3 +1,4 @@
+/* Origin: EmberBSD guided keyboard selection adapter, 2026-10-13. */
 /*	$NetBSD: wskbd.c,v 1.5 2021/01/31 22:45:47 rillig Exp $	*/
 
 /*-
@@ -42,6 +43,7 @@ __RCSID("$NetBSD: wskbd.c,v 1.5 2021/01/31 22:45:47 rillig Exp $");
 #include "defs.h"
 #include "menu_defs.h"
 #include "msg_defs.h"
+#include "wizard.h"
 void save_kb_encoding(void);
 
 /* wscons setup for sysinst */
@@ -115,6 +117,19 @@ get_kb_encoding(void)
 					kb_default = i;
 			}
 			opt[i].opt_action = set_kb_encoding;
+		}
+		if (wizard_active) {
+			const char *names[__arraycount(opt)] = { NULL };
+			for (i = 0; i < __arraycount(opt); i++)
+				names[i] = msg_string(opt[i].opt_name);
+			int choice = wizard_initial_choice("Language and keyboard: keyboard layout",
+			    names, __arraycount(opt), kb_default);
+			if (choice >= 0) {
+				menudesc selected = { .cursel = choice };
+				set_kb_encoding(&selected, &fd);
+			}
+			close(fd);
+			return;
 		}
 		kb_menu = new_menu(MSG_Keyboard_type, opt, __arraycount(opt),
 			-1, -8, 0, 0,

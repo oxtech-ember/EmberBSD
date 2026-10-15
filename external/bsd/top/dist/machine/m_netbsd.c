@@ -769,7 +769,7 @@ get_lwp_info(struct system_info *si, struct process_select *sel,
 	if (thread_pbase == NULL || thread_nproc != thread_onproc) {
 		free(thread_pbase);
 		thread_onproc = thread_nproc;
-		thread_pbase = calloc(sizeof(struct kinfo_proc2), thread_nproc);
+		thread_pbase = calloc(thread_nproc, sizeof(struct kinfo_proc2));
 		if (thread_pbase == NULL) {
 			(void) fprintf(stderr, "top: Out of memory.\n");
 			quit(23);

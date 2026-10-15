@@ -1,4 +1,5 @@
 #	$NetBSD: Makefile.kern.inc,v 1.302 2025/01/13 15:40:18 riastradh Exp $
+# Origin: EmberBSD quiet kernel product version, prepared with AI assistance.
 #
 # This file contains common `MI' targets and definitions and it is included
 # at the bottom of each `MD' ${MACHINE}/conf/Makefile.${MACHINE}.
@@ -65,6 +66,8 @@ S!=	cd ../../../.. && pwd
 INCLUDES?=	-I. ${EXTRA_INCLUDES} -I${S}/../common/include -I$S/arch \
 		-I$S -nostdinc
 CPPFLAGS+=	${INCLUDES} ${IDENT} -D_KERNEL -D_KERNEL_OPT
+EMBER_VERSION?=	1.0
+CPPFLAGS+=	-DEMBER_VERSION=\"${EMBER_VERSION}\"
 .if !defined(COVERITY_TOP_CONFIG)
 CPPFLAGS+=	-std=gnu11
 .endif

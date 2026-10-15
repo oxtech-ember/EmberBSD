@@ -424,7 +424,7 @@ cd9660_copy_file(iso9660_disk *diskStructure, FILE *fd, off_t start_sector,
 {
 	FILE *rf;
 	int bytes_read;
-	off_t sector = start_sector;
+	off_t sector __unused = start_sector;
 	int buf_size = diskStructure->sectorSize;
 	char *buf;
 

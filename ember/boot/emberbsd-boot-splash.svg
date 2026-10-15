@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480" role="img" aria-labelledby="title desc">
+  <title id="title">EmberBSD boot splash</title>
+  <desc id="desc">Flame mascot and thin orange EmberBSD wordmark centered on white.</desc>
+  <rect width="640" height="480" fill="#FFFFFF"/>
+  <image href="emberbsd-boot-logo.png" x="170" y="26" width="300" height="338" preserveAspectRatio="xMidYMid meet"/>
+  <text x="320" y="421" text-anchor="middle" fill="#C2410C" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="34" font-weight="300" letter-spacing="0.5">EmberBSD</text>
+</svg>

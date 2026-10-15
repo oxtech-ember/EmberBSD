@@ -252,7 +252,6 @@ int	send_tcp(nfd, mtu, ip, gwip)
 	ip_t	*ip;
 	struct	in_addr	gwip;
 {
-	static	tcp_seq	iss = 2;
 	tcphdr_t *t, *t2;
 	int	thlen, i, iplen, hlen;
 	u_32_t	lbuf[20];
@@ -275,7 +274,6 @@ int	send_tcp(nfd, mtu, ip, gwip)
 
 	if (!t2->th_win)
 		t2->th_win = htons(4096);
-	iss += 63;
 
 	i = sizeof(struct tcpiphdr) / sizeof(long);
 

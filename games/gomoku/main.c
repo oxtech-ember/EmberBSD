@@ -71,7 +71,7 @@ static char user[LOGIN_NAME_MAX]; /* name of player */
 static FILE *debugfp;		/* file for debug output */
 static FILE *inputfp;		/* file for debug input */
 
-const char	pdir[4]		= "-\\|/";
+const char	pdir[5]		= "-\\|/";
 
 struct	spotstr	board[BAREA];		/* info for board */
 struct	combostr frames[FAREA];		/* storage for all frames */

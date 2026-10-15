@@ -37,10 +37,17 @@ are maintained in the related repositories below.
   or [developer skills](#connect-developer-skills) for development.
 
 - For installation screens and compatible set sources, see
-  [installer identity](ember/boot/installer-branding.md).
-  The installer offers bootable USB/image sets and an EmberBSD CDN source.
-  An [amd64 UEFI VM candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11)
-  supplies complete local media and a pinned GitHub HTTPS set source.
+  [text installer](ember/boot/text-installer.md) and [installer identity](ember/boot/installer-branding.md).
+  The amd64 keyboard wizard reviews automatic GPT, profiles and settings before writing.
+  Keyboard-hook contracts cover builds with and without wscons keyboard support.
+  Normal startup is quiet, with a separate diagnostic choice and a 10-second menu.
+  Console login uses the EmberBSD release greeting; full attribution stays in /etc/release.
+  A fresh amd64 UEFI VM passes complete USB installation with XFCE and its Wi-Fi manager.
+  A separate Minimal/None HTTP installation passes cold boot and console Wi-Fi tool checks;
+  SSH is enabled by default with unchanged authentication settings.
+  An [amd64 UEFI VM candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-c5d396f5698b68e956b29ee5b256bc7877e6c517-amd64-no-x11)
+  supplies the separate no-X11 media and a pinned GitHub HTTPS set source.
+  The accepted desktop candidate remains local until its matching kit is published.
   The [release procedure](ember/release/README.md) verifies composition, VM qualification,
   remote file hashes and immutable publication. The custom domain remains deferred.
 
@@ -49,12 +56,18 @@ are maintained in the related repositories below.
 | Repository | Purpose | Current scope |
 | --- | --- | --- |
 | [EmberBSD](https://github.com/oxtech-ember/EmberBSD) | Central OS project: kernel, drivers, boards, boot, firmware and system validation | Source tree and board-specific evidence; see the support tables |
+| [EmberBSD-DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards) | Hardware references for developers building their own devices | Boards, carriers, SoCs, interfaces, bootloaders and configuration applicability |
 | [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports) | Third-party build recipes, portability patches and native package profiles | pkgsrc recipes and experimental probes, each with its own validation limits |
 | [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) | Standalone applications and reproducible demonstrations | Local AI, robotics and desktop scenarios with requirements and checks |
 | [EmberBSD-Runtime](https://github.com/oxtech-ember/EmberBSD-Runtime) | Application execution, lifecycle, permissions and shared device operations | Design stage; no released runtime implementation |
 | [EmberBSD-SDK](https://github.com/oxtech-ember/EmberBSD-SDK) | Application interfaces, package contracts, developer tools and compatibility checks | Design stage; no stable application API or released SDK tools |
 | [Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills) | Instructions for developers and their AI assistants | Application development, board bring-up, shared ports and tested contributions; source analysis and memory checks for own and ported code |
 | [EmberBSD-User-Skills](https://github.com/oxtech-ember/EmberBSD-User-Skills) | Instructions for users and their local or remote AI assistants | OS installation onto boards, desktop VMs and USB-cabled phones, applications, device diagnostics, personal Ports and GitHub workflows; package checks and client discovery verified |
+
+DevBoards helps transfer research from a reference board to a custom device.
+Start with its [reader guide](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/docs/reader-guide.md) and [catalog](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/catalog.json), then check each record's sources and applicability.
+Current support claims remain in the [OS board catalog](ember/boards/README.md).
+Drivers and executable checks remain with OS and Ports.
 
 Runtime will execute applications on the device; SDK will define their
 interfaces and development tools. Examples demonstrate usable scenarios;
@@ -77,7 +90,7 @@ procedures live in `ember/boards`. Personal source customization stays a user
 workflow; it does not require a contribution PR.
 
 Follow the [installation instructions](https://github.com/oxtech-ember/EmberBSD-User-Skills#install-the-package-or-a-skill)
-for your client. Version 0.4.0 provides ten task skills. Both skill packages can coexist.
+for your client. Version 0.4.1 provides ten task skills. Both skill packages can coexist.
 Read the package's current check results and limits. Package consistency and client discovery
 do not establish on-device agent behavior, cable-installer acceptance or end-to-end personal Ports maintenance.
 The package uses available tools and supplies no agent runtime or credentials.
@@ -104,7 +117,8 @@ Start a new conversation in your project and ask:
 See the [skills installation and update guide](https://github.com/oxtech-ember/Ember-Agent-Skills#use-in-your-development-environment)
 for expected results, updates and other assistant environments. The plugin
 provides developer instructions; it does not install software on a board.
-Package 0.4.3 provides eight task skills; its README records package and client checks.
+Package 0.4.5 provides eight task skills, including staged port modernization, behavior checks, and DevBoards hardware references.
+Its README records package, client, and bounded instruction checks.
 Desktop icon rendering remains unverified for both packages.
 Reusable fixes and ports are contributed through focused PRs after relevant
 testing, following the accepting project's rules.
@@ -120,16 +134,19 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-Status updated **2026-10-13**; linked component documents record their own
+Status updated **2026-10-15**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
 
 ### Local AI and robotics
 
-- **Local text and speech models:** pkgsrc recipes for llama.cpp 0.6.0 and
-  whisper.cpp 1.9.4, with separately supplied models. Native AArch64 VM tests
-  cover package installation, text generation, a loopback HTTP completion
-  service and WAV transcription on CPU. This is a usable starting point for
+- **Local text and speech models:** pkgsrc recipes for llama.cpp 0.6.0nb1 and
+  whisper.cpp 1.9.5, with separately supplied models. Linux GCC16 cross builds
+  pass package installation, integrity checks and removal/reinstallation in an
+  EmberBSD AArch64 QEMU VM. SmolLM2 generates text and HTTP completions;
+  Whisper tiny transcribes WAV with independently checked words and JSON timestamps. The
+  [cross profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/ai-cpu/cross)
+  records the sysroot, model hashes and memory checks. This is a usable starting point for
   local assistants; microphone capture, image understanding and GPU/NPU
   inference still need validation. See the [AI packages](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/ai-cpu)
   and [model execution example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/ai/local-inference).
@@ -147,15 +164,23 @@ on every board in the hardware catalog.
   and reconnection. This connects EmberBSD devices to ROS systems; it is
   bridge interoperability, not a native ROS 2 distribution. See the
   [Zenoh/ROS 2 example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/zenoh-ros2).
-- **Model APIs and speech processing:** ONNX Runtime 1.30.0 and ncnn 20260526
-  provide installed C/C++ CPU inference libraries. RNNoise 0.2 processes audio,
-  and Silero VAD 6.2.3 detects speech through the same ONNX Runtime library.
-  Seven AArch64 VM checks cover numerical results, recurrent stream state,
-  speech/silence boundaries and invalid inputs; ORT worker affinity is checked
-  separately. Ports preserves the NetBSD adaptations and
-  [build and test instructions](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ai-engines).
-  These source probes support application development; microphone capture,
-  real-world audio quality and GPU/NPU execution remain unverified.
+- **Model APIs and speech processing:** ONNX Runtime 1.31.0 provides a GCC16
+  cross package with installed C/C++ CPU APIs. The
+  [small neural-network example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/ai/onnx-cpu)
+  checks dynamic batches against independent scalar answers. AArch64 QEMU
+  acceptance also checks real worker threads, 76 selected upstream tests,
+  error handling and package removal/reinstallation. Existing Silero VAD 6.2.3
+  checks recurrent speech/silence state through the same runtime. Ports owns
+  the [package, adaptations and validation limits](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/onnxruntime).
+  [ncnn 20260526](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ncnn)
+  also provides a GCC16 shared CPU package. Its
+  [C/C++ convolutional-network example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/ai/ncnn-cpu)
+  passes independent numerical checks, eight upstream programs, source and ABI
+  regressions, and package removal/reinstallation in AArch64 QEMU.
+  Separate [AI/audio source probes](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ai-engines)
+  retain historical native RNNoise 0.2 and combined-profile evidence.
+  Microphone capture, speech accuracy,
+  real-time performance, physical boards and GPU/NPU execution remain unverified.
 - **Google AI Edge model execution:** LiteRT 2.2.0 provides a shared C/C++
   CPU runtime for `.tflite` applications; LiteRT-LM 0.18.0 adds SentencePiece
   language-model execution. Ports owns the [cross-build profile, adaptations and instructions](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/litert).
@@ -183,6 +208,10 @@ on every board in the hardware catalog.
   are preserved in the [media port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/media).
   This is a CPU file-processing profile; camera capture, network streaming
   and hardware codecs remain outside its verified scope.
+  A separate [GCC16 CPU cross package](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/cross)
+  passes real dependency/package cycles, exact FFV1 pixels, timestamps,
+  inverse filters and PCM samples in AArch64 QEMU. Its current XML provider
+  passes installed contracts and preserves the libxml2.so.16 ABI.
 - **Recording experiments and finding visual markers:** MCAP C++ 2.1.3 records
   timestamped messages with indexed replay and LZ4/Zstd compression. AprilTag
   3.4.5 detects markers and estimates their pose. Installed AArch64 VM checks
@@ -211,15 +240,43 @@ on every board in the hardware catalog.
   translation ATE RMSE across two controlled runs and fixed-scale alignment. This enables
   recorded-data navigation experiments; live cameras, IMU fusion, boards,
   GUI, sustained operation and real-time performance remain unverified.
-- **Further navigation and motion sources:** Ports prepares
-  [GTSAM](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/gtsam),
-  [PCL](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/pcl),
+- **Mapping recorded RGB-D data:** RTAB-Map 0.23.8 now has a
+  [GCC16 cross package](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/rtabmap)
+  with common OpenCV 5.0.0, PCL 1.15.1nb1, GTSAM 4.3.0 and SQLite 3.54.0.
+  The [recorded-map example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/rtabmap-recorded-map)
+  maps twelve TUM RGB-D frames using their recorded poses, saves and reopens
+  the SQLite map, and exports 10,859 independently checked colored points.
+  EmberBSD AArch64 QEMU checks pass fourteen real package lifecycles,
+  persistence/localization, invalid inputs and selected upstream tests.
+  This supplied-pose map does not establish visual odometry, physical sensors,
+  full-sequence SLAM, real-time or sustained operation.
+- **Navigation and motion software:** Ports prepares
   [OpenVINS](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/openvins)
-  and [RTAB-Map](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/rtabmap)
   with common current dependencies. [Ruckig](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ruckig)
   and [OSQP](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/osqp)
-  pass host numerical contracts; [OMPL](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ompl)
-  has a prepared planning profile. Native acceptance of these additions remains pending.
+  now have GCC16 cross packages accepted in EmberBSD AArch64 QEMU. Ruckig
+  passes analytic/online motion contracts and all 15 bounded upstream groups.
+  OSQP passes QP/KKT, infeasibility, derivatives, real SIGINT and all three
+  upstream programs. Both packages pass removal/reinstallation. These are
+  software contracts; physical motion and real-time reliability remain unverified.
+  [OMPL](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ompl)
+  2.0.2 also has a GCC16 cross package with Eigen 5.0.1 and Boost 1.92.0.
+  Its installed AArch64 QEMU checks pass an independently validated obstacle
+  detour, thirteen upstream programs, archive consumers and all four package
+  lifecycles. The [CSV path example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/ompl-path)
+  uses that shared library. GTSAM 4.3.0 now also has a GCC16 cross package with
+  common Eigen 5.0.1. Installed AArch64 QEMU checks pass known linear/Pose2
+  solutions, covariance, invalid graphs, eleven upstream programs and package
+  removal/reinstallation. The
+  [CSV graph example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/gtsam-graph)
+  uses the shared library. [PCL 1.15.1](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/pcl)
+  also has a GCC16 cross package with common Eigen 5.0.1 and Boost 1.92.0.
+  Installed EmberBSD AArch64 QEMU checks pass known voxel centroids, ICP
+  rigid motion, independent CSV, twelve upstream programs and all eight
+  package lifecycles. The [point-cloud example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/pcl-cloud)
+  uses the shared libraries. These synthetic clouds do not establish camera,
+  LiDAR, calibration, physical-board or real-time behavior. Other navigation
+  additions still need target acceptance.
 - **Ethernet SDR development:** the [Ports SDR profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/sdr)
   combines SoapySDR, libiio 1.0.0 with its official compatibility layer,
   AD9361/Pluto support and current libxml2. Synthetic IQ and loopback RX
@@ -350,11 +407,16 @@ on every board in the hardware catalog.
   private virtual-backend session: the compositor stays active on QPainter
   while Qt Quick clients render real pixel phases through software EGL
   (llvmpipe) and exit cleanly. Hardware GL compositing still needs the DRM
-  render node on A733. On physical CM5, KWin 6.7.5nb2 passes
-  [OpenGL/V3D selection and Qt Quick pixel checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
-  on a virtual output under an existing non-root user. Its missing Vulkan
-  loader dependency is repaired. This does not establish HDMI presentation
-  or the complete Plasma Desktop. The fixed
+  render node on A733. On physical CM5, the installed KWin 6.8.0 reports
+  [OpenGL ES/V3D compositing](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
+  under an ordinary user on a virtual output. Plasma Desktop 6.8.0 also
+  selects V3D OpenGL 3.1. libudev now classifies its DRM render node correctly.
+  One model-readiness run completed, but its containment capture was transparent.
+  A repeat exposed allocation and startup failures; the full desktop remains unaccepted.
+  The [native scatter/gather allocator](ember/boot/bcm2712-v3d-render.md) now
+  passes CM5 allocations through 16 MiB, three held buffers, and the existing
+  TFU/CSD/sync/CL checks. Updated Mesa/Qt and the full desktop need separate acceptance.
+  The fixed
   [Milou](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/milou)
   package passes its fresh-board acceptance on the same board.
   plasma-workspace 6.7.5 itself now cross-builds completely (BROKEN
@@ -367,14 +429,14 @@ on every board in the hardware catalog.
   (365 packages): plasmashell, krunner, ksmserver and startplasma-wayland
   are installed with clean dynamic dependencies, and the private KWin
   session acceptance still passes. A startplasma session on the virtual
-  output is the next acceptance step. CM5 runtime testing also identifies
-  the separate, still absent Plasma Desktop shell package; Workspace alone
-  cannot start `org.kde.plasma.desktop`.
+  output remains a separate acceptance step for that A733 package set.
+  CM5 now has complete Desktop and Workspace 6.8.0 packages, including the
+  separate `org.kde.plasma.desktop` shell and its compiled plugins.
   [Desktop package preparation](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-package-set.md)
   now covers Activities, current Xwayland/libei/basu, correct target XKB paths
   and native QtDBus generators that retain KWin's complex property signatures.
   Offline package and full-session runner host controls pass; board startup,
-  V3D shell rendering and normal logout still require acceptance.
+  visible desktop content and normal full-session logout still require acceptance.
   Its current xdg-user-dirs 0.20
   dependency now cross-builds and passes private-profile checks on CM5.
   [Current desktop providers](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-providers.md)
@@ -433,7 +495,8 @@ on every board in the hardware catalog.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle.
   The current [CM5 display boundary](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
-  is an HDMI-to-VGA EDID that selects 1080p for a 1280x1024 monitor.
+  is a working firmware/genfb console at 1920x1080. The V3D render node
+  rejects DRM mode-resource queries; it does not supply a display controller.
   Native BCM2712 KMS mode setting and accelerated scanout remain unaccepted.
   A complete mobile shell workflow, native display and power management
   still need validation. See the [Plasma Mobile port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile).
@@ -632,8 +695,12 @@ on every board in the hardware catalog.
   PowerVR BXM BVNC `36.56.104.183`; Wi-Fi and the existing NPU probe return
   after a normal reboot. Frequencies and voltage were not measured externally.
   The [physical PLL result](ember/boot/a733-gpu-identification.md#physical-pll-result)
-  supersedes the earlier PERIPH0-400M timeout and GPU MMIO stall. Normal
-  board DTBs remain observe-only; the working cold start is an explicit
+  supersedes the earlier PERIPH0-400M timeout and GPU MMIO stall. The consumer
+  now blocks GPU MMIO after failed CORE ON/Q confirmation, including boot
+  error diagnostics. Zero 3W now also rejects TOP-ID after a failed CORE wait,
+  including a retry after the diagnostic stage reset. HWR diagnostics
+  preserve the full firmware snapshot within the GCC16 stack limit.
+  Normal board DTBs remain observe-only; the working cold start is an explicit
   runtime experiment. Native `firmload` now reads the exact firmware and
   [validates its metadata](ember/boot/a733-gpu-fwinfo.md#physical-preflight-result)
   against the live GPU on Zero 3W. The [native memory preparer](ember/boot/a733-gpu-fwmem.md#physical-preparation-result)
@@ -653,7 +720,7 @@ on every board in the hardware catalog.
   now passes all 21 stages with a Mesa 26.2.4 compiler packet. A guarded
   PowerVR shader writes `0x13579bdf` through the native GPU page tables.
   Client queue completion, timeline, DMA output, and fresh fault/HWR checks
-  agree. This check also passes after a second kernel update and fresh boot.
+  agree. This check also passes on GCC16 kernel `e876bf6d2ce2` after a fresh boot.
   A native [PowerVR DRM/GEM interface](ember/boot/a733-pvr-render.md)
   opens on Zero 3W and passes 115 identity/runtime checks. It reports the measured
   BVNC through a real render node. Native GEM allocation and CPU mapping of
@@ -673,16 +740,23 @@ on every board in the hardware catalog.
   EGL/pixel cycles and 38 upstream invocations, with recorded internal skips.
   The [experimental execution path](ember/boot/a733-pvr-execution.md) now adds
   firmware VM publication, contexts, free lists, and synchronous compute submission.
-  Its production-source contracts pass. The [graphics development checkpoint](ember/boot/a733-pvr-graphics.md)
-  adds stream, queue, HWRT, mapping-hold, and free-list growth primitives.
+  Its production-source contracts pass. Host fixtures use the current bridge and
+  metadata interfaces. They reject diagnostics after bridge adoption and render
+  registration with incomplete metadata. On Zero 3W, Mesa 26.2.4nb5 now passes
+  three complete Vulkan compute lifecycles in one boot with kernel `e876bf6d2ce2`.
+  Device creation, all 16 GPU-written words, fence completion, host readback,
+  and context cleanup pass; the execution service remains usable. The native
+  KICK path accepts its asynchronous zero return word and still requires CCCB,
+  UFO, and fresh health checks. Graphics jobs, Zink, display output, accelerated
+  Plasma, Vulkan conformance, and long-duration GPU stability remain unaccepted.
+  The [graphics development checkpoint](ember/boot/a733-pvr-graphics.md) adds
+  stream, queue, HWRT, mapping-hold, and free-list growth primitives.
   HWRT handles and paired DRM submissions now exist in this branch.
-  Exact intra-pair sync dependencies now use firmware ordering in host contracts.
+  Exact intra-pair sync dependencies use firmware ordering in host contracts.
   External waits retain their error paths and bounded forward-dependency checks.
   GROW callback registration remains incomplete.
   The free-list fixture keeps backing buffers alive through its page-count checks.
   These graphics branch changes have no physical acceptance.
-  The native execution guide records compute evidence separately.
-  Zink, display output, and accelerated Plasma remain unaccepted on A733.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,
@@ -741,6 +815,16 @@ on every board in the hardware catalog.
   The ordinary kernel remains a passive observer. General job recovery,
   foreign-device sharing, Vulkan, HDMI presentation and accelerated Plasma remain unverified.
 
+### Optional command shells
+
+[dash 0.5.13.5](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/shells/dash.md)
+and [mksh R59c](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/shells/mksh.md)
+have GCC16 control builds. dash uses current libedit and ncurses. Ports
+carries parser, trap, history, allocation and arithmetic repairs, with
+Linux behavior, terminal, static-analysis and memory checks. These checks
+do not establish EmberBSD package or ARM64 login acceptance.
+The base system shell is unchanged.
+
 ### Network diagnostics kit
 
 - **Board-side capture, analysis and load tools:** EmberBSD-Ports carries a
@@ -776,7 +860,10 @@ on every board in the hardware catalog.
   this tree, and drivers for the on-board Wi-Fi, Ethernet behind the
   RP1 chip, Bluetooth, the power button, the fan, the watchdog, I2C
   and a WM8960 audio codec. The board pages distinguish tested peripherals
-  from shared driver availability.
+  from shared driver availability. The [CEMAC interrupt lifecycle](ember/boot/cemac-irq-lifecycle.md)
+  has host regression checks for stop, restart and retained receive events.
+  Fault injection checks receive-buffer reuse when replacement allocation fails.
+  Repeated physical Ethernet down/up still needs acceptance.
 - **WPA3-Personal on CM5:** upstream wpa_supplicant SAE now works through
   the fork's `bwfm` external-auth interface, with required protected
   management frames. A physical CM5 passed SAE group 19/H2E, bidirectional
@@ -825,6 +912,10 @@ on every board in the hardware catalog.
   A physical Pi 5 passed 1024 descriptor reads and 1024 STALL recovery requests.
   This validates a limited control-transfer scenario, not phone boot or all USB
   transfer types. See the [contract and checks](ember/boot/usb-control-recovery.md).
+- **DHCP reconnect recovery:** duplicate-address detection cannot confirm an
+  unacknowledged lease. IPv4LL remains available without DHCP and is removed
+  after a usable DHCP bind. This is a userland correction; a kernel update
+  alone does not install it. See the [regression and verification](ember/boot/dhcpcd-dad.md).
 - **Kernel fixes found on these boards** that are not specific to
   them: the `bwfm` Wi-Fi driver stalling on large transfers and after
   an access point asks the client to change band, idle cores on
@@ -871,6 +962,8 @@ on every board in the hardware catalog.
   matched board modules and DTBs on Apple Silicon macOS and Debian/x86_64
   with GCC16.2. The Linux build passes all ten portable contracts and artifact
   checksum checks; native contracts and boot acceptance remain separate.
+  Incremental wrapper builds refresh the generated kernel version metadata;
+  host orchestration checks cover stale `BUILDINFO` and object retention.
   The resulting kernel cold-boots in AArch64 UTM and passes FP process,
   signal and thread checks. The
   [Ports cross GCC16 recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
@@ -896,7 +989,10 @@ on every board in the hardware catalog.
   C API/bitcode and ORC JIT consumers still pass.
   The OS-owned [development image](ember/image/README.md) installs the pinned
   GDB/LLVM package closure offline and includes CTF/libdwarf 2.2 and the
-  corrected FFS primary-superblock selector. The same installed GDB, DWP and
+  corrected FFS primary-superblock selector. A separate [FFS2 xattr list repair](ember/development/ffs-xattr.md)
+  preserves BSD lists and returns NUL-terminated names to the xattr API.
+  Actual-source and target analysis pass; kernel boot and physical retest remain pending.
+  The same installed GDB, DWP and
   CTF matrices pass on first boot and after a normal AArch64 VM reboot.
   Full OS builds
   with GCC16 and general pkgsrc cross-package builds remain unvalidated.
@@ -947,6 +1043,8 @@ on every board in the hardware catalog.
   device diagnosis and personal Ports maintenance with the available tools;
   package checks are verified, while on-device agent behavior remains untested.
   A pinned amd64 UEFI installation candidate is published through GitHub Releases.
+  Its VM profile has a checked [installer upgrade and complete backup recovery](ember/boot/amd64-vm-upgrade.md)
+  between two published builds, with configuration and user-data checks after normal reboots.
   It has no X11 and does not establish a general hardware or GCC16 userland release.
 
 The costs are equally plain. Fixes from upstream are merged by hand.
@@ -969,9 +1067,51 @@ listed revision; it does not imply full peripheral or long-run support.
 | [Orange Pi Zero 4](ember/boards/orange-pi-zero-4.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Ethernet, Wi-Fi, classic Bluetooth, thermal/frequency control and USB 2.0 data; SuperSpeed unconfirmed |
 | [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry, thermal/frequency control, and PowerVR compute/GEM; accelerated GUI, USB devices, and Bluetooth pairing not tested |
 | [ESP32-S31 development board](ember/boards/esp32-s31.md) | RISC-V 32 / ESP32-S31 | Flash boot, Ethernet and WPA2 Wi-Fi in 16 MB; one core, vendor radio libraries, no BLE/USB |
+| [YS-M33 tablet](ember/boards/ys-m33-a133.md) | AArch64 / Allwinner A133 | Experimental eMMC boot, Ethernet and upright awesomeWM on two samples; physical touch, audible audio(4) playback, intelligible captured speech and USB-A/Pixhawk6X tested on the first; [USB-only installation and recovery](ember/boards/ys-m33-a133-cable-install.md) on one unopened factory sample; [U-Boot 2026.10 second-stage RAM kernel handoff](ember/boards/validation/2026-10-08-a133-uboot-ram.md) on the first through its FFS root, followed by a prearmed 16-second watchdog return; permanent loader installation and direct recovery through it unverified; cold cycles, factory restoration, fleet and sustained use unverified; opt-in SDIO RAM diagnostic verifies register reads and function enable/ready/restore; Wi-Fi radio initialization/association unimplemented |
 
 The [board catalog](ember/boards/README.md) defines validation terms and links
-to VM and research targets. To contribute another board, follow
+to VM and research targets. YS-M33 cable-installation development includes
+[host-tested guarded USB range transfers](ember/boards/ys-m33-a133-usb-transfer.md)
+with full readback hashes; this is an API primitive, with physical acceptance
+and a released fleet installer still pending. A [capture checker](ember/boards/ys-m33-a133-backup-recovery.md#bind-a-trusted-capture-record-and-critical-copies)
+freshly verifies full backup and critical copies against recorded serial/CID;
+trusted provenance and live device binding remain separate checks.
+A [read-only USB backup collector](ember/boards/ys-m33-a133-usb-backup.md)
+acquires full/critical/hardware boot copies into private storage, tested through
+actual-dd source files. A separate [recovery mutable-data collector](ember/boards/ys-m33-a133-mutable-backup.md)
+retains complete UDISK/metadata copies with unmounted-source checks and two matching
+reads on host fixtures; coherent Android and physical restoration remain unaccepted.
+A [persistent recovery env transition](ember/boards/ys-m33-a133-recovery-protection.md)
+uses fresh caller-verified backup evidence, changes only the env prefix and
+checks the full env tail and retained recovery; actual-dd fixture tests do not
+prove bootloader execution, power-loss recovery or physical cable return.
+A [guarded factory recovery entry](ember/boards/ys-m33-a133-recovery-entry.md)
+binds one-shot Android env writes and known-state restoration to fresh full-backup
+GPT/critical hashes. The [guarded factory USB reboot](ember/boards/ys-m33-a133-recovery-reboot.md)
+verifies the prepared source, submits one normal reboot and checks whole critical
+images/env on return through the selected USB identity. Its host contract leaves
+unlock, accepted trial boot and physical round-trip acceptance to later integration.
+A [copied-env unlock preparer](ember/boards/ys-m33-a133-unlock-env.md) encodes
+the observed vendor unlock/reset/recovery hook with exact env reversibility.
+Its copied-file contract does not execute unlock or accept a physical transition.
+The [journaled unlock stage](ember/boards/ys-m33-a133-unlock-stage.md) records
+possible effects before guarded prefix writes/reboot, verifies unlocked USB
+recovery and restores known env. Its host resume contract never replays a
+recorded reboot; physical vendor/data-preservation acceptance remains separate.
+A [private session coordinator](ember/boards/ys-m33-a133-install-session.md)
+rechecks live ranges on repeat and keeps recovery protected after failed writes;
+its filesystem/resume contract is tested on a file-backed host fixture.
+The [composed cable write stage](ember/boards/ys-m33-a133-cable-stage.md) binds
+the release before unlock and resumes through persistent recovery protection
+and image writes. Once protection starts, resume never re-enters unlock;
+host contracts exercise actual file-backed writes and interrupted preparation.
+It still leaves recovery protected and reports installation_ready=false;
+release signing, physical restoration and accepted first boot remain separate.
+A [copied-env trial preparer](ember/boards/ys-m33-a133-trial-env.md) constructs
+one normal boot preceded by a save of persistent recovery. Its byte-preservation
+and refusal contracts are host-tested; it does not write/reboot the tablet,
+execute the vendor loader or confirm first boot.
+To contribute another board, follow
 [adding a board](ember/boards/adding-a-board.md) and the
 [developer skill](https://github.com/oxtech-ember/Ember-Agent-Skills#add-your-board).
 Add a catalog row and a board page; keep detailed feature matrices on those pages.

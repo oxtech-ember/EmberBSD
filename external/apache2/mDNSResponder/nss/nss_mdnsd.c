@@ -1134,7 +1134,7 @@ get_svc_ref(void)
     if (!sr) {
         /* none available, we need a new one */
 
-        sr = calloc(sizeof(svc_ref), 1);
+        sr = calloc(1, sizeof(svc_ref));
         if (sr) {
             if (DNSServiceCreateConnection(&(sr->sdRef))) {
                 free(sr);
@@ -1282,7 +1282,7 @@ new_res_conf(res_state res)
     int count = 0;
     char **sd, *p;
     
-    rc = calloc(sizeof(res_conf), 1);
+    rc = calloc(1, sizeof(res_conf));
     if (rc) {
         rc->refcount = 1;
         
@@ -1294,7 +1294,7 @@ new_res_conf(res_state res)
             sd++;
         }
     
-        rc->search_domains = calloc(sizeof(char *), count + 1);
+        rc->search_domains = calloc(count + 1, sizeof(char *));
         if (!(rc->search_domains)) {
             decref_res_conf(rc);
             return NULL;

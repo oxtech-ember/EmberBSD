@@ -1,4 +1,4 @@
-/* Origin: EmberBSD optional per-screen raster wrappers, 2026-10-06. */
+/* Origin: EmberBSD raster wrappers and RGB console palettes, 2026-10-13. */
 /*	$NetBSD: wsdisplay_vconsvar.h,v 1.35 2025/07/25 18:19:12 martin Exp $ */
 
 /*-
@@ -140,6 +140,8 @@ int	vcons_init_screen(struct vcons_data *, struct vcons_screen *, int,
 
 /* completely redraw the screen, clear it if RI_FULLCLEAR is set */
 void	vcons_redraw_screen(struct vcons_screen *);
+void	vcons_set_cmap(struct vcons_data *, u_int, u_int,
+	    const uint8_t *, const uint8_t *, const uint8_t *);
 
 void	vcons_update_screen(struct vcons_screen *);
 

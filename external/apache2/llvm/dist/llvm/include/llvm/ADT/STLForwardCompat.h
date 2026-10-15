@@ -1,4 +1,5 @@
 //===- STLForwardCompat.h - Library features from future STLs ------C++ -*-===//
+// Origin: EmberBSD LLVM host-module header fix, prepared with AI assistance.
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -16,6 +17,7 @@
 #ifndef LLVM_ADT_STLFORWARDCOMPAT_H
 #define LLVM_ADT_STLFORWARDCOMPAT_H
 
+#include <cstddef>
 #include <type_traits>
 
 namespace llvm {

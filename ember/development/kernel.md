@@ -64,7 +64,9 @@ Account for kernel/userland interfaces and each dependent consumer when an ABI c
 The portable kernel suite has one owner: `ember/tools/kernel-contracts.sh`.
 Native-only contracts remain separate when the host cannot execute them.
 The build orchestration regression is `sh ember/tests/build-kernel.sh`.
-Its controlled build fixtures test routing and failure cleanup; they do not build a kernel.
+Its controlled fixtures test routing, version refresh and failure cleanup.
+The stale-`BUILDINFO` case keeps unrelated objects and another configuration.
+These fixtures do not build a kernel or validate its embedded version string.
 Follow the selected subsystem's commands rather than rerunning unrelated full builds.
 
 For C/C++, run Cppcheck on the affected source and executable contracts.

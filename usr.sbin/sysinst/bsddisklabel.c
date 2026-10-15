@@ -53,6 +53,7 @@
 #include "endian.h"
 #include "msg_defs.h"
 #include "menu_defs.h"
+#include "wizard.h"
 
 static size_t fill_ptn_menu(struct partition_usage_set *pset);
 
@@ -1806,7 +1807,9 @@ make_bsd_partitions(struct install_partition_desc *install)
 		pm->ptsize = pm->dlsize;
 
 	/* Ask for layout type -- standard or special */
-	if (partman_go == 0) {
+	if (wizard_automatic)
+		layoutkind = LY_USEDEFAULT;
+	if (partman_go == 0 && !wizard_automatic) {
 		char bsd_size[6], min_size[6], x_size[6];
 
 		humanize_number(bsd_size, sizeof(bsd_size),
@@ -1960,7 +1963,7 @@ make_bsd_partitions(struct install_partition_desc *install)
 	 * edit it and verify it's OK, or abort altogether.
 	 */
  	for (;;) {
-		int rv = edit_and_check_label(pm, &wanted, true);
+		int rv = wizard_automatic ? 1 : edit_and_check_label(pm, &wanted, true);
 		if (rv == 0) {
 			msg_display(MSG_abort_part);
 			free_usage_set(&wanted);
@@ -1974,6 +1977,13 @@ make_bsd_partitions(struct install_partition_desc *install)
 		/* and check them */
 		if (check_partitions(install))
 			break;
+		if (wizard_automatic) {
+			install->infos = NULL;
+			install->write_back = NULL;
+			install->num = install->num_write_back = 0;
+			free_usage_set(&wanted);
+			return 0;
+		}
 	}
 
 	/* we moved infos from wanted to install target */

@@ -322,7 +322,8 @@ pvr_context_compute(struct pvr_context *ctx,
 	error = be->command(be->cookie, &kick, &result);
 	if (error != 0)
 		goto failed;
-	if (result != ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED) {
+	/* KICK may consume its slot without writing a return word. */
+	if ((result & ~ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED) != 0) {
 		error = EIO;
 		goto failed;
 	}

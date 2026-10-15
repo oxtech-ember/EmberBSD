@@ -572,7 +572,6 @@ sgp40_attach(device_t parent, device_t self, void *aux)
 	struct sgp40_sc *sc;
 	struct i2c_attach_args *ia;
 	int error, i;
-	int ecount = 0;
 	uint8_t buf[9];
 	uint8_t tstcrc;
 	uint16_t chiptestvalue;
@@ -634,14 +633,12 @@ sgp40_attach(device_t parent, device_t self, void *aux)
 	if (error) {
 		aprint_error_dev(self, "Failed to turn off the heater: %d\n",
 		    error);
-		ecount++;
 	}
 
 	error = sgp40_cmdr(sc, SGP40_GET_SERIAL_NUMBER, NULL, 0, buf, 9);
 	if (error) {
 		aprint_error_dev(self, "Failed to get serial number: %d\n",
 		    error);
-		ecount++;
 	}
 
 	sn_crc1 = sgp40_crc(&buf[0], 2);
@@ -666,7 +663,6 @@ sgp40_attach(device_t parent, device_t self, void *aux)
 	if (error) {
 		aprint_error_dev(self, "Failed to get featureset: %d\n",
 		    error);
-		ecount++;
 	}
 
 	fs_crc = sgp40_crc(&buf[0], 2);
@@ -681,7 +677,6 @@ sgp40_attach(device_t parent, device_t self, void *aux)
 	if (error) {
 		aprint_error_dev(self, "Failed to perform a chip test: %d\n",
 		    error);
-		ecount++;
 	}
 
 	tstcrc = sgp40_crc(&buf[0], 2);

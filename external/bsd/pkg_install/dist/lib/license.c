@@ -143,7 +143,7 @@ add_license_internal(const char *license, size_t len)
 	new_license[len] = '\0';
 
 	if (license_hash[slot] == NULL) {
-		license_hash[slot] = calloc(sizeof(char *), 2);
+		license_hash[slot] = calloc(2, sizeof(char *));
 		license_hash[slot][0] = new_license;
 	} else {
 		for (i = 0; license_hash[slot][i]; ++i) {

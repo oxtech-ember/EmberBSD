@@ -39,6 +39,12 @@
 
 #include "nv_compat.h"
 
+/* EmberBSD: the userspace build path never pulls a stdarg variant;
+ * va_list is used in the prototypes below. */
+#if !defined(_KERNEL) && !defined(_STANDALONE)
+#include <stdarg.h>
+#endif
+
 #ifndef	_NVPAIR_T_DECLARED
 #define	_NVPAIR_T_DECLARED
 struct nvpair;

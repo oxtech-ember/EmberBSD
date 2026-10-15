@@ -1,0 +1,5 @@
+# YS-M33 with the permanent FFS root in the existing UDISK GPT partition.
+include "arch/evbarm/conf/EMBER64_A133"
+
+no config netbsd
+config netbsd root on "wedge:UDISK" type ffs

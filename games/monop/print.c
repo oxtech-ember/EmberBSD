@@ -84,7 +84,7 @@ where(void)
 void
 printsq(int sqn, bool eoln)
 {
-	int rnt;
+	int rnt __unused;
 	PROP *pp;
 	SQUARE *sqp;
 

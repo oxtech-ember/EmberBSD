@@ -78,7 +78,7 @@ main(int argc, char *argv[])
 	BN_CTX         *ctx;
 	char           *cp;
 	char           *lp;
-	uint32_t        count_in = 0;
+	uint32_t        count_in __unused = 0;
 	uint32_t        count_out = 0;
 	uint32_t        count_possible = 0;
 	uint32_t        generator_known;

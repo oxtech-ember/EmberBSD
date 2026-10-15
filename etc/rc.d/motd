@@ -1,6 +1,7 @@
 #!/bin/sh
 #
 # $NetBSD: motd,v 1.11 2020/09/11 12:50:14 kim Exp $
+# Origin: EmberBSD repeatable product greeting, prepared with AI assistance.
 #
 
 # PROVIDE: motd
@@ -16,7 +17,7 @@ stop_cmd=":"
 
 motd_start()
 {
-	#	Update kernel and release info in /etc/motd
+	#	Update product release info in /etc/motd
 	#	Must be done *before* interactive logins are possible
 	#	to prevent possible race conditions.
 	#
@@ -26,17 +27,20 @@ motd_start()
 	fi
 	( umask 022
 	T=/etc/_motd
-	sysctl -n kern.version | while read i; do echo "$i"; break; done > $T
+	local release t
+	# /etc/release retains full attribution; only its product header is shown.
+	release="$(sed -n '1{/^EmberBSD /p;}' /etc/release)"
+	[ -n "$release" ] || release="EmberBSD"
+	printf '%s\n' "$release" > $T
 	if checkyesno update_motd_release; then
-		local t=$(echo "${motd_release_tag%%:*}" | tr -d /)
-		sed -En '1{/^NetBSD/{'"${t:+s/^/${t}: /;}"'h;d;};q;}
-		    /^ *Build ID */{s//(/;s/$/)/;H;g;y/\n/ /;p;q;}
-		    ${g;p;}' < /etc/release >> $T
-		sed -E '1,2{/^([^:]*: )?NetBSD/{d;};};' \
-		    < /etc/motd >> $T
-	else
-		sed '1{/^NetBSD.*/{d;};};' < /etc/motd >> $T
+		t="$(echo "${motd_release_tag%%:*}" | tr -d /)"
+		sed -En '/^ *Build ID */{s//Build: /;p;q;}' \
+		    < /etc/release | sed "s/^/${t:+${t}: }/" >> $T
 	fi
+	# Remove only generated leading identity lines, preserving local notices.
+	sed -E '1,3{/^([^:]*: )?(NetBSD|EmberBSD)( |$)/d;
+	    /^([^:]*: )?Build: /d;}
+	    s/^Welcome to NetBSD!$/Welcome to EmberBSD!/' < /etc/motd >> $T
 	cmp -s $T /etc/motd || cp $T /etc/motd
 	rm -f $T
 	)

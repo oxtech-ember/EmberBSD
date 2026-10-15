@@ -47,6 +47,13 @@ static void dw_apb_uart_attach(device_t, device_t, void *);
 
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "snps,dw-apb-uart" },
+	{ .compat = "allwinner,sun50i-uart" },
+	DEVICE_COMPAT_EOL
+};
+
+/* Vendor A133 trees use this name and omit reg-io-width and a usable clock. */
+static const struct device_compatible_entry sunxi_compat[] = {
+	{ .compat = "allwinner,sun50i-uart" },
 	DEVICE_COMPAT_EOL
 };
 
@@ -95,21 +102,28 @@ dw_apb_uart_attach(device_t parent, device_t self, void *aux)
 		reg_shift = 2;
 	}
 	if (of_getprop_uint32(phandle, "reg-io-width", &reg_iowidth)) {
-		/* missing or bad reg-io-width property, assume 1 */
-		reg_iowidth = 1;
+		/*
+		 * Allwinner registers are 32-bit and the vendor tree
+		 * omits reg-io-width. A byte access misses the UART.
+		 */
+		reg_iowidth = of_compatible_match(phandle, sunxi_compat) ? 4 : 1;
 	}
 
 	sc->sc_dev = self;
 
 	ssc->ssc_clk = fdtbus_clock_get_index(phandle, 0);
 	if (ssc->ssc_clk == NULL) {
-		aprint_error(": couldn't get clock\n");
-		return;
-	}
-	if (clk_enable(ssc->ssc_clk) != 0) {
+		if (of_compatible_match(phandle, sunxi_compat) == 0) {
+			aprint_error(": couldn't get clock\n");
+			return;
+		}
+		/* The boot loader left the gate open. */
+		sc->sc_frequency = 24000000;
+	} else if (clk_enable(ssc->ssc_clk) != 0) {
 		aprint_error(": couldn't enable clock\n");
 		return;
-	}
+	} else
+		sc->sc_frequency = clk_get_rate(ssc->ssc_clk);
 
 	ssc->ssc_pclk = fdtbus_clock_get(phandle, "apb_pclk");
 	if (ssc->ssc_pclk != NULL && clk_enable(ssc->ssc_pclk) != 0) {
@@ -123,7 +137,6 @@ dw_apb_uart_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 
-	sc->sc_frequency = clk_get_rate(ssc->ssc_clk);
 	sc->sc_type = COM_TYPE_DW_APB;
 
 	error = bus_space_map(bst, addr, size, 0, &bsh);
@@ -195,8 +208,7 @@ dw_apb_uart_console_consinit(struct fdt_attach_args *faa, u_int uart_freq)
 		reg_shift = 2;
 	}
 	if (of_getprop_uint32(phandle, "reg-io-width", &reg_iowidth)) {
-		/* missing or bad reg-io-width property, assume 1 */
-		reg_iowidth = 1;
+		reg_iowidth = of_compatible_match(phandle, sunxi_compat) ? 4 : 1;
 	}
 
 	memset(&dummy_bsh, 0, sizeof(dummy_bsh));

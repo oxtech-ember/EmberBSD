@@ -51,6 +51,12 @@ RCSID("$NetBSD: locore.S,v 1.96 2025/07/21 16:57:10 skrll Exp $")
 #define CM5_LOCORE_TRACE
 #define DEBUG_LOCORE
 #endif
+#if defined(EARLYCONS) && defined(CONSADDR) && CONSADDR == 0x05000000
+#define A133_LOCORE_TRACE
+#endif
+#if defined(CM5_LOCORE_TRACE) || defined(A133_LOCORE_TRACE)
+#define EARLY_FAULT_TRACE
+#endif
 
 /*#define DEBUG_LOCORE			// debug print */
 /*#define DEBUG_LOCORE_PRINT_LOCK	// avoid mixing AP's output */
@@ -136,22 +142,20 @@ ASENTRY_NP(aarch64_start)
 #endif /* LOCORE_EL2 */
 
 
-#ifdef CM5_LOCORE_TRACE
+#ifdef EARLY_FAULT_TRACE
 	/* Catch faults before the normal virtual exception vectors exist. */
-	adr	x0, .Lcm5_early_vectors
+	adr	x0, .Learly_fault_vectors
 	msr	vbar_el1, x0
 	isb
-	VPRINT("[CM5 kernel] mmu_disable\n")
 #endif
+	VPRINT("mmu_disable\n")
 	bl	mmu_disable
 #ifdef CM5_LOCORE_TRACE
-	VPRINT("[CM5 kernel] init_sysregs\n")
 	DPRINTSREG("ISR before init  = ", isr_el1)
 #endif
+	VPRINT("init_sysregs\n")
 	bl	init_sysregs
-#ifdef CM5_LOCORE_TRACE
-	VPRINT("[CM5 kernel] init_mmutable\n")
-#endif
+	VPRINT("init_mmutable\n")
 	bl	init_mmutable
 	cbnz	x0, aarch64_fatal
 	bl	save_ttbrs
@@ -252,62 +256,62 @@ vstart:
 	/* NOTREACHED */
 ASEND(aarch64_start)
 
-#ifdef CM5_LOCORE_TRACE
+#ifdef EARLY_FAULT_TRACE
 /* Each 128-byte slot records its architectural vector number. */
 	.align 11
-.Lcm5_early_vectors:
+.Learly_fault_vectors:
 	.align 7
 	mov	x20, #0
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #1
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #2
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #3
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #4
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #5
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #6
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #7
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #8
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #9
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #10
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #11
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #12
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #13
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #14
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 	.align 7
 	mov	x20, #15
-	b	.Lcm5_early_exception
+	b	.Learly_fault_exception
 
-.Lcm5_early_exception:
+.Learly_fault_exception:
 	msr	daifset, #0xf
-	PRINT("[CM5 kernel] early exception vector=")
+	PRINT("early exception vector=")
 	mov	x0, x20
 	bl	print_x0
 	PRINT("ESR_EL1=")
@@ -346,8 +350,14 @@ init_sysregs:
 	mov	x0, #CNTKCTL_EL0VCTEN
 	msr	cntkctl_el1, x0
 
-	/* any exception not masked */
-	msr	daif, xzr
+	/* Keep IRQ and FIQ masked. The loader can leave one pending, and
+	   this CPU has no handler until its own vectors are installed.
+	   Seen on the A133: vector 5, ESR_EL1 = 0, right after daif was
+	   cleared. SError and debug faults stay unmasked. */
+	VPRINT("daif mask\n")
+	mov	x0, #0xc0			/* DAIF_I|DAIF_F */
+	msr	daif, x0
+	VPRINT("daif ok\n")
 
 	ldp	x0, lr, [sp], #16
 	ret
@@ -903,10 +913,12 @@ init_mmutable:
 	stp	x26, lr, [sp, #-16]!
 
 	/* first allocated page must be kernel l0pt = ARM_BOOTSTRAP_LxPT */
+	VPRINT("ttbr1 page\n")
 	bl	pmapboot_pagealloc
 	cbz	x0, init_mmutable_error
 	msr	ttbr1_el1, x0
 
+	VPRINT("ttbr0 page\n")
 	bl	pmapboot_pagealloc
 	cbz	x0, init_mmutable_error
 	msr	ttbr0_el1, x0

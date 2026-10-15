@@ -53,6 +53,7 @@ rnd_pos(void)
 {
 	static COORD pos;
 	static int call = 0;
+	(void)call;
 
 	do {
 		pos.y = arc4random_uniform(Y_FIELDSIZE - 1) + 1;

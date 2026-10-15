@@ -52,6 +52,7 @@
 #include "msg_defs.h"
 #include "menu_defs.h"
 #include "txtwalk.h"
+#include "wizard.h"
 
 int debug;
 char machine[SSTRSIZE];
@@ -202,7 +203,7 @@ init(void)
 	ftp.xfer = XFER_HTTPS;
 #endif
 
-	clr_arg.bg=COLOR_BLUE;
+	clr_arg.bg=COLOR_BLACK;
 	clr_arg.fg=COLOR_WHITE;
 }
 
@@ -319,19 +320,43 @@ main(int argc, char **argv)
 	/* Ensure we have mountpoint for target filesystems */
 	mkdir(targetroot_mnt, S_IRWXU | S_IRGRP|S_IXGRP | S_IROTH|S_IXOTH);
 
-	select_language(msg_cat_dir);
-	get_kb_encoding();
-	init_lang();
+	int entry = wizard_intro();
+	if (entry < 0)
+		goto finished;
 
 	/* remove some invalid menu entries */
 	if (!has_colors())
 		remove_color_options();
 
 	/* Menu processing */
-	if (partman_go)
-		partman(NULL);
-	else
-		process_menu(MENU_netbsd, NULL);
+	while (entry == 1 && !partman_go) {
+		wizard_active = true;
+		wizard_initial_back = false;
+		select_language(msg_cat_dir);
+		if (!wizard_initial_back)
+			get_kb_encoding();
+		if (!wizard_initial_back) {
+			init_lang();
+			if (logfp == NULL)
+				logfp = fopen("/tmp/sysinst.log", "a");
+			do_install();
+		}
+		wizard_active = wizard_installing = wizard_automatic = false;
+		toplevel();
+		entry = wizard_expert_requested ? 0 : wizard_intro();
+	}
+	if (entry == 0 || partman_go) {
+		wizard_release_console();
+		select_language(msg_cat_dir);
+		get_kb_encoding();
+		init_lang();
+		if (partman_go)
+			partman(NULL);
+		else
+			process_menu(MENU_netbsd, NULL);
+	}
+
+finished:
 
 #ifndef NO_PARTMAN
 	/* clean up internal storage */
@@ -453,6 +478,13 @@ select_language(const char *msg_cat_path)
 
 	if (found.num_lang <= 1)
 		goto done;
+	if (wizard_active) {
+		lang = wizard_initial_choice("Language and keyboard",
+		    (const char * const *)found.lang_msg, found.num_lang, 0);
+		if (lang >= 0)
+			msg_file(found.fnames[lang]);
+		goto done;
+	}
 
 	opt = calloc(found.num_lang, sizeof *opt);
 	if (!opt)

@@ -63,7 +63,7 @@ static int uart_spi_slave_addr = -1;
 int
 uart_clear(int fd, bool debug)
 {
-	const char jcmd[4] = "qq\r\n";
+	const char jcmd[5] = "qq\r\n";
 	char input;
 	int i;
 

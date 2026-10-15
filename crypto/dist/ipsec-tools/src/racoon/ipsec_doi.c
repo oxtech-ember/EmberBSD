@@ -1309,7 +1309,6 @@ get_transform(struct isakmp_pl_p *prop, struct prop_pair **pair, int *num_p)
 	vchar_t *pbuf = NULL;
 	struct isakmp_parse_t *pa;
 	struct prop_pair *p = NULL, *q;
-	int num_t;
 
 	bp = (caddr_t)prop + sizeof(struct isakmp_pl_p) + prop->spi_size;
 	tlen = ntohs(prop->h.len)
@@ -1319,12 +1318,10 @@ get_transform(struct isakmp_pl_p *prop, struct prop_pair **pair, int *num_p)
 		return -1;
 
 	/* check and get transform for use */
-	num_t = 0;
 	for (pa = (struct isakmp_parse_t *)pbuf->v;
 	     pa->type != ISAKMP_NPTYPE_NONE;
 	     pa++) {
 
-		num_t++;
 
 		/* check the value of next payload */
 		if (pa->type != ISAKMP_NPTYPE_T) {

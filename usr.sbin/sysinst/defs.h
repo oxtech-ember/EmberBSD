@@ -523,17 +523,26 @@ extern char xfer_dir[STRSIZE];
 extern int  clean_xfer_dir;
 
 /* OS sets come from EmberBSD. Package defaults below retain pkgsrc provenance. */
+/* Origin: EmberBSD pins the accepted amd64 download kit. */
 #ifndef EMBER_BUILD_ID
 #define EMBER_BUILD_ID "development"
 #endif
+#if defined(MACH_amd64)
+#define EMBER_SYSINST_HOST "github.com"
+#define EMBER_SYSINST_DIR "oxtech-ember/EmberBSD/releases/download/" \
+    "build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11"
+#else
+#define EMBER_SYSINST_HOST "cdn.emberbsd.oxteam.me"
+#define EMBER_SYSINST_DIR "releases/" EMBER_BUILD_ID
+#endif
 #if !defined(SYSINST_FTP_HOST)
-#define SYSINST_FTP_HOST "cdn.emberbsd.oxteam.me"
+#define SYSINST_FTP_HOST EMBER_SYSINST_HOST
 #endif
 #if !defined(SYSINST_HTTP_HOST)
-#define SYSINST_HTTP_HOST "cdn.emberbsd.oxteam.me"
+#define SYSINST_HTTP_HOST EMBER_SYSINST_HOST
 #endif
 #if !defined(SYSINST_FTP_DIR)
-#define SYSINST_FTP_DIR "releases/" EMBER_BUILD_ID
+#define SYSINST_FTP_DIR EMBER_SYSINST_DIR
 #endif
 
 #if !defined(ARCH_SUBDIR)
@@ -541,7 +550,11 @@ extern int  clean_xfer_dir;
 #endif
 
 #ifndef SYSINST_FTP_SET_DIR_BIN
+#if defined(MACH_amd64)
+#define SYSINST_FTP_SET_DIR_BIN ""
+#else
 #define SYSINST_FTP_SET_DIR_BIN "/" ARCH_SUBDIR "/binary/sets"
+#endif
 #endif
 #if !defined(PKG_ARCH_SUBDIR)
 #define	PKG_ARCH_SUBDIR	MACH
@@ -1022,8 +1035,8 @@ int move_aout_libs(void);
 void	get_kb_encoding(void);
 void	save_kb_encoding(void);
 #else
-#define	get_kb_encoding()
-#define	save_kb_encoding()
+#define	get_kb_encoding()	((void)0)
+#define	save_kb_encoding()	((void)0)
 #endif
 
 /* from configmenu.c */

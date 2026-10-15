@@ -131,19 +131,16 @@ evbuffer_get_waste(struct evbuffer *buf, size_t *allocatedp, size_t *wastedp, si
 {
 	struct evbuffer_chain *chain;
 	size_t a, w, u;
-	int n = 0;
 	u = a = w = 0;
 
 	chain = buf->first;
 	/* skip empty at start */
 	while (chain && chain->off==0) {
-		++n;
 		a += chain->buffer_len;
 		chain = chain->next;
 	}
 	/* first nonempty chain: stuff at the end only is wasted. */
 	if (chain) {
-		++n;
 		a += chain->buffer_len;
 		u += chain->off;
 		if (chain->next && chain->next->off)
@@ -152,7 +149,6 @@ evbuffer_get_waste(struct evbuffer *buf, size_t *allocatedp, size_t *wastedp, si
 	}
 	/* subsequent nonempty chains */
 	while (chain && chain->off) {
-		++n;
 		a += chain->buffer_len;
 		w += (size_t)chain->misalign;
 		u += chain->off;
@@ -162,8 +158,8 @@ evbuffer_get_waste(struct evbuffer *buf, size_t *allocatedp, size_t *wastedp, si
 	}
 	/* subsequent empty chains */
 	while (chain) {
-		++n;
 		a += chain->buffer_len;
+		chain = chain->next;
 	}
 	*allocatedp = a;
 	*wastedp = w;

@@ -1,4 +1,5 @@
 /* expat_config.h.cmake.  Based upon generated expat_config.h.in.  */
+/* Origin: EmberBSD font-tool macOS host configuration, prepared with AI assistance. */
 
 #ifndef EXPAT_CONFIG_H
 #define EXPAT_CONFIG_H 1
@@ -7,8 +8,13 @@
 /* #undef AC_APPLE_UNIVERSAL_BUILD */
 
 /* 1234 = LILENDIAN, 4321 = BIGENDIAN */
+#ifdef __APPLE__
+#include <machine/endian.h>
+#define BYTEORDER BYTE_ORDER
+#else
 #include <endian.h>
 #define BYTEORDER _BYTE_ORDER
+#endif
 
 /* Define to 1 if you have the `arc4random' function. */
 #define HAVE_ARC4RANDOM 1
@@ -26,7 +32,9 @@
 #define HAVE_GETPAGESIZE 1
 
 /* Define to 1 if you have the `getrandom' function. */
+#ifndef __APPLE__
 #define HAVE_GETRANDOM 1
+#endif
 
 /* Define to 1 if you have the `getentropy' function. */
 #define HAVE_GETENTROPY 1
@@ -56,7 +64,9 @@
 #define HAVE_STRING_H 1
 
 /* Define to 1 if you have `syscall' and `SYS_getrandom'. */
+#ifndef __APPLE__
 #define HAVE_SYSCALL_GETRANDOM 1
+#endif
 
 /* Define to 1 if you have the <sys/stat.h> header file. */
 #define HAVE_SYS_STAT_H 1

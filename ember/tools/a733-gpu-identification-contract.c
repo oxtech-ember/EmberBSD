@@ -1,4 +1,4 @@
-/* Origin: EmberBSD; causal checks of the production GPU identity consumer. */
+/* Origin: EmberBSD; AI-assisted production GPU identity consumer checks. */
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <assert.h>
 #include <errno.h>
@@ -15,6 +15,7 @@
 #include "sun60i_a733_gpu_fwinfo.h"
 
 typedef unsigned int u_int;
+typedef int kmutex_t;
 typedef struct device *device_t;
 typedef void *cfdata_t;
 typedef void *bus_space_tag_t;
@@ -33,6 +34,9 @@ typedef struct { bus_addr_t ds_addr; bus_size_t ds_len; } bus_dma_segment_t;
 #include "sun60i_a733_gpu_fwcompute.h"
 #include "sun60i_a733_gpu_fwcompute_file.h"
 #include "sun60i_a733_gpu_fwheap.h"
+#include "sun60i_a733_gpu_fwservice.h"
+#include "pvr-backend.h-body.h"
+#include "sun60i_a733_gpu_fwbridge.h"
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
@@ -119,8 +123,24 @@ static int SHA256_Update(SHA256_CTX *c, const uint8_t *data, size_t len)
 { (void)c; (void)data; (void)len; return 0; }
 static int SHA256_Final(uint8_t digest[32], SHA256_CTX *c)
 { (void)c; memset(digest, 0, 32); return 0; }
-static void *kmem_alloc(size_t size, int flags) { return calloc(1, size); }
-static void kmem_free(void *ptr, size_t size) { free(ptr); }
+static unsigned kmem_alloc_calls, kmem_free_calls;
+static size_t kmem_last_size;
+static void *
+kmem_alloc(size_t size, int flags)
+{
+	void *ptr = calloc(1, size);
+
+	assert(ptr != NULL);
+	kmem_alloc_calls++;
+	kmem_last_size = size;
+	return ptr;
+}
+static void
+kmem_free(void *ptr, size_t size)
+{
+	kmem_free_calls++;
+	free(ptr);
+}
 static void panic(const char *msg) { assert(!msg); }
 static void mutex_enter(int *lock) { assert(!*lock); *lock = 1; }
 static void mutex_exit(int *lock) { assert(*lock); *lock = 0; }
@@ -475,6 +495,7 @@ struct sysctlnode { void *sysctl_data; };
 static int sysctl_createv_stub(void *first, ...) { (void)first; return 0; }
 #define sysctl_createv(...) sysctl_createv_stub(__VA_ARGS__)
 
+typedef int32_t __s32;
 typedef uint16_t __u16;
 typedef uint32_t __u32;
 typedef uint64_t __u64;
@@ -490,6 +511,26 @@ pvr_render_attach(device_t dev, bus_dma_tag_t dmat, uint64_t bvnc,
 
 	abort();
 }
+/* The real bridge lifecycle runs in a733-gpu-fwbridge-contract.sh. */
+int
+sun60i_a733_gpu_fwbridge_prepare(struct sun60i_a733_gpu_fwbridge *bridge,
+    kmutex_t *lock, bus_space_tag_t bst, bus_space_handle_t bsh,
+    struct sun60i_a733_gpu_fwmem *memory,
+    const struct sun60i_a733_gpu_fwboot_result *boot,
+    const struct sun60i_a733_gpu_fwprobe_result *previous)
+{
+
+	abort();
+}
+
+int
+sun60i_a733_gpu_fwbridge_publish(struct sun60i_a733_gpu_fwbridge *bridge,
+    struct drm_device *dev)
+{
+
+	abort();
+}
+
 static void sysctl_unlock(void) { abort(); }
 static void sysctl_relock(void) { abort(); }
 #define SYSCTL_DESCR(s) (s)
@@ -502,7 +543,6 @@ static void sysctl_relock(void) { abort(); }
 #define CTL_HW 16
 #define CTL_CREATE 32
 #define CTL_EOL -1
-typedef int kmutex_t;
 #define MUTEX_DEFAULT 0
 #define IPL_NONE 0
 static void mutex_init(kmutex_t *m, int type, int ipl) { *m = 1; }
@@ -957,16 +997,15 @@ void
 sun60i_a733_gpu_fwheap_observe(const struct sun60i_a733_gpu_fwheap *heap,
     uint32_t *read_offset, uint32_t *write_offset, uint32_t *timeline)
 {
+	bool completed = compute_completion_mode != 0 && compute_completion_mode != 4;
+	uint32_t offset = completed ? A733_GPU_FWCOMPUTE_USED_BYTES : 0;
+
 	if (read_offset != NULL)
-		*read_offset = 0;
+		*read_offset = offset;
 	if (write_offset != NULL)
-		*write_offset = 0;
+		*write_offset = offset;
 	if (timeline != NULL)
-		*timeline = 0;
-	if (compute_completion_mode != 0 && compute_completion_mode != 4) {
-		*read_offset = *write_offset = A733_GPU_FWCOMPUTE_USED_BYTES;
-		*timeline = 1;
-	}
+		*timeline = completed;
 }
 
 void
@@ -1344,7 +1383,6 @@ test_domain_request(void)
 {
 	unsigned start = checks;
 	const int errors[] = { EIO, EBUSY, EFAULT, ENXIO, ETIMEDOUT };
-	char expected[192];
 
 	/* The fresh request requires the prepared-clock opt-in. */
 	reset(); request_len = 0;
@@ -1363,83 +1401,176 @@ test_domain_request(void)
 	CHECK(strcmp(events, "ASVPCQPCSVHWQRKSVKFMIUcs") == 0);
 	CHECK(strstr(normal_output, "TOP-only") == NULL);
 
-	/* A failed request stops before the waiter and reads identification. */
+	/* Preserve each failure, retained ownership, and safe CCU diagnostics. */
 	for (u_int i = 0; i < __arraycount(errors); i++) {
-		reset(); prepare_len = request_len = 0; request_error = errors[i];
-		CHECK(sun60i_gpu_identify(&sc) == errors[i]);
-		CHECK(requests == 1 && waits == 0 && sc.sc_retained);
-		CHECK(sc.sc_have_id && sc.sc_bvnc == pbvnc);
-		CHECK(maps == 1 && peeks == 1 && unmaps == 1);
-		CHECK(!regulator.acquired && !clock_fixture.acquired);
-		snprintf(expected, sizeof(expected),
-		    "TOP-only identification: CORE_ID 0x00000000, PBVNC "
-		    "0x00240038006800b7: 36.56.104.183");
-		CHECK(strstr(normal_output, expected) != NULL);
-		CHECK(strstr(normal_output,
-		    "(expected A733 GPU; GPU_CORE not confirmed ON)") != NULL);
-		CHECK(strcmp(sc.sc_stage, "experimental domain request") == 0);
+		for (u_int stage = 0; stage < 4; stage++) {
+			reset(); prepare_len = request_len = 0;
+			switch (stage) {
+			case 0: prepare_error = errors[i]; break;
+			case 1: request_error = errors[i]; break;
+			case 2: wait_error = errors[i]; break;
+			case 3: second_wait_error = errors[i]; break;
+			}
+			unavailable(errors[i]);
+			CHECK(sc.sc_retained && unreserves == 0 && prepares == 1);
+			CHECK(requests == (stage == 0 ? 0U : 1U));
+			CHECK(waits == (stage < 2 ? 0U : stage - 1));
+			CHECK(strstr(normal_output, "TOP-only") == NULL);
+			if (errors[i] == ETIMEDOUT)
+				CHECK(strstr(normal_output,
+				    "terminal CCU observation") != NULL);
+		}
 	}
-
-	/* A failed wait still reaches the same bounded identification. */
-	reset(); prepare_len = request_len = 0; wait_error = ETIMEDOUT;
-	CHECK(sun60i_gpu_identify(&sc) == ETIMEDOUT);
-	CHECK(requests == 1 && waits == 1 && sc.sc_have_id);
-	CHECK(strstr(events, "RKQ") != NULL && strstr(events, "SVPFMiIUcs") != NULL);
-	CHECK(strstr(normal_output, "terminal CCU observation") != NULL);
-	reset(); prepare_len = request_len = 0; second_wait_error = EIO;
-	CHECK(sun60i_gpu_identify(&sc) == EIO);
-	CHECK(requests == 1 && waits == 2 && sc.sc_have_id);
-	CHECK(strcmp(sc.sc_stage, "experimental final CORE check") == 0);
-
-	/* Readiness changes skip the TOP-only access instead of forcing it. */
-	reset(); prepare_len = request_len = 0; request_error = EIO;
-	final_ready_error = ENXIO;
-	CHECK(sun60i_gpu_identify(&sc) == EIO);
-	CHECK(maps == 0 && peeks == 0 && !sc.sc_have_id);
-	CHECK(strstr(normal_output, "TOP-only identification skipped:") != NULL);
-	reset(); prepare_len = request_len = 0; request_error = EIO;
-	supply_on = false;
-	CHECK(sun60i_gpu_identify(&sc) == EBUSY);
-	CHECK(maps == 0 && requests == 0);
-	reset(); prepare_len = request_len = 0; request_error = EIO; voltage = 735000;
-	CHECK(sun60i_gpu_identify(&sc) == EOPNOTSUPP);
-	CHECK(maps == 0 && requests == 0 && !sc.sc_have_id);
-	reset(); prepare_len = request_len = 0; request_error = EIO;
-	power_on = false;
-	CHECK(sun60i_gpu_identify(&sc) == EBUSY);
-	CHECK(maps == 0 && requests == 0 && !sc.sc_have_id);
-	reset(); prepare_len = request_len = 0; request_error = EIO;
-	core_hz = 600000000;
-	CHECK(sun60i_gpu_identify(&sc) == EBUSY);
-	CHECK(maps == 0 && requests == 0 && !sc.sc_have_id);
-
-	/* Mapping and read faults stay bounded diagnostics. */
-	reset(); prepare_len = request_len = 0; request_error = EIO;
-	map_error = ENOMEM;
-	CHECK(sun60i_gpu_identify(&sc) == EIO);
-	CHECK(maps == 1 && peeks == 0 && !sc.sc_have_id);
-	CHECK(strstr(normal_output, "TOP-only identification unavailable:") != NULL);
-	reset(); prepare_len = request_len = 0; request_error = EIO;
-	peek_error = 1;
-	CHECK(sun60i_gpu_identify(&sc) == EIO);
-	CHECK(maps == 1 && peeks == 1 && unmaps == 1 && !sc.sc_have_id);
-	CHECK(strstr(normal_output, "TOP-only PBVNC read failed") != NULL);
-	reset(); prepare_len = request_len = 0; request_error = EIO;
-	coreid_peek_error = 1; core_id = 0x10300;
-	CHECK(sun60i_gpu_identify(&sc) == EIO);
-	CHECK(!sc.sc_have_id && peeks == 0 && unmaps == 1);
-	CHECK(strstr(normal_output, "TOP-only CORE_ID read failed") != NULL);
-	CHECK(strstr(normal_output, "CORE_ID 0x00000000") == NULL);
-	reset(); prepare_len = request_len = 0; request_error = EIO;
-	pbvnc = UINT64_C(0x00240037006800b7);
-	CHECK(sun60i_gpu_identify(&sc) == EIO);
-	CHECK(sc.sc_have_id && sc.sc_bvnc == pbvnc);
-	CHECK(strstr(normal_output, "36.55.104.183 (unexpected") != NULL);
-	/* Without the opt-in no fresh request and no TOP-only access exist. */
-	reset(); prepare_len = 0; wait_error = ETIMEDOUT;
-	CHECK(sun60i_gpu_identify(&sc) == ETIMEDOUT);
-	CHECK(requests == 0 && maps == 0 && !sc.sc_have_id);
+	reset(); prepare_len = request_len = 0; fail_supply_call = 3;
+	unavailable(EIO);
+	CHECK(waits == 1 && sc.sc_retained && unreserves == 0);
+	reset(); prepare_len = request_len = 0; final_ready_error = EBUSY;
+	unavailable(EBUSY);
+	CHECK(waits == 2 && sc.sc_retained && unreserves == 0);
 	printf("PASS: %u experimental CORE request consumer checks\n",
+	    checks - start);
+}
+
+/* Execute the real consumer with only power/clock/bus provider boundaries. */
+static void
+test_core_mmio_guard(const char *selected)
+{
+	unsigned start = checks;
+
+	if (selected == NULL || strcmp(selected, "runtime") == 0) {
+		/* Only REQUEST timeout permits the bounded, read-only WAIT. */
+		for (unsigned dry_run = 0; dry_run < 2; dry_run++) {
+			reset();
+			for (u_int stage = 1; stage < A733_GPU_STAGE_REQUEST; stage++)
+				sun60i_gpu_run_stage(&sc, stage);
+			request_error = ETIMEDOUT;
+			sun60i_gpu_run_stage(&sc, A733_GPU_STAGE_REQUEST);
+			CHECK(sc.sc_run_result == ETIMEDOUT && sc.sc_run_pass);
+			wait_error = ETIMEDOUT;
+			sun60i_gpu_run_stage(&sc, A733_GPU_STAGE_WAIT);
+			CHECK(sc.sc_run_result == ETIMEDOUT && !sc.sc_run_core_on);
+			CHECK(!sc.sc_run_pass && waits == 1);
+			if (dry_run)
+				sun60i_gpu_run_stage(&sc, 0);
+			nevents = 0;
+			sun60i_gpu_run_stage(&sc, A733_GPU_STAGE_TOP_ID);
+			CHECK(sc.sc_run_result == EINVAL && nevents == 0);
+			CHECK(maps == 0 && peeks == 0 && unmaps == 0);
+			CHECK(!sc.sc_have_id && !sc.sc_exec_ready && unreserves == 0);
+		}
+		/* A request timeout can still converge to confirmed CORE ON. */
+		reset();
+		for (u_int stage = 1; stage < A733_GPU_STAGE_REQUEST; stage++)
+			sun60i_gpu_run_stage(&sc, stage);
+		request_error = ETIMEDOUT;
+		for (u_int stage = A733_GPU_STAGE_REQUEST;
+		    stage <= A733_GPU_STAGE_IDENTIFY; stage++)
+			sun60i_gpu_run_stage(&sc, stage);
+		CHECK(sc.sc_run_result == 0 && sc.sc_run_core_on && sc.sc_have_id);
+		CHECK(maps == 2 && peeks == 2 && unmaps == 2 && unreserves == 0);
+		/* An unrelated timeout never authorizes the next stage. */
+		reset();
+		for (u_int stage = 1; stage < A733_GPU_STAGE_PREPARE; stage++)
+			sun60i_gpu_run_stage(&sc, stage);
+		prepare_error = ETIMEDOUT;
+		sun60i_gpu_run_stage(&sc, A733_GPU_STAGE_PREPARE);
+		CHECK(sc.sc_run_result == ETIMEDOUT && !sc.sc_run_pass);
+		nevents = 0;
+		sun60i_gpu_run_stage(&sc, A733_GPU_STAGE_INSPECT);
+		CHECK(sc.sc_run_result == EINVAL && nevents == 0 && maps == 0);
+	}
+	if (selected == NULL || strcmp(selected, "boot") == 0) {
+		reset(); prepare_len = request_len = 0; wait_error = ETIMEDOUT;
+		CHECK(sun60i_gpu_finalize(&gpu_device) == 0);
+		CHECK(maps == 0 && peeks == 0 && unmaps == 0 && !sc.sc_have_id);
+		CHECK(waits == 1 && sc.sc_retained && unreserves == 0);
+		CHECK(strstr(normal_output, "terminal CCU observation") != NULL);
+		CHECK(strstr(error_output, "experimental CORE ON/Q acceptance") != NULL);
+		CHECK(sun60i_gpu_finalize(&gpu_device) == 0 && waits == 1);
+	}
+	if (selected == NULL || strcmp(selected, "direct") == 0) {
+		reset();
+		CHECK(sun60i_gpu_stage_top_id(&sc) == EBUSY);
+		CHECK(nevents == 0 && maps == 0 && peeks == 0);
+		CHECK(sun60i_gpu_stage_identify(&sc) == EBUSY);
+		CHECK(nevents == 0 && maps == 0 && peeks == 0);
+		/* A stale cached identity must not bypass the helper's own gate. */
+		sc.sc_have_id = true;
+		sun60i_gpu_top_identify(&sc, A733_GPU_BASE, &regulator,
+		    &clock_fixture, true);
+		CHECK(nevents == 0 && maps == 0 && peeks == 0);
+		reset(); sc.sc_run_core_on = true;
+		CHECK(sun60i_gpu_stage_top_id(&sc) == 0);
+		CHECK(maps == 1 && peeks == 1 && unmaps == 1 && sc.sc_have_id);
+		CHECK(!regulator.acquired && !clock_fixture.acquired);
+		/* Mapping and read failures remain exercised after CORE readiness. */
+		for (unsigned fault = 0; fault < 3; fault++) {
+			reset(); sc.sc_run_core_on = true;
+			if (fault == 0) map_error = ENOMEM;
+			if (fault == 1) coreid_peek_error = EFAULT;
+			if (fault == 2) peek_error = EFAULT;
+			CHECK(sun60i_gpu_stage_top_id(&sc) == EFAULT);
+			CHECK(!sc.sc_have_id && maps == 1);
+			CHECK(peeks == (fault == 2 ? 1U : 0U));
+			CHECK(unmaps == (fault == 0 ? 0U : 1U));
+			CHECK(!regulator.acquired && !clock_fixture.acquired);
+		}
+	}
+	if (selected == NULL || strcmp(selected, "nonprepare") == 0) {
+		reset();
+		unavailable(EBUSY);
+		CHECK(prepares == 0 && requests == 0 && waits == 0 && reserves == 0);
+		CHECK(strcmp(sc.sc_stage, "CORE ON/Q not confirmed") == 0);
+	}
+	printf("PASS: %u unconfirmed CORE MMIO exclusion checks\n", checks - start);
+}
+
+/* The heap boundary must preserve the production optional-output contract. */
+static void
+test_fwheap_optional_outputs(void)
+{
+	unsigned int start = checks;
+
+	for (unsigned int mode = 0; mode < 5; mode++) {
+		for (unsigned int mask = 0; mask < 8; mask++) {
+			uint32_t rd = UINT32_MAX, wr = UINT32_MAX, timeline = UINT32_MAX;
+			bool completed = mode != 0 && mode != 4;
+			uint32_t offset = completed ? A733_GPU_FWCOMPUTE_USED_BYTES : 0;
+
+			compute_completion_mode = mode;
+			sun60i_a733_gpu_fwheap_observe(NULL, mask & 1 ? &rd : NULL,
+			    mask & 2 ? &wr : NULL, mask & 4 ? &timeline : NULL);
+			CHECK(rd == (mask & 1 ? offset : UINT32_MAX));
+			CHECK(wr == (mask & 2 ? offset : UINT32_MAX));
+			CHECK(timeline == (mask & 4 ? (uint32_t)completed : UINT32_MAX));
+		}
+	}
+	compute_completion_mode = 0;
+	printf("PASS: %u firmware heap fixture optional-output checks\n",
+	    checks - start);
+}
+
+/* An adopted bridge must make every diagnostic stage unreachable. */
+static void
+test_fwbridge_diagnostic_gate(void)
+{
+	unsigned int start = checks;
+
+	for (unsigned int failed = 0; failed < 2; failed++) {
+		for (u_int stage = 0; stage <= A733_GPU_STAGE_FWKICK + 1; stage++) {
+			reset();
+			sc.sc_fwbridge.attempted = true;
+			sc.sc_fwbridge.service.queue.failed = failed;
+			sun60i_gpu_run_stage(&sc, stage);
+			CHECK(sc.sc_run_result == EBUSY && sc.sc_run_stage == 0);
+			CHECK(sc.sc_run_pass && !sc.sc_run_lock);
+			CHECK(nevents == 0 && maps == 0 && full_maps == 0);
+			CHECK(sun60i_gpu_exec_attach(&sc) == (failed ? EIO : EBUSY));
+			CHECK(!sc.sc_run_lock && nevents == 0 && full_maps == 0);
+		}
+	}
+	reset();
+	printf("PASS: %u firmware bridge diagnostic exclusion checks\n",
 	    checks - start);
 }
 
@@ -1501,18 +1632,6 @@ test_runtime_stages(void)
 	nevents = 0;
 	sun60i_gpu_run_stage(&sc, 13);
 	CHECK(sc.sc_run_result == EINVAL && nevents == 0);
-
-	/* A wait timeout keeps the sequence; identification still runs. */
-	reset();
-	for (stage = 1; stage <= 8; stage++)
-		sun60i_gpu_run_stage(&sc, stage);
-	wait_error = ETIMEDOUT;
-	sun60i_gpu_run_stage(&sc, 9);
-	CHECK(sc.sc_run_result == ETIMEDOUT && !sc.sc_run_core_on);
-	sun60i_gpu_run_stage(&sc, 10);
-	CHECK(sc.sc_run_result == 0 && sc.sc_have_id);
-	sun60i_gpu_run_stage(&sc, 11);
-	CHECK(sc.sc_run_result == EBUSY && maps == 1);
 
 	/* A supply failure at stage 1 blocks the rest until reboot. */
 	reset(); supply_on = false;
@@ -2855,7 +2974,7 @@ test_hwr_report(void)
 	char expected[160];
 	const char *last;
 	size_t events_before;
-	unsigned commands_before, start = checks;
+	unsigned commands_before, allocs_before, frees_before, start = checks;
 
 	owner = calloc(1, sizeof(*owner));
 	previous = malloc(sizeof(*previous));
@@ -2875,7 +2994,12 @@ test_hwr_report(void)
 	hwr = (struct rogue_fwif_hwrinfobuf *)(arena + 64);
 	memcpy(copy, arena, 2432);
 	trace_sync_calls = 0;
+	allocs_before = kmem_alloc_calls;
+	frees_before = kmem_free_calls;
 	sun60i_gpu_hwr_report(owner);
+	CHECK(kmem_alloc_calls == allocs_before + 1);
+	CHECK(kmem_free_calls == frees_before + 1);
+	CHECK(kmem_last_size == sizeof(*hwr));
 	CHECK(strstr(owner->sc_hwr_state,
 	    "capture_error=0 captured=16 counter=0 write_index=0") != NULL);
 	CHECK(strstr(owner->sc_hwr_state, "slot=15 number=0 type=0") != NULL);
@@ -2906,7 +3030,12 @@ test_hwr_report(void)
 	events_before = nevents;
 	hwr_on_sync = hwr;
 	trace_sync_calls = 0;
+	allocs_before = kmem_alloc_calls;
+	frees_before = kmem_free_calls;
 	sun60i_gpu_hwr_report(owner);
+	CHECK(kmem_alloc_calls == allocs_before + 1);
+	CHECK(kmem_free_calls == frees_before + 1);
+	CHECK(kmem_last_size == sizeof(*hwr));
 	hwr_on_sync = NULL;
 	CHECK(trace_sync_calls == 1);
 	CHECK(strstr(owner->sc_hwr_state,
@@ -2952,7 +3081,11 @@ test_hwr_report(void)
 		}
 		trace_sync_calls = 0;
 		memcpy(copy, arena, 2432);
+		allocs_before = kmem_alloc_calls;
+		frees_before = kmem_free_calls;
 		sun60i_gpu_hwr_report(owner);
+		CHECK(kmem_alloc_calls == allocs_before);
+		CHECK(kmem_free_calls == frees_before);
 		snprintf(expected, sizeof(expected), "capture_error=%d captured=0:", EINVAL);
 		CHECK(strcmp(owner->sc_hwr_state, expected) == 0);
 		CHECK(trace_sync_calls == 0);
@@ -3132,6 +3265,16 @@ main(void)
 	    UINT64_C(0x00230038006800b7), UINT64_C(0x00240038006700b7),
 	    UINT64_C(0x00240038006800b6) };
 
+	const char *guard_case = getenv("GPU_ID_CORE_GUARD_CASE");
+
+	if (guard_case != NULL && strcmp(guard_case, "runtime") != 0 &&
+	    strcmp(guard_case, "boot") != 0 &&
+	    strcmp(guard_case, "direct") != 0 &&
+	    strcmp(guard_case, "nonprepare") != 0)
+		return 1;
+	test_core_mmio_guard(guard_case);
+	if (guard_case != NULL)
+		return 0;
 	reset();
 	/* /soc finished before a later root FDT pass attaches its GPU child. */
 	config_process_deferred(&deferred_config_queue, &soc_device);
@@ -3158,11 +3301,12 @@ main(void)
 	CHECK(TAILQ_EMPTY(&config_pending));
 	/* Remaining FDT passes attach the providers before finalization. */
 	missing_supply = false;
+	prepare_len = 0;
 	CHECK(config_finalize_register(&root_device, request_extra_pass) == 0);
 	config_finalize();
 	CHECK(config_finalize_done && extra_passes == 2);
 	CHECK(TAILQ_EMPTY(&config_finalize_list) && TAILQ_EMPTY(&config_pending));
-	CHECK(strcmp(events, "ASVPCQMIUcs") == 0);
+	CHECK(strcmp(events, "ASVPCQPCSVHWQKSVKFMIUcs") == 0);
 	CHECK(maps == 1 && peeks == 1 && unmaps == 1 &&
 	    clock_puts == 1 && releases == 1);
 	CHECK(strstr(normal_output, "0x00240038006800b7: 36.56.104.183") != NULL);
@@ -3181,7 +3325,7 @@ main(void)
 	CHECK(strstr(error_output, "supply provider") != NULL);
 	reset();
 	core_hz = 600000000;
-	CHECK(sun60i_gpu_identify(&sc) == 0 && sc.sc_have_id && sc.sc_bvnc == pbvnc);
+	unavailable(EBUSY);
 
 	for (u_int i = 0; i < __arraycount(bad_lengths); i++) {
 		reset();
@@ -3232,8 +3376,9 @@ main(void)
 			unavailable(failures[i]);
 			CHECK(releases == 1 && clock_puts == (stage == 3 ? 1U : 0U));
 			*errors[stage] = 0;
-			CHECK(sun60i_gpu_identify(&sc) == 0);
-			CHECK(peeks == 1 && unmaps == 1 && releases == 2);
+			/* Restored providers do not prove CORE ON/Q readiness. */
+			unavailable(EBUSY);
+			CHECK(releases == 2);
 		}
 	}
 	for (u_int i = 0; i < __arraycount(bad_rates); i++) {
@@ -3242,23 +3387,23 @@ main(void)
 		reset(); voltage = bad_volts[i]; unavailable(EOPNOTSUPP);
 		CHECK(clock_puts == 1 && releases == 1);
 	}
-	reset(); map_error = ENOMEM;
+	reset(); prepare_len = 0; map_error = ENOMEM;
 	CHECK(sun60i_gpu_identify(&sc) == ENOMEM);
 	CHECK(maps == 1 && peeks == 0 && unmaps == 0 &&
 	    clock_puts == 1 && releases == 1);
-	reset(); peek_error = -1;
+	reset(); prepare_len = 0; peek_error = -1;
 	CHECK(sun60i_gpu_finalize(&gpu_device) == 0);
-	CHECK(!sc.sc_have_id && normal_output[0] == '\0');
+	CHECK(!sc.sc_have_id && strstr(normal_output, "PBVNC") == NULL);
 	CHECK(maps == 1 && peeks == 1 && unmaps == 1 &&
 	    clock_puts == 1 && releases == 1);
 	CHECK(strstr(error_output, "PBVNC read") != NULL);
 	for (u_int i = 0; i < __arraycount(ids); i++) {
-		reset(); pbvnc = ids[i];
+		reset(); prepare_len = 0; pbvnc = ids[i];
 		CHECK(sun60i_gpu_identify(&sc) == ENODEV);
 		CHECK(sc.sc_have_id && sc.sc_bvnc == pbvnc);
 		CHECK(maps == 1 && peeks == 1 && unmaps == 1 &&
 		    clock_puts == 1 && releases == 1);
-		reset(); pbvnc = ids[i];
+		reset(); prepare_len = 0; pbvnc = ids[i];
 		CHECK(sun60i_gpu_finalize(&gpu_device) == 0);
 		CHECK(strstr(normal_output, "(unexpected)") != NULL);
 		CHECK(strstr(normal_output, "(expected A733 GPU)") == NULL);
@@ -3291,6 +3436,8 @@ main(void)
 
 	test_experimental_prepare();
 	test_domain_request();
+	test_fwheap_optional_outputs();
+	test_fwbridge_diagnostic_gate();
 	test_runtime_stages();
 	test_fwinfo_stage();
 	test_fwmem_stage();

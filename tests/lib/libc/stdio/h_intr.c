@@ -130,7 +130,7 @@ process(const char *fn)
 	FILE *ifp, *ofp;
 	char *buf, *abuf;
 	int rc = false;
-	size_t nw = 0;
+	size_t nw __unused = 0;
 	ssize_t n;
 
 	abuf = NULL;

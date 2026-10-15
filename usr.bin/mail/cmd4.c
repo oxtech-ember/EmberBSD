@@ -249,7 +249,7 @@ free_name(struct name *np)
 
 	for (/*EMPTY*/; np; np = next_np) {
 		next_np = np->n_flink;
-		free(next_np);
+		free(np);
 	}
 }
 

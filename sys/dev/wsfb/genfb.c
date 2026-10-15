@@ -1,4 +1,4 @@
-/* Origin: EmberBSD optional damage and console redraw hooks, 2026-10-06. */
+/* Origin: EmberBSD damage, redraw and RGB console palettes, 2026-10-13. */
 /*	$NetBSD: genfb.c,v 1.92 2025/04/29 12:20:36 tsutsui Exp $ */
 
 /*-
@@ -91,6 +91,7 @@ struct genfb_private {
 	void *sc_shadowfb;
 	bool sc_enable_shadowfb;
 	int sc_mode;
+	bool sc_palette_ready;
 	u_char sc_cmap_red[256];
 	u_char sc_cmap_green[256];
 	u_char sc_cmap_blue[256];
@@ -605,6 +606,14 @@ genfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 	case WSDISPLAYIO_GETPARAM:
 		param = (struct wsdisplay_param *)data;
 		switch (param->param) {
+		case WSDISPLAYIO_PARAM_RGB_PALETTE:
+			param->min = 0;
+			param->max = 1;
+			param->curval = sc->sc_depth > 8 &&
+			    scp->sc_mode == WSDISPLAYIO_MODE_EMUL &&
+			    GENFB_GLYPHCACHE == 0 &&
+			    !FONT_IS_ALPHA(ms->scr_ri.ri_font);
+			return 0;
 		case WSDISPLAYIO_PARAM_BRIGHTNESS:
 			if (scp->sc_brightness == NULL)
 				return EPASSTHROUGH;
@@ -804,6 +813,9 @@ genfb_init_screen(void *cookie, struct vcons_screen *scr,
 	if (scp->sc_devcmap != NULL) {
 		memcpy(ri->ri_devcmap, scp->sc_devcmap, sizeof(ri->ri_devcmap));
 	}
+	if (scp->sc_palette_ready && ri->ri_depth > 8)
+		rasops_set_cmap(ri, 0, 16, scp->sc_cmap_red,
+		    scp->sc_cmap_green, scp->sc_cmap_blue);
 
 	ri->ri_hw = scr;
 #if GENFB_GLYPHCACHE > 0
@@ -883,6 +895,12 @@ genfb_putcmap(struct genfb_softc *sc, struct wsdisplay_cmap *cm)
 	if (index >= 256 || count > 256 || index + count > 256)
 		return EINVAL;
 
+#if GENFB_GLYPHCACHE > 0
+	/* Cached RGB glyphs require a separate palette invalidation path. */
+	if (sc->sc_depth > 8 && scp->sc_mode == WSDISPLAYIO_MODE_EMUL)
+		return EOPNOTSUPP;
+#endif
+
 	error = copyin(cm->red, &rbuf[index], count);
 	if (error)
 		return error;
@@ -896,6 +914,9 @@ genfb_putcmap(struct genfb_softc *sc, struct wsdisplay_cmap *cm)
 	memcpy(&scp->sc_cmap_red[index], &rbuf[index], count);
 	memcpy(&scp->sc_cmap_green[index], &gbuf[index], count);
 	memcpy(&scp->sc_cmap_blue[index], &bbuf[index], count);
+	if (sc->sc_depth > 8 && scp->sc_mode == WSDISPLAYIO_MODE_EMUL)
+		vcons_set_cmap(&sc->vd, index, count, &rbuf[index],
+		    &gbuf[index], &bbuf[index]);
 
 	r = &scp->sc_cmap_red[index];
 	g = &scp->sc_cmap_green[index];
@@ -987,6 +1008,7 @@ genfb_init_palette(struct genfb_softc *sc)
 			j += 3;
 		}
 	}
+	scp->sc_palette_ready = true;
 }
 
 static int
