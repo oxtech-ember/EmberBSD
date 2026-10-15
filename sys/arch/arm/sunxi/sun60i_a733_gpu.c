@@ -241,10 +241,8 @@ sun60i_gpu_clock_terminal(struct sun60i_gpu_softc *sc, struct clk *gpu)
 }
 
 /*
- * Vendor kernels keep GPU_CORE outside the GPU binding and read this bank
- * with only GPU_TOP managed.  After a failed CORE transition the same
- * resources still allow one bounded, fault-tolerant identification peek;
- * it never authorizes further GPU access.
+ * Even identification reads require confirmed CORE ON/Q readiness.
+ * A fault-aware peek cannot bound a transaction to an unresponsive bus.
  */
 static void
 sun60i_gpu_top_identify(struct sun60i_gpu_softc *sc, bus_addr_t addr,
@@ -256,6 +254,8 @@ sun60i_gpu_top_identify(struct sun60i_gpu_softc *sc, bus_addr_t addr,
 	uint32_t core;
 	bool enabled;
 
+	if (!sc->sc_run_core_on)
+		return;
 	if (fdtbus_regulator_is_enabled(supply, &enabled) != 0 || !enabled ||
 	    fdtbus_regulator_get_voltage(supply, &sc->sc_uvol) != 0 ||
 	    sc->sc_uvol != 800000 ||
@@ -296,7 +296,7 @@ sun60i_gpu_top_identify(struct sun60i_gpu_softc *sc, bus_addr_t addr,
 	    (u_int)((id >> 16) & 0xffff),
 	    (u_int)(id & 0xffff),
 	    id == A733_GPU_EXPECTED ?
-	    " (expected A733 GPU; GPU_CORE not confirmed ON)" :
+	    " (expected A733 GPU; GPU_CORE confirmed ON)" :
 	    " (unexpected)");
 	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_ID_SIZE);
 }
@@ -386,6 +386,8 @@ sun60i_gpu_stage_top_id(struct sun60i_gpu_softc *sc)
 	struct clk *gpu;
 	int error;
 
+	if (!sc->sc_run_core_on)
+		return EBUSY;
 	error = sun60i_gpu_runtime_supply_top(sc);
 	if (error != 0)
 		return error;
@@ -415,6 +417,8 @@ sun60i_gpu_stage_identify(struct sun60i_gpu_softc *sc)
 	uint64_t id;
 	int error;
 
+	if (!sc->sc_run_core_on)
+		return EBUSY;
 	error = sun60i_gpu_runtime_supply_top(sc);
 	if (error != 0)
 		return error;
@@ -1804,8 +1808,9 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 	}
 	sc->sc_exec_ready = error == 0 &&
 	    (stage == A733_GPU_STAGE_FWCACHE || stage == A733_GPU_STAGE_FWKICK);
-	/* A bounded timeout still allows the read-only waiter afterwards. */
-	sc->sc_run_pass = (error == 0 || error == ETIMEDOUT);
+	/* Only a request timeout permits the next, read-only CORE waiter. */
+	sc->sc_run_pass = error == 0 ||
+	    (stage == A733_GPU_STAGE_REQUEST && error == ETIMEDOUT);
 	sc->sc_run_stage = stage;
 out:
 	sc->sc_run_result = error;
@@ -2415,6 +2420,12 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 		}
 	}
 
+	/* The firmware-only path has no retained owner for a strict CORE wait. */
+	if (!prepare) {
+		sc->sc_stage = "CORE ON/Q not confirmed";
+		error = EBUSY;
+		goto out;
+	}
 	sc->sc_stage = "register mapping";
 	error = bus_space_map(sc->sc_bst, addr, A733_GPU_ID_SIZE, 0, &bsh);
 	if (error != 0)
@@ -2433,8 +2444,6 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 out:
 	if (prepare && sc->sc_retained && error == ETIMEDOUT)
 		sun60i_gpu_clock_terminal(sc, gpu);
-	if (request && error != 0 && sc->sc_retained)
-		sun60i_gpu_top_identify(sc, addr, supply, gpu, false);
 	if (!sc->sc_retained) {
 		if (clock_reserved)
 			(void)sun60i_a733_ccu_gpu_release(gpu, sc);

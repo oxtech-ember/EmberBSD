@@ -665,7 +665,10 @@ on every board in the hardware catalog.
   PowerVR BXM BVNC `36.56.104.183`; Wi-Fi and the existing NPU probe return
   after a normal reboot. Frequencies and voltage were not measured externally.
   The [physical PLL result](ember/boot/a733-gpu-identification.md#physical-pll-result)
-  supersedes the earlier PERIPH0-400M timeout and GPU MMIO stall. Normal
+  supersedes the earlier PERIPH0-400M timeout and GPU MMIO stall. The consumer
+  now blocks GPU MMIO after failed CORE ON/Q confirmation, including boot
+  error diagnostics. Host regressions check this gate and the successful path;
+  they do not establish repaired power-domain activation. Normal
   board DTBs remain observe-only; the working cold start is an explicit
   runtime experiment. Native `firmload` now reads the exact firmware and
   [validates its metadata](ember/boot/a733-gpu-fwinfo.md#physical-preflight-result)

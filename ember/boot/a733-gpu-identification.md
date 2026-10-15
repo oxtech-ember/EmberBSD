@@ -1,6 +1,7 @@
 # A733 GPU staged diagnostics
 
-The native `sun60igpuid` consumer can identify an already prepared A733 GPU.
+The native `sun60igpuid` consumer identifies an A733 GPU after strict
+CORE ON/Q confirmation.
 The current A733 DT enables its diagnostic `netbsd,observe-only` stage, which
 never maps or reads GPU registers, even when the queried providers are ready.
 This default mode provides no GPU initialization, DMA, submission or acceleration.
@@ -10,7 +11,9 @@ and physical attachment on Zero 3W are verified. The explicit runtime
 PLL600 cold start now identifies the physical GPU; see the
 [current hardware result](#physical-pll-result). Normal board DTBs remain
 observe-only. The earlier PERIPH0-400M path times out at GPU_CORE and can
-stall on GPU register access. Explicit stage 15 has separately
+stall on GPU register access. The consumer now blocks that access after failed
+CORE confirmation; this does not repair power-domain activation.
+Explicit stage 15 has separately
 [booted the pinned firmware on Zero 3W](a733-gpu-fwboot.md#physical-bootstrap-result).
 Stage 16 has [completed one firmware command](a733-gpu-fwprobe.md#physical-command-result).
 Stage 17 adds a software-checked MMUCACHE probe. GPU memory isolation
@@ -22,6 +25,10 @@ including a failed service. Bridge preparation and publication are explicit
 aborting boundaries here; their actual lifecycle runs in
 `sh ember/tools/a733-gpu-fwbridge-contract.sh`. Run both contracts when changing
 this shared state. These host checks do not establish hardware operation.
+The identity contract checks failed REQUEST/WAIT, finalizer errors, direct
+identity calls, and the unconfirmed firmware-only boot path without GPU MMIO.
+It also checks successful CORE confirmation, retained reservations, and a
+REQUEST timeout followed by a successful WAIT.
 
 ## Physical result
 
@@ -87,7 +94,7 @@ The local binding requires:
 
 - A single register range at `0x01800000`, covering PBVNC at `+0x20`.
   The DT preserves the BSP range size `0x8ffff`; the consumer maps only `0x28`
-  bytes and performs one 64-bit fault-aware read only outside observe-only mode.
+  bytes and performs one 64-bit fault-aware read only after CORE ON/Q confirmation.
 - One `core` clock, `<&ccu CLK_GPU0>`, from the native A733 CCU.
 - One domain, `<&pck600 PD_GPU_TOP>`, with domain ID 5 and one argument cell.
 - `gpu-supply` referencing the AXP8191 `dcdc4` regulator node.
@@ -129,6 +136,12 @@ points with the same voltage across all listed speed bins. Other settings
 return `EOPNOTSUPP`; they are neither changed nor declared electrically unsafe.
 Supply/domain OFF, dynamic power mode, missing providers, unsupported clocks,
 or query errors prevent GPU mapping and reads.
+
+The non-preparation boot path cannot prove CORE ON/Q readiness through a retained
+PCK owner. It returns `EBUSY` before GPU mapping, even with ready supply and
+clocks. This firmware-only path remains unverified on hardware. The explicit
+prepared boot path must pass both strict CORE waits. Observe-only mode remains
+read-only and does not acquire new reservations.
 
 For a completed CCU observation that is not ready, the consumer reports the
 first failed condition, the queried DCDC4 setting in microvolts, both
@@ -218,9 +231,10 @@ The experiment remains disabled in normal board DTBs.
 
 A further opt-in property, `netbsd,experimental-domain-request`, extends the
 prepared-clock experiment. It requires `netbsd,experimental-clock-prepare`,
-is rejected together with `netbsd,observe-only`, and adds two stages only.
+is rejected together with `netbsd,observe-only`, and adds a static CORE request
+before the existing waiter.
 
-The first stage re-issues the static GPU_CORE ON request after strict CCU
+It re-issues the static GPU_CORE ON request after strict CCU
 readiness and before the read-only CORE waiter. Allwinner's own writers do
 exactly this without comparing the previous policy and status: the SCP
 standby-resume loop ORs 8 into every PWPR (skipping only the domain-6 wait),
@@ -232,15 +246,10 @@ that reverts is a denial: the domain is quarantined like an ordinary failed
 transition. A status timeout does not quarantine, so the read-only waiter
 stays usable afterwards. GPU_CORE power-off remains impossible.
 
-The second stage is a bounded TOP-only identification after any failed
-request or wait. Vendor kernels keep GPU_CORE outside the GPU binding, so
-this register bank is read with only GPU_TOP managed. After re-verifying the
-800000 microvolt supply, the statically ON TOP domain and strict 400/200 MHz
-CCU readiness, the consumer maps the identification window and reads
-`RGX_CR_CORE_ID` (0x18) and `RGX_CR_CORE_ID__PBVNC` (0x20) through
-fault-tolerant peeks. A successful read publishes the real PBVNC explicitly
-marked "GPU_CORE not confirmed ON"; a fault or readiness change only prints.
-This diagnostic never authorizes further GPU access, mapping or resets.
+A failed boot request or wait preserves its errno and retained reservations.
+A retained timeout still reports the terminal CCU snapshot. The error path
+never maps or reads the GPU aperture. Fault-aware peeks only catch synchronous
+faults; they cannot bound an unresponsive bus transaction.
 
 ### Physical result: withdraw the experimental boot until a console exists
 
@@ -300,7 +309,7 @@ Run one stage per sysctl write. Each stage runs once in the following order:
 | 7 | Inspect clocks and cache the complete result in `clock_state` |
 | 8 | Reissue the static GPU_CORE ON request |
 | 9 | Wait for CORE ON/Q readiness |
-| 10 | Read TOP-only CORE_ID and PBVNC after supply/TOP/clock checks |
+| 10 | Read CORE_ID and PBVNC only after stage 9 confirms CORE ON/Q and supply/TOP/clock checks pass |
 | 11 | Read strict PBVNC, only after stage 9 confirmed CORE ON |
 | 12 | Load firmware through firmload and validate metadata against the live BVNC; no GPU transfer |
 | 13 | Prepare CPU-owned firmware memory and page tables; no GPU execution ([guide](a733-gpu-fwmem.md)) |
@@ -360,8 +369,11 @@ active during each explicit stage when no serial recovery is available.
 Stage 12 is a [firmware metadata preflight](a733-gpu-fwinfo.md). It requires
 successful strict identification. It does not load or execute code on the GPU.
 
-`result` records the last errno. A bounded timeout permits the next stage;
-other failures stop the sequence. Reading these sysctls accesses cached data,
+`result` records the last errno. Only stage 8 REQUEST returning `ETIMEDOUT`
+permits the next, read-only stage 9 WAIT. Any other failure stops the sequence.
+Failed WAIT blocks stage 10, including after a stage 0 dry run. Both identity
+helpers also reject calls without confirmed CORE ON/Q before GPU mapping.
+Reading these sysctls accesses cached data,
 not GPU registers. The CORE_ID failure path unmaps immediately. It does not
 read PBVNC or print an uninitialized CORE_ID after a failed first read.
 
