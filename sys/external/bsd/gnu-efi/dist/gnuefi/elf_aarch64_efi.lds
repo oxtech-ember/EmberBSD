@@ -3,16 +3,17 @@
 OUTPUT_FORMAT("elf64-littleaarch64", "elf64-littleaarch64", "elf64-littleaarch64")
 OUTPUT_ARCH(aarch64)
 ENTRY(_start)
-/* EmberBSD: binutils >= 2.39 rejects program headers outside every
- * PT_LOAD. Force the headers into one LOAD segment and assign all
- * sections to it, matching what gnu-efi upstream did for new ld. */
+/* EmberBSD: explicit PHDRS avoid an implicit uncovered PT_PHDR with new
+ * binutils. ELF headers are not part of the objcopy-produced PE image.
+ * Keep ImageBase at zero: crt0 passes its runtime address to _relocate,
+ * whose RELATIVE offsets and addends are ELF addresses. */
 PHDRS
 {
-  text PT_LOAD FILEHDR PHDRS;
+  text PT_LOAD;
 }
 SECTIONS
 {
-  .text 0x1000 : {
+  .text 0 : {
     _text = .;
     *(.text.head)
     *(.text)
