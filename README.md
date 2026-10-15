@@ -964,6 +964,8 @@ The base system shell is unchanged.
   The [wscons VT regression](ember/tests/usl-sync.md) checks deferred signals, valid signal ranges and callback lifetime.
   Host tests and isolated target compilation pass; VM console switching remains unverified.
   The [VT lease ownership regression](ember/tests/usl-owner.md) checks owner/admin ACK and reset, process-death tombstones and exit-hook retirement.
+  The [prepared VT VM runner](ember/tests/usl-vt-vm.md) provides a cross-built normal-ioctl acceptance test for an explicitly isolated fixture.
+  Its source checks and target ELF do not establish a VM pass or keyboard IRQ acceptance.
   Function tests and isolated target compilation pass; native session entitlement and coordinated device handoff remain unqualified.
   Incremental wrapper builds refresh the generated kernel version metadata;
   host orchestration checks cover stale `BUILDINFO` and object retention.
