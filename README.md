@@ -212,6 +212,13 @@ on every board in the hardware catalog.
   passes real dependency/package cycles, exact FFV1 pixels, timestamps,
   inverse filters and PCM samples in AArch64 QEMU. Its current XML provider
   passes installed contracts and preserves the libxml2.so.16 ABI.
+  The [H.265 RTP CPU SDK and C API example](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/rtp/README.md)
+  add GCC16.2 cross builds for AArch64 and AMD64. Both architectures pass
+  bidirectional FFmpeg/GStreamer transport, packet faults, receiver restart
+  and 13-package installation/removal/reinstallation in full-system QEMU.
+  Independent captures, exact pixels and timestamps verify recovery;
+  [results](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/rtp/results.md)
+  do not establish hardware-codec, RTSP or production-network performance.
 - **Recording experiments and finding visual markers:** MCAP C++ 2.1.3 records
   timestamped messages with indexed replay and LZ4/Zstd compression. AprilTag
   3.4.5 detects markers and estimates their pose. Installed AArch64 VM checks
