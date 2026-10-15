@@ -118,6 +118,11 @@ The detailed installer log is /tmp/sysinst.log in the installation environment.
 The checks in ember/tests/installer-wizard* exercise actual controller and adapter bodies,
 the shared renderer, source validation and GPT replacement with the host-built GPT tool.
 The executable contracts use ASan and UBSan on supported hosts.
+Run `CFLAGS='-fsanitize=address,undefined' ruby ember/tests/installer-keyboard.rb`
+to check the actual keyboard-hook declarations with and without WSKBD.
+The contract checks conditional statements, condition evaluation and hook calls.
+Set `CC` and `CFLAGS` for a cross compiler, and add `--compile-only` for target objects.
+The evbarm/aarch64 main translation unit also passes GCC16 with `-Werror` and `-fanalyzer`.
 They do not establish a booted image or physical installation.
 Build a clean committed source export, then test the resulting image in a disposable amd64 VM.
 Record the image hashes, kernel identity, source failures, review, completion and disk-only boot.

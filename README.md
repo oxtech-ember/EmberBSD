@@ -39,6 +39,7 @@ are maintained in the related repositories below.
 - For installation screens and compatible set sources, see
   [text installer](ember/boot/text-installer.md) and [installer identity](ember/boot/installer-branding.md).
   The amd64 keyboard wizard reviews automatic GPT, profiles and settings before writing.
+  Keyboard-hook contracts cover builds with and without wscons keyboard support.
   Normal startup is quiet, with a separate diagnostic choice and a 10-second menu.
   Console login uses the EmberBSD release greeting; full attribution stays in /etc/release.
   A fresh amd64 UEFI VM passes complete USB installation with XFCE and its Wi-Fi manager.
