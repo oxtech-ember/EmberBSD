@@ -942,6 +942,8 @@ The base system shell is unchanged.
   Its size change requires a consistent userspace rebuild; isolated libkvm and PCB checks pass.
   The [amd64 crash-dump map regression](ember/tests/kvm-amd64-map.md) checks allocation failure, retry and range boundaries.
   The isolated target TU passes GCC16 analysis; full library and base acceptance remain separate.
+  The [NVMM batch I/O regression](ember/tests/nvmm-io-batch.md) checks temporary-buffer lifetime and callback/error paths.
+  Its isolated target compilation passes; guest execution and full hypervisor acceptance remain separate.
   Incremental wrapper builds refresh the generated kernel version metadata;
   host orchestration checks cover stale `BUILDINFO` and object retention.
   The resulting kernel cold-boots in AArch64 UTM and passes FP process,

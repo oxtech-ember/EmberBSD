@@ -678,6 +678,7 @@ assist_io_batch(struct nvmm_machine *mach, struct nvmm_vcpu *vcpu,
     struct nvmm_io *io, gvaddr_t gva, uint64_t cnt)
 {
 	uint8_t iobuf[NVMM_IO_BATCH_SIZE];
+	uint8_t *saved_data = io->data;
 	size_t i, iosize, iocnt;
 	int ret;
 
@@ -690,7 +691,7 @@ assist_io_batch(struct nvmm_machine *mach, struct nvmm_vcpu *vcpu,
 	if (!io->in) {
 		ret = read_guest_memory(mach, vcpu, gva, iobuf, iosize);
 		if (ret == -1)
-			return -1;
+			goto out;
 	}
 
 	for (i = 0; i < iocnt; i++) {
@@ -701,10 +702,14 @@ assist_io_batch(struct nvmm_machine *mach, struct nvmm_vcpu *vcpu,
 	if (io->in) {
 		ret = write_guest_memory(mach, vcpu, gva, iobuf, iosize);
 		if (ret == -1)
-			return -1;
+			goto out;
 	}
 
-	return iocnt;
+	ret = iocnt;
+
+ out:
+	io->data = saved_data;
+	return ret;
 }
 
 int
