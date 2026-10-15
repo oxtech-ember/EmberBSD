@@ -136,6 +136,8 @@ attack test, long soak or validation of another board/access point.
 During an earlier test that administratively lowered cemac0, the board restarted
 unexpectedly. No crash dump established the cause. Normal gigabit traffic is
 verified; repeated Ethernet down/up and its interaction with Wi-Fi are not.
+The [CEMAC interrupt lifecycle repair](../boot/cemac-irq-lifecycle.md) has
+production-source host checks. It does not establish the cause of that restart.
 
 ## Cooling
 

@@ -814,7 +814,9 @@ The base system shell is unchanged.
   this tree, and drivers for the on-board Wi-Fi, Ethernet behind the
   RP1 chip, Bluetooth, the power button, the fan, the watchdog, I2C
   and a WM8960 audio codec. The board pages distinguish tested peripherals
-  from shared driver availability.
+  from shared driver availability. The [CEMAC interrupt lifecycle](ember/boot/cemac-irq-lifecycle.md)
+  has host regression checks for stop, restart and retained receive events.
+  Repeated physical Ethernet down/up still needs acceptance.
 - **WPA3-Personal on CM5:** upstream wpa_supplicant SAE now works through
   the fork's `bwfm` external-auth interface, with required protected
   management frames. A physical CM5 passed SAE group 19/H2E, bidirectional
