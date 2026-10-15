@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "rtw88_hw.h"
+#include "rtw8822c.h"
 
 static unsigned int failures;
 static unsigned int assertions;
@@ -222,6 +223,193 @@ test_fw_fixture(const char *path, size_t size, int supported)
 	free(data);
 }
 
+/* Literal records from the documented header format, not a map encoder. */
+static const uint8_t efuse_mac_record[] = {
+	0x8f, 0x48, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55
+};
+
+static void
+efuse_reject(const uint8_t *data, size_t size, int error)
+{
+	struct rtw8822c_efuse out, before;
+
+	memset(&out, 0xa5, sizeof(out));
+	memcpy(&before, &out, sizeof(before));
+	CHECK(rtw8822c_efuse_decode(data, size, &out) == error);
+	CHECK(memcmp(&before, &out, sizeof(out)) == 0);
+}
+
+/* Catch speculative extended-header and incomplete-word reads. */
+static void
+test_efuse_truncated_extended_header(void)
+{
+	static const uint8_t partial[] = { 0x8f, 0x48, 0x02, 0x11,
+	    0x22, 0x33, 0x44 };
+	static const uint8_t normal[] = { 0x0e, 0x12 };
+	size_t i;
+
+	for (i = 1; i <= sizeof(partial); i++) {
+		uint8_t *p = malloc(i);
+
+		if (p == NULL)
+			exit(1);
+		memcpy(p, partial, i);
+		efuse_reject(p, i, EINVAL);
+		free(p);
+	}
+	efuse_reject(normal, sizeof(normal), EINVAL);
+	efuse_reject(NULL, 0, EINVAL);
+	efuse_reject(partial, 0, EINVAL);
+	efuse_reject(partial, 513, EINVAL);
+	efuse_reject(partial, SIZE_MAX, EINVAL);
+	CHECK(rtw8822c_efuse_decode(partial, sizeof(partial), NULL) == EINVAL);
+}
+
+/* A valid earlier MAC must not hide a malformed later record. */
+static void
+test_efuse_truncated_after_mac(void)
+{
+	static const uint8_t suffix[] = { 0x0f, 0x2e, 0x12 };
+	size_t i;
+
+	for (i = 1; i <= sizeof(suffix); i++) {
+		uint8_t *data = malloc(8 + i);
+
+		if (data == NULL)
+			exit(1);
+		memcpy(data, efuse_mac_record, 8);
+		memcpy(data + 8, suffix, i);
+		efuse_reject(data, 8 + i, EINVAL);
+		free(data);
+	}
+}
+
+/* Block 96 begins at 768; block 95 word 3 is the last legal word. */
+static void
+test_efuse_logical_overflow(void)
+{
+	static const uint8_t overflow[] = { 0x0f, 0xce, 0x12, 0x34 };
+	static const uint8_t top[] = { 0xef, 0xf7, 0x12, 0x34 };
+	uint8_t valid[12];
+	struct rtw8822c_efuse out = { 0 };
+
+	efuse_reject(overflow, sizeof(overflow), EOVERFLOW);
+	efuse_reject(top, sizeof(top), EOVERFLOW);
+	memcpy(valid, efuse_mac_record, 8);
+	valid[8] = 0xef;
+	valid[9] = 0xb7;
+	valid[10] = 0x12;
+	valid[11] = 0x34;
+	CHECK(rtw8822c_efuse_decode(valid, sizeof(valid), &out) == 0);
+	CHECK(out.logical[766] == 0x12 && out.logical[767] == 0x34);
+}
+
+/* No random-address fallback may turn invalid identity into success. */
+static void
+test_efuse_mac_invalid(void)
+{
+	uint8_t data[8];
+	static const uint8_t blank[] = { 0xff };
+
+	memcpy(data, efuse_mac_record, sizeof(data));
+	data[2] = 0x01;
+	efuse_reject(data, sizeof(data), EINVAL);
+	memset(data + 2, 0, 6);
+	efuse_reject(data, sizeof(data), EINVAL);
+	memset(data + 2, 0xff, 6);
+	efuse_reject(data, sizeof(data), EINVAL);
+	efuse_reject(blank, sizeof(blank), EINVAL);
+}
+
+/* Preserve exact bytes, sparse words, overwrite order, and erased values. */
+static void
+test_efuse_exact_map(void)
+{
+	static const uint8_t records[] = {
+		0x8f, 0x48, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55,
+		0x2e, 0x81, 0xf7,
+		0xef, 0x20, 0x34, 0xfe, 0x09, 0x08, 0x07, 0x06, 0x05, 0x04,
+		0x0f, 0x30, 0x01, 0x22, 0x03, 0x45, 0x06, 0x07, 0x08, 0xa9,
+		0x2f, 0x38, 0xa9, 0x31, 0x05, 'U', 'S', 0x66,
+		0x4f, 0x3e, 0x1a, 0x2b,
+		0x8f, 0x4b, 0xaa, 0xbb,
+		0xff, 0x0f, 0xce
+	};
+	struct rtw8822c_efuse out = { 0 };
+	uint8_t unaligned[sizeof(records) + 1];
+
+	memcpy(unaligned + 1, records, sizeof(records));
+	CHECK(rtw8822c_efuse_decode(unaligned + 1, sizeof(records), &out) == 0);
+	CHECK(memcmp(out.mac, "\x02\x11\x22\x33\xaa\xbb", 6) == 0);
+	CHECK(out.logical[0] == 0xff && out.logical[767] == 0xff);
+	CHECK(out.txpower[0][0] == 0x81 && out.txpower[0][1] == 0xf7);
+	CHECK(out.txpower[3][41] == 0xff);
+	CHECK(out.channel_plan == 0x34 && out.xtal == 0x7e);
+	CHECK(out.board_option == 0x22 && out.bt_setting == 0x45);
+	CHECK(out.rfe_option == 0x05 && out.power_track_type == 0x0a);
+	CHECK(out.country[0] == 'U' && out.country[1] == 'S');
+	CHECK(out.thermal[0] == 0x1a && out.thermal[1] == 0x2b);
+}
+
+/* The protected tail cannot complete a record or overwrite the map. */
+static void
+test_efuse_physical_boundary(void)
+{
+	uint8_t data[512];
+	struct rtw8822c_efuse out = { 0 };
+
+	memset(data, 0x1f, sizeof(data)); /* Normal header: no enabled words. */
+	memcpy(data, efuse_mac_record, 8);
+	data[385] = 0x0e;
+	data[386] = 0x12;
+	data[387] = 0x34;
+	data[388] = 0x0f;
+	data[389] = 0xce;
+	CHECK(rtw8822c_efuse_decode(data, sizeof(data), &out) == 0);
+	CHECK(out.logical[0] == 0x12 && out.logical[1] == 0x34);
+	data[385] = 0x1f;
+	data[386] = 0x0e;
+	efuse_reject(data, sizeof(data), EINVAL);
+	data[386] = 0x1f;
+	data[387] = 0x0f;
+	efuse_reject(data, sizeof(data), EINVAL);
+	data[386] = 0x0f;
+	data[387] = 0xff; /* Upstream extended termination rule. */
+	CHECK(rtw8822c_efuse_decode(data, sizeof(data), &out) == 0);
+}
+
+/* A-G fit the upstream eight-bit power mask; cut 7 must not skip it. */
+static void
+test_identity_unsupported_cut(void)
+{
+	struct rtw8822c_identity id = { 0x10ec, 0xc822, 0x08000000, 0 };
+	unsigned int cut;
+
+	for (cut = 0; cut <= 15; cut++) {
+		id.sys_cfg1 = 0x08000000 | (cut << 12);
+		CHECK(rtw8822c_validate_identity(&id) == (cut <= 6 ? 0 : ENOTSUP));
+	}
+	id.sys_cfg1 = 0xffffffff;
+	CHECK(rtw8822c_validate_identity(&id) == ENOTSUP);
+	id.sys_cfg1 = 0x08800000; /* Test silicon. */
+	CHECK(rtw8822c_validate_identity(&id) == ENOTSUP);
+	id.sys_cfg1 = 0x08001000;
+	id.product = 0xb822;
+	CHECK(rtw8822c_validate_identity(&id) == ENOTSUP);
+	id.product = 0xc82f; /* Valid upstream device, outside this profile. */
+	CHECK(rtw8822c_validate_identity(&id) == ENOTSUP);
+	id.product = 0xc822;
+	id.vendor = 0x1234;
+	CHECK(rtw8822c_validate_identity(&id) == ENOTSUP);
+	id.vendor = 0x10ec;
+	for (id.rfe_option = 0; id.rfe_option < 8; id.rfe_option++)
+		CHECK(rtw8822c_validate_identity(&id) ==
+		    (id.rfe_option <= 6 ? 0 : ENOTSUP));
+	id.rfe_option = 0xff;
+	CHECK(rtw8822c_validate_identity(&id) == ENOTSUP);
+	CHECK(rtw8822c_validate_identity(NULL) == EINVAL);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -231,6 +419,13 @@ main(int argc, char **argv)
 		    argv[0]);
 		return 2;
 	}
+	test_efuse_truncated_extended_header();
+	test_efuse_truncated_after_mac();
+	test_efuse_logical_overflow();
+	test_efuse_mac_invalid();
+	test_efuse_exact_map();
+	test_efuse_physical_boundary();
+	test_identity_unsupported_cut();
 	test_fw_short();
 	test_fw_section_overflow();
 	test_fw_unsupported_profile();
@@ -239,7 +434,7 @@ main(int argc, char **argv)
 		test_fw_fixture(argv[1], 202456, 1);
 		test_fw_fixture(argv[2], 150984, 0);
 	}
-	printf("rtw88 firmware: %u assertions, %u failures%s\n", assertions,
+	printf("rtw88 contracts: %u assertions, %u failures%s\n", assertions,
 	    failures, argc == 3 ? " (real C/B fixtures)" : " (synthetic)");
 	return failures != 0;
 }

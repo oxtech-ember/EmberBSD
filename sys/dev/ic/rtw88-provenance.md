@@ -1,9 +1,9 @@
 <!-- Origin: EmberBSD native RTL8822C format research, AI-assisted. -->
-# RTL8822C firmware container contract
+# RTL8822C portable format contracts
 
 This portable parser validates one normal-firmware load profile.
 It does not attach a device or enable a radio.
-It does not establish chip identity, firmware authenticity, checksum validity,
+The firmware parser does not establish chip identity, authenticity, checksum validity,
 or physical Wi-Fi operation. No kernel or firmware-loader integration exists yet.
 
 ## Driver reference and license
@@ -149,3 +149,141 @@ Use the host's equivalent base64 decoder on other systems.
 This is a host contract of real parser source. Kernel integration, silicon
 cut compatibility, firmware checksum hardware, PCI, DMA, VM execution,
 and physical WPA2 acceptance remain separate work.
+
+## Physical EFUSE and identity contract
+
+`rtw8822c_efuse_decode` consumes physical WIFI-bank bytes, not a logical map.
+It accepts a prefix of 1 through 512 bytes. The record region ends at
+byte 388, before the 124-byte protected tail. The logical map is 768 bytes.
+These sizes come from the complete `rtw8822c_hw_spec` initializer above.
+The parser initializes the logical map to `0xff` and publishes it only
+when every consumed record and the resulting PCIe MAC address are valid.
+It performs no MMIO and has no bus callback.
+
+The format follows the complete `rtw_dump_logical_efuse_map` in `efuse.c`.
+Normal headers encode block in bits 7:4 and disabled words in bits 3:0.
+A header whose low five bits equal `0x0f` has a second byte.
+Its block is `((second & 0xf0) >> 1) | ((first >> 5) & 7)`.
+The second low nibble disables words. Each enabled word supplies two bytes
+at `block * 8 + word * 2`. Later records overwrite earlier words.
+A first or extended second byte of `0xff` terminates the record stream.
+An exhausted prefix is valid only between records, never inside a word/header.
+Unlike the reference's permissive bounds, each read and write must fit
+fully before the physical/logical boundary. The protected tail is never parsed.
+
+The byte offsets follow the complete packed structures in `rtw8822c.h`
+and `main.h`, plus `rtw8822c_read_efuse` and `rtw8822ce_efuse_parsing`:
+
+| Logical offset | Decoded content |
+| --- | --- |
+| `0x10..0xb7` | Four 42-byte transmit-power calibration records, retained as raw bytes |
+| `0xb8`, `0xb9` | Channel plan and crystal cap (low seven bits) |
+| `0xc1`, `0xc3` | RF board option and Bluetooth setting |
+| `0xc8` | Power tracking type (high nibble) |
+| `0xca`, `0xcb..0xcc` | RFE option and country bytes |
+| `0xd0..0xd1` | Path A/B thermal calibration |
+| `0x120..0x125` | PCIe MAC address |
+
+Multicast, all-zero and all-ones MACs fail; no random address is substituted.
+The full logical map retains erased bytes and fields not yet interpreted.
+No calibration defaults, signed-nibble interpretation, regulatory decision,
+or protected-tail trim interpretation is performed. These remain PHY work.
+The masked crystal cap and tracking type follow upstream decoding;
+their unmasked values remain in the logical map.
+
+`rtw8822c_validate_identity` checks observed PCI IDs, a `REG_SYS_CFG1`
+(0x00f0) snapshot, and the decoded RFE option. This initial profile accepts
+only `10ec:c822`; upstream also lists `c82f`, outside this target scope.
+Register bits 15:12 encode the cut. Bit 23 selects test silicon when set.
+Test silicon is rejected because no test-silicon profile is prepared.
+RFE definitions 0 through 6 exist in `rtw8822c_rfe_defs`; other values fail.
+Neither the EFUSE `rtl_id` nor the common firmware signature identifies
+RTL8822C by itself. No inferred magic value is used as chip authentication.
+
+Cuts A through G (0 through 6) are accepted as **source-format compatibility**.
+The reference defines those encodings in `main.h`. Its `mac.h` maps each
+cut to `1 << (cut + 1)`, stored in an eight-bit mask by `rtw_pwr_seq_parser`.
+Encoding 7 or higher cannot select a step in that representation.
+Rejecting them prevents silent omission of all power steps.
+This is not proof that every listed cut exists or works on physical hardware.
+Board revision A4 is unrelated to this silicon cut field.
+The future hardware owner must handle failed register reads and apply these
+checks before configuration; a successful pure validator cannot prove a read.
+
+## Pinned configuration inventory
+
+The additional files below use the same FreeBSD revision and Realtek
+`GPL-2.0 OR BSD-3-Clause` license recorded above. The BSD option applies.
+The complete functions and structures relevant to EFUSE, identity,
+condition matching, RFE selection and power execution were inspected.
+Configuration arrays are inventoried, not imported or executed here.
+
+| Reference file | SHA256 |
+| --- | --- |
+| `efuse.c` | `2120e85547a1f622a5248eeeffd96e068d552d326809bc64488b8c84b21daff5` |
+| `efuse.h` | `9a7ca402cd372484c180d8b046da53e2d320e6bbad32243456dd6119b2a71f15` |
+| `rtw8822c.h` | `975cb88c627ebabb93729c6b5082a6274a9fe69a11094830db83e95486e93b18` |
+| `main.h` | `bab159780b164959b5bd981d24544507558ed816334d49fd1a31d4d17a69285e` |
+| `reg.h` | `c8246f9305539347fdb62b0294fe12ea24769cb3ad56c2b0235c4269a0307324` |
+| `mac.h` | `006c62b0d7b7a6dee95cc27172c0452bcfa6b05f80a1a91610c4750f42f4c91a` |
+| `phy.h` | `55388bdbec3b743553776282b918d2f6ffe06d4ac1d8849cf0ea0e22f19867e4` |
+| `phy.c` | `669d76c8acfc9f30418dbd119e777eae4404f6e3bb1198292aab536a3aa9e4ec` |
+| `rtw8822ce.c` | `4959bfa9e81fb55d2a554ec69ed93819ad700fcfee1bf1ea542625d1b38b7987` |
+| `rtw8822c_table.c` | `ec3f4d9eed016932b9100e4e2332c12f67bd0824a3f3b4b05cc515e7916a2247` |
+| `rtw8822c_table.h` | `9c52f30bfcf62815da793c19ce5cdb8e9acaa5d789c9929cf8a74178670b445c` |
+
+`rtw8822c_table.c` is 1,106,662 bytes and 46,105 lines.
+Import is deferred until the hardware executor exists, to keep the large
+immutable data separate from the portable decoder review.
+The cost is a later data import and independent execution-contract checks.
+No partial substitute or table from a different chip is provided.
+The complete table inventory at that exact revision is:
+
+| Table suffix after `rtw8822c_` | Source declaration/body lines | Purpose |
+| --- | --- | --- |
+| `mac` | 10-11 | Empty upstream MAC table; do not invent register writes |
+| `agc` | 15-1856 | Conditional AGC register/data pairs |
+| `bb` | 1860-3301 | Conditional baseband pairs and delay markers |
+| `bb_pg_type0` | 3305-3352 | Band/path/TX-count/address/mask/data power-by-rate rows |
+| `rf_a` | 3356-21352 | RF path A pairs |
+| `rf_b` | 21356-39820 | RF path B pairs |
+| `txpwr_lmt_type0` | 39824-42165 | Regulatory/band/bandwidth/rate/channel/signed power limit |
+| `txpwr_lmt_type5` | 42169-43535 | RFE 5 power limits |
+| `dpk_afe_no_dpk` | 43539-43575 | DPK AFE setup |
+| `dpk_afe_is_dpk` | 43579-43619 | DPK AFE setup |
+| `dpk_mac_bb` | 43623-43638 | DPK MAC/BB setup |
+| `array_mp_cal_init` | 43642-46103 | RF calibration initialization |
+
+The complete power transitions are in `rtw8822c.c`, lines 4584-4865:
+card-disabled to card-emulation, card-emulation to active, active to
+card-emulation, and card-emulation to card-disabled, in that order.
+Enable runs the first two; disable runs the last two.
+Each row carries offset, cut mask, interface mask, base, command, mask/value.
+Commands 0-4 mean read, write, poll, delay and end. Polling must be bounded.
+The upstream bound is 20,000 attempts at 50 microseconds, with one PCI retry.
+PCI selection uses interface bit 2; its PHY condition uses interface value 1.
+Those are distinct encodings and must not be interchanged.
+
+The future executor must preserve these semantics from `phy.c`/`main.h`:
+
+- Conditional pairs use bits 31/30 for positive/negative markers and
+  bits 29:28 for IF/ELIF/ELSE/ENDIF. Cut occupies bits 27:24, package
+  bits 15:12, interface bits 11:8, and RFE bits 7:0. Zero cut/package/
+  interface is a wildcard; RFE must match exactly for this chip.
+  Driver cut A maps to condition value 15. Package zero also maps to 15.
+- MAC writes are 8-bit; AGC/BB writes are 32-bit. BB pseudo-addresses
+  `0xfe..0xf9` mean 50 ms, 5 ms, 1 ms, 50-60 us, 5 us, 1 us delays.
+  RF `0xffe` means 50 ms; `0xfe` means 100-110 us. Other RF writes
+  use the 20-bit mask and a one-microsecond following delay.
+- `rtw8822c_hw_spec.rf_tbl` is ordered B then A. Each table carries its
+  own path in `RTW_DECL_TABLE_RF_RADIO`; preserve that explicit path.
+- `rtw_phy_load_tables` orders MAC, BB, AGC, optional BTG AGC, RFK, RF.
+  RFK includes register preparation in `rtw_load_rfk_table` before its table.
+  RFE 0-6 use power-by-rate type 0. Only RFE 5 uses power-limit type 5;
+  the other definitions use type 0. Power tracking tables and physical
+  protected-tail trim reads remain separate calibration dependencies.
+
+A future table import must preserve complete arrays, license notices,
+source revision, conditions, delays, limits and RF-path attribution.
+It requires bounded parsing tests and failure propagation before hardware
+use. This inventory is preparation, not acceptance of an executable PHY.
