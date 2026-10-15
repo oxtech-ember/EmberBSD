@@ -166,8 +166,15 @@ The shared graphics sender accepts only zero or `CMD_EXECUTED` after KICK transp
 Zero does not prove GPU completion. Both CCCB consumption and each UFO value remain required.
 Fresh health checks, finite waits, failure retention, and strict CLEANUP acknowledgements remain unchanged.
 Host contracts cover both return words for paired, fragment, and transfer senders.
-The native queue still rejects `COMBINED_GEOM_FRAG_KICK`; its validated transport needs separate integration.
-This source result-mask check does not establish a working paired firmware path.
+The adopted native queue accepts `COMBINED_GEOM_FRAG_KICK` after validating both 32-byte payloads.
+It preserves the single-KICK field checks and clears inactive cleanup entries and packet bytes.
+Malformed payloads cause no DMA synchronization, publication, barrier, or doorbell write.
+Named ABI assertions pin the geometry offset, fragment offset, and combined payload size.
+The legacy diagnostic entry point still rejects combined KICK.
+The queue retains its owner, firmware identity, consumed-entry checks, finite deadline, and failure state.
+Transport completion does not replace CCCB/UFO completion in the context sender.
+Host tests cover both return words, queue wrap, invalid halves, lost consumption, and firmware faults.
+These contracts do not establish physical paired graphics execution or install the missing GROW callbacks.
 
 The synchronous submit path cannot schedule an unpublished self or forward dependency.
 It returns `EDEADLK` when a remaining job can publish the currently missing sync point.

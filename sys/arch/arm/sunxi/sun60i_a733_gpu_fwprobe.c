@@ -43,6 +43,12 @@
 __CTASSERT(A733_MMUCACHE_FLAGS == 0x0400001f);
 __CTASSERT(A733_GPU_FWPROBE_LOGTYPE == ROGUE_FWIF_KCCB_CMD_LOGTYPE_UPDATE);
 __CTASSERT(A733_GPU_FWPROBE_MMUCACHE == ROGUE_FWIF_KCCB_CMD_MMUCACHE);
+__CTASSERT(sizeof(struct rogue_fwif_kccb_cmd_kick_data) == 32);
+__CTASSERT(sizeof(struct rogue_fwif_kccb_cmd_combined_geom_frag_kick_data) == 64);
+__CTASSERT(offsetof(struct rogue_fwif_kccb_cmd_combined_geom_frag_kick_data,
+    geom_cmd_kick_data) == 0);
+__CTASSERT(offsetof(struct rogue_fwif_kccb_cmd_combined_geom_frag_kick_data,
+    frag_cmd_kick_data) == 32);
 #define A733_EXPECTED_BVNC	UINT64_C(0x00240038006800b7)
 #define A733_HWR_BAD	(ROGUE_FWIF_HWR_RESET_IN_PROGRESS | \
     ROGUE_FWIF_HWR_GENERAL_LOCKUP | ROGUE_FWIF_HWR_DM_STALLING | \
@@ -555,7 +561,8 @@ fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
 	    cmd->cmd_type != A733_GPU_FWPROBE_MMUCACHE &&
 	    cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_KICK &&
 	    (!reusable || (cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_CLEANUP &&
-	    cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE)))
+	    cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE &&
+	    cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK)))
 		return EINVAL;
 	out->command = cmd->cmd_type;
 	if (reusable && cmd->cmd_type == A733_GPU_FWPROBE_MMUCACHE) {
@@ -606,8 +613,9 @@ fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
 				break;
 			}
 			if ((fwprobe_return_valid(out->command, out->after.rtn) ||
-			    (reusable && out->command ==
-			    ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE &&
+			    (reusable && (out->command ==
+			    ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE ||
+			    out->command == ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK) &&
 			    (out->after.rtn & ~ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED) == 0) ||
 			    (reusable && out->command == ROGUE_FWIF_KCCB_CMD_CLEANUP &&
 			    (out->after.rtn & ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED) != 0)) &&
@@ -714,7 +722,8 @@ fwqueue_return_valid(const struct sun60i_a733_gpu_fwprobe_result *r)
 		    r->error == 0) ||
 		    (r->after.rtn == (ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED |
 		    ROGUE_FWIF_KCCB_RTN_SLOT_CLEANUP_BUSY) && r->error == EBUSY);
-	if (r->command == ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE)
+	if (r->command == ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE ||
+	    r->command == ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK)
 		return r->error == 0 &&
 		    (r->after.rtn & ~ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED) == 0;
 	return r->error == 0 && fwprobe_return_valid(r->command, r->after.rtn);
@@ -842,15 +851,31 @@ sun60i_a733_gpu_fwqueue_attach(struct sun60i_a733_gpu_fwmem *mem,
 	return error;
 }
 
+/* Keep single and combined KICK payloads on the same bounded field copy. */
+static int
+fwqueue_copy_kick(const struct rogue_fwif_kccb_cmd_kick_data *kick,
+    struct rogue_fwif_kccb_cmd_kick_data *out)
+{
+	unsigned int i;
+
+	if (kick->context_fw_addr == 0 || kick->context_fw_addr % 4 != 0 ||
+	    kick->num_cleanup_ctl > ROGUE_FWIF_KCCB_CMD_KICK_DATA_MAX_NUM_CLEANUP_CTLS)
+		return EINVAL;
+	out->context_fw_addr = kick->context_fw_addr;
+	out->client_woff_update = kick->client_woff_update;
+	out->client_wrap_mask_update = kick->client_wrap_mask_update;
+	out->num_cleanup_ctl = kick->num_cleanup_ctl;
+	for (i = 0; i < kick->num_cleanup_ctl; i++)
+		out->cleanup_ctl_fw_addr[i] = kick->cleanup_ctl_fw_addr[i];
+	out->work_est_cmd_header_offset = kick->work_est_cmd_header_offset;
+	return 0;
+}
+
 /* Copy only supported fields. Never publish caller padding or inactive data. */
 static int
 fwqueue_command(const struct sun60i_a733_gpu_fwmem *mem,
     const struct rogue_fwif_kccb_cmd *cmd, struct rogue_fwif_kccb_cmd *built)
 {
-	const struct rogue_fwif_kccb_cmd_kick_data *kick;
-	struct rogue_fwif_kccb_cmd_kick_data *out;
-	unsigned int i;
-
 	if (cmd->kccb_flags != 0)
 		return EOPNOTSUPP;
 	memset(built, 0, sizeof(*built));
@@ -868,19 +893,23 @@ fwqueue_command(const struct sun60i_a733_gpu_fwmem *mem,
 		built->cmd_data.mmu_cache_data = cmd->cmd_data.mmu_cache_data;
 		return 0;
 	case ROGUE_FWIF_KCCB_CMD_KICK:
-		kick = &cmd->cmd_data.cmd_kick_data;
-		if (kick->context_fw_addr == 0 || kick->context_fw_addr % 4 != 0 ||
-		    kick->num_cleanup_ctl > ROGUE_FWIF_KCCB_CMD_KICK_DATA_MAX_NUM_CLEANUP_CTLS)
-			return EINVAL;
-		out = &built->cmd_data.cmd_kick_data;
-		out->context_fw_addr = kick->context_fw_addr;
-		out->client_woff_update = kick->client_woff_update;
-		out->client_wrap_mask_update = kick->client_wrap_mask_update;
-		out->num_cleanup_ctl = kick->num_cleanup_ctl;
-		for (i = 0; i < kick->num_cleanup_ctl; i++)
-			out->cleanup_ctl_fw_addr[i] = kick->cleanup_ctl_fw_addr[i];
-		out->work_est_cmd_header_offset = kick->work_est_cmd_header_offset;
-		return 0;
+		return fwqueue_copy_kick(&cmd->cmd_data.cmd_kick_data,
+		    &built->cmd_data.cmd_kick_data);
+	case ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK: {
+		const struct rogue_fwif_kccb_cmd_combined_geom_frag_kick_data *pair =
+		    &cmd->cmd_data.combined_geom_frag_cmd_kick_data;
+		struct rogue_fwif_kccb_cmd_combined_geom_frag_kick_data *out =
+		    &built->cmd_data.combined_geom_frag_cmd_kick_data;
+		int error;
+
+		/* Neither half is published until both payloads pass validation. */
+		error = fwqueue_copy_kick(&pair->geom_cmd_kick_data,
+		    &out->geom_cmd_kick_data);
+		if (error != 0)
+			return error;
+		return fwqueue_copy_kick(&pair->frag_cmd_kick_data,
+		    &out->frag_cmd_kick_data);
+	}
 	case ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE: {
 		const struct rogue_fwif_freelist_gs_data *grow =
 		    &cmd->cmd_data.free_list_gs_data;

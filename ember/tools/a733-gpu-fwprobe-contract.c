@@ -13,8 +13,12 @@
 #include "sun60i_a733_gpu_fwinit.h"
 #include "powervr/pvr_rogue_fwif.h"
 
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
+#ifndef __CTASSERT
 #define __CTASSERT(e) _Static_assert(e, #e)
+#endif
 #define roundup(x, y) ((((x) + (y) - 1) / (y)) * (y))
 #define BUS_DMASYNC_PREREAD 1
 #define BUS_DMASYNC_POSTREAD 2
@@ -1400,6 +1404,159 @@ event_tests(void)
 	printf("a733-gpu-fwqueue events: PASS %u checks\n", assertions - start);
 }
 
+static void
+next_combined(unsigned int geom_cleanups, unsigned int frag_cleanups)
+{
+	struct rogue_fwif_kccb_cmd_combined_geom_frag_kick_data *pair;
+	unsigned int half, i;
+
+	next_service(ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK);
+	pair = &test_command.cmd_data.combined_geom_frag_cmd_kick_data;
+	for (half = 0; half < 2; half++) {
+		struct rogue_fwif_kccb_cmd_kick_data *kick = half == 0 ?
+		    &pair->geom_cmd_kick_data : &pair->frag_cmd_kick_data;
+
+		kick->context_fw_addr = 0xc0200100 + half * 152;
+		kick->client_woff_update = 128 + half * 32;
+		kick->client_wrap_mask_update = 32767;
+		kick->num_cleanup_ctl = half == 0 ? geom_cleanups : frag_cleanups;
+		for (i = 0; i < kick->num_cleanup_ctl; i++)
+			kick->cleanup_ctl_fw_addr[i] = 0xc0300040 + half * 256 + i * 64;
+		kick->work_est_cmd_header_offset = half * 8;
+	}
+}
+
+static void
+combined_tests(void)
+{
+	struct rogue_fwif_kccb_cmd dirty, copy;
+	struct rogue_fwif_kccb_cmd_combined_geom_frag_kick_data *pair;
+	struct rogue_fwif_kccb_cmd_kick_data *kick;
+	struct sun60i_a733_gpu_fwprobe_result accepted;
+	struct sun60i_a733_gpu_fwprobe_observation observed;
+	unsigned int start = assertions, response_word, i, half, fault, n;
+
+	/* Extracting the copier must preserve ordinary KICK encoding. */
+	for (response_word = 0; response_word <= 1; response_word++) {
+		for (i = 0; i <= 3; i++) {
+			prepare_service(); next_service(ROGUE_FWIF_KCCB_CMD_KICK);
+			response = response_word;
+			kick = &test_command.cmd_data.cmd_kick_data;
+			kick->client_woff_update = 128;
+			kick->client_wrap_mask_update = 32767;
+			kick->work_est_cmd_header_offset = 16;
+			kick->num_cleanup_ctl = i;
+			for (n = 0; n < i; n++)
+				kick->cleanup_ctl_fw_addr[n] = 0xc0300040 + n * 64;
+			dirty = test_command;
+			for (n = i; n < 3; n++)
+				dirty.cmd_data.cmd_kick_data.cleanup_ctl_fw_addr[n] = UINT32_MAX;
+			memset((uint8_t *)&dirty + 40, 0xa5, sizeof(dirty) - 40);
+			copy = dirty;
+			CHECK(sun60i_a733_gpu_fwqueue_cmd(&owner, 0x12340000,
+			    &owner, &booted, &service, &dirty, test_log_type, &result) == 0);
+			CHECK(!service.failed && result.after.rtn == response_word);
+			CHECK(memcmp(&dirty, &copy, sizeof(dirty)) == 0);
+		}
+	}
+	for (response_word = 0; response_word <= 1; response_word++) {
+		prepare_service();
+		/* Cross a complete KCCB revolution without resetting its owner. */
+		for (i = 1; i <= 140; i++) {
+			next_combined(i % 4, (i / 4) % 4);
+			response = response_word;
+			dirty = test_command;
+			pair = &dirty.cmd_data.combined_geom_frag_cmd_kick_data;
+			for (half = 0; half < 2; half++) {
+				kick = half == 0 ? &pair->geom_cmd_kick_data : &pair->frag_cmd_kick_data;
+				for (n = kick->num_cleanup_ctl; n < 3; n++)
+					kick->cleanup_ctl_fw_addr[n] = UINT32_C(0xa5a5a5a5);
+			}
+			/* Eight header bytes plus two independently checked 32-byte halves. */
+			memset((uint8_t *)&dirty + 72, 0xa5, sizeof(dirty) - 72);
+			copy = dirty;
+			CHECK(sun60i_a733_gpu_fwqueue_cmd(&owner, 0x12340000,
+			    &owner, &booted, &service, &dirty, test_log_type, &result) == 0);
+			CHECK(memcmp(&dirty, &copy, sizeof(dirty)) == 0);
+			CHECK(!service.failed && result.after.rtn == response_word);
+			CHECK(result.slot == (i & 127) && result.after.read_offset == ((i + 1) & 127));
+			memset(&observed, 0xa5, sizeof(observed));
+			CHECK(sun60i_a733_gpu_fwqueue_observe(&owner, &booted, &service, &observed) == 0);
+			CHECK(observed.valid && observed.error == 0 &&
+			    observed.state.rtn == response_word);
+		}
+		/* The saved combined result must authorize a normal successor. */
+		next_service(ROGUE_FWIF_KCCB_CMD_KICK);
+		CHECK(run_service() == 0 && !service.failed);
+	}
+	for (half = 0; half < 2; half++) {
+		for (fault = 0; fault < 4; fault++) {
+			uint32_t old_read, old_write;
+
+			prepare_service();
+			next_combined(1, 1);
+			dirty = test_command;
+			pair = &dirty.cmd_data.combined_geom_frag_cmd_kick_data;
+			kick = half == 0 ? &pair->geom_cmd_kick_data : &pair->frag_cmd_kick_data;
+			if (fault == 0) kick->context_fw_addr = 0;
+			if (fault == 1) kick->context_fw_addr++;
+			if (fault == 2) kick->num_cleanup_ctl = 4;
+			if (fault == 3) kick->num_cleanup_ctl = UINT32_MAX;
+			accepted = service.last;
+			old_read = get32(cpu[3]);
+			old_write = get32(cpu[3] + 4);
+			CHECK(sun60i_a733_gpu_fwqueue_cmd(&owner, 0x12340000,
+			    &owner, &booted, &service, &dirty, test_log_type, &result) == EINVAL);
+			CHECK(!result.attempted && !result.published && !service.failed);
+			CHECK(syncs == 0 && writes == 0 && barriers == 0);
+			CHECK(get32(cpu[3]) == old_read && get32(cpu[3] + 4) == old_write);
+			CHECK(memcmp(&accepted, &service.last, sizeof(accepted)) == 0);
+			CHECK(run_service() == 0 && !service.failed);
+		}
+	}
+	prepare_service(); next_combined(0, 0);
+	dirty = test_command; dirty.kccb_flags = 1;
+	CHECK(sun60i_a733_gpu_fwqueue_cmd(&owner, 0x12340000, &owner,
+	    &booted, &service, &dirty, test_log_type, &result) == EOPNOTSUPP);
+	CHECK(syncs == 0 && writes == 0 && barriers == 0 && !service.failed);
+	dirty.kccb_flags = 0; dirty.cmd_type = UINT32_MAX;
+	CHECK(sun60i_a733_gpu_fwqueue_cmd(&owner, 0x12340000, &owner,
+	    &booted, &service, &dirty, test_log_type, &result) == EOPNOTSUPP);
+	CHECK(syncs == 0 && writes == 0 && barriers == 0 && !service.failed);
+
+	for (response_word = 0; response_word <= 1; response_word++) {
+		for (fault = 0; fault < 4; fault++) {
+			prepare_service(); next_combined(1, 1); response = response_word;
+			if (fault == 0) response_without_read = true;
+			if (fault == 1) complete_at = 0;
+			if (fault == 2) firmware_failure = 7;
+			if (fault == 3) { poke_fault = true; fault_after_execution = true; }
+			accepted = service.last;
+			CHECK(run_service() == (fault < 2 ? ETIMEDOUT : fault == 2 ? EIO : EFAULT));
+			CHECK(result.published && memcmp(&accepted, &service.last, sizeof(accepted)) == 0);
+			service_frozen();
+		}
+	}
+	for (i = 1; i < 32; i++) {
+		prepare_service(); next_combined(1, 1);
+		response = UINT32_C(1) << i;
+		accepted = service.last;
+		CHECK(run_service() == EPROTO && result.published);
+		CHECK(memcmp(&accepted, &service.last, sizeof(accepted)) == 0);
+		service_frozen();
+	}
+	prepare_service(); next_combined(1, 1); response = 3;
+	CHECK(run_service() == EPROTO); service_frozen();
+	/* The diagnostic entry point must not acquire this adopted queue feature. */
+	prepare_service(); next_service(ROGUE_FWIF_KCCB_CMD_MMUCACHE);
+	CHECK(run_service() == 0);
+	next_combined(1, 1);
+	CHECK(sun60i_a733_gpu_fwprobe_cmd(&owner, 0x12340000, &owner,
+	    &booted, &previous, &test_command, test_slot, test_log_type, &result) == EINVAL);
+	CHECK(!result.attempted && syncs == 0 && writes == 0 && barriers == 0);
+	printf("a733-gpu-fwqueue combined KICK: PASS %u checks\n", assertions - start);
+}
+
 int
 main(void)
 {
@@ -1423,6 +1580,7 @@ main(void)
 		kick_consumption_tests();
 	}
 	service_tests();
+	combined_tests();
 	event_tests();
 	/* No real device ran. The test alone owns final reclamation. */
 	for (unsigned int i = 0; i < 5; i++) {

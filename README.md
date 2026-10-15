@@ -754,7 +754,8 @@ on every board in the hardware catalog.
   HWRT handles and paired DRM submissions now exist in this branch.
   Exact intra-pair sync dependencies use firmware ordering in host contracts.
   External waits retain their error paths and bounded forward-dependency checks.
-  GROW callback registration and combined-KICK transport remain incomplete.
+  Combined-KICK queue transport has actual-source validation and failure tests.
+  GROW callback registration remains incomplete.
   The free-list fixture keeps backing buffers alive through its page-count checks.
   These graphics branch changes have no physical acceptance.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
