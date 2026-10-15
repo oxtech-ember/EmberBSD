@@ -1,11 +1,23 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/* Origin: EmberBSD tests of the production GPU render attach handlers. */
+/* Origin: EmberBSD; AI-assisted production GPU render attach tests. */
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "sun60i_a733_gpu_fwimage.h"
+#include "sun60i_a733_gpu_fwinit.h"
+#include "pvr_query.h"
+typedef uint64_t bus_addr_t;
+typedef void *bus_dma_tag_t;
+typedef void *bus_dmamap_t;
+typedef struct { uint64_t ds_addr; size_t ds_len; } bus_dma_segment_t;
+#include "fwmem-body.h"
+#ifndef __arraycount
+#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 
 #define A733_GPU_EXPECTED UINT64_C(0x00240038006800b7)
 typedef struct { bool held; } kmutex_t;
@@ -16,12 +28,27 @@ struct sun60i_gpu_softc {
 	bool sc_render_pending, sc_have_id;
 	uint64_t sc_bvnc;
 	void *sc_dev, *sc_dmat;
+	struct sun60i_a733_gpu_fwmem *sc_fw_memory;
 };
 struct sysctlnode { void *sysctl_data; };
 #define SYSCTLFN_ARGS const void *newp, const struct sysctlnode *rnode
 #define SYSCTLFN_CALL(node) newp, (node)
 
 static struct sun60i_gpu_softc *sun60i_gpu_instance;
+static const struct pvr_query_input expected_input = {
+	.bvnc = A733_GPU_EXPECTED, .fw_major = 1, .fw_minor = 1,
+	.fw_build = 6976702, .brn_mask = 0x201, .ern_mask = 0xf5,
+	.feature = { 19456, 12, 16, 16, 2, 1, 6, 0, 0 }
+};
+static const enum sun60i_a733_gpu_fw_feature required_features[] = {
+	A733_GPU_FW_FEATURE_COMMON_STORE_SIZE_IN_DWORDS,
+	A733_GPU_FW_FEATURE_MAX_PARTITIONS,
+	A733_GPU_FW_FEATURE_TILE_SIZE_X,
+	A733_GPU_FW_FEATURE_TILE_SIZE_Y,
+	A733_GPU_FW_FEATURE_USC_MIN_OUTPUT_REGISTERS_PER_PIX,
+	A733_GPU_FW_FEATURE_NUM_CLUSTERS,
+	A733_GPU_FW_FEATURE_ISP_MAX_TILES_IN_FLIGHT,
+};
 static struct drm_device rendered = { 0x733 };
 static bool tree_held, callback_reentry;
 static unsigned int checks, calls, lookups, unlocks, relocks;
@@ -90,7 +117,7 @@ sysctl_lookup(SYSCTLFN_ARGS)
 
 static int
 pvr_render_attach(void *dev, void *dmat, uint64_t bvnc,
-    struct drm_device **owner)
+    const struct pvr_query_input *input, struct drm_device **owner)
 {
 	struct sun60i_gpu_softc *sc = sun60i_gpu_instance;
 	struct sysctlnode node = { 0 };
@@ -101,6 +128,14 @@ pvr_render_attach(void *dev, void *dmat, uint64_t bvnc,
 	CHECK(sc->sc_render_pending && sc->sc_render_device == NULL);
 	CHECK(dev == sc->sc_dev && dmat == sc->sc_dmat);
 	CHECK(bvnc == A733_GPU_EXPECTED && owner != NULL && *owner == NULL);
+	CHECK(input != NULL && input->bvnc == expected_input.bvnc);
+	CHECK(input->fw_major == expected_input.fw_major &&
+	    input->fw_minor == expected_input.fw_minor &&
+	    input->fw_build == expected_input.fw_build);
+	CHECK(input->brn_mask == expected_input.brn_mask &&
+	    input->ern_mask == expected_input.ern_mask);
+	CHECK(memcmp(input->feature, expected_input.feature,
+	    sizeof(input->feature)) == 0);
 	if (callback_reentry) {
 		/* Simulate another sysctl writer while registration is in progress. */
 		tree_held = true;
@@ -138,6 +173,8 @@ int
 main(void)
 {
 	struct sun60i_gpu_softc sc;
+	struct sun60i_a733_gpu_fwmem memory = { 0 };
+	struct sun60i_a733_gpu_fwinfo *info = &memory.image.info;
 	unsigned int saved_calls, saved_lookups;
 	int value = 1;
 
@@ -151,6 +188,29 @@ main(void)
 	sc.sc_have_id = true;
 	CHECK(invoke(&value) == ENODEV && calls == 0);
 	sc.sc_bvnc = A733_GPU_EXPECTED;
+	CHECK(invoke(&value) == EBUSY && calls == 0);
+	sc.sc_fw_memory = &memory;
+	info->bvnc = expected_input.bvnc;
+	info->version_major = expected_input.fw_major;
+	info->version_minor = expected_input.fw_minor;
+	info->version_build = expected_input.fw_build;
+	info->brn_mask = expected_input.brn_mask;
+	info->ern_mask = expected_input.ern_mask;
+	for (size_t i = 0; i < __arraycount(required_features); i++) {
+		unsigned int f = required_features[i];
+
+		info->feature_mask[f / 64] |= UINT64_C(1) << (f % 64);
+		info->feature_value[f] = expected_input.feature[i];
+	}
+	/* Missing mandatory metadata must not call or reserve DRM publication. */
+	for (size_t i = 0; i < __arraycount(required_features); i++) {
+		unsigned int f = required_features[i];
+
+		info->feature_mask[f / 64] &= ~(UINT64_C(1) << (f % 64));
+		CHECK(invoke(&value) == ENOENT && calls == 0);
+		CHECK(!sc.sc_render_pending && sc.sc_render_device == NULL);
+		info->feature_mask[f / 64] |= UINT64_C(1) << (f % 64);
+	}
 	for (value = -1; value <= 2; value++) {
 		if (value == 1)
 			continue;

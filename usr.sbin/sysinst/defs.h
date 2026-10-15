@@ -1035,8 +1035,8 @@ int move_aout_libs(void);
 void	get_kb_encoding(void);
 void	save_kb_encoding(void);
 #else
-#define	get_kb_encoding()
-#define	save_kb_encoding()
+#define	get_kb_encoding()	((void)0)
+#define	save_kb_encoding()	((void)0)
 #endif
 
 /* from configmenu.c */

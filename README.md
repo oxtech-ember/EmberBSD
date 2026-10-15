@@ -39,6 +39,7 @@ are maintained in the related repositories below.
 - For installation screens and compatible set sources, see
   [text installer](ember/boot/text-installer.md) and [installer identity](ember/boot/installer-branding.md).
   The amd64 keyboard wizard reviews automatic GPT, profiles and settings before writing.
+  Keyboard-hook contracts cover builds with and without wscons keyboard support.
   Normal startup is quiet, with a separate diagnostic choice and a 10-second menu.
   Console login uses the EmberBSD release greeting; full attribution stays in /etc/release.
   A fresh amd64 UEFI VM passes complete USB installation with XFCE and its Wi-Fi manager.
@@ -227,9 +228,7 @@ on every board in the hardware catalog.
   translation ATE RMSE across two controlled runs and fixed-scale alignment. This enables
   recorded-data navigation experiments; live cameras, IMU fusion, boards,
   GUI, sustained operation and real-time performance remain unverified.
-- **Further navigation and motion sources:** Ports prepares
-  [GTSAM](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/gtsam),
-  [PCL](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/pcl),
+- **Navigation and motion software:** Ports prepares
   [OpenVINS](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/openvins)
   and [RTAB-Map](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/rtabmap)
   with common current dependencies. [Ruckig](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ruckig)
@@ -249,7 +248,14 @@ on every board in the hardware catalog.
   solutions, covariance, invalid graphs, eleven upstream programs and package
   removal/reinstallation. The
   [CSV graph example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/gtsam-graph)
-  uses the shared library. Other navigation additions still need target acceptance.
+  uses the shared library. [PCL 1.15.1](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/pcl)
+  also has a GCC16 cross package with common Eigen 5.0.1 and Boost 1.92.0.
+  Installed EmberBSD AArch64 QEMU checks pass known voxel centroids, ICP
+  rigid motion, independent CSV, twelve upstream programs and all eight
+  package lifecycles. The [point-cloud example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/pcl-cloud)
+  uses the shared libraries. These synthetic clouds do not establish camera,
+  LiDAR, calibration, physical-board or real-time behavior. Other navigation
+  additions still need target acceptance.
 - **Ethernet SDR development:** the [Ports SDR profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/sdr)
   combines SoapySDR, libiio 1.0.0 with its official compatibility layer,
   AD9361/Pluto support and current libxml2. Synthetic IQ and loopback RX
@@ -703,7 +709,9 @@ on every board in the hardware catalog.
   EGL/pixel cycles and 38 upstream invocations, with recorded internal skips.
   The [experimental execution path](ember/boot/a733-pvr-execution.md) now adds
   firmware VM publication, contexts, free lists, and synchronous compute submission.
-  Its production-source contracts pass. Physical Vulkan execution, graphics jobs,
+  Its production-source contracts pass. Host fixtures use the current bridge and
+  metadata interfaces. They reject diagnostics after bridge adoption and render
+  registration with incomplete metadata. Physical Vulkan execution, graphics jobs,
   Zink, display output, and accelerated Plasma remain unaccepted.
   Repeated submission within one boot and long-duration GPU stability remain
   untested.

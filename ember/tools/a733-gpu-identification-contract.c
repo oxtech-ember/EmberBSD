@@ -1,4 +1,4 @@
-/* Origin: EmberBSD; causal checks of the production GPU identity consumer. */
+/* Origin: EmberBSD; AI-assisted production GPU identity consumer checks. */
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <assert.h>
 #include <errno.h>
@@ -15,6 +15,7 @@
 #include "sun60i_a733_gpu_fwinfo.h"
 
 typedef unsigned int u_int;
+typedef int kmutex_t;
 typedef struct device *device_t;
 typedef void *cfdata_t;
 typedef void *bus_space_tag_t;
@@ -33,6 +34,9 @@ typedef struct { bus_addr_t ds_addr; bus_size_t ds_len; } bus_dma_segment_t;
 #include "sun60i_a733_gpu_fwcompute.h"
 #include "sun60i_a733_gpu_fwcompute_file.h"
 #include "sun60i_a733_gpu_fwheap.h"
+#include "sun60i_a733_gpu_fwservice.h"
+#include "pvr-backend.h-body.h"
+#include "sun60i_a733_gpu_fwbridge.h"
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
@@ -475,6 +479,7 @@ struct sysctlnode { void *sysctl_data; };
 static int sysctl_createv_stub(void *first, ...) { (void)first; return 0; }
 #define sysctl_createv(...) sysctl_createv_stub(__VA_ARGS__)
 
+typedef int32_t __s32;
 typedef uint16_t __u16;
 typedef uint32_t __u32;
 typedef uint64_t __u64;
@@ -490,6 +495,26 @@ pvr_render_attach(device_t dev, bus_dma_tag_t dmat, uint64_t bvnc,
 
 	abort();
 }
+/* The real bridge lifecycle runs in a733-gpu-fwbridge-contract.sh. */
+int
+sun60i_a733_gpu_fwbridge_prepare(struct sun60i_a733_gpu_fwbridge *bridge,
+    kmutex_t *lock, bus_space_tag_t bst, bus_space_handle_t bsh,
+    struct sun60i_a733_gpu_fwmem *memory,
+    const struct sun60i_a733_gpu_fwboot_result *boot,
+    const struct sun60i_a733_gpu_fwprobe_result *previous)
+{
+
+	abort();
+}
+
+int
+sun60i_a733_gpu_fwbridge_publish(struct sun60i_a733_gpu_fwbridge *bridge,
+    struct drm_device *dev)
+{
+
+	abort();
+}
+
 static void sysctl_unlock(void) { abort(); }
 static void sysctl_relock(void) { abort(); }
 #define SYSCTL_DESCR(s) (s)
@@ -502,7 +527,6 @@ static void sysctl_relock(void) { abort(); }
 #define CTL_HW 16
 #define CTL_CREATE 32
 #define CTL_EOL -1
-typedef int kmutex_t;
 #define MUTEX_DEFAULT 0
 #define IPL_NONE 0
 static void mutex_init(kmutex_t *m, int type, int ipl) { *m = 1; }
@@ -957,16 +981,15 @@ void
 sun60i_a733_gpu_fwheap_observe(const struct sun60i_a733_gpu_fwheap *heap,
     uint32_t *read_offset, uint32_t *write_offset, uint32_t *timeline)
 {
+	bool completed = compute_completion_mode != 0 && compute_completion_mode != 4;
+	uint32_t offset = completed ? A733_GPU_FWCOMPUTE_USED_BYTES : 0;
+
 	if (read_offset != NULL)
-		*read_offset = 0;
+		*read_offset = offset;
 	if (write_offset != NULL)
-		*write_offset = 0;
+		*write_offset = offset;
 	if (timeline != NULL)
-		*timeline = 0;
-	if (compute_completion_mode != 0 && compute_completion_mode != 4) {
-		*read_offset = *write_offset = A733_GPU_FWCOMPUTE_USED_BYTES;
-		*timeline = 1;
-	}
+		*timeline = completed;
 }
 
 void
@@ -1440,6 +1463,55 @@ test_domain_request(void)
 	CHECK(sun60i_gpu_identify(&sc) == ETIMEDOUT);
 	CHECK(requests == 0 && maps == 0 && !sc.sc_have_id);
 	printf("PASS: %u experimental CORE request consumer checks\n",
+	    checks - start);
+}
+
+/* The heap boundary must preserve the production optional-output contract. */
+static void
+test_fwheap_optional_outputs(void)
+{
+	unsigned int start = checks;
+
+	for (unsigned int mode = 0; mode < 5; mode++) {
+		for (unsigned int mask = 0; mask < 8; mask++) {
+			uint32_t rd = UINT32_MAX, wr = UINT32_MAX, timeline = UINT32_MAX;
+			bool completed = mode != 0 && mode != 4;
+			uint32_t offset = completed ? A733_GPU_FWCOMPUTE_USED_BYTES : 0;
+
+			compute_completion_mode = mode;
+			sun60i_a733_gpu_fwheap_observe(NULL, mask & 1 ? &rd : NULL,
+			    mask & 2 ? &wr : NULL, mask & 4 ? &timeline : NULL);
+			CHECK(rd == (mask & 1 ? offset : UINT32_MAX));
+			CHECK(wr == (mask & 2 ? offset : UINT32_MAX));
+			CHECK(timeline == (mask & 4 ? (uint32_t)completed : UINT32_MAX));
+		}
+	}
+	compute_completion_mode = 0;
+	printf("PASS: %u firmware heap fixture optional-output checks\n",
+	    checks - start);
+}
+
+/* An adopted bridge must make every diagnostic stage unreachable. */
+static void
+test_fwbridge_diagnostic_gate(void)
+{
+	unsigned int start = checks;
+
+	for (unsigned int failed = 0; failed < 2; failed++) {
+		for (u_int stage = 0; stage <= A733_GPU_STAGE_FWKICK + 1; stage++) {
+			reset();
+			sc.sc_fwbridge.attempted = true;
+			sc.sc_fwbridge.service.queue.failed = failed;
+			sun60i_gpu_run_stage(&sc, stage);
+			CHECK(sc.sc_run_result == EBUSY && sc.sc_run_stage == 0);
+			CHECK(sc.sc_run_pass && !sc.sc_run_lock);
+			CHECK(nevents == 0 && maps == 0 && full_maps == 0);
+			CHECK(sun60i_gpu_exec_attach(&sc) == (failed ? EIO : EBUSY));
+			CHECK(!sc.sc_run_lock && nevents == 0 && full_maps == 0);
+		}
+	}
+	reset();
+	printf("PASS: %u firmware bridge diagnostic exclusion checks\n",
 	    checks - start);
 }
 
@@ -3291,6 +3363,8 @@ main(void)
 
 	test_experimental_prepare();
 	test_domain_request();
+	test_fwheap_optional_outputs();
+	test_fwbridge_diagnostic_gate();
 	test_runtime_stages();
 	test_fwinfo_stage();
 	test_fwmem_stage();
