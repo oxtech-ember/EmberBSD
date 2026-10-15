@@ -57,6 +57,8 @@ The driver acquires context references and prepares timeline storage before subm
 Each job waits at most ten seconds for dependencies.
 The driver then publishes pending page-table changes and synchronizes mapped buffers.
 It submits a compute command followed by a real firmware UFO update.
+KICK accepts a zero return word or `CMD_EXECUTED`; unknown return bits fail.
+Neither word proves job completion. CLEANUP keeps its synchronous return-word check.
 Success requires queue consumption, the expected UFO value, and fresh firmware health.
 Only that success publishes a completed binary fence or timeline point.
 A failure leaves the current and later signal operations unsignaled.
@@ -87,6 +89,8 @@ done
 
 The checks cover actual encoders, queue wrapping, completion order, DMA ownership,
 allocation failures, interrupted waits, handle removal, and bounded cleanup.
+KICK checks cover both return words, missing UFO or CCCB completion, fresh health failure,
+and invalid return bits. A zero CLEANUP return word remains an error.
 They do not establish physical DMA behavior or sustained hardware stability.
 GCC16 and Clang target analysis and Cppcheck supplement these executable checks.
 Recorded fixture path-budget limits and inherited header diagnostics remain separate.
