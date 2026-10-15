@@ -37,9 +37,11 @@ __KERNEL_RCSID(0, "$NetBSD: wsdisplay_compat_usl.c,v 1.54 2021/06/01 23:28:07 ri
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/callout.h>
+#include <sys/cpu.h>
 #include <sys/ioctl.h>
 #include <sys/kernel.h>
 #include <sys/kmem.h>
+#include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/signalvar.h>
 #include <sys/errno.h>
@@ -59,19 +61,30 @@ struct usl_syncdata {
 	int s_flags;
 #define SF_DETACHPENDING 1
 #define SF_ATTACHPENDING 2
+#define SF_DYING 4
+#define SF_NOTIFY 8
+#define SF_PENDING (SF_DETACHPENDING | SF_ATTACHPENDING)
+	kmutex_t s_lock;
+	u_int s_refs;
+	u_int s_generation;
+	int s_deadline;
 	int s_acqsig, s_relsig;
 	int s_frsig; /* unused */
 	void (*s_callback)(void *, int, int);
 	void *s_cbarg;
 	callout_t s_attach_ch;
 	callout_t s_detach_ch;
+	callout_t s_notify_ch;
+	callout_t s_retire_ch;
 };
 
 static int usl_sync_init(struct wsscreen *, struct usl_syncdata **,
 			      struct proc *, int, int, int);
 static void usl_sync_done(struct usl_syncdata *);
 static int usl_sync_check(void *);
-static int usl_sync_check_sig(struct usl_syncdata *, int, int);
+static int usl_sync_check_sig(struct usl_syncdata *, int, int, u_int);
+static void usl_sync_notify(void *);
+static void usl_sync_retire(void *);
 static struct usl_syncdata *usl_sync_get(struct wsscreen *);
 
 static int usl_detachproc(void *, int, void (*)(void *, int, int), void *);
@@ -101,12 +114,20 @@ usl_sync_init(struct wsscreen *scr, struct usl_syncdata **sdp,
 	struct usl_syncdata *sd;
 	int res;
 
+	/* kpsignal2 requires a valid signal; zero requests no notification. */
+	if (acqsig < 0 || acqsig >= NSIG || relsig < 0 || relsig >= NSIG)
+		return EINVAL;
 	sd = kmem_intr_alloc(sizeof(*sd), KM_SLEEP);
 
 	sd->s_scr = scr;
 	sd->s_proc = p;
 	sd->s_pid = p->p_pid;
 	sd->s_flags = 0;
+	sd->s_refs = 0;
+	sd->s_generation = 0;
+	sd->s_callback = NULL;
+	sd->s_cbarg = NULL;
+	mutex_init(&sd->s_lock, MUTEX_DEFAULT, IPL_TTY);
 	sd->s_acqsig = acqsig;
 	sd->s_relsig = relsig;
 	sd->s_frsig = frsig;
@@ -114,8 +135,18 @@ usl_sync_init(struct wsscreen *scr, struct usl_syncdata **sdp,
 	callout_setfunc(&sd->s_attach_ch, usl_attachtimeout, sd);
 	callout_init(&sd->s_detach_ch, 0);
 	callout_setfunc(&sd->s_detach_ch, usl_detachtimeout, sd);
+	/* Non-MPSAFE callouts are bound to CPU 0 and acquire the BKL. */
+	callout_init(&sd->s_notify_ch, 0);
+	callout_setfunc(&sd->s_notify_ch, usl_sync_notify, sd);
+	callout_init(&sd->s_retire_ch, 0);
+	callout_setfunc(&sd->s_retire_ch, usl_sync_retire, sd);
 	res = wsscreen_attach_sync(scr, &usl_syncops, sd);
 	if (res) {
+		callout_destroy(&sd->s_attach_ch);
+		callout_destroy(&sd->s_detach_ch);
+		callout_destroy(&sd->s_notify_ch);
+		callout_destroy(&sd->s_retire_ch);
+		mutex_destroy(&sd->s_lock);
 		kmem_intr_free(sd, sizeof(*sd));
 		return res;
 	}
@@ -123,38 +154,139 @@ usl_sync_init(struct wsscreen *scr, struct usl_syncdata **sdp,
 	return 0;
 }
 
+/*
+ * wsdisplay sync entry points use the BKL. Pin before the first operation
+ * that can drop it or invoke a reentrant callback. The spin lock also
+ * serializes state with a keyboard interrupt on the BKL owner CPU.
+ */
+static void
+usl_sync_hold(struct usl_syncdata *sd)
+{
+	mutex_spin_enter(&sd->s_lock);
+	sd->s_refs++;
+	mutex_spin_exit(&sd->s_lock);
+}
+
+static void
+usl_sync_rele(struct usl_syncdata *sd)
+{
+	mutex_spin_enter(&sd->s_lock);
+	KASSERT(sd->s_refs != 0);
+	sd->s_refs--;
+	mutex_spin_exit(&sd->s_lock);
+}
+
 static void
 usl_sync_done(struct usl_syncdata *sd)
 {
-	if (sd->s_flags & SF_DETACHPENDING) {
-		callout_stop(&sd->s_detach_ch);
-		(*sd->s_callback)(sd->s_cbarg, 0, 0);
+	void (*callback)(void *, int, int);
+	void *cbarg;
+	int error;
+
+	usl_sync_hold(sd);
+	mutex_spin_enter(&sd->s_lock);
+	if (sd->s_flags & SF_DYING) {
+		mutex_spin_exit(&sd->s_lock);
+		usl_sync_rele(sd);
+		return;
 	}
-	if (sd->s_flags & SF_ATTACHPENDING) {
-		callout_stop(&sd->s_attach_ch);
-		(*sd->s_callback)(sd->s_cbarg, ENXIO, 0);
-	}
+	error = (sd->s_flags & SF_ATTACHPENDING) ? ENXIO : 0;
+	callback = sd->s_callback;
+	cbarg = sd->s_cbarg;
+	sd->s_callback = NULL;
+	sd->s_flags = SF_DYING;
+	sd->s_generation++;
+	callout_stop(&sd->s_notify_ch);
+	callout_stop(&sd->s_attach_ch);
+	callout_stop(&sd->s_detach_ch);
+	/* Unpublish before a callback can install another owner. */
 	wsscreen_detach_sync(sd->s_scr);
+	callout_schedule(&sd->s_retire_ch, 1);
+	mutex_spin_exit(&sd->s_lock);
+	if (callback != NULL)
+		(*callback)(cbarg, error, 0);
+	usl_sync_rele(sd);
+}
+
+static void
+usl_sync_retire(void *arg)
+{
+	struct usl_syncdata *sd = arg;
+
+	mutex_spin_enter(&sd->s_lock);
+	KASSERT(sd->s_flags & SF_DYING);
+	if (sd->s_refs != 0) {
+		callout_schedule(&sd->s_retire_ch, 1);
+		mutex_spin_exit(&sd->s_lock);
+		return;
+	}
+	mutex_spin_exit(&sd->s_lock);
+	/*
+	 * DYING is unpublished and no operation remains pinned. All callouts
+	 * use the same CPU 0 softclock LWP, so another invocation cannot be
+	 * suspended before its initial pin while this retirement runs.
+	 */
+	/* Stop does not drain an invocation that is waiting for the BKL. */
+	callout_halt(&sd->s_notify_ch, NULL);
+	callout_halt(&sd->s_attach_ch, NULL);
+	callout_halt(&sd->s_detach_ch, NULL);
+	callout_destroy(&sd->s_notify_ch);
+	callout_destroy(&sd->s_attach_ch);
+	callout_destroy(&sd->s_detach_ch);
+	/* kern_timeout permits a callback to destroy its own callout. */
+	callout_destroy(&sd->s_retire_ch);
+	mutex_destroy(&sd->s_lock);
 	kmem_intr_free(sd, sizeof(*sd));
 }
 
+/* The caller pins sd. Never acquire an adaptive lock with s_lock held. */
 static int
-usl_sync_check_sig(struct usl_syncdata *sd, int sig, int flags)
+usl_sync_check_sig(struct usl_syncdata *sd, int sig, int flags, u_int gen)
 {
+	struct proc *p;
+	ksiginfo_t ksi;
+	int alive;
 
+	KASSERT(!cpu_intr_p());
 	mutex_enter(&proc_lock);
-	if (sd->s_proc == proc_find(sd->s_pid)) {
-		sd->s_flags |= flags;
-		if (sig)
-			psignal(sd->s_proc, sig);
+	p = proc_find(sd->s_pid);
+	alive = (p == sd->s_proc);
+	if (alive && sig != 0)
+		mutex_enter(p->p_lock);
+	/* Both adaptive locks can drop the BKL. Recheck after the last wait. */
+	mutex_spin_enter(&sd->s_lock);
+	if ((sd->s_flags & SF_DYING) || (flags != 0 &&
+	    (sd->s_generation != gen ||
+	    (sd->s_flags & (SF_PENDING | SF_NOTIFY)) != (flags | SF_NOTIFY)))) {
+		mutex_spin_exit(&sd->s_lock);
+		if (alive && sig != 0)
+			mutex_exit(p->p_lock);
 		mutex_exit(&proc_lock);
-		return 1;
+		return -1;
+	}
+	if (alive && flags != 0) {
+		/* Signal commit: cancellation after this point cannot retract it. */
+		sd->s_flags &= ~SF_NOTIFY;
+		sd->s_deadline = (int)((u_int)getticks() +
+		    wscompat_usl_synctimeout * hz);
+		callout_schedule(flags == SF_DETACHPENDING ?
+		    &sd->s_detach_ch : &sd->s_attach_ch,
+		    wscompat_usl_synctimeout * hz);
+	}
+	mutex_spin_exit(&sd->s_lock);
+	if (alive && sig != 0) {
+		/* Same signal as psignal, without reacquiring p_lock here. */
+		KSI_INIT_EMPTY(&ksi);
+		ksi.ksi_signo = sig;
+		(void)kpsignal2(p, &ksi);
+		mutex_exit(p->p_lock);
 	}
 	mutex_exit(&proc_lock);
-
-	printf("%s: process %d died\n", __func__, sd->s_pid);
-	usl_sync_done(sd);
-	return 0;
+	if (!alive) {
+		printf("%s: process %d died\n", __func__, sd->s_pid);
+		usl_sync_done(sd);
+	}
+	return alive;
 }
 
 static int
@@ -162,7 +294,34 @@ usl_sync_check(void *vsd)
 {
 
 	struct usl_syncdata *sd = vsd;
-	return usl_sync_check_sig(sd, 0, 0);
+	int alive;
+
+	usl_sync_hold(sd);
+	alive = usl_sync_check_sig(sd, 0, 0, 0);
+	usl_sync_rele(sd);
+	return alive > 0;
+}
+
+static void
+usl_sync_notify(void *arg)
+{
+	struct usl_syncdata *sd = arg;
+	u_int gen;
+	int flags, sig;
+
+	usl_sync_hold(sd);
+	mutex_spin_enter(&sd->s_lock);
+	flags = sd->s_flags & SF_PENDING;
+	if ((sd->s_flags & (SF_DYING | SF_NOTIFY)) != SF_NOTIFY || !flags) {
+		mutex_spin_exit(&sd->s_lock);
+		usl_sync_rele(sd);
+		return;
+	}
+	gen = sd->s_generation;
+	sig = flags == SF_DETACHPENDING ? sd->s_relsig : sd->s_acqsig;
+	mutex_spin_exit(&sd->s_lock);
+	(void)usl_sync_check_sig(sd, sig, flags, gen);
+	usl_sync_rele(sd);
 }
 
 static struct usl_syncdata *
@@ -176,122 +335,136 @@ usl_sync_get(struct wsscreen *scr)
 }
 
 static int
+usl_sync_start(struct usl_syncdata *sd, int waitok,
+    void (*callback)(void *, int, int), void *cbarg, int flags)
+{
+	if (!callback)
+		return EINVAL;
+	usl_sync_hold(sd);
+	if (waitok && !usl_sync_check(sd)) {
+		usl_sync_rele(sd);
+		return 0;
+	}
+	mutex_spin_enter(&sd->s_lock);
+	if (sd->s_flags & (SF_DYING | SF_PENDING)) {
+		mutex_spin_exit(&sd->s_lock);
+		usl_sync_rele(sd);
+		return EBUSY;
+	}
+	sd->s_callback = callback;
+	sd->s_cbarg = cbarg;
+	sd->s_flags |= flags | SF_NOTIFY;
+	sd->s_generation++;
+	if (!waitok)
+		callout_schedule(&sd->s_notify_ch, 1);
+	mutex_spin_exit(&sd->s_lock);
+	if (waitok)
+		usl_sync_notify(sd);
+	usl_sync_rele(sd);
+	return EAGAIN;
+}
+
+static int
 usl_detachproc(void *cookie, int waitok,
     void (*callback)(void *, int, int), void *cbarg)
 {
-	struct usl_syncdata *sd = cookie;
+	return usl_sync_start(cookie, waitok, callback, cbarg, SF_DETACHPENDING);
+}
 
-	/* we really need a callback */
-	if (!callback)
+static int
+usl_sync_ack(struct usl_syncdata *sd, int ack, int flags)
+{
+	void (*callback)(void *, int, int);
+	void *cbarg;
+
+	usl_sync_hold(sd);
+	mutex_spin_enter(&sd->s_lock);
+	if ((sd->s_flags & (SF_DYING | SF_PENDING)) != flags) {
+		mutex_spin_exit(&sd->s_lock);
+		usl_sync_rele(sd);
 		return EINVAL;
-
-	/*
-	 * Normally, this is called from the controlling process.
-	 * Is is supposed to reply with a VT_RELDISP ioctl(), so
-	 * it is not useful to tsleep() here.
-	 */
-	sd->s_callback = callback;
-	sd->s_cbarg = cbarg;
-	if (waitok) {
-		if (!usl_sync_check_sig(sd, sd->s_relsig, SF_DETACHPENDING))	
-			return 0;
 	}
-
-	callout_schedule(&sd->s_detach_ch, wscompat_usl_synctimeout * hz);
-	return EAGAIN;
+	callout_stop(&sd->s_notify_ch);
+	callout_stop(flags == SF_DETACHPENDING ?
+	    &sd->s_detach_ch : &sd->s_attach_ch);
+	sd->s_flags &= ~(SF_PENDING | SF_NOTIFY);
+	sd->s_generation++;
+	callback = sd->s_callback;
+	cbarg = sd->s_cbarg;
+	sd->s_callback = NULL;
+	mutex_spin_exit(&sd->s_lock);
+	if (callback != NULL)
+		(*callback)(cbarg, ack ? 0 : EIO, 1);
+	usl_sync_rele(sd);
+	return 0;
 }
 
 static int
 usl_detachack(struct usl_syncdata *sd, int ack)
 {
-	if (!(sd->s_flags & SF_DETACHPENDING)) {
-		printf("%s: not detaching\n", __func__);
-		return EINVAL;
+	return usl_sync_ack(sd, ack, SF_DETACHPENDING);
+}
+
+static void
+usl_sync_timeout(struct usl_syncdata *sd, int flags)
+{
+	void (*callback)(void *, int, int);
+	void *cbarg;
+	int delta;
+
+	usl_sync_hold(sd);
+	mutex_spin_enter(&sd->s_lock);
+	if ((sd->s_flags & (SF_DYING | SF_PENDING | SF_NOTIFY)) != flags) {
+		mutex_spin_exit(&sd->s_lock);
+		usl_sync_rele(sd);
+		return;
 	}
-
-	callout_stop(&sd->s_detach_ch);
-	sd->s_flags &= ~SF_DETACHPENDING;
-
-	if (sd->s_callback)
-		(*sd->s_callback)(sd->s_cbarg, (ack ? 0 : EIO), 1);
-
-	return 0;
+	/* An old invocation can acquire the BKL after a new request starts. */
+	delta = (int)((u_int)sd->s_deadline - (u_int)getticks());
+	if (delta > 0) {
+		callout_schedule(flags == SF_DETACHPENDING ?
+		    &sd->s_detach_ch : &sd->s_attach_ch, delta);
+		mutex_spin_exit(&sd->s_lock);
+		usl_sync_rele(sd);
+		return;
+	}
+	sd->s_flags &= ~SF_PENDING;
+	sd->s_generation++;
+	callback = sd->s_callback;
+	cbarg = sd->s_cbarg;
+	sd->s_callback = NULL;
+	mutex_spin_exit(&sd->s_lock);
+	printf("%s: %s timeout\n", __func__,
+	    flags == SF_DETACHPENDING ? "detach" : "attach");
+	if (callback != NULL)
+		(*callback)(cbarg, EIO, 0);
+	(void)usl_sync_check(sd);
+	usl_sync_rele(sd);
 }
 
 static void
 usl_detachtimeout(void *arg)
 {
-	struct usl_syncdata *sd = arg;
-
-	printf("%s\n", __func__);
-
-	if (!(sd->s_flags & SF_DETACHPENDING)) {
-		printf("%s: not detaching\n", __func__);
-		return;
-	}
-
-	sd->s_flags &= ~SF_DETACHPENDING;
-
-	if (sd->s_callback)
-		(*sd->s_callback)(sd->s_cbarg, EIO, 0);
-
-	(void) usl_sync_check(sd);
+	usl_sync_timeout(arg, SF_DETACHPENDING);
 }
 
 static int
 usl_attachproc(void *cookie, int waitok,
     void (*callback)(void *, int, int), void *cbarg)
 {
-	struct usl_syncdata *sd = cookie;
-
-	/* we really need a callback */
-	if (!callback)
-		return EINVAL;
-
-	sd->s_callback = callback;
-	sd->s_cbarg = cbarg;
-	if (!usl_sync_check_sig(sd, sd->s_acqsig, SF_ATTACHPENDING))
-		return 0;
-
-	callout_schedule(&sd->s_attach_ch, wscompat_usl_synctimeout * hz);
-	return EAGAIN;
+	return usl_sync_start(cookie, waitok, callback, cbarg, SF_ATTACHPENDING);
 }
 
 static int
 usl_attachack(struct usl_syncdata *sd, int ack)
 {
-	if (!(sd->s_flags & SF_ATTACHPENDING)) {
-		printf("%s: not attaching\n", __func__);
-		return EINVAL;
-	}
-
-	callout_stop(&sd->s_attach_ch);
-	sd->s_flags &= ~SF_ATTACHPENDING;
-
-	if (sd->s_callback)
-		(*sd->s_callback)(sd->s_cbarg, (ack ? 0 : EIO), 1);
-
-	return 0;
+	return usl_sync_ack(sd, ack, SF_ATTACHPENDING);
 }
 
 static void
 usl_attachtimeout(void *arg)
 {
-	struct usl_syncdata *sd = arg;
-
-	printf("%s\n", __func__);
-
-	if (!(sd->s_flags & SF_ATTACHPENDING)) {
-		printf("%s: not attaching\n", __func__);
-		return;
-	}
-
-	sd->s_flags &= ~SF_ATTACHPENDING;
-
-	if (sd->s_callback)
-		(*sd->s_callback)(sd->s_cbarg, EIO, 0);
-
-	(void) usl_sync_check(sd);
+	usl_sync_timeout(arg, SF_ATTACHPENDING);
 }
 
 static void
