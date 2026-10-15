@@ -557,7 +557,9 @@ on every board in the hardware catalog.
   target object compilation pass; physical HDMI detection and modesetting remain separate.
   A [versioned BCM2712 display contract](ember/boot/bcm2712-display-contract.md)
   validates shared register ownership, interrupt domains and bounded firmware
-  clock snapshots. It does not enable clocks, map display registers or provide KMS.
+  clock snapshots. The UEFI series declares these resources while preserving the
+  legacy V3D indices. ASL-to-AML component checks pass; full firmware deployment
+  remains unverified. The contract does not enable clocks, map display registers or provide KMS.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.
