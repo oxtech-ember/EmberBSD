@@ -960,6 +960,7 @@ The base system shell is unchanged.
   The [C++ dependency-header regression](ember/tests/external-cxx-depend.md) keeps external GCC compilation and dependency generation on the same audited runtime headers.
   The actual ATF Makefile compiles its checked TU and generates dependencies; a complete base distribution remains pending.
   The [libc canary initializer regression](ember/tests/libc-guard.md) prevents strong SSP from rejecting its own initial canary update; target disassembly and host function checks remain distinct from rebuilt VM boot acceptance.
+  The [incremental sysinst identity check](ember/tests/sysinst-build-config.md) keeps compiled build IDs, runtime mode and generated messages synchronized without weakening guided preflight.
   The [amd64 crash-dump map regression](ember/tests/kvm-amd64-map.md) checks allocation failure, retry and range boundaries.
   The isolated target TU passes GCC16 analysis; full library and base acceptance remain separate.
   The [NVMM batch I/O regression](ember/tests/nvmm-io-batch.md) checks temporary-buffer lifetime and callback/error paths.
