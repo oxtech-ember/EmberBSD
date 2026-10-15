@@ -539,6 +539,9 @@ on every board in the hardware catalog.
   A [checked firmware framebuffer interface](ember/boot/firmware-framebuffer.md)
   preserves boot-console ownership and genfb fallback for future display drivers.
   Source contracts pass; this interface does not supply KMS or physical scanout.
+  [Native DRM change events](ember/boot/drm-hotplug-events.md) publish registered
+  primary-node notifications through the device monitor. Source contracts and
+  target object compilation pass; physical HDMI detection and modesetting remain separate.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.
