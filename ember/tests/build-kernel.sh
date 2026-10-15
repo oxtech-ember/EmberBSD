@@ -53,7 +53,7 @@ SH
 done
 for contract in bcm2712-v3d bcm2712-v3d-takeover bcm2712-v3d-dma \
     bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault \
-    bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-job bcm2712-v3d-csd \
+    bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-sg bcm2712-v3d-job bcm2712-v3d-csd \
     bcm2712-v3d-cl bcm2712-v3d-sync drm-syncobj-wait \
     drm-syncobj-dispatch drm-syncobj-find dma-fence-chain drm-jiffies; do
     cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
@@ -203,7 +203,7 @@ export RUBY="$work/bin/ruby"
 check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
     test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 16
-    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 17
+    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 18
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 3
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 8
 }

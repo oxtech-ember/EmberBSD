@@ -27,7 +27,7 @@ bcmv3d_prime_mmap(struct drm_gem_object *obj, off_t *offp, size_t size,
 	    (prot & ~(PROT_READ | PROT_WRITE)) != 0 ||
 	    (*flagsp & MAP_SHARED) == 0 || (*flagsp & MAP_PRIVATE) != 0)
 		return -EINVAL;
-	/* The CMA pager drops this reference when the mapping is destroyed. */
+	/* The native BO pager drops this reference when the mapping ends. */
 	drm_gem_object_get(obj);
 	*uobjp = &obj->gemo_uvmobj;
 	*maxprotp = PROT_READ | PROT_WRITE;
@@ -75,7 +75,7 @@ static struct drm_driver bcmv3d_driver = {
 	.ioctls = bcmv3d_ioctls,
 	.num_ioctls = __arraycount(bcmv3d_ioctls),
 	.mmap_object = drm_gem_mmap_object,
-	.gem_uvm_ops = &drm_gem_cma_uvm_ops,
+	.gem_uvm_ops = &bcmv3d_bo_uvm_ops,
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
 	.gem_prime_mmap = bcmv3d_prime_mmap,

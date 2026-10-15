@@ -286,16 +286,27 @@ bcmv3d_ptes(struct bcmv3d_job *job, bool map)
 {
 	uint32_t *pt = job->pt->cma.vaddr;
 	struct bcmv3d_bo *objects[] = { job->src, job->dst };
-	unsigned int i, page;
+	unsigned int i;
 
 	for (i = 0; i < (job->nbo ? job->nbo : __arraycount(objects)); i++) {
 		struct bcmv3d_bo *bo = job->nbo ? job->bos[i] : objects[i];
-		uint32_t pfn = bo->cma.dmamap->dm_segs[0].ds_addr >> 12;
-		size_t length = job->nbo ? bo->cma.dmasize : V3D_COPY_SIZE;
+		size_t remaining = job->nbo ? bo->cma.dmasize : V3D_COPY_SIZE;
+		unsigned int page = 0;
+		int seg;
 
-		for (page = 0; page < length / PAGE_SIZE; page++)
-			pt[(bo->gpu >> 12) + page] = map ? (pfn + page) |
-			    V3D_PTE_VALID | (job->nbo || i == 1 ? V3D_PTE_WRITE : 0) : 0;
+		for (seg = 0; seg < bo->cma.dmamap->dm_nsegs && remaining; seg++) {
+			const bus_dma_segment_t *dma = &bo->cma.dmamap->dm_segs[seg];
+			uint32_t pfn = dma->ds_addr >> 12;
+			size_t length = MIN(remaining, dma->ds_len);
+			size_t offset;
+
+			for (offset = 0; offset < length; offset += PAGE_SIZE, page++)
+				pt[(bo->gpu >> 12) + page] = map ?
+				    (pfn + offset / PAGE_SIZE) | V3D_PTE_VALID |
+				    (job->nbo || i == 1 ? V3D_PTE_WRITE : 0) : 0;
+			remaining -= length;
+		}
+		KASSERT(remaining == 0);
 	}
 	bcmv3d_sync(job->pt, BUS_DMASYNC_PREWRITE);
 }

@@ -17,12 +17,23 @@ existing ACPI observer verifies the board resources and completes takeover
 before registering a render-capable DRM device. The ordinary kernel keeps
 its current passive observer. Display modesetting is a separate driver.
 
-Buffer objects use native contiguous DMA storage and the existing CMA UVM
-pager. Each has a separately allocated GPU virtual range; GPU addresses
+Userspace buffer objects use native scatter/gather DMA storage and a private
+UVM pager. The allocator admits at most one DMA segment per page. It validates
+each loaded segment for page alignment, length and the 36-bit address limit.
+CPU faults use allocation segments; GPU PTEs use translated DMA map segments.
+Each BO has a separately allocated GPU virtual range; GPU addresses
 are not physical addresses. GEM handles, mappings and submitted jobs own
 references. The last reference releases the range and storage. Limit one
 BO to 16 MiB and total BO storage to 64 MiB during this stage. The engine's
 4 MiB page table and three scratch pages also count against that total.
+They retain their strict contiguous allocation contract. The shared CMA helper
+is unchanged. PRIME self-import and UVM reference ownership remain unchanged.
+
+The scatter/gather change has source and host-contract coverage only.
+It has no physical acceptance yet. Allocation, mapping and rendering have
+separate acceptance boundaries. Fragmentation, DMA ranges and the unchanged
+budget can still reject an allocation. A successful allocation does not prove
+that global memory use is bounded or that no memory leaks exist.
 
 A device mutex serializes jobs. For TFU, the MMU maps only two referenced BOs:
 source read-only, destination writable. The first admitted payload is the
@@ -131,6 +142,12 @@ observed busy BOs separately. Each successful operation verifies every word.
 Record the kernel and test hashes, output, duration and kernel log.
 
 Host contracts compile the actual production sources with modeled services.
+Run `sh ember/tools/bcm2712-v3d-sg-contract.sh` for fragmented allocation,
+error unwinding, mapped lifetime, and PTE coverage. The TFU test crosses a
+segment boundary and stops within the next segment at its 16 KiB limit.
+Negative controls reject one-segment allocation/mmap/free, invalid segment
+acceptance and contiguous-PFN assumptions. These are modeled service tests,
+not a UVM concurrency or hardware cache-coherency test.
 The job contract exercises 37 register failures, DMA ownership and PTE revoke
 ordering, retained failure references, close during execution, wait boundaries,
 counter wrap and completion at the final wait slice. Eleven causal mutants must
