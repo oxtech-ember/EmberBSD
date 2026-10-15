@@ -57,3 +57,44 @@ The inherited reports include 42 signed register-mask shifts and one GNU-express
 The AST error limits coverage; this is not a clean Cppcheck result.
 Other inherited findings remain outside this adaptation with the OS i915 owner.
 Full-TU GCC16 path analysis reports no diagnostics in the five-TU baseline or changed power/FBC candidates.
+
+## GT workarounds and reset
+
+WA1607087056 applies to all ICL revisions, but only revision-zero A0 on JSL/EHL.
+The adaptation uses the existing `IS_REVID` predicate without a new public stepping interface.
+WA22010271021 disables RCS fixed-function DOP clock gating on JSL/EHL.
+This scoped addition follows the EHL fix and JSL split; existing ICL behavior stays unchanged.
+
+JSL resets each requested domain twice, stopping immediately if either acknowledgement fails.
+Each JSL acknowledgement has a 2000-microsecond timeout.
+A 50-microsecond settling delay follows success or failure.
+Other platforms keep one reset, their 500-microsecond timeout and no settling delay.
+The upstream reset change applies more broadly; this personal adaptation is explicitly JSL-only.
+
+| Upstream commit | Author and scope |
+| --- | --- |
+| [`61b088c5374a9f886efa1edbb49ce552bd1f9cba`](https://github.com/torvalds/linux/commit/61b088c5374a9f886efa1edbb49ce552bd1f9cba) | Swathi Dhanavanthri: A0-only WA1607087056 on EHL/JSL |
+| [`537af0b0caf4b18bf0414ff5ffb4d3d86633403c`](https://github.com/torvalds/linux/commit/537af0b0caf4b18bf0414ff5ffb4d3d86633403c) | Matt Atwood: RCS WA22010271021 |
+| [`24ea098b7c0d80b56d62a200608e0b029056baf6`](https://github.com/torvalds/linux/commit/24ea098b7c0d80b56d62a200608e0b029056baf6) | Tejas Upadhyay: common JSL/EHL GT predicates |
+| [`3db9d590557da3aa2c952f2fecd3e9b703dad790`](https://github.com/torvalds/linux/commit/3db9d590557da3aa2c952f2fecd3e9b703dad790) | Chris Wilson and Andi Shyti: repeat reset and let engine state settle |
+
+| Upstream file and revision | SHA256 |
+| --- | --- |
+| `gt/intel_workarounds.c` at `61b088c5374a` | `d8224f00615beaac3da8959eda3ecdbe33b858a3b2952da6b782d2f7af117714` |
+| `gt/intel_workarounds.c` at `537af0b0caf4` | `553cbf4fb1070c9b5fb66274dd0139f5bdf7fa659ebedf64f9323ba311b06e2c` |
+| `gt/intel_workarounds.c` at `24ea098b7c0d` | `33e9681842fbee398c2f17752d399ffab0b5f624394baf0ffef71f7e84ad5c0a` |
+| `gt/intel_reset.c` at `3db9d590557d` | `265cbe3f7c0a2000885ddda360d5530d85b10fae0ce15f87601385eafcb48298` |
+
+```sh
+ruby ember/tests/i915-jsl-gt.rb
+```
+
+The test executes real workaround builders and the hardware-domain reset function.
+It imports the register definitions; hooks record WA masks, reset writes, waits and delays.
+Independent expectations check A0/B0+, ICL and older platform controls.
+Reset checks include domain-mask preservation, first/second acknowledgement failure and delay ordering.
+The host test uses the target's `-fwrapv` semantics for inherited signed register-mask constants.
+The baseline fails an RCS assertion; eight semantic mutations fail executable assertions.
+ASan/UBSan, native GCC16 analysis, real target compilation and full-TU path analysis pass.
+The five-TU Cppcheck comparison still retains only its baseline findings and coverage limits.
+No hook establishes real MMIO completion or engine recovery on hardware.

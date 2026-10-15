@@ -923,10 +923,12 @@ icl_gt_workarounds_init(struct drm_i915_private *i915, struct i915_wa_list *wal)
 		    GAMT_CHKN_BIT_REG,
 		    GAMT_CHKN_DISABLE_L3_COH_PIPE);
 
-	/* Wa_1607087056:icl */
-	wa_write_or(wal,
-		    SLICE_UNIT_LEVEL_CLKGATE,
-		    L3_CLKGATE_DIS | L3_CR2X_CLKGATE_DIS);
+	/* Wa_1607087056:icl,ehl,jsl. JSL/EHL A0 is revision zero. */
+	if (IS_ICELAKE(i915) ||
+	    (IS_JSL_EHL(i915) && IS_REVID(i915, 0, 0)))
+		wa_write_or(wal,
+			    SLICE_UNIT_LEVEL_CLKGATE,
+			    L3_CLKGATE_DIS | L3_CR2X_CLKGATE_DIS);
 }
 
 static void
@@ -1417,6 +1419,12 @@ rcs_engine_wa_init(struct intel_engine_cs *engine, struct i915_wa_list *wal)
 				   GEN11_SCRATCH2,
 				   GEN11_COHERENT_PARTIAL_WRITE_MERGE_ENABLE,
 				   0);
+
+		/* Wa_22010271021:ehl,jsl */
+		if (IS_JSL_EHL(i915))
+			wa_masked_en(wal,
+				     GEN9_CS_DEBUG_MODE1,
+				     FF_DOP_CLOCK_GATE_DISABLE);
 	}
 
 	if (IS_GEN_RANGE(i915, 9, 11)) {
