@@ -301,8 +301,29 @@ static int icl_max_source_rate(struct intel_dp *intel_dp)
 	enum phy phy = intel_port_to_phy(dev_priv, dig_port->base.port);
 
 	if (intel_phy_is_combo(dev_priv, phy) &&
-	    !IS_ELKHARTLAKE(dev_priv) &&
+	    !IS_JSL_EHL(dev_priv) &&
 	    !intel_dp_is_edp(intel_dp))
+		return 540000;
+
+	return 810000;
+}
+
+static bool is_low_voltage_sku(struct drm_i915_private *dev_priv, enum phy phy)
+{
+	u32 voltage;
+
+	voltage = I915_READ(ICL_PORT_COMP_DW3(phy)) & VOLTAGE_INFO_MASK;
+
+	return voltage == VOLTAGE_INFO_0_85V;
+}
+
+static int ehl_max_source_rate(struct intel_dp *intel_dp)
+{
+	struct intel_digital_port *dig_port = dp_to_dig_port(intel_dp);
+	struct drm_i915_private *dev_priv = to_i915(dig_port->base.base.dev);
+	enum phy phy = intel_port_to_phy(dev_priv, dig_port->base.port);
+
+	if (intel_dp_is_edp(intel_dp) || is_low_voltage_sku(dev_priv, phy))
 		return 540000;
 
 	return 810000;
@@ -342,6 +363,8 @@ intel_dp_set_source_rates(struct intel_dp *intel_dp)
 		size = ARRAY_SIZE(cnl_rates);
 		if (IS_GEN(dev_priv, 10))
 			max_rate = cnl_max_source_rate(intel_dp);
+		else if (IS_JSL_EHL(dev_priv))
+			max_rate = ehl_max_source_rate(intel_dp);
 		else
 			max_rate = icl_max_source_rate(intel_dp);
 	} else if (IS_GEN9_LP(dev_priv)) {

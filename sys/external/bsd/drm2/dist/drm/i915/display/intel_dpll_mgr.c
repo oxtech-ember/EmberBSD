@@ -3008,7 +3008,7 @@ static bool icl_get_combo_phy_dpll(struct intel_atomic_state *state,
 		return false;
 	}
 
-	if (IS_ELKHARTLAKE(dev_priv) && port != PORT_A)
+	if (IS_JSL_EHL(dev_priv) && port != PORT_A)
 		dpll_mask =
 			BIT(DPLL_ID_EHL_DPLL4) |
 			BIT(DPLL_ID_ICL_DPLL1) |
@@ -3289,7 +3289,7 @@ static bool icl_pll_get_hw_state(struct drm_i915_private *dev_priv,
 		hw_state->cfgcr0 = I915_READ(TGL_DPLL_CFGCR0(id));
 		hw_state->cfgcr1 = I915_READ(TGL_DPLL_CFGCR1(id));
 	} else {
-		if (IS_ELKHARTLAKE(dev_priv) && id == DPLL_ID_EHL_DPLL4) {
+		if (IS_JSL_EHL(dev_priv) && id == DPLL_ID_EHL_DPLL4) {
 			hw_state->cfgcr0 = I915_READ(ICL_DPLL_CFGCR0(4));
 			hw_state->cfgcr1 = I915_READ(ICL_DPLL_CFGCR1(4));
 		} else {
@@ -3310,7 +3310,7 @@ static bool combo_pll_get_hw_state(struct drm_i915_private *dev_priv,
 {
 	i915_reg_t enable_reg = CNL_DPLL_ENABLE(pll->info->id);
 
-	if (IS_ELKHARTLAKE(dev_priv) &&
+	if (IS_JSL_EHL(dev_priv) &&
 	    pll->info->id == DPLL_ID_EHL_DPLL4) {
 		enable_reg = MG_PLL_ENABLE(0);
 	}
@@ -3336,7 +3336,7 @@ static void icl_dpll_write(struct drm_i915_private *dev_priv,
 		cfgcr0_reg = TGL_DPLL_CFGCR0(id);
 		cfgcr1_reg = TGL_DPLL_CFGCR1(id);
 	} else {
-		if (IS_ELKHARTLAKE(dev_priv) && id == DPLL_ID_EHL_DPLL4) {
+		if (IS_JSL_EHL(dev_priv) && id == DPLL_ID_EHL_DPLL4) {
 			cfgcr0_reg = ICL_DPLL_CFGCR0(4);
 			cfgcr1_reg = ICL_DPLL_CFGCR1(4);
 		} else {
@@ -3507,7 +3507,7 @@ static void combo_pll_enable(struct drm_i915_private *dev_priv,
 {
 	i915_reg_t enable_reg = CNL_DPLL_ENABLE(pll->info->id);
 
-	if (IS_ELKHARTLAKE(dev_priv) &&
+	if (IS_JSL_EHL(dev_priv) &&
 	    pll->info->id == DPLL_ID_EHL_DPLL4) {
 		enable_reg = MG_PLL_ENABLE(0);
 
@@ -3618,7 +3618,7 @@ static void combo_pll_disable(struct drm_i915_private *dev_priv,
 {
 	i915_reg_t enable_reg = CNL_DPLL_ENABLE(pll->info->id);
 
-	if (IS_ELKHARTLAKE(dev_priv) &&
+	if (IS_JSL_EHL(dev_priv) &&
 	    pll->info->id == DPLL_ID_EHL_DPLL4) {
 		enable_reg = MG_PLL_ENABLE(0);
 		icl_pll_disable(dev_priv, pll, enable_reg);
@@ -3761,7 +3761,7 @@ void intel_shared_dpll_init(struct drm_device *dev)
 
 	if (INTEL_GEN(dev_priv) >= 12)
 		dpll_mgr = &tgl_pll_mgr;
-	else if (IS_ELKHARTLAKE(dev_priv))
+	else if (IS_JSL_EHL(dev_priv))
 		dpll_mgr = &ehl_pll_mgr;
 	else if (INTEL_GEN(dev_priv) >= 11)
 		dpll_mgr = &icl_pll_mgr;

@@ -573,6 +573,34 @@ static const struct cnl_ddi_buf_trans icl_combo_phy_ddi_translations_hdmi[] = {
 	{ 0x6, 0x7F, 0x35, 0x00, 0x0A },	/* 600   850      3.0   */
 };
 
+static const struct cnl_ddi_buf_trans jsl_combo_phy_ddi_translations_edp_hbr[] = {
+						/* NT mV Trans mV db    */
+	{ 0x8, 0x7F, 0x3F, 0x00, 0x00 },	/* 200   200      0.0   */
+	{ 0x8, 0x7F, 0x38, 0x00, 0x07 },	/* 200   250      1.9   */
+	{ 0x1, 0x7F, 0x33, 0x00, 0x0C },	/* 200   300      3.5   */
+	{ 0xA, 0x35, 0x36, 0x00, 0x09 },	/* 200   350      4.9   */
+	{ 0x8, 0x7F, 0x3F, 0x00, 0x00 },	/* 250   250      0.0   */
+	{ 0x1, 0x7F, 0x38, 0x00, 0x07 },	/* 250   300      1.6   */
+	{ 0xA, 0x35, 0x35, 0x00, 0x0A },	/* 250   350      2.9   */
+	{ 0x1, 0x7F, 0x3F, 0x00, 0x00 },	/* 300   300      0.0   */
+	{ 0xA, 0x35, 0x38, 0x00, 0x07 },	/* 300   350      1.3   */
+	{ 0xA, 0x35, 0x3F, 0x00, 0x00 },	/* 350   350      0.0   */
+};
+
+static const struct cnl_ddi_buf_trans jsl_combo_phy_ddi_translations_edp_hbr2[] = {
+							/* NT mV Trans mV db    */
+	{ 0x8, 0x7F, 0x3F, 0x00, 0x00 },	/* 200   200      0.0   */
+	{ 0x8, 0x7F, 0x3F, 0x00, 0x00 },	/* 200   250      1.9   */
+	{ 0x1, 0x7F, 0x3D, 0x00, 0x02 },	/* 200   300      3.5   */
+	{ 0xA, 0x35, 0x38, 0x00, 0x07 },	/* 200   350      4.9   */
+	{ 0x8, 0x7F, 0x3F, 0x00, 0x00 },	/* 250   250      0.0   */
+	{ 0x1, 0x7F, 0x3F, 0x00, 0x00 },	/* 250   300      1.6   */
+	{ 0xA, 0x35, 0x3A, 0x00, 0x05 },	/* 250   350      2.9   */
+	{ 0x1, 0x7F, 0x3F, 0x00, 0x00 },	/* 300   300      0.0   */
+	{ 0xA, 0x35, 0x38, 0x00, 0x07 },	/* 300   350      1.3   */
+	{ 0xA, 0x35, 0x3F, 0x00, 0x00 },	/* 350   350      0.0   */
+};
+
 struct icl_mg_phy_ddi_buf_trans {
 	u32 cri_txdeemph_override_5_0;
 	u32 cri_txdeemph_override_11_6;
@@ -888,9 +916,33 @@ cnl_get_buf_trans_edp(struct drm_i915_private *dev_priv, int *n_entries)
 }
 
 static const struct cnl_ddi_buf_trans *
+jsl_get_combo_buf_trans(struct drm_i915_private *dev_priv, int type, int rate,
+			int *n_entries)
+{
+	if (type == INTEL_OUTPUT_HDMI) {
+		*n_entries = ARRAY_SIZE(icl_combo_phy_ddi_translations_hdmi);
+		return icl_combo_phy_ddi_translations_hdmi;
+	} else if (type == INTEL_OUTPUT_EDP && dev_priv->vbt.edp.low_vswing) {
+		if (rate > 270000) {
+			*n_entries = ARRAY_SIZE(jsl_combo_phy_ddi_translations_edp_hbr2);
+			return jsl_combo_phy_ddi_translations_edp_hbr2;
+		} else {
+			*n_entries = ARRAY_SIZE(jsl_combo_phy_ddi_translations_edp_hbr);
+			return jsl_combo_phy_ddi_translations_edp_hbr;
+		}
+	}
+
+	*n_entries = ARRAY_SIZE(icl_combo_phy_ddi_translations_dp_hbr2);
+	return icl_combo_phy_ddi_translations_dp_hbr2;
+}
+
+static const struct cnl_ddi_buf_trans *
 icl_get_combo_buf_trans(struct drm_i915_private *dev_priv, int type, int rate,
 			int *n_entries)
 {
+	if (IS_JASPERLAKE(dev_priv))
+		return jsl_get_combo_buf_trans(dev_priv, type, rate, n_entries);
+
 	if (type == INTEL_OUTPUT_HDMI) {
 		*n_entries = ARRAY_SIZE(icl_combo_phy_ddi_translations_hdmi);
 		return icl_combo_phy_ddi_translations_hdmi;
@@ -3112,7 +3164,7 @@ static void intel_ddi_clk_select(struct intel_encoder *encoder,
 		if (!intel_phy_is_combo(dev_priv, phy))
 			I915_WRITE(DDI_CLK_SEL(port),
 				   icl_pll_to_ddi_clk_sel(encoder, crtc_state));
-		else if (IS_ELKHARTLAKE(dev_priv) && port >= PORT_C)
+		else if (IS_JSL_EHL(dev_priv) && port >= PORT_C)
 			/*
 			 * MG does not exist but the programming is required
 			 * to ungate DDIC and DDID
@@ -3159,7 +3211,7 @@ static void intel_ddi_clk_disable(struct intel_encoder *encoder)
 
 	if (INTEL_GEN(dev_priv) >= 11) {
 		if (!intel_phy_is_combo(dev_priv, phy) ||
-		    (IS_ELKHARTLAKE(dev_priv) && port >= PORT_C))
+		    (IS_JSL_EHL(dev_priv) && port >= PORT_C))
 			I915_WRITE(DDI_CLK_SEL(port), DDI_CLK_SEL_NONE);
 	} else if (IS_CANNONLAKE(dev_priv)) {
 		I915_WRITE(DPCLKA_CFGCR0, I915_READ(DPCLKA_CFGCR0) |
@@ -4256,7 +4308,7 @@ static bool intel_ddi_is_audio_enabled(struct drm_i915_private *dev_priv,
 void intel_ddi_compute_min_voltage_level(struct drm_i915_private *dev_priv,
 					 struct intel_crtc_state *crtc_state)
 {
-	if (IS_ELKHARTLAKE(dev_priv) && crtc_state->port_clock > 594000)
+	if (IS_JSL_EHL(dev_priv) && crtc_state->port_clock > 594000)
 		crtc_state->min_voltage_level = 3;
 	else if (INTEL_GEN(dev_priv) >= 11 && crtc_state->port_clock > 594000)
 		crtc_state->min_voltage_level = 1;
