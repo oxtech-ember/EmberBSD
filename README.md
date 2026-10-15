@@ -942,6 +942,8 @@ The base system shell is unchanged.
   the base compiler remains explicit bootstrap/recovery support.
   The [external GCC runtime adapter](ember/boot/external-gcc-runtime.md) now isolates
   freestanding links and resolves indirect C++ runtime dependencies at build time.
+  The [unwind-header setlist check](ember/tests/unwind-setlist.md) follows the GCC
+  and libc installers without copying compiler SDK headers into the base destination.
   Isolated amd64 program links pass. EFI replays remove the leaked runtime flags,
   but retain a linker PHDR error under `--noinhibit-exec`; UEFI boot remains unverified.
   The [cross-build wrapper](ember/boot/cross-build.md) builds an AArch64 kernel,
