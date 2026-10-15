@@ -114,7 +114,8 @@ The report has no new findings; it is not a clean or complete analysis result.
 
 ## Remaining port work
 
-The [workaround adaptation](i915-jasperlake-workarounds.md) adds guarded FBC, power and GT handling.
+The [workaround adaptation](i915-jasperlake-workarounds.md) adds FBC, power, GT and firmware selection.
+GuC remains disabled by default.
 Native attachment stays closed until the adaptation and final opt-in have separate review.
 The next steps must preserve a stock recovery kernel.
 Only the final opt-in trial may permit attachment for `8086:4e55`.

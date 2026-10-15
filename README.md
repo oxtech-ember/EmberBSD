@@ -480,8 +480,8 @@ on every board in the hardware catalog.
   identifies PCI `8086:4e55` as a separate JSL platform. Source contracts cover
   identity, eDP swing tables, link rates, PHY/clock selection, the PSR2 limit,
   FBC alignment, guarded display-power handling and GT/reset workarounds.
-  Native attachment remains disabled; remaining workarounds, full builds
-  and physical graphics acceptance are pending.
+  Firmware metadata identifies JSL; GuC stays disabled by default.
+  Native attachment remains disabled; review, full builds and physical acceptance are pending.
 - **Native graphics infrastructure:** experimental VirtIO DRM/KMS, UVM-backed
   GEM buffers and PRIME sharing make direct Wayland sessions possible.
   UTM tests cover visible KMS output, 32 cross-process buffer-lifetime cycles

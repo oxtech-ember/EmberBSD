@@ -98,3 +98,24 @@ The baseline fails an RCS assertion; eight semantic mutations fail executable as
 ASan/UBSan, native GCC16 analysis, real target compilation and full-TU path analysis pass.
 The five-TU Cppcheck comparison still retains only its baseline findings and coverage limits.
 No hook establishes real MMIO completion or engine recovery on hardware.
+
+## Firmware metadata
+
+The firmware table identifies JSL separately and selects the existing EHL GuC/HuC names.
+This adapts Tejas Upadhyay's MIT-licensed
+[`24ea098b7c0d80b56d62a200608e0b029056baf6`](https://github.com/torvalds/linux/commit/24ea098b7c0d80b56d62a200608e0b029056baf6).
+The upstream `gt/uc/intel_uc_fw.c` input has SHA256
+`3ac8421abeeb1520f96181d000c1d694a55b1f4eb4926019af6dc7f702482c77`.
+
+```sh
+ruby ember/tests/i915-jsl-firmware.rb
+```
+
+The real table and auto-selector run with the production ordering self-check enabled.
+Tests check both firmware types across all 256 revisions and existing platform/revision controls.
+They import and check the unchanged zero `enable_guc` default.
+The baseline fails because JSL has no entry; four semantic mutations fail executable assertions.
+ASan/UBSan, native GCC16 analysis, target `-Werror` and target path analysis pass.
+The Cppcheck baseline comparison retains its documented findings and coverage limit.
+This changes metadata only; it does not activate GuC, load firmware or verify image assets.
+DMC selection and the native preliminary-hardware rejection remain unchanged.
