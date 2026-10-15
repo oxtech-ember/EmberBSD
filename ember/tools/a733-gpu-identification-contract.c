@@ -123,8 +123,24 @@ static int SHA256_Update(SHA256_CTX *c, const uint8_t *data, size_t len)
 { (void)c; (void)data; (void)len; return 0; }
 static int SHA256_Final(uint8_t digest[32], SHA256_CTX *c)
 { (void)c; memset(digest, 0, 32); return 0; }
-static void *kmem_alloc(size_t size, int flags) { return calloc(1, size); }
-static void kmem_free(void *ptr, size_t size) { free(ptr); }
+static unsigned kmem_alloc_calls, kmem_free_calls;
+static size_t kmem_last_size;
+static void *
+kmem_alloc(size_t size, int flags)
+{
+	void *ptr = calloc(1, size);
+
+	assert(ptr != NULL);
+	kmem_alloc_calls++;
+	kmem_last_size = size;
+	return ptr;
+}
+static void
+kmem_free(void *ptr, size_t size)
+{
+	kmem_free_calls++;
+	free(ptr);
+}
 static void panic(const char *msg) { assert(!msg); }
 static void mutex_enter(int *lock) { assert(!*lock); *lock = 1; }
 static void mutex_exit(int *lock) { assert(*lock); *lock = 0; }
@@ -2958,7 +2974,7 @@ test_hwr_report(void)
 	char expected[160];
 	const char *last;
 	size_t events_before;
-	unsigned commands_before, start = checks;
+	unsigned commands_before, allocs_before, frees_before, start = checks;
 
 	owner = calloc(1, sizeof(*owner));
 	previous = malloc(sizeof(*previous));
@@ -2978,7 +2994,12 @@ test_hwr_report(void)
 	hwr = (struct rogue_fwif_hwrinfobuf *)(arena + 64);
 	memcpy(copy, arena, 2432);
 	trace_sync_calls = 0;
+	allocs_before = kmem_alloc_calls;
+	frees_before = kmem_free_calls;
 	sun60i_gpu_hwr_report(owner);
+	CHECK(kmem_alloc_calls == allocs_before + 1);
+	CHECK(kmem_free_calls == frees_before + 1);
+	CHECK(kmem_last_size == sizeof(*hwr));
 	CHECK(strstr(owner->sc_hwr_state,
 	    "capture_error=0 captured=16 counter=0 write_index=0") != NULL);
 	CHECK(strstr(owner->sc_hwr_state, "slot=15 number=0 type=0") != NULL);
@@ -3009,7 +3030,12 @@ test_hwr_report(void)
 	events_before = nevents;
 	hwr_on_sync = hwr;
 	trace_sync_calls = 0;
+	allocs_before = kmem_alloc_calls;
+	frees_before = kmem_free_calls;
 	sun60i_gpu_hwr_report(owner);
+	CHECK(kmem_alloc_calls == allocs_before + 1);
+	CHECK(kmem_free_calls == frees_before + 1);
+	CHECK(kmem_last_size == sizeof(*hwr));
 	hwr_on_sync = NULL;
 	CHECK(trace_sync_calls == 1);
 	CHECK(strstr(owner->sc_hwr_state,
@@ -3055,7 +3081,11 @@ test_hwr_report(void)
 		}
 		trace_sync_calls = 0;
 		memcpy(copy, arena, 2432);
+		allocs_before = kmem_alloc_calls;
+		frees_before = kmem_free_calls;
 		sun60i_gpu_hwr_report(owner);
+		CHECK(kmem_alloc_calls == allocs_before);
+		CHECK(kmem_free_calls == frees_before);
 		snprintf(expected, sizeof(expected), "capture_error=%d captured=0:", EINVAL);
 		CHECK(strcmp(owner->sc_hwr_state, expected) == 0);
 		CHECK(trace_sync_calls == 0);

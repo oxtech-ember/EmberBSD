@@ -29,6 +29,12 @@ The identity contract checks failed REQUEST/WAIT, finalizer errors, direct
 identity calls, and the unconfirmed firmware-only boot path without GPU MMIO.
 It also checks successful CORE confirmation, retained reservations, and a
 REQUEST timeout followed by a successful WAIT.
+The HWR diagnostic keeps its full 2,336-byte firmware snapshot in temporary
+kernel memory. It releases that memory after formatting or a format error.
+GCC16.2 reports a 2,032-byte sysctl frame, below the unchanged 3,584-byte limit.
+The target translation unit passes GCC path analysis. Host checks verify
+allocation, release, unchanged DMA bounds, and all 16 diagnostic records.
+These checks do not establish a complete kernel stack bound or hardware operation.
 
 ## Physical result
 

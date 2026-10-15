@@ -668,8 +668,9 @@ on every board in the hardware catalog.
   supersedes the earlier PERIPH0-400M timeout and GPU MMIO stall. The consumer
   now blocks GPU MMIO after failed CORE ON/Q confirmation, including boot
   error diagnostics. Host regressions check this gate and the successful path;
-  they do not establish repaired power-domain activation. Normal
-  board DTBs remain observe-only; the working cold start is an explicit
+  they do not establish repaired power-domain activation. HWR diagnostics
+  preserve the full firmware snapshot within the GCC16 stack limit.
+  Normal board DTBs remain observe-only; the working cold start is an explicit
   runtime experiment. Native `firmload` now reads the exact firmware and
   [validates its metadata](ember/boot/a733-gpu-fwinfo.md#physical-preflight-result)
   against the live GPU on Zero 3W. The [native memory preparer](ember/boot/a733-gpu-fwmem.md#physical-preparation-result)

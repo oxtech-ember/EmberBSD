@@ -1322,12 +1322,12 @@ sun60i_gpu_hwr_report(struct sun60i_gpu_softc *sc)
 {
 	const struct sun60i_a733_gpu_fwmem *m = sc->sc_fw_memory;
 	const struct sun60i_a733_gpu_fwinit_region *region;
-	struct rogue_fwif_hwrinfobuf snapshot;
+	struct rogue_fwif_hwrinfobuf *snapshot;
 	size_t used, i;
 	int count, error = EINVAL;
 
-	_Static_assert(sizeof(snapshot) == 2336, "firmware HWR buffer ABI");
-	_Static_assert(sizeof(snapshot.hwr_info[0]) == 136,
+	_Static_assert(sizeof(*snapshot) == 2336, "firmware HWR buffer ABI");
+	_Static_assert(sizeof(snapshot->hwr_info[0]) == 136,
 	    "firmware HWR record ABI");
 	if (m == NULL || !m->interface_prepared || m->work.cpu == NULL ||
 	    m->work.map == NULL || !m->work.loaded ||
@@ -1335,25 +1335,27 @@ sun60i_gpu_hwr_report(struct sun60i_gpu_softc *sc)
 		goto fail;
 	region = &m->interface_layout.object[A733_GPU_FWINIT_HWR];
 	if (region->buffer != A733_GPU_FWINIT_WORK ||
-	    region->offset % 8 != 0 || region->size < sizeof(snapshot) ||
+	    region->offset % 8 != 0 || region->size < sizeof(*snapshot) ||
 	    region->offset > m->work.size ||
 	    region->size > m->work.size - region->offset)
 		goto fail;
+	/* Keep the full firmware snapshot off the kernel stack. */
+	snapshot = kmem_alloc(sizeof(*snapshot), KM_SLEEP);
 	bus_dmamap_sync(m->dmat, m->work.map, region->offset,
-	    sizeof(snapshot), BUS_DMASYNC_POSTREAD);
-	memcpy(&snapshot, (const uint8_t *)m->work.cpu + region->offset,
-	    sizeof(snapshot));
+	    sizeof(*snapshot), BUS_DMASYNC_POSTREAD);
+	memcpy(snapshot, (const uint8_t *)m->work.cpu + region->offset,
+	    sizeof(*snapshot));
 	count = snprintf(sc->sc_hwr_state, sizeof(sc->sc_hwr_state),
 	    "capture_error=0 captured=%u counter=%u write_index=%u "
 	    "dd_req_count=%u flags=0x%x:",
-	    (u_int)__arraycount(snapshot.hwr_info), snapshot.hwr_counter,
-	    snapshot.write_index, snapshot.dd_req_count,
-	    snapshot.hwr_info_buf_flags);
+	    (u_int)__arraycount(snapshot->hwr_info), snapshot->hwr_counter,
+	    snapshot->write_index, snapshot->dd_req_count,
+	    snapshot->hwr_info_buf_flags);
 	if (count < 0 || (size_t)count >= sizeof(sc->sc_hwr_state))
 		goto full;
 	used = (size_t)count;
-	for (i = 0; i < __arraycount(snapshot.hwr_info); i++) {
-		const struct rogue_hwrinfo *h = &snapshot.hwr_info[i];
+	for (i = 0; i < __arraycount(snapshot->hwr_info); i++) {
+		const struct rogue_hwrinfo *h = &snapshot->hwr_info[i];
 		const char *name0 = "raw0", *name1 = "raw1", *name2 = "raw2";
 		uint64_t raw[3];
 
@@ -1391,8 +1393,10 @@ sun60i_gpu_hwr_report(struct sun60i_gpu_softc *sc)
 			goto full;
 		used += (size_t)count;
 	}
+	kmem_free(snapshot, sizeof(*snapshot));
 	return;
 full:
+	kmem_free(snapshot, sizeof(*snapshot));
 	error = ENOSPC;
 fail:
 	snprintf(sc->sc_hwr_state, sizeof(sc->sc_hwr_state),
