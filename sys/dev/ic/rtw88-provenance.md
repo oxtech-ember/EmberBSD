@@ -1,7 +1,8 @@
 <!-- Origin: EmberBSD native RTL8822C format research, AI-assisted. -->
 # RTL8822C portable format contracts
 
-This portable parser validates one normal-firmware load profile.
+These portable codecs validate one normal-firmware load profile,
+physical EFUSE records, packet descriptors, and bounded DMA ranges.
 It does not attach a device or enable a radio.
 The firmware parser does not establish chip identity, authenticity, checksum validity,
 or physical Wi-Fi operation. No kernel or firmware-loader integration exists yet.
@@ -38,7 +39,7 @@ The RTL8822C device contract uses 48-byte TX packet descriptors,
 16-byte TX buffer descriptors, 24-byte RX packet descriptors,
 and 8-byte RX buffer descriptors. The normal firmware name is
 `rtw88/rtw8822c_fw.bin`. These values come from `rtw8822c_hw_spec`.
-They do not describe an implemented DMA or PCI attachment.
+They do not describe an implemented DMA mapping or PCI attachment.
 
 ## Firmware assets
 
@@ -287,3 +288,132 @@ A future table import must preserve complete arrays, license notices,
 source revision, conditions, delays, limits and RF-path attribution.
 It requires bounded parsing tests and failure propagation before hardware
 use. This inventory is preparation, not acceptance of an executable PHY.
+
+## Packet descriptors and DMA aperture
+
+The codecs use the same pinned FreeBSD revision and BSD-3-Clause option.
+`tx.h` and the complete `rtw_tx_fill_tx_desc` in `tx.c` define TX fields.
+`rx.h` and the complete `rtw_rx_query_rx_desc` in `rx.c` define RX fields.
+`pci.h` defines buffer descriptors; `pci.c` defines their actual consumers.
+These six files retain Realtek's dual-license notice and 2018-2019 copyright.
+The additional USB/SDIO files below establish checksum call sites only.
+No USB, SDIO, LinuxKPI, or WLAN implementation is imported.
+
+| Reference file | SHA256 |
+| --- | --- |
+| `tx.h` | `5f0c1dc2c8e9dbcdfece4e34c264bd24731ab6a3ff28011f9ddb09cb695aaa46` |
+| `tx.c` | `d598fe4d658a9c03de9f0468f0bd7f07b50232f7732fd0f49ed6367221aa3978` |
+| `rx.h` | `789e4fb6baecc2c6e7ac4d802d2ed2b32b799f47b3c37abd81daccdda1b13afa` |
+| `rx.c` | `8f877d9ca9061b5783e3513c85024370ebebb233f7b40acae88fee496636dae9` |
+| `pci.h` | `49129551f28352e1edd567199261893a84f4d451d3fec3af04909085b41c219d` |
+| `pci.c` | `c84aca85002a049c07f4ecad9394be680b148580a008e01b01e0363266023ee1` |
+| `usb.c` | `c26b679e17f3b016fb363a75a915a36404c155eae24caae8f015fd1fa2506db3` |
+| `sdio.c` | `07dd361d4e36599716e580839b7ed88cfc480083082105e2bfbcd53d793f0306` |
+
+`usb.c` has Realtek's dual-license notice. `sdio.c` has the same license
+with 2021 Martin Blumenstingl/Jernej Skrabec and Realtek attribution.
+They are reference-only files, not adapted implementation.
+
+### TX fixed48 profile
+
+`rtw88_tx_encode` writes exactly 48 bytes, even if capacity is larger.
+It sets OFFSET to 48, LS to one, and PKT_OFFSET to zero.
+The caller supplies a nonzero 16-bit packet size and bounded raw fields.
+Queues 0-15 are TIDs; 16-19 are beacon, high, management, and H2C.
+The high queue sets MORE_DATA, as in `rtw_tx_fill_tx_desc`.
+RTS selects hardware rate code 8 (24 Mbps) and RTS_SHORT.
+RTL8822C has `old_datarate_fb_limit=false`; that field remains zero.
+The public header lists each supported semantic flag and raw field.
+Out-of-width fields fail instead of being silently masked.
+Byte stores permit unaligned destinations and make the format host-independent.
+
+| Byte offset | Contents |
+| ---: | --- |
+| 0 | Packet size, descriptor offset, BMC, LS, DISQSELSEQ |
+| 4 | MAC ID, queue, rate ID, security, PKT_OFFSET, MORE_DATA |
+| 8 | Aggregation, report, density, BT null |
+| 12 | HW SSN selection, rate/RTS/NAV controls, maximum aggregation |
+| 16 | Data rate, RTS rate |
+| 20 | Short GI, bandwidth, LDPC, STBC, RTS short |
+| 24 | 12-bit SW_DEFINE/report sequence |
+| 28 | Checksum in low 16 bits; DMA aggregation remains zero |
+| 32 | Hardware sequence enable |
+| 36 | Software sequence and optional TIM insertion offset/enable |
+| 40, 44 | Zero reserved words |
+
+The complete `rtw8822c_fill_txdesc_checksum` computes
+`(packet_offset * 8 + 48) / 2` halfwords. `fill_txdesc_checksum_common`
+first clears w7 low16, XORs those little-endian halfwords, then stores
+that XOR in w7 low16. This codec accepts only packet_offset zero,
+so it covers all 24 halfwords. It never uses the older 32-byte rule.
+The literal contract fixture includes nonzero words after byte 31;
+its checksum is `0x23eb`. A 32-byte checksum mutant fails that test.
+
+The pinned PCI TX path does **not** call the checksum helper.
+USB and SDIO paths do, including USB reserved-page transmission.
+This codec emits the documented chip checksum as a format operation.
+It does not claim PCI requires it or that checksum checking is enabled.
+The future PCI consumer must select its evidenced transport behavior;
+no DMA descriptor is submitted by this codec.
+Variable packet offsets, USB aggregation, and custom reserved words need
+explicit extensions before use. A nonzero packet_offset returns ENOTSUP.
+All other null, capacity, and field errors return EINVAL.
+Every error leaves the destination unchanged.
+
+### RX buffer bounds
+
+`rtw88_rx_decode` takes the received buffer starting with the 24-byte
+packet descriptor. It decodes packet length from w0 bits 13:0,
+driver-info size from bits 19:16 in eight-byte units, and shift from
+bits 25:24. Driver info starts at `24 + shift`; payload follows it.
+Both the metadata prefix and payload must fit the supplied buffer length.
+Trailing buffer capacity is allowed. Byte loads accept unaligned input.
+
+CRC/ICV error, PHY status, SWDEC and C2H remain explicit flags.
+The codec also returns raw security encoding, MAC ID, PPDU count,
+rate, bandwidth, and low TSF. It does not turn these into decryption,
+authentication, PHY, or 802.11 frame-validity decisions.
+A zero packet length can be structurally valid; consumers must validate
+frame or command semantics before delivery. C2H never bypasses bounds.
+Null, short, and out-of-buffer input return EINVAL without changing output.
+
+### DMA address contract
+
+The supported native PCI profile is **32-bit DMA addressing**.
+This is derived from the complete buffer layouts and programming path,
+not from a FreeBSD memory-allocation workaround:
+
+- `rtw_pci_tx_buffer_desc` is eight bytes: size16, PSB length16, DMA32.
+  Each 16-byte TX buffer descriptor contains two such segments.
+  `rtw_pci_tx_write_data` fills segment zero with the 48-byte packet
+  descriptor and segment one with the payload at `dma + 48`.
+- `rtw_pci_rx_buffer_desc` is eight bytes: size16, total-size/tag16, DMA32.
+  Both `rtw_pci_reset_rx_desc` and `rtw_pci_sync_rx_desc_device`
+  publish only the low 32-bit address field.
+- `rtw_pci_reset_buf_desc` programs every TX/RX ring base with write32.
+  No high-address programming path is established by these functions.
+- FreeBSD-only `dma_set_mask(32)` and `dma_set_coherent_mask(32)` in
+  `rtw_pci_io_mapping` corroborate this profile but do not establish
+  the full physical silicon's maximum address capability.
+
+`RTW8822C_DMA_ADDR_BITS` is 32. `rtw88_dma_validate` accepts apertures
+1 through 32 bits and a nonempty byte range. Every byte must fit.
+The check uses `len - 1 <= maximum - addr` after checking `addr`.
+It never forms an overflowing `addr + len` or truncates an address.
+Address `0xffffffff` with length one is valid for the 32-bit aperture;
+length two, addresses above 4 GiB, and wrapping ranges fail EOVERFLOW.
+Widths 33-64 return ENOTSUP; zero length or width outside 1-64 is EINVAL.
+These errors deliberately expose unsupported requests.
+
+Future bus_dma integration must allocate/map within the selected aperture
+and validate entire rings and all packet segments before publication.
+Failure to obtain a suitable mapping must fail visibly. IOMMU mappings
+are bus addresses; a host physical-memory size is not proof of an aperture.
+No mapping, alignment, coherency, ring publication, register write, or
+physical DMA operation is validated by this pure range helper.
+A proven wider hardware mode needs new buffer formats and PCI programming
+before this restriction can be relaxed.
+
+For only descriptor/range tests, run
+`RTW88_DESCRIPTORS_ONLY=1 CC=gcc-16 sh ember/tools/rtw88-contract.sh`.
+Omit that selection for firmware/EFUSE/identity regression and real fixtures.

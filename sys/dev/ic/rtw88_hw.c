@@ -100,3 +100,118 @@ rtw88_fw_parse(const uint8_t *data, size_t size, struct rtw88_fw_info *out)
 	*out = info;
 	return 0;
 }
+
+int
+rtw88_tx_encode(uint8_t *dst, size_t cap, const struct rtw88_tx_info *tx)
+{
+	uint32_t w[12] = { 0 };
+	uint16_t checksum = 0;
+	size_t i;
+
+	if (dst == NULL || tx == NULL || cap < RTW8822C_TX_PACKET_DESC_SIZE)
+		return EINVAL;
+	if (tx->packet_size == 0 || tx->packet_size > 65535 ||
+	    (tx->flags & ~RTW88_TX_FLAGS) != 0 || tx->sequence > 4095 ||
+	    tx->report_sequence > 4095 || tx->queue > 19 ||
+	    tx->rate_id > 31 || tx->security > 3 || tx->rate > 127 ||
+	    tx->bandwidth > 3 || tx->stbc > 3 || tx->ampdu_density > 7 ||
+	    tx->ampdu_factor > 31 || tx->hw_ssn_sel > 3 || tx->tim_offset > 127)
+		return EINVAL;
+	if (tx->packet_offset != 0)
+		return ENOTSUP;
+
+#define TXFLAG(f, s) (((tx->flags & (f)) != 0) ? UINT32_C(1) << (s) : 0)
+	w[0] = tx->packet_size | (RTW8822C_TX_PACKET_DESC_SIZE << 16) |
+	    TXFLAG(RTW88_TX_BMC, 24) | UINT32_C(1) << 26 |
+	    TXFLAG(RTW88_TX_DIS_QSELSEQ, 31);
+	w[1] = tx->mac_id | (uint32_t)tx->queue << 8 |
+	    (uint32_t)tx->rate_id << 16 | (uint32_t)tx->security << 22;
+	if (tx->queue == 17)
+		w[1] |= UINT32_C(1) << 29;
+	w[2] = TXFLAG(RTW88_TX_AMPDU, 12) | TXFLAG(RTW88_TX_REPORT, 19) |
+	    (uint32_t)tx->ampdu_density << 20 | TXFLAG(RTW88_TX_BT_NULL, 23);
+	w[3] = (uint32_t)tx->hw_ssn_sel << 6 | TXFLAG(RTW88_TX_USE_RATE, 8) |
+	    TXFLAG(RTW88_TX_DIS_RATE_FB, 10) | TXFLAG(RTW88_TX_RTS, 12) |
+	    TXFLAG(RTW88_TX_NAV_USE_HDR, 15) | (uint32_t)tx->ampdu_factor << 17;
+	/* RTL8822C does not use the old DATA_RATE_FB_LIMIT field. */
+	w[4] = tx->rate;
+	w[5] = TXFLAG(RTW88_TX_SHORT_GI, 4) | (uint32_t)tx->bandwidth << 5 |
+	    TXFLAG(RTW88_TX_LDPC, 7) | (uint32_t)tx->stbc << 8;
+	if ((tx->flags & RTW88_TX_RTS) != 0) {
+		w[4] |= UINT32_C(8) << 24; /* DESC_RATE24M. */
+		w[5] |= UINT32_C(1) << 12;
+	}
+	w[6] = tx->report_sequence;
+	w[8] = TXFLAG(RTW88_TX_HWSEQ, 15);
+	w[9] = (uint32_t)tx->sequence << 12;
+	if (tx->tim_offset != 0)
+		w[9] |= (UINT32_C(1) << 7) | tx->tim_offset;
+#undef TXFLAG
+
+	/* w7 low16 is zero. RTL8822C covers 48 bytes, not the older 32. */
+	for (i = 0; i < 12; i++)
+		checksum ^= (uint16_t)w[i] ^ (uint16_t)(w[i] >> 16);
+	w[7] = checksum;
+	/* All input reads and validation precede publication. */
+	for (i = 0; i < 12; i++) {
+		dst[4 * i] = (uint8_t)w[i];
+		dst[4 * i + 1] = (uint8_t)(w[i] >> 8);
+		dst[4 * i + 2] = (uint8_t)(w[i] >> 16);
+		dst[4 * i + 3] = (uint8_t)(w[i] >> 24);
+	}
+	return 0;
+}
+
+int
+rtw88_rx_decode(const uint8_t *src, size_t len, struct rtw88_rx_info *out)
+{
+	struct rtw88_rx_info rx = { 0 };
+	uint32_t w0, w2;
+
+	if (src == NULL || out == NULL || len < RTW8822C_RX_PACKET_DESC_SIZE)
+		return EINVAL;
+	w0 = rtw88_get32(src);
+	w2 = rtw88_get32(src + 8);
+	rx.packet_size = w0 & 0x3fff;
+	rx.driver_info_size = ((w0 >> 16) & 0xf) * 8;
+	rx.shift = (w0 >> 24) & 3;
+	rx.driver_info_offset = RTW8822C_RX_PACKET_DESC_SIZE + rx.shift;
+	rx.payload_offset = rx.driver_info_offset + rx.driver_info_size;
+	/* Bounded fields make these offsets <= 147, regardless of len. */
+	if (rx.payload_offset > len || rx.packet_size > len - rx.payload_offset)
+		return EINVAL;
+	if ((w0 & (UINT32_C(1) << 14)) != 0)
+		rx.flags |= RTW88_RX_CRC_ERROR;
+	if ((w0 & (UINT32_C(1) << 15)) != 0)
+		rx.flags |= RTW88_RX_ICV_ERROR;
+	if ((w0 & (UINT32_C(1) << 26)) != 0)
+		rx.flags |= RTW88_RX_PHY_STATUS;
+	if ((w0 & (UINT32_C(1) << 27)) != 0)
+		rx.flags |= RTW88_RX_SWDEC;
+	if ((w2 & (UINT32_C(1) << 28)) != 0)
+		rx.flags |= RTW88_RX_C2H;
+	rx.security = (w0 >> 20) & 7;
+	rx.mac_id = rtw88_get32(src + 4) & 0x7f;
+	rx.ppdu_count = (w2 >> 29) & 3;
+	rx.rate = rtw88_get32(src + 12) & 0x7f;
+	rx.bandwidth = (rtw88_get32(src + 16) >> 4) & 3;
+	rx.tsf_low = rtw88_get32(src + 20);
+	*out = rx;
+	return 0;
+}
+
+int
+rtw88_dma_validate(uint64_t addr, size_t len, unsigned addr_bits)
+{
+	uint64_t maximum;
+
+	if (len == 0 || addr_bits == 0 || addr_bits > 64)
+		return EINVAL;
+	if (addr_bits > RTW8822C_DMA_ADDR_BITS)
+		return ENOTSUP;
+	maximum = (UINT64_C(1) << addr_bits) - 1;
+	/* Check the last byte without forming a wrapping addr + len. */
+	if (addr > maximum || len - 1 > maximum - addr)
+		return EOVERFLOW;
+	return 0;
+}

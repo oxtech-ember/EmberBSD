@@ -410,6 +410,215 @@ test_identity_unsupported_cut(void)
 	CHECK(rtw8822c_validate_identity(NULL) == EINVAL);
 }
 
+/* Catch wrong endian/offsets, missing tail zeroing, and 32-byte checksum. */
+static void
+test_tx_exact(void)
+{
+	static const uint8_t expected[48] = {
+		0x34, 0x12, 0x30, 0x85, 0xab, 0x11, 0xda, 0x20,
+		0x00, 0x10, 0xd8, 0x00, 0x80, 0x95, 0x22, 0x00,
+		0x45, 0x00, 0x00, 0x08, 0xd0, 0x12, 0x00, 0x00,
+		0xbc, 0x0a, 0x00, 0x00, 0xeb, 0x23, 0x00, 0x00,
+		0x00, 0x80, 0x00, 0x00, 0xb5, 0x90, 0x78, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+	};
+	struct rtw88_tx_info info = {
+		.packet_size = 0x1234, .flags = RTW88_TX_FLAGS,
+		.sequence = 0x789, .report_sequence = 0xabc,
+		.mac_id = 0xab, .queue = 17, .rate_id = 0x1a,
+		.security = 3, .rate = 0x45, .bandwidth = 2, .stbc = 2,
+		.ampdu_density = 5, .ampdu_factor = 17, .hw_ssn_sel = 2,
+		.tim_offset = 0x35
+	};
+	uint8_t data[50];
+
+	memset(data, 0xa5, sizeof(data));
+	CHECK(rtw88_tx_encode(data + 1, 48, &info) == 0);
+	CHECK(memcmp(data + 1, expected, 48) == 0);
+	CHECK(data[0] == 0xa5 && data[49] == 0xa5);
+	/* A second call must replace all flags/checksum, not merge old bits. */
+	memset(&info, 0, sizeof(info));
+	info.packet_size = 1;
+	CHECK(rtw88_tx_encode(data + 1, 49, &info) == 0);
+	CHECK(data[1] == 1 && data[3] == 48 && data[4] == 4);
+	CHECK(data[29] == 0x31 && data[30] == 0x04);
+	CHECK(data[49] == 0xa5);
+	data[1] = data[3] = data[4] = data[29] = data[30] = 0;
+	CHECK(memcmp(data + 1, (uint8_t[48]){0}, 48) == 0);
+}
+
+static void
+tx_reject(const struct rtw88_tx_info *info, size_t cap, int error)
+{
+	uint8_t data[50], before[50];
+
+	memset(data, 0xa5, sizeof(data));
+	memcpy(before, data, sizeof(data));
+	CHECK(rtw88_tx_encode(data + 1, cap, info) == error);
+	CHECK(memcmp(before, data, sizeof(data)) == 0);
+}
+
+/* Catch masking invalid fields and writes before all checks complete. */
+static void
+test_tx_bounds(void)
+{
+	struct rtw88_tx_info info = { .packet_size = 1 };
+	size_t i;
+
+	for (i = 0; i < 48; i++)
+		tx_reject(&info, i, EINVAL);
+	tx_reject(NULL, 48, EINVAL);
+	CHECK(rtw88_tx_encode(NULL, 48, &info) == EINVAL);
+#define BAD_TX(field, value, error) do { \
+	info.field = (value); \
+	tx_reject(&info, 48, (error)); \
+	info.field = 0; \
+} while (0)
+	BAD_TX(packet_size, 0, EINVAL);
+	BAD_TX(packet_size, 65536, EINVAL);
+	info.packet_size = 1;
+	BAD_TX(flags, 0x1000, EINVAL);
+	BAD_TX(sequence, 0x1000, EINVAL);
+	BAD_TX(report_sequence, 0x1000, EINVAL);
+	BAD_TX(queue, 20, EINVAL);
+	BAD_TX(rate_id, 32, EINVAL);
+	BAD_TX(security, 4, EINVAL);
+	BAD_TX(rate, 128, EINVAL);
+	BAD_TX(bandwidth, 4, EINVAL);
+	BAD_TX(stbc, 4, EINVAL);
+	BAD_TX(ampdu_density, 8, EINVAL);
+	BAD_TX(ampdu_factor, 32, EINVAL);
+	BAD_TX(hw_ssn_sel, 4, EINVAL);
+	BAD_TX(tim_offset, 128, EINVAL);
+	BAD_TX(packet_offset, 1, ENOTSUP);
+	BAD_TX(packet_offset, 255, ENOTSUP);
+#undef BAD_TX
+	/* Inclusive maxima must fit without truncation. */
+	info.packet_size = 65535;
+	info.sequence = info.report_sequence = 4095;
+	info.mac_id = 255;
+	info.queue = 19;
+	info.rate_id = info.ampdu_factor = 31;
+	info.security = info.bandwidth = info.stbc = info.hw_ssn_sel = 3;
+	info.rate = info.tim_offset = 127;
+	info.ampdu_density = 7;
+	{
+		uint8_t data[48];
+
+		CHECK(rtw88_tx_encode(data, sizeof(data), &info) == 0);
+	}
+}
+
+static void
+rx_reject(const uint8_t *data, size_t len)
+{
+	struct rtw88_rx_info out, before;
+
+	memset(&out, 0xa5, sizeof(out));
+	memcpy(&before, &out, sizeof(out));
+	CHECK(rtw88_rx_decode(data, len, &out) == EINVAL);
+	CHECK(memcmp(&before, &out, sizeof(out)) == 0);
+}
+
+/* Allocations expose speculative reads beyond the 24-byte minimum. */
+static void
+test_rx_bounds(void)
+{
+	uint8_t data[32] = { 0 };
+	struct rtw88_rx_info out;
+	size_t i;
+
+	for (i = 0; i < 24; i++) {
+		uint8_t *shortbuf = calloc(i == 0 ? 1 : i, 1);
+
+		if (shortbuf == NULL)
+			exit(1);
+		rx_reject(shortbuf, i);
+		free(shortbuf);
+	}
+	rx_reject(NULL, 24);
+	CHECK(rtw88_rx_decode(data, 24, NULL) == EINVAL);
+	CHECK(rtw88_rx_decode(data, 24, &out) == 0);
+	data[0] = 1;
+	rx_reject(data, 24); /* One payload byte outside the receive buffer. */
+	data[0] = 0;
+	data[2] = 1; /* Driver info in eight-byte units. */
+	rx_reject(data, 31);
+	CHECK(rtw88_rx_decode(data, 32, &out) == 0);
+	data[3] = 1; /* Shift precedes driver info. */
+	rx_reject(data, 32);
+	data[2] = 0;
+	data[0] = 8;
+	rx_reject(data, 32); /* Payload alone fits, shift plus payload does not. */
+	data[11] = 0x10;
+	rx_reject(data, 32); /* C2H must not bypass bounds. */
+}
+
+/* Literal LE fields expose CRC/ICV/C2H without assuming successful RX. */
+static void
+test_rx_exact(void)
+{
+	static const uint8_t desc[24] = {
+		0x34, 0xd2, 0x43, 0x06, 0x65, 0, 0, 0,
+		0, 0, 0, 0x70, 0x53, 0, 0, 0,
+		0x20, 0, 0, 0, 0x78, 0x56, 0x34, 0x12
+	};
+	uint8_t *data = calloc(1, 4711);
+	struct rtw88_rx_info out = { 0 };
+
+	if (data == NULL)
+		exit(1);
+	memcpy(data + 1, desc, 24);
+	CHECK(rtw88_rx_decode(data + 1, 4710, &out) == 0);
+	CHECK(out.packet_size == 0x1234);
+	CHECK(out.driver_info_offset == 26 && out.driver_info_size == 24);
+	CHECK(out.payload_offset == 50 && out.shift == 2);
+	CHECK(out.flags == (RTW88_RX_CRC_ERROR | RTW88_RX_ICV_ERROR |
+	    RTW88_RX_PHY_STATUS | RTW88_RX_C2H));
+	CHECK(out.security == 4 && out.mac_id == 0x65);
+	CHECK(out.ppdu_count == 3 && out.rate == 0x53);
+	CHECK(out.bandwidth == 2 && out.tsf_low == 0x12345678);
+	rx_reject(data + 1, 4709);
+	data[4] |= 8;
+	CHECK(rtw88_rx_decode(data + 1, 4710, &out) == 0);
+	CHECK((out.flags & RTW88_RX_SWDEC) != 0);
+	/* Reuse must clear prior flags; spare buffer capacity is permitted. */
+	memset(data + 1, 0, 24);
+	CHECK(rtw88_rx_decode(data + 1, 4710, &out) == 0);
+	CHECK(out.flags == 0 && out.payload_offset == 24 && out.tsf_low == 0);
+	free(data);
+}
+
+/* Catch truncation, endpoint off-by-one, overflow and ignored apertures. */
+static void
+test_dma_ranges(void)
+{
+	CHECK(rtw88_dma_validate(0, 1, 32) == 0);
+	CHECK(rtw88_dma_validate(0xffffffff, 1, 32) == 0);
+	CHECK(rtw88_dma_validate(0xffffffff, 2, 32) == EOVERFLOW);
+	CHECK(rtw88_dma_validate(0xfffffff0, 16, 32) == 0);
+	CHECK(rtw88_dma_validate(0xfffffff0, 17, 32) == EOVERFLOW);
+	CHECK(rtw88_dma_validate(UINT64_C(0x100000000), 1, 32) == EOVERFLOW);
+	CHECK(rtw88_dma_validate(UINT64_MAX, 2, 32) == EOVERFLOW);
+	CHECK(rtw88_dma_validate(2, SIZE_MAX, 32) == EOVERFLOW);
+	CHECK(rtw88_dma_validate(0, 0, 32) == EINVAL);
+	CHECK(rtw88_dma_validate(0, 1, 0) == EINVAL);
+	CHECK(rtw88_dma_validate(0, 1, 65) == EINVAL);
+	CHECK(rtw88_dma_validate(0, 1, 33) == ENOTSUP);
+	CHECK(rtw88_dma_validate(0, 1, 64) == ENOTSUP);
+	CHECK(rtw88_dma_validate(0x7fffffff, 1, 31) == 0);
+	CHECK(rtw88_dma_validate(0x7fffffff, 2, 31) == EOVERFLOW);
+	CHECK(rtw88_dma_validate(0x80000000, 1, 31) == EOVERFLOW);
+	CHECK(rtw88_dma_validate(1, 1, 1) == 0);
+	CHECK(rtw88_dma_validate(1, 2, 1) == EOVERFLOW);
+	CHECK(rtw88_dma_validate(2, 1, 1) == EOVERFLOW);
+#if SIZE_MAX > UINT32_MAX
+	CHECK(rtw88_dma_validate(0, (size_t)UINT64_C(0x100000000), 32) == 0);
+	CHECK(rtw88_dma_validate(1, (size_t)UINT64_C(0x100000000), 32) ==
+	    EOVERFLOW);
+#endif
+}
+
 int
 main(int argc, char **argv)
 {
@@ -419,6 +628,13 @@ main(int argc, char **argv)
 		    argv[0]);
 		return 2;
 	}
+	test_tx_exact();
+	test_tx_bounds();
+	test_rx_bounds();
+	test_rx_exact();
+	test_dma_ranges();
+	if (getenv("RTW88_DESCRIPTORS_ONLY") != NULL)
+		goto done;
 	test_efuse_truncated_extended_header();
 	test_efuse_truncated_after_mac();
 	test_efuse_logical_overflow();
@@ -434,6 +650,7 @@ main(int argc, char **argv)
 		test_fw_fixture(argv[1], 202456, 1);
 		test_fw_fixture(argv[2], 150984, 0);
 	}
+done:
 	printf("rtw88 contracts: %u assertions, %u failures%s\n", assertions,
 	    failures, argc == 3 ? " (real C/B fixtures)" : " (synthetic)");
 	return failures != 0;
