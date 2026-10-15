@@ -45,9 +45,12 @@ LIBSUPC++?=	${EMBER_EXTERNAL_GCC_RUNTIME}/lib/libsupc++.a
 # Program links do not pass CXXFLAGS. Shared-library rules also depend on
 # explicit CRT paths. Both paths must select the same GCC runtime.
 CPPFLAGS+=	-B${_EMBER_GCC_CRTDIR}/
-CXXFLAGS+=	-nostdinc++ -isystem ${EMBER_EXTERNAL_GCC_RUNTIME}/include/c++ \
+_EMBER_GCC_CXX_CPPFLAGS= -nostdinc++ -isystem ${EMBER_EXTERNAL_GCC_RUNTIME}/include/c++ \
 		-isystem ${EMBER_EXTERNAL_GCC_RUNTIME}/include/c++/${MACHINE_GNU_PLATFORM} \
 		-isystem ${EMBER_EXTERNAL_GCC_RUNTIME}/include/c++/backward
+CXXFLAGS+=	${_EMBER_GCC_CXX_CPPFLAGS}
+# Keep language-only include options intact in bsd.dep.mk as well.
+MKDEPCXXFLAGS+=	${_EMBER_GCC_CXX_CPPFLAGS}
 LDFLAGS+=	-B${_EMBER_GCC_CRTDIR}/ -L${_GCC_LIBGCCDIR} \
 		-L${EMBER_EXTERNAL_GCC_RUNTIME}/lib -Wl,-rpath,/usr/pkg/gcc16/lib
 .endif

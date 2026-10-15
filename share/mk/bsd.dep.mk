@@ -11,6 +11,8 @@ beforedepend .depend afterdepend: # ensure existence
 ##### Default values
 MKDEP?=			mkdep
 MKDEPCXX?=		mkdep
+# C++ preprocessing options that the CXXFLAGS filter cannot preserve.
+MKDEPCXXFLAGS?=
 MKDEP_SUFFIXES?=	.o .d
 
 ##### Build rules
@@ -86,7 +88,7 @@ _MKDEP_FILEFLAGS=
 
 .C.d .cc.d .cpp.d .cxx.d:
 	${_MKTARGET_CREATE}
-	${MKDEPCXX} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${MKDEPFLAGS} \
+	${MKDEPCXX} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${MKDEPFLAGS} ${MKDEPCXXFLAGS} \
 	    ${CXXFLAGS:M-std=*} ${CXXFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
 	    ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} \
 	    ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \

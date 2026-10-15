@@ -940,6 +940,8 @@ The base system shell is unchanged.
   a complete base distribution remains a separate check. The [stddef interoperability regression](ember/tests/stddef-interop.md)
   covers GCC16's compiler-owned amd64 `max_align_t`, both include orders and resource-free fallbacks.
   Its size change requires a consistent userspace rebuild; isolated libkvm and PCB checks pass.
+  The [C++ dependency-header regression](ember/tests/external-cxx-depend.md) keeps external GCC compilation and dependency generation on the same audited runtime headers.
+  The actual ATF Makefile compiles its checked TU and generates dependencies; a complete base distribution remains pending.
   The [amd64 crash-dump map regression](ember/tests/kvm-amd64-map.md) checks allocation failure, retry and range boundaries.
   The isolated target TU passes GCC16 analysis; full library and base acceptance remain separate.
   The [NVMM batch I/O regression](ember/tests/nvmm-io-batch.md) checks temporary-buffer lifetime and callback/error paths.
