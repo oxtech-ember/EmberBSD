@@ -940,6 +940,9 @@ The base system shell is unchanged.
   Orange Pi Zero 3W. New [development sessions](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/development-defaults.md)
   and ordinary pkgsrc builds on Zero 3W select the repaired GCC16 nb1 package;
   the base compiler remains explicit bootstrap/recovery support.
+  The [external GCC runtime adapter](ember/boot/external-gcc-runtime.md) now isolates
+  freestanding links and resolves indirect C++ runtime dependencies at build time.
+  Isolated amd64 program and EFI links pass; full-world and boot acceptance remain separate.
   The [cross-build wrapper](ember/boot/cross-build.md) builds an AArch64 kernel,
   matched board modules and DTBs on Apple Silicon macOS and Debian/x86_64
   with GCC16.2. The Linux build passes all ten portable contracts and artifact

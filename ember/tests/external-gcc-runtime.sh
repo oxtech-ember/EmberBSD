@@ -40,12 +40,25 @@ Dir.mktmpdir('ember-external-runtime-', '/tmp') do |work|
   end
   selected = ['EMBER_EXTERNAL_GCC_RUNTIME=' + runtime]
   check = lambda { |condition, reason| abort reason unless condition }
+  { 'nostdlib' => "LDFLAGS+=-nostdlib\n",
+    'standalone' => "CPPFLAGS+=-D_STANDALONE\n",
+    'kernel' => "CPPFLAGS+=-D_KERNEL\n" }.each do |context, flags|
+    fixture = work + '/' + context + '.mk'
+    File.write(fixture, flags + setup + "PROG=probe\nSRCS=probe.c\nMAN=\n.include \"#{src}/share/mk/bsd.prog.mk\"\n")
+    %w[CPPFLAGS CXXFLAGS MKDEPCXXFLAGS LDFLAGS].each do |flag|
+      check.call(!query.call(fixture, selected, flag).include?(runtime),
+        'Target runtime polluted ' + context + ' ' + flag)
+    end
+  end
   flags = query.call(prog, selected, 'LDFLAGS')
   check.call(flags.include?('-B' + crt + '/') && flags.include?('-L' + crt), 'External GCC CRT/libgcc search path missing from real program link flags')
   check.call(flags.include?('-L' + runtime + '/lib') && flags.include?('-Wl,-rpath,/usr/pkg/gcc16/lib'), 'Selected runtime or target RPATH missing')
+  check.call(flags.include?('-Wl,-rpath-link,' + runtime + '/lib'), 'Build-only indirect runtime search path missing')
+  check.call(query.call(lib, selected + ['LDLIBC=-nodefaultlibs'], 'LDFLAGS').include?('-L' + crt), 'The libc-style -nodefaultlibs link lost staged libgcc')
   check.call(!flags.include?('-Wl,-rpath,' + work), 'Build-host RPATH leaked')
   check.call(query.call(prog, selected, 'CXXFLAGS').include?('-nostdinc++'), 'C++ headers are not isolated')
   check.call(query.call(prog, selected, 'CXXFLAGS').include?('-isystem ' + runtime + '/include/c++/x86_64--netbsd'), 'Target C++ configuration headers missing')
+  check.call(query.call(prog, selected, 'MKDEPCXXFLAGS').include?('-nostdinc++'), 'C++ dependency scanning lost isolated headers')
   check.call(query.call(prog, selected, '_GCC_CRTBEGIN') == crt + '/crtbegin.o', 'Wrong executable CRT')
   check.call(query.call(prog, selected, '_GCC_LIBGCCDIR') == crt, 'Wrong explicit libgcc directory')
   check.call(query.call(prog, selected, 'LIBSTDC++') == runtime + '/lib/libstdc++.a', 'Static C++ dependency still points into OS DESTDIR')
@@ -82,7 +95,7 @@ Dir.mktmpdir('ember-external-runtime-', '/tmp') do |work|
   FileUtils.rm(crt + '/crtendS.o')
   _, err, status = capture(*args, '-f', prog, *selected, '-v', 'LDFLAGS')
   check.call(!status.success? && err.include?('EMBER_EXTERNAL_GCC_RUNTIME'), 'Incomplete CRT was accepted')
-  puts 'PASS: real BSD make program/library flags, CRT ownership, host isolation and invalid input guards'
+  puts 'PASS: real BSD make program/library flags, CRT ownership, host/freestanding isolation and invalid input guards'
 end
 if ARGV.length == 7
   prefix, runtime, sysroot = ARGV[3, 3].map { |p| File.realpath(p) }
@@ -96,26 +109,40 @@ if ARGV.length == 7
   File.write(output + '/probe.c', "#include <stdio.h>\nint main(void) { return puts(\"C runtime probe\") < 0; }\n")
   File.write(output + '/thread.cc', "#include <thread>\n#include <stdexcept>\nint main() { int n = 0; std::thread t([&] { n = 1; }); t.join(); try { throw std::runtime_error(\"probe\"); } catch (const std::exception&) { return n != 1; } }\n")
   File.write(output + '/library.cc', "#include <stdexcept>\nextern \"C\" int runtime_probe(int n) { try { if (!n) throw std::runtime_error(\"probe\"); } catch (const std::exception&) { return 1; } return 0; }\n")
+  File.write(output + '/indirect.c', "extern int runtime_probe(int);\nint main(void) { return runtime_probe(0) != 1; }\n")
   File.write(output + '/gccprobe.c', "unsigned __int128 gcc_runtime_divide(unsigned __int128, unsigned __int128);\nunsigned __int128 gcc_runtime_divide(unsigned __int128 a, unsigned __int128 b) { return a / b; }\n")
   setup = ".include \"#{src}/share/mk/bsd.own.mk\"\n.include \"#{src}/share/mk/bsd.gcc.mk\"\n"
-  File.write(output + '/programs.mk', setup + "PROGS=cprobe\nSRCS.cprobe=probe.c\nSRCS.thread=thread.cc\nPROGS_CXX=thread\nLDADD.thread=-pthread\nLDFLAGS.cprobe+=-Wl,-Map,cprobe.map\nLDFLAGS.thread+=-Wl,-Map,thread.map\nMAN=\n.include \"#{src}/share/mk/bsd.prog.mk\"\n")
+  File.write(output + '/programs.mk', setup + "PROGS=cprobe indirect\nSRCS.cprobe=probe.c\nSRCS.indirect=indirect.c\nSRCS.thread=thread.cc\nPROGS_CXX=thread\nLDADD.thread=-pthread\nLDADD.indirect=-L#{output} -lruntimeprobe\nLDFLAGS.cprobe+=-Wl,-Map,cprobe.map\nLDFLAGS.thread+=-Wl,-Map,thread.map\nMAN=\n.include \"#{src}/share/mk/bsd.prog.mk\"\n")
   File.write(output + '/library.mk', setup + "LIB=runtimeprobe\nLIBISCXX=yes\nSRCS=library.cc\nSHLIB_MAJOR=1\nSHLIB_MINOR=0\nMAN=\n.include \"#{src}/share/mk/bsd.lib.mk\"\n")
   File.write(output + '/gccprobe.mk', setup + "LIB=gccprobe\nSRCS=gccprobe.c\nLDLIBC=-nodefaultlibs\nLDADD=-lgcc\nDPADD=${_GCC_LIBGCCDIR}/libgcc.a\nSHLIB_MAJOR=1\nSHLIB_MINOR=0\nMAN=\n.include \"#{src}/share/mk/bsd.lib.mk\"\n")
   args = [make, '-C', output, '-m', src + '/share/mk', 'NETBSDSRCDIR=' + src, 'DESTDIR=' + sysroot,
     'EXTERNAL_TOOLCHAIN=' + prefix, 'EMBER_EXTERNAL_GCC_RUNTIME=' + runtime, 'MKCOMPAT=no',
     'MKREPRO=no', 'MKDEBUG=no', 'MKCTF=no', 'MKLINT=no', 'MKLLVM=no', 'MKPIC=yes']
-  [['programs.mk', 'cprobe', 'thread'], ['library.mk', 'libruntimeprobe.so.1.0'], ['gccprobe.mk', 'libgccprobe.so.1.0']].each do |targets|
-    out, err, status = capture(*args, '-f', output + '/' + targets.shift, *targets)
+  [['library.mk', 'libruntimeprobe.so.1.0'], ['programs.mk', 'cprobe', 'thread', 'indirect'], ['gccprobe.mk', 'libgccprobe.so.1.0']].each do |targets|
+    fixture = targets.shift
+    out, err, status = capture(*args, '-f', output + '/' + fixture, 'depend')
+    File.write(output + '/' + fixture + '.depend.log', out + err)
+    require_ok(out, err, status)
+    out, err, status = capture(*args, '-f', output + '/' + fixture, *targets)
     File.write(output + '/' + targets.first + '.build.log', out + err)
     require_ok(out, err, status)
   end
-  %w[cprobe thread libruntimeprobe.so.1.0 libgccprobe.so.1.0].each do |name|
+  %w[thread library].each do |name|
+    dependencies = File.read(output + '/' + name + '.d')
+    abort 'C++ dependencies lost the selected target headers' unless
+      dependencies.include?(runtime + '/include/c++/') &&
+      dependencies.include?(runtime + '/include/c++/x86_64--netbsd/bits/c++config.h')
+  end
+  %w[cprobe thread indirect libruntimeprobe.so.1.0 libgccprobe.so.1.0].each do |name|
     out, err, status = capture(prefix + '/bin/x86_64--netbsd-readelf', '-h', '-d', output + '/' + name)
     require_ok(out, err, status)
     File.write(output + '/' + name + '.elf.txt', out)
     abort 'Wrong target ELF' unless out.include?('Advanced Micro Devices X86-64')
     abort 'Host RPATH leaked' if out.lines.grep(/RPATH|RUNPATH/).any? { |line| line.include?(runtime) || line.include?(sysroot) || line.include?(output) }
     abort 'Wrong C++ runtime' if %w[thread libruntimeprobe.so.1.0].include?(name) && !out.include?('[libstdc++.so.7]')
+    if name == 'indirect'
+      abort 'Indirect fixture did not link the C++ DSO through C' unless out.include?('[libruntimeprobe.so.1]') && !out.include?('[libstdc++.so.7]')
+    end
   end
   %w[cprobe.map thread.map libruntimeprobe.so.1.map libgccprobe.so.1.map].each do |name|
     map = File.read(output + '/' + name)
@@ -123,6 +150,6 @@ if ARGV.length == 7
     abort 'Link map lost OS crti/crtn' unless map.include?(sysroot + '/usr/lib/crti.o') && map.include?(sysroot + '/usr/lib/crtn.o')
   end
   abort 'The -nodefaultlibs link did not select staged libgcc.a' unless File.read(output + '/libgccprobe.so.1.map').include?(runtime + '/lib/gcc/x86_64--netbsd/16.2.0/libgcc.a')
-  puts 'PASS: actual C, C++ thread/exception, shared-library and -nodefaultlibs libgcc cross links; target execution remains separate'
+  puts 'PASS: actual C, C++ thread/exception, indirect C-to-C++ DSO, dependency scanning and -nodefaultlibs libgcc cross links; target execution remains separate'
 end
 RUBY

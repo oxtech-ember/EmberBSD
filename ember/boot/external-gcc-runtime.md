@@ -37,6 +37,10 @@ The external compiler must be GCC. Keep `MKCXX=yes`. Do not set
 `HAVE_GCC=16`; that variable selects the imported in-tree compiler sources.
 The external-toolchain rules disable those sources and their support libraries.
 Host compilers and host flags remain separate from this target selection.
+The adapter also excludes rules with preexisting `-nostdlib` in `LDFLAGS`,
+or `_STANDALONE` or `_KERNEL` in `CPPFLAGS`. Set these flags before including
+the build rules. Raw-linker firmware and freestanding programs must not acquire
+application-runtime headers, startup objects, library paths, or RPATH.
 
 The adapter adds target header paths and isolates the C++ standard headers
 with `-nostdinc++`. It adds GCC CRT and library search paths to program and
@@ -44,6 +48,10 @@ library links. A libc-style `-nodefaultlibs -lgcc` link selects the staged
 `libgcc.a`. Explicit `LIBSTDC++` and `LIBSUPC++` archive dependencies also use
 the stage. The OS still builds and selects its own `crt0.o`, `crti.o` and
 `crtn.o`. The only added runtime RPATH is `/usr/pkg/gcc16/lib`.
+The staged runtime directory also supplies a build-only `-rpath-link` search.
+This resolves indirect C++ dependencies, such as a C program that links libproc.
+It does not add a build path to the target RPATH. A libc-style `-nodefaultlibs`
+link remains eligible for the adapter and its staged static libgcc.
 
 The final system receives target DSOs through the separate `gcc16-runtime`
 Ports package and normal target pkgtools. Select one GCC runtime provider.
@@ -62,6 +70,7 @@ sh ember/tests/external-gcc-runtime.sh /absolute/tools/bin/nbmake-amd64 \
 This checks both target mappings, program/library flags, static dependencies,
 OS startup-object ownership, unchanged defaults, host isolation and rejected
 mixed, missing, relative, foreign-compiler and multilib inputs.
+It also rejects runtime flags in freestanding, kernel, and `-nostdlib` contexts.
 
 After the audited runtime and application compiler exist, run the bounded
 cross-link checks. They do not execute the target programs:
@@ -74,8 +83,20 @@ sh ember/tests/external-gcc-runtime.sh /absolute/tools/bin/nbmake-amd64 \
 ```
 
 The second command links C, C++ thread/exception and shared-library fixtures.
+It generates real C++ dependency files with the selected target headers.
+An indirect C-to-C++ DSO link requires the staged build-only search path.
+The C executable must not gain a direct libstdc++ dependency.
 It also checks a `-nodefaultlibs -lgcc` library. It saves build logs, ELF
 metadata and linker maps. The maps must select staged GCC CRT and libgcc
 with OS `crti/crtn`. ELF checks reject build paths in RPATH and require the
 selected C++ SONAME. Run the prebuilt programs on EmberBSD separately.
 Metadata checks alone do not establish successful target links or execution.
+
+Isolated replays of the amd64 world link commands also pass for libproc's two
+test programs, dtrace, and both EFI architectures. The original commands expose
+the missing indirect runtime and the compiler-only flags passed to raw `ld`.
+These replays reuse existing target objects without changing the common build.
+The adapter does not change the bootxx size limit. A control on source
+`70d994c4798f` kept its old 8200-byte payload identical after flag removal.
+A bootxx size repair, toolchain linker-script relocation, and full-world
+validation are separate changes.

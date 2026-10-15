@@ -5,7 +5,10 @@ _BSD_GCC_MK_=1
 
 # An audited Ports runtime can support an external GCC without installing
 # its headers or development libraries into the OS destination tree.
-.if defined(EMBER_EXTERNAL_GCC_RUNTIME) && !defined(HOSTPROG) && !defined(HOSTLIB)
+# Freestanding rules can call ld directly and must not acquire this runtime.
+.if defined(EMBER_EXTERNAL_GCC_RUNTIME) && !defined(HOSTPROG) && !defined(HOSTLIB) && \
+    empty(LDFLAGS:M-nostdlib) && empty(CPPFLAGS:M-D_STANDALONE) && \
+    empty(CPPFLAGS:M-D_KERNEL)
 .if empty(EMBER_EXTERNAL_GCC_RUNTIME:M/*) || \
     !empty(EMBER_EXTERNAL_GCC_RUNTIME:C,[A-Za-z0-9_./-],,g)
 .error EMBER_EXTERNAL_GCC_RUNTIME must be an absolute path without whitespace or shell metacharacters
@@ -52,7 +55,9 @@ CXXFLAGS+=	${_EMBER_GCC_CXX_CPPFLAGS}
 # Keep language-only include options intact in bsd.dep.mk as well.
 MKDEPCXXFLAGS+=	${_EMBER_GCC_CXX_CPPFLAGS}
 LDFLAGS+=	-B${_EMBER_GCC_CRTDIR}/ -L${_GCC_LIBGCCDIR} \
-		-L${EMBER_EXTERNAL_GCC_RUNTIME}/lib -Wl,-rpath,/usr/pkg/gcc16/lib
+		-L${EMBER_EXTERNAL_GCC_RUNTIME}/lib \
+		-Wl,-rpath-link,${EMBER_EXTERNAL_GCC_RUNTIME}/lib \
+		-Wl,-rpath,/usr/pkg/gcc16/lib
 .endif
 
 _GCC_CRTBEGIN?=		${DESTDIR}/usr/lib/${MLIBDIR:D${MLIBDIR}/}crtbegin.o
