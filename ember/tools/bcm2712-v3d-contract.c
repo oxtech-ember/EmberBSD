@@ -320,6 +320,7 @@ static struct acpi_mem *
 acpi_res_mem(struct acpi_resources *res, unsigned int index)
 {
 	assert(res->parsed);
+	assert(index < 3); /* Only the legacy V3D register prefix is requested. */
 	return index < resource_count ? &resources[index] : NULL;
 }
 
@@ -683,6 +684,14 @@ main(void)
 		}
 		bcmv3d_attach(NULL, &dev, &aa);
 		assert(finalizer == NULL && requests == 0 && maps == 0);
+	}
+	/* Appended display resources leave the legacy V3D prefix usable. */
+	for (unsigned int count = 10; count <= 32; count += 22) {
+		reset();
+		resource_count = count;
+		bcmv3d_attach(NULL, &dev, &aa);
+		assert(finalizer != NULL && cleanups == 1);
+		assert(requests == 0 && reads == 0 && maps == 0);
 	}
 	reset();
 	bcmv3d_attach(NULL, &dev, &aa);

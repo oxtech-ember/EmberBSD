@@ -19,7 +19,9 @@ It preserves the first ten memory ranges and first four interrupt indices.
 Existing firmware without the property remains valid for the V3D render driver.
 The display observer reports `unavailable` and sends no display clock request in that case.
 Unknown versions and incomplete resources are rejected.
-This source change does not add the property to firmware.
+The firmware series adds this property through `bcm2712-display-resources.diff`.
+The builder applies the series once to a fresh pinned source checkout.
+A source patch alone does not prove that a running firmware implements this contract.
 
 Each memory descriptor is QWordMemory with these attributes:
 
@@ -157,6 +159,39 @@ It also rejects deliberately unsafe changes to the production source.
 `TEST_RUNNER` can execute the test through a supported memory checker.
 These checks do not establish physical HDMI, HPD, or KMS support.
 
+## Firmware component test
+
+The firmware owner is `ember/build-firmware.sh` and `ember/firmware/series`.
+The builder checks out UEFI commit `246e70acd939d62b5a79f895984afd0a93bd83e9`.
+Its edk2-platforms submodule is `c4b5d05de1f2ef633bdb4c175b5c118fcb2666ed`.
+Do not apply the series to that checkout before invoking the builder.
+The builder creates and patches its own source checkout.
+
+For a source check, use a separate export of that pinned submodule.
+Apply the ordered series once to the export with `patch -p1 -F0`.
+The component test reads the patched export without changing it:
+
+```sh
+IASL=/path/to/current/iasl \
+    ruby ember/tools/bcm2712-display-firmware-contract.rb /path/to/patched-export "$PWD"
+```
+
+The test extracts the real GPU0 ASL block and the production resource macros.
+Use Ruby 3 or newer and a current iASL compiler.
+It compiles them with iASL and treats warnings as errors.
+It checks the generated AML flags, constants, field offsets, property UUID, and version.
+It feeds those resources to the actual OS decoder.
+`CC`, `CFLAGS`, `DISPLAY_COMPILE_ONLY`, `DISPLAY_OUTPUT`, and `TEST_RUNNER` support cross-built decoder tests.
+`HOST_CC` selects the host ASL preprocessor. `IASL` selects the host ASL compiler.
+`DISPLAY_EVIDENCE` saves the AML, generated test inputs, hashes, and command arguments.
+This component check does not link a complete UEFI image or load an SSDT namespace.
+
+The RPi5 `AcpiTables.inf` uses its local DSDT. Older platform GPU ASL modules are separate inputs.
+The new diff changes only GPU0 and named register constants.
+Thermal references to `\_SB.GPU0` keep the same path.
+The default ACPI parser appends memory and interrupt entries in descriptor order.
+Existing V3D consumers keep their original memory and interrupt indices.
+
 ## Source facts and remaining boundaries
 
 The register facts come from Raspberry Pi Linux commit
@@ -172,7 +207,7 @@ The pinned Linux HDMI driver rejects zero HSM clock before register access.
 It also prohibits clearing `VID_CTL_ENABLE` on BCM2712 because that operation can lock the bus.
 A future native implementation must retain these hardware constraints.
 
-A firmware resource extension, native interrupt and DDC providers, power and clock ownership,
+A complete firmware build and device validation, native interrupt and DDC providers, power and clock ownership,
 HVS IOMMU support, atomic KMS, buffer import, synchronization, and console handoff remain separate stages.
 The firmware framebuffer descriptor does not supply those interfaces.
 An accelerated virtual output does not display a frame on HDMI.
