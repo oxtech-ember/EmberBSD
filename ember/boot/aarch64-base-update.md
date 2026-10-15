@@ -124,6 +124,12 @@ set separately, using `etcupdate` and reviewing `postinstall check`.
 Preserve network settings, SSH access and keys, enabled board modules,
 Bluetooth bonds and existing application startup.
 
+The ARM64 embedded and ARM/AMD64 live-image `rc.conf` templates select
+cloud DHCP flags without `rc.subr`. This permits maintenance tools such as
+`postinstall` to source the configuration directly. Run
+`sh ember/tests/rc-conf-cloud.sh` to check both cloud detector results and
+preserve existing DHCP flags. This host test does not validate cloud boot.
+
 Restore the accepted Pi 5 radio firmware before rebooting, including after
 an interrupted installation. The upstream base set contains Broadcom
 43455 firmware 7.45.18.0; the tested Pi 5 bundle uses Cypress 7.45.265 and

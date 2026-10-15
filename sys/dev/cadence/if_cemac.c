@@ -1,5 +1,5 @@
 /*	$NetBSD: if_cemac.c,v 1.45 2024/10/15 00:58:15 lloyd Exp $	*/
-/* Origin: EmberBSD (AI-assisted), CEMAC sysctl node names. */
+/* Origin: EmberBSD (AI-assisted), CEMAC telemetry and IRQ lifecycle. */
 
 /*
  * Copyright (c) 2015  Genetec Corporation.  All rights reserved.
@@ -133,15 +133,14 @@ cemac_handle_reset_work(struct work *work, void *arg)
 {
 	struct cemac_softc * const sc = arg;
 	struct ifnet * const ifp = &sc->sc_ethercom.ec_if;
+	bool restarted = false;
 
-	printf("%s: watchdog timeout -- resetting\n", ifp->if_xname);
-
-	/* Don't want ioctl operations to happen */
+	/* A reset queued before administrative down must not restart it. */
 	IFNET_LOCK(ifp);
-
-	/* reset the interface. */
-	cemac_ifinit(ifp);
-
+	if ((ifp->if_flags & IFF_UP) != 0) {
+		printf("%s: watchdog timeout -- resetting\n", ifp->if_xname);
+		restarted = cemac_ifinit(ifp) == 0;
+	}
 	IFNET_UNLOCK(ifp);
 
 	/*
@@ -149,7 +148,8 @@ cemac_handle_reset_work(struct work *work, void *arg)
 	 * ifp->if_start(). e.g. ALTQ or one CPU system
 	 */
 	/* Try to get more packets going. */
-	ifp->if_start(ifp);
+	if (restarted)
+		ifp->if_start(ifp);
 
 	atomic_store_relaxed(&sc->sc_reset_pending, 0);
 }
@@ -480,10 +480,6 @@ cemac_intr(void *arg)
 				bus_dmamap_sync(sc->sc_dmat,
 				    sc->rxq[bi].m_dmamap, 0, MCLBYTES,
 				    BUS_DMASYNC_PREREAD);
-				sc->RDSC[bi].Info = 0;
-				sc->RDSC[bi].Addr =
-				    sc->rxq[bi].m_dmamap->dm_segs[0].ds_addr
-				    | (bi == (RX_QLEN-1) ? ETH_RDSC_F_WRAP : 0);
 			} else {
 				/* Drop packets until we can get replacement
 				 * empty mbufs for the RXDQ.
@@ -491,7 +487,19 @@ cemac_intr(void *arg)
 				m_freem(m);
 				sc->sc_stat_rx_nombuf++;
 				if_statinc_ref(ifp, nsr, if_ierrors);
+				/* Reuse the mapped buffer without delivering it. */
+				bus_dmamap_sync(sc->sc_dmat,
+				    sc->rxq[bi].m_dmamap, 0, MCLBYTES,
+				    BUS_DMASYNC_POSTREAD);
+				bus_dmamap_sync(sc->sc_dmat,
+				    sc->rxq[bi].m_dmamap, 0, MCLBYTES,
+				    BUS_DMASYNC_PREREAD);
 			}
+			/* Return ownership on both refill and allocation failure. */
+			sc->RDSC[bi].Info = 0;
+			sc->RDSC[bi].Addr =
+			    sc->rxq[bi].m_dmamap->dm_segs[0].ds_addr
+			    | (bi == (RX_QLEN-1) ? ETH_RDSC_F_WRAP : 0);
 			sc->rxqi++;
 		}
 		bus_dmamap_sync(sc->sc_dmat, sc->rbqpage_dmamap, 0,
@@ -797,7 +805,7 @@ static int
 cemac_mediachange(struct ifnet *ifp)
 {
 	if (ifp->if_flags & IFF_UP)
-		cemac_ifinit(ifp);
+		return cemac_ifinit(ifp);
 	return 0;
 }
 
@@ -1138,11 +1146,12 @@ cemac_ifinit(struct ifnet *ifp)
 {
 	struct cemac_softc * const sc = ifp->if_softc;
 	uint32_t dma, cfg;
+	int error;
 
 	ASSERT_SLEEPABLE();
 	KASSERT(IFNET_LOCKED(ifp));
 
-	/* Cancel pending I/O and flush buffers. */
+	/* Stop software service and mask IRQs; DMA allocations stay owned. */
 	cemac_ifstop(ifp, 0);
 
 	if (ISSET(sc->cemac_flags, CEMAC_FLAG_GEM)) {
@@ -1165,21 +1174,22 @@ cemac_ifinit(struct ifnet *ifp)
 		}
 	}
 
-	// enable interrupts
-	CEMAC_WRITE(ETH_IDR, -1);
-	CEMAC_WRITE(ETH_IER, ETH_ISR_RCOM | ETH_ISR_TBRE | ETH_ISR_TIDLE
-	    | ETH_ISR_RBNA | ETH_ISR_ROVR | ETH_ISR_TCOM);
-
-	// enable transmitter / receiver
-	CEMAC_WRITE(ETH_CTL, ETH_CTL_TE | ETH_CTL_RE | ETH_CTL_ISR
-	    | ETH_CTL_CSR | ETH_CTL_MPE);
-
-	mii_mediachg(&sc->sc_mii);
-	callout_reset(&sc->cemac_tick_ch, hz, cemac_tick, sc);
-	ifp->if_flags |= IFF_RUNNING;
+	/* A failed PHY setup must leave the software gate and IRQs stopped. */
+	error = mii_mediachg(&sc->sc_mii);
+	if (error != 0)
+		return error;
 
 	mutex_enter(sc->sc_intr_lock);
+	/* Preserve pending completions for cemac_intr after IRQ enable. */
+	ifp->if_flags |= IFF_RUNNING;
 	sc->sc_stopping = false;
+	CEMAC_WRITE(ETH_CTL, ETH_CTL_TE | ETH_CTL_RE | ETH_CTL_ISR
+	    | ETH_CTL_CSR | ETH_CTL_MPE);
+	CEMAC_WRITE(ETH_IER, ETH_ISR_RCOM | ETH_ISR_TBRE | ETH_ISR_TIDLE
+	    | ETH_ISR_RBNA | ETH_ISR_ROVR | ETH_ISR_TCOM);
+	/* Flush RP1 PCIe posted writes before releasing the service lock. */
+	(void)CEMAC_READ(ETH_IMR);
+	callout_reset(&sc->cemac_tick_ch, hz, cemac_tick, sc);
 	mutex_exit(sc->sc_intr_lock);
 
 	return 0;
@@ -1188,7 +1198,6 @@ cemac_ifinit(struct ifnet *ifp)
 static void
 cemac_ifstop(struct ifnet *ifp, int disable)
 {
-//	uint32_t u;
 	struct cemac_softc * const sc = ifp->if_softc;
 
 	ASSERT_SLEEPABLE();
@@ -1201,35 +1210,29 @@ cemac_ifstop(struct ifnet *ifp, int disable)
 	mutex_exit(sc->sc_mcast_lock);
 
 	mutex_enter(sc->sc_intr_lock);
+	/*
+	 * Mask our source before cemac_intr starts declining the shared line.
+	 * A readback flushes the RP1 PCIe posted write. Do not read or ACK
+	 * ISR: the retained rings need their pending completion events.
+	 */
+	CEMAC_WRITE(ETH_IDR, UINT32_MAX);
+	(void)CEMAC_READ(ETH_IMR);
 	sc->sc_stopping = true;
+	sc->sc_txbusy = false;
 	mutex_exit(sc->sc_intr_lock);
 
-#if 0
-	CEMAC_WRITE(ETH_CTL, ETH_CTL_MPE);	// disable everything
-	CEMAC_WRITE(ETH_IDR, -1);		// disable interrupts
-//	CEMAC_WRITE(ETH_RBQP, 0);		// clear receive
-	if (ISSET(sc->cemac_flags, CEMAC_FLAG_GEM))
-		CEMAC_WRITE(ETH_CFG,
-		    GEM_CFG_CLK_64 | ETH_CFG_SPD | ETH_CFG_FD | ETH_CFG_BIG);
-	else
-		CEMAC_WRITE(ETH_CFG,
-		    ETH_CFG_CLK_32 | ETH_CFG_SPD | ETH_CFG_FD | ETH_CFG_BIG);
-//	CEMAC_WRITE(ETH_TCR, 0);			// send nothing
-//	(void)CEMAC_READ(ETH_ISR);
-	u = CEMAC_READ(ETH_TSR);
-	CEMAC_WRITE(ETH_TSR, (u & (ETH_TSR_UND | ETH_TSR_COMP | ETH_TSR_BNQ
-				  | ETH_TSR_IDLE | ETH_TSR_RLE
-				  | ETH_TSR_COL | ETH_TSR_OVR)));
-	u = CEMAC_READ(ETH_RSR);
-	CEMAC_WRITE(ETH_RSR, (u & (ETH_RSR_OVR | ETH_RSR_REC | ETH_RSR_BNA)));
-#endif
+	/*
+	 * Retain the running DMA engine, descriptors and buffer mappings.
+	 * Disabling GEM TX resets its queue pointer and needs a separate
+	 * ring teardown/restart protocol. Do not restore the old CFG reset:
+	 * it lost the attachment's MDC divider and GEM data bus width.
+	 */
 	callout_halt(&sc->cemac_tick_ch, NULL);
 
 	/* Down the MII. */
 	mii_down(&sc->sc_mii);
 
 	ifp->if_flags &= ~IFF_RUNNING;
-	sc->sc_txbusy = false;
 	sc->sc_mii.mii_media_status &= ~IFM_ACTIVE;
 }
 

@@ -34,7 +34,7 @@ mkdir -p "$work/src/ember/tools" "$work/bin" "$work/src/tools" \
 cp "$repo/ember/build-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
 # Model only dispatcher arguments and exit status. These fixtures do not
-# execute A733, GPU, Ruby, or Wi-Fi production-code contracts.
+# execute A733, GPU, Ruby, CEMAC, or Wi-Fi production-code contracts.
 for contract in a733-accelerator-clock a733-power a733-gpu-identification \
     a733-gpu-fwinfo a733-gpu-fwimage a733-gpu-mips a733-gpu-fwabi \
     a733-gpu-fwmem a733-gpu-fwinit a733-gpu-fwstart a733-gpu-fwboot \
@@ -65,17 +65,17 @@ test "$1" = "$TEST_ROOT/src"
 test "${FAIL_AT:-}" != gpu-contract
 SH
 done
-for contract in bwfm-link-events bwfm-link-check bwfm-sta aicwf-sta aicwf-vht \
+for contract in cemac-stop bwfm-link-events bwfm-link-check bwfm-sta aicwf-sta aicwf-vht \
     bwfm-scan-padding bwfm-key-epoch; do
 cat > "$work/src/ember/tests/$contract.sh" <<'SH'
 #!/bin/sh
 set -eu
-echo "wifi-contract ${0##*/} $*" >> "$TEST_LOG"
+echo "network-contract ${0##*/} $*" >> "$TEST_LOG"
 case ${0##*/} in
     aicwf-sta.sh|aicwf-vht.sh) test "$#" -eq 0;;
     *) test "$#" -eq 1; test "$1" = "$TEST_ROOT/src";;
 esac
-if [ "${FAIL_AT:-}" = wifi-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; then
+if [ "${FAIL_AT:-}" = network-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; then
     echo "injected contract failure: ${0##*/}" >&2
     exit 1
 fi
@@ -123,7 +123,13 @@ mkdir -p "$TEST_OUT/tools/bin" "$TEST_OUT/obj/kernels/EMBER64"
 cp "$TEST_ROOT/bin/nbmake-evbarm" "$TEST_OUT/tools/bin/"
 cp "$TEST_ROOT/bin/cpp" "$TEST_OUT/tools/bin/target-cpp"
 cp "$TEST_ROOT/bin/dtc" "$TEST_OUT/tools/bin/nbdtc"
-printf kernel > "$TEST_OUT/obj/kernels/EMBER64/netbsd"
+# Model make's incremental version object. BUILDINFO is not a dependency.
+version_obj="$TEST_OUT/obj/kernels/EMBER64/vers.o"
+if [ ! -f "$version_obj" ]; then
+    printf '%s\n' "${BUILDINFO:-fixture-kernel}" > "$TEST_OUT/obj/kernels/EMBER64/vers.c"
+    cp "$TEST_OUT/obj/kernels/EMBER64/vers.c" "$version_obj"
+fi
+cp "$version_obj" "$TEST_OUT/obj/kernels/EMBER64/netbsd"
 printf image > "$TEST_OUT/obj/kernels/EMBER64/netbsd.img"
 SH
 cat > "$work/bin/nbmake-evbarm" <<'SH'
@@ -199,7 +205,7 @@ check_contract_counts() {
     test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 16
     test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 17
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 3
-    test "$(grep -c '^wifi-contract ' "$TEST_LOG")" -eq 7
+    test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 8
 }
 export TEST_OUT="$work/cross"
 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
@@ -213,12 +219,31 @@ grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
 check_contract_counts 2
+# Reuse all objects, but the selected kernel must embed the new build identity.
+printf 'old-source-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.c"
+printf 'old-object-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.o"
+printf 'keep-object\n' > "$TEST_OUT/obj/kernels/EMBER64/keep.o"
+mkdir -p "$TEST_OUT/obj/kernels/OTHER"
+printf 'other-source-id\n' > "$TEST_OUT/obj/kernels/OTHER/vers.c"
+printf 'other-object-id\n' > "$TEST_OUT/obj/kernels/OTHER/vers.o"
+: > "$TEST_LOG"
+BUILDINFO=new-source-id sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+if [ "$(cat "$TEST_OUT/netbsd-EMBER64")" != new-source-id ]; then
+    echo 'stale kernel BUILDINFO survived the incremental rebuild' >&2
+    exit 1
+fi
+test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.c")" = new-source-id
+test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.o")" = new-source-id
+test "$(cat "$TEST_OUT/obj/kernels/EMBER64/keep.o")" = keep-object
+test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.c")" = other-source-id
+test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.o")" = other-object-id
+check_contract_counts 2
 outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
 if_cemac_acpi.kmod bcm2712btcom.kmod rp1wmcodec.kmod rpi5button.kmod'
 for failure in tools module cpp dtb contract a733-contract \
     a733-gpu-vm-contract.sh gpu-contract ruby-contract \
-    bcm2712-v3d-prime-contract.rb wifi-contract bwfm-link-check.sh \
+    bcm2712-v3d-prime-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
     aicwf-sta.sh aicwf-vht.sh publish; do
     : > "$TEST_LOG"
     for output in $outputs; do
@@ -235,10 +260,15 @@ for failure in tools module cpp dtb contract a733-contract \
         grep -Fq 'injected contract failure: a733-' "$TEST_OUT/contracts.log"
         ! grep -q '^gpu-contract ' "$TEST_LOG"
         ;;
-    aicwf-sta.sh|aicwf-vht.sh)
-        grep -Fq "wifi-contract $failure " "$TEST_LOG"
+    cemac-stop.sh)
+        grep -Fq "network-contract $failure " "$TEST_LOG"
         grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
-        ! grep -q '^wifi-contract bwfm-scan-padding.sh ' "$TEST_LOG"
+        ! grep -q '^network-contract bwfm-link-events.sh ' "$TEST_LOG"
+        ;;
+    aicwf-sta.sh|aicwf-vht.sh)
+        grep -Fq "network-contract $failure " "$TEST_LOG"
+        grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
+        ! grep -q '^network-contract bwfm-scan-padding.sh ' "$TEST_LOG"
         ;;
     esac
 done
@@ -270,4 +300,4 @@ fi
 grep -q 'full source' "$work/run.log"
 test ! -e "$TEST_OUT/netbsd-EMBER64"
 test ! -e "$TEST_OUT/bcm2712btcom.kmod"
-echo 'PASS: cross/native routing, matched module headers, external tools, base/A733/GPU/Ruby/Wi-Fi contract dispatch, failure cleanup'
+echo 'PASS: cross/native routing, refreshed kernel identity, retained objects, matched module headers, external tools, base/A733/GPU/Ruby/CEMAC/Wi-Fi contract dispatch, failure cleanup'

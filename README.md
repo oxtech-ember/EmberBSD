@@ -824,7 +824,10 @@ The base system shell is unchanged.
   this tree, and drivers for the on-board Wi-Fi, Ethernet behind the
   RP1 chip, Bluetooth, the power button, the fan, the watchdog, I2C
   and a WM8960 audio codec. The board pages distinguish tested peripherals
-  from shared driver availability.
+  from shared driver availability. The [CEMAC interrupt lifecycle](ember/boot/cemac-irq-lifecycle.md)
+  has host regression checks for stop, restart and retained receive events.
+  Fault injection checks receive-buffer reuse when replacement allocation fails.
+  Repeated physical Ethernet down/up still needs acceptance.
 - **WPA3-Personal on CM5:** upstream wpa_supplicant SAE now works through
   the fork's `bwfm` external-auth interface, with required protected
   management frames. A physical CM5 passed SAE group 19/H2E, bidirectional
@@ -921,6 +924,8 @@ The base system shell is unchanged.
   checksum checks; native contracts and boot acceptance remain separate.
   Darwin host-tool checks pass real GCC16/SDK host-mkdep and mandoc configuration and Clang
   flag selection; complete amd64 tools and image acceptance remain separate.
+  Incremental wrapper builds refresh the generated kernel version metadata;
+  host orchestration checks cover stale `BUILDINFO` and object retention.
   The resulting kernel cold-boots in AArch64 UTM and passes FP process,
   signal and thread checks. The
   [Ports cross GCC16 recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)

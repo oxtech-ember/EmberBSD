@@ -33,6 +33,7 @@ dhcpcd=YES
 sshd=YES
 ec2_init=$(is_ec2)
 
-if checkyesno ec2_init; then
+# postinstall also sources rc.conf without rc.subr.
+if [ "$ec2_init" = YES ]; then
 	dhcpcd_flags="$dhcpcd_flags -w"
 fi
