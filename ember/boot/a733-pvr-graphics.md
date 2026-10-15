@@ -15,7 +15,7 @@ Use the [native execution guide](a733-pvr-execution.md) for the implemented comp
 | Paired geometry/fragment queues, fragment and transfer execution | 199,607 sanitizer checks; 13 causal regressions | Paired submit caller exists; graphics execution remains unverified |
 | HWRT firmware resource owner | 14,101 sanitizer checks; 82,377 configurations compared with pinned Linux | UAPI, handle owner, and build registration exist; hardware acceptance remains pending |
 | Shared GEM and VM mapping holds | BO checks: 37,866 / 148,458; file checks: 2,158 / 127, for 4 KiB / 16 KiB hosts | HWRT handle owner retains these holds; runtime acceptance remains pending |
-| Two-phase free-list growth | 8,457,268 sanitizer checks; 44 allocation-failure cases; 11 causal regressions | Dispatcher contracts pass; device registry and callback installation are absent |
+| Two-phase free-list growth | 8,457,268 sanitizer checks; 44 allocation-failure cases; 11 causal regressions | Device registry and GROW callbacks have host lifecycle contracts |
 
 GCC16 target compilation, GCC path analysis, Clang analysis, and Cppcheck
 supplement these checks. Existing header diagnostics, fixture model findings,
@@ -32,23 +32,25 @@ Each adapted source retains its attribution and license.
 Run the actual-source contracts from this checkout:
 
 ```sh
-for name in pvr-stream pvr-context pvr-hwrt pvr-freelist pvr-bo pvr-file pvr-submit; do
+for name in pvr-render pvr-stream pvr-context pvr-hwrt pvr-freelist pvr-bo pvr-file pvr-submit; do
     CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' \
         sh "ember/tools/$name-contract.sh"
 done
+PVR_EXEC_TEST_CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' \
+    sh ember/tools/pvr-exec-contract.sh
 ```
 
 ## Resume integration
 
-1. Add the device-owned free-list registry and install its `set_events` callbacks.
+1. Recheck device-owned free-list registration and GROW callbacks with the platform backend.
 2. Integrate and recheck the paired submission contracts with the execution backend.
 3. Recheck the main compute guards before each graphics kernel build.
 4. Build a clean committed kernel and its matched modules with the common GCC16 tools.
 5. Recheck the compute path on the physical board before graphics.
 6. Check offscreen Vulkan rendering and Zink before native display integration.
 
-The dispatcher can process GROW events, but no execution-layer caller installs its handlers.
-A GROW request without handlers fails closed.
+The execution backend installs GROW handlers before it becomes available to clients.
+Unknown firmware IDs and incomplete owners fail closed.
 The submit path now identifies exact geometry-signal and fragment-wait pairs.
 It uses the existing firmware `FENCE_PR` instead of waiting before publishing the producer.
 The former host wait timed out before rendering in an actual-source regression.
@@ -99,8 +101,17 @@ They require independent review before integration into `main` or deployment.
 The dispatcher adds validated GROW dequeue and GROW_UPDATE transport, a bounded
 32-event service drain, and `pvr_fw_events` / `set_events` callbacks.
 It also adds `pvr_freelist_current_pages()` for a ready, quiet owner.
-The device-wide registry and installation of its callbacks are not implemented.
-Reconstruction requests remain unsupported.
+The device registry uses full 32-bit firmware IDs, separate from per-file handles.
+A native red-black tree bounds lookup without truncating the final valid ID.
+Registration reserves the owner slot before firmware creation can issue commands.
+Successful destruction removes the entry before the owner slot is freed.
+Failed cleanup keeps the entry, VM, pin, and existing orphan device reference alive.
+One pending owner spans successful GROW preparation and its matching completion.
+Failed preparation creates no pending owner; failed completion retains it.
+Callbacks hold both existing gates and never acquire either gate recursively.
+Host tests use the actual tree implementation and driver/execution sources.
+They cover registration failure, two clients, ID boundaries, cleanup, and retained references.
+Reconstruction requests and physical GROW execution remain unsupported or unverified.
 
 The fixture defines `current_pages_tests()` and does not reacquire the held bridge gate.
 The page-count tests run before their two backing buffers are freed.
@@ -121,7 +132,7 @@ Physical firmware must also establish whether KICK consumption precedes the
 request/response dependency. Keep bounded failure if that assumption does not hold.
 
 HWRT UAPI and paired `SUBMIT_JOBS` integration now exist as described below.
-They do not install the missing device-wide GROW callback registry.
+Their free-list references share the device-wide GROW callback registry.
 
 ## HWRT execution ownership
 
@@ -174,7 +185,7 @@ The legacy diagnostic entry point still rejects combined KICK.
 The queue retains its owner, firmware identity, consumed-entry checks, finite deadline, and failure state.
 Transport completion does not replace CCCB/UFO completion in the context sender.
 Host tests cover both return words, queue wrap, invalid halves, lost consumption, and firmware faults.
-These contracts do not establish physical paired graphics execution or install the missing GROW callbacks.
+These contracts do not establish physical paired graphics or GROW execution.
 
 The synchronous submit path cannot schedule an unpublished self or forward dependency.
 It returns `EDEADLK` when a remaining job can publish the currently missing sync point.

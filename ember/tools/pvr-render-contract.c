@@ -20,6 +20,11 @@ typedef uint64_t __u64;
 #define DRM_IOCTL_NR(n) ((n) & 0xff)
 #include "pvr-uapi-body.h"
 #include "pvr_backend.h"
+#include "rbtree.h"
+#include "powervr/pvr_rogue_fwif.h"
+#ifndef PVR_REGISTRY_TEST
+#define PVR_REGISTRY_TEST 1
+#endif
 #include "pvr-query.h-body.h"
 #define CTASSERT(e) _Static_assert(e, #e)
 
@@ -261,6 +266,10 @@ static int pvr_create_free_list(struct drm_device *d, void *a, struct drm_file *
 { abort(); }
 static int pvr_destroy_free_list(struct drm_device *d, void *a, struct drm_file *f)
 { abort(); }
+static int pvr_create_hwrt_dataset(struct drm_device *d, void *a, struct drm_file *f)
+{ abort(); }
+static int pvr_destroy_hwrt_dataset(struct drm_device *d, void *a, struct drm_file *f)
+{ abort(); }
 static int pvr_submit_jobs(struct drm_device *d, void *a, struct drm_file *f)
 { abort(); }
 /* The separate heap contract tests the actual query and user-copy behavior. */
@@ -282,7 +291,18 @@ static void mutex_exit(kmutex_t *m) { CHECK(m->held); m->held = false; }
 static void mutex_destroy(kmutex_t *m) { CHECK(!m->held); }
 static bool mutex_owned(kmutex_t *m) { return m->held; }
 static void drm_dev_get(struct drm_device *dev) { CHECK(dev->refs != 0); dev->refs++; }
+struct pvr_freelist {
+	bool pending, failed;
+	int prepare_error, complete_error;
+	unsigned prepares, completions;
+};
+#if PVR_REGISTRY_TEST
+static int pvr_freelist_grow_prepare(struct pvr_freelist *,
+    struct rogue_fwif_freelist_gs_data *);
+static int pvr_freelist_grow_complete(struct pvr_freelist *, int);
+#endif
 #include "pvr-drv-body.h"
+
 
 _Static_assert(sizeof(struct drm_pvr_ioctl_dev_query_args) == 16, "query ABI");
 _Static_assert(offsetof(struct drm_pvr_ioctl_dev_query_args, pointer) == 8,
@@ -362,7 +382,9 @@ queries(struct drm_device *dev)
 }
 
 static bool platform_held;
-static unsigned platform_entries, platform_leaves;
+static unsigned platform_entries, platform_leaves, event_installs;
+static int event_install_error;
+static struct pvr_fw_events installed_events;
 static void
 backend_enter(void *cookie)
 {
@@ -392,6 +414,145 @@ static int backend_check(void *c)
 static void backend_fail(void *c)
 { CHECK(false); }
 
+static int
+backend_set_events(void *cookie, const struct pvr_fw_events *events)
+{
+	struct pvr_device *sc = cookie;
+
+	CHECK(mutex_owned(&sc->gate) && platform_held);
+	CHECK(events != NULL && events->cookie == sc);
+	CHECK(events->grow_prepare != NULL && events->grow_complete != NULL);
+	event_installs++;
+	if (event_install_error != 0)
+		return event_install_error;
+	CHECK(installed_events.cookie == NULL);
+	installed_events = *events;
+	return 0;
+}
+
+#if PVR_REGISTRY_TEST
+static int
+pvr_freelist_grow_prepare(struct pvr_freelist *fl,
+    struct rogue_fwif_freelist_gs_data *response)
+{
+	struct pvr_device *sc = installed_events.cookie;
+
+	CHECK(sc != NULL && mutex_owned(&sc->gate) && platform_held);
+	CHECK(fl != NULL && response != NULL && !fl->pending);
+	fl->prepares++;
+	if (fl->prepare_error != 0)
+		return fl->prepare_error;
+	fl->pending = true;
+	memset(response, 0, sizeof(*response));
+	response->freelist_fw_addr = 0xc0200000;
+	return 0;
+}
+
+static int
+pvr_freelist_grow_complete(struct pvr_freelist *fl, int error)
+{
+	struct pvr_device *sc = installed_events.cookie;
+
+	CHECK(sc != NULL && mutex_owned(&sc->gate) && platform_held);
+	CHECK(fl != NULL && fl->pending);
+	fl->completions++;
+	if (error != 0 || fl->complete_error != 0) {
+		fl->failed = true;
+		return error != 0 ? error : fl->complete_error;
+	}
+	fl->pending = false;
+	return 0;
+}
+
+static void
+registry_tests(struct drm_device *dev)
+{
+	struct pvr_device *sc = dev->dev_private;
+	struct pvr_freelist objects[257] = { 0 };
+	struct pvr_freelist *slots[257] = { 0 }, *alien = NULL;
+	struct rogue_fwif_freelist_gs_data response;
+	const struct pvr_fw_events *events = &installed_events;
+	unsigned i, n;
+	struct pvr_orphan *orphan;
+	uint32_t id;
+
+	(void)pvr_device_enter(dev);
+	CHECK(events->cookie == sc);
+	CHECK(pvr_device_freelist_add(dev, 0, &alien) == EINVAL);
+	CHECK(pvr_device_freelist_add(dev, 1, NULL) == EINVAL);
+	alien = &objects[0];
+	CHECK(pvr_device_freelist_add(dev, 1, &alien) == EINVAL);
+	alien = NULL;
+	CHECK(events->grow_prepare(events->cookie, 1, &response) == ENOENT);
+	/* Dense insertion and permuted removal exercise the actual RB tree. */
+	for (i = 0; i < 257; i++) {
+		unsigned completes;
+
+		id = i == 256 ? UINT32_MAX : i + 1;
+		CHECK(pvr_device_freelist_add(dev, id, &slots[i]) == 0);
+		CHECK(pvr_device_freelist_add(dev, id, &alien) == EEXIST);
+		CHECK(events->grow_prepare(events->cookie, id, &response) == EIO);
+		CHECK(sc->grow_pending == NULL);
+		slots[i] = &objects[i];
+		objects[i].prepare_error = ENOMEM;
+		CHECK(events->grow_prepare(events->cookie, id, &response) == ENOMEM);
+		CHECK(sc->grow_pending == NULL && !objects[i].pending);
+		objects[i].prepare_error = 0;
+		CHECK(events->grow_prepare(events->cookie, id, &response) == 0);
+		CHECK(sc->grow_pending != NULL && objects[i].pending);
+		CHECK(events->grow_prepare(events->cookie, id, &response) == EBUSY);
+		CHECK(pvr_device_freelist_remove(dev, id, &slots[i]) == EBUSY);
+		completes = objects[i].completions;
+		CHECK(events->grow_complete(events->cookie, id ^ 0x40000000U, 0) == EINVAL);
+		CHECK(objects[i].completions == completes && sc->grow_pending != NULL);
+		CHECK(events->grow_complete(events->cookie, id, 0) == 0);
+		CHECK(objects[i].completions == completes + 1 && sc->grow_pending == NULL);
+		CHECK(events->grow_complete(events->cookie, id, 0) == EINVAL);
+		CHECK(objects[i].completions == completes + 1);
+	}
+	for (n = 0; n < 257; n++) {
+		i = n * 73 % 257;
+		id = i == 256 ? UINT32_MAX : i + 1;
+		CHECK(pvr_device_freelist_remove(dev, id, &alien) == EINVAL);
+		CHECK(pvr_device_freelist_remove(dev, id, &slots[i]) == EBUSY);
+		slots[i] = NULL;
+		CHECK(pvr_device_freelist_remove(dev, id, &slots[i]) == 0);
+		CHECK(events->grow_prepare(events->cookie, id, &response) == ENOENT);
+	}
+	CHECK(RB_TREE_MIN(&sc->freelists) == NULL);
+	/* Uncertain completion must keep the pending owner and its device alive. */
+	for (n = 0; n < 2; n++) {
+		unsigned refs, old_finalized;
+
+		objects[0] = (struct pvr_freelist){ 0 };
+		CHECK(pvr_device_freelist_add(dev, UINT32_MAX, &slots[0]) == 0);
+		slots[0] = &objects[0];
+		CHECK(events->grow_prepare(events->cookie, UINT32_MAX, &response) == 0);
+		objects[0].complete_error = n == 1 ? EIO : 0;
+		CHECK(events->grow_complete(events->cookie, UINT32_MAX, n == 0 ? EIO : 0) == EIO);
+		CHECK(sc->grow_pending != NULL && objects[0].pending && objects[0].failed);
+		CHECK(pvr_device_freelist_remove(dev, UINT32_MAX, &slots[0]) == EBUSY);
+		refs = dev->refs;
+		old_finalized = finalized;
+		pvr_device_retain(dev, &slots[0]);
+		CHECK(dev->refs == refs + 1 && sc->orphans->owner == &slots[0]);
+		drm_dev_put(dev); /* Drop an ordinary reference, keeping the orphan. */
+		CHECK(dev->refs == refs && finalized == old_finalized);
+		drm_dev_get(dev); /* Restore the test caller's ordinary reference. */
+		/* Only this test's proven-reset model can release failed owners. */
+		sc->grow_pending = NULL;
+		slots[0] = NULL;
+		CHECK(pvr_device_freelist_remove(dev, UINT32_MAX, &slots[0]) == 0);
+		orphan = sc->orphans;
+		sc->orphans = orphan->next;
+		kmem_free(orphan, sizeof(*orphan));
+		drm_dev_put(dev);
+		CHECK(dev->refs == refs);
+	}
+	pvr_device_leave(dev);
+}
+#endif
+
 static void
 backend_lifetime(struct drm_device *dev)
 {
@@ -401,6 +562,7 @@ backend_lifetime(struct drm_device *dev)
 		.alloc = backend_alloc, .free = backend_free, .sync = backend_sync,
 		.command = backend_command, .flush = backend_check,
 		.check = backend_check, .fail = backend_fail,
+		.set_events = backend_set_events,
 	};
 	struct pvr_backend invalid;
 	struct pvr_orphan *orphan;
@@ -413,13 +575,14 @@ backend_lifetime(struct drm_device *dev)
 	CHECK(mutex_owned(&sc->gate));
 	CHECK(pvr_device_next_id(dev, &id) == 0 && id == 1);
 	CHECK(pvr_device_next_id(dev, &id) == 0 && id == 2);
-	sc->next_id = UINT32_MAX;
-	CHECK(pvr_device_next_id(dev, &id) == EOVERFLOW && id == 2);
+	sc->next_id = UINT32_MAX - 1;
+	CHECK(pvr_device_next_id(dev, &id) == 0 && id == UINT32_MAX);
+	CHECK(pvr_device_next_id(dev, &id) == EOVERFLOW && id == UINT32_MAX);
 	pvr_device_leave(dev);
 	CHECK(!mutex_owned(&sc->gate));
 	CHECK(pvr_backend_attach(NULL, &backend) == EINVAL);
 	CHECK(pvr_backend_attach(dev, NULL) == EINVAL);
-	for (unsigned n = 0; n < 10; n++) {
+	for (unsigned n = 0; n < (PVR_REGISTRY_TEST ? 11U : 10U); n++) {
 		invalid = backend;
 		switch (n) {
 		case 0: invalid.cookie = NULL; break;
@@ -432,12 +595,25 @@ backend_lifetime(struct drm_device *dev)
 		case 7: invalid.flush = NULL; break;
 		case 8: invalid.check = NULL; break;
 		case 9: invalid.fail = NULL; break;
+		case 10: invalid.set_events = NULL; break;
 		}
 		CHECK(pvr_backend_attach(dev, &invalid) == EINVAL);
 		CHECK(!sc->execution && !mutex_owned(&sc->gate));
 	}
+	for (unsigned n = 0; n < 2; n++) {
+		event_install_error = n == 0 ? EIO : -EIO;
+		CHECK(pvr_backend_attach(dev, &backend) == (n == 0 ? EIO : EPROTO));
+		CHECK(!sc->execution && installed_events.cookie == NULL);
+		CHECK(!platform_held && !mutex_owned(&sc->gate));
+		CHECK(pvr_device_enter(dev) == NULL);
+		pvr_device_leave(dev);
+	}
+	event_install_error = 0;
 	CHECK(pvr_backend_attach(dev, &backend) == 0);
+	CHECK(event_installs == 3 && installed_events.cookie == sc);
 	CHECK(pvr_backend_attach(dev, &backend) == EALREADY);
+	CHECK(event_installs == 3);
+
 	/* Registration copies the immutable callbacks into device-owned storage. */
 	backend.cookie = NULL;
 	backend.enter = NULL;
@@ -450,7 +626,7 @@ backend_lifetime(struct drm_device *dev)
 	CHECK(sc->orphans->owner == &retained_owner);
 	pvr_device_leave(dev);
 	CHECK(!platform_held && !mutex_owned(&sc->gate));
-	CHECK(platform_entries == 1 && platform_leaves == 1);
+	CHECK(platform_entries == 4 && platform_leaves == 4);
 	/* A model reset ends reachability. The production driver has no reset API. */
 	orphan = sc->orphans;
 	sc->orphans = orphan->next;
@@ -521,6 +697,11 @@ main(void)
 	CHECK(registered == calls);
 	queries(owner);
 	backend_lifetime(owner);
+#if PVR_REGISTRY_TEST
+	registry_tests(owner);
+#endif
+	/* The test resets the backend before releasing its device cookie. */
+	memset(&installed_events, 0, sizeof(installed_events));
 	drm_dev_put(owner);
 	CHECK(allocs == frees && private_allocs == private_frees);
 	printf("PASS: %u native PowerVR registration/query checks\n", checks);

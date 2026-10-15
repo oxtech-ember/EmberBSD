@@ -30,6 +30,8 @@ struct pvr_exec_freelist {
 	struct pvr_freelist *firmware;
 	struct pvr_file_vm *vm;
 	struct pvr_file_pin pin;
+	uint32_t firmware_id;
+	bool registered;
 	unsigned refs;
 };
 struct pvr_exec_file {
@@ -130,6 +132,12 @@ pvr_exec_freelist_put(struct drm_device *dev, struct pvr_exec_freelist *fl)
 				break;
 			(void)kpause("pvrflclean", false, MAX(1, hz / 100), NULL);
 		}
+	}
+	if (error == 0 && fl->registered) {
+		error = pvr_device_freelist_remove(dev, fl->firmware_id,
+		    &fl->firmware);
+		if (error == 0)
+			fl->registered = false;
 	}
 	if (error != 0) {
 		pvr_file_vm_fail(fl->vm);
@@ -340,6 +348,11 @@ pvr_create_free_list_locked(struct drm_device *dev,
 	config.gpu_va = args->free_list_gpu_addr;
 	config.sync_cookie = &fl->pin;
 	config.backing_sync = pvr_file_pin_sync;
+	fl->firmware_id = id;
+	error = pvr_device_freelist_add(dev, id, &fl->firmware);
+	if (error != 0)
+		goto fail;
+	fl->registered = true;
 	config.id = id;
 	config.initial_pages = args->initial_num_pages;
 	config.max_pages = args->max_num_pages;

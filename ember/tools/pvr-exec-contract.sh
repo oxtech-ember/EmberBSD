@@ -7,7 +7,7 @@ src=$(CDPATH= cd -- "$tools/../.." && pwd)
 if [ "$#" -ne 0 ]; then echo "usage: $0" >&2; exit 2; fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/pvr-exec.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-for part in backend context drm exec file freelist stream; do
+for part in backend context drm exec exec_hwrt file freelist stream; do
     sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_$part.h" > "$work/$part.h"
 done
 sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_exec.c" > "$work/exec-driver.h"

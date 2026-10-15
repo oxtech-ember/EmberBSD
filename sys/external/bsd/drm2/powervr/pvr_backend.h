@@ -10,6 +10,7 @@ struct rogue_fwif_freelist_gs_data;
 
 /*
  * Install once while both gates are held. Keep cookie alive until reboot.
+ * A failed installation does not retain the supplied callbacks.
  * Callbacks run after a copied FWCCB event is consumed and its read confirmed.
  * They must not acquire either gate or call backend operations. Complete
  * may call fail(), which only marks state without locking or transport.
@@ -63,6 +64,17 @@ void pvr_device_leave(struct drm_device *);
 /* Retain unreachable device-owned state until reboot. The device gate is held. */
 void pvr_device_retain(struct drm_device *, void *);
 int pvr_device_next_id(struct drm_device *, uint32_t *);
+/*
+ * Hold both gates. Register an empty owner slot before creating its firmware
+ * object. Keep the slot and registration live through every backend operation.
+ * Remove only after destroy clears the slot, before freeing the slot itself.
+ * Failed cleanup keeps the registration and owner through device retention.
+ */
+struct pvr_freelist;
+int pvr_device_freelist_add(struct drm_device *, uint32_t,
+    struct pvr_freelist **);
+int pvr_device_freelist_remove(struct drm_device *, uint32_t,
+    struct pvr_freelist **);
 struct drm_device;
 int pvr_device_hwrt_info(struct drm_device *, uint64_t *, uint32_t *);
 
