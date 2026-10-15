@@ -536,6 +536,9 @@ on every board in the hardware catalog.
   now pair finite DMA phases, retain host resources through failed cleanup,
   and reject private framebuffer handles before publication. Kernel copies
   wait for prior operations while retaining the buffer and its reservation.
+  A [checked firmware framebuffer interface](ember/boot/firmware-framebuffer.md)
+  preserves boot-console ownership and genfb fallback for future display drivers.
+  Source contracts pass; this interface does not supply KMS or physical scanout.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.

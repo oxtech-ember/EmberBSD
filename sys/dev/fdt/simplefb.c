@@ -1,4 +1,4 @@
-/* Origin: EmberBSD early native console selection and fallback, 2026-10-06. */
+/* Origin: EmberBSD firmware framebuffer descriptor and console ownership. */
 /* $NetBSD: simplefb.c,v 1.15 2021/08/30 22:47:24 jmcneill Exp $ */
 
 /*-
@@ -55,41 +55,137 @@ struct simplefb_softc {
 	int sc_phandle;
 
 	bus_addr_t sc_paddr;
+	struct simplefb_framebuffer sc_framebuffer;
+	int sc_framebuffer_error;
 };
 
 static int simplefb_console_phandle = -1;
 
-#ifdef VIRTGPU_CONSOLE
 static struct simplefb_softc *simplefb_deferred;
 static device_t simplefb_owner;
 static bool simplefb_committed;
 
+/* This snapshot is valid for the existing genfb signed arithmetic. */
+static int
+simplefb_read_framebuffer(struct simplefb_softc *sc,
+    struct simplefb_framebuffer *framebuffer)
+{
+	struct simplefb_framebuffer fb = { .sf_bst = sc->sc_bst };
+	prop_dictionary_t dict = device_properties(sc->sc_gen.sc_dev);
+	const int phandle = sc->sc_phandle;
+	const char *format;
+	uint64_t address, span;
+
+	if (fdtbus_get_reg(phandle, 0, &fb.sf_address, &fb.sf_size) != 0 ||
+	    fb.sf_size == 0)
+		return ENXIO;
+	if (of_getprop_uint32(phandle, "width", &fb.sf_width) != 0 ||
+	    of_getprop_uint32(phandle, "height", &fb.sf_height) != 0 ||
+	    of_getprop_uint32(phandle, "stride", &fb.sf_stride) != 0 ||
+	    (format = fdtbus_get_string(phandle, "format")) == NULL)
+		return ENXIO;
+
+	if (strcmp(format, "a8b8g8r8") == 0)
+		fb.sf_format = SIMPLEFB_FORMAT_A8B8G8R8;
+	else if (strcmp(format, "x8r8g8b8") == 0)
+		fb.sf_format = SIMPLEFB_FORMAT_X8R8G8B8;
+	else if (strcmp(format, "r8g8b8a8") == 0)
+		fb.sf_format = SIMPLEFB_FORMAT_R8G8B8A8;
+	else if (strcmp(format, "b8g8r8x8") == 0)
+		fb.sf_format = SIMPLEFB_FORMAT_B8G8R8X8;
+	else if (strcmp(format, "x2r10g10b10") == 0)
+		fb.sf_format = SIMPLEFB_FORMAT_X2R10G10B10;
+	else if (strcmp(format, "r5g6b5") == 0)
+		fb.sf_format = SIMPLEFB_FORMAT_R5G6B5;
+	else
+		return EINVAL;
+	fb.sf_depth = fb.sf_format == SIMPLEFB_FORMAT_R5G6B5 ? 16 : 32;
+
+	if (fb.sf_width == 0 || fb.sf_height == 0 || fb.sf_stride == 0 ||
+	    fb.sf_width > INT_MAX || fb.sf_height > INT_MAX ||
+	    fb.sf_stride > INT_MAX ||
+	    (uint64_t)fb.sf_width * (fb.sf_depth / 8) > fb.sf_stride)
+		return EINVAL;
+	span = (uint64_t)fb.sf_stride * fb.sf_height;
+	if (span > INT_MAX || span > fb.sf_size)
+		return EINVAL;
+	fb.sf_fbsize = (size_t)span;
+
+	/* MD attachment may replace the firmware physical address. */
+	if (prop_dictionary_get_uint64(dict, "simplefb-physaddr", &address) &&
+	    address != 0) {
+		if ((uint64_t)(bus_addr_t)address != address)
+			return EOVERFLOW;
+		fb.sf_address = (bus_addr_t)address;
+	}
+	/* bus_space_map rounds the exclusive end up to a page boundary. */
+	if (fb.sf_size > (bus_addr_t)-1 - fb.sf_address ||
+	    fb.sf_address + fb.sf_size > (bus_addr_t)-1 - PAGE_MASK)
+		return EOVERFLOW;
+
+	*framebuffer = fb;
+	return 0;
+}
+
 bool
 simplefb_console_reserve(device_t owner)
 {
-	if (simplefb_deferred == NULL || simplefb_owner != NULL)
+	if (owner == NULL || simplefb_deferred == NULL ||
+	    simplefb_owner != NULL || simplefb_committed)
 		return false;
+
 	simplefb_owner = owner;
+	return true;
+}
+
+int
+simplefb_console_get_framebuffer(device_t owner,
+    struct simplefb_framebuffer *framebuffer)
+{
+	if (framebuffer == NULL)
+		return EINVAL;
+	if (owner == NULL || simplefb_deferred == NULL ||
+	    simplefb_owner != owner || simplefb_committed)
+		return EPERM;
+	if (simplefb_deferred->sc_framebuffer_error != 0)
+		return simplefb_deferred->sc_framebuffer_error;
+	*framebuffer = simplefb_deferred->sc_framebuffer;
+	return 0;
+}
+
+bool
+simplefb_console_release(device_t owner)
+{
+	if (owner == NULL || simplefb_deferred == NULL ||
+	    simplefb_owner != owner || simplefb_committed)
+		return false;
+	simplefb_owner = NULL;
 	return true;
 }
 
 void
 simplefb_console_commit(device_t owner)
 {
-	KASSERT(simplefb_owner == owner);
+	if (owner == NULL || simplefb_deferred == NULL ||
+	    simplefb_owner != owner || simplefb_committed) {
+		KASSERTMSG(false, "invalid firmware console commit");
+		return;
+	}
 	simplefb_committed = true;
 }
 
 /* config_finalize runs after every config_interrupts job has completed. */
 static int simplefb_attach_genfb(struct simplefb_softc *);
+#ifdef VIRTGPU_CONSOLE
 static int
 simplefb_console_fallback(device_t dev)
 {
 	struct simplefb_softc *sc = device_private(dev);
 
-	if (simplefb_deferred == NULL)
+	if (simplefb_deferred == NULL || simplefb_deferred != sc)
 		return 0;
 	simplefb_deferred = NULL;
+	simplefb_owner = NULL;
 	if (!simplefb_committed)
 		(void)simplefb_attach_genfb(sc);
 	return 0;
@@ -167,61 +263,24 @@ simplefb_attach_genfb(struct simplefb_softc *sc)
 {
 	device_t dev = sc->sc_gen.sc_dev;
 	prop_dictionary_t dict = device_properties(dev);
-	const int phandle = sc->sc_phandle;
 	struct genfb_ops ops;
-	uint32_t width, height, stride;
-	uint16_t depth;
-	const char *format;
-	uint64_t sfb_addr;
-	bus_addr_t addr;
-	bus_size_t size;
+	const struct simplefb_framebuffer *fb = &sc->sc_framebuffer;
+	const uint32_t width = fb->sf_width, height = fb->sf_height;
+	const uint32_t stride = fb->sf_stride;
+	const uint8_t depth = fb->sf_depth;
+	const bus_addr_t addr = fb->sf_address;
+	const bus_size_t size = fb->sf_size;
 
-	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0) {
-		aprint_error(": couldn't get registers\n");
-		return ENXIO;
+	if (sc->sc_framebuffer_error != 0) {
+		aprint_error(": invalid firmware framebuffer (%d)\n",
+		    sc->sc_framebuffer_error);
+		return sc->sc_framebuffer_error;
 	}
-
-	if (size == 0) {
-		aprint_naive("\n");
-		aprint_normal(": disabled\n");
-		return ENXIO;
-	}
-
-	if (of_getprop_uint32(phandle, "width", &width) != 0 ||
-	    of_getprop_uint32(phandle, "height", &height) != 0 ||
-	    of_getprop_uint32(phandle, "stride", &stride) != 0 ||
-	    (format = fdtbus_get_string(phandle, "format")) == NULL) {
-		aprint_error(": missing property in DT\n");
-		return ENXIO;
-	}
-
-	if (strcmp(format, "a8b8g8r8") == 0 ||
-	    strcmp(format, "x8r8g8b8") == 0) {
-		depth = 32;
-	} else if (strcmp(format, "r8g8b8a8") == 0 ||
-		   strcmp(format, "b8g8r8x8") == 0) {
-		depth = 32;
+	if (fb->sf_format == SIMPLEFB_FORMAT_R8G8B8A8 ||
+	    fb->sf_format == SIMPLEFB_FORMAT_B8G8R8X8)
 		prop_dictionary_set_bool(dict, "is_swapped", true);
-	} else if (strcmp(format, "x2r10g10b10") == 0) {
-		depth = 32;
+	if (fb->sf_format == SIMPLEFB_FORMAT_X2R10G10B10)
 		prop_dictionary_set_bool(dict, "is_10bit", true);
-	} else if (strcmp(format, "r5g6b5") == 0) {
-		depth = 16;
-	} else {
-		aprint_error(": unsupported format '%s'\n", format);
-		return ENXIO;
-	}
-
-	if (size < stride * height) {
-		aprint_error(": incorrect size\n");
-		return ENXIO;
-	}
-
-	/* Device may have been reconfigured. MD code will tell us. */
-	if (prop_dictionary_get_uint64(dict, "simplefb-physaddr", &sfb_addr) &&
-	    sfb_addr != 0) {
-		addr = (bus_addr_t)sfb_addr;
-	}
 
 	if (bus_space_map(sc->sc_bst, addr, size,
 	    BUS_SPACE_MAP_LINEAR | BUS_SPACE_MAP_PREFETCHABLE,
@@ -235,8 +294,8 @@ simplefb_attach_genfb(struct simplefb_softc *sc)
 	prop_dictionary_set_uint32(dict, "width", width);
 	prop_dictionary_set_uint32(dict, "height", height);
 	prop_dictionary_set_uint8(dict, "depth", depth);
-	prop_dictionary_set_uint16(dict, "linebytes", stride);
-	prop_dictionary_set_uint32(dict, "address", addr);
+	prop_dictionary_set_uint32(dict, "linebytes", stride);
+	prop_dictionary_set_uint64(dict, "address", addr);
 	prop_dictionary_set_uint64(dict, "virtual_address",
 	    (uintptr_t)bus_space_vaddr(sc->sc_bst, sc->sc_bsh));
 
@@ -261,7 +320,7 @@ simplefb_attach_genfb(struct simplefb_softc *sc)
 	const bool is_console = true;
 	genfb_cnattach();
 #else
-	const bool is_console = phandle == simplefb_console_phandle;
+	const bool is_console = sc->sc_phandle == simplefb_console_phandle;
 	if (is_console)
 		aprint_normal_dev(sc->sc_gen.sc_dev,
 		    "switching to framebuffer console\n");
@@ -292,6 +351,8 @@ simplefb_attach(device_t parent, device_t self, void *aux)
 	sc->sc_gen.sc_dev = self;
 	sc->sc_phandle = phandle;
 	sc->sc_bst = faa->faa_bst;
+	sc->sc_framebuffer_error = simplefb_read_framebuffer(sc,
+	    &sc->sc_framebuffer);
 
 #ifdef VIRTGPU_CONSOLE
 	/* Keep the early arm renderer until exactly one final attachment. */
