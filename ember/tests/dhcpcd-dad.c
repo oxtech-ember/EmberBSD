@@ -8,6 +8,7 @@
 #error This test requires enabled assertions.
 #endif
 #include <assert.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -21,6 +22,10 @@
 #define ARP 1
 #define IPV4LL 1
 #define KERNEL_RFC5227 1
+#define DHCP_INFINITE_LIFETIME UINT32_MAX
+#define DHCP_MIN_LEASE 20
+#define T1 0.5
+#define T2 0.875
 /* Fixture flags only. These do not assert a kernel ABI. */
 #define IN_IFF_TENTATIVE 1
 #define IN_IFF_DUPLICATED 2
@@ -41,8 +46,9 @@
 struct interface;
 struct bootp { uint32_t yiaddr, ciaddr; };
 struct dhcp_lease {
-	struct in_addr addr, mask, brd;
-	uint32_t leasetime, rebindtime;
+	struct in_addr addr, mask, brd, server;
+	uint32_t leasetime, rebindtime, renewaltime;
+	bool frominfo;
 };
 struct ipv4_addr {
 	struct interface *iface;
@@ -53,7 +59,8 @@ struct ipv4_addr {
 struct dhcp_state {
 	enum DHS state;
 	struct bootp *offer, *new, *old;
-	size_t offer_len, new_len;
+	size_t offer_len, new_len, old_len;
+	char leasefile[32];
 	struct dhcp_lease lease;
 	struct ipv4_addr *addr;
 	unsigned int added, interval;
@@ -77,7 +84,7 @@ struct interface {
 
 static struct dhcp_state fixture_state;
 static struct if_options options;
-static struct dhcpcd_ctx ctx;
+static struct dhcpcd_ctx fixture_ctx;
 static struct interface iface;
 static struct bootp offer;
 static struct ipv4_addr address;
@@ -85,9 +92,11 @@ static struct in_addr other;
 static unsigned int checks, failures, binds, informs, drops, adds;
 static unsigned int duplicates, discoveries, timer_cancels, fallback_starts;
 static unsigned int script_calls;
-static bool address_exists, fallback_pending;
+static bool address_exists, fallback_pending, fallback_active, apply_fails;
+static unsigned int apply_calls, lease_timers, lease_writes, exits, daemonises;
+static int last_exit;
 
-static void dhcp_bind(const struct interface *);
+void dhcp_bind(struct interface *);
 static void dhcp_inform(const struct interface *);
 static void dhcp_start1(void *);
 static void dhcp_fallback(void *);
@@ -95,6 +104,9 @@ static void ipv4ll_start(void *);
 static void dhcp_discover(void *);
 static void dhcp_finish_dad(struct interface *, struct in_addr *);
 static void dhcp_arp_bind(struct interface *);
+static void dhcp_startrenew(void *);
+static void dhcp_rebind(void *);
+static void dhcp_expire(void *);
 
 static void
 check(bool ok, const char *name)
@@ -113,6 +125,8 @@ logdebugx(const char *format, ...)
 }
 
 #define loginfox logdebugx
+#define logwarnx logdebugx
+#define logerr logdebugx
 
 static int
 eloop_timeout_delete(void *loop, void (*callback)(void *), const void *arg)
@@ -132,9 +146,14 @@ eloop_timeout_add_sec(void *loop, unsigned int seconds,
 	(void)loop;
 	(void)seconds;
 	assert(arg == &iface);
-	assert(callback == ipv4ll_start || callback == dhcp_fallback);
-	fallback_pending = true;
-	fallback_starts++;
+	if (callback == ipv4ll_start || callback == dhcp_fallback) {
+		fallback_pending = true;
+		fallback_starts++;
+	} else {
+		assert(callback == dhcp_startrenew || callback == dhcp_rebind ||
+		    callback == dhcp_expire);
+		lease_timers++;
+	}
 	return 0;
 }
 
@@ -210,18 +229,73 @@ dhcp_addr_duplicated(const struct interface *ifp, const struct in_addr *addr)
 	return false;
 }
 
-static void
-dhcp_bind(const struct interface *ifp)
+static int
+inet_ntocidr(struct in_addr mask)
 {
-	assert(ifp == &iface && fixture_state.offer != NULL);
-	binds++;
-	fixture_state.new = fixture_state.offer;
-	fixture_state.new_len = fixture_state.offer_len;
-	fixture_state.offer = NULL;
-	fixture_state.offer_len = 0;
-	fixture_state.state = DHS_BOUND;
-	fixture_state.addr = &address;
-	fixture_state.added = STATE_ADDED;
+	(void)mask;
+	return 24;
+}
+
+static void
+dhcp_startrenew(void *arg)
+{
+	(void)arg;
+	assert(!"fixture must not run a renewal timer");
+}
+
+static void
+dhcp_rebind(void *arg)
+{
+	(void)arg;
+	assert(!"fixture must not run a rebind timer");
+}
+
+static void
+dhcp_expire(void *arg)
+{
+	(void)arg;
+	assert(!"fixture must not run an expiry timer");
+}
+
+static void
+eloop_exit(void *loop, int result)
+{
+	(void)loop;
+	exits++;
+	last_exit = result;
+}
+
+static int
+dhcp_writefile(struct dhcpcd_ctx *context, const char *path, int mode,
+    const struct bootp *message, size_t length)
+{
+	(void)context;
+	(void)path;
+	(void)mode;
+	(void)message;
+	(void)length;
+	lease_writes++;
+	return 0;
+}
+
+static struct ipv4_addr *
+ipv4_applyaddr(struct interface *ifp)
+{
+	struct dhcp_state *current = ifp->state;
+
+	apply_calls++;
+	if (apply_fails)
+		return NULL;
+	current->addr = &address;
+	current->added = STATE_ADDED;
+	return &address;
+}
+
+static void
+dhcpcd_daemonise(struct dhcpcd_ctx *context)
+{
+	(void)context;
+	daemonises++;
 }
 
 static void
@@ -237,6 +311,7 @@ ipv4ll_drop(const struct interface *ifp)
 {
 	assert(ifp == &iface);
 	drops++;
+	fallback_active = false;
 }
 
 /* The following I/O branches are outside this fixture's DAD contract. */
@@ -267,7 +342,7 @@ dhcp_bound(struct interface *ifp, uint8_t old_state)
 {
 	(void)ifp;
 	(void)old_state;
-	assert(!"unexpected unmanaged address");
+	binds++;
 }
 
 static size_t
@@ -323,7 +398,7 @@ reset(enum DHS initial)
 {
 	memset(&fixture_state, 0, sizeof(fixture_state));
 	memset(&options, 0, sizeof(options));
-	memset(&ctx, 0, sizeof(ctx));
+	memset(&fixture_ctx, 0, sizeof(fixture_ctx));
 	memset(&iface, 0, sizeof(iface));
 	memset(&offer, 0, sizeof(offer));
 	memset(&address, 0, sizeof(address));
@@ -342,15 +417,21 @@ reset(enum DHS initial)
 	fixture_state.lease.brd = address.brd;
 	fixture_state.lease.leasetime = 3600;
 	fixture_state.lease.rebindtime = 3000;
+	fixture_state.lease.renewaltime = 1800;
 	options.options = DHCPCD_CONFIGURE | DHCPCD_IPV4LL;
 	options.ipv4ll_time = 5;
-	ctx.options = DHCPCD_MANAGER | DHCPCD_CONFIGURE;
+	fixture_ctx.options = DHCPCD_MANAGER | DHCPCD_CONFIGURE;
 	iface.state = &fixture_state;
 	iface.options = &options;
-	iface.ctx = &ctx;
+	iface.ctx = &fixture_ctx;
 	iface.name = "test0";
 	address_exists = true;
 	fallback_pending = true;
+	fallback_active = false;
+	apply_fails = false;
+	apply_calls = lease_timers = lease_writes = exits = daemonises = 0;
+	last_exit = -1;
+	script_calls = 0;
 	binds = informs = drops = adds = duplicates = discoveries = 0;
 	timer_cancels = fallback_starts = 0;
 }
@@ -507,6 +588,103 @@ mismatch_tests(void)
 	    "a link-local accepted address does not drop IPv4LL");
 }
 
+static void
+late_ack_tests(void)
+{
+	reset(DHS_REBOOT);
+	fallback_pending = false;
+	fallback_active = true;
+	dad_event();
+	check(fixture_state.state == DHS_REBOOT && fallback_active,
+	    "DAD leaves an active fallback until DHCP confirms the lease");
+	dhcp_arp_bind(&iface);
+	check(binds == 1 && apply_calls == 1 && !fallback_active && drops == 1,
+	    "late ACK drops active IPv4LL after applying a usable DHCP address");
+	check(lease_writes == 1 && lease_timers == 3,
+	    "late ACK writes the lease and schedules normal lease timers");
+	dad_event();
+	check(drops == 1, "later DAD event does not repeat IPv4LL cleanup");
+
+	reset(DHS_REQUEST);
+	fallback_active = true;
+	apply_fails = true;
+	dhcp_arp_bind(&iface);
+	check(apply_calls == 1 && binds == 0 && fallback_active && drops == 0,
+	    "failed DHCP address application preserves active IPv4LL");
+
+	reset(DHS_PROBE);
+	fallback_active = true;
+	apply_fails = true;
+	dad_event();
+	check(apply_calls == 1 && binds == 0 && fallback_active && drops == 0,
+	    "DAD completion cannot drop IPv4LL when address application fails");
+
+	reset(DHS_REQUEST);
+	fixture_ctx.options |= DHCPCD_ONESHOT;
+	fallback_active = true;
+	apply_fails = true;
+	dhcp_arp_bind(&iface);
+	check(exits == 1 && last_exit == EXIT_FAILURE && fallback_active,
+	    "oneshot application failure keeps fallback and reports failure");
+
+	reset(DHS_REQUEST);
+	options.options &= ~DHCPCD_CONFIGURE;
+	fallback_active = true;
+	dhcp_arp_bind(&iface);
+	check(apply_calls == 0 && binds == 1 && fallback_active && drops == 0,
+	    "no-config mode does not remove an active IPv4LL address");
+	check(script_calls == 1 && daemonises == 1,
+	    "no-config mode retains its notification path");
+
+	reset(DHS_REQUEST);
+	options.options &= ~DHCPCD_CONFIGURE;
+	fallback_active = true;
+	address_exists = false;
+	dhcp_bind(&iface);
+	check(apply_calls == 0 && binds == 0 && fallback_active && drops == 0,
+	    "no-config mode without a usable address preserves fallback");
+
+	reset(DHS_REQUEST);
+	fallback_active = true;
+	assert(inet_pton(AF_INET, "169.254.1.2", &address.addr) == 1);
+	offer.yiaddr = address.addr.s_addr;
+	dhcp_arp_bind(&iface);
+	check(binds == 1 && fallback_active && drops == 0,
+	    "binding a link-local address does not drop IPv4LL");
+
+	reset(DHS_REQUEST);
+	options.options &= ~DHCPCD_IPV4LL;
+	fallback_active = true;
+	dhcp_arp_bind(&iface);
+	check(binds == 1 && fallback_active && drops == 0,
+	    "binding does not manage IPv4LL when its option is disabled");
+
+	reset(DHS_INFORM);
+	options.options |= DHCPCD_INFORM;
+	fallback_active = true;
+	dhcp_arp_bind(&iface);
+	check(binds == 1 && !fallback_active && drops == 1,
+	    "INFORM approval removes fallback after successful application");
+	check(strcmp(fixture_state.reason, "INFORM") == 0 && lease_writes == 0,
+	    "INFORM approval retains its reason and does not write a lease");
+
+	reset(DHS_PROBE);
+	options.options |= DHCPCD_INFORM;
+	options.req_addr = address.addr;
+	fallback_active = true;
+	dad_event();
+	check(informs == 1 && binds == 0 && drops == 1 && !fallback_active,
+	    "initial INFORM DAD retains its existing IPv4LL cleanup");
+
+	reset(DHS_REQUEST);
+	fixture_ctx.options |= DHCPCD_TEST;
+	fallback_active = true;
+	dhcp_arp_bind(&iface);
+	check(exits == 1 && last_exit == EXIT_SUCCESS && apply_calls == 0 &&
+	    binds == 0 && fallback_active && drops == 0,
+	    "test mode exits without changing addresses or fallback");
+}
+
 int
 main(void)
 {
@@ -515,7 +693,7 @@ main(void)
 	fallback_tests();
 	configuration_tests();
 	mismatch_tests();
-	check(script_calls == 0, "fixture did not execute unrelated hooks");
+	late_ack_tests();
 	printf("DHCP DAD: %u checks, %u failures\n", checks, failures);
 	return failures == 0 ? 0 : 1;
 }

@@ -881,6 +881,10 @@ The base system shell is unchanged.
   A physical Pi 5 passed 1024 descriptor reads and 1024 STALL recovery requests.
   This validates a limited control-transfer scenario, not phone boot or all USB
   transfer types. See the [contract and checks](ember/boot/usb-control-recovery.md).
+- **DHCP reconnect recovery:** duplicate-address detection cannot confirm an
+  unacknowledged lease. IPv4LL remains available without DHCP and is removed
+  after a usable DHCP bind. This is a userland correction; a kernel update
+  alone does not install it. See the [regression and verification](ember/boot/dhcpcd-dad.md).
 - **Kernel fixes found on these boards** that are not specific to
   them: the `bwfm` Wi-Fi driver stalling on large transfers and after
   an access point asks the client to change band, idle cores on

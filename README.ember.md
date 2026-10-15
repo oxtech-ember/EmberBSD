@@ -73,6 +73,9 @@ a reproduced stuck connection recovered automatically, followed by an
 The on-demand `hw.bwfm0.report` diagnostic includes radio
 authentication, PMF and station counters to distinguish this failure
 from an SDIO transmit-window stall.
+The separate [DHCP reconnect correction](ember/boot/dhcpcd-dad.md) prevents
+address validation from accepting an unconfirmed lease. It keeps IPv4LL
+fallback available and removes it after a usable DHCP bind.
 
 The Zero 3W [PWM cooling path](ember/boot/a733-fan.md) uses the board's
 fan connector and all five temperature sensors. Source contracts cover

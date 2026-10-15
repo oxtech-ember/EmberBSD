@@ -20,7 +20,7 @@ mkdir "$work"
 
 # Retain upstream authorship and copy complete function bodies unchanged.
 awk '/^#include/ { exit } { print }' "$source" > "$work/production.h"
-for name in dhcp_discover dhcp_finish_dad dhcp_arp_address dhcp_arp_bind \
+for name in dhcp_discover dhcp_bind dhcp_finish_dad dhcp_arp_address dhcp_arp_bind \
     dhcp_lastlease dhcp_handleifa; do
 	awk -v name="$name" '
 	    $0 ~ "^" name "[(]" { print previous; copying = 1 }
@@ -34,9 +34,9 @@ awk '/^enum DHS/ { copying = 1 }
     copying { print }
     copying && /^};/ { found = 1; exit }
     END { if (!found) exit 1 }' "$headers/dhcp.h" > "$work/states.h"
-awk '/^#define DHCPCD_(STATIC|INFORM|IPV4LL|TEST|CONFIGURE|BOOTP|REQUEST|MANAGER)[[:space:]]/ { print }' \
+awk '/^#define DHCPCD_(STATIC|INFORM|IPV4LL|TEST|CONFIGURE|BOOTP|REQUEST|MANAGER|ONESHOT)[[:space:]]/ { print }' \
     "$headers/if-options.h" > "$work/options.h"
-awk '/^#define STATE_(EXPIRED|ADDED)[[:space:]]/ { print }' \
+awk '/^#define STATE_(EXPIRED|ADDED|FAKE)[[:space:]]/ { print }' \
     "$headers/ipv4.h" >> "$work/options.h"
 printf 'DHCP source: %s\n' "$source"
 if command -v sha256 >/dev/null 2>&1; then
