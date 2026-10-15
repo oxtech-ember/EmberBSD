@@ -685,8 +685,12 @@ on every board in the hardware catalog.
   PowerVR BXM BVNC `36.56.104.183`; Wi-Fi and the existing NPU probe return
   after a normal reboot. Frequencies and voltage were not measured externally.
   The [physical PLL result](ember/boot/a733-gpu-identification.md#physical-pll-result)
-  supersedes the earlier PERIPH0-400M timeout and GPU MMIO stall. Normal
-  board DTBs remain observe-only; the working cold start is an explicit
+  supersedes the earlier PERIPH0-400M timeout and GPU MMIO stall. The consumer
+  now blocks GPU MMIO after failed CORE ON/Q confirmation, including boot
+  error diagnostics. Zero 3W now also rejects TOP-ID after a failed CORE wait,
+  including a retry after the diagnostic stage reset. HWR diagnostics
+  preserve the full firmware snapshot within the GCC16 stack limit.
+  Normal board DTBs remain observe-only; the working cold start is an explicit
   runtime experiment. Native `firmload` now reads the exact firmware and
   [validates its metadata](ember/boot/a733-gpu-fwinfo.md#physical-preflight-result)
   against the live GPU on Zero 3W. The [native memory preparer](ember/boot/a733-gpu-fwmem.md#physical-preparation-result)
@@ -706,7 +710,7 @@ on every board in the hardware catalog.
   now passes all 21 stages with a Mesa 26.2.4 compiler packet. A guarded
   PowerVR shader writes `0x13579bdf` through the native GPU page tables.
   Client queue completion, timeline, DMA output, and fresh fault/HWR checks
-  agree. This check also passes after a second kernel update and fresh boot.
+  agree. This check also passes on GCC16 kernel `e876bf6d2ce2` after a fresh boot.
   A native [PowerVR DRM/GEM interface](ember/boot/a733-pvr-render.md)
   opens on Zero 3W and passes 115 identity/runtime checks. It reports the measured
   BVNC through a real render node. Native GEM allocation and CPU mapping of
@@ -728,10 +732,13 @@ on every board in the hardware catalog.
   firmware VM publication, contexts, free lists, and synchronous compute submission.
   Its production-source contracts pass. Host fixtures use the current bridge and
   metadata interfaces. They reject diagnostics after bridge adoption and render
-  registration with incomplete metadata. Physical Vulkan execution, graphics jobs,
-  Zink, display output, and accelerated Plasma remain unaccepted.
-  Repeated submission within one boot and long-duration GPU stability remain
-  untested.
+  registration with incomplete metadata. On Zero 3W, Mesa 26.2.4nb5 now passes
+  three complete Vulkan compute lifecycles in one boot with kernel `e876bf6d2ce2`.
+  Device creation, all 16 GPU-written words, fence completion, host readback,
+  and context cleanup pass; the execution service remains usable. The native
+  KICK path accepts its asynchronous zero return word and still requires CCCB,
+  UFO, and fresh health checks. Graphics jobs, Zink, display output, accelerated
+  Plasma, Vulkan conformance, and long-duration GPU stability remain unaccepted.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,
@@ -887,6 +894,10 @@ The base system shell is unchanged.
   A physical Pi 5 passed 1024 descriptor reads and 1024 STALL recovery requests.
   This validates a limited control-transfer scenario, not phone boot or all USB
   transfer types. See the [contract and checks](ember/boot/usb-control-recovery.md).
+- **DHCP reconnect recovery:** duplicate-address detection cannot confirm an
+  unacknowledged lease. IPv4LL remains available without DHCP and is removed
+  after a usable DHCP bind. This is a userland correction; a kernel update
+  alone does not install it. See the [regression and verification](ember/boot/dhcpcd-dad.md).
 - **Kernel fixes found on these boards** that are not specific to
   them: the `bwfm` Wi-Fi driver stalling on large transfers and after
   an access point asks the client to change band, idle cores on

@@ -2144,14 +2144,21 @@ dhcp_finish_dad(struct interface *ifp, struct in_addr *ia)
 {
 	struct dhcp_state *state = D_STATE(ifp);
 
-	if (state->state == DHS_BOUND)
+	/* DAD does not confirm a saved lease or a DHCP offer.
+	 * Wait for the server to acknowledge it. A lastlease fallback
+	 * can finish DAD while discovery continues. */
+	if (state->state == DHS_BOUND || state->state == DHS_REBOOT ||
+	    state->state == DHS_REQUEST ||
+	    (state->state == DHS_DISCOVER && !(state->added & STATE_EXPIRED)))
 		return;
 	if (state->offer == NULL || state->offer->yiaddr != ia->s_addr)
 		return;
 
 	logdebugx("%s: DAD completed for %s", ifp->name, inet_ntoa(*ia));
-	if (!(ifp->options->options & DHCPCD_INFORM))
+	if (!(ifp->options->options & DHCPCD_INFORM)) {
 		dhcp_bind(ifp);
+		return;
+	}
 #ifndef IN_IFF_DUPLICATED
 	else {
 		struct bootp *bootp;
@@ -2547,6 +2554,12 @@ dhcp_bind(struct interface *ifp)
 			}
 			return;
 		}
+#ifdef IPV4LL
+		/* The address can already be usable when a late ACK arrives. */
+		if (ifo->options & DHCPCD_IPV4LL &&
+		    !IN_LINKLOCAL(ntohl(lease->addr.s_addr)))
+			ipv4ll_drop(ifp);
+#endif
 	} else {
 		struct ipv4_addr *ia;
 
