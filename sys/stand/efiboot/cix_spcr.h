@@ -1,5 +1,6 @@
 /* Origin: EmberBSD opt-in CIX SPCR table correction, 2026-10-15. */
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 EmberBSD contributors. */
 #ifndef _CIX_SPCR_H_
 #define _CIX_SPCR_H_
 
@@ -25,6 +26,5 @@ const char *cix_spcr_prepare(uint64_t, const struct cix_spcr_map *,
     struct cix_spcr_plan *);
 /* Destination must be one page owned by this loader, from AllocatePages. */
 const char *cix_spcr_build(uint64_t, const struct cix_spcr_map *, uint64_t);
-
 
 #endif /* _CIX_SPCR_H_ */

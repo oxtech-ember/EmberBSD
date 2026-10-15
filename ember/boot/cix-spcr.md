@@ -86,14 +86,21 @@ TEST_LDFLAGS='-Wl,-pagezero_size,0x4000' \
     sh ember/tests/efi-cix-spcr.sh /absolute/new-legacy-directory
 ```
 
-`ember/tests/efi-cix-spcr-mutations.rb` applies twelve source mutations to
-memory-map, range, checksum, profile, reference and 4 GiB-bound checks.
+`ember/tests/efi-cix-spcr-mutations.rb` applies fourteen source mutations to
+memory-map, range, checksum, profile, reference, shadow-alias and
+4 GiB-bound checks.
 Each mutant must fail a behavioral assertion. The RSDT fixtures are synthetic
 standard-format tables; the board captures prove only the RSDP and XSDT.
 
 ## Limits
 
 Host contracts and an EFI VM do not establish CIX firmware behavior.
-If the board places an ACPI table in another memory type, the command
-reports an error and changes nothing. Physical acceptance requires a CIX
-boot that shows the kernel console on the DEBUG UART with this loader.
+The command refuses, without changes, when the firmware places an ACPI
+table in another memory type, reports `EFI_MEMORY_RP` for a table, or
+reports `EFI_MEMORY_WP` or `EFI_MEMORY_RO` for the new page. The QEMU EDK2
+map reported only write-back caching for ACPI reclaim memory; the CIX map
+has not been recorded. Run `mem` at the prompt before the first board test.
+The optional `CM5_UART_TRACE` loader trace probes SPCR before this command
+and keeps using the firmware UART.
+Physical acceptance requires a CIX boot that shows the kernel console on
+the DEBUG UART with this loader.

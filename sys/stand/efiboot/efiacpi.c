@@ -183,7 +183,7 @@ efi_acpi_cix_spcr(void)
 		printf("CIX SPCR: cannot allocate memory map\n");
 		return;
 	}
-	/* Allocation changes the map. Refresh it and repeat all input checks. */
+	/* Allocation changes the map. Refresh it and repeat all checks. */
 	for (pass = 0; pass < 2; pass++) {
 		size = CIX_SPCR_MAP_MAX;
 		stride = 0;
@@ -199,12 +199,14 @@ efi_acpi_cix_spcr(void)
 		map.stride = stride;
 		map.version = version;
 		if (pass == 0) {
-			result = cix_spcr_prepare((uintptr_t)acpi_root, &map, &plan);
+			result = cix_spcr_prepare((uintptr_t)acpi_root, &map,
+			    &plan);
 			if (result != NULL)
 				break;
 			shadow = plan.rsdt != NULL ? UINT32_MAX : 0;
 			status = uefi_call_wrapper(BS->AllocatePages, 4,
-			    plan.rsdt != NULL ? AllocateMaxAddress : AllocateAnyPages,
+			    plan.rsdt != NULL ?
+			    AllocateMaxAddress : AllocateAnyPages,
 			    EfiACPIReclaimMemory, 1, &shadow);
 			if (EFI_ERROR(status)) {
 				result = "cannot allocate ACPI shadow page";
@@ -212,13 +214,14 @@ efi_acpi_cix_spcr(void)
 			}
 			allocated = 1;
 		} else {
-			result = cix_spcr_build((uintptr_t)acpi_root, &map, shadow);
+			result = cix_spcr_build((uintptr_t)acpi_root, &map,
+			    shadow);
 		}
 		if (result != NULL)
 			break;
 	}
 	if (result == NULL) {
-		/* Owned ACPI reclaim memory survives ExitBootServices for handoff. */
+		/* ACPI reclaim memory survives ExitBootServices for handoff. */
 		acpi_root = (void *)(uintptr_t)shadow;
 		result = "shadow installed (MMIO 0x040d0000, GSI 330)";
 	} else if (allocated) {

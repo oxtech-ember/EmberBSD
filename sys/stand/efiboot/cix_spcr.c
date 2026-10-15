@@ -1,5 +1,6 @@
 /* Origin: EmberBSD opt-in CIX SPCR table correction, 2026-10-15. */
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 EmberBSD contributors. */
 
 #include "cix_spcr.h"
 #ifdef _STANDALONE
@@ -73,13 +74,15 @@ map_valid(const struct cix_spcr_map *map)
 		if (a.NumberOfPages == 0 ||
 		    a.NumberOfPages > UINT64_MAX / EFI_PAGE_SIZE ||
 		    a.PhysicalStart % EFI_PAGE_SIZE != 0 ||
-		    a.PhysicalStart > UINT64_MAX - a.NumberOfPages * EFI_PAGE_SIZE)
+		    a.PhysicalStart >
+		    UINT64_MAX - a.NumberOfPages * EFI_PAGE_SIZE)
 			return 0;
 		end = a.PhysicalStart + a.NumberOfPages * EFI_PAGE_SIZE;
 		for (j = 0; j < i; j++) {
 			get_descriptor(map, j, &b);
 			if (a.PhysicalStart < b.PhysicalStart +
-			    b.NumberOfPages * EFI_PAGE_SIZE && b.PhysicalStart < end)
+			    b.NumberOfPages * EFI_PAGE_SIZE &&
+			    b.PhysicalStart < end)
 				return 0;
 		}
 	}
@@ -92,6 +95,7 @@ acpi_range(const struct cix_spcr_map *map, uint64_t address, uint64_t length,
     int write)
 {
 	EFI_MEMORY_DESCRIPTOR md;
+	uint64_t end;
 	UINTN i;
 
 	if (address == 0 || length == 0 || address > UINTPTR_MAX ||
@@ -99,12 +103,14 @@ acpi_range(const struct cix_spcr_map *map, uint64_t address, uint64_t length,
 		return NULL;
 	for (i = 0; i < map->size / map->stride; i++) {
 		get_descriptor(map, i, &md);
-		if (address < md.PhysicalStart ||
-		    address + length > md.PhysicalStart + md.NumberOfPages * EFI_PAGE_SIZE)
+		end = md.PhysicalStart + md.NumberOfPages * EFI_PAGE_SIZE;
+		if (address < md.PhysicalStart || address + length > end)
 			continue;
-		if ((md.Type != EfiACPIReclaimMemory && md.Type != EfiACPIMemoryNVS) ||
+		if ((md.Type != EfiACPIReclaimMemory &&
+		    md.Type != EfiACPIMemoryNVS) ||
 		    (md.Attribute & EFI_MEMORY_RP) != 0 ||
-		    (write && (md.Attribute & (EFI_MEMORY_WP | CIX_MEMORY_RO)) != 0))
+		    (write &&
+		    (md.Attribute & (EFI_MEMORY_WP | CIX_MEMORY_RO)) != 0))
 			return NULL;
 		return (uint8_t *)(uintptr_t)address;
 	}
@@ -213,7 +219,8 @@ cix_spcr_prepare(uint64_t root, const struct cix_spcr_map *map,
 	for (i = 0; i < count; i++) {
 		address = getle(xsdt + ACPI_HEADER_SIZE + i * 8, 8);
 		table = acpi_table(map, address, &length);
-		if (table == NULL || !add_range(ranges, nranges++, address, length))
+		if (table == NULL ||
+		    !add_range(ranges, nranges++, address, length))
 			return "invalid, duplicate or overlapping ACPI table";
 		if (memcmp(table, "SPCR", 4) == 0) {
 			if (spcr != NULL || length != sizeof(cix_before))
@@ -232,15 +239,17 @@ cix_spcr_prepare(uint64_t root, const struct cix_spcr_map *map,
 		    rsdt[8] != 1 || rlength != ACPI_HEADER_SIZE + count * 4 ||
 		    !add_range(ranges, nranges, address, rlength))
 			return "invalid or unsupported RSDT";
-		/* Require the same unique child set, independent of entry order. */
+		/* Require the same unique child set in any order. */
 		for (i = 0; i < count; i++) {
 			address = getle(rsdt + ACPI_HEADER_SIZE + i * 4, 4);
 			for (j = 0; j < i; j++) {
-				if (address == getle(rsdt + ACPI_HEADER_SIZE + j * 4, 4))
+				if (address ==
+				    getle(rsdt + ACPI_HEADER_SIZE + j * 4, 4))
 					return "duplicate RSDT entry";
 			}
 			for (j = 0; j < count; j++) {
-				if (address == getle(xsdt + ACPI_HEADER_SIZE + j * 8, 8))
+				if (address ==
+				    getle(xsdt + ACPI_HEADER_SIZE + j * 8, 8))
 					break;
 			}
 			if (j == count)
@@ -248,7 +257,6 @@ cix_spcr_prepare(uint64_t root, const struct cix_spcr_map *map,
 		}
 	}
 	if (spcr == NULL || dbg2 == NULL)
-
 		return "SPCR or DBG2 is missing";
 	if (memcmp(dbg2, cix_dbg2, sizeof(cix_dbg2)) != 0)
 		return "DBG2 does not match the CIX profile";
@@ -293,7 +301,7 @@ cix_spcr_build(uint64_t root, const struct cix_spcr_map *map, uint64_t dest)
 	struct cix_spcr_plan plan;
 	const char *error;
 	uint8_t *page, *xsdt, *rsdt, *spcr;
-	uint64_t address;
+	uint64_t address, length;
 	unsigned i, roff, soff;
 
 	error = cix_spcr_prepare(root, map, &plan);
@@ -301,9 +309,10 @@ cix_spcr_build(uint64_t root, const struct cix_spcr_map *map, uint64_t dest)
 		return error;
 	page = acpi_range(map, dest, EFI_PAGE_SIZE, 1);
 	if (page == NULL || dest % EFI_PAGE_SIZE != 0 ||
-	    (plan.rsdt != NULL && dest > (uint64_t)UINT32_MAX + 1 - EFI_PAGE_SIZE))
+	    (plan.rsdt != NULL &&
+	    dest > (uint64_t)UINT32_MAX + 1 - EFI_PAGE_SIZE))
 		return "invalid shadow allocation";
-	/* AllocatePages owns this page. Also reject aliases of any input table. */
+	/* AllocatePages owns this page. Reject aliases of input tables. */
 	if ((root < dest + EFI_PAGE_SIZE && dest < root + 36) ||
 	    ((uintptr_t)plan.xsdt < dest + EFI_PAGE_SIZE &&
 	    dest < (uintptr_t)plan.xsdt + plan.xlength) ||
@@ -312,9 +321,9 @@ cix_spcr_build(uint64_t root, const struct cix_spcr_map *map, uint64_t dest)
 		return "shadow allocation overlaps a root table";
 	for (i = ACPI_HEADER_SIZE; i < plan.xlength; i += 8) {
 		address = getle(plan.xsdt + i, 8);
-		/* Headers were validated; include ranges that start before dest. */
-		if (address < dest + EFI_PAGE_SIZE &&
-		    dest < address + getle((const uint8_t *)(uintptr_t)address + 4, 4))
+		/* Include validated tables that start before dest. */
+		length = getle((const uint8_t *)(uintptr_t)address + 4, 4);
+		if (address < dest + EFI_PAGE_SIZE && dest < address + length)
 			return "shadow allocation overlaps an ACPI table";
 	}
 	roff = (40 + plan.xlength + 7) & ~7U;

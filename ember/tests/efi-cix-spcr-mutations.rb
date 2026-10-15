@@ -8,9 +8,9 @@ FileUtils.mkdir_p(out)
 original = File.read(File.join(root, 'sys/stand/efiboot/cix_spcr.c'))
 mutations = {
   'map-rp' => ['(md.Attribute & EFI_MEMORY_RP) != 0', '0'],
-  'map-type' => ['(md.Type != EfiACPIReclaimMemory && md.Type != EfiACPIMemoryNVS)', '0'],
+  'map-type' => ['(md.Type != EfiACPIReclaimMemory &&', '(0 &&'],
   'map-overlap' => ['b.PhysicalStart < end)', 'b.PhysicalStart < end && 0)'],
-  'read-range' => ['address + length > md.PhysicalStart + md.NumberOfPages * EFI_PAGE_SIZE', 'address > md.PhysicalStart + md.NumberOfPages * EFI_PAGE_SIZE'],
+  'read-range' => ['address + length > end', 'address > end'],
   'table-checksum' => ['sum(p, *length) != 0', '0'],
   'dbg2-profile' => ['memcmp(dbg2, cix_dbg2, sizeof(cix_dbg2)) != 0', 'memcmp(dbg2, cix_dbg2, sizeof(cix_dbg2)) == 12345'],
   'spcr-profile' => ['memcmp(spcr, cix_before, sizeof(cix_before)) != 0', '0'],
@@ -18,7 +18,9 @@ mutations = {
   'xsdt-reference' => ['putle(xsdt + i, dest + soff, 8);', 'putle(xsdt + i, (uintptr_t)plan.spcr, 8);'],
   'rsdt-reference' => ['putle(rsdt + i, dest + soff, 4);', 'putle(rsdt + i, (uintptr_t)plan.spcr, 4);'],
   'legacy-bound-exclusive' => ['(uint64_t)UINT32_MAX + 1 - EFI_PAGE_SIZE', 'UINT32_MAX - EFI_PAGE_SIZE'],
-  'legacy-bound-removed' => ['(uint64_t)UINT32_MAX + 1 - EFI_PAGE_SIZE', 'UINT64_MAX']
+  'legacy-bound-removed' => ['(uint64_t)UINT32_MAX + 1 - EFI_PAGE_SIZE', 'UINT64_MAX'],
+  'shadow-root-alias' => ['(root < dest + EFI_PAGE_SIZE && dest < root + 36)', '0'],
+  'shadow-table-alias' => ['dest < address + length)', 'dest < address + length && 0)']
 }
 mutations.each do |name, (from, to)|
   raise "missing mutation #{name}" unless original.scan(from).length == 1

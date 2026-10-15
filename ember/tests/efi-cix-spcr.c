@@ -1,5 +1,6 @@
 /* Origin: EmberBSD CIX SPCR production command contracts, 2026-10-15. */
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 EmberBSD contributors. */
 #include <assert.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -20,7 +21,7 @@ static uint8_t *top;
 static uint8_t saved[ARENA_SIZE];
 static EFI_MEMORY_DESCRIPTOR descriptors[6];
 static unsigned maps, helps, checks;
-static unsigned fail_map, protect_map, fail_alloc, fail_pages;
+static unsigned fail_map, protect_map, fail_alloc, fail_pages, keep_map;
 static unsigned allocations, releases, pool_allocs, pool_frees;
 static uint64_t shadow_address, shadow_flags;
 static unsigned shadow_type;
@@ -79,6 +80,9 @@ pages(EFI_ALLOCATE_TYPE type, EFI_MEMORY_TYPE memory, UINTN n,
 	if (fail_pages)
 		return EFI_OUT_OF_RESOURCES;
 	*address = shadow_address;
+	/* Model firmware returning a page inside an existing ACPI range. */
+	if (keep_map)
+		return EFI_SUCCESS;
 	descriptors[5].Type = shadow_type;
 	descriptors[5].PhysicalStart = shadow_address;
 	descriptors[5].Attribute = shadow_flags;
@@ -173,6 +177,7 @@ setup(void)
 	memcpy(arena + 8192, fixture_before, 80);
 	memcpy(arena + 12288, fixture_dbg2, 92);
 	maps = helps = fail_map = protect_map = fail_alloc = fail_pages = 0;
+	keep_map = 0;
 	allocations = releases = pool_allocs = pool_frees = 0;
 	map_size = sizeof(descriptors);
 	map_stride = sizeof(descriptors[0]);
@@ -220,9 +225,11 @@ failure(const char *why)
 	memcpy(saved, arena, ARENA_SIZE);
 	const void *original = efi_acpi_root();
 	command_acpi("cix-spcr");
-	if (efi_acpi_root() != original || memcmp(saved, arena, ARENA_SIZE) != 0 ||
+	if (efi_acpi_root() != original ||
+	    memcmp(saved, arena, ARENA_SIZE) != 0 ||
 	    strstr(output, why) == NULL) {
-		fprintf(stderr, "FAIL: expected unchanged '%s', received '%s'\n",
+		fprintf(stderr,
+		    "FAIL: expected unchanged '%s', received '%s'\n",
 		    why, output);
 		abort();
 	}
@@ -247,9 +254,16 @@ success(int has_legacy)
 	assert(allocation_type ==
 	    (has_legacy ? AllocateMaxAddress : AllocateAnyPages));
 	assert(sum(newroot, 20) == 0 && sum(newroot, 36) == 0);
+	/* Copied headers keep every byte except references and checksums. */
+	assert(memcmp(newroot, saved, 8) == 0 &&
+	    memcmp(newroot + 9, saved + 9, 7) == 0 &&
+	    memcmp(newroot + 20, saved + 20, 4) == 0 &&
+	    memcmp(newroot + 33, saved + 33, 3) == 0);
 	xsdt = (uint8_t *)(uintptr_t)get(newroot + 24, 8);
 	assert(xsdt >= shadow && xsdt + 52 <= shadow + 4096);
 	assert(sum(xsdt, 52) == 0);
+	assert(memcmp(xsdt, saved + 4096, 9) == 0 &&
+	    memcmp(xsdt + 10, saved + 4096 + 10, 26) == 0);
 	spcr = (uint8_t *)(uintptr_t)get(xsdt + 36, 8);
 	assert(spcr >= shadow && spcr + 80 <= shadow + 4096);
 	assert(memcmp(spcr, fixture_after, 80) == 0 && sum(spcr, 80) == 0);
@@ -264,6 +278,8 @@ success(int has_legacy)
 		uint8_t *rsdt = (uint8_t *)(uintptr_t)get(newroot + 16, 4);
 		assert(rsdt >= shadow && rsdt + 44 <= shadow + 4096);
 		assert(sum(rsdt, 44) == 0);
+		assert(memcmp(rsdt, saved + 16384, 9) == 0 &&
+		    memcmp(rsdt + 10, saved + 16384 + 10, 26) == 0);
 		assert(get(rsdt + 36, 4) == (uintptr_t)(arena + 12288));
 		assert(get(rsdt + 40, 4) == (uintptr_t)spcr);
 	} else {
@@ -273,7 +289,8 @@ success(int has_legacy)
 	command_acpi("cix-spcr");
 	assert(strstr(output, "already correct") != NULL);
 	assert(allocations == 1 && releases == 0 && maps == 3);
-	assert(memcmp(saved, arena, ARENA_SIZE) == 0 && efi_acpi_root() == newroot);
+	assert(memcmp(saved, arena, ARENA_SIZE) == 0 &&
+	    efi_acpi_root() == newroot);
 	checks += 2;
 }
 
@@ -284,7 +301,8 @@ main(void)
 	/* Low virtual addresses allow real 32-bit RSDT pointers. */
 	arena = mmap((void *)(uintptr_t)0x40000000, ARENA_SIZE,
 	    PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
-	assert(arena != MAP_FAILED && (uintptr_t)arena + ARENA_SIZE < UINT32_MAX);
+	assert(arena != MAP_FAILED &&
+	    (uintptr_t)arena + ARENA_SIZE < UINT32_MAX);
 	top = mmap((void *)(uintptr_t)(UINT64_C(0x100000000) - 4096), 4096,
 	    PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
 	assert(top == (uint8_t *)(uintptr_t)(UINT64_C(0x100000000) - 4096));
@@ -303,28 +321,42 @@ main(void)
 #endif
 	setup(); descriptors[2].Attribute = EFI_MEMORY_WP | UINT64_C(0x20000);
 	success(0);
-	setup(); memcpy(arena + 8192, fixture_after, 80); failure("already correct");
+	setup(); memcpy(arena + 8192, fixture_after, 80);
+	failure("already correct");
 	setup(); command_acpi("off"); assert(!efi_acpi_enabled());
 	failure("disabled"); assert(maps == 0);
 	command_acpi(""); assert(strstr(output, "disabled")); checks++;
 	command_acpi("on"); assert(efi_acpi_enabled());
 	command_acpi(NULL); assert(strstr(output, "enabled")); checks++;
 	command_acpi("other"); assert(helps == 1); checks++;
-	setup(); root = NULL; assert(efi_acpi_probe() == 0); failure("unavailable");
+	setup(); root = NULL; assert(efi_acpi_probe() == 0);
+	failure("unavailable");
 	setup(); fail_alloc = 1; failure("cannot allocate memory map");
 	setup(); fail_pages = 1; failure("cannot allocate ACPI shadow page");
 	setup(); fail_map = 1; failure("cannot read bounded");
 	setup(); fail_map = 2; failure("cannot read bounded");
 	setup(); protect_map = 2; failure("invalid");
 
-	setup(); shadow_type = EfiLoaderData; failure("invalid shadow allocation");
-	setup(); shadow_flags = EFI_MEMORY_WP; failure("invalid shadow allocation");
+	setup(); shadow_type = EfiLoaderData;
+	failure("invalid shadow allocation");
+	setup(); shadow_flags = EFI_MEMORY_WP;
+	failure("invalid shadow allocation");
 	setup(); shadow_flags = UINT64_C(0x20000);
 	failure("invalid shadow allocation");
-	setup(); shadow_flags = EFI_MEMORY_RP; failure("invalid shadow allocation");
+	setup(); shadow_flags = EFI_MEMORY_RP;
+	failure("invalid shadow allocation");
 	setup(); shadow_address++; failure("memory map");
 	setup(); shadow_address = (uintptr_t)arena; failure("memory map");
 	setup(); shadow_address = 0; failure("invalid shadow allocation");
+	/* Pages inside existing ACPI descriptors must not alias any input. */
+	setup(); keep_map = 1; shadow_address = (uintptr_t)arena;
+	failure("overlaps a root table");
+	setup(); keep_map = 1; shadow_address = (uintptr_t)(arena + 4096);
+	failure("overlaps a root table");
+	setup(); keep_map = 1; shadow_address = (uintptr_t)(arena + 8192);
+	failure("overlaps an ACPI table");
+	setup(); keep_map = 1; shadow_address = (uintptr_t)(arena + 12288);
+	failure("overlaps an ACPI table");
 
 	/* Root checksum, signature, length and revision gates. */
 	for (unsigned i = 0; i < 36; i++) {
@@ -335,7 +367,8 @@ main(void)
 	for (unsigned n = 0; n < 4; n++) {
 		const uint64_t address[] = {0, UINT64_MAX, UINT64_MAX - 15,
 		    (uintptr_t)arena + ARENA_SIZE};
-		setup(); root = (void *)(uintptr_t)address[n]; assert(efi_acpi_probe() == 0);
+		setup(); root = (void *)(uintptr_t)address[n];
+		assert(efi_acpi_probe() == 0);
 		failure(n == 0 ? "unavailable" : "RSDP");
 		setup(); put(arena + 24, address[n], 8);
 		checksum(arena, 36, 32); failure("XSDT");
@@ -354,7 +387,7 @@ main(void)
 	setup(); put(arena + 4100, 36 + 257 * 8, 4);
 	checksum(arena + 4096, 36 + 257 * 8, 9); failure("entry count");
 
-	/* Every non-checksum SPCR/DBG2 byte must match, even with a valid checksum. */
+	/* Every non-checksum SPCR/DBG2 byte must match, despite checksums. */
 	for (unsigned table = 2; table < 4; table++) {
 		unsigned length = table == 2 ? 80 : 92;
 		for (unsigned off = 0; off < length; off++) {
@@ -368,7 +401,8 @@ main(void)
 	}
 	setup(); put(arena + 4140, (uintptr_t)(arena + 8192), 8);
 	checksum(arena + 4096, 52, 9); failure("duplicate");
-	setup(); memcpy(arena + 12288, fixture_before, 80); failure("duplicate");
+	setup(); memcpy(arena + 12288, fixture_before, 80);
+	failure("duplicate");
 	setup(); memcpy(arena + 8192, fixture_dbg2, 92); failure("duplicate");
 	setup(); put(arena + 4100, 44, 4); checksum(arena + 4096, 44, 9);
 	failure("missing");
@@ -380,20 +414,24 @@ main(void)
 	setup(); map_size--; failure("memory map");
 	setup(); map_size = 0; failure("memory map");
 	setup(); map_size = CIX_SPCR_MAP_MAX + 1; failure("memory map");
-	setup(); map_size = sizeof(descriptors[0]) * 1025; failure("memory map");
+	setup(); map_size = sizeof(descriptors[0]) * 1025;
+	failure("memory map");
 	setup(); map_version = 2; failure("memory map");
 	setup(); descriptors[1].NumberOfPages = 0; failure("memory map");
-	setup(); descriptors[1].NumberOfPages = UINT64_MAX; failure("memory map");
+	setup(); descriptors[1].NumberOfPages = UINT64_MAX;
+	failure("memory map");
 	setup(); descriptors[1].PhysicalStart++; failure("memory map");
 	setup(); descriptors[1].PhysicalStart = UINT64_MAX - 4095;
 	failure("memory map");
 	setup(); descriptors[1].PhysicalStart = descriptors[0].PhysicalStart;
 	failure("memory map");
 	for (unsigned i = 0; i < 4; i++) {
-		setup(); descriptors[i].Attribute = EFI_MEMORY_RP; failure("invalid");
-		setup(); descriptors[i].Type = EfiConventionalMemory; failure("invalid");
+		setup(); descriptors[i].Attribute = EFI_MEMORY_RP;
+		failure("invalid");
+		setup(); descriptors[i].Type = EfiConventionalMemory;
+		failure("invalid");
 	}
-	/* A full table ending exactly at a page boundary is valid. Crossing is not. */
+	/* A table may end exactly at a page boundary but not cross it. */
 	setup(); memcpy(arena + 12288 - 80, fixture_before, 80);
 	put(arena + 4132, (uintptr_t)(arena + 12288 - 80), 8);
 	checksum(arena + 4096, 52, 9);
@@ -403,20 +441,25 @@ main(void)
 	checksum(arena + 4096, 52, 9); failure("ACPI table");
 
 #ifdef CIX_LEGACY_TEST
-	/* Synthetic legacy roots: consistency and checksums, not hardware evidence. */
+	/* Synthetic legacy roots: consistency, checksums; not hardware data. */
 	setup(); legacy(); shadow_address = UINT64_C(0x100000000);
 	failure("invalid shadow allocation");
 	/* The last page below 4 GiB keeps every 32-bit RSDT reference valid. */
 	setup(); legacy(); shadow = top; shadow_address = (uintptr_t)top;
 	success(1);
 	setup(); legacy(); arena[16384 + 9] ^= 1; failure("RSDT");
-	setup(); legacy(); put(arena + 16384 + 40, (uintptr_t)(arena + 12288), 4);
+	setup(); legacy();
+	put(arena + 16384 + 40, (uintptr_t)(arena + 12288), 4);
 	checksum(arena + 16384, 44, 9); failure("duplicate RSDT");
 	setup(); legacy(); put(arena + 16384 + 40, 0, 4);
 	checksum(arena + 16384, 44, 9); failure("disagree");
 	setup(); legacy(); put(arena + 16384 + 4, 40, 4);
 	checksum(arena + 16384, 40, 9); failure("RSDT");
-	setup(); legacy(); descriptors[4].Attribute = EFI_MEMORY_RP; failure("RSDT");
+	setup(); legacy(); descriptors[4].Attribute = EFI_MEMORY_RP;
+	failure("RSDT");
+	setup(); legacy(); keep_map = 1;
+	shadow_address = (uintptr_t)(arena + 16384);
+	failure("overlaps a root table");
 #endif
 	assert(munmap(arena, ARENA_SIZE) == 0);
 #ifdef CIX_LEGACY_TEST
