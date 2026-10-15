@@ -76,3 +76,34 @@ available during the outage and disappear after a usable DHCP bind.
 
 This work is AI-assisted. It retains the upstream license and authorship.
 It is an EmberBSD correction, not a claim of upstream acceptance.
+
+## Validation, 2026-10-15
+
+The client was cross-built with GCC 16.2.0 from
+`a6f115893c64a58452af50d89d0fd3dd84d8b9d4`.
+The EmberBSD sysroot came from `f76133ff69a57de1571c892123eadbc589afd1bb`.
+The installed client SHA256 was
+`090fd24c8cc00eed07d0c49c832ba81ddd161f9de3f7c42eaed8b39a101316d7`.
+Its normal INET, ARP, IPv4LL, INET6, DHCPv6, AUTH and PRIVSEP features remained enabled.
+
+All 77 production-function checks passed under host ASan/UBSan and on a physical
+AArch64 Pi 5. Negative controls failed on the affected earlier revisions.
+Valgrind and LeakSanitizer were not run on this platform.
+The fixture replaces I/O; hardware checks below test the real network path.
+
+Production analysis used target GCC preprocessing and build flags.
+Cppcheck 2.22.0 reported 49 existing findings before and after the patch.
+GCC 16.2.0 `-fanalyzer` retained one context-owned descriptor warning.
+Apple Clang 21 Static Analyzer retained one option-parser dead-store warning.
+No new diagnostics appeared. These findings are outside the changed state transitions;
+they do not constitute a clean analysis of the imported module.
+The fixture retained four Cppcheck findings: three const suggestions and one
+condition fixed by its I/O stub. Its Clang analysis produced no findings.
+
+On a Pi 5 Model B with 8 GiB RAM, all six controlled WPA2 reconnects recovered
+DHCP without a residual IPv4LL address. Some cycles started fallback before the
+server reply; the completed DHCP bind removed it. A separate test ignored DHCP
+replies, obtained IPv4LL, then restored DHCP and removed fallback.
+A normal reboot preserved the corrected client, mDNS name and SSH access.
+See the [board evidence](../boards/raspberry-pi-5.md#network-reconnect-validation-2026-10-15)
+for the kernel, transfer checks and acceptance limits.
