@@ -22,7 +22,9 @@ automatic greeting updates. Diagnostic tools retain their upstream ABI names.
 SSH is enabled by default; its authentication defaults are unchanged.
 The System step has a Graphics menu: None, XFCE with a Wi-Fi manager,
 and an experimental KDE Plasma entry. None is the default.
-Selecting either desktop also selects the X11 sets, independently of the base profile.
+XFCE also selects the base X11 sets, independently of the base profile.
+Plasma uses the modular X11 libraries and Xwayland from its package closure.
+It does not force base X11 sets. Custom keeps explicit component selections.
 The desktop and its Wi-Fi manager are installed together with the OS.
 Run ember-desktop after console login to start the selected desktop session.
 

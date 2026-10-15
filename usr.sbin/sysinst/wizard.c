@@ -181,7 +181,7 @@ choose(const char *title, const char * const *options, int count, int first)
 					"The essential system with fewer tools.",
 					"Choose individual binary sets."
 				};
-				wizard_frame_text(&f, 10 + 2 * i, 26, i == 0 && desktop_index ?
+				wizard_frame_text(&f, 10 + 2 * i, 26, i == 0 && desktop_index == 1 ?
 				    "Base and developer tools; X11 with desktop." : detail[i], WIZARD_MUTED);
 			}
 		}
@@ -958,8 +958,8 @@ wizard_prepare(struct install_partition_desc *install)
 			wizard_limit_sets();
 			if (p == 2)
 				customise_sets();
-			wizard_desktop_sets(desktop_index != 0);
-			profile = p == 0 ? (desktop_index ? "Standard" : "Standard (without X11)") :
+			wizard_desktop_sets(desktop_index == 1);
+			profile = p == 0 ? (desktop_index == 1 ? "Standard" : "Standard (without X11)") :
 			    (p == 1 ? "Minimal" : "Custom");
 			stage = 4;
 		} else if (stage == 4) {
