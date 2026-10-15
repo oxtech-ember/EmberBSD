@@ -31,8 +31,9 @@ SRCS=		atoll.c basename.c cdbr.c cdbw.c dirname.c \
 
 BUILD_OSTYPE!=  uname -s
 
-# Disable use of pre-compiled headers on Darwin.
-.if ${BUILD_OSTYPE} == "Darwin"
+# Disable use of pre-compiled headers for Clang on Darwin.
+HOST_COMPILER_CLANG!= if ${HOST_CC} --version | grep -q -s clang; then echo yes; else echo no; fi
+.if ${BUILD_OSTYPE} == "Darwin" && ${HOST_COMPILER_CLANG} == "yes"
 HOST_CPPFLAGS+=	-no-cpp-precomp
 .endif
 

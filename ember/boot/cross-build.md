@@ -77,6 +77,27 @@ provides the host compiler and preserves its current source adaptations.
 Its `--kernel` mode builds frontends without an application sysroot; the
 application mode retains the target libc/header/runtime requirements.
 
+### Darwin host compiler flags
+
+With host GCC16 on macOS, pass the selected SDK through `HOST_CPPFLAGS`
+and `HOST_LDFLAGS`. Keep host language and optimization flags in
+`HOST_CFLAGS`. The host-mkdep configure rule passes all three variables.
+The compatibility, MOP, CTF, ELF and DWARF host libraries select
+`-no-cpp-precomp` only for Clang on Darwin. GCC does not support this flag.
+This follows the compiler selection already used by GNU host tools.
+
+Run the bounded regression with an existing configured make wrapper:
+
+```sh
+sh ember/tests/darwin-host-tools.sh /absolute/tools/bin/nbmake-amd64 \
+    /absolute/source /absolute/host-gcc16
+```
+
+The check evaluates the real Makefiles with GCC16 and Clang. It also runs
+host-mkdep configure with the macOS SDK in a private temporary directory.
+These host checks pass on Apple Silicon macOS with GCC 16.2.0. They do not
+establish a complete tools build, amd64 userland, boot or image acceptance.
+
 ## Acceptance is separate from host selection
 
 The wrapper runs the portable contracts listed in `ember/tools/kernel-contracts.sh`.
