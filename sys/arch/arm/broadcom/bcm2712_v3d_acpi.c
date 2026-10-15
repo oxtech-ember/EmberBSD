@@ -22,6 +22,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/systm.h>
 
 #include <dev/acpi/acpivar.h>
+#include <arm/broadcom/bcm2712_display_acpi.h>
 #include <arm/broadcom/bcm2835_mbox.h>
 #include <arm/broadcom/bcm2835_pmwdogvar.h>
 #include <arch/evbarm/rpi/vcprop.h>
@@ -340,6 +341,7 @@ bcmv3d_finalize(device_t dev)
 	if (sc->sc_observed)
 		return 0;
 	sc->sc_observed = true;
+	bcm2712_display_acpi_observe(dev, sc->sc_handle);
 	error = bcmv3d_observe(sc);
 	if (error != 0)
 		aprint_normal_dev(dev, "observation stopped at %s: error %d; "

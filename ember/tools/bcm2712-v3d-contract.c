@@ -111,6 +111,14 @@ static int config_finalize_register(device_t, int (*)(device_t));
 static void contract_print(const char *, ...);
 
 #include "pm-accessor.h"
+/* The independent display contract has its own actual-source fixture. */
+static void
+bcm2712_display_acpi_observe(device_t dev, ACPI_HANDLE handle)
+{
+	(void)dev;
+	(void)handle;
+}
+
 #include "driver.h"
 
 static struct bcmv3d_softc sc;
