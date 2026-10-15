@@ -975,7 +975,10 @@ The base system shell is unchanged.
   C API/bitcode and ORC JIT consumers still pass.
   The OS-owned [development image](ember/image/README.md) installs the pinned
   GDB/LLVM package closure offline and includes CTF/libdwarf 2.2 and the
-  corrected FFS primary-superblock selector. The same installed GDB, DWP and
+  corrected FFS primary-superblock selector. A separate [FFS2 xattr list repair](ember/development/ffs-xattr.md)
+  preserves BSD lists and returns NUL-terminated names to the xattr API.
+  Actual-source and target analysis pass; kernel boot and physical retest remain pending.
+  The same installed GDB, DWP and
   CTF matrices pass on first boot and after a normal AArch64 VM reboot.
   Full OS builds
   with GCC16 and general pkgsrc cross-package builds remain unvalidated.
