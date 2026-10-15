@@ -705,7 +705,9 @@ on every board in the hardware catalog.
   EGL/pixel cycles and 38 upstream invocations, with recorded internal skips.
   The [experimental execution path](ember/boot/a733-pvr-execution.md) now adds
   firmware VM publication, contexts, free lists, and synchronous compute submission.
-  Its production-source contracts pass. Physical Vulkan execution, graphics jobs,
+  Its production-source contracts pass. Host fixtures use the current bridge and
+  metadata interfaces. They reject diagnostics after bridge adoption and render
+  registration with incomplete metadata. Physical Vulkan execution, graphics jobs,
   Zink, display output, and accelerated Plasma remain unaccepted.
   Repeated submission within one boot and long-duration GPU stability remain
   untested.

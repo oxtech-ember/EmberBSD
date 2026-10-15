@@ -101,6 +101,9 @@ CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' \
 The contract compiles the actual query and registration code with boundary
 stubs. It checks short objects, output bounds, padding, copy faults, unsupported
 queries, duplicate registration, and last-reference cleanup after failed attach.
+`sh ember/tools/pvr-render-attach-contract.sh` also compiles the actual firmware
+metadata adapter. It checks missing firmware, each missing required feature,
+optional absent features, exact query inputs, and registration lock boundaries.
 These host checks do not exercise the running kernel, device nodes, or hardware.
 The BO contract also compiles the real GEM close and pager reference helpers.
 It checks 4 KiB and 16 KiB host-page cases and allocation failure cleanup.

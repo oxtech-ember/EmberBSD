@@ -16,6 +16,13 @@ Stage 16 has [completed one firmware command](a733-gpu-fwprobe.md#physical-comma
 Stage 17 adds a software-checked MMUCACHE probe. GPU memory isolation
 and graphics acceleration remain unverified.
 
+The identification contract includes the production firmware bridge and backend
+interfaces. It checks that an adopted bridge blocks every diagnostic stage,
+including a failed service. Bridge preparation and publication are explicit
+aborting boundaries here; their actual lifecycle runs in
+`sh ember/tools/a733-gpu-fwbridge-contract.sh`. Run both contracts when changing
+this shared state. These host checks do not establish hardware operation.
+
 ## Physical result
 
 On 2026-10-09, a 4 GiB Orange Pi Zero 3W booted the complete GCC16.2 kernel

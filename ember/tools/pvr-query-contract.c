@@ -9,6 +9,7 @@
 #include <string.h>
 #include "sun60i_a733_gpu_fwinfo.h"
 
+typedef int32_t __s32;
 typedef uint16_t __u16;
 typedef uint32_t __u32;
 typedef uint64_t __u64;
