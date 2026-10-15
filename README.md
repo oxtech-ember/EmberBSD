@@ -976,6 +976,10 @@ The base system shell is unchanged.
   checks pass on Zero 3W with its installed GCC16 runtime. Its `--kernel`
   mode builds the cross frontends without an application sysroot; target
   libc and C++ runtime inputs remain required for application builds. The
+  [native flex filter check](ember/tests/flex-filter-sentinel.md) also covers
+  the pointer sentinel required by GCC16 on ARM64 macOS. A private rebuilt
+  lexer regenerates the racoon source and its amd64 ELF symbol definitions;
+  this does not qualify the complete OS build. The
   [CTF converter](ember/boot/ctf-external-types.md) preserves GCC/Clang types
   in DWARF4/5 and both offset widths, including COMDAT type units, standalone
   DWO, indexed DWP and combined split/supplementary input. Linked multi-CU
