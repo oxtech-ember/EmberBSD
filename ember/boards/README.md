@@ -43,6 +43,14 @@ are research directions, not additional supported boards.
 The [common board-change worksheet](../development/board-change.md#applying-the-procedure-to-orange-pi-6-plus)
 uses Orange Pi 6 Plus as a first-port example. It has no accepted EmberBSD board profile yet.
 
+## Reference platforms for your own device
+
+[EmberBSD-DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards) provides hardware references for device development.
+Use its [reader guide](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/docs/reader-guide.md) and [catalog](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/catalog.json) to find board, carrier, SoC, interface, and bootloader records.
+Read design transfer notes before adapting a reference platform to your own device.
+Verify source revisions, connector numbering, and configuration applicability for the exact hardware.
+This OS tree owns current support claims, drivers, build procedures, and executable checks.
+
 ## Contribute a board
 
 Follow [adding a board](adding-a-board.md) for source ownership, build integration,

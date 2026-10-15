@@ -56,12 +56,18 @@ are maintained in the related repositories below.
 | Repository | Purpose | Current scope |
 | --- | --- | --- |
 | [EmberBSD](https://github.com/oxtech-ember/EmberBSD) | Central OS project: kernel, drivers, boards, boot, firmware and system validation | Source tree and board-specific evidence; see the support tables |
+| [EmberBSD-DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards) | Hardware references for developers building their own devices | Boards, carriers, SoCs, interfaces, bootloaders and configuration applicability |
 | [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports) | Third-party build recipes, portability patches and native package profiles | pkgsrc recipes and experimental probes, each with its own validation limits |
 | [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) | Standalone applications and reproducible demonstrations | Local AI, robotics and desktop scenarios with requirements and checks |
 | [EmberBSD-Runtime](https://github.com/oxtech-ember/EmberBSD-Runtime) | Application execution, lifecycle, permissions and shared device operations | Design stage; no released runtime implementation |
 | [EmberBSD-SDK](https://github.com/oxtech-ember/EmberBSD-SDK) | Application interfaces, package contracts, developer tools and compatibility checks | Design stage; no stable application API or released SDK tools |
 | [Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills) | Instructions for developers and their AI assistants | Application development, board bring-up, shared ports and tested contributions; source analysis and memory checks for own and ported code |
 | [EmberBSD-User-Skills](https://github.com/oxtech-ember/EmberBSD-User-Skills) | Instructions for users and their local or remote AI assistants | OS installation onto boards, desktop VMs and USB-cabled phones, applications, device diagnostics, personal Ports and GitHub workflows; package checks and client discovery verified |
+
+DevBoards helps transfer research from a reference board to a custom device.
+Start with its [reader guide](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/docs/reader-guide.md) and [catalog](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/catalog.json), then check each record's sources and applicability.
+Current support claims remain in the [OS board catalog](ember/boards/README.md).
+Drivers and executable checks remain with OS and Ports.
 
 Runtime will execute applications on the device; SDK will define their
 interfaces and development tools. Examples demonstrate usable scenarios;
@@ -84,7 +90,7 @@ procedures live in `ember/boards`. Personal source customization stays a user
 workflow; it does not require a contribution PR.
 
 Follow the [installation instructions](https://github.com/oxtech-ember/EmberBSD-User-Skills#install-the-package-or-a-skill)
-for your client. Version 0.4.0 provides ten task skills. Both skill packages can coexist.
+for your client. Version 0.4.1 provides ten task skills. Both skill packages can coexist.
 Read the package's current check results and limits. Package consistency and client discovery
 do not establish on-device agent behavior, cable-installer acceptance or end-to-end personal Ports maintenance.
 The package uses available tools and supplies no agent runtime or credentials.
@@ -111,7 +117,7 @@ Start a new conversation in your project and ask:
 See the [skills installation and update guide](https://github.com/oxtech-ember/Ember-Agent-Skills#use-in-your-development-environment)
 for expected results, updates and other assistant environments. The plugin
 provides developer instructions; it does not install software on a board.
-Package 0.4.4 provides eight task skills, including staged port modernization and behavior checks.
+Package 0.4.5 provides eight task skills, including staged port modernization, behavior checks, and DevBoards hardware references.
 Its README records package, client, and bounded instruction checks.
 Desktop icon rendering remains unverified for both packages.
 Reusable fixes and ports are contributed through focused PRs after relevant

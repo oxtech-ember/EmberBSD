@@ -15,6 +15,14 @@ Identify the intended first scenario, such as boot to multi-user with Ethernet.
 Inspect current EmberBSD and upstream NetBSD sources before writing a driver.
 Preserve upstream identifiers, licenses, revision and authorship when adapting code.
 
+For reusable hardware references, read
+[DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards).
+Start with its [reader guide](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/docs/reader-guide.md) and [catalog](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/catalog.json), then read the exact board and carrier records.
+Follow the selected bootloader contract and design transfer notes.
+Check source revisions and configuration applicability before reuse.
+Keep board, carrier, SoC, and bootloader knowledge at their respective layers.
+Drivers and executable checks remain here or in Ports.
+
 Read [the build guide](../../README.ember.md) and the relevant board page.
 Use a contributor branch or fork and the target's current submission rules.
 The [developer skill](https://github.com/oxtech-ember/Ember-Agent-Skills#add-your-board)
