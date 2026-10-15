@@ -1966,7 +1966,6 @@ isp_fibre_init_2400(ispsoftc_t *isp)
 	if (isp->isp_nchan > 1) {
 		isp_icb_2400_vpinfo_t vpinfo, *vdst;
 		vp_port_info_t pi, *pdst;
-		size_t amt = 0;
 		uint8_t *off;
 
 		vpinfo.vp_count = isp->isp_nchan - 1;
@@ -1975,7 +1974,6 @@ isp_fibre_init_2400(ispsoftc_t *isp)
 		off += ICB2400_VPINFO_OFF;
 		vdst = (isp_icb_2400_vpinfo_t *) off;
 		isp_put_icb_2400_vpinfo(isp, &vpinfo, vdst);
-		amt = ICB2400_VPINFO_OFF + sizeof (isp_icb_2400_vpinfo_t);
 		for (chan = 1; chan < isp->isp_nchan; chan++) {
 			fcparam *fcp2;
 
@@ -1996,7 +1994,6 @@ isp_fibre_init_2400(ispsoftc_t *isp)
 			off += ICB2400_VPINFO_PORT_OFF(chan);
 			pdst = (vp_port_info_t *) off;
 			isp_put_vp_port_info(isp, &pi, pdst);
-			amt += ICB2400_VPOPT_WRITE_SIZE;
 		}
 	}
 
