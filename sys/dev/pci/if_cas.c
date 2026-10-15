@@ -1516,13 +1516,16 @@ cas_pint(struct cas_softc *sc)
 {
 	bus_space_tag_t t = sc->sc_memt;
 	bus_space_handle_t seb = sc->sc_memh;
+#ifdef CAS_DEBUG
 	uint32_t status;
 
 	status = bus_space_read_4(t, seb, CAS_MII_INTERRUP_STATUS);
 	status |= bus_space_read_4(t, seb, CAS_MII_INTERRUP_STATUS);
-#ifdef CAS_DEBUG
 	if (status)
 		printf("%s: link status changed\n", device_xname(sc->sc_dev));
+#else
+	(void)bus_space_read_4(t, seb, CAS_MII_INTERRUP_STATUS);
+	(void)bus_space_read_4(t, seb, CAS_MII_INTERRUP_STATUS);
 #endif
 	return (1);
 }
