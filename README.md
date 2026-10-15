@@ -940,6 +940,8 @@ The base system shell is unchanged.
   a complete base distribution remains a separate check. The [stddef interoperability regression](ember/tests/stddef-interop.md)
   covers GCC16's compiler-owned amd64 `max_align_t`, both include orders and resource-free fallbacks.
   Its size change requires a consistent userspace rebuild; isolated libkvm and PCB checks pass.
+  The [amd64 crash-dump map regression](ember/tests/kvm-amd64-map.md) checks allocation failure, retry and range boundaries.
+  The isolated target TU passes GCC16 analysis; full library and base acceptance remain separate.
   Incremental wrapper builds refresh the generated kernel version metadata;
   host orchestration checks cover stale `BUILDINFO` and object retention.
   The resulting kernel cold-boots in AArch64 UTM and passes FP process,

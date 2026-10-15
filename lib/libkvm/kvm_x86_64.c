@@ -236,6 +236,17 @@ _kvm_pa2off(kvm_t *kd, paddr_t pa)
 	if (map == NULL) {
 		map = calloc(cpu_kh->nmemsegs, sizeof *map);
 		off = 0;
+		if (map == NULL) {
+			/* Mapped I/O callers need an offset, not an error sentinel. */
+			for (i = 0; i < cpu_kh->nmemsegs; i++) {
+				if (pa >= ramsegs[i].start &&
+				    pa - ramsegs[i].start < ramsegs[i].size)
+					return (kd->dump_off + off +
+					    pa - ramsegs[i].start);
+				off += ramsegs[i].size;
+			}
+			return (kd->dump_off);
+		}
 		for (i = 0; i < cpu_kh->nmemsegs; i++) {
 			map[i].pa = ramsegs[i].start;
 			map[i].sz = ramsegs[i].size;
