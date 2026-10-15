@@ -913,6 +913,8 @@ The base system shell is unchanged.
   matched board modules and DTBs on Apple Silicon macOS and Debian/x86_64
   with GCC16.2. The Linux build passes all ten portable contracts and artifact
   checksum checks; native contracts and boot acceptance remain separate.
+  Incremental wrapper builds refresh the generated kernel version metadata;
+  host orchestration checks cover stale `BUILDINFO` and object retention.
   The resulting kernel cold-boots in AArch64 UTM and passes FP process,
   signal and thread checks. The
   [Ports cross GCC16 recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
