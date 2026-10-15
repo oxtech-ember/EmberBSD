@@ -480,10 +480,6 @@ cemac_intr(void *arg)
 				bus_dmamap_sync(sc->sc_dmat,
 				    sc->rxq[bi].m_dmamap, 0, MCLBYTES,
 				    BUS_DMASYNC_PREREAD);
-				sc->RDSC[bi].Info = 0;
-				sc->RDSC[bi].Addr =
-				    sc->rxq[bi].m_dmamap->dm_segs[0].ds_addr
-				    | (bi == (RX_QLEN-1) ? ETH_RDSC_F_WRAP : 0);
 			} else {
 				/* Drop packets until we can get replacement
 				 * empty mbufs for the RXDQ.
@@ -491,7 +487,19 @@ cemac_intr(void *arg)
 				m_freem(m);
 				sc->sc_stat_rx_nombuf++;
 				if_statinc_ref(ifp, nsr, if_ierrors);
+				/* Reuse the mapped buffer without delivering it. */
+				bus_dmamap_sync(sc->sc_dmat,
+				    sc->rxq[bi].m_dmamap, 0, MCLBYTES,
+				    BUS_DMASYNC_POSTREAD);
+				bus_dmamap_sync(sc->sc_dmat,
+				    sc->rxq[bi].m_dmamap, 0, MCLBYTES,
+				    BUS_DMASYNC_PREREAD);
 			}
+			/* Return ownership on both refill and allocation failure. */
+			sc->RDSC[bi].Info = 0;
+			sc->RDSC[bi].Addr =
+			    sc->rxq[bi].m_dmamap->dm_segs[0].ds_addr
+			    | (bi == (RX_QLEN-1) ? ETH_RDSC_F_WRAP : 0);
 			sc->rxqi++;
 		}
 		bus_dmamap_sync(sc->sc_dmat, sc->rbqpage_dmamap, 0,

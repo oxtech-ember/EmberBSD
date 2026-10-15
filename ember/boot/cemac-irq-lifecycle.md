@@ -27,7 +27,23 @@ This is not a complete DMA shutdown protocol. Disabling GEM transmit resets
 its queue pointer. Graceful transmit teardown needs a separate ring protocol.
 Stop must not restore an old fixed clock divider or data-bus width.
 
+## Receive allocation failure
+
+If a replacement mbuf header or cluster cannot be allocated, the handler drops
+that packet and keeps the original mapped buffer. It completes POSTREAD and
+PREREAD synchronization, then returns the descriptor to the device. It clears
+USED and Info while preserving the buffer address and the ring-wrap flag.
+
+Previously only successful replacement returned descriptor ownership. With all
+64 descriptors used and persistent allocation failure, the handler could circle
+the same ring without returning. The regression injects both allocation failures,
+checks one pass over that fixed full ring, and checks packet reception after
+allocation recovers. It verifies error counters and prevents freeing or remapping
+the retained buffer. This is host fault injection, not hardware memory-pressure
+acceptance or a bound under continuous arrivals that refill descriptors.
+
 ## Reproduce the host contract
+
 
 Run from the source root:
 
@@ -47,7 +63,8 @@ ISR models are checked. These models do not qualify physical bus timing.
 The tests cover repeated stop, shared interrupts, delayed watchdog work,
 PHY failure, posted-write flushing, ring ownership and configuration retention.
 Unsupported modeled operations abort instead of returning success.
-`CEMAC_STOP_CASE` selects `stop`, `init`, `rx`, `reset`, `media` or `all`.
+`CEMAC_STOP_CASE` selects `stop`, `init`, `rx`, `reset`, `media`,
+`nomem-header`, `nomem-cluster` or `all`.
 `CEMAC_STOP_SOURCE` selects a comparison driver source.
 `CEMAC_STOP_BUILD` retains generated inputs for analysis.
 

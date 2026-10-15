@@ -51,7 +51,11 @@ typedef uintptr_t bus_addr_t;
 typedef struct { bool held; } kmutex_t;
 typedef struct { bool pending; } callout_t;
 struct work { unsigned value; };
-struct dma_map { struct { uintptr_t ds_addr; } dm_segs[1]; bool mapped; };
+struct dma_map {
+	struct { uintptr_t ds_addr; } dm_segs[1];
+	bool mapped, device_owned;
+	unsigned loads, unloads, postreads, prereads;
+};
 typedef struct dma_map *bus_dmamap_t;
 struct mbuf {
 	unsigned m_flags;
@@ -62,6 +66,7 @@ struct mbuf {
 struct ifnet {
 	void *if_softc, *if_percpuq;
 	unsigned if_flags, if_capenable;
+	unsigned if_ierrors, if_ipackets, if_collisions;
 	char if_xname[16];
 	void (*if_start)(struct ifnet *);
 	bool locked;
@@ -86,7 +91,9 @@ static uint32_t registers[ETH_SIZE / 4], posted_mask;
 static bool read_clear, pending_disable;
 static unsigned writes, isr_reads, halts, media_calls, ticks, starts, queued;
 static unsigned dma_calls, frees, deferred, delivered;
-static bool rx_enabled;
+static bool rx_enabled, in_handler;
+static unsigned alloc_failure, alloc_attempts;
+static struct mbuf *retained_mbufs[RX_QLEN];
 static int media_error;
 static time_t time_uptime = 20;
 static const int hz = 100, cemac_watchdog_timeout = 5;
@@ -201,6 +208,11 @@ get_header(void)
 	struct mbuf *m;
 
 	CHECK(rx_enabled);
+	if (in_handler) {
+		CHECK(++alloc_attempts <= RX_QLEN);
+		if (alloc_failure == 1)
+			return NULL;
+	}
 	m = calloc(1, sizeof(*m));
 	CHECK(m != NULL);
 	return m;
@@ -209,6 +221,8 @@ static void
 get_cluster(struct mbuf *m)
 {
 	CHECK(rx_enabled && m != NULL && m->m_ext.ext_buf == NULL);
+	if (in_handler && alloc_failure == 2)
+		return;
 	m->m_ext.ext_buf = malloc(MCLBYTES);
 	CHECK(m->m_ext.ext_buf != NULL);
 	m->m_flags |= M_EXT;
@@ -228,6 +242,10 @@ m_freem(struct mbuf *m)
 	CHECK(rx_enabled);
 	if (m == NULL)
 		return;
+	if (in_handler && alloc_failure != 0) {
+		for (unsigned i = 0; i < RX_QLEN; i++)
+			CHECK(m != retained_mbufs[i]);
+	}
 	frees++;
 	free(m->m_ext.ext_buf);
 	free(m);
@@ -253,13 +271,24 @@ bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t m,
 		CHECK(length == MCLBYTES);
 		CHECK(flags == BUS_DMASYNC_POSTREAD || flags == BUS_DMASYNC_PREREAD);
 	}
+	if (flags & BUS_DMASYNC_POSTREAD) {
+		CHECK(m->device_owned);
+		m->device_owned = false;
+		m->postreads++;
+	} else {
+		CHECK(!m->device_owned);
+		m->device_owned = true;
+		m->prereads++;
+	}
 	dma_calls++;
 }
 static void
 bus_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t m)
 {
 	CHECK(rx_enabled && intr_lock.held && m != NULL && m->mapped);
+	CHECK(!m->device_owned);
 	m->mapped = false;
+	m->unloads++;
 }
 static int
 bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t m,
@@ -269,14 +298,15 @@ bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t m,
 	CHECK(buffer != NULL && length == MCLBYTES && p == NULL);
 	CHECK(flags == BUS_DMA_NOWAIT);
 	m->mapped = true;
+	m->loads++;
 	return 0;
 }
 static void if_schedule_deferred_start(struct ifnet *ifp) { deferred++; }
 typedef unsigned net_stat_ref_t;
 #define IF_STAT_GETREF(ifp) 0U
 #define IF_STAT_PUTREF(ifp) ((void)0)
-#define if_statinc_ref(ifp, ref, field) ((void)(ref))
-#define if_statadd(ifp, field, value) ((void)(value))
+#define if_statinc_ref(ifp, ref, field) ((void)(ref), (ifp)->field++)
+#define if_statadd(ifp, field, value) ((ifp)->field += (value))
 #define aprint_normal_ifnet(...) ((void)0)
 #include "cemac-bodies.h"
 
@@ -306,7 +336,9 @@ reset(bool clear)
 	read_clear = clear;
 	writes = isr_reads = halts = media_calls = ticks = starts = queued = 0;
 	dma_calls = frees = deferred = delivered = 0;
-	rx_enabled = false;
+	rx_enabled = in_handler = false;
+	alloc_failure = alloc_attempts = 0;
+	memset(retained_mbufs, 0, sizeof(retained_mbufs));
 	media_error = 0;
 }
 static void
@@ -399,10 +431,10 @@ test_reset(bool clear, bool up, int error)
 	check_retained();
 }
 static void
-test_rx_pending(bool clear)
+test_rx_pending(bool clear, unsigned failure)
 {
 	struct eth_dsc ring[RX_QLEN];
-	struct dma_map ringmap = { .mapped = true };
+	struct dma_map ringmap = { .mapped = true, .device_owned = true };
 	struct dma_map maps[RX_QLEN];
 
 	reset(clear);
@@ -418,7 +450,8 @@ test_rx_pending(bool clear)
 	for (unsigned i = 0; i < RX_QLEN; i++) {
 		test_sc.rxq[i].m = get_header();
 		get_cluster(test_sc.rxq[i].m);
-		maps[i].mapped = true;
+		retained_mbufs[i] = test_sc.rxq[i].m;
+		maps[i].mapped = maps[i].device_owned = true;
 		maps[i].dm_segs[0].ds_addr = 0x40000 + i * MCLBYTES;
 		test_sc.rxq[i].m_dmamap = &maps[i];
 		ring[i].Addr = maps[i].dm_segs[0].ds_addr | ETH_RDSC_F_USED |
@@ -432,18 +465,52 @@ test_rx_pending(bool clear)
 	CHECK(cemac_ifinit(&test_sc.sc_ethercom.ec_if) == 0);
 	/* No new arrival is needed: the retained cause must assert IRQ now. */
 	CHECK((registers[ETH_ISR / 4] & ~registers[ETH_IMR / 4]) != 0);
+	alloc_failure = failure;
+	in_handler = true;
 	CHECK(cemac_intr(&test_sc) == 1);
-	CHECK(delivered == RX_QLEN && test_sc.rxqi == RX_QLEN);
+	in_handler = false;
+	CHECK(alloc_attempts == RX_QLEN && test_sc.rxqi == RX_QLEN);
+	CHECK(delivered == (failure == 0 ? RX_QLEN : 0));
+	CHECK(test_sc.sc_stat_rx_nombuf == (failure != 0 ? RX_QLEN : 0));
+	CHECK(test_sc.sc_ethercom.ec_if.if_ierrors == 1 +
+	    (failure != 0 ? RX_QLEN : 0));
 	CHECK(test_sc.sc_stat_rx_bufna == 1 && registers[ETH_ISR / 4] == 0);
-	CHECK(dma_calls == RX_QLEN * 2 + 2 && frees == RX_QLEN);
+	CHECK(dma_calls == RX_QLEN * 2 + 2);
+	CHECK(frees == (failure == 1 ? 0 : RX_QLEN));
+	CHECK(ringmap.device_owned && ringmap.postreads == 1 && ringmap.prereads == 1);
 	for (unsigned i = 0; i < RX_QLEN; i++) {
 		CHECK(!(ring[i].Addr & ETH_RDSC_F_USED) && maps[i].mapped);
+		CHECK(ring[i].Info == 0 && maps[i].device_owned);
+		CHECK(maps[i].postreads == 1 && maps[i].prereads == 1);
+		CHECK(maps[i].loads == (failure == 0 ? 1U : 0U));
+		CHECK(maps[i].unloads == (failure == 0 ? 1U : 0U));
+		if (failure != 0)
+			CHECK(test_sc.rxq[i].m == retained_mbufs[i]);
 		CHECK(ring[i].Addr == (maps[i].dm_segs[0].ds_addr |
 			(i == RX_QLEN - 1 ? ETH_RDSC_F_WRAP : 0)));
+	}
+	if (failure != 0) {
+		/* Allocation recovery must receive again without reinitializing. */
+		alloc_failure = alloc_attempts = 0;
+		ring[0].Addr |= ETH_RDSC_F_USED;
+		ring[0].Info = 64;
+		registers[ETH_ISR / 4] = ETH_ISR_RCOM;
+		in_handler = true;
+		CHECK(cemac_intr(&test_sc) == 1);
+		in_handler = false;
+		CHECK(delivered == 1 && alloc_attempts == 1);
+		CHECK(test_sc.sc_stat_rx_nombuf == RX_QLEN);
+		CHECK(test_sc.sc_ethercom.ec_if.if_ierrors == 1 + RX_QLEN);
+		CHECK(!(ring[0].Addr & ETH_RDSC_F_USED) && maps[0].device_owned);
+		CHECK(maps[0].postreads == 2 && maps[0].prereads == 2);
+		CHECK(maps[0].loads == 1 && maps[0].unloads == 1);
+	}
+	for (unsigned i = 0; i < RX_QLEN; i++) {
 		m_freem(test_sc.rxq[i].m);
 		test_sc.rxq[i].m = NULL;
 	}
-	CHECK(frees == 2 * RX_QLEN);
+	CHECK(frees == (failure == 1 ? RX_QLEN : 2 * RX_QLEN) +
+	    (failure != 0 ? 1 : 0));
 }
 int
 main(int argc, char **argv)
@@ -451,7 +518,8 @@ main(int argc, char **argv)
 	const char *which = argc > 1 ? argv[1] : "all";
 	CHECK(strcmp(which, "all") == 0 || strcmp(which, "stop") == 0 ||
 		strcmp(which, "init") == 0 || strcmp(which, "reset") == 0 ||
-		strcmp(which, "rx") == 0 || strcmp(which, "media") == 0);
+		strcmp(which, "rx") == 0 || strcmp(which, "media") == 0 ||
+		strcmp(which, "nomem-header") == 0 || strcmp(which, "nomem-cluster") == 0);
 	for (unsigned clear = 0; clear < 2; clear++) {
 		if (strcmp(which, "all") == 0 || strcmp(which, "media") == 0) {
 			test_media(clear, false, EIO);
@@ -460,7 +528,11 @@ main(int argc, char **argv)
 			test_media(clear, true, ENXIO);
 		}
 		if (strcmp(which, "all") == 0 || strcmp(which, "rx") == 0)
-			test_rx_pending(clear);
+			test_rx_pending(clear, 0);
+		if (strcmp(which, "all") == 0 || strcmp(which, "nomem-header") == 0)
+			test_rx_pending(clear, 1);
+		if (strcmp(which, "all") == 0 || strcmp(which, "nomem-cluster") == 0)
+			test_rx_pending(clear, 2);
 		if (strcmp(which, "all") == 0 || strcmp(which, "stop") == 0)
 			test_stop(clear);
 		if (strcmp(which, "all") == 0 || strcmp(which, "init") == 0) {

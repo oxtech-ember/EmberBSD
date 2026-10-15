@@ -816,6 +816,7 @@ The base system shell is unchanged.
   and a WM8960 audio codec. The board pages distinguish tested peripherals
   from shared driver availability. The [CEMAC interrupt lifecycle](ember/boot/cemac-irq-lifecycle.md)
   has host regression checks for stop, restart and retained receive events.
+  Fault injection checks receive-buffer reuse when replacement allocation fails.
   Repeated physical Ethernet down/up still needs acceptance.
 - **WPA3-Personal on CM5:** upstream wpa_supplicant SAE now works through
   the fork's `bwfm` external-auth interface, with required protected
