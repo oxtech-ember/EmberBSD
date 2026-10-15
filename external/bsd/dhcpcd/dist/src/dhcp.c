@@ -2144,7 +2144,10 @@ dhcp_finish_dad(struct interface *ifp, struct in_addr *ia)
 {
 	struct dhcp_state *state = D_STATE(ifp);
 
-	if (state->state == DHS_BOUND)
+	/* DAD does not confirm a saved lease or a DHCP offer.
+	 * Wait for the server to acknowledge it. */
+	if (state->state == DHS_BOUND || state->state == DHS_REBOOT ||
+	    state->state == DHS_REQUEST)
 		return;
 	if (state->offer == NULL || state->offer->yiaddr != ia->s_addr)
 		return;
