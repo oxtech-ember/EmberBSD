@@ -215,6 +215,12 @@ typedef __builtin_va_list       va_list;
 #define ACPI_FALLTHROUGH __attribute__((__fallthrough__))
 #endif
 
+/* Fixed-width ACPI names need not have string terminators. */
+
+#if __has_attribute(__nonstring__)
+#define ACPI_NONSTRING __attribute__((__nonstring__))
+#endif
+
 /*
  * Flexible array members are not allowed to be part of a union under
  * C99, but this is not for any technical reason. Work around the

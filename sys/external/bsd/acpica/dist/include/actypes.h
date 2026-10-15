@@ -1578,6 +1578,10 @@ typedef enum
 #define ACPI_FALLTHROUGH do {} while(0)
 #endif
 
+#ifndef ACPI_NONSTRING
+#define ACPI_NONSTRING
+#endif
+
 #ifndef ACPI_FLEX_ARRAY
 #define ACPI_FLEX_ARRAY(TYPE, NAME)     TYPE NAME[0]
 #endif
