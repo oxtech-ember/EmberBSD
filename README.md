@@ -676,7 +676,9 @@ on every board in the hardware catalog.
   Its production-source contracts pass. The [graphics development checkpoint](ember/boot/a733-pvr-graphics.md)
   adds stream, queue, HWRT, mapping-hold, and free-list growth primitives.
   HWRT handles and paired DRM submissions now exist in this branch.
-  GROW callback registration and paired dependency acceptance remain incomplete.
+  Exact intra-pair sync dependencies now use firmware ordering in host contracts.
+  External waits retain their error paths and bounded forward-dependency checks.
+  GROW callback registration remains incomplete.
   The free-list fixture keeps backing buffers alive through its page-count checks.
   These graphics branch changes have no physical acceptance.
   The native execution guide records compute evidence separately.

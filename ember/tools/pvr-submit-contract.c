@@ -57,7 +57,7 @@ static _Thread_local bool waiting_thread;
 static pthread_mutex_t gate=PTHREAD_MUTEX_INITIALIZER, sync_lock=PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t rendezvous=PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t changed=PTHREAD_COND_INITIALIZER;
-static bool concurrent, waiter_entered, waiter_released, frozen_clock;
+static bool concurrent, waiter_entered, waiter_released, frozen_clock, complete_on_wait;
 static unsigned allocate_calls, allocation_fault, copy_calls, copy_fault;
 static unsigned prepared, completed, computed, poisoned, signals, wait_calls, polls;
 static unsigned compute_error_at, next_id;
@@ -193,6 +193,12 @@ static long dma_fence_wait_timeout(struct dma_fence *f,bool intr,long timeout)
 	CHECK(!gated && !platform && intr && timeout>0); wait_calls++;
 	pause_for_actor();
 	if(wait_error) return -wait_error;
+	/* Model an existing external fence completing inside the real wait. */
+	if(complete_on_wait) {
+		struct dma_fence *completion=f;
+		while(completion->chain) completion=((struct dma_fence_chain *)completion)->dfc_fence;
+		CHECK(completion->status==0); completion->status=1;
+	}
 	return dma_fence_get_status(f)!=0 ? 1 : 0;
 }
 static void getnanouptime(struct timespec *ts)
@@ -290,14 +296,14 @@ static struct dma_fence *drm_syncobj_fence_get(struct drm_syncobj *s)
 }
 static void drm_syncobj_replace_fence(struct drm_syncobj *s,struct dma_fence *f)
 {
-	CHECK(gated && platform && computed==completed && computed!=0);
+	CHECK(gated && platform && computed+rendered==completed && computed+rendered!=0);
 	CHECK(pthread_mutex_lock(&sync_lock)==0); CHECK(s->refs!=0);
 	dma_fence_put(s->fence); s->fence=dma_fence_get(f); signals++;
 	CHECK(pthread_mutex_unlock(&sync_lock)==0);
 }
 static void drm_syncobj_add_point(struct drm_syncobj *s,struct dma_fence_chain *c,struct dma_fence *f,uint64_t point)
 {
-	CHECK(gated && platform && c!=NULL && point!=0 && computed==completed && computed!=0);
+	CHECK(gated && platform && c!=NULL && point!=0 && computed+rendered==completed && computed+rendered!=0);
 	CHECK(pthread_mutex_lock(&sync_lock)==0); CHECK(s->refs!=0);
 	atomic_init(&c->base.refs,1); c->base.chain=true; c->base.seqno=point;
 	c->dfc_fence=dma_fence_get(f); c->prev=s->fence;
@@ -321,22 +327,28 @@ pvr_exec_hwrt_get(struct drm_file *file, uint32_t handle)
 	last_hwrt_handle = handle;
 	if (handle == 0 || handle > 4)
 		return NULL;
+	CHECK(gated && platform);
+	hwrt_model[handle - 1].refs++;
 	return &hwrt_model[handle - 1];
 }
 void
 pvr_exec_hwrt_put(struct drm_device *dev, struct pvr_exec_hwrt *hwrt)
 {
+	CHECK(gated && platform && hwrt->refs != 0);
+	hwrt->refs--;
 	hwrt_puts++;
 }
 struct pvr_file_vm *
 pvr_exec_hwrt_vm(const struct pvr_exec_hwrt *hwrt)
 {
+	CHECK(gated && platform && hwrt->refs != 0);
 	return hwrt_model_vm;
 }
 int
 pvr_exec_hwrt_target(struct pvr_exec_hwrt *hwrt, unsigned index,
     struct pvr_hwrt_target *target)
 {
+	CHECK(gated && platform && hwrt->refs != 0);
 	hwrt_targets++;
 	if (hwrt_target_error != 0)
 		return hwrt_target_error;
@@ -366,8 +378,9 @@ static void initialize(unsigned count)
 	memset(jobs,0,sizeof(jobs)); memset(ops,0,sizeof(ops)); memset(streams,0,sizeof(streams));
 	allocate_calls=allocation_fault=copy_calls=copy_fault=0;
 	prepared=completed=computed=poisoned=signals=wait_calls=polls=0; rendered=hwrt_gets=hwrt_puts=hwrt_targets=0;
+	memset(hwrt_model,0,sizeof(hwrt_model)); hwrt_model_vm=NULL; hwrt_target_error=0; render_error_at=0;
 	compute_error_at=next_id=0; prepare_error=backend_error=pause_error=wait_error=id_error=0;
-	backend_changed=switch_backend_on_pause=backend_absent=false; retained=NULL; concurrent=waiter_entered=waiter_released=frozen_clock=false;
+	backend_changed=switch_backend_on_pause=backend_absent=false; retained=NULL; concurrent=waiter_entered=waiter_released=frozen_clock=complete_on_wait=false;
 	clock_ns=0; waiting_thread=false; nranges=0;
 	atomic_init(&stub.refs,1); stub.status=1; stub.immortal=true; stub.chain=false;
 	for(i=0;i<count;i++) {
@@ -388,6 +401,7 @@ static void finish(void)
 		if(syncobjs[i].handle_live) { syncobjs[i].handle_live=false; drm_syncobj_put(&syncobjs[i]); }
 	}
 	for(i=1;i<4;i++) CHECK(contexts[i].refs==(unsigned)contexts[i].handle_live);
+	for(i=0;i<4;i++) CHECK(hwrt_model[i].refs==0);
 	CHECK(atomic_load(&allocations)==0 && atomic_load(&fence_count)==0 && atomic_load(&stub.refs)==1);
 }
 static void add_op(unsigned job,unsigned handle,uint32_t flags,uint64_t value)
@@ -396,6 +410,19 @@ static void add_op(unsigned job,unsigned handle,uint32_t flags,uint64_t value)
 	CHECK(n<4); ops[job][n]=(struct drm_pvr_sync_op){handle,flags,value};
 }
 static int submit(void) { return pvr_submit_jobs(&device,&arguments,&file); }
+static void initialize_pair(void)
+{
+	initialize(2);
+	contexts[1].firmware.type=DRM_PVR_CTX_TYPE_RENDER;
+	memset(streams,0,sizeof(streams));
+	put32(streams[0],40); put64(streams[0]+8,UINT64_C(0x9000000000));
+	put32(streams[1],384); put64(streams[1]+8,UINT64_C(0x9001000000));
+	jobs[0].type=DRM_PVR_JOB_TYPE_GEOMETRY; jobs[0].hwrt.set_handle=1;
+	jobs[0].cmd_stream_len=40;
+	jobs[1].type=DRM_PVR_JOB_TYPE_FRAGMENT; jobs[1].hwrt.set_handle=1;
+	jobs[1].cmd_stream_len=384;
+	hwrt_model_vm=&contexts[1].vm;
+}
 static void success_cases(void)
 {
 	initialize(2);
@@ -453,16 +480,7 @@ static void preflight_cases(void)
 	initialize(1); contexts[1].firmware.type=DRM_PVR_CTX_TYPE_RENDER;
 	CHECK(submit()==-EINVAL && computed==0); finish();
 	/* Render pair through the HWRT reference and target model. */
-	initialize(2);
-	contexts[1].firmware.type=DRM_PVR_CTX_TYPE_RENDER;
-	memset(streams,0,sizeof(streams));
-	put32(streams[0],40); put64(streams[0]+8,UINT64_C(0x9000000000));
-	put32(streams[1],384); put64(streams[1]+8,UINT64_C(0x9001000000));
-	jobs[0].type=DRM_PVR_JOB_TYPE_GEOMETRY; jobs[0].hwrt.set_handle=1;
-	jobs[0].cmd_stream_len=40;
-	jobs[1].type=DRM_PVR_JOB_TYPE_FRAGMENT; jobs[1].hwrt.set_handle=1;
-	jobs[1].cmd_stream_len=384;
-	hwrt_model_vm=&contexts[1].vm;
+	initialize_pair();
 	CHECK(submit()==0 && rendered==1 && hwrt_gets==1 && hwrt_puts==1);
 	CHECK(last_geom_hwrt==0xc0aa0000 && last_cleanup==0xc0aa0040);
 	CHECK(last_frag_type==ROGUE_FWIF_CCB_CMD_TYPE_FRAG || last_frag_type==ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR);
@@ -520,6 +538,225 @@ static void backend_lifetime_case(void)
 	pvr_device_enter(&device); pvr_submit_release(&device,retained,true);
 	retained=NULL; pvr_device_leave(&device); finish();
 }
+/* The pair may replace host waits only for its exact retained sync point. */
+static void
+paired_dependencies(void)
+{
+	const uint32_t signal = DRM_PVR_SYNC_OP_FLAG_SIGNAL;
+	unsigned i;
+
+	for (i = 0; i < 4; i++) {
+		uint32_t type;
+		uint64_t point;
+
+		initialize_pair();
+		type = i == 0 ? 0 : 1;
+		point = i < 2 ? 0 : 7;
+		add_op(0, 1, signal | type, point);
+		add_op(1, 1, type, point);
+		if (i == 3) {
+			/* Repeated references to the same timeline point are exact. */
+			add_op(0, 1, signal | type, point);
+			add_op(1, 1, type, point);
+		}
+		add_op(1, 2, signal, 0);
+		CHECK(submit() == 0 && arguments.jobs.count == 2);
+		CHECK(rendered == 1 && completed == 1 && computed == 0);
+		CHECK(signals == (i == 3 ? 3U : 2U) && wait_calls == 0 && polls == 0);
+		CHECK(hwrt_gets == 1 && hwrt_puts == 1 && hwrt_targets == 1);
+		finish();
+	}
+	for (i = 0; i < 3; i++) {
+		initialize_pair();
+		add_op(0, 1, signal | 1, i == 1 ? 0 : 7);
+		/* A different object, type or point must remain a host wait. */
+		add_op(1, i == 0 ? 2 : 1, i == 1 ? 0 : 1,
+		    i == 0 ? 7 : i == 1 ? 0 : 8);
+		CHECK(submit() == -ETIMEDOUT && rendered == 0 && signals == 0);
+		CHECK(hwrt_targets == 0 && hwrt_puts == 1 && poisoned == 0);
+		finish();
+	}
+	initialize_pair();
+	add_op(0, 1, signal | 1, 6);
+	add_op(0, 1, signal | 1, 8);
+	add_op(1, 1, 1, 7);
+	CHECK(submit() == -EDEADLK && rendered == 0 && polls == 0);
+	CHECK(hwrt_targets == 0 && signals == 0);
+	finish();
+
+	for (i = 0; i < 4; i++) {
+		initialize_pair();
+		add_op(0, 1, signal, 0);
+		add_op(1, 1, 0, 0);
+		add_op(1, 2, 0, 0);
+		syncobjs[2].fence = new_fence(i == 0 ? 1 : i == 1 ? -EIO : 0);
+		if (i == 3)
+			wait_error = ERESTARTSYS;
+		CHECK(submit() == (i == 0 ? 0 : i == 1 ? -EIO :
+		    i == 2 ? -ETIMEDOUT : -EINTR));
+		CHECK(wait_calls == 1 && rendered == (i == 0 ? 1U : 0U));
+		CHECK(hwrt_targets == rendered && signals == rendered && poisoned == 0);
+		finish();
+	}
+	for (i = 0; i < 4; i++) {
+		initialize_pair();
+		add_op(0, 1, signal, 0);
+		add_op(1, 1, 0, 0);
+		switch (i) {
+		case 0: jobs[1].hwrt.set_handle = 2; break;
+		case 1: jobs[1].hwrt.data_index = 1; break;
+		case 2:
+			jobs[1].context_handle = 2;
+			contexts[2].firmware.type = DRM_PVR_CTX_TYPE_RENDER;
+			break;
+		case 3: hwrt_model_vm = &contexts[2].vm; break;
+		}
+		CHECK(submit() == -EINVAL && rendered == 0 && signals == 0);
+		CHECK(hwrt_targets == 0 && hwrt_puts == 1 && poisoned == 0);
+		finish();
+	}
+	for (i = 0; i < 3; i++) {
+		initialize_pair();
+		add_op(0, 1, signal | 1, 7);
+		add_op(1, 1, 1, 7);
+		add_op(1, 2, signal | 1, 9);
+		if (i == 0)
+			render_error_at = 1;
+		else if (i == 1)
+			hwrt_target_error = EIO;
+		else
+			prepare_error = EIO;
+		CHECK(submit() == -EIO && arguments.jobs.count == 0 && signals == 0);
+		CHECK(rendered == (i == 0 ? 1U : 0U) && completed == 0);
+		CHECK(poisoned == (i < 2 ? 1U : 0U) && hwrt_puts == 1);
+		finish();
+	}
+	/* A lost backend must keep both contexts, syncs and the single HWRT hold. */
+	initialize_pair();
+	add_op(0, 1, signal, 0);
+	add_op(1, 1, 0, 0);
+	add_op(1, 2, 0, 0);
+	switch_backend_on_pause = true;
+	pause_error = EINTR;
+	CHECK(submit() == -EIO && retained != NULL && rendered == 0);
+	CHECK(contexts[1].refs == 3 && syncobjs[1].refs == 3 && hwrt_model[0].refs == 1);
+	CHECK(hwrt_puts == 0 && signals == 0);
+	pvr_device_enter(&device);
+	pvr_submit_release(&device, retained, true);
+	retained = NULL;
+	pvr_device_leave(&device);
+	finish();
+}
+
+static void
+forward_dependencies(void)
+{
+	const uint32_t signal = DRM_PVR_SYNC_OP_FLAG_SIGNAL;
+	unsigned i;
+
+	for (i = 0; i < 4; i++) {
+		initialize(2);
+		add_op(0, 1, 0, 0);
+		add_op(1, 1, signal, 0);
+		if (i != 0)
+			syncobjs[1].fence = new_fence(i == 1 ? 0 : i == 2 ? 1 : -EIO);
+		CHECK(submit() == (i == 2 ? 0 : i == 3 ? -EIO : i == 1 ? -ETIMEDOUT : -EDEADLK));
+		CHECK(computed == (i == 2 ? 2U : 0U) && polls == 0);
+		CHECK(signals == (i == 2 ? 1U : 0U));
+		finish();
+	}
+	/* An existing pending fence may have an independent external producer. */
+	for (i = 0; i < 4; i++) {
+		unsigned producer = i % 2;
+		uint32_t type = i < 2 ? 0 : 1;
+		uint64_t point = i < 2 ? 0 : 7;
+
+		initialize(producer + 1);
+		add_op(0, 1, type, point);
+		add_op(producer, 1, signal | type, point);
+		syncobjs[1].fence = new_fence(0);
+		if (point != 0) {
+			struct dma_fence_chain *chain = calloc(1, sizeof(*chain));
+
+			CHECK(chain != NULL);
+			atomic_fetch_add(&allocations, 1);
+			atomic_init(&chain->base.refs, 1);
+			chain->base.chain = true;
+			chain->base.seqno = point;
+			chain->dfc_fence = syncobjs[1].fence;
+			syncobjs[1].fence = &chain->base;
+			atomic_fetch_add(&fence_count, 1);
+		}
+		complete_on_wait = true;
+		CHECK(submit() == 0 && computed == producer + 1 && wait_calls == 1);
+		CHECK(signals == 1 && polls == 0 && poisoned == 0);
+		finish();
+	}
+	initialize(1);
+	add_op(0, 1, 1, 7);
+	add_op(0, 1, signal | 1, 7);
+	CHECK(submit() == -EDEADLK && computed == 0 && signals == 0 && polls == 0);
+	finish();
+	initialize_pair();
+	add_op(0, 2, 0, 0);
+	add_op(0, 1, signal, 0);
+	add_op(1, 1, 0, 0);
+	add_op(1, 2, signal, 0);
+	CHECK(submit() == -EDEADLK && rendered == 0 && hwrt_targets == 0);
+	finish();
+	/* A completed external timeline point survives a later duplicate signal. */
+	initialize(3);
+	add_op(0, 1, signal | 1, 7);
+	add_op(1, 1, 1, 7);
+	add_op(2, 1, signal | 1, 7);
+	CHECK(submit() == 0 && computed == 3 && wait_calls == 1 && signals == 2);
+	finish();
+	initialize(3);
+	add_op(0, 1, signal | 1, 7);
+	add_op(1, 1, 1, 9);
+	add_op(2, 1, signal | 1, 9);
+	CHECK(submit() == -EDEADLK && arguments.jobs.count == 1);
+	CHECK(computed == 1 && signals == 1 && polls == 0);
+	finish();
+	/* Do not infer a producer from equal values on different objects. */
+	initialize(2);
+	add_op(0, 1, 1, 7);
+	add_op(1, 2, signal | 1, 7);
+	CHECK(submit() == -ETIMEDOUT && computed == 0 && signals == 0);
+	finish();
+}
+
+static void
+producer_search_bounds(void)
+{
+	struct pvr_submit_batch *batch;
+	struct pvr_submit_sync wait = {0}, signal = {0};
+	uint32_t budget;
+	bool found;
+
+	/* Different user handles can refer to one retained object. */
+	wait.object = &syncobjs[1];
+	wait.input.handle = 1;
+	signal.object = wait.object;
+	signal.input.handle = 2;
+	signal.input.flags = DRM_PVR_SYNC_OP_FLAG_SIGNAL;
+	batch = calloc(1, sizeof(*batch) + 3 * sizeof(batch->jobs[0]));
+	CHECK(batch != NULL);
+	batch->count = 3;
+	batch->jobs[2].syncs = &signal;
+	batch->jobs[2].sync_count = 1;
+	budget = 3;
+	CHECK(pvr_submit_producer(batch, 0, 3, &wait, true, &budget, &found) == E2BIG);
+	CHECK(budget == 0 && !found);
+	budget = 4;
+	CHECK(pvr_submit_producer(batch, 0, 3, &wait, true, &budget, &found) == 0);
+	CHECK(budget == 0 && found);
+	/* The shared budget is not renewed for a second dependency. */
+	CHECK(pvr_submit_producer(batch, 0, 3, &wait, true, &budget, &found) == E2BIG);
+	CHECK(budget == 0 && !found);
+	free(batch);
+}
+
 struct worker_args { struct drm_pvr_ioctl_submit_jobs_args args; int result; };
 static void *worker(void *cookie)
 {
@@ -561,6 +798,6 @@ static void concurrency_case(void)
 }
 int main(void)
 {
-	success_cases(); preflight_cases(); error_cases(); backend_lifetime_case(); concurrency_case();
+	success_cases(); preflight_cases(); error_cases(); backend_lifetime_case(); paired_dependencies(); forward_dependencies(); producer_search_bounds(); concurrency_case();
 	printf("pvr submit: %u checks passed\n",atomic_load(&checks)); return 0;
 }

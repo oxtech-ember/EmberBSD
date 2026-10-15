@@ -32,7 +32,7 @@ Each adapted source retains its attribution and license.
 Run the actual-source contracts from this checkout:
 
 ```sh
-for name in pvr-stream pvr-context pvr-hwrt pvr-freelist pvr-bo pvr-file; do
+for name in pvr-stream pvr-context pvr-hwrt pvr-freelist pvr-bo pvr-file pvr-submit; do
     CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' \
         sh "ember/tools/$name-contract.sh"
 done
@@ -41,7 +41,7 @@ done
 ## Resume integration
 
 1. Add the device-owned free-list registry and install its `set_events` callbacks.
-2. Review paired submission dependencies, including a fragment wait on its paired geometry signal.
+2. Integrate and recheck the paired submission contracts with the execution backend.
 3. Integrate the current main compute fixes before a new graphics kernel build.
 4. Build a clean committed kernel and its matched modules with the common GCC16 tools.
 5. Recheck the compute path on the physical board before graphics.
@@ -49,11 +49,10 @@ done
 
 The dispatcher can process GROW events, but no execution-layer caller installs its handlers.
 A GROW request without handlers fails closed.
-The current submit path waits for both jobs before executing a pair.
-Its existing pair fixture has no intra-pair sync dependency.
-An actual-source test with a geometry signal and matching fragment wait times out before rendering.
-The same pair without that dependency passes.
-Fix this ordering before accepting paired dependencies.
+The submit path now identifies exact geometry-signal and fragment-wait pairs.
+It uses the existing firmware `FENCE_PR` instead of waiting before publishing the producer.
+The former host wait timed out before rendering in an actual-source regression.
+Host contracts cover the fix; hardware graphics acceptance remains pending.
 
 Keep both gates held in firmware callbacks: device first, then platform.
 A callback must not acquire the device gate again.
@@ -76,7 +75,7 @@ Publish both queues with `pvr_context_render_pair()` before waiting for geometry
 A matched intra-pair dependency needs firmware ordering; external waits must remain outside both gates.
 Publish both results only after both queues complete and VM synchronization succeeds.
 Standalone partial render and unpaired geometry need explicit rejection until implemented.
-These dependency rules remain acceptance requirements for the new UAPI path.
+The source contracts check these rules. Physical execution remains unverified.
 
 ## Physical acceptance boundary
 
@@ -153,15 +152,36 @@ by its fragment, and no fragment appears alone. The pair resolves one
 HWRT reference (kept on the geometry half; the fragment reuses it, so
 exactly one get and one put per pair), checks that the dataset, the
 render context and both jobs share one VM, and rejects differing dataset
-handles, render-target indices or contexts. Both jobs' wait dependencies
-are consumed while ungated before execution; the target is marked
-exposed immediately before the paired call, both commands receive the
-firmware HWRT data address, and `pvr_context_render_pair` publishes both
-queues in one combined kick with the target's cleanup control. The
-fragment command type (FRAG or FRAG_PR) comes from the decoded stream.
-The contract covers the successful pair, the lone-fragment rejection and
-the render-context preflight; Cppcheck and Clang Static Analyzer are
-clean on the changed sources.
+handles, render-target indices or contexts before waits or target exposure.
+External dependencies are consumed outside both gates. A fragment wait uses
+firmware ordering only when its paired geometry signals the same retained
+sync object, handle type, and timeline point. User handle equality is insufficient.
+`pvr_context_render_pair()` emits `FENCE_PR` on the geometry timeline before
+the fragment command. It publishes both queues in one combined KICK.
+Both commands use the validated HWRT firmware address and cleanup control.
+The fragment command type (FRAG or FRAG_PR) comes from the decoded stream.
+Both results remain unpublished until queue completion and VM synchronization.
+
+The synchronous submit path cannot schedule an unpublished self or forward dependency.
+It returns `EDEADLK` when a remaining job can publish the currently missing sync point.
+A later timeline signal can satisfy an earlier point, but only an exact paired
+point receives the internal `FENCE_PR` treatment. An already published external
+fence retains its normal wait, even when a later job signals that object again.
+The external fence can complete independently while this batch waits.
+Failed external fences preserve their errors. Other external waits retain their
+deadlines, interrupt handling, and retained references across handle removal.
+Each batch permits at most `1 << 20` job and sync visits across producer searches.
+Empty jobs also consume this budget. Exhaustion returns `E2BIG`.
+These are synchronous implementation limits, not firmware or UAPI limits.
+The returned job count still reports partial progress if an earlier job completed.
+
+The actual-source submit contract checks exact binary and timeline dependencies,
+duplicate points, distinct objects and types, external failures, cycles, and forward waits.
+It also checks pair identity before target exposure, bounded searches, and HWRT lifetime.
+Backend loss retains the entire batch until a separately proven reset permits release.
+Normal and ASan/UBSan runs pass. The former host-wait behavior fails the new pair case.
+These checks use kernel, DRM, and firmware boundary models; they are not hardware evidence.
+The earlier full-branch build below does not cover this submit change.
 
 ## Full branch build and target analysis (2026-10-14)
 
