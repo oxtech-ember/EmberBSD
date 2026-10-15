@@ -942,7 +942,8 @@ The base system shell is unchanged.
   the base compiler remains explicit bootstrap/recovery support.
   The [external GCC runtime adapter](ember/boot/external-gcc-runtime.md) now isolates
   freestanding links and resolves indirect C++ runtime dependencies at build time.
-  Isolated amd64 program and EFI links pass; full-world and boot acceptance remain separate.
+  Isolated amd64 program links pass. EFI replays remove the leaked runtime flags,
+  but retain a linker PHDR error under `--noinhibit-exec`; UEFI boot remains unverified.
   The [cross-build wrapper](ember/boot/cross-build.md) builds an AArch64 kernel,
   matched board modules and DTBs on Apple Silicon macOS and Debian/x86_64
   with GCC16.2. The Linux build passes all ten portable contracts and artifact

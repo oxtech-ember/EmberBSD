@@ -92,9 +92,17 @@ with OS `crti/crtn`. ELF checks reject build paths in RPATH and require the
 selected C++ SONAME. Run the prebuilt programs on EmberBSD separately.
 Metadata checks alone do not establish successful target links or execution.
 
-Isolated replays of the amd64 world link commands also pass for libproc's two
-test programs, dtrace, and both EFI architectures. The original commands expose
-the missing indirect runtime and the compiler-only flags passed to raw `ld`.
+Isolated replays of the amd64 world link commands pass for libproc's two
+test programs and dtrace. Both EFI replays remove the compiler-only flags
+from raw `ld` and produce ELF files without runtime dependencies or RPATH.
+They still report `PHDR segment not covered by LOAD segment` and an RWX
+segment warning. The existing `--noinhibit-exec` option permits output and
+exit status zero despite the PHDR error. These are not clean EFI links.
+The final PE files do not use ELF program headers. UEFI boot must establish
+whether the converted images work; neither output creation nor exit status
+zero establishes that result.
+The original commands expose the missing indirect runtime and the
+compiler-only flags passed to raw `ld`.
 These replays reuse existing target objects without changing the common build.
 The adapter does not change the bootxx size limit. A control on source
 `70d994c4798f` kept its old 8200-byte payload identical after flag removal.
