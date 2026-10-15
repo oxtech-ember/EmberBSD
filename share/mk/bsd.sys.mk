@@ -207,7 +207,14 @@ LINTFLAGS+=	-d ${DESTDIR}
 CPPFLAGS+=	-D_FORTIFY_SOURCE=2
 .   endif
 .   if !defined(COVERITY_TOP_CONFIG)
+.     if defined(EXTERNAL_TOOLCHAIN) && ${ACTIVE_CC} == "gcc" && \
+    !defined(HOSTPROG) && !defined(HOSTLIB)
+# GCC16 basic SSP rejects addressable aggregates with zero-length arrays.
+# Strong SSP protects their frames and address-taken locals as well.
+COPTS+=	-fstack-protector-strong -Wstack-protector
+.     else
 COPTS+=	-fstack-protector -Wstack-protector 
+.     endif
 
 # GCC 4.8 on m68k erroneously does not protect functions with
 # variables needing special alignment, see
