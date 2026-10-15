@@ -162,6 +162,13 @@ Both commands use the validated HWRT firmware address and cleanup control.
 The fragment command type (FRAG or FRAG_PR) comes from the decoded stream.
 Both results remain unpublished until queue completion and VM synchronization.
 
+The shared graphics sender accepts only zero or `CMD_EXECUTED` after KICK transport completes.
+Zero does not prove GPU completion. Both CCCB consumption and each UFO value remain required.
+Fresh health checks, finite waits, failure retention, and strict CLEANUP acknowledgements remain unchanged.
+Host contracts cover both return words for paired, fragment, and transfer senders.
+The native queue still rejects `COMBINED_GEOM_FRAG_KICK`; its validated transport needs separate integration.
+This source result-mask check does not establish a working paired firmware path.
+
 The synchronous submit path cannot schedule an unpublished self or forward dependency.
 It returns `EDEADLK` when a remaining job can publish the currently missing sync point.
 A later timeline signal can satisfy an earlier point, but only an exact paired

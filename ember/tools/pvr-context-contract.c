@@ -848,6 +848,7 @@ graphics_jobs(void)
 	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
 	original = m.expected_geometry;
 	for (i = 0; i < 250; i++) {
+		m.command_result = i & 2 ? ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED : 0;
 		m.graphics_id[0] = 101 + i * 2;
 		m.graphics_id[1] = 102 + i * 2;
 		if (i == 100) {
@@ -869,6 +870,7 @@ graphics_jobs(void)
 	CHECK(pvr_context_fragment(ctx, &m.expected_fragment, m.expected_cleanup, m.graphics_id[1]) == 0);
 	CHECK(m.graphics_sequence[0] == 250 && m.graphics_sequence[1] == 251);
 	CHECK(m.pads >= pads && m.kicks == 251 && !m.pending);
+	m.command_result = ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED;
 	/* One cleanup ACK must not release either queue or their shared image. */
 	m.cleanup_busy_at = 2;
 	CHECK(pvr_context_destroy(&ctx) == EBUSY);
@@ -880,13 +882,16 @@ graphics_jobs(void)
 
 	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
 	m.graphics_type[1] = ROGUE_FWIF_CCB_CMD_TYPE_FRAG;
+	m.command_result = 0;
 	CHECK(pvr_context_fragment(ctx, &m.expected_fragment, m.expected_cleanup, 102) == 0);
+	m.command_result = ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED;
 	CHECK(m.exposed_mask == 2 && m.combined_kicks == 0);
 	CHECK(pvr_context_destroy(&ctx) == 0);
 	CHECK(m.cleanups == 1 && m.live == 0);
 
 	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_TRANSFER_FRAG);
 	for (i = 0; i < 250; i++) {
+		m.command_result = i & 1 ? ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED : 0;
 		m.graphics_id[0] = 300 + i;
 		CHECK(pvr_context_transfer(ctx, &m.expected_transfer, m.graphics_id[0]) == 0);
 		CHECK(!m.pending && !m.failed && m.sleeps == 4);
@@ -901,43 +906,47 @@ graphics_failures(void)
 {
 	struct model m;
 	struct pvr_context *ctx;
-	unsigned scenario, kicks;
+	unsigned scenario, response, kicks;
 	int expected;
 
-	for (scenario = 0; scenario < 8; scenario++) {
-		ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
-		expected = ETIMEDOUT;
-		switch (scenario) {
-		case 0: m.graphics_queue[0].ufo_delay = 0; break;
-		case 1: m.graphics_queue[0].read_delay = 0; break;
-		case 2: m.graphics_queue[1].ufo_delay = 0; break;
-		case 3: m.graphics_queue[1].read_delay = 0; break;
-		case 4: m.command_error = ETIMEDOUT; break;
-		case 5: m.command_result = 0; expected = EIO; break;
-		case 6:
-			m.check_fail = m.health + 3;
-			m.graphics_queue[1].read_delay = 20;
-			expected = EIO;
-			break;
-		case 7:
-			/* Both queues complete before the last health observation fails. */
-			m.check_fail = m.health + 3;
-			expected = EIO;
-			break;
+	for (response = 0; response <= 1; response++) {
+		for (scenario = 0; scenario < 9; scenario++) {
+			ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
+			m.command_result = response;
+			expected = ETIMEDOUT;
+			switch (scenario) {
+			case 0: m.graphics_queue[0].ufo_delay = 0; break;
+			case 1: m.graphics_queue[0].read_delay = 0; break;
+			case 2: m.graphics_queue[1].ufo_delay = 0; break;
+			case 3: m.graphics_queue[1].read_delay = 0; break;
+			case 4: m.command_error = ETIMEDOUT; break;
+			case 5: m.command_result = ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED | 2; expected = EIO; break;
+			case 6:
+				m.check_fail = m.health + 3;
+				m.graphics_queue[1].read_delay = 20;
+				expected = EIO;
+				break;
+			case 8: m.command_result = UINT32_C(0x80000000); expected = EIO; break;
+			case 7:
+				/* Both queues complete before the last health observation fails. */
+				m.check_fail = m.health + 3;
+				expected = EIO;
+				break;
+			}
+			CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == expected);
+			CHECK(ctx->failed && m.failed && m.live == 9 && m.frees == 0);
+			if (scenario < 4)
+				CHECK(m.sleeps == 1000);
+			if (scenario == 6)
+				CHECK(!m.graphics_queue[0].pending && m.graphics_queue[1].pending);
+			if (scenario == 7)
+				CHECK(!m.pending);
+			kicks = m.kicks;
+			CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == EIO);
+			CHECK(pvr_context_destroy(&ctx) == EIO);
+			CHECK(m.kicks == kicks && m.live == 9 && m.frees == 0);
+			reset_model(&m, &ctx);
 		}
-		CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == expected);
-		CHECK(ctx->failed && m.failed && m.live == 9 && m.frees == 0);
-		if (scenario < 4)
-			CHECK(m.sleeps == 1000);
-		if (scenario == 6)
-			CHECK(!m.graphics_queue[0].pending && m.graphics_queue[1].pending);
-		if (scenario == 7)
-			CHECK(!m.pending);
-		kicks = m.kicks;
-		CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == EIO);
-		CHECK(pvr_context_destroy(&ctx) == EIO);
-		CHECK(m.kicks == kicks && m.live == 9 && m.frees == 0);
-		reset_model(&m, &ctx);
 	}
 	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
 	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == 0);
@@ -947,16 +956,28 @@ graphics_failures(void)
 	CHECK(pvr_context_destroy(&ctx) == EIO);
 	reset_model(&m, &ctx);
 
+	for (response = 0; response <= 1; response++) {
+		ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
+		m.command_result = response;
+		m.graphics_type[1] = ROGUE_FWIF_CCB_CMD_TYPE_FRAG;
+		m.graphics_queue[1].ufo_delay = 0;
+		CHECK(pvr_context_fragment(ctx, &m.expected_fragment, m.expected_cleanup, 102) == ETIMEDOUT);
+		CHECK(ctx->failed && m.failed && m.live == 9 && m.frees == 0);
+		reset_model(&m, &ctx);
+		ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_TRANSFER_FRAG);
+		m.command_result = response;
+		m.graphics_queue[0].read_delay = 0;
+		CHECK(pvr_context_transfer(ctx, &m.expected_transfer, 101) == ETIMEDOUT);
+		CHECK(ctx->failed && m.failed && m.live == 5 && m.frees == 0);
+		reset_model(&m, &ctx);
+	}
+	/* A zero KICK result does not relax CLEANUP acknowledgements. */
 	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
-	m.graphics_type[1] = ROGUE_FWIF_CCB_CMD_TYPE_FRAG;
-	m.graphics_queue[1].ufo_delay = 0;
-	CHECK(pvr_context_fragment(ctx, &m.expected_fragment, m.expected_cleanup, 102) == ETIMEDOUT);
-	CHECK(ctx->failed && m.failed && m.live == 9 && m.frees == 0);
-	reset_model(&m, &ctx);
-	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_TRANSFER_FRAG);
-	m.graphics_queue[0].read_delay = 0;
-	CHECK(pvr_context_transfer(ctx, &m.expected_transfer, 101) == ETIMEDOUT);
-	CHECK(ctx->failed && m.failed && m.live == 5 && m.frees == 0);
+	m.command_result = 0;
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == 0);
+	CHECK(pvr_context_destroy(&ctx) == EIO);
+	CHECK(ctx != NULL && m.failed && m.cleaned_mask == 0 && m.live == 9);
+	CHECK(m.frees == 0 && pvr_context_destroy(&ctx) == EIO);
 	reset_model(&m, &ctx);
 }
 

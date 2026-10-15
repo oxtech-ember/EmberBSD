@@ -477,7 +477,9 @@ pvr_context_graphics_send(struct pvr_context *ctx,
 	int error;
 
 	error = be->command(be->cookie, kick, &result);
-	if (error == 0 && result != ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED)
+	/* KICK may consume its slot without writing a return word. */
+	if (error == 0 &&
+	    (result & ~ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED) != 0)
 		error = EIO;
 	if (error == 0)
 		error = pvr_context_graphics_wait(ctx, mask);
