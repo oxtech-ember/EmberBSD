@@ -241,7 +241,12 @@ on every board in the hardware catalog.
   Its installed AArch64 QEMU checks pass an independently validated obstacle
   detour, thirteen upstream programs, archive consumers and all four package
   lifecycles. The [CSV path example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/ompl-path)
-  uses that shared library. Other navigation additions still need target acceptance.
+  uses that shared library. GTSAM 4.3.0 now also has a GCC16 cross package with
+  common Eigen 5.0.1. Installed AArch64 QEMU checks pass known linear/Pose2
+  solutions, covariance, invalid graphs, eleven upstream programs and package
+  removal/reinstallation. The
+  [CSV graph example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/gtsam-graph)
+  uses the shared library. Other navigation additions still need target acceptance.
 - **Ethernet SDR development:** the [Ports SDR profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/sdr)
   combines SoapySDR, libiio 1.0.0 with its official compatibility layer,
   AD9361/Pluto support and current libxml2. Synthetic IQ and loopback RX
