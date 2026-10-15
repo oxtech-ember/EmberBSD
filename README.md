@@ -114,7 +114,8 @@ Start a new conversation in your project and ask:
 See the [skills installation and update guide](https://github.com/oxtech-ember/Ember-Agent-Skills#use-in-your-development-environment)
 for expected results, updates and other assistant environments. The plugin
 provides developer instructions; it does not install software on a board.
-Package 0.4.3 provides eight task skills; its README records package and client checks.
+Package 0.4.4 provides eight task skills, including staged port modernization and behavior checks.
+Its README records package, client, and bounded instruction checks.
 Desktop icon rendering remains unverified for both packages.
 Reusable fixes and ports are contributed through focused PRs after relevant
 testing, following the accepting project's rules.
