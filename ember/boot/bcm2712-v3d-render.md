@@ -3,7 +3,8 @@
 Status: the bounded userspace path passed physical CM5 acceptance on
 2026-10-11. Native DRM/GEM buffers, mmap isolation and repeated TFU copies
 work in the opt-in kernel. The subsequent [native CSD acceptance](bcm2712-v3d-csd.md)
-adds verified QPU computation. General Mesa submissions remain unsupported.
+adds verified QPU computation. The later [CL and Mesa acceptance](bcm2712-v3d-gl.md)
+adds hardware OpenGL through the common Ports package. Each stage has its own limits.
 
 ## Design
 
@@ -29,9 +30,15 @@ BO to 16 MiB and total BO storage to 64 MiB during this stage. The engine's
 They retain their strict contiguous allocation contract. The shared CMA helper
 is unchanged. PRIME self-import and UVM reference ownership remain unchanged.
 
-The scatter/gather change has source and host-contract coverage only.
-It has no physical acceptance yet. Allocation, mapping and rendering have
-separate acceptance boundaries. Fragmentation, DMA ranges and the unchanged
+The scatter/gather change passed physical CM5 checks on 2026-10-16 with
+kernel source `93dc0e3167a2e1381c9c4971cf8e4ee00f282685`. The unchanged
+BO probe passed single allocations through 16 MiB and three simultaneous
+buffers totaling 17,969,152 bytes. The previous kernel failed the 7,475,200-byte
+allocation. Existing TFU, CSD, binary-sync and CL programs also passed, including
+325 CL pairs and 1,331,200 checked pixels. Kernel and boot time remained unchanged.
+These bounded checks do not accept the full desktop or a long stress run.
+Allocation, mapping and rendering retain separate acceptance boundaries.
+Fragmentation, DMA ranges and the unchanged
 budget can still reject an allocation. A successful allocation does not prove
 that global memory use is bounded or that no memory leaks exist.
 

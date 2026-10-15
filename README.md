@@ -413,6 +413,9 @@ on every board in the hardware catalog.
   selects V3D OpenGL 3.1. libudev now classifies its DRM render node correctly.
   One model-readiness run completed, but its containment capture was transparent.
   A repeat exposed allocation and startup failures; the full desktop remains unaccepted.
+  The [native scatter/gather allocator](ember/boot/bcm2712-v3d-render.md) now
+  passes CM5 allocations through 16 MiB, three held buffers, and the existing
+  TFU/CSD/sync/CL checks. Updated Mesa/Qt and the full desktop need separate acceptance.
   The fixed
   [Milou](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/milou)
   package passes its fresh-board acceptance on the same board.
