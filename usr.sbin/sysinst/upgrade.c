@@ -41,6 +41,7 @@
 #include "defs.h"
 #include "msg_defs.h"
 #include "menu_defs.h"
+#include "wizard.h"
 
 /*
  * local prototypes
@@ -56,6 +57,8 @@ do_upgrade(void)
 {
 	struct install_partition_desc install = {};
 	int retcode = 0;
+	if (!wizard_allow_install(false))
+		return;
 	partman_go = 0;
 
 	msg_display(MSG_upgradeusure);
@@ -204,6 +207,8 @@ do_reinstall_sets(void)
 {
 	struct install_partition_desc install = {};
 	int retcode = 0;
+	if (!wizard_allow_install(false))
+		return;
 	partman_go = 0;
 
 	unwind_mounts();

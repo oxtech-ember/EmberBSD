@@ -41,10 +41,15 @@ static int desktop_index;
 static char desktop_bundle[STRSIZE], desktop_sum[129];
 static char desktop_cache[STRSIZE];
 static bool desktop_mounted;
+#ifdef EMBER_BASE_RUNTIME_GCC16
+static char runtime_bundle[STRSIZE], runtime_sum[129], runtime_cache[STRSIZE];
+static bool runtime_mounted;
+#endif
 static const char *activity = "Preparing installation";
 static char source_error[128];
 static char boot_medium[STRSIZE];
 static bool desktop_clear(void);
+static void runtime_clear(void);
 
 static bool
 screen_ready(void)
@@ -344,6 +349,7 @@ void
 wizard_release_console(void)
 {
 	desktop_clear();
+	runtime_clear();
 	wizard_console_restore();
 	custom_palette = false;
 	screen_ready();
@@ -451,30 +457,30 @@ select_source(void)
 }
 
 static bool
-desktop_clear(void)
+bundle_clear(char *bundle, char *sum, char *cache, bool *mounted)
 {
-	if (desktop_bundle[0])
-		unlink(desktop_bundle);
-	desktop_bundle[0] = '\0';
-	desktop_sum[0] = '\0';
-	if (desktop_mounted) {
+	if (bundle[0])
+		unlink(bundle);
+	bundle[0] = '\0';
+	sum[0] = '\0';
+	if (*mounted) {
 		if (run_program(RUN_SILENT | RUN_ERROR_OK,
-		    "/sbin/umount %s", desktop_cache) != 0)
+		    "/sbin/umount %s", cache) != 0)
 			return false;
-		desktop_mounted = false;
+		*mounted = false;
 	}
-	if (desktop_cache[0])
-		rmdir(desktop_cache);
-	desktop_cache[0] = '\0';
+	if (cache[0])
+		rmdir(cache);
+	cache[0] = '\0';
 	return true;
 }
 
-/* Freeze and verify all optional package bytes before any disk writes. */
+/* Freeze and verify package bytes before any disk writes. */
 static bool
-desktop_preflight(const char *manifest)
+bundle_preflight(const char *manifest, const char *bundle_name, size_t limit,
+    char *bundle, char *sum, char *cache, bool *mounted)
 {
 	char expected[129], actual[129], path[STRSIZE];
-	const char *bundle_name;
 	unsigned char buffer[16384];
 	struct stat st;
 	struct statvfs fs;
@@ -483,15 +489,7 @@ desktop_preflight(const char *manifest)
 	bool ok = false;
 	int fd;
 
-	if (!desktop_clear())
-		return false;
-	if (desktop_index == 0)
-		return true;
-	if (desktop_index == 1)
-		bundle_name = "desktop-xfce.tar.xz";
-	else if (desktop_index == 2)
-		bundle_name = "desktop-plasma.tar.xz";
-	else
+	if (!bundle_clear(bundle, sum, cache, mounted))
 		return false;
 	fp = fopen(manifest, "r");
 	if (fp == NULL)
@@ -500,31 +498,31 @@ desktop_preflight(const char *manifest)
 	fclose(fp);
 	if (match != 1)
 		return false;
-	strlcpy(desktop_cache, "/tmp/ember-desktop-cache.XXXXXX", sizeof(desktop_cache));
-	if (mkdtemp(desktop_cache) == NULL) {
-		desktop_cache[0] = '\0';
+	strlcpy(cache, "/tmp/ember-package-cache.XXXXXX", STRSIZE);
+	if (mkdtemp(cache) == NULL) {
+		cache[0] = '\0';
 		return false;
 	}
 	/* ISO miniroots are small. Network staging also needs a hard size cap. */
 	if (net_source || statvfs("/tmp", &fs) != 0 || fs.f_frsize == 0 ||
-	    fs.f_bavail < 512 * MEG / fs.f_frsize) {
+	    fs.f_bavail < limit / fs.f_frsize) {
 		if (run_program(RUN_SILENT | RUN_ERROR_OK,
-		    "/sbin/mount_tmpfs -s 536870912 -o nosuid,nodev tmpfs %s",
-		    desktop_cache) != 0)
+		    "/sbin/mount_tmpfs -s %zu -o nosuid,nodev tmpfs %s",
+		    limit, cache) != 0)
 			goto out;
-		desktop_mounted = true;
+		*mounted = true;
 	}
-	snprintf(desktop_bundle, sizeof(desktop_bundle), "%s/bundle.XXXXXX", desktop_cache);
-	fd = mkstemp(desktop_bundle);
+	snprintf(bundle, STRSIZE, "%s/bundle.XXXXXX", cache);
+	fd = mkstemp(bundle);
 	if (fd < 0) {
-		desktop_bundle[0] = '\0';
+		bundle[0] = '\0';
 		goto out;
 	}
 	close(fd);
 	if (net_source) {
 		if (run_program(RUN_SILENT | RUN_ERROR_OK,
 		    "/usr/bin/ftp -q 30 -o %s %s/%s",
-		    desktop_bundle, source_url, bundle_name) != 0)
+		    bundle, source_url, bundle_name) != 0)
 			goto out;
 	} else {
 		snprintf(path, sizeof(path), "%s/%s", ext_dir_bin, bundle_name);
@@ -532,7 +530,7 @@ desktop_preflight(const char *manifest)
 		if (fd < 0)
 			goto out;
 		if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
-		    st.st_size < 1 || st.st_size > (off_t)(512 * MEG)) {
+		    st.st_size < 1 || st.st_size > (off_t)(limit)) {
 			close(fd);
 			goto out;
 		}
@@ -541,7 +539,7 @@ desktop_preflight(const char *manifest)
 			close(fd);
 			goto out;
 		}
-		output = fopen(desktop_bundle, "wb");
+		output = fopen(bundle, "wb");
 		if (output == NULL)
 			goto out;
 		for (;;) {
@@ -551,7 +549,7 @@ desktop_preflight(const char *manifest)
 			if (n == 0)
 				break;
 			total += n;
-			if (total > 512 * MEG || fwrite(buffer, 1, n, output) != n)
+			if (total > limit || fwrite(buffer, 1, n, output) != n)
 				goto out;
 			if ((feof)(input))
 				break;
@@ -561,9 +559,9 @@ desktop_preflight(const char *manifest)
 		if (error != 0)
 			goto out;
 	}
-	ok = stat(desktop_bundle, &st) == 0 && S_ISREG(st.st_mode) &&
-	    st.st_size > 0 && st.st_size <= (off_t)(512 * MEG) &&
-	    SHA512_File(desktop_bundle, actual) != NULL &&
+	ok = stat(bundle, &st) == 0 && S_ISREG(st.st_mode) &&
+	    st.st_size > 0 && st.st_size <= (off_t)(limit) &&
+	    SHA512_File(bundle, actual) != NULL &&
 	    strcmp(expected, actual) == 0;
 out:
 	if (input != NULL)
@@ -571,10 +569,90 @@ out:
 	if (output != NULL)
 		fclose(output);
 	if (ok)
-		strlcpy(desktop_sum, expected, sizeof(desktop_sum));
+		strlcpy(sum, expected, 129);
 	else
-		desktop_clear();
+		bundle_clear(bundle, sum, cache, mounted);
 	return ok;
+}
+
+static bool
+desktop_clear(void)
+{
+	return bundle_clear(desktop_bundle, desktop_sum, desktop_cache, &desktop_mounted);
+}
+
+static bool
+desktop_preflight(const char *manifest)
+{
+	if (desktop_index == 0)
+		return desktop_clear();
+	if (desktop_index != 1 && desktop_index != 2)
+		return false;
+	return bundle_preflight(manifest, desktop_index == 2 ?
+	    "desktop-plasma.tar.xz" : "desktop-xfce.tar.xz", 512 * MEG,
+	    desktop_bundle, desktop_sum, desktop_cache, &desktop_mounted);
+}
+
+static void
+runtime_clear(void)
+{
+#ifdef EMBER_BASE_RUNTIME_GCC16
+	(void)bundle_clear(runtime_bundle, runtime_sum, runtime_cache, &runtime_mounted);
+#endif
+}
+
+static bool
+runtime_preflight(const char *manifest)
+{
+#ifdef EMBER_BASE_RUNTIME_GCC16
+	return bundle_preflight(manifest, "runtime-gcc16.tar.xz", 64 * MEG,
+	    runtime_bundle, runtime_sum, runtime_cache, &runtime_mounted);
+#else
+	(void)manifest;
+	return true;
+#endif
+}
+
+/* This image requires the guided preflight before any destructive action. */
+bool
+wizard_allow_install(bool guided)
+{
+#ifdef EMBER_BASE_RUNTIME_GCC16
+	if (!guided) {
+		hit_enter_to_continue("Use guided installation with this image.", NULL);
+		return false;
+	}
+#else
+	(void)guided;
+#endif
+	return true;
+}
+
+bool
+wizard_apply_runtime(void)
+{
+#ifdef EMBER_BASE_RUNTIME_GCC16
+	char sum[129];
+
+	if (!wizard_active || runtime_bundle[0] == '\0')
+		return false;
+	/* Keep the bootstrap dependency audit valid for target child processes. */
+	(void)unsetenv("LD_LIBRARY_PATH");
+	(void)unsetenv("LD_PRELOAD");
+	wizard_progress("Installing the system runtime");
+	make_target_dir("/var/cache/ember-runtime");
+	if (cp_to_target(runtime_bundle, "/var/cache/ember-runtime.tar.xz") != 0 ||
+	    SHA512_File(target_expand("/var/cache/ember-runtime.tar.xz"), sum) == NULL ||
+	    strcmp(sum, runtime_sum) != 0 ||
+	    run_program(RUN_PROGRESS | RUN_CHROOT,
+	    "/usr/bin/tar -xpf /var/cache/ember-runtime.tar.xz -C /var/cache/ember-runtime") != 0 ||
+	    run_program(RUN_PROGRESS | RUN_CHROOT,
+	    "/usr/libexec/ember-runtime-install") != 0)
+		return false;
+	unlink(target_expand("/var/cache/ember-runtime.tar.xz"));
+	runtime_clear();
+#endif
+	return true;
 }
 
 static bool
@@ -625,6 +703,8 @@ preflight(void)
 	    stat(sums, &st) != 0 || st.st_size > 1024 * 1024)
 		goto out;
 	ok = wizard_check_sets(sums) == SET_OK;
+	if (ok)
+		ok = runtime_preflight(sums);
 	if (ok)
 		ok = desktop_preflight(sums);
 out:

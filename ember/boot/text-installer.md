@@ -42,6 +42,23 @@ The selected profile is stored in /etc/ember-desktop only after installation suc
 Existing XFCE installations without that file keep their original launch behavior.
 No automatic login is enabled. Graphical login management is separate.
 
+An image built with `EMBER_EXTERNAL_GCC_RUNTIME` requires
+`runtime-gcc16.tar.xz` and its SHA512 entry, including when Graphics is None.
+The installer freezes and verifies this archive before disk confirmation.
+Its maximum size is 64 MiB. The archive contains `All/`, `ROOTS`, `SHA512`
+and `PROFILE` with the value `gcc16`. The only package root is
+`gcc16-runtime-16.2.0nb1`. The installed-system copy is verified again.
+Ordinary target pkgtools install the runtime after all selected sets and
+before postinstall, device setup and certificate setup. Package failure
+stops installation. The desktop package closure reuses this provider.
+Build-tree headers, CRT objects and static libraries do not enter base sets.
+These experimental images require guided installation. Expert fresh install,
+upgrade and reinstall refuse before disk changes. Images built without this
+option keep their existing installation paths.
+The build must separately verify the complete ELF dependency closure of the
+bootstrap tools before the runtime is installed. C source is not that check.
+The installer clears loader path and preload overrides before target commands.
+
 The Plasma path is source and host-regression coverage only. A complete amd64
 Plasma package bundle and an installed Plasma session are not qualified here.
 Do not use the XFCE VM result as Plasma acceptance. Build and boot a matching
