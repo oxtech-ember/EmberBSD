@@ -948,6 +948,8 @@ The base system shell is unchanged.
   Its isolated target compilation passes; guest execution and full hypervisor acceptance remain separate.
   The [NVMM ownership regression](ember/tests/nvmm-ownership.md) checks failed-create cleanup and exact-once area removal.
   Host allocation/ioctl models pass; target device acceptance remains separate.
+  The [syslogd TLS status regression](ember/tests/syslog-tls-status.md) covers absent certificate names and fingerprints.
+  Formatting, cleanup and isolated GCC16 target compilation pass; TLS session acceptance remains separate.
   The [wscons VT regression](ember/tests/usl-sync.md) checks deferred signals, valid signal ranges and callback lifetime.
   Host tests and isolated target compilation pass; VM console switching remains unverified.
   The [VT lease ownership regression](ember/tests/usl-owner.md) checks owner/admin ACK and reset, process-death tombstones and exit-hook retirement.
