@@ -288,6 +288,8 @@ main(void)
 		reset(); bad_clock = (int)i; clock_rate = 0; expect(EBUSY, 2 * (i + 1));
 	}
 	reset(); bad_clock = 0; clock_rate = 119999999; expect(EBUSY, 2);
+	assert(strcmp(bcm2712_display_irqs[0].name, "v3d-hub") == 0);
+	assert(strcmp(bcm2712_display_irqs[1].name, "v3d-core") == 0);
 	assert(bcm2712_display_resources[10].owner == BCM2712_OWNER_DVP_CLOCK);
 	assert(bcm2712_display_resources[11].owner == BCM2712_OWNER_HD_SHARED);
 	assert(bcm2712_display_domains[0].memory_index == 9 && bcm2712_display_domains[0].irq_index == 4);
