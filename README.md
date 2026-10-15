@@ -476,6 +476,10 @@ on every board in the hardware catalog.
 
 ### GPU foundations and NPU direction
 
+- **Jasper Lake identity foundation:** the [experimental i915 port](ember/boot/i915-jasperlake.md)
+  identifies PCI `8086:4e55` as a separate JSL platform and checks its SSEU,
+  PCH and stolen-memory consumers. Native attachment remains disabled;
+  display workarounds, full builds and physical graphics acceptance are pending.
 - **Native graphics infrastructure:** experimental VirtIO DRM/KMS, UVM-backed
   GEM buffers and PRIME sharing make direct Wayland sessions possible.
   UTM tests cover visible KMS output, 32 cross-process buffer-lifetime cycles

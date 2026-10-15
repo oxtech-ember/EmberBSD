@@ -593,6 +593,10 @@
 	INTEL_VGA_DEVICE(0x4E61, info), \
 	INTEL_VGA_DEVICE(0x4E51, info)
 
+/* JSL: the local trial foundation covers only the 16-EU 0x4E55 SKU. */
+#define INTEL_JSL_IDS(info) \
+	INTEL_VGA_DEVICE(0x4E55, info)
+
 /* TGL */
 #define INTEL_TGL_12_IDS(info) \
 	INTEL_VGA_DEVICE(0x9A49, info), \
