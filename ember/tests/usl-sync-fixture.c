@@ -20,6 +20,7 @@ typedef unsigned int u_int;
 typedef struct { int held, spin; } kmutex_t;
 static int irq, spinheld, now, signals, callbacks, result, frees;
 static int allocations;
+static int hook_readers;
 static int hz = 100;
 static kmutex_t proc_lock, process_lock;
 struct proc { pid_t p_pid; kmutex_t *p_lock; };
@@ -35,7 +36,7 @@ static void mutex_enter(kmutex_t *m)
 {
     assert(!m->held);
     if (!m->spin) {
-        assert(!irq && !spinheld);
+        assert(!irq && !spinheld && !hook_readers);
         if (lock_hook && m == hook_lock) {
             void (*fn)(void) = lock_hook;
             lock_hook = NULL;
@@ -56,7 +57,7 @@ typedef struct { int ksi_signo; } ksiginfo_t;
 #define KSI_INIT_EMPTY(k) memset((k), 0, sizeof(*(k)))
 static int kpsignal2(struct proc *p, ksiginfo_t *k)
 {
-    assert(!irq && !spinheld && proc_lock.held && p->p_lock->held);
+    assert(!irq && !spinheld && !hook_readers && proc_lock.held && p->p_lock->held);
     assert(k->ksi_signo == 10 || k->ksi_signo == 12);
     signals++;
     if (signal_hook) {
@@ -119,10 +120,10 @@ static void advance(int ticks)
     }
 }
 static void *kmem_intr_alloc(size_t size, int flags)
-{ (void)flags; void *p = malloc(size); assert(p); allocations++; return p; }
+{ (void)flags; assert(!hook_readers); void *p = malloc(size); assert(p); allocations++; return p; }
 static void kmem_intr_free(void *p, size_t size)
-{ (void)size; assert(!spinheld); frees++; free(p); }
-struct wsscreen { void *cookie; };
+{ (void)size; assert(!spinheld && !hook_readers); frees++; free(p); }
+struct wsscreen { void *cookie; const struct wscons_syncops *ops; };
 struct wscons_syncops {
     int (*detach)(void *, int, void (*)(void *, int, int), void *);
     int (*attach)(void *, int, void (*)(void *, int, int), void *);
@@ -131,13 +132,20 @@ struct wscons_syncops {
 static int fail_init;
 static int wsscreen_attach_sync(struct wsscreen *s,
     const struct wscons_syncops *ops, void *cookie)
-{ (void)ops; if (fail_init) return EBUSY; s->cookie = cookie; return 0; }
-static int wsscreen_detach_sync(struct wsscreen *s) { s->cookie = NULL; return 0; }
+{
+    if (fail_init) return EBUSY;
+    if (s->ops && s->ops->check(s->cookie)) return EBUSY;
+    s->cookie = cookie; s->ops = ops; return 0;
+}
+static int wsscreen_detach_sync(struct wsscreen *s)
+{ s->cookie = NULL; s->ops = NULL; return 0; }
 static int wsscreen_lookup_sync(struct wsscreen *s,
     const struct wscons_syncops *ops, void **cookie)
 { (void)ops; if (!s->cookie) return EINVAL; *cookie = s->cookie; return 0; }
 
+@OWNER_SUPPORT@
 @FUNCTIONS@
+@IOCTL_FUNCTION@
 
 static struct wsscreen screen;
 static void (*callback_hook)(void);
@@ -146,7 +154,7 @@ static unsigned tests;
 static struct usl_syncdata *replacement;
 static void completed(void *arg, int error, int waitok)
 {
-    assert(arg == &screen); (void)waitok; callbacks++; result = error;
+    assert(arg == &screen && !hook_readers); (void)waitok; callbacks++; result = error;
     if (callback_hook) {
         void (*fn)(void) = callback_hook; callback_hook = NULL; fn();
     }
@@ -191,11 +199,17 @@ static void replace_owner(void)
     assert(!screen.cookie);
     assert(usl_sync_init(&screen, &replacement, &process, 12, 10, 0) == 0);
 }
+@OWNER_TESTS@
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
     (void)mutex_init; (void)mutex_destroy; (void)cpu_intr_p; (void)getticks;
     (void)callout_halt; (void)callout_destroy; (void)usl_attachack; (void)psignal;
+    (void)exithook_establish; (void)exithook_disestablish; (void)doexithooks;
+    (void)kauth_authorize_generic; (void)wsdisplay_internal_ioctl;
+    if (argc > 1 && strcmp(argv[1], "owner") == 0) {
+        owner_tests(); return 0;
+    }
     setup(); irq = 1;
     assert(usl_detachproc(sd, 0, completed, &screen) == EAGAIN);
     assert(!signals && !callbacks);

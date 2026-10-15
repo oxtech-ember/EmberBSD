@@ -126,8 +126,10 @@ physical-device acceptance. A prepared target test must run with the new
 kernel in a separate VM acceptance step. Development tools stay on the
 cross-build host.
 
-Owner checks for `VT_RELDISP` and mode changes, PID reuse/death, exact-screen
-FD ownership, session ancestry, controller signal routing, and coordinated
-DRM/wscons revoke/reopen and libinput/KWin lifecycle remain separate gates.
+The [lease ownership regression](usl-owner.md) checks owner/admin ACK and
+reset, process-death tombstones, and exit-hook retirement separately.
+Initial registration entitlement, exact-screen FD/session ancestry,
+controller signal routing, and coordinated DRM/wscons revoke/reopen and
+libinput/KWin lifecycle remain separate gates.
 The inherited dead-owner detach result remains success. No native device
 backend can be enabled on the strength of this patch alone.

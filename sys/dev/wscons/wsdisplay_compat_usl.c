@@ -63,6 +63,7 @@ struct usl_syncdata {
 #define SF_ATTACHPENDING 2
 #define SF_DYING 4
 #define SF_NOTIFY 8
+#define SF_OWNERDEAD 16
 #define SF_PENDING (SF_DETACHPENDING | SF_ATTACHPENDING)
 	kmutex_t s_lock;
 	u_int s_refs;
@@ -76,6 +77,7 @@ struct usl_syncdata {
 	callout_t s_detach_ch;
 	callout_t s_notify_ch;
 	callout_t s_retire_ch;
+	void *s_exit_hook;
 };
 
 static int usl_sync_init(struct wsscreen *, struct usl_syncdata **,
@@ -85,6 +87,8 @@ static int usl_sync_check(void *);
 static int usl_sync_check_sig(struct usl_syncdata *, int, int, u_int);
 static void usl_sync_notify(void *);
 static void usl_sync_retire(void *);
+static void usl_sync_exit(struct proc *, void *);
+static int usl_sync_authorize(struct usl_syncdata *, struct lwp *);
 static struct usl_syncdata *usl_sync_get(struct wsscreen *);
 
 static int usl_detachproc(void *, int, void (*)(void *, int, int), void *);
@@ -140,8 +144,12 @@ usl_sync_init(struct wsscreen *scr, struct usl_syncdata **sdp,
 	callout_setfunc(&sd->s_notify_ch, usl_sync_notify, sd);
 	callout_init(&sd->s_retire_ch, 0);
 	callout_setfunc(&sd->s_retire_ch, usl_sync_retire, sd);
-	res = wsscreen_attach_sync(scr, &usl_syncops, sd);
+	sd->s_exit_hook = exithook_establish(usl_sync_exit, sd);
+	res = sd->s_exit_hook == NULL ? ENOMEM :
+	    wsscreen_attach_sync(scr, &usl_syncops, sd);
 	if (res) {
+		if (sd->s_exit_hook != NULL)
+			exithook_disestablish(sd->s_exit_hook);
 		callout_destroy(&sd->s_attach_ch);
 		callout_destroy(&sd->s_detach_ch);
 		callout_destroy(&sd->s_notify_ch);
@@ -221,6 +229,8 @@ usl_sync_retire(void *arg)
 		return;
 	}
 	mutex_spin_exit(&sd->s_lock);
+	/* The hook writer lock drains callbacks before their argument is freed. */
+	exithook_disestablish(sd->s_exit_hook);
 	/*
 	 * DYING is unpublished and no operation remains pinned. All callouts
 	 * use the same CPU 0 softclock LWP, so another invocation cannot be
@@ -239,31 +249,73 @@ usl_sync_retire(void *arg)
 	kmem_intr_free(sd, sizeof(*sd));
 }
 
+/* Exit hooks run without the BKL and hold the hook list's reader lock. */
+static void
+usl_sync_exit(struct proc *p, void *arg)
+{
+	struct usl_syncdata *sd = arg;
+
+	if (p != sd->s_proc)
+		return;
+	mutex_spin_enter(&sd->s_lock);
+	if (!(sd->s_flags & (SF_DYING | SF_OWNERDEAD))) {
+		/* Sticky until retirement, even if both PID and proc address recur. */
+		sd->s_flags |= SF_OWNERDEAD;
+		sd->s_generation++;
+		callout_schedule(&sd->s_notify_ch, 1);
+	}
+	mutex_spin_exit(&sd->s_lock);
+}
+
+/* The ioctl caller pins sd across authorization, which can drop the BKL. */
+static int
+usl_sync_authorize(struct usl_syncdata *sd, struct lwp *l)
+{
+	int owner, error;
+
+	mutex_spin_enter(&sd->s_lock);
+	owner = !(sd->s_flags & (SF_DYING | SF_OWNERDEAD)) &&
+	    sd->s_proc == l->l_proc;
+	mutex_spin_exit(&sd->s_lock);
+	if (owner)
+		return 0;
+	if (kauth_authorize_generic(l->l_cred, KAUTH_GENERIC_ISSUSER, NULL))
+		return EPERM;
+	mutex_spin_enter(&sd->s_lock);
+	error = (sd->s_flags & SF_DYING) ? EINVAL : 0;
+	mutex_spin_exit(&sd->s_lock);
+	return error;
+}
+
 /* The caller pins sd. Never acquire an adaptive lock with s_lock held. */
 static int
 usl_sync_check_sig(struct usl_syncdata *sd, int sig, int flags, u_int gen)
 {
 	struct proc *p;
 	ksiginfo_t ksi;
-	int alive;
+	int alive, locked;
 
 	KASSERT(!cpu_intr_p());
 	mutex_enter(&proc_lock);
 	p = proc_find(sd->s_pid);
 	alive = (p == sd->s_proc);
-	if (alive && sig != 0)
+	locked = alive && sig != 0;
+	if (locked)
 		mutex_enter(p->p_lock);
 	/* Both adaptive locks can drop the BKL. Recheck after the last wait. */
 	mutex_spin_enter(&sd->s_lock);
-	if ((sd->s_flags & SF_DYING) || (flags != 0 &&
+	if ((sd->s_flags & SF_DYING) ||
+	    (!(sd->s_flags & SF_OWNERDEAD) && flags != 0 &&
 	    (sd->s_generation != gen ||
 	    (sd->s_flags & (SF_PENDING | SF_NOTIFY)) != (flags | SF_NOTIFY)))) {
 		mutex_spin_exit(&sd->s_lock);
-		if (alive && sig != 0)
+		if (locked)
 			mutex_exit(p->p_lock);
 		mutex_exit(&proc_lock);
 		return -1;
 	}
+	if (sd->s_flags & SF_OWNERDEAD)
+		alive = 0;
 	if (alive && flags != 0) {
 		/* Signal commit: cancellation after this point cannot retract it. */
 		sd->s_flags &= ~SF_NOTIFY;
@@ -279,8 +331,9 @@ usl_sync_check_sig(struct usl_syncdata *sd, int sig, int flags, u_int gen)
 		KSI_INIT_EMPTY(&ksi);
 		ksi.ksi_signo = sig;
 		(void)kpsignal2(p, &ksi);
-		mutex_exit(p->p_lock);
 	}
+	if (locked)
+		mutex_exit(p->p_lock);
 	mutex_exit(&proc_lock);
 	if (!alive) {
 		printf("%s: process %d died\n", __func__, sd->s_pid);
@@ -312,6 +365,12 @@ usl_sync_notify(void *arg)
 	usl_sync_hold(sd);
 	mutex_spin_enter(&sd->s_lock);
 	flags = sd->s_flags & SF_PENDING;
+	if ((sd->s_flags & (SF_DYING | SF_OWNERDEAD)) == SF_OWNERDEAD) {
+		mutex_spin_exit(&sd->s_lock);
+		usl_sync_done(sd);
+		usl_sync_rele(sd);
+		return;
+	}
 	if ((sd->s_flags & (SF_DYING | SF_NOTIFY)) != SF_NOTIFY || !flags) {
 		mutex_spin_exit(&sd->s_lock);
 		usl_sync_rele(sd);
@@ -384,7 +443,9 @@ usl_sync_ack(struct usl_syncdata *sd, int ack, int flags)
 		usl_sync_rele(sd);
 		return EINVAL;
 	}
-	callout_stop(&sd->s_notify_ch);
+	/* An administrative ACK must not cancel pending owner-death cleanup. */
+	if (!(sd->s_flags & SF_OWNERDEAD))
+		callout_stop(&sd->s_notify_ch);
 	callout_stop(flags == SF_DETACHPENDING ?
 	    &sd->s_detach_ch : &sd->s_attach_ch);
 	sd->s_flags &= ~(SF_PENDING | SF_NOTIFY);
@@ -567,8 +628,14 @@ wsdisplay_usl_ioctl2(struct wsdisplay_softc *sc, struct wsscreen *scr,
 				return res;
 		} else {
 			sd = usl_sync_get(scr);
-			if (sd)
-				usl_sync_done(sd);
+			if (sd) {
+				usl_sync_hold(sd);
+				res = usl_sync_authorize(sd, l);
+				if (res == 0)
+					usl_sync_done(sd);
+				usl_sync_rele(sd);
+				return res;
+			}
 		}
 #undef newmode
 		return 0;
@@ -589,15 +656,26 @@ wsdisplay_usl_ioctl2(struct wsdisplay_softc *sc, struct wsscreen *scr,
 		sd = usl_sync_get(scr);
 		if (!sd)
 			return EINVAL;
+		usl_sync_hold(sd);
+		res = usl_sync_authorize(sd, l);
+		if (res) {
+			usl_sync_rele(sd);
+			return res;
+		}
 		switch (d) {
 		    case VT_FALSE:
 		    case VT_TRUE:
-			return usl_detachack(sd, (d == VT_TRUE));
+			res = usl_detachack(sd, (d == VT_TRUE));
+			break;
 		    case VT_ACKACQ:
-			return usl_attachack(sd, 1);
+			res = usl_attachack(sd, 1);
+			break;
 		    default:
-			return EINVAL;
+			res = EINVAL;
+			break;
 		}
+		usl_sync_rele(sd);
+		return res;
 #undef d
 
 	    case KDENABIO:
