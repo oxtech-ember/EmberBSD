@@ -49,7 +49,7 @@ are maintained in the related repositories below.
   supplies the separate no-X11 media and a pinned GitHub HTTPS set source.
   The accepted desktop candidate remains local until its matching kit is published.
   The installer also exposes an experimental KDE Plasma profile with a separate
-  verified bundle and Wayland launcher. Host regressions cover profile selection
+  verified bundle and Wayland launcher. The [runtime bootstrap](ember/tests/installer-runtime-altroot.md)\n  uses live pkgtools before its first target process. Host regressions cover profile selection
   and failure handling; an amd64 Plasma bundle and session remain unqualified.
   The [release procedure](ember/release/README.md) verifies composition, VM qualification,
   remote file hashes and immutable publication. The custom domain remains deferred.

@@ -14,6 +14,7 @@ finish=util[/\t\/\* The base runtime.*?(?=\n\tif \(!update\) \{\n\t\tstruct stat
 abort 'Desktop is not selectable within System' unless source.include?('Graphics:')
 code=<<~C
 #include <assert.h>
+#include <sys/param.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -53,7 +54,10 @@ static bool wizard_active=true;
 static bool runtime_installed,entropy_loaded;
 static int configured;
 static int run_program(int flags,const char *format,...) {
- (void)flags;if(strstr(format,"mount_tmpfs")){mounts++;return 0;}if(strstr(format,"umount"))return 0;
+ if(strstr(format,"tar -xpf"))assert(!(flags & RUN_CHROOT));
+ if(strstr(format,"ember-runtime-install"))assert(!(flags & RUN_CHROOT));
+ if(strstr(format,"pkg_info")){assert(runtime_installed);assert(flags & RUN_CHROOT);}
+ if(strstr(format,"mount_tmpfs")){mounts++;return 0;}if(strstr(format,"umount"))return 0;
  if(strstr(format,"runtime") && (getenv("LD_LIBRARY_PATH") || getenv("LD_PRELOAD")))abort();
  if(strstr(format,"ember-runtime-install"))runtime_installed=true;
  if(strstr(format,"postinstall") || strstr(format,"certctl")){assert(runtime_installed);configured++;}
@@ -62,6 +66,7 @@ static int run_program(int flags,const char *format,...) {
 static void wizard_progress(const char *p) {(void)p;}
 static int wizard_check_sets(const char *p) {(void)p;return SET_OK;}
 static char target[STRSIZE];
+static const char *target_prefix(void) {return target;}
 static const char *target_expand(const char *p) {static char path[STRSIZE];snprintf(path,sizeof(path),"%s%s",target,p);return path;}
 static void make_target_dir(const char *p) {(void)p;}
 static int cp_to_target(const char *from,const char *to) {
@@ -188,7 +193,7 @@ int main(int argc,char **argv) {
  rv=setenv("LD_PRELOAD","/foreign.so",1);assert(rv==0);
  assert(finish_sets(false)==1);assert(commands==0 && configured==0);
  tarstats.nsuccess=1;corrupt_copy=true;assert(finish_sets(false)==1);assert(commands==0 && configured==0);
- corrupt_copy=false;assert(finish_sets(false)==0);assert(commands==3 && configured==2);assert(runtime_bundle[0]==0);
+ corrupt_copy=false;assert(finish_sets(false)==0);assert(commands==4 && configured==2);assert(runtime_bundle[0]==0);
  assert(preflight());runtime_installed=false;configured=0;
  assert(finish_sets(true)==0);assert(configured==3);assert(entropy_loaded);
  return 0;

@@ -6,7 +6,29 @@ unset LD_LIBRARY_PATH LD_PRELOAD
 PATH=/bin:/usr/bin:/sbin:/usr/sbin
 export PATH
 [ "$(id -u)" = 0 ] || exit 1
-cache=/var/cache/ember-runtime
+root=
+case $# in
+0) ;;
+2)
+	[ "$1" = --root ] || exit 2
+	root=$2
+	case $root in
+	/*) ;;
+	*) exit 2;;
+	esac
+	case $root in /|*[!A-Za-z0-9_/.-]*) exit 2;; esac
+	[ -d "$root" ] && [ "$(cd "$root" && pwd -P)" = "$root" ] || exit 2
+	# pkg_add -P follows directory links. Reject links outside this root.
+	for directory in var var/cache var/cache/ember-runtime var/cache/ember-runtime/All \
+	    usr usr/pkg usr/pkg/pkgdb usr/pkg/gcc16 usr/pkg/gcc16/lib \
+	    usr/pkg/share usr/pkg/share/licenses usr/pkg/share/licenses/gcc16-runtime; do
+		[ ! -L "$root/$directory" ] || exit 1
+		[ ! -e "$root/$directory" ] || [ -d "$root/$directory" ] || exit 1
+	done
+	;;
+*) exit 2;;
+esac
+cache=$root/var/cache/ember-runtime
 package=gcc16-runtime-16.2.0nb1
 printf 'gcc16\n' | cmp -s - "$cache/PROFILE" || exit 1
 printf '%s\n' "$package" | cmp -s - "$cache/ROOTS" || exit 1
@@ -18,7 +40,35 @@ printf 'SHA512 (%s.tgz) = %s\n' "$package" "$expected" |
     cmp -s - "$cache/SHA512" || exit 1
 [ -f "$cache/All/$package.tgz" ] && [ ! -L "$cache/All/$package.tgz" ] || exit 1
 [ "$(/usr/bin/sha512 -q "$cache/All/$package.tgz")" = "$expected" ] || exit 1
-PKG_DBDIR=/usr/pkg/pkgdb
+if [ -n "$root" ]; then
+	for file in PROFILE ROOTS SHA512; do
+		[ -f "$cache/$file" ] && [ ! -L "$cache/$file" ] || exit 1
+	done
+	# -I skips +INSTALL, but does not skip @exec. Accept only data metadata.
+	metadata=$(mktemp -d /tmp/ember-runtime-metadata.XXXXXX)
+	trap 'rm -rf "$metadata"' EXIT
+	trap 'exit 1' HUP INT TERM
+	/usr/bin/tar -tzf "$cache/All/$package.tgz" > "$metadata/files"
+	/usr/bin/tar -xOzf "$cache/All/$package.tgz" +CONTENTS > "$metadata/contents"
+	awk '
+	    /^\+(CONTENTS|COMMENT|DESC|BUILD_INFO)$/ { next }
+	    /^gcc16\/lib\/libgcc_s\.so\.1$/ { next }
+	    /^gcc16\/lib\/libstdc\+\+\.so\.7(\.[0-9]+)*$/ { next }
+	    /^share\/licenses\/gcc16-runtime\/(COPYING3|COPYING.RUNTIME)$/ { next }
+	    { exit 1 }
+	' "$metadata/files" || exit 1
+	awk -v package="$package" '
+	    $0 == "@cwd /usr/pkg" || $0 == "@name " package { next }
+	    $0 == "@pkgcfl gcc16-[0-9]*" || $0 == "@pkgcfl gcc16-libs-[0-9]*" { next }
+	    /^@comment / || $0 == "@ignore" { next }
+	    /^\+(COMMENT|DESC|BUILD_INFO)$/ { next }
+	    /^gcc16\/lib\/libgcc_s\.so\.1$/ { next }
+	    /^gcc16\/lib\/libstdc\+\+\.so\.7(\.[0-9]+)*$/ { next }
+	    /^share\/licenses\/gcc16-runtime\/(COPYING3|COPYING.RUNTIME)$/ { next }
+	    { exit 1 }
+	' "$metadata/contents" || exit 1
+fi
+PKG_DBDIR=$root/usr/pkg/pkgdb
 PKG_PATH=$cache/All
 export PKG_DBDIR PKG_PATH
 for conflict in 'gcc16-[0-9]*' 'gcc16-libs-[0-9]*'; do
@@ -27,5 +77,10 @@ for conflict in 'gcc16-[0-9]*' 'gcc16-libs-[0-9]*'; do
 		exit 1
 	fi
 done
-/usr/sbin/pkg_add "$cache/All/$package.tgz"
+if [ -n "$root" ]; then
+	/usr/sbin/pkg_add -I -P "$root" -p /usr/pkg -K /usr/pkg/pkgdb \
+	    "$cache/All/$package.tgz"
+else
+	/usr/sbin/pkg_add "$cache/All/$package.tgz"
+fi
 /usr/sbin/pkg_info -qe "$package"

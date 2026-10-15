@@ -50,8 +50,17 @@ The installer freezes and verifies this archive before disk confirmation.
 Its maximum size is 64 MiB. The archive contains `All/`, `ROOTS`, `SHA512`
 and `PROFILE` with the value `gcc16`. The only package root is
 `gcc16-runtime-16.2.0nb1`. The installed-system copy is verified again.
-Ordinary target pkgtools install the runtime after all selected sets and
-before postinstall, device setup and certificate setup. Package failure
+Live installer tools unpack the verified bundle into the target cache.
+The live `ember-runtime-install --root /absolute/target` helper uses ordinary
+`pkg_add -P` with the target prefix and package database. This bootstrap mode
+accepts only the exact runtime package with data-only archive and PLIST metadata.
+It rejects install/deinstall scripts, PLIST commands, dependencies and path overrides.
+The `-I` option alone does not suppress PLIST commands. No target executable
+runs before the import. A chrooted target `pkg_info` then verifies registration
+and exercises the target loader. The helper without arguments keeps its
+ordinary installed-system behavior. See the [bootstrap regression](../tests/installer-runtime-altroot.md).
+The runtime is installed after all selected sets and before postinstall,
+device setup and certificate setup. Package failure
 stops installation. The desktop package closure reuses this provider.
 Build-tree headers, CRT objects and static libraries do not enter base sets.
 These experimental images require guided installation. Expert fresh install,

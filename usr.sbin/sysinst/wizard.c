@@ -632,22 +632,34 @@ bool
 wizard_apply_runtime(void)
 {
 #ifdef EMBER_BASE_RUNTIME_GCC16
-	char sum[129];
+	char sum[129], archive[MAXPATHLEN], cache[MAXPATHLEN];
+	const char *root;
 
 	if (!wizard_active || runtime_bundle[0] == '\0')
 		return false;
-	/* Keep the bootstrap dependency audit valid for target child processes. */
+	/* Bootstrap with live tools before executing a target child process. */
 	(void)unsetenv("LD_LIBRARY_PATH");
 	(void)unsetenv("LD_PRELOAD");
 	wizard_progress("Installing the system runtime");
 	make_target_dir("/var/cache/ember-runtime");
+	strlcpy(archive, target_expand("/var/cache/ember-runtime.tar.xz"),
+	    sizeof(archive));
+	strlcpy(cache, target_expand("/var/cache/ember-runtime"), sizeof(cache));
+	root = target_prefix();
+	/* make_argv supports single quotes, without escape sequences. */
+	if (strchr(archive, '\'') != NULL || strchr(cache, '\'') != NULL ||
+	    strchr(root, '\'') != NULL)
+		return false;
 	if (cp_to_target(runtime_bundle, "/var/cache/ember-runtime.tar.xz") != 0 ||
-	    SHA512_File(target_expand("/var/cache/ember-runtime.tar.xz"), sum) == NULL ||
+	    SHA512_File(archive, sum) == NULL ||
 	    strcmp(sum, runtime_sum) != 0 ||
+	    run_program(RUN_PROGRESS,
+	    "/usr/bin/tar -xpf '%s' -C '%s'", archive, cache) != 0 ||
+	    run_program(RUN_PROGRESS, root[0] != '\0' ?
+	    "/usr/libexec/ember-runtime-install --root '%s'" :
+	    "/usr/libexec/ember-runtime-install", root) != 0 ||
 	    run_program(RUN_PROGRESS | RUN_CHROOT,
-	    "/usr/bin/tar -xpf /var/cache/ember-runtime.tar.xz -C /var/cache/ember-runtime") != 0 ||
-	    run_program(RUN_PROGRESS | RUN_CHROOT,
-	    "/usr/libexec/ember-runtime-install") != 0)
+	    "/usr/sbin/pkg_info -K /usr/pkg/pkgdb -qe gcc16-runtime-16.2.0nb1") != 0)
 		return false;
 	unlink(target_expand("/var/cache/ember-runtime.tar.xz"));
 	runtime_clear();
