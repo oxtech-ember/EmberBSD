@@ -3,8 +3,9 @@
 The native driver now has an experimental synchronous compute submission path.
 It connects firmware memory, per-file VMs, execution contexts, free lists, and syncobjs.
 Production-source contracts pass with native DMA and firmware boundary models.
-Physical Vulkan execution has not yet been accepted for this implementation.
-The earlier diagnostic compute packet and ICD enumeration are separate results.
+Three physical Vulkan compute lifecycles now pass on Zero 3W.
+The diagnostic compute packet and ICD enumeration remain separate checks.
+Graphics submission and a complete accelerated desktop are not accepted.
 
 ## Activation and ownership
 
@@ -57,6 +58,8 @@ The driver acquires context references and prepares timeline storage before subm
 Each job waits at most ten seconds for dependencies.
 The driver then publishes pending page-table changes and synchronizes mapped buffers.
 It submits a compute command followed by a real firmware UFO update.
+KICK accepts a zero return word or `CMD_EXECUTED`; unknown return bits fail.
+Neither word proves job completion. CLEANUP keeps its synchronous return-word check.
 Success requires queue consumption, the expected UFO value, and fresh firmware health.
 Only that success publishes a completed binary fence or timeline point.
 A failure leaves the current and later signal operations unsignaled.
@@ -87,6 +90,8 @@ done
 
 The checks cover actual encoders, queue wrapping, completion order, DMA ownership,
 allocation failures, interrupted waits, handle removal, and bounded cleanup.
+KICK checks cover both return words, missing UFO or CCCB completion, fresh health failure,
+and invalid return bits. A zero CLEANUP return word remains an error.
 They do not establish physical DMA behavior or sustained hardware stability.
 GCC16 and Clang target analysis and Cppcheck supplement these executable checks.
 Recorded fixture path-budget limits and inherited header diagnostics remain separate.
@@ -97,6 +102,27 @@ A board receipt must include the kernel and module hashes, firmware, DTB,
 consumer and Mesa hashes, result bytes, queue completion, and fresh fault counters.
 Keep Mesa's `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1` experimental gate.
 A successful compute check does not establish Vulkan conformance or rendering.
+
+## Physical compute boundary
+
+GCC16 kernel `e876bf6d2ce282ae7770078af8f3455866c940cb` passes on A733 Zero 3W with 4 GiB RAM.
+The PCB revision was not recorded. Firmware is `1.1.6976702`, BVNC `36.56.104.183`.
+The explicit PLL600 preparation and all 21 diagnostic stages pass before native activation.
+The accepted kernel ELF SHA256 is `33389891548cca65e87283804f2a08f05d71eaffd4bab3935f91970e4591070a`.
+Matched modules and DTBs come from the same cross-build.
+
+Mesa `26.2.4nb5` and libdrm `2.4.134nb2` use the native render node.
+The Ports consumer SHA256 is `438a0dc7191abde38a3639f6562a16375ad3ccf5a475902affc3f08861f3ef84`.
+Three consecutive create/dispatch/destroy lifecycles pass within one boot.
+Each checks all 16 output words, a completed Vulkan fence, and host readback.
+The execution service stays enabled after cleanup; SSH and boot identity stay unchanged.
+These are bounded functional runs, not an endurance or performance result.
+
+The prior kernel returned `EIO` on the first KICK before its completion checks.
+Mesa mapped that errno to `VK_ERROR_OUT_OF_DEVICE_MEMORY`; this did not establish allocation failure.
+The corrected path accepts the asynchronous zero return word and checks actual completion.
+`ktrace` confirms a successful `SUBMIT_JOBS` ioctl on the corrected kernel.
+The upstream experimental gate stays enabled. No Vulkan conformance is claimed.
 
 ## Remaining rendering path
 
