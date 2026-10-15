@@ -166,9 +166,14 @@ on every board in the hardware catalog.
   error handling and package removal/reinstallation. Existing Silero VAD 6.2.3
   checks recurrent speech/silence state through the same runtime. Ports owns
   the [package, adaptations and validation limits](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/onnxruntime).
+  [ncnn 20260526](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ncnn)
+  also provides a GCC16 shared CPU package. Its
+  [C/C++ convolutional-network example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/ai/ncnn-cpu)
+  passes independent numerical checks, eight upstream programs, source and ABI
+  regressions, and package removal/reinstallation in AArch64 QEMU.
   Separate [AI/audio source probes](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ai-engines)
-  cover ncnn 20260526 and RNNoise 0.2. Their historical native VM results do
-  not establish new GCC16 cross packages. Microphone capture, speech accuracy,
+  retain historical native RNNoise 0.2 and combined-profile evidence.
+  Microphone capture, speech accuracy,
   real-time performance, physical boards and GPU/NPU execution remain unverified.
 - **Google AI Edge model execution:** LiteRT 2.2.0 provides a shared C/C++
   CPU runtime for `.tflite` applications; LiteRT-LM 0.18.0 adds SentencePiece
