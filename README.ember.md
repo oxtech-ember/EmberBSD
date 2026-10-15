@@ -85,7 +85,8 @@ Cross-compilation on the development host is the preferred path. The wrapper
 uses the fork's `build.sh` by default on macOS and NetBSD alike. Set
 `EMBER_BUILD_MODE=native` explicitly for a required NetBSD/AArch64 fallback.
 Use a full source export of a pinned commit and an existing host Python 3
-for the legacy source contracts; see the [cross-build guide](ember/boot/cross-build.md):
+for the legacy source contracts. External GCC16 reproducible builds use explicit
+source/object roots and standard path maps; see the [cross-build guide](ember/boot/cross-build.md):
 
 ```sh
 sh ember/build-kernel.sh /absolute/output EMBER64

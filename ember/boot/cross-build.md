@@ -77,6 +77,46 @@ provides the host compiler and preserves its current source adaptations.
 Its `--kernel` mode builds frontends without an application sysroot; the
 application mode retains the target libc/header/runtime requirements.
 
+### Reproducible debug paths with external GCC
+
+Keep `MKREPRO=yes` when using the supported external GCC16 toolchain.
+Set `NETBSDSRCDIR` and `NETBSDOBJDIR` to the actual absolute source and
+object roots. With `build.sh -O /absolute/objects`, also pass
+`-V NETBSDOBJDIR=/absolute/objects`. The arbitrary `MAKEOBJDIR` expression
+cannot safely supply that root. A missing object root stops the build.
+`MAKEOBJDIRPREFIX` retains its existing explicit root derivation.
+
+The external path uses standard `-fdebug-prefix-map` and
+`-fmacro-prefix-map` options with concrete path values. It maps source,
+objects and X11 to `/usr/src`, `/usr/obj` and `/usr/xsrc`, and removes the
+DESTDIR prefix. The object map takes precedence for generated sources
+below the source tree. Debug maps normalize DWARF. The existing macro-map
+policy separately normalizes `__FILE__` values.
+
+Upstream GCC16 does not implement NetBSD's `-iremap`, environment-variable
+prefix maps or `-fdebug-regex-map`. Those extensions remain selected only
+for the in-tree compiler. No compiler feature probe runs during make parsing,
+and no unknown option is added to the external compiler command.
+
+Run the real amd64 compiler regression with an existing configured make
+wrapper and cross prefix:
+
+```sh
+CPPCHECK=/absolute/cppcheck ruby ember/tests/external-repro.rb \
+    /absolute/tools/bin/nbmake-amd64 /absolute/source /absolute/gcc16-prefix
+```
+
+The fixture compiles `-g` objects through the real make definitions and
+GCC16 in two independent source/object layouts. One object tree is nested
+under its source root. Object bytes must match. Target `readelf` checks
+canonical DWARF paths, while object strings check source, generated-source,
+DESTDIR and X11 `__FILE__` values. The fixture also rejects a missing object
+root and checks that the in-tree GCC12 flag selection retains all four
+regex replacements and its environment/preprocessor maps.
+Cppcheck, when selected, analyzes only the small generated C fixtures for
+NetBSD/x86_64. This is not a kernel source analysis or target execution.
+The regression does not establish complete kernel reproducibility or boot.
+
 ### Darwin host compiler flags
 
 With host GCC16 on macOS, pass the selected SDK through `HOST_CPPFLAGS`

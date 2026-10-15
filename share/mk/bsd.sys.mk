@@ -18,6 +18,30 @@ error2:
 .if ${MKREPRO:Uno} == "yes" && ${MKLLVM:Uno} != "yes"
 .export NETBSDSRCDIR DESTDIR X11SRCDIR
 
+# External upstream GCC lacks NetBSD's environment and regex path maps.
+# Use explicit roots so MKREPRO does not depend on those compiler extensions.
+.if defined(EXTERNAL_TOOLCHAIN)
+.if defined(MAKEOBJDIRPREFIX)
+NETBSDOBJDIR= ${MAKEOBJDIRPREFIX}${NETBSDSRCDIR}
+.endif
+.if empty(NETBSDSRCDIR:M/*) || empty(NETBSDOBJDIR:M/*)
+.error External MKREPRO=yes requires absolute NETBSDSRCDIR and NETBSDOBJDIR
+.endif
+CPPFLAGS+= -Wp,-fno-canonical-system-headers
+.if !empty(DESTDIR)
+REPROFLAGS+= -fdebug-prefix-map=${DESTDIR:Q}=
+REPROFLAGS+= -fmacro-prefix-map=${DESTDIR:Q}=
+.endif
+REPROFLAGS+= -fdebug-prefix-map=${NETBSDSRCDIR:Q}=/usr/src
+REPROFLAGS+= -fmacro-prefix-map=${NETBSDSRCDIR:Q}=/usr/src
+.if !empty(X11SRCDIR)
+REPROFLAGS+= -fdebug-prefix-map=${X11SRCDIR:Q}=/usr/xsrc
+REPROFLAGS+= -fmacro-prefix-map=${X11SRCDIR:Q}=/usr/xsrc
+.endif
+# Put the object map last: it must win when objects are below the source root.
+REPROFLAGS+= -fdebug-prefix-map=${NETBSDOBJDIR:Q}=/usr/obj
+REPROFLAGS+= -fmacro-prefix-map=${NETBSDOBJDIR:Q}=/usr/obj
+.else
 .if !empty(DESTDIR)
 CPPFLAGS+=	-Wp,-iremap,${DESTDIR}:
 REPROFLAGS+=	-fdebug-prefix-map=\$$DESTDIR=
@@ -42,14 +66,15 @@ REPROFLAGS+=	-fdebug-prefix-map=\$$NETBSDOBJDIR=/usr/obj
 REPROFLAGS+=	-fmacro-prefix-map=\$$NETBSDOBJDIR=/usr/obj
 .endif
 
-LINTFLAGS+=	-R${NETBSDSRCDIR}=/usr/src -R${X11SRCDIR}=/usr/xsrc
-LINTFLAGS+=	-R${DESTDIR}=
-
 # XXX: Cannot handle MAKEOBJDIR, yet.
 REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj$$=/usr/obj/\1'
 REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj/(.*)=/usr/obj/\1/\2'
 REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*=/usr/obj/\1'
 REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*/(.*)=/usr/obj/\1/\2'
+.endif
+
+LINTFLAGS+=	-R${NETBSDSRCDIR}=/usr/src -R${X11SRCDIR}=/usr/xsrc
+LINTFLAGS+=	-R${DESTDIR}=
 
 CFLAGS+=	${REPROFLAGS}
 CXXFLAGS+=	${REPROFLAGS}
