@@ -27,6 +27,7 @@
  * SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD opt-in CIX SPCR command, 2026-10-15. */
 #include "efiboot.h"
 #include "efiblock.h"
 #include "efifile.h"
@@ -120,7 +121,7 @@ void	command_quit(char *);
 
 const struct boot_command commands[] = {
 #ifdef EFIBOOT_ACPI
-	{ "acpi",	command_acpi,		"acpi [{on|off}]" },
+	{ "acpi",	command_acpi,		"acpi [{on|off|cix-spcr}]" },
 #endif
 	{ "boot",	command_boot,		"boot [dev:][filename] [args]\n     (ex. \"hd0a:\\netbsd.old -s\"" },
 	{ "dev",	command_dev,		"dev" },
@@ -189,6 +190,8 @@ command_acpi(char *arg)
 			efi_acpi_enable(1);
 		else if (strcmp(arg, "off") == 0)
 			efi_acpi_enable(0);
+		else if (strcmp(arg, "cix-spcr") == 0)
+			efi_acpi_cix_spcr();
 		else {
 			command_help("");
 			return;

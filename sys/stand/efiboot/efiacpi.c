@@ -29,9 +29,11 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD opt-in CIX SPCR command, 2026-10-15. */
 #include "efiboot.h"
 #include "efiacpi.h"
 #include "smbios.h"
+#include "cix_spcr.h"
 
 struct acpi_rdsp {
 	char signature[8];
@@ -156,4 +158,74 @@ efi_acpi_show(void)
 	if (smbios_table) {
 		command_printtab("SMBIOS", "%s\n", efi_acpi_get_model());
 	}
+}
+
+void
+efi_acpi_cix_spcr(void)
+{
+	struct cix_spcr_map map;
+	struct cix_spcr_plan plan;
+	EFI_MEMORY_DESCRIPTOR *buffer;
+	EFI_PHYSICAL_ADDRESS shadow = 0;
+	EFI_STATUS status;
+	UINTN size, key, stride;
+	UINT32 version;
+	const char *result = NULL;
+	unsigned pass;
+	int allocated = 0;
+
+	if (!efi_acpi_available()) {
+		printf("CIX SPCR: ACPI is unavailable or disabled\n");
+		return;
+	}
+	buffer = AllocatePool(CIX_SPCR_MAP_MAX);
+	if (buffer == NULL) {
+		printf("CIX SPCR: cannot allocate memory map\n");
+		return;
+	}
+	/* Allocation changes the map. Refresh it and repeat all input checks. */
+	for (pass = 0; pass < 2; pass++) {
+		size = CIX_SPCR_MAP_MAX;
+		stride = 0;
+		version = 0;
+		status = uefi_call_wrapper(BS->GetMemoryMap, 5, &size, buffer,
+		    &key, &stride, &version);
+		if (EFI_ERROR(status)) {
+			result = "cannot read bounded EFI memory map";
+			break;
+		}
+		map.data = buffer;
+		map.size = size;
+		map.stride = stride;
+		map.version = version;
+		if (pass == 0) {
+			result = cix_spcr_prepare((uintptr_t)acpi_root, &map, &plan);
+			if (result != NULL)
+				break;
+			shadow = plan.rsdt != NULL ? UINT32_MAX : 0;
+			status = uefi_call_wrapper(BS->AllocatePages, 4,
+			    plan.rsdt != NULL ? AllocateMaxAddress : AllocateAnyPages,
+			    EfiACPIReclaimMemory, 1, &shadow);
+			if (EFI_ERROR(status)) {
+				result = "cannot allocate ACPI shadow page";
+				break;
+			}
+			allocated = 1;
+		} else {
+			result = cix_spcr_build((uintptr_t)acpi_root, &map, shadow);
+		}
+		if (result != NULL)
+			break;
+	}
+	if (result == NULL) {
+		/* Owned ACPI reclaim memory survives ExitBootServices for handoff. */
+		acpi_root = (void *)(uintptr_t)shadow;
+		result = "shadow installed (MMIO 0x040d0000, GSI 330)";
+	} else if (allocated) {
+		status = uefi_call_wrapper(BS->FreePages, 2, shadow, 1);
+		if (EFI_ERROR(status))
+			printf("CIX SPCR: cannot free unused shadow page\n");
+	}
+	FreePool(buffer);
+	printf("CIX SPCR: %s\n", result);
 }

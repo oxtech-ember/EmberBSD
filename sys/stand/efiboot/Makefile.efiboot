@@ -38,7 +38,8 @@ SOURCES+=	fdt_ro.c fdt_rw.c fdt_strerror.c fdt_sw.c fdt_wip.c
 
 .if ${EFIBOOT_ACPI:Uno} == "yes"
 CPPFLAGS+=	-DEFIBOOT_ACPI
-SOURCES+=	efiacpi.c
+# Origin: EmberBSD bounded CIX SPCR correction, 2026-10-15.
+SOURCES+=	efiacpi.c cix_spcr.c
 .endif
 
 SRCS= ${SOURCES} ${EXTRA_SOURCES}

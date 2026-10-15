@@ -42,3 +42,6 @@ int efi_acpi_create_fdt(void);
 const char *efi_acpi_get_model(void);
 void *efi_acpi_root(void);
 void *efi_acpi_smbios(void);
+
+/* Origin: EmberBSD opt-in CIX SPCR command, 2026-10-15. */
+void efi_acpi_cix_spcr(void);

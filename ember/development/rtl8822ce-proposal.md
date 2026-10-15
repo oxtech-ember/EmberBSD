@@ -15,7 +15,8 @@ RAM root. A short bidirectional ICMP test passed through one RTL8126.
 Those observations do not establish Wi-Fi, internal storage or full board support.
 The console currently needs a temporary correction of the firmware SPCR
 from UART3 to the UART2 exposed by DEBUG and DBG2.
-A reproducible loader correction is a separate boot dependency.
+The opt-in [loader correction](../boot/cix-spcr.md) is a separate boot
+dependency; its physical acceptance is pending.
 
 ## Scope and baseline
 
