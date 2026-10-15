@@ -493,6 +493,7 @@ on every board in the hardware catalog.
   Firmware metadata identifies JSL; GuC stays disabled by default.
   Default kernels/modules keep preliminary attachment closed; a separate personal trial
   configuration admits only the exact `8086:4e55` JSL identity. Full builds and physical acceptance remain pending.
+- **Personal amd64 VM graphics trial:** a separate [VirtGPU 2D configuration](ember/boot/amd64-vmgpu-trial.md) selects native DRM/KMS for a future llvmpipe/GBM session. Stock kernels are unchanged; kernel, VM and Plasma acceptance remain separate gates.
 - **Native graphics infrastructure:** experimental VirtIO DRM/KMS, UVM-backed
   GEM buffers and PRIME sharing make direct Wayland sessions possible.
   UTM tests cover visible KMS output, 32 cross-process buffer-lifetime cycles
