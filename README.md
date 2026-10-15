@@ -158,15 +158,18 @@ on every board in the hardware catalog.
   and reconnection. This connects EmberBSD devices to ROS systems; it is
   bridge interoperability, not a native ROS 2 distribution. See the
   [Zenoh/ROS 2 example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/zenoh-ros2).
-- **Model APIs and speech processing:** ONNX Runtime 1.30.0 and ncnn 20260526
-  provide installed C/C++ CPU inference libraries. RNNoise 0.2 processes audio,
-  and Silero VAD 6.2.3 detects speech through the same ONNX Runtime library.
-  Seven AArch64 VM checks cover numerical results, recurrent stream state,
-  speech/silence boundaries and invalid inputs; ORT worker affinity is checked
-  separately. Ports preserves the NetBSD adaptations and
-  [build and test instructions](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ai-engines).
-  These source probes support application development; microphone capture,
-  real-world audio quality and GPU/NPU execution remain unverified.
+- **Model APIs and speech processing:** ONNX Runtime 1.31.0 provides a GCC16
+  cross package with installed C/C++ CPU APIs. The
+  [small neural-network example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/ai/onnx-cpu)
+  checks dynamic batches against independent scalar answers. AArch64 QEMU
+  acceptance also checks real worker threads, 76 selected upstream tests,
+  error handling and package removal/reinstallation. Existing Silero VAD 6.2.3
+  checks recurrent speech/silence state through the same runtime. Ports owns
+  the [package, adaptations and validation limits](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/onnxruntime).
+  Separate [AI/audio source probes](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ai-engines)
+  cover ncnn 20260526 and RNNoise 0.2. Their historical native VM results do
+  not establish new GCC16 cross packages. Microphone capture, speech accuracy,
+  real-time performance, physical boards and GPU/NPU execution remain unverified.
 - **Google AI Edge model execution:** LiteRT 2.2.0 provides a shared C/C++
   CPU runtime for `.tflite` applications; LiteRT-LM 0.18.0 adds SentencePiece
   language-model execution. Ports owns the [cross-build profile, adaptations and instructions](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/litert).
