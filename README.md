@@ -224,9 +224,7 @@ on every board in the hardware catalog.
   translation ATE RMSE across two controlled runs and fixed-scale alignment. This enables
   recorded-data navigation experiments; live cameras, IMU fusion, boards,
   GUI, sustained operation and real-time performance remain unverified.
-- **Further navigation and motion sources:** Ports prepares
-  [GTSAM](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/gtsam),
-  [PCL](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/pcl),
+- **Navigation and motion software:** Ports prepares
   [OpenVINS](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/openvins)
   and [RTAB-Map](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/rtabmap)
   with common current dependencies. [Ruckig](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ruckig)
@@ -246,7 +244,14 @@ on every board in the hardware catalog.
   solutions, covariance, invalid graphs, eleven upstream programs and package
   removal/reinstallation. The
   [CSV graph example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/gtsam-graph)
-  uses the shared library. Other navigation additions still need target acceptance.
+  uses the shared library. [PCL 1.15.1](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/pcl)
+  also has a GCC16 cross package with common Eigen 5.0.1 and Boost 1.92.0.
+  Installed EmberBSD AArch64 QEMU checks pass known voxel centroids, ICP
+  rigid motion, independent CSV, twelve upstream programs and all eight
+  package lifecycles. The [point-cloud example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/pcl-cloud)
+  uses the shared libraries. These synthetic clouds do not establish camera,
+  LiDAR, calibration, physical-board or real-time behavior. Other navigation
+  additions still need target acceptance.
 - **Ethernet SDR development:** the [Ports SDR profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/sdr)
   combines SoapySDR, libiio 1.0.0 with its official compatibility layer,
   AD9361/Pluto support and current libxml2. Synthetic IQ and loopback RX
