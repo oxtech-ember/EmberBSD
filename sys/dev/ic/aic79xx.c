@@ -4788,7 +4788,6 @@ ahd_handle_ign_wide_residue(struct ahd_softc *ahd,
 			 */
 		} else {
 			uint32_t data_cnt;
-			uint64_t data_addr;
 			uint32_t sglen;
 
 			/* Pull in the rest of the sgptr */
@@ -4802,9 +4801,8 @@ ahd_handle_ign_wide_residue(struct ahd_softc *ahd,
 				 */
 				data_cnt &= ~AHD_SG_LEN_MASK;
 			}
-			data_addr = ahd_inq(ahd, SHADDR);
+			(void)ahd_inq(ahd, SHADDR);
 			data_cnt += 1;
-			data_addr -= 1;
 			sgptr &= SG_PTR_MASK;
 			if ((ahd->flags & AHD_64BIT_ADDRESSING) != 0) {
 				struct ahd_dma64_seg *sg;
@@ -4827,10 +4825,6 @@ ahd_handle_ign_wide_residue(struct ahd_softc *ahd,
 					 * bits while setting the count to 1.
 					 */
 					data_cnt = 1|(sglen&(~AHD_SG_LEN_MASK));
-					data_addr = ahd_le64toh(sg->addr)
-						  + (sglen & AHD_SG_LEN_MASK)
-						  - 1;
-
 					/*
 					 * Increment sg so it points to the
 					 * "next" sg.
@@ -4860,10 +4854,6 @@ ahd_handle_ign_wide_residue(struct ahd_softc *ahd,
 					 * bits while setting the count to 1.
 					 */
 					data_cnt = 1|(sglen&(~AHD_SG_LEN_MASK));
-					data_addr = ahd_le32toh(sg->addr)
-						  + (sglen & AHD_SG_LEN_MASK)
-						  - 1;
-
 					/*
 					 * Increment sg so it points to the
 					 * "next" sg.
@@ -7118,7 +7108,6 @@ ahd_search_qinfifo(struct ahd_softc *ahd, int target, char channel,
 	uint32_t	 busaddr;
 	int		 found;
 	int		 targets;
-	int		 pending_cmds;
 
 	/* Must be in CCHAN mode */
 	saved_modes = ahd_save_modes(ahd);
@@ -7142,10 +7131,6 @@ ahd_search_qinfifo(struct ahd_softc *ahd, int target, char channel,
 	found = 0;
 	prev_scb = NULL;
 
-	pending_cmds = 0;
-	LIST_FOREACH(scb, &ahd->pending_scbs, pending_links) {
-		pending_cmds++;
-	}
 	(void)ahd_qinfifo_count(ahd);
 
 	if (action == SEARCH_PRINT) {
