@@ -807,15 +807,10 @@ neo_trigger_input(void *addr, void *start, void *end, int blksize,
     void (*intr)(void *), void *arg, const audio_params_t *param)
 {
 	struct neo_softc *sc;
-	int ssz;
 
 	sc = addr;
 	sc->rintr = intr;
 	sc->rarg = arg;
-
-	ssz = (param->precision == 16) ? 2 : 1;
-	if (param->channels == 2)
-		ssz <<= 1;
 
 	sc->rbufsize = ((char*)end - (char *)start);
 	sc->rblksize = blksize;
