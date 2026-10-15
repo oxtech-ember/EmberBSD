@@ -39,9 +39,10 @@ The extracted helper also passes native GCC16 `-fanalyzer`, execution and Clang 
 Cppcheck uses actual GCC-preprocessed target TU inputs.
 It decreases from 128 to 127 reports, removing the batch helper's escaping-address report.
 Ten other escaping-address reports and the remaining allocation/style findings remain with the libnvmm owner.
-The full-TU GCC analyzer retains inherited list-removal and machine-creation findings.
+The separate [ownership regression](nvmm-ownership.md) fixes the inherited machine-creation leak.
+The full-TU GCC analyzer retains a list-removal alias-model report for valid lists.
 It is not a clean analysis result, and no suppression is added.
-Those findings require separate ownership and API checks.
+The ownership regression documents that list invariant and the actual removal checks.
 
 These checks cover the helper and isolated target compilation.
 They do not exercise `/dev/nvmm`, a guest VM or physical hypervisor support.
