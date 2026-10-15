@@ -478,7 +478,8 @@ on every board in the hardware catalog.
 
 - **Jasper Lake source foundation:** the [experimental i915 port](ember/boot/i915-jasperlake.md)
   identifies PCI `8086:4e55` as a separate JSL platform. Source contracts cover
-  identity, eDP swing tables, link rates, PHY/clock selection and the PSR2 limit.
+  identity, eDP swing tables, link rates, PHY/clock selection, the PSR2 limit,
+  FBC alignment and guarded display-power handling.
   Native attachment remains disabled; remaining workarounds, full builds
   and physical graphics acceptance are pending.
 - **Native graphics infrastructure:** experimental VirtIO DRM/KMS, UVM-backed

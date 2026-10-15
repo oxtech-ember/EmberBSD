@@ -114,8 +114,8 @@ The report has no new findings; it is not a clean or complete analysis result.
 
 ## Remaining port work
 
-Native attachment stays closed until the remaining power-domain integration
-and required display/GT workarounds have separate review.
+The [workaround adaptation](i915-jasperlake-workarounds.md) adds guarded FBC and power handling.
+Native attachment stays closed until the remaining GT workarounds have separate review.
 The next steps must preserve a stock recovery kernel.
 Only the final opt-in trial may permit attachment for `8086:4e55`.
 Other preliminary devices must keep the existing rejection.
