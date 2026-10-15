@@ -234,7 +234,7 @@ _kvm_pa2off(kvm_t *kd, paddr_t pa)
 	ramsegs = (void *)((char *)(void *)cpu_kh + ALIGN(sizeof *cpu_kh));
 
 	if (map == NULL) {
-		map = calloc(sizeof *map, cpu_kh->nmemsegs);
+		map = calloc(cpu_kh->nmemsegs, sizeof *map);
 		off = 0;
 		for (i = 0; i < cpu_kh->nmemsegs; i++) {
 			map[i].pa = ramsegs[i].start;
