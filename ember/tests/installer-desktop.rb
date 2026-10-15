@@ -6,7 +6,6 @@ root=File.expand_path('../..',__dir__)
 source=File.read(root+'/usr.sbin/sysinst/wizard.c')
 body=source[/static bool\ndesktop_preflight\(const char \*manifest\)\n\{.*?^\}/m] or abort 'Missing desktop preflight before disk writes'
 abort 'Desktop is not selectable within System' unless source.include?('Graphics:')
-abort 'Missing Plasma development label' unless source.include?('KDE Plasma - in development')
 code=<<~C
 #include <assert.h>
 #include <stdbool.h>
@@ -44,8 +43,9 @@ static int test_statvfs(const char *p,struct statvfs *st) {(void)p;memset(st,0,s
 static char *SHA512_File(const char *path,char *hex) {
  unsigned char digest[CC_SHA512_DIGEST_LENGTH],buf[4096];CC_SHA512_CTX ctx;
  FILE *f=fopen(path,"rb");if(!f)return NULL;CC_SHA512_Init(&ctx);size_t n;
- while((n=fread(buf,1,sizeof(buf),f)))CC_SHA512_Update(&ctx,buf,(CC_LONG)n);
- if(ferror(f)){fclose(f);return NULL;}fclose(f);CC_SHA512_Final(digest,&ctx);
+ for(;;){n=fread(buf,1,sizeof(buf),f);if(ferror(f)){fclose(f);return NULL;}
+ if(n==0)break;CC_SHA512_Update(&ctx,buf,(CC_LONG)n);if(feof(f))break;}
+ fclose(f);CC_SHA512_Final(digest,&ctx);
  for(int i=0;i<64;i++)sprintf(hex+2*i,"%02x",digest[i]);return hex;
 }
 static size_t checked_fread(void *p,size_t size,size_t n,FILE *f) {
@@ -65,11 +65,21 @@ int main(int argc,char **argv) {
  assert(SHA512_File(bundle,sum));f=fopen(manifest,"w");assert(f);
  fprintf(f,"SHA512 (desktop-xfce.tar.xz) = %s\\n",sum);fclose(f);
  assert(desktop_preflight(manifest));assert(strcmp(desktop_bundle,bundle)!=0);assert(mounts==1);
- f=fopen(bundle,"w");fputs("changed source",f);fclose(f);
+ f=fopen(bundle,"w");assert(f);fputs("changed source",f);fclose(f);
  assert(SHA512_File(desktop_bundle,sum)); /* cached bytes survive source mutation */
  assert(!desktop_preflight(manifest));assert(desktop_bundle[0]==0);
  net_source=true;assert(!desktop_preflight(manifest));assert(commands==1);
- assert(desktop_bundle[0]==0);desktop_index=0;assert(desktop_preflight(manifest));
+ assert(desktop_bundle[0]==0);
+ net_source=false;desktop_index=2;
+ assert(!desktop_preflight(manifest)); /* Never accept XFCE for Plasma. */
+ snprintf(bundle,sizeof(bundle),"%s/desktop-plasma.tar.xz",argv[1]);
+ f=fopen(bundle,"w");assert(f);fputs("Plasma package fixture",f);fclose(f);
+ assert(SHA512_File(bundle,sum));f=fopen(manifest,"w");assert(f);
+ fprintf(f,"SHA512 (desktop-plasma.tar.xz) = %s\\n",sum);fclose(f);
+ assert(desktop_preflight(manifest));assert(strcmp(desktop_sum,sum)==0);
+ desktop_index=3;assert(!desktop_preflight(manifest));
+ desktop_index=-1;assert(!desktop_preflight(manifest));
+ desktop_index=0;assert(desktop_preflight(manifest));
  return 0;
 }
 C

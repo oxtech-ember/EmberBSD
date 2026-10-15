@@ -16,7 +16,7 @@ test = <<~C
   #define SFLAG_MINIMAL 2
   struct install_partition_desc { int dummy; };
   static int stage, partman_go, choice_calls, preflights, initializations, selected;
-  static int profile_index,desktop_index;
+  static int profile_index,desktop_index,graphics_calls;
   static bool profile_ready, wizard_installing, wizard_custom, wizard_expert_requested;
   static char boot_medium[128];
   static const char *profile;
@@ -25,7 +25,10 @@ test = <<~C
   static bool layout(struct install_partition_desc *i) { (void)i;return true; }
   static int select_source(void) { return SET_OK; }
   static int choose(const char *s,const char * const *p,int n,int first) {
-    (void)s;(void)p;(void)n;return choice_calls++==0?2:first;
+    (void)p;(void)n;
+    if (strcmp(s,"Choose your graphics environment")==0) return 2;
+    if (graphics_calls++==0) return 3;
+    return choice_calls++==0?2:first;
   }
   static void init_set_status(int p) { (void)p;initializations++;selected=0; }
   static void wizard_limit_sets(void) {}
@@ -38,6 +41,7 @@ test = <<~C
   int main(void) {
     struct install_partition_desc i={0};assert(wizard_prepare(&i));
     assert(choice_calls==2 && initializations==1 && selected==99);
+    assert(desktop_index==2);
     assert(strcmp(profile,"Custom")==0);
     return 0;
   }

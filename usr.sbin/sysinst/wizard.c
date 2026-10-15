@@ -168,8 +168,6 @@ choose(const char *title, const char * const *options, int count, int first)
 			} else if (system_form && i == 3)
 				wizard_frame_text(&f, 17, 22, options[i],
 				    i == pos ? WIZARD_SELECTED : WIZARD_AMBER);
-			else if (desktop_form && i == 2)
-				wizard_frame_text(&f, 15, 22, options[i], WIZARD_DISABLED);
 			else
 				wizard_frame_choice(&f, 9 + spacing * (i - start), options[i], i == pos);
 			if (system_form && i < 3) {
@@ -183,7 +181,8 @@ choose(const char *title, const char * const *options, int count, int first)
 			}
 		}
 		if (system_form)
-			wizard_frame_text(&f, 19, 22, desktop_index ?
+			wizard_frame_text(&f, 19, 22, desktop_index == 2 ?
+			    "KDE Plasma experimental profile. SSH is enabled." : desktop_index ?
 			    "Wi-Fi manager with XFCE. SSH is enabled." :
 			    "Wi-Fi via console. SSH is enabled.", WIZARD_MUTED);
 		if (desktop_form) {
@@ -191,8 +190,8 @@ choose(const char *title, const char * const *options, int count, int first)
 			    "Optional. Installed together with the system.", WIZARD_MUTED);
 			wizard_frame_text(&f, 10, 26, "Console system without desktop packages.", WIZARD_MUTED);
 			wizard_frame_text(&f, 13, 26, "X11 desktop and Wi-Fi manager.", WIZARD_MUTED);
-			wizard_frame_text(&f, 16, 26, "Plasma packages are not ready yet.", WIZARD_MUTED);
-			wizard_frame_text(&f, 19, 22, "XFCE requires a verified desktop bundle.", WIZARD_MUTED);
+			wizard_frame_text(&f, 16, 26, "Experimental Wayland desktop; matching bundle required.", WIZARD_MUTED);
+			wizard_frame_text(&f, 19, 22, "Desktop packages are verified before disk writes.", WIZARD_MUTED);
 		}
 		if (settings_form)
 			wizard_frame_text(&f, 17, 22,
@@ -241,9 +240,9 @@ choose(const char *title, const char * const *options, int count, int first)
 			continue;
 		}
 		if (key == KEY_UP)
-			pos = wizard_menu_move(pos, desktop_form ? 2 : (source_form ? 4 : count), -1);
+			pos = wizard_menu_move(pos, source_form ? 4 : count, -1);
 		if (key == KEY_DOWN)
-			pos = wizard_menu_move(pos, desktop_form ? 2 : (source_form ? 4 : count), 1);
+			pos = wizard_menu_move(pos, source_form ? 4 : count, 1);
 	}
 }
 
@@ -475,6 +474,7 @@ static bool
 desktop_preflight(const char *manifest)
 {
 	char expected[129], actual[129], path[STRSIZE];
+	const char *bundle_name;
 	unsigned char buffer[16384];
 	struct stat st;
 	struct statvfs fs;
@@ -487,10 +487,16 @@ desktop_preflight(const char *manifest)
 		return false;
 	if (desktop_index == 0)
 		return true;
+	if (desktop_index == 1)
+		bundle_name = "desktop-xfce.tar.xz";
+	else if (desktop_index == 2)
+		bundle_name = "desktop-plasma.tar.xz";
+	else
+		return false;
 	fp = fopen(manifest, "r");
 	if (fp == NULL)
 		return false;
-	int match = wizard_checksum_entry(fp, "desktop-xfce.tar.xz", expected);
+	int match = wizard_checksum_entry(fp, bundle_name, expected);
 	fclose(fp);
 	if (match != 1)
 		return false;
@@ -517,11 +523,11 @@ desktop_preflight(const char *manifest)
 	close(fd);
 	if (net_source) {
 		if (run_program(RUN_SILENT | RUN_ERROR_OK,
-		    "/usr/bin/ftp -q 30 -o %s %s/desktop-xfce.tar.xz",
-		    desktop_bundle, source_url) != 0)
+		    "/usr/bin/ftp -q 30 -o %s %s/%s",
+		    desktop_bundle, source_url, bundle_name) != 0)
 			goto out;
 	} else {
-		snprintf(path, sizeof(path), "%s/desktop-xfce.tar.xz", ext_dir_bin);
+		snprintf(path, sizeof(path), "%s/%s", ext_dir_bin, bundle_name);
 		fd = open(path, O_RDONLY | O_NONBLOCK);
 		if (fd < 0)
 			goto out;
@@ -790,7 +796,8 @@ review(const struct install_partition_desc *install)
 	wizard_frame_text(&f, 14, 22, "Build        " EMBER_BUILD_ID, WIZARD_MUTED);
 	snprintf(text, sizeof(text), "System       %s", profile);
 	wizard_frame_text(&f, 15, 22, text, WIZARD_TEXT);
-	wizard_frame_text(&f, 16, 22, desktop_index ?
+	wizard_frame_text(&f, 16, 22, desktop_index == 2 ?
+	    "Desktop      KDE Plasma / experimental" : desktop_index ?
 	    "Desktop      XFCE / Wi-Fi manager" :
 	    "Desktop      None / console Wi-Fi", WIZARD_TEXT);
 	snprintf(text, sizeof(text), "Computer     %s", hostname);
@@ -821,7 +828,7 @@ wizard_prepare(struct install_partition_desc *install)
 {
 	static const char * const desktops[] = {
 		"None - console only", "XFCE with Wi-Fi manager",
-		"KDE Plasma - in development"
+		"KDE Plasma - experimental"
 	};
 	stage = 1;
 	wizard_expert_requested = false;
@@ -847,14 +854,15 @@ wizard_prepare(struct install_partition_desc *install)
 		} else if (stage == 3) {
 			char graphics[64];
 			snprintf(graphics, sizeof(graphics), "[ Graphics: %s ]",
-			    desktop_index ? "XFCE + Wi-Fi" : "None");
+			    desktop_index == 2 ? "KDE Plasma" :
+			    (desktop_index ? "XFCE + Wi-Fi" : "None"));
 			const char *profiles[] = {
 				"Standard system", "Minimal system", "Custom components", graphics
 			};
 			int p = choose("Choose system and graphics", profiles, 4, profile_index);
 			if (p == 3) {
 				int d = choose("Choose your graphics environment", desktops, 3, desktop_index);
-				if (d >= 0 && d < 2)
+				if (d >= 0 && d < 3)
 					desktop_index = d;
 				continue;
 			}
@@ -935,7 +943,8 @@ wizard_configure(void)
 		    run_program(RUN_PROGRESS | RUN_CHROOT,
 		    "/usr/bin/tar -xpf /var/cache/ember-desktop.tar.xz -C /var/cache/ember-desktop") != 0 ||
 		    run_program(RUN_PROGRESS | RUN_CHROOT,
-		    "/usr/libexec/ember-desktop-install xfce") != 0)
+		    "/usr/libexec/ember-desktop-install %s",
+		    desktop_index == 2 ? "plasma" : "xfce") != 0)
 			return false;
 		unlink(target_expand("/var/cache/ember-desktop.tar.xz"));
 		desktop_clear();

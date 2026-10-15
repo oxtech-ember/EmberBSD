@@ -21,10 +21,31 @@ automatic greeting updates. Diagnostic tools retain their upstream ABI names.
 
 SSH is enabled by default; its authentication defaults are unchanged.
 The System step has a Graphics menu: None, XFCE with a Wi-Fi manager,
-and a disabled KDE Plasma entry marked as in development. None is the default.
-Selecting XFCE also selects the X11 sets, independently of the base profile.
+and an experimental KDE Plasma entry. None is the default.
+Selecting either desktop also selects the X11 sets, independently of the base profile.
 The desktop and its Wi-Fi manager are installed together with the OS.
-Run ember-desktop after console login to start the installed XFCE session.
+Run ember-desktop after console login to start the selected desktop session.
+
+KDE Plasma requires its own desktop-plasma.tar.xz and matching SHA512 entry.
+It never installs the XFCE bundle as a fallback. The archive contains All/,
+ROOTS and SHA512 in the same format as the XFCE bundle, plus a PROFILE file
+containing plasma. Keep the complete amd64 package dependency closure in All/.
+Package installation must supply startplasma-wayland, kwin_wayland, plasmashell,
+Xwayland, dbus-run-session and the dbus service. The launcher selects Wayland
+and the default startkderc selects classic startup without a systemd user manager.
+Console launches without XDG_RUNTIME_DIR use a private 0700 directory, removed
+when the session exits. Existing runtime directories must belong to the user
+and have mode 0700; the launcher preserves them after logout.
+The existing 512 MiB staging limit applies to both desktop archives.
+The installer rejects a missing, oversized or damaged archive before disk writes.
+The selected profile is stored in /etc/ember-desktop only after installation succeeds.
+Existing XFCE installations without that file keep their original launch behavior.
+No automatic login is enabled. Graphical login management is separate.
+
+The Plasma path is source and host-regression coverage only. A complete amd64
+Plasma package bundle and an installed Plasma session are not qualified here.
+Do not use the XFCE VM result as Plasma acceptance. Build and boot a matching
+candidate, verify the installed session, and test physical graphics and radios.
 
 XFCE requires desktop-xfce.tar.xz in the same set directory, with its
 SHA512 entry in the build manifest. Sysinst freezes and verifies the complete
@@ -51,7 +72,7 @@ a supported adapter; an Ethernet-only VM cannot establish wireless acceptance.
 3. Identify the target disk by its device, model and capacity.
 4. Review the automatic GPT layout on the disk step. It replaces the entire target layout.
 5. Select the installation image as the set source.
-6. Select Standard, Minimal, or Custom. Choose optional XFCE and Wi-Fi in System.
+6. Select Standard, Minimal, or Custom. Choose an optional desktop in System.
 7. Set the hostname and timezone. A local account is optional.
 8. Read the disk, partitions, source and build ID on the review screen.
 9. Press I to write and install. Set passwords when prompted after copying the sets.
