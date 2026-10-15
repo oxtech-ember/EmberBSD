@@ -81,7 +81,9 @@ application mode retains the target libc/header/runtime requirements.
 
 With host GCC16 on macOS, pass the selected SDK through `HOST_CPPFLAGS`
 and `HOST_LDFLAGS`. Keep host language and optimization flags in
-`HOST_CFLAGS`. The host-mkdep configure rule passes all three variables.
+`HOST_CFLAGS`. The host-mkdep and mandoc configure rules pass all three variables.
+Mandoc preserves explicit build flags in its feature probes. It selects them
+before adding definitions that require mandoc's generated configuration header.
 The compatibility, MOP, CTF, ELF and DWARF host libraries select
 `-no-cpp-precomp` only for Clang on Darwin. GCC does not support this flag.
 This follows the compiler selection already used by GNU host tools.
@@ -94,7 +96,9 @@ sh ember/tests/darwin-host-tools.sh /absolute/tools/bin/nbmake-amd64 \
 ```
 
 The check evaluates the real Makefiles with GCC16 and Clang. It also runs
-host-mkdep configure with the macOS SDK in a private temporary directory.
+host-mkdep and mandoc configure with the macOS SDK in private temporary directories.
+Mandoc's generated configuration follows real host compile, link and execution
+probes, including nanosleep. No target program is executed by this check.
 These host checks pass on Apple Silicon macOS with GCC 16.2.0. They do not
 establish a complete tools build, amd64 userland, boot or image acceptance.
 

@@ -65,5 +65,27 @@ else
     echo 'FAIL: host-mkdep configure cannot use the selected GCC16 and SDK' >&2
     failures=$((failures + 1))
 fi
+mkdir "$work/mandoc"
+if (
+    unset CFLAGS CPPFLAGS LDFLAGS SDKROOT
+    "$make" -C "$src/tools/mandoc" -m "$src/share/mk" NETBSDSRCDIR="$src" \
+        MAKEOBJDIR="$work/mandoc" HOST_CC="$gcc" \
+        HOST_CFLAGS='-O2 -std=gnu17 -DEMBER_MANDOC_CFLAGS=1' \
+        HOST_CPPFLAGS="-isysroot $sdk -DEMBER_MANDOC_CPPFLAGS=1" \
+        HOST_LDFLAGS="-isysroot $sdk -Wl,-headerpad_max_install_names" config.h
+) > "$work/mandoc-configure.log" 2>&1; then
+    for flag in -DEMBER_MANDOC_CFLAGS=1 -DEMBER_MANDOC_CPPFLAGS=1 -Wl,-headerpad_max_install_names; do
+        if ! grep -Fq -- "$flag" "$work/mandoc/config.log"; then
+            echo "FAIL: mandoc configure lost $flag" >&2
+            failures=$((failures + 1))
+        fi
+    done
+    test -s "$work/mandoc/config.h"
+    grep -Fq 'result of running nanosleep: yes' "$work/mandoc/config.log"
+else
+    cat "$work/mandoc-configure.log" >&2
+    echo 'FAIL: mandoc configure cannot use the selected GCC16 and SDK' >&2
+    failures=$((failures + 1))
+fi
 [ "$failures" -eq 0 ] || { echo "FAIL: $failures host-tool regressions" >&2; exit 1; }
-echo 'PASS: GCC16/Clang Darwin flags, non-Darwin isolation and real host-mkdep configure with SDK'
+echo 'PASS: GCC16/Clang Darwin flags, non-Darwin isolation and real host-mkdep/mandoc configure with SDK'
