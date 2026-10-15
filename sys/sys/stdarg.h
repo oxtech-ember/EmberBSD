@@ -38,6 +38,15 @@
 #include <sys/ansi.h>
 #include <sys/featuretest.h>
 
+/*
+ * Let the compiler provide its public definitions before the BSD fallback.
+ * The installed public header can alias this file; our guard breaks that cycle.
+ * Kernel, standalone and lint builds must not need compiler resource headers.
+ */
+#if !defined(_KERNEL) && !defined(_STANDALONE) && !defined(__lint__)
+#include <stdarg.h>
+#endif
+
 #ifdef __lint__
 #define __builtin_next_arg(t)		((t) ? 0 : 0)
 #define	__builtin_va_start(a, l)	((a) = (va_list)(void *)&(l))
@@ -55,9 +64,8 @@ typedef __va_list va_list;
 #endif
 
 /*
- * EmberBSD: guard the macros so a TU that also included the compiler's
- * <stdarg.h> (external GCC16 resolves <stdarg.h> to its own copy) does not
- * hit a redefinition under -Werror; the compiler forms are equivalent.
+ * Keep the BSD fallback when the public header aliases this file.
+ * Definitions from a compiler resource header take precedence when present.
  */
 #ifndef va_start
 #define	va_start(ap, last)	__builtin_va_start((ap), (last))

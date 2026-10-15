@@ -934,6 +934,9 @@ The base system shell is unchanged.
   checksum checks; native contracts and boot acceptance remain separate.
   Darwin host-tool checks pass real GCC16/SDK host-mkdep and mandoc configuration and Clang
   flag selection; complete amd64 tools and image acceptance remain separate.
+  The [variadic-header regression](ember/tests/stdarg-interop.md) covers compiler/system include
+  order, C11/C23/C++20 and resource-free fallbacks. The isolated GCC16 libc assertion TU passes;
+  a complete base distribution remains a separate check.
   Incremental wrapper builds refresh the generated kernel version metadata;
   host orchestration checks cover stale `BUILDINFO` and object retention.
   The resulting kernel cold-boots in AArch64 UTM and passes FP process,
