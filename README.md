@@ -946,6 +946,8 @@ The base system shell is unchanged.
   Its isolated target compilation passes; guest execution and full hypervisor acceptance remain separate.
   The [NVMM ownership regression](ember/tests/nvmm-ownership.md) checks failed-create cleanup and exact-once area removal.
   Host allocation/ioctl models pass; target device acceptance remains separate.
+  The [wscons VT regression](ember/tests/usl-sync.md) checks deferred signals, valid signal ranges and callback lifetime.
+  Host tests and isolated target compilation pass; VM console switching remains unverified.
   Incremental wrapper builds refresh the generated kernel version metadata;
   host orchestration checks cover stale `BUILDINFO` and object retention.
   The resulting kernel cold-boots in AArch64 UTM and passes FP process,
