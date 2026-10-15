@@ -407,11 +407,13 @@ on every board in the hardware catalog.
   private virtual-backend session: the compositor stays active on QPainter
   while Qt Quick clients render real pixel phases through software EGL
   (llvmpipe) and exit cleanly. Hardware GL compositing still needs the DRM
-  render node on A733. On physical CM5, KWin 6.7.5nb2 passes
-  [OpenGL/V3D selection and Qt Quick pixel checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
-  on a virtual output under an existing non-root user. Its missing Vulkan
-  loader dependency is repaired. This does not establish HDMI presentation
-  or the complete Plasma Desktop. The fixed
+  render node on A733. On physical CM5, the installed KWin 6.8.0 reports
+  [OpenGL ES/V3D compositing](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
+  under an ordinary user on a virtual output. Plasma Desktop 6.8.0 also
+  selects V3D OpenGL 3.1. libudev now classifies its DRM render node correctly.
+  One model-readiness run completed, but its containment capture was transparent.
+  A repeat exposed allocation and startup failures; the full desktop remains unaccepted.
+  The fixed
   [Milou](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/milou)
   package passes its fresh-board acceptance on the same board.
   plasma-workspace 6.7.5 itself now cross-builds completely (BROKEN
@@ -424,14 +426,14 @@ on every board in the hardware catalog.
   (365 packages): plasmashell, krunner, ksmserver and startplasma-wayland
   are installed with clean dynamic dependencies, and the private KWin
   session acceptance still passes. A startplasma session on the virtual
-  output is the next acceptance step. CM5 runtime testing also identifies
-  the separate, still absent Plasma Desktop shell package; Workspace alone
-  cannot start `org.kde.plasma.desktop`.
+  output remains a separate acceptance step for that A733 package set.
+  CM5 now has complete Desktop and Workspace 6.8.0 packages, including the
+  separate `org.kde.plasma.desktop` shell and its compiled plugins.
   [Desktop package preparation](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-package-set.md)
   now covers Activities, current Xwayland/libei/basu, correct target XKB paths
   and native QtDBus generators that retain KWin's complex property signatures.
   Offline package and full-session runner host controls pass; board startup,
-  V3D shell rendering and normal logout still require acceptance.
+  visible desktop content and normal full-session logout still require acceptance.
   Its current xdg-user-dirs 0.20
   dependency now cross-builds and passes private-profile checks on CM5.
   [Current desktop providers](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-providers.md)
@@ -490,7 +492,8 @@ on every board in the hardware catalog.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle.
   The current [CM5 display boundary](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
-  is an HDMI-to-VGA EDID that selects 1080p for a 1280x1024 monitor.
+  is a working firmware/genfb console at 1920x1080. The V3D render node
+  rejects DRM mode-resource queries; it does not supply a display controller.
   Native BCM2712 KMS mode setting and accelerated scanout remain unaccepted.
   A complete mobile shell workflow, native display and power management
   still need validation. See the [Plasma Mobile port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile).
