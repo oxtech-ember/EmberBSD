@@ -677,8 +677,8 @@ on every board in the hardware catalog.
   The [physical PLL result](ember/boot/a733-gpu-identification.md#physical-pll-result)
   supersedes the earlier PERIPH0-400M timeout and GPU MMIO stall. The consumer
   now blocks GPU MMIO after failed CORE ON/Q confirmation, including boot
-  error diagnostics. Host regressions check this gate and the successful path;
-  they do not establish repaired power-domain activation. HWR diagnostics
+  error diagnostics. Zero 3W now also rejects TOP-ID after a failed CORE wait,
+  including a retry after the diagnostic stage reset. HWR diagnostics
   preserve the full firmware snapshot within the GCC16 stack limit.
   Normal board DTBs remain observe-only; the working cold start is an explicit
   runtime experiment. Native `firmload` now reads the exact firmware and
@@ -700,7 +700,7 @@ on every board in the hardware catalog.
   now passes all 21 stages with a Mesa 26.2.4 compiler packet. A guarded
   PowerVR shader writes `0x13579bdf` through the native GPU page tables.
   Client queue completion, timeline, DMA output, and fresh fault/HWR checks
-  agree. This check also passes after a second kernel update and fresh boot.
+  agree. This check also passes on GCC16 kernel `e876bf6d2ce2` after a fresh boot.
   A native [PowerVR DRM/GEM interface](ember/boot/a733-pvr-render.md)
   opens on Zero 3W and passes 115 identity/runtime checks. It reports the measured
   BVNC through a real render node. Native GEM allocation and CPU mapping of
@@ -722,10 +722,13 @@ on every board in the hardware catalog.
   firmware VM publication, contexts, free lists, and synchronous compute submission.
   Its production-source contracts pass. Host fixtures use the current bridge and
   metadata interfaces. They reject diagnostics after bridge adoption and render
-  registration with incomplete metadata. Physical Vulkan execution, graphics jobs,
-  Zink, display output, and accelerated Plasma remain unaccepted.
-  Repeated submission within one boot and long-duration GPU stability remain
-  untested.
+  registration with incomplete metadata. On Zero 3W, Mesa 26.2.4nb5 now passes
+  three complete Vulkan compute lifecycles in one boot with kernel `e876bf6d2ce2`.
+  Device creation, all 16 GPU-written words, fence completion, host readback,
+  and context cleanup pass; the execution service remains usable. The native
+  KICK path accepts its asynchronous zero return word and still requires CCCB,
+  UFO, and fresh health checks. Graphics jobs, Zink, display output, accelerated
+  Plasma, Vulkan conformance, and long-duration GPU stability remain unaccepted.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,
