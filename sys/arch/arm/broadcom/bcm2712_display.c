@@ -54,7 +54,8 @@ bcm2712_display_resources[BCM2712_DISPLAY_NMEM] = {
 #undef MEM
 
 const struct bcm2712_display_irq bcm2712_display_irqs[BCM2712_DISPLAY_NIRQ] = {
-	{ "v3d-core", 282 }, { "v3d-hub", 281 },
+	/* Preserve firmware order; native TFU completion uses GSI 282. */
+	{ "v3d-hub", 282 }, { "v3d-core", 281 },
 	{ "pixelvalve0", 133 }, { "pixelvalve1", 142 },
 	{ "display", 129 }, { "aon", 271 }, { "bsc", 274 }
 };

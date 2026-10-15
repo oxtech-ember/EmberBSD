@@ -86,13 +86,18 @@ The seven `_CRS` interrupt values are GIC GSIs, in this order:
 
 | Index | Source | GSI |
 |---:|---|---:|
-| 0 | V3D core | 282 |
-| 1 | V3D hub | 281 |
+| 0 | V3D hub | 282 |
+| 1 | V3D core | 281 |
 | 2 | PixelValve 0 | 133 |
 | 3 | PixelValve 1 | 142 |
 | 4 | Display parent | 129 |
 | 5 | AON parent | 271 |
 | 6 | BSC parent | 274 |
+
+The original firmware symbols name GSI 282 as core and 281 as hub.
+The native V3D driver instead assigns hub completion to 282 and core completion to 281.
+That assignment follows the observed TFU interrupt in `bcm2712_v3d_irq.c`.
+This contract uses the native names and preserves the original numeric order.
 
 Child values below are bits in their parent controller, not additional GSIs.
 
