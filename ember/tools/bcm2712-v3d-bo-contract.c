@@ -93,6 +93,8 @@ struct drm_file {
 #include "uapi-body.h"
 #include "../../sys/external/bsd/drm2/bcmv3d/bcmv3d_bo_stats.h"
 #include "drv-body.h"
+/* Use the smallest kernel budget to keep the exhaustion cases short. */
+#define BCMV3D_BO_TOTAL BCMV3D_BO_TOTAL_MIN
 
 static unsigned checks, fail, allocated, mapped, maps, loaded, ranges, gems;
 static unsigned bad_geometry, fragment_pages, fragmented_allocations;
@@ -291,7 +293,7 @@ static void empty(const struct bcmv3d_device *c)
 int
 main(void)
 {
-	struct bcmv3d_device c={0};
+	struct bcmv3d_device c={.bo_total=BCMV3D_BO_TOTAL};
 	struct drm_device d={.dev_private=&c};
 	struct drm_file f={0}, other={0};
 	struct drm_v3d_create_bo a;

@@ -14,12 +14,14 @@
 struct bcmv3d_device {
 	pthread_mutex_t memory_lock;
 	size_t allocated;
+	size_t bo_total;
 	struct bcmv3d_bo_stats bo_stats;
 };
 static void mutex_enter(pthread_mutex_t *m) { assert(pthread_mutex_lock(m)==0); }
 static void mutex_exit(pthread_mutex_t *m) { assert(pthread_mutex_unlock(m)==0); }
 #include "stats-body.h"
-static struct bcmv3d_device device={.memory_lock=PTHREAD_MUTEX_INITIALIZER};
+static struct bcmv3d_device device={.memory_lock=PTHREAD_MUTEX_INITIALIZER,
+    .bo_total=BCMV3D_BO_TOTAL};
 static void *writer(void *unused)
 {
 	for (unsigned i=0;i<10000;i++)

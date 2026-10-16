@@ -25,7 +25,9 @@ CPU faults use allocation segments; GPU PTEs use translated DMA map segments.
 Each BO has a separately allocated GPU virtual range; GPU addresses
 are not physical addresses. GEM handles, mappings and submitted jobs own
 references. The last reference releases the range and storage. Limit one
-BO to 16 MiB and total BO storage to 64 MiB during this stage. The engine's
+BO to 16 MiB. Limit total BO storage to 1/16 of physical memory, with a
+64 MiB floor and a 256 MiB cap. A full Plasma session needs more than
+64 MiB. The engine's
 4 MiB page table and three scratch pages also count against that total.
 They retain their strict contiguous allocation contract. The shared CMA helper
 is unchanged. PRIME self-import and UVM reference ownership remain unchanged.

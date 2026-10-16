@@ -173,7 +173,7 @@ ptes(struct bcmv3d_device *c, struct drm_device *d, struct drm_file *f)
 int
 main(void)
 {
-	struct bcmv3d_device c = {0};
+	struct bcmv3d_device c = { .bo_total = BCMV3D_BO_TOTAL };
 	struct drm_device d = { .dev_private = &c };
 	struct drm_file f = {0};
 

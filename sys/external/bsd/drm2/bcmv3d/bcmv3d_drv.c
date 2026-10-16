@@ -8,6 +8,7 @@
 #include <sys/mman.h>
 #include <sys/systm.h>
 #include <sys/sysctl.h>
+#include <uvm/uvm_extern.h>
 #include <arm/broadcom/bcm2712_v3d_takeover.h>
 #include <linux/err.h>
 #include <drm/drm_drv.h>
@@ -15,6 +16,20 @@
 #include <drm/drm_gem.h>
 #include <drm/drm_prime.h>
 #include "bcmv3d_drv.h"
+
+/* Compute the total BO budget once, before the first reservation. */
+static size_t
+bcmv3d_bo_total(void)
+{
+	uint64_t total;
+
+	total = (uint64_t)ctob(physmem) >> BCMV3D_BO_TOTAL_SHIFT;
+	if (total < BCMV3D_BO_TOTAL_MIN)
+		total = BCMV3D_BO_TOTAL_MIN;
+	if (total > BCMV3D_BO_TOTAL_MAX)
+		total = BCMV3D_BO_TOTAL_MAX;
+	return (size_t)total;
+}
 
 /* Copy under memory_lock; user copyout occurs after that lock is released. */
 static int
@@ -152,6 +167,7 @@ bcmv3d_render_attach(device_t self, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	sc->handle = handle;
 	dev->dev_private = sc;
 	dev->bus_dmat = dev->bus_dmat32 = dev->dmat = dmat;
+	sc->bo_total = bcmv3d_bo_total();
 	mutex_init(&sc->memory_lock, MUTEX_DEFAULT, IPL_NONE);
 	sc->va = vmem_create("v3dva", BCMV3D_VA_START, BCMV3D_VA_SIZE,
 	    PAGE_SIZE, NULL, NULL, NULL, 0, VM_SLEEP, IPL_NONE);

@@ -16,7 +16,10 @@
 #include "bcmv3d_bo_stats.h"
 
 #define BCMV3D_BO_MAX	(16 * 1024 * 1024)
-#define BCMV3D_BO_TOTAL	(64 * 1024 * 1024)
+/* Scale total BO storage with RAM: 1/16 of RAM, from 64 MiB to 256 MiB. */
+#define BCMV3D_BO_TOTAL_MIN	((size_t)64 * 1024 * 1024)
+#define BCMV3D_BO_TOTAL_MAX	((size_t)256 * 1024 * 1024)
+#define BCMV3D_BO_TOTAL_SHIFT	4
 #define BCMV3D_VA_START	UINT64_C(0x00100000)
 #define BCMV3D_VA_SIZE	UINT64_C(0xffe00000)
 
@@ -29,6 +32,7 @@ struct bcmv3d_device {
 	kmutex_t memory_lock;
 	vmem_t *va;
 	size_t allocated;
+	size_t bo_total;
 	struct bcmv3d_bo_stats bo_stats;
 	struct sysctllog *sysctllog;
 	uint32_t ident[7];

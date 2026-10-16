@@ -317,7 +317,7 @@ static struct drm_v3d_submit_tfu
 setup(struct bcmv3d_device *c,struct drm_device *d,struct drm_file *f)
 {
 	struct drm_v3d_create_bo a={.size=V3D_COPY_SIZE},b=a;
-	*c=(struct bcmv3d_device){.drm=d};
+	*c=(struct bcmv3d_device){.drm=d,.bo_total=BCMV3D_BO_TOTAL};
 	*d=(struct drm_device){.dev_private=c}; *f=(struct drm_file){0};
 	memset(regs,0,sizeof(regs)); memset(core_regs,0,sizeof(core_regs)); regs[V3D_MMU_DEBUG/4]=0x550; csd_model=false; csd_starts=csd_writes=cache_phase=csd_owned=0;
 	cl_model=cl_render=false;cl_bins=cl_renders=0;

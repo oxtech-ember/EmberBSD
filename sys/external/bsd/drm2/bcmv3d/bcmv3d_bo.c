@@ -86,7 +86,7 @@ bcmv3d_bo_snapshot(struct bcmv3d_device *sc, struct bcmv3d_bo_stats *snapshot)
 	snapshot->version = BCMV3D_BO_STATS_VERSION;
 	snapshot->length = sizeof(*snapshot);
 	snapshot->reserved_bytes = sc->allocated;
-	snapshot->limit_bytes = BCMV3D_BO_TOTAL;
+	snapshot->limit_bytes = sc->bo_total;
 	snapshot->max_bo_bytes = BCMV3D_BO_MAX;
 	mutex_exit(&sc->memory_lock);
 }
@@ -144,7 +144,7 @@ bcmv3d_bo_alloc_internal(struct bcmv3d_device *sc, uint32_t requested,
 	bo->dmasegs = kmem_zalloc(bo->maxsegs * sizeof(*bo->dmasegs),
 	    KM_SLEEP);
 	mutex_enter(&sc->memory_lock);
-	if (size > BCMV3D_BO_TOTAL - sc->allocated) {
+	if (size > sc->bo_total - sc->allocated) {
 		bcmv3d_bo_failure_locked(sc, BCMV3D_BO_STAGE_QUOTA,
 		    requested, size, ENOMEM);
 		mutex_exit(&sc->memory_lock);

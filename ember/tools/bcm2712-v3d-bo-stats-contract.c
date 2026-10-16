@@ -80,7 +80,7 @@ snapshot(struct bcmv3d_device *c)
 int
 main(void)
 {
-	struct bcmv3d_device c={0};
+	struct bcmv3d_device c={.bo_total=BCMV3D_BO_TOTAL};
 	struct drm_device d={.dev_private=&c};
 	struct drm_file f={0}, other={0};
 	struct drm_v3d_create_bo a;

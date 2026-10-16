@@ -12,7 +12,9 @@ internal page tables and scratch storage, userspace BOs, and allocations still
 inside bus_dma. `highwater_bytes` is the largest reservation since attachment.
 Neither value is a measurement of physical residency or process memory.
 
-The existing limits remain 16 MiB per BO and 64 MiB per device. The internal
+The limit is 16 MiB per BO. The device limit is 1/16 of physical memory,
+with a 64 MiB floor and a 256 MiB cap. A 4 GiB CM5 gets 256 MiB.
+`limit_bytes` reports the active device limit. The internal
 4 MiB page table and three scratch pages consume this budget. Reservations
 start after GPU virtual-range allocation. They end on allocation rollback or
 final GEM release. A closed GEM handle can leave a mapping, PRIME reference,
