@@ -413,16 +413,21 @@ on every board in the hardware catalog.
   common sysroot file for file. On Orange Pi Zero 3W (A733) it passes a
   private virtual-backend session: the compositor stays active on QPainter
   while Qt Quick clients render real pixel phases through software EGL
-  (llvmpipe) and exit cleanly. Hardware GL compositing still needs the DRM
-  render node on A733. On physical CM5, the installed KWin 6.8.0 reports
+  (llvmpipe) and exit cleanly. Hardware GL compositing still needs native
+  graphics execution and a validated Zink path on A733.
+  On physical CM5, the installed KWin 6.8.0 reports
   [OpenGL ES/V3D compositing](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
   under an ordinary user on a virtual output. Plasma Desktop 6.8.0 also
   selects V3D OpenGL 3.1. libudev now classifies its DRM render node correctly.
   The complete MesaLib 26.2.4nb8 package repairs an uninitialized V3D cache
   mutex identified by an earlier Plasma core. It preserves symbol versions
-  with LLD and passes the previously linked consumer on CM5. The current
-  Plasma startup still needs acceptance: a bounded D-Bus delay and missing
-  Xwayland runtime directories remain under investigation.
+  with LLD and passes the previously linked consumer on CM5. The installed
+  [Plasma shell check](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/plasma-desktop)
+  passes the default desktop and panel models, a 320x256 containment pixel check,
+  30 seconds of responsiveness, and normal shell exit. All 20 temperature
+  samples remain between 63.659 and 66.956 degrees Celsius. This bounded
+  virtual-output run does not establish a full login or physical HDMI output.
+  The separate full-session check still requires working Xwayland runtime directories.
   The [native scatter/gather allocator](ember/boot/bcm2712-v3d-render.md) now
   passes CM5 allocations through 16 MiB, three held buffers, and the existing
   TFU/CSD/sync/CL checks. The updated Mesa package passes four V3D EGL
@@ -774,7 +779,7 @@ on every board in the hardware catalog.
   Its production-source contracts pass. Host fixtures use the current bridge and
   metadata interfaces. They reject diagnostics after bridge adoption and render
   registration with incomplete metadata. On Zero 3W, Mesa 26.2.4nb5 now passes
-  three complete Vulkan compute lifecycles in one boot with kernel `e876bf6d2ce2`.
+  three complete Vulkan compute lifecycles in one boot with kernel `4d9b68f3ec48`.
   Device creation, all 16 GPU-written words, fence completion, host readback,
   and context cleanup pass; the execution service remains usable. The native
   KICK path accepts its asynchronous zero return word and still requires CCCB,
@@ -782,13 +787,14 @@ on every board in the hardware catalog.
   Plasma, Vulkan conformance, and long-duration GPU stability remain unaccepted.
   The [graphics development checkpoint](ember/boot/a733-pvr-graphics.md) adds
   stream, queue, HWRT, mapping-hold, and free-list growth primitives.
-  HWRT handles and paired DRM submissions now exist in this branch.
+  HWRT handles and paired DRM submissions are implemented.
   Exact intra-pair sync dependencies use firmware ordering in host contracts.
   External waits retain their error paths and bounded forward-dependency checks.
   Combined-KICK queue transport has actual-source validation and failure tests.
   Device-owned free-list IDs route GROW callbacks under the existing gates.
   The free-list fixture keeps backing buffers alive through its page-count checks.
-  These graphics branch changes have no physical acceptance.
+  The matched kernel boots and repeats all 21 preparation stages and Vulkan compute.
+  Graphics execution and firmware GROW still have no physical acceptance.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,
@@ -957,11 +963,12 @@ The base system shell is unchanged.
   aarch64 missing a reschedule, and the SD host controller driver.
   Source changes preserve their provenance; `ember/patches` records the
   original board adaptations already applied to this tree.
-- **Current kernel on Orange Pi Zero 3W:** a clean EMBER64 build boots on
-  physical A733 hardware, passes all 16 memfd tests and a checked Wi-Fi
-  round trip. The [board receipt](ember/boards/orange-pi-zero-3w.md#current-kernel-check-2026-10-07)
-  records the kernel hashes, matching modules and remaining userland and
-  accelerator limits.
+- **Current kernel on Orange Pi Zero 3W:** GCC16 EMBER64 revision `4d9b68f3ec48`
+  boots with matched modules and DTBs. The [compute receipt](ember/boot/a733-pvr-execution.md#physical-compute-boundary)
+  records 21 preparation stages and three native Vulkan compute lifecycles.
+  The maximum of 155 temperature samples is 62.310 degrees Celsius.
+  The earlier [board receipt](ember/boards/orange-pi-zero-3w.md#current-kernel-check-2026-10-07)
+  separately records 16 memfd tests and a checked Wi-Fi round trip.
 - **AArch64 numerical correctness:** an [initial FP state correction](ember/boot/aarch64-fp-state.md)
   addresses lost subnormal values and NaN payloads on CPUs without AArch32.
   Production contracts and native object compilation pass. Three runtime
