@@ -467,6 +467,8 @@ int main(void)
 	struct rtw88_pci_softc p;
 	unsigned stages;
 	reset(&p);
+	CHECK(rtwce_bootstrap(1) == ENXIO);
+	CHECK(rtwce_started() == 0);
 	CHECK(rtw88_pci_match(NULL, NULL, &fixture_pa) == 1);
 	struct pci_attach_args other = fixture_pa;
 	other.pa_id = 0xc82110ecU;
@@ -474,6 +476,8 @@ int main(void)
 	rtw88_pci_attach(NULL, &p, &fixture_pa);
 	CHECK(p.sc_core.sc_resources_ready && p.sc_core.sc_nring == 9);
 	CHECK(f.irq == 1 && f.errors == 0 && f.master_writes == 0);
+	CHECK(rtwce_bootstrap(1) == ENOENT);
+	CHECK(rtwce_started() == 0 && f.master_writes == 0);
 	stages = f.step;
 	CHECK(stages >= 40);
 	if (p.sc_core.sc_resources_ready) {

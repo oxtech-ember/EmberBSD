@@ -51,6 +51,26 @@ struct rtw88_pci_dma {
 };
 
 static int rtw88_pci_detach(device_t, int);
+static struct rtw88_softc *rtwce_sc;
+
+int
+rtwce_started(void)
+{
+
+	return rtwce_sc != NULL && rtwce_sc->sc_started;
+}
+
+int
+rtwce_bootstrap(int on)
+{
+
+	if (rtwce_sc == NULL || !rtwce_sc->sc_resources_ready)
+		return ENXIO;
+	if (on)
+		return rtw88_start(rtwce_sc);
+	rtw88_stop(rtwce_sc);
+	return 0;
+}
 
 static int
 rtw88_pci_present(struct rtw88_pci_softc *psc)
@@ -452,6 +472,7 @@ rtw88_pci_attach(device_t parent, device_t self, void *aux)
 	error = rtw88_core_attach(sc);
 	if (error != 0)
 		goto fail;
+	rtwce_sc = sc;
 	aprint_normal_dev(self, "resources ready; radio and DMA remain disabled\n");
 	return;
 fail:
@@ -465,12 +486,14 @@ rtw88_pci_detach(device_t self, int flags)
 	struct rtw88_pci_softc *psc = device_private(self);
 
 	(void)flags;
-	/* Mastering was never enabled; keep it disabled before freeing DMA. */
+	/* stop clears bus mastering before this restores the saved command. */
 	if (psc->sc_command_saved && rtw88_pci_present(psc))
 		pci_conf_write(psc->sc_pa.pa_pc, psc->sc_pa.pa_tag,
 		    PCI_COMMAND_STATUS_REG, psc->sc_command |
 		    (psc->sc_mapped ? PCI_COMMAND_MEM_ENABLE : 0));
 	rtw88_core_detach(&psc->sc_core);
+	if (rtwce_sc == &psc->sc_core)
+		rtwce_sc = NULL;
 	if (psc->sc_lock_initialized) {
 		mutex_destroy(&psc->sc_lock);
 		psc->sc_lock_initialized = 0;

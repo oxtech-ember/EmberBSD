@@ -9,6 +9,7 @@
 #include <sys/systm.h>
 #else
 #include <errno.h>
+#include <stdio.h>
 #include <string.h>
 #endif
 
@@ -217,6 +218,8 @@ rtw8822c_poll_bit(struct rtw88_softc *sc, uint32_t addr, uint8_t mask,
 			return 0;
 		sc->sc_ops->delay_us(sc->sc_bus, 50);
 	}
+	printf("rtwce: power poll timeout reg %#x mask %#x last %#x\n",
+	    addr, mask, v);
 	return ETIMEDOUT;
 }
 

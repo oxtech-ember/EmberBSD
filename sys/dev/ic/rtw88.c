@@ -34,6 +34,26 @@
 #define RTW88_REG_HMETFR	0x01cc
 #define RTW88_REG_HMEBOX0	0x01d0
 #define RTW88_REG_HMEBOX0_EX	0x01f0
+#define RTW88_RING_BCN		4
+#define RTW88_QSEL_BEACON	16
+#define RTW88_REG_SYS_FUNC_EN	0x0002
+#define RTW88_REG_SYS_CLK	0x0008
+#define RTW88_REG_RSV_CTRL	0x001c
+#define RTW88_REG_CR		0x0100
+#define RTW88_REG_TXDMA_PQ	0x010c
+#define RTW88_REG_FIFOPAGE_2	0x0204
+#define RTW88_REG_RQPN_CTRL2	0x022c
+#define RTW88_REG_FIFOPAGE_1	0x0230
+#define RTW88_REG_TXBD_DESA_BCN	0x0308
+#define RTW88_REG_PCI_CTRL	0x0300
+#define RTW88_REG_BCN_WORK	0x0383
+#define RTW88_REG_FWHW_TXQ	0x0420
+#define RTW88_REG_BCN_CTRL	0x0550
+#define RTW88_REG_CPU_DMEM	0x1080
+#define RTW88_REG_H2CQ_CSR	0x1330
+#define RTW88_BCN_WORK_FLAG	0x10
+#define RTW88_BD_OWN		0x8000
+#define RTW88_BCN_VALID		0x8000
 
 static int
 rtw88_poll(struct rtw88_softc *sc, uint32_t gen, unsigned budget_us,
@@ -88,6 +108,259 @@ rtw88_ready8(struct rtw88_softc *sc, void *arg)
 	return ((v & (uint8_t)p->mask) == (uint8_t)p->value) ? 0 : 1;
 }
 
+static void
+rtw88_put16(uint8_t *p, uint16_t v)
+{
+
+	p[0] = (uint8_t)v;
+	p[1] = (uint8_t)(v >> 8);
+}
+
+static void
+rtw88_put32(uint8_t *p, uint32_t v)
+{
+
+	p[0] = (uint8_t)v;
+	p[1] = (uint8_t)(v >> 8);
+	p[2] = (uint8_t)(v >> 16);
+	p[3] = (uint8_t)(v >> 24);
+}
+
+static int
+rtw88_rmw8(struct rtw88_softc *sc, uint32_t addr, uint8_t clear, uint8_t set)
+{
+	uint8_t v;
+	int error;
+
+	error = sc->sc_ops->read_1(sc->sc_bus, addr, &v);
+	if (error != 0)
+		return error;
+	v = (uint8_t)((v & ~clear) | set);
+	return sc->sc_ops->write_1(sc->sc_bus, addr, v);
+}
+
+static int
+rtw88_beacon_idle(struct rtw88_softc *sc, void *arg)
+{
+	uint8_t *bd;
+	uint16_t psb;
+
+	(void)arg;
+	bd = sc->sc_ring[RTW88_RING_BCN].vaddr;
+	if (bd == NULL)
+		return -ENXIO;
+	sc->sc_ops->dma_sync(sc->sc_bus, &sc->sc_ring[RTW88_RING_BCN],
+	    BUS_DMASYNC_PREREAD);
+	psb = (uint16_t)bd[2] | (uint16_t)bd[3] << 8;
+	return (psb & RTW88_BD_OWN) != 0;
+}
+
+/*
+ * The chip DDMA source is its internal TX buffer, not the host mapping.
+ * A beacon-queue descriptor must copy the chunk there before DDMA runs.
+ */
+static int
+rtw88_post_fw_chunk(struct rtw88_softc *sc, uint32_t gen, size_t len)
+{
+	struct rtw88_tx_info tx;
+	struct rtw88_dma *bcn = &sc->sc_ring[RTW88_RING_BCN];
+	uint8_t *bd;
+	uint32_t total, psb, dma;
+	uint8_t v;
+	int error;
+
+	if (bcn->vaddr == NULL || bcn->size < RTW8822C_TX_BUFFER_DESC_SIZE)
+		return ENXIO;
+	if (sc->sc_fw_dma.addr > UINT32_MAX || bcn->addr > UINT32_MAX)
+		return EOVERFLOW;
+	memset(&tx, 0, sizeof(tx));
+	tx.packet_size = (uint32_t)len;
+	tx.queue = RTW88_QSEL_BEACON;
+	tx.rate_id = 8;
+	tx.flags = RTW88_TX_DIS_QSELSEQ | RTW88_TX_USE_RATE |
+	    RTW88_TX_DIS_RATE_FB | RTW88_TX_HWSEQ;
+	error = rtw88_tx_encode(sc->sc_fw_dma.vaddr, sc->sc_fw_dma.size, &tx);
+	if (error != 0)
+		return error;
+	bd = bcn->vaddr;
+	memset(bd, 0, RTW8822C_TX_BUFFER_DESC_SIZE);
+	total = (uint32_t)len + RTW88_TX_DESC;
+	psb = (total - 1) / 128 + 1;
+	psb |= RTW88_BD_OWN;
+	dma = (uint32_t)sc->sc_fw_dma.addr;
+	rtw88_put16(bd, RTW88_TX_DESC);
+	rtw88_put16(bd + 2, (uint16_t)psb);
+	rtw88_put32(bd + 4, dma);
+	rtw88_put16(bd + 8, (uint16_t)len);
+	rtw88_put32(bd + 12, dma + RTW88_TX_DESC);
+	sc->sc_ops->dma_sync(sc->sc_bus, &sc->sc_fw_dma, BUS_DMASYNC_PREWRITE);
+	sc->sc_ops->dma_sync(sc->sc_bus, bcn, BUS_DMASYNC_PREWRITE);
+	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_TXBD_DESA_BCN,
+	    (uint32_t)bcn->addr);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_FIFOPAGE_2,
+	    RTW88_BCN_VALID);
+	if (error != 0)
+		return error;
+	error = rtw88_rmw8(sc, RTW88_REG_CR + 1, 0, 0x01);
+	if (error != 0)
+		return error;
+	error = rtw88_rmw8(sc, RTW88_REG_BCN_CTRL, 0x08, 0x10);
+	if (error != 0)
+		return error;
+	error = rtw88_rmw8(sc, RTW88_REG_FWHW_TXQ + 2, 0x40, 0);
+	if (error != 0)
+		return error;
+	error = rtw88_rmw8(sc, RTW88_REG_BCN_WORK, 0, RTW88_BCN_WORK_FLAG);
+	if (error != 0)
+		return error;
+	error = rtw88_poll(sc, gen, RTW88_COMMAND_US, rtw88_beacon_idle, &v);
+	if (error != 0) {
+		uint32_t desa = 0, cr = 0;
+
+		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_TXBD_DESA_BCN,
+		    &desa);
+		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_CR, &cr);
+		printf("rtwce: firmware beacon queue timed out "
+		    "bd %#lx data %#lx desa %#x cr %#x own %#x\n",
+		    (unsigned long)sc->sc_ring[RTW88_RING_BCN].addr,
+		    (unsigned long)sc->sc_fw_dma.addr, desa, cr,
+		    (unsigned)bd[2] | (unsigned)bd[3] << 8);
+		return error;
+	}
+	return 0;
+}
+
+static int rtw88_publish_rings(struct rtw88_softc *);
+
+static int
+rtw88_fw_prepare(struct rtw88_softc *sc)
+{
+	uint32_t rqpn, dmem;
+	uint8_t pci;
+	int error;
+
+	error = rtw88_rmw8(sc, RTW88_REG_SYS_FUNC_EN + 1, 0x04, 0);
+	if (error != 0)
+		return error;
+	error = rtw88_rmw8(sc, RTW88_REG_RSV_CTRL + 1, 0x01, 0);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_TXDMA_PQ + 1, 0xc0);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_CR, 0x05);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_H2CQ_CSR,
+	    UINT32_C(0x80000000));
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_FIFOPAGE_1, 0x0200);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_RQPN_CTRL2, &rqpn);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_RQPN_CTRL2,
+	    rqpn | UINT32_C(0x80000000));
+	if (error != 0)
+		return error;
+	error = rtw88_rmw8(sc, RTW88_REG_BCN_CTRL, 0x08, 0x10);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_CPU_DMEM, &dmem);
+	if (error != 0)
+		return error;
+	dmem |= UINT32_C(0x00010100);
+	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_CPU_DMEM, dmem);
+	if (error != 0)
+		return error;
+	error = rtw88_rmw8(sc, RTW88_REG_CPU_DMEM + 2, 0x01, 0);
+	if (error != 0)
+		return error;
+	error = rtw88_rmw8(sc, RTW88_REG_SYS_CLK + 1, 0x40, 0);
+	if (error != 0)
+		return error;
+	error = rtw88_rmw8(sc, RTW88_REG_CPU_DMEM + 2, 0, 0x01);
+	if (error != 0)
+		return error;
+	error = rtw88_rmw8(sc, RTW88_REG_SYS_CLK + 1, 0, 0x40);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_PCI_CTRL + 3, &pci);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_PCI_CTRL + 3,
+	    (uint8_t)(pci | 0xf7));
+	if (error != 0)
+		return error;
+	return rtw88_publish_rings(sc);
+}
+
+static int
+rtw88_write_ring(struct rtw88_softc *sc, uint32_t desa, uint32_t num,
+    int with_num, unsigned index, unsigned desc)
+{
+	struct rtw88_dma *ring = &sc->sc_ring[index];
+	int error;
+
+	if (ring->vaddr == NULL || ring->addr > UINT32_MAX ||
+	    desc == 0 || ring->size < desc || (ring->size % desc) != 0)
+		return EINVAL;
+	error = sc->sc_ops->write_4(sc->sc_bus, desa, (uint32_t)ring->addr);
+	if (error != 0 || !with_num)
+		return error;
+	return sc->sc_ops->write_2(sc->sc_bus, num,
+	    (uint16_t)((ring->size / desc) & 0xfff));
+}
+
+/* Publish allocated rings, then release the TRX DMA interface from reset. */
+static int
+rtw88_publish_rings(struct rtw88_softc *sc)
+{
+	uint32_t ctrl;
+	int error;
+
+	error = rtw88_write_ring(sc, 0x0330, 0x038a, 1, 0, 16);
+	if (error != 0)
+		return error;
+	error = rtw88_write_ring(sc, 0x0328, 0x0388, 1, 1, 16);
+	if (error != 0)
+		return error;
+	error = rtw88_write_ring(sc, 0x0320, 0x0386, 1, 2, 16);
+	if (error != 0)
+		return error;
+	error = rtw88_write_ring(sc, 0x0318, 0x0384, 1, 3, 16);
+	if (error != 0)
+		return error;
+	error = rtw88_write_ring(sc, RTW88_REG_TXBD_DESA_BCN, 0, 0,
+	    RTW88_RING_BCN, 16);
+	if (error != 0)
+		return error;
+	error = rtw88_write_ring(sc, 0x0310, 0x0380, 1, 5, 16);
+	if (error != 0)
+		return error;
+	error = rtw88_write_ring(sc, 0x0340, 0x038c, 1, 6, 16);
+	if (error != 0)
+		return error;
+	error = rtw88_write_ring(sc, 0x1320, 0x1328, 1, 7, 16);
+	if (error != 0)
+		return error;
+	error = rtw88_write_ring(sc, 0x0338, 0x0382, 1, 8, 8);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->write_4(sc->sc_bus, 0x039c, 0xffffffff);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_PCI_CTRL, &ctrl);
+	if (error != 0)
+		return error;
+	return sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_PCI_CTRL,
+	    ctrl | UINT32_C(0x00108000));
+}
+
 static int
 rtw88_iddma_chunk(struct rtw88_softc *sc, uint32_t gen, const uint8_t *data,
     size_t len, uint32_t dst, int first)
@@ -99,9 +372,10 @@ rtw88_iddma_chunk(struct rtw88_softc *sc, uint32_t gen, const uint8_t *data,
 	if (sc->sc_fw_dma.vaddr == NULL ||
 	    len + RTW88_TX_DESC > sc->sc_fw_dma.size)
 		return EOVERFLOW;
-	memset(sc->sc_fw_dma.vaddr, 0, RTW88_TX_DESC);
 	memcpy((uint8_t *)sc->sc_fw_dma.vaddr + RTW88_TX_DESC, data, len);
-	sc->sc_ops->dma_sync(sc->sc_bus, &sc->sc_fw_dma, BUS_DMASYNC_PREWRITE);
+	error = rtw88_post_fw_chunk(sc, gen, len);
+	if (error != 0)
+		return error;
 	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_DDMA_SA,
 	    RTW88_OCP_TXBUF + RTW88_TX_DESC);
 	if (error != 0)
@@ -119,7 +393,10 @@ rtw88_iddma_chunk(struct rtw88_softc *sc, uint32_t gen, const uint8_t *data,
 	own.reg = RTW88_REG_DDMA_CTRL;
 	own.mask = RTW88_DDMA_OWN;
 	own.value = 0;
-	return rtw88_poll(sc, gen, RTW88_COMMAND_US, rtw88_ready32, &own);
+	error = rtw88_poll(sc, gen, RTW88_COMMAND_US, rtw88_ready32, &own);
+	if (error != 0)
+		printf("rtwce: firmware DDMA timed out\n");
+	return error;
 }
 
 static int
@@ -167,6 +444,9 @@ rtw88_fw_download(struct rtw88_softc *sc, uint32_t gen, const uint8_t *fw,
 	error = sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_MCUFW_CTRL, ctrl);
 	if (error != 0)
 		return error;
+	error = rtw88_fw_prepare(sc);
+	if (error != 0)
+		return error;
 	error = rtw88_download_section(sc, gen, fw, &info->dmem);
 	if (error != 0)
 		return error;
@@ -194,7 +474,16 @@ rtw88_fw_download(struct rtw88_softc *sc, uint32_t gen, const uint8_t *fw,
 	 */
 	ready.mask = RTW88_FW_READY;
 	ready.value = RTW88_FW_READY;
-	return rtw88_poll(sc, gen, RTW88_BOOTSTRAP_US, rtw88_ready32, &ready);
+	error = rtw88_rmw8(sc, RTW88_REG_RSV_CTRL + 1, 0, 0x01);
+	if (error != 0)
+		return error;
+	error = rtw88_rmw8(sc, RTW88_REG_SYS_FUNC_EN + 1, 0, 0x04);
+	if (error != 0)
+		return error;
+	error = rtw88_poll(sc, gen, RTW88_BOOTSTRAP_US, rtw88_ready32, &ready);
+	if (error != 0)
+		printf("rtwce: firmware ready timed out\n");
+	return error;
 }
 
 static void
@@ -219,6 +508,14 @@ rtw88_stop(struct rtw88_softc *sc)
 		sc->sc_powered = 0;
 	}
 	if (sc->sc_dma_master && sc->sc_ops->bus_master != NULL) {
+		static const uint32_t desa[] = {
+			0x0330, 0x0328, 0x0320, 0x0318, RTW88_REG_TXBD_DESA_BCN,
+			0x0310, 0x0340, 0x1320, 0x0338
+		};
+		unsigned i;
+
+		for (i = 0; i < __arraycount(desa); i++)
+			(void)sc->sc_ops->write_4(sc->sc_bus, desa[i], 0);
 		(void)sc->sc_ops->bus_master(sc->sc_bus, 0);
 		sc->sc_dma_master = 0;
 	}
@@ -273,8 +570,10 @@ rtw88_start(struct rtw88_softc *sc)
 		goto fail;
 	sc->sc_dma_master = 1;
 	error = rtw8822c_power(sc, 1);
-	if (error != 0)
+	if (error != 0) {
+		printf("rtwce: power on failed: %d\n", error);
 		goto fail;
+	}
 	sc->sc_powered = 1;
 	error = rtw88_fw_download(sc, gen, fw, &info);
 	if (error != 0)

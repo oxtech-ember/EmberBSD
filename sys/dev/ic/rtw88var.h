@@ -79,5 +79,8 @@ void rtw88_core_detach(struct rtw88_softc *);
 int rtw88_start(struct rtw88_softc *);
 void rtw88_stop(struct rtw88_softc *);
 int rtw88_fw_command(struct rtw88_softc *, uint8_t, const void *, size_t);
+/* Operator trigger. 1 starts, 0 stops. ENXIO until resources are ready. */
+int rtwce_bootstrap(int);
+int rtwce_started(void);
 
 #endif /* _DEV_IC_RTW88VAR_H_ */

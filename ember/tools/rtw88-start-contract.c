@@ -38,6 +38,7 @@ static struct {
 	int busy_box;
 	int fw_never_ready;
 	int stop_at_delay;
+	int bcn_ready;
 	unsigned delays;
 	unsigned writes;
 	unsigned cfg_writes;
@@ -149,8 +150,14 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 	}
 	if (reg == 0x0080 && !f.fw_never_ready)
 		v |= 0xc078;
-	if (reg == 0x1208)
+	/*
+	 * Internal DDMA completes only after a beacon kick consumed the
+	 * host chunk. Otherwise OWN stays set and the download times out.
+	 */
+	if (reg == 0x1208 && f.bcn_ready) {
 		v &= ~(UINT32_C(1) << 31);
+		f.bcn_ready = 0;
+	}
 	*out = v;
 	return 0;
 }
@@ -170,6 +177,26 @@ write_1(void *cookie, uint32_t reg, uint8_t val)
 	f.mmio[reg] = val;
 	if (reg == 0x05)
 		f.mmio[reg] &= (uint8_t)~0x03;
+	if (reg == 0x383 && (val & 0x10) != 0 && f.sc != NULL &&
+	    f.sc->sc_ring[4].vaddr != NULL && f.sc->sc_fw_dma.vaddr != NULL) {
+		uint8_t *bd = f.sc->sc_ring[4].vaddr;
+		uint32_t desa = (uint32_t)f.mmio[0x308] |
+		    (uint32_t)f.mmio[0x309] << 8 |
+		    (uint32_t)f.mmio[0x30a] << 16 |
+		    (uint32_t)f.mmio[0x30b] << 24;
+		uint32_t dma = (uint32_t)bd[4] | (uint32_t)bd[5] << 8 |
+		    (uint32_t)bd[6] << 16 | (uint32_t)bd[7] << 24;
+		uint16_t psb = (uint16_t)bd[2] | (uint16_t)bd[3] << 8;
+
+		if (desa == (uint32_t)f.sc->sc_ring[4].addr &&
+		    dma == (uint32_t)f.sc->sc_fw_dma.addr &&
+		    (psb & 0x8000) != 0) {
+			psb = (uint16_t)(psb & (uint16_t)~0x8000);
+			bd[2] = (uint8_t)psb;
+			bd[3] = (uint8_t)(psb >> 8);
+			f.bcn_ready = 1;
+		}
+	}
 	return 0;
 }
 
@@ -464,6 +491,26 @@ test_command_length(void)
 		return;
 	CHECK(rtw88_start(&sc) == 0);
 	CHECK(sc.sc_rf_enabled);
+	if (sc.sc_rf_enabled) {
+		uint8_t *bd = sc.sc_ring[4].vaddr;
+		uint8_t *pkt = sc.sc_fw_dma.vaddr;
+		uint32_t dma, desa;
+		uint16_t pkt_size, seg1;
+
+		CHECK(bd != NULL && pkt != NULL);
+		dma = (uint32_t)bd[4] | (uint32_t)bd[5] << 8 |
+		    (uint32_t)bd[6] << 16 | (uint32_t)bd[7] << 24;
+		desa = (uint32_t)f.mmio[0x308] | (uint32_t)f.mmio[0x309] << 8 |
+		    (uint32_t)f.mmio[0x30a] << 16 |
+		    (uint32_t)f.mmio[0x30b] << 24;
+		pkt_size = (uint16_t)pkt[0] | (uint16_t)pkt[1] << 8;
+		seg1 = (uint16_t)bd[8] | (uint16_t)bd[9] << 8;
+		CHECK(dma == (uint32_t)sc.sc_fw_dma.addr);
+		CHECK(desa == (uint32_t)sc.sc_ring[4].addr);
+		CHECK(pkt_size == 2008 && seg1 == 2008);
+		CHECK(f.mmio[0x100] == 0x05);
+		CHECK((bd[3] & 0x80) == 0);
+	}
 	CHECK(rtw88_fw_command(&sc, 1, buf, 8) == EMSGSIZE);
 	CHECK(rtw88_fw_command(&sc, 1, buf, 7) == 0);
 	rtw88_stop(&sc);

@@ -474,3 +474,41 @@ Run `sh ember/tools/rtw88-pci-contract.sh` for actual PCI/core source with
 fake native bus APIs. It tests each acquisition failure, complete unwind,
 32-bit range crossing, map geometry, masked IRQ lifetime and device removal.
 The existing firmware/EFUSE/descriptor contract remains independently runnable.
+
+## Office bootstrap on 2026-10-16
+
+`hw.rtwce_bootstrap` is the operator trigger. Write 1 calls `rtw88_start`;
+write 0 calls `rtw88_stop`. Attach still does not start the radio. A missing
+firmware image returns before bus master is enabled.
+
+DDMA reads the chip TX buffer at `0x18780000+48`, not the host mapping.
+`rtw88_start` publishes the allocated empty TX/RX rings, sets PCI control
+bits 15 and 20, then posts each firmware chunk on the one-entry beacon ring
+and kicks `0x383` bit 4. Internal DDMA runs only after that descriptor's
+OWN bit clears. The rings are not kicked for data. Stop clears the published
+base addresses and bus master. Host results after this change: start
+contract 76/0, PCI contract 5339/0.
+
+The office Orange Pi 6 Plus used the diagnostic RAM root and FFS `dk1`.
+The accepted rollback image was not modified. Pinned firmware
+`rtw8822c_fw.bin` was copied to `/libdata/firmware/rtwce/` and checked:
+202456 bytes, SHA256
+`36b483e37640359a6c686be4661b5f2d94928f93e126a2de09e67c5e04c01b26`.
+The RAM root drops that file on reboot. FFS keeps `netbsd.7c29a5ba`,
+`netbsd.a0f81da8` and `netbsd.task5-boot`.
+
+| Image | BUILDINFO | Size | SHA256 | Silicon |
+| --- | --- | ---: | --- | --- |
+| task5-boot | `EmberBSD:task5-boot` | 17895496 | `6c1a467f2336fb549e14475fcbabcf563f9051a2f80a908ab75c96485b8bc423` | booted; `rtwce0` quiescent; bootstrap returned ETIMEDOUT in about 1.6s with no stage line |
+| task5-fwpost | `EmberBSD:task5-fwpost` | 17895672 | `0c3aaa1a2836c50f63a5b0ef86f60eabcea138e582ce5aafcbe45a593f09d139` | booted as EMBER64 #3; same quiescent attach |
+| task5-dma | `EmberBSD:task5-dma` | 17895752 | `d6a9b8ac44a6ccde25a8024086f4f76a9d9ba8ebf5390d731c5cc2def839a2f2` | built only; not installed and not booted |
+
+`task5-fwpost` is the kernel left on `dk1`. Its dmesg line is
+`rtwce: firmware beacon queue timed out` at 61.8576046s. There was no
+power-poll line, so identity and the power sequence returned before the
+beacon wait. Internal DDMA did not run. Wi-Fi is not up.
+
+The Mac USB Ethernet service stays manual at `192.168.2.1/24`, but the
+address can leave `en7` until the service is toggled. The board uses
+`rge1` at `192.168.2.8/24`. DHCP on the board times out when no server is
+offered.
