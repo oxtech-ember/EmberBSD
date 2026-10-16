@@ -39,6 +39,7 @@ static struct {
 	int fw_never_ready;
 	int stop_at_delay;
 	int bcn_ready;
+	int bcn_dead;
 	unsigned delays;
 	unsigned writes;
 	unsigned cfg_writes;
@@ -188,12 +189,16 @@ write_1(void *cookie, uint32_t reg, uint8_t val)
 		    (uint32_t)bd[6] << 16 | (uint32_t)bd[7] << 24;
 		uint16_t psb = (uint16_t)bd[2] | (uint16_t)bd[3] << 8;
 
-		if (desa == (uint32_t)f.sc->sc_ring[4].addr &&
+		/*
+		 * Reference rtw88: the beacon queue has no completion
+		 * write-back. The chip leaves the host OWN bit set and
+		 * reports the copy through BCN_VALID in FIFOPAGE_CTRL_2.
+		 */
+		if (!f.bcn_dead &&
+		    desa == (uint32_t)f.sc->sc_ring[4].addr &&
 		    dma == (uint32_t)f.sc->sc_fw_dma.addr &&
 		    (psb & 0x8000) != 0) {
-			psb = (uint16_t)(psb & (uint16_t)~0x8000);
-			bd[2] = (uint8_t)psb;
-			bd[3] = (uint8_t)(psb >> 8);
+			f.mmio[0x205] |= 0x80;
 			f.bcn_ready = 1;
 		}
 	}
@@ -214,6 +219,9 @@ write_2(void *cookie, uint32_t reg, uint16_t val)
 		f.cfg_writes++;
 	f.mmio[reg] = (uint8_t)val;
 	f.mmio[reg + 1] = (uint8_t)(val >> 8);
+	/* BCN_VALID is write-one-to-clear. */
+	if (reg == 0x204)
+		f.mmio[0x205] &= (uint8_t)~0x80;
 	return 0;
 }
 
@@ -509,7 +517,9 @@ test_command_length(void)
 		CHECK(desa == (uint32_t)sc.sc_ring[4].addr);
 		CHECK(pkt_size == 2008 && seg1 == 2008);
 		CHECK(f.mmio[0x100] == 0x05);
-		CHECK((bd[3] & 0x80) == 0);
+		/* No beacon write-back: OWN stays, the chip sets BCN_VALID. */
+		CHECK((bd[3] & 0x80) != 0);
+		CHECK((f.mmio[0x205] & 0x80) != 0);
 	}
 	CHECK(rtw88_fw_command(&sc, 1, buf, 8) == EMSGSIZE);
 	CHECK(rtw88_fw_command(&sc, 1, buf, 7) == 0);
@@ -531,6 +541,22 @@ test_command_timeout(void)
 	f.busy_box = 1;
 	CHECK(rtw88_fw_command(&sc, 1, buf, 1) == ETIMEDOUT);
 	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+/* The chip never reports BCN_VALID: bounded failure, mastering cleared. */
+static void
+test_beacon_never_valid(void)
+{
+	struct rtw88_softc sc;
+
+	reset_bus(&sc);
+	f.bcn_dead = 1;
+	if (!attach_ok(&sc))
+		return;
+	CHECK(rtw88_start(&sc) == ETIMEDOUT);
+	CHECK(!sc.sc_rf_enabled && f.master == 0);
+	CHECK((f.mmio[0x205] & 0x80) == 0);
 	rtw88_core_detach(&sc);
 }
 
@@ -612,6 +638,7 @@ main(void)
 	test_unsupported_identity();
 	test_command_length();
 	test_command_timeout();
+	test_beacon_never_valid();
 	test_stop_during_bootstrap();
 	test_stale_generation();
 	test_success_consumes_tables();

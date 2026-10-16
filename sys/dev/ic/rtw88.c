@@ -139,22 +139,6 @@ rtw88_rmw8(struct rtw88_softc *sc, uint32_t addr, uint8_t clear, uint8_t set)
 	return sc->sc_ops->write_1(sc->sc_bus, addr, v);
 }
 
-static int
-rtw88_beacon_idle(struct rtw88_softc *sc, void *arg)
-{
-	uint8_t *bd;
-	uint16_t psb;
-
-	(void)arg;
-	bd = sc->sc_ring[RTW88_RING_BCN].vaddr;
-	if (bd == NULL)
-		return -ENXIO;
-	sc->sc_ops->dma_sync(sc->sc_bus, &sc->sc_ring[RTW88_RING_BCN],
-	    BUS_DMASYNC_PREREAD);
-	psb = (uint16_t)bd[2] | (uint16_t)bd[3] << 8;
-	return (psb & RTW88_BD_OWN) != 0;
-}
-
 /*
  * The chip DDMA source is its internal TX buffer, not the host mapping.
  * A beacon-queue descriptor must copy the chunk there before DDMA runs.
@@ -164,9 +148,9 @@ rtw88_post_fw_chunk(struct rtw88_softc *sc, uint32_t gen, size_t len)
 {
 	struct rtw88_tx_info tx;
 	struct rtw88_dma *bcn = &sc->sc_ring[RTW88_RING_BCN];
+	struct rtw88_poll32 valid;
 	uint8_t *bd;
 	uint32_t total, psb, dma;
-	uint8_t v;
 	int error;
 
 	if (bcn->vaddr == NULL || bcn->size < RTW8822C_TX_BUFFER_DESC_SIZE)
@@ -215,17 +199,27 @@ rtw88_post_fw_chunk(struct rtw88_softc *sc, uint32_t gen, size_t len)
 	error = rtw88_rmw8(sc, RTW88_REG_BCN_WORK, 0, RTW88_BCN_WORK_FLAG);
 	if (error != 0)
 		return error;
-	error = rtw88_poll(sc, gen, RTW88_COMMAND_US, rtw88_beacon_idle, &v);
+	/*
+	 * The beacon queue has no completion write-back: the host OWN bit
+	 * stays set. The chip reports the copy by setting BCN_VALID.
+	 */
+	valid.reg = RTW88_REG_FIFOPAGE_2 + 1;
+	valid.mask = RTW88_BCN_VALID >> 8;
+	valid.value = RTW88_BCN_VALID >> 8;
+	error = rtw88_poll(sc, gen, RTW88_COMMAND_US, rtw88_ready8, &valid);
 	if (error != 0) {
 		uint32_t desa = 0, cr = 0;
+		uint16_t page = 0;
 
 		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_TXBD_DESA_BCN,
 		    &desa);
 		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_CR, &cr);
+		(void)sc->sc_ops->read_2(sc->sc_bus, RTW88_REG_FIFOPAGE_2,
+		    &page);
 		printf("rtwce: firmware beacon queue timed out "
-		    "bd %#lx data %#lx desa %#x cr %#x own %#x\n",
+		    "bd %#lx data %#lx desa %#x cr %#x page %#x own %#x\n",
 		    (unsigned long)sc->sc_ring[RTW88_RING_BCN].addr,
-		    (unsigned long)sc->sc_fw_dma.addr, desa, cr,
+		    (unsigned long)sc->sc_fw_dma.addr, desa, cr, page,
 		    (unsigned)bd[2] | (unsigned)bd[3] << 8);
 		return error;
 	}
