@@ -91,6 +91,7 @@ struct drm_file {
 };
 #define to_drm_gem_cma_obj(p) container_of(p,struct drm_gem_cma_object,base)
 #include "uapi-body.h"
+#include "../../sys/external/bsd/drm2/bcmv3d/bcmv3d_bo_stats.h"
 #include "drv-body.h"
 
 static unsigned checks, fail, allocated, mapped, maps, loaded, ranges, gems;

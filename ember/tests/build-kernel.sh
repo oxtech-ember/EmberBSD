@@ -86,7 +86,7 @@ if [ "${FAIL_AT:-}" = network-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; the
 fi
 SH
 done
-for contract in drm-prime-map drm-dmabuf-lifetime bcm2712-v3d-prime simplefb drm-hotplug; do
+for contract in drm-prime-map drm-dmabuf-lifetime bcm2712-v3d-prime simplefb drm-hotplug bcm2712-v3d-bo-stats; do
     : > "$work/src/ember/tools/$contract-contract.rb"
 done
 cat > "$work/bin/ruby" <<'SCRIPT'
@@ -209,7 +209,7 @@ check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
     test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 20
     test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 21
-    test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 5
+    test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 6
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 8
 }
 export TEST_OUT="$work/cross"
@@ -249,7 +249,7 @@ if_cemac_acpi.kmod bcm2712btcom.kmod rp1wmcodec.kmod rpi5button.kmod'
 for failure in tools module cpp dtb contract a733-contract \
     a733-gpu-vm-contract.sh gpu-contract bcm2712-display-contract.sh \
     bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
-    bcm2712-v3d-prime-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
+    bcm2712-v3d-prime-contract.rb bcm2712-v3d-bo-stats-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
     aicwf-sta.sh aicwf-vht.sh publish; do
     : > "$TEST_LOG"
     for output in $outputs; do
