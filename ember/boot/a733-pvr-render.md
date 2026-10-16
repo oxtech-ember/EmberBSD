@@ -5,8 +5,8 @@ It exposes the measured GPU identity through `DRM_IOCTL_PVR_DEV_QUERY`.
 It also allocates native DMA-backed GEM buffer objects with CPU mappings.
 It builds CPU-owned GPU VM tables and reports heap and static-area layouts.
 It derives runtime limits and compatibility lists from prepared firmware metadata.
-The [experimental execution path](a733-pvr-execution.md) adds contexts and compute jobs.
-Its physical Vulkan execution and Mesa rendering remain unaccepted.
+The [experimental execution path](a733-pvr-execution.md) adds contexts and native submissions.
+Three bounded physical Vulkan compute lifecycles pass. Mesa graphics rendering remains unaccepted.
 
 ## Ownership and registration
 
@@ -62,7 +62,8 @@ The driver advertises `DRIVER_RENDER`, `DRIVER_GEM`, and binary and timeline syn
 The [native syncobj check](drm-syncobj.md#native-api-acceptance) passes on Zero 3W.
 The accepted hardware results cover CPU-issued synchronization.
 The experimental compute path connects real firmware completion to these syncobjs.
-PRIME, display modes, and graphics submission remain unsupported.
+Paired graphics and transfer submissions have source contracts. Their physical execution remains unaccepted.
+PRIME and display modes remain unsupported.
 
 ## Buffer objects and CPU mappings
 
