@@ -13,6 +13,7 @@
 #include <drm/drm_file.h>
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/v3d_drm.h>
+#include "bcmv3d_bo_stats.h"
 
 #define BCMV3D_BO_MAX	(16 * 1024 * 1024)
 #define BCMV3D_BO_TOTAL	(64 * 1024 * 1024)
@@ -28,6 +29,8 @@ struct bcmv3d_device {
 	kmutex_t memory_lock;
 	vmem_t *va;
 	size_t allocated;
+	struct bcmv3d_bo_stats bo_stats;
+	struct sysctllog *sysctllog;
 	uint32_t ident[7];
 	struct bcmv3d_job *job;
 };
@@ -54,6 +57,7 @@ extern const struct uvm_pagerops bcmv3d_bo_uvm_ops;
 /* The engine page table and scratch require contiguous DMA storage. */
 struct bcmv3d_bo *bcmv3d_bo_alloc(struct bcmv3d_device *, uint32_t);
 int bcmv3d_create_bo(struct drm_device *, void *, struct drm_file *);
+void bcmv3d_bo_snapshot(struct bcmv3d_device *, struct bcmv3d_bo_stats *);
 int bcmv3d_mmap_bo(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_get_bo_offset(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_wait_bo(struct drm_device *, void *, struct drm_file *);

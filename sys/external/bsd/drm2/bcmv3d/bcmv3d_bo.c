@@ -39,6 +39,58 @@
 #include <drm/drm_vma_manager.h>
 #include "bcmv3d_drv.h"
 
+/* All counters and snapshots share memory_lock with the quota reservation. */
+static void
+bcmv3d_bo_count(uint64_t *counter)
+{
+
+	if (*counter != UINT64_MAX)
+		++*counter;
+}
+
+static void
+bcmv3d_bo_failure_locked(struct bcmv3d_device *sc,
+    enum bcmv3d_bo_failure_stage stage, uint32_t requested, size_t rounded,
+    int error)
+{
+	struct bcmv3d_bo_stats *stats = &sc->bo_stats;
+
+	KASSERT(stage > BCMV3D_BO_STAGE_NONE && stage < BCMV3D_BO_STAGE_COUNT);
+	KASSERT(error > 0);
+	bcmv3d_bo_count(&stats->failures);
+	bcmv3d_bo_count(&stats->failures_by_stage[stage]);
+	stats->last_requested_bytes = requested;
+	stats->last_rounded_bytes = rounded;
+	stats->last_reserved_bytes = sc->allocated;
+	stats->last_stage = stage;
+	stats->last_errno = error;
+}
+
+static void
+bcmv3d_bo_failure(struct bcmv3d_device *sc,
+    enum bcmv3d_bo_failure_stage stage, uint32_t requested, size_t rounded,
+    int error)
+{
+
+	mutex_enter(&sc->memory_lock);
+	bcmv3d_bo_failure_locked(sc, stage, requested, rounded, error);
+	mutex_exit(&sc->memory_lock);
+}
+
+void
+bcmv3d_bo_snapshot(struct bcmv3d_device *sc, struct bcmv3d_bo_stats *snapshot)
+{
+
+	mutex_enter(&sc->memory_lock);
+	*snapshot = sc->bo_stats;
+	snapshot->version = BCMV3D_BO_STATS_VERSION;
+	snapshot->length = sizeof(*snapshot);
+	snapshot->reserved_bytes = sc->allocated;
+	snapshot->limit_bytes = BCMV3D_BO_TOTAL;
+	snapshot->max_bo_bytes = BCMV3D_BO_MAX;
+	mutex_exit(&sc->memory_lock);
+}
+
 static void
 bcmv3d_bo_free(struct drm_gem_object *obj)
 {
@@ -58,6 +110,7 @@ bcmv3d_bo_free(struct drm_gem_object *obj)
 	vmem_free(sc->va, bo->gpu, cma->dmasize);
 	KASSERT(sc->allocated >= cma->dmasize);
 	sc->allocated -= cma->dmasize;
+	bcmv3d_bo_count(&sc->bo_stats.releases);
 	mutex_exit(&sc->memory_lock);
 	kmem_free(bo->dmasegs, bo->maxsegs * sizeof(*bo->dmasegs));
 	kmem_free(bo, sizeof(*bo));
@@ -77,8 +130,11 @@ bcmv3d_bo_alloc_internal(struct bcmv3d_device *sc, uint32_t requested,
 	size_t size, remaining;
 	int error, seg;
 
-	if (requested == 0 || requested > BCMV3D_BO_MAX)
+	if (requested == 0 || requested > BCMV3D_BO_MAX) {
+		bcmv3d_bo_failure(sc, BCMV3D_BO_STAGE_REQUEST, requested, 0,
+		    EINVAL);
 		return ERR_PTR(-EINVAL);
+	}
 	size = ((size_t)requested + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 	bo = kmem_zalloc(sizeof(*bo), KM_SLEEP);
 	cma = &bo->cma;
@@ -89,38 +145,59 @@ bcmv3d_bo_alloc_internal(struct bcmv3d_device *sc, uint32_t requested,
 	    KM_SLEEP);
 	mutex_enter(&sc->memory_lock);
 	if (size > BCMV3D_BO_TOTAL - sc->allocated) {
+		bcmv3d_bo_failure_locked(sc, BCMV3D_BO_STAGE_QUOTA,
+		    requested, size, ENOMEM);
 		mutex_exit(&sc->memory_lock);
 		error = ENOMEM;
 		goto free_bo;
 	}
 	error = vmem_alloc(sc->va, size, VM_BESTFIT | VM_NOSLEEP, &bo->gpu);
 	if (error != 0) {
+		bcmv3d_bo_failure_locked(sc, BCMV3D_BO_STAGE_VA,
+		    requested, size, error);
 		mutex_exit(&sc->memory_lock);
 		goto free_bo;
 	}
 	sc->allocated += size;
+	bcmv3d_bo_count(&sc->bo_stats.reservations);
+	if (sc->allocated > sc->bo_stats.highwater_bytes)
+		sc->bo_stats.highwater_bytes = sc->allocated;
 	mutex_exit(&sc->memory_lock);
 
 	error = bus_dmamem_alloc(sc->dmat, size, PAGE_SIZE, 0,
 	    bo->dmasegs, bo->maxsegs, &bo->nsegs, BUS_DMA_WAITOK);
-	if (error != 0)
+	if (error != 0) {
+		bcmv3d_bo_failure(sc, BCMV3D_BO_STAGE_DMA_ALLOC, requested,
+		    size, error);
 		goto release_va;
+	}
 	/* Match the existing CMA pager's write-combining userspace mapping. */
 	error = bus_dmamem_map(sc->dmat, bo->dmasegs, bo->nsegs, size,
 	    &cma->vaddr, BUS_DMA_WAITOK | BUS_DMA_PREFETCHABLE);
-	if (error != 0)
+	if (error != 0) {
+		bcmv3d_bo_failure(sc, BCMV3D_BO_STAGE_DMA_MAP, requested,
+		    size, error);
 		goto free_dma;
+	}
 	error = bus_dmamap_create(sc->dmat, size, bo->maxsegs, size, 0,
 	    BUS_DMA_WAITOK, &cma->dmamap);
-	if (error != 0)
+	if (error != 0) {
+		bcmv3d_bo_failure(sc, BCMV3D_BO_STAGE_MAP_CREATE, requested,
+		    size, error);
 		goto unmap;
+	}
 	error = bus_dmamap_load(sc->dmat, cma->dmamap, cma->vaddr,
 	    size, NULL, BUS_DMA_WAITOK);
-	if (error != 0)
+	if (error != 0) {
+		bcmv3d_bo_failure(sc, BCMV3D_BO_STAGE_MAP_LOAD, requested,
+		    size, error);
 		goto destroy;
+	}
 	if (cma->dmamap->dm_nsegs < 1 ||
 	    cma->dmamap->dm_nsegs > bo->maxsegs) {
 		error = EINVAL;
+		bcmv3d_bo_failure(sc, BCMV3D_BO_STAGE_GEOMETRY, requested,
+		    size, error);
 		goto unload;
 	}
 	remaining = size;
@@ -132,12 +209,16 @@ bcmv3d_bo_alloc_internal(struct bcmv3d_device *sc, uint32_t requested,
 		    ((address | length) & (PAGE_SIZE - 1)) != 0 ||
 		    address > (UINT64_C(1) << 36) - length) {
 			error = EINVAL;
+			bcmv3d_bo_failure(sc, BCMV3D_BO_STAGE_GEOMETRY,
+			    requested, size, error);
 			goto unload;
 		}
 		remaining -= length;
 	}
 	if (remaining != 0) {
 		error = EINVAL;
+		bcmv3d_bo_failure(sc, BCMV3D_BO_STAGE_GEOMETRY, requested,
+		    size, error);
 		goto unload;
 	}
 	memset(cma->vaddr, 0, size);
@@ -157,6 +238,7 @@ release_va:
 	mutex_enter(&sc->memory_lock);
 	vmem_free(sc->va, bo->gpu, size);
 	sc->allocated -= size;
+	bcmv3d_bo_count(&sc->bo_stats.releases);
 	mutex_exit(&sc->memory_lock);
 free_bo:
 	kmem_free(bo->dmasegs, bo->maxsegs * sizeof(*bo->dmasegs));
@@ -181,8 +263,11 @@ bcmv3d_create_bo(struct drm_device *dev, void *data, struct drm_file *file)
 
 	args->handle = 0;
 	args->offset = 0;
-	if (args->flags != 0)
+	if (args->flags != 0) {
+		bcmv3d_bo_failure(dev->dev_private, BCMV3D_BO_STAGE_REQUEST,
+		    args->size, 0, EINVAL);
 		return -EINVAL;
+	}
 	bo = bcmv3d_bo_alloc_internal(dev->dev_private, args->size, false);
 	if (IS_ERR(bo))
 		return PTR_ERR(bo);
@@ -190,6 +275,9 @@ bcmv3d_create_bo(struct drm_device *dev, void *data, struct drm_file *file)
 	if (error == 0) {
 		args->handle = handle;
 		args->offset = bo->gpu;
+	} else {
+		bcmv3d_bo_failure(dev->dev_private, BCMV3D_BO_STAGE_HANDLE,
+		    args->size, bo->cma.dmasize, -error);
 	}
 	/* The constructor reference is released exactly once on either path. */
 	drm_gem_object_put_unlocked(&bo->cma.base);

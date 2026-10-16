@@ -7,6 +7,7 @@
 #include <sys/kmem.h>
 #include <sys/mman.h>
 #include <sys/systm.h>
+#include <sys/sysctl.h>
 #include <arm/broadcom/bcm2712_v3d_takeover.h>
 #include <linux/err.h>
 #include <drm/drm_drv.h>
@@ -14,6 +15,45 @@
 #include <drm/drm_gem.h>
 #include <drm/drm_prime.h>
 #include "bcmv3d_drv.h"
+
+/* Copy under memory_lock; user copyout occurs after that lock is released. */
+static int
+bcmv3d_bo_sysctl(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct bcmv3d_device *sc = node.sysctl_data;
+	struct bcmv3d_bo_stats snapshot;
+
+	if (newp != NULL)
+		return EPERM;
+	bcmv3d_bo_snapshot(sc, &snapshot);
+	node.sysctl_data = &snapshot;
+	node.sysctl_size = sizeof(snapshot);
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static void
+bcmv3d_bo_sysctl_init(struct bcmv3d_device *sc)
+{
+	const struct sysctlnode *root;
+	int error;
+
+	error = sysctl_createv(&sc->sysctllog, 0, NULL, &root,
+	    CTLFLAG_READONLY, CTLTYPE_NODE, device_xname(sc->dev),
+	    SYSCTL_DESCR("Native V3D render device"), NULL, 0, NULL, 0,
+	    CTL_HW, CTL_CREATE, CTL_EOL);
+	if (error == 0)
+		error = sysctl_createv(&sc->sysctllog, 0, &root, NULL,
+		    CTLFLAG_READONLY, CTLTYPE_STRUCT, "bo_stats",
+		    SYSCTL_DESCR("V3D BO reservation and allocation failure snapshot"),
+		    bcmv3d_bo_sysctl, 0, sc, sizeof(struct bcmv3d_bo_stats),
+		    CTL_CREATE, CTL_EOL);
+	if (error != 0) {
+		sysctl_teardown(&sc->sysctllog);
+		aprint_error_dev(sc->dev, "BO diagnostic sysctl unavailable: %d\n",
+		    error);
+	}
+}
 
 /* A PRIME fd authorizes this BO; the offset remains relative, in bytes. */
 static int
@@ -144,11 +184,13 @@ bcmv3d_render_attach(device_t self, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		error = -drm_dev_register(dev, 0);
 	if (error != 0)
 		goto fail;
+	bcmv3d_bo_sysctl_init(sc);
 	aprint_normal_dev(self, "native V3D render interface: GEM and "
 	    "serialized CL/TFU/CSD with binary syncobj; experimental render interface\n");
 	/* Device, IRQ and MMU lifetime ends at reboot; no hot removal. */
 	return 0;
 fail:
+	sysctl_teardown(&sc->sysctllog);
 	bcmv3d_job_fini(sc);
 	if (sc->va != NULL)
 		vmem_destroy(sc->va);
