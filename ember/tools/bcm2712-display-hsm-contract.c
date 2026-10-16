@@ -40,6 +40,7 @@ struct firmware {
 	bool ignore_rate, clamp, round_up;
 };
 static struct firmware fw;
+static int device_token;
 static unsigned int allocated, freed, resource_calls;
 static int resource_error;
 static _Thread_local bool in_irq, in_softirq;
@@ -76,7 +77,7 @@ static void kmem_free(void *p, size_t size)
 static int bcm2712_display_acpi_resources(device_t d, ACPI_HANDLE h,
     struct bcm2712_display_contract *out)
 {
-	assert(d == (void *)1 && out != NULL);
+	assert(d == (void *)&device_token && out != NULL);
 	resource_calls++;
 	if (h == NULL) return EINVAL;
 	memset(out, 0, sizeof(*out));
@@ -304,7 +305,8 @@ static void *acquire_worker(void *arg)
 static void
 provider_tests(void)
 {
-	struct bcm2712_hsm_provider *p = (void *)0x1234, *other = NULL;
+	struct bcm2712_hsm_provider untouched;
+	struct bcm2712_hsm_provider *p = &untouched, *other = NULL;
 	struct bcm2712_hsm_status status;
 	struct worker w[2];
 	pthread_t threads[2];
@@ -312,21 +314,21 @@ provider_tests(void)
 
 	reset(0, 0);
 	in_irq = true;
-	CHECK(bcm2712_display_hsm_create((void *)1, (void *)1, &p) == EWOULDBLOCK);
+	CHECK(bcm2712_display_hsm_create((void *)&device_token, (void *)&device_token, &p) == EWOULDBLOCK);
 	in_irq = false; in_softirq = true;
-	CHECK(bcm2712_display_hsm_create((void *)1, (void *)1, &p) == EWOULDBLOCK);
+	CHECK(bcm2712_display_hsm_create((void *)&device_token, (void *)&device_token, &p) == EWOULDBLOCK);
 	in_softirq = false;
-	CHECK(p == (void *)0x1234 && resource_calls == 0 && fw.calls == 0);
+	CHECK(p == &untouched && resource_calls == 0 && fw.calls == 0);
 	resource_error = EOPNOTSUPP;
-	CHECK(bcm2712_display_hsm_create((void *)1, (void *)1, &p) == EOPNOTSUPP);
-	CHECK(p == (void *)0x1234 && fw.calls == 0);
+	CHECK(bcm2712_display_hsm_create((void *)&device_token, (void *)&device_token, &p) == EOPNOTSUPP);
+	CHECK(p == &untouched && fw.calls == 0);
 	resource_error = 0; fw.fail_call = 1;
-	CHECK(bcm2712_display_hsm_create((void *)1, (void *)1, &p) == ETIMEDOUT);
-	CHECK(allocated == freed && p == (void *)0x1234);
+	CHECK(bcm2712_display_hsm_create((void *)&device_token, (void *)&device_token, &p) == ETIMEDOUT);
+	CHECK(allocated == freed && p == &untouched);
 	reset(0, 0);
-	CHECK(bcm2712_display_hsm_create((void *)1, (void *)1, &p) == 0);
+	CHECK(bcm2712_display_hsm_create((void *)&device_token, (void *)&device_token, &p) == 0);
 	calls = fw.calls;
-	CHECK(bcm2712_display_hsm_create((void *)1, (void *)1, &other) == EBUSY);
+	CHECK(bcm2712_display_hsm_create((void *)&device_token, (void *)&device_token, &other) == EBUSY);
 	CHECK(other == NULL && fw.calls == calls);
 	CHECK(bcm2712_display_hsm_acquire(other, 0, 120000000) == ENXIO);
 	for (unsigned int i = 0; i < 2; i++) {
@@ -350,13 +352,13 @@ provider_tests(void)
 	CHECK(bcm2712_display_hsm_destroy(p) == 0 && allocated == freed);
 	CHECK(bcm2712_display_hsm_status(NULL, &status) == ENXIO);
 	reset(0, 0);
-	CHECK(bcm2712_display_hsm_create((void *)1, (void *)1, &p) == 0);
+	CHECK(bcm2712_display_hsm_create((void *)&device_token, (void *)&device_token, &p) == 0);
 	fw.fail_call = fw.calls + 4;
 	CHECK(bcm2712_display_hsm_acquire(p, 0, 120000000) == ETIMEDOUT);
 	CHECK(bcm2712_display_hsm_status(p, &status) == 0 && status.fault == ETIMEDOUT);
 	calls = fw.calls;
 	CHECK(bcm2712_display_hsm_destroy(p) == ETIMEDOUT);
-	CHECK(bcm2712_display_hsm_create((void *)1, (void *)1, &other) == EBUSY);
+	CHECK(bcm2712_display_hsm_create((void *)&device_token, (void *)&device_token, &other) == EBUSY);
 	CHECK(fw.calls == calls && allocated == freed + 1);
 	/* Test teardown only: production retains this owner until reboot. */
 	kmem_free(p, sizeof(*p)); bcm2712_hsm_owner = NULL;

@@ -88,7 +88,7 @@ unlock:
 }
 
 static int
-bcm2712_hsm_owned(struct bcm2712_hsm_provider *sc)
+bcm2712_hsm_owned(const struct bcm2712_hsm_provider *sc)
 {
 	int error = bcm2712_hsm_enter();
 
