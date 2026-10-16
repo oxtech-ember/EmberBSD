@@ -134,7 +134,7 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-Status updated **2026-10-15**; linked component documents record their own
+Status updated **2026-10-16**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
 
@@ -219,6 +219,15 @@ on every board in the hardware catalog.
   Independent captures, exact pixels and timestamps verify recovery;
   [results](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/rtp/results.md)
   do not establish hardware-codec, RTSP or production-network performance.
+- **Four H.265 views in Qt:** the [Qt Multimedia CPU profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/qt-four-streams)
+  cross-builds Qt 6.12 with GCC16 and the common FFmpeg9 provider for amd64.
+  The [four-player example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/media/qt-four-streams)
+  decodes, verifies and paints all 720 frames from four 2048×1500, 9 fps inputs
+  in an installed EmberBSD QEMU VM. A 640×480 raster window reaches observed
+  paint rates of 9.114–9.326 fps. Fourteen packages pass dependency protection
+  and removal/reinstallation; independent RFB captures confirm the window.
+  [CPU measurements and limits](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/qt-four-streams/results.md)
+  distinguish this TCG software path from physical displays, cameras and hardware codecs.
 - **Recording experiments and finding visual markers:** MCAP C++ 2.1.3 records
   timestamped messages with indexed replay and LZ4/Zstd compression. AprilTag
   3.4.5 detects markers and estimates their pose. Installed AArch64 VM checks
