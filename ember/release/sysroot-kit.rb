@@ -7,6 +7,7 @@ module EmberSysroot
   SCHEMA = 'emberbsd.aarch64.sysroot.v1'.freeze
   SETS = %w[base.tar.xz comp.tar.xz].freeze
   KERNEL = 'netbsd-EMBER64.gz'.freeze
+  EVIDENCE = 'target-acceptance.log'.freeze
   REQUIRED = (SETS + [KERNEL, 'build-profile.json', 'source-export.sha256', 'release-notes.md']).freeze
   CHECKS = %w[libc_aliases cross_c11 cross_cxx20 target_c11 target_cxx20 base_loader_smoke fork_cas].freeze
   FLAGS = %w[USETOOLS=yes HAVE_GCC=12 TOOLCHAIN_MISSING=no MKGCC=yes MKGCCCMDS=no MKCXX=yes
@@ -117,6 +118,8 @@ module EmberSysroot
     check(CHECKS.all? { |name| q.fetch('checks', {})[name] == true }, 'Incomplete sysroot target qualification')
     check(q['consumer_compiler'].is_a?(String) && q['consumer_compiler'].include?('16.2.0'), 'Qualification must identify actual GCC16 consumers')
     check(q['execution'] == 'EmberBSD aarch64 full-system QEMU TCG', 'Unrecorded target execution platform')
+    evidence = manifest.fetch('files').find { |file| file['name'] == EVIDENCE }
+    check(evidence && q.fetch('evidence_sha256', {})[EVIDENCE] == evidence['sha256'], 'Qualification lacks bound target evidence')
   end
 
   def verify(dir)
@@ -131,7 +134,7 @@ module EmberSysroot
     check(files.is_a?(Array) && files.all? { |file| file.is_a?(Hash) }, 'Invalid files manifest')
     names = files.map { |file| file['name'] }
     check(names.all? { |name| name.is_a?(String) && name.match?(/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/) } && names.uniq == names, 'Unsafe or duplicate asset')
-    check((REQUIRED - names).empty? && (names - REQUIRED - %w[qualification.json build-run.json]).empty?, 'Incomplete or foreign sysroot asset set')
+    check((REQUIRED - names).empty? && (names - REQUIRED - ['qualification.json', 'build-run.json', EVIDENCE]).empty?, 'Incomplete or foreign sysroot asset set')
     check(Dir.children(dir).sort == (names + %w[manifest.json SHA256]).sort, 'Missing or extra kit file')
     files.each do |file|
       path = File.join(dir, file.fetch('name'))
@@ -152,7 +155,7 @@ module EmberSysroot
       check(names.include?('qualification.json') && JSON.parse(File.read(File.join(dir, 'qualification.json'))) == manifest['qualification'], 'Qualification receipt changed')
       require_qualification(manifest)
     else
-      check(!names.include?('qualification.json'), 'Unbound qualification receipt')
+      check(!names.include?('qualification.json') && !names.include?(EVIDENCE), 'Unbound qualification receipt or target evidence')
     end
     if names.include?('build-run.json')
       run = JSON.parse(File.read(File.join(dir, 'build-run.json')))
@@ -186,6 +189,8 @@ module EmberSysroot
       q['checks'] = q.fetch('checks').slice(*CHECKS)
       File.write(File.join(dir, 'qualification.json'), JSON.pretty_generate(q) + "\n")
       names << 'qualification.json'
+      FileUtils.cp(File.join(build, EVIDENCE), File.join(dir, EVIDENCE))
+      names << EVIDENCE
     end
     File.write(File.join(dir, 'release-notes.md'), <<~TEXT)
       # EmberBSD 1.0 AArch64 development sysroot

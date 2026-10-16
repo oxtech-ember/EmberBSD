@@ -252,11 +252,20 @@ Dir.mktmpdir('ember-release-sysroot') do |dir|
     'consumer_compiler' => 'fixture-only GCC 16.2.0 declaration',
     'execution' => 'EmberBSD aarch64 full-system QEMU TCG',
     'checks' => EmberSysroot::CHECKS.to_h { |name| [name, true] }}
+  evidence = 'Host fixture only. This is not target execution evidence.' + "\n"
+  File.write(File.join(build, EmberSysroot::EVIDENCE), evidence)
+  qualification['evidence_sha256'] = {EmberSysroot::EVIDENCE => Digest::SHA256.hexdigest(evidence)}
   q_path = File.join(dir, 'qualification-fixture.json')
   write_json(q_path, qualification)
   qualified = File.join(dir, 'qualified-kit')
   EmberSysroot.prepare(build, qualified, q_path)
   EmberSysroot.require_qualification(EmberSysroot.verify(qualified))
+  wrong = Marshal.load(Marshal.dump(qualification))
+  wrong['evidence_sha256'][EmberSysroot::EVIDENCE] = '0' * 64
+  write_json(q_path, wrong)
+  refuse('mismatched-target-evidence', /bound target evidence/) do
+    EmberSysroot.prepare(build, File.join(dir, 'wrong-target-evidence'), q_path)
+  end
   {'source_commit' => 'b' * 40, 'base_sha256' => '0' * 64,
    'comp_sha256' => '0' * 64, 'kernel_gzip_sha256' => '0' * 64,
    'consumer_compiler' => 'fixture GCC 12.5.0', 'execution' => 'Linux host'}.each do |field, value|

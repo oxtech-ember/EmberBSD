@@ -123,7 +123,10 @@ The qualification receipt binds these measured checks to the exact inputs:
 ```
 
 Record true only after the check succeeds. Preserve its sources, commands,
-binaries, raw results and hashes. The publisher checks bindings, not execution.
+binaries, raw results and hashes. Put the raw VM serial log in the build
+directory as `target-acceptance.log`. Add its SHA256 to the qualification's
+`evidence_sha256` object under that exact filename. The qualified kit includes
+that log and binds its bytes. The publisher checks bindings, not execution.
 Source fixtures do not establish full-base or hardware acceptance.
 Installation media, physical boards, all libc tests and long runs remain separate.
 
@@ -171,6 +174,7 @@ separate inputs. Do not extract development sets over a running system.
 
 ```sh
 ruby ember/tests/release-aarch64-build.rb
+ruby ember/tests/release-aarch64-sets.rb /absolute/bmake
 ruby ember/tests/release-sysroot.rb
 ruby ember/tests/release-github.rb
 ```
