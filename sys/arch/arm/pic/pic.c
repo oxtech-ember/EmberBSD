@@ -75,6 +75,8 @@ static void
 	pic_deliver_irqs(struct cpu_info *, struct pic_softc *, int, void *);
 static void
 	pic_list_deliver_irqs(struct cpu_info *, register_t, int, void *);
+static uint32_t
+	pic_blocked_enable_mask(struct pic_softc *, size_t, uint32_t);
 
 #endif /* __HAVE_PIC_PENDING_INTRS */
 
@@ -462,8 +464,6 @@ pic_deliver_irqs(struct cpu_info *ci, struct pic_softc *pic, int ipl,
 				poi = 1;
 #endif
 				blocked_irqs |= __BIT(irq);
-			} else {
-				KASSERT(0);
 			}
 			pending_irqs = pic_find_pending_irqs_by_ipl(pic,
 			    irq_base, *ipending, ipl);
@@ -481,6 +481,28 @@ pic_deliver_irqs(struct cpu_info *ci, struct pic_softc *pic, int ipl,
 	 */
 	if (atomic_and_32_nv(&pic->pic_pending_ipls, ~ipl_mask) == 0)
 		ci->ci_pending_pics &= ~__BIT(pic->pic_id);
+}
+
+/*
+ * Origin: EmberBSD (AI-assisted).
+ * Pending unblock must not enable a source that is still software-masked
+ * or already unlinked. The last intr_unmask re-enables hardware.
+ */
+static uint32_t
+pic_blocked_enable_mask(struct pic_softc *pic, size_t irq_base, uint32_t blocked)
+{
+	uint32_t enable = 0;
+	uint32_t remain = blocked;
+
+	while (remain != 0) {
+		const int irq = ffs(remain) - 1;
+		struct intrsource * const is = pic->pic_sources[irq_base + irq];
+
+		remain &= ~__BIT(irq);
+		if (is != NULL && is->is_mask_count == 0)
+			enable |= __BIT(irq);
+	}
+	return enable;
 }
 
 static void
@@ -509,16 +531,26 @@ pic_list_unblock_irqs(struct cpu_info *ci)
 		     irq_base < pic->pic_maxsources;
 		     irq_base += 32, iblocked++) {
 			if ((blocked = *iblocked) != 0) {
-				(*pic->pic_ops->pic_unblock_irqs)(pic,
-				    irq_base, blocked);
+				const uint32_t enable =
+				    pic_blocked_enable_mask(pic, irq_base,
+					blocked);
+				if (enable != 0)
+					(*pic->pic_ops->pic_unblock_irqs)(pic,
+					    irq_base, enable);
 				atomic_and_32(iblocked, ~blocked);
 			}
 		}
 #else
 		KASSERT(pic->pic_blocked_irqs[0] != 0);
-		(*pic->pic_ops->pic_unblock_irqs)(pic,
-		    0, pic->pic_blocked_irqs[0]);
-		pic->pic_blocked_irqs[0] = 0;
+		{
+			const uint32_t blocked = pic->pic_blocked_irqs[0];
+			const uint32_t enable =
+			    pic_blocked_enable_mask(pic, 0, blocked);
+			if (enable != 0)
+				(*pic->pic_ops->pic_unblock_irqs)(pic,
+				    0, enable);
+			pic->pic_blocked_irqs[0] = 0;
+		}
 #endif
 		blocked_pics &= ~__BIT(pic_id);
 	}
@@ -859,6 +891,13 @@ pic_disestablish_source(struct intrsource *is)
 	(*pic->pic_ops->pic_block_irqs)(pic, irq & ~0x1f, __BIT(irq & 0x1f));
 	pic->pic_sources[irq] = NULL;
 	pic__iplsources[pic_ipl_offset[is->is_ipl] + is->is_iplidx] = NULL;
+	/*
+	 * Origin: EmberBSD (AI-assisted).
+	 * Unlink first so new lookups miss, then drain in-flight dispatch
+	 * before name/counter/source free. xc_barrier(0) may drop BKL;
+	 * do not hold PIC/driver locks across it.
+	 */
+	xc_barrier(0);
 	if (is->is_xname != NULL) {
 		kmem_free(is->is_xname, INTRDEVNAMEBUF);
 		is->is_xname = NULL;

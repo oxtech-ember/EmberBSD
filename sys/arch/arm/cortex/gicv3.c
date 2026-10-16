@@ -754,7 +754,12 @@ gicv3_irq_handler(void *frame)
 			continue;
 
 		struct intrsource * const is = pic->pic_sources[irq - pic->pic_irqbase];
-		KASSERT(is != NULL);
+		if (is == NULL) {
+			/* Origin: EmberBSD (AI-assisted). Keep EOI if the source was unlinked. */
+			icc_eoi1r_write(iar);
+			isb();
+			continue;
+		}
 
 		const bool early_eoi = irq < GIC_LPI_BASE && is->is_type == IST_EDGE;
 

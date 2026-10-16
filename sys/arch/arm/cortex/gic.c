@@ -389,7 +389,11 @@ armgic_irq_handler(void *tf)
 
 		//const uint32_t cpuid = __SHIFTOUT(iar, GICC_IAR_CPUID_MASK);
 		struct intrsource * const is = sc->sc_pic.pic_sources[irq];
-		KASSERT(is != &armgic_dummy_source);
+		if (is == NULL || is == &armgic_dummy_source) {
+			/* Origin: EmberBSD (AI-assisted). Keep EOI if the source was unlinked. */
+			gicc_write(sc, GICC_EOIR, iar);
+			continue;
+		}
 
 		/*
 		 * GIC has asserted IPL for us so we can just update ci_cpl.
