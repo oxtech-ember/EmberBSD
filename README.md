@@ -418,16 +418,20 @@ on every board in the hardware catalog.
   [OpenGL ES/V3D compositing](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
   under an ordinary user on a virtual output. Plasma Desktop 6.8.0 also
   selects V3D OpenGL 3.1. libudev now classifies its DRM render node correctly.
-  MesaLib 26.2.4nb7 and QtBase 6.12.0nb1 now produce visible containment
-  pixels. The shell then crashes in V3D's BO cache; a native core identifies
-  its uninitialized mutex. Ports owns the tested source repair and its
-  pending package acceptance. The full desktop remains unaccepted.
+  The complete MesaLib 26.2.4nb8 package repairs an uninitialized V3D cache
+  mutex identified by an earlier Plasma core. It preserves symbol versions
+  with LLD and passes the previously linked consumer on CM5. The current
+  Plasma startup still needs acceptance: a bounded D-Bus delay and missing
+  Xwayland runtime directories remain under investigation.
   The [native scatter/gather allocator](ember/boot/bcm2712-v3d-render.md) now
   passes CM5 allocations through 16 MiB, three held buffers, and the existing
   TFU/CSD/sync/CL checks. The updated Mesa package passes four V3D EGL
   lifecycles and 39 upstream invocations; one internal case skips and nine
   NIR cases remain disabled. Qt's mutex regression holds three descriptors
   under 145 threads. KDED also passes its installed runtime-helper check.
+  KCoreAddons nb3 limits native watches and preserves recursive polling events.
+  Its unchanged CM5 consumer now uses 519 descriptors for 1200 paths, then
+  returns to four after cleanup; nb2 exhausted its limit of 1024.
   Full-session stability, physical HDMI and hotplug still need acceptance.
   The fixed
   [Milou](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/milou)
