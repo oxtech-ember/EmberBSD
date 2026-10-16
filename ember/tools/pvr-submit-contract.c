@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <arm/sunxi/powervr/pvr_rogue_fwif.h>
 #include <arm/sunxi/powervr/pvr_rogue_fwif_client.h>
 #include "pvr_backend.h"
 #include "pvr_context.h"
@@ -60,7 +61,9 @@ static pthread_cond_t changed=PTHREAD_COND_INITIALIZER;
 static bool concurrent, waiter_entered, waiter_released, frozen_clock, complete_on_wait;
 static unsigned allocate_calls, allocation_fault, copy_calls, copy_fault;
 static unsigned prepared, completed, computed, poisoned, signals, wait_calls, polls;
-static unsigned compute_error_at, next_id, transferred;
+static unsigned compute_error_at, next_id, transferred, fragmented;
+static bool triple_model;
+static int fragment_error, after_pair_prepare, after_pair_backend, after_pair_target;
 static int transfer_error;
 static int prepare_error, backend_error, pause_error, wait_error, id_error;
 static bool backend_changed, switch_backend_on_pause, backend_absent;
@@ -139,7 +142,7 @@ static void dma_fence_put(struct dma_fence *f)
 	if(!f) return;
 	CHECK(atomic_load(&f->refs)!=0);
 	if(atomic_fetch_sub(&f->refs,1)!=1) return;
-	CHECK(!f->immortal);
+	CHECK(f != &stub && !f->immortal);
 	atomic_fetch_sub(&fence_count,1);
 	if(f->chain) {
 		chain=(struct dma_fence_chain *)f;
@@ -166,7 +169,7 @@ static int dma_fence_get_status(struct dma_fence *f)
 }
 static unsigned rendered;
 static struct dma_fence *dma_fence_get_stub(void)
-{ CHECK(gated && computed+rendered+transferred!=0 && completed==computed+rendered+transferred); return dma_fence_get(&stub); }
+{ CHECK(gated && computed+rendered+transferred+fragmented!=0 && completed==computed+rendered+transferred+fragmented); return dma_fence_get(&stub); }
 static int dma_fence_chain_find_seqno(struct dma_fence **fp,uint64_t seqno)
 {
 	struct dma_fence *f=*fp;
@@ -267,9 +270,7 @@ pvr_context_transfer(struct pvr_context *c,
 	transferred++;
 	return transfer_error;
 }
-#define ROGUE_FWIF_CCB_CMD_TYPE_FRAG (203u|0x2abc0000u|0x8000u)
-#define ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR (204u|0x2abc0000u|0x8000u)
-static unsigned rendered, render_error_at;
+static unsigned render_error_at;
 static uint32_t last_geom_hwrt, last_frag_hwrt, last_cleanup, last_frag_type;
 int pvr_context_render_pair(struct pvr_context *c,const struct rogue_fwif_cmd_geom *g,
     const struct rogue_fwif_cmd_frag *f,uint32_t ftype,uint32_t cleanup,
@@ -284,8 +285,17 @@ int pvr_context_render_pair(struct pvr_context *c,const struct rogue_fwif_cmd_ge
 	last_frag_hwrt=f->cmd_shared.hwrt_data_fw_addr;
 	last_cleanup=cleanup; last_frag_type=ftype;
 	rendered++;
+	if (triple_model) {
+		CHECK(contexts[1].refs == 4 && prepared == 1 && completed == 0);
+		CHECK(gid == 1 && fid == 2 && ftype == ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR);
+		CHECK(g->flags == (ROGUE_GEOM_FLAGS_FIRSTKICK | ROGUE_GEOM_FLAGS_LASTKICK));
+		CHECK(f->flags == 0 && f->regs.usc_clear_register[0] == 0x11223344);
+	}
 	if(rendered==render_error_at) return EIO;
+	prepare_error = after_pair_prepare;
+	backend_error = after_pair_backend;
 	return 0;
+
 }
 static struct drm_syncobj *drm_syncobj_find(struct drm_file *f,uint32_t handle)
 {
@@ -308,14 +318,14 @@ static struct dma_fence *drm_syncobj_fence_get(struct drm_syncobj *s)
 }
 static void drm_syncobj_replace_fence(struct drm_syncobj *s,struct dma_fence *f)
 {
-	CHECK(gated && platform && computed+rendered+transferred==completed && computed+rendered+transferred!=0);
+	CHECK(gated && platform && computed+rendered+transferred+fragmented==completed && computed+rendered+transferred+fragmented!=0);
 	CHECK(pthread_mutex_lock(&sync_lock)==0); CHECK(s->refs!=0);
 	dma_fence_put(s->fence); s->fence=dma_fence_get(f); signals++;
 	CHECK(pthread_mutex_unlock(&sync_lock)==0);
 }
 static void drm_syncobj_add_point(struct drm_syncobj *s,struct dma_fence_chain *c,struct dma_fence *f,uint64_t point)
 {
-	CHECK(gated && platform && c!=NULL && point!=0 && computed+rendered+transferred==completed && computed+rendered+transferred!=0);
+	CHECK(gated && platform && c!=NULL && point!=0 && computed+rendered+transferred+fragmented==completed && computed+rendered+transferred+fragmented!=0);
 	CHECK(pthread_mutex_lock(&sync_lock)==0); CHECK(s->refs!=0);
 	atomic_init(&c->base.refs,1); c->base.chain=true; c->base.seqno=point;
 	c->dfc_fence=dma_fence_get(f); c->prev=s->fence;
@@ -364,17 +374,35 @@ pvr_exec_hwrt_target(struct pvr_exec_hwrt *hwrt, unsigned index,
 	hwrt_targets++;
 	if (hwrt_target_error != 0)
 		return hwrt_target_error;
+	if (hwrt_targets == 2 && after_pair_target != 0)
+		return after_pair_target;
 	if (index > 1)
 		return EINVAL;
 	target->fw_address = 0xc0aa0000;
 	target->cleanup_address = 0xc0aa0040;
 	return 0;
 }
+int
+pvr_context_fragment(struct pvr_context *c,
+    const struct rogue_fwif_cmd_frag *cmd, uint32_t cleanup, uint32_t id)
+{
+	CHECK(gated && platform && c->type == DRM_PVR_CTX_TYPE_RENDER);
+	CHECK(triple_model && contexts[1].refs == 4 && hwrt_model[0].refs == 1);
+	CHECK(rendered == 1 && fragmented == 0 && prepared == 2 && completed == 1);
+	CHECK(id == 3 && cmd->cmd_shared.hwrt_data_fw_addr == last_geom_hwrt);
+	CHECK(cleanup == last_cleanup && cleanup == 0xc0aa0040);
+	CHECK(cmd->regs.isp_scissor_base == UINT64_C(0x9003000000));
+	CHECK(cmd->regs.usc_clear_register[0] == 0x55667788);
+	CHECK(cmd->flags == ROGUE_FRAG_FLAGS_PREVENT_CDM_OVERLAP);
+	fragmented++;
+	return fragment_error;
+}
 #include "pvr-submit-body.h"
 
-static struct drm_pvr_job jobs[3];
-static struct drm_pvr_sync_op ops[3][4];
-static uint8_t streams[3][384];
+
+static struct drm_pvr_job jobs[4];
+static struct drm_pvr_sync_op ops[4][4];
+static uint8_t streams[4][384];
 static struct drm_pvr_ioctl_submit_jobs_args arguments;
 static void put32(uint8_t *p,uint32_t v)
 { unsigned i; for(i=0;i<4;i++)p[i]=(uint8_t)(v>>(i*8)); }
@@ -391,6 +419,8 @@ static void initialize(unsigned count)
 	allocate_calls=allocation_fault=copy_calls=copy_fault=0;
 	prepared=completed=computed=poisoned=signals=wait_calls=polls=0; rendered=hwrt_gets=hwrt_puts=hwrt_targets=0;
 	memset(hwrt_model,0,sizeof(hwrt_model)); hwrt_model_vm=NULL; hwrt_target_error=0; render_error_at=0;
+	fragmented = 0; triple_model = false;
+	fragment_error = after_pair_prepare = after_pair_backend = after_pair_target = 0;
 	transferred=0; transfer_error=0; compute_error_at=next_id=0; prepare_error=backend_error=pause_error=wait_error=id_error=0;
 	backend_changed=switch_backend_on_pause=backend_absent=false; retained=NULL; concurrent=waiter_entered=waiter_released=frozen_clock=complete_on_wait=false;
 	clock_ns=0; waiting_thread=false; nranges=0;
@@ -435,6 +465,124 @@ static void initialize_pair(void)
 	jobs[1].cmd_stream_len=384;
 	hwrt_model_vm=&contexts[1].vm;
 }
+/* Mesa emits GEOMETRY, FRAG_PR, then an independent final FRAGMENT. */
+static void
+initialize_triple(void)
+{
+	initialize_pair();
+	arguments.jobs.count = 3;
+	jobs[2] = jobs[1];
+	jobs[2].cmd_stream = (uintptr_t)streams[2];
+	jobs[2].sync_ops = (struct drm_pvr_obj_array){16, 0, (uintptr_t)ops[2]};
+	put32(streams[2], PVR_STREAM_FRAGMENT_SIZE);
+	put64(streams[2] + 8, UINT64_C(0x9003000000));
+	put32(streams[1] + 304, 0x11223344);
+	put32(streams[2] + 304, 0x55667788);
+	jobs[0].flags = DRM_PVR_SUBMIT_JOB_GEOM_CMD_FIRST | DRM_PVR_SUBMIT_JOB_GEOM_CMD_LAST;
+	jobs[1].flags = DRM_PVR_SUBMIT_JOB_FRAG_CMD_PARTIAL_RENDER;
+	jobs[2].flags = DRM_PVR_SUBMIT_JOB_FRAG_CMD_PREVENT_CDM_OVERLAP;
+	add_op(0, 1, DRM_PVR_SYNC_OP_FLAG_SIGNAL, 0);
+	add_op(1, 1, 0, 0);
+	add_op(2, 2, DRM_PVR_SYNC_OP_FLAG_SIGNAL, 0);
+	triple_model = true;
+}
+
+static void
+triple_cases(void)
+{
+	unsigned i;
+	int result;
+
+	initialize_triple();
+	CHECK(submit() == 0 && arguments.jobs.count == 3);
+	CHECK(rendered == 1 && fragmented == 1 && computed == 0 && transferred == 0);
+	CHECK(prepared == 2 && completed == 2 && signals == 2 && poisoned == 0);
+	CHECK(wait_calls == 0 && polls == 0 && hwrt_targets == 2);
+	CHECK(hwrt_gets == 1 && hwrt_puts == 1 && syncobjs[2].fence == &stub);
+	finish();
+
+	/* A final wait on the geometry signal is a real, already completed wait. */
+	initialize_triple();
+	add_op(2, 1, 0, 0);
+	CHECK(submit() == 0 && fragmented == 1 && wait_calls == 1);
+	finish();
+	for (i = 0; i < 5; i++) {
+		initialize_triple();
+		add_op(2, 3, 0, 0);
+		syncobjs[3].fence = new_fence(i == 0 ? 1 : i == 2 ? -EIO : 0);
+		complete_on_wait = i == 1;
+		if (i == 4)
+			wait_error = ERESTARTSYS;
+		result = i < 2 ? 0 : i == 2 ? -EIO : i == 3 ? -ETIMEDOUT : -EINTR;
+		CHECK(submit() == result && arguments.jobs.count == (i < 2 ? 3U : 2U));
+		CHECK(wait_calls == 1 && rendered == 1 && fragmented == (i < 2 ? 1U : 0U));
+		CHECK(completed == 1 + fragmented && signals == 1 + fragmented);
+		CHECK(hwrt_targets == 1 + fragmented && hwrt_puts == 1 && poisoned == 0);
+		CHECK((syncobjs[2].fence != NULL) == (i < 2));
+		finish();
+	}
+	/* Every malformed third job fails before even the first pair is published. */
+	for (i = 0; i < 11; i++) {
+		initialize_triple();
+		result = -EINVAL;
+		switch (i) {
+		case 0: jobs[2].hwrt.set_handle = 2; break;
+		case 1: jobs[2].hwrt.data_index = 1; break;
+		case 2:
+			jobs[2].context_handle = 2;
+			contexts[2].firmware.type = DRM_PVR_CTX_TYPE_RENDER;
+			break;
+		case 3: jobs[2].cmd_stream_len--; break;
+		case 4: jobs[2].cmd_stream = 0; break;
+		case 5: ops[2][0].flags = UINT32_MAX; break;
+		case 6: ops[2][0].handle = 0; break;
+		case 7:
+			jobs[2].flags |= DRM_PVR_SUBMIT_JOB_FRAG_CMD_PARTIAL_RENDER;
+			result = -EOPNOTSUPP; break;
+		case 8:
+			jobs[1].flags = 0; /* A normal first fragment is not a PR. */
+			result = -EOPNOTSUPP; break;
+		case 9:
+			jobs[3] = jobs[2]; arguments.jobs.count = 4;
+			result = -EOPNOTSUPP; break;
+		case 10: jobs[2].flags |= 256; result = -EOPNOTSUPP; break;
+		}
+		CHECK(submit() == result);
+		CHECK(rendered == 0 && fragmented == 0 && prepared == 0 && completed == 0);
+		CHECK(hwrt_targets == 0 && hwrt_gets == hwrt_puts && signals == 0 && poisoned == 0);
+		finish();
+	}
+	for (i = 0; i < 5; i++) {
+		initialize_triple();
+		switch (i) {
+		case 0: render_error_at = 1; break;
+		case 1: after_pair_prepare = EIO; break;
+		case 2: after_pair_backend = EIO; break;
+		case 3: after_pair_target = EIO; break;
+		case 4: fragment_error = EIO; break;
+		}
+		CHECK(submit() == -EIO && arguments.jobs.count == (i == 0 ? 0U : 2U));
+		CHECK(rendered == 1 && fragmented == (i == 4 ? 1U : 0U));
+		CHECK(completed == (i == 0 ? 0U : 1U) && signals == completed);
+		CHECK(poisoned == (i == 0 || i >= 3 ? 1U : 0U));
+		CHECK(hwrt_gets == 1 && hwrt_puts == 1 && syncobjs[2].fence == NULL);
+		finish();
+	}
+	/* A backend change during the final wait retains all three job owners. */
+	initialize_triple();
+	add_op(2, 3, 0, 0);
+	switch_backend_on_pause = true;
+	pause_error = EINTR;
+	CHECK(submit() == -EIO && retained != NULL && arguments.jobs.count == 2);
+	CHECK(rendered == 1 && fragmented == 0 && signals == 1);
+	CHECK(contexts[1].refs == 4 && hwrt_model[0].refs == 1 && hwrt_puts == 0);
+	pvr_device_enter(&device);
+	pvr_submit_release(&device, retained, true);
+	retained = NULL;
+	pvr_device_leave(&device);
+	finish();
+}
+
 static void success_cases(void)
 {
 	initialize(2);
@@ -906,6 +1054,6 @@ static void concurrency_case(void)
 }
 int main(void)
 {
-	success_cases(); transfer_cases(); preflight_cases(); error_cases(); backend_lifetime_case(); paired_dependencies(); forward_dependencies(); producer_search_bounds(); concurrency_case();
+	triple_cases(); success_cases(); transfer_cases(); preflight_cases(); error_cases(); backend_lifetime_case(); paired_dependencies(); forward_dependencies(); producer_search_bounds(); concurrency_case();
 	printf("pvr submit: %u checks passed\n",atomic_load(&checks)); return 0;
 }

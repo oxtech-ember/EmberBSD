@@ -36,6 +36,7 @@
 #include <drm/drm_device.h>
 #include <drm/drm_file.h>
 #include <drm/drm_syncobj.h>
+#include <arm/sunxi/powervr/pvr_rogue_fwif.h>
 #include <arm/sunxi/powervr/pvr_rogue_fwif_client.h>
 #include "pvr_backend.h"
 #include "pvr_context.h"
@@ -71,6 +72,7 @@ struct pvr_submit_job {
 	uint32_t type;
 	uint8_t rt_index;
 	uint32_t fragment_type;
+	bool paired_fragment;
 };
 struct pvr_submit_batch {
 	size_t bytes;
@@ -243,9 +245,18 @@ pvr_submit_copy(const struct drm_pvr_obj_array *array,
 		    (i + 1 >= batch->count ||
 		    batch->jobs[i + 1].type != DRM_PVR_JOB_TYPE_FRAGMENT))
 			return EOPNOTSUPP;
-		if (job->type == DRM_PVR_JOB_TYPE_FRAGMENT &&
-		    (i == 0 ||
-		    batch->jobs[i - 1].type != DRM_PVR_JOB_TYPE_GEOMETRY))
+		if (job->type != DRM_PVR_JOB_TYPE_FRAGMENT)
+			continue;
+		if (i == 0)
+			return EOPNOTSUPP;
+		if (batch->jobs[i - 1].type == DRM_PVR_JOB_TYPE_GEOMETRY) {
+			job->paired_fragment = true;
+			continue;
+		}
+		/* Mesa may follow a paired PR with one final ordinary fragment. */
+		if (!batch->jobs[i - 1].paired_fragment ||
+		    batch->jobs[i - 1].fragment_type != ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR ||
+		    job->fragment_type != ROGUE_FWIF_CCB_CMD_TYPE_FRAG)
 			return EOPNOTSUPP;
 	}
 	return 0;
@@ -280,13 +291,13 @@ pvr_submit_references(struct drm_device *dev, struct drm_file *file,
 			    job->context)) != DRM_PVR_CTX_TYPE_RENDER)
 				return EINVAL;
 			if (job->type == DRM_PVR_JOB_TYPE_FRAGMENT) {
-				const struct pvr_submit_job *geom = &batch->jobs[i - 1];
+				const struct pvr_submit_job *previous = &batch->jobs[i - 1];
 
-				if (job->hwrt_handle != geom->hwrt_handle ||
-				    job->rt_index != geom->rt_index ||
-				    job->handle != geom->handle)
+				if (job->hwrt_handle != previous->hwrt_handle ||
+				    job->rt_index != previous->rt_index ||
+				    job->handle != previous->handle)
 					return EINVAL;
-				/* The pair owns one reference, on its geometry. */
+				/* Both fragments borrow the geometry owner reference. */
 				job->hwrt = batch->jobs[i - 1].hwrt;
 				if (job->hwrt == NULL)
 					return EINVAL;
@@ -416,7 +427,7 @@ pvr_submit_wait(struct pvr_submit_batch *batch, uint32_t index,
 
 	KASSERT(index < batch->count && first <= index);
 	job = &batch->jobs[index];
-	KASSERT(job->type == DRM_PVR_JOB_TYPE_FRAGMENT ?
+	KASSERT(job->paired_fragment ?
 	    first + 1 == index : first == index);
 	getnanouptime(&deadline);
 	deadline.tv_sec += PVR_SUBMIT_WAIT_SECONDS;
@@ -425,7 +436,7 @@ pvr_submit_wait(struct pvr_submit_batch *batch, uint32_t index,
 		sync = &job->syncs[i];
 		if ((sync->input.flags & DRM_PVR_SYNC_OP_FLAG_SIGNAL) != 0)
 			continue;
-		if (job->type == DRM_PVR_JOB_TYPE_FRAGMENT) {
+		if (job->paired_fragment) {
 			/* The validated pair emits FENCE_PR before its fragment. */
 			error = pvr_submit_producer(batch, first, index, sync, true,
 			    budget, &matched);
@@ -579,7 +590,7 @@ pvr_submit_jobs(struct drm_device *dev, void *data, struct drm_file *file)
 		goto out;
 	for (index = 0; index < batch->count; index++) {
 		job = &batch->jobs[index];
-		if (job->type == DRM_PVR_JOB_TYPE_FRAGMENT) {
+		if (job->paired_fragment) {
 			/* Handled together with its preceding geometry job. */
 			pvr_submit_signal(job);
 			continue;
@@ -613,6 +624,19 @@ pvr_submit_jobs(struct drm_device *dev, void *data, struct drm_file *file)
 			error = pvr_context_transfer(
 			    pvr_exec_context_firmware(job->context),
 			    &job->command.transfer, job->id);
+		} else if (job->type == DRM_PVR_JOB_TYPE_FRAGMENT) {
+			struct pvr_hwrt_target target;
+
+			error = pvr_exec_hwrt_target(job->hwrt, job->rt_index,
+			    &target);
+			if (error == 0) {
+				job->command.fragment.cmd_shared.
+				    hwrt_data_fw_addr = target.fw_address;
+				error = pvr_context_fragment(
+				    pvr_exec_context_firmware(job->context),
+				    &job->command.fragment, target.cleanup_address,
+				    job->id);
+			}
 		} else {
 			struct pvr_submit_job *frag = &batch->jobs[index + 1];
 			struct pvr_hwrt_target target;

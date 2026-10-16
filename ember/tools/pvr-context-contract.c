@@ -845,6 +845,24 @@ graphics_jobs(void)
 	struct rogue_fwif_cmd_geom original;
 	unsigned i, pads;
 
+	/* A PR is not the final pixel result. Publish a distinct final payload. */
+	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
+	m.expected_geometry.flags = ROGUE_GEOM_FLAGS_FIRSTKICK | ROGUE_GEOM_FLAGS_LASTKICK;
+	m.expected_fragment.flags = 0;
+	m.expected_fragment.regs.usc_clear_register[0] = 0x11223344;
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == 0);
+	CHECK(m.combined_kicks == 1 && m.kicks == 1 && !m.pending);
+	CHECK(m.graphics_sequence[0] == 1 && m.graphics_sequence[1] == 1);
+	m.expected_fragment.flags = ROGUE_FRAG_FLAGS_PREVENT_CDM_OVERLAP;
+	m.expected_fragment.regs.usc_clear_register[0] = 0x55667788;
+	m.graphics_type[1] = ROGUE_FWIF_CCB_CMD_TYPE_FRAG;
+	m.graphics_id[1] = 103;
+	CHECK(pvr_context_fragment(ctx, &m.expected_fragment, m.expected_cleanup, 103) == 0);
+	CHECK(m.combined_kicks == 1 && m.kicks == 2 && !m.pending && !m.failed);
+	CHECK(m.graphics_sequence[0] == 1 && m.graphics_sequence[1] == 2);
+	CHECK(pvr_context_destroy(&ctx) == 0);
+	CHECK(ctx == NULL && m.live == 0 && m.cleanups == 2);
+
 	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
 	original = m.expected_geometry;
 	for (i = 0; i < 250; i++) {

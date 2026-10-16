@@ -75,7 +75,21 @@ context, HWRT owner, VM, and target index.
 Publish both queues with `pvr_context_render_pair()` before waiting for geometry.
 A matched intra-pair dependency needs firmware ordering; external waits must remain outside both gates.
 Publish both results only after both queues complete and VM synchronization succeeds.
-Standalone partial render and unpaired geometry need explicit rejection until implemented.
+Mesa 26.2.4 can append a final ordinary fragment after the paired partial render.
+The native path admits this exact triple after validating the whole batch.
+All three jobs use the same context, HWRT owner, VM, and target index.
+Both fragments borrow the geometry job's single HWRT reference.
+The final fragment waits separately, then uses `pvr_context_fragment()`.
+That sender emits `FRAG` and `UPDATE`, with HWRT cleanup and fresh completion checks.
+The first pair still emits `GEOM`, `FENCE_PR`, `FRAG_PR`, and its two UFO updates.
+Geometry FIRST/LAST flags retain their existing decoder mapping.
+Standalone fragments, two ordinary fragments, and longer fragment chains fail before publication.
+
+The actual-source contracts distinguish the PR and final payloads with different clear values.
+They check final external waits, retained references, VM failure, and unsignaled failed work.
+An invalid third job prevents publication of even the first pair.
+The previous source rejects the valid triple with `EOPNOTSUPP` before firmware execution.
+This matches the observed three-job submit rejection; the new path still needs physical acceptance.
 The source contracts check these rules. Physical execution remains unverified.
 
 ## Physical acceptance boundary

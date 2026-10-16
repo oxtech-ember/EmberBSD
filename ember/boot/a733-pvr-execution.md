@@ -51,12 +51,17 @@ Physical GROW handling remains unverified. Reconstruction requests are not imple
 Such requests stop the firmware service instead of reporting false completion.
 
 `SUBMIT_JOBS` accepts fixed BXM compute, transfer, and paired geometry/fragment streams.
+A paired partial render can be followed by one final ordinary fragment.
 It requires the current 48-byte job and 16-byte sync-operation layouts.
 Unsupported stream extensions and job types return `EOPNOTSUPP`.
 HWRT datasets, transfer, and paired execution have source contracts, but no physical graphics acceptance.
 See the [graphics ownership and dependency contract](a733-pvr-graphics.md).
 All job streams and synchronization records are copied before firmware execution.
 The driver acquires context references and prepares timeline storage before submission.
+A final fragment uses the pair's context, HWRT dataset, VM, and target index.
+It keeps its own external waits, VM synchronization, command, completion, and signals.
+The paired partial render alone does not complete the final fragment's signal.
+Standalone fragments and longer fragment chains remain unsupported.
 
 Each job waits at most ten seconds for dependencies.
 The driver then publishes pending page-table changes and synchronizes mapped buffers.
