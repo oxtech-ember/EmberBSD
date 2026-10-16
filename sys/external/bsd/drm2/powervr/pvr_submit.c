@@ -59,6 +59,7 @@ struct pvr_submit_sync {
 struct pvr_submit_job {
 	union {
 		struct rogue_fwif_cmd_compute compute;
+		struct rogue_fwif_cmd_transfer transfer;
 		struct rogue_fwif_cmd_geom geometry;
 		struct rogue_fwif_cmd_frag fragment;
 	} command;
@@ -67,7 +68,7 @@ struct pvr_submit_job {
 	struct pvr_submit_sync *syncs;
 	uint32_t handle, sync_count, id;
 	uint32_t hwrt_handle;
-	uint8_t type;
+	uint32_t type;
 	uint8_t rt_index;
 	uint32_t fragment_type;
 };
@@ -161,6 +162,24 @@ pvr_submit_copy(const struct drm_pvr_obj_array *array,
 			    sizeof(stream), input.flags, &job->command.compute);
 			if (error != 0)
 				return error;
+		} else if (job->type == DRM_PVR_JOB_TYPE_TRANSFER_FRAG) {
+			uint8_t transfer[PVR_STREAM_TRANSFER_SIZE];
+
+			if (input.hwrt.set_handle != 0 || input.hwrt.data_index != 0 ||
+			    input.cmd_stream == 0 || input.cmd_stream_len < sizeof(transfer))
+				return EINVAL;
+			if (input.cmd_stream_len > sizeof(transfer))
+				return EOPNOTSUPP;
+			if (input.cmd_stream > UINTPTR_MAX - (sizeof(transfer) - 1))
+				return EFAULT;
+			error = copyin((const void *)(uintptr_t)input.cmd_stream,
+			    transfer, sizeof(transfer));
+			if (error != 0)
+				return error;
+			error = pvr_stream_transfer(PVR_STREAM_BVNC, transfer,
+			    sizeof(transfer), input.flags, &job->command.transfer);
+			if (error != 0)
+				return error;
 		} else if (job->type == DRM_PVR_JOB_TYPE_GEOMETRY ||
 		    job->type == DRM_PVR_JOB_TYPE_FRAGMENT) {
 			uint8_t graphics[PVR_STREAM_FRAGMENT_SIZE];
@@ -251,6 +270,10 @@ pvr_submit_references(struct drm_device *dev, struct drm_file *file,
 		if (job->type == DRM_PVR_JOB_TYPE_COMPUTE) {
 			if (pvr_context_type(pvr_exec_context_firmware(
 			    job->context)) != DRM_PVR_CTX_TYPE_COMPUTE)
+				return EINVAL;
+		} else if (job->type == DRM_PVR_JOB_TYPE_TRANSFER_FRAG) {
+			if (pvr_context_type(pvr_exec_context_firmware(
+			    job->context)) != DRM_PVR_CTX_TYPE_TRANSFER_FRAG)
 				return EINVAL;
 		} else {
 			if (pvr_context_type(pvr_exec_context_firmware(
@@ -586,6 +609,10 @@ pvr_submit_jobs(struct drm_device *dev, void *data, struct drm_file *file)
 			error = pvr_context_compute(
 			    pvr_exec_context_firmware(job->context),
 			    &job->command.compute, job->id);
+		} else if (job->type == DRM_PVR_JOB_TYPE_TRANSFER_FRAG) {
+			error = pvr_context_transfer(
+			    pvr_exec_context_firmware(job->context),
+			    &job->command.transfer, job->id);
 		} else {
 			struct pvr_submit_job *frag = &batch->jobs[index + 1];
 			struct pvr_hwrt_target target;

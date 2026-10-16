@@ -11,7 +11,7 @@ Use the [native execution guide](a733-pvr-execution.md) for the implemented comp
 
 | Component | Software evidence | Integration boundary |
 | --- | --- | --- |
-| Geometry, fragment, and transfer stream decoders | 3,914 sanitizer checks; 1,320 comparisons with pinned Linux encoders | Paired geometry/fragment submission exists; transfer submission remains separate |
+| Geometry, fragment, and transfer stream decoders | 3,914 sanitizer checks; 1,320 comparisons with pinned Linux encoders | Paired geometry/fragment and independent transfer submission exist; physical graphics remains unverified |
 | Paired geometry/fragment queues, fragment and transfer execution | 199,607 sanitizer checks; 13 causal regressions | Paired submit caller exists; graphics execution remains unverified |
 | HWRT firmware resource owner | 14,101 sanitizer checks; 82,377 configurations compared with pinned Linux | UAPI, handle owner, and build registration exist; hardware acceptance remains pending |
 | Shared GEM and VM mapping holds | BO checks: 37,866 / 148,458; file checks: 2,158 / 127, for 4 KiB / 16 KiB hosts | HWRT handle owner retains these holds; runtime acceptance remains pending |
@@ -44,7 +44,7 @@ PVR_EXEC_TEST_CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointe
 
 1. Keep the accepted kernel, matched modules, DTBs, and recovery hashes together.
 2. Prepare an offscreen Vulkan consumer with independent pixel readback.
-3. Verify and implement native transfer submissions for image-to-buffer readback.
+3. Build and verify native transfer submissions for image-to-buffer readback.
 4. Test offscreen Vulkan rendering before Zink and PRIME sharing.
 5. Recheck the main compute guards after each driver change.
 
@@ -203,6 +203,25 @@ Backend loss retains the entire batch until a separately proven reset permits re
 Normal and ASan/UBSan runs pass. The former host-wait behavior fails the new pair case.
 These checks use kernel, DRM, and firmware boundary models; they are not hardware evidence.
 The current full-branch build below includes these submit changes.
+
+## Native transfer submission
+
+`TRANSFER_FRAG` uses the existing 176-byte stream decoder and transfer context sender.
+The ioctl rejects unknown flags, nonzero HWRT fields, wrong context types, and malformed streams before execution.
+The copied job type retains all 32 UAPI bits; unknown high-bit values cannot alias a supported opcode.
+External waits, retained context/VM references, PRE synchronization, and firmware completion remain required.
+Only successful transfer completion performs POST synchronization and publishes its output fences.
+A failure marks the VM uncertain; the existing owner prevents premature backing-memory release.
+No separate packet encoder or new completion shortcut is introduced.
+
+The actual-source submit contract passes 39,375 normal and ASan/UBSan checks.
+It covers mixed compute/transfer ordering, input-copy and allocation errors, malformed admission,
+external fence completion/failure, interrupted waits, transfer timeout, and backend-loss retention.
+The former implementation and three causal mutants fail the new assertions.
+Real target GCC16 path analysis is clean. Clang retains the same five common-header dead stores.
+Cppcheck parses both variants and reports an identical diagnostic multiset, including inherited warnings.
+The source check does not establish transfer execution on the physical board.
+The installed `4d9b68f` kernel below predates this transfer ioctl integration.
 
 ## Full kernel build and target analysis
 
