@@ -6,6 +6,7 @@
 #include <sys/param.h>
 #include <sys/kmem.h>
 #include <sys/mutex.h>
+#include <sys/rbtree.h>
 #include <sys/systm.h>
 #include <linux/err.h>
 #include <linux/slab.h>
@@ -17,6 +18,8 @@
 #include "pvr_backend.h"
 #include "pvr_drv.h"
 #include "pvr_exec.h"
+#include "pvr_exec_hwrt.h"
+#include "pvr_freelist.h"
 #include "pvr_heap.h"
 #include "pvr_query.h"
 
@@ -28,7 +31,15 @@ struct pvr_orphan {
 	void *owner;
 };
 
+struct pvr_freelist_entry {
+	rb_node_t node;
+	uint32_t id;
+	struct pvr_freelist **owner;
+};
+
 struct pvr_device {
+	rb_tree_t freelists;
+	struct pvr_freelist_entry *grow_pending;
 	struct pvr_orphan *orphans;
 	uint32_t next_id;
 	kmutex_t gate;
@@ -37,6 +48,111 @@ struct pvr_device {
 	uint64_t bvnc;
 	struct pvr_query_profile profile;
 };
+
+/* Compare the full firmware ID. User handles are private to each file. */
+static int
+pvr_freelist_compare_key(void *context, const void *node, const void *key)
+{
+	const struct pvr_freelist_entry *entry = node;
+	const uint32_t *id = key;
+
+	(void)context;
+	return entry->id < *id ? -1 : entry->id > *id;
+}
+
+static int
+pvr_freelist_compare_nodes(void *context, const void *a, const void *b)
+{
+	const struct pvr_freelist_entry *right = b;
+
+	return pvr_freelist_compare_key(context, a, &right->id);
+}
+
+static const rb_tree_ops_t pvr_freelist_tree_ops = {
+	.rbto_compare_nodes = pvr_freelist_compare_nodes,
+	.rbto_compare_key = pvr_freelist_compare_key,
+	.rbto_node_offset = offsetof(struct pvr_freelist_entry, node),
+};
+
+static int
+pvr_device_grow_prepare(void *cookie, uint32_t id,
+    struct rogue_fwif_freelist_gs_data *response)
+{
+	struct pvr_device *sc = cookie;
+	struct pvr_freelist_entry *entry;
+	int error;
+
+	KASSERT(mutex_owned(&sc->gate));
+	if (sc->grow_pending != NULL)
+		return EBUSY;
+	entry = rb_tree_find_node(&sc->freelists, &id);
+	if (entry == NULL)
+		return ENOENT;
+	if (*entry->owner == NULL)
+		return EIO;
+	error = pvr_freelist_grow_prepare(*entry->owner, response);
+	if (error == 0)
+		sc->grow_pending = entry;
+	return error;
+}
+
+static int
+pvr_device_grow_complete(void *cookie, uint32_t id, int completion)
+{
+	struct pvr_device *sc = cookie;
+	struct pvr_freelist_entry *entry = sc->grow_pending;
+	int error;
+
+	KASSERT(mutex_owned(&sc->gate));
+	if (entry == NULL || entry->id != id)
+		return EINVAL;
+	if (*entry->owner == NULL)
+		return EIO;
+	error = pvr_freelist_grow_complete(*entry->owner, completion);
+	if (error == 0)
+		sc->grow_pending = NULL;
+	return error;
+}
+
+int
+pvr_device_freelist_add(struct drm_device *dev, uint32_t id,
+    struct pvr_freelist **owner)
+{
+	struct pvr_device *sc = dev->dev_private;
+	struct pvr_freelist_entry *entry;
+
+	KASSERT(mutex_owned(&sc->gate));
+	if (id == 0 || owner == NULL || *owner != NULL)
+		return EINVAL;
+	if (rb_tree_find_node(&sc->freelists, &id) != NULL)
+		return EEXIST;
+	entry = kmem_zalloc(sizeof(*entry), KM_SLEEP);
+	entry->id = id;
+	entry->owner = owner;
+	if (rb_tree_insert_node(&sc->freelists, entry) != entry) {
+		kmem_free(entry, sizeof(*entry));
+		return EEXIST;
+	}
+	return 0;
+}
+
+int
+pvr_device_freelist_remove(struct drm_device *dev, uint32_t id,
+    struct pvr_freelist **owner)
+{
+	struct pvr_device *sc = dev->dev_private;
+	struct pvr_freelist_entry *entry;
+
+	KASSERT(mutex_owned(&sc->gate));
+	entry = rb_tree_find_node(&sc->freelists, &id);
+	if (entry == NULL || entry->owner != owner)
+		return EINVAL;
+	if (entry == sc->grow_pending || *owner != NULL)
+		return EBUSY;
+	rb_tree_remove_node(&sc->freelists, entry);
+	kmem_free(entry, sizeof(*entry));
+	return 0;
+}
 
 static int
 pvr_dev_query(struct drm_device *dev, void *data, struct drm_file *file)
@@ -93,11 +209,26 @@ pvr_release(struct drm_device *dev)
 	struct pvr_device *sc = dev->dev_private;
 
 	if (sc != NULL) {
+		KASSERT(RB_TREE_MIN(&sc->freelists) == NULL);
+		KASSERT(sc->grow_pending == NULL && sc->orphans == NULL);
 		mutex_destroy(&sc->gate);
 		kmem_free(sc, sizeof(*sc));
 	}
 	drm_dev_fini(dev);
 	kfree(dev);
+}
+
+int
+pvr_device_hwrt_info(struct drm_device *dev, uint64_t *bvnc,
+    uint32_t *minpages)
+{
+	struct pvr_device *sc = dev->dev_private;
+
+	if (bvnc == NULL || minpages == NULL)
+		return EINVAL;
+	*bvnc = sc->bvnc;
+	*minpages = (uint32_t)sc->profile.runtime.free_list_min_pages;
+	return 0;
 }
 
 static const struct drm_ioctl_desc pvr_ioctls[] = {
@@ -121,6 +252,10 @@ DRM_IOCTL_DEF_DRV(PVR_DESTROY_CONTEXT, pvr_destroy_context,
 DRM_IOCTL_DEF_DRV(PVR_CREATE_FREE_LIST, pvr_create_free_list,
     DRM_RENDER_ALLOW | DRM_UNLOCKED),
 DRM_IOCTL_DEF_DRV(PVR_DESTROY_FREE_LIST, pvr_destroy_free_list,
+    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+DRM_IOCTL_DEF_DRV(PVR_CREATE_HWRT_DATASET, pvr_create_hwrt_dataset,
+    DRM_RENDER_ALLOW | DRM_UNLOCKED),
+DRM_IOCTL_DEF_DRV(PVR_DESTROY_HWRT_DATASET, pvr_destroy_hwrt_dataset,
     DRM_RENDER_ALLOW | DRM_UNLOCKED),
 DRM_IOCTL_DEF_DRV(PVR_SUBMIT_JOBS, pvr_submit_jobs,
     DRM_RENDER_ALLOW | DRM_UNLOCKED),
@@ -172,6 +307,7 @@ pvr_render_attach(device_t self, bus_dma_tag_t dmat, uint64_t bvnc,
 		return -PTR_ERR(dev);
 	sc = kmem_zalloc(sizeof(*sc), KM_SLEEP);
 	mutex_init(&sc->gate, MUTEX_DEFAULT, IPL_NONE);
+	rb_tree_init(&sc->freelists, &pvr_freelist_tree_ops);
 	sc->bvnc = bvnc;
 	sc->profile = profile;
 	dev->dev_private = sc;
@@ -204,15 +340,29 @@ pvr_backend_attach(struct drm_device *dev, const struct pvr_backend *backend)
 	    backend->leave == NULL || backend->alloc == NULL ||
 	    backend->free == NULL || backend->sync == NULL ||
 	    backend->command == NULL || backend->flush == NULL ||
-	    backend->check == NULL || backend->fail == NULL)
+	    backend->check == NULL || backend->fail == NULL ||
+	    backend->set_events == NULL)
 		return EINVAL;
 	sc = dev->dev_private;
 	mutex_enter(&sc->gate);
 	if (sc->execution) {
 		error = EALREADY;
 	} else {
-		sc->backend = *backend;
-		sc->execution = true;
+		const struct pvr_fw_events events = {
+			.cookie = sc,
+			.grow_prepare = pvr_device_grow_prepare,
+			.grow_complete = pvr_device_grow_complete,
+		};
+
+		backend->enter(backend->cookie);
+		error = backend->set_events(backend->cookie, &events);
+		backend->leave(backend->cookie);
+		if (error == 0) {
+			sc->backend = *backend;
+			sc->execution = true;
+		} else if (error < 0) {
+			error = EPROTO;
+		}
 	}
 	mutex_exit(&sc->gate);
 	return error;

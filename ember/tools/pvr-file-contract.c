@@ -111,7 +111,7 @@ static void idr_destroy(struct idr *i)
 { for (int n = 0; n < SLOTS; n++) CHECK(i->slots[n] == NULL); }
 
 struct drm_device { bus_dma_tag_t dmat; };
-struct drm_gem_object { unsigned int refs; uint64_t size, pa, flags; bool pinned; };
+struct drm_gem_object { unsigned int refs; uint64_t size, pa, flags; bool pinned; unsigned holds; };
 struct drm_file { void *driver_priv; struct drm_gem_object *handles[SLOTS]; };
 struct test_map { uint64_t va, pa, size, flags; };
 struct pvr_vm { struct test_map ranges[SLOTS]; int (*invalidate)(void *); void *cookie; bool failed; };
@@ -123,6 +123,7 @@ static void drm_gem_object_put_unlocked(struct drm_gem_object *o)
 {
 	CHECK(o != NULL && o->refs != 0);
 	if (--o->refs != 0) return;
+	CHECK(!o->pinned && o->holds == 0);
 	/* A live table cannot outlive its BO reference. */
 	for (unsigned v = 0; v < SLOTS; v++) if (all_vms[v] != NULL)
 		for (unsigned n = 0; n < SLOTS; n++)
@@ -247,10 +248,15 @@ static int pvr_bo_cpu(struct drm_gem_object *obj, uint64_t offset, size_t size, 
 static void pvr_bo_sync(struct drm_gem_object *obj, int operations)
 { CHECK(obj->refs != 0 && mutex_owned(&device_gate)); if (operations == 3) pre_syncs++; else { CHECK(operations == 12); post_syncs++; } }
 static int pvr_bo_pin(struct drm_gem_object *obj)
-{ CHECK(obj->refs > 0); if (obj->pinned) return EBUSY; obj->pinned = true; return 0; }
+{ CHECK(obj->refs > 0); if (obj->pinned || obj->holds != 0) return EBUSY; obj->pinned = true; return 0; }
 static void pvr_bo_unpin(struct drm_gem_object *obj)
 { CHECK(obj->refs > 0 && obj->pinned); obj->pinned = false; }
+static int pvr_bo_hold(struct drm_gem_object *obj)
+{ CHECK(obj->refs > 0); if (obj->pinned) return EBUSY; if (obj->holds == UINT_MAX) return EOVERFLOW; obj->holds++; return 0; }
+static void pvr_bo_unhold(struct drm_gem_object *obj)
+{ CHECK(obj->refs > 0 && obj->holds > 0); obj->holds--; }
 struct pvr_exec_file { unsigned magic; };
+
 static unsigned exec_live;
 struct pvr_exec_file *pvr_exec_open(void)
 { struct pvr_exec_file *p = calloc(1, sizeof(*p)); CHECK(p != NULL); p->magic = 0x1739; exec_live++; return p; }
@@ -285,7 +291,7 @@ static struct drm_gem_object *new_bo(struct drm_file *f, unsigned h, uint64_t pa
 {
 	struct drm_gem_object *o = calloc(1, sizeof(*o));
 	CHECK(o != NULL && h != 0 && h < SLOTS && f->handles[h] == NULL);
-	*o = (struct drm_gem_object){ 1, 4 * PAGE_SIZE, pa, UINT64_C(1) << 62, false };
+	*o = (struct drm_gem_object){ 1, 4 * PAGE_SIZE, pa, UINT64_C(1) << 62, false, 0 };
 	for (unsigned n = 0; n < SLOTS; n++) if (all_objects[n] == NULL) {
 		all_objects[n] = o; f->handles[h] = o; atomic_fetch_add(&objects, 1); return o;
 	}
@@ -457,6 +463,83 @@ pin_lifetime(struct drm_device *dev)
 	CHECK(pre_syncs == post_syncs);
 }
 
+static void
+hold_lifetime(struct drm_device *dev)
+{
+	struct drm_file file = { 0 };
+	struct drm_pvr_ioctl_vm_map_args map;
+	struct drm_pvr_ioctl_vm_unmap_args unmap;
+	struct pvr_file_vm *vm, *alias;
+	struct pvr_file_hold first = { 0 }, second = { 0 }, third = { 0 };
+	struct pvr_file_pin pin = { 0 };
+	struct drm_gem_object *bo;
+	unsigned handle, alias_handle, before;
+
+	CHECK(pvr_file_open(dev, &file) == 0);
+	handle = create_vm(dev, &file);
+	alias_handle = create_vm(dev, &file);
+	bo = new_bo(&file, 1, 0x73000000);
+	map = (struct drm_pvr_ioctl_vm_map_args){ .vm_context_handle = handle,
+	    .handle = 1, .device_addr = BASE, .offset = PAGE_SIZE, .size = PAGE_SIZE };
+	unmap = (struct drm_pvr_ioctl_vm_unmap_args){ .vm_context_handle = handle,
+	    .device_addr = BASE, .size = PAGE_SIZE };
+	CHECK(pvr_vm_map_ioctl(dev, &map, &file) == 0);
+	map.vm_context_handle = alias_handle;
+	CHECK(pvr_vm_map_ioctl(dev, &map, &file) == 0);
+	(void)pvr_device_enter(dev);
+	vm = pvr_file_vm_get(&file, handle);
+	alias = pvr_file_vm_get(&file, alias_handle);
+	CHECK(pvr_file_vm_hold(vm, BASE, 32, 0, NULL) == EINVAL);
+	CHECK(pvr_file_vm_hold(vm, BASE, 0, 0, &first) == EINVAL);
+	CHECK(pvr_file_vm_hold(vm, BASE - 1, 32, 0, &first) == ENOENT);
+	CHECK(pvr_file_vm_hold(vm, BASE + PAGE_SIZE - 8, 16, 0, &first) == ENOENT);
+	CHECK(pvr_file_vm_hold(vm, UINT64_MAX, 16, 0, &first) == ENOENT);
+	CHECK(pvr_file_vm_hold(vm, BASE, 32, bo->flags | 1, &first) == EACCES);
+	vm->failed = true;
+	CHECK(pvr_file_vm_hold(vm, BASE, 32, 0, &first) == EINVAL);
+	vm->failed = false;
+	vm->mappings->pins = UINT_MAX;
+	CHECK(pvr_file_vm_hold(vm, BASE, 32, 0, &first) == EOVERFLOW);
+	vm->mappings->pins = 0;
+	bo->holds = UINT_MAX;
+	CHECK(pvr_file_vm_hold(vm, BASE, 32, 0, &first) == EOVERFLOW);
+	CHECK(first.mapping == NULL && vm->mappings->pins == 0);
+	bo->holds = 0;
+	CHECK(pvr_file_vm_pin(alias, BASE, 32, bo->flags, &pin) == 0);
+	CHECK(pvr_file_vm_hold(vm, BASE, 32, 0, &first) == EBUSY);
+	CHECK(first.mapping == NULL && vm->mappings->pins == 0 && bo->holds == 0);
+	pvr_file_unpin(&pin);
+	CHECK(pvr_file_vm_hold(vm, BASE + 64, 32, bo->flags, &first) == 0);
+	/* Mesa packs two target spans in one BO and mapping. */
+	CHECK(pvr_file_vm_hold(vm, BASE + 128, 32, bo->flags, &second) == 0);
+	CHECK(pvr_file_vm_hold(alias, BASE + 64, 32, bo->flags, &third) == 0);
+	CHECK(vm->mappings->pins == 2 && alias->mappings->pins == 1);
+	CHECK(bo->holds == 3 && bo->refs == 3);
+	CHECK(pvr_file_vm_hold(vm, BASE, 32, 0, &first) == EINVAL);
+	CHECK(pvr_file_vm_pin(alias, BASE, 32, bo->flags, &pin) == EBUSY);
+	pvr_device_leave(dev);
+	before = core_unmaps;
+	CHECK(pvr_vm_unmap_ioctl(dev, &unmap, &file) == -EBUSY);
+	unmap.vm_context_handle = alias_handle;
+	CHECK(pvr_vm_unmap_ioctl(dev, &unmap, &file) == -EBUSY);
+	CHECK(core_unmaps == before);
+	destroy_vm(dev, &file, handle);
+	destroy_vm(dev, &file, alias_handle);
+	close_file(dev, &file);
+	CHECK(vm->refs == 1 && alias->refs == 1 && bo->refs == 2 && bo->holds == 3);
+	(void)pvr_device_enter(dev);
+	pvr_file_unhold(&first);
+	CHECK(first.mapping == NULL && vm->mappings->pins == 1 && bo->holds == 2);
+	pvr_file_unhold(&second);
+	CHECK(second.mapping == NULL && vm->mappings->pins == 0 && bo->holds == 1);
+	pvr_file_vm_put(vm);
+	CHECK(bo->refs == 1 && bo->holds == 1);
+	pvr_file_unhold(&third);
+	CHECK(third.mapping == NULL && alias->mappings->pins == 0 && bo->holds == 0);
+	pvr_file_vm_put(alias);
+	pvr_device_leave(dev);
+}
+
 int
 main(void)
 {
@@ -573,7 +656,7 @@ main(void)
 finish:
 	close_file(&dev, &a); close_file(&dev, &b);
 	CHECK(atomic_load(&allocations) == 0 && atomic_load(&objects) == 0 && atomic_load(&vms) == 0);
-	if (PAGE_SHIFT == 12) { firmware_lifetime(&dev); pin_lifetime(&dev); }
+	if (PAGE_SHIFT == 12) { firmware_lifetime(&dev); pin_lifetime(&dev); hold_lifetime(&dev); }
 	CHECK(atomic_load(&allocations) == 0 && atomic_load(&objects) == 0 && atomic_load(&vms) == 0);
 	CHECK(exec_live == 0); mutex_destroy(&device_gate);
 	CHECK(pthread_cond_destroy(&changed) == 0 && pthread_mutex_destroy(&rendezvous) == 0);

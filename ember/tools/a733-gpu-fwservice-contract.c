@@ -64,6 +64,10 @@ static unsigned int commands, allocation_step, failure_step;
 static uint64_t next_pa, force_pa;
 static int transport_error, attach_error;
 static bool transport_freezes, quiescent, table_edit;
+static unsigned int events_remaining, event_dequeues, grow_prepares, grow_completes;
+static unsigned int response_commands, observed_responses, grow_delta;
+static int event_error, prepare_error, complete_error, health_error, completion_status;
+static bool events_forever, prepare_reentry;
 
 static void *kmem_zalloc(size_t, int);
 static void kmem_free(void *, size_t);
@@ -305,8 +309,23 @@ sun60i_a733_gpu_fwqueue_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
     uint32_t log_type, struct sun60i_a733_gpu_fwprobe_result *out)
 {
 	CHECK(tag == &memory && handle == 0x12340000 && mem == &memory && b == &boot);
-	CHECK(q == &service.queue && q->attached && !q->failed && log_type == 0x3f);
-	CHECK(cmd->cmd_type == 0x2abc0066 && cmd->kccb_flags == 0);
+	CHECK(q == &service.queue && q->attached && log_type == 0x3f);
+	if (q->failed) return EIO;
+	CHECK(cmd->kccb_flags == 0);
+	if (cmd->cmd_type == ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE) {
+		CHECK(service.dispatching && event_dequeues == grow_prepares);
+		CHECK(cmd->cmd_data.free_list_gs_data.freelist_fw_addr == 0xc0201000);
+		CHECK(cmd->cmd_data.free_list_gs_data.delta_pages == grow_delta);
+		CHECK(cmd->cmd_data.free_list_gs_data.new_pages == 512);
+		CHECK(cmd->cmd_data.free_list_gs_data.ready_pages == 4);
+		response_commands++;
+		memset(out, 0, sizeof(*out));
+		out->command = cmd->cmd_type;
+		out->error = transport_error;
+		if (transport_error != 0 && transport_freezes) q->failed = true;
+		return transport_error;
+	}
+	CHECK(cmd->cmd_type == 0x2abc0066);
 	CHECK(cmd->cmd_data.mmu_cache_data.cache_flags == 0x0400001f);
 	CHECK(cmd->cmd_data.mmu_cache_data.mmu_cache_sync_fw_addr == 0xc0104400);
 	CHECK(cmd->cmd_data.mmu_cache_data.mmu_cache_sync_update_value == 0);
@@ -314,6 +333,7 @@ sun60i_a733_gpu_fwqueue_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
 	commands++;
 	memset(out, 0, sizeof(*out));
 	out->error = transport_error;
+	out->command = cmd->cmd_type;
 	if (transport_error != 0) {
 		if (transport_freezes)
 			q->failed = true;
@@ -332,6 +352,29 @@ sun60i_a733_gpu_fwqueue_observe(struct sun60i_a733_gpu_fwmem *mem,
 	CHECK(mem == &memory && b == &boot && q == &service.queue);
 	memset(out, 0, sizeof(*out));
 	out->valid = true;
+	out->state.fw_read_offset = event_dequeues & 31;
+	out->state.fw_write_offset = (event_dequeues +
+	    (events_remaining != 0 || events_forever ? 1 : 0)) & 31;
+	if (response_commands != 0 && health_error != 0) {
+		q->failed = true;
+		return health_error;
+	}
+	observed_responses = response_commands;
+	return 0;
+}
+
+int
+sun60i_a733_gpu_fwqueue_event(struct sun60i_a733_gpu_fwmem *mem,
+    const struct sun60i_a733_gpu_fwboot_result *b,
+    struct sun60i_a733_gpu_fwqueue *q, uint32_t *id)
+{
+	CHECK(mem == &memory && b == &boot && q == &service.queue);
+	CHECK(service.dispatching && !q->failed);
+	if (event_error != 0) { q->failed = true; return event_error; }
+	if (events_remaining == 0 && !events_forever) return ENOENT;
+	if (events_remaining != 0) events_remaining--;
+	event_dequeues++;
+	*id = 123;
 	return 0;
 }
 
@@ -374,6 +417,10 @@ reset(void)
 	transport_error = attach_error = 0;
 	transport_freezes = true;
 	quiescent = table_edit = false;
+	events_remaining = event_dequeues = grow_prepares = grow_completes = 0;
+	response_commands = observed_responses = grow_delta = 0;
+	event_error = prepare_error = complete_error = health_error = completion_status = 0;
+	events_forever = prepare_reentry = false;
 }
 
 static void
@@ -530,11 +577,113 @@ failure_tests(void)
 	CHECK(memcmp(saved_table, table, sizeof(table)) == 0); finish();
 }
 
+static int
+prepare_event(void *cookie, uint32_t id, struct rogue_fwif_freelist_gs_data *out)
+{
+	struct sun60i_a733_gpu_fwprobe_observation observation;
+
+	CHECK(cookie == &memory && id == 123 && service.dispatching);
+	CHECK(event_dequeues == grow_prepares + 1);
+	grow_prepares++;
+	CHECK(response_commands + 1 == grow_prepares);
+	if (prepare_reentry)
+		CHECK(sun60i_a733_gpu_fwservice_observe(&service, &observation) == EDEADLK);
+	if (prepare_error != 0)
+		return prepare_error;
+	*out = (struct rogue_fwif_freelist_gs_data){0xc0201000, grow_delta, 512, 4};
+	return 0;
+}
+
+static int
+complete_event(void *cookie, uint32_t id, int error)
+{
+	CHECK(cookie == &memory && id == 123 && service.dispatching);
+	CHECK(grow_completes + 1 == grow_prepares);
+	CHECK(error != 0 || observed_responses == response_commands);
+	grow_completes++;
+	completion_status = error;
+	if (error != 0 || complete_error != 0)
+		service.queue.failed = true;
+	return complete_error;
+}
+
+static void
+install_events(void)
+{
+	CHECK(sun60i_a733_gpu_fwservice_set_events(&service, &memory,
+	    prepare_event, complete_event) == 0);
+}
+
+static void
+event_tests(void)
+{
+	struct sun60i_a733_gpu_fwprobe_observation observation;
+	struct sun60i_a733_gpu_fwprobe_result result;
+	struct rogue_fwif_kccb_cmd command = {0};
+	unsigned int calls;
+
+	reset(); attach();
+	CHECK(sun60i_a733_gpu_fwservice_set_events(&service, NULL,
+	    prepare_event, complete_event) == EINVAL);
+	CHECK(!service.events_set);
+	install_events();
+	CHECK(sun60i_a733_gpu_fwservice_set_events(&service, &memory,
+	    prepare_event, complete_event) == EBUSY);
+	CHECK(service.event_cookie == &memory && !service.queue.failed);
+	for (unsigned int n = 0; n < 2; n++) {
+		events_remaining = 3; grow_delta = n * 4;
+		CHECK(sun60i_a733_gpu_fwservice_observe(&service, &observation) == 0);
+		CHECK(!service.dispatching && !service.queue.failed);
+		CHECK(event_dequeues == 3 * (n + 1));
+		CHECK(grow_prepares == event_dequeues && grow_completes == grow_prepares);
+		CHECK(response_commands == grow_completes && completion_status == 0);
+		CHECK(observation.valid && observation.state.fw_write_offset ==
+		    observation.state.fw_read_offset);
+	}
+	/* command() preserves its caller's original result while draining replies. */
+	events_remaining = 1; publications++;
+	command.cmd_type = ROGUE_FWIF_KCCB_CMD_MMUCACHE;
+	command.cmd_data.mmu_cache_data.cache_flags = 0x0400001f;
+	command.cmd_data.mmu_cache_data.mmu_cache_sync_fw_addr = 0xc0104400;
+	CHECK(sun60i_a733_gpu_fwservice_command(&service, &command, &result) == 0);
+	CHECK(result.command == ROGUE_FWIF_KCCB_CMD_MMUCACHE && grow_completes == 7);
+	finish();
+
+	/* No handler, unknown event or owner, and callback failures all stop. */
+	for (unsigned int n = 0; n < 8; n++) {
+		reset(); attach(); events_remaining = 1;
+		if (n != 0) install_events();
+		if (n == 1) event_error = EOPNOTSUPP;
+		if (n == 2) prepare_error = ENOENT;
+		if (n == 3) complete_error = EINVAL;
+		if (n == 4) transport_error = ETIMEDOUT;
+		if (n == 5) health_error = EIO;
+		if (n == 6) prepare_reentry = true;
+		if (n == 7) { transport_error = EINVAL; transport_freezes = false; }
+		CHECK(sun60i_a733_gpu_fwservice_observe(&service, &observation) != 0);
+		CHECK(service.queue.failed && !service.dispatching);
+		CHECK(grow_completes == (n >= 3 ? 1U : 0U));
+		CHECK(n < 4 || completion_status != 0);
+		calls = commands + event_dequeues;
+		CHECK(sun60i_a733_gpu_fwservice_observe(&service, &observation) == EIO);
+		CHECK(sun60i_a733_gpu_fwservice_command(&service, &command, &result) == EIO);
+		CHECK(commands + event_dequeues == calls);
+		finish();
+	}
+	/* Events that keep arriving cannot hold the device gate indefinitely. */
+	reset(); attach(); install_events(); events_forever = true;
+	CHECK(sun60i_a733_gpu_fwservice_observe(&service, &observation) == ELOOP);
+	CHECK(event_dequeues == 32 && response_commands == 32 && grow_completes == 32);
+	CHECK(service.queue.failed && !service.dispatching);
+	finish();
+}
+
 int
 main(void)
 {
 	basic_tests();
 	failure_tests();
+	event_tests();
 	printf("a733-gpu-fwservice-contract: PASS %u checks\n", checks);
 	return 0;
 }

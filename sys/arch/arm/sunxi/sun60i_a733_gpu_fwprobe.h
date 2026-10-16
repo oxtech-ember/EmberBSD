@@ -45,7 +45,8 @@
 struct sun60i_a733_gpu_fwprobe_snapshot {
 	uint32_t read_offset, write_offset, wrap_mask, cmd_size, rtn;
 	uint32_t fw_read_offset, fw_write_offset, fw_wrap_mask, fw_cmd_size;
-	uint32_t fw_command, cmds_executed, pow_state, hwr_state, fw_faults;
+	uint32_t fw_command, fw_flags, fw_freelist_id;
+	uint32_t cmds_executed, pow_state, hwr_state, fw_faults;
 	uint32_t log_type, fw_state, os_state, alive_fw_token, alive_os_token;
 	uint32_t mmucache_sync;
 	uint8_t firmware_started, compchecks_updated, os_count_support;
@@ -156,7 +157,7 @@ int sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t, bus_space_handle_t,
  */
 struct sun60i_a733_gpu_fwqueue {
 	bool attached, failed;
-	uint32_t expected_log_type;
+	uint32_t expected_log_type, fw_read_offset;
 	const struct sun60i_a733_gpu_fwmem *owner;
 	const struct sun60i_a733_gpu_fwboot_result *boot;
 	struct sun60i_a733_gpu_fwmem mem_identity;
@@ -176,7 +177,7 @@ int sun60i_a733_gpu_fwqueue_attach(struct sun60i_a733_gpu_fwmem *,
     struct sun60i_a733_gpu_fwqueue *);
 
 /*
- * Submit one sanitized LOGTYPE, MMUCACHE, KICK or CLEANUP packet. CLEANUP
+ * Submit a sanitized LOGTYPE, MMUCACHE, KICK, CLEANUP or GROW_UPDATE packet. CLEANUP
  * supports FWCOMMONCONTEXT, FREELIST and HWRTDATA. Unsupported types and
  * flags fail before I/O. Supply the shared log type explicitly. Only
  * LOGTYPE can change it; the caller writes it before that command.
@@ -194,10 +195,26 @@ int sun60i_a733_gpu_fwqueue_cmd(bus_space_tag_t, bus_space_handle_t,
     struct sun60i_a733_gpu_fwqueue *, const struct rogue_fwif_kccb_cmd *,
     uint32_t, struct sun60i_a733_gpu_fwprobe_result *);
 
-/* Read fresh fault state without consuming FWCCB or changing last. */
+/*
+ * Read fresh fault state without consuming FWCCB or changing last.
+ * Valid pending GROW events may remain during KCCB consumption. They must
+ * be drained by the service before job acceptance. Unknown events failstop.
+ */
 int sun60i_a733_gpu_fwqueue_observe(struct sun60i_a733_gpu_fwmem *,
     const struct sun60i_a733_gpu_fwboot_result *,
     struct sun60i_a733_gpu_fwqueue *,
     struct sun60i_a733_gpu_fwprobe_observation *);
+
+/*
+ * Consume exactly one validated GROW event and confirm its read offset.
+ * Return ENOENT if empty, with *id unchanged. Any unknown, malformed or
+ * fault event freezes the queue. Preserve its bytes for diagnosis.
+ * The caller must dispatch the copied ID exactly once before job acceptance.
+ * Publication only changes host-owned FWCCB read_offset. Never clear slots.
+ * Use the same gates, boot identity and retention rules as command().
+ */
+int sun60i_a733_gpu_fwqueue_event(struct sun60i_a733_gpu_fwmem *,
+    const struct sun60i_a733_gpu_fwboot_result *,
+    struct sun60i_a733_gpu_fwqueue *, uint32_t *);
 
 #endif /* _SUN60I_A733_GPU_FWPROBE_H */

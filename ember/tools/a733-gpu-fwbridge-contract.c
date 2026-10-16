@@ -179,6 +179,18 @@ int sun60i_a733_gpu_fwservice_observe(struct sun60i_a733_gpu_fwservice *s,
     struct sun60i_a733_gpu_fwprobe_observation *r)
 { CHECK(s == &sc.sc_fwbridge.service && !r->valid); check_calls++; return operation_error; }
 int
+sun60i_a733_gpu_fwservice_set_events(struct sun60i_a733_gpu_fwservice *s,
+    void *cookie, int (*prepare)(void *, uint32_t, struct rogue_fwif_freelist_gs_data *),
+    int (*complete)(void *, uint32_t, int))
+{
+	CHECK(s == &sc.sc_fwbridge.service && mutex_owned(&sc.sc_run_lock));
+	if (cookie == NULL || prepare == NULL || complete == NULL) return EINVAL;
+	if (s->events_set) return EBUSY;
+	s->events_set = true; s->event_cookie = cookie;
+	s->grow_prepare = prepare; s->grow_complete = complete;
+	return 0;
+}
+int
 pvr_backend_attach(struct drm_device *d, const struct pvr_backend *b)
 {
 	CHECK(d == &device && !mutex_owned(&sc.sc_run_lock)); register_calls++;
@@ -316,9 +328,33 @@ commands(void)
 	reset(); b = start(); b->fail(b->cookie);
 	CHECK(sc.sc_fwbridge.service.queue.failed); b->leave(b->cookie);
 }
+static int test_grow(void *c, uint32_t id, struct rogue_fwif_freelist_gs_data *r)
+{ (void)c; (void)id; (void)r; return 0; }
+static int test_complete(void *c, uint32_t id, int e)
+{ (void)c; (void)id; return e; }
+static void event_tests(void)
+{
+	const struct pvr_backend *b;
+	struct pvr_fw_events events = {&device, test_grow, test_complete};
+	reset(); b = start();
+	CHECK(b->set_events != NULL);
+	CHECK(b->set_events(b->cookie, NULL) == EINVAL);
+	CHECK(b->set_events(b->cookie, &events) == 0);
+	CHECK(sc.sc_fwbridge.service.event_cookie == &device);
+	CHECK(sc.sc_fwbridge.service.grow_prepare == test_grow);
+	CHECK(sc.sc_fwbridge.service.grow_complete == test_complete);
+	memset(&events, 0, sizeof(events));
+	CHECK(sc.sc_fwbridge.service.grow_prepare == test_grow);
+	events = (struct pvr_fw_events){&device, test_grow, test_complete};
+	CHECK(b->set_events(b->cookie, &events) == EBUSY);
+	b->fail(b->cookie);
+	CHECK(b->set_events(b->cookie, &events) == EIO);
+	b->leave(b->cookie);
+}
 int main(void)
 {
 	lifecycle(); objects(); commands();
-	printf("a733 fwbridge contract: %u checks passed\n", checks);
+	event_tests();
+	printf("a733-gpu-fwbridge contract: %u checks passed\n", checks);
 	return 0;
 }

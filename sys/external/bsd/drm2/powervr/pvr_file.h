@@ -23,4 +23,14 @@ struct pvr_file_pin {
 int pvr_file_vm_pin(struct pvr_file_vm *, uint64_t, size_t, uint64_t, struct pvr_file_pin *);
 void pvr_file_pin_sync(void *, int);
 void pvr_file_unpin(struct pvr_file_pin *);
+/*
+ * A shared hold requires a live VM reference. It prevents mapping removal.
+ * Several HWRT spans can share one BO. An exclusive free-list pin cannot.
+ */
+struct pvr_file_hold {
+	void *mapping;
+};
+int pvr_file_vm_hold(struct pvr_file_vm *, uint64_t, size_t, uint64_t,
+    struct pvr_file_hold *);
+void pvr_file_unhold(struct pvr_file_hold *);
 #endif /* _PVR_FILE_H_ */

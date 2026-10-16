@@ -20,6 +20,10 @@ struct sun60i_a733_gpu_fwservice {
 	struct sun60i_a733_gpu_fwobject *objects;
 	bus_space_tag_t bst;
 	bus_space_handle_t bsh;
+	void *event_cookie;
+	int (*grow_prepare)(void *, uint32_t, struct rogue_fwif_freelist_gs_data *);
+	int (*grow_complete)(void *, uint32_t, int);
+	bool events_set, dispatching;
 };
 
 /*
@@ -38,6 +42,18 @@ int sun60i_a733_gpu_fwservice_attach(struct sun60i_a733_gpu_fwservice *,
     bus_space_tag_t, bus_space_handle_t, struct sun60i_a733_gpu_fwmem *,
     const struct sun60i_a733_gpu_fwboot_result *,
     const struct sun60i_a733_gpu_fwprobe_result *);
+/*
+ * Install once under both device and platform gates. Keep cookie alive until
+ * reboot. Callbacks run under both gates after the FWCCB read is confirmed.
+ * They must not acquire either gate or call backend transport operations.
+ * Complete may call fail(), which only marks state and performs no transport.
+ * Every successful prepare receives one completion, including delta0/error.
+ * Unknown events, handler errors and more than one ring of events per call
+ * freeze the service. Each response has the normal bounded KCCB deadline.
+ */
+int sun60i_a733_gpu_fwservice_set_events(struct sun60i_a733_gpu_fwservice *,
+    void *, int (*)(void *, uint32_t, struct rogue_fwif_freelist_gs_data *),
+    int (*)(void *, uint32_t, int));
 int sun60i_a733_gpu_fwservice_alloc(struct sun60i_a733_gpu_fwservice *, size_t,
     struct sun60i_a733_gpu_fwobject **);
 /*

@@ -58,8 +58,8 @@ struct pvr_freelist {
 	struct pvr_freelist_config config;
 	struct pvr_fw_object firmware;
 	struct pvr_freelist_page *pages;
-	uint32_t allocated;
-	bool initialized, ready, cleaned, failed;
+	uint32_t allocated, page_capacity, current_pages, ready_pages;
+	bool initialized, ready, cleaned, failed, grow_prepared;
 };
 
 static void
@@ -150,7 +150,7 @@ pvr_freelist_release(struct pvr_freelist *fl)
 		pvr_freelist_page_free(fl, &fl->pages[fl->allocated]);
 	}
 	if (fl->pages != NULL)
-		kmem_free(fl->pages, fl->config.initial_pages * sizeof(*fl->pages));
+		kmem_free(fl->pages, fl->page_capacity * sizeof(*fl->pages));
 	kmem_free(fl, sizeof(*fl));
 }
 
@@ -194,6 +194,7 @@ pvr_freelist_create(bus_dma_tag_t dmat, const struct pvr_backend *be,
 	fl->dmat = dmat;
 	fl->backend = be;
 	fl->config = *config;
+	fl->page_capacity = config->initial_pages;
 	if (config->initial_pages != 0)
 		fl->pages = kmem_zalloc(config->initial_pages * sizeof(*fl->pages),
 		    KM_SLEEP);
@@ -232,6 +233,8 @@ pvr_freelist_create(bus_dma_tag_t dmat, const struct pvr_backend *be,
 	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
 	ready = MIN(config->initial_pages * config->grow_threshold / 100,
 	    config->grow_pages) & ~3U;
+	fl->current_pages = config->initial_pages - ready;
+	fl->ready_pages = ready;
 	firmware = fl->firmware.cpu;
 	memset(firmware, 0, sizeof(*firmware));
 	firmware->freelist_dev_addr = config->gpu_va;
@@ -253,6 +256,126 @@ pvr_freelist_create(bus_dma_tag_t dmat, const struct pvr_backend *be,
 	if (error == 0)
 		fl->ready = true;
 	return error;
+}
+
+/* The event owner has consumed one validated FWCCB grow request. */
+int
+pvr_freelist_grow_prepare(struct pvr_freelist *fl,
+    struct rogue_fwif_freelist_gs_data *response)
+{
+	struct rogue_fwif_freelist_gs_data result;
+	struct pvr_freelist_page *pages;
+	uint8_t *table;
+	uint32_t delta = 0, total, count, i, entry;
+	int error;
+
+	if (fl == NULL || response == NULL)
+		return EINVAL;
+	if (fl->failed || !fl->ready || fl->cleaned)
+		return EIO;
+	if (fl->grow_prepared)
+		return EBUSY;
+	if (fl->allocated > fl->config.max_pages ||
+	    fl->allocated > fl->page_capacity ||
+	    fl->ready_pages > fl->allocated ||
+	    fl->current_pages != fl->allocated - fl->ready_pages) {
+		fl->failed = true;
+		fl->backend->fail(fl->backend->cookie);
+		return EPROTO;
+	}
+	/* Firmware has consumed the reserve before it requests host growth. */
+	fl->current_pages += fl->ready_pages;
+	fl->ready_pages = 0;
+	if (fl->config.grow_pages == 0 ||
+	    fl->config.grow_pages > fl->config.max_pages - fl->allocated)
+		goto respond;
+	total = fl->allocated + fl->config.grow_pages;
+	pages = kmem_zalloc(total * sizeof(*pages), KM_SLEEP);
+	if (fl->allocated != 0)
+		memcpy(pages, fl->pages, fl->allocated * sizeof(*pages));
+	count = fl->allocated;
+	while (count < total) {
+		error = pvr_freelist_page_alloc(fl, &pages[count]);
+		if (error != 0) {
+			/* No new PFN is visible. Existing page ownership is unchanged. */
+			while (count > fl->allocated)
+				pvr_freelist_page_free(fl, &pages[--count]);
+			kmem_free(pages, total * sizeof(*pages));
+			goto respond;
+		}
+		count++;
+	}
+	/* Adopt every new DMA page before publishing any table entry. */
+	if (fl->pages != NULL)
+		kmem_free(fl->pages, fl->page_capacity * sizeof(*fl->pages));
+	fl->pages = pages;
+	fl->page_capacity = total;
+	count = fl->allocated;
+	fl->allocated = total;
+	fl->config.backing_sync(fl->config.sync_cookie,
+	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	table = fl->config.backing_cpu;
+	table += (fl->config.max_pages - total) * sizeof(uint32_t);
+	for (i = count; i < total; i++) {
+		entry = htole32((uint32_t)(pages[i].pa >> 12));
+		memcpy(table + (i - count) * sizeof(entry), &entry, sizeof(entry));
+	}
+	fl->config.backing_sync(fl->config.sync_cookie,
+	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+	delta = fl->config.grow_pages;
+	fl->ready_pages = MIN(total * fl->config.grow_threshold / 100,
+	    fl->config.grow_pages) & ~3U;
+	fl->current_pages = total - fl->ready_pages;
+respond:
+	/* Allocation failure is a valid zero-delta response, not a fake grow. */
+	memset(&result, 0, sizeof(result));
+	result.freelist_fw_addr = fl->firmware.address;
+	result.delta_pages = delta;
+	result.new_pages = fl->current_pages + fl->ready_pages;
+	result.ready_pages = fl->ready_pages;
+	fl->grow_prepared = true;
+	*response = result;
+	return 0;
+}
+
+int
+pvr_freelist_grow_complete(struct pvr_freelist *fl, int error)
+{
+
+	if (fl == NULL || !fl->grow_prepared)
+		return EINVAL;
+	if (fl->failed)
+		return EIO;
+	if (error != 0) {
+		/* Publication or acknowledgement is ambiguous. Keep all DMA pages. */
+		fl->failed = true;
+		fl->backend->fail(fl->backend->cookie);
+		return error > 0 ? error : EPROTO;
+	}
+	fl->grow_prepared = false;
+	return 0;
+}
+
+uint32_t
+pvr_freelist_current_pages(const struct pvr_freelist *fl)
+{
+
+	return fl != NULL && fl->ready && !fl->failed && !fl->cleaned &&
+	    !fl->grow_prepared ? fl->current_pages : 0;
+}
+
+uint32_t
+pvr_freelist_initial_pages(const struct pvr_freelist *fl)
+{
+
+	return fl != NULL && fl->ready ? fl->config.initial_pages : 0;
+}
+
+uint32_t
+pvr_freelist_max_pages(const struct pvr_freelist *fl)
+{
+
+	return fl != NULL && fl->ready ? fl->config.max_pages : 0;
 }
 
 uint32_t
@@ -279,6 +402,8 @@ pvr_freelist_destroy(struct pvr_freelist **owner)
 	be = fl->backend;
 	if (fl->failed)
 		return EIO;
+	if (fl->grow_prepared)
+		return EBUSY;
 	error = be->check(be->cookie);
 	if (error != 0)
 		return error;
@@ -312,8 +437,8 @@ pvr_freelist_destroy(struct pvr_freelist **owner)
 		fl->config.backing_sync(fl->config.sync_cookie,
 		    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
 		table = fl->config.backing_cpu;
-		table += (fl->config.max_pages - fl->config.initial_pages) * sizeof(uint32_t);
-		memset(table, 0, fl->config.initial_pages * sizeof(uint32_t));
+		table += (fl->config.max_pages - fl->allocated) * sizeof(uint32_t);
+		memset(table, 0, fl->allocated * sizeof(uint32_t));
 		fl->config.backing_sync(fl->config.sync_cookie, BUS_DMASYNC_PREWRITE);
 	}
 	pvr_freelist_release(fl);

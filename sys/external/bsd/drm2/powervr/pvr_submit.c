@@ -41,11 +41,15 @@
 #include "pvr_context.h"
 #include "pvr_drm.h"
 #include "pvr_exec.h"
+#include "pvr_exec_hwrt.h"
+#include "pvr_hwrt.h"
 #include "pvr_file.h"
 #include "pvr_stream.h"
 
 /* Policy for this synchronous slice, not a firmware or UAPI size limit. */
 #define PVR_SUBMIT_WAIT_SECONDS 10
+/* Bound all producer searches in one batch, including empty jobs. */
+#define PVR_SUBMIT_DEPENDENCY_CHECKS (1U << 20)
 
 struct pvr_submit_sync {
 	struct drm_pvr_sync_op input;
@@ -53,10 +57,19 @@ struct pvr_submit_sync {
 	struct dma_fence_chain *chain;
 };
 struct pvr_submit_job {
-	struct rogue_fwif_cmd_compute command;
+	union {
+		struct rogue_fwif_cmd_compute compute;
+		struct rogue_fwif_cmd_geom geometry;
+		struct rogue_fwif_cmd_frag fragment;
+	} command;
 	struct pvr_exec_context *context;
+	struct pvr_exec_hwrt *hwrt;
 	struct pvr_submit_sync *syncs;
 	uint32_t handle, sync_count, id;
+	uint32_t hwrt_handle;
+	uint8_t type;
+	uint8_t rt_index;
+	uint32_t fragment_type;
 };
 struct pvr_submit_batch {
 	size_t bytes;
@@ -128,24 +141,58 @@ pvr_submit_copy(const struct drm_pvr_obj_array *array,
 		error = copyin((const void *)(uintptr_t)address, &input, sizeof(input));
 		if (error != 0)
 			return error;
-		if (input.type != DRM_PVR_JOB_TYPE_COMPUTE)
-			return EOPNOTSUPP;
-		if (input.hwrt.set_handle != 0 || input.hwrt.data_index != 0 ||
-		    input.cmd_stream == 0 || input.cmd_stream_len < sizeof(stream))
-			return EINVAL;
-		if (input.cmd_stream_len > sizeof(stream))
-			return EOPNOTSUPP;
-		if (input.cmd_stream > UINTPTR_MAX - (sizeof(stream) - 1))
-			return EFAULT;
-		error = copyin((const void *)(uintptr_t)input.cmd_stream,
-		    stream, sizeof(stream));
-		if (error != 0)
-			return error;
-		error = pvr_stream_compute(PVR_STREAM_BVNC, stream, sizeof(stream),
-		    input.flags, &job->command);
-		if (error != 0)
-			return error;
+		job->type = input.type;
 		job->handle = input.context_handle;
+		job->hwrt_handle = input.hwrt.set_handle;
+		job->rt_index = input.hwrt.data_index;
+		if (job->type == DRM_PVR_JOB_TYPE_COMPUTE) {
+			if (input.hwrt.set_handle != 0 || input.hwrt.data_index != 0 ||
+			    input.cmd_stream == 0 || input.cmd_stream_len < sizeof(stream))
+				return EINVAL;
+			if (input.cmd_stream_len > sizeof(stream))
+				return EOPNOTSUPP;
+			if (input.cmd_stream > UINTPTR_MAX - (sizeof(stream) - 1))
+				return EFAULT;
+			error = copyin((const void *)(uintptr_t)input.cmd_stream,
+			    stream, sizeof(stream));
+			if (error != 0)
+				return error;
+			error = pvr_stream_compute(PVR_STREAM_BVNC, stream,
+			    sizeof(stream), input.flags, &job->command.compute);
+			if (error != 0)
+				return error;
+		} else if (job->type == DRM_PVR_JOB_TYPE_GEOMETRY ||
+		    job->type == DRM_PVR_JOB_TYPE_FRAGMENT) {
+			uint8_t graphics[PVR_STREAM_FRAGMENT_SIZE];
+			size_t expect = job->type == DRM_PVR_JOB_TYPE_GEOMETRY ?
+			    PVR_STREAM_GEOMETRY_SIZE : PVR_STREAM_FRAGMENT_SIZE;
+
+			if (input.hwrt.set_handle == 0 || input.hwrt.data_index > 1 ||
+			    input.cmd_stream == 0 || input.cmd_stream_len < expect)
+				return EINVAL;
+			if (input.cmd_stream_len > expect)
+				return EOPNOTSUPP;
+			if (input.cmd_stream > UINTPTR_MAX - (expect - 1))
+				return EFAULT;
+			error = copyin((const void *)(uintptr_t)input.cmd_stream,
+			    graphics, expect);
+			if (error != 0)
+				return error;
+			if (job->type == DRM_PVR_JOB_TYPE_GEOMETRY) {
+				error = pvr_stream_geometry(PVR_STREAM_BVNC,
+				    graphics, expect, input.flags,
+				    &job->command.geometry);
+			} else {
+				error = pvr_stream_fragment(PVR_STREAM_BVNC,
+				    graphics, expect, input.flags,
+				    &job->command.fragment, &job->fragment_type);
+			}
+			if (error != 0)
+				return error;
+
+		} else {
+			return EOPNOTSUPP;
+		}
 		error = pvr_submit_array(&input.sync_ops, sizeof(struct drm_pvr_sync_op));
 		if (error != 0)
 			return error;
@@ -170,6 +217,18 @@ pvr_submit_copy(const struct drm_pvr_obj_array *array,
 				return error;
 		}
 	}
+	/* Pairing is checked only after every job decoded its type. */
+	for (i = 0; i < batch->count; i++) {
+		job = &batch->jobs[i];
+		if (job->type == DRM_PVR_JOB_TYPE_GEOMETRY &&
+		    (i + 1 >= batch->count ||
+		    batch->jobs[i + 1].type != DRM_PVR_JOB_TYPE_FRAGMENT))
+			return EOPNOTSUPP;
+		if (job->type == DRM_PVR_JOB_TYPE_FRAGMENT &&
+		    (i == 0 ||
+		    batch->jobs[i - 1].type != DRM_PVR_JOB_TYPE_GEOMETRY))
+			return EOPNOTSUPP;
+	}
 	return 0;
 }
 
@@ -189,9 +248,36 @@ pvr_submit_references(struct drm_device *dev, struct drm_file *file,
 		job->context = pvr_exec_context_get(file, job->handle);
 		if (job->context == NULL)
 			return EINVAL;
-		if (pvr_context_type(pvr_exec_context_firmware(job->context)) !=
-		    DRM_PVR_CTX_TYPE_COMPUTE)
-			return EINVAL;
+		if (job->type == DRM_PVR_JOB_TYPE_COMPUTE) {
+			if (pvr_context_type(pvr_exec_context_firmware(
+			    job->context)) != DRM_PVR_CTX_TYPE_COMPUTE)
+				return EINVAL;
+		} else {
+			if (pvr_context_type(pvr_exec_context_firmware(
+			    job->context)) != DRM_PVR_CTX_TYPE_RENDER)
+				return EINVAL;
+			if (job->type == DRM_PVR_JOB_TYPE_FRAGMENT) {
+				const struct pvr_submit_job *geom = &batch->jobs[i - 1];
+
+				if (job->hwrt_handle != geom->hwrt_handle ||
+				    job->rt_index != geom->rt_index ||
+				    job->handle != geom->handle)
+					return EINVAL;
+				/* The pair owns one reference, on its geometry. */
+				job->hwrt = batch->jobs[i - 1].hwrt;
+				if (job->hwrt == NULL)
+					return EINVAL;
+			} else {
+				job->hwrt = pvr_exec_hwrt_get(file,
+				    job->hwrt_handle);
+				if (job->hwrt == NULL)
+					return EINVAL;
+			}
+			/* The dataset, the context and every job share one VM. */
+			if (pvr_exec_hwrt_vm(job->hwrt) !=
+			    pvr_exec_context_vm(job->context))
+				return EINVAL;
+		}
 		for (j = 0; j < job->sync_count; j++) {
 			sync = &job->syncs[j];
 			sync->object = drm_syncobj_find(file, sync->input.handle);
@@ -230,18 +316,85 @@ pvr_submit_fence_status(struct dma_fence *fence)
 	}
 }
 
+/* References and copied sync arrays stay live while both gates are released. */
+static int
+pvr_submit_producer(const struct pvr_submit_batch *batch, uint32_t first,
+    uint32_t end, const struct pvr_submit_sync *wait, bool exact,
+    uint32_t *budget, bool *found)
+{
+	const struct pvr_submit_job *job;
+	uint32_t i, j, type;
+
+	KASSERT(first <= end && end <= batch->count);
+	*found = false;
+	type = wait->input.flags & DRM_PVR_SYNC_OP_FLAG_HANDLE_TYPE_MASK;
+	for (i = first; i < end; i++) {
+		if (*budget == 0)
+			return E2BIG;
+		(*budget)--;
+		job = &batch->jobs[i];
+		for (j = 0; j < job->sync_count; j++) {
+			const struct pvr_submit_sync *signal;
+
+			if (*budget == 0)
+				return E2BIG;
+			(*budget)--;
+			signal = &job->syncs[j];
+			if ((signal->input.flags & DRM_PVR_SYNC_OP_FLAG_SIGNAL) == 0 ||
+			    signal->object != wait->object ||
+			    (signal->input.flags &
+			    DRM_PVR_SYNC_OP_FLAG_HANDLE_TYPE_MASK) != type)
+				continue;
+			if (exact ? signal->input.value != wait->input.value :
+			    signal->input.value < wait->input.value)
+				continue;
+			*found = true;
+			return 0;
+		}
+	}
+	return 0;
+}
+
+/*
+ * An unpublished self or forward dependency cannot run in this synchronous
+ * batch. A published fence can have an external producer and must be waited.
+ */
+static int
+pvr_submit_forward(const struct pvr_submit_batch *batch, uint32_t first,
+    const struct pvr_submit_sync *sync, uint32_t *budget, bool *checked)
+{
+	bool found;
+	int error;
+
+	if (*checked)
+		return 0;
+	error = pvr_submit_producer(batch, first, batch->count, sync, false,
+	    budget, &found);
+	if (error != 0)
+		return error;
+	*checked = true;
+	return found ? EDEADLK : 0;
+}
+
 /* No device or platform gate may be held during this function. */
 static int
-pvr_submit_wait(struct pvr_submit_job *job)
+pvr_submit_wait(struct pvr_submit_batch *batch, uint32_t index,
+    uint32_t first, uint32_t *budget)
 {
+	struct pvr_submit_job *job;
 	struct timespec now, deadline, remaining;
 	struct dma_fence *fence;
 	struct pvr_submit_sync *sync;
 	uint64_t polls;
 	uint32_t i;
 	long waited;
+	bool checked, matched;
 	int error, status, ticks;
 
+	KASSERT(index < batch->count && first <= index);
+	job = &batch->jobs[index];
+	KASSERT(job->type == DRM_PVR_JOB_TYPE_FRAGMENT ?
+	    first + 1 == index : first == index);
 	getnanouptime(&deadline);
 	deadline.tv_sec += PVR_SUBMIT_WAIT_SECONDS;
 	polls = (uint64_t)MAX(hz, 1) * PVR_SUBMIT_WAIT_SECONDS + 1;
@@ -249,6 +402,16 @@ pvr_submit_wait(struct pvr_submit_job *job)
 		sync = &job->syncs[i];
 		if ((sync->input.flags & DRM_PVR_SYNC_OP_FLAG_SIGNAL) != 0)
 			continue;
+		if (job->type == DRM_PVR_JOB_TYPE_FRAGMENT) {
+			/* The validated pair emits FENCE_PR before its fragment. */
+			error = pvr_submit_producer(batch, first, index, sync, true,
+			    budget, &matched);
+			if (error != 0)
+				return error;
+			if (matched)
+				continue;
+		}
+		checked = false;
 		for (;;) {
 			getnanouptime(&now);
 			if (timespeccmp(&now, &deadline, >=) || polls == 0)
@@ -281,6 +444,9 @@ pvr_submit_wait(struct pvr_submit_job *job)
 				if (error != -EINVAL)
 					return -error;
 			}
+			error = pvr_submit_forward(batch, first, sync, budget, &checked);
+			if (error != 0)
+				return error;
 			/* Wait for publication on the retained object, not its handle. */
 			polls--;
 			error = kpause("pvrdep", true, 1, NULL);
@@ -337,6 +503,10 @@ pvr_submit_release(struct drm_device *dev, struct pvr_submit_batch *batch,
 			KASSERT(gated);
 			pvr_exec_context_put(dev, job->context);
 		}
+		if (job->hwrt != NULL && job->type != DRM_PVR_JOB_TYPE_FRAGMENT) {
+			KASSERT(gated);
+			pvr_exec_hwrt_put(dev, job->hwrt);
+		}
 	}
 	kmem_free(batch, batch->bytes);
 }
@@ -351,7 +521,7 @@ pvr_submit_jobs(struct drm_device *dev, void *data, struct drm_file *file)
 	struct pvr_file_vm *vm;
 	const struct pvr_backend *backend, *active_backend;
 	size_t bytes;
-	uint32_t index = 0;
+	uint32_t index = 0, budget = PVR_SUBMIT_DEPENDENCY_CHECKS;
 	int error;
 
 	args->jobs.count = 0;
@@ -386,8 +556,15 @@ pvr_submit_jobs(struct drm_device *dev, void *data, struct drm_file *file)
 		goto out;
 	for (index = 0; index < batch->count; index++) {
 		job = &batch->jobs[index];
+		if (job->type == DRM_PVR_JOB_TYPE_FRAGMENT) {
+			/* Handled together with its preceding geometry job. */
+			pvr_submit_signal(job);
+			continue;
+		}
 		pvr_device_leave(dev);
-		error = pvr_submit_wait(job);
+		error = pvr_submit_wait(batch, index, index, &budget);
+		if (error == 0 && job->type == DRM_PVR_JOB_TYPE_GEOMETRY)
+			error = pvr_submit_wait(batch, index + 1, index, &budget);
 		active_backend = pvr_device_enter(dev);
 		if (active_backend != backend) {
 			/* Broken backend lifetime: preserve all references until reset. */
@@ -405,8 +582,34 @@ pvr_submit_jobs(struct drm_device *dev, void *data, struct drm_file *file)
 		error = pvr_file_vm_prepare(vm);
 		if (error != 0)
 			goto out;
-		error = pvr_context_compute(pvr_exec_context_firmware(job->context),
-		    &job->command, job->id);
+		if (job->type == DRM_PVR_JOB_TYPE_COMPUTE) {
+			error = pvr_context_compute(
+			    pvr_exec_context_firmware(job->context),
+			    &job->command.compute, job->id);
+		} else {
+			struct pvr_submit_job *frag = &batch->jobs[index + 1];
+			struct pvr_hwrt_target target;
+
+			/* Mark the render target exposed immediately before
+			 * execution; both commands share its firmware data. */
+			error = pvr_exec_hwrt_target(job->hwrt, job->rt_index,
+			    &target);
+			if (error == 0) {
+				job->command.geometry.cmd_shared.
+				    hwrt_data_fw_addr = target.fw_address;
+				frag->command.fragment.cmd_shared.
+				    hwrt_data_fw_addr = target.fw_address;
+				if (job->id == 0 || frag->id == 0)
+					error = EINVAL;
+			}
+			if (error == 0)
+				error = pvr_context_render_pair(
+				    pvr_exec_context_firmware(job->context),
+				    &job->command.geometry,
+				    &frag->command.fragment,
+				    frag->fragment_type, target.cleanup_address,
+				    job->id, frag->id);
+		}
 		if (error != 0) {
 			/* The caller cannot prove that the GPU stopped using this VM. */
 			pvr_file_vm_fail(vm);

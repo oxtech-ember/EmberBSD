@@ -370,6 +370,21 @@ cpu_and_dma_contract(struct drm_gem_object *obj)
 	CHECK(pvr_bo_pin(obj) == 0);
 	pvr_bo_unpin(obj);
 	CHECK(!bo->firmware_pinned);
+	CHECK(pvr_bo_hold(NULL) == EINVAL);
+	CHECK(pvr_bo_hold(&foreign) == EINVAL);
+	CHECK(pvr_bo_hold(obj) == 0 && bo->firmware_holds == 1);
+	CHECK(pvr_bo_hold(obj) == 0 && bo->firmware_holds == 2);
+	CHECK(pvr_bo_pin(obj) == EBUSY && !bo->firmware_pinned);
+	pvr_bo_unhold(obj);
+	CHECK(bo->firmware_holds == 1);
+	CHECK(pvr_bo_pin(obj) == EBUSY && !bo->firmware_pinned);
+	bo->firmware_holds = UINT_MAX;
+	CHECK(pvr_bo_hold(obj) == EOVERFLOW && bo->firmware_holds == UINT_MAX);
+	bo->firmware_holds = 1;
+	pvr_bo_unhold(obj);
+	CHECK(bo->firmware_holds == 0 && pvr_bo_pin(obj) == 0);
+	CHECK(pvr_bo_hold(obj) == EBUSY && bo->firmware_holds == 0);
+	pvr_bo_unpin(obj);
 	/* Duplicate aliases close each DMA direction once. */
 	before = syncs;
 	pvr_bo_sync(obj, BUS_DMASYNC_POSTREAD);

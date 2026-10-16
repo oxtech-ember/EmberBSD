@@ -31,6 +31,7 @@ struct pvr_bo {
 	uint64_t flags;
 	int dma_owned;
 	bool firmware_pinned;
+	unsigned int firmware_holds;
 };
 
 static struct pvr_bo *
@@ -47,7 +48,7 @@ pvr_bo_free(struct drm_gem_object *obj)
 	struct pvr_bo *bo = pvr_to_bo(obj);
 	struct drm_gem_cma_object *cma = &bo->cma;
 
-	KASSERT(!bo->firmware_pinned);
+	KASSERT(!bo->firmware_pinned && bo->firmware_holds == 0);
 	drm_gem_object_release(obj);
 	if (bo->dma_owned != 0)
 		bus_dmamap_sync(cma->dmat, cma->dmamap, 0, cma->dmasize,
@@ -292,7 +293,7 @@ pvr_bo_pin(struct drm_gem_object *obj)
 	if (obj == NULL || obj->funcs != &pvr_bo_funcs)
 		return EINVAL;
 	bo = pvr_to_bo(obj);
-	if (bo->firmware_pinned)
+	if (bo->firmware_pinned || bo->firmware_holds != 0)
 		return EBUSY;
 	bo->firmware_pinned = true;
 	return 0;
@@ -305,4 +306,29 @@ pvr_bo_unpin(struct drm_gem_object *obj)
 
 	KASSERT(obj->funcs == &pvr_bo_funcs && bo->firmware_pinned);
 	bo->firmware_pinned = false;
+}
+
+int
+pvr_bo_hold(struct drm_gem_object *obj)
+{
+	struct pvr_bo *bo;
+
+	if (obj == NULL || obj->funcs != &pvr_bo_funcs)
+		return EINVAL;
+	bo = pvr_to_bo(obj);
+	if (bo->firmware_pinned)
+		return EBUSY;
+	if (bo->firmware_holds == UINT_MAX)
+		return EOVERFLOW;
+	bo->firmware_holds++;
+	return 0;
+}
+
+void
+pvr_bo_unhold(struct drm_gem_object *obj)
+{
+	struct pvr_bo *bo = pvr_to_bo(obj);
+
+	KASSERT(obj->funcs == &pvr_bo_funcs && bo->firmware_holds != 0);
+	bo->firmware_holds--;
 }

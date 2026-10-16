@@ -43,6 +43,7 @@ struct allocation {
 	void *cpu;
 	size_t size;
 	uint64_t pa;
+	bool published;
 };
 typedef struct {
 	uint64_t ds_addr;
@@ -141,8 +142,10 @@ bus_dmamem_free(bus_dma_tag_t t, bus_dma_segment_t *seg, int n)
 {
 	void *p = seg->allocation->cpu;
 	CHECK(n == 1 && mem_count != 0);
-	CHECK(!fw.live || fw.reset);
-	CHECK(!fw.initialized || fw.ack || fw.reset);
+	if (seg->allocation->published) {
+		CHECK(!fw.live || fw.reset);
+		CHECK(!fw.initialized || fw.ack || fw.reset);
+	}
 	mem_count--; forget(&memory, p, 4096); free(p);
 }
 
@@ -299,8 +302,24 @@ static void
 backing_sync(void *cookie, int flags)
 {
 	CHECK(cookie == &backing);
-	if ((flags & BUS_DMASYNC_PREWRITE) != 0)
+	if ((flags & BUS_DMASYNC_PREWRITE) != 0) {
+		struct allocation *r;
+		uint64_t lowest = UINT64_MAX, highest = 0;
+		size_t offset;
 		memcpy(backing.visible, backing.cpu, backing.size);
+		for (r = memory; r != NULL; r = r->next) {
+			if (r->pa < lowest) lowest = r->pa;
+			if (r->pa > highest) highest = r->pa;
+		}
+		for (offset = 0; offset < backing.size; offset += 4) {
+			const uint8_t *b = backing.visible + offset;
+			uint64_t pa = ((uint64_t)b[0] | (uint64_t)b[1] << 8 |
+			    (uint64_t)b[2] << 16 | (uint64_t)b[3] << 24) << 12;
+			if (pa < lowest || pa > highest) continue;
+			for (r = memory; r != NULL; r = r->next)
+				if (r->pa == pa) { r->published = true; break; }
+		}
+	}
 	backing.syncs++;
 }
 
@@ -522,6 +541,168 @@ retained_failures(void)
 	reset_reclaim(&fl);
 }
 
+static void
+growth_cases(void)
+{
+	struct pvr_freelist *fl = NULL;
+	struct pvr_freelist_config c;
+	struct rogue_fwif_freelist_gs_data response, expected, saved;
+	uint8_t image[64];
+	uint32_t i;
+	unsigned allocations_before;
+
+	reset_state(); c = config(512, 1024, 256, 13);
+	CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0);
+	memcpy(image, fw.image, sizeof(image));
+	CHECK(pvr_freelist_grow_complete(fl, 0) == EINVAL);
+	CHECK(pvr_freelist_grow_prepare(fl, &response) == 0);
+	expected = (struct rogue_fwif_freelist_gs_data){ 0xc0123000U, 256, 768, 96 };
+	CHECK(memcmp(&response, &expected, sizeof(response)) == 0);
+	CHECK(mem_count == 768 && fl->current_pages == 672 && fl->ready_pages == 96);
+	CHECK(memcmp(image, fw.image, sizeof(image)) == 0 && fw.syncs == 1);
+	CHECK(fw.commands == 0 && fw.flushes == 1 && fw.checks == 2);
+	for (i = 0; i < 256; i++)
+		CHECK(get32(backing.visible + (256 + i) * 4) == 0x120000U + 512 + i);
+	for (i = 0; i < 512; i++)
+		CHECK(get32(backing.visible + (512 + i) * 4) == 0x120000U + i);
+	memset(&response, 0xa5, sizeof(response)); saved = response;
+	CHECK(pvr_freelist_grow_prepare(fl, &response) == EBUSY);
+	CHECK(memcmp(&response, &saved, sizeof(response)) == 0);
+	CHECK(pvr_freelist_destroy(&fl) == EBUSY && fl != NULL);
+	CHECK(fw.commands == 0 && fw.checks == 2 && mem_count == 768);
+	CHECK(pvr_freelist_grow_complete(fl, 0) == 0);
+	CHECK(pvr_freelist_grow_complete(fl, 0) == EINVAL);
+	CHECK(pvr_freelist_grow_prepare(fl, &response) == 0);
+	expected = (struct rogue_fwif_freelist_gs_data){ 0xc0123000U, 256, 1024, 132 };
+	CHECK(memcmp(&response, &expected, sizeof(response)) == 0 && mem_count == 1024);
+	for (i = 0; i < 256; i++)
+		CHECK(get32(backing.visible + i * 4) == 0x120000U + 768 + i);
+	CHECK(pvr_freelist_grow_complete(fl, 0) == 0);
+	allocations_before = allocation_count;
+	CHECK(pvr_freelist_grow_prepare(fl, &response) == 0);
+	expected = (struct rogue_fwif_freelist_gs_data){ 0xc0123000U, 0, 1024, 0 };
+	CHECK(memcmp(&response, &expected, sizeof(response)) == 0);
+	CHECK(allocation_count == allocations_before && !fw.stopped);
+	CHECK(pvr_freelist_grow_complete(fl, 0) == 0);
+	CHECK(pvr_freelist_destroy(&fl) == 0 && fl == NULL);
+	for (i = 0; i < 4096; i++) CHECK(backing.visible[i] == 0);
+
+	reset_state(); c = config(0, 8, 4, 100);
+	CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0);
+	for (i = 1; i <= 2; i++) {
+		CHECK(pvr_freelist_grow_prepare(fl, &response) == 0);
+		CHECK(response.delta_pages == 4 && response.new_pages == i * 4 && response.ready_pages == 4);
+		CHECK(pvr_freelist_grow_complete(fl, 0) == 0);
+	}
+	CHECK(pvr_freelist_destroy(&fl) == 0);
+	reset_state(); c = config(4, 4, 0, 0);
+	CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0);
+	CHECK(pvr_freelist_grow_prepare(fl, &response) == 0);
+	CHECK(response.delta_pages == 0 && response.new_pages == 4 && response.ready_pages == 0);
+	CHECK(allocation_count == 4 && pvr_freelist_destroy(&fl) == EBUSY);
+	CHECK(pvr_freelist_grow_complete(fl, 0) == 0 && pvr_freelist_destroy(&fl) == 0);
+	reset_state(); c = config(4, 16, 8, 13);
+	CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0);
+	CHECK(pvr_freelist_grow_prepare(fl, &response) == 0 && response.delta_pages == 8);
+	CHECK(pvr_freelist_grow_complete(fl, 0) == 0);
+	CHECK(pvr_freelist_grow_prepare(fl, &response) == 0);
+	CHECK(response.delta_pages == 0 && response.new_pages == 12 && allocation_count == 12);
+	CHECK(pvr_freelist_grow_complete(fl, 0) == 0 && pvr_freelist_destroy(&fl) == 0);
+}
+
+static void
+growth_failures(void)
+{
+	struct pvr_freelist *fl = NULL;
+	struct pvr_freelist_config c;
+	struct rogue_fwif_freelist_gs_data response, saved;
+	uint8_t original[48];
+	const int errors[] = { EIO, ETIMEDOUT, EINVAL, -EIO };
+	unsigned ordinal, stage, i;
+
+	for (ordinal = 1; ordinal <= 4; ordinal++) {
+		for (stage = 1; stage <= 11; stage++) {
+			reset_state(); c = config(4, 12, 4, 100);
+			CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0);
+			memcpy(original, backing.visible, sizeof(original));
+			fault_at = 4 + ordinal; fault_stage = stage;
+			CHECK(pvr_freelist_grow_prepare(fl, &response) == 0);
+			CHECK(response.delta_pages == 0 && response.new_pages == 4 && response.ready_pages == 0);
+			CHECK(mem_count == 4 && map_count == 4 && loaded_count == 4 && kva_count == 4);
+			CHECK(meta_count == 2 && !fw.stopped && fl->current_pages == 4 && fl->ready_pages == 0);
+			CHECK(memcmp(original, backing.visible, sizeof(original)) == 0);
+			CHECK(memcmp(original, backing.cpu, sizeof(original)) == 0);
+			CHECK(fw.commands == 0 && fw.flushes == 1 && fw.checks == 2 && fw.syncs == 1);
+			CHECK(pvr_freelist_destroy(&fl) == EBUSY);
+			CHECK(pvr_freelist_grow_complete(fl, 0) == 0);
+			fault_at = fault_stage = 0;
+			CHECK(pvr_freelist_grow_prepare(fl, &response) == 0);
+			CHECK(response.delta_pages == 4 && response.new_pages == 8 && response.ready_pages == 4);
+			CHECK(pvr_freelist_grow_complete(fl, 0) == 0);
+			CHECK(pvr_freelist_destroy(&fl) == 0);
+		}
+	}
+	for (i = 0; i < sizeof(errors) / sizeof(errors[0]); i++) {
+		reset_state(); c = config(4, 8, 4, 13);
+		CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0);
+		CHECK(pvr_freelist_grow_prepare(fl, &response) == 0 && response.delta_pages == 4);
+		CHECK(pvr_freelist_grow_complete(fl, errors[i]) == (errors[i] > 0 ? errors[i] : EPROTO));
+		CHECK(mem_count == 8 && fw.live && fw.stopped && fw.free_calls == 0);
+		CHECK(pvr_freelist_fw_address(fl) == 0 && pvr_freelist_destroy(&fl) == EIO);
+		memset(&response, 0xa5, sizeof(response)); saved = response;
+		CHECK(pvr_freelist_grow_prepare(fl, &response) == EIO);
+		CHECK(memcmp(&response, &saved, sizeof(response)) == 0);
+		CHECK(pvr_freelist_grow_complete(fl, 0) == EIO && mem_count == 8);
+		reset_reclaim(&fl);
+	}
+	reset_state(); c = config(4, 8, 4, 13);
+	CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0);
+	memset(&response, 0xa5, sizeof(response)); saved = response;
+	CHECK(pvr_freelist_grow_prepare(NULL, &response) == EINVAL);
+	CHECK(pvr_freelist_grow_prepare(fl, NULL) == EINVAL);
+	CHECK(memcmp(&response, &saved, sizeof(response)) == 0);
+	CHECK(pvr_freelist_grow_complete(NULL, 0) == EINVAL);
+	CHECK(pvr_freelist_grow_complete(fl, EIO) == EINVAL && !fw.stopped);
+	CHECK(pvr_freelist_destroy(&fl) == 0);
+}
+
+/* Current pages exclude the ready reserve; zero unless ready and quiet. */
+static void
+current_pages_tests(void)
+{
+	struct pvr_freelist *fl = NULL;
+	struct pvr_freelist_config c;
+	struct rogue_fwif_freelist_gs_data response;
+	uint32_t before, grown;
+
+	CHECK(pvr_freelist_current_pages(NULL) == 0);
+	reset_state(); c = config(512, 1024, 256, 13);
+	CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0 && fl != NULL);
+	/* Ready owner: the getter reports exactly the current page count. */
+	CHECK(fl->ready && !fl->grow_prepared && !fl->failed && !fl->cleaned);
+	before = pvr_freelist_current_pages(fl);
+	CHECK(before != 0 && before == fl->current_pages);
+	/* Pending growth blocks the report until completion. */
+	CHECK(pvr_freelist_grow_prepare(fl, &response) == 0);
+	CHECK(fl->grow_prepared);
+	CHECK(pvr_freelist_current_pages(fl) == 0);
+	CHECK(pvr_freelist_grow_complete(fl, 0) == 0);
+	grown = pvr_freelist_current_pages(fl);
+	CHECK(grown > before && grown == fl->current_pages);
+	/* Failed, cleaned and not-ready owners report zero. */
+	fl->failed = true;
+	CHECK(pvr_freelist_current_pages(fl) == 0);
+	fl->failed = false;
+	fl->cleaned = true;
+	CHECK(pvr_freelist_current_pages(fl) == 0);
+	fl->cleaned = false;
+	fl->ready = false;
+	CHECK(pvr_freelist_current_pages(fl) == 0);
+	fl->ready = true;
+	CHECK(pvr_freelist_current_pages(fl) == grown);
+	CHECK(pvr_freelist_destroy(&fl) == 0 && fl == NULL);
+}
+
 int
 main(void)
 {
@@ -532,7 +713,8 @@ main(void)
 	valid_case(28, 28, 0, 0, 0);
 	valid_case(4, 8, 4, 100, 4);
 	valid_case(0, 524288, 4, 13, 0);
-	invalid_cases(); allocation_failures(); retained_failures(); reset_state();
+	invalid_cases(); allocation_failures(); retained_failures();
+	growth_cases(); growth_failures(); current_pages_tests(); reset_state();
 	free(backing.cpu); free(backing.visible);
 	printf("pvr FreeList: %u checks passed\n", checks);
 	return 0;

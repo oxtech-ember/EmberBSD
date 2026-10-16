@@ -780,6 +780,15 @@ on every board in the hardware catalog.
   KICK path accepts its asynchronous zero return word and still requires CCCB,
   UFO, and fresh health checks. Graphics jobs, Zink, display output, accelerated
   Plasma, Vulkan conformance, and long-duration GPU stability remain unaccepted.
+  The [graphics development checkpoint](ember/boot/a733-pvr-graphics.md) adds
+  stream, queue, HWRT, mapping-hold, and free-list growth primitives.
+  HWRT handles and paired DRM submissions now exist in this branch.
+  Exact intra-pair sync dependencies use firmware ordering in host contracts.
+  External waits retain their error paths and bounded forward-dependency checks.
+  Combined-KICK queue transport has actual-source validation and failure tests.
+  Device-owned free-list IDs route GROW callbacks under the existing gates.
+  The free-list fixture keeps backing buffers alive through its page-count checks.
+  These graphics branch changes have no physical acceptance.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,
