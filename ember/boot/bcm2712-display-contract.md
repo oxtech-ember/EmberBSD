@@ -192,6 +192,10 @@ Thermal references to `\_SB.GPU0` keep the same path.
 The default ACPI parser appends memory and interrupt entries in descriptor order.
 Existing V3D consumers keep their original memory and interrupt indices.
 
+The [HSM clock provider](bcm2712-display-hsm.md) adds explicit ownership for firmware clock ID 13.
+Its separate resource query does not require an enabled clock snapshot.
+It has no automatic boot attachment and does not authorize display MMIO.
+
 The [native L2 interrupt provider](bcm2712-display-irq.md) uses these domain and leaf indices.
 It requires explicit lifecycle ownership and has no automatic boot attachment.
 

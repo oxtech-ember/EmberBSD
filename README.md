@@ -568,10 +568,12 @@ on every board in the hardware catalog.
   validates shared register ownership, interrupt domains and bounded firmware
   clock snapshots. The UEFI series declares these resources while preserving the
   legacy V3D indices. ASL-to-AML component checks pass; full firmware deployment
-  remains unverified. The contract does not enable clocks or map display registers.
+  remains unverified. The observer does not enable clocks or map display registers.
   An [explicit native display IRQ provider](ember/boot/bcm2712-display-irq.md)
   adds bounded leaf dispatch and synchronized teardown. Source contracts and
-  kernel object analysis pass. Physical HPD, DDC and KMS scanout remain unimplemented.
+  kernel object analysis pass. An explicit [HSM clock owner](ember/boot/bcm2712-display-hsm.md)
+  adds checked firmware clock leases for two HDMI ports, with source/host validation.
+  It has no automatic attachment. Physical HPD, DDC and KMS scanout remain unimplemented.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.
