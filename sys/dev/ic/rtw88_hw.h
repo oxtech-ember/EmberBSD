@@ -7,7 +7,9 @@
 #define _DEV_IC_RTW88_HW_H_
 
 #include <sys/types.h>
-#ifndef _KERNEL
+#ifdef _KERNEL
+#include <sys/null.h>
+#else
 #include <stddef.h>
 #include <stdint.h>
 #endif

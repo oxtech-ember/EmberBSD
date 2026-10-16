@@ -5,8 +5,10 @@
 
 #include <sys/types.h>
 #ifdef _KERNEL
+#include <sys/param.h>
 #include <sys/errno.h>
 #else
+#include <stddef.h>
 #include <errno.h>
 #endif
 
