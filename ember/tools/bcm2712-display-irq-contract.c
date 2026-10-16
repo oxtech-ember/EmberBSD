@@ -18,7 +18,9 @@
 #else
 #include <sys/endian.h>
 #endif
+#ifndef __aligned
 #define __aligned(n) __attribute__((aligned(n)))
+#endif
 #ifndef __BIT
 #define __BIT(n) (UINT32_C(1) << (n))
 #endif
