@@ -40,6 +40,11 @@
 #define V3D_CSD_CFG0	0x930
 #define V3D_CSD_DONE	0x40
 #define V3D_CORE_IRQ_ALL	0x0fff007f
+/* torvalds/linux a5ebb76233b79db01e82e061173cb73c6d2b5c6b, v3d_regs.h. */
+#define V3D_CLE_CT1CS	0x104
+#define V3D_CLE_CT1EA	0x10c
+#define V3D_CLE_CT1CA	0x114
+#define V3D_CLE_PCS	0x130
 #define V3D_CSD_BO_MAX	64
 
 struct bcmv3d_job {
@@ -918,6 +923,42 @@ bcmv3d_cl_execute(struct bcmv3d_job *job, const struct drm_v3d_submit_cl *a)
 	return 0;
 }
 
+/* The caller owns the powered engine and has masked and drained both IRQs. */
+static void
+bcmv3d_cl_diagnose(struct bcmv3d_device *sc, int error, unsigned int count)
+{
+	struct bcmv3d_job *job = sc->job;
+	static const struct {
+		uint32_t offset;
+		bool core;
+	} regs[] = {
+		{ V3D_INT_STS, true }, { V3D_CLE_PCS, true },
+		{ V3D_CLE_CT1CS, true }, { V3D_CLE_CT1CA, true },
+		{ V3D_CLE_CT1EA, true }, { V3D_MMU, false }
+	};
+	uint32_t value[__arraycount(regs)] = {0}, failed = 0;
+	unsigned int i;
+
+	/* One finite read per register. No acknowledgement or recovery writes. */
+	for (i = 0; i < __arraycount(regs); i++) {
+		int read_error = regs[i].core ?
+		    bcmv3d_takeover_core_peek(regs[i].offset, &value[i]) :
+		    bcmv3d_takeover_hub_peek(regs[i].offset, &value[i]);
+		if (read_error != 0) {
+			value[i] = 0;
+			failed |= 1U << i;
+		}
+	}
+	aprint_error_dev(sc->dev, "%s: error=%d irq=%#x pcs=%#x "
+	    "ct1cs=%#x ct1ca=%#x ct1ea=%#x mmu=%#x read-failed=%#x "
+	    "core-events=%u core-error=%u hub-events=%u; "
+	    "%u buffers retained until reboot\n", job->stage, error,
+	    value[0], value[1], value[2], value[3], value[4], value[5], failed,
+	    atomic_load_acquire(&job->core_events),
+	    atomic_load_acquire(&job->core_error),
+	    atomic_load_acquire(&job->events), count);
+}
+
 int
 bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 {
@@ -991,8 +1032,6 @@ bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 		atomic_store_release(&job->bos[i]->busy, 1);
 	error = bcmv3d_cl_execute(job, a);
 	if (error != 0) {
-		uint32_t irq = 0, pcs = 0;
-
 		job->poisoned = true;
 		(void)bcmv3d_takeover_hub_poke(V3D_MSK_SET, V3D_IRQ_ALL);
 		(void)bcmv3d_takeover_core_poke(V3D_MSK_SET, V3D_CORE_IRQ_ALL);
@@ -1000,14 +1039,7 @@ bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 		bcmv3d_core_mask(job);
 		for (i = 0; i < count; i++)
 			atomic_store_release(&job->bos[i]->error, EIO);
-		(void)bcmv3d_takeover_core_peek(V3D_INT_STS, &irq);
-		(void)bcmv3d_takeover_core_peek(0x08, &pcs);
-		aprint_error_dev(sc->dev, "%s: error=%d irq=%#x pcs=%#x "
-		    "core-events=%u core-error=%u hub-events=%u; "
-		    "%u buffers retained until reboot\n", job->stage, error, irq, pcs,
-		    atomic_load_acquire(&job->core_events),
-		    atomic_load_acquire(&job->core_error),
-		    atomic_load_acquire(&job->events), count);
+		bcmv3d_cl_diagnose(sc, error, count);
 		count = 0;
 		goto unlock;
 	}

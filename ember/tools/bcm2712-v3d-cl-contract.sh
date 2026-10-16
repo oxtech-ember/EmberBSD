@@ -24,12 +24,15 @@ compile
 cp "$work/job-body.h" "$work/job-good.h"
 ulimit -c 0
 for mutant in irq-identity completion-count stale-irq retire-irq cache-clean \
-    pre-sync post-sync address input-rcl; do
+    pre-sync post-sync address input-rcl diagnostic-pcs diagnostic-read-error diagnostic-invalid-value; do
     awk -v mutant="$mutant" '
         mutant == "irq-identity" {
             changed += sub(/status != job->core_expected/, "false")
             changed += sub(/V3D_INT_CLR, job->core_expected/, "V3D_INT_CLR, status")
         }
+        mutant == "diagnostic-pcs" { changed += sub(/V3D_CLE_PCS, true/, "0x08, true") }
+        mutant == "diagnostic-read-error" { changed += sub(/failed \|= 1U << i;/, "failed |= 0;") }
+        mutant == "diagnostic-invalid-value" { changed += sub(/value\[i\] = 0;/, "/* invalid read value retained */") }
         /^bcmv3d_cl_phase\(/ { cl = 1 }
         /^bcmv3d_wait_bo\(/ { cl = 0 }
         cl && mutant == "completion-count" {

@@ -139,6 +139,36 @@ main(void)
 	a = cl_setup(&c, &d, &f, handles); close_during_submit = &f;
 	CHECK(bcmv3d_submit_cl(&d, &a, &f) == 0 && gems == 2);
 	csd_cleanup(&c, &f, false);
+	/* A timeout must report PCS, not the distinct CORE_IDENT2 register. */
+	a = cl_setup(&c, &d, &f, handles); model_case = 1;
+	core_regs[0x08/4] = 0xc0078101;
+	core_regs[0x130/4] = 0x13579bdf;
+	core_regs[0x104/4] = 0x2468ace0;
+	core_regs[0x114/4] = 0x12345000;
+	core_regs[0x10c/4] = 0x12346000;
+	CHECK(bcmv3d_submit_cl(&d, &a, &f) == -EIO);
+	CHECK(strstr(diagnostic_log,"pcs=0x13579bdf ") != NULL);
+	CHECK(strstr(diagnostic_log,"0xc0078101") == NULL);
+	CHECK(strstr(diagnostic_log,"ct1cs=0x2468ace0 ") != NULL);
+	CHECK(strstr(diagnostic_log,"ct1ca=0x12345000 ") != NULL);
+	CHECK(strstr(diagnostic_log,"ct1ea=0x12346000 ") != NULL);
+	CHECK(strstr(diagnostic_log,"mmu=0x60d0c01 read-failed=0 ") != NULL);
+	CHECK(strstr(diagnostic_log,"2 buffers retained until reboot") != NULL);
+	const char *const failed_field[] = {
+	    "irq=0 ", "pcs=0 ", "ct1cs=0 ", "ct1ca=0 ", "ct1ea=0 ", "mmu=0 "};
+	for (unsigned n = 0; n < 6; n++) {
+		char expected_mask[32];
+		unsigned before = reg_calls;
+		fail_reg = before + n + 1;
+		bcmv3d_cl_diagnose(&c, EIO, 2);
+		CHECK(reg_calls == before + 6);
+		snprintf(expected_mask,sizeof(expected_mask),"read-failed=%#x ",1U<<n);
+		CHECK(strstr(diagnostic_log,expected_mask) != NULL);
+		CHECK(strstr(diagnostic_log,failed_field[n]) != NULL);
+		CHECK(c.job->poisoned && c.job->nbo == 2);
+	}
+	fail_reg = 0;
+	csd_cleanup(&c, &f, true);
 	printf("PASS: %u CL ownership/IRQ checks; %u injected register failures\n",
 	    checks, calls);
 	return 0;
