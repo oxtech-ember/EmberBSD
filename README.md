@@ -138,6 +138,13 @@ Status updated **2026-10-16**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
 
+- **AArch64 development sets:** the [pinned base/comp workflow](ember/release/aarch64-sysroot.md)
+  builds complete sets from one fork commit with hashes and source provenance.
+  Its GCC16 C11/C++20 consumers, shared/static libc CAS checks and GNU M4
+  upstream tests pass in AArch64 QEMU. The matching test kernel and raw
+  qualification log are bound to the kit. Binary publication remains pending;
+  the Linux importer and GCC16 compiler/package are separate inputs.
+
 ### Local AI and robotics
 
 - **Local text and speech models:** pkgsrc recipes for llama.cpp 0.6.0nb1 and

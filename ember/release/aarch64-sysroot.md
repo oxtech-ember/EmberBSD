@@ -1,54 +1,54 @@
 # Pinned AArch64 base and compiler-support sets
 
-Status: implementation under test. Complete build, target qualification and
-publication remain pending. A CI artifact is not an accepted binary release.
+Status: full source build and finite AArch64 VM qualification passed.
+Binary publication remains pending. A CI artifact is not a public release.
 Origin: EmberBSD contributors, AI-assisted.
 
-## Problem and result
+## Qualified snapshot
 
-The public binary channel currently has amd64 installation candidates.
-External Linux CI builds also need an AArch64 EmberBSD sysroot.
-An existing cloud bootstrap subset does not qualify complete release sets.
-Publish `base.tar.xz` and `comp.tar.xz` from one clean full fork commit.
-Include SHA256, exact build configuration, compiler identity and source provenance.
+External Linux CI needs matching fork runtime, headers and startup objects.
+The OS owns the complete source build and binary publication. Ports owns
+the [GCC16 consumer and import contract](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/sysroot.md).
 
-The OS owns the source build and binary-set publication.
-Ports owns the GCC16 application consumer and sysroot provenance instructions.
-SDK and Runtime application contracts remain separate work.
+The qualified source is `6dd57144183678938164b4c2dcfc370cdbde8473`.
+The [successful producer](https://github.com/oxtech-ember/EmberBSD/actions/runs/38843939746)
+uses standard `build.sh` on Ubuntu 24.04, with fresh source, tools, objects
+and destination. Strict `checkflist` remains enabled. No upstream NetBSD
+binary sets or earlier cloud bootstrap files are substituted.
 
-## Baseline and profile
+| Artifact | SHA256 |
+| --- | --- |
+| `base.tar.xz` | `688dc6701cd83283d1287fc18dee8b9af35f067096cdd4a92de7e0593fdacddb` |
+| `comp.tar.xz` | `8c813303f0500ae1a4ba6381eee6a1189ffab86036963fb26f36ec313e02daa6` |
+| `netbsd-EMBER64.gz` | `fbc6fa0afe2a91e7798734f58a326d18ccb20bb46e20b1f3579359264e68ea90` |
 
-The baseline is `e95f02d5b0727edf73aef748a1b4de1148d8d9f5`.
-The build uses the fork's standard `build.sh` on a Linux development host.
-The target is `evbarm`, little-endian `aarch64`, with the `EMBER64` kernel.
-Source export, host tools, objects and destination start empty.
-Strict release file-list checks remain enabled.
-Keep base runtime, headers, startup objects and static libraries from that build.
-Do not add upstream NetBSD binary sets or another build's missing files.
+The qualified kit's manifest SHA256 is
+`efc1cd827598451b00b7d743b35a4901a3fd25cf24191b3b3bb679d53f068f5b`.
+It identifies a prepared kit, not a published download channel.
 
-The in-tree GCC12.5 is a host bootstrap, as in the amd64 release.
-It does not claim a GCC16 base userland or install native GCC12 commands.
-GCC16 application cross-compilation and runtime selection are checked separately.
-The non-desktop profile excludes X11, rump and optional debug/documentation sets.
-The manifest must record every effective profile option and omitted component.
-Preserve source notices, firmware licences and compatible NetBSD identifiers.
+The profile is `evbarm/aarch64`, little-endian, with `EMBER64`.
+The in-tree GCC12.5 builds the base runtime; native GCC12 commands are omitted.
+Application consumers use the separate common GCC16.2 headers and runtime.
+X11, rump, compat, optional modules, manuals, debug, profile libraries and
+test sets are omitted. `build-profile.json` records every selected option.
 
-## Acceptance and integration
+The finite full-system QEMU TCG run uses Cortex-A72, two CPUs and 1 GiB RAM:
 
-Build complete sets in CI, then verify their original checksums and inventory.
-Bind both sets and the matching test kernel to the same full source commit.
-Extract them into a fresh sysroot on Linux.
-Check every libc alias and required startup object before consumer compilation.
-Cross-build C and C++ consumers with the common GCC16 toolchain.
-Run the consumers and relevant fork libc regressions in disposable AArch64 QEMU.
-Record exact artifact hashes, numerical results and actual loaded runtime paths.
-Reject changed sets, mixed source receipts and incomplete qualification.
-Download the published assets again and verify their exact bytes.
+- Both sets pass producer SHA256/SHA512 checks. The snapshot has 8188 entries;
+  5880 regular files match METALOG. The two generated set inventories are
+  covered by archive hashes. All four libc aliases select one fork provider.
+- GCC16 C11 plain/LTO, atomics, TLS and threads pass. C++20 constant expressions
+  compile; threads and exception unwinding across a DSO pass on the target.
+  Loaded `libstdc++` and `libgcc_s` paths and hashes match the selected GCC16.
+- Shared and static libc each pass 850 CAS checks across 20 variants.
+  The static link map binds every variant to this build's `libc.a`.
+- GNU M4 1.4.21 passes 236 of 243 upstream invocations, with seven optional
+  `changeword` skips. Stack-overflow handling passes. The guest shuts down normally.
 
-The binary channel uses a separate immutable tag for this source and profile.
-It must not replace either accepted amd64 release or its installer defaults.
-The release remains a development sysroot, without installation-media acceptance.
-Physical boards, graphics, cameras and long-duration operation are out of scope.
+The kit binds the raw serial log to its qualification receipt. The execution
+image contains no compiler. This is finite ABI/consumer acceptance, not all
+base commands, all libc tests, a memory-checker run, installation media or
+physical-board acceptance. Bit-for-bit reproduction across hosts is unverified.
 
 ## Recovery
 
