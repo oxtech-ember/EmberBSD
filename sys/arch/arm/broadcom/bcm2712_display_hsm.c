@@ -6,6 +6,7 @@
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
+#include <sys/bus.h>
 #include <sys/endian.h>
 #include <sys/errno.h>
 #include <sys/systm.h>
