@@ -71,6 +71,14 @@ The fixed-payload fault probe does not establish recovery for arbitrary
 userspace submissions. Engine page tables and scratch remain allocated
 for the device lifetime; hot removal is unsupported.
 
+CL failure reports read the actual PCS register at `0x130`, CT1 status,
+current/end addresses, and HUB MMU control. Earlier diagnostics mislabeled
+CORE_IDENT2 at `0x08` as PCS. A `read-failed` bit marks an unavailable value:
+bits 0 through 5 correspond to IRQ, PCS, CT1CS, CT1CA, CT1EA, and MMU.
+These finite reads run only after both IRQ paths are masked and drained.
+They do not acknowledge faults, reset the engine, or release retained BOs.
+
+
 ## Interfaces and ownership
 
 The UAPI follows the Broadcom-licensed header at Linux
