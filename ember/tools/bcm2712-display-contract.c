@@ -304,6 +304,21 @@ main(void)
 			    bcm2712_display_leaves[i].bit != bcm2712_display_leaves[j].bit);
 	}
 	assert(memcmp(&output, &before_output, sizeof(output)) == 0);
+	/* Cold resources remain available without running any clock transaction. */
+	{
+		struct bcm2712_display_contract cold, saved;
+		reset(); bad_clock = 0; clock_rate = 0;
+		expect(EBUSY, 2);
+		exchanges = 0;
+		memset(&cold, 0xa5, sizeof(cold));
+		assert(bcm2712_display_acpi_resources(NULL, &resources, &cold) == 0);
+		assert(exchanges == 0 && cold.version == 1);
+		assert(memcmp(cold.memory, golden_memory, sizeof(golden_memory)) == 0);
+		saved = cold;
+		version = 0;
+		assert(bcm2712_display_acpi_resources(NULL, &resources, &cold) == EOPNOTSUPP);
+		assert(memcmp(&cold, &saved, sizeof(cold)) == 0 && exchanges == 0);
+	}
 	puts("BCM2712 display contract: resources, flags, versions and bounded clock failures PASS");
 	return 0;
 }

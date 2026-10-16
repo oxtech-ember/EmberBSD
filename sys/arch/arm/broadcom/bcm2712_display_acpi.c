@@ -80,19 +80,17 @@ bcm2712_display_exchange(void *arg, uint32_t *request)
 }
 
 int
-bcm2712_display_acpi_query(device_t dev, ACPI_HANDLE handle,
-    struct bcm2712_display_contract *contract,
-    struct bcm2712_display_clocks *clocks)
+bcm2712_display_acpi_resources(device_t dev, ACPI_HANDLE handle,
+    struct bcm2712_display_contract *contract)
 {
 	struct bcm2712_display_walk walk;
 	struct bcm2712_display_contract decoded;
-	struct bcm2712_display_clocks observed;
 	ACPI_INTEGER contract_version, sta, cca;
 	ACPI_STATUS status;
 	int error;
 
 	(void)dev;
-	if (handle == NULL || contract == NULL || clocks == NULL)
+	if (handle == NULL || contract == NULL)
 		return EINVAL;
 	status = acpi_dsd_integer(handle, BCM2712_DISPLAY_PROPERTY, &contract_version);
 	if (status == AE_NOT_FOUND)
@@ -113,6 +111,24 @@ bcm2712_display_acpi_query(device_t dev, ACPI_HANDLE handle,
 		return status == AE_BAD_DATA ? EINVAL : EIO;
 	error = bcm2712_display_decode(contract_version, walk.memory, walk.nmem,
 	    walk.irq, walk.nirq, &decoded);
+	if (error != 0)
+		return error;
+	*contract = decoded;
+	return 0;
+}
+
+int
+bcm2712_display_acpi_query(device_t dev, ACPI_HANDLE handle,
+    struct bcm2712_display_contract *contract,
+    struct bcm2712_display_clocks *clocks)
+{
+	struct bcm2712_display_contract decoded;
+	struct bcm2712_display_clocks observed;
+	int error;
+
+	if (contract == NULL || clocks == NULL)
+		return EINVAL;
+	error = bcm2712_display_acpi_resources(dev, handle, &decoded);
 	if (error != 0)
 		return error;
 	error = bcm2712_display_read_clocks(bcm2712_display_exchange, NULL,
