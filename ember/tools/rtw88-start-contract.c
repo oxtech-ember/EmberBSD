@@ -43,6 +43,7 @@ static struct {
 	int ddma_bad_sum;
 	unsigned rx_hw_idx;
 	unsigned bcn_valid_sets;
+	unsigned tx_hw_rp[2];	/* MGMT, BE read index reported by the chip. */
 	unsigned barriers;
 	uint32_t imr_at_barrier;
 	unsigned fail_alloc_at;	/* 1-based allocation that fails, or 0. */
@@ -169,6 +170,11 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 	/* RXBD_IDX_MPDUQ: hardware write index in 27:16, host index low. */
 	if (reg == 0x03b4)
 		v = (v & 0xfff) | (uint32_t)(f.rx_hw_idx & 0xfff) << 16;
+	/* TXBD_IDX MGMTQ/BEQ: hardware read index in 27:16. */
+	if (reg == 0x03b0)
+		v = (v & 0xfff) | (uint32_t)(f.tx_hw_rp[0] & 0xfff) << 16;
+	if (reg == 0x03a8)
+		v = (v & 0xfff) | (uint32_t)(f.tx_hw_rp[1] & 0xfff) << 16;
 	/*
 	 * Internal DDMA completes only after a beacon kick consumed the
 	 * host chunk. Otherwise OWN stays set and the download times out.
@@ -976,6 +982,126 @@ test_diag_regs(void)
 	rtw88_core_detach(&sc);
 }
 
+static const uint8_t bcast_frame[24] = {
+	0xd0, 0x00, 0x00, 0x00,				/* Action, no duration. */
+	0xff, 0xff, 0xff, 0xff, 0xff, 0xff,		/* DA broadcast. */
+	0x02, 0x00, 0x00, 0x00, 0x00, 0x01,		/* SA local. */
+	0x02, 0x00, 0x00, 0x00, 0x00, 0x01,		/* BSSID. */
+	0x00, 0x00
+};
+
+static unsigned
+reg16(uint32_t reg)
+{
+
+	return (unsigned)(f.mmio[reg] | f.mmio[reg + 1] << 8);
+}
+
+static void
+test_tx_descriptors_and_full_ring(void)
+{
+	struct rtw88_softc sc;
+	const uint8_t *bd, *pkt;
+	unsigned i;
+
+	if (!start_ok(&sc))
+		return;
+	CHECK(reg16(0x0380) == RTW88_TX_SLOTS);		/* MGMTQ entries */
+	CHECK(reg16(0x0388) == RTW88_TX_SLOTS);		/* BEQ entries */
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, bcast_frame,
+	    sizeof(bcast_frame)) == 0);
+	bd = sc.sc_ring[5].vaddr;
+	pkt = sc.sc_txq[RTW88_TXQ_MGMT].buf[0].vaddr;
+	CHECK((bd[0] | bd[1] << 8) == 48);			/* segment 0 */
+	CHECK((bd[2] | bd[3] << 8) == 1);			/* 72 bytes: 1 PSB */
+	CHECK((bd[8] | bd[9] << 8) == sizeof(bcast_frame));	/* segment 1 */
+	CHECK((uint32_t)(bd[4] | bd[5] << 8 | bd[6] << 16 |
+	    (uint32_t)bd[7] << 24) == (uint32_t)sc.sc_txq[0].buf[0].addr);
+	CHECK((pkt[0] | pkt[1] << 8) == sizeof(bcast_frame));	/* TX desc size */
+	CHECK(((pkt[5] >> 0) & 0x1f) == 18);		/* QSEL management */
+	CHECK(memcmp(pkt + 48, bcast_frame, sizeof(bcast_frame)) == 0);
+	CHECK((reg16(0x03b0) & 0xfff) == 1);		/* kicked */
+	CHECK(sc.sc_stats.tx_queued == 1 && sc.sc_stats.tx_done == 0);
+	for (i = 1; i < RTW88_TX_SLOTS - 1; i++)
+		CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, bcast_frame,
+		    sizeof(bcast_frame)) == 0);
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, bcast_frame,
+	    sizeof(bcast_frame)) == ENOBUFS);
+	CHECK(sc.sc_stats.tx_full == 1);
+	CHECK(sc.sc_stats.tx_queued == RTW88_TX_SLOTS - 1);
+	rtw88_stop(&sc);
+	CHECK(sc.sc_stats.tx_dropped == RTW88_TX_SLOTS - 1);
+	rtw88_core_detach(&sc);
+}
+
+static void
+test_tx_completion(void)
+{
+	struct rtw88_softc sc;
+	unsigned i;
+
+	if (!start_ok(&sc))
+		return;
+	for (i = 0; i < 3; i++)
+		CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, bcast_frame,
+		    sizeof(bcast_frame)) == 0);
+	CHECK((reg16(0x03a8) & 0xfff) == 3);
+	f.tx_hw_rp[1] = 2;
+	set_hisr0(0x10);				/* BEDOK */
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.tx_done == 2 && sc.sc_txq[RTW88_TXQ_BE].queued == 1);
+	/* The same completion again is not counted twice. */
+	set_hisr0(0x10);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.tx_done == 2 && sc.sc_stats.tx_dma_errors == 0);
+	/* A read index past the outstanding frames is a DMA fault. */
+	f.tx_hw_rp[1] = 10;
+	set_hisr0(0x10);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.tx_dma_errors == 1 && sc.sc_stats.tx_done == 2);
+	f.tx_hw_rp[1] = 3;
+	set_hisr0(0x10);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.tx_done == 3 && sc.sc_txq[RTW88_TXQ_BE].queued == 0);
+	rtw88_stop(&sc);
+	CHECK(sc.sc_stats.tx_dropped == 0);
+	rtw88_core_detach(&sc);
+}
+
+static void
+test_tx_refusals(void)
+{
+	static uint8_t big[RTW88_TX_BUF_SIZE];
+	struct rtw88_softc sc;
+
+	reset_bus(&sc);
+	if (!attach_ok(&sc))
+		return;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, bcast_frame,
+	    sizeof(bcast_frame)) == ENXIO);			/* not running */
+	CHECK(rtw88_start(&sc) == 0);
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, big, sizeof(big)) == EMSGSIZE);
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, big, 0) == EMSGSIZE);
+	CHECK(rtw88_tx_raw(&sc, 7, bcast_frame, sizeof(bcast_frame)) == EINVAL);
+	CHECK(sc.sc_stats.tx_queued == 0);
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+static void
+test_loopback_mode(void)
+{
+	struct rtw88_softc sc;
+
+	if (!start_ok(&sc))
+		return;
+	CHECK(rtw88_loopback(&sc, 1) == 0 && f.mmio[0x103] == 0x0b);
+	CHECK(rtw88_loopback(&sc, 0) == 0 && f.mmio[0x103] == 0x00);
+	rtw88_stop(&sc);
+	CHECK(rtw88_loopback(&sc, 1) == ENXIO);
+	rtw88_core_detach(&sc);
+}
+
 int
 main(void)
 {
@@ -1001,6 +1127,10 @@ main(void)
 	test_intr_after_stop();
 	test_rx_buffer_alloc_failure();
 	test_diag_regs();
+	test_tx_descriptors_and_full_ring();
+	test_tx_completion();
+	test_tx_refusals();
+	test_loopback_mode();
 	test_stop_during_bootstrap();
 	test_stale_generation();
 	test_success_consumes_tables();

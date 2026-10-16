@@ -79,6 +79,23 @@
 #define RTW88_RING_RX		8
 #define RTW88_RX_TAG_MAX	8192
 #define RTW88_MIN_FRAME		10	/* 802.11 ACK */
+#define RTW88_IMR_MGNTDOK	0x40
+#define RTW88_IMR_BEDOK		0x10
+#define RTW88_QSEL_MGMT		18
+#define RTW88_RATEID_B_20M	8
+/* rtlwifi REG_LBMODE (CR + 3): LOOPBACK_IMMEDIATELY. */
+#define RTW88_LBMODE_IMMEDIATE	0x0b
+
+/* TX queues in use: ring index, TXBD_NUM, TXBD_IDX, completion bit. */
+static const struct {
+	unsigned ring;
+	uint32_t num;
+	uint32_t idx;
+	uint32_t done;
+} rtw88_txq_hw[RTW88_NTXQ] = {
+	[RTW88_TXQ_MGMT] = { 5, 0x0380, 0x03b0, RTW88_IMR_MGNTDOK },
+	[RTW88_TXQ_BE] = { 1, 0x0388, 0x03a8, RTW88_IMR_BEDOK },
+};
 #define RTW88_BD_OWN		0x8000
 #define RTW88_BCN_VALID		0x8000
 
@@ -380,6 +397,17 @@ rtw88_hci_setup(struct rtw88_softc *sc)
 		error = rtw88_write_ring(sc, 0x0310, 0x0380, 1, 5, 16);
 	if (error == 0)
 		error = rtw88_write_ring(sc, 0x0340, 0x038c, 1, 6, 16);
+	for (i = 0; i < RTW88_NTXQ && error == 0; i++) {
+		struct rtw88_txq *txq = &sc->sc_txq[i];
+
+		if (txq->nbuf != RTW88_TX_SLOTS)
+			return EINVAL;
+		memset(sc->sc_ring[rtw88_txq_hw[i].ring].vaddr, 0,
+		    RTW88_TX_SLOTS * RTW8822C_TX_BUFFER_DESC_SIZE);
+		txq->wp = txq->rp = txq->queued = 0;
+		error = sc->sc_ops->write_2(sc->sc_bus, rtw88_txq_hw[i].num,
+		    RTW88_TX_SLOTS);
+	}
 	if (error != 0)
 		return error;
 	if (sc->sc_nrxbuf == 0 ||
@@ -603,6 +631,10 @@ rtw88_stop(struct rtw88_softc *sc)
 		(void)sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HIMR3, 0);
 		if (sc->sc_ops->intr_barrier != NULL)
 			sc->sc_ops->intr_barrier(sc->sc_bus);
+		for (unsigned q = 0; q < RTW88_NTXQ; q++) {
+			sc->sc_stats.tx_dropped += sc->sc_txq[q].queued;
+			sc->sc_txq[q].queued = 0;
+		}
 	}
 	sc->sc_started = 0;
 	sc->sc_rf_enabled = 0;
@@ -852,6 +884,101 @@ rtw88_rx(struct rtw88_softc *sc)
 }
 
 int
+rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
+    size_t len)
+{
+	struct rtw88_tx_info tx;
+	struct rtw88_txq *txq;
+	struct rtw88_dma *ring, *buf;
+	uint8_t *bd;
+	uint32_t addr;
+	unsigned avail;
+	int error;
+
+	if (q >= RTW88_NTXQ)
+		return EINVAL;
+	if (!sc->sc_running)
+		return ENXIO;
+	if (frame == NULL || len == 0 ||
+	    len > RTW88_TX_BUF_SIZE - RTW8822C_TX_PACKET_DESC_SIZE)
+		return EMSGSIZE;
+	txq = &sc->sc_txq[q];
+	/* pci.h avail_desc: one slot stays empty to tell full from empty. */
+	avail = txq->rp > txq->wp ? txq->rp - txq->wp - 1 :
+	    RTW88_TX_SLOTS - txq->wp + txq->rp - 1;
+	if (avail == 0) {
+		sc->sc_stats.tx_full++;
+		return ENOBUFS;
+	}
+	buf = &txq->buf[txq->wp];
+	memset(&tx, 0, sizeof(tx));
+	tx.packet_size = (uint32_t)len;
+	tx.queue = RTW88_QSEL_MGMT;
+	tx.rate_id = RTW88_RATEID_B_20M;
+	tx.flags = RTW88_TX_DIS_QSELSEQ | RTW88_TX_USE_RATE |
+	    RTW88_TX_DIS_RATE_FB | RTW88_TX_HWSEQ;
+	if (((const uint8_t *)frame)[4] & 0x01)		/* group DA */
+		tx.flags |= RTW88_TX_BMC;
+	error = rtw88_tx_encode(buf->vaddr, buf->size, &tx);
+	if (error != 0)
+		return error;
+	memcpy((uint8_t *)buf->vaddr + RTW8822C_TX_PACKET_DESC_SIZE, frame,
+	    len);
+	sc->sc_ops->dma_sync(sc->sc_bus, buf, BUS_DMASYNC_PREWRITE);
+	ring = &sc->sc_ring[rtw88_txq_hw[q].ring];
+	bd = (uint8_t *)ring->vaddr + RTW8822C_TX_BUFFER_DESC_SIZE * txq->wp;
+	addr = (uint32_t)buf->addr;
+	memset(bd, 0, RTW8822C_TX_BUFFER_DESC_SIZE);
+	rtw88_put16(bd, RTW8822C_TX_PACKET_DESC_SIZE);
+	rtw88_put16(bd + 2, (uint16_t)((len + RTW8822C_TX_PACKET_DESC_SIZE -
+	    1) / 128 + 1));
+	rtw88_put32(bd + 4, addr);
+	rtw88_put16(bd + 8, (uint16_t)len);
+	rtw88_put32(bd + 12, addr + RTW8822C_TX_PACKET_DESC_SIZE);
+	sc->sc_ops->dma_sync(sc->sc_bus, ring, BUS_DMASYNC_PREWRITE);
+	txq->wp = (txq->wp + 1) % RTW88_TX_SLOTS;
+	txq->queued++;
+	sc->sc_stats.tx_queued++;
+	return sc->sc_ops->write_2(sc->sc_bus, rtw88_txq_hw[q].idx,
+	    (uint16_t)txq->wp);
+}
+
+/* pci.c rtw_pci_tx_isr: completion is the chip's read index, nothing else. */
+static void
+rtw88_tx_done(struct rtw88_softc *sc, unsigned q)
+{
+	struct rtw88_txq *txq = &sc->sc_txq[q];
+	uint32_t idx;
+	unsigned hw, count;
+
+	if (sc->sc_ops->read_4(sc->sc_bus, rtw88_txq_hw[q].idx, &idx) != 0)
+		return;
+	hw = (idx >> 16) & 0xfff;
+	if (hw >= RTW88_TX_SLOTS) {
+		sc->sc_stats.tx_dma_errors++;
+		return;
+	}
+	count = hw >= txq->rp ? hw - txq->rp : RTW88_TX_SLOTS - txq->rp + hw;
+	if (count > txq->queued) {
+		sc->sc_stats.tx_dma_errors++;
+		return;
+	}
+	txq->rp = hw;
+	txq->queued -= count;
+	sc->sc_stats.tx_done += count;
+}
+
+int
+rtw88_loopback(struct rtw88_softc *sc, int on)
+{
+
+	if (!sc->sc_running)
+		return ENXIO;
+	return sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_CR + 3,
+	    on ? RTW88_LBMODE_IMMEDIATE : 0);
+}
+
+int
 rtw88_diag(struct rtw88_softc *sc, uint32_t *r)
 {
 	static const uint32_t regs[RTW88_DIAG_REGS] = {
@@ -892,6 +1019,9 @@ rtw88_intr(struct rtw88_softc *sc)
 	(void)sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HISR1, s1);
 	(void)sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HISR3, s3);
 	sc->sc_stats.intr++;
+	for (unsigned q = 0; q < RTW88_NTXQ; q++)
+		if ((s0 & rtw88_txq_hw[q].done) != 0)
+			rtw88_tx_done(sc, q);
 	if ((s0 & RTW88_IMR_ROK) != 0)
 		rtw88_rx(sc);
 	return 1;
@@ -936,6 +1066,21 @@ rtw88_core_attach(struct rtw88_softc *sc)
 		if (error != 0)
 			goto fail;
 	}
+	for (unsigned q = 0; q < RTW88_NTXQ; q++) {
+		struct rtw88_txq *txq = &sc->sc_txq[q];
+
+		for (unsigned i = 0; i < RTW88_TX_SLOTS; i++) {
+			error = sc->sc_ops->dma_alloc(sc->sc_bus, &txq->buf[i],
+			    RTW88_TX_BUF_SIZE);
+			if (error != 0)
+				goto fail;
+			txq->nbuf++;
+			error = rtw88_dma_validate(txq->buf[i].addr,
+			    txq->buf[i].size, RTW8822C_DMA_ADDR_BITS);
+			if (error != 0)
+				goto fail;
+		}
+	}
 	error = sc->sc_ops->intr_establish(sc->sc_bus);
 	if (error != 0)
 		goto fail;
@@ -956,6 +1101,14 @@ rtw88_core_detach(struct rtw88_softc *sc)
 	if (sc->sc_intr_established) {
 		sc->sc_ops->intr_disestablish(sc->sc_bus);
 		sc->sc_intr_established = 0;
+	}
+	for (unsigned q = 0; q < RTW88_NTXQ; q++) {
+		struct rtw88_txq *txq = &sc->sc_txq[q];
+
+		while (txq->nbuf != 0) {
+			txq->nbuf--;
+			sc->sc_ops->dma_free(sc->sc_bus, &txq->buf[txq->nbuf]);
+		}
 	}
 	while (sc->sc_nrxbuf != 0) {
 		sc->sc_nrxbuf--;

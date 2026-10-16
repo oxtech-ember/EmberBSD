@@ -84,18 +84,53 @@ rtwce_stats(char *buf, size_t len)
 		return ENXIO;
 	st = &rtwce_sc->sc_stats;
 	n = snprintf(buf, len, "running %d intr %llu rx %llu c2h %llu "
-	    "err %llu short %llu tag %llu dma %llu last_c2h %#x/%u",
+	    "err %llu short %llu tag %llu dma %llu last_c2h %#x/%u "
+	    "txq %llu txdone %llu txfull %llu txdrop %llu txdma %llu",
 	    rtwce_sc->sc_running, (unsigned long long)st->intr,
 	    (unsigned long long)st->rx_frames, (unsigned long long)st->rx_c2h,
 	    (unsigned long long)st->rx_errors, (unsigned long long)st->rx_short,
 	    (unsigned long long)st->rx_tag_errors,
 	    (unsigned long long)st->rx_dma_errors, st->last_c2h_id,
-	    st->last_c2h_seq);
+	    st->last_c2h_seq, (unsigned long long)st->tx_queued,
+	    (unsigned long long)st->tx_done, (unsigned long long)st->tx_full,
+	    (unsigned long long)st->tx_dropped,
+	    (unsigned long long)st->tx_dma_errors);
 	if (n > 0 && (size_t)n < len && rtw88_diag(rtwce_sc, r) == 0)
 		snprintf(buf + n, len - (size_t)n,
 		    " hisr0 %#x himr0 %#x hisr3 %#x himr3 %#x rxidx %#x pci %#x",
 		    r[0], r[1], r[2], r[3], r[4], r[5]);
 	return 0;
+}
+
+/*
+ * Diagnostic MAC loopback: n > 0 enables it and posts n broadcast
+ * action frames on the management queue; 0 restores normal mode.
+ */
+int
+rtwce_loopback(int n)
+{
+	static const uint8_t frame[24] = {
+		0xd0, 0x00, 0x00, 0x00,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0x02, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0x02, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0x00, 0x00
+	};
+	struct rtw88_pci_softc *psc;
+	int error, i;
+
+	if (rtwce_sc == NULL)
+		return ENXIO;
+	if (n < 0 || n > (int)RTW88_TX_SLOTS)
+		return EINVAL;
+	psc = rtwce_sc->sc_bus;
+	mutex_enter(&psc->sc_lock);
+	error = rtw88_loopback(rtwce_sc, n > 0);
+	for (i = 0; i < n && error == 0; i++)
+		error = rtw88_tx_raw(rtwce_sc, RTW88_TXQ_MGMT, frame,
+		    sizeof(frame));
+	mutex_exit(&psc->sc_lock);
+	return error;
 }
 
 /* Diagnostic H2C: low byte is the command, the next three its payload. */

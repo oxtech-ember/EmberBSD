@@ -52,6 +52,20 @@ struct rtw88_bus_ops {
 #define RTW88_RX_BUF_SIZE	(11454U + 24U)
 /* Bound on RX descriptors handled per interrupt. */
 #define RTW88_RX_LIMIT		64U
+/* Published TX entries per used queue; each has a bounce buffer. */
+#define RTW88_TX_SLOTS		32U
+#define RTW88_TX_BUF_SIZE	4096U
+#define RTW88_TXQ_MGMT		0U
+#define RTW88_TXQ_BE		1U
+#define RTW88_NTXQ		2U
+
+struct rtw88_txq {
+	struct rtw88_dma buf[RTW88_TX_SLOTS];
+	unsigned nbuf;
+	unsigned wp;		/* Next slot the host fills. */
+	unsigned rp;		/* Oldest slot not yet completed. */
+	unsigned queued;	/* Posted, completion not seen. */
+};
 
 /* Visible counters; errors are never silently dropped. */
 struct rtw88_stats {
@@ -62,6 +76,11 @@ struct rtw88_stats {
 	uint64_t rx_short;	/* Shorter than an 802.11 ACK. */
 	uint64_t rx_tag_errors;	/* RX tag mismatch: PCIe DMA timeout. */
 	uint64_t rx_dma_errors;	/* Hardware index outside the ring. */
+	uint64_t tx_queued;
+	uint64_t tx_done;	/* Counted only from the chip's read index. */
+	uint64_t tx_full;
+	uint64_t tx_dropped;	/* Posted but not completed before stop. */
+	uint64_t tx_dma_errors;	/* Read index outside the outstanding range. */
 	uint8_t last_c2h_id;
 	uint8_t last_c2h_seq;
 };
@@ -95,6 +114,7 @@ struct rtw88_softc {
 	unsigned sc_rx_rp;	/* Next RX descriptor the host reads. */
 	unsigned sc_rx_tag;
 	int sc_running;		/* Interrupts unmasked; rtw88_intr owns RX. */
+	struct rtw88_txq sc_txq[RTW88_NTXQ];
 	struct rtw88_stats sc_stats;
 };
 
@@ -114,10 +134,19 @@ int rtw88_intr(struct rtw88_softc *);
 /* Diagnostic snapshot: HISR0, HIMR0, HISR3, HIMR3, RXBD_IDX, PCI_CTRL. */
 #define RTW88_DIAG_REGS 6
 int rtw88_diag(struct rtw88_softc *, uint32_t *);
+/*
+ * Copy one 802.11 frame into the next slot of a TX queue and kick it.
+ * Management rate profile: 1M, no fallback, hardware sequence. The
+ * caller holds the bus interrupt lock. ENOBUFS when the ring is full.
+ */
+int rtw88_tx_raw(struct rtw88_softc *, unsigned, const void *, size_t);
+/* Diagnostic MAC loopback: 1 returns TX frames to RX, 0 is normal. */
+int rtw88_loopback(struct rtw88_softc *, int);
 /* Operator trigger. 1 starts, 0 stops. ENXIO until resources are ready. */
 int rtwce_bootstrap(int);
 int rtwce_started(void);
 int rtwce_stats(char *, size_t);
 int rtwce_h2c(uint32_t);
+int rtwce_loopback(int);
 
 #endif /* _DEV_IC_RTW88VAR_H_ */

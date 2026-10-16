@@ -386,7 +386,7 @@ void *pci_intr_establish_xname(pci_chipset_tag_t pc, pci_intr_handle_t ih,
 	(void)ih;
 	(void)name;
 	CHECK(ipl == IPL_NET);
-	CHECK(f.loaded == RTW88_NRING + RTW88_RX_BUFS && f.reg[0xb0 / 4] == 0 && f.reg[0xb8 / 4] == 0 &&
+	CHECK(f.loaded == RTW88_NRING + RTW88_RX_BUFS + RTW88_NTXQ * RTW88_TX_SLOTS && f.reg[0xb0 / 4] == 0 && f.reg[0xb8 / 4] == 0 &&
 	      f.reg[0x10b8 / 4] == 0);
 	if (acquire())
 		return NULL;
@@ -398,7 +398,7 @@ void *pci_intr_establish_xname(pci_chipset_tag_t pc, pci_intr_handle_t ih,
 void pci_intr_disestablish(pci_chipset_tag_t pc, void *ih)
 {
 	(void)pc;
-	CHECK(ih == &f && f.irq == 1 && f.loaded == RTW88_NRING + RTW88_RX_BUFS);
+	CHECK(ih == &f && f.irq == 1 && f.loaded == RTW88_NRING + RTW88_RX_BUFS + RTW88_NTXQ * RTW88_TX_SLOTS);
 	/* A CPU has already fetched the handler and its argument. */
 	f.pending = 1;
 	f.irq--;
@@ -406,7 +406,7 @@ void pci_intr_disestablish(pci_chipset_tag_t pc, void *ih)
 void xc_barrier(unsigned flags)
 {
 	CHECK(flags == 0 && f.pending && f.irq == 0);
-	CHECK(f.loaded == RTW88_NRING + RTW88_RX_BUFS && f.locks == 1 && f.bar == 1);
+	CHECK(f.loaded == RTW88_NRING + RTW88_RX_BUFS + RTW88_NTXQ * RTW88_TX_SLOTS && f.locks == 1 && f.bar == 1);
 	const struct rtw88_pci_softc *p = f.arg;
 	CHECK(!p->sc_lock.held && p->sc_stopping);
 	int io = f.io;
