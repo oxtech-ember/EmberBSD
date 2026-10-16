@@ -1095,10 +1095,15 @@ test_loopback_mode(void)
 
 	if (!start_ok(&sc))
 		return;
-	CHECK(rtw88_loopback(&sc, 1) == 0 && f.mmio[0x103] == 0x0b);
+	/* rtlwifi LBMODE: normal, PHY, MAC delay, DMA, immediately. */
+	CHECK(rtw88_loopback(&sc, 0x0b) == 0 && f.mmio[0x103] == 0x0b);
+	CHECK(rtw88_loopback(&sc, 0x03) == 0 && f.mmio[0x103] == 0x03);
+	CHECK(rtw88_loopback(&sc, 0x07) == 0 && f.mmio[0x103] == 0x07);
+	CHECK(rtw88_loopback(&sc, 0x01) == 0 && f.mmio[0x103] == 0x01);
+	CHECK(rtw88_loopback(&sc, 0x02) == EINVAL && f.mmio[0x103] == 0x01);
 	CHECK(rtw88_loopback(&sc, 0) == 0 && f.mmio[0x103] == 0x00);
 	rtw88_stop(&sc);
-	CHECK(rtw88_loopback(&sc, 1) == ENXIO);
+	CHECK(rtw88_loopback(&sc, 0x0b) == ENXIO);
 	rtw88_core_detach(&sc);
 }
 

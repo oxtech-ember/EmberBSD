@@ -102,10 +102,23 @@ rtwce_stats(char *buf, size_t len)
 	return 0;
 }
 
-/*
- * Diagnostic MAC loopback: n > 0 enables it and posts n broadcast
- * action frames on the management queue; 0 restores normal mode.
- */
+/* Diagnostic loopback mode; see rtw88_loopback. */
+int
+rtwce_lbmode(int mode)
+{
+	struct rtw88_pci_softc *psc;
+	int error;
+
+	if (rtwce_sc == NULL)
+		return ENXIO;
+	psc = rtwce_sc->sc_bus;
+	mutex_enter(&psc->sc_lock);
+	error = rtw88_loopback(rtwce_sc, mode);
+	mutex_exit(&psc->sc_lock);
+	return error;
+}
+
+/* Diagnostic TX: post n broadcast action frames on the management queue. */
 int
 rtwce_loopback(int n)
 {
@@ -125,7 +138,7 @@ rtwce_loopback(int n)
 		return EINVAL;
 	psc = rtwce_sc->sc_bus;
 	mutex_enter(&psc->sc_lock);
-	error = rtw88_loopback(rtwce_sc, n > 0);
+	error = 0;
 	for (i = 0; i < n && error == 0; i++)
 		error = rtw88_tx_raw(rtwce_sc, RTW88_TXQ_MGMT, frame,
 		    sizeof(frame));

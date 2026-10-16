@@ -67,6 +67,20 @@ rtwce_sysctl_loopback(SYSCTLFN_ARGS)
 	return rtwce_loopback(val);
 }
 
+static int
+rtwce_sysctl_lbmode(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node;
+	int val = 0, error;
+
+	node = *rnode;
+	node.sysctl_data = &val;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	return rtwce_lbmode(val);
+}
+
 SYSCTL_SETUP(sysctl_hw_rtwce_setup, "rtwce firmware bootstrap")
 {
 	int err;
@@ -94,8 +108,15 @@ SYSCTL_SETUP(sysctl_hw_rtwce_setup, "rtwce firmware bootstrap")
 	err = sysctl_createv(clog, 0, NULL, NULL,
 	    CTLFLAG_PERMANENT | CTLFLAG_READWRITE, CTLTYPE_INT,
 	    "rtwce_loopback",
-	    SYSCTL_DESCR("MAC loopback: n>0 sends n frames, 0 turns it off"),
+	    SYSCTL_DESCR("Post n broadcast frames on the management queue"),
 	    rtwce_sysctl_loopback, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
+	if (err != 0)
+		aprint_error("rtwce: sysctl_createv failed: %d\n", err);
+	err = sysctl_createv(clog, 0, NULL, NULL,
+	    CTLFLAG_PERMANENT | CTLFLAG_READWRITE, CTLTYPE_INT,
+	    "rtwce_lbmode",
+	    SYSCTL_DESCR("Loopback mode: 0, 1 PHY, 3 MAC delay, 7 DMA, 11"),
+	    rtwce_sysctl_lbmode, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
 	if (err != 0)
 		aprint_error("rtwce: sysctl_createv failed: %d\n", err);
 }

@@ -83,7 +83,7 @@
 #define RTW88_IMR_BEDOK		0x10
 #define RTW88_QSEL_MGMT		18
 #define RTW88_RATEID_B_20M	8
-/* rtlwifi REG_LBMODE (CR + 3): LOOPBACK_IMMEDIATELY. */
+/* rtlwifi REG_LBMODE (CR + 3): normal 0, PHY 1, MAC delay 3, DMA 7. */
 #define RTW88_LBMODE_IMMEDIATE	0x0b
 
 /* TX queues in use: ring index, TXBD_NUM, TXBD_IDX, completion bit. */
@@ -969,13 +969,18 @@ rtw88_tx_done(struct rtw88_softc *sc, unsigned q)
 }
 
 int
-rtw88_loopback(struct rtw88_softc *sc, int on)
+rtw88_loopback(struct rtw88_softc *sc, int mode)
 {
 
 	if (!sc->sc_running)
 		return ENXIO;
-	return sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_CR + 3,
-	    on ? RTW88_LBMODE_IMMEDIATE : 0);
+	switch (mode) {
+	case 0x00: case 0x01: case 0x03: case 0x07: case RTW88_LBMODE_IMMEDIATE:
+		break;
+	default:
+		return EINVAL;
+	}
+	return sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_CR + 3, (uint8_t)mode);
 }
 
 int

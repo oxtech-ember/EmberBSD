@@ -140,7 +140,7 @@ int rtw88_diag(struct rtw88_softc *, uint32_t *);
  * caller holds the bus interrupt lock. ENOBUFS when the ring is full.
  */
 int rtw88_tx_raw(struct rtw88_softc *, unsigned, const void *, size_t);
-/* Diagnostic MAC loopback: 1 returns TX frames to RX, 0 is normal. */
+/* Diagnostic loopback (rtlwifi LBMODE 0, 1, 3, 7 or 0x0b); 0 is normal. */
 int rtw88_loopback(struct rtw88_softc *, int);
 /* Operator trigger. 1 starts, 0 stops. ENXIO until resources are ready. */
 int rtwce_bootstrap(int);
@@ -148,5 +148,6 @@ int rtwce_started(void);
 int rtwce_stats(char *, size_t);
 int rtwce_h2c(uint32_t);
 int rtwce_loopback(int);
+int rtwce_lbmode(int);
 
 #endif /* _DEV_IC_RTW88VAR_H_ */
