@@ -83,6 +83,12 @@ Mutants remove safety checks to prove that the tests detect their absence.
 
 `CC`, `CFLAGS`, `HSM_COMPILE_ONLY=1`, and `HSM_OUTPUT` support a cross-built fixture.
 `TEST_RUNNER` can invoke a supported memory checker.
+The portable kernel dispatcher runs the resource, IRQ, and HSM contracts.
+The build-orchestration fixture checks their dispatch and failure cleanup.
+GCC 16.2 compiles the affected AArch64 kernel translation units with the real kernel headers.
+GCC path analysis reports no findings in those units.
+Clang Static Analyzer and Cppcheck retain inherited header findings; the HSM source adds none.
+The host fixture passes ASan and UBSan. Valgrind is unavailable on the tested Darwin AArch64 host.
 Host execution does not establish physical clock control or HDMI operation.
 A complete kernel build, firmware deployment, and cold-boot hardware acceptance remain pending.
 

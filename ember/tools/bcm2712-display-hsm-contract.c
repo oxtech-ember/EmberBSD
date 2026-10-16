@@ -116,9 +116,13 @@ exchange(void *arg, uint32_t *p, size_t size)
 	assert(p[1] == 0 && p[4] == 0 && p[words - 1] == 0);
 	assert(le32toh(p[3]) == (set_rate ? 12 : 8));
 	assert(le32toh(p[5]) == 13);
-	if (set_rate) assert(le32toh(p[7]) == 1);
+	if (set_rate) {
+		assert(le32toh(p[7]) == 1);
+		f->sets++;
+	} else if (tag == VCPROPTAG_SET_CLOCKSTATE) {
+		f->sets++;
+	}
 	if (call <= 64) f->tags[call - 1] = tag;
-	if (tag == VCPROPTAG_SET_CLOCKSTATE || set_rate) f->sets++;
 	if (f->fail_call == call) return ETIMEDOUT;
 	switch (tag) {
 	case VCPROPTAG_GET_CLOCKSTATE: value = f->state; break;
