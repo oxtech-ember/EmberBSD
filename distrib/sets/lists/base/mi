@@ -249,6 +249,9 @@
 ./libdata/firmware/if_otus/otus-init		base-firmware-root	firmware
 ./libdata/firmware/if_otus/otus-license		base-firmware-root	firmware
 ./libdata/firmware/if_otus/otus-main		base-firmware-root	firmware
+./libdata/firmware/if_rtw89			base-firmware-root
+./libdata/firmware/if_rtw89/LICENCE.rtlwifi_firmware.txt	base-firmware-root	firmware
+./libdata/firmware/if_rtw89/rtw8852b_fw.bin	base-firmware-root	firmware
 ./libdata/firmware/if_rtwn			base-firmware-root
 ./libdata/firmware/if_rtwn/Realtek-Firmware-License.txt	base-firmware-root	firmware
 ./libdata/firmware/if_rtwn/rtl8192cfw.bin	base-firmware-root	firmware
