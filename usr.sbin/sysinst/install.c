@@ -157,6 +157,8 @@ do_install(void)
 	int retcode = 0, res;
 	struct install_partition_desc install = {};
 
+	if (!wizard_allow_install(wizard_active))
+		return;
 	if (wizard_active) {
 		if (!wizard_prepare(&install))
 			goto error;

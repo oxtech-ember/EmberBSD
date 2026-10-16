@@ -50,12 +50,23 @@
  */
 #if defined(_NETBSD_SOURCE) || defined(_ISOC23_SOURCE) || \
     (__STDC_VERSION__ - 0) >= 202311L
+#ifndef __STDC_VERSION_STDDEF_H__
 #define	__STDC_VERSION_STDDEF_H__	202311L
+#endif
 #endif
 
 #include <sys/cdefs.h>
 #include <sys/featuretest.h>
 #include <machine/ansi.h>
+
+/*
+ * A compiler resource header owns ordinary userspace definitions when present.
+ * The installed public header can alias this file; our guard breaks that cycle.
+ * Keep kernel, standalone and lint builds independent of resource headers.
+ */
+#if !defined(_KERNEL) && !defined(_STANDALONE) && !defined(__lint__)
+#include <stddef.h>
+#endif
 
 /*
  * C23	`3. The types are
@@ -97,7 +108,13 @@ typedef	_BSD_SIZE_T_	size_t;
 #undef	_BSD_SIZE_T_
 #endif
 
-#if (__STDC_VERSION__ - 0) >= 201112L || (__cplusplus - 0) >= 201103L
+/*
+ * Read genuine provider guards; do not claim that the BSD union is their type.
+ * On amd64 GCC uses 32 bytes, versus 16 for this union, with equal alignment.
+ * Rebuild userspace consumers that embed or pass the old type by value.
+ */
+#if ((__STDC_VERSION__ - 0) >= 201112L || (__cplusplus - 0) >= 201103L) && \
+    !defined(_GCC_MAX_ALIGN_T) && !defined(__CLANG_MAX_ALIGN_T_DEFINED)
 typedef union {
 	void *_v;
 	long double _ld;
@@ -138,9 +155,12 @@ typedef typeof_unqual(nullptr)	nullptr_t;
 #include <sys/null.h>
 
 #if (__STDC_VERSION__ - 0) >= 202311L
+#ifndef unreachable
 #define	unreachable()	__unreachable() /* sys/cdefs.h */
 #endif
+#endif
 
+#ifndef offsetof
 #if __GNUC_PREREQ__(4, 0)
 #define	offsetof(type, member)	__builtin_offsetof(type, member)
 #elif !defined(__cplusplus)
@@ -152,5 +172,6 @@ typedef typeof_unqual(nullptr)	nullptr_t;
 #define	offsetof(type, member) __offsetof__((reinterpret_cast<size_t> \
     (&reinterpret_cast<const volatile char &>(static_cast<type *>(0)->member))))
 #endif
+#endif /* !offsetof */
 
 #endif /* _SYS_STDDEF_H_ */

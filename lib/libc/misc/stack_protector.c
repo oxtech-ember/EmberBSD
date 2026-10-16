@@ -55,6 +55,12 @@ __dead void __stack_chk_fail_local(void);
 void __guard_setup(void);
 
 void __section(".text.startup")
+#if defined(__has_attribute)
+#if __has_attribute(no_stack_protector)
+/* This function changes the canary that its own epilogue would check. */
+__attribute__((__no_stack_protector__))
+#endif
+#endif
 __guard_setup(void)
 {
 	static const int mib[2] = { CTL_KERN, KERN_ARND };

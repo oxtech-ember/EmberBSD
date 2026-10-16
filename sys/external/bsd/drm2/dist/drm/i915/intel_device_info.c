@@ -63,6 +63,7 @@ static const char * const platform_names[] = {
 	PLATFORM_NAME(CANNONLAKE),
 	PLATFORM_NAME(ICELAKE),
 	PLATFORM_NAME(ELKHARTLAKE),
+	PLATFORM_NAME(JASPERLAKE),
 	PLATFORM_NAME(TIGERLAKE),
 };
 #undef PLATFORM_NAME
@@ -272,7 +273,7 @@ static void gen11_sseu_info_init(struct drm_i915_private *dev_priv)
 	u32 ss_en;
 	u8 eu_en;
 
-	if (IS_ELKHARTLAKE(dev_priv))
+	if (IS_JSL_EHL(dev_priv))
 		intel_sseu_set_info(sseu, 1, 4, 8);
 	else
 		intel_sseu_set_info(sseu, 1, 8, 8);

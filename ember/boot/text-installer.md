@@ -21,10 +21,59 @@ automatic greeting updates. Diagnostic tools retain their upstream ABI names.
 
 SSH is enabled by default; its authentication defaults are unchanged.
 The System step has a Graphics menu: None, XFCE with a Wi-Fi manager,
-and a disabled KDE Plasma entry marked as in development. None is the default.
-Selecting XFCE also selects the X11 sets, independently of the base profile.
+and an experimental KDE Plasma entry. None is the default.
+XFCE also selects the base X11 sets, independently of the base profile.
+Plasma uses the modular X11 libraries and Xwayland from its package closure.
+It does not force base X11 sets. Custom keeps explicit component selections.
 The desktop and its Wi-Fi manager are installed together with the OS.
-Run ember-desktop after console login to start the installed XFCE session.
+Run ember-desktop after console login to start the selected desktop session.
+
+KDE Plasma requires its own desktop-plasma.tar.xz and matching SHA512 entry.
+It never installs the XFCE bundle as a fallback. The archive contains All/,
+ROOTS and SHA512 in the same format as the XFCE bundle, plus a PROFILE file
+containing plasma. Keep the complete amd64 package dependency closure in All/.
+Package installation must supply startplasma-wayland, kwin_wayland, plasmashell,
+Xwayland, dbus-run-session and the dbus service. The launcher selects Wayland
+and the default startkderc selects classic startup without a systemd user manager.
+Console launches without XDG_RUNTIME_DIR use a private 0700 directory, removed
+when the session exits. Existing runtime directories must belong to the user
+and have mode 0700; the launcher preserves them after logout.
+The existing 512 MiB staging limit applies to both desktop archives.
+The installer rejects a missing, oversized or damaged archive before disk writes.
+The selected profile is stored in /etc/ember-desktop only after installation succeeds.
+Existing XFCE installations without that file keep their original launch behavior.
+No automatic login is enabled. Graphical login management is separate.
+
+An image built with `EMBER_EXTERNAL_GCC_RUNTIME` requires
+`runtime-gcc16.tar.xz` and its SHA512 entry, including when Graphics is None.
+The installer freezes and verifies this archive before disk confirmation.
+Its maximum size is 64 MiB. The archive contains `All/`, `ROOTS`, `SHA512`
+and `PROFILE` with the value `gcc16`. The only package root is
+`gcc16-runtime-16.2.0nb1`. The installed-system copy is verified again.
+Live installer tools unpack the verified bundle into the target cache.
+The live `ember-runtime-install --root /absolute/target` helper uses ordinary
+`pkg_add -P` with the target prefix and package database. This bootstrap mode
+accepts only the exact runtime package with data-only archive and PLIST metadata.
+It rejects install/deinstall scripts, PLIST commands, dependencies and path overrides.
+The `-I` option alone does not suppress PLIST commands. No target executable
+runs before the import. A chrooted target `pkg_info` then verifies registration
+and exercises the target loader. The helper without arguments keeps its
+ordinary installed-system behavior. See the [bootstrap regression](../tests/installer-runtime-altroot.md).
+The runtime is installed after all selected sets and before postinstall,
+device setup and certificate setup. Package failure
+stops installation. The desktop package closure reuses this provider.
+Build-tree headers, CRT objects and static libraries do not enter base sets.
+These experimental images require guided installation. Expert fresh install,
+upgrade and reinstall refuse before disk changes. Images built without this
+option keep their existing installation paths.
+The build must separately verify the complete ELF dependency closure of the
+bootstrap tools before the runtime is installed. C source is not that check.
+The installer clears loader path and preload overrides before target commands.
+
+The Plasma path is source and host-regression coverage only. A complete amd64
+Plasma package bundle and an installed Plasma session are not qualified here.
+Do not use the XFCE VM result as Plasma acceptance. Build and boot a matching
+candidate, verify the installed session, and test physical graphics and radios.
 
 XFCE requires desktop-xfce.tar.xz in the same set directory, with its
 SHA512 entry in the build manifest. Sysinst freezes and verifies the complete
@@ -51,7 +100,7 @@ a supported adapter; an Ethernet-only VM cannot establish wireless acceptance.
 3. Identify the target disk by its device, model and capacity.
 4. Review the automatic GPT layout on the disk step. It replaces the entire target layout.
 5. Select the installation image as the set source.
-6. Select Standard, Minimal, or Custom. Choose optional XFCE and Wi-Fi in System.
+6. Select Standard, Minimal, or Custom. Choose an optional desktop in System.
 7. Set the hostname and timezone. A local account is optional.
 8. Read the disk, partitions, source and build ID on the review screen.
 9. Press I to write and install. Set passwords when prompted after copying the sets.

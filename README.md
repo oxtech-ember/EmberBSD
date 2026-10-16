@@ -48,6 +48,9 @@ are maintained in the related repositories below.
   An [amd64 UEFI VM candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-c5d396f5698b68e956b29ee5b256bc7877e6c517-amd64-no-x11)
   supplies the separate no-X11 media and a pinned GitHub HTTPS set source.
   The accepted desktop candidate remains local until its matching kit is published.
+  The installer also exposes an experimental KDE Plasma profile with a separate
+  verified bundle and Wayland launcher. The [runtime bootstrap](ember/tests/installer-runtime-altroot.md)\n  uses live pkgtools before its first target process. Host regressions cover profile selection
+  and failure handling; an amd64 Plasma bundle and session remain unqualified.
   The [release procedure](ember/release/README.md) verifies composition, VM qualification,
   remote file hashes and immutable publication. The custom domain remains deferred.
 
@@ -553,6 +556,14 @@ on every board in the hardware catalog.
 
 ### GPU foundations and NPU direction
 
+- **Jasper Lake source foundation:** the [experimental i915 port](ember/boot/i915-jasperlake.md)
+  identifies PCI `8086:4e55` as a separate JSL platform. Source contracts cover
+  identity, eDP swing tables, link rates, PHY/clock selection, the PSR2 limit,
+  FBC alignment, guarded display-power handling and GT/reset workarounds.
+  Firmware metadata identifies JSL; GuC stays disabled by default.
+  Default kernels/modules keep preliminary attachment closed; a separate personal trial
+  configuration admits only the exact `8086:4e55` JSL identity. Full builds and physical acceptance remain pending.
+- **Personal amd64 VM graphics trial:** a separate [VirtGPU 2D configuration](ember/boot/amd64-vmgpu-trial.md) selects native DRM/KMS for a future llvmpipe/GBM session. Stock kernels are unchanged; kernel, VM and Plasma acceptance remain separate gates.
 - **Native graphics infrastructure:** experimental VirtIO DRM/KMS, UVM-backed
   GEM buffers and PRIME sharing make direct Wayland sessions possible.
   UTM tests cover visible KMS output, 32 cross-process buffer-lifetime cycles
@@ -1034,10 +1045,43 @@ The base system shell is unchanged.
   Orange Pi Zero 3W. New [development sessions](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/development-defaults.md)
   and ordinary pkgsrc builds on Zero 3W select the repaired GCC16 nb1 package;
   the base compiler remains explicit bootstrap/recovery support.
+  The [external GCC runtime adapter](ember/boot/external-gcc-runtime.md) now isolates
+  freestanding links and resolves indirect C++ runtime dependencies at build time.
+  The [unwind-header setlist check](ember/tests/unwind-setlist.md) follows the GCC
+  and libc installers without copying compiler SDK headers into the base destination.
+  Isolated amd64 program links pass. EFI replays remove the leaked runtime flags,
+  but retain a linker PHDR error under `--noinhibit-exec`; UEFI boot remains unverified.
   The [cross-build wrapper](ember/boot/cross-build.md) builds an AArch64 kernel,
   matched board modules and DTBs on Apple Silicon macOS and Debian/x86_64
   with GCC16.2. The Linux build passes all ten portable contracts and artifact
   checksum checks; native contracts and boot acceptance remain separate.
+  Darwin host-tool checks pass real GCC16/SDK host-mkdep and mandoc configuration and Clang
+  flag selection; complete amd64 tools and image acceptance remain separate.
+  The [variadic-header regression](ember/tests/stdarg-interop.md) covers compiler/system include
+  order, C11/C23/C++20 and resource-free fallbacks. The isolated GCC16 libc assertion TU passes;
+  a complete base distribution remains a separate check. The [stddef interoperability regression](ember/tests/stddef-interop.md)
+  covers GCC16's compiler-owned amd64 `max_align_t`, both include orders and resource-free fallbacks.
+  Its size change requires a consistent userspace rebuild; isolated libkvm and PCB checks pass.
+  The [C++ dependency-header regression](ember/tests/external-cxx-depend.md) keeps external GCC compilation and dependency generation on the same audited runtime headers.
+  The actual ATF Makefile compiles its checked TU and generates dependencies; a complete base distribution remains pending.
+  The [libc canary initializer regression](ember/tests/libc-guard.md) prevents strong SSP from rejecting its own initial canary update; target disassembly and host function checks remain distinct from rebuilt VM boot acceptance.
+  The [incremental sysinst identity check](ember/tests/sysinst-build-config.md) keeps compiled build IDs, runtime mode and generated messages synchronized without weakening guided preflight.
+  The [amd64 crash-dump map regression](ember/tests/kvm-amd64-map.md) checks allocation failure, retry and range boundaries.
+  The isolated target TU passes GCC16 analysis; full library and base acceptance remain separate.
+  The [NVMM batch I/O regression](ember/tests/nvmm-io-batch.md) checks temporary-buffer lifetime and callback/error paths.
+  Its isolated target compilation passes; guest execution and full hypervisor acceptance remain separate.
+  The [NVMM ownership regression](ember/tests/nvmm-ownership.md) checks failed-create cleanup and exact-once area removal.
+  Host allocation/ioctl models pass; target device acceptance remains separate.
+  The [syslogd TLS status regression](ember/tests/syslog-tls-status.md) covers absent certificate names and fingerprints.
+  Formatting, cleanup and isolated GCC16 target compilation pass; TLS session acceptance remains separate.
+  The [wscons VT regression](ember/tests/usl-sync.md) checks deferred signals, valid signal ranges and callback lifetime.
+  Host tests and isolated target compilation pass; VM console switching remains unverified.
+  The [VT lease ownership regression](ember/tests/usl-owner.md) checks owner/admin ACK and reset, process-death tombstones and exit-hook retirement.
+  The [prepared VT VM runner](ember/tests/usl-vt-vm.md) provides a cross-built normal-ioctl acceptance test for an explicitly isolated fixture.
+  Its source checks and target ELF do not establish a VM pass or keyboard IRQ acceptance.
+  The [BIOS bootxx size regression](ember/tests/bootxx-size.md) replays the 8192-byte gate and fixed GPT table classification.
+  A passing compile/relink does not establish a BIOS boot or device pass.
+  Function tests and isolated target compilation pass; native session entitlement and coordinated device handoff remain unqualified.
   Incremental wrapper builds refresh the generated kernel version metadata;
   host orchestration checks cover stale `BUILDINFO` and object retention.
   The resulting kernel cold-boots in AArch64 UTM and passes FP process,
@@ -1047,6 +1091,10 @@ The base system shell is unchanged.
   checks pass on Zero 3W with its installed GCC16 runtime. Its `--kernel`
   mode builds the cross frontends without an application sysroot; target
   libc and C++ runtime inputs remain required for application builds. The
+  [native flex filter check](ember/tests/flex-filter-sentinel.md) also covers
+  the pointer sentinel required by GCC16 on ARM64 macOS. A private rebuilt
+  lexer regenerates the racoon source and its amd64 ELF symbol definitions;
+  this does not qualify the complete OS build. The
   [CTF converter](ember/boot/ctf-external-types.md) preserves GCC/Clang types
   in DWARF4/5 and both offset widths, including COMDAT type units, standalone
   DWO, indexed DWP and combined split/supplementary input. Linked multi-CU

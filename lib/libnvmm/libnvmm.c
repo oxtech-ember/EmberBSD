@@ -236,6 +236,7 @@ nvmm_machine_create(struct nvmm_machine *mach)
 
 	ret = ioctl(nvmm_fd, NVMM_IOC_MACHINE_CREATE, &args);
 	if (ret == -1) {
+		free(pages);
 		free(areas);
 		return -1;
 	}

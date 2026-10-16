@@ -648,9 +648,9 @@ typedef UINT64                          ACPI_INTEGER;
 
 #define ACPI_ARRAY_LENGTH(x)            (sizeof(x) / sizeof((x)[0]))
 
-/* Use a union to align  string s to type t */
+/* Use a union to align string s to type t, with space for its terminator */
 #define ACPI_ALIGNED_STR_UNION(t, s)	\
-    (&((const union { char _s[sizeof(t)]; t _t; }){ s }._t))
+    (&((const union { char _s[sizeof(t) + 1]; t _t; }){ s }._t))
 
 /* Pointer manipulation */
 
@@ -1576,6 +1576,10 @@ typedef enum
 
 #ifndef ACPI_FALLTHROUGH
 #define ACPI_FALLTHROUGH do {} while(0)
+#endif
+
+#ifndef ACPI_NONSTRING
+#define ACPI_NONSTRING
 #endif
 
 #ifndef ACPI_FLEX_ARRAY

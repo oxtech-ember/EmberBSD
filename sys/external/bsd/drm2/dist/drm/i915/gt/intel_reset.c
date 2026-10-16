@@ -292,6 +292,8 @@ out:
 static int gen6_hw_domain_reset(struct intel_gt *gt, u32 hw_domain_mask)
 {
 	struct intel_uncore *uncore = gt->uncore;
+	bool jsl = IS_JASPERLAKE(gt->i915);
+	int loops = jsl ? 2 : 1;
 	int err;
 
 	/*
@@ -299,16 +301,25 @@ static int gen6_hw_domain_reset(struct intel_gt *gt, u32 hw_domain_mask)
 	 * for fifo space for the write or forcewake the chip for
 	 * the read
 	 */
-	intel_uncore_write_fw(uncore, GEN6_GDRST, hw_domain_mask);
+	do {
+		intel_uncore_write_fw(uncore, GEN6_GDRST, hw_domain_mask);
 
-	/* Wait for the device to ack the reset requests */
-	err = __intel_wait_for_register_fw(uncore,
-					   GEN6_GDRST, hw_domain_mask, 0,
-					   500, 0,
-					   NULL);
+		/*
+		 * JSL engine state can remain volatile after GDRST acknowledges.
+		 * Repeat the reset to serialize with the first request.
+		 */
+		err = __intel_wait_for_register_fw(uncore,
+						   GEN6_GDRST, hw_domain_mask, 0,
+						   jsl ? 2000 : 500, 0,
+						   NULL);
+	} while (err == 0 && --loops);
 	if (err)
 		DRM_DEBUG_DRIVER("Wait for 0x%08x engines reset failed\n",
 				 hw_domain_mask);
+
+	/* Let the JSL engine state settle before the caller resumes it. */
+	if (jsl)
+		udelay(50);
 
 	return err;
 }

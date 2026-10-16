@@ -188,7 +188,7 @@ static bool icl_combo_phy_enabled(struct drm_i915_private *dev_priv,
 				  enum phy phy)
 {
 	/* The PHY C added by EHL has no PHY_MISC register */
-	if (IS_ELKHARTLAKE(dev_priv) && phy == PHY_C)
+	if (IS_JSL_EHL(dev_priv) && phy == PHY_C)
 		return I915_READ(ICL_PORT_COMP_DW0(phy)) & COMP_INIT;
 	else
 		return !(I915_READ(ICL_PHY_MISC(phy)) &
@@ -312,7 +312,7 @@ static void icl_combo_phys_init(struct drm_i915_private *dev_priv)
 		 * register for it and no need to program the
 		 * DE_IO_COMP_PWR_DOWN setting on PHY C.
 		 */
-		if (IS_ELKHARTLAKE(dev_priv) && phy == PHY_C)
+		if (IS_JSL_EHL(dev_priv) && phy == PHY_C)
 			goto skip_phy_misc;
 
 		/*
@@ -324,7 +324,7 @@ static void icl_combo_phys_init(struct drm_i915_private *dev_priv)
 		 * "internal" child devices.
 		 */
 		val = I915_READ(ICL_PHY_MISC(phy));
-		if (IS_ELKHARTLAKE(dev_priv) && phy == PHY_A)
+		if (IS_JSL_EHL(dev_priv) && phy == PHY_A)
 			val = ehl_combo_phy_a_mux(dev_priv, val);
 		val &= ~ICL_PHY_MISC_DE_IO_COMP_PWR_DOWN;
 		I915_WRITE(ICL_PHY_MISC(phy), val);
@@ -365,7 +365,7 @@ static void icl_combo_phys_uninit(struct drm_i915_private *dev_priv)
 		 * register for it and no need to program the
 		 * DE_IO_COMP_PWR_DOWN setting on PHY C.
 		 */
-		if (IS_ELKHARTLAKE(dev_priv) && phy == PHY_C)
+		if (IS_JSL_EHL(dev_priv) && phy == PHY_C)
 			goto skip_phy_misc;
 
 		val = I915_READ(ICL_PHY_MISC(phy));

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Personal 8086:4e55 trial. Keep a separate stock GENERIC recovery kernel.
+
+include "arch/amd64/conf/GENERIC"
+
+options EMBER_I915_JSL_4E55_TRIAL

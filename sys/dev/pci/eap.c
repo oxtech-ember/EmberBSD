@@ -205,7 +205,7 @@ static const struct midi_hw_if eap_midi_hw_if = {
 #endif
 
 static struct audio_device eap_device = {
-	"Ensoniq AudioPCI",
+	"EnsoniqAudioPCI",
 	"",
 	"eap"
 };

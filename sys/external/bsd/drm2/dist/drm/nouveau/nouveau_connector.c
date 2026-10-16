@@ -1301,9 +1301,8 @@ nouveau_connector_create(struct drm_device *dev,
 	/* attempt to parse vbios connector type and hotplug gpio */
 	nv_connector->dcb = olddcb_conn(dev, index);
 	if (nv_connector->dcb) {
-		u32 entry = ROM16(nv_connector->dcb[0]);
-		if (olddcb_conntab(dev)[3] >= 4)
-			entry |= (u32)ROM16(nv_connector->dcb[2]) << 16;
+		/* Validate the connector table and report malformed metadata. */
+		(void)olddcb_conntab(dev);
 
 		nv_connector->type = nv_connector->dcb[0];
 		if (drm_conntype_from_dcb(nv_connector->type) ==

@@ -303,7 +303,8 @@ init_global_TLS_CTX(void)
 	    "Initialized TLS settings using library \"%s\". "
 	    "Use certificate from file \"%s\" with CN \"%s\" "
 	    "and fingerprint \"%s\"", SSLeay_version(SSLEAY_VERSION),
-	    certfilename, cn, fp);
+	    certfilename, cn ? cn : "unavailable",
+	    fp ? fp : "unavailable");
 	FREEPTR(cn);
 	FREEPTR(fp);
 	if (cert)

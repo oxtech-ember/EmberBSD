@@ -41,10 +41,15 @@ static int desktop_index;
 static char desktop_bundle[STRSIZE], desktop_sum[129];
 static char desktop_cache[STRSIZE];
 static bool desktop_mounted;
+#ifdef EMBER_BASE_RUNTIME_GCC16
+static char runtime_bundle[STRSIZE], runtime_sum[129], runtime_cache[STRSIZE];
+static bool runtime_mounted;
+#endif
 static const char *activity = "Preparing installation";
 static char source_error[128];
 static char boot_medium[STRSIZE];
 static bool desktop_clear(void);
+static void runtime_clear(void);
 
 static bool
 screen_ready(void)
@@ -168,8 +173,6 @@ choose(const char *title, const char * const *options, int count, int first)
 			} else if (system_form && i == 3)
 				wizard_frame_text(&f, 17, 22, options[i],
 				    i == pos ? WIZARD_SELECTED : WIZARD_AMBER);
-			else if (desktop_form && i == 2)
-				wizard_frame_text(&f, 15, 22, options[i], WIZARD_DISABLED);
 			else
 				wizard_frame_choice(&f, 9 + spacing * (i - start), options[i], i == pos);
 			if (system_form && i < 3) {
@@ -178,12 +181,13 @@ choose(const char *title, const char * const *options, int count, int first)
 					"The essential system with fewer tools.",
 					"Choose individual binary sets."
 				};
-				wizard_frame_text(&f, 10 + 2 * i, 26, i == 0 && desktop_index ?
+				wizard_frame_text(&f, 10 + 2 * i, 26, i == 0 && desktop_index == 1 ?
 				    "Base and developer tools; X11 with desktop." : detail[i], WIZARD_MUTED);
 			}
 		}
 		if (system_form)
-			wizard_frame_text(&f, 19, 22, desktop_index ?
+			wizard_frame_text(&f, 19, 22, desktop_index == 2 ?
+			    "KDE Plasma experimental profile. SSH is enabled." : desktop_index ?
 			    "Wi-Fi manager with XFCE. SSH is enabled." :
 			    "Wi-Fi via console. SSH is enabled.", WIZARD_MUTED);
 		if (desktop_form) {
@@ -191,8 +195,8 @@ choose(const char *title, const char * const *options, int count, int first)
 			    "Optional. Installed together with the system.", WIZARD_MUTED);
 			wizard_frame_text(&f, 10, 26, "Console system without desktop packages.", WIZARD_MUTED);
 			wizard_frame_text(&f, 13, 26, "X11 desktop and Wi-Fi manager.", WIZARD_MUTED);
-			wizard_frame_text(&f, 16, 26, "Plasma packages are not ready yet.", WIZARD_MUTED);
-			wizard_frame_text(&f, 19, 22, "XFCE requires a verified desktop bundle.", WIZARD_MUTED);
+			wizard_frame_text(&f, 16, 26, "Experimental Wayland desktop; matching bundle required.", WIZARD_MUTED);
+			wizard_frame_text(&f, 19, 22, "Desktop packages are verified before disk writes.", WIZARD_MUTED);
 		}
 		if (settings_form)
 			wizard_frame_text(&f, 17, 22,
@@ -241,9 +245,9 @@ choose(const char *title, const char * const *options, int count, int first)
 			continue;
 		}
 		if (key == KEY_UP)
-			pos = wizard_menu_move(pos, desktop_form ? 2 : (source_form ? 4 : count), -1);
+			pos = wizard_menu_move(pos, source_form ? 4 : count, -1);
 		if (key == KEY_DOWN)
-			pos = wizard_menu_move(pos, desktop_form ? 2 : (source_form ? 4 : count), 1);
+			pos = wizard_menu_move(pos, source_form ? 4 : count, 1);
 	}
 }
 
@@ -345,6 +349,7 @@ void
 wizard_release_console(void)
 {
 	desktop_clear();
+	runtime_clear();
 	wizard_console_restore();
 	custom_palette = false;
 	screen_ready();
@@ -452,27 +457,28 @@ select_source(void)
 }
 
 static bool
-desktop_clear(void)
+bundle_clear(char *bundle, char *sum, char *cache, bool *mounted)
 {
-	if (desktop_bundle[0])
-		unlink(desktop_bundle);
-	desktop_bundle[0] = '\0';
-	desktop_sum[0] = '\0';
-	if (desktop_mounted) {
+	if (bundle[0])
+		unlink(bundle);
+	bundle[0] = '\0';
+	sum[0] = '\0';
+	if (*mounted) {
 		if (run_program(RUN_SILENT | RUN_ERROR_OK,
-		    "/sbin/umount %s", desktop_cache) != 0)
+		    "/sbin/umount %s", cache) != 0)
 			return false;
-		desktop_mounted = false;
+		*mounted = false;
 	}
-	if (desktop_cache[0])
-		rmdir(desktop_cache);
-	desktop_cache[0] = '\0';
+	if (cache[0])
+		rmdir(cache);
+	cache[0] = '\0';
 	return true;
 }
 
-/* Freeze and verify all optional package bytes before any disk writes. */
+/* Freeze and verify package bytes before any disk writes. */
 static bool
-desktop_preflight(const char *manifest)
+bundle_preflight(const char *manifest, const char *bundle_name, size_t limit,
+    char *bundle, char *sum, char *cache, bool *mounted)
 {
 	char expected[129], actual[129], path[STRSIZE];
 	unsigned char buffer[16384];
@@ -483,50 +489,48 @@ desktop_preflight(const char *manifest)
 	bool ok = false;
 	int fd;
 
-	if (!desktop_clear())
+	if (!bundle_clear(bundle, sum, cache, mounted))
 		return false;
-	if (desktop_index == 0)
-		return true;
 	fp = fopen(manifest, "r");
 	if (fp == NULL)
 		return false;
-	int match = wizard_checksum_entry(fp, "desktop-xfce.tar.xz", expected);
+	int match = wizard_checksum_entry(fp, bundle_name, expected);
 	fclose(fp);
 	if (match != 1)
 		return false;
-	strlcpy(desktop_cache, "/tmp/ember-desktop-cache.XXXXXX", sizeof(desktop_cache));
-	if (mkdtemp(desktop_cache) == NULL) {
-		desktop_cache[0] = '\0';
+	strlcpy(cache, "/tmp/ember-package-cache.XXXXXX", STRSIZE);
+	if (mkdtemp(cache) == NULL) {
+		cache[0] = '\0';
 		return false;
 	}
 	/* ISO miniroots are small. Network staging also needs a hard size cap. */
 	if (net_source || statvfs("/tmp", &fs) != 0 || fs.f_frsize == 0 ||
-	    fs.f_bavail < 512 * MEG / fs.f_frsize) {
+	    fs.f_bavail < limit / fs.f_frsize) {
 		if (run_program(RUN_SILENT | RUN_ERROR_OK,
-		    "/sbin/mount_tmpfs -s 536870912 -o nosuid,nodev tmpfs %s",
-		    desktop_cache) != 0)
+		    "/sbin/mount_tmpfs -s %zu -o nosuid,nodev tmpfs %s",
+		    limit, cache) != 0)
 			goto out;
-		desktop_mounted = true;
+		*mounted = true;
 	}
-	snprintf(desktop_bundle, sizeof(desktop_bundle), "%s/bundle.XXXXXX", desktop_cache);
-	fd = mkstemp(desktop_bundle);
+	snprintf(bundle, STRSIZE, "%s/bundle.XXXXXX", cache);
+	fd = mkstemp(bundle);
 	if (fd < 0) {
-		desktop_bundle[0] = '\0';
+		bundle[0] = '\0';
 		goto out;
 	}
 	close(fd);
 	if (net_source) {
 		if (run_program(RUN_SILENT | RUN_ERROR_OK,
-		    "/usr/bin/ftp -q 30 -o %s %s/desktop-xfce.tar.xz",
-		    desktop_bundle, source_url) != 0)
+		    "/usr/bin/ftp -q 30 -o %s %s/%s",
+		    bundle, source_url, bundle_name) != 0)
 			goto out;
 	} else {
-		snprintf(path, sizeof(path), "%s/desktop-xfce.tar.xz", ext_dir_bin);
+		snprintf(path, sizeof(path), "%s/%s", ext_dir_bin, bundle_name);
 		fd = open(path, O_RDONLY | O_NONBLOCK);
 		if (fd < 0)
 			goto out;
 		if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
-		    st.st_size < 1 || st.st_size > (off_t)(512 * MEG)) {
+		    st.st_size < 1 || st.st_size > (off_t)(limit)) {
 			close(fd);
 			goto out;
 		}
@@ -535,7 +539,7 @@ desktop_preflight(const char *manifest)
 			close(fd);
 			goto out;
 		}
-		output = fopen(desktop_bundle, "wb");
+		output = fopen(bundle, "wb");
 		if (output == NULL)
 			goto out;
 		for (;;) {
@@ -545,7 +549,7 @@ desktop_preflight(const char *manifest)
 			if (n == 0)
 				break;
 			total += n;
-			if (total > 512 * MEG || fwrite(buffer, 1, n, output) != n)
+			if (total > limit || fwrite(buffer, 1, n, output) != n)
 				goto out;
 			if ((feof)(input))
 				break;
@@ -555,9 +559,9 @@ desktop_preflight(const char *manifest)
 		if (error != 0)
 			goto out;
 	}
-	ok = stat(desktop_bundle, &st) == 0 && S_ISREG(st.st_mode) &&
-	    st.st_size > 0 && st.st_size <= (off_t)(512 * MEG) &&
-	    SHA512_File(desktop_bundle, actual) != NULL &&
+	ok = stat(bundle, &st) == 0 && S_ISREG(st.st_mode) &&
+	    st.st_size > 0 && st.st_size <= (off_t)(limit) &&
+	    SHA512_File(bundle, actual) != NULL &&
 	    strcmp(expected, actual) == 0;
 out:
 	if (input != NULL)
@@ -565,10 +569,102 @@ out:
 	if (output != NULL)
 		fclose(output);
 	if (ok)
-		strlcpy(desktop_sum, expected, sizeof(desktop_sum));
+		strlcpy(sum, expected, 129);
 	else
-		desktop_clear();
+		bundle_clear(bundle, sum, cache, mounted);
 	return ok;
+}
+
+static bool
+desktop_clear(void)
+{
+	return bundle_clear(desktop_bundle, desktop_sum, desktop_cache, &desktop_mounted);
+}
+
+static bool
+desktop_preflight(const char *manifest)
+{
+	if (desktop_index == 0)
+		return desktop_clear();
+	if (desktop_index != 1 && desktop_index != 2)
+		return false;
+	return bundle_preflight(manifest, desktop_index == 2 ?
+	    "desktop-plasma.tar.xz" : "desktop-xfce.tar.xz", 512 * MEG,
+	    desktop_bundle, desktop_sum, desktop_cache, &desktop_mounted);
+}
+
+static void
+runtime_clear(void)
+{
+#ifdef EMBER_BASE_RUNTIME_GCC16
+	(void)bundle_clear(runtime_bundle, runtime_sum, runtime_cache, &runtime_mounted);
+#endif
+}
+
+static bool
+runtime_preflight(const char *manifest)
+{
+#ifdef EMBER_BASE_RUNTIME_GCC16
+	return bundle_preflight(manifest, "runtime-gcc16.tar.xz", 64 * MEG,
+	    runtime_bundle, runtime_sum, runtime_cache, &runtime_mounted);
+#else
+	(void)manifest;
+	return true;
+#endif
+}
+
+/* This image requires the guided preflight before any destructive action. */
+bool
+wizard_allow_install(bool guided)
+{
+#ifdef EMBER_BASE_RUNTIME_GCC16
+	if (!guided) {
+		hit_enter_to_continue("Use guided installation with this image.", NULL);
+		return false;
+	}
+#else
+	(void)guided;
+#endif
+	return true;
+}
+
+bool
+wizard_apply_runtime(void)
+{
+#ifdef EMBER_BASE_RUNTIME_GCC16
+	char sum[129], archive[MAXPATHLEN], cache[MAXPATHLEN];
+	const char *root;
+
+	if (!wizard_active || runtime_bundle[0] == '\0')
+		return false;
+	/* Bootstrap with live tools before executing a target child process. */
+	(void)unsetenv("LD_LIBRARY_PATH");
+	(void)unsetenv("LD_PRELOAD");
+	wizard_progress("Installing the system runtime");
+	make_target_dir("/var/cache/ember-runtime");
+	strlcpy(archive, target_expand("/var/cache/ember-runtime.tar.xz"),
+	    sizeof(archive));
+	strlcpy(cache, target_expand("/var/cache/ember-runtime"), sizeof(cache));
+	root = target_prefix();
+	/* make_argv supports single quotes, without escape sequences. */
+	if (strchr(archive, '\'') != NULL || strchr(cache, '\'') != NULL ||
+	    strchr(root, '\'') != NULL)
+		return false;
+	if (cp_to_target(runtime_bundle, "/var/cache/ember-runtime.tar.xz") != 0 ||
+	    SHA512_File(archive, sum) == NULL ||
+	    strcmp(sum, runtime_sum) != 0 ||
+	    run_program(RUN_PROGRESS,
+	    "/usr/bin/tar -xpf '%s' -C '%s'", archive, cache) != 0 ||
+	    run_program(RUN_PROGRESS, root[0] != '\0' ?
+	    "/usr/libexec/ember-runtime-install --root '%s'" :
+	    "/usr/libexec/ember-runtime-install", root) != 0 ||
+	    run_program(RUN_PROGRESS | RUN_CHROOT,
+	    "/usr/sbin/pkg_info -K /usr/pkg/pkgdb -qe gcc16-runtime-16.2.0nb1") != 0)
+		return false;
+	unlink(target_expand("/var/cache/ember-runtime.tar.xz"));
+	runtime_clear();
+#endif
+	return true;
 }
 
 static bool
@@ -619,6 +715,8 @@ preflight(void)
 	    stat(sums, &st) != 0 || st.st_size > 1024 * 1024)
 		goto out;
 	ok = wizard_check_sets(sums) == SET_OK;
+	if (ok)
+		ok = runtime_preflight(sums);
 	if (ok)
 		ok = desktop_preflight(sums);
 out:
@@ -790,7 +888,8 @@ review(const struct install_partition_desc *install)
 	wizard_frame_text(&f, 14, 22, "Build        " EMBER_BUILD_ID, WIZARD_MUTED);
 	snprintf(text, sizeof(text), "System       %s", profile);
 	wizard_frame_text(&f, 15, 22, text, WIZARD_TEXT);
-	wizard_frame_text(&f, 16, 22, desktop_index ?
+	wizard_frame_text(&f, 16, 22, desktop_index == 2 ?
+	    "Desktop      KDE Plasma / experimental" : desktop_index ?
 	    "Desktop      XFCE / Wi-Fi manager" :
 	    "Desktop      None / console Wi-Fi", WIZARD_TEXT);
 	snprintf(text, sizeof(text), "Computer     %s", hostname);
@@ -821,7 +920,7 @@ wizard_prepare(struct install_partition_desc *install)
 {
 	static const char * const desktops[] = {
 		"None - console only", "XFCE with Wi-Fi manager",
-		"KDE Plasma - in development"
+		"KDE Plasma - experimental"
 	};
 	stage = 1;
 	wizard_expert_requested = false;
@@ -847,14 +946,15 @@ wizard_prepare(struct install_partition_desc *install)
 		} else if (stage == 3) {
 			char graphics[64];
 			snprintf(graphics, sizeof(graphics), "[ Graphics: %s ]",
-			    desktop_index ? "XFCE + Wi-Fi" : "None");
+			    desktop_index == 2 ? "KDE Plasma" :
+			    (desktop_index ? "XFCE + Wi-Fi" : "None"));
 			const char *profiles[] = {
 				"Standard system", "Minimal system", "Custom components", graphics
 			};
 			int p = choose("Choose system and graphics", profiles, 4, profile_index);
 			if (p == 3) {
 				int d = choose("Choose your graphics environment", desktops, 3, desktop_index);
-				if (d >= 0 && d < 2)
+				if (d >= 0 && d < 3)
 					desktop_index = d;
 				continue;
 			}
@@ -870,8 +970,8 @@ wizard_prepare(struct install_partition_desc *install)
 			wizard_limit_sets();
 			if (p == 2)
 				customise_sets();
-			wizard_desktop_sets(desktop_index != 0);
-			profile = p == 0 ? (desktop_index ? "Standard" : "Standard (without X11)") :
+			wizard_desktop_sets(desktop_index == 1);
+			profile = p == 0 ? (desktop_index == 1 ? "Standard" : "Standard (without X11)") :
 			    (p == 1 ? "Minimal" : "Custom");
 			stage = 4;
 		} else if (stage == 4) {
@@ -935,7 +1035,8 @@ wizard_configure(void)
 		    run_program(RUN_PROGRESS | RUN_CHROOT,
 		    "/usr/bin/tar -xpf /var/cache/ember-desktop.tar.xz -C /var/cache/ember-desktop") != 0 ||
 		    run_program(RUN_PROGRESS | RUN_CHROOT,
-		    "/usr/libexec/ember-desktop-install xfce") != 0)
+		    "/usr/libexec/ember-desktop-install %s",
+		    desktop_index == 2 ? "plasma" : "xfce") != 0)
 			return false;
 		unlink(target_expand("/var/cache/ember-desktop.tar.xz"));
 		desktop_clear();

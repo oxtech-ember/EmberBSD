@@ -1449,7 +1449,7 @@ rtw_intr_rx(struct rtw_softc *sc, uint16_t isr)
 	static const int ratetbl[4] = {2, 4, 11, 22};	/* convert rates:
 							 * hardware -> net80211
 							 */
-	u_int next, nproc = 0;
+	u_int next;
 	int hwrate, len, rate, rssi, sq, s;
 	uint32_t hrssi, hstat, htsfth, htsftl;
 	struct rtw_rxdesc *rd;
@@ -1479,8 +1479,6 @@ rtw_intr_rx(struct rtw_softc *sc, uint16_t isr)
 		RTW_DPRINTF(RTW_DEBUG_RECV_DESC,
 		    ("%s: rxdesc[%d] hstat %08x hrssi %08x htsft %08x%08x\n",
 		    __func__, next, hstat, hrssi, htsfth, htsftl));
-
-		++nproc;
 
 		/* still belongs to NIC */
 		if ((hstat & RTW_RXSTAT_OWN) != 0) {

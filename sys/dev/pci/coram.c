@@ -939,10 +939,6 @@ static int
 coram_risc_buffer(struct coram_softc *sc, uint32_t bpl, uint32_t lines)
 {
 	uint32_t *rm;
-	uint32_t size;
-
-	size = 1 + (bpl * lines) / PAGE_SIZE + lines;
-	size += 2;
 
 	if (sc->sc_riscbuf == NULL) {
 		return ENOMEM;
