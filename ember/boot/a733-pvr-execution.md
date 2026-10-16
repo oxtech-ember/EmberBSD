@@ -45,14 +45,16 @@ A busy cleanup has a bounded retry. Uncertain cleanup retains the owner until re
 One firmware free list can own a BO at a time, including aliases through other VMs.
 The owning mapping cannot be removed while the free list is live.
 The firmware's maximum page count remains the allocation limit; allocation may fail.
-Two-phase free-list growth primitives have source checks. Firmware event dispatch
-is not yet integrated. Reconstruction requests are not implemented in this slice.
+Two-phase free-list growth and device-wide event dispatch have source checks.
+Activation registers native GROW callbacks before exposing execution to clients.
+Physical GROW handling remains unverified. Reconstruction requests are not implemented.
 Such requests stop the firmware service instead of reporting false completion.
 
-`SUBMIT_JOBS` supports only the fixed BXM compute stream.
+`SUBMIT_JOBS` accepts fixed BXM compute and paired geometry/fragment streams.
 It requires the current 48-byte job and 16-byte sync-operation layouts.
-Unsupported stream extensions and job types return `EOPNOTSUPP`.
-HWRT datasets, geometry, fragment, and transfer jobs remain unsupported.
+Unsupported stream extensions and transfer submissions return `EOPNOTSUPP`.
+HWRT datasets and paired execution have source contracts, but no physical graphics acceptance.
+See the [graphics ownership and dependency contract](a733-pvr-graphics.md).
 All job streams and synchronization records are copied before firmware execution.
 The driver acquires context references and prepares timeline storage before submission.
 
@@ -106,17 +108,19 @@ A successful compute check does not establish Vulkan conformance or rendering.
 
 ## Physical compute boundary
 
-GCC16 kernel `e876bf6d2ce282ae7770078af8f3455866c940cb` passes on A733 Zero 3W with 4 GiB RAM.
+GCC16 kernel `4d9b68f3ec4866ad46810b4257daf4333ef10f38` passes on A733 Zero 3W with 4 GiB RAM.
 The PCB revision was not recorded. Firmware is `1.1.6976702`, BVNC `36.56.104.183`.
 The explicit PLL600 preparation and all 21 diagnostic stages pass before native activation.
-The accepted kernel ELF SHA256 is `33389891548cca65e87283804f2a08f05d71eaffd4bab3935f91970e4591070a`.
+The accepted kernel ELF SHA256 is `537b91ef2f1eaaa0f71707aee745fdf313507e8103c0aefeb25746a87e04c2e9`.
 Matched modules and DTBs come from the same cross-build.
 
 Mesa `26.2.4nb5` and libdrm `2.4.134nb2` use the native render node.
 The Ports consumer SHA256 is `438a0dc7191abde38a3639f6562a16375ad3ccf5a475902affc3f08861f3ef84`.
 Three consecutive create/dispatch/destroy lifecycles pass within one boot.
 Each checks all 16 output words, a completed Vulkan fence, and host readback.
-The execution service stays enabled after cleanup; SSH and boot identity stay unchanged.
+The execution service stays enabled after cleanup; SSH and the recorded boot time remain stable during all three runs.
+All sampled temperatures remain below 63 degrees Celsius; the run stops at 80 degrees.
+Observe-only boot remains configured. The GPU is prepared only by the explicit test sequence.
 These are bounded functional runs, not an endurance or performance result.
 
 The prior kernel returned `EIO` on the first KICK before its completion checks.
@@ -127,7 +131,7 @@ The upstream experimental gate stays enabled. No Vulkan conformance is claimed.
 
 ## Remaining rendering path
 
-The [graphics checkpoint](a733-pvr-graphics.md) records prepared primitives and missing UAPI integration.
+The [graphics checkpoint](a733-pvr-graphics.md) records the integrated graphics interfaces and their pending physical acceptance.
 Zink needs working graphics jobs and HWRT datasets in addition to compute.
 Native A733 display support also needs DE/TCON/HDMI, KMS, and shared-buffer ownership.
 Accelerated KWin and a complete Plasma Desktop session require separate physical acceptance.

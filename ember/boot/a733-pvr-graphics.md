@@ -3,8 +3,8 @@
 This branch prepares native graphics resources for BXM `36.56.104.183`.
 It includes HWRT dataset handles and paired geometry/fragment DRM submissions.
 These interfaces remain unaccepted on hardware.
-No `VkDevice`, Vulkan dispatch, Zink rendering, HDMI/KMS, or accelerated Plasma
-acceptance was performed with this checkpoint.
+The installed kernel passes three native Vulkan compute lifecycles.
+Zink rendering, HDMI/KMS, and accelerated Plasma remain unaccepted on this platform.
 Use the [native execution guide](a733-pvr-execution.md) for the implemented compute path.
 
 ## Prepared components
@@ -22,7 +22,7 @@ supplement these checks. Existing header diagnostics, fixture model findings,
 and analyzer path-budget limits remain recorded separately.
 Valgrind does not support the macOS ARM64 test host.
 ASan/UBSan checks are not Valgrind or physical DMA tests.
-This source checkpoint has not produced an installed kernel.
+The complete kernel is installed and compute-tested as described below.
 
 The command encoders and FWIF use the MIT alternative from Linux revision
 `7b63ef2d55f24519e7e9e5f4d15dbea03f126e40`.
@@ -42,12 +42,11 @@ PVR_EXEC_TEST_CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointe
 
 ## Resume integration
 
-1. Recheck device-owned free-list registration and GROW callbacks with the platform backend.
-2. Integrate and recheck the paired submission contracts with the execution backend.
-3. Recheck the main compute guards before each graphics kernel build.
-4. Build a clean committed kernel and its matched modules with the common GCC16 tools.
-5. Recheck the compute path on the physical board before graphics.
-6. Check offscreen Vulkan rendering and Zink before native display integration.
+1. Keep the accepted kernel, matched modules, DTBs, and recovery hashes together.
+2. Prepare an offscreen Vulkan consumer with independent pixel readback.
+3. Verify and implement native transfer submissions for image-to-buffer readback.
+4. Test offscreen Vulkan rendering before Zink and PRIME sharing.
+5. Recheck the main compute guards after each driver change.
 
 The execution backend installs GROW handlers before it becomes available to clients.
 Unknown firmware IDs and incomplete owners fail closed.
@@ -81,10 +80,11 @@ The source contracts check these rules. Physical execution remains unverified.
 
 ## Physical acceptance boundary
 
-The main compute path has separate [execution evidence](https://github.com/oxtech-ember/EmberBSD/blob/main/ember/boot/a733-pvr-execution.md).
-This graphics branch has no physical graphics acceptance.
-Recheck board identity, current kernel, and recovery before any deployment.
-A saved build is not evidence that its kernel is installed.
+The kernel `4d9b68f3ec4866ad46810b4257daf4333ef10f38` is installed on the 4 GiB A733 Zero 3W.
+Its exact artifact and three native compute passes are recorded in the [execution guide](a733-pvr-execution.md).
+The explicit PLL600 stages pass before native activation. Observe-only boot remains unchanged.
+This verifies compute regression coverage with the graphics code present.
+It does not execute paired graphics, physical GROW, or a pixel readback oracle.
 
 Mesa 26.2.4nb6 with Zink and the Vulkan compute consumer are prepared in
 [Ports](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/powervr.md).
@@ -95,8 +95,8 @@ An offscreen result does not establish a visible accelerated Plasma session.
 ## Firmware event dispatcher
 
 The primitives originate at `795a20d364e6f7c32c161ce787bd57890cde2e22`.
-The dispatcher and execution integration are later branch changes.
-They require independent review before integration into `main` or deployment.
+The dispatcher and execution integration passed independent source review.
+The installed compute regression does not exercise physical GROW events.
 
 The dispatcher adds validated GROW dequeue and GROW_UPDATE transport, a bounded
 32-event service drain, and `pvr_fw_events` / `set_events` callbacks.
@@ -121,13 +121,9 @@ The unchanged dispatcher contracts also pass ASan/UBSan:
 bridge 582 checks, service 9,069 checks, and fwprobe 15,548,668 checks.
 This checks host boundary models, not physical firmware execution.
 
-Target analysis for the draft: Clang Static Analyzer is clean on the service,
-bridge and freelist sources; Cppcheck reports three variable-scope style notes
-in the service and one false-positive `uninitvar` at the post-loop read of
-`error` (the loop body always assigns it first). A separately recorded target
-GCC16 path analysis is still needed for the dispatcher itself. The getter checks assert exact
-equivalence, so any mutation of the five gating conditions fails them. Review them before claiming a complete dispatcher.
-The earlier passing growth receipt does not cover this later getter change.
+The complete installed source has target analysis with real kernel build flags and generated headers.
+The scope and inherited diagnostics are summarized below.
+The getter checks assert exact equivalence; mutations of all five gating conditions fail them.
 Physical firmware must also establish whether KICK consumption precedes the
 request/response dependency. Keep bounded failure if that assumption does not hold.
 
@@ -206,17 +202,19 @@ It also checks pair identity before target exposure, bounded searches, and HWRT 
 Backend loss retains the entire batch until a separately proven reset permits release.
 Normal and ASan/UBSan runs pass. The former host-wait behavior fails the new pair case.
 These checks use kernel, DRM, and firmware boundary models; they are not hardware evidence.
-The earlier full-branch build below does not cover this submit change.
+The current full-branch build below includes these submit changes.
 
-## Full branch build and target analysis (2026-10-14)
+## Full kernel build and target analysis
 
-The complete branch kernel built clean from the committed tree at
-`dd8cc15b8df1` (GCC16 `EMBER64`, four matched modules, DTBs retained);
-the build receipt with output hashes is in the incremental build root.
-The review pass before it fixed four compile-visible defects: a missing
-type for the HWRT handle drain, an unavailable `sys/limits.h`, an opaque
-free-list dereference replaced by exported identity and page-count
-getters, and the device-info width plus `kpause` declaration. GCC16
-`-fanalyzer` ran on `pvr_exec_hwrt.c`, `pvr_submit.c` and `pvr_exec.c`
-with the exact build flags: zero warnings. The step-2 code is
-build-verified only; no hardware ran it.
+The complete committed tree `4d9b68f3ec4866ad46810b4257daf4333ef10f38` builds with GCC16.2.0 and `EMBER64`.
+The normal builder checks four matched modules and three DTBs. Its portable contracts pass.
+Unchanged module dependencies permit incremental object reuse; the artifact manifest records their exact hashes.
+The ELF and raw Image formats, BUILDINFO, source blobs, and executable modes are checked separately.
+
+Target analysis covers 13 changed firmware/PowerVR units and 11 corresponding compute-baseline units.
+The two new HWRT units have no invented baseline. All 24 GCC16 `-fanalyzer` compilations pass without diagnostics.
+Clang23 reports only the same inherited dead stores in common headers for five DRM units.
+Cppcheck2.22 parses the real GCC-preprocessed inputs but returns nonzero for retained findings.
+Comparable units add style/information findings only. Common-header warnings and normal branch limits remain explicit.
+No analyzer categories are disabled. These results supplement the source contracts and bounded compute check.
+They do not establish physical paired graphics, transfer execution, or firmware GROW behavior.

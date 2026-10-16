@@ -218,4 +218,3 @@ int sun60i_a733_gpu_fwqueue_event(struct sun60i_a733_gpu_fwmem *,
     struct sun60i_a733_gpu_fwqueue *, uint32_t *);
 
 #endif /* _SUN60I_A733_GPU_FWPROBE_H */
-
