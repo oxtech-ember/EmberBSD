@@ -77,11 +77,13 @@ int
 rtwce_stats(char *buf, size_t len)
 {
 	const struct rtw88_stats *st;
+	uint32_t r[RTW88_DIAG_REGS] = { 0 };
+	int n;
 
 	if (rtwce_sc == NULL)
 		return ENXIO;
 	st = &rtwce_sc->sc_stats;
-	snprintf(buf, len, "running %d intr %llu rx %llu c2h %llu "
+	n = snprintf(buf, len, "running %d intr %llu rx %llu c2h %llu "
 	    "err %llu short %llu tag %llu dma %llu last_c2h %#x/%u",
 	    rtwce_sc->sc_running, (unsigned long long)st->intr,
 	    (unsigned long long)st->rx_frames, (unsigned long long)st->rx_c2h,
@@ -89,6 +91,10 @@ rtwce_stats(char *buf, size_t len)
 	    (unsigned long long)st->rx_tag_errors,
 	    (unsigned long long)st->rx_dma_errors, st->last_c2h_id,
 	    st->last_c2h_seq);
+	if (n > 0 && (size_t)n < len && rtw88_diag(rtwce_sc, r) == 0)
+		snprintf(buf + n, len - (size_t)n,
+		    " hisr0 %#x himr0 %#x hisr3 %#x himr3 %#x rxidx %#x pci %#x",
+		    r[0], r[1], r[2], r[3], r[4], r[5]);
 	return 0;
 }
 

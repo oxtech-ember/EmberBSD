@@ -958,6 +958,24 @@ test_rx_buffer_alloc_failure(void)
 	CHECK(!sc.sc_resources_ready && f.dma_allocs == 0);
 }
 
+static void
+test_diag_regs(void)
+{
+	struct rtw88_softc sc;
+	uint32_t r[RTW88_DIAG_REGS];
+
+	if (!start_ok(&sc))
+		return;
+	set_hisr0(0x01);
+	f.rx_hw_idx = 5;
+	CHECK(rtw88_diag(&sc, r) == 0);
+	CHECK(r[0] == 0x01 && r[1] == 0x44fd);		/* HISR0, HIMR0 */
+	CHECK(((r[4] >> 16) & 0xfff) == 5);		/* RXBD_IDX */
+	CHECK(mmio32(0x00b4) == 0x01);			/* Reading is not acking. */
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
 int
 main(void)
 {
@@ -982,6 +1000,7 @@ main(void)
 	test_intr_not_ours();
 	test_intr_after_stop();
 	test_rx_buffer_alloc_failure();
+	test_diag_regs();
 	test_stop_during_bootstrap();
 	test_stale_generation();
 	test_success_consumes_tables();

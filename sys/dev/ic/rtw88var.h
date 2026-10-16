@@ -111,6 +111,9 @@ int rtw88_fw_command(struct rtw88_softc *, uint8_t, const void *, size_t);
  * device is not running, without touching any register.
  */
 int rtw88_intr(struct rtw88_softc *);
+/* Diagnostic snapshot: HISR0, HIMR0, HISR3, HIMR3, RXBD_IDX, PCI_CTRL. */
+#define RTW88_DIAG_REGS 6
+int rtw88_diag(struct rtw88_softc *, uint32_t *);
 /* Operator trigger. 1 starts, 0 stops. ENXIO until resources are ready. */
 int rtwce_bootstrap(int);
 int rtwce_started(void);

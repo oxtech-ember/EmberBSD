@@ -852,6 +852,26 @@ rtw88_rx(struct rtw88_softc *sc)
 }
 
 int
+rtw88_diag(struct rtw88_softc *sc, uint32_t *r)
+{
+	static const uint32_t regs[RTW88_DIAG_REGS] = {
+		RTW88_REG_HISR0, RTW88_REG_HIMR0, RTW88_REG_HISR3,
+		RTW88_REG_HIMR3, RTW88_REG_RXBD_IDX, RTW88_REG_PCI_CTRL
+	};
+	unsigned i;
+	int error;
+
+	if (!sc->sc_resources_ready || !sc->sc_powered)
+		return ENXIO;
+	for (i = 0; i < RTW88_DIAG_REGS; i++) {
+		error = sc->sc_ops->read_4(sc->sc_bus, regs[i], &r[i]);
+		if (error != 0)
+			return error;
+	}
+	return 0;
+}
+
+int
 rtw88_intr(struct rtw88_softc *sc)
 {
 	uint32_t s0, s1, s3;
