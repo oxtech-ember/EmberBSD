@@ -6,6 +6,8 @@ name: AArch64 development sets
       - '.github/workflows/aarch64-sysroot.yml'
       - 'ember/release/build-aarch64.sh'
       - 'ember/tests/release-aarch64-build.rb'
+      - 'ember/tests/release-aarch64-sets.rb'
+      - 'distrib/sets/**'
   workflow_dispatch:
 
 permissions:
@@ -35,7 +37,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential ruby bmake \
             bison flex libtool texinfo zlib1g-dev libarchive-tools xz-utils
       - name: Check the build wrapper
-        run: ruby ember/tests/release-aarch64-build.rb
+        run: |
+          ruby ember/tests/release-aarch64-build.rb
+          ruby ember/tests/release-aarch64-sets.rb /usr/bin/bmake
       - name: Build the pinned complete sets
         run: |
           df -B1 "$RUNNER_TEMP"
