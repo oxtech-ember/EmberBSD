@@ -1,0 +1,126 @@
+name: CIX VPU source contracts
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/cix-vpu.yml'
+      - 'sys/dev/ic/cixvpu_*'
+      - 'sys/sys/videoio.h'
+      - 'ember/tools/cixvpu-*'
+      - 'ember/boot/cix-vpu.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      # Official GCC 16.2 image, Linux amd64 manifest verified before selection.
+      image: gcc@sha256:3f73339bf0d3d64081cac3f6d9fdafc6dd4cef2b9c49e0a09f91e97cb0eb139a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /ember/tools/cixvpu-*
+            /sys/dev/ic/cixvpu_*
+            /sys/sys/videoio.h
+      - name: Prepare source analysis tools
+        run: |
+          test "$(gcc -dumpfullversion)" = 16.2.0
+          gcc -dumpmachine
+          apt-get update
+          apt-get install -y --no-install-recommends clang cppcheck valgrind libc6-dbg ruby
+          clang --version
+          cppcheck --version
+          valgrind --version
+      - name: Execute actual source contracts and Memcheck
+        env:
+          CC: gcc
+          CFLAGS: -O2 -g -gdwarf-4 -fanalyzer
+        run: |
+          mkdir -p "$RUNNER_TEMP/cix-vpu"
+          cat > "$RUNNER_TEMP/cix-vpu/memcheck" <<'SH'
+          #!/bin/sh
+          exec valgrind --tool=memcheck --error-exitcode=97 \
+            --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=all \
+            --track-origins=yes "$@"
+          SH
+          chmod 755 "$RUNNER_TEMP/cix-vpu/memcheck"
+          export TEST_RUNNER="$RUNNER_TEMP/cix-vpu/memcheck"
+          export BUILD_DIR="$RUNNER_TEMP/cix-vpu/firmware"
+          sh ember/tools/cixvpu-fw-test.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/cixvpu-ring-contract.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/cixvpu-mmu-contract.sh "$GITHUB_WORKSPACE"
+      - name: Analyze the portable source contract
+        run: |
+          # Analyze the actual native userland build. Do not invent _KERNEL
+          # configurations with unavailable target headers. Target kernel
+          # analysis remains a separately recorded cross-build check.
+          ruby -rjson -ropen3 - "$RUNNER_TEMP/cix-vpu/analysis" <<'RUBY'
+          root = Dir.pwd
+          output = ARGV.fetch(0)
+          Dir.mkdir(output)
+          compiler_flags = %w[-std=c11 -U_KERNEL -O2 -g -gdwarf-4 -fanalyzer
+            -Wall -Wextra -Werror] + ["-I#{root}/sys/dev/ic"]
+          predefined, error, status = Open3.capture3(
+            'gcc', *compiler_flags, '-dM', '-E', '-x', 'c', '/dev/null')
+          abort error unless status.success?
+          File.write(File.join(output, 'gcc-predefined.h'), predefined)
+          _, search, status = Open3.capture3(
+            'gcc', *compiler_flags, '-E', '-Wp,-v', '-x', 'c', '/dev/null')
+          abort search unless status.success?
+          File.write(File.join(output, 'gcc-include-search.txt'), search)
+          section = search.split("#include <...> search starts here:\n", 2).fetch(1)
+          includes = section.split('End of search list.', 2).first.lines.map(&:strip)
+          abort 'Invalid GCC include search' if includes.empty? ||
+            includes.any? { |path| !File.directory?(path) }
+          # Cppcheck's compilation-database importer ignores -isystem paths.
+          # Use the same explicit -I paths for compilation and analysis.
+          flags = compiler_flags +
+            includes.flat_map { |path| ['-I', path] }
+          sources = Dir['sys/dev/ic/cixvpu_*.c', 'ember/tools/cixvpu-*.c'].sort
+          abort 'Expected all seven source units' unless sources.length == 7
+          database = sources.map do |source|
+            file = File.join(root, source)
+            arguments = ['gcc'] + flags + ['-c', file, '-o',
+              File.join(output, File.basename(source, '.c') + '.o')]
+            { directory: root, file: file, arguments: arguments }
+          end
+          File.write(File.join(output, 'compile_commands.json'),
+            JSON.pretty_generate(database))
+          abort 'Native analysis compilation failed' unless
+            database.all? { |entry| system(*entry.fetch(:arguments)) }
+          # glibc uses __format/__stream in declarations and __fmt/__fp in
+          # these inline definitions. Suppress only those two name mismatches,
+          # at the verified definition lines. Keep every diagnostic category.
+          header = includes.map { |path| File.join(path, 'bits/stdio.h') }
+            .find { |path| File.file?(path) }
+          abort 'Expected the host glibc stdio inline header' unless header
+          lines = File.readlines(header).map(&:strip)
+          signatures = [
+            'vprintf (const char *__restrict __fmt, __gnuc_va_list __arg)',
+            'getc_unlocked (FILE *__fp)'
+          ]
+          suppressions = signatures.map do |signature|
+            positions = lines.each_index.select { |index| lines[index] == signature }
+            abort "Changed glibc inline definition: #{signature}" unless positions.length == 1
+            "funcArgNamesDifferent:#{header}:#{positions.first + 1}"
+          end
+          File.write(File.join(output, 'cppcheck-suppressions.txt'),
+            suppressions.join("\n") + "\n")
+          RUBY
+          cppcheck --enable=all --inconclusive --check-level=exhaustive \
+            --std=c11 --platform=unix64 --error-exitcode=2 --library=posix \
+            --include="$RUNNER_TEMP/cix-vpu/analysis/gcc-predefined.h" \
+            --suppressions-list="$RUNNER_TEMP/cix-vpu/analysis/cppcheck-suppressions.txt" \
+            --project="$RUNNER_TEMP/cix-vpu/analysis/compile_commands.json"
+          for source in sys/dev/ic/cixvpu_*.c ember/tools/cixvpu-*.c; do
+            clang --analyze -std=c11 -U_KERNEL -O2 -Wall -Wextra -Werror -Isys/dev/ic \
+              -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror "$source"
+          done
