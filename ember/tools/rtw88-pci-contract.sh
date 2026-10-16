@@ -13,11 +13,16 @@ fi
 mkdir -p "$work/include/sys" "$work/include/dev/pci"
 ln -s "$src/sys/dev/ic" "$work/include/dev/ic"
 ln -s "$src/sys/dev/pci/pcidevs.h" "$work/include/dev/pci/pcidevs.h"
+mkdir -p "$work/include/dev"
 for header in sys/param.h sys/systm.h sys/device.h sys/kmem.h \
-    sys/mutex.h sys/bus.h sys/intr.h sys/xcall.h dev/pci/pcireg.h dev/pci/pcivar.h; do
+    sys/mutex.h sys/bus.h sys/intr.h sys/xcall.h dev/pci/pcireg.h \
+    dev/pci/pcivar.h dev/firmload.h; do
     printf '#include "rtw88-test-kernel.h"\n' > "$work/include/$header"
 done
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
-    "$tools/rtw88-pci-contract.c" "$src/sys/dev/ic/rtw88_hw.c" -o "$work/test"
+    "$tools/rtw88-pci-contract.c" "$src/sys/dev/ic/rtw88_hw.c" \
+    "$src/sys/dev/ic/rtw8822c.c" "$src/sys/dev/ic/rtw8822c_boot.c" \
+    "$src/sys/dev/ic/rtw8822c_table.c" \
+    -o "$work/test"
 "$work/test"

@@ -437,6 +437,31 @@ static void clean_detach(struct rtw88_pci_softc *p)
 	balanced();
 	CHECK(io == f.io);
 }
+int firmware_open(const char *drv, const char *name, firmware_handle_t *fh)
+{
+	(void)drv;
+	(void)name;
+	(void)fh;
+	return ENOENT;
+}
+int firmware_close(firmware_handle_t fh)
+{
+	(void)fh;
+	return 0;
+}
+long firmware_get_size(firmware_handle_t fh)
+{
+	(void)fh;
+	return 0;
+}
+int firmware_read(firmware_handle_t fh, long off, void *buf, size_t len)
+{
+	(void)fh;
+	(void)off;
+	(void)buf;
+	(void)len;
+	return ENOENT;
+}
 int main(void)
 {
 	struct rtw88_pci_softc p;

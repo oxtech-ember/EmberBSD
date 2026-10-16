@@ -53,4 +53,12 @@ int rtw8822c_efuse_decode(const uint8_t *, size_t, struct rtw8822c_efuse *);
  */
 int rtw8822c_validate_identity(const struct rtw8822c_identity *);
 
+struct rtw88_softc;
+struct rtw8822c_table;
+
+int rtw8822c_identify(struct rtw88_softc *);
+int rtw8822c_power(struct rtw88_softc *, int);
+int rtw8822c_load_tables(struct rtw88_softc *);
+int rtw8822c_apply_table(struct rtw88_softc *, const struct rtw8822c_table *);
+
 #endif /* _DEV_IC_RTW8822C_H_ */

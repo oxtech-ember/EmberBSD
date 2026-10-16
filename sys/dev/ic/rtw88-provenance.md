@@ -234,9 +234,12 @@ Configuration arrays are inventoried, not imported or executed here.
 | `rtw8822c_table.h` | `9c52f30bfcf62815da793c19ce5cdb8e9acaa5d789c9929cf8a74178670b445c` |
 
 `rtw8822c_table.c` is 1,106,662 bytes and 46,105 lines.
-Import is deferred until the hardware executor exists, to keep the large
-immutable data separate from the portable decoder review.
-The cost is a later data import and independent execution-contract checks.
+The pinned arrays are imported as `sys/dev/ic/rtw8822c_table.c` with a native
+descriptor wrapper. The original hash above is of the FreeBSD source file;
+the wrapper does not change array contents. `rtw8822c_boot.c` walks MAC, BB,
+AGC, RFK, RF B then A, power-by-rate type 0, power-limit type 0 or 5 by RFE,
+and DPK setup tables before `rtw88_start` sets the RF-enabled flag.
+Host contract `ember/tools/rtw88-start-contract.sh` is the executor check.
 No partial substitute or table from a different chip is provided.
 The complete table inventory at that exact revision is:
 

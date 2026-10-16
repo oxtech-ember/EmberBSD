@@ -744,6 +744,8 @@ device	rtwce
 file	dev/ic/rtw88.c			rtwce
 file	dev/ic/rtw88_hw.c		rtwce
 file	dev/ic/rtw8822c.c		rtwce
+file	dev/ic/rtw8822c_boot.c		rtwce
+file	dev/ic/rtw8822c_table.c		rtwce
 
 # Realtek RTL8180 802.11
 #

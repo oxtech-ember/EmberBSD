@@ -11,6 +11,7 @@
 #include <sys/bus.h>
 #include <sys/intr.h>
 #include <sys/xcall.h>
+#include <dev/firmload.h>
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcidevs.h>
@@ -28,6 +29,8 @@ struct rtw88_pci_softc {
 	void *sc_ih;
 	kmutex_t sc_lock;
 	pcireg_t sc_command;
+	uint8_t *sc_fw;
+	size_t sc_fwlen;
 	int sc_mapped;
 	int sc_lock_initialized;
 	int sc_command_saved;
@@ -256,6 +259,90 @@ rtw88_pci_intr_establish(void *cookie)
 	return 0;
 }
 
+static int
+rtw88_pci_firmware_load(void *cookie, const char *drv, const char *name,
+    const uint8_t **data, size_t *len)
+{
+	struct rtw88_pci_softc *psc = cookie;
+	firmware_handle_t fh;
+	size_t size;
+	int error;
+
+	error = firmware_open(drv, name, &fh);
+	if (error != 0)
+		return error;
+	size = (size_t)firmware_get_size(fh);
+	if (size == 0) {
+		firmware_close(fh);
+		return EINVAL;
+	}
+	if (psc->sc_fw != NULL) {
+		kmem_free(psc->sc_fw, psc->sc_fwlen);
+		psc->sc_fw = NULL;
+		psc->sc_fwlen = 0;
+	}
+	psc->sc_fw = kmem_zalloc(size, KM_NOSLEEP);
+	if (psc->sc_fw == NULL) {
+		firmware_close(fh);
+		return ENOMEM;
+	}
+	psc->sc_fwlen = size;
+	error = firmware_read(fh, 0, psc->sc_fw, size);
+	firmware_close(fh);
+	if (error != 0) {
+		kmem_free(psc->sc_fw, psc->sc_fwlen);
+		psc->sc_fw = NULL;
+		psc->sc_fwlen = 0;
+		return error;
+	}
+	*data = psc->sc_fw;
+	*len = psc->sc_fwlen;
+	return 0;
+}
+
+static void
+rtw88_pci_firmware_release(void *cookie)
+{
+	struct rtw88_pci_softc *psc = cookie;
+
+	if (psc->sc_fw != NULL) {
+		kmem_free(psc->sc_fw, psc->sc_fwlen);
+		psc->sc_fw = NULL;
+		psc->sc_fwlen = 0;
+	}
+}
+
+static int
+rtw88_pci_bus_master(void *cookie, int enable)
+{
+	struct rtw88_pci_softc *psc = cookie;
+	pcireg_t command, want;
+
+	if (!rtw88_pci_present(psc) || !psc->sc_command_saved)
+		return ENXIO;
+	command = pci_conf_read(psc->sc_pa.pa_pc, psc->sc_pa.pa_tag,
+	    PCI_COMMAND_STATUS_REG);
+	if (command == UINT32_MAX)
+		return ENXIO;
+	want = command & 0xffff;
+	if (enable)
+		want |= PCI_COMMAND_MASTER_ENABLE;
+	else
+		want &= ~PCI_COMMAND_MASTER_ENABLE;
+	pci_conf_write(psc->sc_pa.pa_pc, psc->sc_pa.pa_tag,
+	    PCI_COMMAND_STATUS_REG, want);
+	command = pci_conf_read(psc->sc_pa.pa_pc, psc->sc_pa.pa_tag,
+	    PCI_COMMAND_STATUS_REG);
+	if (command == UINT32_MAX)
+		return ENXIO;
+	if (enable) {
+		if ((command & PCI_COMMAND_MASTER_ENABLE) == 0)
+			return EIO;
+	} else if ((command & PCI_COMMAND_MASTER_ENABLE) != 0)
+		return EIO;
+	return 0;
+}
+
 static void
 rtw88_pci_intr_disestablish(void *cookie)
 {
@@ -293,7 +380,10 @@ static const struct rtw88_bus_ops rtw88_pci_ops = {
 	.dma_free = rtw88_pci_dma_free,
 	.dma_sync = rtw88_pci_dma_sync,
 	.intr_establish = rtw88_pci_intr_establish,
-	.intr_disestablish = rtw88_pci_intr_disestablish
+	.intr_disestablish = rtw88_pci_intr_disestablish,
+	.firmware_load = rtw88_pci_firmware_load,
+	.firmware_release = rtw88_pci_firmware_release,
+	.bus_master = rtw88_pci_bus_master
 };
 
 static int
@@ -321,6 +411,8 @@ rtw88_pci_attach(device_t parent, device_t self, void *aux)
 	psc->sc_pa = *pa;
 	sc->sc_bus = psc;
 	sc->sc_ops = &rtw88_pci_ops;
+	sc->sc_vendor = PCI_VENDOR(pa->pa_id);
+	sc->sc_product = PCI_PRODUCT(pa->pa_id);
 	aprint_normal(": Realtek RTL8822CE PCI resources\n");
 	if (!rtw88_pci_present(psc))
 		goto fail;

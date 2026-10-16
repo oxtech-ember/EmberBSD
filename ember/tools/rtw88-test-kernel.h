@@ -124,6 +124,11 @@ int bus_dmamap_load(bus_dma_tag_t, bus_dmamap_t, void *, bus_size_t, void *,
 		    int);
 void bus_dmamap_unload(bus_dma_tag_t, bus_dmamap_t);
 void bus_dmamap_sync(bus_dma_tag_t, bus_dmamap_t, bus_addr_t, bus_size_t, int);
+typedef void *firmware_handle_t;
+int firmware_open(const char *, const char *, firmware_handle_t *);
+int firmware_close(firmware_handle_t);
+long firmware_get_size(firmware_handle_t);
+int firmware_read(firmware_handle_t, long, void *, size_t);
 int pci_intr_alloc(const struct pci_attach_args *, pci_intr_handle_t **, int *,
 		   pci_intr_type_t);
 void pci_intr_release(pci_chipset_tag_t, pci_intr_handle_t *, int);

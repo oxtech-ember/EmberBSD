@@ -34,20 +34,50 @@ struct rtw88_bus_ops {
 	int (*intr_establish)(void *);
 	/* Mask and synchronously drain handlers before returning. */
 	void (*intr_disestablish)(void *);
+	int (*firmware_load)(void *, const char *, const char *,
+	    const uint8_t **, size_t *);
+	void (*firmware_release)(void *);
+	int (*bus_master)(void *, int);
 };
+
+#define RTW88_BOOTSTRAP_US	5000000U
+#define RTW88_COMMAND_US	1000000U
+#define RTW88_POLL_STEP_US	50U
+#define RTW88_FW_CMD_MAX	7U
+#define RTW88_FW_PAGE_SIZE	(4096U + 48U)
 
 struct rtw88_softc {
 	const struct rtw88_bus_ops *sc_ops;
 	void *sc_bus;
 	struct rtw88_dma sc_ring[RTW88_NRING];
+	struct rtw88_dma sc_fw_dma;
 	unsigned sc_nring;
 	int sc_intr_established;
 	int sc_resources_ready;
+	int sc_fw_dma_owned;
+	int sc_started;
+	int sc_rf_enabled;
+	int sc_dma_master;
+	int sc_powered;
+	int sc_bootstrapping;
+	int sc_stop_requested;
+	uint16_t sc_vendor;
+	uint16_t sc_product;
+	uint8_t sc_rfe;
+	uint8_t sc_cut;
+	uint32_t sc_sys_cfg1;
+	uint32_t sc_generation;
+	uint32_t sc_h2c_box;
+	unsigned sc_pg_rows;
+	unsigned sc_pwr_rows;
 };
 
 /* Attach only quiescent resources. No firmware, DMA publication or ifnet. */
 int rtw88_core_attach(struct rtw88_softc *);
 /* Caller serializes attach/detach; IRQ teardown precedes every DMA free. */
 void rtw88_core_detach(struct rtw88_softc *);
+int rtw88_start(struct rtw88_softc *);
+void rtw88_stop(struct rtw88_softc *);
+int rtw88_fw_command(struct rtw88_softc *, uint8_t, const void *, size_t);
 
 #endif /* _DEV_IC_RTW88VAR_H_ */
