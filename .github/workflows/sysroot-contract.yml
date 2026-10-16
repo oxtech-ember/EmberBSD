@@ -1,0 +1,35 @@
+name: Sysroot release contracts
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/sysroot-contract.yml'
+      - 'ember/release/**'
+      - 'ember/tests/release*.rb'
+      - 'distrib/sets/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install host fixture dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ruby bmake xz-utils
+      - name: Verify release mechanisms on the proposed source
+        run: |
+          ruby ember/tests/release-aarch64-build.rb
+          ruby ember/tests/release-aarch64-sets.rb /usr/bin/bmake
+          ruby ember/tests/release-sysroot.rb
+          ruby ember/tests/release-build.rb
+          ruby ember/tests/release-kit.rb
+          ruby ember/tests/release-github.rb

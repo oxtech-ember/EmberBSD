@@ -6,11 +6,19 @@ module EmberRelease
   class GitHub
     def initialize(dir, runner: nil)
       @dir = File.expand_path(dir)
-      @manifest = EmberRelease.verify(@dir)
+      @manifest = verify_kit(@dir)
       @runner = runner || method(:run)
       @tag = @manifest.fetch('release_tag')
       @sha = @manifest.fetch('source_commit')
       @repo = "github.com/#{REPOSITORY}"
+    end
+
+    def verify_kit(dir)
+      EmberRelease.verify(dir)
+    end
+
+    def qualify_kit
+      EmberRelease.require_qualification(@manifest)
     end
 
     def run(*args)
@@ -127,7 +135,7 @@ module EmberRelease
       Dir.mktmpdir('ember-release-download') do |dir|
         @runner.call('release', 'download', @tag, '--repo', @repo, '--dir', dir,
           *names.flat_map { |n| ['--pattern', n] })
-        EmberRelease.verify(dir)
+        verify_kit(dir)
         names.each do |name|
           EmberRelease.check(Digest::SHA256.file(File.join(dir, name)).hexdigest ==
             Digest::SHA256.file(File.join(@dir, name)).hexdigest, "Downloaded asset differs: #{name}")
@@ -142,7 +150,7 @@ module EmberRelease
     end
 
     def publish
-      EmberRelease.require_qualification(@manifest)
+      qualify_kit
       release = preflight
       EmberRelease.check(release, 'Create and verify the draft first')
       check_draft(release) if release['draft'] == true
