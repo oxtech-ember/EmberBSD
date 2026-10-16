@@ -28,7 +28,8 @@ The selected `-sum` protocol adds a cumulative checksum word between the TX
 header and payload. That word is outside the header's payload size.
 RX messages have no inline checksum. Their validation uses the entire committed
 snapshot, prior consumed total and three published cumulative totals.
-The helpers preserve checksum state and output on malformed input or insufficient space.
+The helpers preserve payload bytes and checksum state on malformed input or
+insufficient space. A short receive buffer can report the required payload length.
 They do not emulate firmware or publish device-visible indices.
 
 ## Source and firmware provenance
