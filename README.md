@@ -832,7 +832,10 @@ on every board in the hardware catalog.
   and desktop OpenGL 3.1, including four 1280x800 lifecycles per display path. Native platform identity
   makes this GPU discoverable without DRM master. All 38 Mesa upstream
   invocations pass with recorded internal skips; LLVM23 llvmpipe also passes.
-  The [LLVM 23.1.3 migration](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-llvm2313.md) repeats all 38 invocations and 20 additional large V3D lifecycles. One transient large-BO allocation failure remains unresolved.
+  The [LLVM 23.1.3 migration](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-llvm2313.md) repeats all 38 invocations and 20 additional large V3D lifecycles.
+  The newer native scatter/gather allocator passes allocations through 16 MiB
+  and three simultaneous buffers on CM5. Sustained allocation pressure remains
+  a separate acceptance step.
   Same-device PRIME passes 80 cross-process lifecycles and four real
   GBM/EGLImage shader/pixel cycles after native DMA-BUF lifetime repairs.
   The ordinary kernel remains a passive observer. General job recovery,
