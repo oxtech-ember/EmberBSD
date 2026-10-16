@@ -1,0 +1,68 @@
+name: CIX VPU source contracts
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/cix-vpu.yml'
+      - 'sys/dev/ic/cixvpu_*'
+      - 'sys/sys/videoio.h'
+      - 'ember/tools/cixvpu-*'
+      - 'ember/boot/cix-vpu.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      # Official GCC 16.2 image, Linux amd64 manifest verified before selection.
+      image: gcc@sha256:3f73339bf0d3d64081cac3f6d9fdafc6dd4cef2b9c49e0a09f91e97cb0eb139a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /ember/tools/cixvpu-*
+            /sys/dev/ic/cixvpu_*
+            /sys/sys/videoio.h
+      - name: Prepare source analysis tools
+        run: |
+          test "$(gcc -dumpfullversion)" = 16.2.0
+          gcc -dumpmachine
+          apt-get update
+          apt-get install -y --no-install-recommends clang cppcheck valgrind libc6-dbg
+          clang --version
+          cppcheck --version
+          valgrind --version
+      - name: Execute actual source contracts and Memcheck
+        env:
+          CC: gcc
+          CFLAGS: -O2 -g -gdwarf-4 -fanalyzer
+        run: |
+          mkdir -p "$RUNNER_TEMP/cix-vpu"
+          cat > "$RUNNER_TEMP/cix-vpu/memcheck" <<'SH'
+          #!/bin/sh
+          exec valgrind --tool=memcheck --error-exitcode=97 \
+            --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=all \
+            --track-origins=yes "$@"
+          SH
+          chmod 755 "$RUNNER_TEMP/cix-vpu/memcheck"
+          export TEST_RUNNER="$RUNNER_TEMP/cix-vpu/memcheck"
+          export BUILD_DIR="$RUNNER_TEMP/cix-vpu/firmware"
+          sh ember/tools/cixvpu-fw-test.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/cixvpu-ring-contract.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/cixvpu-mmu-contract.sh "$GITHUB_WORKSPACE"
+      - name: Analyze the portable source contract
+        run: |
+          cppcheck --enable=all --inconclusive --check-level=exhaustive \
+            --std=c11 --platform=unix64 --error-exitcode=2 --library=posix \
+            -Isys/dev/ic sys/dev/ic/cixvpu_*.c ember/tools/cixvpu-*.c
+          for source in sys/dev/ic/cixvpu_*.c ember/tools/cixvpu-*.c; do
+            clang --analyze -std=c11 -Wall -Wextra -Werror -Isys/dev/ic \
+              -Xanalyzer -analyzer-output=text "$source"
+          done
