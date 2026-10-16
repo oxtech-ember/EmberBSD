@@ -1,0 +1,32 @@
+Origin: local change on top of eotics-com/edk2-platforms dad7cc3332 (carried
+as thermal-fan.diff). The 75/255 handoff sits below the start threshold of
+the lab four-wire fan, so UEFI runs without airflow on a warm boot. Hand
+off at 125/255, the floor validated in ember/boot/thermal-fan.md. Fans that
+spin at 75/255 only run faster; no fan is worse off.
+
+diff --git a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+index 24893bd..1a5c6e9 100644
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+@@ -126,7 +126,6 @@
+ #define RP1_PWM_SET_UPDATE             BIT31
+ #define RP1_FAN_PWM_RANGE              2078U
+-#define RP1_FAN_PWM_LOW                75U
+ 
+ //
+ // Simple NameOp integer patcher.
+@@ -253,9 +252,10 @@ Rp1ProgramFan (
+   Register  = MmioRead32 (Base + RP1_FAN_GPIO_CTRL);
+   Register &= ~(RP1_GPIO_FUNCSEL_MASK | RP1_GPIO_OVERRIDE_MASK);
+   MmioWrite32 (Base + RP1_FAN_GPIO_CTRL, Register);
+ 
+-  // Start at the lowest cooling level; ACPI takes ownership from here.
++  // Start at the validated 125/255 floor. The 75/255 firmware step is below
++  // the start threshold of the installed fan; ACPI takes ownership from here.
+   MmioWrite32 (Base + RP1_PWM_CHANNEL3_RANGE, RP1_FAN_PWM_RANGE);
+   MmioWrite32 (
+     Base + RP1_PWM_CHANNEL3_DUTY,
+-    (RP1_FAN_PWM_RANGE * RP1_FAN_PWM_LOW) / 255
++    (RP1_FAN_PWM_RANGE * 125U) / 255
+     );
+   MmioWrite32 (

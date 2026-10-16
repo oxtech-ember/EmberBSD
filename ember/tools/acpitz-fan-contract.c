@@ -467,6 +467,23 @@ main(void)
 	CHECK(sc.sc_active == ATZ_ACTIVE_NONE);
 	failed_sample = false;
 
+	/* Deactivation sweeps every level, not only the departing one. */
+	at(&sc, 500, 3);
+	on = power_on;
+	off = power_off;
+	at(&sc, 449, ATZ_ACTIVE_NONE);
+	CHECK(power_on == on);
+	CHECK(power_off - off == 4);
+	on = power_on;
+	off = power_off;
+	at(&sc, 440, ATZ_ACTIVE_NONE);
+	CHECK(power_on == on && power_off == off);
+	at(&sc, 500, 3);
+	on = power_on;
+	off = power_off;
+	at(&sc, 675, 1);
+	CHECK(power_on == on + 1 && power_off - off == 1);
+
 	/* Reject missing maximum and invalid floor trips without changing policy. */
 	{
 		ACPI_BUFFER max = sc.sc_zone.al[0];

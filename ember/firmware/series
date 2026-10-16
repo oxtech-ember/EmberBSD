@@ -1,5 +1,6 @@
 sd-power-on.diff
 thermal-fan.diff
+fan-handoff.diff
 bcm2712-stepping.diff
 wifi-sdio2.diff
 pm-watchdog.diff

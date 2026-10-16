@@ -446,7 +446,16 @@ acpitz_set_active(struct acpitz_softc *sc, int active)
 {
 	if (sc->sc_active != active) {
 
-		if (sc->sc_active != ATZ_ACTIVE_NONE)
+		/*
+		 * Stopping active cooling sweeps every level, not only
+		 * the departing one. A firmware failsafe or a handoff
+		 * can leave weaker cooling devices engaged behind the
+		 * driver's back; clearing an already off level is a
+		 * no-op in the power framework.
+		 */
+		if (active == ATZ_ACTIVE_NONE)
+			acpitz_power_off(sc);
+		else if (sc->sc_active != ATZ_ACTIVE_NONE)
 			acpitz_power_zone(sc, sc->sc_active, 0);
 
 		ACPI_DEBUG_PRINT((ACPI_DB_INFO, "%s: active cooling "
@@ -596,7 +605,13 @@ acpitz_switch_cooler(ACPI_OBJECT *obj, void *arg)
 	if (ACPI_FAILURE(rv))
 		return rv;
 
-	(void)acpi_power_set(cooler, pwr_state);
+	/*
+	 * A silent failure here strands the cooling device in its old
+	 * state while the driver believes the transition succeeded.
+	 */
+	if (acpi_power_set(cooler, pwr_state) != true)
+		aprint_error("acpitz: failed to turn %s %s\n",
+		    (flag != 0) ? "on" : "off", acpi_name(cooler));
 
 	return AE_OK;
 }
