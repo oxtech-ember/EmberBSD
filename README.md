@@ -134,7 +134,7 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-Status updated **2026-10-15**; linked component documents record their own
+Status updated **2026-10-16**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
 
@@ -427,7 +427,14 @@ on every board in the hardware catalog.
   30 seconds of responsiveness, and normal shell exit. All 20 temperature
   samples remain between 63.659 and 66.956 degrees Celsius. This bounded
   virtual-output run does not establish a full login or physical HDMI output.
-  The separate full-session check still requires working Xwayland runtime directories.
+  The installed Xwayland runtime service and private Xauthority checks pass.
+  The full session reaches the panel models, then fails BO allocation and
+  responsiveness checks. A failed render job also retains its buffers until reboot.
+  Read-only [BO diagnostics](ember/boot/bcm2712-v3d-bo-stats.md) now distinguish
+  budget refusal, DMA allocation, and handle publication failures. Bounded CL
+  error snapshots report the correct PCS register and render-list position.
+  Their source contracts and complete GCC16 kernel build pass. Hardware
+  correlation and a stable full session remain pending; quotas are unchanged.
   The [native scatter/gather allocator](ember/boot/bcm2712-v3d-render.md) now
   passes CM5 allocations through 16 MiB, three held buffers, and the existing
   TFU/CSD/sync/CL checks. The updated Mesa package passes four V3D EGL
@@ -789,7 +796,11 @@ on every board in the hardware catalog.
   Plasma, Vulkan conformance, and long-duration GPU stability remain unaccepted.
   The [graphics development checkpoint](ember/boot/a733-pvr-graphics.md) adds
   stream, queue, HWRT, mapping-hold, and free-list growth primitives.
-  HWRT handles and paired DRM submissions are implemented.
+  HWRT handles and paired DRM submissions are implemented. The submit path also
+  accepts a validated geometry, partial-render, and final-fragment sequence.
+  Every job is checked before the first publication. Final-fragment waits,
+  completion, and signals remain separate. Source contracts and the complete
+  kernel build pass; physical graphics readback is still pending.
   Exact intra-pair sync dependencies use firmware ordering in host contracts.
   External waits retain their error paths and bounded forward-dependency checks.
   Combined-KICK queue transport has actual-source validation and failure tests.
