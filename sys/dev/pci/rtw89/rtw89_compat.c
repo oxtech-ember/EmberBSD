@@ -314,6 +314,7 @@ rtw89_hexdump(const char *prefix, const void *buf, size_t len)
 
 	for (i = 0; i < len; i++) {
 		if ((i % 16) == 0)
+			/* cppcheck-suppress invalidPrintfArgType_uint ; i is size_t */
 			printf("%s%s%04zx:", i ? "\n" : "", prefix, i);
 		printf(" %02x", b[i]);
 	}
@@ -494,6 +495,11 @@ rtw89_queue_work(struct workqueue_struct *wq, struct work_struct *w)
 
 	if (wq == NULL)
 		wq = rtw89_system_wq;
+	if (wq == NULL) {
+		/* before rtw89_compat_init() or after rtw89_compat_fini() */
+		printf("rtw89: work queued without a work queue\n");
+		return false;
+	}
 	if (w->w_wq != NULL && w->w_wq != wq) {
 		/* moving between queues: only if idle */
 		mutex_enter(&w->w_wq->wq_lock);
@@ -522,6 +528,10 @@ rtw89_queue_delayed_work(struct workqueue_struct *wq, struct delayed_work *dw,
 
 	if (wq == NULL)
 		wq = rtw89_system_wq;
+	if (wq == NULL) {
+		printf("rtw89: work queued without a work queue\n");
+		return false;
+	}
 	if (delay == 0)
 		return rtw89_queue_work(wq, &dw->work);
 	if (dw->dw_armed || work_pending(&dw->work))

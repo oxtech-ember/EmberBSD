@@ -3737,6 +3737,8 @@ static int rtw89_pci_napi_poll(struct napi_struct *napi, int budget)
 	return work_done;
 }
 
+#ifndef __NetBSD__
+/* Linux power management; NetBSD has no suspend support in this driver. */
 static int __maybe_unused rtw89_pci_suspend(struct device *dev)
 {
 	struct ieee80211_hw *hw = dev_get_drvdata(dev);
@@ -3798,6 +3800,8 @@ static int __maybe_unused rtw89_pci_resume(struct device *dev)
 
 	return 0;
 }
+
+#endif /* !__NetBSD__ */
 
 SIMPLE_DEV_PM_OPS(rtw89_pm_ops, rtw89_pci_suspend, rtw89_pci_resume);
 EXPORT_SYMBOL(rtw89_pm_ops);

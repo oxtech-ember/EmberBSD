@@ -525,6 +525,7 @@ rtw89_nb_rx(void *arg, const void *frame, size_t len, int rssi,
 	if (rtw89_debug > 2) {
 		const struct ieee80211_frame *wh = frame;
 
+		/* cppcheck-suppress invalidPrintfArgType_uint ; len is size_t */
 		printf("%s: rx fc %02x%02x len %zu rssi %d freq %u ta %s\n",
 		    device_xname(sc->sc_dev), wh->i_fc[0], wh->i_fc[1], len,
 		    rssi, freq, ether_sprintf(wh->i_addr2));
