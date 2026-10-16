@@ -61,4 +61,11 @@ int rtw8822c_power(struct rtw88_softc *, int);
 int rtw8822c_load_tables(struct rtw88_softc *);
 int rtw8822c_apply_table(struct rtw88_softc *, const struct rtw8822c_table *);
 
+/*
+ * Post-firmware MAC setup: TX/RX queue mapping, FIFO pages, H2C queue,
+ * WMAC defaults, RX driver info and the PCIe interface quirk. The write
+ * sequence matches the pinned reference (ember/tools/rtw8822c-mac.trace).
+ */
+int rtw8822c_mac_init(struct rtw88_softc *);
+
 #endif /* _DEV_IC_RTW8822C_H_ */
