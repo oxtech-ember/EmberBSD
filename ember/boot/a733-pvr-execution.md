@@ -50,17 +50,18 @@ Activation registers native GROW callbacks before exposing execution to clients.
 Physical GROW handling remains unverified. Reconstruction requests are not implemented.
 Such requests stop the firmware service instead of reporting false completion.
 
-`SUBMIT_JOBS` accepts fixed BXM compute and paired geometry/fragment streams.
+`SUBMIT_JOBS` accepts fixed BXM compute, transfer, and paired geometry/fragment streams.
 It requires the current 48-byte job and 16-byte sync-operation layouts.
-Unsupported stream extensions and transfer submissions return `EOPNOTSUPP`.
-HWRT datasets and paired execution have source contracts, but no physical graphics acceptance.
+Unsupported stream extensions and job types return `EOPNOTSUPP`.
+HWRT datasets, transfer, and paired execution have source contracts, but no physical graphics acceptance.
 See the [graphics ownership and dependency contract](a733-pvr-graphics.md).
 All job streams and synchronization records are copied before firmware execution.
 The driver acquires context references and prepares timeline storage before submission.
 
 Each job waits at most ten seconds for dependencies.
 The driver then publishes pending page-table changes and synchronizes mapped buffers.
-It submits a compute command followed by a real firmware UFO update.
+A compute job publishes a compute command followed by a real firmware UFO update.
+A transfer job uses the existing transfer-context sender and its completion checks.
 KICK accepts a zero return word or `CMD_EXECUTED`; unknown return bits fail.
 Neither word proves job completion. CLEANUP keeps its synchronous return-word check.
 Success requires queue consumption, the expected UFO value, and fresh firmware health.
