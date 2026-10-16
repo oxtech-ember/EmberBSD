@@ -60,8 +60,8 @@ jobs:
               changed=false
               while IFS= read -r path; do
                 case "$path" in
-                  ember/release/build-aarch64.sh) changed=true ;;
-                  *.md|.github/*|ember/tests/*|ember/release/*) ;;
+                  *.md|.github/*|ember/tests/*) ;;
+                  ember/release/github.rb|ember/release/kit.rb|ember/release/sysroot-kit.rb|ember/release/sysroot.rb|ember/release/prepare.rb|ember/release/build-amd64.sh) ;;
                   *) changed=true ;;
                 esac
               done < "$RUNNER_TEMP/aarch64-changed-paths.txt"
