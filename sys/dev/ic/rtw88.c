@@ -61,6 +61,24 @@
 #define RTW88_REG_CPU_DMEM	0x1080
 #define RTW88_REG_H2CQ_CSR	0x1330
 #define RTW88_BCN_WORK_FLAG	0x10
+#define RTW88_REG_HIMR0		0x00b0
+#define RTW88_REG_HISR0		0x00b4
+#define RTW88_REG_HIMR1		0x00b8
+#define RTW88_REG_HISR1		0x00bc
+#define RTW88_REG_HIMR3		0x10b8
+#define RTW88_REG_HISR3		0x10bc
+/* pci.c rtw_pci_init irq_mask[0], [1], [3]. */
+#define RTW88_IMR0		0x44fd	/* TX DOKs, ROK, BCNDMAINT_E, C2HCMD */
+#define RTW88_IMR1		0x0200	/* TXFOVW */
+#define RTW88_IMR3		0x10000	/* H2CDOK */
+#define RTW88_IMR_ROK		0x01
+#define RTW88_REG_RXBD_IDX	0x03b4
+#define RTW88_REG_RWPTR_CLR	0x039c
+#define RTW88_H2CQ_CLR_IDX	UINT32_C(0x00010100)
+#define RTW88_PCI_DMA_RESET	UINT32_C(0x00108000)	/* TRXDMA reset, RX tag */
+#define RTW88_RING_RX		8
+#define RTW88_RX_TAG_MAX	8192
+#define RTW88_MIN_FRAME		10	/* 802.11 ACK */
 #define RTW88_BD_OWN		0x8000
 #define RTW88_BCN_VALID		0x8000
 
@@ -235,13 +253,13 @@ rtw88_post_fw_chunk(struct rtw88_softc *sc, uint32_t gen, size_t len)
 	return 0;
 }
 
-static int rtw88_publish_rings(struct rtw88_softc *);
+static int rtw88_hci_setup(struct rtw88_softc *);
+static int rtw88_hci_start(struct rtw88_softc *);
 
 static int
 rtw88_fw_prepare(struct rtw88_softc *sc)
 {
 	uint32_t rqpn, dmem;
-	uint8_t pci;
 	int error;
 
 	error = rtw88_rmw8(sc, RTW88_REG_SYS_FUNC_EN + 1, 0x04, 0);
@@ -292,14 +310,7 @@ rtw88_fw_prepare(struct rtw88_softc *sc)
 	error = rtw88_rmw8(sc, RTW88_REG_SYS_CLK + 1, 0, 0x40);
 	if (error != 0)
 		return error;
-	error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_PCI_CTRL + 3, &pci);
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_PCI_CTRL + 3,
-	    (uint8_t)(pci | 0xf7));
-	if (error != 0)
-		return error;
-	return rtw88_publish_rings(sc);
+	return rtw88_hci_setup(sc);
 }
 
 static int
@@ -319,49 +330,87 @@ rtw88_write_ring(struct rtw88_softc *sc, uint32_t desa, uint32_t num,
 	    (uint16_t)((ring->size / desc) & 0xfff));
 }
 
-/* Publish allocated rings, then release the TRX DMA interface from reset. */
-static int
-rtw88_publish_rings(struct rtw88_softc *sc)
+/* Point every RX descriptor at its buffer, owned by the chip. */
+static void
+rtw88_rx_arm(struct rtw88_softc *sc, unsigned idx)
 {
-	uint32_t ctrl;
+	uint8_t *bd = (uint8_t *)sc->sc_ring[RTW88_RING_RX].vaddr +
+	    RTW8822C_RX_BUFFER_DESC_SIZE * idx;
+
+	rtw88_put16(bd, RTW88_RX_BUF_SIZE);
+	rtw88_put16(bd + 2, 0);
+	rtw88_put32(bd + 4, (uint32_t)sc->sc_rxbuf[idx].addr);
+	sc->sc_ops->dma_sync(sc->sc_bus, &sc->sc_rxbuf[idx],
+	    BUS_DMASYNC_PREREAD);
+}
+
+/*
+ * pci.c rtw_pci_setup: publish rings, clear indices, reset TRX DMA.
+ * Used before firmware download and again after it, as the reference.
+ */
+static int
+rtw88_hci_setup(struct rtw88_softc *sc)
+{
+	uint32_t ctrl, csr;
+	uint8_t pci;
+	unsigned i;
 	int error;
 
-	error = rtw88_write_ring(sc, 0x0330, 0x038a, 1, 0, 16);
+	error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_PCI_CTRL + 3, &pci);
 	if (error != 0)
 		return error;
-	error = rtw88_write_ring(sc, 0x0328, 0x0388, 1, 1, 16);
+	error = sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_PCI_CTRL + 3,
+	    (uint8_t)(pci | 0xf7));
 	if (error != 0)
 		return error;
-	error = rtw88_write_ring(sc, 0x0320, 0x0386, 1, 2, 16);
-	if (error != 0)
-		return error;
-	error = rtw88_write_ring(sc, 0x0318, 0x0384, 1, 3, 16);
-	if (error != 0)
-		return error;
+	/* Beacon, H2C, BK, BE, VO, VI, management, high, then MPDU RX. */
 	error = rtw88_write_ring(sc, RTW88_REG_TXBD_DESA_BCN, 0, 0,
 	    RTW88_RING_BCN, 16);
+	if (error == 0)
+		error = rtw88_write_ring(sc, 0x1320, 0x1328, 1, 7, 16);
+	if (error == 0)
+		error = rtw88_write_ring(sc, 0x0330, 0x038a, 1, 0, 16);
+	if (error == 0)
+		error = rtw88_write_ring(sc, 0x0328, 0x0388, 1, 1, 16);
+	if (error == 0)
+		error = rtw88_write_ring(sc, 0x0318, 0x0384, 1, 3, 16);
+	if (error == 0)
+		error = rtw88_write_ring(sc, 0x0320, 0x0386, 1, 2, 16);
+	if (error == 0)
+		error = rtw88_write_ring(sc, 0x0310, 0x0380, 1, 5, 16);
+	if (error == 0)
+		error = rtw88_write_ring(sc, 0x0340, 0x038c, 1, 6, 16);
 	if (error != 0)
 		return error;
-	error = rtw88_write_ring(sc, 0x0310, 0x0380, 1, 5, 16);
-	if (error != 0)
-		return error;
-	error = rtw88_write_ring(sc, 0x0340, 0x038c, 1, 6, 16);
-	if (error != 0)
-		return error;
-	error = rtw88_write_ring(sc, 0x1320, 0x1328, 1, 7, 16);
-	if (error != 0)
-		return error;
-	error = rtw88_write_ring(sc, 0x0338, 0x0382, 1, 8, 8);
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->write_4(sc->sc_bus, 0x039c, 0xffffffff);
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_PCI_CTRL, &ctrl);
+	if (sc->sc_nrxbuf == 0 ||
+	    sc->sc_ring[RTW88_RING_RX].size <
+	    sc->sc_nrxbuf * RTW8822C_RX_BUFFER_DESC_SIZE)
+		return EINVAL;
+	for (i = 0; i < sc->sc_nrxbuf; i++)
+		rtw88_rx_arm(sc, i);
+	sc->sc_ops->dma_sync(sc->sc_bus, &sc->sc_ring[RTW88_RING_RX],
+	    BUS_DMASYNC_PREWRITE);
+	sc->sc_rx_rp = 0;
+	sc->sc_rx_tag = 0;
+	error = sc->sc_ops->write_2(sc->sc_bus, 0x0382,
+	    (uint16_t)(sc->sc_nrxbuf & 0xfff));
+	if (error == 0)
+		error = sc->sc_ops->write_4(sc->sc_bus, 0x0338,
+		    (uint32_t)sc->sc_ring[RTW88_RING_RX].addr);
+	if (error == 0)
+		error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_RWPTR_CLR,
+		    UINT32_C(0xffffffff));
+	if (error == 0)
+		error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_H2CQ_CSR, &csr);
+	if (error == 0)
+		error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_H2CQ_CSR,
+		    csr | RTW88_H2CQ_CLR_IDX);
+	if (error == 0)
+		error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_PCI_CTRL, &ctrl);
 	if (error != 0)
 		return error;
 	return sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_PCI_CTRL,
-	    ctrl | UINT32_C(0x00108000));
+	    ctrl | RTW88_PCI_DMA_RESET);
 }
 
 static int
@@ -546,6 +595,15 @@ rtw88_stop(struct rtw88_softc *sc)
 
 	sc->sc_stop_requested = 1;
 	sc->sc_generation++;
+	if (sc->sc_running) {
+		/* No new handler work, masks off, then wait out a running one. */
+		sc->sc_running = 0;
+		(void)sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HIMR0, 0);
+		(void)sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HIMR1, 0);
+		(void)sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HIMR3, 0);
+		if (sc->sc_ops->intr_barrier != NULL)
+			sc->sc_ops->intr_barrier(sc->sc_bus);
+	}
 	sc->sc_started = 0;
 	sc->sc_rf_enabled = 0;
 	sc->sc_bootstrapping = 0;
@@ -624,6 +682,15 @@ rtw88_start(struct rtw88_softc *sc)
 	error = rtw88_fw_download(sc, gen, fw, &info);
 	if (error != 0)
 		goto fail;
+	/* Reference rtw_power_on: reset rings, MAC, PHY, then HCI start. */
+	error = rtw88_hci_setup(sc);
+	if (error != 0)
+		goto fail;
+	error = rtw8822c_mac_init(sc);
+	if (error != 0) {
+		printf("rtwce: MAC init failed: %d\n", error);
+		goto fail;
+	}
 	error = rtw8822c_load_tables(sc);
 	if (error != 0)
 		goto fail;
@@ -631,6 +698,9 @@ rtw88_start(struct rtw88_softc *sc)
 		error = EINTR;
 		goto fail;
 	}
+	error = rtw88_hci_start(sc);
+	if (error != 0)
+		goto fail;
 	sc->sc_rf_enabled = 1;
 	sc->sc_started = 1;
 	sc->sc_bootstrapping = 0;
@@ -694,6 +764,119 @@ rtw88_fw_command(struct rtw88_softc *sc, uint8_t id, const void *payload,
 	return 0;
 }
 
+/* pci.c rtw_pci_start: unmask the reference interrupt causes. */
+static int
+rtw88_hci_start(struct rtw88_softc *sc)
+{
+	int error;
+
+	if (sc->sc_ops->intr_barrier == NULL)
+		return ENODEV;
+	sc->sc_running = 1;
+	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HIMR0, RTW88_IMR0);
+	if (error == 0)
+		error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HIMR1,
+		    RTW88_IMR1);
+	if (error == 0)
+		error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HIMR3,
+		    RTW88_IMR3);
+	return error;
+}
+
+/* One received buffer: classify, count, and keep every error visible. */
+static void
+rtw88_rx_one(struct rtw88_softc *sc, unsigned idx)
+{
+	struct rtw88_dma *buf = &sc->sc_rxbuf[idx];
+	struct rtw88_rx_info rx;
+	const uint8_t *p;
+
+	sc->sc_ops->dma_sync(sc->sc_bus, buf, BUS_DMASYNC_POSTREAD);
+	if (rtw88_rx_decode(buf->vaddr, RTW88_RX_BUF_SIZE, &rx) != 0) {
+		sc->sc_stats.rx_errors++;
+		return;
+	}
+	p = (const uint8_t *)buf->vaddr + rx.payload_offset;
+	if ((rx.flags & RTW88_RX_C2H) != 0) {
+		if (rx.packet_size < 2) {
+			sc->sc_stats.rx_errors++;
+			return;
+		}
+		sc->sc_stats.rx_c2h++;
+		sc->sc_stats.last_c2h_id = p[0];
+		sc->sc_stats.last_c2h_seq = p[1];
+		return;
+	}
+	if (rx.packet_size < RTW88_MIN_FRAME) {
+		sc->sc_stats.rx_short++;
+		return;
+	}
+	/* Task 7 hands validated frames to net80211. */
+	sc->sc_stats.rx_frames++;
+}
+
+/* pci.c rtw_pci_rx_napi, bounded by RTW88_RX_LIMIT per interrupt. */
+static void
+rtw88_rx(struct rtw88_softc *sc)
+{
+	struct rtw88_dma *ring = &sc->sc_ring[RTW88_RING_RX];
+	unsigned hw, rp = sc->sc_rx_rp, count;
+	uint32_t idx;
+	uint16_t tag;
+	uint8_t *bd;
+
+	if (sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_RXBD_IDX, &idx) != 0)
+		return;
+	hw = (idx >> 16) & 0xfff;
+	if (hw >= sc->sc_nrxbuf) {
+		sc->sc_stats.rx_dma_errors++;
+		return;
+	}
+	count = hw >= rp ? hw - rp : sc->sc_nrxbuf - rp + hw;
+	if (count > RTW88_RX_LIMIT)
+		count = RTW88_RX_LIMIT;
+	sc->sc_ops->dma_sync(sc->sc_bus, ring, BUS_DMASYNC_POSTREAD);
+	while (count-- > 0) {
+		bd = (uint8_t *)ring->vaddr + RTW8822C_RX_BUFFER_DESC_SIZE * rp;
+		tag = (uint16_t)(bd[2] | bd[3] << 8);
+		if (tag != sc->sc_rx_tag)
+			sc->sc_stats.rx_tag_errors++;
+		sc->sc_rx_tag = (sc->sc_rx_tag + 1) % RTW88_RX_TAG_MAX;
+		rtw88_rx_one(sc, rp);
+		rtw88_rx_arm(sc, rp);
+		rp = (rp + 1) % sc->sc_nrxbuf;
+	}
+	sc->sc_ops->dma_sync(sc->sc_bus, ring, BUS_DMASYNC_PREWRITE);
+	sc->sc_rx_rp = rp;
+	(void)sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_RXBD_IDX, (uint16_t)rp);
+}
+
+int
+rtw88_intr(struct rtw88_softc *sc)
+{
+	uint32_t s0, s1, s3;
+
+	if (!sc->sc_running)
+		return 0;
+	if (sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_HISR0, &s0) != 0 ||
+	    sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_HISR1, &s1) != 0 ||
+	    sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_HISR3, &s3) != 0)
+		return 0;
+	s0 &= RTW88_IMR0;
+	s1 &= RTW88_IMR1;
+	s3 &= RTW88_IMR3;
+	if ((s0 | s1 | s3) == 0)
+		return 0;
+	/* Clear every taken cause before work, so MSI edges are not lost. */
+	(void)sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HISR0, s0);
+	(void)sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HISR1, s1);
+	(void)sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HISR3, s3);
+	sc->sc_stats.intr++;
+	if ((s0 & RTW88_IMR_ROK) != 0)
+		rtw88_rx(sc);
+	return 1;
+}
+
 int
 rtw88_core_attach(struct rtw88_softc *sc)
 {
@@ -720,6 +903,19 @@ rtw88_core_attach(struct rtw88_softc *sc)
 		if (error != 0)
 			goto fail;
 	}
+	for (unsigned i = 0; i < RTW88_RX_BUFS; i++) {
+		struct rtw88_dma *buf = &sc->sc_rxbuf[i];
+
+		error = sc->sc_ops->dma_alloc(sc->sc_bus, buf,
+		    RTW88_RX_BUF_SIZE);
+		if (error != 0)
+			goto fail;
+		sc->sc_nrxbuf++;
+		error = rtw88_dma_validate(buf->addr, buf->size,
+		    RTW8822C_DMA_ADDR_BITS);
+		if (error != 0)
+			goto fail;
+	}
 	error = sc->sc_ops->intr_establish(sc->sc_bus);
 	if (error != 0)
 		goto fail;
@@ -740,6 +936,10 @@ rtw88_core_detach(struct rtw88_softc *sc)
 	if (sc->sc_intr_established) {
 		sc->sc_ops->intr_disestablish(sc->sc_bus);
 		sc->sc_intr_established = 0;
+	}
+	while (sc->sc_nrxbuf != 0) {
+		sc->sc_nrxbuf--;
+		sc->sc_ops->dma_free(sc->sc_bus, &sc->sc_rxbuf[sc->sc_nrxbuf]);
 	}
 	while (sc->sc_nring != 0) {
 		sc->sc_nring--;

@@ -34,6 +34,8 @@ struct rtw88_bus_ops {
 	int (*intr_establish)(void *);
 	/* Mask and synchronously drain handlers before returning. */
 	void (*intr_disestablish)(void *);
+	/* Wait until no handler runs rtw88_intr; the line stays attached. */
+	void (*intr_barrier)(void *);
 	int (*firmware_load)(void *, const char *, const char *,
 	    const uint8_t **, size_t *);
 	void (*firmware_release)(void *);
@@ -45,6 +47,24 @@ struct rtw88_bus_ops {
 #define RTW88_POLL_STEP_US	50U
 #define RTW88_FW_CMD_MAX	7U
 #define RTW88_FW_PAGE_SIZE	(4096U + 48U)
+/* pci.h RTK_PCI_RX_BUF_SIZE. Fewer than the 512 reference buffers. */
+#define RTW88_RX_BUFS		128U
+#define RTW88_RX_BUF_SIZE	(11454U + 24U)
+/* Bound on RX descriptors handled per interrupt. */
+#define RTW88_RX_LIMIT		64U
+
+/* Visible counters; errors are never silently dropped. */
+struct rtw88_stats {
+	uint64_t intr;
+	uint64_t rx_frames;
+	uint64_t rx_c2h;
+	uint64_t rx_errors;	/* Descriptor rejected by the RX decoder. */
+	uint64_t rx_short;	/* Shorter than an 802.11 ACK. */
+	uint64_t rx_tag_errors;	/* RX tag mismatch: PCIe DMA timeout. */
+	uint64_t rx_dma_errors;	/* Hardware index outside the ring. */
+	uint8_t last_c2h_id;
+	uint8_t last_c2h_seq;
+};
 
 struct rtw88_softc {
 	const struct rtw88_bus_ops *sc_ops;
@@ -70,6 +90,12 @@ struct rtw88_softc {
 	uint32_t sc_h2c_box;
 	unsigned sc_pg_rows;
 	unsigned sc_pwr_rows;
+	struct rtw88_dma sc_rxbuf[RTW88_RX_BUFS];
+	unsigned sc_nrxbuf;
+	unsigned sc_rx_rp;	/* Next RX descriptor the host reads. */
+	unsigned sc_rx_tag;
+	int sc_running;		/* Interrupts unmasked; rtw88_intr owns RX. */
+	struct rtw88_stats sc_stats;
 };
 
 /* Attach only quiescent resources. No firmware, DMA publication or ifnet. */
@@ -79,8 +105,16 @@ void rtw88_core_detach(struct rtw88_softc *);
 int rtw88_start(struct rtw88_softc *);
 void rtw88_stop(struct rtw88_softc *);
 int rtw88_fw_command(struct rtw88_softc *, uint8_t, const void *, size_t);
+/*
+ * Interrupt entry; the bus serializes it against rtw88_stop's barrier.
+ * Returns 0 when no unmasked cause is pending (shared INTx) or the
+ * device is not running, without touching any register.
+ */
+int rtw88_intr(struct rtw88_softc *);
 /* Operator trigger. 1 starts, 0 stops. ENXIO until resources are ready. */
 int rtwce_bootstrap(int);
 int rtwce_started(void);
+int rtwce_stats(char *, size_t);
+int rtwce_h2c(uint32_t);
 
 #endif /* _DEV_IC_RTW88VAR_H_ */

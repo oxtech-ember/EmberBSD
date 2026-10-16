@@ -23,6 +23,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
     "$tools/rtw88-pci-contract.c" "$src/sys/dev/ic/rtw88_hw.c" \
     "$src/sys/dev/ic/rtw8822c.c" "$src/sys/dev/ic/rtw8822c_boot.c" \
+    "$src/sys/dev/ic/rtw8822c_mac.c" \
     "$src/sys/dev/ic/rtw8822c_table.c" \
     -o "$work/test"
 "$work/test"

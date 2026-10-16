@@ -23,6 +23,36 @@ rtwce_sysctl_bootstrap(SYSCTLFN_ARGS)
 	return rtwce_bootstrap(val);
 }
 
+static int
+rtwce_sysctl_stats(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node;
+	char buf[192];
+	int error;
+
+	error = rtwce_stats(buf, sizeof(buf));
+	if (error != 0)
+		return error;
+	node = *rnode;
+	node.sysctl_data = buf;
+	node.sysctl_size = strlen(buf) + 1;
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static int
+rtwce_sysctl_h2c(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node;
+	int val = 0, error;
+
+	node = *rnode;
+	node.sysctl_data = &val;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	return rtwce_h2c((uint32_t)val);
+}
+
 SYSCTL_SETUP(sysctl_hw_rtwce_setup, "rtwce firmware bootstrap")
 {
 	int err;
@@ -33,6 +63,18 @@ SYSCTL_SETUP(sysctl_hw_rtwce_setup, "rtwce firmware bootstrap")
 	    SYSCTL_DESCR("Write 1 to load RTL8822CE firmware, 0 to stop"),
 	    rtwce_sysctl_bootstrap, 0, NULL, 0,
 	    CTL_HW, CTL_CREATE, CTL_EOL);
+	if (err != 0)
+		aprint_error("rtwce: sysctl_createv failed: %d\n", err);
+	err = sysctl_createv(clog, 0, NULL, NULL,
+	    CTLFLAG_PERMANENT | CTLFLAG_READONLY, CTLTYPE_STRING,
+	    "rtwce_stats", SYSCTL_DESCR("RTL8822CE interrupt and RX counters"),
+	    rtwce_sysctl_stats, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
+	if (err != 0)
+		aprint_error("rtwce: sysctl_createv failed: %d\n", err);
+	err = sysctl_createv(clog, 0, NULL, NULL,
+	    CTLFLAG_PERMANENT | CTLFLAG_READWRITE, CTLTYPE_INT,
+	    "rtwce_h2c", SYSCTL_DESCR("Send one diagnostic H2C: id | payload << 8"),
+	    rtwce_sysctl_h2c, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
 	if (err != 0)
 		aprint_error("rtwce: sysctl_createv failed: %d\n", err);
 }

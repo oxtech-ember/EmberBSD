@@ -41,6 +41,12 @@ static struct {
 	int bcn_ready;
 	int bcn_dead;
 	int ddma_bad_sum;
+	unsigned rx_hw_idx;
+	unsigned bcn_valid_sets;
+	unsigned barriers;
+	uint32_t imr_at_barrier;
+	unsigned fail_alloc_at;	/* 1-based allocation that fails, or 0. */
+	unsigned alloc_calls;
 	unsigned delays;
 	unsigned writes;
 	unsigned cfg_writes;
@@ -160,6 +166,9 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 		v |= 0x8000;
 	if (reg == 0x1208 && f.ddma_bad_sum)
 		v |= UINT32_C(1) << 27;
+	/* RXBD_IDX_MPDUQ: hardware write index in 27:16, host index low. */
+	if (reg == 0x03b4)
+		v = (v & 0xfff) | (uint32_t)(f.rx_hw_idx & 0xfff) << 16;
 	/*
 	 * Internal DDMA completes only after a beacon kick consumed the
 	 * host chunk. Otherwise OWN stays set and the download times out.
@@ -185,6 +194,9 @@ write_1(void *cookie, uint32_t reg, uint8_t val)
 	if (is_cfg_reg(reg))
 		f.cfg_writes++;
 	f.mmio[reg] = val;
+	/* AUTO_LLT_V1 completes immediately. */
+	if (reg == 0x0208)
+		f.mmio[reg] &= (uint8_t)~0x01;
 	if (reg == 0x05)
 		f.mmio[reg] &= (uint8_t)~0x03;
 	if (reg == 0x383 && (val & 0x10) != 0 && f.sc != NULL &&
@@ -208,6 +220,7 @@ write_1(void *cookie, uint32_t reg, uint8_t val)
 		    dma == (uint32_t)f.sc->sc_fw_dma.addr &&
 		    (psb & 0x8000) != 0) {
 			f.mmio[0x205] |= 0x80;
+			f.bcn_valid_sets++;
 			f.bcn_ready = 1;
 		}
 	}
@@ -246,6 +259,14 @@ write_4(void *cookie, uint32_t reg, uint32_t val)
 	f.writes++;
 	if (is_cfg_reg(reg))
 		f.cfg_writes++;
+	/* HISR0/1/3 are write-one-to-clear. */
+	if (reg == 0x00b4 || reg == 0x00bc || reg == 0x10bc) {
+		unsigned i;
+
+		for (i = 0; i < 4; i++)
+			f.mmio[reg + i] &= (uint8_t)~(val >> (8 * i));
+		return 0;
+	}
 	f.mmio[reg] = (uint8_t)val;
 	f.mmio[reg + 1] = (uint8_t)(val >> 8);
 	f.mmio[reg + 2] = (uint8_t)(val >> 16);
@@ -270,6 +291,8 @@ dma_alloc(void *cookie, struct rtw88_dma *ring, size_t size)
 {
 
 	(void)cookie;
+	if (f.fail_alloc_at != 0 && ++f.alloc_calls == f.fail_alloc_at)
+		return ENOMEM;
 	ring->vaddr = calloc(1, size);
 	if (ring->vaddr == NULL)
 		return ENOMEM;
@@ -313,6 +336,23 @@ intr_disestablish(void *cookie)
 {
 
 	(void)cookie;
+}
+
+static uint32_t
+mmio32(uint32_t reg)
+{
+
+	return (uint32_t)f.mmio[reg] | (uint32_t)f.mmio[reg + 1] << 8 |
+	    (uint32_t)f.mmio[reg + 2] << 16 | (uint32_t)f.mmio[reg + 3] << 24;
+}
+
+static void
+intr_barrier(void *cookie)
+{
+
+	(void)cookie;
+	f.barriers++;
+	f.imr_at_barrier = mmio32(0x00b0) | mmio32(0x00b8) | mmio32(0x10b8);
 }
 
 static int
@@ -361,6 +401,7 @@ static const struct rtw88_bus_ops ops = {
 	.dma_sync = dma_sync,
 	.intr_establish = intr_establish,
 	.intr_disestablish = intr_disestablish,
+	.intr_barrier = intr_barrier,
 	.firmware_load = firmware_load,
 	.firmware_release = firmware_release,
 	.bus_master = bus_master
@@ -525,10 +566,12 @@ test_command_length(void)
 		CHECK(dma == (uint32_t)sc.sc_fw_dma.addr);
 		CHECK(desa == (uint32_t)sc.sc_ring[4].addr);
 		CHECK(pkt_size == 2008 && seg1 == 2008);
-		CHECK(f.mmio[0x100] == 0x05);
+		/* MAC init after download: MAC_TRX_ENABLE, reserved boundary. */
+		CHECK(f.mmio[0x100] == 0xff);
+		CHECK((f.mmio[0x204] | f.mmio[0x205] << 8) == 0x0792);
 		/* No beacon write-back: OWN stays, the chip sets BCN_VALID. */
 		CHECK((bd[3] & 0x80) != 0);
-		CHECK((f.mmio[0x205] & 0x80) != 0);
+		CHECK(f.bcn_valid_sets > 0);
 	}
 	CHECK(rtw88_fw_command(&sc, 1, buf, 8) == EMSGSIZE);
 	CHECK(rtw88_fw_command(&sc, 1, buf, 7) == 0);
@@ -651,6 +694,270 @@ test_success_consumes_tables(void)
 	CHECK(f.dma_allocs == 0);
 }
 
+/* Started device with RX armed and interrupts unmasked. */
+static int
+start_ok(struct rtw88_softc *sc)
+{
+
+	reset_bus(sc);
+	if (!attach_ok(sc))
+		return 0;
+	CHECK(rtw88_start(sc) == 0);
+	CHECK(sc->sc_running);
+	return sc->sc_running;
+}
+
+/*
+ * Put one received packet in RX buffer idx: 24-byte RX descriptor,
+ * optional C2H flag, then the payload. tag goes to the buffer
+ * descriptor's total_pkt_size, as the chip reports it with RX_TAG_EN.
+ */
+static void
+rx_put(struct rtw88_softc *sc, unsigned idx, unsigned len, int c2h,
+    const uint8_t *payload, uint16_t tag)
+{
+	uint8_t *buf = sc->sc_rxbuf[idx].vaddr;
+	uint8_t *bd = (uint8_t *)sc->sc_ring[8].vaddr + 8 * idx;
+	uint32_t w0 = len & 0x3fff, w2 = c2h ? UINT32_C(1) << 28 : 0;
+	unsigned i;
+
+	memset(buf, 0, 24);
+	for (i = 0; i < 4; i++) {
+		buf[i] = (uint8_t)(w0 >> (8 * i));
+		buf[8 + i] = (uint8_t)(w2 >> (8 * i));
+	}
+	if (payload != NULL && len <= RTW88_RX_BUF_SIZE - 24)
+		memcpy(buf + 24, payload, len);
+	bd[2] = (uint8_t)tag;
+	bd[3] = (uint8_t)(tag >> 8);
+	/* The chip consumed the descriptor; a stale size must not survive. */
+	bd[0] = bd[1] = 0;
+}
+
+static void
+set_hisr0(uint32_t v)
+{
+
+	f.mmio[0xb4] = (uint8_t)v;
+	f.mmio[0xb5] = (uint8_t)(v >> 8);
+	f.mmio[0xb6] = (uint8_t)(v >> 16);
+	f.mmio[0xb7] = (uint8_t)(v >> 24);
+}
+
+static unsigned
+host_rx_idx(void)
+{
+
+	return (unsigned)(f.mmio[0x3b4] | f.mmio[0x3b5] << 8) & 0xfff;
+}
+
+static int
+rx_armed(struct rtw88_softc *sc, unsigned idx)
+{
+	const uint8_t *bd = (const uint8_t *)sc->sc_ring[8].vaddr + 8 * idx;
+	uint32_t dma = (uint32_t)bd[4] | (uint32_t)bd[5] << 8 |
+	    (uint32_t)bd[6] << 16 | (uint32_t)bd[7] << 24;
+
+	return (bd[0] | bd[1] << 8) == RTW88_RX_BUF_SIZE &&
+	    dma == (uint32_t)sc->sc_rxbuf[idx].addr;
+}
+
+static void
+test_hci_start_masks(void)
+{
+	struct rtw88_softc sc;
+
+	if (!start_ok(&sc))
+		return;
+	CHECK(mmio32(0x00b0) == 0x44fd);	/* ROK, TX DOKs, C2HCMD... */
+	CHECK(mmio32(0x00b8) == 0x200);		/* TXFOVW */
+	CHECK(mmio32(0x10b8) == 0x10000);	/* H2CDOK */
+	CHECK((f.mmio[0x382] | f.mmio[0x383] << 8) == RTW88_RX_BUFS);
+	CHECK(mmio32(0x338) == (uint32_t)sc.sc_ring[8].addr);
+	CHECK(rx_armed(&sc, 0) && rx_armed(&sc, RTW88_RX_BUFS - 1));
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+static void
+test_rx_c2h_and_frame(void)
+{
+	static const uint8_t c2h[4] = { 0x09, 0x05, 0xaa, 0xbb };
+	uint8_t frame[24] = { 0x80, 0x00 };	/* Beacon header. */
+	struct rtw88_softc sc;
+
+	if (!start_ok(&sc))
+		return;
+	rx_put(&sc, 0, sizeof(c2h), 1, c2h, 0);
+	rx_put(&sc, 1, sizeof(frame), 0, frame, 1);
+	f.rx_hw_idx = 2;
+	set_hisr0(0x01);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.rx_c2h == 1 && sc.sc_stats.last_c2h_id == 0x09 &&
+	    sc.sc_stats.last_c2h_seq == 0x05);
+	CHECK(sc.sc_stats.rx_frames == 1);
+	CHECK(sc.sc_stats.rx_errors == 0 && sc.sc_stats.rx_tag_errors == 0);
+	CHECK(host_rx_idx() == 2);
+	CHECK(mmio32(0x00b4) == 0);
+	CHECK(rx_armed(&sc, 0) && rx_armed(&sc, 1));
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+static void
+test_rx_malformed_and_short(void)
+{
+	uint8_t frame[4] = { 0 };
+	struct rtw88_softc sc;
+
+	if (!start_ok(&sc))
+		return;
+	/* Length beyond the buffer: the decoder must refuse it. */
+	rx_put(&sc, 0, 0x3fff, 0, NULL, 0);
+	/* Shorter than the smallest 802.11 frame (ACK, 10 bytes). */
+	rx_put(&sc, 1, sizeof(frame), 0, frame, 1);
+	f.rx_hw_idx = 2;
+	set_hisr0(0x01);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.rx_errors == 1 && sc.sc_stats.rx_short == 1);
+	CHECK(sc.sc_stats.rx_frames == 0 && sc.sc_stats.rx_c2h == 0);
+	CHECK(host_rx_idx() == 2);
+	CHECK(rx_armed(&sc, 0) && rx_armed(&sc, 1));
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+static void
+test_rx_limit_and_wrap(void)
+{
+	uint8_t frame[24] = { 0x80 };
+	struct rtw88_softc sc;
+	unsigned i;
+
+	if (!start_ok(&sc))
+		return;
+	for (i = 0; i < RTW88_RX_BUFS; i++)
+		rx_put(&sc, i, sizeof(frame), 0, frame,
+		    (uint16_t)(i % 8192));
+	f.rx_hw_idx = 100;
+	set_hisr0(0x01);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.rx_frames == RTW88_RX_LIMIT);
+	CHECK(host_rx_idx() == RTW88_RX_LIMIT);
+	set_hisr0(0x01);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.rx_frames == 100 && host_rx_idx() == 100);
+	/* Wrap: 28 to the end, then 4 from the start. */
+	for (i = 0; i < RTW88_RX_BUFS; i++)
+		rx_put(&sc, i, sizeof(frame), 0, frame,
+		    (uint16_t)((i < 100 ? i + RTW88_RX_BUFS : i) % 8192));
+	f.rx_hw_idx = 4;
+	set_hisr0(0x01);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.rx_frames == 100 + RTW88_RX_BUFS - 100 + 4);
+	CHECK(host_rx_idx() == 4);
+	CHECK(sc.sc_stats.rx_tag_errors == 0);
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+static void
+test_rx_bad_hw_index(void)
+{
+	struct rtw88_softc sc;
+
+	if (!start_ok(&sc))
+		return;
+	f.rx_hw_idx = RTW88_RX_BUFS;	/* Outside the published ring. */
+	set_hisr0(0x01);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.rx_dma_errors == 1 && sc.sc_stats.rx_frames == 0);
+	CHECK(host_rx_idx() == 0);
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+static void
+test_rx_duplicate_interrupt(void)
+{
+	struct rtw88_softc sc;
+
+	if (!start_ok(&sc))
+		return;
+	f.rx_hw_idx = 0;	/* Nothing new since the last read. */
+	set_hisr0(0x01);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.rx_frames == 0 && sc.sc_stats.rx_errors == 0 &&
+	    sc.sc_stats.rx_dma_errors == 0);
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+static void
+test_rx_tag_mismatch(void)
+{
+	uint8_t frame[24] = { 0x80 };
+	struct rtw88_softc sc;
+
+	if (!start_ok(&sc))
+		return;
+	rx_put(&sc, 0, sizeof(frame), 0, frame, 7);	/* Expected 0. */
+	f.rx_hw_idx = 1;
+	set_hisr0(0x01);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.rx_tag_errors == 1 && sc.sc_stats.rx_frames == 1);
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+/* A shared INTx line: none of our unmasked causes is pending. */
+static void
+test_intr_not_ours(void)
+{
+	struct rtw88_softc sc;
+	unsigned writes;
+
+	if (!start_ok(&sc))
+		return;
+	set_hisr0(UINT32_C(0x80000000));	/* TIMER2: masked off. */
+	writes = f.writes;
+	CHECK(rtw88_intr(&sc) == 0);
+	CHECK(f.writes == writes);
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+/* stop masks and drains before buffers go; a late handler is inert. */
+static void
+test_intr_after_stop(void)
+{
+	struct rtw88_softc sc;
+	unsigned writes;
+
+	if (!start_ok(&sc))
+		return;
+	rtw88_stop(&sc);
+	CHECK(!sc.sc_running);
+	CHECK(f.barriers == 1 && f.imr_at_barrier == 0);
+	set_hisr0(0x01);
+	f.rx_hw_idx = 3;
+	writes = f.writes;
+	CHECK(rtw88_intr(&sc) == 0);
+	CHECK(f.writes == writes && sc.sc_stats.rx_frames == 0);
+	rtw88_core_detach(&sc);
+}
+
+static void
+test_rx_buffer_alloc_failure(void)
+{
+	struct rtw88_softc sc;
+
+	reset_bus(&sc);
+	f.fail_alloc_at = RTW88_NRING + 5;	/* Sixth RX buffer. */
+	CHECK(rtw88_core_attach(&sc) == ENOMEM);
+	CHECK(!sc.sc_resources_ready && f.dma_allocs == 0);
+}
+
 int
 main(void)
 {
@@ -665,6 +972,16 @@ main(void)
 	test_command_timeout();
 	test_beacon_never_valid();
 	test_firmware_checksum_bad();
+	test_hci_start_masks();
+	test_rx_c2h_and_frame();
+	test_rx_malformed_and_short();
+	test_rx_limit_and_wrap();
+	test_rx_bad_hw_index();
+	test_rx_duplicate_interrupt();
+	test_rx_tag_mismatch();
+	test_intr_not_ours();
+	test_intr_after_stop();
+	test_rx_buffer_alloc_failure();
 	test_stop_during_bootstrap();
 	test_stale_generation();
 	test_success_consumes_tables();

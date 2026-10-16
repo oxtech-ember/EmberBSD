@@ -72,6 +72,41 @@ rtwce_bootstrap(int on)
 	return 0;
 }
 
+/* Diagnostic counters for the operator sysctl. */
+int
+rtwce_stats(char *buf, size_t len)
+{
+	const struct rtw88_stats *st;
+
+	if (rtwce_sc == NULL)
+		return ENXIO;
+	st = &rtwce_sc->sc_stats;
+	snprintf(buf, len, "running %d intr %llu rx %llu c2h %llu "
+	    "err %llu short %llu tag %llu dma %llu last_c2h %#x/%u",
+	    rtwce_sc->sc_running, (unsigned long long)st->intr,
+	    (unsigned long long)st->rx_frames, (unsigned long long)st->rx_c2h,
+	    (unsigned long long)st->rx_errors, (unsigned long long)st->rx_short,
+	    (unsigned long long)st->rx_tag_errors,
+	    (unsigned long long)st->rx_dma_errors, st->last_c2h_id,
+	    st->last_c2h_seq);
+	return 0;
+}
+
+/* Diagnostic H2C: low byte is the command, the next three its payload. */
+int
+rtwce_h2c(uint32_t cmd)
+{
+	uint8_t payload[3];
+
+	if (rtwce_sc == NULL)
+		return ENXIO;
+	payload[0] = (uint8_t)(cmd >> 8);
+	payload[1] = (uint8_t)(cmd >> 16);
+	payload[2] = (uint8_t)(cmd >> 24);
+	return rtw88_fw_command(rtwce_sc, (uint8_t)cmd, payload,
+	    sizeof(payload));
+}
+
 static int
 rtw88_pci_present(struct rtw88_pci_softc *psc)
 {
@@ -244,14 +279,32 @@ rtw88_pci_intr(void *arg)
 {
 	struct rtw88_pci_softc *psc = arg;
 
+	int handled = 0;
+
 	mutex_enter(&psc->sc_lock);
 	/*
-	 * Resource-only attachment never unmasks interrupts. In particular,
-	 * do not acknowledge another device's shared INTx. Task6 supplies
-	 * status handling before any interrupt or DMA engine is enabled.
+	 * rtw88_intr touches nothing unless the core unmasked interrupts
+	 * and one of its causes is pending, so a shared INTx is left alone.
 	 */
+	if (!psc->sc_stopping)
+		handled = rtw88_intr(&psc->sc_core);
 	mutex_exit(&psc->sc_lock);
-	return 0;
+	return handled;
+}
+
+/*
+ * rtw88_stop cleared sc_running and the masks before calling this. A
+ * handler holding sc_lock finishes first; one already dispatched but
+ * not yet locked sees sc_running == 0. xc_barrier covers the latter.
+ */
+static void
+rtw88_pci_intr_barrier(void *cookie)
+{
+	struct rtw88_pci_softc *psc = cookie;
+
+	mutex_enter(&psc->sc_lock);
+	mutex_exit(&psc->sc_lock);
+	xc_barrier(0);
 }
 
 static int
@@ -401,6 +454,7 @@ static const struct rtw88_bus_ops rtw88_pci_ops = {
 	.dma_sync = rtw88_pci_dma_sync,
 	.intr_establish = rtw88_pci_intr_establish,
 	.intr_disestablish = rtw88_pci_intr_disestablish,
+	.intr_barrier = rtw88_pci_intr_barrier,
 	.firmware_load = rtw88_pci_firmware_load,
 	.firmware_release = rtw88_pci_firmware_release,
 	.bus_master = rtw88_pci_bus_master
