@@ -52,7 +52,7 @@ if [ "${FAIL_AT:-}" = a733-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; then
 fi
 SH
 done
-for contract in bcm2712-display bcm2712-display-irq bcm2712-display-hsm \
+for contract in bcm2712-display bcm2712-display-irq bcm2712-display-hsm bcm2712-display-dvp \
     bcm2712-v3d bcm2712-v3d-takeover bcm2712-v3d-dma \
     bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault \
     bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-sg bcm2712-v3d-job bcm2712-v3d-csd \
@@ -208,7 +208,7 @@ export RUBY="$work/bin/ruby"
 check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
     test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 20
-    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 21
+    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 22
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 6
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 8
 }
@@ -248,7 +248,7 @@ sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
 if_cemac_acpi.kmod bcm2712btcom.kmod rp1wmcodec.kmod rpi5button.kmod'
 for failure in tools module cpp dtb contract a733-contract \
     a733-gpu-vm-contract.sh gpu-contract bcm2712-display-contract.sh \
-    bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
+    bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh bcm2712-display-dvp-contract.sh ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
     bcm2712-v3d-prime-contract.rb bcm2712-v3d-bo-stats-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
     aicwf-sta.sh aicwf-vht.sh publish; do
     : > "$TEST_LOG"
@@ -266,7 +266,7 @@ for failure in tools module cpp dtb contract a733-contract \
         grep -Fq 'injected contract failure: a733-' "$TEST_OUT/contracts.log"
         ! grep -q '^gpu-contract ' "$TEST_LOG"
         ;;
-    bcm2712-display-contract.sh|bcm2712-display-irq-contract.sh|bcm2712-display-hsm-contract.sh)
+    bcm2712-display-contract.sh|bcm2712-display-irq-contract.sh|bcm2712-display-hsm-contract.sh|bcm2712-display-dvp-contract.sh)
         grep -Fq "gpu-contract $failure " "$TEST_LOG"
         grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
         ! grep -q '^gpu-contract bcm2712-v3d-contract.sh ' "$TEST_LOG"

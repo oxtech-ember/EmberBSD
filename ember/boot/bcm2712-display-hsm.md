@@ -103,5 +103,6 @@ Hardware acceptance must use the declared firmware resources and a coherent kern
 First validate a cold boot without an HDMI cable and the HSM request/readback sequence.
 Then implement and validate controller power, reset, HPD, and DDC ownership separately.
 The [L2 interrupt provider](bcm2712-display-irq.md) supplies a separate interrupt interface.
+The [DVP gate owner](bcm2712-display-dvp.md) manages the separate per-port gates without reset writes.
 Runtime KMS, scanout, IOMMU, and firmware-console handoff remain separate work.
 A733 uses a different clock and power backend. Do not reuse firmware clock ID 13 there.
