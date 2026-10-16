@@ -1170,6 +1170,12 @@ The base system shell is unchanged.
   Its VM profile has a checked [installer upgrade and complete backup recovery](ember/boot/amd64-vm-upgrade.md)
   between two published builds, with configuration and user-data checks after normal reboots.
   It has no X11 and does not establish a general hardware or GCC16 userland release.
+- **Realtek RTL8852BE Wi-Fi on amd64:** the [rtwx driver](ember/boot/rtwx.md)
+  reuses the dual-licensed Linux rtw89 hardware code through a small Linux
+  API layer and a net80211 bridge. One Jasper Lake (Celeron N5095A) laptop
+  passed 2.4/5 GHz scan, WPA2-PSK on 5 GHz with DHCP and a 30 MB transfer
+  with the module. Station mode and legacy rates only; boot with the
+  built-in driver and long-run operation are not tested.
 
 The costs are equally plain. Fixes from upstream are merged by hand.
 Only what the linked board pages mark "Tested" is claimed on physical
@@ -1279,6 +1285,9 @@ remain unverified.
   802.11r and long-duration operation remain outside this result. The [board page](ember/boards/orange-pi-zero-3w.md#wi-fi-limits-and-connected-scan-regression)
   records the firmware, bundle and tests.
 - **Short firmware replies** still need a command-transport fix and regression.
+- **RTL8852BE (`rtwx`):** WPA2-PSK station mode works with software crypto.
+  HT/VHT/HE rates, aggregation, WPA3/PMF, power save and beacon-loss
+  detection are not implemented. See the [driver limits](ember/boot/rtwx.md#limits).
 
 Changes to association and command handling should preserve the SAE and
 WPA2 checks and account for the separate roaming work.
