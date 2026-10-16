@@ -1614,7 +1614,8 @@
 ./usr/sbin/mbrlabel				base-obsolete		obsolete
 ./usr/sbin/mdconfig				base-sysutil-bin
 ./usr/sbin/mdnsd				base-mdns-bin		mdns
-./usr/sbin/mdsetimage				base-sysutil-bin
+./usr/sbin/mdsetimage				base-sysutil-bin		binutils
+./usr/sbin/mdsetimage				base-sysutil-bin		toolchain_missing
 ./usr/sbin/mk-amd-map				base-amd-bin
 ./usr/sbin/mkalias				base-nis-bin		yp
 ./usr/sbin/mknetid				base-nis-bin		yp

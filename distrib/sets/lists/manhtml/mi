@@ -2759,7 +2759,8 @@
 ./usr/share/man/html8/mbrlabel.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/mdconfig.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/mdnsd.html		man-mdns-htmlman	mdns,html
-./usr/share/man/html8/mdsetimage.html		man-sysutil-htmlman	html
+./usr/share/man/html8/mdsetimage.html		man-sysutil-htmlman	html,binutils
+./usr/share/man/html8/mdsetimage.html		man-sysutil-htmlman	html,toolchain_missing
 ./usr/share/man/html8/mfs.html			man-sys-htmlman		html
 ./usr/share/man/html8/mk-amd-map.html		man-amd-htmlman		html
 ./usr/share/man/html8/mkalias.html		man-nis-htmlman		yp,html
