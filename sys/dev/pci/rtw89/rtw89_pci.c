@@ -9,9 +9,19 @@
 #include "reg.h"
 #include "ser.h"
 
+#ifdef __NetBSD__
+/*
+ * Keep the PCIe link in L0: ASPM/CLKREQ handling has not been validated
+ * on NetBSD hosts yet.
+ */
+static bool rtw89_pci_disable_clkreq = true;
+static bool rtw89_pci_disable_aspm_l1 = true;
+static bool rtw89_pci_disable_l1ss = true;
+#else
 static bool rtw89_pci_disable_clkreq;
 static bool rtw89_pci_disable_aspm_l1;
 static bool rtw89_pci_disable_l1ss;
+#endif
 module_param_named(disable_clkreq, rtw89_pci_disable_clkreq, bool, 0644);
 module_param_named(disable_aspm_l1, rtw89_pci_disable_aspm_l1, bool, 0644);
 module_param_named(disable_aspm_l1ss, rtw89_pci_disable_l1ss, bool, 0644);
@@ -3842,11 +3852,11 @@ int rtw89_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	info = (const struct rtw89_driver_info *)id->driver_data;
 
-	rtwdev = rtw89_alloc_ieee80211_hw(&pdev->dev,
+	rtwdev = rtw89_alloc_ieee80211_hw(pdev->dev,
 					  sizeof(struct rtw89_pci),
 					  info->chip);
 	if (!rtwdev) {
-		dev_err(&pdev->dev, "failed to allocate hw\n");
+		dev_err(pdev->dev, "failed to allocate hw\n");
 		return -ENOMEM;
 	}
 
@@ -3858,7 +3868,7 @@ int rtw89_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	rtwdev->hci.rpwm_addr = pci_info->rpwm_addr;
 	rtwdev->hci.cpwm_addr = pci_info->cpwm_addr;
 
-	SET_IEEE80211_DEV(rtwdev->hw, &pdev->dev);
+	SET_IEEE80211_DEV(rtwdev->hw, pdev->dev);
 
 	ret = rtw89_core_init(rtwdev);
 	if (ret) {

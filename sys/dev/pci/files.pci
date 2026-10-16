@@ -814,6 +814,9 @@ device	rtwn: ifnet, arp, wlan, firmload
 attach	rtwn at pci
 file	dev/pci/if_rtwn.c		rtwn
 
+# Realtek RTL8852BE 802.11ax (rtw89)
+include "dev/pci/rtw89/files.rtw89"
+
 # Ralink RT2500/RT2600 PCI/Mini-PCI
 attach	ral at pci with ral_pci
 file	dev/pci/if_ral_pci.c		ral_pci

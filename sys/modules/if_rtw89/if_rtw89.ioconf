@@ -1,0 +1,10 @@
+#	$NetBSD$
+
+ioconf if_rtw89
+
+include "conf/files"
+include "dev/pci/files.pci"
+
+pseudo-root pci*
+
+rtwx* at pci? dev ? function ?

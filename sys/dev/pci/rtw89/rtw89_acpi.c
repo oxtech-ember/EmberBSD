@@ -6,6 +6,15 @@
 #include <linux/uuid.h>
 
 #include "acpi.h"
+
+#ifdef __NetBSD__
+/* ACPI _DSM overrides for regulatory/TAS are not supported on NetBSD. */
+int rtw89_acpi_evaluate_dsm(struct rtw89_dev *rtwdev,
+			    enum rtw89_acpi_dsm_func func, u8 *value)
+{
+	return -ENODEV;
+}
+#else
 #include "debug.h"
 
 static const guid_t rtw89_guid = GUID_INIT(0xD2A8C3E8, 0x4B69, 0x4F00,
@@ -50,3 +59,5 @@ int rtw89_acpi_evaluate_dsm(struct rtw89_dev *rtwdev,
 	ACPI_FREE(obj);
 	return ret;
 }
+
+#endif /* __NetBSD__ */

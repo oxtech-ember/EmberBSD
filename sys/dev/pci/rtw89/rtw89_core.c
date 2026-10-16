@@ -19,7 +19,12 @@
 #include "txrx.h"
 #include "util.h"
 
+#ifdef __NetBSD__
+/* Power save is not supported by the NetBSD glue yet. */
+static bool rtw89_disable_ps_mode = true;
+#else
 static bool rtw89_disable_ps_mode;
+#endif
 module_param_named(disable_ps_mode, rtw89_disable_ps_mode, bool, 0644);
 MODULE_PARM_DESC(disable_ps_mode, "Set Y to disable low power mode");
 

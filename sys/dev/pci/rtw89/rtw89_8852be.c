@@ -85,6 +85,20 @@ static struct pci_driver rtw89_8852be_driver = {
 };
 module_pci_driver(rtw89_8852be_driver);
 
+#ifdef __NetBSD__
+int rtw89_8852be_probe(struct pci_dev *pdev, u16 device);
+
+int rtw89_8852be_probe(struct pci_dev *pdev, u16 device)
+{
+	const struct pci_device_id *id;
+
+	for (id = rtw89_8852be_id_table; id->vendor != 0; id++)
+		if (id->device == device)
+			return rtw89_pci_probe(pdev, id);
+	return -ENODEV;
+}
+#endif
+
 MODULE_AUTHOR("Realtek Corporation");
 MODULE_DESCRIPTION("Realtek 802.11ax wireless 8852BE driver");
 MODULE_LICENSE("Dual BSD/GPL");

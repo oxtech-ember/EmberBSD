@@ -866,6 +866,7 @@ rge*	at pci? dev ? function ?	# Realtek 8125
 rtk*	at pci? dev ? function ?	# Realtek 8129/8139
 rtw*	at pci? dev ? function ?	# Realtek 8180L (802.11)
 rtwn*	at pci? dev ? function ?	# Realtek 8188CE/8192CE 802.11b/g/n
+rtwx*	at pci? dev ? function ?	# Realtek RTL8852BE 802.11ax
 sf*	at pci? dev ? function ?	# Adaptec AIC-6915 Ethernet
 sip*	at pci? dev ? function ?	# SiS 900/DP83815 Ethernet
 skc*	at pci? dev ? function ?	# SysKonnect SK9821 Gigabit Ethernet
