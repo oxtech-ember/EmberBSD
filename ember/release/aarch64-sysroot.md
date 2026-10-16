@@ -87,6 +87,14 @@ before removing its own temporary tree. Its artifact has limited retention.
 `build-run.json` can bind a downloaded candidate to its successful run URL and
 exact head commit before kit preparation.
 
+The separate **Sysroot release contracts** workflow checks the proposed helper
+revision. A synchronized PR can reuse an earlier successful OS producer only
+when its exact-source artifact remains available and OS producer inputs have
+not changed. The job names that source and run explicitly. It does not claim
+new binaries for the helper revision or target qualification. Manual dispatch
+always builds the selected source again. Preserve the actual producer's
+commit and profile when preparing a kit.
+
 ## Qualify the actual sets
 
 Extract into a fresh sysroot on Linux and check every selected libc alias.
