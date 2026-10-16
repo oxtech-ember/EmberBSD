@@ -40,6 +40,7 @@ static struct {
 	int stop_at_delay;
 	int bcn_ready;
 	int bcn_dead;
+	int ddma_bad_sum;
 	unsigned delays;
 	unsigned writes;
 	unsigned cfg_writes;
@@ -149,8 +150,16 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 			v = (v & ~0xffu) | f.efuse[addr];
 		v |= UINT32_C(1) << 31;
 	}
-	if (reg == 0x0080 && !f.fw_never_ready)
-		v |= 0xc078;
+	/*
+	 * Reference rtw88: the driver sets DW_OK and CHKSUM_OK per section
+	 * and FW_DW_RDY at the end. Only then does the enabled CPU boot the
+	 * image and raise FW_INIT_RDY.
+	 */
+	if (reg == 0x0080 && !f.fw_never_ready && (f.mmio[0x03] & 0x04) != 0 &&
+	    (v & 0x4078) == 0x4078)
+		v |= 0x8000;
+	if (reg == 0x1208 && f.ddma_bad_sum)
+		v |= UINT32_C(1) << 27;
 	/*
 	 * Internal DDMA completes only after a beacon kick consumed the
 	 * host chunk. Otherwise OWN stays set and the download times out.
@@ -544,6 +553,22 @@ test_command_timeout(void)
 	rtw88_core_detach(&sc);
 }
 
+/* DDMA reports a bad section checksum: no FW_DW_RDY, bounded failure. */
+static void
+test_firmware_checksum_bad(void)
+{
+	struct rtw88_softc sc;
+
+	reset_bus(&sc);
+	f.ddma_bad_sum = 1;
+	if (!attach_ok(&sc))
+		return;
+	CHECK(rtw88_start(&sc) == EIO);
+	CHECK(!sc.sc_rf_enabled && f.master == 0);
+	CHECK((f.mmio[0x81] & 0x40) == 0);
+	rtw88_core_detach(&sc);
+}
+
 /* The chip never reports BCN_VALID: bounded failure, mastering cleared. */
 static void
 test_beacon_never_valid(void)
@@ -639,6 +664,7 @@ main(void)
 	test_command_length();
 	test_command_timeout();
 	test_beacon_never_valid();
+	test_firmware_checksum_bad();
 	test_stop_during_bootstrap();
 	test_stale_generation();
 	test_success_consumes_tables();

@@ -27,8 +27,17 @@
 #define RTW88_DDMA_CHKSUM_EN	UINT32_C(0x20000000)
 #define RTW88_DDMA_CHKSUM_CONT	UINT32_C(0x01000000)
 #define RTW88_DDMA_RESET_CK	UINT32_C(0x02000000)
+#define RTW88_DDMA_CHKSUM_STS	UINT32_C(0x08000000)
 #define RTW88_DDMA_LEN_MASK	0x3ffff
 #define RTW88_OCP_TXBUF		UINT32_C(0x18780000)
+#define RTW88_OCP_DMEM		UINT32_C(0x00200000)
+#define RTW88_IMEM_DW_OK	0x08
+#define RTW88_IMEM_CHKSUM_OK	0x10
+#define RTW88_DMEM_DW_OK	0x20
+#define RTW88_DMEM_CHKSUM_OK	0x40
+#define RTW88_REG_TXDMA_STATUS	0x0210
+#define RTW88_PAGE_OVF		0x04
+#define RTW88_REG_FW_DBG7	0x10fc
 #define RTW88_TX_DESC		48
 #define RTW88_FW_CHUNK		0x1000
 #define RTW88_REG_HMETFR	0x01cc
@@ -393,6 +402,41 @@ rtw88_iddma_chunk(struct rtw88_softc *sc, uint32_t gen, const uint8_t *data,
 	return error;
 }
 
+/*
+ * The driver, not the firmware, reports each section to the WCPU ROM:
+ * DW_OK, plus CHKSUM_OK when DDMA saw a good checksum. IMEM and EMEM
+ * sit below the DMEM base and share the IMEM bits.
+ */
+static int
+rtw88_section_checksum(struct rtw88_softc *sc, uint32_t addr)
+{
+	uint32_t ddma;
+	uint8_t fw, dw, ok;
+	int error;
+
+	error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_DDMA_CTRL, &ddma);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_MCUFW_CTRL, &fw);
+	if (error != 0)
+		return error;
+	if (addr < RTW88_OCP_DMEM) {
+		dw = RTW88_IMEM_DW_OK;
+		ok = RTW88_IMEM_CHKSUM_OK;
+	} else {
+		dw = RTW88_DMEM_DW_OK;
+		ok = RTW88_DMEM_CHKSUM_OK;
+	}
+	if ((ddma & RTW88_DDMA_CHKSUM_STS) != 0) {
+		(void)sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_MCUFW_CTRL,
+		    (uint8_t)((fw | dw) & ~ok));
+		printf("rtwce: firmware checksum failed at %#x\n", addr);
+		return EIO;
+	}
+	return sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_MCUFW_CTRL,
+	    (uint8_t)(fw | dw | ok));
+}
+
 static int
 rtw88_download_section(struct rtw88_softc *sc, uint32_t gen,
     const uint8_t *fw, const struct rtw88_fw_section *section)
@@ -420,7 +464,7 @@ rtw88_download_section(struct rtw88_softc *sc, uint32_t gen,
 		first = 0;
 		off += chunk;
 	}
-	return 0;
+	return rtw88_section_checksum(sc, section->load_address);
 }
 
 static int
@@ -452,20 +496,22 @@ rtw88_fw_download(struct rtw88_softc *sc, uint32_t gen, const uint8_t *fw,
 		if (error != 0)
 			return error;
 	}
+	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_TXDMA_STATUS,
+	    RTW88_PAGE_OVF);
+	if (error != 0)
+		return error;
 	error = sc->sc_ops->read_2(sc->sc_bus, RTW88_REG_MCUFW_CTRL, &ctrl);
 	if (error != 0)
 		return error;
+	/* Reference end flow: no FW_DW_RDY without both checksums. */
+	if ((ctrl & RTW88_CHECK_SUM_OK) != RTW88_CHECK_SUM_OK)
+		return EIO;
 	ctrl = (uint16_t)((ctrl | RTW88_FW_DW_RDY) & ~RTW88_MCUFWDL_EN);
 	error = sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_MCUFW_CTRL, ctrl);
 	if (error != 0)
 		return error;
+	/* FW_INIT_RDY joins the driver-set bits once the image runs. */
 	ready.reg = RTW88_REG_MCUFW_CTRL;
-	ready.mask = 0xffff;
-	ready.value = RTW88_FW_READY;
-	/*
-	 * The mock and silicon report a ready constellation in the low 16
-	 * bits. Accept any value that includes the documented ready bits.
-	 */
 	ready.mask = RTW88_FW_READY;
 	ready.value = RTW88_FW_READY;
 	error = rtw88_rmw8(sc, RTW88_REG_RSV_CTRL + 1, 0, 0x01);
@@ -475,8 +521,14 @@ rtw88_fw_download(struct rtw88_softc *sc, uint32_t gen, const uint8_t *fw,
 	if (error != 0)
 		return error;
 	error = rtw88_poll(sc, gen, RTW88_BOOTSTRAP_US, rtw88_ready32, &ready);
-	if (error != 0)
-		printf("rtwce: firmware ready timed out\n");
+	if (error != 0) {
+		uint32_t mcu = 0, dbg7 = 0;
+
+		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_MCUFW_CTRL, &mcu);
+		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_FW_DBG7, &dbg7);
+		printf("rtwce: firmware ready timed out mcufw %#x dbg7 %#x\n",
+		    mcu, dbg7);
+	}
 	return error;
 }
 
