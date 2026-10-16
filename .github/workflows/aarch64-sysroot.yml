@@ -1,0 +1,77 @@
+name: AArch64 development sets
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/aarch64-sysroot.yml'
+      - 'ember/release/build-aarch64.sh'
+      - 'ember/tests/release-aarch64-build.rb'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aarch64-sysroot-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      LC_ALL: C
+      TZ: UTC
+      EMBER_RELEASE_JOBS: '4'
+      BUILD_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BUILD_SOURCE_COMMIT }}
+          persist-credentials: false
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential ruby bmake \
+            bison flex libtool texinfo zlib1g-dev libarchive-tools xz-utils
+      - name: Check the build wrapper
+        run: ruby ember/tests/release-aarch64-build.rb
+      - name: Build the pinned complete sets
+        run: |
+          df -B1 "$RUNNER_TEMP"
+          sh ember/release/build-aarch64.sh "$BUILD_SOURCE_COMMIT" "$RUNNER_TEMP/ember-aarch64"
+      - name: Record the exact source export hash
+        if: success()
+        run: |
+          cd "$RUNNER_TEMP/ember-aarch64"
+          sha256sum source.tar.gz > source-export.sha256
+          sha256sum release/evbarm-aarch64/binary/sets/base.tar.xz \
+            release/evbarm-aarch64/binary/sets/comp.tar.xz netbsd-EMBER64.gz > build-outputs.sha256
+      - name: Preserve candidate sets and failed-build evidence
+        if: always()
+        id: artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: aarch64-development-sets-${{ env.BUILD_SOURCE_COMMIT }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/ember-aarch64/build.log
+            ${{ runner.temp }}/ember-aarch64/build-profile.json
+            ${{ runner.temp }}/ember-aarch64/build-success
+            ${{ runner.temp }}/ember-aarch64/source-export.sha256
+            ${{ runner.temp }}/ember-aarch64/build-outputs.sha256
+            ${{ runner.temp }}/ember-aarch64/netbsd-EMBER64.gz
+            ${{ runner.temp }}/ember-aarch64/dest/METALOG
+            ${{ runner.temp }}/ember-aarch64/release/evbarm-aarch64/binary/sets/base.tar.xz
+            ${{ runner.temp }}/ember-aarch64/release/evbarm-aarch64/binary/sets/comp.tar.xz
+            ${{ runner.temp }}/ember-aarch64/release/evbarm-aarch64/binary/sets/SHA512
+      - name: Release this job's temporary build tree
+        if: always() && steps.artifact.outcome == 'success'
+        run: |
+          test -n "$RUNNER_TEMP"
+          df -B1 "$RUNNER_TEMP"
+          rm -rf -- "$RUNNER_TEMP/ember-aarch64"
+          test ! -e "$RUNNER_TEMP/ember-aarch64"
+          df -B1 "$RUNNER_TEMP"
