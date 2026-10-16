@@ -1,0 +1,405 @@
+/* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause */
+/* Copyright(c) 2018-2019 Realtek Corporation. */
+/* Copyright (c) 2026 EmberBSD contributors. */
+/* Origin: FreeBSD a143197801c680b958ab662c88cf086668a1958b rtw88 PCI. */
+#include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/device.h>
+#include <sys/errno.h>
+#include <sys/kmem.h>
+#include <sys/mutex.h>
+#include <sys/bus.h>
+#include <sys/intr.h>
+#include <sys/xcall.h>
+#include <dev/pci/pcireg.h>
+#include <dev/pci/pcivar.h>
+#include <dev/pci/pcidevs.h>
+#include <dev/ic/rtw88var.h>
+
+struct rtw88_pci_softc {
+	struct rtw88_softc sc_core;
+	device_t sc_dev;
+	struct pci_attach_args sc_pa;
+	bus_space_tag_t sc_st;
+	bus_space_handle_t sc_sh;
+	bus_size_t sc_mapsize;
+	bus_dma_tag_t sc_dmat;
+	pci_intr_handle_t *sc_pih;
+	void *sc_ih;
+	kmutex_t sc_lock;
+	pcireg_t sc_command;
+	int sc_mapped;
+	int sc_lock_initialized;
+	int sc_command_saved;
+	int sc_stopping;
+};
+
+/* pci.h at the pinned origin: BAR2 and RTL8822C WCPU interrupt masks. */
+#define RTW88_PCI_BAR PCI_BAR(2)
+#define RTW88_PCI_HIMR0 0x00b0
+#define RTW88_PCI_HIMR1 0x00b8
+#define RTW88_PCI_HIMR3 0x10b8
+#define RTW88_PCI_MAP_MIN 0x1334
+#define RTW88_PCI_RING_ALIGN 256
+
+struct rtw88_pci_dma {
+	bus_dmamap_t map;
+	bus_dma_segment_t seg;
+};
+
+static int rtw88_pci_detach(device_t, int);
+
+static int
+rtw88_pci_present(struct rtw88_pci_softc *psc)
+{
+	return pci_conf_read(psc->sc_pa.pa_pc, psc->sc_pa.pa_tag,
+	    PCI_ID_REG) == psc->sc_pa.pa_id;
+}
+
+static int
+rtw88_pci_access(struct rtw88_pci_softc *psc, uint32_t reg, size_t width)
+{
+	if ((reg & (width - 1)) != 0 || reg > psc->sc_mapsize ||
+	    width > psc->sc_mapsize - reg)
+		return EINVAL;
+	if (!psc->sc_mapped || !rtw88_pci_present(psc))
+		return ENXIO;
+	return 0;
+}
+
+/*
+ * bus_space has no status result. Check PCI presence around each access.
+ * All-ones register values alone are not proof of removal. These methods
+ * cannot recover a synchronous CPU bus fault; see the provenance limits.
+ * The caller must serialize hardware commands against detach.
+ */
+#define RTW88_PCI_IO(width, type) \
+static int \
+rtw88_pci_read_##width(void *cookie, uint32_t reg, type *out) \
+{ \
+	struct rtw88_pci_softc *psc = cookie; \
+	type value; \
+	int error; \
+	if (out == NULL) \
+		return EINVAL; \
+	error = rtw88_pci_access(psc, reg, width); \
+	if (error != 0) \
+		return error; \
+	value = bus_space_read_##width(psc->sc_st, psc->sc_sh, reg); \
+	if (!rtw88_pci_present(psc)) \
+		return ENXIO; \
+	*out = value; \
+	return 0; \
+} \
+static int \
+rtw88_pci_write_##width(void *cookie, uint32_t reg, type value) \
+{ \
+	struct rtw88_pci_softc *psc = cookie; \
+	int error = rtw88_pci_access(psc, reg, width); \
+	if (error != 0) \
+		return error; \
+	bus_space_write_##width(psc->sc_st, psc->sc_sh, reg, value); \
+	bus_space_barrier(psc->sc_st, psc->sc_sh, reg, width, \
+	    BUS_SPACE_BARRIER_WRITE); \
+	return rtw88_pci_present(psc) ? 0 : ENXIO; \
+}
+RTW88_PCI_IO(1, uint8_t)
+RTW88_PCI_IO(2, uint16_t)
+RTW88_PCI_IO(4, uint32_t)
+#undef RTW88_PCI_IO
+
+static void
+rtw88_pci_delay(void *cookie, unsigned us)
+{
+	(void)cookie;
+	delay(us);
+}
+
+static int
+rtw88_pci_mask(struct rtw88_pci_softc *psc)
+{
+	static const uint32_t regs[] = {
+		RTW88_PCI_HIMR0, RTW88_PCI_HIMR1, RTW88_PCI_HIMR3
+	};
+	uint32_t value;
+
+	for (unsigned i = 0; i < __arraycount(regs); i++) {
+		int error = rtw88_pci_write_4(psc, regs[i], 0);
+		if (error != 0)
+			return error;
+		/* Readback flushes posted writes and verifies the critical mask. */
+		error = rtw88_pci_read_4(psc, regs[i], &value);
+		if (error != 0)
+			return error;
+		if (value != 0)
+			return EIO;
+	}
+	return 0;
+}
+
+static int
+rtw88_pci_dma_alloc(void *cookie, struct rtw88_dma *ring, size_t size)
+{
+	struct rtw88_pci_softc *psc = cookie;
+	struct rtw88_pci_dma *dma;
+	void *kva;
+	int error, nsegs;
+
+	dma = kmem_zalloc(sizeof(*dma), KM_NOSLEEP);
+	if (dma == NULL)
+		return ENOMEM;
+	error = bus_dmamap_create(psc->sc_dmat, size, 1, size, 0,
+	    BUS_DMA_NOWAIT, &dma->map);
+	if (error != 0)
+		goto free_cookie;
+	error = bus_dmamem_alloc(psc->sc_dmat, size, RTW88_PCI_RING_ALIGN,
+	    0, &dma->seg, 1, &nsegs, BUS_DMA_NOWAIT);
+	if (error != 0)
+		goto destroy_map;
+	error = bus_dmamem_map(psc->sc_dmat, &dma->seg, nsegs, size,
+	    &kva, BUS_DMA_NOWAIT | BUS_DMA_COHERENT);
+	if (error != 0)
+		goto free_mem;
+	error = bus_dmamap_load(psc->sc_dmat, dma->map, kva, size,
+	    NULL, BUS_DMA_NOWAIT);
+	if (error != 0)
+		goto unmap_mem;
+	if (dma->map->dm_nsegs != 1 || dma->map->dm_mapsize != size ||
+	    dma->map->dm_segs[0].ds_len != size ||
+	    (dma->map->dm_segs[0].ds_addr & (RTW88_PCI_RING_ALIGN - 1))) {
+		error = EINVAL;
+		goto unload_map;
+	}
+	error = rtw88_dma_validate(dma->map->dm_segs[0].ds_addr, size,
+	    RTW8822C_DMA_ADDR_BITS);
+	if (error != 0)
+		goto unload_map;
+	memset(kva, 0, size);
+	ring->cookie = dma;
+	ring->vaddr = kva;
+	ring->addr = dma->map->dm_segs[0].ds_addr;
+	ring->size = size;
+	return 0;
+unload_map:
+	bus_dmamap_unload(psc->sc_dmat, dma->map);
+unmap_mem:
+	bus_dmamem_unmap(psc->sc_dmat, kva, size);
+free_mem:
+	bus_dmamem_free(psc->sc_dmat, &dma->seg, nsegs);
+destroy_map:
+	bus_dmamap_destroy(psc->sc_dmat, dma->map);
+free_cookie:
+	kmem_free(dma, sizeof(*dma));
+	return error;
+}
+
+static void
+rtw88_pci_dma_free(void *cookie, struct rtw88_dma *ring)
+{
+	struct rtw88_pci_softc *psc = cookie;
+	struct rtw88_pci_dma *dma = ring->cookie;
+
+	bus_dmamap_unload(psc->sc_dmat, dma->map);
+	bus_dmamem_unmap(psc->sc_dmat, ring->vaddr, ring->size);
+	bus_dmamem_free(psc->sc_dmat, &dma->seg, 1);
+	bus_dmamap_destroy(psc->sc_dmat, dma->map);
+	kmem_free(dma, sizeof(*dma));
+	memset(ring, 0, sizeof(*ring));
+}
+
+static void
+rtw88_pci_dma_sync(void *cookie, struct rtw88_dma *ring, int ops)
+{
+	struct rtw88_pci_softc *psc = cookie;
+	struct rtw88_pci_dma *dma = ring->cookie;
+
+	bus_dmamap_sync(psc->sc_dmat, dma->map, 0, ring->size, ops);
+}
+
+static int
+rtw88_pci_intr(void *arg)
+{
+	struct rtw88_pci_softc *psc = arg;
+
+	mutex_enter(&psc->sc_lock);
+	/*
+	 * Resource-only attachment never unmasks interrupts. In particular,
+	 * do not acknowledge another device's shared INTx. Task6 supplies
+	 * status handling before any interrupt or DMA engine is enabled.
+	 */
+	mutex_exit(&psc->sc_lock);
+	return 0;
+}
+
+static int
+rtw88_pci_intr_establish(void *cookie)
+{
+	struct rtw88_pci_softc *psc = cookie;
+	int counts[PCI_INTR_TYPE_SIZE] = { 0 };
+	int error;
+
+	/* Pinned PCI code requests one MSI or legacy INTx, never MSI-X. */
+	counts[PCI_INTR_TYPE_INTX] = 1;
+	counts[PCI_INTR_TYPE_MSI] = 1;
+	error = pci_intr_alloc(&psc->sc_pa, &psc->sc_pih, counts,
+	    PCI_INTR_TYPE_MSI);
+	if (error != 0)
+		return error;
+	psc->sc_ih = pci_intr_establish_xname(psc->sc_pa.pa_pc,
+	    psc->sc_pih[0], IPL_NET, rtw88_pci_intr, psc,
+	    device_xname(psc->sc_dev));
+	if (psc->sc_ih == NULL) {
+		pci_intr_release(psc->sc_pa.pa_pc, psc->sc_pih, 1);
+		psc->sc_pih = NULL;
+		return EIO;
+	}
+	return 0;
+}
+
+static void
+rtw88_pci_intr_disestablish(void *cookie)
+{
+	struct rtw88_pci_softc *psc = cookie;
+
+	mutex_enter(&psc->sc_lock);
+	psc->sc_stopping = 1;
+	/* All masks were zero at attach and are never enabled in this stage. */
+	if (psc->sc_mapped && rtw88_pci_present(psc))
+		(void)rtw88_pci_mask(psc);
+	mutex_exit(&psc->sc_lock);
+	/* Remove future dispatch before draining already fetched handlers. */
+	pci_intr_disestablish(psc->sc_pa.pa_pc, psc->sc_ih);
+	/*
+	 * A low-priority cross-call waits for IPL_NET activity on every CPU.
+	 * No driver lock is held. If xc_wait sleeps, cv_wait releases BKL,
+	 * allowing a pending non-MPSAFE handler to complete. Keep the softc,
+	 * mutex and DMA alive until this barrier returns.
+	 */
+	xc_barrier(0);
+	psc->sc_ih = NULL;
+	pci_intr_release(psc->sc_pa.pa_pc, psc->sc_pih, 1);
+	psc->sc_pih = NULL;
+}
+
+static const struct rtw88_bus_ops rtw88_pci_ops = {
+	.read_1 = rtw88_pci_read_1,
+	.read_2 = rtw88_pci_read_2,
+	.read_4 = rtw88_pci_read_4,
+	.write_1 = rtw88_pci_write_1,
+	.write_2 = rtw88_pci_write_2,
+	.write_4 = rtw88_pci_write_4,
+	.delay_us = rtw88_pci_delay,
+	.dma_alloc = rtw88_pci_dma_alloc,
+	.dma_free = rtw88_pci_dma_free,
+	.dma_sync = rtw88_pci_dma_sync,
+	.intr_establish = rtw88_pci_intr_establish,
+	.intr_disestablish = rtw88_pci_intr_disestablish
+};
+
+static int
+rtw88_pci_match(device_t parent, cfdata_t match, void *aux)
+{
+	const struct pci_attach_args *pa = aux;
+
+	(void)parent;
+	(void)match;
+	return PCI_VENDOR(pa->pa_id) == PCI_VENDOR_REALTEK &&
+	    PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_REALTEK_RTL8822CE;
+}
+
+static void
+rtw88_pci_attach(device_t parent, device_t self, void *aux)
+{
+	struct rtw88_pci_softc *psc = device_private(self);
+	struct rtw88_softc *sc = &psc->sc_core;
+	const struct pci_attach_args *pa = aux;
+	pcireg_t command, type;
+	int error = ENXIO;
+
+	(void)parent;
+	psc->sc_dev = self;
+	psc->sc_pa = *pa;
+	sc->sc_bus = psc;
+	sc->sc_ops = &rtw88_pci_ops;
+	aprint_normal(": Realtek RTL8822CE PCI resources\n");
+	if (!rtw88_pci_present(psc))
+		goto fail;
+	command = pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG);
+	if (command == UINT32_MAX || !rtw88_pci_present(psc))
+		goto fail;
+	/* Do not write status W1C bits or restore a firmware bus master. */
+	psc->sc_command = (command & 0xffff) & ~PCI_COMMAND_MASTER_ENABLE;
+	psc->sc_command_saved = 1;
+	pci_conf_write(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG,
+	    psc->sc_command);
+	command = pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG);
+	if ((command & PCI_COMMAND_MASTER_ENABLE) != 0)
+		goto fail;
+	type = pci_mapreg_type(pa->pa_pc, pa->pa_tag, RTW88_PCI_BAR);
+	if (PCI_MAPREG_TYPE(type) != PCI_MAPREG_TYPE_MEM)
+		goto fail;
+	error = pci_mapreg_map(pa, RTW88_PCI_BAR, type, 0,
+	    &psc->sc_st, &psc->sc_sh, NULL, &psc->sc_mapsize);
+	if (error != 0)
+		goto fail;
+	psc->sc_mapped = 1;
+	if (psc->sc_mapsize < RTW88_PCI_MAP_MIN) {
+		error = EINVAL;
+		goto fail;
+	}
+	error = rtw88_pci_mask(psc);
+	if (error != 0)
+		goto fail;
+	/* This is mandatory. Never fall back to an unconstrained parent. */
+	error = bus_dmatag_subregion(pa->pa_dmat, 0, UINT32_MAX,
+	    &psc->sc_dmat, BUS_DMA_NOWAIT);
+	if (error != 0)
+		goto fail;
+	mutex_init(&psc->sc_lock, MUTEX_DEFAULT, IPL_NET);
+	psc->sc_lock_initialized = 1;
+	error = rtw88_core_attach(sc);
+	if (error != 0)
+		goto fail;
+	aprint_normal_dev(self, "resources ready; radio and DMA remain disabled\n");
+	return;
+fail:
+	aprint_error_dev(self, "resource attachment failed: %d\n", error);
+	(void)rtw88_pci_detach(self, 0);
+}
+
+static int
+rtw88_pci_detach(device_t self, int flags)
+{
+	struct rtw88_pci_softc *psc = device_private(self);
+
+	(void)flags;
+	/* Mastering was never enabled; keep it disabled before freeing DMA. */
+	if (psc->sc_command_saved && rtw88_pci_present(psc))
+		pci_conf_write(psc->sc_pa.pa_pc, psc->sc_pa.pa_tag,
+		    PCI_COMMAND_STATUS_REG, psc->sc_command |
+		    (psc->sc_mapped ? PCI_COMMAND_MEM_ENABLE : 0));
+	rtw88_core_detach(&psc->sc_core);
+	if (psc->sc_lock_initialized) {
+		mutex_destroy(&psc->sc_lock);
+		psc->sc_lock_initialized = 0;
+	}
+	if (psc->sc_dmat != NULL) {
+		bus_dmatag_destroy(psc->sc_dmat);
+		psc->sc_dmat = NULL;
+	}
+	if (psc->sc_mapped) {
+		bus_space_unmap(psc->sc_st, psc->sc_sh, psc->sc_mapsize);
+		psc->sc_mapped = 0;
+	}
+	if (psc->sc_command_saved) {
+		if (rtw88_pci_present(psc))
+			pci_conf_write(psc->sc_pa.pa_pc, psc->sc_pa.pa_tag,
+			    PCI_COMMAND_STATUS_REG, psc->sc_command);
+		psc->sc_command_saved = 0;
+	}
+	return 0;
+}
+
+CFATTACH_DECL3_NEW(rtw88_pci, sizeof(struct rtw88_pci_softc),
+    rtw88_pci_match, rtw88_pci_attach, rtw88_pci_detach, NULL, NULL, NULL,
+    DVF_DETACH_SHUTDOWN);

@@ -809,6 +809,10 @@ file	dev/pci/if_atw_pci.c		atw_pci
 attach	rtw at pci with rtw_pci
 file	dev/pci/if_rtw_pci.c		rtw_pci
 
+# Realtek RTL8822CE PCIe (quiescent resources; no network interface)
+attach	rtw88 at pci with rtw88_pci
+file	dev/pci/if_rtw88_pci.c		rtw88_pci
+
 # Realtek RTL8188CE Mini-PCIe
 device	rtwn: ifnet, arp, wlan, firmload
 attach	rtwn at pci

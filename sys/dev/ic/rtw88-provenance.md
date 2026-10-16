@@ -417,3 +417,57 @@ before this restriction can be relaxed.
 For only descriptor/range tests, run
 `RTW88_DESCRIPTORS_ONLY=1 CC=gcc-16 sh ember/tools/rtw88-contract.sh`.
 Omit that selection for firmware/EFUSE/identity regression and real fixtures.
+
+## Native PCI resource attachment
+
+`if_rtw88_pci.c` and `rtw88.c` implement quiescent resource attachment for
+PCI 10ec:c822. This stage creates no network interface. It does not load
+firmware, publish ring addresses, unmask interrupts, or enable bus mastering.
+Select `rtw88* at pci? dev ? function ?` in an explicit kernel configuration.
+The default board configuration is unchanged.
+
+The pinned `pci.c` and `pci.h` above establish BAR2, eight TX queues and one
+RX queue. BK/VI/VO/management/high/H2C have 128 buffer descriptors, BE has
+256, beacon has one, and RX has 512. TX entries are 16 bytes; RX entries
+are eight bytes. The native allocator requests 256-byte alignment (a
+conservative allocation constraint), one coherent DMA segment and a
+mandatory 32-bit subregion tag. It validates the full loaded bus range,
+size, alignment and segment count before ownership transfer. There is no
+fallback to an unconstrained DMA tag, address truncation, or IOMMU change.
+Packet buffers and descriptor execution remain separate integration work.
+
+`rtw_pci_request_irq` requests one MSI or legacy INTx, without MSI-X.
+The native attachment uses the same alternatives through `pci_intr_alloc`.
+`rtw_pci_disable_interrupt` establishes HIMR0=0x00b0, HIMR1=0x00b8 and,
+for the RTL8822C WCPU, HIMR3=0x10b8. Each mask is cleared and read back
+before allocating rings or installing the passive handler. The handler
+returns unclaimed for shared INTx and never touches MMIO. It must be
+replaced with validated status processing before enabling interrupts.
+
+The shared core owns complete ring mappings and the established interrupt.
+The PCI attachment owns BAR mapping, restricted DMA tag, native mutex and
+PCI command restoration. Failed partial allocations unwind locally. Core
+teardown removes the interrupt before freeing rings; PCI teardown then
+releases the mutex, tag and BAR. Command restoration never re-enables a
+bus master inherited from firmware. PCI status W1C bits are not replayed.
+After disestablishment, `xc_barrier(0)` waits for pending IPL_NET handlers
+on every CPU before vector, ring or mutex release. The driver holds no
+mutex across this wait. The native low-priority xcall wait drops BKL when
+it sleeps, allowing an already selected non-MPSAFE handler to finish.
+The native PIC still owns its internal interrupt-source lifetime. The
+fake-bus contract proves driver ordering, not physical SMP behavior.
+
+Register reads return status separately from data and preserve output on
+failure. Bounds, alignment and PCI presence are checked. Presence is checked
+again after an access, so an observed removal is not ordinary register data.
+Native `bus_space` supplies no error result and cannot catch a synchronous
+CPU bus fault here. A valid all-ones register value is not rejected by itself.
+Critical mask writes have readback; ordinary writes only check presence and
+issue a bus-space write barrier. No successful EFUSE or silicon read is
+claimed by this resource attachment. Later bootstrap must propagate both
+hardware-read and parser failures before any configuration sequence.
+
+Run `sh ember/tools/rtw88-pci-contract.sh` for actual PCI/core source with
+fake native bus APIs. It tests each acquisition failure, complete unwind,
+32-bit range crossing, map geometry, masked IRQ lifetime and device removal.
+The existing firmware/EFUSE/descriptor contract remains independently runnable.

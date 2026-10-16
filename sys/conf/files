@@ -738,6 +738,12 @@ file	dev/ic/athrate-sample.c		ath
 device	atw: arp, wlan, ifnet, smc93cx6
 file	dev/ic/atw.c			atw
 
+# Realtek RTL8822CE resource-only core
+device	rtw88
+file	dev/ic/rtw88.c			rtw88
+file	dev/ic/rtw88_hw.c		rtw88
+file	dev/ic/rtw8822c.c		rtw88
+
 # Realtek RTL8180 802.11
 #
 device rtw: arp, wlan, ifnet, smc93cx6
