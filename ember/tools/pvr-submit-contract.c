@@ -60,7 +60,8 @@ static pthread_cond_t changed=PTHREAD_COND_INITIALIZER;
 static bool concurrent, waiter_entered, waiter_released, frozen_clock, complete_on_wait;
 static unsigned allocate_calls, allocation_fault, copy_calls, copy_fault;
 static unsigned prepared, completed, computed, poisoned, signals, wait_calls, polls;
-static unsigned compute_error_at, next_id;
+static unsigned compute_error_at, next_id, transferred;
+static int transfer_error;
 static int prepare_error, backend_error, pause_error, wait_error, id_error;
 static bool backend_changed, switch_backend_on_pause, backend_absent;
 static void *retained;
@@ -165,7 +166,7 @@ static int dma_fence_get_status(struct dma_fence *f)
 }
 static unsigned rendered;
 static struct dma_fence *dma_fence_get_stub(void)
-{ CHECK(gated && computed+rendered!=0 && completed==computed+rendered); return dma_fence_get(&stub); }
+{ CHECK(gated && computed+rendered+transferred!=0 && completed==computed+rendered+transferred); return dma_fence_get(&stub); }
 static int dma_fence_chain_find_seqno(struct dma_fence **fp,uint64_t seqno)
 {
 	struct dma_fence *f=*fp;
@@ -255,6 +256,17 @@ int pvr_context_compute(struct pvr_context *c,const struct rogue_fwif_cmd_comput
 	if(computed==compute_error_at) return EIO;
 	return 0;
 }
+int
+pvr_context_transfer(struct pvr_context *c,
+    const struct rogue_fwif_cmd_transfer *cmd, uint32_t id)
+{
+	CHECK(gated && platform && c->type == DRM_PVR_CTX_TYPE_TRANSFER_FRAG);
+	CHECK(id != 0 && cmd->regs.pds_bgnd0_base == UINT64_C(0x9002000000));
+	CHECK(contexts[2].refs == 2 && contexts[2].vm.prepared == 1);
+	CHECK(cmd->flags == ROGUE_TRANSFER_FLAGS_SINGLE_CORE);
+	transferred++;
+	return transfer_error;
+}
 #define ROGUE_FWIF_CCB_CMD_TYPE_FRAG (203u|0x2abc0000u|0x8000u)
 #define ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR (204u|0x2abc0000u|0x8000u)
 static unsigned rendered, render_error_at;
@@ -296,14 +308,14 @@ static struct dma_fence *drm_syncobj_fence_get(struct drm_syncobj *s)
 }
 static void drm_syncobj_replace_fence(struct drm_syncobj *s,struct dma_fence *f)
 {
-	CHECK(gated && platform && computed+rendered==completed && computed+rendered!=0);
+	CHECK(gated && platform && computed+rendered+transferred==completed && computed+rendered+transferred!=0);
 	CHECK(pthread_mutex_lock(&sync_lock)==0); CHECK(s->refs!=0);
 	dma_fence_put(s->fence); s->fence=dma_fence_get(f); signals++;
 	CHECK(pthread_mutex_unlock(&sync_lock)==0);
 }
 static void drm_syncobj_add_point(struct drm_syncobj *s,struct dma_fence_chain *c,struct dma_fence *f,uint64_t point)
 {
-	CHECK(gated && platform && c!=NULL && point!=0 && computed+rendered==completed && computed+rendered!=0);
+	CHECK(gated && platform && c!=NULL && point!=0 && computed+rendered+transferred==completed && computed+rendered+transferred!=0);
 	CHECK(pthread_mutex_lock(&sync_lock)==0); CHECK(s->refs!=0);
 	atomic_init(&c->base.refs,1); c->base.chain=true; c->base.seqno=point;
 	c->dfc_fence=dma_fence_get(f); c->prev=s->fence;
@@ -379,7 +391,7 @@ static void initialize(unsigned count)
 	allocate_calls=allocation_fault=copy_calls=copy_fault=0;
 	prepared=completed=computed=poisoned=signals=wait_calls=polls=0; rendered=hwrt_gets=hwrt_puts=hwrt_targets=0;
 	memset(hwrt_model,0,sizeof(hwrt_model)); hwrt_model_vm=NULL; hwrt_target_error=0; render_error_at=0;
-	compute_error_at=next_id=0; prepare_error=backend_error=pause_error=wait_error=id_error=0;
+	transferred=0; transfer_error=0; compute_error_at=next_id=0; prepare_error=backend_error=pause_error=wait_error=id_error=0;
 	backend_changed=switch_backend_on_pause=backend_absent=false; retained=NULL; concurrent=waiter_entered=waiter_released=frozen_clock=complete_on_wait=false;
 	clock_ns=0; waiting_thread=false; nranges=0;
 	atomic_init(&stub.refs,1); stub.status=1; stub.immortal=true; stub.chain=false;
@@ -434,6 +446,102 @@ static void success_cases(void)
 	initialize(1); syncobjs[1].fence=new_fence(1);
 	add_op(0,1,0,0); add_op(0,2,DRM_PVR_SYNC_OP_FLAG_SIGNAL|1,0);
 	CHECK(submit()==0 && signals==1 && syncobjs[2].fence==&stub); finish();
+}
+static void
+set_transfer(unsigned index)
+{
+	contexts[2].firmware.type = DRM_PVR_CTX_TYPE_TRANSFER_FRAG;
+	memset(streams[index], 0, sizeof(streams[index]));
+	put32(streams[index], PVR_STREAM_TRANSFER_SIZE);
+	put64(streams[index] + 8, UINT64_C(0x9002000000));
+	jobs[index].type = DRM_PVR_JOB_TYPE_TRANSFER_FRAG;
+	jobs[index].context_handle = 2;
+	jobs[index].flags = DRM_PVR_SUBMIT_JOB_TRANSFER_CMD_SINGLE_CORE;
+	jobs[index].cmd_stream_len = PVR_STREAM_TRANSFER_SIZE;
+}
+
+static void
+transfer_cases(void)
+{
+	unsigned i, copies, allocs;
+	int error;
+
+	initialize(1); set_transfer(0);
+	add_op(0, 1, DRM_PVR_SYNC_OP_FLAG_SIGNAL, 0);
+	CHECK(submit() == 0 && arguments.jobs.count == 1);
+	CHECK(transferred == 1 && computed == 0 && rendered == 0);
+	CHECK(prepared == 1 && completed == 1 && signals == 1 && poisoned == 0);
+	CHECK(hwrt_gets == 0 && hwrt_targets == 0 && syncobjs[1].fence == &stub);
+	copies = copy_calls; allocs = allocate_calls; finish();
+
+	for (i = 0; i < 12; i++) {
+		initialize(1); set_transfer(0);
+		switch (i) {
+		case 0: jobs[0].cmd_stream_len--; break;
+		case 1: jobs[0].cmd_stream_len++; break;
+		case 2: jobs[0].flags |= 2; break;
+		case 3: jobs[0].hwrt.set_handle = 1; break;
+		case 4: jobs[0].hwrt.data_index = 1; break;
+		case 5: streams[0][0]--; break;
+		case 6: jobs[0].cmd_stream = UINT64_MAX - 4; break;
+		case 7: jobs[0].cmd_stream = 0; break;
+		case 8: contexts[2].firmware.type = DRM_PVR_CTX_TYPE_COMPUTE; break;
+		case 9: contexts[2].firmware.type = DRM_PVR_CTX_TYPE_RENDER; break;
+		case 10: jobs[0].type += 0x100; break;
+		case 11: jobs[0].context_handle = 7; break;
+		}
+		CHECK(submit() < 0 && arguments.jobs.count == 0);
+		CHECK(transferred == 0 && prepared == 0 && signals == 0 && poisoned == 0);
+		CHECK(hwrt_gets == 0 && hwrt_targets == 0); finish();
+	}
+	/* An unknown high-bit compute type must not narrow to a known opcode. */
+	initialize(1); jobs[0].type += 0x100;
+	CHECK(submit() == -EOPNOTSUPP && computed == 0); finish();
+	for (i = 1; i <= copies; i++) {
+		initialize(1); set_transfer(0); add_op(0, 1, DRM_PVR_SYNC_OP_FLAG_SIGNAL, 0);
+		copy_fault = i;
+		CHECK(submit() == -EFAULT && transferred == 0 && signals == 0); finish();
+	}
+	for (i = 1; i <= allocs; i++) {
+		initialize(1); set_transfer(0); add_op(0, 1, DRM_PVR_SYNC_OP_FLAG_SIGNAL, 0);
+		allocation_fault = i;
+		CHECK(submit() == -ENOMEM && transferred == 0 && signals == 0); finish();
+	}
+	initialize(1); set_transfer(0); prepare_error = EIO;
+	CHECK(submit() == -EIO && transferred == 0 && poisoned == 0); finish();
+	initialize(1); set_transfer(0); backend_error = EIO;
+	CHECK(submit() == -EIO && transferred == 0 && prepared == 0); finish();
+	for (i = 0; i < 2; i++) {
+		initialize(1); set_transfer(0); add_op(0, 1, DRM_PVR_SYNC_OP_FLAG_SIGNAL, 0);
+		error = i == 0 ? ETIMEDOUT : EIO; transfer_error = error;
+		CHECK(submit() == -error && arguments.jobs.count == 0);
+		CHECK(transferred == 1 && completed == 0 && poisoned == 1 && signals == 0);
+		CHECK(contexts[2].vm.failed && syncobjs[1].fence == NULL); finish();
+	}
+	/* Compute can publish the external point consumed by a later transfer. */
+	initialize(2); set_transfer(1);
+	add_op(0, 1, DRM_PVR_SYNC_OP_FLAG_SIGNAL | 1, 9);
+	add_op(1, 1, 1, 9); add_op(1, 2, DRM_PVR_SYNC_OP_FLAG_SIGNAL, 0);
+	CHECK(submit() == 0 && arguments.jobs.count == 2);
+	CHECK(computed == 1 && transferred == 1 && completed == 2 && signals == 2);
+	CHECK(wait_calls == 1); finish();
+	for (i = 0; i < 4; i++) {
+		initialize(1); set_transfer(0); add_op(0, 1, 0, 0);
+		add_op(0, 2, DRM_PVR_SYNC_OP_FLAG_SIGNAL, 0);
+		syncobjs[1].fence = new_fence(i == 0 ? -EIO : 0);
+		if (i == 2) wait_error = ERESTARTSYS;
+		if (i == 3) complete_on_wait = true;
+		error = i == 0 ? EIO : i == 1 ? ETIMEDOUT : i == 2 ? EINTR : 0;
+		CHECK(submit() == -error);
+		CHECK(transferred == (i == 3) && signals == (i == 3)); finish();
+	}
+	initialize(1); set_transfer(0); add_op(0, 1, 1, 9);
+	switch_backend_on_pause = true; pause_error = EINTR;
+	CHECK(submit() == -EIO && retained != NULL && transferred == 0);
+	CHECK(contexts[2].refs == 2 && syncobjs[1].refs == 2);
+	/* Only the model's separately proven reset can reclaim this owner. */
+	pvr_device_enter(&device); pvr_submit_release(&device, retained, true);
+	retained = NULL; pvr_device_leave(&device); finish();
 }
 static void preflight_cases(void)
 {
@@ -798,6 +906,6 @@ static void concurrency_case(void)
 }
 int main(void)
 {
-	success_cases(); preflight_cases(); error_cases(); backend_lifetime_case(); paired_dependencies(); forward_dependencies(); producer_search_bounds(); concurrency_case();
+	success_cases(); transfer_cases(); preflight_cases(); error_cases(); backend_lifetime_case(); paired_dependencies(); forward_dependencies(); producer_search_bounds(); concurrency_case();
 	printf("pvr submit: %u checks passed\n",atomic_load(&checks)); return 0;
 }
