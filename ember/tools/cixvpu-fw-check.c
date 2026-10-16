@@ -53,7 +53,7 @@ main(int argc, char **argv)
 	struct stat st;
 	enum cixvpu_fw_error error;
 	FILE *file;
-	size_t count, chunk, total;
+	size_t count, total;
 	int saved_errno;
 
 	if (argc != 2) {
@@ -80,7 +80,9 @@ main(int argc, char **argv)
 	}
 	count = fread(header, 1, sizeof(header), file);
 	total = count;
-	while ((chunk = fread(buffer, 1, sizeof(buffer), file)) != 0) {
+	while (!feof(file) && !ferror(file)) {
+		size_t chunk = fread(buffer, 1, sizeof(buffer), file);
+
 		if (chunk > SIZE_MAX - total) {
 			(void)fclose(file);
 			fprintf(stderr, "%s: firmware file is too large\n", argv[1]);
