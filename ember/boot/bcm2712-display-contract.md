@@ -192,6 +192,9 @@ Thermal references to `\_SB.GPU0` keep the same path.
 The default ACPI parser appends memory and interrupt entries in descriptor order.
 Existing V3D consumers keep their original memory and interrupt indices.
 
+The [native L2 interrupt provider](bcm2712-display-irq.md) uses these domain and leaf indices.
+It requires explicit lifecycle ownership and has no automatic boot attachment.
+
 ## Source facts and remaining boundaries
 
 The register facts come from Raspberry Pi Linux commit
