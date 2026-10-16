@@ -959,6 +959,8 @@ rtw89_dma_free_coherent(size_t size, void *kva, dma_addr_t dma)
 {
 	struct rtw89_dmabuf *db;
 
+	if (kva == NULL)
+		return;
 	mutex_enter(&rtw89_dmabuf_lock);
 	LIST_FOREACH(db, &rtw89_all_dmabufs, db_all)
 		if (db->db_kva == kva)

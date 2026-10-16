@@ -279,7 +279,6 @@ rtw89_attach_hook(device_t self)
 		aprint_error_dev(self, "registers are not linearly mapped\n");
 		return;
 	}
-	rtw89_nb_set_debug(rtw89_debug);
 	error = rtw89_nb_attach(&aa, &sc->sc_nb);
 	if (error) {
 		aprint_error_dev(self, "hardware initialization failed (%d)\n",
@@ -523,11 +522,33 @@ rtw89_nb_rx(void *arg, const void *frame, size_t len, int rssi,
 
 	if (!sc->sc_running || len < sizeof(struct ieee80211_frame_min))
 		return;
-	m = m_devget(__UNCONST(frame), len, 0, ifp);
+	if (rtw89_debug > 2) {
+		const struct ieee80211_frame *wh = frame;
+
+		printf("%s: rx fc %02x%02x len %zu rssi %d freq %u ta %s\n",
+		    device_xname(sc->sc_dev), wh->i_fc[0], wh->i_fc[1], len,
+		    rssi, freq, ether_sprintf(wh->i_addr2));
+	}
+	/* net80211 parses management frames in the first mbuf only. */
+	if (len > MCLBYTES) {
+		if_statinc(ifp, if_ierrors);
+		return;
+	}
+	MGETHDR(m, M_DONTWAIT, MT_DATA);
+	if (m != NULL && len > MHLEN) {
+		MCLGET(m, M_DONTWAIT);
+		if ((m->m_flags & M_EXT) == 0) {
+			m_freem(m);
+			m = NULL;
+		}
+	}
 	if (m == NULL) {
 		if_statinc(ifp, if_ierrors);
 		return;
 	}
+	memcpy(mtod(m, void *), frame, len);
+	m->m_pkthdr.len = m->m_len = len;
+	m_set_rcvif(m, ifp);
 	s = splnet();
 	ni = ieee80211_find_rxnode(ic, mtod(m, struct ieee80211_frame_min *));
 	ieee80211_input(ic, m, ni, MAX(rssi + 100, 0), 0);
@@ -614,6 +635,9 @@ rtw89_set_curchan(struct rtw89_softc *sc, struct ieee80211_channel *c)
 	struct ieee80211com *ic = &sc->sc_ic;
 	int error;
 
+	if (rtw89_debug > 1)
+		printf("%s: channel %u (%u MHz)\n", device_xname(sc->sc_dev),
+		    ieee80211_chan2ieee(ic, c), c->ic_freq);
 	error = rtw89_nb_set_channel(sc->sc_nb, ieee80211_chan2ieee(ic, c),
 	    c->ic_freq);
 	if (error)
@@ -947,8 +971,12 @@ SYSCTL_SETUP(sysctl_hw_rtw89_setup, "sysctl hw.rtw89 setup")
 		return;
 	sysctl_createv(clog, 0, &node, NULL, CTLFLAG_PERMANENT |
 	    CTLFLAG_READWRITE, CTLTYPE_INT, "debug",
-	    SYSCTL_DESCR("Debug message mask, set before attach"),
+	    SYSCTL_DESCR("Driver (net80211 glue) debug messages"),
 	    NULL, 0, &rtw89_debug, 0, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, &node, NULL, CTLFLAG_PERMANENT |
+	    CTLFLAG_READWRITE, CTLTYPE_INT, "hwdebug",
+	    SYSCTL_DESCR("rtw89 debug mask (RTW89_DBG_*)"),
+	    NULL, 0, &rtw89_debug_mask, 0, CTL_CREATE, CTL_EOL);
 }
 
 MODULE(MODULE_CLASS_DRIVER, if_rtw89, "pci");

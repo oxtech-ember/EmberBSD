@@ -217,7 +217,16 @@ ieee80211_free_hw(struct ieee80211_hw *hw)
 int
 ieee80211_register_hw(struct ieee80211_hw *hw)
 {
+	struct regulatory_request req = {
+		.alpha2 = "00",
+		.initiator = NL80211_REGDOM_SET_BY_CORE,
+	};
 
+	/*
+	 * wiphy_register() reports the world regulatory domain to the driver
+	 * before returning; rtw89_regd_init() relies on that.
+	 */
+	rtw89_regd_notifier(hw->wiphy, &req);
 	return 0;
 }
 
@@ -530,18 +539,6 @@ rtw89_nb_attach(const struct rtw89_nb_attach_args *aa, struct rtw89_nb **nbp)
 		destroy_workqueue(nb->wq);
 		kfree(nb);
 		return -ret;
-	}
-	/*
-	 * cfg80211 would now report the regulatory domain.  Chips without a
-	 * programmed country code follow the stack; use the world domain.
-	 */
-	if (nb_to_rtwdev(nb)->regulatory.regd == NULL) {
-		struct regulatory_request req = {
-			.alpha2 = "00",
-			.initiator = NL80211_REGDOM_SET_BY_CORE,
-		};
-
-		rtw89_regd_notifier(nb->hw->wiphy, &req);
 	}
 	*nbp = nb;
 	return 0;
