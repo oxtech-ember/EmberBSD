@@ -40,7 +40,7 @@ aicwf*		at sdmmc?
 
 #	Realtek RTL8822CE on Orange Pi 6 Plus. Attach maps BAR/IRQ only;
 #	bus mastering and radio stay off until firmware bootstrap is accepted.
-rtw88*		at pci?
+rtwce*		at pci?
 
 #	The power management chip of the Orange Pi Zero 4: its power key
 #	(../patches/sun60i-a733.diff).
