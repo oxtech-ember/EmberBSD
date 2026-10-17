@@ -1034,6 +1034,40 @@ test_tx_descriptors_and_full_ring(void)
 	rtw88_core_detach(&sc);
 }
 
+/* Legacy station TX must use a legal basic rate for the selected band. */
+static void
+test_tx_band_and_sequence(void)
+{
+	struct rtw88_softc sc;
+	uint8_t data[24];
+	const uint8_t *pkt;
+
+	if (!start_ok(&sc))
+		return;
+	sc.sc_channel = 36;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, bcast_frame,
+	    sizeof(bcast_frame)) == 0);
+	pkt = sc.sc_txq[RTW88_TXQ_MGMT].buf[0].vaddr;
+	CHECK(pkt[16] == 4); /* DESC_RATE6M; CCK cannot be sent on 5 GHz. */
+	CHECK(pkt[6] == 7); /* RTW_RATEID_G, legacy OFDM. */
+	memcpy(data, bcast_frame, sizeof(data));
+	data[0] = 0x08; /* Non-QoS data with a software sequence. */
+	data[22] = 0x30;
+	data[23] = 0x12;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, data, sizeof(data)) == 0);
+	pkt = sc.sc_txq[RTW88_TXQ_BE].buf[0].vaddr;
+	CHECK(pkt[5] == 0); /* BE TID 0, not the management QSEL. */
+	CHECK((pkt[33] & 0x80) == 0); /* Preserve software/CCMP sequence. */
+	CHECK((pkt[37] >> 4 | (unsigned)pkt[38] << 4) == 0x123);
+	sc.sc_channel = 1;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, bcast_frame,
+	    sizeof(bcast_frame)) == 0);
+	pkt = sc.sc_txq[RTW88_TXQ_MGMT].buf[1].vaddr;
+	CHECK(pkt[16] == 0 && pkt[6] == 8); /* 1M, B_20M. */
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
 static void
 test_tx_completion(void)
 {
@@ -1082,6 +1116,8 @@ test_tx_refusals(void)
 	CHECK(rtw88_start(&sc) == 0);
 	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, big, sizeof(big)) == EMSGSIZE);
 	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, big, 0) == EMSGSIZE);
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, big, 1) == EMSGSIZE);
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, big, 23) == EMSGSIZE);
 	CHECK(rtw88_tx_raw(&sc, 7, bcast_frame, sizeof(bcast_frame)) == EINVAL);
 	CHECK(sc.sc_stats.tx_queued == 0);
 	rtw88_stop(&sc);
@@ -1242,6 +1278,7 @@ main(void)
 	test_rx_buffer_alloc_failure();
 	test_diag_regs();
 	test_tx_descriptors_and_full_ring();
+	test_tx_band_and_sequence();
 	test_tx_completion();
 	test_tx_refusals();
 	test_loopback_mode();

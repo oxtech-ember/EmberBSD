@@ -86,6 +86,7 @@
 #define RTW88_IMR_MGNTDOK	0x40
 #define RTW88_IMR_BEDOK		0x10
 #define RTW88_QSEL_MGMT		18
+#define RTW88_RATEID_G		7
 #define RTW88_RATEID_B_20M	8
 /* rtlwifi REG_LBMODE (CR + 3): normal 0, PHY 1, MAC delay 3, DMA 7. */
 #define RTW88_LBMODE_IMMEDIATE	0x0b
@@ -941,7 +942,7 @@ rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
 		return EINVAL;
 	if (!sc->sc_running)
 		return ENXIO;
-	if (frame == NULL || len == 0 ||
+	if (frame == NULL || len < 24 ||
 	    len > RTW88_TX_BUF_SIZE - RTW8822C_TX_PACKET_DESC_SIZE)
 		return EMSGSIZE;
 	txq = &sc->sc_txq[q];
@@ -955,10 +956,17 @@ rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
 	buf = &txq->buf[txq->wp];
 	memset(&tx, 0, sizeof(tx));
 	tx.packet_size = (uint32_t)len;
-	tx.queue = RTW88_QSEL_MGMT;
-	tx.rate_id = RTW88_RATEID_B_20M;
+	tx.queue = q == RTW88_TXQ_MGMT ? RTW88_QSEL_MGMT : 0;
+	/* main.h DESC_RATE6M and RATEID_G: CCK is invalid on 5 GHz. */
+	tx.rate = sc->sc_channel > 14 ? 4 : 0;
+	tx.rate_id = sc->sc_channel > 14 ? RTW88_RATEID_G : RTW88_RATEID_B_20M;
 	tx.flags = RTW88_TX_DIS_QSELSEQ | RTW88_TX_USE_RATE |
-	    RTW88_TX_DIS_RATE_FB | RTW88_TX_HWSEQ;
+	    RTW88_TX_DIS_RATE_FB;
+	if (q == RTW88_TXQ_MGMT)
+		tx.flags |= RTW88_TX_HWSEQ;
+	else
+		tx.sequence = (uint16_t)((((const uint8_t *)frame)[22] |
+		    ((const uint8_t *)frame)[23] << 8) >> 4);
 	if (((const uint8_t *)frame)[4] & 0x01)		/* group DA */
 		tx.flags |= RTW88_TX_BMC;
 	error = rtw88_tx_encode(buf->vaddr, buf->size, &tx);

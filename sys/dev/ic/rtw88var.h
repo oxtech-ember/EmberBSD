@@ -144,8 +144,10 @@ int rtw88_intr(struct rtw88_softc *);
 int rtw88_diag(struct rtw88_softc *, uint32_t *);
 /*
  * Copy one 802.11 frame into the next slot of a TX queue and kick it.
- * Management rate profile: 1M, no fallback, hardware sequence. The
- * caller holds the bus interrupt lock. ENOBUFS when the ring is full.
+ * Legacy basic rate: 1M on 2.4 GHz, 6M on 5 GHz, no fallback.
+ * Management uses hardware sequence; BE retains the frame sequence.
+ * At least a 24-byte header is required. The caller holds the bus
+ * interrupt lock. ENOBUFS when the ring is full.
  */
 int rtw88_tx_raw(struct rtw88_softc *, unsigned, const void *, size_t);
 /* Diagnostic loopback (rtlwifi LBMODE 0, 1, 3, 7 or 0x0b); 0 is normal. */
