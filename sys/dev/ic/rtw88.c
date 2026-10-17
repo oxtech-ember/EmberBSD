@@ -822,6 +822,17 @@ rtw88_fw_command(struct rtw88_softc *sc, uint8_t id, const void *payload,
 	box.mask = (uint32_t)1 << (sc->sc_h2c_box & 3);
 	box.value = 0;
 	error = rtw88_poll(sc, gen, RTW88_COMMAND_US, rtw88_ready8, &box);
+	if (error == ETIMEDOUT) {
+		uint32_t mcu = 0, imr = 0, isr = 0, boxes = 0;
+
+		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_MCUFW_CTRL, &mcu);
+		(void)sc->sc_ops->read_4(sc->sc_bus, 0x0130, &imr);
+		(void)sc->sc_ops->read_4(sc->sc_bus, 0x0134, &isr);
+		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_HMETFR, &boxes);
+		printf("rtwce: mailbox %u command %#x timed out "
+		    "mcufw %#x fwimr %#x fwisr %#x boxes %#x\n",
+		    (unsigned)(sc->sc_h2c_box & 3), id, mcu, imr, isr, boxes);
+	}
 	if (error != 0)
 		return error;
 	w0 = id;
