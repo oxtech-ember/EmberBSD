@@ -286,11 +286,11 @@ static void setup(void)
     memset(&selfdev,0,sizeof(selfdev));memset(&otherdev,0,sizeof(otherdev));
     rootdev.private=&root;root.sc_head.first=nodes;
     for(unsigned int i=0;i<5;i++){
-        info[i].p=calloc(1,sizeof(ACPI_DEVICE_INFO)+24);assert(info[i].p);
+        info[i].p=calloc(1,sizeof(ACPI_DEVICE_INFO)+40);assert(info[i].p);
         info[i].hid=(char *)(info[i].p+1);info[i].uid=info[i].hid+16;
         nodes[i].ad_handle=&nodes[i];nodes[i].ad_type=ACPI_TYPE_DEVICE;nodes[i].ad_root=&rootdev;
         nodes[i].ad_devinfo=info[i].p;nodes[i].next=i==4?NULL:&nodes[i+1];
-        info[i].p->InfoSize=sizeof(ACPI_DEVICE_INFO)+24;info[i].p->Type=ACPI_TYPE_DEVICE;
+        info[i].p->InfoSize=sizeof(ACPI_DEVICE_INFO)+40;info[i].p->Type=ACPI_TYPE_DEVICE;
         info[i].p->Valid=ACPI_VALID_HID|ACPI_VALID_UID;
         strcpy(info[i].hid,i==0?"CIXHA006":i<3?"CIXHA001":i==3?"CIXHA004":"CIXHA005");
         strcpy(info[i].uid,i==1?"6":i==2?"7":"0");
@@ -311,6 +311,86 @@ static void attach(struct cixscmi_acpi_softc *sc,unsigned int flags)
 }
 static void finish(struct cixscmi_acpi_softc *sc)
 { CHECK(allocations==0);CHECK(pthread_mutex_destroy(&sc->sc_lock.lock)==0); }
+static void test_uid_capacity(void)
+{
+    struct cixscmi_acpi_softc sc;
+    for(unsigned int n=0;n<5;n++)for(unsigned int mode=0;mode<14;mode++){
+        setup();attach(&sc,1);
+        ACPI_DEVICE_INFO *p=info[n].p;
+        if(mode!=0)p->UniqueId.Length=ACPI_MAX64_DECIMAL_DIGITS+1;
+        if(mode==2)memset(info[n].uid+2,0x6d,ACPI_MAX64_DECIMAL_DIGITS-1);
+        if(mode==3)p->UniqueId.Length=1;
+        if(mode==4)p->UniqueId.Length=0;
+        if(mode==5)p->UniqueId.Length=UINT32_MAX;
+        if(mode==6)p->UniqueId.Length=25; /* Only24 bytes remain in InfoSize. */
+        if(mode==7)p->UniqueId.String=(char *)p+p->InfoSize-1;
+        if(mode==8)info[n].uid[1]='x'; /* Expected NUL is mandatory. */
+        if(mode==9)info[n].uid[0]='9';
+        if(mode==10){p->UniqueId.Length=2;info[n].uid[1]='0';}
+        if(mode==11)p->InfoSize=(UINT32)((char *)info[n].uid-(char *)p+20);
+        if(mode==12)p->HardwareId.Length=10; /* HID length stays exact. */
+        if(mode==13)p->UniqueId.String=NULL;
+        deferred(&selfdev);
+        if(mode<=2){
+            CHECK(sc.sc_error==0 && sc.sc_version_valid && sc.sc_version==0x20000);
+            CHECK(maps==2 && doorbells==1 && cixscmi_lease==&sc);
+        }else{
+            CHECK(sc.sc_error==ENOTSUP && !sc.sc_query_started);
+            CHECK(maps==0 && reads==0 && writes==0 && cixscmi_lease==NULL);
+            for(unsigned int i=1;i<5;i++)CHECK(nodes[i].ad_device==NULL);
+            CHECK(strstr(diagnostic,"stage=identity")!=NULL);
+        }
+        finish(&sc);
+    }
+    setup();attach(&sc,1);
+    for(unsigned int n=0;n<5;n++){
+        info[n].p->UniqueId.Length=ACPI_MAX64_DECIMAL_DIGITS+1;
+        memset(info[n].uid+2,0x6d,ACPI_MAX64_DECIMAL_DIGITS-1);
+    }
+    deferred(&selfdev);
+    CHECK(sc.sc_error==0 && sc.sc_version_valid && maps==2 && doorbells==1);
+    CHECK(sc.sc_ack_after_valid && cixscmi_lease==&sc);finish(&sc);
+}
+static void check_diagnostic(const char *stage,unsigned int role,int error)
+{
+    static const char * const roles[]={"parent","MBX6","MBX7","SHM0","SHM1"};
+    char expected[128];
+    (void)snprintf(expected,sizeof(expected),"stage=%s role=%s error=%d",stage,roles[role],error);
+    CHECK(strstr(diagnostic,expected)!=NULL);
+}
+static void test_diagnostic_stages(void)
+{
+    struct cixscmi_acpi_softc sc;
+    for(unsigned int n=0;n<5;n++){
+        setup();attach(&sc,1);info[n].uid[0]='9';deferred(&selfdev);
+        check_diagnostic("identity",n,ENOTSUP);CHECK(maps==0 && reads==0 && writes==0);finish(&sc);
+        setup();attach(&sc,1);malformed=2;failed_node=n;deferred(&selfdev);
+        check_diagnostic("sta",n,ENOTSUP);CHECK(maps==0 && reads==0 && writes==0);finish(&sc);
+        setup();attach(&sc,1);malformed=4;failed_node=n;deferred(&selfdev);
+        check_diagnostic("properties",n,EIO);CHECK(maps==0 && reads==0 && writes==0);finish(&sc);
+        if(n>=3){
+            setup();attach(&sc,1);malformed=3;failed_node=n;deferred(&selfdev);
+            check_diagnostic("cca",n,ENOTSUP);CHECK(maps==0 && reads==0 && writes==0);finish(&sc);
+        }
+        if(n>0){
+            setup();attach(&sc,1);malformed=30;failed_node=n;deferred(&selfdev);
+            check_diagnostic("resources",n,EIO);CHECK(maps==0 && reads==0 && writes==0);finish(&sc);
+            setup();attach(&sc,1);nodes[n].ad_device=&otherdev;deferred(&selfdev);
+            check_diagnostic("ownership",n,EBUSY);CHECK(maps==0 && reads==0 && writes==0);
+            CHECK(nodes[n].ad_device==&otherdev);finish(&sc);
+        }
+    }
+    setup();attach(&sc,1);malformed=24;deferred(&selfdev);
+    check_diagnostic("references",0,ENOTSUP);CHECK(maps==0 && reads==0 && writes==0);finish(&sc);
+    setup();attach(&sc,1);cold=0;deferred(&selfdev);
+    check_diagnostic("ownership",0,EBUSY);CHECK(maps==0 && reads==0 && writes==0);finish(&sc);
+    for(unsigned int n=1;n<=2;n++){
+        setup();attach(&sc,1);map_fail=n;deferred(&selfdev);
+        check_diagnostic("map",n,ENOMEM);CHECK(reads==0 && writes==0);finish(&sc);
+    }
+    setup();attach(&sc,1);tx[0xbc/4]=2;deferred(&selfdev);
+    check_diagnostic("interrupt-ownership",0,EBUSY);CHECK(writes==0);finish(&sc);
+}
 static void run_negative(unsigned int m,unsigned int n)
 {
     struct cixscmi_acpi_softc sc;setup();malformed=m;failed_node=n;attach(&sc,1);
@@ -322,6 +402,7 @@ static void run_negative(unsigned int m,unsigned int n)
 int main(void)
 {
     struct cixscmi_acpi_softc sc;alarm(30);(void)test_attach_refs;
+    test_uid_capacity();test_diagnostic_stages();
     setup();attach(&sc,2);CHECK(defers==0 && evaluations==0 && maps==0 && reads==0 && writes==0);finish(&sc);
     setup();attach(&sc,0);CHECK(defers==0 && evaluations==0 && maps==0 && reads==0 && writes==0);finish(&sc);
     for(unsigned int n=0;n<5;n++){

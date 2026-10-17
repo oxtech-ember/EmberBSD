@@ -34,12 +34,17 @@ struct cixscmi_acpi_softc {
 	uint32_t sc_ack_after;
 	bool sc_ack_after_valid;
 	int sc_error;
+	const char *sc_stage;
+	const char *sc_role;
 	struct scmi_smt_diag sc_wire;
 	struct scmi_smt_diag_trace sc_trace;
 };
 
 /* cold boot autoconfiguration serializes publication and the four aliases. */
 static struct cixscmi_acpi_softc *cixscmi_lease;
+static const char * const cixscmi_roles[] = {
+	"parent", "MBX6", "MBX7", "SHM0", "SHM1"
+};
 static const struct device_compatible_entry cixscmi_compat[] = {
 	{ .compat = "CIXHA006" }, DEVICE_COMPAT_EOL
 };
@@ -183,13 +188,15 @@ cixscmi_identity(struct acpi_devnode *node, const char *hid, const char *uid)
 	ACPI_DEVICE_INFO *info = node->ad_devinfo;
 	size_t hsize = strlen(hid) + 1, usize = strlen(uid) + 1;
 
+	/* ACPICA integer UID length is buffer capacity, not decimal text length. */
 	return node->ad_type == ACPI_TYPE_DEVICE && info != NULL &&
 	    info->InfoSize >= sizeof(*info) && info->Type == ACPI_TYPE_DEVICE &&
 	    (info->Valid & (ACPI_VALID_HID | ACPI_VALID_UID)) ==
 	    (ACPI_VALID_HID | ACPI_VALID_UID) &&
-	    info->HardwareId.Length == hsize && info->UniqueId.Length == usize &&
+	    info->HardwareId.Length == hsize && info->UniqueId.Length >= usize &&
 	    cixscmi_span(info, info->InfoSize, info->HardwareId.String, hsize) &&
-	    cixscmi_span(info, info->InfoSize, info->UniqueId.String, usize) &&
+	    cixscmi_span(info, info->InfoSize, info->UniqueId.String,
+	    info->UniqueId.Length) &&
 	    memcmp(info->HardwareId.String, hid, hsize) == 0 &&
 	    memcmp(info->UniqueId.String, uid, usize) == 0;
 }
@@ -208,9 +215,11 @@ cixscmi_references(struct cixscmi_acpi_softc *sc)
 	unsigned int i, j;
 	int error;
 
+	sc->sc_stage = "properties";
 	error = cixscmi_properties(sc->sc_node, 0, &b, values);
 	if (error != 0)
 		goto out;
+	sc->sc_stage = "references";
 	if (values[0].Type != ACPI_TYPE_PACKAGE ||
 	    values[0].Package.Count != 4 || values[1].Type != ACPI_TYPE_PACKAGE ||
 	    values[1].Package.Count != 2) {
@@ -323,23 +332,34 @@ cixscmi_metadata(struct cixscmi_acpi_softc *sc)
 	unsigned int i;
 	int error;
 
-	if (!cixscmi_identity(sc->sc_node, "CIXHA006", "0") ||
-	    ACPI_FAILURE(acpi_eval_integer(sc->sc_node->ad_handle, "_STA", &value)) ||
+	sc->sc_stage = "identity";
+	sc->sc_role = cixscmi_roles[0];
+	if (!cixscmi_identity(sc->sc_node, "CIXHA006", "0"))
+		return ENOTSUP;
+	sc->sc_stage = "sta";
+	if (ACPI_FAILURE(acpi_eval_integer(sc->sc_node->ad_handle, "_STA", &value)) ||
 	    (value & 0xb) != 0xb)
 		return ENOTSUP;
 	error = cixscmi_references(sc);
 	if (error != 0)
 		return error;
 	for (i = 0; i < 4; i++) {
+		sc->sc_stage = "identity";
+		sc->sc_role = cixscmi_roles[i + 1];
 		if (!cixscmi_identity(sc->sc_refs[i], cixscmi_profiles[i].hid,
-		    cixscmi_profiles[i].uid) || ACPI_FAILURE(acpi_eval_integer(
+		    cixscmi_profiles[i].uid))
+			return ENOTSUP;
+		sc->sc_stage = "sta";
+		if (ACPI_FAILURE(acpi_eval_integer(
 		    sc->sc_refs[i]->ad_handle, "_STA", &value)) ||
 		    (value & 0xb) != 0xb)
 			return ENOTSUP;
+		sc->sc_stage = "cca";
 		if (i >= 2 && (ACPI_FAILURE(acpi_eval_integer(
 		    sc->sc_refs[i]->ad_handle, "_CCA", &value)) || value != 0))
 			return ENOTSUP;
 		b = (ACPI_BUFFER){ ACPI_ALLOCATE_BUFFER, NULL };
+		sc->sc_stage = "properties";
 		error = cixscmi_properties(sc->sc_refs[i], i + 1, &b, values);
 		if (error == 0) {
 			if (i < 2) {
@@ -352,8 +372,10 @@ cixscmi_metadata(struct cixscmi_acpi_softc *sc)
 		}
 		if (b.Pointer != NULL)
 			AcpiOsFree(b.Pointer);
-		if (error == 0)
+		if (error == 0) {
+			sc->sc_stage = "resources";
 			error = cixscmi_resources(sc->sc_refs[i], i);
+		}
 		if (error != 0)
 			return error;
 	}
@@ -468,12 +490,15 @@ cixscmi_acpi_deferred(device_t self)
 		goto out;
 	sc->sc_once = true;
 	sc->sc_error = EBUSY;
+	sc->sc_stage = "ownership";
 	if (cold != 1 || sc->sc_node->ad_device != self || cixscmi_lease != NULL)
 		goto failed;
 	sc->sc_error = cixscmi_metadata(sc);
 	if (sc->sc_error != 0)
 		goto failed;
+	sc->sc_stage = "ownership";
 	for (i = 0; i < 4; i++) {
+		sc->sc_role = cixscmi_roles[i + 1];
 		if (sc->sc_refs[i]->ad_device != NULL) {
 			sc->sc_error = EBUSY;
 			goto failed;
@@ -485,23 +510,29 @@ cixscmi_acpi_deferred(device_t self)
 		sc->sc_refs[i]->ad_device = self;
 	sc->sc_claimed = true;
 	for (i = 0; i < 2; i++) {
+		sc->sc_stage = "map";
+		sc->sc_role = cixscmi_roles[i + 1];
 		sc->sc_error = bus_space_map(sc->sc_memt, cixscmi_profiles[i].address,
 		    cixscmi_profiles[i].length, BUS_SPACE_MAP_NONPOSTED, &sc->sc_io[i]);
 		if (sc->sc_error != 0)
 			goto failed;
 		sc->sc_mapped[i] = true;
 	}
+	sc->sc_stage = "interrupt-ownership";
+	sc->sc_role = cixscmi_roles[0];
 	if ((bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xbc) & 2) != 0 ||
 	    (bus_space_read_4(sc->sc_memt, sc->sc_io[1], 0xc0) & 1) != 0) {
 		sc->sc_error = EBUSY;
 		goto failed;
 	}
 	sc->sc_ack_before = bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
+	sc->sc_stage = "wire-init";
 	sc->sc_error = scmi_smt_diag_init(&sc->sc_wire, &io);
 	if (sc->sc_error != 0)
 		goto failed;
 	/* A request may be published from here. Retain mappings and leases forever. */
 	sc->sc_query_started = true;
+	sc->sc_stage = "query";
 	sc->sc_error = scmi_smt_diag_query(&sc->sc_wire,
 	    SCMI_SMT_DIAG_BASE_VERSION, 0, &reply, &sc->sc_trace);
 	/* Do not issue further I/O after a possibly poisoned wire attempt. */
@@ -527,7 +558,8 @@ cixscmi_acpi_deferred(device_t self)
 	goto out;
  failed:
 	cixscmi_release(sc);
-	aprint_error_dev(self, "single-request diagnostic rejected: error=%d\n",
+	aprint_error_dev(self, "single-request diagnostic rejected: "
+	    "stage=%s role=%s error=%d\n", sc->sc_stage, sc->sc_role,
 	    sc->sc_error);
  out:
 	mutex_exit(&sc->sc_lock);
@@ -552,6 +584,8 @@ cixscmi_acpi_attach(device_t parent, device_t self, void *aux)
 	sc->sc_dev = self;
 	sc->sc_node = aa->aa_node;
 	sc->sc_memt = aa->aa_memt;
+	sc->sc_stage = "attach";
+	sc->sc_role = cixscmi_roles[0];
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 	aprint_naive("\n");
 	aprint_normal(": CIX single-request SCMI diagnostic\n");

@@ -76,6 +76,11 @@ Before mapping, the binding validates each static property, resource and
 reference. It requires MBX6/7, SHM0/1, channel 8, non-coherent shared memory,
 the reviewed interrupt profile and four unowned ACPI nodes. It reserves only
 those nodes. Enabled transport interrupts cause rejection without writes.
+ACPICA reports an integer UID's allocation capacity in its declared length.
+The binding checks that complete span, then matches the expected UID including
+its NUL terminator. It does not require unused capacity bytes to be zero.
+Pre-query rejection prints a constant validation stage, role and native error.
+Those diagnostics add no firmware evaluation or transport access.
 Mappings use Device memory and explicit completion barriers. One BASE-version
 request runs in serialized cold-boot thread context. No IRQ is installed or
 cleared. The binding exposes no retry, setter, clock service or detach path.
@@ -83,8 +88,10 @@ Once a request can be published, mappings and claims remain until reboot,
 including on timeout or malformed reply. Before that point, failures release
 only resources that the diagnostic still owns.
 
-The actual-source binding contract passes 33678 checks with GCC16 path
-analysis, Cppcheck, CSA and ASan/UBSan. Eighteen causal mutations fail.
+The actual-source binding contract covers compact string UIDs and native
+integer-UID capacity, full-span bounds, exact NUL matching and failed-stage
+diagnostics. GCC16 path analysis, Cppcheck, CSA and ASan/UBSan check the same source.
+Eighteen original causal mutations fail.
 Native target compilation passes. Target analysis retains inherited header
 findings and fixed callback-signature style hints. No category is suppressed.
 These checks do not qualify a complete kernel boot or physical transaction.
