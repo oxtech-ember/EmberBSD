@@ -11,7 +11,7 @@ This profile records one physical sample. It is not a complete installation imag
 | CPU and memory | The kernel reports 12 CPUs and about 32 GB. SMP stress and memory integrity are not qualified. |
 | Ethernet | `rge1` negotiates 1000baseT full-duplex. A short host-to-board transfer and ICMP replies pass. Board-initiated ping to the host did not receive replies; the cause is unconfirmed. The second port and sustained camera traffic remain unqualified. |
 | Video codec | [Passive ACPI attachment](../boot/cix-vpu.md) validates both memory windows, level IRQ 358 and `_CCA=0`. Power, clocks, reset, MMIO, DMA and video queues remain disabled. No hardware encoding is claimed. |
-| RTL8822CE | Native PCI/net80211 station sources and GCC16 checks are integrated; see the [source boundary and contracts](../development/rtl8822ce-proposal.md#current-source-boundary). Physical kernel `4f6e826234fc5c1f129341948f64108d725537ce` lists 26 APs, including a test network at 2447 and 5745 MHz. Cold calibration completes with ADC AB and DAC B residual-quality warnings. A 2.4 GHz station trial reaches RUN setup, which fails with EINVAL and powers the radio off. Association on 2.4/5 GHz, WPA2, DHCP, data transport and reconnect remain unaccepted. |
+| RTL8822CE | Physical kernel `71877588ca099bf69686a35b96a00771a26feebc` passes WPA2-PSK/CCMP and fresh DHCP on channels 8 and 149. Each band passes simultaneous 16 MiB TCP transfers in both directions with matching SHA256. See the [source boundary and contracts](../development/rtl8822ce-proposal.md#current-source-boundary). This is a legacy 802.11a/b/g profile with software CCMP. Cold calibration retains ADC AB and DAC B residual-quality warnings. Analog qualification, higher rates, repeated reconnect, persistent startup and long-term stability remain pending. |
 | Storage | SD supplies the boot payload. The root is RAM only. NVMe installation is not accepted. |
 | Other peripherals | USB device failures remain in the boot log. GPIO/PPS, camera capture, Bluetooth, HDMI, GPU, NPU, thermal behavior and sustained operation are not accepted by this trial. |
 
@@ -45,6 +45,8 @@ Earlier firmware DDR training/BIST messages still require separate investigation
 A later Wi-Fi kernel trial waited for `acpibat0` before root attachment after
 an ACPI `AE_NO_MEMORY` error. A warm retry reached the shell without a source change.
 Boot reliability and the cause of this failure remain unqualified.
+The Wi-Fi trial used temporary userconf `disable acpibat` for this boot.
+This diagnostic setting is not a persistent ACPI correction.
 
 For reusable board and interface references, start with
 [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards).

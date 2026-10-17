@@ -86,17 +86,14 @@ Insufficient valid samples, readiness timeouts and bus failures stop startup
 and require a power reset.
 Pinned-source trace tests include persistent noise and bounded nonconvergence
 followed by both paths and control restore. Completion, control restore,
-measured paths and converged paths have separate result fields. Physical kernel
-`4f6e826234fc5c1f129341948f64108d725537ce` completes the procedure and starts HCI.
+measured paths and converged paths have separate result fields. Physical cold
+startup completes the procedure and starts HCI.
 ADC AB and DAC B residuals have not converged. Numeric diagnostics report the failure stage,
 attempts, last measurement, ADC means and programmed compensation.
 The failure output includes the already-read silicon identity and RFE fields.
 The tenth ADC attempt also reads back five ordinary BB control registers
 after measurement and before the convergence decision. These native diagnostics
 add at most ten reads across both paths. A read failure stops all later I/O.
-The same kernel lists 26 APs, including the test network at 2447 and 5745 MHz.
-A 2.4 GHz station trial reaches RUN setup, which fails with EINVAL.
-The failure powers the radio off. Station acceptance remains pending.
 State failures now retain numeric call stages and station inputs before stop.
 Stage 1 is channel setup, 2 is station setup, and 3 is an inactive core.
 The output includes both channels, rate mask, slot, AID and rate count.
@@ -106,7 +103,14 @@ The diagnostic kernel confirmed a zero BASIC rate mask during RUN setup.
 Native STA rate negotiation now retains the AP's BASIC flags for supported rates.
 Other modes retain the local BASIC flags. There is no default-mask fallback.
 Actual-source negotiation and wrapper-consumer tests cover both legacy bands.
-Physical association, WPA2, DHCP and data tests remain pending for this fix.
+Physical kernel `71877588ca099bf69686a35b96a00771a26feebc` passes station RUN,
+WPA2-PSK/CCMP and fresh DHCP on channels 8 and 149. Each band transfers
+16777216 TCP bytes in each direction, with matching size and SHA256.
+The simultaneous transfers take 251.13 s on 2.4 GHz and 53.26 s on 5 GHz.
+During the 2.4 GHz transfer, three ping replies take 1.83-2.25 s.
+After each transfer, router ping is about 3.4 ms with no loss in three probes.
+These short RAM-root trials leave analog qualification, higher rates,
+repeated reconnect, persistent startup and long-term stability pending.
 
 The kernel configuration selects the native station wrapper and ingress
 generation policy. Use the standard interface tools when the PCI wrapper
