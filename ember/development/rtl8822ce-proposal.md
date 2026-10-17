@@ -60,6 +60,16 @@ power limits. It sends the general-info and PHYDM packet commands through
 the H2C DMA ring before publishing started state. Runtime retuning pauses
 TX and restores it only after both channel and power setup succeed.
 
+Startup and the internal runtime packet-H2C API share one bounded producer.
+It retains the ring position and 16-bit command sequence for each firmware
+epoch. The shared 80-byte DMA buffer is reused only after hardware consumes
+the preceding packet and POSTWRITE synchronization completes. Unexpected
+hardware state, uncertain posts and completion failures fence the epoch.
+Only a confirmed new firmware download clears that fence.
+Callers must pin core lifetime and serialize command, channel and stop work
+in process context without the PCI spin lock. This transport does not run
+IQK or prove firmware semantic acceptance.
+
 Normal table load keeps DPK mode tables out of the cold startup path.
 Those tables require a separate calibration transaction and register restore.
 The actual-source call graph and pre-ADCK AFE register checks cover this boundary.

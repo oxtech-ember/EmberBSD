@@ -6,7 +6,8 @@ set -eu
 if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
     SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
 fi
-[ "$#" -eq 1 ] || exit 2
+[ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && [ "$2" = runtime ]; } || exit 2
+if [ "$#" -eq 2 ]; then export H2C_REF_RUNTIME=1; fi
 ref=$1
 tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/rtw88-fw-init-gen.XXXXXXXX")

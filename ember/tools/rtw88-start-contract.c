@@ -1039,6 +1039,43 @@ test_command_after_restart(void)
 	CHECK(f.dma_allocs == 0);
 }
 
+/* An uncertain runtime packet retains DMA until stop confirms quiescence. */
+static void
+test_packet_epoch_recovery(void)
+{
+	struct rtw88_softc sc;
+	const uint8_t command[32] = {1, 0xff, 0x0d, 0, 12, 0, 0, 0, [10] = 56};
+	unsigned loads, allocations, writes;
+
+	reset_bus(&sc);
+	if (!attach_ok(&sc))
+		return;
+	CHECK(rtw88_start(&sc) == 0);
+	CHECK(sc.sc_packet_h2c.initialized && sc.sc_packet_h2c.sequence == 2);
+	f.h2c_dead = 1;
+	CHECK(rtw88_fw_packet(&sc, command, sizeof(command)) == ETIMEDOUT);
+	CHECK(sc.sc_packet_h2c.dirty && sc.sc_packet_h2c.error == ETIMEDOUT);
+	writes = f.writes;
+	CHECK(rtw88_fw_packet(&sc, command, sizeof(command)) == EBUSY);
+	CHECK(rtw88_fw_init(&sc) == EBUSY && f.writes == writes);
+	f.disable_error = 1;
+	allocations = f.dma_allocs;
+	CHECK(rtw88_stop(&sc) == EIO);
+	CHECK(!sc.sc_packet_h2c.active && sc.sc_packet_h2c.dirty);
+	CHECK(sc.sc_fw_dma_owned && sc.sc_dma_master && f.dma_allocs == allocations);
+	loads = f.firmware_loads;
+	CHECK(rtw88_start(&sc) == EBUSY && f.firmware_loads == loads);
+	f.disable_error = f.h2c_dead = 0;
+	CHECK(rtw88_stop(&sc) == 0 && !sc.sc_fw_dma_owned);
+	CHECK(sc.sc_packet_h2c.error == ETIMEDOUT && sc.sc_packet_h2c.dirty);
+	CHECK(rtw88_start(&sc) == 0);
+	CHECK(sc.sc_packet_h2c.active && sc.sc_packet_h2c.initialized);
+	CHECK(sc.sc_packet_h2c.sequence == 2 && sc.sc_packet_h2c.wp == 2);
+	CHECK(!sc.sc_packet_h2c.error && !sc.sc_packet_h2c.dirty);
+	CHECK(rtw88_stop(&sc) == 0 && rtw88_core_detach(&sc) == 0);
+	CHECK(f.dma_allocs == 0);
+}
+
 /* DDMA reports a bad section checksum: no FW_DW_RDY, bounded failure. */
 static void
 test_firmware_checksum_bad(void)
@@ -1845,6 +1882,7 @@ main(void)
 	test_command_length();
 	test_command_timeout();
 	test_command_after_restart();
+	test_packet_epoch_recovery();
 	test_beacon_never_valid();
 	test_firmware_checksum_bad();
 	test_hci_start_masks();

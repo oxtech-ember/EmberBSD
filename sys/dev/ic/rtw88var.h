@@ -90,6 +90,14 @@ struct rtw88_stats {
 	uint8_t last_c2h_seq;
 };
 
+/* One shared packet buffer. Only a confirmed new firmware epoch resets this. */
+struct rtw88_packet_h2c {
+	uint32_t generation;
+	uint16_t wp, sequence;
+	uint8_t active, initialized, attempted, busy, dirty;
+	int error;		/* Sticky after an uncertain DMA operation. */
+};
+
 struct rtw88_softc {
 	const struct rtw88_bus_ops *sc_ops;
 	void *sc_bus;
@@ -118,6 +126,7 @@ struct rtw88_softc {
 	uint32_t sc_sys_cfg1;
 	uint32_t sc_generation;
 	uint32_t sc_h2c_box;
+	struct rtw88_packet_h2c sc_packet_h2c;
 	unsigned sc_pg_rows;
 	unsigned sc_pwr_rows;
 	struct rtw88_dma sc_rxbuf[RTW88_RX_BUFS];
@@ -148,8 +157,21 @@ int rtw88_core_attach(struct rtw88_softc *);
 /* Failure retains resources; success drains IRQ before freeing ring mappings. */
 int rtw88_core_detach(struct rtw88_softc *);
 int rtw88_start(struct rtw88_softc *);
-/* Synchronous packet-H2C init; caller stops DMA on any error. */
+/*
+ * One startup call per firmware epoch. Process context without the PCI spin
+ * lock, with the same external ownership contract as rtw88_fw_packet below.
+ * The caller stops DMA on any error.
+ */
 int rtw88_fw_init(struct rtw88_softc *);
+/*
+ * Process context, without the PCI spin lock. The caller pins core lifetime
+ * and exclusively owns command/channel/stop operations for the entire call.
+ * busy rejects reentry; it is not a concurrent lifetime or locking mechanism.
+ * Send exactly 32 bytes. Transport owns the 16-bit sequence field in the copy.
+ * DMA completion does not mean firmware semantic acceptance. On an uncertain
+ * error stop the core; no buffer reuse is allowed before a new firmware epoch.
+ */
+int rtw88_fw_packet(struct rtw88_softc *, const uint8_t *, size_t);
 /* Caller serializes startup/stop. Errors retain unsafe ownership for a retry. */
 int rtw88_stop(struct rtw88_softc *);
 int rtw88_fw_command(struct rtw88_softc *, uint8_t, const void *, size_t);

@@ -21,7 +21,9 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     "${RTW88_FW_INIT_SOURCE:-$src/sys/dev/ic/rtw88_fw_init.c}" \
     "$src/sys/dev/ic/rtw88_hw.c" -o "$work/test"
 if [ -n "${TEST_RUNNER:-}" ]; then
-    "$TEST_RUNNER" "$work/test" "$tools/rtw88-fw-init-contract.vectors"
+    "$TEST_RUNNER" "$work/test" "$tools/rtw88-fw-init-contract.vectors" \
+        "$tools/rtw88-fw-packet-runtime.vectors"
 else
-    "$work/test" "$tools/rtw88-fw-init-contract.vectors"
+    "$work/test" "$tools/rtw88-fw-init-contract.vectors" \
+        "$tools/rtw88-fw-packet-runtime.vectors"
 fi

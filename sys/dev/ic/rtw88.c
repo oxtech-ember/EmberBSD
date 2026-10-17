@@ -630,6 +630,7 @@ rtw88_stop(struct rtw88_softc *sc)
 
 	sc->sc_stop_requested = 1;
 	sc->sc_generation++;
+	sc->sc_packet_h2c.active = 0;
 	if (sc->sc_running) {
 		/* No new handler work, masks off, then wait out a running one. */
 		sc->sc_running = 0;
@@ -758,6 +759,10 @@ rtw88_start(struct rtw88_softc *sc)
 	if (error != 0)
 		goto fail;
 	sc->sc_h2c_box = 0;
+	/* Only a confirmed new firmware image starts a new packet sequence. */
+	memset(&sc->sc_packet_h2c, 0, sizeof(sc->sc_packet_h2c));
+	sc->sc_packet_h2c.active = 1;
+	sc->sc_packet_h2c.generation = gen;
 	/* Reference rtw_power_on: reset rings, MAC, PHY, then HCI start. */
 	stage = "PCI rings";
 	error = rtw88_hci_setup(sc);

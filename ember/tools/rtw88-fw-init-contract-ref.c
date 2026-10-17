@@ -128,7 +128,7 @@ rtw_pci_tx_kick_off_queue(struct rtw_dev *d,enum rtw_tx_queue_type queue)
 {
 	struct rtw_pci_tx_ring *ring=&d->priv->tx_rings[queue];
 	struct sk_buff *skb=ring->queue;
-	const u8 *bd=ring->r.head+(ring->r.wp-1)*16;
+	const u8 *bd=ring->r.head+((ring->r.wp+ring->r.len-1)%ring->r.len)*16;
 	if(queue!=RTW_TX_QUEUE_H2C || !skb || skb->len!=80) abort();
 	if(!emitting) {
 		memcpy(expected_desc,skb->data,48);
@@ -155,6 +155,16 @@ int main(void)
 	pci.tx_rings[RTW_TX_QUEUE_H2C].r.len=128;
 	/* Capture one actual producer result before emitting invariant metadata. */
 	rtw_fw_send_general_info(&d);
+	if(getenv("H2C_REF_RUNTIME")) {
+		puts("# FreeBSD a143197801c680b958ab662c88cf086668a1958b runtime producer");
+		puts("runtime 260 126 65534");
+		d.h2c.seq=65534;
+		pci.tx_rings[RTW_TX_QUEUE_H2C].r.wp=126;
+		pci.tx_rings[RTW_TX_QUEUE_H2C].r.rp=126;
+		emitting=true;
+		for(r=0;r<260;r++) rtw_fw_send_general_info(&d);
+		return 0;
+	}
 	puts("# FreeBSD a143197801c680b958ab662c88cf086668a1958b unchanged PCI packet producers");
 	printf("layout %zu %zu %zu %zu\n",sizeof(struct rtw_pci_tx_buffer_desc),
 	    offsetof(struct rtw_pci_tx_buffer_desc,buf_size),
