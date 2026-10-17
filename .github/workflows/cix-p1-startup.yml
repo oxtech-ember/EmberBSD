@@ -50,7 +50,7 @@ jobs:
           ruby ember/image/test-cix-p1-root-image.rb
           for file in ember/image/cix-p1-*.sh ember/image/cix-p1-*.subr \
               ember/image/cix-p1-rc ember/image/cix-p1-rc.shutdown \
-              ember/image/cix-p1-console ember/image/cix-p1-console.env \
+              ember/image/cix-p1-console \
               ember/image/cix-p1-power-button; do
             sh -n "$file"
           done

@@ -1030,6 +1030,8 @@ The base system shell is unchanged.
   process waits early. It preserves hooks, sync and normal process grace limits.
   [Actual-source contracts](ember/tools/immediate-shutdown-contract.c) check this
   separate source path. Physical timing with this mode remains unqualified.
+  The trusted UART wrapper retains a session leader. Native board checks cover
+  Ctrl-C, stopped jobs and console exit without input after leader termination.
   Restart by a short press after shutdown remains unresolved on this sample;
   the operator reports that power must be removed and restored.
   A physical CIX S5 GPIO passive snapshot passes on one board. EMBER64 now selects
