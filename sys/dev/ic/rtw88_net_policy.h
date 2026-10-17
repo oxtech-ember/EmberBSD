@@ -17,6 +17,10 @@ struct rtw88_net_policy {
 	unsigned queued;
 	int accepting;
 	int dying;
+	uint64_t beacon_epoch;
+	uint32_t beacon_tick;
+	uint32_t beacon_report_tick;
+	int beacon_valid;
 };
 uint64_t	rtw88_net_request(struct rtw88_net_policy *);
 int		rtw88_net_commit(struct rtw88_net_policy *, uint64_t, int, int);
@@ -24,4 +28,10 @@ void		rtw88_net_close(struct rtw88_net_policy *);
 int		rtw88_net_rx_admit(struct rtw88_net_policy *, uint64_t,
     const uint8_t *, size_t, unsigned, unsigned);
 void		rtw88_net_rx_release(struct rtw88_net_policy *);
+int		rtw88_net_beacon_start(struct rtw88_net_policy *, uint64_t, uint32_t);
+int		rtw88_net_beacon_note(struct rtw88_net_policy *, uint64_t, uint32_t,
+    const uint8_t *, size_t, const uint8_t[6]);
+int		rtw88_net_beacon_poll(struct rtw88_net_policy *, uint64_t, uint32_t,
+    uint32_t);
+uint32_t	rtw88_net_tu_to_ms(uint16_t);
 #endif

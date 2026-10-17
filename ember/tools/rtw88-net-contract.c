@@ -14,9 +14,16 @@ main(void)
 {
 	struct rtw88_net_policy p = {0};
 	unsigned char frame[64] = {0x08, 0x02};
-	uint64_t a, b;
+	const uint8_t bssid[6] = {2, 1, 2, 3, 4, 5};
+	uint64_t a, b, c;
 	unsigned i;
 
+	/* Beacon timeout configuration is in 1024-us TUs, not milliseconds. */
+	CHECK(rtw88_net_tu_to_ms(0) == 0);
+	CHECK(rtw88_net_tu_to_ms(1) == 2);
+	CHECK(rtw88_net_tu_to_ms(100) == 103);
+	CHECK(rtw88_net_tu_to_ms(700) == 717);
+	CHECK(rtw88_net_tu_to_ms(65535) == 67108);
 	/* Removing epoch/acceptance checks admits stale DMA after a rescan. */
 	CHECK(rtw88_net_rx_admit(&p, 0, frame, 24, 0, 0) == ENXIO);
 	a = rtw88_net_request(&p);
@@ -59,10 +66,50 @@ main(void)
 		CHECK(rtw88_net_rx_admit(&p, b, frame, 24, 0, 0) == 0);
 	CHECK(rtw88_net_rx_admit(&p, b, frame, 24, 0, 0) == ENOBUFS);
 	CHECK(p.queued == 64);
+	/* A live generation starts its watchdog at RUN, before its first beacon. */
+	CHECK(rtw88_net_beacon_start(&p, b, 100) == 0);
+	CHECK(!rtw88_net_beacon_poll(&p, b, 599, 500));
+	CHECK(rtw88_net_beacon_poll(&p, b, 600, 500));
+	CHECK(!rtw88_net_beacon_poll(&p, b, 600, 500));
+	CHECK(!rtw88_net_beacon_poll(&p, b, 1099, 500));
+	/* Other BSSIDs, probe responses and truncated beacons cannot keep RUN live. */
+	frame[0] = 0x80;
+	frame[1] = 0;
+	CHECK(rtw88_net_beacon_start(&p, b, 100) == 0);
+	CHECK(rtw88_net_beacon_note(&p, b, 400, frame, 36, bssid) == ENOENT);
+	CHECK(rtw88_net_beacon_poll(&p, b, 600, 500));
+	memcpy(frame + 16, bssid, 6);
+	CHECK(rtw88_net_beacon_start(&p, b, 100) == 0);
+	CHECK(rtw88_net_beacon_note(&p, b, 400, frame, 35, bssid) == ENOENT);
+	CHECK(rtw88_net_beacon_poll(&p, b, 600, 500));
+	frame[0] = 0x50;
+	CHECK(rtw88_net_beacon_start(&p, b, 100) == 0);
+	CHECK(rtw88_net_beacon_note(&p, b, 400, frame, 36, bssid) == ENOENT);
+	CHECK(rtw88_net_beacon_poll(&p, b, 600, 500));
+	frame[0] = 0x80;
+	CHECK(rtw88_net_beacon_note(&p, b, 1200, frame, 36, bssid) == 0);
+	CHECK(!rtw88_net_beacon_poll(&p, b, 1699, 500));
+	CHECK(rtw88_net_beacon_poll(&p, b, 1700, 500));
+	/* State changes invalidate old beacons even if a new RUN starts quickly. */
+	c = rtw88_net_request(&p);
+	CHECK(!rtw88_net_beacon_poll(&p, b, 2200, 500));
+	CHECK(rtw88_net_commit(&p, c, 0, 1) == 0);
+	CHECK(rtw88_net_beacon_note(&p, b, 2200, frame, 36, bssid) == ECANCELED);
+	CHECK(rtw88_net_beacon_note(&p, c, 2200, frame, 36, bssid) == ENXIO);
+	/* Unsigned elapsed ticks handle wrap, and do not fire on backward time. */
+	CHECK(rtw88_net_beacon_start(&p, c, UINT32_MAX - 50) == 0);
+	CHECK(!rtw88_net_beacon_poll(&p, c, 48, 100));
+	CHECK(rtw88_net_beacon_poll(&p, c, 49, 100));
+	CHECK(!rtw88_net_beacon_poll(&p, c, 49, 100));
+	CHECK(!rtw88_net_beacon_poll(&p, c, 48, 100));
+	CHECK(!rtw88_net_beacon_poll(&p, c, 1000, 0));
+	CHECK(!rtw88_net_beacon_poll(&p, c, 1000, UINT32_MAX));
 	rtw88_net_close(&p);
 	CHECK(!p.accepting && p.dying);
 	CHECK(rtw88_net_commit(&p, b, 0, 1) == ECANCELED);
 	CHECK(rtw88_net_rx_admit(&p, p.epoch, frame, 24, 0, 0) == ENXIO);
+	CHECK(!rtw88_net_beacon_poll(&p, c, 1000, 100));
+	CHECK(rtw88_net_beacon_start(&p, p.epoch, 1000) == ENXIO);
 	printf("rtw88 net policy: %u assertions, %u failures\n", checks, failures);
 	return failures != 0;
 }

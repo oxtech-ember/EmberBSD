@@ -13,4 +13,8 @@ fi
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$src/sys/dev/ic" "$tools/rtw88-net-contract.c" \
     "$src/sys/dev/ic/rtw88_net_policy.c" -o "$work/test"
-"$work/test"
+if [ -n "${TEST_RUNNER:-}" ]; then
+    "$TEST_RUNNER" "$work/test"
+else
+    "$work/test"
+fi

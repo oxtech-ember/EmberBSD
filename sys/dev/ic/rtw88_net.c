@@ -10,6 +10,7 @@
 #include <sys/systm.h>
 #include <sys/device.h>
 #include <sys/kmem.h>
+#include <sys/kernel.h>
 #include <sys/mbuf.h>
 #include <sys/callout.h>
 #include <sys/workqueue.h>
@@ -145,6 +146,13 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				rtw88_stop(net->core);
 			} else {
 				(void)net->parent_state(ic, state, arg);
+				if (state == IEEE80211_S_RUN) {
+					mutex_enter(net->lock);
+					if (rtw88_net_beacon_start(&net->policy,
+					    epoch, (uint32_t)getticks()) == 0)
+						ifp->if_timer = 1;
+					mutex_exit(net->lock);
+				}
 				if (state == IEEE80211_S_SCAN)
 					callout_schedule(&net->scan, mstohz(200));
 				softint_schedule(net->softint);
@@ -269,6 +277,13 @@ rtw88_net_softintr(void *cookie)
 		if (!valid) {
 			m_freem(rx.m);
 			continue;
+		}
+		if (ic->ic_state == IEEE80211_S_RUN) {
+			mutex_enter(net->lock);
+			(void)rtw88_net_beacon_note(&net->policy, rx.epoch,
+			    (uint32_t)getticks(), mtod(rx.m, const uint8_t *),
+			    rx.m->m_len, ic->ic_bss->ni_bssid);
+			mutex_exit(net->lock);
 		}
 		ni = ieee80211_find_rxnode(ic,
 		    mtod(rx.m, struct ieee80211_frame_min *));
@@ -460,6 +475,8 @@ static void
 rtw88_net_watchdog(struct ifnet *ifp)
 {
 	struct rtw88_net *net = ifp->if_softc;
+	int missed = 0;
+	uint32_t timeout;
 
 	ifp->if_timer = 0;
 	if (net->tx_timer != 0 && --net->tx_timer == 0) {
@@ -469,6 +486,18 @@ rtw88_net_watchdog(struct ifnet *ifp)
 	if (net->tx_timer != 0)
 		ifp->if_timer = 1;
 	ieee80211_watchdog(&net->ic);
+	if (net->ic.ic_state == IEEE80211_S_RUN) {
+		timeout = (uint32_t)MAX(5 * hz,
+		    mstohz(rtw88_net_tu_to_ms(net->ic.ic_bmisstimeout)));
+		mutex_enter(net->lock);
+		missed = rtw88_net_beacon_poll(&net->policy,
+		    net->policy.epoch, (uint32_t)getticks(), timeout);
+		mutex_exit(net->lock);
+		if (missed)
+			ieee80211_beacon_miss(&net->ic);
+		/* Keep checking an idle station even when it has no outstanding TX. */
+		ifp->if_timer = 1;
+	}
 }
 
 int
