@@ -62,8 +62,15 @@ or MMIO fault. BYPASS was `0`, DIRECTION was `0x226826c1`, INPUT was
 `0x38783ffe`, and MASK was `0xffffffff`. Pin6 was an input, high and not
 bypassed; every bank interrupt was masked. The disk-root fsck was clean,
 and native powerd started automatically. No synthetic event was injected.
-This accepts passive register access only. Armed IRQ delivery, AML/PWRB
-notification, the physical button and final poweroff remain unqualified.
+That passive trial accepts register access only.
+
+With source `522474e4d`, two physical short presses later reached native
+powerd, disk synchronization and FFS unmount. The operator reports fan stop,
+and the next boot reports clean FFS. The earlier shutdown utilities take about
+15–20 seconds. Restart by a short press after shutdown is unresolved: the
+operator reports that power must be removed and restored. These observations
+do not qualify the final firmware wake-source configuration. The new adaptive
+userland timing mode requires a separate physical trial.
 
 ## Source contracts
 

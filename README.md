@@ -1016,16 +1016,22 @@ The base system shell is unchanged.
 - **Reduced CIX P1 development userland:** the OS-owned
   [static C profile](ember/image/cix-p1-userland.md) cross-builds current
   headers, libraries, network clients and disk recovery tools with GCC16.
-  Its 77-program cohort passes static little-endian AArch64 ELF checks.
+  An extended 80-program cohort passes static little-endian AArch64 ELF checks.
   The [persistent-root profile](ember/image/cix-p1.md) adds explicit console,
   network and shutdown scripts. Five unattended SD-root boots retain a marker. Reboot trials
   on both bands restore WPA2/DHCP. Both bands pass 2 MiB TCP checks in each direction.
-  Cold power removal and a complete base release remain separate acceptance.
+  Unexpected power loss while running and a complete base release remain separate acceptance.
   A source-tested native `powerd` policy requests orderly poweroff and rejects
   duplicate button requests. Two physical short presses reach `powerd`, sync
-  and FFS unmount. The operator confirms fan stop and subsequent power-on;
+  and FFS unmount. The operator confirms fan stop and subsequent power cycling;
   the next boot reports clean FFS. Shutdown takes about 15–20 seconds in this
   trial; optimized timing remains pending. Full cold power-cut behavior is unqualified.
+  The explicit `shutdown -i` mode removes operator pauses and ends drained
+  process waits early. It preserves hooks, sync and normal process grace limits.
+  [Actual-source contracts](ember/tools/immediate-shutdown-contract.c) check this
+  separate source path. Physical timing with this mode remains unqualified.
+  Restart by a short press after shutdown remains unresolved on this sample;
+  the operator reports that power must be removed and restored.
   A physical CIX S5 GPIO passive snapshot passes on one board. EMBER64 now selects
   the bounded pin6 ACPI event path; `flags 0x0` retains passive mode. Source
   contracts cover event completion and truncated resource rejection. The
