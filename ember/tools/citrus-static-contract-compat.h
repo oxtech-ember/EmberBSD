@@ -46,6 +46,9 @@
 #define be16toh(x) ntohs(x)
 #define htobe16(x) htons(x)
 #endif
+#ifndef __used
+#define __used __attribute__((__used__))
+#endif
 #ifndef __packed
 #define __packed __attribute__((packed))
 #endif

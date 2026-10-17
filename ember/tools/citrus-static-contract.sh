@@ -69,6 +69,16 @@ if [ "$(uname -s)" = Darwin ]; then
 else
     set --
 fi
+# Exercise the BSD attribute fallback even on hosts that define it already.
+# Keep the unused function: an empty fallback must fail under -Werror too.
+cat > "$work/include/compat-surface.c" <<'SRC'
+#include <sys/cdefs.h>
+#undef __used
+#include "compat.h"
+static int __used citrus_unused_attribute_probe(void) { return 0; }
+SRC
+${CC:-cc} -std=gnu11 -Wall -Wextra -Werror ${CFLAGS:-} "$@" \
+    -I"$work/include" -c "$work/include/compat-surface.c" -o "$work/compat-surface.o"
 : > "$work/commands.jsonl"
 for file in "$work"/*.c; do
     alloc='-Dmalloc=citrus_test_malloc -Dcalloc=citrus_test_calloc -Drealloc=citrus_test_realloc -Dfree=citrus_test_free -Dstrdup=citrus_test_strdup'
