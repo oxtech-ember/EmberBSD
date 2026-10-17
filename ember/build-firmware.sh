@@ -82,23 +82,51 @@ series="$ROOT/ember/firmware/series"
     || { echo 'firmware series must name every diff once' >&2; exit 1; }
 
 # A persistent source cache keeps the pinned revision and submodules.
-# Re-runs reuse it; the working trees are restored to their pins first.
+# A cache prepared on a machine with git carries .ember-pinned with the
+# revision; a build host without git (an EmberBSD board with the toolchain
+# packages) trusts that marker instead of re-fetching. The series
+# application is tracked by .ember-series with the combined series hash.
+prepare_only=0
+args=()
+for arg in "$@"; do
+    [[ "$arg" == "--prepare" ]] && prepare_only=1 || args+=("$arg")
+done
+set -- "${args[@]}"
 if [[ ! -d "$src/.git" ]]; then
+    command -v git >/dev/null 2>&1 || {
+        echo "no git and no source cache: prepare the cache on a host with git" >&2
+        exit 1
+    }
     git clone -q "$repo" "$src"
 fi
-git -C "$src" fetch -q origin
-git -C "$src" checkout -q "$revision"
-git -C "$src" submodule update -q --init --depth 1
-git -C "$src" submodule -q foreach 'git submodule update --init --depth 1 --recursive'
-for tree in . edk2 edk2-platforms; do
-    git -C "$src/$tree" reset -q --hard
-    git -C "$src/$tree" clean -qfdx
-done
+if [[ -f "$src/.ember-pinned" && "$(cat "$src/.ember-pinned")" == "$revision" ]] \
+    && ! command -v git >/dev/null 2>&1; then
+    : # Prepared cache on a host without git: keep the transferred state.
+else
+    command -v git >/dev/null 2>&1 || {
+        echo "cache is not pinned to $revision and git is unavailable" >&2
+        exit 1
+    }
+    git -C "$src" fetch -q origin
+    git -C "$src" checkout -q "$revision"
+    git -C "$src" submodule update -q --init --depth 1
+    git -C "$src" submodule -q foreach 'git submodule update --init --depth 1 --recursive'
+    for tree in . edk2 edk2-platforms; do
+        git -C "$src/$tree" reset -q --hard
+        git -C "$src/$tree" clean -qfdx
+    done
+    printf '%s\n' "$revision" > "$src/.ember-pinned"
+    [[ $prepare_only -eq 0 ]] || { echo "prepared: $src"; exit 0; }
+fi
 
-# Apply the ordered fork diffs on the clean pinned checkout.
-while IFS= read -r diff; do
-    patch -s -p1 -F0 -d "$src/edk2-platforms" < "$ROOT/ember/firmware/$diff"
-done < "$series"
+# Apply the ordered fork diffs once; the marker makes re-runs idempotent.
+series_identity=$( (cd "$ROOT/ember/firmware" && cat $(cat "$series") | shasum -a 256) | awk '{print $1}')
+if [[ ! -f "$src/.ember-series" || "$(cat "$src/.ember-series")" != "$series_identity" ]]; then
+    while IFS= read -r diff; do
+        patch -s -p1 -F0 -d "$src/edk2-platforms" < "$ROOT/ember/firmware/$diff"
+    done < "$series"
+    printf '%s\n' "$series_identity" > "$src/.ember-series"
+fi
 
 # A failed rebuild must make the previous binary unusable as an image input.
 rm -f "$out/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming"
