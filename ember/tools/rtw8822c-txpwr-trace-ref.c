@@ -158,6 +158,8 @@ run(u8 regd, u8 rfe, u8 ch, const char *name)
 	for (p = 0; p < 4; p++)
 		for (i = 0; i < sizeof(dev.efuse.txpwr_idx_table[p]); i++)
 			((u8 *)&dev.efuse.txpwr_idx_table[p])[i] =
+			    strncmp(name, "valid-", 6) == 0 ?
+			    ((i < 11 || (i >= 18 && i < 32)) ? 96 : 0) :
 			    (u8)((p * 42 + i) * 13 + 5);
 	rtw_phy_init_tx_power(&dev);
 	load(&rtw8822c_bb_pg_type0_tbl, 1);
@@ -181,11 +183,13 @@ int
 main(void)
 {
 	static const u8 channels[] = { 1, 6, 11, 13, 14 };
+	static const u8 valid_channels[] = { 1, 6, 11, 36, 44, 149 };
 	char name[48];
-	unsigned i;
+	unsigned i, rfe, regd;
 
 	printf("# rtw8822c TX power reference trace, FreeBSD a143197 rtw88\n");
 	printf("# EFUSE txpwr byte i of path p = (p * 42 + i) * 13 + 5, 20 MHz\n");
+	printf("# valid- sections: all group bases 96; signed differences zero\n");
 	for (i = 0; i < sizeof(channels); i++) {
 		snprintf(name, sizeof(name), "etsi-rfe0-ch%u", channels[i]);
 		run(RTW_REGD_ETSI, 0, channels[i], name);
@@ -194,5 +198,14 @@ main(void)
 	run(RTW_REGD_WW, 0, 6, "ww-rfe0-ch6");
 	run(RTW_REGD_ETSI, 5, 6, "etsi-rfe5-ch6");
 	run(RTW_REGD_UKRAINE, 0, 6, "ukraine-rfe0-ch6");
+	for (rfe = 0; rfe <= 5; rfe += 5) {
+		for (regd = 2; regd <= 12; regd += 10) {
+			for (i = 0; i < sizeof(valid_channels); i++) {
+				snprintf(name, sizeof(name), "valid-%s-rfe%u-ch%u",
+				    regd == 2 ? "etsi" : "ww", rfe, valid_channels[i]);
+				run(regd, rfe, valid_channels[i], name);
+			}
+		}
+	}
 	return 0;
 }

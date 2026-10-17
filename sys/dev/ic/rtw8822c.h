@@ -79,4 +79,18 @@ int rtw8822c_phy_pre(struct rtw88_softc *);
 int rtw8822c_phy_post(struct rtw88_softc *);
 int rtw8822c_set_channel(struct rtw88_softc *, unsigned);
 
+/*
+ * 20 MHz, two-path TX power consumer. Accept explicit ETSI (2) or WW (12)
+ * table domains only. The caller must authorize the channel and serialize
+ * access while TX is stopped. No SAR, thermal correction or channel policy
+ * is supplied here. Reject erased base calibration and signed arithmetic
+ * outside 0..127 before any register access; never reproduce byte wrap.
+ * Missing required limits return ENOTSUP. Unused 2G VHT rates inherit
+ * absolute HT1/HT2 limits; this intentionally differs from the reference.
+ * Propagate the first bus error or cancellation; a partial write is not
+ * rolled back. The caller must keep TX stopped after any failure.
+ */
+int rtw8822c_set_tx_power(struct rtw88_softc *sc,
+    const struct rtw8822c_efuse *efuse, unsigned channel, unsigned regd);
+
 #endif /* _DEV_IC_RTW8822C_H_ */

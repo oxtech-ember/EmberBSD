@@ -24,6 +24,11 @@ check() {
 }
 check rtw8822c.c 6986e6107da9261b97277d57fcc11daf5dcb0d71571c55b1080bdea1495ce160
 check reg.h c8246f9305539347fdb62b0294fe12ea24769cb3ad56c2b0235c4269a0307324
+check main.h bab159780b164959b5bd981d24544507558ed816334d49fd1a31d4d17a69285e
+check phy.h 55388bdbec3b743553776282b918d2f6ffe06d4ac1d8849cf0ea0e22f19867e4
+check phy.c 669d76c8acfc9f30418dbd119e777eae4404f6e3bb1198292aab536a3aa9e4ec
+check rtw8822c.h 975cb88c627ebabb93729c6b5082a6274a9fe69a11094830db83e95486e93b18
+check regd.c d12704ef1123132bd881d5831f4d996a0e0dab5a81a460ed87baac671ca7fd0d
 
 x="python3 $tools/rtw88-ref-extract.py $ref"
 $x "$work/defs.h" main.h:defines phy.h:defines rtw8822c.h:defines regd.c:defines \
@@ -71,7 +76,8 @@ $x "$work/body.c" \
     rtw8822c.c:fn:rtw8822c_set_tx_power_diff \
     rtw8822c.c:fn:rtw8822c_set_tx_power_index
 
-${CC:-cc} -std=gnu11 -w -I"$work" -I"$src/sys/dev/ic" -I"$ref" -I"$tools" \
+${CC:-cc} -std=gnu11 -w ${RTW88_TEST_CFLAGS:-} \
+    -I"$work" -I"$src/sys/dev/ic" -I"$ref" -I"$tools" \
     "$tools/rtw8822c-txpwr-trace-ref.c" "$src/sys/dev/ic/rtw8822c_table.c" \
     -o "$work/gen"
 "$work/gen"
