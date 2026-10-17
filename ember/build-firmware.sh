@@ -5,6 +5,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # --prepare pins the source cache and exits; it may appear anywhere.
+prepare_only=0
+args=()
+for arg in "$@"; do
+    [[ "$arg" == "--prepare" ]] && prepare_only=1 || args+=("$arg")
+done
+set -- "${args[@]}"
 [[ $# -ge 1 && $# -le 2 ]] || { echo 'usage: build-firmware.sh CACHE [--rp1-console|--rp1-trace] [--prepare]' >&2; exit 1; }
 case "$1" in /*) CACHE="$1" ;; *) echo 'CACHE must be an absolute path' >&2; exit 1 ;; esac
 revision=246e70acd939d62b5a79f895984afd0a93bd83e9
@@ -59,8 +65,20 @@ case "$host_system" in
         ;;
 esac
 missing=0
+if [[ $prepare_only -eq 1 ]]; then
+    # Preparing the cache only needs git on this host.
+    command -v git >/dev/null 2>&1 || { echo 'missing host tool: git' >&2; exit 1; }
+elif [[ "$host_system" == "NetBSD" ]]; then
+    for tool in gmake iasl dtc python3; do
+        command -v "$tool" >/dev/null 2>&1 || { echo "missing host tool: $tool" >&2; missing=1; }
+    done
+    command -v aarch64-none-elf-gcc >/dev/null 2>&1 || { echo 'missing host tool: aarch64-none-elf-gcc' >&2; missing=1; }
+    python3 -c 'import elftools' >/dev/null 2>&1 || { echo 'missing python3 module: pyelftools' >&2; missing=1; }
+    [[ $missing -eq 0 ]] || exit 1
+fi
 # pkgsrc ships the bare-metal toolchain as aarch64-none-elf-;
 # accept both it and the classic aarch64-elf- prefix.
+if [[ $prepare_only -eq 0 ]]; then
 for tool in gmake iasl dtc python3; do
     command -v "$tool" >/dev/null 2>&1 || { echo "missing host tool: $tool" >&2; missing=1; }
 done
@@ -76,6 +94,7 @@ case "${CROSS_COMPILE:-}" in
 esac
 python3 -c 'import elftools' >/dev/null 2>&1 || { echo 'missing python3 module: pyelftools' >&2; missing=1; }
 [[ $missing -eq 0 ]] || exit 1
+fi
 
 # The firmware series must name every diff exactly once.
 series="$ROOT/ember/firmware/series"
