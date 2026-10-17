@@ -16,15 +16,32 @@
 struct cixclk_acpi_softc;
 struct cixclk {
 	struct cixclk_acpi_softc *provider;
+	uint32_t id;
+	unsigned int capabilities;
 	bool claimed;
 	enum { CIXCLK_IDLE, CIXCLK_ENABLED, CIXCLK_UNCERTAIN } state;
+};
+
+enum {
+	CIXCLK_RATE_READ = 1U << 0,
+	CIXCLK_GATE_CONTROL = 1U << 1
+};
+
+/* Firmware clock IDs. UART functional clocks are rate-only in this API. */
+static const struct {
+	uint32_t id;
+	unsigned int capabilities;
+} cixclk_profiles[] = {
+	{ 0x43, CIXCLK_RATE_READ | CIXCLK_GATE_CONTROL },
+	{ 0x108, CIXCLK_RATE_READ },
+	{ 0x10a, CIXCLK_RATE_READ }
 };
 
 struct cixclk_acpi_softc {
 	device_t sc_dev;
 	ACPI_HANDLE sc_handle;
 	kmutex_t sc_lock;
-	struct cixclk sc_clock;
+	struct cixclk sc_clocks[__arraycount(cixclk_profiles)];
 };
 
 /* UID 0 is the only supported provider. Autoconfiguration publishes it once. */
@@ -54,6 +71,7 @@ cixclk_acpi_attach(device_t parent, device_t self, void *aux)
 {
 	struct cixclk_acpi_softc *sc = device_private(self);
 	const struct acpi_attach_args *aa = aux;
+	unsigned int i;
 
 	(void)parent;
 	aprint_naive("\n");
@@ -65,9 +83,14 @@ cixclk_acpi_attach(device_t parent, device_t self, void *aux)
 	sc->sc_dev = self;
 	sc->sc_handle = aa->aa_node->ad_handle;
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
-	sc->sc_clock.provider = sc;
-	sc->sc_clock.claimed = false;
-	sc->sc_clock.state = CIXCLK_IDLE;
+	for (i = 0; i < __arraycount(sc->sc_clocks); i++) {
+		sc->sc_clocks[i] = (struct cixclk){
+			.provider = sc,
+			.id = cixclk_profiles[i].id,
+			.capabilities = cixclk_profiles[i].capabilities,
+			.state = CIXCLK_IDLE
+		};
+	}
 	cixclk_provider = sc;
 	/* No GCLK or CLKC evaluation is permitted during attachment. */
 }
@@ -86,7 +109,9 @@ int
 cixclk_acpi_get(ACPI_HANDLE provider, uint32_t id, struct cixclk **out)
 {
 	struct cixclk_acpi_softc *sc = cixclk_provider;
-	int error = 0;
+	struct cixclk *clk;
+	unsigned int i;
+	int error = ENOTSUP;
 
 	if (out == NULL || provider == NULL)
 		return EINVAL;
@@ -94,14 +119,19 @@ cixclk_acpi_get(ACPI_HANDLE provider, uint32_t id, struct cixclk **out)
 		return EWOULDBLOCK;
 	if (sc == NULL || sc->sc_handle != provider)
 		return ENXIO;
-	if (id != 0x43)
-		return ENOTSUP;
 	mutex_enter(&sc->sc_lock);
-	if (sc->sc_clock.claimed)
-		error = EBUSY;
-	else {
-		sc->sc_clock.claimed = true;
-		*out = &sc->sc_clock;
+	for (i = 0; i < __arraycount(sc->sc_clocks); i++) {
+		clk = &sc->sc_clocks[i];
+		if (clk->id != id)
+			continue;
+		if (clk->claimed)
+			error = EBUSY;
+		else {
+			clk->claimed = true;
+			*out = clk;
+			error = 0;
+		}
+		break;
 	}
 	mutex_exit(&sc->sc_lock);
 	return error;
@@ -117,9 +147,10 @@ cixclk_le32(const uint8_t *p)
 
 /* Caller holds the sleep mutex across AML, including mailbox waits. */
 static int
-cixclk_evaluate(struct cixclk_acpi_softc *sc, bool rate, bool enable,
+cixclk_evaluate(struct cixclk *clk, bool rate, bool enable,
     uint64_t *value)
 {
+	struct cixclk_acpi_softc *sc = clk->provider;
 	ACPI_OBJECT args[2] = { { .Type = ACPI_TYPE_INTEGER },
 	    { .Type = ACPI_TYPE_INTEGER } };
 	ACPI_OBJECT_LIST list = { rate ? 1 : 2, args };
@@ -132,7 +163,7 @@ cixclk_evaluate(struct cixclk_acpi_softc *sc, bool rate, bool enable,
 	uint32_t clock_status;
 	int error = EIO;
 
-	args[0].Integer.Value = 0x43;
+	args[0].Integer.Value = clk->id;
 	args[1].Integer.Value = enable ? 1 : 0;
 	status = AcpiEvaluateObject(sc->sc_handle, method,
 	    &list, &result);
@@ -191,6 +222,8 @@ cixclk_control(struct cixclk *clk, bool enable)
 	mutex_enter(&sc->sc_lock);
 	if (!clk->claimed)
 		error = EINVAL;
+	else if (!(clk->capabilities & CIXCLK_GATE_CONTROL))
+		error = ENOTSUP;
 	else if (enable && clk->state == CIXCLK_UNCERTAIN)
 		error = EIO;
 	else if ((enable && clk->state == CIXCLK_ENABLED) ||
@@ -199,7 +232,7 @@ cixclk_control(struct cixclk *clk, bool enable)
 	else {
 		/* An AML error can follow a hardware change. Keep ownership. */
 		clk->state = CIXCLK_UNCERTAIN;
-		error = cixclk_evaluate(sc, false, enable, NULL);
+		error = cixclk_evaluate(clk, false, enable, NULL);
 		if (error == 0)
 			clk->state = enable ? CIXCLK_ENABLED : CIXCLK_IDLE;
 	}
@@ -233,7 +266,12 @@ cixclk_acpi_get_rate(struct cixclk *clk, uint64_t *rate)
 		return EWOULDBLOCK;
 	sc = clk->provider;
 	mutex_enter(&sc->sc_lock);
-	error = clk->claimed ? cixclk_evaluate(sc, true, false, rate) : EINVAL;
+	if (!clk->claimed)
+		error = EINVAL;
+	else if (!(clk->capabilities & CIXCLK_RATE_READ))
+		error = ENOTSUP;
+	else
+		error = cixclk_evaluate(clk, true, false, rate);
 	mutex_exit(&sc->sc_lock);
 	return error;
 }

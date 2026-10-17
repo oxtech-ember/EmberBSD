@@ -12,9 +12,13 @@ struct cixclk;
 
 /*
  * Sleepable, boot-long provider. No interrupt or hot-detach support.
- * Only clock 0x43 is supported. A claim is exclusive and does not change hardware.
+ * ID 0x43 supports gate control and rate queries. IDs 0x108 and 0x10a support
+ * rate queries only; enable/disable returns ENOTSUP without evaluating AML.
+ * This matrix limits the driver API. Firmware can reject a supported request.
+ * Other IDs are unsupported. Claims are exclusive per ID. Different IDs have
+ * independent claims. A claim does not change hardware.
  * Outputs are unchanged on failure. No operation changes the clock rate.
- * Repeated enable/disable returns EALREADY without evaluating AML.
+ * Repeated confirmed gate enable/disable returns EALREADY without evaluating AML.
  * Failed control retains the claim in an uncertain state. Disable can retry
  * rollback. Put returns EBUSY until disable succeeds. Enable returns EIO while
  * uncertain. The caller must not use the claim after a successful put.
