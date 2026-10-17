@@ -39,4 +39,11 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     "$src/sys/dev/ic/rtw8822c_coex.c" \
     "$src/sys/dev/ic/rtw8822c_txpwr.c" \
     -o "$work/test"
-run_test "$work/test"
+if ! run_test "$work/test" > "$work/output"; then
+    cat "$work/output"
+    exit 1
+fi
+cat "$work/output"
+# Both real calibration quality scenarios must reach the startup warning.
+grep -F 'WARNING: cold calibration degraded: ADC nonconverged 0x1 DAC nonconverged 0; RF quality is unqualified' "$work/output" > /dev/null
+grep -F 'WARNING: cold calibration degraded: ADC nonconverged 0 DAC nonconverged 0x1; RF quality is unqualified' "$work/output" > /dev/null

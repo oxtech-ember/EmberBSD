@@ -7,6 +7,8 @@
  * range-checked measurements, use signed widened arithmetic, reject
  * unrepresentable vectors, propagate failures and keep RF backups separate
  * for paths AB.
+ * Residual nonconvergence after ten valid attempts is advisory, as in the
+ * reference. Report measured, converged and completed paths separately.
  * No warm cache. A failure after a write requires a full caller power reset;
  * restoring control words cannot undo internal ADC/DAC/MSBK calibration.
  */
@@ -421,8 +423,13 @@ step3(struct dack_context *c, unsigned path, unsigned ic, unsigned qc)
 
 		stage(c, RTW8822C_DACK_DAC_POST, path);
 		measure(c, &iv, &qv);
-		c->out->dac_residual[path][0] = (int16_t)signed10((uint32_t)(iv - 16));
-		c->out->dac_residual[path][1] = (int16_t)signed10((uint32_t)(qv - 16));
+		if (c->error == 0) {
+			c->out->dac_residual[path][0] =
+			    (int16_t)signed10((uint32_t)(iv - 16));
+			c->out->dac_residual[path][1] =
+			    (int16_t)signed10((uint32_t)(qv - 16));
+			c->out->dac_measured |= (uint8_t)(1U << path);
+		}
 	}
 }
 
@@ -495,15 +502,20 @@ adc_cal(struct dack_context *c, unsigned path)
 		stage(c, RTW8822C_DACK_ADC_POST, path);
 		w32(c, 0x1c3c, sel + 0x8103);
 		measure(c, &iv, &qv);
+		if (c->error != 0)
+			return;
 		c->out->adc_residual[path][0] = (int16_t)iv;
 		c->out->adc_residual[path][1] = (int16_t)qv;
+		c->out->adc_measured |= (uint8_t)(1U << path);
 		if (attempt == 9 && c->error == 0)
 			adc_snapshot(c, path);
-		if (converged(c->out->adc_residual[path]))
+		if (c->error == 0 && converged(c->out->adc_residual[path])) {
+			c->out->adc_converged |= (uint8_t)(1U << path);
 			break;
+		}
 	}
 	if (attempt == 10 && c->error == 0)
-		c->error = ERANGE;
+		c->out->adc_nonconverged |= (uint8_t)(1U << path);
 	w32(c, 0x1c3c, 3);
 	w32(c, base + 0x0c, 0x10000260);
 	w32(c, base + 0x10, 0x02d508c4);
@@ -602,12 +614,16 @@ rtw8822c_dack(struct rtw88_softc *sc, struct rtw8822c_dack_result *out)
 			step2(&c, path);
 			stage(&c, RTW8822C_DACK_DAC_PROGRAM, path);
 			step3(&c, path, out->dac[path][0], out->dac[path][1]);
-			if (converged(out->dac_residual[path]))
+			if (c.error == 0 && converged(out->dac_residual[path])) {
+				out->dac_converged |= (uint8_t)(1U << path);
 				break;
+			}
 		}
 		if (attempt == 10 && c.error == 0)
-			c.error = ERANGE;
+			out->dac_nonconverged |= (uint8_t)(1U << path);
 		step4(&c, path);
+		if (c.error == 0)
+			out->completed_paths |= (uint8_t)(1U << path);
 	}
 	stage(&c, RTW8822C_DACK_RESTORE, 2);
 	w32(&c, 0x1b00, 8);
@@ -621,10 +637,14 @@ rtw8822c_dack(struct rtw88_softc *sc, struct rtw8822c_dack_result *out)
 		write_rf(&c, path, 0x8f, RF_MASK, rf[path]);
 	if (c.error == 0 && canceled(&c))
 		c.error = EINTR;
-	if (c.error == 0) {
-		out->valid_paths = 3;
+	if (c.error == 0 && out->adc_measured == 3 && out->dac_measured == 3 &&
+	    out->completed_paths == 3) {
+		out->restored = 1;
 		stage(&c, RTW8822C_DACK_DONE, 1);
-	} else
+	} else if (c.error == 0) {
+		c.error = EIO;
+	}
+	if (c.error != 0)
 		out->reset_required = (uint8_t)c.mutated;
 	return c.error;
 }

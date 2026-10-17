@@ -34,7 +34,7 @@ static struct {
 	unsigned off_attempts, master_enables, master_disables, firmware_loads;
 	int power_pre_seen, power_table_seen, power_post_seen, bad_power_order;
 	int coex_before_h2c;
-	int fail_dack, stop_dack_delay, dack_seen, dack_failed;
+	int fail_dack, quality_dack, stop_dack_delay, dack_seen, dack_failed;
 	unsigned dack_samples, dack_polls, dack_after_error, hci_before_dack;
 	int h2c_dead;
 	int stop_coex_final;
@@ -562,6 +562,7 @@ firmware_load(void *cookie, const char *drv, const char *name,
 	f.dack_samples = f.dack_polls = f.dack_after_error = f.hci_before_dack = 0;
 	model_reset(0);
 	model.recording = 0;
+	model.profile = f.quality_dack == 1 ? 6 : f.quality_dack == 2 ? 7 : 0;
 	model.invalid = f.fail_dack == 2;
 	model.not_ready = f.fail_dack == 3;
 	if (f.fw_error != 0)
@@ -720,6 +721,19 @@ test_cold_dack_startup(void)
 	CHECK(f.dack_samples == 800 && !f.hci_before_dack);
 	CHECK(model.visits[0][ADC_POST] == 1 && model.visits[1][DAC_PRE] == 1);
 	CHECK(rtw88_core_detach(&sc) == 0);
+	/* Advisory residual quality must be visible after the full A/B procedure. */
+	for (int kind = 1; kind <= 2; kind++) {
+		reset_bus(&sc);
+		f.quality_dack = kind;
+		if (!attach_ok(&sc)) return;
+		CHECK(rtw88_start(&sc) == 0);
+		CHECK(sc.sc_started && sc.sc_running && sc.sc_rf_enabled);
+		CHECK(model.visits[0][ADC_POST] == (kind == 1 ? 10U : 1U));
+		CHECK(model.visits[0][DAC_PRE] == (kind == 2 ? 10U : 1U));
+		CHECK(model.visits[1][ADC_POST] == 1 && model.visits[1][DAC_PRE] == 1);
+		CHECK(!f.hci_before_dack);
+		CHECK(rtw88_core_detach(&sc) == 0);
+	}
 	for (int kind = 1; kind <= 3; kind++) {
 		reset_bus(&sc);
 		f.fail_dack = kind;

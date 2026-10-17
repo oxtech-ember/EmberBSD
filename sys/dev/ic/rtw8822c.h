@@ -133,7 +133,11 @@ struct rtw8822c_dack_result {
 	uint32_t adc_snapshot[5];
 	int adc_snapshot_error;
 	uint8_t adc_snapshot_valid, adc_snapshot_path;
-	uint8_t valid_paths;		/* 3 only after complete success. */
+	/* Per-path observations and residual quality, not radio qualification. */
+	uint8_t adc_measured, dac_measured;
+	uint8_t adc_converged, dac_converged;
+	uint8_t adc_nonconverged, dac_nonconverged;
+	uint8_t completed_paths, restored; /* Temporary BB/RF controls only. */
 	uint8_t reset_required;
 };
 
@@ -147,7 +151,11 @@ struct rtw8822c_dack_result {
  * The first error stops all access. Any attempted write followed by failure
  * sets reset_required; the caller MUST perform a full power reset before
  * retry or scan/TX. Register snapshots cannot roll back analog/MSBK state.
- * Leave valid_paths zero on any error, including failure during restore.
+ * Return zero only after measured/completed paths AB and common restore.
+ * Residual nonconvergence after ten valid attempts is advisory, as in the
+ * reference. The measured/converged masks report observation and quality
+ * separately; nonconverged masks remain set after later paths complete.
+ * Any hard failure leaves restored zero, including a failure during restore.
  */
 int rtw8822c_dack(struct rtw88_softc *, struct rtw8822c_dack_result *);
 

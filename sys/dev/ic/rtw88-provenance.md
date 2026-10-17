@@ -246,6 +246,14 @@ Host contract `ember/tools/rtw88-start-contract.sh` is the executor check.
 call graph against the unchanged pinned `rtw_phy_load_tables` producer.
 That contract records table dispatch and RFK mask writes, not analog behavior.
 The startup contract also checks real decoded AFE registers before ADCK.
+Cold ADCK/DACK follows the reference's ten-attempt residual-quality policy.
+Nonconvergence is advisory and emits a numeric degraded startup warning.
+Measured, converged and completed paths are distinct from common temporary
+BB/RF control restore. Completion does not establish radio qualification.
+Sample validity, vector range, readiness, bus errors, cancellation and budgets
+remain hard failures. Actual pinned-source fixtures cover ADC and DAC
+nonconvergence followed by both paths and restore; later hard faults retain
+earlier quality warnings without reporting a completed restore.
 No partial substitute or table from a different chip is provided.
 The complete table inventory at that exact revision is:
 

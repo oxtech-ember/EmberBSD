@@ -264,14 +264,23 @@ rtw8822c_phy_post(struct rtw88_softc *sc)
 		return io.error;
 	/* rtw8822c_rf_init: measured cold ADCK/DACK before any HCI start. */
 	error = rtw8822c_dack(sc, &dack);
-	printf("rtwce: cold ADCK/DACK error %d valid %#x reset %u "
+	printf("rtwce: cold ADCK/DACK error %d measured %#x/%#x "
+	    "converged %#x/%#x completed %#x restored %u reset %u "
 	    "ADC A %d/%d B %d/%d DAC A %d/%d B %d/%d "
-	    "ops %u explicit_delay_us %u\n", error, (unsigned)dack.valid_paths,
+	    "ops %u explicit_delay_us %u\n", error, (unsigned)dack.adc_measured,
+	    (unsigned)dack.dac_measured, (unsigned)dack.adc_converged,
+	    (unsigned)dack.dac_converged, (unsigned)dack.completed_paths,
+	    (unsigned)dack.restored,
 	    (unsigned)dack.reset_required, dack.adc_residual[0][0],
 	    dack.adc_residual[0][1], dack.adc_residual[1][0],
 	    dack.adc_residual[1][1], dack.dac_residual[0][0],
 	    dack.dac_residual[0][1], dack.dac_residual[1][0],
 	    dack.dac_residual[1][1], dack.operations, dack.delay_us);
+	if (dack.adc_nonconverged != 0 || dack.dac_nonconverged != 0)
+		printf("rtwce: WARNING: cold calibration degraded: "
+		    "ADC nonconverged %#x DAC nonconverged %#x; "
+		    "RF quality is unqualified\n", (unsigned)dack.adc_nonconverged,
+		    (unsigned)dack.dac_nonconverged);
 	if (error != 0) {
 		printf("rtwce: DACK identity syscfg %#x cut %u RFE %u XTAL %u\n",
 		    sc->sc_sys_cfg1, (unsigned)sc->sc_cut, (unsigned)sc->sc_rfe,

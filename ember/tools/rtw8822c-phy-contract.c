@@ -23,7 +23,10 @@ rtw8822c_dack(struct rtw88_softc *sc, struct rtw8822c_dack_result *out)
 
 	(void)sc;
 	memset(out, 0, sizeof(*out));
-	out->valid_paths = 3;
+	out->adc_measured = out->dac_measured = 3;
+	out->adc_converged = out->dac_converged = 3;
+	out->completed_paths = 3;
+	out->restored = 1;
 	return 0;
 }
 #define CHECK(x)                                                       \

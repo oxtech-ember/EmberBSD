@@ -84,6 +84,8 @@ model_read(unsigned a,unsigned n)
 			qv+=(model.samples%2)?-10:10;
 		}
 		if(model.transient_replacement && model.samples==100) iv=101;
+		if(model.profile==6 && p==0 && k==ADC_POST) iv=8;
+		if(model.profile==7 && p==0 && k==DAC_POST) iv=32;
 		if(model.samples<model.skip) iv=101;
 		v=(((unsigned)iv&1023)<<12)|((unsigned)qv&1023);
 		model.samples++;
