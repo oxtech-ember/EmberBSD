@@ -69,8 +69,18 @@ powerd, disk synchronization and FFS unmount. The operator reports fan stop,
 and the next boot reports clean FFS. The earlier shutdown utilities take about
 15–20 seconds. Restart by a short press after shutdown is unresolved: the
 operator reports that power must be removed and restored. These observations
-do not qualify the final firmware wake-source configuration. The new adaptive
-userland timing mode requires a separate physical trial.
+do not qualify the final firmware wake-source configuration.
+
+On 2026-10-18, another physical short press with the same kernel and GCC16
+utilities from `2231dbb6c` passes sync and FFS unmount. The installed console
+wrapper is from `3794f23aa`; the profile head is `df31d0139`. Host UART arrival
+timestamps record 4.05 s from the shutdown reason to completed unmount. This
+excludes press-to-policy latency and firmware completion. The operator measures
+about 5 s from press to fan stop and accepts that duration. Restart by short
+press still fails. After DC restoration, the next unattended boot reports clean
+FFS and restores WPA2/DHCP. The persistence marker and installed file hashes
+match. Electrical rail state remains unmeasured. No shutdown hook or filesystem
+step was bypassed.
 
 ## Source contracts
 

@@ -1023,13 +1023,16 @@ The base system shell is unchanged.
   Unexpected power loss while running and a complete base release remain separate acceptance.
   A source-tested native `powerd` policy requests orderly poweroff and rejects
   duplicate button requests. Two physical short presses reach `powerd`, sync
-  and FFS unmount. The operator confirms fan stop and subsequent power cycling;
-  the next boot reports clean FFS. Shutdown takes about 15–20 seconds in this
-  trial; optimized timing remains pending. Full cold power-cut behavior is unqualified.
+  and FFS unmount; subsequent boots report clean FFS. With the adaptive utilities,
+  another short press reaches FFS unmount 4.05 s after the shutdown reason log.
+  The operator measures about 5 s from press to fan stop, down from 15–20 s.
+  The next unattended boot reports clean FFS, retains the marker and utilities,
+  and restores WPA2/DHCP.
+  Full cold power-cut behavior is unqualified.
   The explicit `shutdown -i` mode removes operator pauses and ends drained
   process waits early. It preserves hooks, sync and normal process grace limits.
   [Actual-source contracts](ember/tools/immediate-shutdown-contract.c) check this
-  separate source path. Physical timing with this mode remains unqualified.
+  separate source path. This physical result covers one healthy-system trial.
   The trusted UART wrapper retains a session leader. Native board checks cover
   Ctrl-C, stopped jobs and console exit without input after leader termination.
   Restart by a short press after shutdown remains unresolved on this sample;

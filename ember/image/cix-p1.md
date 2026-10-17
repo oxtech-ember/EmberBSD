@@ -94,6 +94,15 @@ The new timing mode requires rebuilt native shutdown/halt binaries and a separat
 target trial. A late shutdown failure can retain the request guard; the policy
 does not guarantee retry after process termination has begun.
 
+One physical trial on 2026-10-18 uses the accepted `522474e4d` kernel, static
+GCC16 utilities from `2231dbb6c`, and the `3794f23aa` console wrapper.
+UART records sync and completed FFS unmount 4.05 s after the shutdown reason.
+The operator measures about 5 s from the press to fan stop, instead of 15–20 s.
+This is one healthy-system result. After DC restoration, the next unattended
+boot reports clean FFS, retains the marker and new file hashes, and restores
+WPA2/DHCP. Electrical power-off remains unmeasured. Power-on by a later short
+press still fails; the operator must remove and restore input power.
+
 This development profile exposes an unauthenticated root shell on its trusted
 UART console. It starts no network login server. Configure access separately
 before deployment outside a controlled development bench.
