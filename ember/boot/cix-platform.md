@@ -155,7 +155,7 @@ query version, protocol attributes or entity attributes. A rate can already be
 stale after an asynchronous change; it grants no control permission.
 See [DEN0056D section 4.6.2.7](https://documentation-service.arm.com/static/6231acfc8804d00769e9db69).
 No result sets a rate, enables a clock, clears ACK or starts another query.
-Physical rate acceptance requires a separate manual diagnostic boot.
+The physical receipt below qualifies one rate read, without clock control.
 
 Before mapping, the binding validates each static property, resource and
 reference. It requires MBX6/7, SHM0/1, channel 8, non-coherent shared memory,
@@ -382,6 +382,25 @@ Exact-head CI, including Memcheck and ASan/UBSan, passes. FFS is clean after boo
 The default and rollback entries remain unchanged. No ACK is cleared, and the
 boot-long lease remains held. VPU activation, clock identity, rate and control
 remain unqualified.
+
+Two separate manual boots of GCC16.2 kernel source
+`96d41f7f1013270869d504d6f212be9a15aab177` qualify further read-only evidence.
+The rate variant has gzip SHA256
+`0d26245ea5b57aa885aa726293bf8cb705d1054b1d03cd090b0d80dc36032595`.
+Its one CLOCK_RATE_GET reply has header `0x45006`, length 16, firmware status 0,
+helper return 0 and decode error 0. It reports `rate_valid=1` and `rate_hz=0`.
+This is firmware telemetry, not a measured waveform or a proven reason for zero.
+The entity variant has gzip SHA256
+`70d370939c09b52cc0cb0478e21b40572401ada7a68bca8c0bd6b20b3ce62f00`.
+It again receives only 20 entity data bytes. Its rejected-prefix record contains
+attribute word 0 and name words `5f757076,63627061,00006b6c,00000000`.
+Those name bytes spell `vpu_apbclk`, consistent with the vendor ID table.
+The full CLOCK 2.0 entity record still reports EPROTO96 and invalid outputs;
+enable delay is absent. This does not establish a compatibility policy or
+clock-control permission. Both boots report clean FFS and retain their channel
+leases without clearing ACK. Exact-head CI passes Memcheck and ASan/UBSan.
+Each boot issues only one request. Repeated transactions, clock control and
+VPU MMIO, IRQ, DMA and firmware execution remain unqualified.
 
 ## Primary provenance
 
