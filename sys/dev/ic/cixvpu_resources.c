@@ -12,6 +12,14 @@
 /* Both CIXH3010 register windows require at least 64 KiB. */
 #define CIXVPU_RESOURCE_MIN_SPAN 0x10000U
 
+int
+cixvpu_acpi_resource_type_allowed(uint32_t type)
+{
+
+	return type == CIXVPU_ACPI_FIXED_MEMORY32 ||
+	    type == CIXVPU_ACPI_EXTENDED_IRQ || type == CIXVPU_ACPI_END_TAG;
+}
+
 enum cixvpu_resource_status
 cixvpu_resources_validate(const struct cixvpu_resources *res)
 {

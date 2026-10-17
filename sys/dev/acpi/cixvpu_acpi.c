@@ -11,6 +11,10 @@
 #include <dev/acpi/acpivar.h>
 #include <dev/ic/cixvpu_resources.h>
 
+__CTASSERT(CIXVPU_ACPI_FIXED_MEMORY32 == ACPI_RESOURCE_TYPE_FIXED_MEMORY32);
+__CTASSERT(CIXVPU_ACPI_EXTENDED_IRQ == ACPI_RESOURCE_TYPE_EXTENDED_IRQ);
+__CTASSERT(CIXVPU_ACPI_END_TAG == ACPI_RESOURCE_TYPE_END_TAG);
+
 static const struct device_compatible_entry cixvpu_acpi_compat[] = {
 	{ .compat = "CIXH3010" },
 	DEVICE_COMPAT_EOL
@@ -21,6 +25,20 @@ cixvpu_acpi_match(device_t parent, cfdata_t cf, void *aux)
 {
 
 	return acpi_compatible_match(aux, cixvpu_acpi_compat);
+}
+
+static ACPI_STATUS
+cixvpu_acpi_resource_check(ACPI_RESOURCE *resource, void *context)
+{
+
+	if (!cixvpu_acpi_resource_type_allowed(resource->Type)) {
+		device_t self = context;
+
+		aprint_error_dev(self, "unsupported _CRS descriptor type %u\n",
+		    resource->Type);
+		return AE_BAD_DATA;
+	}
+	return AE_OK;
 }
 
 static void
@@ -38,8 +56,8 @@ cixvpu_acpi_attach(device_t parent, device_t self, void *aux)
 	const ACPI_HANDLE handle = aa->aa_node->ad_handle;
 	struct acpi_resources resources;
 	struct cixvpu_resources description = { 0 };
-	struct acpi_mem *mem;
-	struct acpi_irq *irq;
+	const struct acpi_mem *mem;
+	const struct acpi_irq *irq;
 	ACPI_INTEGER cca;
 	ACPI_STATUS rv;
 	enum cixvpu_resource_status status;
@@ -48,6 +66,13 @@ cixvpu_acpi_attach(device_t parent, device_t self, void *aux)
 	aprint_naive(": CIX P1 video codec (disabled)\n");
 	aprint_normal(": CIX P1 video codec (diagnostic attachment)\n");
 
+	/* The common parser ignores some descriptor types. Reject those first. */
+	rv = AcpiWalkResources(handle, "_CRS", cixvpu_acpi_resource_check, self);
+	if (ACPI_FAILURE(rv)) {
+		aprint_error_dev(self, "_CRS descriptor validation failed: %s\n",
+		    AcpiFormatException(rv));
+		goto disabled;
+	}
 	/* Parse firmware descriptions only. Do not map or activate the block. */
 	rv = acpi_resource_parse(self, handle, "_CRS", &resources,
 	    &acpi_resource_parse_ops_quiet);
@@ -96,6 +121,7 @@ cixvpu_acpi_attach(device_t parent, device_t self, void *aux)
 done:
 	/* The parser initializes its lists before any failure; free them too. */
 	acpi_resource_cleanup(&resources);
+disabled:
 	aprint_error_dev(self,
 	    "codec disabled: CIX power/clock/reset providers not implemented\n");
 }

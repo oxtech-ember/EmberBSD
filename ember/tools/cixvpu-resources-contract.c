@@ -9,6 +9,24 @@
 static unsigned int assertions;
 
 static void
+check_raw(const char *name, const uint32_t *types, size_t count, int expected)
+{
+	int allowed = 1;
+	size_t i;
+
+	for (i = 0; i < count; i++) {
+		if (!cixvpu_acpi_resource_type_allowed(types[i]))
+			allowed = 0;
+	}
+	assertions++;
+	if (allowed != expected) {
+		fprintf(stderr, "%s: raw resource policy expected %d, got %d\n",
+		    name, expected, allowed);
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void
 check(const char *name, const struct cixvpu_resources *res,
     enum cixvpu_resource_status expected)
 {
@@ -35,6 +53,20 @@ main(void)
 	};
 	struct cixvpu_resources res;
 	unsigned int i;
+	/* Literal ACPICA descriptor types, independent of the production macros. */
+	const uint32_t raw_good[] = {10, 10, 15, 7};
+	const uint32_t raw_extended64[] = {10, 10, 15, 14, 7};
+	const uint32_t raw_address16[] = {10, 10, 15, 11, 7};
+	const uint32_t raw_unknown[] = {10, 10, 15, UINT32_MAX, 7};
+	const uint32_t raw_io[] = {10, 10, 15, 4, 7};
+	const uint32_t raw_dependent[] = {2, 10, 10, 15, 3, 7};
+
+	check_raw("stock descriptor types", raw_good, 4, 1);
+	check_raw("extra ExtendedAddress64", raw_extended64, 5, 0);
+	check_raw("extra Address16", raw_address16, 5, 0);
+	check_raw("extra unknown type", raw_unknown, 5, 0);
+	check_raw("extra IO", raw_io, 5, 0);
+	check_raw("dependent alternatives", raw_dependent, 6, 0);
 
 	check("missing description", NULL, CIXVPU_RESOURCE_COUNT);
 	check("valid noncoherent", &good, CIXVPU_RESOURCE_OK);

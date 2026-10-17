@@ -16,6 +16,13 @@ struct cixvpu_mem_resource {
 	uint64_t length;
 };
 
+/* ACPICA resource type values, checked against its headers by the attachment. */
+#define CIXVPU_ACPI_END_TAG 7U
+#define CIXVPU_ACPI_FIXED_MEMORY32 10U
+#define CIXVPU_ACPI_EXTENDED_IRQ 15U
+
+int cixvpu_acpi_resource_type_allowed(uint32_t type);
+
 struct cixvpu_resources {
 	struct cixvpu_mem_resource mem[2];
 	unsigned int nmem;

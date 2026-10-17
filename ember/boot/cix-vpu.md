@@ -30,6 +30,9 @@ capture-only; the presence of M2M declarations does not implement two queues.
 
 `cixvpu_acpi` matches `CIXH3010`. `EMBER64` selects this diagnostic attachment.
 It parses `_CRS` through the standard ACPI resource parser and evaluates `_CCA`.
+Before that parse, an ACPICA resource walk rejects unsupported descriptor types.
+Only `Memory32Fixed`, `ExtendedInterrupt` and `EndTag` are accepted.
+This prevents the common parser from silently dropping extra unsupported resources.
 The independent BSD validator in `sys/dev/ic/cixvpu_resources.[ch]` requires:
 
 - Exactly two fixed memory resources and one interrupt, without I/O, variable
@@ -144,8 +147,11 @@ Linux Memcheck runs with origins, all leak kinds and a failure exit status.
 The core tests and firmware CLI have zero reported memory errors or leaks.
 These checks are not a full kernel build, kernel memory analysis or DMA test.
 
-The resource validator passes 44 assertions with GCC 16.2.0 on macOS/AArch64,
+The resource validator passes 50 assertions with GCC 16.2.0 on macOS/AArch64,
 including GCC path analysis and a separate ASan/UBSan run.
+Six raw-descriptor policy cases include extra `ExtendedAddress64`, `Address16`,
+unknown and I/O types, and dependent alternatives. These exercise the same
+classification function as the ACPICA callback, with literal descriptor types.
 Its real source and contract cross-compile for EmberBSD/AArch64 with GCC16.
 Cppcheck 2.22.0 uses those actual target arguments and headers.
 It reports no findings after three exact unused-inline standard-header suppressions:
