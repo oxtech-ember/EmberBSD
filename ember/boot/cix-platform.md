@@ -281,6 +281,21 @@ pass. The default and rollback entries remain unchanged. This validates one
 BASE exchange. It does not validate repeated requests, CLOCK version or clock
 ID 67. VPU MMIO, IRQ, DMA and firmware execution remain disabled.
 
+A separate manual boot of GCC16.2 kernel
+`5b8fb039cd07287ffef931e2f8993687e309f766` sends one CLOCK-version request.
+The gzip SHA256 is
+`5de9d4eeb8205dc0d94b4c65838880970f5a42b550b205df0f6e7821a109c3cc`.
+The reply contains `0x20000`, helper return 0, decode error 0, header `0x45000`,
+length 12 and valid firmware status 0. The old exact-1.0 review policy prints
+error 86; this is a local policy result, not a transport or firmware failure.
+[DEN0056D section 4.6](https://documentation-service.arm.com/static/6231acfc8804d00769e9db69)
+defines CLOCK 2.0. Its entity attributes add a clock-enable delay after the
+16-byte name. Do not apply the older 20-byte entity schema to this reply version.
+The boot reports clean FFS and restores WPA2/DHCP; three gateway probes pass.
+No ACK is cleared, and the lease remains until reboot. Protocol attributes,
+clock identity, rate and control remain unqualified. VPU MMIO, IRQ, DMA and
+firmware execution remain disabled.
+
 ## Primary provenance
 
 Hardware facts come from the pinned vendor

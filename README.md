@@ -246,8 +246,9 @@ on every board in the hardware catalog.
   A checked SCMI discovery wire helper validates replies, ordering and bounded
   waits. An explicit diagnostic ACPI binding sends one BASE-version request
   with a boot-long channel lease. One physical trial returns BASE version 2.0
-  with the expected header, length and successful firmware status. CLOCK protocol
-  discovery and codec clock control remain unqualified.
+  with the expected header, length and successful firmware status. A separate
+  one-request boot returns CLOCK version 2.0 with valid framing and status.
+  Clock attributes, resource identity and codec clock control remain unqualified.
 - **Four H.265 views in Qt:** the [Qt Multimedia CPU profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/qt-four-streams)
   cross-builds Qt 6.12 with GCC16 and the common FFmpeg9 provider for amd64.
   The [four-player example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/media/qt-four-streams)
