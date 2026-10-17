@@ -749,6 +749,7 @@ file	dev/ic/rtw8822c_boot.c		rtwce
 file	dev/ic/rtw8822c_power.c		rtwce
 file	dev/ic/rtw8822c_mac.c		rtwce
 file	dev/ic/rtw8822c_phy.c		rtwce
+file	dev/ic/rtw8822c_dack.c		rtwce
 file	dev/ic/rtw8822c_table.c		rtwce
 file	dev/ic/rtw8822c_coex.c		rtwce
 file	dev/ic/rtw8822c_txpwr.c		rtwce

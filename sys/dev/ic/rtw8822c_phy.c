@@ -6,9 +6,9 @@
  * Native adaptation of rtw8822c_phy_set_param (around the table load),
  * rtw_phy_init, rtw_bf_phy_init and rtw8822c_set_channel for 20 MHz.
  * ember/tools/rtw8822c-phy.trace holds the reference register writes.
- * rf_init runs without the DAC calibration (a measurement loop, not yet
- * ported); trims and PA bias come from the physical EFUSE read at
- * identify. The TX power level is not set here.
+ * Cold ADC/DAC calibration runs before x2, trims and PA bias. Failed
+ * measurements stop startup; the caller performs a complete power off.
+ * Trims and PA bias come from physical EFUSE. TX power is set separately.
  */
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -247,7 +247,9 @@ int
 rtw8822c_phy_post(struct rtw88_softc *sc)
 {
 	struct rtw8822c_io io = { sc, 0 };
+	struct rtw8822c_dack_result dack;
 	uint32_t v, cap = sc->sc_xtal & 0x7f;
+	int error;
 
 	mask32(&io, 0x1040, 0xfffc00, cap | (cap << 7));	/* ANAPAR_XTAL_0 */
 	header_file_init(&io, 0);
@@ -258,7 +260,20 @@ rtw8822c_phy_post(struct rtw88_softc *sc)
 	clr32(&io, 0x0520, 0x8000);		/* TX_PTCL_CTRL: DIS_EDCCA */
 	set32(&io, 0x0524, 0x800);		/* RD_CTRL: EDCCA_MSK_CNTDOWN */
 	clr32(&io, 0x0844, UINT32_C(0x60000000));	/* EDCCA_DECISION */
-	/* rtw8822c_rf_init without the DAC calibration. */
+	if (io.error != 0)
+		return io.error;
+	/* rtw8822c_rf_init: measured cold ADCK/DACK before any HCI start. */
+	error = rtw8822c_dack(sc, &dack);
+	printf("rtwce: cold ADCK/DACK error %d valid %#x reset %u "
+	    "ADC A %d/%d B %d/%d DAC A %d/%d B %d/%d "
+	    "ops %u explicit_delay_us %u\n", error, (unsigned)dack.valid_paths,
+	    (unsigned)dack.reset_required, dack.adc_residual[0][0],
+	    dack.adc_residual[0][1], dack.adc_residual[1][0],
+	    dack.adc_residual[1][1], dack.dac_residual[0][0],
+	    dack.dac_residual[0][1], dack.dac_residual[1][0],
+	    dack.dac_residual[1][1], dack.operations, dack.delay_us);
+	if (error != 0)
+		return error;
 	rf_x2_check(&io);
 	thermal_trim(&io, sc->sc_efuse_phys);
 	power_trim(&io, sc->sc_efuse_phys);

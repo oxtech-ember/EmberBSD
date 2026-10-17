@@ -34,6 +34,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     "$src/sys/dev/ic/rtw8822c_power.c" \
     "$src/sys/dev/ic/rtw8822c_mac.c" \
     "$src/sys/dev/ic/rtw8822c_phy.c" \
+    "$src/sys/dev/ic/rtw8822c_dack.c" \
     "$src/sys/dev/ic/rtw8822c_table.c" \
     "$src/sys/dev/ic/rtw8822c_coex.c" \
     "$src/sys/dev/ic/rtw8822c_txpwr.c" \

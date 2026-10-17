@@ -11,6 +11,7 @@
 #include <dev/ic/rtw88var.h>
 #include <dev/ic/rtw8822c.h>
 #include <dev/ic/rtw8822c_table.h>
+#include "rtw8822c-dack-model.h"
 
 static unsigned assertions, failures;
 
@@ -33,6 +34,8 @@ static struct {
 	unsigned off_attempts, master_enables, master_disables, firmware_loads;
 	int power_pre_seen, power_table_seen, power_post_seen, bad_power_order;
 	int coex_before_h2c;
+	int fail_dack, stop_dack_delay, dack_seen, dack_failed;
+	unsigned dack_samples, dack_polls, dack_after_error, hci_before_dack;
 	int h2c_dead;
 	int stop_coex_final;
 	unsigned bcn_last_pkt_size, bcn_last_seg1;
@@ -145,6 +148,8 @@ static int
 access_ok(uint32_t reg, size_t width)
 {
 
+	if (f.dack_failed && !f.sc->sc_stop_requested)
+		f.dack_after_error++;
 	if (f.remove)
 		return ENXIO;
 	if (reg + width > sizeof(f.mmio) || (reg & (width - 1)) != 0)
@@ -213,6 +218,24 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 		return EIO;
 	v = (uint32_t)f.mmio[reg] | (uint32_t)f.mmio[reg + 1] << 8 |
 	    (uint32_t)f.mmio[reg + 2] << 16 | (uint32_t)f.mmio[reg + 3] << 24;
+	if (f.dack_seen && !f.sc->sc_stop_requested) {
+		if (reg == 0x2dbc) {
+			CHECK(f.sc->sc_powered && f.sc->sc_bootstrapping &&
+			    !f.sc->sc_running && !f.sc->sc_started);
+			CHECK(f.mmio[0xb0] == 0 && f.mmio[0xb8] == 0 &&
+			    f.mmio[0x10b8] == 0);
+			f.dack_samples++;
+			if (f.fail_dack == 1) { f.dack_failed = 1; return EIO; }
+			if (f.fail_dack == 2 && f.dack_samples == 10000)
+				f.dack_failed = 1;
+		}
+		if (reg == 0x2dbc || reg == 0x2808 || reg == 0x2834 ||
+		    reg == 0x4508 || reg == 0x4534 || reg == 0x2824 ||
+		    reg == 0x2850 || reg == 0x4524 || reg == 0x4550)
+			v = model_read(reg, 4);
+		if (reg == 0x2808 && f.fail_dack == 3 && ++f.dack_polls == 1000)
+			f.dack_failed = 1;
+	}
 	if (reg == 0x0030) {
 		uint32_t addr = (v >> 8) & 0x3ff;
 
@@ -374,6 +397,12 @@ write_4(void *cookie, uint32_t reg, uint32_t val)
 	error = access_ok(reg, 4);
 	if (error != 0)
 		return error;
+	model_write(reg, 4, val);
+	if (reg == 0x1c3c && val == 0xa8003)
+		f.dack_seen = 1;
+	if ((reg == 0xb0 || reg == 0xb8 || reg == 0x10b8) && val != 0 &&
+	    f.dack_samples < 800)
+		f.hci_before_dack++;
 	f.writes++;
 	if (is_cfg_reg(reg))
 		f.cfg_writes++;
@@ -418,7 +447,12 @@ delay_us(void *cookie, unsigned us)
 {
 
 	(void)cookie;
-	(void)us;
+	model_delay(us);
+	if (f.dack_seen && f.stop_dack_delay && !f.sc->sc_stop_requested) {
+		f.sc->sc_generation++;
+		f.stop_dack_delay = 0;
+		f.dack_failed = 1;
+	}
 	f.delays++;
 	if (f.stop_at_delay != 0 && f.sc != NULL &&
 	    f.delays == (unsigned)f.stop_at_delay)
@@ -506,6 +540,12 @@ firmware_load(void *cookie, const char *drv, const char *name,
 	f.firmware_loads++;
 	f.power_pre_seen = f.power_table_seen = f.power_post_seen = 0;
 	f.bad_power_order = 0;
+	f.dack_seen = f.dack_failed = 0;
+	f.dack_samples = f.dack_polls = f.dack_after_error = f.hci_before_dack = 0;
+	model_reset(0);
+	model.recording = 0;
+	model.invalid = f.fail_dack == 2;
+	model.not_ready = f.fail_dack == 3;
 	if (f.fw_error != 0)
 		return f.fw_error;
 	if (f.fw == NULL)
@@ -647,6 +687,51 @@ test_radio_dependencies(void)
 	CHECK(rtw88_start(&sc) == ETIMEDOUT);
 	CHECK(!sc.sc_started && !sc.sc_running && !sc.sc_rf_enabled && !f.master);
 	rtw88_core_detach(&sc);
+}
+
+/* Actual core+PHY+calibrator: no HCI start before measured cold success. */
+static void
+test_cold_dack_startup(void)
+{
+	struct rtw88_softc sc;
+	unsigned loads;
+
+	reset_bus(&sc);
+	if (!attach_ok(&sc)) return;
+	CHECK(rtw88_start(&sc) == 0);
+	CHECK(f.dack_samples == 800 && !f.hci_before_dack);
+	CHECK(model.visits[0][ADC_POST] == 1 && model.visits[1][DAC_PRE] == 1);
+	CHECK(rtw88_core_detach(&sc) == 0);
+	for (int kind = 1; kind <= 3; kind++) {
+		reset_bus(&sc);
+		f.fail_dack = kind;
+		if (!attach_ok(&sc)) return;
+		CHECK(rtw88_start(&sc) == (kind == 1 ? EIO : kind == 2 ? ERANGE : ETIMEDOUT));
+		CHECK(f.dack_seen && f.dack_samples > 0 && f.dack_after_error == 0);
+		CHECK(!sc.sc_running && !sc.sc_started && !sc.sc_rf_enabled);
+		CHECK(!f.master && !sc.sc_powered && !sc.sc_power_dirty);
+		CHECK(f.off_attempts == 2 && f.mmio[0x92] == 0x20 && f.h2c_sent == 0);
+		CHECK(rtw88_core_detach(&sc) == 0);
+	}
+	reset_bus(&sc);
+	f.stop_dack_delay = 1;
+	if (!attach_ok(&sc)) return;
+	CHECK(rtw88_start(&sc) == EINTR);
+	CHECK(f.dack_seen && f.h2c_sent == 0 && !sc.sc_running && !f.master);
+	CHECK(f.dack_after_error == 0);
+	CHECK(f.off_attempts == 2 && !sc.sc_power_dirty);
+	CHECK(rtw88_core_detach(&sc) == 0);
+	/* Preserve the calibration error when shutdown fails; block unsafe retry. */
+	reset_bus(&sc);
+	f.fail_dack = 2; f.off_error = 1;
+	if (!attach_ok(&sc)) return;
+	CHECK(rtw88_start(&sc) == ERANGE);
+	CHECK(sc.sc_power_dirty && sc.sc_power_error == EIO && !sc.sc_running);
+	loads = f.firmware_loads;
+	CHECK(rtw88_start(&sc) == EBUSY && f.firmware_loads == loads);
+	f.off_error = f.fail_dack = 0;
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_core_detach(&sc) == 0);
 }
 
 /* Shutdown must finish the off table without lowering its stop fence. */
@@ -1711,6 +1796,7 @@ int
 main(void)
 {
 
+	test_cold_dack_startup();
 	test_radio_dependencies();
 	test_power_system_integration();
 	test_power_setup_unwind();

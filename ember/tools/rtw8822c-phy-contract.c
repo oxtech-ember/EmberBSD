@@ -14,6 +14,18 @@
 #include "rtw8822c-mac-model.h"
 
 static unsigned checks, failures;
+
+/* Isolate the historical PHY trace from measured calibration here only.
+ * rtw88-start-contract links the real core, PHY and calibrator together. */
+int
+rtw8822c_dack(struct rtw88_softc *sc, struct rtw8822c_dack_result *out)
+{
+
+	(void)sc;
+	memset(out, 0, sizeof(*out));
+	out->valid_paths = 3;
+	return 0;
+}
 #define CHECK(x)                                                       \
 	do {                                                           \
 		checks++;                                              \

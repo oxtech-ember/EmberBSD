@@ -111,8 +111,8 @@ model_write(unsigned a,unsigned n,uint32_t v)
 	if(a==base+0xb0) model.active[p]=1;
 	if(a==base+0xb8 && v==0x62000000) memset(model.ready_reads+4*p,0,4*sizeof(model.ready_reads[0]));
 	if(a==0x1c3c) {
-		if(v==0xa8003) model_phase(0,ADC_PRE);
-		else if(v==0x88003) model_phase(1,ADC_PRE);
+		if(v==0xa8003) { model.active[0]=0; model_phase(0,ADC_PRE); }
+		else if(v==0x88003) { model.active[1]=0; model_phase(1,ADC_PRE); }
 		else if(v==0xa8103) model_phase(0,ADC_POST);
 		else if(v==0x88103) model_phase(p,model.active[p]?DAC_PRE:ADC_POST);
 	}
