@@ -68,10 +68,15 @@ model_read(unsigned a,unsigned n)
 		if(model.vector_overflow && k==DAC_PRE) iv=model.vector_overflow;
 		if(k==ADC_POST && model.adc_fail) iv=8;
 		if(k==DAC_POST && model.dac_fail) iv=32;
-		if(model.profile>=2) {
+		if(model.profile==2 || model.profile==3) {
 			unsigned attempt=model.profile==3 ? 10 : 2;
 			if(k==ADC_POST && model.visits[p][ADC_POST]<attempt) iv=8;
 			if(k==DAC_POST && model.visits[p][DAC_PRE]<attempt) iv=32;
+		}
+		if(model.profile==4 && model.samples<100) {
+			if(model.samples<10) iv=qv=-80;
+			else if(model.samples>=90) iv=qv=80;
+			else { iv+=(model.samples%2)?2:-2; qv+=(model.samples%2)?-2:2; }
 		}
 		if(model.samples<model.skip) iv=101;
 		v=(((unsigned)iv&1023)<<12)|((unsigned)qv&1023);

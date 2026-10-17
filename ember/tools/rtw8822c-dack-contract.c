@@ -49,12 +49,16 @@ int main(int argc,char **argv)
 	static const uint16_t adc[2][2][2]={{{0,0},{0,0}},{{1020,3},{5,1018}}};
 	static const int16_t ar[2][2][2]={{{0,0},{0,0}},{{0,0},{0,0}}};
 	static const int16_t dr[2][2][2]={{{0,0},{0,0}},{{1,-2},{-1,2}}};
+	const unsigned fixtures[]={0,1,2,3,4,5,8};
 	FILE *fp;
 	char line[256];
-	unsigned fixture,total,cold,i,j,kind,addr,value,n,complete_calls,complete_delays;
+	unsigned total,cold,i,j,kind,addr,value,n,scenario;
+	unsigned complete_calls=0,complete_delays=0;
 	CHECK(argc==2); fp=fopen(argv[1],"r"); CHECK(fp!=NULL);
 	CHECK(fgets(line,sizeof(line),fp)!=NULL);
-	for(fixture=0;fixture<6;fixture++) {
+	for(scenario=0;scenario<sizeof(fixtures)/sizeof(fixtures[0]);scenario++) {
+		unsigned fixture=fixtures[scenario];
+
 		CHECK(fgets(line,sizeof(line),fp)!=NULL);
 		CHECK(sscanf(line,"case %u events %u cold %u",&n,&total,&cold)==3 && n==fixture);
 		setup(fixture);
@@ -66,6 +70,8 @@ int main(int argc,char **argv)
 		CHECK(memcmp(result.adc_residual,ar[fixture%2],sizeof(result.adc_residual))==0);
 		CHECK(memcmp(result.dac_residual,dr[fixture%2],sizeof(result.dac_residual))==0);
 		for(i=0;i<2;i++) for(j=0;j<2;j++) CHECK(result.dac[i][j]==vectors[fixture%2][i][j]);
+		/* Keep fault/cancel coverage on the two-attempt convergence path. */
+		if(fixture==5) { complete_calls=calls; complete_delays=delays; }
 		for(i=0;i<total;i++) {
 			CHECK(fgets(line,sizeof(line),fp)!=NULL);
 			CHECK(sscanf(line,"%u %x %x",&kind,&addr,&value)==3);
@@ -75,8 +81,7 @@ int main(int argc,char **argv)
 		}
 	}
 	CHECK(fgets(line,sizeof(line),fp)==NULL); fclose(fp);
-	complete_calls=calls;
-	complete_delays=delays;
+	CHECK(complete_calls!=0 && complete_delays!=0);
 	/* Every bus failure and generation change must stop the actual sequence. */
 	for(i=1;i<=complete_calls;i++) {
 		setup(5); fail_at=i;

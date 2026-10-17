@@ -58,10 +58,12 @@ int main(void)
 {
 	const struct rtw_chip_ops ops={rtw_phy_read_rf};
 	const struct rtw_chip_info chip={{0x3c00,0x4c00},{0x1808,0x4108},&ops};
-	unsigned fixture,i;
+	const unsigned fixtures[]={0,1,2,3,4,5,8};
+	unsigned fixture,i,n;
 	puts("# FreeBSD a143197801c680b958ab662c88cf086668a1958b unchanged cold ADCK/DACK");
-	for(fixture=0;fixture<6;fixture++) {
+	for(n=0;n<sizeof(fixtures)/sizeof(fixtures[0]);n++) {
 		struct rtw_dev d={.hal={2},.chip=&chip};
+		fixture=fixtures[n];
 		model_reset(fixture);
 		rtw8822c_rf_dac_cal(&d);
 		if(model.errors || !model.cold_count) abort();
