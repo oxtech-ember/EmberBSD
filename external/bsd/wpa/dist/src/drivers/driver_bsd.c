@@ -1361,7 +1361,7 @@ bsd_wireless_event_receive(int sock, void *ctx, void *sock_ctx)
 						size_t req_len = WPA_GET_LE16(info.data + ETH_ALEN);
 						size_t resp_len = WPA_GET_LE16(info.data + ETH_ALEN + 2);
 
-						if (req_len + resp_len == info.len - ETH_ALEN - 4) {
+						if (req_len + resp_len == (size_t)info.len - ETH_ALEN - 4) {
 							event.assoc_info.req_ies = info.data + ETH_ALEN + 4;
 							event.assoc_info.req_ies_len = req_len;
 							event.assoc_info.resp_ies = event.assoc_info.req_ies + req_len;
