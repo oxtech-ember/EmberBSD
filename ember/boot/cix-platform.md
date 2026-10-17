@@ -2,8 +2,8 @@
 
 These native providers support the first bounded CIX P1 VPU resource path.
 They are selected by EMBER64. Registration does not activate the codec.
-The [VPU attachment](cix-vpu.md) still leaves power, clocks, reset, DMA and
-firmware execution disabled until a checked consumer owns these resources.
+The [VPU attachment](cix-vpu.md) has no operational DMA or firmware path.
+Its default query does not activate the block or prove its physical power state.
 
 ## Clock provider
 
@@ -34,6 +34,48 @@ Enable or disable failure can follow a hardware change. The claim stays
 uncertain until disable succeeds. An uncertain claim cannot be released or
 enabled again. Repeated confirmed enable or disable returns EALREADY without
 calling AML. Callers must use thread context and serialize claim lifetime.
+
+## Native SCMI discovery foundation
+
+`sys/dev/ic/scmi_smt_diag.[ch]` provides a separate checked discovery wire
+helper. It is not a second clock provider or a fallback after AML failure.
+It exposes a closed subset of BASE and CLOCK queries, including only clock
+ID 67 for entity attributes and rate. It exposes no clock or performance setter.
+
+The caller must own validated CIX TX resources, ordering callbacks, a boot-long
+exclusive channel lease and serialized thread context. The helper performs
+aligned 32-bit SMT transactions and rings the CIX doorbell at offset 0x80.
+It preserves implementation-defined SMT words. Replies must match the complete
+request header, including protocol, message, type, token and reserved bits.
+Length, minimum body size and protocol-list count are checked before output.
+Nonzero firmware status preserves its full signed 32-bit value as a failure.
+
+Each wait has a 30 ms deadline and a 3000-poll ceiling. Initial channel faults
+cause no writes. Corrupt replies, completion failures and clock regression
+poison the instance. Reinitialization and later callbacks are then forbidden.
+Tokens are never reused; the engine stops after 1023 issued requests.
+Replies remain unchanged on error; a separate trace reports failure evidence.
+
+The actual-source contract passes 33029 checks with GCC16 and ASan/UBSan.
+Fourteen causal mutations fail, including missing barriers and poisoned reuse.
+The source cross-compiles with actual AArch64 kernel flags and GCC path analysis.
+Target Cppcheck reports only unused public APIs and inherited header style;
+CSA reports no findings. Host Cppcheck cannot parse the macOS SDK's `errno_t`
+typedef in version 2.22.0; that failed run is retained separately.
+These source checks do not establish an ACPI attachment or firmware exchange.
+
+The first native binding still needs review and an explicit diagnostic kernel.
+Masked CIX ACK behavior across repeated requests is unqualified. Linux's polled
+SMT completion alone does not prove that an ACK interrupt can stay disabled
+and uncleared. Do not add an ACK sequence or change disabled ACPI clock children
+from this wire helper's success. A single BASE-version query is the next
+transport discriminator; it does not enable VPU resources.
+
+Run the source contract with GCC16:
+
+```sh
+CC=gcc-16 CFLAGS='-O2 -g -fanalyzer' sh ember/tools/scmi-smt-diag-contract.sh
+```
 
 ## Reset provider
 

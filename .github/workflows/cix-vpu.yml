@@ -6,6 +6,8 @@ name: CIX VPU source contracts
     paths:
       - '.github/workflows/cix-vpu.yml'
       - 'sys/dev/ic/cixvpu_*'
+      - 'sys/dev/ic/scmi_smt_diag.*'
+      - 'ember/tools/scmi-smt-diag-*'
       - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
@@ -15,6 +17,8 @@ name: CIX VPU source contracts
     paths:
       - '.github/workflows/cix-vpu.yml'
       - 'sys/dev/ic/cixvpu_*'
+      - 'sys/dev/ic/scmi_smt_diag.*'
+      - 'ember/tools/scmi-smt-diag-*'
       - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
@@ -42,6 +46,8 @@ jobs:
           sparse-checkout: |
             /ember/tools/cixvpu-*
             /sys/dev/ic/cixvpu_*
+            /sys/dev/ic/scmi_smt_diag.*
+            /ember/tools/scmi-smt-diag-*
             /sys/sys/videoio.h
       - name: Prepare source analysis tools
         run: |
@@ -72,6 +78,7 @@ jobs:
           sh ember/tools/cixvpu-mmu-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-resources-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-fw-plan-contract.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/scmi-smt-diag-contract.sh
           # Native bus_dma calls use a separate actual-source service model.
           CIXVPU_DMA_ANALYZE=1 sh ember/tools/cixvpu-dma-contract.sh
           CFLAGS="$CFLAGS -DPAGE_SIZE=16384" sh ember/tools/cixvpu-dma-contract.sh
@@ -87,6 +94,7 @@ jobs:
           sh ember/tools/cixvpu-mmu-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-resources-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-fw-plan-contract.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/scmi-smt-diag-contract.sh
           sh ember/tools/cixvpu-dma-contract.sh
       - name: Analyze the portable source contract
         run: |
@@ -118,6 +126,8 @@ jobs:
           # Native ACPI control uses the platform workflow and service model.
           # The DMA allocator uses its own service model in the step above.
           sources = %w[
+            sys/dev/ic/scmi_smt_diag.c
+            ember/tools/scmi-smt-diag-contract.c
             sys/dev/ic/cixvpu_fw.c
             sys/dev/ic/cixvpu_fw_plan.c
             sys/dev/ic/cixvpu_ring.c
@@ -130,7 +140,7 @@ jobs:
             ember/tools/cixvpu-mmu-contract.c
             ember/tools/cixvpu-resources-contract.c
           ].sort
-          abort 'Expected all eleven portable source units' unless sources.length == 11
+          abort 'Expected all thirteen portable source units' unless sources.length == 13
           database = sources.map do |source|
             file = File.join(root, source)
             arguments = ['gcc'] + flags + ['-c', file, '-o',
@@ -166,6 +176,8 @@ jobs:
             --suppressions-list="$RUNNER_TEMP/cix-vpu/analysis/cppcheck-suppressions.txt" \
             --project="$RUNNER_TEMP/cix-vpu/analysis/compile_commands.json"
           for source in \
+            sys/dev/ic/scmi_smt_diag.c \
+            ember/tools/scmi-smt-diag-contract.c \
             sys/dev/ic/cixvpu_fw.c \
             sys/dev/ic/cixvpu_fw_plan.c \
             sys/dev/ic/cixvpu_ring.c \

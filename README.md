@@ -243,6 +243,8 @@ on every board in the hardware catalog.
   A separate native allocation helper owns validated, disjoint bus pages and
   reverses partial failures. Its pages stay CPU-owned and never device-visible;
   synchronization, hardware publication and runtime teardown remain unfinished.
+  A checked SCMI discovery wire helper validates replies, ordering and bounded
+  waits. It has no ACPI binding or verified firmware exchange yet.
 - **Four H.265 views in Qt:** the [Qt Multimedia CPU profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/qt-four-streams)
   cross-builds Qt 6.12 with GCC16 and the common FFmpeg9 provider for amd64.
   The [four-player example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/media/qt-four-streams)
