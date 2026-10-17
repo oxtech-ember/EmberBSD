@@ -10,6 +10,7 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/cixvpu_acpi_control.*'
       - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/acpi_power.*'
+      - 'sys/dev/acpi/xhci_acpi.c'
       - 'sys/dev/ic/cixvpu_resources.*'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
@@ -20,8 +21,10 @@ name: CIX platform resource contracts
       - 'ember/tools/cixreset-*'
       - 'ember/tools/cixvpu-control-*'
       - 'ember/tools/acpi-power-*'
+      - 'ember/tools/xhci-acpi-rootbus-*'
       - 'ember/boot/acpi-power.md'
       - 'ember/boot/cix-platform.md'
+      - 'ember/boards/orange-pi-6-plus.md'
   pull_request:
     paths:
       - '.github/workflows/cix-platform.yml'
@@ -30,6 +33,7 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/cixvpu_acpi_control.*'
       - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/acpi_power.*'
+      - 'sys/dev/acpi/xhci_acpi.c'
       - 'sys/dev/ic/cixvpu_resources.*'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
@@ -40,8 +44,10 @@ name: CIX platform resource contracts
       - 'ember/tools/cixreset-*'
       - 'ember/tools/cixvpu-control-*'
       - 'ember/tools/acpi-power-*'
+      - 'ember/tools/xhci-acpi-rootbus-*'
       - 'ember/boot/acpi-power.md'
       - 'ember/boot/cix-platform.md'
+      - 'ember/boards/orange-pi-6-plus.md'
   workflow_dispatch:
 
 permissions:
@@ -64,11 +70,13 @@ jobs:
             /ember/tools/cixreset-*
             /ember/tools/cixvpu-control-*
             /ember/tools/acpi-power-*
+            /ember/tools/xhci-acpi-rootbus-*
             /sys/dev/acpi/cixclk_acpi.*
             /sys/dev/acpi/cixreset_acpi.*
             /sys/dev/acpi/cixvpu_acpi_control.*
             /sys/dev/acpi/cixvpu_acpi.c
             /sys/dev/acpi/acpi_power.*
+            /sys/dev/acpi/xhci_acpi.c
             /sys/dev/ic/cixvpu_resources.*
             /sys/sys/queue.h
             /sys/external/bsd/acpica/dist/include/
@@ -88,11 +96,13 @@ jobs:
           CIXCLK_ANALYZE: '1'
           CIXRESET_ANALYZE: '1'
           CIXVPU_CONTROL_ANALYZE: '1'
+          XHCI_ACPI_ANALYZE: '1'
         run: |
           sh ember/tools/cixclk-contract.sh
           sh ember/tools/cixreset-contract.sh
           sh ember/tools/acpi-power-contract.sh
           sh ember/tools/cixvpu-control-contract.sh
+          sh ember/tools/xhci-acpi-rootbus-contract.sh
       - name: Run ASan and UBSan
         env:
           CC: gcc
@@ -103,6 +113,7 @@ jobs:
           sh ember/tools/cixreset-contract.sh
           sh ember/tools/acpi-power-contract.sh
           sh ember/tools/cixvpu-control-contract.sh
+          sh ember/tools/xhci-acpi-rootbus-contract.sh
       - name: Run complete contracts under Memcheck
         env:
           CC: gcc
@@ -120,3 +131,4 @@ jobs:
           sh ember/tools/cixreset-contract.sh
           sh ember/tools/acpi-power-contract.sh
           sh ember/tools/cixvpu-control-contract.sh
+          sh ember/tools/xhci-acpi-rootbus-contract.sh

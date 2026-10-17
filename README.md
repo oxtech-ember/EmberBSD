@@ -1021,11 +1021,15 @@ The base system shell is unchanged.
   on both bands restore WPA2/DHCP. Both bands pass 2 MiB TCP checks in each direction.
   Cold power removal and a complete base release remain separate acceptance.
   A source-tested native `powerd` policy requests orderly poweroff and rejects
-  duplicate button requests. Physical button delivery remains unqualified.
+  duplicate button requests. Two physical short presses reach `powerd`, sync
+  and FFS unmount. The operator confirms fan stop and subsequent power-on;
+  the next boot reports clean FFS. Shutdown takes about 15–20 seconds in this
+  trial; optimized timing remains pending. Full cold power-cut behavior is unqualified.
   A physical CIX S5 GPIO passive snapshot passes on one board. EMBER64 now selects
   the bounded pin6 ACPI event path; `flags 0x0` retains passive mode. Source
-  contracts cover event completion and truncated resource rejection. Physical
-  button delivery and poweroff remain unqualified. See [CIX GPIO](ember/boot/cix-gpio.md).
+  contracts cover event completion and truncated resource rejection. The
+  [board boundary](ember/boards/orange-pi-6-plus.md) records the limited physical
+  poweroff result. See [CIX GPIO](ember/boot/cix-gpio.md) for the source mechanism.
   Native [CIX clock/reset providers](ember/boot/cix-platform.md) have checked source
   contracts and passive registration. A bounded VPU control helper uses checked
   [ACPI power ownership](ember/boot/acpi-power.md). EMBER64 selects a resource
@@ -1038,6 +1042,11 @@ The base system shell is unchanged.
   A physical Pi 5 passed 1024 descriptor reads and 1024 STALL recovery requests.
   This validates a limited control-transfer scenario, not phone boot or all USB
   transfer types. See the [contract and checks](ember/boot/usb-control-recovery.md).
+- **ACPI xHCI root buses:** the frontend skips a logical USB bus when its
+  initialized root-hub descriptor has no ports. Actual-source contracts cover
+  USB2-only, USB3-only, mixed and empty profiles. This source-only fix avoids
+  phantom SuperSpeed hubs; it does not qualify external USB devices or runtime
+  interrupts without children. See the [CIX board boundary](ember/boards/orange-pi-6-plus.md#usb-root-bus-source-check).
 - **DHCP reconnect recovery:** duplicate-address detection cannot confirm an
   unacknowledged lease. IPv4LL remains available without DHCP and is removed
   after a usable DHCP bind. This is a userland correction; a kernel update

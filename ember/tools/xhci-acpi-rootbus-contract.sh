@@ -7,6 +7,7 @@ src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 work=$(mktemp -d "${TMPDIR:-/tmp}/xhci-acpi-rootbus.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 case "${XHCI_ACPI_COMPILE_ONLY:-0}" in 0|1) ;; *) exit 2 ;; esac
+case "${XHCI_ACPI_ANALYZE:-0}" in 0|1) ;; *) exit 2 ;; esac
 if [ "${XHCI_ACPI_COMPILE_ONLY:-0}" = 1 ] && [ -z "${XHCI_ACPI_OUTPUT:-}" ]; then
     echo 'XHCI_ACPI_COMPILE_ONLY requires XHCI_ACPI_OUTPUT' >&2
     exit 2
@@ -29,6 +30,26 @@ RUBY
 "${CC:-cc}" -std=c11 -O2 -g -Wall -Werror ${CFLAGS:-} \
     -I"$work" "$src/ember/tools/xhci-acpi-rootbus-contract.c" -o "$work/contract"
 if [ -n "${XHCI_ACPI_OUTPUT:-}" ]; then cp "$work/contract" "$XHCI_ACPI_OUTPUT"; fi
+if [ "${XHCI_ACPI_ANALYZE:-0}" = 1 ]; then
+    # Analyze the same complete frontend with its explicit host service model.
+    # This does not replace separate analysis with native target kernel headers.
+    # shellcheck disable=SC2086
+    "${CC:-cc}" -std=c11 ${CFLAGS:-} -dM -E -x c /dev/null > "$work/predefined.h"
+    cppcheck --quiet --check-level=exhaustive \
+        --enable=warning,performance,portability --error-exitcode=1 \
+        --include="$work/predefined.h" --std=c11 --platform=unix64 \
+        -I"$work" "$src/ember/tools/xhci-acpi-rootbus-contract.c"
+    set --
+    if [ "$(uname -s)" = Darwin ]; then set -- -isysroot "$SDKROOT"; fi
+    csa_status=0
+    "${CSA:-clang}" --analyze -std=c11 -Wall -Werror -I"$work" \
+        -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
+        "$@" "$src/ember/tools/xhci-acpi-rootbus-contract.c" \
+        -o "$work/xhci.plist" 2> "$work/csa.log" || csa_status=$?
+    cat "$work/csa.log"
+    if [ "$csa_status" != 0 ]; then exit "$csa_status"; fi
+    test ! -s "$work/csa.log"
+fi
 [ "${XHCI_ACPI_COMPILE_ONLY:-0}" = 0 ] || exit 0
 if [ -n "${TEST_RUNNER:-}" ]; then
     "$TEST_RUNNER" "$work/contract"

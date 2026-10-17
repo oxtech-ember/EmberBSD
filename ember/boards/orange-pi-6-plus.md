@@ -11,10 +11,11 @@ This profile records one physical sample. It is not a complete installation imag
 | CPU and memory | The kernel reports 12 CPUs and about 32 GB. SMP stress and memory integrity are not qualified. |
 | Ethernet | `rge1` negotiates 1000baseT full-duplex. A short host-to-board transfer and ICMP replies pass. Board-initiated ping to the host did not receive replies; the cause is unconfirmed. The second port and sustained camera traffic remain unqualified. |
 | Video codec | [ACPI attachment](../boot/cix-vpu.md) validates both memory windows, level IRQ 358 and `_CCA=0`. Native [clock/reset providers and a bounded resource probe](../boot/cix-platform.md) have source contracts. EMBER64 selects a resource query without VPU activation. An identity probe requires explicit flags; DMA, firmware and video queues are incomplete. No hardware encoding is claimed. |
-| Power button | The [GPI4 passive snapshot](../boot/cix-gpio.md#passive-physical-check) passes without an MMIO fault. EMBER64 now selects the bounded pin6 ACPI event path; `flags 0x0` retains passive mode. Physical button delivery and orderly poweroff remain unqualified. |
+| Power button | Two short presses reach native `powerd`, filesystem sync and FFS unmount. The operator confirms fan stop and a subsequent short-press power-on; the next boot reports clean FFS. The observed shutdown takes about 15–20 seconds. Reduction toward 3–5 seconds remains pending, with no timing guarantee. EMBER64 selects the bounded pin6 ACPI event path; `flags 0x0` retains passive mode. See [CIX GPIO](../boot/cix-gpio.md). |
 | RTL8822CE | Physical kernel `71877588ca099bf69686a35b96a00771a26feebc` passes WPA2-PSK/CCMP and fresh DHCP on channels 8 and 149. Each band passes simultaneous 16 MiB RAM-root TCP transfers in both directions with matching SHA256. The persistent SD profile also passes automatic reboot recovery and 2 MiB checks each way. See the [source boundary and contracts](../development/rtl8822ce-proposal.md#current-source-boundary). This is a legacy 802.11a/b/g profile with software CCMP. Cold calibration retains ADC AB and DAC B residual-quality warnings. Analog qualification, higher rates, AP-loss recovery and long-term stability remain pending. |
 | Storage | SD supplies the boot payload and a new 2 GiB writable FFS root. Full image readback and forced native fsck pass before provisioning. The existing EFI and boot partitions remain. NVMe installation is not accepted. |
-| Other peripherals | USB device failures remain in the boot log. General-purpose GPIO/PPS, camera capture, Bluetooth, HDMI, GPU, NPU, thermal behavior and sustained operation are not accepted by this trial. |
+| USB | Earlier boots report zero-port USB3 root hubs on four USB2-only controllers. The ACPI frontend now skips empty logical root buses in source contracts. The changed kernel and external USB devices remain unqualified. See the [source check](#usb-root-bus-source-check). |
+| Other peripherals | General-purpose GPIO/PPS, camera capture, Bluetooth, HDMI, GPU, NPU, thermal behavior and sustained operation are not accepted by this trial. |
 
 ## Boot and recovery
 
@@ -47,3 +48,39 @@ errors remain visible in the boot log.
 For reusable board and interface references, start with
 [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards).
 Apply the [board contribution procedure](adding-a-board.md) to each new support claim.
+
+## USB root-bus source check
+
+Earlier diagnostic boot logs report `0 ports` for USB3 root hubs on four
+USB2-only controllers. The corresponding `root device is not a hub` messages
+do not prove failed external-device transfers. The ACPI frontend previously
+attached both logical buses even when the core reported no ports for one bus.
+
+`xhci_acpi` now attaches each logical USB bus only when its initialized
+`sc_rhportcount` is nonzero. This is the count used by the root-hub descriptor.
+No controller address, board ID, speed override or clock/reset change is used.
+The [actual-source contract](../tools/xhci-acpi-rootbus-contract.c) passes
+584 checks with GCC16 path analysis and ASan/UBSan. Five causal mutations fail.
+The [CIX platform workflow](../../.github/workflows/cix-platform.yml) runs the
+same frontend model with GCC16, Cppcheck, CSA, sanitizers and Linux Memcheck.
+These CI checks use explicit host services. They do not execute native MMIO,
+DMA, AML or hardware interrupts.
+
+An actual AArch64 GCC16 kernel-flags compilation also passes. Native-header
+analysis retains one inherited Cppcheck warning and four CSA header dead stores.
+Cppcheck 2.22 cannot parse a direct-header `__aligned` expansion; actual GCC
+preprocessing permits comparison with the same baseline findings.
+
+This fix has not yet run on the physical sample. External-device enumeration,
+transfers, hotplug and suspend/resume remain unqualified. If both port counts
+are zero, the frontend reports an error and creates no children. This does not
+repair the existing core IRQ assertion when no child exists. Both child attach
+attempts returning NULL can reach the same gap. Core start/stop behavior and
+the frontend's existing failure-cleanup limits are unchanged.
+
+Run the frontend contract and host analysis with GCC16:
+
+```sh
+CC=gcc-16 CFLAGS='-O2 -g -fanalyzer' XHCI_ACPI_ANALYZE=1 \
+    sh ember/tools/xhci-acpi-rootbus-contract.sh
+```
