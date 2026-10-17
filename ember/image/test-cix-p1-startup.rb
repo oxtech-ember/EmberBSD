@@ -4,7 +4,7 @@ require 'tmpdir'
 require 'fileutils'
 require 'open3'
 
-source = File.expand_path('cix-p1-network.subr', __dir__)
+source = ENV.fetch('CIX_NETWORK_SOURCE', File.expand_path('cix-p1-network.subr', __dir__))
 abort 'missing network startup library' unless File.file?(source)
 checks = 0
 Dir.mktmpdir('cix-startup-') do |tmp|
@@ -17,6 +17,22 @@ Dir.mktmpdir('cix-startup-') do |tmp|
       for arg do printf ' <%s>' "$arg" >> "$TRACE"; done
       printf '\n' >> "$TRACE"
       case '#{command}: '"$*" in "$FAIL"*) [ -z "$FAIL" ] || exit 9;; esac
+      if [ -n "${CIX_STOP_PROBE:-}" ]; then
+        action=
+        case '#{command}: '"$*" in
+          'ifconfig: rtwce0 down') action=down;;
+          'ifconfig: rtwce0 up') action=up;;
+          'dhcpcd: -4 -k rtwce0') action=multicast;;
+          wpa_cli:*) action=wpa;;
+        esac
+        if [ -n "$action" ]; then
+          if [ -n "${TEST_RUNNER:-}" ]; then
+            "$TEST_RUNNER" "$CIX_STOP_PROBE" "$CIX_STOP_STATE" "$action" || exit $?
+          else
+            "$CIX_STOP_PROBE" "$CIX_STOP_STATE" "$action" || exit $?
+          fi
+        fi
+      fi
       exit 0
     SH
     FileUtils.chmod(0755, File.join(bin, command))
@@ -27,17 +43,20 @@ Dir.mktmpdir('cix-startup-') do |tmp|
   profile = File.join(tmp, 'profile')
   File.write(profile, 'test profile: no credentials')
   trace = File.join(tmp, 'trace')
+  state = File.join(tmp, 'state')
   run = lambda do |action, fail = '', mode = '0:600', config = profile|
     File.write(trace, '')
+    # Start UP|RUNNING: the native ioctl decides whether cleanup restarts it.
+    File.write(state, "65 0\n")
     env = {'PATH' => "#{bin}:/usr/bin:/bin", 'TRACE' => trace,
-           'FAIL' => fail, 'PROFILE_MODE' => mode}
+           'FAIL' => fail, 'PROFILE_MODE' => mode, 'CIX_STOP_STATE' => state}
     body = <<~SH
       . "$1"
       cix_run="$2/run"
       cix_log="$2/log"
       cix_network_#{action} rtwce0 "$3"
     SH
-    output, status = Open3.capture2e(env, 'sh', '-c', body, 'contract', source, tmp, config)
+    output, status = Open3.capture2e(env, ENV.fetch('TEST_SH', 'sh'), '-c', body, 'contract', source, tmp, config)
     [status.success?, File.read(trace), output]
   end
   assert = lambda do |condition, message|
@@ -71,10 +90,26 @@ Dir.mktmpdir('cix-startup-') do |tmp|
   ok, text, = run.call('start', '', '0:600', profile + '.link')
   assert.call(!ok && text.empty?, 'reject symlink config')
   ok, text, = run.call('stop')
-  assert.call(ok && text.lines.first == "dhcpcd <-4> <-k> <rtwce0>\n", 'stop correct IPv4 daemon')
-  assert.call(text.lines[1] == "ifconfig <rtwce0> <down>\n", 'stop takes interface down before WPA restores AUTO')
+  if ENV['CIX_STOP_PROBE']
+    assert.call(File.read(state).split.map(&:to_i) == [0, 0], "cleanup must not restart an UP radio: #{File.read(state).strip}")
+  end
+  assert.call(ok && text.lines.first == "ifconfig <rtwce0> <down>\n", 'quiesce radio before address cleanup')
+  assert.call(text.lines[1] == "dhcpcd <-4> <-k> <rtwce0>\n", 'stop correct IPv4 daemon after DOWN')
   assert.call(text.lines[2]&.start_with?('wpa_cli <-p>') && text.include?('<terminate>'), 'stop the owned WPA instance')
   ok, text, = run.call('stop', 'dhcpcd:')
   assert.call(ok && text.include?('wpa_cli'), 'absent DHCP does not prevent WPA stop')
+  if ENV['CIX_STOP_PROBE']
+    assert.call(File.read(state).split.map(&:to_i) == [0, 0], 'DHCP failure leaves radio stopped')
+  end
+  ok, text, = run.call('stop', 'wpa_cli:')
+  assert.call(ok && text.include?('dhcpcd'), 'WPA control failure retains completed DHCP cleanup')
+  if ENV['CIX_STOP_PROBE']
+    assert.call(File.read(state).split.map(&:to_i) == [0, 0], 'WPA failure leaves radio stopped')
+  end
+  ok, text, = run.call('stop', 'ifconfig: rtwce0 down')
+  assert.call(!ok && text.lines.size == 1, 'failed DOWN cannot clean DHCP or restore WPA while UP')
+  if ENV['CIX_STOP_PROBE']
+    assert.call(File.read(state).split.map(&:to_i) == [65, 0], 'failed DOWN preserves flags without cleanup restart')
+  end
 end
 puts "CIX network startup: #{checks} checks, 0 failures"

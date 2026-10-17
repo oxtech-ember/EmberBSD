@@ -6,10 +6,11 @@ cix_network_stop()
 {
 	_cix_if=$1
 	_cix_run=${cix_run:-/var/run}
+	# Quiesce before DHCP removes multicast membership or WPA restores AUTO.
+	# Either cleanup can request a radio restart while the interface is UP.
+	ifconfig "$_cix_if" down || return 1
 	# dhcpcd has distinct IPv4-only and dual-stack PID files.
 	dhcpcd -4 -k "$_cix_if" || :
-	# WPA deinit restores AUTO roaming. Keep the interface DOWN first.
-	ifconfig "$_cix_if" down || return 1
 	wpa_cli -p "$_cix_run/wpa_supplicant" -i "$_cix_if" terminate || :
 }
 
