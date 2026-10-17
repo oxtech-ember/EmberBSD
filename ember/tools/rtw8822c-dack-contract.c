@@ -49,7 +49,7 @@ int main(int argc,char **argv)
 	static const uint16_t adc[2][2][2]={{{0,0},{0,0}},{{1020,3},{5,1018}}};
 	static const int16_t ar[2][2][2]={{{0,0},{0,0}},{{0,0},{0,0}}};
 	static const int16_t dr[2][2][2]={{{0,0},{0,0}},{{1,-2},{-1,2}}};
-	const unsigned fixtures[]={0,1,2,3,4,5,8};
+	const unsigned fixtures[]={0,1,2,3,4,5,8,10};
 	FILE *fp;
 	char line[256];
 	unsigned total,cold,i,j,kind,addr,value,n,scenario;
@@ -70,6 +70,9 @@ int main(int argc,char **argv)
 		CHECK(memcmp(result.adc_residual,ar[fixture%2],sizeof(result.adc_residual))==0);
 		CHECK(memcmp(result.dac_residual,dr[fixture%2],sizeof(result.dac_residual))==0);
 		for(i=0;i<2;i++) for(j=0;j<2;j++) CHECK(result.dac[i][j]==vectors[fixture%2][i][j]);
+		if(fixture==10)
+			for(i=0;i<2;i++) for(j=0;j<4;j++)
+				CHECK(model.sample_reads[i][j]==302);
 		/* Keep fault/cancel coverage on the two-attempt convergence path. */
 		if(fixture==5) { complete_calls=calls; complete_delays=delays; }
 		for(i=0;i<total;i++) {
@@ -102,6 +105,7 @@ int main(int argc,char **argv)
 	CHECK(model.visits[0][ADC_POST]==0 && model.visits[0][DAC_PRE]==0);
 	setup(0); model.unstable=1; model.recording=0; check_failure(ERANGE);
 	CHECK(model.samples==302);
+	CHECK(model.visits[0][ADC_POST]==1 && model.visits[0][DAC_PRE]==10);
 	setup(0); model.replacement_invalid=1; model.recording=0; check_failure(ERANGE);
 	CHECK(model.samples==101);
 	setup(0); model.not_ready=1; model.recording=0; check_failure(ETIMEDOUT);

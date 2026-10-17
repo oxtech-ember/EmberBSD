@@ -78,6 +78,11 @@ model_read(unsigned a,unsigned n)
 			else if(model.samples>=90) iv=qv=80;
 			else { iv+=(model.samples%2)?2:-2; qv+=(model.samples%2)?-2:2; }
 		}
+		/* Noise stays wider than the early-stop range on every batch. */
+		if(model.profile==5) {
+			iv+=(model.samples%2)?10:-10;
+			qv+=(model.samples%2)?-10:10;
+		}
 		if(model.samples<model.skip) iv=101;
 		v=(((unsigned)iv&1023)<<12)|((unsigned)qv&1023);
 		model.samples++;

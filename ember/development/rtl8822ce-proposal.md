@@ -57,6 +57,14 @@ power limits. It sends the general-info and PHYDM packet commands through
 the H2C DMA ring before publishing started state. Runtime retuning pauses
 TX and restores it only after both channel and power setup succeed.
 
+Cold startup runs the native ADCK/DACK helper before HCI starts. Its bounded
+noise filter computes a trimmed mean after at most 101 replacement passes.
+A spread above five only prevents early exit. ADC/DAC residuals must still
+converge below five within ten attempts. Incomplete or out-of-range samples,
+readiness timeouts and bus failures stop startup and require a power reset.
+Pinned-source trace tests include persistent noise; physical calibration
+and station acceptance remain pending.
+
 The kernel configuration selects the native station wrapper and ingress
 generation policy. Use the standard interface tools when the PCI wrapper
 attaches it. Legacy diagnostic writes return EBUSY while net80211 owns the
@@ -79,6 +87,7 @@ CC=gcc-16 sh ember/tools/rtw88-fw-init-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-net-contract.sh
 CC=gcc-16 sh ember/tools/rtw8822c-txpwr-contract.sh
 CC=gcc-16 sh ember/tools/rtw8822c-coex-contract.sh
+CC=gcc-16 sh ember/tools/rtw8822c-dack-contract.sh
 ```
 
 Both 2.4 GHz and 5 GHz need physical station tests. Association, WPA2,

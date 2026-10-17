@@ -4,8 +4,9 @@
 /* Origin: FreeBSD a143197801c680b958ab662c88cf086668a1958b rtw88 DACK. */
 /*
  * Cold ADCK/DACK only. Native safety deviations: validate complete and
- * stable measurements, use signed widened arithmetic, reject unrepresentable
- * vectors, propagate failures and keep RF backups separate for paths AB.
+ * range-checked measurements, use signed widened arithmetic, reject
+ * unrepresentable vectors, propagate failures and keep RF backups separate
+ * for paths AB.
  * No warm cache. A failure after a write requires a full caller power reset;
  * restoring control words cannot undo internal ADC/DAC/MSBK calibration.
  */
@@ -199,6 +200,7 @@ static void
 measure(struct dack_context *c, int *iv, int *qv)
 {
 	int samples[2][SAMPLE_COUNT], si, sq;
+	int32_t isum = 0, qsum = 0;
 	unsigned count = 0, reads, attempt, i;
 
 	/* Preserve the reference RF-mode diagnostic reads in the source trace. */
@@ -221,17 +223,8 @@ measure(struct dack_context *c, int *iv, int *qv)
 		sort(samples[0]);
 		sort(samples[1]);
 		if (samples[0][99] - samples[0][0] <= 5 &&
-		    samples[1][99] - samples[1][0] <= 5) {
-			int32_t isum = 0, qsum = 0;
-
-			for (i = 10; i < 90; i++) {
-				isum += samples[0][i];
-				qsum += samples[1][i];
-			}
-			*iv = isum / 80;
-			*qv = qsum / 80;
-			return;
-		}
+		    samples[1][99] - samples[1][0] <= 5)
+			break;
 		if (!pair(c, &samples[0][0], &samples[1][0]) ||
 		    !pair(c, &samples[0][99], &samples[1][99])) {
 			if (c->error == 0)
@@ -239,8 +232,20 @@ measure(struct dack_context *c, int *iv, int *qv)
 			return;
 		}
 	}
-	if (c->error == 0)
-		c->error = ERANGE;
+	if (c->error != 0)
+		return;
+	/*
+	 * The reference bounds its noise filter, then takes this trimmed mean.
+	 * A spread above five is not a calibration failure. ADC/DAC residuals
+	 * must still converge below five in their separate bounded loops.
+	 * The last replacement changes only the two excluded extremes.
+	 */
+	for (i = 10; i < 90; i++) {
+		isum += samples[0][i];
+		qsum += samples[1][i];
+	}
+	*iv = isum / 80;
+	*qv = qsum / 80;
 }
 
 static unsigned
