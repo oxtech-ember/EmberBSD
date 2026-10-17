@@ -21,8 +21,9 @@ The independent BSD source in `sys/dev/ic` implements bounded wire operations:
 | `cixvpu_fw.[ch]` | Validate the protocol 3 firmware header, text extent, BSS bitmap and shared-region layout. Reject invalid input without publishing partial output. | Select an authorized blob, allocate pages and load/boot firmware. Structural validity is not authentication. |
 | `cixvpu_ring.[ch]` | Pack and unpack bounded message rings, including the selected `-sum` firmware's asymmetric checksum framing. | Own coherent snapshots, locking, DMA synchronization, barriers and index publication. |
 | `cixvpu_mmu.[ch]` | Encode 40-bit bus addresses and checked two-level page entries. Reject invalid permissions, occupied entries and stale removals. | Allocate/map DMA memory, stop the device and manage caches/TLBs. Removal is not safe during active DMA. |
+| `cixvpu_fw_plan.[ch]` | Plan protocol-3 backing owners and firmware VA mappings without allocation. Check the text offset, BSS bounds, aliases, table coverage and page quota. | Allocate validated DMA backing, copy data, synchronize and publish only after stopped-device checks. |
 
-The three wire helpers are not selected by a kernel configuration or attachment.
+The wire helpers and layout planner are not selected by a kernel configuration or attachment.
 `sys/videoio.h` adds the standard `V4L2_PIX_FMT_HEVC` fourcc without changing
 structure layout or ioctl numbers. The existing `video(4)` driver remains
 capture-only; the presence of M2M declarations does not implement two queues.
@@ -108,6 +109,7 @@ CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-fw-test.sh
 CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-ring-contract.sh
 CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-mmu-contract.sh
 CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-resources-contract.sh
+CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-fw-plan-contract.sh
 ```
 
 The firmware script prints its build directory and retains its CLI and fixtures.
@@ -151,6 +153,19 @@ at exact file/line locations; the initial findings are retained.
 Linux Memcheck runs with origins, all leak kinds and a failure exit status.
 The core tests and firmware CLI have zero reported memory errors or leaks.
 These checks are not a full kernel build, kernel memory analysis or DMA test.
+
+The pure layout planner passes 669449 actual-source checks with GCC16 and
+ASan/UBSan. Its kernel-mode source also compiles with actual AArch64 GCC16
+arguments and path analysis. Cppcheck and CSA report no findings in that scope.
+The planner calls the unchanged header parser, then rejects mapping overlaps
+from the text's additional 0x1000 VA offset. Its page list describes unique
+allocation owners; its mapping list can alias text and shared backing across
+cores. Callers must never free from the mapping list. Getters recheck bounds
+and counts before indexing. Synthetic bus addresses in the MMU composition
+tests are fixtures; no DMA address or device operation occurs in the planner.
+The selected layout has seven common pages, 128 print pages and at most four
+contiguous cores. Other layouts need separate support. Check exact-head CI
+for its Linux Memcheck result before accepting that boundary.
 
 The resource validator passes 50 assertions with GCC 16.2.0 on macOS/AArch64,
 including GCC path analysis and a separate ASan/UBSan run.

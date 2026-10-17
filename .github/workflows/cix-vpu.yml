@@ -71,6 +71,19 @@ jobs:
           sh ember/tools/cixvpu-ring-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-mmu-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-resources-contract.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/cixvpu-fw-plan-contract.sh "$GITHUB_WORKSPACE"
+      - name: Run portable ASan and UBSan contracts
+        env:
+          CC: gcc
+          CFLAGS: -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
+          UBSAN_OPTIONS: halt_on_error=1
+        run: |
+          export BUILD_DIR="$RUNNER_TEMP/cix-vpu/sanitized-firmware"
+          sh ember/tools/cixvpu-fw-test.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/cixvpu-ring-contract.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/cixvpu-mmu-contract.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/cixvpu-resources-contract.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/cixvpu-fw-plan-contract.sh "$GITHUB_WORKSPACE"
       - name: Analyze the portable source contract
         run: |
           # Analyze the actual native userland build. Do not invent _KERNEL
@@ -101,16 +114,18 @@ jobs:
           # Native ACPI control contracts use the platform workflow and model.
           sources = %w[
             sys/dev/ic/cixvpu_fw.c
+            sys/dev/ic/cixvpu_fw_plan.c
             sys/dev/ic/cixvpu_ring.c
             sys/dev/ic/cixvpu_mmu.c
             sys/dev/ic/cixvpu_resources.c
             ember/tools/cixvpu-fw-check.c
             ember/tools/cixvpu-fw-test.c
+            ember/tools/cixvpu-fw-plan-contract.c
             ember/tools/cixvpu-ring-contract.c
             ember/tools/cixvpu-mmu-contract.c
             ember/tools/cixvpu-resources-contract.c
           ].sort
-          abort 'Expected all nine portable source units' unless sources.length == 9
+          abort 'Expected all eleven portable source units' unless sources.length == 11
           database = sources.map do |source|
             file = File.join(root, source)
             arguments = ['gcc'] + flags + ['-c', file, '-o',
@@ -147,11 +162,13 @@ jobs:
             --project="$RUNNER_TEMP/cix-vpu/analysis/compile_commands.json"
           for source in \
             sys/dev/ic/cixvpu_fw.c \
+            sys/dev/ic/cixvpu_fw_plan.c \
             sys/dev/ic/cixvpu_ring.c \
             sys/dev/ic/cixvpu_mmu.c \
             sys/dev/ic/cixvpu_resources.c \
             ember/tools/cixvpu-fw-check.c \
             ember/tools/cixvpu-fw-test.c \
+            ember/tools/cixvpu-fw-plan-contract.c \
             ember/tools/cixvpu-ring-contract.c \
             ember/tools/cixvpu-mmu-contract.c \
             ember/tools/cixvpu-resources-contract.c; do

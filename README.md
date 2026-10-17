@@ -229,14 +229,17 @@ on every board in the hardware catalog.
   Independent captures, exact pixels and timestamps verify recovery;
   [results](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/rtp/results.md)
   do not establish hardware-codec, RTSP or production-network performance.
-- **CIX P1 codec foundations:** original [firmware, message-ring and MMU helpers](ember/boot/cix-vpu.md)
-  pass GCC16 source contracts and AArch64 VM checks. Ports cross-builds the
+- **CIX P1 codec foundations:** original [firmware, layout, message-ring and MMU helpers](ember/boot/cix-vpu.md)
+  pass GCC16 source contracts. The firmware, message-ring and MMU units also
+  pass AArch64 VM checks. Ports cross-builds the
   actual FFmpeg M2M backend and GStreamer V4L2 plugin; missing-device and
   semaphore cleanup checks pass in EmberBSD. A checked ACPI attachment validates
   the codec's resource description. Native clock/reset providers, shared ACPI
   power ownership and a bounded resource probe have source contracts.
   The default attachment queries resources without activating the codec. DMA, firmware execution
   and M2M queues are unfinished. Hardware H.265 is unverified.
+  The pure layout planner checks unique backing owners and aliases before
+  allocation. It does not allocate DMA pages, load firmware or execute the codec.
 - **Four H.265 views in Qt:** the [Qt Multimedia CPU profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/qt-four-streams)
   cross-builds Qt 6.12 with GCC16 and the common FFmpeg9 provider for amd64.
   The [four-player example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/media/qt-four-streams)
