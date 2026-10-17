@@ -1,0 +1,9 @@
+# Explicit CIX native SCMI transport diagnostic. One BASE version query only.
+# Do not enable clocks, attach disabled clock children or activate the VPU.
+# Use a manual boot entry and preserve a working recovery kernel.
+
+include "arch/evbarm/conf/EMBER64"
+
+no cixvpu* at acpi?
+cixvpu* at acpi? flags 0x0
+cixscmi* at acpi? flags 0x1

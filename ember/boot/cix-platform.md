@@ -62,19 +62,53 @@ The source cross-compiles with actual AArch64 kernel flags and GCC path analysis
 Target Cppcheck reports only unused public APIs and inherited header style;
 CSA reports no findings. Host Cppcheck cannot parse the macOS SDK's `errno_t`
 typedef in version 2.22.0; that failed run is retained separately.
-These source checks do not establish an ACPI attachment or firmware exchange.
+These source checks do not establish firmware exchange.
 
-The first native binding still needs review and an explicit diagnostic kernel.
+The separate `cixscmi_acpi` diagnostic binds CIXHA006, UID 0. Its default
+flags 0 mode performs no AML evaluation, claims, mapping or transport access.
+The explicit
+[EMBER64_CIXSCMI_QUERY](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY)
+configuration selects flags 1 and disables deferred VPU provider queries.
+VPU descriptor validation remains enabled. The normal
+EMBER64 configuration does not select this diagnostic attachment.
+
+Before mapping, the binding validates each static property, resource and
+reference. It requires MBX6/7, SHM0/1, channel 8, non-coherent shared memory,
+the reviewed interrupt profile and four unowned ACPI nodes. It reserves only
+those nodes. Enabled transport interrupts cause rejection without writes.
+Mappings use Device memory and explicit completion barriers. One BASE-version
+request runs in serialized cold-boot thread context. No IRQ is installed or
+cleared. The binding exposes no retry, setter, clock service or detach path.
+Once a request can be published, mappings and claims remain until reboot,
+including on timeout or malformed reply. Before that point, failures release
+only resources that the diagnostic still owns.
+
+The actual-source binding contract passes 33678 checks with GCC16 path
+analysis, Cppcheck, CSA and ASan/UBSan. Eighteen causal mutations fail.
+Native target compilation passes. Target analysis retains inherited header
+findings and fixed callback-signature style hints. No category is suppressed.
+These checks do not qualify a complete kernel boot or physical transaction.
+The [platform workflow](../../.github/workflows/cix-platform.yml) adds Linux
+Memcheck. Check its exact-head result before interpreting a CI claim.
+
+Deferred attachment runs before `initclocks`. Uptime can remain frozen there;
+the independent 3000-poll ceiling still bounds the wait. The nominal 30 ms
+budget excludes software and MMIO overhead. Use a manual boot entry and keep
+the working default and recovery kernels. The printed version-valid and
+status-valid fields distinguish accepted output from failure evidence.
+
 Masked CIX ACK behavior across repeated requests is unqualified. Linux's polled
 SMT completion alone does not prove that an ACK interrupt can stay disabled
 and uncleared. Do not add an ACK sequence or change disabled ACPI clock children
-from this wire helper's success. A single BASE-version query is the next
-transport discriminator; it does not enable VPU resources.
+from this wire helper's success. A single BASE-version query is a transport
+discriminator; it does not establish clock ID 67 or enable VPU resources.
 
 Run the source contract with GCC16:
 
 ```sh
 CC=gcc-16 CFLAGS='-O2 -g -fanalyzer' sh ember/tools/scmi-smt-diag-contract.sh
+CC=gcc-16 CFLAGS='-O2 -g -fanalyzer' CIXSCMI_ANALYZE=1 \
+    sh ember/tools/cixscmi-contract.sh
 ```
 
 ## Reset provider
@@ -208,3 +242,7 @@ Hardware facts come from the pinned vendor
 and [reset IDs](https://github.com/radxa/kernel/blob/77736302973085a9d0ffb397ec4ee4ef795160f4/include/dt-bindings/reset/sky1-reset.h).
 The checked board firmware describes CCLK, RST0 and the VPU CLKT/RSTL references.
 These original BSD providers do not include or relabel GPL implementation code.
+The single-request diagnostic also uses the pinned
+[SCMI ACPI description](https://github.com/radxa/edk2-platforms/blob/14cf7bdcfe1d0e8635a16a25d4209b6e28b18fca/Platform/CIX/Sky1/Drivers/AcpiSocTables/Dsdt-ScmiMailbox.asl)
+and [mailbox register roles](https://github.com/radxa/kernel/blob/77736302973085a9d0ffb397ec4ee4ef795160f4/drivers/mailbox/cix-mailbox.c)
+as hardware references. Its BSD source is original.

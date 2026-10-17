@@ -11,17 +11,21 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/acpi_power.*'
       - 'sys/dev/acpi/xhci_acpi.c'
+      - 'sys/dev/acpi/cixscmi_acpi.c'
+      - 'sys/dev/ic/scmi_smt_diag.*'
       - 'sys/dev/ic/cixvpu_resources.*'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY'
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cixreset-*'
       - 'ember/tools/cixvpu-control-*'
       - 'ember/tools/acpi-power-*'
       - 'ember/tools/xhci-acpi-rootbus-*'
+      - 'ember/tools/cixscmi-*'
       - 'ember/boot/acpi-power.md'
       - 'ember/boot/cix-platform.md'
       - 'ember/boards/orange-pi-6-plus.md'
@@ -34,17 +38,21 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/acpi_power.*'
       - 'sys/dev/acpi/xhci_acpi.c'
+      - 'sys/dev/acpi/cixscmi_acpi.c'
+      - 'sys/dev/ic/scmi_smt_diag.*'
       - 'sys/dev/ic/cixvpu_resources.*'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY'
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cixreset-*'
       - 'ember/tools/cixvpu-control-*'
       - 'ember/tools/acpi-power-*'
       - 'ember/tools/xhci-acpi-rootbus-*'
+      - 'ember/tools/cixscmi-*'
       - 'ember/boot/acpi-power.md'
       - 'ember/boot/cix-platform.md'
       - 'ember/boards/orange-pi-6-plus.md'
@@ -71,12 +79,15 @@ jobs:
             /ember/tools/cixvpu-control-*
             /ember/tools/acpi-power-*
             /ember/tools/xhci-acpi-rootbus-*
+            /ember/tools/cixscmi-*
             /sys/dev/acpi/cixclk_acpi.*
             /sys/dev/acpi/cixreset_acpi.*
             /sys/dev/acpi/cixvpu_acpi_control.*
             /sys/dev/acpi/cixvpu_acpi.c
             /sys/dev/acpi/acpi_power.*
             /sys/dev/acpi/xhci_acpi.c
+            /sys/dev/acpi/cixscmi_acpi.c
+            /sys/dev/ic/scmi_smt_diag.*
             /sys/dev/ic/cixvpu_resources.*
             /sys/sys/queue.h
             /sys/external/bsd/acpica/dist/include/
@@ -97,12 +108,14 @@ jobs:
           CIXRESET_ANALYZE: '1'
           CIXVPU_CONTROL_ANALYZE: '1'
           XHCI_ACPI_ANALYZE: '1'
+          CIXSCMI_ANALYZE: '1'
         run: |
           sh ember/tools/cixclk-contract.sh
           sh ember/tools/cixreset-contract.sh
           sh ember/tools/acpi-power-contract.sh
           sh ember/tools/cixvpu-control-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
+          sh ember/tools/cixscmi-contract.sh
       - name: Run ASan and UBSan
         env:
           CC: gcc
@@ -114,6 +127,7 @@ jobs:
           sh ember/tools/acpi-power-contract.sh
           sh ember/tools/cixvpu-control-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
+          sh ember/tools/cixscmi-contract.sh
       - name: Run complete contracts under Memcheck
         env:
           CC: gcc
@@ -132,3 +146,4 @@ jobs:
           sh ember/tools/acpi-power-contract.sh
           sh ember/tools/cixvpu-control-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
+          sh ember/tools/cixscmi-contract.sh
