@@ -630,7 +630,7 @@ int main(void)
 	CHECK(rtwce_bootstrap(0) == EBUSY);
 	int old_io = f.io;
 	int ch = 36;
-	char stats[2048];
+	char stats[2048] = { 0 };
 	CHECK(rtwce_h2c(0x1234) == EBUSY);
 	CHECK(rtwce_lbmode(1) == EBUSY);
 	CHECK(rtwce_loopback(1) == EBUSY);
