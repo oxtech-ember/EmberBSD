@@ -73,7 +73,7 @@ IQK or prove firmware semantic acceptance.
 Normal table load keeps DPK mode tables out of the cold startup path.
 Those tables require a separate calibration transaction and register restore.
 The actual-source call graph and pre-ADCK AFE register checks cover this boundary.
-Its effect on physical calibration still requires a board trial.
+Physical trials still report residual nonconvergence after this correction.
 
 Cold startup runs the native ADCK/DACK helper before HCI starts. Its bounded
 noise filter computes a trimmed mean after at most 101 replacement passes.
@@ -86,16 +86,17 @@ Insufficient valid samples, readiness timeouts and bus failures stop startup
 and require a power reset.
 Pinned-source trace tests include persistent noise and bounded nonconvergence
 followed by both paths and control restore. Completion, control restore,
-measured paths and converged paths have separate result fields. Physical ADC
-measurements have not converged; complete startup under this source contract
-still requires a board trial. Numeric diagnostics report the failure stage,
+measured paths and converged paths have separate result fields. Physical kernel
+`4f6e826234fc5c1f129341948f64108d725537ce` completes the procedure and starts HCI.
+ADC AB and DAC B residuals have not converged. Numeric diagnostics report the failure stage,
 attempts, last measurement, ADC means and programmed compensation.
 The failure output includes the already-read silicon identity and RFE fields.
 The tenth ADC attempt also reads back five ordinary BB control registers
 after measurement and before the convergence decision. These native diagnostics
 add at most ten reads across both paths. A read failure stops all later I/O.
-Earlier 2.4 GHz RX evidence predates cold calibration integration; current
-startup and station acceptance remain pending.
+The same kernel lists 26 APs, including the test network at 2447 and 5745 MHz.
+A 2.4 GHz station trial reaches RUN setup, which fails with EINVAL.
+The failure powers the radio off. Station acceptance remains pending.
 
 The kernel configuration selects the native station wrapper and ingress
 generation policy. Use the standard interface tools when the PCI wrapper
