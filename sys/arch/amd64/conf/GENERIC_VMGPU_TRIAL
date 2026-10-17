@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD; personal amd64 VirtGPU 2D trial, not a default kernel.
+# Keep stock GENERIC as a separate recovery choice.
+
+include "arch/amd64/conf/GENERIC"
+
+# Keep this experiment on its built-in drivers and matching DRM core.
+no options MODULAR_DEFAULT_AUTOLOAD
+no viogpu* at virtio?
+virtiodrm* at virtio?
+
+# VIRTGPU_VIRGL and the FDT-specific VIRTGPU_CONSOLE remain disabled.

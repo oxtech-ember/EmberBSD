@@ -18,6 +18,7 @@
 #include "pvr_exec.h"
 #include "pvr_file.h"
 #include "pvr_freelist.h"
+#include "pvr_exec_hwrt.h"
 #include "pvr_stream.h"
 
 struct pvr_exec_context {
@@ -29,11 +30,15 @@ struct pvr_exec_freelist {
 	struct pvr_freelist *firmware;
 	struct pvr_file_vm *vm;
 	struct pvr_file_pin pin;
+	uint32_t firmware_id;
+	bool registered;
+	unsigned refs;
 };
 struct pvr_exec_file {
 	/* All handle operations are serialized by the DRM device gate. */
 	struct idr contexts;
 	struct idr freelists;
+	struct idr hwrts;
 };
 
 struct pvr_exec_file *
@@ -43,6 +48,7 @@ pvr_exec_open(void)
 
 	idr_init(&ef->contexts);
 	idr_init(&ef->freelists);
+	idr_init(&ef->hwrts);
 	return ef;
 }
 
@@ -55,7 +61,7 @@ pvr_exec_find(struct idr *handles, uint32_t handle)
 	return idr_find(handles, (int)handle);
 }
 
-static int
+int
 pvr_exec_insert(struct idr *handles, void *owner, uint32_t *out)
 {
 	int handle;
@@ -110,12 +116,15 @@ pvr_exec_context_put(struct drm_device *dev, struct pvr_exec_context *ctx)
 	kmem_free(ctx, sizeof(*ctx));
 }
 
-static void
+void
 pvr_exec_freelist_put(struct drm_device *dev, struct pvr_exec_freelist *fl)
 {
 	unsigned attempt;
 	int error = 0;
 
+	KASSERT(fl->refs != 0);
+	if (--fl->refs != 0)
+		return;
 	if (fl->firmware != NULL) {
 		for (attempt = 0; attempt < 100; attempt++) {
 			error = pvr_freelist_destroy(&fl->firmware);
@@ -123,6 +132,12 @@ pvr_exec_freelist_put(struct drm_device *dev, struct pvr_exec_freelist *fl)
 				break;
 			(void)kpause("pvrflclean", false, MAX(1, hz / 100), NULL);
 		}
+	}
+	if (error == 0 && fl->registered) {
+		error = pvr_device_freelist_remove(dev, fl->firmware_id,
+		    &fl->firmware);
+		if (error == 0)
+			fl->registered = false;
 	}
 	if (error != 0) {
 		pvr_file_vm_fail(fl->vm);
@@ -140,6 +155,7 @@ pvr_exec_close(struct drm_device *dev, struct pvr_exec_file *ef)
 {
 	struct pvr_exec_context *ctx;
 	struct pvr_exec_freelist *fl;
+	struct pvr_exec_hwrt *hwrt;
 	int id;
 
 	for (;;) {
@@ -158,8 +174,17 @@ pvr_exec_close(struct drm_device *dev, struct pvr_exec_file *ef)
 		idr_remove(&ef->freelists, id);
 		pvr_exec_freelist_put(dev, fl);
 	}
+	for (;;) {
+		id = 0;
+		hwrt = idr_get_next(&ef->hwrts, &id);
+		if (hwrt == NULL)
+			break;
+		idr_remove(&ef->hwrts, id);
+		pvr_exec_hwrt_put(dev, hwrt);
+	}
 	idr_destroy(&ef->contexts);
 	idr_destroy(&ef->freelists);
+	idr_destroy(&ef->hwrts);
 	kmem_free(ef, sizeof(*ef));
 }
 
@@ -309,6 +334,7 @@ pvr_create_free_list_locked(struct drm_device *dev,
 		return EINVAL;
 	fl = kmem_zalloc(sizeof(*fl), KM_SLEEP);
 	fl->vm = vm;
+	fl->refs = 1;
 	error = pvr_file_vm_pin(vm, args->free_list_gpu_addr, size,
 	    DRM_PVR_BO_PM_FW_PROTECT, &fl->pin);
 	if (error == 0)
@@ -322,6 +348,11 @@ pvr_create_free_list_locked(struct drm_device *dev,
 	config.gpu_va = args->free_list_gpu_addr;
 	config.sync_cookie = &fl->pin;
 	config.backing_sync = pvr_file_pin_sync;
+	fl->firmware_id = id;
+	error = pvr_device_freelist_add(dev, id, &fl->firmware);
+	if (error != 0)
+		goto fail;
+	fl->registered = true;
 	config.id = id;
 	config.initial_pages = args->initial_num_pages;
 	config.max_pages = args->max_num_pages;
@@ -385,4 +416,58 @@ pvr_exec_context_firmware(struct pvr_exec_context *ctx)
 {
 
 	return ctx->firmware;
+}
+
+/* Handle lookup with a reference; requires the device/backend gate. */
+struct pvr_exec_freelist *
+pvr_exec_freelist_get(struct drm_file *file, uint32_t handle)
+{
+	struct pvr_exec_file *ef = pvr_file_execution(file);
+	struct pvr_exec_freelist *fl = pvr_exec_find(&ef->freelists, handle);
+
+	if (fl != NULL) {
+		if (fl->refs == UINT_MAX)
+			return NULL;
+		fl->refs++;
+	}
+	return fl;
+}
+
+int
+pvr_exec_freelist_info(const struct pvr_exec_freelist *fl,
+    struct pvr_exec_freelist_info *info)
+{
+
+	if (fl == NULL || info == NULL)
+		return EINVAL;
+	info->vm = fl->vm;
+	info->fw_address = pvr_freelist_fw_address(fl->firmware);
+	info->initial_pages = pvr_freelist_initial_pages(fl->firmware);
+	info->current_pages = pvr_freelist_current_pages(fl->firmware);
+	info->max_pages = pvr_freelist_max_pages(fl->firmware);
+	return 0;
+}
+
+bool
+pvr_exec_freelist_same(const struct pvr_exec_freelist *a,
+    const struct pvr_exec_freelist *b)
+{
+
+	return a != NULL && b != NULL &&
+	    a->firmware == b->firmware;
+}
+
+struct pvr_file_vm *
+pvr_exec_freelist_vm(const struct pvr_exec_freelist *fl)
+{
+
+	return fl->vm;
+}
+
+struct idr *
+pvr_exec_hwrt_handles(struct drm_file *file)
+{
+	struct pvr_exec_file *ef = pvr_file_execution(file);
+
+	return &ef->hwrts;
 }

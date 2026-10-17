@@ -116,6 +116,10 @@ Temperature monitoring and hot/critical reporting remain enabled. Policy
 changes run in the ACPI worker. A zone refresh retains active cooling when
 the cooling devices are unchanged. An incomplete refresh retains the previous
 working description. It does not pulse the fan merely to reload its settings.
+When a policy step selects "no cooling", the driver clears every active
+cooling list, not only the step it last engaged. This also clears devices
+that a firmware failsafe or a handoff left engaged. A failed power transition
+is reported in the kernel log. The remaining devices are still processed.
 
 Check actual rotation, temperature and undervoltage indicators. An ACPI `D0`
 state reports power state, not RPM. On the checked CM5 firmware, `_AL0`

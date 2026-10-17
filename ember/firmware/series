@@ -1,5 +1,6 @@
 sd-power-on.diff
 thermal-fan.diff
+fan-handoff.diff
 bcm2712-stepping.diff
 wifi-sdio2.diff
 pm-watchdog.diff
@@ -22,3 +23,4 @@ rp1-uart-shared-irq.diff
 cm5-trace-option.diff
 fan-state-fix.diff
 power-button.diff
+bcm2712-display-resources.diff

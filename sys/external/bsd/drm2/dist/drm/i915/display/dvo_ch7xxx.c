@@ -252,17 +252,25 @@ static enum drm_connector_status ch7xxx_detect(struct intel_dvo_device *dvo)
 {
 	u8 cdet, orig_pm, pm;
 
-	ch7xxx_readb(dvo, CH7xxx_PM, &orig_pm);
+	if (!ch7xxx_readb(dvo, CH7xxx_PM, &orig_pm))
+		return connector_status_unknown;
 
 	pm = orig_pm;
 	pm &= ~CH7xxx_PM_FPD;
 	pm |= CH7xxx_PM_DVIL | CH7xxx_PM_DVIP;
 
-	ch7xxx_writeb(dvo, CH7xxx_PM, pm);
+	if (!ch7xxx_writeb(dvo, CH7xxx_PM, pm)) {
+		ch7xxx_writeb(dvo, CH7xxx_PM, orig_pm);
+		return connector_status_unknown;
+	}
 
-	ch7xxx_readb(dvo, CH7xxx_CONNECTION_DETECT, &cdet);
+	if (!ch7xxx_readb(dvo, CH7xxx_CONNECTION_DETECT, &cdet)) {
+		ch7xxx_writeb(dvo, CH7xxx_PM, orig_pm);
+		return connector_status_unknown;
+	}
 
-	ch7xxx_writeb(dvo, CH7xxx_PM, orig_pm);
+	if (!ch7xxx_writeb(dvo, CH7xxx_PM, orig_pm))
+		return connector_status_unknown;
 
 	if (cdet & CH7xxx_CDET_DVI)
 		return connector_status_connected;
@@ -304,7 +312,8 @@ static void ch7xxx_mode_set(struct intel_dvo_device *dvo,
 	ch7xxx_writeb(dvo, CH7xxx_TLPF, tlpf);
 	ch7xxx_writeb(dvo, CH7xxx_TCT, 0x00);
 
-	ch7xxx_readb(dvo, CH7xxx_IDF, &idf);
+	if (!ch7xxx_readb(dvo, CH7xxx_IDF, &idf))
+		return;
 
 	idf &= ~(CH7xxx_IDF_HSP | CH7xxx_IDF_VSP);
 	if (mode->flags & DRM_MODE_FLAG_PHSYNC)
@@ -329,7 +338,8 @@ static bool ch7xxx_get_hw_state(struct intel_dvo_device *dvo)
 {
 	u8 val;
 
-	ch7xxx_readb(dvo, CH7xxx_PM, &val);
+	if (!ch7xxx_readb(dvo, CH7xxx_PM, &val))
+		return false;
 
 	if (val & (CH7xxx_PM_DVIL | CH7xxx_PM_DVIP))
 		return true;
@@ -345,7 +355,10 @@ static void ch7xxx_dump_regs(struct intel_dvo_device *dvo)
 		u8 val;
 		if ((i % 8) == 0)
 			DRM_DEBUG_KMS("\n %02X: ", i);
-		ch7xxx_readb(dvo, i, &val);
+		if (!ch7xxx_readb(dvo, i, &val)) {
+			DRM_DEBUG_KMS("?? ");
+			continue;
+		}
 		DRM_DEBUG_KMS("%02X ", val);
 	}
 }

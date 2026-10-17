@@ -25,6 +25,7 @@ typedef void *bus_dma_tag_t;
 #include "context.h"
 #include "drm.h"
 #include "exec.h"
+#include "exec_hwrt.h"
 #include "file.h"
 #include "freelist.h"
 #include "stream.h"
@@ -58,6 +59,9 @@ static unsigned context_busy, freelist_busy, context_destroys, freelist_destroys
 static unsigned context_creates, freelist_creates, pauses, copies, ids, publishes;
 static unsigned unpins, vm_puts, fails, retained_count, context_order, freelist_order;
 static unsigned event_order, unpin_order, put_order;
+static unsigned registry_adds, registry_removes;
+static int registry_error, registry_remove_error;
+static struct { uint32_t id; struct pvr_freelist **owner; } registry[8];
 static void *retained[8];
 static bool retained_is_freelist;
 static union { uint64_t align; uint8_t bytes[256]; } user_state;
@@ -81,6 +85,9 @@ static void kmem_free(void *p, size_t n)
 	size_t i;
 	for (i = 0; i < NITEMS(records); i++) if (records[i].ptr == p) break;
 	CHECK(p != NULL && i < NITEMS(records) && records[i].size == n);
+	for (size_t j = 0; j < NITEMS(registry); j++)
+		CHECK(registry[j].owner == NULL || (uintptr_t)registry[j].owner < (uintptr_t)p ||
+		    (uintptr_t)registry[j].owner - (uintptr_t)p >= n);
 	records[i] = (struct record){ 0 }; CHECK(allocations != 0); allocations--; free(p);
 }
 static void idr_init(struct idr *id) { memset(id, 0, sizeof(*id)); }
@@ -130,6 +137,37 @@ void pvr_device_retain(struct drm_device *d, void *owner)
 { CHECK(d == &device && gated && owner != NULL && retained_count < 8); retained[retained_count++] = owner; }
 int pvr_device_next_id(struct drm_device *d, uint32_t *out)
 { CHECK(d == &device && gated); if (id_error != 0) return id_error; *out = ++ids; return 0; }
+static unsigned registry_find(struct pvr_freelist **owner)
+{
+	unsigned i;
+	CHECK(gated);
+	for (i = 0; i < NITEMS(registry); i++) if (registry[i].owner == owner) break;
+	return i;
+}
+int pvr_device_freelist_add(struct drm_device *dev, uint32_t id,
+    struct pvr_freelist **owner)
+{
+	unsigned i;
+	CHECK(dev == &device && gated && id != 0 && owner != NULL && *owner == NULL);
+	CHECK(registry_find(owner) == NITEMS(registry));
+	if (registry_error != 0) return registry_error;
+	for (i = 0; i < NITEMS(registry); i++) if (registry[i].owner == NULL) break;
+	CHECK(i < NITEMS(registry));
+	registry[i].id = id; registry[i].owner = owner; registry_adds++;
+	return 0;
+}
+int pvr_device_freelist_remove(struct drm_device *dev, uint32_t id,
+    struct pvr_freelist **owner)
+{
+	unsigned i = registry_find(owner);
+	CHECK(dev == &device && gated && i < NITEMS(registry));
+	CHECK(registry[i].id == id && *owner == NULL);
+	if (registry_remove_error != 0) return registry_remove_error;
+	registry[i].owner = NULL; registry[i].id = 0; registry_removes++;
+	return 0;
+}
+void pvr_exec_hwrt_put(struct drm_device *dev, struct pvr_exec_hwrt *owner)
+{ (void)dev; (void)owner; CHECK(false); }
 struct pvr_exec_file *pvr_file_execution(struct drm_file *f) { return f->execution; }
 struct pvr_file_vm *pvr_file_vm_get(struct drm_file *f, uint32_t h)
 {
@@ -187,7 +225,9 @@ int pvr_context_destroy(struct pvr_context **owner)
 int pvr_freelist_create(bus_dma_tag_t dmat, const struct pvr_backend *be,
     const struct pvr_freelist_config *config, struct pvr_freelist **owner)
 {
+	unsigned registered_slot = registry_find(owner);
 	CHECK(gated && dmat == &device && be == &backend && *owner == NULL);
+	CHECK(registered_slot < NITEMS(registry) && registry[registered_slot].id == config->id);
 	CHECK(config->backing_cpu == backing && config->backing_sync == pvr_file_pin_sync);
 	CHECK(((struct pvr_file_pin *)config->sync_cookie)->mapping != NULL);
 	observed_freelist = *config; freelist_creates++;
@@ -196,15 +236,26 @@ int pvr_freelist_create(bus_dma_tag_t dmat, const struct pvr_backend *be,
 }
 int pvr_freelist_destroy(struct pvr_freelist **owner)
 {
-	CHECK(gated && *owner != NULL); freelist_destroys++; freelist_order = ++event_order;
+	CHECK(gated && *owner != NULL && registry_find(owner) < NITEMS(registry)); freelist_destroys++; freelist_order = ++event_order;
 	CHECK(((struct pvr_file_vm *)((struct pvr_file_pin *)observed_freelist.sync_cookie)->mapping)->pins == 1);
 	if (freelist_busy != 0) { freelist_busy--; return EBUSY; }
 	if (freelist_destroy_error != 0) return freelist_destroy_error;
 	kmem_free(*owner, sizeof(**owner)); *owner = NULL; return 0;
 }
+/* Accessor behavior has its own actual-source free-list contract. */
+uint32_t pvr_freelist_current_pages(const struct pvr_freelist *fl)
+{ (void)fl; CHECK(false); return 0; }
+uint32_t pvr_freelist_fw_address(const struct pvr_freelist *fl)
+{ (void)fl; CHECK(false); return 0; }
+uint32_t pvr_freelist_initial_pages(const struct pvr_freelist *fl)
+{ (void)fl; CHECK(false); return 0; }
+uint32_t pvr_freelist_max_pages(const struct pvr_freelist *fl)
+{ (void)fl; CHECK(false); return 0; }
 static void reset(void)
 {
 	CHECK(!gated && !preloaded && allocations == 0 && retained_count == 0);
+	for (unsigned i = 0; i < NITEMS(registry); i++) CHECK(registry[i].owner == NULL);
+	registry_error = registry_remove_error = 0; registry_adds = registry_removes = 0;
 	memset(&first, 0, sizeof(first)); memset(&second, 0, sizeof(second));
 	memset(vms, 0, sizeof(vms)); memset(&observed_config, 0, sizeof(observed_config));
 	memset(&observed_freelist, 0, sizeof(observed_freelist));
@@ -240,7 +291,11 @@ static void reset_reclaim(void)
 		if (retained_is_freelist) {
 			struct pvr_exec_freelist *fl = owner;
 			CHECK(fl->vm->refs == 1 && fl->vm->pins == 1);
-			kmem_free(fl->firmware, sizeof(*fl->firmware));
+			CHECK(fl->registered && registry_find(&fl->firmware) < NITEMS(registry));
+			if (fl->firmware != NULL) kmem_free(fl->firmware, sizeof(*fl->firmware));
+			fl->firmware = NULL;
+			CHECK(pvr_device_freelist_remove(&device, fl->firmware_id, &fl->firmware) == 0);
+			fl->registered = false;
 			pvr_file_unpin(&fl->pin); fl->vm->failed = false; pvr_file_vm_put(fl->vm);
 			kmem_free(fl, sizeof(*fl));
 		} else {
@@ -424,6 +479,55 @@ static void close_order(void)
 	close_files(); CHECK(vms[0].refs == 1 && vms[0].alive); reset_reclaim();
 }
 
+static void registry_lifetime(void)
+{
+	struct drm_pvr_ioctl_create_free_list_args a, b, saved;
+	struct drm_pvr_ioctl_destroy_free_list_args destroy = { 0 };
+	struct pvr_exec_freelist *held_fl;
+
+	reset(); a = freelist_args(); saved = a; registry_error = ENOMEM;
+	CHECK(pvr_create_free_list(&device, &a, &first) == -ENOMEM);
+	CHECK(memcmp(&a, &saved, sizeof(a)) == 0 && freelist_creates == 0);
+	CHECK(registry_adds == 0 && registry_removes == 0 && unpins == 1);
+	close_files();
+	reset(); a = freelist_args(); b = freelist_args();
+	CHECK(pvr_create_free_list(&device, &a, &first) == 0);
+	CHECK(pvr_create_free_list(&device, &b, &second) == 0);
+	CHECK(a.handle == b.handle && registry_adds == 2 && registry_removes == 0);
+	CHECK(registry[0].id != registry[1].id && registry[0].owner != registry[1].owner);
+	/* A dataset reference outlives removal of its user handle. */
+	(void)pvr_device_enter(&device);
+	held_fl = pvr_exec_freelist_get(&first, a.handle);
+	CHECK(held_fl != NULL && held_fl->refs == 2);
+	pvr_device_leave(&device);
+	destroy.handle = a.handle;
+	CHECK(pvr_destroy_free_list(&device, &destroy, &first) == 0);
+	CHECK(registry_removes == 0 && held_fl->registered);
+	(void)pvr_device_enter(&device);
+	pvr_exec_freelist_put(&device, held_fl);
+	pvr_device_leave(&device);
+	CHECK(registry_removes == 1);
+	close_files(); CHECK(registry_removes == 2);
+	reset(); a = freelist_args();
+	CHECK(pvr_create_free_list(&device, &a, &first) == 0);
+	freelist_destroy_error = EIO; retained_is_freelist = true;
+	destroy.handle = a.handle;
+	CHECK(pvr_destroy_free_list(&device, &destroy, &first) == 0);
+	CHECK(registry_adds == 1 && registry_removes == 0 && retained_count == 1);
+	CHECK(registry[0].owner != NULL && *registry[0].owner != NULL);
+	close_files(); reset_reclaim(); CHECK(registry_removes == 1);
+	/* A rejected registry removal also retains the already-cleaned owner slot. */
+	reset(); a = freelist_args();
+	CHECK(pvr_create_free_list(&device, &a, &first) == 0);
+	registry_remove_error = EIO; retained_is_freelist = true;
+	destroy.handle = a.handle;
+	CHECK(pvr_destroy_free_list(&device, &destroy, &first) == 0);
+	CHECK(retained_count == 1 && registry_removes == 0 && registry[0].owner != NULL);
+	CHECK(*registry[0].owner == NULL && vms[0].pins == 1);
+	close_files(); registry_remove_error = 0; reset_reclaim();
+	CHECK(registry_removes == 1);
+}
+
 static void unknown_handles(void)
 {
 	const uint32_t values[] = { 0, 31, INT_MAX, (uint32_t)INT_MAX + 1, UINT_MAX };
@@ -443,7 +547,7 @@ static void unknown_handles(void)
 }
 int main(void)
 {
-	context_inputs(); context_ownership(); freelist_ownership(); close_order(); unknown_handles();
+	context_inputs(); context_ownership(); freelist_ownership(); close_order(); unknown_handles(); registry_lifetime();
 	CHECK(allocations == 0 && retained_count == 0 && !gated && !preloaded);
 	printf("pvr exec contract: %u checks passed\n", checks); return 0;
 }

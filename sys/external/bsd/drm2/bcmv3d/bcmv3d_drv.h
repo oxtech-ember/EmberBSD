@@ -13,9 +13,13 @@
 #include <drm/drm_file.h>
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/v3d_drm.h>
+#include "bcmv3d_bo_stats.h"
 
 #define BCMV3D_BO_MAX	(16 * 1024 * 1024)
-#define BCMV3D_BO_TOTAL	(64 * 1024 * 1024)
+/* Scale total BO storage with RAM: 1/16 of RAM, from 64 MiB to 256 MiB. */
+#define BCMV3D_BO_TOTAL_MIN	((size_t)64 * 1024 * 1024)
+#define BCMV3D_BO_TOTAL_MAX	((size_t)256 * 1024 * 1024)
+#define BCMV3D_BO_TOTAL_SHIFT	4
 #define BCMV3D_VA_START	UINT64_C(0x00100000)
 #define BCMV3D_VA_SIZE	UINT64_C(0xffe00000)
 
@@ -28,13 +32,18 @@ struct bcmv3d_device {
 	kmutex_t memory_lock;
 	vmem_t *va;
 	size_t allocated;
+	size_t bo_total;
+	struct bcmv3d_bo_stats bo_stats;
+	struct sysctllog *sysctllog;
 	uint32_t ident[7];
 	struct bcmv3d_job *job;
 };
 
-/* CMA is first for the existing native UVM pager; allocation/free are ours. */
+/* Keep the CMA base layout; allocation, segments and pager are private. */
 struct bcmv3d_bo {
 	struct drm_gem_cma_object cma;
+	bus_dma_segment_t *dmasegs;
+	int nsegs, maxsegs;
 	vmem_addr_t gpu;
 	volatile unsigned int busy;
 	volatile unsigned int error;
@@ -47,8 +56,12 @@ bcmv3d_to_bo(struct drm_gem_object *obj)
 	return container_of(to_drm_gem_cma_obj(obj), struct bcmv3d_bo, cma);
 }
 
+extern const struct uvm_pagerops bcmv3d_bo_uvm_ops;
+
+/* The engine page table and scratch require contiguous DMA storage. */
 struct bcmv3d_bo *bcmv3d_bo_alloc(struct bcmv3d_device *, uint32_t);
 int bcmv3d_create_bo(struct drm_device *, void *, struct drm_file *);
+void bcmv3d_bo_snapshot(struct bcmv3d_device *, struct bcmv3d_bo_stats *);
 int bcmv3d_mmap_bo(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_get_bo_offset(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_wait_bo(struct drm_device *, void *, struct drm_file *);

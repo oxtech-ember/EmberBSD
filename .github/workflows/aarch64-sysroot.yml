@@ -1,0 +1,131 @@
+name: AArch64 development sets
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/aarch64-sysroot.yml'
+      - 'ember/release/build-aarch64.sh'
+      - 'ember/tests/release-aarch64-build.rb'
+      - 'ember/tests/release-aarch64-sets.rb'
+      - 'distrib/sets/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: aarch64-sysroot-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      LC_ALL: C
+      TZ: UTC
+      EMBER_RELEASE_JOBS: '4'
+      BUILD_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BUILD_SOURCE_COMMIT }}
+          persist-credentials: false
+      - name: Select changed OS producer inputs
+        id: producer
+        env:
+          EVENT_ACTION: ${{ github.event.action }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          required=true
+          if test "$EVENT_ACTION" = synchronize && gh api --method GET \
+              "repos/$GITHUB_REPOSITORY/actions/runs" -f "branch=$GITHUB_HEAD_REF" \
+              -f status=success -f per_page=100 \
+              --jq '.workflow_runs[] | select(.name == "AArch64 development sets" and .path == ".github/workflows/aarch64-sysroot.yml") | [.id, .head_sha, .head_repository.full_name] | @tsv' \
+              > "$RUNNER_TEMP/aarch64-producer-runs.tsv"; then
+            while IFS="$(printf '\t')" read -r run source repository; do
+              test "$repository" = "$GITHUB_REPOSITORY" || continue
+              printf '%s' "$source" | grep -Eq '^[0-9a-f]{40}$' || continue
+              if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" \
+                  --jq ".artifacts[] | select(.name == \"aarch64-development-sets-$source\" and .expired == false and .size_in_bytes > 0 and (.digest | test(\"^sha256:[0-9a-f]{64}$\"))) | .id" \
+                  > "$RUNNER_TEMP/aarch64-producer-artifact.txt"; then
+                continue
+              fi
+              test -s "$RUNNER_TEMP/aarch64-producer-artifact.txt" || continue
+              if ! git cat-file -e "$source^{commit}" 2>/dev/null; then
+                git fetch --no-tags --depth=1 origin "$source" || continue
+              fi
+              git diff --name-only "$source" "$BUILD_SOURCE_COMMIT" > "$RUNNER_TEMP/aarch64-changed-paths.txt"
+              changed=false
+              while IFS= read -r path; do
+                case "$path" in
+                  *.md|.github/*|ember/tests/*) ;;
+                  ember/release/github.rb|ember/release/kit.rb|ember/release/sysroot-kit.rb|ember/release/sysroot.rb|ember/release/prepare.rb|ember/release/build-amd64.sh) ;;
+                  *) changed=true ;;
+                esac
+              done < "$RUNNER_TEMP/aarch64-changed-paths.txt"
+              if test "$changed" = false; then
+                required=false
+                printf 'producer_source=%s\nproducer_run=%s\n' "$source" "$run" >> "$GITHUB_OUTPUT"
+                printf 'Reused successful OS producer: https://github.com/%s/actions/runs/%s at %s. No new OS binary or target qualification is claimed.\n' \
+                  "$GITHUB_REPOSITORY" "$run" "$source" | tee -a "$GITHUB_STEP_SUMMARY"
+                break
+              fi
+            done < "$RUNNER_TEMP/aarch64-producer-runs.tsv"
+          fi
+          printf 'required=%s\n' "$required" >> "$GITHUB_OUTPUT"
+          if test "$required" = false; then
+            echo 'Only release mechanisms or documentation changed. No new OS binary build is claimed.'
+          fi
+      - name: Install host build dependencies
+        if: steps.producer.outputs.required == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential ruby bmake \
+            bison flex libtool texinfo zlib1g-dev libarchive-tools xz-utils
+      - name: Check the build wrapper
+        if: steps.producer.outputs.required == 'true'
+        run: |
+          ruby ember/tests/release-aarch64-build.rb
+          ruby ember/tests/release-aarch64-sets.rb /usr/bin/bmake
+      - name: Build the pinned complete sets
+        if: steps.producer.outputs.required == 'true'
+        run: |
+          df -B1 "$RUNNER_TEMP"
+          sh ember/release/build-aarch64.sh "$BUILD_SOURCE_COMMIT" "$RUNNER_TEMP/ember-aarch64"
+      - name: Record the exact source export hash
+        if: success() && steps.producer.outputs.required == 'true'
+        run: |
+          cd "$RUNNER_TEMP/ember-aarch64"
+          sha256sum source.tar.gz > source-export.sha256
+          sha256sum release/evbarm-aarch64/binary/sets/base.tar.xz \
+            release/evbarm-aarch64/binary/sets/comp.tar.xz netbsd-EMBER64.gz > build-outputs.sha256
+      - name: Preserve candidate sets and failed-build evidence
+        if: always() && steps.producer.outputs.required == 'true'
+        id: artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: aarch64-development-sets-${{ env.BUILD_SOURCE_COMMIT }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/ember-aarch64/build.log
+            ${{ runner.temp }}/ember-aarch64/build-profile.json
+            ${{ runner.temp }}/ember-aarch64/build-success
+            ${{ runner.temp }}/ember-aarch64/source-export.sha256
+            ${{ runner.temp }}/ember-aarch64/build-outputs.sha256
+            ${{ runner.temp }}/ember-aarch64/netbsd-EMBER64.gz
+            ${{ runner.temp }}/ember-aarch64/dest/METALOG
+            ${{ runner.temp }}/ember-aarch64/release/evbarm-aarch64/binary/sets/base.tar.xz
+            ${{ runner.temp }}/ember-aarch64/release/evbarm-aarch64/binary/sets/comp.tar.xz
+            ${{ runner.temp }}/ember-aarch64/release/evbarm-aarch64/binary/sets/SHA512
+      - name: Release this job's temporary build tree
+        if: always() && steps.artifact.outcome == 'success'
+        run: |
+          test -n "$RUNNER_TEMP"
+          df -B1 "$RUNNER_TEMP"
+          rm -rf -- "$RUNNER_TEMP/ember-aarch64"
+          test ! -e "$RUNNER_TEMP/ember-aarch64"
+          df -B1 "$RUNNER_TEMP"

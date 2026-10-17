@@ -1459,7 +1459,6 @@ ale_rxeof(struct ale_softc *sc)
 	struct rx_rs *rs;
 	struct mbuf *m;
 	uint32_t length, prod, seqno, status;
-	int prog;
 
 	rx_page = &sc->ale_cdata.ale_rx_page[sc->ale_cdata.ale_rx_curp];
 	bus_dmamap_sync(sc->sc_dmat, rx_page->cmb_map, 0,
@@ -1476,7 +1475,7 @@ ale_rxeof(struct ale_softc *sc)
 	 * access.
 	 */
 	prod = *rx_page->cmb_addr;
-	for (prog = 0; ; prog++) {
+	for (;;) {
 		if (rx_page->cons >= prod)
 			break;
 		rs = (struct rx_rs *)(rx_page->page_addr + rx_page->cons);

@@ -281,6 +281,9 @@ struct vcprop_tag_boardserial {
 #define	VCPROP_CLK_PIXEL	9
 #define	VCPROP_CLK_PWM		10
 #define	VCPROP_CLK_EMMC2	12
+#define	VCPROP_CLK_M2MC		13
+#define	VCPROP_CLK_PIXEL_BVB	14
+#define	VCPROP_CLK_DISP		16
 
 struct vcprop_clock {
 	uint32_t pclk;

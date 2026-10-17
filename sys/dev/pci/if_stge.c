@@ -823,7 +823,7 @@ stge_start(struct ifnet *ifp)
 	struct stge_descsoft *ds;
 	struct stge_tfd *tfd;
 	bus_dmamap_t dmamap;
-	int error, firsttx, nexttx, opending, seg, totlen;
+	int error, firsttx, nexttx, opending, seg;
 	uint64_t csum_flags;
 
 	if ((ifp->if_flags & IFF_RUNNING) != IFF_RUNNING)
@@ -914,11 +914,10 @@ stge_start(struct ifnet *ifp)
 		    BUS_DMASYNC_PREWRITE);
 
 		/* Initialize the fragment list. */
-		for (totlen = 0, seg = 0; seg < dmamap->dm_nsegs; seg++) {
+		for (seg = 0; seg < dmamap->dm_nsegs; seg++) {
 			tfd->tfd_frags[seg].frag_word0 =
 			    htole64(FRAG_ADDR(dmamap->dm_segs[seg].ds_addr) |
 			    FRAG_LEN(dmamap->dm_segs[seg].ds_len));
-			totlen += dmamap->dm_segs[seg].ds_len;
 		}
 
 #ifdef STGE_EVENT_COUNTERS
@@ -967,7 +966,7 @@ stge_start(struct ifnet *ifp)
 		 * Check to see if we have a VLAN tag to insert.
 		 */
 
-		tfc = TFD_FrameId(nexttx) | TFD_WordAlign(/*totlen & */3) |
+		tfc = TFD_FrameId(nexttx) | TFD_WordAlign(3) |
 		    TFD_FragCount(seg) | csum_flags |
 		    (((nexttx & STGE_TXINTR_SPACING_MASK) == 0) ?
 			TFD_TxDMAIndicate : 0);

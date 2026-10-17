@@ -7,6 +7,8 @@
 #include <sys/kmem.h>
 #include <sys/mman.h>
 #include <sys/systm.h>
+#include <sys/sysctl.h>
+#include <uvm/uvm_extern.h>
 #include <arm/broadcom/bcm2712_v3d_takeover.h>
 #include <linux/err.h>
 #include <drm/drm_drv.h>
@@ -14,6 +16,59 @@
 #include <drm/drm_gem.h>
 #include <drm/drm_prime.h>
 #include "bcmv3d_drv.h"
+
+/* Compute the total BO budget once, before the first reservation. */
+static size_t
+bcmv3d_bo_total(void)
+{
+	uint64_t total;
+
+	total = (uint64_t)ctob(physmem) >> BCMV3D_BO_TOTAL_SHIFT;
+	if (total < BCMV3D_BO_TOTAL_MIN)
+		total = BCMV3D_BO_TOTAL_MIN;
+	if (total > BCMV3D_BO_TOTAL_MAX)
+		total = BCMV3D_BO_TOTAL_MAX;
+	return (size_t)total;
+}
+
+/* Copy under memory_lock; user copyout occurs after that lock is released. */
+static int
+bcmv3d_bo_sysctl(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct bcmv3d_device *sc = node.sysctl_data;
+	struct bcmv3d_bo_stats snapshot;
+
+	if (newp != NULL)
+		return EPERM;
+	bcmv3d_bo_snapshot(sc, &snapshot);
+	node.sysctl_data = &snapshot;
+	node.sysctl_size = sizeof(snapshot);
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static void
+bcmv3d_bo_sysctl_init(struct bcmv3d_device *sc)
+{
+	const struct sysctlnode *root;
+	int error;
+
+	error = sysctl_createv(&sc->sysctllog, 0, NULL, &root,
+	    CTLFLAG_READONLY, CTLTYPE_NODE, device_xname(sc->dev),
+	    SYSCTL_DESCR("Native V3D render device"), NULL, 0, NULL, 0,
+	    CTL_HW, CTL_CREATE, CTL_EOL);
+	if (error == 0)
+		error = sysctl_createv(&sc->sysctllog, 0, &root, NULL,
+		    CTLFLAG_READONLY, CTLTYPE_STRUCT, "bo_stats",
+		    SYSCTL_DESCR("V3D BO reservation and allocation failure snapshot"),
+		    bcmv3d_bo_sysctl, 0, sc, sizeof(struct bcmv3d_bo_stats),
+		    CTL_CREATE, CTL_EOL);
+	if (error != 0) {
+		sysctl_teardown(&sc->sysctllog);
+		aprint_error_dev(sc->dev, "BO diagnostic sysctl unavailable: %d\n",
+		    error);
+	}
+}
 
 /* A PRIME fd authorizes this BO; the offset remains relative, in bytes. */
 static int
@@ -27,7 +82,7 @@ bcmv3d_prime_mmap(struct drm_gem_object *obj, off_t *offp, size_t size,
 	    (prot & ~(PROT_READ | PROT_WRITE)) != 0 ||
 	    (*flagsp & MAP_SHARED) == 0 || (*flagsp & MAP_PRIVATE) != 0)
 		return -EINVAL;
-	/* The CMA pager drops this reference when the mapping is destroyed. */
+	/* The native BO pager drops this reference when the mapping ends. */
 	drm_gem_object_get(obj);
 	*uobjp = &obj->gemo_uvmobj;
 	*maxprotp = PROT_READ | PROT_WRITE;
@@ -75,7 +130,7 @@ static struct drm_driver bcmv3d_driver = {
 	.ioctls = bcmv3d_ioctls,
 	.num_ioctls = __arraycount(bcmv3d_ioctls),
 	.mmap_object = drm_gem_mmap_object,
-	.gem_uvm_ops = &drm_gem_cma_uvm_ops,
+	.gem_uvm_ops = &bcmv3d_bo_uvm_ops,
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
 	.gem_prime_mmap = bcmv3d_prime_mmap,
@@ -112,6 +167,7 @@ bcmv3d_render_attach(device_t self, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	sc->handle = handle;
 	dev->dev_private = sc;
 	dev->bus_dmat = dev->bus_dmat32 = dev->dmat = dmat;
+	sc->bo_total = bcmv3d_bo_total();
 	mutex_init(&sc->memory_lock, MUTEX_DEFAULT, IPL_NONE);
 	sc->va = vmem_create("v3dva", BCMV3D_VA_START, BCMV3D_VA_SIZE,
 	    PAGE_SIZE, NULL, NULL, NULL, 0, VM_SLEEP, IPL_NONE);
@@ -144,11 +200,13 @@ bcmv3d_render_attach(device_t self, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		error = -drm_dev_register(dev, 0);
 	if (error != 0)
 		goto fail;
+	bcmv3d_bo_sysctl_init(sc);
 	aprint_normal_dev(self, "native V3D render interface: GEM and "
 	    "serialized CL/TFU/CSD with binary syncobj; experimental render interface\n");
 	/* Device, IRQ and MMU lifetime ends at reboot; no hot removal. */
 	return 0;
 fail:
+	sysctl_teardown(&sc->sysctllog);
 	bcmv3d_job_fini(sc);
 	if (sc->va != NULL)
 		vmem_destroy(sc->va);

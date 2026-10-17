@@ -4,7 +4,7 @@
 set -eu
 PATH=/bin:/usr/bin:/sbin:/usr/sbin
 export PATH
-case ${1-} in xfce) ;; *) echo 'Supported desktop: xfce' >&2; exit 2;; esac
+case ${1-} in xfce|plasma) profile=$1;; *) echo 'Supported desktops: xfce, plasma' >&2; exit 2;; esac
 [ "$(id -u)" = 0 ] || { echo 'Run inside the installed system as root.' >&2; exit 1; }
 configure_network()
 {
@@ -36,6 +36,11 @@ configure_network()
 	chmod 600 /etc/wpa_supplicant.conf
 }
 cache=/var/cache/ember-desktop
+if [ "$profile" = plasma ]; then
+	[ -f "$cache/PROFILE" ] && [ "$(cat "$cache/PROFILE")" = plasma ] || {
+		echo 'The bundle does not match the Plasma profile.' >&2; exit 1;
+	}
+fi
 [ -f "$cache/ROOTS" ] && [ -f "$cache/SHA512" ] || exit 1
 
 # The outer archive is verified by sysinst. Validate the staged package bytes too.
@@ -57,8 +62,24 @@ while IFS= read -r package; do
 	[ -f "$PKG_PATH/$package.tgz" ] || exit 1
 	pkg_add "$PKG_PATH/$package.tgz"
 done < "$cache/ROOTS"
-[ -x /usr/pkg/bin/startxfce4 ] && [ -x /usr/pkg/bin/dhcpcd-gtk ] || exit 1
+case $profile in
+xfce) [ -x /usr/pkg/bin/startxfce4 ] && [ -x /usr/pkg/bin/dhcpcd-gtk ] || exit 1;;
+plasma)
+	for program in startplasma-wayland kwin_wayland plasmashell Xwayland dbus-run-session; do
+		[ -x "/usr/pkg/bin/$program" ] || { echo "Missing Plasma program: $program" >&2; exit 1; }
+	done
+	# EmberBSD uses Plasma's classic startup, without a systemd user manager.
+	mkdir -p /usr/pkg/etc/xdg
+	if [ ! -f /usr/pkg/etc/xdg/startkderc ]; then
+		printf '[General]\nsystemdBoot=false\n' > /usr/pkg/etc/xdg/startkderc
+	fi
+	;;
+esac
 [ -f /usr/pkg/share/examples/rc.d/dbus ] || exit 1
 install -o root -g wheel -m 555 /usr/pkg/share/examples/rc.d/dbus /etc/rc.d/dbus
 configure_network
-echo 'XFCE and the Wi-Fi manager are installed. After login run: ember-desktop'
+config=$(mktemp /etc/ember-desktop.XXXXXX)
+printf '%s\n' "$profile" > "$config"
+chmod 644 "$config"
+mv "$config" /etc/ember-desktop
+echo "Desktop profile $profile is installed. After login run: ember-desktop"

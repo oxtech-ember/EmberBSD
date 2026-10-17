@@ -32,6 +32,10 @@
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: i915_pci_autoconf.c,v 1.14 2022/10/15 15:20:06 riastradh Exp $");
 
+#ifdef _KERNEL_OPT
+#include "opt_ember_i915_jsl_trial.h"
+#endif
+
 #include <sys/types.h>
 #include <sys/atomic.h>
 #include <sys/queue.h>
@@ -109,6 +113,18 @@ i915drmkms_pci_lookup(const struct pci_attach_args *pa)
 	    (struct intel_device_info *)ent->driver_data;
 
 	if (info->require_force_probe) {
+#ifdef EMBER_I915_JSL_4E55_TRIAL
+		/* This pre-attach info has no runtime IS_JASPERLAKE mask yet. */
+		if (PCI_PRODUCT(pa->pa_id) == 0x4e55 &&
+		    ent->vendor == PCI_VENDOR_INTEL &&
+		    info->platform == INTEL_JASPERLAKE && info->gen == 11 &&
+		    info->ppgtt_size == 36 &&
+		    info->engine_mask ==
+		    (BIT(RCS0) | BIT(BCS0) | BIT(VCS0) | BIT(VECS0))) {
+			printf("i915drmkms: experimental JSL 8086:4e55 trial enabled\n");
+			return ent;
+		}
+#endif
 		printf("i915drmkms: preliminary hardware support disabled\n");
 		return NULL;
 	}

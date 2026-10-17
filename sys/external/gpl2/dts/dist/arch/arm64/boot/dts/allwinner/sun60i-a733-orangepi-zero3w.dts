@@ -13,12 +13,15 @@
 	model = "OrangePi Zero 3W";
 	compatible = "xunlong,orangepi-zero3w", "allwinner,sun60i-a733";
 
-	/* PWM wiring and levels from the pinned Orange Pi BSP. */
+	/* PWM wiring from the pinned Orange Pi BSP. The stock kit fan is
+	 * two-wire: the header switches its supply rail, and a chopped
+	 * rail runs the motor only near the full duty. Collapse the
+	 * vendor table to off/full until a four-wire fan is accepted. */
 	fan: pwm-fan {
 		compatible = "pwm-fan";
 		pwms = <&pwm0 5 25000 0>;
 		#cooling-cells = <2>;
-		cooling-levels = <0 50 102 170 255>;
+		cooling-levels = <0 255 255 255 255>;
 		/* DC1SW2 also powers microSD. Never switch it off here. */
 	};
 

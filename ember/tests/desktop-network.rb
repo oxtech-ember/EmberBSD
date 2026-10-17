@@ -5,7 +5,7 @@ require 'open3'
 root=File.expand_path('../..',__dir__)
 source=File.read(root+'/usr.sbin/sysinst/wizard.c')
 configure=source[/bool\nwizard_configure\(void\).*?^\}/m]
-abort 'Saved Ethernet settings run after desktop network setup' unless configure.index('mnt_net_config()') < configure.index('ember-desktop-install xfce')
+abort 'Saved Ethernet settings run after desktop network setup' unless configure.index('mnt_net_config()') < configure.index('ember-desktop-install %s')
 helper=File.read(root+'/libexec/ember-desktop/ember-desktop-install')
 body=helper[/configure_network\(\)\n\{.*?^\}/m] or abort 'Missing installed desktop network configuration'
 Dir.mktmpdir do |d|

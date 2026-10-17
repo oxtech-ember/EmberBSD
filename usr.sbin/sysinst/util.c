@@ -1682,6 +1682,13 @@ source_ready:
 		hit_enter_to_continue(NULL, NULL);
 	}
 
+	/* The base runtime must precede any installed-system configuration. */
+#ifdef EMBER_BASE_RUNTIME_GCC16
+	if (tarstats.nerror != 0 || tarstats.nsuccess != tarstats.nselected ||
+	    !wizard_apply_runtime())
+		return 1;
+#endif
+
 	/*
 	 * postinstall needs to be run after extracting all sets, because
 	 * otherwise /var/db/obsolete will only have current information

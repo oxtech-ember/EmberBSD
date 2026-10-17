@@ -193,6 +193,7 @@ cat > "$work/selection.c" <<'C'
 #include <stdio.h>
 #undef putchar
 #define KASSERT assert
+#define KASSERTMSG(condition, ...) assert(condition)
 typedef void *device_t;
 struct simplefb_softc { int unused; };
 static struct simplefb_softc *simplefb_deferred;

@@ -1,0 +1,45 @@
+#	$NetBSD$
+#
+# Realtek RTL8852BE 802.11ax PCIe WLAN (rtw89).
+# The rtw89_*.c and rtw8852b*.c files are derived from the Linux rtw89
+# driver, dual licensed GPL-2.0 OR BSD-3-Clause; they are used here under
+# the BSD-3-Clause terms.
+
+device	rtwx: ifnet, arp, wlan, firmload
+attach	rtwx at pci
+file	dev/pci/rtw89/if_rtw89.c		rtwx
+file	dev/pci/rtw89/rtw89_compat.c		rtwx
+file	dev/pci/rtw89/rtw89_bridge.c		rtwx
+file	dev/pci/rtw89/rtw89_core.c		rtwx
+file	dev/pci/rtw89/rtw89_mac.c		rtwx
+file	dev/pci/rtw89/rtw89_mac_be.c		rtwx
+file	dev/pci/rtw89/rtw89_phy.c		rtwx
+file	dev/pci/rtw89/rtw89_phy_be.c		rtwx
+file	dev/pci/rtw89/rtw89_fw.c		rtwx
+file	dev/pci/rtw89/rtw89_pci.c		rtwx
+file	dev/pci/rtw89/rtw89_efuse.c		rtwx
+file	dev/pci/rtw89/rtw89_cam.c		rtwx
+file	dev/pci/rtw89/rtw89_chan.c		rtwx
+file	dev/pci/rtw89/rtw89_coex.c		rtwx
+file	dev/pci/rtw89/rtw89_ps.c		rtwx
+file	dev/pci/rtw89/rtw89_ser.c		rtwx
+file	dev/pci/rtw89/rtw89_sar.c		rtwx
+file	dev/pci/rtw89/rtw89_regd.c		rtwx
+file	dev/pci/rtw89/rtw89_acpi.c		rtwx
+file	dev/pci/rtw89/rtw89_mac80211.c		rtwx
+file	dev/pci/rtw89/rtw89_8852be.c		rtwx
+file	dev/pci/rtw89/rtw8852b.c		rtwx
+file	dev/pci/rtw89/rtw8852b_rfk.c		rtwx
+file	dev/pci/rtw89/rtw8852b_rfk_table.c	rtwx
+file	dev/pci/rtw89/rtw8852b_table.c		rtwx
+makeoptions	rtwx	"CPPFLAGS.rtwx"+="-I$S/dev/pci/rtw89 -I$S/dev/pci/rtw89/compat"
+makeoptions	rtwx	"CPPFLAGS.rtwx"+="-DCONFIG_RTW89_DEBUGMSG"
+makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-shadow -Wno-cast-qual"
+makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-missing-prototypes -Wno-missing-field-initializers"
+makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-unused-function -Wno-unused-variable"
+makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-unused-but-set-variable -Wno-strict-prototypes"
+makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-pointer-arith -Wno-sign-compare"
+makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-implicit-fallthrough -Wno-address-of-packed-member"
+makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-type-limits -Wno-array-bounds"
+makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-old-style-declaration -Wno-int-in-bool-context -Wno-discarded-qualifiers"
+makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-format-zero-length"

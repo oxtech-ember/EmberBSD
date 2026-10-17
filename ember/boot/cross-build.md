@@ -52,6 +52,16 @@ paths. Build logs remain in the output directory.
 host Python executable; there is no fixed Python 3.13 requirement. These
 legacy Python source contracts have not yet been replaced.
 
+Darwin host tools retain `-no-cpp-precomp` only for Clang. Modern GNU GCC
+rejects that legacy Apple flag. The actual Makefile/compiler regression covers
+six tool paths, GCC/Clang and both host-selector values. Its 24 cases pass on
+macOS; the Linux selector is simulated, not a Linux execution claim.
+
+```sh
+sh ember/tests/darwin-host-flags.sh /absolute/source /absolute/nbmake-evbarm \
+    /absolute/host-gcc /absolute/host-clang /absolute/SDK /absolute/new-work
+```
+
 ## Compiler selection
 
 The fork's in-tree bootstrap compiler is currently GCC 12.5. Building it as
@@ -86,6 +96,71 @@ compiler. The [Ports cross recipe](https://github.com/oxtech-ember/EmberBSD-Port
 provides the host compiler and preserves its current source adaptations.
 Its `--kernel` mode builds frontends without an application sysroot; the
 application mode retains the target libc/header/runtime requirements.
+
+### Reproducible debug paths with external GCC
+
+Keep `MKREPRO=yes` when using the supported external GCC16 toolchain.
+Set `NETBSDSRCDIR` and `NETBSDOBJDIR` to the actual absolute source and
+object roots. With `build.sh -O /absolute/objects`, also pass
+`-V NETBSDOBJDIR=/absolute/objects`. The arbitrary `MAKEOBJDIR` expression
+cannot safely supply that root. A missing object root stops the build.
+`MAKEOBJDIRPREFIX` retains its existing explicit root derivation.
+
+The external path uses standard `-fdebug-prefix-map` and
+`-fmacro-prefix-map` options with concrete path values. It maps source,
+objects and X11 to `/usr/src`, `/usr/obj` and `/usr/xsrc`, and removes the
+DESTDIR prefix. The object map takes precedence for generated sources
+below the source tree. Debug maps normalize DWARF. The existing macro-map
+policy separately normalizes `__FILE__` values.
+
+Upstream GCC16 does not implement NetBSD's `-iremap`, environment-variable
+prefix maps or `-fdebug-regex-map`. Those extensions remain selected only
+for the in-tree compiler. No compiler feature probe runs during make parsing,
+and no unknown option is added to the external compiler command.
+
+Run the real amd64 compiler regression with an existing configured make
+wrapper and cross prefix:
+
+```sh
+CPPCHECK=/absolute/cppcheck ruby ember/tests/external-repro.rb \
+    /absolute/tools/bin/nbmake-amd64 /absolute/source /absolute/gcc16-prefix
+```
+
+The fixture compiles `-g` objects through the real make definitions and
+GCC16 in two independent source/object layouts. One object tree is nested
+under its source root. Object bytes must match. Target `readelf` checks
+canonical DWARF paths, while object strings check source, generated-source,
+DESTDIR and X11 `__FILE__` values. The fixture also rejects a missing object
+root and checks that the in-tree GCC12 flag selection retains all four
+regex replacements and its environment/preprocessor maps.
+Cppcheck, when selected, analyzes only the small generated C fixtures for
+NetBSD/x86_64. This is not a kernel source analysis or target execution.
+The regression does not establish complete kernel reproducibility or boot.
+
+### Darwin host compiler flags
+
+With host GCC16 on macOS, pass the selected SDK through `HOST_CPPFLAGS`
+and `HOST_LDFLAGS`. Keep host language and optimization flags in
+`HOST_CFLAGS`. The host-mkdep and mandoc configure rules pass all three variables.
+Mandoc preserves explicit build flags in its feature probes. It selects them
+before adding definitions that require mandoc's generated configuration header.
+The compatibility, MOP, CTF, ELF and DWARF host libraries select
+`-no-cpp-precomp` only for Clang on Darwin. GCC does not support this flag.
+This follows the compiler selection already used by GNU host tools.
+
+Run the bounded regression with an existing configured make wrapper:
+
+```sh
+sh ember/tests/darwin-host-tools.sh /absolute/tools/bin/nbmake-amd64 \
+    /absolute/source /absolute/host-gcc16
+```
+
+The check evaluates the real Makefiles with GCC16 and Clang. It also runs
+host-mkdep and mandoc configure with the macOS SDK in private temporary directories.
+Mandoc's generated configuration follows real host compile, link and execution
+probes, including nanosleep. No target program is executed by this check.
+These host checks pass on Apple Silicon macOS with GCC 16.2.0. They do not
+establish a complete tools build, amd64 userland, boot or image acceptance.
 
 ## Acceptance is separate from host selection
 
@@ -205,3 +280,28 @@ native CTF execution and live tracing. The [external type-unit guide](ctf-extern
 extends conversion to GNU/standard split objects, DWP v2/v5, combined
 supplements and multiple primary CUs, with explicit ownership limits. General
 DWARF5 location-list evaluation is not established by type conversion.
+
+For GNU host sub-makes on Darwin, an explicit `SDKROOT` is retained through
+`env -i`. The owning wrapper still requires the selected GCC16 toolchain;
+this does not select a fallback compiler. Exercise the actual build environment:
+
+```sh
+ruby ember/tests/darwin-gnuhost-sdk.rb SOURCE NBMAKE GCC SDK NEW_WORK
+```
+
+The imported flex host generator must terminate its variadic pointer list with
+a pointer-typed NULL. An integer zero can leave an invalid extra argument on
+Darwin ARM64 and make the generated m4 execution fail. The real host filter and
+its generated scanner are tested without replacing m4:
+
+```sh
+sh ember/tests/lex-host-filter.sh /absolute/nblex HOST_CC SDK NEW_WORK
+```
+
+The flex caller repair has independent spec/quality/security approval. Original
+and patched actual `main.c` compiler analysis each retain one GCC warning
+(imprecise floating-point statistics) and one Clang warning (m4 allocation
+ownership). Cppcheck could not parse this Darwin configuration: the compilation
+database reached a NAME_MAX header guard; actual GCC preprocessing then exposed
+an SDK errno typedef syntax limitation. Both inputs fail identically. These
+failures are recorded, not a clean Cppcheck claim or a full flex audit.

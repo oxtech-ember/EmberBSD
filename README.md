@@ -48,6 +48,9 @@ are maintained in the related repositories below.
   An [amd64 UEFI VM candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-c5d396f5698b68e956b29ee5b256bc7877e6c517-amd64-no-x11)
   supplies the separate no-X11 media and a pinned GitHub HTTPS set source.
   The accepted desktop candidate remains local until its matching kit is published.
+  The installer also exposes an experimental KDE Plasma profile with a separate
+  verified bundle and Wayland launcher. The [runtime bootstrap](ember/tests/installer-runtime-altroot.md)\n  uses live pkgtools before its first target process. Host regressions cover profile selection
+  and failure handling; an amd64 Plasma bundle and session remain unqualified.
   The [release procedure](ember/release/README.md) verifies composition, VM qualification,
   remote file hashes and immutable publication. The custom domain remains deferred.
 
@@ -134,9 +137,16 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-Status updated **2026-10-15**; linked component documents record their own
+Status updated **2026-10-16**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
+
+- **AArch64 development sets:** the [pinned base/comp workflow](ember/release/aarch64-sysroot.md)
+  builds complete sets from one fork commit with hashes and source provenance.
+  Its GCC16 C11/C++20 consumers, shared/static libc CAS checks and GNU M4
+  upstream tests pass in AArch64 QEMU. The matching test kernel and raw
+  qualification log are bound to the kit. Binary publication remains pending;
+  the Linux importer and GCC16 compiler/package are separate inputs.
 
 ### Local AI and robotics
 
@@ -212,6 +222,27 @@ on every board in the hardware catalog.
   passes real dependency/package cycles, exact FFV1 pixels, timestamps,
   inverse filters and PCM samples in AArch64 QEMU. Its current XML provider
   passes installed contracts and preserves the libxml2.so.16 ABI.
+  The [H.265 RTP CPU SDK and C API example](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/rtp/README.md)
+  add GCC16.2 cross builds for AArch64 and AMD64. Both architectures pass
+  bidirectional FFmpeg/GStreamer transport, packet faults, receiver restart
+  and 13-package installation/removal/reinstallation in full-system QEMU.
+  Independent captures, exact pixels and timestamps verify recovery;
+  [results](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/rtp/results.md)
+  do not establish hardware-codec, RTSP or production-network performance.
+- **CIX P1 codec foundations:** original [firmware, message-ring and MMU helpers](ember/boot/cix-vpu.md)
+  pass GCC16 source contracts and AArch64 VM checks. Ports cross-builds the
+  actual FFmpeg M2M backend and GStreamer V4L2 plugin; missing-device and
+  semaphore cleanup checks pass in EmberBSD. Native attachment, platform
+  power/reset control and M2M queues are unfinished. Hardware H.265 is unverified.
+- **Four H.265 views in Qt:** the [Qt Multimedia CPU profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/qt-four-streams)
+  cross-builds Qt 6.12 with GCC16 and the common FFmpeg9 provider for amd64.
+  The [four-player example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/media/qt-four-streams)
+  decodes, verifies and paints all 720 frames from four 2048×1500, 9 fps inputs
+  in an installed EmberBSD QEMU VM. A 640×480 raster window reaches observed
+  paint rates of 9.114–9.326 fps. Fourteen packages pass dependency protection
+  and removal/reinstallation; independent RFB captures confirm the window.
+  [CPU measurements and limits](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/qt-four-streams/results.md)
+  distinguish this TCG software path from physical displays, cameras and hardware codecs.
 - **Recording experiments and finding visual markers:** MCAP C++ 2.1.3 records
   timestamped messages with indexed replay and LZ4/Zstd compression. AprilTag
   3.4.5 detects markers and estimates their pose. Installed AArch64 VM checks
@@ -406,12 +437,39 @@ on every board in the hardware catalog.
   common sysroot file for file. On Orange Pi Zero 3W (A733) it passes a
   private virtual-backend session: the compositor stays active on QPainter
   while Qt Quick clients render real pixel phases through software EGL
-  (llvmpipe) and exit cleanly. Hardware GL compositing still needs the DRM
-  render node on A733. On physical CM5, KWin 6.7.5nb2 passes
-  [OpenGL/V3D selection and Qt Quick pixel checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
-  on a virtual output under an existing non-root user. Its missing Vulkan
-  loader dependency is repaired. This does not establish HDMI presentation
-  or the complete Plasma Desktop. The fixed
+  (llvmpipe) and exit cleanly. Hardware GL compositing still needs native
+  graphics execution and a validated Zink path on A733.
+  On physical CM5, the installed KWin 6.8.0 reports
+  [OpenGL ES/V3D compositing](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
+  under an ordinary user on a virtual output. Plasma Desktop 6.8.0 also
+  selects V3D OpenGL 3.1. libudev now classifies its DRM render node correctly.
+  The complete MesaLib 26.2.4nb8 package repairs an uninitialized V3D cache
+  mutex identified by an earlier Plasma core. It preserves symbol versions
+  with LLD and passes the previously linked consumer on CM5. The installed
+  [Plasma shell check](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/plasma-desktop)
+  passes the default desktop and panel models, a 320x256 containment pixel check,
+  30 seconds of responsiveness, and normal shell exit. All 20 temperature
+  samples remain between 63.659 and 66.956 degrees Celsius. This bounded
+  virtual-output run does not establish a full login or physical HDMI output.
+  The installed Xwayland runtime service and private Xauthority checks pass.
+  The full session reaches the panel models, then fails BO allocation and
+  responsiveness checks. A failed render job also retains its buffers until reboot.
+  Read-only [BO diagnostics](ember/boot/bcm2712-v3d-bo-stats.md) now distinguish
+  budget refusal, DMA allocation, and handle publication failures. Bounded CL
+  error snapshots report the correct PCS register and render-list position.
+  Their source contracts and complete GCC16 kernel build pass. Hardware
+  correlation and a stable full session remain pending; quotas are unchanged.
+  The [native scatter/gather allocator](ember/boot/bcm2712-v3d-render.md) now
+  passes CM5 allocations through 16 MiB, three held buffers, and the existing
+  TFU/CSD/sync/CL checks. The updated Mesa package passes four V3D EGL
+  lifecycles and 39 upstream invocations; one internal case skips and nine
+  NIR cases remain disabled. Qt's mutex regression holds three descriptors
+  under 145 threads. KDED also passes its installed runtime-helper check.
+  KCoreAddons nb3 limits native watches and preserves recursive polling events.
+  Its unchanged CM5 consumer now uses 519 descriptors for 1200 paths, then
+  returns to four after cleanup; nb2 exhausted its limit of 1024.
+  Full-session stability, physical HDMI and hotplug still need acceptance.
+  The fixed
   [Milou](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/milou)
   package passes its fresh-board acceptance on the same board.
   plasma-workspace 6.7.5 itself now cross-builds completely (BROKEN
@@ -424,14 +482,14 @@ on every board in the hardware catalog.
   (365 packages): plasmashell, krunner, ksmserver and startplasma-wayland
   are installed with clean dynamic dependencies, and the private KWin
   session acceptance still passes. A startplasma session on the virtual
-  output is the next acceptance step. CM5 runtime testing also identifies
-  the separate, still absent Plasma Desktop shell package; Workspace alone
-  cannot start `org.kde.plasma.desktop`.
+  output remains a separate acceptance step for that A733 package set.
+  CM5 now has complete Desktop and Workspace 6.8.0 packages, including the
+  separate `org.kde.plasma.desktop` shell and its compiled plugins.
   [Desktop package preparation](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-package-set.md)
   now covers Activities, current Xwayland/libei/basu, correct target XKB paths
   and native QtDBus generators that retain KWin's complex property signatures.
   Offline package and full-session runner host controls pass; board startup,
-  V3D shell rendering and normal logout still require acceptance.
+  visible desktop content and normal full-session logout still require acceptance.
   Its current xdg-user-dirs 0.20
   dependency now cross-builds and passes private-profile checks on CM5.
   [Current desktop providers](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-providers.md)
@@ -490,13 +548,22 @@ on every board in the hardware catalog.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle.
   The current [CM5 display boundary](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
-  is an HDMI-to-VGA EDID that selects 1080p for a 1280x1024 monitor.
+  is a working firmware/genfb console at 1920x1080. The V3D render node
+  rejects DRM mode-resource queries; it does not supply a display controller.
   Native BCM2712 KMS mode setting and accelerated scanout remain unaccepted.
   A complete mobile shell workflow, native display and power management
   still need validation. See the [Plasma Mobile port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile).
 
 ### GPU foundations and NPU direction
 
+- **Jasper Lake source foundation:** the [experimental i915 port](ember/boot/i915-jasperlake.md)
+  identifies PCI `8086:4e55` as a separate JSL platform. Source contracts cover
+  identity, eDP swing tables, link rates, PHY/clock selection, the PSR2 limit,
+  FBC alignment, guarded display-power handling and GT/reset workarounds.
+  Firmware metadata identifies JSL; GuC stays disabled by default.
+  Default kernels/modules keep preliminary attachment closed; a separate personal trial
+  configuration admits only the exact `8086:4e55` JSL identity. Full builds and physical acceptance remain pending.
+- **Personal amd64 VM graphics trial:** a separate [VirtGPU 2D configuration](ember/boot/amd64-vmgpu-trial.md) selects native DRM/KMS for a future llvmpipe/GBM session. Stock kernels are unchanged; kernel, VM and Plasma acceptance remain separate gates.
 - **Native graphics infrastructure:** experimental VirtIO DRM/KMS, UVM-backed
   GEM buffers and PRIME sharing make direct Wayland sessions possible.
   UTM tests cover visible KMS output, 32 cross-process buffer-lifetime cycles
@@ -530,6 +597,22 @@ on every board in the hardware catalog.
   now pair finite DMA phases, retain host resources through failed cleanup,
   and reject private framebuffer handles before publication. Kernel copies
   wait for prior operations while retaining the buffer and its reservation.
+  A [checked firmware framebuffer interface](ember/boot/firmware-framebuffer.md)
+  preserves boot-console ownership and genfb fallback for future display drivers.
+  Source contracts pass; this interface does not supply KMS or physical scanout.
+  [Native DRM change events](ember/boot/drm-hotplug-events.md) publish registered
+  primary-node notifications through the device monitor. Source contracts and
+  target object compilation pass; physical HDMI detection and modesetting remain separate.
+  A [versioned BCM2712 display contract](ember/boot/bcm2712-display-contract.md)
+  validates shared register ownership, interrupt domains and bounded firmware
+  clock snapshots. The UEFI series declares these resources while preserving the
+  legacy V3D indices. ASL-to-AML component checks pass; full firmware deployment
+  remains unverified. The observer does not enable clocks or map display registers.
+  An [explicit native display IRQ provider](ember/boot/bcm2712-display-irq.md)
+  adds bounded leaf dispatch and synchronized teardown. Source contracts and
+  kernel object analysis pass. An explicit [HSM clock owner](ember/boot/bcm2712-display-hsm.md)
+  adds checked firmware clock leases for two HDMI ports, with source/host validation.
+  It has no automatic attachment. Physical HPD, DDC and KMS scanout remain unimplemented.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.
@@ -548,7 +631,7 @@ on every board in the hardware catalog.
   Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/wayland-utm),
   with native DSO-lifetime/numeric regressions under GCC 16.2 and
   common-toolchain staging rules. A [common graphics source profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-graphics)
-  supplies canonical MesaLib 26.2.4nb4/libdrm 2.4.134nb2 packages with one
+  supplies the shared MesaLib 26.2.4/libdrm 2.4.134nb2 packages with one
   shared LLVM 23.1.3 provider. The complete selected Mesa package cross-builds
   with GCC16 on macOS and is installed normally on Orange Pi Zero 3W (A733).
   [Installed-package acceptance](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-package.md)
@@ -737,12 +820,26 @@ on every board in the hardware catalog.
   Its production-source contracts pass. Host fixtures use the current bridge and
   metadata interfaces. They reject diagnostics after bridge adoption and render
   registration with incomplete metadata. On Zero 3W, Mesa 26.2.4nb5 now passes
-  three complete Vulkan compute lifecycles in one boot with kernel `e876bf6d2ce2`.
+  three complete Vulkan compute lifecycles in one boot with kernel `4d9b68f3ec48`.
   Device creation, all 16 GPU-written words, fence completion, host readback,
   and context cleanup pass; the execution service remains usable. The native
   KICK path accepts its asynchronous zero return word and still requires CCCB,
   UFO, and fresh health checks. Graphics jobs, Zink, display output, accelerated
   Plasma, Vulkan conformance, and long-duration GPU stability remain unaccepted.
+  The [graphics development checkpoint](ember/boot/a733-pvr-graphics.md) adds
+  stream, queue, HWRT, mapping-hold, and free-list growth primitives.
+  HWRT handles and paired DRM submissions are implemented. The submit path also
+  accepts a validated geometry, partial-render, and final-fragment sequence.
+  Every job is checked before the first publication. Final-fragment waits,
+  completion, and signals remain separate. Source contracts and the complete
+  kernel build pass; physical graphics readback is still pending.
+  Exact intra-pair sync dependencies use firmware ordering in host contracts.
+  External waits retain their error paths and bounded forward-dependency checks.
+  Combined-KICK queue transport has actual-source validation and failure tests.
+  Device-owned free-list IDs route GROW callbacks under the existing gates.
+  The free-list fixture keeps backing buffers alive through its page-count checks.
+  The matched kernel boots and repeats all 21 preparation stages and Vulkan compute.
+  Graphics execution and firmware GROW still have no physical acceptance.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,
@@ -795,7 +892,10 @@ on every board in the hardware catalog.
   and desktop OpenGL 3.1, including four 1280x800 lifecycles per display path. Native platform identity
   makes this GPU discoverable without DRM master. All 38 Mesa upstream
   invocations pass with recorded internal skips; LLVM23 llvmpipe also passes.
-  The [LLVM 23.1.3 migration](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-llvm2313.md) repeats all 38 invocations and 20 additional large V3D lifecycles. One transient large-BO allocation failure remains unresolved.
+  The [LLVM 23.1.3 migration](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-llvm2313.md) repeats all 38 invocations and 20 additional large V3D lifecycles.
+  The newer native scatter/gather allocator passes allocations through 16 MiB
+  and three simultaneous buffers on CM5. Sustained allocation pressure remains
+  a separate acceptance step.
   Same-device PRIME passes 80 cross-process lifecycles and four real
   GBM/EGLImage shader/pixel cycles after native DMA-BUF lifetime repairs.
   The ordinary kernel remains a passive observer. General job recovery,
@@ -908,11 +1008,12 @@ The base system shell is unchanged.
   aarch64 missing a reschedule, and the SD host controller driver.
   Source changes preserve their provenance; `ember/patches` records the
   original board adaptations already applied to this tree.
-- **Current kernel on Orange Pi Zero 3W:** a clean EMBER64 build boots on
-  physical A733 hardware, passes all 16 memfd tests and a checked Wi-Fi
-  round trip. The [board receipt](ember/boards/orange-pi-zero-3w.md#current-kernel-check-2026-10-07)
-  records the kernel hashes, matching modules and remaining userland and
-  accelerator limits.
+- **Current kernel on Orange Pi Zero 3W:** GCC16 EMBER64 revision `4d9b68f3ec48`
+  boots with matched modules and DTBs. The [compute receipt](ember/boot/a733-pvr-execution.md#physical-compute-boundary)
+  records 21 preparation stages and three native Vulkan compute lifecycles.
+  The maximum of 155 temperature samples is 62.310 degrees Celsius.
+  The earlier [board receipt](ember/boards/orange-pi-zero-3w.md#current-kernel-check-2026-10-07)
+  separately records 16 memfd tests and a checked Wi-Fi round trip.
 - **AArch64 numerical correctness:** an [initial FP state correction](ember/boot/aarch64-fp-state.md)
   addresses lost subnormal values and NaN payloads on CPUs without AArch32.
   Production contracts and native object compilation pass. Three runtime
@@ -944,10 +1045,43 @@ The base system shell is unchanged.
   Orange Pi Zero 3W. New [development sessions](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/development-defaults.md)
   and ordinary pkgsrc builds on Zero 3W select the repaired GCC16 nb1 package;
   the base compiler remains explicit bootstrap/recovery support.
+  The [external GCC runtime adapter](ember/boot/external-gcc-runtime.md) now isolates
+  freestanding links and resolves indirect C++ runtime dependencies at build time.
+  The [unwind-header setlist check](ember/tests/unwind-setlist.md) follows the GCC
+  and libc installers without copying compiler SDK headers into the base destination.
+  Isolated amd64 program links pass. EFI replays remove the leaked runtime flags,
+  but retain a linker PHDR error under `--noinhibit-exec`; UEFI boot remains unverified.
   The [cross-build wrapper](ember/boot/cross-build.md) builds an AArch64 kernel,
   matched board modules and DTBs on Apple Silicon macOS and Debian/x86_64
   with GCC16.2. The Linux build passes all ten portable contracts and artifact
   checksum checks; native contracts and boot acceptance remain separate.
+  Darwin host-tool checks pass real GCC16/SDK host-mkdep and mandoc configuration and Clang
+  flag selection; complete amd64 tools and image acceptance remain separate.
+  The [variadic-header regression](ember/tests/stdarg-interop.md) covers compiler/system include
+  order, C11/C23/C++20 and resource-free fallbacks. The isolated GCC16 libc assertion TU passes;
+  a complete base distribution remains a separate check. The [stddef interoperability regression](ember/tests/stddef-interop.md)
+  covers GCC16's compiler-owned amd64 `max_align_t`, both include orders and resource-free fallbacks.
+  Its size change requires a consistent userspace rebuild; isolated libkvm and PCB checks pass.
+  The [C++ dependency-header regression](ember/tests/external-cxx-depend.md) keeps external GCC compilation and dependency generation on the same audited runtime headers.
+  The actual ATF Makefile compiles its checked TU and generates dependencies; a complete base distribution remains pending.
+  The [libc canary initializer regression](ember/tests/libc-guard.md) prevents strong SSP from rejecting its own initial canary update; target disassembly and host function checks remain distinct from rebuilt VM boot acceptance.
+  The [incremental sysinst identity check](ember/tests/sysinst-build-config.md) keeps compiled build IDs, runtime mode and generated messages synchronized without weakening guided preflight.
+  The [amd64 crash-dump map regression](ember/tests/kvm-amd64-map.md) checks allocation failure, retry and range boundaries.
+  The isolated target TU passes GCC16 analysis; full library and base acceptance remain separate.
+  The [NVMM batch I/O regression](ember/tests/nvmm-io-batch.md) checks temporary-buffer lifetime and callback/error paths.
+  Its isolated target compilation passes; guest execution and full hypervisor acceptance remain separate.
+  The [NVMM ownership regression](ember/tests/nvmm-ownership.md) checks failed-create cleanup and exact-once area removal.
+  Host allocation/ioctl models pass; target device acceptance remains separate.
+  The [syslogd TLS status regression](ember/tests/syslog-tls-status.md) covers absent certificate names and fingerprints.
+  Formatting, cleanup and isolated GCC16 target compilation pass; TLS session acceptance remains separate.
+  The [wscons VT regression](ember/tests/usl-sync.md) checks deferred signals, valid signal ranges and callback lifetime.
+  Host tests and isolated target compilation pass; VM console switching remains unverified.
+  The [VT lease ownership regression](ember/tests/usl-owner.md) checks owner/admin ACK and reset, process-death tombstones and exit-hook retirement.
+  The [prepared VT VM runner](ember/tests/usl-vt-vm.md) provides a cross-built normal-ioctl acceptance test for an explicitly isolated fixture.
+  Its source checks and target ELF do not establish a VM pass or keyboard IRQ acceptance.
+  The [BIOS bootxx size regression](ember/tests/bootxx-size.md) replays the 8192-byte gate and fixed GPT table classification.
+  A passing compile/relink does not establish a BIOS boot or device pass.
+  Function tests and isolated target compilation pass; native session entitlement and coordinated device handoff remain unqualified.
   Incremental wrapper builds refresh the generated kernel version metadata;
   host orchestration checks cover stale `BUILDINFO` and object retention.
   The resulting kernel cold-boots in AArch64 UTM and passes FP process,
@@ -957,6 +1091,12 @@ The base system shell is unchanged.
   checks pass on Zero 3W with its installed GCC16 runtime. Its `--kernel`
   mode builds the cross frontends without an application sysroot; target
   libc and C++ runtime inputs remain required for application builds. The
+  [native flex filter check](ember/tests/flex-filter-sentinel.md) also covers
+  the pointer sentinel required by GCC16 on ARM64 macOS. A private rebuilt
+  lexer regenerates the racoon source and its amd64 ELF symbol definitions;
+  this does not qualify the complete OS build. The
+  fork's [readelf split-string repair](ember/boot/readelf-split-strings.md)
+  passes 24 GCC/Clang DWARF4/5 cases on macOS, including standalone DWO files. The
   [CTF converter](ember/boot/ctf-external-types.md) preserves GCC/Clang types
   in DWARF4/5 and both offset widths, including COMDAT type units, standalone
   DWO, indexed DWP and combined split/supplementary input. Linked multi-CU
@@ -975,7 +1115,10 @@ The base system shell is unchanged.
   C API/bitcode and ORC JIT consumers still pass.
   The OS-owned [development image](ember/image/README.md) installs the pinned
   GDB/LLVM package closure offline and includes CTF/libdwarf 2.2 and the
-  corrected FFS primary-superblock selector. The same installed GDB, DWP and
+  corrected FFS primary-superblock selector. A separate [FFS2 xattr list repair](ember/development/ffs-xattr.md)
+  preserves BSD lists and returns NUL-terminated names to the xattr API.
+  Actual-source and target analysis pass; kernel boot and physical retest remain pending.
+  The same installed GDB, DWP and
   CTF matrices pass on first boot and after a normal AArch64 VM reboot.
   Full OS builds
   with GCC16 and general pkgsrc cross-package builds remain unvalidated.
@@ -1029,6 +1172,12 @@ The base system shell is unchanged.
   Its VM profile has a checked [installer upgrade and complete backup recovery](ember/boot/amd64-vm-upgrade.md)
   between two published builds, with configuration and user-data checks after normal reboots.
   It has no X11 and does not establish a general hardware or GCC16 userland release.
+- **Realtek RTL8852BE Wi-Fi on amd64:** the [rtwx driver](ember/boot/rtwx.md)
+  reuses the dual-licensed Linux rtw89 hardware code through a small Linux
+  API layer and a net80211 bridge. One Jasper Lake (Celeron N5095A) laptop
+  passed 2.4/5 GHz scan, WPA2-PSK on 5 GHz with DHCP and a 30 MB transfer
+  with the module. Station mode and legacy rates only; boot with the
+  built-in driver and long-run operation are not tested.
 
 The costs are equally plain. Fixes from upstream are merged by hand.
 Only what the linked board pages mark "Tested" is claimed on physical
@@ -1138,6 +1287,9 @@ remain unverified.
   802.11r and long-duration operation remain outside this result. The [board page](ember/boards/orange-pi-zero-3w.md#wi-fi-limits-and-connected-scan-regression)
   records the firmware, bundle and tests.
 - **Short firmware replies** still need a command-transport fix and regression.
+- **RTL8852BE (`rtwx`):** WPA2-PSK station mode works with software crypto.
+  HT/VHT/HE rates, aggregation, WPA3/PMF, power save and beacon-loss
+  detection are not implemented. See the [driver limits](ember/boot/rtwx.md#limits).
 
 Changes to association and command handling should preserve the SAE and
 WPA2 checks and account for the separate roaming work.

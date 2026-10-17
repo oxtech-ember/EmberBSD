@@ -4315,7 +4315,7 @@ int intel_power_domains_init(struct drm_i915_private *dev_priv)
 	 */
 	if (IS_GEN(dev_priv, 12)) {
 		err = set_power_wells(power_domains, tgl_power_wells);
-	} else if (IS_ELKHARTLAKE(dev_priv)) {
+	} else if (IS_JSL_EHL(dev_priv)) {
 		err = set_power_wells(power_domains, ehl_power_wells);
 	} else if (IS_GEN(dev_priv, 11)) {
 		err = set_power_wells(power_domains, icl_power_wells);
@@ -5513,6 +5513,11 @@ void intel_display_power_suspend_late(struct drm_i915_private *i915)
 		bxt_enable_dc9(i915);
 	else if (IS_HASWELL(i915) || IS_BROADWELL(i915))
 		hsw_enable_pc8(i915);
+
+	/* Tweaked Wa_14010685332:jsp,mcc. Keep the bit set until resume. */
+	if (IS_JASPERLAKE(i915) && (HAS_PCH_JSP(i915) || HAS_PCH_MCC(i915)))
+		intel_uncore_rmw(&i915->uncore, SOUTH_CHICKEN1,
+				 SBCLK_RUN_REFCLK_DIS, SBCLK_RUN_REFCLK_DIS);
 }
 
 void intel_display_power_resume_early(struct drm_i915_private *i915)
@@ -5523,6 +5528,11 @@ void intel_display_power_resume_early(struct drm_i915_private *i915)
 	} else if (IS_HASWELL(i915) || IS_BROADWELL(i915)) {
 		hsw_disable_pc8(i915);
 	}
+
+	/* Tweaked Wa_14010685332:jsp,mcc. Restore after DC9 is disabled. */
+	if (IS_JASPERLAKE(i915) && (HAS_PCH_JSP(i915) || HAS_PCH_MCC(i915)))
+		intel_uncore_rmw(&i915->uncore, SOUTH_CHICKEN1,
+				 SBCLK_RUN_REFCLK_DIS, 0);
 }
 
 void intel_display_power_suspend(struct drm_i915_private *i915)

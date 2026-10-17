@@ -30,6 +30,8 @@ for header in fwmem fwstart fwboot fwprobe fwservice fwbridge; do
     sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_$header.h" \
         > "$work/sun60i_a733_gpu_$header.h"
 done
+sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_backend.h" \
+    > "$work/pvr-backend.h-body.h"
 # Exercise the real parent-specific queue and finalization dispatch as well.
 autoconf="$src/sys/kern/subr_autoconf.c"
 sed -n '1,/^#include /p' "$autoconf" | sed '/^#include /d' \

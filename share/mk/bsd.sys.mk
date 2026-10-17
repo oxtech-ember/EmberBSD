@@ -18,6 +18,30 @@ error2:
 .if ${MKREPRO:Uno} == "yes" && ${MKLLVM:Uno} != "yes"
 .export NETBSDSRCDIR DESTDIR X11SRCDIR
 
+# External upstream GCC lacks NetBSD's environment and regex path maps.
+# Use explicit roots so MKREPRO does not depend on those compiler extensions.
+.if defined(EXTERNAL_TOOLCHAIN)
+.if defined(MAKEOBJDIRPREFIX)
+NETBSDOBJDIR= ${MAKEOBJDIRPREFIX}${NETBSDSRCDIR}
+.endif
+.if empty(NETBSDSRCDIR:M/*) || empty(NETBSDOBJDIR:M/*)
+.error External MKREPRO=yes requires absolute NETBSDSRCDIR and NETBSDOBJDIR
+.endif
+CPPFLAGS+= -Wp,-fno-canonical-system-headers
+.if !empty(DESTDIR)
+REPROFLAGS+= -fdebug-prefix-map=${DESTDIR:Q}=
+REPROFLAGS+= -fmacro-prefix-map=${DESTDIR:Q}=
+.endif
+REPROFLAGS+= -fdebug-prefix-map=${NETBSDSRCDIR:Q}=/usr/src
+REPROFLAGS+= -fmacro-prefix-map=${NETBSDSRCDIR:Q}=/usr/src
+.if !empty(X11SRCDIR)
+REPROFLAGS+= -fdebug-prefix-map=${X11SRCDIR:Q}=/usr/xsrc
+REPROFLAGS+= -fmacro-prefix-map=${X11SRCDIR:Q}=/usr/xsrc
+.endif
+# Put the object map last: it must win when objects are below the source root.
+REPROFLAGS+= -fdebug-prefix-map=${NETBSDOBJDIR:Q}=/usr/obj
+REPROFLAGS+= -fmacro-prefix-map=${NETBSDOBJDIR:Q}=/usr/obj
+.else
 .if !empty(DESTDIR)
 CPPFLAGS+=	-Wp,-iremap,${DESTDIR}:
 REPROFLAGS+=	-fdebug-prefix-map=\$$DESTDIR=
@@ -42,14 +66,15 @@ REPROFLAGS+=	-fdebug-prefix-map=\$$NETBSDOBJDIR=/usr/obj
 REPROFLAGS+=	-fmacro-prefix-map=\$$NETBSDOBJDIR=/usr/obj
 .endif
 
-LINTFLAGS+=	-R${NETBSDSRCDIR}=/usr/src -R${X11SRCDIR}=/usr/xsrc
-LINTFLAGS+=	-R${DESTDIR}=
-
 # XXX: Cannot handle MAKEOBJDIR, yet.
 REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj$$=/usr/obj/\1'
 REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj/(.*)=/usr/obj/\1/\2'
 REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*=/usr/obj/\1'
 REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*/(.*)=/usr/obj/\1/\2'
+.endif
+
+LINTFLAGS+=	-R${NETBSDSRCDIR}=/usr/src -R${X11SRCDIR}=/usr/xsrc
+LINTFLAGS+=	-R${DESTDIR}=
 
 CFLAGS+=	${REPROFLAGS}
 CXXFLAGS+=	${REPROFLAGS}
@@ -182,7 +207,14 @@ LINTFLAGS+=	-d ${DESTDIR}
 CPPFLAGS+=	-D_FORTIFY_SOURCE=2
 .   endif
 .   if !defined(COVERITY_TOP_CONFIG)
+.     if defined(EXTERNAL_TOOLCHAIN) && ${ACTIVE_CC} == "gcc" && \
+    !defined(HOSTPROG) && !defined(HOSTLIB)
+# GCC16 basic SSP rejects addressable aggregates with zero-length arrays.
+# Strong SSP protects their frames and address-taken locals as well.
+COPTS+=	-fstack-protector-strong -Wstack-protector
+.     else
 COPTS+=	-fstack-protector -Wstack-protector 
+.     endif
 
 # GCC 4.8 on m68k erroneously does not protect functions with
 # variables needing special alignment, see

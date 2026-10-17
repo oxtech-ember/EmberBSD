@@ -7136,7 +7136,7 @@ bool intel_phy_is_combo(struct drm_i915_private *dev_priv, enum phy phy)
 	if (phy == PHY_NONE)
 		return false;
 
-	if (IS_ELKHARTLAKE(dev_priv))
+	if (IS_JSL_EHL(dev_priv))
 		return phy <= PHY_C;
 
 	if (INTEL_GEN(dev_priv) >= 11)
@@ -7150,7 +7150,7 @@ bool intel_phy_is_tc(struct drm_i915_private *dev_priv, enum phy phy)
 	if (INTEL_GEN(dev_priv) >= 12)
 		return phy >= PHY_D && phy <= PHY_I;
 
-	if (INTEL_GEN(dev_priv) >= 11 && !IS_ELKHARTLAKE(dev_priv))
+	if (INTEL_GEN(dev_priv) >= 11 && !IS_JSL_EHL(dev_priv))
 		return phy >= PHY_C && phy <= PHY_F;
 
 	return false;
@@ -7158,7 +7158,7 @@ bool intel_phy_is_tc(struct drm_i915_private *dev_priv, enum phy phy)
 
 enum phy intel_port_to_phy(struct drm_i915_private *i915, enum port port)
 {
-	if (IS_ELKHARTLAKE(i915) && port == PORT_D)
+	if (IS_JSL_EHL(i915) && port == PORT_D)
 		return PHY_A;
 
 	return (enum phy)port;
@@ -16664,7 +16664,7 @@ static void intel_setup_outputs(struct drm_i915_private *dev_priv)
 		intel_ddi_init(dev_priv, PORT_H);
 		intel_ddi_init(dev_priv, PORT_I);
 		icl_dsi_init(dev_priv);
-	} else if (IS_ELKHARTLAKE(dev_priv)) {
+	} else if (IS_JSL_EHL(dev_priv)) {
 		intel_ddi_init(dev_priv, PORT_A);
 		intel_ddi_init(dev_priv, PORT_B);
 		intel_ddi_init(dev_priv, PORT_C);
@@ -18118,7 +18118,7 @@ static void intel_modeset_readout_hw_state(struct drm_device *dev)
 		pll->on = pll->info->funcs->get_hw_state(dev_priv, pll,
 							&pll->state.hw_state);
 
-		if (IS_ELKHARTLAKE(dev_priv) && pll->on &&
+		if (IS_JSL_EHL(dev_priv) && pll->on &&
 		    pll->info->id == DPLL_ID_EHL_DPLL4) {
 			pll->wakeref = intel_display_power_get(dev_priv,
 							       POWER_DOMAIN_DPLL_DC_OFF);

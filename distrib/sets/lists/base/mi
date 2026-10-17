@@ -249,6 +249,9 @@
 ./libdata/firmware/if_otus/otus-init		base-firmware-root	firmware
 ./libdata/firmware/if_otus/otus-license		base-firmware-root	firmware
 ./libdata/firmware/if_otus/otus-main		base-firmware-root	firmware
+./libdata/firmware/if_rtw89			base-firmware-root
+./libdata/firmware/if_rtw89/LICENCE.rtlwifi_firmware.txt	base-firmware-root	firmware
+./libdata/firmware/if_rtw89/rtw8852b_fw.bin	base-firmware-root	firmware
 ./libdata/firmware/if_rtwn			base-firmware-root
 ./libdata/firmware/if_rtwn/Realtek-Firmware-License.txt	base-firmware-root	firmware
 ./libdata/firmware/if_rtwn/rtl8192cfw.bin	base-firmware-root	firmware
@@ -1318,6 +1321,7 @@
 ./usr/libexec/ftpd				base-netutil-bin
 ./usr/libexec/getNAME				base-man-bin		!makemandb
 ./usr/libexec/ember-desktop-install		base-sysutil-bin
+./usr/libexec/ember-runtime-install		base-sysutil-bin
 ./usr/bin/ember-desktop				base-sysutil-bin
 ./usr/libexec/getty				base-sysutil-bin
 ./usr/libexec/hprop				base-obsolete		obsolete
@@ -1614,7 +1618,8 @@
 ./usr/sbin/mbrlabel				base-obsolete		obsolete
 ./usr/sbin/mdconfig				base-sysutil-bin
 ./usr/sbin/mdnsd				base-mdns-bin		mdns
-./usr/sbin/mdsetimage				base-sysutil-bin
+./usr/sbin/mdsetimage				base-sysutil-bin		binutils
+./usr/sbin/mdsetimage				base-sysutil-bin		toolchain_missing
 ./usr/sbin/mk-amd-map				base-amd-bin
 ./usr/sbin/mkalias				base-nis-bin		yp
 ./usr/sbin/mknetid				base-nis-bin		yp

@@ -318,7 +318,9 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 #else
 	bool write = area->vm_flags & VM_WRITE;
 #endif
+#ifndef __NetBSD__
 	resource_size_t iomap;
+#endif
 	int err;
 
 	/* Sanity check that we allow writing into this object */
@@ -333,11 +335,13 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 	if (err)
 		goto out;
 
+#ifndef __NetBSD__
 	iomap = -1;
 	if (!i915_gem_object_type_has(obj, I915_GEM_OBJECT_HAS_STRUCT_PAGE)) {
 		iomap = obj->mm.region->iomap.base;
 		iomap -= obj->mm.region->region.start;
 	}
+#endif
 
 	/* PTEs are revoked in obj->ops->put_pages() */
 #ifdef __NetBSD__

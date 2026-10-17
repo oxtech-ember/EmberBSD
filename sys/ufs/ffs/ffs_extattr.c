@@ -845,6 +845,7 @@ ffs_listextattr(void *v)
 	}
 
 	struct extattr *eap, *eaend;
+	char nul = 0;
 	int error, ealen;
 
 	if (ap->a_vp->v_type == VCHR || ap->a_vp->v_type == VBLK)
@@ -876,9 +877,18 @@ ffs_listextattr(void *v)
 		ealen = eap->ea_namelength;
 		if (ap->a_size != NULL)
 			*ap->a_size += ealen + 1;
-		else if (ap->a_uio != NULL)
-			error = uiomove(&eap->ea_namelength, ealen + 1,
-			    ap->a_uio);
+		else if (ap->a_uio != NULL) {
+			if (ap->a_flag & EXTATTR_LIST_LENPREFIX) {
+				error = uiomove(&eap->ea_namelength, ealen + 1,
+				    ap->a_uio);
+			} else if (ap->a_uio->uio_resid < ealen + 1) {
+				error = ERANGE;
+			} else {
+				error = uiomove(eap->ea_name, ealen, ap->a_uio);
+				if (error == 0)
+					error = uiomove(&nul, sizeof(nul), ap->a_uio);
+			}
+		}
 	}
 
 	ffs_close_ea(ap->a_vp, 0, ap->a_cred);

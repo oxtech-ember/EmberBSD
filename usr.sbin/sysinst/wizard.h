@@ -10,6 +10,8 @@ void wizard_release_console(void);
 int wizard_intro(void);
 bool wizard_prepare(struct install_partition_desc *);
 bool wizard_configure(void);
+bool wizard_allow_install(bool);
+bool wizard_apply_runtime(void);
 void wizard_progress(const char *);
 int wizard_disk_choice(const char * const *, int);
 bool wizard_disk_is_root(const char *);

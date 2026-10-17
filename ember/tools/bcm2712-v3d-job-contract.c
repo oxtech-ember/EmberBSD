@@ -33,7 +33,14 @@ static struct acpi_irq irq={282,ACPI_LEVEL_SENSITIVE};
 static struct acpi_irq core_irq={281,ACPI_LEVEL_SENSITIVE};
 static void mutex_init(kmutex_t *m,int a,int b) { *m=0; }
 static void mutex_destroy(kmutex_t *m) { CHECK(*m==0); }
-static void aprint_error_dev(device_t d,const char *fmt,...) { }
+static char diagnostic_log[1024];
+static void aprint_error_dev(device_t d,const char *fmt,...)
+{
+ va_list ap;
+ va_start(ap,fmt);
+ vsnprintf(diagnostic_log,sizeof(diagnostic_log),fmt,ap);
+ va_end(ap);
+}
 static void aprint_normal_dev(device_t d,const char *fmt,...) { }
 static int acpi_resource_parse(device_t d,ACPI_HANDLE h,const char *s,
     struct acpi_resources *r,const int *p) { return 0; }
@@ -92,7 +99,7 @@ static void csd_complete(void);
 static void cl_complete(void);
 static int bcmv3d_takeover_core_peek(bus_size_t r,uint32_t *v)
 {
- if(++reg_calls==fail_reg)return EIO;
+ if(++reg_calls==fail_reg){ *v=0xbad0bad0;return EIO; }
  CHECK(r/4<__arraycount(core_regs)); *v=core_regs[r/4];
  if(r==0x30 && model_case==20 && cache_phase==1)*v|=1;
  if(r==0x30 && model_case==21 && cache_phase==2)*v|=0x100;
@@ -189,7 +196,7 @@ bus_dmamap_sync
 (bus_dma_tag_t t,bus_dmamap_t m,size_t o,size_t n,int ops)
 {
 	struct bcmv3d_job *j=handler_arg;
-	CHECK(o==0 && n==m->dm_segs[0].ds_len && j!=NULL);
+	CHECK(o==0 && n==m->dm_mapsize && j!=NULL);
  if(j->nbo) {
   if(m==j->pt->cma.dmamap) {
    uint32_t *pt=j->pt->cma.vaddr; CHECK(ops==1 && csd_owned==j->nbo);
@@ -235,7 +242,7 @@ bus_dmamap_sync
 static int
 bcmv3d_takeover_hub_peek(bus_size_t r,uint32_t *v)
 {
-	if (++reg_calls == fail_reg) return EIO;
+	if (++reg_calls == fail_reg) { *v=0xbad0bad0; return EIO; }
 	CHECK(r/4 < __arraycount(regs));
 	*v=regs[r/4];
 	if (r==V3D_MMUC && model_case==7) *v|=4;
@@ -310,7 +317,7 @@ static struct drm_v3d_submit_tfu
 setup(struct bcmv3d_device *c,struct drm_device *d,struct drm_file *f)
 {
 	struct drm_v3d_create_bo a={.size=V3D_COPY_SIZE},b=a;
-	*c=(struct bcmv3d_device){.drm=d};
+	*c=(struct bcmv3d_device){.drm=d,.bo_total=BCMV3D_BO_TOTAL};
 	*d=(struct drm_device){.dev_private=c}; *f=(struct drm_file){0};
 	memset(regs,0,sizeof(regs)); memset(core_regs,0,sizeof(core_regs)); regs[V3D_MMU_DEBUG/4]=0x550; csd_model=false; csd_starts=csd_writes=cache_phase=csd_owned=0;
 	cl_model=cl_render=false;cl_bins=cl_renders=0;

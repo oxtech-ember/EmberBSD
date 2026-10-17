@@ -3731,7 +3731,8 @@
 ./usr/include/unbound.h				comp-c-include		unbound
 ./usr/include/unctrl.h				comp-c-include
 ./usr/include/unistd.h				comp-c-include
-./usr/include/unwind.h				comp-c-include
+./usr/include/unwind.h				comp-c-include		gcc,libgcc_eh
+./usr/include/unwind.h				comp-c-include		!libgcc_eh
 ./usr/include/usb.h				comp-obsolete		obsolete
 ./usr/include/usbhid.h				comp-c-include
 ./usr/include/util.h				comp-c-include

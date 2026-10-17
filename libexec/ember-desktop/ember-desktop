@@ -1,8 +1,56 @@
 #!/bin/sh
-# Origin: EmberBSD optional XFCE console launcher, prepared with AI assistance.
+# Origin: EmberBSD selected desktop console launcher, prepared with AI assistance.
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
-[ -x /usr/pkg/bin/startxfce4 ] || { echo 'No desktop is installed.' >&2; exit 1; }
 PATH=/usr/pkg/bin:/usr/X11R7/bin:/usr/bin:/bin
 export PATH
-exec /usr/pkg/bin/startxfce4 "$@"
+profile=xfce
+if [ -f /etc/ember-desktop ]; then
+	IFS= read -r profile < /etc/ember-desktop
+fi
+case $profile in
+xfce)
+	[ -x /usr/pkg/bin/startxfce4 ] || { echo 'XFCE is not installed.' >&2; exit 1; }
+	exec /usr/pkg/bin/startxfce4 "$@"
+	;;
+plasma)
+	[ -x /usr/pkg/bin/startplasma-wayland ] && [ -x /usr/pkg/bin/dbus-run-session ] || {
+		echo 'KDE Plasma is not installed.' >&2; exit 1;
+	}
+	if [ -z "${XDG_RUNTIME_DIR-}" ]; then
+		# Console login has no session manager to supply the Wayland socket directory.
+		runtime=$(mktemp -d /tmp/ember-plasma.XXXXXX)
+		chmod 700 "$runtime"
+		XDG_RUNTIME_DIR=$runtime
+		export XDG_RUNTIME_DIR
+		trap 'rm -rf "$runtime"' EXIT
+		session=
+		stop_session()
+		{
+			trap '' HUP INT TERM
+			if [ -n "$session" ]; then
+				# dbus-run-session does not forward signals to its two children.
+				pkill -TERM -P "$session" 2>/dev/null || :
+				kill -TERM "$session" 2>/dev/null || :
+				wait "$session" 2>/dev/null || :
+			fi
+			exit "$1"
+		}
+		trap 'stop_session 129' HUP
+		trap 'stop_session 130' INT
+		trap 'stop_session 143' TERM
+		/usr/pkg/bin/dbus-run-session -- /usr/pkg/bin/startplasma-wayland "$@" &
+		session=$!
+		status=0
+		wait "$session" || status=$?
+		session=
+		exit "$status"
+	fi
+	[ -d "$XDG_RUNTIME_DIR" ] &&
+	    [ "$(stat -f '%u %Lp' "$XDG_RUNTIME_DIR")" = "$(id -u) 700" ] || {
+		echo 'Unsafe XDG_RUNTIME_DIR; expected an owned directory with mode 700.' >&2; exit 1;
+	}
+	exec /usr/pkg/bin/dbus-run-session -- /usr/pkg/bin/startplasma-wayland "$@"
+	;;
+*) echo 'Unknown desktop profile.' >&2; exit 1;;
+esac

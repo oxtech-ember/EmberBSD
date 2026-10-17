@@ -380,9 +380,13 @@ int setup_scratch_page(struct i915_address_space *vm, gfp_t gfp)
 	if (i915_vm_is_4lvl(vm) &&
 	    HAS_PAGE_SIZES(vm->i915, I915_GTT_PAGE_SIZE_64K)) {
 		size = I915_GTT_PAGE_SIZE_64K;
+#ifndef __NetBSD__
 		gfp |= __GFP_NOWARN;
+#endif
 	}
+#ifndef __NetBSD__
 	gfp |= __GFP_ZERO | __GFP_RETRY_MAYFAIL;
+#endif
 
 	do {
 		unsigned int order = get_order(size);
@@ -470,7 +474,9 @@ skip:
 			return -ENOMEM;
 
 		size = I915_GTT_PAGE_SIZE_4K;
+#ifndef __NetBSD__
 		gfp &= ~__GFP_NOWARN;
+#endif
 	} while (1);
 }
 

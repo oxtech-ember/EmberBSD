@@ -174,7 +174,7 @@ static int
 is_bootable(struct gpt_ent *ent)
 {
 	/* GPT_ENT_TYPE_NETBSD_RAID omitted as we are already in a RAID */
-	const struct uuid bootable[] = {
+	static const struct uuid bootable[] = {
 		GPT_ENT_TYPE_NETBSD_FFS,
 		GPT_ENT_TYPE_NETBSD_LFS,
 		GPT_ENT_TYPE_NETBSD_CCD,

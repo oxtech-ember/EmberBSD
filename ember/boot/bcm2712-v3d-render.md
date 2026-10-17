@@ -3,7 +3,8 @@
 Status: the bounded userspace path passed physical CM5 acceptance on
 2026-10-11. Native DRM/GEM buffers, mmap isolation and repeated TFU copies
 work in the opt-in kernel. The subsequent [native CSD acceptance](bcm2712-v3d-csd.md)
-adds verified QPU computation. General Mesa submissions remain unsupported.
+adds verified QPU computation. The later [CL and Mesa acceptance](bcm2712-v3d-gl.md)
+adds hardware OpenGL through the common Ports package. Each stage has its own limits.
 
 ## Design
 
@@ -17,12 +18,35 @@ existing ACPI observer verifies the board resources and completes takeover
 before registering a render-capable DRM device. The ordinary kernel keeps
 its current passive observer. Display modesetting is a separate driver.
 
-Buffer objects use native contiguous DMA storage and the existing CMA UVM
-pager. Each has a separately allocated GPU virtual range; GPU addresses
+Userspace buffer objects use native scatter/gather DMA storage and a private
+UVM pager. The allocator admits at most one DMA segment per page. It validates
+each loaded segment for page alignment, length and the 36-bit address limit.
+CPU faults use allocation segments; GPU PTEs use translated DMA map segments.
+Each BO has a separately allocated GPU virtual range; GPU addresses
 are not physical addresses. GEM handles, mappings and submitted jobs own
 references. The last reference releases the range and storage. Limit one
-BO to 16 MiB and total BO storage to 64 MiB during this stage. The engine's
+BO to 16 MiB. Limit total BO storage to 1/16 of physical memory, with a
+64 MiB floor and a 256 MiB cap. A full Plasma session needs more than
+64 MiB. The engine's
 4 MiB page table and three scratch pages also count against that total.
+They retain their strict contiguous allocation contract. The shared CMA helper
+is unchanged. PRIME self-import and UVM reference ownership remain unchanged.
+
+The scatter/gather change passed physical CM5 checks on 2026-10-16 with
+kernel source `93dc0e3167a2e1381c9c4971cf8e4ee00f282685`. The unchanged
+BO probe passed single allocations through 16 MiB and three simultaneous
+buffers totaling 17,969,152 bytes. The previous kernel failed the 7,475,200-byte
+allocation. Existing TFU, CSD, binary-sync and CL programs also passed, including
+325 CL pairs and 1,331,200 checked pixels. Kernel and boot time remained unchanged.
+These bounded checks do not accept the full desktop or a long stress run.
+Allocation, mapping and rendering retain separate acceptance boundaries.
+Fragmentation, DMA ranges and the unchanged
+budget can still reject an allocation. A successful allocation does not prove
+that global memory use is bounded or that no memory leaks exist.
+
+The [read-only BO snapshot](bcm2712-v3d-bo-stats.md) distinguishes quota,
+DMA and publication failures without changing these limits. Its counters include
+in-flight reservations and retained GEM ownership.
 
 A device mutex serializes jobs. For TFU, the MMU maps only two referenced BOs:
 source read-only, destination writable. The first admitted payload is the
@@ -48,6 +72,14 @@ fail. There is no unbounded retry or freeing of GPU-accessible storage.
 The fixed-payload fault probe does not establish recovery for arbitrary
 userspace submissions. Engine page tables and scratch remain allocated
 for the device lifetime; hot removal is unsupported.
+
+CL failure reports read the actual PCS register at `0x130`, CT1 status,
+current/end addresses, and HUB MMU control. Earlier diagnostics mislabeled
+CORE_IDENT2 at `0x08` as PCS. A `read-failed` bit marks an unavailable value:
+bits 0 through 5 correspond to IRQ, PCS, CT1CS, CT1CA, CT1EA, and MMU.
+These finite reads run only after both IRQ paths are masked and drained.
+They do not acknowledge faults, reset the engine, or release retained BOs.
+
 
 ## Interfaces and ownership
 
@@ -131,6 +163,12 @@ observed busy BOs separately. Each successful operation verifies every word.
 Record the kernel and test hashes, output, duration and kernel log.
 
 Host contracts compile the actual production sources with modeled services.
+Run `sh ember/tools/bcm2712-v3d-sg-contract.sh` for fragmented allocation,
+error unwinding, mapped lifetime, and PTE coverage. The TFU test crosses a
+segment boundary and stops within the next segment at its 16 KiB limit.
+Negative controls reject one-segment allocation/mmap/free, invalid segment
+acceptance and contiguous-PFN assumptions. These are modeled service tests,
+not a UVM concurrency or hardware cache-coherency test.
 The job contract exercises 37 register failures, DMA ownership and PTE revoke
 ordering, retained failure references, close during execution, wait boundaries,
 counter wrap and completion at the final wait slice. Eleven causal mutants must

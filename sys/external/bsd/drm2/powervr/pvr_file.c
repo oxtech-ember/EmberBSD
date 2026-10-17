@@ -503,6 +503,50 @@ pvr_file_unpin(struct pvr_file_pin *pin)
 	memset(pin, 0, sizeof(*pin));
 }
 
+int
+pvr_file_vm_hold(struct pvr_file_vm *vm, uint64_t address, size_t size,
+    uint64_t flags, struct pvr_file_hold *hold)
+{
+	struct pvr_file_mapping *mapping;
+	uint64_t offset;
+	void *cpu;
+	int error;
+
+	if (hold == NULL || hold->mapping != NULL || vm->failed || size == 0)
+		return EINVAL;
+	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next) {
+		if (address < mapping->address)
+			continue;
+		offset = address - mapping->address;
+		if (offset >= mapping->size || size > mapping->size - offset)
+			continue;
+		if (mapping->pins == UINT_MAX)
+			return EOVERFLOW;
+		error = pvr_bo_cpu(mapping->object, mapping->offset + offset,
+		    size, flags, &cpu);
+		if (error != 0)
+			return error;
+		error = pvr_bo_hold(mapping->object);
+		if (error != 0)
+			return error;
+		mapping->pins++;
+		hold->mapping = mapping;
+		return 0;
+	}
+	return ENOENT;
+}
+
+void
+pvr_file_unhold(struct pvr_file_hold *hold)
+{
+	struct pvr_file_mapping *mapping = hold->mapping;
+
+	KASSERT(mapping != NULL && mapping->pins != 0);
+	pvr_bo_unhold(mapping->object);
+	mapping->pins--;
+	hold->mapping = NULL;
+}
+
 struct pvr_exec_file *
 pvr_file_execution(struct drm_file *file)
 {

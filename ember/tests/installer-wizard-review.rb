@@ -53,6 +53,8 @@ code=<<~C
     assert(strstr(captured.text[19],"WILL BE ERASED"));
     assert(strstr(captured.text[20],"omitted: 2"));
     assert(strstr(captured.text[16],"None / console Wi-Fi"));assert(keys==2);
+    desktop_index=2;assert(review(&install)==1);
+    assert(strstr(captured.text[16],"KDE Plasma"));
     return 0;
   }
 C

@@ -2371,7 +2371,6 @@ alc_txeof(struct alc_softc *sc)
 	struct ifnet *ifp = &sc->sc_ec.ec_if;
 	struct alc_txdesc *txd;
 	uint32_t cons, prod;
-	int prog;
 
 	if (sc->alc_cdata.alc_tx_cnt == 0)
 		return;
@@ -2393,11 +2392,9 @@ alc_txeof(struct alc_softc *sc)
 	 * Go through our Tx list and free mbufs for those
 	 * frames which have been transmitted.
 	 */
-	for (prog = 0; cons != prod; prog++,
-	    ALC_DESC_INC(cons, ALC_TX_RING_CNT)) {
+	for (; cons != prod; ALC_DESC_INC(cons, ALC_TX_RING_CNT)) {
 		if (sc->alc_cdata.alc_tx_cnt <= 0)
 			break;
-		prog++;
 		ifp->if_flags &= ~IFF_OACTIVE;
 		sc->alc_cdata.alc_tx_cnt--;
 		txd = &sc->alc_cdata.alc_txdesc[cons];

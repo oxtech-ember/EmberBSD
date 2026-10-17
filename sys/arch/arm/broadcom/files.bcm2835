@@ -44,6 +44,12 @@ file	arch/arm/broadcom/bcm2835_pmwdog_acpi.c	bcmpmwdog_acpi
 device	bcmv3d
 attach	bcmv3d at acpinodebus with bcmv3d_acpi
 file	arch/arm/broadcom/bcm2712_v3d_acpi.c	bcmv3d_acpi
+file	arch/arm/broadcom/bcm2712_display.c	bcmv3d_acpi
+file	arch/arm/broadcom/bcm2712_display_acpi.c	bcmv3d_acpi
+file	arch/arm/broadcom/bcm2712_display_hsm.c	bcmv3d_acpi
+file	arch/arm/broadcom/bcm2712_display_hsm_acpi.c	bcmv3d_acpi
+file	arch/arm/broadcom/bcm2712_display_irq.c	bcmv3d_acpi
+file	arch/arm/broadcom/bcm2712_display_irq_acpi.c	bcmv3d_acpi
 defflag opt_bcmv3d.h	BCM2712_V3D_TAKEOVER
 file	arch/arm/broadcom/bcm2712_v3d_takeover.c	bcmv3d_acpi & bcm2712_v3d_takeover
 defflag opt_bcmv3d.h	BCM2712_V3D_DMA_PROBE: BCM2712_V3D_TAKEOVER

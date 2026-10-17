@@ -109,8 +109,26 @@ CPPFLAGS+=	-DHAVE_MODULES
 .endif
 
 EMBER_BUILD_ID?=development
+.if defined(EMBER_EXTERNAL_GCC_RUNTIME)
+CPPFLAGS+= -DEMBER_BASE_RUNTIME_GCC16
+_EMBER_SYSINST_RUNTIME= gcc16
+.else
+_EMBER_SYSINST_RUNTIME= base
+.endif
 CPPFLAGS+= -DEMBER_VERSION=\"${EMBER_VERSION}\"
 CPPFLAGS+= -DEMBER_BUILD_ID=\"${EMBER_BUILD_ID}\"
+
+# Command-line macros and substitutions are also incremental build inputs.
+DPSRCS+= ember-build-config
+ember-build-config-force: .PHONY .NOTMAIN
+ember-build-config: .NOTMAIN ember-build-config-force
+	@printf '%s\n' ${EMBER_VERSION:Q} ${EMBER_BUILD_ID:Q} \
+	    ${_EMBER_SYSINST_RUNTIME:Q} > ${.TARGET}.tmp
+	@if ! cmp -s ${.TARGET}.tmp ${.TARGET}; then \
+		mv -f ${.TARGET}.tmp ${.TARGET}; \
+	else \
+		rm -f ${.TARGET}.tmp; \
+	fi
 
 CATALOGDIR=	/usr/share/sysinst/catalog
 CPPFLAGS+=	-I. -I${.CURDIR}/../.. -I${.CURDIR} \
@@ -210,7 +228,7 @@ DPSRCS+=	msg_defs.h menu_defs.h
 
 CLEANFILES=	menu_defs.c menu_defs.h menus.def \
 		msg_defs.c msg_defs.h msg.def msgtouch \
-		sysinstmsgs.*
+		sysinstmsgs.* ember-build-config ember-build-config.tmp
 
 .PATH: ${.CURDIR}/../..
 
@@ -239,7 +257,7 @@ msg_defs.c: msg.def
 	@rm -f msg_defs.oh
 
 # Needed to get proper dependency checks on osrelease
-msgtouch: ${DISTRIBVERDEP}
+msgtouch: ${DISTRIBVERDEP} ember-build-config
 	touch ${.TARGET}
 
 .if !defined(NOPARTMAN)

@@ -6,6 +6,9 @@
 struct pvr_backend;
 struct pvr_context;
 struct rogue_fwif_cmd_compute;
+struct rogue_fwif_cmd_geom;
+struct rogue_fwif_cmd_frag;
+struct rogue_fwif_cmd_transfer;
 struct pvr_context_config {
 	uint32_t type, priority, id, pid, vm_address;
 	uint64_t callstack;
@@ -25,5 +28,16 @@ int pvr_context_create(const struct pvr_backend *, const struct pvr_context_conf
     struct pvr_context **);
 int pvr_context_destroy(struct pvr_context **);
 int pvr_context_compute(struct pvr_context *, const struct rogue_fwif_cmd_compute *, uint32_t);
+/* The caller also retains the HWRT owner until completion or acknowledged cleanup.
+ * A pair publishes both CCCBs in one combined kick with the geometry UFO.
+ * Standalone partial-render jobs are unsupported. Do not wait for geometry
+ * before submitting its paired fragment command.
+ */
+int pvr_context_render_pair(struct pvr_context *, const struct rogue_fwif_cmd_geom *,
+    const struct rogue_fwif_cmd_frag *, uint32_t, uint32_t, uint32_t, uint32_t);
+int pvr_context_fragment(struct pvr_context *, const struct rogue_fwif_cmd_frag *,
+    uint32_t, uint32_t);
+int pvr_context_transfer(struct pvr_context *, const struct rogue_fwif_cmd_transfer *,
+    uint32_t);
 uint32_t pvr_context_type(const struct pvr_context *);
 #endif /* _PVR_CONTEXT_H_ */

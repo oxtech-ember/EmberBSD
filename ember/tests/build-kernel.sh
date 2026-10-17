@@ -39,7 +39,8 @@ for contract in a733-accelerator-clock a733-power a733-gpu-identification \
     a733-gpu-fwinfo a733-gpu-fwimage a733-gpu-mips a733-gpu-fwabi \
     a733-gpu-fwmem a733-gpu-fwinit a733-gpu-fwstart a733-gpu-fwboot \
     a733-gpu-fwprobe a733-gpu-fwcompute a733-gpu-fwfile a733-gpu-mmu \
-    a733-gpu-vm; do
+    a733-gpu-vm pvr-freelist pvr-exec-hwrt a733-gpu-fwbridge \
+    a733-gpu-fwservice; do
     cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
 #!/bin/sh
 set -eu
@@ -51,9 +52,10 @@ if [ "${FAIL_AT:-}" = a733-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; then
 fi
 SH
 done
-for contract in bcm2712-v3d bcm2712-v3d-takeover bcm2712-v3d-dma \
+for contract in bcm2712-display bcm2712-display-irq bcm2712-display-hsm \
+    bcm2712-v3d bcm2712-v3d-takeover bcm2712-v3d-dma \
     bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault \
-    bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-job bcm2712-v3d-csd \
+    bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-sg bcm2712-v3d-job bcm2712-v3d-csd \
     bcm2712-v3d-cl bcm2712-v3d-sync drm-syncobj-wait \
     drm-syncobj-dispatch drm-syncobj-find dma-fence-chain drm-jiffies; do
     cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
@@ -62,7 +64,10 @@ set -eu
 echo "gpu-contract ${0##*/} $*" >> "$TEST_LOG"
 test "$#" -eq 1
 test "$1" = "$TEST_ROOT/src"
-test "${FAIL_AT:-}" != gpu-contract
+if [ "${FAIL_AT:-}" = gpu-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; then
+    echo "injected contract failure: ${0##*/}" >&2
+    exit 1
+fi
 SH
 done
 for contract in cemac-stop bwfm-link-events bwfm-link-check bwfm-sta aicwf-sta aicwf-vht \
@@ -81,7 +86,7 @@ if [ "${FAIL_AT:-}" = network-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; the
 fi
 SH
 done
-for contract in drm-prime-map drm-dmabuf-lifetime bcm2712-v3d-prime; do
+for contract in drm-prime-map drm-dmabuf-lifetime bcm2712-v3d-prime simplefb drm-hotplug bcm2712-v3d-bo-stats; do
     : > "$work/src/ember/tools/$contract-contract.rb"
 done
 cat > "$work/bin/ruby" <<'SCRIPT'
@@ -202,9 +207,9 @@ export PATH="$work/bin:$PATH" NETBSD2_PYTHON="$work/bin/python3" NETBSD2_JOBS=2
 export RUBY="$work/bin/ruby"
 check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
-    test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 16
-    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 17
-    test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 3
+    test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 20
+    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 21
+    test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 6
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 8
 }
 export TEST_OUT="$work/cross"
@@ -242,8 +247,9 @@ outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
 if_cemac_acpi.kmod bcm2712btcom.kmod rp1wmcodec.kmod rpi5button.kmod'
 for failure in tools module cpp dtb contract a733-contract \
-    a733-gpu-vm-contract.sh gpu-contract ruby-contract \
-    bcm2712-v3d-prime-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
+    a733-gpu-vm-contract.sh gpu-contract bcm2712-display-contract.sh \
+    bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
+    bcm2712-v3d-prime-contract.rb bcm2712-v3d-bo-stats-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
     aicwf-sta.sh aicwf-vht.sh publish; do
     : > "$TEST_LOG"
     for output in $outputs; do
@@ -259,6 +265,11 @@ for failure in tools module cpp dtb contract a733-contract \
     a733-contract|a733-gpu-vm-contract.sh)
         grep -Fq 'injected contract failure: a733-' "$TEST_OUT/contracts.log"
         ! grep -q '^gpu-contract ' "$TEST_LOG"
+        ;;
+    bcm2712-display-contract.sh|bcm2712-display-irq-contract.sh|bcm2712-display-hsm-contract.sh)
+        grep -Fq "gpu-contract $failure " "$TEST_LOG"
+        grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
+        ! grep -q '^gpu-contract bcm2712-v3d-contract.sh ' "$TEST_LOG"
         ;;
     cemac-stop.sh)
         grep -Fq "network-contract $failure " "$TEST_LOG"

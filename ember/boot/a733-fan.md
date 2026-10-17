@@ -45,6 +45,15 @@ These thresholds are an EmberBSD policy, not vendor hardware limits.
 The vendor table supplies the duty values and its first fan threshold is 55 °C.
 The existing independent CPU throttle at 85 °C remains enabled.
 
+A 2026-10-16 physical check showed the stock kit fan is a two-wire
+motor: the header switches its supply rail, and a chopped rail runs the
+motor only near the full duty (measured: silent at 190 and 220, running
+at 255). The Zero 3W device tree therefore collapses the table to
+`<0 255 255 255 255>`: every active trip selects the full duty, and the
+fan stops after the lowest trip releases at 50 °C. Graded speed control
+requires a four-wire fan and its own acceptance; the vendor duty values
+above then serve as the starting table.
+
 The native `allwinner,sun60i-a733-ths` binding exports physical indices 0 through 4.
 Local index 5 returns the hottest of all five sensors.
 It fails if any conversion is missing or calibration is incomplete.
