@@ -29,7 +29,7 @@
 .\"
 .\"     @(#)shutdown.8	8.2 (Berkeley) 4/27/95
 .\"
-.Dd February 14, 2023
+.Dd October 18, 2026
 .Dt SHUTDOWN 8
 .Os
 .Sh NAME
@@ -37,7 +37,7 @@
 .Nd close down the system at a given time
 .Sh SYNOPSIS
 .Nm
-.Op Fl Ddfhknprvxz
+.Op Fl Ddfhiknprvxz
 .Op Fl b Ar bootstr
 .Ar time
 .Op Ar message ... No | Fl
@@ -87,6 +87,25 @@ The system is halted at the specified
 .Ar time ,
 using
 .Xr halt 8 .
+.It Fl i
+Use immediate orderly shutdown timing.
+This option requires
+.Cm now
+and one of
+.Fl h ,
+.Fl p
+or
+.Fl r .
+It removes the two-second logging pause and five-second operator-abort pause.
+Shutdown hooks, process termination and filesystem synchronization still run.
+Process waits can end early when no permitted broadcast signal targets remain.
+Live processes retain the normal termination grace period.
+This option cannot be combined with
+.Fl f ,
+.Fl k
+or
+.Fl n .
+It does not impose a deadline on services, filesystem work or firmware poweroff.
 .It Fl k
 Kick everybody off.
 The

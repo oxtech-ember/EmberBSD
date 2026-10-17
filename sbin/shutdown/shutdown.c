@@ -91,6 +91,7 @@ static time_t offset, shuttime;
 static int dofast, dohalt, doreboot, killflg, nofork, nosync, dodump;
 static size_t mbuflen;
 static int dopowerdown;
+static int doimmediate;
 static int dodebug, dosilent, doverbose;
 static const char *whom;
 static char mbuf[BUFSIZ];
@@ -121,7 +122,7 @@ main(int argc, char *argv[])
 	if (geteuid())
 		errx(1, "%s: Not super-user", strerror(EPERM));
 #endif
-	while ((ch = getopt(argc, argv, "b:Ddfhknprvxz")) != -1)
+	while ((ch = getopt(argc, argv, "b:Ddfhiknprvxz")) != -1)
 		switch (ch) {
 		case 'b':
 			bootstr = optarg;
@@ -134,6 +135,9 @@ main(int argc, char *argv[])
 			break;
 		case 'f':
 			dofast = 1;
+			break;
+		case 'i':
+			doimmediate = 1;
 			break;
 		case 'p':
 			dopowerdown = 1;
@@ -180,6 +184,11 @@ main(int argc, char *argv[])
 		const char *which_flag = dopowerdown ? "p" : "h";
 
 		warnx("Incompatible options -%s and -r", which_flag);
+		usage();
+	}
+	if (doimmediate && (nosync || dofast || killflg ||
+	    (!dohalt && !doreboot) || strcasecmp(*argv, "now") != 0)) {
+		warnx("-i requires an immediate orderly halt, poweroff or reboot");
 		usage();
 	}
 
@@ -369,7 +378,8 @@ die_you_gravy_sucking_pig_dog(void)
 	}
 
 	syslog(LOG_NOTICE, "%s by %s: %s", what, whom, mbuf);
-	(void)sleep(2);
+	if (!doimmediate)
+		(void)sleep(2);
 
 	(void)printf("\r\nSystem shutdown time has arrived\007\007\r\n");
 	if (killflg) {
@@ -404,6 +414,8 @@ die_you_gravy_sucking_pig_dog(void)
 			*arg++ = "-d";
 		if (nosync)
 			*arg++ = "-n";
+		if (doimmediate)
+			*arg++ = "-i";
 		if (dopowerdown)
 			*arg++ = "-p";
 		*arg++ = "-l";
@@ -417,6 +429,8 @@ die_you_gravy_sucking_pig_dog(void)
 		syslog(LOG_ERR, "Can't exec `%s' (%m)", path);
 		errno = serrno;
 		warn("Can't exec `%s'", path);
+		if (doimmediate)
+			exit(EXIT_FAILURE);
 #else
 		printf("%s", path);
 		for (arg = &args[0]; *arg; arg++)
@@ -534,7 +548,8 @@ dorcshutdown(const char *arg)
 	(void)setuid(0);
 	(void)system(arg);
 #endif
-	(void)sleep(5);		/* Give operator a chance to abort this. */
+	if (!doimmediate)
+		(void)sleep(5);	/* Give operator a chance to abort this. */
 	(void)printf("\r\nDone running shutdown hooks.\r\n");
 }
 
@@ -597,7 +612,7 @@ usage(void)
 {
 
 	(void)fprintf(stderr,
-	    "Usage: %s [-Ddfhknprvxz] [-b bootstr] time [message ... | -]\n",
+	    "Usage: %s [-Ddfhiknprvxz] [-b bootstr] time [message ... | -]\n",
 	    getprogname());
 	exit(1);
 }

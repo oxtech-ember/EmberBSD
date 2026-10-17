@@ -45,15 +45,18 @@ __RCSID("$NetBSD: reboot.c,v 1.41 2019/08/08 21:14:12 roy Exp $");
 #endif /* not lint */
 
 #include <sys/reboot.h>
+#include <sys/time.h>
 
 #include <err.h>
 #include <errno.h>
 #include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 #include <util.h>
 #ifdef SUPPORT_UTMPX
@@ -65,13 +68,59 @@ __dead static void usage(void);
 static int dohalt;
 static int dopoweroff;
 
+enum process_wait_result {
+	PROCESS_WAIT_EMPTY,
+	PROCESS_WAIT_EXPIRED,
+	PROCESS_WAIT_ERROR
+};
+
+/* Native broadcast excludes init, the caller, system and zombie processes. */
+static enum process_wait_result
+wait_for_process_exit(unsigned int seconds)
+{
+	struct timespec start, now, deadline, remaining, pause;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &start) == -1)
+		return PROCESS_WAIT_ERROR;
+	if (start.tv_sec < 0 || start.tv_sec > INT64_MAX - seconds ||
+	    start.tv_nsec < 0 || start.tv_nsec >= 1000000000) {
+		errno = EOVERFLOW;
+		return PROCESS_WAIT_ERROR;
+	}
+	deadline = start;
+	deadline.tv_sec += seconds;
+	for (;;) {
+		/* ESRCH means no permitted broadcast targets, as in native KILL. */
+		if (kill(-1, 0) == -1)
+			return errno == ESRCH ? PROCESS_WAIT_EMPTY : PROCESS_WAIT_ERROR;
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+			return PROCESS_WAIT_ERROR;
+		if (now.tv_nsec < 0 || now.tv_nsec >= 1000000000 ||
+		    timespeccmp(&now, &start, <)) {
+			errno = EIO;
+			return PROCESS_WAIT_ERROR;
+		}
+		if (timespeccmp(&now, &deadline, >=))
+			return PROCESS_WAIT_EXPIRED;
+		pause.tv_sec = 0;
+		pause.tv_nsec = 100000000;
+		timespecsub(&deadline, &now, &remaining);
+		if (remaining.tv_sec == 0 && remaining.tv_nsec < pause.tv_nsec)
+			pause.tv_nsec = remaining.tv_nsec;
+		if (nanosleep(&pause, NULL) == -1 && errno != EINTR)
+			return PROCESS_WAIT_ERROR;
+		/* EINTR never extends the fixed monotonic deadline. */
+	}
+}
+
 int
 main(int argc, char *argv[])
 {
 	const char *progname;
 	int i;
 	struct passwd *pw;
-	int ch, howto, lflag, nflag, qflag, sverrno, len;
+	int ch, howto, iflag, lflag, nflag, qflag, sverrno, len;
+	enum process_wait_result waited = PROCESS_WAIT_EXPIRED;
 	const char *user;
 	char *bootstr, **av;
 
@@ -86,14 +135,17 @@ main(int argc, char *argv[])
 		howto = RB_HALT | RB_POWERDOWN;
 	} else
 		howto = 0;
-	lflag = nflag = qflag = 0;
-	while ((ch = getopt(argc, argv, "dlnpqvxz")) != -1)
+	iflag = lflag = nflag = qflag = 0;
+	while ((ch = getopt(argc, argv, "dilnpqvxz")) != -1)
 		switch(ch) {
 		case 'd':
 			howto |= RB_DUMP;
 			break;
 		case 'l':
 			lflag = 1;
+			break;
+		case 'i':
+			iflag = 1;
 			break;
 		case 'n':
 			nflag = 1;
@@ -122,11 +174,17 @@ main(int argc, char *argv[])
 		}
 	argc -= optind;
 	argv += optind;
+	if (iflag && (nflag || qflag)) {
+		warnx("-i is incompatible with -n and -q");
+		usage();
+	}
 
 	if (argc) {
 		for (av = argv, len = 0; *av; av++)
 			len += strlen(*av) + 1;
 		bootstr = malloc(len + 1);
+		if (bootstr == NULL)
+			err(1, "malloc");
 		*bootstr = '\0';		/* for first strcat */
 		for (av = argv; *av; av++) {
 			strcat(bootstr, *av);
@@ -218,10 +276,24 @@ main(int argc, char *argv[])
 	 * buffers on their way.  Wait 5 seconds between the SIGTERM and
 	 * the SIGKILL to pretend to give everybody a chance.
 	 */
-	sleep(2);
+	if (iflag) {
+		waited = wait_for_process_exit(2);
+		if (waited == PROCESS_WAIT_ERROR) {
+			warn("waiting for processes");
+			goto restart;
+		}
+	} else
+		sleep(2);
 	if (!nflag)
 		sync();
-	sleep(3);
+	if (iflag) {
+		if (waited != PROCESS_WAIT_EMPTY &&
+		    wait_for_process_exit(3) == PROCESS_WAIT_ERROR) {
+			warn("waiting for processes");
+			goto restart;
+		}
+	} else
+		sleep(3);
 
 	for (i = 1;; ++i) {
 		if (kill(-1, SIGKILL) == -1) {
@@ -234,7 +306,15 @@ main(int argc, char *argv[])
 			warnx("WARNING: some process(es) wouldn't die");
 			break;
 		}
-		(void)sleep(2 * i);
+		if (iflag) {
+			waited = wait_for_process_exit(2 * i);
+			if (waited == PROCESS_WAIT_ERROR) {
+				warn("waiting for processes");
+				goto restart;
+			}
+			/* Even an empty poll must reach the next native KILL check. */
+		} else
+			(void)sleep(2 * i);
 	}
 
 	reboot(howto, bootstr);
@@ -253,7 +333,7 @@ usage(void)
 {
 	const char *pflag = dohalt ? "p" : "";
 
-	(void)fprintf(stderr, "usage: %s [-dln%sqvxz] [-- <boot string>]\n",
+	(void)fprintf(stderr, "usage: %s [-diln%sqvxz] [-- <boot string>]\n",
 	    getprogname(), pflag);
 	exit(1);
 }

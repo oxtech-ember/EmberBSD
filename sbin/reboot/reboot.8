@@ -29,7 +29,7 @@
 .\"
 .\"	@(#)reboot.8	8.1 (Berkeley) 6/9/93
 .\"
-.Dd September 12, 2016
+.Dd October 18, 2026
 .Dt REBOOT 8
 .Os
 .Sh NAME
@@ -39,11 +39,11 @@
 .Nd restarting, powering down and stopping the system
 .Sh SYNOPSIS
 .Nm halt
-.Op Fl dlnpqvxz
+.Op Fl dilnpqvxz
 .Nm poweroff
-.Op Fl dlnqvxz
+.Op Fl dilnqvxz
 .Nm
-.Op Fl dlnqvxz
+.Op Fl dilnqvxz
 .Op Ar arg ...
 .Sh DESCRIPTION
 The
@@ -54,9 +54,10 @@ and
 utilities flush the file system cache to disk, send all running processes
 a
 .Dv SIGTERM ,
-wait for up to 30 seconds for them to die, send a
+wait five seconds for them to die, send a
 .Dv SIGKILL
-to the survivors and, respectively, power down, halt or restart the system.
+to the survivors, retry for up to thirty seconds and, respectively, power down,
+halt or restart the system.
 The action is logged, including entering a shutdown record into the login
 accounting file and sending a message via
 .Xr syslog 3 .
@@ -67,6 +68,17 @@ The options are as follows:
 Create a dump before halting or restarting.
 This option is useful for debugging system dump procedures or
 capturing the state of a corrupted or misbehaving system.
+.It Fl i
+Use adaptive process waits for an immediate orderly shutdown.
+Preserve the five-second termination grace and thirty-second kill retry limit,
+but poll at intervals of at most 100 milliseconds and finish waits early when
+no permitted broadcast signal targets remain.
+Filesystem synchronization and the kernel shutdown path still run.
+Unexpected wait errors abort shutdown and request that init resume operation.
+This option cannot be combined with
+.Fl n
+or
+.Fl q .
 .It Fl l
 Suppress sending a message via
 .Xr syslog 3
