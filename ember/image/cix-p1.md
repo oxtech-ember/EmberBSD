@@ -86,6 +86,7 @@ service participates in this development-console path.
 ruby ember/image/test-cix-p1-userland.rb
 ruby ember/image/test-cix-p1-startup.rb
 ruby ember/image/test-cix-p1-root.rb
+ruby ember/image/test-cix-p1-root-image.rb
 CC=gcc-16 TEST_CFLAGS=-O2 \
     sh ember/tests/cix-p1-boot.sh /absolute/new-boot-check
 ```
@@ -93,6 +94,10 @@ CC=gcc-16 TEST_CFLAGS=-O2 \
 The startup contracts execute the actual shell functions with command-boundary
 doubles. They check ordering, profile permissions, failed launches and FFS
 failure handling. They do not qualify target startup or a complete base system.
+The root-image contract runs the actual assembler against synthetic Git sources,
+runtime receipts, firmware data and host-tool doubles. It checks rejection before
+image creation, final source pins, native ownership metadata and the getty recipe.
+It neither reads a private Wi-Fi profile nor formats a real filesystem or device.
 Physical acceptance must show the disk-root device, a retained marker,
 automatic WPA completion, DHCP and checksummed data after an unattended reboot.
 Test each required band separately. Preserve source and artifact hashes.
