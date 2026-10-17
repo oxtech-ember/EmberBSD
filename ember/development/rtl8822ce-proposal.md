@@ -74,6 +74,9 @@ Pinned-source trace tests include persistent noise. Physical cold startup
 still fails cold ADC calibration with ERANGE before HCI starts. The failure
 path powers the radio off. Numeric diagnostics report the failure stage,
 attempts, last measurement, ADC means and programmed compensation.
+The tenth ADC attempt also reads back five ordinary BB control registers
+after measurement and before the convergence decision. These native diagnostics
+add at most ten reads across both paths. A read failure stops all later I/O.
 Earlier 2.4 GHz RX evidence predates cold calibration integration; current
 startup and station acceptance remain pending.
 

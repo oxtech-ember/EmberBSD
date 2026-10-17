@@ -420,6 +420,28 @@ converged(const int16_t residual[2])
 }
 
 static void
+adc_snapshot(struct dack_context *c, unsigned path)
+{
+	uint32_t addresses[] = {
+		write_base(path) + 0x68, 0x1c3c, 0x1c24,
+		write_base(path) + 0x30, write_base(path) + 0x60
+	};
+	unsigned i;
+
+	/*
+	 * Native diagnostics: five ordinary read-only BB register reads after
+	 * the last post measurement. Do not alter its samples or convergence.
+	 * A bus error stops all later I/O and remains the returned error.
+	 */
+	c->out->adc_snapshot_valid = 0;
+	c->out->adc_snapshot_path = (uint8_t)path;
+	for (i = 0; i < __arraycount(addresses) && c->error == 0; i++)
+		c->out->adc_snapshot[i] = rd(c, addresses[i]);
+	c->out->adc_snapshot_error = c->error;
+	c->out->adc_snapshot_valid = c->error == 0;
+}
+
+static void
 adc_cal(struct dack_context *c, unsigned path)
 {
 	unsigned base = write_base(path), sel = path ? 0x80000 : 0xa0000;
@@ -460,6 +482,8 @@ adc_cal(struct dack_context *c, unsigned path)
 		measure(c, &iv, &qv);
 		c->out->adc_residual[path][0] = (int16_t)iv;
 		c->out->adc_residual[path][1] = (int16_t)qv;
+		if (attempt == 9 && c->error == 0)
+			adc_snapshot(c, path);
 		if (converged(c->out->adc_residual[path]))
 			break;
 	}

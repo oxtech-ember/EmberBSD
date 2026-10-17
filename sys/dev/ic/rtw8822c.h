@@ -129,6 +129,10 @@ struct rtw8822c_dack_result {
 	uint8_t stage, path, mean_valid;
 	uint8_t sample_stage, sample_path;
 	uint8_t adc_attempts[2], dac_attempts[2];
+	/* Native read-only snapshot on the tenth ADC post measurement. */
+	uint32_t adc_snapshot[5];
+	int adc_snapshot_error;
+	uint8_t adc_snapshot_valid, adc_snapshot_path;
 	uint8_t valid_paths;		/* 3 only after complete success. */
 	uint8_t reset_required;
 };

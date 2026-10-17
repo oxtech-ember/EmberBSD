@@ -53,7 +53,7 @@ int main(int argc,char **argv)
 	FILE *fp;
 	char line[256];
 	unsigned total,cold,i,j,kind,addr,value,n,scenario;
-	unsigned complete_calls=0,complete_delays=0;
+	unsigned complete_calls=0,complete_delays=0,snapshot_calls;
 	CHECK(argc==2); fp=fopen(argv[1],"r"); CHECK(fp!=NULL);
 	CHECK(fgets(line,sizeof(line),fp)!=NULL);
 	for(scenario=0;scenario<sizeof(fixtures)/sizeof(fixtures[0]);scenario++) {
@@ -126,10 +126,29 @@ int main(int argc,char **argv)
 	CHECK(!result.adc_attempts[1] && !result.dac_attempts[0] && !result.dac_attempts[1]);
 	CHECK(result.mean_valid && result.mean[0]==8 && result.mean[1]==0);
 	CHECK(result.sample_count==100 && result.sample_reads==100 && result.filter_passes==0);
+	CHECK(result.adc_snapshot_valid && !result.adc_snapshot_error && result.adc_snapshot_path==0);
+	CHECK(result.adc_snapshot[0]==0 && result.adc_snapshot[1]==0xa8103);
+	CHECK(result.adc_snapshot[2]==0x10002 && result.adc_snapshot[4]==0xf0040ff0);
+	CHECK((result.adc_snapshot[3]&(1U<<30))==0);
 	setup(1); model.adc_fail=1; model.recording=0; check_failure(ERANGE);
 	CHECK(result.adc_before[0][0]==4 && result.adc_before[0][1]==-3);
 	CHECK(result.adc[0][0]==1020 && result.adc[0][1]==3);
 	CHECK(result.adc_residual[0][0]==8 && result.adc_residual[0][1]==0);
+	CHECK(result.adc_snapshot[0]==(1020U|(3U<<10)));
+	snapshot_calls=calls;
+	for(i=0;i<5;i++) {
+		setup(1); model.adc_fail=1; model.recording=0;
+		fail_at=snapshot_calls-4+i;
+		check_failure(EIO);
+		CHECK(calls==fail_at && !result.adc_snapshot_valid);
+		CHECK(result.adc_snapshot_error==EIO);
+		CHECK(result.stage==RTW8822C_DACK_ADC_POST);
+		setup(1); model.adc_fail=1; model.recording=0;
+		cancel_at=snapshot_calls-4+i;
+		check_failure(EINTR);
+		CHECK(calls==cancel_at && !result.adc_snapshot_valid);
+		CHECK(result.adc_snapshot_error==EINTR);
+	}
 	setup(0); model.dac_fail=1; model.recording=0; check_failure(ERANGE);
 	CHECK(model.visits[0][DAC_PRE]==10);
 	CHECK(result.stage==RTW8822C_DACK_DAC_POST && result.dac_attempts[0]==10);

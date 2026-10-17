@@ -290,6 +290,13 @@ rtw8822c_phy_post(struct rtw88_softc *sc)
 		    dack.adc_before[1][1], (unsigned)dack.adc[0][0],
 		    (unsigned)dack.adc[0][1], (unsigned)dack.adc[1][0],
 		    (unsigned)dack.adc[1][1]);
+		printf("rtwce: DACK ADC snapshot path %u valid %u error %d "
+		    "comp %#x mux %#x sample %#x AFE %#x control %#x\n",
+		    (unsigned)dack.adc_snapshot_path,
+		    (unsigned)dack.adc_snapshot_valid, dack.adc_snapshot_error,
+		    dack.adc_snapshot[0], dack.adc_snapshot[1],
+		    dack.adc_snapshot[2], dack.adc_snapshot[3],
+		    dack.adc_snapshot[4]);
 		return error;
 	}
 	rf_x2_check(&io);
