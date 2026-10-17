@@ -273,6 +273,9 @@ rtw8822c_phy_post(struct rtw88_softc *sc)
 	    dack.dac_residual[0][1], dack.dac_residual[1][0],
 	    dack.dac_residual[1][1], dack.operations, dack.delay_us);
 	if (error != 0) {
+		printf("rtwce: DACK identity syscfg %#x cut %u RFE %u XTAL %u\n",
+		    sc->sc_sys_cfg1, (unsigned)sc->sc_cut, (unsigned)sc->sc_rfe,
+		    (unsigned)sc->sc_xtal);
 		printf("rtwce: DACK stage %u path %u ADC attempts %u/%u "
 		    "DAC attempts %u/%u measure %u/%u samples %u/%u "
 		    "filter %u spread %u/%u "
