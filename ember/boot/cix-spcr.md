@@ -25,6 +25,43 @@ A second invocation reports `already correct` and allocates nothing.
 Any other result leaves the ACPI root and all tables unchanged.
 The correction is not persistent; repeat it after every reset.
 
+## Automatic sample profile
+
+The opt-in [CIX P1 profile](cix-p1-persistent.cfg) runs the command on each
+boot. Copy it to `boot.cfg` at the root of the loader's EFI filesystem.
+It selects `netbsd.wifi.gz` and `root=NAME=ember-cix-root`. Supply that checked
+kernel and a uniquely named FFS wedge. The kernel must not use
+`MEMORY_DISK_IS_ROOT`. The normal entry clears any previously selected initrd.
+The recovery entry selects the known working `/netbsd` and `root.fs` pair.
+Verify these file aliases before deploying the profile.
+
+Both CIX entries queue `userconf disable acpibat` before kernel attachment.
+This is a sample-local diagnostic policy for the observed battery wait.
+It does not change `GENERIC64` or fix the underlying ACPI failure.
+Do not add `-c`: the loader supplies the command through FDT without an
+interactive userconf prompt. Commands remain queued until the loader resets.
+The boot prompt and the five-second menu timeout remain available for recovery.
+
+This loader has no shell conditionals. A failed SPCR correction prints its
+reason and the menu continues. Keep UART recovery available. The profile is
+not a firmware correction and does not qualify automatic physical startup.
+
+The host profile contract executes the actual boot.cfg parser, ARM menu
+dispatcher, selected command handlers and userconf queue. EFI correction
+and kernel execution are boundary doubles. It checks command order, disk-root
+arguments, stale initrd removal and RAM recovery. Run with GCC16:
+
+```sh
+CC=gcc-16 TEST_CFLAGS='-O2' \
+    sh ember/tests/cix-p1-boot.sh /absolute/new-check-directory
+```
+
+The unchanged ARM dispatcher has an inherited uninitialized read for an empty
+first command and no command-length bound. The profile contract rejects empty
+or 80-byte command segments before execution. This profile contains only short,
+nonempty segments. GCC path analysis still reports the inherited empty-command
+finding; the sample does not repair that loader code.
+
 ## Applicability
 
 The command accepts one table profile only: the exact 80-byte SPCR revision 2
