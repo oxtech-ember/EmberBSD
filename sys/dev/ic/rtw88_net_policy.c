@@ -46,27 +46,44 @@ rtw88_net_rx_admit(struct rtw88_net_policy *p, uint64_t epoch,
     const uint8_t *frame, size_t len, unsigned flags, unsigned security)
 {
 
-	if (p->dying || !p->accepting)
+	if (p->dying || !p->accepting) {
+		p->rx.inactive++;
 		return ENXIO;
-	if (epoch != p->epoch)
+	}
+	if (epoch != p->epoch) {
+		p->rx.epoch++;
 		return ECANCELED;
-	if (frame == NULL)
+	}
+	if (frame == NULL) {
+		p->rx.invalid++;
 		return EINVAL;
-	if (len < 24 || len > RTW88_NET_MPDU_LIMIT)
+	}
+	if (len < 24 || len > RTW88_NET_MPDU_LIMIT) {
+		p->rx.size++;
 		return EMSGSIZE;
+	}
 	/* Descriptor flags: CRC, ICV and C2H do not describe valid MPDUs. */
-	if ((flags & 0x13) != 0)
+	if ((flags & 0x13) != 0) {
+		p->rx.corrupt++;
 		return EBADMSG;
+	}
 	/* Only version-zero, three-address management and data frames. */
 	if ((frame[0] & 3) != 0 || (frame[0] & 0x0c) == 4 ||
-	    (frame[0] & 0x0c) == 12 || (frame[1] & 3) == 3)
+	    (frame[0] & 0x0c) == 12 || (frame[1] & 3) == 3) {
+		p->rx.format++;
 		return EPROTONOSUPPORT;
+	}
 	/* Encrypted input must retain its software-decrypt descriptor flag. */
-	if (security != 0 && (flags & 8) == 0)
+	if (security != 0 && (flags & 8) == 0) {
+		p->rx.crypto++;
 		return EACCES;
-	if (p->queued >= RTW88_NET_RX_LIMIT)
+	}
+	if (p->queued >= RTW88_NET_RX_LIMIT) {
+		p->rx.full++;
 		return ENOBUFS;
+	}
 	p->queued++;
+	p->rx.accepted++;
 	return 0;
 }
 
@@ -76,6 +93,22 @@ rtw88_net_rx_release(struct rtw88_net_policy *p)
 
 	if (p->queued != 0)
 		p->queued--;
+}
+
+int
+rtw88_net_rx_ready(struct rtw88_net_policy *p, uint64_t epoch)
+{
+
+	if (p->dying || !p->accepting) {
+		p->rx.delivery_inactive++;
+		return 0;
+	}
+	if (epoch != p->epoch) {
+		p->rx.delivery_epoch++;
+		return 0;
+	}
+	p->rx.delivered++;
+	return 1;
 }
 
 int

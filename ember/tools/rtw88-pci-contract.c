@@ -523,6 +523,24 @@ static void reset(struct rtw88_pci_softc *p)
 struct rtw88_net { int owned; };
 static struct rtw88_net fake_net;
 
+void
+rtw88_net_get_stats(struct rtw88_net *net, struct rtw88_net_stats *stats)
+{
+
+	CHECK(net == &fake_net && net->owned);
+	CHECK(rtwce_diag_lock.held && f.locks == 1);
+	CHECK(((struct rtw88_pci_softc *)f.arg)->sc_lock.held);
+	memset(stats, 0, sizeof(*stats));
+	stats->rx.accepted = 7;
+	stats->rx.delivery_epoch = 3;
+	stats->rx.inactive = 2;
+	stats->chanmismatch = 11;
+	stats->badchan = 13;
+	stats->elem_missing = 17;
+	stats->elem_toobig = 19;
+	stats->elem_toosmall = 23;
+}
+
 int
 rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
     const uint8_t mac[6], struct rtw88_net **out)
@@ -612,13 +630,19 @@ int main(void)
 	CHECK(rtwce_bootstrap(0) == EBUSY);
 	int old_io = f.io;
 	int ch = 36;
-	char stats[512];
+	char stats[2048];
 	CHECK(rtwce_h2c(0x1234) == EBUSY);
 	CHECK(rtwce_lbmode(1) == EBUSY);
 	CHECK(rtwce_loopback(1) == EBUSY);
 	CHECK(rtwce_channel(&ch, 1) == EBUSY);
 	CHECK(rtwce_channel(&ch, 0) == 0);
+	memcpy(p.sc_core.sc_stats.last_ssid, "private-fixture", 16);
 	CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
+	CHECK(strstr(stats, "nrx 7") != NULL && strstr(stats, "ndepoch 3") != NULL);
+	CHECK(strstr(stats, "ninactive 2") != NULL);
+	CHECK(strstr(stats, "chanmismatch 11 badchan 13") != NULL);
+	CHECK(strstr(stats, "elem_missing 17 elem_toobig 19 elem_toosmall 23") != NULL);
+	CHECK(strstr(stats, "ssid") == NULL && strstr(stats, "private-fixture") == NULL);
 	CHECK(f.io == old_io);
 	CHECK(rtwce_started() == 0 && f.master_writes == 0);
 	stages = f.step;

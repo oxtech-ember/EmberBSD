@@ -63,6 +63,12 @@ attaches it. Legacy diagnostic writes return EBUSY while net80211 owns the
 device. RSSI, thermal power tracking and higher-rate modes remain outside
 this profile. Source contracts do not establish a linked wireless network.
 
+The read-only PCI statistics expose direct RF18 A/B windows and numeric RX
+handoff counters. Native beacon, channel and element-drop counters are
+snapshots from the most recent net80211 input. The diagnostic path reads
+that copy without entering the network stack. It does not print SSIDs or
+BSSIDs, retune the radio or change frame admission.
+
 Run the actual-source contracts with GCC16:
 
 ```sh

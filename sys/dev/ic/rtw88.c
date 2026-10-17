@@ -1247,7 +1247,8 @@ rtw88_diag(struct rtw88_softc *sc, uint32_t *r)
 {
 	static const uint32_t regs[RTW88_DIAG_REGS] = {
 		RTW88_REG_HISR0, RTW88_REG_HIMR0, RTW88_REG_HISR3,
-		RTW88_REG_HIMR3, RTW88_REG_RXBD_IDX, RTW88_REG_PCI_CTRL
+		RTW88_REG_HIMR3, RTW88_REG_RXBD_IDX, RTW88_REG_PCI_CTRL,
+		0x3c60, 0x4c60	/* Direct RF18 A/B windows; no RF command writes. */
 	};
 	unsigned i;
 	int error;

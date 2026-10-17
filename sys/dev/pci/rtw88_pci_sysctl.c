@@ -27,7 +27,7 @@ static int
 rtwce_sysctl_stats(SYSCTLFN_ARGS)
 {
 	struct sysctlnode node;
-	char buf[512];
+	char buf[2048];
 	int error;
 
 	error = rtwce_stats(buf, sizeof(buf));

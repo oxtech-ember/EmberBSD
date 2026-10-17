@@ -137,6 +137,7 @@ rtwce_stats(char *buf, size_t len)
 	struct rtw88_pci_softc *psc;
 	struct rtw88_softc *sc;
 	const struct rtw88_stats *st;
+	struct rtw88_net_stats ns;
 	uint32_t r[RTW88_DIAG_REGS] = { 0 };
 	int n;
 
@@ -164,15 +165,41 @@ rtwce_stats(char *buf, size_t len)
 	    (unsigned long long)st->tx_dma_errors);
 	if (n > 0 && (size_t)n < len)
 		n += snprintf(buf + n, len - (size_t)n,
-		    " ch %u bcn %llu bssid %02x:%02x:%02x:%02x:%02x:%02x"
-		    " ssid '%s'", sc->sc_channel,
-		    (unsigned long long)st->rx_beacons, st->last_bssid[0],
-		    st->last_bssid[1], st->last_bssid[2], st->last_bssid[3],
-		    st->last_bssid[4], st->last_bssid[5], st->last_ssid);
+		    " ch %u bcn %llu", sc->sc_channel,
+		    (unsigned long long)st->rx_beacons);
 	if (n > 0 && (size_t)n < len && rtw88_diag(sc, r) == 0)
+		n += snprintf(buf + n, len - (size_t)n,
+		    " hisr0 %#x himr0 %#x hisr3 %#x himr3 %#x rxidx %#x pci %#x"
+		    " rf18a %#x rf18b %#x",
+		    r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
+	if (n > 0 && (size_t)n < len && psc->sc_net != NULL) {
+		rtw88_net_get_stats(psc->sc_net, &ns);
 		snprintf(buf + n, len - (size_t)n,
-		    " hisr0 %#x himr0 %#x hisr3 %#x himr3 %#x rxidx %#x pci %#x",
-		    r[0], r[1], r[2], r[3], r[4], r[5]);
+		    " nrx %llu ninput %llu ninactive %llu nepoch %llu"
+		    " ninvalid %llu nsize %llu ncorrupt %llu nformat %llu"
+		    " ncrypto %llu nfull %llu nmem %llu ndinactive %llu"
+		    " ndepoch %llu nchained %llu nfirstshort %llu"
+		    " nbeacon %u chanmismatch %u badchan %u"
+		    " elem_missing %u elem_toobig %u elem_toosmall %u"
+		    " nodealloc %u mgtdiscard %u",
+		    (unsigned long long)ns.rx.accepted,
+		    (unsigned long long)ns.rx.delivered,
+		    (unsigned long long)ns.rx.inactive,
+		    (unsigned long long)ns.rx.epoch,
+		    (unsigned long long)ns.rx.invalid,
+		    (unsigned long long)ns.rx.size,
+		    (unsigned long long)ns.rx.corrupt,
+		    (unsigned long long)ns.rx.format,
+		    (unsigned long long)ns.rx.crypto,
+		    (unsigned long long)ns.rx.full,
+		    (unsigned long long)ns.nomem,
+		    (unsigned long long)ns.rx.delivery_inactive,
+		    (unsigned long long)ns.rx.delivery_epoch,
+		    (unsigned long long)ns.chained,
+		    (unsigned long long)ns.first_short,
+		    ns.beacon, ns.chanmismatch, ns.badchan, ns.elem_missing,
+		    ns.elem_toobig, ns.elem_toosmall, ns.nodealloc, ns.mgtdiscard);
+	}
 	mutex_exit(&psc->sc_lock);
 	mutex_exit(&rtwce_diag_lock);
 	return 0;

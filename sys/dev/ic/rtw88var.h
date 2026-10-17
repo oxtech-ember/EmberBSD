@@ -159,8 +159,8 @@ int rtw88_fw_command(struct rtw88_softc *, uint8_t, const void *, size_t);
  * device is not running, without touching any register.
  */
 int rtw88_intr(struct rtw88_softc *);
-/* Diagnostic snapshot: HISR0, HIMR0, HISR3, HIMR3, RXBD_IDX, PCI_CTRL. */
-#define RTW88_DIAG_REGS 6
+/* Read-only snapshot: IRQ, RX index, PCI control, and direct RF18 A/B. */
+#define RTW88_DIAG_REGS 8
 int rtw88_diag(struct rtw88_softc *, uint32_t *);
 /*
  * Copy one 802.11 frame into the next slot of a TX queue and kick it.

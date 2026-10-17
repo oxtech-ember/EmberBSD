@@ -51,6 +51,7 @@ struct rtw88_net {
 	int (*parent_state)(struct ieee80211com *, enum ieee80211_state, int);
 	uint8_t txbuf[RTW88_TX_BUF_SIZE];
 	uint64_t rx_dropped;
+	struct rtw88_net_stats stats;
 	unsigned tx_timer;
 	unsigned tx_completed;
 };
@@ -227,6 +228,7 @@ rtw88_net_rx_frame(void *cookie, const uint8_t *frame, size_t len,
 	if (m == NULL) {
 		rtw88_net_rx_release(&net->policy);
 		net->rx_dropped++;
+		net->stats.nomem++;
 		if_statinc(&net->ec.ec_if, if_ierrors);
 		return;
 	}
@@ -271,8 +273,11 @@ rtw88_net_softintr(void *cookie)
 		net->rx[net->rx_head].m = NULL;
 		net->rx_head = (net->rx_head + 1) % RTW88_NET_RX_LIMIT;
 		rtw88_net_rx_release(&net->policy);
-		valid = !net->policy.dying && net->policy.accepting &&
-		    rx.epoch == net->policy.epoch;
+		valid = rtw88_net_rx_ready(&net->policy, rx.epoch);
+		if (valid && rx.m->m_next != NULL)
+			net->stats.chained++;
+		if (valid && rx.m->m_len < rx.m->m_pkthdr.len)
+			net->stats.first_short++;
 		mutex_exit(net->lock);
 		if (!valid) {
 			m_freem(rx.m);
@@ -290,6 +295,21 @@ rtw88_net_softintr(void *cookie)
 		/* RSSI is unavailable until the core supplies parsed PHY data. */
 		ieee80211_input(ic, rx.m, ni, 0, rx.tsf);
 		ieee80211_free_node(ni);
+		/*
+		 * The stack holds Giant here. Publish a numeric snapshot under
+		 * the PCI lock; sysctl must not acquire Giant under its gate.
+		 * Native counts reflect the most recent input, not live stack state.
+		 */
+		mutex_enter(net->lock);
+		net->stats.beacon = ic->ic_stats.is_rx_beacon;
+		net->stats.chanmismatch = ic->ic_stats.is_rx_chanmismatch;
+		net->stats.badchan = ic->ic_stats.is_rx_badchan;
+		net->stats.elem_missing = ic->ic_stats.is_rx_elem_missing;
+		net->stats.elem_toobig = ic->ic_stats.is_rx_elem_toobig;
+		net->stats.elem_toosmall = ic->ic_stats.is_rx_elem_toosmall;
+		net->stats.nodealloc = ic->ic_stats.is_rx_nodealloc;
+		net->stats.mgtdiscard = ic->ic_stats.is_rx_mgtdiscard;
+		mutex_exit(net->lock);
 	}
 	mutex_enter(net->lock);
 	completed = net->tx_completed;
@@ -307,6 +327,15 @@ rtw88_net_softintr(void *cookie)
 		ifp->if_flags &= ~IFF_OACTIVE;
 		rtw88_net_start(ifp);
 	}
+}
+
+void
+rtw88_net_get_stats(struct rtw88_net *net, struct rtw88_net_stats *stats)
+{
+
+	KASSERT(mutex_owned(net->lock));
+	*stats = net->stats;
+	stats->rx = net->policy.rx;
 }
 
 static void

@@ -12,6 +12,11 @@
 #endif
 #define RTW88_NET_RX_LIMIT 64U
 #define RTW88_NET_MPDU_LIMIT 4096U
+struct rtw88_net_rx_counts {
+	uint64_t accepted, inactive, epoch, invalid, size;
+	uint64_t corrupt, format, crypto, full;
+	uint64_t delivered, delivery_inactive, delivery_epoch;
+};
 struct rtw88_net_policy {
 	uint64_t epoch;
 	unsigned queued;
@@ -21,6 +26,7 @@ struct rtw88_net_policy {
 	uint32_t beacon_tick;
 	uint32_t beacon_report_tick;
 	int beacon_valid;
+	struct rtw88_net_rx_counts rx;
 };
 uint64_t	rtw88_net_request(struct rtw88_net_policy *);
 int		rtw88_net_commit(struct rtw88_net_policy *, uint64_t, int, int);
@@ -28,6 +34,7 @@ void		rtw88_net_close(struct rtw88_net_policy *);
 int		rtw88_net_rx_admit(struct rtw88_net_policy *, uint64_t,
     const uint8_t *, size_t, unsigned, unsigned);
 void		rtw88_net_rx_release(struct rtw88_net_policy *);
+int		rtw88_net_rx_ready(struct rtw88_net_policy *, uint64_t);
 int		rtw88_net_beacon_start(struct rtw88_net_policy *, uint64_t, uint32_t);
 int		rtw88_net_beacon_note(struct rtw88_net_policy *, uint64_t, uint32_t,
     const uint8_t *, size_t, const uint8_t[6]);

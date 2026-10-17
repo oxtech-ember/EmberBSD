@@ -66,6 +66,17 @@ main(void)
 		CHECK(rtw88_net_rx_admit(&p, b, frame, 24, 0, 0) == 0);
 	CHECK(rtw88_net_rx_admit(&p, b, frame, 24, 0, 0) == ENOBUFS);
 	CHECK(p.queued == 64);
+	/* Real admission refusals must retain a distinct diagnostic reason. */
+	CHECK(p.rx.accepted == 66 && p.rx.inactive == 2 && p.rx.epoch == 1);
+	CHECK(p.rx.invalid == 1 && p.rx.size == 2 && p.rx.corrupt == 3);
+	CHECK(p.rx.format == 2 && p.rx.crypto == 1 && p.rx.full == 1);
+	/* A retune between admission and softint delivery has a separate cause. */
+	CHECK(rtw88_net_rx_ready(&p, b));
+	CHECK(!rtw88_net_rx_ready(&p, a));
+	CHECK(p.rx.delivered == 1 && p.rx.delivery_epoch == 1);
+	struct rtw88_net_policy closed = {0};
+	CHECK(!rtw88_net_rx_ready(&closed, 0));
+	CHECK(closed.rx.delivery_inactive == 1 && closed.rx.delivered == 0);
 	/* A live generation starts its watchdog at RUN, before its first beacon. */
 	CHECK(rtw88_net_beacon_start(&p, b, 100) == 0);
 	CHECK(!rtw88_net_beacon_poll(&p, b, 599, 500));

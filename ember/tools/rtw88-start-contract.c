@@ -64,6 +64,8 @@ static struct {
 	unsigned alloc_calls;
 	unsigned delays;
 	unsigned writes;
+	unsigned diag_reads;
+	uint32_t fail_diag_reg;
 	unsigned cfg_writes;
 	unsigned dma_allocs;
 	struct rtw88_softc *sc;
@@ -209,6 +211,11 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 	uint32_t v;
 
 	(void)cookie;
+	if (reg == 0x3c60 || reg == 0x4c60) {
+		f.diag_reads++;
+		if (reg == f.fail_diag_reg)
+			return EIO;
+	}
 	error = access_ok(reg, 4);
 	if (error != 0)
 		return error;
@@ -1456,17 +1463,33 @@ static void
 test_diag_regs(void)
 {
 	struct rtw88_softc sc;
-	uint32_t r[RTW88_DIAG_REGS];
+	uint32_t r[8] = { 0 };
+	unsigned writes, reads;
 
 	if (!start_ok(&sc))
 		return;
 	set_hisr0(0x01);
 	f.rx_hw_idx = 5;
+	memcpy(f.mmio + 0x3c60, "\x45\x23\x01\x00", 4);
+	memcpy(f.mmio + 0x4c60, "\xde\xbc\x0a\x00", 4);
+	f.diag_reads = 0;
+	writes = f.writes;
 	CHECK(rtw88_diag(&sc, r) == 0);
 	CHECK(r[0] == 0x01 && r[1] == 0x44fd);		/* HISR0, HIMR0 */
 	CHECK(((r[4] >> 16) & 0xfff) == 5);		/* RXBD_IDX */
 	CHECK(mmio32(0x00b4) == 0x01);			/* Reading is not acking. */
+	CHECK(r[6] == 0x12345 && r[7] == 0xabcde);
+	CHECK(f.writes == writes && f.diag_reads == 2);
+	f.fail_diag_reg = 0x3c60;
+	CHECK(rtw88_diag(&sc, r) == EIO);
+	CHECK(f.diag_reads == 3);			/* Do not read B after A fails. */
+	f.fail_diag_reg = 0x4c60;
+	CHECK(rtw88_diag(&sc, r) == EIO);
+	CHECK(f.diag_reads == 5 && f.writes == writes);
+	f.fail_diag_reg = 0;
 	rtw88_stop(&sc);
+	reads = f.diag_reads;
+	CHECK(rtw88_diag(&sc, r) == ENXIO && f.diag_reads == reads);
 	rtw88_core_detach(&sc);
 }
 
