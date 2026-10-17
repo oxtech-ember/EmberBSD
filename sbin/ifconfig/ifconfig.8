@@ -417,6 +417,21 @@ If the driver is a
 pseudo-device, set the authentication key to
 .Ar passphrase .
 There is no passphrase by default
+.It Cm roaming Ar mode
+.Pq IEEE 802.11 devices only
+Select the owner of wireless roaming.
+The modes are
+.Cm auto
+for net80211 control,
+.Cm manual
+for application control, and
+.Cm device
+for driver or hardware control.
+This command does not raise the interface or reset its current state.
+To prevent an initial automatic join, lower the interface, select
+.Cm roaming manual ,
+and then raise it in separate invocations before starting
+.Xr wpa_supplicant 8 .
 .It Cm powersave
 .Pq IEEE 802.11 devices only
 Enable 802.11 power saving mode.

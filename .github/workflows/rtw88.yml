@@ -10,6 +10,9 @@ name: Native RTL8822CE source contracts
       - 'sys/dev/pci/rtw88_pci_sysctl.c'
       - 'sys/net80211/ieee80211_proto.c'
       - 'sys/net80211/*ieee80211*.h'
+      - 'sbin/ifconfig/**'
+      - 'sys/sys/ioccom.h'
+      - 'sys/sys/queue.h'
       - 'ember/tools/rtw*'
   pull_request:
     paths:
@@ -19,6 +22,9 @@ name: Native RTL8822CE source contracts
       - 'sys/dev/pci/rtw88_pci_sysctl.c'
       - 'sys/net80211/ieee80211_proto.c'
       - 'sys/net80211/*ieee80211*.h'
+      - 'sbin/ifconfig/**'
+      - 'sys/sys/ioccom.h'
+      - 'sys/sys/queue.h'
       - 'ember/tools/rtw*'
   workflow_dispatch:
 
@@ -47,6 +53,13 @@ jobs:
             /sys/net80211/ieee80211.h
             /sys/net80211/ieee80211_var.h
             /sys/net80211/ieee80211_proto.h
+            /sys/net80211/ieee80211_ioctl.h
+            /sys/sys/ioccom.h
+            /sys/sys/queue.h
+            /sbin/ifconfig/ieee80211.c
+            /sbin/ifconfig/parse.c
+            /sbin/ifconfig/parse.h
+            /sbin/ifconfig/util.c
       - name: Prepare GCC16 and Memcheck
         run: |
           test "$(gcc -dumpfullversion)" = 16.2.0

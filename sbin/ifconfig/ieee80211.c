@@ -91,6 +91,7 @@ static int setiffrag(prop_dictionary_t, prop_dictionary_t);
 static int setifpowersave(prop_dictionary_t, prop_dictionary_t);
 static int setifpowersavesleep(prop_dictionary_t, prop_dictionary_t);
 static int setifrts(prop_dictionary_t, prop_dictionary_t);
+static int setifroaming(prop_dictionary_t, prop_dictionary_t);
 static int scan_exec(prop_dictionary_t, prop_dictionary_t);
 
 static void printies(const u_int8_t *, int, int);
@@ -133,6 +134,19 @@ static const struct kwinst listskw[] = {
 static struct pkw lists = PKW_INITIALIZER(&lists, "ieee80211 lists", NULL,
     "list", listskw, __arraycount(listskw), &command_root.pb_parser);
 
+static const struct kwinst roamingkw[] = {
+	  {.k_word = "auto", .k_type = KW_T_INT,
+	   .k_int = IEEE80211_ROAMING_AUTO}
+	, {.k_word = "manual", .k_type = KW_T_INT,
+	   .k_int = IEEE80211_ROAMING_MANUAL}
+	, {.k_word = "device", .k_type = KW_T_INT,
+	   .k_int = IEEE80211_ROAMING_DEVICE}
+};
+
+static struct pkw roaming = PKW_INITIALIZER(&roaming, "roaming mode",
+    setifroaming, "roaming", roamingkw, __arraycount(roamingkw),
+    &command_root.pb_parser);
+
 static const struct kwinst kw80211kw[] = {
 	  {.k_word = "bssid", .k_nextparser = &parse_bssid.ps_parser}
 	, {.k_word = "-bssid", .k_exec = unsetifbssid,
@@ -151,6 +165,7 @@ static const struct kwinst kw80211kw[] = {
 	, {.k_word = "-nwkey", .k_exec = unsetifnwkey,
 	   .k_nextparser = &command_root.pb_parser}
 	, {.k_word = "rts", .k_nextparser = &parse_rts.pi_parser}
+	, {.k_word = "roaming", .k_nextparser = &roaming.pk_parser}
 	, {.k_word = "-rts", .k_key = "rts", .k_type = KW_T_INT,
 	   .k_int = IEEE80211_RTS_MAX, .k_exec = setifrts,
 	   .k_nextparser = &command_root.pb_parser}
@@ -217,6 +232,18 @@ sethidessid(prop_dictionary_t env, prop_dictionary_t oenv)
 	rc = prop_dictionary_get_bool(env, "hidessid", &on);
 	assert(rc);
 	return set80211(env, IEEE80211_IOC_HIDESSID, on ? 1 : 0, 0, NULL);
+}
+
+static int
+setifroaming(prop_dictionary_t env, prop_dictionary_t oenv)
+{
+	int16_t mode;
+	bool rc;
+
+	(void)oenv;
+	rc = prop_dictionary_get_int16(env, "roaming", &mode);
+	assert(rc);
+	return set80211(env, IEEE80211_IOC_ROAMING, mode, 0, NULL);
 }
 
 static int
@@ -1380,6 +1407,7 @@ ieee80211_usage(prop_dictionary_t env)
 	fprintf(stderr,
 	    "\t[ nwid network_id ] [ nwkey network_key | -nwkey ]\n"
 	    "\t[ list scan ]\n"
+	    "\t[ roaming auto | manual | device ]\n"
 	    "\t[ powersave | -powersave ] [ powersavesleep duration ]\n"
 	    "\t[ hidessid | -hidessid ] [ apbridge | -apbridge ]\n");
 }

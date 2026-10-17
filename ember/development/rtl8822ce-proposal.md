@@ -118,6 +118,12 @@ attaches it. Legacy diagnostic writes return EBUSY while net80211 owns the
 device. RSSI, thermal power tracking and higher-rate modes remain outside
 this profile. Source contracts do not establish a linked wireless network.
 
+The native `ifconfig` accepts `roaming auto|manual|device` for net80211.
+It only selects the existing roaming owner. It does not raise the interface.
+For application control, run `down`, `roaming manual` and `up` separately.
+The new source contract checks parsing and the exact ioctl request.
+Target command readback and persistent startup remain separate acceptance gates.
+
 The read-only PCI statistics expose direct RF18 A/B windows and numeric RX
 handoff counters. Native beacon, channel and element-drop counters are
 snapshots from the most recent net80211 input. The diagnostic path reads
@@ -132,6 +138,7 @@ CC=gcc-16 sh ember/tools/rtw88-pci-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-start-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-fw-init-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-net-contract.sh
+CC=gcc-16 sh ember/tools/rtw88-ifconfig-roaming-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-mbuf-contract.sh
 CC=gcc-16 sh ember/tools/rtw8822c-txpwr-contract.sh
 CC=gcc-16 sh ember/tools/rtw8822c-coex-contract.sh
