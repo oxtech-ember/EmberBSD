@@ -103,6 +103,14 @@ boot reports clean FFS, retains the marker and new file hashes, and restores
 WPA2/DHCP. Electrical power-off remains unmeasured. Power-on by a later short
 press still fails; the operator must remove and restore input power.
 
+The current network stop policy takes the interface DOWN before DHCP address
+cleanup, then terminates WPA. Multicast-list changes can restart an UP radio
+through the native ioctl path. Quiescing first avoids that restart request.
+The actual-consumer contract checks the old ordering as a failing control.
+Local DHCP cleanup remains requested; delivery of DHCPRELEASE after DOWN is
+not guaranteed. The five-second physical trial predates this ordering change;
+its additional timing benefit remains unqualified.
+
 This development profile exposes an unauthenticated root shell on its trusted
 UART console. It starts no network login server. Configure access separately
 before deployment outside a controlled development bench.

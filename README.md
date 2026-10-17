@@ -1035,6 +1035,9 @@ The base system shell is unchanged.
   separate source path. This physical result covers one healthy-system trial.
   The trusted UART wrapper retains a session leader. Native board checks cover
   Ctrl-C, stopped jobs and console exit without input after leader termination.
+  The network stop policy quiesces the radio before address cleanup. A native
+  ioctl contract detects the earlier restart during cleanup; target timing
+  with this additional ordering change remains unqualified.
   Restart by a short press after shutdown remains unresolved on this sample;
   the operator reports that power must be removed and restored.
   A physical CIX S5 GPIO passive snapshot passes on one board. EMBER64 now selects
