@@ -948,7 +948,7 @@ The base system shell is unchanged.
   RTL8822C hardware setup and a net80211 wrapper for legacy 802.11a/b/g
   with software CCMP. GCC16 builds and source contracts are checked.
   Earlier physical diagnostics receive 2.4 GHz beacons and list APs.
-  Current cold ADC calibration fails its residual check and stops radio startup.
+  Current cold ADC calibration returns ERANGE and stops radio startup.
   Association on either band, WPA2, DHCP and data transport remain unaccepted.
   See the [source boundary and checks](ember/development/rtl8822ce-proposal.md#current-source-boundary)
   and [physical board limits](ember/boards/orange-pi-6-plus.md).
