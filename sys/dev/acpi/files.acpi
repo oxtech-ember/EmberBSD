@@ -361,6 +361,7 @@ file	dev/acpi/dwcwdt_acpi.c		dwcwdt_acpi
 device	cixvpu
 attach	cixvpu at acpinodebus with cixvpu_acpi
 file	dev/acpi/cixvpu_acpi.c		cixvpu_acpi
+file	dev/acpi/cixvpu_acpi_control.c	cixvpu_acpi
 file	dev/ic/cixvpu_resources.c		cixvpu
 
 # Qualcomm GPIO

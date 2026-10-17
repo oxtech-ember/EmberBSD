@@ -52,6 +52,22 @@ built in with boot-long lifetime. Hot detach and suspend/resume are not supporte
 
 ## Source checks and limits
 
+The [native PowerResource framework](acpi-power.md) now preserves shared
+ownership and failed transitions. It is not a complete D-state engine.
+The VPU control helper validates the running CLKT, RSTL, _PR0 and _PR3
+packages before acquiring these providers. It is compiled with the kernel,
+but the diagnostic attachment does not call it yet.
+
+The helper supports a query with no power or reset operation. Its separate
+active probe requires an already deasserted RCSU reset. It uses native power
+ownership, confirms the power bit, enables the clock, pulses the main reset
+and reads identity and geometry. Cleanup asserts reset before releasing
+clock and power. Failed cleanup retains its context and reports a separate
+error. A power attempt is pending rollback, not proof of a native lease.
+An OFF readback fault after lease release requires diagnosis, not OFF replay.
+This probe has no DMA or interrupts. Its cleanup cannot serve a DMA driver.
+Power-bit confirmation does not establish memory repair or firmware readiness.
+
 Run from the source root with GCC16:
 
 ```sh
@@ -63,6 +79,10 @@ CC=gcc-16 CFLAGS='-O1 -g -fsanitize=address,undefined' \
   sh ember/tools/cixclk-contract.sh
 CC=gcc-16 CFLAGS='-O1 -g -fsanitize=address,undefined' \
   sh ember/tools/cixreset-contract.sh
+CC=gcc-16 CFLAGS='-O2 -fanalyzer' \
+  sh ember/tools/acpi-power-contract.sh
+CC=gcc-16 CFLAGS='-O2 -fanalyzer' CIXVPU_CONTROL_ANALYZE=1 \
+  sh ember/tools/cixvpu-control-contract.sh
 ```
 
 The contracts compile all production functions with modeled OS services.
@@ -79,6 +99,10 @@ retains inherited header style findings and fixed callback-const suggestions;
 the clock target CSA also reports four inherited bitops dead stores.
 No diagnostic category was suppressed. The [CI workflow](../../.github/workflows/cix-platform.yml)
 adds Linux ASan/UBSan and complete Memcheck runs. Check its exact-head result.
+The power contract passes 75 assertions; the VPU control contract passes 379.
+The power module retains inherited CSA dead stores in unchanged functions.
+Those findings are recorded separately; its execution contract does not
+claim clean analysis of the whole ACPI power module.
 
 A complete kernel build, provider attachment, real clock transactions,
 reset readback and codec execution are separate acceptance boundaries.

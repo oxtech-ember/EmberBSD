@@ -1,4 +1,4 @@
-name: CIX platform provider contracts
+name: CIX platform resource contracts
 
 'on':
   push:
@@ -7,22 +7,36 @@ name: CIX platform provider contracts
       - '.github/workflows/cix-platform.yml'
       - 'sys/dev/acpi/cixclk_acpi.*'
       - 'sys/dev/acpi/cixreset_acpi.*'
+      - 'sys/dev/acpi/cixvpu_acpi_control.*'
+      - 'sys/dev/acpi/acpi_power.*'
+      - 'sys/dev/ic/cixvpu_resources.*'
+      - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cixreset-*'
+      - 'ember/tools/cixvpu-control-*'
+      - 'ember/tools/acpi-power-*'
+      - 'ember/boot/acpi-power.md'
       - 'ember/boot/cix-platform.md'
   pull_request:
     paths:
       - '.github/workflows/cix-platform.yml'
       - 'sys/dev/acpi/cixclk_acpi.*'
       - 'sys/dev/acpi/cixreset_acpi.*'
+      - 'sys/dev/acpi/cixvpu_acpi_control.*'
+      - 'sys/dev/acpi/acpi_power.*'
+      - 'sys/dev/ic/cixvpu_resources.*'
+      - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cixreset-*'
+      - 'ember/tools/cixvpu-control-*'
+      - 'ember/tools/acpi-power-*'
+      - 'ember/boot/acpi-power.md'
       - 'ember/boot/cix-platform.md'
   workflow_dispatch:
 
@@ -44,8 +58,14 @@ jobs:
           sparse-checkout: |
             /ember/tools/cixclk-*
             /ember/tools/cixreset-*
+            /ember/tools/cixvpu-control-*
+            /ember/tools/acpi-power-*
             /sys/dev/acpi/cixclk_acpi.*
             /sys/dev/acpi/cixreset_acpi.*
+            /sys/dev/acpi/cixvpu_acpi_control.*
+            /sys/dev/acpi/acpi_power.*
+            /sys/dev/ic/cixvpu_resources.*
+            /sys/sys/queue.h
             /sys/external/bsd/acpica/dist/include/
       - name: Prepare GCC16 and analysis tools
         run: |
@@ -62,9 +82,12 @@ jobs:
           CFLAGS: -O2 -g -gdwarf-4 -fanalyzer
           CIXCLK_ANALYZE: '1'
           CIXRESET_ANALYZE: '1'
+          CIXVPU_CONTROL_ANALYZE: '1'
         run: |
           sh ember/tools/cixclk-contract.sh
           sh ember/tools/cixreset-contract.sh
+          sh ember/tools/acpi-power-contract.sh
+          sh ember/tools/cixvpu-control-contract.sh
       - name: Run ASan and UBSan
         env:
           CC: gcc
@@ -73,6 +96,8 @@ jobs:
         run: |
           sh ember/tools/cixclk-contract.sh
           sh ember/tools/cixreset-contract.sh
+          sh ember/tools/acpi-power-contract.sh
+          sh ember/tools/cixvpu-control-contract.sh
       - name: Run complete contracts under Memcheck
         env:
           CC: gcc
@@ -88,3 +113,5 @@ jobs:
           export TEST_RUNNER="$RUNNER_TEMP/cix-platform-memcheck"
           sh ember/tools/cixclk-contract.sh
           sh ember/tools/cixreset-contract.sh
+          sh ember/tools/acpi-power-contract.sh
+          sh ember/tools/cixvpu-control-contract.sh
