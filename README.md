@@ -1095,6 +1095,8 @@ The base system shell is unchanged.
   the pointer sentinel required by GCC16 on ARM64 macOS. A private rebuilt
   lexer regenerates the racoon source and its amd64 ELF symbol definitions;
   this does not qualify the complete OS build. The
+  fork's [readelf split-string repair](ember/boot/readelf-split-strings.md)
+  passes 24 GCC/Clang DWARF4/5 cases on macOS, including standalone DWO files. The
   [CTF converter](ember/boot/ctf-external-types.md) preserves GCC/Clang types
   in DWARF4/5 and both offset widths, including COMDAT type units, standalone
   DWO, indexed DWP and combined split/supplementary input. Linked multi-CU

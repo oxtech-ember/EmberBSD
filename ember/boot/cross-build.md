@@ -52,6 +52,16 @@ paths. Build logs remain in the output directory.
 host Python executable; there is no fixed Python 3.13 requirement. These
 legacy Python source contracts have not yet been replaced.
 
+Darwin host tools retain `-no-cpp-precomp` only for Clang. Modern GNU GCC
+rejects that legacy Apple flag. The actual Makefile/compiler regression covers
+six tool paths, GCC/Clang and both host-selector values. Its 24 cases pass on
+macOS; the Linux selector is simulated, not a Linux execution claim.
+
+```sh
+sh ember/tests/darwin-host-flags.sh /absolute/source /absolute/nbmake-evbarm \
+    /absolute/host-gcc /absolute/host-clang /absolute/SDK /absolute/new-work
+```
+
 ## Compiler selection
 
 The fork's in-tree bootstrap compiler is currently GCC 12.5. Building it as
@@ -270,3 +280,28 @@ native CTF execution and live tracing. The [external type-unit guide](ctf-extern
 extends conversion to GNU/standard split objects, DWP v2/v5, combined
 supplements and multiple primary CUs, with explicit ownership limits. General
 DWARF5 location-list evaluation is not established by type conversion.
+
+For GNU host sub-makes on Darwin, an explicit `SDKROOT` is retained through
+`env -i`. The owning wrapper still requires the selected GCC16 toolchain;
+this does not select a fallback compiler. Exercise the actual build environment:
+
+```sh
+ruby ember/tests/darwin-gnuhost-sdk.rb SOURCE NBMAKE GCC SDK NEW_WORK
+```
+
+The imported flex host generator must terminate its variadic pointer list with
+a pointer-typed NULL. An integer zero can leave an invalid extra argument on
+Darwin ARM64 and make the generated m4 execution fail. The real host filter and
+its generated scanner are tested without replacing m4:
+
+```sh
+sh ember/tests/lex-host-filter.sh /absolute/nblex HOST_CC SDK NEW_WORK
+```
+
+The flex caller repair has independent spec/quality/security approval. Original
+and patched actual `main.c` compiler analysis each retain one GCC warning
+(imprecise floating-point statistics) and one Clang warning (m4 allocation
+ownership). Cppcheck could not parse this Darwin configuration: the compilation
+database reached a NAME_MAX header guard; actual GCC preprocessing then exposed
+an SDK errno typedef syntax limitation. Both inputs fail identically. These
+failures are recorded, not a clean Cppcheck claim or a full flex audit.

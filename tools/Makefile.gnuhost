@@ -20,7 +20,7 @@
 # Disable use of pre-compiled headers on Darwin.
 BUILD_OSTYPE!= uname -s
 HOST_COMPILER_CLANG!= if ${HOST_CC} --version | grep -q -s clang; then echo yes; else echo no; fi
-.if ${HOST_COMPILER_CLANG} == "yes"
+.if ${BUILD_OSTYPE} == "Darwin" && ${HOST_COMPILER_CLANG} == "yes"
 HOST_CFLAGS+=-O2 -no-cpp-precomp
 .endif
 
@@ -69,6 +69,11 @@ CONFIGURE_ENV+= \
 		PATH="${TOOLDIR}/bin:$$PATH" \
 		RANLIB=${HOST_RANLIB:Q} \
 		YACC=${YACC:Q}
+
+# GNU sub-makes use env -i below.  Keep an explicitly selected Darwin SDK.
+.if ${BUILD_OSTYPE} == "Darwin" && defined(SDKROOT)
+CONFIGURE_ENV+= SDKROOT=${SDKROOT:Q}
+.endif
 
 BUILD_ENV+=	${CONFIGURE_ENV}
 
