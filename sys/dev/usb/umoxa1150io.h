@@ -6,6 +6,6 @@
 #define UMOXA1150_MODE_RS232 0
 #define UMOXA1150_MODE_RS485_2W 1
 #define UMOXA1150_MODE_RS422_4W 2
-#define UMOXA1150_SET_MODE _IOW('M', 115, int)
-#define UMOXA1150_GET_FAULT _IOR('M', 116, int)
+#define UMOXA1150_SET_MODE _IOW('o', 115, int)
+#define UMOXA1150_GET_FAULT _IOR('o', 116, int)
 #endif
