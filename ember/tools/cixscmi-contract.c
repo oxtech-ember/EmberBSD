@@ -2,6 +2,7 @@
 /* Origin: EmberBSD actual-source CIX SCMI binding contracts, AI-assisted. */
 #include <assert.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -29,7 +30,7 @@ static unsigned int reads, writes, doorbells, barriers, completions, pauses;
 static unsigned int malformed, failed_node, map_fail, response_mode;
 static bool intr, foreign_on_failure, sent, published, ordered, acquired;
 static uint64_t ticks;
-static uint32_t response_word, response_firmware_status, expected_header, response_delay;
+static uint32_t response_word, response_firmware_status, expected_header, response_delay, response_high;
 static uint8_t response_name[16];
 static uint32_t tx[0x10000/4],rx[0x10000/4];
 static int cold=1;
@@ -88,7 +89,9 @@ static bool cpu_softintr_p(void) { return intr; }
 #define aprint_normal(...) ((void)0)
 static void test_print(device_t d,const char *fmt,...)
 { va_list ap;CHECK(d==&selfdev);va_start(ap,fmt);
-    (void)vsnprintf(diagnostic,sizeof(diagnostic),fmt,ap);va_end(ap); }
+    size_t used=strlen(diagnostic);
+    int n=vsnprintf(diagnostic+used,sizeof(diagnostic)-used,fmt,ap);va_end(ap);
+    CHECK(n>=0 && (size_t)n<sizeof(diagnostic)-used); }
 #define aprint_error_dev test_print
 #define aprint_normal_dev test_print
 static int acpi_compatible_match(const void *a,const struct device_compatible_entry *e)
@@ -262,7 +265,7 @@ static uint32_t bus_space_read_4(bus_space_tag_t t,bus_space_handle_t h,bus_size
     if(h==rx){CHECK(o==0xc0);return rx[o/4];}
     CHECK(h==tx);CHECK(o==0xbc || o==0xc8 || o<=0x7c);
     if(sent && o==4 && response_mode!=1){
-        tx[4/4]=1;tx[20/4]=response_mode==2?8:expected_header==0x45003?32:12;tx[28/4]=response_mode==2?response_firmware_status:0;
+        tx[4/4]=1;tx[20/4]=response_mode==2?8:expected_header==0x45003?32:expected_header==0x45006?16:12;tx[28/4]=response_mode==2?response_firmware_status:0;
         tx[32/4]=response_word;
         if(expected_header==0x45003){
             for(unsigned int i=0;i<4;i++)tx[9+i]=(uint32_t)response_name[i*4] |
@@ -270,8 +273,9 @@ static uint32_t bus_space_read_4(bus_space_tag_t t,bus_space_handle_t h,bus_size
                 (uint32_t)response_name[i*4+3]<<24;
             tx[13]=response_delay;
         }
-        if(response_mode==9)tx[20/4]=expected_header==0x45003?36:16;
-        if(response_mode==3)tx[20/4]=expected_header==0x45003?28:8;
+        if(expected_header==0x45006)tx[9]=response_high;
+        if(response_mode==9)tx[20/4]=expected_header==0x45003?36:expected_header==0x45006?20:16;
+        if(response_mode==3)tx[20/4]=expected_header==0x45003?28:expected_header==0x45006?12:8;
         if(response_mode==10)tx[20/4]=24;
         if(response_mode==4)tx[24/4]^=1;
         if(response_mode==7)tx[4/4]=3;
@@ -283,11 +287,11 @@ static uint32_t bus_space_read_4(bus_space_tag_t t,bus_space_handle_t h,bus_size
 static void bus_space_write_4(bus_space_tag_t t,bus_space_handle_t h,bus_size_t o,uint32_t v)
 {
     (void)t;writes++;CHECK(h==tx);CHECK(o==0 || o==4 || o==16 || o==20 || o==24 || o==128 ||
-        (o==28 && expected_header==0x45003));
+        (o==28 && (expected_header==0x45003 || expected_header==0x45006)));
     if(o==4){CHECK(v==0 && published);}
     if(o==128){doorbells++;CHECK(v==1 && ordered);CHECK(tx[0]==0 && tx[4]==0);
-        CHECK(tx[5]==(expected_header==0x45003?8u:4u) && tx[6]==expected_header);
-        if(expected_header==0x45003)CHECK(tx[7]==67);
+        CHECK(tx[5]==((expected_header==0x45003 || expected_header==0x45006)?8u:4u) && tx[6]==expected_header);
+        if(expected_header==0x45003 || expected_header==0x45006)CHECK(tx[7]==67);
         sent=true;}
     tx[o/4]=v;
 }
@@ -320,13 +324,13 @@ static void setup(void)
     sent=published=ordered=acquired=false;ticks=0;cold=1;defers=0;deferred=NULL;
     diagnostic[0]=0;cixscmi_lease=NULL;
     response_word=0x20000;response_firmware_status=0xfffffffc;expected_header=0x44000;
-    response_delay=0;memset(response_name,0,sizeof(response_name));memcpy(response_name,"vpu",3);
+    response_delay=response_high=0;memset(response_name,0,sizeof(response_name));memcpy(response_name,"vpu",3);
 }
 static void attach(struct cixscmi_acpi_softc *sc,unsigned int flags)
 {
     struct acpi_attach_args aa={.aa_node=&nodes[0],.aa_memt=&root};
     memset(sc,0,sizeof(*sc));selfdev.private=sc;selfdev.cf.cf_flags=flags;
-    expected_header=flags==8?0x45003:flags==4?0x45001:flags==2?0x45000:0x44000;
+    expected_header=flags==16?0x45006:flags==8?0x45003:flags==4?0x45001:flags==2?0x45000:0x44000;
     cixscmi_acpi_attach(&rootdev,&selfdev,&aa);nodes[0].ad_device=&selfdev;
 }
 static void finish(struct cixscmi_acpi_softc *sc)
@@ -385,7 +389,7 @@ static void test_clock_selector(void)
         CHECK(strstr(diagnostic,"decode_error=0 reviewed_version=0 version_policy_error=0")!=NULL);
         CHECK(doorbells==1);finish(&sc);
     }
-    const unsigned int invalid[]={3,5,6,7,9,15,UINT_MAX};
+    const unsigned int invalid[]={3,5,6,7,9,15,17,31,UINT_MAX};
     for(unsigned int i=0;i<sizeof(invalid)/sizeof(invalid[0]);i++){
         setup();attach(&sc,invalid[i]);
         CHECK(defers==0 && evaluations==0 && maps==0 && reads==0 && writes==0);finish(&sc);
@@ -470,6 +474,7 @@ static void test_clock67_attributes(void)
         CHECK(sc.sc_error==0 && sc.sc_decode_error==(valid?0:EPROTO));
         CHECK(sc.sc_entity_raw_valid && sc.sc_entity_attr==response_word && sc.sc_entity_delay==response_delay);
         CHECK(sc.sc_entity_valid==valid);
+        CHECK(strstr(diagnostic,"CLOCK67_REJECTED_BODY20_PREFIX")==NULL);
         if(mode==0)CHECK(strstr(diagnostic,"name_le32=00757076,00000000,00000000,00000000")!=NULL);
         if(mode==34)CHECK(sc.sc_entity_name[0]==0x0075ff00);
         if(mode==35)CHECK(sc.sc_entity_name[0]==0x64636261 && sc.sc_entity_name[1]==0x68676665 &&
@@ -499,6 +504,12 @@ static void test_clock67_attributes(void)
         if(mode==6)tx[1]=0;
         deferred(&selfdev);
         CHECK(strstr(diagnostic,"CLOCK67_ATTRIBUTES raw_valid=0")!=NULL);
+        CHECK((strstr(diagnostic,"CLOCK67_REJECTED_BODY20_PREFIX")!=NULL)==(mode==3));
+        if(mode==3){
+            CHECK(strstr(diagnostic,"prefix_attr=0x1 prefix_name_le32=00757076,00000000,00000000,00000000 delay_present=0")!=NULL);
+            CHECK(strstr(diagnostic,"available=1 expected_body=24 actual_body=20")!=NULL);
+            CHECK(reads==14 && writes==7 && barriers==3);
+        }
         CHECK(!sc.sc_entity_raw_valid && !sc.sc_entity_valid);
         CHECK(sc.sc_entity_attr==0xfeedface && sc.sc_entity_delay==0xf00dd00d);
         for(unsigned int i=0;i<4;i++)CHECK(sc.sc_entity_name[i]==0xa5a5a5a5);
@@ -519,6 +530,78 @@ static void test_clock67_attributes(void)
         CHECK(sc.sc_trace.stage==SCMI_SMT_DIAG_FIRMWARE && sc.sc_trace.firmware_status_valid);
         CHECK((uint32_t)sc.sc_trace.firmware_status==statuses[i]);
         CHECK(sc.sc_ack_after_valid && doorbells==1 && cixscmi_lease==&sc);finish(&sc);
+    }
+}
+static void test_clock67_rate(void)
+{
+    struct cixscmi_acpi_softc sc;
+    static const struct { uint32_t low,high;const char *decimal; } values[]={
+        {0,0,"0"},{1,0,"1"},{UINT32_MAX,0,"4294967295"},
+        {0,1,"4294967296"},{0,0x80000000,"9223372036854775808"},
+        {UINT32_MAX,UINT32_MAX,"18446744073709551615"},
+        {0x12345678,0x9abcdef0,"11150031900141442680"}
+    };
+    for(unsigned int i=0;i<sizeof(values)/sizeof(values[0]);i++){
+        setup();attach(&sc,16);CHECK(defers==1 && evaluations==0 && maps==0 && writes==0);
+        if(defers!=1){finish(&sc);continue;}
+        response_word=values[i].low;response_high=values[i].high;deferred(&selfdev);
+        CHECK(sc.sc_error==0 && sc.sc_decode_error==0);
+        CHECK(sc.sc_rate_valid && sc.sc_rate_hz==strtoull(values[i].decimal,NULL,10));
+        CHECK(sc.sc_trace.request_header==0x45006 && sc.sc_trace.response_length==16);
+        char expected[120];(void)snprintf(expected,sizeof(expected),"CLOCK67_RATE_GET rate_valid=1 rate_hz=%s ",values[i].decimal);
+        CHECK(strstr(diagnostic,expected)!=NULL);
+        CHECK(strstr(diagnostic,"version_queried=0 protocolattrs_queried=0 entityattrs_queried=0 clock_id=67")!=NULL);
+        CHECK(maps==2 && unmaps==0 && doorbells==1 && cixscmi_lease==&sc);
+        CHECK(writes==7 && barriers==3);
+        unsigned int old_reads=reads,old_writes=writes;deferred(&selfdev);
+        CHECK(reads==old_reads && writes==old_writes && doorbells==1);finish(&sc);
+    }
+    for(unsigned int mode=1;mode<=9;mode++){
+        setup();attach(&sc,16);CHECK(defers==1);
+        if(defers!=1){finish(&sc);continue;}
+        response_mode=mode;sc.sc_rate_hz=UINT64_C(0xfedcba9876543210);
+        if(mode==5)tx[1]=3;
+        if(mode==6)tx[1]=0;
+        deferred(&selfdev);
+        CHECK(strstr(diagnostic,"CLOCK67_RATE_GET rate_valid=0")!=NULL);
+        CHECK(!sc.sc_rate_valid && sc.sc_rate_hz==UINT64_C(0xfedcba9876543210));
+        CHECK(sc.sc_error==(mode==1?ETIMEDOUT:mode==2?EIO:mode==6?EBUSY:mode==9?0:EPROTO));
+        CHECK(sc.sc_decode_error==(mode==9?EPROTO:0));
+        CHECK(sc.sc_ack_after_valid==(mode==2 || mode==9));
+        CHECK(maps==2 && unmaps==0 && cixscmi_lease==&sc && sc.sc_query_started);
+        CHECK(doorbells==((mode==5 || mode==6)?0u:1u));
+        unsigned int old_reads=reads,old_writes=writes;deferred(&selfdev);
+        CHECK(reads==old_reads && writes==old_writes);finish(&sc);
+    }
+    const uint32_t statuses[]={0xffffffff,0xfffffffd,0xfffffffc,0xfffffffa,0xfffffff8,0x80000000};
+    for(unsigned int i=0;i<sizeof(statuses)/sizeof(statuses[0]);i++){
+        setup();attach(&sc,16);response_mode=2;response_firmware_status=statuses[i];
+        sc.sc_rate_hz=UINT64_C(0xfedcba9876543210);deferred(&selfdev);
+        CHECK(sc.sc_error==EIO && !sc.sc_rate_valid && sc.sc_rate_hz==UINT64_C(0xfedcba9876543210));
+        CHECK(sc.sc_trace.stage==SCMI_SMT_DIAG_FIRMWARE && sc.sc_trace.firmware_status_valid);
+        CHECK((uint32_t)sc.sc_trace.firmware_status==statuses[i] && sc.sc_decode_error==0);
+        CHECK(sc.sc_ack_after_valid && doorbells==1 && cixscmi_lease==&sc);finish(&sc);
+    }
+}
+static void test_rejected_body20_prefix(void)
+{
+    struct cixscmi_acpi_softc sc;
+    for(unsigned int mode=0;mode<3;mode++){
+        setup();attach(&sc,8);response_mode=3;response_word=UINT32_MAX;
+        memset(response_name,mode==0?27:mode==1?255:0,16);
+        sc.sc_entity_attr=0xfeedface;sc.sc_entity_delay=0xf00dd00d;
+        for(unsigned int i=0;i<4;i++)sc.sc_entity_name[i]=0xa5a5a5a5;
+        deferred(&selfdev);
+        CHECK(sc.sc_error==0 && sc.sc_decode_error==EPROTO);
+        CHECK(!sc.sc_entity_raw_valid && !sc.sc_entity_valid);
+        CHECK(sc.sc_entity_attr==0xfeedface && sc.sc_entity_delay==0xf00dd00d);
+        for(unsigned int i=0;i<4;i++)CHECK(sc.sc_entity_name[i]==0xa5a5a5a5);
+        const char *words=mode==0?"1b1b1b1b,1b1b1b1b,1b1b1b1b,1b1b1b1b":
+            mode==1?"ffffffff,ffffffff,ffffffff,ffffffff":"00000000,00000000,00000000,00000000";
+        CHECK(strstr(diagnostic,words)!=NULL && strstr(diagnostic,"prefix_attr=0xffffffff")!=NULL);
+        CHECK(strstr(diagnostic,"delay_present=0")!=NULL && strstr(diagnostic,"entity_valid=0")!=NULL);
+        CHECK(strchr(diagnostic,27)==NULL && strchr(diagnostic,255)==NULL);
+        CHECK(reads==14 && writes==7 && barriers==3 && doorbells==1 && cixscmi_lease==&sc);finish(&sc);
     }
 }
 static void test_uid_capacity(void)
@@ -603,7 +686,7 @@ static void test_diagnostic_stages(void)
 }
 static void run_negative(unsigned int m,unsigned int n)
 {
-    for(unsigned int selector=1;selector<=8;selector*=2){
+    for(unsigned int selector=1;selector<=16;selector*=2){
     struct cixscmi_acpi_softc sc;setup();malformed=m;failed_node=n;attach(&sc,selector);
     CHECK(defers==1 && evaluations==0 && maps==0 && writes==0);
     if(defers!=1){finish(&sc);continue;}
@@ -616,7 +699,7 @@ static void run_negative(unsigned int m,unsigned int n)
 int main(void)
 {
     struct cixscmi_acpi_softc sc;alarm(30);(void)test_attach_refs;
-    test_clock_selector();test_clock_protocol_attributes();test_clock67_attributes();test_uid_capacity();test_diagnostic_stages();
+    test_clock_selector();test_clock_protocol_attributes();test_clock67_attributes();test_clock67_rate();test_rejected_body20_prefix();test_uid_capacity();test_diagnostic_stages();
     setup();attach(&sc,3);CHECK(defers==0 && evaluations==0 && maps==0 && reads==0 && writes==0);finish(&sc);
     setup();attach(&sc,0);CHECK(defers==0 && evaluations==0 && maps==0 && reads==0 && writes==0);finish(&sc);
     for(unsigned int n=0;n<5;n++){
@@ -633,7 +716,7 @@ int main(void)
     }
     for(unsigned int m=18;m<=21;m++)run_negative(m,0);
     run_negative(24,0);run_negative(18,1);run_negative(18,2);
-    for(unsigned int selector=1;selector<=8;selector*=2)
+    for(unsigned int selector=1;selector<=16;selector*=2)
     for(unsigned int mode=0;mode<18;mode++){
         setup();attach(&sc,selector);
         if(mode==0)cold=0;
@@ -664,7 +747,7 @@ int main(void)
         if(mode==1){intr=false;deferred(&selfdev);CHECK(maps==0 && writes==0);}
         finish(&sc);
     }
-    for(unsigned int selector=1;selector<=8;selector*=2)
+    for(unsigned int selector=1;selector<=16;selector*=2)
     for(unsigned int mode=1;mode<=4;mode++){
         setup();attach(&sc,selector);map_fail=mode<=2?mode:2;foreign_on_failure=mode==3;
         if(mode==4){map_fail=0;tx[0xbc/4]=2;}

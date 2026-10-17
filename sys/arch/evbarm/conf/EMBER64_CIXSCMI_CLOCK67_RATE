@@ -1,0 +1,8 @@
+# Explicit CIX native SCMI clock67 rate diagnostic. One request only.
+# Keep the VPU inactive. Do not set rates, enable clocks or clear ACK.
+# Use a manual boot entry and preserve a working recovery kernel.
+
+include "arch/evbarm/conf/EMBER64_CIXSCMI_QUERY"
+
+no cixscmi* at acpi?
+cixscmi* at acpi? flags 0x10

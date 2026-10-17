@@ -77,7 +77,7 @@ The separate
 [EMBER64_CIXSCMI_CLOCK_QUERY](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY)
 configuration selects exact flags 2. It sends only CLOCK PROTOCOL_VERSION,
 protocol 0x14, message 0, with no clock ID argument. Flags 3 and all values
-except 0, 1, 2, 4 and 8 are rejected before deferred evaluation, mapping or bus access.
+except 0, 1, 2, 4, 8 and 16 are rejected before deferred evaluation, mapping or bus access.
 This diagnostic does not query clock attributes, rates or clock ID 67.
 The original BASE configuration and the normal EMBER64 configuration are unchanged.
 
@@ -110,7 +110,7 @@ are valid. The selected Clock 2.0 schema comes from
 The output states that protocol version was not queried in this boot.
 No result starts another request. The physical receipt below qualifies one
 protocol-attributes exchange. Entity attributes use a separate selector and boot;
-rates, notifications and extended-name queries remain unavailable.
+notifications and extended-name queries remain unavailable.
 
 The separate
 [EMBER64_CIXSCMI_CLOCK67_ATTRS](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_ATTRS)
@@ -133,6 +133,29 @@ boot. The selected schema is 0x20000; see
 [DEN0056D section 4.6.2.4](https://documentation-service.arm.com/static/6231acfc8804d00769e9db69).
 No result enables a clock, queries a rate or changes VPU resources. The physical
 receipt below records a short firmware reply; entity attributes remain unqualified.
+
+A checked successful entity response with only 20 data bytes gets a separate
+rejected-prefix record. It prints only attributes and four name words as HEX.
+The exact 24-byte guard still reports EPROTO, with full raw and entity validity
+false. The record states that delay is absent; it does not synthesize a delay,
+accept the old schema or change ownership. This uses only the checked local
+reply. It adds no firmware request or mailbox access.
+
+The separate
+[EMBER64_CIXSCMI_CLOCK67_RATE](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_RATE)
+configuration selects exact flags 16. It sends only CLOCK_RATE_GET for ID 67,
+protocol 0x14, message 6. A successful body must contain exactly eight bytes.
+Two LE32 words form the full unsigned 64-bit rate in Hertz, low word first.
+Zero and UINT64_MAX are valid numeric replies; no guessed or fallback rate is
+substituted. The decimal log uses the native 64-bit format and includes both
+raw words. A failed helper or size check leaves the rate unchanged and invalid.
+Interpret the rate only with `rate_valid`, and retain the separate helper return,
+decode error and full firmware status. The output states that this boot did not
+query version, protocol attributes or entity attributes. A rate can already be
+stale after an asynchronous change; it grants no control permission.
+See [DEN0056D section 4.6.2.7](https://documentation-service.arm.com/static/6231acfc8804d00769e9db69).
+No result sets a rate, enables a clock, clears ACK or starts another query.
+Physical rate acceptance requires a separate manual diagnostic boot.
 
 Before mapping, the binding validates each static property, resource and
 reference. It requires MBX6/7, SHM0/1, channel 8, non-coherent shared memory,
