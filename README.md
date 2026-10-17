@@ -232,10 +232,10 @@ on every board in the hardware catalog.
 - **CIX P1 codec foundations:** original [firmware, message-ring and MMU helpers](ember/boot/cix-vpu.md)
   pass GCC16 source contracts and AArch64 VM checks. Ports cross-builds the
   actual FFmpeg M2M backend and GStreamer V4L2 plugin; missing-device and
-  semaphore cleanup checks pass in EmberBSD. A passive ACPI attachment validates
+  semaphore cleanup checks pass in EmberBSD. A checked ACPI attachment validates
   the codec's resource description. Native clock/reset providers, shared ACPI
   power ownership and a bounded resource probe have source contracts.
-  The diagnostic attachment does not activate the codec. DMA, firmware execution
+  The default attachment queries resources without activating the codec. DMA, firmware execution
   and M2M queues are unfinished. Hardware H.265 is unverified.
 - **Four H.265 views in Qt:** the [Qt Multimedia CPU profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/qt-four-streams)
   cross-builds Qt 6.12 with GCC16 and the common FFmpeg9 provider for amd64.
@@ -1020,8 +1020,9 @@ The base system shell is unchanged.
   button delivery and poweroff remain unqualified. See [CIX GPIO](ember/boot/cix-gpio.md).
   Native [CIX clock/reset providers](ember/boot/cix-platform.md) have checked source
   contracts and passive registration. A bounded VPU control helper uses checked
-  [ACPI power ownership](ember/boot/acpi-power.md). The attachment does not call
-  that helper yet; VPU activation, DMA and firmware remain disabled.
+  [ACPI power ownership](ember/boot/acpi-power.md). EMBER64 selects a resource
+  query; the active identity probe requires explicit configuration. DMA and
+  firmware execution remain disabled.
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request
   cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the
   active control request and preserves queued requests. Actual-function

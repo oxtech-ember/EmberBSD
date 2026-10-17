@@ -55,8 +55,16 @@ built in with boot-long lifetime. Hot detach and suspend/resume are not supporte
 The [native PowerResource framework](acpi-power.md) now preserves shared
 ownership and failed transitions. It is not a complete D-state engine.
 The VPU control helper validates the running CLKT, RSTL, _PR0 and _PR3
-packages before acquiring these providers. It is compiled with the kernel,
-but the diagnostic attachment does not call it yet.
+packages before acquiring these providers. The attachment defers the probe
+until the ACPI children have attached. It copies attachment values and releases
+parsed resource lists before deferring; it retains no stack arguments.
+
+EMBER64 selects `flags 0x1`: validate metadata, acquire claims, query GCLK and
+release untouched claims. `flags 0x0` retains descriptions-only attachment.
+`flags 0x2` explicitly selects the active identity probe. Other flags are
+rejected. No mode starts DMA, loads firmware or registers a video device.
+The callback reports primary and cleanup errors, ACPI statuses, identity
+validity and released controls. It runs at most once per attachment.
 
 The helper supports a query with no power or reset operation. Its separate
 active probe requires an already deasserted RCSU reset. It uses native power
@@ -99,7 +107,8 @@ retains inherited header style findings and fixed callback-const suggestions;
 the clock target CSA also reports four inherited bitops dead stores.
 No diagnostic category was suppressed. The [CI workflow](../../.github/workflows/cix-platform.yml)
 adds Linux ASan/UBSan and complete Memcheck runs. Check its exact-head result.
-The power contract passes 75 assertions; the VPU control contract passes 379.
+The power contract passes 87 assertions; the VPU control contract passes 421.
+The latter compiles both the complete helper and actual attachment source.
 The power module retains inherited CSA dead stores in unchanged functions.
 Those findings are recorded separately; its execution contract does not
 claim clean analysis of the whole ACPI power module.

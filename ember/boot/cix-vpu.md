@@ -5,7 +5,8 @@ The hardware driver is incomplete.
 Origin: EmberBSD contributors, AI-assisted.
 
 EmberBSD identifies the CIX P1 codec and validates its ACPI descriptions.
-It leaves the codec disabled. There is no video device or M2M interface.
+The default resource query leaves the codec disabled.
+There is no video device or M2M interface.
 The attachment and helpers do not load firmware or encode frames.
 The target is Orange Pi 6 Plus with CIX CD8180 and stock ACPI firmware.
 The OS owns firmware, DMA, interrupts, power/reset and the application API.
@@ -56,10 +57,14 @@ Firmware tables from one Orange Pi 6 Plus, CIX CD8180, A4 PHECDA-Rev A,
 GSI 358 and `_CCA = 0`. This is firmware evidence, not codec execution.
 The driver reads the running firmware's descriptions rather than copying those addresses.
 
-Every attachment reports that resource activation, DMA and firmware are not enabled.
-It does not map, read or write MMIO, allocate DMA, load firmware, establish an interrupt
-handler, register a video device, or call `_PS0` or ACPI PowerResource methods.
-Parsing descriptions does not establish ownership of power, clocks or reset.
+The default EMBER64 attachment defers a checked resource query until the ACPI
+providers have attached. It validates the CLKT/RSTL/_PR0/_PR3 references,
+claims the providers, reads GCLK and releases untouched claims. It does not
+operate reset, activate VPU power, map VPU MMIO, allocate DMA, load firmware,
+establish an interrupt handler or register a video device.
+`flags 0x0` selects descriptions only. An explicit `flags 0x2` enables the
+bounded [identity probe](cix-platform.md); it still does not start DMA or firmware.
+Parsing descriptions alone does not establish power, clock or reset ownership.
 The existing firmware, ring and page-entry helpers remain unused by the attachment.
 
 The selected `-sum` protocol adds a cumulative checksum word between the TX
@@ -192,8 +197,9 @@ The reference ACPI identifier is `CIXH3010`. Read the target's actual ACPI
 resources; do not assume a Linux DTS register range or interrupt number.
 Establish clock/reset and power ownership before touching the block.
 The [native CIX clock/reset providers](cix-platform.md) now have checked source
-contracts and passive registration. The diagnostic attachment does not consume
-them or establish power ownership. Complete SCMI support is not claimed.
+contracts and passive registration. The default query consumes and releases
+untouched provider claims. The optional identity probe uses native power
+ownership and checked cleanup. Neither path implements full SCMI support.
 The VPU has its own MMU. Use bus_dma for any platform translation; do not
 assume IOMMU bypass or infer a mandatory external SMMU from another device.
 
