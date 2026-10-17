@@ -113,9 +113,27 @@ int main(int argc,char **argv)
 	setup(0); model.unstable=1; model.recording=0; check_failure(ERANGE);
 	CHECK(model.samples==302);
 	CHECK(model.visits[0][ADC_POST]==1 && model.visits[0][DAC_PRE]==10);
+	/* Transient replacement outliers must be skipped, never averaged. */
+	setup(10); model.transient_replacement=1;
+	CHECK(rtw8822c_dack(&sc,&result)==0 && result.valid_paths==3);
+	for(i=0;i<2;i++) {
+		CHECK(result.adc[i][0]==0 && result.adc[i][1]==0);
+		CHECK(result.dac[i][0]==128 && result.dac[i][1]==128);
+		CHECK(result.adc_residual[i][0]==0 && result.adc_residual[i][1]==0);
+		CHECK(result.dac_residual[i][0]==0 && result.dac_residual[i][1]==0);
+		for(j=0;j<4;j++) CHECK(model.sample_reads[i][j]==303);
+	}
+	setup(10); model.transient_replacement=1; fail_at=151; check_failure(EIO);
+	CHECK(calls==151);
+	CHECK(result.stage==RTW8822C_DACK_ADC_PRE && result.sample_reads==102);
+	CHECK(model.samples==101 && result.sample_count==100 && !result.mean_valid);
+	setup(10); model.transient_replacement=1; cancel_at=151; check_failure(EINTR);
+	CHECK(calls==151);
+	CHECK(result.stage==RTW8822C_DACK_ADC_PRE && result.sample_reads==102);
+	CHECK(model.samples==102 && result.sample_count==100 && !result.mean_valid);
 	setup(0); model.replacement_invalid=1; model.recording=0; check_failure(ERANGE);
-	CHECK(model.samples==101);
-	CHECK(result.stage==RTW8822C_DACK_ADC_PRE && result.sample_reads==101);
+	CHECK(model.samples==10202);
+	CHECK(result.stage==RTW8822C_DACK_ADC_PRE && result.sample_reads==10202);
 	CHECK(result.sample_count==100 && result.spread[0]==20 && !result.mean_valid);
 	setup(0); model.not_ready=1; model.recording=0; check_failure(ETIMEDOUT);
 	setup(0); model.bad_vector=1; model.recording=0; check_failure(ETIMEDOUT);

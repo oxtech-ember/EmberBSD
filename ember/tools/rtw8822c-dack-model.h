@@ -15,7 +15,7 @@ static struct {
 	unsigned errors,restored,recording,profile,ready_reads[8],skip;
 	unsigned sample_reads[2][4];
 	int invalid,unstable,not_ready,bad_vector,adc_fail,dac_fail;
-	int replacement_invalid,vector_overflow;
+	int replacement_invalid,transient_replacement,vector_overflow;
 } model;
 static const int measured[2][2][4][2]={
 	{ {{0,0},{0,0},{0,0},{16,16}}, {{0,0},{0,0},{0,0},{16,16}} },
@@ -83,6 +83,7 @@ model_read(unsigned a,unsigned n)
 			iv+=(model.samples%2)?10:-10;
 			qv+=(model.samples%2)?-10:10;
 		}
+		if(model.transient_replacement && model.samples==100) iv=101;
 		if(model.samples<model.skip) iv=101;
 		v=(((unsigned)iv&1023)<<12)|((unsigned)qv&1023);
 		model.samples++;

@@ -17,6 +17,7 @@
 #include <dev/ic/rtw8822c.h>
 
 #define SAMPLE_COUNT 100U
+#define SAMPLE_READ_BUDGET 10202U
 #define RF_MASK 0xfffffU
 /* 80 measurements * 10202 sample reads + 80000 ready polls + <10000
  * control/RF operations fit in 1000000. Explicit step delays total at most
@@ -211,6 +212,18 @@ pair(struct dack_context *c, int *iv, int *qv)
 }
 
 static void
+valid_pair(struct dack_context *c, int *iv, int *qv)
+{
+
+	while (c->error == 0 && c->out->sample_reads < SAMPLE_READ_BUDGET) {
+		if (pair(c, iv, qv))
+			return;
+	}
+	if (c->error == 0)
+		c->error = ERANGE;
+}
+
+static void
 measure(struct dack_context *c, int *iv, int *qv)
 {
 	int samples[2][SAMPLE_COUNT], si, sq;
@@ -252,12 +265,14 @@ measure(struct dack_context *c, int *iv, int *qv)
 		    samples[1][99] - samples[1][0] <= 5)
 			break;
 		c->out->filter_passes++;
-		if (!pair(c, &samples[0][0], &samples[1][0]) ||
-		    !pair(c, &samples[0][99], &samples[1][99])) {
-			if (c->error == 0)
-				c->error = ERANGE;
+		/*
+		 * Skip outliers within the existing total request bound. Neither
+		 * invalid replacement can enter the trimmed mean.
+		 */
+		valid_pair(c, &samples[0][0], &samples[1][0]);
+		valid_pair(c, &samples[0][99], &samples[1][99]);
+		if (c->error != 0)
 			return;
-		}
 	}
 	if (c->error != 0)
 		return;

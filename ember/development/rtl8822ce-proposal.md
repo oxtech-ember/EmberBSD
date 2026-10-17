@@ -68,8 +68,10 @@ Its effect on physical calibration still requires a board trial.
 Cold startup runs the native ADCK/DACK helper before HCI starts. Its bounded
 noise filter computes a trimmed mean after at most 101 replacement passes.
 A spread above five only prevents early exit. ADC/DAC residuals must still
-converge below five within ten attempts. Incomplete or out-of-range samples,
-readiness timeouts and bus failures stop startup and require a power reset.
+converge below five within ten attempts. Acquisition skips out-of-range pairs,
+including filter replacements, within 10202 requests per measurement.
+Insufficient valid samples, readiness timeouts and bus failures stop startup
+and require a power reset.
 Pinned-source trace tests include persistent noise. Physical cold startup
 still fails cold ADC calibration with ERANGE before HCI starts. The failure
 path powers the radio off. Numeric diagnostics report the failure stage,
