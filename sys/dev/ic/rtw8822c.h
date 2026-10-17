@@ -94,6 +94,21 @@ int rtw8822c_set_channel(struct rtw88_softc *, unsigned);
 int rtw8822c_set_tx_power(struct rtw88_softc *sc,
     const struct rtw8822c_efuse *efuse, unsigned channel, unsigned regd);
 
+enum rtw8822c_dack_stage {
+	RTW8822C_DACK_SNAPSHOT = 1,
+	RTW8822C_DACK_BB_SETUP,
+	RTW8822C_DACK_ADC_SETUP,
+	RTW8822C_DACK_ADC_PRE,
+	RTW8822C_DACK_ADC_PROGRAM,
+	RTW8822C_DACK_ADC_POST,
+	RTW8822C_DACK_DAC_SETUP,
+	RTW8822C_DACK_DAC_PRE,
+	RTW8822C_DACK_DAC_PROGRAM,
+	RTW8822C_DACK_DAC_POST,
+	RTW8822C_DACK_RESTORE,
+	RTW8822C_DACK_DONE
+};
+
 struct rtw8822c_dack_result {
 	uint32_t operations;
 	uint32_t delay_us;
@@ -101,6 +116,19 @@ struct rtw8822c_dack_result {
 	uint8_t dac[2][2];		/* Programmed 8-bit vectors. */
 	int16_t adc_residual[2][2];
 	int16_t dac_residual[2][2];
+	int16_t adc_before[2][2];
+	/*
+	 * Last measurement only. A mean is usable only when mean_valid is set.
+	 * Stage/path freeze at the first error; path 2 is a shared operation.
+	 * Counts can be partial on failure. sample_reads counts requests,
+	 * including the request that fails or is canceled before bus access.
+	 */
+	uint16_t sample_count, sample_reads, filter_passes;
+	uint16_t spread[2];
+	int16_t mean[2];
+	uint8_t stage, path, mean_valid;
+	uint8_t sample_stage, sample_path;
+	uint8_t adc_attempts[2], dac_attempts[2];
 	uint8_t valid_paths;		/* 3 only after complete success. */
 	uint8_t reset_required;
 };

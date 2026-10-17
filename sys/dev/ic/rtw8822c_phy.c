@@ -272,8 +272,26 @@ rtw8822c_phy_post(struct rtw88_softc *sc)
 	    dack.adc_residual[1][1], dack.dac_residual[0][0],
 	    dack.dac_residual[0][1], dack.dac_residual[1][0],
 	    dack.dac_residual[1][1], dack.operations, dack.delay_us);
-	if (error != 0)
+	if (error != 0) {
+		printf("rtwce: DACK stage %u path %u ADC attempts %u/%u "
+		    "DAC attempts %u/%u measure %u/%u samples %u/%u "
+		    "filter %u spread %u/%u "
+		    "mean %d/%d valid %u\n", (unsigned)dack.stage,
+		    (unsigned)dack.path, (unsigned)dack.adc_attempts[0],
+		    (unsigned)dack.adc_attempts[1], (unsigned)dack.dac_attempts[0],
+		    (unsigned)dack.dac_attempts[1], (unsigned)dack.sample_stage,
+		    (unsigned)dack.sample_path, (unsigned)dack.sample_count,
+		    (unsigned)dack.sample_reads, (unsigned)dack.filter_passes,
+		    (unsigned)dack.spread[0], (unsigned)dack.spread[1],
+		    dack.mean[0], dack.mean[1], (unsigned)dack.mean_valid);
+		printf("rtwce: DACK ADC before A %d/%d B %d/%d "
+		    "comp A %u/%u B %u/%u\n", dack.adc_before[0][0],
+		    dack.adc_before[0][1], dack.adc_before[1][0],
+		    dack.adc_before[1][1], (unsigned)dack.adc[0][0],
+		    (unsigned)dack.adc[0][1], (unsigned)dack.adc[1][0],
+		    (unsigned)dack.adc[1][1]);
 		return error;
+	}
 	rf_x2_check(&io);
 	thermal_trim(&io, sc->sc_efuse_phys);
 	power_trim(&io, sc->sc_efuse_phys);

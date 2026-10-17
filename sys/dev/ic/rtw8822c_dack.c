@@ -31,6 +31,16 @@ struct dack_context {
 	int error, mutated;
 };
 
+static void
+stage(struct dack_context *c, unsigned value, unsigned path)
+{
+
+	if (c->error == 0) {
+		c->out->stage = (uint8_t)value;
+		c->out->path = (uint8_t)path;
+	}
+}
+
 static int
 canceled(const struct dack_context *c)
 {
@@ -189,7 +199,11 @@ sort(int values[SAMPLE_COUNT])
 static int
 pair(struct dack_context *c, int *iv, int *qv)
 {
-	uint32_t raw = read_mask(c, 0x2dbc, 0x3fffff);
+	uint32_t raw;
+
+	if (c->error == 0)
+		c->out->sample_reads++;
+	raw = read_mask(c, 0x2dbc, 0x3fffff);
 
 	*iv = signed10(raw >> 12);
 	*qv = signed10(raw);
@@ -203,6 +217,15 @@ measure(struct dack_context *c, int *iv, int *qv)
 	int32_t isum = 0, qsum = 0;
 	unsigned count = 0, reads, attempt, i;
 
+	if (c->error != 0)
+		return;
+	c->out->sample_stage = c->out->stage;
+	c->out->sample_path = c->out->path;
+	c->out->sample_count = c->out->sample_reads = 0;
+	c->out->filter_passes = 0;
+	c->out->spread[0] = c->out->spread[1] = 0;
+	c->out->mean[0] = c->out->mean[1] = 0;
+	c->out->mean_valid = 0;
 	/* Preserve the reference RF-mode diagnostic reads in the source trace. */
 	(void)read_rf(c, 0, 0);
 	(void)read_rf(c, 1, 0);
@@ -211,6 +234,7 @@ measure(struct dack_context *c, int *iv, int *qv)
 		if (pair(c, &si, &sq)) {
 			samples[0][count] = si;
 			samples[1][count++] = sq;
+			c->out->sample_count = (uint16_t)count;
 		}
 	}
 	if (c->error != 0)
@@ -222,9 +246,12 @@ measure(struct dack_context *c, int *iv, int *qv)
 	for (attempt = 0; attempt < 101 && c->error == 0; attempt++) {
 		sort(samples[0]);
 		sort(samples[1]);
+		c->out->spread[0] = (uint16_t)(samples[0][99] - samples[0][0]);
+		c->out->spread[1] = (uint16_t)(samples[1][99] - samples[1][0]);
 		if (samples[0][99] - samples[0][0] <= 5 &&
 		    samples[1][99] - samples[1][0] <= 5)
 			break;
+		c->out->filter_passes++;
 		if (!pair(c, &samples[0][0], &samples[1][0]) ||
 		    !pair(c, &samples[0][99], &samples[1][99])) {
 			if (c->error == 0)
@@ -246,6 +273,9 @@ measure(struct dack_context *c, int *iv, int *qv)
 	}
 	*iv = isum / 80;
 	*qv = qsum / 80;
+	c->out->mean[0] = (int16_t)*iv;
+	c->out->mean[1] = (int16_t)*qv;
+	c->out->mean_valid = 1;
 }
 
 static unsigned
@@ -374,6 +404,7 @@ step3(struct dack_context *c, unsigned path, unsigned ic, unsigned qc)
 	{
 		int iv = 0, qv = 0;
 
+		stage(c, RTW8822C_DACK_DAC_POST, path);
 		measure(c, &iv, &qv);
 		c->out->dac_residual[path][0] = (int16_t)signed10((uint32_t)(iv - 16));
 		c->out->dac_residual[path][1] = (int16_t)signed10((uint32_t)(qv - 16));
@@ -395,6 +426,7 @@ adc_cal(struct dack_context *c, unsigned path)
 	unsigned attempt;
 	int iv = 0, qv = 0;
 
+	stage(c, RTW8822C_DACK_ADC_SETUP, path);
 	mask32(c, base + 0x30, DACK_BIT(30), 0);
 	if (path == 1)
 		w32(c, base + 0x30, 0x30db8041);
@@ -407,17 +439,23 @@ adc_cal(struct dack_context *c, unsigned path)
 	for (attempt = 0; attempt < 10 && c->error == 0; attempt++) {
 		uint32_t compensation;
 
+		c->out->adc_attempts[path] = (uint8_t)(attempt + 1);
+		stage(c, RTW8822C_DACK_ADC_PRE, path);
 		w32(c, 0x1c3c, sel + 0x8003);
 		w32(c, 0x1c24, 0x00010002);
 		measure(c, &iv, &qv);
 		if (c->error != 0)
 			return;
+		c->out->adc_before[path][0] = (int16_t)iv;
+		c->out->adc_before[path][1] = (int16_t)qv;
+		stage(c, RTW8822C_DACK_ADC_PROGRAM, path);
 		c->out->adc[path][0] = (uint16_t)((unsigned)-iv & 1023);
 		c->out->adc[path][1] = (uint16_t)((unsigned)-qv & 1023);
 		compensation = c->out->adc[path][0] |
 		    ((uint32_t)c->out->adc[path][1] << 10);
 		c->adck[path] = compensation;
 		w32(c, base + 0x68, compensation);
+		stage(c, RTW8822C_DACK_ADC_POST, path);
 		w32(c, 0x1c3c, sel + 0x8103);
 		measure(c, &iv, &qv);
 		c->out->adc_residual[path][0] = (int16_t)iv;
@@ -506,18 +544,24 @@ rtw8822c_dack(struct rtw88_softc *sc, struct rtw8822c_dack_result *out)
 		return ENXIO;
 	c = (struct dack_context){ .sc = sc, .out = out,
 	    .generation = sc->sc_generation };
+	stage(&c, RTW8822C_DACK_SNAPSHOT, 2);
 	if (canceled(&c))
 		return EINTR;
 	for (i = 0; i < __arraycount(addresses); i++)
 		backup[i] = rd(&c, addresses[i]);
 	for (path = 0; path < 2; path++)
 		rf[path] = read_rf(&c, path, 0x8f);
+	stage(&c, RTW8822C_DACK_BB_SETUP, 2);
 	bb_setting(&c);
 	for (path = 0; path < 2 && c.error == 0; path++) {
 		adc_cal(&c, path);
 		for (attempt = 0; attempt < 10 && c.error == 0; attempt++) {
+			out->dac_attempts[path] = (uint8_t)(attempt + 1);
+			stage(&c, RTW8822C_DACK_DAC_SETUP, path);
 			step1(&c, path);
+			stage(&c, RTW8822C_DACK_DAC_PRE, path);
 			step2(&c, path);
+			stage(&c, RTW8822C_DACK_DAC_PROGRAM, path);
 			step3(&c, path, out->dac[path][0], out->dac[path][1]);
 			if (converged(out->dac_residual[path]))
 				break;
@@ -526,6 +570,7 @@ rtw8822c_dack(struct rtw88_softc *sc, struct rtw8822c_dack_result *out)
 			c.error = ERANGE;
 		step4(&c, path);
 	}
+	stage(&c, RTW8822C_DACK_RESTORE, 2);
 	w32(&c, 0x1b00, 8);
 	mask32(&c, 0x4130, DACK_BIT(30), 1);
 	w8(&c, 0x1bcc, 0);
@@ -537,9 +582,10 @@ rtw8822c_dack(struct rtw88_softc *sc, struct rtw8822c_dack_result *out)
 		write_rf(&c, path, 0x8f, RF_MASK, rf[path]);
 	if (c.error == 0 && canceled(&c))
 		c.error = EINTR;
-	if (c.error == 0)
+	if (c.error == 0) {
 		out->valid_paths = 3;
-	else
+		stage(&c, RTW8822C_DACK_DONE, 1);
+	} else
 		out->reset_required = (uint8_t)c.mutated;
 	return c.error;
 }

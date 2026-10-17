@@ -62,8 +62,12 @@ noise filter computes a trimmed mean after at most 101 replacement passes.
 A spread above five only prevents early exit. ADC/DAC residuals must still
 converge below five within ten attempts. Incomplete or out-of-range samples,
 readiness timeouts and bus failures stop startup and require a power reset.
-Pinned-source trace tests include persistent noise; physical calibration
-and station acceptance remain pending.
+Pinned-source trace tests include persistent noise. Physical cold startup
+still fails cold ADC calibration with ERANGE before HCI starts. The failure
+path powers the radio off. Numeric diagnostics report the failure stage,
+attempts, last measurement, ADC means and programmed compensation.
+Earlier 2.4 GHz RX evidence predates cold calibration integration; current
+startup and station acceptance remain pending.
 
 The kernel configuration selects the native station wrapper and ingress
 generation policy. Use the standard interface tools when the PCI wrapper
