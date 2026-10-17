@@ -1001,6 +1001,13 @@ The base system shell is unchanged.
   The [board receipt](ember/boards/raspberry-pi-5.md#headless-base-update-2026-10-07)
   records operator-reported Ethernet access after the final reboot;
   Wi-Fi recovery and post-reboot library acceptance remain open.
+- **Reduced CIX P1 development userland:** the OS-owned
+  [static C profile](ember/image/cix-p1-userland.md) cross-builds current
+  headers, libraries, network clients and disk recovery tools with GCC16.
+  Its 77-program cohort passes static little-endian AArch64 ELF checks.
+  The [persistent-root profile](ember/image/cix-p1.md) adds explicit console,
+  network and shutdown scripts. These build checks do not qualify unattended
+  SD startup or a complete base release.
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request
   cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the
   active control request and preserves queued requests. Actual-function

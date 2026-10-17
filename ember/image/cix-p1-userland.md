@@ -26,9 +26,11 @@ The source commit must remain unchanged until the build completes.
 The builder installs current headers, CSU, libc, the selected C libraries,
 OpenSSL and libpcap. It relinks the console and network tools, WPA programs,
 DHCP client, filesystem checkers, mount helpers, GPT and wedge tools, stat,
-shutdown and wall. It generates the target MAKEDEV script. This is a C-only
-profile; it does not provide C++, login services or the complete rc system.
+shutdown, wall and native getty. It generates the target MAKEDEV script.
+This C-only profile does not provide C++, login/PAM or the complete rc system.
 The receiving root profile owns startup, console access and shutdown scripts.
+Use native getty to establish the console session before its trusted wrapper.
+A direct shell wrapper in `ttys` does not establish the controlling terminal.
 
 Each component has separate build and install logs under `logs/`.
 Failures stop the build. `BUILD-INPUTS.pending` records an incomplete run.
@@ -45,6 +47,13 @@ propagation. It does not establish a successful target build or boot.
 ```sh
 ruby ember/image/test-cix-p1-userland.rb
 ```
+
+The cohort at source `dafccbdc09153ffc85be31fadfd3f7a6cdf536fe`, extended
+with native getty at the same source and build configuration, passed a GCC16.2
+cross-build on macOS. All 77 installed programs passed little-endian AArch64
+static ELF checks and received SHA256 records. Current target headers and the
+strong SSP flags were verified in actual compiler arguments. These are build
+and artifact checks; target execution and persistent startup remain separate.
 
 Keep generated binaries, local paths and personal configuration outside Git.
 Network credentials belong to a separate protected configuration overlay.

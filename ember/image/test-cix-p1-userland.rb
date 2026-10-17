@@ -63,7 +63,7 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
       *install*)
         for file in bin/sh sbin/init sbin/ifconfig sbin/dhcpcd sbin/fsck \
           sbin/fsck_ffs sbin/mount_msdos sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl \
-          usr/bin/stat usr/bin/wall usr/sbin/wpa_supplicant usr/sbin/wpa_cli; do
+          usr/bin/stat usr/bin/wall usr/sbin/wpa_supplicant usr/sbin/wpa_cli usr/libexec/getty; do
           test "$file" = "$TEST_OMIT_BINARY" && continue
           mkdir -p "$dest/$(dirname "$file")"
           printf 'candidate\n' > "$dest/$file"
@@ -93,7 +93,8 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   events = File.readlines(out + '/events')
   %w[lib/libc external/bsd/wpa/bin/wpa_supplicant
      external/bsd/dhcpcd/sbin/dhcpcd sbin/fsck_ffs sbin/mount_msdos
-     sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl usr.bin/stat usr.bin/wall].each do |part|
+     sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl
+     usr.bin/stat usr.bin/wall libexec/getty].each do |part|
     abort "FAIL: missing component #{part}" unless events.any? { |l| l.include?("/#{part} ") }
     checks += 1
   end
@@ -123,6 +124,9 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   checks += 1
   _, _, status = run.call(work + '/missing-fsck', 'TEST_OMIT_BINARY' => 'sbin/fsck_ffs')
   abort 'FAIL: accepted cohort without fsck_ffs' if status.success? || File.exist?(work + '/missing-fsck/BUILD-INPUTS.txt')
+  checks += 1
+  _, _, status = run.call(work + '/missing-getty', 'TEST_OMIT_BINARY' => 'usr/libexec/getty')
+  abort 'FAIL: accepted cohort without getty' if status.success? || File.exist?(work + '/missing-getty/BUILD-INPUTS.txt')
   checks += 1
   _, _, status = run.call(work + '/c-runtime', 'TEST_NO_UNWINDER' => '1')
   abort 'FAIL: C-only compiler without unwinder rejected' unless status.success? &&

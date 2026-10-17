@@ -107,7 +107,7 @@ for part in bin/sh bin/cat bin/ls bin/cp bin/mv bin/rm bin/mkdir bin/chmod \
     usr.bin/stat usr.bin/wall usr.bin/cksum usr.bin/uname usr.bin/env \
     usr.bin/printf usr.bin/wc usr.bin/nc usr.bin/sed usr.bin/grep \
     usr.bin/head usr.bin/tail external/historical/nawk/bin usr.bin/sort \
-    usr.bin/tr usr.bin/mktemp usr.bin/netstat \
+    usr.bin/tr usr.bin/mktemp usr.bin/netstat libexec/getty \
     external/bsd/wpa/bin/wpa_passphrase external/bsd/wpa/bin/wpa_supplicant \
     external/bsd/wpa/bin/wpa_cli; do
     component "$part"
@@ -116,7 +116,7 @@ component external/bsd/dhcpcd/sbin/dhcpcd SMALLPROG=1
 run makedev "$wrapper" -C "$src/etc" MAKEDEV
 for file in bin/sh sbin/init sbin/ifconfig sbin/dhcpcd sbin/fsck \
     sbin/fsck_ffs sbin/mount_msdos sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl \
-    usr/bin/stat usr/bin/wall usr/sbin/wpa_supplicant usr/sbin/wpa_cli; do
+    usr/bin/stat usr/bin/wall usr/sbin/wpa_supplicant usr/sbin/wpa_cli usr/libexec/getty; do
     [ -f "$out/dest/$file" ] || {
         echo "Missing required program: $file" >&2; exit 1
     }
