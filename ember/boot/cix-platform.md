@@ -131,8 +131,8 @@ fields only with `entity_valid`. `raw_valid` is separate failure evidence.
 The output states that version and protocol attributes were not queried in this
 boot. The selected schema is 0x20000; see
 [DEN0056D section 4.6.2.4](https://documentation-service.arm.com/static/6231acfc8804d00769e9db69).
-No result enables a clock, queries a rate or changes VPU resources. This selector
-requires its own manual physical acceptance.
+No result enables a clock, queries a rate or changes VPU resources. The physical
+receipt below records a short firmware reply; entity attributes remain unqualified.
 
 Before mapping, the binding validates each static property, resource and
 reference. It requires MBX6/7, SHM0/1, channel 8, non-coherent shared memory,
@@ -345,6 +345,20 @@ identity or access permission. The selected schema is CLOCK 2.0; this boot
 does not query version again. FFS is clean, and WPA2/DHCP plus three gateway
 probes pass. VPU activation, per-clock attributes, rate and control remain
 unqualified. No ACK is cleared, and the boot-long lease remains held.
+
+A manual boot of GCC16.2 kernel `9b684797f63bd2fa399ebf02d2ffc1f7db682158`
+sends one CLOCK_ATTRIBUTES request for ID67. The gzip SHA256 is
+`9ff43cac32314667e3a7e3c4ba93f14dcedd607365265e7b2549917e654473b5`.
+The firmware returns status 0, matching header `0x45003` and SMT length 28.
+That length contains only 20 data bytes. The selected CLOCK 2.0 schema requires
+24 data bytes, including enable delay. The binding reports decode error 96,
+`raw_valid=0` and `entity_valid=0`. It does not decode a name, enabled state
+or delay from that incomplete reply. The separately advertised version and this
+reply length disagree; no compatibility policy or firmware cause is established.
+Exact-head CI, including Memcheck and ASan/UBSan, passes. FFS is clean after boot.
+The default and rollback entries remain unchanged. No ACK is cleared, and the
+boot-long lease remains held. VPU activation, clock identity, rate and control
+remain unqualified.
 
 ## Primary provenance
 
