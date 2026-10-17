@@ -10,7 +10,7 @@ This profile records one physical sample. It is not a complete installation imag
 | Console | DEBUG UART2, 115200 8N1. The stock SPCR points at UART3. The loader correction selects UART2 without rewriting the firmware. |
 | CPU and memory | The kernel reports 12 CPUs and about 32 GB. SMP stress and memory integrity are not qualified. |
 | Ethernet | `rge1` negotiates 1000baseT full-duplex. A short host-to-board transfer and ICMP replies pass. Board-initiated ping to the host did not receive replies; the cause is unconfirmed. The second port and sustained camera traffic remain unqualified. |
-| Video codec | [ACPI attachment](../boot/cix-vpu.md) validates both memory windows, level IRQ 358 and `_CCA=0`. Native [clock/reset providers and a bounded resource probe](../boot/cix-platform.md) have source contracts. EMBER64 selects a resource query without VPU activation. An identity probe requires explicit flags; DMA, firmware and video queues are incomplete. No hardware encoding is claimed. |
+| Video codec | [ACPI attachment](../boot/cix-vpu.md) validates both memory windows, level IRQ 358 and `_CCA=0`. Native [clock/reset providers and a bounded resource probe](../boot/cix-platform.md) have source contracts. EMBER64 selects a resource query without VPU activation. A separate GCC16 diagnostic kernel passes one native SCMI BASE-version 2.0 transaction; CLOCK discovery and codec control remain unqualified. An identity probe requires explicit flags; DMA, firmware and video queues are incomplete. No hardware encoding is claimed. |
 | Power button | Physical short presses reach native `powerd`, filesystem sync and FFS unmount. Adaptive utilities reduce the operator's press-to-fan-stop measurement from 15–20 s to about 5 s. UART records 4.05 s from the shutdown reason to FFS unmount. A later network-stop ordering fix reduces that interval to 0.31 s in one commanded reboot; new button-to-fan timing is unmeasured. The next unattended boot reports clean FFS and restores WPA2/DHCP with the marker and new utilities intact. Restart by short press remains unresolved: power must be removed and restored. The retained UART session leader passes native Ctrl-C, stopped-job and termination-without-input checks. EMBER64 selects the bounded pin6 ACPI event path; `flags 0x0` retains passive mode. See [CIX GPIO](../boot/cix-gpio.md). |
 | RTL8822CE | Physical kernel `71877588ca099bf69686a35b96a00771a26feebc` passes WPA2-PSK/CCMP and fresh DHCP on channels 8 and 149. Each band passes simultaneous 16 MiB RAM-root TCP transfers in both directions with matching SHA256. The persistent SD profile also passes automatic reboot recovery and 2 MiB checks each way. See the [source boundary and contracts](../development/rtl8822ce-proposal.md#current-source-boundary). This is a legacy 802.11a/b/g profile with software CCMP. Cold calibration retains ADC AB and DAC B residual-quality warnings. Analog qualification, higher rates, AP-loss recovery and long-term stability remain pending. |
 | Storage | SD supplies the boot payload and a new 2 GiB writable FFS root. Full image readback and forced native fsck pass before provisioning. The existing EFI and boot partitions remain. NVMe installation is not accepted. |
@@ -25,7 +25,10 @@ Enable `Support SPCR` in firmware. On this sample it can be lost after power rem
 Use the [CIX SPCR loader correction](../boot/cix-spcr.md); UART1 and UART3 remain separate device interfaces.
 
 The [opt-in profile](../boot/cix-p1-persistent.cfg) clears initrd and selects
-`netbsd.wifi.gz` with `root=NAME=ember-cix-root`. The checked gzip SHA256 is
+`netbsd.wifi.gz` with `root=NAME=ember-cix-root`. The current development media
+uses kernel `522474e4de9f597153b5192ad579d900fff273ca`, gzip SHA256
+`f1108160847844625ac9cce4d28419042687388c9f95d794d5b3341107aa1d1c`.
+The retained `71877588c` rollback gzip SHA256 is
 `2902b98e8b604446ec7103c9efe7e1fe928ad8a07d0711cdce2ebb37b514766d`.
 The recovery menu selects the retained `/netbsd` and `root.fs` pair.
 The [root guide](../image/cix-p1.md) records userland, startup and image pins.

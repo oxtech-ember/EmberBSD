@@ -241,6 +241,23 @@ Do not substitute 271 or invent a rate. Rate telemetry and successful gate
 control require separate qualification. Both trials used a manual kernel
 entry and preserved the working default, rollback and RAM recovery paths.
 
+On 2026-10-18, diagnostic kernel `30b63316d07a6957aa7c5fff4e9cda6afbc4ac57`
+passes one native SCMI BASE-version transaction on the same board and BIOS.
+The GCC16.2 build uses `EMBER64_CIXSCMI_QUERY`; SCMI flags are 1 and VPU flags
+are 0. Its gzip SHA256 is
+`6bbfd4a98f6537215e7fc6d68bc6869ea4ad51ff3cac62a47f5c665103f644ef`.
+The reply reports version `0x20000`, error 0, header `0x44000`, length 12 and
+valid firmware status 0. The TX ACK snapshot is `0x8` before and after; no ACK
+is cleared. Mappings and the channel lease remain until reboot.
+The earlier pre-query rejection came from treating ACPICA's integer UID
+capacity as an exact text length. The corrected binding passes 37227 source
+checks and exact-head CI, including Memcheck and ASan/UBSan.
+The boot reports clean FFS and retains the persistence marker. Wi-Fi completes
+WPA2/DHCP recovery after an initial association interval; three gateway probes
+pass. The default and rollback entries remain unchanged. This validates one
+BASE exchange. It does not validate repeated requests, CLOCK version or clock
+ID 67. VPU MMIO, IRQ, DMA and firmware execution remain disabled.
+
 ## Primary provenance
 
 Hardware facts come from the pinned vendor
