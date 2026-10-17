@@ -58,7 +58,8 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} $api -DACPI_MISALIGNMENT_NO
 if [ -n "${CIXGPIO_TEST_OUTPUT:-}" ]; then cp "$work/test" "$CIXGPIO_TEST_OUTPUT"; fi
 if [ "${CIXGPIO_ANALYZE:-0}" = 1 ]; then
     ${CC:-cc} -std=c11 ${CFLAGS:-} -dM -E -x c /dev/null > "$work/gcc-predefined.h"
-    cppcheck --quiet --enable=warning,performance,portability --error-exitcode=1 \
+    cppcheck --quiet --check-level=exhaustive \
+        --enable=warning,performance,portability --error-exitcode=1 \
         --include="$work/gcc-predefined.h" \
         --std=c11 --platform=unix64 -DACPI_APPLICATION \
         -DACPI_MISALIGNMENT_NOT_SUPPORTED -DCIXGPIO_DRIVER_API \
