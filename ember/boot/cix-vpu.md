@@ -1,10 +1,12 @@
 # CIX P1 H.265 codec foundations
 
-Status: checked source foundations. The hardware driver is incomplete.
+Status: diagnostic ACPI attachment and checked source foundations.
+The hardware driver is incomplete.
 Origin: EmberBSD contributors, AI-assisted.
 
-EmberBSD has no attached CIX P1 video codec driver or M2M device.
-These helpers do not load firmware into the device or encode frames.
+EmberBSD identifies the CIX P1 codec and validates its ACPI descriptions.
+It leaves the codec disabled. There is no video device or M2M interface.
+The attachment and helpers do not load firmware or encode frames.
 The target is Orange Pi 6 Plus with CIX CD8180 and stock ACPI firmware.
 The OS owns firmware, DMA, interrupts, power/reset and the application API.
 Ports owns FFmpeg and GStreamer consumers.
@@ -19,10 +21,43 @@ The independent BSD source in `sys/dev/ic` implements bounded wire operations:
 | `cixvpu_ring.[ch]` | Pack and unpack bounded message rings, including the selected `-sum` firmware's asymmetric checksum framing. | Own coherent snapshots, locking, DMA synchronization, barriers and index publication. |
 | `cixvpu_mmu.[ch]` | Encode 40-bit bus addresses and checked two-level page entries. Reject invalid permissions, occupied entries and stale removals. | Allocate/map DMA memory, stop the device and manage caches/TLBs. Removal is not safe during active DMA. |
 
-These files are not selected by a kernel configuration or device attachment.
+The three wire helpers are not selected by a kernel configuration or attachment.
 `sys/videoio.h` adds the standard `V4L2_PIX_FMT_HEVC` fourcc without changing
 structure layout or ioctl numbers. The existing `video(4)` driver remains
 capture-only; the presence of M2M declarations does not implement two queues.
+
+## Diagnostic ACPI attachment
+
+`cixvpu_acpi` matches `CIXH3010`. `EMBER64` selects this diagnostic attachment.
+It parses `_CRS` through the standard ACPI resource parser and evaluates `_CCA`.
+The independent BSD validator in `sys/dev/ic/cixvpu_resources.[ch]` requires:
+
+- Exactly two fixed memory resources and one interrupt, without I/O, variable
+  memory ranges or DMA-channel resources.
+- Each memory span has at least 64 KiB and four-byte aligned addresses and length.
+- Each inclusive end fits in 64 bits. Bus spans and translated CPU spans do not overlap.
+- CPU addresses do not wrap below their bus addresses during unsigned translation.
+- The interrupt is a standard GIC SPI, GSI 32 through 1019, with level triggering.
+- `_CCA` exists and is an integer with value zero or one. No coherence default is assumed.
+
+The validator does not use a fixed physical-address allowlist.
+It accepts relocated and adjacent disjoint spans, including a span ending at `UINT64_MAX`.
+The attachment prints validated addresses, interrupt and coherence information.
+Malformed or missing descriptions produce an error. Parsed lists are always released.
+The standard parser supplies triggering but does not preserve interrupt polarity
+or sharing in `struct acpi_irq`; this stage does not claim to validate those fields.
+It does not accept extended GIC SPIs or variable placement requirements.
+
+Firmware tables from one Orange Pi 6 Plus, CIX CD8180, A4 PHECDA-Rev A,
+`BiosV1.5-W20260706-e321056a`, describe two 64 KiB `Memory32Fixed` windows,
+GSI 358 and `_CCA = 0`. This is firmware evidence, not codec execution.
+The driver reads the running firmware's descriptions rather than copying those addresses.
+
+Every attachment reports that CIX power, clock and reset providers are not implemented.
+It does not map, read or write MMIO, allocate DMA, load firmware, establish an interrupt
+handler, register a video device, or call `_PS0` or ACPI PowerResource methods.
+Parsing descriptions does not establish ownership of power, clocks or reset.
+The existing firmware, ring and page-entry helpers remain unused by the attachment.
 
 The selected `-sum` protocol adds a cumulative checksum word between the TX
 header and payload. That word is outside the header's payload size.
@@ -64,12 +99,19 @@ From the repository root, use GCC 16.2.0 on a supported build host:
 CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-fw-test.sh
 CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-ring-contract.sh
 CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-mmu-contract.sh
+CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-resources-contract.sh
 ```
 
 The firmware script prints its build directory and retains its CLI and fixtures.
 Run `cixvpu-fw-check /absolute/path/to/hevcenc.fwb` to inspect an independently
 obtained image. Missing files, truncated input and directories must fail.
 No check downloads or redistributes firmware.
+
+The resource contract removes its temporary directory on exit.
+Set `CIXVPU_RESOURCES_OUTPUT` to an explicit path to retain the executable.
+Set `CIXVPU_COMPILE_ONLY=1` when cross-compiling without an execution runner.
+On macOS, pass `-isysroot` with an installed macOS SDK to the host GCC16 compiler.
+For an AArch64 target executable, pass the EmberBSD sysroot through `CFLAGS`.
 
 For cross-builds, compile each test with its actual `sys/dev/ic/cixvpu_*.c`
 implementation. Select the common GCC16 cross compiler and an explicit EmberBSD
@@ -102,6 +144,14 @@ Linux Memcheck runs with origins, all leak kinds and a failure exit status.
 The core tests and firmware CLI have zero reported memory errors or leaks.
 These checks are not a full kernel build, kernel memory analysis or DMA test.
 
+The resource validator passes 44 assertions with GCC 16.2.0 on macOS/AArch64,
+including GCC path analysis and a separate ASan/UBSan run.
+Its real source and contract cross-compile for EmberBSD/AArch64 with GCC16.
+Cppcheck 2.22.0 uses those actual target arguments and headers.
+It reports no findings after three exact unused-inline standard-header suppressions:
+`__zeroll`, `__zeroull` and `__sputc`. No project diagnostics are suppressed.
+These host results do not establish physical attachment or codec support.
+
 [Ports diagnostics](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/cix-vpu)
 cross-build FFmpeg 9.0.2 M2M modules and the actual GStreamer 1.28.8 V4L2 plugin.
 All 58 selected AArch64 ABI values match between native and bundled headers.
@@ -125,13 +175,14 @@ Current SCMI support has no CIX clock/reset provider.
 The VPU has its own MMU. Use bus_dma for any platform translation; do not
 assume IOMMU bypass or infer a mandatory external SMMU from another device.
 
-Implement ACPI attachment, resource lifetime, power/clocks/reset, firmware page
-loading, MMIO, interrupt handling, bounded waits and DMA synchronization.
+Replace the diagnostic attachment with an operational driver only after power,
+clock and reset ownership is established. Implement firmware page loading,
+MMIO, interrupt handling, bounded waits and DMA synchronization.
 Add native M2M input/output queues, controls, buffers, poll and stream lifetime.
 Reset and close during a frame must stop DMA before releasing resources.
 Late completion must not reach a closed or reused session.
 Then connect the real device to FFmpeg/GStreamer and qualify the complete packages.
-No physical CIX endpoint is available in the current cloud environment.
+Physical attachment, DMA and codec execution require separate board acceptance.
 
 ## Physical acceptance and recovery
 

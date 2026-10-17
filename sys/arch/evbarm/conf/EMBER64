@@ -42,6 +42,9 @@ aicwf*		at sdmmc?
 #	bus mastering and radio stay off until firmware bootstrap is accepted.
 rtwce*		at pci?
 
+# CIX P1 codec resources only; power, MMIO, DMA and video stay disabled.
+cixvpu*		at acpi?
+
 #	The power management chip of the Orange Pi Zero 4: its power key
 #	(../patches/sun60i-a733.diff).
 axp8191pm*	at iic?

@@ -232,8 +232,10 @@ on every board in the hardware catalog.
 - **CIX P1 codec foundations:** original [firmware, message-ring and MMU helpers](ember/boot/cix-vpu.md)
   pass GCC16 source contracts and AArch64 VM checks. Ports cross-builds the
   actual FFmpeg M2M backend and GStreamer V4L2 plugin; missing-device and
-  semaphore cleanup checks pass in EmberBSD. Native attachment, platform
-  power/reset control and M2M queues are unfinished. Hardware H.265 is unverified.
+  semaphore cleanup checks pass in EmberBSD. A passive ACPI attachment validates
+  the codec's resource description and reports the missing platform providers.
+  It does not activate registers, DMA or interrupts. Platform power/reset control
+  and M2M queues are unfinished. Hardware H.265 is unverified.
 - **Four H.265 views in Qt:** the [Qt Multimedia CPU profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/qt-four-streams)
   cross-builds Qt 6.12 with GCC16 and the common FFmpeg9 provider for amd64.
   The [four-player example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/media/qt-four-streams)

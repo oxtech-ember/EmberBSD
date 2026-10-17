@@ -1,10 +1,23 @@
 name: CIX VPU source contracts
 
 'on':
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/cix-vpu.yml'
+      - 'sys/dev/ic/cixvpu_*'
+      - 'sys/dev/acpi/cixvpu_acpi.c'
+      - 'sys/dev/acpi/files.acpi'
+      - 'sys/arch/evbarm/conf/EMBER64'
+      - 'ember/tools/cixvpu-*'
+      - 'ember/boot/cix-vpu.md'
   pull_request:
     paths:
       - '.github/workflows/cix-vpu.yml'
       - 'sys/dev/ic/cixvpu_*'
+      - 'sys/dev/acpi/cixvpu_acpi.c'
+      - 'sys/dev/acpi/files.acpi'
+      - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/sys/videoio.h'
       - 'ember/tools/cixvpu-*'
       - 'ember/boot/cix-vpu.md'
@@ -57,6 +70,7 @@ jobs:
           sh ember/tools/cixvpu-fw-test.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-ring-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-mmu-contract.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/cixvpu-resources-contract.sh "$GITHUB_WORKSPACE"
       - name: Analyze the portable source contract
         run: |
           # Analyze the actual native userland build. Do not invent _KERNEL
@@ -85,7 +99,7 @@ jobs:
           flags = compiler_flags +
             includes.flat_map { |path| ['-I', path] }
           sources = Dir['sys/dev/ic/cixvpu_*.c', 'ember/tools/cixvpu-*.c'].sort
-          abort 'Expected all seven source units' unless sources.length == 7
+          abort 'Expected all nine portable source units' unless sources.length == 9
           database = sources.map do |source|
             file = File.join(root, source)
             arguments = ['gcc'] + flags + ['-c', file, '-o',

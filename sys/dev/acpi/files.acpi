@@ -344,6 +344,12 @@ file	dev/acpi/dwcmmc_acpi.c		dwcmmc_acpi
 attach	dwcwdt at acpinodebus with dwcwdt_acpi
 file	dev/acpi/dwcwdt_acpi.c		dwcwdt_acpi
 
+# CIX P1 video codec: resource diagnostics only, no hardware access.
+device	cixvpu
+attach	cixvpu at acpinodebus with cixvpu_acpi
+file	dev/acpi/cixvpu_acpi.c		cixvpu_acpi
+file	dev/ic/cixvpu_resources.c		cixvpu
+
 # Qualcomm GPIO
 device	qcomgpio: gpiobus
 attach	qcomgpio at acpinodebus
