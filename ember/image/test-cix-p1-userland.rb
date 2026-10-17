@@ -30,6 +30,8 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   File.write(compiler + '/bin/aarch64--netbsd-readelf', <<~SH)
     #!/bin/sh
     test -s "$2" || exit 1
+    if [ -n "$TEST_LATE_PROFILE_FILE" ]; then printf '\n# late fixture change\n' >> "$TEST_LATE_PROFILE_FILE"; fi
+    if [ -n "$TEST_LATE_DATA_FILE" ]; then printf 'late change\n' >> "$TEST_LATE_DATA_FILE"; fi
     test "$TEST_ELF_KIND" != invalid || exit 1
     echo 'Class: ELF64'
     if [ "$TEST_ELF_KIND" = big-endian ]; then
@@ -41,7 +43,7 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
     echo 'Type: EXEC (Executable file)'
     if [ "$TEST_ELF_KIND" = dynamic ] && [ "$1" = -l ]; then echo INTERP; fi
   SH
-  File.write(tools + '/bin/nbmake', "#!/bin/sh\nexit 0\n")
+  %w[nbmake nbmkesdb nbmkcsmapper].each { |tool| File.write(tools + '/bin/' + tool, "#!/bin/sh\nexit 0\n") }
   File.write(src + '/build.sh', <<~'SH')
     #!/bin/sh
     while [ "$#" -gt 0 ]; do
@@ -59,6 +61,39 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
       test -z "$TEST_FAIL_MKNOD_STAGE" || exit 17;; esac
     case "$*" in *"$TEST_FAIL_COMPONENT"*)
       test -z "$TEST_FAIL_COMPONENT" || exit 17;; esac
+    case "$*" in *'/share/i18n/esdb '*)
+      selected=0
+      for arg do [ "$arg" != 'SUBDIR=ISO646 UTF' ] || selected=1; done
+      [ "$selected" = 1 ] || exit 71;;
+    esac
+    case "$*" in *'/share/i18n/'*' install')
+      files=
+      case "$*" in
+      *'/iconv '*) files='iconv/iconv.dir';;
+      *'/esdb '*) files='esdb/esdb.dir esdb/esdb.alias esdb/esdb.dir.db esdb/esdb.alias.db esdb/ISO646/ISO646-US.esdb esdb/UTF/UTF-8.esdb';;
+      *'/csmapper '*) files='csmapper/mapper.dir csmapper/mapper.dir.db csmapper/charset.pivot csmapper/charset.pivot.pvdb csmapper/ISO646/ISO646-US%UCS.646';;
+      esac
+      for file in $files; do
+        test "$file" != "$TEST_OMIT_DATA" || continue
+        rel=usr/share/i18n/$file
+        mkdir -p "$dest/$(dirname "$rel")"
+        dir=$(dirname "$rel")
+        while [ "$dir" != . ]; do
+          printf './%s type=dir uname=root gname=wheel mode=0755\n' "$dir" >> "$dest/METALOG"
+          dir=$(dirname "$dir")
+        done
+        printf 'synthetic native recipe output\n' > "$dest/$rel"
+        printf './%s type=file uname=root gname=wheel mode=0444 size=%s\n' \
+          "$rel" "$(wc -c < "$dest/$rel" | tr -d ' ')" >> "$dest/METALOG"
+      done;;
+    esac
+    case "$*" in *'/share/i18n/csmapper '*' install')
+      case "$TEST_BAD_DATA" in
+      metadata) printf './usr/share/i18n/iconv/iconv.dir type=file uname=root gname=wheel mode=0444 content=/etc/passwd\n' >> "$dest/METALOG";;
+      path) printf './usr/share/i18n/../escape type=file uname=root gname=wheel mode=0444\n' >> "$dest/METALOG";;
+      unsupported) printf 'unsupported\n' > "$dest/usr/share/i18n/esdb/unreviewed.esdb";;
+      esac;;
+    esac
     case "$*" in
       *do-distrib-dirs*) mkdir -p "$dest/bin" "$dest/sbin" "$dest/usr/bin" \
         "$dest/usr/sbin" "$dest/usr/libexec";;
@@ -91,13 +126,25 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   end
   run = lambda do |out, env = {}|
     Open3.capture3({'TEST_FAIL_COMPONENT' => '', 'TEST_OMIT_BINARY' => '',
-      'TEST_ELF_KIND' => '', 'TEST_FAIL_MKNOD_STAGE' => ''}.merge(env),
+      'TEST_ELF_KIND' => '', 'TEST_FAIL_MKNOD_STAGE' => '', 'TEST_OMIT_DATA' => '',
+      'TEST_BAD_DATA' => '', 'TEST_LATE_PROFILE_FILE' => '', 'TEST_LATE_DATA_FILE' => ''}.merge(env),
       'sh', builder, src, out, tools, compiler)
   end
   out = work + '/accepted'
   stdout, stderr, status = run.call(out)
   abort "FAIL: valid profile: #{stdout}#{stderr}" unless status.success?
   events = File.readlines(out + '/events')
+  { 'iconv' => '', 'esdb' => 'SUBDIR=ISO646 UTF ISO646_PART=US UTF_PART=8 ',
+    'csmapper' => 'SUBDIR=ISO646 PART_ISO646=US ' }.each do |part, selection|
+    selected = events.select { |line| line.include?("/share/i18n/#{part} ") }
+    abort "FAIL: native DATA component/selection #{part}" unless selected.size == 3 &&
+      selected[0].end_with?(selection + "obj\n") && selected[1].end_with?(selection + "dependall\n") &&
+      selected[2].end_with?(selection + "install\n")
+    checks += 1
+  end
+  inventory = out + '/I18N-INVENTORY.json'
+  abort 'FAIL: separate DATA inventory absent' unless File.file?(inventory)
+  checks += 1
   %w[bin/stty usr.sbin/usbdevs sbin/mknod].each do |part|
     selected = events.select { |line| line.include?("/#{part} ") }
     abort "FAIL: incomplete diagnostic component #{part}" unless
@@ -128,6 +175,13 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
     flags.include?('-nostdinc') && flags.include?(out + '/dest/usr/include')
   checks += 1
   receipt = File.read(out + '/BUILD-INPUTS.txt')
+  abort 'FAIL: DATA inventory not pinned in accepted receipt' unless
+    receipt.include?('i18n-inventory-sha256=' + Digest::SHA256.file(inventory).hexdigest)
+  checks += 1
+  %w[nbmkesdb nbmkcsmapper].each do |tool|
+    abort "FAIL: no native generator hash #{tool}" unless receipt.include?(Digest::SHA256.file(tools + '/bin/' + tool).hexdigest)
+    checks += 1
+  end
   abort 'FAIL: no compiler runtime hash' unless receipt.include?(Digest::SHA256.file(compiler + '/libgcc.a').hexdigest)
   checks += 1
   abort 'FAIL: no compiler unwinder hash' unless receipt.include?(Digest::SHA256.file(compiler + '/libgcc_eh.a').hexdigest)
@@ -193,6 +247,36 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
     abort "FAIL: accepted #{kind} executable" if status.success? || File.exist?(work + '/' + kind + '/BUILD-INPUTS.txt')
     checks += 1
   end
+  %w[iconv esdb csmapper].each do |part|
+    output = work + '/failed-data-' + part
+    _, _, status = run.call(output, 'TEST_FAIL_COMPONENT' => "/share/i18n/#{part} ")
+    abort "FAIL: accepted failed native DATA #{part}" if status.success? || File.exist?(output + '/BUILD-INPUTS.txt')
+    checks += 1
+  end
+  %w[iconv/iconv.dir esdb/esdb.dir esdb/esdb.alias esdb/ISO646/ISO646-US.esdb esdb/UTF/UTF-8.esdb csmapper/mapper.dir csmapper/ISO646/ISO646-US%UCS.646].each_with_index do |path, i|
+    output = work + '/missing-data-' + i.to_s
+    _, _, status = run.call(output, 'TEST_OMIT_DATA' => path)
+    abort "FAIL: accepted missing DATA #{path}" if status.success? || File.exist?(output + '/BUILD-INPUTS.txt')
+    checks += 1
+  end
+  %w[metadata path unsupported].each do |kind|
+    output = work + '/unsafe-data-' + kind
+    _, _, status = run.call(output, 'TEST_BAD_DATA' => kind)
+    abort "FAIL: accepted unsafe native DATA #{kind}" if status.success? || File.exist?(output + '/BUILD-INPUTS.txt')
+    checks += 1
+  end
+  output = work + '/late-data'
+  _, _, status = run.call(output, 'TEST_LATE_DATA_FILE' => output + '/dest/usr/share/i18n/iconv/iconv.dir')
+  abort 'FAIL: accepted DATA mutated after inventory capture' if status.success? || File.exist?(output + '/BUILD-INPUTS.txt')
+  checks += 1
+  profile = work + '/profile'
+  FileUtils.mkdir_p(profile)
+  %w[cix-p1-build-userland.sh cix-p1-i18n.rb].each { |p| FileUtils.cp(File.join(__dir__, p), profile + '/' + p) }
+  profile_output = work + '/late-profile'
+  _, _, status = Open3.capture3({ 'TEST_LATE_PROFILE_FILE' => profile + '/cix-p1-i18n.rb' },
+    'sh', profile + '/cix-p1-build-userland.sh', src, profile_output, tools, compiler)
+  abort 'FAIL: accepted helper changed during build' if status.success? || File.exist?(profile_output + '/BUILD-INPUTS.txt')
+  checks += 1
   File.write(src + '/untracked.h', 'unrecorded source input')
   _, _, status = run.call(work + '/untracked-source')
   abort 'FAIL: accepted untracked source input' if status.success? || File.exist?(work + '/untracked-source')

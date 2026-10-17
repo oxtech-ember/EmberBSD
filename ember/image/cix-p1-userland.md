@@ -39,7 +39,33 @@ The wrapper retains the noninteractive session leader while its interactive
 child owns normal job control. Native leader teardown closes the terminal on
 TERM. An interactive TERM trap can be deferred until the next input command.
 
+The host also needs Ruby and the native `nbmkesdb` and `nbmkcsmapper` tools.
+The profile installs native iconv indices, ISO646-US and UTF-8 ESDB data, and
+ISO646-US mapper data using their normal build recipes. It preserves canonical
+indices without filtering their entries. The selected static libc modules are
+a separate input: installed DATA alone does not add a converter or establish
+that every encoding named by a canonical index is available.
+
+`I18N-INVENTORY.json` records the source revision, exact installed DATA file
+hashes, and explicit native METALOG entries for those files and their parent
+directories. Seven runtime paths are required: `iconv/iconv.dir`, `esdb/esdb.dir`,
+`esdb/esdb.alias`, `esdb/ISO646/ISO646-US.esdb`, `esdb/UTF/UTF-8.esdb`,
+`csmapper/mapper.dir` and `csmapper/ISO646/ISO646-US%UCS.646`, all below
+`usr/share/i18n`. Native index databases and charset pivot files may accompany
+these paths; unreviewed DATA files are rejected. The receipt pins the inventory,
+profile, inventory helper and native generator hashes.
+
+The receiving root stager checks this separate inventory and its source pin,
+rejects missing, changed, symlinked, unrecorded or malformed DATA, and appends
+native ownership and modes to its image specification. It checks staged DATA
+again after the image-tool boundary and copies the inventory alongside the
+userland receipt. A failed final check publishes no accepted image receipt.
+Ruby handles inventory validation only; native tools generate conversion data.
+These host contracts use synthetic DATA and build/image service doubles. They
+do not establish a target relink, conversion result or physical acceptance.
+
 Each component has separate build and install logs under `logs/`.
+
 Failures stop the build. `BUILD-INPUTS.pending` records an incomplete run.
 Only a completed run publishes `BUILD-INPUTS.txt`. That receipt includes the
 source revision, compiler, compiler runtime, profile and generated wrapper

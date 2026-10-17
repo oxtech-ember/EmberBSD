@@ -61,6 +61,7 @@ awk 'NR == FNR {wanted[$0] = 1; next}
     }; exit missing}' "$checkdir/relative-files" "$cohort/dest/METALOG" \
     > "$checkdir/runtime-metadata-raw"
 sort "$checkdir/runtime-metadata-raw" > "$checkdir/runtime.spec"
+ruby "$here/cix-p1-i18n.rb" verify "$cohort" "$revision" "$cohort/BUILD-INPUTS.txt" > "$checkdir/i18n.spec"
 expected=36b483e37640359a6c686be4661b5f2d94928f93e126a2de09e67c5e04c01b26
 [ "$(shasum -a 256 "$firmware" | awk '{print $1}')" = "$expected" ]
 for tool in nbmakefs nbmtree nbpwd_mkdb; do [ -x "$tools/bin/$tool" ]; done
@@ -79,6 +80,7 @@ for dir in bin sbin usr/bin usr/sbin usr/libexec; do
 	mkdir -p "$root/$dir"
 	cp -pR "$cohort/dest/$dir/." "$root/$dir/"
 done
+ruby "$here/cix-p1-i18n.rb" copy "$cohort" "$revision" "$cohort/BUILD-INPUTS.txt" "$root"
 mkdir -p "$root/etc" "$root/dev" "$root/root" "$root/tmp" "$root/mnt" \
     "$root/var/run" "$root/var/db/dhcpcd" "$root/var/log" \
     "$root/var/spool/lock" "$root/libexec/dhcpcd-hooks" \
@@ -125,16 +127,21 @@ sed -e '/^\. type=dir/d' -e 's,^\.,./dev,' "$out/devices-raw.spec" > "$out/devic
 sed -E 's/(\/set[[:space:]].*)/\1 uid=0 gid=0/' "$out/files.spec" > "$out/root.spec"
 cat "$out/devices.spec" >> "$out/root.spec"
 cat "$checkdir/runtime.spec" >> "$out/root.spec"
+cat "$checkdir/i18n.spec" >> "$out/root.spec"
 "$tools/bin/nbmakefs" -t ffs -B little -s 2g \
     -o version=2,bsize=16384,fsize=2048 -F "$out/root.spec" -N "$src/etc" \
     "$out/root.fs" "$root"
 cp "$cohort/BUILD-INPUTS.txt" "$out/USERLAND-INPUTS.txt"
+cp "$cohort/I18N-INVENTORY.json" "$out/USERLAND-I18N-INVENTORY.json"
 git -C "$src" diff --quiet
 git -C "$src" diff --cached --quiet
 [ "$(git -C "$src" rev-parse HEAD)" = "$revision" ]
 git -C "$profile_src" diff --quiet
 git -C "$profile_src" diff --cached --quiet
 [ "$(git -C "$profile_src" rev-parse HEAD)" = "$profile_revision" ]
+ruby "$here/cix-p1-i18n.rb" verify "$cohort" "$revision" "$cohort/BUILD-INPUTS.txt" > "$checkdir/i18n-final.spec"
+cmp "$checkdir/i18n.spec" "$checkdir/i18n-final.spec"
+ruby "$here/cix-p1-i18n.rb" check-copy "$cohort" "$revision" "$cohort/BUILD-INPUTS.txt" "$root"
 printf 'userland=%s\nprofile=%s\n' "$revision" "$profile_revision" > "$out/ROOT-INPUTS.txt"
 shasum -a 256 "$out/root.fs" > "$out/ROOT-SHA256.txt"
 echo 'Created a new 2 GiB FFS image. Provision the private Wi-Fi profile on the target.'

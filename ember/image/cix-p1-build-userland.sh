@@ -9,6 +9,7 @@ export LC_ALL=C
     exit 2
 }
 src=$1 out=$2 tools=$3 compiler=$4
+here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 for path in "$src" "$out" "$tools" "$compiler"; do
     case "$path" in /*) ;; *) echo 'Absolute paths required.' >&2; exit 2;; esac
     case "$path" in *[!A-Za-z0-9_./-]*) echo 'Unsafe build path.' >&2; exit 2;; esac
@@ -16,6 +17,8 @@ done
 [ -d "$src" ] && [ -f "$src/build.sh" ] || exit 2
 [ ! -e "$out" ] && [ ! -L "$out" ] || exit 2
 [ -x "$tools/bin/nbmake" ]
+for tool in nbmkesdb nbmkcsmapper; do [ -x "$tools/bin/$tool" ]; done
+command -v ruby >/dev/null
 cc=$compiler/bin/aarch64--netbsd-gcc
 readelf=$compiler/bin/aarch64--netbsd-readelf
 [ -x "$cc" ] && [ -x "$readelf" ] || exit 2
@@ -51,9 +54,11 @@ mkdir -p "$out/logs" "$out/dest"
 printf '%s\n' "source=$revision" "gcc=$version" "target=$machine" \
     "profile=reduced-static-c-development" > "$out/BUILD-INPUTS.pending"
 printf 'target-cppflags=%s\n' "$CPPFLAGS" >> "$out/BUILD-INPUTS.pending"
-for input in "$src/build.sh" "$0" "$cc" "$runtime"; do
+for input in "$src/build.sh" "$0" "$here/cix-p1-i18n.rb" "$cc" "$runtime" \
+    "$tools/bin/nbmkesdb" "$tools/bin/nbmkcsmapper"; do
     shasum -a 256 "$input" >> "$out/BUILD-INPUTS.pending"
 done
+shasum -a 256 "$0" "$here/cix-p1-i18n.rb" > "$out/PROFILE-SHA256.txt"
 if [ -n "$unwinder" ]; then
     shasum -a 256 "$unwinder" >> "$out/BUILD-INPUTS.pending"
 else
@@ -113,6 +118,13 @@ for part in bin/sh bin/cat bin/ls bin/cp bin/mv bin/rm bin/mkdir bin/chmod \
     component "$part"
 done
 component external/bsd/dhcpcd/sbin/dhcpcd SMALLPROG=1
+component share/i18n/iconv
+component share/i18n/esdb 'SUBDIR=ISO646 UTF' ISO646_PART=US UTF_PART=8
+component share/i18n/csmapper SUBDIR=ISO646 PART_ISO646=US
+printf '%s\n' 'i18n-recipes=iconv;esdb:ISO646-US,UTF-8;csmapper:ISO646-US' >> "$out/BUILD-INPUTS.pending"
+ruby "$here/cix-p1-i18n.rb" record "$out" "$revision"
+printf 'i18n-inventory-sha256=%s\n' "$(shasum -a 256 "$out/I18N-INVENTORY.json" | awk '{print $1}')" \
+    >> "$out/BUILD-INPUTS.pending"
 run makedev "$wrapper" -C "$src/etc" MAKEDEV
 for file in bin/sh bin/stty usr/sbin/usbdevs sbin/init sbin/mknod sbin/ifconfig sbin/dhcpcd sbin/fsck \
     sbin/fsck_ffs sbin/mount_msdos sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl \
@@ -139,6 +151,8 @@ while IFS= read -r file; do
     shasum -a 256 "$file" >> "$out/BINARIES-SHA256.txt"
 done < "$out/programs.list"
 [ -s "$out/BINARIES-SHA256.txt" ]
+shasum -a 256 -c "$out/PROFILE-SHA256.txt" >/dev/null
+ruby "$here/cix-p1-i18n.rb" verify "$out" "$revision" "$out/BUILD-INPUTS.pending" >/dev/null
 git -C "$src" diff --quiet
 git -C "$src" diff --cached --quiet
 [ -z "$(git -C "$src" ls-files --others --exclude-standard)" ] || exit 1

@@ -15,7 +15,7 @@ require 'tmpdir'
 
 ROOT_SCRIPT = File.expand_path(ENV.fetch('ROOT_SCRIPT', File.join(__dir__, 'cix-p1-root.sh')))
 abort 'Root stager is missing' unless File.file?(ROOT_SCRIPT)
-PROFILE_FILES = %w[cix-p1-root.sh cix-p1-root.subr cix-p1-network.subr cix-p1-power.subr cix-p1-power-button cix-p1-rc cix-p1-rc.shutdown cix-p1-console].freeze
+PROFILE_FILES = %w[cix-p1-root.sh cix-p1-root.subr cix-p1-network.subr cix-p1-power.subr cix-p1-power-button cix-p1-rc cix-p1-rc.shutdown cix-p1-console cix-p1-i18n.rb].freeze
 # Capture one immutable candidate, without editing another agent's checkout.
 PROFILE_DATA = PROFILE_FILES.to_h do |file|
   path = file == 'cix-p1-root.sh' ? ROOT_SCRIPT : File.join(File.dirname(ROOT_SCRIPT), file)
@@ -23,6 +23,10 @@ PROFILE_DATA = PROFILE_FILES.to_h do |file|
 end.freeze
 REQUIRED = %w[sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant usr/sbin/wpa_cli sbin/dhcpcd bin/sh bin/stty usr/sbin/usbdevs usr/bin/stat usr/libexec/getty usr/sbin/powerd].freeze
 RUNTIME = (REQUIRED + %w[usr/bin/wall usr/bin/netstat]).freeze
+I18N_REQUIRED = %w[iconv/iconv.dir esdb/esdb.dir esdb/esdb.alias esdb/ISO646/ISO646-US.esdb
+  esdb/UTF/UTF-8.esdb csmapper/mapper.dir csmapper/ISO646/ISO646-US%UCS.646].freeze
+I18N_DATA = (I18N_REQUIRED + %w[esdb/esdb.dir.db esdb/esdb.alias.db csmapper/mapper.dir.db
+  csmapper/charset.pivot csmapper/charset.pivot.pvdb]).map { |p| 'usr/share/i18n/' + p }.sort.freeze
 DIAGNOSTIC_TARGETS = (%w[usb] + (0..19).map { |i| "usb#{i}" } + %w[plcom1 plcom3]).freeze
 FW_HASH = '36b483e37640359a6c686be4661b5f2d94928f93e126a2de09e67c5e04c01b26'
 HOST_PATH = [File.dirname(RbConfig.ruby), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].uniq.join(':')
@@ -80,6 +84,28 @@ def manifest(f, paths = RUNTIME)
   File.binwrite(File.join(f[:cohort], 'BINARIES-SHA256.txt'), rows.join)
 end
 
+def data_manifest(f)
+  parents = I18N_DATA.flat_map { |p| parts=p.split('/'); (1...parts.size).map { |n| parts.take(n).join('/') } }.uniq
+  entries = (parents + I18N_DATA).sort.map do |p|
+    path = File.join(f[:cohort], 'dest', p)
+    row = { 'path' => p, 'metadata' => File.readlines(f[:metalog]).select { |s| s.start_with?("./#{p} ") }.last.strip }
+    row['sha256'] = Digest::SHA256.file(path).hexdigest if File.file?(path)
+    row
+  end
+  file = f[:cohort] + '/I18N-INVENTORY.json'
+  write(file, JSON.pretty_generate('format' => 1, 'source' => f[:revision], 'entries' => entries) + "\n")
+  receipt = File.read(f[:cohort] + '/BUILD-INPUTS.txt').lines.reject { |s| s.start_with?('i18n-inventory-sha256=') }.join
+  write(f[:cohort] + '/BUILD-INPUTS.txt', receipt + 'i18n-inventory-sha256=' + Digest::SHA256.file(file).hexdigest + "\n")
+end
+
+def edit_data_receipt(f)
+  path = f[:cohort] + '/I18N-INVENTORY.json'
+  data = JSON.parse(File.read(path)); yield data
+  File.write(path, JSON.pretty_generate(data) + "\n")
+  receipt = File.readlines(f[:cohort] + '/BUILD-INPUTS.txt').reject { |s| s.start_with?('i18n-inventory-sha256=') }.join
+  File.write(f[:cohort] + '/BUILD-INPUTS.txt', receipt + 'i18n-inventory-sha256=' + Digest::SHA256.file(path).hexdigest + "\n")
+end
+
 def fixture(base, name)
   dir = File.join(base, name)
   FileUtils.mkdir_p(dir)
@@ -112,6 +138,14 @@ def fixture(base, name)
   write(f[:metalog], metadata)
   write(f[:cohort] + '/BUILD-INPUTS.txt', "source=#{f[:revision]}\ngcc=16.2.0\ntarget=aarch64--netbsd\nprofile=reduced-static-c-development\n")
   manifest(f)
+  I18N_DATA.each { |p| write(f[:cohort] + '/dest/' + p, 'synthetic native DATA ' + p) }
+  File.open(f[:metalog], 'a') do |s|
+    I18N_DATA.flat_map { |p| parts=p.split('/'); (1...parts.size).map { |n| parts.take(n).join('/') } }.uniq.each do |p|
+      s.puts("./#{p} type=dir uname=root gname=wheel mode=0755")
+    end
+    I18N_DATA.each { |p| s.puts("./#{p} type=file uname=root gname=wheel mode=0444 size=#{File.size(f[:cohort] + '/dest/' + p)} time=1.0 sha256=#{Digest::SHA256.file(f[:cohort] + '/dest/' + p).hexdigest}") }
+  end
+  data_manifest(f)
   spec_only = <<~SH
     #!/bin/sh
     case "$*" in
@@ -162,6 +196,13 @@ def fixture(base, name)
       if ENV['MUTATE_TRACKED_ASSET']
         File.open(ENV.fetch('MUTATE_TRACKED_ASSET'), 'a') { |f| f.puts('# changed during image assembly') }
       end
+      if ENV['EXTRA_STAGED_DATA']
+        File.write(out + '/root/usr/share/i18n/unrecorded', 'unexpected DATA')
+      end
+      if ENV['MUTATE_STAGED_DATA']
+        path = out + '/root/' + ENV.fetch('MUTATE_STAGED_DATA')
+        File.chmod(0o644, path); File.open(path, 'a') { |f| f.write('changed staged data') }; File.chmod(0o444, path)
+      end
     else
       abort 'forbidden media action: ' + name
     end
@@ -208,6 +249,47 @@ Dir.mktmpdir('ember-cix-root-image-') do |base|
   f = fixture(base, 'missing-binary-receipt')
   File.unlink(f[:cohort] + '/BINARIES-SHA256.txt')
   reject(f, 'missing binary receipt')
+  f = fixture(base, 'missing-data-receipt')
+  File.unlink(f[:cohort] + '/I18N-INVENTORY.json')
+  reject(f, 'missing DATA receipt')
+  I18N_REQUIRED.each_with_index do |p, i|
+    f = fixture(base, 'missing-data-' + i.to_s)
+    File.unlink(f[:cohort] + '/dest/usr/share/i18n/' + p)
+    reject(f, 'missing required DATA ' + p)
+  end
+  { 'changed-data' => ->(f) { File.write(f[:cohort] + '/dest/' + I18N_DATA.first, 'tampered') },
+    'unrecorded-data' => ->(f) { write(f[:cohort] + '/dest/usr/share/i18n/esdb/extra', 'unrecorded') },
+    'data-symlink' => ->(f) { path=f[:cohort] + '/dest/' + I18N_DATA.first; File.unlink(path); File.symlink('/etc/passwd', path) },
+    'data-dir-symlink' => ->(f) { File.symlink('/etc', f[:cohort] + '/dest/usr/share/i18n/alias') },
+    'changed-data-metadata' => ->(f) { File.open(f[:metalog], 'a') { |s| s.puts("./#{I18N_DATA.first} type=file uname=root gname=wheel mode=0777") } }
+  }.each do |name, change|
+    f = fixture(base, name); change.call(f); reject(f, name)
+  end
+  {
+    'unrecorded-allowed-data' => ->(data) { data['entries'].reject! { |row| row['path'].end_with?('/esdb.dir.db') } },
+    'duplicate-data-entry' => ->(data) { data['entries'] << data['entries'].last },
+    'malformed-data-path' => ->(data) { data['entries'].first['path'] = '../escape' },
+    'malicious-data-metadata' => ->(data) { data['entries'].last['metadata'] += ' content=/etc/passwd' },
+    'unsupported-data-schema' => ->(data) { data['extra'] = 'unreviewed' }
+  }.each do |name, change|
+    f = fixture(base, name); edit_data_receipt(f, &change); reject(f, name)
+  end
+  f = fixture(base, 'duplicate-json-key')
+  path = f[:cohort] + '/I18N-INVENTORY.json'
+  File.write(path, File.read(path).sub('"format": 1', '"format": 1, "format": 1'))
+  receipt = File.readlines(f[:cohort] + '/BUILD-INPUTS.txt').reject { |s| s.start_with?('i18n-inventory-sha256=') }.join
+  File.write(f[:cohort] + '/BUILD-INPUTS.txt', receipt + 'i18n-inventory-sha256=' + Digest::SHA256.file(path).hexdigest + "\n")
+  reject(f, 'duplicate JSON key with correctly re-pinned inventory')
+  f = fixture(base, 'malicious-native-data-path')
+  File.open(f[:metalog], 'a') { |s| s.puts('./usr/share/i18n/../escape type=file uname=root gname=wheel mode=0444') }
+  reject(f, 'malicious native DATA path')
+  f = fixture(base, 'malicious-native-data-field')
+  File.open(f[:metalog], 'a') { |s| s.puts("./#{I18N_DATA.first} type=file uname=root gname=wheel mode=0444 content=/etc/passwd") }
+  reject(f, 'malicious native DATA field')
+  f = fixture(base, 'missing-installed-optional-data')
+  File.unlink(f[:cohort] + '/dest/usr/share/i18n/esdb/esdb.dir.db')
+  edit_data_receipt(f) { |data| data['entries'].reject! { |row| row['path'] == 'usr/share/i18n/esdb/esdb.dir.db' } }
+  reject(f, 'native METALOG installed optional DATA is missing')
   f = fixture(base, 'mismatched-source')
   File.write(f[:cohort] + '/BUILD-INPUTS.txt', "source=#{'f' * 40}\n")
   reject(f, 'source revision mismatch')
@@ -262,12 +344,14 @@ Dir.mktmpdir('ember-cix-root-image-') do |base|
   File.write(f[:metalog], File.readlines(f[:metalog]).reject { |s| s.start_with?('./sbin/shutdown ') }.join)
   reject(f, 'missing selected runtime metadata')
 
-  ['source', 'profile', 'console-wrapper'].each do |which|
+  ['source', 'profile', 'console-wrapper', 'data-helper', 'data-source'].each do |which|
     f = fixture(base, 'late-' + which + '-change')
     asset = case which
     when 'source' then f[:src] + '/etc/group'
     when 'profile' then f[:profile] + '/ember/image/cix-p1-network.subr'
-    else f[:profile] + '/ember/image/cix-p1-console'
+    when 'console-wrapper' then f[:profile] + '/ember/image/cix-p1-console'
+    when 'data-helper' then f[:profile] + '/ember/image/cix-p1-i18n.rb'
+    else f[:cohort] + '/dest/' + I18N_DATA.first
     end
     f[:env]['MUTATE_TRACKED_ASSET'] = asset
     success, _, _ = run_stager(f)
@@ -275,6 +359,24 @@ Dir.mktmpdir('ember-cix-root-image-') do |base|
     check(!File.exist?(f[:out] + '/ROOT-INPUTS.txt') && !File.exist?(f[:out] + '/ROOT-SHA256.txt'),
       'late ' + which + ' mutation emits no accepted image receipt')
   end
+  f = fixture(base, 'late-staged-data')
+  f[:env]['MUTATE_STAGED_DATA'] = I18N_DATA.first
+  success, _, _ = run_stager(f)
+  check(!success && !File.exist?(f[:out] + '/ROOT-INPUTS.txt') && !File.exist?(f[:out] + '/ROOT-SHA256.txt'),
+    'late staged DATA mutation prevents accepted image receipts')
+  f = fixture(base, 'extra-staged-data')
+  f[:env]['EXTRA_STAGED_DATA'] = '1'
+  success, _, _ = run_stager(f)
+  check(!success && !File.exist?(f[:out] + '/ROOT-INPUTS.txt') && !File.exist?(f[:out] + '/ROOT-SHA256.txt'),
+    'extra staged DATA prevents accepted image receipts')
+  f = fixture(base, 'readonly-data-directory')
+  File.open(f[:metalog], 'a') { |s| s.puts('./usr/share/i18n/esdb type=dir uname=root gname=wheel mode=0555') }
+  data_manifest(f)
+  success, output, = run_stager(f)
+  check(success, 'native read-only DATA directory permits copying children before final chmod')
+  warn output unless success
+  # Restore only our fixture directory so temporary-tree removal remains possible.
+  File.chmod(0o755, f[:out] + '/root/usr/share/i18n/esdb') if File.directory?(f[:out] + '/root/usr/share/i18n/esdb')
 
   f = fixture(base, 'success')
   success, output, calls = run_stager(f)
@@ -329,6 +431,13 @@ Dir.mktmpdir('ember-cix-root-image-') do |base|
     end
     check(File.read(root + '/etc/group').include?("tty:*:4:\n") && File.read(root + '/etc/group').include?("kmem:*:2:\n"),
       'native group database retains runtime supplementary groups')
+    I18N_DATA.each do |p|
+      check(File.file?(root + '/' + p) && File.binread(root + '/' + p) == File.binread(f[:cohort] + '/dest/' + p),
+        'exact verified DATA staged: ' + p)
+      entry = spec.lines.select { |s| s.split.first == './' + p }.last.to_s
+      check(entry.include?('uname=root gname=wheel mode=0444') && (File.stat(root + '/' + p).mode & 0o7777) == 0o444,
+        'native DATA metadata retained: ' + p) if File.file?(root + '/' + p)
+    end
     check(File.file?(root + '/libdata/firmware/rtwce/LICENCE.rtlwifi_firmware.txt'), 'firmware licence is staged')
     check(File.read(f[:out] + '/ROOT-INPUTS.txt') == "userland=#{f[:revision]}\nprofile=#{f[:profile_revision]}\n", 'image receipt identifies userland and profile commits')
     makefs = calls.select { |a| a.first == 'nbmakefs' }
