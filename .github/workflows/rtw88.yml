@@ -8,6 +8,8 @@ name: Native RTL8822CE source contracts
       - 'sys/dev/ic/rtw*'
       - 'sys/dev/pci/if_rtw88_pci.c'
       - 'sys/dev/pci/rtw88_pci_sysctl.c'
+      - 'sys/net80211/ieee80211_proto.c'
+      - 'sys/net80211/*ieee80211*.h'
       - 'ember/tools/rtw*'
   pull_request:
     paths:
@@ -15,6 +17,8 @@ name: Native RTL8822CE source contracts
       - 'sys/dev/ic/rtw*'
       - 'sys/dev/pci/if_rtw88_pci.c'
       - 'sys/dev/pci/rtw88_pci_sysctl.c'
+      - 'sys/net80211/ieee80211_proto.c'
+      - 'sys/net80211/*ieee80211*.h'
       - 'ember/tools/rtw*'
   workflow_dispatch:
 
@@ -38,6 +42,11 @@ jobs:
             /sys/dev/ic/rtw*
             /sys/dev/pci/if_rtw88_pci.c
             /sys/dev/pci/pcidevs.h
+            /sys/net80211/ieee80211_proto.c
+            /sys/net80211/_ieee80211.h
+            /sys/net80211/ieee80211.h
+            /sys/net80211/ieee80211_var.h
+            /sys/net80211/ieee80211_proto.h
       - name: Prepare GCC16 and Memcheck
         run: |
           test "$(gcc -dumpfullversion)" = 16.2.0

@@ -396,13 +396,12 @@ ieee80211_fix_rate(struct ieee80211_node *ni, int flags)
 			for (j = 0; j < srs->rs_nrates; j++) {
 				if (r == RV(srs->rs_rates[j])) {
 					/*
-					 * Overwrite with the supported rate
-					 * value so any basic rate bit is set.
-					 * This insures that response we send
-					 * to stations have the necessary basic
-					 * rate bit set.
+					 * A station retains the AP's basic rate
+					 * set. Other modes use the local basic
+					 * flags in responses sent to stations.
 					 */
-					nrs->rs_rates[i] = srs->rs_rates[j];
+					if (ic->ic_opmode != IEEE80211_M_STA)
+						nrs->rs_rates[i] = srs->rs_rates[j];
 					break;
 				}
 			}

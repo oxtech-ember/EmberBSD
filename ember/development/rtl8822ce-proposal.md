@@ -102,6 +102,11 @@ Stage 1 is channel setup, 2 is station setup, and 3 is an inactive core.
 The output includes both channels, rate mask, slot, AID and rate count.
 BSSID flags report presence, a group address and an all-zero address.
 The output contains no station address or network name. Input checks remain strict.
+The diagnostic kernel confirmed a zero BASIC rate mask during RUN setup.
+Native STA rate negotiation now retains the AP's BASIC flags for supported rates.
+Other modes retain the local BASIC flags. There is no default-mask fallback.
+Actual-source negotiation and wrapper-consumer tests cover both legacy bands.
+Physical association, WPA2, DHCP and data tests remain pending for this fix.
 
 The kernel configuration selects the native station wrapper and ingress
 generation policy. Use the standard interface tools when the PCI wrapper
