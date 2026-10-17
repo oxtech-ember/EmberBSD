@@ -31,8 +31,9 @@ This C-only profile does not provide C++, login/PAM or the complete rc system.
 The receiving root profile owns startup, console access and shutdown scripts.
 Use native getty to establish the console session before its trusted wrapper.
 A direct shell wrapper in `ttys` does not establish the controlling terminal.
-The root profile stages a trusted interactive ENV file for graceful TERM exit.
-Its interactive guard preserves noninteractive shell signal behavior.
+The wrapper retains the noninteractive session leader while its interactive
+child owns normal job control. Native leader teardown closes the terminal on
+TERM. An interactive TERM trap can be deferred until the next input command.
 
 Each component has separate build and install logs under `logs/`.
 Failures stop the build. `BUILD-INPUTS.pending` records an incomplete run.

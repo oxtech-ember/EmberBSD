@@ -98,10 +98,14 @@ This development profile exposes an unauthenticated root shell on its trusted
 UART console. It starts no network login server. Configure access separately
 before deployment outside a controlled development bench.
 Native `getty` establishes the console session before starting the shell.
-The wrapper exports the fixed `/etc/cix-console.env` path. This root-owned,
-mode `0644` file installs a TERM exit trap only in interactive shells.
-The trusted console can then leave during normal process shutdown.
-Stopped jobs or other processes can still require the full native grace period.
+The wrapper retains getty's noninteractive session leader and waits for its
+interactive child. A normal child exit keeps its status. TERM ends the leader;
+native terminal teardown sends HUP to the foreground process group and revokes
+the controlling terminal. This avoids a TERM trap deferred at an idle prompt.
+Normal interactive job control and Ctrl-C remain available. This requires a
+controlling terminal; a raw pipe is not an equivalent console session.
+Blocked terminal output, stopped jobs or custom signal policies can still
+require the full native grace period. No service or filesystem deadline changes.
 The `ember-cix` entry selects the local wrapper explicitly; no login or PAM
 service participates in this development-console path.
 

@@ -1,13 +1,12 @@
 #!/usr/bin/env ruby
 # SPDX-License-Identifier: BSD-2-Clause
-# Execute the trusted console policy with real, individually owned host children.
-require 'fileutils'
+# Exercise the actual trusted console wrapper in an owned controlling PTY.
+require 'pty'
 require 'shellwords'
 require 'tmpdir'
 
 shell = ENV.fetch('TEST_SH', '/bin/sh')
-here = __dir__
-wrapper = File.read(File.join(here, 'cix-p1-console'))
+wrapper = File.read(File.join(__dir__, 'cix-p1-console'))
 checks = 0
 check = lambda do |condition, message|
   checks += 1
@@ -15,73 +14,138 @@ check = lambda do |condition, message|
 end
 clock = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
 Dir.mktmpdir('cix-console-') do |tmp|
-  env_path = File.join(tmp, 'console.env')
-  check.call(File.file?(File.join(here, 'cix-p1-console.env')), 'trusted console ENV exists')
-  FileUtils.cp(File.join(here, 'cix-p1-console.env'), env_path)
-  check.call(wrapper.include?("ENV=/etc/cix-console.env\n") && wrapper.match?(/^export .*\bENV\b/),
-    'wrapper exports the fixed trusted console ENV')
   candidate = wrapper.sub('HOME=/root', 'HOME=' + Shellwords.escape(tmp))
-    .sub('ENV=/etc/cix-console.env', 'ENV=' + Shellwords.escape(env_path))
     .sub('cd /root', 'cd ' + Shellwords.escape(tmp))
-    .sub('exec /bin/sh -i', 'exec ' + Shellwords.escape(shell) + ' -i')
+    .gsub('/bin/sh -i', Shellwords.escape(shell) + ' -i')
   candidate_path = File.join(tmp, 'console')
   File.write(candidate_path, candidate)
-  run = lambda do |argv, env, expected|
-    input_read, input_write = IO.pipe
-    output_read, output_write = IO.pipe
-    pid = nil
+  run = lambda do |path, scenario|
+    reader = writer = pid = child = command = nil
     reaped = false
+    output = +''
+    eof = false
+    status = nil
     begin
-      pid = Process.spawn(env, *argv, in: input_read, out: output_write, err: output_write)
-      input_read.close
-      output_write.close
-      # Some host shells read ENV only when interactive. Execute the native
-      # non-POSIX startup boundary explicitly to verify the file's guard too.
-      input_write.write(". \"$ENV\"\n") if expected == :signal
-      input_write.write("printf 'CIX_CONSOLE_READY\\n'\n")
-      input_write.flush
-      deadline = clock.call + 3
-      output = +''
-      until output.include?("CIX_CONSOLE_READY\n")
-        raise 'console readiness timeout' if clock.call >= deadline
-        next unless IO.select([output_read], nil, nil, 0.05)
-        output << output_read.read_nonblock(4096)
-      end
-      Process.kill('TERM', pid)
-      deadline = clock.call + (expected == :alive ? 0.25 : 3)
-      result = nil
-      loop do
-        result = Process.waitpid2(pid, Process::WNOHANG)
-        if result
-          reaped = true
-          break
+      reader, writer, pid = PTY.spawn({'ENV' => '', 'TERM' => 'dumb'}, shell, path)
+      drain = lambda do |seconds|
+        if !eof && IO.select([reader], nil, nil, seconds)
+          begin
+            bytes = reader.read_nonblock(4096, exception: false)
+            if bytes.nil?
+              eof = true
+            elsif bytes.is_a?(String)
+              output << bytes
+            end
+          rescue Errno::EIO, EOFError
+            eof = true
+          end
         end
-        break if clock.call >= deadline
-        sleep 0.01
       end
-      if expected == :alive
-        check.call(result.nil?, 'interactive baseline ignores TERM before the profile trap')
-      elsif expected == :exit
-        check.call(result && result[1].exited? && result[1].exitstatus.zero?,
-          'interactive profile console exits gracefully on TERM')
+      marker = lambda do |name|
+        deadline = clock.call + 3
+        until (match = output.match(/#{name}:(\d+)\r?\n/))
+          raise "#{name} timeout: #{output.inspect}" if eof || clock.call >= deadline
+          drain.call(0.02)
+        end
+        match[1].to_i
+      end
+      writer.write("printf 'CIX_SHELL:%s\\n' \"$$\"\n")
+      writer.flush
+      child = marker.call('CIX_SHELL')
+      check.call(Process.getsid(pid) == pid && Process.getsid(child) == pid,
+        'wrapper and interactive shell share the owned controlling session')
+      if scenario == :baseline
+        check.call(child == pid, 'old exec wrapper replaces its session leader with the interactive shell')
       else
-        check.call(result && result[1].signaled? && result[1].termsig == Signal.list.fetch('TERM'),
-          'noninteractive ENV leaves the native TERM disposition')
+        check.call(child != pid && Process.getpgid(child) == child,
+          'noninteractive session leader retains a child with normal interactive job control')
       end
+      if scenario == :normal
+        # A normal terminal interrupt must leave both the prompt and leader alive.
+        deadline = clock.call + 3
+        until output.end_with?('ember-cix# ')
+          raise "initial prompt timeout: #{output.inspect}" if eof || clock.call >= deadline
+          drain.call(0.02)
+        end
+        interrupt = lambda do
+          offset = output.bytesize
+          writer.write("\003")
+          writer.flush
+          deadline = clock.call + 3
+          until output.byteslice(offset..).include?('ember-cix# ')
+            raise "interrupt prompt timeout: #{output.inspect}" if eof || clock.call >= deadline
+            drain.call(0.02)
+          end
+        end
+        interrupt.call
+        writer.write("printf 'CIX_IDLE:%s\\n' \"$$\"\n")
+        writer.flush
+        check.call(marker.call('CIX_IDLE') == child, 'Ctrl-C at the idle prompt keeps the interactive shell')
+        body = "printf 'CIX_COMMAND:%s\\n' \"$$\"; exec sleep 30"
+        writer.write(Shellwords.escape(shell) + ' -c ' + Shellwords.escape(body) + "\n")
+        writer.flush
+        command = marker.call('CIX_COMMAND')
+        check.call(Process.getsid(command) == pid && Process.getpgid(command) != Process.getpgid(child),
+          'foreground command has its own job process group in the console session')
+        interrupt.call
+        writer.write("printf 'CIX_AFTER_INT:%s\\n' \"$$\"\n")
+        writer.flush
+        check.call(marker.call('CIX_AFTER_INT') == child,
+          'Ctrl-C stops the foreground command and returns to the same prompt')
+        command = nil # The interactive shell has reaped its foreground command.
+        writer.write("exit 7\n")
+        writer.flush
+      else
+        # No terminal input follows TERM. Only this owned session leader is signaled.
+        Process.kill('TERM', pid)
+      end
+      deadline = clock.call + (scenario == :baseline ? 0.25 : 3)
+      loop do
+        unless reaped
+          result = Process.waitpid2(pid, Process::WNOHANG)
+          status = result.last if result
+          reaped = !result.nil?
+        end
+        drain.call(0.01)
+        break if (reaped && eof) || clock.call >= deadline
+      end
+      diagnostic = "status=#{status.inspect}, PTY_EOF=#{eof}, output=#{output.inspect}"
+      if scenario == :baseline
+        check.call(!reaped && !eof, "idle interactive exec baseline survives TERM: #{diagnostic}")
+      elsif scenario == :normal
+        check.call(reaped && status.exited? && status.exitstatus == 7 && eof,
+          "wrapper preserves normal child exit status: #{diagnostic}")
+      else
+        check.call(reaped && status.signaled? && status.termsig == Signal.list.fetch('TERM') && eof,
+          "leader TERM closes the idle console without further input: #{diagnostic}")
+      end
+      child = nil if eof # All slave descriptors closed; do not signal a released PID.
     ensure
-      # Signal only this unreaped child; never use a process group or broadcast.
+      # Never broadcast or signal a process group. Clean up only tracked children.
+      [command, child].compact.uniq.reject { |owned| owned == pid }.each do |owned|
+        begin
+          Process.kill('KILL', owned)
+        rescue Errno::ESRCH
+        end
+      end
       if pid && !reaped
         begin
           Process.kill('KILL', pid)
         rescue Errno::ESRCH
         end
-        Process.waitpid(pid)
       end
-      [input_read, input_write, output_read, output_write].each { |io| io.close unless io.closed? }
+      # Close the PTY before waiting: a dying session leader can drain output
+      # in the kernel. Do not leave unread output blocking failure cleanup.
+      [reader, writer].compact.each { |io| io.close unless io.closed? }
+      Process.waitpid(pid) if pid && !reaped
     end
   end
-  run.call([shell, '-i'], {'ENV' => ''}, :alive)
-  run.call([shell, candidate_path], {'ENV' => ''}, :exit)
-  run.call([shell, '-s'], {'ENV' => env_path}, :signal)
+  run.call(candidate_path, :term)
+  run.call(candidate_path, :normal)
+  # Execute the previous lifecycle as a causal control, with the same setup.
+  baseline = candidate.sub(/^(#{Regexp.escape(Shellwords.escape(shell))} -i)\n.*\z/m) { "exec #{Regexp.last_match(1)}\n" }
+  baseline_path = File.join(tmp, 'console-exec')
+  File.write(baseline_path, baseline)
+  run.call(baseline_path, :baseline)
 end
-puts "CIX console TERM: #{checks} checks, 0 failures"
+puts "CIX console PTY lifecycle: #{checks} checks, 0 failures"

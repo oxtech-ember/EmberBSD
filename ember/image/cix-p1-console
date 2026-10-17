@@ -5,7 +5,10 @@ HOME=/root
 TERM=${TERM:-vt100}
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 PS1='ember-cix# '
-ENV=/etc/cix-console.env
-export HOME TERM PATH PS1 ENV
+export HOME TERM PATH PS1
 cd /root || exit 1
-exec /bin/sh -i
+# Retain getty's noninteractive session leader. Its TERM exit hangs up the TTY.
+# The continuation also prevents a shell from replacing us with its last command.
+/bin/sh -i
+cix_console_status=$?
+exit "$cix_console_status"
