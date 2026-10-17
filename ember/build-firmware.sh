@@ -4,7 +4,8 @@
 # No containers, no per-run network package installs, no cloud steps.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-[[ $# -ge 1 && $# -le 2 ]] || { echo 'usage: build-firmware.sh CACHE [--rp1-console|--rp1-trace]' >&2; exit 1; }
+# --prepare pins the source cache and exits; it may appear anywhere.
+[[ $# -ge 1 && $# -le 2 ]] || { echo 'usage: build-firmware.sh CACHE [--rp1-console|--rp1-trace] [--prepare]' >&2; exit 1; }
 case "$1" in /*) CACHE="$1" ;; *) echo 'CACHE must be an absolute path' >&2; exit 1 ;; esac
 revision=246e70acd939d62b5a79f895984afd0a93bd83e9
 repo=https://github.com/eotics-com/rpi5-uefi.git
@@ -86,12 +87,6 @@ series="$ROOT/ember/firmware/series"
 # revision; a build host without git (an EmberBSD board with the toolchain
 # packages) trusts that marker instead of re-fetching. The series
 # application is tracked by .ember-series with the combined series hash.
-prepare_only=0
-args=()
-for arg in "$@"; do
-    [[ "$arg" == "--prepare" ]] && prepare_only=1 || args+=("$arg")
-done
-set -- "${args[@]}"
 if [[ ! -d "$src/.git" ]]; then
     command -v git >/dev/null 2>&1 || {
         echo "no git and no source cache: prepare the cache on a host with git" >&2
