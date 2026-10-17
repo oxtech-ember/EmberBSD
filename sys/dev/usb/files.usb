@@ -1,3 +1,4 @@
+# Origin: EmberBSD external ucom transport build integration, 2026-10-10.
 #	$NetBSD: files.usb,v 1.182.2.2 2025/12/14 11:18:30 martin Exp $
 #
 # Config file and device description for machine-independent USB code.
@@ -136,6 +137,10 @@ file	dev/usb/umidi_quirks.c		umidi
 device	ucom
 attach	ucom at ucombus
 file	dev/usb/ucom.c			ucom | ucombus		needs-flag
+file	dev/usb/ucom_transport_core.c	ucom | ucombus
+file	dev/usb/ucom_transport_rx.c	ucom | ucombus
+file	dev/usb/umoxa_frame.c		ucom | ucombus
+file	dev/usb/umoxa_g2_txq.c		ucom | ucombus
 
 
 # Generic devices
@@ -578,3 +583,17 @@ device	umcpmio: hid, i2cbus, i2cexec, gpiobus
 attach  umcpmio at uhidbus
 file    dev/usb/umcpmio.c		umcpmio			needs-flag
 file	dev/usb/umcpmio_subr.c		umcpmio
+
+# MOXA UPort 1150 single-port USB serial and external firmware
+device	umoxa: ucombus, firmload
+attach	umoxa at usbdevif
+file	dev/usb/umoxa1150.c		umoxa
+file	dev/usb/umoxa1150_protocol.c	umoxa
+
+# MOXA UPort 1450-G2 four-port shared USB transport
+device	umoxag: ucombus, firmload
+attach	umoxag at usbdevif
+file	dev/usb/umoxa_g2.c		umoxag
+file	dev/usb/umoxa_g2_io.c		umoxag
+file	dev/usb/umoxa_g2_tty.c		umoxag
+file	dev/usb/umoxa_g2_protocol.c	umoxag

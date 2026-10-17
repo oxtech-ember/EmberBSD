@@ -1,0 +1,10 @@
+# Origin: EmberBSD test-only external ucom parent, 2026-10-10.
+ioconf ucom_mock
+include "conf/files"
+include "dev/usb/files.usb"
+include "rump/dev/files.rump"
+device umock: ucombus
+attach umock at mainbus
+pseudo-root mainbus*
+umock0 at mainbus?
+ucom* at umock? portno ?

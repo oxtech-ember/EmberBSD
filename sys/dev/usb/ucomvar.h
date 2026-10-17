@@ -1,3 +1,4 @@
+/* Origin: EmberBSD opt-in external ucom transport interface, 2026-10-10. */
 /*	$NetBSD: ucomvar.h,v 1.23 2019/05/09 02:43:35 mrg Exp $	*/
 
 /*
@@ -35,6 +36,34 @@
 #define UCOM_UNK_PORTNO (-1)
 
 struct	ucom_softc;
+
+/*
+ * External transports own their I/O resources, shared across child ports.
+ * All methods and ucom_param are required. No sc_lock/TTY lock is held.
+ * A process mutex serializes param/set; never reenter them on the same port.
+ * Legacy open/close/read/write/set methods must be NULL for this backend.
+ * attach/start/stop/set/detach run in process context. submit/rx_flow run
+ * in softint context: they must not sleep or call child APIs inline.
+ *
+ * attach publishes the child only on success. start may partially start;
+ * stop is called even after a failed start. stop/detach are quiescence
+ * barriers: on return no old dispatch/callback may access the child or
+ * the borrowed TX buffer. Parents release their lock before child APIs.
+ * submit accepts a bounded payload, borrowed until done or quiescent stop.
+ * An error accepts nothing and must not produce a completion. On success
+ * the parent calls done once, relinquishing the buffer before that call.
+ * An epoch tags host callbacks, not bytes on the wire; parents purge old
+ * device queues and establish USB completion barriers before a new start.
+ */
+struct ucom_transport_methods {
+	int (*uct_attach)(void *, int, struct ucom_softc *);
+	int (*uct_start)(void *, int, uint64_t);
+	void (*uct_stop)(void *, int, uint64_t);
+	int (*uct_submit)(void *, int, uint64_t, uint64_t, const uint8_t *, size_t);
+	void (*uct_rx_flow)(void *, int, uint64_t, int);
+	int (*uct_set)(void *, int, int, int);
+	void (*uct_detach)(void *, int);
+};
 
 /*
  * USB detach requires ensuring that outstanding operations and
@@ -118,6 +147,12 @@ struct ucom_methods {
 	 * arg5: pointer to buffer count
 	 */
 	void (*ucom_write)(void *, int, u_char *, u_char *, uint32_t *);
+	/* NULL retains the existing USB path; rebuild all affected consumers. */
+	const struct ucom_transport_methods *ucom_transport;
+	/* Opt-in legacy params: accept before TTY commit; fail initial open. */
+	bool ucom_param_strict;
+	/* Read-only diagnostics after transport fault; others return EPASSTHROUGH. */
+	int (*ucom_fault_ioctl)(void *, int, u_long, void *, int, proc_t *);
 };
 
 /* modem control register */
@@ -164,3 +199,10 @@ struct ucom_attach_args {
 int ucomprint(void *, const char *);
 int ucomsubmatch(device_t t, cfdata_t, const int *, void *);
 void ucom_status_change(struct ucom_softc *);
+
+/* Input copies all bytes or returns errno. Stale/closed callbacks reject. */
+int ucom_transport_input(struct ucom_softc *, uint64_t, const void *, size_t);
+void ucom_transport_done(struct ucom_softc *, uint64_t, uint64_t, size_t, int);
+void ucom_transport_fault(struct ucom_softc *, uint64_t, int);
+/* Includes TTY output queued before parent submission; no sleep or I/O. */
+bool ucom_transport_idle(struct ucom_softc *);

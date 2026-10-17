@@ -46,6 +46,8 @@ The following accessory and protocol limits also apply:
 | CM5: WPA3-Personal | SAE group 19/H2E, required PMF, file transfer, reconnect, wrong-password rejection and WPA2 regression pass on CYW43455 7.45.265; [configuration and limits](ember/boot/bwfm-sae.md) |
 | Zero 3W: WPA3-Personal | AIC8800D80 SAE group 19/H2E, required PMF, protected SA Query and automatic recovery after AP removal are physically checked; nonzero initial IGTK IPN remains unsupported ([configuration and limits](ember/boot/aicwf-sae.md)); VHT80 1SS has a physical WPA2 data-transfer check; SAE/PMF with nonzero IGTK IPN and complete k/v remain [driver work](ember/boot/aicwf-vht.md) |
 | CAN FD | Raw sockets, virtual canlo interfaces and canconfig mode control pass native rump checks; physical drivers and data-phase timing are not implemented ([guide](ember/can/README.md)) |
+| MOXA UPort 1150 | Experimental `umoxa` USB/ucom parent; 12 wire + 22 parent groups and strict-parameter regression pass on host. Automatic cold firmware upload/warm attachment and 4096-byte RS-232 loopback passed at 9600/115200 8N1 in an isolated macOS/QEMU trial requiring a process-local passthrough workaround. Bare-metal and broader serial acceptance remain pending ([guide](ember/boot/moxa-serial.md)) |
+| MOXA UPort 1450-G2 | Experimental `umoxag` parent for `110a:1452`; 13 protocol + 31 actual-parent host groups and eight native actual-parent/workqueue/ucom/TTY groups pass with USB doubles. External firmware, real USB-controller and electrical acceptance pending ([guide](ember/boot/moxa-g2.md)) |
 
 The `bwfm` driver leaves roaming and WPA authentication to the host.
 It disables firmware WNM transitions as well as autonomous roaming:

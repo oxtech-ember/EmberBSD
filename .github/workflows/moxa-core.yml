@@ -1,0 +1,111 @@
+# Origin: EmberBSD portable MOXA serial-core contracts, 2026-10-09.
+name: MOXA serial core
+on:
+  pull_request:
+    paths:
+      - 'sys/dev/usb/umoxa_frame.*'
+      - 'sys/dev/usb/umoxa_g2*'
+      - 'sys/dev/usb/ucom_transport_core.*'
+      - 'sys/dev/usb/ucom_transport_rx.*'
+      - 'sys/dev/usb/ucom.c'
+      - 'sys/dev/usb/ucomvar.h'
+      - 'sys/dev/usb/files.usb'
+      - 'sys/dev/usb/usbdevices.config'
+      - 'sys/dev/usb/Makefile'
+      - 'sys/dev/usb/umoxa1150*'
+      - 'ember/tests/umoxa1150/**'
+      - 'ember/tools/umoxa1150*'
+      - 'ember/tools/ucom-strict-param-test.sh'
+      - 'distrib/sets/lists/comp/mi'
+      - 'sys/rump/dev/lib/libucom/**'
+      - 'tests/dev/usb/ucom_transport/**'
+      - 'tests/dev/usb/umoxa_g2/**'
+      - 'ember/tools/umoxa-frame-test.*'
+      - 'ember/tools/umoxa-g2*'
+      - 'ember/tests/umoxa-g2/**'
+      - 'ember/boot/moxa-g2.md'
+      - 'ember/tools/ucom-transport-core-test.*'
+      - 'ember/tools/ucom-transport-rx-test.*'
+      - 'ember/tools/ucom-transport-rump-test.sh'
+      - 'ember/tools/ucom-transport-rump-cross-build.sh'
+      - 'ember/tools/ucom-transport-cross-check.sh'
+      - 'ember/tools/moxa-core-cross-check.sh'
+      - 'ember/boot/moxa-serial.md'
+      - '.github/workflows/moxa-core.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'sys/dev/usb/umoxa_frame.*'
+      - 'sys/dev/usb/umoxa_g2*'
+      - 'sys/dev/usb/ucom_transport_core.*'
+      - 'sys/dev/usb/ucom_transport_rx.*'
+      - 'sys/dev/usb/ucom.c'
+      - 'sys/dev/usb/ucomvar.h'
+      - 'sys/dev/usb/files.usb'
+      - 'sys/dev/usb/usbdevices.config'
+      - 'sys/dev/usb/Makefile'
+      - 'sys/dev/usb/umoxa1150*'
+      - 'ember/tests/umoxa1150/**'
+      - 'ember/tools/umoxa1150*'
+      - 'ember/tools/ucom-strict-param-test.sh'
+      - 'distrib/sets/lists/comp/mi'
+      - 'sys/rump/dev/lib/libucom/**'
+      - 'tests/dev/usb/ucom_transport/**'
+      - 'tests/dev/usb/umoxa_g2/**'
+      - 'ember/tools/umoxa-frame-test.*'
+      - 'ember/tools/umoxa-g2*'
+      - 'ember/tests/umoxa-g2/**'
+      - 'ember/boot/moxa-g2.md'
+      - 'ember/tools/ucom-transport-core-test.*'
+      - 'ember/tools/ucom-transport-rx-test.*'
+      - 'ember/tools/ucom-transport-rump-test.sh'
+      - 'ember/tools/ucom-transport-rump-cross-build.sh'
+      - 'ember/tools/ucom-transport-cross-check.sh'
+      - 'ember/tools/moxa-core-cross-check.sh'
+      - '.github/workflows/moxa-core.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  portable:
+    name: portable (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Host framing, shared TX, state and bounded RX contracts
+        shell: sh
+        run: |
+          sh ember/tools/umoxa1150-test.sh "$RUNNER_TEMP/moxa-1150-protocol"
+          sh ember/tools/umoxa1150-driver-test.sh "$RUNNER_TEMP/moxa-1150-parent"
+          sh ember/tools/ucom-strict-param-test.sh "$RUNNER_TEMP/ucom-strict-params"
+          sh ember/tools/umoxa-g2-protocol-test.sh "$RUNNER_TEMP/moxa-g2-protocol"
+          sh ember/tools/umoxa-g2-driver-test.sh "$RUNNER_TEMP/moxa-g2-parent"
+          sh ember/tools/umoxa-g2-txq-test.sh "$RUNNER_TEMP/moxa-txq"
+          sh ember/tools/umoxa-frame-test.sh "$RUNNER_TEMP/moxa-frame"
+          sh ember/tools/ucom-transport-core-test.sh "$RUNNER_TEMP/moxa-state"
+          sh ember/tools/ucom-transport-rx-test.sh "$RUNNER_TEMP/moxa-rx"
+          cat "$RUNNER_TEMP/moxa-frame/compiler.txt"
+          cat "$RUNNER_TEMP/moxa-frame/sources.sha256"
+          cat "$RUNNER_TEMP/moxa-state/sources.sha256"
+          cat "$RUNNER_TEMP/moxa-rx/sources.sha256"
+          cat "$RUNNER_TEMP/moxa-txq/sources.sha256"
+          echo 'Host contracts only; kernel/native/USB acceptance is separate.'
+
+      - name: Linux Valgrind software contracts
+        if: runner.os == 'Linux'
+        shell: sh
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes valgrind
+          for suite in moxa-1150-protocol moxa-1150-parent ucom-strict-params moxa-txq moxa-g2-protocol moxa-g2-parent moxa-frame moxa-state moxa-rx; do
+            binary="$RUNNER_TEMP/$suite/test-plain"
+            [ -f "$binary" ] || binary="$RUNNER_TEMP/$suite/test"
+            valgrind --error-exitcode=1 --track-origins=yes --leak-check=full --errors-for-leak-kinds=all "$binary"
+          done

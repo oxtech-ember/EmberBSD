@@ -7,6 +7,6 @@ INCSDIR= /usr/include/dev/usb
 
 # Only install includes which are used by userland
 INCS=	if_umbreg.h mbim.h ukyopon.h umcpmio_io.h umcpmio_hid_reports.h \
-	usb.h usbhid.h utoppy.h vhci.h
+	umoxa1150io.h umoxa_g2io.h usb.h usbhid.h utoppy.h vhci.h
 
 .include <bsd.kinc.mk>

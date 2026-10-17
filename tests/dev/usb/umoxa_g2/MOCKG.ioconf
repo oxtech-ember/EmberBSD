@@ -1,0 +1,10 @@
+# Origin: EmberBSD actual G2 test-only USB root, 2026-10-14.
+ioconf umoxag_mock
+include "conf/files"
+include "dev/usb/files.usb"
+include "rump/dev/files.rump"
+device ug2mock: ucombus
+attach ug2mock at mainbus
+pseudo-root mainbus*
+ug2mock0 at mainbus?
+ucom* at ug2mock? portno ?

@@ -1,3 +1,4 @@
+/* Origin: EmberBSD opt-in external ucom integration, 2026-10-10. */
 /*	$NetBSD: ucom.c,v 1.140.2.1 2025/11/29 15:58:35 martin Exp $	*/
 
 /*
@@ -58,6 +59,8 @@ __KERNEL_RCSID(0, "$NetBSD: ucom.c,v 1.140.2.1 2025/11/29 15:58:35 martin Exp $"
 #include <sys/sysctl.h>
 #include <sys/timepps.h>
 #include <sys/rndsource.h>
+#include <sys/kmem.h>
+#include <sys/atomic.h>
 
 #include <dev/usb/usb.h>
 
@@ -68,6 +71,8 @@ __KERNEL_RCSID(0, "$NetBSD: ucom.c,v 1.140.2.1 2025/11/29 15:58:35 martin Exp $"
 #include <dev/usb/usbhist.h>
 
 #include <dev/usb/ucomvar.h>
+#include <dev/usb/ucom_transport_core.h>
+#include <dev/usb/ucom_transport_rx.h>
 
 #include "ucom.h"
 #include "locators.h"
@@ -169,6 +174,21 @@ struct ucom_softc {
 	void                    *sc_parent;
 	int			sc_portno;
 
+	const struct ucom_transport_methods *sc_transport;
+	struct ucom_transport_core sc_tcore; /* protected by sc_lock */
+	struct ucom_transport_rx *sc_trx;
+	uint8_t			*sc_tbuf;
+	size_t			sc_tdone;
+	unsigned		sc_trefs; /* dispatches outside sc_lock */
+	int			sc_tflow;
+	bool			sc_tattached;
+	bool			sc_tstarted;
+	bool			sc_tnotify;
+	kmutex_t		sc_tctl; /* process control -> sc_lock -> TTY */
+	unsigned		sc_terror; /* atomic fault snapshot for TTY knotes */
+	const struct filterops	*sc_treadops;
+	const struct filterops	*sc_twriteops;
+
 	struct tty		*sc_tty;	/* our tty */
 	u_char			sc_lsr;
 	u_char			sc_msr;
@@ -206,6 +226,7 @@ dev_type_ioctl(ucomioctl);
 dev_type_stop(ucomstop);
 dev_type_tty(ucomtty);
 dev_type_poll(ucompoll);
+dev_type_kqfilter(ucomkqfilter);
 
 const struct cdevsw ucom_cdevsw = {
 	.d_open = ucomopen,
@@ -218,7 +239,7 @@ const struct cdevsw ucom_cdevsw = {
 	.d_tty = ucomtty,
 	.d_poll = ucompoll,
 	.d_mmap = nommap,
-	.d_kqfilter = ttykqfilter,
+	.d_kqfilter = ucomkqfilter,
 	.d_discard = nodiscard,
 	.d_cfdriver = &ucom_cd,
 	.d_devtounit = ucom_unit,
@@ -230,11 +251,20 @@ static int	ucomparam(struct tty *, struct termios *);
 static int	ucomhwiflow(struct tty *, int);
 static void	ucomstart(struct tty *);
 static void	ucom_shutdown(struct ucom_softc *);
-static void	ucom_dtr(struct ucom_softc *, int);
-static void	ucom_rts(struct ucom_softc *, int);
-static void	ucom_break(struct ucom_softc *, int);
-static void	tiocm_to_ucom(struct ucom_softc *, u_long, int);
+static int	ucom_dtr(struct ucom_softc *, int);
+static int	ucom_rts(struct ucom_softc *, int);
+static int	ucom_break(struct ucom_softc *, int);
+static int	tiocm_to_ucom(struct ucom_softc *, u_long, int);
 static int	ucom_to_tiocm(struct ucom_softc *);
+static int	ucom_do_ioctl(dev_t, u_long, void *, int, struct lwp *);
+
+static int	ucom_transport_attach(struct ucom_softc *);
+static void	ucom_transport_stop(struct ucom_softc *);
+static void	ucom_transport_softintr(struct ucom_softc *);
+static int	ucom_transport_error(struct ucom_softc *);
+static void	ucom_transport_schedule(struct ucom_softc *);
+static void	ucom_transport_fail(struct ucom_softc *, int);
+static int	ucom_transport_set(struct ucom_softc *, int, int);
 
 static void	ucomreadcb(struct usbd_xfer *, void *, usbd_status);
 static void	ucom_submit_write(struct ucom_softc *, struct ucom_buffer *);
@@ -264,6 +294,7 @@ ucom_attach(device_t parent, device_t self, void *aux)
 {
 	struct ucom_softc *sc = device_private(self);
 	struct ucom_attach_args *ucaa = aux;
+	struct tty *tp;
 
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
 
@@ -284,6 +315,7 @@ ucom_attach(device_t parent, device_t self, void *aux)
 	sc->sc_obufsize = ucaa->ucaa_obufsize;
 	sc->sc_opkthdrlen = ucaa->ucaa_opkthdrlen;
 	sc->sc_methods = ucaa->ucaa_methods;
+	sc->sc_transport = sc->sc_methods->ucom_transport;
 	sc->sc_parent = ucaa->ucaa_arg;
 	sc->sc_portno = ucaa->ucaa_portno;
 
@@ -298,6 +330,7 @@ ucom_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_si = softint_establish(SOFTINT_USB, ucom_softintr, sc);
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_SOFTUSB);
+	mutex_init(&sc->sc_tctl, MUTEX_DEFAULT, IPL_NONE);
 	cv_init(&sc->sc_statecv, "ucomstate");
 
 	rnd_attach_source(&sc->sc_rndsource, device_xname(sc->sc_dev),
@@ -317,6 +350,13 @@ ucom_attach(device_t parent, device_t self, void *aux)
 	struct ucom_buffer *ub;
 	usbd_status err;
 	int error;
+
+	if (sc->sc_transport != NULL) {
+		error = ucom_transport_attach(sc);
+		if (error)
+			goto fail_0;
+		goto attach_tty;
+	}
 
 	/* Open the bulk pipes */
 	err = usbd_open_pipe(sc->sc_iface, sc->sc_bulkin_no,
@@ -356,7 +396,8 @@ ucom_attach(device_t parent, device_t self, void *aux)
 		SIMPLEQ_INSERT_TAIL(&sc->sc_obuff_free, ub, ub_link);
 	}
 
-	struct tty *tp = tty_alloc();
+attach_tty:
+	tp = tty_alloc();
 	tp->t_oproc = ucomstart;
 	tp->t_param = ucomparam;
 	tp->t_hwiflow = ucomhwiflow;
@@ -410,6 +451,7 @@ ucom_detach(device_t self, int flags)
 	/* Prevent new opens from hanging.  */
 	mutex_enter(&sc->sc_lock);
 	sc->sc_dying = true;
+	atomic_store_release(&sc->sc_terror, ENXIO);
 	mutex_exit(&sc->sc_lock);
 
 	pmf_device_deregister(self);
@@ -431,6 +473,15 @@ ucom_detach(device_t self, int flags)
 	vdevgone(maj, mn, mn, VCHR);
 	vdevgone(maj, mn | UCOMDIALOUT_MASK, mn | UCOMDIALOUT_MASK, VCHR);
 	vdevgone(maj, mn | UCOMCALLUNIT_MASK, mn | UCOMCALLUNIT_MASK, VCHR);
+
+	if (sc->sc_transport != NULL && sc->sc_tattached) {
+		ucom_transport_stop(sc);
+		mutex_enter(&sc->sc_lock);
+		ucom_transport_core_detach(&sc->sc_tcore);
+		sc->sc_tattached = false;
+		mutex_exit(&sc->sc_lock);
+		sc->sc_transport->uct_detach(sc->sc_parent, sc->sc_portno);
+	}
 
 	softint_disestablish(sc->sc_si);
 
@@ -461,10 +512,20 @@ ucom_detach(device_t self, int flags)
 		sc->sc_bulkout_pipe = NULL;
 	}
 
+	if (sc->sc_tbuf != NULL) {
+		kmem_free(sc->sc_tbuf, sc->sc_obufsize);
+		sc->sc_tbuf = NULL;
+	}
+	if (sc->sc_trx != NULL) {
+		kmem_free(sc->sc_trx, sizeof(*sc->sc_trx));
+		sc->sc_trx = NULL;
+	}
+
 	/* Detach the random source */
 	rnd_detach_source(&sc->sc_rndsource);
 
 	mutex_destroy(&sc->sc_lock);
+	mutex_destroy(&sc->sc_tctl);
 	cv_destroy(&sc->sc_statecv);
 
 	return 0;
@@ -482,7 +543,9 @@ ucom_shutdown(struct ucom_softc *sc)
 	 * notice even if we immediately open the port again.
 	 */
 	if (ISSET(tp->t_cflag, HUPCL)) {
-		ucom_dtr(sc, 0);
+		int error = ucom_dtr(sc, 0);
+		if (error)
+			aprint_error_dev(sc->sc_dev, "hangup failed, error=%d\n", error);
 		mutex_enter(&sc->sc_lock);
 		microuptime(&sc->sc_hup_time);
 		sc->sc_hup_time.tv_sec++;
@@ -506,6 +569,7 @@ ucomopen(dev_t dev, int flag, int mode, struct lwp *l)
 	const int unit = UCOMUNIT(dev);
 	struct ucom_softc * const sc = device_lookup_private(&ucom_cd, unit);
 	int error = 0;
+	struct termios saved;
 
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
 
@@ -514,6 +578,11 @@ ucomopen(dev_t dev, int flag, int mode, struct lwp *l)
 		DPRINTF("... dying", 0, 0, 0, 0);
 		mutex_exit(&sc->sc_lock);
 		return ENXIO;
+	}
+	if (sc->sc_transport != NULL && sc->sc_tcore.state == UCT_FAULT) {
+		error = sc->sc_tcore.error;
+		mutex_exit(&sc->sc_lock);
+		return error;
 	}
 
 	if (!device_is_active(sc->sc_dev)) {
@@ -590,6 +659,12 @@ ucomopen(dev_t dev, int flag, int mode, struct lwp *l)
 		sc->sc_state = UCOM_OPENING;
 		mutex_exit(&sc->sc_lock);
 
+		if (sc->sc_transport != NULL || sc->sc_methods->ucom_param_strict) {
+			ttylock(tp);
+			saved = tp->t_termios;
+			ttyunlock(tp);
+		}
+
 		if (sc->sc_methods->ucom_open != NULL) {
 			error = sc->sc_methods->ucom_open(sc->sc_parent,
 			    sc->sc_portno);
@@ -622,8 +697,14 @@ ucomopen(dev_t dev, int flag, int mode, struct lwp *l)
 		if (ISSET(sc->sc_swflags, TIOCFLAG_MDMBUF))
 			SET(t.c_cflag, MDMBUF);
 		/* Make sure ucomparam() will do something. */
-		tp->t_ospeed = 0;
-		(void) ucomparam(tp, &t);
+		if (sc->sc_transport == NULL && !sc->sc_methods->ucom_param_strict) {
+			tp->t_ospeed = 0;
+			(void)ucomparam(tp, &t);
+		} else {
+			error = ucomparam(tp, &t);
+			if (error)
+				goto bad;
+		}
 		tp->t_iflag = TTYDEF_IFLAG;
 		tp->t_oflag = TTYDEF_OFLAG;
 		tp->t_lflag = TTYDEF_LFLAG;
@@ -637,13 +718,42 @@ ucomopen(dev_t dev, int flag, int mode, struct lwp *l)
 		 * expect.  We always assert DTR while the device is open
 		 * unless explicitly requested to deassert it.  Ditto RTS.
 		 */
-		ucom_dtr(sc, 1);
-		ucom_rts(sc, 1);
+		error = ucom_dtr(sc, 1);
+		if (error)
+			goto bad;
+		error = ucom_rts(sc, 1);
+		if (error)
+			goto bad;
 
 		mutex_enter(&sc->sc_lock);
+		if (sc->sc_transport != NULL) {
+			uint64_t epoch;
+			if (sc->sc_dying) {
+				error = ENXIO;
+				mutex_exit(&sc->sc_lock);
+				goto bad;
+			}
+			error = ucom_transport_core_open(&sc->sc_tcore, &epoch);
+			if (error) {
+				mutex_exit(&sc->sc_lock);
+				goto bad;
+			}
+			sc->sc_tstarted = true;
+			sc->sc_tflow = -1;
+			mutex_exit(&sc->sc_lock);
+			error = sc->sc_transport->uct_start(sc->sc_parent,
+			    sc->sc_portno, epoch);
+			if (error) {
+				error = error > 0 ? error : EIO;
+				goto bad;
+			}
+			mutex_enter(&sc->sc_lock);
+		}
+		ttylock(tp);
 		sc->sc_rx_unblock = 0;
 		sc->sc_rx_stopped = 0;
 		sc->sc_tx_stopped = 0;
+		ttyunlock(tp);
 
 		/*
 		 * Either after ucom was attached, or after ucomclose(), this
@@ -652,7 +762,7 @@ ucomopen(dev_t dev, int flag, int mode, struct lwp *l)
 		 */
 		KASSERT(SIMPLEQ_EMPTY(&sc->sc_ibuff_empty));
 
-		for (size_t i = 0; i < UCOM_IN_BUFFS; i++) {
+		for (size_t i = 0; sc->sc_transport == NULL && i < UCOM_IN_BUFFS; i++) {
 			struct ucom_buffer *ub = &sc->sc_ibuff[i];
 			error = ucomsubmitread(sc, ub);
 			if (error) {
@@ -679,8 +789,18 @@ ucomopen(dev_t dev, int flag, int mode, struct lwp *l)
 	 */
 	if (firstopen) {
 		mutex_enter(&sc->sc_lock);
+		if (sc->sc_transport != NULL && (sc->sc_dying ||
+		    sc->sc_tcore.state != UCT_OPEN)) {
+			error = sc->sc_dying ? ENXIO : sc->sc_tcore.error;
+			if (!error)
+				error = EIO;
+			mutex_exit(&sc->sc_lock);
+			goto bad;
+		}
 		KASSERT(sc->sc_state == UCOM_OPENING);
 		sc->sc_state = UCOM_OPEN;
+		if (sc->sc_transport != NULL)
+			ucom_transport_schedule(sc);
 		cv_broadcast(&sc->sc_statecv);
 		mutex_exit(&sc->sc_lock);
 	}
@@ -693,6 +813,11 @@ bad:
 	 */
 	if (firstopen) {
 		ucom_cleanup(sc, flag);
+		if (sc->sc_transport != NULL || sc->sc_methods->ucom_param_strict) {
+			ttylock(tp);
+			tp->t_termios = saved;
+			ttyunlock(tp);
+		}
 
 		mutex_enter(&sc->sc_lock);
 		KASSERT(sc->sc_state == UCOM_OPENING);
@@ -832,6 +957,9 @@ ucomread(dev_t dev, struct uio *uio, int flag)
 	struct tty *tp = sc->sc_tty;
 
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
+	int error = ucom_transport_error(sc);
+	if (error)
+		return error;
 
 	return (*tp->t_linesw->l_read)(tp, uio, flag);
 }
@@ -844,6 +972,9 @@ ucomwrite(dev_t dev, struct uio *uio, int flag)
 	struct tty *tp = sc->sc_tty;
 
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
+	int error = ucom_transport_error(sc);
+	if (error)
+		return error;
 
 	return (*tp->t_linesw->l_write)(tp, uio, flag);
 }
@@ -856,8 +987,85 @@ ucompoll(dev_t dev, int events, struct lwp *l)
 	struct tty *tp = sc->sc_tty;
 
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
+	if (sc->sc_transport == NULL)
+		return (*tp->t_linesw->l_poll)(tp, events, l);
 
-	return (*tp->t_linesw->l_poll)(tp, events, l);
+	/* Fault admission and selector registration form one sc_lock section. */
+	mutex_enter(&sc->sc_lock);
+	int revents = sc->sc_dying || sc->sc_tcore.state == UCT_FAULT ?
+	    POLLERR | POLLHUP : (*tp->t_linesw->l_poll)(tp, events, l);
+	mutex_exit(&sc->sc_lock);
+	return revents;
+}
+
+static const struct filterops *
+ucom_tty_filtops(struct knote *kn)
+{
+	struct tty *tp = kn->kn_hook;
+	struct ucom_softc *sc = device_lookup_private(&ucom_cd, UCOMUNIT(tp->t_dev));
+
+	return kn->kn_filter == EVFILT_READ ? sc->sc_treadops : sc->sc_twriteops;
+}
+
+static void
+filt_ucom_detach(struct knote *kn)
+{
+
+	ucom_tty_filtops(kn)->f_detach(kn);
+}
+
+static int
+filt_ucom_event(struct knote *kn, long hint)
+{
+	struct tty *tp = kn->kn_hook;
+	struct ucom_softc *sc = device_lookup_private(&ucom_cd, UCOMUNIT(tp->t_dev));
+	unsigned error;
+	int ready;
+
+	if ((hint & NOTE_SUBMIT) == 0)
+		ttylock(tp);
+	/* No sc_lock acquisition while the selector holds the TTY lock. */
+	error = atomic_load_acquire(&sc->sc_terror);
+	if (error != 0) {
+		SET(kn->kn_flags, EV_EOF);
+		kn->kn_fflags = error;
+		kn->kn_data = 0;
+		ready = 1;
+	} else {
+		CLR(kn->kn_flags, EV_EOF);
+		kn->kn_fflags = 0;
+		ready = ucom_tty_filtops(kn)->f_event(kn, hint | NOTE_SUBMIT);
+	}
+	if ((hint & NOTE_SUBMIT) == 0)
+		ttyunlock(tp);
+	return ready;
+}
+
+static const struct filterops ucom_filtops = {
+	.f_flags = FILTEROP_ISFD | FILTEROP_MPSAFE,
+	.f_attach = NULL,
+	.f_detach = filt_ucom_detach,
+	.f_event = filt_ucom_event,
+};
+
+int
+ucomkqfilter(dev_t dev, struct knote *kn)
+{
+	struct ucom_softc *sc = device_lookup_private(&ucom_cd, UCOMUNIT(dev));
+	int error;
+
+	error = ttykqfilter(dev, kn);
+	if (error || sc->sc_transport == NULL)
+		return error;
+	/* Retain native TTY readiness and detach, including canonical/VMIN rules. */
+	ttylock(sc->sc_tty);
+	if (kn->kn_filter == EVFILT_READ)
+		sc->sc_treadops = kn->kn_fop;
+	else
+		sc->sc_twriteops = kn->kn_fop;
+	kn->kn_fop = &ucom_filtops;
+	ttyunlock(sc->sc_tty);
+	return 0;
 }
 
 struct tty *
@@ -872,6 +1080,43 @@ ucomtty(dev_t dev)
 int
 ucomioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 {
+	struct ucom_softc *sc = device_lookup_private(&ucom_cd, UCOMUNIT(dev));
+	int error;
+	bool serialize;
+
+	if (sc->sc_transport == NULL && !sc->sc_methods->ucom_param_strict)
+		return ucom_do_ioctl(dev, cmd, data, flag, l);
+	/* Leave progress/query operations available while a setting drains. */
+	switch (cmd) {
+	case TIOCSETA:
+	case TIOCSETAW:
+	case TIOCSETAF:
+	case TIOCSBRK:
+	case TIOCCBRK:
+	case TIOCSDTR:
+	case TIOCCDTR:
+	case TIOCMSET:
+	case TIOCMBIS:
+	case TIOCMBIC:
+	case TIOCSFLAGS:
+		serialize = true;
+		break;
+	default:
+		serialize = false;
+		break;
+	}
+	if (!serialize)
+		return ucom_do_ioctl(dev, cmd, data, flag, l);
+	/* Cover the TTY termios commit after t_param returns too. */
+	mutex_enter(&sc->sc_tctl);
+	error = ucom_do_ioctl(dev, cmd, data, flag, l);
+	mutex_exit(&sc->sc_tctl);
+	return error;
+}
+
+static int
+ucom_do_ioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
+{
 	const int unit = UCOMUNIT(dev);
 	struct ucom_softc * const sc = device_lookup_private(&ucom_cd, unit);
 	struct tty *tp = sc->sc_tty;
@@ -880,7 +1125,25 @@ ucomioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
 
 	DPRINTF("cmd=0x%08jx", cmd, 0, 0, 0);
+	error = ucom_transport_error(sc);
+	if (error) {
+		/* A parent may expose a read-only fault diagnostic, never recovery. */
+		if (sc->sc_transport != NULL && sc->sc_methods->ucom_fault_ioctl != NULL) {
+			int diagnostic = sc->sc_methods->ucom_fault_ioctl(sc->sc_parent,
+			    sc->sc_portno, cmd, data, flag, l->l_proc);
+			if (diagnostic != EPASSTHROUGH)
+				return diagnostic;
+		}
+		return error;
+	}
 
+	/* Private transport diagnostics/controls need no TTY compat module. */
+	if (sc->sc_transport != NULL && sc->sc_methods->ucom_ioctl != NULL) {
+		error = sc->sc_methods->ucom_ioctl(sc->sc_parent,
+		    sc->sc_portno, cmd, data, flag, l->l_proc);
+		if (error != EPASSTHROUGH)
+			return error;
+	}
 	error = (*tp->t_linesw->l_ioctl)(tp, cmd, data, flag, l);
 	if (error != EPASSTHROUGH)
 		return error;
@@ -889,7 +1152,7 @@ ucomioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 	if (error != EPASSTHROUGH)
 		return error;
 
-	if (sc->sc_methods->ucom_ioctl != NULL) {
+	if (sc->sc_transport == NULL && sc->sc_methods->ucom_ioctl != NULL) {
 		error = sc->sc_methods->ucom_ioctl(sc->sc_parent,
 		    sc->sc_portno, cmd, data, flag, l->l_proc);
 		if (error != EPASSTHROUGH)
@@ -902,19 +1165,19 @@ ucomioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 
 	switch (cmd) {
 	case TIOCSBRK:
-		ucom_break(sc, 1);
+		error = ucom_break(sc, 1);
 		break;
 
 	case TIOCCBRK:
-		ucom_break(sc, 0);
+		error = ucom_break(sc, 0);
 		break;
 
 	case TIOCSDTR:
-		ucom_dtr(sc, 1);
+		error = ucom_dtr(sc, 1);
 		break;
 
 	case TIOCCDTR:
-		ucom_dtr(sc, 0);
+		error = ucom_dtr(sc, 0);
 		break;
 
 	case TIOCGFLAGS:
@@ -936,7 +1199,7 @@ ucomioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 	case TIOCMSET:
 	case TIOCMBIS:
 	case TIOCMBIC:
-		tiocm_to_ucom(sc, cmd, *(int *)data);
+		error = tiocm_to_ucom(sc, cmd, *(int *)data);
 		break;
 
 	case TIOCMGET:
@@ -965,7 +1228,7 @@ ucomioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 	return error;
 }
 
-static void
+static int
 tiocm_to_ucom(struct ucom_softc *sc, u_long how, int ttybits)
 {
 	u_char combits;
@@ -975,6 +1238,28 @@ tiocm_to_ucom(struct ucom_softc *sc, u_long how, int ttybits)
 		SET(combits, UMCR_DTR);
 	if (ISSET(ttybits, TIOCM_RTS))
 		SET(combits, UMCR_RTS);
+
+	if (sc->sc_transport != NULL) {
+		u_char mcr;
+		int error;
+		mutex_enter(&sc->sc_lock);
+		mcr = sc->sc_mcr;
+		mutex_exit(&sc->sc_lock);
+		if (how == TIOCMBIC)
+			CLR(mcr, combits);
+		else if (how == TIOCMBIS)
+			SET(mcr, combits);
+		else
+			mcr = combits;
+		if (how == TIOCMSET || ISSET(combits, UMCR_DTR)) {
+			error = ucom_dtr(sc, ISSET(mcr, UMCR_DTR) != 0);
+			if (error)
+				return error;
+		}
+		if (how == TIOCMSET || ISSET(combits, UMCR_RTS))
+			return ucom_rts(sc, ISSET(mcr, UMCR_RTS) != 0);
+		return 0;
+	}
 
 	mutex_enter(&sc->sc_lock);
 	switch (how) {
@@ -998,6 +1283,7 @@ tiocm_to_ucom(struct ucom_softc *sc, u_long how, int ttybits)
 		ucom_dtr(sc, (mcr & UMCR_DTR) != 0);
 	if (how == TIOCMSET || ISSET(combits, UMCR_RTS))
 		ucom_rts(sc, (mcr & UMCR_RTS) != 0);
+	return 0;
 }
 
 static int
@@ -1033,40 +1319,49 @@ XXX;
 	return ttybits;
 }
 
-static void
+static int
 ucom_break(struct ucom_softc *sc, int onoff)
 {
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
 
 	DPRINTF("onoff=%jd", onoff, 0, 0, 0);
+	if (sc->sc_transport != NULL)
+		return ucom_transport_set(sc, UCOM_SET_BREAK, onoff);
 
 	if (sc->sc_methods->ucom_set != NULL)
 		sc->sc_methods->ucom_set(sc->sc_parent, sc->sc_portno,
 		    UCOM_SET_BREAK, onoff);
+	return 0;
 }
 
-static void
+static int
 ucom_dtr(struct ucom_softc *sc, int onoff)
 {
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
 
 	DPRINTF("onoff=%jd", onoff, 0, 0, 0);
+	if (sc->sc_transport != NULL)
+		return ucom_transport_set(sc, UCOM_SET_DTR, onoff);
 
 	if (sc->sc_methods->ucom_set != NULL)
 		sc->sc_methods->ucom_set(sc->sc_parent, sc->sc_portno,
 		    UCOM_SET_DTR, onoff);
+	return 0;
 }
 
-static void
+static int
 ucom_rts(struct ucom_softc *sc, int onoff)
 {
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
 
 	DPRINTF("onoff=%jd", onoff, 0, 0, 0);
+	if (sc->sc_transport != NULL)
+		return ucom_transport_set(sc, UCOM_SET_RTS, onoff);
 
 	if (sc->sc_methods->ucom_set != NULL)
 		sc->sc_methods->ucom_set(sc->sc_parent, sc->sc_portno,
 		    UCOM_SET_RTS, onoff);
+	return 0;
 }
 
 void
@@ -1116,6 +1411,11 @@ ucomparam(struct tty *tp, struct termios *t)
 	/* XXX should take tty lock around touching tp */
 
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
+	if (sc->sc_transport != NULL) {
+		error = ucom_transport_error(sc);
+		if (error)
+			return error;
+	}
 
 	/* Check requested parameters. */
 	if (t->c_ispeed && t->c_ispeed != t->c_ospeed) {
@@ -1130,6 +1430,42 @@ ucomparam(struct tty *tp, struct termios *t)
 	if (ISSET(sc->sc_swflags, TIOCFLAG_SOFTCAR)) {
 		SET(t->c_cflag, CLOCAL);
 		CLR(t->c_cflag, HUPCL);
+	}
+
+	if (sc->sc_transport != NULL || sc->sc_methods->ucom_param_strict) {
+		bool opening, changed;
+		bool owned = mutex_owned(&sc->sc_tctl);
+		u_char msr;
+
+		if (!owned)
+			mutex_enter(&sc->sc_tctl);
+		error = ucom_transport_error(sc);
+		mutex_enter(&sc->sc_lock);
+		opening = sc->sc_state == UCOM_OPENING;
+		msr = sc->sc_msr;
+		mutex_exit(&sc->sc_lock);
+		ttylock(tp);
+		changed = opening || tp->t_ospeed != t->c_ospeed ||
+		    tp->t_cflag != t->c_cflag;
+		ttyunlock(tp);
+		if (!error && changed) {
+			/* Serialize parent acceptance and the advertised TTY state. */
+			error = sc->sc_methods->ucom_param(sc->sc_parent, sc->sc_portno, t);
+			if (!error) {
+				ttylock(tp);
+				tp->t_ispeed = 0;
+				tp->t_ospeed = t->c_ospeed;
+				tp->t_cflag = t->c_cflag;
+				ttyunlock(tp);
+			}
+		}
+		if (!owned)
+			mutex_exit(&sc->sc_tctl);
+		if (error)
+			return error > 0 ? error : EIO;
+		if (changed)
+			(void)(*tp->t_linesw->l_modem)(tp, ISSET(msr, UMSR_DCD));
+		return 0;
 	}
 
 	/*
@@ -1191,6 +1527,13 @@ ucomhwiflow(struct tty *tp, int block)
 	KASSERT(&sc->sc_lock);
 	KASSERT(ttylocked(tp));
 
+	if (sc->sc_transport != NULL) {
+		/* This callback has the TTY lock; never acquire sc_lock here. */
+		sc->sc_rx_stopped = block != 0;
+		ucom_transport_schedule(sc);
+		return 1;
+	}
+
 	old = sc->sc_rx_stopped;
 	sc->sc_rx_stopped = (u_char)block;
 
@@ -1214,6 +1557,11 @@ ucomstart(struct tty *tp)
 	int cnt;
 
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
+	if (sc->sc_transport != NULL) {
+		/* t_oproc runs under TTY lock; dispatch later in lock order. */
+		ucom_transport_schedule(sc);
+		return;
+	}
 
 	if (ISSET(tp->t_state, TS_BUSY | TS_TIMEOUT | TS_TTSTOP))
 		goto out;
@@ -1267,6 +1615,15 @@ ucomstart(struct tty *tp)
 void
 ucomstop(struct tty *tp, int flag)
 {
+	const int unit = UCOMUNIT(tp->t_dev);
+	struct ucom_softc * const sc = device_lookup_private(&ucom_cd, unit);
+
+	if (sc != NULL && sc->sc_transport != NULL) {
+		KASSERT(ttylocked(tp));
+		if (ISSET(tp->t_state, TS_BUSY) && !ISSET(tp->t_state, TS_TTSTOP))
+			SET(tp->t_state, TS_FLUSH);
+		return;
+	}
 #if 0
 	const int unit = UCOMUNIT(tp->t_dev);
 	struct ucom_softc * const sc = device_lookup_private(&ucom_cd, unit);
@@ -1363,6 +1720,11 @@ ucom_softintr(void *arg)
 
 	struct ucom_softc *sc = arg;
 	struct tty *tp = sc->sc_tty;
+
+	if (sc->sc_transport != NULL) {
+		ucom_transport_softintr(sc);
+		return;
+	}
 
 	mutex_enter(&sc->sc_lock);
 	ttylock(tp);
@@ -1530,6 +1892,326 @@ ucomreadcb(struct usbd_xfer *xfer, void *p, usbd_status status)
 }
 
 static void
+ucom_transport_schedule(struct ucom_softc *sc)
+{
+
+	kpreempt_disable();
+	softint_schedule(sc->sc_si);
+	kpreempt_enable();
+}
+
+static int
+ucom_transport_set(struct ucom_softc *sc, int which, int on)
+{
+	int error;
+	u_char bit = which == UCOM_SET_DTR ? UMCR_DTR : UMCR_RTS;
+	bool owned = mutex_owned(&sc->sc_tctl);
+
+	if (!owned)
+		mutex_enter(&sc->sc_tctl);
+	error = sc->sc_transport->uct_set(sc->sc_parent, sc->sc_portno, which, on);
+	if (!error && which != UCOM_SET_BREAK) {
+		mutex_enter(&sc->sc_lock);
+		if (on)
+			SET(sc->sc_mcr, bit);
+		else
+			CLR(sc->sc_mcr, bit);
+		mutex_exit(&sc->sc_lock);
+	}
+	if (!owned)
+		mutex_exit(&sc->sc_tctl);
+	return error >= 0 ? error : EIO;
+}
+
+static int
+ucom_transport_attach(struct ucom_softc *sc)
+{
+	const struct ucom_transport_methods *t = sc->sc_transport;
+	int error;
+
+	if (t->uct_attach == NULL || t->uct_start == NULL ||
+	    t->uct_stop == NULL || t->uct_submit == NULL ||
+	    t->uct_rx_flow == NULL || t->uct_set == NULL ||
+	    t->uct_detach == NULL || sc->sc_methods->ucom_param == NULL ||
+	    sc->sc_methods->ucom_open != NULL || sc->sc_methods->ucom_close != NULL ||
+	    sc->sc_methods->ucom_read != NULL || sc->sc_methods->ucom_write != NULL ||
+	    sc->sc_methods->ucom_set != NULL || sc->sc_obufsize == 0 ||
+	    sc->sc_obufsize > 65535 || sc->sc_opkthdrlen != 0)
+		return EINVAL;
+	ucom_transport_core_init(&sc->sc_tcore);
+	sc->sc_tflow = -1;
+	sc->sc_trx = kmem_zalloc(sizeof(*sc->sc_trx), KM_SLEEP);
+	sc->sc_tbuf = kmem_alloc(sc->sc_obufsize, KM_SLEEP);
+	error = t->uct_attach(sc->sc_parent, sc->sc_portno, sc);
+	if (error) {
+		kmem_free(sc->sc_tbuf, sc->sc_obufsize);
+		kmem_free(sc->sc_trx, sizeof(*sc->sc_trx));
+		sc->sc_tbuf = NULL;
+		sc->sc_trx = NULL;
+		return error > 0 ? error : EIO;
+	}
+	sc->sc_tattached = true;
+	return 0;
+}
+
+static int
+ucom_transport_error(struct ucom_softc *sc)
+{
+	int error = 0;
+
+	if (sc->sc_transport == NULL)
+		return 0;
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_dying)
+		error = ENXIO;
+	else if (sc->sc_tcore.state == UCT_FAULT)
+		error = sc->sc_tcore.error;
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+static void
+ucom_transport_fail(struct ucom_softc *sc, int error)
+{
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+	if (sc->sc_tcore.state != UCT_OPEN)
+		return;
+	ucom_transport_core_fault(&sc->sc_tcore, error);
+	atomic_store_release(&sc->sc_terror, sc->sc_tcore.error);
+	sc->sc_tnotify = true;
+	ucom_transport_schedule(sc);
+}
+
+bool
+ucom_transport_idle(struct ucom_softc *sc)
+{
+	struct tty *tp = sc->sc_tty;
+	bool idle;
+
+	mutex_enter(&sc->sc_lock);
+	ttylock(tp);
+	idle = !sc->sc_dying && sc->sc_transport != NULL && sc->sc_tstarted &&
+	    sc->sc_tcore.state == UCT_OPEN && !sc->sc_tcore.tx_pending &&
+	    sc->sc_tdone == 0 && tp->t_outq.c_cc == 0;
+	ttyunlock(tp);
+	mutex_exit(&sc->sc_lock);
+	return idle;
+}
+
+int
+ucom_transport_input(struct ucom_softc *sc, uint64_t epoch,
+    const void *data, size_t len)
+{
+	int error;
+
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_transport == NULL || !sc->sc_tattached || sc->sc_dying ||
+	    !ucom_transport_core_accept(&sc->sc_tcore, epoch)) {
+		mutex_exit(&sc->sc_lock);
+		return ENXIO;
+	}
+	error = ucom_transport_rx_put(sc->sc_trx, data, len);
+	if (error == ENOBUFS)
+		ucom_transport_fail(sc, error);
+	if (!error && len != 0)
+		ucom_transport_schedule(sc);
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+void
+ucom_transport_done(struct ucom_softc *sc, uint64_t epoch, uint64_t cookie,
+    size_t actual, int error)
+{
+	size_t consumed;
+
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_transport != NULL && sc->sc_tattached && !sc->sc_dying &&
+	    ucom_transport_core_done(&sc->sc_tcore, epoch, cookie, actual,
+	    error, &consumed)) {
+		if (consumed != 0) {
+			KASSERT(sc->sc_tdone == 0);
+			sc->sc_tdone = consumed;
+		}
+		if (sc->sc_tcore.state == UCT_FAULT) {
+			atomic_store_release(&sc->sc_terror, sc->sc_tcore.error);
+			sc->sc_tnotify = true;
+		}
+		ucom_transport_schedule(sc);
+	}
+	mutex_exit(&sc->sc_lock);
+}
+
+void
+ucom_transport_fault(struct ucom_softc *sc, uint64_t epoch, int error)
+{
+
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_transport != NULL && sc->sc_tattached && !sc->sc_dying &&
+	    ucom_transport_core_accept(&sc->sc_tcore, epoch))
+		ucom_transport_fail(sc, error);
+	mutex_exit(&sc->sc_lock);
+}
+
+static void
+ucom_transport_stop(struct ucom_softc *sc)
+{
+	uint64_t epoch;
+	bool started;
+
+	mutex_enter(&sc->sc_lock);
+	epoch = sc->sc_tcore.epoch;
+	started = sc->sc_tstarted;
+	sc->sc_tstarted = false;
+	ucom_transport_core_close(&sc->sc_tcore);
+	while (sc->sc_trefs != 0)
+		cv_wait(&sc->sc_statecv, &sc->sc_lock);
+	mutex_exit(&sc->sc_lock);
+	if (started)
+		sc->sc_transport->uct_stop(sc->sc_parent, sc->sc_portno, epoch);
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_trx != NULL)
+		ucom_transport_rx_init(sc->sc_trx);
+	sc->sc_tdone = 0;
+	sc->sc_tnotify = false;
+	atomic_store_release(&sc->sc_terror, sc->sc_dying ? ENXIO : 0);
+	mutex_exit(&sc->sc_lock);
+}
+
+static void
+ucom_transport_softintr(struct ucom_softc *sc)
+{
+	struct tty *tp = sc->sc_tty;
+	uint64_t epoch = 0, cookie = 0;
+	size_t length = 0, n;
+	const uint8_t *data;
+	int paused = 0, error;
+	bool flow = false, submit = false, open;
+
+	mutex_enter(&sc->sc_lock);
+	if (tp == NULL || sc->sc_dying || sc->sc_closing || !sc->sc_tattached) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
+	ttylock(tp);
+	open = ISSET(tp->t_state, TS_ISOPEN) != 0;
+	if (open && sc->sc_tdone != 0) {
+		CLR(tp->t_state, TS_BUSY);
+		if (ISSET(tp->t_state, TS_FLUSH))
+			CLR(tp->t_state, TS_FLUSH);
+		else if (sc->sc_tdone <= (size_t)tp->t_outq.c_cc)
+			ndflush(&tp->t_outq, sc->sc_tdone);
+		else
+			ucom_transport_fail(sc, EPROTO);
+		sc->sc_tdone = 0;
+		(*tp->t_linesw->l_start)(tp);
+	}
+	ttyunlock(tp);
+
+	if (sc->sc_tcore.state == UCT_FAULT && sc->sc_tnotify) {
+		error = sc->sc_tcore.error;
+		epoch = sc->sc_tcore.epoch;
+		flow = sc->sc_tstarted && sc->sc_tflow != 1;
+		sc->sc_tflow = 1;
+		sc->sc_tnotify = false;
+		/* Keep fault notification within the close/reopen barrier. */
+		sc->sc_trefs++;
+		mutex_exit(&sc->sc_lock);
+		ttycancel(tp);
+		ttylock(tp);
+		selnotify(&tp->t_rsel, 0, NOTE_SUBMIT);
+		selnotify(&tp->t_wsel, 0, NOTE_SUBMIT);
+		ttyunlock(tp);
+		aprint_error_dev(sc->sc_dev, "external transport fault, error=%d\n", error);
+		if (flow)
+			sc->sc_transport->uct_rx_flow(sc->sc_parent, sc->sc_portno, epoch, 1);
+		mutex_enter(&sc->sc_lock);
+		sc->sc_trefs--;
+		cv_broadcast(&sc->sc_statecv);
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
+	if (!open || sc->sc_tcore.state != UCT_OPEN || !sc->sc_tstarted) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
+
+	/* l_rint acquires the TTY lock itself, in sc_lock -> TTY order. */
+	while ((data = ucom_transport_rx_peek(sc->sc_trx, &n)) != NULL) {
+		ttylock(tp);
+		paused = sc->sc_rx_stopped;
+		ttyunlock(tp);
+		if (paused)
+			break;
+		if ((*tp->t_linesw->l_rint)(*data, tp) == -1) {
+			ucom_transport_fail(sc, ENOBUFS);
+			break;
+		}
+		(void)ucom_transport_rx_drop(sc->sc_trx, 1);
+	}
+	if (sc->sc_tcore.state != UCT_OPEN) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
+	ttylock(tp);
+	paused = sc->sc_rx_stopped || sc->sc_trx->paused;
+	if (paused != sc->sc_tflow) {
+		sc->sc_tflow = paused;
+		epoch = sc->sc_tcore.epoch;
+		flow = true;
+		sc->sc_trefs++;
+	}
+	if (!sc->sc_tcore.tx_pending && !sc->sc_tx_stopped &&
+	    !ISSET(tp->t_state, TS_BUSY | TS_TIMEOUT | TS_TTSTOP) && ttypull(tp)) {
+		length = MIN((u_int)ndqb(&tp->t_outq, 0), sc->sc_obufsize);
+		if (length != 0) {
+			error = ucom_transport_core_begin(&sc->sc_tcore, length, &cookie);
+			if (!error) {
+				memcpy(sc->sc_tbuf, tp->t_outq.c_cf, length);
+				SET(tp->t_state, TS_BUSY);
+				epoch = sc->sc_tcore.epoch;
+				submit = true;
+				sc->sc_trefs++;
+			} else {
+				if (sc->sc_tcore.state == UCT_FAULT)
+					atomic_store_release(&sc->sc_terror, sc->sc_tcore.error);
+				sc->sc_tnotify = true;
+				ucom_transport_schedule(sc);
+			}
+		}
+	}
+	ttyunlock(tp);
+	mutex_exit(&sc->sc_lock);
+
+	if (submit) {
+		/* Recheck admission if a concurrent callback faulted the port. */
+		mutex_enter(&sc->sc_lock);
+		open = ucom_transport_core_accept(&sc->sc_tcore, epoch);
+		mutex_exit(&sc->sc_lock);
+		error = open ? sc->sc_transport->uct_submit(sc->sc_parent,
+		    sc->sc_portno, epoch, cookie, sc->sc_tbuf, length) : 0;
+		mutex_enter(&sc->sc_lock);
+		if (error && ucom_transport_core_accept(&sc->sc_tcore, epoch))
+			ucom_transport_fail(sc, error);
+		sc->sc_trefs--;
+		cv_broadcast(&sc->sc_statecv);
+		mutex_exit(&sc->sc_lock);
+	}
+	if (flow) {
+		mutex_enter(&sc->sc_lock);
+		open = ucom_transport_core_accept(&sc->sc_tcore, epoch);
+		mutex_exit(&sc->sc_lock);
+		if (open)
+			sc->sc_transport->uct_rx_flow(sc->sc_parent, sc->sc_portno, epoch, paused);
+		mutex_enter(&sc->sc_lock);
+		sc->sc_trefs--;
+		cv_broadcast(&sc->sc_statecv);
+		mutex_exit(&sc->sc_lock);
+	}
+}
+
+static void
 ucom_cleanup(struct ucom_softc *sc, int flag)
 {
 	struct tty *tp = sc->sc_tty;
@@ -1537,6 +2219,8 @@ ucom_cleanup(struct ucom_softc *sc, int flag)
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
 
 	DPRINTF("closing pipes", 0, 0, 0, 0);
+	if (sc->sc_transport != NULL)
+		ucom_transport_stop(sc);
 
 	/*
 	 * Close the tty and interrupt any pending opens waiting for
@@ -1550,8 +2234,10 @@ ucom_cleanup(struct ucom_softc *sc, int flag)
 	 * New xfers will only be submitted under the lock after
 	 * sc_closing is cleared.
 	 */
-	usbd_abort_pipe(sc->sc_bulkin_pipe);
-	usbd_abort_pipe(sc->sc_bulkout_pipe);
+	if (sc->sc_transport == NULL) {
+		usbd_abort_pipe(sc->sc_bulkin_pipe);
+		usbd_abort_pipe(sc->sc_bulkout_pipe);
+	}
 
 	/*
 	 * Hang up the phone and start the timer before we can make a
