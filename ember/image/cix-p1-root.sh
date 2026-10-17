@@ -66,7 +66,7 @@ expected=36b483e37640359a6c686be4661b5f2d94928f93e126a2de09e67c5e04c01b26
 for tool in nbmakefs nbmtree nbpwd_mkdb; do [ -x "$tools/bin/$tool" ]; done
 for file in sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount \
     sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant \
-    usr/sbin/wpa_cli sbin/dhcpcd bin/sh usr/bin/stat usr/libexec/getty; do
+    usr/sbin/wpa_cli sbin/dhcpcd bin/sh usr/bin/stat usr/libexec/getty usr/sbin/powerd; do
 	[ -x "$cohort/dest/$file" ] || {
 		echo "Missing runtime input: $file" >&2; exit 2
 	}
@@ -81,7 +81,7 @@ done
 mkdir -p "$root/etc" "$root/dev" "$root/root" "$root/tmp" "$root/mnt" \
     "$root/var/run" "$root/var/db/dhcpcd" "$root/var/log" \
     "$root/var/spool/lock" "$root/libexec/dhcpcd-hooks" \
-    "$root/libdata/firmware/rtwce"
+    "$root/libdata/firmware/rtwce" "$root/etc/powerd/scripts"
 chmod 1777 "$root/tmp"
 chmod 700 "$root/root" "$root/var/db/dhcpcd"
 cp "$firmware" "$root/libdata/firmware/rtwce/rtw8822c_fw.bin"
@@ -93,6 +93,9 @@ chmod 755 "$root/libexec/dhcpcd-run-hooks"
 cp "$cohort/obj/etc/MAKEDEV" "$root/dev/MAKEDEV"
 cp "$here/cix-p1-root.subr" "$root/etc/cix-root.subr"
 cp "$here/cix-p1-network.subr" "$root/etc/cix-network.subr"
+cp "$here/cix-p1-power.subr" "$root/etc/cix-power.subr"
+cp "$here/cix-p1-power-button" "$root/etc/powerd/scripts/power_button"
+chmod 755 "$root/etc/powerd/scripts/power_button"
 cp "$here/cix-p1-rc" "$root/etc/rc"
 cp "$here/cix-p1-rc.shutdown" "$root/etc/rc.shutdown"
 cp "$here/cix-p1-console" "$root/usr/libexec/ember-console"
@@ -111,7 +114,7 @@ printf 'group: files\nhosts: files dns\nnetworks: files\npasswd: files\nshells: 
 printf 'Reduced EmberBSD CIX development root\nuserland=%s\n' "$revision" > "$root/etc/ember-build"
 printf 'profile=%s\n' "$profile_revision" >> "$root/etc/ember-build"
 "$tools/bin/nbpwd_mkdb" -L -p -d "$root" "$root/etc/master.passwd"
-MACHINE=aarch64 MACHINE_ARCH=aarch64 sh "$root/dev/MAKEDEV" -s ramdisk wscons \
+MACHINE=aarch64 MACHINE_ARCH=aarch64 sh "$root/dev/MAKEDEV" -s ramdisk wscons sysmon \
     > "$out/devices-raw.spec"
 sed -e '/^\. type=dir/d' -e 's,^\.,./dev,' "$out/devices-raw.spec" > "$out/devices.spec"
 "$tools/bin/nbmtree" -c -p "$root" -k type,mode,link > "$out/files.spec"

@@ -73,6 +73,17 @@ WPA, because the BSD WPA backend restores automatic roaming on exit.
 Use `shutdown -r now` for a reboot with shutdown hooks.
 The separate `reboot` command does not execute `/etc/rc.shutdown`.
 
+The profile starts native `powerd -d` in the background after root setup.
+Native AArch64 MAKEDEV supplies `/dev/power` through its `sysmon` entry.
+Daemon diagnostics go to `/var/log/powerd.log` with mode `0600`.
+A failed early launch reports a console warning and leaves the console available.
+The one-second live-process check does not prove delivery of button events.
+The profile's `power_button` policy accepts `pressed` and calls `shutdown -p now`.
+An atomic guard prevents duplicate requests until reboot. A failed synchronous
+request releases that guard so a later press can retry. Release events do nothing.
+This policy retains the normal shutdown hooks and filesystem shutdown path.
+Button delivery and physical poweroff still need a separate target trial.
+
 This development profile exposes an unauthenticated root shell on its trusted
 UART console. It starts no network login server. Configure access separately
 before deployment outside a controlled development bench.
@@ -85,6 +96,7 @@ service participates in this development-console path.
 ```sh
 ruby ember/image/test-cix-p1-userland.rb
 ruby ember/image/test-cix-p1-startup.rb
+ruby ember/image/test-cix-p1-power.rb
 ruby ember/image/test-cix-p1-root.rb
 ruby ember/image/test-cix-p1-root-image.rb
 CC=gcc-16 TEST_CFLAGS=-O2 \
@@ -94,6 +106,8 @@ CC=gcc-16 TEST_CFLAGS=-O2 \
 The startup contracts execute the actual shell functions with command-boundary
 doubles. They check ordering, profile permissions, failed launches and FFS
 failure handling. They do not qualify target startup or a complete base system.
+The power contract executes the actual policy and startup function with explicit
+device, daemon and shutdown boundary doubles. It never executes host shutdown.
 The root-image contract runs the actual assembler against synthetic Git sources,
 runtime receipts, firmware data and host-tool doubles. It checks rejection before
 image creation, final source pins, native ownership metadata and the getty recipe.
@@ -110,6 +124,7 @@ The first boot moved from the recovery RAM root to SD. Four further boots used
 `shutdown -r now`; all cleanly unmounted FFS and the two tmpfs instances.
 Each boot selected `dk2`, retained the same marker and started one WPA daemon
 and one IPv4 DHCP daemon. The private profile retained root ownership and `0600`.
+These five boots predate the power-button policy described above.
 
 | Check | Result |
 | --- | --- |

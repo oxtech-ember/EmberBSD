@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Native powerd owns events. This check only detects early launch failures.
+cix_power_start()
+{
+	_cix_run=${cix_run:-/var/run}
+	_cix_log=${cix_log:-/var/log}
+	if ! test -c /dev/power; then
+		echo 'powerd: power character device is missing.' >&2
+		return 1
+	fi
+	umask 077
+	mkdir -p "$_cix_log" || return 1
+	mkdir "$_cix_run/cix-powerd" || {
+		echo 'powerd: startup guard exists or cannot be created.' >&2
+		return 1
+	}
+	if ! { : >> "$_cix_log/powerd.log" && chmod 600 "$_cix_log/powerd.log"; }; then
+		rm -d "$_cix_run/cix-powerd"
+		return 1
+	fi
+	# Debug mode keeps native diagnostics on stderr without requiring syslogd.
+	powerd -d >> "$_cix_log/powerd.log" 2>&1 &
+	_cix_power_pid=$!
+	if ! printf '%s\n' "$_cix_power_pid" > "$_cix_run/cix-powerd/pid"; then
+		kill "$_cix_power_pid" 2>/dev/null || :
+		wait "$_cix_power_pid" 2>/dev/null || :
+		rm -f "$_cix_run/cix-powerd/pid"
+		rm -d "$_cix_run/cix-powerd"
+		return 1
+	fi
+	sleep 1
+	if ! kill -0 "$_cix_power_pid" 2>/dev/null; then
+		wait "$_cix_power_pid" 2>/dev/null || :
+		echo 'powerd: child exited during startup; diagnostics follow.' >&2
+		cat "$_cix_log/powerd.log" >&2
+		rm -f "$_cix_run/cix-powerd/pid"
+		rm -d "$_cix_run/cix-powerd"
+		return 1
+	fi
+}

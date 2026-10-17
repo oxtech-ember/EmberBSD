@@ -1011,6 +1011,8 @@ The base system shell is unchanged.
   network and shutdown scripts. Five unattended SD-root boots retain a marker. Reboot trials
   on both bands restore WPA2/DHCP. Both bands pass 2 MiB TCP checks in each direction.
   Cold power removal and a complete base release remain separate acceptance.
+  A source-tested native `powerd` policy requests orderly poweroff and rejects
+  duplicate button requests. Physical button delivery remains unqualified.
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request
   cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the
   active control request and preserves queued requests. Actual-function

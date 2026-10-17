@@ -15,18 +15,25 @@ require 'tmpdir'
 
 ROOT_SCRIPT = File.expand_path(ENV.fetch('ROOT_SCRIPT', File.join(__dir__, 'cix-p1-root.sh')))
 abort 'Root stager is missing' unless File.file?(ROOT_SCRIPT)
-PROFILE_FILES = %w[cix-p1-root.sh cix-p1-root.subr cix-p1-network.subr cix-p1-rc cix-p1-rc.shutdown cix-p1-console].freeze
+PROFILE_FILES = %w[cix-p1-root.sh cix-p1-root.subr cix-p1-network.subr cix-p1-power.subr cix-p1-power-button cix-p1-rc cix-p1-rc.shutdown cix-p1-console].freeze
 # Capture one immutable candidate, without editing another agent's checkout.
 PROFILE_DATA = PROFILE_FILES.to_h do |file|
   path = file == 'cix-p1-root.sh' ? ROOT_SCRIPT : File.join(File.dirname(ROOT_SCRIPT), file)
   [file, File.binread(path)]
 end.freeze
-REQUIRED = %w[sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant usr/sbin/wpa_cli sbin/dhcpcd bin/sh usr/bin/stat usr/libexec/getty].freeze
+REQUIRED = %w[sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant usr/sbin/wpa_cli sbin/dhcpcd bin/sh usr/bin/stat usr/libexec/getty usr/sbin/powerd].freeze
 RUNTIME = (REQUIRED + %w[usr/bin/wall usr/bin/netstat]).freeze
 FW_HASH = '36b483e37640359a6c686be4661b5f2d94928f93e126a2de09e67c5e04c01b26'
 HOST_PATH = [File.dirname(RbConfig.ruby), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].uniq.join(':')
 REAL_SHASUM = HOST_PATH.split(':').map { |p| File.join(p, 'shasum') }.find { |p| File.executable?(p) }
 abort 'Host shasum is missing' unless REAL_SHASUM
+# Use the unchanged native generator and AArch64 major-number sources.
+# MAKEDEV -s emits metadata; it cannot create a host device node.
+native_source = File.expand_path('../..', File.dirname(ROOT_SCRIPT))
+NATIVE_MAKEDEV, generator_error, generator_status = Open3.capture3(
+  {'MACHINE' => 'aarch64', 'MACHINE_ARCH' => 'aarch64', 'NETBSDSRCDIR' => native_source},
+  'awk', '-f', native_source + '/etc/MAKEDEV.awk', native_source + '/etc/MAKEDEV.tmpl')
+abort generator_error unless generator_status.success?
 $checks = $failures = 0
 
 def check(value, message)
@@ -96,12 +103,14 @@ def fixture(base, name)
   write(f[:metalog], metadata)
   write(f[:cohort] + '/BUILD-INPUTS.txt', "source=#{f[:revision]}\ngcc=16.2.0\ntarget=aarch64--netbsd\nprofile=reduced-static-c-development\n")
   manifest(f)
-  write(f[:cohort] + '/obj/etc/MAKEDEV', <<~SH, 0o755)
+  spec_only = <<~SH
     #!/bin/sh
-    [ "$MACHINE" = aarch64 ] && [ "$MACHINE_ARCH" = aarch64 ] || exit 91
-    [ "$*" = '-s ramdisk wscons' ] || exit 92
-    printf '. type=dir mode=0755\n./console type=char mode=0600 device=native,240,0\n'
+    case "$*" in
+      '-s ramdisk wscons'|'-s ramdisk wscons sysmon') ;;
+      *) echo 'Only fixture spec generation is permitted.' >&2; exit 92;;
+    esac
   SH
+  write(f[:cohort] + '/obj/etc/MAKEDEV', spec_only + NATIVE_MAKEDEV, 0o755)
   write(f[:firmware], "synthetic-approved-firmware\n")
   write(f[:cohort] + '/dest/etc/wpa_supplicant.conf', "SYNTHETIC_PROFILE_MUST_NOT_SHIP\n", 0o600)
   fake = dir + '/fakebin'
@@ -199,7 +208,7 @@ Dir.mktmpdir('ember-cix-root-image-') do |base|
   f = fixture(base, 'dirty-profile')
   File.open(f[:script], 'a') { |s| s.puts('# modified after profile commit') }
   reject(f, 'dirty tracked image profile')
-  %w[sbin/fsck sbin/mount_tmpfs usr/sbin/wpa_supplicant usr/libexec/getty].each_with_index do |rel, i|
+  %w[sbin/fsck sbin/mount_tmpfs usr/sbin/wpa_supplicant usr/libexec/getty usr/sbin/powerd].each_with_index do |rel, i|
     f = fixture(base, 'missing-runtime-' + i.to_s)
     File.unlink(f[:cohort] + '/dest/' + rel)
     manifest(f, RUNTIME - [rel])
@@ -271,11 +280,15 @@ Dir.mktmpdir('ember-cix-root-image-') do |base|
       %w[al=root lo=/usr/libexec/ember-console sp#115200 np ce ck].all? { |cap| caps.include?(cap) },
       'getty creates the console session and selects the root wrapper without PAM/login')
     check(!File.exist?(root + '/etc/wpa_supplicant.conf'), 'template Wi-Fi profile is not shipped')
+    check(File.file?(root + '/etc/powerd/scripts/power_button') && File.executable?(root + '/etc/powerd/scripts/power_button'),
+      'the selected profile includes an executable power-button policy')
     check(Dir.glob(root + '/**/*').select { |p| !File.symlink?(p) && File.file?(p) }.none? { |p| File.binread(p).include?('SYNTHETIC_PROFILE_MUST_NOT_SHIP') }, 'synthetic profile data absent from all staged files')
     check((File.stat(root + '/root').mode & 0o7777) == 0o700 && (File.stat(root + '/tmp').mode & 0o7777) == 0o1777, 'root home and temporary directory modes')
     spec = File.read(f[:out] + '/root.spec')
     check(spec.include?("/set type=file mode=0755 uid=0 gid=0\n"), 'target ownership defaults are root')
-    check(spec.include?("./dev/console type=char mode=0600 device=native,240,0\n"), 'MAKEDEV nodes are rooted under dev')
+    check(spec.lines.any? { |s| s.split.first == './dev/console' && s.include?('type=char') && s.include?('device=netbsd,2,0') && s.include?('mode=600') }, 'MAKEDEV nodes are rooted under dev')
+    check(spec.lines.any? { |s| s.split.first == './dev/power' && s.include?('type=char') && s.include?('device=netbsd,101,2') && s.include?('mode=640') },
+      'native AArch64 MAKEDEV provides the sysmon power character device')
     check(!spec.include?("\n./console "), 'device spec does not create a root console path')
     { './sbin/shutdown' => ['operator', 0o4554], './usr/bin/wall' => ['tty', 0o2555],
       './usr/bin/netstat' => ['kmem', 0o2555] }.each do |path, (group, mode)|
