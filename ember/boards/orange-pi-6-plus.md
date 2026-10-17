@@ -11,7 +11,7 @@ This profile records one physical sample. It is not a complete installation imag
 | CPU and memory | The kernel reports 12 CPUs and about 32 GB. SMP stress and memory integrity are not qualified. |
 | Ethernet | `rge1` negotiates 1000baseT full-duplex. A short host-to-board transfer and ICMP replies pass. Board-initiated ping to the host did not receive replies; the cause is unconfirmed. The second port and sustained camera traffic remain unqualified. |
 | Video codec | [Passive ACPI attachment](../boot/cix-vpu.md) validates both memory windows, level IRQ 358 and `_CCA=0`. Power, clocks, reset, MMIO, DMA and video queues remain disabled. No hardware encoding is claimed. |
-| RTL8822CE | Native PCI/net80211 station sources and GCC16 checks are integrated; see the [source boundary and contracts](../development/rtl8822ce-proposal.md#current-source-boundary). A physical `EMBER64` trial at `be108d5319de7bea7b3bc86c51935c605b8a39e4` initializes `rtwce0`, receives beacons and returns AP scan results. Association on 2.4/5 GHz, WPA2, DHCP, data transport and reconnect remain unaccepted. |
+| RTL8822CE | Native PCI/net80211 station sources and GCC16 checks are integrated; see the [source boundary and contracts](../development/rtl8822ce-proposal.md#current-source-boundary). Earlier physical trials receive 2.4 GHz beacons and return AP scan results. Cold ADC calibration at `4739eb6dc12dffb4676214408a3f46bb23acd9d1` returns ERANGE and stops radio startup with power off. Association on 2.4/5 GHz, WPA2, DHCP, data transport and reconnect remain unaccepted. |
 | Storage | SD supplies the boot payload. The root is RAM only. NVMe installation is not accepted. |
 | Other peripherals | USB device failures remain in the boot log. GPIO/PPS, camera capture, Bluetooth, HDMI, GPU, NPU, thermal behavior and sustained operation are not accepted by this trial. |
 
@@ -42,6 +42,9 @@ The VPU resource contract passes 50 assertions on the physical kernel.
 Source contracts, GCC path analysis, host sanitizers and Linux CI memory checks
 do not qualify firmware execution, live DMA or a usable codec.
 Earlier firmware DDR training/BIST messages still require separate investigation.
+A later Wi-Fi kernel trial waited for `acpibat0` before root attachment after
+an ACPI `AE_NO_MEMORY` error. A warm retry reached the shell without a source change.
+Boot reliability and the cause of this failure remain unqualified.
 
 For reusable board and interface references, start with
 [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards).

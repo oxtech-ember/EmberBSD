@@ -947,8 +947,9 @@ The base system shell is unchanged.
 - **Native RTL8822CE station foundation:** this OS tree integrates PCI/DMA,
   RTL8822C hardware setup and a net80211 wrapper for legacy 802.11a/b/g
   with software CCMP. GCC16 builds and source contracts are checked.
-  A physical diagnostic initializes the interface, receives beacons and lists APs;
-  2.4/5 GHz association, WPA2, DHCP and data transport remain unaccepted.
+  Earlier physical diagnostics receive 2.4 GHz beacons and list APs.
+  Current cold ADC calibration fails its residual check and stops radio startup.
+  Association on either band, WPA2, DHCP and data transport remain unaccepted.
   See the [source boundary and checks](ember/development/rtl8822ce-proposal.md#current-source-boundary)
   and [physical board limits](ember/boards/orange-pi-6-plus.md).
 - **Raspberry Pi 5 and Compute Module 5**: UEFI firmware built from
