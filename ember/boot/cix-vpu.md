@@ -158,6 +158,20 @@ It reports no findings after three exact unused-inline standard-header suppressi
 `__zeroll`, `__zeroull` and `__sputc`. No project diagnostics are suppressed.
 These host results do not establish physical attachment or codec support.
 
+On 2026-10-17, `EMBER64` from `293e5f1166569113072a1deac12012e025056ce0`
+booted on the CIX CD8180 board described above. Both host and target compilers
+were GCC 16.2.0. The ELF kernel SHA256 is
+`5afb9ee12a359d9007f03d8746d699bdaa34d61fba359c861b137ab1cf3924d2`.
+The physical diagnostic attachment reported MEM0 `0x14230000`, MEM1 `0x14240000`,
+two `0x10000` spans, level IRQ 358 and `_CCA = 0`. It left the codec disabled.
+All 50 resource assertions also passed as a cross-built program on that kernel.
+The kernel sources compile with their actual target arguments and GCC `-fanalyzer`.
+Cppcheck on those kernel arguments reports inherited header style findings and
+two callback-const suggestions incompatible with the fixed autoconfiguration API.
+No project diagnostic category was disabled. Native host ASan/UBSan and the
+GCC16 Linux CI with Memcheck cover the portable source, not live kernel memory.
+See the [board profile](../boards/orange-pi-6-plus.md) for the boot and recovery limits.
+
 [Ports diagnostics](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/cix-vpu)
 cross-build FFmpeg 9.0.2 M2M modules and the actual GStreamer 1.28.8 V4L2 plugin.
 All 58 selected AArch64 ABI values match between native and bundled headers.

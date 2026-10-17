@@ -12,6 +12,7 @@ adds a row and a page, without adding columns to a project-wide feature matrix.
 | Broadcom / AArch64 | [Raspberry Pi 5](raspberry-pi-5.md), [Compute Module 5](compute-module-5.md), [Raspberry Pi Zero 2 W](raspberry-pi-zero-2-w.md) |
 | Allwinner A733 / AArch64 | [Orange Pi Zero 4](orange-pi-zero-4.md), [Orange Pi Zero 3W](orange-pi-zero-3w.md) |
 | Allwinner A133 / AArch64 | [YS-M33 tablet](ys-m33-a133.md) |
+| CIX CD8180 / AArch64 | [Orange Pi 6 Plus](orange-pi-6-plus.md), experimental diagnostic boot |
 | Espressif / RV32 | [ESP32-S31 development board](esp32-s31.md) |
 
 ## Read a support claim
@@ -41,7 +42,9 @@ AArch64 platform. It is separate from the physical-board catalog.
 [GPU and NPU porting targets](../../README.md#gpu-foundations-and-npu-direction)
 are research directions, not additional supported boards.
 The [common board-change worksheet](../development/board-change.md#applying-the-procedure-to-orange-pi-6-plus)
-uses Orange Pi 6 Plus as a first-port example. It has no accepted EmberBSD board profile yet.
+uses Orange Pi 6 Plus as a first-port example. Its
+[experimental profile](orange-pi-6-plus.md) records a diagnostic RAM boot;
+it does not establish a complete board installation or peripheral acceptance.
 
 ## Reference platforms for your own device
 
