@@ -697,7 +697,6 @@ rtw88_start(struct rtw88_softc *sc)
 	gen = sc->sc_generation;
 	sc->sc_stop_requested = 0;
 	sc->sc_bootstrapping = 1;
-	stage = "identity";
 	error = rtw8822c_identify(sc);
 	if (error != 0)
 		goto fail;
