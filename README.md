@@ -249,7 +249,10 @@ on every board in the hardware catalog.
   with the expected header, length and successful firmware status. A separate
   one-request boot returns CLOCK version 2.0 with valid framing and status.
   A further single-request boot reports 273 clocks and eight asynchronous slots.
-  Clock ID 67 is in range; its identity, rate and control remain unqualified.
+  Clock ID 67 is in range. A separate rate read returns valid zero-Hertz
+  telemetry. The entity reply omits the CLOCK 2.0 enable-delay field and stays
+  rejected. Its raw name prefix spells `vpu_apbclk`. Repeated requests and
+  clock control remain unqualified; the rate is not a measured waveform.
 - **Four H.265 views in Qt:** the [Qt Multimedia CPU profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/qt-four-streams)
   cross-builds Qt 6.12 with GCC16 and the common FFmpeg9 provider for amd64.
   The [four-player example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/media/qt-four-streams)
@@ -1020,7 +1023,7 @@ The base system shell is unchanged.
 - **Reduced CIX P1 development userland:** the OS-owned
   [static C profile](ember/image/cix-p1-userland.md) cross-builds current
   headers, libraries, network clients and disk recovery tools with GCC16.
-  An extended 80-program cohort passes static little-endian AArch64 ELF checks.
+  An extended 81-program cohort passes static little-endian AArch64 ELF checks.
   The [persistent-root profile](ember/image/cix-p1.md) adds explicit console,
   network and shutdown scripts. Five unattended SD-root boots retain a marker. Reboot trials
   on both bands restore WPA2/DHCP. Both bands pass 2 MiB TCP checks in each direction.
