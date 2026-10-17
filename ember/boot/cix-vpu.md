@@ -5,7 +5,7 @@ The hardware driver is incomplete.
 Origin: EmberBSD contributors, AI-assisted.
 
 EmberBSD identifies the CIX P1 codec and validates its ACPI descriptions.
-The default resource query leaves the codec disabled.
+The default resource query does not activate the codec or establish its power state.
 There is no video device or M2M interface.
 The attachment and helpers do not load firmware or encode frames.
 The target is Orange Pi 6 Plus with CIX CD8180 and stock ACPI firmware.
@@ -164,8 +164,25 @@ cores. Callers must never free from the mapping list. Getters recheck bounds
 and counts before indexing. Synthetic bus addresses in the MMU composition
 tests are fixtures; no DMA address or device operation occurs in the planner.
 The selected layout has seven common pages, 128 print pages and at most four
-contiguous cores. Other layouts need separate support. Check exact-head CI
-for its Linux Memcheck result before accepting that boundary.
+contiguous cores. Other layouts need separate support. Linux source CI at
+`09331e9443d32bf061b781f24e2fe9d47c8b25a3` passes these planner checks under
+Memcheck and ASan/UBSan, without reported memory errors or leaks.
+
+The optional identity probe from
+`a6a21a0820a54fac683a53b4980d296ae6a94177` also booted on the board and
+firmware described above. The firmware returned `0xfffffffc` (`-4`, SCMI
+`NOT_FOUND`) for both clock ID 67 enable and cleanup disable. The probe
+reported primary error 5, cleanup error 5 and unreleased claims. The source
+path reached native power ON and its status check, then asserted main reset
+with readback during cleanup. It retained power ownership and provider
+claims after the rejected clock disable. It did not map VPU registers,
+read a hardware identity, allocate DMA or execute firmware.
+
+The default query had separately received the same status from GCLK for
+clock ID 67. These failures do not identify their firmware-side cause or
+prove the final electrical power state. Returning to an accepted kernel
+passed a clean FFS boot and network reconnection. Clock transport and
+capability discovery remain prerequisites for another activation trial.
 
 The resource validator passes 50 assertions with GCC 16.2.0 on macOS/AArch64,
 including GCC path analysis and a separate ASan/UBSan run.
