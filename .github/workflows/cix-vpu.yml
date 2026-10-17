@@ -98,7 +98,18 @@ jobs:
           # Use the same explicit -I paths for compilation and analysis.
           flags = compiler_flags +
             includes.flat_map { |path| ['-I', path] }
-          sources = Dir['sys/dev/ic/cixvpu_*.c', 'ember/tools/cixvpu-*.c'].sort
+          # Native ACPI control contracts use the platform workflow and model.
+          sources = %w[
+            sys/dev/ic/cixvpu_fw.c
+            sys/dev/ic/cixvpu_ring.c
+            sys/dev/ic/cixvpu_mmu.c
+            sys/dev/ic/cixvpu_resources.c
+            ember/tools/cixvpu-fw-check.c
+            ember/tools/cixvpu-fw-test.c
+            ember/tools/cixvpu-ring-contract.c
+            ember/tools/cixvpu-mmu-contract.c
+            ember/tools/cixvpu-resources-contract.c
+          ].sort
           abort 'Expected all nine portable source units' unless sources.length == 9
           database = sources.map do |source|
             file = File.join(root, source)
@@ -134,7 +145,16 @@ jobs:
             --include="$RUNNER_TEMP/cix-vpu/analysis/gcc-predefined.h" \
             --suppressions-list="$RUNNER_TEMP/cix-vpu/analysis/cppcheck-suppressions.txt" \
             --project="$RUNNER_TEMP/cix-vpu/analysis/compile_commands.json"
-          for source in sys/dev/ic/cixvpu_*.c ember/tools/cixvpu-*.c; do
+          for source in \
+            sys/dev/ic/cixvpu_fw.c \
+            sys/dev/ic/cixvpu_ring.c \
+            sys/dev/ic/cixvpu_mmu.c \
+            sys/dev/ic/cixvpu_resources.c \
+            ember/tools/cixvpu-fw-check.c \
+            ember/tools/cixvpu-fw-test.c \
+            ember/tools/cixvpu-ring-contract.c \
+            ember/tools/cixvpu-mmu-contract.c \
+            ember/tools/cixvpu-resources-contract.c; do
             clang --analyze -std=c11 -U_KERNEL -O2 -Wall -Wextra -Werror -Isys/dev/ic \
               -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror "$source"
           done
