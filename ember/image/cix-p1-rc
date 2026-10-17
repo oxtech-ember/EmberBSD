@@ -1,0 +1,28 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Reduced development root. This does not replace the full base rc system.
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+HOME=/root
+LC_ALL=C
+export PATH HOME LC_ALL
+umask 022
+. /etc/cix-root.subr
+. /etc/cix-network.subr
+cix_root_start || exit 1
+mkdir -p /var/run/dhcpcd /var/db/dhcpcd
+chmod 700 /var/db/dhcpcd
+hostname ember-cix
+ifconfig lo0 inet 127.0.0.1 up
+if [ -f /var/db/entropy-file ]; then
+	rndctl -L /var/db/entropy-file || echo 'WARNING: entropy load failed.' >&2
+fi
+umask 077
+rndctl -S /var/db/entropy-file || echo 'WARNING: entropy save failed.' >&2
+if [ -f /etc/rc.local ]; then
+	/bin/sh /etc/rc.local || echo 'WARNING: rc.local failed.' >&2
+fi
+if ! cix_network_start rtwce0 /etc/wpa_supplicant.conf; then
+	echo 'WARNING: Wi-Fi startup failed. Use the local console to inspect it.' >&2
+fi
+echo 'EmberBSD CIX development root. Wi-Fi association and DHCP run in background.'
+exit 0

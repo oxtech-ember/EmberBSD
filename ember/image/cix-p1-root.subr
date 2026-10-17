@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Startup for a writable FFS root. The kernel must mount root read-only.
+
+cix_root_start()
+{
+	fsck -p /
+	_cix_fsck=$?
+	case $_cix_fsck in
+	0)	;;
+	4)	echo 'Root was modified. Reboot before using the mounted copy.' >&2
+		reboot -n
+		return 1 ;;
+	*)	echo "Root check failed ($_cix_fsck). Enter single-user recovery." >&2
+		return 1 ;;
+	esac
+	mount -u -w / || return 1
+	# A fresh runtime tree prevents stale PIDs and sockets after a crash.
+	mount_tmpfs -s 32M tmpfs /var/run || return 1
+	mount_tmpfs -s 128M tmpfs /tmp || return 1
+}

@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Trusted UART console for this development profile. No network login service.
+HOME=/root
+TERM=${TERM:-vt100}
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+PS1='ember-cix# '
+export HOME TERM PATH PS1
+cd /root || exit 1
+exec /bin/sh -i

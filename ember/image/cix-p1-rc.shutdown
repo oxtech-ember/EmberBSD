@@ -1,0 +1,11 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# shutdown(8) invokes this file. reboot(8) does not run shutdown hooks.
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+. /etc/cix-network.subr
+cix_network_stop rtwce0 || echo 'WARNING: Wi-Fi stop failed.' >&2
+umask 077
+rndctl -S /var/db/entropy-file || echo 'WARNING: entropy save failed.' >&2
+sync
+exit 0

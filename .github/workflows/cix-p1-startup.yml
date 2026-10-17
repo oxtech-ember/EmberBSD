@@ -1,0 +1,37 @@
+name: CIX P1 startup contracts
+
+'on':
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/cix-p1-startup.yml'
+      - 'ember/image/cix-p1-*'
+      - 'ember/image/test-cix-p1-*'
+  pull_request:
+    paths:
+      - '.github/workflows/cix-p1-startup.yml'
+      - 'ember/image/cix-p1-*'
+      - 'ember/image/test-cix-p1-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  startup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Check reduced-root startup and failures
+        run: |
+          ruby ember/image/test-cix-p1-startup.rb
+          ruby ember/image/test-cix-p1-root.rb
+          for file in ember/image/cix-p1-*.sh ember/image/cix-p1-*.subr \
+              ember/image/cix-p1-rc ember/image/cix-p1-rc.shutdown \
+              ember/image/cix-p1-console; do
+            sh -n "$file"
+          done
