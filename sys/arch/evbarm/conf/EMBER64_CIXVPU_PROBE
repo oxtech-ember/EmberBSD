@@ -1,0 +1,9 @@
+# Explicit CIX P1 resource and identity probe. No DMA or firmware execution.
+# This configuration temporarily powers the VPU, pulses its main reset,
+# reads identity, then attempts checked reset/clock/power cleanup.
+# Use a manual boot entry and preserve a working recovery kernel.
+
+include "arch/evbarm/conf/EMBER64"
+
+no cixvpu* at acpi?
+cixvpu* at acpi? flags 0x2

@@ -8,8 +8,19 @@ firmware execution disabled until a checked consumer owns these resources.
 ## Clock provider
 
 `cixclk_acpi` matches CIXHA010 with UID 0. It registers without calling GCLK
-or CLKC. One exclusive claim supports clock ID 0x43. The API uses the native
+or CLKC. Claims are exclusive per clock ID. The API uses the native
 CCLK AML methods rather than a second mailbox implementation.
+
+| ID | Driver API operations | Intended consumer |
+| --- | --- | --- |
+| 0x43 / 67 | Rate query, enable, disable | VPU APB gate named by CLKT |
+| 0x108 / 264 | Rate query only | UART1 functional clock |
+| 0x10a / 266 | Rate query only | UART3 functional clock |
+
+Different IDs have independent claims. Every request carries its actual ID.
+UART clock claims reject enable and disable without evaluating AML. No PL011
+consumer is added at this stage. This table limits the driver API; firmware
+can still reject an operation. It does not establish physical UART frequency.
 
 GCLK returns a little-endian status and a 64-bit rate. CLKC returns a
 little-endian status. The implementation checks the returned object, payload
@@ -63,18 +74,26 @@ EMBER64 selects `flags 0x1`: validate metadata, acquire claims, query GCLK and
 release untouched claims. `flags 0x0` retains descriptions-only attachment.
 `flags 0x2` explicitly selects the active identity probe. Other flags are
 rejected. No mode starts DMA, loads firmware or registers a video device.
+The separate [EMBER64_CIXVPU_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE)
+configuration selects mode 2. Build it with the common GCC16 toolchain.
+Select its kernel manually and retain the working default and recovery paths.
 The callback reports primary and cleanup errors, ACPI statuses, identity
 validity and released controls. It runs at most once per attachment.
 
-The helper supports a query with no power or reset operation. Its separate
+The helper supports a strict rate query with no power or reset operation.
+It records query-attempted and rate-valid separately; a decoded zero can be valid.
+Its separate
 active probe requires an already deasserted RCSU reset. It uses native power
-ownership, confirms the power bit, enables the clock, pulses the main reset
+ownership, confirms the power bit, requires successful clock enable, pulses the main reset
 and reads identity and geometry. Cleanup asserts reset before releasing
 clock and power. Failed cleanup retains its context and reports a separate
 error. A power attempt is pending rollback, not proof of a native lease.
 An OFF readback fault after lease release requires diagnosis, not OFF replay.
 This probe has no DMA or interrupts. Its cleanup cannot serve a DMA driver.
 Power-bit confirmation does not establish memory repair or firmware readiness.
+The active probe does not query the rate or require rate telemetry. This follows
+the maintained runtime-resume sequence. It reports the frequency as unmeasured;
+it does not suppress a failed rate request or substitute another clock ID.
 
 Run from the source root with GCC16:
 
@@ -100,14 +119,16 @@ AML byte decoding is outside that model. Two reset threads perform 8000
 operations through a real host mutex. These are userspace source contracts,
 not kernel execution or evidence of physical reset behavior.
 
-GCC16 host contracts pass 780 clock checks and 383 reset checks. The source
+GCC16 host contracts pass 65393 clock checks and 383 reset checks. Two clock
+threads also execute 8000 rate transactions for the independent UART claims.
+The source
 also compiles with actual AArch64 kernel flags and GCC path analysis. Host
 Cppcheck and Clang Static Analyzer cover the contracts. Target analysis
 retains inherited header style findings and fixed callback-const suggestions;
 the clock target CSA also reports four inherited bitops dead stores.
 No diagnostic category was suppressed. The [CI workflow](../../.github/workflows/cix-platform.yml)
 adds Linux ASan/UBSan and complete Memcheck runs. Check its exact-head result.
-The power contract passes 87 assertions; the VPU control contract passes 421.
+The power contract passes 87 assertions; the VPU control contract passes 447.
 The latter compiles both the complete helper and actual attachment source.
 The power module retains inherited CSA dead stores in unchanged functions.
 Those findings are recorded separately; its execution contract does not
@@ -115,7 +136,27 @@ claim clean analysis of the whole ACPI power module.
 
 A complete kernel build, provider attachment, real clock transactions,
 reset readback and codec execution are separate acceptance boundaries.
-No physical provider operation is accepted by these source checks.
+Source checks alone do not establish physical provider behavior.
+
+## Physical registration and query boundary
+
+On 2026-10-17, GCC16.2 kernel `68d1fc3b020242c9967569816e5e0d35b3a3c771`
+booted on Orange Pi 6 Plus, CIX CD8180, A4 PHECDA-Rev A, with firmware
+`BiosV1.5-W20260706-e321056a`. CCLK and RST0 registered. The VPU stayed disabled.
+The root filesystem was clean, and the installed power daemon restarted.
+
+The separate `8230d5c73e319afe5c649a838543dd560316a6b2` query kernel validated
+the running resource tables and acquired all three provider claims. GCLK for
+ID 67 returned status `0xfffffffc`, SCMI NOT_FOUND. The query reported EIO,
+released all claims and continued boot with a clean filesystem. The rate
+was not accepted. This is a negative clock-query result, not codec readiness.
+Neither trial activated the VPU, operated its reset or started DMA or firmware.
+
+The firmware [clock IDs](https://github.com/cixtech/edk2-platforms/blob/1a48c6523a3225f3ef01b1c91eb3e3dc0dd1857f/Silicon/CIX/Sky1/Include/Protocol/ClockId.h)
+name 67 as VPU_APBCLK and 271 as VPU_CLK. The actual CLKT names only 67.
+Do not substitute 271 or invent a rate. Rate telemetry and successful gate
+control require separate qualification. Both trials used a manual kernel
+entry and preserved the working default, rollback and RAM recovery paths.
 
 ## Primary provenance
 
