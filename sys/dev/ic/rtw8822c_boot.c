@@ -46,6 +46,8 @@ struct rtw8822c_pwr_cmd {
 };
 
 static const uint32_t rtw8822c_rf_base[2] = { 0x3c00, 0x4c00 };
+/* rtw8822c_hw_spec rf_sipi_addr: serial port for RF register 0x00. */
+static const uint32_t rtw8822c_rf_sipi[2] = { 0x1808, 0x4108 };
 
 static const struct rtw8822c_pwr_cmd trans_carddis_to_cardemu_8822c[] = {
 	{ 0x002e, RTW8822C_PWR_CUT_ALL, RTW8822C_PWR_ALL,
@@ -427,7 +429,17 @@ rtw8822c_cfg_rf(struct rtw88_softc *sc, int path, uint32_t addr, uint32_t data)
 	}
 	if (path < 0 || path > 1)
 		return EINVAL;
-	direct = rtw8822c_rf_base[path] + ((addr & 0xff) << 2);
+	addr &= 0xff;
+	/* rtw_phy_write_rf_reg_mix: the mode register goes through SIPI. */
+	if (addr == 0) {
+		int error;
+
+		error = sc->sc_ops->write_4(sc->sc_bus, rtw8822c_rf_sipi[path],
+		    (data & RTW8822C_RFREG_MASK) & UINT32_C(0x0fffffff));
+		sc->sc_ops->delay_us(sc->sc_bus, 13);
+		return error;
+	}
+	direct = rtw8822c_rf_base[path] + (addr << 2);
 	return rtw8822c_write32_mask(sc, direct, RTW8822C_RFREG_MASK, data);
 }
 

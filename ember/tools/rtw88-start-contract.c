@@ -1107,6 +1107,40 @@ test_loopback_mode(void)
 	rtw88_core_detach(&sc);
 }
 
+/*
+ * Reference rtw_phy_write_rf_reg_mix: RF register 0x00 (mode) goes
+ * through the SIPI port, every other register through the direct map.
+ */
+static void
+test_rf_mode_register_uses_sipi(void)
+{
+	static const uint32_t rows[] = {
+		0x00000000, 0x00030000,
+		0x00000018, 0x00012345
+	};
+	struct rtw8822c_table tbl = {
+		.data = rows, .count = 4, .kind = RTW8822C_TBL_RF
+	};
+	struct rtw88_softc sc;
+	unsigned path;
+
+	for (path = 0; path < 2; path++) {
+		uint32_t base = path == 0 ? 0x3c00 : 0x4c00;
+		uint32_t sipi = path == 0 ? 0x1808 : 0x4108;
+
+		reset_bus(&sc);
+		f.mmio[base] = 0xef;
+		f.mmio[base + 1] = 0xbe;
+		f.mmio[base + 2] = 0xad;
+		f.mmio[base + 3] = 0xde;
+		tbl.rf_path = (int)path;
+		CHECK(rtw8822c_apply_table(&sc, &tbl) == 0);
+		CHECK(mmio32(sipi) == 0x00030000);
+		CHECK(mmio32(base) == 0xdeadbeef);
+		CHECK((mmio32(base + 0x18 * 4) & 0xfffff) == 0x12345);
+	}
+}
+
 int
 main(void)
 {
@@ -1136,6 +1170,7 @@ main(void)
 	test_tx_completion();
 	test_tx_refusals();
 	test_loopback_mode();
+	test_rf_mode_register_uses_sipi();
 	test_stop_during_bootstrap();
 	test_stale_generation();
 	test_success_consumes_tables();
