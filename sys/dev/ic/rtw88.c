@@ -79,6 +79,10 @@
 #define RTW88_RING_RX		8
 #define RTW88_RX_TAG_MAX	8192
 #define RTW88_MIN_FRAME		10	/* 802.11 ACK */
+#define RTW88_REG_RCR		0x0608
+/* main.c hal.rcr: APP_FCS/MIC/ICV/PHYSTS, PKTCTL_DLEN, HTC_LOC, AB/AM/APM. */
+#define RTW88_RCR		UINT32_C(0xf010400e)
+#define RTW88_BEACON_IES	36	/* header 24, timestamp, interval, caps */
 #define RTW88_IMR_MGNTDOK	0x40
 #define RTW88_IMR_BEDOK		0x10
 #define RTW88_QSEL_MGMT		18
@@ -723,9 +727,24 @@ rtw88_start(struct rtw88_softc *sc)
 		printf("rtwce: MAC init failed: %d\n", error);
 		goto fail;
 	}
+	/* rtw8822c_phy_set_param: BB/RF on, tables, paths, EDCCA, BF. */
+	error = rtw8822c_phy_pre(sc);
+	if (error != 0)
+		goto fail;
 	error = rtw8822c_load_tables(sc);
 	if (error != 0)
 		goto fail;
+	error = rtw8822c_phy_post(sc);
+	if (error != 0)
+		goto fail;
+	/* rtw_core_start: RCR = hal.rcr, accepting any BSSID's beacons. */
+	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_RCR, RTW88_RCR);
+	if (error != 0)
+		goto fail;
+	error = rtw8822c_set_channel(sc, RTW88_DEFAULT_CHANNEL);
+	if (error != 0)
+		goto fail;
+	sc->sc_channel = RTW88_DEFAULT_CHANNEL;
 	if (sc->sc_stop_requested || sc->sc_generation != gen) {
 		error = EINTR;
 		goto fail;
@@ -815,6 +834,27 @@ rtw88_hci_start(struct rtw88_softc *sc)
 	return error;
 }
 
+/* Beacon evidence: BSSID and SSID, the SSID only when its IE fits. */
+static void
+rtw88_rx_beacon(struct rtw88_softc *sc, const uint8_t *p, size_t len)
+{
+	struct rtw88_stats *st = &sc->sc_stats;
+	size_t n;
+
+	st->rx_beacons++;
+	memcpy(st->last_bssid, p + 16, sizeof(st->last_bssid));
+	st->last_ssid_len = 0;
+	st->last_ssid[0] = '\0';
+	if (len < RTW88_BEACON_IES + 2 || p[RTW88_BEACON_IES] != 0)
+		return;
+	n = p[RTW88_BEACON_IES + 1];
+	if (n > sizeof(st->last_ssid) - 1 || RTW88_BEACON_IES + 2 + n > len)
+		return;
+	memcpy(st->last_ssid, p + RTW88_BEACON_IES + 2, n);
+	st->last_ssid[n] = '\0';
+	st->last_ssid_len = (uint8_t)n;
+}
+
 /* One received buffer: classify, count, and keep every error visible. */
 static void
 rtw88_rx_one(struct rtw88_softc *sc, unsigned idx)
@@ -845,6 +885,8 @@ rtw88_rx_one(struct rtw88_softc *sc, unsigned idx)
 	}
 	/* Task 7 hands validated frames to net80211. */
 	sc->sc_stats.rx_frames++;
+	if (p[0] == 0x80 && rx.packet_size >= RTW88_BEACON_IES)
+		rtw88_rx_beacon(sc, p, rx.packet_size);
 }
 
 /* pci.c rtw_pci_rx_napi, bounded by RTW88_RX_LIMIT per interrupt. */
@@ -981,6 +1023,19 @@ rtw88_loopback(struct rtw88_softc *sc, int mode)
 		return EINVAL;
 	}
 	return sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_CR + 3, (uint8_t)mode);
+}
+
+int
+rtw88_channel(struct rtw88_softc *sc, unsigned ch)
+{
+	int error;
+
+	if (!sc->sc_running)
+		return ENXIO;
+	error = rtw8822c_set_channel(sc, ch);
+	if (error == 0)
+		sc->sc_channel = ch;
+	return error;
 }
 
 int

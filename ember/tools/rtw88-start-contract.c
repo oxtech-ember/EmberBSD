@@ -1141,6 +1141,81 @@ test_rf_mode_register_uses_sipi(void)
 	}
 }
 
+static void
+test_phy_and_channel_at_start(void)
+{
+	struct rtw8822c_efuse map;
+	struct rtw88_softc sc;
+	uint32_t x;
+
+	if (!start_ok(&sc))
+		return;
+	CHECK((f.mmio[0x1f] & 0x7) == 0x7);		/* RF_CTRL powered */
+	CHECK((mmio32(0x1c3c) & 0x3) == 0x3);		/* ENCCK after tables */
+	CHECK(mmio32(0x0608) == UINT32_C(0xf010400e));	/* RCR = hal.rcr */
+	CHECK(rtw8822c_efuse_decode(f.efuse, sizeof(f.efuse), &map) == 0);
+	CHECK(sc.sc_xtal == map.xtal);
+	x = sc.sc_xtal;
+	CHECK(((mmio32(0x1040) >> 10) & 0x3fff) == (x | x << 7));
+	CHECK(sc.sc_channel == RTW88_DEFAULT_CHANNEL);
+	CHECK(f.mmio[0x3c60] == RTW88_DEFAULT_CHANNEL);	/* RF 0x18 path A */
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+static void
+test_channel_switch(void)
+{
+	struct rtw88_softc sc;
+
+	if (!start_ok(&sc))
+		return;
+	CHECK(rtw88_channel(&sc, 6) == 0 && sc.sc_channel == 6);
+	CHECK(f.mmio[0x3c60] == 6 && f.mmio[0x4c60] == 6);
+	CHECK(rtw88_channel(&sc, 36) == 0 && f.mmio[0x3c60] == 36);
+	CHECK(rtw88_channel(&sc, 15) == EINVAL && sc.sc_channel == 36);
+	rtw88_stop(&sc);
+	CHECK(rtw88_channel(&sc, 1) == ENXIO);
+	rtw88_core_detach(&sc);
+}
+
+static void
+test_rx_beacon(void)
+{
+	uint8_t bcn[24 + 12 + 2 + 4 + 4] = {
+		0x80, 0x00, 0x00, 0x00,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0x02, 0x11, 0x22, 0x33, 0x44, 0x55,	/* SA */
+		0x02, 0x11, 0x22, 0x33, 0x44, 0x55,	/* BSSID */
+		0x10, 0x00,
+	};
+	uint8_t bad[sizeof(bcn)];
+	struct rtw88_softc sc;
+
+	memcpy(bcn + 36, "\x00\x04Test", 6);	/* SSID IE, then FCS */
+	memcpy(bad, bcn, sizeof(bcn));
+	bad[37] = 40;				/* SSID IE past the frame */
+	if (!start_ok(&sc))
+		return;
+	rx_put(&sc, 0, sizeof(bcn), 0, bcn, 0);
+	rx_put(&sc, 1, sizeof(bad), 0, bad, 1);
+	f.rx_hw_idx = 2;
+	set_hisr0(0x01);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.rx_frames == 2 && sc.sc_stats.rx_beacons == 2);
+	CHECK(memcmp(sc.sc_stats.last_bssid, bcn + 16, 6) == 0);
+	/* The second beacon's SSID is malformed: no stale or partial name. */
+	CHECK(sc.sc_stats.last_ssid_len == 0 && sc.sc_stats.last_ssid[0] == 0);
+	rx_put(&sc, 2, sizeof(bcn), 0, bcn, 2);
+	f.rx_hw_idx = 3;
+	set_hisr0(0x01);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.last_ssid_len == 4 &&
+	    strcmp(sc.sc_stats.last_ssid, "Test") == 0);
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
 int
 main(void)
 {
@@ -1171,6 +1246,9 @@ main(void)
 	test_tx_refusals();
 	test_loopback_mode();
 	test_rf_mode_register_uses_sipi();
+	test_phy_and_channel_at_start();
+	test_channel_switch();
+	test_rx_beacon();
 	test_stop_during_bootstrap();
 	test_stale_generation();
 	test_success_consumes_tables();

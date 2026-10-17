@@ -95,11 +95,40 @@ rtwce_stats(char *buf, size_t len)
 	    (unsigned long long)st->tx_done, (unsigned long long)st->tx_full,
 	    (unsigned long long)st->tx_dropped,
 	    (unsigned long long)st->tx_dma_errors);
+	if (n > 0 && (size_t)n < len)
+		n += snprintf(buf + n, len - (size_t)n,
+		    " ch %u bcn %llu bssid %02x:%02x:%02x:%02x:%02x:%02x"
+		    " ssid '%s'", rtwce_sc->sc_channel,
+		    (unsigned long long)st->rx_beacons, st->last_bssid[0],
+		    st->last_bssid[1], st->last_bssid[2], st->last_bssid[3],
+		    st->last_bssid[4], st->last_bssid[5], st->last_ssid);
 	if (n > 0 && (size_t)n < len && rtw88_diag(rtwce_sc, r) == 0)
 		snprintf(buf + n, len - (size_t)n,
 		    " hisr0 %#x himr0 %#x hisr3 %#x himr3 %#x rxidx %#x pci %#x",
 		    r[0], r[1], r[2], r[3], r[4], r[5]);
 	return 0;
+}
+
+/* Operator channel switch (20 MHz); 0 reads nothing back. */
+int
+rtwce_channel(int *ch, int set)
+{
+	struct rtw88_pci_softc *psc;
+	int error = 0;
+
+	if (rtwce_sc == NULL)
+		return ENXIO;
+	if (!set) {
+		*ch = (int)rtwce_sc->sc_channel;
+		return 0;
+	}
+	if (*ch <= 0)
+		return EINVAL;
+	psc = rtwce_sc->sc_bus;
+	mutex_enter(&psc->sc_lock);
+	error = rtw88_channel(rtwce_sc, (unsigned)*ch);
+	mutex_exit(&psc->sc_lock);
+	return error;
 }
 
 /* Diagnostic loopback mode; see rtw88_loopback. */

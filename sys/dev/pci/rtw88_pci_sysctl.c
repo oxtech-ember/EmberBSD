@@ -27,7 +27,7 @@ static int
 rtwce_sysctl_stats(SYSCTLFN_ARGS)
 {
 	struct sysctlnode node;
-	char buf[320];
+	char buf[512];
 	int error;
 
 	error = rtwce_stats(buf, sizeof(buf));
@@ -81,6 +81,21 @@ rtwce_sysctl_lbmode(SYSCTLFN_ARGS)
 	return rtwce_lbmode(val);
 }
 
+static int
+rtwce_sysctl_channel(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node;
+	int val = 0, error;
+
+	(void)rtwce_channel(&val, 0);
+	node = *rnode;
+	node.sysctl_data = &val;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	return rtwce_channel(&val, 1);
+}
+
 SYSCTL_SETUP(sysctl_hw_rtwce_setup, "rtwce firmware bootstrap")
 {
 	int err;
@@ -117,6 +132,12 @@ SYSCTL_SETUP(sysctl_hw_rtwce_setup, "rtwce firmware bootstrap")
 	    "rtwce_lbmode",
 	    SYSCTL_DESCR("Loopback mode: 0, 1 PHY, 3 MAC delay, 7 DMA, 11"),
 	    rtwce_sysctl_lbmode, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
+	if (err != 0)
+		aprint_error("rtwce: sysctl_createv failed: %d\n", err);
+	err = sysctl_createv(clog, 0, NULL, NULL,
+	    CTLFLAG_PERMANENT | CTLFLAG_READWRITE, CTLTYPE_INT,
+	    "rtwce_channel", SYSCTL_DESCR("RTL8822CE 20 MHz receive channel"),
+	    rtwce_sysctl_channel, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
 	if (err != 0)
 		aprint_error("rtwce: sysctl_createv failed: %d\n", err);
 }

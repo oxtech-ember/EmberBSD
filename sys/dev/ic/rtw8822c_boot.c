@@ -344,6 +344,7 @@ rtw8822c_identify(struct rtw88_softc *sc)
 	if (error != 0)
 		return error;
 	sc->sc_rfe = map.rfe_option;
+	sc->sc_xtal = map.xtal & 0x7f;
 	sc->sc_cut = (uint8_t)((sc->sc_sys_cfg1 >> 12) & 0x0f);
 	id.vendor = sc->sc_vendor;
 	id.product = sc->sc_product;

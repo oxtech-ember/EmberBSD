@@ -52,6 +52,7 @@ struct rtw88_bus_ops {
 #define RTW88_RX_BUF_SIZE	(11454U + 24U)
 /* Bound on RX descriptors handled per interrupt. */
 #define RTW88_RX_LIMIT		64U
+#define RTW88_DEFAULT_CHANNEL	1U
 /* Published TX entries per used queue; each has a bounce buffer. */
 #define RTW88_TX_SLOTS		32U
 #define RTW88_TX_BUF_SIZE	4096U
@@ -81,6 +82,10 @@ struct rtw88_stats {
 	uint64_t tx_full;
 	uint64_t tx_dropped;	/* Posted but not completed before stop. */
 	uint64_t tx_dma_errors;	/* Read index outside the outstanding range. */
+	uint64_t rx_beacons;
+	uint8_t last_bssid[6];
+	char last_ssid[33];	/* NUL-terminated; empty if malformed. */
+	uint8_t last_ssid_len;
 	uint8_t last_c2h_id;
 	uint8_t last_c2h_seq;
 };
@@ -104,6 +109,7 @@ struct rtw88_softc {
 	uint16_t sc_product;
 	uint8_t sc_rfe;
 	uint8_t sc_cut;
+	uint8_t sc_xtal;		/* EFUSE crystal cap, 7 bits. */
 	uint32_t sc_sys_cfg1;
 	uint32_t sc_generation;
 	uint32_t sc_h2c_box;
@@ -114,6 +120,7 @@ struct rtw88_softc {
 	unsigned sc_rx_rp;	/* Next RX descriptor the host reads. */
 	unsigned sc_rx_tag;
 	int sc_running;		/* Interrupts unmasked; rtw88_intr owns RX. */
+	unsigned sc_channel;
 	struct rtw88_txq sc_txq[RTW88_NTXQ];
 	struct rtw88_stats sc_stats;
 };
@@ -142,6 +149,8 @@ int rtw88_diag(struct rtw88_softc *, uint32_t *);
 int rtw88_tx_raw(struct rtw88_softc *, unsigned, const void *, size_t);
 /* Diagnostic loopback (rtlwifi LBMODE 0, 1, 3, 7 or 0x0b); 0 is normal. */
 int rtw88_loopback(struct rtw88_softc *, int);
+/* 20 MHz channel switch; caller holds the bus interrupt lock. */
+int rtw88_channel(struct rtw88_softc *, unsigned);
 /* Operator trigger. 1 starts, 0 stops. ENXIO until resources are ready. */
 int rtwce_bootstrap(int);
 int rtwce_started(void);
@@ -149,5 +158,6 @@ int rtwce_stats(char *, size_t);
 int rtwce_h2c(uint32_t);
 int rtwce_loopback(int);
 int rtwce_lbmode(int);
+int rtwce_channel(int *, int);
 
 #endif /* _DEV_IC_RTW88VAR_H_ */
