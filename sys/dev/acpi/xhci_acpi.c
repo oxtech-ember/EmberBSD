@@ -196,9 +196,14 @@ xhci_acpi_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 
-	sc->sc_child = config_found(self, &sc->sc_bus, usbctlprint, CFARGS_NONE);
-	sc->sc_child2 = config_found(self, &sc->sc_bus2, usbctlprint,
-	    CFARGS_NONE);
+	if (sc->sc_rhportcount[0] != 0)
+		sc->sc_child = config_found(self, &sc->sc_bus, usbctlprint,
+		    CFARGS_NONE);
+	if (sc->sc_rhportcount[1] != 0)
+		sc->sc_child2 = config_found(self, &sc->sc_bus2, usbctlprint,
+		    CFARGS_NONE);
+	if (sc->sc_rhportcount[0] == 0 && sc->sc_rhportcount[1] == 0)
+		aprint_error_dev(self, "no root hub ports\n");
 
 done:
 	acpi_resource_cleanup(&res);
