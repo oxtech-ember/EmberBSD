@@ -84,7 +84,6 @@ wait_consumed(struct rtw88_softc *sc, uint32_t generation, unsigned wp,
 int
 rtw88_fw_init(struct rtw88_softc *sc)
 {
-	const struct rtw88_tx_info tx = { .packet_size = 32, .queue = 19 };
 	struct rtw88_dma *ring, *packet;
 	uint8_t *buf;
 	uint32_t generation, desa, idx;
@@ -152,9 +151,10 @@ rtw88_fw_init(struct rtw88_softc *sc)
 		if (canceled(sc, generation))
 			return EINTR;
 		memset(buf, 0, H2C_BYTES);
-		error = rtw88_tx_encode(buf, 48, &tx);
-		if (error != 0)
-			return error;
+		/* PCI packet-H2C sets only TXPKTSIZE and QSEL.  Unlike a data
+		 * packet, it has no OFFSET, LS or descriptor checksum. */
+		put16(buf, 32);
+		put32(buf + 4, 19U << 8);
 		h2c = buf + 48;
 		h2c[0] = 1;
 		h2c[1] = 0xff;

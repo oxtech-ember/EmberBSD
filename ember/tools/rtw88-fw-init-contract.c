@@ -10,6 +10,7 @@
 int rtw88_fw_init(struct rtw88_softc *);
 static unsigned assertions;
 static unsigned bd_size,bd_buf_size,bd_psb_len,bd_dma;
+static uint8_t reference_desc[48];
 #define CHECK(x) do { assertions++; if (!(x)) { \
 	fprintf(stderr,"%s:%d: %s\n",__func__,__LINE__,#x); exit(1); \
 } } while(0)
@@ -41,15 +42,13 @@ op(void)
 static void
 consume(void)
 {
-	static const uint8_t desc[48]={
-	    0x20,0,0x30,4,0,0x13,0,0,[28]=0x10,[29]=0x17 };
 	const uint8_t *bd=f.dma_ring+16*(f.wp-1);
 	CHECK(f.consumed<2 && f.pre==f.kicks);
 	CHECK(get(bd+bd_buf_size,2)==48 && get(bd+bd_psb_len,2)==1);
 	CHECK(get(bd+bd_dma,4)==f.sc.sc_fw_dma.addr);
 	CHECK(get(bd+bd_size+bd_buf_size,2)==32 && get(bd+bd_size+bd_psb_len,2)==0);
 	CHECK(get(bd+bd_size+bd_dma,4)==f.sc.sc_fw_dma.addr+48);
-	CHECK(memcmp(f.dma_fw,desc,48)==0);
+	CHECK(memcmp(f.dma_fw,reference_desc,48)==0);
 	CHECK(memcmp(f.dma_fw+48,f.want[f.consumed],32)==0);
 	f.consumed++;
 	f.rp=f.wp;
@@ -150,6 +149,15 @@ load(const char *path)
 	CHECK(fgets(line,sizeof(line),fp)!=NULL);
 	CHECK(sscanf(line,"layout %u %u %u %u",&bd_size,&bd_buf_size,&bd_psb_len,&bd_dma)==4);
 	CHECK(bd_size==8 && bd_buf_size==0 && bd_psb_len==2 && bd_dma==4);
+	CHECK(fgets(line,sizeof(line),fp)!=NULL && strncmp(line,"txdesc ",7)==0);
+	CHECK(strlen(line)==104);
+	for(i=0;i<48;i++) {
+		CHECK(sscanf(line+7+2*i,"%2x",&v)==1);
+		reference_desc[i]=(uint8_t)v;
+	}
+	/* Independent field checks: PCI packet-H2C has no data offset, LS or checksum. */
+	CHECK(get(reference_desc,4)==32 && get(reference_desc+4,4)==0x1300);
+	for(i=8;i<48;i++) CHECK(reference_desc[i]==0);
 	CHECK(fgets(line,sizeof(line),fp)!=NULL && strncmp(line,"bd ",3)==0);
 	for(i=0;i<16;i++) {
 		CHECK(sscanf(line+3+2*i,"%2x",&v)==1);
