@@ -17,9 +17,10 @@ triplets and upstream identifiers do not select an upstream NetBSD build.
 Record the origin of base libraries and headers in cross sysroots; see the
 [Ports provenance requirements](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/sysroot.md).
 Component acceptance does not establish a complete current base release.
-The [CIX P1 persistent-root profile](ember/image/cix-p1.md) prepares a reduced
+The [CIX P1 persistent-root profile](ember/image/cix-p1.md) provides a reduced
 GCC16 userland, checked FFS startup and background RTL8822CE WPA/DHCP startup.
-Its source contracts and physical reboot acceptance have separate limits.
+Five unattended SD-root boots pass persistence checks on one board.
+Both legacy bands pass post-reboot WPA2, DHCP and checksummed TCP transfers.
 
 For target selection and installation, follow [Quick Start](ember/quick-start.md).
 Use the [User Guide](ember/user-guide.md) for first login, network access, applications, updates and recovery.

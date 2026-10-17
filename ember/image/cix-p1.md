@@ -1,6 +1,6 @@
 # CIX P1 persistent development root
 
-Status: source contracts. Physical reboot acceptance is pending.
+Status: source contracts and five unattended physical SD-root boots on 2026-10-17.
 This profile targets the observed CIX P1 CD8180 board and RTL8822CE adapter.
 It builds a reduced static C userland from EmberBSD sources with GCC16.
 It does not produce a complete base release or an unattended disk installer.
@@ -101,3 +101,43 @@ It neither reads a private Wi-Fi profile nor formats a real filesystem or device
 Physical acceptance must show the disk-root device, a retained marker,
 automatic WPA completion, DHCP and checksummed data after an unattended reboot.
 Test each required band separately. Preserve source and artifact hashes.
+
+## Physical reboot check
+
+One CIX P1 CD8180 board, 32 GB, A4 PHECDA-Rev A, passed five unattended boots
+with stock `BiosV1.5-W20260706-e321056a`. No menu or userconf input was sent.
+The first boot moved from the recovery RAM root to SD. Four further boots used
+`shutdown -r now`; all cleanly unmounted FFS and the two tmpfs instances.
+Each boot selected `dk2`, retained the same marker and started one WPA daemon
+and one IPv4 DHCP daemon. The private profile retained root ownership and `0600`.
+
+| Check | Result |
+| --- | --- |
+| Kernel | `71877588ca099bf69686a35b96a00771a26feebc`, GCC16 |
+| Selected userland | `dafccbdc09153ffc85be31fadfd3f7a6cdf536fe`, including a recorded same-source getty extension; 77 static programs |
+| Startup and assembler | `2079c3c6574885304ad1c8c71be02aa79854e22e` |
+| Owning build recipe with getty | `a60132e4b683ce2bfb39c39b7ac54ece60545229` |
+| Initial 2 GiB FFS image | SHA256 `6d9d309ae91d14d10cf664d00410721dad36c7c5f323837f7c55cf87896a6c9d`; full SD readback matches; forced native read-only fsck exits zero |
+| Boot 1, unrestricted profile | Channel 149; WPA2-PSK, CCMP pairwise/group, DHCP and default route; 2 MiB TCP each way, SHA256 matches |
+| Boot 2, selected 2.4 GHz AP | Channel 8; WPA2 and local-subnet TCP pass; the early snapshot does not capture a DHCP lease or default route |
+| Boot 3, restored unrestricted profile | Channel 149; all checks pass again |
+| Boot 4, selected 2.4 GHz AP | Channel 8; WPA2, DHCP lease, default route and TCP integrity pass |
+| Boot 5, restored unrestricted profile | Channel 8; WPA2, DHCP lease, default route and TCP integrity pass |
+
+The simultaneous TCP checks take 9.38 s, 35.53 s, 10.92 s, 33.27 s and 33.73 s.
+Each subsequent router check receives three replies. This is a short integrity
+check, not a throughput qualification. Association retries occur before connection.
+Boot 4 reaches the console in 53 s; DHCP readiness is observed at 150 s.
+The console appears before background WPA and DHCP complete. No connection-time
+bound is qualified. The early boot 2 snapshot is not DHCP evidence; boot 4
+separately confirms that check on 2.4 GHz.
+The final profile has no BSSID or frequency restriction. Credentials stay off Git.
+The original EFI configuration and the known working RAM recovery remain available.
+
+The [startup CI](https://github.com/oxtech-ember/EmberBSD/actions/runs/39041299600)
+passes all 148 host checks on the exact owning-recipe commit above.
+These checks do not execute target AArch64 programs. The boot-menu contract has
+separate Linux Memcheck and sanitizer acceptance.
+Cold power removal, an absent AP, repeated AP loss and long-term operation remain
+unqualified. The battery ACPI workaround, RTC warning and ADC/DAC quality warnings
+remain. This reduced root does not qualify the complete board or a full base set.

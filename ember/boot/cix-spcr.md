@@ -1,6 +1,6 @@
 # Opt-in CIX SPCR console correction
 
-Status: loader source and host contracts. Physical CIX acceptance is pending.
+Status: loader source, host contracts and console boots on the observed CIX board.
 
 ## Problem
 
@@ -132,6 +132,9 @@ standard-format tables; the board captures prove only the RSDP and XSDT.
 ## Limits
 
 Host contracts and an EFI VM do not establish CIX firmware behavior.
+The observed CIX board keeps its DEBUG UART2 kernel console through five
+unattended warm boots with the [persistent profile](../image/cix-p1.md#physical-reboot-check).
+That acceptance is limited to the recorded stock firmware and table profile.
 The command refuses, without changes, when the firmware places an ACPI
 table in another memory type, reports `EFI_MEMORY_RP` for a table, or
 reports `EFI_MEMORY_WP` or `EFI_MEMORY_RO` for the new page. The QEMU EDK2
@@ -139,5 +142,4 @@ map reported only write-back caching for ACPI reclaim memory; the CIX map
 has not been recorded. Run `mem` at the prompt before the first board test.
 The optional `CM5_UART_TRACE` loader trace probes SPCR before this command
 and keeps using the firmware UART.
-Physical acceptance requires a CIX boot that shows the kernel console on
-the DEBUG UART with this loader.
+Cold power removal and other firmware/table profiles remain unqualified.

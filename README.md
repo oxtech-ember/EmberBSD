@@ -949,7 +949,9 @@ The base system shell is unchanged.
   with software CCMP. GCC16 builds and source contracts are checked.
   Physical trials pass WPA2-PSK/CCMP, DHCP and bidirectional 16 MiB file
   checks on both 2.4 and 5 GHz. Cold calibration still reports residual-quality
-  warnings. Higher rates, analog qualification and persistent Wi-Fi remain pending.
+  warnings. The [persistent SD profile](ember/image/cix-p1.md) also passes
+  unattended reboot and Wi-Fi recovery checks on both bands. Higher rates,
+  analog qualification and long-term stability remain pending.
   See the [source boundary and checks](ember/development/rtl8822ce-proposal.md#current-source-boundary)
   and [physical board limits](ember/boards/orange-pi-6-plus.md).
 - **Raspberry Pi 5 and Compute Module 5**: UEFI firmware built from
@@ -1006,8 +1008,9 @@ The base system shell is unchanged.
   headers, libraries, network clients and disk recovery tools with GCC16.
   Its 77-program cohort passes static little-endian AArch64 ELF checks.
   The [persistent-root profile](ember/image/cix-p1.md) adds explicit console,
-  network and shutdown scripts. These build checks do not qualify unattended
-  SD startup or a complete base release.
+  network and shutdown scripts. Five unattended SD-root boots retain a marker. Reboot trials
+  on both bands restore WPA2/DHCP. Both bands pass 2 MiB TCP checks in each direction.
+  Cold power removal and a complete base release remain separate acceptance.
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request
   cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the
   active control request and preserves queued requests. Actual-function
@@ -1215,7 +1218,7 @@ listed revision; it does not imply full peripheral or long-run support.
 | [Raspberry Pi Zero 2 W](ember/boards/raspberry-pi-zero-2-w.md) | AArch64 / BCM2710A1 | microSD boot, all cores, serial and 2.4 GHz Wi-Fi; large Wi-Fi transfers stall |
 | [Orange Pi Zero 4](ember/boards/orange-pi-zero-4.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Ethernet, Wi-Fi, classic Bluetooth, thermal/frequency control and USB 2.0 data; SuperSpeed unconfirmed |
 | [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry, thermal/frequency control, and PowerVR compute/GEM; accelerated GUI, USB devices, and Bluetooth pairing not tested |
-| [Orange Pi 6 Plus](ember/boards/orange-pi-6-plus.md) | AArch64 / CIX CD8180 | Experimental stock-UEFI RAM boot, DEBUG UART2 and passive codec resource attachment; one Ethernet link and short transfers checked; native RTL8822CE initializes, receives beacons and lists APs, with station association unaccepted; hardware codec, installed NVMe root and sustained peripheral operation unverified |
+| [Orange Pi 6 Plus](ember/boards/orange-pi-6-plus.md) | AArch64 / CIX CD8180 | Experimental stock-UEFI SD/FFS root, DEBUG UART2 and passive codec resource attachment; one Ethernet link checked; native RTL8822CE WPA2/DHCP and TCP checks pass on both bands, including unattended warm reboots; hardware codec, installed NVMe root, cold power removal and sustained peripheral operation unverified |
 | [ESP32-S31 development board](ember/boards/esp32-s31.md) | RISC-V 32 / ESP32-S31 | Flash boot, Ethernet and WPA2 Wi-Fi in 16 MB; one core, vendor radio libraries, no BLE/USB |
 | [YS-M33 tablet](ember/boards/ys-m33-a133.md) | AArch64 / Allwinner A133 | Experimental eMMC boot, Ethernet and upright awesomeWM on two samples; physical touch, audible audio(4) playback, intelligible captured speech and USB-A/Pixhawk6X tested on the first; [USB-only installation and recovery](ember/boards/ys-m33-a133-cable-install.md) on one unopened factory sample; [U-Boot 2026.10 second-stage RAM kernel handoff](ember/boards/validation/2026-10-08-a133-uboot-ram.md) on the first through its FFS root, followed by a prearmed 16-second watchdog return; permanent loader installation and direct recovery through it unverified; cold cycles, factory restoration, fleet and sustained use unverified; opt-in SDIO RAM diagnostic verifies register reads and function enable/ready/restore; Wi-Fi radio initialization/association unimplemented |
 

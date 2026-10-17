@@ -1,6 +1,6 @@
 # Native RTL8822CE station driver proposal
 
-Status: staged implementation. Physical station acceptance is pending.
+Status: staged implementation. Legacy WPA2 station checks pass on both bands.
 
 ## Problem and target
 
@@ -13,8 +13,9 @@ The delivered firmware is `BiosV1.5-W20260706-e321056a`.
 An experimental EmberBSD diagnostic build reached a PL011 console and a
 RAM root. A short bidirectional ICMP test passed through one RTL8126.
 Those observations do not establish Wi-Fi, internal storage or full board support.
-The console currently needs a temporary correction of the firmware SPCR
-from UART3 to the UART2 exposed by DEBUG and DBG2.
+The initial console needed a temporary correction of the firmware SPCR
+from UART3 to the UART2 exposed by DEBUG and DBG2. The installed profile now
+applies the correction on each boot.
 The opt-in [loader correction](../boot/cix-spcr.md) is a separate boot
 dependency. See the [current board evidence](../boards/orange-pi-6-plus.md).
 
@@ -109,8 +110,10 @@ WPA2-PSK/CCMP and fresh DHCP on channels 8 and 149. Each band transfers
 The simultaneous transfers take 251.13 s on 2.4 GHz and 53.26 s on 5 GHz.
 During the 2.4 GHz transfer, three ping replies take 1.83-2.25 s.
 After each transfer, router ping is about 3.4 ms with no loss in three probes.
-These short RAM-root trials leave analog qualification, higher rates,
-repeated reconnect, persistent startup and long-term stability pending.
+Those RAM-root transfers do not qualify analog performance or higher rates.
+The separate [persistent SD profile](../image/cix-p1.md) passes five unattended
+boots, WPA2/DHCP recovery and 2 MiB TCP checks in each direction on both bands.
+AP-loss recovery and long-term stability remain pending.
 
 The kernel configuration selects the native station wrapper and ingress
 generation policy. Use the standard interface tools when the PCI wrapper
@@ -122,7 +125,9 @@ The native `ifconfig` accepts `roaming auto|manual|device` for net80211.
 It only selects the existing roaming owner. It does not raise the interface.
 For application control, run `down`, `roaming manual` and `up` separately.
 The new source contract checks parsing and the exact ioctl request.
-Target command readback and persistent startup remain separate acceptance gates.
+The persistent profile executes this native command before WPA starts on the
+physical board. The source contract and post-reboot network checks have separate
+boundaries; a complete base release remains unqualified.
 
 The read-only PCI statistics expose direct RF18 A/B windows and numeric RX
 handoff counters. Native beacon, channel and element-drop counters are
@@ -146,8 +151,8 @@ CC=gcc-16 sh ember/tools/rtw8822c-dack-contract.sh
 CC=gcc-16 sh ember/tools/rtw8822c-init-contract.sh
 ```
 
-Both 2.4 GHz and 5 GHz need physical station tests. Association, WPA2,
-DHCP, bidirectional data transfer and reconnect recovery remain unaccepted.
+Both 2.4 GHz and 5 GHz pass the station checks described above.
+RF quality, higher rates, AP-loss recovery and long-term operation remain unqualified.
 
 ## First acceptance scenario
 
