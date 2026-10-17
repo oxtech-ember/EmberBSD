@@ -61,7 +61,7 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
       *do-distrib-dirs*) mkdir -p "$dest/bin" "$dest/sbin" "$dest/usr/bin" \
         "$dest/usr/sbin" "$dest/usr/libexec";;
       *install*)
-        for file in bin/sh sbin/init sbin/ifconfig sbin/dhcpcd sbin/fsck \
+        for file in bin/sh bin/stty usr/sbin/usbdevs sbin/init sbin/ifconfig sbin/dhcpcd sbin/fsck \
           sbin/fsck_ffs sbin/mount_msdos sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl \
           usr/bin/stat usr/bin/wall usr/sbin/wpa_supplicant usr/sbin/wpa_cli \
           usr/sbin/powerd usr/libexec/getty; do
@@ -92,6 +92,13 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   stdout, stderr, status = run.call(out)
   abort "FAIL: valid profile: #{stdout}#{stderr}" unless status.success?
   events = File.readlines(out + '/events')
+  %w[bin/stty usr.sbin/usbdevs].each do |part|
+    selected = events.select { |line| line.include?("/#{part} ") }
+    abort "FAIL: incomplete diagnostic component #{part}" unless
+      selected.size == 3 && selected[0].end_with?(" obj\n") &&
+      selected[1].end_with?(" dependall\n") && selected[2].end_with?(" install\n")
+    checks += 1
+  end
   %w[lib/libc external/bsd/wpa/bin/wpa_supplicant
      external/bsd/dhcpcd/sbin/dhcpcd sbin/fsck_ffs sbin/mount_msdos
      sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl
@@ -132,6 +139,20 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   _, _, status = run.call(work + '/missing-powerd', 'TEST_OMIT_BINARY' => 'usr/sbin/powerd')
   abort 'FAIL: accepted cohort without powerd' if status.success? || File.exist?(work + '/missing-powerd/BUILD-INPUTS.txt')
   checks += 1
+  %w[bin/stty usr.sbin/usbdevs].each_with_index do |part, index|
+    output = work + '/failed-diagnostic-' + index.to_s
+    _, _, status = run.call(output, 'TEST_FAIL_COMPONENT' => "/#{part} ")
+    abort "FAIL: accepted failed diagnostic component #{part}" if status.success? ||
+      File.exist?(output + '/BUILD-INPUTS.txt')
+    checks += 1
+  end
+  %w[bin/stty usr/sbin/usbdevs].each_with_index do |binary, index|
+    output = work + '/missing-diagnostic-' + index.to_s
+    _, _, status = run.call(output, 'TEST_OMIT_BINARY' => binary)
+    abort "FAIL: accepted cohort without #{binary}" if status.success? ||
+      File.exist?(output + '/BUILD-INPUTS.txt')
+    checks += 1
+  end
   _, _, status = run.call(work + '/c-runtime', 'TEST_NO_UNWINDER' => '1')
   abort 'FAIL: C-only compiler without unwinder rejected' unless status.success? &&
     File.read(work + '/c-runtime/BUILD-INPUTS.txt').include?('compiler-unwinder=not-provided')

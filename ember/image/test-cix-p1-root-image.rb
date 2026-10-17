@@ -21,8 +21,9 @@ PROFILE_DATA = PROFILE_FILES.to_h do |file|
   path = file == 'cix-p1-root.sh' ? ROOT_SCRIPT : File.join(File.dirname(ROOT_SCRIPT), file)
   [file, File.binread(path)]
 end.freeze
-REQUIRED = %w[sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant usr/sbin/wpa_cli sbin/dhcpcd bin/sh usr/bin/stat usr/libexec/getty usr/sbin/powerd].freeze
+REQUIRED = %w[sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant usr/sbin/wpa_cli sbin/dhcpcd bin/sh bin/stty usr/sbin/usbdevs usr/bin/stat usr/libexec/getty usr/sbin/powerd].freeze
 RUNTIME = (REQUIRED + %w[usr/bin/wall usr/bin/netstat]).freeze
+DIAGNOSTIC_TARGETS = (%w[usb] + (0..19).map { |i| "usb#{i}" } + %w[plcom1 plcom3]).freeze
 FW_HASH = '36b483e37640359a6c686be4661b5f2d94928f93e126a2de09e67c5e04c01b26'
 HOST_PATH = [File.dirname(RbConfig.ruby), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].uniq.join(':')
 REAL_SHASUM = HOST_PATH.split(':').map { |p| File.join(p, 'shasum') }.find { |p| File.executable?(p) }
@@ -34,6 +35,14 @@ NATIVE_MAKEDEV, generator_error, generator_status = Open3.capture3(
   {'MACHINE' => 'aarch64', 'MACHINE_ARCH' => 'aarch64', 'NETBSDSRCDIR' => native_source},
   'awk', '-f', native_source + '/etc/MAKEDEV.awk', native_source + '/etc/MAKEDEV.tmpl')
 abort generator_error unless generator_status.success?
+diagnostic_output, diagnostic_error, diagnostic_status = Open3.capture3(
+  {'MACHINE' => 'aarch64', 'MACHINE_ARCH' => 'aarch64'},
+  'sh', '-s', '--', '-s', *DIAGNOSTIC_TARGETS, stdin_data: NATIVE_MAKEDEV)
+abort diagnostic_error unless diagnostic_status.success?
+NATIVE_DIAGNOSTIC_SPEC = diagnostic_output.lines.select { |line| line.start_with?('./') }.freeze
+expected_paths = (DIAGNOSTIC_TARGETS + %w[dplcom1 dplcom3]).map { |name| './' + name }
+abort 'Native diagnostic node inventory is incomplete' unless
+  NATIVE_DIAGNOSTIC_SPEC.map { |line| line.split.first }.sort == expected_paths.sort
 $checks = $failures = 0
 
 def check(value, message)
@@ -106,7 +115,7 @@ def fixture(base, name)
   spec_only = <<~SH
     #!/bin/sh
     case "$*" in
-      '-s ramdisk wscons'|'-s ramdisk wscons sysmon') ;;
+      '-s ramdisk wscons'|'-s ramdisk wscons sysmon'|'-s ramdisk wscons sysmon #{DIAGNOSTIC_TARGETS.join(' ')}') ;;
       *) echo 'Only fixture spec generation is permitted.' >&2; exit 92;;
     esac
   SH
@@ -208,7 +217,7 @@ Dir.mktmpdir('ember-cix-root-image-') do |base|
   f = fixture(base, 'dirty-profile')
   File.open(f[:script], 'a') { |s| s.puts('# modified after profile commit') }
   reject(f, 'dirty tracked image profile')
-  %w[sbin/fsck sbin/mount_tmpfs usr/sbin/wpa_supplicant usr/libexec/getty usr/sbin/powerd].each_with_index do |rel, i|
+  %w[sbin/fsck sbin/mount_tmpfs usr/sbin/wpa_supplicant usr/libexec/getty usr/sbin/powerd bin/stty usr/sbin/usbdevs].each_with_index do |rel, i|
     f = fixture(base, 'missing-runtime-' + i.to_s)
     File.unlink(f[:cohort] + '/dest/' + rel)
     manifest(f, RUNTIME - [rel])
@@ -289,6 +298,19 @@ Dir.mktmpdir('ember-cix-root-image-') do |base|
     check(spec.lines.any? { |s| s.split.first == './dev/console' && s.include?('type=char') && s.include?('device=netbsd,2,0') && s.include?('mode=600') }, 'MAKEDEV nodes are rooted under dev')
     check(spec.lines.any? { |s| s.split.first == './dev/power' && s.include?('type=char') && s.include?('device=netbsd,101,2') && s.include?('mode=640') },
       'native AArch64 MAKEDEV provides the sysmon power character device')
+    NATIVE_DIAGNOSTIC_SPEC.each do |native|
+      expected = native.sub('./', './dev/')
+      check(spec.lines.include?(expected), 'native diagnostic node specification retained: ' + expected.split.first)
+    end
+    device_paths = spec.lines.map { |line| line.split.first }
+    check((device_paths.grep(%r{\A\./dev/usb\d*\z}) -
+      ['usb', *(0..19).map { |i| "usb#{i}" }].map { |name| './dev/' + name }).empty?,
+      'no USB controller beyond the selected diagnostic range')
+    check(!device_paths.include?('./dev/plcom2') && !device_paths.include?('./dev/dplcom2'),
+      'the DEBUG UART nodes are not staged')
+    %w[bin/stty usr/sbin/usbdevs].each do |binary|
+      check(File.executable?(root + '/' + binary), 'native diagnostic tool is staged: ' + binary)
+    end
     check(!spec.include?("\n./console "), 'device spec does not create a root console path')
     { './sbin/shutdown' => ['operator', 0o4554], './usr/bin/wall' => ['tty', 0o2555],
       './usr/bin/netstat' => ['kmem', 0o2555] }.each do |path, (group, mode)|

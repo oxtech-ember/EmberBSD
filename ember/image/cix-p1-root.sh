@@ -66,7 +66,8 @@ expected=36b483e37640359a6c686be4661b5f2d94928f93e126a2de09e67c5e04c01b26
 for tool in nbmakefs nbmtree nbpwd_mkdb; do [ -x "$tools/bin/$tool" ]; done
 for file in sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount \
     sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant \
-    usr/sbin/wpa_cli sbin/dhcpcd bin/sh usr/bin/stat usr/libexec/getty usr/sbin/powerd; do
+    usr/sbin/wpa_cli sbin/dhcpcd bin/sh bin/stty usr/sbin/usbdevs \
+    usr/bin/stat usr/libexec/getty usr/sbin/powerd; do
 	[ -x "$cohort/dest/$file" ] || {
 		echo "Missing runtime input: $file" >&2; exit 2
 	}
@@ -114,7 +115,10 @@ printf 'group: files\nhosts: files dns\nnetworks: files\npasswd: files\nshells: 
 printf 'Reduced EmberBSD CIX development root\nuserland=%s\n' "$revision" > "$root/etc/ember-build"
 printf 'profile=%s\n' "$profile_revision" >> "$root/etc/ember-build"
 "$tools/bin/nbpwd_mkdb" -L -p -d "$root" "$root/etc/master.passwd"
+# Request only the selected diagnostic nodes. Leave the DEBUG UART unexposed.
 MACHINE=aarch64 MACHINE_ARCH=aarch64 sh "$root/dev/MAKEDEV" -s ramdisk wscons sysmon \
+    usb usb0 usb1 usb2 usb3 usb4 usb5 usb6 usb7 usb8 usb9 \
+    usb10 usb11 usb12 usb13 usb14 usb15 usb16 usb17 usb18 usb19 plcom1 plcom3 \
     > "$out/devices-raw.spec"
 sed -e '/^\. type=dir/d' -e 's,^\.,./dev,' "$out/devices-raw.spec" > "$out/devices.spec"
 "$tools/bin/nbmtree" -c -p "$root" -k type,mode,link > "$out/files.spec"
