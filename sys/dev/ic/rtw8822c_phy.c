@@ -6,8 +6,9 @@
  * Native adaptation of rtw8822c_phy_set_param (around the table load),
  * rtw_phy_init, rtw_bf_phy_init and rtw8822c_set_channel for 20 MHz.
  * ember/tools/rtw8822c-phy.trace holds the reference register writes.
- * rf_init (DAC calibration, thermal and power trim, PA bias) and the TX
- * power level are not ported yet; they shape transmission, not reception.
+ * rf_init runs without the DAC calibration (a measurement loop, not yet
+ * ported); trims and PA bias come from the physical EFUSE read at
+ * identify. The TX power level is not set here.
  */
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -141,6 +142,107 @@ rtw8822c_phy_pre(struct rtw88_softc *sc)
 	return io.error;
 }
 
+/* rtw8822c_rf_x2_check: restart the X2 clock if the RF reports busy. */
+static void
+rf_x2_check(struct rtw8822c_io *io)
+{
+
+	rtw8822c_io_delay(io, 1000);
+	if (read_rf(io, 0, 0xb8, 1U << 15) == 1) {
+		write_rf(io, 0, 0xb8, RFREG_MASK, 0xc4440);
+		write_rf(io, 0, 0xba, RFREG_MASK, 0x6840d);
+		write_rf(io, 0, 0xb8, RFREG_MASK, 0x80440);
+		rtw8822c_io_delay(io, 1000);
+	}
+}
+
+/* rtw8822c_thermal_trim: EFUSE bit 0 moves to bit 3, bits 3:1 shift down. */
+static void
+thermal_trim(struct rtw8822c_io *io, const uint8_t *efuse)
+{
+	static const uint16_t addr[2] = { 0x1ef, 0x1b0 };	/* PPG_THERMAL */
+	unsigned path;
+
+	for (path = 0; path < 2; path++) {
+		uint8_t pg = efuse[addr[path]];
+
+		if (pg == 0xff)
+			return;
+		write_rf(io, path, 0x43, 0xf0000,
+		    ((pg >> 1) & 0x7) | ((pg & 0x1) << 3));
+	}
+}
+
+/* rtw8822c_power_trim and rtw8822c_set_power_trim. */
+static void
+power_trim(struct rtw8822c_io *io, const uint8_t *efuse)
+{
+	static const uint16_t ppg_2g[3] = { 0x1d4, 0x1ee, 0x1d2 };
+	static const uint16_t ppg_5g[2][5] = {
+		{ 0x1ec, 0x1e8, 0x1e4, 0x1e0, 0x1dc },	/* path A: L1..H1 */
+		{ 0x1eb, 0x1e7, 0x1e3, 0x1df, 0x1db },	/* path B */
+	};
+	/* RF LUT sequence 0..0xe to bb_gain index. */
+	static const uint8_t idx[15] = {
+		0, 1, 2, 2, 3, 4, 5, 6, 7, 3, 4, 5, 6, 7, 7
+	};
+	uint8_t gain[2][8] = { { 0 } };
+	unsigned i, path;
+	int set = 0;
+
+	for (i = 0; i < 3; i++) {
+		uint8_t pg = efuse[ppg_2g[i]];
+
+		if (pg == 0xff)
+			continue;
+		set = 1;
+		gain[0][i] = pg & 0x0f;
+		gain[1][i] = (pg >> 4) & 0x0f;
+	}
+	for (i = 0; i < 5; i++) {
+		for (path = 0; path < 2; path++) {
+			uint8_t pg = efuse[ppg_5g[path][i]];
+
+			if (pg == 0xff)
+				continue;
+			set = 1;
+			gain[path][i + 3] = pg & 0x1f;
+		}
+	}
+	if (set) {
+		for (path = 0; path < 2; path++) {
+			write_rf(io, path, 0xee, 1U << 19, 1);
+			for (i = 0; i < 15; i++) {
+				write_rf(io, path, 0x33, RFREG_MASK, i);
+				write_rf(io, path, 0x3f, RFREG_MASK,
+				    gain[path][idx[i]]);
+			}
+			write_rf(io, path, 0xee, 1U << 19, 0);
+		}
+	}
+	mask32(io, 0x0a70, 0x3ff, 0x3ff);	/* DIS_DPD: all rates */
+}
+
+/* rtw8822c_pa_bias: 2.4 GHz stops at the first blank byte, 5 GHz not. */
+static void
+pa_bias(struct rtw8822c_io *io, const uint8_t *efuse)
+{
+	static const uint16_t ppg_2g[2] = { 0x1d6, 0x1d5 };
+	static const uint16_t ppg_5g[2] = { 0x1d8, 0x1d7 };
+	unsigned path;
+
+	for (path = 0; path < 2; path++) {
+		uint8_t pg = efuse[ppg_2g[path]];
+
+		if (pg == 0xff)
+			return;
+		write_rf(io, path, 0x60, 0xf000, pg & 0x0f);	/* RF_PA 2G */
+	}
+	for (path = 0; path < 2; path++)
+		write_rf(io, path, 0x60, 0xf0000,
+		    efuse[ppg_5g[path]] & 0x0f);		/* RF_PA 5G */
+}
+
 int
 rtw8822c_phy_post(struct rtw88_softc *sc)
 {
@@ -156,6 +258,11 @@ rtw8822c_phy_post(struct rtw88_softc *sc)
 	clr32(&io, 0x0520, 0x8000);		/* TX_PTCL_CTRL: DIS_EDCCA */
 	set32(&io, 0x0524, 0x800);		/* RD_CTRL: EDCCA_MSK_CNTDOWN */
 	clr32(&io, 0x0844, UINT32_C(0x60000000));	/* EDCCA_DECISION */
+	/* rtw8822c_rf_init without the DAC calibration. */
+	rf_x2_check(&io);
+	thermal_trim(&io, sc->sc_efuse_phys);
+	power_trim(&io, sc->sc_efuse_phys);
+	pa_bias(&io, sc->sc_efuse_phys);
 	/* rtw_bf_phy_init. */
 	v = rd(&io, 0x14c0, 4);			/* MU_TX_CTL */
 	v |= 0x10000;				/* MU_P1_WAIT_STATE_EN */

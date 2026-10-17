@@ -35,6 +35,10 @@ typedef int8_t s8;
 #include "defs-phy.h"
 #include "defs-main.h"
 #include "defs-mac.h"
+#define EFUSE_READ_FAIL 0xff	/* efuse.h */
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+#define FIELD_GET(m, v) (((v) & (m)) >> __ffs(m))
+#define FIELD_PREP(m, v) (((v) << __ffs(m)) & (m))
 #define CCK_PD_LV0 0		/* phy.h enum rtw_cck_pd_lv, first member */
 #define DESC_RATE6M 0x04	/* main.h enum rtw_desc_rate */
 
@@ -150,11 +154,24 @@ rtw_phy_load_tables(struct rtw_dev *d)
 	(void)d;
 	mark_tables = model_ntrace;
 }
+/* DAC calibration is a measurement loop; it is ported separately. */
 static void
-rtw8822c_rf_init(struct rtw_dev *d)
+rtw8822c_rf_dac_cal(struct rtw_dev *d)
 {
 	(void)d;
 	mark_rf_init = model_ntrace;
+}
+
+/*
+ * Physical EFUSE image. The native driver reads the whole map once at
+ * identify, so this stub performs no register access.
+ */
+static u8 efuse_phys[512];
+static void
+rtw_read8_physical_efuse(struct rtw_dev *d, u16 addr, u8 *data)
+{
+	(void)d;
+	*data = efuse_phys[addr & 511];
 }
 static void rtw8822c_pwrtrack_init(struct rtw_dev *d) { (void)d; }
 static void rtw8822c_adaptivity_init(struct rtw_dev *);
@@ -217,17 +234,26 @@ main(void)
 
 	printf("# rtw8822c PHY and channel reference trace, FreeBSD a143197 rtw88\n");
 	printf("# crystal_cap 0x3c, antennas AB, 20 MHz, regd unset\n");
-	setup(&dev);
-	mark_tables = mark_rf_init = ~0U;
-	rtw8822c_phy_set_param(&dev);
-	if (mark_tables == ~0U || mark_rf_init == ~0U) {
-		fprintf(stderr, "phy_set_param markers missing\n");
-		return 1;
+	printf("# EFUSE: physical byte i = (i * 29 + 7) & 0x7f; blank = 0xff\n");
+	for (i = 0; i < 2; i++) {
+		unsigned b;
+
+		for (b = 0; b < sizeof(efuse_phys); b++)
+			efuse_phys[b] = i == 0 ? (u8)((b * 29 + 7) & 0x7f) : 0xff;
+		setup(&dev);
+		mark_tables = mark_rf_init = ~0U;
+		rtw8822c_phy_set_param(&dev);
+		if (mark_tables == ~0U || mark_rf_init == ~0U) {
+			fprintf(stderr, "phy_set_param markers missing\n");
+			return 1;
+		}
+		if (i == 0)
+			section("phy-pre", 0, mark_tables);
+		section(i == 0 ? "phy-post" : "phy-post-blank", mark_tables,
+		    model_ntrace);
+		printf("# DAC calibration marker after write %u\n",
+		    mark_rf_init - mark_tables);
 	}
-	section("phy-pre", 0, mark_tables);
-	section("phy-post", mark_tables, model_ntrace);
-	printf("# phy-post: rf_init marker after write %u\n",
-	    mark_rf_init - mark_tables);
 	for (i = 0; i < sizeof(channels); i++) {
 		setup(&dev);
 		rtw8822c_set_channel(&dev, channels[i], RTW_CHANNEL_WIDTH_20,

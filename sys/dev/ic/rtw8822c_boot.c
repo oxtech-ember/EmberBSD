@@ -340,6 +340,7 @@ rtw8822c_identify(struct rtw88_softc *sc)
 		}
 	}
 	(void)sc->sc_ops->write_1(sc->sc_bus, RTW8822C_REG_EFUSE_ACCESS, 0);
+	memcpy(sc->sc_efuse_phys, phy, sizeof(sc->sc_efuse_phys));
 	error = rtw8822c_efuse_decode(phy, sizeof(phy), &map);
 	if (error != 0)
 		return error;

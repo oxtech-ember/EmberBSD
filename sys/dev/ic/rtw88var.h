@@ -110,6 +110,7 @@ struct rtw88_softc {
 	uint8_t sc_rfe;
 	uint8_t sc_cut;
 	uint8_t sc_xtal;		/* EFUSE crystal cap, 7 bits. */
+	uint8_t sc_efuse_phys[512];	/* Physical EFUSE read at identify. */
 	uint32_t sc_sys_cfg1;
 	uint32_t sc_generation;
 	uint32_t sc_h2c_box;

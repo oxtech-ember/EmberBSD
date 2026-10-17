@@ -109,6 +109,17 @@ load_section(const char *path, const char *name, char out[][32], unsigned max)
 	return n;
 }
 
+/* The trace's physical EFUSE: (i * 29 + 7) & 0x7f, or blank 0xff. */
+static void
+efuse_fill(struct rtw88_softc *sc, int blank)
+{
+	unsigned i;
+
+	for (i = 0; i < sizeof(sc->sc_efuse_phys); i++)
+		sc->sc_efuse_phys[i] = blank ? 0xff :
+		    (uint8_t)((i * 29 + 7) & 0x7f);
+}
+
 static void
 setup(struct rtw88_softc *sc)
 {
@@ -117,6 +128,7 @@ setup(struct rtw88_softc *sc)
 	sc->sc_ops = &ops;
 	sc->sc_bus = sc;
 	sc->sc_xtal = 0x3c;	/* The trace's crystal_cap. */
+	efuse_fill(sc, 0);
 	model_reset();
 }
 
@@ -150,6 +162,13 @@ test_phy(const char *path)
 	model_ntrace = 0;
 	CHECK(rtw8822c_phy_post(&sc) == 0);
 	same_trace(path, "phy-post");
+	/* Unprogrammed trim bytes: the reference skips those writes. */
+	setup(&sc);
+	efuse_fill(&sc, 1);
+	CHECK(rtw8822c_phy_pre(&sc) == 0);
+	model_ntrace = 0;
+	CHECK(rtw8822c_phy_post(&sc) == 0);
+	same_trace(path, "phy-post-blank");
 }
 
 static void
