@@ -55,11 +55,17 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
     dest=$(cat "$0.dest")
     printf '%s\n' "$*" >> "$dest/../events"
     printf '%s\n' "$CPPFLAGS" > "$dest/../header-flags"
+    case "$*" in *"/sbin/mknod "*"$TEST_FAIL_MKNOD_STAGE")
+      test -z "$TEST_FAIL_MKNOD_STAGE" || exit 17;; esac
     case "$*" in *"$TEST_FAIL_COMPONENT"*)
       test -z "$TEST_FAIL_COMPONENT" || exit 17;; esac
     case "$*" in
       *do-distrib-dirs*) mkdir -p "$dest/bin" "$dest/sbin" "$dest/usr/bin" \
         "$dest/usr/sbin" "$dest/usr/libexec";;
+      *"/sbin/mknod install")
+        if [ "$TEST_OMIT_BINARY" != sbin/mknod ]; then
+          printf 'candidate\n' > "$dest/sbin/mknod"
+        fi;;
       *install*)
         for file in bin/sh bin/stty usr/sbin/usbdevs sbin/init sbin/ifconfig sbin/dhcpcd sbin/fsck \
           sbin/fsck_ffs sbin/mount_msdos sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl \
@@ -85,20 +91,28 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   end
   run = lambda do |out, env = {}|
     Open3.capture3({'TEST_FAIL_COMPONENT' => '', 'TEST_OMIT_BINARY' => '',
-      'TEST_ELF_KIND' => ''}.merge(env),
+      'TEST_ELF_KIND' => '', 'TEST_FAIL_MKNOD_STAGE' => ''}.merge(env),
       'sh', builder, src, out, tools, compiler)
   end
   out = work + '/accepted'
   stdout, stderr, status = run.call(out)
   abort "FAIL: valid profile: #{stdout}#{stderr}" unless status.success?
   events = File.readlines(out + '/events')
-  %w[bin/stty usr.sbin/usbdevs].each do |part|
+  %w[bin/stty usr.sbin/usbdevs sbin/mknod].each do |part|
     selected = events.select { |line| line.include?("/#{part} ") }
     abort "FAIL: incomplete diagnostic component #{part}" unless
       selected.size == 3 && selected[0].end_with?(" obj\n") &&
       selected[1].end_with?(" dependall\n") && selected[2].end_with?(" install\n")
     checks += 1
   end
+  abort 'FAIL: mknod before its static libc dependency' unless
+    events.index { |line| line.include?('/lib/libc ') && line.end_with?(" install\n") } <
+    events.index { |line| line.include?('/sbin/mknod ') }
+  checks += 1
+  mknod = out + '/dest/sbin/mknod'
+  abort 'FAIL: installed mknod absent from the executable receipt' unless File.file?(mknod) &&
+    File.readlines(out + '/BINARIES-SHA256.txt').include?("#{Digest::SHA256.file(mknod).hexdigest}  #{mknod}\n")
+  checks += 1
   %w[lib/libc external/bsd/wpa/bin/wpa_supplicant
      external/bsd/dhcpcd/sbin/dhcpcd sbin/fsck_ffs sbin/mount_msdos
      sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl
@@ -153,6 +167,23 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
       File.exist?(output + '/BUILD-INPUTS.txt')
     checks += 1
   end
+  %w[obj dependall install].each do |stage|
+    output = work + '/failed-mknod-' + stage
+    _, _, status = run.call(output, 'TEST_FAIL_MKNOD_STAGE' => stage)
+    abort "FAIL: accepted failed mknod #{stage}" if status.success? ||
+      File.exist?(output + '/BUILD-INPUTS.txt') || File.exist?(output + '/BINARIES-SHA256.txt')
+    checks += 1
+    failed_events = File.readlines(output + '/events')
+    abort "FAIL: continued after failed mknod #{stage}" unless
+      failed_events.last.include?('/sbin/mknod ') && failed_events.last.end_with?(" #{stage}\n") &&
+      failed_events.none? { |line| line.include?('/sbin/ifconfig ') }
+    checks += 1
+  end
+  output = work + '/missing-mknod'
+  _, stderr, status = run.call(output, 'TEST_OMIT_BINARY' => 'sbin/mknod')
+  abort 'FAIL: accepted cohort without native mknod' if status.success? ||
+    !stderr.include?('Missing required program: sbin/mknod') || File.exist?(output + '/BUILD-INPUTS.txt')
+  checks += 1
   _, _, status = run.call(work + '/c-runtime', 'TEST_NO_UNWINDER' => '1')
   abort 'FAIL: C-only compiler without unwinder rejected' unless status.success? &&
     File.read(work + '/c-runtime/BUILD-INPUTS.txt').include?('compiler-unwinder=not-provided')

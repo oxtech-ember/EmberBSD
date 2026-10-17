@@ -26,7 +26,11 @@ The source commit must remain unchanged until the build completes.
 The builder installs current headers, CSU, libc, the selected C libraries,
 OpenSSL and libpcap. It relinks the console and network tools, WPA programs,
 DHCP client, filesystem checkers, mount helpers, GPT and wedge tools, stat,
-shutdown, wall, native getty, stty and usbdevs. It generates the target MAKEDEV script.
+shutdown, wall, native getty, stty, usbdevs and mknod. It generates the target
+MAKEDEV script.
+Native `mknod` lets the installed target run its own architecture-specific
+MAKEDEV definitions. The builder requires and records `sbin/mknod` with the
+other static executables. It does not run mknod or create host device nodes.
 This C-only profile does not provide C++, login/PAM or the complete rc system.
 The receiving root profile owns startup, console access and shutdown scripts.
 Use native getty to establish the console session before its trusted wrapper.

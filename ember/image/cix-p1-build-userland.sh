@@ -101,7 +101,7 @@ for part in lib/csu lib/libc lib/libterminfo lib/libedit lib/libutil \
 done
 for part in bin/sh bin/cat bin/ls bin/cp bin/mv bin/rm bin/mkdir bin/chmod \
     bin/df bin/dd bin/echo bin/sleep bin/sync bin/hostname bin/pwd bin/kill \
-    bin/date bin/ps bin/stty sbin/init sbin/ifconfig sbin/route sbin/dmesg sbin/sysctl \
+    bin/date bin/ps bin/stty sbin/init sbin/mknod sbin/ifconfig sbin/route sbin/dmesg sbin/sysctl \
     sbin/mount sbin/mount_ffs sbin/mount_msdos sbin/mount_tmpfs sbin/umount sbin/reboot \
     sbin/shutdown sbin/rndctl sbin/ping sbin/fsck sbin/fsck_ffs sbin/gpt sbin/dkctl \
     usr.bin/stat usr.bin/wall usr.bin/cksum usr.bin/uname usr.bin/env \
@@ -114,7 +114,7 @@ for part in bin/sh bin/cat bin/ls bin/cp bin/mv bin/rm bin/mkdir bin/chmod \
 done
 component external/bsd/dhcpcd/sbin/dhcpcd SMALLPROG=1
 run makedev "$wrapper" -C "$src/etc" MAKEDEV
-for file in bin/sh bin/stty usr/sbin/usbdevs sbin/init sbin/ifconfig sbin/dhcpcd sbin/fsck \
+for file in bin/sh bin/stty usr/sbin/usbdevs sbin/init sbin/mknod sbin/ifconfig sbin/dhcpcd sbin/fsck \
     sbin/fsck_ffs sbin/mount_msdos sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl \
     usr/bin/stat usr/bin/wall usr/sbin/wpa_supplicant usr/sbin/wpa_cli usr/sbin/powerd usr/libexec/getty; do
     [ -f "$out/dest/$file" ] || {
