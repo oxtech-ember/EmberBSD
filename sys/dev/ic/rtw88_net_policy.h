@@ -18,10 +18,10 @@ struct rtw88_net_policy {
 	int accepting;
 	int dying;
 };
-uint64_t rtw88_net_request(struct rtw88_net_policy *);
-int rtw88_net_commit(struct rtw88_net_policy *, uint64_t, int, int);
-void rtw88_net_close(struct rtw88_net_policy *);
-int rtw88_net_rx_admit(struct rtw88_net_policy *, uint64_t,
+uint64_t	rtw88_net_request(struct rtw88_net_policy *);
+int		rtw88_net_commit(struct rtw88_net_policy *, uint64_t, int, int);
+void		rtw88_net_close(struct rtw88_net_policy *);
+int		rtw88_net_rx_admit(struct rtw88_net_policy *, uint64_t,
     const uint8_t *, size_t, unsigned, unsigned);
-void rtw88_net_rx_release(struct rtw88_net_policy *);
+void		rtw88_net_rx_release(struct rtw88_net_policy *);
 #endif
