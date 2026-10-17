@@ -39,6 +39,7 @@ struct rtw88_pci_softc {
 	int sc_lock_initialized;
 	int sc_command_saved;
 	int sc_stopping;
+	int sc_detaching;	/* The net wrapper is closed; only cleanup may run. */
 };
 
 /* pci.h at the pinned origin: BAR2 and RTL8822C WCPU interrupt masks. */
@@ -116,14 +117,14 @@ rtwce_bootstrap(int on)
 	sc = &psc->sc_core;
 	mutex_enter(&psc->sc_lock);
 	error = !sc->sc_resources_ready ? ENXIO :
-	    (psc->sc_net != NULL ? EBUSY : 0);
+	    (psc->sc_net != NULL || (on && psc->sc_detaching) ? EBUSY : 0);
 	mutex_exit(&psc->sc_lock);
 	/* Firmware loading and interrupt draining cannot hold a spin lock. */
 	if (error == 0) {
 		if (on)
 			error = rtw88_start(sc);
 		else
-			rtw88_stop(sc);
+			error = rtw88_stop(sc);
 	}
 	mutex_exit(&rtwce_diag_lock);
 	return error;
@@ -145,10 +146,14 @@ rtwce_stats(char *buf, size_t len)
 	sc = &psc->sc_core;
 	mutex_enter(&psc->sc_lock);
 	st = &sc->sc_stats;
-	n = snprintf(buf, len, "running %d intr %llu rx %llu c2h %llu "
+	n = snprintf(buf, len, "running %d detaching %d "
+	    "power_dirty %d power_error %d dma_error %d "
+	    "intr %llu rx %llu c2h %llu "
 	    "err %llu short %llu tag %llu dma %llu last_c2h %#x/%u "
 	    "txq %llu txdone %llu txfull %llu txdrop %llu txdma %llu",
-	    sc->sc_running, (unsigned long long)st->intr,
+	    sc->sc_running, psc->sc_detaching, sc->sc_power_dirty,
+	    sc->sc_power_error, sc->sc_dma_error,
+	    (unsigned long long)st->intr,
 	    (unsigned long long)st->rx_frames, (unsigned long long)st->rx_c2h,
 	    (unsigned long long)st->rx_errors, (unsigned long long)st->rx_short,
 	    (unsigned long long)st->rx_tag_errors,
@@ -192,7 +197,7 @@ rtwce_channel(int *ch, int set)
 		mutex_exit(&rtwce_diag_lock);
 		return 0;
 	}
-	if (psc->sc_net != NULL)
+	if (psc->sc_net != NULL || psc->sc_detaching)
 		error = EBUSY;
 	else if (*ch <= 0)
 		error = EINVAL;
@@ -216,7 +221,8 @@ rtwce_lbmode(int mode)
 		return ENXIO;
 	sc = &psc->sc_core;
 	mutex_enter(&psc->sc_lock);
-	error = psc->sc_net != NULL ? EBUSY : rtw88_loopback(sc, mode);
+	error = psc->sc_net != NULL || psc->sc_detaching ? EBUSY :
+	    rtw88_loopback(sc, mode);
 	mutex_exit(&psc->sc_lock);
 	mutex_exit(&rtwce_diag_lock);
 	return error;
@@ -242,7 +248,7 @@ rtwce_loopback(int n)
 		return ENXIO;
 	sc = &psc->sc_core;
 	mutex_enter(&psc->sc_lock);
-	if (psc->sc_net != NULL) {
+	if (psc->sc_net != NULL || psc->sc_detaching) {
 		mutex_exit(&psc->sc_lock);
 		mutex_exit(&rtwce_diag_lock);
 		return EBUSY;
@@ -278,7 +284,7 @@ rtwce_h2c(uint32_t cmd)
 	payload[1] = (uint8_t)(cmd >> 16);
 	payload[2] = (uint8_t)(cmd >> 24);
 	mutex_enter(&psc->sc_lock);
-	error = psc->sc_net != NULL ? EBUSY :
+	error = psc->sc_net != NULL || psc->sc_detaching ? EBUSY :
 	    rtw88_fw_command(sc, (uint8_t)cmd, payload, sizeof(payload));
 	mutex_exit(&psc->sc_lock);
 	mutex_exit(&rtwce_diag_lock);
@@ -731,11 +737,13 @@ static int
 rtw88_pci_detach(device_t self, int flags)
 {
 	struct rtw88_pci_softc *psc = device_private(self);
+	int error;
 
 	(void)flags;
 	/* Wait for an entered diagnostic, then block new diagnostics. */
 	(void)RUN_ONCE(&rtwce_diag_once, rtwce_diag_init);
 	mutex_enter(&rtwce_diag_lock);
+	psc->sc_detaching = 1;
 	if (rtwce_sc == psc)
 		rtwce_sc = NULL;
 	mutex_exit(&rtwce_diag_lock);
@@ -743,12 +751,16 @@ rtw88_pci_detach(device_t self, int flags)
 		rtw88_net_detach(psc->sc_net);
 		psc->sc_net = NULL;
 	}
-	/* stop clears bus mastering before this restores the saved command. */
-	if (psc->sc_command_saved && rtw88_pci_present(psc))
-		pci_conf_write(psc->sc_pa.pa_pc, psc->sc_pa.pa_tag,
-		    PCI_COMMAND_STATUS_REG, psc->sc_command |
-		    (psc->sc_mapped ? PCI_COMMAND_MEM_ENABLE : 0));
-	rtw88_core_detach(&psc->sc_core);
+	error = rtw88_core_detach(&psc->sc_core);
+	if (error != 0) {
+		/* Keep BAR, tags, IRQ and the instance lock alive for a retry. */
+		mutex_enter(&rtwce_diag_lock);
+		if (rtwce_sc == NULL)
+			rtwce_sc = psc;
+		mutex_exit(&rtwce_diag_lock);
+		aprint_error_dev(self, "detach blocked by incomplete shutdown: %d\n", error);
+		return error;
+	}
 	if (psc->sc_lock_initialized) {
 		mutex_destroy(&psc->sc_lock);
 		psc->sc_lock_initialized = 0;
@@ -762,9 +774,11 @@ rtw88_pci_detach(device_t self, int flags)
 		psc->sc_mapped = 0;
 	}
 	if (psc->sc_command_saved) {
+		/* Released DMA mappings must never regain firmware bus mastering. */
 		if (rtw88_pci_present(psc))
 			pci_conf_write(psc->sc_pa.pa_pc, psc->sc_pa.pa_tag,
-			    PCI_COMMAND_STATUS_REG, psc->sc_command);
+			    PCI_COMMAND_STATUS_REG,
+			    psc->sc_command & ~PCI_COMMAND_MASTER_ENABLE);
 		psc->sc_command_saved = 0;
 	}
 	return 0;

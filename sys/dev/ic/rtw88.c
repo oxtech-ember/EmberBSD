@@ -623,9 +623,10 @@ rtw88_release_fw(struct rtw88_softc *sc)
 		sc->sc_ops->firmware_release(sc->sc_bus);
 }
 
-void
+int
 rtw88_stop(struct rtw88_softc *sc)
 {
+	int error;
 
 	sc->sc_stop_requested = 1;
 	sc->sc_generation++;
@@ -645,11 +646,18 @@ rtw88_stop(struct rtw88_softc *sc)
 	sc->sc_started = 0;
 	sc->sc_rf_enabled = 0;
 	sc->sc_bootstrapping = 0;
-	if (sc->sc_powered) {
-		(void)rtw8822c_power(sc, 0);
-		sc->sc_powered = 0;
+	if (sc->sc_power_dirty || sc->sc_powered) {
+		error = rtw8822c_power(sc, 0);
+		sc->sc_power_error = error;
+		if (error == 0) {
+			sc->sc_powered = 0;
+			sc->sc_power_dirty = 0;
+		} else {
+			sc->sc_power_dirty = 1;
+			printf("rtwce: power off failed: %d; restart blocked\n", error);
+		}
 	}
-	if (sc->sc_dma_master && sc->sc_ops->bus_master != NULL) {
+	if (sc->sc_dma_master) {
 		static const uint32_t desa[] = {
 			0x0330, 0x0328, 0x0320, 0x0318, RTW88_REG_TXBD_DESA_BCN,
 			0x0310, 0x0340, 0x1320, 0x0338
@@ -658,13 +666,19 @@ rtw88_stop(struct rtw88_softc *sc)
 
 		for (i = 0; i < __arraycount(desa); i++)
 			(void)sc->sc_ops->write_4(sc->sc_bus, desa[i], 0);
-		(void)sc->sc_ops->bus_master(sc->sc_bus, 0);
-		sc->sc_dma_master = 0;
+		error = sc->sc_ops->bus_master == NULL ? ENODEV :
+		    sc->sc_ops->bus_master(sc->sc_bus, 0);
+		sc->sc_dma_error = error;
+		if (error == 0)
+			sc->sc_dma_master = 0;
+		else
+			printf("rtwce: bus-master disable failed: %d; DMA retained\n", error);
 	}
-	if (sc->sc_fw_dma_owned) {
+	if (sc->sc_fw_dma_owned && !sc->sc_dma_master) {
 		sc->sc_ops->dma_free(sc->sc_bus, &sc->sc_fw_dma);
 		sc->sc_fw_dma_owned = 0;
 	}
+	return sc->sc_dma_error != 0 ? sc->sc_dma_error : sc->sc_power_error;
 }
 
 int
@@ -682,6 +696,12 @@ rtw88_start(struct rtw88_softc *sc)
 		return ENXIO;
 	if (sc->sc_started)
 		return EBUSY;
+	if (sc->sc_power_dirty || sc->sc_power_error || sc->sc_dma_master ||
+	    sc->sc_dma_error) {
+		printf("rtwce: startup blocked by incomplete shutdown: power %d DMA %d\n",
+		    sc->sc_power_error, sc->sc_dma_error);
+		return EBUSY;
+	}
 	if (sc->sc_ops->firmware_load == NULL || sc->sc_ops->bus_master == NULL)
 		return ENODEV;
 	error = sc->sc_ops->firmware_load(sc->sc_bus, RTW88_FW_DRV,
@@ -711,10 +731,17 @@ rtw88_start(struct rtw88_softc *sc)
 	if (error != 0)
 		goto fail;
 	stage = "bus mastering";
+	/* An enable method may fail after hardware has accepted the write. */
+	sc->sc_dma_master = 1;
 	error = sc->sc_ops->bus_master(sc->sc_bus, 1);
 	if (error != 0)
 		goto fail;
-	sc->sc_dma_master = 1;
+	stage = "MAC power preinit";
+	/* Partial pre/table/post writes also require a complete off attempt. */
+	sc->sc_power_dirty = 1;
+	error = rtw8822c_power_pre(sc);
+	if (error != 0)
+		goto fail;
 	stage = "MAC power";
 	error = rtw8822c_power(sc, 1);
 	if (error != 0) {
@@ -722,6 +749,10 @@ rtw88_start(struct rtw88_softc *sc)
 		goto fail;
 	}
 	sc->sc_powered = 1;
+	stage = "MAC power postinit";
+	error = rtw8822c_power_post(sc);
+	if (error != 0)
+		goto fail;
 	stage = "firmware download";
 	error = rtw88_fw_download(sc, gen, fw, &info);
 	if (error != 0)
@@ -1321,15 +1352,18 @@ rtw88_core_attach(struct rtw88_softc *sc)
 	sc->sc_resources_ready = 1;
 	return 0;
 fail:
-	rtw88_core_detach(sc);
+	(void)rtw88_core_detach(sc);
 	return error;
 }
 
-void
+int
 rtw88_core_detach(struct rtw88_softc *sc)
 {
+	int error;
 
-	rtw88_stop(sc);
+	error = rtw88_stop(sc);
+	if (error != 0)
+		return error;
 	sc->sc_resources_ready = 0;
 	if (sc->sc_intr_established) {
 		sc->sc_ops->intr_disestablish(sc->sc_bus);
@@ -1351,4 +1385,5 @@ rtw88_core_detach(struct rtw88_softc *sc)
 		sc->sc_nring--;
 		sc->sc_ops->dma_free(sc->sc_bus, &sc->sc_ring[sc->sc_nring]);
 	}
+	return 0;
 }

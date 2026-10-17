@@ -101,8 +101,11 @@ struct rtw88_softc {
 	int sc_fw_dma_owned;
 	int sc_started;
 	int sc_rf_enabled;
-	int sc_dma_master;
+	int sc_dma_master;	/* Enabled, or an enable/disable is unconfirmed. */
 	int sc_powered;
+	int sc_power_dirty;	/* An off sequence is still required. */
+	int sc_power_error;	/* Last failed off sequence. */
+	int sc_dma_error;	/* Last unconfirmed bus-master disable. */
 	int sc_bootstrapping;
 	int sc_stop_requested;
 	uint16_t sc_vendor;
@@ -142,12 +145,13 @@ struct rtw88_softc {
 
 /* Attach only quiescent resources. No firmware, DMA publication or ifnet. */
 int rtw88_core_attach(struct rtw88_softc *);
-/* Caller serializes attach/detach; IRQ teardown precedes every DMA free. */
-void rtw88_core_detach(struct rtw88_softc *);
+/* Failure retains resources; success drains IRQ before freeing ring mappings. */
+int rtw88_core_detach(struct rtw88_softc *);
 int rtw88_start(struct rtw88_softc *);
 /* Synchronous packet-H2C init; caller stops DMA on any error. */
 int rtw88_fw_init(struct rtw88_softc *);
-void rtw88_stop(struct rtw88_softc *);
+/* Caller serializes startup/stop. Errors retain unsafe ownership for a retry. */
+int rtw88_stop(struct rtw88_softc *);
 int rtw88_fw_command(struct rtw88_softc *, uint8_t, const void *, size_t);
 /*
  * Interrupt entry; the bus serializes it against rtw88_stop's barrier.

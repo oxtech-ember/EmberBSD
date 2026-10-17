@@ -121,5 +121,8 @@ int rtw8822c_dack(struct rtw88_softc *, struct rtw8822c_dack_result *);
 /* Wi-Fi-only antenna ownership; no dynamic Bluetooth policy. */
 int rtw8822c_coex_power_on(struct rtw88_softc *);
 int rtw8822c_coex_init(struct rtw88_softc *);
+/* Serialized PCI3081 setup around the chip power table. */
+int rtw8822c_power_pre(struct rtw88_softc *);
+int rtw8822c_power_post(struct rtw88_softc *);
 
 #endif /* _DEV_IC_RTW8822C_H_ */

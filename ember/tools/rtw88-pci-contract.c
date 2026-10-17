@@ -8,6 +8,8 @@
 
 static unsigned assertions, failures;
 static int parent_tag, restricted_tag;
+static bus_dmamap_t firmware_map;
+static void *firmware_vaddr;
 #define CHECK(x)                                                               \
 	do {                                                                   \
 		assertions++;                                                  \
@@ -25,6 +27,8 @@ static struct {
 	int msi_available, selected_irq, callbacks, pending;
 	unsigned efuse_reads, efuse_writes, net_attach_calls, net_detach_calls;
 	int efuse_enabled, efuse_stuck, net_owned;
+	int shutdown_fault;
+	unsigned config_writes;
 	uint32_t command, reg[16384];
 	uint8_t efuse[512];
 	int (*handler)(void *);
@@ -175,6 +179,7 @@ void pci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int r, pcireg_t v)
 	(void)pc;
 	(void)tag;
 	CHECK(r == PCI_COMMAND_STATUS_REG);
+	f.config_writes++;
 	CHECK((v & 0xffff0000U) == 0);
 	CHECK(!f.removed);
 	if (v & PCI_COMMAND_MASTER_ENABLE)
@@ -265,6 +270,13 @@ static void io_write(bus_size_t r, uint32_t v)
 		f.reg[r / 4] = v;
 		if (!f.efuse_stuck)
 			f.reg[r / 4] = (v & ~0xffU) | 0x80000000U | f.efuse[addr];
+		return;
+	}
+	if (f.shutdown_fault && (r == 0x330 || r == 0x328 || r == 0x320 ||
+	    r == 0x318 || r == 0x308 || r == 0x310 || r == 0x340 ||
+	    r == 0x1320 || r == 0x338)) {
+		CHECK(v == 0);
+		f.reg[r / 4] = 0;
 		return;
 	}
 	CHECK((r == 0xb0 || r == 0xb8 || r == 0x10b8) && v == 0);
@@ -375,7 +387,8 @@ int bus_dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *s, int ns, size_t n,
 void bus_dmamem_unmap(bus_dma_tag_t t, void *p, size_t n)
 {
 	(void)n;
-	CHECK(t == &restricted_tag && f.kva > 0 && f.irq == 0);
+	CHECK(t == &restricted_tag && f.kva > 0);
+	CHECK(f.irq == 0 || p == firmware_vaddr);
 	f.kva--;
 	free(p);
 }
@@ -411,7 +424,9 @@ int bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t m, void *p, bus_size_t n,
 }
 void bus_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t m)
 {
-	CHECK(t == &restricted_tag && m->loaded && f.irq == 0);
+	CHECK(f.removed || !(f.command & PCI_COMMAND_MASTER_ENABLE));
+	CHECK(t == &restricted_tag && m->loaded);
+	CHECK(f.irq == 0 || m == firmware_map);
 	m->loaded = 0;
 	f.loaded--;
 }
@@ -632,6 +647,33 @@ int main(void)
 	clean_detach(&p);
 	CHECK(f.net_detach_calls == 1);
 	CHECK(f.command == 0x140);
+	/* Failed disable retains the full instance and diagnostics for a retry. */
+	reset(&p);
+	rtw88_pci_attach(NULL, &p, &fixture_pa);
+	CHECK(p.sc_core.sc_ops->dma_alloc(&p, &p.sc_core.sc_fw_dma, 4096) == 0);
+	p.sc_core.sc_fw_dma_owned = 1;
+	firmware_map = ((struct rtw88_pci_dma *)p.sc_core.sc_fw_dma.cookie)->map;
+	firmware_vaddr = p.sc_core.sc_fw_dma.vaddr;
+	p.sc_core.sc_dma_master = 1;
+	f.command |= PCI_COMMAND_MASTER_ENABLE;
+	f.refuse_master_clear = f.shutdown_fault = 1;
+	unsigned loaded = (unsigned)f.loaded, config_writes = f.config_writes;
+	CHECK(rtw88_pci_detach(&p, 0) == EIO);
+	CHECK(f.config_writes == config_writes + 1); /* Disable only, no restore. */
+	CHECK(p.sc_net == NULL && !f.net_owned && f.net_detach_calls == 1);
+	CHECK(p.sc_core.sc_resources_ready && p.sc_core.sc_dma_error == EIO);
+	CHECK(p.sc_core.sc_fw_dma_owned && p.sc_core.sc_dma_master);
+	CHECK(f.loaded == (int)loaded && f.bar == 1 && f.tag == 1 && f.locks == 1);
+	CHECK(f.irq == 1 && f.handler != NULL);
+	CHECK(rtwce_stats(stats, sizeof(stats)) == 0 && strstr(stats, "dma_error 5"));
+	CHECK(rtwce_bootstrap(1) == EBUSY);
+	CHECK(rtwce_bootstrap(0) == EIO); /* Propagate the retained error. */
+	f.refuse_master_clear = 0;
+	CHECK(rtwce_bootstrap(0) == 0); /* Operator can retry a safe shutdown. */
+	CHECK(rtwce_bootstrap(1) == EBUSY); /* A torn-down net wrapper cannot restart. */
+	clean_detach(&p);
+	firmware_map = NULL;
+	firmware_vaddr = NULL;
 	/* A detach attempt must wait until each diagnostic releases its gate. */
 	for (unsigned op = 0; op < 8; op++) {
 		reset(&p);

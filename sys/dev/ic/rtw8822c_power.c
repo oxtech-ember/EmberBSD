@@ -14,6 +14,7 @@
 #include <sys/systm.h>
 #include <sys/errno.h>
 #include <dev/ic/rtw88var.h>
+#include <dev/ic/rtw8822c.h>
 
 struct power_io {
 	struct rtw88_softc *sc;

@@ -28,6 +28,10 @@ static struct {
 	uint8_t mmio[0x10000];
 	uint32_t lte[256];
 	int coex_busy;
+	int fail_power_stage, off_stuck, off_error, expect_stop;
+	int enable_error, disable_error;
+	unsigned off_attempts, master_enables, master_disables, firmware_loads;
+	int power_pre_seen, power_table_seen, power_post_seen, bad_power_order;
 	int coex_before_h2c;
 	int h2c_dead;
 	int stop_coex_final;
@@ -157,9 +161,20 @@ read_1(void *cookie, uint32_t reg, uint8_t *out)
 	error = access_ok(reg, 1);
 	if (error != 0)
 		return error;
+	if (f.expect_stop)
+		CHECK(f.sc->sc_stop_requested == 1);
+	if (reg == 0x93 && f.sc->sc_stop_requested) {
+		f.off_attempts++;
+		if (f.off_error)
+			return EIO;
+	}
+	if (!f.sc->sc_stop_requested && f.fail_power_stage == 2 && reg == 0x75)
+		return EIO;
 	if (f.fail_syscfg && reg == 0x00f0)
 		return EIO;
 	*out = f.mmio[reg];
+	if (f.off_stuck && f.sc->sc_stop_requested && reg == 0x05)
+		*out |= 0x02;
 	if (reg == 0x06)
 		*out |= 0x02;
 	if (reg == 0x01cc && f.busy_box)
@@ -250,6 +265,20 @@ write_1(void *cookie, uint32_t reg, uint8_t val)
 	error = access_ok(reg, 1);
 	if (error != 0)
 		return error;
+	if (!f.sc->sc_stop_requested &&
+	    ((f.fail_power_stage == 1 && reg == 0x1c) ||
+	    (f.fail_power_stage == 3 && reg == 0x1103)))
+		return EIO;
+	if (!f.sc->sc_stop_requested && reg == 0x1c)
+		f.power_pre_seen = 1;
+	if (!f.sc->sc_stop_requested && reg == 0x2e) {
+		f.bad_power_order |= !f.power_pre_seen;
+		f.power_table_seen = 1;
+	}
+	if (!f.sc->sc_stop_requested && reg == 0x1103) {
+		f.bad_power_order |= !f.power_table_seen;
+		f.power_post_seen = 1;
+	}
 	f.writes++;
 	if (is_cfg_reg(reg))
 		f.cfg_writes++;
@@ -308,6 +337,8 @@ write_2(void *cookie, uint32_t reg, uint16_t val)
 	error = access_ok(reg, 2);
 	if (error != 0)
 		return error;
+	if (reg == 0x80 && (val & 1) && !f.sc->sc_stop_requested)
+		f.bad_power_order |= !f.power_post_seen;
 	f.writes++;
 	if (is_cfg_reg(reg))
 		f.cfg_writes++;
@@ -416,6 +447,7 @@ dma_free(void *cookie, struct rtw88_dma *ring)
 {
 
 	(void)cookie;
+	CHECK(!f.master); /* No host mapping may outlive unconfirmed DMA ownership. */
 	free(ring->vaddr);
 	memset(ring, 0, sizeof(*ring));
 	if (f.dma_allocs > 0)
@@ -471,6 +503,9 @@ firmware_load(void *cookie, const char *drv, const char *name,
 	(void)cookie;
 	(void)drv;
 	(void)name;
+	f.firmware_loads++;
+	f.power_pre_seen = f.power_table_seen = f.power_post_seen = 0;
+	f.bad_power_order = 0;
 	if (f.fw_error != 0)
 		return f.fw_error;
 	if (f.fw == NULL)
@@ -492,7 +527,15 @@ bus_master(void *cookie, int enable)
 {
 
 	(void)cookie;
-	f.master = enable ? 1 : 0;
+	if (enable) {
+		f.master_enables++;
+		f.master = 1; /* A failing enable may already have changed hardware. */
+		return f.enable_error ? EIO : 0;
+	}
+	f.master_disables++;
+	if (f.disable_error)
+		return EIO;
+	f.master = 0;
 	return 0;
 }
 
@@ -604,6 +647,122 @@ test_radio_dependencies(void)
 	CHECK(rtw88_start(&sc) == ETIMEDOUT);
 	CHECK(!sc.sc_started && !sc.sc_running && !sc.sc_rf_enabled && !f.master);
 	rtw88_core_detach(&sc);
+}
+
+/* Shutdown must finish the off table without lowering its stop fence. */
+static void
+test_power_system_integration(void)
+{
+	struct rtw88_softc sc;
+	uint32_t generation;
+
+	reset_bus(&sc);
+	if (!attach_ok(&sc))
+		return;
+	CHECK(rtw88_start(&sc) == 0);
+	CHECK((f.mmio[0x03] & 0xd8) == 0xd8);
+	CHECK((f.mmio[0x1103] & 0x0f) == 0x0c);
+	CHECK(f.power_pre_seen && f.power_table_seen && f.power_post_seen &&
+	    !f.bad_power_order);
+	f.mmio[0x92] = 0;
+	generation = sc.sc_generation;
+	rtw88_stop(&sc);
+	CHECK(sc.sc_stop_requested == 1 && sc.sc_generation == generation + 1);
+	CHECK(f.mmio[0x92] == 0x20); /* Last card-disable stage, after off poll. */
+	CHECK(!sc.sc_powered && !sc.sc_dma_master && !f.master);
+	rtw88_core_detach(&sc);
+}
+
+/* Failed power setup must run off even before sc_powered becomes true. */
+static void
+test_power_setup_unwind(void)
+{
+	struct rtw88_softc sc;
+
+	for (int stage = 1; stage <= 3; stage++) {
+		reset_bus(&sc);
+		if (!attach_ok(&sc))
+			return;
+		f.fail_power_stage = stage;
+		CHECK(rtw88_start(&sc) == EIO);
+		/* The two off-table stages each read 0x93, and finish at 0x92. */
+		CHECK(f.off_attempts == 2 && f.mmio[0x92] == 0x20);
+		CHECK(!sc.sc_power_dirty && !sc.sc_power_error && !sc.sc_dma_error);
+		CHECK(!sc.sc_powered && !sc.sc_dma_master && !f.master);
+		CHECK(!sc.sc_fw_dma_owned && !sc.sc_started);
+		CHECK(rtw88_core_detach(&sc) == 0);
+		CHECK(f.dma_allocs == 0);
+	}
+}
+
+/* Off failures remain visible, keep the fence and forbid a fresh startup. */
+static void
+test_shutdown_failure_retention(void)
+{
+	struct rtw88_softc sc;
+	unsigned allocations, loads, delays;
+
+	for (int kind = 0; kind < 2; kind++) {
+		reset_bus(&sc);
+		if (!attach_ok(&sc))
+			return;
+		CHECK(rtw88_start(&sc) == 0);
+		f.expect_stop = 1;
+		f.off_stuck = kind == 0;
+		f.off_error = kind == 1;
+		delays = f.delays;
+		CHECK(rtw88_stop(&sc) == (kind == 0 ? ETIMEDOUT : EIO));
+		CHECK(sc.sc_power_dirty && sc.sc_power_error ==
+		    (kind == 0 ? ETIMEDOUT : EIO));
+		CHECK(sc.sc_stop_requested && !sc.sc_started && !sc.sc_running);
+		CHECK(!sc.sc_dma_master && !f.master && !sc.sc_fw_dma_owned);
+		if (kind == 0)
+			CHECK(f.delays - delays == 20000); /* One bounded one-second poll. */
+		allocations = f.dma_allocs;
+		loads = f.firmware_loads;
+		CHECK(rtw88_start(&sc) == EBUSY && f.firmware_loads == loads);
+		CHECK(rtw88_core_detach(&sc) == (kind == 0 ? ETIMEDOUT : EIO));
+		CHECK(sc.sc_resources_ready && f.dma_allocs == allocations);
+		CHECK(sc.sc_intr_established);
+		f.off_stuck = f.off_error = 0;
+		CHECK(rtw88_stop(&sc) == 0);
+		CHECK(!sc.sc_power_dirty && !sc.sc_power_error);
+		CHECK(rtw88_core_detach(&sc) == 0 && f.dma_allocs == 0);
+	}
+}
+
+/* Mastering errors can change hardware before the method reports failure. */
+static void
+test_master_failure_retention(void)
+{
+	struct rtw88_softc sc;
+	unsigned allocations, loads;
+
+	reset_bus(&sc);
+	if (!attach_ok(&sc))
+		return;
+	f.enable_error = 1;
+	CHECK(rtw88_start(&sc) == EIO);
+	CHECK(f.master_enables == 1 && f.master_disables == 1 && !f.master);
+	CHECK(!sc.sc_dma_master && !sc.sc_fw_dma_owned);
+	CHECK(rtw88_core_detach(&sc) == 0 && f.dma_allocs == 0);
+	reset_bus(&sc);
+	if (!attach_ok(&sc))
+		return;
+	CHECK(rtw88_start(&sc) == 0);
+	allocations = f.dma_allocs;
+	f.disable_error = 1;
+	CHECK(rtw88_stop(&sc) == EIO);
+	CHECK(sc.sc_dma_master && sc.sc_dma_error == EIO && f.master);
+	CHECK(sc.sc_fw_dma_owned && f.dma_allocs == allocations);
+	CHECK(sc.sc_power_error == 0 && !sc.sc_power_dirty);
+	loads = f.firmware_loads;
+	CHECK(rtw88_start(&sc) == EBUSY && f.firmware_loads == loads);
+	CHECK(rtw88_core_detach(&sc) == EIO);
+	CHECK(sc.sc_resources_ready && sc.sc_intr_established);
+	CHECK(f.dma_allocs == allocations);
+	f.disable_error = 0;
+	CHECK(rtw88_core_detach(&sc) == 0 && !f.master && f.dma_allocs == 0);
 }
 
 static void
@@ -1553,6 +1712,10 @@ main(void)
 {
 
 	test_radio_dependencies();
+	test_power_system_integration();
+	test_power_setup_unwind();
+	test_shutdown_failure_retention();
+	test_master_failure_retention();
 	test_missing_firmware();
 	test_corrupt_firmware();
 	test_failed_identity_read();

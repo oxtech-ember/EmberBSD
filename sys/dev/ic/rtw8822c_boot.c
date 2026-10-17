@@ -204,18 +204,22 @@ rtw8822c_write32_mask(struct rtw88_softc *sc, uint32_t addr, uint32_t mask,
 
 static int
 rtw8822c_poll_bit(struct rtw88_softc *sc, uint32_t addr, uint8_t mask,
-    uint8_t value)
+    uint8_t value, uint32_t generation, int shutdown)
 {
 	unsigned n;
 	uint8_t v;
 	int error;
 
 	for (n = 0; n < RTW8822C_PWR_POLL_MAX; n++) {
-		if (sc->sc_stop_requested)
+		if (!shutdown && (sc->sc_stop_requested ||
+		    sc->sc_generation != generation))
 			return EINTR;
 		error = sc->sc_ops->read_1(sc->sc_bus, addr, &v);
 		if (error != 0)
 			return error;
+		if (!shutdown && (sc->sc_stop_requested ||
+		    sc->sc_generation != generation))
+			return EINTR;
 		if ((v & mask) == value)
 			return 0;
 		sc->sc_ops->delay_us(sc->sc_bus, 50);
@@ -226,7 +230,8 @@ rtw8822c_poll_bit(struct rtw88_softc *sc, uint32_t addr, uint8_t mask,
 }
 
 static int
-rtw8822c_run_pwr(struct rtw88_softc *sc, const struct rtw8822c_pwr_cmd *cmd)
+rtw8822c_run_pwr(struct rtw88_softc *sc, const struct rtw8822c_pwr_cmd *cmd,
+    uint32_t generation, int shutdown)
 {
 	uint8_t cut_mask = (uint8_t)(1U << (sc->sc_cut + 1));
 	uint8_t v;
@@ -236,6 +241,9 @@ rtw8822c_run_pwr(struct rtw88_softc *sc, const struct rtw8822c_pwr_cmd *cmd)
 		if ((cmd->intf_mask & RTW8822C_PWR_PCI) == 0 ||
 		    (cmd->cut_mask & cut_mask) == 0)
 			continue;
+		if (!shutdown && (sc->sc_stop_requested ||
+		    sc->sc_generation != generation))
+			return EINTR;
 		switch (cmd->cmd) {
 		case RTW8822C_PWR_CMD_READ:
 			break;
@@ -243,6 +251,9 @@ rtw8822c_run_pwr(struct rtw88_softc *sc, const struct rtw8822c_pwr_cmd *cmd)
 			error = sc->sc_ops->read_1(sc->sc_bus, cmd->offset, &v);
 			if (error != 0)
 				return error;
+			if (!shutdown && (sc->sc_stop_requested ||
+			    sc->sc_generation != generation))
+				return EINTR;
 			v = (uint8_t)((v & ~cmd->mask) |
 			    (cmd->value & cmd->mask));
 			error = sc->sc_ops->write_1(sc->sc_bus, cmd->offset, v);
@@ -251,7 +262,7 @@ rtw8822c_run_pwr(struct rtw88_softc *sc, const struct rtw8822c_pwr_cmd *cmd)
 			break;
 		case RTW8822C_PWR_CMD_POLL:
 			error = rtw8822c_poll_bit(sc, cmd->offset, cmd->mask,
-			    cmd->value);
+			    cmd->value, generation, shutdown);
 			if (error != 0)
 				return error;
 			break;
@@ -263,6 +274,9 @@ rtw8822c_run_pwr(struct rtw88_softc *sc, const struct rtw8822c_pwr_cmd *cmd)
 		default:
 			return EINVAL;
 		}
+		if (!shutdown && (sc->sc_stop_requested ||
+		    sc->sc_generation != generation))
+			return EINTR;
 	}
 	return 0;
 }
@@ -271,11 +285,13 @@ int
 rtw8822c_power(struct rtw88_softc *sc, int on)
 {
 	const struct rtw8822c_pwr_cmd * const *flow;
+	uint32_t generation = sc->sc_generation;
 	int error;
 
 	flow = on ? card_enable_flow_8822c : card_disable_flow_8822c;
 	for (; *flow != NULL; flow++) {
-		error = rtw8822c_run_pwr(sc, *flow);
+		/* Shutdown keeps the startup cancellation fence raised. */
+		error = rtw8822c_run_pwr(sc, *flow, generation, !on);
 		if (error != 0)
 			return error;
 	}

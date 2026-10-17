@@ -746,6 +746,7 @@ file	dev/ic/rtw88_fw_init.c		rtwce
 file	dev/ic/rtw88_hw.c		rtwce
 file	dev/ic/rtw8822c.c		rtwce
 file	dev/ic/rtw8822c_boot.c		rtwce
+file	dev/ic/rtw8822c_power.c		rtwce
 file	dev/ic/rtw8822c_mac.c		rtwce
 file	dev/ic/rtw8822c_phy.c		rtwce
 file	dev/ic/rtw8822c_table.c		rtwce
