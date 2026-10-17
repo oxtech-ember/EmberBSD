@@ -8,6 +8,7 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/cixclk_acpi.*'
       - 'sys/dev/acpi/cixreset_acpi.*'
       - 'sys/dev/acpi/cixvpu_acpi_control.*'
+      - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/acpi_power.*'
       - 'sys/dev/ic/cixvpu_resources.*'
       - 'sys/sys/queue.h'
@@ -26,6 +27,7 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/cixclk_acpi.*'
       - 'sys/dev/acpi/cixreset_acpi.*'
       - 'sys/dev/acpi/cixvpu_acpi_control.*'
+      - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/acpi_power.*'
       - 'sys/dev/ic/cixvpu_resources.*'
       - 'sys/sys/queue.h'
@@ -63,6 +65,7 @@ jobs:
             /sys/dev/acpi/cixclk_acpi.*
             /sys/dev/acpi/cixreset_acpi.*
             /sys/dev/acpi/cixvpu_acpi_control.*
+            /sys/dev/acpi/cixvpu_acpi.c
             /sys/dev/acpi/acpi_power.*
             /sys/dev/ic/cixvpu_resources.*
             /sys/sys/queue.h
