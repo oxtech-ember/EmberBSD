@@ -3,6 +3,9 @@
 # Origin: unchanged FreeBSD packet-H2C producer consumer, AI-assisted.
 # Usage: rtw88-fw-init-contract-gen.sh REFDIR > rtw88-fw-init-contract.vectors
 set -eu
+if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
+    SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
+fi
 [ "$#" -eq 1 ] || exit 2
 ref=$1
 tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

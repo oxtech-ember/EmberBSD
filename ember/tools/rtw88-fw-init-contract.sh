@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Origin: actual-source RTL8822C packet-H2C DMA consumer contract.
 set -eu
+if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
+    SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
+fi
 [ "$#" -eq 0 ] || exit 2
 tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src=$(CDPATH= cd -- "$tools/../.." && pwd)
