@@ -68,4 +68,15 @@ int rtw8822c_apply_table(struct rtw88_softc *, const struct rtw8822c_table *);
  */
 int rtw8822c_mac_init(struct rtw88_softc *);
 
+/*
+ * rtw8822c_phy_set_param around rtw8822c_load_tables: BB/RF power-on
+ * before, crystal, TRX paths AB, EDCCA and beamforming defaults after.
+ * rf_init and TX power are not included. Channel switch is 20 MHz only;
+ * EINVAL for a channel outside the reference 2.4/5 GHz bands.
+ * Sequences match ember/tools/rtw8822c-phy.trace.
+ */
+int rtw8822c_phy_pre(struct rtw88_softc *);
+int rtw8822c_phy_post(struct rtw88_softc *);
+int rtw8822c_set_channel(struct rtw88_softc *, unsigned);
+
 #endif /* _DEV_IC_RTW8822C_H_ */
