@@ -57,6 +57,11 @@ power limits. It sends the general-info and PHYDM packet commands through
 the H2C DMA ring before publishing started state. Runtime retuning pauses
 TX and restores it only after both channel and power setup succeed.
 
+Normal table load keeps DPK mode tables out of the cold startup path.
+Those tables require a separate calibration transaction and register restore.
+The actual-source call graph and pre-ADCK AFE register checks cover this boundary.
+Its effect on physical calibration still requires a board trial.
+
 Cold startup runs the native ADCK/DACK helper before HCI starts. Its bounded
 noise filter computes a trimmed mean after at most 101 replacement passes.
 A spread above five only prevents early exit. ADC/DAC residuals must still
@@ -92,6 +97,7 @@ CC=gcc-16 sh ember/tools/rtw88-net-contract.sh
 CC=gcc-16 sh ember/tools/rtw8822c-txpwr-contract.sh
 CC=gcc-16 sh ember/tools/rtw8822c-coex-contract.sh
 CC=gcc-16 sh ember/tools/rtw8822c-dack-contract.sh
+CC=gcc-16 sh ember/tools/rtw8822c-init-contract.sh
 ```
 
 Both 2.4 GHz and 5 GHz need physical station tests. Association, WPA2,

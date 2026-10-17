@@ -647,14 +647,9 @@ rtw8822c_load_tables(struct rtw88_softc *sc)
 		return error;
 	pwr = sc->sc_rfe == 5 ? &rtw8822c_txpwr_lmt_type5_tbl :
 	    &rtw8822c_txpwr_lmt_type0_tbl;
-	error = rtw8822c_apply_table(sc, pwr);
-	if (error != 0)
-		return error;
-	error = rtw8822c_apply_table(sc, &rtw8822c_dpk_mac_bb_tbl);
-	if (error != 0)
-		return error;
-	error = rtw8822c_apply_table(sc, &rtw8822c_dpk_afe_no_dpk_tbl);
-	if (error != 0)
-		return error;
-	return rtw8822c_apply_table(sc, &rtw8822c_dpk_afe_is_dpk_tbl);
+	/*
+	 * DPK mode tables belong to the separate RF calibration transaction.
+	 * Normal PHY table load must leave the AFE in its operating mode.
+	 */
+	return rtw8822c_apply_table(sc, pwr);
 }

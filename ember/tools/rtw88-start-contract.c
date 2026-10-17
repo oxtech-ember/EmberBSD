@@ -227,6 +227,17 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 	    (uint32_t)f.mmio[reg + 2] << 16 | (uint32_t)f.mmio[reg + 3] << 24;
 	if (f.dack_seen && !f.sc->sc_stop_requested) {
 		if (reg == 0x2dbc) {
+			if (f.dack_samples == 0) {
+				/*
+				 * Normal PHY load must not leave AFE in DPK mode.
+				 * The pinned phy_load_tables graph has no DPK setup.
+				 * Check the actual MMIO from native table decoding.
+				 */
+				CHECK((f.mmio[0x18a4] & 0x80) == 0);
+				CHECK((f.mmio[0x41a4] & 0x80) == 0);
+				CHECK((f.mmio[0x1867] & 0x80) == 0);
+				CHECK((f.mmio[0x4167] & 0x80) == 0);
+			}
 			CHECK(f.sc->sc_powered && f.sc->sc_bootstrapping &&
 			    !f.sc->sc_running && !f.sc->sc_started);
 			CHECK(f.mmio[0xb0] == 0 && f.mmio[0xb8] == 0 &&

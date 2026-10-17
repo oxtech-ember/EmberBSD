@@ -237,9 +237,15 @@ Configuration arrays are inventoried, not imported or executed here.
 The pinned arrays are imported as `sys/dev/ic/rtw8822c_table.c` with a native
 descriptor wrapper. The original hash above is of the FreeBSD source file;
 the wrapper does not change array contents. `rtw8822c_boot.c` walks MAC, BB,
-AGC, RFK, RF B then A, power-by-rate type 0, power-limit type 0 or 5 by RFE,
-and DPK setup tables before `rtw88_start` sets the RF-enabled flag.
+AGC, RFK, RF B then A, power-by-rate type 0 and power-limit type 0 or 5 by RFE
+before `rtw88_start` sets the RF-enabled flag. Normal table loading does not
+enter DPK mode. The DPK tables remain available for a separate calibration
+transaction with its required backup and restore operations.
 Host contract `ember/tools/rtw88-start-contract.sh` is the executor check.
+`ember/tools/rtw8822c-init-contract.sh` compares the actual native table-load
+call graph against the unchanged pinned `rtw_phy_load_tables` producer.
+That contract records table dispatch and RFK mask writes, not analog behavior.
+The startup contract also checks real decoded AFE registers before ADCK.
 No partial substitute or table from a different chip is provided.
 The complete table inventory at that exact revision is:
 
