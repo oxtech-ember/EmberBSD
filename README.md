@@ -1040,6 +1040,8 @@ The base system shell is unchanged.
   with this additional ordering change remains unqualified.
   Restart by a short press after shutdown remains unresolved on this sample;
   the operator reports that power must be removed and restored.
+  A control boot stopped before the OS reproduces the same failure after the
+  built-in UEFI Shell's shutdown command. The cause remains undiagnosed.
   A physical CIX S5 GPIO passive snapshot passes on one board. EMBER64 now selects
   the bounded pin6 ACPI event path; `flags 0x0` retains passive mode. Source
   contracts cover event completion and truncated resource rejection. The

@@ -82,6 +82,14 @@ FFS and restores WPA2/DHCP. The persistence marker and installed file hashes
 match. Electrical rail state remains unmeasured. No shutdown hook or filesystem
 step was bypassed.
 
+A separate control on the same BIOS `BiosV1.5-W20260706-e321056a` and EC
+`V1.15-7e90ed4de22c` stops at the built-in UEFI Shell after reported input-power
+removal, before any OS boot. The observed help identifies `reset -s` as shutdown.
+After that command, one short press with input power connected produces no new
+UART boot. The operator confirms that the fan does not start. The failure thus
+reproduces outside the native OS shutdown sequence. This does not isolate an
+EC, PDC, firmware or hardware cause; electrical rail state remains unmeasured.
+
 ## Source contracts
 
 Run from the source root with GCC16:

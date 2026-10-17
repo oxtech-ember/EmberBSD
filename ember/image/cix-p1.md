@@ -102,6 +102,8 @@ This is one healthy-system result. After DC restoration, the next unattended
 boot reports clean FFS, retains the marker and new file hashes, and restores
 WPA2/DHCP. Electrical power-off remains unmeasured. Power-on by a later short
 press still fails; the operator must remove and restore input power.
+The same failure reproduces after the built-in UEFI shutdown command in a
+control boot stopped before OS execution. See the [GPIO evidence](../boot/cix-gpio.md).
 
 The current network stop policy takes the interface DOWN before DHCP address
 cleanup, then terminates WPA. Multicast-list changes can restart an UP radio
