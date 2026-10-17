@@ -145,6 +145,8 @@ int rtw88_core_attach(struct rtw88_softc *);
 /* Caller serializes attach/detach; IRQ teardown precedes every DMA free. */
 void rtw88_core_detach(struct rtw88_softc *);
 int rtw88_start(struct rtw88_softc *);
+/* Synchronous packet-H2C init; caller stops DMA on any error. */
+int rtw88_fw_init(struct rtw88_softc *);
 void rtw88_stop(struct rtw88_softc *);
 int rtw88_fw_command(struct rtw88_softc *, uint8_t, const void *, size_t);
 /*

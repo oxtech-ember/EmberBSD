@@ -52,8 +52,16 @@ The legacy port0 helper programs the local address, BSSID, AID, basic rates,
 slot time and software-only crypto. It returns hardware and mailbox errors
 before the caller can publish a successful station state. Frames use a
 band-valid basic rate and retain software data sequence numbers.
-Wi-Fi-only coexistence and ingress-generation contracts are separate source
-components. Their presence does not establish a linked network interface.
+Startup applies the Wi-Fi-only antenna grants and calibrated 20 MHz TX
+power limits. It sends the general-info and PHYDM packet commands through
+the H2C DMA ring before publishing started state. Runtime retuning pauses
+TX and restores it only after both channel and power setup succeed.
+
+The kernel configuration selects the native station wrapper and ingress
+generation policy. Use the standard interface tools when the PCI wrapper
+attaches it. Legacy diagnostic writes return EBUSY while net80211 owns the
+device. RSSI, thermal power tracking and higher-rate modes remain outside
+this profile. Source contracts do not establish a linked wireless network.
 
 Run the actual-source contracts with GCC16:
 
@@ -61,7 +69,9 @@ Run the actual-source contracts with GCC16:
 CC=gcc-16 sh ember/tools/rtw88-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-pci-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-start-contract.sh
+CC=gcc-16 sh ember/tools/rtw88-fw-init-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-net-contract.sh
+CC=gcc-16 sh ember/tools/rtw8822c-txpwr-contract.sh
 CC=gcc-16 sh ember/tools/rtw8822c-coex-contract.sh
 ```
 

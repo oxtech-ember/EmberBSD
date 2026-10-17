@@ -673,6 +673,7 @@ rtw88_start(struct rtw88_softc *sc)
 	const uint8_t *fw = NULL;
 	size_t fw_len = 0;
 	struct rtw88_fw_info info;
+	struct rtw8822c_efuse efuse;
 	uint32_t gen;
 	int error;
 
@@ -717,6 +718,9 @@ rtw88_start(struct rtw88_softc *sc)
 		goto fail;
 	}
 	sc->sc_powered = 1;
+	error = rtw8822c_coex_power_on(sc);
+	if (error != 0)
+		goto fail;
 	error = rtw88_fw_download(sc, gen, fw, &info);
 	if (error != 0)
 		goto fail;
@@ -746,6 +750,12 @@ rtw88_start(struct rtw88_softc *sc)
 	error = rtw8822c_set_channel(sc, RTW88_DEFAULT_CHANNEL);
 	if (error != 0)
 		goto fail;
+	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
+	    sizeof(sc->sc_efuse_phys), &efuse);
+	if (error == 0)
+		error = rtw8822c_set_tx_power(sc, &efuse, RTW88_DEFAULT_CHANNEL, 12);
+	if (error != 0)
+		goto fail;
 	sc->sc_channel = RTW88_DEFAULT_CHANNEL;
 	if (sc->sc_stop_requested || sc->sc_generation != gen) {
 		error = EINTR;
@@ -754,6 +764,16 @@ rtw88_start(struct rtw88_softc *sc)
 	error = rtw88_hci_start(sc);
 	if (error != 0)
 		goto fail;
+	error = rtw88_fw_init(sc);
+	if (error != 0)
+		goto fail;
+	error = rtw8822c_coex_init(sc);
+	if (error != 0)
+		goto fail;
+	if (sc->sc_stop_requested || sc->sc_generation != gen) {
+		error = EINTR;
+		goto fail;
+	}
 	sc->sc_rf_enabled = 1;
 	sc->sc_started = 1;
 	sc->sc_bootstrapping = 0;
@@ -1129,11 +1149,34 @@ rtw88_loopback(struct rtw88_softc *sc, int mode)
 int
 rtw88_channel(struct rtw88_softc *sc, unsigned ch)
 {
+	struct rtw8822c_efuse efuse;
+	uint8_t pause;
 	int error;
 
 	if (!sc->sc_running)
 		return ENXIO;
+	/* The calibrated 20 MHz profile has no policy for other channels. */
+	if (!((ch >= 1 && ch <= 13) ||
+	    (ch >= 36 && ch <= 64 && ch % 4 == 0) ||
+	    (ch >= 100 && ch <= 144 && ch % 4 == 0) ||
+	    (ch >= 149 && ch <= 165 && (ch - 149) % 4 == 0)))
+		return EINVAL;
+	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
+	    sizeof(sc->sc_efuse_phys), &efuse);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->read_1(sc->sc_bus, 0x0522, &pause);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->write_1(sc->sc_bus, 0x0522, 0xff);
+	if (error != 0)
+		return error;
 	error = rtw8822c_set_channel(sc, ch);
+	if (error == 0)
+		error = rtw8822c_set_tx_power(sc, &efuse, ch, 12);
+	if (error == 0)
+		error = sc->sc_ops->write_1(sc->sc_bus, 0x0522, pause);
+	/* A failed retune leaves TX paused. The caller must stop the core. */
 	if (error == 0)
 		sc->sc_channel = ch;
 	return error;

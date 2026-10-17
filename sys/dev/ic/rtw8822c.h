@@ -93,4 +93,8 @@ int rtw8822c_set_channel(struct rtw88_softc *, unsigned);
 int rtw8822c_set_tx_power(struct rtw88_softc *sc,
     const struct rtw8822c_efuse *efuse, unsigned channel, unsigned regd);
 
+/* Wi-Fi-only antenna ownership; no dynamic Bluetooth policy. */
+int rtw8822c_coex_power_on(struct rtw88_softc *);
+int rtw8822c_coex_init(struct rtw88_softc *);
+
 #endif /* _DEV_IC_RTW8822C_H_ */

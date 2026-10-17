@@ -28,10 +28,13 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     "$tools/rtw88-start-contract.c" \
     "$src/sys/dev/ic/rtw88.c" \
     "$src/sys/dev/ic/rtw88_hw.c" \
+    "$src/sys/dev/ic/rtw88_fw_init.c" \
     "$src/sys/dev/ic/rtw8822c.c" \
     "$src/sys/dev/ic/rtw8822c_boot.c" \
     "$src/sys/dev/ic/rtw8822c_mac.c" \
     "$src/sys/dev/ic/rtw8822c_phy.c" \
     "$src/sys/dev/ic/rtw8822c_table.c" \
+    "$src/sys/dev/ic/rtw8822c_coex.c" \
+    "$src/sys/dev/ic/rtw8822c_txpwr.c" \
     -o "$work/test"
 run_test "$work/test"

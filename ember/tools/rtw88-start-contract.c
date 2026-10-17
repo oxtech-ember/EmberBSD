@@ -25,7 +25,13 @@ static unsigned assertions, failures;
 	} while (0)
 
 static struct {
-	uint8_t mmio[0x8000];
+	uint8_t mmio[0x10000];
+	uint32_t lte[256];
+	int coex_busy;
+	int h2c_dead;
+	int stop_coex_final;
+	unsigned bcn_last_pkt_size, bcn_last_seg1;
+	unsigned h2c_rp, h2c_sent;
 	uint8_t efuse[512];
 	const uint8_t *fw;
 	size_t fw_len;
@@ -79,6 +85,47 @@ static const uint8_t efuse_ok[] = {
 	0x8f, 0x4b, 0xaa, 0xbb,
 	0xff
 };
+
+/* Valid synthetic calibration, encoded as real physical EFUSE records. */
+static void
+efuse_calibrated(void)
+{
+	struct rtw8822c_efuse map;
+	unsigned p, i, block, mask, word, cursor = 0;
+
+	CHECK(rtw8822c_efuse_decode(efuse_ok, sizeof(efuse_ok), &map) == 0);
+	for (p = 0; p < 4; p++) {
+		for (i = 0; i < 42; i++)
+			map.logical[0x10 + p * 42 + i] =
+			    (i < 11 || (i >= 18 && i < 32)) ? 96 : 0;
+	}
+	memset(f.efuse, 0xff, sizeof(f.efuse));
+	for (block = 0; block < sizeof(map.logical) / 8; block++) {
+		mask = 15;
+		for (word = 0; word < 4; word++) {
+			i = block * 8 + word * 2;
+			if (map.logical[i] != 0xff || map.logical[i + 1] != 0xff)
+				mask &= ~(1U << word);
+		}
+		if (mask == 15)
+			continue;
+		if (block < 16)
+			f.efuse[cursor++] = (uint8_t)(block << 4 | mask);
+		else {
+			f.efuse[cursor++] = (uint8_t)((block & 7) << 5 | 15);
+			f.efuse[cursor++] = (uint8_t)((block & 0x78) << 1 | mask);
+		}
+		for (word = 0; word < 4; word++) {
+			if ((mask & (1U << word)) != 0)
+				continue;
+			i = block * 8 + word * 2;
+			CHECK(cursor + 2 < RTW8822C_EFUSE_PHYSICAL_SIZE -
+			    RTW8822C_EFUSE_PROTECTED_SIZE);
+			f.efuse[cursor++] = map.logical[i];
+			f.efuse[cursor++] = map.logical[i + 1];
+		}
+	}
+}
 
 static int
 is_cfg_reg(uint32_t reg)
@@ -167,9 +214,13 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 		v |= 0x8000;
 	if (reg == 0x1208 && f.ddma_bad_sum)
 		v |= UINT32_C(1) << 27;
+	if (reg == 0x1700 && !f.coex_busy)
+		v |= UINT32_C(0x20000000);
 	/* RXBD_IDX_MPDUQ: hardware write index in 27:16, host index low. */
 	if (reg == 0x03b4)
 		v = (v & 0xfff) | (uint32_t)(f.rx_hw_idx & 0xfff) << 16;
+	if (reg == 0x132c)
+		v = (v & 0xfff) | (uint32_t)f.h2c_rp << 16;
 	/* TXBD_IDX MGMTQ/BEQ: hardware read index in 27:16. */
 	if (reg == 0x03b0)
 		v = (v & 0xfff) | (uint32_t)(f.tx_hw_rp[0] & 0xfff) << 16;
@@ -200,6 +251,12 @@ write_1(void *cookie, uint32_t reg, uint8_t val)
 	if (is_cfg_reg(reg))
 		f.cfg_writes++;
 	f.mmio[reg] = val;
+	if (reg == 0x73 && f.stop_coex_final && f.sc->sc_running) {
+		if (f.stop_coex_final == 1)
+			f.sc->sc_stop_requested = 1;
+		else
+			f.sc->sc_generation++;
+	}
 	/* AUTO_LLT_V1 completes immediately. */
 	if (reg == 0x0208)
 		f.mmio[reg] &= (uint8_t)~0x01;
@@ -225,6 +282,11 @@ write_1(void *cookie, uint32_t reg, uint8_t val)
 		    desa == (uint32_t)f.sc->sc_ring[4].addr &&
 		    dma == (uint32_t)f.sc->sc_fw_dma.addr &&
 		    (psb & 0x8000) != 0) {
+			const uint8_t *packet = f.sc->sc_fw_dma.vaddr;
+
+			f.bcn_last_pkt_size = (unsigned)packet[0] |
+			    (unsigned)packet[1] << 8;
+			f.bcn_last_seg1 = (unsigned)bd[8] | (unsigned)bd[9] << 8;
 			f.mmio[0x205] |= 0x80;
 			f.bcn_valid_sets++;
 			f.bcn_ready = 1;
@@ -247,6 +309,21 @@ write_2(void *cookie, uint32_t reg, uint16_t val)
 		f.cfg_writes++;
 	f.mmio[reg] = (uint8_t)val;
 	f.mmio[reg + 1] = (uint8_t)(val >> 8);
+	if (reg == 0x132c && !f.h2c_dead) {
+		uint8_t *bd = (uint8_t *)f.sc->sc_ring[7].vaddr + (val - 1) * 16;
+		uint8_t *packet = (uint8_t *)f.sc->sc_fw_dma.vaddr;
+
+		CHECK(val == 1 || val == 2);
+		CHECK(bd[0] == 48 && bd[1] == 0 && bd[2] == 1 && bd[3] == 0);
+		CHECK(bd[8] == 32 && bd[9] == 0);
+		CHECK(packet[0] == 32 && packet[5] == 19);
+		CHECK(packet[48] == 1 && packet[49] == 0xff);
+		CHECK(packet[50] == (val == 1 ? 0x0d : 0x11));
+		CHECK(packet[52] == (val == 1 ? 12 : 16));
+		CHECK(packet[54] == val - 1);
+		f.h2c_sent++;
+		f.h2c_rp = val;
+	}
 	/* BCN_VALID is write-one-to-clear. */
 	if (reg == 0x204)
 		f.mmio[0x205] &= (uint8_t)~0x80;
@@ -277,6 +354,27 @@ write_4(void *cookie, uint32_t reg, uint32_t val)
 	f.mmio[reg + 1] = (uint8_t)(val >> 8);
 	f.mmio[reg + 2] = (uint8_t)(val >> 16);
 	f.mmio[reg + 3] = (uint8_t)(val >> 24);
+	if (reg == 0x1330 && (val & 0x10100) != 0) {
+		f.h2c_rp = 0;
+		memset(f.mmio + 0x132c, 0, 4);
+	}
+	if (reg == 0x1700) {
+		unsigned address = val & 0xff;
+		uint32_t value;
+		unsigned j;
+
+		if ((val & 0xc0000000) == 0xc0000000) {
+			value = (uint32_t)f.mmio[0x1704] |
+			    (uint32_t)f.mmio[0x1705] << 8 |
+			    (uint32_t)f.mmio[0x1706] << 16 |
+			    (uint32_t)f.mmio[0x1707] << 24;
+			f.lte[address] = value;
+		} else {
+			value = f.lte[address];
+			for (j = 0; j < 4; j++)
+				f.mmio[0x1708 + j] = (uint8_t)(value >> (8 * j));
+		}
+	}
 	return 0;
 }
 
@@ -441,6 +539,7 @@ reset_bus(struct rtw88_softc *sc)
 	memcpy(f.efuse, efuse_ok, sizeof(efuse_ok));
 	for (i = sizeof(efuse_ok); i < sizeof(f.efuse); i++)
 		f.efuse[i] = 0xff;
+	efuse_calibrated();
 	reset_fw();
 	f.fw = fw_image;
 	f.fw_len = sizeof(fw_image);
@@ -454,6 +553,52 @@ attach_ok(struct rtw88_softc *sc)
 	CHECK(sc->sc_resources_ready);
 	CHECK(!sc->sc_rf_enabled && !sc->sc_dma_master);
 	return sc->sc_resources_ready;
+}
+
+static void
+test_radio_dependencies(void)
+{
+	struct rtw88_softc sc;
+
+	reset_bus(&sc);
+	if (!attach_ok(&sc))
+		return;
+	CHECK(rtw88_start(&sc) == 0);
+	CHECK(f.h2c_sent == 2); /* Both mandatory packet commands were consumed. */
+	CHECK((f.lte[0x38] & 0xff00) == 0x7700); /* WONLY grants. */
+	CHECK((f.mmio[0x73] & 4) != 0); /* WLAN owns the antenna path. */
+	CHECK((f.mmio[0x18a2] & 0x7f) != 0); /* CCK reference programmed. */
+	CHECK(rtw88_channel(&sc, 36) == 0);
+	CHECK((f.mmio[0x18a2] & 0x7f) == 0); /* No CCK on 5 GHz. */
+	CHECK(sc.sc_efuse_phys[0] == 0x20 && sc.sc_efuse_phys[1] == 96);
+	sc.sc_efuse_phys[1] = 0; /* Invalid CCK calibration result for channel1. */
+	CHECK(rtw88_channel(&sc, 1) == ERANGE);
+	CHECK(f.mmio[0x522] == 0xff && sc.sc_channel == 36);
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+	for (unsigned cancel = 1; cancel <= 2; cancel++) {
+		reset_bus(&sc);
+		f.stop_coex_final = (int)cancel;
+		if (!attach_ok(&sc))
+			return;
+		CHECK(rtw88_start(&sc) == EINTR);
+		CHECK(!sc.sc_started && !sc.sc_running && !sc.sc_rf_enabled && !f.master);
+		rtw88_core_detach(&sc);
+	}
+	reset_bus(&sc);
+	f.h2c_dead = 1;
+	if (!attach_ok(&sc))
+		return;
+	CHECK(rtw88_start(&sc) == ETIMEDOUT);
+	CHECK(!sc.sc_started && !sc.sc_running && !sc.sc_rf_enabled && !f.master);
+	rtw88_core_detach(&sc);
+	reset_bus(&sc);
+	f.coex_busy = 1;
+	if (!attach_ok(&sc))
+		return;
+	CHECK(rtw88_start(&sc) == ETIMEDOUT);
+	CHECK(!sc.sc_started && !sc.sc_running && !sc.sc_rf_enabled && !f.master);
+	rtw88_core_detach(&sc);
 }
 
 static void
@@ -567,8 +712,9 @@ test_command_length(void)
 		desa = (uint32_t)f.mmio[0x308] | (uint32_t)f.mmio[0x309] << 8 |
 		    (uint32_t)f.mmio[0x30a] << 16 |
 		    (uint32_t)f.mmio[0x30b] << 24;
-		pkt_size = (uint16_t)pkt[0] | (uint16_t)pkt[1] << 8;
-		seg1 = (uint16_t)bd[8] | (uint16_t)bd[9] << 8;
+		/* Snapshot at beacon consumption, before packet-H2C reuses the map. */
+		pkt_size = (uint16_t)f.bcn_last_pkt_size;
+		seg1 = (uint16_t)f.bcn_last_seg1;
 		CHECK(dma == (uint32_t)sc.sc_fw_dma.addr);
 		CHECK(desa == (uint32_t)sc.sc_ring[4].addr);
 		CHECK(pkt_size == 2008 && seg1 == 2008);
@@ -1377,6 +1523,7 @@ int
 main(void)
 {
 
+	test_radio_dependencies();
 	test_missing_firmware();
 	test_corrupt_firmware();
 	test_failed_identity_read();

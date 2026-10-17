@@ -738,16 +738,21 @@ file	dev/ic/athrate-sample.c		ath
 device	atw: arp, wlan, ifnet, smc93cx6
 file	dev/ic/atw.c			atw
 
-# Realtek RTL8822CE resource-only core.
+# Realtek RTL8822CE native station core.
 # Config base cannot be rtw88: names must not end in a digit. rtw is RTL8180.
-device	rtwce
+device	rtwce: arp, wlan, ifnet, firmload
 file	dev/ic/rtw88.c			rtwce
+file	dev/ic/rtw88_fw_init.c		rtwce
 file	dev/ic/rtw88_hw.c		rtwce
 file	dev/ic/rtw8822c.c		rtwce
 file	dev/ic/rtw8822c_boot.c		rtwce
 file	dev/ic/rtw8822c_mac.c		rtwce
 file	dev/ic/rtw8822c_phy.c		rtwce
 file	dev/ic/rtw8822c_table.c		rtwce
+file	dev/ic/rtw8822c_coex.c		rtwce
+file	dev/ic/rtw8822c_txpwr.c		rtwce
+file	dev/ic/rtw88_net.c		rtwce
+file	dev/ic/rtw88_net_policy.c		rtwce
 
 # Realtek RTL8180 802.11
 #
