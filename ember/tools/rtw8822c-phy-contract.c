@@ -102,8 +102,16 @@ load_section(const char *path, const char *name, char out[][32], unsigned max)
 			on = strcmp(sec, name) == 0;
 			continue;
 		}
-		if (on && line[0] == 'w' && n < max)
-			snprintf(out[n++], 32, "%s", line);
+		if (on && line[0] == 'w' && n < max) {
+			size_t length = strlen(line);
+
+			if (length >= sizeof(out[0])) {
+				fprintf(stderr, "trace entry too long\n");
+				fclose(fp);
+				return 0;
+			}
+			memcpy(out[n++], line, length + 1);
+		}
 	}
 	fclose(fp);
 	return n;

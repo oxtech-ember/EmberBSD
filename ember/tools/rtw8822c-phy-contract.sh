@@ -20,4 +20,4 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     "$tools/rtw8822c-phy-contract.c" \
     "$src/sys/dev/ic/rtw8822c_phy.c" \
     -o "$work/test"
-"$work/test" "$tools/rtw8822c-phy.trace"
+"$work/test" "${RTW8822C_TRACE:-$tools/rtw8822c-phy.trace}"
