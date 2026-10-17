@@ -47,6 +47,9 @@ register tables and bounded frame transfer. The core exposes copied-frame
 callbacks for a native station wrapper. It rejects CRC/ICV errors and stale
 DMA tags. The RX callback excludes the FCS and expires when it returns.
 A DMA TX completion does not prove an acknowledgement from an access point.
+Management input occupies one contiguous mbuf because native parsers use
+the first segment as the frame end. Nonblocking allocation retains the
+4096-byte input bound. Data input keeps the native chained-copy path.
 
 The legacy port0 helper programs the local address, BSSID, AID, basic rates,
 slot time and software-only crypto. It returns hardware and mailbox errors
@@ -94,6 +97,7 @@ CC=gcc-16 sh ember/tools/rtw88-pci-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-start-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-fw-init-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-net-contract.sh
+CC=gcc-16 sh ember/tools/rtw88-mbuf-contract.sh
 CC=gcc-16 sh ember/tools/rtw8822c-txpwr-contract.sh
 CC=gcc-16 sh ember/tools/rtw8822c-coex-contract.sh
 CC=gcc-16 sh ember/tools/rtw8822c-dack-contract.sh

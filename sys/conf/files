@@ -755,6 +755,7 @@ file	dev/ic/rtw8822c_coex.c		rtwce
 file	dev/ic/rtw8822c_txpwr.c		rtwce
 file	dev/ic/rtw88_net.c		rtwce
 file	dev/ic/rtw88_net_policy.c		rtwce
+file	dev/ic/rtw88_net_mbuf.c		rtwce
 
 # Realtek RTL8180 802.11
 #

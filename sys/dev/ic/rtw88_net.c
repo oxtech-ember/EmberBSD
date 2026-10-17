@@ -24,6 +24,7 @@
 #include <dev/ic/rtw88var.h>
 #include <dev/ic/rtw88_net.h>
 #include <dev/ic/rtw88_net_policy.h>
+#include <dev/ic/rtw88_net_mbuf.h>
 
 struct rtw88_net_rx {
 	struct mbuf *m;
@@ -224,7 +225,7 @@ rtw88_net_rx_frame(void *cookie, const uint8_t *frame, size_t len,
 		net->rx_dropped++;
 		return;
 	}
-	m = m_devget((char *)__UNCONST(frame), (int)len, 0, &net->ec.ec_if);
+	m = rtw88_net_rx_mbuf(frame, len, &net->ec.ec_if);
 	if (m == NULL) {
 		rtw88_net_rx_release(&net->policy);
 		net->rx_dropped++;
