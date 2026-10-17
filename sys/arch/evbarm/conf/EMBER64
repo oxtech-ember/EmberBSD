@@ -44,6 +44,7 @@ rtwce*		at pci?
 
 # CIX P1 codec resources only; power, MMIO, DMA and video stay disabled.
 cixvpu*		at acpi?
+cixgpio*	at acpi? flags 0x0	# Passive GPI4 snapshot; no IRQ/write.
 
 #	The power management chip of the Orange Pi Zero 4: its power key
 #	(../patches/sun60i-a733.diff).

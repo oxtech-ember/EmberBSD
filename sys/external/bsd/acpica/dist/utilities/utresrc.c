@@ -322,6 +322,19 @@ AcpiUtWalkAmlResources (
 
     while (Aml < EndAml)
     {
+        /* Origin: EmberBSD. Bound the header before any length-field read. */
+
+        if ((ACPI_SIZE) (EndAml - Aml) <
+            AcpiUtGetResourceHeaderLength (Aml))
+        {
+            return_ACPI_STATUS (AE_AML_BAD_RESOURCE_LENGTH);
+        }
+
+        if (AcpiUtGetDescriptorLength (Aml) > (ACPI_SIZE) (EndAml - Aml))
+        {
+            return_ACPI_STATUS (AE_AML_BAD_RESOURCE_LENGTH);
+        }
+
         /* Validate the Resource Type and Resource Length */
 
         Status = AcpiUtValidateResource (WalkState, Aml, &ResourceIndex);

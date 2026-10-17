@@ -29,6 +29,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD opt-in event completion and pre-queue cleanup, AI-assisted. */
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: acpi_event.c,v 1.2 2022/01/11 10:53:08 jmcneill Exp $");
 
@@ -48,6 +49,8 @@ struct acpi_event {
 	bool		ev_method_evt;
 	UINT16		ev_data;
 	void		*ev_intrcookie;
+	void		(*ev_completion)(void *, ACPI_STATUS);
+	void		*ev_completion_arg;
 };
 
 struct acpi_event_gpio_context {
@@ -71,6 +74,8 @@ acpi_event_create(device_t dev, ACPI_HANDLE handle, UINT16 data, UINT8 trig, str
 	ev->ev_method_evt = false;
 	ev->ev_data = data;
 	ev->ev_intrcookie = NULL;
+	ev->ev_completion = NULL;
+	ev->ev_completion_arg = NULL;
 
 	if (data <= 255) {
 		snprintf(namebuf, sizeof(namebuf), "_%c%02X", trigchar, data);
@@ -177,7 +182,9 @@ acpi_event_invoke(void *priv)
 		    acpi_name(ev->ev_method), AcpiFormatException(rv));
 	}
 
-	if (ev->ev_intrcookie != NULL) {
+	if (ev->ev_completion != NULL) {
+		ev->ev_completion(ev->ev_completion_arg, rv);
+	} else if (ev->ev_intrcookie != NULL) {
 		acpi_intr_unmask(ev->ev_intrcookie);
 	}
 }
@@ -185,11 +192,35 @@ acpi_event_invoke(void *priv)
 ACPI_STATUS
 acpi_event_notify(struct acpi_event *ev)
 {
+	ACPI_STATUS rv;
+
 	if (ev->ev_intrcookie != NULL) {
 		acpi_intr_mask(ev->ev_intrcookie);
 	}
 
-	return AcpiOsExecute(OSL_NOTIFY_HANDLER, acpi_event_invoke, ev);
+	rv = AcpiOsExecute(OSL_NOTIFY_HANDLER, acpi_event_invoke, ev);
+	if (ACPI_FAILURE(rv) && ev->ev_completion != NULL)
+		ev->ev_completion(ev->ev_completion_arg, rv);
+	return rv;
+}
+
+void
+acpi_event_set_completion(struct acpi_event *ev,
+    void (*func)(void *, ACPI_STATUS), void *arg)
+{
+
+	KASSERT(ev->ev_completion == NULL);
+	KASSERT(func != NULL);
+	ev->ev_completion = func;
+	ev->ev_completion_arg = arg;
+}
+
+/* Only for attachment failure, before the event can be notified. */
+void
+acpi_event_destroy(struct acpi_event *ev)
+{
+
+	kmem_free(ev, sizeof(*ev));
 }
 
 void

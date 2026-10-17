@@ -599,6 +599,20 @@ AcpiRsGetListLength (
 
     while (AmlBuffer < EndAml)
     {
+        /* Origin: EmberBSD. Bound the header before any length-field read. */
+
+        if ((ACPI_SIZE) (EndAml - AmlBuffer) <
+            AcpiUtGetResourceHeaderLength (AmlBuffer))
+        {
+            return_ACPI_STATUS (AE_AML_BAD_RESOURCE_LENGTH);
+        }
+
+        if (AcpiUtGetDescriptorLength (AmlBuffer) >
+            (ACPI_SIZE) (EndAml - AmlBuffer))
+        {
+            return_ACPI_STATUS (AE_AML_BAD_RESOURCE_LENGTH);
+        }
+
         /* Validate the Resource Type and Resource Length */
 
         Status = AcpiUtValidateResource (NULL, AmlBuffer, &ResourceIndex);

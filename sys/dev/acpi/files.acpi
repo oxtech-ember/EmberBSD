@@ -283,6 +283,11 @@ file	dev/acpi/ahcisata_acpi.c	ahcisata_acpi
 attach	plgpio at acpinodebus with plgpio_acpi
 file	dev/acpi/plgpio_acpi.c		plgpio_acpi
 
+# CIX S5 GPIO0 ACPI event profile. Default attachment is passive.
+device	cixgpio
+attach	cixgpio at acpinodebus with cixgpio_acpi
+file	dev/acpi/cixgpio_acpi.c		cixgpio_acpi
+
 # DesignWare I2C controller
 attach	dwiic at acpinodebus with dwiic_acpi
 file	dev/acpi/dwiic_acpi.c		dwiic_acpi

@@ -1,0 +1,86 @@
+name: CIX GPIO actual source contracts
+
+'on':
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/cix-gpio.yml'
+      - 'sys/dev/acpi/cixgpio_acpi.c'
+      - 'sys/dev/acpi/acpi_event.*'
+      - 'sys/dev/acpi/files.acpi'
+      - 'sys/arch/evbarm/conf/EMBER64'
+      - 'sys/external/bsd/acpica/dist/**'
+      - 'ember/tools/cixgpio-*'
+      - 'ember/boot/cix-gpio.md'
+  pull_request:
+    paths:
+      - '.github/workflows/cix-gpio.yml'
+      - 'sys/dev/acpi/cixgpio_acpi.c'
+      - 'sys/dev/acpi/acpi_event.*'
+      - 'sys/dev/acpi/files.acpi'
+      - 'sys/arch/evbarm/conf/EMBER64'
+      - 'sys/external/bsd/acpica/dist/**'
+      - 'ember/tools/cixgpio-*'
+      - 'ember/boot/cix-gpio.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      # Official GCC16.2 Linux amd64 image used by the native driver contracts.
+      image: gcc@sha256:3f73339bf0d3d64081cac3f6d9fdafc6dd4cef2b9c49e0a09f91e97cb0eb139a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /ember/tools/cixgpio-*
+            /sys/dev/acpi/cixgpio_acpi.c
+            /sys/dev/acpi/acpi_event.*
+            /sys/external/bsd/acpica/dist/include/
+            /sys/external/bsd/acpica/dist/resources/
+            /sys/external/bsd/acpica/dist/utilities/
+      - name: Check compiler and prepare analysis tools
+        run: |
+          test "$(gcc -dumpfullversion)" = 16.2.0
+          gcc -dumpmachine
+          apt-get update
+          apt-get install -y --no-install-recommends ruby clang cppcheck valgrind libc6-dbg
+          clang --version
+          cppcheck --version
+          valgrind --version
+      - name: Run GCC16 fanalyzer and host static analysis
+        env:
+          CC: gcc
+          CFLAGS: -O2 -g -gdwarf-4 -fanalyzer
+          CIXGPIO_ANALYZE: '1'
+        run: sh ember/tools/cixgpio-contract.sh
+      - name: Run native ASan and UBSan with explicit decoder scope
+        env:
+          CC: gcc
+          CFLAGS: -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
+          # Only unchanged rsmisc.c uses ASan-only for direct unaligned loads.
+          CIXGPIO_RSMISC_CFLAGS: -O1 -g -fsanitize=address -fno-omit-frame-pointer
+          UBSAN_OPTIONS: halt_on_error=1
+        run: sh ember/tools/cixgpio-contract.sh
+      - name: Run complete actual source contract under Memcheck
+        env:
+          CC: gcc
+          CFLAGS: -O2 -g -gdwarf-4
+        run: |
+          cat > "$RUNNER_TEMP/cix-gpio-memcheck" <<'SH'
+          #!/bin/sh
+          exec valgrind --tool=memcheck --error-exitcode=97 \
+            --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=all \
+            --track-origins=yes "$@"
+          SH
+          chmod 755 "$RUNNER_TEMP/cix-gpio-memcheck"
+          export TEST_RUNNER="$RUNNER_TEMP/cix-gpio-memcheck"
+          sh ember/tools/cixgpio-contract.sh

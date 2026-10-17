@@ -29,6 +29,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD opt-in completion and pre-queue destruction API, AI-assisted. */
 #ifndef _DEV_ACPI_ACPI_EVENT_H
 #define _DEV_ACPI_ACPI_EVENT_H
 
@@ -48,5 +49,14 @@ ACPI_STATUS	acpi_event_create_int(device_t, ACPI_HANDLE,
 		    void *);
 ACPI_STATUS	acpi_event_notify(struct acpi_event *);
 void		acpi_event_set_intrcookie(struct acpi_event *, void *);
+/*
+ * Install before enabling the interrupt. A completion callback owns rearming.
+ * Queue failure calls it in the notifying context (possibly hard interrupt).
+ * AML completion calls it in the OSL worker. It must not sleep in either case.
+ */
+void		acpi_event_set_completion(struct acpi_event *,
+		    void (*)(void *, ACPI_STATUS), void *);
+/* Only before any call to acpi_event_notify; never free an in-flight event. */
+void		acpi_event_destroy(struct acpi_event *);
 
 #endif /* !_DEV_ACPI_ACPI_EVENT_H */
