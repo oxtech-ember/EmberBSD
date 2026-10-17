@@ -19,13 +19,15 @@ if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
 fi
 api=
 if [ -f "$src/sys/dev/acpi/cixvpu_acpi_control.c" ]; then
-    api=-DCIXVPU_CONTROL_API
+    api="-DCIXVPU_CONTROL_API -DCIXVPU_ATTACH_API"
     for part in source header; do
         case "$part" in source) ext=c;; header) ext=h;; esac
         ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("#include ") }.join)' \
             "$src/sys/dev/acpi/cixvpu_acpi_control.$ext" "$work/control-$part.inc"
     done
 fi
+ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("#include ") }.join)' \
+    "$src/sys/dev/acpi/cixvpu_acpi.c" "$work/attachment-source.inc"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} $api \
     -isystem "$src/sys/external/bsd/acpica/dist/include" -I"$src/sys/dev/ic" -I"$work" \
     "$src/ember/tools/cixvpu-control-contract.c" "$src/sys/dev/ic/cixvpu_resources.c" -o "$work/test"

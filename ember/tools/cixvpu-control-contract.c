@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Origin: original actual-source VPU probe contracts, AI-assisted. */
 #include <assert.h>
+#include <inttypes.h>
+#include <stdarg.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -36,6 +38,7 @@ static char events[256];
 static unsigned int nevents, allocations, live, bad, faults, sta_count;
 static bool interrupt_context, power_live, rc_asserted, clock_live;
 static unsigned int delays, reads, maps, unmaps;
+static ACPI_STATUS attach_cca_status;
 static uint64_t clock_rate;
 static uint32_t id, ncores, nlsid;
 enum {
@@ -55,8 +58,16 @@ static void *allocate(size_t n)
 void AcpiOsFree(void *p) { if (p) { assert(live); live--; free(p); } }
 static bool cpu_intr_p(void) { return interrupt_context; }
 static bool cpu_softintr_p(void) { return false; }
+static char diagnostic[8192];
 static void print_error(device_t d, const char *fmt, ...)
-{ (void)d; (void)fmt; }
+{
+    va_list ap;
+    (void)d;
+    size_t used = strlen(diagnostic);
+    va_start(ap, fmt);
+    if (used < sizeof(diagnostic)) vsnprintf(diagnostic + used, sizeof(diagnostic) - used, fmt, ap);
+    va_end(ap);
+}
 #define aprint_error_dev print_error
 struct blob { ACPI_OBJECT o[16]; char strings[64]; };
 static void package(ACPI_OBJECT *o, unsigned int n, ACPI_OBJECT *p)
@@ -164,6 +175,7 @@ ACPI_STATUS AcpiGetType(ACPI_HANDLE h, ACPI_OBJECT_TYPE *out)
 }
 static ACPI_STATUS acpi_eval_integer(ACPI_HANDLE h, const char *n, ACPI_INTEGER *v)
 {
+    if (h == VPU && strcmp(n, "_CCA") == 0) { *v = 0; return attach_cca_status; }
     if (strcmp(n, "_UID") == 0) {
         assert(h == CLOCK || h == RESET);
         if (bad == 28) return AE_ERROR;
@@ -232,10 +244,11 @@ static const struct cixvpu_resources description = {
 };
 static void fixture(void)
 {
-    assert(live == 0);
+    assert(live == 0); diagnostic[0] = 0;
     clock_claim = (struct cixclk){0}; main_claim = (struct cixreset){0}; rcsu_claim = (struct cixreset){0};
     bad = faults = sta_count = nevents = delays = reads = maps = unmaps = 0; events[0] = 0;
     interrupt_context = power_live = clock_live = rc_asserted = false;
+    attach_cca_status = AE_OK;
     clock_rate = 600000000; id = 0x56621234; ncores = 2; nlsid = 4;
 }
 static void released(void)
@@ -351,11 +364,138 @@ static void retention_tests(void)
         faults = 0; CHECK(cixvpu_acpi_control_cleanup(&c) == 0); released();
     }
 }
+#ifdef CIXVPU_ATTACH_API
+/* The actual consumer uses modeled parser ownership and a deferred queue. */
+#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#define __CTASSERT(x) _Static_assert(x, #x)
+struct device_compatible_entry { const char *compat; };
+#define DEVICE_COMPAT_EOL { NULL }
+struct test_cfdata { unsigned int cf_flags; };
+typedef struct test_cfdata *cfdata_t;
+#define CFATTACH_DECL_NEW(n,s,m,a,d,r) \
+    static const void * const attach_refs[] = {(const void *)(m),(const void *)(a)}; \
+    static const size_t attach_softc_size = (s)
+#define aprint_naive(...) print_error(NULL, __VA_ARGS__)
+#define aprint_normal(...) print_error(NULL, __VA_ARGS__)
+#define aprint_normal_dev print_error
+struct acpi_mem { uint64_t ar_base, ar_xbase, ar_length; };
+struct acpi_irq { uint32_t ar_irq, ar_type; };
+struct acpi_resources { unsigned int ar_nmem, ar_nirq, ar_nio, ar_niorange, ar_nmemrange, ar_ndrq; };
+static int acpi_resource_parse_ops_quiet;
+static struct test_cfdata attach_cf;
+static void *attach_private;
+static void (*deferred_callback)(device_t);
+static device_t deferred_device;
+static unsigned int parser_calls, cleanup_calls, defer_calls, raw_extra;
+static ACPI_STATUS parser_status;
+static struct cixvpu_resources attach_description;
+static struct acpi_mem parser_memory[2];
+static struct acpi_irq parser_irq;
+static void *device_private(device_t d) { assert(d == VPU); return attach_private; }
+static cfdata_t device_cfdata(device_t d) { assert(d == VPU); return &attach_cf; }
+static int acpi_compatible_match(const void *aux, const struct device_compatible_entry *e)
+{ (void)aux; assert(strcmp(e[0].compat, "CIXH3010") == 0); return 1; }
+const char *AcpiFormatException(ACPI_STATUS status)
+{ switch (status) { case AE_OK: return "AE_OK"; case AE_ERROR: return "AE_ERROR"; case AE_NOT_FOUND: return "AE_NOT_FOUND"; default: return "AE_OTHER"; } }
+ACPI_STATUS AcpiWalkResources(ACPI_HANDLE h, const char *n, ACPI_WALK_RESOURCE_CALLBACK cb, void *arg)
+{
+    const unsigned int types[] = {10,10,15,7};
+    assert(h == VPU && strcmp(n, "_CRS") == 0);
+    for (unsigned int i = 0; i < 4; i++) {
+        ACPI_RESOURCE resource = {0}; resource.Type = types[i];
+        ACPI_STATUS rv = cb(&resource, arg); if (ACPI_FAILURE(rv)) return rv;
+    }
+    if (raw_extra) { ACPI_RESOURCE resource = {0}; resource.Type = raw_extra; return cb(&resource, arg); }
+    return AE_OK;
+}
+static ACPI_STATUS acpi_resource_parse(device_t d, ACPI_HANDLE h, const char *name,
+    struct acpi_resources *out, const void *ops)
+{
+    assert(d == VPU && h == VPU && strcmp(name, "_CRS") == 0 && ops == &acpi_resource_parse_ops_quiet);
+    parser_calls++; memset(out, 0, sizeof(*out));
+    out->ar_nmem = attach_description.nmem; out->ar_nirq = attach_description.nirq; out->ar_nio = attach_description.other;
+    for (unsigned int i = 0; i < 2; i++) {
+        parser_memory[i].ar_base = attach_description.mem[i].base;
+        parser_memory[i].ar_xbase = attach_description.mem[i].translated;
+        parser_memory[i].ar_length = attach_description.mem[i].length;
+    }
+    parser_irq.ar_irq = attach_description.irq; parser_irq.ar_type = attach_description.irq_trigger;
+    return parser_status;
+}
+static const struct acpi_mem *acpi_res_mem(struct acpi_resources *r, unsigned int i)
+{ return i < r->ar_nmem && i < 2 ? &parser_memory[i] : NULL; }
+static const struct acpi_irq *acpi_res_irq(struct acpi_resources *r, unsigned int i)
+{ return r->ar_nirq > i ? &parser_irq : NULL; }
+static void acpi_resource_cleanup(struct acpi_resources *r)
+{ cleanup_calls++; memset(r, 0, sizeof(*r)); memset(parser_memory, 0, sizeof(parser_memory)); memset(&parser_irq, 0, sizeof(parser_irq)); }
+static void config_defer(device_t d, void (*cb)(device_t))
+{ assert(d == VPU && cleanup_calls == 1); defer_calls++; deferred_device = d; deferred_callback = cb; }
+#include "attachment-source.inc"
+static union { max_align_t align; unsigned char bytes[4096]; } attachment_storage;
+static void attach_fixture(unsigned int mode)
+{
+    fixture(); attach_cf.cf_flags = mode; attach_private = attachment_storage.bytes;
+    memset(&attachment_storage, 0, sizeof(attachment_storage));
+    deferred_callback = NULL; deferred_device = NULL; parser_calls = cleanup_calls = defer_calls = raw_extra = 0;
+    parser_status = AE_OK; attach_description = description;
+}
+static void attach_tests(void)
+{
+    (void)device_private; (void)device_cfdata; (void)config_defer; (void)attach_refs;
+    CHECK(attach_softc_size > 0 && attach_softc_size <= sizeof(attachment_storage));
+    CHECK(cixvpu_acpi_match(NULL, NULL, &aa) != 0);
+    attach_fixture(0); cixvpu_acpi_attach(NULL, VPU, &aa);
+    CHECK(parser_calls == 1 && cleanup_calls == 1 && defer_calls == 0);
+    CHECK(nevents == 0 && reads == 0 && maps == 0); released();
+    for (unsigned int mode = 1; mode <= 2; mode++) {
+        struct acpi_attach_args temporary = aa;
+        attach_fixture(mode); cixvpu_acpi_attach(NULL, VPU, &temporary);
+        CHECK(parser_calls == 1 && cleanup_calls == 1 && defer_calls == 1 && deferred_callback != NULL);
+        CHECK(nevents == 0 && reads == 0 && maps == 0);
+        temporary.aa_node = NULL; temporary.aa_memt = OTHER;
+        if (deferred_callback) {
+            deferred_callback(deferred_device);
+            CHECK(mode == 1 ? strcmp(events, "CMRGrmc") == 0 : strcmp(events, "CMRSPTEGAdDdB0123UAKOtrmc") == 0);
+            unsigned int before = nevents;
+            deferred_callback(deferred_device); CHECK(nevents == before);
+            CHECK(strstr(diagnostic, "600000000") != NULL && strstr(diagnostic, "AE_OK") != NULL);
+            if (mode == 2) CHECK(strstr(diagnostic, "56621234") != NULL && strstr(diagnostic, "cores 2 slots 4") != NULL);
+            else CHECK(strstr(diagnostic, "identity valid no, released yes") != NULL);
+            released();
+        }
+    }
+    const unsigned int invalid_flags[] = {3, 4, 0xffff, UINT32_MAX};
+    for (unsigned int i = 0; i < sizeof(invalid_flags)/sizeof(invalid_flags[0]); i++) {
+        attach_fixture(invalid_flags[i]); cixvpu_acpi_attach(NULL, VPU, &aa);
+        CHECK(parser_calls == 0 && defer_calls == 0 && nevents == 0);
+    }
+    for (unsigned int i = 0; i < 7; i++) {
+        attach_fixture(2);
+        switch (i) { case 0: raw_extra = 14; break; case 1: parser_status = AE_ERROR; break;
+        case 2: attach_description.nmem = 1; break; case 3: attach_description.mem[1] = attach_description.mem[0]; break;
+        case 4: attach_description.nirq = 0; break; case 5: attach_cca_status = AE_NOT_FOUND; break; case 6: attach_description.irq_trigger = 1; break; }
+        cixvpu_acpi_attach(NULL, VPU, &aa);
+        CHECK(defer_calls == 0 && nevents == 0 && reads == 0 && maps == 0);
+        CHECK(cleanup_calls == (i == 0 ? 0U : 1U));
+    }
+    attach_fixture(2); faults = F_POWER_ON | F_POWER_OFF;
+    cixvpu_acpi_attach(NULL, VPU, &aa);
+    if (deferred_callback) {
+        deferred_callback(deferred_device);
+        char expected[64]; snprintf(expected, sizeof(expected), "primary %d cleanup %d", EIO, EIO);
+        CHECK(strstr(diagnostic, "AE_ERROR") != NULL && strstr(diagnostic, expected) != NULL && strstr(diagnostic, "released no") != NULL);
+        CHECK(clock_claim.claimed && main_claim.claimed && rcsu_claim.claimed);
+    } else CHECK(false);
+}
+#endif
 #endif
 int main(void)
 {
 #ifdef CIXVPU_CONTROL_API
     metadata_tests(); query_tests(); active_tests(); failures_tests(); retention_tests();
+#ifdef CIXVPU_ATTACH_API
+    attach_tests();
+#endif
     CHECK(live == 0 && allocations != 0);
 #else
     CHECK(!"native VPU control helper is absent");
