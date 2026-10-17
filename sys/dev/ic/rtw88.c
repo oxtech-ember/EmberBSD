@@ -726,6 +726,7 @@ rtw88_start(struct rtw88_softc *sc)
 	error = rtw88_fw_download(sc, gen, fw, &info);
 	if (error != 0)
 		goto fail;
+	sc->sc_h2c_box = 0;
 	/* Reference rtw_power_on: reset rings, MAC, PHY, then HCI start. */
 	stage = "PCI rings";
 	error = rtw88_hci_setup(sc);

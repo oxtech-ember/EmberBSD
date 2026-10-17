@@ -753,6 +753,30 @@ test_command_timeout(void)
 	rtw88_core_detach(&sc);
 }
 
+/* A new firmware instance starts its host mailbox sequence at box 0. */
+static void
+test_command_after_restart(void)
+{
+	struct rtw88_softc sc;
+	uint8_t payload = 0x31;
+
+	reset_bus(&sc);
+	if (!attach_ok(&sc))
+		return;
+	CHECK(rtw88_start(&sc) == 0);
+	CHECK(rtw88_fw_command(&sc, 0x01, &payload, 1) == 0);
+	CHECK(mmio32(0x1d0) == 0x3101);
+	rtw88_stop(&sc);
+	CHECK(!sc.sc_started && f.master == 0);
+	CHECK(rtw88_start(&sc) == 0);
+	payload = 0x72;
+	CHECK(rtw88_fw_command(&sc, 0x2c, &payload, 1) == 0);
+	CHECK(mmio32(0x1d0) == 0x722c);
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+	CHECK(f.dma_allocs == 0);
+}
+
 /* DDMA reports a bad section checksum: no FW_DW_RDY, bounded failure. */
 static void
 test_firmware_checksum_bad(void)
@@ -1537,6 +1561,7 @@ main(void)
 	test_unsupported_identity();
 	test_command_length();
 	test_command_timeout();
+	test_command_after_restart();
 	test_beacon_never_valid();
 	test_firmware_checksum_bad();
 	test_hci_start_masks();
