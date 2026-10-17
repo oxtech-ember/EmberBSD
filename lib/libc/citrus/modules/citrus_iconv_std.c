@@ -201,9 +201,9 @@ open_csmapper(struct _csmapper **rcm, const char *src, const char *dst,
 static void
 close_dsts(struct _citrus_iconv_std_dst_list *dl)
 {
-	struct _citrus_iconv_std_dst *sd;
+	struct _citrus_iconv_std_dst *sd, *next;
 
-	while ((sd=TAILQ_FIRST(dl)) != NULL) {
+	TAILQ_FOREACH_SAFE(sd, dl, sd_entry, next) {
 		TAILQ_REMOVE(dl, sd, sd_entry);
 		_csmapper_close(sd->sd_mapper);
 		free(sd);
@@ -258,9 +258,9 @@ open_dsts(struct _citrus_iconv_std_dst_list *dl,
 static void
 close_srcs(struct _citrus_iconv_std_src_list *sl)
 {
-	struct _citrus_iconv_std_src *ss;
+	struct _citrus_iconv_std_src *ss, *next;
 
-	while ((ss=TAILQ_FIRST(sl)) != NULL) {
+	TAILQ_FOREACH_SAFE(ss, sl, ss_entry, next) {
 		TAILQ_REMOVE(sl, ss, ss_entry);
 		close_dsts(&ss->ss_dsts);
 		free(ss);
@@ -535,6 +535,10 @@ _citrus_iconv_std_iconv_convert(struct _citrus_iconv * __restrict cv,
 	for (;;) {
 		if (*inbytes==0) {
 			ret = get_state_desc_gen(&sc->sc_src_encoding, &state);
+			if (ret) {
+				*invalids = inval;
+				return ret;
+			}
 			if (state == _STDENC_SDGEN_INITIAL ||
 			    state == _STDENC_SDGEN_STABLE)
 				break;
@@ -607,7 +611,6 @@ next:
 err:
 	restore_encoding_state(&sc->sc_src_encoding);
 	restore_encoding_state(&sc->sc_dst_encoding);
-err_norestore:
 	*invalids = inval;
 
 	return ret;

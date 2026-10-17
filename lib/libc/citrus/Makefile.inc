@@ -27,3 +27,19 @@ CPPFLAGS.citrus_lc_messages.c+=	-I${LIBCDIR}/locale
 COPTS.citrus_iconv.c+=		${CC_WNO_FORMAT_TRUNCATION}
 COPTS.citrus_csmapper.c+=	${CC_WNO_FORMAT_TRUNCATION}
 
+# Keep built-in modules out of shared libc. They use the same native getops
+# implementations as the loadable modules.
+.PATH: ${.CURDIR}/citrus/modules
+CITRUS_STATIC_SRCS= citrus_module_static.c citrus_iconv_std.c citrus_utf8.c \
+	citrus_mapper_646.c citrus_mapper_none.c
+.for src in ${CITRUS_STATIC_SRCS}
+CPPFLAGS.${src}+= -I${LIBCDIR}/citrus
+.endfor
+DPSRCS+= ${CITRUS_STATIC_SRCS}
+STOBJS+= ${CITRUS_STATIC_SRCS:.c=.o}
+.if ${MKPROFILE} != "no" && ${MAKELINKLIB} != "no"
+POBJS+= ${CITRUS_STATIC_SRCS:.c=.po}
+.endif
+.if ${MKDEBUGLIB} != "no" && ${MAKELINKLIB} != "no"
+GOBJS+= ${CITRUS_STATIC_SRCS:.c=.go}
+.endif

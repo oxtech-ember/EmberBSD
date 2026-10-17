@@ -127,7 +127,7 @@ retry:
 			break;
 		}
 		snprintf(buf, sizeof(buf), "%.*s", (int)len, p);
-		m6->m6_map[i] = strtoul(buf, (char **)&p, 0);
+		m6->m6_map[i] = strtoul(buf, NULL, 0);
 		p = _bcs_skip_ws(buf);
 		if (*p != T_COMM && !*p) {
 			ret = EINVAL;
@@ -154,7 +154,8 @@ parse_var(struct _citrus_mapper_646 *m6, struct _memstream *ms,
 		m6->m6_forward = 0;
 	}
 	/* get description file path */
-	_memstream_getregion(ms, &r, _memstream_remainder(ms));
+	if (_memstream_getregion(ms, &r, _memstream_remainder(ms)) == NULL)
+		return EINVAL;
 	snprintf(path, sizeof(path), "%s/%.*s",
 		 dir, (int)_region_size(&r), (char *)_region_head(&r));
 	/* remove trailing white spaces */
@@ -185,7 +186,7 @@ _citrus_mapper_646_mapper_init(struct _citrus_mapper_area *__restrict ma,
 	if (m6 == NULL)
 		return errno;
 
-	_region_init(&r, (void *)var, lenvar);
+	_region_init(&r, __UNCONST(var), lenvar);
 	_memstream_bind(&ms, &r);
 	ret = parse_var(m6, &ms, dir);
 	if (ret) {
@@ -231,7 +232,7 @@ if (src==(x)) {						\
 	*dst = m6->m6_map[INDEX_##x];			\
 	return 0;					\
 } else
-		SPECIALS(FORWARD);
+		SPECIALS(FORWARD) {}
 		*dst = src;
 	} else {
 		/* backward */
@@ -242,7 +243,7 @@ if (m6->m6_map[INDEX_##x]!=INVALID && src==m6->m6_map[INDEX_##x]) {	\
 } else if (src==(x))							\
 	return _MAPPER_CONVERT_ILSEQ;					\
 else
-		SPECIALS(BACKWARD);
+		SPECIALS(BACKWARD) {}
 		if (src>=0x80)
 			return _MAPPER_CONVERT_NONIDENTICAL;
 		*dst = src;

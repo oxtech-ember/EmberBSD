@@ -121,6 +121,8 @@ seq_lookup_db(struct _citrus_lookup *cl, const char *key,
 	cl->cl_rewind = 0;
 	free(cl->cl_key);
 	cl->cl_key = strdup(key);
+	if (cl->cl_key == NULL)
+		return ENOMEM;
 	if (cl->cl_ignore_case)
 		_bcs_convert_to_lower(cl->cl_key);
 	cl->cl_keylen = strlen(cl->cl_key);
@@ -229,6 +231,8 @@ seq_lookup_plain(struct _citrus_lookup *cl, const char *key,
 	cl->cl_rewind = 0;
 	free(cl->cl_key);
 	cl->cl_key = strdup(key);
+	if (cl->cl_key == NULL)
+		return ENOMEM;
 	if (cl->cl_ignore_case)
 		_bcs_convert_to_lower(cl->cl_key);
 	cl->cl_keylen = strlen(cl->cl_key);

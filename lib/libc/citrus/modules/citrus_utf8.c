@@ -203,7 +203,7 @@ _UTF8_findlen(wchar_t v)
 	u_int32_t c;
 
 	c = (u_int32_t)v;	/*XXX*/
-	for (i = 1; i < sizeof(_UTF8_range) / sizeof(_UTF8_range[0]) - 1; i++)
+	for (i = 1; i < (int)__arraycount(_UTF8_range) - 1; i++)
 		if (c >= _UTF8_range[i] && c < _UTF8_range[i + 1])
 			return i;
 
@@ -333,7 +333,7 @@ _citrus_UTF8_wcrtomb_priv(_UTF8EncodingInfo *ei, char *s, size_t n, wchar_t wc,
 		ret = EILSEQ;
 		goto err;
 	}
-	if (n < cnt) {
+	if (n < (size_t)cnt) {
 		/* bound check failure */
 		ret = E2BIG;
 		goto err;

@@ -50,8 +50,6 @@ struct _citrus_stdenc _citrus_stdenc_default = {
 	&_citrus_NONE_stdenc_traits,	/* ce_traits */
 };
 
-#ifdef _I18N_DYNAMIC
-
 static int
 /*ARGSUSED*/
 get_state_desc_default(struct _citrus_stdenc * __restrict ce,
@@ -149,7 +147,8 @@ _citrus_stdenc_open(struct _citrus_stdenc * __restrict * __restrict rce,
 	return (0);
 
 bad:
-	_citrus_stdenc_close(ce);
+	if (ce != NULL)
+		_citrus_stdenc_close(ce);
 	return (ret);
 }
 
@@ -173,27 +172,3 @@ _citrus_stdenc_close(struct _citrus_stdenc *ce)
 	}
 	free(ce);
 }
-
-#else
-/* !_I18N_DYNAMIC */
-
-int
-/*ARGSUSED*/
-_citrus_stdenc_open(struct _citrus_stdenc * __restrict * __restrict rce,
-		    char const * __restrict encname,
-		    const void * __restrict variable, size_t lenvar)
-{
-	if (!strcmp(encname, _CITRUS_DEFAULT_STDENC_NAME)) {
-		*rce = &_citrus_stdenc_default;
-		return (0);
-	}
-	return (EINVAL);
-}
-
-void
-/*ARGSUSED*/
-_citrus_stdenc_close(struct _citrus_stdenc *ce)
-{
-}
-
-#endif

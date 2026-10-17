@@ -197,6 +197,7 @@ _FUNCNAME(mbtowc_priv)(_ENCODING_INFO * __restrict ei,
 		       size_t n, _ENCODING_STATE * __restrict psenc,
 		       int * __restrict nresult)
 {
+	const char *cursor = s;
 	_ENCODING_STATE state;
 	size_t nr;
 	int err = 0;
@@ -211,7 +212,7 @@ _FUNCNAME(mbtowc_priv)(_ENCODING_INFO * __restrict ei,
 	}
 
 	state = *psenc;
-	err = _FUNCNAME(mbrtowc_priv)(ei, pwc, (const char **)&s, n, psenc, &nr);
+	err = _FUNCNAME(mbrtowc_priv)(ei, pwc, &cursor, n, psenc, &nr);
 	if (nr == (size_t)-2)
 		err = EILSEQ;
 	if (err) {
@@ -570,6 +571,7 @@ _FUNCNAME(ctype_mbrlen)(void * __restrict cl, const char * __restrict s,
 			size_t n, void * __restrict pspriv,
 			size_t * __restrict nresult)
 {
+	const char *cursor = s;
 	_ENCODING_STATE *psenc;
 	_ENCODING_INFO *ei;
 	int err = 0;
@@ -582,7 +584,7 @@ _FUNCNAME(ctype_mbrlen)(void * __restrict cl, const char * __restrict s,
 		_FUNCNAME(init_state)(ei, psenc);
 		*nresult = 0;
 	} else {
-		err = _FUNCNAME(mbrtowc_priv)(ei, NULL, (const char **)&s, n,
+		err = _FUNCNAME(mbrtowc_priv)(ei, NULL, &cursor, n,
 		    (void *)psenc, nresult);
 	}
 	_RESTART_END(mbrlen, _TO_CEI(cl), pspriv, psenc);
@@ -595,6 +597,7 @@ _FUNCNAME(ctype_mbrtowc)(void * __restrict cl, wchar_t * __restrict pwc,
 			 const char * __restrict s, size_t n,
 			 void * __restrict pspriv, size_t * __restrict nresult)
 {
+	const char *cursor = s;
 	_ENCODING_STATE *psenc;
 	_ENCODING_INFO *ei;
 	int err = 0;
@@ -607,7 +610,7 @@ _FUNCNAME(ctype_mbrtowc)(void * __restrict cl, wchar_t * __restrict pwc,
 		_FUNCNAME(init_state)(ei, psenc);
 		*nresult = 0;
 	} else {
-		err = _FUNCNAME(mbrtowc_priv)(ei, pwc, (const char **)&s, n,
+		err = _FUNCNAME(mbrtowc_priv)(ei, pwc, &cursor, n,
 		    (void *)psenc, nresult);
 	}
 	_RESTART_END(mbrtowc, _TO_CEI(cl), pspriv, psenc);
@@ -680,6 +683,7 @@ _FUNCNAME(ctype_mbstowcs)(void * __restrict cl, wchar_t * __restrict pwcs,
 			  const char * __restrict s, size_t n,
 			  size_t * __restrict nresult)
 {
+	const char *cursor = s;
 	int err;
 	_ENCODING_STATE state;
 	_ENCODING_INFO *ei;
@@ -688,7 +692,7 @@ _FUNCNAME(ctype_mbstowcs)(void * __restrict cl, wchar_t * __restrict pwcs,
 
 	ei = _CEI_TO_EI(_TO_CEI(cl));
 	_FUNCNAME(init_state)(ei, &state);
-	err = _FUNCNAME(mbsrtowcs_priv)(ei, pwcs, (const char **)&s, n,
+	err = _FUNCNAME(mbsrtowcs_priv)(ei, pwcs, &cursor, n,
 					&state, nresult);
 	if (*nresult == (size_t)-2) {
 		err = EILSEQ;
@@ -816,6 +820,7 @@ _FUNCNAME(ctype_wcstombs)(void * __restrict cl, char * __restrict s,
 			  const wchar_t * __restrict pwcs, size_t n,
 			  size_t * __restrict nresult)
 {
+	const wchar_t *cursor = pwcs;
 	_ENCODING_STATE state;
 	_ENCODING_INFO *ei;
 	int err;
@@ -824,7 +829,7 @@ _FUNCNAME(ctype_wcstombs)(void * __restrict cl, char * __restrict s,
 
 	ei = _CEI_TO_EI(_TO_CEI(cl));
 	_FUNCNAME(init_state)(ei, &state);
-	err = _FUNCNAME(wcsrtombs_priv)(ei, s, (const wchar_t **)&pwcs, n,
+	err = _FUNCNAME(wcsrtombs_priv)(ei, s, &cursor, n,
 					&state, nresult);
 
 	return err;
@@ -875,7 +880,7 @@ _FUNCNAME(ctype_wctomb)(void * __restrict cl, char * __restrict s, wchar_t wc,
 #endif
 	*nresult = (int)nr;
 
-	return 0;
+	return err;
 }
 
 static int

@@ -157,8 +157,16 @@ _FUNCNAME(stdenc_mbtowc)(struct _citrus_stdenc * __restrict ce,
 			 const char ** __restrict s, size_t n,
 			 void * __restrict ps, size_t * __restrict nresult)
 {
-	return _FUNCNAME(mbrtowc_priv)(_CE_TO_EI(ce), wc, s, n,
-				       _TO_STATE(ps), nresult);
+	wchar_t tmp;
+	int ret;
+	const char *input = *s;
+
+	ret = _FUNCNAME(mbrtowc_priv)(_CE_TO_EI(ce), wc ? &tmp : NULL, s, n,
+	    _TO_STATE(ps), nresult);
+	if (ret == 0 && wc != NULL && input != NULL &&
+	    *nresult != (size_t)-1 && *nresult != (size_t)-2)
+		*wc = (_citrus_wc_t)tmp;
+	return ret;
 }
 
 static int

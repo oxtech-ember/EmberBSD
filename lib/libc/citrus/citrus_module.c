@@ -348,27 +348,4 @@ _citrus_unload_module(_citrus_module_t handle)
 	if (handle)
 		dlclose((void *)handle);
 }
-#else
-/* !_I18N_DYNAMIC */
-
-void *
-/*ARGSUSED*/
-_citrus_find_getops(_citrus_module_t handle, const char *modname,
-		    const char *ifname)
-{
-	return (NULL);
-}
-
-int
-/*ARGSUSED*/
-_citrus_load_module(_citrus_module_t *rhandle, char const *modname)
-{
-	return (EINVAL);
-}
-
-void
-/*ARGSUSED*/
-_citrus_unload_module(_citrus_module_t handle)
-{
-}
-#endif
+#endif /* _I18N_DYNAMIC */
