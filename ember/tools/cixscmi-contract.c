@@ -29,7 +29,7 @@ static unsigned int reads, writes, doorbells, barriers, completions, pauses;
 static unsigned int malformed, failed_node, map_fail, response_mode;
 static bool intr, foreign_on_failure, sent, published, ordered, acquired;
 static uint64_t ticks;
-static uint32_t response_version, response_firmware_status, expected_header;
+static uint32_t response_word, response_firmware_status, expected_header;
 static uint32_t tx[0x10000/4],rx[0x10000/4];
 static int cold=1;
 #define CHECK(x) do { checks++; if (!(x)) { failures++; \
@@ -259,7 +259,7 @@ static uint32_t bus_space_read_4(bus_space_tag_t t,bus_space_handle_t h,bus_size
     CHECK(h==tx);CHECK(o==0xbc || o==0xc8 || o<=0x7c);
     if(sent && o==4 && response_mode!=1){
         tx[4/4]=1;tx[20/4]=response_mode==2?8:12;tx[28/4]=response_mode==2?response_firmware_status:0;
-        tx[32/4]=response_version;if(response_mode==9)tx[20/4]=16;if(response_mode==3)tx[20/4]=8;
+        tx[32/4]=response_word;if(response_mode==9)tx[20/4]=16;if(response_mode==3)tx[20/4]=8;
         if(response_mode==4)tx[24/4]^=1;
         if(response_mode==7)tx[4/4]=3;
         if(response_mode==8)tx[20/4]=108;
@@ -303,13 +303,13 @@ static void setup(void)
     malformed=failed_node=map_fail=response_mode=0;intr=foreign_on_failure=false;
     sent=published=ordered=acquired=false;ticks=0;cold=1;defers=0;deferred=NULL;
     diagnostic[0]=0;cixscmi_lease=NULL;
-    response_version=0x20000;response_firmware_status=0xfffffffc;expected_header=0x44000;
+    response_word=0x20000;response_firmware_status=0xfffffffc;expected_header=0x44000;
 }
 static void attach(struct cixscmi_acpi_softc *sc,unsigned int flags)
 {
     struct acpi_attach_args aa={.aa_node=&nodes[0],.aa_memt=&root};
     memset(sc,0,sizeof(*sc));selfdev.private=sc;selfdev.cf.cf_flags=flags;
-    expected_header=flags==2?0x45000:0x44000;
+    expected_header=flags==4?0x45001:flags==2?0x45000:0x44000;
     cixscmi_acpi_attach(&rootdev,&selfdev,&aa);nodes[0].ad_device=&selfdev;
 }
 static void finish(struct cixscmi_acpi_softc *sc)
@@ -317,21 +317,21 @@ static void finish(struct cixscmi_acpi_softc *sc)
 static void test_clock_selector(void)
 {
     struct cixscmi_acpi_softc sc;
-    const uint32_t versions[]={0x10000,0x10001,0,1,0x20000,UINT32_MAX};
+    const uint32_t versions[]={0x10000,0x10001,0,1,0x20000,0x20001,UINT32_MAX};
     const uint32_t statuses[]={0xffffffff,0xfffffffd,0xfffffffc,0xfffffffa,0xfffffff8,0x80000000};
     for(unsigned int i=0;i<sizeof(versions)/sizeof(versions[0]);i++){
         setup();attach(&sc,2);CHECK(defers==1 && evaluations==0 && maps==0 && writes==0);
         if(defers!=1){finish(&sc);continue;}
-        response_version=versions[i];sc.sc_version=0xfeedface;deferred(&selfdev);
+        response_word=versions[i];sc.sc_version=0xfeedface;deferred(&selfdev);
         CHECK(sc.sc_error==0 && sc.sc_version_valid && sc.sc_version==versions[i]);
         CHECK(maps==2 && unmaps==0 && doorbells==1 && cixscmi_lease==&sc);
         CHECK(sc.sc_trace.request_header==0x45000 && sc.sc_trace.response_length==12);
         CHECK(strstr(diagnostic,"CLOCK_VERSION")!=NULL);
-        CHECK(sc.sc_decode_error==0 && sc.sc_reviewed_version==(i==0));
-        CHECK(sc.sc_version_policy_error==(i==0?0:ENOTSUP));
+        CHECK(sc.sc_decode_error==0 && sc.sc_reviewed_version==(i==0 || i==4));
+        CHECK(sc.sc_version_policy_error==((i==0 || i==4)?0:ENOTSUP));
         char expected[128];
         (void)snprintf(expected,sizeof(expected),"helper_return=0 decode_error=0 reviewed_version=%u version_policy_error=%d",
-            i==0,i==0?0:ENOTSUP);
+            i==0 || i==4,(i==0 || i==4)?0:ENOTSUP);
         CHECK(strstr(diagnostic,expected)!=NULL);
         unsigned int old_reads=reads,old_writes=writes;deferred(&selfdev);
         CHECK(reads==old_reads && writes==old_writes && doorbells==1);finish(&sc);
@@ -368,10 +368,67 @@ static void test_clock_selector(void)
         CHECK(strstr(diagnostic,"decode_error=0 reviewed_version=0 version_policy_error=0")!=NULL);
         CHECK(doorbells==1);finish(&sc);
     }
-    const unsigned int invalid[]={3,4,5,UINT_MAX};
+    const unsigned int invalid[]={3,5,6,7,8,UINT_MAX};
     for(unsigned int i=0;i<sizeof(invalid)/sizeof(invalid[0]);i++){
         setup();attach(&sc,invalid[i]);
         CHECK(defers==0 && evaluations==0 && maps==0 && reads==0 && writes==0);finish(&sc);
+    }
+}
+static void test_clock_protocol_attributes(void)
+{
+    struct cixscmi_acpi_softc sc;
+    const uint32_t attributes[]={0,67,68,65535,0xff0044,0xffffff,
+        0x1000000,0x2000000,0x4000000,0x8000000,0x10000000,0x20000000,0x40000000,0x80000000,UINT32_MAX};
+    for(unsigned int i=0;i<sizeof(attributes)/sizeof(attributes[0]);i++){
+        setup();attach(&sc,4);CHECK(defers==1 && evaluations==0 && maps==0 && writes==0);
+        if(defers!=1){finish(&sc);continue;}
+        response_word=attributes[i];sc.sc_num_clocks=0xfeedface;sc.sc_max_async=0xabcdef;
+        sc.sc_id67_in_range=true;deferred(&selfdev);
+        CHECK(maps==2 && unmaps==0 && doorbells==1 && cixscmi_lease==&sc);
+        CHECK(sc.sc_error==0 && sc.sc_trace.request_header==0x45001 && sc.sc_trace.response_length==12);
+        char expected[180];bool valid=(attributes[i]&0xff000000)==0;
+        (void)snprintf(expected,sizeof(expected),"CLOCK_PROTOCOL_ATTRIBUTES word_valid=1 raw=%#x helper_return=0 decode_error=%d attributes_valid=%u",
+            attributes[i],valid?0:EPROTO,valid);
+        CHECK(strstr(diagnostic,expected)!=NULL);
+        CHECK(sc.sc_attr_word_valid && sc.sc_attr==attributes[i] && sc.sc_attributes_valid==valid);
+        if(!valid)CHECK(sc.sc_num_clocks==0xfeedface && sc.sc_max_async==0xabcdef && sc.sc_id67_in_range);
+        if(valid){
+            (void)snprintf(expected,sizeof(expected),"num_clocks=%u max_async=%u id67_in_range=%u",
+                attributes[i]&0xffff,(attributes[i]>>16)&0xff,(attributes[i]&0xffff)>67);
+            CHECK(strstr(diagnostic,expected)!=NULL);
+        }
+        CHECK(strstr(diagnostic,"version_queried=0 selected_schema=0x20000")!=NULL);
+        unsigned int old_reads=reads,old_writes=writes;deferred(&selfdev);
+        CHECK(reads==old_reads && writes==old_writes && doorbells==1);finish(&sc);
+    }
+    for(unsigned int mode=1;mode<=9;mode++){
+        setup();attach(&sc,4);CHECK(defers==1);
+        if(defers!=1){finish(&sc);continue;}
+        response_mode=mode;sc.sc_attr=0xfeedface;sc.sc_num_clocks=0xfeedface;
+        sc.sc_max_async=0xabcdef;sc.sc_id67_in_range=true;
+        if(mode==5)tx[1]=3;
+        if(mode==6)tx[1]=0;
+        deferred(&selfdev);
+        CHECK(maps==2 && unmaps==0 && cixscmi_lease==&sc && sc.sc_query_started);
+        CHECK(sc.sc_error==(mode==1?ETIMEDOUT:mode==2?EIO:mode==6?EBUSY:mode==9?0:EPROTO));
+        CHECK(sc.sc_ack_after_valid==(mode==2 || mode==9));
+        CHECK(strstr(diagnostic,"CLOCK_PROTOCOL_ATTRIBUTES word_valid=0 raw=0xfeedface")!=NULL);
+        CHECK(!sc.sc_attr_word_valid && !sc.sc_attributes_valid && sc.sc_attr==0xfeedface);
+        CHECK(sc.sc_num_clocks==0xfeedface && sc.sc_max_async==0xabcdef && sc.sc_id67_in_range);
+        char expected[64];(void)snprintf(expected,sizeof(expected),"decode_error=%d",mode==9?EPROTO:0);
+        CHECK(strstr(diagnostic,expected)!=NULL);
+        CHECK(doorbells==((mode==5 || mode==6)?0u:1u));
+        unsigned int old_reads=reads,old_writes=writes;deferred(&selfdev);
+        CHECK(reads==old_reads && writes==old_writes);finish(&sc);
+    }
+    const uint32_t statuses[]={0xffffffff,0xfffffffd,0xfffffffc,0xfffffffa,0xfffffff8,0x80000000};
+    for(unsigned int i=0;i<sizeof(statuses)/sizeof(statuses[0]);i++){
+        setup();attach(&sc,4);response_mode=2;response_firmware_status=statuses[i];
+        sc.sc_attr=0xfeedface;deferred(&selfdev);
+        CHECK(sc.sc_error==EIO && !sc.sc_attr_word_valid && !sc.sc_attributes_valid && sc.sc_attr==0xfeedface);
+        CHECK(sc.sc_trace.stage==SCMI_SMT_DIAG_FIRMWARE && sc.sc_trace.firmware_status_valid);
+        CHECK((uint32_t)sc.sc_trace.firmware_status==statuses[i] && sc.sc_decode_error==0);
+        CHECK(sc.sc_ack_after_valid && doorbells==1 && cixscmi_lease==&sc);finish(&sc);
     }
 }
 static void test_uid_capacity(void)
@@ -456,7 +513,7 @@ static void test_diagnostic_stages(void)
 }
 static void run_negative(unsigned int m,unsigned int n)
 {
-    for(unsigned int selector=1;selector<=2;selector++){
+    for(unsigned int selector=1;selector<=4;selector*=2){
     struct cixscmi_acpi_softc sc;setup();malformed=m;failed_node=n;attach(&sc,selector);
     CHECK(defers==1 && evaluations==0 && maps==0 && writes==0);
     if(defers!=1){finish(&sc);continue;}
@@ -469,7 +526,7 @@ static void run_negative(unsigned int m,unsigned int n)
 int main(void)
 {
     struct cixscmi_acpi_softc sc;alarm(30);(void)test_attach_refs;
-    test_clock_selector();test_uid_capacity();test_diagnostic_stages();
+    test_clock_selector();test_clock_protocol_attributes();test_uid_capacity();test_diagnostic_stages();
     setup();attach(&sc,3);CHECK(defers==0 && evaluations==0 && maps==0 && reads==0 && writes==0);finish(&sc);
     setup();attach(&sc,0);CHECK(defers==0 && evaluations==0 && maps==0 && reads==0 && writes==0);finish(&sc);
     for(unsigned int n=0;n<5;n++){
@@ -486,7 +543,7 @@ int main(void)
     }
     for(unsigned int m=18;m<=21;m++)run_negative(m,0);
     run_negative(24,0);run_negative(18,1);run_negative(18,2);
-    for(unsigned int selector=1;selector<=2;selector++)
+    for(unsigned int selector=1;selector<=4;selector*=2)
     for(unsigned int mode=0;mode<18;mode++){
         setup();attach(&sc,selector);
         if(mode==0)cold=0;
@@ -517,7 +574,7 @@ int main(void)
         if(mode==1){intr=false;deferred(&selfdev);CHECK(maps==0 && writes==0);}
         finish(&sc);
     }
-    for(unsigned int selector=1;selector<=2;selector++)
+    for(unsigned int selector=1;selector<=4;selector*=2)
     for(unsigned int mode=1;mode<=4;mode++){
         setup();attach(&sc,selector);map_fail=mode<=2?mode:2;foreign_on_failure=mode==3;
         if(mode==4){map_fail=0;tx[0xbc/4]=2;}

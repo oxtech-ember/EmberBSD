@@ -76,8 +76,8 @@ EMBER64 configuration does not select this diagnostic attachment.
 The separate
 [EMBER64_CIXSCMI_CLOCK_QUERY](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY)
 configuration selects exact flags 2. It sends only CLOCK PROTOCOL_VERSION,
-protocol 0x14, message 0, with no clock ID argument. Flags 3 and all other
-nonzero values are rejected before deferred evaluation, mapping or bus access.
+protocol 0x14, message 0, with no clock ID argument. Flags 3 and all values
+except 0, 1, 2 and 4 are rejected before deferred evaluation, mapping or bus access.
 This diagnostic does not query clock attributes, rates or clock ID 67.
 The original BASE configuration and the normal EMBER64 configuration are unchanged.
 
@@ -87,13 +87,30 @@ with valid full status; EIO alone does not identify a transport failure.
 `decode_error` is EPROTO when a successful reply has more than the exact four-byte
 version body. A short body fails inside the helper. No version word becomes valid
 on either failure. Every decoded word, including zero, remains visible as raw data.
-`reviewed_version` means exactly 0x10000. Other decoded values report local
+`reviewed_version` accepts exact 0x10000 and 0x20000. Other decoded values report local
 `version_policy_error=ENOTSUP`. This policy does not claim SCMI incompatibility;
 [DEN0056C section 4.1.3](https://documentation-service.arm.com/static/5fce1789e167456a35b368a7)
 defines same-major minor revisions as compatible. Decode and policy fields are
 not evaluated when the helper fails; check version and status validity first.
-No result starts another request or changes a clock. CLOCK physical behavior
-remains unqualified until a separate manual diagnostic boot.
+No result starts another request or changes a clock. The physical receipt below
+qualifies one CLOCK_VERSION exchange; other clock commands need separate gates.
+
+The separate
+[EMBER64_CIXSCMI_CLOCK_ATTRS](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_ATTRS)
+configuration selects exact flags 4. It sends only CLOCK PROTOCOL_ATTRIBUTES,
+protocol 0x14, message 1, without a clock ID. The VPU remains inactive.
+The binding requires exactly four successful data bytes. It reports the raw word
+with separate validity, then rejects reserved bits 31:24 before typed output.
+The low 16 bits give `num_clocks`; bits 23:16 give `max_async`.
+Zero values are valid. `id67_in_range` means only `num_clocks > 67`.
+It does not establish clock visibility, rate telemetry or control permission.
+Typed fields remain unchanged on failure; interpret them only when attributes
+are valid. The selected Clock 2.0 schema comes from
+[DEN0056D section 4.6.2.2](https://documentation-service.arm.com/static/6231acfc8804d00769e9db69).
+The output states that protocol version was not queried in this boot.
+No result starts another request. Entity attributes, rates, notifications and
+extended-name queries remain unavailable through this binding. Attributes
+physical qualification requires a separate manual boot.
 
 Before mapping, the binding validates each static property, resource and
 reference. It requires MBX6/7, SHM0/1, channel 8, non-coherent shared memory,
@@ -105,7 +122,7 @@ its NUL terminator. It does not require unused capacity bytes to be zero.
 Pre-query rejection prints a constant validation stage, role and native error.
 Those diagnostics add no firmware evaluation or transport access.
 Mappings use Device memory and explicit completion barriers. One selected
-version request runs in serialized cold-boot thread context. No IRQ is installed or
+discovery request runs in serialized cold-boot thread context. No IRQ is installed or
 cleared. The binding exposes no retry, setter, clock service or detach path.
 Once a request can be published, mappings and claims remain until reboot,
 including on timeout or malformed reply. Before that point, failures release
