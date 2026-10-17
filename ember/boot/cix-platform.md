@@ -77,7 +77,7 @@ The separate
 [EMBER64_CIXSCMI_CLOCK_QUERY](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY)
 configuration selects exact flags 2. It sends only CLOCK PROTOCOL_VERSION,
 protocol 0x14, message 0, with no clock ID argument. Flags 3 and all values
-except 0, 1, 2, 4, 8 and 16 are rejected before deferred evaluation, mapping or bus access.
+except 0, 1, 2, 4, 8, 16 and 32 are rejected before deferred evaluation, mapping or bus access.
 This diagnostic does not query clock attributes, rates or clock ID 67.
 The original BASE configuration and the normal EMBER64 configuration are unchanged.
 
@@ -156,6 +156,26 @@ stale after an asynchronous change; it grants no control permission.
 See [DEN0056D section 4.6.2.7](https://documentation-service.arm.com/static/6231acfc8804d00769e9db69).
 No result sets a rate, enables a clock, clears ACK or starts another query.
 The physical receipt below qualifies one rate read, without clock control.
+
+The separate
+[EMBER64_CIXSCMI_REPEAT_QUERY](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY)
+configuration selects exact flags 32. This experimental manual diagnostic sends
+three serial BASE_VERSION requests on one initialized wire and one owned lease.
+The expected request headers are `0x44000`, `0x84000` and `0xc4000`; tokens are
+not reset or reused. Each record retains the helper result, exact-body decode,
+raw version, firmware trace and read-only TX status snapshot. Batch qualification
+requires three complete four-byte replies with version `0x20000` and no pending
+TX ACK bit1. This version prerequisite applies only to this batch.
+A fresh read-only ACK snapshot precedes queries2 and3. Each blocked record
+marks `query_called=0`; `attempted` counts actual helper calls. Logs are emitted
+after the batch ends. An initial pending ACK rejects it before any request. Any failure or
+pending ACK after a response stops the batch. It never clears ACK, retries,
+reinitializes the channel or starts a fourth request. It retains the lease after
+a possible publication. Each FREE/completion wait keeps the existing 30ms and
+3000-poll ceilings, including a frozen-clock ceiling. Three queries permit at
+most six waits. Earlier selectors still issue exactly one request; flags0 stays
+passive. No result changes a clock or VPU resource. Physical repeated-request
+acceptance is pending a separate manual boot.
 
 Before mapping, the binding validates each static property, resource and
 reference. It requires MBX6/7, SHM0/1, channel 8, non-coherent shared memory,

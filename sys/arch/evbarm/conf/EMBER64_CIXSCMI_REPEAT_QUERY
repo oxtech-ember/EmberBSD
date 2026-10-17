@@ -1,0 +1,8 @@
+# Explicit CIX three-request BASE version diagnostic. One batch only.
+# No ACK writes or clock control. Keep the VPU inactive.
+# Use a manual boot entry and preserve a working recovery kernel.
+
+include "arch/evbarm/conf/EMBER64_CIXSCMI_QUERY"
+
+no cixscmi* at acpi?
+cixscmi* at acpi? flags 0x20

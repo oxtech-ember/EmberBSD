@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* Origin: original single-request CIX ACPI SCMI diagnostic, AI-assisted. */
+/* Origin: original checked CIX ACPI SCMI boot diagnostic, AI-assisted. */
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -15,6 +15,21 @@
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #include <dev/ic/scmi_smt_diag.h>
+
+/* Fixed boot diagnostic records. No exported service or retry API. */
+struct cixscmi_repeat_result {
+	int helper_return;
+	int decode_error;
+	int version_policy_error;
+	int ack_error;
+	bool query_called;
+	bool version_valid;
+	uint32_t version;
+	uint32_t ack_before;
+	uint32_t ack_after;
+	bool ack_after_valid;
+	struct scmi_smt_diag_trace trace;
+};
 
 /* Boot-only diagnostic. No clock service, detach, notification or retry API. */
 struct cixscmi_acpi_softc {
@@ -55,6 +70,10 @@ struct cixscmi_acpi_softc {
 	const char *sc_role;
 	struct scmi_smt_diag sc_wire;
 	struct scmi_smt_diag_trace sc_trace;
+	struct cixscmi_repeat_result sc_repeat[3];
+	unsigned int sc_repeat_count;
+	unsigned int sc_repeat_queries;
+	bool sc_repeat_qualified;
 };
 
 /* cold boot autoconfiguration serializes publication and the four aliases. */
@@ -482,6 +501,80 @@ cixscmi_release(struct cixscmi_acpi_softc *sc)
 		cixscmi_lease = NULL;
 }
 
+/* Reuse the initialized wire and its tokens. Stop before any fourth request. */
+static void
+cixscmi_repeat_base(struct cixscmi_acpi_softc *sc)
+{
+	unsigned int i;
+
+	for (i = 0; i < __arraycount(sc->sc_repeat); i++) {
+		struct cixscmi_repeat_result *r = &sc->sc_repeat[i];
+		struct scmi_smt_diag_reply reply;
+
+		r->ack_before = i == 0 ? sc->sc_ack_before :
+		    bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
+		sc->sc_repeat_count++;
+		if ((r->ack_before & 2) != 0) {
+			r->ack_error = EBUSY;
+			sc->sc_error = EBUSY;
+			break;
+		}
+		r->query_called = true;
+		sc->sc_repeat_queries++;
+		r->helper_return = scmi_smt_diag_query(&sc->sc_wire,
+		    SCMI_SMT_DIAG_BASE_VERSION, 0, &reply, &r->trace);
+		/* Match the single-query rule: no callback after a poisoned reply. */
+		if (r->trace.stage == SCMI_SMT_DIAG_COMPLETE ||
+		    r->trace.stage == SCMI_SMT_DIAG_FIRMWARE) {
+			r->ack_after = bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
+			r->ack_after_valid = true;
+			if ((r->ack_after & 2) != 0)
+				r->ack_error = EBUSY;
+		}
+		if (r->helper_return == 0) {
+			if (r->trace.stage != SCMI_SMT_DIAG_COMPLETE ||
+			    reply.data_length != 4) {
+				r->decode_error = EPROTO;
+			} else {
+				r->version = (uint32_t)reply.data[0] |
+				    (uint32_t)reply.data[1] << 8 |
+				    (uint32_t)reply.data[2] << 16 |
+				    (uint32_t)reply.data[3] << 24;
+				r->version_valid = true;
+				/* Require version2.0 for this batch only. */
+				if (r->version != 0x20000)
+					r->version_policy_error = ENOTSUP;
+			}
+		}
+		sc->sc_trace = r->trace;
+		sc->sc_error = r->helper_return != 0 ? r->helper_return :
+		    r->decode_error != 0 ? r->decode_error :
+		    r->version_policy_error != 0 ? r->version_policy_error : r->ack_error;
+		if (sc->sc_error != 0)
+			break;
+	}
+	/* Keep UART logging outside the consecutive request sequence. */
+	for (i = 0; i < sc->sc_repeat_count; i++) {
+		const struct cixscmi_repeat_result *r = &sc->sc_repeat[i];
+
+		aprint_normal_dev(sc->sc_dev, "BASE_REPEAT index=%u query_called=%u helper_return=%d "
+		    "decode_error=%d version_valid=%u version=%#x version_policy_error=%d ack_error=%d "
+		    "stage=%u request_header=%#x response_header=%#x length=%u status_valid=%u status=%d "
+		    "tx_status_before=%#x tx_status_after_valid=%u tx_status_after=%#x\n",
+		    i + 1, r->query_called, r->helper_return, r->decode_error, r->version_valid,
+		    r->version, r->version_policy_error, r->ack_error,
+		    (unsigned int)r->trace.stage, r->trace.request_header,
+		    r->trace.response_header, r->trace.response_length,
+		    r->trace.firmware_status_valid, r->trace.firmware_status,
+		    r->ack_before, r->ack_after_valid, r->ack_after);
+	}
+	sc->sc_repeat_qualified = sc->sc_repeat_queries == __arraycount(sc->sc_repeat) &&
+	    sc->sc_error == 0;
+	aprint_normal_dev(sc->sc_dev, "BASE_REPEAT attempted=%u qualified=%u records=%u error=%d; "
+	    "boot-long lease retained\n", sc->sc_repeat_queries,
+	    sc->sc_repeat_qualified, sc->sc_repeat_count, sc->sc_error);
+}
+
 static void
 cixscmi_acpi_deferred(device_t self)
 {
@@ -543,6 +636,11 @@ cixscmi_acpi_deferred(device_t self)
 		goto failed;
 	}
 	sc->sc_ack_before = bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
+	if (sc->sc_selector == 32 && (sc->sc_ack_before & 2) != 0) {
+		sc->sc_stage = "ack-ownership";
+		sc->sc_error = EBUSY;
+		goto failed;
+	}
 	sc->sc_stage = "wire-init";
 	sc->sc_error = scmi_smt_diag_init(&sc->sc_wire, &io);
 	if (sc->sc_error != 0)
@@ -550,6 +648,10 @@ cixscmi_acpi_deferred(device_t self)
 	/* A request may be published from here. Retain mappings and leases forever. */
 	sc->sc_query_started = true;
 	sc->sc_stage = "query";
+	if (sc->sc_selector == 32) {
+		cixscmi_repeat_base(sc);
+		goto out;
+	}
 	sc->sc_error = scmi_smt_diag_query(&sc->sc_wire,
 	    sc->sc_selector == 16 ? SCMI_SMT_DIAG_CLOCK_RATE_GET :
 	    sc->sc_selector == 8 ? SCMI_SMT_DIAG_CLOCK_ENTITY_ATTRIBUTES :
@@ -753,8 +855,11 @@ cixscmi_acpi_attach(device_t parent, device_t self, void *aux)
 	sc->sc_role = cixscmi_roles[0];
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 	aprint_naive("\n");
-	aprint_normal(": CIX single-request SCMI diagnostic\n");
-	if (flags == 1 || flags == 2 || flags == 4 || flags == 8 || flags == 16)
+	if (flags == 32)
+		aprint_normal(": CIX three-request BASE SCMI diagnostic\n");
+	else
+		aprint_normal(": CIX single-request SCMI diagnostic\n");
+	if (flags == 1 || flags == 2 || flags == 4 || flags == 8 || flags == 16 || flags == 32)
 		config_defer(self, cixscmi_acpi_deferred);
 	else if (flags != 0)
 		aprint_error_dev(self, "unsupported diagnostic flags %#x\n", flags);
