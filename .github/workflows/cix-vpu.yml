@@ -72,6 +72,9 @@ jobs:
           sh ember/tools/cixvpu-mmu-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-resources-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-fw-plan-contract.sh "$GITHUB_WORKSPACE"
+          # Native bus_dma calls use a separate actual-source service model.
+          CIXVPU_DMA_ANALYZE=1 sh ember/tools/cixvpu-dma-contract.sh
+          CFLAGS="$CFLAGS -DPAGE_SIZE=16384" sh ember/tools/cixvpu-dma-contract.sh
       - name: Run portable ASan and UBSan contracts
         env:
           CC: gcc
@@ -84,6 +87,7 @@ jobs:
           sh ember/tools/cixvpu-mmu-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-resources-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-fw-plan-contract.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/cixvpu-dma-contract.sh
       - name: Analyze the portable source contract
         run: |
           # Analyze the actual native userland build. Do not invent _KERNEL
@@ -111,7 +115,8 @@ jobs:
           # Use the same explicit -I paths for compilation and analysis.
           flags = compiler_flags +
             includes.flat_map { |path| ['-I', path] }
-          # Native ACPI control contracts use the platform workflow and model.
+          # Native ACPI control uses the platform workflow and service model.
+          # The DMA allocator uses its own service model in the step above.
           sources = %w[
             sys/dev/ic/cixvpu_fw.c
             sys/dev/ic/cixvpu_fw_plan.c

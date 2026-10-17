@@ -14,7 +14,7 @@ Ports owns FFmpeg and GStreamer consumers.
 
 ## Implemented scope
 
-The independent BSD source in `sys/dev/ic` implements bounded wire operations:
+The independent BSD source in `sys/dev/ic` implements bounded foundations:
 
 | Source | Contract | Remaining caller responsibility |
 |---|---|---|
@@ -22,8 +22,9 @@ The independent BSD source in `sys/dev/ic` implements bounded wire operations:
 | `cixvpu_ring.[ch]` | Pack and unpack bounded message rings, including the selected `-sum` firmware's asymmetric checksum framing. | Own coherent snapshots, locking, DMA synchronization, barriers and index publication. |
 | `cixvpu_mmu.[ch]` | Encode 40-bit bus addresses and checked two-level page entries. Reject invalid permissions, occupied entries and stale removals. | Allocate/map DMA memory, stop the device and manage caches/TLBs. Removal is not safe during active DMA. |
 | `cixvpu_fw_plan.[ch]` | Plan protocol-3 backing owners and firmware VA mappings without allocation. Check the text offset, BSS bounds, aliases, table coverage and page quota. | Allocate validated DMA backing, copy data, synchronize and publish only after stopped-device checks. |
+| `cixvpu_dma.[ch]` | Allocate one native `bus_dma` owner per planned backing page. Validate loaded bus addresses and reverse partial allocation failures. | Keep all addresses hidden from hardware. Add synchronization, publication tracking and runtime teardown before integration. |
 
-The wire helpers and layout planner are not selected by a kernel configuration or attachment.
+These helpers are not selected by a kernel configuration or attachment.
 `sys/videoio.h` adds the standard `V4L2_PIX_FMT_HEVC` fourcc without changing
 structure layout or ioctl numbers. The existing `video(4)` driver remains
 capture-only; the presence of M2M declarations does not implement two queues.
@@ -110,6 +111,7 @@ CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-ring-contract.sh
 CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-mmu-contract.sh
 CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-resources-contract.sh
 CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-fw-plan-contract.sh
+CC=gcc CFLAGS='-O2 -g -fanalyzer' CIXVPU_DMA_ANALYZE=1 sh ember/tools/cixvpu-dma-contract.sh
 ```
 
 The firmware script prints its build directory and retains its CLI and fixtures.
@@ -167,6 +169,27 @@ The selected layout has seven common pages, 128 print pages and at most four
 contiguous cores. Other layouts need separate support. Linux source CI at
 `09331e9443d32bf061b781f24e2fe9d47c8b25a3` passes these planner checks under
 Memcheck and ASan/UBSan, without reported memory errors or leaks.
+
+The layout planner also passes all 669449 checks as a static GCC16/AArch64
+program on the physical board, with kernel
+`522474e4de9f597153b5192ad579d900fff273ca`. This userspace execution does not
+access VPU resources or test native DMA allocation.
+
+The native allocation-only helper passes 2338334 actual-source checks,
+including all 629 native acquisition failure positions. The harness models
+kernel services and executes the production functions. It tests translated,
+discontiguous bus addresses, duplicate bus-page rejection, partial rollback,
+child-tag lifetime and unchanged error outputs. A separate build rejects
+non-4-KiB kernel pages before calling native allocation services.
+
+The allocator chooses the supplied 64-bit ACPI tag, or the supplied 32-bit
+tag when no 64-bit tag exists. It validates loaded bus segments independently
+of allocation physical addresses and the child tag's bounds. Common and print
+CPU mappings use a coherent mapping hint without changing `_CCA`. All pages
+remain CPU-owned. Zeroed CPU mappings do not prepare a possible bounce buffer
+for hardware; no DMA sync, PTE publication or device access occurs. Free is
+forbidden after any device exposure. A future runtime must track that exposure
+and confirm reset, bus drain and callback quiescence before freeing pages.
 
 The optional identity probe from
 `a6a21a0820a54fac683a53b4980d296ae6a94177` also booted on the board and
