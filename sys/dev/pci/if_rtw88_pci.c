@@ -8,6 +8,7 @@
 #include <sys/errno.h>
 #include <sys/kmem.h>
 #include <sys/mutex.h>
+#include <sys/once.h>
 #include <sys/bus.h>
 #include <sys/intr.h>
 #include <sys/xcall.h>
@@ -16,9 +17,12 @@
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcidevs.h>
 #include <dev/ic/rtw88var.h>
+#include <dev/ic/rtw8822c.h>
+#include <dev/ic/rtw88_net.h>
 
 struct rtw88_pci_softc {
 	struct rtw88_softc sc_core;
+	struct rtw88_net *sc_net;
 	device_t sc_dev;
 	struct pci_attach_args sc_pa;
 	bus_space_tag_t sc_st;
@@ -42,7 +46,7 @@ struct rtw88_pci_softc {
 #define RTW88_PCI_HIMR0 0x00b0
 #define RTW88_PCI_HIMR1 0x00b8
 #define RTW88_PCI_HIMR3 0x10b8
-#define RTW88_PCI_MAP_MIN 0x1334
+#define RTW88_PCI_MAP_MIN 0x10000
 #define RTW88_PCI_RING_ALIGN 256
 
 struct rtw88_pci_dma {
@@ -51,42 +55,100 @@ struct rtw88_pci_dma {
 };
 
 static int rtw88_pci_detach(device_t, int);
-static struct rtw88_softc *rtwce_sc;
+/*
+ * Diagnostics run in process context without Giant. Keep this gate for the
+ * whole operation so detach cannot destroy the instance lock or resources.
+ * Lock order is the adaptive diagnostic gate, then the instance spin lock.
+ * Interrupt callbacks never acquire the diagnostic gate.
+ */
+static struct rtw88_pci_softc *rtwce_sc;
+static kmutex_t rtwce_diag_lock;
+static ONCE_DECL(rtwce_diag_once);
+
+static int
+rtwce_diag_init(void)
+{
+
+	mutex_init(&rtwce_diag_lock, MUTEX_DEFAULT, IPL_NONE);
+	return 0;
+}
+
+/* Return a stable instance with the diagnostic gate held. */
+static struct rtw88_pci_softc *
+rtwce_diag_enter(void)
+{
+	struct rtw88_pci_softc *psc;
+
+	(void)RUN_ONCE(&rtwce_diag_once, rtwce_diag_init);
+	mutex_enter(&rtwce_diag_lock);
+	psc = rtwce_sc;
+	if (psc == NULL)
+		mutex_exit(&rtwce_diag_lock);
+	return psc;
+}
 
 int
 rtwce_started(void)
 {
+	struct rtw88_pci_softc *psc;
+	int started;
 
-	return rtwce_sc != NULL && rtwce_sc->sc_started;
+	psc = rtwce_diag_enter();
+	if (psc == NULL)
+		return 0;
+	mutex_enter(&psc->sc_lock);
+	started = psc->sc_core.sc_started;
+	mutex_exit(&psc->sc_lock);
+	mutex_exit(&rtwce_diag_lock);
+	return started;
 }
 
 int
 rtwce_bootstrap(int on)
 {
+	struct rtw88_pci_softc *psc;
+	struct rtw88_softc *sc;
+	int error;
 
-	if (rtwce_sc == NULL || !rtwce_sc->sc_resources_ready)
+	psc = rtwce_diag_enter();
+	if (psc == NULL)
 		return ENXIO;
-	if (on)
-		return rtw88_start(rtwce_sc);
-	rtw88_stop(rtwce_sc);
-	return 0;
+	sc = &psc->sc_core;
+	mutex_enter(&psc->sc_lock);
+	error = !sc->sc_resources_ready ? ENXIO :
+	    (psc->sc_net != NULL ? EBUSY : 0);
+	mutex_exit(&psc->sc_lock);
+	/* Firmware loading and interrupt draining cannot hold a spin lock. */
+	if (error == 0) {
+		if (on)
+			error = rtw88_start(sc);
+		else
+			rtw88_stop(sc);
+	}
+	mutex_exit(&rtwce_diag_lock);
+	return error;
 }
 
 /* Diagnostic counters for the operator sysctl. */
 int
 rtwce_stats(char *buf, size_t len)
 {
+	struct rtw88_pci_softc *psc;
+	struct rtw88_softc *sc;
 	const struct rtw88_stats *st;
 	uint32_t r[RTW88_DIAG_REGS] = { 0 };
 	int n;
 
-	if (rtwce_sc == NULL)
+	psc = rtwce_diag_enter();
+	if (psc == NULL)
 		return ENXIO;
-	st = &rtwce_sc->sc_stats;
+	sc = &psc->sc_core;
+	mutex_enter(&psc->sc_lock);
+	st = &sc->sc_stats;
 	n = snprintf(buf, len, "running %d intr %llu rx %llu c2h %llu "
 	    "err %llu short %llu tag %llu dma %llu last_c2h %#x/%u "
 	    "txq %llu txdone %llu txfull %llu txdrop %llu txdma %llu",
-	    rtwce_sc->sc_running, (unsigned long long)st->intr,
+	    sc->sc_running, (unsigned long long)st->intr,
 	    (unsigned long long)st->rx_frames, (unsigned long long)st->rx_c2h,
 	    (unsigned long long)st->rx_errors, (unsigned long long)st->rx_short,
 	    (unsigned long long)st->rx_tag_errors,
@@ -98,14 +160,16 @@ rtwce_stats(char *buf, size_t len)
 	if (n > 0 && (size_t)n < len)
 		n += snprintf(buf + n, len - (size_t)n,
 		    " ch %u bcn %llu bssid %02x:%02x:%02x:%02x:%02x:%02x"
-		    " ssid '%s'", rtwce_sc->sc_channel,
+		    " ssid '%s'", sc->sc_channel,
 		    (unsigned long long)st->rx_beacons, st->last_bssid[0],
 		    st->last_bssid[1], st->last_bssid[2], st->last_bssid[3],
 		    st->last_bssid[4], st->last_bssid[5], st->last_ssid);
-	if (n > 0 && (size_t)n < len && rtw88_diag(rtwce_sc, r) == 0)
+	if (n > 0 && (size_t)n < len && rtw88_diag(sc, r) == 0)
 		snprintf(buf + n, len - (size_t)n,
 		    " hisr0 %#x himr0 %#x hisr3 %#x himr3 %#x rxidx %#x pci %#x",
 		    r[0], r[1], r[2], r[3], r[4], r[5]);
+	mutex_exit(&psc->sc_lock);
+	mutex_exit(&rtwce_diag_lock);
 	return 0;
 }
 
@@ -114,20 +178,28 @@ int
 rtwce_channel(int *ch, int set)
 {
 	struct rtw88_pci_softc *psc;
+	struct rtw88_softc *sc;
 	int error = 0;
 
-	if (rtwce_sc == NULL)
+	psc = rtwce_diag_enter();
+	if (psc == NULL)
 		return ENXIO;
+	sc = &psc->sc_core;
+	mutex_enter(&psc->sc_lock);
 	if (!set) {
-		*ch = (int)rtwce_sc->sc_channel;
+		*ch = (int)sc->sc_channel;
+		mutex_exit(&psc->sc_lock);
+		mutex_exit(&rtwce_diag_lock);
 		return 0;
 	}
-	if (*ch <= 0)
-		return EINVAL;
-	psc = rtwce_sc->sc_bus;
-	mutex_enter(&psc->sc_lock);
-	error = rtw88_channel(rtwce_sc, (unsigned)*ch);
+	if (psc->sc_net != NULL)
+		error = EBUSY;
+	else if (*ch <= 0)
+		error = EINVAL;
+	else
+		error = rtw88_channel(sc, (unsigned)*ch);
 	mutex_exit(&psc->sc_lock);
+	mutex_exit(&rtwce_diag_lock);
 	return error;
 }
 
@@ -136,14 +208,17 @@ int
 rtwce_lbmode(int mode)
 {
 	struct rtw88_pci_softc *psc;
+	struct rtw88_softc *sc;
 	int error;
 
-	if (rtwce_sc == NULL)
+	psc = rtwce_diag_enter();
+	if (psc == NULL)
 		return ENXIO;
-	psc = rtwce_sc->sc_bus;
+	sc = &psc->sc_core;
 	mutex_enter(&psc->sc_lock);
-	error = rtw88_loopback(rtwce_sc, mode);
+	error = psc->sc_net != NULL ? EBUSY : rtw88_loopback(sc, mode);
 	mutex_exit(&psc->sc_lock);
+	mutex_exit(&rtwce_diag_lock);
 	return error;
 }
 
@@ -159,19 +234,30 @@ rtwce_loopback(int n)
 		0x00, 0x00
 	};
 	struct rtw88_pci_softc *psc;
+	struct rtw88_softc *sc;
 	int error, i;
 
-	if (rtwce_sc == NULL)
+	psc = rtwce_diag_enter();
+	if (psc == NULL)
 		return ENXIO;
-	if (n < 0 || n > (int)RTW88_TX_SLOTS)
-		return EINVAL;
-	psc = rtwce_sc->sc_bus;
+	sc = &psc->sc_core;
 	mutex_enter(&psc->sc_lock);
+	if (psc->sc_net != NULL) {
+		mutex_exit(&psc->sc_lock);
+		mutex_exit(&rtwce_diag_lock);
+		return EBUSY;
+	}
+	if (n < 0 || n > (int)RTW88_TX_SLOTS) {
+		mutex_exit(&psc->sc_lock);
+		mutex_exit(&rtwce_diag_lock);
+		return EINVAL;
+	}
 	error = 0;
 	for (i = 0; i < n && error == 0; i++)
-		error = rtw88_tx_raw(rtwce_sc, RTW88_TXQ_MGMT, frame,
+		error = rtw88_tx_raw(sc, RTW88_TXQ_MGMT, frame,
 		    sizeof(frame));
 	mutex_exit(&psc->sc_lock);
+	mutex_exit(&rtwce_diag_lock);
 	return error;
 }
 
@@ -179,15 +265,24 @@ rtwce_loopback(int n)
 int
 rtwce_h2c(uint32_t cmd)
 {
+	struct rtw88_pci_softc *psc;
+	struct rtw88_softc *sc;
 	uint8_t payload[3];
+	int error;
 
-	if (rtwce_sc == NULL)
+	psc = rtwce_diag_enter();
+	if (psc == NULL)
 		return ENXIO;
+	sc = &psc->sc_core;
 	payload[0] = (uint8_t)(cmd >> 8);
 	payload[1] = (uint8_t)(cmd >> 16);
 	payload[2] = (uint8_t)(cmd >> 24);
-	return rtw88_fw_command(rtwce_sc, (uint8_t)cmd, payload,
-	    sizeof(payload));
+	mutex_enter(&psc->sc_lock);
+	error = psc->sc_net != NULL ? EBUSY :
+	    rtw88_fw_command(sc, (uint8_t)cmd, payload, sizeof(payload));
+	mutex_exit(&psc->sc_lock);
+	mutex_exit(&rtwce_diag_lock);
+	return error;
 }
 
 static int
@@ -609,8 +704,23 @@ rtw88_pci_attach(device_t parent, device_t self, void *aux)
 	error = rtw88_core_attach(sc);
 	if (error != 0)
 		goto fail;
-	rtwce_sc = sc;
-	aprint_normal_dev(self, "resources ready; radio and DMA remain disabled\n");
+	/*
+	 * Identify reads physical EFUSE through its command register. It does
+	 * not start the radio, publish DMA, or load firmware.
+	 */
+	error = rtw8822c_identify(sc);
+	if (error != 0)
+		goto fail;
+	error = rtw88_net_attach(sc, self, &psc->sc_lock, sc->sc_mac,
+	    &psc->sc_net);
+	if (error != 0)
+		goto fail;
+	(void)RUN_ONCE(&rtwce_diag_once, rtwce_diag_init);
+	mutex_enter(&rtwce_diag_lock);
+	rtwce_sc = psc;
+	mutex_exit(&rtwce_diag_lock);
+	aprint_normal_dev(self,
+	    "station attached; radio and DMA remain disabled until interface init\n");
 	return;
 fail:
 	aprint_error_dev(self, "resource attachment failed: %d\n", error);
@@ -623,14 +733,22 @@ rtw88_pci_detach(device_t self, int flags)
 	struct rtw88_pci_softc *psc = device_private(self);
 
 	(void)flags;
+	/* Wait for an entered diagnostic, then block new diagnostics. */
+	(void)RUN_ONCE(&rtwce_diag_once, rtwce_diag_init);
+	mutex_enter(&rtwce_diag_lock);
+	if (rtwce_sc == psc)
+		rtwce_sc = NULL;
+	mutex_exit(&rtwce_diag_lock);
+	if (psc->sc_net != NULL) {
+		rtw88_net_detach(psc->sc_net);
+		psc->sc_net = NULL;
+	}
 	/* stop clears bus mastering before this restores the saved command. */
 	if (psc->sc_command_saved && rtw88_pci_present(psc))
 		pci_conf_write(psc->sc_pa.pa_pc, psc->sc_pa.pa_tag,
 		    PCI_COMMAND_STATUS_REG, psc->sc_command |
 		    (psc->sc_mapped ? PCI_COMMAND_MEM_ENABLE : 0));
 	rtw88_core_detach(&psc->sc_core);
-	if (rtwce_sc == &psc->sc_core)
-		rtwce_sc = NULL;
 	if (psc->sc_lock_initialized) {
 		mutex_destroy(&psc->sc_lock);
 		psc->sc_lock_initialized = 0;

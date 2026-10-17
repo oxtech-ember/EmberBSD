@@ -3,6 +3,8 @@
 #include "../../sys/dev/ic/rtw88.c"
 #include "../../sys/dev/pci/if_rtw88_pci.c"
 #include "rtw88-test-kernel.h"
+#include <dev/ic/rtw88_net.h>
+#include <setjmp.h>
 
 static unsigned assertions, failures;
 static int parent_tag, restricted_tag;
@@ -21,11 +23,20 @@ static struct {
 	int errors, io, writes, master_writes, removed, remove_read;
 	int mask_stuck, small_bar, wrong_type, refuse_master_clear, remove_config;
 	int msi_available, selected_irq, callbacks, pending;
-	uint32_t command, reg[2048];
+	unsigned efuse_reads, efuse_writes, net_attach_calls, net_detach_calls;
+	int efuse_enabled, efuse_stuck, net_owned;
+	uint32_t command, reg[16384];
+	uint8_t efuse[512];
 	int (*handler)(void *);
 	void *arg;
 } f;
+/* Model a detach task parked at the adaptive gate while diagnostics run. */
+static struct rtw88_pci_softc *diag_race;
+static jmp_buf diag_resume, diag_abort;
+static int diag_detaching, diag_waiting;
+static unsigned diag_waits, diag_wakes;
 static int acquire(void)
+
 {
 	f.step++;
 	if (f.step == f.fail) {
@@ -40,6 +51,8 @@ static void balanced(void)
 	CHECK(f.mem == 0 && f.kva == 0 && f.loaded == 0);
 	CHECK(f.vectors == 0 && f.irq == 0 && f.locks == 0);
 	CHECK(f.handler == NULL);
+	CHECK(f.net_owned == 0);
+	CHECK(rtwce_diag_lock.initialized && !rtwce_diag_lock.held);
 }
 void *device_private(device_t d)
 {
@@ -85,19 +98,46 @@ void kmem_free(void *p, size_t n)
 void mutex_init(kmutex_t *m, int type, int ipl)
 {
 	(void)type;
-	CHECK(ipl == IPL_NET);
+	CHECK(ipl == IPL_NET || ipl == IPL_NONE);
 	CHECK(!m->initialized);
+	m->ipl = ipl;
 	m->initialized = 1;
-	f.locks++;
+	if (ipl == IPL_NET)
+		f.locks++;
 }
 void mutex_destroy(kmutex_t *m)
 {
 	CHECK(m->initialized && !m->held);
 	m->initialized = 0;
-	f.locks--;
+	if (m->ipl == IPL_NET)
+		f.locks--;
 }
 void mutex_enter(kmutex_t *m)
 {
+	if (m->ipl == IPL_NONE && m->held && diag_detaching) {
+		CHECK(f.net_owned && f.bar && f.irq && f.locks == 1);
+		CHECK(f.net_detach_calls == 0);
+		diag_waits++;
+		diag_waiting = 1;
+		/* Park detach without acquiring the held gate; run diagnostics. */
+		longjmp(diag_resume, 1);
+	}
+	if (m->ipl == IPL_NET && diag_race != NULL) {
+		struct rtw88_pci_softc *psc = diag_race;
+
+		diag_race = NULL;
+		diag_detaching = 1;
+		if (setjmp(diag_resume) == 0)
+			CHECK(rtw88_pci_detach(psc, 0) == 0);
+		diag_detaching = 0;
+		/* No resource teardown may pass the active diagnostic. */
+		CHECK(diag_waits == 1 && psc->sc_lock.initialized);
+		CHECK(f.net_owned == 1 && f.bar == 1 && f.irq == 1);
+		CHECK(f.net_detach_calls == 0);
+		CHECK(psc->sc_core.sc_resources_ready);
+		if (!psc->sc_lock.initialized)
+			longjmp(diag_abort, 1); /* Avoid the known unsafe access in RED. */
+	}
 	CHECK(m->initialized && !m->held);
 	m->held = 1;
 }
@@ -105,6 +145,16 @@ void mutex_exit(kmutex_t *m)
 {
 	CHECK(m->initialized && m->held);
 	m->held = 0;
+	if (m->ipl == IPL_NONE && diag_waiting) {
+		diag_waiting = 0;
+		diag_wakes++;
+	}
+}
+int _init_once(once_t *once, int (*init)(void))
+{
+	once->o_error = init();
+	once->o_status = 1;
+	return once->o_error;
 }
 void delay(unsigned n)
 {
@@ -153,7 +203,7 @@ int pci_mapreg_map(const struct pci_attach_args *pa, int r, pcireg_t type,
 	f.bar++;
 	*st = 1;
 	*sh = 1;
-	*sz = f.small_bar ? 0x100 : 0x4000;
+	*sz = f.small_bar ? 0xffff : 0x10000;
 	f.command |= PCI_COMMAND_MEM_ENABLE;
 	return 0;
 }
@@ -167,7 +217,7 @@ void bus_space_unmap(bus_space_tag_t st, bus_space_handle_t sh, bus_size_t n)
 }
 static uint32_t io_read(bus_size_t r)
 {
-	CHECK(f.bar == 1 && !f.removed && r < 8192);
+	CHECK(f.bar == 1 && !f.removed && r < 0x10000);
 	f.io++;
 	if (f.remove_read)
 		f.removed = 1;
@@ -199,7 +249,24 @@ static void io_write(bus_size_t r, uint32_t v)
 	CHECK(f.bar == 1 && !f.removed);
 	f.io++;
 	f.writes++;
-	/* Task4 may only silence the evidenced interrupt masks. */
+	/* Identification may access only EFUSE and the existing interrupt masks. */
+	if (r == 0xcf) {
+		CHECK(v == 0 || v == 0x69);
+		f.efuse_enabled = v != 0;
+		f.efuse_writes++;
+		return;
+	}
+	if (r == 0x30) {
+		unsigned addr = (v >> 8) & 0x3ff;
+
+		CHECK(f.efuse_enabled && addr < sizeof(f.efuse));
+		CHECK((v & 0x80000000U) == 0);
+		f.efuse_reads++;
+		f.reg[r / 4] = v;
+		if (!f.efuse_stuck)
+			f.reg[r / 4] = (v & ~0xffU) | 0x80000000U | f.efuse[addr];
+		return;
+	}
 	CHECK((r == 0xb0 || r == 0xb8 || r == 0x10b8) && v == 0);
 	if (!f.mask_stuck)
 		f.reg[r / 4] = v;
@@ -420,11 +487,60 @@ void xc_barrier(unsigned flags)
 static struct pci_attach_args fixture_pa = {.pa_id = 0xc82210ecU, .pa_dmat = &parent_tag};
 static void reset(struct rtw88_pci_softc *p)
 {
+	/* Extended EFUSE records: logical MAC0x120 and RFE0xca, then terminator. */
+	static const uint8_t physical[] = {
+		0x8f, 0x48, 0x02, 0x12, 0x23, 0x34, 0x45, 0x56,
+		0x2f, 0x3d, 0x05, 'U', 0xff
+	};
+
+	CHECK(diag_race == NULL);
+	diag_waits = diag_wakes = 0;
 	memset(p, 0, sizeof(*p));
 	memset(&f, 0, sizeof(f));
 	f.command = 0x140 | PCI_COMMAND_MASTER_ENABLE;
 	f.msi_available = 1;
 	f.reg[0xb0 / 4] = f.reg[0xb8 / 4] = f.reg[0x10b8 / 4] = UINT32_MAX;
+	memset(f.efuse, 0xff, sizeof(f.efuse));
+	memcpy(f.efuse, physical, sizeof(physical));
+	f.reg[0xf0 / 4] = 0x2000;
+}
+
+struct rtw88_net { int owned; };
+static struct rtw88_net fake_net;
+
+int
+rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
+    const uint8_t mac[6], struct rtw88_net **out)
+{
+	static const uint8_t expected[6] = {2, 0x12, 0x23, 0x34, 0x45, 0x56};
+	const struct rtw88_pci_softc *psc = dev;
+
+	f.net_attach_calls++;
+	CHECK(core == &psc->sc_core && lock == &psc->sc_lock);
+	CHECK(core->sc_resources_ready && !core->sc_started && !core->sc_powered);
+	CHECK(!lock->held && lock->initialized && f.irq == 1);
+	CHECK(f.efuse_reads == 512 && !f.efuse_enabled);
+	CHECK(core->sc_rfe == 5 && memcmp(mac, expected, 6) == 0);
+	/* The global diagnostics must not expose a half-attached instance. */
+	CHECK(rtwce_bootstrap(1) == ENXIO);
+	if (acquire())
+		return ENOMEM;
+	CHECK(!f.net_owned);
+	f.net_owned = 1;
+	fake_net.owned = 1;
+	*out = &fake_net;
+	return 0;
+}
+
+void
+rtw88_net_detach(struct rtw88_net *net)
+{
+	f.net_detach_calls++;
+	CHECK(net == &fake_net && net->owned && f.net_owned == 1);
+	CHECK(f.locks == 1 && f.irq == 1 && f.bar == 1 && f.loaded != 0);
+	CHECK(rtwce_bootstrap(1) == ENXIO);
+	f.net_owned = 0;
+	net->owned = 0;
 }
 static void clean_detach(struct rtw88_pci_softc *p)
 {
@@ -476,7 +592,19 @@ int main(void)
 	rtw88_pci_attach(NULL, &p, &fixture_pa);
 	CHECK(p.sc_core.sc_resources_ready && p.sc_core.sc_nring == 9);
 	CHECK(f.irq == 1 && f.errors == 0 && f.master_writes == 0);
-	CHECK(rtwce_bootstrap(1) == ENOENT);
+	CHECK(f.net_attach_calls == 1 && f.net_owned == 1);
+	CHECK(rtwce_bootstrap(1) == EBUSY);
+	CHECK(rtwce_bootstrap(0) == EBUSY);
+	int old_io = f.io;
+	int ch = 36;
+	char stats[512];
+	CHECK(rtwce_h2c(0x1234) == EBUSY);
+	CHECK(rtwce_lbmode(1) == EBUSY);
+	CHECK(rtwce_loopback(1) == EBUSY);
+	CHECK(rtwce_channel(&ch, 1) == EBUSY);
+	CHECK(rtwce_channel(&ch, 0) == 0);
+	CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
+	CHECK(f.io == old_io);
 	CHECK(rtwce_started() == 0 && f.master_writes == 0);
 	stages = f.step;
 	CHECK(stages >= 40);
@@ -502,13 +630,66 @@ int main(void)
 		CHECK(io == f.io);
 	}
 	clean_detach(&p);
+	CHECK(f.net_detach_calls == 1);
 	CHECK(f.command == 0x140);
+	/* A detach attempt must wait until each diagnostic releases its gate. */
+	for (unsigned op = 0; op < 8; op++) {
+		reset(&p);
+		rtw88_pci_attach(NULL, &p, &fixture_pa);
+		diag_race = &p;
+		ch = 36;
+		if (setjmp(diag_abort) == 0) {
+			switch (op) {
+			case 0:
+				CHECK(rtwce_started() == 0);
+				break;
+			case 1:
+				CHECK(rtwce_bootstrap(1) == EBUSY);
+				break;
+			case 2:
+				CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
+				break;
+			case 3:
+				CHECK(rtwce_channel(&ch, 0) == 0);
+				break;
+			case 4:
+				CHECK(rtwce_channel(&ch, 1) == EBUSY);
+				break;
+			case 5:
+				CHECK(rtwce_lbmode(1) == EBUSY);
+				break;
+			case 6:
+				CHECK(rtwce_loopback(1) == EBUSY);
+				break;
+			case 7:
+				CHECK(rtwce_h2c(0x1234) == EBUSY);
+				break;
+			}
+		}
+		CHECK(diag_race == NULL && diag_waits == 1 && diag_wakes == 1);
+		diag_race = NULL;
+		/* Resume detach after the diagnostic releases the gate. */
+		clean_detach(&p);
+		CHECK(rtwce_started() == 0);
+		CHECK(rtwce_bootstrap(1) == ENXIO);
+		CHECK(rtwce_stats(stats, sizeof(stats)) == ENXIO);
+		CHECK(rtwce_channel(&ch, 0) == ENXIO);
+		CHECK(rtwce_channel(&ch, 1) == ENXIO);
+		CHECK(rtwce_lbmode(1) == ENXIO);
+		CHECK(rtwce_loopback(1) == ENXIO);
+		CHECK(rtwce_h2c(0x1234) == ENXIO);
+	}
 	for (unsigned i = 1; i <= stages; i++) {
 		reset(&p);
 		f.fail = i;
 		rtw88_pci_attach(NULL, &p, &fixture_pa);
 		CHECK(f.injected == 1);
 		CHECK(!p.sc_core.sc_resources_ready && f.errors == 1);
+		if (i == stages) {
+			/* The last acquisition is the opaque net wrapper. */
+			CHECK(f.net_attach_calls == 1 && f.net_detach_calls == 0);
+			CHECK(rtwce_bootstrap(1) == ENXIO);
+		}
 		balanced();
 		clean_detach(&p);
 	}
@@ -534,6 +715,7 @@ int main(void)
 		rtw88_pci_attach(NULL, &p, &fixture_pa);
 		CHECK(!p.sc_core.sc_resources_ready && f.errors == 1);
 		balanced();
+		CHECK(f.net_attach_calls == 0 && f.efuse_reads == 0);
 		f.refuse_master_clear = 0;
 		f.command &= ~PCI_COMMAND_MASTER_ENABLE;
 		clean_detach(&p);
@@ -545,6 +727,21 @@ int main(void)
 	CHECK(f.io == 0);
 	balanced();
 	clean_detach(&p);
+	/* Real identity decoding must reject bad EFUSE before net80211 attaches. */
+	for (unsigned kind = 0; kind < 3; kind++) {
+		reset(&p);
+		if (kind == 0)
+			f.efuse[2] = 1; /* Multicast MAC. */
+		if (kind == 1)
+			f.efuse[10] = 0xff; /* Unsupported RFE. */
+		if (kind == 2)
+			f.efuse_stuck = 1;
+		rtw88_pci_attach(NULL, &p, &fixture_pa);
+		CHECK(!p.sc_core.sc_resources_ready && f.errors == 1);
+		CHECK(f.net_attach_calls == 0 && !f.efuse_enabled);
+		balanced();
+		clean_detach(&p);
+	}
 	reset(&p);
 	f.msi_available = 0;
 	rtw88_pci_attach(NULL, &p, &fixture_pa);
@@ -559,7 +756,11 @@ int main(void)
 		uint16_t v2 = 0x5678;
 		uint8_t v1 = 0x78;
 		const struct rtw88_bus_ops *op = p.sc_core.sc_ops;
-		CHECK(op->read_4(&p, 0x4000, &v) == EINVAL && v == 0x12345678);
+		CHECK(op->read_4(&p, 0x10000, &v) == EINVAL && v == 0x12345678);
+		CHECK(op->read_1(&p, 0xff1a, &v1) == 0);
+		CHECK(op->read_4(&p, 0xfffc, &v) == 0);
+		v = 0x12345678;
+		v1 = 0x78;
 		CHECK(op->read_4(&p, 1, &v) == EINVAL && v == 0x12345678);
 		CHECK(op->read_4(&p, 0, NULL) == EINVAL);
 		f.reg[0xf0 / 4] = UINT32_MAX;

@@ -22,6 +22,7 @@
 #define BUS_SPACE_BARRIER_READ 1
 #define BUS_SPACE_BARRIER_WRITE 2
 #define MUTEX_DEFAULT 0
+#define IPL_NONE 0
 #define IPL_NET 1
 #define DVF_DETACH_SHUTDOWN 0
 #define PCI_ID_REG 0
@@ -53,8 +54,13 @@ typedef uint64_t bus_addr_t;
 typedef size_t bus_size_t;
 typedef void *bus_dma_tag_t;
 typedef struct {
-	int initialized, held;
+	int initialized, held, ipl;
 } kmutex_t;
+typedef struct {
+	int o_error, o_status;
+} once_t;
+#define ONCE_DECL(o) once_t o = {0, 0}
+#define RUN_ONCE(o, fn) ((o)->o_status ? (o)->o_error : _init_once(o, fn))
 typedef struct {
 	bus_addr_t ds_addr;
 	bus_size_t ds_len;
@@ -88,6 +94,7 @@ void mutex_init(kmutex_t *, int, int);
 void mutex_destroy(kmutex_t *);
 void mutex_enter(kmutex_t *);
 void mutex_exit(kmutex_t *);
+int _init_once(once_t *, int (*)(void));
 void delay(unsigned);
 void xc_barrier(unsigned);
 pcireg_t pci_conf_read(pci_chipset_tag_t, pcitag_t, int);
