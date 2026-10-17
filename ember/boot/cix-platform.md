@@ -313,6 +313,17 @@ No ACK is cleared, and the lease remains until reboot. Protocol attributes,
 clock identity, rate and control remain unqualified. VPU MMIO, IRQ, DMA and
 firmware execution remain disabled.
 
+A further manual boot of kernel `f17c2aecdd9efc96143666578eed6846d9763005`
+sends one CLOCK PROTOCOL_ATTRIBUTES request. The gzip SHA256 is
+`9960ab00ea96f6e24b2a8e3203daaf60087ed2a21f079048f8c1940b4e0b975e`.
+The reply reports raw `0x80111`, valid attributes, 273 clocks, eight asynchronous
+slots, helper return 0, decode error 0 and firmware status 0. Header `0x45001`
+and length 12 match the request. ID67 is in range; this does not establish its
+identity or access permission. The selected schema is CLOCK 2.0; this boot
+does not query version again. FFS is clean, and WPA2/DHCP plus three gateway
+probes pass. VPU activation, per-clock attributes, rate and control remain
+unqualified. No ACK is cleared, and the boot-long lease remains held.
+
 ## Primary provenance
 
 Hardware facts come from the pinned vendor
