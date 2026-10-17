@@ -12,7 +12,7 @@ pressed)
 		exit 1
 	fi
 	echo "power button pressed on ${1}: requesting orderly poweroff" >&2
-	if /sbin/shutdown -p now "power button pressed"; then
+	if /sbin/shutdown -D -i -p now "power button pressed"; then
 		exit 0
 	fi
 	echo 'power button: shutdown request failed; a later press can retry.' >&2

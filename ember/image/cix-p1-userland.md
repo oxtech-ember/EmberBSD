@@ -26,11 +26,13 @@ The source commit must remain unchanged until the build completes.
 The builder installs current headers, CSU, libc, the selected C libraries,
 OpenSSL and libpcap. It relinks the console and network tools, WPA programs,
 DHCP client, filesystem checkers, mount helpers, GPT and wedge tools, stat,
-shutdown, wall and native getty. It generates the target MAKEDEV script.
+shutdown, wall, native getty, stty and usbdevs. It generates the target MAKEDEV script.
 This C-only profile does not provide C++, login/PAM or the complete rc system.
 The receiving root profile owns startup, console access and shutdown scripts.
 Use native getty to establish the console session before its trusted wrapper.
 A direct shell wrapper in `ttys` does not establish the controlling terminal.
+The root profile stages a trusted interactive ENV file for graceful TERM exit.
+Its interactive guard preserves noninteractive shell signal behavior.
 
 Each component has separate build and install logs under `logs/`.
 Failures stop the build. `BUILD-INPUTS.pending` records an incomplete run.
@@ -60,3 +62,13 @@ Network credentials belong to a separate protected configuration overlay.
 Record the root-image hash and its kernel, loader and userland inputs before
 deployment. Preserve a separately bootable recovery kernel and RAM root.
 Use the board's [boot and recovery guidance](../boards/orange-pi-6-plus.md).
+
+The selected native shutdown and halt programs support the explicit `-i` timing
+mode. It removes administrative shutdown pauses and ends process waits early
+when no permitted broadcast targets remain. Live processes retain the normal
+five-second TERM grace and thirty-second KILL retry limit. The mode preserves
+sync, shutdown hooks and the kernel filesystem shutdown path. It rejects
+options that skip synchronization or process termination. Rebuild both native
+programs before enabling a root profile that requests this mode. Source contracts
+model process and time services; they do not run host shutdown or establish a
+physical shutdown duration.

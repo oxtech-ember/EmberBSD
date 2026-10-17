@@ -75,19 +75,33 @@ The separate `reboot` command does not execute `/etc/rc.shutdown`.
 
 The profile starts native `powerd -d` in the background after root setup.
 Native AArch64 MAKEDEV supplies `/dev/power` through its `sysmon` entry.
+The profile also requires native `stty` and `usbdevs`, and requests USB control
+and controller nodes zero through nineteen. Native MAKEDEV supplies PLcom1/3
+and their dialout aliases. The DEBUG UART nodes are not included or opened.
 Daemon diagnostics go to `/var/log/powerd.log` with mode `0600`.
 A failed early launch reports a console warning and leaves the console available.
 The one-second live-process check does not prove delivery of button events.
-The profile's `power_button` policy accepts `pressed` and calls `shutdown -p now`.
-An atomic guard prevents duplicate requests until reboot. A failed synchronous
-request releases that guard so a later press can retry. Release events do nothing.
-This policy retains the normal shutdown hooks and filesystem shutdown path.
-Button delivery and physical poweroff still need a separate target trial.
+The profile's `power_button` policy accepts `pressed` and calls `shutdown -D -i -p now`.
+An atomic guard prevents duplicate requests until reboot. Foreground `-D` keeps
+early errors visible to the policy. A failed synchronous request releases the
+guard so a later press can retry. Release events do nothing.
+This policy retains shutdown hooks, sync, process termination and filesystem shutdown.
+The explicit `-i` mode removes administrative pauses and waits adaptively for
+process exit. Live services retain the normal TERM grace and KILL retry limit.
+Three to five seconds is a healthy-system objective, not a safety deadline.
+Network shutdown, filesystem operations and firmware can take longer.
+The new timing mode requires rebuilt native shutdown/halt binaries and a separate
+target trial. A late shutdown failure can retain the request guard; the policy
+does not guarantee retry after process termination has begun.
 
 This development profile exposes an unauthenticated root shell on its trusted
 UART console. It starts no network login server. Configure access separately
 before deployment outside a controlled development bench.
 Native `getty` establishes the console session before starting the shell.
+The wrapper exports the fixed `/etc/cix-console.env` path. This root-owned,
+mode `0644` file installs a TERM exit trap only in interactive shells.
+The trusted console can then leave during normal process shutdown.
+Stopped jobs or other processes can still require the full native grace period.
 The `ember-cix` entry selects the local wrapper explicitly; no login or PAM
 service participates in this development-console path.
 

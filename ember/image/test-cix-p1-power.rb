@@ -163,7 +163,7 @@ Dir.mktmpdir('cix-power-') do |tmp|
     _, status = invoke.call('unknown')
     check.call(!status.success? && File.read(trace).empty?, 'unsupported event cannot request shutdown')
     _, status = invoke.call('pressed')
-    check.call(status.success? && File.read(trace) == "shutdown <-p> <now> <power button pressed>\n", 'press requests the orderly poweroff path')
+    check.call(status.success? && File.read(trace) == "shutdown <-D> <-i> <-p> <now> <power button pressed>\n", 'press requests the orderly poweroff path')
     check.call(File.directory?(lock), 'accepted request keeps the duplicate guard')
     _, status = invoke.call('pressed')
     check.call(status.success? && File.readlines(trace).size == 1, 'duplicate press does not repeat shutdown')

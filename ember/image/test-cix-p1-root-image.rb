@@ -15,7 +15,7 @@ require 'tmpdir'
 
 ROOT_SCRIPT = File.expand_path(ENV.fetch('ROOT_SCRIPT', File.join(__dir__, 'cix-p1-root.sh')))
 abort 'Root stager is missing' unless File.file?(ROOT_SCRIPT)
-PROFILE_FILES = %w[cix-p1-root.sh cix-p1-root.subr cix-p1-network.subr cix-p1-power.subr cix-p1-power-button cix-p1-rc cix-p1-rc.shutdown cix-p1-console].freeze
+PROFILE_FILES = %w[cix-p1-root.sh cix-p1-root.subr cix-p1-network.subr cix-p1-power.subr cix-p1-power-button cix-p1-rc cix-p1-rc.shutdown cix-p1-console cix-p1-console.env].freeze
 # Capture one immutable candidate, without editing another agent's checkout.
 PROFILE_DATA = PROFILE_FILES.to_h do |file|
   path = file == 'cix-p1-root.sh' ? ROOT_SCRIPT : File.join(File.dirname(ROOT_SCRIPT), file)
@@ -262,9 +262,13 @@ Dir.mktmpdir('ember-cix-root-image-') do |base|
   File.write(f[:metalog], File.readlines(f[:metalog]).reject { |s| s.start_with?('./sbin/shutdown ') }.join)
   reject(f, 'missing selected runtime metadata')
 
-  ['source', 'profile'].each do |which|
+  ['source', 'profile', 'console-env'].each do |which|
     f = fixture(base, 'late-' + which + '-change')
-    asset = which == 'source' ? f[:src] + '/etc/group' : f[:profile] + '/ember/image/cix-p1-network.subr'
+    asset = case which
+    when 'source' then f[:src] + '/etc/group'
+    when 'profile' then f[:profile] + '/ember/image/cix-p1-network.subr'
+    else f[:profile] + '/ember/image/cix-p1-console.env'
+    end
     f[:env]['MUTATE_TRACKED_ASSET'] = asset
     success, _, _ = run_stager(f)
     check(!success, 'late ' + which + ' mutation rejects final acceptance')
@@ -288,6 +292,9 @@ Dir.mktmpdir('ember-cix-root-image-') do |base|
     check(entry &&
       %w[al=root lo=/usr/libexec/ember-console sp#115200 np ce ck].all? { |cap| caps.include?(cap) },
       'getty creates the console session and selects the root wrapper without PAM/login')
+    check(File.binread(root + '/etc/cix-console.env') == PROFILE_DATA.fetch('cix-p1-console.env') &&
+      (File.stat(root + '/etc/cix-console.env').mode & 0o7777) == 0o644,
+      'exact profile-pinned console ENV is staged with mode 0644')
     check(!File.exist?(root + '/etc/wpa_supplicant.conf'), 'template Wi-Fi profile is not shipped')
     check(File.file?(root + '/etc/powerd/scripts/power_button') && File.executable?(root + '/etc/powerd/scripts/power_button'),
       'the selected profile includes an executable power-button policy')

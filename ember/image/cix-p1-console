@@ -5,6 +5,7 @@ HOME=/root
 TERM=${TERM:-vt100}
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 PS1='ember-cix# '
-export HOME TERM PATH PS1
+ENV=/etc/cix-console.env
+export HOME TERM PATH PS1 ENV
 cd /root || exit 1
 exec /bin/sh -i
