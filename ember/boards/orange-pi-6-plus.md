@@ -11,7 +11,7 @@ This profile records one physical sample. It is not a complete installation imag
 | CPU and memory | The kernel reports 12 CPUs and about 32 GB. SMP stress and memory integrity are not qualified. |
 | Ethernet | `rge1` negotiates 1000baseT full-duplex. A short host-to-board transfer and ICMP replies pass. Board-initiated ping to the host did not receive replies; the cause is unconfirmed. The second port and sustained camera traffic remain unqualified. |
 | Video codec | [Passive ACPI attachment](../boot/cix-vpu.md) validates both memory windows, level IRQ 358 and `_CCA=0`. Power, clocks, reset, MMIO, DMA and video queues remain disabled. No hardware encoding is claimed. |
-| RTL8822CE | Staged driver sources exist. This trial does not establish association, authentication or Wi-Fi data transport. |
+| RTL8822CE | Native PCI/net80211 station sources and GCC16 checks are integrated; see the [source boundary and contracts](../development/rtl8822ce-proposal.md#current-source-boundary). A physical `EMBER64` trial at `332dfb58356ffc23ef6642fc18691896d9c85b93` attached `rtwce0`, but `ifconfig rtwce0 up` timed out. Association on 2.4/5 GHz, WPA2, DHCP, data transport and reconnect remain unaccepted. |
 | Storage | SD supplies the boot payload. The root is RAM only. NVMe installation is not accepted. |
 | Other peripherals | USB device failures remain in the boot log. GPIO/PPS, camera capture, Bluetooth, HDMI, GPU, NPU, thermal behavior and sustained operation are not accepted by this trial. |
 
