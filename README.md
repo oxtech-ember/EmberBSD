@@ -1017,6 +1017,8 @@ The base system shell is unchanged.
   the bounded pin6 ACPI event path; `flags 0x0` retains passive mode. Source
   contracts cover event completion and truncated resource rejection. Physical
   button delivery and poweroff remain unqualified. See [CIX GPIO](ember/boot/cix-gpio.md).
+  Native [CIX clock/reset providers](ember/boot/cix-platform.md) have checked source
+  contracts and passive registration. VPU activation, DMA and firmware remain disabled.
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request
   cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the
   active control request and preserves queued requests. Actual-function

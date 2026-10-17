@@ -56,7 +56,7 @@ Firmware tables from one Orange Pi 6 Plus, CIX CD8180, A4 PHECDA-Rev A,
 GSI 358 and `_CCA = 0`. This is firmware evidence, not codec execution.
 The driver reads the running firmware's descriptions rather than copying those addresses.
 
-Every attachment reports that CIX power, clock and reset providers are not implemented.
+Every attachment reports that resource activation, DMA and firmware are not enabled.
 It does not map, read or write MMIO, allocate DMA, load firmware, establish an interrupt
 handler, register a video device, or call `_PS0` or ACPI PowerResource methods.
 Parsing descriptions does not establish ownership of power, clocks or reset.
@@ -191,7 +191,9 @@ The complete revised FFmpeg package and its installed consumers are not yet requ
 The reference ACPI identifier is `CIXH3010`. Read the target's actual ACPI
 resources; do not assume a Linux DTS register range or interrupt number.
 Establish clock/reset and power ownership before touching the block.
-Current SCMI support has no CIX clock/reset provider.
+The [native CIX clock/reset providers](cix-platform.md) now have checked source
+contracts and passive registration. The diagnostic attachment does not consume
+them or establish power ownership. Complete SCMI support is not claimed.
 The VPU has its own MMU. Use bus_dma for any platform translation; do not
 assume IOMMU bypass or infer a mandatory external SMMU from another device.
 

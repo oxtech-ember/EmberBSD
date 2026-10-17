@@ -43,6 +43,8 @@ aicwf*		at sdmmc?
 rtwce*		at pci?
 
 # CIX P1 codec resources only; power, MMIO, DMA and video stay disabled.
+cixclk*		at acpi?		# Passive checked CCLK provider registration.
+cixreset*	at acpi?		# Passive RST0 mapping; no reset operations.
 cixvpu*		at acpi?
 cixgpio*	at acpi? flags 0x1	# Bounded GPI4 pin6 ACPI event; 0x0 is passive.
 

@@ -123,7 +123,7 @@ done:
 	acpi_resource_cleanup(&resources);
 disabled:
 	aprint_error_dev(self,
-	    "codec disabled: CIX power/clock/reset providers not implemented\n");
+	    "codec disabled: resource activation, DMA and firmware are not enabled\n");
 }
 
 CFATTACH_DECL_NEW(cixvpu_acpi, 0, cixvpu_acpi_match, cixvpu_acpi_attach,
