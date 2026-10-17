@@ -12,6 +12,7 @@
 #endif
 #include <dev/ic/rtw88var.h>
 #include <dev/ic/rtw8822c.h>
+#include <dev/ic/rtw8822c_io.h>
 
 #define RTW88_FW_DRV		"rtwce"
 #define RTW88_FW_IMG		"rtw8822c_fw.bin"
@@ -880,14 +881,23 @@ rtw88_rx_one(struct rtw88_softc *sc, unsigned idx)
 		sc->sc_stats.last_c2h_seq = p[1];
 		return;
 	}
+	if ((rx.flags & (RTW88_RX_CRC_ERROR | RTW88_RX_ICV_ERROR)) != 0) {
+		sc->sc_stats.rx_errors++;
+		return;
+	}
 	if (rx.packet_size < RTW88_MIN_FRAME) {
 		sc->sc_stats.rx_short++;
 		return;
 	}
-	/* Task 7 hands validated frames to net80211. */
+	/* The diagnostic counters include valid control frames. */
 	sc->sc_stats.rx_frames++;
 	if (p[0] == 0x80 && rx.packet_size >= RTW88_BEACON_IES)
 		rtw88_rx_beacon(sc, p, rx.packet_size);
+	/* RCR.APP_FCS is set. Never expose the four FCS bytes to net80211. */
+	if (sc->sc_rx_frame != NULL && rx.packet_size >= 24 + 4) {
+		rx.packet_size -= 4;
+		sc->sc_rx_frame(sc->sc_net_cookie, p, rx.packet_size, &rx);
+	}
 }
 
 /* pci.c rtw_pci_rx_napi, bounded by RTW88_RX_LIMIT per interrupt. */
@@ -916,14 +926,93 @@ rtw88_rx(struct rtw88_softc *sc)
 		tag = (uint16_t)(bd[2] | bd[3] << 8);
 		if (tag != sc->sc_rx_tag)
 			sc->sc_stats.rx_tag_errors++;
+		else
+			rtw88_rx_one(sc, rp);
 		sc->sc_rx_tag = (sc->sc_rx_tag + 1) % RTW88_RX_TAG_MAX;
-		rtw88_rx_one(sc, rp);
 		rtw88_rx_arm(sc, rp);
 		rp = (rp + 1) % sc->sc_nrxbuf;
 	}
 	sc->sc_ops->dma_sync(sc->sc_bus, ring, BUS_DMASYNC_PREWRITE);
 	sc->sc_rx_rp = rp;
 	(void)sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_RXBD_IDX, (uint16_t)rp);
+}
+
+unsigned
+rtw88_tx_available(struct rtw88_softc *sc, unsigned q)
+{
+	const struct rtw88_txq *txq;
+
+	if (q >= RTW88_NTXQ || !sc->sc_running)
+		return 0;
+	txq = &sc->sc_txq[q];
+	return txq->rp > txq->wp ? txq->rp - txq->wp - 1 :
+	    RTW88_TX_SLOTS - txq->wp + txq->rp - 1;
+}
+
+/*
+ * Port0 fields and mailbox layouts are from pinned rtw88 main.c,
+ * fw.c/fw.h, sec.c and reg.h. This host-managed legacy station does
+ * not enable hardware crypto, firmware rate adaptation, LPS or offload.
+ */
+int
+rtw88_station_config(struct rtw88_softc *sc, const uint8_t *bssid,
+    unsigned aid, unsigned basic_rates, unsigned slot, int linked)
+{
+	struct rtw8822c_io io = { sc, 0 };
+	uint8_t media[3] = { 0 }, port[3] = { 0 }, any = 0;
+	unsigned i;
+
+	if (linked != 0 && linked != 1)
+		return EINVAL;
+	if (basic_rates == 0 || (basic_rates & ~0xfffU) != 0 ||
+	    (slot != 9 && slot != 20))
+		return EINVAL;
+	if (linked) {
+		if (bssid == NULL || (bssid[0] & 1) != 0 ||
+		    aid == 0 || aid > 2007)
+			return EINVAL;
+		for (i = 0; i < 6; i++)
+			any |= bssid[i];
+		if (any == 0)
+			return EINVAL;
+	} else if (aid != 0 || bssid != NULL) {
+		return EINVAL;
+	}
+	if (!sc->sc_running || !sc->sc_started)
+		return ENXIO;
+	if (sc->sc_channel > 14 && (basic_rates & 0xf) != 0)
+		return EINVAL;
+	/* Keep data paused and port unlinked until all setup writes succeed. */
+	rtw8822c_io_wr_mask(&io, 0x0100, 0x30000, 0);
+	rtw8822c_io_set(&io, 0x0522, 1, 0x0f);
+	rtw8822c_io_wr(&io, 0x06a4, 2, 0);
+	for (i = 0; i < 6; i++) {
+		rtw8822c_io_wr(&io, 0x0610 + i, 1, sc->sc_mac[i]);
+		rtw8822c_io_wr(&io, 0x0618 + i, 1, linked ? bssid[i] : 0);
+	}
+	/* SECCFG.TXDEC/RXDEC are off: the stack owns CCMP/PN/MIC. */
+	rtw8822c_io_clr(&io, 0x0680, 1, 0x0c);
+	rtw8822c_io_wr_mask(&io, 0x06a8, 0x7ff, aid);
+	rtw8822c_io_wr_mask(&io, 0x0440, 0xfff, basic_rates);
+	rtw8822c_io_wr(&io, 0x051b, 1, slot);
+	rtw8822c_io_set(&io, 0x0550, 1, 0x18);
+	rtw8822c_io_clr(&io, 0x0608, 4, 0xc0);
+	if (io.error != 0)
+		return io.error;
+	media[0] = linked ? 1 : 0;
+	io.error = rtw88_fw_command(sc, 0x01, media, sizeof(media));
+	if (linked && io.error == 0)
+		io.error = rtw88_fw_command(sc, 0x2c, port, sizeof(port));
+	if (linked) {
+		rtw8822c_io_set(&io, 0x0608, 4, 0xc0);
+		rtw8822c_io_clr(&io, 0x0550, 1, 0x10);
+		rtw8822c_io_wr(&io, 0x06a4, 2, 0xffff);
+		rtw8822c_io_wr_mask(&io, 0x0100, 0x30000, 2);
+		rtw8822c_io_clr(&io, 0x0522, 1, 0x0f);
+	}
+	if (io.error == 0)
+		sc->sc_basic_rates = basic_rates;
+	return io.error;
 }
 
 int
@@ -935,7 +1024,7 @@ rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
 	struct rtw88_dma *ring, *buf;
 	uint8_t *bd;
 	uint32_t addr;
-	unsigned avail;
+	unsigned avail, rates;
 	int error;
 
 	if (q >= RTW88_NTXQ)
@@ -947,8 +1036,7 @@ rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
 		return EMSGSIZE;
 	txq = &sc->sc_txq[q];
 	/* pci.h avail_desc: one slot stays empty to tell full from empty. */
-	avail = txq->rp > txq->wp ? txq->rp - txq->wp - 1 :
-	    RTW88_TX_SLOTS - txq->wp + txq->rp - 1;
+	avail = rtw88_tx_available(sc, q);
 	if (avail == 0) {
 		sc->sc_stats.tx_full++;
 		return ENOBUFS;
@@ -959,7 +1047,10 @@ rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
 	tx.queue = q == RTW88_TXQ_MGMT ? RTW88_QSEL_MGMT : 0;
 	/* main.h DESC_RATE6M and RATEID_G: CCK is invalid on 5 GHz. */
 	tx.rate = sc->sc_channel > 14 ? 4 : 0;
-	tx.rate_id = sc->sc_channel > 14 ? RTW88_RATEID_G : RTW88_RATEID_B_20M;
+	rates = sc->sc_basic_rates & (sc->sc_channel > 14 ? 0xff0U : 0xfffU);
+	if (rates != 0)
+		tx.rate = (uint8_t)__builtin_ctz(rates);
+	tx.rate_id = tx.rate >= 4 ? RTW88_RATEID_G : RTW88_RATEID_B_20M;
 	tx.flags = RTW88_TX_DIS_QSELSEQ | RTW88_TX_USE_RATE |
 	    RTW88_TX_DIS_RATE_FB;
 	if (q == RTW88_TXQ_MGMT)
@@ -1016,6 +1107,8 @@ rtw88_tx_done(struct rtw88_softc *sc, unsigned q)
 	txq->rp = hw;
 	txq->queued -= count;
 	sc->sc_stats.tx_done += count;
+	if (count != 0 && sc->sc_tx_complete != NULL)
+		sc->sc_tx_complete(sc->sc_net_cookie, count);
 }
 
 int

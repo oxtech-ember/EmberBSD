@@ -1,12 +1,12 @@
 # Native RTL8822CE station driver proposal
 
-Status: proposal. Driver implementation and physical Wi-Fi acceptance are pending.
+Status: staged implementation. Physical station acceptance is pending.
 
 ## Problem and target
 
 An Orange Pi 6 Plus with CIX P1 CD8180, 32 GB RAM and board ID
 A4 (PHECDA-Rev A) exposes a Realtek RTL8822CE PCI function, `10ec:c822`.
-The diagnostic EmberBSD kernel reports that function as not configured.
+The initial diagnostic kernel reported that function as not configured.
 The existing `rtwn` driver targets different Realtek generations.
 
 The delivered firmware is `BiosV1.5-W20260706-e321056a`.
@@ -16,7 +16,7 @@ Those observations do not establish Wi-Fi, internal storage or full board suppor
 The console currently needs a temporary correction of the firmware SPCR
 from UART3 to the UART2 exposed by DEBUG and DBG2.
 The opt-in [loader correction](../boot/cix-spcr.md) is a separate boot
-dependency; its physical acceptance is pending.
+dependency. See the [current board evidence](../boards/orange-pi-6-plus.md).
 
 ## Scope and baseline
 
@@ -39,6 +39,34 @@ Record each imported file's license and revision. GPL-only implementation
 is protocol reference only. Verify the separate firmware asset's license,
 origin, size and SHA256 before distributing it through an image profile.
 No radio firmware binary is added to this proposal.
+
+## Current source boundary
+
+The native source includes firmware validation, PCI DMA rings, RTL8822C
+register tables and bounded frame transfer. The core exposes copied-frame
+callbacks for a native station wrapper. It rejects CRC/ICV errors and stale
+DMA tags. The RX callback excludes the FCS and expires when it returns.
+A DMA TX completion does not prove an acknowledgement from an access point.
+
+The legacy port0 helper programs the local address, BSSID, AID, basic rates,
+slot time and software-only crypto. It returns hardware and mailbox errors
+before the caller can publish a successful station state. Frames use a
+band-valid basic rate and retain software data sequence numbers.
+Wi-Fi-only coexistence and ingress-generation contracts are separate source
+components. Their presence does not establish a linked network interface.
+
+Run the actual-source contracts with GCC16:
+
+```sh
+CC=gcc-16 sh ember/tools/rtw88-contract.sh
+CC=gcc-16 sh ember/tools/rtw88-pci-contract.sh
+CC=gcc-16 sh ember/tools/rtw88-start-contract.sh
+CC=gcc-16 sh ember/tools/rtw88-net-contract.sh
+CC=gcc-16 sh ember/tools/rtw8822c-coex-contract.sh
+```
+
+Both 2.4 GHz and 5 GHz need physical station tests. Association, WPA2,
+DHCP, bidirectional data transfer and reconnect recovery remain unaccepted.
 
 ## First acceptance scenario
 

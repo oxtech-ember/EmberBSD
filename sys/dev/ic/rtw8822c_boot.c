@@ -344,6 +344,7 @@ rtw8822c_identify(struct rtw88_softc *sc)
 	error = rtw8822c_efuse_decode(phy, sizeof(phy), &map);
 	if (error != 0)
 		return error;
+	memcpy(sc->sc_mac, map.mac, sizeof(sc->sc_mac));
 	sc->sc_rfe = map.rfe_option;
 	sc->sc_xtal = map.xtal & 0x7f;
 	sc->sc_cut = (uint8_t)((sc->sc_sys_cfg1 >> 12) & 0x0f);

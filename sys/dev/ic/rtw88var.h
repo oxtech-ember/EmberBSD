@@ -107,6 +107,7 @@ struct rtw88_softc {
 	int sc_stop_requested;
 	uint16_t sc_vendor;
 	uint16_t sc_product;
+	uint8_t sc_mac[6];	/* Validated EFUSE identity. */
 	uint8_t sc_rfe;
 	uint8_t sc_cut;
 	uint8_t sc_xtal;		/* EFUSE crystal cap, 7 bits. */
@@ -122,7 +123,20 @@ struct rtw88_softc {
 	unsigned sc_rx_tag;
 	int sc_running;		/* Interrupts unmasked; rtw88_intr owns RX. */
 	unsigned sc_channel;
+	unsigned sc_basic_rates;	/* Negotiated legacy descriptor-rate bitmap. */
 	struct rtw88_txq sc_txq[RTW88_NTXQ];
+	/*
+	 * Optional network consumers. Called under the bus interrupt lock;
+	 * they must not sleep, call the stack, reenter the core, or alter
+	 * callbacks. Borrowed RX bytes and info
+	 * expire at return. packet_size equals len, with FCS removed. Stop
+	 * drains interrupts before the owner clears these callbacks.
+	 */
+	void *sc_net_cookie;
+	void (*sc_rx_frame)(void *, const uint8_t *, size_t,
+	    const struct rtw88_rx_info *);
+	/* Completed DMA entries, not acknowledged over-the-air frames. */
+	void (*sc_tx_complete)(void *, unsigned);
 	struct rtw88_stats sc_stats;
 };
 
@@ -144,12 +158,25 @@ int rtw88_intr(struct rtw88_softc *);
 int rtw88_diag(struct rtw88_softc *, uint32_t *);
 /*
  * Copy one 802.11 frame into the next slot of a TX queue and kick it.
- * Legacy basic rate: 1M on 2.4 GHz, 6M on 5 GHz, no fallback.
+ * Lowest configured legacy basic rate, no fallback. Before station
+ * setup, use 1M on 2.4 GHz or 6M on 5 GHz.
  * Management uses hardware sequence; BE retains the frame sequence.
  * At least a 24-byte header is required. The caller holds the bus
  * interrupt lock. ENOBUFS when the ring is full.
  */
 int rtw88_tx_raw(struct rtw88_softc *, unsigned, const void *, size_t);
+/* Read software ring capacity while holding the bus interrupt lock. */
+unsigned rtw88_tx_available(struct rtw88_softc *, unsigned);
+/*
+ * Legacy port0 station configuration, with software-only crypto. The
+ * caller has switched channel and holds the bus interrupt lock. A NULL
+ * BSSID and linked=0 select no-link with data RX paused. linked=1 requires
+ * a unicast BSSID, AID1..2007, basic-rate bits0..11, and slot9 or20 us.
+ * Input errors have no hardware effects. Hardware errors are returned;
+ * the caller must not publish RUN after failure. Mailbox MAC ID is0.
+ */
+int rtw88_station_config(struct rtw88_softc *, const uint8_t *, unsigned,
+    unsigned, unsigned, int);
 /* Diagnostic loopback (rtlwifi LBMODE 0, 1, 3, 7 or 0x0b); 0 is normal. */
 int rtw88_loopback(struct rtw88_softc *, int);
 /* 20 MHz channel switch; caller holds the bus interrupt lock. */

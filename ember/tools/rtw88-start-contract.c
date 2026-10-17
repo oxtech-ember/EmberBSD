@@ -785,6 +785,75 @@ test_hci_start_masks(void)
 	rtw88_core_detach(&sc);
 }
 
+static unsigned rx_delivered, tx_completed;
+static uint8_t rx_copy[32];
+static size_t rx_copy_len;
+
+static void
+network_rx(void *cookie, const uint8_t *p, size_t len,
+    const struct rtw88_rx_info *info)
+{
+	CHECK(cookie == &rx_delivered);
+	CHECK(info->packet_size == len && len <= sizeof(rx_copy));
+	CHECK((info->flags & (RTW88_RX_CRC_ERROR | RTW88_RX_ICV_ERROR |
+	    RTW88_RX_C2H)) == 0);
+	rx_delivered++;
+	rx_copy_len = len;
+	memcpy(rx_copy, p, len);
+}
+
+static void
+network_tx(void *cookie, unsigned count)
+{
+	CHECK(cookie == &rx_delivered && count != 0);
+	tx_completed += count;
+}
+
+static void
+test_network_delivery(void)
+{
+	struct rtw88_softc sc;
+	uint8_t frame[28] = { 0x80, 0x00 };
+	unsigned i;
+
+	if (!start_ok(&sc))
+		return;
+	rx_delivered = tx_completed = 0;
+	rx_copy_len = 0;
+	sc.sc_net_cookie = &rx_delivered;
+	sc.sc_rx_frame = network_rx;
+	sc.sc_tx_complete = network_tx;
+	frame[24] = 0xde; frame[25] = 0xad; frame[26] = 0xbe; frame[27] = 0xef;
+	for (i = 0; i < 4; i++)
+		rx_put(&sc, i, sizeof(frame), 0, frame, (uint16_t)i);
+	/* CRC error, ICV error, and a C2H event must never reach the stack. */
+	((uint8_t *)sc.sc_rxbuf[1].vaddr)[1] |= 0x40;
+	((uint8_t *)sc.sc_rxbuf[2].vaddr)[1] |= 0x80;
+	((uint8_t *)sc.sc_rxbuf[3].vaddr)[11] |= 0x10;
+	/* A valid-looking frame with an unexpected DMA tag has no ownership. */
+	rx_put(&sc, 4, sizeof(frame), 0, frame, 77);
+	/* A bare ACK cannot be offered as a full net80211 header. */
+	rx_put(&sc, 5, 14, 0, frame, 5);
+	f.rx_hw_idx = 6;
+	set_hisr0(0x01);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(rx_delivered == 1 && rx_copy_len == 24);
+	CHECK(memcmp(rx_copy, frame, 24) == 0);
+	CHECK(sc.sc_stats.rx_errors == 2 && sc.sc_stats.rx_tag_errors == 1);
+	CHECK(rx_armed(&sc, 4) && rx_armed(&sc, 5));
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, frame, 24) == 0);
+	f.tx_hw_rp[0] = 1;
+	set_hisr0(0x40); /* MGNTDOK. */
+	CHECK(rtw88_intr(&sc) == 1 && tx_completed == 1);
+	set_hisr0(0x40);
+	CHECK(rtw88_intr(&sc) == 1 && tx_completed == 1);
+	rtw88_stop(&sc);
+	f.rx_hw_idx = 7;
+	set_hisr0(0x41);
+	CHECK(rtw88_intr(&sc) == 0 && rx_delivered == 1 && tx_completed == 1);
+	rtw88_core_detach(&sc);
+}
+
 static void
 test_rx_c2h_and_frame(void)
 {
@@ -911,7 +980,7 @@ test_rx_tag_mismatch(void)
 	f.rx_hw_idx = 1;
 	set_hisr0(0x01);
 	CHECK(rtw88_intr(&sc) == 1);
-	CHECK(sc.sc_stats.rx_tag_errors == 1 && sc.sc_stats.rx_frames == 1);
+	CHECK(sc.sc_stats.rx_tag_errors == 1 && sc.sc_stats.rx_frames == 0);
 	rtw88_stop(&sc);
 	rtw88_core_detach(&sc);
 }
@@ -1035,6 +1104,58 @@ test_tx_descriptors_and_full_ring(void)
 }
 
 /* Legacy station TX must use a legal basic rate for the selected band. */
+static void
+test_station_config(void)
+{
+	static const uint8_t mac[6] = { 0x02, 0x12, 0x23, 0x34, 0x45, 0x56 };
+	static const uint8_t bssid[6] = { 0x02, 0x65, 0x54, 0x43, 0x32, 0x21 };
+	struct rtw88_softc sc;
+	unsigned writes;
+
+	if (!start_ok(&sc))
+		return;
+	memcpy(sc.sc_mac, mac, sizeof(mac));
+	f.mmio[0x680] = 0xff;
+	f.mmio[0x551] = 0x71;
+	f.mmio[0x6ab] = 0x8a;
+	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == 0);
+	CHECK(memcmp(f.mmio + 0x610, mac, sizeof(mac)) == 0);
+	CHECK((mmio32(0x100) & 0x30000) == 0);
+	CHECK((f.mmio[0x680] & 0x0c) == 0 && (f.mmio[0x680] & 0xf3) == 0xf3);
+	CHECK((f.mmio[0x550] & 0x18) == 0x18 && f.mmio[0x551] == 0x71);
+	CHECK((mmio32(0x608) & 0xc0) == 0 && (mmio32(0x608) & 0x80000000) != 0);
+	CHECK(reg16(0x6a4) == 0 && (f.mmio[0x522] & 0x0f) == 0x0f);
+	CHECK(f.mmio[0x51b] == 20 && (mmio32(0x440) & 0xfff) == 0xf);
+	writes = f.writes;
+	CHECK(rtw88_station_config(&sc, bssid, 2008, 0x10, 9, 1) == EINVAL);
+	CHECK(rtw88_station_config(&sc, bssid, 1, 0, 9, 1) == EINVAL);
+	CHECK(rtw88_station_config(&sc, bssid, 1, 0x1000, 9, 1) == EINVAL);
+	CHECK(rtw88_station_config(&sc, bssid, 1, 0x10, 10, 1) == EINVAL);
+	CHECK(rtw88_station_config(&sc, NULL, 1, 0x10, 9, 1) == EINVAL);
+	CHECK(f.writes == writes);
+	CHECK(rtw88_station_config(&sc, bssid, 123, 0xff0, 9, 1) == 0);
+	CHECK(mmio32(0x1d0) == 0x01 && mmio32(0x1d4) == 0x0101 &&
+	    mmio32(0x1d8) == 0x2c); /* media off/on and default port0/MACID0. */
+	CHECK(memcmp(f.mmio + 0x618, bssid, sizeof(bssid)) == 0);
+	CHECK((mmio32(0x100) & 0x30000) == 0x20000);
+	CHECK((mmio32(0x6a8) & 0x7ff) == 123 && f.mmio[0x6ab] == 0x8a);
+	CHECK((f.mmio[0x550] & 0x18) == 0x08);
+	CHECK((mmio32(0x608) & 0xc0) == 0xc0);
+	CHECK(reg16(0x6a4) == 0xffff && (f.mmio[0x522] & 0x0f) == 0);
+	CHECK(f.mmio[0x51b] == 9 && (mmio32(0x440) & 0xfff) == 0xff0);
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, bcast_frame,
+	    sizeof(bcast_frame)) == 0);
+	CHECK(((const uint8_t *)sc.sc_txq[0].buf[0].vaddr)[16] == 4);
+	CHECK(rtw88_tx_available(&sc, RTW88_TXQ_BE) == RTW88_TX_SLOTS - 1);
+	CHECK(rtw88_tx_available(&sc, 7) == 0);
+	f.mmio[0x1cc] = 0x0f; /* All mailbox slots remain busy. */
+	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == ETIMEDOUT);
+	rtw88_stop(&sc);
+	CHECK(rtw88_tx_available(&sc, 0) == 0);
+	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == ENXIO);
+	rtw88_core_detach(&sc);
+}
+
 static void
 test_tx_band_and_sequence(void)
 {
@@ -1267,6 +1388,7 @@ main(void)
 	test_beacon_never_valid();
 	test_firmware_checksum_bad();
 	test_hci_start_masks();
+	test_network_delivery();
 	test_rx_c2h_and_frame();
 	test_rx_malformed_and_short();
 	test_rx_limit_and_wrap();
@@ -1278,6 +1400,7 @@ main(void)
 	test_rx_buffer_alloc_failure();
 	test_diag_regs();
 	test_tx_descriptors_and_full_ring();
+	test_station_config();
 	test_tx_band_and_sequence();
 	test_tx_completion();
 	test_tx_refusals();
