@@ -671,6 +671,7 @@ int
 rtw88_start(struct rtw88_softc *sc)
 {
 	const uint8_t *fw = NULL;
+	const char *stage = "identity";
 	size_t fw_len = 0;
 	struct rtw88_fw_info info;
 	struct rtw8822c_efuse efuse;
@@ -696,9 +697,11 @@ rtw88_start(struct rtw88_softc *sc)
 	gen = sc->sc_generation;
 	sc->sc_stop_requested = 0;
 	sc->sc_bootstrapping = 1;
+	stage = "identity";
 	error = rtw8822c_identify(sc);
 	if (error != 0)
 		goto fail;
+	stage = "firmware DMA allocation";
 	error = sc->sc_ops->dma_alloc(sc->sc_bus, &sc->sc_fw_dma,
 	    RTW88_FW_PAGE_SIZE);
 	if (error != 0)
@@ -708,38 +711,43 @@ rtw88_start(struct rtw88_softc *sc)
 	    RTW8822C_DMA_ADDR_BITS);
 	if (error != 0)
 		goto fail;
+	stage = "bus mastering";
 	error = sc->sc_ops->bus_master(sc->sc_bus, 1);
 	if (error != 0)
 		goto fail;
 	sc->sc_dma_master = 1;
+	stage = "MAC power";
 	error = rtw8822c_power(sc, 1);
 	if (error != 0) {
 		printf("rtwce: power on failed: %d\n", error);
 		goto fail;
 	}
 	sc->sc_powered = 1;
-	error = rtw8822c_coex_power_on(sc);
-	if (error != 0)
-		goto fail;
+	stage = "firmware download";
 	error = rtw88_fw_download(sc, gen, fw, &info);
 	if (error != 0)
 		goto fail;
 	/* Reference rtw_power_on: reset rings, MAC, PHY, then HCI start. */
+	stage = "PCI rings";
 	error = rtw88_hci_setup(sc);
 	if (error != 0)
 		goto fail;
+	stage = "MAC setup";
 	error = rtw8822c_mac_init(sc);
 	if (error != 0) {
 		printf("rtwce: MAC init failed: %d\n", error);
 		goto fail;
 	}
 	/* rtw8822c_phy_set_param: BB/RF on, tables, paths, EDCCA, BF. */
+	stage = "PHY preinit";
 	error = rtw8822c_phy_pre(sc);
 	if (error != 0)
 		goto fail;
+	stage = "PHY tables";
 	error = rtw8822c_load_tables(sc);
 	if (error != 0)
 		goto fail;
+	stage = "PHY postinit";
 	error = rtw8822c_phy_post(sc);
 	if (error != 0)
 		goto fail;
@@ -747,9 +755,11 @@ rtw88_start(struct rtw88_softc *sc)
 	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_RCR, RTW88_RCR);
 	if (error != 0)
 		goto fail;
+	stage = "channel setup";
 	error = rtw8822c_set_channel(sc, RTW88_DEFAULT_CHANNEL);
 	if (error != 0)
 		goto fail;
+	stage = "TX power";
 	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
 	    sizeof(sc->sc_efuse_phys), &efuse);
 	if (error == 0)
@@ -761,12 +771,19 @@ rtw88_start(struct rtw88_softc *sc)
 		error = EINTR;
 		goto fail;
 	}
+	stage = "HCI start";
 	error = rtw88_hci_start(sc);
 	if (error != 0)
 		goto fail;
+	stage = "packet H2C";
 	error = rtw88_fw_init(sc);
 	if (error != 0)
 		goto fail;
+	stage = "coex power-on";
+	error = rtw8822c_coex_power_on(sc);
+	if (error != 0)
+		goto fail;
+	stage = "coex init";
 	error = rtw8822c_coex_init(sc);
 	if (error != 0)
 		goto fail;
@@ -780,6 +797,7 @@ rtw88_start(struct rtw88_softc *sc)
 	rtw88_release_fw(sc);
 	return 0;
 fail:
+	printf("rtwce: startup %s failed: %d\n", stage, error);
 	rtw88_stop(sc);
 	rtw88_release_fw(sc);
 	return error;

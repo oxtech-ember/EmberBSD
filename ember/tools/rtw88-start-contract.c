@@ -28,6 +28,7 @@ static struct {
 	uint8_t mmio[0x10000];
 	uint32_t lte[256];
 	int coex_busy;
+	int coex_before_h2c;
 	int h2c_dead;
 	int stop_coex_final;
 	unsigned bcn_last_pkt_size, bcn_last_seg1;
@@ -214,6 +215,8 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 		v |= 0x8000;
 	if (reg == 0x1208 && f.ddma_bad_sum)
 		v |= UINT32_C(1) << 27;
+	if (reg == 0x1700 && (!f.sc->sc_running || f.h2c_sent < 2))
+		f.coex_before_h2c = 1;
 	if (reg == 0x1700 && !f.coex_busy)
 		v |= UINT32_C(0x20000000);
 	/* RXBD_IDX_MPDUQ: hardware write index in 27:16, host index low. */
@@ -251,7 +254,8 @@ write_1(void *cookie, uint32_t reg, uint8_t val)
 	if (is_cfg_reg(reg))
 		f.cfg_writes++;
 	f.mmio[reg] = val;
-	if (reg == 0x73 && f.stop_coex_final && f.sc->sc_running) {
+	if (reg == 0x73 && f.stop_coex_final && f.sc->sc_running &&
+	    (f.lte[0x38] & 0xff00) == 0x7700) {
 		if (f.stop_coex_final == 1)
 			f.sc->sc_stop_requested = 1;
 		else
@@ -564,6 +568,7 @@ test_radio_dependencies(void)
 	if (!attach_ok(&sc))
 		return;
 	CHECK(rtw88_start(&sc) == 0);
+	CHECK(!f.coex_before_h2c); /* main.c rtw_power_on: H2C before coex. */
 	CHECK(f.h2c_sent == 2); /* Both mandatory packet commands were consumed. */
 	CHECK((f.lte[0x38] & 0xff00) == 0x7700); /* WONLY grants. */
 	CHECK((f.mmio[0x73] & 4) != 0); /* WLAN owns the antenna path. */
