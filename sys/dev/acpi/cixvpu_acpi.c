@@ -38,9 +38,14 @@ cixvpu_acpi_deferred(device_t self)
 	error = cixvpu_acpi_control_probe(&sc->sc_control, self, &sc->sc_aa,
 	    &sc->sc_resources, sc->sc_mode == 2);
 	aprint_normal_dev(self,
-	    "%s rate %" PRIu64 " ID %#x cores %u slots %u SVN %#x, "
-	    "identity valid %s, released %s\n",
-	    sc->sc_mode == 1 ? "resource query" : "identity probe", r->rate,
+	    "%s: rate query attempted %s, rate valid %s\n",
+	    sc->sc_mode == 1 ? "resource query" : "identity probe",
+	    r->rate_query_attempted ? "yes" : "no",
+	    r->rate_valid ? "yes" : "no");
+	if (r->rate_valid)
+		aprint_normal_dev(self, "clock rate %" PRIu64 "\n", r->rate);
+	aprint_normal_dev(self,
+	    "ID %#x cores %u slots %u SVN %#x, identity valid %s, released %s\n",
 	    r->id, r->ncores, r->nlsid, r->svn,
 	    r->identity_valid ? "yes" : "no", r->released ? "yes" : "no");
 	aprint_normal_dev(self,

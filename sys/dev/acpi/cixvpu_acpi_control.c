@@ -390,7 +390,9 @@ cixvpu_acpi_control_probe(struct cixvpu_acpi_control *c, device_t dev,
 	    (error = cixreset_acpi_get(reset, 0x8e, &c->rcsu)) != 0)
 		goto out;
 	if (!activate) {
+		c->report.rate_query_attempted = true;
 		error = cixclk_acpi_get_rate(c->clock, &c->report.rate);
+		c->report.rate_valid = error == 0;
 		goto out;
 	}
 	/* The vendor VPU sequence pulses only main reset. Do not invent RCSU control. */
@@ -411,13 +413,9 @@ cixvpu_acpi_control_probe(struct cixvpu_acpi_control *c, device_t dev,
 	if ((error = cixvpu_power_status(c, true, false)) != 0)
 		goto out;
 	c->clock_attempted = true;
-	if ((error = cixclk_acpi_enable(c->clock)) != 0 ||
-	    (error = cixclk_acpi_get_rate(c->clock, &c->report.rate)) != 0)
+	/* Runtime resume requires clock enable, not devfreq rate telemetry. */
+	if ((error = cixclk_acpi_enable(c->clock)) != 0)
 		goto out;
-	if (c->report.rate == 0) {
-		error = ERANGE;
-		goto out;
-	}
 	if ((error = cixreset_acpi_assert(c->reset)) != 0)
 		goto out;
 	delay(20);

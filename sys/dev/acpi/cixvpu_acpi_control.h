@@ -21,6 +21,8 @@ struct cixvpu_acpi_report {
 	int error, cleanup_error;
 	ACPI_STATUS acpi_status, cleanup_acpi_status;
 	bool identity_valid, released;
+	/* Valid means a decoded query response, including a valid zero rate. */
+	bool rate_query_attempted, rate_valid;
 };
 
 struct cixvpu_acpi_control {
@@ -40,6 +42,8 @@ struct cixvpu_acpi_control {
 /*
  * Thread context only. The caller serializes this embedded, boot-long object.
  * probe accepts a fresh zeroed object once. Query mode does not activate it.
+ * Query mode records rate_query_attempted and rate_valid separately.
+ * A valid decoded rate can be zero. Active mode does not query the rate.
  * Active mode pulses only the main reset, reads identity, then stops the block.
  * _STA confirms only the power bit; it does not prove repair or firmware ready.
  * Error and cleanup_error remain separate. Failed cleanup retains claims and

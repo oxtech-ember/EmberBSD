@@ -39,6 +39,8 @@ static unsigned int nevents, allocations, live, bad, faults, sta_count;
 static bool interrupt_context, power_live, rc_asserted, clock_live;
 static unsigned int delays, reads, maps, unmaps;
 static ACPI_STATUS attach_cca_status;
+/* Opaque provider turns SCMI status -4 (NOT_FOUND) into EIO. */
+static int32_t rate_status;
 static uint64_t clock_rate;
 static uint32_t id, ncores, nlsid;
 enum {
@@ -198,7 +200,7 @@ static int cixreset_acpi_get(ACPI_HANDLE h, uint32_t n, struct cixreset **out)
     r = n == 0x0e ? &main_claim : &rcsu_claim; assert(!r->claimed); r->claimed = true; *out = r; return 0;
 }
 static int cixclk_acpi_get_rate(struct cixclk *c, uint64_t *v)
-{ assert(c == &clock_claim && c->claimed); event('G'); if (faults & F_RATE) return EIO; *v = clock_rate; return 0; }
+{ assert(c == &clock_claim && c->claimed); event('G'); if ((faults & F_RATE) || rate_status != 0) return EIO; *v = clock_rate; return 0; }
 static int cixreset_acpi_get_state(struct cixreset *r, bool *v)
 { assert(r == &rcsu_claim && r->claimed); event('S'); if (faults & F_RCSU_STATE) return EIO; *v = rc_asserted; return 0; }
 static ACPI_STATUS acpi_power_res(ACPI_HANDLE h, ACPI_HANDLE owner, bool on)
@@ -249,7 +251,7 @@ static void fixture(void)
     bad = faults = sta_count = nevents = delays = reads = maps = unmaps = 0; events[0] = 0;
     interrupt_context = power_live = clock_live = rc_asserted = false;
     attach_cca_status = AE_OK;
-    clock_rate = 600000000; id = 0x56621234; ncores = 2; nlsid = 4;
+    rate_status = 0; clock_rate = 600000000; id = 0x56621234; ncores = 2; nlsid = 4;
 }
 static void released(void)
 { CHECK(!clock_claim.claimed && !main_claim.claimed && !rcsu_claim.claimed); CHECK(!power_live && !clock_live && live == 0); }
@@ -279,6 +281,8 @@ static void query_tests(void)
         CHECK(reads == 0 && maps == 0 && delays == 0 && sta_count == 0);
         CHECK(strchr(events, 'S') == NULL && strchr(events, 'P') == NULL && strchr(events, 'A') == NULL && strchr(events, 'E') == NULL);
         if (i == 0) { CHECK(strcmp(events, "CMRGrmc") == 0); CHECK(c.report.rate == 600000000); }
+        CHECK(c.report.rate_query_attempted == (cases[i] == 0 || cases[i] == F_RATE));
+        CHECK(c.report.rate_valid == (cases[i] == 0));
         released();
         CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, false) == EALREADY);
     }
@@ -287,9 +291,9 @@ static void active_tests(void)
 {
     struct cixvpu_acpi_control c = {0}; fixture();
     CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) == 0);
-    CHECK(strcmp(events, "CMRSPTEGAdDdB0123UAKOtrmc") == 0);
+    CHECK(strcmp(events, "CMRSPTEAdDdB0123UAKOtrmc") == 0);
     CHECK(c.report.id == 0x56621234 && c.report.ncores == 2 && c.report.nlsid == 4 && c.report.svn == 0x12345678);
-    CHECK(c.report.rate == 600000000 && c.report.error == 0 && c.report.cleanup_error == 0);
+    CHECK(c.report.rate == 0 && !c.report.rate_query_attempted && !c.report.rate_valid && c.report.error == 0 && c.report.cleanup_error == 0);
     CHECK(reads == 4 && delays == 2 && maps == 1 && unmaps == 1 && sta_count == 2);
     released();
     const uint32_t ids[] = {0x56500000, 0x56550000, 0x56600000, 0x56610000, 0x56620000, 0x56630000, 0x56640000, 0x56650000, 0};
@@ -305,7 +309,7 @@ static void active_tests(void)
 }
 static void failures_tests(void)
 {
-    const unsigned int cases[] = {F_RCSU_STATE, F_POWER_ON, F_CLOCK_ON, F_RATE,
+    const unsigned int cases[] = {F_RCSU_STATE, F_POWER_ON, F_CLOCK_ON,
         F_RESET_DEASSERT, F_MAP, F_STA_ON, F_STA_ON_FAIL};
     for (unsigned int i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
         struct cixvpu_acpi_control c = {0}; fixture(); faults = cases[i];
@@ -319,7 +323,27 @@ static void failures_tests(void)
     CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) == EBUSY);
     CHECK(strcmp(events, "CMRSrmc") == 0); released();
     fixture(); c = (struct cixvpu_acpi_control){0}; clock_rate = 0;
-    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) != 0); CHECK(reads == 0); released();
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) == 0); CHECK(reads == 4); released();
+}
+static void rate_separation_tests(void)
+{
+    struct cixvpu_acpi_control c = {0};
+    fixture(); rate_status = -4;
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) == 0);
+    CHECK(strchr(events, 'G') == NULL);
+    CHECK(strcmp(events, "CMRSPTEAdDdB0123UAKOtrmc") == 0);
+    CHECK(c.report.rate == 0 && !c.report.rate_query_attempted && !c.report.rate_valid && c.report.identity_valid && c.report.released);
+    released();
+    fixture(); rate_status = -4; c = (struct cixvpu_acpi_control){0};
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, false) == EIO);
+    CHECK(strcmp(events, "CMRGrmc") == 0);
+    CHECK(c.report.rate == 0 && c.report.rate_query_attempted && !c.report.rate_valid && c.report.error == EIO && c.report.cleanup_error == 0);
+    CHECK(reads == 0 && maps == 0 && sta_count == 0);
+    released();
+    fixture(); c = (struct cixvpu_acpi_control){0}; clock_rate = 0;
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, false) == 0);
+    CHECK(c.report.rate_query_attempted && c.report.rate_valid && c.report.rate == 0);
+    released();
 }
 static void retention_tests(void)
 {
@@ -449,21 +473,30 @@ static void attach_tests(void)
     CHECK(nevents == 0 && reads == 0 && maps == 0); released();
     for (unsigned int mode = 1; mode <= 2; mode++) {
         struct acpi_attach_args temporary = aa;
-        attach_fixture(mode); cixvpu_acpi_attach(NULL, VPU, &temporary);
+        attach_fixture(mode); if (mode == 2) rate_status = -4; cixvpu_acpi_attach(NULL, VPU, &temporary);
         CHECK(parser_calls == 1 && cleanup_calls == 1 && defer_calls == 1 && deferred_callback != NULL);
         CHECK(nevents == 0 && reads == 0 && maps == 0);
         temporary.aa_node = NULL; temporary.aa_memt = OTHER;
         if (deferred_callback) {
             deferred_callback(deferred_device);
-            CHECK(mode == 1 ? strcmp(events, "CMRGrmc") == 0 : strcmp(events, "CMRSPTEGAdDdB0123UAKOtrmc") == 0);
+            CHECK(mode == 1 ? strcmp(events, "CMRGrmc") == 0 : strcmp(events, "CMRSPTEAdDdB0123UAKOtrmc") == 0);
             unsigned int before = nevents;
             deferred_callback(deferred_device); CHECK(nevents == before);
-            CHECK(strstr(diagnostic, "600000000") != NULL && strstr(diagnostic, "AE_OK") != NULL);
+            CHECK(strstr(diagnostic, "AE_OK") != NULL);
+            if (mode == 1) CHECK(strstr(diagnostic, "600000000") != NULL && strstr(diagnostic, "rate query attempted yes, rate valid yes") != NULL);
+            else CHECK(strstr(diagnostic, "clock rate") == NULL && strstr(diagnostic, "rate query attempted no, rate valid no") != NULL);
             if (mode == 2) CHECK(strstr(diagnostic, "56621234") != NULL && strstr(diagnostic, "cores 2 slots 4") != NULL);
             else CHECK(strstr(diagnostic, "identity valid no, released yes") != NULL);
             released();
         }
     }
+    attach_fixture(1); rate_status = -4; cixvpu_acpi_attach(NULL, VPU, &aa);
+    if (deferred_callback) {
+        deferred_callback(deferred_device);
+        CHECK(strstr(diagnostic, "rate query attempted yes, rate valid no") != NULL);
+        CHECK(strstr(diagnostic, "clock rate") == NULL && strstr(diagnostic, "released yes") != NULL);
+        CHECK(reads == 0 && maps == 0 && sta_count == 0); released();
+    } else CHECK(false);
     const unsigned int invalid_flags[] = {3, 4, 0xffff, UINT32_MAX};
     for (unsigned int i = 0; i < sizeof(invalid_flags)/sizeof(invalid_flags[0]); i++) {
         attach_fixture(invalid_flags[i]); cixvpu_acpi_attach(NULL, VPU, &aa);
@@ -492,7 +525,7 @@ static void attach_tests(void)
 int main(void)
 {
 #ifdef CIXVPU_CONTROL_API
-    metadata_tests(); query_tests(); active_tests(); failures_tests(); retention_tests();
+    metadata_tests(); query_tests(); active_tests(); failures_tests(); rate_separation_tests(); retention_tests();
 #ifdef CIXVPU_ATTACH_API
     attach_tests();
 #endif
