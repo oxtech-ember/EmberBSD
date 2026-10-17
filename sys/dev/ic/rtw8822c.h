@@ -93,6 +93,31 @@ int rtw8822c_set_channel(struct rtw88_softc *, unsigned);
 int rtw8822c_set_tx_power(struct rtw88_softc *sc,
     const struct rtw8822c_efuse *efuse, unsigned channel, unsigned regd);
 
+struct rtw8822c_dack_result {
+	uint32_t operations;
+	uint32_t delay_us;
+	uint16_t adc[2][2];		/* Encoded 10-bit compensation. */
+	uint8_t dac[2][2];		/* Programmed 8-bit vectors. */
+	int16_t adc_residual[2][2];
+	int16_t dac_residual[2][2];
+	uint8_t valid_paths;		/* 3 only after complete success. */
+	uint8_t reset_required;
+};
+
+/*
+ * Cold ADCK/DACK for paths AB. Require resources_ready, powered and
+ * bootstrapping; running/started must both be zero. The caller serializes
+ * access before HCI/interrupt start. No warm cache. Check all measurements
+ * and restore temporary controls on success. At most 1000000 bus operations
+ * and 2000000 us of explicit delays; these are software bounds, not RF timing
+ * guarantees.
+ * The first error stops all access. Any attempted write followed by failure
+ * sets reset_required; the caller MUST perform a full power reset before
+ * retry or scan/TX. Register snapshots cannot roll back analog/MSBK state.
+ * Leave valid_paths zero on any error, including failure during restore.
+ */
+int rtw8822c_dack(struct rtw88_softc *, struct rtw8822c_dack_result *);
+
 /* Wi-Fi-only antenna ownership; no dynamic Bluetooth policy. */
 int rtw8822c_coex_power_on(struct rtw88_softc *);
 int rtw8822c_coex_init(struct rtw88_softc *);
