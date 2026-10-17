@@ -28,6 +28,17 @@ struct rtw88_net_policy {
 	int beacon_valid;
 	struct rtw88_net_rx_counts rx;
 };
+/* Numeric failure evidence. No station address or network name is stored. */
+#define RTW88_NET_STAGE_CHANNEL 1U
+#define RTW88_NET_STAGE_STATION 2U
+#define RTW88_NET_STAGE_CORE 3U
+struct rtw88_net_state_diag {
+	int state, error;
+	unsigned stage, channel, core_channel, basic, slot, aid, raw_aid;
+	unsigned bssid_flags, nrates, flags, started, running;
+};
+int		rtw88_net_state_format(char *, size_t,
+    const struct rtw88_net_state_diag *);
 uint64_t	rtw88_net_request(struct rtw88_net_policy *);
 int		rtw88_net_commit(struct rtw88_net_policy *, uint64_t, int, int);
 void		rtw88_net_close(struct rtw88_net_policy *);

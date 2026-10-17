@@ -97,6 +97,11 @@ add at most ten reads across both paths. A read failure stops all later I/O.
 The same kernel lists 26 APs, including the test network at 2447 and 5745 MHz.
 A 2.4 GHz station trial reaches RUN setup, which fails with EINVAL.
 The failure powers the radio off. Station acceptance remains pending.
+State failures now retain numeric call stages and station inputs before stop.
+Stage 1 is channel setup, 2 is station setup, and 3 is an inactive core.
+The output includes both channels, rate mask, slot, AID and rate count.
+BSSID flags report presence, a group address and an all-zero address.
+The output contains no station address or network name. Input checks remain strict.
 
 The kernel configuration selects the native station wrapper and ingress
 generation policy. Use the standard interface tools when the PCI wrapper

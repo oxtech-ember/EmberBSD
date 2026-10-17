@@ -7,7 +7,7 @@
 
 static unsigned checks, failures;
 #define CHECK(e) do { checks++; if (!(e)) { failures++; \
-	fprintf(stderr, "line %u: %s\n", __LINE__, #e); } } while (0)
+	fprintf(stderr, "line %u: %s\n", (unsigned)__LINE__, #e); } } while (0)
 
 int
 main(void)
@@ -17,6 +17,41 @@ main(void)
 	const uint8_t bssid[6] = {2, 1, 2, 3, 4, 5};
 	uint64_t a, b, c;
 	unsigned i;
+	struct rtw88_net_state_diag diag = {
+	    .state = 4, .error = EINVAL, .stage = 2, .channel = 6,
+	    .core_channel = 6, .basic = 0, .slot = 9, .aid = 7,
+	    .raw_aid = 0xc007, .bssid_flags = 1, .nrates = 12,
+	    .flags = 0x200, .started = 1, .running = 1
+	};
+	char evidence[384], shortbuf[8];
+	int evidence_len;
+
+	/* Losing a bad input must not hide which strict call failed. */
+	evidence_len = rtw88_net_state_format(evidence, sizeof(evidence), &diag);
+	CHECK(evidence_len > 0 && (size_t)evidence_len < sizeof(evidence));
+	CHECK(strstr(evidence, "state 4 failed: 22 stage 2") != NULL);
+	CHECK(strstr(evidence, "channel 6 core_channel 6 basic 0") != NULL);
+	CHECK(strstr(evidence, "slot 9 aid 7 raw_aid 0xc007") != NULL);
+	CHECK(strstr(evidence, "bssid_flags 0x1 nrates 12 flags 0x200") != NULL);
+	CHECK(strstr(evidence, "started 1 running 1") != NULL);
+	diag.stage = 1;
+	diag.channel = 166;
+	diag.core_channel = 6;
+	diag.basic = 0x150;
+	diag.aid = 2008;
+	diag.bssid_flags = 7;
+	(void)rtw88_net_state_format(evidence, sizeof(evidence), &diag);
+	CHECK(strstr(evidence, "failed: 22 stage 1 channel 166 core_channel 6") != NULL);
+	CHECK(strstr(evidence, "basic 0x150 slot 9 aid 2008") != NULL);
+	CHECK(strstr(evidence, "bssid_flags 0x7") != NULL);
+	memset(shortbuf, 0x5a, sizeof(shortbuf));
+	CHECK(rtw88_net_state_format(shortbuf, 7, &diag) > 7);
+	CHECK(shortbuf[6] == '\0' && shortbuf[7] == 0x5a);
+	/* Full-width invalid inputs still leave the last core fields visible. */
+	memset(&diag, 0xff, sizeof(diag));
+	evidence_len = rtw88_net_state_format(evidence, sizeof(evidence), &diag);
+	CHECK(evidence_len > 0 && (size_t)evidence_len < sizeof(evidence));
+	CHECK(strstr(evidence, "running 4294967295\n") != NULL);
 
 	/* Beacon timeout configuration is in 1024-us TUs, not milliseconds. */
 	CHECK(rtw88_net_tu_to_ms(0) == 0);

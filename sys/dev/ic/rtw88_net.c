@@ -87,10 +87,13 @@ rtw88_net_state_work(struct work *work, void *cookie)
 	struct rtw88_net *net = cookie;
 	struct ieee80211com *ic = &net->ic;
 	struct ifnet *ifp = &net->ec.ec_if;
+	struct rtw88_net_state_diag diag;
 	enum ieee80211_state state;
 	uint64_t epoch;
-	unsigned channel, basic, slot, aid;
+	unsigned channel, basic, slot, aid, i;
 	const uint8_t *bssid;
+	char failure[384];
+	uint8_t any;
 	int arg, error;
 
 	(void)work;
@@ -127,22 +130,50 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			continue;
 		}
 		error = 0;
+		memset(&diag, 0, sizeof(diag));
+		diag.state = state;
+		diag.channel = channel;
+		diag.basic = basic;
+		diag.slot = slot;
+		diag.aid = aid;
+		diag.raw_aid = ic->ic_bss->ni_associd;
+		diag.nrates = ic->ic_bss->ni_rates.rs_nrates;
+		diag.flags = ic->ic_flags;
+		diag.started = net->core->sc_started;
+		diag.running = net->core->sc_running;
+		/* Bits: present, group address, all zero. Do not retain the address. */
+		if (bssid != NULL) {
+			diag.bssid_flags = 1 | ((bssid[0] & 1) << 1);
+			any = 0;
+			for (i = 0; i < 6; i++)
+				any |= bssid[i];
+			if (any == 0)
+				diag.bssid_flags |= 4;
+		}
 		if (net->core->sc_started) {
-			if (state != IEEE80211_S_INIT)
+			if (state != IEEE80211_S_INIT) {
+				diag.stage = RTW88_NET_STAGE_CHANNEL;
 				error = rtw88_channel(net->core, channel);
-			if (error == 0)
+			}
+			if (error == 0) {
+				diag.stage = RTW88_NET_STAGE_STATION;
 				error = rtw88_station_config(net->core, bssid, aid,
 				    basic, slot, state == IEEE80211_S_RUN);
+			}
 		} else if (state != IEEE80211_S_INIT) {
+			diag.stage = RTW88_NET_STAGE_CORE;
 			error = ENXIO;
 		}
+		diag.core_channel = net->core->sc_channel;
+		diag.error = error;
 		error = rtw88_net_commit(&net->policy, epoch, error,
 		    state != IEEE80211_S_INIT);
 		mutex_exit(net->lock);
 		if (error != ECANCELED) {
 			if (error != 0) {
-				aprint_error_dev(net->dev,
-				    "station state %d failed: %d\n", state, error);
+				(void)rtw88_net_state_format(failure,
+				    sizeof(failure), &diag);
+				aprint_error_dev(net->dev, "%s", failure);
 				ifp->if_flags &= ~(IFF_RUNNING | IFF_OACTIVE);
 				(void)net->parent_state(ic, IEEE80211_S_INIT, -1);
 				rtw88_stop(net->core);

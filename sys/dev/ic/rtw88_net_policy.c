@@ -4,10 +4,25 @@
 #include <sys/types.h>
 #ifdef _KERNEL
 #include <sys/errno.h>
+#include <sys/systm.h>
 #else
 #include <errno.h>
+#include <stdio.h>
 #endif
 #include "rtw88_net_policy.h"
+
+int
+rtw88_net_state_format(char *buf, size_t len,
+    const struct rtw88_net_state_diag *d)
+{
+
+	return snprintf(buf, len, "station state %d failed: %d stage %u "
+	    "channel %u core_channel %u basic %#x slot %u aid %u raw_aid %#x "
+	    "bssid_flags %#x nrates %u flags %#x started %u running %u\n",
+	    d->state, d->error, d->stage, d->channel, d->core_channel,
+	    d->basic, d->slot, d->aid, d->raw_aid, d->bssid_flags,
+	    d->nrates, d->flags, d->started, d->running);
+}
 
 uint64_t
 rtw88_net_request(struct rtw88_net_policy *p)
