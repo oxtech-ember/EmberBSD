@@ -38,6 +38,10 @@ bool		acpi_power_register(ACPI_HANDLE);
 void		acpi_power_deregister(ACPI_HANDLE);
 bool		acpi_power_get(ACPI_HANDLE, int *);
 bool		acpi_power_set(ACPI_HANDLE, int);
+/*
+ * Process context only: resource control evaluates AML under a sleep mutex.
+ * Failed AML control retains the owner's reference for explicit retry/release.
+ */
 ACPI_STATUS	acpi_power_res(ACPI_HANDLE, ACPI_HANDLE, bool);
 void		acpi_power_add(struct acpi_devnode *);
 

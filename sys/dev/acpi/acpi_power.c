@@ -63,6 +63,7 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_power.c,v 1.36 2022/05/31 20:28:57 mrg Exp $");
 #include <sys/param.h>
 #include <sys/kmem.h>
 #include <sys/mutex.h>
+#include <sys/once.h>
 #include <sys/sysctl.h>
 
 #include <dev/acpi/acpireg.h>
@@ -83,32 +84,46 @@ struct acpi_power_res {
 	ACPI_HANDLE			res_ref[5];
 	char				res_name[5];
 	kmutex_t			res_mutex;
+	enum {
+		ACPI_POWER_RES_OFF,
+		ACPI_POWER_RES_ON,
+		ACPI_POWER_RES_UNCERTAIN
+	} res_state;
 
 	TAILQ_ENTRY(acpi_power_res)	res_list;
 };
 
 static TAILQ_HEAD(, acpi_power_res) res_head =
 	TAILQ_HEAD_INITIALIZER(res_head);
+static kmutex_t res_list_mutex;
+static ONCE_DECL(res_list_once);
 
 static int32_t acpi_power_acpinode = CTL_EOL;
 static int32_t acpi_power_powernode = CTL_EOL;
 
 static struct acpi_power_res	*acpi_power_res_init(ACPI_HANDLE);
 static struct acpi_power_res	*acpi_power_res_get(ACPI_HANDLE);
+static int		 acpi_power_res_list_init(void);
 
 static ACPI_STATUS	 acpi_power_get_direct(struct acpi_devnode *);
 static ACPI_STATUS	 acpi_power_get_indirect(struct acpi_devnode *);
 static ACPI_STATUS	 acpi_power_switch(struct acpi_devnode *,
 						   int, bool);
-static ACPI_STATUS	 acpi_power_res_ref(struct acpi_power_res *,
-					    ACPI_HANDLE);
-static ACPI_STATUS	 acpi_power_res_deref(struct acpi_power_res *,
-					      ACPI_HANDLE);
+static ACPI_STATUS	 acpi_power_res_switch(struct acpi_power_res *,
+					       ACPI_HANDLE, bool);
 static ACPI_STATUS	 acpi_power_res_sta(ACPI_OBJECT *, void *);
 
 static ACPI_OBJECT	*acpi_power_pkg_get(ACPI_HANDLE, int);
 static int		 acpi_power_sysctl(SYSCTLFN_PROTO);
 static const char	*acpi_xname(ACPI_HANDLE);
+
+static int
+acpi_power_res_list_init(void)
+{
+
+	mutex_init(&res_list_mutex, MUTEX_DEFAULT, IPL_NONE);
+	return 0;
+}
 
 static struct acpi_power_res *
 acpi_power_res_init(ACPI_HANDLE hdl)
@@ -177,13 +192,19 @@ acpi_power_res_get(ACPI_HANDLE hdl)
 {
 	struct acpi_power_res *res;
 
+	(void)RUN_ONCE(&res_list_once, acpi_power_res_list_init);
+	mutex_enter(&res_list_mutex);
 	TAILQ_FOREACH(res, &res_head, res_list) {
 
-		if (res->res_handle == hdl)
+		if (res->res_handle == hdl) {
+			mutex_exit(&res_list_mutex);
 			return res;
+		}
 	}
 
-	return acpi_power_res_init(hdl);
+	res = acpi_power_res_init(hdl);
+	mutex_exit(&res_list_mutex);
+	return res;
 }
 
 bool
@@ -196,16 +217,33 @@ void
 acpi_power_deregister(ACPI_HANDLE hdl)
 {
 	struct acpi_devnode *ad = acpi_match_node(hdl);
-	struct acpi_power_res *res;
+	struct acpi_power_res *res, **snapshot;
+	size_t i = 0, n = 0;
 
 	if (ad == NULL)
 		return;
 
-	/*
-	 * Remove all references in each resource.
-	 */
+	(void)RUN_ONCE(&res_list_once, acpi_power_res_list_init);
+	mutex_enter(&res_list_mutex);
 	TAILQ_FOREACH(res, &res_head, res_list)
-	    (void)acpi_power_res_deref(res, ad->ad_handle);
+		n++;
+	if (n == 0) {
+		mutex_exit(&res_list_mutex);
+		return;
+	}
+	snapshot = kmem_alloc(n * sizeof(*snapshot), KM_SLEEP);
+	TAILQ_FOREACH(res, &res_head, res_list)
+		snapshot[i++] = res;
+	mutex_exit(&res_list_mutex);
+
+	/*
+	 * Registry entries live until shutdown. Drop the registry lock before
+	 * acquiring a resource lock or evaluating AML. A failed release retains
+	 * its owner, so this void interface cannot promise full deregistration.
+	 */
+	for (i = 0; i < n; i++)
+		(void)acpi_power_res(snapshot[i]->res_handle, ad->ad_handle, false);
+	kmem_free(snapshot, n * sizeof(*snapshot));
 }
 
 /*
@@ -445,7 +483,9 @@ acpi_power_switch(struct acpi_devnode *ad, int state, bool on)
 		if (ACPI_FAILURE(rv))
 			continue;
 
-		(void)acpi_power_res(hdl, ad->ad_handle, on);
+		rv = acpi_power_res(hdl, ad->ad_handle, on);
+		if (ACPI_FAILURE(rv))
+			break;
 	}
 
 	ACPI_FREE(pkg);
@@ -457,8 +497,10 @@ ACPI_STATUS
 acpi_power_res(ACPI_HANDLE hdl, ACPI_HANDLE ref, bool on)
 {
 	struct acpi_power_res *res;
-	const char *str;
 	ACPI_STATUS rv;
+
+	if (ref == NULL)
+		return AE_BAD_PARAMETER;
 
 	/*
 	 * Search for the resource.
@@ -468,96 +510,63 @@ acpi_power_res(ACPI_HANDLE hdl, ACPI_HANDLE ref, bool on)
 	if (res == NULL)
 		return AE_NOT_FOUND;
 
-	if (ref == NULL)
-		return AE_BAD_PARAMETER;
-
-	/*
-	 * Adjust the reference counting. This is
-	 * necessary since a single power resource
-	 * can be shared by multiple devices.
-	 */
-	if (on) {
-		rv = acpi_power_res_ref(res, ref);
-		str = "_ON";
-	} else {
-		rv = acpi_power_res_deref(res, ref);
-		str = "_OFF";
-	}
-
-	if (ACPI_FAILURE(rv))
-		return rv;
-
-	/*
-	 * Turn the resource on or off.
-	 */
-	return AcpiEvaluateObject(res->res_handle, str, NULL, NULL);
-}
-
-static ACPI_STATUS
-acpi_power_res_ref(struct acpi_power_res *res, ACPI_HANDLE ref)
-{
-	size_t i, j = SIZE_MAX;
-
+	/* AML can sleep. Serialize its result and ownership as one transition. */
 	mutex_enter(&res->res_mutex);
-
-	for (i = 0; i < __arraycount(res->res_ref); i++) {
-
-		/*
-		 * Do not error out if the handle
-		 * has already been referenced.
-		 */
-		if (res->res_ref[i] == ref) {
-			mutex_exit(&res->res_mutex);
-			return AE_OK;
-		}
-
-		if (j == SIZE_MAX && res->res_ref[i] == NULL)
-			j = i;
-	}
-
-	if (j == SIZE_MAX) {
-		mutex_exit(&res->res_mutex);
-		return AE_LIMIT;
-	}
-
-	res->res_ref[j] = ref;
+	rv = acpi_power_res_switch(res, ref, on);
 	mutex_exit(&res->res_mutex);
-
-	ACPI_DEBUG_PRINT((ACPI_DB_INFO, "%s referenced "
-		"by %s\n", res->res_name, acpi_xname(ref)));
-
-	return AE_OK;
+	return rv;
 }
 
 static ACPI_STATUS
-acpi_power_res_deref(struct acpi_power_res *res, ACPI_HANDLE ref)
+acpi_power_res_switch(struct acpi_power_res *res, ACPI_HANDLE ref, bool on)
 {
-	size_t i;
+	size_t i, owner = SIZE_MAX, empty = SIZE_MAX, count = 0;
+	ACPI_STATUS rv;
 
-	mutex_enter(&res->res_mutex);
-
+	KASSERT(mutex_owned(&res->res_mutex));
 	for (i = 0; i < __arraycount(res->res_ref); i++) {
+		if (res->res_ref[i] == ref)
+			owner = i;
+		if (res->res_ref[i] != NULL)
+			count++;
+		else if (empty == SIZE_MAX)
+			empty = i;
+	}
 
-		if (res->res_ref[i] != ref)
-			continue;
+	if (on) {
+		if (res->res_state == ACPI_POWER_RES_UNCERTAIN && owner == SIZE_MAX)
+			return AE_ABORT_METHOD;
+		if (owner == SIZE_MAX) {
+			if (empty == SIZE_MAX)
+				return AE_LIMIT;
+			res->res_ref[empty] = ref;
+		}
+		if (res->res_state == ACPI_POWER_RES_ON)
+			return AE_OK;
+		/* The initial unowned state does not infer firmware power state. */
+		res->res_state = ACPI_POWER_RES_UNCERTAIN;
+		rv = AcpiEvaluateObject(res->res_handle, "_ON", NULL, NULL);
+		if (ACPI_SUCCESS(rv))
+			res->res_state = ACPI_POWER_RES_ON;
+		return rv;
+	}
 
-		res->res_ref[i] = NULL;
-		mutex_exit(&res->res_mutex);
-
-		ACPI_DEBUG_PRINT((ACPI_DB_INFO, "%s dereferenced "
-			"by %s\n", res->res_name, acpi_xname(ref)));
-
+	if (owner == SIZE_MAX)
+		return AE_ABORT_METHOD;
+	if (count > 1) {
+		KASSERT(res->res_state == ACPI_POWER_RES_ON);
+		res->res_ref[owner] = NULL;
 		return AE_OK;
 	}
 
-	/*
-	 * If the array remains to be non-empty,
-	 * something else is using the resource
-	 * and hence it can not be turned off.
-	 */
-	mutex_exit(&res->res_mutex);
-
-	return AE_ABORT_METHOD;
+	/* Either AML method can fail after changing hardware: retain the owner. */
+	res->res_state = ACPI_POWER_RES_UNCERTAIN;
+	rv = AcpiEvaluateObject(res->res_handle, "_OFF", NULL, NULL);
+	if (ACPI_SUCCESS(rv)) {
+		res->res_ref[owner] = NULL;
+		res->res_state = ACPI_POWER_RES_OFF;
+	}
+	return rv;
 }
 
 static ACPI_STATUS
