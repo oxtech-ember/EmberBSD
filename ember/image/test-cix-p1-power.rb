@@ -8,6 +8,7 @@ require 'open3'
 require 'shellwords'
 
 here = __dir__
+shell = ENV.fetch('TEST_SH', 'sh')
 library = File.join(here, 'cix-p1-power.subr')
 policy = File.join(here, 'cix-p1-power-button')
 abort 'FAIL: missing CIX power startup library' unless File.file?(library)
@@ -71,12 +72,12 @@ Dir.mktmpdir('cix-power-') do |tmp|
       cix_run="$2/run"
       cix_log="$2/log"
       printf() {
-        if [ "$FAIL_PID_WRITE" = yes ]; then return 1; fi
+        if [ "$FAIL_PID_WRITE" = yes ] && [ "$#" -eq 2 ]; then return 1; fi
         command printf "$@"
       }
       cix_power_start
     SH
-    output, status = Open3.capture2e(env.merge('POWER_DEVICE' => '/dev/null').merge(extra), 'sh', '-c', script,
+    output, status = Open3.capture2e(env.merge('POWER_DEVICE' => '/dev/null').merge(extra), shell, '-c', script,
       'power-contract', library, dir)
     [status.success?, output, dir]
   end
@@ -133,7 +134,7 @@ Dir.mktmpdir('cix-power-') do |tmp|
     rcenv = env.merge('cix_run' => rcroot + '/var/run', 'cix_log' => rcroot + '/var/log',
       'POWER_DEVICE' => '/dev/null')
     File.write(trace, '')
-    output, status = Open3.capture2e(rcenv, 'sh', '-c', probe + '. "$1"', 'rc-contract', rcpath)
+    output, status = Open3.capture2e(rcenv, shell, '-c', probe + '. "$1"', 'rc-contract', rcpath)
     rcpid = rcroot + '/var/run/cix-powerd/pid'
     live << File.read(rcpid).to_i if File.file?(rcpid)
     check.call(status.success? && File.file?(rcpid), 'actual rc starts the native power daemon')
@@ -141,7 +142,7 @@ Dir.mktmpdir('cix-power-') do |tmp|
     check.call(output.include?('background'), 'console still reports asynchronous network startup')
     FileUtils.rm_rf(rcroot + '/var/run/cix-powerd')
     File.write(trace, '')
-    output, status = Open3.capture2e(rcenv.merge('FAIL_POWERD' => 'yes'), 'sh', '-c', probe + '. "$1"', 'rc-contract', rcpath)
+    output, status = Open3.capture2e(rcenv.merge('FAIL_POWERD' => 'yes'), shell, '-c', probe + '. "$1"', 'rc-contract', rcpath)
     check.call(status.success? && output.include?('WARNING: powerd startup failed'), 'actual rc exposes failure and preserves the console')
     check.call(File.read(trace).include?('network'), 'power startup failure does not suppress Wi-Fi startup')
 
@@ -154,7 +155,7 @@ Dir.mktmpdir('cix-power-') do |tmp|
     File.write(action, text.sub('/sbin/shutdown', Shellwords.escape(bin + '/shutdown-double'))
       .gsub('/var/run/cix-poweroff.pending', lock))
     invoke = lambda do |event, extra = {}|
-      Open3.capture2e(env.merge(extra), 'sh', action, 'acpibut0', event)
+      Open3.capture2e(env.merge(extra), shell, action, 'acpibut0', event)
     end
     File.write(trace, '')
     _, status = invoke.call('released')

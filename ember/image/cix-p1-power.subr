@@ -14,7 +14,8 @@ cix_power_start()
 		echo 'powerd: startup guard exists or cannot be created.' >&2
 		return 1
 	}
-	if ! { : >> "$_cix_log/powerd.log" && chmod 600 "$_cix_log/powerd.log"; }; then
+	# A special builtin's redirection error can exit sh before guard cleanup.
+	if ! { printf '' >> "$_cix_log/powerd.log" && chmod 600 "$_cix_log/powerd.log"; }; then
 		rm -d "$_cix_run/cix-powerd"
 		return 1
 	fi
