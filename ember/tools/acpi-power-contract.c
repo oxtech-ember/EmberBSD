@@ -14,6 +14,22 @@
 #include <time.h>
 #include <unistd.h>
 
+/* Kernel string service: do not depend on a host libc extension. */
+static size_t
+contract_strlcpy(char *dst, const char *src, size_t size)
+{
+	size_t length = strlen(src);
+
+	if (size != 0) {
+		size_t copied = length < size - 1 ? length : size - 1;
+
+		memcpy(dst, src, copied);
+		dst[copied] = '\0';
+	}
+	return length;
+}
+#define strlcpy contract_strlcpy
+
 typedef void *ACPI_HANDLE;
 typedef uint64_t ACPI_INTEGER;
 typedef uint32_t ACPI_STATUS;
@@ -173,6 +189,30 @@ static bool control_armed, control_entered, control_release;
 			printf("FAIL line%u: %s\n", (unsigned)__LINE__, #x);   \
 		}                                                              \
 	} while (0)
+static void
+string_service_contract(void)
+{
+	char buf[7];
+
+	puts("CASE bounded host string service");
+	memset(buf, 'X', sizeof(buf));
+	CHECK(contract_strlcpy(buf + 1, "PWR0", 5) == 4);
+	CHECK(memcmp(buf + 1, "PWR0\0", 5) == 0);
+	CHECK(buf[0] == 'X' && buf[6] == 'X');
+	memset(buf, 'X', sizeof(buf));
+	CHECK(contract_strlcpy(buf + 1, "LONGER", 5) == 6);
+	CHECK(memcmp(buf + 1, "LONG\0", 5) == 0);
+	CHECK(buf[0] == 'X' && buf[6] == 'X');
+	CHECK(contract_strlcpy(NULL, "LONGER", 0) == 6);
+	memset(buf, 'X', sizeof(buf));
+	CHECK(contract_strlcpy(buf + 1, "PWR0", 1) == 4);
+	CHECK(buf[1] == '\0');
+	CHECK(buf[0] == 'X' && buf[2] == 'X');
+	memset(buf, 'X', sizeof(buf));
+	CHECK(contract_strlcpy(buf + 1, "", 3) == 0);
+	CHECK(buf[1] == '\0' && buf[0] == 'X' && buf[2] == 'X');
+}
+
 static ACPI_STATUS
 acpi_eval_struct(ACPI_HANDLE h, const char *path, ACPI_BUFFER *b)
 {
@@ -517,6 +557,7 @@ int
 main(void)
 {
 	alarm(10);
+	string_service_contract();
 	direct_contract();
 	switch_contract();
 	transition_contract();
