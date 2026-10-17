@@ -110,8 +110,11 @@ cleanup, then terminates WPA. Multicast-list changes can restart an UP radio
 through the native ioctl path. Quiescing first avoids that restart request.
 The actual-consumer contract checks the old ordering as a failing control.
 Local DHCP cleanup remains requested; delivery of DHCPRELEASE after DOWN is
-not guaranteed. The five-second physical trial predates this ordering change;
-its additional timing benefit remains unqualified.
+not guaranteed. After installing `fc9ab38b2`, one `shutdown -i -r now` trial
+reaches completed FFS unmount 0.31 s after the reason log. No radio calibration
+appears within that interval. The next boot reports clean FFS and restores
+WPA2/DHCP; three gateway probes pass. The five-second button trial predates this
+ordering change. New press-to-fan-stop and electrical timing remain unmeasured.
 
 This development profile exposes an unauthenticated root shell on its trusted
 UART console. It starts no network login server. Configure access separately

@@ -82,6 +82,12 @@ FFS and restores WPA2/DHCP. The persistence marker and installed file hashes
 match. Electrical rail state remains unmeasured. No shutdown hook or filesystem
 step was bypassed.
 
+After installing the `fc9ab38b2` network-stop ordering fix, one commanded
+`shutdown -i -r now` trial reaches completed FFS unmount 0.31 s after the reason
+log. No radio calibration appears in that interval. The next boot reports clean
+FFS and restores WPA2/DHCP. This measures the OS reboot path; new physical
+button-to-fan-stop and electrical power-off timing remain unmeasured.
+
 A separate control on the same BIOS `BiosV1.5-W20260706-e321056a` and EC
 `V1.15-7e90ed4de22c` stops at the built-in UEFI Shell after reported input-power
 removal, before any OS boot. The observed help identifies `reset -s` as shutdown.
