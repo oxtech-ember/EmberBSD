@@ -129,6 +129,9 @@ else
         git -C "$src/$tree" reset -q --hard
         git -C "$src/$tree" clean -qfdx
     done
+    # Nested submodule checkouts can hold files from a fetched tip that
+    # conflict with the pinned commit; restore them too.
+    git -C "$src" submodule -q foreach --recursive 'git reset -q --hard && git clean -qfdx'
     printf '%s\n' "$revision" > "$src/.ember-pinned"
     [[ $prepare_only -eq 0 ]] || { echo "prepared: $src"; exit 0; }
 fi
