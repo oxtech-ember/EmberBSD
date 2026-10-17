@@ -56,7 +56,8 @@ poison the instance. Reinitialization and later callbacks are then forbidden.
 Tokens are never reused; the engine stops after 1023 issued requests.
 Replies remain unchanged on error; a separate trace reports failure evidence.
 
-The actual-source contract passes 33029 checks with GCC16 and ASan/UBSan.
+The actual-source wire contract passes 52660 checks with GCC16 path analysis
+and ASan/UBSan.
 Fourteen causal mutations fail, including missing barriers and poisoned reuse.
 The source cross-compiles with actual AArch64 kernel flags and GCC path analysis.
 Target Cppcheck reports only unused public APIs and inherited header style;
@@ -72,6 +73,28 @@ configuration selects flags 1 and disables deferred VPU provider queries.
 VPU descriptor validation remains enabled. The normal
 EMBER64 configuration does not select this diagnostic attachment.
 
+The separate
+[EMBER64_CIXSCMI_CLOCK_QUERY](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY)
+configuration selects exact flags 2. It sends only CLOCK PROTOCOL_VERSION,
+protocol 0x14, message 0, with no clock ID argument. Flags 3 and all other
+nonzero values are rejected before deferred evaluation, mapping or bus access.
+This diagnostic does not query clock attributes, rates or clock ID 67.
+The original BASE configuration and the normal EMBER64 configuration are unchanged.
+
+CLOCK output separates the helper return, firmware status and binding decode.
+`helper_return` is the helper's return value. A framed firmware error returns EIO
+with valid full status; EIO alone does not identify a transport failure.
+`decode_error` is EPROTO when a successful reply has more than the exact four-byte
+version body. A short body fails inside the helper. No version word becomes valid
+on either failure. Every decoded word, including zero, remains visible as raw data.
+`reviewed_version` means exactly 0x10000. Other decoded values report local
+`version_policy_error=ENOTSUP`. This policy does not claim SCMI incompatibility;
+[DEN0056C section 4.1.3](https://documentation-service.arm.com/static/5fce1789e167456a35b368a7)
+defines same-major minor revisions as compatible. Decode and policy fields are
+not evaluated when the helper fails; check version and status validity first.
+No result starts another request or changes a clock. CLOCK physical behavior
+remains unqualified until a separate manual diagnostic boot.
+
 Before mapping, the binding validates each static property, resource and
 reference. It requires MBX6/7, SHM0/1, channel 8, non-coherent shared memory,
 the reviewed interrupt profile and four unowned ACPI nodes. It reserves only
@@ -81,8 +104,8 @@ The binding checks that complete span, then matches the expected UID including
 its NUL terminator. It does not require unused capacity bytes to be zero.
 Pre-query rejection prints a constant validation stage, role and native error.
 Those diagnostics add no firmware evaluation or transport access.
-Mappings use Device memory and explicit completion barriers. One BASE-version
-request runs in serialized cold-boot thread context. No IRQ is installed or
+Mappings use Device memory and explicit completion barriers. One selected
+version request runs in serialized cold-boot thread context. No IRQ is installed or
 cleared. The binding exposes no retry, setter, clock service or detach path.
 Once a request can be published, mappings and claims remain until reboot,
 including on timeout or malformed reply. Before that point, failures release

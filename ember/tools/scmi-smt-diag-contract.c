@@ -41,7 +41,8 @@ static const struct fixture fixtures[] = {
 	{ SCMI_SMT_DIAG_BASE_LIST_PROTOCOLS, 255, 0x4006, 8, 8 },
 	{ SCMI_SMT_DIAG_CLOCK_ATTRIBUTES, 0, 0x5001, 4, 4 },
 	{ SCMI_SMT_DIAG_CLOCK_ENTITY_ATTRIBUTES, 67, 0x5003, 8, 20 },
-	{ SCMI_SMT_DIAG_CLOCK_RATE_GET, 67, 0x5006, 8, 8 }
+	{ SCMI_SMT_DIAG_CLOCK_RATE_GET, 67, 0x5006, 8, 8 },
+	{ SCMI_SMT_DIAG_CLOCK_VERSION, 0, 0x5000, 4, 4 }
 };
 
 struct device {
@@ -101,6 +102,7 @@ model_write(void *cookie, uint32_t off, uint32_t value)
 	struct device *d = cookie;
 	d->calls++;
 	d->writes++;
+	CHECK(off != 28 || d->fixture->request_length == 8);
 	CHECK(off == 0 || off == 4 || off == 16 || off == 20 ||
 	    off == 24 || off == 28 || off == 0x80);
 	if (off > 0x80 || (off & 3) != 0)
@@ -265,6 +267,36 @@ test_success(void)
 }
 
 static void
+test_clock_version(void)
+{
+	const uint32_t statuses[] = { 0xffffffff, 0xfffffffd, 0xfffffffc,
+	    0xfffffffa, 0xfffffff8, 0x80000000, 0x7fffffff };
+	for (size_t i = 0; i <= sizeof(statuses) / sizeof(statuses[0]); i++) {
+		struct scmi_smt_diag s = SCMI_SMT_DIAG_INITIALIZER;
+		struct scmi_smt_diag_reply r = { 0 }, before;
+		struct scmi_smt_diag_trace t = { 0 }, tb;
+		struct device d;
+		struct scmi_smt_diag_io io = model_io(&d);
+		model_reset(&d, &fixtures[6], 1);
+		memset(&r, 0xa5, sizeof(r)); before = r;
+		memset(&t, 0x5a, sizeof(t)); tb = t;
+		CHECK(scmi_smt_diag_init(&s, &io) == 0);
+		CHECK(scmi_smt_diag_query(&s, fixtures[6].cmd, 67, &r, &t) == EINVAL);
+		CHECK(scmi_smt_diag_query(&s, fixtures[6].cmd, UINT32_MAX, &r, &t) == EINVAL);
+		CHECK(d.calls == 0 && memcmp(&r, &before, sizeof(r)) == 0);
+		CHECK(memcmp(&t, &tb, sizeof(t)) == 0);
+		if (i != 0) { d.status = statuses[i - 1]; d.length = 8; }
+		CHECK(scmi_smt_diag_query(&s, fixtures[6].cmd, 0, &r, &t) == (i ? EIO : 0));
+		CHECK(d.rings == 1 && !d.bad_request && d.writes == 6);
+		CHECK(t.request_header == 0x00045000 && t.response_header == 0x00045000);
+		CHECK(t.firmware_status_valid && (uint32_t)t.firmware_status == d.status);
+		CHECK(t.stage == (i ? SCMI_SMT_DIAG_FIRMWARE : SCMI_SMT_DIAG_COMPLETE));
+		if (i) CHECK(memcmp(&r, &before, sizeof(r)) == 0);
+		else CHECK(r.data_length == 4 && r.data[0] == 0x78 && r.data[3] == 0x12);
+	}
+}
+
+static void
 test_api(void)
 {
 	struct scmi_smt_diag s = SCMI_SMT_DIAG_INITIALIZER, before;
@@ -415,13 +447,14 @@ test_status_and_list(void)
 static void
 test_waits(void)
 {
-	unsigned int mode, phase;
+	unsigned int mode, phase, command;
+	for (command = 5; command <= 6; command++)
 	for (phase = 0; phase < 2; phase++) {
 		for (mode = 0; mode < 5; mode++) {
 			struct scmi_smt_diag s = SCMI_SMT_DIAG_INITIALIZER;
 			struct device d;
 			struct scmi_smt_diag_io io = model_io(&d);
-			model_reset(&d, &fixtures[5], 1);
+			model_reset(&d, &fixtures[command], 1);
 			d.initial_status = phase ? 1 : 0;
 			d.no_response = 1;
 			if (mode == 1) d.frozen = 1;
@@ -509,6 +542,7 @@ main(void)
 		return 1;
 	}
 	test_success();
+	test_clock_version();
 	test_api();
 	test_framing();
 	test_status_and_list();

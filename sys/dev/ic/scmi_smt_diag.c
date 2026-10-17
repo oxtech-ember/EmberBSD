@@ -50,6 +50,9 @@ scmi_smt_diag_command(enum scmi_smt_diag_cmd cmd, uint32_t argument,
 	case SCMI_SMT_DIAG_CLOCK_ATTRIBUTES:
 		*header = 0x5001;
 		break;
+	case SCMI_SMT_DIAG_CLOCK_VERSION:
+		*header = 0x5000;
+		break;
 	case SCMI_SMT_DIAG_CLOCK_ENTITY_ATTRIBUTES:
 	case SCMI_SMT_DIAG_CLOCK_RATE_GET:
 		if (argument != 67)

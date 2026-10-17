@@ -30,6 +30,10 @@ struct cixscmi_acpi_softc {
 	bool sc_query_started;
 	bool sc_version_valid;
 	uint32_t sc_version;
+	unsigned int sc_selector;
+	int sc_decode_error;
+	bool sc_reviewed_version;
+	int sc_version_policy_error;
 	uint32_t sc_ack_before;
 	uint32_t sc_ack_after;
 	bool sc_ack_after_valid;
@@ -534,6 +538,7 @@ cixscmi_acpi_deferred(device_t self)
 	sc->sc_query_started = true;
 	sc->sc_stage = "query";
 	sc->sc_error = scmi_smt_diag_query(&sc->sc_wire,
+	    sc->sc_selector == 2 ? SCMI_SMT_DIAG_CLOCK_VERSION :
 	    SCMI_SMT_DIAG_BASE_VERSION, 0, &reply, &sc->sc_trace);
 	/* Do not issue further I/O after a possibly poisoned wire attempt. */
 	if (sc->sc_trace.stage == SCMI_SMT_DIAG_COMPLETE ||
@@ -541,11 +546,31 @@ cixscmi_acpi_deferred(device_t self)
 		sc->sc_ack_after = bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
 		sc->sc_ack_after_valid = true;
 	}
-	if (sc->sc_error == 0) {
+	if (sc->sc_error == 0 && sc->sc_selector == 2 && reply.data_length != 4)
+		sc->sc_decode_error = EPROTO;
+	if (sc->sc_error == 0 && sc->sc_decode_error == 0) {
 		sc->sc_version = (uint32_t)reply.data[0] |
 		    (uint32_t)reply.data[1] << 8 | (uint32_t)reply.data[2] << 16 |
 		    (uint32_t)reply.data[3] << 24;
 		sc->sc_version_valid = true;
+		if (sc->sc_selector == 2) {
+			/* Local review policy; same-major minor revisions are compatible. */
+			sc->sc_reviewed_version = sc->sc_version == 0x00010000;
+			sc->sc_version_policy_error = sc->sc_reviewed_version ? 0 : ENOTSUP;
+		}
+	}
+	if (sc->sc_selector == 2) {
+		aprint_normal_dev(self, "CLOCK_VERSION valid=%u value=%#x "
+		    "helper_return=%d decode_error=%d reviewed_version=%u version_policy_error=%d "
+		    "stage=%u header=%#x length=%u status_valid=%u status=%d "
+		    "tx_status_before=%#x tx_status_after_valid=%u tx_status_after=%#x; boot-long lease retained\n",
+		    sc->sc_version_valid, sc->sc_version, sc->sc_error,
+		    sc->sc_decode_error, sc->sc_reviewed_version, sc->sc_version_policy_error,
+		    (unsigned int)sc->sc_trace.stage, sc->sc_trace.response_header,
+		    sc->sc_trace.response_length, sc->sc_trace.firmware_status_valid,
+		    sc->sc_trace.firmware_status, sc->sc_ack_before,
+		    sc->sc_ack_after_valid, sc->sc_ack_after);
+		goto out;
 	}
 	aprint_normal_dev(self, "BASE_VERSION valid=%u value=%#x error=%d "
 	    "stage=%u header=%#x length=%u status_valid=%u status=%d "
@@ -584,12 +609,13 @@ cixscmi_acpi_attach(device_t parent, device_t self, void *aux)
 	sc->sc_dev = self;
 	sc->sc_node = aa->aa_node;
 	sc->sc_memt = aa->aa_memt;
+	sc->sc_selector = flags;
 	sc->sc_stage = "attach";
 	sc->sc_role = cixscmi_roles[0];
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 	aprint_naive("\n");
 	aprint_normal(": CIX single-request SCMI diagnostic\n");
-	if (flags == 1)
+	if (flags == 1 || flags == 2)
 		config_defer(self, cixscmi_acpi_deferred);
 	else if (flags != 0)
 		aprint_error_dev(self, "unsupported diagnostic flags %#x\n", flags);
