@@ -40,6 +40,11 @@ struct cixscmi_acpi_softc {
 	uint32_t sc_num_clocks;
 	uint32_t sc_max_async;
 	bool sc_id67_in_range;
+	bool sc_entity_raw_valid;
+	uint32_t sc_entity_attr;
+	uint32_t sc_entity_name[4];
+	uint32_t sc_entity_delay;
+	bool sc_entity_valid;
 	uint32_t sc_ack_before;
 	uint32_t sc_ack_after;
 	bool sc_ack_after_valid;
@@ -544,9 +549,11 @@ cixscmi_acpi_deferred(device_t self)
 	sc->sc_query_started = true;
 	sc->sc_stage = "query";
 	sc->sc_error = scmi_smt_diag_query(&sc->sc_wire,
+	    sc->sc_selector == 8 ? SCMI_SMT_DIAG_CLOCK_ENTITY_ATTRIBUTES :
 	    sc->sc_selector == 4 ? SCMI_SMT_DIAG_CLOCK_ATTRIBUTES :
 	    sc->sc_selector == 2 ? SCMI_SMT_DIAG_CLOCK_VERSION :
-	    SCMI_SMT_DIAG_BASE_VERSION, 0, &reply, &sc->sc_trace);
+	    SCMI_SMT_DIAG_BASE_VERSION, sc->sc_selector == 8 ? 67 : 0,
+	    &reply, &sc->sc_trace);
 	/* Do not issue further I/O after a possibly poisoned wire attempt. */
 	if (sc->sc_trace.stage == SCMI_SMT_DIAG_COMPLETE ||
 	    sc->sc_trace.stage == SCMI_SMT_DIAG_FIRMWARE) {
@@ -556,12 +563,43 @@ cixscmi_acpi_deferred(device_t self)
 	if (sc->sc_error == 0 && (sc->sc_selector == 2 || sc->sc_selector == 4) &&
 	    reply.data_length != 4)
 		sc->sc_decode_error = EPROTO;
+	if (sc->sc_error == 0 && sc->sc_selector == 8 && reply.data_length != 24)
+		sc->sc_decode_error = EPROTO;
 	if (sc->sc_error == 0 && sc->sc_decode_error == 0) {
 		uint32_t word = (uint32_t)reply.data[0] |
 		    (uint32_t)reply.data[1] << 8 | (uint32_t)reply.data[2] << 16 |
 		    (uint32_t)reply.data[3] << 24;
 
-		if (sc->sc_selector == 4) {
+		if (sc->sc_selector == 8) {
+			bool terminated = false;
+
+			sc->sc_entity_attr = word;
+			for (i = 0; i < 4; i++)
+				sc->sc_entity_name[i] = (uint32_t)reply.data[4 + i * 4] |
+				    (uint32_t)reply.data[5 + i * 4] << 8 |
+				    (uint32_t)reply.data[6 + i * 4] << 16 |
+				    (uint32_t)reply.data[7 + i * 4] << 24;
+			sc->sc_entity_delay = (uint32_t)reply.data[20] |
+			    (uint32_t)reply.data[21] << 8 | (uint32_t)reply.data[22] << 16 |
+			    (uint32_t)reply.data[23] << 24;
+			sc->sc_entity_raw_valid = true;
+			if ((word & 0x1ffffffe) != 0) {
+				sc->sc_decode_error = EPROTO;
+			} else {
+				for (i = 0; i < 16; i++) {
+					if (reply.data[4 + i] == 0) {
+						terminated = true;
+						break;
+					}
+					if (reply.data[4 + i] >= 128)
+						break;
+				}
+				if (!terminated)
+					sc->sc_decode_error = EPROTO;
+				else
+					sc->sc_entity_valid = true;
+			}
+		} else if (sc->sc_selector == 4) {
 			sc->sc_attr = word;
 			sc->sc_attr_word_valid = true;
 			if ((word & 0xff000000) != 0) {
@@ -582,6 +620,27 @@ cixscmi_acpi_deferred(device_t self)
 			    sc->sc_version == 0x00020000;
 			sc->sc_version_policy_error = sc->sc_reviewed_version ? 0 : ENOTSUP;
 		}
+	}
+	if (sc->sc_selector == 8) {
+		aprint_normal_dev(self, "CLOCK67_ATTRIBUTES raw_valid=%u raw_attr=%#x "
+		    "name_le32=%08x,%08x,%08x,%08x "
+		    "raw_delay_us=%u delay_supported=%u "
+		    "helper_return=%d decode_error=%d entity_valid=%u enabled=%u extended_name=%u "
+		    "selected_schema=0x20000 version_queried=0 protocolattrs_queried=0 clock_id=67 "
+		    "stage=%u header=%#x length=%u status_valid=%u status=%d "
+		    "tx_status_before=%#x tx_status_after_valid=%u tx_status_after=%#x; boot-long lease retained\n",
+		    sc->sc_entity_raw_valid, sc->sc_entity_attr,
+		    sc->sc_entity_name[0], sc->sc_entity_name[1],
+		    sc->sc_entity_name[2], sc->sc_entity_name[3], sc->sc_entity_delay,
+		    sc->sc_entity_valid && sc->sc_entity_delay != 0,
+		    sc->sc_error, sc->sc_decode_error, sc->sc_entity_valid,
+		    sc->sc_entity_valid && (sc->sc_entity_attr & 1) != 0,
+		    sc->sc_entity_valid && (sc->sc_entity_attr & 0x20000000) != 0,
+		    (unsigned int)sc->sc_trace.stage, sc->sc_trace.response_header,
+		    sc->sc_trace.response_length, sc->sc_trace.firmware_status_valid,
+		    sc->sc_trace.firmware_status, sc->sc_ack_before,
+		    sc->sc_ack_after_valid, sc->sc_ack_after);
+		goto out;
 	}
 	if (sc->sc_selector == 4) {
 		aprint_normal_dev(self, "CLOCK_PROTOCOL_ATTRIBUTES word_valid=%u raw=%#x "
@@ -655,7 +714,7 @@ cixscmi_acpi_attach(device_t parent, device_t self, void *aux)
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 	aprint_naive("\n");
 	aprint_normal(": CIX single-request SCMI diagnostic\n");
-	if (flags == 1 || flags == 2 || flags == 4)
+	if (flags == 1 || flags == 2 || flags == 4 || flags == 8)
 		config_defer(self, cixscmi_acpi_deferred);
 	else if (flags != 0)
 		aprint_error_dev(self, "unsupported diagnostic flags %#x\n", flags);

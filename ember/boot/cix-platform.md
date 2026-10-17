@@ -77,7 +77,7 @@ The separate
 [EMBER64_CIXSCMI_CLOCK_QUERY](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY)
 configuration selects exact flags 2. It sends only CLOCK PROTOCOL_VERSION,
 protocol 0x14, message 0, with no clock ID argument. Flags 3 and all values
-except 0, 1, 2 and 4 are rejected before deferred evaluation, mapping or bus access.
+except 0, 1, 2, 4 and 8 are rejected before deferred evaluation, mapping or bus access.
 This diagnostic does not query clock attributes, rates or clock ID 67.
 The original BASE configuration and the normal EMBER64 configuration are unchanged.
 
@@ -108,9 +108,31 @@ Typed fields remain unchanged on failure; interpret them only when attributes
 are valid. The selected Clock 2.0 schema comes from
 [DEN0056D section 4.6.2.2](https://documentation-service.arm.com/static/6231acfc8804d00769e9db69).
 The output states that protocol version was not queried in this boot.
-No result starts another request. Entity attributes, rates, notifications and
-extended-name queries remain unavailable through this binding. Attributes
-physical qualification requires a separate manual boot.
+No result starts another request. The physical receipt below qualifies one
+protocol-attributes exchange. Entity attributes use a separate selector and boot;
+rates, notifications and extended-name queries remain unavailable.
+
+The separate
+[EMBER64_CIXSCMI_CLOCK67_ATTRS](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_ATTRS)
+configuration selects exact flags 8. It sends only CLOCK_ATTRIBUTES for ID 67,
+protocol 0x14, message 3. The request contains literal ID 67; no returned name
+selects another clock. Success requires the exact Clock 2.0 body of 24 bytes.
+The binding records raw attributes, four little-endian name words and the full
+32-bit enable-delay value before semantic validation. It then rejects reserved
+bits 28:1, a missing NUL within 16 name bytes or a non-ASCII name prefix.
+Empty names are permitted; bytes after the first NUL need not be zero.
+The name is printed only as four hexadecimal words, including on semantic failure.
+Firmware text is never passed to an unterminated string format.
+Bits 31, 30 and 29 describe notification and extended-name capabilities;
+bit 0 reports enabled state. None starts a notification or extended-name query.
+The raw delay is in microseconds. Zero means unsupported delay telemetry,
+not a measured zero latency. Interpret enabled, extended-name and delay-support
+fields only with `entity_valid`. `raw_valid` is separate failure evidence.
+The output states that version and protocol attributes were not queried in this
+boot. The selected schema is 0x20000; see
+[DEN0056D section 4.6.2.4](https://documentation-service.arm.com/static/6231acfc8804d00769e9db69).
+No result enables a clock, queries a rate or changes VPU resources. This selector
+requires its own manual physical acceptance.
 
 Before mapping, the binding validates each static property, resource and
 reference. It requires MBX6/7, SHM0/1, channel 8, non-coherent shared memory,
