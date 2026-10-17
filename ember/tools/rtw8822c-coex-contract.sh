@@ -2,6 +2,14 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Origin: EmberBSD actual-source RTL8822C coex contract runner.
 set -eu
+# TEST_RUNNER names one executable, for example a Memcheck wrapper.
+run_test() {
+    if [ -n "${TEST_RUNNER:-}" ]; then
+        "$TEST_RUNNER" "$@"
+    else
+        "$@"
+    fi
+}
 [ "$#" -eq 0 ] || { echo "usage: $0" >&2; exit 2; }
 tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src=$(CDPATH= cd -- "$tools/../.." && pwd)
@@ -16,4 +24,4 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
     "$tools/rtw8822c-coex-contract.c" \
     "${RTW8822C_COEX_SOURCE:-$src/sys/dev/ic/rtw8822c_coex.c}" -o "$work/test"
-"$work/test" "$tools/rtw8822c-coex.trace"
+run_test "$work/test" "$tools/rtw8822c-coex.trace"

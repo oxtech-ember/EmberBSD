@@ -21,7 +21,13 @@ failures=0
 for kind in mac phy; do
     if RTW8822C_TRACE="$work/$kind.trace" \
         sh "$tools/rtw8822c-$kind-contract.sh" > "$work/$kind.out" 2> "$work/$kind.err"; then
-        echo "$kind: overlong register row was accepted" >&2
+        status=0
+    else
+        status=$?
+    fi
+    if [ "$status" -ne 1 ]; then
+        echo "$kind: expected parser rejection (1), received $status" >&2
+        cat "$work/$kind.err" >&2
         failures=$((failures + 1))
     elif ! grep -qx 'trace entry too long' "$work/$kind.err"; then
         echo "$kind: missing explicit overlong-row rejection" >&2
