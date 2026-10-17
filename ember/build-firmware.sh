@@ -58,12 +58,23 @@ case "$host_system" in
         ;;
 esac
 missing=0
-for tool in aarch64-elf-gcc gmake iasl dtc python3; do
+# pkgsrc ships the bare-metal toolchain as aarch64-none-elf-;
+# accept both it and the classic aarch64-elf- prefix.
+for tool in gmake iasl dtc python3; do
     command -v "$tool" >/dev/null 2>&1 || { echo "missing host tool: $tool" >&2; missing=1; }
 done
+case "${CROSS_COMPILE:-}" in
+    '') if command -v aarch64-none-elf-gcc >/dev/null 2>&1; then
+            export CROSS_COMPILE=aarch64-none-elf-
+        elif command -v aarch64-elf-gcc >/dev/null 2>&1; then
+            export CROSS_COMPILE=aarch64-elf-
+        else
+            echo 'missing host tool: aarch64-none-elf-gcc (pkgsrc cross/aarch64-none-elf-gcc) or aarch64-elf-gcc' >&2
+            missing=1
+        fi ;;
+esac
 python3 -c 'import elftools' >/dev/null 2>&1 || { echo 'missing python3 module: pyelftools' >&2; missing=1; }
 [[ $missing -eq 0 ]] || exit 1
-export CROSS_COMPILE="${CROSS_COMPILE:-aarch64-elf-}"
 
 # The firmware series must name every diff exactly once.
 series="$ROOT/ember/firmware/series"
