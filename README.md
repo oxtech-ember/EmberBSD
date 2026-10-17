@@ -1013,9 +1013,10 @@ The base system shell is unchanged.
   Cold power removal and a complete base release remain separate acceptance.
   A source-tested native `powerd` policy requests orderly poweroff and rejects
   duplicate button requests. Physical button delivery remains unqualified.
-  The bounded CIX S5 GPIO ACPI event driver defaults to a passive register snapshot.
-  Its source contracts cover event completion and truncated resource rejection;
-  physical GPIO delivery remains unqualified. See [CIX GPIO](ember/boot/cix-gpio.md).
+  A physical CIX S5 GPIO passive snapshot passes on one board. EMBER64 now selects
+  the bounded pin6 ACPI event path; `flags 0x0` retains passive mode. Source
+  contracts cover event completion and truncated resource rejection. Physical
+  button delivery and poweroff remain unqualified. See [CIX GPIO](ember/boot/cix-gpio.md).
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request
   cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the
   active control request and preserves queued requests. Actual-function

@@ -5,15 +5,17 @@
 interrupt on pin6. It does not attach the other GPIO banks or expose a
 general-purpose GPIO interface. The hardware is Cadence GPIO r1p02.
 
-EMBER64 selects **passive mode**, `flags 0x0`. Attachment validates the
+EMBER64 selects **armed mode**, `flags 0x1`, for this bounded profile.
+Set `flags 0x0` to repeat the passive check before arming another sample.
+A passive attachment validates the
 resource profile, maps that resource, prints nine register values, and
 unmaps it. It performs no register writes, IRQ installation, event method
 execution, or clock/reset operation. The passive snapshot excludes
 `IRQ_STATUS` at offset0x20 because reading it clears pending status.
-Mapping success does not prove that firmware left the clock accessible.
-The first physical check must establish this boundary before arming.
+Mapping success alone does not prove that firmware left the clock accessible.
+The passive physical check below establishes this boundary on one sample.
 
-An explicitly selected `flags 0x1` arms the event after the same snapshot.
+The selected `flags 0x1` arms the event after the same snapshot.
 It requires pin6 to be an input with bypass off and requires all other
 interrupts in the bank to be masked. It preserves pin direction, output,
 pull, mux, and every unrelated register bit. Setup disables pin6, sets its
@@ -51,6 +53,17 @@ was delivered. The firmware contains busy loops; the ACPICA loop timeout
 does not provide a short driver deadline. Physical acceptance must record
 the GPIO IRQ, AML completion, PWRB/sysmon event, userspace action and final
 power state separately.
+
+## Passive physical check
+
+On 2026-10-17, a passive boot on the observed CIX P1 CD8180 sample passed
+with source `9571b130e`. All nine snapshot reads completed without a panic
+or MMIO fault. BYPASS was `0`, DIRECTION was `0x226826c1`, INPUT was
+`0x38783ffe`, and MASK was `0xffffffff`. Pin6 was an input, high and not
+bypassed; every bank interrupt was masked. The disk-root fsck was clean,
+and native powerd started automatically. No synthetic event was injected.
+This accepts passive register access only. Armed IRQ delivery, AML/PWRB
+notification, the physical button and final poweroff remain unqualified.
 
 ## Source contracts
 
