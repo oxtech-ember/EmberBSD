@@ -5,6 +5,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -17,6 +18,9 @@
 #define ACPI_APPLICATION
 #include <acpi.h>
 #include <dev/ic/scmi_smt_diag.h>
+#ifdef CIXSCMI_SERVICE_API
+#include "cixscmi-api.inc"
+#endif
 
 #ifndef CIXSCMI_DRIVER_API
 int main(void)
@@ -25,7 +29,8 @@ int main(void)
     return 1;
 }
 #else
-static unsigned int checks, failures, evaluations, allocations, maps, unmaps;
+static atomic_uint checks, failures;
+static unsigned int evaluations, allocations, maps, unmaps;
 static unsigned int reads, writes, doorbells, barriers, completions, pauses;
 static unsigned int malformed, failed_node, map_fail, response_mode;
 static bool intr, foreign_on_failure, sent, published, ordered, acquired;
@@ -33,6 +38,8 @@ static uint64_t ticks;
 static bool repeat_test, mixed_test, frozen_time;
 static uint32_t mixed_words[5];
 static unsigned int mixed_expected;
+static bool runtime_test, lock_order_test, runtime_late_ack;
+static unsigned int runtime_command, runtime_token, runtime_enable, time_calls;
 static unsigned int repeat_fail_at, repeat_failure, repeat_late_pre, ack_reads;
 static uint32_t response_word, response_firmware_status, expected_header, response_delay, response_high;
 static uint8_t response_name[16];
@@ -69,10 +76,12 @@ struct acpi_attach_args { struct acpi_devnode *aa_node; bus_space_tag_t aa_memt;
 struct device_compatible_entry { const char *compat; };
 #define DEVICE_COMPAT_EOL {NULL}
 #define CFATTACH_DECL_NEW(n,s,m,a,d,r) \
-    static const void * const test_attach_refs[] = {(const void *)(m),(const void *)(a)}
-static struct device rootdev,selfdev,otherdev;
+    static const void * const test_attach_refs_##n[] = {(const void *)(m),(const void *)(a)}
+static struct device rootdev,selfdev,otherdev,clockdev;
 static struct acpi_softc root;
 static struct acpi_devnode nodes[5];
+static struct acpi_devnode clocknode;
+static kmutex_t *test_clock_lock,*test_service_lock;
 static void (*deferred)(device_t);
 static unsigned int defers;
 static char diagnostic[4096];
@@ -83,7 +92,8 @@ static void config_defer(device_t d,void (*f)(device_t))
 static void mutex_init(kmutex_t *m,int a,int b)
 { (void)a;(void)b;assert(pthread_mutex_init(&m->lock,NULL)==0);m->held=false; }
 static void mutex_enter(kmutex_t *m)
-{ assert(pthread_mutex_lock(&m->lock)==0);assert(!m->held);m->held=true; }
+{ CHECK(!intr);if(lock_order_test && m==test_service_lock)CHECK(test_clock_lock->held);
+    assert(pthread_mutex_lock(&m->lock)==0);assert(!m->held);m->held=true; }
 static void mutex_exit(kmutex_t *m)
 { assert(m->held);m->held=false;assert(pthread_mutex_unlock(&m->lock)==0); }
 static bool mutex_owned(kmutex_t *m) { return m->held; }
@@ -92,24 +102,25 @@ static bool cpu_softintr_p(void) { return intr; }
 #define aprint_naive(...) ((void)0)
 #define aprint_normal(...) ((void)0)
 static void test_print(device_t d,const char *fmt,...)
-{ va_list ap;CHECK(d==&selfdev);
+{ va_list ap;CHECK(d==&selfdev || d==&clockdev);
     if((repeat_test && strncmp(fmt,"BASE_REPEAT",11)==0) ||
         (mixed_test && strncmp(fmt,"CLOCK_BATCH",11)==0)){
         unsigned int expected=repeat_fail_at?repeat_fail_at:repeat_late_pre?repeat_late_pre-1:mixed_test?mixed_expected:3;
         CHECK(doorbells==expected);
     }
     va_start(ap,fmt);
-    size_t used=strlen(diagnostic);
+    size_t used=runtime_test?0:strlen(diagnostic);
     int n=vsnprintf(diagnostic+used,sizeof(diagnostic)-used,fmt,ap);va_end(ap);
     CHECK(n>=0 && (size_t)n<sizeof(diagnostic)-used); }
 #define aprint_error_dev test_print
 #define aprint_normal_dev test_print
 static int acpi_compatible_match(const void *a,const struct device_compatible_entry *e)
-{ (void)a;CHECK(strcmp(e[0].compat,"CIXHA006")==0);return 1; }
+{ (void)a;CHECK(strcmp(e[0].compat,"CIXHA006")==0 || strcmp(e[0].compat,"CIXHA010")==0);return 1; }
 static unsigned int node_index(ACPI_HANDLE h)
 { for(unsigned int i=0;i<5;i++)if(h==nodes[i].ad_handle)return i;abort(); }
 static ACPI_STATUS acpi_eval_integer(ACPI_HANDLE h,const char *n,ACPI_INTEGER *v)
 {
+    if(h==clocknode.ad_handle && h!=NULL){evaluations++;CHECK(strcmp(n,"_UID")==0);*v=0;return AE_OK;}
     unsigned int i=node_index(h);evaluations++;
     CHECK(strcmp(n,"_STA")==0 || (i>=3 && strcmp(n,"_CCA")==0));
     if(malformed==1 && i==failed_node)return AE_ERROR;
@@ -129,13 +140,19 @@ static void bus_space_barrier(bus_space_tag_t,bus_space_handle_t,bus_size_t,bus_
 static void test_dsb(void);
 #define dsb(x) test_dsb()
 static void getmicrouptime(struct timeval *v)
-{ v->tv_sec=(long)(ticks/1000000);v->tv_usec=(int)(ticks%1000000); }
+{ time_calls++;v->tv_sec=(long)(ticks/1000000);v->tv_usec=(int)(ticks%1000000); }
 static void delay(unsigned int us) { CHECK(us==10);if(!frozen_time)ticks+=us;pauses++; }
 #include "cixscmi-source.inc"
+#ifdef CIXSCMI_SERVICE_API
+#include "cixclk-source.inc"
+const char *AcpiFormatException(ACPI_STATUS status)
+{ (void)status;return "test ACPICA error"; }
+#endif
 
 /* Only ACPICA allocation/firmware, autoconfiguration and bus boundaries follow. */
 struct info_blob { ACPI_DEVICE_INFO *p; char *hid, *uid; };
 static struct info_blob info[5];
+static struct info_blob clockinfo;
 struct dsd_blob { ACPI_OBJECT o[32]; unsigned char bytes[256]; };
 static const uint8_t uuid[16]={0x14,0xd8,0xff,0xda,0xba,0x6e,0x8c,0x4d,
     0x8a,0x91,0xbc,0x9b,0xbf,0x4a,0xa3,0x01};
@@ -279,6 +296,8 @@ static uint32_t bus_space_read_4(bus_space_tag_t t,bus_space_handle_t h,bus_size
     }
     (void)t;reads++;
 
+    if(runtime_test && runtime_late_ack && sent && o==0xc8)return 0xa;
+
     if(sent && mode!=0 && mode!=2 && mode!=9 &&
         !(mode==3 && (expected_header & 0x3ffff)==0x5003))CHECK(o!=0xc8);
     CHECK(o%4==0 && o<0x10000);
@@ -290,7 +309,7 @@ static uint32_t bus_space_read_4(bus_space_tag_t t,bus_space_handle_t h,bus_size
     if(h==rx){CHECK(o==0xc0);return rx[o/4];}
     CHECK(h==tx);CHECK(o==0xbc || o==0xc8 || o<=0x7c);
     if(sent && o==4 && mode!=1){
-        tx[4/4]=1;tx[20/4]=mode==2?8:(expected_header & 0x3ffff)==0x5003?32:(expected_header & 0x3ffff)==0x5006?16:12;tx[28/4]=mode==2?response_firmware_status:0;
+        tx[4/4]=1;tx[20/4]=mode==2?8:(expected_header & 0x3ffff)==0x5007?8:(expected_header & 0x3ffff)==0x5003?32:(expected_header & 0x3ffff)==0x5006?16:12;tx[28/4]=mode==2?response_firmware_status:0;
         tx[32/4]=failed && repeat_failure==5?0x10000:
             mixed_test?mixed_words[doorbells-1]:response_word;
         if((expected_header & 0x3ffff)==0x5003){
@@ -300,20 +319,23 @@ static uint32_t bus_space_read_4(bus_space_tag_t t,bus_space_handle_t h,bus_size
             tx[13]=response_delay;
         }
         if((expected_header & 0x3ffff)==0x5006)tx[9]=response_high;
-        if(mode==9)tx[20/4]=(expected_header & 0x3ffff)==0x5003?36:(expected_header & 0x3ffff)==0x5006?20:16;
-        if(mode==3)tx[20/4]=(expected_header & 0x3ffff)==0x5003?28:(expected_header & 0x3ffff)==0x5006?12:8;
+        if(mode==9)tx[20/4]=(expected_header & 0x3ffff)==0x5007?12:(expected_header & 0x3ffff)==0x5003?36:(expected_header & 0x3ffff)==0x5006?20:16;
+        if(mode==3)tx[20/4]=(expected_header & 0x3ffff)==0x5007?4:(expected_header & 0x3ffff)==0x5003?28:(expected_header & 0x3ffff)==0x5006?12:8;
         if(mode==10)tx[20/4]=24;
         if(mode==4)tx[24/4]^=1;
         if(mode==7)tx[4/4]=3;
         if(mode==8)tx[20/4]=108;
     }
     if(sent && o>=20 && o<=52)CHECK(acquired);
+    if(runtime_test && sent && runtime_command==0x5007 && o>=32 && o<=0x7c)
+        CHECK(false); /* Status-only control must not read a data body. */
     return tx[o/4];
 }
 static void bus_space_write_4(bus_space_tag_t t,bus_space_handle_t h,bus_size_t o,uint32_t v)
 {
     (void)t;writes++;CHECK(h==tx);
     if(o==0){sent=published=ordered=acquired=false;}
+    if(runtime_test && o==24){expected_header=runtime_command | runtime_token<<18;CHECK(v==expected_header);}
     if(mixed_test && o==24){
         static const uint32_t headers[]={0x44000,0x85000,0xc5001,0x105002,0x145006};
         CHECK(doorbells<5);
@@ -326,13 +348,17 @@ static void bus_space_write_4(bus_space_tag_t t,bus_space_handle_t h,bus_size_t 
     }
     CHECK(o==0 || o==4 || o==16 || o==20 || o==24 || o==128 ||
         (o==28 && ((expected_header & 0x3ffff)==0x5003 || (expected_header & 0x3ffff)==0x5006 ||
-        (expected_header & 0x3ffff)==0x5002)));
+        (expected_header & 0x3ffff)==0x5002 || (expected_header & 0x3ffff)==0x5007)) ||
+        (o==32 && runtime_test && runtime_command==0x5007));
     if(o==4){CHECK(v==0 && published);}
     if(o==128){doorbells++;CHECK(v==1 && ordered);CHECK(tx[0]==0 && tx[4]==0);
         CHECK(tx[5]==(((expected_header & 0x3ffff)==0x5003 || (expected_header & 0x3ffff)==0x5006 ||
-            (expected_header & 0x3ffff)==0x5002)?8u:4u) && tx[6]==expected_header);
-        if((expected_header & 0x3ffff)==0x5003 || (expected_header & 0x3ffff)==0x5006)CHECK(tx[7]==67);
+            (expected_header & 0x3ffff)==0x5002)?8u:(expected_header & 0x3ffff)==0x5007?12u:4u) && tx[6]==expected_header);
+        if((expected_header & 0x3ffff)==0x5003 || (expected_header & 0x3ffff)==0x5006 ||
+            (expected_header & 0x3ffff)==0x5007)CHECK(tx[7]==67);
         if((expected_header & 0x3ffff)==0x5002)CHECK(tx[7]==7);
+        if(runtime_test){CHECK(runtime_token<=1023);runtime_token++;
+            if(runtime_command==0x5007)CHECK(tx[8]==runtime_enable);}
         sent=true;}
     tx[o/4]=v;
 }
@@ -344,6 +370,13 @@ static void test_dsb(void)
 static void setup(void)
 {
     for(unsigned int i=0;i<5;i++)free(info[i].p);
+    free(clockinfo.p);memset(&clockinfo,0,sizeof(clockinfo));memset(&clocknode,0,sizeof(clocknode));
+#ifdef CIXSCMI_SERVICE_API
+    cixclk_provider=NULL;
+    cixscmi_service=NULL;
+#endif
+    runtime_test=lock_order_test=runtime_late_ack=false;runtime_command=runtime_enable=time_calls=0;runtime_token=6;
+    test_clock_lock=test_service_lock=NULL;
     memset(&root,0,sizeof(root));memset(nodes,0,sizeof(nodes));memset(info,0,sizeof(info));
     memset(&selfdev,0,sizeof(selfdev));memset(&otherdev,0,sizeof(otherdev));
     rootdev.private=&root;root.sc_head.first=nodes;
@@ -373,7 +406,7 @@ static void attach(struct cixscmi_acpi_softc *sc,unsigned int flags)
 {
     struct acpi_attach_args aa={.aa_node=&nodes[0],.aa_memt=&root};
     memset(sc,0,sizeof(*sc));selfdev.private=sc;selfdev.cf.cf_flags=flags;
-    repeat_test=flags==32;mixed_test=flags==64;
+    repeat_test=flags==32;mixed_test=flags==64 || flags==128;
     expected_header=flags==16?0x45006:flags==8?0x45003:flags==4?0x45001:flags==2?0x45000:0x44000;
     cixscmi_acpi_attach(&rootdev,&selfdev,&aa);nodes[0].ad_device=&selfdev;
 }
@@ -433,7 +466,7 @@ static void test_clock_selector(void)
         CHECK(strstr(diagnostic,"decode_error=0 reviewed_version=0 version_policy_error=0")!=NULL);
         CHECK(doorbells==1);finish(&sc);
     }
-    const unsigned int invalid[]={3,5,6,7,9,15,17,31,33,63,65,96,127,128,UINT_MAX};
+    const unsigned int invalid[]={3,5,6,7,9,15,17,31,33,63,65,96,127,129,256,UINT_MAX};
     for(unsigned int i=0;i<sizeof(invalid)/sizeof(invalid[0]);i++){
         setup();attach(&sc,invalid[i]);
         CHECK(defers==0 && evaluations==0 && maps==0 && reads==0 && writes==0);finish(&sc);
@@ -917,7 +950,7 @@ static void test_diagnostic_stages(void)
 }
 static void run_negative(unsigned int m,unsigned int n)
 {
-    for(unsigned int selector=1;selector<=64;selector*=2){
+    for(unsigned int selector=1;selector<=128;selector*=2){
     struct cixscmi_acpi_softc sc;setup();malformed=m;failed_node=n;attach(&sc,selector);
     CHECK(defers==1 && evaluations==0 && maps==0 && writes==0);
     if(defers!=1){finish(&sc);continue;}
@@ -927,9 +960,307 @@ static void run_negative(unsigned int m,unsigned int n)
     deferred(&selfdev);CHECK(maps==0 && writes==0);finish(&sc);
     }
 }
+/* These paths execute the real clock provider, binding and wire together. */
+#ifdef CIXSCMI_SERVICE_API
+static void native_begin(struct cixscmi_acpi_softc *sc,
+    struct cixclk_acpi_softc *clock,unsigned int selector)
+{
+    setup();attach(sc,selector);CHECK(defers==1);
+    if(defers==1)deferred(&selfdev);
+    CHECK(sc->sc_batch_qualified && doorbells==5 && unmaps==0);
+    runtime_test=true;mixed_test=false;
+    clockinfo.p=calloc(1,sizeof(ACPI_DEVICE_INFO)+40);assert(clockinfo.p);
+    clockinfo.hid=(char *)(clockinfo.p+1);clockinfo.uid=clockinfo.hid+16;
+    strcpy(clockinfo.hid,"CIXHA010");strcpy(clockinfo.uid,"0");
+    clockinfo.p->InfoSize=sizeof(ACPI_DEVICE_INFO)+40;clockinfo.p->Type=ACPI_TYPE_DEVICE;
+    clockinfo.p->Valid=ACPI_VALID_HID|ACPI_VALID_UID;
+    clockinfo.p->HardwareId.String=clockinfo.hid;clockinfo.p->HardwareId.Length=9;
+    clockinfo.p->UniqueId.String=clockinfo.uid;clockinfo.p->UniqueId.Length=2;
+    clocknode=(struct acpi_devnode){.ad_handle=&clocknode,.ad_devinfo=clockinfo.p,
+        .ad_type=ACPI_TYPE_DEVICE,.ad_root=&rootdev,.ad_device=&clockdev};
+    nodes[4].next=&clocknode;memset(clock,0,sizeof(*clock));clockdev.private=clock;
+    struct acpi_attach_args aa={.aa_node=&clocknode};
+    cixclk_acpi_attach(&rootdev,&clockdev,&aa);
+    (void)test_attach_refs_cixclk_acpi;
+    test_clock_lock=&clock->sc_lock;test_service_lock=&sc->sc_lock;
+    lock_order_test=true;cold=0;
+}
+static void native_finish(struct cixscmi_acpi_softc *sc,struct cixclk_acpi_softc *clock)
+{
+    CHECK(pthread_mutex_destroy(&clock->sc_lock.lock)==0);finish(sc);
+}
+static void runtime_prepare(unsigned int command,unsigned int enable,unsigned int mode)
+{
+    runtime_command=command;runtime_enable=enable;response_mode=mode;
+    response_word=response_high=0;sent=false;
+}
+static unsigned int callbacks(void)
+{ return reads+writes+barriers+pauses+time_calls; }
+static void test_native_metadata(void)
+{
+    struct cixscmi_acpi_softc sc;
+    struct cixclk_acpi_softc clock;
+    struct cixclk canary={0},*out,*sentinel=&canary;
+    for(unsigned int mode=0;mode<17;mode++){
+        native_begin(&sc,&clock,128);
+        ACPI_DEVICE_INFO *p=clockinfo.p;
+        struct acpi_devnode duplicate=clocknode;
+        if(mode==1)clocknode.ad_root=&otherdev;
+        if(mode==2)clocknode.ad_type=ACPI_TYPE_INTEGER;
+        if(mode==3)clocknode.ad_device=&otherdev;
+        if(mode==4)p->UniqueId.Length=1;
+        if(mode==5)clockinfo.uid[1]='x';
+        if(mode==6)p->UniqueId.String=(void *)&otherdev;
+        if(mode==7)p->HardwareId.Length=UINT32_MAX;
+        if(mode==8)clockinfo.hid[8]='x';
+        if(mode==9)clockinfo.hid[0]='D';
+        if(mode==10)p->InfoSize=sizeof(*p)-1;
+        if(mode==11)p->Valid=0;
+        if(mode==12){duplicate.next=NULL;clocknode.next=&duplicate;}
+        if(mode==13){p->UniqueId.Length=ACPI_MAX64_DECIMAL_DIGITS+1;memset(clockinfo.uid+2,0xa5,ACPI_MAX64_DECIMAL_DIGITS-1);}
+        if(mode==14)p->UniqueId.Length=UINT32_MAX;
+        if(mode==15)p->Type=ACPI_TYPE_INTEGER;
+        if(mode==16)clocknode.ad_devinfo=NULL;
+        unsigned int before=callbacks(),eval_before=evaluations;
+        out=sentinel;
+        int e=cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,&out);
+        if(mode==0 || mode==13){CHECK(e==0 && out!=sentinel);CHECK(cixclk_acpi_put(out)==0);}
+        else CHECK(e!=0 && out==sentinel);
+        CHECK(callbacks()==before && evaluations==eval_before);
+        native_finish(&sc,&clock);
+    }
+}
+static void test_native_api(void)
+{
+    struct cixscmi_acpi_softc sc;
+    struct cixclk_acpi_softc clock;
+    struct cixclk sentinel_storage={0},*gate=NULL,*out,*sentinel=&sentinel_storage;
+    struct cixscmi_clock67_result r,canary;
+    uint64_t value;
+
+    native_begin(&sc,&clock,128);unsigned int before=callbacks();
+    out=sentinel;
+    CHECK(cixclk_acpi_get_native(NULL,nodes[0].ad_handle,67,&out)==EINVAL && out==sentinel);
+    CHECK(cixclk_acpi_get_native(clocknode.ad_handle,NULL,67,&out)==EINVAL && out==sentinel);
+    CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,NULL)==EINVAL);
+    CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,271,&out)==ENOTSUP && out==sentinel);
+    CHECK(cixclk_acpi_get_native(&otherdev,nodes[0].ad_handle,67,&out)==ENXIO && out==sentinel);
+    CHECK(cixclk_acpi_get_native(clocknode.ad_handle,&otherdev,67,&out)==ENXIO && out==sentinel);
+    CHECK(callbacks()==before);
+    CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,&gate)==0);
+    struct cixscmi_clock67 *service=gate->native;
+    memset(&canary,0xa5,sizeof(canary));r=canary;lock_order_test=false;
+    CHECK(cixscmi_acpi_clock67_config_set(service,2,&r)==EINVAL && memcmp(&r,&canary,sizeof(r))==0);
+    CHECK(cixscmi_acpi_clock67_config_set((void *)&otherdev,0,&r)==EINVAL && memcmp(&r,&canary,sizeof(r))==0);
+    CHECK(cixscmi_acpi_clock67_get_rate(service,NULL,&r)==EINVAL && memcmp(&r,&canary,sizeof(r))==0);
+    CHECK(cixscmi_acpi_clock67_get_rate(service,&value,NULL)==EINVAL);
+    CHECK(callbacks()==before);
+    intr=true;value=UINT64_MAX;out=sentinel;
+    CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,&out)==EWOULDBLOCK && out==sentinel);
+    CHECK(cixclk_acpi_enable(gate)==EWOULDBLOCK);
+    CHECK(cixclk_acpi_disable(gate)==EWOULDBLOCK);
+    CHECK(cixclk_acpi_get_rate(gate,&value)==EWOULDBLOCK && value==UINT64_MAX);
+    CHECK(cixclk_acpi_put(gate)==EWOULDBLOCK);
+    CHECK(cixscmi_acpi_clock67_config_set(service,0,&r)==EWOULDBLOCK && memcmp(&r,&canary,sizeof(r))==0);
+    CHECK(cixscmi_acpi_clock67_get_rate(service,&value,&r)==EWOULDBLOCK && memcmp(&r,&canary,sizeof(r))==0);
+    CHECK(callbacks()==before);intr=false;lock_order_test=true;
+
+    runtime_prepare(0x5007,1,0);tx[1]=0;
+    CHECK(cixclk_acpi_enable(gate)==EBUSY && doorbells==5 && gate->state==CIXCLK_UNCERTAIN);
+    CHECK(cixclk_acpi_put(gate)==EBUSY);
+    CHECK(strstr(diagnostic,"helper_called=1")!=NULL && strstr(diagnostic,"remaining_calls=1017")!=NULL);
+    tx[1]=1;runtime_prepare(0x5006,0,0);response_word=UINT32_MAX;response_high=UINT32_MAX;
+    CHECK(cixclk_acpi_get_rate(gate,&value)==0 && value==UINT64_MAX && gate->state==CIXCLK_UNCERTAIN);
+    runtime_prepare(0x5007,0,0);CHECK(cixclk_acpi_disable(gate)==0 && doorbells==7);
+    runtime_prepare(0x5006,0,0);response_word=response_high=UINT32_MAX;
+    lock_order_test=false;r=canary;value=0;
+    CHECK(cixscmi_acpi_clock67_get_rate(service,&value,&r)==0 && value==UINT64_MAX);
+    CHECK(r.helper_called && r.trace_valid && r.ack_after_valid && r.service_usable && !r.wire_poisoned);
+    CHECK(r.remaining==1014 && r.helper_return==0 && r.decode_error==0 && r.ack_error==0);
+    CHECK(r.trace.stage==SCMI_SMT_DIAG_COMPLETE && r.trace.firmware_status_valid && r.trace.firmware_status==0);
+    CHECK(r.trace.request_header==((8U<<18)|0x5006) && r.trace.response_length==16);
+    CHECK(gate->state==CIXCLK_IDLE);lock_order_test=true;
+    CHECK(cixclk_acpi_put(gate)==0);native_finish(&sc,&clock);
+}
+static void test_native_ownership(void)
+{
+    struct cixscmi_acpi_softc sc;
+    struct cixclk_acpi_softc clock;
+    struct cixclk *gate=NULL;
+    for(unsigned int mode=0;mode<5;mode++){
+        native_begin(&sc,&clock,128);
+        CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,&gate)==0);
+        if(mode==0)tx[0xc8/4]=0xa;
+        if(mode==1)nodes[3].ad_device=&otherdev;
+        runtime_prepare(0x5007,1,0);unsigned int before=callbacks();
+        if(mode<2){
+            CHECK(cixclk_acpi_enable(gate)!=0 && doorbells==5 && gate->state==CIXCLK_IDLE);
+            CHECK(callbacks()==before+(mode==0?1u:0u));
+        }else if(mode<4){
+            CHECK(cixclk_acpi_enable(gate)==0);
+            if(mode==2)nodes[4].ad_device=&otherdev;else tx[0xc8/4]=0xa;
+            runtime_prepare(0x5007,0,0);before=callbacks();
+            CHECK(cixclk_acpi_disable(gate)!=0 && gate->state==CIXCLK_ENABLED);
+            CHECK(callbacks()==before+(mode==3?1u:0u));
+        }else{
+            runtime_late_ack=true;CHECK(cixclk_acpi_enable(gate)==EBUSY);
+            CHECK(doorbells==6 && gate->state==CIXCLK_UNCERTAIN);
+        }
+        before=callbacks();tx[0xc8/4]=8;nodes[3].ad_device=nodes[4].ad_device=&selfdev;
+        uint64_t value=UINT64_MAX;
+        CHECK(cixclk_acpi_get_rate(gate,&value)==EIO && value==UINT64_MAX && callbacks()==before);
+        if(mode<2)CHECK(cixclk_acpi_put(gate)==0);else CHECK(cixclk_acpi_put(gate)==EBUSY);
+        native_finish(&sc,&clock);
+    }
+}
+static void test_native_budget_failure(void)
+{
+    struct cixscmi_acpi_softc sc;struct cixclk_acpi_softc clock;
+    struct cixclk *gate=NULL;uint64_t value;
+    for(unsigned int mode=0;mode<2;mode++){
+        native_begin(&sc,&clock,128);
+        CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,&gate)==0);
+        for(unsigned int i=0;i<1016+mode;i++){
+            runtime_prepare(0x5006,0,0);CHECK(cixclk_acpi_get_rate(gate,&value)==0);
+        }
+        runtime_prepare(0x5007,1,0);unsigned int before=callbacks();
+        if(mode==1){
+            CHECK(cixclk_acpi_enable(gate)==EOVERFLOW && gate->state==CIXCLK_IDLE && callbacks()==before);
+            CHECK(cixclk_acpi_put(gate)==0);
+        }else{
+            CHECK(cixclk_acpi_enable(gate)==0);
+            runtime_prepare(0x5007,0,2);CHECK(cixclk_acpi_disable(gate)==EIO && doorbells==1023);
+            CHECK(gate->state==CIXCLK_UNCERTAIN && cixclk_acpi_put(gate)==EBUSY);
+            CHECK(strstr(diagnostic,"remaining_calls=0")!=NULL && strstr(diagnostic,"status=-4")!=NULL);
+            before=callbacks();CHECK(cixclk_acpi_disable(gate)==EOVERFLOW && callbacks()==before);
+            value=UINT64_MAX;CHECK(cixclk_acpi_get_rate(gate,&value)==EOVERFLOW && value==UINT64_MAX && callbacks()==before);
+        }
+        native_finish(&sc,&clock);
+    }
+}
+static void test_native_clock_faults(void)
+{
+    struct cixscmi_acpi_softc sc;struct cixclk_acpi_softc clock;
+    struct cixclk *gate=NULL;uint64_t value;
+    for(unsigned int mode=0;mode<3;mode++){
+        native_begin(&sc,&clock,128);
+        CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,&gate)==0);
+        if(mode==0){
+            ticks=100;runtime_prepare(0x5006,0,0);CHECK(cixclk_acpi_get_rate(gate,&value)==0);ticks=0;
+        }
+        runtime_prepare(0x5007,1,mode==1?1:0);
+        if(mode==1)frozen_time=true;
+        if(mode==2)tx[1]=3;
+        CHECK(cixclk_acpi_enable(gate)!=0 && gate->state==CIXCLK_UNCERTAIN);
+        unsigned int before=callbacks();value=UINT64_MAX;
+        CHECK(cixclk_acpi_disable(gate)==EIO && callbacks()==before);
+        CHECK(cixclk_acpi_get_rate(gate,&value)==EIO && value==UINT64_MAX && callbacks()==before);
+        CHECK(cixclk_acpi_put(gate)==EBUSY);native_finish(&sc,&clock);
+    }
+}
+struct native_worker { struct cixclk *gate; };
+static void *native_rate_thread(void *p)
+{
+    struct native_worker *w=p;
+    for(unsigned int i=0;i<100;i++){
+        uint64_t value=UINT64_MAX;CHECK(cixclk_acpi_get_rate(w->gate,&value)==0 && value==0);
+    }
+    return NULL;
+}
+static void test_native_threads(void)
+{
+    struct cixscmi_acpi_softc sc;struct cixclk_acpi_softc clock;
+    struct cixclk *gate=NULL;pthread_t first,second;
+    native_begin(&sc,&clock,128);
+    CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,&gate)==0);
+    runtime_prepare(0x5006,0,0);struct native_worker w={gate};
+    CHECK(pthread_create(&first,NULL,native_rate_thread,&w)==0);
+    CHECK(pthread_create(&second,NULL,native_rate_thread,&w)==0);
+    CHECK(pthread_join(first,NULL)==0 && pthread_join(second,NULL)==0);
+    CHECK(doorbells==205 && cixclk_acpi_put(gate)==0);native_finish(&sc,&clock);
+}
+static void test_native_service(void)
+{
+    struct cixscmi_acpi_softc sc;
+    struct cixclk_acpi_softc clock;
+    struct cixclk sentinel_storage={0},*gate=NULL,*other=&sentinel_storage,*out;
+    uint64_t rate;
+    unsigned int before;
+
+    native_begin(&sc,&clock,64);out=other;before=callbacks();
+    CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,&out)==ENXIO);
+    CHECK(out==other && callbacks()==before);native_finish(&sc,&clock);
+
+    native_begin(&sc,&clock,128);before=callbacks();
+    CHECK(cixclk_acpi_get(clocknode.ad_handle,67,&gate)==0);
+    out=other;CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,&out)==EBUSY);
+    CHECK(out==other && cixclk_acpi_put(gate)==0);
+    CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,&gate)==0);
+    CHECK(callbacks()==before);
+    out=other;CHECK(cixclk_acpi_get(clocknode.ad_handle,67,&out)==EBUSY && out==other);
+    runtime_prepare(0x5007,1,0);CHECK(cixclk_acpi_enable(gate)==0);
+    CHECK(strstr(diagnostic,"trace_valid=1")!=NULL && strstr(diagnostic,"request_header=0x185007")!=NULL);
+    CHECK(strstr(diagnostic,"response_header=0x185007")!=NULL && strstr(diagnostic,"response_length=8")!=NULL);
+    CHECK(doorbells==6 && gate->state==CIXCLK_ENABLED && cixclk_acpi_put(gate)==EBUSY);
+    before=callbacks();CHECK(cixclk_acpi_enable(gate)==EALREADY && callbacks()==before);
+    runtime_prepare(0x5006,0,0);rate=UINT64_MAX;CHECK(cixclk_acpi_get_rate(gate,&rate)==0 && rate==0);
+    runtime_prepare(0x5007,0,0);CHECK(cixclk_acpi_disable(gate)==0 && doorbells==8);
+    CHECK(strstr(diagnostic,"trace_valid=1")!=NULL && strstr(diagnostic,"request_header=0x205007")!=NULL);
+    CHECK(strstr(diagnostic,"response_header=0x205007")!=NULL && strstr(diagnostic,"response_length=8")!=NULL);
+    before=callbacks();CHECK(cixclk_acpi_disable(gate)==EALREADY && callbacks()==before);
+    CHECK(cixclk_acpi_put(gate)==0);
+    CHECK(cixclk_acpi_get(clocknode.ad_handle,67,&gate)==0 && cixclk_acpi_put(gate)==0);
+    native_finish(&sc,&clock);
+
+    /* Complete errors permit rollback; poisoned attempts permit no callback. */
+    const unsigned int modes[]={2,9,1,3,4,7,8};
+    for(unsigned int i=0;i<__arraycount(modes);i++){
+        native_begin(&sc,&clock,128);
+        CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,&gate)==0);
+        runtime_prepare(0x5007,1,modes[i]);CHECK(cixclk_acpi_enable(gate)!=0);
+        CHECK(gate->state==CIXCLK_UNCERTAIN && cixclk_acpi_put(gate)==EBUSY);
+        before=callbacks();CHECK(cixclk_acpi_enable(gate)==EIO && callbacks()==before);
+        if(i<2){
+            runtime_prepare(0x5007,0,0);CHECK(cixclk_acpi_disable(gate)==0);
+            CHECK(doorbells==7 && cixclk_acpi_put(gate)==0);
+        }else{
+            rate=UINT64_MAX;CHECK(cixclk_acpi_get_rate(gate,&rate)==EIO && rate==UINT64_MAX);
+            CHECK(cixclk_acpi_disable(gate)==EIO && callbacks()==before && doorbells==6);
+        }
+        native_finish(&sc,&clock);
+    }
+
+    /* Exhaust real slots, rather than mutating opaque transport internals. */
+    native_begin(&sc,&clock,128);
+    CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,&gate)==0);
+    for(unsigned int i=0;i<1016;i++){
+        runtime_prepare(0x5006,0,0);CHECK(cixclk_acpi_get_rate(gate,&rate)==0);
+    }
+    runtime_prepare(0x5007,1,0);CHECK(cixclk_acpi_enable(gate)==0 && doorbells==1022);
+    before=callbacks();rate=UINT64_MAX;
+    CHECK(cixclk_acpi_get_rate(gate,&rate)==EOVERFLOW && rate==UINT64_MAX && callbacks()==before);
+    runtime_prepare(0x5007,0,0);CHECK(cixclk_acpi_disable(gate)==0 && doorbells==1023);
+    CHECK(cixclk_acpi_put(gate)==0);
+    CHECK(cixclk_acpi_get_native(clocknode.ad_handle,nodes[0].ad_handle,67,&gate)==0);
+    before=callbacks();CHECK(cixclk_acpi_enable(gate)==EOVERFLOW && callbacks()==before);
+    CHECK(gate->state==CIXCLK_IDLE && cixclk_acpi_put(gate)==0);
+    native_finish(&sc,&clock);
+
+    test_native_metadata();test_native_api();test_native_ownership();test_native_threads();
+    test_native_budget_failure();test_native_clock_faults();
+}
+#else
+static void test_native_service(void)
+{
+    struct cixscmi_acpi_softc sc;setup();attach(&sc,128);
+    CHECK(defers==1);CHECK(false); /* Native clock67 service API is missing. */
+    finish(&sc);
+}
+#endif
 int main(void)
 {
-    struct cixscmi_acpi_softc sc;alarm(30);(void)test_attach_refs;
+    struct cixscmi_acpi_softc sc;alarm(30);(void)test_attach_refs_cixscmi_acpi;
+    test_native_service();
     test_clock_selector();test_clock_protocol_attributes();test_clock67_attributes();test_clock67_rate();test_rejected_body20_prefix();test_repeat_base();test_mixed_batch();test_uid_capacity();test_diagnostic_stages();
     setup();attach(&sc,3);CHECK(defers==0 && evaluations==0 && maps==0 && reads==0 && writes==0);finish(&sc);
     setup();attach(&sc,0);CHECK(defers==0 && evaluations==0 && maps==0 && reads==0 && writes==0);finish(&sc);
@@ -947,7 +1278,7 @@ int main(void)
     }
     for(unsigned int m=18;m<=21;m++)run_negative(m,0);
     run_negative(24,0);run_negative(18,1);run_negative(18,2);
-    for(unsigned int selector=1;selector<=64;selector*=2)
+    for(unsigned int selector=1;selector<=128;selector*=2)
     for(unsigned int mode=0;mode<18;mode++){
         setup();attach(&sc,selector);
         if(defers!=1){CHECK(defers==1);finish(&sc);continue;}
@@ -979,7 +1310,7 @@ int main(void)
         if(mode==1){intr=false;deferred(&selfdev);CHECK(maps==0 && writes==0);}
         finish(&sc);
     }
-    for(unsigned int selector=1;selector<=64;selector*=2)
+    for(unsigned int selector=1;selector<=128;selector*=2)
     for(unsigned int mode=1;mode<=4;mode++){
         setup();attach(&sc,selector);
         if(defers!=1){CHECK(defers==1);finish(&sc);continue;}map_fail=mode<=2?mode:2;foreign_on_failure=mode==3;
@@ -1007,6 +1338,7 @@ int main(void)
     }
     printf("CIX SCMI binding contracts: %u checks, %u failures\n",checks,failures);
     for(unsigned int i=0;i<5;i++)free(info[i].p);
+    free(clockinfo.p);
     return failures?1:0;
 }
 #endif

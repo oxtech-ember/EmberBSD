@@ -14,6 +14,7 @@
 #include <arm/cpufunc.h>
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
+#include <dev/acpi/cixscmi_acpi.h>
 #include <dev/ic/scmi_smt_diag.h>
 
 /* Fixed boot diagnostic records. No exported service or retry API. */
@@ -52,7 +53,12 @@ struct cixscmi_batch_result {
 	struct scmi_smt_diag_trace trace;
 };
 
-/* Boot-only diagnostic. No clock service, detach, notification or retry API. */
+struct cixscmi_acpi_softc;
+struct cixscmi_clock67 {
+	struct cixscmi_acpi_softc *provider;
+};
+
+/* Boot-long mappings. Only selector128 can publish the fixed clock service. */
 struct cixscmi_acpi_softc {
 	device_t sc_dev;
 	struct acpi_devnode *sc_node;
@@ -99,10 +105,16 @@ struct cixscmi_acpi_softc {
 	unsigned int sc_batch_count;
 	unsigned int sc_batch_queries;
 	bool sc_batch_qualified;
+	struct cixscmi_clock67 sc_clock67;
+	bool sc_service_fault;
+	bool sc_wire_poisoned;
+	bool sc_gate_reserved;
+	unsigned int sc_remaining;
 };
 
 /* cold boot autoconfiguration serializes publication and the four aliases. */
 static struct cixscmi_acpi_softc *cixscmi_lease;
+static struct cixscmi_acpi_softc *cixscmi_service;
 static const char * const cixscmi_roles[] = {
 	"parent", "MBX6", "MBX7", "SHM0", "SHM1"
 };
@@ -721,6 +733,181 @@ cixscmi_mixed_batch(struct cixscmi_acpi_softc *sc)
 	    sc->sc_batch_qualified, sc->sc_batch_count, sc->sc_error);
 }
 
+static bool
+cixscmi_service_live(struct cixscmi_acpi_softc *sc)
+{
+	unsigned int i;
+
+	if (sc->sc_selector != 128 || !sc->sc_batch_qualified ||
+	    cixscmi_lease != sc || !sc->sc_claimed ||
+	    !sc->sc_mapped[0] || !sc->sc_mapped[1] ||
+	    sc->sc_node->ad_device != sc->sc_dev)
+		return false;
+	for (i = 0; i < 4; i++)
+		if (sc->sc_refs[i]->ad_device != sc->sc_dev)
+			return false;
+	return true;
+}
+
+int
+cixscmi_acpi_clock67_get(ACPI_HANDLE provider, ACPI_HANDLE logical,
+    struct cixscmi_clock67 **out)
+{
+	struct cixscmi_acpi_softc *sc = cixscmi_service;
+	struct acpi_devnode *node, *found = NULL;
+	const struct acpi_softc *acpi;
+	int error = ENOTSUP;
+
+	if (provider == NULL || logical == NULL || out == NULL)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (sc == NULL || sc->sc_node->ad_handle != provider)
+		return ENXIO;
+	mutex_enter(&sc->sc_lock);
+	if (!cixscmi_service_live(sc)) {
+		sc->sc_service_fault = true;
+		error = EIO;
+	} else if (sc->sc_service_fault || sc->sc_wire_poisoned) {
+		error = EIO;
+	} else {
+		acpi = device_private(sc->sc_node->ad_root);
+		SIMPLEQ_FOREACH(node, &acpi->sc_head, ad_list) {
+			if (node->ad_handle != logical)
+				continue;
+			if (found != NULL)
+				goto out;
+			found = node;
+		}
+		if (found != NULL && found->ad_root == sc->sc_node->ad_root &&
+		    cixscmi_identity(found, "CIXHA010", "0")) {
+			*out = &sc->sc_clock67;
+			error = 0;
+		}
+	}
+out:
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+static int
+cixscmi_clock67_operation(struct cixscmi_clock67 *service, bool rate,
+    uint32_t enable, uint64_t *value, struct cixscmi_clock67_result *result)
+{
+	struct cixscmi_acpi_softc *sc = cixscmi_service;
+	struct cixscmi_clock67_result r = { 0 };
+	struct scmi_smt_diag_reply reply;
+	uint64_t decoded = 0;
+	unsigned int i;
+	int error;
+
+	if (service == NULL || result == NULL || (rate && value == NULL) ||
+	    enable > 1)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (sc == NULL || service != &sc->sc_clock67)
+		return EINVAL;
+	mutex_enter(&sc->sc_lock);
+	if (!cixscmi_service_live(sc))
+		sc->sc_service_fault = true;
+	if (sc->sc_service_fault || sc->sc_wire_poisoned) {
+		error = EIO;
+		goto out;
+	}
+	/* Protect a disable call without depending on opaque wire state. */
+	if (sc->sc_remaining == 0 ||
+	    (((!rate && enable != 0) || (rate && sc->sc_gate_reserved)) &&
+	    sc->sc_remaining < 2)) {
+		error = EOVERFLOW;
+		goto out;
+	}
+	r.ack_before = bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
+	if ((r.ack_before & 2) != 0) {
+		r.ack_error = EBUSY;
+		sc->sc_service_fault = true;
+		error = EBUSY;
+		goto out;
+	}
+	sc->sc_remaining--;
+	r.helper_called = true;
+	if (rate) {
+		r.helper_return = scmi_smt_diag_query(&sc->sc_wire,
+		    SCMI_SMT_DIAG_CLOCK_RATE_GET, 67, &reply, &r.trace);
+	} else {
+		sc->sc_gate_reserved = true;
+		r.helper_return = scmi_smt_clock67_config_set(&sc->sc_wire,
+		    enable, &r.trace);
+	}
+	r.trace_valid = r.trace.request_header != 0;
+	if (r.trace_valid && (r.trace.stage == SCMI_SMT_DIAG_COMPLETE ||
+	    r.trace.stage == SCMI_SMT_DIAG_FIRMWARE)) {
+		r.ack_after = bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
+		r.ack_after_valid = true;
+		if ((r.ack_after & 2) != 0) {
+			r.ack_error = EBUSY;
+			sc->sc_service_fault = true;
+		}
+	} else if (!r.trace_valid) {
+		sc->sc_service_fault = true;
+	} else if (!(r.helper_return == EBUSY &&
+	    r.trace.stage == SCMI_SMT_DIAG_WAIT_FREE)) {
+		sc->sc_wire_poisoned = true;
+	}
+	if (rate && r.helper_return == 0) {
+		if (!r.trace_valid || r.trace.stage != SCMI_SMT_DIAG_COMPLETE ||
+		    reply.data_length != 8) {
+			r.decode_error = EPROTO;
+		} else {
+			for (i = 0; i < 8; i++)
+				decoded |= (uint64_t)reply.data[i] << (i * 8);
+		}
+	}
+	error = r.helper_return != 0 ? r.helper_return :
+	    r.decode_error != 0 ? r.decode_error : r.ack_error;
+	if (error == 0) {
+		if (rate)
+			*value = decoded;
+		else
+			sc->sc_gate_reserved = enable != 0;
+	}
+out:
+	r.remaining = sc->sc_remaining;
+	r.wire_poisoned = sc->sc_wire_poisoned;
+	r.service_usable = !sc->sc_service_fault && !sc->sc_wire_poisoned;
+	*result = r;
+	aprint_normal_dev(sc->sc_dev, "CLOCK67_NATIVE rate=%u enable=%u error=%d "
+	    "helper_called=%u helper_return=%d trace_valid=%u stage=%u "
+	    "request_header=%#x response_header=%#x response_length=%u "
+	    "status_valid=%u status=%d decode_error=%d ack_error=%d "
+	    "ack_before=%#x ack_after_valid=%u ack_after=%#x "
+	    "service_usable=%u wire_poisoned=%u remaining_calls=%u\n",
+	    rate, enable, error, r.helper_called, r.helper_return, r.trace_valid,
+	    (unsigned int)r.trace.stage, r.trace.request_header,
+	    r.trace.response_header, r.trace.response_length, r.trace.firmware_status_valid,
+	    r.trace.firmware_status, r.decode_error, r.ack_error, r.ack_before,
+	    r.ack_after_valid, r.ack_after, r.service_usable, r.wire_poisoned,
+	    r.remaining);
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+int
+cixscmi_acpi_clock67_get_rate(struct cixscmi_clock67 *service, uint64_t *rate,
+    struct cixscmi_clock67_result *result)
+{
+
+	return cixscmi_clock67_operation(service, true, 0, rate, result);
+}
+
+int
+cixscmi_acpi_clock67_config_set(struct cixscmi_clock67 *service, uint32_t enable,
+    struct cixscmi_clock67_result *result)
+{
+
+	return cixscmi_clock67_operation(service, false, enable, NULL, result);
+}
+
 static void
 cixscmi_acpi_deferred(device_t self)
 {
@@ -782,7 +969,7 @@ cixscmi_acpi_deferred(device_t self)
 		goto failed;
 	}
 	sc->sc_ack_before = bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
-	if ((sc->sc_selector == 32 || sc->sc_selector == 64) &&
+	if ((sc->sc_selector == 32 || sc->sc_selector == 64 || sc->sc_selector == 128) &&
 	    (sc->sc_ack_before & 2) != 0) {
 		sc->sc_stage = "ack-ownership";
 		sc->sc_error = EBUSY;
@@ -795,8 +982,13 @@ cixscmi_acpi_deferred(device_t self)
 	/* A request may be published from here. Retain mappings and leases forever. */
 	sc->sc_query_started = true;
 	sc->sc_stage = "query";
-	if (sc->sc_selector == 64) {
+	if (sc->sc_selector == 64 || sc->sc_selector == 128) {
 		cixscmi_mixed_batch(sc);
+		if (sc->sc_selector == 128 && sc->sc_batch_qualified) {
+			sc->sc_clock67.provider = sc;
+			sc->sc_remaining = 1023 - 5;
+			cixscmi_service = sc;
+		}
 		goto out;
 	}
 	if (sc->sc_selector == 32) {
@@ -1006,13 +1198,15 @@ cixscmi_acpi_attach(device_t parent, device_t self, void *aux)
 	sc->sc_role = cixscmi_roles[0];
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 	aprint_naive("\n");
-	if (flags == 64)
+	if (flags == 128)
+		aprint_normal(": CIX fixed native clock67 service\n");
+	else if (flags == 64)
 		aprint_normal(": CIX five-request read-only SCMI diagnostic\n");
 	else if (flags == 32)
 		aprint_normal(": CIX three-request BASE SCMI diagnostic\n");
 	else
 		aprint_normal(": CIX single-request SCMI diagnostic\n");
-	if (flags == 1 || flags == 2 || flags == 4 || flags == 8 || flags == 16 || flags == 32 || flags == 64)
+	if (flags == 1 || flags == 2 || flags == 4 || flags == 8 || flags == 16 || flags == 32 || flags == 64 || flags == 128)
 		config_defer(self, cixscmi_acpi_deferred);
 	else if (flags != 0)
 		aprint_error_dev(self, "unsupported diagnostic flags %#x\n", flags);

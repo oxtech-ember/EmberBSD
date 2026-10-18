@@ -9,10 +9,18 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
     SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
 fi
-source=${CIXCLK_SOURCE:-"$src/sys/dev/acpi/cixclk_acpi.c"}
 api=
+case ${CIXCLK_NCIXSCMI:-1} in 0|1) ;; *) exit 2 ;; esac
+api="-DNCIXSCMI=${CIXCLK_NCIXSCMI:-1}"
+if [ -f "$src/sys/dev/acpi/cixscmi_acpi.h" ]; then
+    api="$api -DCIXCLK_NATIVE_API"
+    ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |l| l.start_with?("#include ") }.join)' \
+        "$src/sys/dev/acpi/cixscmi_acpi.h" "$work/cixscmi-api.inc"
+    cp "$src/sys/dev/ic/scmi_smt_diag.h" "$work/scmi-smt-api.inc"
+fi
+source=${CIXCLK_SOURCE:-"$src/sys/dev/acpi/cixclk_acpi.c"}
 if [ -f "$source" ]; then
-    api=-DCIXCLK_DRIVER_API
+    api="$api -DCIXCLK_DRIVER_API"
     ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |l| l.start_with?("#include ") }.join)' \
         "$source" "$work/cixclk-source.inc"
 fi
@@ -30,11 +38,14 @@ if [ "${CIXCLK_ANALYZE:-0}" = 1 ]; then
         "$src/ember/tools/cixclk-contract.c"
     set --
     if [ "$(uname -s)" = Darwin ]; then set -- -isysroot "$SDKROOT"; fi
-    "${CSA:-clang}" --analyze -std=c11 -pthread -Wall -Wextra -Werror \
+    if ! "${CSA:-clang}" --analyze -std=c11 -pthread -Wall -Wextra -Werror \
         -DACPI_APPLICATION -DACPI_MISALIGNMENT_NOT_SUPPORTED $api \
         -isystem "$src/sys/external/bsd/acpica/dist/include" -I"$work" \
         "$@" "$src/ember/tools/cixclk-contract.c" -o "$work/clock.plist" \
-        2> "$work/csa.log"
+        2> "$work/csa.log"; then
+        cat "$work/csa.log"
+        exit 1
+    fi
     cat "$work/csa.log"
     test ! -s "$work/csa.log"
 fi

@@ -12,6 +12,9 @@
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/cixclk_acpi.h>
+#include <dev/acpi/cixscmi_acpi.h>
+/* Generated counts; the source directory also contains the public API header. */
+#include <cixclk_acpi.h>
 
 struct cixclk_acpi_softc;
 struct cixclk {
@@ -19,6 +22,8 @@ struct cixclk {
 	uint32_t id;
 	unsigned int capabilities;
 	bool claimed;
+	enum { CIXCLK_AML, CIXCLK_NATIVE } backend;
+	struct cixscmi_clock67 *native;
 	enum { CIXCLK_IDLE, CIXCLK_ENABLED, CIXCLK_UNCERTAIN } state;
 };
 
@@ -40,6 +45,7 @@ static const struct {
 struct cixclk_acpi_softc {
 	device_t sc_dev;
 	ACPI_HANDLE sc_handle;
+	struct acpi_devnode *sc_node;
 	kmutex_t sc_lock;
 	struct cixclk sc_clocks[__arraycount(cixclk_profiles)];
 };
@@ -82,6 +88,7 @@ cixclk_acpi_attach(device_t parent, device_t self, void *aux)
 	}
 	sc->sc_dev = self;
 	sc->sc_handle = aa->aa_node->ad_handle;
+	sc->sc_node = aa->aa_node;
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 	for (i = 0; i < __arraycount(sc->sc_clocks); i++) {
 		sc->sc_clocks[i] = (struct cixclk){
@@ -127,6 +134,8 @@ cixclk_acpi_get(ACPI_HANDLE provider, uint32_t id, struct cixclk **out)
 		if (clk->claimed)
 			error = EBUSY;
 		else {
+			clk->backend = CIXCLK_AML;
+			clk->native = NULL;
 			clk->claimed = true;
 			*out = clk;
 			error = 0;
@@ -135,6 +144,48 @@ cixclk_acpi_get(ACPI_HANDLE provider, uint32_t id, struct cixclk **out)
 	}
 	mutex_exit(&sc->sc_lock);
 	return error;
+}
+
+int
+cixclk_acpi_get_native(ACPI_HANDLE logical, ACPI_HANDLE provider, uint32_t id,
+    struct cixclk **out)
+{
+	struct cixclk_acpi_softc *sc = cixclk_provider;
+#if NCIXSCMI > 0
+	struct cixscmi_clock67 *service;
+	struct cixclk *clk;
+	int error;
+#endif
+
+	if (out == NULL || logical == NULL || provider == NULL)
+		return EINVAL;
+	if (cixclk_interrupt())
+		return EWOULDBLOCK;
+	if (id != 67)
+		return ENOTSUP;
+	if (sc == NULL || sc->sc_handle != logical)
+		return ENXIO;
+#if NCIXSCMI > 0
+	mutex_enter(&sc->sc_lock);
+	clk = &sc->sc_clocks[0];
+	if (clk->claimed)
+		error = EBUSY;
+	else if (sc->sc_node->ad_device != sc->sc_dev)
+		error = ENXIO;
+	else {
+		error = cixscmi_acpi_clock67_get(provider, logical, &service);
+		if (error == 0) {
+			clk->native = service;
+			clk->backend = CIXCLK_NATIVE;
+			clk->claimed = true;
+			*out = clk;
+		}
+	}
+	mutex_exit(&sc->sc_lock);
+	return error;
+#else
+	return ENOTSUP;
+#endif
 }
 
 static uint32_t
@@ -230,9 +281,25 @@ cixclk_control(struct cixclk *clk, bool enable)
 	    (!enable && clk->state == CIXCLK_IDLE))
 		error = EALREADY;
 	else {
-		/* An AML error can follow a hardware change. Keep ownership. */
+		int previous = clk->state;
+
+		/* A control error can follow a hardware change. Keep ownership. */
 		clk->state = CIXCLK_UNCERTAIN;
-		error = cixclk_evaluate(clk, false, enable, NULL);
+		if (clk->backend == CIXCLK_NATIVE) {
+#if NCIXSCMI > 0
+			struct cixscmi_clock67_result result = { 0 };
+
+			error = cixscmi_acpi_clock67_config_set(clk->native,
+			    enable ? 1 : 0, &result);
+			if (!result.helper_called)
+				clk->state = previous;
+#else
+			error = ENOTSUP;
+			clk->state = previous;
+#endif
+		} else {
+			error = cixclk_evaluate(clk, false, enable, NULL);
+		}
 		if (error == 0)
 			clk->state = enable ? CIXCLK_ENABLED : CIXCLK_IDLE;
 	}
@@ -270,7 +337,15 @@ cixclk_acpi_get_rate(struct cixclk *clk, uint64_t *rate)
 		error = EINVAL;
 	else if (!(clk->capabilities & CIXCLK_RATE_READ))
 		error = ENOTSUP;
-	else
+	else if (clk->backend == CIXCLK_NATIVE) {
+#if NCIXSCMI > 0
+		struct cixscmi_clock67_result result;
+
+		error = cixscmi_acpi_clock67_get_rate(clk->native, rate, &result);
+#else
+		error = ENOTSUP;
+#endif
+	} else
 		error = cixclk_evaluate(clk, true, false, rate);
 	mutex_exit(&sc->sc_lock);
 	return error;
@@ -292,8 +367,11 @@ cixclk_acpi_put(struct cixclk *clk)
 		error = EINVAL;
 	else if (clk->state != CIXCLK_IDLE)
 		error = EBUSY;
-	else
+	else {
 		clk->claimed = false;
+		clk->native = NULL;
+		clk->backend = CIXCLK_AML;
+	}
 	mutex_exit(&sc->sc_lock);
 	return error;
 }

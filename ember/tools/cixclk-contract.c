@@ -13,6 +13,20 @@
 #include <unistd.h>
 #define ACPI_APPLICATION
 #include <acpi.h>
+#ifdef CIXCLK_NATIVE_API
+#include "scmi-smt-api.inc"
+#include "cixscmi-api.inc"
+/* This standalone contract retains the AML boundary; integration is tested
+ * with the actual service and wire in cixscmi-contract.c. */
+#if NCIXSCMI > 0
+int cixscmi_acpi_clock67_get(ACPI_HANDLE p,ACPI_HANDLE l,struct cixscmi_clock67 **out)
+{ (void)p;(void)l;(void)out;return ENXIO; }
+int cixscmi_acpi_clock67_get_rate(struct cixscmi_clock67 *p,uint64_t *v,struct cixscmi_clock67_result *r)
+{ (void)p;(void)v;(void)r;return ENXIO; }
+int cixscmi_acpi_clock67_config_set(struct cixscmi_clock67 *p,uint32_t e,struct cixscmi_clock67_result *r)
+{ (void)p;(void)e;(void)r;return ENXIO; }
+#endif
+#endif
 
 #ifndef CIXCLK_DRIVER_API
 int main(void)
@@ -36,7 +50,7 @@ struct device_compatible_entry { const char *compat; };
 #define DEVICE_COMPAT_EOL {NULL}
 #define CFATTACH_DECL_NEW(n,s,m,a,d,r) \
     static const void * const test_attach_refs[] = {(const void *)(m),(const void *)(a)}
-struct acpi_devnode { ACPI_HANDLE ad_handle; };
+struct acpi_devnode { ACPI_HANDLE ad_handle; device_t ad_device; };
 struct acpi_attach_args { struct acpi_devnode *aa_node; };
 static void *private_data;
 static ACPI_INTEGER test_uid;
@@ -236,7 +250,7 @@ rate_only_tests(void)
 int main(void)
 {
     struct cixclk_acpi_softc sc={0}, duplicate={0};
-    struct acpi_devnode node={HANDLE};
+    struct acpi_devnode node={.ad_handle=HANDLE};
     struct acpi_attach_args aa={&node};
     struct cixclk sentinel_storage={0};
     struct cixclk *clk=NULL, *sentinel=&sentinel_storage, *out;
@@ -252,6 +266,12 @@ int main(void)
     private_data=&sc;
     cixclk_acpi_attach(NULL,HANDLE,&aa);
     CHECK(calls==0 && live==0); /* Adding a probe at attach breaks this. */
+#if defined(CIXCLK_NATIVE_API) && NCIXSCMI == 0
+    out=sentinel;
+    CHECK(cixclk_acpi_get_native(HANDLE,OTHER,67,&out)==ENOTSUP && out==sentinel && calls==0);
+    CHECK(cixclk_acpi_get_native(NULL,OTHER,67,&out)==EINVAL && out==sentinel);
+    intr=true;CHECK(cixclk_acpi_get_native(HANDLE,OTHER,67,&out)==EWOULDBLOCK && out==sentinel);intr=false;
+#endif
     private_data=&duplicate;cixclk_acpi_attach(NULL,OTHER,&aa);
     CHECK(calls==0);
     CHECK(cixclk_acpi_get(OTHER,0x43,&out)==ENXIO && out==sentinel);

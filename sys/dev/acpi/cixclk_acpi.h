@@ -24,6 +24,15 @@ struct cixclk;
  * uncertain. The caller must not use the claim after a successful put.
  */
 int cixclk_acpi_get(ACPI_HANDLE, uint32_t, struct cixclk **);
+/*
+ * Explicit native backend for ID67 only. The two actual handles must identify
+ * the registered CCLK and selector128 SCMI service in the same ACPI root.
+ * It shares the AML claim and pins this backend until successful put. No AML
+ * fallback is permitted. Acquisition does not read or change hardware. Native
+ * preflight rejection preserves the previous state when no helper was called.
+ * A transport fault forbids rollback I/O; the enabled/uncertain claim stays held.
+ */
+int cixclk_acpi_get_native(ACPI_HANDLE, ACPI_HANDLE, uint32_t, struct cixclk **);
 int cixclk_acpi_enable(struct cixclk *);
 int cixclk_acpi_disable(struct cixclk *);
 int cixclk_acpi_get_rate(struct cixclk *, uint64_t *);

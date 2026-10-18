@@ -12,11 +12,18 @@ fi
 mkdir -p "$work/dev/ic"
 cp "$src/sys/dev/ic/scmi_smt_diag.h" "$work/dev/ic/scmi_smt_diag.h"
 source=${CIXSCMI_SOURCE:-"$src/sys/dev/acpi/cixscmi_acpi.c"}
-api=
+api=-DNCIXSCMI=1
 if [ -f "$source" ]; then
-    api=-DCIXSCMI_DRIVER_API
+    api="$api -DCIXSCMI_DRIVER_API"
     ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |l| l.start_with?("#include ") }.join)' \
         "$source" "$work/cixscmi-source.inc"
+fi
+if [ -f "$src/sys/dev/acpi/cixscmi_acpi.h" ]; then
+    api="$api -DCIXSCMI_SERVICE_API"
+    ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |l| l.start_with?("#include ") }.join)' \
+        "$src/sys/dev/acpi/cixscmi_acpi.h" "$work/cixscmi-api.inc"
+    ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |l| l.start_with?("#include ") }.join)' \
+        "$src/sys/dev/acpi/cixclk_acpi.c" "$work/cixclk-source.inc"
 fi
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} $api -pthread \
     -DACPI_MISALIGNMENT_NOT_SUPPORTED -isystem "$src/sys/external/bsd/acpica/dist/include" \
@@ -33,11 +40,14 @@ if [ "${CIXSCMI_ANALYZE:-0}" = 1 ]; then
         "$src/ember/tools/cixscmi-contract.c"
     set --
     if [ "$(uname -s)" = Darwin ]; then set -- -isysroot "$SDKROOT"; fi
-    "${CSA:-clang}" --analyze -std=c11 -pthread -Wall -Wextra -Werror \
+    if ! "${CSA:-clang}" --analyze -std=c11 -pthread -Wall -Wextra -Werror \
         -DACPI_APPLICATION -DACPI_MISALIGNMENT_NOT_SUPPORTED $api \
         -isystem "$src/sys/external/bsd/acpica/dist/include" -I"$work" \
         "$@" "$src/ember/tools/cixscmi-contract.c" -o "$work/binding.plist" \
-        2> "$work/csa.log"
+        2> "$work/csa.log"; then
+        cat "$work/csa.log"
+        exit 1
+    fi
     cat "$work/csa.log"
     test ! -s "$work/csa.log"
 fi
