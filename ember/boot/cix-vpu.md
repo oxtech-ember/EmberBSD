@@ -287,7 +287,7 @@ Seven compiled runtime mutations are detected. Native GCC16 and CSA have no
 diagnostics. All-category Cppcheck retains its baseline and adds one isolated
 unused-export hint in each changed native unit; it is not reported clean.
 The poisoned bounce model checks that all 4092 bytes after state stay unchanged.
-Active RPC service and firmware readiness still require physical acceptance.
+Complete RPC service and firmware readiness still require physical acceptance.
 
 ## Closed bootstrap RPC service
 
@@ -383,8 +383,9 @@ to that boot profile. It does not change the RPC policy or exposure lifetime.
 selects the separate fixed RPC policy with VPU `flags 0x8` and SCMI `flags 0x80`.
 It preserves the UART2 console gate and all boot-long exposure rules.
 Its source checks pass, including ALLOC, fixed RESIZE, notification and the
-modeled SWITCHED_IN/PONG exchange. The physical diagnostic below uses an
-earlier policy that stops on RESIZE. The fixed resize reply needs a new board test.
+modeled SWITCHED_IN/PONG exchange. The physical diagnostic below commits the
+first ALLOC and fixed RESIZE. It stops on a second, unsupported ALLOC.
+That second object is not implemented.
 The complete firmware handshake remains unqualified.
 
 The once-only mountroot callback reuses the fixed local image pin, exact size,
@@ -663,24 +664,23 @@ Device DMA data correctness and codec execution require separate board acceptanc
 ## Physical diagnostic boundary
 
 The [observed CIX board](../boards/orange-pi-6-plus.md) runs the manual GCC16
-kernel `db0adb0378cd367f4a93573dc14e21e3a359b6b1` with `flags 0x8`.
+kernel `4b2a919a119ddbd4f8a3893913e8ce46e5d9573d` with `flags 0x8`.
 The report confirms identity, active power controls, root publication and
-IRQ status mask `0x1`, with no unexpected IRQ bits. The fixed allocation has
-one committed response and one notification. The next PARAM is state1,
-call3, payload8, identified as RESIZE by the pinned protocol reference.
-Its checked body contains address `0x20000000` and new_size 524288.
-The probe returns ENOTSUP86 at RECEIVE: one visit, zero accepted messages,
-no SWITCHED_IN and no PONG. This is protocol progress, not firmware readiness.
+IRQ status mask `0x1`, with no unexpected IRQ bits. The first MEM_ALLOC and
+fixed RESIZE each have one committed response and one notification.
+The resize serves address `0x20000000` and new_size 524288.
+The next request is PARAM state1, call2, payload12: MEM_ALLOC with size and
+max_size 16384, region0 and log2 alignment12. No response to that second
+allocation is implemented. The probe returns ENOTSUP86 at RECEIVE, last stage9,
+without SWITCHED_IN or PONG. This is protocol progress, not firmware readiness.
 
-The fixed allocator serves the separately observed MEM_ALLOC tuple:
-initial `131072` bytes, maximum `67108864` bytes, region0 and log2 alignment22.
-In this measured kernel, maximum size reserves virtual capacity; only the
-initial 128 KiB is backed. The newer source prepares 512 KiB before exposure and
-can acknowledge the one fixed resize. That response is not yet physically accepted.
-The request decoder acquires twelve payload bytes and rechecks the header.
-Matching headers rely on committed PARAM ownership; they do not prove an
-atomic transaction or physical DMA coherence. No live PTE change, free or
-complete allocator is implemented by this closed policy.
+The first MEM_ALLOC tuple remains initial `131072` bytes, maximum `67108864`
+bytes, region0 and log2 alignment22. Maximum size reserves virtual capacity;
+512 KiB has physical backing before exposure. The closed policy does not
+allocate pages or change live PTEs while servicing the fixed resize.
+Checked payloads and matching headers rely on committed PARAM ownership;
+they do not prove an atomic transaction or physical DMA coherence.
+No second object, free or complete allocator is implemented by this policy.
 
 The exposed prepared owner, core power claims and IRQ registration remain held.
 The IRQ is masked. Cleanup counters do not indicate post-exposure reclamation.

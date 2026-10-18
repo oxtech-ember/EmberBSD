@@ -1084,17 +1084,15 @@ The base system shell is unchanged.
   The [CPU preparation probe](ember/boot/cix-vpu.md#manual-cpu-preparation-probe)
   allocates and zero-checks 256 pages, copies the pinned firmware, builds tables
   and releases both owners on the physical board. Absent firmware stops before
-  allocation. An explicit firmware boot trial reaches exposed ownership and an
-  initial IRQ, then returns ENOTSUP before SWITCHED_IN/PONG. It retains exposed
-  pages and masks the IRQ. Physical RPC-header diagnostics identify MEM_ALLOC
-  (PARAM state `1`, call ID `2`, payload size `12`): 128 KiB initial memory,
-  64 MiB virtual capacity, protected region and 4 MiB alignment.
-  A separate manual RPC profile replies to the first allocation and notifies
-  the firmware once on the board. The next request is RESIZE, call3/body8,
-  address 0x20000000/new_size 524288. That measured kernel stops with ENOTSUP
-  before SWITCHED_IN/PONG and retains exposed owners. The newer source
-  prepares 512 KiB before exposure and replies to that one fixed resize.
-  The resize reply still needs physical acceptance.
+  allocation. The manual GCC16 RPC profile reaches exposed ownership and
+  IRQ status mask 0x1. On the board it commits two replies and two notifications:
+  the first MEM_ALLOC and its fixed RESIZE to 512 KiB at 0x20000000.
+  The first request asks for 128 KiB initial memory, 64 MiB virtual capacity,
+  region0 and 4 MiB alignment. The next request is another MEM_ALLOC,
+  PARAM1/call2/body12, size/max_size 16384, region0 and log2 alignment12.
+  That second allocation is not implemented. The probe returns ENOTSUP before
+  SWITCHED_IN/PONG and retains exposed owners with the IRQ masked.
+  Firmware readiness and DMA data correctness remain unqualified.
   A separate [UART rate query](ember/boot/cix-platform.md#manual-uart-rate-observations)
   reads functional clock IDs264/266 as 100 MHz on the physical sample.
   Baud programming and instrument exchange remain unqualified. An opt-in
