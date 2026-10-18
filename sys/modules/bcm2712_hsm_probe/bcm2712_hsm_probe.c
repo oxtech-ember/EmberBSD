@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* AI-assisted finite acceptance probe. Only explicit modes access shared DVP. */
+/* AI-assisted finite acceptance probe. Display MMIO needs an explicit mode. */
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
@@ -29,12 +29,15 @@ extern struct bus_space arm_generic_bs_tag;
 enum hsm_probe_mode {
 	HSM_PROBE_CLOCK,
 	HSM_PROBE_OBSERVE,
-	HSM_PROBE_GATE0
+	HSM_PROBE_GATE0,
+	HSM_PROBE_HPD0
 };
 struct hsm_probe_dvp {
 	struct bcm2712_dvp_provider *owner;
 	bus_space_handle_t handle;
-	bool mapped;
+	bool mapped, hpd_mapped, hpd_valid;
+	bus_space_handle_t hpd_handle;
+	uint32_t hpd_raw;
 	const char *stage;
 	struct bcm2712_dvp_status sample;
 	const char *sample_stage;
@@ -51,7 +54,38 @@ hsm_probe_dvp_snapshot(device_t dev, const char *stage,
 	    status->mutation_attempted);
 }
 
-/* The caller holds a verified HSM lease for this entire shared-resource cycle. */
+/* HSM and DVP leases remain held until the controller mapping is released. */
+static int
+hsm_probe_hpd0(device_t dev, const struct bcm2712_display_contract *contract,
+    struct hsm_probe_dvp *dvp)
+{
+	const struct bcm2712_display_memory *memory = &contract->memory[16];
+	int error;
+
+	dvp->stage = "HPD0-map";
+	error = bus_space_map(&arm_generic_bs_tag, memory->address,
+	    memory->length, 0, &dvp->hpd_handle);
+	if (error != 0)
+		return error;
+	dvp->hpd_mapped = true;
+	dvp->stage = "HPD0-read";
+	aprint_normal_dev(dev, "HPD0 probe: normal-active-SoC prior-art "
+	    "assumption; first per-controller resource16 MMIO: one read at "
+	    "+0x1c8; bus_space stall/abort is not recoverable; no ACPI power "
+	    "or display-lifetime claim\n");
+	/* BCM2712 uses the VC6 HDMI core table, not the VC5 register offset. */
+	dvp->hpd_raw = bus_space_read_4(&arm_generic_bs_tag, dvp->hpd_handle,
+	    0x1c8);
+	dvp->hpd_valid = true;
+	aprint_normal_dev(dev, "HPD0 probe sample: raw %#x connected %u\n",
+	    dvp->hpd_raw, dvp->hpd_raw & 1U);
+	bus_space_unmap(&arm_generic_bs_tag, dvp->hpd_handle, memory->length);
+	dvp->hpd_mapped = false;
+	dvp->stage = "HPD0-unmapped";
+	return 0;
+}
+
+/* The caller holds a verified HSM lease for this entire DVP/controller cycle. */
 static int
 hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
     struct hsm_probe_dvp *dvp)
@@ -74,7 +108,8 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 	aprint_normal_dev(dev, "DVP probe %s: normal-active-SoC prior-art "
 	    "assumption; first shared resource10 MMIO; bus_space stall/abort "
 	    "is not recoverable; no ACPI power or display-lifetime claim\n",
-	    mode == HSM_PROBE_OBSERVE ? "observe" : "gate0");
+	    mode == HSM_PROBE_OBSERVE ? "observe" :
+	    mode == HSM_PROBE_HPD0 ? "HPD0" : "gate0");
 	dvp->stage = "create";
 	error = bcm2712_display_dvp_create(dev, &contract,
 	    &contract.memory[BCM2712_DVP_RESOURCE], &arm_generic_bs_tag,
@@ -92,7 +127,10 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 		return EIO;
 	if ((initial.resets & (1U << 1)) != 0)
 		return EBUSY;
-	if (mode == HSM_PROBE_GATE0) {
+	/* Do not combine first controller access with an unaccepted gate write. */
+	if (mode == HSM_PROBE_HPD0 && (initial.gates & (1U << 3)) != 0)
+		return EBUSY;
+	if (mode == HSM_PROBE_GATE0 || mode == HSM_PROBE_HPD0) {
 		dvp->stage = "acquire0";
 		error = bcm2712_display_dvp_acquire(dvp->owner, 0);
 		if (error != 0)
@@ -108,6 +146,14 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 		    status.gates != (initial.gates & ~(1U << 3)) ||
 		    status.resets != initial.resets)
 			return EIO;
+		if (mode == HSM_PROBE_HPD0) {
+			/* Acquire can write if an external owner changed the gate. */
+			if (status.mutation_attempted)
+				return EIO;
+			error = hsm_probe_hpd0(dev, &contract, dvp);
+			if (error != 0)
+				return error;
+		}
 		dvp->stage = "release0";
 		error = bcm2712_display_dvp_release(dvp->owner, 0);
 		if (error != 0)
@@ -302,8 +348,10 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 		goto stop;
 	/* Successful destroy invalidates provider. Do not read it again. */
 	aprint_normal_dev(dev, "HSM probe destroy succeeded; finite cycle "
-	    "complete; %s; no HPD, reset or clock-lifetime claim\n",
-	    mode == HSM_PROBE_CLOCK ? "no display MMIO" : "shared DVP resource10 only");
+	    "complete; %s; no reset or clock-lifetime claim\n",
+	    mode == HSM_PROBE_CLOCK ? "no display MMIO or HPD" :
+	    mode == HSM_PROBE_HPD0 ? "one HPD0 sample" :
+	    "shared DVP resource10 only; no HPD");
 	return 0;
 stop:
 	if (bcm2712_display_hsm_status(provider, &status) == 0) {
@@ -325,6 +373,11 @@ retained:
 		aprint_error_dev(dev, "DVP probe stopped at %s: error %d "
 		    "mapping retained %u native owner retained %u\n", dvp.stage,
 		    error, dvp.mapped, dvp.owner != NULL);
+		if (mode == HSM_PROBE_HPD0)
+			aprint_error_dev(dev, "HPD0 probe resource16 mapping "
+			    "retained %u sample valid %u; cached raw %#x connected "
+			    "%u; no current connector-state claim\n", dvp.hpd_mapped,
+			    dvp.hpd_valid, dvp.hpd_raw, dvp.hpd_raw & 1U);
 		aprint_error_dev(dev, "DVP probe sample valid %u at %s; "
 		    "pre-failure cached values only; current status unknown\n",
 		    dvp.sample_stage != NULL,
@@ -348,7 +401,7 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 	prop_dictionary_t properties = argument;
 	struct drm_minor *minor;
 	ACPI_HANDLE handle;
-	const char *expected, *dvp_mode;
+	const char *expected, *dvp_mode, *hpd_mode;
 	enum hsm_probe_mode mode = HSM_PROBE_CLOCK;
 	bool cold_headless = false;
 	size_t length;
@@ -363,7 +416,13 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 	    !cold_headless || !prop_dictionary_get_cstring_nocopy(properties,
 	    "expected-buildinfo", &expected))
 		return EINVAL;
-	if (prop_dictionary_get(properties, "dvp-mode") != NULL) {
+	if (prop_dictionary_get(properties, "hpd-mode") != NULL) {
+		if (prop_dictionary_get(properties, "dvp-mode") != NULL ||
+		    !prop_dictionary_get_cstring_nocopy(properties, "hpd-mode",
+		    &hpd_mode) || strcmp(hpd_mode, "sample0") != 0)
+			return EINVAL;
+		mode = HSM_PROBE_HPD0;
+	} else if (prop_dictionary_get(properties, "dvp-mode") != NULL) {
 		if (!prop_dictionary_get_cstring_nocopy(properties, "dvp-mode", &dvp_mode))
 			return EINVAL;
 		if (strcmp(dvp_mode, "observe") == 0)
@@ -392,6 +451,6 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 	error = hsm_probe_cycle(minor->dev->dev, handle, mode);
 	drm_minor_release(minor);
 	if (error != 0)
-		aprint_error("HSM probe failed: %d; no per-controller MMIO\n", error);
+		aprint_error("HSM probe failed: %d; see retained stages; no retry\n", error);
 	return error;
 }

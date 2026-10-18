@@ -57,6 +57,38 @@ Its DVP reset provider leaves `reset_us` zero. `reset_simple_reset` then returns
 The HDMI reset callback ignores that return value. This does not establish a usable reset pulse width.
 This implementation therefore leaves `SW_INIT` unchanged, including when reset is already asserted.
 
+## Finite HPD0 sample
+
+The [finite module](bcm2712-display-hsm.md#finite-opt-in-module) also accepts
+`-s hpd-mode=sample0`. Apply its selected-kernel, render and cold-headless gates.
+First accept the separate shared-DVP observation and inherited-gate cycle.
+Any `dvp-mode` property conflicts with this mode. Empty, unknown or non-string
+HPD values fail before all HSM, mapping and MMIO calls. No mode advances itself.
+
+This mode holds HSM at least 120 MHz, creates DVP, and requires port0 reset bit1 clear,
+gate bit3 already clear, no leases, no fault and no mutation. It acquires port0
+and rechecks lease1, gate/reset state, fault0 and mutation0 before controller map.
+It assumes no concurrent firmware writer. If an external actor closes the gate
+after the initial sample, native acquire can write. Any observed mutation then
+stops before controller access and retains the owners and shared mapping.
+
+The only controller mapping is resource16, `0x107c701400/0x300`.
+A log before the first read names the normal-active-SoC prior-art assumption
+and the unrecoverable bus_space stall/abort boundary. Exactly one 32-bit read
+at `HDMI_HOTPLUG`, offset `0x1c8`, records the raw word and connected bit0.
+Other bits do not determine the connection. The module then unmaps resource16,
+calls DVP release/status/destroy, unmaps resource10, then calls HSM release/status/destroy.
+Every controller map/read/unmap occurs under both leases. No reset, PHY, per-controller DVP,
+VID_CTL or other controller register is written. HPD errors retain remaining
+owners/maps and label any saved sample as cached. Unload performs no cleanup.
+
+This is a bounded first-controller-access probe, not a complete ACPI power or
+display-lifetime contract. It does not arm AON interrupts, read DDC/EDID, or
+provide KMS. A disconnected sample does not accept hotplug delivery.
+Linux uses the VC6 core register table for BCM2712. Its detect path holds
+runtime PM; resume also invokes a controller-reset callback. That prior art
+does not prove that the native read-only sequence has physical acceptance.
+
 ## Source validation
 
 ```sh
@@ -98,3 +130,7 @@ The interface facts use Raspberry Pi Linux revision `a1a601d4857978d810175365550
 - [Simple reset semantics](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/reset/reset-simple.c).
 
 This implementation uses register and interface facts. It does not copy Linux driver code.
+
+The HPD register facts use the same pinned Linux revision:
+[VC6 register tables](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hdmi_regs.h#L437-L477)
+and [connected bit0](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_regs.h#L768).

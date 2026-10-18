@@ -89,7 +89,6 @@ GCC 16.2 compiles the affected AArch64 kernel translation units with the real ke
 GCC path analysis reports no findings in those units.
 Clang Static Analyzer and Cppcheck retain inherited header findings; the HSM source adds none.
 The host fixture passes ASan and UBSan. Valgrind is unavailable on the tested Darwin AArch64 host.
-Host execution does not establish physical clock control or HDMI operation.
 These source checks do not establish physical HSM control or a display access lifetime.
 
 ## Finite opt-in module
@@ -101,13 +100,10 @@ Set `EMBER_KERNEL_OBJDIR` to that kernel's configured object directory.
 The Makefile reads its real preprocessing and DRM flags, generated option
 headers, source include paths, and warning policy. Generic DRM module defaults
 can select different architecture and legacy configuration definitions.
-Record matching source, headers, options, build settings and strong kernel
-symbols before loading. A buildinfo string comparison alone does not prove ABI
-compatibility. The optional [ABI sample](../tools/bcm2712-hsm-probe-abi.c)
-compares three configuration definitions and selected DRM, ACPI, HSM, DVP
-and bus_space layouts. It
-does not replace the source, option or symbol audit. Do not load a module built
-against a different kernel profile.
+Record matching source, headers, options, build settings and strong symbols.
+Buildinfo alone does not prove ABI. The optional [ABI sample](../tools/bcm2712-hsm-probe-abi.c)
+checks three configuration definitions and selected DRM, ACPI, HSM, DVP and bus_space layouts.
+It does not replace source, option or symbol audits. Use the selected profile.
 
 The operator must first shut down, remove HDMI, and perform a controlled cold
 boot. A disconnected cable on an already running system is not this prerequisite.
@@ -137,28 +133,27 @@ restores an unknown clock state, or clears mailbox quarantine. Empty unmutated
 owners can be destroyed during failure cleanup. Module unload performs no HSM
 operation and cannot clear a retained owner.
 
-The default HSM-only mode does not access display MMIO. No mode performs HPD,
-DDC or reset operations.
-Its framebuffer gate is conservative; it does not establish a general firmware
-clock lifetime. Run its actual-source host contract with:
+The default HSM-only mode does not access display MMIO. The explicit
+[HPD0 sample](bcm2712-display-dvp.md#finite-hpd0-sample) reads one controller register.
+No mode performs DDC or reset operations. The framebuffer gate does not establish
+a general firmware clock lifetime. Run the actual-source host contract with:
 
 ```sh
 sh ember/tools/bcm2712-hsm-probe-contract.sh "$PWD"
 ```
 
-The fixture uses the real resource decoder, HSM/DVP cores and native providers,
-module body and libfdt.
-Only kernel services are controlled. It checks refusal before HSM calls,
-malformed trees, zero rate, inherited state, every transaction failure, retained
-ownership and cleanup. `CC`, `CFLAGS`, `HSM_PROBE_COMPILE_ONLY=1`,
+The fixture uses the real decoder, HSM/DVP cores/providers, module and libfdt.
+Controlled kernel services test early refusal, malformed trees, zero rate,
+inherited state, failures, retained ownership, cleanup and exact HPD MMIO order.
+`CC`, `CFLAGS`, `HSM_PROBE_COMPILE_ONLY=1`,
 `HSM_PROBE_OUTPUT` and `TEST_RUNNER` support cross-built and memory-checked tests.
 `HSM_PROBE_SKIP_MUTANT=1` runs only the positive source contract.
 Host execution does not establish physical acceptance.
 
 ### Explicit shared-DVP modes
 
-An absent `dvp-mode` property keeps the HSM-only cycle above. An empty,
-unknown or non-string value fails before all HSM, mapping and MMIO calls.
+Absent `dvp-mode` and `hpd-mode` properties keep the HSM-only cycle above.
+Empty, unknown, non-string or conflicting modes fail before HSM, mapping and MMIO.
 `dvp-mode=observe` and `dvp-mode=gate0` use the same headless, framebuffer,
 render and selected-kernel guards. Both acquire and hold a verified HSM lease
 throughout the DVP operation. A completed earlier HSM cycle is not a held lease.

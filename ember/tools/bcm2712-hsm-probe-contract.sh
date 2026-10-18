@@ -53,7 +53,8 @@ if [ "${HSM_PROBE_COMPILE_ONLY:-0}" = 1 ]; then exit 0; fi
 run
 if [ "${HSM_PROBE_SKIP_MUTANT:-0}" = 1 ]; then exit 0; fi
 cp "$work/probe.h" "$work/probe-good.h"
-for mutation in fdt-full mode-fallback selected-reset hsm-held retained-map; do
+for mutation in fdt-full mode-fallback selected-reset hsm-held retained-map \
+    hpd-inherited-gate hpd-mutation hpd-offset hpd-held hpd-conflict; do
     case "$mutation" in
         fdt-full)
             from='fdt_check_full(fdt, fdt_totalsize(fdt))'; to='fdt_check_header(fdt)' ;;
@@ -64,9 +65,23 @@ for mutation in fdt-full mode-fallback selected-reset hsm-held retained-map; do
         hsm-held)
             from='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp);'
             to='(void)bcm2712_display_hsm_release(provider, 0); error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp);' ;;
+        hpd-inherited-gate)
+            from='if (mode == HSM_PROBE_HPD0 && (initial.gates & (1U << 3)) != 0)'
+            to='if (false)' ;;
+        hpd-mutation)
+            from='if (status.mutation_attempted)'; to='if (false)' ;;
+        hpd-offset)
+            from='0x1c8);'; to='0x1a8);' ;;
+        hpd-held)
+            from='dvp->hpd_raw = bus_space_read_4'
+            to='(void)bcm2712_display_dvp_release(dvp->owner, 0); dvp->hpd_raw = bus_space_read_4' ;;
+        hpd-conflict)
+            from='prop_dictionary_get(properties, "dvp-mode") != NULL ||'
+            to='false ||' ;;
         retained-map)
             from='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp);'
             to='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp); if (error != 0 && dvp.mapped) bus_space_unmap(&arm_generic_bs_tag, dvp.handle, 0x10);' ;;
+        *) echo "Unknown probe mutant: $mutation" >&2; exit 1 ;;
     esac
     if [ "$mutation" = mode-fallback ]; then
         awk '
@@ -85,8 +100,8 @@ for mutation in fdt-full mode-fallback selected-reset hsm-held retained-map; do
     fi
     compile
     if (ulimit -c 0; run) >"$work/mutant.log" 2>&1; then
-        echo "HSM/DVP probe accepted causal mutant: $mutation" >&2
+        echo "HSM/DVP/HPD probe accepted causal mutant: $mutation" >&2
         exit 1
     fi
-    echo "HSM/DVP probe: rejected causal mutant $mutation"
+    echo "HSM/DVP/HPD probe: rejected causal mutant $mutation"
 done

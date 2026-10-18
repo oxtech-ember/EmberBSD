@@ -32,7 +32,8 @@
 #define PTR_ERR(p) ((intptr_t)(p))
 typedef int modcmd_t;
 typedef struct { unsigned int next; } deviter_t;
-struct properties { const char *expected; bool cold; const char *mode; bool wrong_mode_type; };
+struct properties { const char *expected; bool cold; const char *mode;
+    bool wrong_mode_type; const char *hpd_mode; bool wrong_hpd_type; };
 typedef struct properties *prop_dictionary_t;
 const char buildinfo[] = "EmberBSD:accepted-kernel\n";
 static char blob[4096] __aligned(8);
@@ -63,11 +64,20 @@ static bool prop_dictionary_get_cstring_nocopy(prop_dictionary_t p,
 		if (p->wrong_mode_type) return false;
 		*v = p->mode; return *v != NULL;
 	}
+	if (strcmp(n, "hpd-mode") == 0) {
+		if (p->wrong_hpd_type) return false;
+		*v = p->hpd_mode; return *v != NULL;
+	}
 	assert(strcmp(n, "expected-buildinfo") == 0);
 	*v = p->expected; return *v != NULL;
 }
 static void *prop_dictionary_get(prop_dictionary_t p, const char *n)
-{ assert(strcmp(n, "dvp-mode") == 0); return p->mode || p->wrong_mode_type ? p : NULL; }
+{
+	if (strcmp(n, "hpd-mode") == 0)
+		return p->hpd_mode || p->wrong_hpd_type ? p : NULL;
+	assert(strcmp(n, "dvp-mode") == 0);
+	return p->mode || p->wrong_mode_type ? p : NULL;
+}
 static device_t device_find_by_xname(const char *name)
 { assert(strcmp(name, "bcmv3d0") == 0); return find_device ? &device_token : NULL; }
 static bool device_is_a(device_t d, const char *kind)
@@ -120,7 +130,9 @@ typedef uintptr_t bus_space_handle_t;
 static struct {
 	uint32_t gates, resets, pending;
 	unsigned int maps, unmaps, reads, writes, barriers, ignore_write;
-	bool mapped, waiting, disturb_lease;
+	bool mapped, waiting, disturb_lease, hpd_mapped, external_gate;
+	uint32_t hpd_raw;
+	unsigned int hpd_maps, hpd_reads, hpd_unmaps;
 } hw;
 static char events[128];
 static unsigned int event_count, fail_step;
@@ -138,9 +150,17 @@ static void held_hsm(void)
 	assert(bcm2712_hsm_owner->core.status.rate >= 120000000);
 	assert(bcm2712_hsm_owner->core.status.fault == 0);
 }
+static void held_dvp(void);
 static int bus_space_map(bus_space_tag_t tag, uint64_t base, uint64_t size,
     int flags, bus_space_handle_t *handle)
 {
+	if (base == UINT64_C(0x107c701400)) {
+		assert(tag == &arm_generic_bs_tag && size == 0x300 && flags == 0);
+		assert(!hw.hpd_mapped && hw.hpd_maps == 0);
+		held_hsm(); held_dvp(); hw.hpd_maps++;
+		if (step('H')) return EIO;
+		hw.hpd_mapped = true; *handle = 23; return 0;
+	}
 	assert(tag == &arm_generic_bs_tag && base == UINT64_C(0x107c700000));
 	assert(size == 0x10 && flags == 0 && !hw.mapped);
 	held_hsm(); hw.maps++;
@@ -150,6 +170,13 @@ static int bus_space_map(bus_space_tag_t tag, uint64_t base, uint64_t size,
 static uint32_t bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle,
     unsigned int offset)
 {
+	if (handle == 23) {
+		assert(tag == &arm_generic_bs_tag && hw.hpd_mapped && offset == 0x1c8);
+		assert(hw.hpd_reads == 0 && !hw.waiting);
+		assert(strstr(log_text, "first per-controller resource16 MMIO") != NULL);
+		held_hsm(); held_dvp(); hw.hpd_reads++; (void)step('h');
+		return hw.hpd_raw;
+	}
 	assert(tag == &arm_generic_bs_tag && handle == 17 && hw.mapped && !hw.waiting);
 	assert(offset == 0x04 || offset == 0x08);
 	held_hsm(); hw.reads++;
@@ -182,8 +209,24 @@ static void bus_space_barrier(bus_space_tag_t tag, bus_space_handle_t handle,
 #undef bcm2712_display_dvp_acquire
 #undef bcm2712_display_dvp_release
 #undef bcm2712_display_dvp_destroy
+static void held_dvp(void)
+{
+	assert(hw.mapped && bcm2712_dvp_owner != NULL);
+	assert(bcm2712_dvp_owner->core.status.leases == 1);
+	assert(bcm2712_dvp_owner->core.status.fault == 0);
+	assert(!bcm2712_dvp_owner->core.status.mutation_attempted);
+	assert((bcm2712_dvp_owner->core.status.gates & (1U << 3)) == 0);
+	assert((bcm2712_dvp_owner->core.status.resets & (1U << 1)) == 0);
+}
 static void bus_space_unmap(bus_space_tag_t tag, bus_space_handle_t handle, uint64_t size)
 {
+	if (handle == 23) {
+		assert(tag == &arm_generic_bs_tag && size == 0x300 && hw.hpd_mapped);
+		assert(hw.hpd_reads == 1);
+		held_hsm(); held_dvp(); (void)step('u');
+		hw.hpd_unmaps++; hw.hpd_mapped = false; return;
+	}
+	assert(!hw.hpd_mapped);
 	assert(tag == &arm_generic_bs_tag && handle == 17 && size == 0x10 && hw.mapped);
 	assert(bcm2712_dvp_owner == NULL && !hw.waiting);
 	held_hsm(); (void)step('U'); hw.unmaps++; hw.mapped = false;
@@ -204,9 +247,9 @@ static int bcm2712_display_hsm_acquire(struct bcm2712_hsm_provider *p,
     unsigned int port, uint32_t rate)
 { PROVIDER_CALL('A', actual_hsm_acquire(p, port, rate)); }
 static int bcm2712_display_hsm_release(struct bcm2712_hsm_provider *p, unsigned int port)
-{ assert(!hw.mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('R', actual_hsm_release(p, port)); }
+{ assert(!hw.mapped && !hw.hpd_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('R', actual_hsm_release(p, port)); }
 static int bcm2712_display_hsm_destroy(struct bcm2712_hsm_provider *p)
-{ assert(!hw.mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('D', actual_hsm_destroy(p)); }
+{ assert(!hw.mapped && !hw.hpd_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('D', actual_hsm_destroy(p)); }
 static int bcm2712_display_acpi_resources(device_t d, ACPI_HANDLE h,
     struct bcm2712_display_contract *out)
 {
@@ -236,9 +279,13 @@ static int bcm2712_display_dvp_status(struct bcm2712_dvp_provider *p,
 	return result;
 }
 static int bcm2712_display_dvp_acquire(struct bcm2712_dvp_provider *p, unsigned int port)
-{ assert(port == 0); held_hsm(); PROVIDER_CALL('a', actual_dvp_acquire(p, port)); }
+{
+	assert(port == 0); held_hsm();
+	if (hw.external_gate) hw.gates |= 1U << 3;
+	PROVIDER_CALL('a', actual_dvp_acquire(p, port));
+}
 static int bcm2712_display_dvp_release(struct bcm2712_dvp_provider *p, unsigned int port)
-{ assert(port == 0); held_hsm(); PROVIDER_CALL('r', actual_dvp_release(p, port)); }
+{ assert(port == 0 && !hw.hpd_mapped); held_hsm(); PROVIDER_CALL('r', actual_dvp_release(p, port)); }
 static int bcm2712_display_dvp_destroy(struct bcm2712_dvp_provider *p)
 { held_hsm(); PROVIDER_CALL('d', actual_dvp_destroy(p)); }
 #undef PROVIDER_CALL
@@ -274,6 +321,7 @@ refusal(struct properties *p, int expected)
 	CHECK(actual == expected);
 	CHECK(fw.calls == 0 && fw.sets == 0 && references == 0);
 	CHECK(hw.maps == 0 && hw.reads == 0 && hw.writes == 0);
+	CHECK(hw.hpd_maps == 0 && hw.hpd_reads == 0 && hw.hpd_unmaps == 0);
 	CHECK(event_count == 0 && resource_calls == 0);
 	CHECK(bcm2712_hsm_owner == NULL);
 	CHECK(strstr(log_text, "finite cycle complete") == NULL);
@@ -286,7 +334,7 @@ static void reboot_model(void)
 		kmem_free(bcm2712_dvp_owner, sizeof(*bcm2712_dvp_owner));
 		bcm2712_dvp_owner = NULL;
 	}
-	hw.mapped = hw.waiting = false;
+	hw.mapped = hw.hpd_mapped = hw.waiting = false;
 	if (bcm2712_hsm_owner != NULL) {
 		kmem_free(bcm2712_hsm_owner, sizeof(*bcm2712_hsm_owner));
 		bcm2712_hsm_owner = NULL;
@@ -386,6 +434,105 @@ static void dvp_probe_tests(void)
 	CHECK(bcm2712_dvp_owner->core.status.leases == 1); reboot_model();
 }
 
+static void hpd_probe_tests(void)
+{
+	struct properties p = { .expected = "EmberBSD:accepted-kernel", .cold = true,
+	    .hpd_mode = "sample0" };
+	const char *order = "CSASQMcsasHhursdURSD";
+	unsigned int i, stop;
+
+	prepare(1, 0); p.hpd_mode = ""; refusal(&p, EINVAL);
+	prepare(1, 0); p.hpd_mode = "other"; refusal(&p, EINVAL);
+	prepare(1, 0); p.hpd_mode = NULL; p.wrong_hpd_type = true; refusal(&p, EINVAL);
+	p.hpd_mode = "sample0"; p.wrong_hpd_type = false;
+	prepare(1, 0); p.mode = "observe"; refusal(&p, EINVAL);
+	prepare(1, 0); p.mode = "gate0"; refusal(&p, EINVAL);
+	prepare(1, 0); p.mode = ""; refusal(&p, EINVAL);
+	prepare(1, 0); p.mode = NULL; p.wrong_mode_type = true; refusal(&p, EINVAL);
+	p.wrong_mode_type = false;
+	prepare(1, 0); early_framebuffer = 1; refusal(&p, EBUSY);
+	prepare(1, 0); genfb = true; refusal(&p, EBUSY);
+	prepare(1, 0); wsdisplay = true; refusal(&p, EBUSY);
+	prepare(1, 0); tree = NULL; refusal(&p, EIO);
+	prepare(1, 0); render = false; refusal(&p, ENODEV);
+	prepare(1, 0); p.expected = "wrong"; refusal(&p, EPROGMISMATCH);
+	p.expected = "EmberBSD:accepted-kernel";
+	/* Arbitrary foreign bits remain data; only bit0 is the HPD level. */
+	for (i = 0; i < 3; i++) {
+		prepare(i == 0 ? 0 : 1, i == 2 ? 240000000 : 0);
+		hw.gates &= ~(1U << 3); hw.hpd_raw = 0xa5a50000U | (i & 1U);
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+		CHECK(strcmp(events, order) == 0);
+		CHECK(hw.maps == 1 && hw.unmaps == 1 && !hw.mapped);
+		CHECK(hw.hpd_maps == 1 && hw.hpd_reads == 1 && hw.hpd_unmaps == 1);
+		CHECK(!hw.hpd_mapped && hw.reads == 6 && hw.writes == 0 && hw.barriers == 0);
+		CHECK(hw.gates == 0xa5a50010 && hw.resets == 0);
+		CHECK(strstr(log_text, i == 1 ? "raw 0xa5a50001 connected 1" :
+		    "raw 0xa5a50000 connected 0") != NULL);
+		CHECK(strstr(log_text, "one HPD0 sample") != NULL);
+		CHECK(bcm2712_dvp_owner == NULL && bcm2712_hsm_owner == NULL);
+		CHECK(allocated == freed && references == 0);
+	}
+	for (i = 1; i <= strlen(order); i++) {
+		char operation = order[i - 1];
+		if (operation == 'h' || operation == 'u' || operation == 'U') continue;
+		prepare(1, 120000000); hw.gates &= ~(1U << 3); fail_step = i;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) ==
+		    (operation == 'Q' || operation == 'M' || operation == 'H' ? EIO : EWOULDBLOCK));
+		CHECK(strstr(log_text, "finite cycle complete") == NULL);
+		CHECK(strncmp(events, order, i) == 0);
+		CHECK(!hw.hpd_mapped && hw.hpd_reads == (i > 13 ? 1U : 0U));
+		CHECK(hw.hpd_unmaps == hw.hpd_reads);
+		CHECK(hw.mapped == (i >= 7 && i <= 16));
+		CHECK((bcm2712_dvp_owner != NULL) == (i >= 8 && i <= 16));
+		if (i >= 4) CHECK(bcm2712_hsm_owner != NULL);
+		if (hw.mapped) CHECK(bcm2712_hsm_owner->core.status.leases == 1);
+		if (operation == 'S' || operation == 's') {
+			CHECK(event_count == i);
+			CHECK(strstr(log_text, "current status unknown") != NULL);
+		}
+		if (i == 11) {
+			CHECK(strstr(log_text, "stopped at HPD0-map") != NULL);
+			CHECK(strstr(log_text, "resource16 mapping retained 0 sample valid 0") != NULL);
+			CHECK(bcm2712_dvp_owner->core.status.leases == 1);
+		}
+		if (i > 13)
+			CHECK(strstr(log_text, "resource16 mapping retained 0 sample valid 1") != NULL);
+		stop = event_count;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_FINI, NULL) == 0);
+		CHECK(event_count == stop); reboot_model();
+	}
+	for (i = 1; i <= 18; i++) {
+		prepare(0, 0); hw.gates &= ~(1U << 3); fw.fail_call = i;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == ETIMEDOUT);
+		CHECK(fw.calls == i && !hw.mapped && !hw.hpd_mapped);
+		CHECK(bcm2712_dvp_owner == NULL);
+		CHECK(hw.hpd_reads == (i >= 12 ? 1U : 0U));
+		CHECK(hw.hpd_maps == hw.hpd_reads && hw.hpd_unmaps == hw.hpd_reads);
+		CHECK(strstr(log_text, "finite cycle complete") == NULL); reboot_model();
+	}
+	/* Inherited closed gate and asserted reset refuse before native acquire. */
+	for (i = 0; i < 2; i++) {
+		prepare(1, 120000000);
+		if (i == 1) { hw.gates &= ~(1U << 3); hw.resets = 1U << 1; }
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EBUSY);
+		CHECK(hw.writes == 0 && hw.reads == 2 && hw.hpd_maps == 0);
+		CHECK(strchr(events, 'a') == NULL && hw.mapped);
+		CHECK(bcm2712_dvp_owner->core.status.leases == 0);
+		CHECK(bcm2712_hsm_owner->core.status.leases == 1);
+		CHECK(strstr(log_text, "finite cycle complete") == NULL); reboot_model();
+	}
+	/* An external gate change can cause a native write, but never HPD MMIO. */
+	prepare(1, 120000000); hw.gates &= ~(1U << 3); hw.external_gate = true;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EIO);
+	CHECK(hw.writes == 1 && hw.barriers == 1 && hw.hpd_maps == 0 && hw.hpd_reads == 0);
+	CHECK(hw.mapped && bcm2712_dvp_owner->core.status.leases == 1);
+	CHECK(bcm2712_dvp_owner->core.status.mutation_attempted);
+	CHECK(bcm2712_hsm_owner->core.status.leases == 1);
+	CHECK(strstr(log_text, "sample valid 1 at acquired-status") != NULL);
+	CHECK(strstr(log_text, "finite cycle complete") == NULL); reboot_model();
+}
+
 int
 main(void)
 {
@@ -476,6 +623,7 @@ main(void)
 	bcm2712_hsm_owner = NULL;
 	CHECK(allocated == freed);
 	dvp_probe_tests();
+	hpd_probe_tests();
 	printf("HSM probe: %u checks PASS; real libfdt and native owner, host only\n", checks);
 	return 0;
 }
