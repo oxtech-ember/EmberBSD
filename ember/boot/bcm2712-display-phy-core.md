@@ -4,8 +4,8 @@ The [pure core](../../sys/arch/arm/broadcom/bcm2712_display_phy.c) issues one
 fixed HDMI0 RGB8 profile with a 148.5 MHz TMDS character rate.
 The intended first mode is progressive 1920x1080 without pixel repetition.
 The core does not validate geometry, a sink, EDID, mappings, clock leases,
-power or controller quiesce. It has no native adapter or kernel configuration
-entry and performs no automatic attachment.
+power or controller quiesce. The explicit [retained programming module](bcm2712-phy-program-probe.md)
+links this core privately. It adds no built-in provider or automatic attachment.
 
 ## Private interface
 
@@ -54,7 +54,8 @@ Neither these cached leases nor absence of framebuffer proves quiesce or power.
 It must validate the current sink and selected mode; historical EDID is not
 an unconditional authorization for a later monitor.
 The safe post-disable owner-release predicate remains open.
-This core must not be used as a native MMIO probe before those contracts exist.
+The retained module is a controlled access test under the documented prior-art
+assumption. It does not complete those external power or ownership contracts.
 Never clear BCM2712 VID_CTL.ENABLE or infer a supported SW_INIT reset pulse.
 
 ## Source checks and provenance

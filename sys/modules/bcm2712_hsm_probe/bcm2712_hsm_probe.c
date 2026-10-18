@@ -33,6 +33,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <libfdt.h>
 #include <linux/err.h>
 #include "drm_internal.h"
+#include "../../arch/arm/broadcom/bcm2712_display_phyvar.h"
 
 MODULE(MODULE_CLASS_MISC, bcm2712_hsm_probe, NULL);
 
@@ -43,6 +44,7 @@ enum hsm_probe_mode {
 	HSM_PROBE_BVB0,
 	HSM_PROBE_HD,
 	HSM_PROBE_HD_INIT,
+	HSM_PROBE_PHY0,
 	HSM_PROBE_OBSERVE,
 	HSM_PROBE_GATE0,
 	HSM_PROBE_HPD0,
@@ -110,6 +112,25 @@ struct hsm_probe_irq {
 	bool initialized, aon_mapped, stopping, retained;
 };
 static struct hsm_probe_irq hsm_probe_irq0;
+
+/* A PHY attempt has no proven release predicate. All storage stays resident. */
+struct hsm_probe_phy {
+	struct bcm2712_phy core;
+	struct bcm2712_display_contract contract;
+	struct bcm2712_hsm_provider *hsm;
+	struct bcm2712_hsm_status hsm_sample;
+	struct hsm_probe_bvb bvb;
+	struct hsm_probe_dvp dvp;
+	bus_space_handle_t handle[2];
+	struct drm_minor *minor;
+	device_t dev;
+	const char *stage, *hsm_sample_stage;
+	unsigned int mapped;
+	int error;
+	bool hsm_leased, retained, write_attempted;
+};
+static struct hsm_probe_phy hsm_probe_phy0;
+
 
 /* The elapsed limit avoids adding 120 seconds to a possibly large time_t. */
 static int
@@ -295,6 +316,13 @@ hsm_probe_hd_stopped(const struct hsm_probe_hd *hd)
 	    (hd->stop[0] & 2U) != 0 && (hd->stop[1] & 2U) != 0;
 }
 
+static bool
+hsm_probe_hd_candidate(const struct hsm_probe_hd *hd)
+{
+
+	return hd->ctl == 0 && hsm_probe_hd_stopped(hd);
+}
+
 /* These values describe a non-atomic snapshot, not a handoff or idle proof. */
 static void
 hsm_probe_hd_snapshot(device_t dev, const struct hsm_probe_hd *hd)
@@ -303,7 +331,7 @@ hsm_probe_hd_snapshot(device_t dev, const struct hsm_probe_hd *hd)
 
 	if (!hd->valid)
 		return;
-	candidate = hd->ctl == 0 && hsm_probe_hd_stopped(hd);
+	candidate = hsm_probe_hd_candidate(hd);
 	aprint_normal_dev(dev, "HD observe sample: DVP_CTL %#x VID_CTL0 %#x "
 	    "VID_CTL1 %#x CLOCK_STOP0 %#x CLOCK_STOP1 %#x reset-side "
 	    "candidate %u; non-atomic snapshot, not idle or handoff proof\n",
@@ -324,17 +352,12 @@ hsm_probe_hd_read(device_t dev, struct hsm_probe_hd *hd)
 	hsm_probe_hd_snapshot(dev, hd);
 }
 
-/* Both inherited-open DVP ports stay leased throughout every snapshot. */
+/* Both inherited-open ports stay leased until the caller releases them. */
 static int
-hsm_probe_hd_observe(device_t dev,
-    const struct bcm2712_display_contract *contract, struct hsm_probe_dvp *dvp,
-    bool initialize)
+hsm_probe_hd_acquire(device_t dev, struct hsm_probe_dvp *dvp)
 {
-	const unsigned int resource[] = { 11, 17, 25 };
 	const struct bcm2712_dvp_status initial = dvp->sample;
-	struct hsm_probe_hd *hd = &dvp->hd;
 	struct bcm2712_dvp_status status;
-	unsigned int i;
 	int error;
 
 	dvp->stage = "HD-acquire0";
@@ -365,6 +388,19 @@ hsm_probe_hd_observe(device_t dev,
 	if (status.leases != 3 || status.fault != 0 || status.mutation_attempted ||
 	    status.gates != initial.gates || status.resets != initial.resets)
 		return EIO;
+	return 0;
+}
+
+static int
+hsm_probe_hd_sample(device_t dev,
+    const struct bcm2712_display_contract *contract, struct hsm_probe_dvp *dvp,
+    bool initialize)
+{
+	const unsigned int resource[] = { 11, 17, 25 };
+	struct hsm_probe_hd *hd = &dvp->hd;
+	unsigned int i;
+	int error;
+
 	for (i = 0; i < __arraycount(resource); i++) {
 		dvp->stage = i == 0 ? "HD-map11" :
 		    i == 1 ? "HD-map17" : "HD-map25";
@@ -413,6 +449,17 @@ unmap:
 		    contract->memory[resource[i - 1]].length);
 		hd->mapped &= ~(1U << (i - 1));
 	}
+	return 0;
+}
+
+static int
+hsm_probe_hd_release(device_t dev, struct hsm_probe_dvp *dvp)
+{
+	const struct bcm2712_dvp_status initial = dvp->sample;
+	struct bcm2712_dvp_status status;
+	unsigned int i;
+	int error;
+
 	for (i = 2; i > 0; i--) {
 		dvp->stage = i == 2 ? "HD-release1" : "HD-release0";
 		error = bcm2712_display_dvp_release(dvp->owner, i - 1);
@@ -431,6 +478,23 @@ unmap:
 			return EIO;
 	}
 	return 0;
+}
+
+/* Keep both accepted HD modes independent of the retained PHY lifetime. */
+static int
+hsm_probe_hd_observe(device_t dev,
+    const struct bcm2712_display_contract *contract, struct hsm_probe_dvp *dvp,
+    bool initialize)
+{
+	int error;
+
+	error = hsm_probe_hd_acquire(dev, dvp);
+	if (error != 0)
+		return error;
+	error = hsm_probe_hd_sample(dev, contract, dvp, initialize);
+	if (error != 0)
+		return error;
+	return hsm_probe_hd_release(dev, dvp);
 }
 
 /* HSM and DVP leases remain held until the controller mapping is released. */
@@ -953,6 +1017,354 @@ retained:
 	return error;
 }
 
+/* Validate typed windows before native access. A bus abort cannot return errno. */
+static int
+hsm_probe_phy_window(struct hsm_probe_phy *phy, enum bcm2712_phy_window window,
+    unsigned int offset, bus_space_handle_t *handle)
+{
+	unsigned int index, length;
+
+	if (window == BCM2712_PHY_WINDOW) {
+		index = 0;
+		length = BCM2712_PHY_LENGTH;
+	} else if (window == BCM2712_RM_WINDOW) {
+		index = 1;
+		length = BCM2712_RM_LENGTH;
+	} else
+		return EINVAL;
+	if ((phy->mapped & (1U << index)) == 0 || (offset & 3U) != 0 ||
+	    offset > length - sizeof(uint32_t))
+		return EINVAL;
+	*handle = phy->handle[index];
+	return 0;
+}
+
+static int
+hsm_probe_phy_read(void *arg, enum bcm2712_phy_window window,
+    unsigned int offset, uint32_t *value)
+{
+	struct hsm_probe_phy *phy = arg;
+	bus_space_handle_t handle;
+	int error;
+
+	error = hsm_probe_phy_window(phy, window, offset, &handle);
+	if (error != 0)
+		return error;
+	*value = bus_space_read_4(&arm_generic_bs_tag, handle, offset);
+	return 0;
+}
+
+static int
+hsm_probe_phy_write(void *arg, enum bcm2712_phy_window window,
+    unsigned int offset, uint32_t value)
+{
+	struct hsm_probe_phy *phy = arg;
+	bus_space_handle_t handle;
+	int error;
+
+	/* Latch before the first attempted write, including backend rejection. */
+	phy->retained = true;
+	phy->write_attempted = true;
+	error = hsm_probe_phy_window(phy, window, offset, &handle);
+	if (error != 0)
+		return error;
+	bus_space_write_4(&arm_generic_bs_tag, handle, offset, value);
+	return 0;
+}
+
+static void
+hsm_probe_phy_barrier(void *arg)
+{
+	struct hsm_probe_phy *phy = arg;
+
+	bus_space_barrier(&arm_generic_bs_tag, phy->handle[0], 0,
+	    BCM2712_PHY_LENGTH, BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+	bus_space_barrier(&arm_generic_bs_tag, phy->handle[1], 0,
+	    BCM2712_RM_LENGTH, BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+}
+
+static int
+hsm_probe_phy_hsm_sample(struct hsm_probe_phy *phy)
+{
+	struct bcm2712_hsm_status status;
+	int error;
+
+	error = bcm2712_display_hsm_status(phy->hsm, &status);
+	if (error != 0)
+		return error;
+	phy->hsm_sample = status;
+	phy->hsm_sample_stage = phy->stage;
+	hsm_probe_snapshot(phy->dev, phy->stage, &status);
+	return 0;
+}
+
+/* Known prefix cleanup only. Every failed status or cleanup stops immediately. */
+static int
+hsm_probe_phy_cleanup(struct hsm_probe_phy *phy, int operation_error)
+{
+	const struct bcm2712_hsm_status *hsm = &phy->hsm_sample;
+	struct hsm_probe_dvp *dvp = &phy->dvp;
+	int error;
+
+	if (phy->bvb.owner != NULL) {
+		phy->stage = "PHY-BVB-destroy";
+		error = bcm2712_display_bvb_destroy(phy->bvb.owner);
+		if (error != 0)
+			goto retained;
+		phy->bvb.owner = NULL;
+	}
+	if (dvp->owner != NULL) {
+		if (dvp->sample.leases == 3) {
+			phy->stage = "PHY-DVP-release";
+			error = hsm_probe_hd_release(phy->dev, dvp);
+			if (error != 0)
+				goto retained;
+		}
+		phy->stage = "PHY-DVP-destroy";
+		error = bcm2712_display_dvp_destroy(dvp->owner);
+		if (error != 0)
+			goto retained;
+		dvp->owner = NULL;
+	}
+	if (dvp->mapped) {
+		bus_space_unmap(&arm_generic_bs_tag, dvp->handle,
+		    phy->contract.memory[BCM2712_DVP_RESOURCE].length);
+		dvp->mapped = false;
+	}
+	if (phy->hsm_leased) {
+		phy->stage = "PHY-HSM-release";
+		error = bcm2712_display_hsm_release(phy->hsm, 0);
+		if (error != 0)
+			goto retained;
+		phy->hsm_leased = false;
+		phy->stage = "PHY-HSM-released-status";
+		error = hsm_probe_phy_hsm_sample(phy);
+		if (error != 0)
+			goto retained;
+		if (hsm->fault != 0 || hsm->leases != 0 || hsm->state != 1 ||
+		    hsm->rate < BCM2712_DISPLAY_HSM_MIN_RATE ||
+		    hsm->minimum[0] != 0 || hsm->minimum[1] != 0) {
+			error = EIO;
+			goto retained;
+		}
+	}
+	phy->stage = "PHY-HSM-destroy";
+	error = bcm2712_display_hsm_destroy(phy->hsm);
+	if (error != 0)
+		goto retained;
+	phy->hsm = NULL;
+	aprint_error_dev(phy->dev, "PHY0 refused before PHY programming: error "
+	    "%d; known prefix cleaned; no programming or lifecycle success\n",
+	    operation_error);
+	return operation_error;
+retained:
+	phy->retained = true;
+	return error;
+}
+
+static void
+hsm_probe_phy_retained(struct hsm_probe_phy *phy, int error)
+{
+	const struct bcm2712_phy_status *status = &phy->core.status;
+
+	phy->error = error;
+	aprint_error_dev(phy->dev, "PHY0 retained at %s: error %d; "
+	    "programming_complete %u fault %d step %u reads %u writes %u "
+	    "write_attempted %u; overall lifecycle accepted 0; no success; "
+	    "INIT0 registers static context; FINI EBUSY; controlled reboot\n",
+	    phy->stage, error, status->programming_complete, status->fault,
+	    status->step, status->reads, status->writes, phy->write_attempted);
+	aprint_error_dev(phy->dev, "PHY0 retained maps18/19 %#x HD11/17/25 %#x "
+	    "DVP-map10 %u DVP-owner %u HSM-owner %u BVB-owner %u render %u; "
+	    "cached HSM valid %u at %s, DVP valid %u at %s, BVB valid %u "
+	    "at %s; no current-state or release claim\n", phy->mapped,
+	    phy->dvp.hd.mapped, phy->dvp.mapped, phy->dvp.owner != NULL,
+	    phy->hsm != NULL, phy->bvb.owner != NULL, phy->minor != NULL,
+	    phy->hsm_sample_stage != NULL,
+	    phy->hsm_sample_stage != NULL ? phy->hsm_sample_stage : "none",
+	    phy->dvp.sample_stage != NULL,
+	    phy->dvp.sample_stage != NULL ? phy->dvp.sample_stage : "none",
+	    phy->bvb.sample_stage != NULL,
+	    phy->bvb.sample_stage != NULL ? phy->bvb.sample_stage : "none");
+	if (phy->hsm_sample_stage != NULL)
+		hsm_probe_snapshot(phy->dev, "PHY retained cached", &phy->hsm_sample);
+	if (phy->dvp.sample_stage != NULL)
+		hsm_probe_dvp_snapshot(phy->dev, "PHY retained cached", &phy->dvp.sample);
+	if (phy->bvb.sample_stage != NULL)
+		aprint_error_dev(phy->dev, "PHY0 cached BVB state %#x rate %u "
+		    "floor %u leases %#x fault %d mutation %u\n",
+		    phy->bvb.sample.state, phy->bvb.sample.rate,
+		    phy->bvb.sample.floor, phy->bvb.sample.leases,
+		    phy->bvb.sample.fault, phy->bvb.sample.mutation_attempted);
+}
+
+/* Fixed programming boundary. It deliberately has no post-write cleanup. */
+static int
+hsm_probe_phy_cycle(struct hsm_probe_phy *phy, ACPI_HANDLE handle)
+{
+	struct hsm_probe_dvp *dvp = &phy->dvp;
+	struct hsm_probe_bvb *bvb = &phy->bvb;
+	const struct bcm2712_hsm_status *hsm = &phy->hsm_sample;
+	const struct bcm2712_bvb_status *status = &bvb->sample;
+	struct bcm2712_phy_io io = { .read = hsm_probe_phy_read,
+	    .write = hsm_probe_phy_write, .barrier = hsm_probe_phy_barrier,
+	    .arg = phy };
+	unsigned int i;
+	int error, operation_error;
+
+	phy->stage = "PHY-HSM-create";
+	error = bcm2712_display_hsm_create(phy->dev, handle, &phy->hsm);
+	if (error != 0)
+		return error;
+	phy->stage = "PHY-HSM-initial-status";
+	error = hsm_probe_phy_hsm_sample(phy);
+	if (error != 0)
+		goto retained;
+	if (hsm->leases != 0 || hsm->fault != 0 || hsm->mutation_attempted) {
+		error = EIO;
+		goto retained;
+	}
+	if (hsm->state != 1 || hsm->rate < BCM2712_DISPLAY_HSM_MIN_RATE)
+		return hsm_probe_phy_cleanup(phy, EBUSY);
+	phy->stage = "PHY-HSM-acquire0";
+	error = bcm2712_display_hsm_acquire(phy->hsm, 0, HSM_PROBE_BVB_HSM_MIN);
+	if (error != 0) {
+		operation_error = error;
+		phy->stage = "PHY-HSM-failed-acquire-status";
+		error = hsm_probe_phy_hsm_sample(phy);
+		if (error != 0)
+			goto retained;
+		if (hsm->fault != 0 || hsm->mutation_attempted || hsm->leases != 0) {
+			error = operation_error;
+			goto retained;
+		}
+		return hsm_probe_phy_cleanup(phy, operation_error);
+	}
+	phy->hsm_leased = true;
+	phy->stage = "PHY-HSM-acquired-status";
+	error = hsm_probe_phy_hsm_sample(phy);
+	if (error != 0)
+		goto retained;
+	if (hsm->state != 1 || hsm->rate < HSM_PROBE_BVB_HSM_MIN ||
+	    hsm->leases != 1 || hsm->fault != 0 ||
+	    hsm->minimum[0] != HSM_PROBE_BVB_HSM_MIN || hsm->minimum[1] != 0) {
+		error = EIO;
+		goto retained;
+	}
+	phy->stage = "PHY-resources";
+	error = bcm2712_display_acpi_resources(phy->dev, handle, &phy->contract);
+	if (error != 0)
+		return hsm_probe_phy_cleanup(phy, error);
+	phy->stage = "PHY-DVP-map10";
+	error = bus_space_map(&arm_generic_bs_tag,
+	    phy->contract.memory[BCM2712_DVP_RESOURCE].address,
+	    phy->contract.memory[BCM2712_DVP_RESOURCE].length, 0, &dvp->handle);
+	if (error != 0)
+		return hsm_probe_phy_cleanup(phy, error);
+	dvp->mapped = true;
+	phy->stage = "PHY-DVP-create";
+	aprint_normal_dev(phy->dev, "PHY0 prefix: normal-active-SoC prior-art "
+	    "assumption; first shared DVP10 MMIO; bus_space stall/abort "
+	    "is not recoverable; no ACPI power or ownership proof\n");
+	error = bcm2712_display_dvp_create(phy->dev, &phy->contract,
+	    &phy->contract.memory[BCM2712_DVP_RESOURCE], &arm_generic_bs_tag,
+	    dvp->handle, &dvp->owner);
+	if (error != 0)
+		goto retained;
+	phy->stage = "PHY-DVP-initial-status";
+	error = bcm2712_display_dvp_status(dvp->owner, &dvp->sample);
+	if (error != 0)
+		goto retained;
+	dvp->sample_stage = phy->stage;
+	if (dvp->sample.leases != 0 || dvp->sample.fault != 0 ||
+	    dvp->sample.mutation_attempted) {
+		error = EIO;
+		goto retained;
+	}
+	if ((dvp->sample.gates & 0x18U) != 0 || (dvp->sample.resets & 6U) != 0)
+		return hsm_probe_phy_cleanup(phy, EBUSY);
+	phy->stage = "PHY-HD-acquire";
+	error = hsm_probe_hd_acquire(phy->dev, dvp);
+	if (error != 0)
+		goto retained;
+	phy->stage = "PHY-HD-sample";
+	error = hsm_probe_hd_sample(phy->dev, &phy->contract, dvp, false);
+	if (error != 0)
+		goto retained;
+	if (!hsm_probe_hd_candidate(&dvp->hd))
+		return hsm_probe_phy_cleanup(phy, EBUSY);
+	/* No BVB minimization occurs before the fresh two-port HD predicate. */
+	phy->stage = "PHY-BVB-create";
+	error = bcm2712_display_bvb_create(phy->dev, handle, &bvb->owner);
+	if (error != 0) {
+		if (bvb->owner != NULL)
+			goto retained;
+		return hsm_probe_phy_cleanup(phy, error);
+	}
+	if (bvb->owner == NULL) {
+		error = EIO;
+		goto retained;
+	}
+	phy->stage = "PHY-BVB-initial-status";
+	error = hsm_probe_bvb_sample(phy->dev, bvb, phy->stage);
+	if (error != 0)
+		goto retained;
+	if (status->floor == 0 || status->leases != 0 || status->fault != 0 ||
+	    status->mutation_attempted || status->minimum[0] != 0 ||
+	    status->minimum[1] != 0) {
+		error = EIO;
+		goto retained;
+	}
+	phy->stage = "PHY-BVB-acquire0";
+	error = bcm2712_display_bvb_acquire(bvb->owner, 0, HSM_PROBE_BVB_MIN);
+	if (error != 0) {
+		operation_error = error;
+		phy->stage = "PHY-BVB-failed-acquire-status";
+		error = hsm_probe_bvb_sample(phy->dev, bvb, phy->stage);
+		if (error != 0)
+			goto retained;
+		if (status->fault != 0 || status->mutation_attempted || status->leases != 0) {
+			error = operation_error;
+			goto retained;
+		}
+		return hsm_probe_phy_cleanup(phy, operation_error);
+	}
+	phy->stage = "PHY-BVB-acquired-status";
+	error = hsm_probe_bvb_sample(phy->dev, bvb, phy->stage);
+	if (error != 0)
+		goto retained;
+	if (status->state != 1 || status->leases != 1 || status->fault != 0 ||
+	    status->minimum[0] != HSM_PROBE_BVB_MIN || status->minimum[1] != 0 ||
+	    status->rate < MAX(status->floor, HSM_PROBE_BVB_MIN)) {
+		error = EIO;
+		goto retained;
+	}
+	for (i = 0; i < 2; i++) {
+		phy->stage = i == 0 ? "PHY-map18" : "PHY-map19";
+		error = bus_space_map(&arm_generic_bs_tag,
+		    phy->contract.memory[18 + i].address,
+		    phy->contract.memory[18 + i].length, 0, &phy->handle[i]);
+		if (error != 0)
+			goto retained;
+		phy->mapped |= 1U << i;
+	}
+	phy->stage = "PHY-init";
+	error = bcm2712_phy_init(&phy->core, &io);
+	if (error != 0)
+		goto retained;
+	phy->stage = "PHY-program148500";
+	aprint_normal_dev(phy->dev, "PHY0 first resource18/19 MMIO: fixed "
+	    "148.5 MHz RGB8 programming only; fresh same-boot EDID and "
+	    "controlled exclusion of firmware, audio, HDMI1 and all other "
+	    "shared-HD writers is external; bus_space stall/abort is not recoverable; "
+	    "no power, PLL-lock, link, scanout or lifecycle acceptance\n");
+	error = bcm2712_phy_program_148500(&phy->core);
+	/* Even full programming has no established release predicate. No disable. */
+retained:
+	phy->retained = true;
+	return error;
+}
+
 static int
 hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 {
@@ -1190,24 +1602,35 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 	prop_dictionary_t properties = argument;
 	struct drm_minor *minor;
 	ACPI_HANDLE handle;
-	const char *expected, *dvp_mode, *hpd_mode, *ddc_mode, *clock_mode, *hd_mode;
+	const char *expected, *dvp_mode, *hpd_mode, *ddc_mode;
+	const char *clock_mode, *hd_mode, *phy_mode;
 	enum hsm_probe_mode mode = HSM_PROBE_CLOCK;
 	bool cold_headless = false;
 	size_t length;
 	int error;
 
 	if (command == MODULE_CMD_FINI)
-		return hsm_probe_irq0.retained ? EBUSY : 0;
+		return hsm_probe_irq0.retained || hsm_probe_phy0.retained ? EBUSY : 0;
 	if (command != MODULE_CMD_INIT)
 		return ENOTTY;
-	if (hsm_probe_irq0.retained)
+	if (hsm_probe_irq0.retained || hsm_probe_phy0.retained)
 		return EBUSY;
 	if (properties == NULL ||
 	    !prop_dictionary_get_bool(properties, "cold-headless", &cold_headless) ||
 	    !cold_headless || !prop_dictionary_get_cstring_nocopy(properties,
 	    "expected-buildinfo", &expected))
 		return EINVAL;
-	if (prop_dictionary_get(properties, "hd-mode") != NULL) {
+	if (prop_dictionary_get(properties, "phy-mode") != NULL) {
+		if (prop_dictionary_get(properties, "hd-mode") != NULL ||
+		    prop_dictionary_get(properties, "clock-mode") != NULL ||
+		    prop_dictionary_get(properties, "dvp-mode") != NULL ||
+		    prop_dictionary_get(properties, "hpd-mode") != NULL ||
+		    prop_dictionary_get(properties, "ddc-mode") != NULL ||
+		    !prop_dictionary_get_cstring_nocopy(properties, "phy-mode", &phy_mode) ||
+		    strcmp(phy_mode, "program0") != 0)
+			return EINVAL;
+		mode = HSM_PROBE_PHY0;
+	} else if (prop_dictionary_get(properties, "hd-mode") != NULL) {
 		if (prop_dictionary_get(properties, "clock-mode") != NULL ||
 		    prop_dictionary_get(properties, "dvp-mode") != NULL ||
 		    prop_dictionary_get(properties, "hpd-mode") != NULL ||
@@ -1288,7 +1711,19 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 		cv_init(&hsm_probe_irq0.cv, "hpd-irq0");
 		hsm_probe_irq0.initialized = true;
 	}
-	error = hsm_probe_cycle(minor->dev->dev, handle, mode);
+	if (mode == HSM_PROBE_PHY0) {
+		memset(&hsm_probe_phy0, 0, sizeof(hsm_probe_phy0));
+		hsm_probe_phy0.minor = minor;
+		hsm_probe_phy0.dev = minor->dev->dev;
+		error = hsm_probe_phy_cycle(&hsm_probe_phy0, handle);
+		if (hsm_probe_phy0.retained) {
+			/* INIT0 registers retained callback storage. It is not success. */
+			hsm_probe_phy_retained(&hsm_probe_phy0, error);
+			return 0;
+		}
+		hsm_probe_phy0.minor = NULL;
+	} else
+		error = hsm_probe_cycle(minor->dev->dev, handle, mode);
 	if (mode == HSM_PROBE_IRQ0) {
 		if (hsm_probe_irq0.retained) {
 			aprint_error_dev(minor->dev->dev, "HPD IRQ0 retained fault "

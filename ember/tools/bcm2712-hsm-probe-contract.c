@@ -52,7 +52,7 @@ typedef int modcmd_t;
 typedef struct { unsigned int next; } deviter_t;
 struct properties { const char *expected; bool cold; const char *mode;
     bool wrong_mode_type; const char *hpd_mode; bool wrong_hpd_type;
-    const char *ddc_mode; bool wrong_ddc_type; const char *clock_mode; bool wrong_clock_type; const char *hd_mode; bool wrong_hd_type; };
+    const char *ddc_mode; bool wrong_ddc_type; const char *clock_mode; bool wrong_clock_type; const char *hd_mode; bool wrong_hd_type; const char *phy_mode; bool wrong_phy_type; };
 typedef struct properties *prop_dictionary_t;
 const char buildinfo[] = "EmberBSD:accepted-kernel\n";
 static char blob[4096] __aligned(8);
@@ -79,6 +79,10 @@ static bool prop_dictionary_get_bool(prop_dictionary_t p, const char *n, bool *v
 static bool prop_dictionary_get_cstring_nocopy(prop_dictionary_t p,
     const char *n, const char **v)
 {
+	if (strcmp(n, "phy-mode") == 0) {
+		if (p->wrong_phy_type) return false;
+		*v = p->phy_mode; return *v != NULL;
+	}
 	if (strcmp(n, "hd-mode") == 0) {
 		if (p->wrong_hd_type) return false;
 		*v = p->hd_mode; return *v != NULL;
@@ -104,6 +108,8 @@ static bool prop_dictionary_get_cstring_nocopy(prop_dictionary_t p,
 }
 static void *prop_dictionary_get(prop_dictionary_t p, const char *n)
 {
+	if (strcmp(n, "phy-mode") == 0)
+		return p->phy_mode || p->wrong_phy_type ? p : NULL;
 	if (strcmp(n, "hd-mode") == 0)
 		return p->hd_mode || p->wrong_hd_type ? p : NULL;
 	if (strcmp(n, "clock-mode") == 0)
@@ -139,6 +145,9 @@ static int AcpiGetHandle(ACPI_HANDLE parent, const char *path, ACPI_HANDLE *h)
 static struct acpi_devnode *acpi_match_node(ACPI_HANDLE h)
 { assert(h == &device_token); return right_node ? &fixture_node : NULL; }
 static void payload_guard(void);
+static void fixture_phy_begin(void);
+static void fixture_phy_access(void);
+static void fixture_phy_map_guard(void);
 static void fixture_hd_latch(void);
 static const void *hd_tracking;
 static void capture(const char *format, va_list ap)
@@ -146,6 +155,7 @@ static void capture(const char *format, va_list ap)
 	int length;
 
 	if (strstr(format, "BCM2712_EDID0") != NULL) payload_guard();
+	if (strstr(format, "PHY0 first resource18/19") != NULL) fixture_phy_begin();
 	length = vsnprintf(log_text + log_size, sizeof(log_text) - log_size,
 	    format, ap);
 	assert(length >= 0 && (size_t)length < sizeof(log_text) - log_size);
@@ -246,7 +256,12 @@ static struct {
 	int create_error, acquire_error, acquire_result, release_error, destroy_error;
 	bool live, failed_owner, null_owner, hsm_status_low;
 } native_bvb;
-static char events[128];
+static struct {
+	bool mode;
+	unsigned int mapped, maps, reads, writes, barriers, operations, fail_operation;
+	uint32_t reg190;
+} phy_hw;
+static char events[256];
 
 static unsigned int event_count, fail_step;
 static bool step(char event)
@@ -268,6 +283,19 @@ static void held_hd(void);
 static int bus_space_map(bus_space_tag_t tag, uint64_t base, uint64_t size,
     int flags, bus_space_handle_t *handle)
 {
+if (base == UINT64_C(0x107c701d00) || base == UINT64_C(0x107c702000)) {
+	unsigned int i = phy_hw.maps;
+	assert(phy_hw.mode && i < 2 && phy_hw.mapped == (1U << i) - 1);
+	assert(base == (i == 0 ? UINT64_C(0x107c701d00) : UINT64_C(0x107c702000)));
+	assert(size == (i == 0 ? 0x300U : 0x80U) && tag == &arm_generic_bs_tag && flags == 0);
+	fixture_phy_map_guard();
+	assert(hd_hw.reads == 5 && hd_hw.unmaps == 3 && hd_hw.mapped == 0);
+	assert(hd_hw.raw[0] == 0 && native_bvb.live && native_bvb.statuses == 2);
+	assert(native_bvb.acquires == 1 && native_bvb.acquire_result == 0);
+	phy_hw.maps++;
+	if (step((char)('O' + i))) return EIO;
+	phy_hw.mapped |= 1U << i; *handle = 51 + i; return 0;
+}
 	if (base == UINT64_C(0x107c720000) || base == UINT64_C(0x107c701000) ||
 	    base == UINT64_C(0x107c706000)) {
 		const uint64_t bases[] = { UINT64_C(0x107c720000),
@@ -317,6 +345,13 @@ static int bus_space_map(bus_space_tag_t tag, uint64_t base, uint64_t size,
 static uint32_t bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle,
     unsigned int offset)
 {
+	if (handle == 51 || handle == 52) {
+		assert(tag == &arm_generic_bs_tag && handle == 51 && offset == 0x190);
+		fixture_phy_access();
+		assert(phy_hw.writes == 25 + phy_hw.reads && phy_hw.reads < 2);
+		assert(phy_hw.barriers == phy_hw.writes * 2);
+		phy_hw.reads++; (void)step('e'); return phy_hw.reg190;
+	}
 	if (handle >= 41 && handle <= 43) {
 		const unsigned int handles[] = { 41, 41, 41, 42, 43 };
 		const unsigned int offsets[] = { 0, 0x44, 0x48, 0xbc, 0xbc };
@@ -370,6 +405,20 @@ static uint32_t bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle,
 static void bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
     unsigned int offset, uint32_t value)
 {
+	if (handle == 51 || handle == 52) {
+		static const unsigned int offsets[] = { 0, 4, 0x28, 0x60, 0x64,
+		    0x68, 0x6c, 0x70, 0x74, 0x78, 0x7c, 0x80, 0x1c, 0,
+		    0x18, 0x2c, 0x44, 0x28, 8, 0xc, 0x10, 0x14, 0x54, 4,
+		    0x194, 0x190, 0x190 };
+		unsigned int i = phy_hw.writes;
+		assert(i < __arraycount(offsets) && offset == offsets[i]);
+		assert(handle == (i == 14 ? 52U : 51U) && tag == &arm_generic_bs_tag);
+		fixture_phy_access(); assert(phy_hw.barriers == i * 2);
+		if (i == 25) assert(value == (phy_hw.reg190 & ~1U));
+		if (i == 26) assert(value == (phy_hw.reg190 | 1U));
+		if (offset == 0x190) phy_hw.reg190 = value;
+		phy_hw.writes++; (void)step('w'); return;
+	}
 	if (handle >= 41 && handle <= 43) {
 		assert(hd_hw.initialize && handle == 41 && tag == &arm_generic_bs_tag);
 		assert(offset == 0 && value == 0 && hd_hw.reads == 5 && hd_hw.writes == 0);
@@ -389,6 +438,13 @@ static void bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
 static void bus_space_barrier(bus_space_tag_t tag, bus_space_handle_t handle,
     unsigned int offset, unsigned int size, unsigned int flags)
 {
+	if (handle == 51 || handle == 52) {
+		assert(tag == &arm_generic_bs_tag && offset == 0 && flags == 3);
+		assert(handle == (phy_hw.barriers % 2 == 0 ? 51U : 52U));
+		assert(size == (handle == 51 ? 0x300U : 0x80U)); fixture_phy_access();
+		assert(phy_hw.barriers < phy_hw.writes * 2);
+		phy_hw.barriers++; (void)step(handle == 51 ? 'x' : 'y'); return;
+	}
 	if (handle >= 41 && handle <= 43) {
 		assert(hd_hw.initialize && handle == 41 && tag == &arm_generic_bs_tag);
 		assert(offset == 0 && size == 0x100 && flags == 3 && hd_hw.waiting);
@@ -422,7 +478,7 @@ static void held_dvp(void)
 static void held_hd(void)
 {
 	held_hsm();
-	assert(hd_hw.mode && fw.sets == 0 && !native_bvb.live);
+	assert(hd_hw.mode && (phy_hw.mode || fw.sets == 0) && !native_bvb.live);
 	assert(hw.mapped && bcm2712_dvp_owner != NULL);
 	assert(bcm2712_dvp_owner->core.status.leases == 3);
 	assert(bcm2712_dvp_owner->core.status.fault == 0);
@@ -556,7 +612,14 @@ static void bvb_guard(void)
 	held_hsm();
 	assert(bcm2712_hsm_owner->core.status.minimum[0] == 149985000);
 	assert(bcm2712_hsm_owner->core.status.rate >= 149985000);
-	assert(hw.maps == 0 && hw.reads == 0 && hw.writes == 0);
+	if (phy_hw.mode) {
+		assert(hw.mapped && bcm2712_dvp_owner != NULL);
+		assert(bcm2712_dvp_owner->core.status.leases == 3 && hw.writes == 0);
+		assert(hd_hw.reads == 5 && hd_hw.unmaps == 3 && hd_hw.mapped == 0);
+		assert(hd_hw.raw[0] == 0 && ((hd_hw.raw[1] | hd_hw.raw[2]) & (1U << 31)) == 0);
+		assert((hd_hw.raw[3] & 2U) != 0 && (hd_hw.raw[4] & 2U) != 0);
+	} else
+		assert(hw.maps == 0 && hw.reads == 0 && hw.writes == 0);
 	assert(hw.hpd_maps == 0 && hw.bsc_maps == 0 && hw.ddc_maps == 0);
 	assert(!irq_api.live && !irq_api.cv_live && references == 1);
 }
@@ -751,7 +814,54 @@ static void payload_guard(void)
 	assert(!native_ddc.live);
 #endif
 }
+#include "phy-types.h"
+#include "phy-core.h"
 #include "probe.h"
+/* Native bus_space is void: inject only a callback geometry rejection, not a
+ * recoverable hardware abort. The actual core and module callbacks still run. */
+static int fixture_phy_read(void *arg, enum bcm2712_phy_window window,
+    unsigned int offset, uint32_t *value)
+{
+	phy_hw.operations++;
+	if (phy_hw.operations == phy_hw.fail_operation) window = (enum bcm2712_phy_window)2;
+	return hsm_probe_phy_read(arg, window, offset, value);
+}
+static int fixture_phy_write(void *arg, enum bcm2712_phy_window window,
+    unsigned int offset, uint32_t value)
+{
+	phy_hw.operations++;
+	if (phy_hw.operations == phy_hw.fail_operation) window = (enum bcm2712_phy_window)2;
+	return hsm_probe_phy_write(arg, window, offset, value);
+}
+static void fixture_phy_begin(void)
+{
+	assert(phy_hw.mode && hsm_probe_phy0.core.initialized);
+	assert(hsm_probe_phy0.core.io.arg == &hsm_probe_phy0);
+	hsm_probe_phy0.core.io.read = fixture_phy_read;
+	hsm_probe_phy0.core.io.write = fixture_phy_write;
+}
+static void fixture_phy_access(void)
+{
+	assert(phy_hw.mode && phy_hw.mapped == 3 && references == 1);
+	assert(hsm_probe_phy0.retained && hsm_probe_phy0.write_attempted);
+	assert(hsm_probe_phy0.core.status.mutation_attempted && hsm_probe_phy0.core.status.fault == 0);
+	assert(hsm_probe_phy0.core.io.arg == &hsm_probe_phy0);
+	assert(hsm_probe_phy0.minor == &fixture_minor && hsm_probe_phy0.hsm == bcm2712_hsm_owner);
+	held_hsm(); assert(bcm2712_hsm_owner->core.status.rate >= 149985000);
+	assert(bcm2712_hsm_owner->core.status.minimum[0] == 149985000);
+	assert(bcm2712_dvp_owner != NULL && bcm2712_dvp_owner->core.status.leases == 3);
+	assert(!bcm2712_dvp_owner->core.status.mutation_attempted && hw.writes == 0);
+	assert(native_bvb.live && native_bvb.acquires == 1 && native_bvb.statuses == 2);
+	assert(native_bvb.releases == 0 && native_bvb.destroys == 0);
+	assert(strstr(log_text, "PHY0 first resource18/19 MMIO") != NULL);
+}
+
+static void fixture_phy_map_guard(void)
+{
+	held_hsm(); assert(bcm2712_hsm_owner->core.status.rate >= 149985000);
+	assert(bcm2712_dvp_owner != NULL && bcm2712_dvp_owner->core.status.leases == 3);
+}
+
 static void fixture_hd_latch(void)
 { if (hd_tracking != NULL) assert(((const struct hsm_probe_hd *)hd_tracking)->write_attempted); }
 
@@ -763,6 +873,9 @@ static void
 prepare(uint32_t state, uint32_t rate)
 {
 	reset(state, rate);
+	assert(!hsm_probe_phy0.retained && phy_hw.mapped == 0);
+	memset(&hsm_probe_phy0, 0, sizeof(hsm_probe_phy0));
+	memset(&phy_hw, 0, sizeof(phy_hw));
 	hd_tracking = NULL;
 	assert(hd_hw.mapped == 0); memset(&hd_hw, 0, sizeof(hd_hw));
 	assert(!native_bvb.live);
@@ -821,6 +934,9 @@ refusal(struct properties *p, int expected)
 static void reboot_model(void)
 {
 	native_bvb.live = false;
+	if (hsm_probe_phy0.retained) references = 0;
+	memset(&hsm_probe_phy0, 0, sizeof(hsm_probe_phy0));
+	phy_hw.mapped = 0;
 	hd_hw.mapped = 0; hd_hw.mode = false;
 	if (irq_api.cv_live) {
 		irq_api.live = false; irq_api.aon_mapped = false; hw.hpd_mapped = false;
@@ -988,6 +1104,219 @@ static void hd_initialize_tests(void)
 		bus_space_unmap(&arm_generic_bs_tag, dvp.handle, 0x10);
 		CHECK(actual_hsm_release(hsm, 0) == 0 && actual_hsm_destroy(hsm) == 0);
 		CHECK(allocated == freed);
+	}
+}
+
+static void phy_prepare(uint32_t state, uint32_t rate)
+{
+	hd_prepare(state, rate); phy_hw.mode = true; phy_hw.reg190 = 0xa5a50101;
+	for (unsigned int i = 0; i < 3; i++) native_bvb.sample[i].floor = 324000000;
+	native_bvb.sample[1].rate = native_bvb.sample[2].rate = 324000000;
+	native_bvb.failed = native_bvb.sample[0];
+}
+static void phy_no_program(void)
+{
+	CHECK(phy_hw.maps == 0 && phy_hw.reads == 0 && phy_hw.writes == 0);
+	CHECK(strstr(log_text, "finite cycle complete") == NULL);
+	CHECK(strstr(log_text, "programming_complete 1") == NULL);
+}
+static void phy_retained(void)
+{
+	unsigned int count = event_count;
+	CHECK(hsm_probe_phy0.retained && references == 1);
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_FINI, NULL) == EBUSY);
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, NULL) == EBUSY);
+	CHECK(event_count == count);
+	CHECK(strstr(log_text, "overall lifecycle accepted 0; no success") != NULL);
+	CHECK(strstr(log_text, "finite cycle complete") == NULL);
+}
+static void phy_probe_tests(void)
+{
+	struct properties p = { .expected = "EmberBSD:accepted-kernel", .cold = true,
+	    .phy_mode = "program0" };
+	char prefix[256];
+	bus_space_handle_t native_handle;
+	uint32_t word;
+	unsigned int i, n, calls = 0, prefix_boundaries = 0;
+	int result;
+
+	phy_prepare(1, 120000000);
+	word = 0xa5a50101;
+	CHECK(hsm_probe_phy_read(&hsm_probe_phy0, (enum bcm2712_phy_window)2, 0, &word) == EINVAL);
+	CHECK(word == 0xa5a50101 && !hsm_probe_phy0.retained);
+	hsm_probe_phy0.mapped = 3; hsm_probe_phy0.handle[0] = 51; hsm_probe_phy0.handle[1] = 52;
+	CHECK(hsm_probe_phy_window(&hsm_probe_phy0, BCM2712_PHY_WINDOW, 0x2fc, &native_handle) == 0 && native_handle == 51);
+	CHECK(hsm_probe_phy_window(&hsm_probe_phy0, BCM2712_RM_WINDOW, 0x7c, &native_handle) == 0 && native_handle == 52);
+	CHECK(hsm_probe_phy_read(&hsm_probe_phy0, BCM2712_PHY_WINDOW, 0x300, &word) == EINVAL);
+	CHECK(hsm_probe_phy_read(&hsm_probe_phy0, BCM2712_RM_WINDOW, 0x80, &word) == EINVAL);
+	CHECK(hsm_probe_phy_read(&hsm_probe_phy0, BCM2712_PHY_WINDOW, 1, &word) == EINVAL);
+	CHECK(word == 0xa5a50101 && !hsm_probe_phy0.retained && phy_hw.reads == 0);
+	CHECK(hsm_probe_phy_write(&hsm_probe_phy0, (enum bcm2712_phy_window)2, 0, 0) == EINVAL);
+	CHECK(hsm_probe_phy0.retained && hsm_probe_phy0.write_attempted && phy_hw.writes == 0);
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_FINI, NULL) == EBUSY); reboot_model();
+	phy_prepare(1, 120000000); p.phy_mode = ""; refusal(&p, EINVAL);
+	phy_prepare(1, 120000000); p.phy_mode = "other"; refusal(&p, EINVAL);
+	phy_prepare(1, 120000000); p.phy_mode = NULL; p.wrong_phy_type = true; refusal(&p, EINVAL);
+	p.phy_mode = "program0"; p.wrong_phy_type = false;
+	phy_prepare(1, 120000000); p.hd_mode = "observe"; refusal(&p, EINVAL); p.hd_mode = NULL;
+	phy_prepare(1, 120000000); p.clock_mode = "bvb0"; refusal(&p, EINVAL); p.clock_mode = NULL;
+	phy_prepare(1, 120000000); p.mode = "observe"; refusal(&p, EINVAL); p.mode = NULL;
+	phy_prepare(1, 120000000); p.hpd_mode = "sample0"; refusal(&p, EINVAL); p.hpd_mode = NULL;
+	phy_prepare(1, 120000000); p.ddc_mode = "edid0"; refusal(&p, EINVAL); p.ddc_mode = NULL;
+	phy_prepare(1, 120000000); genfb = true; refusal(&p, EBUSY);
+	phy_prepare(1, 120000000); tree = NULL; refusal(&p, EIO);
+	phy_prepare(1, 120000000); render = false; refusal(&p, ENODEV);
+	phy_prepare(1, 120000000); p.expected = "wrong"; refusal(&p, EPROGMISMATCH);
+	p.expected = "EmberBSD:accepted-kernel";
+	for (i = 0; i < 3; i++) {
+		phy_prepare(i == 1 ? 0 : 1, i == 0 ? 0 : i == 1 ? 120000000 : 119999999);
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EBUSY);
+		CHECK(fw.sets == 0 && hw.maps == 0 && bcm2712_hsm_owner == NULL);
+		CHECK(references == 0 && allocated == freed); phy_no_program();
+	}
+	/* Verify the mode-specific HSM floor before any DVP or BVB call. */
+	phy_prepare(1, 120000000); native_bvb.hsm_status_low = true;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+	CHECK(hsm_probe_phy0.error == EIO && hw.maps == 0 && native_bvb.creates == 0);
+	phy_no_program(); phy_retained(); reboot_model();
+	for (i = 0; i < 4; i++) {
+		phy_prepare(1, 120000000);
+		if (i < 2) hw.gates |= 1U << (i + 3); else hw.resets |= 1U << (i - 1);
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EBUSY);
+		CHECK(hw.writes == 0 && hd_hw.maps == 0 && native_bvb.creates == 0);
+		CHECK(!hw.mapped && references == 0 && allocated == freed); phy_no_program();
+	}
+	for (i = 1; i <= 4; i++) {
+		phy_prepare(1, 120000000); hd_hw.bad_status = i;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+		CHECK(hsm_probe_phy0.error == EIO && hd_hw.maps == 0 && native_bvb.creates == 0);
+		phy_no_program(); phy_retained(); reboot_model();
+	}
+	/* Every noncandidate field cleans known clocks and dual leases before BVB. */
+	for (i = 0; i < 5; i++) {
+		phy_prepare(1, 120000000);
+		if (i == 0) hd_hw.raw[0] = 1;
+		if (i == 1) hd_hw.raw[1] = 1U << 31;
+		if (i == 2) hd_hw.raw[2] = 1U << 31;
+		if (i == 3) hd_hw.raw[3] = 0;
+		if (i == 4) hd_hw.raw[4] = 0;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EBUSY);
+		CHECK(strcmp(events, "CSASQMcsasbsJKL01234lkjtsrsdURSD") == 0);
+		CHECK(hd_hw.reads == 5 && hd_hw.unmaps == 3 && native_bvb.creates == 0);
+		CHECK(bcm2712_dvp_owner == NULL && bcm2712_hsm_owner == NULL);
+		CHECK(allocated == freed && references == 0 && !hsm_probe_phy0.retained);
+		CHECK(fw.rate >= 120000000 && fw.state == 1); phy_no_program();
+	}
+	for (i = 0; i < 3; i++) {
+		phy_prepare(1, i == 1 ? 240000000 : 120000000);
+		if (i == 2) native_bvb.sample[1].rate = 324001000;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+		CHECK(strncmp(events, "CSASQMcsasbsJKL01234lkjVvGvOP", strlen("CSASQMcsasbsJKL01234lkjVvGvOP")) == 0);
+		CHECK(phy_hw.maps == 2 && phy_hw.mapped == 3 && phy_hw.reads == 2);
+		CHECK(phy_hw.writes == 27 && phy_hw.barriers == 54 && phy_hw.operations == 29);
+		CHECK(hsm_probe_phy0.core.status.programming_complete && !hsm_probe_phy0.core.status.disable_complete);
+		CHECK(hsm_probe_phy0.core.status.fault == 0 && hsm_probe_phy0.error == 0);
+		CHECK(hw.unmaps == 0 && bcm2712_dvp_owner->core.status.leases == 3);
+		CHECK(native_bvb.releases == 0 && native_bvb.destroys == 0 && fw.rate >= 149985000);
+		CHECK(!irq_api.live && hw.hpd_maps == 0 && hw.bsc_maps == 0 && hw.ddc_maps == 0);
+		phy_retained();
+		if (i == 0) { strcpy(prefix, events); calls = fw.calls; prefix_boundaries = (unsigned int)strcspn(events, "w"); }
+		reboot_model();
+	}
+	/* All29 callback validation failures stop the real core, without disable. */
+	for (i = 1; i <= 29; i++) {
+		phy_prepare(1, 120000000); phy_hw.fail_operation = i;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+		CHECK(hsm_probe_phy0.error == EINVAL && hsm_probe_phy0.core.status.fault == EINVAL);
+		CHECK(phy_hw.operations == i && !hsm_probe_phy0.core.status.programming_complete);
+		CHECK(phy_hw.writes + phy_hw.reads == i - 1 && phy_hw.barriers == phy_hw.writes * 2);
+		phy_retained(); n = event_count;
+		CHECK(bcm2712_phy_program_148500(&hsm_probe_phy0.core) == EINVAL);
+		CHECK(bcm2712_phy_disable(&hsm_probe_phy0.core) == EINVAL);
+		CHECK(event_count == n && native_bvb.releases == 0);
+		reboot_model();
+	}
+	/* All prefix boundaries, including map18 and partial map19, stop before IO. */
+	CHECK(prefix_boundaries == strlen("CSASQMcsasbsJKL01234lkjVvGvOP"));
+	for (i = 1; i <= prefix_boundaries; i++) {
+		char op = prefix[i - 1];
+		if (strchr("01234lkj", op) != NULL) continue;
+		phy_prepare(1, 120000000); fail_step = i;
+		result = bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p);
+		CHECK(result != 0 || hsm_probe_phy0.retained);
+		CHECK(phy_hw.writes == 0 && phy_hw.reads == 0);
+		CHECK(strncmp(events, prefix, i) == 0);
+		if (hsm_probe_phy0.retained) phy_retained();
+		if (op == 'O') CHECK(phy_hw.maps == 1 && phy_hw.mapped == 0);
+		if (op == 'P') CHECK(phy_hw.maps == 2 && phy_hw.mapped == 1);
+		reboot_model();
+	}
+	for (i = 1; i <= calls; i++) {
+		phy_prepare(1, 120000000); fw.fail_call = i;
+		result = bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p);
+		CHECK(result != 0 || hsm_probe_phy0.retained);
+		CHECK(fw.calls == i && native_bvb.creates == 0); phy_no_program();
+		if (hsm_probe_phy0.retained) phy_retained();
+		reboot_model();
+	}
+	/* Clean BVB GET-only/pre-SET errors reverse-clean DVP then HSM. */
+	for (i = 0; i < 2; i++) {
+		phy_prepare(1, 120000000);
+		if (i == 0) native_bvb.create_error = ERANGE; else native_bvb.acquire_error = ERANGE;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == ERANGE);
+		CHECK(!native_bvb.live && !hsm_probe_phy0.retained && references == 0);
+		CHECK(bcm2712_hsm_owner == NULL && bcm2712_dvp_owner == NULL && allocated == freed);
+		CHECK(native_bvb.releases == 0); phy_no_program();
+	}
+	/* Failed cleanup cannot discard the still-live BVB owner or held prefix. */
+	phy_prepare(1, 120000000);
+	native_bvb.acquire_error = ERANGE; native_bvb.destroy_error = EIO;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+	CHECK(hsm_probe_phy0.error == EIO && native_bvb.live);
+	CHECK(native_bvb.statuses == 2 && native_bvb.destroys == 1 && native_bvb.releases == 0);
+	CHECK(bcm2712_dvp_owner != NULL && bcm2712_dvp_owner->core.status.leases == 3);
+	CHECK(bcm2712_hsm_owner != NULL && bcm2712_hsm_owner->core.status.leases == 1);
+	CHECK(hw.mapped && hd_hw.mapped == 0 && references == 1);
+	CHECK(strcmp(events, "CSASQMcsasbsJKL01234lkjVvGvZ") == 0);
+	phy_no_program(); phy_retained(); reboot_model();
+	/* BVB uncertainty and invalid cached rates retain every clock and dual lease. */
+	for (i = 0; i < 6; i++) {
+		phy_prepare(1, 120000000);
+		if (i < 3) native_bvb.acquire_error = ETIMEDOUT;
+		if (i == 0) native_bvb.failed.fault = ETIMEDOUT;
+		if (i == 1) native_bvb.failed.mutation_attempted = true;
+		if (i == 2) native_bvb.failed.leases = 1;
+		if (i == 3) native_bvb.sample[1].rate = 75000000;
+		if (i == 4) native_bvb.sample[1].state = 0;
+		if (i == 5) native_bvb.status_error = 2;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+		CHECK(hsm_probe_phy0.error != 0 && native_bvb.live && native_bvb.releases == 0);
+		CHECK(bcm2712_dvp_owner->core.status.leases == 3);
+		phy_no_program(); phy_retained(); reboot_model();
+	}
+	/* External gate0 change is caught before acquire1 or any HD/BVB/PHY access. */
+	phy_prepare(1, 120000000); hw.external_gate = true;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+	CHECK(hw.writes == 1 && strchr(events, 'b') == NULL && hd_hw.maps == 0);
+	CHECK(native_bvb.creates == 0 && hsm_probe_phy0.error == EIO);
+	phy_no_program(); phy_retained(); reboot_model();
+	phy_prepare(1, 120000000); hd_hw.external_port1 = true;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+	CHECK(hw.writes == 1 && hd_hw.maps == 0 && native_bvb.creates == 0);
+	phy_no_program(); phy_retained(); reboot_model();
+	phy_prepare(1, 120000000); native_bvb.sample[0].floor = 0;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+	CHECK(native_bvb.acquires == 0 && native_bvb.live && hsm_probe_phy0.error == EIO);
+	phy_no_program(); phy_retained(); reboot_model();
+	/* Known noncandidate cleanup failures stop without further release/retry. */
+	strcpy(prefix, "CSASQMcsasbsJKL01234lkjtsrsdURSD");
+	for (i = 24; i <= strlen(prefix); i++) {
+		if (prefix[i - 1] == 'U') continue;
+		phy_prepare(1, 120000000); hd_hw.raw[0] = 1; fail_step = i;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+		CHECK(hsm_probe_phy0.error != 0 && event_count == i);
+		CHECK(hd_hw.reads == 5 && hd_hw.unmaps == 3 && hd_hw.mapped == 0);
+		CHECK(native_bvb.creates == 0); phy_no_program(); phy_retained(); reboot_model();
 	}
 }
 
@@ -1981,6 +2310,7 @@ main(void)
 	bcm2712_hsm_owner = NULL;
 	CHECK(allocated == freed);
 	hd_initialize_tests();
+	phy_probe_tests();
 	hd_probe_tests();
 	bvb_probe_tests();
 	dvp_probe_tests();

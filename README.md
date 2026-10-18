@@ -725,6 +725,9 @@ on every board in the hardware catalog.
   Physical BVB clock control remains unaccepted.
   A separate [shared HD control initialization probe](ember/boot/bcm2712-hd-initialize-probe.md)
   adds one explicit write and fresh readback with source-tested guards. It does not authorize PHY access.
+  An explicit [retained PHY programming probe](ember/boot/bcm2712-phy-program-probe.md)
+  links the fixed private core with source-tested access guards and retained resources.
+  Physical PHY programming, PLL lock and link acceptance remain separate.
   DRM hotplug delivery, extension reads and KMS scanout remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
