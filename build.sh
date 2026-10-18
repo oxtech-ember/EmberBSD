@@ -1119,6 +1119,7 @@ help()
     dtb                 Build devicetree blobs.
     obj                 Run "make obj".  [Default unless -o is used]
     tools               Build and install tools.
+    libs                Build and install target headers and libraries.
     install=IDIR        Run "make installworld" to IDIR to install all sets
                         except 'etc'.  Useful after "distribution" or "release".
     kernel=CONF         Build kernel with config file CONF.
