@@ -11,7 +11,7 @@
 
 static unsigned checks;
 #define CHECK(x) do { checks++; if (!(x)) { \
-	fprintf(stderr, "line %u: %s\n", __LINE__, #x); exit(1); } } while (0)
+	fprintf(stderr, "line %d: %s\n", __LINE__, #x); exit(1); } } while (0)
 #define KASSERT(x) CHECK(x)
 #define PAGE_SIZE 4096
 #define PAGE_SHIFT 12
