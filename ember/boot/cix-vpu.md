@@ -23,6 +23,7 @@ The independent BSD source in `sys/dev/ic` implements bounded foundations:
 | `cixvpu_fw.[ch]` | Validate the protocol 3 firmware header, text extent, BSS bitmap and shared-region layout. Reject invalid input without publishing partial output. | Select an authorized blob, allocate pages and load/boot firmware. Structural validity is not authentication. |
 | `cixvpu_ring.[ch]` | Pack and unpack bounded message rings, including the selected `-sum` firmware's asymmetric checksum framing. | Own coherent snapshots, locking, DMA synchronization, barriers and index publication. |
 | `cixvpu_command.[ch]` | Serialize JOB and selected option payloads. Decode bounded control replies without losing option failures or missing indices. | Own session policy, ring framing, command submission, response matching and DMA synchronization. |
+| `cixvpu_buffer.[ch]` | Serialize closed NV12 and empty BITSTREAM descriptors. Check returned identity, geometry and byte bounds against known slots. | Prove page ownership, perform DMA synchronization, submit queues and interpret completion separately. |
 | `cixvpu_mmu.[ch]` | Encode 40-bit bus addresses and checked two-level page entries. Reject invalid permissions, occupied entries and stale removals. | Allocate/map DMA memory, stop the device and manage caches/TLBs. Removal is not safe during active DMA. |
 | `cixvpu_fw_plan.[ch]` | Plan protocol-3 backing owners and firmware VA mappings without allocation. Check the text offset, BSS bounds, aliases, table coverage and page quota. | Allocate validated DMA backing, copy data, synchronize and publish only after stopped-device checks. |
 | `cixvpu_dma.[ch]` | Allocate one native `bus_dma` owner per backing page. Seal moved ownership, synchronize unique maps and reject release after recorded exposure. | Keep addresses hidden. Qualify the hardware handoff, runtime synchronization and eventual teardown separately. |
@@ -119,6 +120,44 @@ interrupt handling or session state machine. One-frame encoding remains pending.
 ```sh
 CC=gcc-16 CFLAGS=-fanalyzer CIXVPU_COMMAND_ANALYZE=1 \
     sh ember/tools/cixvpu-command-contract.sh
+```
+
+## Closed buffer descriptor codec
+
+The pure `cixvpu_buffer` codec emits fixed 72-byte FRAME and 40-byte BITSTREAM
+payloads. The first FRAME profile is progressive, positive even NV12 geometry,
+with separate Y/UV strides and capacity spans. It checks each full plane span,
+wide stride products and disjoint capacities. Unused fields remain zero.
+This is a closed local profile, not a statement that firmware rejects other formats.
+BITSTREAM serialization creates an empty output descriptor for a known slot.
+
+Return decoders require the expected handle, tag, firmware VA and capacity.
+For BITSTREAM, the caller supplies the correlated outstanding INPUT
+`user_data_tag` as the expected tag. It need not equal the empty output
+submission tag. The output slot still determines the handle, VA and capacity.
+FRAME also checks every geometry and unused byte, except its raw flags.
+The result preserves raw flags and separate rejected/corrupt indicators.
+BITSTREAM bounds offset and filled length by the remaining capacity, without
+wrapping their sum. Flags, frame type, transform and remaining kilobytes are
+numeric observations. Parsing success does not mean consumption, a complete
+access unit, successful encoding or permission to release an exposed owner.
+
+The aperture checks do not prove mapped backing or authorize an address.
+A future stopped-only planner must exclude existing RPC logical reservations
+and bind each slot to owned pages. No physical geometry or buffer capacity is
+selected here. The module does not access pixel/encoded data, modify page tables,
+synchronize DMA, submit native queues or issue GO.
+
+Tests use independent literal payloads and actual TX checksum/RX plain ring
+helpers. They cover identity, reserved bytes, aliases, full capacity spans,
+wide-product overflow and returned-length overflow. Target GCC16 static assertions
+check the pinned reference v2/v3 layouts. The VPU workflow configures GCC16 analysis,
+Cppcheck, CSA, sanitizers and Linux Memcheck for the portable module and contract.
+These source and layout checks do not qualify a hardware encoder.
+
+```sh
+CC=gcc-16 CFLAGS=-fanalyzer CIXVPU_BUFFER_ANALYZE=1 \
+    sh ember/tools/cixvpu-buffer-contract.sh
 ```
 
 ## Manual CPU-only allocation probe

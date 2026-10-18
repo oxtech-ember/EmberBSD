@@ -254,6 +254,8 @@ on every board in the hardware catalog.
   A [pure command codec](ember/boot/cix-vpu.md#typed-control-command-codec)
   serializes JOB and selected options and preserves typed response failures.
   It does not submit native commands or start a codec frame.
+  A [closed buffer codec](ember/boot/cix-vpu.md#closed-buffer-descriptor-codec)
+  checks NV12 geometry and known BITSTREAM slots without native queues or DMA access.
   Every exposed owner remains held, and the terminal report masks the IRQ.
   This check submits no codec frame and does not qualify runtime DMA teardown.
   [Initially masked ARM PIC registration](ember/boot/cix-vpu.md#initially-masked-native-irq-registration)

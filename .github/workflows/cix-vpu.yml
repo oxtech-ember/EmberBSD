@@ -81,6 +81,7 @@ jobs:
           sh ember/tools/cixvpu-resources-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-fw-plan-contract.sh "$GITHUB_WORKSPACE"
           CIXVPU_COMMAND_ANALYZE=1 sh ember/tools/cixvpu-command-contract.sh "$GITHUB_WORKSPACE"
+          CIXVPU_BUFFER_ANALYZE=1 sh ember/tools/cixvpu-buffer-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/scmi-smt-diag-contract.sh
           # Native bus_dma calls use a separate actual-source service model.
           CIXVPU_DMA_ANALYZE=1 sh ember/tools/cixvpu-dma-contract.sh
@@ -99,6 +100,7 @@ jobs:
           sh ember/tools/cixvpu-resources-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-fw-plan-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-command-contract.sh "$GITHUB_WORKSPACE"
+          sh ember/tools/cixvpu-buffer-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/scmi-smt-diag-contract.sh
           sh ember/tools/cixvpu-dma-contract.sh
           sh ember/tools/cixvpu-prepare-contract.sh
@@ -140,6 +142,7 @@ jobs:
             sys/dev/ic/cixvpu_mmu.c
             sys/dev/ic/cixvpu_resources.c
             sys/dev/ic/cixvpu_command.c
+            sys/dev/ic/cixvpu_buffer.c
             ember/tools/cixvpu-fw-check.c
             ember/tools/cixvpu-fw-test.c
             ember/tools/cixvpu-fw-plan-contract.c
@@ -147,8 +150,9 @@ jobs:
             ember/tools/cixvpu-mmu-contract.c
             ember/tools/cixvpu-resources-contract.c
             ember/tools/cixvpu-command-contract.c
+            ember/tools/cixvpu-buffer-contract.c
           ].sort
-          abort 'Expected all fifteen portable source units' unless sources.length == 15
+          abort 'Expected all seventeen portable source units' unless sources.length == 17
           database = sources.map do |source|
             file = File.join(root, source)
             arguments = ['gcc'] + flags + ['-c', file, '-o',
@@ -192,13 +196,15 @@ jobs:
             sys/dev/ic/cixvpu_mmu.c \
             sys/dev/ic/cixvpu_resources.c \
             sys/dev/ic/cixvpu_command.c \
+            sys/dev/ic/cixvpu_buffer.c \
             ember/tools/cixvpu-fw-check.c \
             ember/tools/cixvpu-fw-test.c \
             ember/tools/cixvpu-fw-plan-contract.c \
             ember/tools/cixvpu-ring-contract.c \
             ember/tools/cixvpu-mmu-contract.c \
             ember/tools/cixvpu-resources-contract.c \
-            ember/tools/cixvpu-command-contract.c; do
+            ember/tools/cixvpu-command-contract.c \
+            ember/tools/cixvpu-buffer-contract.c; do
             clang --analyze -std=c11 -U_KERNEL -O2 -Wall -Wextra -Werror -Isys/dev/ic \
               -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror "$source"
           done
