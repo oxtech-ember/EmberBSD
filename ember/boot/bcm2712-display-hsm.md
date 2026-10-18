@@ -223,6 +223,23 @@ This is one finite request/readback check. It does not measure the clock,
 validate display MMIO accessibility, or establish a general display lifetime.
 It does not accept suspend, HPD, DDC, scanout, KMS, or a physical desktop session.
 
+The same cold-headless boot then passed separate shared-DVP `observe` and
+`gate0` cycles with module source `3d4420f3`. Before loading, 346 source
+dependencies, 30 generated files, 40 sampled configuration/layout values and
+all strong external symbols matched the selected kernel. Observe read the
+shared SW_INIT and MISC_CONFIG registers. Both gate and reset samples were
+zero. Gate0 acquired port 0 with lease mask 1, then released it with mask 0.
+The gate and reset samples remained zero, with no fault or mutation.
+Both modes held HSM at 120 MHz until DVP destruction and unmapping completed.
+Both HSM owners were then released and destroyed, and both modules unloaded.
+
+The firmware had already enabled the gates. These cycles made no DVP writes
+and do not accept the physical gate-write path. The temperature after gate0
+was 50.469 C, without reported throttling or undervoltage. This accepts finite
+shared-resource access and inherited-state ownership on this boot. It does
+not establish per-controller accessibility, power/reset control, a general
+display lifetime, HPD, DDC, KMS, hotplug, or a physical Plasma session.
+
 ## Sources and next hardware boundary
 
 The hardware floor and shared-clock facts come from Raspberry Pi Linux
