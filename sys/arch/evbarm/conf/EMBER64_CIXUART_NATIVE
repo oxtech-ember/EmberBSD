@@ -1,0 +1,6 @@
+# Explicit UART1/3 consumer of this boot's checked functional-rate cache.
+# Keep VPU inactive and DEBUG UART2 on the existing console path.
+include "arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY"
+
+no plcom* at acpi?
+plcom* at acpi? flags 0x1

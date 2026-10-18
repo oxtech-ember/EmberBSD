@@ -115,6 +115,7 @@ struct cixscmi_acpi_softc {
 /* cold boot autoconfiguration serializes publication and the four aliases. */
 static struct cixscmi_acpi_softc *cixscmi_lease;
 static struct cixscmi_acpi_softc *cixscmi_service;
+static struct cixscmi_acpi_softc *cixscmi_uart_cache;
 static const char * const cixscmi_roles[] = {
 	"parent", "MBX6", "MBX7", "SHM0", "SHM1"
 };
@@ -816,6 +817,40 @@ cixscmi_uart_rates(struct cixscmi_acpi_softc *sc)
 	    sc->sc_batch_count, sc->sc_error);
 }
 
+int
+cixscmi_acpi_uart_rate(ACPI_HANDLE provider, uint32_t id, uint64_t *out)
+{
+	struct cixscmi_acpi_softc *sc = cixscmi_uart_cache;
+	unsigned int i, index;
+	int error = EIO;
+
+	if (provider == NULL || out == NULL)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (id != 264 && id != 266)
+		return ENOTSUP;
+	if (sc == NULL || sc->sc_node->ad_handle != provider)
+		return ENXIO;
+	index = id == 264 ? 0 : 1;
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_selector != 256 || !sc->sc_batch_qualified ||
+	    sc->sc_error != 0 || cixscmi_lease != sc || !sc->sc_claimed ||
+	    !sc->sc_mapped[0] || !sc->sc_mapped[1] ||
+	    sc->sc_node->ad_device != sc->sc_dev)
+		goto out;
+	for (i = 0; i < 4; i++)
+		if (sc->sc_refs[i]->ad_device != sc->sc_dev)
+			goto out;
+	if (!sc->sc_batch[index].value_valid)
+		goto out;
+	*out = sc->sc_batch[index].rate_hz;
+	error = 0;
+out:
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
 static bool
 cixscmi_service_live(struct cixscmi_acpi_softc *sc)
 {
@@ -1068,6 +1103,8 @@ cixscmi_acpi_deferred(device_t self)
 	sc->sc_stage = "query";
 	if (sc->sc_selector == 256) {
 		cixscmi_uart_rates(sc);
+		if (sc->sc_batch_qualified)
+			cixscmi_uart_cache = sc;
 		goto out;
 	}
 	if (sc->sc_selector == 64 || sc->sc_selector == 128) {

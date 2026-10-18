@@ -384,6 +384,7 @@ static void setup(void)
 #ifdef CIXSCMI_SERVICE_API
     cixclk_provider=NULL;
     cixscmi_service=NULL;
+    cixscmi_uart_cache=NULL;
 #endif
     runtime_test=lock_order_test=runtime_late_ack=false;runtime_command=runtime_enable=time_calls=0;runtime_token=6;
     test_clock_lock=test_service_lock=NULL;
@@ -933,6 +934,62 @@ static void test_uart_rates(void)
     }
 }
 
+static void test_uart_cache(void)
+{
+    struct cixscmi_acpi_softc sc;
+    uint64_t value=UINT64_MAX;
+    setup();attach(&sc,256);
+    unsigned int rd=reads,wr=writes,ev=evaluations;
+    CHECK(cixscmi_acpi_uart_rate(nodes[0].ad_handle,264,&value)==ENXIO && value==UINT64_MAX);
+    CHECK(reads==rd && writes==wr && evaluations==ev);
+    deferred(&selfdev);
+    for(unsigned int i=0;i<2;i++) {
+        rd=reads;wr=writes;ev=evaluations;
+        CHECK(cixscmi_acpi_uart_rate(nodes[0].ad_handle,i==0?264:266,&value)==0 && value==uart_rates[i]);
+        CHECK(reads==rd && writes==wr && evaluations==ev);
+    }
+    rd=reads;wr=writes;ev=evaluations;value=UINT64_MAX;
+    CHECK(cixscmi_acpi_uart_rate(NULL,264,&value)==EINVAL && value==UINT64_MAX);
+    CHECK(cixscmi_acpi_uart_rate(nodes[0].ad_handle,264,NULL)==EINVAL);
+    CHECK(cixscmi_acpi_uart_rate(nodes[1].ad_handle,264,&value)==ENXIO && value==UINT64_MAX);
+    const uint32_t ids[]={0,67,247,265,UINT32_MAX};
+    for(unsigned int i=0;i<__arraycount(ids);i++) CHECK(cixscmi_acpi_uart_rate(nodes[0].ad_handle,ids[i],&value)==ENOTSUP && value==UINT64_MAX);
+    intr=true;CHECK(cixscmi_acpi_uart_rate(nodes[0].ad_handle,264,&value)==EWOULDBLOCK && value==UINT64_MAX);intr=false;
+    for(unsigned int i=0;i<5;i++) {
+        device_t old=nodes[i].ad_device;nodes[i].ad_device=&otherdev;
+        CHECK(cixscmi_acpi_uart_rate(nodes[0].ad_handle,264,&value)==EIO && value==UINT64_MAX);
+        nodes[i].ad_device=old;
+    }
+    cixscmi_lease=NULL;
+    CHECK(cixscmi_acpi_uart_rate(nodes[0].ad_handle,266,&value)==EIO && value==UINT64_MAX);
+    CHECK(reads==rd && writes==wr && evaluations==ev);finish(&sc);
+    for(unsigned int i=0;i<6;i++) {
+        /* Independent boot fixture: no restored metadata hides a fault. */
+        setup();attach(&sc,256);deferred(&selfdev);
+        if(i==0)sc.sc_selector=128;
+        if(i==1)sc.sc_batch_qualified=false;
+        if(i==2)sc.sc_claimed=false;
+        if(i==3)sc.sc_mapped[0]=false;
+        if(i==4)sc.sc_batch[0].value_valid=false;
+        if(i==5)sc.sc_error=EIO;
+        rd=reads;wr=writes;ev=evaluations;value=UINT64_MAX;
+        CHECK(cixscmi_acpi_uart_rate(nodes[0].ad_handle,264,&value)==EIO && value==UINT64_MAX);
+        CHECK(reads==rd && writes==wr && evaluations==ev);finish(&sc);
+    }
+    for(unsigned int at=1;at<=2;at++)for(unsigned int failure=1;failure<=7;failure++) {
+        if(failure==5)continue;
+        setup();attach(&sc,256);repeat_fail_at=at;repeat_failure=failure;
+        deferred(&selfdev);rd=reads;wr=writes;ev=evaluations;value=UINT64_MAX;
+        CHECK(cixscmi_acpi_uart_rate(nodes[0].ad_handle,264,&value)==ENXIO && value==UINT64_MAX);
+        CHECK(reads==rd && writes==wr && evaluations==ev);finish(&sc);
+    }
+    setup();attach(&sc,256);uart_rates[0]=0;uart_rates[1]=UINT64_MAX;deferred(&selfdev);
+    CHECK(cixscmi_acpi_uart_rate(nodes[0].ad_handle,264,&value)==0 && value==0);
+    CHECK(cixscmi_acpi_uart_rate(nodes[0].ad_handle,266,&value)==0 && value==UINT64_MAX);finish(&sc);
+    setup();attach(&sc,128);deferred(&selfdev);value=UINT64_MAX;
+    CHECK(cixscmi_acpi_uart_rate(nodes[0].ad_handle,264,&value)==ENXIO && value==UINT64_MAX);finish(&sc);
+}
+
 static void test_uid_capacity(void)
 {
     struct cixscmi_acpi_softc sc;
@@ -1326,7 +1383,7 @@ int main(void)
 {
     struct cixscmi_acpi_softc sc;alarm(30);(void)test_attach_refs_cixscmi_acpi;
     test_native_service();
-    test_clock_selector();test_clock_protocol_attributes();test_clock67_attributes();test_clock67_rate();test_rejected_body20_prefix();test_repeat_base();test_mixed_batch();test_uart_rates();test_uid_capacity();test_diagnostic_stages();
+    test_clock_selector();test_clock_protocol_attributes();test_clock67_attributes();test_clock67_rate();test_rejected_body20_prefix();test_repeat_base();test_mixed_batch();test_uart_rates();test_uart_cache();test_uid_capacity();test_diagnostic_stages();
     setup();attach(&sc,3);CHECK(defers==0 && evaluations==0 && maps==0 && reads==0 && writes==0);finish(&sc);
     setup();attach(&sc,0);CHECK(defers==0 && evaluations==0 && maps==0 && reads==0 && writes==0);finish(&sc);
     for(unsigned int n=0;n<5;n++){

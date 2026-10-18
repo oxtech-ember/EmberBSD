@@ -365,15 +365,35 @@ pl010comspeed(long speed, long frequency)
 int
 pl011comspeed(long speed, long frequency)
 {
-	int denom = 16 * speed;
-	int div = frequency / denom;
-	int rem = frequency % denom;
+	uint64_t baud, clock, whole, remainder, fraction = 0, divisor;
+	unsigned int i;
 
-	int ibrd = div << 6;
-	int fbrd = (((8 * rem) / speed) + 1) / 2;
-
-	/* Tolerance? */
-	return ibrd | fbrd;
+	if (speed <= 0 || frequency < 0)
+		return -1;
+	/* Zero frequency preserves firmware divisors in the common driver. */
+	if (frequency == 0)
+		return 0;
+	baud = (uint64_t)speed;
+	clock = (uint64_t)frequency;
+	whole = clock / baud;
+	if (whole > 0x3fffc0 / 4)
+		return -1;
+	remainder = clock % baud;
+	/* Round 4*clock/baud without overflowing either product. */
+	for (i = 0; i < 3; i++) {
+		fraction <<= 1;
+		if (remainder >= baud - remainder) {
+			remainder -= baud - remainder;
+			fraction++;
+		} else {
+			remainder += remainder;
+		}
+	}
+	divisor = whole * 4 + (fraction + 1) / 2;
+	/* IBRD65535 requires FBRD0 (DDI0183G 3.3.6). */
+	if (divisor < 64 || divisor > 0x3fffc0)
+		return -1;
+	return (int)divisor;
 }
 
 #ifdef PLCOM_DEBUG

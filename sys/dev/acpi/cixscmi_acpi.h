@@ -44,4 +44,12 @@ int cixscmi_acpi_clock67_get_rate(struct cixscmi_clock67 *, uint64_t *,
 int cixscmi_acpi_clock67_config_set(struct cixscmi_clock67 *, uint32_t,
     struct cixscmi_clock67_result *);
 
+/*
+ * Cache only. Selector256 publishes both checked UART functional rates once.
+ * No AML, mailbox or UART access occurs here. Thread context is required.
+ * Only IDs264/266 are supported. Errors leave out unchanged. Zero is a valid
+ * cached observation; a consumer must reject unusable divisor inputs itself.
+ */
+int cixscmi_acpi_uart_rate(ACPI_HANDLE, uint32_t, uint64_t *);
+
 #endif /* _DEV_ACPI_CIXSCMI_ACPI_H_ */

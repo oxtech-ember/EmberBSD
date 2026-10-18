@@ -286,7 +286,7 @@ file	dev/acpi/plgpio_acpi.c		plgpio_acpi
 # CIX ACPI control providers and S5 GPIO0 event profile.
 device	cixscmi
 attach	cixscmi at acpinodebus with cixscmi_acpi
-file	dev/acpi/cixscmi_acpi.c		cixscmi_acpi
+file	dev/acpi/cixscmi_acpi.c		cixscmi_acpi needs-flag
 file	dev/ic/scmi_smt_diag.c		cixscmi
 
 device	cixclk

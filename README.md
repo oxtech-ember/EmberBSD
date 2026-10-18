@@ -1098,7 +1098,10 @@ The base system shell is unchanged.
   Firmware readiness and DMA data correctness remain unqualified.
   A separate [UART rate query](ember/boot/cix-platform.md#manual-uart-rate-observations)
   reads functional clock IDs264/266 as 100 MHz on the physical sample.
-  Baud programming and instrument exchange remain unqualified. An opt-in
+  A separate [native UART1/3 profile](ember/boot/cix-uart.md) consumes the checked
+  per-boot rate cache after provider initialization and validates PL011 divisors
+  in actual-source tests. DEBUG UART2 keeps its existing path. Physical baud
+  programming and instrument exchange remain unqualified. An opt-in
   [GPIO observation profile](ember/boot/cix-gpio.md#manual-header-observation)
   validates GPI5/MUX1, reads six nonclearing registers and unmaps both windows.
   One physical snapshot passes. That observer exposes no GPIO device.

@@ -21,6 +21,9 @@ name: CIX platform resource contracts
       - 'sys/arch/arm/acpi/acpi_platform.c'
       - 'sys/arch/arm/acpi/files.acpi'
       - 'sys/arch/arm/acpi/cix_uart2_console.*'
+      - 'sys/dev/acpi/acpi_resource.c'
+      - 'sys/arch/arm/acpi/plcom_acpi.c'
+      - 'sys/arch/evbarm/dev/plcom.c'
       - 'sys/arch/arm/acpi/acpi_iort.c'
       - 'sys/arch/arm/pic/pic.c'
       - 'sys/arch/arm/pic/picvar.h'
@@ -39,6 +42,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_RATE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXUART_NATIVE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE'
       - 'sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY'
@@ -50,6 +54,7 @@ name: CIX platform resource contracts
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cix-uart2-console-*'
+      - 'ember/tools/cix-plcom-*'
       - 'ember/tools/cixreset-*'
       - 'ember/tools/cixvpu-*'
       - 'ember/tools/acpi-power-*'
@@ -77,6 +82,9 @@ name: CIX platform resource contracts
       - 'sys/arch/arm/acpi/acpi_platform.c'
       - 'sys/arch/arm/acpi/files.acpi'
       - 'sys/arch/arm/acpi/cix_uart2_console.*'
+      - 'sys/dev/acpi/acpi_resource.c'
+      - 'sys/arch/arm/acpi/plcom_acpi.c'
+      - 'sys/arch/evbarm/dev/plcom.c'
       - 'sys/arch/arm/acpi/acpi_iort.c'
       - 'sys/arch/arm/pic/pic.c'
       - 'sys/arch/arm/pic/picvar.h'
@@ -95,6 +103,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_RATE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXUART_NATIVE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE'
       - 'sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY'
@@ -106,6 +115,7 @@ name: CIX platform resource contracts
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cix-uart2-console-*'
+      - 'ember/tools/cix-plcom-*'
       - 'ember/tools/cixreset-*'
       - 'ember/tools/cixvpu-*'
       - 'ember/tools/acpi-power-*'
@@ -134,6 +144,7 @@ jobs:
           sparse-checkout: |
             /ember/tools/cixclk-*
             /ember/tools/cix-uart2-console-*
+            /ember/tools/cix-plcom-*
             /ember/tools/cixreset-*
             /ember/tools/cixvpu-*
             /ember/tools/acpi-power-*
@@ -148,12 +159,16 @@ jobs:
             /sys/arch/arm/acpi/acpi_machdep.c
             /sys/arch/arm/acpi/acpi_platform.c
             /sys/arch/arm/acpi/cix_uart2_console.*
+            /sys/dev/acpi/acpi_resource.c
+            /sys/arch/arm/acpi/plcom_acpi.c
+            /sys/arch/evbarm/dev/plcom.c
             /sys/arch/arm/acpi/files.acpi
             /sys/arch/evbarm/conf/EMBER64_CIX_UART2
             /sys/arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE
             /sys/arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE
             /sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY
             /sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY
+            /sys/arch/evbarm/conf/EMBER64_CIXUART_NATIVE
             /sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE
             /sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE
             /sys/arch/arm/acpi/acpi_iort.c
@@ -189,6 +204,7 @@ jobs:
           CIXSCMI_ANALYZE: '1'
           IORT_DMA_ANALYZE: '1'
           CIX_UART2_ANALYZE: '1'
+          CIX_PLCOM_ANALYZE: '1'
         run: |
           sh ember/tools/cixclk-contract.sh
           CIXCLK_NCIXSCMI=0 sh ember/tools/cixclk-contract.sh
@@ -201,6 +217,7 @@ jobs:
           sh ember/tools/cixvpu-boot-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
+          sh ember/tools/cix-plcom-contract.sh
           sh ember/tools/cix-uart2-console-contract.sh
       - name: Run ASan and UBSan
         env:
@@ -219,6 +236,7 @@ jobs:
           sh ember/tools/cixvpu-boot-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
+          sh ember/tools/cix-plcom-contract.sh
           sh ember/tools/cix-uart2-console-contract.sh
       - name: Run complete contracts under Memcheck
         env:
@@ -245,4 +263,5 @@ jobs:
           sh ember/tools/cixvpu-boot-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
+          sh ember/tools/cix-plcom-contract.sh
           sh ember/tools/cix-uart2-console-contract.sh
