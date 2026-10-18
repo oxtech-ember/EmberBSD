@@ -102,3 +102,6 @@ A native hardware provider still needs checked TV0/VO1 writes, A733 PHY control,
 DDC/EDID, clock and supply admission, HPD, and a bounded vblank lifecycle.
 The [display ownership boundary](a733-display-ownership.md) remains mandatory.
 Do not select the older H3/A64 `sunxi_hdmiphy` for the A733 SNPS C422-0 PHY.
+
+The [A733 PHY core](a733-hdmi-phy.md) supplies checked TOP and SNPS control.
+It requires the same retained display owner and an exact admitted DCXO ratio.
