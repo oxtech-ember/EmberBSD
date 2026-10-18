@@ -511,6 +511,7 @@ dwhdmi* 	at fdt?			# Designware HDMI TX
 rkdrm*		at fdt? pass 5		# Rockchip DRM master
 rkfb*		at rkdrm?		# Rockchip DRM framebuffer
 rkvop*		at fdt?			# Rockchip Visual Output Processor
+sun60ide352*	at fdt?			# A733 guarded DE352 coordinator
 sunxide2bus*	at fdt? pass 4		# Allwinner DE2 bus
 sunxidrm*	at fdt?	pass 5		# Allwinner Display Pipeline
 sunxifb*	at sunxidrm?		# Allwinner DRM framebuffer

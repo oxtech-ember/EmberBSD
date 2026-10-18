@@ -7,6 +7,8 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <time.h>
+#include "display-memory-regs.h"
+#define CTASSERT(x) _Static_assert(x, #x)
 
 typedef size_t bus_size_t;
 typedef unsigned bus_space_handle_t;

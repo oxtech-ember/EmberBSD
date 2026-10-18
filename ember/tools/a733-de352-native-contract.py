@@ -4,6 +4,7 @@
 # Origin: EmberBSD, AI-assisted; native DE consumer and fault controls.
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import tempfile
@@ -14,6 +15,11 @@ def main():
     root = Path(os.environ.get("DE352_SOURCE_ROOT", tools.parent.parent))
     with tempfile.TemporaryDirectory(prefix="a733-de352-native-") as directory:
         work = Path(directory)
+        ccu = (root / "sys/arch/arm/sunxi/sun60i_a733_ccu.h").read_text()
+        enums = re.findall(r"^enum sun60i_a733_display_memory_reg \{.*?^};", ccu, re.M | re.S)
+        if len(enums) != 1:
+            raise RuntimeError("Expected the public DISPLAY memory register enum")
+        (work / "display-memory-regs.h").write_text(enums[0] + "\n")
         for stem in ("sun60i_a733_de352", "sun60i_a733_de352_dma"):
             for suffix in ("c", "h"):
                 name = f"{stem}.{suffix}"

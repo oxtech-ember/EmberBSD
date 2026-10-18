@@ -33,10 +33,12 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define DE352_NSI_SIZE 0x420
 #define DE352_TIMEOUT_NS UINT64_C(100000000)
 
+CTASSERT(A733_DISPLAY_NMEMORY_REGS == 7);
+
 /* Complete raw samples. Valid bits describe capture, not DMA acceptance. */
 struct de352_memory_snapshot {
 	uint32_t version, valid;
-	uint32_t clocks[2][7], iommu[2][5], nsi[2][3];
+	uint32_t clocks[2][A733_DISPLAY_NMEMORY_REGS], iommu[2][5], nsi[2][3];
 };
 
 struct sun60i_de352_softc {
@@ -109,7 +111,7 @@ de352_memory(struct sun60i_de352_softc *sc)
 {
 	static const uint32_t iregs[] = { 0, 0x10, 0x14, 0x804, 0x838 };
 	static const uint32_t nregs[] = { 0x410, 0x414, 0x418 };
-	uint32_t clocks[2][7], iommu[2][5], nsi[2][3];
+	uint32_t clocks[2][A733_DISPLAY_NMEMORY_REGS], iommu[2][5], nsi[2][3];
 	bus_space_handle_t ih, nh;
 	int error;
 
@@ -123,13 +125,13 @@ de352_memory(struct sun60i_de352_softc *sc)
 	if (memcmp(clocks[0], clocks[1], sizeof(clocks[0])) != 0)
 		return EBUSY;
 	/* Fixed borrowed profile: static PERIPH0-600M for MBUS. No retune. */
-	if ((clocks[0][0] & 0x10007) != 0x10007 ||
-	    (clocks[0][1] & 0x10001) != 0x10001 ||
-	    (clocks[0][2] & 0x9f000000) != 0x81000000 ||
-	    (clocks[0][3] & 0x802) != 0x802 ||
-	    (clocks[0][4] & 0x02000200) != 0x02000200 ||
-	    (clocks[0][5] & 0x02000000) == 0 ||
-	    (clocks[0][6] & 0xdf000000) != 0xc3000000)
+	if ((clocks[0][A733_DISPLAY_MEMORY_IOMMU1] & 0x10007) != 0x10007 ||
+	    (clocks[0][A733_DISPLAY_MEMORY_NSI_CFG] & 0x10001) != 0x10001 ||
+	    (clocks[0][A733_DISPLAY_MEMORY_MBUS] & 0x9f000000) != 0x81000000 ||
+	    (clocks[0][A733_DISPLAY_MEMORY_MBUS_MASTER] & 0x802) != 0x802 ||
+	    (clocks[0][A733_DISPLAY_MEMORY_PERIPH_GATE] & 0x02000200) != 0x02000200 ||
+	    (clocks[0][A733_DISPLAY_MEMORY_PERIPH_STATUS] & 0x02000000) == 0 ||
+	    (clocks[0][A733_DISPLAY_MEMORY_NSI] & 0xdf000000) != 0xc3000000)
 		return EOPNOTSUPP;
 	error = bus_space_map(sc->bst, DE352_IOMMU1_BASE, DE352_IOMMU1_SIZE,
 	    0, &ih);

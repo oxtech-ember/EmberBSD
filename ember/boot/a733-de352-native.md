@@ -168,3 +168,17 @@ self-clearing commands, RCQ register evidence and independent vblank.
 These checks are not physical scanout acceptance. A board check must record
 the exact kernel/DTB, mode, raw guards, visible pixels and failure boundaries.
 HDMI PHY/DDC/EDID, KMS, PRIME and accelerated Plasma need their own checks.
+
+## Native build integration
+
+`files.sunxi` selects the DE352 formatter, DMA adapter, and FDT coordinator
+through `sun60ide352`. `GENERIC64` includes that attachment. The coordinator
+uses the public CCU memory register enum and the retained DISPLAY APIs.
+Its raw memory record stays at version 1 with seven CCU words per sample.
+The host contract extracts that enum from the public CCU header.
+
+This integration does not add or enable an FDT node. A board description
+must provide the complete DE, disabled memory-provider, and output bindings
+before attach can expose the explicit stage. The output provider must register
+under the same phandle and validate the same owner cookie. Kernel build and
+physical scanout acceptance remain separate requirements.
