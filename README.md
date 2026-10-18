@@ -315,10 +315,13 @@ on every board in the hardware catalog.
   BER 0.516113 when carrier correction is removed. This verifies bounded
   software processing with known carrier and timing parameters; physical SDR,
   real-time deadlines, GUI and Python bindings remain unverified.
-- **KiCad portability prerequisites:** Ports supplies current
-  [ngspice 47 source repairs](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/kicad/ngspice)
-  with native numerical checks, and [protobuf 36.2/Abseil prerequisites](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/kicad/protobuf)
-  with fourteen native C++ checks and four causal allocation-failure controls.
+- **KiCad portability prerequisites:** Ports supplies installed AArch64
+  [ngspice 47 packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/ngspice.md)
+  with numerical API, CLI and OpenMP checks. The common
+  [Eigen 5 numerical checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/eigen.md),
+  [Lerc samples](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/lerc.md)
+  and [Abseil package consumers](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/protobuf.md)
+  also pass installed execution and package lifecycle checks in EmberBSD.
   The [runtime-only GCC16 package](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/runtime)
   passes C11/C++20, OpenMP, large atomics and removal/reinstallation in the
   verified AArch64 E34 guest. KiCad's target package and CAD workflows remain pending.
