@@ -371,6 +371,8 @@ file	dev/ic/cixvpu_resources.c		cixvpu
 file	dev/ic/cixvpu_fw.c		cixvpu
 file	dev/ic/cixvpu_fw_plan.c		cixvpu
 file	dev/ic/cixvpu_dma.c		cixvpu
+file	dev/ic/cixvpu_mmu.c		cixvpu
+file	dev/ic/cixvpu_prepare.c		cixvpu
 
 # Qualcomm GPIO
 device	qcomgpio: gpiobus

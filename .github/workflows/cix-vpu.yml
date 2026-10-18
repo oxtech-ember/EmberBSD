@@ -11,6 +11,7 @@ name: CIX VPU source contracts
       - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_*'
       - 'ember/tools/cixvpu-*'
       - 'ember/boot/cix-vpu.md'
   pull_request:
@@ -22,6 +23,7 @@ name: CIX VPU source contracts
       - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_*'
       - 'sys/sys/videoio.h'
       - 'ember/tools/cixvpu-*'
       - 'ember/boot/cix-vpu.md'
@@ -81,6 +83,7 @@ jobs:
           sh ember/tools/scmi-smt-diag-contract.sh
           # Native bus_dma calls use a separate actual-source service model.
           CIXVPU_DMA_ANALYZE=1 sh ember/tools/cixvpu-dma-contract.sh
+          CIXVPU_PREPARE_ANALYZE=1 sh ember/tools/cixvpu-prepare-contract.sh
           CFLAGS="$CFLAGS -DPAGE_SIZE=16384" sh ember/tools/cixvpu-dma-contract.sh
       - name: Run portable ASan and UBSan contracts
         env:
@@ -96,6 +99,7 @@ jobs:
           sh ember/tools/cixvpu-fw-plan-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/scmi-smt-diag-contract.sh
           sh ember/tools/cixvpu-dma-contract.sh
+          sh ember/tools/cixvpu-prepare-contract.sh
       - name: Analyze the portable source contract
         run: |
           # Analyze the actual native userland build. Do not invent _KERNEL
@@ -124,7 +128,7 @@ jobs:
           flags = compiler_flags +
             includes.flat_map { |path| ['-I', path] }
           # Native ACPI control uses the platform workflow and service model.
-          # The DMA allocator uses its own service model in the step above.
+          # DMA allocation and CPU preparation use their own service models above.
           sources = %w[
             sys/dev/ic/scmi_smt_diag.c
             ember/tools/scmi-smt-diag-contract.c

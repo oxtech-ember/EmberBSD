@@ -245,6 +245,9 @@ on every board in the hardware catalog.
   reads a selected local image after root mounts, then checks a one-core page
   set and reports checked cleanup. Its source contracts and GCC16 kernel link pass; physical
   allocation remains unverified. No address is published to the VPU.
+  A separate [CPU preparation helper](ember/boot/cix-vpu.md#cpu-preparation-and-opaque-ownership)
+  copies text and verifies CPU page tables before moving ownership. Its source
+  checks pass; no DMA synchronization or hardware handoff occurs.
   Synchronization, hardware publication and runtime teardown remain unfinished.
   ARM ACPI DMA tags preserve [IORT named-component address limits](ember/boot/cix-platform.md#arm-acpi-dma-address-limits)
   through the device's namespace handle. Actual-source checks cover the fix;

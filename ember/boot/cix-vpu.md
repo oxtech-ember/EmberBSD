@@ -24,9 +24,11 @@ The independent BSD source in `sys/dev/ic` implements bounded foundations:
 | `cixvpu_mmu.[ch]` | Encode 40-bit bus addresses and checked two-level page entries. Reject invalid permissions, occupied entries and stale removals. | Allocate/map DMA memory, stop the device and manage caches/TLBs. Removal is not safe during active DMA. |
 | `cixvpu_fw_plan.[ch]` | Plan protocol-3 backing owners and firmware VA mappings without allocation. Check the text offset, BSS bounds, aliases, table coverage and page quota. | Allocate validated DMA backing, copy data, synchronize and publish only after stopped-device checks. |
 | `cixvpu_dma.[ch]` | Allocate one native `bus_dma` owner per planned backing page. Validate loaded bus addresses and reverse partial allocation failures. | Keep all addresses hidden from hardware. Add synchronization, publication tracking and runtime teardown before integration. |
+| `cixvpu_prepare.[ch]` | Recheck the image pin and plan, copy CPU text pages, build and verify CPU page tables, then move the allocation into an opaque owner. | Preserve exclusive ownership. Add enforced exposure tracking and DMA synchronization before any hardware publication. |
 
 The attachment selects the header parser, layout planner and CPU-only allocator.
-The ring and MMU encoder remain independent helpers without a device consumer.
+The kernel also links CPU preparation and its MMU helper. The attachment does
+not call them yet. The ring remains an independent helper.
 `sys/videoio.h` adds the standard `V4L2_PIX_FMT_HEVC` fourcc without changing
 structure layout or ioctl numbers. The existing `video(4)` driver remains
 capture-only; the presence of M2M declarations does not implement two queues.
@@ -115,6 +117,32 @@ acquisition failures. The full manual kernel links with GCC16.2.
 No physical allocation result is established. Device DMA, firmware execution
 and video queues remain unqualified.
 
+## CPU preparation and opaque ownership
+
+`cixvpu_prepare_cpu` takes an existing CPU-only allocator owner, an immutable
+image and plan, and a trusted SHA256 pin. It hashes the full image, rebuilds
+the plan and compares semantic fields. It validates all loaded bus addresses,
+CPU spans and handle storage before writes. It then zeroes pages, copies only
+planned text bytes, builds leaf entries and root links with the real MMU helper,
+and verifies every table slot, including unmapped holes.
+
+Success moves the allocation into an opaque prepared owner. The caller's
+allocator handle becomes NULL. No mutable getter or root-address handoff exists.
+Failure preserves caller handles, but CPU bytes may be partially changed.
+The caller must free that allocation. It must not retry or publish those bytes.
+`cixvpu_prepared_free` retains the complete owner if cleanup fails.
+This API seal relies on exclusive serialized ownership. It does not enforce
+an immutable device-visible lifetime or revoke arbitrary old C pointer copies.
+
+Source `75c59de2e3d76ae51fc1c3de564719749dab0c99` passes 13057225 checks
+with GCC16 path analysis, host Cppcheck/CSA and ASan/UBSan. The tests execute
+actual preparation, allocator, parser, planner and MMU source. Native services,
+including SHA, are modeled; this is not cryptographic or physical acceptance.
+Five compiled causal mutations are detected. The native GCC16 object and CSA
+have no findings. Native Cppcheck retains 403 header-baseline diagnostics and
+two exported-API unused-function hints in the isolated source unit.
+No synchronization, MMIO, address publication or firmware execution occurs.
+
 ## Source and firmware provenance
 
 The OS baseline is `7fac11898f3451472b6288d84ea3fdc87ca4f808`.
@@ -150,6 +178,7 @@ CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-mmu-contract.sh
 CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-resources-contract.sh
 CC=gcc CFLAGS='-O2 -g -fanalyzer' sh ember/tools/cixvpu-fw-plan-contract.sh
 CC=gcc CFLAGS='-O2 -g -fanalyzer' CIXVPU_DMA_ANALYZE=1 sh ember/tools/cixvpu-dma-contract.sh
+CC=gcc CFLAGS='-O2 -g -fanalyzer' CIXVPU_PREPARE_ANALYZE=1 sh ember/tools/cixvpu-prepare-contract.sh
 ```
 
 The firmware script prints its build directory and retains its CLI and fixtures.
