@@ -58,6 +58,7 @@ static unsigned int checks;
 
 typedef uint64_t bus_addr_t;
 typedef size_t bus_size_t;
+typedef unsigned int u_int;
 typedef unsigned long u_long;
 typedef void *device_t;
 typedef void *bus_space_tag_t;
