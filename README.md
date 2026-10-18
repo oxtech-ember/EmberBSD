@@ -147,6 +147,12 @@ on every board in the hardware catalog.
   upstream tests pass in AArch64 QEMU. The matching test kernel and raw
   qualification log are bound to the kit. Binary publication remains pending;
   the Linux importer and GCC16 compiler/package are separate inputs.
+- **Physical CIX C/C++ foundation:** an isolated
+  [GCC16 runtime check](ember/image/cix-p1.md#isolated-c-and-c-foundation)
+  passes C11 atomics/pthreads/TLS, C++20 strings, `std::span`, DSO exceptions
+  and a static consumer. Native UTF8 decoding and a numeric/stream contract pass
+  with genuine French locale data. Runtime package installation in the normal
+  root, complete C++ images, standard C++ modules and applications remain unqualified.
 
 ### Local AI and robotics
 
