@@ -1160,9 +1160,12 @@ The base system shell is unchanged.
   exposes three parent-reserved GPIO inputs on one cold boot; initial reads
   are all 1 and output-changing requests are refused. External transitions
   and PPS remain unqualified. A [combined manual profile](ember/boot/cix-uart.md#combined-manual-peripherals-profile)
-  composes both services with VPU0 and the UART2 console gate. Its generated
-  configuration passes source checks; combined physical acceptance is pending.
-  The normal default kernel remains unchanged.
+  composes both services with VPU0 and the UART2 console gate. On one sample,
+  it is installed as the persistent default and passes one automatic warm boot,
+  with native UART1/3 rates, GPI5 inputs, clean FFS, WPA2, a Wi-Fi default route
+  and authenticated SSH. An independent copy preserves the old kernel. Cold
+  boot with this combined kernel remains unqualified. Generic EMBER64 defaults
+  remain unchanged.
   The separate, inactive
   [DEBUGPARAM primitive](ember/boot/cix-vpu.md#inactive-debugparam-response)
   passes actual-source checks. It changes only a validated request's state word;

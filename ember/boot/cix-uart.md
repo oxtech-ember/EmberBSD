@@ -51,6 +51,19 @@ boot log. Reduced images need the corresponding native `MAKEDEV plcomN` nodes.
 includes `EMBER64_CIXUART_NATIVE` and adds the same fixed GPI5 input attachment
 as [the separate GPIO profile](cix-gpio.md#manual-fixed-gpi5-inputs). It retains
 the UART2 console gate, checked SCMI256 rate cache and GPI4 power button; the
-VPU stays inactive. The default kernel and both individual profiles are
+VPU stays inactive. The source-tree default and both individual profiles are
 unchanged. Generated configuration checks cover the combined attachment flags
-and provider counts. The combined kernel has not passed a physical boot.
+and provider counts.
+
+On one physical sample, source `24b6895ec` is installed as the persistent
+default. One automatic warm boot completes the default countdown without a
+menu selection. It attaches UART1/3 with checked 100 MHz rates and three GPI5
+inputs, retains the UART2 console, and reaches clean FFS, authenticated SSH,
+WPA2 and a Wi-Fi default route. Native `powerd`, `dhcpcd` and the SSH listener
+are present. These checks do not prove a new DHCP exchange.
+
+The old kernel remains an independent rollback copy. Recovery assets, the
+manual trial kernel, boot configuration and EFI loader remain unchanged.
+This acceptance covers the installed warm-default path. Cold boot with this
+combined kernel, external UART traffic, GPIO transitions and PPS remain
+unqualified. This warm boot does not retest button or wake behavior.
