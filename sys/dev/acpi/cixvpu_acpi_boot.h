@@ -23,10 +23,12 @@ struct cixvpu_boot_report {
 	uint32_t repair_pass, repair_enable, repair_busy;
 	uint32_t terminate_reads, visits, messages, irq_seen, irq_unexpected;
 	uint32_t last_offset, last_value;
+	uint32_t rpc_state, rpc_callid, rpc_size;
 	enum cixvpu_boot_stage stage, last_stage;
-	int error, cleanup_error;
+	int error, cleanup_error, rpc_header_error;
 	bool started, moved, exposed, held, switched_in, pong, prepared_retained;
 	bool irq_registered, irq_masked;
+	bool rpc_header_valid; /* One-copy observation, not transaction stability. */
 };
 /*
  * Process context, external serialization, one manual boot-long object.

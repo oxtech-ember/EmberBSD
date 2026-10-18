@@ -606,6 +606,8 @@ cixvpu_dma_boot_snapshot(struct cixvpu_dma *dma,
 	memcpy(rpc_header, rpc->kva, sizeof(rpc_header));
 	bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(rpc_header),
 	    BUS_DMASYNC_PREREAD);
+	memcpy(snapshot->rpc_header, rpc_header, sizeof(rpc_header));
+	snapshot->rpc_valid = true;
 	state = (uint32_t)rpc_header[0] | (uint32_t)rpc_header[1] << 8 |
 	    (uint32_t)rpc_header[2] << 16 | (uint32_t)rpc_header[3] << 24;
 	if (state != 0)

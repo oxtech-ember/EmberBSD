@@ -70,6 +70,12 @@ cixvpu_acpi_boot_print(device_t self, const struct cixvpu_acpi_softc *sc,
 	    r->irq_seen, r->irq_unexpected);
 	aprint_normal_dev(self, "boot terminate reads %u visits %u messages %u\n",
 	    r->terminate_reads, r->visits, r->messages);
+	aprint_normal_dev(self,
+	    "boot RPC header valid %s state %#x callid %#x size %#x, "
+	    "header error %d stage %u primary %d\n",
+	    r->rpc_header_valid ? "yes" : "no", r->rpc_state,
+	    r->rpc_callid, r->rpc_size, r->rpc_header_error,
+	    (unsigned int)r->last_stage, r->error);
 	for (i = 0; i < __arraycount(r->core_status); i++) {
 		aprint_normal_dev(self,
 		    "boot core %u attempted %s released %s status %s cleanup %s\n",

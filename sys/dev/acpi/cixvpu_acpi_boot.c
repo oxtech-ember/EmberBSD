@@ -226,8 +226,15 @@ cixvpu_boot_receive(struct cixvpu_acpi_boot *b)
 		if (atomic_load_acquire(&b->irq_unexpected) != 0)
 			return EIO;
 		for (i = 0; i < 16 && bytes < 4096; i++) {
+			struct cixvpu_boot_rpc_header header = { 0 };
 			int error = cixvpu_prepared_boot_receive(b->prepared, &reply);
 
+			b->report.rpc_header_error = cixvpu_prepared_boot_rpc_header(
+			    b->prepared, &header);
+			b->report.rpc_header_valid = header.valid;
+			b->report.rpc_state = header.state;
+			b->report.rpc_callid = header.callid;
+			b->report.rpc_size = header.size;
 			if (error == EAGAIN)
 				break;
 			if (error != 0)

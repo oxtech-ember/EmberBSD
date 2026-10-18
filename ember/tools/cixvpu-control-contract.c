@@ -956,13 +956,24 @@ static void boot_attach_tests(void)
     CHECK(prepared_live && attachment_boot.prepared==&prepared_owner);
     CHECK(strstr(diagnostic,"native boot: once invoked yes")!=NULL);
     CHECK(strstr(diagnostic,"SWITCHED_IN yes PONG yes")!=NULL);
+    CHECK(strstr(diagnostic,"RPC header valid no")!=NULL);
     CHECK(strstr(diagnostic,"deadbeef")==NULL);
+    CHECK(strstr(diagnostic,"header error 0 stage 9 primary 0")!=NULL);
 #ifdef CIXVPU_BOOT_ATTACH_API
     const struct cixvpu_acpi_softc *sc=attach_private;
     CHECK(sc->sc_boot==&attachment_boot && sc->sc_prepared==NULL);
     CHECK(sc->sc_boot_report.exposed && sc->sc_boot_report.held);
 #endif
     boot_attach_drop();
+    boot_attach_fixture(0);
+    attachment_boot.report.rpc_header_valid=true;
+    attachment_boot.report.rpc_state=1;
+    attachment_boot.report.rpc_callid=0x12345678;
+    attachment_boot.report.rpc_size=0xfedcba98;
+    boot_attach_run();
+    CHECK(strstr(diagnostic,"RPC header valid yes state 0x1 callid 0x12345678 size 0xfedcba98")!=NULL);
+    boot_attach_drop();
+
     const unsigned int faults_to_test[]={1,2,3,4,5,6,7,8,9,10,12,13,14,15,16,19,20,21,22,23};
     for(unsigned int i=0;i<__arraycount(faults_to_test);i++) {
         unsigned int f=faults_to_test[i];

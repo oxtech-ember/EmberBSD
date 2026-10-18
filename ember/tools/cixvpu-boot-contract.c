@@ -17,6 +17,8 @@
 #define cixvpu_prepared_publish_root model_prepared_publish_root
 #define cixvpu_prepared_boot_receive model_prepared_boot_receive
 #define cixvpu_boot_reply model_boot_reply
+#define cixvpu_boot_rpc_header model_boot_rpc_header
+#define cixvpu_prepared_boot_rpc_header model_prepared_boot_rpc_header
 #define delay control_delay
 #define bus_space_read_4 control_read_4
 #define bus_space_barrier control_barrier
@@ -38,6 +40,8 @@
 #undef cixvpu_prepared_publish_root
 #undef cixvpu_prepared_boot_receive
 #undef cixvpu_boot_reply
+#undef cixvpu_boot_rpc_header
+#undef cixvpu_prepared_boot_rpc_header
 #undef bus_space_read_4
 #undef bus_space_barrier
 #undef delay
@@ -55,6 +59,7 @@ extern struct cixvpu_prepared *boot_fixture_prepare_kind(bool);
 extern void boot_fixture_set_ack(void (*)(void));
 extern unsigned int boot_fixture_acks(void);
 extern unsigned int boot_fixture_live(void);
+extern void boot_fixture_rpc(uint32_t, uint32_t, uint32_t);
 extern void boot_fixture_map_valid(struct cixvpu_prepared *, bool);
 
 /* The PIC model starts masked and can dispatch synchronously on unmask. */
@@ -137,6 +142,7 @@ static void bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h,
     if (h==1 && offset==4 && value==1) {
         boot_fixture_runtime(boot_fault != 7 && boot_fault != 5 && boot_fault != 21);
         if (boot_fault == 9) boot_fixture_set_ack(boot_final_ack_irq);
+        if (boot_fault == 23 || boot_fault == 24) boot_fixture_rpc(1,0x12345678,0xfedcba98);
     }
     if (h == 1 && offset == 0x21c && value == 0) boot_regs[1][0x18 / 4] &= ~1U;
 }
@@ -164,9 +170,13 @@ static int boot_publish_actual(struct cixvpu_prepared *p, uint32_t *root)
     }
     return error;
 }
+static int boot_rpc_header_actual(struct cixvpu_prepared *p, struct cixvpu_boot_rpc_header *out)
+{ if(boot_fault==24) return EIO; return cixvpu_prepared_boot_rpc_header(p,out); }
+#define cixvpu_prepared_boot_rpc_header boot_rpc_header_actual
 #define cixvpu_prepared_publish_root boot_publish_actual
 #include "boot-source.inc"
 #undef cixvpu_prepared_publish_root
+#undef cixvpu_prepared_boot_rpc_header
 
 static void boot_fixture(void)
 {
@@ -204,6 +214,26 @@ static void boot_failure_tests(void)
     struct cixvpu_prepared *owned;
     struct cixvpu_boot_report r = {0};
     unsigned int before;
+
+    /* Real RPC snapshot rejection retains the one-copy raw header, not payload. */
+    boot_fixture(); ctx=boot_new(true); owned=boot_actual; boot_fault=23;
+    CHECK(cixvpu_acpi_boot_once(ctx,&owned)==ENOTSUP && owned==NULL);
+    CHECK(cixvpu_acpi_boot_report(ctx,&r)==0);
+    CHECK(r.rpc_header_valid && r.rpc_state==1 && r.rpc_callid==0x12345678 && r.rpc_size==0xfedcba98);
+    CHECK(r.rpc_header_error==0 && r.error==ENOTSUP && r.last_stage==CIXVPU_BOOT_RECEIVE);
+    CHECK(r.visits==1 && r.messages==0 && !r.switched_in && !r.pong);
+    CHECK(r.exposed && r.prepared_retained && r.held && r.irq_registered && r.irq_masked);
+    CHECK(boot_fixture_acks()==0 && boot_masks==1 && boot_disestablish==0);
+    CHECK(cixvpu_prepared_free(&boot_actual)==EBUSY);
+    boot_discard_fixture(ctx);
+
+    boot_fixture(); ctx=boot_new(true); owned=boot_actual; boot_fault=24;
+    CHECK(cixvpu_acpi_boot_once(ctx,&owned)==ENOTSUP && owned==NULL);
+    CHECK(cixvpu_acpi_boot_report(ctx,&r)==0);
+    CHECK(r.error==ENOTSUP && r.rpc_header_error==EIO && !r.rpc_header_valid);
+    CHECK(r.rpc_state==0 && r.rpc_callid==0 && r.rpc_size==0 && r.messages==0);
+    CHECK(r.last_stage==CIXVPU_BOOT_RECEIVE && r.held && r.irq_masked && boot_fixture_acks()==0);
+    boot_discard_fixture(ctx);
 
     /* Real ordinary constructor: root refuses at its actual typed boundary. */
     boot_fixture(); ctx=boot_new(false); owned=boot_actual; boot_fault=6;

@@ -594,6 +594,84 @@ static void boot_message(unsigned int pos, uint16_t code, uint16_t size, uint32_
     m[0]=(uint8_t)end; m[1]=(uint8_t)(end>>8);
     put32(m+4,sum); put32(m+8,sum); put32(m+12,sum);
 }
+static void boot_rpc_header_tests(void)
+{
+    struct cixvpu_prepared *out=boot_begin();
+    struct cixvpu_boot_rpc_header h, canary;
+    struct cixvpu_boot_reply reply, old_reply;
+    uint32_t root=0;
+    unsigned int calls=native_calls;
+    memset(&h,0xa5,sizeof(h));
+    CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==0 && !h.valid);
+    CHECK(h.state==0 && h.callid==0 && h.size==0 && native_calls==calls);
+    memset(&h,0xa5,sizeof(h)); canary=h;
+    CHECK(cixvpu_prepared_boot_rpc_header(NULL,&h)==EINVAL);
+    CHECK(memcmp(&h,&canary,sizeof(h))==0);
+    CHECK(cixvpu_prepared_boot_rpc_header(out,NULL)==EINVAL);
+    CHECK(cixvpu_prepared_boot_rpc_header(out,(void *)&out->plan)==EINVAL);
+    CHECK(cixvpu_prepared_boot_rpc_header(out,resources[boot_rpc].kva)==EINVAL);
+    intr=true; CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==EWOULDBLOCK); intr=false;
+    softintr=true; CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==EWOULDBLOCK); softintr=false;
+    CHECK(memcmp(&h,&canary,sizeof(h))==0 && native_calls==calls);
+    CHECK(cixvpu_prepared_publish_root(out,&root)==0);
+    put32(device_memory[boot_rpc]+4,0x12345678);
+    put32(device_memory[boot_rpc]+8,0xfedcba98);
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)==EAGAIN);
+    CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==0 && h.valid && h.state==0);
+    CHECK(h.callid==0x12345678 && h.size==0xfedcba98);
+    put32(device_memory[boot_rpc],1);
+    memset(&reply,0xa5,sizeof(reply)); old_reply=reply;
+    boot_nevents=0;
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)==ENOTSUP);
+    CHECK(memcmp(&reply,&old_reply,sizeof(reply))==0 && device_memory[boot_host][0]==0);
+    CHECK(boot_nevents==2 && boot_events[0].page==boot_rpc && boot_events[0].offset==0);
+    CHECK(boot_events[0].length==12 && boot_events[0].ops==BUS_DMASYNC_POSTREAD);
+    CHECK(boot_events[1].page==boot_rpc && boot_events[1].offset==0 &&
+        boot_events[1].length==12 && boot_events[1].ops==BUS_DMASYNC_PREREAD);
+    calls=native_calls;
+    CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==0 && h.valid && h.state==1);
+    CHECK(h.callid==0x12345678 && h.size==0xfedcba98);
+    CHECK(cixvpu_prepared_boot_receive(out,(void *)&out->plan)==EINVAL);
+    CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==0 && h.valid && h.state==1);
+    put32(device_memory[boot_rpc],0); /* A sticky retry must not observe this. */
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)==ENOTSUP);
+    CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==0 && h.valid && h.state==1);
+    CHECK(h.callid==0x12345678 && h.size==0xfedcba98 && native_calls==calls && boot_nevents==2);
+    boot_drop(out);
+
+    static const struct { uint32_t state, callid, size; } vectors[]={
+        {2,3,1012}, {99,0x87654321,1013}, {UINT32_MAX,0x80000000,UINT32_MAX}
+    };
+    for(unsigned int i=0;i<__arraycount(vectors);i++) {
+        out=boot_begin(); CHECK(cixvpu_prepared_publish_root(out,&root)==0);
+        put32(device_memory[boot_rpc],vectors[i].state);
+        put32(device_memory[boot_rpc]+4,vectors[i].callid);
+        put32(device_memory[boot_rpc]+8,vectors[i].size);
+        memset(&reply,0xa5,sizeof(reply)); old_reply=reply;
+        boot_nevents=0;
+        CHECK(cixvpu_prepared_boot_receive(out,&reply)==ENOTSUP);
+        CHECK(memcmp(&reply,&old_reply,sizeof(reply))==0 && device_memory[boot_host][0]==0);
+        calls=native_calls;
+        CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==0 && h.valid);
+        CHECK(h.state==vectors[i].state && h.callid==vectors[i].callid && h.size==vectors[i].size);
+        CHECK(boot_nevents==2 && native_calls==calls);
+        CHECK(boot_events[0].page==boot_rpc && boot_events[0].length==12 && boot_events[0].ops==BUS_DMASYNC_POSTREAD);
+        CHECK(boot_events[1].page==boot_rpc && boot_events[1].length==12 && boot_events[1].ops==BUS_DMASYNC_PREREAD);
+        boot_drop(out);
+    }
+    out=boot_begin(); CHECK(cixvpu_prepared_publish_root(out,&root)==0);
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)==EAGAIN);
+    CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==0 && h.valid);
+    calls=native_calls;
+    out->dma->owners[out->dma->count-1].map->dm_nsegs=0;
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)==EIO);
+    memset(&h,0xa5,sizeof(h)); canary=h;
+    CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==EIO && memcmp(&h,&canary,sizeof(h))==0);
+    out->dma->owners[out->dma->count-1].map->dm_nsegs=1;
+    CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==0 && !h.valid);
+    CHECK(h.state==0 && h.callid==0 && h.size==0 && native_calls==calls);
+    boot_drop(out);
+}
 static void boot_api_tests(void)
 {
     struct cixvpu_prepared *out=boot_begin();
@@ -723,7 +801,7 @@ int main(void)
 #ifdef CIXVPU_SYNC_API
     sync_success_tests(); sync_failure_tests(); sync_owner_tests(); exposure_tests();
 #ifdef CIXVPU_BOOT_API
-    boot_api_tests();
+    boot_rpc_header_tests(); boot_api_tests();
 #else
     fprintf(stderr, "FAIL: no typed boot seed/publication/receive API\n"); return 1;
 #endif

@@ -40,6 +40,10 @@ struct cixvpu_boot_reply {
 	uint16_t code;
 	uint32_t core; /* Only SWITCHED_IN has a core value; PONG returns zero. */
 };
+struct cixvpu_boot_rpc_header {
+	uint32_t state, callid, size;
+	bool valid;
+};
 /*
  * Fixed one-core protocol3.5 sum0005 CPU initializer. Reuses prepare_cpu rules.
  * Seed PING before seal/sync. The caller supplies the trusted full-image pin.
@@ -57,5 +61,16 @@ int cixvpu_prepare_boot_cpu(struct cixvpu_dma **, const struct cixvpu_fw_plan *,
 int cixvpu_prepared_publish_root(struct cixvpu_prepared *, uint32_t *);
 int cixvpu_prepared_boot_receive(struct cixvpu_prepared *,
     struct cixvpu_boot_reply *);
+/*
+ * Cache only, with the same context/output guards as receive. No device access.
+ * valid means twelve bytes were copied in one existing RPC observation, not an
+ * atomic/stable firmware transaction. size is numeric telemetry only.
+ * After initial sync, before the first read, fields are zero and valid=false.
+ * A sticky retry retains the last diagnostic. A new attempt or retained-map
+ * fault invalidates it until
+ * another observation; argument/alias errors preserve it. Errors preserve out.
+ */
+int cixvpu_prepared_boot_rpc_header(struct cixvpu_prepared *,
+    struct cixvpu_boot_rpc_header *);
 
 #endif

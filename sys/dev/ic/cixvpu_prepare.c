@@ -525,6 +525,32 @@ cixvpu_prepare_get32(const uint8_t *p)
 }
 
 int
+cixvpu_prepared_boot_rpc_header(struct cixvpu_prepared *p,
+    struct cixvpu_boot_rpc_header *out)
+{
+	struct cixvpu_boot_rpc_header header = { 0 };
+	int error;
+	bool fault;
+
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (p == NULL || out == NULL)
+		return EINVAL;
+	error = cixvpu_prepare_boot_output(p, out, sizeof(*out),
+	    _Alignof(struct cixvpu_boot_rpc_header), &fault);
+	if (error != 0)
+		return error;
+	if (p->boot.snapshot.rpc_valid) {
+		header.state = cixvpu_prepare_get32(p->boot.snapshot.rpc_header);
+		header.callid = cixvpu_prepare_get32(p->boot.snapshot.rpc_header + 4);
+		header.size = cixvpu_prepare_get32(p->boot.snapshot.rpc_header + 8);
+		header.valid = true;
+	}
+	*out = header;
+	return 0;
+}
+
+int
 cixvpu_prepared_boot_receive(struct cixvpu_prepared *p,
     struct cixvpu_boot_reply *out)
 {
@@ -541,14 +567,17 @@ cixvpu_prepared_boot_receive(struct cixvpu_prepared *p,
 	error = cixvpu_prepare_boot_output(p, out, sizeof(*out),
 	    _Alignof(struct cixvpu_boot_reply), &fault);
 	if (error != 0) {
-		if (fault && p->boot.published)
+		if (fault && p->boot.published) {
 			p->boot.error = error;
+			p->boot.snapshot.rpc_valid = false;
+		}
 		return error;
 	}
 	if (!p->boot.published)
 		return EBUSY;
 	if (p->boot.error != 0)
 		return p->boot.error;
+	p->boot.snapshot.rpc_valid = false;
 	error = cixvpu_dma_boot_snapshot(p->dma, p, &p->plan, &p->boot.snapshot);
 	if (error != 0)
 		goto failed;
