@@ -52,6 +52,10 @@ file	arch/arm/broadcom/bcm2712_display_dvp.c	bcmv3d_acpi
 file	arch/arm/broadcom/bcm2712_display_dvp_acpi.c	bcmv3d_acpi
 file	arch/arm/broadcom/bcm2712_display_irq.c	bcmv3d_acpi
 file	arch/arm/broadcom/bcm2712_display_irq_acpi.c	bcmv3d_acpi
+
+# Explicit DDC0 API only. No default attachment or interrupt activation.
+defflag opt_bcm2712_ddc.h BCM2712_DISPLAY_DDC: brcmstb_i2c, i2cexec, edid
+file	arch/arm/broadcom/bcm2712_display_ddc_acpi.c	bcmv3d_acpi & bcm2712_display_ddc
 defflag opt_bcmv3d.h	BCM2712_V3D_TAKEOVER
 file	arch/arm/broadcom/bcm2712_v3d_takeover.c	bcmv3d_acpi & bcm2712_v3d_takeover
 defflag opt_bcmv3d.h	BCM2712_V3D_DMA_PROBE: BCM2712_V3D_TAKEOVER

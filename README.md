@@ -680,7 +680,9 @@ on every board in the hardware catalog.
   returns five BSC/DDC control values and completes cleanup on that boot.
   A [bounded BRCMSTB I2C core](ember/boot/brcmstb-i2c.md) adds combined reads
   with actual-source fault and deadline contracts.
-  Runtime HPD delivery, DDC transfers and KMS scanout remain unimplemented.
+  The opt-in [native DDC0 owner](ember/boot/bcm2712-display-ddc.md) adds a base-EDID API
+  with source/host validation and retained faults. Physical DDC transfer acceptance,
+  runtime HPD delivery and KMS scanout remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.
