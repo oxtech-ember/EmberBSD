@@ -197,7 +197,8 @@ from a connected HDMI cable or offscreen GPU success.
 
 ## Boundary before the first initialization write
 
-The next code stage can reserve resources without writing hardware. Reuse
+The [display ownership core](a733-display-ownership.md) defines a write-free
+reservation contract. Its native adapters remain to be connected. Use
 the native provider arbitration pattern: count in-flight CCU writers before
 acquisition, protect shared ancestor mutations, and reserve DE_SYS/VO1 under
 the PCK lock. Existing GPU reservations must continue to work. The generic
