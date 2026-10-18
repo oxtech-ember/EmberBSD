@@ -77,7 +77,7 @@ sun60i_a733_hdmi_plan(uint32_t dcxo, uint32_t pixel,
 		if (p->dcxo_hz != dcxo || p->pixel_hz != pixel)
 			continue;
 		numerator = (uint64_t)dcxo * (((p->pll >> 8) & 255) + 1);
-		denominator = (((p->pll >> 1) & 1) + 1) *
+		denominator = (uint64_t)(((p->pll >> 1) & 1) + 1) *
 		    (((p->pll >> 16) & 127) + 1);
 		if (numerator != (uint64_t)pixel * denominator)
 			return EOPNOTSUPP;
@@ -203,7 +203,7 @@ static void
 phy_i2c(struct sun60i_a733_hdmi_phy *s, uint8_t address,
     uint16_t *value, bool write)
 {
-	uint32_t status = 0, hi, lo;
+	uint32_t status = 0;
 	unsigned i;
 
 	phy_write(s, A733_HDMI_CORE8, CORE_PHY_I2C_STATUS, 3);
@@ -233,6 +233,8 @@ phy_i2c(struct sun60i_a733_hdmi_phy *s, uint8_t address,
 	}
 	phy_write(s, A733_HDMI_CORE8, CORE_PHY_I2C_STATUS, 2);
 	if (!write) {
+		uint32_t hi, lo;
+
 		hi = phy_read(s, A733_HDMI_CORE8, CORE_PHY_I2C_IN_HI);
 		lo = phy_read(s, A733_HDMI_CORE8, CORE_PHY_I2C_IN_LO);
 		if (s->fault == 0)

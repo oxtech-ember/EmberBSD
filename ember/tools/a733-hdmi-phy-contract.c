@@ -147,9 +147,8 @@ complete(struct fixture *f)
 	if (error == 0) {
 		CHECK((f->core[0x3000] & 0x1f) == 0x16);
 		CHECK(f->internal[6] == 0);
-	}
-	if (error == 0)
 		error = sun60i_a733_hdmi_phy_prepare(&f->state, 26000000, 108000000);
+	}
 	if (error == 0)
 		error = sun60i_a733_hdmi_phy_observe(&f->state);
 	return error;
@@ -183,7 +182,7 @@ static void
 normal_and_faults(void)
 {
 	struct fixture f;
-	unsigned count, calls;
+	unsigned count;
 	fresh(&f);
 	CHECK(complete(&f) == 0);
 	CHECK(f.state.hpd_prepared && f.state.phy_prepared && f.state.written);
@@ -202,8 +201,10 @@ normal_and_faults(void)
 	CHECK(sun60i_a733_hdmi_phy_prepare(&f.state, 26000000, 108000000) == EALREADY);
 	CHECK(f.calls == count);
 	for (unsigned failure = 1; failure <= count; failure++) {
+		unsigned calls;
+
 		fresh(&f);
-	f.fail_at = failure;
+		f.fail_at = failure;
 		CHECK(complete(&f) == EFAULT && f.state.fault == EFAULT);
 		CHECK(f.calls == failure);
 		calls = f.calls;
