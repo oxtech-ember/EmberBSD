@@ -16,6 +16,9 @@ name: CIX platform resource contracts
       - 'sys/dev/ic/cixvpu_*'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
+      - 'sys/arch/arm/acpi/acpi_machdep.c'
+      - 'sys/arch/arm/acpi/acpi_iort.c'
+      - 'ember/tools/acpi-iort-dma-*'
       - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY'
@@ -51,6 +54,9 @@ name: CIX platform resource contracts
       - 'sys/dev/ic/cixvpu_*'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
+      - 'sys/arch/arm/acpi/acpi_machdep.c'
+      - 'sys/arch/arm/acpi/acpi_iort.c'
+      - 'ember/tools/acpi-iort-dma-*'
       - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY'
@@ -101,6 +107,9 @@ jobs:
             /sys/dev/acpi/cixvpu_acpi_control.*
             /sys/dev/acpi/cixvpu_acpi.c
             /sys/dev/acpi/acpi_power.*
+            /sys/arch/arm/acpi/acpi_machdep.c
+            /sys/arch/arm/acpi/acpi_iort.c
+            /ember/tools/acpi-iort-dma-*
             /sys/dev/acpi/xhci_acpi.c
             /sys/dev/acpi/cixscmi_acpi.*
             /sys/dev/ic/scmi_smt_diag.*
@@ -125,11 +134,13 @@ jobs:
           CIXVPU_CONTROL_ANALYZE: '1'
           XHCI_ACPI_ANALYZE: '1'
           CIXSCMI_ANALYZE: '1'
+          IORT_DMA_ANALYZE: '1'
         run: |
           sh ember/tools/cixclk-contract.sh
           CIXCLK_NCIXSCMI=0 sh ember/tools/cixclk-contract.sh
           sh ember/tools/cixreset-contract.sh
           sh ember/tools/acpi-power-contract.sh
+          sh ember/tools/acpi-iort-dma-contract.sh
           sh ember/tools/cixvpu-control-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
@@ -143,6 +154,7 @@ jobs:
           CIXCLK_NCIXSCMI=0 sh ember/tools/cixclk-contract.sh
           sh ember/tools/cixreset-contract.sh
           sh ember/tools/acpi-power-contract.sh
+          sh ember/tools/acpi-iort-dma-contract.sh
           sh ember/tools/cixvpu-control-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
@@ -163,6 +175,7 @@ jobs:
           CIXCLK_NCIXSCMI=0 sh ember/tools/cixclk-contract.sh
           sh ember/tools/cixreset-contract.sh
           sh ember/tools/acpi-power-contract.sh
+          sh ember/tools/acpi-iort-dma-contract.sh
           sh ember/tools/cixvpu-control-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh

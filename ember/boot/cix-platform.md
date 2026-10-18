@@ -318,6 +318,29 @@ choose a VPU RCSU reset sequence, expose arbitrary register access, toggle
 other reset IDs or implement general CIX clock and reset support. They are
 built in with boot-long lifetime. Hot detach and suspend/resume are not supported.
 
+## ARM ACPI DMA address limits
+
+The ARM ACPI DMA tag path resolves an IORT named component with the device's
+ACPI namespace handle. Passing the `acpi_devnode` pointer instead lost the
+component's `MemoryAddressLimit` and selected the unrestricted fallback.
+The fix preserves the existing range-length, `_DMA` translation and `_CCA`
+policies. A child tag and loaded-address checks remain separate requirements.
+
+Run the actual-source regression with the common GCC16 host compiler:
+
+```sh
+CC=gcc CFLAGS='-O2 -g -fanalyzer' IORT_DMA_ANALYZE=1 \
+  sh ember/tools/acpi-iort-dma-contract.sh
+```
+
+The runner executes five complete native functions extracted without algorithm
+changes. It uses the actual ACPICA table types and modeled namespace, resource
+and allocation services. All 113 checks pass. They cover 40/32-bit limits,
+missing/zero limits, `_DMA` translations, coherency flags and cleanup.
+The complete native source also compiles with GCC16 and path analysis.
+These checks do not validate arbitrary IORT input, establish an SMMU domain,
+or qualify the physical VPU stream route.
+
 ## Source checks and limits
 
 The [native PowerResource framework](acpi-power.md) now preserves shared

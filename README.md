@@ -242,10 +242,13 @@ on every board in the hardware catalog.
   allocation. It does not allocate DMA pages, load firmware or execute the codec.
   A separate native allocation helper owns validated, disjoint bus pages and
   reverses partial failures. A manual [CPU-only allocation profile](ember/boot/cix-vpu.md#manual-cpu-only-allocation-probe)
-  reads a selected local image after root mounts, then checks and frees a
-  one-core page set. Its source contracts and GCC16 kernel link pass; physical
+  reads a selected local image after root mounts, then checks a one-core page
+  set and reports checked cleanup. Its source contracts and GCC16 kernel link pass; physical
   allocation remains unverified. No address is published to the VPU.
   Synchronization, hardware publication and runtime teardown remain unfinished.
+  ARM ACPI DMA tags preserve [IORT named-component address limits](ember/boot/cix-platform.md#arm-acpi-dma-address-limits)
+  through the device's namespace handle. Actual-source checks cover the fix;
+  physical stream routing still needs qualification.
   A checked SCMI discovery wire helper validates replies, ordering and bounded
   waits. An explicit diagnostic ACPI binding sends one BASE-version request
   with a boot-long channel lease. One physical trial returns BASE version 2.0
