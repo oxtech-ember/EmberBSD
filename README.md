@@ -130,6 +130,10 @@ maps EmberBSD Development skills to preparation, validation, and submission.
 
 ## What this fork adds to NetBSD 11
 
+The [RGE raw-wire correctness probe](ember/boot/rge-wire-probe.md) tests
+raw Ethernet frame integrity through two native BPF descriptors. Its source
+contract is separate from native wire and throughput acceptance.
+
 EmberBSD builds on NetBSD 11 to make useful device workflows reproducible:
 local inference, robot telemetry, vision and positioning, and graphical
 controls. This tree owns the OS changes; Ports and Examples supply optional

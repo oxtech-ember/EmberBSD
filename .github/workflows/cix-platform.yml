@@ -27,6 +27,9 @@ name: CIX platform resource contracts
       - 'sys/sys/mbuf.h'
       - 'sys/kern/uipc_mbuf.c'
       - 'ember/tools/rge-rx-contract.*'
+      - 'ember/tools/rge-wire-probe*'
+      - 'sys/net/bpf.h'
+      - 'sys/net/bpf_filter.c'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/arm/acpi/acpi_machdep.c'
@@ -102,6 +105,9 @@ name: CIX platform resource contracts
       - 'sys/sys/mbuf.h'
       - 'sys/kern/uipc_mbuf.c'
       - 'ember/tools/rge-rx-contract.*'
+      - 'ember/tools/rge-wire-probe*'
+      - 'sys/net/bpf.h'
+      - 'sys/net/bpf_filter.c'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/arm/acpi/acpi_machdep.c'
@@ -223,6 +229,9 @@ jobs:
             /sys/sys/mbuf.h
             /sys/kern/uipc_mbuf.c
             /ember/tools/rge-rx-contract.*
+            /ember/tools/rge-wire-probe*
+            /sys/net/bpf.h
+            /sys/net/bpf_filter.c
             /sys/sys/queue.h
             /sys/external/bsd/acpica/dist/include/
       - name: Prepare GCC16 and analysis tools
@@ -248,6 +257,7 @@ jobs:
           CIX_UART2_ANALYZE: '1'
           CIX_PLCOM_ANALYZE: '1'
           RGE_RX_ANALYZE: '1'
+          RGE_WIRE_ANALYZE: '1'
           IFCONFIG_MTU_ANALYZE: '1'
         run: |
           sh ember/tools/cixclk-contract.sh
@@ -264,6 +274,7 @@ jobs:
           sh ember/tools/cix-plcom-contract.sh
           sh ember/tools/cix-uart2-console-contract.sh
           sh ember/tools/rge-rx-contract.sh
+          sh ember/tools/rge-wire-probe-contract.sh
           sh ember/tools/ifconfig-mtu-contract.sh
       - name: Run ASan and UBSan
         env:
@@ -285,6 +296,7 @@ jobs:
           sh ember/tools/cix-plcom-contract.sh
           sh ember/tools/cix-uart2-console-contract.sh
           sh ember/tools/rge-rx-contract.sh
+          sh ember/tools/rge-wire-probe-contract.sh
           sh ember/tools/ifconfig-mtu-contract.sh
       - name: Run complete contracts under Memcheck
         env:
@@ -314,4 +326,5 @@ jobs:
           sh ember/tools/cix-plcom-contract.sh
           sh ember/tools/cix-uart2-console-contract.sh
           sh ember/tools/rge-rx-contract.sh
+          sh ember/tools/rge-wire-probe-contract.sh
           sh ember/tools/ifconfig-mtu-contract.sh
