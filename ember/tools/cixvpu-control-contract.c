@@ -645,8 +645,9 @@ static struct cixvpu_dma dma_owner;
 int cixvpu_dma_alloc(bus_dma_tag_t dmat, bus_dma_tag_t dmat64,
     const struct cixvpu_fw_plan *plan, struct cixvpu_dma **out)
 {
-    CHECK(dmat == &dma_tags[0] && dmat64 == &dma_tags[1] && fw_live == (attach_cf.cf_flags == 5 || attach_cf.cf_flags == 7 ? 1U : 0U));
-    CHECK(plan->cores == 1 && plan->backing_pages == 140 && *out == NULL);
+    CHECK(dmat == &dma_tags[0] && dmat64 == &dma_tags[1] && fw_live == (attach_cf.cf_flags == 5 || attach_cf.cf_flags == 7 || attach_cf.cf_flags == 8 ? 1U : 0U));
+    CHECK(plan->cores == 1 && plan->backing_pages == (attach_cf.cf_flags == 8 ? 173U : 140U) && *out == NULL);
+    CHECK(plan->boot_rpc == (attach_cf.cf_flags == 8 ? 1U : 0U));
     dma_allocs++; fw_event('a');
     if (fw_fault == 8) return ENOMEM;
     dma_owner.count = plan->backing_pages; dma_owner.plan = *plan; dma_count = dma_owner.count;
@@ -682,11 +683,12 @@ static int fixture_prepare(struct cixvpu_dma **owner, const struct cixvpu_fw_pla
     const void *bytes, size_t size, const uint8_t pin[32], struct cixvpu_prepared **out)
 {
     CHECK(*owner == &dma_owner && dma_live && *out == NULL && !prepared_live);
-    CHECK(fw_live == 1 && fw_closes == 1 && dma_views == 140);
+    CHECK(fw_live == 1 && fw_closes == 1 && dma_views == (attach_cf.cf_flags == 8 ? 173U : 140U));
     CHECK(bytes != NULL);
     if (bytes == NULL) return EINVAL;
     CHECK(size == sizeof(fw_image) && memcmp(bytes, fw_image, size) == 0);
-    CHECK(plan->cores == 1 && plan->backing_pages == 140);
+    CHECK(plan->cores == 1 && plan->backing_pages == (attach_cf.cf_flags == 8 ? 173U : 140U));
+    CHECK(plan->boot_rpc == (attach_cf.cf_flags == 8 ? 1U : 0U));
     for (unsigned int i = 0; i < 32; i++) {
         char byte[3] = {selected_digest[i * 2], selected_digest[i * 2 + 1], 0};
         CHECK(pin[i] == (uint8_t)strtoul(byte, NULL, 16));
@@ -703,7 +705,7 @@ struct cixvpu_acpi_boot {
     struct cixvpu_boot_report report;
 };
 static struct cixvpu_acpi_boot attachment_boot;
-static unsigned int boot_create_calls, boot_once_calls, boot_report_calls;
+static unsigned int boot_create_calls, boot_once_calls, boot_report_calls, boot_rpc_create_calls;
 static unsigned int boot_prepare_calls, ordinary_prepare_calls, initial_sync_calls;
 static int boot_create_result;
 int cixvpu_prepare_boot_cpu(struct cixvpu_dma **owner,
@@ -726,6 +728,8 @@ int cixvpu_prepared_free(struct cixvpu_prepared **owner)
     if (fw_fault == 17) return EBUSY;
     prepared_live = false; dma_live = false; *owner = NULL; return 0;
 }
+int cixvpu_acpi_boot_create_rpc(device_t, const struct acpi_attach_args *,
+    const struct cixvpu_resources *, struct cixvpu_acpi_boot **);
 #include "attachment-source.inc"
 int cixvpu_acpi_boot_create(device_t dev, const struct acpi_attach_args *aux,
     const struct cixvpu_resources *resources, struct cixvpu_acpi_boot **out)
@@ -739,6 +743,13 @@ int cixvpu_acpi_boot_create(device_t dev, const struct acpi_attach_args *aux,
     if(boot_create_result!=0) return boot_create_result;
     if(fw_fault==21) return ENOMEM;
     *out=&attachment_boot; return 0;
+}
+int cixvpu_acpi_boot_create_rpc(device_t dev, const struct acpi_attach_args *aux,
+    const struct cixvpu_resources *resources, struct cixvpu_acpi_boot **out)
+{
+    CHECK(attach_cf.cf_flags==8 && dma_owner.plan.boot_rpc==1);
+    boot_rpc_create_calls++;
+    return cixvpu_acpi_boot_create(dev,aux,resources,out);
 }
 int cixvpu_acpi_boot_once(struct cixvpu_acpi_boot *ctx,
     struct cixvpu_prepared **owner)
@@ -931,7 +942,7 @@ static void boot_attach_fixture(unsigned int fault)
 {
     allocation_fixture(fault); attach_cf.cf_flags=7;
     boot_prepare_calls=ordinary_prepare_calls=initial_sync_calls=0;
-    boot_create_calls=boot_once_calls=boot_report_calls=0; boot_create_result=0;
+    boot_create_calls=boot_once_calls=boot_report_calls=boot_rpc_create_calls=0; boot_create_result=0;
     memset(&attachment_boot,0,sizeof(attachment_boot));
 }
 static void boot_attach_run(void)
@@ -951,9 +962,31 @@ static void boot_attach_drop(void)
 }
 static void boot_attach_tests(void)
 {
+    boot_attach_fixture(0); attach_cf.cf_flags=8; boot_attach_run();
+    CHECK(dma_count==173 && dma_views==173 && dma_owner.plan.boot_rpc==1);
+    CHECK(boot_rpc_create_calls==1 && boot_create_calls==1 && boot_once_calls==1 && boot_report_calls==1);
+    CHECK(initial_sync_calls==0 && prepared_frees==0 && dma_frees==0);
+    CHECK(prepared_live && attachment_boot.prepared==&prepared_owner);
+    CHECK(strcmp(fw_events,"osmrchapfCUV")==0 && fw_live==0);
+    boot_attach_drop();
+    const unsigned int rpc_faults[]={1,8,16,19,20,21,22,23};
+    for(unsigned int i=0;i<__arraycount(rpc_faults);i++) {
+        unsigned int f=rpc_faults[i];
+        boot_attach_fixture(f); attach_cf.cf_flags=8; boot_attach_run();
+        bool invoked=f==20 || f==22 || f==23;
+        CHECK(boot_once_calls==(invoked ? 1U : 0U));
+        CHECK(boot_report_calls==(invoked ? 1U : 0U));
+        CHECK(boot_rpc_create_calls==((invoked || f==21) ? 1U : 0U));
+        CHECK(boot_create_calls==boot_rpc_create_calls);
+        CHECK(initial_sync_calls==0 && ordinary_prepare_calls==0);
+        CHECK(prepared_frees==(f==21 ? 1U : 0U));
+        CHECK(prepared_live==invoked && fw_live==0);
+        boot_attach_drop();
+    }
     boot_attach_fixture(0); boot_attach_run();
     CHECK(boot_prepare_calls==1 && ordinary_prepare_calls==0 && prepare_calls==1);
     CHECK(boot_create_calls==1 && boot_once_calls==1 && boot_report_calls==1);
+    CHECK(boot_rpc_create_calls==0);
     CHECK(initial_sync_calls==0 && prepared_frees==0 && dma_frees==0);
     CHECK(strcmp(fw_events,"osmrchapfCUV")==0 && fw_live==0);
     CHECK(prepared_live && attachment_boot.prepared==&prepared_owner);
@@ -1070,7 +1103,7 @@ static void attach_tests(void)
     attach_fixture(5); cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     CHECK(parser_calls == 1 && cleanup_calls == 1 && mountroot_calls == 1);
     CHECK(defer_calls == 0 && deferred_callback != NULL && nevents == 0 && maps == 0);
-    const unsigned int invalid_flags[] = {8, 0xffff, UINT32_MAX};
+    const unsigned int invalid_flags[] = {9, 0xffff, UINT32_MAX};
     for (unsigned int i = 0; i < sizeof(invalid_flags)/sizeof(invalid_flags[0]); i++) {
         attach_fixture(invalid_flags[i]); cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
         CHECK(parser_calls == 0 && defer_calls == 0 && nevents == 0);

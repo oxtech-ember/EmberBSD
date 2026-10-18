@@ -141,8 +141,9 @@ Never-exposed cleanup and irreversible exposed hold keep their existing rules.
 The planner contract passes 678050 checks. Actual preparation passes 13943467
 checks with GCC16 path analysis, configured Cppcheck/CSA and ASan/UBSan.
 Independent reviews and causal runtime mutations cover the new boundaries.
-The native attachment does not select this plan yet. No active RPC response,
-runtime allocation, resize, free, PTE change or physical coherency is accepted.
+Only the separate manual RPC profile selects this plan. Default and strict
+manual profiles keep the ordinary plan. Runtime allocation, resize, free, PTE
+changes and physical coherency remain unqualified.
 
 ## CPU preparation and opaque ownership
 
@@ -249,8 +250,8 @@ These results do not establish a hardware firmware boot or physical DMA.
 ## Inactive DEBUGPARAM response
 
 `cixvpu_prepared_boot_debugparam` is a closed primitive for a fresh published
-boot owner. The boot coordinator does not call it. Existing receive behavior
-and the manual boot profile still reject nonzero RPC state with sticky ENOTSUP.
+boot owner. The boot coordinator does not call it. Legacy receive and
+the strict `flags 0x7` profile still reject nonzero RPC state with sticky ENOTSUP.
 The primitive cannot resume a failed boot epoch.
 
 The helper acquires two fixed 12-byte RPC headers, with at most four pairs.
@@ -278,6 +279,30 @@ diagnostics. All-category Cppcheck retains its baseline and adds one isolated
 unused-export hint in each changed native unit; it is not reported clean.
 The poisoned bounce model checks that all 4092 bytes after state stay unchanged.
 Active RPC service and firmware readiness still require physical acceptance.
+
+## Closed bootstrap RPC service
+
+`cixvpu_prepared_boot_rpc_step` and `cixvpu_prepared_boot_receive_rpc` are
+separate plan1-only APIs. They cannot resume an owner with a sticky error.
+Fresh bounded observations accept the exact first MEM_ALLOC tuple or at most
+sixteen DEBUG calls. One allocation is consumed before its first response store.
+The fixed VA and payload size 4 become visible before the release RETURN store.
+Partial DMA synchronization preserves unchanged request and neighboring bytes.
+No runtime allocation, live PTE change, heap view, resize or free is provided.
+
+FREE and RETURN do not repeat a response. Receive permits their ordinary queue
+progress; a newly observed PARAM defers without reading or advancing that queue.
+The manual native coordinator services RPC before messages and issues exactly
+one IRQHOST notification after each commit. Reports count commits, notifications
+and the allocation reply separately. Unexpected IRQs before or after notification
+retain ownership and stop the epoch. Transient EAGAIN waits for the next visit
+within the original one-second/1001-visit bound. Terminal errors are not retried.
+
+Actual-source preparation passes 14269978 checks. The composed native contract
+passes 34299 checks, including 12090 attachment checks, with GCC16 path analysis,
+configured Cppcheck/CSA and ASan/UBSan. Causal runtime mutations detect missing
+or repeated notification and faults around commit. Native analysis retains its
+explicit inherited findings. These are models, not physical firmware readiness.
 
 ## Dedicated native boot epoch source
 
@@ -340,6 +365,11 @@ When the observed firmware loses SPCR, the separate
 [EMBER64_CIXVPU_UART2_BOOT_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE)
 adds only the [exact-board UART2 console gate](cix-spcr.md#manual-kernel-console-profile)
 to that boot profile. It does not change the RPC policy or exposure lifetime.
+
+[EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE)
+selects the separate fixed RPC policy with VPU `flags 0x8` and SCMI `flags 0x80`.
+It preserves the UART2 console gate and all boot-long exposure rules.
+Its source checks pass; its physical firmware handshake remains unqualified.
 
 The once-only mountroot callback reuses the fixed local image pin, exact size,
 one-core plan and zero-page audit. It calls `cixvpu_prepare_boot_cpu`, then frees

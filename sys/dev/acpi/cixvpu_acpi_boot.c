@@ -27,6 +27,7 @@ struct cixvpu_acpi_boot {
 	ACPI_HANDLE cores[4], powers[4];
 	void *irq_cookie;
 	volatile unsigned int irq_ready, irq_masked, irq_seen, irq_unexpected;
+	bool rpc_enabled;
 	struct cixvpu_boot_report report;
 };
 
@@ -210,6 +211,24 @@ cixvpu_boot_start(struct cixvpu_acpi_boot *b, uint32_t root)
 	return EBUSY;
 }
 
+static void
+cixvpu_boot_observe_rpc(struct cixvpu_acpi_boot *b)
+{
+	struct cixvpu_boot_rpc_header header = { 0 };
+
+	b->report.rpc_header_error = cixvpu_prepared_boot_rpc_header(b->prepared,
+	    &header);
+	b->report.rpc_header_valid = header.valid;
+	b->report.rpc_state = header.state;
+	b->report.rpc_callid = header.callid;
+	b->report.rpc_size = header.size;
+	b->report.rpc_alloc_valid = header.alloc_valid;
+	b->report.rpc_alloc_size = header.alloc_size;
+	b->report.rpc_alloc_max_size = header.alloc_max_size;
+	b->report.rpc_alloc_region = header.alloc_region;
+	b->report.rpc_alloc_log2_alignment = header.alloc_log2_alignment;
+}
+
 static int
 cixvpu_boot_receive(struct cixvpu_acpi_boot *b)
 {
@@ -226,20 +245,44 @@ cixvpu_boot_receive(struct cixvpu_acpi_boot *b)
 		if (atomic_load_acquire(&b->irq_unexpected) != 0)
 			return EIO;
 		for (i = 0; i < 16 && bytes < 4096; i++) {
-			struct cixvpu_boot_rpc_header header = { 0 };
-			int error = cixvpu_prepared_boot_receive(b->prepared, &reply);
+			int error;
 
-			b->report.rpc_header_error = cixvpu_prepared_boot_rpc_header(
-			    b->prepared, &header);
-			b->report.rpc_header_valid = header.valid;
-			b->report.rpc_state = header.state;
-			b->report.rpc_callid = header.callid;
-			b->report.rpc_size = header.size;
-			b->report.rpc_alloc_valid = header.alloc_valid;
-			b->report.rpc_alloc_size = header.alloc_size;
-			b->report.rpc_alloc_max_size = header.alloc_max_size;
-			b->report.rpc_alloc_region = header.alloc_region;
-			b->report.rpc_alloc_log2_alignment = header.alloc_log2_alignment;
+			if (b->rpc_enabled) {
+				enum cixvpu_boot_rpc_result result;
+
+				error = cixvpu_prepared_boot_rpc_step(b->prepared,
+				    &result);
+				cixvpu_boot_observe_rpc(b);
+				if (error == EAGAIN)
+					break;
+				if (error != 0)
+					return error;
+				if (result == CIXVPU_BOOT_RPC_ALLOC_REPLIED ||
+				    result == CIXVPU_BOOT_RPC_DEBUG_REPLIED) {
+					/* The closed step has already committed RETURN. */
+					b->report.rpc_commits++;
+					if (result == CIXVPU_BOOT_RPC_ALLOC_REPLIED)
+						b->report.rpc_alloc_replied = true;
+					if (b->report.rpc_commits > 17)
+						return EPROTO;
+					if (atomic_load_acquire(&b->irq_unexpected) != 0)
+						return EIO;
+					cixvpu_boot_write(b, false, 0x220, 1);
+					b->report.rpc_notifications++;
+					if (atomic_load_acquire(&b->irq_unexpected) != 0)
+						return EIO;
+					continue;
+				}
+				if (result != CIXVPU_BOOT_RPC_IDLE &&
+				    result != CIXVPU_BOOT_RPC_PENDING)
+					return EPROTO;
+				error = cixvpu_prepared_boot_receive_rpc(b->prepared,
+				    &reply);
+			} else {
+				error = cixvpu_prepared_boot_receive(b->prepared, &reply);
+			}
+
+			cixvpu_boot_observe_rpc(b);
 			if (error == EAGAIN)
 				break;
 			if (error != 0)
@@ -322,9 +365,10 @@ cixvpu_boot_overlap(const struct cixvpu_acpi_boot *b, const void *p,
 	    base - address < size;
 }
 
-int
-cixvpu_acpi_boot_create(device_t dev, const struct acpi_attach_args *aa,
-    const struct cixvpu_resources *resources, struct cixvpu_acpi_boot **out)
+static int
+cixvpu_boot_create(device_t dev, const struct acpi_attach_args *aa,
+    const struct cixvpu_resources *resources, struct cixvpu_acpi_boot **out,
+    bool rpc_enabled)
 {
 	struct cixvpu_acpi_boot *b;
 
@@ -341,8 +385,25 @@ cixvpu_acpi_boot_create(device_t dev, const struct acpi_attach_args *aa,
 	b->dev = dev;
 	b->aa = *aa;
 	b->resources = *resources;
+	b->rpc_enabled = rpc_enabled;
 	*out = b;
 	return 0;
+}
+
+int
+cixvpu_acpi_boot_create(device_t dev, const struct acpi_attach_args *aa,
+    const struct cixvpu_resources *resources, struct cixvpu_acpi_boot **out)
+{
+
+	return cixvpu_boot_create(dev, aa, resources, out, false);
+}
+
+int
+cixvpu_acpi_boot_create_rpc(device_t dev, const struct acpi_attach_args *aa,
+    const struct cixvpu_resources *resources, struct cixvpu_acpi_boot **out)
+{
+
+	return cixvpu_boot_create(dev, aa, resources, out, true);
 }
 
 int

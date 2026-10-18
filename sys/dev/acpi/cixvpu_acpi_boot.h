@@ -25,12 +25,14 @@ struct cixvpu_boot_report {
 	uint32_t last_offset, last_value;
 	uint32_t rpc_state, rpc_callid, rpc_size;
 	uint32_t rpc_alloc_size, rpc_alloc_max_size;
+	uint32_t rpc_commits, rpc_notifications;
 	uint8_t rpc_alloc_region, rpc_alloc_log2_alignment;
 	enum cixvpu_boot_stage stage, last_stage;
 	int error, cleanup_error, rpc_header_error;
 	bool started, moved, exposed, held, switched_in, pong, prepared_retained;
 	bool irq_registered, irq_masked;
 	bool rpc_alloc_valid;
+	bool rpc_alloc_replied;
 	bool rpc_header_valid; /* One-copy observation, not transaction stability. */
 };
 /*
@@ -51,6 +53,9 @@ struct cixvpu_boot_report {
  * Reports contain raw/advisory observations; API success does not prove repair.
  */
 int cixvpu_acpi_boot_create(device_t, const struct acpi_attach_args *,
+    const struct cixvpu_resources *, struct cixvpu_acpi_boot **);
+/* Separate manual policy for the fixed first RPC allocation. */
+int cixvpu_acpi_boot_create_rpc(device_t, const struct acpi_attach_args *,
     const struct cixvpu_resources *, struct cixvpu_acpi_boot **);
 int cixvpu_acpi_boot_once(struct cixvpu_acpi_boot *, struct cixvpu_prepared **);
 int cixvpu_acpi_boot_report(const struct cixvpu_acpi_boot *,

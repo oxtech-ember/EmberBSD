@@ -2,6 +2,7 @@
 /* Actual control/boot source; platform services only are modeled. */
 #define cixvpu_acpi_boot model_cixvpu_acpi_boot
 #define cixvpu_acpi_boot_create model_cixvpu_acpi_boot_create
+#define cixvpu_acpi_boot_create_rpc model_cixvpu_acpi_boot_create_rpc
 #define cixvpu_acpi_boot_once model_cixvpu_acpi_boot_once
 #define cixvpu_acpi_boot_report model_cixvpu_acpi_boot_report
 #define main cixvpu_control_contract_main
@@ -38,6 +39,7 @@
 #undef main
 #undef cixvpu_acpi_boot
 #undef cixvpu_acpi_boot_create
+#undef cixvpu_acpi_boot_create_rpc
 #undef cixvpu_acpi_boot_once
 #undef cixvpu_acpi_boot_report
 #undef cixvpu_dma
@@ -86,6 +88,11 @@ extern unsigned int boot_fixture_live(void);
 extern void boot_fixture_rpc(uint32_t, uint32_t, uint32_t);
 extern void boot_fixture_rpc_alloc(void);
 extern void boot_fixture_map_valid(struct cixvpu_prepared *, bool);
+extern struct cixvpu_prepared *boot_fixture_prepare_rpc(void);
+extern void boot_fixture_rpc_words(uint32_t, uint32_t, uint32_t, uint32_t,
+    uint32_t, uint32_t, uint32_t);
+extern uint32_t boot_fixture_rpc_word(unsigned int);
+extern void boot_fixture_set_rpc_commit(void (*)(void));
 
 /* The PIC model starts masked and can dispatch synchronously on unmask. */
 #define KM_NOSLEEP 0
@@ -96,6 +103,9 @@ extern void boot_fixture_map_valid(struct cixvpu_prepared *, bool);
 static unsigned int boot_masks, boot_unmasks, boot_intrs, boot_disestablish;
 static unsigned int boot_irq_count, boot_writes, boot_delays;
 static unsigned int boot_fault;
+static bool boot_rpc_test;
+static unsigned int boot_rpc_commit_events, boot_rpc_notify_events;
+static unsigned int boot_rpc_deferrals;
 static bool boot_term_issued;
 static uint64_t boot_now;
 static uint32_t boot_regs[2][0x400 / 4];
@@ -152,6 +162,9 @@ static uint32_t bus_space_read_4(bus_space_tag_t t, bus_space_handle_t h, bus_si
     return boot_regs[h == 1 ? 1 : 0][offset / 4];
 }
 static void boot_final_ack_irq(void);
+static void boot_rpc_request(void);
+static void boot_rpc_commit_hook(void);
+static void boot_rpc_notified(void);
 static void bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h,
     bus_size_t offset, uint32_t value)
 {
@@ -165,16 +178,26 @@ static void bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h,
     boot_regs[h == 1 ? 1 : 0][offset / 4] = value;
     if (h==1 && offset==0x218 && value==1) boot_term_issued=true;
     if (h==1 && offset==4 && value==1) {
-        boot_fixture_runtime(boot_fault != 7 && boot_fault != 5 && boot_fault != 21);
+        boot_fixture_runtime(!boot_rpc_test && boot_fault != 7 && boot_fault != 5 && boot_fault != 21);
+        if (boot_rpc_test) {
+            boot_fixture_set_rpc_commit(boot_rpc_commit_hook);
+            boot_rpc_request();
+        }
         if (boot_fault == 9) boot_fixture_set_ack(boot_final_ack_irq);
         if (boot_fault == 23 || boot_fault == 24) boot_fixture_rpc(1,0x12345678,0xfedcba98);
         if (boot_fault == 25) boot_fixture_rpc_alloc();
     }
+    if(h==1 && offset==0x220 && value==1 && boot_regs[1][1]==1 && boot_rpc_test)
+        boot_rpc_notified();
     if (h == 1 && offset == 0x21c && value == 0) boot_regs[1][0x18 / 4] &= ~1U;
 }
 static void bus_space_barrier(bus_space_tag_t t, bus_space_handle_t h,
     bus_size_t offset, bus_size_t length, int flags)
-{ (void)t; CHECK(h == 1 || h == 2); CHECK(offset <= 0x10000 && length <= 0x10000-offset); CHECK(flags == (BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE)); CHECK(boot_writes==boot_barriers+1); CHECK(boot_trace[boot_barriers].h==h && boot_trace[boot_barriers].offset==offset && length==4); boot_barriers++; }
+{ (void)t; CHECK(h == 1 || h == 2); CHECK(offset <= 0x10000 && length <= 0x10000-offset); CHECK(flags == (BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE)); CHECK(boot_writes==boot_barriers+1); CHECK(boot_trace[boot_barriers].h==h && boot_trace[boot_barriers].offset==offset && length==4); boot_barriers++;
+  if(h==1 && offset==0x220 && boot_regs[1][1]==1 && boot_rpc_test && boot_fault==33) {
+      boot_regs[1][0x18/4]=2; CHECK(boot_handler(boot_handler_arg)==1);
+  }
+}
 static void getmicrouptime(struct timeval *t)
 { if (boot_fault==11 || boot_fault==21) boot_now=boot_now==0 ? 100000 : boot_now-100; else if (boot_fault!=5 && boot_fault!=12) boot_now+=10; t->tv_sec=boot_now/1000000; t->tv_usec=boot_now%1000000; }
 static void delay(unsigned int usec)
@@ -198,9 +221,17 @@ static int boot_publish_actual(struct cixvpu_prepared *p, uint32_t *root)
 }
 static int boot_rpc_header_actual(struct cixvpu_prepared *p, struct cixvpu_boot_rpc_header *out)
 { if(boot_fault==24) return EIO; return cixvpu_prepared_boot_rpc_header(p,out); }
+static int boot_rpc_step_actual(struct cixvpu_prepared *p, enum cixvpu_boot_rpc_result *out)
+{
+    /* Inject one legal zero-I/O EAGAIN at the native coordinator boundary. */
+    if(boot_fault==36 && boot_rpc_deferrals++==0) return EAGAIN;
+    return cixvpu_prepared_boot_rpc_step(p,out);
+}
 #define cixvpu_prepared_boot_rpc_header boot_rpc_header_actual
 #define cixvpu_prepared_publish_root boot_publish_actual
+#define cixvpu_prepared_boot_rpc_step boot_rpc_step_actual
 #include "boot-source.inc"
+#undef cixvpu_prepared_boot_rpc_step
 #undef cixvpu_prepared_publish_root
 #undef cixvpu_prepared_boot_rpc_header
 
@@ -212,6 +243,8 @@ static void boot_fixture(void)
     boot_irq_count = boot_writes = boot_delays = boot_barriers = 0; boot_now = 0; boot_fault = 0;
     boot_handler = NULL; boot_handler_arg = NULL; boot_pic_mask_count = 0;
     boot_term_issued=false;
+    boot_rpc_test=false; boot_rpc_commit_events=boot_rpc_notify_events=0;
+    boot_rpc_deferrals=0;
     memset(boot_regs, 0, sizeof(boot_regs));
     boot_regs[0][0x21c/4] = 0xa5a50ffc;
     boot_regs[0][0x300/4] = 0xf1234567;
@@ -226,6 +259,109 @@ static struct cixvpu_acpi_boot *boot_new(bool special)
     boot_actual = boot_fixture_prepare_kind(special);
     assert(boot_actual != NULL);
     return ctx;
+}
+static void boot_rpc_request(void)
+{
+    if(boot_fault==30 || boot_fault==31)
+        boot_fixture_rpc_words(1,1,1012,0,0,0,0);
+    else
+        boot_fixture_rpc_words(1,2,12,131072,boot_fault==35 ? 67108865 : 67108864,0,22);
+}
+static void boot_rpc_commit_hook(void)
+{
+    boot_rpc_commit_events++;
+    CHECK(boot_fixture_rpc_word(0)==2 && boot_fixture_acks()==0);
+    if(boot_fault==32) {
+        boot_regs[1][0x18/4]=2; CHECK(boot_handler(boot_handler_arg)==1);
+    }
+}
+static void boot_rpc_notified(void)
+{
+    CHECK(boot_rpc_commit_events==boot_rpc_notify_events+1);
+    CHECK(boot_fixture_rpc_word(0)==2 && boot_fixture_acks()==0);
+    if(boot_fixture_rpc_word(1)==2) {
+        CHECK(boot_fixture_rpc_word(2)==4 && boot_fixture_rpc_word(3)==0x20000000);
+    } else CHECK(boot_fixture_rpc_word(1)==1);
+    boot_rpc_notify_events++;
+    if(boot_fault==27) return; /* RETURN must not notify twice. */
+    if(boot_fault==28) { boot_rpc_request(); return; }
+    if(boot_fault==29 || boot_fault==34) {
+        boot_fixture_rpc_words(1,boot_fault==29 ? 3 : 4,12,131072,67108864,0,22); return;
+    }
+    if(boot_fault==30 && boot_rpc_notify_events<16) { boot_rpc_request(); return; }
+    if(boot_fault==31) { boot_rpc_request(); return; }
+    if(boot_fault==30 && boot_rpc_notify_events==16) {
+        boot_fixture_rpc_words(1,2,12,131072,67108864,0,22); return;
+    }
+    /* Device changes stale fields after consuming RETURN, before queue input. */
+    boot_fixture_rpc_words(0,0xdeadbeef,UINT32_MAX,0,0,0,0);
+    boot_fixture_runtime(true);
+}
+static void boot_rpc_integration_tests(void)
+{
+    for(unsigned int scenario=26;scenario<=36;scenario++) {
+        struct cixvpu_acpi_boot *ctx=NULL;
+        struct cixvpu_prepared *owned;
+        struct cixvpu_boot_report report={0};
+        boot_fixture(); boot_fault=scenario; boot_rpc_test=true;
+        CHECK(cixvpu_acpi_boot_create_rpc(VPU,&fixture_aa,&attach_description,&ctx)==0);
+        boot_actual=boot_fixture_prepare_rpc(); owned=boot_actual;
+        int expected=scenario==26 || scenario==30 || scenario==36 ? 0 : scenario==27 ? ETIMEDOUT :
+            scenario==32 || scenario==33 ? EIO : scenario==28 ? EBUSY :
+            scenario==31 ? E2BIG : ENOTSUP;
+        int actual=cixvpu_acpi_boot_once(ctx,&owned);
+        CHECK(actual==expected && owned==NULL);
+        CHECK(cixvpu_acpi_boot_report(ctx,&report)==0 && report.error==expected);
+        if(actual!=expected) fprintf(stderr,"RPC scenario %u: result %d expected %d, replies %u notifications %u messages %u visits %u\n",
+            scenario,actual,expected,report.rpc_commits,report.rpc_notifications,report.messages,report.visits);
+        unsigned int commits=scenario==30 ? 17 : scenario==31 ? 16 : scenario==35 ? 0 : 1;
+        CHECK(boot_rpc_commit_events==commits && report.rpc_commits==commits);
+        CHECK(boot_rpc_notify_events==(scenario==32 ? 0 : commits));
+        CHECK(report.rpc_notifications==boot_rpc_notify_events);
+        CHECK(report.rpc_alloc_replied==(scenario!=31 && scenario!=35));
+        CHECK(report.exposed && report.held && report.prepared_retained && report.irq_masked);
+        CHECK(report.irq_registered && boot_disestablish==0 && boot_masks==1);
+        CHECK(report.messages==(expected==0 ? 2U : 0U));
+        CHECK(boot_fixture_acks()==report.messages);
+        CHECK(report.switched_in==(expected==0) && report.pong==(expected==0));
+        if(scenario==32 || scenario==33) CHECK(report.irq_unexpected==2);
+        if(scenario==35) CHECK(report.rpc_alloc_valid && report.rpc_alloc_max_size==67108865);
+        if(scenario==27) CHECK(report.visits>1 && boot_rpc_notify_events==1);
+        if(scenario==36) CHECK(report.visits>=2 && boot_rpc_deferrals>=2 && boot_delays>=1);
+        unsigned int writes=boot_writes;
+        CHECK(cixvpu_acpi_boot_once(ctx,&owned)==EALREADY && boot_writes==writes);
+        CHECK(cixvpu_prepared_free(&boot_actual)==EBUSY);
+        boot_fixture_drop(boot_actual); AcpiOsFree(ctx);
+    }
+}
+static void boot_rpc_policy_tests(void)
+{
+    struct cixvpu_acpi_boot *ctx=NULL;
+    struct cixvpu_prepared *owned;
+    struct cixvpu_boot_report report={0};
+
+    boot_fixture();
+    CHECK(cixvpu_acpi_boot_create_rpc(NULL,&fixture_aa,&attach_description,&ctx)==EINVAL);
+    CHECK(cixvpu_acpi_boot_create_rpc(VPU,NULL,&attach_description,&ctx)==EINVAL);
+    CHECK(cixvpu_acpi_boot_create_rpc(VPU,&fixture_aa,NULL,&ctx)==EINVAL);
+    CHECK(cixvpu_acpi_boot_create_rpc(VPU,&fixture_aa,&attach_description,NULL)==EINVAL);
+    CHECK(ctx==NULL && maps==0 && nevents==0);
+    interrupt_context=true;
+    CHECK(cixvpu_acpi_boot_create_rpc(VPU,&fixture_aa,&attach_description,&ctx)==EWOULDBLOCK);
+    interrupt_context=false; soft_context=true;
+    CHECK(cixvpu_acpi_boot_create_rpc(VPU,&fixture_aa,&attach_description,&ctx)==EWOULDBLOCK);
+    soft_context=false;
+    CHECK(cixvpu_acpi_boot_create_rpc(VPU,&fixture_aa,&attach_description,&ctx)==0);
+    CHECK(ctx!=NULL && ctx->rpc_enabled && maps==0 && nevents==0);
+    CHECK(cixvpu_acpi_boot_create_rpc(VPU,&fixture_aa,&attach_description,&ctx)==EBUSY);
+    boot_actual=boot_fixture_prepare(); owned=boot_actual;
+    /* A new RPC coordinator must not service an ordinary plan0 owner. */
+    CHECK(cixvpu_acpi_boot_once(ctx,&owned)==ENOTSUP && owned==NULL);
+    CHECK(cixvpu_acpi_boot_report(ctx,&report)==0);
+    CHECK(report.exposed && report.held && report.irq_masked && report.prepared_retained);
+    CHECK(report.error==ENOTSUP && report.messages==0 && boot_fixture_acks()==0);
+    CHECK(cixvpu_prepared_free(&boot_actual)==EBUSY);
+    boot_fixture_drop(boot_actual); AcpiOsFree(ctx);
 }
 static void boot_discard_fixture(struct cixvpu_acpi_boot *ctx)
 {
@@ -553,7 +689,7 @@ int main(void)
 {
     int result = cixvpu_control_contract_main();
 #ifdef CIXVPU_BOOT_ORCH_API
-    boot_tests(); boot_failure_tests(); boot_matrix_tests(); boot_trace_api_tests();
+    boot_tests(); boot_failure_tests(); boot_matrix_tests(); boot_trace_api_tests(); boot_rpc_policy_tests(); boot_rpc_integration_tests();
 #else
     CHECK(!"dedicated native boot epoch is absent");
 #endif

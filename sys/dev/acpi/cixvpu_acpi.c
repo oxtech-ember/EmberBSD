@@ -82,6 +82,10 @@ cixvpu_acpi_boot_print(device_t self, const struct cixvpu_acpi_softc *sc,
 	    r->rpc_alloc_valid ? "yes" : "no", r->rpc_alloc_size,
 	    r->rpc_alloc_max_size, (unsigned int)r->rpc_alloc_region,
 	    (unsigned int)r->rpc_alloc_log2_alignment);
+	aprint_normal_dev(self,
+	    "boot RPC replies %u notifications %u allocation replied %s\n",
+	    r->rpc_commits, r->rpc_notifications,
+	    r->rpc_alloc_replied ? "yes" : "no");
 	for (i = 0; i < __arraycount(r->core_status); i++) {
 		aprint_normal_dev(self,
 		    "boot core %u attempted %s released %s status %s cleanup %s\n",
@@ -146,7 +150,10 @@ cixvpu_acpi_allocation(device_t self)
 		error = EINVAL;
 		goto out;
 	}
-	error = cixvpu_fw_plan_build(image, size, 1, &plan);
+	if (sc->sc_mode == 8)
+		error = cixvpu_fw_plan_build_boot_rpc(image, size, 1, &plan);
+	else
+		error = cixvpu_fw_plan_build(image, size, 1, &plan);
 	if (error != 0)
 		goto out;
 	if (sc->sc_mode == 4) {
@@ -178,10 +185,11 @@ cixvpu_acpi_allocation(device_t self)
 		roles[page.plan_page.role]++;
 		checked++;
 	}
-	if ((sc->sc_mode == 5 || sc->sc_mode == 7) && error == 0) {
+	if ((sc->sc_mode == 5 || sc->sc_mode == 7 || sc->sc_mode == 8) &&
+	    error == 0) {
 		/* No page view survives this CPU ownership MOVE. */
 		prepare_attempted = true;
-		if (sc->sc_mode == 7)
+		if (sc->sc_mode == 7 || sc->sc_mode == 8)
 			prepare_error = cixvpu_prepare_boot_cpu(&sc->sc_dma,
 			    &plan, image, size, digest_expected, &sc->sc_prepared);
 		else
@@ -189,11 +197,15 @@ cixvpu_acpi_allocation(device_t self)
 			    image, size, digest_expected, &sc->sc_prepared);
 		error = prepare_error;
 	}
-	if (sc->sc_mode == 7 && error == 0) {
+	if ((sc->sc_mode == 7 || sc->sc_mode == 8) && error == 0) {
 		firmware_free(image, size);
 		image = NULL;
-		error = cixvpu_acpi_boot_create(self, &sc->sc_aa,
-		    &sc->sc_resources, &sc->sc_boot);
+		if (sc->sc_mode == 8)
+			error = cixvpu_acpi_boot_create_rpc(self, &sc->sc_aa,
+			    &sc->sc_resources, &sc->sc_boot);
+		else
+			error = cixvpu_acpi_boot_create(self, &sc->sc_aa,
+			    &sc->sc_resources, &sc->sc_boot);
 		if (error != 0)
 			goto out;
 		/* Boot owns sync. Preserve every ownership state it returns. */
@@ -214,7 +226,7 @@ out:
 		if (sc->sc_dma != NULL)
 			cleanup_error = cixvpu_dma_free(&sc->sc_dma);
 	}
-	if (sc->sc_mode == 7) {
+	if (sc->sc_mode == 7 || sc->sc_mode == 8) {
 		cixvpu_acpi_boot_print(self, sc, boot_report_valid);
 	} else if (sc->sc_mode == 5) {
 		aprint_normal_dev(self,
@@ -234,7 +246,7 @@ out:
 			aprint_normal_dev(self, "allocation role %u pages %u\n",
 			    i, roles[i]);
 	}
-	if (sc->sc_mode == 7) {
+	if (sc->sc_mode == 7 || sc->sc_mode == 8) {
 		aprint_normal_dev(self,
 		    "native boot result %d, primary %d close %d report %d "
 		    "prepared cleanup %d DMA cleanup %d\n",
@@ -367,8 +379,8 @@ cixvpu_acpi_attach(device_t parent, device_t self, void *aux)
 	aprint_normal(": CIX P1 video codec (diagnostic attachment)\n");
 	sc->sc_dev = self;
 	sc->sc_mode = device_cfdata(self)->cf_flags;
-	if (sc->sc_mode > 7) {
-		aprint_error_dev(self, "unsupported flags %#x; use 0, 1, 2, 3, 4, 5, 6 or 7\n",
+	if (sc->sc_mode > 8) {
+		aprint_error_dev(self, "unsupported flags %#x; use 0, 1, 2, 3, 4, 5, 6, 7 or 8\n",
 		    sc->sc_mode);
 		return;
 	}
@@ -435,7 +447,8 @@ done:
 	/* The parser initializes its lists before any failure; free them too. */
 	acpi_resource_cleanup(&resources);
 	if (defer_probe) {
-		if (sc->sc_mode == 4 || sc->sc_mode == 5 || sc->sc_mode == 7) {
+		if (sc->sc_mode == 4 || sc->sc_mode == 5 ||
+		    sc->sc_mode == 7 || sc->sc_mode == 8) {
 			config_mountroot(self, cixvpu_acpi_allocation);
 			return;
 		}

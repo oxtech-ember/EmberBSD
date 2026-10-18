@@ -244,8 +244,10 @@ on every board in the hardware catalog.
   adds a checked plan and CPU/DMA preparation for the observed initial request.
   It maps 128 KiB of real pages and reserves 64 MiB of virtual capacity.
   Source tests verify all mapped entries, invalid tail entries, synchronization
-  order and lifetime guards. The native boot attachment does not select it yet;
-  it does not implement an active memory response or qualify physical DMA.
+  order and lifetime guards. A separate manual RPC profile selects this plan,
+  replies to one exact allocation and at most sixteen DEBUG calls, then notifies
+  firmware. Native source tests cover commit/notification order and faults.
+  The new profile's physical handshake and DMA correctness remain unqualified.
   [Initially masked ARM PIC registration](ember/boot/cix-vpu.md#initially-masked-native-irq-registration)
   publishes the consumer context before enabling an exclusive interrupt.
   ARM ACPI tags retain [IORT address limits](ember/boot/cix-platform.md#arm-acpi-dma-address-limits).
@@ -1082,7 +1084,8 @@ The base system shell is unchanged.
   pages and masks the IRQ. Physical RPC-header diagnostics identify MEM_ALLOC
   (PARAM state `1`, call ID `2`, payload size `12`): 128 KiB initial memory,
   64 MiB virtual capacity, protected region and 4 MiB alignment.
-  A checked memory response is not implemented. A separate, inactive
+  A separate manual RPC profile has a source-tested fixed memory response;
+  its physical handshake remains unqualified. The separate, inactive
   [DEBUGPARAM primitive](ember/boot/cix-vpu.md#inactive-debugparam-response)
   passes actual-source checks. It changes only a validated request's state word;
   the boot coordinator does not call it. Firmware readiness, DMA data

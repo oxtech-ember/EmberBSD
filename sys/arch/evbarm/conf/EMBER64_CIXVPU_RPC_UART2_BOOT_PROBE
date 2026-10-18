@@ -1,0 +1,8 @@
+# Manual first-allocation RPC boot trial with the exact-board UART2 gate.
+# Preserve the default and rollback kernels. Retain every exposed owner.
+# Only the fixed initial allocation and bounded DEBUG calls are supported.
+
+include "arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE"
+
+no cixvpu* at acpi?
+cixvpu* at acpi? flags 0x8
