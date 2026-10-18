@@ -152,6 +152,28 @@ ownership and cleanup. `CC`, `CFLAGS`, `HSM_PROBE_COMPILE_ONLY=1`,
 `HSM_PROBE_SKIP_MUTANT=1` runs only the positive source contract.
 Host execution does not establish physical acceptance.
 
+## Physical acceptance boundary
+
+One CM5 Rev1.0 with BCM2712D0 passed the finite module cycle after an
+operator-confirmed cold boot without HDMI. The kernel was `0562cd54`,
+the firmware source was `c90c2a6c`, and the module source was `faa8e933`.
+The selected kernel headers, options, sampled layouts and strong symbols
+were checked before loading. The connected-console control returned `EBUSY`
+before all HSM calls. Both loads kept the module compatibility checks enabled.
+
+| Last verified stage | State | Configured rate | Leases | Fault |
+| --- | --- | --- | --- | --- |
+| Initial | 1 | 0 Hz | 0 | 0 |
+| Acquired | 1 | 120000000 Hz | 1 | 0 |
+| Released, before destroy | 1 | 120000000 Hz | 0 | 0 |
+
+Destroy returned zero. The module was then unloaded without an HSM operation.
+No provider access occurred after destroy. The temperature immediately after
+the cycle was 49.370 C, without reported throttling or undervoltage.
+This is one finite request/readback check. It does not measure the clock,
+validate display MMIO accessibility, or establish a general display lifetime.
+It does not accept suspend, HPD, DDC, scanout, KMS, or a physical desktop session.
+
 ## Sources and next hardware boundary
 
 The hardware floor and shared-clock facts come from Raspberry Pi Linux
@@ -159,9 +181,8 @@ The hardware floor and shared-clock facts come from Raspberry Pi Linux
 The firmware ABI follows the [mailbox property interface](https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface#clocks).
 The implementation uses those interface facts. It does not copy Linux driver code.
 
-Hardware acceptance must use the declared firmware resources and a coherent kernel.
-First validate a cold boot without an HDMI cable and the HSM request/readback sequence.
-Then implement and validate controller power, reset, HPD, and DDC ownership separately.
+Further hardware acceptance must use the declared firmware resources and a coherent kernel.
+Implement and validate controller accessibility, power, reset, HPD, and DDC ownership separately.
 The [L2 interrupt provider](bcm2712-display-irq.md) supplies a separate interrupt interface.
 The [DVP gate owner](bcm2712-display-dvp.md) manages the separate per-port gates without reset writes.
 Runtime KMS, scanout, IOMMU, and firmware-console handoff remain separate work.

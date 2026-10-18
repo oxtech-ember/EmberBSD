@@ -654,8 +654,9 @@ on every board in the hardware catalog.
   legacy V3D indices. A complete GCC 16.2 firmware build booted on CM5;
   its live DSDT passed the OS decoder with 32 memory ranges and seven IRQs.
   The installed observer separately found HSM clock ID 13 enabled at a reported
-  zero rate. Clock control remains unaccepted. The observer does not enable
-  clocks or map display registers.
+  zero rate. A finite native HSM cycle now passes after a cold boot without
+  HDMI: acquisition reports 120 MHz, release clears the lease, and destroy
+  succeeds. The observer does not enable clocks or map display registers.
   An [explicit native display IRQ provider](ember/boot/bcm2712-display-irq.md)
   adds bounded leaf dispatch and synchronized teardown. Source contracts and
   kernel object analysis pass. An explicit [HSM clock owner](ember/boot/bcm2712-display-hsm.md)
