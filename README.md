@@ -1166,10 +1166,10 @@ The base system shell is unchanged.
   remains unqualified. RTL8126-only jumbo source uses private single-segment
   DMA storage for MTU 9000 and copies received packets into independent mbuf
   chains before rearming each slot. Default MTU 1500 and other ASIC paths remain
-  unchanged. Host fault, copy-lifetime and sanitizer contracts pass. Native
-  diagnostics identify the previous bring-up failure as EFBIG on RX buffer 0
-  at 9216 bytes; ifconfig reports failure correctly. The new DMA-backed path
-  still needs target build and physical jumbo traffic acceptance. See the
+  unchanged. Host fault, copy-lifetime and sanitizer contracts pass. One physical
+  CIX sample passes repeated MTU 1500/9000 initialization on both ports without
+  carrier, including stop and reallocation. This does not qualify jumbo wire
+  traffic, throughput or sustained camera operation. See the
   [CIX board limits](ember/boards/orange-pi-6-plus.md).
 - **ACPI xHCI root buses:** the frontend skips a logical USB bus when its
   initialized root-hub descriptor has no ports. Actual-source contracts cover
