@@ -104,7 +104,8 @@ can select different architecture and legacy configuration definitions.
 Record matching source, headers, options, build settings and strong kernel
 symbols before loading. A buildinfo string comparison alone does not prove ABI
 compatibility. The optional [ABI sample](../tools/bcm2712-hsm-probe-abi.c)
-compares three configuration definitions and selected structure layouts. It
+compares three configuration definitions and selected DRM, ACPI, HSM, DVP
+and bus_space layouts. It
 does not replace the source, option or symbol audit. Do not load a module built
 against a different kernel profile.
 
@@ -136,7 +137,8 @@ restores an unknown clock state, or clears mailbox quarantine. Empty unmutated
 owners can be destroyed during failure cleanup. Module unload performs no HSM
 operation and cannot clear a retained owner.
 
-The module does not access display MMIO or perform HPD, DDC or reset operations.
+The default HSM-only mode does not access display MMIO. No mode performs HPD,
+DDC or reset operations.
 Its framebuffer gate is conservative; it does not establish a general firmware
 clock lifetime. Run its actual-source host contract with:
 
@@ -144,13 +146,60 @@ clock lifetime. Run its actual-source host contract with:
 sh ember/tools/bcm2712-hsm-probe-contract.sh "$PWD"
 ```
 
-The fixture uses the real HSM core, native provider, module body and libfdt.
+The fixture uses the real resource decoder, HSM/DVP cores and native providers,
+module body and libfdt.
 Only kernel services are controlled. It checks refusal before HSM calls,
 malformed trees, zero rate, inherited state, every transaction failure, retained
 ownership and cleanup. `CC`, `CFLAGS`, `HSM_PROBE_COMPILE_ONLY=1`,
 `HSM_PROBE_OUTPUT` and `TEST_RUNNER` support cross-built and memory-checked tests.
 `HSM_PROBE_SKIP_MUTANT=1` runs only the positive source contract.
 Host execution does not establish physical acceptance.
+
+### Explicit shared-DVP modes
+
+An absent `dvp-mode` property keeps the HSM-only cycle above. An empty,
+unknown or non-string value fails before all HSM, mapping and MMIO calls.
+`dvp-mode=observe` and `dvp-mode=gate0` use the same headless, framebuffer,
+render and selected-kernel guards. Both acquire and hold a verified HSM lease
+throughout the DVP operation. A completed earlier HSM cycle is not a held lease.
+
+First request `observe` on a controlled cold-headless boot:
+
+```sh
+modload -b cold-headless=true \
+    -s "expected-buildinfo=EmberBSD:${kernel_commit}" -s dvp-mode=observe \
+    /absolute/path/bcm2712_hsm_probe.kmod
+```
+
+This mode maps only resource 10, `0x107c700000/0x10`, and calls native DVP
+create/status/destroy before unmapping. Create reads SW_INIT and MISC_CONFIG.
+Status is cached. Observe performs two DVP reads and no DVP write. It still
+uses the HSM provider, which can change firmware clock state or rate.
+
+Review and accept that separate physical observation before an explicit
+`-s dvp-mode=gate0` invocation. No mode automatically advances to gate0 or
+falls back to observe. Gate0 acquires and releases port 0 through the native
+DVP provider, with status at each stage. It performs at most ten DVP reads
+and two gate writes. Both DVP modes reject an asserted port 0 reset with
+`EBUSY`; neither mode reports successful observation in that state.
+Reset bits and the per-controller DVP apertures are never written or mapped.
+
+Both modes use a normal-active-SoC prior-art assumption, as described in the
+[DVP access boundary](bcm2712-display-dvp.md#power-and-reset-limits). The first
+create is controlled physical MMIO acceptance, not pre-proven ACPI accessibility.
+Native bus_space cannot recover a stalled transaction or synchronous abort.
+These modes do not claim an ACPI power contract or a general display lifetime.
+
+Successful cleanup destroys DVP, unmaps resource 10, then releases and destroys
+HSM. No freed provider is read. Any uncertainty after HSM acquisition stops the
+cycle and retains the remaining HSM owner/lease, mapping and native DVP owner.
+The log identifies the failed stage and remaining mapping/owner. Retained
+samples carry an explicit validity flag and their last successful status stage.
+DVP samples are labeled pre-failure; HSM samples are labeled cached. The current
+fault and mutation state are unknown after a failed call. A failed status call
+is never retried. No native
+provider retains a callback into module text. Unload does not clean up retained
+state; controlled reboot is required. No failure prints finite-cycle success.
 
 ## Physical acceptance boundary
 
