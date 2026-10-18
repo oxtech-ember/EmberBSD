@@ -193,10 +193,46 @@ ddc(void)
 	}
 }
 
+static void
+ddc_counts(void)
+{
+	struct dwhdmi_softc sc = fresh();
+	uint8_t block = 0, data;
+
+	sc.sc_scl_hcnt = 0x1234;
+	sc.sc_scl_lcnt = 0xabcd;
+	registers[0x730c] = 0xa5;
+	registers[0x730e] = 0x5a;
+	CHECK(dwhdmi_ddc_exec(&sc, I2C_OP_READ_WITH_STOP, DDC_ADDR,
+	    &block, 1, &data, sizeof(data), 0) == 0);
+	/* These numeric addresses are independent of the production macros. */
+	CHECK(registers[0x7e0b] == 0x12 && registers[0x7e0c] == 0x34);
+	CHECK(registers[0x7e0d] == 0xab && registers[0x7e0e] == 0xcd);
+	CHECK(registers[0x730c] == 0xa5 && registers[0x730e] == 0x5a);
+
+	sc = fresh();
+	sc.sc_scl_hcnt = 0xd8;
+	sc.sc_scl_lcnt = 0xfe;
+	registers[0x7e0b] = registers[0x7e0d] = 0x55;
+	CHECK(dwhdmi_ddc_exec(&sc, I2C_OP_READ_WITH_STOP, DDC_ADDR,
+	    &block, 1, &data, sizeof(data), 0) == 0);
+	CHECK(registers[0x7e0b] == 0 && registers[0x7e0c] == 0xd8);
+	CHECK(registers[0x7e0d] == 0 && registers[0x7e0e] == 0xfe);
+
+	sc = fresh();
+	sc.sc_scl_hcnt = 65536;
+	CHECK(dwhdmi_ddc_exec(&sc, I2C_OP_READ_WITH_STOP, DDC_ADDR,
+	    &block, 1, &data, sizeof(data), 0) == ERANGE && calls == 0);
+	sc = fresh();
+	sc.sc_scl_lcnt = 65536;
+	CHECK(dwhdmi_ddc_exec(&sc, I2C_OP_READ_WITH_STOP, DDC_ADDR,
+	    &block, 1, &data, sizeof(data), 0) == ERANGE && calls == 0);
+}
+
 int
 main(void)
 {
-	io(); prepare(); ddc();
+	io(); prepare(); ddc(); ddc_counts();
 	printf("%u DW-HDMI checked I/O/native RGB checks passed\n", checks);
 	return 0;
 }
