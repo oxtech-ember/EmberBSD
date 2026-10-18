@@ -37,8 +37,8 @@ int cixvpu_dma_mark_exposed(struct cixvpu_dma *,
  */
 struct cixvpu_dma_boot_snapshot {
 	uint8_t message[CIXVPU_FW_PAGE_SIZE];
-	uint8_t rpc_header[12], rpc_alloc[12];
-	bool rpc_valid, rpc_alloc_valid;
+	uint8_t rpc_header[12], rpc_alloc[12], rpc_resize[8];
+	bool rpc_valid, rpc_alloc_valid, rpc_resize_valid;
 };
 int cixvpu_dma_boot_output(struct cixvpu_dma *,
     const struct cixvpu_prepared *, const void *, size_t, bool *);

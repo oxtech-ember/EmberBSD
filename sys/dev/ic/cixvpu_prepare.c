@@ -562,6 +562,13 @@ cixvpu_prepared_boot_rpc_header(struct cixvpu_prepared *p,
 			header.alloc_log2_alignment = p->boot.snapshot.rpc_alloc[9];
 			header.alloc_valid = true;
 		}
+		if (p->boot.snapshot.rpc_resize_valid) {
+			header.resize_address = cixvpu_prepare_get32(
+			    p->boot.snapshot.rpc_resize);
+			header.resize_new_size = cixvpu_prepare_get32(
+			    p->boot.snapshot.rpc_resize + 4);
+			header.resize_valid = true;
+		}
 	}
 	*out = header;
 	return 0;
@@ -589,6 +596,7 @@ cixvpu_prepared_boot_debugparam(struct cixvpu_prepared *p,
 			p->boot.error = error;
 			p->boot.snapshot.rpc_valid = false;
 			p->boot.snapshot.rpc_alloc_valid = false;
+			p->boot.snapshot.rpc_resize_valid = false;
 		}
 		return error;
 	}
@@ -596,6 +604,7 @@ cixvpu_prepared_boot_debugparam(struct cixvpu_prepared *p,
 		return EBUSY;
 	p->boot.snapshot.rpc_valid = false;
 	p->boot.snapshot.rpc_alloc_valid = false;
+	p->boot.snapshot.rpc_resize_valid = false;
 	error = cixvpu_dma_boot_debugparam(p->dma, p, &p->plan,
 	    &p->boot.snapshot);
 	if (error != 0) {
@@ -632,6 +641,7 @@ cixvpu_prepared_boot_rpc_step(struct cixvpu_prepared *p,
 			p->boot.error = error;
 			p->boot.snapshot.rpc_valid = false;
 			p->boot.snapshot.rpc_alloc_valid = false;
+			p->boot.snapshot.rpc_resize_valid = false;
 		}
 		return error;
 	}
@@ -641,6 +651,7 @@ cixvpu_prepared_boot_rpc_step(struct cixvpu_prepared *p,
 		return EBUSY;
 	p->boot.snapshot.rpc_valid = false;
 	p->boot.snapshot.rpc_alloc_valid = false;
+	p->boot.snapshot.rpc_resize_valid = false;
 	error = cixvpu_dma_boot_rpc_step(p->dma, p, &p->plan,
 	    &p->boot.snapshot, &observed);
 	if (error != 0) {
@@ -698,6 +709,7 @@ cixvpu_prepared_boot_receive_common(struct cixvpu_prepared *p,
 			p->boot.error = error;
 			p->boot.snapshot.rpc_valid = false;
 			p->boot.snapshot.rpc_alloc_valid = false;
+			p->boot.snapshot.rpc_resize_valid = false;
 		}
 		return error;
 	}
@@ -709,6 +721,7 @@ cixvpu_prepared_boot_receive_common(struct cixvpu_prepared *p,
 		return p->boot.error;
 	p->boot.snapshot.rpc_valid = false;
 	p->boot.snapshot.rpc_alloc_valid = false;
+	p->boot.snapshot.rpc_resize_valid = false;
 	if (rpc_enabled)
 		error = cixvpu_dma_boot_snapshot_rpc(p->dma, p, &p->plan,
 		    &p->boot.snapshot);

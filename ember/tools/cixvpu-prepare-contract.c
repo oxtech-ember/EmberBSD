@@ -547,7 +547,7 @@ struct boot_sync { unsigned int page; uint64_t offset, length; int ops; };
 static struct boot_sync boot_events[128];
 static unsigned int boot_nevents, boot_host, boot_mve, boot_rpc;
 static bool boot_unstable, boot_append;
-static unsigned int boot_alloc_change;
+static unsigned int boot_alloc_change, boot_resize_change;
 static void boot_observe(unsigned int i, bus_addr_t offset, bus_size_t length, int ops)
 {
     CHECK(boot_nevents < __arraycount(boot_events));
@@ -575,7 +575,13 @@ static void boot_observe(unsigned int i, bus_addr_t offset, bus_size_t length, i
         put32(device_memory[i]+off,word(device_memory[i],boot_alloc_change-1)^1);
         boot_alloc_change=0;
     }
-
+    if (boot_resize_change!=0 && i==boot_rpc && ops==BUS_DMASYNC_PREREAD &&
+        ((offset==12 && length==8) || (offset==0 && length==12 && boot_nevents>=2 &&
+        boot_events[boot_nevents-2].length==20 && boot_events[boot_nevents-2].ops==BUS_DMASYNC_POSTREAD))) {
+        unsigned int at=boot_resize_change-1;
+        put32(device_memory[i]+4*at,word(device_memory[i],at)^1);
+        boot_resize_change=0;
+    }
 }
 static struct cixvpu_prepared *boot_begin(void)
 {
@@ -600,7 +606,7 @@ static struct cixvpu_prepared *boot_begin(void)
     sync_fixture(&plan,true);
     CHECK(cixvpu_prepared_sync_initial(out)==0);
     CHECK(memcmp(device_memory[boot_host],h,4096)==0);
-    boot_nevents=0; boot_alloc_change=0; boot_unstable=boot_append=false; sync_observer=boot_observe;
+    boot_nevents=0; boot_alloc_change=boot_resize_change=0; boot_unstable=boot_append=false; sync_observer=boot_observe;
     return out;
 }
 static void boot_drop(struct cixvpu_prepared *out)
@@ -1046,6 +1052,92 @@ static void rpc_protocol_tests(void)
     CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==ENOTSUP && native_calls==calls);
     CHECK(cixvpu_prepared_boot_receive_rpc(p,&reply)==ENOTSUP && native_calls==calls); boot_drop(p);
 }
+/* Breaks caught: lost/swapped resize words, unchecked recheck, broad payload
+ * reads, writes/responses, stale cache validity and callbacks after sticky86. */
+#ifdef CIXVPU_BOOT_BRIDGE
+/* Device injection only. The composed native fixture owns its policy. */
+void boot_fixture_rpc_resize(uint32_t address,uint32_t size)
+{
+    uint8_t *rpc=device_memory[boot_rpc];
+    put32(rpc,1);put32(rpc+4,3);put32(rpc+8,8);
+    put32(rpc+12,address);put32(rpc+16,size);
+}
+#endif
+static void boot_rpc_resize_tests(void)
+{
+    const uint32_t addresses[]={0x20000000,0,UINT32_MAX};
+    const uint32_t sizes[]={131072,67108864,UINT32_MAX};
+    for(unsigned int service=0;service<2;service++)for(unsigned int change=0;change<6;change++) {
+        struct cixvpu_prepared *p=service ? rpc_protocol_begin(true) : boot_begin();
+        uint32_t root=0;
+        enum cixvpu_boot_rpc_result result=CIXVPU_BOOT_RPC_PENDING;
+        struct cixvpu_boot_reply reply,old_reply;
+        struct cixvpu_boot_rpc_header h,old;
+        if(service) {
+            rpc_request(1,2,12);
+            CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==0 && result==CIXVPU_BOOT_RPC_ALLOC_REPLIED);
+            CHECK(p->dma->rpc_alloc_used);
+        } else CHECK(cixvpu_prepared_publish_root(p,&root)==0);
+        unsigned int tuple=change%3;
+        rpc_request(1,3,8);
+#ifdef CIXVPU_BOOT_BRIDGE
+        boot_fixture_rpc_resize(addresses[tuple],sizes[tuple]);
+#else
+        put32(device_memory[boot_rpc]+12,addresses[tuple]);
+        put32(device_memory[boot_rpc]+16,sizes[tuple]);
+#endif
+        uint8_t before[4096];memcpy(before,device_memory[boot_rpc],4096);
+        boot_resize_change=change<3 ? 0 : change-2;boot_nevents=0;
+        memset(&reply,0xa5,sizeof(reply));old_reply=reply;result=CIXVPU_BOOT_RPC_IDLE;
+        int error=service ? cixvpu_prepared_boot_rpc_step(p,&result) : cixvpu_prepared_boot_receive(p,&reply);
+        CHECK(error==ENOTSUP && p->boot.error==ENOTSUP && result==CIXVPU_BOOT_RPC_IDLE);
+        CHECK(memcmp(&reply,&old_reply,sizeof(reply))==0 && boot_nevents==6);
+        const unsigned int offsets[]={0,0,12,12,0,0};
+        const unsigned int lengths[]={12,12,8,8,12,12};
+        const unsigned int step_lengths[]={12,12,20,12,12,20};
+        for(unsigned int i=0;i<boot_nevents;i++) {
+            CHECK(boot_events[i].page==boot_rpc && boot_events[i].offset==(service ? 0u : offsets[i]));
+            CHECK(boot_events[i].length==(service ? step_lengths[i] : lengths[i]));
+            CHECK(boot_events[i].ops==(i%2==0 ? BUS_DMASYNC_POSTREAD : BUS_DMASYNC_PREREAD));
+        }
+        CHECK(((uint8_t *)resources[boot_rpc].kva)[20]==0xa5);
+        CHECK(memcmp(device_memory[boot_rpc]+12,before+12,4084)==0);
+        if(change<3)CHECK(memcmp(device_memory[boot_rpc],before,4096)==0);
+        unsigned int calls=native_calls,depth_before=depth,heap=live_kmem;
+        CHECK(cixvpu_prepared_boot_rpc_header(p,&h)==0 && h.valid && h.state==1 && h.callid==3 && h.size==8);
+        CHECK(h.resize_valid==(change<3) && !h.alloc_valid);
+        CHECK(h.resize_address==(change<3 ? addresses[tuple] : 0) && h.resize_new_size==(change<3 ? sizes[tuple] : 0));
+        CHECK(native_calls==calls && depth==depth_before && live_kmem==heap);
+        old=h; memset(device_memory[boot_rpc],0,4096);
+        CHECK((service ? cixvpu_prepared_boot_rpc_step(p,&result) : cixvpu_prepared_boot_receive(p,&reply))==ENOTSUP);
+        CHECK(cixvpu_prepared_boot_rpc_header(p,&h)==0 && memcmp(&h,&old,sizeof(h))==0 && native_calls==calls);
+        memset(&h,0x5a,sizeof(h));old=h;
+        CHECK(cixvpu_prepared_boot_rpc_header(p,(void *)&p->plan)==EINVAL && memcmp(&h,&old,sizeof(h))==0);
+        p->dma->owners[0].map->dm_nsegs=2;
+        CHECK(cixvpu_prepared_boot_rpc_header(p,&h)==EIO && memcmp(&h,&old,sizeof(h))==0 && native_calls==calls && p->boot.error==ENOTSUP);
+        if(service)CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==ENOTSUP && p->boot.error==ENOTSUP && native_calls==calls);
+        p->dma->owners[0].map->dm_nsegs=1;boot_drop(p);
+    }
+    const uint32_t shapes[][3]={{1,3,0},{1,3,7},{1,3,9},{1,3,UINT32_MAX},{1,4,8}};
+    for(unsigned int service=0;service<2;service++)for(unsigned int n=0;n<__arraycount(shapes);n++) {
+        struct cixvpu_prepared *p=service ? rpc_protocol_begin(true) : boot_begin();
+        if(!service){uint32_t root;CHECK(cixvpu_prepared_publish_root(p,&root)==0);}
+        rpc_request(shapes[n][0],shapes[n][1],shapes[n][2]);
+        enum cixvpu_boot_rpc_result r;struct cixvpu_boot_reply reply;struct cixvpu_boot_rpc_header h;
+        CHECK((service ? cixvpu_prepared_boot_rpc_step(p,&r) : cixvpu_prepared_boot_receive(p,&reply))==ENOTSUP);
+        CHECK(boot_nevents==(service ? 4u : 2u));
+        CHECK(cixvpu_prepared_boot_rpc_header(p,&h)==0 && h.valid && !h.resize_valid && h.resize_address==0 && h.resize_new_size==0);
+        CHECK(((uint8_t *)resources[boot_rpc].kva)[12]==0xa5);boot_drop(p);
+    }
+    struct cixvpu_prepared *p=rpc_protocol_begin(true);enum cixvpu_boot_rpc_result r;
+    struct cixvpu_boot_rpc_header h;unsigned int calls=native_calls;
+    p->boot.snapshot.rpc_resize_valid=true; /* Stale-cache fault injection. */
+    p->dma->owners[0].map->dm_nsegs=2;
+    CHECK(cixvpu_prepared_boot_rpc_step(p,&r)==EIO && native_calls==calls);
+    p->dma->owners[0].map->dm_nsegs=1;
+    CHECK(cixvpu_prepared_boot_rpc_header(p,&h)==0 && !h.valid && !h.resize_valid);boot_drop(p);
+}
+
 static void boot_rpc_alloc_tests(void)
 {
     static const uint32_t tuples[][3]={
@@ -1325,7 +1417,7 @@ int main(void)
 #ifdef CIXVPU_SYNC_API
     sync_success_tests(); sync_failure_tests(); sync_owner_tests(); exposure_tests();
 #ifdef CIXVPU_BOOT_API
-    rpc_reserve_tests(); rpc_protocol_tests(); boot_rpc_alloc_tests(); boot_rpc_header_tests(); boot_api_tests();
+    rpc_reserve_tests(); rpc_protocol_tests(); boot_rpc_resize_tests(); boot_rpc_alloc_tests(); boot_rpc_header_tests(); boot_api_tests();
 #else
     fprintf(stderr, "FAIL: no typed boot seed/publication/receive API\n"); return 1;
 #endif

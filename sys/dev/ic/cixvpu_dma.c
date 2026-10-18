@@ -684,14 +684,20 @@ cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
 		memcpy(before, rpc->kva, sizeof(before));
 		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(before),
 		    BUS_DMASYNC_PREREAD);
-		bytes = le32dec(before) == 1 && le32dec(before + 4) == 2 &&
-		    le32dec(before + 8) == 12 ? sizeof(observed) : sizeof(before);
+		bytes = sizeof(before);
+		if (le32dec(before) == 1) {
+			if (le32dec(before + 4) == 2 && le32dec(before + 8) == 12)
+				bytes = sizeof(observed);
+			else if (le32dec(before + 4) == 3 && le32dec(before + 8) == 8)
+				bytes = 20;
+		}
 		bus_dmamap_sync(dma->tag, rpc->map, 0, bytes,
 		    BUS_DMASYNC_POSTREAD);
 		memcpy(observed, rpc->kva, bytes);
 		memcpy(snapshot->rpc_header, observed, sizeof(before));
 		snapshot->rpc_valid = true;
 		snapshot->rpc_alloc_valid = false;
+		snapshot->rpc_resize_valid = false;
 		if (memcmp(before, observed, sizeof(before)) == 0)
 			break;
 		bus_dmamap_sync(dma->tag, rpc->map, 0, bytes,
@@ -705,6 +711,19 @@ cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
 	if (bytes == sizeof(observed)) {
 		memcpy(snapshot->rpc_alloc, observed + 12, 12);
 		snapshot->rpc_alloc_valid = true;
+	}
+	if (state == 1 && call == 3 && size == 8 && bytes == 20) {
+		uint8_t after[12];
+
+		memcpy(snapshot->rpc_resize, observed + 12, 8);
+		/* Recheck only the header. No response or semantic retry follows. */
+		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(after),
+		    BUS_DMASYNC_PREREAD);
+		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(after),
+		    BUS_DMASYNC_POSTREAD);
+		memcpy(after, rpc->kva, sizeof(after));
+		snapshot->rpc_resize_valid =
+		    memcmp(observed, after, sizeof(after)) == 0;
 	}
 	if (state == 0 || state == 2) {
 		result = state == 0 ? CIXVPU_DMA_RPC_IDLE : CIXVPU_DMA_RPC_PENDING;
@@ -805,25 +824,34 @@ cixvpu_dma_boot_snapshot_common(struct cixvpu_dma *dma,
 	    (uint32_t)rpc_header[2] << 16 | (uint32_t)rpc_header[3] << 24;
 	/* Closed diagnostics only. Keep the original header and rejection. */
 	snapshot->rpc_alloc_valid = false;
+	snapshot->rpc_resize_valid = false;
 	if (rpc_enabled && state == 1)
 		return EAGAIN;
-	if (state == 1 && le32dec(rpc_header + 4) == 2 &&
-	    le32dec(rpc_header + 8) == sizeof(snapshot->rpc_alloc)) {
+	if (state == 1 &&
+	    ((le32dec(rpc_header + 4) == 2 && le32dec(rpc_header + 8) == 12) ||
+	    (le32dec(rpc_header + 4) == 3 && le32dec(rpc_header + 8) == 8))) {
 		uint8_t rpc_after[12];
+		bool alloc = le32dec(rpc_header + 4) == 2;
+		size_t length = alloc ? 12 : 8;
+		uint8_t *parameters = alloc ? snapshot->rpc_alloc :
+		    snapshot->rpc_resize;
 
 		bus_dmamap_sync(dma->tag, rpc->map, 12,
-		    sizeof(snapshot->rpc_alloc), BUS_DMASYNC_POSTREAD);
-		memcpy(snapshot->rpc_alloc, (const uint8_t *)rpc->kva + 12,
-		    sizeof(snapshot->rpc_alloc));
+		    length, BUS_DMASYNC_POSTREAD);
+		memcpy(parameters, (const uint8_t *)rpc->kva + 12, length);
 		bus_dmamap_sync(dma->tag, rpc->map, 12,
-		    sizeof(snapshot->rpc_alloc), BUS_DMASYNC_PREREAD);
+		    length, BUS_DMASYNC_PREREAD);
 		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(rpc_after),
 		    BUS_DMASYNC_POSTREAD);
 		memcpy(rpc_after, rpc->kva, sizeof(rpc_after));
 		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(rpc_after),
 		    BUS_DMASYNC_PREREAD);
-		snapshot->rpc_alloc_valid =
-		    memcmp(rpc_header, rpc_after, sizeof(rpc_header)) == 0;
+		if (alloc)
+			snapshot->rpc_alloc_valid =
+			    memcmp(rpc_header, rpc_after, sizeof(rpc_header)) == 0;
+		else
+			snapshot->rpc_resize_valid =
+			    memcmp(rpc_header, rpc_after, sizeof(rpc_header)) == 0;
 	}
 
 	if (state != 0 && !(rpc_enabled && state == 2))
