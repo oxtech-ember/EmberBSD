@@ -94,8 +94,14 @@ SSH failure reports a warning and leaves local-console startup available.
 Host script contracts check build selection, opt-in, metadata, ordering and
 error handling with explicit build/daemon/filesystem boundary doubles.
 They do not establish a successful complete cohort build or authenticated
-network login. Target key generation, PTY login and restart persistence require
-separate acceptance on the installed root.
+network login. On the observed board, a seven-program static native extension
+built with GCC16.2 from source `c4f93abd66afe41bc071f1822268435aa52cb590`
+passes installed-file hash checks, host-key generation, authenticated root PTY
+access and wrong-password rejection. Startup source
+`1d94afe4d3f76b563e072f0ced8757dbb3709349` restores the listener and authenticated
+PTY after a warm reboot. The host identity and persistent account remain intact.
+This receipt covers that native extension and installed configuration.
+The complete expanded cohort build and cold power-loss recovery remain separate.
 
 ```sh
 ruby ember/image/test-cix-p1-userland.rb

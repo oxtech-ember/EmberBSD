@@ -1068,57 +1068,32 @@ The base system shell is unchanged.
   records operator-reported Ethernet access after the final reboot;
   Wi-Fi recovery and post-reboot library acceptance remain open.
 - **Reduced CIX P1 development userland:** the OS-owned
-  [static C profile](ember/image/cix-p1-userland.md) cross-builds current
-  headers, libraries, network clients and disk recovery tools with GCC16.
-  An extended 81-program cohort passes static little-endian AArch64 ELF checks.
-  The [persistent-root profile](ember/image/cix-p1.md) adds explicit console,
-  network and shutdown scripts. Five unattended SD-root boots retain a marker. Reboot trials
-  on both bands restore WPA2/DHCP. Both bands pass 2 MiB TCP checks in each direction.
-  Unexpected power loss while running and a complete base release remain separate acceptance.
-  A source-tested native `powerd` policy requests orderly poweroff and rejects
-  duplicate button requests. Two physical short presses reach `powerd`, sync
-  and FFS unmount; subsequent boots report clean FFS. With the adaptive utilities,
-  another short press reaches FFS unmount 4.05 s after the shutdown reason log.
-  The operator measures about 5 s from press to fan stop, down from 15–20 s.
-  The next unattended boot reports clean FFS, retains the marker and utilities,
-  and restores WPA2/DHCP.
-  Full cold power-cut behavior is unqualified.
-  The explicit `shutdown -i` mode removes operator pauses and ends drained
-  process waits early. It preserves hooks, sync and normal process grace limits.
-  [Actual-source contracts](ember/tools/immediate-shutdown-contract.c) check this
-  separate source path. This physical result covers one healthy-system trial.
-  The trusted UART wrapper retains a session leader. Native board checks cover
-  Ctrl-C, stopped jobs and console exit without input after leader termination.
-  The network stop policy quiesces the radio before address cleanup. A native
-  ioctl contract detects the earlier restart during cleanup. After installation,
-  a commanded reboot reaches completed FFS unmount in 0.31 s from the reason
-  log, without radio calibration in that interval. The next boot reports clean
-  FFS and restores WPA2/DHCP. New press-to-fan-stop timing remains unmeasured.
-  Restart by a short press after shutdown remains unresolved on this sample;
-  the operator reports that power must be removed and restored.
-  A control boot stopped before the OS reproduces the same failure after the
-  built-in UEFI Shell's shutdown command. The cause remains undiagnosed.
-  A physical CIX S5 GPIO passive snapshot passes on one board. EMBER64 now selects
-  the bounded pin6 ACPI event path; `flags 0x0` retains passive mode. Source
-  contracts cover event completion and truncated resource rejection. The
-  [board boundary](ember/boards/orange-pi-6-plus.md) records the limited physical
-  poweroff result. See [CIX GPIO](ember/boot/cix-gpio.md) for the source mechanism.
-  Native [CIX clock/reset providers](ember/boot/cix-platform.md) have checked source
-  contracts and passive registration. A bounded VPU control helper uses checked
-  [ACPI power ownership](ember/boot/acpi-power.md). EMBER64 selects a resource
-  query; the active identity probe requires explicit configuration. Default
-  EMBER64 keeps device-visible DMA and firmware execution disabled.
-  A source-tested, fixed clock67 SCMI gate helper shares checked wire and token
-  state. An explicit native service shares
-  the logical clock claim with AML, reserves a disable call and rejects further
-  I/O after transport faults. A separate native identity profile uses that
-  service. On the physical board, fixed native enable/disable replies succeed,
-  VPU identity is valid and checked resource cleanup releases the controls.
-  A separate manual CPU-only allocation profile has source and build checks;
-  its physical allocation test is pending.
-  A manual CPU preparation profile adds checked firmware copying and page-table
-  construction; its physical test is also pending.
-  DMA, firmware execution and video queues remain unqualified.
+  [static C profile](ember/image/cix-p1-userland.md) cross-builds headers,
+  libraries, network clients and recovery tools with GCC16. A pinned static
+  cohort and a seven-program SSH extension pass AArch64 ELF checks.
+  The [persistent-root profile](ember/image/cix-p1.md) restores WPA2/DHCP on both
+  legacy bands and passes 2 MiB TCP checks each way. Administrator-provisioned
+  root password login, PTY access, persistent host identity and SSH autostart
+  pass a physical warm-reboot check. Images contain no access credentials.
+  Native `powerd` short presses reach sync and FFS unmount; the operator measures
+  about 5 s to fan stop. A commanded reboot reaches FFS unmount in 0.31 s from
+  its reason log. These are separate timing scenarios on one healthy sample.
+  [Immediate shutdown](ember/tools/immediate-shutdown-contract.c) preserves hooks
+  and sync; the trusted UART session leader and network-stop ordering have
+  native checks. Restart by a short press remains unresolved, including after
+  UEFI-only shutdown. Cold boot can require re-enabling firmware Support SPCR.
+  Cold power-loss recovery and a complete base release remain unqualified.
+  See the [board boundary](ember/boards/orange-pi-6-plus.md) and
+  [CIX GPIO](ember/boot/cix-gpio.md).
+  Native [clock/reset diagnostics](ember/boot/cix-platform.md) pass clock67
+  enable/disable, identity, seven-word hardware profile and checked cleanup.
+  The [CPU preparation probe](ember/boot/cix-vpu.md#manual-cpu-preparation-probe)
+  allocates and zero-checks 256 pages, copies the pinned firmware, builds tables
+  and releases both owners on the physical board. Absent firmware stops before
+  allocation. An explicit firmware boot trial reaches exposed ownership and an
+  initial IRQ, then returns ENOTSUP before SWITCHED_IN/PONG. It retains exposed
+  pages and masks the IRQ. Firmware readiness, DMA data correctness and video
+  queues remain unqualified. Default EMBER64 keeps active firmware boot disabled.
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request
   cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the
   active control request and preserves queued requests. Actual-function

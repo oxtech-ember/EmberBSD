@@ -76,8 +76,8 @@ accepts clock67 enable/disable and reads ID `0x56648002`, four cores and four sl
 Checked reset/clock/power cleanup releases the controls. This does not qualify
 per-core memory repair, device-visible DMA, firmware execution or video queues.
 A separate [manual native hardware profile](cix-platform.md#manual-native-hardware-profile)
-adds seven fixed raw state reads under the same controls. Source checks pass;
-physical acceptance remains pending.
+adds seven fixed raw state reads under the same controls. Its physical trial
+reports a valid snapshot and checked cleanup on the observed board.
 Parsing descriptions alone does not establish power, clock or reset ownership.
 The manual allocation profile below uses the parser, planner and allocator.
 The preparation profile also uses the page-entry encoders. Neither uses the ring.
@@ -118,8 +118,8 @@ checks with GCC16 path analysis, Cppcheck, CSA and host ASan/UBSan.
 Firmware, hash and DMA services are modeled; the parser and planner are real.
 The separate actual-source allocator passes 2338334 checks, including 629
 acquisition failures. The full manual kernel links with GCC16.2.
-No physical allocation result is established. Device DMA, firmware execution
-and video queues remain unqualified.
+The physical CPU preparation fixture below also exercises native allocation.
+Device DMA data correctness, firmware readiness and video queues remain unqualified.
 
 ## CPU preparation and opaque ownership
 
@@ -260,8 +260,8 @@ GCC16 path analysis, host CSA and ASan/UBSan pass. Seven compiled runtime
 mutations are detected. Native GCC16 passes; native CSA retains four inherited
 bitops findings per unit. All-category Cppcheck retains explicit header,
 isolated export and native-service signature findings. No category is disabled.
-These are source results. Hardware DMA, firmware execution, IRQ delivery and
-video acceptance remain pending.
+These are source results. The separate physical diagnostic boundary below
+records the limited IRQ observation and an incomplete firmware handshake.
 
 ## Manual firmware handshake trial
 
@@ -287,8 +287,8 @@ alone does not establish successful encoding.
 This is a boot-long diagnostic profile. After exposure, keep the current boot
 and resources intact while collecting results. Use a full power cycle before
 reusing them. Warm reboot, hot detach and runtime reclamation are unqualified.
-No GO, frame, video stream or general RPC is submitted. Physical execution of
-this profile remains pending.
+No GO, frame, video stream or general RPC is submitted. The physical trial below
+reaches exposed ownership and an initial IRQ, then stops before a valid handshake.
 
 ## Initially masked native IRQ registration
 
@@ -319,8 +319,9 @@ Use fresh output paths. `CC`, `CFLAGS` and `TEST_RUNNER` select the establish
 fixture compiler, flags and execution wrapper. UP418 and MP420 checks pass,
 as do ASan/UBSan and the unchanged teardown contract. Five causal mutations
 are detected. Native GCC16 passes; all-category Cppcheck and native CSA retain
-explicit inherited diagnostics. The manual VPU boot context uses this API; real
-IRQ delivery remains unverified.
+explicit inherited diagnostics. The manual VPU boot context uses this API.
+The physical diagnostic boundary below records an initial IRQ observation.
+Complete interrupt behavior remains unqualified.
 
 ## Manual CPU preparation probe
 
@@ -344,7 +345,13 @@ with GCC16 path analysis, Cppcheck, CSA and host ASan/UBSan. Six compiled causal
 mutations are detected. The callback test models the preparation service and
 checks its inputs and ownership transfer; it does not emulate page-table work.
 The separate actual-source preparation contract checks that work.
-Physical allocation and preparation tests remain pending.
+On the observed board, GCC16 kernel
+`07f2ddf493d1b701de8163e51d76bc7cd9c9ff9f` allocates and zero-checks all
+256 pages, prepares the pinned image and tables, and releases both owners.
+Primary, close, preparation and both cleanup results are zero.
+With the firmware file naturally absent, the same kernel reports ENOENT,
+zero pages, no preparation and no retained owner. These are CPU-side checks;
+the profile performs no device-visible DMA or firmware execution.
 
 ## Source and firmware provenance
 
@@ -535,7 +542,22 @@ Add native M2M input/output queues, controls, buffers, poll and stream lifetime.
 Reset and close during a frame must stop DMA before releasing resources.
 Late completion must not reach a closed or reused session.
 Then connect the real device to FFmpeg/GStreamer and qualify the complete packages.
-Physical attachment, DMA and codec execution require separate board acceptance.
+Device DMA data correctness and codec execution require separate board acceptance.
+
+## Physical diagnostic boundary
+
+The [observed CIX board](../boards/orange-pi-6-plus.md) runs the manual GCC16
+kernel `b02be11c061df4b9eba4fe205de5cbded4fe576f` with `flags 0x7`.
+The report confirms identity, active power controls, root publication and
+IRQ status mask `0x1`, with no unexpected IRQ bits. It returns ENOTSUP (86) at RECEIVE:
+one visit, zero accepted messages, no SWITCHED_IN and no PONG.
+The kernel does not report the raw RPC header; the specific request is unknown.
+
+The exposed prepared owner, core power claims and IRQ registration remain held.
+The IRQ is masked. Cleanup counters do not indicate post-exposure reclamation.
+The OS console and authenticated SSH remain available. Use a full power cycle
+before another test epoch; warm reset and runtime reclamation remain unqualified.
+Firmware readiness, DMA data correctness, encoding and video queues remain open.
 
 ## Physical acceptance and recovery
 

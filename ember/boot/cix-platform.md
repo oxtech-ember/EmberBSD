@@ -394,7 +394,21 @@ No BUSCTRL or LSID read, DMA, firmware execution or interrupt setup occurs.
 `bus_space_read_4` has no errno; external-abort recovery is not implemented.
 Source contracts pass 5242 checks, host ASan/UBSan and six causal mutations.
 Native GCC16 passes; native Cppcheck/CSA retain only their recorded baseline.
-Physical profile acceptance, fresh core repair, rates and DMA routing are pending.
+On the physical board described in the receipt below, GCC16 kernel
+`3c7595278fcf5c602c5c6b1aa1778208bc2b8f46` reports a valid profile:
+
+| Raw field | Observed value |
+| --- | --- |
+| STRAP_PIN2 | `0` |
+| STRAP_PIN0 | `0x0c0c0c00` |
+| PGCTRL | `0x07cefffc` |
+| Repair PASS / ENBL / BUSY | `0 / 0 / 0` |
+| CLKFORCE | `0x200` |
+| Derived usable core mask | `0xf` |
+
+Clock67 enable/disable, identity and checked cleanup return success.
+The additional reads request no fresh repair. Electrical rails, clock waveform,
+functional clock271, repair execution and DMA routing retain separate boundaries.
 
 The separate
 [EMBER64_CIXVPU_NATIVE_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE)
