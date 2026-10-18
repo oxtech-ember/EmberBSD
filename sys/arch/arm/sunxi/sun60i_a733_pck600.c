@@ -752,6 +752,49 @@ A733_BORROW_API(display, release, PCK600_RELEASE)
 A733_BORROW_API(display, ready, PCK600_READY)
 #undef A733_BORROW_API
 
+int
+sun60i_a733_pck_display_snapshot(int phandle, const void *owner,
+    struct sun60i_a733_display_power *out)
+{
+	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
+	struct sun60i_a733_display_power state = { 0 };
+	uint32_t sample[2][3];
+	int error = 0;
+
+	if (owner == NULL || out == NULL)
+		return EINVAL;
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->sc_lock);
+	for (u_int d = 0; d < __arraycount(sun60i_pck600_display_domains); d++) {
+		u_int id = sun60i_pck600_display_domains[d];
+		struct sun60i_pck600_lease *slot = &sc->sc_lease[id];
+
+		if (slot->owner != owner) {
+			error = EINVAL;
+			goto done;
+		}
+	}
+	for (u_int d = 0; d < __arraycount(sun60i_pck600_display_domains); d++) {
+		u_int id = sun60i_pck600_display_domains[d];
+		struct sun60i_pck600_lease *slot = &sc->sc_lease[id];
+
+		error = sun60i_pck600_borrow_read(sc, id, sample);
+		if (error != 0)
+			goto done;
+		if (memcmp(slot->before, sample, sizeof(sample)) != 0) {
+			error = EBUSY;
+			goto done;
+		}
+		for (u_int s = 0; s < 2; s++)
+			memcpy(state.sample[s][d], sample[s], sizeof(sample[s]));
+	}
+	*out = state;
+done:
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
 static void
 sun60i_pck600_report(struct sun60i_pck600_softc *sc)
 {

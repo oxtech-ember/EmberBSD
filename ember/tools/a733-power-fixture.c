@@ -811,6 +811,8 @@ test_borrowed_domains(void)
 	printf("PASS: %u independent NPU/display PCK lease scenarios\n", cases);
 }
 
+#include "a733-display-power-fixture.h"
+
 static void
 test_gpu_lease(void)
 {
@@ -981,6 +983,7 @@ main(void)
 
 	test_gpu_lease();
 	test_borrowed_domains();
+	test_display_reserved_snapshot();
 	test_gpu_request_on();
 	test_read_state();
 	cases = 0;

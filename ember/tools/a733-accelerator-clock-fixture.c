@@ -107,6 +107,8 @@ struct device_compatible_entry { const char *compat; };
 #include "sunxi_ccu.h"
 #include "sun60i_a733_ccu.h"
 #include "sun60i_a733_display.h"
+#include "sun60i_a733_display_owner.h"
+#include "sun60i_a733_pck600.h"
 #include "bindings.h"
 
 static uint32_t registers[0x2000 / 4], last_write;
@@ -227,6 +229,8 @@ bus_space_peek_4(bus_space_tag_t tag, bus_space_handle_t handle,
 	*value = bus_space_read_4(tag, handle, off);
 	return reads == fail_peek ? 1 : 0;
 }
+static void display_write_check(bus_size_t);
+
 static void
 bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
     bus_size_t off, uint32_t val)
@@ -245,6 +249,7 @@ bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
 	}
 #endif
 	assert(off < sizeof(registers) && off % 4 == 0);
+	display_write_check(off);
 	if (writes < __arraycount(write_regs)) {
 		write_regs[writes] = off; write_vals[writes] = val;
 	}
@@ -377,7 +382,50 @@ static int clk_set_parent(struct clk *clk, struct clk *parent)
 #include "sunxi_ccu_nkmp.c"
 #include "sunxi_ccu_fixed_factor.c"
 #include "sun60i_a733_display.c"
+#include "sun60i_a733_display_owner.c"
+static const void *display_power_owner;
+static bool display_power_retained;
+static int display_power_error, display_retain_error;
+int
+sun60i_a733_pck_display_snapshot(int node, const void *owner,
+    struct sun60i_a733_display_power *out)
+{
+	struct sun60i_a733_display_power p = { 0 };
+	if (display_power_error != 0)
+		return display_power_error;
+	if (node != 17 || owner == NULL || owner != display_power_owner)
+		return EINVAL;
+	for (unsigned s = 0; s < 2; s++)
+		for (unsigned d = 0; d < 2; d++)
+			p.sample[s][d][0] = p.sample[s][d][2] = 8;
+	*out = p;
+	return 0;
+}
+int
+sun60i_a733_pck_display_retain(int node, const void *owner)
+{
+	assert(node == 17 && owner == display_power_owner);
+	if (display_retain_error != 0)
+		return display_retain_error;
+	display_power_retained = true;
+	return 0;
+}
+int
+sun60i_a733_pck_display_ready(int node, const void *owner)
+{
+	return display_power_error != 0 ? display_power_error :
+	    node == 17 && owner == display_power_owner && display_power_retained ? 0 : EINVAL;
+}
 #include "sun60i_a733_ccu.c"
+static void
+display_write_check(bus_size_t off)
+{
+	if (off == DE0_CLK_REG || off == DE0_BGR_REG) {
+		assert(display_power_retained && sun60i_display_lease.pck_retained);
+		assert(sun60i_display_lease.core.retained);
+		assert(mutex_owned(&sun60i_a733_ccu_lock));
+	}
+}
 #define CHECK(c) do { assert(c); checks++; } while (0)
 #define REG(r) registers[(r) / 4]
 #define CLOCK(id) (&state.sc_clks[(id)].base)
@@ -389,7 +437,9 @@ reset(void)
 	memset(registers, 0, sizeof(registers));
 	memset(&sun60i_gpu_lease, 0, sizeof(sun60i_gpu_lease));
 	memset(&sun60i_npu_lease, 0, sizeof(sun60i_npu_lease));
+	memset(&sun60i_display_lease, 0, sizeof(sun60i_display_lease));
 	writes = barriers = reads = hosc_reads = dcxo_queries = fail_peek = 0;
+	parent_queries = 0;
 	update_model = pll_model = false;
 	pll_delay_us = pll_lock_after_us = pll_lock_reads = 0;
 	pll_glitch = pll_settle_loss = pll_output_loss = pll_gate_change = false;
@@ -397,6 +447,9 @@ reset(void)
 	update_clear_us = update_delay_us = update_reads = 0;
 	reject_write_number = fail_poke_number = pokes = 0;
 	prepare_test = false;
+	display_power_owner = NULL;
+	display_power_retained = false;
+	display_power_error = display_retain_error = 0;
 	ccu_size = sizeof(registers); ccu_reg_error = 0;
 	unstable_read = 0;
 	unstable_mask = 1;
@@ -1444,6 +1497,8 @@ test_generic_rmw_fallback(void)
 	    checks - start);
 }
 
+#include "a733-display-native-fixture.h"
+
 int
 main(void)
 {
@@ -1618,6 +1673,7 @@ main(void)
 	test_periph_gates();
 	test_gpu_prepare();
 	test_npu_prepare_divider();
+	test_display_native();
 	test_gpu_update_completion();
 	test_gpu_prepare_pll();
 	printf("A733 accelerator clocks: %u production checks passed\n", checks);

@@ -51,6 +51,8 @@ __KERNEL_RCSID(1, "$NetBSD$");
 #include <arm/sunxi/sunxi_ccu.h>
 #include <arm/sunxi/sun60i_a733_ccu.h>
 #include <arm/sunxi/sun60i_a733_display.h>
+#include <arm/sunxi/sun60i_a733_display_owner.h>
+#include <arm/sunxi/sun60i_a733_pck600.h>
 #include <arm/sunxi/sunxi_rtcvar.h>
 
 #include "sunxi_rtc.h"
@@ -95,6 +97,8 @@ static kmutex_t sun60i_a733_ccu_lock;
 #define	PWM0_BGR_REG		0x784
 #define	CE_CLK_REG		0xac0
 #define	CE_BGR_REG		0xac4
+#define	DE0_CLK_REG		0xa00
+#define	DE0_BGR_REG		0xa04
 #define	NPU_CLK_REG		0xb00
 #define	NPU_BGR_REG		0xb04
 #define	GPU0_CLK_REG		0xb20
@@ -210,6 +214,9 @@ static const char *ce_parents[] = {
 static const char *gpu_parents[] = {
 	"pll-gpu0", "pll-periph0-800M", "pll-periph0-600M",
 	"pll-periph0-400M", "pll-periph0-300M", "pll-periph0-200M"
+};
+static const char *de0_parents[] = {
+	NULL, NULL, NULL, "pll-periph0-400M"
 };
 static const char *npu_parents[] = {
 	"pll-npu", "pll-periph0-800M", "pll-periph0-600M",
@@ -486,6 +493,28 @@ sun60i_a733_accel_set_rate(struct sunxi_ccu_softc *sc,
 		.set_parent = sun60i_a733_accel_set_parent,	\
 	}
 
+/* All DE0 mutations use the typed retained profile, including enable. */
+static int
+sun60i_a733_de0_enable(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk, int enable)
+{
+	return EOPNOTSUPP;
+}
+
+static int
+sun60i_a733_de0_set_rate(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk, u_int rate)
+{
+	return EOPNOTSUPP;
+}
+
+static int
+sun60i_a733_de0_set_parent(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk, const char *parent)
+{
+	return EOPNOTSUPP;
+}
+
 /*
  * The SD/MMC controllers halve their module clock, so a card clock of
  * 50 MHz is a 100 MHz module clock.
@@ -523,6 +552,19 @@ static struct sunxi_ccu_clk sun60i_a733_ccu_clks[] = {
 	 */
 	SUNXI_CCU_FIXED_FACTOR(A733_CLK_PLL_REF, "pll-ref", "hosc", 1, 1),
 	SUNXI_CCU_FIXED_FACTOR(A733_CLK_SYS_24M, "sys-24M", "pll-ref", 1, 1),
+	[A733_CLK_DE0] = {
+		.type = SUNXI_CCU_DIV,
+		.base.name = "de0",
+		.u.div.reg = DE0_CLK_REG,
+		.u.div.div = __BITS(4,0),
+		.u.div.parents = de0_parents,
+		.u.div.nparents = __arraycount(de0_parents),
+		.enable = sun60i_a733_de0_enable,
+		.get_rate = sun60i_a733_accel_rate,
+		.get_parent = sun60i_a733_accel_parent,
+		.set_rate = sun60i_a733_de0_set_rate,
+		.set_parent = sun60i_a733_de0_set_parent,
+	},
 	A733_ACCEL_PLL(A733_CLK_PLL_GPU0, "pll-gpu0", PLL_GPU0_CTRL_REG),
 	A733_ACCEL_PLL(A733_CLK_PLL_NPU, "pll-npu", PLL_NPU_CTRL_REG),
 	A733_ACCEL_GATE(A733_CLK_AHB_NPU, "ahb-npu", "ahb",
@@ -993,6 +1035,83 @@ static struct {
 	struct sun60i_a733_npu_state before, after;
 } sun60i_npu_lease;
 
+/* The pure DISPLAY core and native admission share this provider mutex. */
+static struct {
+	struct sun60i_a733_display_owner core;
+	int power, fault;
+	bool pck_retained, prepared;
+	struct sun60i_a733_display_inputs after;
+} sun60i_display_lease;
+
+static uint32_t
+sun60i_a733_display_mask(bus_size_t reg)
+{
+	switch (reg) {
+	case PLL_REF_CTRL_REG:
+	case PLL_PERIPH0_CTRL_REG:
+	case PLL_PERIPH0_CTRL_REG + 8:
+	case PLL_PERIPH0_CTRL_REG + 12:
+	case AHB_CFG_REG:
+	case PERI0PLL_GATE_EN_REG:
+	case PERI0PLL_GATE_STAT_REG:
+	case 0x2e0: case 0x2e8: case 0x2ec:
+	case 0x1928: case 0x19a8:
+		return UINT32_MAX;
+	case DE0_CLK_REG:
+		return UINT32_C(0x8700001f);
+	case DE0_BGR_REG:
+	case 0x1604: case 0x16cc: case 0x16ec:
+		return UINT32_C(0x00010001);
+	case 0xa74:
+		return __BIT(16);
+	case 0x1684:
+		return UINT32_C(0x87001f1f);
+	case 0x168c:
+		return UINT32_C(0x00070001);
+	case 0x1690:
+		return UINT32_C(0x87000000);
+	case AHB_MASTER_GATE_REG:
+		return __BIT(31) | __BIT(5) | __BIT(4);
+	case MBUS_MASTER_GATE_REG:
+		return __BIT(11);
+	default:
+		return 0;
+	}
+}
+
+/* Classify every current hardware descriptor, including PLL_DE providers. */
+static enum sun60i_a733_display_resource
+sun60i_a733_display_resource(const struct sunxi_ccu_clk *clk,
+    const struct sunxi_ccu_reset *reset)
+{
+	bus_size_t reg;
+
+	if (reset != NULL)
+		reg = reset->reg;
+	else if (clk != NULL) {
+		switch (clk->type) {
+		case SUNXI_CCU_GATE: reg = clk->u.gate.reg; break;
+		case SUNXI_CCU_DIV: reg = clk->u.div.reg; break;
+		case SUNXI_CCU_NM: reg = clk->u.nm.reg; break;
+		case SUNXI_CCU_NKMP: reg = clk->u.nkmp.reg; break;
+		default: return A733_DISPLAY_RES_OTHER;
+		}
+	} else
+		return A733_DISPLAY_RES_OTHER;
+	if (reg == DE0_CLK_REG || reg == DE0_BGR_REG)
+		return A733_DISPLAY_RES_DE0;
+	if (sun60i_a733_display_mask(reg) == 0)
+		return A733_DISPLAY_RES_OTHER;
+	/* Fixed masks below refine shared master registers before admission. */
+	if (reset != NULL &&
+	    (reset->mask & sun60i_a733_display_mask(reg)) == 0)
+		return A733_DISPLAY_RES_OTHER;
+	if (clk != NULL && clk->type == SUNXI_CCU_GATE &&
+	    (clk->u.gate.mask & sun60i_a733_display_mask(reg)) == 0)
+		return A733_DISPLAY_RES_OTHER;
+	return A733_DISPLAY_RES_DE_PLL;
+}
+
 /* Recheck actual RMW masks under the same mutex, including direct callbacks. */
 static bool
 sun60i_a733_native_mask_busy(bus_size_t reg, uint32_t mask)
@@ -1001,6 +1120,9 @@ sun60i_a733_native_mask_busy(bus_size_t reg, uint32_t mask)
 	bool npu = sun60i_npu_lease.owner != NULL;
 
 	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
+	if (sun60i_display_lease.core.owner != NULL &&
+	    (mask & sun60i_a733_display_mask(reg)) != 0)
+		return true;
 	if (!gpu && !npu)
 		return false;
 	switch (reg) {
@@ -1039,10 +1161,27 @@ sun60i_a733_gpu_guard_enter(struct sunxi_ccu_softc *sc, struct clk *clk,
     struct sunxi_ccu_reset *reset, enum sunxi_ccu_mutation op, bool *handled)
 {
 	bool shared = false, local = false;
+	struct sunxi_ccu_clk *descriptor = NULL;
+	enum sun60i_a733_display_resource resource;
 	int error = 0;
 
 	mutex_enter(&sun60i_a733_ccu_lock);
-	if (sun60i_gpu_lease.owner != NULL || sun60i_npu_lease.owner != NULL) {
+	for (u_int id = 0; clk != NULL && id < sc->sc_nclks; id++) {
+		if (clk == &sc->sc_clks[id].base) {
+			descriptor = &sc->sc_clks[id];
+			break;
+		}
+	}
+	resource = sun60i_a733_display_resource(descriptor, reset);
+	/* A normal enable must not recurse into parents before failing locally. */
+	if (descriptor == &sc->sc_clks[A733_CLK_DE0] &&
+	    sun60i_display_lease.core.owner == NULL) {
+		*handled = true;
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	if (sun60i_gpu_lease.owner != NULL || sun60i_npu_lease.owner != NULL ||
+	    sun60i_display_lease.core.owner != NULL) {
 		if (reset != NULL)
 			local = (sun60i_gpu_lease.owner != NULL &&
 			    reset->reg == GPU0_BGR_REG) ||
@@ -1064,14 +1203,20 @@ sun60i_a733_gpu_guard_enter(struct sunxi_ccu_softc *sc, struct clk *clk,
 			break;
 		}
 	}
+	if (sun60i_display_lease.core.owner != NULL &&
+	    resource != A733_DISPLAY_RES_OTHER && !shared)
+		local = true;
 	if (shared || local) {
 		*handled = true;
 		/* Running ancestors are borrowed, never recursively re-enabled. */
 		if (!shared || op != SUNXI_CCU_ENABLE)
 			error = EBUSY;
 	} else {
-		sun60i_gpu_lease.writers++;
+		error = sun60i_a733_display_writer_enter(&sun60i_display_lease.core, resource);
+		if (error == 0)
+			sun60i_gpu_lease.writers++;
 	}
+out:
 	mutex_exit(&sun60i_a733_ccu_lock);
 	return error;
 }
@@ -1082,6 +1227,7 @@ sun60i_a733_gpu_guard_exit(struct sunxi_ccu_softc *sc)
 	mutex_enter(&sun60i_a733_ccu_lock);
 	KASSERT(sun60i_gpu_lease.writers != 0);
 	sun60i_gpu_lease.writers--;
+	(void)sun60i_a733_display_writer_exit(&sun60i_display_lease.core);
 	mutex_exit(&sun60i_a733_ccu_lock);
 }
 
@@ -1674,6 +1820,364 @@ sun60i_a733_ccu_npu_ready(struct clk *npu, const void *owner)
 	if (error == 0 && memcmp(&state, &sun60i_npu_lease.after, sizeof(state)) != 0)
 		error = EBUSY;
 out:
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
+static int sun60i_a733_display_ccu_read(void *, uint32_t, uint32_t *);
+
+/* Origin: EmberBSD; AI-assisted fixed native DISPLAY provider adapter. */
+struct sun60i_a733_display_read_arg {
+	struct sunxi_ccu_softc *sc;
+	int power;
+	const void *owner;
+};
+
+static int
+sun60i_a733_display_handle(const struct clk *de0, struct sunxi_ccu_softc **out)
+{
+	if (de0 != &sun60i_a733_ccu_clks[A733_CLK_DE0].base)
+		return EINVAL;
+	if (sun60i_gpu_lease.sc == NULL || de0->domain == NULL ||
+	    de0->domain->priv != sun60i_gpu_lease.sc)
+		return ENXIO;
+	*out = sun60i_gpu_lease.sc;
+	return 0;
+}
+
+static int
+sun60i_a733_display_inputs_read(void *arg,
+    struct sun60i_a733_display_inputs *out)
+{
+	static const bus_size_t regs[A733_DISPLAY_NANCESTORS] = {
+		PLL_REF_CTRL_REG, PLL_PERIPH0_CTRL_REG,
+		PLL_PERIPH0_CTRL_REG + 8, PLL_PERIPH0_CTRL_REG + 12,
+		AHB_CFG_REG, PERI0PLL_GATE_EN_REG, PERI0PLL_GATE_STAT_REG
+	};
+	const struct sun60i_a733_display_read_arg *ctx = arg;
+	struct sunxi_ccu_softc *sc = ctx->sc;
+	struct sun60i_a733_display_inputs in = { 0 };
+	struct sunxi_rtc_dcxo_state dcxo;
+	bus_addr_t addr;
+	bus_size_t size;
+	int node, error;
+
+	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
+	if (fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size) != 0 ||
+	    size < 0x19ac)
+		return ENXIO;
+	if (OF_getproplen(sc->sc_phandle, "netbsd,dcxo-source") != 4)
+		return EINVAL;
+	node = fdtbus_get_phandle(sc->sc_phandle, "netbsd,dcxo-source");
+	if (node <= 0 || !of_compatible_match(node, sun60i_a733_dcxo_compat))
+		return EOPNOTSUPP;
+	error = sun60i_a733_dcxo_query(node, &dcxo);
+	if (error != 0)
+		return error;
+	memcpy(in.dcxo[0], dcxo.sample, sizeof(dcxo.sample));
+	error = sun60i_a733_display_read_clocks(sun60i_a733_display_ccu_read,
+	    sc, size, &in.clocks);
+	if (error != 0)
+		return error;
+	for (u_int s = 0; s < 2; s++) {
+		for (u_int i = 0; i < __arraycount(regs); i++) {
+			if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh, regs[i],
+			    &in.ancestor[s][i]) != 0)
+				return EFAULT;
+		}
+	}
+	error = sun60i_a733_pck_display_snapshot(ctx->power, ctx->owner, &in.power);
+	if (error != 0)
+		return error;
+	error = sun60i_a733_dcxo_query(node, &dcxo);
+	if (error != 0)
+		return error;
+	memcpy(in.dcxo[1], dcxo.sample, sizeof(dcxo.sample));
+	*out = in;
+	return 0;
+}
+
+/* Compare only DISPLAY-owned fields. Other accelerator masks are disjoint. */
+static bool
+sun60i_a733_display_same(const struct sun60i_a733_display_inputs *a,
+    const struct sun60i_a733_display_inputs *b)
+{
+	if (memcmp(a->power.sample, b->power.sample, sizeof(a->power.sample)) != 0 ||
+	    memcmp(a->ancestor, b->ancestor, sizeof(a->ancestor)) != 0 ||
+	    memcmp(a->dcxo, b->dcxo, sizeof(a->dcxo)) != 0)
+		return false;
+	for (u_int s = 0; s < 2; s++) {
+		for (u_int i = 0; i < A733_DISPLAY_NCLOCK_REGS; i++) {
+			const uint32_t mask = sun60i_a733_display_mask(
+			    sun60i_a733_display_clock_regs[i].offset);
+			if (((a->clocks.sample[s][i] ^ b->clocks.sample[s][i]) & mask) != 0)
+				return false;
+		}
+	}
+	return true;
+}
+
+static int
+sun60i_a733_display_check(struct sun60i_a733_display_inputs *in)
+{
+	struct sun60i_a733_display_rates rates;
+	const uint32_t *v = in->clocks.sample[0];
+	int error;
+
+	if (in->clocks.changed != 0 || in->power.changed != 0)
+		return EBUSY;
+	error = sun60i_a733_display_running_ancestors(in, &rates);
+	if (error != 0)
+		return error;
+	if ((v[A733_DISPLAY_DE0] & UINT32_C(0x8700001f)) !=
+	    UINT32_C(0x83000000) ||
+	    (v[A733_DISPLAY_DE0_BUS] & UINT32_C(0x00010001)) !=
+	    UINT32_C(0x00010001))
+		return EBUSY;
+	return 0;
+}
+
+static void
+sun60i_a733_display_fault_locked(int error)
+{
+	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
+	KASSERT(error > 0 && sun60i_display_lease.pck_retained);
+	if (sun60i_display_lease.fault == 0)
+		sun60i_display_lease.fault = error;
+	if (sun60i_display_lease.core.retained)
+		(void)sun60i_a733_display_fault(&sun60i_display_lease.core,
+		    sun60i_display_lease.core.owner, error);
+}
+
+int
+sun60i_a733_ccu_display_reserve(struct clk *de0, int power, const void *owner)
+{
+	struct sun60i_a733_display_rates rates;
+	struct sunxi_ccu_softc *sc;
+	struct sun60i_a733_display_read_arg arg;
+	int error;
+
+	if (owner == NULL)
+		return EINVAL;
+	error = sun60i_a733_display_handle(de0, &sc);
+	if (error != 0)
+		return error;
+	arg = (struct sun60i_a733_display_read_arg){ sc, power, owner };
+	mutex_enter(&sun60i_a733_ccu_lock);
+	error = sun60i_a733_display_reserve(&sun60i_display_lease.core,
+	    owner, sun60i_a733_display_inputs_read, &arg);
+	if (error == 0) {
+		/* Borrowed enable admission must already refer to running parents. */
+		error = sun60i_a733_display_running_ancestors(
+		    &sun60i_display_lease.core.before, &rates);
+		if (error != 0)
+			(void)sun60i_a733_display_release(&sun60i_display_lease.core, owner);
+		else
+			sun60i_display_lease.power = power;
+	}
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
+int
+sun60i_a733_ccu_display_release(struct clk *de0, const void *owner)
+{
+	struct sunxi_ccu_softc *sc;
+	int error = sun60i_a733_display_handle(de0, &sc);
+
+	if (error != 0)
+		return error;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (owner == NULL || sun60i_display_lease.core.owner != owner)
+		error = EINVAL;
+	else if (sun60i_display_lease.pck_retained || sun60i_display_lease.fault != 0)
+		error = EBUSY;
+	else {
+		error = sun60i_a733_display_release(&sun60i_display_lease.core, owner);
+		if (error == 0) {
+			sun60i_display_lease.power = 0;
+			sun60i_display_lease.prepared = false;
+			memset(&sun60i_display_lease.after, 0, sizeof(sun60i_display_lease.after));
+		}
+	}
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
+/* No caller can select another register or mask. */
+static int
+sun60i_a733_display_de0_write(struct sunxi_ccu_softc *sc, bus_size_t reg,
+    uint32_t mask, uint32_t bits)
+{
+	uint32_t old, value, allowed;
+
+	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
+	KASSERT(sun60i_display_lease.pck_retained && sun60i_display_lease.core.retained);
+	allowed = reg == DE0_CLK_REG ? UINT32_C(0x8700001f) :
+	    reg == DE0_BGR_REG ? UINT32_C(0x00010001) : 0;
+	if (mask == 0 || (mask & ~allowed) != 0 || (bits & ~mask) != 0)
+		return EINVAL;
+	if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh, reg, &old) != 0)
+		return EFAULT;
+	value = (old & ~mask) | bits;
+	if (value == old)
+		return 0;
+	if (bus_space_poke_4(sc->sc_bst, sc->sc_bsh, reg, value) != 0)
+		return EFAULT;
+	bus_space_barrier(sc->sc_bst, sc->sc_bsh, reg, sizeof(value),
+	    BUS_SPACE_BARRIER_WRITE | BUS_SPACE_BARRIER_READ);
+	if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh, reg, &value) != 0)
+		return EFAULT;
+	return (value & mask) == bits ? 0 : EIO;
+}
+
+int
+sun60i_a733_ccu_display_begin_de0(struct clk *de0, const void *owner,
+    bool *retained)
+{
+	static const struct { bus_size_t reg; uint32_t mask, bits; } steps[] = {
+		{ DE0_CLK_REG, UINT32_C(0x0700001f), UINT32_C(0x03000000) },
+		{ DE0_BGR_REG, __BIT(16), __BIT(16) },
+		{ DE0_BGR_REG, __BIT(0), __BIT(0) },
+		{ DE0_CLK_REG, __BIT(31), __BIT(31) },
+	};
+	struct sun60i_a733_display_inputs in, expected;
+	struct sun60i_a733_display_read_arg arg;
+	struct sunxi_ccu_softc *sc;
+	int error;
+
+	if (owner == NULL || retained == NULL)
+		return EINVAL;
+	*retained = false;
+	error = sun60i_a733_display_handle(de0, &sc);
+	if (error != 0)
+		return error;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (sun60i_display_lease.core.owner != owner) {
+		error = EINVAL;
+		goto out;
+	}
+	*retained = sun60i_display_lease.pck_retained;
+	if (*retained || sun60i_display_lease.fault != 0) {
+		error = EBUSY;
+		goto out;
+	}
+	arg = (struct sun60i_a733_display_read_arg){ sc, sun60i_display_lease.power, owner };
+	/* PCK retention precedes even the first faulting CCU write attempt. */
+	error = sun60i_a733_pck_display_retain(arg.power, owner);
+	if (error != 0)
+		goto out;
+	sun60i_display_lease.pck_retained = *retained = true;
+	error = sun60i_a733_display_begin_de0(&sun60i_display_lease.core,
+	    owner, sun60i_a733_display_inputs_read, &arg);
+	if (error != 0)
+		goto failed;
+	for (u_int i = 0; i < __arraycount(steps); i++) {
+		error = sun60i_a733_display_de0_write(sc, steps[i].reg,
+		    steps[i].mask, steps[i].bits);
+		if (error != 0)
+			goto failed;
+	}
+	error = sun60i_a733_display_inputs_read(&arg, &in);
+	if (error == 0)
+		error = sun60i_a733_display_check(&in);
+	if (error != 0)
+		goto failed;
+	expected = sun60i_display_lease.core.before;
+	for (u_int s = 0; s < 2; s++) {
+		expected.clocks.sample[s][A733_DISPLAY_DE0] =
+		    (expected.clocks.sample[s][A733_DISPLAY_DE0] & ~UINT32_C(0x8700001f)) |
+		    UINT32_C(0x83000000);
+		expected.clocks.sample[s][A733_DISPLAY_DE0_BUS] |= UINT32_C(0x00010001);
+	}
+	if (!sun60i_a733_display_same(&expected, &in)) {
+		error = EBUSY;
+		goto failed;
+	}
+	sun60i_display_lease.after = in;
+	sun60i_display_lease.prepared = true;
+	goto out;
+failed:
+	sun60i_a733_display_fault_locked(error);
+out:
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
+int
+sun60i_a733_ccu_display_ready(struct clk *de0, const void *owner)
+{
+	struct sun60i_a733_display_inputs in;
+	struct sun60i_a733_display_read_arg arg;
+	struct sunxi_ccu_softc *sc;
+	int error = sun60i_a733_display_handle(de0, &sc);
+
+	if (error != 0)
+		return error;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (owner == NULL || sun60i_display_lease.core.owner != owner ||
+	    !sun60i_display_lease.pck_retained || !sun60i_display_lease.prepared ||
+	    sun60i_display_lease.fault != 0) {
+		error = EBUSY;
+		goto out;
+	}
+	arg = (struct sun60i_a733_display_read_arg){ sc, sun60i_display_lease.power, owner };
+	error = sun60i_a733_pck_display_ready(arg.power, owner);
+	if (error == 0)
+		error = sun60i_a733_display_inputs_read(&arg, &in);
+	if (error == 0)
+		error = sun60i_a733_display_check(&in);
+	if (error == 0 && !sun60i_a733_display_same(&sun60i_display_lease.after, &in))
+		error = EBUSY;
+	if (error != 0)
+		sun60i_a733_display_fault_locked(error);
+out:
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
+int
+sun60i_a733_ccu_display_status(struct clk *de0, const void *owner,
+    struct sun60i_a733_display_owner_status *out)
+{
+	struct sunxi_ccu_softc *sc;
+	struct sun60i_a733_display_owner_status status;
+	int error = sun60i_a733_display_handle(de0, &sc);
+
+	if (error != 0)
+		return error;
+	if (out == NULL)
+		return EINVAL;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (owner == NULL || sun60i_display_lease.core.owner != owner)
+		error = EINVAL;
+	else {
+		error = sun60i_a733_display_owner_status(&sun60i_display_lease.core, &status);
+		if (error == 0) {
+			status.retained |= sun60i_display_lease.pck_retained;
+			if (sun60i_display_lease.fault != 0)
+				status.fault = sun60i_display_lease.fault;
+			*out = status;
+		}
+	}
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
+int
+sun60i_a733_ccu_display_fault(struct clk *de0, const void *owner, int fault)
+{
+	struct sunxi_ccu_softc *sc;
+	int error = sun60i_a733_display_handle(de0, &sc);
+
+	if (error != 0)
+		return error;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (owner == NULL || sun60i_display_lease.core.owner != owner ||
+	    !sun60i_display_lease.pck_retained || fault <= 0)
+		error = EINVAL;
+	else
+		sun60i_a733_display_fault_locked(fault);
 	mutex_exit(&sun60i_a733_ccu_lock);
 	return error;
 }
