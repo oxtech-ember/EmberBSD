@@ -62,6 +62,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_DMA_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PREPARE_PROBE'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_SLOT_PREPARE_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROFILE_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_BOOT_PROBE'
       - 'sys/external/bsd/acpica/dist/include/**'
@@ -136,6 +137,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_DMA_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PREPARE_PROBE'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_SLOT_PREPARE_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROFILE_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_BOOT_PROBE'
       - 'sys/external/bsd/acpica/dist/include/**'
@@ -192,6 +194,7 @@ jobs:
             /sys/arch/evbarm/conf/EMBER64_CIX_UART2
             /sys/arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE
             /sys/arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE
+            /sys/arch/evbarm/conf/EMBER64_CIXVPU_SLOT_PREPARE_PROBE
             /sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY
             /sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY
             /sys/arch/evbarm/conf/EMBER64_CIXUART_NATIVE

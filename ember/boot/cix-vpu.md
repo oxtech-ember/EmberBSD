@@ -182,8 +182,8 @@ not allocate, copy pixels, build live PTEs, synchronize DMA or grant ownership.
 Ordinary plans keep their existing indices and mappings with slots disabled.
 The allocator accepts the explicit slot roles. Ordinary CPU constructors still
 reject all slot metadata before page borrows, writes or ownership movement.
-Only the explicit slot constructor described below accepts this layout. No
-attachment selects it. Command submission, output refill and one-frame encoding
+Only the explicit slot constructor described below accepts this layout. A manual
+CPU-only probe selects it. Command submission, output refill and one-frame encoding
 remain pending.
 
 Actual-source tests compose MMU tables with discontiguous synthetic bus pages.
@@ -216,8 +216,35 @@ submission is added.
 
 Actual-source contracts check distinct source patterns, page tails, PTEs,
 poisoned bounce memory, aliases, failures before effects, last-fallible seal and
-retained exposure. This is an uncalled CPU mechanism. No active profile, pixel
-format conversion, hardware frame completion or output capacity is qualified.
+retained exposure. No firmware-active profile, pixel format conversion, hardware
+frame completion or output capacity is qualified.
+
+## Manual CPU-only slot probe
+
+[EMBER64_CIXVPU_SLOT_PREPARE_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_SLOT_PREPARE_PROBE)
+uses plain EMBER64, manual UART2 console selection and VPU `flags 0x9`.
+It selects no SCMI service. Keep the working default and recovery entries.
+This is a source-tested manual diagnostic; its full kernel and physical run
+remain unverified.
+
+The existing mountroot callback reads, closes and hashes the same local
+user-provided firmware file. The synthetic CPU fixture uses width 2, height 4,
+strides 4097/2051 and output capacity 4097 bytes. These are test values, not an
+encoder geometry or capacity recommendation. Its plan has 401 owners,
+394 mappings and 7 stopped page tables.
+
+The callback audits every allocated page is zero. It keeps both source planes
+and firmware staging alive through the typed constructor. It then frees staging,
+performs one initial sync, and checks prepared cleanup with matching cancellation.
+A failed cleanup retains its owner and reports the error. No automatic retry
+occurs. Modes 0 through 8 keep their existing behavior.
+
+No root address is published or printed. The probe makes no VPU MMIO access,
+IRQ registration, clock/power request, firmware command or GO submission.
+It does not qualify device coherency, firmware-visible pixel bytes or encoding.
+Actual-source orchestration tests check no hardware calls, exact source lifetime,
+all 401 zero-page views, once-only callbacks, sync ordering and retained failures.
+The separate IC tests check copied bytes, PTE words and poisoned bounce buffers.
 
 ## Manual CPU-only allocation probe
 

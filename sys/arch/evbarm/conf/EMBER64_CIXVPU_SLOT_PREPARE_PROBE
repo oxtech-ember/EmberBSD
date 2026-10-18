@@ -1,0 +1,10 @@
+# Synthetic CPU-only slot copy, stopped PTE checks and DMA sync/cancellation.
+# No SCMI query, VPU control, device address publication or firmware execution.
+# Use a manual boot entry and preserve a working recovery kernel.
+
+include "arch/evbarm/conf/EMBER64"
+
+options CIXP1_UART2_CONSOLE
+
+no cixvpu* at acpi?
+cixvpu* at acpi? flags 0x9

@@ -104,7 +104,7 @@ extern uint32_t boot_fixture_rpc_word(unsigned int);
 extern void boot_fixture_set_rpc_commit(void (*)(void));
 
 /* The PIC model starts masked and can dispatch synchronously on unmask. */
-#define KM_NOSLEEP 0
+#define KM_NOSLEEP 0x00000002
 #define IPL_VM 6
 #define IST_LEVEL 3
 #define IST_MPSAFE 0x100

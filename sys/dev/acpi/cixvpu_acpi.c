@@ -5,6 +5,7 @@
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/device.h>
+#include <sys/kmem.h>
 #include <sys/sha2.h>
 #include <sys/systm.h>
 
@@ -116,17 +117,29 @@ cixvpu_acpi_allocation(device_t self)
 	struct cixvpu_acpi_softc *sc = device_private(self);
 	struct cixvpu_fw_plan plan;
 	struct cixvpu_dma_page page;
+	static const struct cixvpu_fw_slot_request slots = {
+		.width = 2, .height = 4, .stride_y = 4097, .stride_uv = 2051,
+		.bitstream_bytes = 4097
+	};
+	/* Synthetic CPU fixture, not a selected encoder geometry or capacity. */
+	enum {
+		Y_BYTES = 16388, UV_BYTES = 4102,
+		PIXEL_BYTES = Y_BYTES + UV_BYTES
+	};
+	struct cixvpu_frame_source pixels = { 0 };
+	uint8_t *pixel_data = NULL;
 	firmware_handle_t firmware;
 	SHA256_CTX hash;
 	uint8_t digest[SHA256_DIGEST_LENGTH];
-	unsigned int roles[CIXVPU_FW_PLAN_RPC_SECOND_DATA + 1] = { 0 };
+	unsigned int roles[CIXVPU_FW_PLAN_BITSTREAM + 1] = { 0 };
 	unsigned int i, j, pages = 0, checked = 0;
 	off_t extent;
 	size_t size = 0;
 	void *image = NULL;
 	int error, close_error = 0, cleanup_error = 0;
 	int prepare_error = 0, prepared_cleanup_error = 0;
-	int boot_report_error = 0;
+	int boot_report_error = 0, sync_error = 0;
+	bool sync_attempted = false;
 	bool boot_report_valid = false;
 	bool prepare_attempted = false;
 
@@ -158,7 +171,10 @@ cixvpu_acpi_allocation(device_t self)
 		error = EINVAL;
 		goto out;
 	}
-	if (sc->sc_mode == 8)
+	if (sc->sc_mode == 9)
+		error = cixvpu_fw_plan_build_frame_slots(image, size, 1,
+		    &slots, &plan);
+	else if (sc->sc_mode == 8)
 		error = cixvpu_fw_plan_build_boot_rpc(image, size, 1, &plan);
 	else
 		error = cixvpu_fw_plan_build(image, size, 1, &plan);
@@ -167,6 +183,21 @@ cixvpu_acpi_allocation(device_t self)
 	if (sc->sc_mode == 4) {
 		firmware_free(image, size);
 		image = NULL;
+	}
+	if (sc->sc_mode == 9) {
+		pixel_data = kmem_alloc(PIXEL_BYTES, KM_NOSLEEP);
+		if (pixel_data == NULL) {
+			error = ENOMEM;
+			goto out;
+		}
+		pixels = (struct cixvpu_frame_source){
+			.y = pixel_data, .uv = pixel_data + Y_BYTES,
+			.y_bytes = Y_BYTES, .uv_bytes = UV_BYTES
+		};
+		for (i = 0; i < Y_BYTES; i++)
+			pixel_data[i] = (uint8_t)(i * 17U + 3U);
+		for (i = 0; i < UV_BYTES; i++)
+			pixel_data[Y_BYTES + i] = (uint8_t)(i * 29U + 0x91U);
 	}
 	pages = plan.backing_pages;
 	error = cixvpu_dma_alloc(sc->sc_aa.aa_dmat, sc->sc_aa.aa_dmat64,
@@ -193,11 +224,16 @@ cixvpu_acpi_allocation(device_t self)
 		roles[page.plan_page.role]++;
 		checked++;
 	}
-	if ((sc->sc_mode == 5 || sc->sc_mode == 7 || sc->sc_mode == 8) &&
+	if ((sc->sc_mode == 5 || sc->sc_mode == 7 || sc->sc_mode == 8 ||
+	    sc->sc_mode == 9) &&
 	    error == 0) {
 		/* No page view survives this CPU ownership MOVE. */
 		prepare_attempted = true;
-		if (sc->sc_mode == 7 || sc->sc_mode == 8)
+		if (sc->sc_mode == 9)
+			prepare_error = cixvpu_prepare_frame_slots_cpu(&sc->sc_dma,
+			    &plan, image, size, digest_expected, &pixels,
+			    &sc->sc_prepared);
+		else if (sc->sc_mode == 7 || sc->sc_mode == 8)
 			prepare_error = cixvpu_prepare_boot_cpu(&sc->sc_dma,
 			    &plan, image, size, digest_expected, &sc->sc_prepared);
 		else
@@ -228,6 +264,16 @@ out:
 		firmware_free(image, size);
 		image = NULL;
 	}
+	if (pixel_data != NULL) {
+		kmem_free(pixel_data, PIXEL_BYTES);
+		pixel_data = NULL;
+	}
+	/* Cache/bounce maintenance only; no address is given to the device. */
+	if (sc->sc_mode == 9 && error == 0 && close_error == 0) {
+		sync_attempted = true;
+		sync_error = cixvpu_prepared_sync_initial(sc->sc_prepared);
+		error = sync_error;
+	}
 	if (!sc->sc_boot_once_invoked) {
 		if (sc->sc_prepared != NULL)
 			prepared_cleanup_error = cixvpu_prepared_free(&sc->sc_prepared);
@@ -236,6 +282,18 @@ out:
 	}
 	if (sc->sc_mode == 7 || sc->sc_mode == 8) {
 		cixvpu_acpi_boot_print(self, sc, boot_report_valid);
+	} else if (sc->sc_mode == 9) {
+		aprint_normal_dev(self,
+		    "CPU slot fixture: pages %u checked %u mappings %u tables %u\n",
+		    pages, checked, pages != 0 ? plan.mappings : 0,
+		    roles[CIXVPU_FW_PLAN_ROOT] + roles[CIXVPU_FW_PLAN_LEAF]);
+		aprint_normal_dev(self,
+		    "prepare attempted %s, error %d; sync attempted %s, error %d\n",
+		    prepare_attempted ? "yes" : "no", prepare_error,
+		    sync_attempted ? "yes" : "no", sync_error);
+		aprint_normal_dev(self, "retained DMA %s prepared %s, no exposure\n",
+		    sc->sc_dma != NULL ? "yes" : "no",
+		    sc->sc_prepared != NULL ? "yes" : "no");
 	} else if (sc->sc_mode == 5) {
 		aprint_normal_dev(self,
 		    "one-core CPU prepare fixture: pages %u checked %u, "
@@ -263,10 +321,11 @@ out:
 		    prepared_cleanup_error != 0 ? prepared_cleanup_error : cleanup_error,
 		    error, close_error, boot_report_error,
 		    prepared_cleanup_error, cleanup_error);
-	} else if (sc->sc_mode == 5) {
+	} else if (sc->sc_mode == 5 || sc->sc_mode == 9) {
 		aprint_normal_dev(self,
-		    "prepare result %d, primary %d close %d "
+		    "%s result %d, primary %d close %d "
 		    "prepared cleanup %d DMA cleanup %d\n",
+		    sc->sc_mode == 9 ? "slot" : "prepare",
 		    error != 0 ? error : close_error != 0 ? close_error :
 		    prepared_cleanup_error != 0 ? prepared_cleanup_error : cleanup_error,
 		    error, close_error, prepared_cleanup_error, cleanup_error);
@@ -387,8 +446,8 @@ cixvpu_acpi_attach(device_t parent, device_t self, void *aux)
 	aprint_normal(": CIX P1 video codec (diagnostic attachment)\n");
 	sc->sc_dev = self;
 	sc->sc_mode = device_cfdata(self)->cf_flags;
-	if (sc->sc_mode > 8) {
-		aprint_error_dev(self, "unsupported flags %#x; use 0, 1, 2, 3, 4, 5, 6, 7 or 8\n",
+	if (sc->sc_mode > 9) {
+		aprint_error_dev(self, "unsupported flags %#x; use 0, 1, 2, 3, 4, 5, 6, 7, 8 or 9\n",
 		    sc->sc_mode);
 		return;
 	}
@@ -456,7 +515,7 @@ done:
 	acpi_resource_cleanup(&resources);
 	if (defer_probe) {
 		if (sc->sc_mode == 4 || sc->sc_mode == 5 ||
-		    sc->sc_mode == 7 || sc->sc_mode == 8) {
+		    sc->sc_mode == 7 || sc->sc_mode == 8 || sc->sc_mode == 9) {
 			config_mountroot(self, cixvpu_acpi_allocation);
 			return;
 		}
