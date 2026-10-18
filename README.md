@@ -251,7 +251,10 @@ on every board in the hardware catalog.
   An explicit [manual preparation profile](ember/boot/cix-vpu.md#manual-cpu-preparation-probe)
   calls that helper after root mounts and reports checked cleanup. Its attachment
   source checks pass; physical preparation remains unverified.
-  Synchronization, hardware publication and runtime teardown remain unfinished.
+  The [initial DMA synchronization and lifetime guard](ember/boot/cix-vpu.md#initial-dma-synchronization-and-lifetime-guard)
+  pass actual-source checks, including separate modeled bounce backing and
+  rejection of release after recorded exposure. No address handoff exists.
+  Physical DMA, hardware publication and runtime teardown remain unfinished.
   ARM ACPI DMA tags preserve [IORT named-component address limits](ember/boot/cix-platform.md#arm-acpi-dma-address-limits)
   through the device's namespace handle. Actual-source checks cover the fix;
   physical stream routing still needs qualification.

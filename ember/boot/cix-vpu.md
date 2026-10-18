@@ -23,8 +23,8 @@ The independent BSD source in `sys/dev/ic` implements bounded foundations:
 | `cixvpu_ring.[ch]` | Pack and unpack bounded message rings, including the selected `-sum` firmware's asymmetric checksum framing. | Own coherent snapshots, locking, DMA synchronization, barriers and index publication. |
 | `cixvpu_mmu.[ch]` | Encode 40-bit bus addresses and checked two-level page entries. Reject invalid permissions, occupied entries and stale removals. | Allocate/map DMA memory, stop the device and manage caches/TLBs. Removal is not safe during active DMA. |
 | `cixvpu_fw_plan.[ch]` | Plan protocol-3 backing owners and firmware VA mappings without allocation. Check the text offset, BSS bounds, aliases, table coverage and page quota. | Allocate validated DMA backing, copy data, synchronize and publish only after stopped-device checks. |
-| `cixvpu_dma.[ch]` | Allocate one native `bus_dma` owner per planned backing page. Validate loaded bus addresses and reverse partial allocation failures. | Keep all addresses hidden from hardware. Add synchronization, publication tracking and runtime teardown before integration. |
-| `cixvpu_prepare.[ch]` | Recheck the image pin and plan, copy CPU text pages, build and verify CPU page tables, then move the allocation into an opaque owner. | Preserve exclusive ownership. Add enforced exposure tracking and DMA synchronization before any hardware publication. |
+| `cixvpu_dma.[ch]` | Allocate one native `bus_dma` owner per backing page. Seal moved ownership, synchronize unique maps and reject release after recorded exposure. | Keep addresses hidden. Qualify the hardware handoff, runtime synchronization and eventual teardown separately. |
+| `cixvpu_prepare.[ch]` | Recheck the image pin and plan, copy CPU text, verify CPU page tables and move the allocation into an opaque owner. Offer initial synchronization without an address getter. | End all mutable borrows before preparation. Serialize access and retain every exposed owner until a qualified teardown exists. |
 
 The attachment selects the header parser, layout planner and CPU-only allocator.
 The kernel also links CPU preparation and its MMU helper. Only the explicit
@@ -131,8 +131,10 @@ allocator handle becomes NULL. No mutable getter or root-address handoff exists.
 Failure preserves caller handles, but CPU bytes may be partially changed.
 The caller must free that allocation. It must not retry or publish those bytes.
 `cixvpu_prepared_free` retains the complete owner if cleanup fails.
-This API seal relies on exclusive serialized ownership. It does not enforce
-an immutable device-visible lifetime or revoke arbitrary old C pointer copies.
+The allocator seals ownership before the move. Public page access and free
+reject old aliases which still name that live sealed allocation.
+Raw saved CPU views and pointers to freed objects remain invalid by contract.
+The caller must serialize access and end all mutable borrows before preparation.
 
 Source `75c59de2e3d76ae51fc1c3de564719749dab0c99` passes 13057225 checks
 with GCC16 path analysis, host Cppcheck/CSA and ASan/UBSan. The tests execute
@@ -142,6 +144,34 @@ Five compiled causal mutations are detected. The native GCC16 object and CSA
 have no findings. Native Cppcheck retains 403 header-baseline diagnostics and
 two exported-API unused-function hints in the isolated source unit.
 No synchronization, MMIO, address publication or firmware execution occurs.
+
+## Initial DMA synchronization and lifetime guard
+
+`cixvpu_prepared_sync_initial` offers one initial synchronization of a prepared
+owner. It validates all maps, loaded segments, roles, plan records and allocation
+capacity before the first native sync. Every unique data map is synchronized
+once, followed by all leaves and the root last. Offsets are map-relative zero;
+each operation covers the complete 4096-byte page.
+
+Text, host-written pages and tables use PREWRITE. Device-written data pages
+also use PREREAD. PREWRITE initializes possible bounce backing, including zeros.
+No DMA address is returned. The manual preparation callback does not call this
+API yet, and no production caller marks an owner exposed.
+
+Cleanup of a synchronized, never-exposed owner validates all receipts before
+matching POST operations and release. A private irreversible exposure marker
+closes every release path. There is no reset, timeout or caller-boolean bypass.
+This marker supports a future publication API; hardware handoff is unfinished.
+The guard does not implement a global stale-pointer registry or internal locking.
+
+Source `ea410dcd9b33ecf57fee7d86594454799ac776b3` passes 13349515 preparation
+checks with GCC16 path analysis, host Cppcheck/CSA and ASan/UBSan. The tests
+execute actual allocator, preparer, parser, planner and MMU source. Native
+services are modeled, with separate poisoned bounce backing. Ten causal mutations
+are detected, including an ASan reproduction of an allocation-capacity overrun.
+Native GCC16 and CSA pass. Native Cppcheck reports no warning, performance or
+portability findings in the changed DMA/preparer scope. These checks do not
+qualify physical cache behavior, routing or DMA.
 
 ## Manual CPU preparation probe
 
@@ -278,9 +308,9 @@ tag when no 64-bit tag exists. It validates loaded bus segments independently
 of allocation physical addresses and the child tag's bounds. Common and print
 CPU mappings use a coherent mapping hint without changing `_CCA`. All pages
 remain CPU-owned. Zeroed CPU mappings do not prepare a possible bounce buffer
-for hardware; no DMA sync, PTE publication or device access occurs. Free is
-forbidden after any device exposure. A future runtime must track that exposure
-and confirm reset, bus drain and callback quiescence before freeing pages.
+for hardware. Allocation alone performs no DMA sync, PTE publication or device
+access. The separate initial-sync helper and lifetime guard are described above.
+No runtime reclamation exists for an exposed owner.
 
 The optional identity probe from
 `a6a21a0820a54fac683a53b4980d296ae6a94177` also booted on the board and
