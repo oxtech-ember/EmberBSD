@@ -11,6 +11,14 @@
 #define CIXVPU_FW_PLAN_MAX_PAGES 2048U
 #define CIXVPU_FW_PLAN_NO_CORE UINT32_MAX
 
+/* Closed bootstrap arena: only INITIAL_SIZE is mapped; CAPACITY reserves VA. */
+#define CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS UINT32_C(0x20000000)
+#define CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_SIZE UINT32_C(0x00020000)
+#define CIXVPU_FW_PLAN_BOOT_RPC_CAPACITY UINT32_C(0x04000000)
+#define CIXVPU_FW_PLAN_BOOT_RPC_REGION 0U
+#define CIXVPU_FW_PLAN_BOOT_RPC_LOG2_ALIGNMENT 22U
+#define CIXVPU_FW_PLAN_BOOT_RPC_PAGES 32U
+
 enum cixvpu_fw_plan_role {
 	CIXVPU_FW_PLAN_TEXT,
 	CIXVPU_FW_PLAN_PRIVATE,
@@ -23,6 +31,7 @@ enum cixvpu_fw_plan_role {
 	CIXVPU_FW_PLAN_BUF_OUT_MVE,
 	CIXVPU_FW_PLAN_RPC,
 	CIXVPU_FW_PLAN_PRINT,
+	CIXVPU_FW_PLAN_RPC_DATA,
 	CIXVPU_FW_PLAN_ROOT,
 	CIXVPU_FW_PLAN_LEAF
 };
@@ -31,6 +40,7 @@ enum cixvpu_fw_plan_role {
 struct cixvpu_fw_plan {
 	struct cixvpu_fw_info info;
 	uint32_t cores;
+	uint32_t boot_rpc;             /* Closed reserve profile: exactly 0 or 1. */
 	uint32_t backing_pages;
 	uint32_t mappings;
 };
@@ -78,6 +88,15 @@ struct cixvpu_fw_plan_mapping {
  * ERANGE for an enumeration index outside the validated plan.
  */
 int cixvpu_fw_plan_build(const void *, size_t, unsigned int,
+    struct cixvpu_fw_plan *);
+/*
+ * Pure one-core protocol-3.5 variant, uncalled by native consumers.
+ * Adds 32 SHARED_RW/WRITE pages at ADDRESS, plus one PRIVATE/READ leaf.
+ * The complete [ADDRESS, ADDRESS+CAPACITY) interval is logically reserved.
+ * Unmapped tail entries stay invalid/zero, unlike the reference's dummy-PA
+ * no-access encoding. No tail backing, resize/free, PTE update or RPC occurs.
+ */
+int cixvpu_fw_plan_build_boot_rpc(const void *, size_t, unsigned int,
     struct cixvpu_fw_plan *);
 int cixvpu_fw_plan_page(const struct cixvpu_fw_plan *, unsigned int,
     struct cixvpu_fw_plan_page *);

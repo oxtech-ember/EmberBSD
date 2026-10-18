@@ -305,7 +305,16 @@ static uint8_t device_memory[2048][4096];
 static unsigned int pres[2048], posts[2048], sync_calls;
 static bool bounce;
 static struct cixvpu_fw_plan sync_plan;
-static const unsigned int want_pre[] = {4, 5, 5, 4, 5, 4, 5, 4, 5, 5, 5, 4, 4};
+static const unsigned int want_pre[] = {
+    [CIXVPU_FW_PLAN_TEXT]=4,
+    [CIXVPU_FW_PLAN_PRIVATE]=5, [CIXVPU_FW_PLAN_SHARED]=5,
+    [CIXVPU_FW_PLAN_MSG_HOST]=4, [CIXVPU_FW_PLAN_MSG_MVE]=5,
+    [CIXVPU_FW_PLAN_BUF_IN_HOST]=4, [CIXVPU_FW_PLAN_BUF_IN_MVE]=5,
+    [CIXVPU_FW_PLAN_BUF_OUT_HOST]=4, [CIXVPU_FW_PLAN_BUF_OUT_MVE]=5,
+    [CIXVPU_FW_PLAN_RPC]=5, [CIXVPU_FW_PLAN_PRINT]=5,
+    /* RPC_DATA has no initial-sync support in this foundation slice. */
+    [CIXVPU_FW_PLAN_ROOT]=4, [CIXVPU_FW_PLAN_LEAF]=4
+};
 static uint8_t *device_bytes(unsigned int i)
 { return bounce ? device_memory[i] : resources[i].kva; }
 static void observe_sync(unsigned int i, bus_addr_t offset, bus_size_t length, int ops)

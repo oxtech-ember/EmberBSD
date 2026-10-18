@@ -836,7 +836,10 @@ static void allocation_tests(void)
     CHECK(strstr(diagnostic, "allocation role 0 pages 1") != NULL);
     CHECK(strstr(diagnostic, "allocation role 1 pages 1") != NULL);
     CHECK(strstr(diagnostic, "allocation role 10 pages 128") != NULL);
-    CHECK(strstr(diagnostic, "allocation role 12 pages 2") != NULL);
+    char leaf_diagnostic[64];
+    CHECK(snprintf(leaf_diagnostic,sizeof(leaf_diagnostic),
+        "allocation role %u pages 2\n",(unsigned int)CIXVPU_FW_PLAN_LEAF)>0);
+    CHECK(strstr(diagnostic,leaf_diagnostic)!=NULL);
     CHECK(strstr(diagnostic, "allocation result 0, primary 0 close 0 cleanup 0") != NULL);
     for (unsigned int fault = 1; fault <= 15; fault++) {
         allocation_fixture(fault); allocation_run();

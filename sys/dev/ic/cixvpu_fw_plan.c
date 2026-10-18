@@ -25,12 +25,15 @@
 /* Recheck metadata on every public call, before any bitmap or index use. */
 static int
 cixvpu_fw_plan_check(const struct cixvpu_fw_info *info, unsigned int cores,
-    struct cixvpu_fw_plan *checked)
+    uint32_t boot_rpc, struct cixvpu_fw_plan *checked)
 {
 	uint32_t text_pages, shared_pages, bss_end, first, private_pages = 0;
 	uint32_t i;
 	uint64_t backing, mappings;
 
+	if (boot_rpc > 1 || (boot_rpc != 0 &&
+	    (cores != 1 || info->minor != 5)))
+		return EINVAL;
 	if (cores == 0 || cores > CIXVPU_FW_PLAN_MAX_CORES || info->major != 3 ||
 	    info->text_size < CIXVPU_FW_HEADER_SIZE ||
 	    info->text_size > CIXVPU_FW_REGION_SIZE)
@@ -74,10 +77,13 @@ cixvpu_fw_plan_check(const struct cixvpu_fw_info *info, unsigned int cores,
 	    shared_pages + PLAN_COMMON_PAGES + PLAN_PRINT_PAGES + cores + 2;
 	mappings = (uint64_t)cores * (text_pages + private_pages + shared_pages) +
 	    PLAN_COMMON_PAGES + PLAN_PRINT_PAGES;
+	backing += (uint64_t)boot_rpc * (CIXVPU_FW_PLAN_BOOT_RPC_PAGES + 1);
+	mappings += (uint64_t)boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_PAGES;
 	if (backing > CIXVPU_FW_PLAN_MAX_PAGES || mappings > UINT32_MAX)
 		return E2BIG;
 	checked->info = *info;
 	checked->cores = cores;
+	checked->boot_rpc = boot_rpc;
 	checked->backing_pages = (uint32_t)backing;
 	checked->mappings = (uint32_t)mappings;
 	return 0;
@@ -91,7 +97,8 @@ cixvpu_fw_plan_validate(const struct cixvpu_fw_plan *plan)
 
 	if (plan == NULL)
 		return EINVAL;
-	error = cixvpu_fw_plan_check(&plan->info, plan->cores, &checked);
+	error = cixvpu_fw_plan_check(&plan->info, plan->cores, plan->boot_rpc,
+	    &checked);
 	if (error != 0)
 		return error;
 	if (plan->backing_pages != checked.backing_pages ||
@@ -100,9 +107,9 @@ cixvpu_fw_plan_validate(const struct cixvpu_fw_plan *plan)
 	return 0;
 }
 
-int
-cixvpu_fw_plan_build(const void *image, size_t size, unsigned int cores,
-    struct cixvpu_fw_plan *out)
+static int
+cixvpu_fw_plan_build_profile(const void *image, size_t size,
+    unsigned int cores, uint32_t boot_rpc, struct cixvpu_fw_plan *out)
 {
 	struct cixvpu_fw_info info;
 	struct cixvpu_fw_plan checked;
@@ -110,11 +117,27 @@ cixvpu_fw_plan_build(const void *image, size_t size, unsigned int cores,
 
 	if (out == NULL || cixvpu_fw_parse(image, size, &info) != CIXVPU_FW_OK)
 		return EINVAL;
-	error = cixvpu_fw_plan_check(&info, cores, &checked);
+	error = cixvpu_fw_plan_check(&info, cores, boot_rpc, &checked);
 	if (error != 0)
 		return error;
 	*out = checked;
 	return 0;
+}
+
+int
+cixvpu_fw_plan_build(const void *image, size_t size, unsigned int cores,
+    struct cixvpu_fw_plan *out)
+{
+
+	return cixvpu_fw_plan_build_profile(image, size, cores, 0, out);
+}
+
+int
+cixvpu_fw_plan_build_boot_rpc(const void *image, size_t size, unsigned int cores,
+    struct cixvpu_fw_plan *out)
+{
+
+	return cixvpu_fw_plan_build_profile(image, size, cores, 1, out);
 }
 
 /* Called only after validation and an index bound check. */
@@ -124,12 +147,13 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 {
 	const struct cixvpu_fw_info *info = &plan->info;
 	struct cixvpu_fw_plan_page page = { 0 };
-	uint32_t shared, common, print, root;
+	uint32_t shared, common, print, rpc, root;
 
 	shared = info->text_pages + plan->cores * info->private_pages;
 	common = shared + info->shared_pages;
 	print = common + PLAN_COMMON_PAGES;
-	root = print + PLAN_PRINT_PAGES;
+	rpc = print + PLAN_PRINT_PAGES;
+	root = rpc + plan->boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_PAGES;
 	page.backing_index = index;
 	page.core = CIXVPU_FW_PLAN_NO_CORE;
 	page.attribute = CIXVPU_MMU_PRIVATE;
@@ -153,9 +177,13 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 		page.role = (enum cixvpu_fw_plan_role)
 		    (CIXVPU_FW_PLAN_MSG_HOST + index - common);
 		page.attribute = CIXVPU_MMU_COHERENT;
-	} else if (index < root) {
+	} else if (index < rpc) {
 		page.role = CIXVPU_FW_PLAN_PRINT;
 		page.ordinal = index - print;
+		page.attribute = CIXVPU_MMU_SHARED_RW;
+	} else if (index < root) {
+		page.role = CIXVPU_FW_PLAN_RPC_DATA;
+		page.ordinal = index - rpc;
 		page.attribute = CIXVPU_MMU_SHARED_RW;
 	} else if (index == root) {
 		page.role = CIXVPU_FW_PLAN_ROOT;
@@ -166,8 +194,10 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 		if (page.ordinal < plan->cores) {
 			page.core = page.ordinal;
 			page.leaf_address = page.core * PLAN_CORE_STRIDE;
-		} else {
+		} else if (page.ordinal == plan->cores) {
 			page.leaf_address = PLAN_COMMON_LEAF;
+		} else {
+			page.leaf_address = CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS;
 		}
 	}
 	*out = page;
@@ -211,8 +241,17 @@ cixvpu_fw_plan_mapping(const struct cixvpu_fw_plan *plan, unsigned int index,
 	info = &plan->info;
 	per_core = info->text_pages + info->private_pages + info->shared_pages;
 	core_maps = per_core * plan->cores;
-	first_leaf = plan->backing_pages - plan->cores - 1;
+	first_leaf = plan->backing_pages - plan->cores - 1 - plan->boot_rpc;
 	shared = info->text_pages + plan->cores * info->private_pages;
+	if (index >= core_maps + PLAN_COMMON_PAGES + PLAN_PRINT_PAGES) {
+		local = index - core_maps - PLAN_COMMON_PAGES - PLAN_PRINT_PAGES;
+		map.backing_index = shared + info->shared_pages +
+		    PLAN_COMMON_PAGES + PLAN_PRINT_PAGES + local;
+		map.leaf_backing_index = first_leaf + plan->cores + 1;
+		map.address = CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS +
+		    local * CIXVPU_FW_PAGE_SIZE;
+		goto ready;
+	}
 	if (index >= core_maps) {
 		local = index - core_maps;
 		map.backing_index = shared + info->shared_pages + local;
