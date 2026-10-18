@@ -551,6 +551,47 @@ cixvpu_prepared_boot_rpc_header(struct cixvpu_prepared *p,
 }
 
 int
+cixvpu_prepared_boot_debugparam(struct cixvpu_prepared *p,
+    enum cixvpu_boot_debug_result *out)
+{
+	enum cixvpu_boot_debug_result result;
+	uint32_t state;
+	int error;
+	bool fault = false;
+
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (p == NULL || out == NULL)
+		return EINVAL;
+	if (p->boot.error != 0)
+		return p->boot.error;
+	error = cixvpu_prepare_boot_output(p, out, sizeof(*out),
+	    _Alignof(enum cixvpu_boot_debug_result), &fault);
+	if (error != 0) {
+		if (fault && p->boot.published) {
+			p->boot.error = error;
+			p->boot.snapshot.rpc_valid = false;
+		}
+		return error;
+	}
+	if (!p->boot.published)
+		return EBUSY;
+	p->boot.snapshot.rpc_valid = false;
+	error = cixvpu_dma_boot_debugparam(p->dma, p, &p->plan,
+	    &p->boot.snapshot);
+	if (error != 0) {
+		if (error != EAGAIN)
+			p->boot.error = error;
+		return error;
+	}
+	state = cixvpu_prepare_get32(p->boot.snapshot.rpc_header);
+	result = state == 0 ? CIXVPU_BOOT_DEBUG_IDLE :
+	    state == 2 ? CIXVPU_BOOT_DEBUG_PENDING : CIXVPU_BOOT_DEBUG_REPLIED;
+	*out = result;
+	return 0;
+}
+
+int
 cixvpu_prepared_boot_receive(struct cixvpu_prepared *p,
     struct cixvpu_boot_reply *out)
 {

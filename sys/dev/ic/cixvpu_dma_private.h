@@ -45,6 +45,10 @@ int cixvpu_dma_boot_output(struct cixvpu_dma *,
 int cixvpu_dma_boot_snapshot(struct cixvpu_dma *,
     const struct cixvpu_prepared *, const struct cixvpu_fw_plan *,
     struct cixvpu_dma_boot_snapshot *);
+/* Closed DEBUGPARAM only; success retains the original observed header. */
+int cixvpu_dma_boot_debugparam(struct cixvpu_dma *,
+    const struct cixvpu_prepared *, const struct cixvpu_fw_plan *,
+    struct cixvpu_dma_boot_snapshot *);
 int cixvpu_dma_boot_ack(struct cixvpu_dma *,
     const struct cixvpu_prepared *, const struct cixvpu_fw_plan *, uint16_t);
 

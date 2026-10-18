@@ -1093,7 +1093,10 @@ The base system shell is unchanged.
   allocation. An explicit firmware boot trial reaches exposed ownership and an
   initial IRQ, then returns ENOTSUP before SWITCHED_IN/PONG. It retains exposed
   pages and masks the IRQ. Cached RPC-header diagnostics have source checks;
-  their next physical trial requires a cold start. Firmware readiness, DMA data
+  their next physical trial requires a cold start. A separate, inactive
+  [DEBUGPARAM primitive](ember/boot/cix-vpu.md#inactive-debugparam-response)
+  passes actual-source checks. It changes only a validated request's state word;
+  the boot coordinator does not call it. Firmware readiness, DMA data
   correctness and video queues remain unqualified. Default EMBER64 keeps active
   firmware boot disabled.
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request

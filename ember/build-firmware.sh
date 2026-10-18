@@ -217,7 +217,7 @@ if [[ ! -f "$src/.ember-series" || "$(cat "$src/.ember-series")" != "$series_ide
             tfa-*.diff) patch_tree=arm-trusted-firmware ;;
             *)         patch_tree=edk2-platforms ;;
         esac
-        patch -s -p1 -F0 -d "$src/$patch_tree" < "$ROOT/ember/firmware/$diff"
+        patch -s -t -N -p1 -F0 -d "$src/$patch_tree" < "$ROOT/ember/firmware/$diff"
     done < "$series"
     printf '%s\n' "$series_identity" > "$src/.ember-series"
 fi

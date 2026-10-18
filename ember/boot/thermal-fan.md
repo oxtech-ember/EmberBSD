@@ -1,5 +1,8 @@
 # ACPI fan policies
 
+The canonical firmware series hands off at 125/255 until the OS establishes
+its cooling policy. Source checks do not establish flashed-firmware or cold-start acceptance.
+
 The tested CM5 fan almost stopped at 75/255 PWM. It started and ran at
 125/255 without a maximum-speed boost. The thermal-zone driver offers a
 configurable minimum active level and two optional fallback policies.

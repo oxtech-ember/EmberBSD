@@ -73,4 +73,27 @@ int cixvpu_prepared_boot_receive(struct cixvpu_prepared *,
 int cixvpu_prepared_boot_rpc_header(struct cixvpu_prepared *,
     struct cixvpu_boot_rpc_header *);
 
+enum cixvpu_boot_debug_result {
+	CIXVPU_BOOT_DEBUG_IDLE,
+	CIXVPU_BOOT_DEBUG_PENDING,
+	CIXVPU_BOOT_DEBUG_REPLIED
+};
+/*
+ * Inactive closed primitive, not used by boot receive or its coordinator.
+ * Thread context, serialized published owner and the same output guards apply.
+ * FREE/RETURN ignore stale call/size and return IDLE/PENDING without writes.
+ * Stable PARAM/call1/size<=1012 changes only state to RETURN, then REPLIED.
+ * No payload read/log, IRQ notification, message ACK or allocation occurs.
+ * Two matching header copies rely on committed PARAM staying firmware-immutable
+ * until RETURN; they do not establish an atomic read or physical cache proof.
+ * Four unstable pairs return nonsticky EAGAIN. Protocol/map faults are sticky;
+ * an existing sticky fault permits no I/O. Errors preserve out; diagnostics
+ * retain the last acquired header. No exposed-owner reclamation is allowed.
+ * After basic context/NULL checks, an existing sticky error takes priority
+ * over map/alias checks; it preserves the primary error and performs no I/O.
+ * Future integration must notify firmware after REPLIED before another step.
+ */
+int cixvpu_prepared_boot_debugparam(struct cixvpu_prepared *,
+    enum cixvpu_boot_debug_result *);
+
 #endif

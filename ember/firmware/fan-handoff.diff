@@ -8,14 +8,14 @@ diff --git a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c b/Pl
 index 24893bd..1a5c6e9 100644
 --- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
 +++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
-@@ -126,7 +126,6 @@
+@@ -126,6 +126,5 @@
  #define RP1_PWM_SET_UPDATE             BIT31
  #define RP1_FAN_PWM_RANGE              2078U
 -#define RP1_FAN_PWM_LOW                75U
  
  //
  // Simple NameOp integer patcher.
-@@ -253,9 +252,10 @@ Rp1ProgramFan (
+@@ -253,11 +252,12 @@ Rp1ProgramFan (
    Register  = MmioRead32 (Base + RP1_FAN_GPIO_CTRL);
    Register &= ~(RP1_GPIO_FUNCSEL_MASK | RP1_GPIO_OVERRIDE_MASK);
    MmioWrite32 (Base + RP1_FAN_GPIO_CTRL, Register);
