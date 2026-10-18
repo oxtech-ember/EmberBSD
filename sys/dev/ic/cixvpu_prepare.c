@@ -156,7 +156,8 @@ cixvpu_prepare_gather(struct cixvpu_dma *dma,
 		}
 		work->owners[work->count++] = i;
 	}
-	if (roots != 1 || work->count != plan->cores + 2 + 2 * plan->boot_rpc)
+	if (roots != 1 || work->count != plan->cores + 2 + 2 * plan->boot_rpc +
+	    2 * plan->slots_enabled)
 		return EINVAL;
 	/* The caller's allocator snapshot must contain exactly these owners. */
 	error = cixvpu_dma_page(dma, plan->backing_pages, &extra);
@@ -255,19 +256,23 @@ static int
 cixvpu_prepare_common(struct cixvpu_dma **owned,
     const struct cixvpu_fw_plan *expected_plan, const void *image,
     size_t image_size, const uint8_t expected_digest[32],
-    struct cixvpu_prepared **out, bool boot)
+    struct cixvpu_prepared **out, bool boot,
+    const struct cixvpu_frame_source *source)
 {
 	static const uint8_t boot_version[16] = "r0p0-sum0005";
 	struct cixvpu_fw_plan snapshot, checked;
 	struct cixvpu_prepared *prepared = NULL;
 	struct cixvpu_prepare_work *work = NULL;
+	struct cixvpu_frame_source pixels = { 0 };
+	struct cixvpu_fw_slot_span planes[2];
 	struct cixvpu_prepare_span spans[] = {
 		{ image, image_size }, { expected_plan, sizeof(*expected_plan) },
-		{ expected_digest, 32 }, { owned, sizeof(*owned) }, { out, sizeof(*out) }
+		{ expected_digest, 32 }, { owned, sizeof(*owned) }, { out, sizeof(*out) },
+		{ source, sizeof(*source) }, { NULL, 0 }, { NULL, 0 }
 	};
 	SHA256_CTX hash;
 	uint8_t digest[SHA256_DIGEST_LENGTH], pin[SHA256_DIGEST_LENGTH];
-	size_t work_bytes, prepared_bytes, capacity, pages;
+	size_t work_bytes, prepared_bytes, capacity, pages, nspans = 5;
 	unsigned int i, j;
 	uint32_t word;
 	int error;
@@ -283,19 +288,32 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 		return EBUSY;
 	if (PAGE_SIZE != CIXVPU_FW_PAGE_SIZE)
 		return EOPNOTSUPP;
-	for (i = 0; i < __arraycount(spans); i++)
+	if (source != NULL) {
+		if (!cixvpu_prepare_span_valid(&spans[5]) ||
+		    cixvpu_prepare_overlap(&spans[5], &spans[3]) ||
+		    cixvpu_prepare_overlap(&spans[5], &spans[4]))
+			return EINVAL;
+		pixels = *source;
+		spans[6] = (struct cixvpu_prepare_span){ pixels.y, pixels.y_bytes };
+		spans[7] = (struct cixvpu_prepare_span){ pixels.uv, pixels.uv_bytes };
+		nspans = __arraycount(spans);
+	}
+	for (i = 0; i < nspans; i++)
 		if (!cixvpu_prepare_span_valid(&spans[i]))
 			return EINVAL;
 	/* Publishing handles must not change each other or immutable inputs. */
-	for (i = 3; i < __arraycount(spans); i++)
-		for (j = 0; j < i; j++)
-			if (cixvpu_prepare_overlap(&spans[i], &spans[j]))
+	for (i = 3; i <= 4; i++)
+		for (j = 0; j < nspans; j++)
+			if (i != j && cixvpu_prepare_overlap(&spans[i], &spans[j]))
 				return EINVAL;
 	snapshot = *expected_plan;
-	/* This constructor does not yet own or synchronize frame slots. */
-	if (snapshot.slots_enabled != 0 || snapshot.slots.width != 0 ||
+	/* Ordinary entry points never silently downgrade a slot request. */
+	if (source == NULL && (snapshot.slots_enabled != 0 ||
+	    snapshot.slots.width != 0 ||
 	    snapshot.slots.height != 0 || snapshot.slots.stride_y != 0 ||
-	    snapshot.slots.stride_uv != 0 || snapshot.slots.bitstream_bytes != 0)
+	    snapshot.slots.stride_uv != 0 || snapshot.slots.bitstream_bytes != 0))
+		return EINVAL;
+	if (source != NULL && (snapshot.slots_enabled != 1 || snapshot.boot_rpc != 1))
 		return EINVAL;
 	memcpy(pin, expected_digest, sizeof(pin));
 	(void)SHA256_Init(&hash);
@@ -303,7 +321,10 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 	(void)SHA256_Final(digest, &hash);
 	if (memcmp(digest, pin, sizeof(pin)) != 0)
 		return EINVAL;
-	if (snapshot.boot_rpc == 1)
+	if (source != NULL)
+		error = cixvpu_fw_plan_build_frame_slots(image, image_size,
+		    snapshot.cores, &snapshot.slots, &checked);
+	else if (snapshot.boot_rpc == 1)
 		error = cixvpu_fw_plan_build_boot_rpc(image, image_size,
 		    snapshot.cores, &checked);
 	else
@@ -315,12 +336,27 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 	    snapshot.boot_rpc != checked.boot_rpc ||
 	    snapshot.backing_pages != checked.backing_pages ||
 	    snapshot.mappings != checked.mappings ||
+	    snapshot.slots_enabled != checked.slots_enabled ||
+	    snapshot.slots.width != checked.slots.width ||
+	    snapshot.slots.height != checked.slots.height ||
+	    snapshot.slots.stride_y != checked.slots.stride_y ||
+	    snapshot.slots.stride_uv != checked.slots.stride_uv ||
+	    snapshot.slots.bitstream_bytes != checked.slots.bitstream_bytes ||
 	    !cixvpu_prepare_info_equal(&snapshot.info, &checked.info))
 		return EINVAL;
 	if (boot && (checked.cores != 1 || checked.info.major != 3 ||
 	    checked.info.minor != 5 || memcmp(checked.info.version,
 	    boot_version, sizeof(checked.info.version)) != 0))
 		return ENOTSUP;
+	if (source != NULL) {
+		for (i = 0; i < 2; i++) {
+			error = cixvpu_fw_plan_slot(&checked, i, &planes[i]);
+			if (error != 0)
+				return error;
+			if (spans[6 + i].bytes != planes[i].bytes)
+				return EINVAL;
+		}
+	}
 	capacity = (size_t)checked.mappings + CIXVPU_FW_PLAN_MAX_CORES + 1 +
 	    2 * checked.boot_rpc;
 	pages = checked.backing_pages;
@@ -342,7 +378,7 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 	prepared->bytes = prepared_bytes;
 	prepared->plan = checked;
 	error = cixvpu_prepare_gather(*owned, &checked, spans,
-	    __arraycount(spans), work);
+	    nspans, work);
 	if (error != 0)
 		goto failed;
 	error = cixvpu_prepare_tables(prepared, work);
@@ -357,6 +393,19 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 			memcpy(work->pages[i].kva,
 			    (const uint8_t *)image + p->image_offset,
 			    p->image_bytes);
+	}
+	if (source != NULL) {
+		for (i = 0; i < 2; i++) {
+			for (j = 0; j < planes[i].pages; j++) {
+				size_t offset = (size_t)j * CIXVPU_FW_PAGE_SIZE;
+				size_t bytes = planes[i].bytes - offset;
+
+				if (bytes > CIXVPU_FW_PAGE_SIZE)
+					bytes = CIXVPU_FW_PAGE_SIZE;
+				memcpy(work->pages[planes[i].first_backing + j].kva,
+				    (const uint8_t *)spans[6 + i].pointer + offset, bytes);
+			}
+		}
 	}
 	for (i = 0; i < prepared->count; i++) {
 		const struct cixvpu_prepare_entry *e = &prepared->entries[i];
@@ -461,7 +510,7 @@ cixvpu_prepare_cpu(struct cixvpu_dma **owned,
     const uint8_t pin[32], struct cixvpu_prepared **out)
 {
 
-	return cixvpu_prepare_common(owned, plan, image, size, pin, out, false);
+	return cixvpu_prepare_common(owned, plan, image, size, pin, out, false, NULL);
 }
 
 int
@@ -470,7 +519,19 @@ cixvpu_prepare_boot_cpu(struct cixvpu_dma **owned,
     const uint8_t pin[32], struct cixvpu_prepared **out)
 {
 
-	return cixvpu_prepare_common(owned, plan, image, size, pin, out, true);
+	return cixvpu_prepare_common(owned, plan, image, size, pin, out, true, NULL);
+}
+
+int
+cixvpu_prepare_frame_slots_cpu(struct cixvpu_dma **owned,
+    const struct cixvpu_fw_plan *plan, const void *image, size_t size,
+    const uint8_t pin[32], const struct cixvpu_frame_source *source,
+    struct cixvpu_prepared **out)
+{
+
+	if (source == NULL)
+		return EINVAL;
+	return cixvpu_prepare_common(owned, plan, image, size, pin, out, true, source);
 }
 
 static int

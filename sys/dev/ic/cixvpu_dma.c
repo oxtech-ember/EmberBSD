@@ -56,9 +56,30 @@ static int
 cixvpu_dma_record(const struct cixvpu_fw_plan_page *page, uint32_t index)
 {
 
+	switch (page->role) {
+	case CIXVPU_FW_PLAN_TEXT:
+	case CIXVPU_FW_PLAN_PRIVATE:
+	case CIXVPU_FW_PLAN_SHARED:
+	case CIXVPU_FW_PLAN_MSG_HOST:
+	case CIXVPU_FW_PLAN_MSG_MVE:
+	case CIXVPU_FW_PLAN_BUF_IN_HOST:
+	case CIXVPU_FW_PLAN_BUF_IN_MVE:
+	case CIXVPU_FW_PLAN_BUF_OUT_HOST:
+	case CIXVPU_FW_PLAN_BUF_OUT_MVE:
+	case CIXVPU_FW_PLAN_RPC:
+	case CIXVPU_FW_PLAN_PRINT:
+	case CIXVPU_FW_PLAN_RPC_DATA:
+	case CIXVPU_FW_PLAN_ROOT:
+	case CIXVPU_FW_PLAN_LEAF:
+	case CIXVPU_FW_PLAN_RPC_SECOND_DATA:
+	case CIXVPU_FW_PLAN_FRAME_Y:
+	case CIXVPU_FW_PLAN_FRAME_UV:
+	case CIXVPU_FW_PLAN_BITSTREAM:
+		break;
+	default:
+		return EINVAL;
+	}
 	if (page->backing_index != index ||
-	    page->role < CIXVPU_FW_PLAN_TEXT ||
-	    page->role > CIXVPU_FW_PLAN_RPC_SECOND_DATA ||
 	    page->attribute > CIXVPU_MMU_SHARED_RW ||
 	    page->permission < CIXVPU_MMU_READ ||
 	    page->permission > CIXVPU_MMU_WRITE ||
@@ -311,6 +332,8 @@ cixvpu_dma_initial_ops(enum cixvpu_fw_plan_role role)
 	case CIXVPU_FW_PLAN_BUF_OUT_HOST:
 	case CIXVPU_FW_PLAN_LEAF:
 	case CIXVPU_FW_PLAN_ROOT:
+	case CIXVPU_FW_PLAN_FRAME_Y:
+	case CIXVPU_FW_PLAN_FRAME_UV:
 		return BUS_DMASYNC_PREWRITE;
 	case CIXVPU_FW_PLAN_PRIVATE:
 	case CIXVPU_FW_PLAN_SHARED:
@@ -321,6 +344,7 @@ cixvpu_dma_initial_ops(enum cixvpu_fw_plan_role role)
 	case CIXVPU_FW_PLAN_PRINT:
 	case CIXVPU_FW_PLAN_RPC_DATA:
 	case CIXVPU_FW_PLAN_RPC_SECOND_DATA:
+	case CIXVPU_FW_PLAN_BITSTREAM:
 		return BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD;
 	default:
 		return 0;

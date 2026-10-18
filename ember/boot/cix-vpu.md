@@ -144,7 +144,8 @@ access unit, successful encoding or permission to release an exposed owner.
 
 The aperture checks do not prove mapped backing or authorize an address.
 The [stopped slot layout foundation](#stopped-slot-layout-foundation) excludes
-existing RPC logical reservations. Actual owner binding remains separate. No physical geometry or buffer capacity is
+existing RPC logical reservations. An explicit CPU constructor checks owner
+binding; native queue authorization remains separate. No physical geometry or buffer capacity is
 selected here. The module does not access pixel/encoded data, modify page tables,
 synchronize DMA, submit native queues or issue GO.
 
@@ -179,21 +180,47 @@ for that image. Other images use their validated base count.
 Slot accessors return checked VA spans and unique backing indices. They do
 not allocate, copy pixels, build live PTEs, synchronize DMA or grant ownership.
 Ordinary plans keep their existing indices and mappings with slots disabled.
-The allocator rejects new roles before allocation. Existing CPU preparation
-rejects any slot metadata before page borrows, writes or ownership movement.
-No attachment selects this layout. Native owner integration, command submission,
-output refill and one-frame encoding remain pending.
+The allocator accepts the explicit slot roles. Ordinary CPU constructors still
+reject all slot metadata before page borrows, writes or ownership movement.
+Only the explicit slot constructor described below accepts this layout. No
+attachment selects it. Command submission, output refill and one-frame encoding
+remain pending.
 
 Actual-source tests compose MMU tables with discontiguous synthetic bus pages.
 They check literal slot spans, zero tails, full reserve exclusion, exact quotas,
-invalid metadata and the existing consumers' refusal before side effects.
+invalid metadata and ordinary constructors' refusal before side effects.
 
 ```sh
 CC=gcc-16 CFLAGS=-fanalyzer CIXVPU_PLAN_ANALYZE=1 \
     sh ember/tools/cixvpu-fw-plan-contract.sh
 ```
 
+## Stopped CPU slot preparation
+
+`cixvpu_prepare_frame_slots_cpu` takes a validated slot plan, the trusted full
+firmware pin and two immutable CPU plane spans. Each span must have the exact
+required length, including row padding. Both source planes are copied before
+seal. Storage tails and the complete BITSTREAM backing stay zero.
+
+The constructor checks known input/handle/owner spans and all loaded page
+metadata before writing. It builds and verifies the seven stopped page tables,
+seeds the existing PING, then seals and moves the owner. Errors preserve both
+handles but can leave dirty CPU pages; free that stopped allocation instead of
+retrying it. Success exposes no mutable page view.
+
+Initial sync publishes each unique data page before leaves and root. Input
+planes use PREWRITE. Output uses PREWRITE|PREREAD, so bounce memory receives its
+initial zeros. Pre-exposure cancellation matches those masks. Every free remains
+forbidden after recorded exposure. No runtime output-byte getter or native
+submission is added.
+
+Actual-source contracts check distinct source patterns, page tails, PTEs,
+poisoned bounce memory, aliases, failures before effects, last-fallible seal and
+retained exposure. This is an uncalled CPU mechanism. No active profile, pixel
+format conversion, hardware frame completion or output capacity is qualified.
+
 ## Manual CPU-only allocation probe
+
 
 
 [EMBER64_CIXVPU_DMA_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_DMA_PROBE)

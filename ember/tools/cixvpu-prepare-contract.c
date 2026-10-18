@@ -36,6 +36,7 @@ static unsigned int success_counts[4];
 static bool fail_free, top_bus;
 #ifdef CIXVPU_SYNC_API
 static bool fail_seal;
+static void (*seal_observer)(void);
 #endif
 static int SHA256_Init(SHA256_CTX *ctx)
 { ctx->phase = 1; ctx->matches = false; return 1; }
@@ -83,7 +84,11 @@ static int prepare_encode(uint64_t bus, unsigned int attr, unsigned int perm, ui
 static int prepare_free(struct cixvpu_dma **owner, const struct cixvpu_prepared *p)
 { if (fail_free) return EIO; return cixvpu_dma_free_prepared(owner, p); }
 static int prepare_seal(struct cixvpu_dma *owner, const struct cixvpu_prepared *p)
-{ if (fail_seal) return EIO; return cixvpu_dma_seal(owner, p); }
+{
+    if (seal_observer != NULL) seal_observer();
+    if (fail_seal) return EIO;
+    return cixvpu_dma_seal(owner, p);
+}
 #else
 static int prepare_free(struct cixvpu_dma **owner)
 { if (fail_free) return EIO; return cixvpu_dma_free(owner); }
@@ -121,7 +126,7 @@ static struct cixvpu_dma *begin(unsigned int cores, struct cixvpu_fw_plan *plan)
     fail_meta = fail_page = fail_map = fail_link = fail_encode = view_fault = duplicate_map = 0;
     fail_free = false;
 #ifdef CIXVPU_SYNC_API
-    fail_seal = false;
+    fail_seal = false; seal_observer = NULL;
 #endif
     return owner;
 }
@@ -322,7 +327,9 @@ static const unsigned int want_pre[] = {
     [CIXVPU_FW_PLAN_RPC]=5, [CIXVPU_FW_PLAN_PRINT]=5,
     [CIXVPU_FW_PLAN_RPC_DATA]=5,
     [CIXVPU_FW_PLAN_RPC_SECOND_DATA]=5,
-    [CIXVPU_FW_PLAN_ROOT]=4, [CIXVPU_FW_PLAN_LEAF]=4
+    [CIXVPU_FW_PLAN_ROOT]=4, [CIXVPU_FW_PLAN_LEAF]=4,
+    [CIXVPU_FW_PLAN_FRAME_Y]=4, [CIXVPU_FW_PLAN_FRAME_UV]=4,
+    [CIXVPU_FW_PLAN_BITSTREAM]=5
 };
 static uint8_t *device_bytes(unsigned int i)
 { return bounce ? device_memory[i] : resources[i].kva; }
@@ -783,7 +790,7 @@ static struct cixvpu_dma *rpc_reserve_begin(struct cixvpu_fw_plan *plan)
     for(unsigned int i=0;i<390;i++) memset(resources[i].kva,0xa5,4096);
     hashes=page_calls=map_calls=link_calls=encode_calls=meta_calls=0;
     fail_meta=fail_page=fail_map=fail_link=fail_encode=view_fault=duplicate_map=rpc_table_fault=0;
-    fail_free=fail_seal=false;
+    fail_free=fail_seal=false; seal_observer=NULL;
     return owner;
 }
 static void rpc_reserve_tests(void)
@@ -1589,8 +1596,9 @@ static void closed_slot_profile_tests(void)
         &request, &slots) == 0);
     CHECK(cixvpu_dma_free(&owner) == 0);
     reset();
-    CHECK(cixvpu_dma_alloc(&tag32, &tag64, &slots, &owner) == EINVAL);
-    CHECK(owner == NULL && native_calls == 0 && live_kmem == 0 && depth == 0);
+    CHECK(cixvpu_dma_alloc(&tag32, &tag64, &slots, &owner) == 0);
+    CHECK(owner != NULL && owner->count == 401);
+    CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
     for (unsigned int boot = 0; boot < 2; boot++) {
         for (unsigned int fault = 0; fault < 9; fault++) {
             owner = rpc_reserve_begin(&base);
@@ -1623,11 +1631,289 @@ static void closed_slot_profile_tests(void)
     }
 }
 #endif
+#if defined(CIXVPU_PREPARE_API) && defined(CIXVPU_FW_PLAN_FRAME_ADDRESS)
+#ifndef CIXVPU_PREPARE_FRAME_SLOTS_API
+struct cixvpu_frame_source { const void *y, *uv; size_t y_bytes, uv_bytes; };
+static int prepare_frame_slots(struct cixvpu_dma **owner,
+    const struct cixvpu_fw_plan *plan, const void *img, size_t bytes,
+    const uint8_t pin[32], const struct cixvpu_frame_source *source,
+    struct cixvpu_prepared **out)
+{
+    (void)owner; (void)plan; (void)img; (void)bytes; (void)pin; (void)source; (void)out;
+    return ENOTSUP;
+}
+#else
+#define prepare_frame_slots cixvpu_prepare_frame_slots_cpu
+#endif
+_Alignas(max_align_t) static uint8_t slot_y[16388], slot_uv[4102];
+static void frame_slot_seal(void);
+static struct cixvpu_dma *frame_slots_begin(struct cixvpu_fw_plan *plan,
+    struct cixvpu_frame_source *source)
+{
+    struct cixvpu_fw_plan base;
+    struct cixvpu_dma *owner = rpc_reserve_begin(&base);
+    const struct cixvpu_fw_slot_request request = {2, 4, 4097, 2051, 4097};
+    CHECK(cixvpu_dma_free(&owner) == 0);
+    CHECK(cixvpu_fw_plan_build_frame_slots(rpc_image, sizeof(rpc_image), 1,
+        &request, plan) == 0);
+    reset();
+    CHECK(cixvpu_dma_alloc(&tag32, &tag64, plan, &owner) == 0);
+    for (unsigned int i = 0; i < plan->backing_pages; i++)
+        memset(resources[i].kva, 0xa5, 4096);
+    for (unsigned int i = 0; i < sizeof(slot_y); i++) slot_y[i] = (uint8_t)(17 + i * 37 + i / 251);
+    for (unsigned int i = 0; i < sizeof(slot_uv); i++) slot_uv[i] = (uint8_t)(0x83 ^ (i * 23 + i / 113));
+    *source = (struct cixvpu_frame_source){slot_y, slot_uv, sizeof(slot_y), sizeof(slot_uv)};
+    hashes=page_calls=map_calls=link_calls=encode_calls=meta_calls=0;
+    fail_meta=fail_page=fail_map=fail_link=fail_encode=view_fault=duplicate_map=rpc_table_fault=0;
+    fail_free=fail_seal=false; seal_observer=frame_slot_seal;
+    return owner;
+}
+static void frame_slot_bytes(bool device)
+{
+    static const uint8_t zero[4096] = {0};
+    const uint8_t *sources[] = {slot_y, slot_uv};
+    const unsigned int starts[] = {385, 390}, counts[] = {5, 2}, lengths[] = {16388, 4102};
+    for (unsigned int plane = 0; plane < 2; plane++) {
+        for (unsigned int j = 0; j < counts[plane]; j++) {
+            unsigned int offset = j * 4096, bytes = lengths[plane] - offset;
+            if (bytes > 4096) bytes = 4096;
+            const void *p = device ? device_bytes(starts[plane] + j) : resources[starts[plane] + j].kva;
+            CHECK(memcmp(p, sources[plane] + offset, bytes) == 0);
+            CHECK(memcmp((const uint8_t *)p + bytes, zero, 4096 - bytes) == 0);
+        }
+    }
+    for (unsigned int j = 392; j < 394; j++)
+        CHECK(memcmp(device ? device_bytes(j) : resources[j].kva, zero, 4096) == 0);
+}
+static void frame_slot_seal(void)
+{ frame_slot_bytes(false); }
+static void frame_slot_tables(const struct cixvpu_fw_plan *plan)
+{
+    uint32_t expected[7][1024] = {{0}};
+    const uint32_t roots[] = {0, 64, 128, 144, 448, 145};
+    for (unsigned int i = 0; i < 6; i++)
+        expected[0][roots[i]] = (uint32_t)(bus_address(395 + i) >> 12) << 2 | 1;
+    for (unsigned int i = 0; i < plan->mappings; i++) {
+        struct cixvpu_fw_plan_mapping m;
+        CHECK(cixvpu_fw_plan_mapping(plan, i, &m) == 0 &&
+            m.leaf_backing_index >= 395 && m.leaf_backing_index <= 400);
+        expected[m.leaf_backing_index - 394][(m.address >> 12) & 1023] =
+            (uint32_t)(bus_address(m.backing_index) >> 12) << 2 | m.attribute << 30 | m.permission;
+    }
+    for (unsigned int t = 0; t < 7; t++)
+        for (unsigned int j = 0; j < 1024; j++)
+            CHECK(word(resources[394 + t].kva, j) == expected[t][j]);
+}
+static void frame_slot_failure_tests(void)
+{
+    static uint8_t canary[4096];
+    memset(canary, 0xa5, sizeof(canary));
+    for (unsigned int fault = 0; fault < 24; fault++) {
+        struct cixvpu_fw_plan plan;
+        struct cixvpu_frame_source source;
+        struct cixvpu_dma *owner = frame_slots_begin(&plan, &source), *saved = owner;
+        struct cixvpu_prepared *out = NULL;
+        const struct cixvpu_frame_source *argument = &source;
+        int expected = EINVAL;
+        if (fault == 0) source.y = NULL;
+        if (fault == 1) source.uv = NULL;
+        if (fault == 2) source.y_bytes--;
+        if (fault == 3) source.y_bytes++;
+        if (fault == 4) source.uv_bytes--;
+        if (fault == 5) source.uv_bytes++;
+        if (fault == 6) source.y = (void *)(UINTPTR_MAX - 3);
+        if (fault == 7) source.uv = (void *)(UINTPTR_MAX - 3);
+        if (fault == 8) argument = NULL;
+        if (fault == 9) argument = (void *)(UINTPTR_MAX - 3);
+        if (fault == 10) plan.slots_enabled = 0;
+        if (fault == 11) plan.slots_enabled = 2;
+        if (fault == 12) plan.boot_rpc = 0;
+        if (fault == 13) { plan.backing_pages = 390; plan.mappings = 385; }
+        if (fault == 14) plan.slots.width = 5; /* Invalid odd geometry cannot match the closed profile. */
+        if (fault == 15) plan.slots.stride_y++;
+        if (fault == 16) rpc_image[4000] ^= 1;
+        if (fault == 17) { rpc_image[80] ^= 1; rpc_pinned[80] ^= 1; plan.info.version[0] ^= 1; expected = ENOTSUP; }
+        if (fault == 18) source.y = resources[385].kva;
+        if (fault == 19) source.uv = resources[390].kva;
+        if (fault == 20) source.y_bytes = SIZE_MAX;
+        if (fault == 21) source.uv_bytes = 0;
+        if (fault == 22) intr = true;
+        if (fault == 23) softintr = true;
+        if (fault >= 22) expected = EWOULDBLOCK;
+        unsigned int calls = native_calls;
+        CHECK(prepare_frame_slots(&owner, &plan, rpc_image, sizeof(rpc_image),
+            fixture_pin, argument, &out) == expected);
+        CHECK(owner == saved && out == NULL && owner->phase == CIXVPU_DMA_ALLOC &&
+            !owner->ever_visible && native_calls == calls);
+        for (unsigned int i = 0; i < 401; i++)
+            CHECK(memcmp(resources[i].kva, canary, 4096) == 0);
+        intr = softintr = false;
+        CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
+    }
+    /* Handle storage in an otherwise valid immutable plane must not be overwritten. */
+    for (unsigned int which = 0; which < 3; which++) {
+        struct cixvpu_fw_plan plan;
+        struct cixvpu_frame_source source;
+        struct cixvpu_dma *owner = frame_slots_begin(&plan, &source), *saved = owner;
+        struct cixvpu_prepared *out = NULL;
+        if (which == 0) {
+            memcpy(slot_y, &owner, sizeof(owner));
+            CHECK(prepare_frame_slots((void *)slot_y, &plan, rpc_image, sizeof(rpc_image),
+                fixture_pin, &source, &out) == EINVAL);
+            struct cixvpu_dma *unchanged;
+            memcpy(&unchanged, slot_y, sizeof(unchanged));
+            CHECK(unchanged == saved);
+        } else if (which == 1) {
+            memset(slot_uv, 0, sizeof(out));
+            CHECK(prepare_frame_slots(&owner, &plan, rpc_image, sizeof(rpc_image),
+                fixture_pin, &source, (void *)slot_uv) == EINVAL);
+            struct cixvpu_prepared *unchanged;
+            memcpy(&unchanged, slot_uv, sizeof(unchanged));
+            CHECK(unchanged == NULL);
+        } else {
+            memcpy(resources[392].kva, &source, sizeof(source));
+            uint8_t before[4096]; memcpy(before, resources[392].kva, sizeof(before));
+            CHECK(prepare_frame_slots(&owner, &plan, rpc_image, sizeof(rpc_image),
+                fixture_pin, resources[392].kva, &out) == EINVAL);
+            CHECK(memcmp(resources[392].kva, before, sizeof(before)) == 0);
+        }
+        CHECK(owner == saved && out == NULL && map_calls == 0 && link_calls == 0);
+        CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
+    }
+    /* Fallible gather, mapping, link and final seal leave the exact owner held. */
+    for (unsigned int fault = 0; fault < 10; fault++) {
+        struct cixvpu_fw_plan plan;
+        struct cixvpu_frame_source source;
+        struct cixvpu_dma *owner = frame_slots_begin(&plan, &source), *saved = owner;
+        struct cixvpu_prepared *out = NULL;
+        if (fault == 0) fail_meta = 1;
+        if (fault == 1) fail_meta = 2;
+        if (fault == 2) fail_page = 386;
+        if (fault == 3) fail_page = 394;
+        if (fault == 4) fail_map = 386;
+        if (fault == 5) fail_map = 394;
+        if (fault == 6) fail_link = 5;
+        if (fault == 7) fail_link = 6;
+        if (fault == 8) fail_seal = true;
+        if (fault == 9) view_fault = 2;
+        CHECK(prepare_frame_slots(&owner, &plan, rpc_image, sizeof(rpc_image),
+            fixture_pin, &source, &out) != 0);
+        CHECK(owner == saved && out == NULL && owner->phase == CIXVPU_DMA_ALLOC &&
+            !owner->ever_visible && owner->prepared_owner == NULL);
+        if (fault < 4 || fault == 9)
+            for (unsigned int i = 0; i < 401; i++)
+                CHECK(memcmp(resources[i].kva, canary, 4096) == 0);
+        fail_seal = false; seal_observer = NULL;
+        CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
+    }
+}
+static void frame_slot_readonly_alias_test(void)
+{
+    struct cixvpu_fw_plan plan;
+    struct cixvpu_frame_source source;
+    struct cixvpu_dma *owner = frame_slots_begin(&plan, &source);
+    struct cixvpu_prepared *out = NULL;
+    source.uv = slot_y + 7; /* Immutable input-input overlap is safe. */
+    seal_observer = NULL;
+    CHECK(prepare_frame_slots(&owner, &plan, rpc_image, sizeof(rpc_image),
+        fixture_pin, &source, &out) == 0 && owner == NULL);
+    CHECK(memcmp(resources[390].kva, slot_y + 7, 4096) == 0);
+    CHECK(memcmp(resources[391].kva, slot_y + 4103, 6) == 0);
+    CHECK(cixvpu_prepared_free(&out) == 0 && out == NULL && depth == 0 && live_kmem == 0);
+}
+static void frame_slot_phase_tests(void)
+
+{
+    for (unsigned int mode = 0; mode < 2; mode++) {
+        struct cixvpu_fw_plan plan;
+        struct cixvpu_frame_source source;
+        struct cixvpu_dma *owner = frame_slots_begin(&plan, &source);
+        struct cixvpu_prepared *out = NULL;
+        CHECK(prepare_frame_slots(&owner, &plan, rpc_image, sizeof(rpc_image),
+            fixture_pin, &source, &out) == 0 && owner == NULL);
+        sync_fixture(&plan, true);
+        if (mode == 0) {
+            struct test_map *map = out->dma->owners[400].map;
+            map->dm_nsegs = 2;
+            CHECK(cixvpu_prepared_sync_initial(out) == EIO && sync_calls == 0);
+            for (unsigned int i = 0; i < 401; i++) CHECK(pres[i] == 0 && posts[i] == 0);
+            map->dm_nsegs = 1;
+            CHECK(cixvpu_prepared_free(&out) == 0 && out == NULL && sync_calls == 0);
+            CHECK(depth == 0 && live_kmem == 0);
+        } else {
+            CHECK(cixvpu_prepared_sync_initial(out) == 0 && sync_calls == 401);
+            CHECK(cixvpu_prepared_publish_root(out, resources[385].kva) == EINVAL &&
+                !out->dma->ever_visible && sync_calls == 401);
+            uint32_t root = 0;
+            CHECK(cixvpu_prepared_publish_root(out, &root) == 0 &&
+                root == ((uint32_t)(bus_address(394) >> 12) << 2 | 3));
+            struct cixvpu_prepared *saved = out;
+            unsigned int calls = native_calls;
+            CHECK(out->dma->ever_visible && cixvpu_prepared_free(&out) == EBUSY && out == saved);
+            struct cixvpu_dma *alias = out->dma;
+            CHECK(cixvpu_dma_free(&alias) == EBUSY && alias == out->dma);
+            CHECK(sync_calls == 401 && native_calls == calls);
+            boot_drop(out); /* Host-only quarantine disposal, no production bypass. */
+        }
+    }
+    struct cixvpu_fw_plan plan;
+    struct cixvpu_frame_source source;
+    struct cixvpu_dma *owner = frame_slots_begin(&plan, &source), *saved = owner;
+    struct cixvpu_prepared *out = NULL;
+    CHECK(prepare_frame_slots(NULL, &plan, rpc_image, sizeof(rpc_image), fixture_pin, &source, &out) == EINVAL);
+    CHECK(prepare_frame_slots(&owner, NULL, rpc_image, sizeof(rpc_image), fixture_pin, &source, &out) == EINVAL);
+    CHECK(prepare_frame_slots(&owner, &plan, NULL, sizeof(rpc_image), fixture_pin, &source, &out) == EINVAL);
+    CHECK(prepare_frame_slots(&owner, &plan, rpc_image, sizeof(rpc_image), NULL, &source, &out) == EINVAL);
+    CHECK(prepare_frame_slots(&owner, &plan, rpc_image, sizeof(rpc_image), fixture_pin, &source, NULL) == EINVAL);
+    CHECK(prepare_frame_slots(&owner, &plan, rpc_image, sizeof(rpc_image), fixture_pin, (void *)&owner, &out) == EINVAL);
+    CHECK(owner == saved && out == NULL && hashes == 0 && map_calls == 0 && link_calls == 0);
+    CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
+}
+static void frame_slot_owner_tests(void)
+{
+    for (unsigned int mode = 0; mode < 2; mode++) {
+        struct cixvpu_fw_plan plan;
+        struct cixvpu_frame_source source;
+        struct cixvpu_dma *owner = frame_slots_begin(&plan, &source), *old = owner;
+        struct cixvpu_prepared *out = NULL;
+        CHECK(prepare_frame_slots(&owner, &plan, rpc_image, sizeof(rpc_image),
+            fixture_pin, &source, &out) == 0);
+        CHECK(owner == NULL && out != NULL && out->boot.enabled &&
+            out->count == 400 && out->plan.slots_enabled == 1);
+        CHECK(map_calls == 394 && link_calls == 6);
+        frame_slot_bytes(false); frame_slot_tables(&plan);
+        CHECK(memcmp(resources[0].kva, rpc_image, 4096) == 0);
+        const uint8_t *host = resources[118].kva;
+        CHECK(host[0] == 0 && host[1] == 0 && host[2] == 2 && host[3] == 0);
+        CHECK(word(host, 4) == 1006 && word(host, 5) == 1006);
+        struct cixvpu_dma_page view;
+        CHECK(cixvpu_dma_page(old, 385, &view) == EBUSY);
+        struct cixvpu_dma *alias = old;
+        CHECK(cixvpu_dma_free(&alias) == EBUSY && alias == old);
+        sync_fixture(&plan, mode != 0);
+        CHECK(cixvpu_prepared_sync_initial(out) == 0 && sync_calls == 401);
+        frame_slot_bytes(true);
+        CHECK(pres[385] == 4 && pres[390] == 4 && pres[392] == 5);
+        CHECK(memcmp(device_bytes(394), resources[394].kva, 4096) == 0);
+        fail_free = true; struct cixvpu_prepared *saved = out;
+        CHECK(cixvpu_prepared_free(&out) == EIO && out == saved);
+        fail_free = false;
+        unload_observer = observe_unload;
+        CHECK(cixvpu_prepared_free(&out) == 0 && out == NULL);
+        CHECK(sync_calls == 802 && depth == 0 && live_kmem == 0);
+    }
+}
+
+#endif
 int main(void)
 
 {
 #ifdef CIXVPU_PREPARE_API
 #ifdef CIXVPU_FW_PLAN_FRAME_ADDRESS
+    frame_slot_owner_tests();
+    frame_slot_failure_tests();
+    frame_slot_phase_tests();
+    frame_slot_readonly_alias_test();
     closed_slot_profile_tests();
 #endif
     debugparam_tests(); success_tests(); failure_tests(); handle_alias_tests(); argument_tests(); boundary_tests();

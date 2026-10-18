@@ -13,6 +13,8 @@
 #define cixvpu_prepared model_prepared
 #define cixvpu_prepare_cpu model_prepare_cpu
 #define cixvpu_prepare_boot_cpu model_prepare_boot_cpu
+#define cixvpu_frame_source model_frame_source
+#define cixvpu_prepare_frame_slots_cpu model_prepare_frame_slots_cpu
 #define cixvpu_prepared_free model_prepared_free
 #define cixvpu_prepared_sync_initial model_prepared_sync_initial
 #define cixvpu_prepared_publish_root model_prepared_publish_root
@@ -51,6 +53,8 @@
 #undef cixvpu_prepared
 #undef cixvpu_prepare_cpu
 #undef cixvpu_prepare_boot_cpu
+#undef cixvpu_frame_source
+#undef cixvpu_prepare_frame_slots_cpu
 #undef cixvpu_prepared_free
 #undef cixvpu_prepared_sync_initial
 #undef cixvpu_prepared_publish_root

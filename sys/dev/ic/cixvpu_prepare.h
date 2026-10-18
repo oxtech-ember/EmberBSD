@@ -61,6 +61,28 @@ struct cixvpu_boot_rpc_header {
  */
 int cixvpu_prepare_boot_cpu(struct cixvpu_dma **, const struct cixvpu_fw_plan *,
     const void *, size_t, const uint8_t[32], struct cixvpu_prepared **);
+#define CIXVPU_PREPARE_FRAME_SLOTS_API 1
+struct cixvpu_frame_source {
+	const void *y, *uv;
+	size_t y_bytes, uv_bytes;
+};
+/*
+ * Explicit stopped-only slots1/boot_rpc1 constructor; ordinary constructors
+ * still reject all slot metadata. Uses the same pinned boot profile and PING.
+ * Both immutable CPU planes must contain exactly the plan's required bytes,
+ * including row padding. Copy before seal; zero storage tails and BITSTREAM.
+ * The source value/planes and all other inputs must not overlap owner pages.
+ * Both handle slots must be disjoint from all inputs and each other. Read-only
+ * input-input aliases are allowed. Sources stay addressable and stable for
+ * the call; this is not pointer authentication or an arbitrary-cookie guard.
+ * Failure preserves handles, but may dirty CPU pages: free, never retry them.
+ * Success moves ownership, with no surviving page views. Existing sync/root
+ * and irreversible exposure rules apply. No queue submission, GO, active
+ * profile, output-byte getter or exposed-owner reclamation is added.
+ */
+int cixvpu_prepare_frame_slots_cpu(struct cixvpu_dma **,
+    const struct cixvpu_fw_plan *, const void *, size_t, const uint8_t[32],
+    const struct cixvpu_frame_source *, struct cixvpu_prepared **);
 int cixvpu_prepared_publish_root(struct cixvpu_prepared *, uint32_t *);
 int cixvpu_prepared_boot_receive(struct cixvpu_prepared *,
     struct cixvpu_boot_reply *);

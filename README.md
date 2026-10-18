@@ -260,7 +260,8 @@ on every board in the hardware catalog.
   checks NV12 geometry and known BITSTREAM slots without native queues or DMA access.
   An [inactive slot planner](ember/boot/cix-vpu.md#stopped-slot-layout-foundation)
   checks page-rounded FRAME/BITSTREAM storage and excludes the complete RPC reserve.
-  Native allocation and preparation reject this new layout until owner support exists.
+  Explicit CPU preparation copies both planes and seals their unique page owners.
+  No attachment selects these slots or submits a codec frame.
   Every exposed owner remains held, and the terminal report masks the IRQ.
   This check submits no codec frame and does not qualify runtime DMA teardown.
   [Initially masked ARM PIC registration](ember/boot/cix-vpu.md#initially-masked-native-irq-registration)
