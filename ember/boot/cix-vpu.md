@@ -8,7 +8,8 @@ EmberBSD identifies the CIX P1 codec and validates its ACPI descriptions.
 The default resource query does not activate the codec or establish its power state.
 There is no video device or M2M interface.
 The manual allocation and preparation profiles read an image into CPU memory.
-No mode executes firmware or encodes frames.
+An explicit boot trial publishes the prepared root and starts the engine.
+Firmware readiness and frame encoding remain unqualified.
 The target is Orange Pi 6 Plus with CIX CD8180 and stock ACPI firmware.
 The OS owns firmware, DMA, interrupts, power/reset and the application API.
 Ports owns FFmpeg and GStreamer consumers.
@@ -27,9 +28,9 @@ The independent BSD source in `sys/dev/ic` implements bounded foundations:
 | `cixvpu_prepare.[ch]` | Recheck the image pin and plan, verify CPU tables and move ownership. Offer initial synchronization, fixed boot messages and a guarded root capability. | End all mutable borrows before preparation. Serialize access and retain every exposed owner until a qualified teardown exists. |
 
 The attachment selects the header parser, layout planner and CPU-only allocator.
-The kernel also links CPU preparation, MMU and ring helpers. Only the explicit
-manual preparation profile calls ordinary CPU preparation. No attachment calls
-the typed boot constructor, root publication or receive helpers.
+The kernel also links CPU preparation, MMU and ring helpers. The explicit manual
+preparation profile calls ordinary CPU preparation. A separate manual boot
+profile calls the typed constructor, root publication and receive helpers.
 `sys/videoio.h` adds the standard `V4L2_PIX_FMT_HEVC` fourcc without changing
 structure layout or ioctl numbers. The existing `video(4)` driver remains
 capture-only; the presence of M2M declarations does not implement two queues.
@@ -222,6 +223,39 @@ host Cppcheck/CSA and ASan/UBSan cover the production bodies and modeled service
 Ten causal mutations are detected. Native GCC16/CSA pass; all-category Cppcheck
 retains header, informational and isolated unused-API findings without suppression.
 These results do not establish a hardware firmware boot or physical DMA.
+
+## Inactive DEBUGPARAM response
+
+`cixvpu_prepared_boot_debugparam` is a closed primitive for a fresh published
+boot owner. The boot coordinator does not call it. Existing receive behavior
+and the manual boot profile still reject nonzero RPC state with sticky ENOTSUP.
+The primitive cannot resume a failed boot epoch.
+
+The helper acquires two fixed 12-byte RPC headers, with at most four pairs.
+FREE and RETURN return IDLE and PENDING without writes; stale call/size fields
+are ignored. Stable PARAM with call ID 1 and size at most 1012 returns REPLIED.
+Only its aligned little-endian state word changes to RETURN. No payload is read
+or logged. Other calls and malformed headers stop further protocol I/O.
+Unstable observations return nonsticky EAGAIN. Errors preserve caller output;
+an existing sticky error prevents all native I/O.
+
+The accepted response ends the prior PREWRITE phase for state with POSTWRITE.
+It re-arms unchanged call/size words before the release-ordered state store,
+then synchronizes only the four-byte state with PREWRITE|PREREAD.
+The payload and page tail remain untouched. Cached diagnostics retain the
+observed request. No IRQ notification, message ACK, allocation or release occurs.
+A future caller must notify firmware after REPLIED before another step.
+Matching observations rely on committed PARAM remaining immutable until RETURN;
+they do not prove an atomic transaction or physical cache correctness.
+
+Actual-source suites pass 13647963 preparation checks, 28357 composed boot checks
+and 2338334 allocator checks, including 629 acquisition-failure positions.
+GCC16 path analysis, configured Cppcheck, CSA and ASan/UBSan cover the change.
+Seven compiled runtime mutations are detected. Native GCC16 and CSA have no
+diagnostics. All-category Cppcheck retains its baseline and adds one isolated
+unused-export hint in each changed native unit; it is not reported clean.
+The poisoned bounce model checks that all 4092 bytes after state stay unchanged.
+Active RPC service and firmware readiness still require physical acceptance.
 
 ## Dedicated native boot epoch source
 
