@@ -136,7 +136,8 @@ operation and cannot clear a retained owner.
 The default HSM-only mode does not access display MMIO. The explicit
 [HPD0 sample](bcm2712-display-dvp.md#finite-hpd0-sample) reads one controller register.
 The explicit [EDID0 transfer](bcm2712-display-edid-probe.md) requires
-`BCM2712_DISPLAY_DDC`. No mode resets hardware. The framebuffer gate does not establish
+`BCM2712_DISPLAY_DDC`. The separate [HPD IRQ0 probe](bcm2712-hpd-irq-probe.md) waits for an IRQ-driven
+HPD level cycle through the native AON owner. No mode resets hardware. The framebuffer gate does not establish
 a general firmware clock lifetime. Run the actual-source host contract with:
 
 ```sh

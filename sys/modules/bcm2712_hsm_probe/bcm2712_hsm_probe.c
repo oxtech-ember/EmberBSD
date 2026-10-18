@@ -7,6 +7,11 @@
 __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
 #include <sys/device.h>
+#include <sys/condvar.h>
+#include <sys/mutex.h>
+#include <sys/time.h>
+#include <sys/timearith.h>
+#include <sys/timevar.h>
 #include <sys/errno.h>
 #include <sys/module.h>
 #include <sys/systm.h>
@@ -17,6 +22,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arm/broadcom/bcm2712_display_acpi.h>
 #include <arm/broadcom/bcm2712_display_hsm.h>
 #include <arm/broadcom/bcm2712_display_dvp.h>
+#include <arm/broadcom/bcm2712_display_irq.h>
 #ifdef BCM2712_DISPLAY_DDC
 #include <arm/broadcom/bcm2712_display_ddc.h>
 #endif
@@ -37,7 +43,8 @@ enum hsm_probe_mode {
 	HSM_PROBE_GATE0,
 	HSM_PROBE_HPD0,
 	HSM_PROBE_DDC0,
-	HSM_PROBE_EDID0
+	HSM_PROBE_EDID0,
+	HSM_PROBE_IRQ0
 };
 struct hsm_probe_ddc {
 	bus_space_handle_t bsc_handle, handle;
@@ -62,6 +69,189 @@ struct hsm_probe_dvp {
 	struct bcm2712_dvp_status sample;
 	const char *sample_stage;
 };
+
+/* An undrained IRQ retains module text, callback storage and every owner. */
+struct hsm_probe_irq {
+	struct hsm_probe_dvp dvp;
+	struct bcm2712_hsm_provider *hsm;
+	struct bcm2712_l2_provider *owner;
+	struct drm_minor *minor;
+	device_t dev;
+	kmutex_t lock;
+	kcondvar_t cv;
+	struct timespec started, previous;
+	bus_space_handle_t aon_handle;
+	unsigned int phase, callbacks;
+	int error;
+	bool initialized, aon_mapped, stopping, retained;
+};
+static struct hsm_probe_irq hsm_probe_irq0;
+
+/* The elapsed limit avoids adding 120 seconds to a possibly large time_t. */
+static int
+hsm_probe_irq_remaining(struct hsm_probe_irq *irq, struct timespec *remaining)
+{
+	const struct timespec limit = { .tv_sec = 120, .tv_nsec = 0 };
+	struct timespec now, elapsed;
+
+	nanouptime(&now);
+	if (now.tv_sec < 0 || now.tv_nsec < 0 || now.tv_nsec >= 1000000000 ||
+	    timespeccmp(&now, &irq->previous, <))
+		return EIO;
+	irq->previous = now;
+	timespecsub(&now, &irq->started, &elapsed);
+	if (timespeccmp(&elapsed, &limit, >=))
+		return ETIMEDOUT;
+	timespecsub(&limit, &elapsed, remaining);
+	return 0;
+}
+
+static int
+hsm_probe_irq_service(void *arg, uint32_t pending, int service_error)
+{
+	struct hsm_probe_irq *irq = arg;
+	struct timespec remaining;
+	uint32_t raw;
+	int error;
+
+	mutex_enter(&irq->lock);
+	raw = bus_space_read_4(&arm_generic_bs_tag, irq->dvp.hpd_handle, 0x1c8);
+	error = !irq->stopping && irq->phase != 2 ?
+	    hsm_probe_irq_remaining(irq, &remaining) : 0;
+	if (irq->error == 0 && service_error != 0)
+		irq->error = service_error;
+	if (irq->error == 0 && error != 0)
+		irq->error = error;
+	if (irq->error == 0 && (pending & ~0x180U) != 0)
+		irq->error = EIO;
+	if (!irq->stopping && irq->error == 0 && (pending & 0x180U) != 0) {
+		if (irq->phase == 0 && (raw & 1U) == 0)
+			irq->phase = 1;
+		else if (irq->phase == 1 && (raw & 1U) != 0)
+			irq->phase = 2;
+	}
+	irq->callbacks++;
+	aprint_normal_dev(irq->dev, "HPD IRQ0 callback %u: pending %#x raw "
+	    "%#x connected %u service_error %d phase %u stopping %u\n",
+	    irq->callbacks, pending, raw, raw & 1U, service_error,
+	    irq->phase, irq->stopping);
+	cv_signal(&irq->cv);
+	error = irq->error;
+	mutex_exit(&irq->lock);
+	return error;
+}
+
+/* Return known operation errors only after normal DVP/HSM cleanup. */
+static int
+hsm_probe_irq_cycle(device_t dev, const struct bcm2712_display_contract *contract,
+    struct hsm_probe_dvp *dvp)
+{
+	struct hsm_probe_irq *irq = &hsm_probe_irq0;
+	const struct bcm2712_display_memory *hpd = &contract->memory[16];
+	const struct bcm2712_display_memory *aon = &contract->memory[12];
+	struct timespec remaining;
+	uint32_t pending, mask, raw;
+	int error, ticks;
+
+	dvp->stage = "IRQ0-HPD-map";
+	error = bus_space_map(&arm_generic_bs_tag, hpd->address, hpd->length,
+	    0, &dvp->hpd_handle);
+	if (error != 0)
+		goto known_error;
+	dvp->hpd_mapped = true;
+	dvp->stage = "IRQ0-AON-map";
+	error = bus_space_map(&arm_generic_bs_tag, aon->address, aon->length,
+	    0, &irq->aon_handle);
+	if (error != 0)
+		goto known_error;
+	irq->aon_mapped = true;
+	dvp->stage = "IRQ0-initial";
+	aprint_normal_dev(dev, "HPD IRQ0 first resource12/16 MMIO: AON "
+	    "status/mask and HPD +0x1c8 reads; native bus_space stall/abort "
+	    "is not recoverable; no ACPI power or display-lifetime claim\n");
+	pending = bus_space_read_4(&arm_generic_bs_tag, irq->aon_handle, 0);
+	mask = bus_space_read_4(&arm_generic_bs_tag, irq->aon_handle, 0x0c);
+	raw = bus_space_read_4(&arm_generic_bs_tag, dvp->hpd_handle, 0x1c8);
+	aprint_normal_dev(dev, "HPD IRQ0 initial: AON pending %#x mask %#x "
+	    "raw %#x connected %u; owned bits %#x\n", pending, mask,
+	    raw, raw & 1U, 0x180);
+	if ((mask & 0x180U) != 0x180U || (pending & 0x180U) != 0 ||
+	    (raw & 1U) == 0) {
+		error = EBUSY;
+		goto known_error;
+	}
+	nanouptime(&irq->started);
+	irq->previous = irq->started;
+	if (irq->started.tv_sec < 0 || irq->started.tv_nsec < 0 ||
+	    irq->started.tv_nsec >= 1000000000) {
+		error = EIO;
+		goto known_error;
+	}
+	dvp->stage = "IRQ0-create";
+	error = bcm2712_display_irq_create(dev, contract, BCM2712_L2_AON, aon,
+	    &arm_generic_bs_tag, irq->aon_handle, 0x180,
+	    hsm_probe_irq_service, irq, &irq->owner);
+	if (error != 0) {
+		if (irq->owner != NULL) {
+			irq->retained = true;
+			return error;
+		}
+		goto known_error;
+	}
+	if (irq->owner == NULL) {
+		irq->retained = true;
+		return EIO;
+	}
+	aprint_normal_dev(dev, "HPD IRQ0 armed: GSI 271; disconnect for at "
+	    "least five seconds, then reconnect; fixed 120 second limit\n");
+	dvp->stage = "IRQ0-wait";
+	mutex_enter(&irq->lock);
+	while (irq->error == 0 && irq->phase != 2) {
+		error = hsm_probe_irq_remaining(irq, &remaining);
+		if (error != 0) {
+			irq->error = error;
+			break;
+		}
+		ticks = tstohz(&remaining);
+		if (ticks <= 0) {
+			irq->error = EIO;
+			break;
+		}
+		error = cv_timedwait_sig(&irq->cv, &irq->lock, ticks);
+		if (error != 0 && error != EWOULDBLOCK)
+			irq->error = error;
+	}
+	irq->stopping = true;
+	mutex_exit(&irq->lock);
+	/* A pre-drain fault sample is not a post-drain hardware health proof. */
+	error = bcm2712_display_irq_error(irq->owner);
+	mutex_enter(&irq->lock);
+	if (irq->error == 0)
+		irq->error = error;
+	mutex_exit(&irq->lock);
+	dvp->stage = "IRQ0-destroy";
+	/* A worker can need the callback mutex while destroy drains it. */
+	error = bcm2712_display_irq_destroy(irq->owner);
+	if (error != 0) {
+		irq->retained = true;
+		return error;
+	}
+	irq->owner = NULL;
+	goto unmap;
+known_error:
+	irq->error = error;
+unmap:
+	if (irq->aon_mapped) {
+		bus_space_unmap(&arm_generic_bs_tag, irq->aon_handle, aon->length);
+		irq->aon_mapped = false;
+	}
+	if (dvp->hpd_mapped) {
+		bus_space_unmap(&arm_generic_bs_tag, dvp->hpd_handle, hpd->length);
+		dvp->hpd_mapped = false;
+	}
+	dvp->stage = "IRQ0-unmapped";
+	return 0;
+}
 
 static void
 hsm_probe_dvp_snapshot(device_t dev, const char *stage,
@@ -293,6 +483,7 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 	    "is not recoverable; no ACPI power or display-lifetime claim\n",
 	    mode == HSM_PROBE_OBSERVE ? "observe" :
 	    mode == HSM_PROBE_HPD0 ? "HPD0" :
+	    mode == HSM_PROBE_IRQ0 ? "IRQ0" :
 	    mode == HSM_PROBE_DDC0 ? "DDC0" :
 	    mode == HSM_PROBE_EDID0 ? "EDID0" : "gate0");
 	dvp->stage = "create";
@@ -319,8 +510,11 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 		return EBUSY;
 	if (mode == HSM_PROBE_EDID0 && (initial.gates & (1U << 3)) != 0)
 		return EBUSY;
+	if (mode == HSM_PROBE_IRQ0 && (initial.gates & (1U << 3)) != 0)
+		return EBUSY;
 	if (mode == HSM_PROBE_GATE0 || mode == HSM_PROBE_HPD0 ||
-	    mode == HSM_PROBE_DDC0 || mode == HSM_PROBE_EDID0) {
+	    mode == HSM_PROBE_DDC0 || mode == HSM_PROBE_EDID0 ||
+	    mode == HSM_PROBE_IRQ0) {
 		dvp->stage = "acquire0";
 		error = bcm2712_display_dvp_acquire(dvp->owner, 0);
 		if (error != 0)
@@ -337,12 +531,14 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 		    status.resets != initial.resets)
 			return EIO;
 		if (mode == HSM_PROBE_HPD0 || mode == HSM_PROBE_DDC0 ||
-		    mode == HSM_PROBE_EDID0) {
+		    mode == HSM_PROBE_EDID0 || mode == HSM_PROBE_IRQ0) {
 			/* Acquire can write if an external owner changed the gate. */
 			if (status.mutation_attempted)
 				return EIO;
 			if (mode == HSM_PROBE_HPD0)
 				error = hsm_probe_hpd0(dev, &contract, dvp);
+			else if (mode == HSM_PROBE_IRQ0)
+				error = hsm_probe_irq_cycle(dev, &contract, dvp);
 			else if (mode == HSM_PROBE_DDC0)
 				error = hsm_probe_ddc0(dev, &contract, dvp);
 			else {
@@ -484,14 +680,19 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 {
 	struct bcm2712_hsm_provider *provider;
 	struct bcm2712_hsm_status status, sample = { 0 };
-	struct hsm_probe_dvp dvp = { .stage = "not-entered" };
+	struct hsm_probe_dvp local_dvp = { .stage = "not-entered" };
+	struct hsm_probe_dvp *dvp = &local_dvp;
 	const char *stage, *sample_stage = NULL;
 	bool entered_lease = false;
 	int error, cleanup;
 
+	if (mode == HSM_PROBE_IRQ0)
+		dvp = &hsm_probe_irq0.dvp;
 	error = bcm2712_display_hsm_create(dev, handle, &provider);
 	if (error != 0)
 		return error;
+	if (mode == HSM_PROBE_IRQ0)
+		hsm_probe_irq0.hsm = provider;
 	stage = "initial-status";
 	error = bcm2712_display_hsm_status(provider, &status);
 	if (error != 0)
@@ -523,7 +724,7 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 	}
 	if (mode != HSM_PROBE_CLOCK) {
 		stage = "DVP-cycle";
-		error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp);
+		error = hsm_probe_dvp_cycle(dev, handle, mode, dvp);
 		if (error != 0)
 			goto retained;
 	}
@@ -548,17 +749,27 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 	if (error != 0)
 		goto stop;
 	/* Successful destroy invalidates provider. Do not read it again. */
+	if (mode == HSM_PROBE_IRQ0) {
+		hsm_probe_irq0.hsm = NULL;
+		if (hsm_probe_irq0.error != 0) {
+			aprint_error_dev(dev, "HPD IRQ0 cleanup complete; error %d; "
+			    "no success or retry\n", hsm_probe_irq0.error);
+			return hsm_probe_irq0.error;
+		}
+		if (hsm_probe_irq0.phase != 2)
+			return EIO;
+	}
 #ifdef BCM2712_DISPLAY_DDC
 	if (mode == HSM_PROBE_EDID0) {
-		if (dvp.ddc.operation_error != 0) {
+		if (dvp->ddc.operation_error != 0) {
 			aprint_error_dev(dev, "EDID0 cleanup complete; operation "
 			    "error %d; payload withheld; no retry\n",
-			    dvp.ddc.operation_error);
-			return dvp.ddc.operation_error;
+			    dvp->ddc.operation_error);
+			return dvp->ddc.operation_error;
 		}
-		if (!dvp.ddc.edid_valid)
+		if (!dvp->ddc.edid_valid)
 			return EIO;
-		hsm_probe_edid0_payload(dev, dvp.ddc.edid);
+		hsm_probe_edid0_payload(dev, dvp->ddc.edid);
 	}
 #endif
 	aprint_normal_dev(dev, "HSM probe destroy succeeded; finite cycle "
@@ -567,6 +778,7 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 	    mode == HSM_PROBE_HPD0 ? "one HPD0 sample" :
 	    mode == HSM_PROBE_DDC0 ? "DDC0 snapshot complete; no idle or transfer claim" :
 	    mode == HSM_PROBE_EDID0 ? "EDID0 base block complete" :
+	    mode == HSM_PROBE_IRQ0 ? "IRQ-driven sampled 1->0->1; lifecycle complete" :
 	    "shared DVP resource10 only; no HPD");
 	return 0;
 stop:
@@ -587,42 +799,42 @@ retained:
 	/* Native storage has no module callback and keeps exclusive ownership. */
 	if (mode != HSM_PROBE_CLOCK) {
 		aprint_error_dev(dev, "DVP probe stopped at %s: error %d "
-		    "mapping retained %u native owner retained %u\n", dvp.stage,
-		    error, dvp.mapped, dvp.owner != NULL);
+		    "mapping retained %u native owner retained %u\n", dvp->stage,
+		    error, dvp->mapped, dvp->owner != NULL);
 		if (mode == HSM_PROBE_HPD0)
 			aprint_error_dev(dev, "HPD0 probe resource16 mapping "
 			    "retained %u sample valid %u; cached raw %#x connected "
-			    "%u; no current connector-state claim\n", dvp.hpd_mapped,
-			    dvp.hpd_valid, dvp.hpd_raw, dvp.hpd_raw & 1U);
+			    "%u; no current connector-state claim\n", dvp->hpd_mapped,
+			    dvp->hpd_valid, dvp->hpd_raw, dvp->hpd_raw & 1U);
 		if (mode == HSM_PROBE_DDC0) {
 			aprint_error_dev(dev, "DDC0 probe resource13 mapping retained "
 			    "%u resource14 mapping retained %u; BSC sample valid %u "
 			    "DDC sample valid %u; cached values only\n",
-			    dvp.ddc.bsc_mapped, dvp.ddc.mapped,
-			    dvp.ddc.bsc_valid, dvp.ddc.valid);
-			hsm_probe_ddc_snapshot(dev, "retained cached", &dvp.ddc);
+			    dvp->ddc.bsc_mapped, dvp->ddc.mapped,
+			    dvp->ddc.bsc_valid, dvp->ddc.valid);
+			hsm_probe_ddc_snapshot(dev, "retained cached", &dvp->ddc);
 		}
 #ifdef BCM2712_DISPLAY_DDC
 		if (mode == HSM_PROBE_EDID0) {
 			aprint_error_dev(dev, "EDID0 probe resource13 mapping retained "
 			    "%u resource14 mapping retained %u native owner retained "
 			    "%u operation error %d cached status valid %u; payload "
-			    "withheld\n", dvp.ddc.bsc_mapped, dvp.ddc.mapped,
-			    dvp.ddc.owner != NULL, dvp.ddc.operation_error,
-			    dvp.ddc.sample_valid);
-			if (dvp.ddc.sample_valid)
+			    "withheld\n", dvp->ddc.bsc_mapped, dvp->ddc.mapped,
+			    dvp->ddc.owner != NULL, dvp->ddc.operation_error,
+			    dvp->ddc.sample_valid);
+			if (dvp->ddc.sample_valid)
 				aprint_error_dev(dev, "EDID0 cached native fault %d "
 				    "core fault %d active %u; no current-state claim\n",
-				    dvp.ddc.sample.fault, dvp.ddc.sample.core.fault,
-				    dvp.ddc.sample.core.active);
+				    dvp->ddc.sample.fault, dvp->ddc.sample.core.fault,
+				    dvp->ddc.sample.core.active);
 		}
 #endif
 		aprint_error_dev(dev, "DVP probe sample valid %u at %s; "
 		    "pre-failure cached values only; current status unknown\n",
-		    dvp.sample_stage != NULL,
-		    dvp.sample_stage != NULL ? dvp.sample_stage : "none");
-		if (dvp.sample_stage != NULL)
-			hsm_probe_dvp_snapshot(dev, "retained cached", &dvp.sample);
+		    dvp->sample_stage != NULL,
+		    dvp->sample_stage != NULL ? dvp->sample_stage : "none");
+		if (dvp->sample_stage != NULL)
+			hsm_probe_dvp_snapshot(dev, "retained cached", &dvp->sample);
 	}
 	aprint_error_dev(dev, "HSM probe sample valid %u at %s; cached "
 	    "values only; current status unknown\n", sample_stage != NULL,
@@ -647,9 +859,11 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 	int error;
 
 	if (command == MODULE_CMD_FINI)
-		return 0;
+		return hsm_probe_irq0.retained ? EBUSY : 0;
 	if (command != MODULE_CMD_INIT)
 		return ENOTTY;
+	if (hsm_probe_irq0.retained)
+		return EBUSY;
 	if (properties == NULL ||
 	    !prop_dictionary_get_bool(properties, "cold-headless", &cold_headless) ||
 	    !cold_headless || !prop_dictionary_get_cstring_nocopy(properties,
@@ -674,9 +888,14 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 	} else if (prop_dictionary_get(properties, "hpd-mode") != NULL) {
 		if (prop_dictionary_get(properties, "dvp-mode") != NULL ||
 		    !prop_dictionary_get_cstring_nocopy(properties, "hpd-mode",
-		    &hpd_mode) || strcmp(hpd_mode, "sample0") != 0)
+		    &hpd_mode))
 			return EINVAL;
-		mode = HSM_PROBE_HPD0;
+		if (strcmp(hpd_mode, "sample0") == 0)
+			mode = HSM_PROBE_HPD0;
+		else if (strcmp(hpd_mode, "irq0") == 0)
+			mode = HSM_PROBE_IRQ0;
+		else
+			return EINVAL;
 	} else if (prop_dictionary_get(properties, "dvp-mode") != NULL) {
 		if (!prop_dictionary_get_cstring_nocopy(properties, "dvp-mode", &dvp_mode))
 			return EINVAL;
@@ -703,7 +922,29 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 	error = hsm_probe_device(&minor, &handle);
 	if (error != 0)
 		return error;
+	if (mode == HSM_PROBE_IRQ0) {
+		memset(&hsm_probe_irq0, 0, sizeof(hsm_probe_irq0));
+		hsm_probe_irq0.dev = minor->dev->dev;
+		hsm_probe_irq0.minor = minor;
+		hsm_probe_irq0.dvp.stage = "not-entered";
+		mutex_init(&hsm_probe_irq0.lock, MUTEX_DEFAULT, IPL_NONE);
+		cv_init(&hsm_probe_irq0.cv, "hpd-irq0");
+		hsm_probe_irq0.initialized = true;
+	}
 	error = hsm_probe_cycle(minor->dev->dev, handle, mode);
+	if (mode == HSM_PROBE_IRQ0) {
+		if (hsm_probe_irq0.retained) {
+			aprint_error_dev(minor->dev->dev, "HPD IRQ0 retained fault "
+			    "%d: undrained callback state, IRQ/HSM/DVP owners, maps "
+			    "and render reference retained; module registered for "
+			    "safety; no success; FINI EBUSY; controlled reboot\n", error);
+			return 0;
+		}
+		cv_destroy(&hsm_probe_irq0.cv);
+		mutex_destroy(&hsm_probe_irq0.lock);
+		hsm_probe_irq0.initialized = false;
+		hsm_probe_irq0.minor = NULL;
+	}
 	drm_minor_release(minor);
 	if (error != 0)
 		aprint_error("HSM probe failed: %d; see reported stages; no retry\n", error);

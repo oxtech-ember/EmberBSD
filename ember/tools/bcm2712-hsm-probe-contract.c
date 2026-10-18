@@ -16,6 +16,8 @@
 #undef bcm2712_display_hsm_destroy
 #undef bcm2712_display_acpi_resources
 #include <stdarg.h>
+#include <sys/time.h>
+#include "time-ops.h"
 #include <libfdt.h>
 #include "opt_bcm2712_ddc.h"
 
@@ -151,7 +153,42 @@ static struct {
 	uint8_t bytes[BCM2712_DDC_EDID_LENGTH];
 } native_ddc;
 #endif
+#include "irq-types.h"
+struct bcm2712_l2_provider { unsigned int token; };
+typedef pthread_cond_t kcondvar_t;
+static kmutex_t *fixture_irq_lock(void);
+static struct {
+	bcm2712_display_irq_fn service;
+	void *arg;
+	struct bcm2712_l2_provider owner;
+	struct { uint32_t pending, raw; int error; uint64_t advance; bool spurious; } event[32];
+	unsigned int count, next, before_create, on_destroy, creates, destroys, errors;
+	unsigned int waits, signals, cv_inits, cv_destroys, aon_maps, aon_reads, aon_unmaps;
+	int create_error, destroy_error, route_error, wait_error;
+	uint64_t ns, maximum_wait, last_wait;
+	uint32_t aon_pending, aon_mask;
+	bool live, cv_live, aon_mapped, mode, drained, null_owner, failed_owner;
+} irq_api;
+static void cv_init(kcondvar_t *cv, const char *name)
+{ assert(strcmp(name, "hpd-irq0") == 0 && !irq_api.cv_live); assert(pthread_cond_init(cv, NULL) == 0); irq_api.cv_live = true; irq_api.cv_inits++; }
+static void cv_destroy(kcondvar_t *);
+static void mutex_destroy(kmutex_t *mutex)
+{ assert(!irq_api.cv_live && !irq_api.live); assert(pthread_mutex_destroy(mutex) == 0); }
+static void cv_signal(kcondvar_t *cv)
+{ assert(irq_api.cv_live); irq_api.signals++; assert(pthread_cond_signal(cv) == 0); }
+static void nanouptime(struct timespec *time)
+{ time->tv_sec = (time_t)(irq_api.ns / UINT64_C(1000000000)); time->tv_nsec = (long)(irq_api.ns % UINT64_C(1000000000)); }
+static int tstohz(const struct timespec *time)
+{
+	uint64_t ns = (uint64_t)time->tv_sec * UINT64_C(1000000000) + (uint64_t)time->tv_nsec;
+	assert(ns > 0 && ns <= UINT64_C(120000000000));
+	irq_api.last_wait = ns;
+	if (ns > irq_api.maximum_wait) irq_api.maximum_wait = ns;
+	return (int)((ns + UINT64_C(9999999)) / UINT64_C(10000000)) + 1;
+}
+static int cv_timedwait_sig(kcondvar_t *, kmutex_t *, int);
 #define BUS_SPACE_BARRIER_READ 1
+
 
 #define BUS_SPACE_BARRIER_WRITE 2
 static struct {
@@ -164,6 +201,8 @@ static struct {
 	uint32_t bsc_status, bsc_mask, ddc_ctl, ddc_enable, ddc_ctlhi;
 	unsigned int bsc_maps, bsc_reads, bsc_unmaps, ddc_maps, ddc_reads, ddc_unmaps;
 } hw;
+static void cv_destroy(kcondvar_t *cv)
+{ assert(irq_api.cv_live && !irq_api.live && !irq_api.aon_mapped && !hw.hpd_mapped); assert(pthread_cond_destroy(cv) == 0); irq_api.cv_live = false; irq_api.cv_destroys++; }
 static char events[128];
 static unsigned int event_count, fail_step;
 static bool step(char event)
@@ -184,6 +223,13 @@ static void held_dvp(void);
 static int bus_space_map(bus_space_tag_t tag, uint64_t base, uint64_t size,
     int flags, bus_space_handle_t *handle)
 {
+	if (base == UINT64_C(0x107d510600)) {
+		assert(tag == &arm_generic_bs_tag && size == 0x30 && flags == 0);
+		assert(irq_api.mode && hw.hpd_mapped && !irq_api.aon_mapped);
+		held_hsm(); held_dvp(); irq_api.aon_maps++;
+		if (step('N')) return EIO;
+		irq_api.aon_mapped = true; *handle = 37; return 0;
+	}
 	if (base == UINT64_C(0x107d508380)) {
 		assert(tag == &arm_generic_bs_tag && size == 0x10 && flags == 0);
 		assert(!hw.bsc_mapped && hw.bsc_maps == 0 && !hw.hpd_mapped);
@@ -215,6 +261,13 @@ static int bus_space_map(bus_space_tag_t tag, uint64_t base, uint64_t size,
 static uint32_t bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle,
     unsigned int offset)
 {
+	if (handle == 37) {
+		assert(tag == &arm_generic_bs_tag && irq_api.aon_mapped);
+		assert(irq_api.aon_reads < 2 && offset == (irq_api.aon_reads == 0 ? 0U : 0x0cU));
+		held_hsm(); held_dvp(); irq_api.aon_reads++;
+		(void)step(offset == 0 ? 'p' : 'm');
+		return offset == 0 ? irq_api.aon_pending : irq_api.aon_mask;
+	}
 	if (handle == 29) {
 		const unsigned int offsets[] = { 0, 4 };
 		assert(tag == &arm_generic_bs_tag && hw.bsc_mapped && !hw.ddc_mapped);
@@ -235,8 +288,8 @@ static uint32_t bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle,
 	}
 	if (handle == 23) {
 		assert(tag == &arm_generic_bs_tag && hw.hpd_mapped && offset == 0x1c8);
-		assert(hw.hpd_reads == 0 && !hw.waiting);
-		assert(strstr(log_text, "first per-controller resource16 MMIO") != NULL);
+		assert((irq_api.mode || hw.hpd_reads == 0) && !hw.waiting);
+		assert(irq_api.mode || strstr(log_text, "first per-controller resource16 MMIO") != NULL);
 		held_hsm(); held_dvp(); hw.hpd_reads++; (void)step('h');
 		return hw.hpd_raw;
 	}
@@ -283,6 +336,12 @@ static void held_dvp(void)
 }
 static void bus_space_unmap(bus_space_tag_t tag, bus_space_handle_t handle, uint64_t size)
 {
+	if (handle == 37) {
+		assert(tag == &arm_generic_bs_tag && size == 0x30 && irq_api.aon_mapped);
+		assert(!irq_api.live && hw.hpd_mapped);
+		held_hsm(); held_dvp(); (void)step('n');
+		irq_api.aon_mapped = false; irq_api.aon_unmaps++; return;
+	}
 	if (handle == 31) {
 		assert(tag == &arm_generic_bs_tag && size == 0x58 && hw.ddc_mapped);
 		assert(hw.bsc_mapped && hw.bsc_reads == (hw.edid0 ? 0U : 2U) &&
@@ -302,7 +361,7 @@ static void bus_space_unmap(bus_space_tag_t tag, bus_space_handle_t handle, uint
 	assert(!hw.bsc_mapped && !hw.ddc_mapped);
 	if (handle == 23) {
 		assert(tag == &arm_generic_bs_tag && size == 0x300 && hw.hpd_mapped);
-		assert(hw.hpd_reads == 1);
+		assert(irq_api.mode ? !irq_api.live && !irq_api.aon_mapped : hw.hpd_reads == 1);
 		held_hsm(); held_dvp(); (void)step('u');
 		hw.hpd_unmaps++; hw.hpd_mapped = false; return;
 	}
@@ -327,9 +386,9 @@ static int bcm2712_display_hsm_acquire(struct bcm2712_hsm_provider *p,
     unsigned int port, uint32_t rate)
 { PROVIDER_CALL('A', actual_hsm_acquire(p, port, rate)); }
 static int bcm2712_display_hsm_release(struct bcm2712_hsm_provider *p, unsigned int port)
-{ assert(!hw.mapped && !hw.hpd_mapped && !hw.bsc_mapped && !hw.ddc_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('R', actual_hsm_release(p, port)); }
+{ assert(!irq_api.aon_mapped && !irq_api.live && !hw.mapped && !hw.hpd_mapped && !hw.bsc_mapped && !hw.ddc_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('R', actual_hsm_release(p, port)); }
 static int bcm2712_display_hsm_destroy(struct bcm2712_hsm_provider *p)
-{ assert(!hw.mapped && !hw.hpd_mapped && !hw.bsc_mapped && !hw.ddc_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('D', actual_hsm_destroy(p)); }
+{ assert(!irq_api.aon_mapped && !irq_api.live && !hw.mapped && !hw.hpd_mapped && !hw.bsc_mapped && !hw.ddc_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('D', actual_hsm_destroy(p)); }
 static int bcm2712_display_acpi_resources(device_t d, ACPI_HANDLE h,
     struct bcm2712_display_contract *out)
 {
@@ -365,10 +424,73 @@ static int bcm2712_display_dvp_acquire(struct bcm2712_dvp_provider *p, unsigned 
 	PROVIDER_CALL('a', actual_dvp_acquire(p, port));
 }
 static int bcm2712_display_dvp_release(struct bcm2712_dvp_provider *p, unsigned int port)
-{ assert(port == 0 && !hw.hpd_mapped && !hw.bsc_mapped && !hw.ddc_mapped); held_hsm(); PROVIDER_CALL('r', actual_dvp_release(p, port)); }
+{ assert(port == 0 && !irq_api.aon_mapped && !irq_api.live && !hw.hpd_mapped && !hw.bsc_mapped && !hw.ddc_mapped); held_hsm(); PROVIDER_CALL('r', actual_dvp_release(p, port)); }
 static int bcm2712_display_dvp_destroy(struct bcm2712_dvp_provider *p)
 { held_hsm(); PROVIDER_CALL('d', actual_dvp_destroy(p)); }
 #undef PROVIDER_CALL
+/* Controlled lifecycle boundary only. Native IRQ workqueue/core is tested separately. */
+static void irq_event(void)
+{
+	unsigned int next = irq_api.next++;
+	assert(irq_api.live && irq_api.cv_live && next < irq_api.count);
+	held_hsm(); held_dvp(); assert(references == 1);
+	irq_api.ns += irq_api.event[next].advance;
+	hw.hpd_raw = irq_api.event[next].raw;
+	(void)irq_api.service(irq_api.arg, irq_api.event[next].pending,
+	    irq_api.event[next].error);
+}
+int bcm2712_display_irq_create(device_t dev,
+    const struct bcm2712_display_contract *contract, enum bcm2712_l2_domain domain,
+    const struct bcm2712_display_memory *memory, bus_space_tag_t bst,
+    bus_space_handle_t bsh, uint32_t owned, bcm2712_display_irq_fn service,
+    void *arg, struct bcm2712_l2_provider **out)
+{
+	int error;
+	assert(dev == &device_token && memory == &contract->memory[12]);
+	assert(domain == BCM2712_L2_AON && contract->irq[5] == 271);
+	assert(bst == &arm_generic_bs_tag && bsh == 37 && owned == 0x180);
+	assert(irq_api.cv_live && irq_api.aon_mapped && hw.hpd_mapped);
+	assert(pthread_mutex_trylock(fixture_irq_lock()) == 0);
+	assert(pthread_mutex_unlock(fixture_irq_lock()) == 0);
+	held_hsm(); held_dvp(); irq_api.creates++;
+	error = step('I') ? EIO : irq_api.create_error;
+	irq_api.service = service; irq_api.arg = arg;
+	if ((error == 0 && !irq_api.null_owner) || irq_api.failed_owner) {
+		irq_api.live = true;
+		while (irq_api.next < irq_api.before_create) irq_event();
+		*out = &irq_api.owner;
+	}
+	return error;
+}
+int bcm2712_display_irq_error(struct bcm2712_l2_provider *owner)
+{ assert(irq_api.live && owner == &irq_api.owner); held_hsm(); held_dvp(); irq_api.errors++; return step('q') ? EIO : irq_api.route_error; }
+int bcm2712_display_irq_destroy(struct bcm2712_l2_provider *owner)
+{
+	unsigned int i;
+
+	assert(irq_api.live && owner == &irq_api.owner && irq_api.cv_live);
+	assert(irq_api.aon_mapped && hw.hpd_mapped && references == 1);
+	held_hsm(); held_dvp(); irq_api.destroys++;
+	assert(pthread_mutex_trylock(fixture_irq_lock()) == 0);
+	assert(pthread_mutex_unlock(fixture_irq_lock()) == 0);
+	if (step('X') || irq_api.destroy_error) return EDEADLK;
+	for (i = 0; i < irq_api.on_destroy; i++) irq_event();
+	irq_api.drained = true; irq_api.live = false; return 0;
+}
+static int cv_timedwait_sig(kcondvar_t *cv, kmutex_t *mutex, int ticks)
+{
+	assert(irq_api.cv_live && cv != NULL && mutex == fixture_irq_lock());
+	assert(ticks > 0 && irq_api.live && irq_api.ns <= UINT64_C(120000000000)); irq_api.waits++;
+	assert(pthread_mutex_unlock(mutex) == 0);
+	if (irq_api.next < irq_api.count - irq_api.on_destroy) {
+		if (irq_api.event[irq_api.next].spurious)
+			irq_api.ns += irq_api.event[irq_api.next++].advance;
+		else irq_event();
+	}
+	else irq_api.ns += irq_api.last_wait;
+	assert(pthread_mutex_lock(mutex) == 0);
+	return irq_api.wait_error;
+}
 /* The DDC API is controlled here. The I2C algorithm is not part of this fixture. */
 #ifdef BCM2712_DISPLAY_DDC
 int bcm2712_display_ddc_create(device_t dev,
@@ -445,6 +567,8 @@ static void payload_guard(void)
 #endif
 }
 #include "probe.h"
+static kmutex_t *fixture_irq_lock(void)
+{ assert(hsm_probe_irq0.initialized); return &hsm_probe_irq0.lock; }
 
 
 static void
@@ -452,6 +576,8 @@ prepare(uint32_t state, uint32_t rate)
 {
 	reset(state, rate);
 	assert(bcm2712_dvp_owner == NULL && !hw.mapped);
+	assert(!irq_api.live && !irq_api.cv_live);
+	memset(&irq_api, 0, sizeof(irq_api)); irq_api.aon_mask = UINT32_MAX;
 	memset(&hw, 0, sizeof(hw)); hw.gates = 0xa5a50018;
 #ifdef BCM2712_DISPLAY_DDC
 	assert(!native_ddc.live);
@@ -493,6 +619,13 @@ refusal(struct properties *p, int expected)
 /* Only the test's simulated reboot can discard retained native owners/maps. */
 static void reboot_model(void)
 {
+	if (irq_api.cv_live) {
+		irq_api.live = false; irq_api.aon_mapped = false; hw.hpd_mapped = false;
+		assert(pthread_cond_destroy(&hsm_probe_irq0.cv) == 0);
+		assert(pthread_mutex_destroy(&hsm_probe_irq0.lock) == 0);
+		irq_api.cv_live = false; references = 0;
+	}
+	memset(&hsm_probe_irq0, 0, sizeof(hsm_probe_irq0));
 #ifdef BCM2712_DISPLAY_DDC
 	native_ddc.live = false;
 #endif
@@ -967,6 +1100,176 @@ static void edid_probe_tests(void)
 #endif
 }
 
+static void prepare_irq(void)
+{
+	prepare(1, 120000000); hw.gates &= ~(1U << 3); hw.hpd_raw = 1;
+	irq_api.mode = true;
+}
+static void queue_irq(uint32_t pending, uint32_t raw, int error,
+    uint64_t advance, bool spurious)
+{
+	unsigned int slot = irq_api.count++;
+	assert(slot < sizeof(irq_api.event) / sizeof(irq_api.event[0]));
+	irq_api.event[slot].pending = pending; irq_api.event[slot].raw = raw;
+	irq_api.event[slot].error = error; irq_api.event[slot].advance = advance;
+	irq_api.event[slot].spurious = spurious;
+}
+static void cycle_irq(void)
+{
+	queue_irq(0x180, 0, 0, UINT64_C(5000000000), false);
+	queue_irq(0x180, 1, 0, UINT64_C(5000000000), false);
+}
+static void irq_freed(void)
+{
+	CHECK(!irq_api.live && !irq_api.cv_live && !irq_api.aon_mapped);
+	CHECK(!hw.hpd_mapped && !hw.mapped && bcm2712_dvp_owner == NULL);
+	CHECK(bcm2712_hsm_owner == NULL && allocated == freed && references == 0);
+	CHECK(irq_api.cv_inits == 1 && irq_api.cv_destroys == 1);
+}
+static void irq_no_success(void)
+{
+	CHECK(strstr(log_text, "IRQ-driven sampled 1->0->1") == NULL);
+	CHECK(strstr(log_text, "finite cycle complete") == NULL);
+}
+static void irq_probe_tests(void)
+{
+	struct properties properties = { .expected = "EmberBSD:accepted-kernel",
+	    .cold = true, .hpd_mode = "irq0" };
+	const char *order = "CSASQMcsasHNpmhIhhqXnursdURSD";
+	unsigned int i, stop;
+	int error;
+
+	prepare_irq(); properties.mode = "observe"; refusal(&properties, EINVAL);
+	prepare_irq(); properties.mode = NULL; properties.ddc_mode = "observe0";
+	refusal(&properties, EINVAL); properties.ddc_mode = NULL;
+	prepare_irq(); properties.wrong_hpd_type = true; refusal(&properties, EINVAL);
+	properties.wrong_hpd_type = false;
+	prepare_irq(); properties.cold = false; refusal(&properties, EINVAL); properties.cold = true;
+	prepare_irq(); properties.expected = "wrong"; refusal(&properties, EPROGMISMATCH);
+	properties.expected = "EmberBSD:accepted-kernel";
+	prepare_irq(); early_framebuffer = 1; refusal(&properties, EBUSY);
+	prepare_irq(); genfb = true; refusal(&properties, EBUSY);
+	prepare_irq(); tree = NULL; refusal(&properties, EIO);
+	prepare_irq(); render = false; refusal(&properties, ENODEV);
+	CHECK(irq_api.creates == 0 && irq_api.cv_inits == 0);
+
+	prepare_irq(); cycle_irq();
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == 0);
+	CHECK(strcmp(events, order) == 0); irq_freed();
+	CHECK(irq_api.drained && irq_api.creates == 1 && irq_api.destroys == 1);
+	CHECK(irq_api.waits == 2 && irq_api.signals == 2 && hsm_probe_irq0.phase == 2);
+	CHECK(hw.hpd_reads == 3 && irq_api.aon_reads == 2 && hw.writes == 0);
+	CHECK(strstr(log_text, "callback 1: pending 0x180 raw 0 connected 0") != NULL);
+	CHECK(strstr(log_text, "callback 2: pending 0x180 raw 0x1 connected 1") != NULL);
+	CHECK(strstr(log_text, "IRQ-driven sampled 1->0->1; lifecycle complete") != NULL);
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_FINI, NULL) == 0);
+
+	/* The callback can finish the sampled cycle before create returns. */
+	prepare_irq(); cycle_irq(); irq_api.before_create = 2;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == 0);
+	CHECK(irq_api.waits == 0 && irq_api.signals == 2 && hsm_probe_irq0.phase == 2);
+	CHECK(irq_api.arg == &hsm_probe_irq0); irq_freed();
+	/* Raw levels advance the phase; repeated or reversed leaf labels do not. */
+	prepare_irq();
+	queue_irq(0x80, 0, 0, 1, false); queue_irq(0x80, 0, 0, 1, false);
+	queue_irq(0x80, 1, 0, 1, false);
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == 0);
+	CHECK(hsm_probe_irq0.callbacks == 3 && hsm_probe_irq0.phase == 2); irq_freed();
+	for (i = 0; i < 3; i++) {
+		prepare_irq();
+		if (i == 0) { queue_irq(0x180, 1, 0, 1, false); queue_irq(0x80, 1, 0, 1, false); }
+		if (i == 1) { queue_irq(0, 0, 0, 1, false); queue_irq(0, 1, 0, 1, false); }
+		if (i == 2) { queue_irq(0x100, 0, 0, 1, false); queue_irq(0x80, 0, 0, 1, false); }
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == ETIMEDOUT);
+		CHECK(irq_api.ns == UINT64_C(120000000000)); irq_freed(); irq_no_success();
+	}
+	/* Spurious CV wakes share one deadline and add no controller reads. */
+	prepare_irq();
+	for (i = 0; i < 24; i++) queue_irq(0, 0, 0, UINT64_C(5000000000), true);
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == ETIMEDOUT);
+	CHECK(irq_api.waits == 24 && irq_api.maximum_wait == UINT64_C(120000000000));
+	CHECK(irq_api.ns == UINT64_C(120000000000) && hw.hpd_reads == 1);
+	CHECK(hsm_probe_irq0.callbacks == 0); irq_freed(); irq_no_success();
+	prepare_irq(); queue_irq(0x80, 0, 0, UINT64_C(119000000000), false);
+	queue_irq(0x100, 1, 0, UINT64_C(1000000000), false);
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == ETIMEDOUT);
+	CHECK(hsm_probe_irq0.phase == 1); irq_freed(); irq_no_success();
+	/* An in-flight callback during drain cannot complete a timed-out cycle. */
+	prepare_irq(); queue_irq(0x80, 0, 0, 1, false);
+	queue_irq(0x100, 1, 0, 1, false); irq_api.on_destroy = 1;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == ETIMEDOUT);
+	CHECK(hsm_probe_irq0.phase == 1 && irq_api.drained); irq_freed(); irq_no_success();
+	for (i = 0; i < 3; i++) {
+		prepare_irq(); cycle_irq();
+		if (i == 0) irq_api.wait_error = EINTR;
+		if (i == 1) irq_api.route_error = EIO;
+		if (i == 2) { queue_irq(0, 1, EIO, 1, false); irq_api.on_destroy = 1; }
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == (i == 0 ? EINTR : EIO));
+		irq_freed(); irq_no_success();
+	}
+	prepare_irq(); queue_irq(0, 0, EIO, 1, false);
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == EIO);
+	CHECK(hw.hpd_reads == 2); irq_freed(); irq_no_success();
+	for (i = 0; i < 4; i++) {
+		prepare_irq(); cycle_irq();
+		if (i == 0) irq_api.aon_mask &= ~0x80U;
+		if (i == 1) irq_api.aon_mask &= ~0x100U;
+		if (i == 2) irq_api.aon_pending = 0x80;
+		if (i == 3) hw.hpd_raw = 0x80000000U;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == EBUSY);
+		CHECK(irq_api.creates == 0); irq_freed(); irq_no_success();
+	}
+	/* Every fallible boundary, including late DVP/HSM cleanup. */
+	for (i = 1; i <= strlen(order); i++) {
+		char operation = order[i - 1];
+		if (strchr("pmhnuU", operation) != NULL) continue;
+		prepare_irq(); cycle_irq(); fail_step = i;
+		error = bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties);
+		CHECK(error == (operation == 'X' ? 0 : strchr("QMHNIq", operation) != NULL ? EIO : EWOULDBLOCK));
+		CHECK(strncmp(events, order, i) == 0); irq_no_success();
+		if (strchr("HNIq", operation) != NULL) irq_freed();
+		if (operation == 'X') {
+			CHECK(irq_api.live && irq_api.cv_live && irq_api.aon_mapped && hw.hpd_mapped);
+			CHECK(hsm_probe_irq0.retained && hsm_probe_irq0.hsm == bcm2712_hsm_owner);
+			CHECK(references == 1 && hsm_probe_irq0.minor == &fixture_minor);
+			stop = event_count;
+			CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_FINI, NULL) == EBUSY);
+			CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == EBUSY);
+			CHECK(event_count == stop);
+			queue_irq(0x180, 1, 0, 1, false); irq_event();
+			CHECK(irq_api.cv_destroys == 0 && references == 1);
+		}
+		reboot_model();
+	}
+	for (i = 0; i < 2; i++) {
+		prepare_irq(); cycle_irq();
+		if (i == 0) { irq_api.failed_owner = true; irq_api.create_error = EIO; }
+		else irq_api.null_owner = true;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == 0);
+		CHECK(hsm_probe_irq0.retained && references == 1);
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_FINI, NULL) == EBUSY);
+		irq_no_success(); reboot_model();
+	}
+	for (i = 0; i < 2; i++) {
+		prepare_irq(); cycle_irq();
+		if (i == 0) hw.gates |= 1U << 3; else hw.resets = 1U << 1;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == EBUSY);
+		CHECK(irq_api.creates == 0 && hw.hpd_maps == 0 && hw.writes == 0);
+		irq_no_success(); reboot_model();
+	}
+	for (i = 1; i <= 18; i++) {
+		prepare_irq(); cycle_irq(); fw.state = 0; fw.rate = 0; fw.fail_call = i;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == ETIMEDOUT);
+		CHECK(fw.calls == i && !irq_api.live && !irq_api.aon_mapped && !hw.hpd_mapped);
+		CHECK(irq_api.cv_destroys == 1 && references == 0);
+		irq_no_success(); reboot_model();
+	}
+	prepare_irq(); cycle_irq(); hw.external_gate = true;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == EIO);
+	CHECK(irq_api.creates == 0 && hw.hpd_maps == 0 && hw.writes == 1);
+	irq_no_success(); reboot_model();
+}
+
 int
 main(void)
 {
@@ -1060,6 +1363,7 @@ main(void)
 	hpd_probe_tests();
 	ddc_probe_tests();
 	edid_probe_tests();
+	irq_probe_tests();
 	printf("HSM probe: %u checks PASS; real libfdt and native owner, host only\n", checks);
 	return 0;
 }

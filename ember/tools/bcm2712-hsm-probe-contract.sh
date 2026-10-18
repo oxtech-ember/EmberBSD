@@ -11,8 +11,21 @@ for unit in hsm hsm_acpi dvp dvp_acpi; do
 done
 sed '/^#include /{ /"opt_bcm2712_ddc.h"/!d; }; /^__KERNEL_RCSID(/d' \
     "$src/sys/modules/bcm2712_hsm_probe/bcm2712_hsm_probe.c" > "$work/probe.h"
+# Keep the BSD time arithmetic macros and their original source license.
+awk '/^#ifndef/ { exit } { print }' "$src/sys/sys/time.h" > "$work/time-ops.h"
+for macro in timespeccmp timespecsub; do
+    printf '#ifndef %s\n' "$macro" >> "$work/time-ops.h"
+    awk -v macro="$macro" '
+        $0 ~ "^#define[ \t]+" macro "[(]" { copying=1; found++ }
+        copying { print; if (substr($0,length($0)) != sprintf("%c",92)) copying=0 }
+        END { if (found != 1 || copying) exit 1 }
+    ' "$src/sys/sys/time.h" >> "$work/time-ops.h"
+    echo '#endif' >> "$work/time-ops.h"
+done
 cp "$src/sys/arch/arm/broadcom/bcm2712_display_hsm.h" "$work/hsm-types.h"
 cp "$src/sys/arch/arm/broadcom/bcm2712_display.h" "$work/display.h"
+awk '/^#ifdef _KERNEL/ { kernel=1; next } kernel && /^#endif/ { kernel=0; next } !/^#include / { print }' \
+    "$src/sys/arch/arm/broadcom/bcm2712_display_irq.h" > "$work/irq-types.h"
 cp "$src/ember/tools/bcm2712-display-hsm-contract.c" "$work/hsm-services.c"
 awk '/^#define[ \t]+(VCPROP_CLK_M2MC|VCPROP_CLK_PIXEL_BVB|VCPROP_CLK_CORE|VCPROP_CLK_DISP|VCPROP_REQ_SUCCESS|VCPROPTAG_RESPONSE|VCPROPTAG_GET_CLOCKSTATE|VCPROPTAG_GET_CLOCKRATE|VCPROPTAG_GET_MAX_CLOCKRATE|VCPROPTAG_SET_CLOCKSTATE|VCPROPTAG_SET_CLOCKRATE)[ \t]/' \
     "$src/sys/arch/evbarm/rpi/vcprop.h" > "$work/properties.h"
@@ -97,10 +110,48 @@ for feature in ${HSM_PROBE_FEATURES:-off on}; do
             ddc-partial ddc-conflict ddc-value
             edid-range edid-length edid-inherited-gate edid-status edid-fault
             edid-active edid-validity edid-native-owner edid-null-owner edid-error
-            edid-payload-order edid-payload-format edid-destroy'
+            edid-payload-order edid-payload-format edid-destroy
+            irq-range irq-owned irq-offset irq-mask irq-pending irq-label
+            irq-deadline irq-callback-deadline irq-destroy-lock irq-unmap
+            irq-retain irq-fini irq-render'
     fi
 for mutation in $mutations; do
     case "$mutation" in
+        irq-range)
+            from='const struct bcm2712_display_memory *aon = &contract->memory[12];'
+            to='const struct bcm2712_display_memory *aon = &contract->memory[13];' ;;
+        irq-owned)
+            from='&arm_generic_bs_tag, irq->aon_handle, 0x180,'
+            to='&arm_generic_bs_tag, irq->aon_handle, 0x80,' ;;
+        irq-offset)
+            from='irq->dvp.hpd_handle, 0x1c8);'
+            to='irq->dvp.hpd_handle, 0x1a8);' ;;
+        irq-mask)
+            from='(mask & 0x180U) != 0x180U ||'; to='false ||' ;;
+        irq-pending)
+            from='(pending & 0x180U) != 0 ||'; to='false ||' ;;
+        irq-label)
+            from='if (irq->phase == 0 && (raw & 1U) == 0)'
+            to='if (irq->phase == 0 && (pending & 0x80U) != 0)' ;;
+        irq-deadline)
+            from='while (irq->error == 0 && irq->phase != 2) {'
+            to='while (irq->error == 0 && irq->phase != 2) { irq->started = irq->previous;' ;;
+        irq-callback-deadline)
+            from='hsm_probe_irq_remaining(irq, &remaining) : 0;'
+            to='hsm_probe_irq_remaining(irq, &remaining) : 0; error = 0;' ;;
+        irq-destroy-lock)
+            from='error = bcm2712_display_irq_destroy(irq->owner);'
+            to='mutex_enter(&irq->lock); error = bcm2712_display_irq_destroy(irq->owner); mutex_exit(&irq->lock);' ;;
+        irq-unmap)
+            from='error = bcm2712_display_irq_destroy(irq->owner);'
+            to='bus_space_unmap(&arm_generic_bs_tag, irq->aon_handle, 0x30); error = bcm2712_display_irq_destroy(irq->owner);' ;;
+        irq-retain)
+            from='if (hsm_probe_irq0.retained) {'; to='if (false) {' ;;
+        irq-fini)
+            from='return hsm_probe_irq0.retained ? EBUSY : 0;'; to='return 0;' ;;
+        irq-render)
+            from='error);'
+            to='error);' ;;
         edid-feature) from='#ifndef BCM2712_DISPLAY_DDC'; to='#if 0' ;;
         edid-range)
             from='error = bcm2712_display_ddc_create(dev, contract, bsc,'
@@ -126,10 +177,10 @@ for mutation in $mutations; do
         edid-null-owner)
             from='if (ddc->owner == NULL)'; to='if (false)' ;;
         edid-error)
-            from='return dvp.ddc.operation_error;'; to='return 0;' ;;
+            from='return dvp->ddc.operation_error;'; to='return 0;' ;;
         edid-payload-order)
-            from='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp);'
-            to='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp); if (mode == HSM_PROBE_EDID0) hsm_probe_edid0_payload(dev, dvp.ddc.edid);' ;;
+            from='error = hsm_probe_dvp_cycle(dev, handle, mode, dvp);'
+            to='error = hsm_probe_dvp_cycle(dev, handle, mode, dvp); if (mode == HSM_PROBE_EDID0) hsm_probe_edid0_payload(dev, dvp->ddc.edid);' ;;
         edid-payload-format)
             from='edid[i], edid[i + 1], edid[i + 2], edid[i + 3],'
             to='edid[i + 1], edid[i], edid[i + 2], edid[i + 3],' ;;
@@ -143,8 +194,8 @@ for mutation in $mutations; do
         mode-fallback)
             from=''; to='' ;;
         hsm-held)
-            from='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp);'
-            to='(void)bcm2712_display_hsm_release(provider, 0); error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp);' ;;
+            from='error = hsm_probe_dvp_cycle(dev, handle, mode, dvp);'
+            to='(void)bcm2712_display_hsm_release(provider, 0); error = hsm_probe_dvp_cycle(dev, handle, mode, dvp);' ;;
         hpd-inherited-gate)
             from='if (mode == HSM_PROBE_HPD0 && (initial.gates & (1U << 3)) != 0)'
             to='if (false)' ;;
@@ -182,13 +233,20 @@ for mutation in $mutations; do
         ddc-value)
             from='if (strcmp(ddc_mode, "observe0") == 0)'; to='if (true)' ;;
         retained-map)
-            from='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp);'
-            to='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp); if (error != 0 && dvp.mapped) bus_space_unmap(&arm_generic_bs_tag, dvp.handle, 0x10);' ;;
+            from='error = hsm_probe_dvp_cycle(dev, handle, mode, dvp);'
+            to='error = hsm_probe_dvp_cycle(dev, handle, mode, dvp); if (error != 0 && dvp->mapped) bus_space_unmap(&arm_generic_bs_tag, dvp->handle, 0x10);' ;;
         *) echo "Unknown probe mutant: $mutation" >&2; exit 1 ;;
     esac
-    if [ "$mutation" = mode-fallback ]; then
+    if [ "$mutation" = irq-render ]; then
         awk '
-            previous == "\t\telse" && $0 == "\t\t\treturn EINVAL;" {
+            /module registered for/ { retained=1 }
+            retained && /return 0;/ { sub(/return 0;/, "drm_minor_release(minor); return 0;"); changed++; retained=0 }
+            { print } END { if (changed != 1) exit 1 }
+        ' "$work/probe-good.h" > "$work/probe.h"
+    elif [ "$mutation" = mode-fallback ]; then
+        awk '
+            /else if \(strcmp\(dvp_mode, "gate0"\)/ { selected=1 }
+            selected && previous == "\t\telse" && $0 == "\t\t\treturn EINVAL;" {
                 $0 = "\t\t\tmode = HSM_PROBE_CLOCK;"; changed++
             }
             { previous = $0; print } END { if (changed != 1) exit 1 }

@@ -9,6 +9,9 @@
 #include <sys/bus.h>
 #include <sys/device.h>
 #include <sys/module.h>
+#include <sys/mutex.h>
+#include <sys/condvar.h>
+#include <sys/time.h>
 #include <sys/systm.h>
 #include <prop/proplib.h>
 #include <dev/acpi/acpivar.h>
@@ -78,5 +81,15 @@ const uint64_t bcm2712_hsm_probe_abi[]
 	sizeof(bus_addr_t),
 	sizeof(bus_size_t),
 	sizeof(bool),
-	sizeof(void *)
+	sizeof(void *),
+	sizeof(kmutex_t),
+	_Alignof(kmutex_t),
+	sizeof(kcondvar_t),
+	_Alignof(kcondvar_t),
+	sizeof(struct timespec),
+	_Alignof(struct timespec),
+	OFFSET(timespec, tv_sec),
+	OFFSET(timespec, tv_nsec),
+	sizeof(((struct timespec *)0)->tv_sec),
+	sizeof(((struct timespec *)0)->tv_nsec)
 };
