@@ -677,8 +677,11 @@ on every board in the hardware catalog.
   A [versioned BCM2712 display contract](ember/boot/bcm2712-display-contract.md)
   validates shared register ownership, interrupt domains and bounded firmware
   clock snapshots. The UEFI series declares these resources while preserving the
-  legacy V3D indices. ASL-to-AML component checks pass; full firmware deployment
-  remains unverified. The observer does not enable clocks or map display registers.
+  legacy V3D indices. A complete GCC 16.2 firmware build booted on CM5;
+  its live DSDT passed the OS decoder with 32 memory ranges and seven IRQs.
+  The installed observer separately found HSM clock ID 13 enabled at a reported
+  zero rate. Clock control remains unaccepted. The observer does not enable
+  clocks or map display registers.
   An [explicit native display IRQ provider](ember/boot/bcm2712-display-irq.md)
   adds bounded leaf dispatch and synchronized teardown. Source contracts and
   kernel object analysis pass. An explicit [HSM clock owner](ember/boot/bcm2712-display-hsm.md)
