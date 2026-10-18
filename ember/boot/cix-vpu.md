@@ -214,6 +214,38 @@ Ten causal mutations are detected. Native GCC16/CSA pass; all-category Cppcheck
 retains header, informational and isolated unused-API findings without suppression.
 These results do not establish a hardware firmware boot or physical DMA.
 
+## Initially masked native IRQ registration
+
+The ARM PIC API `intr_establish_xname_masked` reserves an exclusive native
+source with one initial mask reference. It blocks before source publication
+and skips the initial direct or multiprocessor enable operation. A caller must
+publish its returned cookie and ready context before `intr_unmask` releases
+that reference. A pending line can dispatch immediately during that unmask.
+An occupied source is rejected without changing the existing owner.
+
+The controller configure callback must preserve the mask. The inspected GICv3
+wired SPI path meets that requirement. Other controllers and all-CPU PPI
+unmask affinity are not qualified. Existing establish APIs retain their event
+order; mask counting and native teardown remain unchanged. Establish and
+teardown still require caller serialization. This is not firmware ownership,
+DMA drain or a generic replacement for pending-dispatch synchronization.
+
+Run the actual-source ordering contracts from the repository root:
+
+```sh
+PIC_ESTABLISH_ANALYZE=1 sh ember/tools/pic-establish-contract.sh \
+  sys/arch/arm/pic/pic.c /tmp/pic-establish-new
+sh ember/tools/pic-teardown-contract.sh \
+  sys/arch/arm/pic/pic.c /tmp/pic-teardown-new
+```
+
+Use fresh output paths. `CC`, `CFLAGS` and `TEST_RUNNER` select the establish
+fixture compiler, flags and execution wrapper. UP418 and MP420 checks pass,
+as do ASan/UBSan and the unchanged teardown contract. Five causal mutations
+are detected. Native GCC16 passes; all-category Cppcheck and native CSA retain
+explicit inherited diagnostics. No VPU attachment uses this API yet, and real
+IRQ delivery remains unverified.
+
 ## Manual CPU preparation probe
 
 [EMBER64_CIXVPU_PREPARE_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_PREPARE_PROBE)

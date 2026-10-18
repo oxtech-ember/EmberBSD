@@ -258,6 +258,9 @@ on every board in the hardware catalog.
   copied SWITCHED_IN/PONG messages from bounded snapshots. Actual-source checks
   pass; no attachment invokes these boot helpers or writes that word to hardware.
   Physical DMA, hardware publication and runtime teardown remain unfinished.
+  [Initially masked ARM PIC registration](ember/boot/cix-vpu.md#initially-masked-native-irq-registration)
+  lets a consumer publish its context before enabling an exclusive interrupt.
+  Actual-source ordering checks pass; VPU use and physical IRQ delivery are pending.
   A separate [native hardware profile](ember/boot/cix-platform.md#manual-native-hardware-profile)
   adds seven raw VPU observations under the same clock/reset/power claims.
   Source checks pass; physical harvesting and repair-state observation is pending.

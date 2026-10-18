@@ -18,6 +18,10 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/arm/acpi/acpi_machdep.c'
       - 'sys/arch/arm/acpi/acpi_iort.c'
+      - 'sys/arch/arm/pic/pic.c'
+      - 'sys/arch/arm/pic/picvar.h'
+      - 'ember/tools/pic-establish-*'
+      - 'ember/tools/pic-teardown-*'
       - 'ember/tools/acpi-iort-dma-*'
       - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE'
@@ -58,6 +62,10 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/arm/acpi/acpi_machdep.c'
       - 'sys/arch/arm/acpi/acpi_iort.c'
+      - 'sys/arch/arm/pic/pic.c'
+      - 'sys/arch/arm/pic/picvar.h'
+      - 'ember/tools/pic-establish-*'
+      - 'ember/tools/pic-teardown-*'
       - 'ember/tools/acpi-iort-dma-*'
       - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE'
@@ -113,6 +121,10 @@ jobs:
             /sys/dev/acpi/acpi_power.*
             /sys/arch/arm/acpi/acpi_machdep.c
             /sys/arch/arm/acpi/acpi_iort.c
+            /sys/arch/arm/pic/pic.c
+            /sys/arch/arm/pic/picvar.h
+            /ember/tools/pic-establish-*
+            /ember/tools/pic-teardown-*
             /ember/tools/acpi-iort-dma-*
             /sys/dev/acpi/xhci_acpi.c
             /sys/dev/acpi/cixscmi_acpi.*
@@ -145,6 +157,8 @@ jobs:
           sh ember/tools/cixreset-contract.sh
           sh ember/tools/acpi-power-contract.sh
           sh ember/tools/acpi-iort-dma-contract.sh
+          PIC_ESTABLISH_ANALYZE=1 sh ember/tools/pic-establish-contract.sh sys/arch/arm/pic/pic.c "$RUNNER_TEMP/pic-establish-analysis"
+          sh ember/tools/pic-teardown-contract.sh sys/arch/arm/pic/pic.c "$RUNNER_TEMP/pic-teardown-analysis"
           sh ember/tools/cixvpu-control-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
@@ -159,6 +173,8 @@ jobs:
           sh ember/tools/cixreset-contract.sh
           sh ember/tools/acpi-power-contract.sh
           sh ember/tools/acpi-iort-dma-contract.sh
+          sh ember/tools/pic-establish-contract.sh sys/arch/arm/pic/pic.c "$RUNNER_TEMP/pic-establish-sanitized"
+          sh ember/tools/pic-teardown-contract.sh sys/arch/arm/pic/pic.c "$RUNNER_TEMP/pic-teardown-sanitized"
           sh ember/tools/cixvpu-control-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
@@ -180,6 +196,9 @@ jobs:
           sh ember/tools/cixreset-contract.sh
           sh ember/tools/acpi-power-contract.sh
           sh ember/tools/acpi-iort-dma-contract.sh
+          sh ember/tools/pic-establish-contract.sh sys/arch/arm/pic/pic.c "$RUNNER_TEMP/pic-establish-memcheck"
+          sh ember/tools/pic-teardown-contract.sh sys/arch/arm/pic/pic.c "$RUNNER_TEMP/pic-teardown-memcheck"
+          "$TEST_RUNNER" "$RUNNER_TEMP/pic-teardown-memcheck/check"
           sh ember/tools/cixvpu-control-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
