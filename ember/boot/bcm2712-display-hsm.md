@@ -90,7 +90,67 @@ GCC path analysis reports no findings in those units.
 Clang Static Analyzer and Cppcheck retain inherited header findings; the HSM source adds none.
 The host fixture passes ASan and UBSan. Valgrind is unavailable on the tested Darwin AArch64 host.
 Host execution does not establish physical clock control or HDMI operation.
-A complete kernel build, firmware deployment, and cold-boot hardware acceptance remain pending.
+These source checks do not establish physical HSM control or a display access lifetime.
+
+## Finite opt-in module
+
+[`bcm2712_hsm_probe`](../../sys/modules/bcm2712_hsm_probe) runs one explicit
+native-provider cycle at module load. It is not part of a default kernel or
+module set. Cross-build it with GCC16 and the selected kernel's build tools.
+Set `EMBER_KERNEL_OBJDIR` to that kernel's configured object directory.
+The Makefile reads its real preprocessing and DRM flags, generated option
+headers, source include paths, and warning policy. Generic DRM module defaults
+can select different architecture and legacy configuration definitions.
+Record matching source, headers, options, build settings and strong kernel
+symbols before loading. A buildinfo string comparison alone does not prove ABI
+compatibility. The optional [ABI sample](../tools/bcm2712-hsm-probe-abi.c)
+compares three configuration definitions and selected structure layouts. It
+does not replace the source, option or symbol audit. Do not load a module built
+against a different kernel profile.
+
+The operator must first shut down, remove HDMI, and perform a controlled cold
+boot. A disconnected cable on an already running system is not this prerequisite.
+Load the selected module only after the V3D render device has initialized:
+
+```sh
+modload -b cold-headless=true \
+    -s "expected-buildinfo=EmberBSD:${kernel_commit}" \
+    /absolute/path/bcm2712_hsm_probe.kmod
+```
+
+Set `kernel_commit` to the verified selected kernel commit before this command.
+Use the exact selected kernel buildinfo without its final newline. The module
+rejects a mismatch before any HSM call. It also rejects an early framebuffer,
+any genfb or wsdisplay device, a missing or invalid FDT, and every framebuffer
+descriptor, including a disabled descriptor. These refusal paths send no HSM
+request. The module holds a reference to the registered V3D render object and
+checks that its device is the ACPI `\_SB.GPU0` device.
+
+The cycle creates the native owner, records initial status, acquires port 0 at
+120 MHz, records acquired status, releases port 0, records status before destroy,
+and destroys the owner. Status is the last verified cached state, rate, lease
+mask, fault and mutation flag. Successful destroy frees the owner; the module
+does not read it afterward. An error after any SET attempt or active lease
+retains the native owner and requests a controlled reboot. It never retries,
+restores an unknown clock state, or clears mailbox quarantine. Empty unmutated
+owners can be destroyed during failure cleanup. Module unload performs no HSM
+operation and cannot clear a retained owner.
+
+The module does not access display MMIO or perform HPD, DDC or reset operations.
+Its framebuffer gate is conservative; it does not establish a general firmware
+clock lifetime. Run its actual-source host contract with:
+
+```sh
+sh ember/tools/bcm2712-hsm-probe-contract.sh "$PWD"
+```
+
+The fixture uses the real HSM core, native provider, module body and libfdt.
+Only kernel services are controlled. It checks refusal before HSM calls,
+malformed trees, zero rate, inherited state, every transaction failure, retained
+ownership and cleanup. `CC`, `CFLAGS`, `HSM_PROBE_COMPILE_ONLY=1`,
+`HSM_PROBE_OUTPUT` and `TEST_RUNNER` support cross-built and memory-checked tests.
+`HSM_PROBE_SKIP_MUTANT=1` runs only the positive source contract.
+Host execution does not establish physical acceptance.
 
 ## Sources and next hardware boundary
 
