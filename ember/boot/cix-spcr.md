@@ -118,7 +118,7 @@ These checks do not establish a physical cold boot or UART handoff.
 Existing PSCI/MADT discovery still uses its native ACPI routines;
 this profile does not harden the complete ACPI parser.
 
-## Loader validation and ownership
+## Validation and ownership
 
 Before any write the loader checks:
 
