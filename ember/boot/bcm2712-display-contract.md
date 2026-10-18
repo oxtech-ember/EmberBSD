@@ -314,6 +314,9 @@ and [VC6 stop check](https://github.com/raspberrypi/linux/blob/a1a601d4857978d81
 The [pure fixed HVS plane encoder](bcm2712-display-hvs-core.md) documents the
 ten-word C0/D0 payload and its separate DMA/UPM metadata contract.
 
+The separate [pure HDMI0 timing encoder](bcm2712-hdmi0-timing-core.md) describes
+fixed controller timing and packing payloads. It performs no I/O or activation.
+
 ### Pure PV0 timing payload
 
 The [fixed encoder](../../sys/arch/arm/broadcom/bcm2712_display_pv0.c) produces

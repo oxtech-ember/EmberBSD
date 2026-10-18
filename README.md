@@ -728,6 +728,8 @@ on every board in the hardware catalog.
   An explicit [retained PHY programming probe](ember/boot/bcm2712-phy-program-probe.md)
   links the fixed private core with source-tested access guards and retained resources.
   Physical PHY programming, PLL lock and link acceptance remain separate.
+  A [pure HDMI0 timing encoder](ember/boot/bcm2712-hdmi0-timing-core.md) adds fixed
+  1080p60 controller payloads with source-tested packing. It performs no I/O or activation.
   DRM hotplug delivery, extension reads and KMS scanout remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
