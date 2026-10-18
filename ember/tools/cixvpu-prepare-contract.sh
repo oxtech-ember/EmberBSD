@@ -11,6 +11,9 @@ if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
     SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
 fi
 api=-DCIXVPU_DMA_API
+if grep -q 'int cixvpu_prepare_boot_cpu' "$src/sys/dev/ic/cixvpu_prepare.h"; then
+    api="$api -DCIXVPU_BOOT_API"
+fi
 if [ -f "$src/sys/dev/ic/cixvpu_dma_private.h" ]; then
     api="$api -DCIXVPU_SYNC_API"
 fi
@@ -21,6 +24,10 @@ for part in source header; do
     ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("#include ") }.join)' \
         "$input" "$work/dma-$part.inc"
 done
+if [ -f "$src/sys/dev/ic/cixvpu_dma_private.h" ]; then
+    ruby -e 'p=ARGV[0]; h=File.readlines(ARGV[1]).reject { |s| s.start_with?("#include ") }.join; File.write(p,h+File.read(p))' \
+        "$work/dma-source.inc" "$src/sys/dev/ic/cixvpu_dma_private.h"
+fi
 source=${CIXVPU_PREPARE_SOURCE:-"$src/sys/dev/ic/cixvpu_prepare.c"}
 if [ -f "$source" ]; then
     api="$api -DCIXVPU_PREPARE_API"
@@ -42,7 +49,7 @@ fi
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} $api \
     -I"$src/sys/dev/ic" -I"$work" "$src/ember/tools/cixvpu-prepare-contract.c" \
     "$src/sys/dev/ic/cixvpu_fw.c" "$src/sys/dev/ic/cixvpu_fw_plan.c" \
-    "$src/sys/dev/ic/cixvpu_mmu.c" -o "$work/test"
+    "$src/sys/dev/ic/cixvpu_mmu.c" "$src/sys/dev/ic/cixvpu_ring.c" -o "$work/test"
 if [ -n "${CIXVPU_PREPARE_TEST_OUTPUT:-}" ]; then cp "$work/test" "$CIXVPU_PREPARE_TEST_OUTPUT"; fi
 if [ "${CIXVPU_PREPARE_ANALYZE:-0}" = 1 ]; then
     ${CC:-cc} -std=c11 -dM -E -x c /dev/null > "$work/predefined.h"

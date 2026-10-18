@@ -25,6 +25,10 @@ if [ -f "$src/sys/dev/ic/cixvpu_dma.c" ]; then
         ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("#include ") }.join)' \
             "$src/sys/dev/ic/cixvpu_dma.$ext" "$work/dma-$part.inc"
     done
+    if [ -f "$src/sys/dev/ic/cixvpu_dma_private.h" ]; then
+        ruby -e 'p=ARGV[0]; h=File.readlines(ARGV[1]).reject { |s| s.start_with?("#include ") }.join; File.write(p,h+File.read(p))' \
+            "$work/dma-source.inc" "$src/sys/dev/ic/cixvpu_dma_private.h"
+    fi
 fi
 # CFLAGS is an intentional compiler argument list.
 # shellcheck disable=SC2086

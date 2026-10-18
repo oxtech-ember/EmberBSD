@@ -8,6 +8,7 @@
 #include <sys/sha2.h>
 #include <sys/systm.h>
 #include <dev/ic/cixvpu_prepare.h>
+#include <dev/ic/cixvpu_ring.h>
 #include <dev/ic/cixvpu_dma_private.h>
 
 #define PREPARE_TABLES (CIXVPU_FW_PLAN_MAX_CORES + 2U)
@@ -18,9 +19,19 @@ struct cixvpu_prepare_entry {
 	bool link;
 };
 
+struct cixvpu_prepare_boot {
+	bool enabled, published;
+	int error;
+	uint16_t cursor;
+	struct cixvpu_ring_checksum checksum;
+	struct cixvpu_dma_boot_snapshot snapshot;
+};
+
 struct cixvpu_prepared {
+
 	struct cixvpu_dma *dma;
 	struct cixvpu_fw_plan plan;
+	struct cixvpu_prepare_boot boot;
 	size_t bytes;
 	uint32_t root_entry;
 	unsigned int count;
@@ -239,12 +250,13 @@ cixvpu_prepare_tables(struct cixvpu_prepared *prepared,
 	    CIXVPU_MMU_PRIVATE, CIXVPU_MMU_WRITE, &prepared->root_entry);
 }
 
-int
-cixvpu_prepare_cpu(struct cixvpu_dma **owned,
+static int
+cixvpu_prepare_common(struct cixvpu_dma **owned,
     const struct cixvpu_fw_plan *expected_plan, const void *image,
     size_t image_size, const uint8_t expected_digest[32],
-    struct cixvpu_prepared **out)
+    struct cixvpu_prepared **out, bool boot)
 {
+	static const uint8_t boot_version[16] = "r0p0-sum0005";
 	struct cixvpu_fw_plan snapshot, checked;
 	struct cixvpu_prepared *prepared = NULL;
 	struct cixvpu_prepare_work *work = NULL;
@@ -293,8 +305,13 @@ cixvpu_prepare_cpu(struct cixvpu_dma **owned,
 	    snapshot.mappings != checked.mappings ||
 	    !cixvpu_prepare_info_equal(&snapshot.info, &checked.info))
 		return EINVAL;
+	if (boot && (checked.cores != 1 || checked.info.major != 3 ||
+	    checked.info.minor != 5 || memcmp(checked.info.version,
+	    boot_version, sizeof(checked.info.version)) != 0))
+		return ENOTSUP;
 	capacity = (size_t)checked.mappings + CIXVPU_FW_PLAN_MAX_CORES + 1;
 	pages = checked.backing_pages;
+
 	if (checked.backing_pages > CIXVPU_FW_PLAN_MAX_PAGES ||
 	    pages > (SIZE_MAX - sizeof(*work)) / sizeof(work->pages[0]) ||
 	    capacity > (SIZE_MAX - sizeof(*prepared)) / sizeof(prepared->entries[0]))
@@ -355,7 +372,31 @@ cixvpu_prepare_cpu(struct cixvpu_dma **owned,
 			}
 		}
 	}
+	if (boot) {
+		struct cixvpu_ring_checksum initial = { 0 }, seeded;
+		uint16_t next;
+		uint8_t *host = NULL;
+
+		for (i = 0; i < checked.backing_pages; i++)
+			if (work->pages[i].plan_page.role == CIXVPU_FW_PLAN_MSG_HOST)
+				host = work->pages[i].kva;
+		if (host == NULL) {
+			error = EINVAL;
+			goto failed;
+		}
+		error = cixvpu_ring_write_sum(host + 16, CIXVPU_RING_BYTES,
+		    0, 0, 1006, NULL, 0, &initial, &next, &seeded);
+		if (error != 0)
+			goto failed;
+		host[2] = (uint8_t)next;
+		host[3] = (uint8_t)(next >> 8);
+		for (i = 0; i < 3; i++)
+			for (j = 0; j < 4; j++)
+				host[4 + i * 4 + j] = (uint8_t)(seeded.reserved[i] >> (8 * j));
+		prepared->boot.enabled = true;
+	}
 	error = cixvpu_dma_seal(*owned, prepared);
+
 	if (error != 0)
 		goto failed;
 	/* Seal is the last fallible operation. Discard views and move the owner. */
@@ -399,4 +440,147 @@ cixvpu_prepared_sync_initial(struct cixvpu_prepared *prepared)
 	if (prepared == NULL)
 		return EINVAL;
 	return cixvpu_dma_sync_initial(prepared->dma, prepared, &prepared->plan);
+}
+
+int
+cixvpu_prepare_cpu(struct cixvpu_dma **owned,
+    const struct cixvpu_fw_plan *plan, const void *image, size_t size,
+    const uint8_t pin[32], struct cixvpu_prepared **out)
+{
+
+	return cixvpu_prepare_common(owned, plan, image, size, pin, out, false);
+}
+
+int
+cixvpu_prepare_boot_cpu(struct cixvpu_dma **owned,
+    const struct cixvpu_fw_plan *plan, const void *image, size_t size,
+    const uint8_t pin[32], struct cixvpu_prepared **out)
+{
+
+	return cixvpu_prepare_common(owned, plan, image, size, pin, out, true);
+}
+
+static int
+cixvpu_prepare_boot_output(struct cixvpu_prepared *p, void *out,
+    size_t size, size_t alignment, bool *fault)
+{
+	struct cixvpu_fw_plan_page page;
+	struct cixvpu_prepare_span destination = { out, size };
+	struct cixvpu_prepare_span retained;
+	size_t capacity;
+	int error;
+
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	*fault = false;
+	if (p == NULL || !cixvpu_prepare_span_valid(&destination) ||
+	    (uintptr_t)out % alignment != 0)
+		return EINVAL;
+	if (!p->boot.enabled)
+		return ENOTSUP;
+	error = cixvpu_fw_plan_page(&p->plan, 0, &page);
+	if (error != 0) {
+		*fault = true;
+		return error;
+	}
+	capacity = (size_t)p->plan.mappings + CIXVPU_FW_PLAN_MAX_CORES + 1;
+	if (capacity > (SIZE_MAX - sizeof(*p)) / sizeof(p->entries[0]) ||
+	    p->bytes != sizeof(*p) + capacity * sizeof(p->entries[0])) {
+		*fault = true;
+		return EINVAL;
+	}
+	retained = (struct cixvpu_prepare_span){ p, p->bytes };
+	if (!cixvpu_prepare_span_valid(&retained) ||
+	    cixvpu_prepare_overlap(&destination, &retained))
+		return EINVAL;
+	return cixvpu_dma_boot_output(p->dma, p, out, size, fault);
+}
+
+int
+cixvpu_prepared_publish_root(struct cixvpu_prepared *p, uint32_t *out)
+{
+	int error;
+	bool fault;
+
+	error = cixvpu_prepare_boot_output(p, out, sizeof(*out),
+	    _Alignof(uint32_t), &fault);
+	if (error != 0)
+		return error;
+	if (p->boot.published)
+		return EBUSY;
+	error = cixvpu_dma_mark_exposed(p->dma, p);
+	if (error != 0)
+		return error;
+	p->boot.published = true;
+	*out = p->root_entry;
+	return 0;
+}
+
+static uint32_t
+cixvpu_prepare_get32(const uint8_t *p)
+{
+
+	return (uint32_t)p[0] | (uint32_t)p[1] << 8 |
+	    (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+int
+cixvpu_prepared_boot_receive(struct cixvpu_prepared *p,
+    struct cixvpu_boot_reply *out)
+{
+	struct cixvpu_boot_reply reply = { 0 };
+	struct cixvpu_ring_checksum observed, next_sum;
+	uint8_t payload[4];
+	uint8_t *message;
+	uint16_t next, write;
+	size_t length;
+	unsigned int i;
+	int error;
+	bool fault = false;
+
+	error = cixvpu_prepare_boot_output(p, out, sizeof(*out),
+	    _Alignof(struct cixvpu_boot_reply), &fault);
+	if (error != 0) {
+		if (fault && p->boot.published)
+			p->boot.error = error;
+		return error;
+	}
+	if (!p->boot.published)
+		return EBUSY;
+	if (p->boot.error != 0)
+		return p->boot.error;
+	error = cixvpu_dma_boot_snapshot(p->dma, p, &p->plan, &p->boot.snapshot);
+	if (error != 0)
+		goto failed;
+	message = p->boot.snapshot.message;
+	write = (uint16_t)((uint16_t)message[0] | (uint16_t)message[1] << 8);
+	observed = p->boot.checksum;
+	for (i = 0; i < 3; i++)
+		observed.reserved[i] = cixvpu_prepare_get32(message + 4 + 4 * i);
+	error = cixvpu_ring_read_sum(message + 16, CIXVPU_RING_BYTES,
+	    p->boot.cursor, write, &observed, &reply.code, payload,
+	    sizeof(payload), &length, &next, &next_sum);
+	if (error != 0)
+		goto failed;
+	if (reply.code == 2001 && length == 4) {
+		reply.core = cixvpu_prepare_get32(payload);
+		if (reply.core != 0) {
+			error = EPROTO;
+			goto failed;
+		}
+	} else if (reply.code != 2009 || length != 0) {
+		error = EPROTO;
+		goto failed;
+	}
+	error = cixvpu_dma_boot_ack(p->dma, p, &p->plan, next);
+	if (error != 0)
+		goto failed;
+	p->boot.cursor = next;
+	p->boot.checksum = next_sum;
+	*out = reply;
+	return 0;
+failed:
+	if (error != EAGAIN)
+		p->boot.error = error;
+	return error;
 }

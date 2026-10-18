@@ -4,9 +4,10 @@
 #include "cixvpu-dma-contract.c"
 #undef main
 #include "cixvpu_mmu.h"
+#include "cixvpu_ring.h"
 
 _Alignas(max_align_t) static uint8_t image[8192], pinned_image[8192];
-static const uint8_t pin[32] = { 0x47, 0x21, 0x83, 0xb0 };
+static const uint8_t fixture_pin[32] = { 0x47, 0x21, 0x83, 0xb0 };
 static size_t extent = sizeof(image);
 static struct cixvpu_fw_plan make_plan(unsigned int cores)
 {
@@ -23,7 +24,7 @@ static struct cixvpu_fw_plan make_plan(unsigned int cores)
 }
 #ifdef CIXVPU_PREPARE_API
 /* Native SHA is a service boundary, not a modeled cryptographic claim.
- * Match the complete immutable synthetic pin; native object uses libkern SHA. */
+ * Match the complete immutable synthetic fixture_pin; native object uses libkern SHA. */
 #define SHA256_DIGEST_LENGTH 32
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 typedef struct { unsigned int phase; bool matches; } SHA256_CTX;
@@ -40,7 +41,7 @@ static int SHA256_Init(SHA256_CTX *ctx)
 static int SHA256_Update(SHA256_CTX *ctx, const uint8_t *p, size_t n)
 { CHECK(ctx->phase == 1 && p == image && n == extent); ctx->matches = memcmp(p, pinned_image, n) == 0; ctx->phase = 2; hashes++; return 1; }
 static int SHA256_Final(uint8_t out[32], SHA256_CTX *ctx)
-{ CHECK(ctx->phase == 2); memcpy(out, pin, 32); if (!ctx->matches) out[0] ^= 1; return 1; }
+{ CHECK(ctx->phase == 2); memcpy(out, fixture_pin, 32); if (!ctx->matches) out[0] ^= 1; return 1; }
 static void *prepare_kmem(size_t n, int flags)
 { if (++meta_calls == fail_meta) return NULL; return kmem_zalloc(n, flags); }
 static int prepare_page(struct cixvpu_dma *dma, unsigned int index, struct cixvpu_dma_page *out)
@@ -153,7 +154,7 @@ static void success_tests(void)
         struct cixvpu_fw_plan plan;
         struct cixvpu_dma *owner = begin(cores, &plan), *old = owner;
         struct cixvpu_prepared *out = NULL;
-        CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, &out) == 0);
+        CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, fixture_pin, &out) == 0);
         CHECK(owner == NULL && out != NULL && hashes == 1);
         struct cixvpu_dma_page stale, before;
         memset(&stale, 0xa5, sizeof(stale)); before = stale;
@@ -173,7 +174,7 @@ static void success_tests(void)
         success_counts[0] = page_calls; success_counts[1] = map_calls;
         success_counts[2] = link_calls; success_counts[3] = encode_calls;
         struct cixvpu_prepared *same = out;
-        CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, &out) == EINVAL && out == same);
+        CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, fixture_pin, &out) == EINVAL && out == same);
         fail_free = true; struct cixvpu_prepared *saved = out;
         CHECK(cixvpu_prepared_free(&out) == EIO && out == saved);
         fail_free = false; intr = true;
@@ -195,7 +196,7 @@ static void failure_tests(void)
         if (kind == 10) fail_meta = 1;
         if (kind == 11) fail_meta = 2;
         if (kind == 12) duplicate_map = 2;
-        CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, &out) != 0);
+        CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, fixture_pin, &out) != 0);
         CHECK(owner == saved && out == NULL);
         if (kind != 12) for (unsigned int i = 0; i < owner->count; i++) for (unsigned int j = 0; j < 4096; j++) CHECK(((uint8_t *)resources[i].kva)[j] == 0xa5);
         CHECK(cixvpu_dma_free(&owner) == 0 && owner == NULL && depth == 0 && live_kmem == 0);
@@ -209,7 +210,7 @@ static void failure_tests(void)
             if (stage == 1) fail_map = at;
             if (stage == 2) fail_link = at;
             if (stage == 3) fail_encode = at;
-            CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, &out) != 0);
+            CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, fixture_pin, &out) != 0);
             CHECK(owner == saved && out == NULL);
             CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
         }
@@ -228,8 +229,8 @@ static void handle_alias_tests(void)
         memcpy(pinned_image, image, sizeof(image));
         if (kind >= 2) memcpy(before, resources[2].kva, sizeof(before));
         int error = (kind & 1) == 0 ?
-            cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, slot) :
-            cixvpu_prepare_cpu(slot, &plan, image, extent, pin, &out);
+            cixvpu_prepare_cpu(&owner, &plan, image, extent, fixture_pin, slot) :
+            cixvpu_prepare_cpu(slot, &plan, image, extent, fixture_pin, &out);
         CHECK(error == EINVAL && owner == saved && out == NULL);
         if (kind >= 2) CHECK(memcmp(before, resources[2].kva, sizeof(before)) == 0);
         else CHECK(memcmp(image, pinned_image, sizeof(image)) == 0);
@@ -241,17 +242,17 @@ static void argument_tests(void)
     struct cixvpu_fw_plan plan;
     struct cixvpu_dma *owner = begin(4, &plan), *saved = owner;
     struct cixvpu_prepared canary = {0}, *out = &canary;
-    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, &out) == EBUSY && out == &canary);
+    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, fixture_pin, &out) == EBUSY && out == &canary);
     out = NULL;
-    CHECK(cixvpu_prepare_cpu(NULL, &plan, image, extent, pin, &out) == EINVAL);
-    CHECK(cixvpu_prepare_cpu(&owner, NULL, image, extent, pin, &out) == EINVAL);
-    CHECK(cixvpu_prepare_cpu(&owner, &plan, NULL, extent, pin, &out) == EINVAL);
+    CHECK(cixvpu_prepare_cpu(NULL, &plan, image, extent, fixture_pin, &out) == EINVAL);
+    CHECK(cixvpu_prepare_cpu(&owner, NULL, image, extent, fixture_pin, &out) == EINVAL);
+    CHECK(cixvpu_prepare_cpu(&owner, &plan, NULL, extent, fixture_pin, &out) == EINVAL);
     CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, NULL, &out) == EINVAL);
-    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, NULL) == EINVAL);
-    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, SIZE_MAX, pin, &out) == EINVAL);
-    CHECK(cixvpu_prepare_cpu(&owner, &plan, (void *)(UINTPTR_MAX - 3), extent, pin, &out) == EINVAL);
+    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, fixture_pin, NULL) == EINVAL);
+    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, SIZE_MAX, fixture_pin, &out) == EINVAL);
+    CHECK(cixvpu_prepare_cpu(&owner, &plan, (void *)(UINTPTR_MAX - 3), extent, fixture_pin, &out) == EINVAL);
     intr = true;
-    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, &out) == EWOULDBLOCK);
+    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, fixture_pin, &out) == EWOULDBLOCK);
     intr = false;
     CHECK(out == NULL && owner == saved && hashes == 0 && page_calls == 0);
     CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
@@ -269,7 +270,7 @@ static void argument_tests(void)
     for (unsigned int i = 0; i < __arraycount(fields); i++) {
         owner = begin(4, &plan); saved = owner; out = NULL;
         ((uint8_t *)&plan.info)[fields[i]] ^= 1;
-        CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, &out) == EINVAL);
+        CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, fixture_pin, &out) == EINVAL);
         CHECK(owner == saved && out == NULL && page_calls == 0);
         CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
     }
@@ -280,7 +281,7 @@ static void boundary_tests(void)
     top_bus = true;
     struct cixvpu_dma *owner = begin(1, &plan);
     struct cixvpu_prepared *out = NULL;
-    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, &out) == 0);
+    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, fixture_pin, &out) == 0);
     for (unsigned int i = 0; i < plan.backing_pages; i++) {
         struct cixvpu_fw_plan_page p; CHECK(cixvpu_fw_plan_page(&plan, i, &p) == 0);
         if (p.role == CIXVPU_FW_PLAN_LEAF && p.leaf_address == 0)
@@ -290,7 +291,7 @@ static void boundary_tests(void)
     CHECK(cixvpu_prepared_free(&out) == EINVAL);
     owner = begin(4, &plan); struct cixvpu_dma *saved = owner;
     view_fault = 8;
-    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, &out) == EINVAL);
+    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, fixture_pin, &out) == EINVAL);
     CHECK(owner == saved && out == NULL);
     for (unsigned int i = 0; i < plan.backing_pages; i++)
         for (unsigned int j = 0; j < 4096; j++)
@@ -354,7 +355,7 @@ static struct cixvpu_prepared *prepared_begin(unsigned int cores, struct cixvpu_
 {
     struct cixvpu_dma *owner = begin(cores, plan);
     struct cixvpu_prepared *out = NULL;
-    CHECK(cixvpu_prepare_cpu(&owner, plan, image, extent, pin, &out) == 0 && owner == NULL);
+    CHECK(cixvpu_prepare_cpu(&owner, plan, image, extent, fixture_pin, &out) == 0 && owner == NULL);
     return out;
 }
 static void sync_success_tests(void)
@@ -433,7 +434,7 @@ static void sync_failure_tests(void)
     struct cixvpu_dma *owner = begin(4, &plan), *saved = owner;
     struct cixvpu_prepared *out = NULL;
     fail_seal = true;
-    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, &out) == EIO);
+    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, fixture_pin, &out) == EIO);
     CHECK(owner == saved && out == NULL && owner->phase == CIXVPU_DMA_ALLOC);
     CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
 }
@@ -521,6 +522,199 @@ static void exposure_tests(void)
     CHECK(depth == 0 && live_kmem == 0);
 }
 #endif
+#ifdef CIXVPU_BOOT_API
+/* Breaks caught: wrong fixed seed, publish-before-mark, missing alias region,
+ * stale whole-page PREWRITE, omitted RX acquire/return, early ACK and retry
+ * after malformed input. Device bytes are independent native-service backing. */
+struct boot_sync { unsigned int page; uint64_t offset, length; int ops; };
+static struct boot_sync boot_events[128];
+static unsigned int boot_nevents, boot_host, boot_mve, boot_rpc;
+static bool boot_unstable, boot_append;
+static void boot_observe(unsigned int i, bus_addr_t offset, bus_size_t length, int ops)
+{
+    CHECK(boot_nevents < __arraycount(boot_events));
+    CHECK(i < sync_plan.backing_pages && offset <= 4096 && length <= 4096-offset);
+    boot_events[boot_nevents++] = (struct boot_sync){i,offset,length,ops};
+    if (ops & BUS_DMASYNC_POSTREAD) {
+        if (boot_append && i==boot_mve && length==4096) {
+            /* Native bounce memcpy may fetch payload before the producer.
+             * Simulate valid FW append+commit between these two copy ranges. */
+            memcpy((uint8_t *)resources[i].kva+16,device_memory[i]+16,4080);
+            put32(device_memory[i]+16,0x000407d1); put32(device_memory[i]+20,0);
+            device_memory[i][0]=2; put32(device_memory[i]+4,0x000407d1);
+            put32(device_memory[i]+8,0x000407d1); put32(device_memory[i]+12,0x000407d1);
+            memcpy(resources[i].kva,device_memory[i],16); boot_append=false;
+        } else memcpy((uint8_t *)resources[i].kva+offset,device_memory[i]+offset,(size_t)length);
+    }
+
+    if (ops & BUS_DMASYNC_PREWRITE)
+        memcpy(device_memory[i]+offset,(uint8_t *)resources[i].kva+offset,(size_t)length);
+    if (boot_unstable && i==boot_mve && ops==BUS_DMASYNC_PREREAD && length==4096)
+        device_memory[i][0] ^= 1;
+}
+static struct cixvpu_prepared *boot_begin(void)
+{
+    struct cixvpu_fw_plan plan;
+    struct cixvpu_dma *owner=begin(1,&plan);
+    memcpy(image+80,"r0p0-sum0005",12); memcpy(pinned_image,image,sizeof(image));
+    CHECK(cixvpu_fw_plan_build(image,extent,1,&plan)==0);
+    struct cixvpu_prepared *out=NULL;
+    CHECK(cixvpu_prepare_boot_cpu(&owner,&plan,image,extent,fixture_pin,&out)==0);
+    CHECK(owner==NULL && out!=NULL);
+    for(unsigned int i=0;i<plan.backing_pages;i++) {
+        struct cixvpu_fw_plan_page p;
+        CHECK(cixvpu_fw_plan_page(&plan,i,&p)==0);
+        if(p.role==CIXVPU_FW_PLAN_MSG_HOST) boot_host=i;
+        if(p.role==CIXVPU_FW_PLAN_MSG_MVE) boot_mve=i;
+        if(p.role==CIXVPU_FW_PLAN_RPC) boot_rpc=i;
+    }
+    const uint8_t *h=resources[boot_host].kva;
+    CHECK(h[0]==0 && h[1]==0 && h[2]==2 && h[3]==0);
+    CHECK(word(h,4)==1006 && word(h,5)==1006);
+    CHECK(word(h,1)==0 && word(h,2)==0 && word(h,3)==1006);
+    sync_fixture(&plan,true);
+    CHECK(cixvpu_prepared_sync_initial(out)==0);
+    CHECK(memcmp(device_memory[boot_host],h,4096)==0);
+    boot_nevents=0; boot_unstable=boot_append=false; sync_observer=boot_observe;
+    return out;
+}
+static void boot_drop(struct cixvpu_prepared *out)
+{
+    /* Host-only quarantine teardown, never a production exposure reset. */
+    sync_observer=NULL; unload_observer=NULL;
+    cixvpu_dma_release(out->dma); kmem_free(out,out->bytes);
+    CHECK(depth==0 && live_kmem==0);
+}
+static void boot_message(unsigned int pos, uint16_t code, uint16_t size, uint32_t payload, uint32_t sum)
+{
+    uint8_t *m=device_memory[boot_mve];
+    put32(m+16+pos*4,(uint32_t)code|((uint32_t)size<<16));
+    if(size!=0) put32(m+16+((pos+1)%1020)*4,payload);
+    unsigned int end=(pos+1+(size+3)/4)%1020;
+    m[0]=(uint8_t)end; m[1]=(uint8_t)(end>>8);
+    put32(m+4,sum); put32(m+8,sum); put32(m+12,sum);
+}
+static void boot_api_tests(void)
+{
+    struct cixvpu_prepared *out=boot_begin();
+    uint32_t root=0xa5a5a5a5;
+    void *bad[]={out,&out->plan,out->dma,&out->dma->owners[0],resources[0].kva,
+        out->dma->owners[0].map,(uint8_t *)out+out->bytes-4};
+    for(unsigned int i=0;i<__arraycount(bad);i++) {
+        CHECK(cixvpu_prepared_publish_root(out,bad[i])==EINVAL);
+        CHECK(!out->dma->ever_visible && boot_nevents==0);
+    }
+    CHECK(cixvpu_prepared_publish_root(out,(void *)(UINTPTR_MAX-3))==EINVAL);
+    intr=true; CHECK(cixvpu_prepared_publish_root(out,&root)==EWOULDBLOCK); intr=false;
+    CHECK(root==0xa5a5a5a5 && !out->dma->ever_visible);
+    CHECK(cixvpu_prepared_publish_root(out,&root)==0 && root==out->root_entry);
+    CHECK(out->dma->ever_visible && boot_nevents==0);
+    root=0x12345678;
+    CHECK(cixvpu_prepared_publish_root(out,&root)==EBUSY && root==0x12345678);
+    CHECK(cixvpu_prepared_free(&out)==EBUSY && out!=NULL);
+    struct cixvpu_boot_reply reply,before;
+    memset(&reply,0xa5,sizeof(reply)); before=reply;
+    CHECK(cixvpu_prepared_boot_receive(out,(void *)&out->plan)==EINVAL && boot_nevents==0);
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)==EAGAIN);
+    CHECK(memcmp(&reply,&before,sizeof(reply))==0);
+    boot_nevents=0;
+    boot_message(0,2001,4,0,0x000407d1);
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)==0 && reply.code==2001 && reply.core==0);
+    CHECK(device_memory[boot_host][0]==2 && device_memory[boot_host][2]==2);
+    CHECK(word(device_memory[boot_host],4)==1006 && word(device_memory[boot_host],5)==1006);
+    CHECK(boot_nevents==10);
+    CHECK(boot_events[0].page==boot_rpc && boot_events[0].ops==BUS_DMASYNC_POSTREAD && boot_events[0].length==12);
+    CHECK(boot_events[1].ops==BUS_DMASYNC_PREREAD);
+    CHECK(boot_events[2].page==boot_mve && boot_events[2].ops==BUS_DMASYNC_POSTREAD && boot_events[2].length==16);
+    CHECK(boot_events[3].ops==BUS_DMASYNC_PREREAD);
+    CHECK(boot_events[4].page==boot_mve && boot_events[4].ops==BUS_DMASYNC_POSTREAD && boot_events[4].length==4096);
+    CHECK(boot_events[5].ops==BUS_DMASYNC_PREREAD);
+    CHECK(boot_events[6].page==boot_mve && boot_events[6].ops==BUS_DMASYNC_POSTREAD && boot_events[6].length==16);
+    CHECK(boot_events[7].ops==BUS_DMASYNC_PREREAD);
+    CHECK(boot_events[8].page==boot_host && boot_events[8].ops==BUS_DMASYNC_POSTWRITE && boot_events[8].offset==0 && boot_events[8].length==2);
+    CHECK(boot_events[9].page==boot_host && boot_events[9].ops==BUS_DMASYNC_PREWRITE && boot_events[9].offset==0 && boot_events[9].length==2);
+    boot_nevents=0; boot_message(2,2009,0,0,0x00040faa);
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)==0 && reply.code==2009);
+    CHECK(device_memory[boot_host][0]==3 && boot_nevents==10);
+    boot_drop(out);
+    for(unsigned int f=0;f<7;f++) {
+        out=boot_begin(); CHECK(cixvpu_prepared_publish_root(out,&root)==0);
+        boot_message(0,2001,4,0,0x000407d1);
+        if(f==0) put32(device_memory[boot_mve]+4,1),put32(device_memory[boot_mve]+8,2),put32(device_memory[boot_mve]+12,3);
+        if(f==1) boot_message(0,2001,4,1,0x000407d2);
+        if(f==2) boot_message(0,2001,0,0,2001);
+        if(f==3) boot_message(0,2009,4,0,0x000407d9);
+        if(f==4) boot_message(0,2010,0,0,2010);
+        if(f==5) put32(device_memory[boot_rpc],1);
+        if(f==6) put32(device_memory[boot_rpc],99);
+        memset(&reply,0xa5,sizeof(reply)); before=reply;
+        CHECK(cixvpu_prepared_boot_receive(out,&reply)!=0);
+        CHECK(memcmp(&reply,&before,sizeof(reply))==0 && device_memory[boot_host][0]==0);
+        unsigned int calls=native_calls;
+        CHECK(cixvpu_prepared_boot_receive(out,&reply)!=0 && native_calls==calls);
+        CHECK(cixvpu_prepared_free(&out)==EBUSY); boot_drop(out);
+    }
+    out=boot_begin(); CHECK(cixvpu_prepared_publish_root(out,&root)==0);
+    boot_unstable=true;
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)==EAGAIN && boot_nevents==26);
+    CHECK(device_memory[boot_host][0]==0);
+    boot_unstable=false; boot_nevents=0;
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)==EAGAIN); boot_drop(out);
+    out=boot_begin(); CHECK(cixvpu_prepared_publish_root(out,&root)==0);
+    boot_append=true;
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)==0 && reply.code==2001 && reply.core==0);
+    CHECK(device_memory[boot_host][0]==2 && !boot_append);
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)==EAGAIN);
+    boot_drop(out);
+    out=boot_begin(); CHECK(cixvpu_prepared_publish_root(out,&root)==0);
+    out->boot.cursor=1019; out->boot.checksum.sum=0;
+    device_memory[boot_host][0]=0xfb; device_memory[boot_host][1]=3;
+    boot_message(1019,2001,4,0,0x000407d1);
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)==0 && reply.code==2001);
+    CHECK(device_memory[boot_host][0]==1 && device_memory[boot_host][1]==0);
+    boot_drop(out);
+    out=boot_begin(); CHECK(cixvpu_prepared_publish_root(out,&root)==0);
+    unsigned int before_calls=native_calls;
+    out->dma->owners[0].map->dm_nsegs=2;
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)!=0 && native_calls==before_calls);
+    out->dma->owners[0].map->dm_nsegs=1;
+    CHECK(cixvpu_prepared_boot_receive(out,&reply)!=0 && native_calls==before_calls);
+    boot_drop(out);
+    struct cixvpu_fw_plan plan;
+    struct cixvpu_dma *owner=begin(4,&plan),*saved=owner; out=NULL;
+
+    CHECK(cixvpu_prepare_boot_cpu(&owner,&plan,image,extent,fixture_pin,&out)==ENOTSUP && owner==saved && out==NULL);
+    CHECK(cixvpu_dma_free(&owner)==0);
+    for(unsigned int f=0;f<3;f++) {
+        owner=begin(1,&plan); saved=owner; out=NULL;
+        memcpy(image+80,"r0p0-sum0005",12);
+        if(f==0) image[4]=4;
+        if(f==1) image[80]='x';
+        memcpy(pinned_image,image,sizeof(image));
+        CHECK(cixvpu_fw_plan_build(image,extent,1,&plan)==0);
+        if(f!=2) {
+            CHECK(cixvpu_prepare_boot_cpu(&owner,&plan,image,extent,fixture_pin,&out)==ENOTSUP && owner==saved && out==NULL);
+            CHECK(cixvpu_dma_free(&owner)==0);
+        } else {
+            CHECK(cixvpu_prepare_boot_cpu(&owner,&plan,image,extent,fixture_pin,&out)==0);
+            root=0x12345678; unsigned int calls=native_calls;
+            CHECK(cixvpu_prepared_publish_root(out,&root)==EBUSY && root==0x12345678 && native_calls==calls);
+            CHECK(cixvpu_prepared_boot_receive(out,&reply)==EBUSY && native_calls==calls);
+            CHECK(cixvpu_prepared_free(&out)==0 && out==NULL && depth==0 && live_kmem==0);
+        }
+    }
+    out=boot_begin();
+    CHECK(cixvpu_dma_mark_exposed(out->dma,out)==0);
+    root=0x12345678;
+    CHECK(cixvpu_prepared_publish_root(out,&root)==EBUSY && root==0x12345678);
+    CHECK(!out->boot.published && out->dma->ever_visible); boot_drop(out);
+    out=prepared_begin(1,&plan); root=0x12345678;
+    CHECK(cixvpu_prepared_publish_root(out,&root)==ENOTSUP && root==0x12345678);
+    CHECK(cixvpu_prepared_free(&out)==0 && out==NULL);
+
+}
+#endif
+
 #endif
 int main(void)
 {
@@ -528,12 +722,17 @@ int main(void)
     success_tests(); failure_tests(); handle_alias_tests(); argument_tests(); boundary_tests();
 #ifdef CIXVPU_SYNC_API
     sync_success_tests(); sync_failure_tests(); sync_owner_tests(); exposure_tests();
+#ifdef CIXVPU_BOOT_API
+    boot_api_tests();
+#else
+    fprintf(stderr, "FAIL: no typed boot seed/publication/receive API\n"); return 1;
+#endif
 #else
     fprintf(stderr, "FAIL: no enforced initial-sync/exposure boundary\n");
     return 1;
 #endif
 #else
-    (void)pin; (void)extent;
+    (void)fixture_pin; (void)extent;
     struct cixvpu_fw_plan plan = make_plan(4);
     struct cixvpu_dma *owner = NULL;
     reset(); CHECK(cixvpu_dma_alloc(&tag32, &tag64, &plan, &owner) == 0);

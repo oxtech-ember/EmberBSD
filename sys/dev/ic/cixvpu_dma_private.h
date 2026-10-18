@@ -22,11 +22,28 @@ int cixvpu_dma_free_prepared(struct cixvpu_dma **,
     const struct cixvpu_prepared *);
 
 /*
- * Source-only exposure guard; no production caller or L0 capability yet.
- * A future publication API must mark before returning an address, even if
+ * Private irreversible exposure guard, used by the typed root capability.
+ * Publication must mark before returning an address, even if
  * hardware publication later fails. This transition is irreversible.
  */
 int cixvpu_dma_mark_exposed(struct cixvpu_dma *,
     const struct cixvpu_prepared *);
+
+/*
+ * Fixed boot MESSAGE snapshot. No shared memory or map view escapes.
+ * boot_output identifies retained-object validation faults separately from
+ * caller output/alias errors. Its fault output is private stack storage.
+ * The preparer designates only its retained snapshot for boot_snapshot.
+ */
+struct cixvpu_dma_boot_snapshot {
+	uint8_t message[CIXVPU_FW_PAGE_SIZE];
+};
+int cixvpu_dma_boot_output(struct cixvpu_dma *,
+    const struct cixvpu_prepared *, const void *, size_t, bool *);
+int cixvpu_dma_boot_snapshot(struct cixvpu_dma *,
+    const struct cixvpu_prepared *, const struct cixvpu_fw_plan *,
+    struct cixvpu_dma_boot_snapshot *);
+int cixvpu_dma_boot_ack(struct cixvpu_dma *,
+    const struct cixvpu_prepared *, const struct cixvpu_fw_plan *, uint16_t);
 
 #endif
