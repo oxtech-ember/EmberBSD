@@ -15,6 +15,7 @@ python=${NETBSD2_PYTHON:-$(command -v python3 || true)}
 "$python" "$src/ember/tools/bluetooth-rc-contract.py"
 sh "$src/ember/tools/a733-accelerator-clock-contract.sh"
 sh "$src/ember/tools/a733-power-contract.sh"
+"$python" "$src/ember/tests/a733-npu-observe.py"
 sh "$src/ember/tools/a733-display-observer-contract.sh"
 sh "$src/ember/tools/a733-gpu-identification-contract.sh"
 sh "$src/ember/tools/a733-gpu-fwinfo-contract.sh"

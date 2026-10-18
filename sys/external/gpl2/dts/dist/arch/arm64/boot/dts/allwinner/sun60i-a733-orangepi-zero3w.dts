@@ -75,6 +75,13 @@
 	};
 };
 
+/* Attach diagnostics only. Runtime power and MMIO steps remain explicit. */
+&npu {
+	netbsd,consumer-managed-power;
+	netbsd,observe-only;
+	status = "okay";
+};
+
 /* Nothing is wired to the MAC: its pins are left to the pin header. */
 &gmac0 {
 	status = "disabled";
