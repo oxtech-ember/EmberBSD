@@ -25,10 +25,11 @@ if [ -n "${TEST_RUNNER:-}" ]; then "$TEST_RUNNER" "$work/contract"; else "$work/
 if [ "${L2_SKIP_MUTANTS:-0}" = 1 ]; then exit 0; fi
 cp "$work/irq-core.h" "$work/core-good.h"
 cp "$work/irq-adapter.h" "$work/adapter-good.h"
-for mutation in no-ack bsc-clear unknown-source foreign-enable reserved-zero startup-unknown queued-duplicate queued-stop no-drain no-rollback self-destroy; do
+for mutation in no-ack bsc-clear unknown-source foreign-enable reserved-zero startup-unknown queued-duplicate queued-stop no-drain no-rollback self-destroy null-tag; do
     cp "$work/core-good.h" "$work/irq-core.h"
     cp "$work/adapter-good.h" "$work/irq-adapter.h"
     case "$mutation" in
+        null-tag) input=adapter-good.h; output=irq-adapter.h; from='bst == NULL || '; to='' ;;
         no-ack) input=core-good.h; output=irq-core.h; from='if (sc->has_clear)'; to='if (false)' ;;
         bsc-clear) input=core-good.h; output=irq-core.h; from='result.mask_status = 0x04;'; to='result.has_clear = true; result.clear = 8; result.mask_status = 0x04;' ;;
         unknown-source) input=core-good.h; output=irq-core.h; from='if ((pending & ~sc->owned) != 0)'; to='if (false)' ;;

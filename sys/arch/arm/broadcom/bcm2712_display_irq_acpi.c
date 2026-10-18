@@ -121,7 +121,8 @@ bcm2712_display_irq_create(device_t dev,
 	int error;
 
 	ASSERT_SLEEPABLE();
-	if (dev == NULL || service == NULL || out == NULL || mapped == NULL)
+	if (dev == NULL || bst == NULL || service == NULL || out == NULL ||
+	    mapped == NULL)
 		return EINVAL;
 	sc = kmem_zalloc(sizeof(*sc), KM_SLEEP);
 	sc->bst = bst;

@@ -41,7 +41,11 @@
 #define BUS_SPACE_BARRIER_WRITE 2
 #define ASSERT_SLEEPABLE() assert(!in_irq)
 typedef void *device_t;
-typedef unsigned int bus_space_tag_t;
+struct bus_space {
+	int cookie;
+};
+typedef struct bus_space *bus_space_tag_t;
+static struct bus_space test_bst;
 typedef unsigned int bus_space_handle_t;
 typedef uint64_t bus_size_t;
 typedef struct {
@@ -110,7 +114,7 @@ static uint32_t
 bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle,
     unsigned int offset)
 {
-	assert(tag == 1 && handle == 2);
+	assert(tag == &test_bst && handle == 2);
 	reads++;
 	if (offset == 0)
 		return status_bits;
@@ -122,7 +126,7 @@ static void
 bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
     unsigned int offset, uint32_t value)
 {
-	assert(tag == 1 && handle == 2);
+	assert(tag == &test_bst && handle == 2);
 	assert(value != 0 && (value & ~owned_bits) == 0);
 	writes++;
 	if (offset == mask_set)
@@ -140,7 +144,7 @@ static void
 bus_space_barrier(bus_space_tag_t tag, bus_space_handle_t handle,
     bus_size_t offset, bus_size_t length, int flags)
 {
-	assert(tag == 1 && handle == 2 && offset == 0);
+	assert(tag == &test_bst && handle == 2 && offset == 0);
 	assert(length == (has_clear ? 0x30 : 0x10));
 	assert(flags == (BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE));
 }
@@ -148,9 +152,14 @@ bus_space_barrier(bus_space_tag_t tag, bus_space_handle_t handle,
 static void *
 kmem_zalloc(size_t size, int flags)
 {
+	void *memory;
+
 	assert(flags == KM_SLEEP && !in_irq);
+	memory = calloc(1, size);
+	/* KM_SLEEP does not return NULL; host exhaustion fails the contract. */
+	assert(memory != NULL);
 	allocations++;
-	return calloc(1, size);
+	return memory;
 }
 
 static void
@@ -358,8 +367,8 @@ static int
 create(enum bcm2712_l2_domain domain)
 {
 	return bcm2712_display_irq_create(&contract, &contract, domain,
-	    &contract.memory[bcm2712_display_domains[domain].memory_index], 1,
-	    2, owned_bits, service, &callbacks, &instance);
+	    &contract.memory[bcm2712_display_domains[domain].memory_index],
+	    &test_bst, 2, owned_bits, service, &callbacks, &instance);
 }
 
 static void
@@ -467,6 +476,14 @@ main(void)
 	contract.version = 2;
 	error = create(BCM2712_L2_AON);
 	assert(error == EOPNOTSUPP && reads == 0 && writes == 0);
+	/* A NULL bus tag fails before allocation or register access. */
+	reset(BCM2712_L2_AON);
+	error = bcm2712_display_irq_create(&contract, &contract,
+	    BCM2712_L2_AON,
+	    &contract.memory[bcm2712_display_domains[BCM2712_L2_AON].memory_index],
+	    NULL, 2, owned_bits, service, &callbacks, &instance);
+	assert(error == EINVAL && instance == NULL && allocations == 0 &&
+	    queues == 0 && established == 0 && reads == 0 && writes == 0);
 	reset(BCM2712_L2_AON);
 	owned_bits = __BIT(31);
 	error = create(BCM2712_L2_AON);
