@@ -590,11 +590,15 @@ Device DMA data correctness and codec execution require separate board acceptanc
 ## Physical diagnostic boundary
 
 The [observed CIX board](../boards/orange-pi-6-plus.md) runs the manual GCC16
-kernel `b02be11c061df4b9eba4fe205de5cbded4fe576f` with `flags 0x7`.
+kernel `25438a551feba961b863f8c9c29de56ec414cc38` with `flags 0x7`.
 The report confirms identity, active power controls, root publication and
 IRQ status mask `0x1`, with no unexpected IRQ bits. It returns ENOTSUP (86) at RECEIVE:
 one visit, zero accepted messages, no SWITCHED_IN and no PONG.
-The kernel does not report the raw RPC header; the specific request is unknown.
+Cached RPC diagnostics report PARAM state `1`, call ID `2` and payload size `12`.
+The pinned codec reference identifies call `2` as MEM_ALLOC.
+The request body is not captured; allocation size, capacity, region and alignment
+remain unknown. The inactive DEBUGPARAM helper handles call `1` and cannot service
+this request. A checked memory response and firmware readiness remain open.
 
 The exposed prepared owner, core power claims and IRQ registration remain held.
 The IRQ is masked. Cleanup counters do not indicate post-exposure reclamation.

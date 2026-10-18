@@ -1103,8 +1103,9 @@ The base system shell is unchanged.
   and releases both owners on the physical board. Absent firmware stops before
   allocation. An explicit firmware boot trial reaches exposed ownership and an
   initial IRQ, then returns ENOTSUP before SWITCHED_IN/PONG. It retains exposed
-  pages and masks the IRQ. Cached RPC-header diagnostics have source checks;
-  their next physical trial requires a cold start. A separate, inactive
+  pages and masks the IRQ. Physical RPC-header diagnostics identify MEM_ALLOC
+  (PARAM state `1`, call ID `2`, payload size `12`); request fields are unknown.
+  A checked memory response is not implemented. A separate, inactive
   [DEBUGPARAM primitive](ember/boot/cix-vpu.md#inactive-debugparam-response)
   passes actual-source checks. It changes only a validated request's state word;
   the boot coordinator does not call it. Firmware readiness, DMA data
