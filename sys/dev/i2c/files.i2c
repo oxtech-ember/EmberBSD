@@ -5,6 +5,10 @@ obsolete defflag	opt_i2cbus.h		I2C_SCAN
 define	i2cbus { }
 define	i2cexec
 
+# Broadcom STB I2C transaction core. No automatic attachment.
+define	brcmstb_i2c
+file	dev/i2c/brcmstb_i2c.c		brcmstb_i2c
+
 device	iic { [addr = -1] } : i2c_bitbang
 attach	iic at i2cbus
 file	dev/i2c/i2c.c				iic	needs-flag

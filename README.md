@@ -676,6 +676,8 @@ on every board in the hardware catalog.
   clock leases held.
   A separate [finite DDC0 snapshot](ember/boot/bcm2712-display-dvp.md#physical-ddc0-snapshot-boundary)
   returns five BSC/DDC control values and completes cleanup on that boot.
+  A [bounded BRCMSTB I2C core](ember/boot/brcmstb-i2c.md) adds combined reads
+  with actual-source fault and deadline contracts.
   Runtime HPD delivery, DDC transfers and KMS scanout remain unimplemented.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
