@@ -674,7 +674,9 @@ on every board in the hardware catalog.
   It has no automatic attachment. A finite [HPD0 sample](ember/boot/bcm2712-display-dvp.md#physical-hpd0-boundary)
   tracks disconnected and live-connected levels on one CM5 boot with both
   clock leases held.
-  Runtime HPD delivery, DDC and KMS scanout remain unimplemented.
+  A separate [finite DDC0 snapshot](ember/boot/bcm2712-display-dvp.md#physical-ddc0-snapshot-boundary)
+  returns five BSC/DDC control values and completes cleanup on that boot.
+  Runtime HPD delivery, DDC transfers and KMS scanout remain unimplemented.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.

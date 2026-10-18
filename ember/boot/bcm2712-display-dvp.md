@@ -154,6 +154,35 @@ It checks exact ranges, offsets, read count, held leases, inverse unmap order,
 busy cleanup, invalid properties, partial validity and retained failures.
 Causal mutants test those boundaries. Host checks do not accept physical DDC.
 
+### Physical DDC0 snapshot boundary
+
+One CM5 Rev1.0, BCM2712D0, 4 GiB, on a CM5-NANO-B carrier passed the finite
+snapshot on 2026-10-18. The board stayed on the same cold boot used for the
+HPD0 checks. HDMI0 was connected after startup. The carrier revision was not
+established. Kernel `0562cd54544965f1405fa09dd8cbf395212b352a` and firmware
+`c90c2a6cee52208fbc1fbe794a72c597f2bd9fd3` stayed unchanged.
+
+Module source `09fd64021587befa510a575e716f92df3ae33fe5` produced a 46,112-byte
+module with SHA256
+`bbe3e54820d4621f2e5bc9f25c8bb754ba8a6dc955037ebe932e3086cc068985`.
+Its 345 kernel source dependencies and the new module source matched their
+recorded revisions. The 30 generated headers, 40 sampled ABI values and
+strong symbol names matched the selected kernel. Source checks passed 2,847
+ASan/UBSan assertions and rejected 19 causal mutants. Static analysis added
+no findings; inherited header findings and platform limits remain recorded.
+
+The five reads returned BSC status `0`, mask `0xf`, DDC CTL `0`, ENABLE `0`,
+and CTLHI `0xc0`. The module reported `candidate_quiescent=1`. HSM remained at
+120 MHz. DVP gates, resets, fault and mutation stayed zero. The port lease
+went from zero to one and back to zero. Both owners were destroyed, all
+mappings were released, and module unload succeeded. Temperature was
+51.019 degrees C before the cycle and 51.569 degrees C after it, without
+reported throttling or undervoltage.
+
+This accepts those five returned register reads on that boot. It does not
+accept a DDC transfer, an EDID result, interrupt ownership, a free bus,
+power management, KMS output or a physical Plasma session.
+
 ## Source validation
 
 ```sh
