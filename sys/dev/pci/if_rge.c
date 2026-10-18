@@ -111,6 +111,9 @@ static int	rge_ioctl(struct ifnet *, u_long, void *);
 static void	rge_start(struct ifnet *);
 static void	rge_watchdog(struct ifnet *);
 static int	rge_init(struct ifnet *);
+static unsigned int	rge_frame_limit(struct rge_softc *);
+static unsigned int	rge_rx_buffer_size(struct rge_softc *);
+static unsigned int	rge_jumbo_capabilities(struct rge_softc *);
 static void	rge_stop(struct ifnet *, int);
 static int	rge_ifmedia_upd(struct ifnet *);
 static void	rge_ifmedia_sts(struct ifnet *, struct ifmediareq *);
@@ -387,6 +390,7 @@ rge_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_ec.ec_capabilities |= ETHERCAP_VLAN_MTU;
 	sc->sc_ec.ec_capabilities |= ETHERCAP_VLAN_HWTAGGING;
+	sc->sc_ec.ec_capabilities |= rge_jumbo_capabilities(sc);
 
 	callout_init(&sc->sc_timeout, CALLOUT_FLAGS);
 	callout_setfunc(&sc->sc_timeout, rge_tick, sc);
@@ -653,7 +657,7 @@ rge_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 			if (ifp->if_flags & IFF_RUNNING)
 				error = ENETRESET;
 			else
-				rge_init(ifp);
+				error = rge_init(ifp);
 		} else {
 			if (ifp->if_flags & IFF_RUNNING)
 				rge_stop(ifp, 1);
@@ -746,6 +750,26 @@ rge_watchdog(struct ifnet *ifp)
 	rge_init(ifp);
 }
 
+static unsigned int
+rge_frame_limit(struct rge_softc *sc)
+{
+	return RGE_TYPE_R26(sc) ? RGE_R26_FRAMELEN : RGE_JUMBO_FRAMELEN;
+}
+
+static unsigned int
+rge_rx_buffer_size(struct rge_softc *sc)
+{
+	if (sc->sc_ec.ec_if.if_mtu <= ETHERMTU)
+		return RGE_JUMBO_FRAMELEN;
+	return rge_frame_limit(sc);
+}
+
+static unsigned int
+rge_jumbo_capabilities(struct rge_softc *sc)
+{
+	return RGE_TYPE_R26(sc) ? ETHERCAP_JUMBO_MTU : 0;
+}
+
 static int
 rge_init(struct ifnet *ifp)
 {
@@ -756,12 +780,16 @@ rge_init(struct ifnet *ifp)
 	int error = 0;
 
 	rge_stop(ifp, 0);
+	if (ifp->if_mtu > ETHERMTU_JUMBO ||
+	    (ifp->if_mtu > ETHERMTU && !RGE_TYPE_R26(sc)))
+		return EINVAL;
 
 	/* Set MAC address. */
 	rge_set_macaddr(sc, CLLADDR(ifp->if_sadl));
 
 	/* Initialize RX and TX descriptors lists. */
-	rge_rx_list_init(q);
+	if ((error = rge_rx_list_init(q)) != 0)
+		return error;
 	rge_tx_list_init(q);
 
 	if ((error = rge_chipinit(sc)))
@@ -949,7 +977,7 @@ rge_init(struct ifnet *ifp)
 	RGE_READ_2(sc, RGE_CPLUSCMD);
 
 	/* Set Maximum frame size. */
-	RGE_WRITE_2(sc, RGE_RXMAXSIZE, RGE_JUMBO_FRAMELEN);
+	RGE_WRITE_2(sc, RGE_RXMAXSIZE, rge_rx_buffer_size(sc));
 
 	/* Disable RXDV gate. */
 	RGE_CLRBIT_1(sc, RGE_PPSW, 0x08);
@@ -1214,8 +1242,8 @@ rge_allocmem(struct rge_softc *sc)
 
 	/* Create DMA maps for TX buffers. */
 	for (i = 0; i < RGE_TX_LIST_CNT; i++) {
-		error = bus_dmamap_create(sc->sc_dmat, RGE_JUMBO_FRAMELEN,
-		    RGE_TX_NSEGS, RGE_JUMBO_FRAMELEN, 0, 0,
+		error = bus_dmamap_create(sc->sc_dmat, rge_frame_limit(sc),
+		    RGE_TX_NSEGS, rge_frame_limit(sc), 0, 0,
 		    &q->q_tx.rge_txq[i].txq_dmamap);
 		if (error) {
 			aprint_error_dev(sc->sc_dev, "can't create DMA map for TX\n");
@@ -1264,12 +1292,12 @@ rge_allocmem(struct rge_softc *sc)
 	q->q_rx.rge_rx_list_loaded = true;
 
 	/*
-	 * Create DMA maps for RX buffers.  Use BUS_DMA_ALLOCNOW to avoid any
-	 * potential failure in bus_dmamap_load_mbuf() in the RX path.
+	 * Reserve maps for RX buffers.  A replacement may still fail to load,
+	 * so load it into a spare before releasing the current slot's map.
 	 */
 	for (i = 0; i < RGE_RX_LIST_CNT; i++) {
-		error = bus_dmamap_create(sc->sc_dmat, RGE_JUMBO_FRAMELEN, 1,
-		    RGE_JUMBO_FRAMELEN, 0, BUS_DMA_ALLOCNOW,
+		error = bus_dmamap_create(sc->sc_dmat, rge_frame_limit(sc), 1,
+		    rge_frame_limit(sc), 0, BUS_DMA_ALLOCNOW,
 		    &q->q_rx.rge_rxq[i].rxq_dmamap);
 		if (error) {
 			aprint_error_dev(sc->sc_dev, "can't create DMA map for RX\n");
@@ -1278,6 +1306,15 @@ rge_allocmem(struct rge_softc *sc)
 		}
 		q->q_rx.rge_rx_map_count++;
 	}
+	error = bus_dmamap_create(sc->sc_dmat, rge_frame_limit(sc), 1,
+	    rge_frame_limit(sc), 0, BUS_DMA_ALLOCNOW,
+	    &q->q_rx.rge_rx_sparemap);
+	if (error) {
+		aprint_error_dev(sc->sc_dev, "can't create spare RX DMA map\n");
+		q->q_rx.rge_rx_sparemap = NULL;
+		goto failed;
+	}
+	q->q_rx.rge_rx_spare_created = true;
 
 	return 0;
 
@@ -1295,6 +1332,11 @@ rge_deallocmem(struct rge_softc *sc)
 	struct rge_queues *q = sc->sc_queues;
 	unsigned int i;
 
+	if (q->q_rx.rge_rx_spare_created) {
+		bus_dmamap_destroy(sc->sc_dmat, q->q_rx.rge_rx_sparemap);
+		q->q_rx.rge_rx_spare_created = false;
+	}
+	q->q_rx.rge_rx_sparemap = NULL;
 	while (q->q_rx.rge_rx_map_count != 0) {
 		i = --q->q_rx.rge_rx_map_count;
 		bus_dmamap_destroy(sc->sc_dmat,
@@ -1365,6 +1407,9 @@ rge_load_rxbuf(struct rge_queues *q, int idx)
 	bus_dmamap_t rxmap = rxq->rxq_dmamap;
 	uint32_t cmdsts;
 
+	bus_dmamap_sync(sc->sc_dmat, rxmap, 0, rxmap->dm_mapsize,
+	    BUS_DMASYNC_PREREAD);
+
 	cmdsts = rxmap->dm_segs[0].ds_len | RGE_RDCMDSTS_OWN;
 	if (idx == RGE_RX_LIST_CNT - 1)
 		cmdsts |= RGE_RDCMDSTS_EOR;
@@ -1388,27 +1433,40 @@ rge_newbuf(struct rge_queues *q, int idx)
 	struct mbuf *m;
 	struct rge_rxq *rxq;
 	bus_dmamap_t rxmap;
-	int error __diagused;
+	unsigned int size = rge_rx_buffer_size(sc);
+	int error;
 
-	m = MCLGETL(NULL, M_DONTWAIT, RGE_JUMBO_FRAMELEN);
+	m = MCLGETL(NULL, M_DONTWAIT, size);
 	if (m == NULL)
 		return (ENOBUFS);
+	if ((m->m_flags & M_EXT) == 0 || m->m_ext.ext_size < size) {
+		m_freem(m);
+		return ENOBUFS;
+	}
 	MCLAIM(m, &sc->sc_ec.ec_rx_mowner);
 
-	m->m_len = m->m_pkthdr.len = RGE_JUMBO_FRAMELEN;
+	m->m_len = m->m_pkthdr.len = size;
 
 	rxq = &q->q_rx.rge_rxq[idx];
-	rxmap = rxq->rxq_dmamap;
+	rxmap = q->q_rx.rge_rx_sparemap;
+
+	error = bus_dmamap_load_mbuf(sc->sc_dmat, rxmap, m, BUS_DMA_NOWAIT);
+	if (error != 0) {
+		m_freem(m);
+		return error;
+	}
+	if (rxmap->dm_nsegs != 1 || rxmap->dm_mapsize != size ||
+	    rxmap->dm_segs[0].ds_len != size ||
+	    size > RGE_RDCMDSTS_FRAGLEN) {
+		bus_dmamap_unload(sc->sc_dmat, rxmap);
+		m_freem(m);
+		return EFBIG;
+	}
 
 	if (rxq->rxq_mbuf != NULL)
 		bus_dmamap_unload(sc->sc_dmat, rxq->rxq_dmamap);
-
-	/* This map was created with BUS_DMA_ALLOCNOW so should never fail. */
-	error = bus_dmamap_load_mbuf(sc->sc_dmat, rxmap, m, BUS_DMA_NOWAIT);
-	KASSERTMSG(error == 0, "error=%d", error);
-
-	bus_dmamap_sync(sc->sc_dmat, rxmap, 0, rxmap->dm_mapsize,
-	    BUS_DMASYNC_PREREAD);
+	q->q_rx.rge_rx_sparemap = rxq->rxq_dmamap;
+	rxq->rxq_dmamap = rxmap;
 
 	/* Map the segments into RX descriptors. */
 
@@ -1508,6 +1566,13 @@ rge_rxeof(struct rge_softc *sc)
 		/* Invalidate the RX mbuf. */
 		bus_dmamap_sync(sc->sc_dmat, rxq->rxq_dmamap, 0,
 		    rxq->rxq_dmamap->dm_mapsize, BUS_DMASYNC_POSTREAD);
+
+		if (total_len < ETHER_HDR_LEN + ETHER_CRC_LEN ||
+		    (bus_size_t)total_len > rxq->rxq_dmamap->dm_mapsize) {
+			if_statinc(ifp, if_ierrors);
+			rge_load_rxbuf(q, i);
+			continue;
+		}
 
 		if ((rxstat & (RGE_RDCMDSTS_SOF | RGE_RDCMDSTS_EOF)) !=
 		    (RGE_RDCMDSTS_SOF | RGE_RDCMDSTS_EOF)) {

@@ -1139,7 +1139,12 @@ The base system shell is unchanged.
   and unmaps the TX ring through its CPU address. The [actual-source contract](ember/tools/rge-rx-contract.c)
   injects every allocation-stage failure and checks repeated cleanup. GCC16
   path analysis and sanitizers pass on the host; physical failure recovery
-  remains unqualified. See the [CIX board limits](ember/boards/orange-pi-6-plus.md).
+  remains unqualified. RTL8126-only jumbo source supports MTU 9000 using 9216-byte
+  external buffers and a spare DMA map. Resource failures retain the old RX buffer;
+  invalid receive lengths are rejected before delivery. Default MTU 1500 and
+  other ASIC limits remain unchanged. The expanded actual-source contracts pass
+  host analysis and sanitizers. Target build and physical jumbo acceptance remain
+  pending. See the [CIX board limits](ember/boards/orange-pi-6-plus.md).
 - **ACPI xHCI root buses:** the frontend skips a logical USB bus when its
   initialized root-hub descriptor has no ports. Actual-source contracts cover
   USB2-only, USB3-only, mixed and empty profiles. This source-only fix avoids

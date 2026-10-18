@@ -12,14 +12,15 @@ fi
 ruby - "${RGE_RX_SOURCE:-$src/sys/dev/pci/if_rge.c}" "$src/sys/dev/pci/if_rgereg.h" "$work" <<'RUBY'
 s=File.read(ARGV[0]); h=File.read(ARGV[1]); out=ARGV[2]
 # KNF function bodies end with a brace at column zero. No copied algorithm.
-names=%w[rge_allocmem rge_deallocmem]
+names=%w[rge_frame_limit rge_rx_buffer_size rge_jumbo_capabilities MCLGETL rge_allocmem rge_deallocmem rge_load_rxbuf rge_newbuf rge_rx_list_init rge_rx_list_fini rge_tx_list_init rge_rxeof rge_init rge_ioctl]
 parts=names.map do |name|
     m=s.match(/^static [^\n]+\n#{Regexp.escape(name)}\(/)
+    next if !m && %w[rge_frame_limit rge_rx_buffer_size rge_jumbo_capabilities].include?(name)
     abort "missing actual function #{name}" unless m
     last=s.index("\n}\n",m.end(0)); abort name unless last
     s[m.begin(0)..last+2]
 end
-File.write(out+'/rge-source.inc',parts.join("\n"))
+File.write(out+'/rge-source.inc',parts.compact.join("\n"))
 # Include the actual descriptors, queues, softc, geometry and register macros.
 last=h.index('struct rge_mac_bps {'); abort 'missing header boundary' unless last
 File.write(out+'/rge-header.inc',h[0...last])

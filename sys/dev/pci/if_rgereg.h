@@ -338,7 +338,9 @@ struct rge_rx {
 	int			rge_rx_listnseg;
 	bus_dmamap_t		rge_rx_list_map;
 	struct rge_rx_desc	*rge_rx_list;
+	bus_dmamap_t		rge_rx_sparemap;
 	unsigned int		rge_rx_map_count;
+	bool			rge_rx_spare_created;
 	bool			rge_rx_list_created;
 	bool			rge_rx_list_allocated;
 	bool			rge_rx_list_mapped;
@@ -394,6 +396,8 @@ enum rge_mac_type {
 #define RGE_JUMBO_MTU							\
 	(RGE_JUMBO_FRAMELEN - ETHER_HDR_LEN - ETHER_CRC_LEN - 		\
 	ETHER_VLAN_ENCAP_LEN)
+
+#define RGE_R26_FRAMELEN	9216
 
 #define RGE_TXCFG_CONFIG	0x03000700
 #define RGE_RXCFG_CONFIG	0x41000700
