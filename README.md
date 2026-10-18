@@ -323,8 +323,16 @@ on every board in the hardware catalog.
   and [Abseil package consumers](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/protobuf.md)
   also pass installed execution and package lifecycle checks in EmberBSD.
   The [runtime-only GCC16 package](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/runtime)
-  passes C11/C++20, OpenMP, large atomics and removal/reinstallation in the
-  verified AArch64 E34 guest. KiCad's target package and CAD workflows remain pending.
+  at revision 3 passes installed C11/C++20, DSO exceptions, TLS, concurrent
+  locale, OpenMP and large-atomic checks, including LTO, in the AArch64 E34 VM.
+  WebKit's adapted Skia modules pass with the repaired installed runtime.
+  [OpenEXR and OpenJPH](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/openexr.md)
+  pass installed target codec/API checks and package removal/reinstallation;
+  all 147 native OpenEXR tests also pass.
+  [Wayland 1.26](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/wayland.md)
+  separates its runtime from the developer package. All 24 upstream target
+  invocations pass before and after normal removal/reinstallation.
+  KiCad's target package and CAD workflows remain pending.
 - **Offline visual SLAM:** ORB-SLAM3 runs with the common Eigen 5.0.1 and
   OpenCV 5.0.0 through a [headless Ports adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/orb-slam3).
   Ports adapts current dependencies and repairs worker shutdown, cancellation
