@@ -1088,7 +1088,7 @@ static void boot_rpc_resize_tests(void)
 #endif
         uint8_t before[4096];memcpy(before,device_memory[boot_rpc],4096);
         boot_resize_change=change<3 ? 0 : change-2;boot_nevents=0;
-        memset(&reply,0xa5,sizeof(reply));old_reply=reply;result=CIXVPU_BOOT_RPC_IDLE;
+        memset(&reply,0xa5,sizeof(reply));memcpy(&old_reply,&reply,sizeof(old_reply));result=CIXVPU_BOOT_RPC_IDLE;
         int error=service ? cixvpu_prepared_boot_rpc_step(p,&result) : cixvpu_prepared_boot_receive(p,&reply);
         CHECK(error==ENOTSUP && p->boot.error==ENOTSUP && result==CIXVPU_BOOT_RPC_IDLE);
         CHECK(memcmp(&reply,&old_reply,sizeof(reply))==0 && boot_nevents==6);
@@ -1110,8 +1110,14 @@ static void boot_rpc_resize_tests(void)
         CHECK(native_calls==calls && depth==depth_before && live_kmem==heap);
         old=h; memset(device_memory[boot_rpc],0,4096);
         CHECK((service ? cixvpu_prepared_boot_rpc_step(p,&result) : cixvpu_prepared_boot_receive(p,&reply))==ENOTSUP);
-        CHECK(cixvpu_prepared_boot_rpc_header(p,&h)==0 && memcmp(&h,&old,sizeof(h))==0 && native_calls==calls);
-        memset(&h,0x5a,sizeof(h));old=h;
+        /* Successful getters define members, not structure padding. */
+        CHECK(cixvpu_prepared_boot_rpc_header(p,&h)==0 &&
+            h.valid==old.valid && h.state==old.state && h.callid==old.callid && h.size==old.size &&
+            h.alloc_valid==old.alloc_valid && h.alloc_size==old.alloc_size && h.alloc_max_size==old.alloc_max_size &&
+            h.alloc_region==old.alloc_region && h.alloc_log2_alignment==old.alloc_log2_alignment &&
+            h.resize_valid==old.resize_valid && h.resize_address==old.resize_address && h.resize_new_size==old.resize_new_size &&
+            native_calls==calls);
+        memset(&h,0x5a,sizeof(h));memcpy(&old,&h,sizeof(old));
         CHECK(cixvpu_prepared_boot_rpc_header(p,(void *)&p->plan)==EINVAL && memcmp(&h,&old,sizeof(h))==0);
         p->dma->owners[0].map->dm_nsegs=2;
         CHECK(cixvpu_prepared_boot_rpc_header(p,&h)==EIO && memcmp(&h,&old,sizeof(h))==0 && native_calls==calls && p->boot.error==ENOTSUP);
@@ -1197,7 +1203,7 @@ static void boot_rpc_alloc_tests(void)
         CHECK(h.alloc_valid==old.alloc_valid && h.alloc_size==old.alloc_size &&
             h.alloc_max_size==old.alloc_max_size && h.alloc_region==old.alloc_region &&
             h.alloc_log2_alignment==old.alloc_log2_alignment && native_calls==calls);
-        memset(&h,0xa5,sizeof(h)); old=h;
+        memset(&h,0xa5,sizeof(h)); memcpy(&old,&h,sizeof(old));
         CHECK(cixvpu_prepared_boot_rpc_header(out,(void *)&out->plan)==EINVAL);
         CHECK(memcmp(&h,&old,sizeof(h))==0 && native_calls==calls);
         /* Faulted retained metadata invalidates both cached observations. */
@@ -1220,7 +1226,7 @@ static void boot_rpc_header_tests(void)
     memset(&h,0xa5,sizeof(h));
     CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==0 && !h.valid);
     CHECK(h.state==0 && h.callid==0 && h.size==0 && native_calls==calls);
-    memset(&h,0xa5,sizeof(h)); canary=h;
+    memset(&h,0xa5,sizeof(h)); memcpy(&canary,&h,sizeof(canary));
     CHECK(cixvpu_prepared_boot_rpc_header(NULL,&h)==EINVAL);
     CHECK(memcmp(&h,&canary,sizeof(h))==0);
     CHECK(cixvpu_prepared_boot_rpc_header(out,NULL)==EINVAL);
@@ -1281,7 +1287,7 @@ static void boot_rpc_header_tests(void)
     calls=native_calls;
     out->dma->owners[out->dma->count-1].map->dm_nsegs=0;
     CHECK(cixvpu_prepared_boot_receive(out,&reply)==EIO);
-    memset(&h,0xa5,sizeof(h)); canary=h;
+    memset(&h,0xa5,sizeof(h)); memcpy(&canary,&h,sizeof(canary));
     CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==EIO && memcmp(&h,&canary,sizeof(h))==0);
     out->dma->owners[out->dma->count-1].map->dm_nsegs=1;
     CHECK(cixvpu_prepared_boot_rpc_header(out,&h)==0 && !h.valid);

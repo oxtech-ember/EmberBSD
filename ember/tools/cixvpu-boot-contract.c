@@ -621,7 +621,7 @@ static void boot_trace_api_tests(void)
     CHECK(cixvpu_acpi_boot_report(NULL,&r)==EINVAL);
     CHECK(cixvpu_acpi_boot_report(ctx,NULL)==EINVAL);
     CHECK(cixvpu_acpi_boot_report(ctx,&ctx->report)==EINVAL);
-    memset(&r,0xa5,sizeof(r)); before=r;
+    memset(&r,0xa5,sizeof(r)); memcpy(&before,&r,sizeof(before));
     interrupt_context=true;
     CHECK(cixvpu_acpi_boot_report(ctx,&r)==EWOULDBLOCK && memcmp(&r,&before,sizeof(r))==0);
     CHECK(cixvpu_acpi_boot_once(ctx,&owned)==EWOULDBLOCK && owned==boot_actual);
