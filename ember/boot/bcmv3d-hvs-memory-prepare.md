@@ -1,0 +1,83 @@
+# Fixed HVS frame memory preparation
+
+This private helper prepares one unexposed 1920x1080 XRGB8888 frame. Its logical
+size is 8294400 bytes and its pitch is 7680. It uses the existing native contiguous
+`bcmv3d_bo_alloc` constructor. It does not change CREATE_BO's separate SG policy.
+This is a source/host contract. No physical HVS DMA or scanout is accepted here.
+
+## Private ownership contract
+
+`bcmv3d_hvs_prepare(sc, consumer_dmat, out)` leaves `out` unchanged on error.
+The caller uses process context, serializes access and holds the render/device
+reference and consumer tag until destruction. The constructor supplies one GEM
+reference. The helper keeps it and creates a separate one-segment consumer map
+with `BUS_DMA_WRITE`. It checks the actual page-rounded backing size, GEM size,
+original-map geometry, consumer mapsize and complete segment length. The complete
+consumer span must fit 32 bits; base zero and exclusive end 2^32 are valid. This
+also satisfies the conservative 36-bit HVS bound. No HVS address alignment is
+invented. PAGE alignment belongs to the existing BO constructor.
+
+The helper reads the address only from the new consumer map. It does not copy
+`bo->gpu` or the original map address. Numeric addresses can coincide. The finite module explicitly
+uses `sc->dmat`, the current GPU0 parent tag. This proves CPU/DMA-map preparation
+only. It does not establish an HVS parent/tag, IOMMU configuration, accessibility,
+clock, power, ownership or DMA-address-path contract.
+
+The module fills and reads back a deterministic 32-bit XRGB pattern across the
+whole backing allocation, including page-rounding padding. It then calls
+`bcmv3d_hvs_prewrite` for all backing bytes. PREWRITE is cache synchronization,
+not publication or drain. It checks reserved-byte accounting before and after
+under the external prerequisite that no concurrent GPU clients allocate BOs.
+
+`bcmv3d_hvs_destroy` unloads and destroys the separate map before exactly one
+constructor GEM put. All cleanup APIs are ordinary void operations. The module
+drops the render minor last. No job, descriptor, LPTR, fence, IRQ or callback sees
+the frame. Calling this destruction API after any hardware publication attempt
+is invalid. A future persistent display owner needs its own proved stop/drain
+contract. No fake drain flag, POSTWRITE inference or fault registry is added.
+
+## Explicit module
+
+`bcmv3d_hvs_prepare` is built only on explicit request. It has no default kernel
+configuration, automatic attachment or new kernel API. Its Makefile reuses the
+selected configured kernel's actual DRM flags and headers. Set
+`EMBER_KERNEL_OBJDIR` to that matching kernel object directory. Audit the new
+helper/header/module and Makefile as source exceptions; all existing native
+interfaces, generated options and strong symbols must match the selected kernel.
+The [sampled ABI helper](../tools/bcmv3d-hvs-prepare-abi.c) supplies an additional
+configuration/layout comparison, not a complete compatibility proof.
+
+The module requires `prepare-only=true` and an exact verified kernel buildinfo.
+For example, after a coherent build and source/symbol audit:
+
+```sh
+: "${kernel_commit:?Set the verified selected kernel commit}"
+modload -b prepare-only=true -s "expected-buildinfo=EmberBSD:${kernel_commit}" \
+    ./bcmv3d_hvs_prepare.kmod
+modunload bcmv3d_hvs_prepare
+```
+
+INIT is finite and leaves no frame behind. Wrong properties, interrupt context,
+framebuffer/console presence or unverified absence, wrong render/GPU0 identity and
+invalid display resources refuse before allocation. It rejects all display-probe
+mode properties. The operation does not map display resources, access MMIO, query
+or change clocks, invoke PHY/IOMMU owners, submit DMA, or expose a GEM handle.
+No compatibility claim permits use of a retained PHY owner's references.
+
+## Actual-source checks
+
+Run `ruby ember/tools/bcmv3d-hvs-prepare-contract.rb /path/to/EmberBSD`.
+The runner compiles the actual helper and module bodies and the unchanged native
+BO constructor/free. It reuses the existing BO fixture services with two explicit
+adaptations: guarded PAGE_SIZE and a controlled DRM device shape for the module.
+It links actual libfdt. AML, DRM lookup, bus DMA, allocation and reference services
+remain controlled boundaries. Source hashes and compile commands can be saved
+with `HVS_PREPARE_EVIDENCE` to a new directory. The tests use a consumer address
+that differs from both original DMA address and V3D GPU VA.
+
+Tests cover 4 KiB and caller-selected page rounding, complete32-bit span limits,
+geometry, positive errno conversion, every allocation/map failure, output commit,
+pattern/PREWRITE, exact map/GEM/minor cleanup, process/property/framebuffer guards
+and focused causal mutants. Host sanitizers and static analyzers do not establish
+physical HVS or DMA behavior. See the [HVS core](bcm2712-display-hvs-core.md) for
+separate list, address-path and hardware-ownership boundaries.

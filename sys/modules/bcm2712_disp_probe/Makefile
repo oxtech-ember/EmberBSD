@@ -26,8 +26,9 @@ CPPFLAGS+= -I${S}/external/bsd/drm2/dist/drm
 KMOD= bcm2712_disp_probe
 # Compile the SAME shared engine with private function names. Audit the exact
 # new clock C/header and DISP files as exceptions to the selected kernel source.
-.PATH: ${.PARSEDIR}/../../arch/arm/broadcom
-CPPFLAGS+= -include ${.PARSEDIR}/../../arch/arm/broadcom/bcm2712_display_clockvar.h
+_DISP_PRIVATE_DIR:= ${.PARSEDIR}/../../arch/arm/broadcom
+.PATH: ${_DISP_PRIVATE_DIR}
+CPPFLAGS:= ${CPPFLAGS} -include ${_DISP_PRIVATE_DIR}/bcm2712_display_clockvar.h
 CPPFLAGS+= -Dbcm2712_clock_init=bcm2712_disp_private_init
 CPPFLAGS+= -Dbcm2712_clock_acquire=bcm2712_disp_private_acquire
 CPPFLAGS+= -Dbcm2712_clock_update=bcm2712_disp_private_update
