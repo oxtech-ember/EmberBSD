@@ -51,6 +51,13 @@ begin
   write.call('prepare-types.h', strip.call(read.call(driver + 'bcmv3d_hvs_prepare.h')))
   helper = strip.call(read.call(driver + 'bcmv3d_hvs_prepare.c'))
   mod = strip.call(read.call('sys/modules/bcmv3d_hvs_prepare/bcmv3d_hvs_prepare_module.c'))
+  # Keep the real BSD round_page and Linux PAGE_MASK interaction in the fixture.
+  uvm = read.call('sys/uvm/uvm_param.h')
+  linux = read.call('sys/external/bsd/drm2/include/linux/mm.h')
+  round = uvm.lines.grep(/^#define\s+round_page\(x\)\s+.*PAGE_MASK/)
+  mask = linux.lines.grep(/^#define\s+PAGE_MASK\s+/)
+  abort 'Changed native page-macro contract' unless round.length == 1 && mask.length == 1
+  write.call('page-macros.h', "#undef round_page\n#undef PAGE_MASK\n" + round[0] + mask[0])
   write.call('prepare-body.h', helper)
   write.call('module-body.h', mod)
   fixture = File.join(source, 'ember/tools/bcmv3d-hvs-prepare-contract.c')
@@ -78,6 +85,7 @@ begin
     unless ENV['HVS_PREPARE_SKIP_MUTANTS'] == '1'
       mutations = {
         'errno' => [:helper, 'return -PTR_ERR(bo);', 'return PTR_ERR(bo);'],
+        'page-mask' => [:helper, "((size_t)BCMV3D_HVS_BYTES + PAGE_SIZE - 1) &\n\t    ~((size_t)PAGE_SIZE - 1)", 'round_page(BCMV3D_HVS_BYTES)'],
         'size' => [:helper, 'cma->dmasize != size', 'false'],
         'bo-size' => [:helper, 'cma->base.size != size', 'false'],
         'map-size' => [:helper, 'frame->map->dm_mapsize != cma->dmasize', 'false'],

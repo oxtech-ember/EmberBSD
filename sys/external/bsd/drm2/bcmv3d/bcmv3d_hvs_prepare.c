@@ -13,7 +13,9 @@ int
 bcmv3d_hvs_prepare(struct bcmv3d_device *sc, bus_dma_tag_t consumer,
     struct bcmv3d_hvs_frame **out)
 {
-	const bus_size_t size = round_page(BCMV3D_HVS_BYTES);
+	/* DRM headers reverse PAGE_MASK; match the native BO constructor. */
+	const bus_size_t size = ((size_t)BCMV3D_HVS_BYTES + PAGE_SIZE - 1) &
+	    ~((size_t)PAGE_SIZE - 1);
 	struct bcmv3d_hvs_frame *frame;
 	struct drm_gem_cma_object *cma;
 	struct bcmv3d_bo *bo;

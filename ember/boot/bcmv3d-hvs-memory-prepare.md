@@ -12,7 +12,10 @@ The caller uses process context, serializes access and holds the render/device
 reference and consumer tag until destruction. The constructor supplies one GEM
 reference. The helper keeps it and creates a separate one-segment consumer map
 with `BUS_DMA_WRITE`. It checks the actual page-rounded backing size, GEM size,
-original-map geometry, consumer mapsize and complete segment length. The complete
+original-map geometry, consumer mapsize and complete segment length. Size rounding
+uses `PAGE_SIZE` explicitly, as the BO constructor does. BSD `round_page` uses
+`PAGE_MASK`, whose meaning changes after Linux DRM headers; it is not valid here.
+The complete
 consumer span must fit 32 bits; base zero and exclusive end 2^32 are valid. This
 also satisfies the conservative 36-bit HVS bound. No HVS address alignment is
 invented. PAGE alignment belongs to the existing BO constructor.
@@ -68,7 +71,11 @@ No compatibility claim permits use of a retained PHY owner's references.
 
 Run `ruby ember/tools/bcmv3d-hvs-prepare-contract.rb /path/to/EmberBSD`.
 The runner compiles the actual helper and module bodies and the unchanged native
-BO constructor/free. It reuses the existing BO fixture services with two explicit
+BO constructor/free. It extracts the native BSD `round_page` and Linux
+`PAGE_MASK` definitions to
+keep their header interaction in the actual-helper regression. A causal mutant
+restores the unsafe expression. It reuses the existing BO fixture services with
+two explicit
 adaptations: guarded PAGE_SIZE and a controlled DRM device shape for the module.
 It links actual libfdt. AML, DRM lookup, bus DMA, allocation and reference services
 remain controlled boundaries. Source hashes and compile commands can be saved

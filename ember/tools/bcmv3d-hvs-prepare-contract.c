@@ -166,7 +166,13 @@ prepare_sync(bus_dma_tag_t tag, bus_dmamap_t map, bus_addr_t offset,
 #define bus_dmamap_destroy prepare_map_destroy
 #define drm_gem_object_put_unlocked prepare_put
 #define bus_dmamap_sync prepare_sync
+/* These two native macros conflict after DRM headers. Preserve that boundary. */
+#include "page-macros.h"
 #include "prepare-body.h"
+#undef round_page
+#undef PAGE_MASK
+/* Test expectations and controlled services use explicit PAGE_SIZE rounding. */
+#define round_page(n) (((size_t)(n) + PAGE_SIZE - 1) & ~((size_t)PAGE_SIZE - 1))
 #undef bcmv3d_bo_alloc
 #undef drm_gem_object_put_unlocked
 
