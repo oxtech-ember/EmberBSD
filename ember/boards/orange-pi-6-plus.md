@@ -24,6 +24,9 @@ Use the [GCC16 kernel procedure](../development/kernel.md).
 Keep a known working kernel, its matching RAM root and UART recovery available.
 Enable `Support SPCR` in firmware. On this sample it can be lost after power removal.
 Use the [CIX SPCR loader correction](../boot/cix-spcr.md); UART1 and UART3 remain separate device interfaces.
+The separate [manual UART2 kernel profile](../boot/cix-spcr.md#manual-kernel-console-profile)
+has source checks for missing-SPCR recovery through an exact DSDT gate.
+Its physical cold boot and native UART handoff remain unqualified.
 
 The [opt-in profile](../boot/cix-p1-persistent.cfg) clears initrd and selects
 `netbsd.wifi.gz` with `root=NAME=ember-cix-root`. The current development media

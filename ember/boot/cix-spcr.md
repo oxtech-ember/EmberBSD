@@ -75,7 +75,50 @@ Another system with identical tables would also match. DBG2 has no interrupt
 field: GSI 330 belongs to this observed profile and is not derived from DBG2.
 SMBIOS strings are not used as a gate.
 
-## Validation and ownership
+## Manual kernel console profile
+
+`EMBER64_CIX_UART2` is a separate console-only diagnostic kernel.
+Build this configuration with the [GCC16 kernel procedure](../development/kernel.md).
+It includes `EMBER64` and adds only `CIXP1_UART2_CONSOLE`.
+It adds no early console, active VPU probe or SCMI service.
+Generic `EMBER64` keeps its existing console selection.
+
+When SPCR is absent, the manual profile can select DEBUG UART2 at
+`0x040d0000`, 115200 8N1. It first validates bounded RSDP, XSDT and FADT
+descriptions through trusted native firmware mappings. FADT must reference
+the exact 81063-byte DSDT with SHA256
+`9e7bf30cb29484910cceec208adf6fa9f1fab4ed54c93236d53bb4119b04260a`.
+The check validates checksums, table limits and agreement between nonzero
+legacy and extended DSDT references. The ordinary SPCR lookup must then
+return `AE_NOT_FOUND`; other lookup errors do not select UART2.
+
+When SPCR exists, this manual profile accepts only the checked 80-byte
+revision-2 PL011 description for UART2, GSI330 and 115200 8N1.
+It rejects the original UART3 description and descriptions for UART1.
+The existing loader shadow matches the accepted UART2 fields.
+Rejected descriptions cause no new UART register access.
+
+Selection uses the existing polled PL011 console with frequency zero.
+This preserves firmware divisors but still writes UART control/line registers.
+Later ACPI attachment remains responsible for the native UART and interrupt.
+The profile changes no firmware table, variable, pinmux or clock setting.
+It does not repair NVRAM retention or restart by the power button.
+
+Run its actual-source host contract with GCC16:
+
+```sh
+CC=gcc-16 CFLAGS='-O2 -g -fanalyzer' CIX_UART2_ANALYZE=1 \
+    sh ember/tools/cix-uart2-console-contract.sh
+```
+
+The contract models native mapping, SHA and PL011 services.
+It exercises both option states. CI is configured to run it with sanitizers
+and Memcheck.
+These checks do not establish a physical cold boot or UART handoff.
+Existing PSCI/MADT discovery still uses its native ACPI routines;
+this profile does not harden the complete ACPI parser.
+
+## Loader validation and ownership
 
 Before any write the loader checks:
 
