@@ -122,7 +122,9 @@ for file in "$work"/*.c; do
 lines = File.readlines(ARGV.fetch(0), chomp: true)
 progress = /\AANALYZE \((Syntax|Path[^)]*)\): .+ citrus_test_lookup_iconv_entry : [0-9.]+ ms\z/
 timers = /\A\s*(?:===-+===|Analyzer timers|Total Execution Time: [0-9.]+ seconds \([0-9.]+ wall clock\)|---User Time---.*--- Name ---|(?:[0-9.]+(?:\s+\(\s*[0-9.]+%\))?\s+)+(?:Path exploration time|Syntax-based analysis time|Path-sensitive report post-processing time|Total))?\s*\z/
-unexpected = lines.reject { |line| progress.match?(line) || timers.match?(line) }
+# Clang19 can report skipped other entries after analyzing the selected wrapper.
+# The two mandatory progress checks below still reject a skipped-only run.
+unexpected = lines.reject { |line| line == 'Every top-level function was skipped.' || progress.match?(line) || timers.match?(line) }
 abort "unexpected CSA output: #{unexpected.join("\n")}" unless unexpected.empty?
 abort 'CSA wrapper syntax analysis missing' unless lines.any? { |line| (m = progress.match(line)) && m[1] == 'Syntax' }
 abort 'CSA wrapper path analysis missing' unless lines.any? { |line| (m = progress.match(line)) && m[1].start_with?('Path') }
