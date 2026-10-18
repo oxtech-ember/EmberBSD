@@ -7,6 +7,7 @@
 #include "cixvpu_ring.h"
 
 _Alignas(max_align_t) static uint8_t image[8192], pinned_image[8192];
+_Alignas(max_align_t) static uint8_t rpc_image[420736], rpc_pinned[420736];
 static const uint8_t fixture_pin[32] = { 0x47, 0x21, 0x83, 0xb0 };
 static size_t extent = sizeof(image);
 static struct cixvpu_fw_plan make_plan(unsigned int cores)
@@ -30,7 +31,7 @@ static struct cixvpu_fw_plan make_plan(unsigned int cores)
 typedef struct { unsigned int phase; bool matches; } SHA256_CTX;
 static unsigned int hashes, page_calls, map_calls, link_calls, encode_calls;
 static unsigned int meta_calls, fail_meta, fail_page, fail_map, fail_link, fail_encode;
-static unsigned int view_fault, duplicate_map;
+static unsigned int view_fault, duplicate_map, rpc_table_fault;
 static unsigned int success_counts[4];
 static bool fail_free, top_bus;
 #ifdef CIXVPU_SYNC_API
@@ -39,7 +40,10 @@ static bool fail_seal;
 static int SHA256_Init(SHA256_CTX *ctx)
 { ctx->phase = 1; ctx->matches = false; return 1; }
 static int SHA256_Update(SHA256_CTX *ctx, const uint8_t *p, size_t n)
-{ CHECK(ctx->phase == 1 && p == image && n == extent); ctx->matches = memcmp(p, pinned_image, n) == 0; ctx->phase = 2; hashes++; return 1; }
+{ CHECK(ctx->phase == 1 && ((p == image && n == extent) ||
+    (p == rpc_image && n == sizeof(rpc_image))));
+  ctx->matches = memcmp(p, p == image ? pinned_image : rpc_pinned, n) == 0;
+  ctx->phase = 2; hashes++; return 1; }
 static int SHA256_Final(uint8_t out[32], SHA256_CTX *ctx)
 { CHECK(ctx->phase == 2); memcpy(out, fixture_pin, 32); if (!ctx->matches) out[0] ^= 1; return 1; }
 static void *prepare_kmem(size_t n, int flags)
@@ -64,11 +68,15 @@ static int prepare_map(void *table, size_t n, uint32_t va, uint64_t bus, unsigne
 {
     if (++map_calls == fail_map) return EIO;
     int error = cixvpu_mmu_map(table, n, va, bus, attr, perm);
+    if (error == 0 && va == 0x20000000 && rpc_table_fault == 1) put32((uint8_t *)table + 128, 1);
     if (error == 0 && map_calls == duplicate_map) return cixvpu_mmu_map(table, n, va, bus, attr, perm);
     return error;
 }
 static int prepare_link(void *table, size_t n, uint32_t va, uint64_t bus)
-{ if (++link_calls == fail_link) return EIO; return cixvpu_mmu_link(table, n, va, bus); }
+{ if (++link_calls == fail_link) return EIO;
+  int error=cixvpu_mmu_link(table,n,va,bus);
+  if(error==0 && va==0x20000000 && rpc_table_fault==2) put32((uint8_t *)table+129*4,1);
+  return error; }
 static int prepare_encode(uint64_t bus, unsigned int attr, unsigned int perm, uint32_t *out)
 { if (++encode_calls == fail_encode) return EIO; return cixvpu_mmu_encode(bus, attr, perm, out); }
 #ifdef CIXVPU_SYNC_API
@@ -312,7 +320,7 @@ static const unsigned int want_pre[] = {
     [CIXVPU_FW_PLAN_BUF_IN_HOST]=4, [CIXVPU_FW_PLAN_BUF_IN_MVE]=5,
     [CIXVPU_FW_PLAN_BUF_OUT_HOST]=4, [CIXVPU_FW_PLAN_BUF_OUT_MVE]=5,
     [CIXVPU_FW_PLAN_RPC]=5, [CIXVPU_FW_PLAN_PRINT]=5,
-    /* RPC_DATA has no initial-sync support in this foundation slice. */
+    [CIXVPU_FW_PLAN_RPC_DATA]=5,
     [CIXVPU_FW_PLAN_ROOT]=4, [CIXVPU_FW_PLAN_LEAF]=4
 };
 static uint8_t *device_bytes(unsigned int i)
@@ -748,6 +756,116 @@ static void debugparam_tests(void)
     sync_observer=observe_sync;
     CHECK(cixvpu_prepared_free(&p)==0);
 }
+/* Literal observed-size shape; the real planner/allocator/preparer stay linked. */
+static struct cixvpu_dma *rpc_reserve_begin(struct cixvpu_fw_plan *plan)
+{
+    struct cixvpu_dma *owner=NULL;
+    reset();
+    memset(rpc_image,0x79,sizeof(rpc_image));
+    memset(rpc_image,0,CIXVPU_FW_HEADER_SIZE);
+    rpc_image[4]=5; rpc_image[5]=3;
+    memcpy(rpc_image+80,"r0p0-sum0005",12);
+    put32(rpc_image+96,420736); put32(rpc_image+100,0x70000);
+    put32(rpc_image+104,15); put32(rpc_image+108,0x7fff);
+    put32(rpc_image+172,0x7f000); put32(rpc_image+176,0);
+    memcpy(rpc_pinned,rpc_image,sizeof(rpc_image));
+    CHECK(cixvpu_fw_plan_build_boot_rpc(rpc_image,sizeof(rpc_image),1,plan)==0);
+    CHECK(plan->backing_pages==289 && plan->mappings==285 && plan->boot_rpc==1);
+    CHECK(cixvpu_dma_alloc(&tag32,&tag64,plan,&owner)==0);
+    for(unsigned int i=0;i<289;i++) memset(resources[i].kva,0xa5,4096);
+    hashes=page_calls=map_calls=link_calls=encode_calls=meta_calls=0;
+    fail_meta=fail_page=fail_map=fail_link=fail_encode=view_fault=duplicate_map=rpc_table_fault=0;
+    fail_free=fail_seal=false;
+    return owner;
+}
+static void rpc_reserve_tests(void)
+{
+    static const uint8_t zero[4096]={0};
+    static uint8_t canary[4096];
+    memset(canary,0xa5,sizeof(canary));
+    for(unsigned int mode=0;mode<2;mode++) {
+        struct cixvpu_fw_plan plan;
+        struct cixvpu_dma *owner=rpc_reserve_begin(&plan),*old=owner;
+        struct cixvpu_prepared *out=NULL;
+        CHECK(cixvpu_prepare_boot_cpu(&owner,&plan,rpc_image,sizeof(rpc_image),fixture_pin,&out)==0);
+        CHECK(owner==NULL && out!=NULL && out->plan.boot_rpc==1 && out->count==288);
+        CHECK(map_calls==285 && link_calls==3);
+        for(unsigned int i=0;i<103;i++) {
+            size_t n=i==102 ? 2944 : 4096;
+            CHECK(memcmp(resources[i].kva,rpc_image+i*4096,n)==0);
+            CHECK(memcmp((uint8_t *)resources[i].kva+n,zero,4096-n)==0);
+        }
+        for(unsigned int i=253;i<285;i++) CHECK(memcmp(resources[i].kva,zero,4096)==0);
+        const void *root=resources[285].kva,*leaf=resources[288].kva;
+        CHECK(word(root,0)==((uint32_t)(bus_address(286)>>12)<<2|1));
+        CHECK(word(root,64)==((uint32_t)(bus_address(287)>>12)<<2|1));
+        CHECK(word(root,128)==((uint32_t)(bus_address(288)>>12)<<2|1));
+        for(unsigned int i=0;i<1024;i++) {
+            CHECK(word(leaf,i)==(i<32 ? (uint32_t)(bus_address(253+i)>>12)<<2|0xc0000003U : 0));
+            if(i!=0 && i!=64 && i!=128) CHECK(word(root,i)==0);
+        }
+        struct cixvpu_dma_page view;
+        CHECK(cixvpu_dma_page(old,253,&view)==EBUSY);
+        sync_fixture(&plan,mode!=0);
+        /* A late new data-map fault must prevent every native sync. */
+        old->owners[284].map->dm_segs[0].ds_addr++;
+        unsigned int calls=native_calls;
+        CHECK(cixvpu_prepared_sync_initial(out)==ERANGE && sync_calls==0 && native_calls==calls);
+        old->owners[284].map->dm_segs[0].ds_addr--;
+        CHECK(cixvpu_prepared_sync_initial(out)==0 && sync_calls==289);
+        for(unsigned int i=253;i<285;i++) {
+            CHECK(pres[i]==5 && posts[i]==0);
+            CHECK(memcmp(device_bytes(i),zero,4096)==0);
+        }
+        calls=native_calls;
+        CHECK(cixvpu_prepared_sync_initial(out)==EBUSY && native_calls==calls);
+        if(mode==0) {
+            unload_observer=observe_unload;
+            CHECK(cixvpu_prepared_free(&out)==0 && out==NULL && sync_calls==578);
+        } else {
+            uint32_t address=0xa5a5a5a5;
+            CHECK(cixvpu_prepared_publish_root(out,&address)==0);
+            CHECK(address==((uint32_t)(bus_address(285)>>12)<<2|3));
+            calls=native_calls;
+            CHECK(cixvpu_prepared_free(&out)==EBUSY && out!=NULL && native_calls==calls);
+            boot_drop(out); /* Host-only quarantine teardown, never production. */
+        }
+        CHECK(depth==0 && live_kmem==0);
+    }
+    for(unsigned int fault=0;fault<9;fault++) {
+        struct cixvpu_fw_plan plan;
+        struct cixvpu_dma *owner=rpc_reserve_begin(&plan),*saved=owner;
+        struct cixvpu_prepared *out=NULL;
+        struct cixvpu_dma_owner original=owner->owners[253];
+        if(fault==0) plan.boot_rpc=0;
+        if(fault==1) plan.boot_rpc=2;
+        if(fault==2) plan.mappings--;
+        if(fault==3) owner->owners[253].page.role=CIXVPU_FW_PLAN_PRINT;
+        if(fault==4) owner->owners[253].bus_address=bus_address(0);
+        if(fault==5) owner->owners[253].kva=resources[0].kva;
+        if(fault==6) rpc_table_fault=1;
+        if(fault==7) rpc_table_fault=2;
+        if(fault==8) rpc_image[4000]^=1;
+        CHECK(cixvpu_prepare_boot_cpu(&owner,&plan,rpc_image,sizeof(rpc_image),fixture_pin,&out)!=0);
+        CHECK(owner==saved && out==NULL && owner->phase==CIXVPU_DMA_ALLOC);
+        if(fault<6 || fault==8) for(unsigned int i=0;i<289;i++)
+            CHECK(memcmp(resources[i].kva,canary,4096)==0);
+        owner->owners[253]=original; rpc_table_fault=0;
+        CHECK(cixvpu_dma_free(&owner)==0 && depth==0 && live_kmem==0);
+    }
+    struct cixvpu_fw_plan plan;
+    struct cixvpu_dma *owner=rpc_reserve_begin(&plan);
+    struct cixvpu_prepared *out=NULL;
+    CHECK(cixvpu_prepare_cpu(&owner,&plan,rpc_image,sizeof(rpc_image),fixture_pin,&out)==0 && owner==NULL);
+    CHECK(cixvpu_prepared_free(&out)==0 && out==NULL && depth==0 && live_kmem==0);
+    /* Unknown selector with otherwise valid plain-plan counts cannot fall back. */
+    owner=begin(1,&plan); struct cixvpu_dma *saved=owner;
+    plan.boot_rpc=2;
+    CHECK(cixvpu_prepare_cpu(&owner,&plan,image,extent,fixture_pin,&out)==EINVAL);
+    CHECK(owner==saved && out==NULL && page_calls==0);
+    CHECK(cixvpu_dma_free(&owner)==0 && depth==0 && live_kmem==0);
+
+}
 static void boot_rpc_alloc_tests(void)
 {
     static const uint32_t tuples[][3]={
@@ -1027,7 +1145,7 @@ int main(void)
 #ifdef CIXVPU_SYNC_API
     sync_success_tests(); sync_failure_tests(); sync_owner_tests(); exposure_tests();
 #ifdef CIXVPU_BOOT_API
-    boot_rpc_alloc_tests(); boot_rpc_header_tests(); boot_api_tests();
+    rpc_reserve_tests(); boot_rpc_alloc_tests(); boot_rpc_header_tests(); boot_api_tests();
 #else
     fprintf(stderr, "FAIL: no typed boot seed/publication/receive API\n"); return 1;
 #endif

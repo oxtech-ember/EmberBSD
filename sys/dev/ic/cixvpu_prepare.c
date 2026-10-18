@@ -11,7 +11,7 @@
 #include <dev/ic/cixvpu_ring.h>
 #include <dev/ic/cixvpu_dma_private.h>
 
-#define PREPARE_TABLES (CIXVPU_FW_PLAN_MAX_CORES + 2U)
+#define PREPARE_TABLES (CIXVPU_FW_PLAN_MAX_CORES + 3U)
 
 struct cixvpu_prepare_entry {
 	uint32_t table, backing, address, word;
@@ -156,7 +156,7 @@ cixvpu_prepare_gather(struct cixvpu_dma *dma,
 		}
 		work->owners[work->count++] = i;
 	}
-	if (roots != 1 || work->count != plan->cores + 2)
+	if (roots != 1 || work->count != plan->cores + 2 + plan->boot_rpc)
 		return EINVAL;
 	/* The caller's allocator snapshot must contain exactly these owners. */
 	error = cixvpu_dma_page(dma, plan->backing_pages, &extra);
@@ -297,10 +297,16 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 	(void)SHA256_Final(digest, &hash);
 	if (memcmp(digest, pin, sizeof(pin)) != 0)
 		return EINVAL;
-	error = cixvpu_fw_plan_build(image, image_size, snapshot.cores, &checked);
+	if (snapshot.boot_rpc == 1)
+		error = cixvpu_fw_plan_build_boot_rpc(image, image_size,
+		    snapshot.cores, &checked);
+	else
+		error = cixvpu_fw_plan_build(image, image_size, snapshot.cores,
+		    &checked);
 	if (error != 0)
 		return error;
 	if (snapshot.cores != checked.cores ||
+	    snapshot.boot_rpc != checked.boot_rpc ||
 	    snapshot.backing_pages != checked.backing_pages ||
 	    snapshot.mappings != checked.mappings ||
 	    !cixvpu_prepare_info_equal(&snapshot.info, &checked.info))
@@ -309,7 +315,8 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 	    checked.info.minor != 5 || memcmp(checked.info.version,
 	    boot_version, sizeof(checked.info.version)) != 0))
 		return ENOTSUP;
-	capacity = (size_t)checked.mappings + CIXVPU_FW_PLAN_MAX_CORES + 1;
+	capacity = (size_t)checked.mappings + CIXVPU_FW_PLAN_MAX_CORES + 1 +
+	    checked.boot_rpc;
 	pages = checked.backing_pages;
 
 	if (checked.backing_pages > CIXVPU_FW_PLAN_MAX_PAGES ||
@@ -483,7 +490,8 @@ cixvpu_prepare_boot_output(struct cixvpu_prepared *p, void *out,
 		*fault = true;
 		return error;
 	}
-	capacity = (size_t)p->plan.mappings + CIXVPU_FW_PLAN_MAX_CORES + 1;
+	capacity = (size_t)p->plan.mappings + CIXVPU_FW_PLAN_MAX_CORES + 1 +
+	    p->plan.boot_rpc;
 	if (capacity > (SIZE_MAX - sizeof(*p)) / sizeof(p->entries[0]) ||
 	    p->bytes != sizeof(*p) + capacity * sizeof(p->entries[0])) {
 		*fault = true;

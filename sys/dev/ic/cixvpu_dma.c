@@ -316,6 +316,7 @@ cixvpu_dma_initial_ops(enum cixvpu_fw_plan_role role)
 	case CIXVPU_FW_PLAN_BUF_OUT_MVE:
 	case CIXVPU_FW_PLAN_RPC:
 	case CIXVPU_FW_PLAN_PRINT:
+	case CIXVPU_FW_PLAN_RPC_DATA:
 		return BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD;
 	default:
 		return 0;
