@@ -311,6 +311,51 @@ lifetime and stop/drain/release remain gates before native first-frame access.
 See the [stop sequence](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_crtc.c#L503-L551)
 and [VC6 stop check](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hvs.c#L1097-L1123).
 
+### Pure PV0 timing payload
+
+The [fixed encoder](../../sys/arch/arm/broadcom/bcm2712_display_pv0.c) produces
+the nine named fields in [`bcm2712_pv0_timing`](../../sys/arch/arm/broadcom/bcm2712_display_pv0var.h).
+`bcm2712_pv0_encode_1080p60` returns positive `EINVAL` for NULL output.
+A valid output receives the complete fixed payload. The function has no other
+failure case, mutable state, callbacks or native integration.
+
+| Field | PV0 offset | Word |
+|---|---:|---:|
+| `control` | `0x00` | `0x00177002` |
+| `v_control` | `0x04` | `0x20000002` |
+| `vsyncd_even` | `0x08` | `0x00000000` |
+| `horza` | `0x0c` | `0x0094002c` |
+| `horzb` | `0x10` | `0x00580780` |
+| `verta` | `0x14` | `0x00240005` |
+| `vertb` | `0x18` | `0x00040438` |
+| `mux_cfg` | `0x34` | `0x00000020` |
+| `pipe_init_ctrl` | `0x94` | `0x00000111` |
+
+These offsets are source facts, not a register-write API or application order.
+The words use PV0 clock-select 0, one pixel per clock, RGB24 format and FIFO
+threshold 46. Progressive VC6 timing includes `ODD_TIMING` despite its name.
+`PV.EN` and `VIDEN` are clear. `FIFO_CLR` and pipe-init enable remain future
+payload commands that require quiesce. Do not apply this table to a live PV.
+Sync polarity belongs to the HDMI controller stage.
+See the pinned [PV fields](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_regs.h#L145-L236),
+[FIFO threshold](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_crtc.c#L239-L307)
+and [configuration facts](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_crtc.c#L346-L480).
+
+The caller owns output storage and serializes access to it. Encoding does not
+validate EDID, clocks, power, HVS, mappings, IRQ lifetime, enable, stop or DMA drain.
+It does not establish a first frame, PLL lock or a working link.
+
+```sh
+sh ember/tools/bcm2712-pv0-timing-contract.sh "$PWD"
+PV0_SKIP_MUTANTS=1 CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' \
+    sh ember/tools/bcm2712-pv0-timing-contract.sh "$PWD"
+```
+
+The contract compiles the actual source. It checks the fixed words, NULL input,
+output canaries and repeated encoding over poisoned storage. Its causal mutants
+change production facts or packing. `CC`, `CFLAGS`, `PV0_COMPILE_ONLY`,
+`PV0_OUTPUT` and `TEST_RUNNER` support cross builds and supported memory checkers.
+
 ## Physical resource observation
 
 A CM5 Rev 1.0 with BCM2712 D0 booted the complete GCC 16.2 firmware build from
