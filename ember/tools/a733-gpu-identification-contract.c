@@ -11,6 +11,9 @@
 #include <sys/queue.h>
 #include <time.h>
 #include <sys/types.h>
+#ifndef EAUTH
+#define EAUTH 80
+#endif
 #include "powervr/pvr_rogue_fwif.h"
 #include "sun60i_a733_gpu_fwinfo.h"
 
@@ -517,26 +520,6 @@ pvr_render_attach(device_t dev, bus_dma_tag_t dmat, uint64_t bvnc,
 
 	abort();
 }
-/* The real bridge lifecycle runs in a733-gpu-fwbridge-contract.sh. */
-int
-sun60i_a733_gpu_fwbridge_prepare(struct sun60i_a733_gpu_fwbridge *bridge,
-    kmutex_t *lock, bus_space_tag_t bst, bus_space_handle_t bsh,
-    struct sun60i_a733_gpu_fwmem *memory,
-    const struct sun60i_a733_gpu_fwboot_result *boot,
-    const struct sun60i_a733_gpu_fwprobe_result *previous)
-{
-
-	abort();
-}
-
-int
-sun60i_a733_gpu_fwbridge_publish(struct sun60i_a733_gpu_fwbridge *bridge,
-    struct drm_device *dev)
-{
-
-	abort();
-}
-
 static void sysctl_unlock(void) { abort(); }
 static void sysctl_relock(void) { abort(); }
 #define SYSCTL_DESCR(s) (s)
