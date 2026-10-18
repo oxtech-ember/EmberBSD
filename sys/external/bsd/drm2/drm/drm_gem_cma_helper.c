@@ -93,6 +93,8 @@ drm_gem_cma_create_internal(struct drm_device *ddev, size_t size,
 		memset(obj->vaddr, 0, obj->dmasize);
 
 	drm_gem_private_object_init(ddev, &obj->base, size);
+	/* EmberBSD, AI-assisted: retain the borrowed import until destruction. */
+	obj->sgt = sgt;
 
 	return obj;
 
@@ -101,12 +103,14 @@ destroy:
 unmap:
 	bus_dmamem_unmap(obj->dmat, obj->vaddr, obj->dmasize);
 free:
-	if (obj->sgt)
-		drm_prime_sg_free(obj->sgt);
-	else if (obj->vmem_pool)
-		vmem_xfree(obj->vmem_pool, obj->vmem_addr, obj->dmasize);
-	else
-		bus_dmamem_free(obj->dmat, obj->dmasegs, nsegs);
+	/* The generic PRIME caller unwinds a failed import. */
+	if (sgt == NULL) {
+		if (obj->vmem_pool)
+			vmem_xfree(obj->vmem_pool, obj->vmem_addr,
+			    obj->dmasize);
+		else
+			bus_dmamem_free(obj->dmat, obj->dmasegs, nsegs);
+	}
 failed:
 	kmem_free(obj, sizeof(*obj));
 
@@ -128,7 +132,7 @@ drm_gem_cma_obj_free(struct drm_gem_cma_object *obj)
 	bus_dmamap_destroy(obj->dmat, obj->dmamap);
 	bus_dmamem_unmap(obj->dmat, obj->vaddr, obj->dmasize);
 	if (obj->sgt)
-		drm_prime_sg_free(obj->sgt);
+		drm_prime_gem_destroy(&obj->base, obj->sgt);
 	else if (obj->vmem_pool)
 		vmem_xfree(obj->vmem_pool, obj->vmem_addr, obj->dmasize);
 	else

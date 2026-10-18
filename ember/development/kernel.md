@@ -82,6 +82,9 @@ On unsupported hosts, record that gap and use applicable ASan/UBSan or kernel di
 Do not report a sanitizer run as a Valgrind pass.
 Static analysis and host execution supplement device acceptance.
 
+The [native CMA import contract](drm-cma-import.md) checks imported-page
+ownership and segment bounds with the actual native source.
+
 ## A reproducible regression example
 
 [USB control recovery](../boot/usb-control-recovery.md) provides an actual-source concurrency regression.

@@ -34,6 +34,7 @@
 
 #include <sys/cdefs.h>
 #include <sys/bus.h>
+#include <sys/errno.h>
 #include <sys/kmem.h>
 #include <sys/queue.h>
 
@@ -234,15 +235,24 @@ bus_dmamem_import_pages(bus_dma_tag_t dmat, bus_dma_segment_t *segs,
 	int seg;
 	unsigned i;
 
+	/* EmberBSD, AI-assisted: bound the imported segment array. */
+	if (nsegs <= 0 || npgs == 0)
+		return EINVAL;
+
 	seg = 0;
 	for (i = 0; i < npgs; i++) {
 		paddr_t paddr = VM_PAGE_TO_PHYS(&pgs[i]->p_vmp);
 		bus_addr_t baddr = PHYS_TO_BUS_MEM(dmat, paddr);
 
-		if (seg > 0 && segs[seg - 1].ds_addr + PAGE_SIZE == baddr) {
+		if (seg > 0 && baddr >= segs[seg - 1].ds_addr &&
+		    baddr - segs[seg - 1].ds_addr == segs[seg - 1].ds_len) {
+			if (segs[seg - 1].ds_len >
+			    (bus_size_t)-1 - PAGE_SIZE)
+				return EFBIG;
 			segs[seg - 1].ds_len += PAGE_SIZE;
 		} else {
-			KASSERT(seg < nsegs);
+			if (seg == nsegs)
+				return EFBIG;
 			segs[seg].ds_addr = baddr;
 			segs[seg].ds_len = PAGE_SIZE;
 			seg++;
