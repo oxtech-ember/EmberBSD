@@ -301,8 +301,8 @@ separate plan1-only APIs. They cannot resume an owner with a sticky error.
 Fresh bounded observations accept two exact MEM_ALLOC tuples, one fixed RESIZE
 and at most sixteen DEBUG calls. RESIZE requires the accepted first allocation,
 base `0x20000000` and new_size 524288. Its backing is prepared before exposure.
-The second allocation requires committed RESIZE, size=max_size16384, region0
-and log2_alignment12. It returns VA `0x24000000`; its backing and leaf already
+The second allocation requires committed RESIZE, size=max_size 16384, region 0
+and log2_alignment 12. It returns VA `0x24000000`; its backing and leaf already
 exist before exposure. A consumed but uncommitted resize cannot authorize it.
 Each allocation or resize slot is consumed before its first response store.
 The fixed VA and payload size 4 become visible before the release RETURN store.
@@ -392,9 +392,9 @@ to that boot profile. It does not change the RPC policy or exposure lifetime.
 selects the separate fixed RPC policy with VPU `flags 0x8` and SCMI `flags 0x80`.
 It preserves the UART2 console gate and all boot-long exposure rules.
 Its source checks pass, including both exact ALLOCs, fixed RESIZE, notifications
-and the modeled SWITCHED_IN/PONG exchange. The physical diagnostic below commits
-the first ALLOC and fixed RESIZE. That measured kernel stops on the second ALLOC.
-The newer second-object extension needs a target build and physical acceptance.
+and the modeled SWITCHED_IN/PONG exchange. The physical diagnostic below also
+completes those three replies and receives SWITCHED_IN and PONG.
+Runtime codec operations and safe post-exposure teardown remain unqualified.
 The complete firmware handshake remains unqualified.
 
 The once-only mountroot callback reuses the fixed local image pin, exact size,
@@ -672,32 +672,35 @@ Device DMA data correctness and codec execution require separate board acceptanc
 
 ## Physical diagnostic boundary
 
-The [observed CIX board](../boards/orange-pi-6-plus.md) runs the manual GCC16
-kernel `4b2a919a119ddbd4f8a3893913e8ce46e5d9573d` with `flags 0x8`.
-The report confirms identity, active power controls, root publication and
-IRQ status mask `0x1`, with no unexpected IRQ bits. The first MEM_ALLOC and
-fixed RESIZE each have one committed response and one notification.
-The resize serves address `0x20000000` and new_size 524288.
-The next request is PARAM state1, call2, payload12: MEM_ALLOC with size and
-max_size 16384, region0 and log2 alignment12. That measured kernel does not
-respond to the second allocation. It returns ENOTSUP86 at RECEIVE, last stage9,
-without SWITCHED_IN or PONG. This is protocol progress, not firmware readiness.
+The [observed CIX board](../boards/orange-pi-6-plus.md) passes one closed
+bootstrap handshake after a confirmed full DC cycle on 2026-10-18.
+It runs manual GCC16 kernel `c2e7cdcac019dcae9ab54ab9ed20c609068d3edb`
+with flags `0x8`. Native UART and authenticated SSH report that exact source.
+The gzip SHA256 is `c683a1740fb373cae54317b2bd5bc537a5177253eb147c1af11a699dadd58f2c`.
+The root FFS is clean, and the OS console and SSH remain available.
 
-The first MEM_ALLOC tuple remains initial `131072` bytes, maximum `67108864`
-bytes, region0 and log2 alignment22. Maximum size reserves virtual capacity;
-512 KiB has physical backing before exposure. The closed policy does not
-allocate pages or change live PTEs while servicing the fixed resize.
-Checked payloads and matching headers rely on committed PARAM ownership;
-they do not prove an atomic transaction or physical DMA coherence.
-The newer source adds one fixed second-object response after committed RESIZE.
-Its target build and physical response remain pending. Free and a complete
-allocator are not implemented by this closed policy.
+The first MEM_ALLOC, fixed RESIZE and second MEM_ALLOC each receive one
+committed response and one notification. The report records three of each,
+SWITCHED_IN and PONG, two messages, IRQ status mask `0x1` and no unexpected bits.
+Native result, primary error and cleanup error are zero; stage is 10, last stage 9.
+The final RPC snapshot is FREE, call 2, body 4. Its cleared allocation-valid flags
+do not erase the separately recorded committed reply flags.
 
-The exposed prepared owner, core power claims and IRQ registration remain held.
-The IRQ is masked. Cleanup counters do not indicate post-exposure reclamation.
-The OS console and authenticated SSH remain available. Use a full power cycle
-before another test epoch; warm reset and runtime reclamation remain unqualified.
-Firmware readiness, DMA data correctness, encoding and video queues remain open.
+The first ALLOC has initial size 131072, maximum 67108864, region 0 and log2
+alignment 22. Maximum size reserves virtual capacity; 512 KiB has real backing
+before exposure. The fixed resize serves address `0x20000000`, size 524288.
+The second exact ALLOC has size=max_size 16384, region 0 and log2 alignment 12.
+It uses four separate pages at derived virtual address `0x24000000`.
+The checked source plan has 390 owners, 385 mappings and five tables.
+The policy allocates no pages and changes no live PTE while answering RPC.
+General allocation, FREE, session control and codec buffers are not implemented.
+
+The exposed prepared owner, four core power claims and IRQ registration remain
+held. The IRQ is masked. This is not DMA drain or post-exposure reclamation.
+Use a full power cycle before another test epoch. Warm reset, retry, free and
+clock teardown remain unqualified. The check submits no GO command or frame.
+Operational firmware commands, DMA data correctness, encoding and video queues
+still require separate physical acceptance.
 
 ## Physical acceptance and recovery
 

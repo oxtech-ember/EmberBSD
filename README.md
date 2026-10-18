@@ -242,18 +242,17 @@ on every board in the hardware catalog.
   disable clock67, read VPU identity and validate a fixed hardware profile.
   CPU preparation on the board allocates and audits 256 pages, copies the
   pinned local image, builds page tables and completes checked cleanup.
-  A separate [manual boot epoch](ember/boot/cix-vpu.md#manual-firmware-handshake-trial)
-  publishes its root and observes an IRQ plus a memory-allocation request.
-  It retains every exposed owner and masks the IRQ at the terminal result.
-  SWITCHED_IN, PONG, firmware readiness and hardware encoding remain unqualified.
-  The [fixed bootstrap reserve](ember/boot/cix-vpu.md#fixed-bootstrap-memory-reserve)
-  adds a checked plan and CPU/DMA preparation for the observed initial request.
-  It maps 128 KiB of real pages and reserves 64 MiB of virtual capacity.
-  Source tests verify all mapped entries, invalid tail entries, synchronization
-  order and lifetime guards. A separate manual RPC profile selects this plan,
-  replies to one exact allocation and at most sixteen DEBUG calls, then notifies
-  firmware. Native source tests cover commit/notification order and faults.
-  The new profile's physical handshake and DMA correctness remain unqualified.
+  A separate [manual boot epoch](ember/boot/cix-vpu.md#physical-diagnostic-boundary)
+  passes a closed bootstrap handshake on a physical board. Kernel
+  `c2e7cdcac019dcae9ab54ab9ed20c609068d3edb` replies to the first allocation,
+  one fixed 512 KiB resize and a second 16 KiB allocation. It records three
+  commits and notifications, SWITCHED_IN and PONG, with primary error zero.
+  The [fixed bootstrap plan](ember/boot/cix-vpu.md#fixed-bootstrap-memory-reserve)
+  reserves 64 MiB of virtual capacity for the first object and maps 512 KiB.
+  The second object uses four separate pages and a separate leaf.
+  Source tests check mapping bounds, synchronization order and lifetime guards.
+  Every exposed owner remains held, and the terminal report masks the IRQ.
+  This check submits no codec frame and does not qualify runtime DMA teardown.
   [Initially masked ARM PIC registration](ember/boot/cix-vpu.md#initially-masked-native-irq-registration)
   publishes the consumer context before enabling an exclusive interrupt.
   ARM ACPI tags retain [IORT address limits](ember/boot/cix-platform.md#arm-acpi-dma-address-limits).
