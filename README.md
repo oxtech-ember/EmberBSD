@@ -1121,6 +1121,8 @@ The base system shell is unchanged.
   Native `powerd` short presses reach sync and FFS unmount; the operator measures
   about 5 s to fan stop. A commanded reboot reaches FFS unmount in 0.31 s from
   its reason log. These are separate timing scenarios on one healthy sample.
+  Two further short-press checks on the combined peripherals kernel also
+  reach clean root FFS unmount. A long reliability run remains unqualified.
   A source-only [AArch64 reboot contract](ember/tools/aarch64-reboot-contract.c)
   checks that PMF receives current shutdown request flags, not boot flags.
   [Immediate shutdown](ember/tools/immediate-shutdown-contract.c) preserves hooks

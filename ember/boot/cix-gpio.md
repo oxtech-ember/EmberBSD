@@ -96,6 +96,13 @@ UART boot. The operator confirms that the fan does not start. The failure thus
 reproduces outside the native OS shutdown sequence. This does not isolate an
 EC, PDC, firmware or hardware cause; electrical rail state remains unmeasured.
 
+The combined peripherals kernel from `24b6895ec` passes two further physical
+short presses. Both reach sync and completed root FFS unmount. The operator
+confirms fan stop in each case. A new exact press-to-fan duration is not measured.
+Post-S5 button start still fails through both power inputs with the same supply.
+Press-duration changes do not produce a new UART boot. These checks do not
+establish a supply fault, a firmware cause or sustained button reliability.
+
 ## Manual header observation
 
 The separate [cixgpioobs attachment](../../sys/dev/acpi/cixgpio_observe_acpi.c)
