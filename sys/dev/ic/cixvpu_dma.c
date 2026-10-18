@@ -264,7 +264,7 @@ cixvpu_dma_free(struct cixvpu_dma **allocation)
 }
 
 static int
-cixvpu_dma_owned(struct cixvpu_dma *dma,
+cixvpu_dma_owned(const struct cixvpu_dma *dma,
     const struct cixvpu_prepared *owner, enum cixvpu_dma_phase phase)
 {
 
@@ -340,9 +340,8 @@ cixvpu_dma_sync_check(struct cixvpu_dma *dma,
 	struct cixvpu_fw_plan snapshot;
 	struct cixvpu_fw_plan_page expected;
 	const struct cixvpu_dma_owner *p;
-	const bus_dma_segment_t *segment;
 	uint32_t i, roots = 0;
-	int error, ops;
+	int error;
 
 	if (dma->tag == NULL || !dma->tag_acquired || dma->count == 0 ||
 	    dma->count > CIXVPU_FW_PLAN_MAX_PAGES)
@@ -361,6 +360,9 @@ cixvpu_dma_sync_check(struct cixvpu_dma *dma,
 			return EINVAL;
 	}
 	for (i = 0; i < dma->count; i++) {
+		const bus_dma_segment_t *segment;
+		int ops;
+
 		p = &dma->owners[i];
 		error = cixvpu_dma_record(&p->page, i);
 		if (error != 0)
@@ -400,7 +402,7 @@ cixvpu_dma_sync_initial(struct cixvpu_dma *dma,
 	struct cixvpu_dma_owner *p;
 	uint32_t i;
 	unsigned int pass;
-	int error, group, ops;
+	int error, ops;
 
 	error = cixvpu_dma_context();
 	if (error != 0)
@@ -416,6 +418,8 @@ cixvpu_dma_sync_initial(struct cixvpu_dma *dma,
 	/* No fallible work remains. Each unique map is synchronized once. */
 	for (pass = 0; pass < 3; pass++) {
 		for (i = 0; i < dma->count; i++) {
+			int group;
+
 			p = &dma->owners[i];
 			group = p->page.role == CIXVPU_FW_PLAN_ROOT ? 2 :
 			    p->page.role == CIXVPU_FW_PLAN_LEAF ? 1 : 0;
@@ -437,8 +441,7 @@ cixvpu_dma_free_prepared(struct cixvpu_dma **allocation,
 {
 	struct cixvpu_dma *dma;
 	struct cixvpu_dma_owner *p;
-	uint32_t i;
-	int error, ops;
+	int error;
 
 	error = cixvpu_dma_context();
 	if (error != 0)
@@ -454,8 +457,12 @@ cixvpu_dma_free_prepared(struct cixvpu_dma **allocation,
 	if (error != 0)
 		return error;
 	if (dma->phase == CIXVPU_DMA_SYNCED) {
+		uint32_t i;
+
 		/* No address was disclosed. Cancel PRE ownership before unloading. */
 		for (i = dma->count; i != 0; i--) {
+			int ops;
+
 			p = &dma->owners[i - 1];
 			ops = BUS_DMASYNC_POSTWRITE;
 			if (p->pre_ops & BUS_DMASYNC_PREREAD)
