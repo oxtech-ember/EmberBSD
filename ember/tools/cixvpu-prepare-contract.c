@@ -594,6 +594,143 @@ static void boot_message(unsigned int pos, uint16_t code, uint16_t size, uint32_
     m[0]=(uint8_t)end; m[1]=(uint8_t)(end>>8);
     put32(m+4,sum); put32(m+8,sum); put32(m+12,sum);
 }
+static unsigned int debug_changes;
+static bool debug_churn;
+static void debug_observe(unsigned int i, bus_addr_t offset, bus_size_t length, int ops)
+{
+    CHECK(i==boot_rpc && length<=12 && offset+length<=12);
+    CHECK(!((ops & (BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE)) &&
+        (ops & (BUS_DMASYNC_POSTREAD|BUS_DMASYNC_POSTWRITE))));
+    if(ops & BUS_DMASYNC_PREWRITE) {
+        CHECK(offset==0 && length==4 && ops==(BUS_DMASYNC_PREWRITE|BUS_DMASYNC_PREREAD));
+        CHECK(word(resources[i].kva,0)==2 && word(device_memory[i],0)==1);
+        CHECK(boot_nevents>=5 && boot_events[boot_nevents-2].ops==BUS_DMASYNC_POSTWRITE);
+        CHECK(boot_events[boot_nevents-1].offset==4 && boot_events[boot_nevents-1].length==8);
+    }
+    if(ops==BUS_DMASYNC_POSTWRITE || (offset==4 && ops==BUS_DMASYNC_PREREAD))
+        CHECK(word(resources[i].kva,0)==1 && word(device_memory[i],0)==1);
+    boot_observe(i,offset,length,ops);
+    if(offset==0 && length==12 && ops==BUS_DMASYNC_PREREAD &&
+        (debug_churn || debug_changes!=0)) {
+        if(word(device_memory[i],0)==0) put32(device_memory[i],1);
+        else put32(device_memory[i]+4,word(device_memory[i],1)^1);
+        if(debug_changes!=0) debug_changes--;
+    }
+}
+static struct cixvpu_prepared *debug_begin(uint32_t state, uint32_t call, uint32_t size)
+{
+    struct cixvpu_prepared *p=boot_begin(); uint32_t root;
+    CHECK(cixvpu_prepared_publish_root(p,&root)==0);
+    memset(device_memory[boot_rpc],0x6d,4096);
+    memset(resources[boot_rpc].kva,0xa5,4096);
+    put32(device_memory[boot_rpc],state); put32(device_memory[boot_rpc]+4,call);
+    put32(device_memory[boot_rpc]+8,size);
+    debug_changes=0; debug_churn=false; sync_observer=debug_observe;
+    return p;
+}
+static void debugparam_tests(void)
+{
+    enum cixvpu_boot_debug_result result;
+    struct cixvpu_prepared *p;
+    uint8_t before[4096];
+    const uint32_t sizes[]={0,1,1012};
+    for(unsigned int i=0;i<__arraycount(sizes);i++) {
+        p=debug_begin(1,1,sizes[i]); result=CIXVPU_BOOT_DEBUG_IDLE;
+        memcpy(before,device_memory[boot_rpc],4096);
+        unsigned int calls=native_calls, owners=depth, heaps=live_kmem;
+        CHECK(cixvpu_prepared_boot_debugparam(p,&result)==0 && result==CIXVPU_BOOT_DEBUG_REPLIED);
+        CHECK(native_calls==calls+6 && depth==owners && live_kmem==heaps);
+        CHECK(word(device_memory[boot_rpc],0)==2 && boot_nevents==6);
+        CHECK(boot_events[0].ops==BUS_DMASYNC_POSTREAD && boot_events[0].length==12);
+        CHECK(boot_events[1].ops==BUS_DMASYNC_PREREAD && boot_events[1].length==12);
+        CHECK(boot_events[2].ops==BUS_DMASYNC_POSTREAD && boot_events[2].length==12);
+        CHECK(boot_events[3].offset==0 && boot_events[3].length==4);
+        CHECK(memcmp(before+4,device_memory[boot_rpc]+4,4092)==0);
+        CHECK(((uint8_t *)resources[boot_rpc].kva)[12]==0xa5);
+        struct cixvpu_boot_rpc_header h;
+        CHECK(cixvpu_prepared_boot_rpc_header(p,&h)==0 && h.valid && h.state==1 && h.callid==1 && h.size==sizes[i]);
+        calls=native_calls; boot_nevents=0;
+        CHECK(cixvpu_prepared_boot_debugparam(p,&result)==0 && result==CIXVPU_BOOT_DEBUG_PENDING);
+        CHECK(native_calls==calls+4 && boot_nevents==4);
+        CHECK(word(device_memory[boot_rpc],0)==2);
+        put32(device_memory[boot_rpc],0); boot_nevents=0;
+        CHECK(cixvpu_prepared_boot_debugparam(p,&result)==0 && result==CIXVPU_BOOT_DEBUG_IDLE);
+        /* An identical newly committed request is a new transaction. */
+        put32(device_memory[boot_rpc],1); boot_nevents=0;
+        CHECK(cixvpu_prepared_boot_debugparam(p,&result)==0 && result==CIXVPU_BOOT_DEBUG_REPLIED);
+        CHECK(cixvpu_prepared_free(&p)==EBUSY); boot_drop(p);
+    }
+    const struct { uint32_t state,call,size; int error; } bad[]={
+        {1,1,1013,EPROTO},{1,1,UINT32_MAX,EPROTO},
+        {1,2,0,ENOTSUP},{1,3,8,ENOTSUP},{1,4,4,ENOTSUP},
+        {1,UINT32_MAX,0,ENOTSUP},{3,1,0,EPROTO},{UINT32_MAX,1,0,EPROTO}};
+    for(unsigned int i=0;i<__arraycount(bad);i++) {
+        p=debug_begin(bad[i].state,bad[i].call,bad[i].size);
+        memcpy(before,device_memory[boot_rpc],4096); result=CIXVPU_BOOT_DEBUG_PENDING;
+        CHECK(cixvpu_prepared_boot_debugparam(p,&result)==bad[i].error);
+        CHECK(result==CIXVPU_BOOT_DEBUG_PENDING && boot_nevents==4);
+        CHECK(boot_events[3].ops==BUS_DMASYNC_PREREAD && boot_events[3].length==12);
+        CHECK(memcmp(before,device_memory[boot_rpc],4096)==0);
+        unsigned int calls=native_calls;
+        CHECK(cixvpu_prepared_boot_debugparam(p,&result)==bad[i].error && native_calls==calls);
+        boot_drop(p);
+    }
+    for(unsigned int state=0;state<=2;state+=2) {
+        p=debug_begin(state,UINT32_MAX,UINT32_MAX);
+        memcpy(before,device_memory[boot_rpc],4096);
+        CHECK(cixvpu_prepared_boot_debugparam(p,&result)==0);
+        CHECK(result==(state==0 ? CIXVPU_BOOT_DEBUG_IDLE : CIXVPU_BOOT_DEBUG_PENDING));
+        CHECK(memcmp(before,device_memory[boot_rpc],4096)==0 && boot_nevents==4); boot_drop(p);
+    }
+    p=debug_begin(0,1,4); debug_changes=1;
+    CHECK(cixvpu_prepared_boot_debugparam(p,&result)==0 && result==CIXVPU_BOOT_DEBUG_REPLIED);
+    CHECK(boot_nevents==10 && word(device_memory[boot_rpc],0)==2); boot_drop(p);
+    p=debug_begin(1,0,1); debug_changes=1;
+    CHECK(cixvpu_prepared_boot_debugparam(p,&result)==0 && result==CIXVPU_BOOT_DEBUG_REPLIED);
+    CHECK(boot_nevents==10 && word(device_memory[boot_rpc],0)==2); boot_drop(p);
+    p=debug_begin(1,1,1); debug_churn=true; result=CIXVPU_BOOT_DEBUG_IDLE;
+    memcpy(before,device_memory[boot_rpc],4096);
+    CHECK(cixvpu_prepared_boot_debugparam(p,&result)==EAGAIN && result==CIXVPU_BOOT_DEBUG_IDLE);
+    CHECK(boot_nevents==16 && word(device_memory[boot_rpc],0)==1 && p->boot.error==0);
+    debug_churn=false; put32(device_memory[boot_rpc]+4,1); boot_nevents=0;
+    CHECK(cixvpu_prepared_boot_debugparam(p,&result)==0 && result==CIXVPU_BOOT_DEBUG_REPLIED); boot_drop(p);
+    p=debug_begin(1,1,4); unsigned int calls=native_calls;
+    CHECK(cixvpu_prepared_boot_debugparam(NULL,&result)==EINVAL);
+    CHECK(cixvpu_prepared_boot_debugparam(p,NULL)==EINVAL);
+    CHECK(cixvpu_prepared_boot_debugparam(p,(void *)&p->plan)==EINVAL);
+    CHECK(cixvpu_prepared_boot_debugparam(p,resources[boot_rpc].kva)==EINVAL);
+    CHECK(cixvpu_prepared_boot_debugparam(p,(void *)((uint8_t *)&result+1))==EINVAL);
+    intr=true; CHECK(cixvpu_prepared_boot_debugparam(p,&result)==EWOULDBLOCK); intr=false;
+    softintr=true; CHECK(cixvpu_prepared_boot_debugparam(p,&result)==EWOULDBLOCK); softintr=false;
+    CHECK(native_calls==calls && p->boot.error==0);
+    p->dma->owners[0].map->dm_nsegs=2; result=CIXVPU_BOOT_DEBUG_PENDING;
+    CHECK(cixvpu_prepared_boot_debugparam(p,&result)==EIO && result==CIXVPU_BOOT_DEBUG_PENDING);
+    p->dma->owners[0].map->dm_nsegs=1;
+    CHECK(cixvpu_prepared_boot_debugparam(p,&result)==EIO && native_calls==calls); boot_drop(p);
+    p=debug_begin(1,1,4); void *aligned=p->dma->owners[boot_rpc].kva;
+    p->dma->owners[boot_rpc].kva=(uint8_t *)aligned+1; calls=native_calls;
+    result=CIXVPU_BOOT_DEBUG_PENDING;
+    CHECK(cixvpu_prepared_boot_debugparam(p,&result)==EINVAL && native_calls==calls && result==CIXVPU_BOOT_DEBUG_PENDING);
+    p->dma->owners[boot_rpc].kva=aligned;
+    CHECK(cixvpu_prepared_boot_debugparam(p,&result)==EINVAL && native_calls==calls); boot_drop(p);
+    for(unsigned int state=1;state<=2;state++) {
+        p=debug_begin(state,1,4); struct cixvpu_boot_reply reply;
+        sync_observer=boot_observe;
+        CHECK(cixvpu_prepared_boot_receive(p,&reply)==ENOTSUP);
+        calls=native_calls; result=CIXVPU_BOOT_DEBUG_IDLE;
+        CHECK(cixvpu_prepared_boot_debugparam(p,&result)==ENOTSUP && native_calls==calls && result==CIXVPU_BOOT_DEBUG_IDLE);
+        p->dma->owners[0].map->dm_nsegs=2;
+        CHECK(cixvpu_prepared_boot_debugparam(p,&result)==ENOTSUP && p->boot.error==ENOTSUP && native_calls==calls);
+        CHECK(cixvpu_prepared_boot_debugparam(p,(void *)&p->plan)==ENOTSUP && p->boot.error==ENOTSUP && native_calls==calls);
+        p->dma->owners[0].map->dm_nsegs=1;
+        CHECK(word(device_memory[boot_rpc],0)==state); boot_drop(p);
+
+    }
+    p=boot_begin(); calls=native_calls; result=CIXVPU_BOOT_DEBUG_PENDING;
+    CHECK(cixvpu_prepared_boot_debugparam(p,&result)==EBUSY && native_calls==calls && result==CIXVPU_BOOT_DEBUG_PENDING);
+    sync_observer=observe_sync;
+    CHECK(cixvpu_prepared_free(&p)==0);
+}
 static void boot_rpc_header_tests(void)
 {
     struct cixvpu_prepared *out=boot_begin();
@@ -797,7 +934,7 @@ static void boot_api_tests(void)
 int main(void)
 {
 #ifdef CIXVPU_PREPARE_API
-    success_tests(); failure_tests(); handle_alias_tests(); argument_tests(); boundary_tests();
+    debugparam_tests(); success_tests(); failure_tests(); handle_alias_tests(); argument_tests(); boundary_tests();
 #ifdef CIXVPU_SYNC_API
     sync_success_tests(); sync_failure_tests(); sync_owner_tests(); exposure_tests();
 #ifdef CIXVPU_BOOT_API

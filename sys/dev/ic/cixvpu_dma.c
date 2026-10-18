@@ -2,8 +2,10 @@
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Origin: original stopped-only native DMA allocator, AI-assisted. */
 #include <sys/param.h>
+#include <sys/atomic.h>
 #include <sys/bus.h>
 #include <sys/cpu.h>
+#include <sys/endian.h>
 #include <sys/errno.h>
 #include <sys/kmem.h>
 #include <sys/systm.h>
@@ -580,6 +582,70 @@ cixvpu_dma_boot_pages(struct cixvpu_dma *dma,
 		}
 	}
 	return *host != NULL && *mve != NULL && *rpc != NULL ? 0 : EINVAL;
+}
+
+int
+cixvpu_dma_boot_debugparam(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner, const struct cixvpu_fw_plan *plan,
+    struct cixvpu_dma_boot_snapshot *snapshot)
+{
+	struct cixvpu_dma_owner *host, *mve, *rpc;
+	uint8_t before[12];
+	uint32_t state, call, size;
+	unsigned int attempt;
+	int error;
+	bool fault;
+
+	error = cixvpu_dma_boot_pages(dma, owner, plan, &host, &mve, &rpc);
+	if (error != 0)
+		return error;
+	error = cixvpu_dma_boot_output(dma, owner, snapshot,
+	    sizeof(*snapshot), &fault);
+	if (error != 0)
+		return error;
+	if ((uintptr_t)rpc->kva % _Alignof(uint32_t) != 0)
+		return EINVAL;
+	for (attempt = 0; attempt < 4; attempt++) {
+		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(before),
+		    BUS_DMASYNC_POSTREAD);
+		memcpy(before, rpc->kva, sizeof(before));
+		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(before),
+		    BUS_DMASYNC_PREREAD);
+		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(before),
+		    BUS_DMASYNC_POSTREAD);
+		memcpy(snapshot->rpc_header, rpc->kva, sizeof(before));
+		snapshot->rpc_valid = true;
+		if (memcmp(before, snapshot->rpc_header, sizeof(before)) == 0)
+			break;
+		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(before),
+		    BUS_DMASYNC_PREREAD);
+	}
+	if (attempt == 4)
+		return EAGAIN;
+	state = le32dec(snapshot->rpc_header);
+	call = le32dec(snapshot->rpc_header + 4);
+	size = le32dec(snapshot->rpc_header + 8);
+	if (state == 0 || state == 2)
+		error = 0;
+	else if (state != 1 || (call == 1 && size > 1012))
+		error = EPROTO;
+	else if (call != 1)
+		error = ENOTSUP;
+	else {
+		/* Committed PARAM grants ownership until the RETURN store. */
+		bus_dmamap_sync(dma->tag, rpc->map, 0, 4,
+		    BUS_DMASYNC_POSTWRITE);
+		/* Re-arm unchanged words before state becomes CPU-dirty. */
+		bus_dmamap_sync(dma->tag, rpc->map, 4, 8,
+		    BUS_DMASYNC_PREREAD);
+		atomic_store_release((uint32_t *)rpc->kva, htole32(2));
+		bus_dmamap_sync(dma->tag, rpc->map, 0, 4,
+		    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+		return 0;
+	}
+	bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(before),
+	    BUS_DMASYNC_PREREAD);
+	return error;
 }
 
 int

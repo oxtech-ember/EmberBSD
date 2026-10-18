@@ -19,6 +19,11 @@
 #define cixvpu_boot_reply model_boot_reply
 #define cixvpu_boot_rpc_header model_boot_rpc_header
 #define cixvpu_prepared_boot_rpc_header model_prepared_boot_rpc_header
+#define cixvpu_prepared_boot_debugparam model_prepared_boot_debugparam
+#define cixvpu_boot_debug_result model_boot_debug_result
+#define CIXVPU_BOOT_DEBUG_IDLE MODEL_BOOT_DEBUG_IDLE
+#define CIXVPU_BOOT_DEBUG_PENDING MODEL_BOOT_DEBUG_PENDING
+#define CIXVPU_BOOT_DEBUG_REPLIED MODEL_BOOT_DEBUG_REPLIED
 #define delay control_delay
 #define bus_space_read_4 control_read_4
 #define bus_space_barrier control_barrier
@@ -42,6 +47,11 @@
 #undef cixvpu_boot_reply
 #undef cixvpu_boot_rpc_header
 #undef cixvpu_prepared_boot_rpc_header
+#undef cixvpu_prepared_boot_debugparam
+#undef cixvpu_boot_debug_result
+#undef CIXVPU_BOOT_DEBUG_IDLE
+#undef CIXVPU_BOOT_DEBUG_PENDING
+#undef CIXVPU_BOOT_DEBUG_REPLIED
 #undef bus_space_read_4
 #undef bus_space_barrier
 #undef delay
