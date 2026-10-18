@@ -217,7 +217,7 @@ These results do not establish a hardware firmware boot or physical DMA.
 ## Dedicated native boot epoch source
 
 `cixvpu_acpi_boot.[ch]` implements a separate opaque manual boot context.
-The attachment does not select or call it yet. It accepts a fresh SEALED owner
+The attachment does not call it yet. It accepts a fresh SEALED owner
 from the typed boot constructor. Initial DMA synchronization occurs before
 ownership transfer or resource acquisition. A failed synchronization preserves
 the caller's handle and consumes the attempt without automatic cleanup.

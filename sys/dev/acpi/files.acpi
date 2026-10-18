@@ -367,6 +367,7 @@ device	cixvpu: firmload
 attach	cixvpu at acpinodebus with cixvpu_acpi
 file	dev/acpi/cixvpu_acpi.c		cixvpu_acpi
 file	dev/acpi/cixvpu_acpi_control.c	cixvpu_acpi
+file	dev/acpi/cixvpu_acpi_boot.c	cixvpu_acpi
 file	dev/ic/cixvpu_resources.c		cixvpu
 file	dev/ic/cixvpu_fw.c		cixvpu
 file	dev/ic/cixvpu_fw_plan.c		cixvpu
