@@ -1132,6 +1132,11 @@ The base system shell is unchanged.
   A physical Pi 5 passed 1024 descriptor reads and 1024 STALL recovery requests.
   This validates a limited control-transfer scenario, not phone boot or all USB
   transfer types. See the [contract and checks](ember/boot/usb-control-recovery.md).
+- **Realtek Ethernet allocation cleanup:** `rge` unwinds partial DMA resources
+  and unmaps the TX ring through its CPU address. The [actual-source contract](ember/tools/rge-rx-contract.c)
+  injects every allocation-stage failure and checks repeated cleanup. GCC16
+  path analysis and sanitizers pass on the host; physical failure recovery
+  remains unqualified. See the [CIX board limits](ember/boards/orange-pi-6-plus.md).
 - **ACPI xHCI root buses:** the frontend skips a logical USB bus when its
   initialized root-hub descriptor has no ports. Actual-source contracts cover
   USB2-only, USB3-only, mixed and empty profiles. This source-only fix avoids

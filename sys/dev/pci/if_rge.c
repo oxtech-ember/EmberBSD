@@ -1166,9 +1166,7 @@ rge_ifmedia_sts(struct ifnet *ifp, struct ifmediareq *ifmr)
 
 /*
  * Allocate memory for RX/TX rings.
- *
- * XXX There is no tear-down for this if it any part fails, so everything
- * remains allocated.
+ * Every successful native acquisition has one reverse-order release.
  */
 static int
 rge_allocmem(struct rge_softc *sc)
@@ -1181,15 +1179,18 @@ rge_allocmem(struct rge_softc *sc)
 	    RGE_TX_LIST_SZ, 0, BUS_DMA_NOWAIT, &q->q_tx.rge_tx_list_map);
 	if (error) {
 		aprint_error_dev(sc->sc_dev, "can't create TX list map\n");
-		return (error);
+		goto failed;
 	}
+	q->q_tx.rge_tx_list_created = true;
 	error = bus_dmamem_alloc(sc->sc_dmat, RGE_TX_LIST_SZ, RGE_ALIGN, 0,
 	    &q->q_tx.rge_tx_listseg, 1, &q->q_tx.rge_tx_listnseg,
 	    BUS_DMA_NOWAIT);
 	if (error) {
 		aprint_error_dev(sc->sc_dev, "can't alloc TX list\n");
-		return (error);
+		goto failed;
 	}
+
+	q->q_tx.rge_tx_list_allocated = true;
 
 	/* Load the map for the TX ring. */
 	error = bus_dmamem_map(sc->sc_dmat, &q->q_tx.rge_tx_listseg,
@@ -1198,22 +1199,18 @@ rge_allocmem(struct rge_softc *sc)
 	    BUS_DMA_NOWAIT | BUS_DMA_COHERENT);
 	if (error) {
 		aprint_error_dev(sc->sc_dev, "can't map TX dma buffers\n");
-		bus_dmamem_free(sc->sc_dmat, &q->q_tx.rge_tx_listseg,
-		    q->q_tx.rge_tx_listnseg);
-		return (error);
+		goto failed;
 	}
+	q->q_tx.rge_tx_list_mapped = true;
 	memset(q->q_tx.rge_tx_list, 0, RGE_TX_LIST_SZ);
 	error = bus_dmamap_load(sc->sc_dmat, q->q_tx.rge_tx_list_map,
 	    q->q_tx.rge_tx_list, RGE_TX_LIST_SZ, NULL, BUS_DMA_NOWAIT);
 	if (error) {
 		aprint_error_dev(sc->sc_dev, "can't load TX dma map\n");
-		bus_dmamap_destroy(sc->sc_dmat, q->q_tx.rge_tx_list_map);
-		bus_dmamem_unmap(sc->sc_dmat,
-		    q->q_tx.rge_tx_list, RGE_TX_LIST_SZ);
-		bus_dmamem_free(sc->sc_dmat, &q->q_tx.rge_tx_listseg,
-		    q->q_tx.rge_tx_listnseg);
-		return (error);
+		goto failed;
 	}
+
+	q->q_tx.rge_tx_list_loaded = true;
 
 	/* Create DMA maps for TX buffers. */
 	for (i = 0; i < RGE_TX_LIST_CNT; i++) {
@@ -1222,8 +1219,10 @@ rge_allocmem(struct rge_softc *sc)
 		    &q->q_tx.rge_txq[i].txq_dmamap);
 		if (error) {
 			aprint_error_dev(sc->sc_dev, "can't create DMA map for TX\n");
-			return (error);
+			q->q_tx.rge_txq[i].txq_dmamap = NULL;
+			goto failed;
 		}
+		q->q_tx.rge_tx_map_count++;
 	}
 
 	/* Allocate DMA'able memory for the RX ring. */
@@ -1231,15 +1230,18 @@ rge_allocmem(struct rge_softc *sc)
 	    RGE_RX_LIST_SZ, 0, 0, &q->q_rx.rge_rx_list_map);
 	if (error) {
 		aprint_error_dev(sc->sc_dev, "can't create RX list map\n");
-		return (error);
+		goto failed;
 	}
+	q->q_rx.rge_rx_list_created = true;
 	error = bus_dmamem_alloc(sc->sc_dmat, RGE_RX_LIST_SZ, RGE_ALIGN, 0,
 	    &q->q_rx.rge_rx_listseg, 1, &q->q_rx.rge_rx_listnseg,
 	    BUS_DMA_NOWAIT);
 	if (error) {
 		aprint_error_dev(sc->sc_dev, "can't alloc RX list\n");
-		return (error);
+		goto failed;
 	}
+
+	q->q_rx.rge_rx_list_allocated = true;
 
 	/* Load the map for the RX ring. */
 	error = bus_dmamem_map(sc->sc_dmat, &q->q_rx.rge_rx_listseg,
@@ -1248,22 +1250,18 @@ rge_allocmem(struct rge_softc *sc)
 	    BUS_DMA_NOWAIT | BUS_DMA_COHERENT);
 	if (error) {
 		aprint_error_dev(sc->sc_dev, "can't map RX dma buffers\n");
-		bus_dmamem_free(sc->sc_dmat, &q->q_rx.rge_rx_listseg,
-		    q->q_rx.rge_rx_listnseg);
-		return (error);
+		goto failed;
 	}
+	q->q_rx.rge_rx_list_mapped = true;
 	memset(q->q_rx.rge_rx_list, 0, RGE_RX_LIST_SZ);
 	error = bus_dmamap_load(sc->sc_dmat, q->q_rx.rge_rx_list_map,
 	    q->q_rx.rge_rx_list, RGE_RX_LIST_SZ, NULL, BUS_DMA_NOWAIT);
 	if (error) {
 		aprint_error_dev(sc->sc_dev, "can't load RX dma map\n");
-		bus_dmamap_destroy(sc->sc_dmat, q->q_rx.rge_rx_list_map);
-		bus_dmamem_unmap(sc->sc_dmat,
-		    q->q_rx.rge_rx_list, RGE_RX_LIST_SZ);
-		bus_dmamem_free(sc->sc_dmat, &q->q_rx.rge_rx_listseg,
-		    q->q_rx.rge_rx_listnseg);
-		return (error);
+		goto failed;
 	}
+
+	q->q_rx.rge_rx_list_loaded = true;
 
 	/*
 	 * Create DMA maps for RX buffers.  Use BUS_DMA_ALLOCNOW to avoid any
@@ -1275,11 +1273,17 @@ rge_allocmem(struct rge_softc *sc)
 		    &q->q_rx.rge_rxq[i].rxq_dmamap);
 		if (error) {
 			aprint_error_dev(sc->sc_dev, "can't create DMA map for RX\n");
-			return (error);
+			q->q_rx.rge_rxq[i].rxq_dmamap = NULL;
+			goto failed;
 		}
+		q->q_rx.rge_rx_map_count++;
 	}
 
-	return (error);
+	return 0;
+
+failed:
+	rge_deallocmem(sc);
+	return error;
 }
 
 /*
@@ -1289,38 +1293,63 @@ static int
 rge_deallocmem(struct rge_softc *sc)
 {
 	struct rge_queues *q = sc->sc_queues;
-	int i;
+	unsigned int i;
 
-	/* Destroy DMA maps for RX buffers */
-	for (i = 0; i < RGE_RX_LIST_CNT; i++)
+	while (q->q_rx.rge_rx_map_count != 0) {
+		i = --q->q_rx.rge_rx_map_count;
 		bus_dmamap_destroy(sc->sc_dmat,
 		    q->q_rx.rge_rxq[i].rxq_dmamap);
+		q->q_rx.rge_rxq[i].rxq_dmamap = NULL;
+	}
+	if (q->q_rx.rge_rx_list_loaded) {
+		bus_dmamap_unload(sc->sc_dmat, q->q_rx.rge_rx_list_map);
+		q->q_rx.rge_rx_list_loaded = false;
+	}
+	if (q->q_rx.rge_rx_list_mapped) {
+		bus_dmamem_unmap(sc->sc_dmat,
+		    q->q_rx.rge_rx_list, RGE_RX_LIST_SZ);
+		q->q_rx.rge_rx_list_mapped = false;
+	}
+	q->q_rx.rge_rx_list = NULL;
+	if (q->q_rx.rge_rx_list_allocated) {
+		bus_dmamem_free(sc->sc_dmat, &q->q_rx.rge_rx_listseg,
+		    q->q_rx.rge_rx_listnseg);
+		q->q_rx.rge_rx_list_allocated = false;
+	}
+	q->q_rx.rge_rx_listnseg = 0;
+	if (q->q_rx.rge_rx_list_created) {
+		bus_dmamap_destroy(sc->sc_dmat, q->q_rx.rge_rx_list_map);
+		q->q_rx.rge_rx_list_created = false;
+	}
+	q->q_rx.rge_rx_list_map = NULL;
 
-	/* Unload the map for the RX ring */
-	bus_dmamap_unload(sc->sc_dmat, q->q_rx.rge_rx_list_map);
-	bus_dmamem_unmap(sc->sc_dmat,
-	    q->q_rx.rge_rx_list, RGE_RX_LIST_SZ);
-
-	/* Deallocate DMA'able memory for the RX ring. */
-	bus_dmamem_free(sc->sc_dmat, &q->q_rx.rge_rx_listseg,
-	    q->q_rx.rge_rx_listnseg);
-	bus_dmamap_destroy(sc->sc_dmat, q->q_rx.rge_rx_list_map);
-
-	/* Destroy DMA maps for TX buffers. */
-	for (i = 0; i < RGE_TX_LIST_CNT; i++)
+	while (q->q_tx.rge_tx_map_count != 0) {
+		i = --q->q_tx.rge_tx_map_count;
 		bus_dmamap_destroy(sc->sc_dmat,
 		    q->q_tx.rge_txq[i].txq_dmamap);
-
-	/* Unload the map for the TX ring */
-	bus_dmamap_unload(sc->sc_dmat, q->q_tx.rge_tx_list_map);
-	bus_dmamem_unmap(sc->sc_dmat,
-	    q->q_tx.rge_tx_list_map, RGE_TX_LIST_SZ);
-
-	/* Deallocate DMA'able memory for the TX ring. */
-	bus_dmamem_free(sc->sc_dmat, &q->q_tx.rge_tx_listseg,
-	    q->q_tx.rge_tx_listnseg);
-	bus_dmamap_destroy(sc->sc_dmat, q->q_tx.rge_tx_list_map);
-
+		q->q_tx.rge_txq[i].txq_dmamap = NULL;
+	}
+	if (q->q_tx.rge_tx_list_loaded) {
+		bus_dmamap_unload(sc->sc_dmat, q->q_tx.rge_tx_list_map);
+		q->q_tx.rge_tx_list_loaded = false;
+	}
+	if (q->q_tx.rge_tx_list_mapped) {
+		bus_dmamem_unmap(sc->sc_dmat,
+		    q->q_tx.rge_tx_list, RGE_TX_LIST_SZ);
+		q->q_tx.rge_tx_list_mapped = false;
+	}
+	q->q_tx.rge_tx_list = NULL;
+	if (q->q_tx.rge_tx_list_allocated) {
+		bus_dmamem_free(sc->sc_dmat, &q->q_tx.rge_tx_listseg,
+		    q->q_tx.rge_tx_listnseg);
+		q->q_tx.rge_tx_list_allocated = false;
+	}
+	q->q_tx.rge_tx_listnseg = 0;
+	if (q->q_tx.rge_tx_list_created) {
+		bus_dmamap_destroy(sc->sc_dmat, q->q_tx.rge_tx_list_map);
+		q->q_tx.rge_tx_list_created = false;
+	}
+	q->q_tx.rge_tx_list_map = NULL;
 	return 0;
 }
 

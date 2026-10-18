@@ -15,6 +15,9 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/cixscmi_acpi.*'
       - 'sys/dev/ic/scmi_smt_diag.*'
       - 'sys/dev/ic/cixvpu_*'
+      - 'sys/dev/pci/if_rge.c'
+      - 'sys/dev/pci/if_rgereg.h'
+      - 'ember/tools/rge-rx-contract.*'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/arm/acpi/acpi_machdep.c'
@@ -76,6 +79,9 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/cixscmi_acpi.*'
       - 'sys/dev/ic/scmi_smt_diag.*'
       - 'sys/dev/ic/cixvpu_*'
+      - 'sys/dev/pci/if_rge.c'
+      - 'sys/dev/pci/if_rgereg.h'
+      - 'ember/tools/rge-rx-contract.*'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/arm/acpi/acpi_machdep.c'
@@ -181,6 +187,9 @@ jobs:
             /sys/dev/acpi/cixscmi_acpi.*
             /sys/dev/ic/scmi_smt_diag.*
             /sys/dev/ic/cixvpu_*
+            /sys/dev/pci/if_rge.c
+            /sys/dev/pci/if_rgereg.h
+            /ember/tools/rge-rx-contract.*
             /sys/sys/queue.h
             /sys/external/bsd/acpica/dist/include/
       - name: Prepare GCC16 and analysis tools
@@ -205,6 +214,7 @@ jobs:
           IORT_DMA_ANALYZE: '1'
           CIX_UART2_ANALYZE: '1'
           CIX_PLCOM_ANALYZE: '1'
+          RGE_RX_ANALYZE: '1'
         run: |
           sh ember/tools/cixclk-contract.sh
           CIXCLK_NCIXSCMI=0 sh ember/tools/cixclk-contract.sh
@@ -219,6 +229,7 @@ jobs:
           sh ember/tools/cixscmi-contract.sh
           sh ember/tools/cix-plcom-contract.sh
           sh ember/tools/cix-uart2-console-contract.sh
+          sh ember/tools/rge-rx-contract.sh
       - name: Run ASan and UBSan
         env:
           CC: gcc
@@ -238,6 +249,7 @@ jobs:
           sh ember/tools/cixscmi-contract.sh
           sh ember/tools/cix-plcom-contract.sh
           sh ember/tools/cix-uart2-console-contract.sh
+          sh ember/tools/rge-rx-contract.sh
       - name: Run complete contracts under Memcheck
         env:
           CC: gcc
@@ -265,3 +277,4 @@ jobs:
           sh ember/tools/cixscmi-contract.sh
           sh ember/tools/cix-plcom-contract.sh
           sh ember/tools/cix-uart2-console-contract.sh
+          sh ember/tools/rge-rx-contract.sh

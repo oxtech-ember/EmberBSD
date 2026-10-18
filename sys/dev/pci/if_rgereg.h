@@ -322,6 +322,11 @@ struct rge_tx {
 	int			rge_tx_listnseg;
 	bus_dmamap_t		rge_tx_list_map;
 	struct rge_tx_desc	*rge_tx_list;
+	unsigned int		rge_tx_map_count;
+	bool			rge_tx_list_created;
+	bool			rge_tx_list_allocated;
+	bool			rge_tx_list_mapped;
+	bool			rge_tx_list_loaded;
 };
 
 struct rge_rx {
@@ -333,6 +338,11 @@ struct rge_rx {
 	int			rge_rx_listnseg;
 	bus_dmamap_t		rge_rx_list_map;
 	struct rge_rx_desc	*rge_rx_list;
+	unsigned int		rge_rx_map_count;
+	bool			rge_rx_list_created;
+	bool			rge_rx_list_allocated;
+	bool			rge_rx_list_mapped;
+	bool			rge_rx_list_loaded;
 
 	struct mbuf		*rge_head;
 	struct mbuf		**rge_tail;
