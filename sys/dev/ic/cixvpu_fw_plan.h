@@ -11,13 +11,19 @@
 #define CIXVPU_FW_PLAN_MAX_PAGES 2048U
 #define CIXVPU_FW_PLAN_NO_CORE UINT32_MAX
 
-/* Closed bootstrap arena: only INITIAL_SIZE is mapped; CAPACITY reserves VA. */
+/* Closed arena: RESIZE_SIZE is mapped before exposure; CAPACITY reserves VA. */
 #define CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS UINT32_C(0x20000000)
 #define CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_SIZE UINT32_C(0x00020000)
 #define CIXVPU_FW_PLAN_BOOT_RPC_CAPACITY UINT32_C(0x04000000)
 #define CIXVPU_FW_PLAN_BOOT_RPC_REGION 0U
 #define CIXVPU_FW_PLAN_BOOT_RPC_LOG2_ALIGNMENT 22U
-#define CIXVPU_FW_PLAN_BOOT_RPC_PAGES 32U
+#define CIXVPU_FW_PLAN_BOOT_RPC_RESIZE_SIZE UINT32_C(0x00080000)
+#define CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_PAGES \
+    (CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_SIZE / CIXVPU_FW_PAGE_SIZE)
+#define CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES \
+    (CIXVPU_FW_PLAN_BOOT_RPC_RESIZE_SIZE / CIXVPU_FW_PAGE_SIZE)
+/* Compatibility name for the initial ALLOC request, not physical backing. */
+#define CIXVPU_FW_PLAN_BOOT_RPC_PAGES CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_PAGES
 
 enum cixvpu_fw_plan_role {
 	CIXVPU_FW_PLAN_TEXT,
@@ -90,11 +96,14 @@ struct cixvpu_fw_plan_mapping {
 int cixvpu_fw_plan_build(const void *, size_t, unsigned int,
     struct cixvpu_fw_plan *);
 /*
- * Pure one-core protocol-3.5 variant, uncalled by native consumers.
- * Adds 32 SHARED_RW/WRITE pages at ADDRESS, plus one PRIVATE/READ leaf.
+ * Pure one-core protocol-3.5 closed reserve variant.
+ * Adds 128 SHARED_RW/WRITE pages at ADDRESS, plus one PRIVATE/READ leaf.
+ * Initial ALLOC remains 128 KiB; measured RESIZE backing is 512 KiB.
  * The complete [ADDRESS, ADDRESS+CAPACITY) interval is logically reserved.
- * Unmapped tail entries stay invalid/zero, unlike the reference's dummy-PA
- * no-access encoding. No tail backing, resize/free, PTE update or RPC occurs.
+ * The 128-to-512 KiB tail is RW before exposure, unlike reference growth
+ * from no-access PTEs. The remaining reserve entries stay invalid/zero, unlike
+ * the reference's dummy-PA no-access encoding. No memory allocation, live PTE
+ * update, resize/free operation or RPC occurs in this pure planner.
  */
 int cixvpu_fw_plan_build_boot_rpc(const void *, size_t, unsigned int,
     struct cixvpu_fw_plan *);

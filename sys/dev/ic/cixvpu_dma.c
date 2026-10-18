@@ -35,7 +35,7 @@ struct cixvpu_dma {
 	bus_dma_tag_t tag;
 	bool tag_acquired;
 	bool ever_visible;
-	bool rpc_alloc_used;
+	bool rpc_alloc_used, rpc_resize_used;
 	unsigned int rpc_debug_count;
 	enum cixvpu_dma_phase phase;
 	const struct cixvpu_prepared *prepared_owner;
@@ -716,7 +716,7 @@ cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
 		uint8_t after[12];
 
 		memcpy(snapshot->rpc_resize, observed + 12, 8);
-		/* Recheck only the header. No response or semantic retry follows. */
+		/* Recheck the committed header before a possible fixed response. */
 		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(after),
 		    BUS_DMASYNC_PREREAD);
 		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(after),
@@ -733,7 +733,7 @@ cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
 		return 0;
 	}
 	if (state != 1 || (call == 1 && size > 1012) ||
-	    (call == 2 && size != 12)) {
+	    (call == 2 && size != 12) || (call == 3 && size != 8)) {
 		error = EPROTO;
 		goto rearm;
 	}
@@ -771,6 +771,35 @@ cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
 		bus_dmamap_sync(dma->tag, rpc->map, 8, 8,
 		    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
 		result = CIXVPU_DMA_RPC_ALLOC_REPLIED;
+	} else if (call == 3) {
+		uint32_t *words;
+
+		if (!snapshot->rpc_resize_valid) {
+			error = EPROTO;
+			goto rearm;
+		}
+		if (!dma->rpc_alloc_used ||
+		    le32dec(observed + 12) != CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS ||
+		    le32dec(observed + 16) != CIXVPU_FW_PLAN_BOOT_RPC_RESIZE_SIZE) {
+			error = ENOTSUP;
+			goto rearm;
+		}
+		if (dma->rpc_resize_used) {
+			error = EBUSY;
+			goto rearm;
+		}
+		dma->rpc_resize_used = true;
+		/* The entire fixed backing was mapped and synced before exposure. */
+		bus_dmamap_sync(dma->tag, rpc->map, 0, 4, BUS_DMASYNC_POSTWRITE);
+		bus_dmamap_sync(dma->tag, rpc->map, 8, 8, BUS_DMASYNC_POSTWRITE);
+		bus_dmamap_sync(dma->tag, rpc->map, 4, 4, BUS_DMASYNC_PREREAD);
+		bus_dmamap_sync(dma->tag, rpc->map, 16, 4, BUS_DMASYNC_PREREAD);
+		words = rpc->kva;
+		words[3] = htole32(CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS);
+		words[2] = htole32(4);
+		bus_dmamap_sync(dma->tag, rpc->map, 8, 8,
+		    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+		result = CIXVPU_DMA_RPC_RESIZE_REPLIED;
 	} else if (call == 1) {
 		if (dma->rpc_debug_count >= 16) {
 			error = E2BIG;

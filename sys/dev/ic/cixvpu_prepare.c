@@ -672,6 +672,9 @@ cixvpu_prepared_boot_rpc_step(struct cixvpu_prepared *p,
 	case CIXVPU_DMA_RPC_DEBUG_REPLIED:
 		result = CIXVPU_BOOT_RPC_DEBUG_REPLIED;
 		break;
+	case CIXVPU_DMA_RPC_RESIZE_REPLIED:
+		result = CIXVPU_BOOT_RPC_RESIZE_REPLIED;
+		break;
 	default:
 		p->boot.error = EPROTO;
 		return EPROTO;

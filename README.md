@@ -1088,8 +1088,11 @@ The base system shell is unchanged.
   (PARAM state `1`, call ID `2`, payload size `12`): 128 KiB initial memory,
   64 MiB virtual capacity, protected region and 4 MiB alignment.
   A separate manual RPC profile replies to the first allocation and notifies
-  the firmware once on the board. The next request is RESIZE, call3/body8;
-  it stops with ENOTSUP before SWITCHED_IN/PONG and retains exposed owners.
+  the firmware once on the board. The next request is RESIZE, call3/body8,
+  address 0x20000000/new_size 524288. That measured kernel stops with ENOTSUP
+  before SWITCHED_IN/PONG and retains exposed owners. The newer source
+  prepares 512 KiB before exposure and replies to that one fixed resize.
+  The resize reply still needs physical acceptance.
   A separate [UART rate query](ember/boot/cix-platform.md#manual-uart-rate-observations)
   reads functional clock IDs264/266 as 100 MHz on the physical sample.
   Baud programming and instrument exchange remain unqualified. An opt-in

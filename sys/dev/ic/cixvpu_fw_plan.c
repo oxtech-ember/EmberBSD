@@ -22,6 +22,13 @@
 #define PLAN_PRINT_BASE UINT32_C(0x10100000)
 #define PLAN_COMMON_LEAF UINT32_C(0x10000000)
 
+_Static_assert(CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_SIZE % CIXVPU_FW_PAGE_SIZE == 0 &&
+    CIXVPU_FW_PLAN_BOOT_RPC_RESIZE_SIZE % CIXVPU_FW_PAGE_SIZE == 0 &&
+    CIXVPU_FW_PLAN_BOOT_RPC_RESIZE_SIZE >= CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_SIZE &&
+    CIXVPU_FW_PLAN_BOOT_RPC_RESIZE_SIZE <= CIXVPU_FW_PLAN_BOOT_RPC_CAPACITY &&
+    CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES <= 1024,
+    "closed RPC backing must fit one leaf and the logical reserve");
+
 /* Recheck metadata on every public call, before any bitmap or index use. */
 static int
 cixvpu_fw_plan_check(const struct cixvpu_fw_info *info, unsigned int cores,
@@ -77,8 +84,8 @@ cixvpu_fw_plan_check(const struct cixvpu_fw_info *info, unsigned int cores,
 	    shared_pages + PLAN_COMMON_PAGES + PLAN_PRINT_PAGES + cores + 2;
 	mappings = (uint64_t)cores * (text_pages + private_pages + shared_pages) +
 	    PLAN_COMMON_PAGES + PLAN_PRINT_PAGES;
-	backing += (uint64_t)boot_rpc * (CIXVPU_FW_PLAN_BOOT_RPC_PAGES + 1);
-	mappings += (uint64_t)boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_PAGES;
+	backing += (uint64_t)boot_rpc * (CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES + 1);
+	mappings += (uint64_t)boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES;
 	if (backing > CIXVPU_FW_PLAN_MAX_PAGES || mappings > UINT32_MAX)
 		return E2BIG;
 	checked->info = *info;
@@ -153,7 +160,7 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 	common = shared + info->shared_pages;
 	print = common + PLAN_COMMON_PAGES;
 	rpc = print + PLAN_PRINT_PAGES;
-	root = rpc + plan->boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_PAGES;
+	root = rpc + plan->boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES;
 	page.backing_index = index;
 	page.core = CIXVPU_FW_PLAN_NO_CORE;
 	page.attribute = CIXVPU_MMU_PRIVATE;

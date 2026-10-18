@@ -32,6 +32,7 @@
 #define CIXVPU_BOOT_RPC_PENDING MODEL_BOOT_RPC_PENDING
 #define CIXVPU_BOOT_RPC_ALLOC_REPLIED MODEL_BOOT_RPC_ALLOC_REPLIED
 #define CIXVPU_BOOT_RPC_DEBUG_REPLIED MODEL_BOOT_RPC_DEBUG_REPLIED
+#define CIXVPU_BOOT_RPC_RESIZE_REPLIED MODEL_BOOT_RPC_RESIZE_REPLIED
 #define delay control_delay
 #define bus_space_read_4 control_read_4
 #define bus_space_barrier control_barrier
@@ -68,6 +69,7 @@
 #undef CIXVPU_BOOT_RPC_PENDING
 #undef CIXVPU_BOOT_RPC_ALLOC_REPLIED
 #undef CIXVPU_BOOT_RPC_DEBUG_REPLIED
+#undef CIXVPU_BOOT_RPC_RESIZE_REPLIED
 #undef bus_space_read_4
 #undef bus_space_barrier
 #undef delay
@@ -195,7 +197,7 @@ static void bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h,
 static void bus_space_barrier(bus_space_tag_t t, bus_space_handle_t h,
     bus_size_t offset, bus_size_t length, int flags)
 { (void)t; CHECK(h == 1 || h == 2); CHECK(offset <= 0x10000 && length <= 0x10000-offset); CHECK(flags == (BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE)); CHECK(boot_writes==boot_barriers+1); CHECK(boot_trace[boot_barriers].h==h && boot_trace[boot_barriers].offset==offset && length==4); boot_barriers++;
-  if(h==1 && offset==0x220 && boot_regs[1][1]==1 && boot_rpc_test && boot_fault==33) {
+  if(h==1 && offset==0x220 && boot_regs[1][1]==1 && boot_rpc_test && (boot_fault==33 || (boot_fault==43 && boot_rpc_notify_events==2))) {
       boot_regs[1][0x18/4]=2; CHECK(boot_handler(boot_handler_arg)==1);
   }
 }
@@ -263,7 +265,8 @@ static struct cixvpu_acpi_boot *boot_new(bool special)
 }
 static void boot_rpc_request(void)
 {
-    if(boot_fault==30 || boot_fault==31)
+    if(boot_fault==40) { boot_fixture_rpc_resize(0x20000000,524288); return; }
+    if(boot_fault==30 || boot_fault==31 || boot_fault==44)
         boot_fixture_rpc_words(1,1,1012,0,0,0,0);
     else
         boot_fixture_rpc_words(1,2,12,131072,boot_fault==35 ? 67108865 : 67108864,0,22);
@@ -272,7 +275,7 @@ static void boot_rpc_commit_hook(void)
 {
     boot_rpc_commit_events++;
     CHECK(boot_fixture_rpc_word(0)==2 && boot_fixture_acks()==0);
-    if(boot_fault==32) {
+    if(boot_fault==32 || (boot_fault==42 && boot_rpc_commit_events==2)) {
         boot_regs[1][0x18/4]=2; CHECK(boot_handler(boot_handler_arg)==1);
     }
 }
@@ -280,11 +283,22 @@ static void boot_rpc_notified(void)
 {
     CHECK(boot_rpc_commit_events==boot_rpc_notify_events+1);
     CHECK(boot_fixture_rpc_word(0)==2 && boot_fixture_acks()==0);
-    if(boot_fixture_rpc_word(1)==2) {
+    if(boot_fixture_rpc_word(1)==2 || boot_fixture_rpc_word(1)==3) {
         CHECK(boot_fixture_rpc_word(2)==4 && boot_fixture_rpc_word(3)==0x20000000);
     } else CHECK(boot_fixture_rpc_word(1)==1);
     boot_rpc_notify_events++;
     if(boot_fault==27) return; /* RETURN must not notify twice. */
+    if(boot_fault>=38 && boot_fault<=43) {
+        if(boot_rpc_notify_events==1 || boot_fault==39) {
+            boot_fixture_rpc_resize(0x20000000,boot_fault==41 ? 524287 : 524288); return;
+        }
+    }
+    if(boot_fault==44) {
+        if(boot_rpc_notify_events<16) { boot_rpc_request(); return; }
+        if(boot_rpc_notify_events==16) { boot_fixture_rpc_words(1,2,12,131072,67108864,0,22); return; }
+        if(boot_rpc_notify_events==17) { boot_fixture_rpc_resize(0x20000000,524288); return; }
+    }
+
     if(boot_fault==28) { boot_rpc_request(); return; }
     if(boot_fault==37) { boot_fixture_rpc_resize(0x89abcdef,0xfedcba98); return; }
     if(boot_fault==29 || boot_fault==34) {
@@ -301,32 +315,33 @@ static void boot_rpc_notified(void)
 }
 static void boot_rpc_integration_tests(void)
 {
-    for(unsigned int scenario=26;scenario<=37;scenario++) {
+    for(unsigned int scenario=26;scenario<=44;scenario++) {
         struct cixvpu_acpi_boot *ctx=NULL;
         struct cixvpu_prepared *owned;
         struct cixvpu_boot_report report={0};
         boot_fixture(); boot_fault=scenario; boot_rpc_test=true;
         CHECK(cixvpu_acpi_boot_create_rpc(VPU,&fixture_aa,&attach_description,&ctx)==0);
         boot_actual=boot_fixture_prepare_rpc(); owned=boot_actual;
-        int expected=scenario==26 || scenario==30 || scenario==36 ? 0 : scenario==27 ? ETIMEDOUT :
-            scenario==32 || scenario==33 ? EIO : scenario==28 ? EBUSY :
-            scenario==31 ? E2BIG : ENOTSUP;
+        int expected=scenario==26 || scenario==30 || scenario==36 || scenario==38 || scenario==44 ? 0 : scenario==27 ? ETIMEDOUT :
+            scenario==32 || scenario==33 || scenario==42 || scenario==43 ? EIO : scenario==28 || scenario==39 ? EBUSY :
+            scenario==31 ? E2BIG : scenario==29 ? EPROTO : ENOTSUP;
         int actual=cixvpu_acpi_boot_once(ctx,&owned);
         CHECK(actual==expected && owned==NULL);
         CHECK(cixvpu_acpi_boot_report(ctx,&report)==0 && report.error==expected);
         if(actual!=expected) fprintf(stderr,"RPC scenario %u: result %d expected %d, replies %u notifications %u messages %u visits %u\n",
             scenario,actual,expected,report.rpc_commits,report.rpc_notifications,report.messages,report.visits);
-        unsigned int commits=scenario==30 ? 17 : scenario==31 ? 16 : scenario==35 ? 0 : 1;
+        unsigned int commits=scenario==44 ? 18 : scenario==30 ? 17 : scenario==31 ? 16 : scenario==35 || scenario==40 ? 0 : scenario==38 || scenario==39 || scenario==42 || scenario==43 ? 2 : 1;
         CHECK(boot_rpc_commit_events==commits && report.rpc_commits==commits);
-        CHECK(boot_rpc_notify_events==(scenario==32 ? 0 : commits));
+        CHECK(boot_rpc_notify_events==(scenario==32 || scenario==42 ? commits-1 : commits));
         CHECK(report.rpc_notifications==boot_rpc_notify_events);
-        CHECK(report.rpc_alloc_replied==(scenario!=31 && scenario!=35));
+        CHECK(report.rpc_alloc_replied==(scenario!=31 && scenario!=35 && scenario!=40));
+        CHECK(report.rpc_resize_replied==(scenario==38 || scenario==39 || scenario==42 || scenario==43 || scenario==44));
         CHECK(report.exposed && report.held && report.prepared_retained && report.irq_masked);
         CHECK(report.irq_registered && boot_disestablish==0 && boot_masks==1);
         CHECK(report.messages==(expected==0 ? 2U : 0U));
         CHECK(boot_fixture_acks()==report.messages);
         CHECK(report.switched_in==(expected==0) && report.pong==(expected==0));
-        if(scenario==32 || scenario==33) CHECK(report.irq_unexpected==2);
+        if(scenario==32 || scenario==33 || scenario==42 || scenario==43) CHECK(report.irq_unexpected==2);
         if(scenario==35) CHECK(report.rpc_alloc_valid && report.rpc_alloc_max_size==67108865);
         if(scenario==27) CHECK(report.visits>1 && boot_rpc_notify_events==1);
         if(scenario==36) CHECK(report.visits>=2 && boot_rpc_deferrals>=2 && boot_delays>=1);
@@ -334,6 +349,8 @@ static void boot_rpc_integration_tests(void)
             CHECK(report.rpc_header_valid && report.rpc_state==1 && report.rpc_callid==3 && report.rpc_size==8);
             CHECK(report.rpc_resize_valid && report.rpc_resize_address==0x89abcdef && report.rpc_resize_new_size==0xfedcba98);
             CHECK(report.rpc_header_error==0 && report.last_stage==CIXVPU_BOOT_RECEIVE);
+        } else if(scenario==39 || (scenario>=40 && scenario<=43)) {
+            CHECK(report.rpc_resize_valid && report.rpc_resize_address==0x20000000 && report.rpc_resize_new_size==(scenario==41 ? 524287U : 524288U));
         } else CHECK(!report.rpc_resize_valid && report.rpc_resize_address==0 && report.rpc_resize_new_size==0);
         unsigned int writes=boot_writes;
         CHECK(cixvpu_acpi_boot_once(ctx,&owned)==EALREADY && boot_writes==writes);

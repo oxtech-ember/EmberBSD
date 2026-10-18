@@ -126,24 +126,27 @@ Device DMA data correctness, firmware readiness and video queues remain unqualif
 
 `cixvpu_fw_plan_build_boot_rpc` selects a separate one-core protocol-3.5 plan.
 The ordinary builder keeps `boot_rpc` zero. The selected plan uses value one.
-It maps 32 zeroed `RPC_DATA` pages at firmware VA `0x20000000` and reserves
+It maps 128 zeroed `RPC_DATA` pages at firmware VA `0x20000000` and reserves
 `[0x20000000,0x24000000)` for the observed 64 MiB logical capacity.
-Only the initial 128 KiB has physical backing. One extra leaf links root slot128.
-The observed image shape has 289 owners and 285 mappings in this plan.
+The initial ALLOC remains 128 KiB. The measured RESIZE backing is 512 KiB.
+One extra leaf links root slot128. The observed image shape has 385 owners
+and 381 mappings in this plan. The ordinary plan remains 256 owners/253 mappings.
 
 Unused leaf and root entries stay invalid zero. This differs from the vendor
 NOACCESS dummy-page encoding; identical fault behavior is not claimed.
+Memory between 128 and 512 KiB is RW before exposure. The reference instead grows
+backing and changes live PTEs. This closed profile does neither after exposure.
 CPU preparation rebuilds the selected plan and compares its semantic fields
 before writes. It checks all table entries, zeroed data and unique loaded bus
 addresses. Initial data PREWRITE|PREREAD precedes leaf and root PREWRITE.
 Never-exposed cleanup and irreversible exposed hold keep their existing rules.
 
-The planner contract passes 678050 checks. Actual preparation passes 13943467
+The planner contract passes 680043 checks. Actual preparation passes 14984972
 checks with GCC16 path analysis, configured Cppcheck/CSA and ASan/UBSan.
 Independent reviews and causal runtime mutations cover the new boundaries.
 Only the separate manual RPC profile selects this plan. Default and strict
-manual profiles keep the ordinary plan. Runtime allocation, resize, free, PTE
-changes and physical coherency remain unqualified.
+manual profiles keep the ordinary plan. General allocation, resize/free, live
+PTE changes and physical coherency remain unqualified.
 
 ## CPU preparation and opaque ownership
 
@@ -290,22 +293,26 @@ Active RPC service and firmware readiness still require physical acceptance.
 
 `cixvpu_prepared_boot_rpc_step` and `cixvpu_prepared_boot_receive_rpc` are
 separate plan1-only APIs. They cannot resume an owner with a sticky error.
-Fresh bounded observations accept the exact first MEM_ALLOC tuple or at most
-sixteen DEBUG calls. One allocation is consumed before its first response store.
+Fresh bounded observations accept the exact first MEM_ALLOC tuple, one fixed
+RESIZE and at most sixteen DEBUG calls. RESIZE requires the accepted allocation,
+base `0x20000000` and new_size 524288. Its backing is prepared before exposure.
+Each allocation or resize slot is consumed before its first response store.
 The fixed VA and payload size 4 become visible before the release RETURN store.
 Partial DMA synchronization preserves unchanged request and neighboring bytes.
-No runtime allocation, live PTE change, heap view, resize or free is provided.
+No runtime allocation, live PTE change, heap view, general resize or free occurs.
+Wrong tuples fail closed; a duplicate allocation or resize returns EBUSY.
 
 FREE and RETURN do not repeat a response. Receive permits their ordinary queue
 progress; a newly observed PARAM defers without reading or advancing that queue.
 The manual native coordinator services RPC before messages and issues exactly
 one IRQHOST notification after each commit. Reports count commits, notifications
-and the allocation reply separately. Unexpected IRQs before or after notification
+and allocation/resize replies separately. The maximum is 18 committed replies.
+Unexpected IRQs before or after notification
 retain ownership and stop the epoch. Transient EAGAIN waits for the next visit
 within the original one-second/1001-visit bound. Terminal errors are not retried.
 
-Actual-source preparation passes 14269978 checks. The composed native contract
-passes 34299 checks, including 12090 attachment checks, with GCC16 path analysis,
+Actual-source preparation passes 14984972 checks. The composed native contract
+passes 37527 checks, including 13438 attachment checks, with GCC16 path analysis,
 configured Cppcheck/CSA and ASan/UBSan. Causal runtime mutations detect missing
 or repeated notification and faults around commit. Native analysis retains its
 explicit inherited findings. These are models, not physical firmware readiness.
@@ -375,8 +382,9 @@ to that boot profile. It does not change the RPC policy or exposure lifetime.
 [EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE)
 selects the separate fixed RPC policy with VPU `flags 0x8` and SCMI `flags 0x80`.
 It preserves the UART2 console gate and all boot-long exposure rules.
-Its source checks pass. One board trial replies to the first allocation and
-issues one notification, then stops on RESIZE before SWITCHED_IN/PONG.
+Its source checks pass, including ALLOC, fixed RESIZE, notification and the
+modeled SWITCHED_IN/PONG exchange. The physical diagnostic below uses an
+earlier policy that stops on RESIZE. The fixed resize reply needs a new board test.
 The complete firmware handshake remains unqualified.
 
 The once-only mountroot callback reuses the fixed local image pin, exact size,
@@ -655,22 +663,24 @@ Device DMA data correctness and codec execution require separate board acceptanc
 ## Physical diagnostic boundary
 
 The [observed CIX board](../boards/orange-pi-6-plus.md) runs the manual GCC16
-kernel `99455ef8aca14898e600569003454a5ed921480c` with `flags 0x8`.
+kernel `db0adb0378cd367f4a93573dc14e21e3a359b6b1` with `flags 0x8`.
 The report confirms identity, active power controls, root publication and
 IRQ status mask `0x1`, with no unexpected IRQ bits. The fixed allocation has
 one committed response and one notification. The next PARAM is state1,
 call3, payload8, identified as RESIZE by the pinned protocol reference.
-Its address and requested size are not captured by this kernel.
+Its checked body contains address `0x20000000` and new_size 524288.
 The probe returns ENOTSUP86 at RECEIVE: one visit, zero accepted messages,
 no SWITCHED_IN and no PONG. This is protocol progress, not firmware readiness.
 
 The fixed allocator serves the separately observed MEM_ALLOC tuple:
 initial `131072` bytes, maximum `67108864` bytes, region0 and log2 alignment22.
-Maximum size reserves virtual capacity; only the initial128KiB is backed.
+In this measured kernel, maximum size reserves virtual capacity; only the
+initial 128 KiB is backed. The newer source prepares 512 KiB before exposure and
+can acknowledge the one fixed resize. That response is not yet physically accepted.
 The request decoder acquires twelve payload bytes and rechecks the header.
 Matching headers rely on committed PARAM ownership; they do not prove an
-atomic transaction or physical DMA coherence. No resize, live PTE change,
-free or complete allocator is implemented by this closed policy.
+atomic transaction or physical DMA coherence. No live PTE change, free or
+complete allocator is implemented by this closed policy.
 
 The exposed prepared owner, core power claims and IRQ registration remain held.
 The IRQ is masked. Cleanup counters do not indicate post-exposure reclamation.

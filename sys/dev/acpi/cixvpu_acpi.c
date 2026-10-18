@@ -90,6 +90,8 @@ cixvpu_acpi_boot_print(device_t self, const struct cixvpu_acpi_softc *sc,
 	    "boot RPC replies %u notifications %u allocation replied %s\n",
 	    r->rpc_commits, r->rpc_notifications,
 	    r->rpc_alloc_replied ? "yes" : "no");
+	aprint_normal_dev(self, "boot RPC resize replied %s\n",
+	    r->rpc_resize_replied ? "yes" : "no");
 	for (i = 0; i < __arraycount(r->core_status); i++) {
 		aprint_normal_dev(self,
 		    "boot core %u attempted %s released %s status %s cleanup %s\n",
