@@ -112,7 +112,7 @@ struct device_compatible_entry { const char *compat; };
 static uint32_t registers[0x2000 / 4], last_write;
 static bus_size_t ccu_size, read_regs[64];
 static int ccu_reg_error;
-static unsigned reject_write_number;
+static unsigned reject_write_number, fail_poke_number, pokes;
 static bus_size_t write_regs[64];
 static uint32_t write_vals[64];
 static unsigned writes, barriers, checks, reads, fail_peek;
@@ -161,6 +161,7 @@ static bool unstable_hosc, unstable_all;
 static bool reject_write, missing_hosc;
 static struct sunxi_ccu_softc state;
 static struct clk hosc = { .name = "hosc" };
+static void clk_put(struct clk *clk) { assert(clk == &hosc); }
 static struct clk *clk_get_parent(struct clk *);
 static u_int clk_get_rate(struct clk *);
 static int clk_set_rate(struct clk *, u_int);
@@ -283,6 +284,15 @@ delay(unsigned us)
 	assert(us == 10 && update_delay_us < 10000);
 	update_delay_us += us;
 }
+static int
+bus_space_poke_4(bus_space_tag_t tag, bus_space_handle_t handle,
+    bus_size_t off, uint32_t value)
+{
+	bus_space_write_4(tag, handle, off, value);
+	pokes++;
+	return pokes == fail_poke_number ? EFAULT : 0;
+}
+
 static void
 bus_space_barrier(bus_space_tag_t tag, bus_space_handle_t handle,
     bus_size_t off, bus_size_t len, int flags)
@@ -378,13 +388,14 @@ reset(void)
 	struct fdt_attach_args args = { 0 };
 	memset(registers, 0, sizeof(registers));
 	memset(&sun60i_gpu_lease, 0, sizeof(sun60i_gpu_lease));
+	memset(&sun60i_npu_lease, 0, sizeof(sun60i_npu_lease));
 	writes = barriers = reads = hosc_reads = dcxo_queries = fail_peek = 0;
 	update_model = pll_model = false;
 	pll_delay_us = pll_lock_after_us = pll_lock_reads = 0;
 	pll_glitch = pll_settle_loss = pll_output_loss = pll_gate_change = false;
 	pll_factor_change = pll_settled = false;
 	update_clear_us = update_delay_us = update_reads = 0;
-	reject_write_number = 0;
+	reject_write_number = fail_poke_number = pokes = 0;
 	prepare_test = false;
 	ccu_size = sizeof(registers); ccu_reg_error = 0;
 	unstable_read = 0;
@@ -976,31 +987,143 @@ test_gpu_prepare(void)
 }
 
 static void
+npu_fixture(void)
+{
+	prepare_fixture();
+	REG(AHB_MASTER_GATE_REG) &= ~__BIT(6);
+	REG(PERI0PLL_GATE_EN_REG) |= __BIT(9) | __BIT(25);
+	REG(PERI0PLL_GATE_STAT_REG) |= __BIT(25);
+}
+
+static void
 test_npu_prepare_divider(void)
 {
 	const int npu_owner = 1, gpu_owner = 2;
 	unsigned start = checks;
 	bool retained;
 
-	/* NPU has a five-bit divider. Preserve its gate and unrelated bits. */
 	for (unsigned divider = 0; divider < 32; divider++) {
-		int error;
-		prepare_fixture(); retained = false;
-		REG(NPU_CLK_REG) = 0x81500000 | divider;
-		error = sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU),
-		    &npu_owner, &retained);
-		CHECK(error == 0 && retained && REG(NPU_CLK_REG) == 0x82500000);
-		CHECK(writes == 1 && write_regs[0] == NPU_CLK_REG);
+		npu_fixture(); retained = false;
+		REG(NPU_CLK_REG) = 0x01500000 | divider;
+		REG(NPU_BGR_REG) = __BIT(19) | __BIT(9);
+		CHECK(sun60i_a733_ccu_npu_reserve(CLOCK(A733_CLK_NPU), &npu_owner) == 0);
+		CHECK(sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU),
+		    &npu_owner, &retained) == 0 && retained);
+		CHECK(REG(NPU_CLK_REG) == 0x82500000);
+		CHECK(REG(NPU_BGR_REG) == (__BIT(19) | __BIT(9) | __BITS(18,16) | 1));
+		CHECK(sun60i_a733_ccu_npu_ready(CLOCK(A733_CLK_NPU), &npu_owner) == 0);
+		CHECK(!sun60i_gpu_lease.attempted && sun60i_gpu_lease.owner == NULL);
+		CHECK(sun60i_a733_ccu_npu_release(CLOCK(A733_CLK_NPU), &npu_owner) == EBUSY);
 	}
-	/* Keep the existing exclusion under a GPU owner. */
-	prepare_fixture(); retained = false;
+	/* Both acquisition/preparation orderings keep independent local slots. */
+	for (unsigned order = 0; order < 2; order++) {
+		npu_fixture(); retained = false;
+		if (order == 0) {
+			CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &gpu_owner) == 0);
+			CHECK(sun60i_a733_ccu_gpu_prepare(CLOCK(A733_CLK_GPU0), &gpu_owner, &retained) == 0);
+		}
+		CHECK(sun60i_a733_ccu_npu_reserve(CLOCK(A733_CLK_NPU), &npu_owner) == 0);
+		CHECK(sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU), &npu_owner, &retained) == 0);
+		if (order == 1) {
+			CHECK(!sun60i_gpu_lease.attempted);
+			CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &gpu_owner) == 0);
+			CHECK(sun60i_a733_ccu_gpu_prepare(CLOCK(A733_CLK_GPU0), &gpu_owner, &retained) == 0);
+		}
+		CHECK(sun60i_a733_ccu_npu_ready(CLOCK(A733_CLK_NPU), &npu_owner) == 0);
+		CHECK(REG(AHB_MASTER_GATE_REG) == 0x110103ff);
+		CHECK((REG(MBUS_MASTER_GATE_REG) & __BIT(18)) != 0);
+	}
+	/* NPU can prepare between GPU reserve and prepare without a stale bit7. */
+	npu_fixture(); retained = false;
 	CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &gpu_owner) == 0);
-	CHECK(sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU), &npu_owner,
-	    &retained) == EBUSY);
+	CHECK(sun60i_a733_ccu_npu_reserve(CLOCK(A733_CLK_NPU), &npu_owner) == 0);
+	CHECK(sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU), &npu_owner, &retained) == 0);
+	CHECK(sun60i_a733_ccu_gpu_prepare(CLOCK(A733_CLK_GPU0), &gpu_owner, &retained) == 0);
+	/* A matching pointer in another profile never replaces NPU reserve. */
+	npu_fixture(); retained = false;
+	CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &npu_owner) == 0);
+	CHECK(sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU), &npu_owner, &retained) == EBUSY);
 	CHECK(!retained && writes == 0 && !sun60i_gpu_lease.attempted);
-	CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0), &gpu_owner) == 0);
+	CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0), &npu_owner) == 0);
+	npu_fixture(); retained = false;
+	CHECK(sun60i_a733_ccu_npu_reserve(CLOCK(A733_CLK_NPU), &npu_owner) == 0);
+	const u_int owned_ids[] = { A733_CLK_NPU, A733_CLK_BUS_NPU,
+	    A733_CLK_AHB_NPU, A733_CLK_MBUS_NPU, A733_CLK_PLL_NPU };
+	unsigned prior_writes = writes;
+	for (u_int i = 0; i < __arraycount(owned_ids); i++) {
+		CHECK(clk_enable(CLOCK(owned_ids[i])) == EBUSY);
+		CHECK(clk_set_rate(CLOCK(owned_ids[i]), 1) == EBUSY);
+	}
+	CHECK(clk_enable(CLOCK(A733_CLK_PLL_PERIPH0_600M)) == 0);
+	CHECK(clk_set_rate(CLOCK(A733_CLK_PLL_PERIPH0_600M), 1) == EBUSY);
+	CHECK(sunxi_ccu_reset_deassert(&state, &state.sc_resets[A733_RST_BUS_NPU_SRAM]) == EBUSY);
+	CHECK(sunxi_ccu_update_bits(&state, NPU_CLK_REG, 1, 1) == EBUSY);
+	CHECK(sunxi_ccu_update_bits(&state, PERI0PLL_GATE_EN_REG, __BIT(9), 0) == EBUSY);
+	CHECK(writes == prior_writes);
+	CHECK(sun60i_a733_ccu_npu_release(CLOCK(A733_CLK_NPU), &npu_owner) == 0);
+
+	for (unsigned fault = 1; fault <= 22; fault++) {
+		npu_fixture(); reads = 0; fail_peek = fault;
+		CHECK(sun60i_a733_ccu_npu_reserve(CLOCK(A733_CLK_NPU), &npu_owner) == EFAULT);
+		CHECK(sun60i_npu_lease.owner == NULL && writes == 0);
+	}
+	for (unsigned step = 1; step <= 8; step++) {
+		npu_fixture(); retained = false;
+		CHECK(sun60i_a733_ccu_npu_reserve(CLOCK(A733_CLK_NPU), &npu_owner) == 0);
+		reject_write_number = step;
+		CHECK(sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU), &npu_owner, &retained) == EIO);
+		CHECK(retained && sun60i_npu_lease.attempted && !sun60i_npu_lease.prepared);
+		CHECK(sun60i_a733_ccu_npu_release(CLOCK(A733_CLK_NPU), &npu_owner) == EBUSY);
+		CHECK(sun60i_a733_ccu_npu_ready(CLOCK(A733_CLK_NPU), &npu_owner) != 0);
+		CHECK(writes == step && !sun60i_gpu_lease.attempted);
+	}
+	for (unsigned fault = 1; fault <= 8; fault++) {
+		npu_fixture(); retained = false;
+		CHECK(sun60i_a733_ccu_npu_reserve(CLOCK(A733_CLK_NPU), &npu_owner) == 0);
+		fail_poke_number = fault;
+		CHECK(sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU), &npu_owner, &retained) == EFAULT);
+		CHECK(retained && writes == fault && !sun60i_npu_lease.prepared);
+		CHECK(sun60i_a733_ccu_npu_release(CLOCK(A733_CLK_NPU), &npu_owner) == EBUSY);
+	}
+	for (unsigned fault = 1; fault <= 60; fault++) {
+		npu_fixture(); retained = false;
+		CHECK(sun60i_a733_ccu_npu_reserve(CLOCK(A733_CLK_NPU), &npu_owner) == 0);
+		reads = 0; fail_peek = fault;
+		CHECK(sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU), &npu_owner, &retained) == EFAULT);
+		CHECK(retained == (fault > 22));
+		CHECK(!sun60i_npu_lease.prepared && !sun60i_gpu_lease.attempted);
+		CHECK(sun60i_a733_ccu_npu_release(CLOCK(A733_CLK_NPU), &npu_owner) ==
+		    (fault > 22 ? EBUSY : 0));
+	}
+	static const bus_size_t stale_regs[] = { PLL_REF_CTRL_REG,
+	    PLL_PERIPH0_CTRL_REG, PLL_PERIPH0_CTRL_REG + 8,
+	    PLL_PERIPH0_CTRL_REG + 12, AHB_CFG_REG, PERI0PLL_GATE_EN_REG,
+	    PERI0PLL_GATE_STAT_REG, NPU_CLK_REG, NPU_BGR_REG,
+	    AHB_MASTER_GATE_REG, MBUS_MASTER_GATE_REG };
+	static const uint32_t stale_bits[] = { __BIT(31), __BIT(28), __BIT(31),
+	    __BIT(27), 1, __BIT(9), __BIT(25), 1, __BIT(16), __BIT(6), __BIT(18) };
+	for (u_int stale = 0; stale < __arraycount(stale_regs); stale++) {
+		npu_fixture(); retained = false;
+		CHECK(sun60i_a733_ccu_npu_reserve(CLOCK(A733_CLK_NPU), &npu_owner) == 0);
+		CHECK(sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU), &npu_owner, &retained) == 0);
+		REG(stale_regs[stale]) ^= stale_bits[stale];
+		CHECK(sun60i_a733_ccu_npu_ready(CLOCK(A733_CLK_NPU), &npu_owner) != 0);
+		CHECK(sun60i_a733_ccu_npu_release(CLOCK(A733_CLK_NPU), &npu_owner) == EBUSY);
+	}
+
+	for (unsigned change = 0; change < 7; change++) {
+		npu_fixture(); retained = false;
+		CHECK(sun60i_a733_ccu_npu_reserve(CLOCK(A733_CLK_NPU), &npu_owner) == 0);
+		static const bus_size_t regs[] = { PLL_REF_CTRL_REG, PLL_PERIPH0_CTRL_REG,
+		    PLL_PERIPH0_CTRL_REG + 8, PLL_PERIPH0_CTRL_REG + 12,
+		    AHB_CFG_REG, PERI0PLL_GATE_EN_REG, PERI0PLL_GATE_STAT_REG };
+		REG(regs[change]) ^= __BIT(change == 5 ? 9 : change == 6 ? 25 : 0);
+		CHECK(sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU), &npu_owner, &retained) != 0);
+		CHECK(!retained && writes == 0 && !sun60i_npu_lease.attempted);
+		CHECK(sun60i_a733_ccu_npu_release(CLOCK(A733_CLK_NPU), &npu_owner) == 0);
+	}
 	prepare_test = false;
-	printf("A733 NPU divider preparation: %u checks passed\n", checks - start);
+	printf("A733 typed NPU ownership and divider: %u checks passed\n", checks - start);
 }
 
 static void

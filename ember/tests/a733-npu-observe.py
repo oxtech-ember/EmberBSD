@@ -21,9 +21,10 @@ def function(text, name, result):
 
 def main():
     root = Path(__file__).resolve().parents[2]
-    driver = (root / "sys/arch/arm/sunxi/sun60i_a733_npu.c").read_text()
-    fdt = (root / "sys/dev/fdt/fdtbus.c").read_text()
-    dtsroot = root / "sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner"
+    source = Path(os.environ.get("NPU_SOURCE_ROOT", root))
+    driver = (source / "sys/arch/arm/sunxi/sun60i_a733_npu.c").read_text()
+    fdt = (source / "sys/dev/fdt/fdtbus.c").read_text()
+    dtsroot = source / "sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner"
     board = (dtsroot / "sun60i-a733-orangepi-zero3w.dts").read_text()
     soc = (dtsroot / "sun60i-a733.dtsi").read_text()
     override = re.search(r"&npu\s*\{([^}]+)};", board)
@@ -50,12 +51,18 @@ def main():
             if re.match(r"#define (A733_NPU_|VIP_STATUS_)", line)) + "\n")
         (work / "npu-registers.h").write_text(
             function(driver, "sun60i_npu_read_ids", "int") +
+            (function(driver, "sun60i_npu_mmio_ready", "int")
+             if "sun60i_npu_mmio_ready(" in driver else "") +
             function(driver, "sun60i_npu_vip_read_reg", "int"))
+        (work / "npu-power.h").write_text(
+            function(driver, "sun60i_npu_power_node", "int") +
+            function(driver, "sun60i_npu_read_ids", "int") +
+            function(driver, "sun60i_npu_stage_power_id", "int"))
         flags = ["-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter"]
         flags += shlex.split(os.environ.get("NPU_TEST_CFLAGS", ""))
         compiler = shlex.split(os.environ.get("CC", "cc"))
         for name in ("a733-npu-observe-contract", "a733-npu-vip-smoke-contract",
-                     "a733-npu-register-contract"):
+                     "a733-npu-register-contract", "a733-npu-power-contract"):
             binary = work / name
             subprocess.run(compiler + flags + ["-I" + str(work),
                 str(root / "ember/tools" / (name + ".c")), "-o", str(binary)], check=True)

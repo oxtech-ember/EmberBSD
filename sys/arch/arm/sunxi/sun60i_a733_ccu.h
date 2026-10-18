@@ -79,7 +79,12 @@ int	sun60i_a733_ccu_gpu_reserve(struct clk *, const void *);
 int	sun60i_a733_ccu_gpu_prepare(struct clk *, const void *, bool *);
 /* Opt-in PLL600 cold start; caller must first establish its operating voltage. */
 int	sun60i_a733_ccu_gpu_prepare_pll(struct clk *, const void *, bool *);
+/* Fixed NPU local profile. PCK4 must be retained before prepare. */
+int	sun60i_a733_ccu_npu_reserve(struct clk *, const void *);
 int	sun60i_a733_ccu_npu_prepare(struct clk *, const void *, bool *);
+int	sun60i_a733_ccu_npu_release(struct clk *, const void *);
+/* Fresh proof of this owner's completed retained profile. No NPU MMIO. */
+int	sun60i_a733_ccu_npu_ready(struct clk *, const void *);
 int	sun60i_a733_ccu_gpu_release(struct clk *, const void *);
 
 /* Read-only readiness observation, not a reservation against future writers. */

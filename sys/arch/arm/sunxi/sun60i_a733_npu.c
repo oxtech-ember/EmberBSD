@@ -27,7 +27,7 @@
  */
 
 /*
- * Origin: EmberBSD; firmware-ready A733 NPU identification only.
+ * Origin: EmberBSD; AI-assisted typed A733 NPU identification only.
  * Hardware facts: Orange Pi BSP 2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f,
  * bsp/drivers/npu/aw_nna_vip/vip2 and bsp/configs/linux-6.6/sun60iw2p1.dtsi.
  * The runtime stages are single watchdog-bounded steps; no console output
@@ -63,7 +63,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 /* Vendor order: AHB and AXI resets first, then core, then gates/clocks. */
 #define A733_NPU_STAGE_DOMAIN	1
 #define A733_NPU_STAGE_CLOCKS	2
-#define A733_NPU_STAGE_RAW_ID	3
+#define A733_NPU_STAGE_PREFLIGHT	3
 #define A733_NPU_STAGE_POWER_ID	4
 
 /*
@@ -131,6 +131,9 @@ struct sun60i_npu_softc {
 	u_int sc_run_result;
 	uint64_t sc_pid, sc_rev, sc_date;
 	bool sc_run_pass;
+	bool sc_mmio_ready;
+	struct clk *sc_owned_clock;
+	int sc_owned_power;
 	/* VIPLite dispatch state */
 	devmajor_t sc_cmajor;
 	bool sc_cdev_attached;
@@ -157,7 +160,7 @@ sun60i_npu_power_node(struct sun60i_npu_softc *sc)
 	int len;
 
 	pd = fdtbus_get_prop(sc->sc_phandle, "power-domains", &len);
-	if (pd == NULL || len != 2 * sizeof(*pd))
+	if (pd == NULL || len != 2 * sizeof(*pd) || be32toh(pd[1]) != 4)
 		return -1;
 	return fdtbus_get_phandle_from_native(be32toh(pd[0]));
 }
@@ -231,50 +234,59 @@ sun60i_npu_read_ids(struct sun60i_npu_softc *sc)
 	return error;
 }
 
-/* Stage 4: the vendor power order through the generic FDT interfaces. */
+/* Stage 4: retain PCK before the first typed CCU write attempt. */
 static int
 sun60i_npu_stage_power_id(struct sun60i_npu_softc *sc)
 {
-	static const char * const resets[] = {
-		"npu_ahb_rst", "npu_axi_rst", "npu_rst",
-	};
-	static const char * const gates[] = {
-		"clk_ahb_gate", "clk_mbus_gate", "clk_bus", "clk_npu",
-	};
-	struct fdtbus_reset *rst;
-	struct clk *clk, *mod;
-	bool retained = false;
-	int error;
+	struct clk *mod;
+	bool ccu_reserved = false, attempted = false;
+	int power_node, error;
 
-	/* The module clock's reset parent is the dead pll-npu: move the
-	 * mux to the running PERIPH0-600M before any enable walks up. */
+	KASSERT(mutex_owned(&sc->sc_run_lock));
+	sc->sc_mmio_ready = false;
+	power_node = sun60i_npu_power_node(sc);
+	if (power_node <= 0 || !of_compatible_match(power_node, power_compat))
+		return ENXIO;
 	mod = fdtbus_clock_get(sc->sc_phandle, "clk_npu");
 	if (mod == NULL)
 		return ENODEV;
-	error = sun60i_a733_ccu_npu_prepare(mod, sc, &retained);
-	clk_put(mod);
+	error = sun60i_a733_pck_npu_reserve(power_node, sc);
+	if (error != 0)
+		goto put;
+	error = sun60i_a733_ccu_npu_reserve(mod, sc);
+	if (error != 0)
+		goto clean;
+	ccu_reserved = true;
+	error = sun60i_a733_pck_npu_retain(power_node, sc);
+	if (error != 0)
+		goto clean;
+	sc->sc_owned_clock = mod;
+	sc->sc_owned_power = power_node;
+	error = sun60i_a733_ccu_npu_prepare(mod, sc, &attempted);
 	if (error != 0)
 		return error;
-
-	for (u_int i = 0; i < __arraycount(resets); i++) {
-		rst = fdtbus_reset_get(sc->sc_phandle, resets[i]);
-		if (rst == NULL)
-			return ENOENT;
-		error = fdtbus_reset_deassert(rst);
-		fdtbus_reset_put(rst);
-		if (error != 0)
-			return error;
-	}
-	for (u_int i = 0; i < __arraycount(gates); i++) {
-		clk = fdtbus_clock_get(sc->sc_phandle, gates[i]);
-		if (clk == NULL)
-			return ENODEV;
-		error = clk_enable(clk);
-		clk_put(clk);
-		if (error != 0)
-			return error;
-	}
-	return sun60i_npu_read_ids(sc);
+	if (!attempted)
+		return EIO;
+	/* Fresh retained proofs precede even the internal identification map. */
+	error = sun60i_a733_ccu_npu_ready(mod, sc);
+	if (error == 0)
+		error = sun60i_a733_pck_npu_ready(power_node, sc);
+	if (error == 0)
+		error = sun60i_npu_read_ids(sc);
+	if (error == 0 && (sc->sc_pid != A733_NPU_EXPECTED_PID ||
+	    sc->sc_rev != A733_NPU_EXPECTED_REV))
+		error = ENODEV;
+	if (error == 0)
+		sc->sc_mmio_ready = true;
+	return error;
+clean:
+	/* Release only our clean acquisitions. Never unwind retained state. */
+	if (ccu_reserved)
+		(void)sun60i_a733_ccu_npu_release(mod, sc);
+	(void)sun60i_a733_pck_npu_release(power_node, sc);
+put:
+	clk_put(mod);
+	return error;
 }
 
 static void
@@ -286,12 +298,14 @@ sun60i_npu_run_stage(struct sun60i_npu_softc *sc, u_int stage)
 	/* Stage 0 is a dry run of the sysctl machinery: no hardware calls. */
 	if (stage == 0) {
 		sc->sc_run_result = 0;
+		sc->sc_mmio_ready = false;
 		mutex_exit(&sc->sc_run_lock);
 		return;
 	}
 	if (stage < A733_NPU_STAGE_DOMAIN || stage > A733_NPU_STAGE_POWER_ID ||
 	    stage != sc->sc_run_stage + 1 || !sc->sc_run_pass) {
 		sc->sc_run_result = EINVAL;
+		sc->sc_mmio_ready = false;
 		mutex_exit(&sc->sc_run_lock);
 		return;
 	}
@@ -305,8 +319,9 @@ sun60i_npu_run_stage(struct sun60i_npu_softc *sc, u_int stage)
 	case A733_NPU_STAGE_CLOCKS:
 		error = sun60i_npu_stage_clocks(sc);
 		break;
-	case A733_NPU_STAGE_RAW_ID:
-		error = sun60i_npu_read_ids(sc);
+	case A733_NPU_STAGE_PREFLIGHT:
+		/* Cold MMIO has no owner proof. Keep the staged preflight only. */
+		error = EBUSY;
 		break;
 	case A733_NPU_STAGE_POWER_ID:
 		error = sun60i_npu_stage_power_id(sc);
@@ -316,32 +331,54 @@ sun60i_npu_run_stage(struct sun60i_npu_softc *sc, u_int stage)
 	sc->sc_run_stage = stage;
 out:
 	sc->sc_run_result = error;
+	if (error != 0)
+		sc->sc_mmio_ready = false;
 	mutex_exit(&sc->sc_run_lock);
 }
 
-/* One bounded register access through the powered NPU window. */
+/* Caller holds sc_run_lock. Database constants do not prove hardware state. */
+static int
+sun60i_npu_mmio_ready(struct sun60i_npu_softc *sc)
+{
+	int error;
+
+	KASSERT(mutex_owned(&sc->sc_run_lock));
+	if (!sc->sc_mmio_ready || sc->sc_run_stage != A733_NPU_STAGE_POWER_ID ||
+	    sc->sc_run_result != 0 || !sc->sc_run_pass ||
+	    sc->sc_pid != A733_NPU_EXPECTED_PID || sc->sc_rev != A733_NPU_EXPECTED_REV)
+		return EBUSY;
+	error = sun60i_a733_ccu_npu_ready(sc->sc_owned_clock, sc);
+	if (error != 0)
+		return error;
+	return sun60i_a733_pck_npu_ready(sc->sc_owned_power, sc);
+}
+
+/* One bounded register access through a freshly verified retained profile. */
 static int
 sun60i_npu_vip_read_reg(struct sun60i_npu_softc *sc,
     struct vip_drv_reg *reg)
 {
 	bus_space_handle_t bsh;
 	uint32_t value;
-	int error;
+	int error = VIP_STATUS_IO;
 
 	if (reg->offset == 0 || reg->offset > A733_NPU_ID_SIZE - 4 ||
 	    (reg->offset & 3) != 0)
 		return VIP_STATUS_INVALID;
-	error = bus_space_map(sc->sc_bst, A733_NPU_BASE,
-	    A733_NPU_ID_SIZE, 0, &bsh);
-	if (error != 0)
-		return VIP_STATUS_IO;
-	if (bus_space_peek_4(sc->sc_bst, bsh, reg->offset, &value) != 0) {
-		bus_space_unmap(sc->sc_bst, bsh, A733_NPU_ID_SIZE);
-		return VIP_STATUS_IO;
+	mutex_enter(&sc->sc_run_lock);
+	if (sun60i_npu_mmio_ready(sc) != 0)
+		goto out;
+	if (bus_space_map(sc->sc_bst, A733_NPU_BASE,
+	    A733_NPU_ID_SIZE, 0, &bsh) != 0)
+		goto out;
+	if (bus_space_peek_4(sc->sc_bst, bsh, reg->offset, &value) == 0) {
+		reg->value = value;
+		error = VIP_STATUS_SUCCESS;
 	}
 	bus_space_unmap(sc->sc_bst, bsh, A733_NPU_ID_SIZE);
-	reg->value = value;
-	return VIP_STATUS_SUCCESS;
+out:
+	mutex_exit(&sc->sc_run_lock);
+	return error;
 }
 
 static int
