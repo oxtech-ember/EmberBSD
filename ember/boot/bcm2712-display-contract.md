@@ -374,3 +374,6 @@ Native interrupt and DDC providers, power and clock ownership,
 HVS IOMMU support, atomic KMS, buffer import, synchronization, and console handoff remain separate stages.
 The firmware framebuffer descriptor does not supply those interfaces.
 An accelerated virtual output does not display a frame on HDMI.
+
+The explicit [finite IOMMU4 observer](bcm2712-iommu-observe.md) samples inherited
+clock and translation registers. Its diagnostic candidate never authorizes DMA.
