@@ -251,8 +251,10 @@ on every board in the hardware catalog.
   A further single-request boot reports 273 clocks and eight asynchronous slots.
   Clock ID 67 is in range. A separate rate read returns valid zero-Hertz
   telemetry. The entity reply omits the CLOCK 2.0 enable-delay field and stays
-  rejected. Its raw name prefix spells `vpu_apbclk`. Repeated requests and
-  clock control remain unqualified; the rate is not a measured waveform.
+  rejected. Its raw name prefix spells `vpu_apbclk`. Separate fixed three-BASE
+  and five-request mixed read-only boots pass with unchanged ACK status. The
+  mixed batch confirms message7 availability. Runtime clock control remains
+  unqualified; the rate is not a measured waveform.
 - **Four H.265 views in Qt:** the [Qt Multimedia CPU profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/qt-four-streams)
   cross-builds Qt 6.12 with GCC16 and the common FFmpeg9 provider for amd64.
   The [four-player example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/media/qt-four-streams)

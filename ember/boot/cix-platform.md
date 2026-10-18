@@ -457,6 +457,23 @@ WPA2/DHCP recovers and 20 gateway probes pass on native channel149.
 This bounded cold-boot result does not qualify an exported runtime service,
 concurrent access, clock control, VPU MMIO, IRQ, DMA or firmware execution.
 
+## Physical mixed-batch receipt
+
+A manual boot of GCC16.2 kernel `44d9c0571458615dff5e5709adefca1eb4e38c1e`
+passes all five read-only requests on one initialized wire and lease. The gzip
+SHA256 is `e7a5016d43b89877bb4acd58c79ab05f6872b0372a7de0605a3c0ae5bf96ca40`.
+BASE and CLOCK report version 2.0. Protocol attributes report 273 clocks and
+eight asynchronous slots. Message7 attributes return zero. RATE_GET67 returns
+zero Hertz as firmware telemetry. Tokens1 through5 match headers `0x44000`,
+`0x85000`, `0xc5001`, `0x105002` and `0x145006`; each record has helper, decode,
+policy, ACK and firmware status zero. TX status remains `0x8` around every query.
+The summary reports five attempts and `qualified=1`. No ACK or setter is written.
+Both exact-head CIX workflows pass, including Memcheck and ASan/UBSan. FFS is
+clean and the root marker persists. WPA2/CCMP, DHCP and five gateway probes pass
+on native channel149. Message7 availability does not prove permission to control
+clock67. Runtime concurrency, gate control, waveform, VPU access, DMA and codec
+firmware execution remain unqualified. The short ENTITY2.0 reply stays rejected.
+
 ## Primary provenance
 
 Hardware facts come from the pinned vendor
