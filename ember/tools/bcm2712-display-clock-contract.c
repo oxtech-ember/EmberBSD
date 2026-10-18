@@ -322,7 +322,7 @@ initialization(void)
 	init_unchanged(&f, BCM2712_CLOCK_HSM, ERANGE);
 	f = firmware_new(BCM2712_CLOCK_BVB, 0, 0);
 	init_unchanged(&f, (enum bcm2712_clock_profile)-1, EINVAL);
-	init_unchanged(&f, (enum bcm2712_clock_profile)2, EINVAL);
+	init_unchanged(&f, (enum bcm2712_clock_profile)3, EINVAL);
 	CHECK(f.calls == 0);
 	CHECK(bcm2712_clock_init(NULL, BCM2712_CLOCK_BVB, exchange, &f) == EINVAL);
 	CHECK(bcm2712_clock_init(&core, BCM2712_CLOCK_BVB, NULL, &f) == EINVAL);

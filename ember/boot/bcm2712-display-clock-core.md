@@ -1,18 +1,18 @@
 # BCM2712 shared firmware-clock core
 
-The [pure core](../../sys/arch/arm/broadcom/bcm2712_display_clock.c) is a source foundation for two fixed profiles:
-HSM firmware clock 13 and BVB firmware clock 14.
+The [pure core](../../sys/arch/arm/broadcom/bcm2712_display_clock.c) is a source foundation for three fixed profiles:
+HSM firmware clock 13, BVB firmware clock 14 and DISP firmware clock 16.
 It shares the EmberBSD HSM packet validation, two-port minimum leases and fault policy.
 The HSM facade is the first native consumer.
 The [HSM compatibility facade](../../sys/arch/arm/broadcom/bcm2712_display_hsm.c) now calls this engine.
 The [native HSM API](bcm2712-display-hsm.md), both public HSM structures and their headers remain unchanged.
-The kernel selects the shared engine and native adapter with `bcmv3d_acpi`. Neither profile attaches automatically.
+The kernel selects the shared engine and native adapter with `bcmv3d_acpi`. No profile attaches automatically.
 
 ## Private interface
 
 The private types and functions are in
 [`bcm2712_display_clockvar.h`](../../sys/arch/arm/broadcom/bcm2712_display_clockvar.h).
-Only `BCM2712_CLOCK_HSM` and `BCM2712_CLOCK_BVB` are valid profiles.
+Only fixed `BCM2712_CLOCK_HSM`, `BCM2712_CLOCK_BVB` and `BCM2712_CLOCK_DISP` profiles are valid.
 There is no arbitrary firmware clock-ID or property-tag interface.
 
 The caller supplies an exchange callback and its argument.
@@ -23,7 +23,7 @@ This pure core does not implement native locking, a registry, IRQ-context checks
 It performs no MMIO, reset, power-domain operation or automatic attachment.
 
 `bcm2712_clock_init` reads state, rate and the current firmware maximum.
-BVB also reads the firmware minimum. Creation sends no SET.
+BVB and DISP also read the firmware minimum. Creation sends no SET.
 An invalid profile, malformed reply or failed initialization leaves the output unchanged.
 An off clock with a zero initial rate is valid before acquisition.
 
@@ -42,6 +42,7 @@ The caller must stop dependent hardware before release or finalization.
 |---|---|---|---|
 | HSM13 | max(120 MHz, initial rate) | Preserved until the owner has changed the rate | Restores off only if initially off and enabled by this owner |
 | BVB14 | Cached positive `GET_MIN_CLOCKRATE(14)` | First acquisition can reduce it to the effective minimum | Never sends `SET_CLOCKSTATE(0)` |
+| DISP16 | Cached positive `GET_MIN_CLOCKRATE(16)` | First acquisition can reduce it to the effective minimum | Restores off only if initially off and enabled by this owner |
 
 HSM creation and operation order match the existing BSD HSM core.
 Its create transcript is GET_STATE, GET_RATE, GET_MAX.
@@ -114,3 +115,8 @@ Native adapter checks, a linked coherent kernel, physical BVB control and PHY/KM
   [firmware MIN/MAX](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/clk/bcm/clk-raspberrypi.c#L375-L417),
   [CCF critical activation](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/clk/clk.c#L4050-L4069).
   Linux is a reference for ABI and policy facts. Its implementation is not copied into this BSD core.
+
+DISP16 uses the same mechanism with a noncritical finish policy. Its two slots
+are logical HVS clients, not HDMI ports. The separate [retained DISP module](bcm2712-disp-clock-probe.md)
+compiles this same engine with private function names for an installed kernel.
+The native HSM/BVB adapter and all existing public layouts remain unchanged.

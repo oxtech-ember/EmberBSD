@@ -78,3 +78,8 @@ Causal mutants test these boundaries. Earlier HSM/probe contracts remain valid.
 cross builds. `TEST_RUNNER` can invoke a supported memory checker.
 These checks and an actual `_KERNEL` translation-unit compile do not prove a
 linked coherent kernel, physical BVB clock control, PHY/KMS output or Plasma.
+
+The optional [DISP16 hold module](bcm2712-disp-clock-probe.md) has its own typed
+module-resident slot. It does not add a third slot or API to this kernel adapter.
+It uses the same core source with private function names and explicit mutex
+init/fini. Its callback cannot unload while an owner or fault is retained.

@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /*
- * Shared BSD HSM lease mechanism. BVB policy facts: Raspberry Pi Linux
+ * Shared BSD clock lease mechanism. Fixed profile policy facts: Raspberry Pi Linux
  * a1a601d4857978d810175365550c4536701df4ed, clk-raspberrypi.c and CCF.
- * No Linux implementation code is used. No native consumer is wired yet.
+ * No Linux implementation code is used. DISP is an explicit opt-in profile.
  */
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
@@ -23,11 +23,23 @@ bcm2712_clock_property(struct bcm2712_clock *sc, uint32_t tag, uint32_t value,
 	uint32_t packet[9] __aligned(16);
 	size_t words = tag == VCPROPTAG_SET_CLOCKRATE ? 9 : 8;
 	uint32_t size = (uint32_t)(words * sizeof(*packet));
-	uint32_t id = sc->profile == BCM2712_CLOCK_HSM ?
-	    VCPROP_CLK_M2MC : VCPROP_CLK_PIXEL_BVB;
+	uint32_t id;
 	uint32_t capacity = words == 9 ? 12 : 8;
 	int error;
 
+	switch (sc->profile) {
+	case BCM2712_CLOCK_HSM:
+		id = VCPROP_CLK_M2MC;
+		break;
+	case BCM2712_CLOCK_BVB:
+		id = VCPROP_CLK_PIXEL_BVB;
+		break;
+	case BCM2712_CLOCK_DISP:
+		id = VCPROP_CLK_DISP;
+		break;
+	default:
+		return EINVAL;
+	}
 	memset(packet, 0, sizeof(packet));
 	packet[0] = htole32(size);
 	packet[2] = htole32(tag);
@@ -81,7 +93,8 @@ bcm2712_clock_init(struct bcm2712_clock *out,
 	int error;
 
 	if (out == NULL || exchange == NULL ||
-	    (profile != BCM2712_CLOCK_HSM && profile != BCM2712_CLOCK_BVB))
+	    (profile != BCM2712_CLOCK_HSM && profile != BCM2712_CLOCK_BVB &&
+	    profile != BCM2712_CLOCK_DISP))
 		return EINVAL;
 	memset(&sc, 0, sizeof(sc));
 	sc.profile = profile;
@@ -133,7 +146,7 @@ bcm2712_clock_apply(struct bcm2712_clock *sc, uint32_t wanted)
 	if (wanted > maximum)
 		return ERANGE;
 	if (rate < wanted ||
-	    ((sc->profile == BCM2712_CLOCK_BVB || sc->rate_changed) &&
+	    ((sc->profile != BCM2712_CLOCK_HSM || sc->rate_changed) &&
 	    rate != wanted)) {
 		attempted = true;
 		sc->status.mutation_attempted = true;
@@ -268,7 +281,7 @@ bcm2712_clock_fini(struct bcm2712_clock *sc)
 		return error;
 	if (sc->status.leases != 0)
 		return EBUSY;
-	if (sc->profile == BCM2712_CLOCK_HSM &&
+	if (sc->profile != BCM2712_CLOCK_BVB &&
 	    sc->initial_state == 0 && sc->state_changed) {
 		sc->status.mutation_attempted = true;
 		error = bcm2712_clock_property(sc, VCPROPTAG_SET_CLOCKSTATE, 0,
@@ -288,7 +301,7 @@ bcm2712_clock_fini(struct bcm2712_clock *sc)
 	}
 	/*
 	 * BVB stays enabled after activation, even if it was initially off.
-	 * HSM keeps its safe floor instead of restoring an initial zero rate.
+	 * HSM and DISP keep their safe floor instead of an initial zero rate.
 	 */
 	sc->initialized = false;
 	return 0;
