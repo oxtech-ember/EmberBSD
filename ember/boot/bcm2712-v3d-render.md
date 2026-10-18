@@ -169,6 +169,21 @@ segment boundary and stops within the next segment at its 16 KiB limit.
 Negative controls reject one-segment allocation/mmap/free, invalid segment
 acceptance and contiguous-PFN assumptions. These are modeled service tests,
 not a UVM concurrency or hardware cache-coherency test.
+
+CL, TFU and CSD completion share an IRQ-safe sleep interlock.
+A spin mutex at `IPL_VM` protects event publication and waiter enqueue.
+The submission mutex precedes that interlock. The ISR takes only the spin mutex.
+The waiter drops the interlock before masking and draining the parent IRQs.
+Spurious wakeups preserve the 500 ms deadline, including tick-counter wrap.
+
+Run `sh ember/tools/bcm2712-v3d-wait-contract.sh` for the actual-source regression.
+It injects completion between the event check and sleep enqueue for all three engines.
+It also checks early completion, spurious wakeups, wrong IRQs, timeout, errors,
+last-slice completion and retained faulted buffers at `hz=100` and `hz=1000`.
+Negative controls restore `tsleep` or unlock before enqueue; both must fail.
+`CC`, `CFLAGS`, `V3D_COMPILE_ONLY=1`, `V3D_OUTPUT` and `TEST_RUNNER` support
+cross compilation and a selected execution checker. Physical latency remains unmeasured.
+
 The job contract exercises 37 register failures, DMA ownership and PTE revoke
 ordering, retained failure references, close during execution, wait boundaries,
 counter wrap and completion at the final wait slice. Eleven causal mutants must

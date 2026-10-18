@@ -6,6 +6,7 @@
 #include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/atomic.h>
+#include <sys/kernel.h>
 #include <sys/kmem.h>
 #include <sys/systm.h>
 #include <sys/time.h>
@@ -49,6 +50,7 @@
 
 struct bcmv3d_job {
 	kmutex_t lock;
+	kmutex_t irq_lock;
 	spinlock_t fence_lock;
 	uint64_t fence_context, fence_seqno;
 	struct bcmv3d_bo *pt, *scratch;
@@ -195,10 +197,12 @@ bcmv3d_core_intr(void *arg)
 		error = EIO;
 	if (error == 0)
 		error = bcmv3d_takeover_core_poke(V3D_INT_CLR, job->core_expected);
+	mutex_enter(&job->irq_lock);
 	if (error != 0)
 		atomic_cas_uint(&job->core_error, 0, error);
 	atomic_inc_uint(&job->core_events);
 	wakeup(job);
+	mutex_exit(&job->irq_lock);
 	return 1;
 }
 
@@ -237,11 +241,43 @@ bcmv3d_hub_intr(void *arg)
 		error = EIO;
 	if (error == 0)
 		error = bcmv3d_takeover_hub_poke(V3D_INT_CLR, V3D_TFUC);
+	mutex_enter(&job->irq_lock);
 	if (error != 0)
 		atomic_cas_uint(&job->irq_error, 0, error);
 	atomic_inc_uint(&job->events);
 	wakeup(job);
+	mutex_exit(&job->irq_lock);
 	return 1;
+}
+
+/*
+ * job->lock serializes submissions. The ISR takes only irq_lock. mtsleep
+ * enqueues before dropping that spin mutex, so completion cannot lose a wakeup.
+ * Release irq_lock before masking and draining the parent interrupt routes.
+ */
+static void
+bcmv3d_wait_irq(struct bcmv3d_job *job, bool core, const char *wmesg)
+{
+	const unsigned int budget = MAX(1, mstohz(500));
+	const unsigned int slice = MAX(1, mstohz(100));
+	unsigned int start = (unsigned int)getticks();
+
+	mutex_enter(&job->irq_lock);
+	for (;;) {
+		unsigned int elapsed;
+		int ticks;
+
+		if (atomic_load_acquire(&job->events) != 0 ||
+		    (core && atomic_load_acquire(&job->core_events) != 0))
+			break;
+		/* Unsigned subtraction also covers a wrap of the tick counter. */
+		elapsed = (unsigned int)getticks() - start;
+		if (elapsed >= budget)
+			break;
+		ticks = MIN(slice, budget - elapsed);
+		(void)mtsleep(job, PWAIT, wmesg, ticks, &job->irq_lock);
+	}
+	mutex_exit(&job->irq_lock);
 }
 
 static int
@@ -408,8 +444,7 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *a)
 	if (error != 0)
 		return error;
 	job->stage = "completion interrupt";
-	for (i = 0; i < 5 && atomic_load_acquire(&job->events) == 0; i++)
-		tsleep(job, PWAIT, "v3dtfu", MAX(1, mstohz(100)));
+	bcmv3d_wait_irq(job, false, "v3dtfu");
 	bcmv3d_mask(job);
 	error = bcmv3d_takeover_hub_poke(V3D_MSK_SET, V3D_IRQ_ALL);
 	if (error != 0)
@@ -639,9 +674,7 @@ bcmv3d_csd_execute(struct bcmv3d_job *job, struct drm_v3d_submit_csd *a)
 	if (error != 0)
 		return error;
 	job->stage = "CSD completion interrupt";
-	for (i = 0; i < 5 && atomic_load_acquire(&job->core_events) == 0 &&
-	    atomic_load_acquire(&job->events) == 0; i++)
-		tsleep(job, PWAIT, "v3dcsd", MAX(1, mstohz(100)));
+	bcmv3d_wait_irq(job, true, "v3dcsd");
 	bcmv3d_mask(job);
 	bcmv3d_core_mask(job);
 	error = bcmv3d_takeover_core_poke(V3D_MSK_SET, V3D_CORE_IRQ_ALL);
@@ -802,7 +835,6 @@ bcmv3d_cl_phase(struct bcmv3d_job *job, const struct drm_v3d_submit_cl *a,
     bool bin)
 {
 	uint32_t status;
-	unsigned int i;
 	int error;
 
 	bcmv3d_mask(job);
@@ -856,9 +888,7 @@ bcmv3d_cl_phase(struct bcmv3d_job *job, const struct drm_v3d_submit_cl *a,
 		    bin ? a->bcl_end : a->rcl_end);
 	if (error != 0)
 		return error;
-	for (i = 0; i < 5 && atomic_load_acquire(&job->core_events) == 0 &&
-	    atomic_load_acquire(&job->events) == 0; i++)
-		tsleep(job, PWAIT, "v3dcl", MAX(1, mstohz(100)));
+	bcmv3d_wait_irq(job, true, "v3dcl");
 	bcmv3d_mask(job);
 	bcmv3d_core_mask(job);
 	error = bcmv3d_takeover_core_poke(V3D_MSK_SET, V3D_CORE_IRQ_ALL);
@@ -1121,6 +1151,7 @@ bcmv3d_job_fini(struct bcmv3d_device *sc)
 		drm_gem_object_put_unlocked(&job->scratch->cma.base);
 	if (job->pt != NULL)
 		drm_gem_object_put_unlocked(&job->pt->cma.base);
+	mutex_destroy(&job->irq_lock);
 	mutex_destroy(&job->lock);
 	spin_lock_destroy(&job->fence_lock);
 	kmem_free(job, sizeof(*job));
@@ -1147,6 +1178,7 @@ bcmv3d_job_init(struct bcmv3d_device *sc)
 		return EIO;
 	job = sc->job = kmem_zalloc(sizeof(*job), KM_SLEEP);
 	mutex_init(&job->lock, MUTEX_DEFAULT, IPL_NONE);
+	mutex_init(&job->irq_lock, MUTEX_DEFAULT, IPL_VM);
 	spin_lock_init(&job->fence_lock);
 	job->fence_context = dma_fence_context_alloc(1);
 	bo = bcmv3d_bo_alloc(sc, V3D_PT_SIZE);

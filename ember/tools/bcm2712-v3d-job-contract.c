@@ -4,7 +4,9 @@
 #include "bcm2712-v3d-bo-contract.c"
 #include <time.h>
 #include <stdarg.h>
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 #define BUS_DMASYNC_PREWRITE 1
 #define BUS_DMASYNC_PREREAD 2
 #define BUS_DMASYNC_POSTWRITE 4
@@ -20,7 +22,14 @@
 #endif
 #define ACPI_FAILURE(e) ((e) != 0)
 #define ACPI_LEVEL_SENSITIVE 1
-#define atomic_load_acquire(p) (*(p))
+static void (*on_event_read)(const volatile unsigned *);
+static unsigned contract_atomic_load(const volatile unsigned *p)
+{
+ unsigned value = *p;
+ if (on_event_read != NULL) on_event_read(p);
+ return value;
+}
+#define atomic_load_acquire(p) contract_atomic_load(p)
 #define atomic_store_release(p,v) (*(p)=(v))
 #define atomic_store_relaxed(p,v) (*(p)=(v))
 static unsigned atomic_cas_uint(volatile unsigned *p, unsigned old, unsigned v)
@@ -31,7 +40,9 @@ struct acpi_irq { int ar_irq, ar_type; };
 static const int acpi_resource_parse_ops_quiet;
 static struct acpi_irq irq={282,ACPI_LEVEL_SENSITIVE};
 static struct acpi_irq core_irq={281,ACPI_LEVEL_SENSITIVE};
-static void mutex_init(kmutex_t *m,int a,int b) { *m=0; }
+static kmutex_t *irq_mutex;
+static void mutex_init(kmutex_t *m,int a,int b)
+{ *m=0; if (b == IPL_VM) irq_mutex=m; }
 static void mutex_destroy(kmutex_t *m) { CHECK(*m==0); }
 static char diagnostic_log[1024];
 static void aprint_error_dev(device_t d,const char *fmt,...)
@@ -65,23 +76,31 @@ static void *acpi_intr_establish_irq(device_t d,struct acpi_irq *r,int ipl,
 { if(r==&core_irq) { CHECK(!core_handler); core_handler=h; core_arg=a; return &core_irq; } CHECK(!handler); handler=h; handler_arg=a; return &irq; }
 static void acpi_intr_mask(void *h)
 { if(h==&core_irq) { core_mask_count++; return; } mask_count++; controller_masked=true; drained=false; }
-static void xc_barrier(int n) { CHECK(controller_masked); drained=true; }
+static void xc_barrier(int n) { CHECK(controller_masked); CHECK(irq_mutex == NULL || *irq_mutex == 0); drained=true; }
 static void acpi_intr_unmask(void *h)
 { if(h==&core_irq) { CHECK(core_mask_count>0); --core_mask_count; return; } CHECK(drained && mask_count>0); controller_masked=--mask_count!=0; }
 static void acpi_intr_disestablish(void *h)
 { if(h==&core_irq) { CHECK(core_mask_count>0); core_handler=NULL; core_arg=NULL; core_mask_count=0; return; } CHECK(controller_masked && drained); handler=NULL; handler_arg=NULL; mask_count=0; }
-static void wakeup(void *p) { }
+static void (*on_wakeup)(const void *);
+static void (*on_engine_start)(void);
+static int (*on_sleep)(const void *, int, const char *, int, kmutex_t *);
+static void wakeup(void *p) { if (on_wakeup != NULL) on_wakeup(p); }
 static void delay(unsigned n) { time_ns+=(uint64_t)n*1000; }
-static unsigned mstohz(unsigned n) { return n; }
+static unsigned clock_hz = 1000;
+static unsigned mstohz(unsigned n) { return (n * clock_hz + 999) / 1000; }
+static int getticks(void) { return (int)(unsigned)(time_ns / (1000000000 / clock_hz)); }
 static void getnanouptime(struct timespec *t)
 { t->tv_sec=time_ns/1000000000; t->tv_nsec=time_ns%1000000000; }
+#ifndef timespecsub
 #define timespecsub(a,b,r) do { \
  (r)->tv_sec=(a)->tv_sec-(b)->tv_sec; (r)->tv_nsec=(a)->tv_nsec-(b)->tv_nsec; \
  if((r)->tv_nsec<0) { --(r)->tv_sec; (r)->tv_nsec+=1000000000; } } while(0)
+#endif
 static void bus_dmamap_sync(bus_dma_tag_t t,bus_dmamap_t m,size_t o,size_t n,int ops);
 static int bcmv3d_takeover_hub_peek(bus_size_t r,uint32_t *v);
 static int bcmv3d_takeover_hub_poke(bus_size_t r,uint32_t v);
 static int tsleep(void *p,int f,const char *n,int ticks);
+static int mtsleep(void *p,int f,const char *n,int ticks,kmutex_t *m);
 static int bcmv3d_takeover_core_peek(bus_size_t r,uint32_t *v);
 static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v);
 static int copyin(const void *src,void *dst,size_t n)
@@ -140,7 +159,8 @@ static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v)
    for(unsigned i=0;i<j->nbo;i++)CHECK(j->bos[i]->cma.base.refs==1);
    close_during_submit=NULL;
   }
-  if(model_case!=1 && model_case!=11)cl_complete();
+  if(on_engine_start != NULL)on_engine_start();
+  if(model_case!=1 && model_case!=11 && model_case<=40)cl_complete();
  }
  if(r>V3D_CSD_CFG0 && r<=V3D_CSD_CFG0+28)csd_writes++;
  if(r==V3D_CSD_CFG0) {
@@ -160,7 +180,8 @@ static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v)
    close_during_submit=NULL;
   }
   csd_writes=0; csd_starts++; core_regs[V3D_CSD_STATUS/4]|=2;
-  if(model_case!=1 && model_case!=11)csd_complete();
+  if(on_engine_start != NULL)on_engine_start();
+  if(model_case!=1 && model_case!=11 && model_case<=40)csd_complete();
  }
  return 0;
 }
@@ -302,15 +323,28 @@ bcmv3d_takeover_hub_poke(bus_size_t r,uint32_t v)
 		}
 		starts++; regs[V3D_TFU_CS/4]|=1;
 		if(model_case==10)((uint32_t *)j->scratch->cma.vaddr)[0]^=1;
-		if(model_case!=1 && model_case!=11)complete();
+		if(on_engine_start != NULL)on_engine_start();
+  if(model_case!=1 && model_case!=11 && model_case<=40)complete();
 	}
 	return 0;
 }
 static int tsleep(void *p,int f,const char *n,int ticks)
 {
+	if (on_sleep != NULL) return on_sleep(p, f, n, ticks, NULL);
 	time_ns+=1000000; sleeps++;
 	if(model_case==11 && sleeps%5==0) { if(cl_model)cl_complete(); else if(csd_model)csd_complete(); else complete(); }
 	return EWOULDBLOCK;
+}
+
+static int
+mtsleep(void *p,int f,const char *n,int ticks,kmutex_t *m)
+{
+ if (on_sleep != NULL) return on_sleep(p, f, n, ticks, m);
+ CHECK(m == irq_mutex && *m == 1);
+ mutex_exit(m);
+ int error = tsleep(p, f, n, ticks);
+ mutex_enter(m);
+ return error;
 }
 
 static struct drm_v3d_submit_tfu

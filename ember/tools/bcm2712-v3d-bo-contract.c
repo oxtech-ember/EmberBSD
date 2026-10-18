@@ -107,7 +107,16 @@ static bus_dma_segment_t dma_segments[16];
 #define CHECK(c) do { checks++; if (!(c)) { \
  fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#c); exit(1); } } while (0)
 static void mutex_enter(kmutex_t *m) { CHECK((*m)++ == 0); }
-static void mutex_exit(kmutex_t *m) { CHECK(--*m == 0); }
+#ifdef BCMV3D_JOB_CONTRACT
+static void (*on_mutex_exit)(const kmutex_t *);
+#endif
+static void mutex_exit(kmutex_t *m)
+{
+ CHECK(--*m == 0);
+#ifdef BCMV3D_JOB_CONTRACT
+ if (on_mutex_exit != NULL) on_mutex_exit(m);
+#endif
+}
 static void *kmem_zalloc(size_t n, int f) { void *p=calloc(1,n); CHECK(p!=NULL); kmem_blocks++; return p; }
 static void kmem_free(void *p, size_t n) { CHECK(p!=NULL && kmem_blocks>0); kmem_blocks--; free(p); }
 static int vmem_alloc(vmem_t *v, size_t n, int f, vmem_addr_t *a)

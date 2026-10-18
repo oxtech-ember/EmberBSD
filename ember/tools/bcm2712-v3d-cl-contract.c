@@ -37,6 +37,7 @@ cl_setup(struct bcmv3d_device *c, struct drm_device *d, struct drm_file *f,
 	    .bo_handles = (uintptr_t)handles, .bo_handle_count = 2};
 }
 
+#ifndef BCMV3D_WAIT_CONTRACT
 int
 main(void)
 {
@@ -173,3 +174,4 @@ main(void)
 	    checks, calls);
 	return 0;
 }
+#endif

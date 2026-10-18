@@ -931,7 +931,10 @@ on every board in the hardware catalog.
   A native [DRM/GEM render interface](ember/boot/bcm2712-v3d-render.md) now
   passes bounded userspace TFU acceptance on CM5: 420 verified copies,
   per-file mmap isolation, counter wrap, concurrent clients and submit/close
-  races. The [native compute path](ember/boot/bcm2712-v3d-csd.md) also passed
+  races. CL/TFU/CSD completion uses an IRQ-safe sleep interlock; actual-source
+  checks cover the lost-wakeup race and a bounded 500 ms deadline. Physical
+  latency measurements remain pending. The
+  [native compute path](ember/boot/bcm2712-v3d-csd.md) also passed
   389 QPU dispatches with 6,224 verified integer results, changing uniforms,
   guarded memory, concurrent clients and CSD/TFU/CSD transitions. A subsequent
   [binary synchronization check](ember/boot/bcm2712-v3d-sync.md) passed standard
