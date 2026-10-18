@@ -56,7 +56,13 @@ link remains eligible for the adapter and its staged static libgcc.
 The final system receives target DSOs through the separate `gcc16-runtime`
 Ports package and normal target pkgtools. Select one GCC runtime provider.
 Build-tree headers, CRT and static archives are not an installable compiler
-package. Image composition and runtime execution checks remain separate.
+package. The OS sets do not own the external SDK or `/usr/pkg/gcc16` payload.
+Use a clean OS destination and install one declared target runtime provider
+separately. A full compiler package can already provide the matching runtime;
+do not install the conflicting runtime-only provider beside it.
+The [set ownership regression](../tests/external-gcc-setlist.md) checks the
+AArch64 list boundary. Image composition, ELF dependency closure and runtime
+execution checks remain separate.
 
 ## Regression checks
 

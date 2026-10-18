@@ -112,11 +112,16 @@ The build-only adapter does not perform this installation or prove closure.
 
 `-U` records ownership and permissions in `DESTDIR/METALOG`. Keep it when installing.
 Reconcile the selected set lists, destination inventory and runtime provider first.
-The current [AArch64 set additions](../../distrib/sets/lists/base/ad.aarch64)
-also select GCC SDK files under `toolchain_missing`; the adapter does not install them.
+The [AArch64 set list](../../distrib/sets/lists/base/ad.aarch64) does not own
+external GCC headers, CRT, archives or package-prefix files. Use a new destination;
+a previously seeded SDK or runtime copy must not enter the OS sets.
+The [set ownership regression](../tests/external-gcc-setlist.md) checks this
+boundary and preserves strict missing/extra-file rejection. It does not qualify
+a complete distribution or its ELF dependency closure.
+Audit `METALOG` ownership separately. The inherited `checkflist` implementation
+compares the destination and selected lists; its metadata comparison is disabled.
 Stop if the selected profile has no matching payload and ownership recipe.
 Do not copy a compiler SDK to silence missing-file errors or relax `checkflist`.
-Set composition must be repaired separately before this profile can produce sets.
 
 Only after that audit succeeds, run the unchanged strict set checks:
 
