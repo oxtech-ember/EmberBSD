@@ -15,6 +15,7 @@
 #include <dev/acpi/cixclk_acpi.h>
 #include <dev/acpi/cixreset_acpi.h>
 #include <dev/acpi/cixvpu_acpi_control.h>
+#include <dev/acpi/cixvpu_acpi_control_private.h>
 #include <dev/ic/cixvpu_resources.h>
 
 struct cixvpu_object {
@@ -68,8 +69,8 @@ cixvpu_reference(const ACPI_OBJECT *p, ACPI_HANDLE expected)
 }
 
 static int
-cixvpu_evaluate(struct cixvpu_acpi_control *c, const char *name,
-    struct cixvpu_object *o)
+cixvpu_evaluate_at(struct cixvpu_acpi_control *c, ACPI_HANDLE consumer,
+    const char *name, struct cixvpu_object *o)
 {
 	ACPI_HANDLE table;
 	ACPI_OBJECT_TYPE type;
@@ -78,7 +79,7 @@ cixvpu_evaluate(struct cixvpu_acpi_control *c, const char *name,
 	o->buffer = (ACPI_BUFFER){ ACPI_ALLOCATE_BUFFER, NULL };
 	o->root = NULL;
 	/* Reject a method before evaluating a table that must be static data. */
-	rv = AcpiGetHandle(c->consumer, name, &table);
+	rv = AcpiGetHandle(consumer, name, &table);
 	if (ACPI_SUCCESS(rv))
 		rv = AcpiGetType(table, &type);
 	if (ACPI_FAILURE(rv)) {
@@ -87,7 +88,7 @@ cixvpu_evaluate(struct cixvpu_acpi_control *c, const char *name,
 	}
 	if (type != ACPI_TYPE_PACKAGE)
 		return EINVAL;
-	rv = AcpiEvaluateObject(c->consumer, name, NULL, &o->buffer);
+	rv = AcpiEvaluateObject(consumer, name, NULL, &o->buffer);
 	if (ACPI_FAILURE(rv)) {
 		c->report.acpi_status = rv;
 		return EIO;
@@ -97,6 +98,14 @@ cixvpu_evaluate(struct cixvpu_acpi_control *c, const char *name,
 		return EINVAL;
 	o->root = o->buffer.Pointer;
 	return 0;
+}
+
+static int
+cixvpu_evaluate(struct cixvpu_acpi_control *c, const char *name,
+    struct cixvpu_object *o)
+{
+
+	return cixvpu_evaluate_at(c, c->consumer, name, o);
 }
 
 static int
@@ -163,14 +172,14 @@ out:
 }
 
 static int
-cixvpu_power_table(struct cixvpu_acpi_control *c, const char *name,
-    ACPI_HANDLE power)
+cixvpu_power_table_at(struct cixvpu_acpi_control *c, ACPI_HANDLE consumer,
+    const char *name, ACPI_HANDLE power)
 {
 	struct cixvpu_object o;
 	const ACPI_OBJECT *p;
 	int error;
 
-	error = cixvpu_evaluate(c, name, &o);
+	error = cixvpu_evaluate_at(c, consumer, name, &o);
 	if (error != 0)
 		goto out;
 	p = cixvpu_package(&o, o.root, 1);
@@ -179,6 +188,14 @@ cixvpu_power_table(struct cixvpu_acpi_control *c, const char *name,
 out:
 	AcpiOsFree(o.buffer.Pointer);
 	return error;
+}
+
+static int
+cixvpu_power_table(struct cixvpu_acpi_control *c, const char *name,
+    ACPI_HANDLE power)
+{
+
+	return cixvpu_power_table_at(c, c->consumer, name, power);
 }
 
 static int
@@ -337,7 +354,7 @@ cixvpu_profile_bound(bus_size_t span, bus_size_t offset)
 
 /* No arbitrary register API: only this control transaction owns both maps. */
 static int
-cixvpu_profile_read(struct cixvpu_acpi_control *c,
+cixvpu_profile_read_owned(struct cixvpu_acpi_control *c,
     struct cixvpu_hw_profile *out)
 {
 	static const bus_size_t offsets[] = {
@@ -350,8 +367,6 @@ cixvpu_profile_read(struct cixvpu_acpi_control *c,
 		return EINVAL;
 	if (cpu_intr_p() || cpu_softintr_p())
 		return EWOULDBLOCK;
-	if (cold != 1)
-		return ENOTSUP;
 	if (!c->started || !c->mapped || !c->profile_mapped ||
 	    !c->power_attempted || !c->clock_attempted || c->reset_safe ||
 	    c->power_released_fault || !c->report.identity_valid ||
@@ -385,6 +400,44 @@ cixvpu_profile_read(struct cixvpu_acpi_control *c,
 	return 0;
 }
 
+static int
+cixvpu_profile_read(struct cixvpu_acpi_control *c,
+    struct cixvpu_hw_profile *out)
+{
+
+	if (cold != 1)
+		return ENOTSUP;
+	return cixvpu_profile_read_owned(c, out);
+}
+
+int
+cixvpu_control_assert_stop(struct cixvpu_acpi_control *c)
+{
+
+	if ((c->power_attempted || c->clock_attempted) && !c->reset_safe) {
+		int error = cixreset_acpi_assert(c->reset);
+
+		if (error != 0)
+			return error;
+		c->reset_safe = true;
+	}
+	return 0;
+}
+
+int
+cixvpu_control_clock_stop(struct cixvpu_acpi_control *c)
+{
+
+	if (c->clock_attempted) {
+		int error = cixclk_acpi_disable(c->clock);
+
+		if (error != 0)
+			return error;
+		c->clock_attempted = false;
+	}
+	return 0;
+}
+
 int
 cixvpu_acpi_control_cleanup(struct cixvpu_acpi_control *c)
 {
@@ -408,18 +461,9 @@ cixvpu_acpi_control_cleanup(struct cixvpu_acpi_control *c)
 		error = EIO;
 		goto out;
 	}
-	if ((c->power_attempted || c->clock_attempted) && !c->reset_safe) {
-		error = cixreset_acpi_assert(c->reset);
-		if (error != 0)
-			goto out;
-		c->reset_safe = true;
-	}
-	if (c->clock_attempted) {
-		error = cixclk_acpi_disable(c->clock);
-		if (error != 0)
-			goto out;
-		c->clock_attempted = false;
-	}
+	if ((error = cixvpu_control_assert_stop(c)) != 0 ||
+	    (error = cixvpu_control_clock_stop(c)) != 0)
+		goto out;
 	if (c->power_attempted) {
 		rv = acpi_power_res(c->power, c->consumer, false);
 		c->report.cleanup_acpi_status = rv;
@@ -484,13 +528,80 @@ cixvpu_identity(const struct cixvpu_acpi_report *r)
 }
 
 static int
+cixvpu_claim_providers(struct cixvpu_acpi_control *c,
+    const struct acpi_attach_args *aa, bool native)
+{
+	ACPI_HANDLE clock, reset, scmi = NULL;
+	int error;
+
+	if (native && (error = cixvpu_native_scmi(aa, &scmi)) != 0)
+		return error;
+	if ((error = cixvpu_profile(c, &clock, &reset)) != 0)
+		return error;
+	error = native ? cixclk_acpi_get_native(clock, scmi, 0x43, &c->clock) :
+	    cixclk_acpi_get(clock, 0x43, &c->clock);
+	if (error != 0 ||
+	    (error = cixreset_acpi_get(reset, 0x0e, &c->reset)) != 0 ||
+	    (error = cixreset_acpi_get(reset, 0x8e, &c->rcsu)) != 0)
+		return error;
+	return 0;
+}
+
+static int
+cixvpu_activate_identity(struct cixvpu_acpi_control *c,
+    const struct cixvpu_resources *resources)
+{
+	ACPI_STATUS rv;
+	bool asserted;
+	int error;
+
+	/* The vendor VPU sequence pulses only main reset. Do not invent RCSU control. */
+	if ((error = cixreset_acpi_get_state(c->rcsu, &asserted)) != 0)
+		return error;
+	if (asserted) {
+		error = EBUSY;
+		return error;
+	}
+	/* ON can fail before lease insertion or after effects. Attempt rollback. */
+	c->power_attempted = true;
+	rv = acpi_power_res(c->power, c->consumer, true);
+	c->report.acpi_status = rv;
+	if (ACPI_FAILURE(rv)) {
+		error = EIO;
+		return error;
+	}
+	if ((error = cixvpu_power_status(c, true, false)) != 0)
+		return error;
+	c->clock_attempted = true;
+	/* Runtime resume requires clock enable, not devfreq rate telemetry. */
+	if ((error = cixclk_acpi_enable(c->clock)) != 0)
+		return error;
+	if ((error = cixreset_acpi_assert(c->reset)) != 0)
+		return error;
+	delay(20);
+	if ((error = cixreset_acpi_deassert(c->reset)) != 0)
+		return error;
+	delay(20);
+	c->span = resources->mem[1].length;
+	error = bus_space_map(c->bst, resources->mem[1].translated, c->span, 0,
+	    &c->bsh);
+	if (error != 0)
+		return error;
+	c->mapped = true;
+	c->report.id = bus_space_read_4(c->bst, c->bsh, 0x00);
+	c->report.ncores = bus_space_read_4(c->bst, c->bsh, 0x08);
+	c->report.nlsid = bus_space_read_4(c->bst, c->bsh, 0x0c);
+	c->report.svn = bus_space_read_4(c->bst, c->bsh, 0x30);
+	c->report.identity_valid = cixvpu_identity(&c->report);
+	error = c->report.identity_valid ? 0 : ENODEV;
+	return error;
+}
+
+static int
 cixvpu_probe(struct cixvpu_acpi_control *c, device_t dev,
     const struct acpi_attach_args *aa, const struct cixvpu_resources *resources,
     bool activate, bool native, bool profile)
 {
-	ACPI_HANDLE clock, reset, scmi = NULL;
-	ACPI_STATUS rv;
-	bool asserted;
 	int error, cleanup_error;
 
 	if (c == NULL || aa == NULL || aa->aa_node == NULL ||
@@ -514,15 +625,7 @@ cixvpu_probe(struct cixvpu_acpi_control *c, device_t dev,
 		error = ENOTSUP;
 		goto out;
 	}
-	if (native && (error = cixvpu_native_scmi(aa, &scmi)) != 0)
-		goto out;
-	if ((error = cixvpu_profile(c, &clock, &reset)) != 0)
-		goto out;
-	error = native ? cixclk_acpi_get_native(clock, scmi, 0x43, &c->clock) :
-	    cixclk_acpi_get(clock, 0x43, &c->clock);
-	if (error != 0 ||
-	    (error = cixreset_acpi_get(reset, 0x0e, &c->reset)) != 0 ||
-	    (error = cixreset_acpi_get(reset, 0x8e, &c->rcsu)) != 0)
+	if ((error = cixvpu_claim_providers(c, aa, native)) != 0)
 		goto out;
 	if (!activate) {
 		c->report.rate_query_attempted = true;
@@ -530,45 +633,9 @@ cixvpu_probe(struct cixvpu_acpi_control *c, device_t dev,
 		c->report.rate_valid = error == 0;
 		goto out;
 	}
-	/* The vendor VPU sequence pulses only main reset. Do not invent RCSU control. */
-	if ((error = cixreset_acpi_get_state(c->rcsu, &asserted)) != 0)
-		goto out;
-	if (asserted) {
-		error = EBUSY;
-		goto out;
-	}
-	/* ON can fail before lease insertion or after effects. Attempt rollback. */
-	c->power_attempted = true;
-	rv = acpi_power_res(c->power, c->consumer, true);
-	c->report.acpi_status = rv;
-	if (ACPI_FAILURE(rv)) {
-		error = EIO;
-		goto out;
-	}
-	if ((error = cixvpu_power_status(c, true, false)) != 0)
-		goto out;
-	c->clock_attempted = true;
-	/* Runtime resume requires clock enable, not devfreq rate telemetry. */
-	if ((error = cixclk_acpi_enable(c->clock)) != 0)
-		goto out;
-	if ((error = cixreset_acpi_assert(c->reset)) != 0)
-		goto out;
-	delay(20);
-	if ((error = cixreset_acpi_deassert(c->reset)) != 0)
-		goto out;
-	delay(20);
-	c->span = resources->mem[1].length;
-	error = bus_space_map(c->bst, resources->mem[1].translated, c->span, 0,
-	    &c->bsh);
+	error = cixvpu_activate_identity(c, resources);
 	if (error != 0)
 		goto out;
-	c->mapped = true;
-	c->report.id = bus_space_read_4(c->bst, c->bsh, 0x00);
-	c->report.ncores = bus_space_read_4(c->bst, c->bsh, 0x08);
-	c->report.nlsid = bus_space_read_4(c->bst, c->bsh, 0x0c);
-	c->report.svn = bus_space_read_4(c->bst, c->bsh, 0x30);
-	c->report.identity_valid = cixvpu_identity(&c->report);
-	error = c->report.identity_valid ? 0 : ENODEV;
 	if (profile) {
 		if (c->report.id != 0x56648002 || c->report.ncores != 4 ||
 		    c->report.nlsid != 4 || c->report.svn != 0xe0c1afe1) {
@@ -616,4 +683,101 @@ cixvpu_acpi_control_probe_native_profile(struct cixvpu_acpi_control *c,
 {
 
 	return cixvpu_probe(c, dev, aa, resources, true, true, true);
+}
+
+int
+cixvpu_control_claim_native(struct cixvpu_acpi_control *c, device_t dev,
+    const struct acpi_attach_args *aa, const struct cixvpu_resources *r)
+{
+
+	if (c == NULL || aa == NULL || aa->aa_node == NULL ||
+	    aa->aa_node->ad_handle == NULL || r == NULL)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (c->started)
+		return EALREADY;
+	c->started = true;
+	c->dev = dev;
+	c->consumer = aa->aa_node->ad_handle;
+	c->bst = aa->aa_memt;
+	if (cixvpu_resources_validate(r) != CIXVPU_RESOURCE_OK)
+		return EINVAL;
+	if (!cixvpu_profile_resources(r))
+		return ENOTSUP;
+	return cixvpu_claim_providers(c, aa, true);
+}
+
+int
+cixvpu_control_activate(struct cixvpu_acpi_control *c,
+    const struct cixvpu_resources *r)
+{
+
+	return cixvpu_activate_identity(c, r);
+}
+
+int
+cixvpu_control_boot_profile(struct cixvpu_acpi_control *c,
+    const struct cixvpu_resources *r)
+{
+	int error;
+
+	if (c->report.id != 0x56648002 || c->report.ncores != 4 ||
+	    c->report.nlsid != 4 || c->report.svn != 0xe0c1afe1)
+		return ENOTSUP;
+	c->profile_span = r->mem[0].length;
+	error = bus_space_map(c->bst, r->mem[0].translated, c->profile_span, 0,
+	    &c->profile_bsh);
+	if (error != 0)
+		return error;
+	c->profile_mapped = true;
+	return cixvpu_profile_read_owned(c, &c->profile);
+}
+
+int
+cixvpu_control_core_resources(struct cixvpu_acpi_control *c,
+    ACPI_HANDLE cores[4], ACPI_HANDLE powers[4])
+{
+	static const char * const names[] = { "CRE0", "CRE1", "CRE2", "CRE3" };
+	static const char * const resources[] = { "PRS0", "PRS1", "PRS2", "PRS3" };
+	ACPI_HANDLE core[4], power[4];
+	ACPI_OBJECT_TYPE type;
+	ACPI_INTEGER address;
+	ACPI_STATUS rv;
+	unsigned int i, j;
+	int error;
+
+	for (i = 0; i < 4; i++) {
+		rv = AcpiGetHandle(c->consumer, names[i], &core[i]);
+		if (ACPI_SUCCESS(rv))
+			rv = AcpiGetType(core[i], &type);
+		if (ACPI_FAILURE(rv))
+			goto failed;
+		if (type != ACPI_TYPE_DEVICE)
+			return EINVAL;
+		rv = acpi_eval_integer(core[i], "_ADR", &address);
+		if (ACPI_FAILURE(rv))
+			goto failed;
+		if (address != i)
+			return EINVAL;
+		rv = AcpiGetHandle(core[i], resources[i], &power[i]);
+		if (ACPI_SUCCESS(rv))
+			rv = AcpiGetType(power[i], &type);
+		if (ACPI_FAILURE(rv))
+			goto failed;
+		if (type != ACPI_TYPE_POWER)
+			return EINVAL;
+		for (j = 0; j < i; j++)
+			if (core[i] == core[j] || power[i] == power[j])
+				return EINVAL;
+		if ((error = cixvpu_power_table_at(c, core[i], "_PR0", power[i])) != 0 ||
+		    (error = cixvpu_power_table_at(c, core[i], "_PR3", power[i])) != 0)
+			return error;
+	}
+	memcpy(cores, core, sizeof(core));
+	memcpy(powers, power, sizeof(power));
+	return 0;
+failed:
+	c->report.acpi_status = rv;
+	return EIO;
 }

@@ -71,6 +71,16 @@ static uint32_t id, ncores, nlsid, svn;
 static int cold = 1;
 static bool profile_mode;
 static uint32_t profile_words[7];
+#ifdef CIXVPU_BOOT_ORCH_API
+static char boot_core_tokens[16];
+#define BOOT_CORE(i) ((void *)&boot_core_tokens[(i)])
+#define BOOT_POWER(i) ((void *)&boot_core_tokens[4+(i)])
+#define BOOT_TABLE(i,j) ((void *)&boot_core_tokens[8+2*(i)+(j)])
+static unsigned int boot_core_bad;
+static int boot_core_on_fail = -1, boot_core_off_fail = -1;
+static int boot_core_no_lease = -1;
+static bool boot_core_live[4];
+#endif
 #define BUS_SPACE_BARRIER_READ 1
 #define F_PROFILE_MAP (1U << 21)
 enum {
@@ -90,7 +100,8 @@ static void *allocate(size_t n)
 { void *p = calloc(1, n); assert(p); live++; allocations++; return p; }
 void AcpiOsFree(void *p) { if (p) { assert(live); live--; free(p); } }
 static bool cpu_intr_p(void) { return interrupt_context; }
-static bool cpu_softintr_p(void) { return false; }
+static bool soft_context;
+static bool cpu_softintr_p(void) { return soft_context; }
 static char diagnostic[8192];
 static void print_error(device_t d, const char *fmt, ...)
 {
@@ -115,6 +126,15 @@ ACPI_STATUS AcpiEvaluateObject(ACPI_HANDLE h, const char *name,
     ACPI_OBJECT_LIST *args, ACPI_BUFFER *result)
 {
     struct blob *b;
+#ifdef CIXVPU_BOOT_ORCH_API
+    for (unsigned int i = 0; i < 4; i++) {
+        if (h != BOOT_CORE(i)) continue;
+        assert(args == NULL && result != NULL && (strcmp(name,"_PR0")==0 || strcmp(name,"_PR3")==0));
+        b = allocate(sizeof(*b)); result->Pointer=b; result->Length=sizeof(*b);
+        package(&b->o[0],1,&b->o[1]); reference(&b->o[1],boot_core_bad==3 ? OTHER : BOOT_POWER(i));
+        return AE_OK;
+    }
+#endif
     assert(h == VPU && args == NULL && result != NULL);
     if (bad == 26) return AE_ERROR;
     if (bad == 29) { result->Pointer = NULL; result->Length = 0; return AE_OK; }
@@ -167,6 +187,19 @@ ACPI_STATUS AcpiEvaluateObject(ACPI_HANDLE h, const char *name,
 }
 ACPI_STATUS AcpiGetHandle(ACPI_HANDLE h, const char *p, ACPI_HANDLE *out)
 {
+#ifdef CIXVPU_BOOT_ORCH_API
+    for (unsigned int i = 0; i < 4; i++) {
+        if (h == VPU && strlen(p)==4 && memcmp(p,"CRE",3)==0 && p[3]=='0'+(int)i) {
+            *out=BOOT_CORE(i); return AE_OK;
+        }
+        if (h == BOOT_CORE(i) && strlen(p)==4 && memcmp(p,"PRS",3)==0 && p[3]=='0'+(int)i) {
+            *out=BOOT_POWER(i); return AE_OK;
+        }
+        if (h == BOOT_CORE(i) && (strcmp(p,"_PR0")==0 || strcmp(p,"_PR3")==0)) {
+            *out=BOOT_TABLE(i,strcmp(p,"_PR3")==0); return AE_OK;
+        }
+    }
+#endif
     if (h == NULL) { assert(strcmp(p, "\\_SB.CCLK") == 0); if (bad == 25) return AE_NOT_FOUND; *out = CLOCK; }
     else {
         assert(h == VPU);
@@ -198,6 +231,13 @@ ACPI_STATUS AcpiGetObjectInfo(ACPI_HANDLE h, ACPI_DEVICE_INFO **out)
 }
 ACPI_STATUS AcpiGetType(ACPI_HANDLE h, ACPI_OBJECT_TYPE *out)
 {
+#ifdef CIXVPU_BOOT_ORCH_API
+    for (unsigned int i = 0; i < 4; i++) {
+        if (h == BOOT_CORE(i)) { *out=ACPI_TYPE_DEVICE; return AE_OK; }
+        if (h == BOOT_POWER(i)) { *out=boot_core_bad==2 ? ACPI_TYPE_DEVICE : ACPI_TYPE_POWER; return AE_OK; }
+        if (h == BOOT_TABLE(i,0) || h == BOOT_TABLE(i,1)) { *out=ACPI_TYPE_PACKAGE; return AE_OK; }
+    }
+#endif
     if (h == POWER) *out = bad == 23 ? ACPI_TYPE_DEVICE : ACPI_TYPE_POWER;
     else {
         assert(h == &tokens[6] || h == &tokens[7] || h == &tokens[8] || h == &tokens[9]);
@@ -208,6 +248,10 @@ ACPI_STATUS AcpiGetType(ACPI_HANDLE h, ACPI_OBJECT_TYPE *out)
 }
 static ACPI_STATUS acpi_eval_integer(ACPI_HANDLE h, const char *n, ACPI_INTEGER *v)
 {
+#ifdef CIXVPU_BOOT_ORCH_API
+    for (unsigned int i = 0; i < 4; i++)
+        if (h == BOOT_CORE(i) && strcmp(n,"_ADR")==0) { *v=boot_core_bad==1 ? 9 : i; return AE_OK; }
+#endif
     if (h == VPU && strcmp(n, "_CCA") == 0) { *v = attach_cca_value; return attach_cca_status; }
     if (strcmp(n, "_UID") == 0) {
         assert(h == CLOCK || h == RESET);
@@ -239,6 +283,16 @@ static int cixreset_acpi_get_state(struct cixreset *r, bool *v)
 { assert(r == &rcsu_claim && r->claimed); event('S'); if (faults & F_RCSU_STATE) return EIO; *v = rc_asserted; return 0; }
 static ACPI_STATUS acpi_power_res(ACPI_HANDLE h, ACPI_HANDLE owner, bool on)
 {
+#ifdef CIXVPU_BOOT_ORCH_API
+    for (unsigned int i = 0; i < 4; i++) {
+        if (h != BOOT_POWER(i)) continue;
+        assert(owner == BOOT_CORE(i)); event(on ? (char)('a'+i) : (char)('4'+i));
+        if (boot_core_no_lease==(int)i) return on ? AE_NOT_FOUND : AE_ABORT_METHOD;
+        bool failed=(on ? boot_core_on_fail : boot_core_off_fail)==(int)i;
+        if (on || !failed) boot_core_live[i]=on;
+        return failed ? AE_ERROR : AE_OK;
+    }
+#endif
     assert(h == POWER && owner == VPU);
     if (on) { event('P'); if (faults & F_POWER_NO_LEASE) return AE_NOT_FOUND; power_live = true; return faults & F_POWER_ON ? AE_ERROR : AE_OK; }
     event('O'); if (faults & F_POWER_NO_LEASE) return AE_ABORT_METHOD; if (faults & F_POWER_OFF) return AE_ERROR; power_live = false; return AE_OK;
@@ -310,7 +364,7 @@ static void bus_space_unmap(bus_space_tag_t t, bus_space_handle_t h, bus_size_t 
 #include "control-source.inc"
 static struct acpi_devnode node = { .ad_handle = VPU };
 static char dma_tags[2];
-static struct acpi_attach_args aa = { &node, NULL, &dma_tags[0], &dma_tags[1] };
+static struct acpi_attach_args fixture_aa = { &node, NULL, &dma_tags[0], &dma_tags[1] };
 static const struct cixvpu_resources description = {
     .mem = {{0x100000, 0x110000, 0x10000}, {0x300000, 0x320000, 0x10000}},
     .nmem = 2, .nirq = 1, .irq = 358, .irq_trigger = 0, .cca_present = 1, .cca = 0
@@ -344,16 +398,16 @@ static void metadata_tests(void)
 {
     for (unsigned int i = 1; i <= 42; i++) {
         struct cixvpu_acpi_control c = {0}; fixture(); bad = i;
-        CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) != 0);
+        CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, true) != 0);
         CHECK(nevents == 0 && reads == 0 && maps == 0 && delays == 0 && sta_count == 0);
         released();
     }
     struct cixvpu_acpi_control c = {0}; struct cixvpu_resources invalid = description;
     fixture(); invalid.nmem = 1;
-    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &invalid, true) == EINVAL);
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &invalid, true) == EINVAL);
     CHECK(nevents == 0); released();
     fixture(); c = (struct cixvpu_acpi_control){0}; interrupt_context = true;
-    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) == EWOULDBLOCK);
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, true) == EWOULDBLOCK);
     CHECK(nevents == 0); interrupt_context = false;
 }
 static void query_tests(void)
@@ -361,7 +415,7 @@ static void query_tests(void)
     const unsigned int cases[] = {0, F_CLOCK_GET, F_RESET_GET, F_RCSU_GET, F_RATE};
     for (unsigned int i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
         struct cixvpu_acpi_control c = {0}; fixture(); faults = cases[i];
-        int rv = cixvpu_acpi_control_probe(&c, VPU, &aa, &description, false);
+        int rv = cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, false);
         CHECK(i == 0 ? rv == 0 : rv != 0);
         CHECK(reads == 0 && maps == 0 && delays == 0 && sta_count == 0);
         CHECK(strchr(events, 'S') == NULL && strchr(events, 'P') == NULL && strchr(events, 'A') == NULL && strchr(events, 'E') == NULL);
@@ -369,13 +423,13 @@ static void query_tests(void)
         CHECK(c.report.rate_query_attempted == (cases[i] == 0 || cases[i] == F_RATE));
         CHECK(c.report.rate_valid == (cases[i] == 0));
         released();
-        CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, false) == EALREADY);
+        CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, false) == EALREADY);
     }
 }
 static void active_tests(void)
 {
     struct cixvpu_acpi_control c = {0}; fixture();
-    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) == 0);
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, true) == 0);
     CHECK(strcmp(events, "CMRSPTEAdDdB0123UAKOtrmc") == 0);
     CHECK(c.report.id == 0x56621234 && c.report.ncores == 2 && c.report.nlsid == 4 && c.report.svn == 0x12345678);
     CHECK(c.report.rate == 0 && !c.report.rate_query_attempted && !c.report.rate_valid && c.report.error == 0 && c.report.cleanup_error == 0);
@@ -384,12 +438,12 @@ static void active_tests(void)
     const uint32_t ids[] = {0x56500000, 0x56550000, 0x56600000, 0x56610000, 0x56620000, 0x56630000, 0x56640000, 0x56650000, 0};
     for (unsigned int i = 0; i < sizeof(ids)/sizeof(ids[0]); i++) {
         fixture(); c = (struct cixvpu_acpi_control){0}; id = ids[i];
-        CHECK((cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) == 0) == (i < 7)); released();
+        CHECK((cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, true) == 0) == (i < 7)); released();
     }
     for (unsigned int i = 0; i < 4; i++) {
         fixture(); c = (struct cixvpu_acpi_control){0};
         if (i < 2) ncores = i == 0 ? 0 : 5; else nlsid = i == 2 ? 0 : 5;
-        CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) != 0); released();
+        CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, true) != 0); released();
     }
 }
 static void failures_tests(void)
@@ -398,35 +452,35 @@ static void failures_tests(void)
         F_RESET_DEASSERT, F_MAP, F_STA_ON, F_STA_ON_FAIL};
     for (unsigned int i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
         struct cixvpu_acpi_control c = {0}; fixture(); faults = cases[i];
-        CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) != 0);
+        CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, true) != 0);
         CHECK(c.report.error != 0 && c.report.cleanup_error == 0);
         if (cases[i] == F_RCSU_STATE) CHECK(strchr(events, 'P') == NULL && strchr(events, 'A') == NULL);
         else { const char *a = strchr(events, 'A'), *off = strchr(events, 'O'); CHECK(a != NULL && off != NULL && a < off); CHECK(sta_count >= 1); }
         CHECK(reads == 0); released();
     }
     struct cixvpu_acpi_control c = {0}; fixture(); rc_asserted = true;
-    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) == EBUSY);
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, true) == EBUSY);
     CHECK(strcmp(events, "CMRSrmc") == 0); released();
     fixture(); c = (struct cixvpu_acpi_control){0}; clock_rate = 0;
-    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) == 0); CHECK(reads == 4); released();
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, true) == 0); CHECK(reads == 4); released();
 }
 static void rate_separation_tests(void)
 {
     struct cixvpu_acpi_control c = {0};
     fixture(); rate_status = -4;
-    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) == 0);
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, true) == 0);
     CHECK(strchr(events, 'G') == NULL);
     CHECK(strcmp(events, "CMRSPTEAdDdB0123UAKOtrmc") == 0);
     CHECK(c.report.rate == 0 && !c.report.rate_query_attempted && !c.report.rate_valid && c.report.identity_valid && c.report.released);
     released();
     fixture(); rate_status = -4; c = (struct cixvpu_acpi_control){0};
-    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, false) == EIO);
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, false) == EIO);
     CHECK(strcmp(events, "CMRGrmc") == 0);
     CHECK(c.report.rate == 0 && c.report.rate_query_attempted && !c.report.rate_valid && c.report.error == EIO && c.report.cleanup_error == 0);
     CHECK(reads == 0 && maps == 0 && sta_count == 0);
     released();
     fixture(); c = (struct cixvpu_acpi_control){0}; clock_rate = 0;
-    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, false) == 0);
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, false) == 0);
     CHECK(c.report.rate_query_attempted && c.report.rate_valid && c.report.rate == 0);
     released();
 }
@@ -435,7 +489,7 @@ static void retention_tests(void)
     const unsigned int cases[] = {F_RESET_ASSERT, F_CLOCK_OFF, F_POWER_OFF, F_STA_OFF, F_STA_OFF_FAIL};
     for (unsigned int i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
         struct cixvpu_acpi_control c = {0}; fixture(); faults = cases[i];
-        CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) != 0);
+        CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, true) != 0);
         CHECK(c.report.cleanup_error != 0);
         CHECK(clock_claim.claimed && main_claim.claimed && rcsu_claim.claimed);
         if (cases[i] == F_RESET_ASSERT) CHECK(strchr(events, 'K') == NULL && strchr(events, 'O') == NULL && power_live && clock_live);
@@ -453,12 +507,12 @@ static void retention_tests(void)
         released();
     }
     struct cixvpu_acpi_control c = {0}; fixture(); faults = F_POWER_ON | F_POWER_OFF;
-    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) == EIO);
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, true) == EIO);
     CHECK(c.report.error == EIO && c.report.cleanup_error == EIO);
     CHECK(c.report.acpi_status == AE_ERROR && c.report.cleanup_acpi_status == AE_ERROR);
     faults = 0; CHECK(cixvpu_acpi_control_cleanup(&c) == 0); released();
     fixture(); c = (struct cixvpu_acpi_control){0}; faults = F_POWER_NO_LEASE;
-    CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, true) == EIO);
+    CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, true) == EIO);
     CHECK(c.report.error == EIO && c.report.cleanup_error == EIO);
     CHECK(c.report.acpi_status == AE_NOT_FOUND && c.report.cleanup_acpi_status == AE_ABORT_METHOD);
     CHECK(c.power_attempted && !power_live && clock_claim.claimed && main_claim.claimed && rcsu_claim.claimed);
@@ -467,7 +521,7 @@ static void retention_tests(void)
     const unsigned int put_cases[] = {F_PUT_MAIN, F_PUT_RCSU, F_PUT_CLOCK};
     for (unsigned int i = 0; i < sizeof(put_cases)/sizeof(put_cases[0]); i++) {
         fixture(); c = (struct cixvpu_acpi_control){0}; faults = put_cases[i];
-        CHECK(cixvpu_acpi_control_probe(&c, VPU, &aa, &description, false) != 0);
+        CHECK(cixvpu_acpi_control_probe(&c, VPU, &fixture_aa, &description, false) != 0);
         CHECK(c.report.error == 0 && c.report.cleanup_error == EBUSY);
         CHECK(strchr(events, 'A') == NULL && strchr(events, 'P') == NULL);
         faults = 0; CHECK(cixvpu_acpi_control_cleanup(&c) == 0); released();
@@ -679,7 +733,7 @@ static void allocation_fixture(unsigned int fault)
 }
 static void allocation_run(void)
 {
-    struct acpi_attach_args temporary = aa;
+    struct acpi_attach_args temporary = fixture_aa;
     cixvpu_acpi_attach(NULL, VPU, &temporary);
     CHECK(mountroot_calls == 1 && defer_calls == 0 && deferred_callback != NULL);
     CHECK(fw_opens == 0 && dma_allocs == 0);
@@ -734,7 +788,7 @@ static void allocation_tests(void)
         CHECK(fw_closes == 1 && fw_reads == 0 && fw_hashes == 0 && dma_allocs == 0);
     }
     allocation_fixture(0); mountroot_immediate = true;
-    cixvpu_acpi_attach(NULL, VPU, &aa);
+    cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     CHECK(mountroot_calls == 1 && dma_allocs == 1 && dma_frees == 1 && !dma_live);
     CHECK(strcmp(fw_events, "osmrchfad") == 0 && nevents == 0);
 }
@@ -790,7 +844,7 @@ static void prepare_tests(void)
         CHECK(strstr(diagnostic, expected) != NULL);
     }
     prepare_fixture(0); mountroot_immediate = true;
-    cixvpu_acpi_attach(NULL, VPU, &aa);
+    cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     CHECK(mountroot_calls == 1 && prepare_calls == 1 && prepared_frees == 1);
     CHECK(strcmp(fw_events, "osmrchapfq") == 0 && !dma_live && !prepared_live && nevents == 0);
 }
@@ -798,12 +852,12 @@ static void attach_tests(void)
 {
     (void)device_private; (void)device_cfdata; (void)config_defer; (void)config_mountroot; (void)attach_refs;
     CHECK(attach_softc_size > 0 && attach_softc_size <= sizeof(attachment_storage));
-    CHECK(cixvpu_acpi_match(NULL, NULL, &aa) != 0);
-    attach_fixture(0); cixvpu_acpi_attach(NULL, VPU, &aa);
+    CHECK(cixvpu_acpi_match(NULL, NULL, &fixture_aa) != 0);
+    attach_fixture(0); cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     CHECK(parser_calls == 1 && cleanup_calls == 1 && defer_calls == 0);
     CHECK(nevents == 0 && reads == 0 && maps == 0); released();
     for (unsigned int mode = 1; mode <= 2; mode++) {
-        struct acpi_attach_args temporary = aa;
+        struct acpi_attach_args temporary = fixture_aa;
         attach_fixture(mode); if (mode == 2) rate_status = -4; cixvpu_acpi_attach(NULL, VPU, &temporary);
         CHECK(parser_calls == 1 && cleanup_calls == 1 && defer_calls == 1 && deferred_callback != NULL);
         CHECK(nevents == 0 && reads == 0 && maps == 0);
@@ -821,22 +875,22 @@ static void attach_tests(void)
             released();
         }
     }
-    attach_fixture(1); rate_status = -4; cixvpu_acpi_attach(NULL, VPU, &aa);
+    attach_fixture(1); rate_status = -4; cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     if (deferred_callback) {
         deferred_callback(deferred_device);
         CHECK(strstr(diagnostic, "rate query attempted yes, rate valid no") != NULL);
         CHECK(strstr(diagnostic, "clock rate") == NULL && strstr(diagnostic, "released yes") != NULL);
         CHECK(reads == 0 && maps == 0 && sta_count == 0); released();
     } else CHECK(false);
-    attach_fixture(4); cixvpu_acpi_attach(NULL, VPU, &aa);
+    attach_fixture(4); cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     CHECK(parser_calls == 1 && cleanup_calls == 1 && mountroot_calls == 1);
     CHECK(defer_calls == 0 && deferred_callback != NULL && nevents == 0 && maps == 0);
-    attach_fixture(5); cixvpu_acpi_attach(NULL, VPU, &aa);
+    attach_fixture(5); cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     CHECK(parser_calls == 1 && cleanup_calls == 1 && mountroot_calls == 1);
     CHECK(defer_calls == 0 && deferred_callback != NULL && nevents == 0 && maps == 0);
     const unsigned int invalid_flags[] = {7, 0xffff, UINT32_MAX};
     for (unsigned int i = 0; i < sizeof(invalid_flags)/sizeof(invalid_flags[0]); i++) {
-        attach_fixture(invalid_flags[i]); cixvpu_acpi_attach(NULL, VPU, &aa);
+        attach_fixture(invalid_flags[i]); cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
         CHECK(parser_calls == 0 && defer_calls == 0 && nevents == 0);
     }
     for (unsigned int i = 0; i < 7; i++) {
@@ -844,12 +898,12 @@ static void attach_tests(void)
         switch (i) { case 0: raw_extra = 14; break; case 1: parser_status = AE_ERROR; break;
         case 2: attach_description.nmem = 1; break; case 3: attach_description.mem[1] = attach_description.mem[0]; break;
         case 4: attach_description.nirq = 0; break; case 5: attach_cca_status = AE_NOT_FOUND; break; case 6: attach_description.irq_trigger = 1; break; }
-        cixvpu_acpi_attach(NULL, VPU, &aa);
+        cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
         CHECK(defer_calls == 0 && nevents == 0 && reads == 0 && maps == 0);
         CHECK(cleanup_calls == (i == 0 ? 0U : 1U));
     }
     attach_fixture(2); faults = F_POWER_ON | F_POWER_OFF;
-    cixvpu_acpi_attach(NULL, VPU, &aa);
+    cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     if (deferred_callback) {
         deferred_callback(deferred_device);
         char expected[64]; snprintf(expected, sizeof(expected), "primary %d cleanup %d", EIO, EIO);
@@ -857,7 +911,7 @@ static void attach_tests(void)
         CHECK(clock_claim.claimed && main_claim.claimed && rcsu_claim.claimed);
     } else CHECK(false);
     attach_fixture(3);
-    cixvpu_acpi_attach(NULL, VPU, &aa);
+    cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     CHECK(parser_calls == 1 && cleanup_calls == 1 && defer_calls == 1);
     if (deferred_callback) {
         deferred_callback(deferred_device);
@@ -880,7 +934,7 @@ static void profile_fixture(void)
 }
 static void profile_run(void)
 {
-    cixvpu_acpi_attach(NULL, VPU, &aa);
+    cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     CHECK(defer_calls == 1 && deferred_callback != NULL && mountroot_calls == 0);
     if (deferred_callback) {
         deferred_callback(deferred_device);
@@ -1032,7 +1086,7 @@ static void profile_tests(void)
 }
 static struct cixvpu_acpi_report native_run(void)
 {
-    cixvpu_acpi_attach(NULL, VPU, &aa);
+    cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     CHECK(deferred_callback != NULL);
     if (deferred_callback) deferred_callback(deferred_device);
     return ((struct cixvpu_acpi_softc *)attach_private)->sc_control.report;
@@ -1041,11 +1095,11 @@ static void native_tests(void)
 {
     struct cixvpu_acpi_control control = {0};
     fixture();
-    CHECK(cixvpu_acpi_control_probe_native(NULL, VPU, &aa, &description) == EINVAL);
+    CHECK(cixvpu_acpi_control_probe_native(NULL, VPU, &fixture_aa, &description) == EINVAL);
     CHECK(cixvpu_acpi_control_probe_native(&control, VPU, NULL, &description) == EINVAL);
-    CHECK(cixvpu_acpi_control_probe_native(&control, VPU, &aa, NULL) == EINVAL);
+    CHECK(cixvpu_acpi_control_probe_native(&control, VPU, &fixture_aa, NULL) == EINVAL);
     interrupt_context = true;
-    CHECK(cixvpu_acpi_control_probe_native(&control, VPU, &aa, &description) == EWOULDBLOCK);
+    CHECK(cixvpu_acpi_control_probe_native(&control, VPU, &fixture_aa, &description) == EWOULDBLOCK);
     CHECK(!control.started && nevents == 0 && maps == 0);
     interrupt_context = false;
     for (unsigned int i = 0; i < 24; i++) {
@@ -1136,7 +1190,7 @@ static void native_tests(void)
         switch (i) { case 0: raw_extra = 14; break; case 1: parser_status = AE_ERROR; break;
         case 2: attach_description.nmem = 1; break; case 3: attach_description.mem[1] = attach_description.mem[0]; break;
         case 4: attach_description.nirq = 0; break; case 5: attach_cca_status = AE_NOT_FOUND; break; case 6: attach_description.irq_trigger = 1; break; }
-        cixvpu_acpi_attach(NULL, VPU, &aa);
+        cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
         CHECK(defer_calls == 0 && nevents == 0 && reads == 0 && maps == 0);
         CHECK(cleanup_calls == (i == 0 ? 0U : 1U));
     }

@@ -214,6 +214,55 @@ Ten causal mutations are detected. Native GCC16/CSA pass; all-category Cppcheck
 retains header, informational and isolated unused-API findings without suppression.
 These results do not establish a hardware firmware boot or physical DMA.
 
+## Dedicated native boot epoch source
+
+`cixvpu_acpi_boot.[ch]` implements a separate opaque manual boot context.
+The attachment does not select or call it yet. It accepts a fresh SEALED owner
+from the typed boot constructor. Initial DMA synchronization occurs before
+ownership transfer or resource acquisition. A failed synchronization preserves
+the caller's handle and consumes the attempt without automatic cleanup.
+
+The fixed profile validates both resource windows, identity, all four core
+power references and the native clock67 provider. It reserves the exclusive
+initially masked IRQ before activation or main reset. Handler state is ready
+before unmask. Only the LSID0 cause is acknowledged; other causes become a
+held fault. No parser, DMA synchronization or AML runs in the handler.
+
+Core power API success and raw repair words are advisory. Cached ON can skip
+AML, and firmware repair methods can return after a timeout. This source does
+not prove fresh repair, electrical power, functional clock271 or exclusive
+ownership against unknown firmware. Saved IRQ polarity/sharing is a manual
+profile qualification; the common resource object retains number/trigger only.
+
+The source issues the root capability before MMIO publication and immediately
+records irreversible exposure. All later outcomes retain pages, maps, claims
+and handler for the rest of the boot. Terminal outcomes mask the owned IRQ
+once. Before exposure, checked rollback can release ownership; a rollback
+failure retains the remaining resources. There is no qualified hot detach,
+runtime teardown, suspend, retry or warm-reboot reclamation protocol.
+
+TERMINATE polling is limited to 100 ms and 10001 reads. Reply polling is limited
+to one second and 1001 visits, with message limits and finite counter fallbacks.
+These limits cover device polls. Inherited native GIC and AML waits do not have
+those wall-clock guarantees. Fixed SWITCHED_IN and PONG are separate results;
+no GO, codec job, framebuffer or arbitrary RPC is sent.
+
+Run `sh ember/tools/cixvpu-boot-contract.sh` from the repository root.
+`CIXVPU_BOOT_ANALYZE=1` adds Cppcheck and host CSA. `CC`, `CFLAGS` and
+`TEST_RUNNER` select compilation and execution. `CIXVPU_BOOT_EVIDENCE` preserves
+a fresh output directory, and `CIXVPU_BOOT_SOURCE` selects a source-copy mutant.
+The linked fixture executes the actual native control and boot bodies plus
+actual DMA, preparation, MMU and ring helpers. Native platform services alone
+are modeled. It passes 24132 reported checks, including 5242 legacy checks;
+the imported DMA fixture also has fail-fast internal assertions.
+
+GCC16 path analysis, host CSA and ASan/UBSan pass. Seven compiled runtime
+mutations are detected. Native GCC16 passes; native CSA retains four inherited
+bitops findings per unit. All-category Cppcheck retains explicit header,
+isolated export and native-service signature findings. No category is disabled.
+These are source results. Hardware DMA, firmware execution, IRQ delivery and
+video acceptance remain pending.
+
 ## Initially masked native IRQ registration
 
 The ARM PIC API `intr_establish_xname_masked` reserves an exclusive native

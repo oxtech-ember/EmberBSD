@@ -7,7 +7,8 @@ name: CIX platform resource contracts
       - '.github/workflows/cix-platform.yml'
       - 'sys/dev/acpi/cixclk_acpi.*'
       - 'sys/dev/acpi/cixreset_acpi.*'
-      - 'sys/dev/acpi/cixvpu_acpi_control.*'
+      - 'sys/dev/acpi/cixvpu_acpi_control*'
+      - 'sys/dev/acpi/cixvpu_acpi_boot.*'
       - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/acpi_power.*'
       - 'sys/dev/acpi/xhci_acpi.c'
@@ -39,7 +40,7 @@ name: CIX platform resource contracts
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cixreset-*'
-      - 'ember/tools/cixvpu-control-*'
+      - 'ember/tools/cixvpu-*'
       - 'ember/tools/acpi-power-*'
       - 'ember/tools/xhci-acpi-rootbus-*'
       - 'ember/tools/cixscmi-*'
@@ -51,7 +52,8 @@ name: CIX platform resource contracts
       - '.github/workflows/cix-platform.yml'
       - 'sys/dev/acpi/cixclk_acpi.*'
       - 'sys/dev/acpi/cixreset_acpi.*'
-      - 'sys/dev/acpi/cixvpu_acpi_control.*'
+      - 'sys/dev/acpi/cixvpu_acpi_control*'
+      - 'sys/dev/acpi/cixvpu_acpi_boot.*'
       - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/acpi_power.*'
       - 'sys/dev/acpi/xhci_acpi.c'
@@ -83,7 +85,7 @@ name: CIX platform resource contracts
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cixreset-*'
-      - 'ember/tools/cixvpu-control-*'
+      - 'ember/tools/cixvpu-*'
       - 'ember/tools/acpi-power-*'
       - 'ember/tools/xhci-acpi-rootbus-*'
       - 'ember/tools/cixscmi-*'
@@ -110,13 +112,14 @@ jobs:
           sparse-checkout: |
             /ember/tools/cixclk-*
             /ember/tools/cixreset-*
-            /ember/tools/cixvpu-control-*
+            /ember/tools/cixvpu-*
             /ember/tools/acpi-power-*
             /ember/tools/xhci-acpi-rootbus-*
             /ember/tools/cixscmi-*
             /sys/dev/acpi/cixclk_acpi.*
             /sys/dev/acpi/cixreset_acpi.*
-            /sys/dev/acpi/cixvpu_acpi_control.*
+            /sys/dev/acpi/cixvpu_acpi_control*
+            /sys/dev/acpi/cixvpu_acpi_boot.*
             /sys/dev/acpi/cixvpu_acpi.c
             /sys/dev/acpi/acpi_power.*
             /sys/arch/arm/acpi/acpi_machdep.c
@@ -148,6 +151,7 @@ jobs:
           CIXCLK_ANALYZE: '1'
           CIXRESET_ANALYZE: '1'
           CIXVPU_CONTROL_ANALYZE: '1'
+          CIXVPU_BOOT_ANALYZE: '1'
           XHCI_ACPI_ANALYZE: '1'
           CIXSCMI_ANALYZE: '1'
           IORT_DMA_ANALYZE: '1'
@@ -160,6 +164,7 @@ jobs:
           PIC_ESTABLISH_ANALYZE=1 sh ember/tools/pic-establish-contract.sh sys/arch/arm/pic/pic.c "$RUNNER_TEMP/pic-establish-analysis"
           sh ember/tools/pic-teardown-contract.sh sys/arch/arm/pic/pic.c "$RUNNER_TEMP/pic-teardown-analysis"
           sh ember/tools/cixvpu-control-contract.sh
+          sh ember/tools/cixvpu-boot-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
       - name: Run ASan and UBSan
@@ -176,6 +181,7 @@ jobs:
           sh ember/tools/pic-establish-contract.sh sys/arch/arm/pic/pic.c "$RUNNER_TEMP/pic-establish-sanitized"
           sh ember/tools/pic-teardown-contract.sh sys/arch/arm/pic/pic.c "$RUNNER_TEMP/pic-teardown-sanitized"
           sh ember/tools/cixvpu-control-contract.sh
+          sh ember/tools/cixvpu-boot-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
       - name: Run complete contracts under Memcheck
@@ -200,5 +206,6 @@ jobs:
           sh ember/tools/pic-teardown-contract.sh sys/arch/arm/pic/pic.c "$RUNNER_TEMP/pic-teardown-memcheck"
           "$TEST_RUNNER" "$RUNNER_TEMP/pic-teardown-memcheck/check"
           sh ember/tools/cixvpu-control-contract.sh
+          sh ember/tools/cixvpu-boot-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
