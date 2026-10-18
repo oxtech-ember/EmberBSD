@@ -145,16 +145,43 @@ bcm2712_display_acpi_observe(device_t dev, ACPI_HANDLE handle)
 {
 	struct bcm2712_display_contract contract;
 	struct bcm2712_display_clocks clocks;
+	struct bcm2712_display_clock_failure failure;
 	int error;
 
-	error = bcm2712_display_acpi_query(dev, handle, &contract, &clocks);
+	error = bcm2712_display_acpi_resources(dev, handle, &contract);
 	if (error != 0) {
 		aprint_normal_dev(dev,
-		    "display contract unavailable: error %d; no display MMIO\n",
+		    "display resources unavailable: error %d; no display MMIO\n",
 		    error);
 		return;
 	}
 	aprint_normal_dev(dev,
-	    "display contract v%u and firmware clock snapshot validated; "
-	    "no display MMIO, HPD or KMS\n", contract.version);
+	    "display resources v%u validated: %u MMIO, %u IRQ; "
+	    "no display MMIO\n", contract.version,
+	    BCM2712_DISPLAY_NMEM, BCM2712_DISPLAY_NIRQ);
+	error = bcm2712_display_read_clocks_report(bcm2712_display_exchange,
+	    NULL, &clocks, &failure);
+	if (error != 0) {
+		if (failure.valid) {
+			const char *check;
+
+			check = failure.check == BCM2712_DISPLAY_CLOCK_STATE ?
+			    "state != 1" :
+			    failure.check == BCM2712_DISPLAY_CLOCK_RATE ?
+			    "rate == 0" : "rate below HSM minimum";
+			aprint_normal_dev(dev,
+			    "firmware clock snapshot unavailable: error %d; "
+			    "validated clock %u check tag %#x (%s), "
+			    "state %#x rate %u Hz; no display MMIO\n",
+			    error, failure.clock.id, failure.check_tag, check,
+			    failure.clock.state, failure.clock.rate);
+		} else {
+			aprint_normal_dev(dev,
+			    "firmware clock snapshot unavailable: error %d; "
+			    "no complete validated response; no display MMIO\n", error);
+		}
+		return;
+	}
+	aprint_normal_dev(dev,
+	    "firmware clock snapshot validated; no display MMIO, HPD or KMS\n");
 }

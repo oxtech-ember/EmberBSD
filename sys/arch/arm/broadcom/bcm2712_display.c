@@ -117,8 +117,9 @@ bcm2712_display_decode(uint64_t contract_version,
 }
 
 int
-bcm2712_display_read_clocks(bcm2712_display_exchange_fn exchange, void *arg,
-    struct bcm2712_display_clocks *out)
+bcm2712_display_read_clocks_report(bcm2712_display_exchange_fn exchange, void *arg,
+    struct bcm2712_display_clocks *out,
+    struct bcm2712_display_clock_failure *failure)
 {
 	static const uint32_t ids[BCM2712_DISPLAY_NCLOCK] = {
 		VCPROP_CLK_M2MC, VCPROP_CLK_PIXEL_BVB, VCPROP_CLK_CORE,
@@ -129,8 +130,11 @@ bcm2712_display_read_clocks(bcm2712_display_exchange_fn exchange, void *arg,
 	};
 	struct bcm2712_display_clocks result;
 	uint32_t request[8] __aligned(16), values[2];
+	enum bcm2712_display_clock_check check;
 	unsigned int i, j;
 
+	if (failure != NULL)
+		memset(failure, 0, sizeof(*failure));
 	if (exchange == NULL || out == NULL)
 		return EINVAL;
 	memset(&result, 0, sizeof(result));
@@ -154,14 +158,38 @@ bcm2712_display_read_clocks(bcm2712_display_exchange_fn exchange, void *arg,
 				return EIO;
 			values[j] = le32toh(request[6]);
 		}
-		if (values[0] != 1 || values[1] == 0 ||
-		    (ids[i] == VCPROP_CLK_M2MC &&
-		    values[1] < BCM2712_DISPLAY_HSM_MIN_RATE))
-			return EBUSY;
+		if (values[0] != 1)
+			check = BCM2712_DISPLAY_CLOCK_STATE;
+		else if (values[1] == 0)
+			check = BCM2712_DISPLAY_CLOCK_RATE;
+		else if (ids[i] == VCPROP_CLK_M2MC &&
+		    values[1] < BCM2712_DISPLAY_HSM_MIN_RATE)
+			check = BCM2712_DISPLAY_CLOCK_HSM_MIN;
+		else
+			goto valid;
+		if (failure != NULL) {
+			failure->clock.id = ids[i];
+			failure->clock.state = values[0];
+			failure->clock.rate = values[1];
+			failure->check = check;
+			failure->check_tag = tags[check ==
+			    BCM2712_DISPLAY_CLOCK_STATE ? 0 : 1];
+			failure->valid = true;
+		}
+		return EBUSY;
+valid:
 		result.clock[i].id = ids[i];
 		result.clock[i].state = values[0];
 		result.clock[i].rate = values[1];
 	}
 	*out = result;
 	return 0;
+}
+
+int
+bcm2712_display_read_clocks(bcm2712_display_exchange_fn exchange, void *arg,
+    struct bcm2712_display_clocks *out)
+{
+
+	return bcm2712_display_read_clocks_report(exchange, arg, out, NULL);
 }

@@ -129,6 +129,13 @@ Each clock must report state 1 and a nonzero rate.
 HSM must report at least 120 MHz, the minimum in the pinned firmware clock provider.
 The observer validates the complete response header, length, tag, echoed ID, and terminator.
 It sends at most eight requests and stops on the first failure.
+The observer reports resource validation separately from the clock snapshot.
+A rejected snapshot does not invalidate a successful version-1 resource check.
+For `EBUSY` after two valid clock responses, it reports the clock ID, state,
+rate, and failed state, nonzero-rate, or HSM-minimum check. The printed tag
+identifies that predicate; it does not identify a transport failure.
+Transport and malformed-response failures do not expose clock values.
+The existing query and clock-output APIs retain all-or-nothing results.
 It does not set rates, enable clocks, release resets, or claim a power domain.
 
 This snapshot is not a clock lifetime guarantee or a mode-specific rate check.
