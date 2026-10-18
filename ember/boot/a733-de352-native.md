@@ -8,7 +8,7 @@ console. A successful software contract does not establish visible HDMI.
 ## Entry and ownership
 
 Attachment validates FDT properties. It does not map, read or write display
-MMIO. An administrator must request `hw.sun60i_a733_de3520.stage=1` explicitly.
+MMIO. An administrator must request `hw.sun60ide0.stage=1` explicitly.
 Use the actual attached device name. The request runs one bounded experiment.
 No console output occurs inside the request handler.
 
