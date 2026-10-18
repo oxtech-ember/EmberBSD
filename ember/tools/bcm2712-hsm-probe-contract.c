@@ -1135,6 +1135,7 @@ static void irq_probe_tests(void)
 {
 	struct properties properties = { .expected = "EmberBSD:accepted-kernel",
 	    .cold = true, .hpd_mode = "irq0" };
+	const uint32_t stale[] = { 0x80, 0x100, 0x180 };
 	const char *order = "CSASQMcsasHNpmhIhhqXnursdURSD";
 	unsigned int i, stop;
 	int error;
@@ -1169,6 +1170,27 @@ static void irq_probe_tests(void)
 	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == 0);
 	CHECK(irq_api.waits == 0 && irq_api.signals == 2 && hsm_probe_irq0.phase == 2);
 	CHECK(irq_api.arg == &hsm_probe_irq0); irq_freed();
+	/* Owned masked sticky bits are accepted. Their raw 1 samples are stale. */
+	for (i = 0; i < sizeof(stale) / sizeof(stale[0]); i++) {
+		prepare_irq(); irq_api.aon_pending = stale[i];
+		queue_irq(stale[i], 1, 0, 1, false);
+		queue_irq(stale[i], 1, 0, 1, false); irq_api.before_create = 2;
+		cycle_irq();
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == 0);
+		CHECK(irq_api.creates == 1 && irq_api.waits == 2);
+		CHECK(hsm_probe_irq0.callbacks == 4 && hsm_probe_irq0.phase == 2);
+		CHECK(strstr(log_text, "connected 1 service_error 0 phase 0 stopping 0") != NULL);
+		CHECK(hw.hpd_reads == 5 && irq_api.aon_reads == 2 && hw.writes == 0);
+		irq_freed();
+		prepare_irq(); irq_api.aon_pending = stale[i];
+		queue_irq(stale[i], 1, 0, 1, false);
+		queue_irq(stale[i], 1, 0, 1, false); irq_api.before_create = 2;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == ETIMEDOUT);
+		CHECK(hsm_probe_irq0.callbacks == 2 && hsm_probe_irq0.phase == 0);
+		CHECK(irq_api.creates == 1 && irq_api.ns == UINT64_C(120000000000));
+		CHECK(hw.hpd_reads == 3 && hw.writes == 0);
+		irq_freed(); irq_no_success();
+	}
 	/* Raw levels advance the phase; repeated or reversed leaf labels do not. */
 	prepare_irq();
 	queue_irq(0x80, 0, 0, 1, false); queue_irq(0x80, 0, 0, 1, false);
@@ -1210,12 +1232,11 @@ static void irq_probe_tests(void)
 	prepare_irq(); queue_irq(0, 0, EIO, 1, false);
 	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == EIO);
 	CHECK(hw.hpd_reads == 2); irq_freed(); irq_no_success();
-	for (i = 0; i < 4; i++) {
+	for (i = 0; i < 3; i++) {
 		prepare_irq(); cycle_irq();
 		if (i == 0) irq_api.aon_mask &= ~0x80U;
 		if (i == 1) irq_api.aon_mask &= ~0x100U;
-		if (i == 2) irq_api.aon_pending = 0x80;
-		if (i == 3) hw.hpd_raw = 0x80000000U;
+		if (i == 2) hw.hpd_raw = 0x80000000U;
 		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &properties) == EBUSY);
 		CHECK(irq_api.creates == 0); irq_freed(); irq_no_success();
 	}

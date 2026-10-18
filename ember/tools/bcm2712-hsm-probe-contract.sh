@@ -111,7 +111,7 @@ for feature in ${HSM_PROBE_FEATURES:-off on}; do
             edid-range edid-length edid-inherited-gate edid-status edid-fault
             edid-active edid-validity edid-native-owner edid-null-owner edid-error
             edid-payload-order edid-payload-format edid-destroy
-            irq-range irq-owned irq-offset irq-mask irq-pending irq-label
+            irq-range irq-owned irq-offset irq-mask irq-pending irq-stale-phase irq-label
             irq-deadline irq-callback-deadline irq-destroy-lock irq-unmap
             irq-retain irq-fini irq-render'
     fi
@@ -129,7 +129,11 @@ for mutation in $mutations; do
         irq-mask)
             from='(mask & 0x180U) != 0x180U ||'; to='false ||' ;;
         irq-pending)
-            from='(pending & 0x180U) != 0 ||'; to='false ||' ;;
+            from='if ((mask & 0x180U) != 0x180U || (raw & 1U) == 0) {'
+            to='if ((mask & 0x180U) != 0x180U || (pending & 0x180U) != 0 || (raw & 1U) == 0) {' ;;
+        irq-stale-phase)
+            from='if (irq->phase == 0 && (raw & 1U) == 0)'
+            to='if (irq->phase == 0)' ;;
         irq-label)
             from='if (irq->phase == 0 && (raw & 1U) == 0)'
             to='if (irq->phase == 0 && (pending & 0x80U) != 0)' ;;

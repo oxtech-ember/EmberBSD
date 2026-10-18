@@ -13,8 +13,11 @@ unknown or non-string mode properties fail before HSM, mapping or MMIO.
 The probe holds HSM at least 120 MHz and a DVP0 lease. It requires inherited
 DVP gate bit3 clear, reset bit1 clear, no fault and no DVP mutation. It maps
 HDMI0 resource16 and AON resource12. Initial reads require raw HPD bit0 at
-`+0x1c8` set, owned AON bits7/8 masked at `+0x0c`, and neither bit pending at
-`+0x00`. The native provider owns only `0x180` on GSI271. Its MASK_SET,
+`+0x1c8` set and owned AON bits7/8 masked at `+0x0c`. It logs initial
+pending bits at `+0x00`. Owned masked sticky bits are accepted. The native
+provider masks and W1C-acknowledges them through its normal IRQ service.
+A stale callback that samples raw HPD 1 does not advance the level cycle.
+The native provider owns only `0x180` on GSI271. Its MASK_SET,
 MASK_CLEAR and W1C writes stay within that mask. The accepted path sends no controller,
 DDC, DVP, PHY or reset write. If an external owner changes the gate, native
 DVP acquire can attempt a gate write. Its mutation flag aborts before either

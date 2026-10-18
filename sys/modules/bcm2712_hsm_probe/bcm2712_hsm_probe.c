@@ -175,8 +175,7 @@ hsm_probe_irq_cycle(device_t dev, const struct bcm2712_display_contract *contrac
 	aprint_normal_dev(dev, "HPD IRQ0 initial: AON pending %#x mask %#x "
 	    "raw %#x connected %u; owned bits %#x\n", pending, mask,
 	    raw, raw & 1U, 0x180);
-	if ((mask & 0x180U) != 0x180U || (pending & 0x180U) != 0 ||
-	    (raw & 1U) == 0) {
+	if ((mask & 0x180U) != 0x180U || (raw & 1U) == 0) {
 		error = EBUSY;
 		goto known_error;
 	}
