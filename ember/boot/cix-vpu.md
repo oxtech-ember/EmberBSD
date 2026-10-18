@@ -224,8 +224,10 @@ frame completion or output capacity is qualified.
 [EMBER64_CIXVPU_SLOT_PREPARE_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_SLOT_PREPARE_PROBE)
 uses plain EMBER64, manual UART2 console selection and VPU `flags 0x9`.
 It selects no SCMI service. Keep the working default and recovery entries.
-This is a source-tested manual diagnostic; its full kernel and physical run
-remain unverified.
+This manual diagnostic passed a full GCC16 kernel build and one physical warm
+boot on CIX P1 CD8180 with PHECDA UEFI 1.5 and EC 1.15.
+The tested source is `d956044f7fe434e535b5ab6044f1c9627d73f3af`.
+The running revision was checked through UART and authenticated SSH; FFS was clean.
 
 The existing mountroot callback reads, closes and hashes the same local
 user-provided firmware file. The synthetic CPU fixture uses width 2, height 4,
@@ -245,6 +247,13 @@ It does not qualify device coherency, firmware-visible pixel bytes or encoding.
 Actual-source orchestration tests check no hardware calls, exact source lifetime,
 all 401 zero-page views, once-only callbacks, sync ordering and retained failures.
 The separate IC tests check copied bytes, PTE words and poisoned bounce buffers.
+
+The native run checked all 401 zero pages, 394 mappings and 7 page tables.
+Preparation, initial sync, primary/close results and both cleanup results were zero.
+Neither DMA nor prepared owners remained. The kernel gzip SHA256 is
+`18e3e872d0d631f413f313512941054c99b0a8dec906a3e98ad7376782819f11`.
+This accepts native CPU preparation and pre-exposure cancellation only.
+It does not qualify device-visible pixels, an encoded frame or a cold/default boot.
 
 ## Manual CPU-only allocation probe
 

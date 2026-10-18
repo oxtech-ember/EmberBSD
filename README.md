@@ -266,7 +266,8 @@ on every board in the hardware catalog.
   checks page-rounded FRAME/BITSTREAM storage and excludes the complete RPC reserve.
   Explicit CPU preparation copies both planes and seals their unique page owners.
   A [manual CPU-only slot probe](ember/boot/cix-vpu.md#manual-cpu-only-slot-probe)
-  exercises allocation, copy, stopped PTE checks, initial sync and cancellation.
+  passed native allocation, copy, stopped PTE checks, initial sync and cancellation
+  in one physical warm boot.
   It does not expose addresses to the device or submit a codec frame.
   Every exposed owner remains held, and the terminal report masks the IRQ.
   This check submits no codec frame and does not qualify runtime DMA teardown.
