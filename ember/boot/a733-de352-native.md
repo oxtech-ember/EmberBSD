@@ -52,7 +52,7 @@ The complete samples must match before any IOMMU or NSI access.
 
 | Word | Required borrowed fields |
 | --- | --- |
-| IOMMU1_BGR,0x5b4 | reset 16 and gates2:0 set |
+| IOMMU1_BGR,0x5b4 | reset 16 and gates 2:0 set |
 | NSI_CFG_BGR,0x584 | reset 16 and gate 0 set |
 | MBUS_CLK,0x588 | gate 31 set, mux 1 PERIPH0-600M, DFS/update clear |
 | MBUS_MASTER,0x5e0 | IOMMU1 bit 1 and DE_SYS bit 11 set |
@@ -80,8 +80,9 @@ partly initialized data. Each new proof clears the previous capture.
 Before internal writes, every DE module clock must be closed and core 0
 reset must still be asserted. A closed gate does not prove that retained
 RTMX/DMA registers are inactive. The consumer never asserts reset to replace
-unknown state. All present channels must select core 0. Other output muxes must not select TV0. The probe
-releases internal core 0 reset, opens its gate, then releases the shared MBUS
+unknown state. All present channels must select core 0. Other output muxes
+must not select TV0. The probe releases internal core 0 reset, opens its gate,
+then releases the shared MBUS
 reset and opens its gate. It preserves other fields. It does not open WB.
 The older A733 top implementation supports this per-core gate operation;
 the newer DRM implementation also opens WB. The isolated native choice
@@ -136,14 +137,20 @@ It supplies the CCU fields, address map, IOMMU master assignment and TV0 facts.
 Within that BSP, `bsp/configs/linux-5.15/sun60iw2p1.dtsi` supplies the DE,
 IOMMU and NSI bindings and the 0x16 IOMMU version. The DTS is dual GPL-2.0+
 or MIT. `bsp/drivers/iommu/sunxi-iommu-v2.c` supplies per-instance and
-per-master address arithmetic and bypass meaning. `bsp/drivers/nsi/`
-supplies the NSI port register facts. These C sources have GPL notices.
+per-master address arithmetic and bypass meaning. Its SPDX identifier is
+GPL-2.0-or-later; an older comment also claims dual BSD/GPL terms. This code
+is used only for hardware facts. `bsp/drivers/bus/sunxi-nsi.c` and `.h` supply
+the NSI port facts. The C file has GPL-2.0-or-later SPDX and an older GPLv2
+notice. No implementation is imported under either interpretation.
 
 Under `bsp/drivers/drm/sunxi_device/hardware/lowlevel_de/`, `de_top.c`,
 `sunxi_de.c`, and the OVL/BLD/FMT/scaler/compression/backend platform and
 register headers supply the DE topology and bit positions. They are
-GPL-2.0-or-later. The older A733 disp2 `v35x/de_top.c` supplies the independent
-per-core clock field description. They are hardware references, not copied
+GPL-2.0-or-later. The older A733
+`bsp/drivers/video/sunxi/disp2/disp/de/lowlevel_v35x/de35x/de_top.c` supplies
+the per-core clock field description. It has GPL-2.0-or-later SPDX and an
+older GPLv2 notice. This cross-check is within the same BSP, not independent
+hardware evidence. They are hardware references, not copied
 implementation or a permissive driver dependency. See the linked
 [format contract](a733-de352-format.md) for the exact plane/list layout.
 
