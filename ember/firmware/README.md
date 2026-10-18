@@ -6,10 +6,7 @@ Set `CROSS_COMPILE` to the compiler prefix. Clang is not a target compiler.
 The compiler triplet and architecture macros remain unchanged.
 
 The host needs Git for source preparation, GNU Make, iASL, DTC, Python 3,
-and a current pyelftools module. The pinned TF-A shell argument helpers also
-need a host `sed` that accepts their grouped-command syntax. Stock macOS
-`sed` reports a syntax error. Supply a compatible host `sed` before a full
-build. These are existing upstream dependencies.
+and a current pyelftools module. These are existing upstream dependencies.
 A compiler identity check and the smoke tests below do not establish a
 complete firmware build or acceptance on a physical board.
 
@@ -102,3 +99,9 @@ alone does not establish ELF metadata. The separate injected
 `--no-as-needed -lgcc_s` control demonstrates an unintended runtime input;
 it does not claim that upstream normally requests this library. A static
 archive lookup control independently tests implicit search isolation.
+
+The pinned TF-A `make_helpers/utilities.mk` shell-argument helper uses a
+`sed` grouped command that stock macOS `sed` rejects. The tool-selection
+control records this diagnostic while checking its selected commands.
+This upstream portability issue remains a separate full-build boundary.
+The firmware profile does not install or require a replacement `sed`.
