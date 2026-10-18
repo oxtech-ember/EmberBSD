@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/* Actual new clock core and unchanged BSD HSM reference. Firmware is fake. */
+/* Actual clock core, HSM facade and frozen BSD HSM reference. Firmware is fake. */
 #if defined(__linux__) && !defined(_DEFAULT_SOURCE)
 #define _DEFAULT_SOURCE 1
 #endif
@@ -30,7 +30,19 @@
 #include "hsm-types.h"
 #include "properties.h"
 #include "clock-core.h"
+#include "hsm.h"
+/* Rename only public function symbols in the exact frozen reference. */
+#define bcm2712_hsm_init reference_init
+#define bcm2712_hsm_acquire reference_acquire
+#define bcm2712_hsm_update reference_update
+#define bcm2712_hsm_release reference_release
+#define bcm2712_hsm_fini reference_fini
 #include "hsm-reference.h"
+#undef bcm2712_hsm_init
+#undef bcm2712_hsm_acquire
+#undef bcm2712_hsm_update
+#undef bcm2712_hsm_release
+#undef bcm2712_hsm_fini
 
 static unsigned int checks;
 #define CHECK(e) do { checks++; if (!(e)) { \
@@ -127,8 +139,9 @@ exchange(void *arg, uint32_t *p, size_t length)
 	p[4] = htole32(VCPROPTAG_RESPONSE | 8);
 	p[6] = htole32(value);
 	if (f->bad_call == f->calls) {
-		CHECK(f->bad_word < words);
-		p[f->bad_word] = htole32(f->bad_value);
+		unsigned int word_index = f->bad_word == 9 ? (unsigned int)words - 1 : f->bad_word;
+		CHECK(word_index < words);
+		p[word_index] = htole32(f->bad_value);
 	}
 	return 0;
 }
@@ -160,62 +173,103 @@ hsm_equal(const struct bcm2712_clock *a, const struct bcm2712_hsm *b)
 }
 
 static void
-hsm_trace(uint32_t state, uint32_t rate, unsigned int fail, bool malformed)
+hsm_trace(uint32_t state, uint32_t rate, unsigned int fail, int malformed)
 {
 	struct firmware a = firmware_new(BCM2712_CLOCK_HSM, state, rate);
-	struct firmware b;
+	struct firmware b, c;
 	struct bcm2712_clock core;
-	struct bcm2712_hsm reference;
-	int actual, expected;
+	struct bcm2712_hsm reference, facade, saved;
+	int actual, expected, compatible;
 	unsigned int operation;
 
-	if (malformed) {
+	if (malformed >= 0) {
 		a.bad_call = fail;
-		a.bad_word = 5;
-		a.bad_value = VCPROP_CLK_PIXEL_BVB;
+		a.bad_word = malformed == 7 ? 9 : (unsigned int)malformed;
+		a.bad_value = 0xffffffff;
 	} else {
 		a.fail_call = fail;
 		a.fail_after_set = true;
 	}
-	b = a;
+	b = c = a;
+	memset(&saved, 0xa5, sizeof(saved));
+	memcpy(&reference, &saved, sizeof(reference));
+	memcpy(&facade, &saved, sizeof(facade));
 	actual = bcm2712_clock_init(&core, BCM2712_CLOCK_HSM, exchange, &a);
-	expected = bcm2712_hsm_init(&reference, exchange, &b);
-	CHECK(actual == expected);
+	expected = reference_init(&reference, exchange, &b);
+	compatible = bcm2712_hsm_init(&facade, exchange, &c);
+	CHECK(actual == expected && compatible == expected);
 	trace_equal(&a, &b);
-	if (actual != 0)
+	trace_equal(&c, &b);
+	if (actual != 0) {
+		CHECK(memcmp(&reference, &saved, sizeof(saved)) == 0);
+		CHECK(memcmp(&facade, &saved, sizeof(saved)) == 0);
 		return;
+	}
 	hsm_equal(&core, &reference);
+	hsm_equal(&core, &facade);
 	for (operation = 0; operation < 6; operation++) {
 		switch (operation) {
 		case 0:
 			actual = bcm2712_clock_acquire(&core, 0, 150000000);
-			expected = bcm2712_hsm_acquire(&reference, 0, 150000000);
+			expected = reference_acquire(&reference, 0, 150000000);
+			compatible = bcm2712_hsm_acquire(&facade, 0, 150000000);
 			break;
 		case 1:
 			actual = bcm2712_clock_acquire(&core, 1, 240000000);
-			expected = bcm2712_hsm_acquire(&reference, 1, 240000000);
+			expected = reference_acquire(&reference, 1, 240000000);
+			compatible = bcm2712_hsm_acquire(&facade, 1, 240000000);
 			break;
 		case 2:
 			actual = bcm2712_clock_update(&core, 0, 200000000);
-			expected = bcm2712_hsm_update(&reference, 0, 200000000);
+			expected = reference_update(&reference, 0, 200000000);
+			compatible = bcm2712_hsm_update(&facade, 0, 200000000);
 			break;
 		case 3:
 			actual = bcm2712_clock_release(&core, 1);
-			expected = bcm2712_hsm_release(&reference, 1);
+			expected = reference_release(&reference, 1);
+			compatible = bcm2712_hsm_release(&facade, 1);
 			break;
 		case 4:
 			actual = bcm2712_clock_release(&core, 0);
-			expected = bcm2712_hsm_release(&reference, 0);
+			expected = reference_release(&reference, 0);
+			compatible = bcm2712_hsm_release(&facade, 0);
 			break;
 		default:
 			actual = bcm2712_clock_fini(&core);
-			expected = bcm2712_hsm_fini(&reference);
+			expected = reference_fini(&reference);
+			compatible = bcm2712_hsm_fini(&facade);
 			break;
 		}
-		CHECK(actual == expected);
+		CHECK(actual == expected && compatible == expected);
 		hsm_equal(&core, &reference);
+		hsm_equal(&core, &facade);
 		trace_equal(&a, &b);
+		trace_equal(&c, &b);
 	}
+}
+
+static void
+facade_inputs(void)
+{
+	struct bcm2712_hsm inactive, saved;
+	struct firmware f = firmware_new(BCM2712_CLOCK_HSM, 0, 0);
+
+	CHECK(bcm2712_hsm_init(NULL, exchange, &f) == EINVAL);
+	memset(&inactive, 0xa5, sizeof(inactive));
+	memcpy(&saved, &inactive, sizeof(saved));
+	CHECK(bcm2712_hsm_init(&inactive, NULL, &f) == EINVAL);
+	CHECK(memcmp(&inactive, &saved, sizeof(saved)) == 0);
+	/* Only initialized is a valid field in this inactive object. */
+	inactive.initialized = false;
+	CHECK(bcm2712_hsm_acquire(NULL, 0, 1) == ENXIO);
+	CHECK(bcm2712_hsm_update(NULL, 0, 1) == ENXIO);
+	CHECK(bcm2712_hsm_release(NULL, 0) == ENXIO);
+	CHECK(bcm2712_hsm_fini(NULL) == ENXIO);
+	CHECK(bcm2712_hsm_acquire(&inactive, 0, 1) == ENXIO);
+	CHECK(bcm2712_hsm_update(&inactive, 0, 1) == ENXIO);
+	CHECK(bcm2712_hsm_release(&inactive, 0) == ENXIO);
+	CHECK(bcm2712_hsm_fini(&inactive) == ENXIO);
+	CHECK(f.calls == 0);
 }
 
 static void
@@ -481,16 +535,18 @@ finish_failures(void)
 int
 main(void)
 {
-	unsigned int profile, state, rate, failure, bad, operation, step, word;
+	unsigned int profile, state, rate, failure, operation, step, word;
 	static const uint32_t initial_rates[] = { 0, 120000000, 240000000 };
 	static const unsigned int fields[] = { 0, 1, 2, 3, 4, 5, 7 };
 
+	facade_inputs();
 	initialization();
 	for (state = 0; state <= 1; state++) {
 		for (rate = 0; rate < sizeof(initial_rates) / sizeof(initial_rates[0]); rate++) {
 			for (failure = 0; failure <= 45; failure++) {
-				for (bad = 0; bad <= 1; bad++)
-					hsm_trace(state, initial_rates[rate], failure, bad);
+				hsm_trace(state, initial_rates[rate], failure, -1);
+				for (word = 0; word < sizeof(fields) / sizeof(fields[0]); word++)
+					hsm_trace(state, initial_rates[rate], failure, (int)fields[word]);
 			}
 		}
 	}

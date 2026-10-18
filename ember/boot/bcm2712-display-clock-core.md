@@ -2,11 +2,11 @@
 
 The [pure core](../../sys/arch/arm/broadcom/bcm2712_display_clock.c) is a source foundation for two fixed profiles:
 HSM firmware clock 13 and BVB firmware clock 14.
-It shares the BSD HSM packet validation, two-port minimum leases and fault policy.
-It has no native consumer or kernel configuration entry yet.
-The existing [native HSM owner](bcm2712-display-hsm.md), its headers and its status layout remain unchanged.
-Native BVB ownership and HSM facade migration are separate integration steps.
-No second installed clock stack is selected by this change.
+It shares the EmberBSD HSM packet validation, two-port minimum leases and fault policy.
+The HSM facade is the first native consumer.
+The [HSM compatibility facade](../../sys/arch/arm/broadcom/bcm2712_display_hsm.c) now calls this engine.
+The existing [native HSM owner](bcm2712-display-hsm.md), both HSM structures and their headers remain unchanged.
+The kernel selects the shared engine with `bcmv3d_acpi`. Native BVB ownership remains a separate step.
 
 ## Private interface
 
@@ -87,23 +87,28 @@ CLOCK_SKIP_MUTANTS=1 CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointe
     sh ember/tools/bcm2712-display-clock-contract.sh "$PWD"
 ```
 
-The test compiles the actual new core and the unchanged BSD HSM core.
+The test compiles the actual shared core, HSM facade and a [frozen EmberBSD HSM reference](../tools/fixtures/bcm2712-hsm-reference.md).
+The reference retains its exact source hash and is never selected by the kernel.
 It removes only kernel includes and the RCS declaration for the portable fixture.
 The firmware boundary is controlled. It does not model MMIO or native ownership.
-HSM return values, cached state and complete request bytes are compared operation by operation.
+Both implementations must match the reference return values, cached fields and complete request bytes.
+The comparison covers transport errors and each packet-envelope field at every operation boundary.
+The facade copies each field without structure casts. It exports fault and mutation state even after failure.
+It checks inactive objects before it imports their fields. Failed initialization leaves the output unchanged.
 Checks include initialization failures, both minima, critical BVB cleanup, current maximum changes,
 rounding, malformed packet fields and every SET/readback failure boundary.
 Causal mutants remove the corresponding guards.
+`CLOCK_MUTANTS='facade-fault facade-floor facade-flags facade-ready'` selects only the facade controls.
 
 `CC`, `CFLAGS`, `CLOCK_COMPILE_ONLY=1` and `CLOCK_OUTPUT` support a cross-built fixture.
 `TEST_RUNNER` can invoke a supported memory checker.
 The actual kernel translation unit must also compile with the selected kernel's GCC16 flags and headers.
 A portable fixture does not replace that check.
-Native API integration, clock ownership, physical BVB control and PHY/KMS acceptance remain separate.
+A linked coherent kernel, native BVB ownership, physical BVB control and PHY/KMS acceptance remain separate checks.
 
 ## Sources
 
-- Existing BSD [HSM core](../../sys/arch/arm/broadcom/bcm2712_display_hsm.c).
+- Frozen EmberBSD [HSM reference](../tools/fixtures/bcm2712-hsm-reference.md).
 - Raspberry Pi Linux a1a601d4857978d810175365550c4536701df4ed:
   [firmware clock policy](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/clk/bcm/clk-raspberrypi.c#L157-L161),
   [firmware MIN/MAX](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/clk/bcm/clk-raspberrypi.c#L375-L417),

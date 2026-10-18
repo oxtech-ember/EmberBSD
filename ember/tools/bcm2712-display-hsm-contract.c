@@ -29,6 +29,8 @@
 #include "display.h"
 #include "hsm-types.h"
 #include "properties.h"
+#include "clockvar.h"
+#include "clock.h"
 #include "hsm.h"
 
 static unsigned int checks;

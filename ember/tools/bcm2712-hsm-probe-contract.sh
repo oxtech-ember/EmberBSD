@@ -5,7 +5,7 @@ src=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/bcm2712-hsm-probe.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 echo "HSM probe temporary directory: $work"
-for unit in hsm hsm_acpi dvp dvp_acpi; do
+for unit in clock hsm hsm_acpi dvp dvp_acpi; do
     sed '/^#include /d; /^__KERNEL_RCSID(/d' \
         "$src/sys/arch/arm/broadcom/bcm2712_display_${unit}.c" > "$work/$unit.h"
 done
@@ -23,11 +23,12 @@ for macro in timespeccmp timespecsub; do
     echo '#endif' >> "$work/time-ops.h"
 done
 cp "$src/sys/arch/arm/broadcom/bcm2712_display_hsm.h" "$work/hsm-types.h"
+cp "$src/sys/arch/arm/broadcom/bcm2712_display_clockvar.h" "$work/clockvar.h"
 cp "$src/sys/arch/arm/broadcom/bcm2712_display.h" "$work/display.h"
 awk '/^#ifdef _KERNEL/ { kernel=1; next } kernel && /^#endif/ { kernel=0; next } !/^#include / { print }' \
     "$src/sys/arch/arm/broadcom/bcm2712_display_irq.h" > "$work/irq-types.h"
 cp "$src/ember/tools/bcm2712-display-hsm-contract.c" "$work/hsm-services.c"
-awk '/^#define[ \t]+(VCPROP_CLK_M2MC|VCPROP_CLK_PIXEL_BVB|VCPROP_CLK_CORE|VCPROP_CLK_DISP|VCPROP_REQ_SUCCESS|VCPROPTAG_RESPONSE|VCPROPTAG_GET_CLOCKSTATE|VCPROPTAG_GET_CLOCKRATE|VCPROPTAG_GET_MAX_CLOCKRATE|VCPROPTAG_SET_CLOCKSTATE|VCPROPTAG_SET_CLOCKRATE)[ \t]/' \
+awk '/^#define[ \t]+(VCPROP_CLK_M2MC|VCPROP_CLK_PIXEL_BVB|VCPROP_CLK_CORE|VCPROP_CLK_DISP|VCPROP_REQ_SUCCESS|VCPROPTAG_RESPONSE|VCPROPTAG_GET_CLOCKSTATE|VCPROPTAG_GET_CLOCKRATE|VCPROPTAG_GET_MIN_CLOCKRATE|VCPROPTAG_GET_MAX_CLOCKRATE|VCPROPTAG_SET_CLOCKSTATE|VCPROPTAG_SET_CLOCKRATE)[ \t]/' \
     "$src/sys/arch/evbarm/rpi/vcprop.h" > "$work/properties.h"
 for pair in display-core:bcm2712_display.c dvp-types:bcm2712_display_dvp.h; do
     name=${pair%%:*}; input=${pair#*:}

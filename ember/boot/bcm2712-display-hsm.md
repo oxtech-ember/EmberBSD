@@ -73,7 +73,8 @@ HSM_SKIP_MUTANTS=1 CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer 
     sh ember/tools/bcm2712-display-hsm-contract.sh "$PWD"
 ```
 
-The HSM test compiles the actual core and native adapter.
+The HSM test compiles the actual [shared clock engine and HSM facade](bcm2712-display-clock-core.md),
+and the unchanged native adapter. The public HSM structures and signatures are unchanged.
 Only ACPI, mailbox, allocation, and kernel synchronization boundaries are replaced.
 The adapter test uses a real host pthread mutex and concurrent port acquisition.
 The resource test separately compiles the actual ACPI parser.
