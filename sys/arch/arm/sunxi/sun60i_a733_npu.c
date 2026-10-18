@@ -202,16 +202,15 @@ sun60i_npu_stage_clocks(struct sun60i_npu_softc *sc)
 	return 0;
 }
 
-/* The identification triple at fixed offsets of the NPU window. */
 /*
- * One bounded identification read of the fixed offsets. The PID is a
- * 64-bit read at 0x30; the revision and date sit at 0x24 and 0x28.
+ * BSP vip2 reads a 32-bit PID at 0x30, revision at 0x24 and date at 0x28.
+ * Keep all accesses inside the 0x34-byte identification window.
  */
 static int
 sun60i_npu_read_ids(struct sun60i_npu_softc *sc)
 {
 	bus_space_handle_t bsh;
-	uint32_t t;
+	uint32_t pid, revision, date;
 	int error;
 
 	error = bus_space_map(sc->sc_bst, A733_NPU_BASE, A733_NPU_ID_SIZE,
@@ -219,14 +218,14 @@ sun60i_npu_read_ids(struct sun60i_npu_softc *sc)
 	if (error != 0)
 		return error;
 	error = 0;
-	if (bus_space_peek_8(sc->sc_bst, bsh, A733_NPU_ID_PID,
-	    &sc->sc_pid) != 0)
+	if (bus_space_peek_4(sc->sc_bst, bsh, A733_NPU_ID_PID, &pid) != 0 ||
+	    bus_space_peek_4(sc->sc_bst, bsh, 0x24, &revision) != 0 ||
+	    bus_space_peek_4(sc->sc_bst, bsh, A733_NPU_ID_DATE, &date) != 0) {
 		error = EFAULT;
-	if (bus_space_peek_4(sc->sc_bst, bsh, 0x24, &t) == 0) {
-		sc->sc_rev = t;
-		if (bus_space_peek_4(sc->sc_bst, bsh, A733_NPU_ID_DATE,
-		    &t) == 0)
-			sc->sc_date = t;
+	} else {
+		sc->sc_pid = pid;
+		sc->sc_rev = revision;
+		sc->sc_date = date;
 	}
 	bus_space_unmap(sc->sc_bst, bsh, A733_NPU_ID_SIZE);
 	return error;

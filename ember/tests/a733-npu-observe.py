@@ -45,10 +45,17 @@ def main():
             abi.append(re.search(r"^struct vip_drv_" + name + r" \{.*?^};",
                                  driver, re.MULTILINE | re.DOTALL).group(0))
         (work / "vip-abi.h").write_text("\n".join(abi) + "\n")
+        (work / "npu-register-defs.h").write_text("\n".join(
+            line for line in driver.splitlines()
+            if re.match(r"#define (A733_NPU_|VIP_STATUS_)", line)) + "\n")
+        (work / "npu-registers.h").write_text(
+            function(driver, "sun60i_npu_read_ids", "int") +
+            function(driver, "sun60i_npu_vip_read_reg", "int"))
         flags = ["-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter"]
         flags += shlex.split(os.environ.get("NPU_TEST_CFLAGS", ""))
         compiler = shlex.split(os.environ.get("CC", "cc"))
-        for name in ("a733-npu-observe-contract", "a733-npu-vip-smoke-contract"):
+        for name in ("a733-npu-observe-contract", "a733-npu-vip-smoke-contract",
+                     "a733-npu-register-contract"):
             binary = work / name
             subprocess.run(compiler + flags + ["-I" + str(work),
                 str(root / "ember/tools" / (name + ".c")), "-o", str(binary)], check=True)

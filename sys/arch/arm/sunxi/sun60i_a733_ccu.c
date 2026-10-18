@@ -1290,7 +1290,7 @@ sun60i_a733_ccu_npu_prepare(struct clk *npu, const void *owner, bool *retained)
 	*retained = true;
 	/* npu_parents[2] = pll-periph0-600M; GPU uses index 3 = 400M. */
 	int error = sun60i_a733_accel_write(sc, NPU_CLK_REG,
-	    ACCEL_CLK_SEL | __BITS(3,0), __SHIFTIN(2, ACCEL_CLK_SEL));
+	    ACCEL_CLK_SEL | __BITS(4,0), __SHIFTIN(2, ACCEL_CLK_SEL));
 	mutex_exit(&sun60i_gpu_lease.lock);
 	return error;
 }

@@ -70,7 +70,8 @@ result cannot establish accelerator execution.
 ## Shared-resource limit
 
 `sun60i_a733_ccu_npu_prepare()` selects the running PERIPH0-600M parent.
-It does not enable PLL_NPU. The existing coarse GPU clock lease rejects
+It clears the complete five-bit NPU divider and keeps unrelated module
+fields intact. It does not enable PLL_NPU. The existing coarse GPU clock lease rejects
 this call with EBUSY while another GPU owner is retained. NPU preparation
 also sets that lease's attempted flag without acquiring its owner. This
 is not a complete NPU reservation. Keep the guard in place until separate
@@ -92,6 +93,11 @@ with narrow host doubles. No NPU MMIO or clock/reset APIs are supplied.
 It also compiles the complete production smoke probe and tests success,
 wrong PID, both error channels, and cleanup failures. Layout assertions
 compare the probe structures with the production driver structures.
+The register control executes the actual 32-bit PID/revision/date reader.
+It checks the 0x34-byte mapping, every read failure, and the unchanged
+READ_REG offset range. The reader publishes a new identifier triple only
+when all three reads succeed. The accelerator-clock control tests all 32
+stale divider values and preserves the existing GPU-owner exclusion.
 These are host controls. They do not validate device access, native ioctl
 copying, power sequencing, DMA, IRQ delivery, command completion, or a
 model result. The earlier [board evidence](../boards/orange-pi-zero-3w.md)

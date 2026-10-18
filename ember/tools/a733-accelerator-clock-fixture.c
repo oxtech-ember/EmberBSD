@@ -901,6 +901,34 @@ test_gpu_prepare(void)
 }
 
 static void
+test_npu_prepare_divider(void)
+{
+	const int npu_owner = 1, gpu_owner = 2;
+	unsigned start = checks;
+	bool retained;
+
+	/* NPU has a five-bit divider. Preserve its gate and unrelated bits. */
+	for (unsigned divider = 0; divider < 32; divider++) {
+		int error;
+		prepare_fixture(); retained = false;
+		REG(NPU_CLK_REG) = 0x81500000 | divider;
+		error = sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU),
+		    &npu_owner, &retained);
+		CHECK(error == 0 && retained && REG(NPU_CLK_REG) == 0x82500000);
+		CHECK(writes == 1 && write_regs[0] == NPU_CLK_REG);
+	}
+	/* Keep the existing exclusion under a GPU owner. */
+	prepare_fixture(); retained = false;
+	CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &gpu_owner) == 0);
+	CHECK(sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU), &npu_owner,
+	    &retained) == EBUSY);
+	CHECK(!retained && writes == 0 && !sun60i_gpu_lease.attempted);
+	CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0), &gpu_owner) == 0);
+	prepare_test = false;
+	printf("A733 NPU divider preparation: %u checks passed\n", checks - start);
+}
+
+static void
 test_gpu_update_completion(void)
 {
 	const unsigned clear_us[] = { 30, 0, 10000, 10010, UINT_MAX };
@@ -1300,6 +1328,7 @@ main(void)
 	test_dcxo();
 	test_periph_gates();
 	test_gpu_prepare();
+	test_npu_prepare_divider();
 	test_gpu_update_completion();
 	test_gpu_prepare_pll();
 	printf("A733 accelerator clocks: %u production checks passed\n", checks);
