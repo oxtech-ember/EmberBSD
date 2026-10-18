@@ -66,6 +66,10 @@ operate reset, activate VPU power, map VPU MMIO, allocate DMA, load firmware,
 establish an interrupt handler or register a video device.
 `flags 0x0` selects descriptions only. An explicit `flags 0x2` enables the
 bounded [identity probe](cix-platform.md); it still does not start DMA or firmware.
+The separate native profile uses SCMI128 and VPU3. One physical diagnostic boot
+accepts clock67 enable/disable and reads ID `0x56648002`, four cores and four slots.
+Checked reset/clock/power cleanup releases the controls. This does not qualify
+per-core memory repair, device-visible DMA, firmware execution or video queues.
 Parsing descriptions alone does not establish power, clock or reset ownership.
 The existing firmware, ring and page-entry helpers remain unused by the attachment.
 
@@ -204,8 +208,8 @@ read a hardware identity, allocate DMA or execute firmware.
 The default query had separately received the same status from GCLK for
 clock ID 67. These failures do not identify their firmware-side cause or
 prove the final electrical power state. Returning to an accepted kernel
-passed a clean FFS boot and network reconnection. Clock transport and
-capability discovery remain prerequisites for another activation trial.
+passed a clean FFS boot and network reconnection. The later native-backend receipt above qualifies a separate control and
+identity sequence. That result does not change this earlier AML failure.
 
 The resource validator passes 50 assertions with GCC 16.2.0 on macOS/AArch64,
 including GCC path analysis and a separate ASan/UBSan run.

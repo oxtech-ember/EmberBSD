@@ -85,7 +85,7 @@ until it confirms a safe state. Capability qualification, exclusive clock claims
 and serialized thread context belong to the caller. Only the explicit
 selector 128 service below can call this helper through the clock backend.
 All discovery selectors through 64 remain read-only.
-Physical gate control is unqualified.
+The physical receipt below qualifies one native enable/identity/disable sequence.
 
 ### Explicit native clock67 service
 
@@ -529,6 +529,34 @@ clean and the root marker persists. WPA2/CCMP, DHCP and five gateway probes pass
 on native channel149. Message7 availability does not prove permission to control
 clock67. Runtime concurrency, gate control, waveform, VPU access, DMA and codec
 firmware execution remain unqualified. The short ENTITY2.0 reply stays rejected.
+
+## Physical native clock67 and VPU identity receipt
+
+Kernel `dc121fb39d978d3e383c3c07a015ebf33e5d42ee` boots the explicit native
+profile on the board and stock firmware described above. GCC16.2 builds and
+links both the ordinary kernel without SCMI and the native diagnostic kernel.
+The [exact source CI](https://github.com/oxtech-ember/EmberBSD/actions/runs/39084296929)
+passes path/static analysis, ASan/UBSan and Memcheck, including service absence.
+Only the manual diagnostic boot payload changes; default and recovery remain.
+
+After the five readiness reads, CLOCK_CONFIG_SET67 enable uses token6 and
+matching request/reply header `0x185007`. Disable uses token7 and `0x1c5007`.
+Both replies have SMT length8, status0, helper/decode/ACK errors0 and stage COMPLETE.
+TX status stays `0x8` before and after both operations. The driver writes no ACK.
+The service retains1016 conservative calls and its boot-long transport lease.
+
+Between enable and disable, the identity probe reads ID `0x56648002`, four
+cores, four slots and SVN `0xe0c1afe1`. Power method/status checks, main reset
+pulse/readback and cleanup return success. The report has valid identity,
+released controls, primary0 and cleanup0. RCSU is observed deasserted, not pulsed.
+The next root is clean FFS; its marker survives. WPA2/CCMP and DHCP recover on
+native channel149, with five of five gateway replies.
+
+This is a bounded APB clock/control and identity check. It does not measure
+a gate waveform, electrical rails, enable latency or per-core memory repair.
+It does not operate functional clock271, expose DMA addresses, load firmware,
+establish IRQ transport or qualify video encoding or unlimited runtime PM.
+The short CLOCK2.0 entity reply remains rejected.
 
 ## Primary provenance
 

@@ -253,8 +253,10 @@ on every board in the hardware catalog.
   telemetry. The entity reply omits the CLOCK 2.0 enable-delay field and stays
   rejected. Its raw name prefix spells `vpu_apbclk`. Separate fixed three-BASE
   and five-request mixed read-only boots pass with unchanged ACK status. The
-  mixed batch confirms message7 availability. Runtime clock control remains
-  unqualified; the rate is not a measured waveform.
+  mixed batch confirms message7 availability. A separate native probe enables
+  and disables ID67, reads VPU ID `0x56648002` with four cores and four slots,
+  and completes checked reset/clock/power cleanup. Waveform, DMA, firmware
+  execution and general runtime clock control remain unqualified.
 - **Four H.265 views in Qt:** the [Qt Multimedia CPU profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/qt-four-streams)
   cross-builds Qt 6.12 with GCC16 and the common FFmpeg9 provider for amd64.
   The [four-player example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/media/qt-four-streams)
@@ -1066,7 +1068,9 @@ The base system shell is unchanged.
   helper shares checked wire and token state. An explicit native service shares
   the logical clock claim with AML, reserves a disable call and rejects further
   I/O after transport faults. A separate native identity profile uses that
-  service. Physical clock control remains unqualified.
+  service. On the physical board, fixed native enable/disable replies succeed,
+  VPU identity is valid and checked resource cleanup releases the controls.
+  DMA, firmware execution and video queues remain unqualified.
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request
   cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the
   active control request and preserves queued requests. Actual-function
