@@ -358,6 +358,7 @@ selects the native clock backend. Exact `flags 0x4` selects the
 after root mounts; it does not call this resource-control helper or select SCMI.
 Exact `flags 0x5` selects the [CPU preparation fixture](cix-vpu.md#manual-cpu-preparation-probe)
 with the same control restrictions.
+Exact `flags 0x6` selects the [native hardware profile](#manual-native-hardware-profile).
 Other flags are rejected. No mode starts device DMA, executes firmware or
 registers a video device.
 The separate [EMBER64_CIXVPU_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE)
@@ -365,6 +366,35 @@ configuration selects mode 2. Build it with the common GCC16 toolchain.
 Select its kernel manually and retain the working default and recovery paths.
 The callback reports primary and cleanup errors, ACPI statuses, identity
 validity and released controls. It runs at most once per attachment.
+
+## Manual native hardware profile
+
+[EMBER64_CIXVPU_PROFILE_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_PROFILE_PROBE)
+includes the native identity profile, preserving SCMI service128 and selecting
+VPU mode6. Build it with GCC16 and select it manually. Preserve a working default
+and recovery kernel. The profile requires boot context with `cold == 1`.
+It accepts only MEM0 `0x14230000`, MEM1 `0x14240000`, two `0x10000` spans,
+GSI358, `_CCA=0`, ID `0x56648002`, four cores, four slots and SVN `0xe0c1afe1`.
+Other otherwise valid locations or revisions return ENOTSUP for this profile;
+the general resource validator remains unrestricted.
+
+The existing native power, clock67 and reset sequence reads identity first.
+The same control context then maps MEM0 and reads six words at offsets
+`0x308`, `0x300`, `0x21c`, `0x10`, `0x14` and `0x18`. It also reads MEM1+`0x24`.
+These are raw STRAP_PIN2, STRAP_PIN0, PGCTRL, repair PASS/ENBL/BUSY and CLKFORCE.
+The report derives the reference usable-core mask from inverted STRAP_PIN2
+bits7:4. Sparse and zero masks remain valid observations.
+
+All bounds checks precede the seven reads. READ barriers preserve their order;
+the snapshot is not atomic. Both mappings are released before existing checked
+reset/clock/power cleanup. A valid raw report can coexist with cleanup failure.
+The active transaction includes the existing power/reset writes; the additional
+snapshot adds no writes, repair requests or functional-clock271 operations.
+No BUSCTRL or LSID read, DMA, firmware execution or interrupt setup occurs.
+`bus_space_read_4` has no errno; external-abort recovery is not implemented.
+Source contracts pass 5242 checks, host ASan/UBSan and six causal mutations.
+Native GCC16 passes; native Cppcheck/CSA retain only their recorded baseline.
+Physical profile acceptance, fresh core repair, rates and DMA routing are pending.
 
 The separate
 [EMBER64_CIXVPU_NATIVE_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE)

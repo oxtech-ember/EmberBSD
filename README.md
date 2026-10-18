@@ -255,6 +255,9 @@ on every board in the hardware catalog.
   pass actual-source checks, including separate modeled bounce backing and
   rejection of release after recorded exposure. No address handoff exists.
   Physical DMA, hardware publication and runtime teardown remain unfinished.
+  A separate [native hardware profile](ember/boot/cix-platform.md#manual-native-hardware-profile)
+  adds seven raw VPU observations under the same clock/reset/power claims.
+  Source checks pass; physical harvesting and repair-state observation is pending.
   ARM ACPI DMA tags preserve [IORT named-component address limits](ember/boot/cix-platform.md#arm-acpi-dma-address-limits)
   through the device's namespace handle. Actual-source checks cover the fix;
   physical stream routing still needs qualification.

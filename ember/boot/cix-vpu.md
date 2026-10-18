@@ -74,6 +74,9 @@ The separate native profile uses SCMI128 and VPU3. One physical diagnostic boot
 accepts clock67 enable/disable and reads ID `0x56648002`, four cores and four slots.
 Checked reset/clock/power cleanup releases the controls. This does not qualify
 per-core memory repair, device-visible DMA, firmware execution or video queues.
+A separate [manual native hardware profile](cix-platform.md#manual-native-hardware-profile)
+adds seven fixed raw state reads under the same controls. Source checks pass;
+physical acceptance remains pending.
 Parsing descriptions alone does not establish power, clock or reset ownership.
 The manual allocation profile below uses the parser, planner and allocator.
 The preparation profile also uses the page-entry encoders. Neither uses the ring.

@@ -1,0 +1,9 @@
+# Native clock67/identity probe with seven additional raw VPU observations.
+# Keep existing activation and checked cleanup. Do not start DMA or firmware.
+# Boot-only pinned resource/revision profile; select the kernel manually.
+# Preserve the working default and recovery kernels.
+
+include "arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE"
+
+no cixvpu* at acpi?
+cixvpu* at acpi? flags 0x6
