@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* AI-assisted finite acceptance probe. Display MMIO needs an explicit mode. */
+#include "opt_bcm2712_ddc.h"
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
@@ -15,6 +17,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arm/broadcom/bcm2712_display_acpi.h>
 #include <arm/broadcom/bcm2712_display_hsm.h>
 #include <arm/broadcom/bcm2712_display_dvp.h>
+#ifdef BCM2712_DISPLAY_DDC
+#include <arm/broadcom/bcm2712_display_ddc.h>
+#endif
 #include <drm/drm_device.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
@@ -31,12 +36,20 @@ enum hsm_probe_mode {
 	HSM_PROBE_OBSERVE,
 	HSM_PROBE_GATE0,
 	HSM_PROBE_HPD0,
-	HSM_PROBE_DDC0
+	HSM_PROBE_DDC0,
+	HSM_PROBE_EDID0
 };
 struct hsm_probe_ddc {
 	bus_space_handle_t bsc_handle, handle;
 	bool bsc_mapped, mapped, bsc_valid, valid;
 	uint32_t status, mask, ctl, enable, ctlhi;
+#ifdef BCM2712_DISPLAY_DDC
+	struct bcm2712_ddc_provider *owner;
+	struct bcm2712_ddc_status sample;
+	uint8_t edid[BCM2712_DDC_EDID_LENGTH];
+	int operation_error;
+	bool sample_valid, edid_valid;
+#endif
 };
 struct hsm_probe_dvp {
 	struct bcm2712_dvp_provider *owner;
@@ -157,6 +170,104 @@ hsm_probe_ddc0(device_t dev, const struct bcm2712_display_contract *contract,
 	return 0;
 }
 
+#ifdef BCM2712_DISPLAY_DDC
+/* Native callbacks and retained storage belong to the kernel provider. */
+static int
+hsm_probe_edid0(device_t dev, const struct bcm2712_display_contract *contract,
+    struct hsm_probe_dvp *dvp)
+{
+	const struct bcm2712_display_memory *bsc = &contract->memory[13];
+	const struct bcm2712_display_memory *memory = &contract->memory[14];
+	struct hsm_probe_ddc *ddc = &dvp->ddc;
+	int error;
+
+	dvp->stage = "EDID0-BSC-map";
+	error = bus_space_map(&arm_generic_bs_tag, bsc->address, bsc->length,
+	    0, &ddc->bsc_handle);
+	if (error != 0)
+		goto known_error;
+	ddc->bsc_mapped = true;
+	dvp->stage = "EDID0-map";
+	error = bus_space_map(&arm_generic_bs_tag, memory->address,
+	    memory->length, 0, &ddc->handle);
+	if (error != 0)
+		goto known_error;
+	ddc->mapped = true;
+	dvp->stage = "EDID0-create";
+	error = bcm2712_display_ddc_create(dev, contract, bsc,
+	    ddc->bsc_handle, memory, ddc->handle, &arm_generic_bs_tag,
+	    &ddc->owner);
+	if (error != 0) {
+		if (ddc->owner != NULL)
+			return error;
+		goto known_error;
+	}
+	if (ddc->owner == NULL)
+		return EIO;
+	dvp->stage = "EDID0-read";
+	ddc->operation_error = bcm2712_display_ddc_read_edid(ddc->owner,
+	    ddc->edid, sizeof(ddc->edid));
+	dvp->stage = "EDID0-status";
+	error = bcm2712_display_ddc_status(ddc->owner, &ddc->sample);
+	if (error != 0)
+		return error;
+	ddc->sample_valid = true;
+	aprint_normal_dev(dev, "EDID0 cached: native_fault %d core_fault %d "
+	    "active %u commands %u polls %u mutation_attempted %u "
+	    "BSC_status %#x status_valid %u BSC_mask %#x mask_valid %u\n",
+	    ddc->sample.fault, ddc->sample.core.fault,
+	    ddc->sample.core.active, ddc->sample.core.commands,
+	    ddc->sample.core.polls, ddc->sample.core.mutation_attempted,
+	    ddc->sample.bsc_status, ddc->sample.status_valid,
+	    ddc->sample.bsc_mask, ddc->sample.mask_valid);
+	if (!ddc->sample.status_valid || !ddc->sample.mask_valid)
+		return EIO;
+	if (ddc->sample.fault != 0 || ddc->sample.core.fault != 0 ||
+	    ddc->sample.core.active)
+		return ddc->sample.fault != 0 ? ddc->sample.fault :
+		    ddc->sample.core.fault != 0 ? ddc->sample.core.fault : EBUSY;
+	dvp->stage = "EDID0-destroy";
+	error = bcm2712_display_ddc_destroy(ddc->owner);
+	if (error != 0)
+		return error;
+	ddc->owner = NULL;
+	ddc->edid_valid = ddc->operation_error == 0;
+	goto unmap;
+known_error:
+	/* No native owner or controller write exists on this path. */
+	ddc->operation_error = error;
+unmap:
+	if (ddc->mapped) {
+		bus_space_unmap(&arm_generic_bs_tag, ddc->handle, memory->length);
+		ddc->mapped = false;
+	}
+	if (ddc->bsc_mapped) {
+		bus_space_unmap(&arm_generic_bs_tag, ddc->bsc_handle, bsc->length);
+		ddc->bsc_mapped = false;
+	}
+	dvp->stage = "EDID0-unmapped";
+	return 0;
+}
+
+/* Publish only after every provider and mapping has been released. */
+static void
+hsm_probe_edid0_payload(device_t dev, const uint8_t *edid)
+{
+	unsigned int i;
+
+	aprint_normal_dev(dev, "BCM2712_EDID0 begin length=128\n");
+	for (i = 0; i < BCM2712_DDC_EDID_LENGTH; i += 16)
+		aprint_normal_dev(dev, "BCM2712_EDID0 data %02x: "
+		    "%02x %02x %02x %02x %02x %02x %02x %02x "
+		    "%02x %02x %02x %02x %02x %02x %02x %02x\n", i,
+		    edid[i], edid[i + 1], edid[i + 2], edid[i + 3],
+		    edid[i + 4], edid[i + 5], edid[i + 6], edid[i + 7],
+		    edid[i + 8], edid[i + 9], edid[i + 10], edid[i + 11],
+		    edid[i + 12], edid[i + 13], edid[i + 14], edid[i + 15]);
+	aprint_normal_dev(dev, "BCM2712_EDID0 end length=128\n");
+}
+#endif
+
 /* The caller holds a verified HSM lease for this entire DVP/controller cycle. */
 static int
 hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
@@ -182,7 +293,8 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 	    "is not recoverable; no ACPI power or display-lifetime claim\n",
 	    mode == HSM_PROBE_OBSERVE ? "observe" :
 	    mode == HSM_PROBE_HPD0 ? "HPD0" :
-	    mode == HSM_PROBE_DDC0 ? "DDC0" : "gate0");
+	    mode == HSM_PROBE_DDC0 ? "DDC0" :
+	    mode == HSM_PROBE_EDID0 ? "EDID0" : "gate0");
 	dvp->stage = "create";
 	error = bcm2712_display_dvp_create(dev, &contract,
 	    &contract.memory[BCM2712_DVP_RESOURCE], &arm_generic_bs_tag,
@@ -205,8 +317,10 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 		return EBUSY;
 	if (mode == HSM_PROBE_DDC0 && (initial.gates & (1U << 3)) != 0)
 		return EBUSY;
+	if (mode == HSM_PROBE_EDID0 && (initial.gates & (1U << 3)) != 0)
+		return EBUSY;
 	if (mode == HSM_PROBE_GATE0 || mode == HSM_PROBE_HPD0 ||
-	    mode == HSM_PROBE_DDC0) {
+	    mode == HSM_PROBE_DDC0 || mode == HSM_PROBE_EDID0) {
 		dvp->stage = "acquire0";
 		error = bcm2712_display_dvp_acquire(dvp->owner, 0);
 		if (error != 0)
@@ -222,14 +336,22 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 		    status.gates != (initial.gates & ~(1U << 3)) ||
 		    status.resets != initial.resets)
 			return EIO;
-		if (mode == HSM_PROBE_HPD0 || mode == HSM_PROBE_DDC0) {
+		if (mode == HSM_PROBE_HPD0 || mode == HSM_PROBE_DDC0 ||
+		    mode == HSM_PROBE_EDID0) {
 			/* Acquire can write if an external owner changed the gate. */
 			if (status.mutation_attempted)
 				return EIO;
 			if (mode == HSM_PROBE_HPD0)
 				error = hsm_probe_hpd0(dev, &contract, dvp);
-			else
+			else if (mode == HSM_PROBE_DDC0)
 				error = hsm_probe_ddc0(dev, &contract, dvp);
+			else {
+#ifdef BCM2712_DISPLAY_DDC
+				error = hsm_probe_edid0(dev, &contract, dvp);
+#else
+				error = EOPNOTSUPP;
+#endif
+			}
 			if (error != 0)
 				return error;
 		}
@@ -426,11 +548,25 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 	if (error != 0)
 		goto stop;
 	/* Successful destroy invalidates provider. Do not read it again. */
+#ifdef BCM2712_DISPLAY_DDC
+	if (mode == HSM_PROBE_EDID0) {
+		if (dvp.ddc.operation_error != 0) {
+			aprint_error_dev(dev, "EDID0 cleanup complete; operation "
+			    "error %d; payload withheld; no retry\n",
+			    dvp.ddc.operation_error);
+			return dvp.ddc.operation_error;
+		}
+		if (!dvp.ddc.edid_valid)
+			return EIO;
+		hsm_probe_edid0_payload(dev, dvp.ddc.edid);
+	}
+#endif
 	aprint_normal_dev(dev, "HSM probe destroy succeeded; finite cycle "
 	    "complete; %s; no reset or clock-lifetime claim\n",
 	    mode == HSM_PROBE_CLOCK ? "no display MMIO or HPD" :
 	    mode == HSM_PROBE_HPD0 ? "one HPD0 sample" :
 	    mode == HSM_PROBE_DDC0 ? "DDC0 snapshot complete; no idle or transfer claim" :
+	    mode == HSM_PROBE_EDID0 ? "EDID0 base block complete" :
 	    "shared DVP resource10 only; no HPD");
 	return 0;
 stop:
@@ -466,6 +602,21 @@ retained:
 			    dvp.ddc.bsc_valid, dvp.ddc.valid);
 			hsm_probe_ddc_snapshot(dev, "retained cached", &dvp.ddc);
 		}
+#ifdef BCM2712_DISPLAY_DDC
+		if (mode == HSM_PROBE_EDID0) {
+			aprint_error_dev(dev, "EDID0 probe resource13 mapping retained "
+			    "%u resource14 mapping retained %u native owner retained "
+			    "%u operation error %d cached status valid %u; payload "
+			    "withheld\n", dvp.ddc.bsc_mapped, dvp.ddc.mapped,
+			    dvp.ddc.owner != NULL, dvp.ddc.operation_error,
+			    dvp.ddc.sample_valid);
+			if (dvp.ddc.sample_valid)
+				aprint_error_dev(dev, "EDID0 cached native fault %d "
+				    "core fault %d active %u; no current-state claim\n",
+				    dvp.ddc.sample.fault, dvp.ddc.sample.core.fault,
+				    dvp.ddc.sample.core.active);
+		}
+#endif
 		aprint_error_dev(dev, "DVP probe sample valid %u at %s; "
 		    "pre-failure cached values only; current status unknown\n",
 		    dvp.sample_stage != NULL,
@@ -508,9 +659,18 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 		if (prop_dictionary_get(properties, "hpd-mode") != NULL ||
 		    prop_dictionary_get(properties, "dvp-mode") != NULL ||
 		    !prop_dictionary_get_cstring_nocopy(properties, "ddc-mode",
-		    &ddc_mode) || strcmp(ddc_mode, "observe0") != 0)
+		    &ddc_mode))
 			return EINVAL;
-		mode = HSM_PROBE_DDC0;
+		if (strcmp(ddc_mode, "observe0") == 0)
+			mode = HSM_PROBE_DDC0;
+		else if (strcmp(ddc_mode, "edid0") == 0) {
+#ifndef BCM2712_DISPLAY_DDC
+			return EOPNOTSUPP;
+#else
+			mode = HSM_PROBE_EDID0;
+#endif
+		} else
+			return EINVAL;
 	} else if (prop_dictionary_get(properties, "hpd-mode") != NULL) {
 		if (prop_dictionary_get(properties, "dvp-mode") != NULL ||
 		    !prop_dictionary_get_cstring_nocopy(properties, "hpd-mode",
@@ -546,6 +706,6 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 	error = hsm_probe_cycle(minor->dev->dev, handle, mode);
 	drm_minor_release(minor);
 	if (error != 0)
-		aprint_error("HSM probe failed: %d; see retained stages; no retry\n", error);
+		aprint_error("HSM probe failed: %d; see reported stages; no retry\n", error);
 	return error;
 }

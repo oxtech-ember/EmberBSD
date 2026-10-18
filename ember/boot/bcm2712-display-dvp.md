@@ -157,6 +157,9 @@ Causal mutants test those boundaries. Host checks do not accept physical DDC.
 The separate opt-in [native DDC0 owner](bcm2712-display-ddc.md) provides the
 base-EDID API. Its source checks do not accept a physical transfer.
 
+The separate [finite EDID0 probe](bcm2712-display-edid-probe.md) requests a base
+EDID block through the native DDC provider in a matching experimental kernel.
+
 ### Physical DDC0 snapshot boundary
 
 One CM5 Rev1.0, BCM2712D0, 4 GiB, on a CM5-NANO-B carrier passed the finite

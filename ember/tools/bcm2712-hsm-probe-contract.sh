@@ -4,11 +4,12 @@ set -eu
 src=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/bcm2712-hsm-probe.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
+echo "HSM probe temporary directory: $work"
 for unit in hsm hsm_acpi dvp dvp_acpi; do
     sed '/^#include /d; /^__KERNEL_RCSID(/d' \
         "$src/sys/arch/arm/broadcom/bcm2712_display_${unit}.c" > "$work/$unit.h"
 done
-sed '/^#include /d; /^__KERNEL_RCSID(/d' \
+sed '/^#include /{ /"opt_bcm2712_ddc.h"/!d; }; /^__KERNEL_RCSID(/d' \
     "$src/sys/modules/bcm2712_hsm_probe/bcm2712_hsm_probe.c" > "$work/probe.h"
 cp "$src/sys/arch/arm/broadcom/bcm2712_display_hsm.h" "$work/hsm-types.h"
 cp "$src/sys/arch/arm/broadcom/bcm2712_display.h" "$work/display.h"
@@ -47,17 +48,94 @@ run()
         "$work/contract"
     fi
 }
-compile
-if [ -n "${HSM_PROBE_OUTPUT:-}" ]; then cp "$work/contract" "$HSM_PROBE_OUTPUT"; fi
-if [ "${HSM_PROBE_COMPILE_ONLY:-0}" = 1 ]; then exit 0; fi
-run
-if [ "${HSM_PROBE_SKIP_MUTANT:-0}" = 1 ]; then exit 0; fi
+# These are explicit fixture option configurations, not kernel-header fallbacks.
+# The native module requires the selected kernel's generated header.
+if [ -f "$src/sys/arch/arm/broadcom/bcm2712_display_ddc.h" ]; then
+    sed '/^#include /d' "$src/sys/arch/arm/broadcom/bcm2712_display_ddc.h" > "$work/ddc-types.h"
+    sed '/^#include /d' "$src/sys/dev/i2c/brcmstb_i2cvar.h" > "$work/brcm-types.h"
+    cp "$src/sys/dev/i2c/i2c_io.h" "$work/i2c-types.h"
+fi
 cp "$work/probe.h" "$work/probe-good.h"
-for mutation in fdt-full mode-fallback selected-reset hsm-held retained-map \
-    hpd-inherited-gate hpd-mutation hpd-offset hpd-held hpd-conflict \
-    ddc-range ddc-offset ddc-extra-read ddc-held ddc-mask ddc-busy-cleanup \
-    ddc-partial ddc-conflict ddc-value; do
+for feature in ${HSM_PROBE_FEATURES:-off on}; do
+    case "$feature" in
+        off) : > "$work/opt_bcm2712_ddc.h" ;;
+        on)
+            test -f "$work/ddc-types.h" || {
+                echo "The enabled fixture requires the published native DDC header" >&2
+                exit 1
+            }
+            echo '#define BCM2712_DISPLAY_DDC 1' > "$work/opt_bcm2712_ddc.h"
+            ;;
+        *) echo "Unknown HSM probe fixture feature: $feature" >&2; exit 1 ;;
+    esac
+    cp "$work/probe-good.h" "$work/probe.h"
+    compile
+    if [ "$feature" = off ]; then
+        "${NM:-nm}" "$work/contract" > "$work/symbols"
+        awk '
+            /bcm2712_display_ddc_/ { bad = 1 }
+            END { if (bad) exit 1 }
+        ' "$work/symbols"
+    fi
+    if [ -n "${HSM_PROBE_OUTPUT:-}" ]; then cp "$work/contract" "$HSM_PROBE_OUTPUT"; fi
+    if [ -n "${HSM_PROBE_EVIDENCE:-}" ]; then
+        mkdir -p "$HSM_PROBE_EVIDENCE/$feature"
+        cp "$work/"*.h "$work/hsm-services.c" \
+            "$src/ember/tools/bcm2712-hsm-probe-contract.c" "$HSM_PROBE_EVIDENCE/$feature/"
+    fi
+    if [ "${HSM_PROBE_COMPILE_ONLY:-0}" = 1 ]; then continue; fi
+    run
+    echo "HSM probe feature $feature: PASS"
+    if [ "${HSM_PROBE_SKIP_MUTANT:-0}" = 1 ]; then continue; fi
+    # Shared behavior is mutated once. The disabled feature gets its own gate mutant.
+    if [ "$feature" = off ]; then
+        mutations='edid-feature'
+    else
+        mutations='fdt-full mode-fallback selected-reset hsm-held retained-map
+            hpd-inherited-gate hpd-mutation hpd-offset hpd-held hpd-conflict
+            ddc-range ddc-offset ddc-extra-read ddc-held ddc-mask ddc-busy-cleanup
+            ddc-partial ddc-conflict ddc-value
+            edid-range edid-length edid-inherited-gate edid-status edid-fault
+            edid-active edid-validity edid-native-owner edid-null-owner edid-error
+            edid-payload-order edid-payload-format edid-destroy'
+    fi
+for mutation in $mutations; do
     case "$mutation" in
+        edid-feature) from='#ifndef BCM2712_DISPLAY_DDC'; to='#if 0' ;;
+        edid-range)
+            from='error = bcm2712_display_ddc_create(dev, contract, bsc,'
+            to='error = bcm2712_display_ddc_create(dev, contract, &contract->memory[12],' ;;
+        edid-length)
+            from='ddc->edid, sizeof(ddc->edid));'; to='ddc->edid, sizeof(ddc->edid) - 1);' ;;
+        edid-inherited-gate)
+            from='if (mode == HSM_PROBE_EDID0 && (initial.gates & (1U << 3)) != 0)'
+            to='if (false)' ;;
+        edid-status)
+            from='error = bcm2712_display_ddc_status(ddc->owner, &ddc->sample);'
+            to='error = bcm2712_display_ddc_status(ddc->owner, &ddc->sample); error = 0;' ;;
+        edid-fault)
+            from='if (ddc->sample.fault != 0 || ddc->sample.core.fault != 0 ||'
+            to='if (false || false ||' ;;
+        edid-validity)
+            from='if (!ddc->sample.status_valid || !ddc->sample.mask_valid)'
+            to='if (false)' ;;
+        edid-active)
+            from='ddc->sample.core.active)'; to='false)' ;;
+        edid-native-owner)
+            from='if (ddc->owner != NULL)'; to='if (false)' ;;
+        edid-null-owner)
+            from='if (ddc->owner == NULL)'; to='if (false)' ;;
+        edid-error)
+            from='return dvp.ddc.operation_error;'; to='return 0;' ;;
+        edid-payload-order)
+            from='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp);'
+            to='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp); if (mode == HSM_PROBE_EDID0) hsm_probe_edid0_payload(dev, dvp.ddc.edid);' ;;
+        edid-payload-format)
+            from='edid[i], edid[i + 1], edid[i + 2], edid[i + 3],'
+            to='edid[i + 1], edid[i], edid[i + 2], edid[i + 3],' ;;
+        edid-destroy)
+            from='error = bcm2712_display_ddc_destroy(ddc->owner);'
+            to='error = 0;' ;;
         fdt-full)
             from='fdt_check_full(fdt, fdt_totalsize(fdt))'; to='fdt_check_header(fdt)' ;;
         selected-reset)
@@ -102,7 +180,7 @@ for mutation in fdt-full mode-fallback selected-reset hsm-held retained-map \
             from='if (prop_dictionary_get(properties, "hpd-mode") != NULL ||'
             to='if (false ||' ;;
         ddc-value)
-            from='strcmp(ddc_mode, "observe0") != 0'; to='false' ;;
+            from='if (strcmp(ddc_mode, "observe0") == 0)'; to='if (true)' ;;
         retained-map)
             from='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp);'
             to='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp); if (error != 0 && dvp.mapped) bus_space_unmap(&arm_generic_bs_tag, dvp.handle, 0x10);' ;;
@@ -129,4 +207,5 @@ for mutation in fdt-full mode-fallback selected-reset hsm-held retained-map \
         exit 1
     fi
     echo "HSM/DVP/HPD/DDC probe: rejected causal mutant $mutation"
+done
 done

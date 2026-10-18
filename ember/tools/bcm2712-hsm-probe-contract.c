@@ -17,6 +17,7 @@
 #undef bcm2712_display_acpi_resources
 #include <stdarg.h>
 #include <libfdt.h>
+#include "opt_bcm2712_ddc.h"
 
 #ifndef EPROGMISMATCH
 #define EPROGMISMATCH ENOEXEC
@@ -108,9 +109,13 @@ static int AcpiGetHandle(ACPI_HANDLE parent, const char *path, ACPI_HANDLE *h)
 { assert(parent == NULL && strcmp(path, "\\_SB.GPU0") == 0); *h = &device_token; return 0; }
 static struct acpi_devnode *acpi_match_node(ACPI_HANDLE h)
 { assert(h == &device_token); return right_node ? &fixture_node : NULL; }
+static void payload_guard(void);
 static void capture(const char *format, va_list ap)
 {
-	int length = vsnprintf(log_text + log_size, sizeof(log_text) - log_size,
+	int length;
+
+	if (strstr(format, "BCM2712_EDID0") != NULL) payload_guard();
+	length = vsnprintf(log_text + log_size, sizeof(log_text) - log_size,
 	    format, ap);
 	assert(length >= 0 && (size_t)length < sizeof(log_text) - log_size);
 	log_size += (size_t)length;
@@ -132,7 +137,22 @@ struct bus_space { unsigned int token; };
 struct bus_space arm_generic_bs_tag;
 typedef struct bus_space *bus_space_tag_t;
 typedef uintptr_t bus_space_handle_t;
+#ifdef BCM2712_DISPLAY_DDC
+#include "i2c-types.h"
+#include "brcm-types.h"
+#include "ddc-types.h"
+struct bcm2712_ddc_provider { unsigned int token; };
+static struct {
+	struct bcm2712_ddc_provider owner;
+	unsigned int creates, reads, statuses, destroys;
+	int create_error, read_error, status_error, destroy_error, native_fault, core_fault;
+	bool live, read_called, status_called, active, create_owner, null_owner;
+	bool invalid_status, invalid_mask;
+	uint8_t bytes[BCM2712_DDC_EDID_LENGTH];
+} native_ddc;
+#endif
 #define BUS_SPACE_BARRIER_READ 1
+
 #define BUS_SPACE_BARRIER_WRITE 2
 static struct {
 	uint32_t gates, resets, pending;
@@ -140,7 +160,7 @@ static struct {
 	bool mapped, waiting, disturb_lease, hpd_mapped, external_gate;
 	uint32_t hpd_raw;
 	unsigned int hpd_maps, hpd_reads, hpd_unmaps;
-	bool bsc_mapped, ddc_mapped;
+	bool bsc_mapped, ddc_mapped, edid0;
 	uint32_t bsc_status, bsc_mask, ddc_ctl, ddc_enable, ddc_ctlhi;
 	unsigned int bsc_maps, bsc_reads, bsc_unmaps, ddc_maps, ddc_reads, ddc_unmaps;
 } hw;
@@ -173,7 +193,7 @@ static int bus_space_map(bus_space_tag_t tag, uint64_t base, uint64_t size,
 	}
 	if (base == UINT64_C(0x107d508200)) {
 		assert(tag == &arm_generic_bs_tag && size == 0x58 && flags == 0);
-		assert(hw.bsc_mapped && hw.bsc_reads == 2 && !hw.ddc_mapped);
+		assert(hw.bsc_mapped && hw.bsc_reads == (hw.edid0 ? 0U : 2U) && !hw.ddc_mapped);
 		assert(hw.ddc_maps == 0 && !hw.hpd_mapped);
 		held_hsm(); held_dvp(); hw.ddc_maps++;
 		if (step('E')) return EIO;
@@ -265,13 +285,17 @@ static void bus_space_unmap(bus_space_tag_t tag, bus_space_handle_t handle, uint
 {
 	if (handle == 31) {
 		assert(tag == &arm_generic_bs_tag && size == 0x58 && hw.ddc_mapped);
-		assert(hw.bsc_mapped && hw.bsc_reads == 2 && hw.ddc_reads == 3);
+		assert(hw.bsc_mapped && hw.bsc_reads == (hw.edid0 ? 0U : 2U) &&
+		    hw.ddc_reads == (hw.edid0 ? 0U : 3U));
+#ifdef BCM2712_DISPLAY_DDC
+		if (hw.edid0) assert(!native_ddc.live);
+#endif
 		held_hsm(); held_dvp(); (void)step('v');
 		hw.ddc_unmaps++; hw.ddc_mapped = false; return;
 	}
 	if (handle == 29) {
 		assert(tag == &arm_generic_bs_tag && size == 0x10 && hw.bsc_mapped);
-		assert(!hw.ddc_mapped && hw.ddc_unmaps == 1);
+		assert(!hw.ddc_mapped && (hw.edid0 || hw.ddc_unmaps == 1));
 		held_hsm(); held_dvp(); (void)step('w');
 		hw.bsc_unmaps++; hw.bsc_mapped = false; return;
 	}
@@ -345,7 +369,83 @@ static int bcm2712_display_dvp_release(struct bcm2712_dvp_provider *p, unsigned 
 static int bcm2712_display_dvp_destroy(struct bcm2712_dvp_provider *p)
 { held_hsm(); PROVIDER_CALL('d', actual_dvp_destroy(p)); }
 #undef PROVIDER_CALL
+/* The DDC API is controlled here. The I2C algorithm is not part of this fixture. */
+#ifdef BCM2712_DISPLAY_DDC
+int bcm2712_display_ddc_create(device_t dev,
+    const struct bcm2712_display_contract *contract,
+    const struct bcm2712_display_memory *bsc, bus_space_handle_t bsc_handle,
+    const struct bcm2712_display_memory *ddc, bus_space_handle_t ddc_handle,
+    bus_space_tag_t bst, struct bcm2712_ddc_provider **out)
+{
+	int error;
+
+	held_hsm(); held_dvp();
+	assert(dev == &device_token && bsc == &contract->memory[13]);
+	assert(ddc == &contract->memory[14] && bst == &arm_generic_bs_tag);
+	assert(bsc_handle == 29 && ddc_handle == 31);
+	assert(hw.edid0 && hw.bsc_mapped && hw.ddc_mapped && !native_ddc.live);
+	assert(bsc->address == UINT64_C(0x107d508380) && bsc->length == 0x10);
+	assert(ddc->address == UINT64_C(0x107d508200) && ddc->length == 0x58);
+	native_ddc.creates++;
+	error = step('j') ? EIO : native_ddc.create_error;
+	if ((error == 0 && !native_ddc.null_owner) || native_ddc.create_owner) {
+		native_ddc.live = true; *out = &native_ddc.owner;
+	}
+	return error;
+}
+int bcm2712_display_ddc_read_edid(struct bcm2712_ddc_provider *owner,
+    uint8_t *data, size_t length)
+{
+	held_hsm(); held_dvp();
+	assert(native_ddc.live && owner == &native_ddc.owner && !native_ddc.read_called);
+	assert(hw.bsc_mapped && hw.ddc_mapped && length == BCM2712_DDC_EDID_LENGTH);
+	native_ddc.reads++; native_ddc.read_called = true;
+	if (step('k')) { native_ddc.read_error = EIO; native_ddc.native_fault = EIO; }
+	/* Poison even failed output: the probe must never print a failed payload. */
+	memcpy(data, native_ddc.bytes, length);
+	return native_ddc.read_error;
+}
+int bcm2712_display_ddc_status(struct bcm2712_ddc_provider *owner,
+    struct bcm2712_ddc_status *out)
+{
+	held_hsm(); held_dvp();
+	assert(native_ddc.live && owner == &native_ddc.owner && native_ddc.read_called);
+	assert(hw.bsc_mapped && hw.ddc_mapped && !native_ddc.status_called);
+	native_ddc.statuses++;
+	if (step('l')) return EIO;
+	if (native_ddc.status_error) return native_ddc.status_error;
+	native_ddc.status_called = true;
+	*out = (struct bcm2712_ddc_status){
+	    .core = { .commands = 5, .polls = 9, .enable = 0,
+	        .fault = native_ddc.core_fault, .active = native_ddc.active,
+	        .mutation_attempted = true },
+	    .bsc_status = 0, .bsc_mask = 2, .status_valid = !native_ddc.invalid_status,
+	    .mask_valid = !native_ddc.invalid_mask,
+	    .fault = native_ddc.native_fault };
+	return 0;
+}
+int bcm2712_display_ddc_destroy(struct bcm2712_ddc_provider *owner)
+{
+	held_hsm(); held_dvp();
+	assert(native_ddc.live && owner == &native_ddc.owner && native_ddc.status_called);
+	assert(hw.bsc_mapped && hw.ddc_mapped);
+	assert(!native_ddc.native_fault && !native_ddc.core_fault && !native_ddc.active);
+	native_ddc.destroys++;
+	if (step('x')) return EIO;
+	if (native_ddc.destroy_error) return native_ddc.destroy_error;
+	native_ddc.live = false; return 0;
+}
+#endif
+static void payload_guard(void)
+{
+	assert(!hw.bsc_mapped && !hw.ddc_mapped && !hw.mapped && !hw.hpd_mapped);
+	assert(bcm2712_hsm_owner == NULL && bcm2712_dvp_owner == NULL);
+#ifdef BCM2712_DISPLAY_DDC
+	assert(!native_ddc.live);
+#endif
+}
 #include "probe.h"
+
 
 static void
 prepare(uint32_t state, uint32_t rate)
@@ -353,6 +453,12 @@ prepare(uint32_t state, uint32_t rate)
 	reset(state, rate);
 	assert(bcm2712_dvp_owner == NULL && !hw.mapped);
 	memset(&hw, 0, sizeof(hw)); hw.gates = 0xa5a50018;
+#ifdef BCM2712_DISPLAY_DDC
+	assert(!native_ddc.live);
+	memset(&native_ddc, 0, sizeof(native_ddc));
+	for (unsigned int i = 0; i < sizeof(native_ddc.bytes); i++)
+		native_ddc.bytes[i] = (uint8_t)(i * 73U);
+#endif
 	events[0] = 0; event_count = fail_step = 0;
 	CHECK(fdt_create_empty_tree(blob, sizeof(blob)) == 0);
 	tree = blob;
@@ -387,6 +493,9 @@ refusal(struct properties *p, int expected)
 /* Only the test's simulated reboot can discard retained native owners/maps. */
 static void reboot_model(void)
 {
+#ifdef BCM2712_DISPLAY_DDC
+	native_ddc.live = false;
+#endif
 	if (bcm2712_dvp_owner != NULL) {
 		kmem_free(bcm2712_dvp_owner, sizeof(*bcm2712_dvp_owner));
 		bcm2712_dvp_owner = NULL;
@@ -695,6 +804,169 @@ static void ddc_probe_tests(void)
 	CHECK(bcm2712_dvp_owner->core.status.mutation_attempted); reboot_model();
 }
 
+static void edid_no_payload(void)
+{
+	CHECK(strstr(log_text, "BCM2712_EDID0") == NULL);
+	CHECK(strstr(log_text, "finite cycle complete") == NULL);
+	CHECK(references == 0);
+}
+#ifdef BCM2712_DISPLAY_DDC
+static void prepare_edid(uint32_t state, uint32_t rate)
+{
+	prepare(state, rate); hw.edid0 = true; hw.gates &= ~(1U << 3);
+}
+static void edid_freed(void)
+{
+	CHECK(!native_ddc.live && !hw.bsc_mapped && !hw.ddc_mapped && !hw.mapped);
+	CHECK(bcm2712_dvp_owner == NULL && bcm2712_hsm_owner == NULL);
+	CHECK(allocated == freed && references == 0);
+}
+static void edid_payload(void)
+{
+	const char *line = strstr(log_text, "BCM2712_EDID0 begin length=128\n");
+	char expected[128];
+	unsigned int i, j;
+	int length;
+
+	CHECK(line != NULL); line += strlen("BCM2712_EDID0 begin length=128\n");
+	for (i = 0; i < BCM2712_DDC_EDID_LENGTH; i += 16) {
+		length = snprintf(expected, sizeof(expected), "BCM2712_EDID0 data %02x:", i);
+		for (j = 0; j < 16; j++)
+			length += snprintf(expected + length, sizeof(expected) - (size_t)length,
+			    " %02x", native_ddc.bytes[i + j]);
+		CHECK((size_t)length + 1 < sizeof(expected));
+		expected[length++] = '\n'; expected[length] = 0;
+		CHECK(strncmp(line, expected, (size_t)length) == 0); line += length;
+	}
+	CHECK(strncmp(line, "BCM2712_EDID0 end length=128\n", strlen("BCM2712_EDID0 end length=128\n")) == 0);
+	CHECK(strstr(line + strlen("BCM2712_EDID0 end length=128\n"), "BCM2712_EDID0") == NULL);
+}
+#endif
+static void edid_probe_tests(void)
+{
+	struct properties p = { .expected = "EmberBSD:accepted-kernel", .cold = true,
+	    .ddc_mode = "edid0" };
+#ifdef BCM2712_DISPLAY_DDC
+	const char *order = "CSASQMcsasBEjklxvwrsdURSD";
+	const int clean_errors[] = { EBADMSG, EBUSY };
+	unsigned int i, stop;
+	int error;
+#endif
+
+	/* Conflicts are invalid even if a feature-disabled kernel rejects EDID0. */
+	prepare(1, 120000000); p.hpd_mode = "observe0"; refusal(&p, EINVAL);
+	prepare(1, 120000000); p.hpd_mode = NULL; p.wrong_hpd_type = true; refusal(&p, EINVAL);
+	prepare(1, 120000000); p.wrong_hpd_type = false; p.mode = "observe"; refusal(&p, EINVAL);
+	prepare(1, 120000000); p.mode = NULL; p.wrong_mode_type = true; refusal(&p, EINVAL);
+	p.wrong_mode_type = false;
+#ifndef BCM2712_DISPLAY_DDC
+	prepare(1, 120000000); refusal(&p, EOPNOTSUPP); edid_no_payload();
+#else
+	prepare_edid(1, 120000000); p.cold = false; refusal(&p, EINVAL); p.cold = true;
+	prepare_edid(1, 120000000); p.expected = "wrong"; refusal(&p, EPROGMISMATCH);
+	p.expected = "EmberBSD:accepted-kernel";
+	prepare_edid(1, 120000000); early_framebuffer = 1; refusal(&p, EBUSY);
+	prepare_edid(1, 120000000); genfb = true; refusal(&p, EBUSY);
+	prepare_edid(1, 120000000); wsdisplay = true; refusal(&p, EBUSY);
+	prepare_edid(1, 120000000); tree = NULL; refusal(&p, EIO);
+	prepare_edid(1, 120000000); render = false; refusal(&p, ENODEV);
+	for (i = 0; i < 3; i++) {
+		prepare_edid(i == 0 ? 0 : 1, i == 2 ? 240000000 : 0);
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+		CHECK(strcmp(events, order) == 0);
+		CHECK(native_ddc.creates == 1 && native_ddc.reads == 1 &&
+		    native_ddc.statuses == 1 && native_ddc.destroys == 1);
+		CHECK(hw.bsc_maps == 1 && hw.bsc_unmaps == 1 && hw.bsc_reads == 0);
+		CHECK(hw.ddc_maps == 1 && hw.ddc_unmaps == 1 && hw.ddc_reads == 0);
+		CHECK(hw.reads == 6 && hw.writes == 0 && hw.barriers == 0);
+		CHECK(strstr(log_text, "native_fault 0 core_fault 0 active 0 commands 5 polls 9") != NULL);
+		CHECK(strstr(log_text, "mutation_attempted 1 BSC_status 0 status_valid 1 BSC_mask 0x2 mask_valid 1") != NULL);
+		edid_freed(); edid_payload();
+	}
+	/* Every API/map failure, including all cleanup stages after valid data. */
+	for (i = 1; i <= strlen(order); i++) {
+		char operation = order[i - 1];
+		if (strchr("vwU", operation) != NULL) continue;
+		prepare_edid(1, 120000000); fail_step = i;
+		error = bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p);
+		CHECK(error == (strchr("QMBEjklx", operation) != NULL ? EIO : EWOULDBLOCK));
+		CHECK(strncmp(events, order, i) == 0); edid_no_payload();
+		if (strchr("BEj", operation) != NULL) {
+			edid_freed();
+			CHECK(event_count > i && native_ddc.reads == 0);
+		} else {
+			if (strchr("ASRD", operation) == NULL)
+				CHECK(event_count == i + (operation == 'k' ? 1U : 0U));
+			CHECK(native_ddc.live == (operation == 'k' || operation == 'l' || operation == 'x'));
+			CHECK(hw.bsc_mapped == native_ddc.live && hw.ddc_mapped == native_ddc.live);
+			CHECK(hw.mapped == (i >= 7 && i <= 21));
+			CHECK((bcm2712_dvp_owner != NULL) == (i >= 8 && i <= 21));
+			if (i >= 4) CHECK(bcm2712_hsm_owner != NULL);
+		}
+		stop = event_count;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_FINI, NULL) == 0);
+		CHECK(event_count == stop); reboot_model();
+	}
+	/* Successful transport with invalid EDID and pre-invoke acquire refusal. */
+	for (i = 0; i < sizeof(clean_errors) / sizeof(clean_errors[0]); i++) {
+		prepare_edid(1, 120000000); native_ddc.read_error = clean_errors[i];
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == clean_errors[i]);
+		CHECK(strcmp(events, order) == 0); edid_freed(); edid_no_payload();
+		CHECK(strstr(log_text, "cleanup complete; operation error") != NULL);
+	}
+	/* Fault/status/destroy uncertainty must keep both controller maps and clocks. */
+	for (i = 0; i < 9; i++) {
+		prepare_edid(1, 120000000);
+		switch (i) {
+		case 0: native_ddc.native_fault = EIO; break;
+		case 1: native_ddc.core_fault = ETIMEDOUT; break;
+		case 2: native_ddc.active = true; break;
+		case 3: native_ddc.status_error = EWOULDBLOCK; break;
+		case 4: native_ddc.destroy_error = EWOULDBLOCK; break;
+		case 5: native_ddc.create_error = EIO; native_ddc.create_owner = true; break;
+		case 6: native_ddc.null_owner = true; break;
+		case 7: native_ddc.invalid_status = true; break;
+		case 8: native_ddc.invalid_mask = true; break;
+		}
+		error = bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p);
+		CHECK(error == (i == 1 ? ETIMEDOUT : i == 2 ? EBUSY :
+		    i == 3 || i == 4 ? EWOULDBLOCK : EIO));
+		CHECK(hw.bsc_mapped && hw.ddc_mapped && hw.mapped);
+		CHECK(bcm2712_hsm_owner->core.status.leases == 1);
+		CHECK(bcm2712_dvp_owner->core.status.leases == 1);
+		CHECK(native_ddc.live == (i != 6));
+		CHECK(native_ddc.destroys == (i == 4 ? 1U : 0U));
+		edid_no_payload(); reboot_model();
+	}
+	/* An operation error never hides a subsequent cleanup failure. */
+	for (i = 19; i <= strlen(order); i++) {
+		if (order[i - 1] == 'U') continue;
+		prepare_edid(1, 120000000); native_ddc.read_error = EBADMSG; fail_step = i;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EWOULDBLOCK);
+		edid_no_payload(); CHECK(event_count >= i); reboot_model();
+	}
+	for (i = 1; i <= 18; i++) {
+		prepare_edid(0, 0); fw.fail_call = i;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == ETIMEDOUT);
+		CHECK(fw.calls == i && !hw.mapped && !hw.bsc_mapped && !hw.ddc_mapped);
+		CHECK(bcm2712_dvp_owner == NULL && !native_ddc.live);
+		CHECK(native_ddc.reads == (i >= 12 ? 1U : 0U));
+		edid_no_payload(); reboot_model();
+	}
+	for (i = 0; i < 2; i++) {
+		prepare_edid(1, 120000000);
+		if (i == 0) hw.gates |= 1U << 3; else hw.resets = 1U << 1;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EBUSY);
+		CHECK(native_ddc.creates == 0 && hw.bsc_maps == 0 && hw.writes == 0);
+		edid_no_payload(); reboot_model();
+	}
+	prepare_edid(1, 120000000); hw.external_gate = true;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EIO);
+	CHECK(native_ddc.creates == 0 && hw.bsc_maps == 0 && hw.writes == 1);
+	edid_no_payload(); reboot_model();
+#endif
+}
+
 int
 main(void)
 {
@@ -787,6 +1059,7 @@ main(void)
 	dvp_probe_tests();
 	hpd_probe_tests();
 	ddc_probe_tests();
+	edid_probe_tests();
 	printf("HSM probe: %u checks PASS; real libfdt and native owner, host only\n", checks);
 	return 0;
 }
