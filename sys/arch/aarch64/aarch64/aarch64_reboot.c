@@ -241,7 +241,7 @@ cpu_reboot(int howto, char *bootstr)
 
 	splx(s);
 
-	pmf_system_shutdown(boothowto);
+	pmf_system_shutdown(howto);
 
 	/* Say NO to interrupts for good */
 	splhigh();
