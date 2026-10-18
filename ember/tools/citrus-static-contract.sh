@@ -9,7 +9,7 @@ compile_only=${CITRUS_COMPILE_ONLY:-0}
 mode=${CITRUS_TEST_MODE:-all}
 case "$analyze" in 0|1) ;; *) exit 2;; esac
 case "$compile_only" in 0|1) ;; *) exit 2;; esac
-case "$mode" in all|lookup|lookup-db|lookup-plain|convert|cleanup|state-error|ctype-error|stdenc-output) ;; *) exit 2;; esac
+case "$mode" in all|lookup|lookup-db|lookup-plain|convert|cleanup|state-error|ctype-error|stdenc-output|parser) ;; *) exit 2;; esac
 if [ "$compile_only" = 1 ] && [ -z "${CITRUS_TEST_OUTPUT:-}" ]; then
     echo 'compile-only requires a new CITRUS_TEST_OUTPUT directory' >&2
     exit 2
@@ -23,7 +23,7 @@ else
     work=$(mktemp -d "${TMPDIR:-/tmp}/citrus-static.XXXXXXXX")
     trap 'rm -rf "$work"' EXIT HUP INT TERM
 fi
-mkdir -p "$work/include/sys" "$work/data/lookup" "$work/data/iconv" \
+mkdir -p "$work/include/sys" "$work/data/lookup" "$work/data/lookup/parser" "$work/data/iconv" \
     "$work/data/esdb/UTF" "$work/data/esdb/ISO646" "$work/data/csmapper/ISO646"
 cp "$src"/lib/libc/citrus/modules/*.h "$work/include/"
 cp "$src"/lib/libc/citrus/*.h "$work/include/"
@@ -55,6 +55,16 @@ size_t __iconv(iconv_t, char **, size_t *, char **, size_t *, uint32_t, size_t *
 HDR
 parts='citrus_bcs citrus_bcs_strtol citrus_bcs_strtoul citrus_csmapper citrus_db citrus_db_hash citrus_esdb citrus_hash citrus_iconv citrus_lookup citrus_mapper citrus_memstream citrus_mmap citrus_module citrus_module_static citrus_none citrus_stdenc'
 for part in $parts; do cp "$src/lib/libc/citrus/$part.c" "$work/$part.c"; done
+# Expose the actual static helper only in this generated host copy.
+cat >> "$work/citrus_iconv.c" <<'SRC'
+int
+citrus_test_lookup_iconv_entry(const char *dir, const char *key, char *buffer,
+    size_t size, const char **module, const char **variable)
+{
+    return lookup_iconv_entry(dir, key, buffer, size, module, variable);
+}
+SRC
+
 for part in citrus_iconv_std citrus_utf8 citrus_mapper_646 citrus_mapper_none; do
     cp "$src/lib/libc/citrus/modules/$part.c" "$work/$part.c"
 done
@@ -94,9 +104,14 @@ for file in "$work"/*.c; do
         -include "$work/include/compat.h" $alloc -c "$file" -o "${file%.c}.o"
     if [ "$analyze" = 1 ]; then
         case "${file##*/}" in
-            citrus_module*.c|citrus_stdenc.c|citrus_lookup.c|citrus_iconv_std.c|citrus_utf8.c|citrus_mapper_*.c|test.c)
+            citrus_module*.c|citrus_stdenc.c|citrus_lookup.c|citrus_iconv.c|citrus_iconv_std.c|citrus_utf8.c|citrus_mapper_*.c|test.c)
+                scope=
+                # The dispatcher change is confined to its entry parser.
+                if [ "${file##*/}" = citrus_iconv.c ]; then
+                    scope='-Xanalyzer -analyze-function -Xanalyzer lookup_iconv_entry'
+                fi
                 if ! "${CSA:-clang}" --analyze -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Werror \
-                    "$@" -I"$work/include" -include "$work/include/compat.h" $alloc \
+                    "$@" $scope -I"$work/include" -include "$work/include/compat.h" $alloc \
                     "$file" -o "${file%.c}.plist" 2> "${file%.c}.csa.log"; then
                     cat "${file%.c}.csa.log"
                     exit 1
@@ -110,7 +125,7 @@ done
 ruby -rjson -e 'puts JSON.pretty_generate(File.readlines(ARGV[0]).map { |l| JSON.parse(l) })' \
     "$work/commands.jsonl" > "$work/compile_commands.json"
 if [ "$analyze" = 1 ]; then
-    ruby -rjson -e 'a=JSON.parse(File.read(ARGV[0])); puts JSON.pretty_generate(a.select { |e| File.basename(e["file"]).match?(/\A(?:citrus_module.*|citrus_stdenc|citrus_lookup|citrus_iconv_std|citrus_utf8|citrus_mapper_.*|test)\.c\z/) })' \
+    ruby -rjson -e 'a=JSON.parse(File.read(ARGV[0])); puts JSON.pretty_generate(a.select { |e| File.basename(e["file"]).match?(/\A(?:citrus_module.*|citrus_stdenc|citrus_lookup|citrus_iconv|citrus_iconv_std|citrus_utf8|citrus_mapper_.*|test)\.c\z/) })' \
         "$work/compile_commands.json" > "$work/analysis_commands.json"
     if ! cppcheck --quiet --check-level=exhaustive --enable=warning,performance,portability \
         --error-exitcode=1 --project="$work/analysis_commands.json" --platform=unix64 \
@@ -138,7 +153,7 @@ printf 'ASCII ISO646-US\n646 ISO646-US\nus-ascii ISO646-US\nUTF8 UTF-8\n' > "$wo
 printf 'ISO646-US/UCS mapper_646 ISO646/ISO646-US%%UCS.646\nUCS/ISO646-US mapper_646 !ISO646/ISO646-US%%UCS.646\n' > "$work/data/csmapper/mapper.dir"
 printf 'ascii ISO646-US\n646 ISO646-US\n' > "$work/data/lookup/plain"
 if [ "$mode" != all ]; then run_case "$mode"; exit 0; fi
-for part in lookup-db lookup-plain lookup convert cleanup state-error ctype-error stdenc-output; do
+for part in parser lookup-db lookup-plain lookup convert cleanup state-error ctype-error stdenc-output; do
     run_case "$part"
 done
 n=1

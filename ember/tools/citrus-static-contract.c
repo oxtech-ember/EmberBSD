@@ -20,6 +20,8 @@
 #include "citrus-static-contract-data.h"
 
 _CITRUS_CTYPE_GETOPS_FUNC(UTF8);
+int citrus_test_lookup_iconv_entry(const char *, const char *, char *, size_t,
+    const char **, const char **);
 
 int
 citrus_test_issetugid(void)
@@ -153,6 +155,52 @@ init_data(void)
 	write_data("data/esdb/UTF/UTF-8.esdb", utf8_esdb, sizeof(utf8_esdb));
 	write_data("data/esdb/ISO646/ISO646-US.esdb", ascii_esdb,
 	    sizeof(ascii_esdb));
+}
+
+static void
+parser(void)
+{
+	static const char *entries[] = {
+		"* iconv_std\n", "* iconv_std   \t\n",
+		"* iconv_std sample\n", "* iconv_std sample trailing\n"
+	};
+	char exact[sizeof("iconv_std")], wide[64], truncated[4];
+	const char *module, *variable;
+	size_t i;
+
+	write_data("data/lookup/parser/iconv.dir", entries[0], strlen(entries[0]));
+	memset(exact, 0xa5, sizeof(exact));
+	CHECK(citrus_test_lookup_iconv_entry("data/lookup/parser", "*", exact,
+	    sizeof(exact), &module, &variable) == 0);
+	CHECK(module == exact && strcmp(module, "iconv_std") == 0);
+	CHECK(variable == exact + sizeof(exact) - 1);
+	CHECK(*variable == '\0');
+	for (i = 0; i < __arraycount(entries); i++) {
+		write_data("data/lookup/parser/iconv.dir", entries[i], strlen(entries[i]));
+		memset(wide, 0xa5, sizeof(wide));
+		CHECK(citrus_test_lookup_iconv_entry("data/lookup/parser", "*", wide,
+		    sizeof(wide), &module, &variable) == 0);
+		CHECK(module == wide && strcmp(module, "iconv_std") == 0);
+		CHECK(strcmp(variable, i < 2 ? "" : "sample") == 0);
+		if (i < 2) {
+			CHECK(variable == wide + strlen("iconv_std"));
+			CHECK((unsigned char)wide[sizeof("iconv_std")] == 0xa5);
+		}
+	}
+	/* The native lookup service truncates its result. Stay inside that NUL. */
+	CHECK(citrus_test_lookup_iconv_entry("data/lookup/parser", "*", truncated,
+	    sizeof(truncated), &module, &variable) == 0);
+	CHECK(strcmp(module, "ico") == 0);
+	CHECK(variable == truncated + sizeof(truncated) - 1 && *variable == '\0');
+	write_data("data/lookup/parser/iconv.dir", "* \n", 3);
+	module = variable = "unchanged";
+	CHECK(citrus_test_lookup_iconv_entry("data/lookup/parser", "*", wide,
+	    sizeof(wide), &module, &variable) == EINVAL);
+	CHECK(strcmp(module, "unchanged") == 0 && strcmp(variable, "unchanged") == 0);
+	CHECK(citrus_test_lookup_iconv_entry("data/lookup/parser", "missing", wide,
+	    sizeof(wide), &module, &variable) == ENOENT);
+	CHECK(strcmp(module, "unchanged") == 0 && strcmp(variable, "unchanged") == 0);
+	CHECK(live == 0);
 }
 
 static void
@@ -480,6 +528,8 @@ main(int argc, char **argv)
 	CHECK(setenv("ICONV_MAX_REUSE", "0", 1) == 0);
 	if (strcmp(argv[1], "init") == 0) {
 		init_data();
+	} else if (strcmp(argv[1], "parser") == 0) {
+		parser();
 	} else if (strcmp(argv[1], "lookup") == 0) {
 		registry();
 		stdenc_oom();

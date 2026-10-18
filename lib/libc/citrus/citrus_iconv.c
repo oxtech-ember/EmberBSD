@@ -120,8 +120,14 @@ lookup_iconv_entry(const char *curdir, const char *key,
 		return ENOENT;
 
 	/* get module name */
-	*module = p;
 	cq = _bcs_skip_nonws(cp);
+	if (cq == cp)
+		return EINVAL;
+	*module = p;
+	if (*cq == '\0') {
+		*variable = cq;
+		return 0;
+	}
 	p[cq-cp] = '\0';
 	p += cq-cp+1;
 	cq++;

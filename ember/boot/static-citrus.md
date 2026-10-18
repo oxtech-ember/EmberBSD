@@ -39,7 +39,9 @@ Allocation records encode pointer values so the test does not hide leaks by
 keeping otherwise unreachable allocations alive.
 
 Set `CITRUS_ANALYZE=1` to run Cppcheck and Clang Static Analyzer on the affected
-native modules and the contract. Set compiler flags such as
+native modules and the contract. In the dispatcher, CSA selects the changed
+`lookup_iconv_entry` parser; other selected translation units use full analysis.
+Set compiler flags such as
 `CFLAGS='-O2 -g -fanalyzer'` or sanitizer flags through the environment.
 `CITRUS_TEST_OUTPUT` retains a new absolute output directory with compilation
 databases and diagnostics. `CITRUS_COMPILE_ONLY=1` requires that directory.
