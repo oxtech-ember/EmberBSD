@@ -100,8 +100,10 @@ doc.elements.each('results/errors/error') do |e|
   next if id == 'checkersReport' && e.attributes['severity'] == 'information'
   if id == 'missingIncludeSystem' && e.attributes['severity'] == 'information'
     next if %w[assert stdbool stddef stdint stdio stdlib string].any? do |name|
-      message == "Include file: <#{name}.h> not found. Please note: Standard " \
-        'library headers do not need to be provided to get proper results.'
+      ["Include file: <#{name}.h> not found. Please note: Standard " \
+         'library headers do not need to be provided to get proper results.',
+       "Include file: <#{name}.h> not found. Please note: Cppcheck does not " \
+         'need standard library headers to get proper results.'].include?(message)
     end
   end
   location = e.elements['location']
