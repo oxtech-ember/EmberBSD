@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Do not add application runtime search paths to a firmware -nostdlib link.
+# GCC documents %D as its implicit library search directory list.
+*link_libgcc:
+%{!nostdlib:%D}

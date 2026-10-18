@@ -132,6 +132,10 @@ Cross-build Raspberry Pi 5 UEFI with native host tools on macOS or EmberBSD.
 The target compiler must be AArch64 GCC major 16. The host also needs GNU Make,
 iASL, DTC, Python 3 and pyelftools. Use `CROSS_COMPILE` to select an explicit
 compiler prefix. `EMBER_AARCH64_ELF_TOOLCHAIN` can add a local toolchain on macOS.
+The [firmware profile](ember/firmware/README.md) isolates compiler headers and
+library searches from the application sysroot. It preserves upstream module
+flags, platform defines, and LTO. Source, cache, and toolchain paths must not
+contain whitespace.
 
 ```sh
 bash ember/build-firmware.sh /absolute/cache --rp1-console
@@ -144,9 +148,9 @@ according to `ember/boot/image-assets.tsv`, with hash verification and
 license preservation; their binaries are not included in the repository.
 The firmware receipt records the compiler path, version, machine, identity and
 SHA256. The builder checks the compiler hash again before publication.
-This identity check does not prove complete TF-A/EDK2 freestanding
-compatibility. In particular, an accepted NetBSD target identity is not a
-successful UEFI build. `--prepare` needs only Git and preserves accepted outputs.
+Real GCC16 smoke controls check the bounded freestanding header, ELF, LTO,
+and search contract. Neither these controls nor an accepted NetBSD target
+identity prove a complete TF-A/EDK2 build or physical firmware acceptance. `--prepare` needs only Git and preserves accepted outputs.
 
 The RV32 kernels are cross-built with the stock `build.sh`:
 

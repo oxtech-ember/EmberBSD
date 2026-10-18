@@ -23,6 +23,19 @@ case "${2:-}" in
     --rp1-trace)   variant=-rp1-trace;   variant_flags+=(--tfa-flags LOG_LEVEL=0 --edk2-flags '-D RP1_UART_CONSOLE=TRUE -D CM5_BOOT_TRACE=TRUE') ;;
     *) echo 'unknown firmware option' >&2; exit 1 ;;
 esac
+# The pinned top-level build API splits its flag strings on whitespace.
+for input_path in "$CACHE" "$ROOT"; do
+    [[ "$input_path" != *[[:space:]]* ]] || {
+        echo 'firmware source and cache paths must not contain whitespace' >&2; exit 1;
+    }
+done
+if [[ $prepare_only -eq 0 ]]; then
+    for input_path in "${CROSS_COMPILE:-}" "${EMBER_AARCH64_ELF_TOOLCHAIN:-}"; do
+        [[ "$input_path" != *[[:space:]]* ]] || {
+            echo 'explicit firmware toolchain paths must not contain whitespace' >&2; exit 1;
+        }
+    done
+fi
 mkdir -p "$CACHE"
 CACHE="$(cd "$CACHE" && pwd)"
 out="$CACHE/firmware$variant"
@@ -30,10 +43,14 @@ src="$CACHE/rpi5-uefi-src"
 mkdir -p "$out"
 
 if [[ $prepare_only -eq 0 ]]; then
+    firmware_empty_root=
     firmware_cleanup()
     {
         firmware_status=$?
         trap - EXIT
+        if [[ -n "$firmware_empty_root" ]] && ! rmdir "$firmware_empty_root"; then
+            [[ $firmware_status -ne 0 ]] || firmware_status=1
+        fi
         if [[ $firmware_status -ne 0 ]]; then
             # Keep the original status and build.log if cleanup also fails.
             rm -f "$out/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming" \
@@ -45,6 +62,7 @@ if [[ $prepare_only -eq 0 ]]; then
     # Invalidate this variant before any fallible host, source or build check.
     rm -f "$out/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming" \
         "$out/firmware-receipt.json"
+    source "$ROOT/ember/firmware/gcc-profile.sh"
 fi
 
 # Use native host tools on EmberBSD or macOS. The firmware target is
@@ -107,16 +125,16 @@ compiler_path=$(command -v "${CROSS_COMPILE}gcc") || {
     echo "missing target compiler: ${CROSS_COMPILE}gcc" >&2; exit 1;
 }
 case "$compiler_path" in /*) ;; *) compiler_path="$PWD/$compiler_path" ;; esac
-compiler_version=$("$compiler_path" -dumpfullversion) || {
+compiler_version=$(firmware_gcc_query "$compiler_path" -dumpfullversion) || {
     echo 'cannot read target GCC version' >&2; exit 1;
 }
-compiler_machine=$("$compiler_path" -dumpmachine) || {
+compiler_machine=$(firmware_gcc_query "$compiler_path" -dumpmachine) || {
     echo 'cannot read target GCC machine' >&2; exit 1;
 }
-compiler_identity=$("$compiler_path" --version) || {
+compiler_identity=$(firmware_gcc_query "$compiler_path" --version) || {
     echo 'cannot read target GCC identity' >&2; exit 1;
 }
-compiler_macros=$("$compiler_path" -dM -E -x c /dev/null) || {
+compiler_macros=$(firmware_gcc_query "$compiler_path" -dM -E -x c /dev/null) || {
     echo 'cannot read target GCC predefined macros' >&2; exit 1;
 }
 if [[ ! "$compiler_version" =~ ^16(\.[0-9]+)*$ ]] ||
@@ -128,6 +146,25 @@ if [[ ! "$compiler_version" =~ ^16(\.[0-9]+)*$ ]] ||
     exit 1
 fi
 compiler_sha256=$(shasum -a 256 "$compiler_path" | awk '{print $1}')
+firmware_empty_root=$(mktemp -d "$out/gcc-empty.XXXXXXXX")
+firmware_specs="$ROOT/ember/firmware/gcc.specs"
+firmware_gcc_profile "$compiler_path" "$compiler_machine" "$compiler_version" \
+    "$firmware_empty_root" "$firmware_specs"
+firmware_tfa_flags=" CC=$compiler_path LD=$compiler_path"
+for profile_flag in "${firmware_gcc_cpp[@]}"; do
+    firmware_tfa_flags+=" CFLAGS+=$profile_flag"
+done
+for profile_flag in "${firmware_gcc_link[@]}"; do
+    firmware_tfa_flags+=" LDFLAGS+=$profile_flag"
+done
+firmware_edk2_flags="-D EMBER_FIRMWARE_ROOT=$firmware_empty_root -D EMBER_GCC_INCLUDE=$firmware_gcc_include -D EMBER_FIRMWARE_SPECS=$firmware_specs"
+# Keep the variant options and pass each accumulated make assignment as a token.
+if [[ -z "$variant" ]]; then
+    variant_flags+=(--tfa-flags "$firmware_tfa_flags" --edk2-flags "$firmware_edk2_flags")
+else
+    variant_flags[3]="${variant_flags[3]}$firmware_tfa_flags"
+    variant_flags[5]="${variant_flags[5]} $firmware_edk2_flags"
+fi
 # Identity checks do not prove full TF-A/EDK2 freestanding compatibility.
 fi
 
@@ -180,7 +217,8 @@ if [[ ! -f "$src/.ember-series" || "$(cat "$src/.ember-series")" != "$series_ide
     printf '%s\n' "$series_identity" > "$src/.ember-series"
 fi
 
-( cd "$src" && ./build.sh "${variant_flags[@]}" ) > "$out/build.log" 2>&1
+# Use host defaults and the selected CROSS_COMPILE, not implicit caller flags.
+( cd "$src" && firmware_gcc_query ./build.sh "${variant_flags[@]}" ) > "$out/build.log" 2>&1
 compiler_final_sha256=$(shasum -a 256 "$compiler_path" | awk '{print $1}')
 [[ "$compiler_final_sha256" == "$compiler_sha256" ]] || {
     echo 'target compiler changed during firmware build' >&2; exit 1;
@@ -190,9 +228,12 @@ cp "$src/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming"
 # Receipt: pins, series hashes and the artifact identity.
 python3 - "$out" "$variant" "$revision" "$ROOT" "$compiler_path" \
     "$compiler_version" "$compiler_machine" "$compiler_identity" \
-    "$compiler_sha256" "$CROSS_COMPILE" << 'PYEOF'
+    "$compiler_sha256" "$CROSS_COMPILE" "$firmware_gcc_include" \
+    "$firmware_empty_root" "$firmware_specs" "$firmware_tfa_flags" \
+    "$firmware_edk2_flags" << 'PYEOF'
 import hashlib, json, os, sys
 out, variant, revision, root, compiler, version, machine, identity, compiler_sha, prefix = sys.argv[1:11]
+include, empty_root, specs, tfa_flags, edk2_flags = sys.argv[11:16]
 def sha(path):
     h = hashlib.sha256()
     with open(path, 'rb') as f:
@@ -207,6 +248,10 @@ receipt = {
     'compiler': {'path': compiler, 'version': version, 'machine': machine,
                  'identity': identity, 'sha256': compiler_sha,
                  'cross_compile': prefix},
+    'freestanding': {'include': include, 'empty_root': empty_root,
+                     'specs_sha256': sha(specs),
+                     'profile_sha256': sha(os.path.join(root, 'ember/firmware/gcc-profile.sh')),
+                     'tfa_flags': tfa_flags, 'edk2_flags': edk2_flags},
     'series': {d: sha(os.path.join(root, 'ember/firmware', d)) for d in series},
     'files': {'RPI_EFI.fd': sha(os.path.join(out, 'RPI_EFI.fd.incoming'))},
 }

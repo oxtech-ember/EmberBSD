@@ -24,3 +24,4 @@ cm5-trace-option.diff
 fan-state-fix.diff
 power-button.diff
 bcm2712-display-resources.diff
+gcc-freestanding.diff

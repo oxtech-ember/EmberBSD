@@ -43,9 +43,15 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
     fake_build = <<~RUBY
       #!#{RbConfig.ruby}
       require 'json'
+      search = %w[CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH LIBRARY_PATH COMPILER_PATH GCC_EXEC_PREFIX LD_RUN_PATH LD_LIBRARY_PATH CFLAGS CPPFLAGS CXXFLAGS ASFLAGS LDFLAGS LDLIBS CC CXX CPP AS LD AR NM OBJCOPY OBJDUMP RANLIB STRIP MAKEFLAGS MFLAGS MAKEOVERRIDES]
+      abort 'Inherited compiler search environment reached the build' if search.any? { |key| ENV.key?(key) }
       File.open(ENV.fetch('FIXTURE_TRACE'), 'a') { |f| f.puts JSON.generate(['build', ARGV]) }
       exit 43 if ENV['FIXTURE_FAIL'] == 'build'
       File.write('RPI_EFI.fd', "new fixture firmware\n")
+      if ENV['FIXTURE_FAIL'] == 'fill-root'
+        directory = ARGV.join(' ').match(/EMBER_FIRMWARE_ROOT=([^ ]+)/)[1]
+        File.write(directory + '/unexpected', 'fixture input')
+      end
       if ENV['FIXTURE_FAIL'] == 'compiler-changed'
         File.open(ENV.fetch('FIXTURE_COMPILER'), 'a') { |f| f.puts '# changed during fixture build' }
       end
@@ -105,6 +111,9 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
       when ['--version'] then puts "Fixture GCC " + ENV.fetch('FIXTURE_VERSION')
       when ['-dumpfullversion'] then puts ENV.fetch('FIXTURE_VERSION')
       when ['-dumpmachine'] then puts ENV.fetch('FIXTURE_MACHINE')
+      when ['-print-file-name=include']
+        relative = ENV['FIXTURE_FAIL']=='headers-other' ? '../foreign-headers' : '../lib/gcc/' + ENV.fetch('FIXTURE_MACHINE') + '/' + ENV.fetch('FIXTURE_VERSION') + '/include'
+        puts File.expand_path(relative, __dir__)
       when ['-dM', '-E', '-x', 'c', '/dev/null']
         puts "#define __GNUC__ " + ENV.fetch('FIXTURE_MAJOR')
         puts '#define __aarch64__ 1' unless ENV['FIXTURE_FAIL'] == 'arch-macro'
@@ -113,6 +122,13 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
       end
     RUBY
     %w[aarch64-none-elf-gcc explicit-gcc].each { |file| executable.call(file, compiler) }
+    FileUtils.mkdir_p(directory+'/foreign-headers')
+    %w[stddef.h stdint.h stdarg.h].each { |header| File.write(directory+'/foreign-headers/'+header,'foreign fixture header') }
+    %w[aarch64-none-elf aarch64--netbsd].each do |machine|
+      includes = "#{directory}/lib/gcc/#{machine}/16.2.0/include"
+      FileUtils.mkdir_p(includes)
+      %w[stddef.h stdint.h stdarg.h].each { |header| File.write(includes+'/'+header, 'fixture compiler header') }
+    end
     env = {'PATH'=>"#{tools}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
            'FIXTURE_TRACE'=>"#{directory}/trace", 'FIXTURE_HOST'=>'Darwin',
            'FIXTURE_FAIL'=>'', 'FIXTURE_VERSION'=>'16.2.0', 'FIXTURE_MAJOR'=>'16',
@@ -120,9 +136,21 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
            'PYTHONDONTWRITEBYTECODE'=>'1', 'CROSS_COMPILE'=>'',
            'EMBER_AARCH64_ELF_TOOLCHAIN'=>''}.merge(values)
     env['CROSS_COMPILE'] = "#{tools}/explicit-" if env['CROSS_COMPILE'] == 'EXPLICIT'
+    if env['FIXTURE_PATH_SPACE']
+      spaced=directory+'/compiler space/bin'
+      FileUtils.mkdir_p(spaced)
+      FileUtils.cp(tools+'/aarch64-none-elf-gcc',spaced+'/aarch64-none-elf-gcc')
+      env['PATH']=spaced+':'+env['PATH']
+    end
     env['FIXTURE_COMPILER'] = env['CROSS_COMPILE'].empty? ? "#{tools}/aarch64-none-elf-gcc" : "#{tools}/explicit-gcc"
-    args = arguments.map { |arg| arg == 'CACHE' ? cache : arg }
-    command = ['/bin/bash', builder, *args]
+    args = arguments.map { |arg| arg == 'CACHE' ? cache : (arg == 'CACHE_SPACE' ? cache+' space' : arg) }
+    selected_builder=builder
+    if env['FIXTURE_ROOT_SPACE']
+      selected_builder=directory+'/source space/ember/build-firmware.sh'
+      FileUtils.mkdir_p(File.dirname(selected_builder))
+      FileUtils.cp(builder,selected_builder)
+    end
+    command = ['/bin/bash', selected_builder, *args]
     out, err, result = Open3.capture3(env, *command)
     begin
       raise "expected status #{expected}, got #{result.exitstatus}: #{out}#{err}" unless result.exitstatus == expected
@@ -151,7 +179,7 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
         end
       end
       trace = File.exist?(env['FIXTURE_TRACE']) ? File.read(env['FIXTURE_TRACE']) : ''
-      if %w[build receipt copy rename compiler-changed].include?(env['FIXTURE_FAIL'])
+      if %w[build receipt copy rename compiler-changed fill-root].include?(env['FIXTURE_FAIL'])
         raise 'failed rebuild lost build.log' unless File.file?("#{cache}/#{selected}/build.log")
       end
       if env['FIXTURE_FAIL'] == 'compiler-changed'
@@ -163,9 +191,19 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
       end
       if expected == 0 && !preserve
         call = trace.lines.find { |line| line.start_with?('["build"') }
-        flags = selected == 'firmware' ? [] : ['--tfa-flags', 'LOG_LEVEL=0', '--edk2-flags',
-          selected.end_with?('trace') ? '-D RP1_UART_CONSOLE=TRUE -D CM5_BOOT_TRACE=TRUE' : '-D RP1_UART_CONSOLE=TRUE']
-        raise 'variant build arguments changed' unless call && JSON.parse(call) == ['build', ['--model', '5', *flags]]
+        flags = call && JSON.parse(call).fetch(1)
+        raise 'variant build arguments changed' unless flags && flags.length==6 && flags[0,3]==['--model','5','--tfa-flags'] && flags[4]=='--edk2-flags'
+        raise 'TF-A must use the verified GCC driver' unless flags[3].include?("CC=#{env.fetch('FIXTURE_COMPILER')} LD=#{env.fetch('FIXTURE_COMPILER')}")
+        raise 'missing strict compiler flags' unless flags[3].include?('CFLAGS+=-ffreestanding') && flags[3].include?('LDFLAGS+=-Wl,-nostdlib')
+        raise 'missing strict EDK2 macros' unless flags[5].include?('EMBER_FIRMWARE_ROOT=') && flags[5].include?('EMBER_GCC_INCLUDE=') && flags[5].include?('EMBER_FIRMWARE_SPECS=')
+        if selected!='firmware'
+          raise 'lost variant TF-A flag' unless flags[3].start_with?('LOG_LEVEL=0 ')
+          raise 'lost console flag' unless flags[5].include?('-D RP1_UART_CONSOLE=TRUE')
+          raise 'lost trace flag' if selected.end_with?('trace') && !flags[5].include?('-D CM5_BOOT_TRACE=TRUE')
+        end
+        record=JSON.parse(File.read("#{cache}/#{selected}/firmware-receipt.json")).fetch('freestanding')
+        raise 'empty root was not removed' if File.exist?(record.fetch('empty_root'))
+        raise 'profile receipt has the wrong builtin include' unless record.fetch('include')=="#{directory}/lib/gcc/#{env.fetch('FIXTURE_MACHINE')}/16.2.0/include"
       end
       checks += 1
       puts "PASS: #{name}"
@@ -205,6 +243,17 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
    ['gcc-command-failure',{'FIXTURE_FAIL'=>'compiler'}],
    ['gcc-explicit-missing',{'CROSS_COMPILE'=>'/no/such/fixture-prefix-'}]].each { |name,env| test.call(name,['CACHE','--rp1-console'],env,1,'firmware-rp1-console') }
   test.call('explicit-netbsd-identity-only',['CACHE'],{'CROSS_COMPILE'=>'EXPLICIT','FIXTURE_MACHINE'=>'aarch64--netbsd'},0)
+  test.call('profile-cache-space',['CACHE_SPACE'],{},1,'firmware',true)
+  test.call('profile-prefix-space',['CACHE'],{'CROSS_COMPILE'=>'/compiler space/prefix-'},1,'firmware',true)
+  test.call('profile-toolchain-space',['CACHE'],{'EMBER_AARCH64_ELF_TOOLCHAIN'=>'/compiler space'},1,'firmware',true)
+  test.call('profile-root-space',['CACHE'],{'FIXTURE_ROOT_SPACE'=>'1'},1,'firmware',true)
+  test.call('profile-resolved-compiler-space',['CACHE'],{'FIXTURE_PATH_SPACE'=>'1'},1)
+  test.call('profile-wrong-header-owner',['CACHE'],{'FIXTURE_FAIL'=>'headers-other'},1)
+  test.call('profile-empty-root-change',['CACHE'],{'FIXTURE_FAIL'=>'fill-root'},1)
+  search_env=%w[CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH LIBRARY_PATH COMPILER_PATH GCC_EXEC_PREFIX LD_RUN_PATH LD_LIBRARY_PATH CFLAGS CPPFLAGS CXXFLAGS ASFLAGS LDFLAGS LDLIBS CC CXX CPP AS LD AR NM OBJCOPY OBJDUMP RANLIB STRIP MAKEFLAGS MFLAGS MAKEOVERRIDES].to_h { |key| [key,'/unsupported/firmware-search'] }
+  test.call('profile-search-env-standard',['CACHE'],search_env,0)
+  test.call('profile-search-env-console',['CACHE','--rp1-console'],search_env,0,'firmware-rp1-console')
+  test.call('profile-search-env-trace',['CACHE','--rp1-trace'],search_env,0,'firmware-rp1-trace')
   [['input-empty',[]],['input-prepare-only',['--prepare']],['input-relative',['relative']],['input-unknown-option',['CACHE','--unknown']],
    ['input-extra',['CACHE','--rp1-console','extra']],['input-prepare-unknown',['CACHE','--prepare','--unknown']]].each do |name,args|
     test.call(name,args,{},1,'firmware',true)
