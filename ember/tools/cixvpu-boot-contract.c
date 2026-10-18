@@ -3,8 +3,10 @@
 #define cixvpu_acpi_boot model_cixvpu_acpi_boot
 #define cixvpu_acpi_boot_create model_cixvpu_acpi_boot_create
 #define cixvpu_acpi_boot_create_rpc model_cixvpu_acpi_boot_create_rpc
+#define cixvpu_acpi_boot_create_frame model_cixvpu_acpi_boot_create_frame
 #define cixvpu_acpi_boot_once model_cixvpu_acpi_boot_once
 #define cixvpu_acpi_boot_report model_cixvpu_acpi_boot_report
+#define device_xname control_device_xname
 #define main cixvpu_control_contract_main
 #define cixvpu_dma model_dma
 #define cixvpu_dma_page model_dma_page
@@ -68,6 +70,7 @@
 #define CIXVPU_Q_OUTPUT_FLUSHED MODEL_CIXVPU_Q_OUTPUT_FLUSHED
 #define cixvpu_queue_event MODEL_cixvpu_queue_event
 #define cixvpu_prepared_queue_open MODEL_cixvpu_prepared_queue_open
+#define cixvpu_prepared_queue_rpc_pending MODEL_cixvpu_prepared_queue_rpc_pending
 #define cixvpu_prepared_queue_command MODEL_cixvpu_prepared_queue_command
 #define cixvpu_prepared_queue_input_param MODEL_cixvpu_prepared_queue_input_param
 #define cixvpu_prepared_queue_submit MODEL_cixvpu_prepared_queue_submit
@@ -76,15 +79,19 @@
 #define cixvpu_prepared_queue_output_copy MODEL_cixvpu_prepared_queue_output_copy
 #define cixvpu_prepared_queue_hold MODEL_cixvpu_prepared_queue_hold
 #define delay control_delay
+#define kmem_free control_kmem_free
 #define bus_space_read_4 control_read_4
 #define bus_space_barrier control_barrier
 #include "cixvpu_command.h"
 #include "cixvpu_buffer.h"
 #include "cixvpu-control-contract.c"
+#undef kmem_free
 #undef main
+#undef device_xname
 #undef cixvpu_acpi_boot
 #undef cixvpu_acpi_boot_create
 #undef cixvpu_acpi_boot_create_rpc
+#undef cixvpu_acpi_boot_create_frame
 #undef cixvpu_acpi_boot_once
 #undef cixvpu_acpi_boot_report
 #undef cixvpu_dma
@@ -152,6 +159,7 @@
 #undef CIXVPU_Q_OUTPUT_FLUSHED
 #undef cixvpu_queue_event
 #undef cixvpu_prepared_queue_open
+#undef cixvpu_prepared_queue_rpc_pending
 #undef cixvpu_prepared_queue_command
 #undef cixvpu_prepared_queue_input_param
 #undef cixvpu_prepared_queue_submit
@@ -182,6 +190,11 @@ extern void boot_fixture_rpc_words(uint32_t, uint32_t, uint32_t, uint32_t,
     uint32_t, uint32_t, uint32_t);
 extern uint32_t boot_fixture_rpc_word(unsigned int);
 extern void boot_fixture_set_rpc_commit(void (*)(void));
+extern struct cixvpu_prepared *boot_fixture_prepare_frame(void);
+extern void boot_fixture_frame_start(unsigned int);
+extern void boot_fixture_frame_notify(void);
+extern unsigned int boot_fixture_frame_publications(void);
+extern void boot_fixture_frame_tick(void);
 
 /* The PIC model starts masked and can dispatch synchronously on unmask. */
 #define KM_NOSLEEP 0x00000002
@@ -195,17 +208,23 @@ static unsigned int boot_fault;
 static bool boot_rpc_test;
 static unsigned int boot_rpc_commit_events, boot_rpc_notify_events;
 static unsigned int boot_rpc_deferrals;
+static bool frame_bootstrap_test;
+static unsigned int frame_bootstrap_notifies;
+static bool frame_trial;
+static unsigned int frame_scenario,frame_command_calls,frame_gate_calls,frame_fault_acks;
+static bool frame_rpc_faulted;
 static bool boot_term_issued;
 static uint64_t boot_now;
 static uint32_t boot_regs[2][0x400 / 4];
-static struct { bus_space_handle_t h; bus_size_t offset; uint32_t value; } boot_trace[64];
+static struct { bus_space_handle_t h; bus_size_t offset; uint32_t value; } boot_trace[128];
 static unsigned int boot_barriers;
 static int (*boot_handler)(void *);
 static void *boot_handler_arg;
 static unsigned int boot_pic_mask_count;
 static struct cixvpu_prepared *boot_actual;
 static void *kmem_zalloc(size_t n, int f)
-{ (void)f; if (boot_fault == 1) return NULL; return allocate(n); }
+{ (void)f; if (boot_fault == 1 || (boot_fault==63 && n==262144)) return NULL; return allocate(n); }
+static void kmem_free(void *p,size_t n) {CHECK(n!=0);AcpiOsFree(p);}
 static unsigned int atomic_cas_uint(volatile unsigned int *p, unsigned int a, unsigned int b)
 { unsigned int old = *p; if (old == a) *p = b; return old; }
 static void atomic_or_uint(volatile unsigned int *p, unsigned int v) { *p |= v; }
@@ -254,6 +273,7 @@ static void boot_final_ack_irq(void);
 static void boot_rpc_request(void);
 static void boot_rpc_commit_hook(void);
 static void boot_rpc_notified(void);
+static void frame_bootstrap_notified(void);
 static void bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h,
     bus_size_t offset, uint32_t value)
 {
@@ -268,6 +288,7 @@ static void bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h,
     if (h==1 && offset==0x218 && value==1) boot_term_issued=true;
     if (h==1 && offset==4 && value==1) {
         boot_fixture_runtime(!boot_rpc_test && boot_fault != 7 && boot_fault != 5 && boot_fault != 21);
+        if(frame_trial)boot_fixture_frame_start(frame_scenario);
         if (boot_rpc_test) {
             boot_fixture_set_rpc_commit(boot_rpc_commit_hook);
             boot_rpc_request();
@@ -276,7 +297,11 @@ static void bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h,
         if (boot_fault == 23 || boot_fault == 24) boot_fixture_rpc(1,0x12345678,0xfedcba98);
         if (boot_fault == 25) boot_fixture_rpc_alloc();
     }
-    if(h==1 && offset==0x220 && value==1 && boot_regs[1][1]==1 && boot_rpc_test)
+    if(h==1 && offset==0x220 && value==1 && boot_regs[1][1]==1 && frame_trial)
+        boot_fixture_frame_notify();
+    else if(h==1 && offset==0x220 && value==1 && frame_bootstrap_test)
+        frame_bootstrap_notified();
+    else if(h==1 && offset==0x220 && value==1 && boot_regs[1][1]==1 && boot_rpc_test)
         boot_rpc_notified();
     if (h == 1 && offset == 0x21c && value == 0) boot_regs[1][0x18 / 4] &= ~1U;
 }
@@ -288,9 +313,9 @@ static void bus_space_barrier(bus_space_tag_t t, bus_space_handle_t h,
   }
 }
 static void getmicrouptime(struct timeval *t)
-{ if (boot_fault==11 || boot_fault==21) boot_now=boot_now==0 ? 100000 : boot_now-100; else if (boot_fault!=5 && boot_fault!=12) boot_now+=10; t->tv_sec=boot_now/1000000; t->tv_usec=boot_now%1000000; }
+{ if(frame_trial && frame_scenario==30 && boot_fixture_frame_publications()>=2) {} else if (boot_fault==11 || boot_fault==21) boot_now=boot_now==0 ? 100000 : boot_now-100; else if (boot_fault!=5 && boot_fault!=12) boot_now+=10; t->tv_sec=boot_now/1000000; t->tv_usec=boot_now%1000000; }
 static void delay(unsigned int usec)
-{ boot_delays++; if (boot_fault!=5 && boot_fault!=12 && boot_fault!=11) boot_now+=usec; }
+{ if(frame_trial)boot_fixture_frame_tick();boot_delays++; if(frame_trial && frame_scenario==30 && boot_fixture_frame_publications()>=2)return; if (boot_fault!=5 && boot_fault!=12 && boot_fault!=11) boot_now+=usec; }
 static const char *device_xname(device_t d) { CHECK(d==VPU); return "cixvpu0"; }
 static void boot_final_ack_irq(void)
 {
@@ -314,12 +339,160 @@ static int boot_rpc_step_actual(struct cixvpu_prepared *p, enum cixvpu_boot_rpc_
 {
     /* Inject one legal zero-I/O EAGAIN at the native coordinator boundary. */
     if(boot_fault==36 && boot_rpc_deferrals++==0) return EAGAIN;
-    return cixvpu_prepared_boot_rpc_step(p,out);
+    int error=cixvpu_prepared_boot_rpc_step(p,out);
+    if(frame_trial && !frame_rpc_faulted && error==0 && *out==CIXVPU_BOOT_RPC_IDLE &&
+        ((frame_scenario==15 || frame_scenario==16) ? boot_fixture_frame_publications()==8 :
+        frame_scenario==17 && boot_fixture_frame_publications()==11 && boot_fixture_acks()==9)) {
+        frame_rpc_faulted=true;frame_fault_acks=boot_fixture_acks();
+        if(frame_scenario==16)boot_now=0;
+        else {boot_regs[1][0x18/4]=2;CHECK(boot_handler(boot_handler_arg)==1);}
+    }
+    return error;
+
 }
+/* Native sysctl tree and user copy are service boundaries. old_sysctl below
+ * is imported from the actual fork; callback and wrapper are not mirrored. */
+#define SYSCTLFN_ARGS const int *name,unsigned int namelen,void *oldp,size_t *oldlenp,const void *newp,size_t newlen,const int *oname,struct lwp *l,const struct sysctlnode *rnode
+#define SYSCTLFN_CALL(n) name,namelen,oldp,oldlenp,newp,newlen,oname,l,n
+#define CTLFLAG_READONLY 0
+#define CTLFLAG_PRIVATE 0x100
+#define CTLFLAG_PERMANENT 0x200
+#define CTLTYPE_NODE 1
+#define CTLTYPE_STRUCT 5
+#define CTL_HW 6
+#define CTL_CREATE -3
+#define CTL_EOL -1
+#define CTL_QUERY -2
+#define CTL_DESCRIBE -7
+#define SYSCTL_DESCR(s) s
+#define __UNCONST(a) ((void *)(uintptr_t)(const void *)(a))
+#define SYSCTL_NAMELEN 32
+#define SYSCTL_VERSION 0x01000000
+#define SYSCTL_VERS_0 0
+#define SYSCTL_VERS_1 SYSCTL_VERSION
+#define SYSCTL_VERS(f) ((f)&0xff000000)
+#define SYSCTL_TYPE(f) ((f)&15)
+#define __sysc_pad(type) union {uint64_t __sysc_upad;struct {type __sysc_sdatum;} __sysc_ustr;}
+#define __sysc_unpad(x) x.__sysc_ustr.__sysc_sdatum
+struct emul {const struct sysctlnode *e_sysctlovly;};
+struct proc {const struct emul *p_emul;};
+struct lwp {const struct proc *l_proc;};
+
+struct sysctlnode;
+typedef int (*sysctlfn)(SYSCTLFN_ARGS);
+/* Strict C11 glibc hides these native BSD names. The imported ABI is LP64. */
+#if defined(__linux__)
+typedef unsigned int u_int;
+typedef uint64_t u_quad_t;
+#endif
+#include "sysctl-node.inc"
+_Static_assert(sizeof(struct sysctlnode)==96,"native LP64 sysctlnode layout");
+
+struct sysctllog {unsigned int count;};
+static struct sysctlnode frame_nodes[3];
+static struct sysctllog frame_log;
+static unsigned int frame_node_count,frame_node_calls,frame_teardowns,frame_lookups;
+static bool frame_copy_fault,frame_tree_locked,frame_query_churn;
+static unsigned int frame_copyins,frame_copyouts,frame_copyout_fault;
+static const struct sysctlnode *frame_selected_node;
+static int sysctl_createv(struct sysctllog **log,int cflags,const struct sysctlnode **root,
+    const struct sysctlnode **out,int flags,int type,const char *label,const char *desc,
+    sysctlfn fn,unsigned long long q,void *data,size_t n,...)
+{
+    (void)desc;CHECK(cflags==0 && log!=NULL && label!=NULL && q==0);
+    CHECK((flags&CTLFLAG_PERMANENT)==0 && frame_node_count<3);
+    frame_node_calls++;
+    if(boot_fault==60+frame_node_calls-1)return ENOMEM;
+    if(frame_node_count==0)CHECK(root==NULL && type==CTLTYPE_NODE && data==NULL);
+    else CHECK(root!=NULL && *root==&frame_nodes[0] && type==CTLTYPE_STRUCT && data!=NULL);
+    struct sysctlnode *node=&frame_nodes[frame_node_count++];
+    memset(node,0,sizeof(*node));node->sysctl_flags=flags|type|SYSCTL_VERSION;
+    node->sysctl_num=(int)frame_node_count;node->sysctl_data=data;node->sysctl_size=n;node->sysctl_func=fn;
+    snprintf(node->sysctl_name,sizeof(node->sysctl_name),"%s",label);node->sysctl_ver=1;node->sysctl_desc=desc;
+    if(frame_node_count>1) {node->sysctl_parent=&frame_nodes[0];frame_nodes[0].sysctl_child=&frame_nodes[1];frame_nodes[0].sysctl_clen=frame_node_count-1;}
+
+    CHECK(fn!=NULL);*log=&frame_log;frame_log.count=frame_node_count;if(out)*out=node;
+    return 0;
+}
+static void sysctl_teardown(struct sysctllog **log)
+{
+    assert(log!=NULL);if(*log==NULL)return;
+    CHECK(*log==&frame_log && !frame_tree_locked);
+    frame_teardowns++;frame_node_count=frame_log.count=0;*log=NULL;
+}
+static int sysctl_lookup(SYSCTLFN_ARGS)
+{
+    (void)name;(void)newlen;(void)oname;(void)l;
+    CHECK(namelen==0 && newp==NULL);frame_lookups++;
+    if(oldp!=NULL) {
+        if(frame_copy_fault)return EFAULT;
+        memcpy(oldp,rnode->sysctl_data,*oldlenp<rnode->sysctl_size?*oldlenp:rnode->sysctl_size);
+    }
+    *oldlenp=rnode->sysctl_size;return 0;
+}
+static int sysctl_describe(SYSCTLFN_ARGS)
+{ (void)name;(void)oldp;(void)oldlenp;(void)newp;(void)newlen;(void)oname;(void)l;CHECK(namelen==1 && rnode==&frame_nodes[0]);return 0; }
+static void sysctl_lock(bool write) {(void)write;CHECK(!frame_tree_locked);frame_tree_locked=true;}
+static void sysctl_unlock(void) {CHECK(frame_tree_locked);frame_tree_locked=false;}
+static int sysctl_dispatch(SYSCTLFN_ARGS)
+{ CHECK(frame_tree_locked);(void)rnode;return frame_selected_node->sysctl_func(name,namelen,oldp,oldlenp,newp,newlen,oname,l,frame_selected_node); }
+#define KASSERT(x) assert(x)
+#define MIN(a,b) ((a)<(b)?(a):(b))
+#define rw_lock_held(p) (*(p))
+#define sysctl_treelock frame_tree_locked
+static int sysctl_copyin(struct lwp *l,const void *src,void *out,size_t n)
+{(void)l;frame_copyins++;if(frame_copy_fault)return EFAULT;memcpy(out,src,n);if(frame_query_churn && n==sizeof(struct sysctlnode))((struct sysctlnode *)(uintptr_t)src)->sysctl_ver=1;return 0;}
+static int sysctl_copyout(struct lwp *l,const void *src,void *out,size_t n)
+{(void)l;frame_copyouts++;if(frame_copy_fault || frame_copyouts==frame_copyout_fault)return EFAULT;memcpy(out,src,n);return 0;}
+static const struct sysctlnode *sysctl_rootof(const struct sysctlnode *node)
+{while(node->sysctl_parent!=NULL)node=node->sysctl_parent;return node;}
+static int sysctl_locate(struct lwp *l,const int *name,unsigned int n,const struct sysctlnode **node,int *index)
+{(void)l;(void)name;(void)n;(void)node;(void)index;CHECK(false);return ENOENT;}
+static int sysctl_cvt_in(struct lwp *,int *,const void *,size_t,struct sysctlnode *);
+static int sysctl_dispatch(SYSCTLFN_ARGS);
+/* The unchanged native query uses int ni against uint32_t child count.
+ * Our owned tree has at most two children. Keep the native body unchanged. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#include "old-sysctl.inc"
+#pragma GCC diagnostic pop
+
+#undef sysctl_treelock
+
+
+static int frame_command_actual(struct cixvpu_prepared *p,const struct cixvpu_queue_command *c)
+{
+    if(frame_trial && frame_scenario==13 && frame_command_calls++==0)return EAGAIN;
+    int error=cixvpu_prepared_queue_command(p,c);
+    if(frame_trial && frame_scenario==14 && error==0) {
+        boot_regs[1][0x18/4]=2;CHECK(boot_handler(boot_handler_arg)==1);
+    }
+    return error;
+}
+static int frame_gate_actual(struct cixvpu_prepared *p,bool *out)
+{
+    /* A legal no-new-observation deferral must not grant stale authority. */
+    if(frame_trial && frame_scenario==22 && frame_gate_calls++==0)return EAGAIN;
+    return cixvpu_prepared_queue_rpc_pending(p,out);
+}
+static int frame_copy_actual(struct cixvpu_prepared *p,void *out,size_t n,struct cixvpu_buffer_bitstream_result *r)
+{
+    int error=cixvpu_prepared_queue_output_copy(p,out,n,r);
+    if(frame_trial && frame_scenario==26 && error==0 && (r->flags&0x10)!=0) {
+        boot_regs[1][0x18/4]=2;CHECK(boot_handler(boot_handler_arg)==1);
+    }
+    return error;
+}
+#define cixvpu_prepared_queue_output_copy frame_copy_actual
+#define cixvpu_prepared_queue_command frame_command_actual
+#define cixvpu_prepared_queue_rpc_pending frame_gate_actual
 #define cixvpu_prepared_boot_rpc_header boot_rpc_header_actual
 #define cixvpu_prepared_publish_root boot_publish_actual
 #define cixvpu_prepared_boot_rpc_step boot_rpc_step_actual
 #include "boot-source.inc"
+#undef cixvpu_prepared_queue_output_copy
+#undef cixvpu_prepared_queue_command
+#undef cixvpu_prepared_queue_rpc_pending
 #undef cixvpu_prepared_boot_rpc_step
 #undef cixvpu_prepared_publish_root
 #undef cixvpu_prepared_boot_rpc_header
@@ -334,11 +507,141 @@ static void boot_fixture(void)
     boot_term_issued=false;
     boot_rpc_test=false; boot_rpc_commit_events=boot_rpc_notify_events=0;
     boot_rpc_deferrals=0;
+    frame_bootstrap_test=false;frame_bootstrap_notifies=0;
+    frame_trial=false;frame_scenario=frame_command_calls=frame_gate_calls=frame_fault_acks=0;frame_rpc_faulted=false;
+    frame_node_count=frame_node_calls=frame_teardowns=frame_lookups=0;
+    frame_copy_fault=frame_tree_locked=frame_query_churn=false;frame_copyins=frame_copyouts=frame_copyout_fault=0;frame_selected_node=NULL;memset(frame_nodes,0,sizeof(frame_nodes));
     memset(boot_regs, 0, sizeof(boot_regs));
     boot_regs[0][0x21c/4] = 0xa5a50ffc;
     boot_regs[0][0x300/4] = 0xf1234567;
     boot_regs[1][0x14/4] = 0x0f0f0f0f;
     boot_regs[1][0x10/4] = UINT32_MAX;
+}
+/* Missing constructor is a runtime boundary, never a copied implementation. */
+#ifndef CIXVPU_BOOT_FRAME_API
+static int cixvpu_acpi_boot_create_frame(device_t d,const struct acpi_attach_args *a,
+    const struct cixvpu_resources *r,struct cixvpu_acpi_boot **out)
+{ (void)d;(void)a;(void)r;(void)out;return ENOTSUP; }
+#endif
+static void frame_bootstrap_ack(void)
+{
+    if(boot_fixture_acks()==2)
+        boot_fixture_rpc_words(1,2,12,131072,67108864,0,22);
+}
+static void frame_bootstrap_notified(void)
+{
+    CHECK(boot_fixture_acks()==2 && boot_fixture_rpc_word(0)==2);
+    frame_bootstrap_notifies++;
+    if(frame_bootstrap_notifies==1) boot_fixture_rpc_resize(0x20000000,524288);
+    else if(frame_bootstrap_notifies==2) boot_fixture_rpc_words(1,2,12,16384,16384,0,12);
+    else { CHECK(frame_bootstrap_notifies==3);boot_fixture_rpc(0,0,0); }
+}
+static void frame_bootstrap_tests(void)
+{
+    for(unsigned int policy=0;policy<2;policy++) {
+        struct cixvpu_acpi_boot *b=NULL;
+        boot_fixture();
+        int error=policy==1?cixvpu_acpi_boot_create_frame(VPU,&fixture_aa,&attach_description,&b):
+            cixvpu_acpi_boot_create_rpc(VPU,&fixture_aa,&attach_description,&b);
+        CHECK(error==0);if(error!=0)return;
+        frame_bootstrap_test=true;
+        boot_actual=boot_fixture_prepare_rpc();b->prepared=boot_actual;
+        CHECK(cixvpu_prepared_sync_initial(boot_actual)==0);
+        uint32_t root;CHECK(cixvpu_prepared_publish_root(boot_actual,&root)==0);
+        b->control.bst=fixture_aa.aa_memt;b->control.bsh=1;
+        boot_fixture_runtime(true);boot_fixture_set_ack(frame_bootstrap_ack);
+        CHECK(cixvpu_boot_receive(b)==0);
+        CHECK(b->report.switched_in && b->report.pong && b->report.messages==2);
+        CHECK(frame_bootstrap_notifies==(policy==1?3U:0U));
+        CHECK(b->report.rpc_commits==frame_bootstrap_notifies && b->report.rpc_notifications==frame_bootstrap_notifies);
+        CHECK(b->report.rpc_second_alloc_replied==(policy==1));
+        boot_fixture_drop(boot_actual);
+#ifdef CIXVPU_BOOT_FRAME_API
+        if(b->frame_result!=NULL) {
+            sysctl_teardown(&b->frame_log);cixvpu_frame_claimed=0;AcpiOsFree(b->frame_result);
+        }
+#endif
+        AcpiOsFree(b);
+    }
+}
+static void frame_trial_tests(void)
+{
+    for(unsigned int scenario=0;scenario<2;scenario++) {
+        struct cixvpu_acpi_boot *b=NULL;
+        boot_fixture();frame_trial=true;frame_scenario=scenario;
+        CHECK(cixvpu_acpi_boot_create_frame(VPU,&fixture_aa,&attach_description,&b)==0);assert(b!=NULL);
+        boot_actual=boot_fixture_prepare_frame();struct cixvpu_prepared *owner=boot_actual;
+        CHECK(cixvpu_acpi_boot_once(b,&owner)==0 && owner==NULL);
+        CHECK(boot_fixture_frame_publications()==13);
+        CHECK(b->report.exposed && b->report.held && boot_disestablish==0 && boot_masks==1);
+        CHECK(cixvpu_prepared_free(&boot_actual)==EBUSY);
+        boot_fixture_drop(boot_actual);sysctl_teardown(&b->frame_log);cixvpu_frame_claimed=0;
+        AcpiOsFree(b->frame_result);AcpiOsFree(b);
+    }
+}
+static void frame_advisory_tests(void)
+{
+    struct cixvpu_acpi_boot b;memset(&b,0,sizeof(b));
+    const enum cixvpu_command_response_kind kinds[]={CIXVPU_COMMAND_JOB_DEQUEUED,CIXVPU_COMMAND_STATE};
+    for(unsigned int i=0;i<2;i++) {
+        struct cixvpu_queue_event event;memset(&event,0,sizeof(event));
+        event.kind=CIXVPU_Q_RESPONSE;event.response.kind=kinds[i];
+        bool waiting=false,idle=false;unsigned int pending=0,n=0;
+        CHECK(cixvpu_frame_event(&b,&event,&waiting,&pending,&idle,&n)==0);
+        CHECK(n==8 && !b.report.frame_complete && !waiting && !idle && pending==0);
+    }
+}
+static void frame_fault_tests(void)
+{
+    const struct {unsigned int scenario;int error;} cases[]={
+        {2,EPROTO},{3,ETIMEDOUT},{4,EIO},{5,EIO},{6,ENOTSUP},
+        {7,EPROTO},{8,EIO},{9,EIO},{10,EPROTO},{11,ENOTSUP},{12,EPROTO},
+        {13,0},{14,EIO},{15,EIO},{16,EIO},{17,EIO},{20,0},{21,E2BIG},{22,0},{23,E2BIG},{24,0},{25,E2BIG},{26,EIO},{27,0},{28,0},{29,EPROTO},{30,ETIMEDOUT}
+    };
+    for(unsigned int i=0;i<__arraycount(cases);i++) {
+        boot_fixture();frame_trial=true;frame_scenario=cases[i].scenario;
+        struct cixvpu_acpi_boot *b=NULL;
+        CHECK(cixvpu_acpi_boot_create_frame(VPU,&fixture_aa,&attach_description,&b)==0);assert(b!=NULL);
+        boot_actual=boot_fixture_prepare_frame();struct cixvpu_prepared *owner=boot_actual;
+        int error=cixvpu_acpi_boot_once(b,&owner);
+        if(error!=cases[i].error)fprintf(stderr,"frame scenario %u got %d expected %d\n",frame_scenario,error,cases[i].error);
+        CHECK(error==cases[i].error && b->report.error==error && owner==NULL);
+        CHECK(b->report.held && b->report.exposed && boot_masks==1 && boot_disestablish==0);
+        CHECK(cixvpu_prepared_free(&boot_actual)==EBUSY);
+        CHECK(b->report.frame_complete==(error==0));
+        CHECK(b->report.frame_publications<=32 && b->report.frame_notifications<=32);
+        CHECK(b->report.frame_messages<=128 && b->report.frame_output_returns<=4);
+        CHECK(b->report.frame_output_bytes<=262144 && b->report.frame_received_bytes<=65536);
+        if(frame_scenario==20 || frame_scenario==22) {
+            CHECK(b->report.frame_publications==32 && b->report.frame_notifications==32);
+            CHECK(b->report.frame_complete && b->report.frame_output_bytes==8 && boot_delays>=10);
+            CHECK(b->report.rpc_commits==19 && b->report.rpc_notifications==19);
+        }
+        if(frame_scenario==21) {
+            CHECK(b->report.frame_publications==32 && b->report.rpc_commits==19);
+            CHECK(boot_fixture_rpc_word(0)==1 && !b->report.frame_complete);
+        }
+        if(frame_scenario==14)CHECK(b->report.frame_publications==1 && b->report.frame_notifications==0 && boot_fixture_frame_publications()==0);
+        if(frame_scenario>=15 && frame_scenario<=17) {
+            CHECK(frame_rpc_faulted && boot_fixture_acks()==frame_fault_acks);
+            CHECK(!b->report.frame_input_accepted && b->report.frame_output_bytes==0);
+        }
+        if(frame_scenario==3 || frame_scenario==25) {
+            frame_selected_node=&frame_nodes[1];size_t count=0;
+            CHECK(old_sysctl(NULL,0,NULL,&count,NULL,0,NULL)==(frame_scenario==3?ENODATA:0));
+            CHECK(count==b->report.frame_output_bytes);
+            frame_selected_node=&frame_nodes[2];uint8_t status[96];count=sizeof(status);
+            CHECK(old_sysctl(NULL,0,status,&count,NULL,0,NULL)==0 && count==96);
+            CHECK(status[0]==1 && status[8]==(uint8_t)error && status[9]==0 && status[10]==0 && status[11]==0 && status[28]==0);
+        }
+        if(frame_scenario==30)CHECK(b->report.frame_visits==5001 && b->report.frame_publications==2 && boot_delays==4999);
+        if(frame_scenario==28)CHECK(boot_delays>=10 && boot_fixture_frame_publications()==13);
+        if(frame_scenario==23)CHECK(b->report.frame_messages==128);
+        if(frame_scenario==24)CHECK(b->report.frame_complete && b->report.frame_output_bytes==262144 && b->report.frame_output_returns==4);
+        if(frame_scenario==25)CHECK(!b->report.frame_complete && b->report.frame_output_returns==4 && boot_fixture_frame_publications()==15);
+        boot_fixture_drop(boot_actual);sysctl_teardown(&b->frame_log);cixvpu_frame_claimed=0;
+        AcpiOsFree(b->frame_result);AcpiOsFree(b);
+    }
 }
 static struct cixvpu_acpi_boot *boot_new(bool special)
 {
@@ -349,6 +652,105 @@ static struct cixvpu_acpi_boot *boot_new(bool special)
     assert(boot_actual != NULL);
     return ctx;
 }
+static void frame_export_tests(void)
+{
+    (void)sysctl_createv;(void)sysctl_teardown;(void)sysctl_lookup;
+    (void)sysctl_query;(void)sysctl_describe;
+    struct cixvpu_acpi_boot *b=NULL;
+    boot_fixture();
+    CHECK(cixvpu_acpi_boot_create_frame(VPU,&fixture_aa,&attach_description,&b)==0);assert(b!=NULL);
+    CHECK(frame_node_count==3);
+    if(frame_node_count!=3) {AcpiOsFree(b->frame_result);AcpiOsFree(b);return;}
+    struct cixvpu_acpi_boot *other=NULL;unsigned int baseline=live;
+    CHECK(cixvpu_acpi_boot_create_frame(VPU,&fixture_aa,&attach_description,&other)==EBUSY);
+    CHECK(other==NULL && live==baseline && frame_node_count==3 && frame_teardowns==0);
+    frame_selected_node=&frame_nodes[0];int query=CTL_QUERY;
+    struct sysctlnode request;memset(&request,0,sizeof(request));request.sysctl_flags=SYSCTL_VERSION;
+    struct sysctlnode discovered[2];memset(discovered,0,sizeof(discovered));size_t metadata=sizeof(discovered);
+    CHECK(old_sysctl(&query,1,discovered,&metadata,&request,sizeof(request),NULL)==0);
+    CHECK(metadata==sizeof(discovered) && frame_lookups==0);
+    CHECK(strcmp(discovered[0].sysctl_name,"hevc_frame")==0 && strcmp(discovered[1].sysctl_name,"frame_status")==0);
+    for(unsigned int i=0;i<2;i++) {
+        CHECK(discovered[i].sysctl_data==NULL && discovered[i].sysctl_func==NULL && discovered[i].sysctl_parent==NULL && discovered[i].sysctl_desc==NULL);
+        CHECK(discovered[i].__rsvd==0 && discovered[i].sysctl_ver==1 && discovered[i].sysctl_num==(int)i+2);
+        CHECK(discovered[i].sysctl_flags==frame_nodes[i+1].sysctl_flags && discovered[i].sysctl_size==frame_nodes[i+1].sysctl_size);
+    }
+    /* The same current-version request shape is used by libc __learn_tree. */
+    struct emul native_emul={NULL};struct proc process={&native_emul};struct lwp user={&process};
+    request.sysctl_ver=1;metadata=sizeof(discovered);
+    CHECK(old_sysctl(&query,1,discovered,&metadata,&request,sizeof(request),&user)==ENOTSUP);
+    request.sysctl_ver=UINT32_MAX;
+    CHECK(old_sysctl(&query,1,NULL,&metadata,&request,sizeof(request),&user)==ENOTSUP);
+    request.sysctl_ver=0;frame_copyins=0;frame_query_churn=true;
+    CHECK(old_sysctl(&query,1,discovered,&metadata,&request,sizeof(request),&user)==0);
+    CHECK(frame_copyins==1 && request.sysctl_ver==1);
+    frame_query_churn=false;request.sysctl_ver=0;
+    /* Compare normal version-zero discovery to the unchanged native engine. */
+    sysctlfn handler=frame_nodes[0].sysctl_func;frame_nodes[0].sysctl_func=sysctl_query;
+    struct sysctlnode native_nodes[2];size_t native_size=sizeof(native_nodes);
+    CHECK(old_sysctl(&query,1,native_nodes,&native_size,&request,sizeof(request),NULL)==0 && native_size==sizeof(native_nodes));
+    for(unsigned int i=0;i<2;i++) {
+        CHECK(native_nodes[i].sysctl_num==discovered[i].sysctl_num && native_nodes[i].sysctl_flags==discovered[i].sysctl_flags);
+        CHECK(native_nodes[i].sysctl_size==discovered[i].sysctl_size && strcmp(native_nodes[i].sysctl_name,discovered[i].sysctl_name)==0);
+        CHECK(native_nodes[i].sysctl_data!=NULL && native_nodes[i].sysctl_func!=NULL);
+    }
+    native_size=sizeof(native_nodes)-1;
+    CHECK(old_sysctl(&query,1,native_nodes,&native_size,&request,sizeof(request),NULL)==ENOMEM && native_size==sizeof(native_nodes));
+    frame_nodes[0].sysctl_func=handler;
+    frame_copyouts=0;frame_copyout_fault=2;metadata=sizeof(discovered);
+    memset(discovered,0xa5,sizeof(discovered));
+    CHECK(old_sysctl(&query,1,discovered,&metadata,&request,sizeof(request),&user)==EFAULT && metadata==sizeof(discovered));
+    CHECK(frame_copyouts==2 && discovered[0].sysctl_data==NULL && ((const uint8_t *)&discovered[1])[0]==0xa5);
+    frame_copyout_fault=0;
+
+    request.sysctl_ver=0;native_emul.e_sysctlovly=&frame_nodes[0];
+    CHECK(old_sysctl(&query,1,NULL,&metadata,&request,sizeof(request),&user)==ENOTSUP);
+    native_emul.e_sysctlovly=NULL;
+    metadata=sizeof(discovered)-1;
+    CHECK(old_sysctl(&query,1,discovered,&metadata,&request,sizeof(request),NULL)==ENOMEM && metadata==sizeof(discovered));
+    request.sysctl_flags=0;metadata=sizeof(discovered);
+
+    CHECK(old_sysctl(&query,1,discovered,&metadata,&request,sizeof(request),NULL)==EINVAL);
+    request.sysctl_flags=SYSCTL_VERSION;
+    CHECK(old_sysctl(&query,1,NULL,&metadata,&request,1,NULL)==EINVAL);
+    frame_copy_fault=true;CHECK(old_sysctl(&query,1,NULL,&metadata,&request,sizeof(request),NULL)==EFAULT);frame_copy_fault=false;
+    query=CTL_DESCRIBE;metadata=0;CHECK(old_sysctl(&query,1,NULL,&metadata,NULL,0,NULL)==0 && frame_lookups==0);
+    CHECK(old_sysctl(&query,1,NULL,&metadata,&request,sizeof(request),NULL)==EPERM);
+    query=1;CHECK(old_sysctl(&query,1,NULL,&metadata,NULL,0,NULL)==EINVAL && frame_lookups==0);
+    frame_selected_node=&frame_nodes[1];
+    uint8_t copy[96];memset(copy,0xa5,sizeof(copy));size_t n=sizeof(copy);int name=CTL_QUERY;
+    CHECK(old_sysctl(NULL,0,copy,&n,NULL,0,NULL)==EAGAIN && n==sizeof(copy) && copy[0]==0xa5);
+    CHECK(old_sysctl(NULL,0,NULL,&n,copy,1,NULL)==EPERM);
+    unsigned int lookups=frame_lookups;
+    CHECK(old_sysctl(&name,1,copy,&n,NULL,0,NULL)==EINVAL && frame_lookups==lookups);
+    name=CTL_DESCRIBE;CHECK(old_sysctl(&name,1,copy,&n,NULL,0,NULL)==EINVAL);
+    name=1;CHECK(old_sysctl(&name,1,copy,&n,NULL,0,NULL)==EINVAL);
+    frame_trial=true;boot_actual=boot_fixture_prepare_frame();struct cixvpu_prepared *owner=boot_actual;
+    CHECK(cixvpu_acpi_boot_once(b,&owner)==0);
+    unsigned int writes=boot_writes;
+    n=0;CHECK(old_sysctl(NULL,0,NULL,&n,NULL,0,NULL)==0 && n==8);
+    n=4;CHECK(old_sysctl(NULL,0,copy,&n,NULL,0,NULL)==ENOMEM && n==8);
+    n=4;CHECK(frame_selected_node->sysctl_func(NULL,0,copy,&n,NULL,0,NULL,NULL,frame_selected_node)==0 && n==8);
+    frame_copy_fault=true;n=4;memset(copy,0xa5,sizeof(copy));
+    CHECK(old_sysctl(NULL,0,copy,&n,NULL,0,NULL)==EFAULT && n==4 && copy[0]==0xa5);
+    frame_copy_fault=false;n=sizeof(copy);
+    CHECK(old_sysctl(NULL,0,copy,&n,NULL,0,NULL)==0 && n==8);
+    const uint8_t expected[]={0,0,1,0x26,1,2,3,4};CHECK(memcmp(copy,expected,8)==0);
+    frame_selected_node=&frame_nodes[2];n=sizeof(copy);
+    CHECK(old_sysctl(NULL,0,copy,&n,NULL,0,NULL)==0 && n==96);
+    CHECK(copy[0]==1 && copy[4]==96 && copy[8]==0 && copy[28]==1 && copy[32]==8 && copy[36]==2);
+    CHECK(boot_writes==writes && !frame_tree_locked && b->report.exposed && boot_disestablish==0);
+#ifdef CIXVPU_BOOT_FRAME_EXPORT_API
+    sysctl_teardown(&b->frame_log);cixvpu_frame_claimed=0;
+#endif
+    boot_fixture_drop(boot_actual);AcpiOsFree(b->frame_result);AcpiOsFree(b);
+    for(unsigned int i=0;i<4;i++) {
+        boot_fixture();boot_fault=60+i;b=NULL;unsigned int baseline=live;
+        CHECK(cixvpu_acpi_boot_create_frame(VPU,&fixture_aa,&attach_description,&b)==ENOMEM);
+        CHECK(b==NULL && live==baseline && frame_node_count==0 && boot_writes==0 && maps==0);
+    }
+}
+
 static void boot_rpc_request(void)
 {
     if(boot_fault==47) { boot_fixture_rpc_words(1,2,12,16384,16384,0,12); return; }
@@ -816,6 +1218,11 @@ int main(void)
 {
     int result = cixvpu_control_contract_main();
 #ifdef CIXVPU_BOOT_ORCH_API
+    frame_bootstrap_tests();
+    frame_trial_tests();
+    frame_export_tests();
+    frame_advisory_tests();
+    frame_fault_tests();
     boot_tests(); boot_failure_tests(); boot_matrix_tests(); boot_trace_api_tests(); boot_rpc_policy_tests(); boot_rpc_integration_tests();
 #else
     CHECK(!"dedicated native boot epoch is absent");

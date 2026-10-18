@@ -262,7 +262,7 @@ on every board in the hardware catalog.
   A [pure command codec](ember/boot/cix-vpu.md#typed-control-command-codec)
   serializes JOB, selected HEVC setup and INPUT parameters, and preserves typed
   response failures.
-  It does not submit native commands or start a codec frame.
+  A separate manual policy selects these commands for one fixed frame.
   A [closed buffer codec](ember/boot/cix-vpu.md#closed-buffer-descriptor-codec)
   checks NV12 geometry and known BITSTREAM slots without native queues or DMA access.
   An [inactive slot planner](ember/boot/cix-vpu.md#stopped-slot-layout-foundation)
@@ -272,12 +272,14 @@ on every board in the hardware catalog.
   passed native allocation, copy, stopped PTE checks, initial sync and cancellation
   in one physical warm boot.
   It does not expose addresses to the device or submit a codec frame.
-  An [inactive queue bridge](ember/boot/cix-vpu.md#closed-active-queue-bridge)
+  An [opaque queue bridge](ember/boot/cix-vpu.md#closed-active-queue-bridge)
   binds immutable slot identities after the same owner's bootstrap handshake.
   Source contracts check typed submission, return credits, bounded host copyout
-  and refill synchronization. No active profile calls this bridge yet.
-  Every exposed owner remains held, and the terminal report masks the IRQ.
-  This check submits no codec frame and does not qualify runtime DMA teardown.
+  and refill synchronization. A [manual first-frame profile](ember/boot/cix-vpu.md#manual-first-frame-experiment)
+  selects a bounded 128×128 NV12 experiment and immutable host-copy export.
+  Native active queue traffic, encoded output and independent host decode remain
+  unqualified. Every exposed owner stays held with its IRQ masked.
+  No runtime DMA teardown is qualified.
   [Initially masked ARM PIC registration](ember/boot/cix-vpu.md#initially-masked-native-irq-registration)
   publishes the consumer context before enabling an exclusive interrupt.
   ARM ACPI tags retain [IORT address limits](ember/boot/cix-platform.md#arm-acpi-dma-address-limits).

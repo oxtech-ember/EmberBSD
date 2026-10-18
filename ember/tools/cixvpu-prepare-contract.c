@@ -96,6 +96,15 @@ static int prepare_free(struct cixvpu_dma **owner)
 { if (fail_free) return EIO; return cixvpu_dma_free(owner); }
 #endif
 #include "prepare-header.inc"
+static bool queue_gate_no_observation, queue_gate_churn;
+static int prepare_queue_cursor(struct cixvpu_dma *d,const struct cixvpu_prepared *p,
+    const struct cixvpu_fw_plan *plan,enum cixvpu_dma_queue q,
+    struct cixvpu_dma_boot_snapshot *s,uint16_t *out)
+{
+    if(queue_gate_no_observation)return EAGAIN;
+    return cixvpu_dma_queue_cursor(d,p,plan,q,s,out);
+}
+#define cixvpu_dma_queue_cursor prepare_queue_cursor
 #define kmem_zalloc prepare_kmem
 #define cixvpu_dma_page(...) prepare_page(__VA_ARGS__)
 #ifdef CIXVPU_SYNC_API
@@ -116,6 +125,7 @@ static int prepare_free(struct cixvpu_dma **owner)
 #undef cixvpu_mmu_map
 #undef cixvpu_mmu_link
 #undef cixvpu_mmu_encode
+#undef cixvpu_dma_queue_cursor
 
 static struct cixvpu_dma *begin(unsigned int cores, struct cixvpu_fw_plan *plan)
 {
@@ -1990,6 +2000,8 @@ static void queue_observe(unsigned int i, bus_addr_t offset, bus_size_t length, 
         memcpy(device_memory[i]+offset,(uint8_t *)resources[i].kva+offset,(size_t)length);
     }
     if ((i==392 || i==393) && ops==BUS_DMASYNC_PREREAD) queue_pre_reads++;
+    if(i==124 && ops==BUS_DMASYNC_PREREAD && queue_gate_churn)
+        put32(device_memory[i],0);
     if (i==119 && length==4096 && ops==BUS_DMASYNC_PREREAD) {
         if(queue_churn) device_memory[i][0]^=1;
         if(queue_consumer_churn) device_memory[i][2]^=1;
@@ -2380,6 +2392,46 @@ static void queue_command_tests(void)
         boot_drop(p);
     }
 }
+#ifndef CIXVPU_QUEUE_RPC_PENDING_API
+static int cixvpu_prepared_queue_rpc_pending(struct cixvpu_prepared *p,bool *out)
+{ (void)p;(void)out;return ENOTSUP; }
+#endif
+static void queue_rpc_gate_tests(void)
+{
+    for(unsigned int state=0;state<4;state++) {
+        struct cixvpu_prepared *p=queue_ready();bool pending=false;
+        put32(device_memory[124],state);put32(device_memory[124]+4,0x12345678);
+        unsigned int calls=native_calls;
+        CHECK(cixvpu_prepared_queue_rpc_pending(p,&pending)==(state==3?EPROTO:0));
+        if(state!=3)CHECK(pending==(state==1));
+        CHECK(device_memory[124][0]==state && device_memory[118][0]==3 && device_memory[118][2]==2);
+        CHECK(native_calls>calls);
+        if(state==3) {
+            calls=native_calls;CHECK(cixvpu_prepared_queue_rpc_pending(p,&pending)==EPROTO && native_calls==calls);
+        }
+        boot_drop(p);
+    }
+    struct cixvpu_prepared *p=queue_ready();bool pending=true;
+    CHECK(cixvpu_prepared_queue_rpc_pending(p,&pending)==0 && !pending);
+    struct cixvpu_boot_rpc_header before,after;
+    CHECK(cixvpu_prepared_boot_rpc_header(p,&before)==0 && before.valid);
+    unsigned int calls=native_calls;
+    CHECK(cixvpu_prepared_queue_rpc_pending(p,NULL)==EINVAL && native_calls==calls);
+    CHECK(cixvpu_prepared_queue_rpc_pending(p,(void *)resources[0].kva)==EINVAL && native_calls==calls);
+    CHECK(cixvpu_prepared_boot_rpc_header(p,&after)==0 && after.valid==before.valid && after.state==before.state);
+    queue_gate_no_observation=true;pending=true;
+    CHECK(cixvpu_prepared_queue_rpc_pending(p,&pending)==EAGAIN && pending && native_calls==calls);
+    CHECK(cixvpu_prepared_boot_rpc_header(p,&after)==0 && !after.valid);
+    queue_gate_no_observation=false;queue_gate_churn=true;
+    put32(device_memory[124],1);
+    CHECK(cixvpu_prepared_queue_rpc_pending(p,&pending)==0 && pending && device_memory[124][0]==0);
+    queue_gate_churn=false;
+    p->dma->owners[400].map->dm_nsegs=2;calls=native_calls;
+    CHECK(cixvpu_prepared_queue_rpc_pending(p,&pending)==EIO && native_calls==calls);
+    p->dma->owners[400].map->dm_nsegs=1;
+    CHECK(cixvpu_prepared_queue_rpc_pending(p,&pending)==EIO && native_calls==calls);
+    boot_drop(p);
+}
 #endif
 
 #endif
@@ -2393,6 +2445,7 @@ int main(void)
     queue_admission_tests(); queue_response_tests(); queue_atomic_tests();
     queue_capacity_tests();
     queue_command_tests();
+    queue_rpc_gate_tests();
     queue_open_tests();
     frame_slot_owner_tests();
     frame_slot_failure_tests();
