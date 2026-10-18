@@ -311,6 +311,9 @@ lifetime and stop/drain/release remain gates before native first-frame access.
 See the [stop sequence](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_crtc.c#L503-L551)
 and [VC6 stop check](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hvs.c#L1097-L1123).
 
+The [pure fixed HVS plane encoder](bcm2712-display-hvs-core.md) documents the
+ten-word C0/D0 payload and its separate DMA/UPM metadata contract.
+
 ### Pure PV0 timing payload
 
 The [fixed encoder](../../sys/arch/arm/broadcom/bcm2712_display_pv0.c) produces
