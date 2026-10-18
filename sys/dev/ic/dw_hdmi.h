@@ -79,6 +79,7 @@ struct dwhdmi_softc {
 	bool			sc_native_prepared, sc_native_started;
 	u_int			sc_flags;
 #define	DWHDMI_USE_INTERNAL_PHY	__BIT(0)
+	/* Optional 16-bit DDC counts. Zero keeps the controller default. */
 	u_int			sc_scl_hcnt;
 	u_int			sc_scl_lcnt;
 

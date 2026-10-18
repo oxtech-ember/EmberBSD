@@ -69,3 +69,17 @@ ASan/UBSan host checks are not Valgrind acceptance.
 The code retains the existing BSD license and authorship.
 The checked path and tests are AI-assisted EmberBSD additions.
 See the [A733 output contract](a733-output-timing.md) for its consumer boundary.
+
+## DDC clock counts
+
+A nonzero `sc_scl_hcnt` or `sc_scl_lcnt` supplies a complete 16-bit count.
+The controller writes the high and low bytes to `0x7e0b` through `0x7e0e`.
+A zero count keeps the hardware default.
+A count above 65535 fails before any register access.
+The numeric-address fixture also checks that `0x730c` and `0x730e` stay unchanged.
+These are controller checks, not physical DDC timing acceptance.
+
+The address pairs match the pinned
+[A733 DDC map](https://github.com/orangepi-xunlong/linux-orangepi/blob/2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f/bsp/drivers/drm/sunxi_device/hardware/lowlevel_hdmi20/dw_i2cm.h)
+and the independent
+[Linux DW-HDMI map](https://github.com/torvalds/linux/blob/f909e534f5e34feb2ea2701d54df63e21aa506fc/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h).

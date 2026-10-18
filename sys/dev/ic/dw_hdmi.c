@@ -243,8 +243,10 @@ __KERNEL_RCSID(0, "$NetBSD: dw_hdmi.c,v 1.12 2024/02/09 16:56:23 skrll Exp $");
 #define	HDMI_I2CM_SOFTRSTZ	0x7e09
 #define	 HDMI_I2CM_SOFTRSTZ_I2C_SOFTRST		__BIT(0)
 #define	HDMI_I2CM_SEGPTR	0x7e0a
-#define	HDMI_I2CM_SS_SCL_HCNT_0_ADDR 0x730c
-#define	HDMI_I2CM_SS_SCL_LCNT_0_ADDR 0x730e
+#define	HDMI_I2CM_SS_SCL_HCNT_1_ADDR 0x7e0b
+#define	HDMI_I2CM_SS_SCL_HCNT_0_ADDR 0x7e0c
+#define	HDMI_I2CM_SS_SCL_LCNT_1_ADDR 0x7e0d
+#define	HDMI_I2CM_SS_SCL_LCNT_0_ADDR 0x7e0e
 
 enum dwhdmi_dai_mixer_ctrl {
 	DWHDMI_DAI_OUTPUT_CLASS,
@@ -275,12 +277,19 @@ dwhdmi_ddc_exec(void *priv, i2c_op_t op, i2c_addr_t addr,
 		return ERANGE;
 	}
 
+	if (sc->sc_scl_hcnt > UINT16_MAX || sc->sc_scl_lcnt > UINT16_MAX)
+		return ERANGE;
+
 	dwhdmi_write(sc, HDMI_I2CM_SOFTRSTZ, 0);
 	dwhdmi_write(sc, HDMI_IH_I2CM_STAT0, dwhdmi_read(sc, HDMI_IH_I2CM_STAT0));
-	if (sc->sc_scl_hcnt)
-		dwhdmi_write(sc, HDMI_I2CM_SS_SCL_HCNT_0_ADDR, sc->sc_scl_hcnt);
-	if (sc->sc_scl_lcnt)
-		dwhdmi_write(sc, HDMI_I2CM_SS_SCL_LCNT_0_ADDR, sc->sc_scl_lcnt);
+	if (sc->sc_scl_hcnt) {
+		dwhdmi_write(sc, HDMI_I2CM_SS_SCL_HCNT_1_ADDR, sc->sc_scl_hcnt >> 8);
+		dwhdmi_write(sc, HDMI_I2CM_SS_SCL_HCNT_0_ADDR, sc->sc_scl_hcnt & 0xff);
+	}
+	if (sc->sc_scl_lcnt) {
+		dwhdmi_write(sc, HDMI_I2CM_SS_SCL_LCNT_1_ADDR, sc->sc_scl_lcnt >> 8);
+		dwhdmi_write(sc, HDMI_I2CM_SS_SCL_LCNT_0_ADDR, sc->sc_scl_lcnt & 0xff);
+	}
 	dwhdmi_write(sc, HDMI_I2CM_DIV, 0);
 	dwhdmi_write(sc, HDMI_I2CM_SLAVE, DDC_ADDR);
 	dwhdmi_write(sc, HDMI_I2CM_SEGADDR, DDC_SEGMENT_ADDR);
