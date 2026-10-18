@@ -131,21 +131,52 @@ for feature in ${HSM_PROBE_FEATURES:-off on}; do
             bvb-conflict bvb-hsm-floor bvb-hsm-verify bvb-minimum bvb-clean-error
             bvb-fault bvb-mutation bvb-lease bvb-held bvb-after-free
             bvb-initial-floor bvb-acquired-rate bvb-released-rate
-            hd-conflict hd-value hd-initial-hsm hd-hsm-mutation hd-gates hd-resets hd-port0-mutation hd-port1-status hd-range hd-offset hd-extra-read hd-held hd-unmap hd-release-order hd-candidate hd-partial hd-busy-cleanup'
+            hd-conflict hd-value hd-initial-hsm hd-hsm-mutation hd-gates hd-resets hd-port0-mutation hd-port1-status hd-range hd-offset hd-extra-read hd-held hd-unmap hd-release-order hd-candidate hd-partial hd-busy-cleanup
+            hd-init-precondition hd-init-address hd-init-value hd-init-extra-write hd-init-attempt
+            hd-init-barrier hd-init-post-ctl hd-init-post-stopped hd-init-fresh hd-init-retain
+            hd-init-error hd-init-no-transition'
     fi
 for mutation in $mutations; do
     case "$mutation" in
+hd-init-precondition)
+    from='if (!hsm_probe_hd_stopped(hd)) {'; to='if (false) {' ;;
+hd-init-address)
+    from='hd->handle[0], 0, 0);'; to='hd->handle[0], 4, 0);' ;;
+hd-init-value)
+    from='hd->handle[0], 0, 0);'; to='hd->handle[0], 0, 1);' ;;
+hd-init-extra-write)
+    from='hd->write_attempted = true;'
+    to='hd->write_attempted = true; bus_space_write_4(&arm_generic_bs_tag, hd->handle[0], 0, 0);' ;;
+hd-init-attempt)
+    from='hd->write_attempted = true;'; to='hd->write_attempted = false;' ;;
+hd-init-barrier)
+    from='bus_space_barrier(&arm_generic_bs_tag, hd->handle[0], 0,'
+    to='hsm_probe_omitted_barrier(&arm_generic_bs_tag, hd->handle[0], 0,' ;;
+hd-init-post-ctl)
+    from='if (hd->ctl != 0 || !hsm_probe_hd_stopped(hd))'; to='if (false || !hsm_probe_hd_stopped(hd))' ;;
+hd-init-post-stopped)
+    from='if (hd->ctl != 0 || !hsm_probe_hd_stopped(hd))'; to='if (hd->ctl != 0 || false)' ;;
+hd-init-fresh)
+    from='dvp->stage = "HD-initialize0-readback";'
+    to='if (hd->write_attempted) goto unmap; dvp->stage = "HD-initialize0-readback";' ;;
+hd-init-retain)
+    from='if (hd->ctl != 0 || !hsm_probe_hd_stopped(hd))'; to='if (false)' ;;
+hd-init-error)
+    from='return dvp->hd.operation_error;'; to='return 0;' ;;
+hd-init-no-transition)
+    from='hd->write_attempted = true;'
+    to='(void)bcm2712_display_bvb_create(dev, NULL, NULL); hd->write_attempted = true;' ;;
         hd-conflict)
             from='if (prop_dictionary_get(properties, "clock-mode") != NULL ||'
             to='if (false ||' ;;
         hd-value)
-            from='strcmp(hd_mode, "observe") != 0)'; to='false)' ;;
+            from='(strcmp(hd_mode, "observe") != 0 &&'; to='(false &&' ;;
         hd-initial-hsm)
-            from='if (mode == HSM_PROBE_HD && (status.state != 1 ||'
-            to='if (false && (status.state != 1 ||' ;;
+            from='if ((mode == HSM_PROBE_HD || mode == HSM_PROBE_HD_INIT) &&'
+            to='if ((false) &&' ;;
         hd-hsm-mutation)
-            from='(mode == HSM_PROBE_HD && (status.mutation_attempted ||'
-            to='(mode == HSM_PROBE_HD && (false ||' ;;
+            from='(status.mutation_attempted ||'
+            to='(false ||' ;;
         hd-gates)
             from='if ((initial.gates & 0x18U) != 0 || (initial.resets & 6U) != 0)'
             to='if ((initial.gates & 8U) != 0 || (initial.resets & 6U) != 0)' ;;
@@ -181,8 +212,8 @@ for mutation in $mutations; do
         hd-partial)
             from='hd->mapped |= 1U << i;'; to='hd->mapped = 7;' ;;
         hd-busy-cleanup)
-            from='hsm_probe_hd_snapshot(dev, hd);'
-            to='hsm_probe_hd_snapshot(dev, hd); if ((hd->video[1] & (1U << 31)) != 0) return EBUSY;' ;;
+            from='hsm_probe_hd_read(dev, hd);'
+            to='hsm_probe_hd_read(dev, hd); if ((hd->video[1] & (1U << 31)) != 0) return EBUSY;' ;;
         bvb-conflict)
             from='if (prop_dictionary_get(properties, "dvp-mode") != NULL ||'
             to='if (false ||' ;;
@@ -380,6 +411,11 @@ for mutation in $mutations; do
             } }
             { print } END { if (changed != 1) exit 1 }
         ' "$work/probe-good.h" > "$work/probe.h"
+    fi
+    if [ "$mutation" = hd-init-barrier ]; then
+        printf '#define hsm_probe_omitted_barrier(a,b,c,d,e) ((void)0)\n' > "$work/barrier-prefix"
+        cat "$work/barrier-prefix" "$work/probe.h" > "$work/probe-with-prefix"
+        mv "$work/probe-with-prefix" "$work/probe.h"
     fi
     compile
     if (ulimit -c 0; run) >"$work/mutant.log" 2>&1; then

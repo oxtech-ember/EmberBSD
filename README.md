@@ -715,6 +715,8 @@ on every board in the hardware catalog.
   [kernel-native owners](ember/boot/bcm2712-native-display-clocks.md) provide fixed HSM13/BVB14 leases and retained faults.
   The opt-in [finite BVB0 clock probe](ember/boot/bcm2712-bvb-clock-probe.md) is source-tested.
   Physical BVB clock control remains unaccepted.
+  A separate [shared HD control initialization probe](ember/boot/bcm2712-hd-initialize-probe.md)
+  adds one explicit write and fresh readback with source-tested guards. It does not authorize PHY access.
   DRM hotplug delivery, extension reads and KMS scanout remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,

@@ -259,6 +259,8 @@ The [DVP gate owner](bcm2712-display-dvp.md) manages the separate per-port gates
 Runtime KMS, scanout, IOMMU, and firmware-console handoff remain separate work.
 A733 uses a different clock and power backend. Do not reuse firmware clock ID 13 there.
 
+The separate [HD control initialization mode](bcm2712-hd-initialize-probe.md) performs one explicit shared-HD write with fresh readback and software cleanup. It has no automatic BVB/PHY transition.
+
 The separate [HD observation mode](bcm2712-hd-observe-probe.md) samples shared HD
 and both controller clock-stop words while inherited HSM and both DVP leases stay held.
 It does not bootstrap a zero HSM rate or write controller registers.

@@ -42,6 +42,7 @@ enum hsm_probe_mode {
 	HSM_PROBE_CLOCK,
 	HSM_PROBE_BVB0,
 	HSM_PROBE_HD,
+	HSM_PROBE_HD_INIT,
 	HSM_PROBE_OBSERVE,
 	HSM_PROBE_GATE0,
 	HSM_PROBE_HPD0,
@@ -76,7 +77,8 @@ struct hsm_probe_hd {
 	bus_space_handle_t handle[3];
 	unsigned int mapped;
 	uint32_t ctl, video[2], stop[2];
-	bool valid;
+	bool valid, write_attempted;
+	int operation_error;
 };
 
 struct hsm_probe_dvp {
@@ -285,6 +287,14 @@ hsm_probe_dvp_snapshot(device_t dev, const char *stage,
 	    status->mutation_attempted);
 }
 
+static bool
+hsm_probe_hd_stopped(const struct hsm_probe_hd *hd)
+{
+
+	return hd->valid && ((hd->video[0] | hd->video[1]) & (1U << 31)) == 0 &&
+	    (hd->stop[0] & 2U) != 0 && (hd->stop[1] & 2U) != 0;
+}
+
 /* These values describe a non-atomic snapshot, not a handoff or idle proof. */
 static void
 hsm_probe_hd_snapshot(device_t dev, const struct hsm_probe_hd *hd)
@@ -293,9 +303,7 @@ hsm_probe_hd_snapshot(device_t dev, const struct hsm_probe_hd *hd)
 
 	if (!hd->valid)
 		return;
-	candidate = hd->ctl == 0 && ((hd->video[0] | hd->video[1]) &
-	    (1U << 31)) == 0 && (hd->stop[0] & 2U) != 0 &&
-	    (hd->stop[1] & 2U) != 0;
+	candidate = hd->ctl == 0 && hsm_probe_hd_stopped(hd);
 	aprint_normal_dev(dev, "HD observe sample: DVP_CTL %#x VID_CTL0 %#x "
 	    "VID_CTL1 %#x CLOCK_STOP0 %#x CLOCK_STOP1 %#x reset-side "
 	    "candidate %u; non-atomic snapshot, not idle or handoff proof\n",
@@ -303,10 +311,24 @@ hsm_probe_hd_snapshot(device_t dev, const struct hsm_probe_hd *hd)
 	    candidate);
 }
 
-/* Both inherited-open DVP ports remain leased throughout all five reads. */
+static void
+hsm_probe_hd_read(device_t dev, struct hsm_probe_hd *hd)
+{
+
+	hd->ctl = bus_space_read_4(&arm_generic_bs_tag, hd->handle[0], 0);
+	hd->video[0] = bus_space_read_4(&arm_generic_bs_tag, hd->handle[0], 0x44);
+	hd->video[1] = bus_space_read_4(&arm_generic_bs_tag, hd->handle[0], 0x48);
+	hd->stop[0] = bus_space_read_4(&arm_generic_bs_tag, hd->handle[1], 0xbc);
+	hd->stop[1] = bus_space_read_4(&arm_generic_bs_tag, hd->handle[2], 0xbc);
+	hd->valid = true;
+	hsm_probe_hd_snapshot(dev, hd);
+}
+
+/* Both inherited-open DVP ports stay leased throughout every snapshot. */
 static int
 hsm_probe_hd_observe(device_t dev,
-    const struct bcm2712_display_contract *contract, struct hsm_probe_dvp *dvp)
+    const struct bcm2712_display_contract *contract, struct hsm_probe_dvp *dvp,
+    bool initialize)
 {
 	const unsigned int resource[] = { 11, 17, 25 };
 	const struct bcm2712_dvp_status initial = dvp->sample;
@@ -354,17 +376,38 @@ hsm_probe_hd_observe(device_t dev,
 		hd->mapped |= 1U << i;
 	}
 	dvp->stage = "HD-read";
-	aprint_normal_dev(dev, "HD observe: normal-active-SoC prior-art "
+	aprint_normal_dev(dev, "HD %s: normal-active-SoC prior-art "
 	    "assumption, no concurrent firmware writer; first shared HD11 "
 	    "and controller DVP17/25 MMIO, exactly five reads; bus_space "
-	    "stall/abort is not recoverable; no power or access proof\n");
-	hd->ctl = bus_space_read_4(&arm_generic_bs_tag, hd->handle[0], 0);
-	hd->video[0] = bus_space_read_4(&arm_generic_bs_tag, hd->handle[0], 0x44);
-	hd->video[1] = bus_space_read_4(&arm_generic_bs_tag, hd->handle[0], 0x48);
-	hd->stop[0] = bus_space_read_4(&arm_generic_bs_tag, hd->handle[1], 0xbc);
-	hd->stop[1] = bus_space_read_4(&arm_generic_bs_tag, hd->handle[2], 0xbc);
-	hd->valid = true;
-	hsm_probe_hd_snapshot(dev, hd);
+	    "stall/abort is not recoverable; no power or access proof\n",
+	    initialize ? "initialize0" : "observe");
+	hsm_probe_hd_read(dev, hd);
+	if (initialize) {
+		/* VID_CTL is not an audio-idle or exclusive-ownership proof. */
+		if (!hsm_probe_hd_stopped(hd)) {
+			hd->operation_error = EBUSY;
+			goto unmap;
+		}
+		dvp->stage = "HD-initialize0-write";
+		aprint_normal_dev(dev, "HD initialize0: exactly one shared resource11 "
+		    "+0 write0; external exclusion of all shared-HD consumers, "
+		    "including firmware and audio, is required; no full reset, "
+		    "power-off, idle or universal handoff claim\n");
+		hd->write_attempted = true;
+		bus_space_write_4(&arm_generic_bs_tag, hd->handle[0], 0, 0);
+		bus_space_barrier(&arm_generic_bs_tag, hd->handle[0], 0,
+		    contract->memory[11].length,
+		    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+		dvp->stage = "HD-initialize0-readback";
+		hd->valid = false;
+		hsm_probe_hd_read(dev, hd);
+		if (hd->ctl != 0 || !hsm_probe_hd_stopped(hd))
+			return EIO;
+		aprint_normal_dev(dev, "HD initialize0: fresh reset-side readback "
+		    "verified; software cleanup only; gates stay open and HSM "
+		    "stays enabled; no CTL restoration or automatic BVB/PHY\n");
+	}
+unmap:
 	for (i = __arraycount(resource); i > 0; i--) {
 		bus_space_unmap(&arm_generic_bs_tag, hd->handle[i - 1],
 		    contract->memory[resource[i - 1]].length);
@@ -607,6 +650,7 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 	aprint_normal_dev(dev, "DVP probe %s: normal-active-SoC prior-art "
 	    "assumption; first shared resource10 MMIO; bus_space stall/abort "
 	    "is not recoverable; no ACPI power or display-lifetime claim\n",
+	    mode == HSM_PROBE_HD_INIT ? "HD initialize0" :
 	    mode == HSM_PROBE_HD ? "HD observe" :
 	    mode == HSM_PROBE_OBSERVE ? "observe" :
 	    mode == HSM_PROBE_HPD0 ? "HPD0" :
@@ -639,10 +683,11 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 		return EBUSY;
 	if (mode == HSM_PROBE_IRQ0 && (initial.gates & (1U << 3)) != 0)
 		return EBUSY;
-	if (mode == HSM_PROBE_HD) {
+	if (mode == HSM_PROBE_HD || mode == HSM_PROBE_HD_INIT) {
 		if ((initial.gates & 0x18U) != 0 || (initial.resets & 6U) != 0)
 			return EBUSY;
-		error = hsm_probe_hd_observe(dev, &contract, dvp);
+		error = hsm_probe_hd_observe(dev, &contract, dvp,
+		    mode == HSM_PROBE_HD_INIT);
 		if (error != 0)
 			return error;
 	} else if (mode == HSM_PROBE_GATE0 || mode == HSM_PROBE_HPD0 ||
@@ -941,7 +986,8 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 		goto stop;
 	}
 	/* Observe never bootstraps an uninitialized or disabled HSM clock. */
-	if (mode == HSM_PROBE_HD && (status.state != 1 ||
+	if ((mode == HSM_PROBE_HD || mode == HSM_PROBE_HD_INIT) &&
+	    (status.state != 1 ||
 	    status.rate < BCM2712_DISPLAY_HSM_MIN_RATE)) {
 		error = EBUSY;
 		goto stop;
@@ -960,11 +1006,12 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 	hsm_probe_snapshot(dev, "acquired", &status);
 	if (status.leases != 1 || status.state != 1 ||
 	    status.rate < minimum || status.fault != 0 ||
-	    (mode == HSM_PROBE_HD && (status.mutation_attempted ||
+	    ((mode == HSM_PROBE_HD || mode == HSM_PROBE_HD_INIT) &&
+	    (status.mutation_attempted ||
 	    status.minimum[0] != minimum || status.minimum[1] != 0)) ||
 	    (mode == HSM_PROBE_BVB0 && status.minimum[0] != minimum)) {
 		error = EIO;
-		if (mode == HSM_PROBE_HD)
+		if (mode == HSM_PROBE_HD || mode == HSM_PROBE_HD_INIT)
 			goto retained;
 		goto stop;
 	}
@@ -993,7 +1040,8 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 	hsm_probe_snapshot(dev, "released (before destroy)", &status);
 	if (status.leases != 0 || status.fault != 0 || status.state != 1 ||
 	    status.rate < BCM2712_DISPLAY_HSM_MIN_RATE ||
-	    (mode == HSM_PROBE_HD && status.mutation_attempted)) {
+	    ((mode == HSM_PROBE_HD || mode == HSM_PROBE_HD_INIT) &&
+	    status.mutation_attempted)) {
 		error = EIO;
 		goto stop;
 	}
@@ -1025,6 +1073,12 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 		hsm_probe_edid0_payload(dev, dvp->ddc.edid);
 	}
 #endif
+	if (mode == HSM_PROBE_HD_INIT && dvp->hd.operation_error != 0) {
+		aprint_error_dev(dev, "HD initialize0 precondition refused: error %d; "
+		    "zero HD writes; known prefix cleaned; no success\n",
+		    dvp->hd.operation_error);
+		return dvp->hd.operation_error;
+	}
 	if (clock_error != 0) {
 		aprint_error_dev(dev, "BVB0 probe cleanup complete; operation "
 		    "error %d; no success or retry\n", clock_error);
@@ -1034,6 +1088,8 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 	    "complete; %s; no reset or clock-lifetime claim\n",
 	    mode == HSM_PROBE_CLOCK ? "no display MMIO or HPD" :
 	    mode == HSM_PROBE_BVB0 ? "BVB0 firmware-clock cycle only; no display MMIO" :
+	    mode == HSM_PROBE_HD_INIT ? "HD control initialization readback and "
+	    "software cleanup complete; not idle or handoff proof" :
 	    mode == HSM_PROBE_HD ? "HD snapshot complete; not idle or handoff proof" :
 	    mode == HSM_PROBE_HPD0 ? "one HPD0 sample" :
 	    mode == HSM_PROBE_DDC0 ? "DDC0 snapshot complete; no idle or transfer claim" :
@@ -1074,10 +1130,13 @@ retained:
 		aprint_error_dev(dev, "DVP probe stopped at %s: error %d "
 		    "mapping retained %u native owner retained %u\n", dvp->stage,
 		    error, dvp->mapped, dvp->owner != NULL);
-		if (mode == HSM_PROBE_HD) {
+		if (mode == HSM_PROBE_HD || mode == HSM_PROBE_HD_INIT) {
 			aprint_error_dev(dev, "HD observe retained resource11/17/25 "
 			    "mapping bits %#x sample valid %u; cached values only\n",
 			    dvp->hd.mapped, dvp->hd.valid);
+			aprint_error_dev(dev, "HD retained write_attempted %u; "
+			    "no retry or CTL restore\n",
+			    dvp->hd.write_attempted);
 			hsm_probe_hd_snapshot(dev, &dvp->hd);
 		}
 		if (mode == HSM_PROBE_HPD0)
@@ -1154,9 +1213,11 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 		    prop_dictionary_get(properties, "hpd-mode") != NULL ||
 		    prop_dictionary_get(properties, "ddc-mode") != NULL ||
 		    !prop_dictionary_get_cstring_nocopy(properties, "hd-mode", &hd_mode) ||
-		    strcmp(hd_mode, "observe") != 0)
+		    (strcmp(hd_mode, "observe") != 0 &&
+		    strcmp(hd_mode, "initialize0") != 0))
 			return EINVAL;
-		mode = HSM_PROBE_HD;
+		mode = strcmp(hd_mode, "initialize0") == 0 ?
+		    HSM_PROBE_HD_INIT : HSM_PROBE_HD;
 	} else if (prop_dictionary_get(properties, "clock-mode") != NULL) {
 		if (prop_dictionary_get(properties, "dvp-mode") != NULL ||
 		    prop_dictionary_get(properties, "hpd-mode") != NULL ||
