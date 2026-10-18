@@ -67,6 +67,7 @@ unsigned int boot_fixture_acks(void) { return bridge_acks; }
 void boot_fixture_runtime(bool messages) { boot_nevents=0; sync_observer=bridge_observe; if(messages) { boot_message(0,2001,4,0,0x407d1); boot_message(2,2009,0,0,0x40faa); } }
 bool boot_fixture_exposed(struct cixvpu_prepared *p) { return p->dma->ever_visible; }
 void boot_fixture_rpc(uint32_t state, uint32_t callid, uint32_t size) { put32(device_memory[boot_rpc],state); put32(device_memory[boot_rpc]+4,callid); put32(device_memory[boot_rpc]+8,size); }
+void boot_fixture_rpc_alloc(void) { boot_fixture_rpc(1,2,12); put32(device_memory[boot_rpc]+12,0x12345678); put32(device_memory[boot_rpc]+16,0xfedcba98); device_memory[boot_rpc][20]=1; device_memory[boot_rpc][21]=31; device_memory[boot_rpc][22]=0xc3; device_memory[boot_rpc][23]=0xd4; }
 void boot_fixture_drop(struct cixvpu_prepared *p) { boot_drop(p); }
 unsigned int boot_fixture_live(void) { return depth + live_kmem; }
 void boot_fixture_map_valid(struct cixvpu_prepared *p, bool valid) { p->dma->owners[p->dma->count-1].map->dm_nsegs=valid ? 1 : 0; }

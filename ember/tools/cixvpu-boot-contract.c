@@ -70,6 +70,7 @@ extern void boot_fixture_set_ack(void (*)(void));
 extern unsigned int boot_fixture_acks(void);
 extern unsigned int boot_fixture_live(void);
 extern void boot_fixture_rpc(uint32_t, uint32_t, uint32_t);
+extern void boot_fixture_rpc_alloc(void);
 extern void boot_fixture_map_valid(struct cixvpu_prepared *, bool);
 
 /* The PIC model starts masked and can dispatch synchronously on unmask. */
@@ -153,6 +154,7 @@ static void bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h,
         boot_fixture_runtime(boot_fault != 7 && boot_fault != 5 && boot_fault != 21);
         if (boot_fault == 9) boot_fixture_set_ack(boot_final_ack_irq);
         if (boot_fault == 23 || boot_fault == 24) boot_fixture_rpc(1,0x12345678,0xfedcba98);
+        if (boot_fault == 25) boot_fixture_rpc_alloc();
     }
     if (h == 1 && offset == 0x21c && value == 0) boot_regs[1][0x18 / 4] &= ~1U;
 }
@@ -242,7 +244,22 @@ static void boot_failure_tests(void)
     CHECK(cixvpu_acpi_boot_report(ctx,&r)==0);
     CHECK(r.error==ENOTSUP && r.rpc_header_error==EIO && !r.rpc_header_valid);
     CHECK(r.rpc_state==0 && r.rpc_callid==0 && r.rpc_size==0 && r.messages==0);
+    CHECK(!r.rpc_alloc_valid && r.rpc_alloc_size==0 && r.rpc_alloc_max_size==0 &&
+        r.rpc_alloc_region==0 && r.rpc_alloc_log2_alignment==0);
     CHECK(r.last_stage==CIXVPU_BOOT_RECEIVE && r.held && r.irq_masked && boot_fixture_acks()==0);
+    boot_discard_fixture(ctx);
+
+    boot_fixture(); ctx=boot_new(true); owned=boot_actual; boot_fault=25;
+    CHECK(cixvpu_acpi_boot_once(ctx,&owned)==ENOTSUP && owned==NULL);
+    CHECK(cixvpu_acpi_boot_report(ctx,&r)==0);
+    CHECK(r.rpc_header_valid && r.rpc_state==1 && r.rpc_callid==2 && r.rpc_size==12);
+    CHECK(r.rpc_alloc_valid && r.rpc_alloc_size==0x12345678 && r.rpc_alloc_max_size==0xfedcba98);
+    CHECK(r.rpc_alloc_region==1 && r.rpc_alloc_log2_alignment==31);
+    CHECK(r.error==ENOTSUP && r.rpc_header_error==0 && r.last_stage==CIXVPU_BOOT_RECEIVE);
+    CHECK(r.visits==1 && r.messages==0 && !r.switched_in && !r.pong);
+    CHECK(r.exposed && r.prepared_retained && r.held && r.irq_registered && r.irq_masked);
+    CHECK(boot_fixture_acks()==0 && boot_masks==1 && boot_disestablish==0);
+    CHECK(cixvpu_prepared_free(&boot_actual)==EBUSY);
     boot_discard_fixture(ctx);
 
     /* Real ordinary constructor: root refuses at its actual typed boundary. */

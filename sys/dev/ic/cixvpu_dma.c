@@ -676,6 +676,27 @@ cixvpu_dma_boot_snapshot(struct cixvpu_dma *dma,
 	snapshot->rpc_valid = true;
 	state = (uint32_t)rpc_header[0] | (uint32_t)rpc_header[1] << 8 |
 	    (uint32_t)rpc_header[2] << 16 | (uint32_t)rpc_header[3] << 24;
+	/* Closed diagnostics only. Keep the original header and rejection. */
+	snapshot->rpc_alloc_valid = false;
+	if (state == 1 && le32dec(rpc_header + 4) == 2 &&
+	    le32dec(rpc_header + 8) == sizeof(snapshot->rpc_alloc)) {
+		uint8_t rpc_after[12];
+
+		bus_dmamap_sync(dma->tag, rpc->map, 12,
+		    sizeof(snapshot->rpc_alloc), BUS_DMASYNC_POSTREAD);
+		memcpy(snapshot->rpc_alloc, (const uint8_t *)rpc->kva + 12,
+		    sizeof(snapshot->rpc_alloc));
+		bus_dmamap_sync(dma->tag, rpc->map, 12,
+		    sizeof(snapshot->rpc_alloc), BUS_DMASYNC_PREREAD);
+		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(rpc_after),
+		    BUS_DMASYNC_POSTREAD);
+		memcpy(rpc_after, rpc->kva, sizeof(rpc_after));
+		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(rpc_after),
+		    BUS_DMASYNC_PREREAD);
+		snapshot->rpc_alloc_valid =
+		    memcmp(rpc_header, rpc_after, sizeof(rpc_header)) == 0;
+	}
+
 	if (state != 0)
 		return ENOTSUP;
 	for (attempt = 0; attempt < 4; attempt++) {

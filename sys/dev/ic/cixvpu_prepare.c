@@ -545,6 +545,15 @@ cixvpu_prepared_boot_rpc_header(struct cixvpu_prepared *p,
 		header.callid = cixvpu_prepare_get32(p->boot.snapshot.rpc_header + 4);
 		header.size = cixvpu_prepare_get32(p->boot.snapshot.rpc_header + 8);
 		header.valid = true;
+		if (p->boot.snapshot.rpc_alloc_valid) {
+			header.alloc_size = cixvpu_prepare_get32(
+			    p->boot.snapshot.rpc_alloc);
+			header.alloc_max_size = cixvpu_prepare_get32(
+			    p->boot.snapshot.rpc_alloc + 4);
+			header.alloc_region = p->boot.snapshot.rpc_alloc[8];
+			header.alloc_log2_alignment = p->boot.snapshot.rpc_alloc[9];
+			header.alloc_valid = true;
+		}
 	}
 	*out = header;
 	return 0;
@@ -571,12 +580,14 @@ cixvpu_prepared_boot_debugparam(struct cixvpu_prepared *p,
 		if (fault && p->boot.published) {
 			p->boot.error = error;
 			p->boot.snapshot.rpc_valid = false;
+			p->boot.snapshot.rpc_alloc_valid = false;
 		}
 		return error;
 	}
 	if (!p->boot.published)
 		return EBUSY;
 	p->boot.snapshot.rpc_valid = false;
+	p->boot.snapshot.rpc_alloc_valid = false;
 	error = cixvpu_dma_boot_debugparam(p->dma, p, &p->plan,
 	    &p->boot.snapshot);
 	if (error != 0) {
@@ -611,6 +622,7 @@ cixvpu_prepared_boot_receive(struct cixvpu_prepared *p,
 		if (fault && p->boot.published) {
 			p->boot.error = error;
 			p->boot.snapshot.rpc_valid = false;
+			p->boot.snapshot.rpc_alloc_valid = false;
 		}
 		return error;
 	}
@@ -619,6 +631,7 @@ cixvpu_prepared_boot_receive(struct cixvpu_prepared *p,
 	if (p->boot.error != 0)
 		return p->boot.error;
 	p->boot.snapshot.rpc_valid = false;
+	p->boot.snapshot.rpc_alloc_valid = false;
 	error = cixvpu_dma_boot_snapshot(p->dma, p, &p->plan, &p->boot.snapshot);
 	if (error != 0)
 		goto failed;

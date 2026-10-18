@@ -76,6 +76,12 @@ cixvpu_acpi_boot_print(device_t self, const struct cixvpu_acpi_softc *sc,
 	    r->rpc_header_valid ? "yes" : "no", r->rpc_state,
 	    r->rpc_callid, r->rpc_size, r->rpc_header_error,
 	    (unsigned int)r->last_stage, r->error);
+	aprint_normal_dev(self,
+	    "boot RPC alloc valid %s size %u max_size %u region %u "
+	    "log2_alignment %u\n",
+	    r->rpc_alloc_valid ? "yes" : "no", r->rpc_alloc_size,
+	    r->rpc_alloc_max_size, (unsigned int)r->rpc_alloc_region,
+	    (unsigned int)r->rpc_alloc_log2_alignment);
 	for (i = 0; i < __arraycount(r->core_status); i++) {
 		aprint_normal_dev(self,
 		    "boot core %u attempted %s released %s status %s cleanup %s\n",
