@@ -11,9 +11,21 @@ This is an update procedure, not a general installation image.
 Use a clean export of a recorded EmberBSD commit. Keep build files outside
 the installed system directories and record the source archive's SHA256.
 The kernel, modules and base must come from the same source revision.
-The native build uses the GCC toolchain included in that source tree.
+Use the common external GCC 16.2.0 for all target compilation, including
+the kernel and modules. Do not select the in-tree compiler or set `HAVE_GCC=16`.
 
-First prepare the toolchain and kernel with the standard `build.sh`:
+Prepare the [Ports cross compiler](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/cross/README.md)
+and [runtime bootstrap](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/bootstrap/README.md)
+from recorded full Ports commits and the pinned GCC archive/checksums.
+The base needs the application compiler with a matching AArch64 seed,
+CRT, C++ headers and runtime; the kernel-only compiler cannot replace it.
+Select the [external runtime adapter](external-gcc-runtime.md) below.
+It supplies build-time paths, not an installed target runtime.
+
+Keep the OS and Ports commits, seed provenance, compiler inputs and hashes,
+runtime receipts, build flags and artifact hashes in one recorded build cohort.
+Do not combine a newer kernel with older modules or unrecorded base libraries.
+First build the host tools and kernel with the fork's `build.sh`:
 
 ```sh
 export PATH=/sbin:/usr/sbin:/bin:/usr/bin
@@ -21,10 +33,17 @@ export MAKECONF=/dev/null
 src=/absolute/source
 out=/absolute/output
 revision=FULL_COMMIT_ID
+compiler=/absolute/application-toolchain
+runtime=/absolute/gcc-runtime-bootstrap/stage/usr/pkg/gcc16
+test "$("$compiler/bin/aarch64--netbsd-gcc" -dumpfullversion)" = 16.2.0
+test "$("$compiler/bin/aarch64--netbsd-gcc" -dumpmachine)" = aarch64--netbsd
 mkdir "$out"
 cd "$src"
 sh ./build.sh -U -u -j4 -m evbarm -a aarch64 \
     -O "$out/obj" -T "$out/tools" -D "$out/dest" -R "$out/release" \
+    -V "EXTERNAL_TOOLCHAIN=$compiler" -V TOOLCHAIN_MISSING=yes \
+    -V MKGCCCMDS=no -V MKCOMPAT=no -V MKCXX=yes \
+    -V "EMBER_EXTERNAL_GCC_RUNTIME=$runtime" \
     -V MKDEBUG=no -V MKDEBUGLIB=no -V MKX11=no \
     -V "BUILDINFO=EmberBSD:$revision" \
     -V "KERNOBJDIR=$src/sys/arch/evbarm/compile" \
@@ -53,7 +72,7 @@ not provide other optional loadable drivers. Check the actual device's
 module requirements before using that reduced module tree.
 
 Use a separate destination tree for the reduced base. The following flags
-keep the C/C++ runtime and omit new compiler commands, debuggers, tests,
+keep C/C++ support and omit new compiler commands, debuggers, tests,
 manuals, X11 and additional modules. The explicit build targets reuse the
 already completed tools and object directories; use them only after the
 preceding toolchain/kernel build from this same revision succeeds.
@@ -64,6 +83,8 @@ exist; this does not compile the omitted components.
 "$out/tools/bin/nbmake-evbarm" -C "$src" obj
 sh ./build.sh -U -u -j4 -m evbarm -a aarch64 \
     -O "$out/obj" -T "$out/tools" -D "$out/minimal-dest" -R "$out/minimal-release" \
+    -V "EXTERNAL_TOOLCHAIN=$compiler" -V TOOLCHAIN_MISSING=yes \
+    -V MKCOMPAT=no -V MKCXX=yes -V "EMBER_EXTERNAL_GCC_RUNTIME=$runtime" \
     -V MKDEBUG=no -V MKDEBUGLIB=no -V MKX11=no \
     -V MKKMOD=no -V MKGCCCMDS=no -V MKGDB=no -V MKBINUTILS=no \
     -V MKATF=no -V MKKYUA=no -V MKMAN=no -V MKDOC=no -V MKINFO=no \
@@ -76,17 +97,35 @@ sh ./build.sh -U -u -j4 -m evbarm -a aarch64 \
 "$out/tools/bin/nbmake-evbarm" -C "$src" -j4 \
     'BUILDTARGETS=check-tools params clean_METALOG do-distrib-dirs includes do-lib do-compat-lib do-build do-obsolete' \
     distribution
-"$out/tools/bin/nbmake-evbarm" -C "$src" -j4 sets
 ```
 
 Pass `BUILDTARGETS` directly to make. Passing it through `build.sh -V`
 exports an environment variable, allowing the root Makefile to append
 its default targets and repeat work.
 
-`-U` records ownership and permissions in `DESTDIR/METALOG`. Keep it when
-installing. The normal release file-list checks remain enabled: a partial
-destination tree or a successful kernel build is not a completed base.
-Record hashes of the kernel, native image, modules and both sets.
+Before creating sets, audit the target runtime closure and its installation
+ownership. The [Ports runtime package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/runtime/README.md)
+supplies target DSOs separately from build-only headers, CRT and static archives.
+Every target ELF dependency must resolve to a declared payload from this cohort.
+Keep one GCC runtime provider and record its package hash and SONAMEs.
+The build-only adapter does not perform this installation or prove closure.
+
+`-U` records ownership and permissions in `DESTDIR/METALOG`. Keep it when installing.
+Reconcile the selected set lists, destination inventory and runtime provider first.
+The current [AArch64 set additions](../../distrib/sets/lists/base/ad.aarch64)
+also select GCC SDK files under `toolchain_missing`; the adapter does not install them.
+Stop if the selected profile has no matching payload and ownership recipe.
+Do not copy a compiler SDK to silence missing-file errors or relax `checkflist`.
+Set composition must be repaired separately before this profile can produce sets.
+
+Only after that audit succeeds, run the unchanged strict set checks:
+
+```sh
+"$out/tools/bin/nbmake-evbarm" -C "$src" -j4 sets
+```
+
+A partial destination tree or a successful kernel build is not a completed base.
+Record hashes of the kernel, native image, modules, runtime package and both sets.
 
 ## Recovery and installation
 
@@ -144,34 +183,13 @@ outputs. Verify the loaded kernel revision, SSH, networking and existing
 services. Keep the update receipt and recovery files after removing
 temporary build storage.
 
-## Validation
+## Validation boundary
 
-On 2026-10-10, the full update profile was cross-built on Apple Silicon macOS
-with the in-tree GCC 12.5 bootstrap: `EMBER64` with recorded `BUILDINFO`, the
-four board modules and the reduced base set. The strict `checkflist` caught a
-stale `libdwarf` entry in the set lists, fixed before building the sets. The
-kernel, modules and base were installed on a physical Pi 5 in the documented
-order (kernel and modules, reboot, base, reboot). Post-install acceptance on
-the board passed: kernel `kern.buildinfo` matched the pinned revision, all
-four modules loaded, 16 memfd and three FP-state checks passed, and the
-installed libc passed the smoke, 850-case CAS, binary128 (one `invalid_traps`
-skip remains a Cortex-A76 IOE limitation) and 27 libc/pthread checks. The
-accepted radio firmware overlay kept its hashes, `etcupdate -a -l` merged the
-etc set, and the SAE network block parsed again with the updated
-wpa_supplicant. Wi-Fi association was not verifiable at that bench: no
-configured network was in range. A single transient host `cc1` SIGTRAP under
-`-j8` did not reproduce; the remainder of the build ran at `-j6`.
+These GCC16 instructions describe source configuration and prerequisites.
+They do not establish a completed reduced base, full image or physical update.
+The runtime/set composition gate above remains separate from compiler and kernel acceptance.
 
-On 2026-10-07, the matching kernel booted on physical Pi 5 hardware and
-passed 16 memfd and three FP-state checks. The reduced base passed strict
-file-list validation, candidate libc contracts and a chroot command check.
-Installation completed and seven core files matched the accepted outputs.
-Local configuration and the radio firmware overlay retained their hashes.
-
-After the userland reboot and a subsequent power cycle, the previous Wi-Fi
-address was unreachable. The operator later reported finding the board
-over Ethernet. No post-reboot shell, library or network acceptance was
-recorded by the installer; investigation continues with another developer.
-This is an installed base with incomplete final acceptance, not a validated
-general release image. The [board receipt](../boards/raspberry-pi-5.md#headless-base-update-2026-10-07)
-records the revision, hashes and boundaries of the completed checks.
+The [historical Pi 5 receipt](../boards/raspberry-pi-5.md#headless-base-update-2026-10-07)
+records older kernel, module, libc and installed-file checks with the in-tree GCC 12.5 bootstrap.
+Those results do not qualify this external GCC16 cohort or recommend the old compiler.
+Complete post-reboot network and general release acceptance were not established.
