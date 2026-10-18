@@ -13,7 +13,7 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/xhci_acpi.c'
       - 'sys/dev/acpi/cixscmi_acpi.*'
       - 'sys/dev/ic/scmi_smt_diag.*'
-      - 'sys/dev/ic/cixvpu_resources.*'
+      - 'sys/dev/ic/cixvpu_*'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
@@ -26,6 +26,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_DMA_PROBE'
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cixreset-*'
@@ -47,7 +48,7 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/xhci_acpi.c'
       - 'sys/dev/acpi/cixscmi_acpi.*'
       - 'sys/dev/ic/scmi_smt_diag.*'
-      - 'sys/dev/ic/cixvpu_resources.*'
+      - 'sys/dev/ic/cixvpu_*'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
@@ -60,6 +61,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_DMA_PROBE'
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cixreset-*'
@@ -102,7 +104,7 @@ jobs:
             /sys/dev/acpi/xhci_acpi.c
             /sys/dev/acpi/cixscmi_acpi.*
             /sys/dev/ic/scmi_smt_diag.*
-            /sys/dev/ic/cixvpu_resources.*
+            /sys/dev/ic/cixvpu_*
             /sys/sys/queue.h
             /sys/external/bsd/acpica/dist/include/
       - name: Prepare GCC16 and analysis tools
