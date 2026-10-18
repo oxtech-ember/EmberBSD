@@ -595,15 +595,20 @@ Device DMA data correctness and codec execution require separate board acceptanc
 ## Physical diagnostic boundary
 
 The [observed CIX board](../boards/orange-pi-6-plus.md) runs the manual GCC16
-kernel `25438a551feba961b863f8c9c29de56ec414cc38` with `flags 0x7`.
+kernel `aeff3f1c44022e7997ff79270989b8bbbbeb0112` with `flags 0x7`.
 The report confirms identity, active power controls, root publication and
 IRQ status mask `0x1`, with no unexpected IRQ bits. It returns ENOTSUP (86) at RECEIVE:
 one visit, zero accepted messages, no SWITCHED_IN and no PONG.
 Cached RPC diagnostics report PARAM state `1`, call ID `2` and payload size `12`.
 The pinned codec reference identifies call `2` as MEM_ALLOC.
-The request body is not captured; allocation size, capacity, region and alignment
-remain unknown. The inactive DEBUGPARAM helper handles call `1` and cannot service
-this request. A checked memory response and firmware readiness remain open.
+The checked fixed payload reports initial size `131072` bytes, maximum size
+`67108864` bytes, protected region `0` and log2 alignment `22` (4 MiB).
+Maximum size reserves virtual capacity for later growth; the reference initially
+backs only the 128 KiB request. Native diagnostics acquire twelve payload bytes
+and recheck the fixed header. Matching headers rely on committed PARAM ownership;
+they do not prove an atomic transaction or physical DMA coherence.
+The inactive DEBUGPARAM helper handles call `1` and cannot service this request.
+A checked memory response and firmware readiness remain open.
 
 The exposed prepared owner, core power claims and IRQ registration remain held.
 The IRQ is masked. Cleanup counters do not indicate post-exposure reclamation.

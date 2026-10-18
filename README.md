@@ -1108,7 +1108,8 @@ The base system shell is unchanged.
   allocation. An explicit firmware boot trial reaches exposed ownership and an
   initial IRQ, then returns ENOTSUP before SWITCHED_IN/PONG. It retains exposed
   pages and masks the IRQ. Physical RPC-header diagnostics identify MEM_ALLOC
-  (PARAM state `1`, call ID `2`, payload size `12`); request fields are unknown.
+  (PARAM state `1`, call ID `2`, payload size `12`): 128 KiB initial memory,
+  64 MiB virtual capacity, protected region and 4 MiB alignment.
   A checked memory response is not implemented. A separate, inactive
   [DEBUGPARAM primitive](ember/boot/cix-vpu.md#inactive-debugparam-response)
   passes actual-source checks. It changes only a validated request's state word;
