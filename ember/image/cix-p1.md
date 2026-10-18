@@ -55,6 +55,54 @@ The menu repeats the narrowly gated SPCR shadow correction and disables
 `acpibat` through loader userconf. This does not repair firmware or battery ACPI.
 Keep the original boot configuration as a separate rollback file.
 
+## Optional SSH access
+
+The reduced cohort includes the native listener, both OpenSSH reexec helpers,
+`ssh-keygen`, `passwd`, `pwd_mkdb` and the PTY filesystem mount helper.
+The image includes empty `/etc/ssh` and `/var/chroot/sshd` directories and native
+PTY multiplexor nodes. It includes no SSH configuration, host key or password.
+It does not add the `sshd` account or change the locked root account template.
+Recreating an image does not preserve account changes made to an installed root.
+
+Provision access separately from a trusted local console on the writable
+persistent root. Create the native locked `sshd` privilege-separation account
+and group with UID/GID 16. Keep `/var/chroot/sshd` root-owned and not writable by
+other users. Set a nonempty root password with native `passwd -l root`.
+Keep account databases, host keys and personal configuration outside Git.
+Generate or install host keys only on the intended persistent root.
+The profile never runs `ssh-keygen` automatically, including on first boot.
+
+An administrator-created `/etc/ssh/sshd_config` enables startup. It must be a
+root-owned regular file with mode `0600`. Symlinks are rejected. Its directory
+must be root-owned, not a symlink, with mode `0700` or `0755`.
+Select the intended host key explicitly. For password access, set
+`PermitRootLogin yes`, `PasswordAuthentication yes`, `PermitEmptyPasswords no`
+and `KbdInteractiveAuthentication no`. The build excludes PAM. Omit `UsePAM`:
+this native build reports that directive as unsupported, even with value `no`.
+Do not advertise an uninstalled external SFTP subsystem.
+
+Absent configuration leaves SSH disabled without writes or mounts.
+Startup validates native configuration, keys and privilege-separation setup with
+`sshd -t`. It separately requires both executable reexec helpers. It mounts
+`ptyfs` at `/dev/pts` when absent, reuses an existing `ptyfs`, and rejects a
+conflicting mount. It launches the listener before network startup and after
+persistent-root and entropy setup. Native diagnostics remain visible.
+A PID file or an earlier daemon invocation blocks a duplicate launch in that
+startup context. A failed launch requires operator inspection before retry.
+SSH failure reports a warning and leaves local-console startup available.
+
+Host script contracts check build selection, opt-in, metadata, ordering and
+error handling with explicit build/daemon/filesystem boundary doubles.
+They do not establish a successful complete cohort build or authenticated
+network login. Target key generation, PTY login and restart persistence require
+separate acceptance on the installed root.
+
+```sh
+ruby ember/image/test-cix-p1-userland.rb
+ruby ember/image/test-cix-p1-ssh.rb
+ruby ember/image/test-cix-p1-root-image.rb
+```
+
 ## Startup and shutdown
 
 The kernel must mount the disk root read-only. The startup script checks FFS

@@ -31,7 +31,14 @@ MAKEDEV script.
 Native `mknod` lets the installed target run its own architecture-specific
 MAKEDEV definitions. The builder requires and records `sbin/mknod` with the
 other static executables. It does not run mknod or create host device nodes.
-This C-only profile does not provide C++, login/PAM or the complete rc system.
+The builder also selects native OpenSSH `sshd`, `sshd-session`, `sshd-auth`,
+`ssh-keygen`, `passwd`, `pwd_mkdb` and `mount_ptyfs`. It builds libblocklist,
+libwrap and private libssh before the server programs. All selected programs
+use the same static target libraries and receipt checks. PAM, Kerberos, LDAP,
+YP, S/Key and Hesiod are disabled explicitly before headers and libraries build.
+The private libssh archive stays in the object tree; it is not an installed ABI.
+
+This C-only profile does not provide C++, PAM or the complete rc system.
 The receiving root profile owns startup, console access and shutdown scripts.
 Use native getty to establish the console session before its trusted wrapper.
 A direct shell wrapper in `ttys` does not establish the controlling terminal.

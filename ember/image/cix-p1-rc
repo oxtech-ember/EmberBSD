@@ -9,6 +9,7 @@ umask 022
 . /etc/cix-root.subr
 . /etc/cix-network.subr
 . /etc/cix-power.subr
+. /etc/cix-ssh.subr
 cix_root_start || exit 1
 mkdir -p /var/run/dhcpcd /var/db/dhcpcd
 chmod 700 /var/db/dhcpcd
@@ -19,6 +20,9 @@ if [ -f /var/db/entropy-file ]; then
 fi
 umask 077
 rndctl -S /var/db/entropy-file || echo 'WARNING: entropy save failed.' >&2
+if ! cix_ssh_start; then
+	echo 'WARNING: SSH startup failed. Use the local console to inspect it.' >&2
+fi
 if ! cix_power_start; then
 	echo 'WARNING: powerd startup failed. The power button has no userland shutdown handler.' >&2
 fi

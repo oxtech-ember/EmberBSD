@@ -126,13 +126,14 @@ Dir.mktmpdir('cix-power-') do |tmp|
     File.write(rcroot + '/etc/cix-root.subr', "cix_root_start() { echo root >> \"$TRACE\"; }\n")
     File.write(rcroot + '/etc/cix-network.subr', "cix_network_start() { echo network >> \"$TRACE\"; }\n")
     FileUtils.cp(library, rcroot + '/etc/cix-power.subr')
+    FileUtils.cp(File.join(here, 'cix-p1-ssh.subr'), rcroot + '/etc/cix-ssh.subr')
     rc = File.read(ENV.fetch('RC_SCRIPT', File.join(here, 'cix-p1-rc')))
       .gsub(%r{/(etc|var)/}) { rcroot + '/' + Regexp.last_match(1) + '/' }
       .sub(/^PATH=.*$/, 'PATH=' + Shellwords.escape(env.fetch('PATH')))
     rcpath = tmp + '/rc'
     File.write(rcpath, rc)
     rcenv = env.merge('cix_run' => rcroot + '/var/run', 'cix_log' => rcroot + '/var/log',
-      'POWER_DEVICE' => '/dev/null')
+      'POWER_DEVICE' => '/dev/null', 'cix_ssh_etc' => rcroot + '/etc/ssh')
     File.write(trace, '')
     output, status = Open3.capture2e(rcenv, shell, '-c', probe + '. "$1"', 'rc-contract', rcpath)
     rcpid = rcroot + '/var/run/cix-powerd/pid'

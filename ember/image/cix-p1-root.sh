@@ -66,6 +66,8 @@ expected=36b483e37640359a6c686be4661b5f2d94928f93e126a2de09e67c5e04c01b26
 [ "$(shasum -a 256 "$firmware" | awk '{print $1}')" = "$expected" ]
 for tool in nbmakefs nbmtree nbpwd_mkdb; do [ -x "$tools/bin/$tool" ]; done
 for file in sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount \
+    sbin/mount_ptyfs usr/sbin/sshd usr/libexec/sshd-session usr/libexec/sshd-auth \
+    usr/bin/ssh-keygen usr/bin/passwd usr/sbin/pwd_mkdb \
     sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant \
     usr/sbin/wpa_cli sbin/dhcpcd bin/sh bin/stty usr/sbin/usbdevs \
     usr/bin/stat usr/libexec/getty usr/sbin/powerd; do
@@ -82,9 +84,10 @@ for dir in bin sbin usr/bin usr/sbin usr/libexec; do
 done
 ruby "$here/cix-p1-i18n.rb" copy "$cohort" "$revision" "$cohort/BUILD-INPUTS.txt" "$root"
 mkdir -p "$root/etc" "$root/dev" "$root/root" "$root/tmp" "$root/mnt" \
-    "$root/var/run" "$root/var/db/dhcpcd" "$root/var/log" \
+    "$root/etc/ssh" "$root/var/chroot/sshd" "$root/var/run" "$root/var/db/dhcpcd" "$root/var/log" \
     "$root/var/spool/lock" "$root/libexec/dhcpcd-hooks" \
     "$root/libdata/firmware/rtwce" "$root/etc/powerd/scripts"
+chmod 755 "$root/etc/ssh" "$root/var/chroot/sshd"
 chmod 1777 "$root/tmp"
 chmod 700 "$root/root" "$root/var/db/dhcpcd"
 cp "$firmware" "$root/libdata/firmware/rtwce/rtw8822c_fw.bin"
@@ -95,6 +98,7 @@ cp "$src/external/bsd/dhcpcd/dist/hooks/20-resolv.conf" "$root/libexec/dhcpcd-ho
 chmod 755 "$root/libexec/dhcpcd-run-hooks"
 cp "$cohort/obj/etc/MAKEDEV" "$root/dev/MAKEDEV"
 cp "$here/cix-p1-root.subr" "$root/etc/cix-root.subr"
+cp "$here/cix-p1-ssh.subr" "$root/etc/cix-ssh.subr"
 cp "$here/cix-p1-network.subr" "$root/etc/cix-network.subr"
 cp "$here/cix-p1-power.subr" "$root/etc/cix-power.subr"
 cp "$here/cix-p1-power-button" "$root/etc/powerd/scripts/power_button"
@@ -118,7 +122,7 @@ printf 'Reduced EmberBSD CIX development root\nuserland=%s\n' "$revision" > "$ro
 printf 'profile=%s\n' "$profile_revision" >> "$root/etc/ember-build"
 "$tools/bin/nbpwd_mkdb" -L -p -d "$root" "$root/etc/master.passwd"
 # Request only the selected diagnostic nodes. Leave the DEBUG UART unexposed.
-MACHINE=aarch64 MACHINE_ARCH=aarch64 sh "$root/dev/MAKEDEV" -s ramdisk wscons sysmon \
+MACHINE=aarch64 MACHINE_ARCH=aarch64 sh "$root/dev/MAKEDEV" -s ramdisk wscons sysmon ptm \
     usb usb0 usb1 usb2 usb3 usb4 usb5 usb6 usb7 usb8 usb9 \
     usb10 usb11 usb12 usb13 usb14 usb15 usb16 usb17 usb18 usb19 plcom1 plcom3 \
     > "$out/devices-raw.spec"

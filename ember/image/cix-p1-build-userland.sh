@@ -82,6 +82,9 @@ run wrapper sh "$src/build.sh" -U -u -j"$jobs" -m evbarm -a aarch64 \
     -V MKHTML=no -V MKLINT=no -V MKPROFILE=no -V MKCVS=no \
     -V MKGROFF=no -V MKRUMP=no -V MKPIC=no -V MKPICINSTALL=no \
     -V MKPIE=no -V LDSTATIC=-static -V MKZFS=no -V MKDTRACE=no \
+    -V MKPAM=no -V USE_PAM=no -V MKKERBEROS=no -V USE_KERBEROS=no \
+    -V MKLDAP=no -V USE_LDAP=no -V MKYP=no -V USE_YP=no \
+    -V MKSKEY=no -V USE_SKEY=no -V MKHESIOD=no -V USE_HESIOD=no \
     -V "BUILDINFO=EmberBSD:$revision" makewrapper
 run obj "$wrapper" -C "$src" obj
 run directories "$wrapper" -C "$src" do-distrib-dirs
@@ -101,20 +104,25 @@ for part in lib/csu lib/libc lib/libterminfo lib/libedit lib/libutil \
     external/bsd/libpcap/lib crypto/external/apache2/openssl/lib/libcommon \
     crypto/external/apache2/openssl/lib/libcrypto \
     crypto/external/apache2/openssl/lib/libdes \
-    crypto/external/apache2/openssl/lib/libssl; do
+    crypto/external/apache2/openssl/lib/libssl external/bsd/blocklist/lib lib/libwrap; do
     component "$part"
 done
+# libssh is a private object-tree dependency. It has no installed link library.
+run openssh-lib-obj "$wrapper" -C "$src/crypto/external/bsd/openssh/lib" obj
+run openssh-lib-build "$wrapper" -C "$src/crypto/external/bsd/openssh/lib" -j"$jobs" dependall
 for part in bin/sh bin/cat bin/ls bin/cp bin/mv bin/rm bin/mkdir bin/chmod \
     bin/df bin/dd bin/echo bin/sleep bin/sync bin/hostname bin/pwd bin/kill \
     bin/date bin/ps bin/stty sbin/init sbin/mknod sbin/ifconfig sbin/route sbin/dmesg sbin/sysctl \
-    sbin/mount sbin/mount_ffs sbin/mount_msdos sbin/mount_tmpfs sbin/umount sbin/reboot \
+    sbin/mount sbin/mount_ffs sbin/mount_msdos sbin/mount_tmpfs sbin/mount_ptyfs sbin/umount sbin/reboot \
     sbin/shutdown sbin/rndctl sbin/ping sbin/fsck sbin/fsck_ffs sbin/gpt sbin/dkctl \
     usr.bin/stat usr.bin/wall usr.bin/cksum usr.bin/uname usr.bin/env \
     usr.bin/printf usr.bin/wc usr.bin/nc usr.bin/sed usr.bin/grep \
     usr.bin/head usr.bin/tail external/historical/nawk/bin usr.bin/sort \
     usr.bin/tr usr.bin/mktemp usr.bin/netstat libexec/getty usr.sbin/powerd usr.sbin/usbdevs \
     external/bsd/wpa/bin/wpa_passphrase external/bsd/wpa/bin/wpa_supplicant \
-    external/bsd/wpa/bin/wpa_cli; do
+    external/bsd/wpa/bin/wpa_cli crypto/external/bsd/openssh/bin/sshd \
+    crypto/external/bsd/openssh/libexec/sshd-session crypto/external/bsd/openssh/libexec/sshd-auth \
+    crypto/external/bsd/openssh/bin/ssh-keygen usr.bin/passwd usr.sbin/pwd_mkdb; do
     component "$part"
 done
 component external/bsd/dhcpcd/sbin/dhcpcd SMALLPROG=1
@@ -128,6 +136,8 @@ printf 'i18n-inventory-sha256=%s\n' "$(shasum -a 256 "$out/I18N-INVENTORY.json" 
 run makedev "$wrapper" -C "$src/etc" MAKEDEV
 for file in bin/sh bin/stty usr/sbin/usbdevs sbin/init sbin/mknod sbin/ifconfig sbin/dhcpcd sbin/fsck \
     sbin/fsck_ffs sbin/mount_msdos sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl \
+    sbin/mount_ptyfs usr/sbin/sshd usr/libexec/sshd-session usr/libexec/sshd-auth \
+    usr/bin/ssh-keygen usr/bin/passwd usr/sbin/pwd_mkdb \
     usr/bin/stat usr/bin/wall usr/sbin/wpa_supplicant usr/sbin/wpa_cli usr/sbin/powerd usr/libexec/getty; do
     [ -f "$out/dest/$file" ] || {
         echo "Missing required program: $file" >&2; exit 1

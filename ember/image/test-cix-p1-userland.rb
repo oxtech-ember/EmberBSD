@@ -46,11 +46,13 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   %w[nbmake nbmkesdb nbmkcsmapper].each { |tool| File.write(tools + '/bin/' + tool, "#!/bin/sh\nexit 0\n") }
   File.write(src + '/build.sh', <<~'SH')
     #!/bin/sh
+    TEST_BUILD_ARGS="$*"
     while [ "$#" -gt 0 ]; do
       case "$1" in -D) shift; dest=$1;; -w) shift; wrapper=$1;; esac
       shift
     done
     export dest
+    printf '%s\n' "$TEST_BUILD_ARGS" > "$dest/../build-flags"
     printf '%s\n' "$dest" > "$wrapper.dest"
     cat > "$wrapper" <<'WRAPPER'
     #!/bin/sh
@@ -105,7 +107,9 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
         for file in bin/sh bin/stty usr/sbin/usbdevs sbin/init sbin/ifconfig sbin/dhcpcd sbin/fsck \
           sbin/fsck_ffs sbin/mount_msdos sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl \
           usr/bin/stat usr/bin/wall usr/sbin/wpa_supplicant usr/sbin/wpa_cli \
-          usr/sbin/powerd usr/libexec/getty; do
+          usr/sbin/powerd usr/libexec/getty sbin/mount_ptyfs usr/sbin/sshd \
+          usr/libexec/sshd-session usr/libexec/sshd-auth usr/bin/ssh-keygen \
+          usr/bin/passwd usr/sbin/pwd_mkdb; do
           test "$file" = "$TEST_OMIT_BINARY" && continue
           mkdir -p "$dest/$(dirname "$file")"
           printf 'candidate\n' > "$dest/$file"
@@ -142,6 +146,28 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
       selected[2].end_with?(selection + "install\n")
     checks += 1
   end
+# Catch omitted SSH/account components and implicit auth-module dependencies.
+ssh_parts = %w[external/bsd/blocklist/lib lib/libwrap crypto/external/bsd/openssh/lib
+  crypto/external/bsd/openssh/bin/sshd crypto/external/bsd/openssh/libexec/sshd-session
+  crypto/external/bsd/openssh/libexec/sshd-auth crypto/external/bsd/openssh/bin/ssh-keygen
+  usr.bin/passwd usr.sbin/pwd_mkdb sbin/mount_ptyfs]
+ssh_parts.each do |part|
+  selected = events.select { |line| line.include?("/#{part} ") }
+  wanted = part == 'crypto/external/bsd/openssh/lib' ? %w[obj dependall] : %w[obj dependall install]
+  abort "FAIL: incomplete native SSH dependency #{part}" unless selected.map { |l| l.split.last } == wanted
+  checks += 1
+end
+%w[PAM KERBEROS LDAP YP SKEY HESIOD].each do |feature|
+  flags = File.read(out + '/build-flags')
+  abort "FAIL: optional auth feature enabled #{feature}" unless
+    flags.include?("MK#{feature}=no") && flags.include?("USE_#{feature}=no")
+  checks += 1
+end
+dependency_order = %w[external/bsd/blocklist/lib lib/libwrap crypto/external/bsd/openssh/lib
+  crypto/external/bsd/openssh/bin/sshd]
+positions = dependency_order.map { |part| events.index { |line| line.include?("/#{part} ") } }
+abort 'FAIL: SSH library dependency order' unless positions == positions.sort && positions.uniq.size == 4
+checks += 1
   inventory = out + '/I18N-INVENTORY.json'
   abort 'FAIL: separate DATA inventory absent' unless File.file?(inventory)
   checks += 1
@@ -198,6 +224,21 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   failed_events = File.read(work + '/failed/events')
   abort 'FAIL: built programs after failed libc' if failed_events.include?('/sbin/ifconfig ')
   checks += 1
+%w[external/bsd/blocklist/lib lib/libwrap crypto/external/bsd/openssh/lib
+   crypto/external/bsd/openssh/libexec/sshd-auth].each_with_index do |part, index|
+  output = work + '/failed-ssh-' + index.to_s
+  _, _, status = run.call(output, 'TEST_FAIL_COMPONENT' => "/#{part} ")
+  abort "FAIL: continued failed SSH dependency #{part}" if status.success? || File.exist?(output + '/BUILD-INPUTS.txt')
+  checks += 1
+end
+%w[sbin/mount_ptyfs usr/sbin/sshd usr/libexec/sshd-session usr/libexec/sshd-auth
+   usr/bin/ssh-keygen usr/bin/passwd usr/sbin/pwd_mkdb].each_with_index do |binary, index|
+  output = work + '/missing-ssh-' + index.to_s
+  _, stderr, status = run.call(output, 'TEST_OMIT_BINARY' => binary)
+  abort "FAIL: accepted absent required SSH/account program #{binary}" if status.success? ||
+    !stderr.include?('Missing required program: ' + binary) || File.exist?(output + '/BUILD-INPUTS.txt')
+  checks += 1
+end
   _, _, status = run.call(work + '/missing-fsck', 'TEST_OMIT_BINARY' => 'sbin/fsck_ffs')
   abort 'FAIL: accepted cohort without fsck_ffs' if status.success? || File.exist?(work + '/missing-fsck/BUILD-INPUTS.txt')
   checks += 1

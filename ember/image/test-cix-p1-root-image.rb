@@ -15,13 +15,13 @@ require 'tmpdir'
 
 ROOT_SCRIPT = File.expand_path(ENV.fetch('ROOT_SCRIPT', File.join(__dir__, 'cix-p1-root.sh')))
 abort 'Root stager is missing' unless File.file?(ROOT_SCRIPT)
-PROFILE_FILES = %w[cix-p1-root.sh cix-p1-root.subr cix-p1-network.subr cix-p1-power.subr cix-p1-power-button cix-p1-rc cix-p1-rc.shutdown cix-p1-console cix-p1-i18n.rb].freeze
+PROFILE_FILES = %w[cix-p1-root.sh cix-p1-root.subr cix-p1-network.subr cix-p1-ssh.subr cix-p1-power.subr cix-p1-power-button cix-p1-rc cix-p1-rc.shutdown cix-p1-console cix-p1-i18n.rb].freeze
 # Capture one immutable candidate, without editing another agent's checkout.
 PROFILE_DATA = PROFILE_FILES.to_h do |file|
   path = file == 'cix-p1-root.sh' ? ROOT_SCRIPT : File.join(File.dirname(ROOT_SCRIPT), file)
   [file, File.binread(path)]
 end.freeze
-REQUIRED = %w[sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant usr/sbin/wpa_cli sbin/dhcpcd bin/sh bin/stty usr/sbin/usbdevs usr/bin/stat usr/libexec/getty usr/sbin/powerd].freeze
+REQUIRED = %w[sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant usr/sbin/wpa_cli sbin/dhcpcd bin/sh bin/stty usr/sbin/usbdevs usr/bin/stat usr/libexec/getty usr/sbin/powerd sbin/mount_ptyfs usr/sbin/sshd usr/libexec/sshd-session usr/libexec/sshd-auth usr/bin/ssh-keygen usr/bin/passwd usr/sbin/pwd_mkdb].freeze
 RUNTIME = (REQUIRED + %w[usr/bin/wall usr/bin/netstat]).freeze
 I18N_REQUIRED = %w[iconv/iconv.dir esdb/esdb.dir esdb/esdb.alias esdb/ISO646/ISO646-US.esdb
   esdb/UTF/UTF-8.esdb csmapper/mapper.dir csmapper/ISO646/ISO646-US%UCS.646].freeze
@@ -149,7 +149,7 @@ def fixture(base, name)
   spec_only = <<~SH
     #!/bin/sh
     case "$*" in
-      '-s ramdisk wscons'|'-s ramdisk wscons sysmon'|'-s ramdisk wscons sysmon #{DIAGNOSTIC_TARGETS.join(' ')}') ;;
+      '-s ramdisk wscons'|'-s ramdisk wscons sysmon'|'-s ramdisk wscons sysmon ptm #{DIAGNOSTIC_TARGETS.join(' ')}') ;;
       *) echo 'Only fixture spec generation is permitted.' >&2; exit 92;;
     esac
   SH
@@ -299,7 +299,7 @@ Dir.mktmpdir('ember-cix-root-image-') do |base|
   f = fixture(base, 'dirty-profile')
   File.open(f[:script], 'a') { |s| s.puts('# modified after profile commit') }
   reject(f, 'dirty tracked image profile')
-  %w[sbin/fsck sbin/mount_tmpfs usr/sbin/wpa_supplicant usr/libexec/getty usr/sbin/powerd bin/stty usr/sbin/usbdevs].each_with_index do |rel, i|
+  %w[sbin/fsck sbin/mount_tmpfs usr/sbin/wpa_supplicant usr/libexec/getty usr/sbin/powerd bin/stty usr/sbin/usbdevs sbin/mount_ptyfs usr/sbin/sshd usr/libexec/sshd-session usr/libexec/sshd-auth usr/bin/ssh-keygen usr/bin/passwd usr/sbin/pwd_mkdb].each_with_index do |rel, i|
     f = fixture(base, 'missing-runtime-' + i.to_s)
     File.unlink(f[:cohort] + '/dest/' + rel)
     manifest(f, RUNTIME - [rel])
@@ -344,9 +344,10 @@ Dir.mktmpdir('ember-cix-root-image-') do |base|
   File.write(f[:metalog], File.readlines(f[:metalog]).reject { |s| s.start_with?('./sbin/shutdown ') }.join)
   reject(f, 'missing selected runtime metadata')
 
-  ['source', 'profile', 'console-wrapper', 'data-helper', 'data-source'].each do |which|
+  ['source', 'profile', 'console-wrapper', 'data-helper', 'data-source', 'ssh-helper'].each do |which|
     f = fixture(base, 'late-' + which + '-change')
     asset = case which
+    when 'ssh-helper' then f[:profile] + '/ember/image/cix-p1-ssh.subr'
     when 'source' then f[:src] + '/etc/group'
     when 'profile' then f[:profile] + '/ember/image/cix-p1-network.subr'
     when 'console-wrapper' then f[:profile] + '/ember/image/cix-p1-console'
@@ -397,6 +398,18 @@ Dir.mktmpdir('ember-cix-root-image-') do |base|
     check(File.binread(root + '/usr/libexec/ember-console') == PROFILE_DATA.fetch('cix-p1-console') &&
       (File.stat(root + '/usr/libexec/ember-console').mode & 0o7777) == 0o755,
       'exact profile-pinned console supervisor is staged with mode 0755')
+check(File.binread(root + '/etc/cix-ssh.subr') == PROFILE_DATA.fetch('cix-p1-ssh.subr'), 'exact pinned opt-in SSH startup helper is staged')
+%w[etc/ssh var/chroot/sshd].each do |dir|
+  path = root + '/' + dir
+  check(File.directory?(path) && (File.stat(path).mode & 0o7777) == 0o755 && Dir.children(path).empty?,
+    'empty safe SSH directory: ' + dir)
+end
+check(File.read(root + '/etc/master.passwd') == "root:*:0:0::0:0:Development console:/root:/bin/sh\n",
+  'SSH support does not provision accounts or passwords')
+check(!File.exist?(root + '/etc/ssh/sshd_config') && Dir.glob(root + '/etc/ssh/*').empty?,
+  'no SSH configuration or host key is included')
+check(File.read(f[:out] + '/root.spec').lines.any? { |line| line.start_with?('./dev/ptm ') },
+  'native PTY multiplexor device is included')
     check(!File.exist?(root + '/etc/wpa_supplicant.conf'), 'template Wi-Fi profile is not shipped')
     check(File.file?(root + '/etc/powerd/scripts/power_button') && File.executable?(root + '/etc/powerd/scripts/power_button'),
       'the selected profile includes an executable power-button policy')

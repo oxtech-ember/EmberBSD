@@ -42,6 +42,7 @@ jobs:
           persist-credentials: false
       - name: Check reduced-root startup and failures
         run: |
+          ruby ember/image/test-cix-p1-ssh.rb
           ruby ember/image/test-cix-p1-userland.rb
           ruby ember/image/test-cix-p1-startup.rb
           ruby ember/image/test-cix-p1-console.rb

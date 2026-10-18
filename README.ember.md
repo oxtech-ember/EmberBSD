@@ -37,6 +37,12 @@ All shared changes follow [CONTRIBUTING](CONTRIBUTING.md).
 The [kernel guide](ember/development/kernel.md) and
 [board-change worksheet](ember/development/board-change.md) define the relevant evidence.
 
+The reduced CIX profile also selects static native OpenSSH and local password
+tools. SSH startup requires an administrator-provisioned configuration, account
+and host keys. The image creates no credentials and leaves SSH disabled by
+default. [SSH provisioning and source-contract limits](ember/image/cix-p1.md#optional-ssh-access)
+remain separate from physical login acceptance.
+
 The following accessory and protocol limits also apply:
 
 | Platform or feature | Status |
