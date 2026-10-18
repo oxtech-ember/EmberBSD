@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 
 
@@ -75,6 +76,10 @@ def main():
                 print(result.stdout + result.stderr, end="")
                 result.check_returncode()
             print(result.stdout.strip().splitlines()[-1])
+    mmu_env = dict(os.environ, NPU_MMU_SOURCE_ROOT=str(source))
+    mmu_env.setdefault("NPU_MMU_CFLAGS", os.environ.get("NPU_TEST_CFLAGS", ""))
+    subprocess.run([sys.executable, str(root / "ember/tools/a733-npu-mmu-contract.py")],
+                   env=mmu_env, check=True)
     print("PASS: Zero 3W NPU DT scope and source controls")
 
 
