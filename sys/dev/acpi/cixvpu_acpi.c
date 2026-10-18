@@ -83,6 +83,10 @@ cixvpu_acpi_boot_print(device_t self, const struct cixvpu_acpi_softc *sc,
 	    r->rpc_alloc_max_size, (unsigned int)r->rpc_alloc_region,
 	    (unsigned int)r->rpc_alloc_log2_alignment);
 	aprint_normal_dev(self,
+	    "boot RPC resize valid %s address %#x new_size %u\n",
+	    r->rpc_resize_valid ? "yes" : "no", r->rpc_resize_address,
+	    r->rpc_resize_new_size);
+	aprint_normal_dev(self,
 	    "boot RPC replies %u notifications %u allocation replied %s\n",
 	    r->rpc_commits, r->rpc_notifications,
 	    r->rpc_alloc_replied ? "yes" : "no");

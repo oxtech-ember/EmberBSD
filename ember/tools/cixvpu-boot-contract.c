@@ -87,6 +87,7 @@ extern unsigned int boot_fixture_acks(void);
 extern unsigned int boot_fixture_live(void);
 extern void boot_fixture_rpc(uint32_t, uint32_t, uint32_t);
 extern void boot_fixture_rpc_alloc(void);
+extern void boot_fixture_rpc_resize(uint32_t, uint32_t);
 extern void boot_fixture_map_valid(struct cixvpu_prepared *, bool);
 extern struct cixvpu_prepared *boot_fixture_prepare_rpc(void);
 extern void boot_fixture_rpc_words(uint32_t, uint32_t, uint32_t, uint32_t,
@@ -285,6 +286,7 @@ static void boot_rpc_notified(void)
     boot_rpc_notify_events++;
     if(boot_fault==27) return; /* RETURN must not notify twice. */
     if(boot_fault==28) { boot_rpc_request(); return; }
+    if(boot_fault==37) { boot_fixture_rpc_resize(0x89abcdef,0xfedcba98); return; }
     if(boot_fault==29 || boot_fault==34) {
         boot_fixture_rpc_words(1,boot_fault==29 ? 3 : 4,12,131072,67108864,0,22); return;
     }
@@ -299,7 +301,7 @@ static void boot_rpc_notified(void)
 }
 static void boot_rpc_integration_tests(void)
 {
-    for(unsigned int scenario=26;scenario<=36;scenario++) {
+    for(unsigned int scenario=26;scenario<=37;scenario++) {
         struct cixvpu_acpi_boot *ctx=NULL;
         struct cixvpu_prepared *owned;
         struct cixvpu_boot_report report={0};
@@ -328,6 +330,11 @@ static void boot_rpc_integration_tests(void)
         if(scenario==35) CHECK(report.rpc_alloc_valid && report.rpc_alloc_max_size==67108865);
         if(scenario==27) CHECK(report.visits>1 && boot_rpc_notify_events==1);
         if(scenario==36) CHECK(report.visits>=2 && boot_rpc_deferrals>=2 && boot_delays>=1);
+        if(scenario==37) {
+            CHECK(report.rpc_header_valid && report.rpc_state==1 && report.rpc_callid==3 && report.rpc_size==8);
+            CHECK(report.rpc_resize_valid && report.rpc_resize_address==0x89abcdef && report.rpc_resize_new_size==0xfedcba98);
+            CHECK(report.rpc_header_error==0 && report.last_stage==CIXVPU_BOOT_RECEIVE);
+        } else CHECK(!report.rpc_resize_valid && report.rpc_resize_address==0 && report.rpc_resize_new_size==0);
         unsigned int writes=boot_writes;
         CHECK(cixvpu_acpi_boot_once(ctx,&owned)==EALREADY && boot_writes==writes);
         CHECK(cixvpu_prepared_free(&boot_actual)==EBUSY);

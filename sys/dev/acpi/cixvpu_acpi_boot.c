@@ -227,6 +227,9 @@ cixvpu_boot_observe_rpc(struct cixvpu_acpi_boot *b)
 	b->report.rpc_alloc_max_size = header.alloc_max_size;
 	b->report.rpc_alloc_region = header.alloc_region;
 	b->report.rpc_alloc_log2_alignment = header.alloc_log2_alignment;
+	b->report.rpc_resize_valid = header.resize_valid;
+	b->report.rpc_resize_address = header.resize_address;
+	b->report.rpc_resize_new_size = header.resize_new_size;
 }
 
 static int

@@ -38,6 +38,7 @@ if [ -f "$src/sys/dev/acpi/cixvpu_acpi_boot.c" ]; then
     ruby -e 's=File.read(ARGV[0]);s=s.sub("int main(void)"){"int unused_prepare_main(void)"};File.write(ARGV[1],s)' \
         "$src/ember/tools/cixvpu-prepare-contract.c" "$work/prepare-fixture.c"
     cat > "$work/prepare-bridge.c" <<'BRIDGE'
+#define CIXVPU_BOOT_BRIDGE 1
 #include "prepare-fixture.c"
 static void (*bridge_ack_hook)(void);
 static void (*bridge_rpc_commit_hook)(void);

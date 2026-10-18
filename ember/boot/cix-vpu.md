@@ -228,11 +228,17 @@ Only that two-byte HOST field uses POSTWRITE/store/PREWRITE.
 `cixvpu_prepared_boot_rpc_header` returns the cached 12-byte RPC observation.
 It uses the existing context and output-storage guards without device I/O.
 The boot report prints raw state, call ID, size and a separate getter error.
-Size is numeric telemetry; it never selects a read or copy length.
+Reported size never authorizes an arbitrary read or copy length.
 Validity means one copy completed, not an atomic firmware transaction.
 Sticky retries retain the observation. A new read or retained-map fault
 invalidates it until another copy; argument and alias errors preserve it.
 Unsupported RPC still stops with ENOTSUP before any response or message ACK.
+
+Exact PARAM1/call3/size8 also permits a fixed eight-byte diagnostic copy.
+A matching header recheck sets `resize_valid`; the cached VPU address and
+new size remain advisory uint32 values. The native report prints them without
+new device I/O. Header drift invalidates the fields while preserving ENOTSUP.
+This adds no resize response, memory allocation, PTE change or notification.
 
 Empty or unstable snapshots return EAGAIN without output or cursor advancement.
 Malformed data, unsupported RPC and retained-map faults stop further protocol I/O.
