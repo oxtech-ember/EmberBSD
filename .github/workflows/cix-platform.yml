@@ -15,6 +15,13 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/cixscmi_acpi.*'
       - 'sys/dev/ic/scmi_smt_diag.*'
       - 'sys/dev/ic/cixvpu_*'
+      - 'sbin/ifconfig/ifconfig.c'
+      - 'sbin/ifconfig/parse.*'
+      - 'sbin/ifconfig/util.c'
+      - 'sys/net/if.h'
+      - 'sys/sys/sockio.h'
+      - 'sys/sys/ioccom.h'
+      - 'ember/tools/ifconfig-mtu-*'
       - 'sys/dev/pci/if_rge.c'
       - 'sys/dev/pci/if_rgereg.h'
       - 'ember/tools/rge-rx-contract.*'
@@ -80,6 +87,13 @@ name: CIX platform resource contracts
       - 'sys/dev/acpi/cixscmi_acpi.*'
       - 'sys/dev/ic/scmi_smt_diag.*'
       - 'sys/dev/ic/cixvpu_*'
+      - 'sbin/ifconfig/ifconfig.c'
+      - 'sbin/ifconfig/parse.*'
+      - 'sbin/ifconfig/util.c'
+      - 'sys/net/if.h'
+      - 'sys/sys/sockio.h'
+      - 'sys/sys/ioccom.h'
+      - 'ember/tools/ifconfig-mtu-*'
       - 'sys/dev/pci/if_rge.c'
       - 'sys/dev/pci/if_rgereg.h'
       - 'ember/tools/rge-rx-contract.*'
@@ -190,6 +204,13 @@ jobs:
             /sys/dev/acpi/cixscmi_acpi.*
             /sys/dev/ic/scmi_smt_diag.*
             /sys/dev/ic/cixvpu_*
+            /sbin/ifconfig/ifconfig.c
+            /sbin/ifconfig/parse.*
+            /sbin/ifconfig/util.c
+            /sys/net/if.h
+            /sys/sys/sockio.h
+            /sys/sys/ioccom.h
+            /ember/tools/ifconfig-mtu-*
             /sys/dev/pci/if_rge.c
             /sys/dev/pci/if_rgereg.h
             /ember/tools/rge-rx-contract.*
@@ -218,6 +239,7 @@ jobs:
           CIX_UART2_ANALYZE: '1'
           CIX_PLCOM_ANALYZE: '1'
           RGE_RX_ANALYZE: '1'
+          IFCONFIG_MTU_ANALYZE: '1'
         run: |
           sh ember/tools/cixclk-contract.sh
           CIXCLK_NCIXSCMI=0 sh ember/tools/cixclk-contract.sh
@@ -233,6 +255,7 @@ jobs:
           sh ember/tools/cix-plcom-contract.sh
           sh ember/tools/cix-uart2-console-contract.sh
           sh ember/tools/rge-rx-contract.sh
+          sh ember/tools/ifconfig-mtu-contract.sh
       - name: Run ASan and UBSan
         env:
           CC: gcc
@@ -253,6 +276,7 @@ jobs:
           sh ember/tools/cix-plcom-contract.sh
           sh ember/tools/cix-uart2-console-contract.sh
           sh ember/tools/rge-rx-contract.sh
+          sh ember/tools/ifconfig-mtu-contract.sh
       - name: Run complete contracts under Memcheck
         env:
           CC: gcc
@@ -281,3 +305,4 @@ jobs:
           sh ember/tools/cix-plcom-contract.sh
           sh ember/tools/cix-uart2-console-contract.sh
           sh ember/tools/rge-rx-contract.sh
+          sh ember/tools/ifconfig-mtu-contract.sh

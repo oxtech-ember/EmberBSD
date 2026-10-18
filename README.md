@@ -1145,6 +1145,10 @@ The base system shell is unchanged.
   A physical Pi 5 passed 1024 descriptor reads and 1024 STALL recovery requests.
   This validates a limited control-transfer scenario, not phone boot or all USB
   transfer types. See the [contract and checks](ember/boot/usb-control-recovery.md).
+- **Reliable MTU command status:** `ifconfig` returns failure when the kernel
+  rejects an MTU change. The [actual-source contract](ember/tools/ifconfig-mtu-contract.c)
+  checks error preservation and stops later matched commands. Host analysis and
+  sanitizers pass; native CLI acceptance remains pending.
 - **Realtek Ethernet allocation cleanup:** `rge` unwinds partial DMA resources
   and unmaps the TX ring through its CPU address. The [actual-source contract](ember/tools/rge-rx-contract.c)
   injects every allocation-stage failure and checks repeated cleanup. GCC16

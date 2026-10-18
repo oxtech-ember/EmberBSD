@@ -1194,8 +1194,13 @@ setifmtu(prop_dictionary_t env, prop_dictionary_t oenv)
 	assert(rc);
 
 	ifr.ifr_mtu = mtu;
-	if (direct_ioctl(env, SIOCSIFMTU, &ifr) == -1)
+	if (direct_ioctl(env, SIOCSIFMTU, &ifr) == -1) {
+		int error = errno;
+
 		warn("SIOCSIFMTU");
+		errno = error;
+		return -1;
+	}
 
 	return 0;
 }
