@@ -144,7 +144,7 @@ scmi_smt_diag_init(struct scmi_smt_diag *s, const struct scmi_smt_diag_io *io)
 }
 
 static int
-scmi_smt_ready(struct scmi_smt_diag *s, const struct scmi_smt_diag_reply *out,
+scmi_smt_ready(const struct scmi_smt_diag *s, const struct scmi_smt_diag_reply *out,
     const struct scmi_smt_diag_trace *trace)
 {
 	if (s == NULL || out == NULL || trace == NULL)
