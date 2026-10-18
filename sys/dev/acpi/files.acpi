@@ -372,6 +372,7 @@ file	dev/ic/cixvpu_fw.c		cixvpu
 file	dev/ic/cixvpu_fw_plan.c		cixvpu
 file	dev/ic/cixvpu_dma.c		cixvpu
 file	dev/ic/cixvpu_mmu.c		cixvpu
+file	dev/ic/cixvpu_ring.c		cixvpu
 file	dev/ic/cixvpu_prepare.c		cixvpu
 
 # Qualcomm GPIO
