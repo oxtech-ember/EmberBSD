@@ -1,5 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Origin: EmberBSD, AI-assisted production-source thermal contracts. */
+#if defined(__linux__) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE 1
+#endif
 #include <sys/queue.h>
 #include <assert.h>
 #include <errno.h>
@@ -13,6 +16,8 @@
 #include <libkern/OSByteOrder.h>
 #define be32toh(x) OSSwapBigToHostInt32(x)
 #define htobe32(x) OSSwapHostToBigInt32(x)
+#elif defined(__linux__)
+#include <endian.h>
 #else
 #include <sys/endian.h>
 #endif

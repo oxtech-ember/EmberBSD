@@ -1,5 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Actual HSM core and native provider. Only kernel/firmware services are fake. */
+#if defined(__linux__) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE 1
+#endif
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
@@ -12,6 +15,8 @@
 #include <libkern/OSByteOrder.h>
 #define htole32 OSSwapHostToLittleInt32
 #define le32toh OSSwapLittleToHostInt32
+#elif defined(__linux__)
+#include <endian.h>
 #else
 #include <sys/endian.h>
 #endif

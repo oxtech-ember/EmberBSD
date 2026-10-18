@@ -1,5 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Production AIC admission and BSD client functions with bounded OS fixtures. */
+#if defined(__linux__) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE 1
+#endif
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -213,6 +216,8 @@ static void le32enc(void *v, uint32_t x)
 	uint8_t *p = v;
 	p[0] = x; p[1] = x >> 8; p[2] = x >> 16; p[3] = x >> 24;
 }
+#elif defined(__linux__)
+#include <endian.h>
 #else
 #include <sys/endian.h>
 #endif

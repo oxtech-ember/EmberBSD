@@ -30,6 +30,14 @@ begin
   bodies['stats-body.h']=bodies['bo-body.h'][/\/\* All counters.*?(?=static void\nbcmv3d_bo_free)/m] or abort 'snapshot source boundary missing'
   bodies['sysctl-body.h']=File.read(driver+'bcmv3d_drv.c')[/\/\* Copy under.*?(?=\/\* A PRIME fd)/m] or abort 'sysctl source boundary missing'
   bodies.each {|name,data| File.write(File.join(work,name),data)}
+  FileUtils.mkdir_p(File.join(work,'sys'))
+  File.write(File.join(work,'sys','sysctl.h'), <<~HEADER)
+    #ifndef EMBER_V3D_BO_STATS_TEST_SYSCTL_H
+    #define EMBER_V3D_BO_STATS_TEST_SYSCTL_H
+    #include <stddef.h>
+    int sysctlbyname(const char *, void *, size_t *, void *, size_t);
+    #endif
+  HEADER
   flags=['-std=c11','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-unused-function',*Shellwords.split(ENV.fetch('CFLAGS','')),'-I'+work]
   cc=Shellwords.split(ENV.fetch('CC','cc'))
   %w[contract threads cli-test].each do |test|

@@ -30,6 +30,6 @@ awk '/^ieee80211_ioctl_getscanresults\(/ {copy=1}
     copy {print} copy && /^}/ {exit}' \
     "$src/sys/net80211/ieee80211_ioctl.c" >> "$work/getscanresults.h"
 cp "$src/ember/tools/bwfm-scan-padding.c" "$work/check.c"
-${CC:-cc} -std=c99 -Wall -Wextra -Werror ${CFLAGS:-} \
+${CC:-cc} -std=c99 -D_DEFAULT_SOURCE -Wall -Wextra -Werror ${CFLAGS:-} \
     -I"$work" "$work/check.c" -o "$work/check"
 "$work/check"

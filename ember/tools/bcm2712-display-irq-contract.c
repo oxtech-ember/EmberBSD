@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Exercise the production L2 core and native adapter with controlled services.
  */
+#if defined(__linux__) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE 1
+#endif
 #ifdef NDEBUG
 #error This contract requires assertions
 #endif
@@ -15,6 +18,8 @@
 #include <libkern/OSByteOrder.h>
 #define htole32 OSSwapHostToLittleInt32
 #define le32toh OSSwapLittleToHostInt32
+#elif defined(__linux__)
+#include <endian.h>
 #else
 #include <sys/endian.h>
 #endif

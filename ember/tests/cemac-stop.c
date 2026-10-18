@@ -509,8 +509,8 @@ test_rx_pending(bool clear, unsigned failure)
 		m_freem(test_sc.rxq[i].m);
 		test_sc.rxq[i].m = NULL;
 	}
-	CHECK(frees == (failure == 1 ? RX_QLEN : 2 * RX_QLEN) +
-	    (failure != 0 ? 1 : 0));
+	CHECK(frees == (failure == 1 ? RX_QLEN : 2U * RX_QLEN) +
+	    (failure != 0 ? 1U : 0U));
 }
 int
 main(int argc, char **argv)
