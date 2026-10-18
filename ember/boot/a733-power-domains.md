@@ -144,6 +144,22 @@ A [physical preboot snapshot](a733-preboot-snapshot.md#physical-zero-3w-result)
 finds the same `8`/`0` state before the final ARISC-startup SMC and kernel.
 It establishes an earlier boundary, not the original writer or reset cause.
 
+## Fixed borrowed-domain reservations
+
+Each of the eleven domains has its own owner and retention state under
+the provider mutex. The existing GPU wrappers reserve domains 5/6 atomically
+and keep their exact initial/retain/wait/request rules. NPU reserve/retain/
+ready/release uses domain 4. The display profile uses domains 1/10.
+Native setters reject only occupied domains.
+
+NPU and display acquisition use two fault-aware PWPR/PMER/PWSR samples.
+They require stable static ON, no emulation, no dynamic policy and no
+quarantine. A locked static ON domain can be borrowed. Acquisition validates
+the whole fixed set before publishing any owner. Retain and ready repeat
+the observation and compare it with the reservation. Retention forbids
+release. These APIs perform no power write and cannot power on an OFF domain.
+The NPU consumer retains PCK before its first CCU write attempt.
+
 ## Reproduce the software checks
 
 The contract compiles the actual driver and FDT implementation, with bus,

@@ -30,16 +30,16 @@ The initial structures and version remain unchanged.
 | Command | Current behavior |
 | --- | --- |
 | INIT (0), DESTROY (1) | Software handshake and global process accounting |
-| READ_REG (2) | Bounded NPU MMIO read; hardware readiness must be established separately |
+| READ_REG (2) | Bounded read after successful stage4 and fresh retained CCU/PCK proof |
 | WRITE_REG (3) | NOT_SUPPORTED |
 | QUERY_DATABASE (10) | Static PID/core/SRAM facts from the pinned BSP database |
 | QUERY_DRIVER_STATUS (21) | Software initialization counters; power_state reports the handshake state |
 | Memory, cache and task commands | NOT_SUPPORTED |
 
 INIT does not power the NPU. The status power_state is not a measurement
-of the power domain. Database data is not a silicon read. READ_REG does
-not establish clocks, power or ownership before access. Do not use it as
-a probe on an unpowered NPU.
+of the power domain. Database data is not a silicon read. READ_REG rejects cold, failed or
+stale ownership before mapping NPU registers. It holds the consumer mutex
+through the proof and bounded access. It does not prepare resources.
 
 ## Acceptance probe
 
@@ -67,18 +67,27 @@ The probe checks a diagnostic ABI and identification. It does not execute
 a task or a model. A successful INIT/status response or NOT_SUPPORTED
 result cannot establish accelerator execution.
 
-## Shared-resource limit
+## Typed resource preparation
 
-`sun60i_a733_ccu_npu_prepare()` selects the running PERIPH0-600M parent.
-It clears the complete five-bit NPU divider and keeps unrelated module
-fields intact. It does not enable PLL_NPU. The existing coarse GPU clock lease rejects
-this call with EBUSY while another GPU owner is retained. NPU preparation
-also sets that lease's attempted flag without acquiring its owner. This
-is not a complete NPU reservation. Keep the guard in place until separate
-local GPU/NPU ownership and shared parent borrowing have source controls.
-PLL_NPU can feed memory and video consumers; it must not be retuned for
-this diagnostic path. See the [power provider](a733-power-domains.md) and
-[GPU ownership](a733-gpu-identification.md).
+Stage 3 is a read-free EBUSY preflight. Stage 4 resolves the fixed NPU provider
+handles, reserves PCK4 and the NPU CCU slot, then retains PCK before the
+first CCU write attempt. Clean acquisition failures release only these
+unretained reservations. After retention, failures keep the resources.
+
+`sun60i_a733_ccu_npu_prepare()` requires its own prior reservation. It selects
+PERIPH0-600M at selector 2, clears all five divider bits, and performs the
+fixed local reset/gate sequence. It preserves SRAM reset 19 and unrelated
+fields. It neither changes GPU ownership nor enables PLL_NPU. GPU and NPU
+can hold separate local leases while borrowing unchanged running parents.
+
+The NPU profile requires fresh stable REF normalization, integer 600 MHz,
+manual/configured/effective 600M post-gating, and the static 200 MHz AHB path.
+The provider checks its own retained local sequence before ID access.
+The consumer sets MMIO readiness only after the observed PID/revision match.
+Public reads repeat CCU and PCK ownership proofs before NPU mapping.
+These checks do not exclude firmware, authorize DMA or establish task execution.
+See the [clock provider](a733-accelerator-clocks.md) and
+[power provider](a733-power-domains.md).
 
 ## Source controls and physical limits
 
@@ -89,15 +98,19 @@ python3 ember/tests/a733-npu-observe.py
 ```
 
 It compiles the production NPU attach and generic FDT pre-attach bodies
-with narrow host doubles. No NPU MMIO or clock/reset APIs are supplied.
+with narrow host doubles. Those attachment controls supply no MMIO or
+clock/reset APIs. Separate runtime controls use deterministic provider doubles.
 It also compiles the complete production smoke probe and tests success,
 wrong PID, both error channels, and cleanup failures. Layout assertions
 compare the probe structures with the production driver structures.
 The register control executes the actual 32-bit PID/revision/date reader.
 It checks the 0x34-byte mapping, every read failure, and the unchanged
 READ_REG offset range. The reader publishes a new identifier triple only
-when all three reads succeed. The accelerator-clock control tests all 32
-stale divider values and preserves the existing GPU-owner exclusion.
+when all three reads succeed. Cold, failed and stale ownership cause no
+NPU mapping or peek. The actual consumer sequence checks retention before
+write, clean unwind, failed writes, ID faults and wrong observed IDs.
+The accelerator-clock control tests all 32 stale divider values, both
+GPU/NPU orderings, current parent proofs and retained write failures.
 These are host controls. They do not validate device access, native ioctl
 copying, power sequencing, DMA, IRQ delivery, command completion, or a
 model result. The earlier [board evidence](../boards/orange-pi-zero-3w.md)

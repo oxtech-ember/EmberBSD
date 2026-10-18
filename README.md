@@ -344,7 +344,15 @@ on every board in the hardware catalog.
   all 16 target query groups and passes Mesa's production LLVM guards.
   The resulting [Mesa26 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-linux-aarch64.md)
   passes installed llvmpipe rendering, all 39 target invocations and normal
-  removal/reinstallation on this stack. KiCad's package/CAD workflows remain pending.
+  removal/reinstallation on this stack.
+  Installed [GLU, Cairo and GLM consumers](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-graphics/cross/gui-cad-api)
+  verify tessellation, image/document output and numerical transforms.
+  [FreeImage and FreeImagePlus](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/freeimage.md)
+  pass all nine selected upstream image tests and the original C++ wrapper test.
+  Tcl 9.1 passes installed ZipFS, Unicode, SQLite, TDBC and joined-thread checks.
+  The installed DNS-SD public API and thread-safe MIT Kerberos/GSS clients also
+  pass bounded VM contracts. These checks do not establish network services or
+  a complete display session. KiCad's package/CAD workflows remain pending.
 - **Offline visual SLAM:** ORB-SLAM3 runs with the common Eigen 5.0.1 and
   OpenCV 5.0.0 through a [headless Ports adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/orb-slam3).
   Ports adapts current dependencies and repairs worker shutdown, cancellation
@@ -717,6 +725,9 @@ on every board in the hardware catalog.
   Physical BVB clock control remains unaccepted.
   A separate [shared HD control initialization probe](ember/boot/bcm2712-hd-initialize-probe.md)
   adds one explicit write and fresh readback with source-tested guards. It does not authorize PHY access.
+  An explicit [retained PHY programming probe](ember/boot/bcm2712-phy-program-probe.md)
+  links the fixed private core with source-tested access guards and retained resources.
+  Physical PHY programming, PLL lock and link acceptance remain separate.
   DRM hotplug delivery, extension reads and KMS scanout remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,

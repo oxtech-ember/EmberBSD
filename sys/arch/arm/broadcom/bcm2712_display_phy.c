@@ -10,7 +10,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
 #include <sys/errno.h>
 #include <sys/systm.h>
-#include <arm/broadcom/bcm2712_display_phyvar.h>
+#include "bcm2712_display_phyvar.h"
 
 /* Fixed programming facts, not a caller-supplied register language. */
 struct bcm2712_phy_setting {

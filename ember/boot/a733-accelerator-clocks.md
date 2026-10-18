@@ -53,6 +53,23 @@ here. The NPU bus gate also reports no rate: its real parent is not
 documented in the cited Linux submission. Neither is assigned a fictional
 24 MHz parent. Their on/off operations remain available.
 
+## Independent local reservations
+
+GPU and NPU have separate typed local slots. Either acquisition order can
+borrow the same running REF/SYS24M/PERIPH0/AHB ancestors. Native writers
+cannot change a reserved local mask or borrowed ancestor. Borrowed enable
+returns success without a physical write. Native admission counts remain
+balanced, and the actual RMW hook rechecks protected masks under its mutex.
+
+The NPU reserve/prepare/ready/release APIs use its fixed profile. Prepare
+requires PCK4 retention first. It writes only its mux/divider, three resets
+and four gates. It retains its slot before any write attempt, including a
+fault. A fresh ready query requires a completed retained sequence and the
+same verified parent/local state. PLL_NPU and SRAM reset 19 stay unchanged.
+The legacy GPU wrappers keep their readiness, PLL600 and UPDATE policies.
+GPU snapshot comparison uses only its own AHB master bit 7, so an NPU bit 6
+change does not invalidate the GPU reservation.
+
 ## PLL ownership and power
 
 PLL handoff checks enable, LDO, lock detection, lock and output bits, the two SDM pattern

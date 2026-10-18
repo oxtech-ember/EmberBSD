@@ -68,6 +68,13 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define PCK600_TIMEOUT_US	10000
 #define PCK600_POLL_US		10
 
+/* Fixed profile slots. One domain cannot belong to two profiles. */
+struct sun60i_pck600_lease {
+	const void *owner;
+	bool retained;
+	uint32_t before[2][3];
+};
+
 struct sun60i_pck600_softc {
 	device_t sc_dev;
 	bus_space_tag_t sc_bst;
@@ -75,8 +82,7 @@ struct sun60i_pck600_softc {
 	kmutex_t sc_lock;
 	bool sc_failed[PCK600_NDOMAINS];
 	int sc_phandle;
-	const void *sc_gpu_owner;
-	bool sc_gpu_retained;
+	struct sun60i_pck600_lease sc_lease[PCK600_NDOMAINS];
 	LIST_ENTRY(sun60i_pck600_softc) sc_next;
 };
 
@@ -197,8 +203,9 @@ sun60i_pck600_set(device_t dev, const uint32_t *data, bool enable)
 	int error;
 
 	mutex_enter(&sc->sc_lock);
-	if (sc->sc_gpu_owner != NULL &&
-	    (id == PCK600_GPU_TOP || id == PCK600_GPU_CORE))
+	if (id >= PCK600_NDOMAINS)
+		error = EINVAL;
+	else if (sc->sc_lease[id].owner != NULL)
 		error = EBUSY;
 	else
 		error = sun60i_pck600_transition(sc, id, enable);
@@ -467,10 +474,13 @@ sun60i_a733_pck_gpu_reserve(int phandle, const void *owner)
 	if (sc == NULL)
 		return ENXIO;
 	mutex_enter(&sc->sc_lock);
-	if (sc->sc_gpu_owner != NULL)
+	if (sc->sc_lease[PCK600_GPU_TOP].owner != NULL ||
+	    sc->sc_lease[PCK600_GPU_CORE].owner != NULL)
 		error = EBUSY;
-	else if ((error = sun60i_pck600_gpu_check(sc, true, NULL)) == 0)
-		sc->sc_gpu_owner = owner;
+	else if ((error = sun60i_pck600_gpu_check(sc, true, NULL)) == 0) {
+		sc->sc_lease[PCK600_GPU_TOP].owner = owner;
+		sc->sc_lease[PCK600_GPU_CORE].owner = owner;
+	}
 	mutex_exit(&sc->sc_lock);
 	return error;
 }
@@ -484,12 +494,14 @@ sun60i_a733_pck_gpu_release(int phandle, const void *owner)
 	if (sc == NULL)
 		return ENXIO;
 	mutex_enter(&sc->sc_lock);
-	if (owner == NULL || sc->sc_gpu_owner != owner)
+	if (owner == NULL || sc->sc_lease[PCK600_GPU_TOP].owner != owner)
 		error = EINVAL;
-	else if (sc->sc_gpu_retained)
+	else if (sc->sc_lease[PCK600_GPU_TOP].retained)
 		error = EBUSY;
-	else
-		sc->sc_gpu_owner = NULL;
+	else {
+		sc->sc_lease[PCK600_GPU_TOP].owner = NULL;
+		sc->sc_lease[PCK600_GPU_CORE].owner = NULL;
+	}
 	mutex_exit(&sc->sc_lock);
 	return error;
 }
@@ -503,10 +515,13 @@ sun60i_a733_pck_gpu_retain(int phandle, const void *owner)
 	if (sc == NULL)
 		return ENXIO;
 	mutex_enter(&sc->sc_lock);
-	if (owner == NULL || sc->sc_gpu_owner != owner || sc->sc_gpu_retained)
+	if (owner == NULL || sc->sc_lease[PCK600_GPU_TOP].owner != owner ||
+	    sc->sc_lease[PCK600_GPU_TOP].retained)
 		error = EBUSY;
-	else if ((error = sun60i_pck600_gpu_check(sc, true, NULL)) == 0)
-		sc->sc_gpu_retained = true;
+	else if ((error = sun60i_pck600_gpu_check(sc, true, NULL)) == 0) {
+		sc->sc_lease[PCK600_GPU_TOP].retained = true;
+		sc->sc_lease[PCK600_GPU_CORE].retained = true;
+	}
 	mutex_exit(&sc->sc_lock);
 	return error;
 }
@@ -521,7 +536,8 @@ sun60i_a733_pck_gpu_wait(int phandle, const void *owner, bool quiet)
 	if (sc == NULL)
 		return ENXIO;
 	mutex_enter(&sc->sc_lock);
-	if (owner == NULL || sc->sc_gpu_owner != owner || !sc->sc_gpu_retained) {
+	if (owner == NULL || sc->sc_lease[PCK600_GPU_TOP].owner != owner ||
+	    !sc->sc_lease[PCK600_GPU_TOP].retained) {
 		error = EINVAL;
 		goto out;
 	}
@@ -555,7 +571,8 @@ sun60i_a733_pck_gpu_request_on(int phandle, const void *owner, bool quiet)
 	if (sc == NULL)
 		return ENXIO;
 	mutex_enter(&sc->sc_lock);
-	if (owner == NULL || sc->sc_gpu_owner != owner || !sc->sc_gpu_retained) {
+	if (owner == NULL || sc->sc_lease[PCK600_GPU_TOP].owner != owner ||
+	    !sc->sc_lease[PCK600_GPU_TOP].retained) {
 		error = EINVAL;
 		goto out;
 	}
@@ -612,6 +629,128 @@ out:
 	mutex_exit(&sc->sc_lock);
 	return error;
 }
+
+/* Origin: EmberBSD; AI-assisted fixed NPU/display borrowed-domain leases. */
+static const u_int sun60i_pck600_npu_domains[] = { 4 };
+static const u_int sun60i_pck600_display_domains[] = { 1, 10 };
+
+/* Caller holds sc_lock. Publish no sample after a read fault. */
+static int
+sun60i_pck600_borrow_read(struct sun60i_pck600_softc *sc, u_int id,
+    uint32_t result[2][3])
+{
+	const bus_size_t offsets[] = { PCK600_PWPR, PCK600_PMER, PCK600_PWSR };
+	uint32_t sample[2][3];
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+	if (id >= PCK600_NDOMAINS)
+		return EINVAL;
+	if (sc->sc_failed[id])
+		return EIO;
+	for (u_int n = 0; n < 2; n++) {
+		for (u_int r = 0; r < 3; r++) {
+			if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh,
+			    id * PCK600_DOMAIN_SIZE + offsets[r], &sample[n][r]) != 0)
+				return EFAULT;
+		}
+	}
+	if (memcmp(sample[0], sample[1], sizeof(sample[0])) != 0)
+		return EBUSY;
+	/* A locked static ON domain can be borrowed without policy writes. */
+	if (((sample[0][0] | sample[0][2]) & PCK600_DYNAMIC) != 0 ||
+	    sample[0][1] != 0)
+		return EOPNOTSUPP;
+	if ((sample[0][0] & PCK600_MODE) != PCK600_ON ||
+	    (sample[0][2] & PCK600_MODE) != PCK600_ON)
+		return EBUSY;
+	memcpy(result, sample, sizeof(sample));
+	return 0;
+}
+
+enum sun60i_pck600_lease_op {
+	PCK600_RESERVE, PCK600_RETAIN, PCK600_RELEASE, PCK600_READY
+};
+
+/* Internal profile lists are fixed. No caller supplies a domain write mask. */
+static int
+sun60i_pck600_borrow(int phandle, const void *owner, const u_int *ids,
+    u_int count, enum sun60i_pck600_lease_op op)
+{
+	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
+	uint32_t sample[2][2][3];
+	int error = 0;
+
+	if (owner == NULL)
+		return EINVAL;
+	if (sc == NULL)
+		return ENXIO;
+	KASSERT(count <= __arraycount(sample));
+	mutex_enter(&sc->sc_lock);
+	for (u_int i = 0; i < count; i++) {
+		struct sun60i_pck600_lease *slot = &sc->sc_lease[ids[i]];
+
+		if (op == PCK600_RESERVE) {
+			if (slot->owner != NULL) {
+				error = EBUSY;
+				goto out;
+			}
+		} else if (slot->owner != owner) {
+			error = EINVAL;
+			goto out;
+		} else if ((op == PCK600_RELEASE || op == PCK600_RETAIN) &&
+		    slot->retained) {
+			error = EBUSY;
+			goto out;
+		} else if (op == PCK600_READY && !slot->retained) {
+			error = EBUSY;
+			goto out;
+		}
+		if (op == PCK600_RELEASE)
+			continue;
+		error = sun60i_pck600_borrow_read(sc, ids[i], sample[i]);
+		if (error != 0)
+			goto out;
+		if (op != PCK600_RESERVE &&
+		    memcmp(slot->before, sample[i], sizeof(slot->before)) != 0) {
+			error = EBUSY;
+			goto out;
+		}
+	}
+	/* Acquire all members atomically. A failed validation publishes none. */
+	for (u_int i = 0; i < count; i++) {
+		struct sun60i_pck600_lease *slot = &sc->sc_lease[ids[i]];
+
+		if (op == PCK600_RESERVE) {
+			memcpy(slot->before, sample[i], sizeof(slot->before));
+			slot->owner = owner;
+		} else if (op == PCK600_RETAIN) {
+			slot->retained = true;
+		} else if (op == PCK600_RELEASE) {
+			memset(slot, 0, sizeof(*slot));
+		}
+	}
+out:
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+#define A733_BORROW_API(profile, operation, code) \
+int \
+sun60i_a733_pck_ ## profile ## _ ## operation(int phandle, const void *owner) \
+{ \
+	return sun60i_pck600_borrow(phandle, owner, \
+	    sun60i_pck600_ ## profile ## _domains, \
+	    __arraycount(sun60i_pck600_ ## profile ## _domains), code); \
+}
+A733_BORROW_API(npu, reserve, PCK600_RESERVE)
+A733_BORROW_API(npu, retain, PCK600_RETAIN)
+A733_BORROW_API(npu, release, PCK600_RELEASE)
+A733_BORROW_API(npu, ready, PCK600_READY)
+A733_BORROW_API(display, reserve, PCK600_RESERVE)
+A733_BORROW_API(display, retain, PCK600_RETAIN)
+A733_BORROW_API(display, release, PCK600_RELEASE)
+A733_BORROW_API(display, ready, PCK600_READY)
+#undef A733_BORROW_API
 
 static void
 sun60i_pck600_report(struct sun60i_pck600_softc *sc)

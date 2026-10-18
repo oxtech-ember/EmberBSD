@@ -5,12 +5,14 @@ src=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/bcm2712-hsm-probe.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 echo "HSM probe temporary directory: $work"
-for unit in clock hsm hsm_acpi dvp dvp_acpi; do
+for unit in clock hsm hsm_acpi dvp dvp_acpi phy; do
     input=$unit
     if [ "$unit" = hsm_acpi ]; then input=clock_acpi; fi
     sed '/^#include /d; /^__KERNEL_RCSID(/d' \
         "$src/sys/arch/arm/broadcom/bcm2712_display_${input}.c" > "$work/$unit.h"
 done
+sed '/^#include /d' "$src/sys/arch/arm/broadcom/bcm2712_display_phyvar.h" > "$work/phy-types.h"
+mv "$work/phy.h" "$work/phy-core.h"
 sed '/^#include /d' "$src/sys/arch/arm/broadcom/bcm2712_display_bvb.h" > "$work/bvb-types.h"
 {
     echo '#ifndef __CTASSERT'
@@ -134,10 +136,67 @@ for feature in ${HSM_PROBE_FEATURES:-off on}; do
             hd-conflict hd-value hd-initial-hsm hd-hsm-mutation hd-gates hd-resets hd-port0-mutation hd-port1-status hd-range hd-offset hd-extra-read hd-held hd-unmap hd-release-order hd-candidate hd-partial hd-busy-cleanup
             hd-init-precondition hd-init-address hd-init-value hd-init-extra-write hd-init-attempt
             hd-init-barrier hd-init-post-ctl hd-init-post-stopped hd-init-fresh hd-init-retain
-            hd-init-error hd-init-no-transition'
+            hd-init-error hd-init-no-transition
+            phy-conflict phy-value phy-hsm-min phy-hsm-verify phy-hd-guard phy-hd-write phy-bvb-rate phy-clean-error phy-map phy-window phy-bounds phy-latch phy-barrier phy-after-fault phy-disable phy-release phy-render phy-fini phy-arg phy-retain-prefix phy-register phy-known-error'
     fi
 for mutation in $mutations; do
     case "$mutation" in
+                phy-conflict)
+                    from='if (prop_dictionary_get(properties, "hd-mode") != NULL ||'; to='if (false ||' ;;
+                phy-value)
+                    from='strcmp(phy_mode, "program0") != 0)'; to='false)' ;;
+                phy-hsm-min)
+                    from='bcm2712_display_hsm_acquire(phy->hsm, 0, HSM_PROBE_BVB_HSM_MIN);'
+                    to='bcm2712_display_hsm_acquire(phy->hsm, 0, BCM2712_DISPLAY_HSM_MIN_RATE);' ;;
+                phy-hsm-verify)
+                    from='hsm->rate < HSM_PROBE_BVB_HSM_MIN ||'; to='false ||' ;;
+                phy-hd-guard)
+                    from='if (!hsm_probe_hd_candidate(&dvp->hd))'; to='if (false)' ;;
+                phy-hd-write)
+                    from='hsm_probe_hd_sample(phy->dev, &phy->contract, dvp, false);'
+                    to='hsm_probe_hd_sample(phy->dev, &phy->contract, dvp, true);' ;;
+                phy-bvb-rate)
+                    from='status->rate < MAX(status->floor, HSM_PROBE_BVB_MIN)) {'
+                    to='status->rate < HSM_PROBE_BVB_MIN) {' ;;
+                phy-clean-error)
+                    from='return hsm_probe_phy_cleanup(phy, operation_error);'
+                    to='return hsm_probe_phy_cleanup(phy, 0);' ;;
+                phy-map)
+                    from='phy->contract.memory[18 + i].address,'
+                    to='phy->contract.memory[20 + i].address,' ;;
+                phy-window)
+                    from='index = 1;'; to='index = 0;' ;;
+                phy-bounds)
+                    from='offset > length - sizeof(uint32_t))'; to='offset > length)' ;;
+                phy-latch)
+                    from='phy->write_attempted = true;'; to='phy->write_attempted = false;' ;;
+                phy-barrier)
+                    from='bus_space_barrier(&arm_generic_bs_tag, phy->handle[1], 0,'
+                    to='hsm_probe_omitted_barrier(&arm_generic_bs_tag, phy->handle[1], 0,' ;;
+                phy-after-fault)
+                    from='error = bcm2712_phy_program_148500(&phy->core);'
+                    to='error = bcm2712_phy_program_148500(&phy->core); if (error != 0) (void)bus_space_read_4(&arm_generic_bs_tag, phy->handle[0], 0x190);' ;;
+                phy-disable)
+                    from='error = bcm2712_phy_program_148500(&phy->core);'
+                    to='error = bcm2712_phy_program_148500(&phy->core); if (error == 0) error = bcm2712_phy_disable(&phy->core);' ;;
+                phy-release)
+                    from='error = bcm2712_phy_program_148500(&phy->core);'
+                    to='error = bcm2712_phy_program_148500(&phy->core); (void)bcm2712_display_bvb_release(bvb->owner, 0);' ;;
+                phy-render)
+                    from='hsm_probe_phy_retained(&hsm_probe_phy0, error);'
+                    to='hsm_probe_phy_retained(&hsm_probe_phy0, error); drm_minor_release(minor);' ;;
+                phy-fini)
+                    from='return hsm_probe_irq0.retained || hsm_probe_phy0.retained ? EBUSY : 0;'
+                    to='return hsm_probe_irq0.retained ? EBUSY : 0;' ;;
+                phy-arg)
+                    from='.arg = phy };'; to='.arg = &io };' ;;
+                phy-retain-prefix)
+                    from='phy->retained = true;'; to='phy->retained = false;' ;;
+                phy-register)
+                    from='return 0;'; to='return error;' ;;
+                phy-known-error)
+                    from='return hsm_probe_phy_cleanup(phy, EBUSY);'
+                    to='return hsm_probe_phy_cleanup(phy, 0);' ;;
 hd-init-precondition)
     from='if (!hsm_probe_hd_stopped(hd)) {'; to='if (false) {' ;;
 hd-init-address)
@@ -285,7 +344,7 @@ hd-init-no-transition)
         irq-retain)
             from='if (hsm_probe_irq0.retained) {'; to='if (false) {' ;;
         irq-fini)
-            from='return hsm_probe_irq0.retained ? EBUSY : 0;'; to='return 0;' ;;
+            from='return hsm_probe_irq0.retained || hsm_probe_phy0.retained ? EBUSY : 0;'; to='return 0;' ;;
         irq-render)
             from='error);'
             to='error);' ;;
@@ -374,7 +433,33 @@ hd-init-no-transition)
             to='error = hsm_probe_dvp_cycle(dev, handle, mode, dvp); if (error != 0 && dvp->mapped) bus_space_unmap(&arm_generic_bs_tag, dvp->handle, 0x10);' ;;
         *) echo "Unknown probe mutant: $mutation" >&2; exit 1 ;;
     esac
-    if [ "$mutation" = irq-render ]; then
+    if [ "$mutation" = phy-bvb-rate ] || [ "$mutation" = phy-retain-prefix ]; then
+        # Select the exact function. Earlier BVB-only helpers have similar text.
+        awk -v from="$from" -v to="$to" '
+            /^hsm_probe_phy_cycle\(/ { selected=1; functions++ }
+            /^hsm_probe_cycle\(/ { selected=0 }
+            selected { p=index($0,from); if (p) {
+                $0=substr($0,1,p-1) to substr($0,p+length(from)); changed++
+            } }
+            { print } END { if (functions!=1 || changed!=1) exit 1 }
+        ' "$work/probe-good.h" > "$work/probe.h"
+    elif [ "$mutation" = phy-clean-error ]; then
+        awk -v from="$from" -v to="$to" '
+            /phy->stage = "PHY-BVB-failed-acquire-status";/ { selected=1; anchors++ }
+            selected && !changed { p=index($0,from); if (p) {
+                $0=substr($0,1,p-1) to substr($0,p+length(from)); changed++
+            } }
+            { print } END { if (anchors!=1 || changed!=1) exit 1 }
+        ' "$work/probe-good.h" > "$work/probe.h"
+    elif [ "$mutation" = phy-register ]; then
+        awk -v from="$from" -v to="$to" '
+            /hsm_probe_phy_retained\(&hsm_probe_phy0, error\);/ { selected=1; anchors++ }
+            selected && !changed { p=index($0,from); if (p) {
+                $0=substr($0,1,p-1) to substr($0,p+length(from)); changed++
+            } }
+            { print } END { if (anchors!=1 || changed!=1) exit 1 }
+        ' "$work/probe-good.h" > "$work/probe.h"
+    elif [ "$mutation" = irq-render ]; then
         awk '
             /module registered for/ { retained=1 }
             retained && /return 0;/ { sub(/return 0;/, "drm_minor_release(minor); return 0;"); changed++; retained=0 }
@@ -382,7 +467,7 @@ hd-init-no-transition)
         ' "$work/probe-good.h" > "$work/probe.h"
     elif [ "$mutation" = hd-conflict ]; then
         awk -v from="$from" -v to="$to" '
-            /^\tif \(prop_dictionary_get\(properties, "hd-mode"\) != NULL\)/ { selected=1; branches++ }
+            /else if \(prop_dictionary_get\(properties, "hd-mode"\) != NULL\)/ { selected=1; branches++ }
             selected && !changed { p = index($0, from); if (p) {
                 $0 = substr($0,1,p-1) to substr($0,p+length(from)); changed++
             } }
@@ -412,7 +497,7 @@ hd-init-no-transition)
             { print } END { if (changed != 1) exit 1 }
         ' "$work/probe-good.h" > "$work/probe.h"
     fi
-    if [ "$mutation" = hd-init-barrier ]; then
+    if [ "$mutation" = hd-init-barrier ] || [ "$mutation" = phy-barrier ]; then
         printf '#define hsm_probe_omitted_barrier(a,b,c,d,e) ((void)0)\n' > "$work/barrier-prefix"
         cat "$work/barrier-prefix" "$work/probe.h" > "$work/probe-with-prefix"
         mv "$work/probe-with-prefix" "$work/probe.h"

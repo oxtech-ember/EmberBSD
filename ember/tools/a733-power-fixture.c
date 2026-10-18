@@ -713,6 +713,105 @@ lease_fixture(void)
 }
 
 static void
+borrow_fixture(void)
+{
+	lease_fixture();
+	for (u_int id = 0; id < PCK600_NDOMAINS; id++) {
+		if (id != 1 && id != 4 && id != 10)
+			continue;
+		registers[id * PCK600_DOMAIN_SIZE / 4] = PCK600_ON;
+		registers[(id * PCK600_DOMAIN_SIZE + 4) / 4] = 0;
+		registers[(id * PCK600_DOMAIN_SIZE + 8) / 4] = PCK600_ON;
+	}
+	peeks = 0;
+}
+
+static void
+test_borrowed_domains(void)
+{
+	const int gpu = 1, npu = 2, display = 3;
+	uint32_t id[2] = { 0, 0 };
+	unsigned cases = 0;
+
+	borrow_fixture();
+	assert(sun60i_a733_pck_gpu_reserve(1, &gpu) == 0);
+	assert(sun60i_a733_pck_npu_retain(1, &gpu) == EINVAL);
+	assert(sun60i_a733_pck_npu_reserve(1, &npu) == 0);
+	assert(sun60i_a733_pck_display_reserve(1, &display) == 0);
+	for (u_int domain = 0; domain < PCK600_NDOMAINS; domain++) {
+		bool owned = domain == 1 || domain == 4 || domain == 5 || domain == 6 || domain == 10;
+		id[1] = swap32(domain);
+		if (owned)
+			assert(sun60i_pck600_set(&sc, id, true) == EBUSY);
+	}
+	id[1] = swap32(3);
+	assert(sun60i_pck600_set(&sc, id, false) == 0);
+	assert(sun60i_a733_pck_npu_ready(1, &npu) == EBUSY);
+	assert(sun60i_a733_pck_npu_retain(1, &npu) == 0);
+	assert(sun60i_a733_pck_display_retain(1, &display) == 0);
+	assert(sun60i_a733_pck_npu_ready(1, &npu) == 0);
+	assert(sun60i_a733_pck_display_ready(1, &display) == 0);
+	assert(sun60i_a733_pck_gpu_release(1, &gpu) == 0);
+	assert(sc.sc_lease[5].owner == NULL && sc.sc_lease[6].owner == NULL);
+	assert(sun60i_a733_pck_npu_release(1, &npu) == EBUSY);
+	assert(sun60i_a733_pck_display_release(1, &display) == EBUSY);
+	assert(sun60i_a733_pck_npu_ready(1, &display) == EINVAL);
+	assert(writes == 0); cases++;
+
+	for (unsigned fault = 1; fault <= 12; fault++) {
+		borrow_fixture(); fail_peek = fault;
+		assert(sun60i_a733_pck_display_reserve(1, &display) == EFAULT);
+		assert(sc.sc_lease[1].owner == NULL && sc.sc_lease[10].owner == NULL);
+		assert(writes == 0 && peeks == fault); cases++;
+	}
+	for (unsigned fault = 1; fault <= 6; fault++) {
+		borrow_fixture(); fail_peek = fault;
+		assert(sun60i_a733_pck_npu_reserve(1, &npu) == EFAULT);
+		assert(sc.sc_lease[4].owner == NULL && writes == 0); cases++;
+	}
+	for (unsigned scenario = 0; scenario < 7; scenario++) {
+		borrow_fixture();
+		switch (scenario) {
+		case 0: registers[0xa008 / 4] = 0; break;
+		case 1: registers[0xa004 / 4] = 1; break;
+		case 2: registers[0xa000 / 4] |= PCK600_DYNAMIC; break;
+		case 3: sc.sc_failed[10] = true; break;
+		case 4: change_peek = 12; break;
+		case 5: registers[0x1000 / 4] |= PCK600_DYNAMIC; break;
+		case 6: registers[0x1008 / 4] = 0; break;
+		}
+		assert(sun60i_a733_pck_display_reserve(1, &display) != 0);
+		assert(sc.sc_lease[1].owner == NULL && sc.sc_lease[10].owner == NULL);
+		assert(writes == 0); cases++;
+	}
+	for (unsigned scenario = 0; scenario < 3; scenario++) {
+		borrow_fixture();
+		assert(sun60i_a733_pck_display_reserve(1, &display) == 0);
+		if (scenario == 0) registers[0xa008 / 4] = 0;
+		if (scenario == 1) sc.sc_failed[10] = true;
+		if (scenario == 2) registers[0xa000 / 4] |= PCK600_LOCK;
+		assert(sun60i_a733_pck_display_retain(1, &display) != 0);
+		assert(!sc.sc_lease[1].retained && !sc.sc_lease[10].retained);
+		assert(sun60i_a733_pck_display_release(1, &display) == 0);
+		assert(sc.sc_lease[1].owner == NULL && sc.sc_lease[10].owner == NULL);
+		cases++;
+	}
+	borrow_fixture();
+	registers[0x4000 / 4] |= PCK600_LOCK;
+	registers[0x4008 / 4] |= PCK600_LOCK;
+	assert(sun60i_a733_pck_npu_reserve(1, &npu) == 0);
+	assert(sun60i_a733_pck_npu_retain(1, &npu) == 0);
+	assert(sun60i_a733_pck_npu_ready(1, &npu) == 0);
+	registers[0x4008 / 4] = 0;
+	assert(sun60i_a733_pck_npu_ready(1, &npu) == EBUSY);
+	assert(sun60i_a733_pck_npu_release(1, &npu) == EBUSY);
+	assert(writes == 0); cases++;
+	lease_test = false;
+	reset_fixture();
+	printf("PASS: %u independent NPU/display PCK lease scenarios\n", cases);
+}
+
+static void
 test_gpu_lease(void)
 {
 	const int owner = 1, other = 2;
@@ -744,19 +843,19 @@ test_gpu_lease(void)
 		lease_fixture();
 		registers[bad_regs[test] / 4] ^= 8;
 		assert(sun60i_a733_pck_gpu_reserve(1, &owner) != 0);
-		assert(sc.sc_gpu_owner == NULL && writes == 0);
+		assert(sc.sc_lease[PCK600_GPU_TOP].owner == NULL && writes == 0);
 		checks++;
 	}
 	for (unsigned fault = 1; fault <= 80; fault++) {
 		lease_fixture(); fail_peek = fault;
 		assert(sun60i_a733_pck_gpu_reserve(1, &owner) == EFAULT);
-		assert(sc.sc_gpu_owner == NULL && writes == 0 && peeks == fault);
+		assert(sc.sc_lease[PCK600_GPU_TOP].owner == NULL && writes == 0 && peeks == fault);
 		checks++;
 	}
 	for (unsigned change = 21; change <= 40; change++) {
 		lease_fixture(); change_peek = change;
 		assert(sun60i_a733_pck_gpu_reserve(1, &owner) != 0);
-		assert(sc.sc_gpu_owner == NULL && writes == 0);
+		assert(sc.sc_lease[PCK600_GPU_TOP].owner == NULL && writes == 0);
 		checks++;
 	}
 	for (unsigned test = 0; test < 7; test++) {
@@ -777,7 +876,7 @@ test_gpu_lease(void)
 		int error = sun60i_a733_pck_gpu_wait(1, &owner, false);
 		assert(error == (test == 0 ? 0 : test == 2 ? EFAULT :
 		    test == 3 ? EOPNOTSUPP : test == 4 || test == 5 ? EIO : ETIMEDOUT));
-		assert(writes == 0 && sc.sc_gpu_retained && sc.sc_gpu_owner == &owner);
+		assert(writes == 0 && sc.sc_lease[PCK600_GPU_TOP].retained && sc.sc_lease[PCK600_GPU_TOP].owner == &owner);
 		if (test == 0) assert(delay_us == 10 && peeks == 160);
 		if (test == 1 || test == 6) assert(delay_us == 10000 && peeks == 80080);
 		checks++;
@@ -854,7 +953,7 @@ test_gpu_request_on(void)
 		if (error == EIO)
 			assert(sc.sc_failed[6]);
 		/* The reservation survives every outcome until release. */
-		assert(sc.sc_gpu_owner == &owner && sc.sc_gpu_retained);
+		assert(sc.sc_lease[PCK600_GPU_TOP].owner == &owner && sc.sc_lease[PCK600_GPU_TOP].retained);
 		assert(sun60i_a733_pck_gpu_release(1, &owner) == EBUSY);
 		checks++;
 	}
@@ -881,6 +980,7 @@ main(void)
 	unsigned int old_writes, old_reads;
 
 	test_gpu_lease();
+	test_borrowed_domains();
 	test_gpu_request_on();
 	test_read_state();
 	cases = 0;

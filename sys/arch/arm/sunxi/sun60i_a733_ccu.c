@@ -297,6 +297,8 @@ sun60i_a733_accel_write_locked(struct sunxi_ccu_softc *sc, bus_size_t reg,
 }
 
 /* Native callbacks acquire the same mutex as the typed preparation paths. */
+static bool sun60i_a733_native_mask_busy(bus_size_t, uint32_t);
+
 static int
 sun60i_a733_accel_write(struct sunxi_ccu_softc *sc, bus_size_t reg,
     uint32_t mask, uint32_t bits)
@@ -304,7 +306,10 @@ sun60i_a733_accel_write(struct sunxi_ccu_softc *sc, bus_size_t reg,
 	int error;
 
 	mutex_enter(&sun60i_a733_ccu_lock);
-	error = sun60i_a733_accel_write_locked(sc, reg, mask, bits);
+	if (sun60i_a733_native_mask_busy(reg, mask))
+		error = EBUSY;
+	else
+		error = sun60i_a733_accel_write_locked(sc, reg, mask, bits);
 	mutex_exit(&sun60i_a733_ccu_lock);
 	return error;
 }
@@ -970,6 +975,65 @@ static struct {
 	struct sun60i_a733_gpu_state before;
 } sun60i_gpu_lease;
 
+/* NPU owns local masks. Running common ancestors remain borrowed. */
+enum sun60i_a733_npu_reg {
+	A733_NPU_REF, A733_NPU_PERIPH, A733_NPU_PAT0, A733_NPU_PAT1,
+	A733_NPU_AHB, A733_NPU_GATE, A733_NPU_STATUS,
+	A733_NPU_MODULE, A733_NPU_BUS, A733_NPU_AHB_MASTER,
+	A733_NPU_MBUS_MASTER, A733_NPU_NREGS
+};
+struct sun60i_a733_npu_state {
+	uint32_t sample[2][A733_NPU_NREGS];
+	uint32_t dcxo[2][2];
+	u_int dcxo_hz[2], hosc_hz[2];
+};
+static struct {
+	const void *owner;
+	bool attempted, prepared;
+	struct sun60i_a733_npu_state before, after;
+} sun60i_npu_lease;
+
+/* Recheck actual RMW masks under the same mutex, including direct callbacks. */
+static bool
+sun60i_a733_native_mask_busy(bus_size_t reg, uint32_t mask)
+{
+	bool gpu = sun60i_gpu_lease.owner != NULL;
+	bool npu = sun60i_npu_lease.owner != NULL;
+
+	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
+	if (!gpu && !npu)
+		return false;
+	switch (reg) {
+	case PLL_REF_CTRL_REG:
+	case PLL_PERIPH0_CTRL_REG:
+	case PLL_PERIPH0_CTRL_REG + 8:
+	case PLL_PERIPH0_CTRL_REG + 12:
+	case AHB_CFG_REG:
+	case PERI0PLL_GATE_EN_REG:
+	case PERI0PLL_GATE_STAT_REG:
+		return mask != 0;
+	case PLL_GPU0_CTRL_REG:
+	case PLL_GPU0_CTRL_REG + 8:
+	case PLL_GPU0_CTRL_REG + 12:
+	case GPUPLL_GATE_EN_REG:
+	case GPU0_CLK_REG:
+	case GPU0_BGR_REG:
+		return gpu && mask != 0;
+	case PLL_NPU_CTRL_REG:
+	case PLL_NPU_CTRL_REG + 8:
+	case PLL_NPU_CTRL_REG + 12:
+	case NPU_CLK_REG:
+	case NPU_BGR_REG:
+		return npu && mask != 0;
+	case AHB_MASTER_GATE_REG:
+		return (mask & ((gpu ? __BIT(7) : 0) | (npu ? __BIT(6) : 0))) != 0;
+	case MBUS_MASTER_GATE_REG:
+		return (mask & ((gpu ? __BIT(16) : 0) | (npu ? __BIT(18) : 0))) != 0;
+	default:
+		return false;
+	}
+}
+
 static int
 sun60i_a733_gpu_guard_enter(struct sunxi_ccu_softc *sc, struct clk *clk,
     struct sunxi_ccu_reset *reset, enum sunxi_ccu_mutation op, bool *handled)
@@ -978,17 +1042,25 @@ sun60i_a733_gpu_guard_enter(struct sunxi_ccu_softc *sc, struct clk *clk,
 	int error = 0;
 
 	mutex_enter(&sun60i_a733_ccu_lock);
-	if (sun60i_gpu_lease.owner != NULL) {
+	if (sun60i_gpu_lease.owner != NULL || sun60i_npu_lease.owner != NULL) {
 		if (reset != NULL)
-			local = reset->reg == GPU0_BGR_REG;
+			local = (sun60i_gpu_lease.owner != NULL &&
+			    reset->reg == GPU0_BGR_REG) ||
+			    (sun60i_npu_lease.owner != NULL && reset->reg == NPU_BGR_REG);
 		for (u_int id = 0; clk != NULL && id < sc->sc_nclks; id++) {
 			if (clk != &sc->sc_clks[id].base)
 				continue;
 			shared = id == A733_CLK_PLL_REF || id == A733_CLK_SYS_24M ||
 			    (id >= A733_CLK_PLL_PERIPH0_4X &&
 			    id <= A733_CLK_PLL_PERIPH0_150M) || id == A733_CLK_AHB;
-			local = id == A733_CLK_GPU0 || id == A733_CLK_BUS_GPU0 ||
-			    id == A733_CLK_AHB_GPU0 || id == A733_CLK_PLL_GPU0;
+			local = (sun60i_gpu_lease.owner != NULL &&
+			    (id == A733_CLK_GPU0 || id == A733_CLK_BUS_GPU0 ||
+			    id == A733_CLK_AHB_GPU0 || id == A733_CLK_PLL_GPU0 ||
+			    id == A733_CLK_MBUS_GPU0)) ||
+			    (sun60i_npu_lease.owner != NULL &&
+			    (id == A733_CLK_NPU || id == A733_CLK_BUS_NPU ||
+			    id == A733_CLK_AHB_NPU || id == A733_CLK_MBUS_NPU ||
+			    id == A733_CLK_PLL_NPU));
 			break;
 		}
 	}
@@ -1021,7 +1093,8 @@ sun60i_a733_gpu_same(const struct sun60i_a733_gpu_state *a,
 	/* Autonomous diagnostic gate status is not part of the old policy. */
 	for (u_int s = 0; s < 2; s++) {
 		for (u_int i = A733_GPU_REF; i <= A733_GPU_MASTER; i++) {
-			if (a->sample[s][i] != b->sample[s][i])
+			uint32_t mask = i == A733_GPU_MASTER ? __BIT(7) : UINT32_MAX;
+			if (((a->sample[s][i] ^ b->sample[s][i]) & mask) != 0)
 				return false;
 		}
 	}
@@ -1284,29 +1357,323 @@ out:
 	return error;
 }
 
-/*
- * Select a running parent for the NPU module clock before any enable:
- * after reset the mux points at pll-npu, which firmware left off and the
- * accel PLL protection refuses to turn on. PERIPH0-600M runs at boot.
- */
+/* Origin: EmberBSD; AI-assisted fixed NPU borrowed-parent policy. */
+static int
+sun60i_a733_npu_handle(const struct clk *npu, struct sunxi_ccu_softc **result)
+{
+	if (npu != &sun60i_a733_ccu_clks[A733_CLK_NPU].base)
+		return EINVAL;
+	if (sun60i_gpu_lease.sc == NULL || npu->domain == NULL ||
+	    npu->domain->priv != sun60i_gpu_lease.sc)
+		return ENXIO;
+	*result = sun60i_gpu_lease.sc;
+	return 0;
+}
+
+static int
+sun60i_a733_npu_observe(struct sunxi_ccu_softc *sc,
+    struct sun60i_a733_npu_state *result)
+{
+	static const bus_size_t regs[A733_NPU_NREGS] = {
+		PLL_REF_CTRL_REG, PLL_PERIPH0_CTRL_REG,
+		PLL_PERIPH0_CTRL_REG + 8, PLL_PERIPH0_CTRL_REG + 12,
+		AHB_CFG_REG, PERI0PLL_GATE_EN_REG, PERI0PLL_GATE_STAT_REG,
+		NPU_CLK_REG, NPU_BGR_REG, AHB_MASTER_GATE_REG, MBUS_MASTER_GATE_REG
+	};
+	struct sun60i_a733_npu_state state = { 0 };
+	struct sunxi_rtc_dcxo_state dcxo;
+	struct clk *hosc;
+	bus_addr_t addr;
+	bus_size_t size;
+	int node, error;
+
+	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
+	if (fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size) != 0 ||
+	    size < PERI0PLL_GATE_STAT_REG + sizeof(uint32_t))
+		return ENXIO;
+	if (OF_getproplen(sc->sc_phandle, "netbsd,dcxo-source") != 4)
+		return EINVAL;
+	node = fdtbus_get_phandle(sc->sc_phandle, "netbsd,dcxo-source");
+	if (node <= 0 || !of_compatible_match(node, sun60i_a733_dcxo_compat))
+		return EOPNOTSUPP;
+	hosc = fdtbus_clock_get(sc->sc_phandle, "hosc");
+	if (hosc == NULL)
+		return ENXIO;
+	state.hosc_hz[0] = clk_get_rate(hosc);
+	error = sun60i_a733_dcxo_query(node, &dcxo);
+	if (error != 0)
+		goto out;
+	memcpy(state.dcxo[0], dcxo.sample, sizeof(dcxo.sample));
+	state.dcxo_hz[0] = dcxo.rate_hz;
+	for (u_int n = 0; n < 2; n++) {
+		for (u_int i = 0; i < __arraycount(regs); i++) {
+			if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh, regs[i],
+			    &state.sample[n][i]) != 0) {
+				error = EFAULT;
+				goto out;
+			}
+		}
+		/* Other native owners can change disjoint master bits. */
+		state.sample[n][A733_NPU_AHB_MASTER] &= __BIT(31) | __BIT(6);
+		state.sample[n][A733_NPU_MBUS_MASTER] &= __BIT(18);
+	}
+	state.hosc_hz[1] = clk_get_rate(hosc);
+	error = sun60i_a733_dcxo_query(node, &dcxo);
+	if (error != 0)
+		goto out;
+	memcpy(state.dcxo[1], dcxo.sample, sizeof(dcxo.sample));
+	state.dcxo_hz[1] = dcxo.rate_hz;
+	*result = state;
+out:
+	clk_put(hosc);
+	return error;
+}
+
+static int
+sun60i_a733_npu_parents(const struct sun60i_a733_npu_state *state)
+{
+	const uint32_t *v = state->sample[0];
+	const uint32_t running = ACCEL_PLL_ENABLE | ACCEL_PLL_LDO |
+	    ACCEL_PLL_LOCK_ENABLE | ACCEL_PLL_LOCK | ACCEL_PLL_OUTPUT;
+	const uint32_t gate = __BIT(9) | __BIT(25);
+	uint64_t numerator;
+	u_int divisor, core, bus;
+	int error;
+
+	if (memcmp(state->sample[0], state->sample[1],
+	    sizeof(state->sample[0])) != 0 ||
+	    memcmp(state->dcxo[0], state->dcxo[1], sizeof(state->dcxo[0])) != 0 ||
+	    state->dcxo[0][0] != state->dcxo[0][1] ||
+	    state->dcxo_hz[0] != state->dcxo_hz[1] ||
+	    state->hosc_hz[0] != state->hosc_hz[1])
+		return EBUSY;
+	if (state->dcxo_hz[0] == 0 || state->hosc_hz[0] != 24000000 ||
+	    (v[A733_NPU_REF] & running) != running)
+		return EOPNOTSUPP;
+	divisor = (__SHIFTOUT(v[A733_NPU_REF], __BITS(22,16)) + 1) *
+	    (__SHIFTOUT(v[A733_NPU_REF], ACCEL_PLL_P) + 1);
+	numerator = (uint64_t)state->dcxo_hz[0] *
+	    (__SHIFTOUT(v[A733_NPU_REF], ACCEL_PLL_N) + 1);
+	if (numerator != UINT64_C(24000000) * divisor)
+		return EOPNOTSUPP;
+	error = sun60i_a733_gpu_pll_rate(v[A733_NPU_PERIPH], v[A733_NPU_PAT0],
+	    v[A733_NPU_PAT1], ACCEL_PLL_M, ACCEL_PLL_OUTPUT, 2, &core);
+	if (error != 0)
+		return error;
+	if (core != 600000000 || (v[A733_NPU_GATE] & gate) != gate ||
+	    (v[A733_NPU_STATUS] & __BIT(25)) == 0)
+		return EOPNOTSUPP;
+	/* First profile borrows the observed static 200 MHz AHB path. */
+	if (__SHIFTOUT(v[A733_NPU_AHB], __BITS(25,24)) != 3 ||
+	    (v[A733_NPU_AHB_MASTER] & __BIT(31)) != 0)
+		return EOPNOTSUPP;
+	divisor = __SHIFTOUT(v[A733_NPU_AHB], __BITS(4,0)) + 1;
+	if (core % divisor != 0)
+		return EOPNOTSUPP;
+	bus = core / divisor;
+	return bus == 200000000 ? 0 : EOPNOTSUPP;
+}
+
+static bool
+sun60i_a733_npu_shared_same(const struct sun60i_a733_npu_state *a,
+    const struct sun60i_a733_npu_state *b)
+{
+	for (u_int n = 0; n < 2; n++)
+		for (u_int i = A733_NPU_REF; i <= A733_NPU_STATUS; i++)
+			if (a->sample[n][i] != b->sample[n][i])
+				return false;
+	return memcmp(a->dcxo, b->dcxo, sizeof(a->dcxo)) == 0 &&
+	    memcmp(a->dcxo_hz, b->dcxo_hz, sizeof(a->dcxo_hz)) == 0 &&
+	    memcmp(a->hosc_hz, b->hosc_hz, sizeof(a->hosc_hz)) == 0;
+}
+
+int
+sun60i_a733_ccu_npu_reserve(struct clk *npu, const void *owner)
+{
+	struct sun60i_a733_npu_state state;
+	struct sunxi_ccu_softc *sc;
+	int error;
+
+	if (owner == NULL)
+		return EINVAL;
+	error = sun60i_a733_npu_handle(npu, &sc);
+	if (error != 0)
+		return error;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (sun60i_npu_lease.owner != NULL || sun60i_gpu_lease.writers != 0) {
+		error = EBUSY;
+		goto out;
+	}
+	error = sun60i_a733_npu_observe(sc, &state);
+	if (error != 0 || (error = sun60i_a733_npu_parents(&state)) != 0)
+		goto out;
+	if ((state.sample[0][A733_NPU_MODULE] & ACCEL_CLK_ENABLE) != 0 ||
+	    (state.sample[0][A733_NPU_BUS] & (__BITS(18,16) | __BIT(0))) != 0) {
+		error = EBUSY;
+		goto out;
+	}
+	sun60i_npu_lease.before = state;
+	sun60i_npu_lease.owner = owner;
+	sun60i_npu_lease.attempted = sun60i_npu_lease.prepared = false;
+out:
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
+int
+sun60i_a733_ccu_npu_release(struct clk *npu, const void *owner)
+{
+	struct sunxi_ccu_softc *sc;
+	int error = sun60i_a733_npu_handle(npu, &sc);
+
+	if (error != 0)
+		return error;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (owner == NULL || sun60i_npu_lease.owner != owner)
+		error = EINVAL;
+	else if (sun60i_npu_lease.attempted)
+		error = EBUSY;
+	else
+		memset(&sun60i_npu_lease, 0, sizeof(sun60i_npu_lease));
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
+/* Only the fixed NPU profile can call this internal masked write. */
+static int
+sun60i_a733_npu_write(struct sunxi_ccu_softc *sc, bus_size_t reg,
+    uint32_t mask, uint32_t bits)
+{
+	uint32_t allowed, old, value;
+
+	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
+	switch (reg) {
+	case NPU_CLK_REG:
+		allowed = ACCEL_CLK_ENABLE | ACCEL_CLK_SEL | __BITS(4,0);
+		break;
+	case NPU_BGR_REG:
+		allowed = __BITS(18,16) | __BIT(0);
+		break;
+	case AHB_MASTER_GATE_REG:
+		allowed = __BIT(6);
+		break;
+	case MBUS_MASTER_GATE_REG:
+		allowed = __BIT(18);
+		break;
+	default:
+		return EINVAL;
+	}
+	if (mask == 0 || (mask & ~allowed) != 0 || (bits & ~mask) != 0)
+		return EINVAL;
+	if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh, reg, &old) != 0)
+		return EFAULT;
+	value = (old & ~mask) | bits;
+	if (value == old)
+		return 0;
+	if (bus_space_poke_4(sc->sc_bst, sc->sc_bsh, reg, value) != 0)
+		return EFAULT;
+	bus_space_barrier(sc->sc_bst, sc->sc_bsh, reg, sizeof(value),
+	    BUS_SPACE_BARRIER_WRITE | BUS_SPACE_BARRIER_READ);
+	if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh, reg, &value) != 0)
+		return EFAULT;
+	return (value & mask) == bits ? 0 : EIO;
+}
+
+static int
+sun60i_a733_npu_check_ready(struct sunxi_ccu_softc *sc,
+    struct sun60i_a733_npu_state *state)
+{
+	const uint32_t module = ACCEL_CLK_ENABLE | __SHIFTIN(2, ACCEL_CLK_SEL);
+	int error = sun60i_a733_npu_observe(sc, state);
+
+	if (error != 0 || (error = sun60i_a733_npu_parents(state)) != 0)
+		return error;
+	if ((state->sample[0][A733_NPU_MODULE] &
+	    (ACCEL_CLK_ENABLE | ACCEL_CLK_SEL | __BITS(4,0))) != module ||
+	    (state->sample[0][A733_NPU_BUS] & (__BITS(18,16) | __BIT(0))) !=
+	    (__BITS(18,16) | __BIT(0)) ||
+	    (state->sample[0][A733_NPU_AHB_MASTER] & __BIT(6)) == 0 ||
+	    (state->sample[0][A733_NPU_MBUS_MASTER] & __BIT(18)) == 0)
+		return EBUSY;
+	return 0;
+}
+
 int
 sun60i_a733_ccu_npu_prepare(struct clk *npu, const void *owner, bool *retained)
 {
-	struct sunxi_ccu_softc *sc = sun60i_gpu_lease.sc;
+	static const struct { bus_size_t reg; uint32_t mask, bits; } steps[] = {
+		{ NPU_CLK_REG, ACCEL_CLK_SEL | __BITS(4,0),
+		    __SHIFTIN(2, ACCEL_CLK_SEL) },
+		{ NPU_BGR_REG, __BIT(18), __BIT(18) },
+		{ NPU_BGR_REG, __BIT(17), __BIT(17) },
+		{ NPU_BGR_REG, __BIT(16), __BIT(16) },
+		{ AHB_MASTER_GATE_REG, __BIT(6), __BIT(6) },
+		{ MBUS_MASTER_GATE_REG, __BIT(18), __BIT(18) },
+		{ NPU_BGR_REG, __BIT(0), __BIT(0) },
+		{ NPU_CLK_REG, ACCEL_CLK_ENABLE, ACCEL_CLK_ENABLE },
+	};
+	struct sun60i_a733_npu_state state;
+	struct sunxi_ccu_softc *sc;
+	int error;
 
-	if (npu != &sun60i_a733_ccu_clks[A733_CLK_NPU].base || owner == NULL ||
-	    retained == NULL || sc == NULL)
+	if (owner == NULL || retained == NULL)
 		return EINVAL;
+	error = sun60i_a733_npu_handle(npu, &sc);
+	if (error != 0)
+		return error;
 	mutex_enter(&sun60i_a733_ccu_lock);
-	if (sun60i_gpu_lease.owner != NULL && sun60i_gpu_lease.owner != owner) {
-		mutex_exit(&sun60i_a733_ccu_lock);
-		return EBUSY;
+	if (sun60i_npu_lease.owner != owner || sun60i_npu_lease.attempted) {
+		error = EBUSY;
+		goto out;
 	}
-	sun60i_gpu_lease.attempted = true;
+	error = sun60i_a733_npu_observe(sc, &state);
+	if (error != 0 || (error = sun60i_a733_npu_parents(&state)) != 0)
+		goto out;
+	if (memcmp(&sun60i_npu_lease.before, &state, sizeof(state)) != 0) {
+		error = EBUSY;
+		goto out;
+	}
+	/* Caller must retain PCK4 first. Failed writes cannot release this slot. */
+	sun60i_npu_lease.attempted = true;
 	*retained = true;
-	/* npu_parents[2] = pll-periph0-600M; GPU uses index 3 = 400M. */
-	int error = sun60i_a733_accel_write_locked(sc, NPU_CLK_REG,
-	    ACCEL_CLK_SEL | __BITS(4,0), __SHIFTIN(2, ACCEL_CLK_SEL));
+	for (u_int i = 0; i < __arraycount(steps); i++) {
+		error = sun60i_a733_npu_write(sc, steps[i].reg,
+		    steps[i].mask, steps[i].bits);
+		if (error != 0)
+			goto out;
+	}
+	error = sun60i_a733_npu_check_ready(sc, &state);
+	if (error == 0 &&
+	    !sun60i_a733_npu_shared_same(&sun60i_npu_lease.before, &state))
+		error = EBUSY;
+	if (error == 0) {
+		sun60i_npu_lease.after = state;
+		sun60i_npu_lease.prepared = true;
+	}
+out:
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
+int
+sun60i_a733_ccu_npu_ready(struct clk *npu, const void *owner)
+{
+	struct sun60i_a733_npu_state state;
+	struct sunxi_ccu_softc *sc;
+	int error = sun60i_a733_npu_handle(npu, &sc);
+
+	if (error != 0)
+		return error;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (owner == NULL || sun60i_npu_lease.owner != owner ||
+	    !sun60i_npu_lease.attempted || !sun60i_npu_lease.prepared) {
+		error = EBUSY;
+		goto out;
+	}
+	error = sun60i_a733_npu_check_ready(sc, &state);
+	if (error == 0 && memcmp(&state, &sun60i_npu_lease.after, sizeof(state)) != 0)
+		error = EBUSY;
+out:
 	mutex_exit(&sun60i_a733_ccu_lock);
 	return error;
 }

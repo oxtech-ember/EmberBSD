@@ -24,7 +24,10 @@ CPPFLAGS:= -I${EMBER_KERNEL_OBJDIR:Q} ${_HSM_KERNEL_CPPFLAGS} ${_HSM_DRM_CPPFLAG
 CPPFLAGS+= -I${S}/external/bsd/drm2/dist/drm
 
 KMOD= bcm2712_hsm_probe
-SRCS= bcm2712_hsm_probe.c
+# Use only this private core from the module source revision. Keep S at the
+# selected kernel. Audit this C/header pair as explicit source exceptions.
+.PATH: ${.PARSEDIR}/../../arch/arm/broadcom
+SRCS= bcm2712_hsm_probe.c bcm2712_display_phy.c
 
 .include <bsd.kmodule.mk>
 
