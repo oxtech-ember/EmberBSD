@@ -11,6 +11,7 @@
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/cixvpu_acpi_control.h>
+#include <dev/acpi/cixvpu_acpi_boot.h>
 #include <dev/firmload.h>
 #include <dev/ic/cixvpu_dma.h>
 #include <dev/ic/cixvpu_prepare.h>
@@ -25,12 +26,59 @@ struct cixvpu_acpi_softc {
 	struct acpi_attach_args sc_aa;
 	struct cixvpu_resources sc_resources;
 	struct cixvpu_acpi_control sc_control;
-	/* CPU-only owner. Retain it if cleanup unexpectedly fails. */
+	/* Retain CPU owners on failed cleanup or after a boot attempt. */
 	struct cixvpu_dma *sc_dma;
 	struct cixvpu_prepared *sc_prepared;
+	struct cixvpu_acpi_boot *sc_boot;
+	struct cixvpu_boot_report sc_boot_report;
+	bool sc_boot_once_invoked;
 	unsigned int sc_mode;
 	bool sc_probe_ran;
 };
+
+static void
+cixvpu_acpi_boot_print(device_t self, const struct cixvpu_acpi_softc *sc,
+    bool valid)
+{
+	const struct cixvpu_boot_report *r = &sc->sc_boot_report;
+	unsigned int i;
+
+	aprint_normal_dev(self,
+	    "native boot: once invoked %s, caller prepared %s, DMA %s\n",
+	    sc->sc_boot_once_invoked ? "yes" : "no",
+	    sc->sc_prepared != NULL ? "yes" : "no",
+	    sc->sc_dma != NULL ? "yes" : "no");
+	aprint_normal_dev(self, "boot report valid %s\n", valid ? "yes" : "no");
+	if (!valid)
+		return;
+	aprint_normal_dev(self, "boot stage %u last stage %u, primary %d cleanup %d\n",
+	    (unsigned int)r->stage, (unsigned int)r->last_stage,
+	    r->error, r->cleanup_error);
+	aprint_normal_dev(self,
+	    "boot attempted %s moved %s exposed %s held %s, "
+	    "prepared retained %s IRQ registered %s masked %s\n",
+	    r->started ? "yes" : "no", r->moved ? "yes" : "no",
+	    r->exposed ? "yes" : "no", r->held ? "yes" : "no",
+	    r->prepared_retained ? "yes" : "no",
+	    r->irq_registered ? "yes" : "no", r->irq_masked ? "yes" : "no");
+	aprint_normal_dev(self,
+	    "boot ID %#x cores %u slots %u SVN %#x, identity valid %s\n",
+	    r->control.id, r->control.ncores, r->control.nlsid, r->control.svn,
+	    r->control.identity_valid ? "yes" : "no");
+	aprint_normal_dev(self, "SWITCHED_IN %s PONG %s, IRQ seen %#x unexpected %#x\n",
+	    r->switched_in ? "yes" : "no", r->pong ? "yes" : "no",
+	    r->irq_seen, r->irq_unexpected);
+	aprint_normal_dev(self, "boot terminate reads %u visits %u messages %u\n",
+	    r->terminate_reads, r->visits, r->messages);
+	for (i = 0; i < __arraycount(r->core_status); i++) {
+		aprint_normal_dev(self,
+		    "boot core %u attempted %s released %s status %s cleanup %s\n",
+		    i, (r->core_attempted & (1U << i)) != 0 ? "yes" : "no",
+		    (r->core_released & (1U << i)) != 0 ? "yes" : "no",
+		    AcpiFormatException(r->core_status[i]),
+		    AcpiFormatException(r->core_cleanup[i]));
+	}
+}
 
 static void
 cixvpu_acpi_allocation(device_t self)
@@ -54,12 +102,14 @@ cixvpu_acpi_allocation(device_t self)
 	void *image = NULL;
 	int error, close_error = 0, cleanup_error = 0;
 	int prepare_error = 0, prepared_cleanup_error = 0;
+	int boot_report_error = 0;
+	bool boot_report_valid = false;
 	bool prepare_attempted = false;
 
 	if (sc->sc_probe_ran)
 		return;
 	sc->sc_probe_ran = true;
-	/* One-core allocation fixture; no VPU power, clock, reset or MMIO. */
+	/* Load and audit one fixed image before the selected owner transition. */
 	error = firmware_open("cixvpu", "hevcenc.fwb", &firmware);
 	if (error != 0)
 		goto out;
@@ -116,21 +166,45 @@ cixvpu_acpi_allocation(device_t self)
 		roles[page.plan_page.role]++;
 		checked++;
 	}
-	if (sc->sc_mode == 5 && error == 0) {
-		/* No page view is used after this CPU-only ownership MOVE. */
+	if ((sc->sc_mode == 5 || sc->sc_mode == 7) && error == 0) {
+		/* No page view survives this CPU ownership MOVE. */
 		prepare_attempted = true;
-		prepare_error = cixvpu_prepare_cpu(&sc->sc_dma, &plan,
-		    image, size, digest_expected, &sc->sc_prepared);
+		if (sc->sc_mode == 7)
+			prepare_error = cixvpu_prepare_boot_cpu(&sc->sc_dma,
+			    &plan, image, size, digest_expected, &sc->sc_prepared);
+		else
+			prepare_error = cixvpu_prepare_cpu(&sc->sc_dma, &plan,
+			    image, size, digest_expected, &sc->sc_prepared);
 		error = prepare_error;
 	}
-out:
-	if (image != NULL)
+	if (sc->sc_mode == 7 && error == 0) {
 		firmware_free(image, size);
-	if (sc->sc_prepared != NULL)
-		prepared_cleanup_error = cixvpu_prepared_free(&sc->sc_prepared);
-	if (sc->sc_dma != NULL)
-		cleanup_error = cixvpu_dma_free(&sc->sc_dma);
-	if (sc->sc_mode == 5) {
+		image = NULL;
+		error = cixvpu_acpi_boot_create(self, &sc->sc_aa,
+		    &sc->sc_resources, &sc->sc_boot);
+		if (error != 0)
+			goto out;
+		/* Boot owns sync. Preserve every ownership state it returns. */
+		sc->sc_boot_once_invoked = true;
+		error = cixvpu_acpi_boot_once(sc->sc_boot, &sc->sc_prepared);
+		boot_report_error = cixvpu_acpi_boot_report(sc->sc_boot,
+		    &sc->sc_boot_report);
+		boot_report_valid = boot_report_error == 0;
+	}
+out:
+	if (image != NULL) {
+		firmware_free(image, size);
+		image = NULL;
+	}
+	if (!sc->sc_boot_once_invoked) {
+		if (sc->sc_prepared != NULL)
+			prepared_cleanup_error = cixvpu_prepared_free(&sc->sc_prepared);
+		if (sc->sc_dma != NULL)
+			cleanup_error = cixvpu_dma_free(&sc->sc_dma);
+	}
+	if (sc->sc_mode == 7) {
+		cixvpu_acpi_boot_print(self, sc, boot_report_valid);
+	} else if (sc->sc_mode == 5) {
 		aprint_normal_dev(self,
 		    "one-core CPU prepare fixture: pages %u checked %u, "
 		    "retained DMA %s prepared %s\n",
@@ -148,7 +222,16 @@ out:
 			aprint_normal_dev(self, "allocation role %u pages %u\n",
 			    i, roles[i]);
 	}
-	if (sc->sc_mode == 5) {
+	if (sc->sc_mode == 7) {
+		aprint_normal_dev(self,
+		    "native boot result %d, primary %d close %d report %d "
+		    "prepared cleanup %d DMA cleanup %d\n",
+		    error != 0 ? error : close_error != 0 ? close_error :
+		    boot_report_error != 0 ? boot_report_error :
+		    prepared_cleanup_error != 0 ? prepared_cleanup_error : cleanup_error,
+		    error, close_error, boot_report_error,
+		    prepared_cleanup_error, cleanup_error);
+	} else if (sc->sc_mode == 5) {
 		aprint_normal_dev(self,
 		    "prepare result %d, primary %d close %d "
 		    "prepared cleanup %d DMA cleanup %d\n",
@@ -272,8 +355,8 @@ cixvpu_acpi_attach(device_t parent, device_t self, void *aux)
 	aprint_normal(": CIX P1 video codec (diagnostic attachment)\n");
 	sc->sc_dev = self;
 	sc->sc_mode = device_cfdata(self)->cf_flags;
-	if (sc->sc_mode > 6) {
-		aprint_error_dev(self, "unsupported flags %#x; use 0, 1, 2, 3, 4, 5 or 6\n",
+	if (sc->sc_mode > 7) {
+		aprint_error_dev(self, "unsupported flags %#x; use 0, 1, 2, 3, 4, 5, 6 or 7\n",
 		    sc->sc_mode);
 		return;
 	}
@@ -340,7 +423,7 @@ done:
 	/* The parser initializes its lists before any failure; free them too. */
 	acpi_resource_cleanup(&resources);
 	if (defer_probe) {
-		if (sc->sc_mode == 4 || sc->sc_mode == 5) {
+		if (sc->sc_mode == 4 || sc->sc_mode == 5 || sc->sc_mode == 7) {
 			config_mountroot(self, cixvpu_acpi_allocation);
 			return;
 		}

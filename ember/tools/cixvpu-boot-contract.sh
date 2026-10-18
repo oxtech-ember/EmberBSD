@@ -73,6 +73,8 @@ BRIDGE
     extra="$work/prepare-bridge.c $src/sys/dev/ic/cixvpu_mmu.c $src/sys/dev/ic/cixvpu_ring.c"
     api="$api -DCIXVPU_DMA_API -DCIXVPU_SYNC_API -DCIXVPU_PREPARE_API -DCIXVPU_BOOT_API"
 fi
+if ruby -e 'exit(File.read(ARGV[0]).include?("sc_boot_once_invoked") ? 0 : 1)' \
+    "$src/sys/dev/acpi/cixvpu_acpi.c"; then api="$api -DCIXVPU_BOOT_ATTACH_API"; fi
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} $api \
     -isystem "$src/sys/external/bsd/acpica/dist/include" -I"$src/sys/dev/ic" -I"$src/ember/tools" -I"$work" \
     "$src/ember/tools/cixvpu-boot-contract.c" "$src/sys/dev/ic/cixvpu_resources.c" \

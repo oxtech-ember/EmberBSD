@@ -645,7 +645,7 @@ static struct cixvpu_dma dma_owner;
 int cixvpu_dma_alloc(bus_dma_tag_t dmat, bus_dma_tag_t dmat64,
     const struct cixvpu_fw_plan *plan, struct cixvpu_dma **out)
 {
-    CHECK(dmat == &dma_tags[0] && dmat64 == &dma_tags[1] && fw_live == (attach_cf.cf_flags == 5 ? 1U : 0U));
+    CHECK(dmat == &dma_tags[0] && dmat64 == &dma_tags[1] && fw_live == (attach_cf.cf_flags == 5 || attach_cf.cf_flags == 7 ? 1U : 0U));
     CHECK(plan->cores == 1 && plan->backing_pages == 140 && *out == NULL);
     dma_allocs++; fw_event('a');
     if (fw_fault == 8) return ENOMEM;
@@ -678,7 +678,7 @@ int cixvpu_dma_free(struct cixvpu_dma **owner)
  * Its real implementation, allocator and MMU run in the separate D1 contract. */
 struct cixvpu_prepared { struct cixvpu_dma *owner; };
 static struct cixvpu_prepared prepared_owner;
-int cixvpu_prepare_cpu(struct cixvpu_dma **owner, const struct cixvpu_fw_plan *plan,
+static int fixture_prepare(struct cixvpu_dma **owner, const struct cixvpu_fw_plan *plan,
     const void *bytes, size_t size, const uint8_t pin[32], struct cixvpu_prepared **out)
 {
     CHECK(*owner == &dma_owner && dma_live && *out == NULL && !prepared_live);
@@ -696,6 +696,29 @@ int cixvpu_prepare_cpu(struct cixvpu_dma **owner, const struct cixvpu_fw_plan *p
     prepared_owner.owner = *owner; *owner = NULL; *out = &prepared_owner;
     prepared_live = true; return 0;
 }
+/* The boot module is an API boundary here; D3B links its real implementation. */
+#include "boot-header.inc"
+struct cixvpu_acpi_boot {
+    struct cixvpu_prepared *prepared;
+    struct cixvpu_boot_report report;
+};
+static struct cixvpu_acpi_boot attachment_boot;
+static unsigned int boot_create_calls, boot_once_calls, boot_report_calls;
+static unsigned int boot_prepare_calls, ordinary_prepare_calls, initial_sync_calls;
+static int boot_create_result;
+int cixvpu_prepare_boot_cpu(struct cixvpu_dma **owner,
+    const struct cixvpu_fw_plan *plan, const void *bytes, size_t size,
+    const uint8_t pin[32], struct cixvpu_prepared **out)
+{
+    boot_prepare_calls++;
+    return fixture_prepare(owner, plan, bytes, size, pin, out);
+}
+int cixvpu_prepared_sync_initial(struct cixvpu_prepared *p)
+{ CHECK(p==&prepared_owner && prepared_live); initial_sync_calls++; fw_event('i'); return 0; }
+
+int cixvpu_prepare_cpu(struct cixvpu_dma **owner, const struct cixvpu_fw_plan *plan,
+    const void *bytes, size_t size, const uint8_t pin[32], struct cixvpu_prepared **out)
+{ ordinary_prepare_calls++; return fixture_prepare(owner,plan,bytes,size,pin,out); }
 int cixvpu_prepared_free(struct cixvpu_prepared **owner)
 {
     CHECK(*owner == &prepared_owner && prepared_live && dma_live && fw_live == 0);
@@ -704,6 +727,59 @@ int cixvpu_prepared_free(struct cixvpu_prepared **owner)
     prepared_live = false; dma_live = false; *owner = NULL; return 0;
 }
 #include "attachment-source.inc"
+int cixvpu_acpi_boot_create(device_t dev, const struct acpi_attach_args *aux,
+    const struct cixvpu_resources *resources, struct cixvpu_acpi_boot **out)
+{
+    CHECK(dev==VPU && aux->aa_node==fixture_aa.aa_node);
+    CHECK(aux->aa_dmat==&dma_tags[0] && aux->aa_dmat64==&dma_tags[1]);
+    CHECK(resources->irq==358 && resources->nmem==2);
+    CHECK(fw_live==0 && prepared_live && dma_live && *out==NULL);
+    CHECK(boot_prepare_calls==1 && ordinary_prepare_calls==0 && initial_sync_calls==0);
+    boot_create_calls++; fw_event('C');
+    if(boot_create_result!=0) return boot_create_result;
+    if(fw_fault==21) return ENOMEM;
+    *out=&attachment_boot; return 0;
+}
+int cixvpu_acpi_boot_once(struct cixvpu_acpi_boot *ctx,
+    struct cixvpu_prepared **owner)
+{
+    CHECK(ctx==&attachment_boot && *owner==&prepared_owner && prepared_live);
+    CHECK(fw_live==0 && initial_sync_calls==0);
+#ifdef CIXVPU_BOOT_ATTACH_API
+    CHECK(((struct cixvpu_acpi_softc *)attach_private)->sc_boot_once_invoked);
+#endif
+    boot_once_calls++; fw_event('U');
+    ctx->report.started=true;
+    if(fw_fault==20) {
+        ctx->report.stage=CIXVPU_BOOT_SYNC;
+        ctx->report.error=EIO; return EIO;
+    }
+    ctx->prepared=*owner; *owner=NULL;
+    ctx->report.moved=ctx->report.exposed=ctx->report.held=true;
+    ctx->report.irq_registered=ctx->report.irq_masked=true;
+    ctx->report.prepared_retained=true;
+    ctx->report.stage=CIXVPU_BOOT_HELD;
+    ctx->report.last_stage=CIXVPU_BOOT_RECEIVE;
+    ctx->report.control.id=0x56648002; ctx->report.control.identity_valid=true;
+    ctx->report.switched_in=ctx->report.pong=true;
+    ctx->report.core_attempted=15; ctx->report.last_offset=0x204; ctx->report.last_value=0xdeadbeef;
+    if(fw_fault==22) {
+        ctx->report.error=EIO; ctx->report.cleanup_error=EBUSY;
+        ctx->report.core_status[2]=AE_ERROR;
+        ctx->report.core_cleanup[2]=AE_ABORT_METHOD;
+        return EIO;
+    }
+    return 0;
+}
+int cixvpu_acpi_boot_report(const struct cixvpu_acpi_boot *ctx,
+    struct cixvpu_boot_report *out)
+{
+    CHECK(ctx==&attachment_boot && fw_live==0 && boot_once_calls==1);
+    boot_report_calls++; fw_event('V');
+    if(fw_fault==23) return EIO;
+    *out=ctx->report; return 0;
+}
+
 static union { max_align_t align; unsigned char bytes[4096]; } attachment_storage;
 static void attach_fixture(unsigned int mode)
 {
@@ -848,6 +924,90 @@ static void prepare_tests(void)
     CHECK(mountroot_calls == 1 && prepare_calls == 1 && prepared_frees == 1);
     CHECK(strcmp(fw_events, "osmrchapfq") == 0 && !dma_live && !prepared_live && nevents == 0);
 }
+static void boot_attach_fixture(unsigned int fault)
+{
+    allocation_fixture(fault); attach_cf.cf_flags=7;
+    boot_prepare_calls=ordinary_prepare_calls=initial_sync_calls=0;
+    boot_create_calls=boot_once_calls=boot_report_calls=0; boot_create_result=0;
+    memset(&attachment_boot,0,sizeof(attachment_boot));
+}
+static void boot_attach_run(void)
+{
+    allocation_run();
+    if(deferred_callback) {
+        unsigned int p=prepare_calls, c=boot_create_calls, u=boot_once_calls;
+        deferred_callback(deferred_device);
+        CHECK(prepare_calls==p && boot_create_calls==c && boot_once_calls==u);
+    }
+}
+static void boot_attach_drop(void)
+{
+    /* Quarantine teardown after assertions, never a production reclaim path. */
+    prepared_live=dma_live=false;
+    attachment_boot.prepared=NULL;
+}
+static void boot_attach_tests(void)
+{
+    boot_attach_fixture(0); boot_attach_run();
+    CHECK(boot_prepare_calls==1 && ordinary_prepare_calls==0 && prepare_calls==1);
+    CHECK(boot_create_calls==1 && boot_once_calls==1 && boot_report_calls==1);
+    CHECK(initial_sync_calls==0 && prepared_frees==0 && dma_frees==0);
+    CHECK(strcmp(fw_events,"osmrchapfCUV")==0 && fw_live==0);
+    CHECK(prepared_live && attachment_boot.prepared==&prepared_owner);
+    CHECK(strstr(diagnostic,"native boot: once invoked yes")!=NULL);
+    CHECK(strstr(diagnostic,"SWITCHED_IN yes PONG yes")!=NULL);
+    CHECK(strstr(diagnostic,"deadbeef")==NULL);
+#ifdef CIXVPU_BOOT_ATTACH_API
+    const struct cixvpu_acpi_softc *sc=attach_private;
+    CHECK(sc->sc_boot==&attachment_boot && sc->sc_prepared==NULL);
+    CHECK(sc->sc_boot_report.exposed && sc->sc_boot_report.held);
+#endif
+    boot_attach_drop();
+    const unsigned int faults_to_test[]={1,2,3,4,5,6,7,8,9,10,12,13,14,15,16,19,20,21,22,23};
+    for(unsigned int i=0;i<__arraycount(faults_to_test);i++) {
+        unsigned int f=faults_to_test[i];
+        boot_attach_fixture(f); boot_attach_run();
+        bool invoked=f==20 || f==22 || f==23;
+        CHECK(boot_once_calls==(invoked ? 1U : 0U));
+        CHECK(boot_report_calls==(invoked ? 1U : 0U));
+        CHECK(initial_sync_calls==0 && ordinary_prepare_calls==0);
+        CHECK(boot_prepare_calls==(f>=16 ? 1U : 0U));
+        CHECK(boot_create_calls==((invoked || f==21) ? 1U : 0U));
+        CHECK(prepared_frees==(f==21 ? 1U : 0U));
+        CHECK(fw_live==0);
+        CHECK(prepared_live==invoked);
+#ifdef CIXVPU_BOOT_ATTACH_API
+        sc=attach_private;
+        CHECK(sc->sc_boot_once_invoked==invoked);
+        CHECK((sc->sc_prepared!=NULL)==(f==20));
+        CHECK((sc->sc_dma!=NULL)==(f==19));
+        if(f==20) {
+            CHECK(strstr(diagnostic,"caller prepared yes")!=NULL);
+            CHECK(!sc->sc_boot_report.moved && sc->sc_boot_report.started);
+        }
+        if(f==22) {
+            CHECK(strstr(diagnostic,"primary 5 close 0 report 0")!=NULL);
+            CHECK(strstr(diagnostic,"cleanup 16")!=NULL);
+            CHECK(strstr(diagnostic,"core 2 attempted yes released no")!=NULL);
+            CHECK(strstr(diagnostic,"AE_ERROR")!=NULL);
+        }
+        if(f==23) CHECK(strstr(diagnostic,"report valid no")!=NULL);
+#endif
+        boot_attach_drop();
+    }
+    boot_attach_fixture(17); boot_create_result=ENOMEM; boot_attach_run();
+    CHECK(boot_create_calls==1 && boot_once_calls==0 && prepared_frees==1);
+    CHECK(prepared_live && dma_live);
+    boot_attach_drop();
+    boot_attach_fixture(0); mountroot_immediate=true;
+    cixvpu_acpi_attach(NULL,VPU,&fixture_aa);
+    CHECK(mountroot_calls==1 && defer_calls==0 && boot_once_calls==1);
+    CHECK(fw_live==0 && prepared_frees==0 && initial_sync_calls==0);
+    if(deferred_callback) deferred_callback(deferred_device);
+    CHECK(boot_once_calls==1);
+    boot_attach_drop();
+}
+
 static void attach_tests(void)
 {
     (void)device_private; (void)device_cfdata; (void)config_defer; (void)config_mountroot; (void)attach_refs;
@@ -888,7 +1048,7 @@ static void attach_tests(void)
     attach_fixture(5); cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     CHECK(parser_calls == 1 && cleanup_calls == 1 && mountroot_calls == 1);
     CHECK(defer_calls == 0 && deferred_callback != NULL && nevents == 0 && maps == 0);
-    const unsigned int invalid_flags[] = {7, 0xffff, UINT32_MAX};
+    const unsigned int invalid_flags[] = {8, 0xffff, UINT32_MAX};
     for (unsigned int i = 0; i < sizeof(invalid_flags)/sizeof(invalid_flags[0]); i++) {
         attach_fixture(invalid_flags[i]); cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
         CHECK(parser_calls == 0 && defer_calls == 0 && nevents == 0);
@@ -1203,7 +1363,7 @@ int main(void)
     (void)cixclk_acpi_get_native;
     metadata_tests(); query_tests(); active_tests(); failures_tests(); rate_separation_tests(); retention_tests();
 #ifdef CIXVPU_ATTACH_API
-    attach_tests(); native_tests(); allocation_tests(); prepare_tests(); profile_tests();
+    attach_tests(); native_tests(); allocation_tests(); prepare_tests(); profile_tests(); boot_attach_tests();
 #endif
     CHECK(live == 0 && allocations != 0);
 #else

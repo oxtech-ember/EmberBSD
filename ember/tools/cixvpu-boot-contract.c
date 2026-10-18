@@ -1,5 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Actual control/boot source; platform services only are modeled. */
+#define cixvpu_acpi_boot model_cixvpu_acpi_boot
+#define cixvpu_acpi_boot_create model_cixvpu_acpi_boot_create
+#define cixvpu_acpi_boot_once model_cixvpu_acpi_boot_once
+#define cixvpu_acpi_boot_report model_cixvpu_acpi_boot_report
 #define main cixvpu_control_contract_main
 #define cixvpu_dma model_dma
 #define cixvpu_dma_page model_dma_page
@@ -18,6 +22,10 @@
 #define bus_space_barrier control_barrier
 #include "cixvpu-control-contract.c"
 #undef main
+#undef cixvpu_acpi_boot
+#undef cixvpu_acpi_boot_create
+#undef cixvpu_acpi_boot_once
+#undef cixvpu_acpi_boot_report
 #undef cixvpu_dma
 #undef cixvpu_dma_page
 #undef cixvpu_dma_alloc

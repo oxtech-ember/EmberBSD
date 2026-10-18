@@ -34,6 +34,9 @@ ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("
     "$src/sys/dev/ic/cixvpu_dma.h" "$work/dma-header.inc"
 ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("#include ") }.join)' \
     "$src/sys/dev/ic/cixvpu_prepare.h" "$work/prepare-header.inc"
+ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("#include ") }.join)' \
+    "$src/sys/dev/acpi/cixvpu_acpi_boot.h" "$work/boot-header.inc"
+if ruby -e 'exit(File.read(ARGV[0]).include?("sc_boot_once_invoked") ? 0 : 1)' "$attachment_source"; then api="$api -DCIXVPU_BOOT_ATTACH_API"; fi
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} $api \
     -isystem "$src/sys/external/bsd/acpica/dist/include" -I"$src/sys/dev/ic" -I"$work" \
     "$src/ember/tools/cixvpu-control-contract.c" "$src/sys/dev/ic/cixvpu_resources.c" \
