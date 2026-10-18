@@ -663,7 +663,9 @@ on every board in the hardware catalog.
   adds bounded leaf dispatch and synchronized teardown. Source contracts and
   kernel object analysis pass. An explicit [HSM clock owner](ember/boot/bcm2712-display-hsm.md)
   adds checked firmware clock leases for two HDMI ports, with source/host validation.
-  It has no automatic attachment. Physical HPD, DDC and KMS scanout remain unimplemented.
+  It has no automatic attachment. A finite [HPD0 sample](ember/boot/bcm2712-display-dvp.md#physical-hpd0-boundary)
+  returns disconnected on a cold-headless CM5 with both clock leases held.
+  Runtime HPD delivery, DDC and KMS scanout remain unimplemented.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.
