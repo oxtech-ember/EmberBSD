@@ -8,6 +8,7 @@
 #include <sys/sha2.h>
 #include <sys/systm.h>
 #include <dev/ic/cixvpu_prepare.h>
+#include <dev/ic/cixvpu_dma_private.h>
 
 #define PREPARE_TABLES (CIXVPU_FW_PLAN_MAX_CORES + 2U)
 
@@ -354,6 +355,10 @@ cixvpu_prepare_cpu(struct cixvpu_dma **owned,
 			}
 		}
 	}
+	error = cixvpu_dma_seal(*owned, prepared);
+	if (error != 0)
+		goto failed;
+	/* Seal is the last fallible operation. Discard views and move the owner. */
 	kmem_free(work, work_bytes);
 	prepared->dma = *owned;
 	*owned = NULL;
@@ -377,10 +382,21 @@ cixvpu_prepared_free(struct cixvpu_prepared **owner)
 	if (cpu_intr_p() || cpu_softintr_p())
 		return EWOULDBLOCK;
 	prepared = *owner;
-	error = cixvpu_dma_free(&prepared->dma);
+	error = cixvpu_dma_free_prepared(&prepared->dma, prepared);
 	if (error != 0)
 		return error;
 	kmem_free(prepared, prepared->bytes);
 	*owner = NULL;
 	return 0;
+}
+
+int
+cixvpu_prepared_sync_initial(struct cixvpu_prepared *prepared)
+{
+
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (prepared == NULL)
+		return EINVAL;
+	return cixvpu_dma_sync_initial(prepared->dma, prepared, &prepared->plan);
 }

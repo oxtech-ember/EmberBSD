@@ -8,6 +8,7 @@
 #include <sys/kmem.h>
 #include <sys/systm.h>
 #include <dev/ic/cixvpu_dma.h>
+#include <dev/ic/cixvpu_dma_private.h>
 
 #define CIXVPU_DMA_LIMIT UINT64_C(0xffffffffff)
 
@@ -18,11 +19,22 @@ struct cixvpu_dma_owner {
 	void *kva;
 	bus_addr_t bus_address;
 	bool allocated, mapped, created, loaded;
+	int pre_ops;
+};
+
+enum cixvpu_dma_phase {
+	CIXVPU_DMA_ALLOC,
+	CIXVPU_DMA_SEALED,
+	CIXVPU_DMA_SYNCED,
+	CIXVPU_DMA_EXPOSED
 };
 
 struct cixvpu_dma {
 	bus_dma_tag_t tag;
 	bool tag_acquired;
+	bool ever_visible;
+	enum cixvpu_dma_phase phase;
+	const struct cixvpu_prepared *prepared_owner;
 	uint32_t count;
 	size_t bytes;
 	struct cixvpu_dma_owner owners[];
@@ -222,6 +234,8 @@ cixvpu_dma_page(struct cixvpu_dma *dma, unsigned int index,
 		return error;
 	if (dma == NULL || out == NULL)
 		return EINVAL;
+	if (dma->ever_visible || dma->phase != CIXVPU_DMA_ALLOC)
+		return EBUSY;
 	if (index >= dma->count)
 		return ERANGE;
 	page.kva = dma->owners[index].kva;
@@ -241,7 +255,235 @@ cixvpu_dma_free(struct cixvpu_dma **allocation)
 		return error;
 	if (allocation == NULL || *allocation == NULL)
 		return EINVAL;
+	if ((*allocation)->ever_visible ||
+	    (*allocation)->phase != CIXVPU_DMA_ALLOC)
+		return EBUSY;
 	cixvpu_dma_release(*allocation);
 	*allocation = NULL;
+	return 0;
+}
+
+static int
+cixvpu_dma_owned(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner, enum cixvpu_dma_phase phase)
+{
+
+	if (dma == NULL || owner == NULL)
+		return EINVAL;
+	if (dma->ever_visible || dma->phase != phase ||
+	    dma->prepared_owner != owner)
+		return EBUSY;
+	return 0;
+}
+
+int
+cixvpu_dma_seal(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner)
+{
+	int error;
+
+	error = cixvpu_dma_context();
+	if (error != 0)
+		return error;
+	if (dma == NULL || owner == NULL)
+		return EINVAL;
+	if (dma->ever_visible || dma->phase != CIXVPU_DMA_ALLOC ||
+	    dma->prepared_owner != NULL)
+		return EBUSY;
+	dma->prepared_owner = owner;
+	dma->phase = CIXVPU_DMA_SEALED;
+	return 0;
+}
+
+static int
+cixvpu_dma_initial_ops(enum cixvpu_fw_plan_role role)
+{
+
+	switch (role) {
+	case CIXVPU_FW_PLAN_TEXT:
+	case CIXVPU_FW_PLAN_MSG_HOST:
+	case CIXVPU_FW_PLAN_BUF_IN_HOST:
+	case CIXVPU_FW_PLAN_BUF_OUT_HOST:
+	case CIXVPU_FW_PLAN_LEAF:
+	case CIXVPU_FW_PLAN_ROOT:
+		return BUS_DMASYNC_PREWRITE;
+	case CIXVPU_FW_PLAN_PRIVATE:
+	case CIXVPU_FW_PLAN_SHARED:
+	case CIXVPU_FW_PLAN_MSG_MVE:
+	case CIXVPU_FW_PLAN_BUF_IN_MVE:
+	case CIXVPU_FW_PLAN_BUF_OUT_MVE:
+	case CIXVPU_FW_PLAN_RPC:
+	case CIXVPU_FW_PLAN_PRINT:
+		return BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD;
+	default:
+		return 0;
+	}
+}
+
+static bool
+cixvpu_dma_page_equal(const struct cixvpu_fw_plan_page *a,
+    const struct cixvpu_fw_plan_page *b)
+{
+
+	return a->backing_index == b->backing_index && a->role == b->role &&
+	    a->core == b->core && a->ordinal == b->ordinal &&
+	    a->image_offset == b->image_offset && a->image_bytes == b->image_bytes &&
+	    a->leaf_address == b->leaf_address && a->attribute == b->attribute &&
+	    a->permission == b->permission;
+}
+
+/* All recoverable checks precede the first native void sync or cleanup. */
+static int
+cixvpu_dma_sync_check(struct cixvpu_dma *dma,
+    const struct cixvpu_fw_plan *plan, bool synced)
+{
+	struct cixvpu_fw_plan snapshot;
+	struct cixvpu_fw_plan_page expected;
+	const struct cixvpu_dma_owner *p;
+	const bus_dma_segment_t *segment;
+	uint32_t i, roots = 0;
+	int error, ops;
+
+	if (dma->tag == NULL || !dma->tag_acquired || dma->count == 0 ||
+	    dma->count > CIXVPU_FW_PLAN_MAX_PAGES)
+		return EINVAL;
+	if (dma->bytes != sizeof(*dma) +
+	    (size_t)dma->count * sizeof(dma->owners[0]))
+		return EINVAL;
+	if (PAGE_SIZE != CIXVPU_FW_PAGE_SIZE)
+		return EOPNOTSUPP;
+	if (plan != NULL) {
+		snapshot = *plan;
+		error = cixvpu_fw_plan_page(&snapshot, 0, &expected);
+		if (error != 0)
+			return error;
+		if (snapshot.backing_pages != dma->count)
+			return EINVAL;
+	}
+	for (i = 0; i < dma->count; i++) {
+		p = &dma->owners[i];
+		error = cixvpu_dma_record(&p->page, i);
+		if (error != 0)
+			return error;
+		if (plan != NULL) {
+			error = cixvpu_fw_plan_page(&snapshot, i, &expected);
+			if (error != 0)
+				return error;
+			if (!cixvpu_dma_page_equal(&p->page, &expected))
+				return EINVAL;
+		}
+		ops = cixvpu_dma_initial_ops(p->page.role);
+		if (ops == 0 || p->pre_ops != (synced ? ops : 0) ||
+		    !p->allocated || !p->mapped || !p->created || !p->loaded ||
+		    p->kva == NULL || p->map == NULL)
+			return EINVAL;
+		if (p->map->dm_nsegs != 1 ||
+		    p->map->dm_mapsize != CIXVPU_FW_PAGE_SIZE)
+			return EIO;
+		segment = &p->map->dm_segs[0];
+		if (segment->ds_len != CIXVPU_FW_PAGE_SIZE ||
+		    segment->ds_addr != p->bus_address ||
+		    segment->ds_addr % CIXVPU_FW_PAGE_SIZE != 0 ||
+		    segment->ds_addr > CIXVPU_DMA_LIMIT ||
+		    segment->ds_len - 1 > CIXVPU_DMA_LIMIT - segment->ds_addr)
+			return ERANGE;
+		if (p->page.role == CIXVPU_FW_PLAN_ROOT)
+			roots++;
+	}
+	return roots == 1 ? 0 : EINVAL;
+}
+
+int
+cixvpu_dma_sync_initial(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner, const struct cixvpu_fw_plan *plan)
+{
+	struct cixvpu_dma_owner *p;
+	uint32_t i;
+	unsigned int pass;
+	int error, group, ops;
+
+	error = cixvpu_dma_context();
+	if (error != 0)
+		return error;
+	if (plan == NULL)
+		return EINVAL;
+	error = cixvpu_dma_owned(dma, owner, CIXVPU_DMA_SEALED);
+	if (error != 0)
+		return error;
+	error = cixvpu_dma_sync_check(dma, plan, false);
+	if (error != 0)
+		return error;
+	/* No fallible work remains. Each unique map is synchronized once. */
+	for (pass = 0; pass < 3; pass++) {
+		for (i = 0; i < dma->count; i++) {
+			p = &dma->owners[i];
+			group = p->page.role == CIXVPU_FW_PLAN_ROOT ? 2 :
+			    p->page.role == CIXVPU_FW_PLAN_LEAF ? 1 : 0;
+			if ((unsigned int)group != pass)
+				continue;
+			ops = cixvpu_dma_initial_ops(p->page.role);
+			bus_dmamap_sync(dma->tag, p->map, 0,
+			    CIXVPU_FW_PAGE_SIZE, ops);
+			p->pre_ops = ops;
+		}
+	}
+	dma->phase = CIXVPU_DMA_SYNCED;
+	return 0;
+}
+
+int
+cixvpu_dma_free_prepared(struct cixvpu_dma **allocation,
+    const struct cixvpu_prepared *owner)
+{
+	struct cixvpu_dma *dma;
+	struct cixvpu_dma_owner *p;
+	uint32_t i;
+	int error, ops;
+
+	error = cixvpu_dma_context();
+	if (error != 0)
+		return error;
+	if (allocation == NULL || *allocation == NULL || owner == NULL)
+		return EINVAL;
+	dma = *allocation;
+	if (dma->ever_visible || dma->prepared_owner != owner ||
+	    (dma->phase != CIXVPU_DMA_SEALED && dma->phase != CIXVPU_DMA_SYNCED))
+		return EBUSY;
+	error = cixvpu_dma_sync_check(dma, NULL,
+	    dma->phase == CIXVPU_DMA_SYNCED);
+	if (error != 0)
+		return error;
+	if (dma->phase == CIXVPU_DMA_SYNCED) {
+		/* No address was disclosed. Cancel PRE ownership before unloading. */
+		for (i = dma->count; i != 0; i--) {
+			p = &dma->owners[i - 1];
+			ops = BUS_DMASYNC_POSTWRITE;
+			if (p->pre_ops & BUS_DMASYNC_PREREAD)
+				ops |= BUS_DMASYNC_POSTREAD;
+			bus_dmamap_sync(dma->tag, p->map, 0,
+			    CIXVPU_FW_PAGE_SIZE, ops);
+			p->pre_ops = 0;
+		}
+	}
+	cixvpu_dma_release(dma);
+	*allocation = NULL;
+	return 0;
+}
+
+int
+cixvpu_dma_mark_exposed(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner)
+{
+	int error;
+
+	error = cixvpu_dma_context();
+	if (error != 0)
+		return error;
+	error = cixvpu_dma_owned(dma, owner, CIXVPU_DMA_SYNCED);
+	if (error != 0)
+		return error;
+	/* No public address capability exists yet. Never undo this transition. */
+	dma->ever_visible = true;
+	dma->phase = CIXVPU_DMA_EXPOSED;
 	return 0;
 }

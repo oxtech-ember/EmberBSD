@@ -11,10 +11,15 @@ if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
     SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
 fi
 api=-DCIXVPU_DMA_API
+if [ -f "$src/sys/dev/ic/cixvpu_dma_private.h" ]; then
+    api="$api -DCIXVPU_SYNC_API"
+fi
 for part in source header; do
     case "$part" in source) ext=c;; header) ext=h;; esac
+    input=$src/sys/dev/ic/cixvpu_dma.$ext
+    if [ "$part" = source ]; then input=${CIXVPU_DMA_SOURCE:-"$input"}; fi
     ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("#include ") }.join)' \
-        "$src/sys/dev/ic/cixvpu_dma.$ext" "$work/dma-$part.inc"
+        "$input" "$work/dma-$part.inc"
 done
 source=${CIXVPU_PREPARE_SOURCE:-"$src/sys/dev/ic/cixvpu_prepare.c"}
 if [ -f "$source" ]; then
@@ -26,6 +31,12 @@ if [ -f "$source" ]; then
             "$input" "$work/prepare-$part.inc"
     done
 fi
+if [ -n "${CIXVPU_PREPARE_ARTIFACT_DIR:-}" ]; then
+    mkdir -p "$CIXVPU_PREPARE_ARTIFACT_DIR"
+    cp "$work/"*.inc "$CIXVPU_PREPARE_ARTIFACT_DIR/"
+    ruby -rjson -rdigest -e 'File.write(ARGV[0],JSON.pretty_generate(ARGV[1..].to_h { |p| [File.basename(p),Digest::SHA256.file(p).hexdigest] })+"\n")' \
+        "$CIXVPU_PREPARE_ARTIFACT_DIR/generated-sha256.json" "$work/"*.inc
+fi
 # CFLAGS is an intentional compiler argument list.
 # shellcheck disable=SC2086
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} $api \
@@ -35,9 +46,14 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} $api \
 if [ -n "${CIXVPU_PREPARE_TEST_OUTPUT:-}" ]; then cp "$work/test" "$CIXVPU_PREPARE_TEST_OUTPUT"; fi
 if [ "${CIXVPU_PREPARE_ANALYZE:-0}" = 1 ]; then
     ${CC:-cc} -std=c11 -dM -E -x c /dev/null > "$work/predefined.h"
-    cppcheck --quiet --check-level=exhaustive --enable=warning,performance,portability \
+    if ! cppcheck --quiet --check-level=exhaustive --enable=warning,performance,portability \
         --error-exitcode=1 --include="$work/predefined.h" --std=c11 --platform=unix64 \
-        $api -I"$work" -I"$src/sys/dev/ic" "$src/ember/tools/cixvpu-prepare-contract.c"
+        $api -I"$work" -I"$src/sys/dev/ic" "$src/ember/tools/cixvpu-prepare-contract.c" \
+        2> "$work/cppcheck.log"; then
+        cat "$work/cppcheck.log"; exit 1
+    fi
+    cat "$work/cppcheck.log"
+    test ! -s "$work/cppcheck.log"
     set --
     if [ "$(uname -s)" = Darwin ]; then set -- -isysroot "$SDKROOT"; fi
     if ! "${CSA:-clang}" --analyze -std=c11 -Wall -Wextra -Werror $api \

@@ -16,12 +16,11 @@ struct cixvpu_dma_page {
 };
 
 /*
- * ALLOCATION ONLY: all pages remain CPU-owned and never device-visible.
+ * Public allocation interface: pages start CPU-owned and never device-visible.
  * Never disclose these addresses to hardware. free is FORBIDDEN after any
- * hardware exposure, even if firmware was not started. A future runtime must
- * add an immutable/device-visible epoch before integration, and require reset,
- * bus drain and callback quiescence before unloading or freeing exposed pages.
- * This module does not implement that lifetime or DMA ownership transfer.
+ * hardware exposure, even if firmware was not started. The prepared-owner
+ * coupling seals public access and records irreversible exposure internally.
+ * There is no exposed-owner reclamation or prepared address publication API.
  *
  * Thread context only; the caller serializes all access, including free.
  * Only PAGE_SIZE == 4096 is supported. alloc copies and validates the plan,
@@ -30,11 +29,15 @@ struct cixvpu_dma_page {
  * allocation/map, including shared pages and MMU tables. Distinct owners
  * have disjoint loaded bus ranges. Mapping aliases do
  * not allocate owners. All CPU pages are zeroed; no firmware is copied, PTE is
- * built, bus_dmamap_sync is performed or device operation is issued. A bounce
+ * built, bus_dmamap_sync is performed or device operation is issued by alloc. A bounce
  * buffer may contain different bytes until a future PREWRITE; the loaded bus
  * memory is not prepared for a device by this allocator.
  *
- * page returns a stopped-only CPU view and validated loaded DMA bus address.
+ * page returns an unsealed CPU view and validated loaded DMA bus address.
+ * After ownership is sealed/moved into a prepared owner, page and free return
+ * EBUSY even for old pointer copies which still name that live allocation.
+ * The caller must end all page-view borrows before sealing. Raw saved KVA and
+ * pointers to already freed objects cannot be validated by this interface.
  * The common/print CPU mappings use the BUS_DMA_COHERENT hint; this neither
  * asserts device snooping nor changes ACPI _CCA or the parent's DMA flags.
  * Future device handoff requires an explicit sync/ownership protocol.

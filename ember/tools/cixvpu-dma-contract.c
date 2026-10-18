@@ -19,6 +19,10 @@ static unsigned int checks;
 #define KM_SLEEP 0
 #define BUS_DMA_WAITOK 0
 #define BUS_DMA_COHERENT 4
+#define BUS_DMASYNC_PREREAD 1
+#define BUS_DMASYNC_POSTREAD 2
+#define BUS_DMASYNC_PREWRITE 4
+#define BUS_DMASYNC_POSTWRITE 8
 /* Full public map/segment fields used by production; private fields unused. */
 typedef uint64_t bus_addr_t;
 typedef uint64_t bus_size_t;
@@ -31,6 +35,9 @@ struct test_map {
     bus_dma_segment_t dm_segs[1];
 };
 typedef struct test_map *bus_dmamap_t;
+struct cixvpu_prepared;
+static void (*sync_observer)(unsigned int, bus_addr_t, bus_size_t, int);
+static void (*unload_observer)(unsigned int);
 static struct test_tag tag32 = { 32 }, tag64 = { 64 }, child = { 40 };
 struct resource {
     bus_dma_segment_t allocation;
@@ -263,9 +270,19 @@ static void
 bus_dmamap_unload(bus_dma_tag_t tag, bus_dmamap_t map)
 {
     unsigned int i = map_index(map);
+    if (unload_observer != NULL) unload_observer(i);
     tag_check(tag);
     native_calls++;
     pop(4 + i * 4);
+}
+static void
+bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map,
+    bus_addr_t offset, bus_size_t length, int ops)
+{
+    tag_check(tag);
+    CHECK(sync_observer != NULL);
+    native_calls++;
+    sync_observer(map_index(map), offset, length, ops);
 }
 
 #ifdef CIXVPU_DMA_API
@@ -311,11 +328,13 @@ fixture(void)
 static void
 reset(void)
 {
+    (void)bus_dmamap_sync; /* The allocation-only runner must never call it. */
     CHECK(depth == 0 && live_kmem == 0);
     memset(resources, 0, sizeof(resources));
     native_calls = next_owner = step = fail_at = malformed = selected = 0;
     malformed_owner = 0;
     intr = softintr = alias_tag = fail_kmem = false;
+    sync_observer = NULL; unload_observer = NULL;
 }
 static void
 allocation_error(const struct cixvpu_fw_plan *plan)

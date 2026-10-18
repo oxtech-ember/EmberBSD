@@ -32,6 +32,9 @@ static unsigned int meta_calls, fail_meta, fail_page, fail_map, fail_link, fail_
 static unsigned int view_fault, duplicate_map;
 static unsigned int success_counts[4];
 static bool fail_free, top_bus;
+#ifdef CIXVPU_SYNC_API
+static bool fail_seal;
+#endif
 static int SHA256_Init(SHA256_CTX *ctx)
 { ctx->phase = 1; ctx->matches = false; return 1; }
 static int SHA256_Update(SHA256_CTX *ctx, const uint8_t *p, size_t n)
@@ -67,12 +70,24 @@ static int prepare_link(void *table, size_t n, uint32_t va, uint64_t bus)
 { if (++link_calls == fail_link) return EIO; return cixvpu_mmu_link(table, n, va, bus); }
 static int prepare_encode(uint64_t bus, unsigned int attr, unsigned int perm, uint32_t *out)
 { if (++encode_calls == fail_encode) return EIO; return cixvpu_mmu_encode(bus, attr, perm, out); }
+#ifdef CIXVPU_SYNC_API
+static int prepare_free(struct cixvpu_dma **owner, const struct cixvpu_prepared *p)
+{ if (fail_free) return EIO; return cixvpu_dma_free_prepared(owner, p); }
+static int prepare_seal(struct cixvpu_dma *owner, const struct cixvpu_prepared *p)
+{ if (fail_seal) return EIO; return cixvpu_dma_seal(owner, p); }
+#else
 static int prepare_free(struct cixvpu_dma **owner)
 { if (fail_free) return EIO; return cixvpu_dma_free(owner); }
+#endif
 #include "prepare-header.inc"
 #define kmem_zalloc prepare_kmem
 #define cixvpu_dma_page(...) prepare_page(__VA_ARGS__)
+#ifdef CIXVPU_SYNC_API
+#define cixvpu_dma_free_prepared prepare_free
+#define cixvpu_dma_seal prepare_seal
+#else
 #define cixvpu_dma_free prepare_free
+#endif
 #define cixvpu_mmu_map prepare_map
 #define cixvpu_mmu_link prepare_link
 #define cixvpu_mmu_encode prepare_encode
@@ -80,6 +95,8 @@ static int prepare_free(struct cixvpu_dma **owner)
 #undef kmem_zalloc
 #undef cixvpu_dma_page
 #undef cixvpu_dma_free
+#undef cixvpu_dma_free_prepared
+#undef cixvpu_dma_seal
 #undef cixvpu_mmu_map
 #undef cixvpu_mmu_link
 #undef cixvpu_mmu_encode
@@ -94,6 +111,9 @@ static struct cixvpu_dma *begin(unsigned int cores, struct cixvpu_fw_plan *plan)
     hashes = page_calls = map_calls = link_calls = encode_calls = meta_calls = 0;
     fail_meta = fail_page = fail_map = fail_link = fail_encode = view_fault = duplicate_map = 0;
     fail_free = false;
+#ifdef CIXVPU_SYNC_API
+    fail_seal = false;
+#endif
     return owner;
 }
 static uint32_t word(const void *p, unsigned int at)
@@ -131,10 +151,18 @@ static void success_tests(void)
 {
     for (unsigned int cores = 1; cores <= 4; cores += 3) {
         struct cixvpu_fw_plan plan;
-        struct cixvpu_dma *owner = begin(cores, &plan);
+        struct cixvpu_dma *owner = begin(cores, &plan), *old = owner;
         struct cixvpu_prepared *out = NULL;
         CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, &out) == 0);
         CHECK(owner == NULL && out != NULL && hashes == 1);
+        struct cixvpu_dma_page stale, before;
+        memset(&stale, 0xa5, sizeof(stale)); before = stale;
+        unsigned int calls = native_calls;
+        CHECK(cixvpu_dma_page(old, 0, &stale) == EBUSY);
+        CHECK(memcmp(&stale, &before, sizeof(stale)) == 0);
+        struct cixvpu_dma *alias = old;
+        CHECK(cixvpu_dma_free(&alias) == EBUSY && alias == old);
+        CHECK(native_calls == calls);
         prepared_bytes(&plan);
         for (unsigned int i = 0; i < plan.backing_pages; i++) {
             struct cixvpu_fw_plan_page p;
@@ -269,11 +297,241 @@ static void boundary_tests(void)
             CHECK(((const uint8_t *)resources[i].kva)[j] == 0xa5);
     CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
 }
+#ifdef CIXVPU_SYNC_API
+/* A separate poisoned device backing models bounce, not CPU cache hardware.
+ * Literal masks are independently checked against the protocol role list. */
+static uint8_t device_memory[2048][4096];
+static unsigned int pres[2048], posts[2048], sync_calls;
+static bool bounce;
+static struct cixvpu_fw_plan sync_plan;
+static const unsigned int want_pre[] = {4, 5, 5, 4, 5, 4, 5, 4, 5, 5, 5, 4, 4};
+static uint8_t *device_bytes(unsigned int i)
+{ return bounce ? device_memory[i] : resources[i].kva; }
+static void observe_sync(unsigned int i, bus_addr_t offset, bus_size_t length, int ops)
+{
+    struct cixvpu_fw_plan_page p;
+    CHECK(i < sync_plan.backing_pages && offset == 0 && length == 4096);
+    CHECK(cixvpu_fw_plan_page(&sync_plan, i, &p) == 0);
+    CHECK(p.role < __arraycount(want_pre));
+    sync_calls++;
+    if (ops & (BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD)) {
+        CHECK(ops == (int)want_pre[p.role] && pres[i] == 0 && posts[i] == 0);
+        if (p.role == CIXVPU_FW_PLAN_ROOT || p.role == CIXVPU_FW_PLAN_LEAF) {
+            for (unsigned int j = 0; j < sync_plan.backing_pages; j++) {
+                struct cixvpu_fw_plan_page q;
+                CHECK(cixvpu_fw_plan_page(&sync_plan, j, &q) == 0);
+                if (q.role >= CIXVPU_FW_PLAN_ROOT && p.role != CIXVPU_FW_PLAN_ROOT) continue;
+                if (q.role == CIXVPU_FW_PLAN_ROOT) continue;
+                CHECK(pres[j] != 0);
+                CHECK(memcmp(device_bytes(j), resources[j].kva, 4096) == 0);
+            }
+        }
+        if (bounce && (ops & BUS_DMASYNC_PREWRITE))
+            memcpy(device_memory[i] + offset, (uint8_t *)resources[i].kva + offset, (size_t)length);
+        pres[i] = (unsigned int)ops;
+    } else {
+        /* PRE4 -> POST8; PRE5 -> POST10. Never mix PRE with POST. */
+        unsigned int expected = want_pre[p.role] == 4 ? 8 : 10;
+        CHECK(pres[i] == want_pre[p.role] && posts[i] == 0 && (unsigned int)ops == expected);
+        if (bounce && (ops & BUS_DMASYNC_POSTREAD))
+            memcpy((uint8_t *)resources[i].kva + offset, device_memory[i] + offset, (size_t)length);
+        posts[i] = (unsigned int)ops;
+    }
+}
+static void observe_unload(unsigned int i)
+{
+    (void)i;
+    for (unsigned int j = 0; j < sync_plan.backing_pages; j++) CHECK(posts[j] != 0);
+}
+static void sync_fixture(const struct cixvpu_fw_plan *plan, bool use_bounce)
+{
+    sync_plan = *plan; bounce = use_bounce; sync_calls = 0;
+    memset(pres, 0, sizeof(pres)); memset(posts, 0, sizeof(posts));
+    memset(device_memory, 0xb7, sizeof(device_memory));
+    sync_observer = observe_sync;
+}
+static struct cixvpu_prepared *prepared_begin(unsigned int cores, struct cixvpu_fw_plan *plan)
+{
+    struct cixvpu_dma *owner = begin(cores, plan);
+    struct cixvpu_prepared *out = NULL;
+    CHECK(cixvpu_prepare_cpu(&owner, plan, image, extent, pin, &out) == 0 && owner == NULL);
+    return out;
+}
+static void sync_success_tests(void)
+{
+    for (unsigned int cores = 1; cores <= 4; cores += 3) {
+        for (unsigned int mode = 0; mode < 2; mode++) {
+            struct cixvpu_fw_plan plan;
+            struct cixvpu_prepared *out = prepared_begin(cores, &plan);
+            sync_fixture(&plan, mode != 0);
+            CHECK(cixvpu_prepared_sync_initial(out) == 0);
+            CHECK(sync_calls == plan.backing_pages);
+            for (unsigned int i = 0; i < plan.backing_pages; i++) {
+                struct cixvpu_fw_plan_page p;
+                CHECK(cixvpu_fw_plan_page(&plan, i, &p) == 0);
+                CHECK(pres[i] == want_pre[p.role] && posts[i] == 0);
+                CHECK(memcmp(device_bytes(i), resources[i].kva, 4096) == 0);
+            }
+            unsigned int calls = native_calls;
+            CHECK(cixvpu_prepared_sync_initial(out) == EBUSY && native_calls == calls);
+            struct cixvpu_dma_page view;
+            CHECK(cixvpu_dma_page(out->dma, 0, &view) == EBUSY);
+            unload_observer = observe_unload;
+            CHECK(cixvpu_prepared_free(&out) == 0 && out == NULL);
+            CHECK(sync_calls == 2 * plan.backing_pages && depth == 0 && live_kmem == 0);
+        }
+    }
+}
+static void sync_failure_tests(void)
+{
+    for (unsigned int kind = 0; kind < 23; kind++) {
+        struct cixvpu_fw_plan plan;
+        struct cixvpu_prepared *out = prepared_begin(4, &plan), *saved = out;
+        struct cixvpu_dma *dma = out->dma;
+        unsigned int last = plan.backing_pages - 1;
+        struct cixvpu_dma_owner owner = dma->owners[last];
+        struct test_map map = *owner.map;
+        uint32_t count = dma->count;
+        bus_dma_tag_t tag = dma->tag;
+        sync_fixture(&plan, true);
+        switch (kind) {
+        case 0: dma->count = 0; break;
+        case 1: dma->tag_acquired = false; break;
+        case 2: dma->owners[last].loaded = false; break;
+        case 3: dma->owners[last].map = NULL; break;
+        case 4: owner.map->dm_nsegs = 2; break;
+        case 5: owner.map->dm_mapsize = 8192; break;
+        case 6: owner.map->dm_segs[0].ds_len = 0; break;
+        case 7: owner.map->dm_segs[0].ds_addr++; break;
+        case 8: owner.map->dm_segs[0].ds_addr = UINT64_C(1) << 40; break;
+        case 9: dma->owners[last].bus_address += 4096; break;
+        case 10: dma->owners[last].page.backing_index++; break;
+        case 11: dma->owners[last].page.role = 99; break;
+        case 12: dma->owners[last].page.ordinal++; break;
+        case 13: out->plan.mappings++; break;
+        case 14: dma->owners[last].page.attribute++; break;
+        case 15: dma->owners[last].page.core++; break;
+        case 16: dma->owners[last].allocated = false; break;
+        case 17: dma->owners[last].mapped = false; break;
+        case 18: dma->owners[last].created = false; break;
+        case 19: dma->tag = NULL; break;
+        case 20: dma->owners[last].page.role = CIXVPU_FW_PLAN_ROOT; break;
+        case 21: out->plan.info.text_pages++; break;
+        case 22: dma->owners[last].pre_ops = BUS_DMASYNC_PREWRITE; break;
+        }
+        unsigned int calls = native_calls;
+        CHECK(cixvpu_prepared_sync_initial(out) != 0);
+        CHECK(native_calls == calls && sync_calls == 0 && out == saved);
+        CHECK(!dma->ever_visible && dma->phase == CIXVPU_DMA_SEALED);
+        /* Restore deliberately corrupted modeled resources before cleanup. */
+        dma->count = count; dma->tag = tag; dma->tag_acquired = true;
+        dma->owners[last] = owner; *owner.map = map; out->plan = plan;
+        CHECK(cixvpu_prepared_free(&out) == 0 && out == NULL && live_kmem == 0 && depth == 0);
+        CHECK(sync_calls == 0);
+    }
+    struct cixvpu_fw_plan plan;
+    struct cixvpu_dma *owner = begin(4, &plan), *saved = owner;
+    struct cixvpu_prepared *out = NULL;
+    fail_seal = true;
+    CHECK(cixvpu_prepare_cpu(&owner, &plan, image, extent, pin, &out) == EIO);
+    CHECK(owner == saved && out == NULL && owner->phase == CIXVPU_DMA_ALLOC);
+    CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
+}
+static void sync_owner_tests(void)
+{
+    struct cixvpu_fw_plan plan;
+    struct cixvpu_prepared *out = prepared_begin(4, &plan), wrong = {0};
+    struct cixvpu_dma *dma = out->dma, *alias = dma;
+    sync_fixture(&plan, true);
+    unsigned int calls = native_calls;
+    CHECK(cixvpu_prepared_sync_initial(NULL) == EINVAL);
+    CHECK(cixvpu_dma_sync_initial(dma, &wrong, &plan) == EBUSY);
+    CHECK(cixvpu_dma_free_prepared(&alias, &wrong) == EBUSY && alias == dma);
+    CHECK(cixvpu_dma_mark_exposed(dma, out) == EBUSY);
+    CHECK(cixvpu_dma_seal(dma, out) == EBUSY);
+    CHECK(cixvpu_dma_sync_initial(dma, out, NULL) == EINVAL);
+    CHECK(cixvpu_dma_mark_exposed(NULL, out) == EINVAL);
+    CHECK(cixvpu_dma_mark_exposed(dma, NULL) == EINVAL);
+    intr = true;
+    CHECK(cixvpu_prepared_sync_initial(out) == EWOULDBLOCK);
+    CHECK(cixvpu_dma_mark_exposed(dma, out) == EWOULDBLOCK);
+    intr = false; softintr = true;
+    CHECK(cixvpu_prepared_sync_initial(out) == EWOULDBLOCK);
+    softintr = false;
+    CHECK(native_calls == calls && sync_calls == 0);
+    CHECK(cixvpu_prepared_sync_initial(out) == 0);
+    calls = native_calls;
+    CHECK(cixvpu_dma_mark_exposed(dma, &wrong) == EBUSY);
+    intr = true;
+    CHECK(cixvpu_prepared_free(&out) == EWOULDBLOCK);
+    intr = false;
+    /* Even a late bad receipt/map rejects before the first POST or unload. */
+    unsigned int last = plan.backing_pages - 1;
+    int receipt = dma->owners[last].pre_ops;
+    dma->owners[last].pre_ops = 0;
+    CHECK(cixvpu_prepared_free(&out) != 0 && out != NULL);
+    CHECK(native_calls == calls);
+    dma->owners[last].pre_ops = receipt;
+    /* A count can stay below the global quota yet exceed the real allocation. */
+    dma->count++;
+    CHECK(cixvpu_prepared_free(&out) != 0 && out != NULL && native_calls == calls);
+    dma->count -= 2;
+    CHECK(cixvpu_prepared_free(&out) != 0 && out != NULL && native_calls == calls);
+    dma->count++;
+    dma->bytes--;
+    CHECK(cixvpu_prepared_free(&out) != 0 && out != NULL && native_calls == calls);
+    dma->bytes++;
+    unload_observer = observe_unload;
+    CHECK(cixvpu_prepared_free(&out) == 0 && out == NULL && live_kmem == 0 && depth == 0);
+}
+static void exposure_tests(void)
+{
+    struct cixvpu_fw_plan plan;
+    struct cixvpu_prepared *out = prepared_begin(4, &plan), *saved = out;
+    struct cixvpu_dma *dma = out->dma, *alias = dma;
+    sync_fixture(&plan, true);
+    CHECK(cixvpu_prepared_sync_initial(out) == 0);
+    CHECK(cixvpu_dma_mark_exposed(dma, out) == 0);
+    CHECK(dma->ever_visible && dma->phase == CIXVPU_DMA_EXPOSED);
+    unsigned int calls = native_calls;
+    struct cixvpu_dma_page page, before;
+    memset(&page, 0x7b, sizeof(page)); before = page;
+    CHECK(cixvpu_dma_page(alias, 0, &page) == EBUSY);
+    CHECK(memcmp(&page, &before, sizeof(page)) == 0);
+    CHECK(cixvpu_dma_free(&alias) == EBUSY && alias == dma);
+    CHECK(cixvpu_prepared_free(&out) == EBUSY && out == saved);
+    CHECK(cixvpu_dma_free_prepared(&alias, out) == EBUSY && alias == dma);
+    CHECK(cixvpu_prepared_sync_initial(out) == EBUSY);
+    CHECK(cixvpu_dma_seal(dma, out) == EBUSY);
+    CHECK(cixvpu_dma_mark_exposed(dma, out) == EBUSY);
+    CHECK(native_calls == calls);
+    /* Fault the reversible phase in the model: the immutable bit must still
+     * close every release path. This never changes ever_visible. */
+    dma->phase = CIXVPU_DMA_SYNCED;
+    CHECK(cixvpu_prepared_free(&out) == EBUSY && out == saved);
+    dma->phase = CIXVPU_DMA_ALLOC;
+    CHECK(cixvpu_dma_page(alias, 0, &page) == EBUSY);
+    CHECK(cixvpu_dma_free(&alias) == EBUSY && alias == dma);
+    dma->phase = CIXVPU_DMA_EXPOSED;
+    CHECK(dma->ever_visible && native_calls == calls);
+    /* Host fixture only: no hardware exists. End modeled object lifetimes
+     * after guard assertions without an unmark or product recovery API. */
+    cixvpu_dma_release(dma);
+    kmem_free(out, out->bytes);
+    CHECK(depth == 0 && live_kmem == 0);
+}
+#endif
 #endif
 int main(void)
 {
 #ifdef CIXVPU_PREPARE_API
     success_tests(); failure_tests(); handle_alias_tests(); argument_tests(); boundary_tests();
+#ifdef CIXVPU_SYNC_API
+    sync_success_tests(); sync_failure_tests(); sync_owner_tests(); exposure_tests();
+#else
+    fprintf(stderr, "FAIL: no enforced initial-sync/exposure boundary\n");
+    return 1;
+#endif
 #else
     (void)pin; (void)extent;
     struct cixvpu_fw_plan plan = make_plan(4);
