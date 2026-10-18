@@ -22,21 +22,39 @@ typedef uint64_t bus_size_t;
 typedef void *bus_space_tag_t;
 typedef uintptr_t bus_space_handle_t;
 typedef void *device_t;
-struct acpi_devnode { ACPI_HANDLE ad_handle; };
+struct acpi_devnode {
+    ACPI_HANDLE ad_handle;
+    device_t ad_root;
+    ACPI_DEVICE_INFO *ad_devinfo;
+    uint32_t ad_type;
+    struct acpi_devnode *next;
+};
+struct acpi_softc { struct { struct acpi_devnode *first; } sc_head; };
+#define SIMPLEQ_FOREACH(v,h,f) for ((v)=(h)->first;(v)!=NULL;(v)=(v)->next)
 struct acpi_attach_args { struct acpi_devnode *aa_node; bus_space_tag_t aa_memt; };
-struct cixclk { bool claimed, dirty; };
+struct cixclk { bool claimed, dirty, native; };
 struct cixreset { bool claimed, dirty; };
-static char tokens[10];
+static char tokens[12];
 #define VPU ((void *)&tokens[0])
 #define CLOCK ((void *)&tokens[1])
 #define RESET ((void *)&tokens[2])
 #define POWER ((void *)&tokens[3])
 #define OTHER ((void *)&tokens[4])
+#define ROOT ((void *)&tokens[10])
+#define SCMI ((void *)&tokens[11])
+static struct acpi_softc acpi_root;
+static void *root_private = &acpi_root;
+static void *device_private(device_t);
+static union { max_align_t align; unsigned char bytes[sizeof(ACPI_DEVICE_INFO) + 30]; } scmi_cache;
+static struct { ACPI_DEVICE_INFO *info; char *hid, *uid; } scmi_info;
+static struct acpi_devnode scmi_node;
 static struct cixclk clock_claim;
 static struct cixreset main_claim, rcsu_claim;
 static char events[256];
 static unsigned int nevents, allocations, live, bad, faults, sta_count;
 static bool interrupt_context, power_live, rc_asserted, clock_live;
+static bool native_poison;
+static unsigned int native_disable_calls;
 static unsigned int delays, reads, maps, unmaps;
 static ACPI_STATUS attach_cca_status;
 /* Opaque provider turns SCMI status -4 (NOT_FOUND) into EIO. */
@@ -51,7 +69,8 @@ enum {
     F_CLOCK_OFF = 1U << 10, F_POWER_OFF = 1U << 11,
     F_STA_ON = 1U << 12, F_STA_OFF = 1U << 13,
     F_STA_ON_FAIL = 1U << 14, F_STA_OFF_FAIL = 1U << 15,
-    F_PUT_MAIN = 1U << 16, F_PUT_RCSU = 1U << 17, F_PUT_CLOCK = 1U << 18, F_POWER_NO_LEASE = 1U << 19
+    F_PUT_MAIN = 1U << 16, F_PUT_RCSU = 1U << 17, F_PUT_CLOCK = 1U << 18, F_POWER_NO_LEASE = 1U << 19,
+    F_NATIVE_POISON = 1U << 20
 };
 static void event(char e)
 { assert(nevents + 1 < sizeof(events)); events[nevents++] = e; events[nevents] = 0; }
@@ -192,6 +211,9 @@ static ACPI_STATUS acpi_eval_integer(ACPI_HANDLE h, const char *n, ACPI_INTEGER 
 }
 static int cixclk_acpi_get(ACPI_HANDLE h, uint32_t n, struct cixclk **out)
 { assert(h == CLOCK && n == 0x43); event('C'); if (faults & F_CLOCK_GET) return ENXIO; assert(!clock_claim.claimed); clock_claim.claimed = true; *out = &clock_claim; return 0; }
+static int cixclk_acpi_get_native(ACPI_HANDLE h, ACPI_HANDLE scmi,
+    uint32_t n, struct cixclk **out)
+{ assert(h == CLOCK && scmi == SCMI && n == 0x43); event('N'); if (faults & F_CLOCK_GET) return ENXIO; assert(!clock_claim.claimed); clock_claim.claimed = clock_claim.native = true; *out = &clock_claim; return 0; }
 static int cixreset_acpi_get(ACPI_HANDLE h, uint32_t n, struct cixreset **out)
 {
     struct cixreset *r;
@@ -210,9 +232,9 @@ static ACPI_STATUS acpi_power_res(ACPI_HANDLE h, ACPI_HANDLE owner, bool on)
     event('O'); if (faults & F_POWER_NO_LEASE) return AE_ABORT_METHOD; if (faults & F_POWER_OFF) return AE_ERROR; power_live = false; return AE_OK;
 }
 static int cixclk_acpi_enable(struct cixclk *c)
-{ assert(c == &clock_claim && c->claimed && power_live); event('E'); c->dirty = true; clock_live = true; return faults & F_CLOCK_ON ? EIO : 0; }
+{ assert(c == &clock_claim && c->claimed && power_live); event('E'); c->dirty = true; clock_live = true; if (c->native && (faults & F_NATIVE_POISON)) { native_poison = true; return EIO; } return faults & F_CLOCK_ON ? EIO : 0; }
 static int cixclk_acpi_disable(struct cixclk *c)
-{ assert(c == &clock_claim && c->claimed && !main_claim.dirty); event('K'); if (faults & F_CLOCK_OFF) return EIO; c->dirty = false; clock_live = false; return 0; }
+{ assert(c == &clock_claim && c->claimed && !main_claim.dirty); if (c->native) { native_disable_calls++; if (native_poison) return EIO; } event('K'); if (faults & F_CLOCK_OFF) return EIO; c->dirty = false; clock_live = false; return 0; }
 static int cixreset_acpi_assert(struct cixreset *r)
 { assert(r == &main_claim && r->claimed); event('A'); r->dirty = true; if (faults & F_RESET_ASSERT) return EIO; r->dirty = false; return 0; }
 static int cixreset_acpi_deassert(struct cixreset *r)
@@ -238,7 +260,7 @@ static void bus_space_unmap(bus_space_tag_t t, bus_space_handle_t h, bus_size_t 
 { (void)t; assert(h == 1 && n == 0x10000); event('U'); unmaps++; }
 #include "control-header.inc"
 #include "control-source.inc"
-static struct acpi_devnode node = { VPU };
+static struct acpi_devnode node = { .ad_handle = VPU };
 static struct acpi_attach_args aa = { &node, NULL };
 static const struct cixvpu_resources description = {
     .mem = {{0x100000, 0x110000, 0x10000}, {0x300000, 0x320000, 0x10000}},
@@ -250,8 +272,21 @@ static void fixture(void)
     clock_claim = (struct cixclk){0}; main_claim = (struct cixreset){0}; rcsu_claim = (struct cixreset){0};
     bad = faults = sta_count = nevents = delays = reads = maps = unmaps = 0; events[0] = 0;
     interrupt_context = power_live = clock_live = rc_asserted = false;
+    native_poison = false; native_disable_calls = 0;
     attach_cca_status = AE_OK;
     rate_status = 0; clock_rate = 600000000; id = 0x56621234; ncores = 2; nlsid = 4;
+    memset(&scmi_cache, 0, sizeof(scmi_cache));
+    scmi_info.info = (void *)scmi_cache.bytes;
+    scmi_info.hid = (char *)(scmi_info.info + 1); scmi_info.uid = scmi_info.hid + 9;
+    scmi_info.info->InfoSize = sizeof(scmi_cache.bytes); scmi_info.info->Type = ACPI_TYPE_DEVICE;
+    scmi_info.info->Valid = ACPI_VALID_HID | ACPI_VALID_UID;
+    memcpy(scmi_info.hid, "CIXHA006", 9); memcpy(scmi_info.uid, "0", 2);
+    scmi_info.info->HardwareId.String = scmi_info.hid; scmi_info.info->HardwareId.Length = 9;
+    scmi_info.info->UniqueId.String = scmi_info.uid; scmi_info.info->UniqueId.Length = 21;
+    node.ad_root = ROOT; node.next = &scmi_node; node.ad_type = ACPI_TYPE_DEVICE;
+    scmi_node = (struct acpi_devnode){ .ad_handle = SCMI, .ad_root = ROOT,
+        .ad_devinfo = scmi_info.info, .ad_type = ACPI_TYPE_DEVICE };
+    acpi_root.sc_head.first = &node; root_private = &acpi_root;
 }
 static void released(void)
 { CHECK(!clock_claim.claimed && !main_claim.claimed && !rcsu_claim.claimed); CHECK(!power_live && !clock_live && live == 0); }
@@ -415,7 +450,8 @@ static ACPI_STATUS parser_status;
 static struct cixvpu_resources attach_description;
 static struct acpi_mem parser_memory[2];
 static struct acpi_irq parser_irq;
-static void *device_private(device_t d) { assert(d == VPU); return attach_private; }
+static void *device_private(device_t d)
+{ if (d == ROOT) return root_private; assert(d == VPU); return attach_private; }
 static cfdata_t device_cfdata(device_t d) { assert(d == VPU); return &attach_cf; }
 static int acpi_compatible_match(const void *aux, const struct device_compatible_entry *e)
 { (void)aux; assert(strcmp(e[0].compat, "CIXH3010") == 0); return 1; }
@@ -497,7 +533,7 @@ static void attach_tests(void)
         CHECK(strstr(diagnostic, "clock rate") == NULL && strstr(diagnostic, "released yes") != NULL);
         CHECK(reads == 0 && maps == 0 && sta_count == 0); released();
     } else CHECK(false);
-    const unsigned int invalid_flags[] = {3, 4, 0xffff, UINT32_MAX};
+    const unsigned int invalid_flags[] = {4, 5, 0xffff, UINT32_MAX};
     for (unsigned int i = 0; i < sizeof(invalid_flags)/sizeof(invalid_flags[0]); i++) {
         attach_fixture(invalid_flags[i]); cixvpu_acpi_attach(NULL, VPU, &aa);
         CHECK(parser_calls == 0 && defer_calls == 0 && nevents == 0);
@@ -519,15 +555,137 @@ static void attach_tests(void)
         CHECK(strstr(diagnostic, "AE_ERROR") != NULL && strstr(diagnostic, expected) != NULL && strstr(diagnostic, "released no") != NULL);
         CHECK(clock_claim.claimed && main_claim.claimed && rcsu_claim.claimed);
     } else CHECK(false);
+    attach_fixture(3);
+    cixvpu_acpi_attach(NULL, VPU, &aa);
+    CHECK(parser_calls == 1 && cleanup_calls == 1 && defer_calls == 1);
+    if (deferred_callback) {
+        deferred_callback(deferred_device);
+        CHECK(strcmp(events, "NMRSPTEAdDdB0123UAKOtrmc") == 0);
+        CHECK(reads == 4 && delays == 2 && maps == 1 && unmaps == 1);
+        CHECK(strstr(diagnostic, "native identity probe") != NULL);
+        released();
+    } else CHECK(false);
+}
+static struct cixvpu_acpi_report native_run(void)
+{
+    cixvpu_acpi_attach(NULL, VPU, &aa);
+    CHECK(deferred_callback != NULL);
+    if (deferred_callback) deferred_callback(deferred_device);
+    return ((struct cixvpu_acpi_softc *)attach_private)->sc_control.report;
+}
+static void native_tests(void)
+{
+    struct cixvpu_acpi_control control = {0};
+    fixture();
+    CHECK(cixvpu_acpi_control_probe_native(NULL, VPU, &aa, &description) == EINVAL);
+    CHECK(cixvpu_acpi_control_probe_native(&control, VPU, NULL, &description) == EINVAL);
+    CHECK(cixvpu_acpi_control_probe_native(&control, VPU, &aa, NULL) == EINVAL);
+    interrupt_context = true;
+    CHECK(cixvpu_acpi_control_probe_native(&control, VPU, &aa, &description) == EWOULDBLOCK);
+    CHECK(!control.started && nevents == 0 && maps == 0);
+    interrupt_context = false;
+    for (unsigned int i = 0; i < 24; i++) {
+        struct acpi_devnode duplicate;
+        attach_fixture(3);
+        switch (i) {
+        case 0: node.ad_root = NULL; break;
+        case 1: root_private = NULL; break;
+        case 2: acpi_root.sc_head.first = &scmi_node; break;
+        case 3: node.next = NULL; break;
+        case 4: scmi_node.ad_root = OTHER; break;
+        case 5: duplicate = scmi_node; duplicate.ad_handle = OTHER; scmi_node.next = &duplicate; break;
+        case 6: scmi_node.ad_devinfo = NULL; break;
+        case 7: scmi_node.ad_type = ACPI_TYPE_METHOD; break;
+        case 8: scmi_info.info->Type = ACPI_TYPE_METHOD; break;
+        case 9: scmi_info.info->InfoSize = sizeof(ACPI_DEVICE_INFO) - 1; break;
+        case 10: scmi_info.info->Valid = ACPI_VALID_UID; break;
+        case 11: scmi_info.info->Valid = ACPI_VALID_HID; break;
+        case 12: scmi_info.hid[0] = 'X'; break;
+        case 13: scmi_info.info->HardwareId.String = NULL; break;
+        case 14: scmi_info.info->HardwareId.Length = 8; break;
+        case 15: scmi_info.info->UniqueId.String = NULL; break;
+        case 16: scmi_info.info->UniqueId.Length = 1; break;
+        case 17: scmi_info.uid[0] = '1'; break;
+        case 18: scmi_info.uid[1] = 'x'; break;
+        case 19: scmi_info.info->UniqueId.Length = UINT32_MAX; break;
+        case 20: scmi_info.info->HardwareId.String = (char *)scmi_info.info + sizeof(scmi_cache.bytes) - 1; break;
+        case 21: node.ad_type = ACPI_TYPE_METHOD; break;
+        case 22: scmi_node.ad_handle = NULL; break;
+        default: scmi_info.info->UniqueId.String = (char *)scmi_info.info + sizeof(scmi_cache.bytes) - 1; break;
+        }
+        struct cixvpu_acpi_report r = native_run();
+        CHECK(r.error != 0 && r.released && !r.identity_valid);
+        CHECK(nevents == 0 && maps == 0 && reads == 0 && sta_count == 0);
+        released();
+    }
+    for (unsigned int i = 0; i < 2; i++) {
+        attach_fixture(3);
+        scmi_info.info->UniqueId.Length = i == 0 ? 2 : 21;
+        memset(scmi_info.uid + 2, 0xa5, 19);
+        struct cixvpu_acpi_report r = native_run();
+        CHECK(r.error == 0 && r.cleanup_error == 0 && r.identity_valid && r.released);
+        CHECK(strcmp(events, "NMRSPTEAdDdB0123UAKOtrmc") == 0);
+        CHECK(!r.rate_query_attempted && !r.rate_valid);
+        unsigned int before = nevents;
+        if (deferred_callback) deferred_callback(deferred_device);
+        CHECK(nevents == before);
+        released();
+    }
+    for (unsigned int i = 1; i <= 42; i++) {
+        attach_fixture(3); bad = i;
+        struct cixvpu_acpi_report r = native_run();
+        CHECK(r.error != 0 && r.cleanup_error == 0 && r.released);
+        CHECK(nevents == 0 && reads == 0 && maps == 0 && sta_count == 0);
+        released();
+    }
+    const uint32_t ids[] = {0x56500000, 0x56550000, 0x56600000, 0x56610000,
+        0x56620000, 0x56630000, 0x56640000, 0x56650000, 0};
+    for (unsigned int i = 0; i < sizeof(ids)/sizeof(ids[0]); i++) {
+        attach_fixture(3); id = ids[i];
+        struct cixvpu_acpi_report r = native_run();
+        CHECK(r.identity_valid == (i < 7) && r.error == (i < 7 ? 0 : ENODEV));
+        CHECK(r.released && r.cleanup_error == 0 && reads == 4);
+        released();
+    }
+    const unsigned int cases[] = { F_CLOCK_GET, F_RESET_GET, F_RCSU_GET,
+        F_RCSU_STATE, F_POWER_ON, F_STA_ON, F_STA_ON_FAIL, F_CLOCK_ON,
+        F_RESET_DEASSERT, F_MAP, F_CLOCK_OFF, F_NATIVE_POISON };
+    for (unsigned int i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+        attach_fixture(3); faults = cases[i];
+        struct cixvpu_acpi_report r = native_run();
+        CHECK(r.error != 0 || r.cleanup_error != 0);
+        CHECK(strchr(events, 'C') == NULL && strchr(events, 'G') == NULL);
+        if (cases[i] == F_CLOCK_ON || cases[i] == F_NATIVE_POISON) CHECK(maps == 0 && reads == 0);
+        if (cases[i] == F_NATIVE_POISON) {
+            CHECK(r.error == EIO && r.cleanup_error == EIO && !r.released);
+            CHECK(strcmp(events, "NMRSPTEA") == 0 && native_disable_calls == 1);
+            CHECK(clock_claim.claimed && main_claim.claimed && rcsu_claim.claimed && power_live);
+            unsigned int before = nevents;
+            CHECK(cixvpu_acpi_control_cleanup(&((struct cixvpu_acpi_softc *)attach_private)->sc_control) == EIO);
+            CHECK(nevents == before && native_disable_calls == 2);
+        } else if (cases[i] == F_CLOCK_OFF) {
+            CHECK(!r.released && power_live && clock_claim.claimed);
+        } else released();
+    }
+    for (unsigned int i = 0; i < 7; i++) {
+        attach_fixture(3);
+        switch (i) { case 0: raw_extra = 14; break; case 1: parser_status = AE_ERROR; break;
+        case 2: attach_description.nmem = 1; break; case 3: attach_description.mem[1] = attach_description.mem[0]; break;
+        case 4: attach_description.nirq = 0; break; case 5: attach_cca_status = AE_NOT_FOUND; break; case 6: attach_description.irq_trigger = 1; break; }
+        cixvpu_acpi_attach(NULL, VPU, &aa);
+        CHECK(defer_calls == 0 && nevents == 0 && reads == 0 && maps == 0);
+        CHECK(cleanup_calls == (i == 0 ? 0U : 1U));
+    }
 }
 #endif
 #endif
 int main(void)
 {
 #ifdef CIXVPU_CONTROL_API
+    (void)cixclk_acpi_get_native;
     metadata_tests(); query_tests(); active_tests(); failures_tests(); rate_separation_tests(); retention_tests();
 #ifdef CIXVPU_ATTACH_API
-    attach_tests();
+    attach_tests(); native_tests();
 #endif
     CHECK(live == 0 && allocations != 0);
 #else

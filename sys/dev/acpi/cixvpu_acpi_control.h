@@ -58,6 +58,9 @@ struct cixvpu_acpi_control {
  */
 int cixvpu_acpi_control_probe(struct cixvpu_acpi_control *, device_t,
     const struct acpi_attach_args *, const struct cixvpu_resources *, bool);
+/* Explicit native clock backend; active identity only, with no AML fallback. */
+int cixvpu_acpi_control_probe_native(struct cixvpu_acpi_control *, device_t,
+    const struct acpi_attach_args *, const struct cixvpu_resources *);
 int cixvpu_acpi_control_cleanup(struct cixvpu_acpi_control *);
 
 #endif /* _DEV_ACPI_CIXVPU_ACPI_CONTROL_H_ */

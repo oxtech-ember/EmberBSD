@@ -265,6 +265,55 @@ cixvpu_power_status(struct cixvpu_acpi_control *c, bool on, bool cleanup)
 	return ACPI_SUCCESS(rv) ? 0 : EIO;
 }
 
+/* Resolve cached identity only. B independently validates service ownership. */
+static int
+cixvpu_native_scmi(const struct acpi_attach_args *aa, ACPI_HANDLE *out)
+{
+	const struct acpi_softc *acpi;
+	struct acpi_devnode *node;
+	ACPI_HANDLE match = NULL;
+	bool consumer_found = false;
+
+	if (aa->aa_node->ad_root == NULL ||
+	    aa->aa_node->ad_type != ACPI_TYPE_DEVICE)
+		return EINVAL;
+	acpi = device_private(aa->aa_node->ad_root);
+	if (acpi == NULL)
+		return ENXIO;
+	SIMPLEQ_FOREACH(node, &acpi->sc_head, ad_list) {
+		ACPI_DEVICE_INFO *info = node->ad_devinfo;
+		ACPI_BUFFER b;
+
+		if (node->ad_root != aa->aa_node->ad_root)
+			continue;
+		if (node == aa->aa_node)
+			consumer_found = true;
+		if (node->ad_type != ACPI_TYPE_DEVICE || node->ad_handle == NULL ||
+		    info == NULL || info->InfoSize < sizeof(*info) ||
+		    info->InfoSize > UINTPTR_MAX - (uintptr_t)info ||
+		    info->Type != ACPI_TYPE_DEVICE ||
+		    (info->Valid & (ACPI_VALID_HID | ACPI_VALID_UID)) !=
+		    (ACPI_VALID_HID | ACPI_VALID_UID))
+			continue;
+		b = (ACPI_BUFFER){ info->InfoSize, info };
+		/* Integer UID Length is allocation capacity, including unused tail. */
+		if (info->HardwareId.Length != sizeof("CIXHA006") ||
+		    info->UniqueId.Length < sizeof("0") ||
+		    !cixvpu_range(&b, info->HardwareId.String, sizeof("CIXHA006")) ||
+		    !cixvpu_range(&b, info->UniqueId.String, info->UniqueId.Length) ||
+		    memcmp(info->HardwareId.String, "CIXHA006", sizeof("CIXHA006")) != 0 ||
+		    memcmp(info->UniqueId.String, "0", sizeof("0")) != 0)
+			continue;
+		if (match != NULL)
+			return EINVAL;
+		match = node->ad_handle;
+	}
+	if (!consumer_found || match == NULL)
+		return ENXIO;
+	*out = match;
+	return 0;
+}
+
 int
 cixvpu_acpi_control_cleanup(struct cixvpu_acpi_control *c)
 {
@@ -359,12 +408,12 @@ cixvpu_identity(const struct cixvpu_acpi_report *r)
 	}
 }
 
-int
-cixvpu_acpi_control_probe(struct cixvpu_acpi_control *c, device_t dev,
+static int
+cixvpu_probe(struct cixvpu_acpi_control *c, device_t dev,
     const struct acpi_attach_args *aa, const struct cixvpu_resources *resources,
-    bool activate)
+    bool activate, bool native)
 {
-	ACPI_HANDLE clock, reset;
+	ACPI_HANDLE clock, reset, scmi = NULL;
 	ACPI_STATUS rv;
 	bool asserted;
 	int error, cleanup_error;
@@ -384,8 +433,13 @@ cixvpu_acpi_control_probe(struct cixvpu_acpi_control *c, device_t dev,
 		error = EINVAL;
 		goto out;
 	}
-	if ((error = cixvpu_profile(c, &clock, &reset)) != 0 ||
-	    (error = cixclk_acpi_get(clock, 0x43, &c->clock)) != 0 ||
+	if (native && (error = cixvpu_native_scmi(aa, &scmi)) != 0)
+		goto out;
+	if ((error = cixvpu_profile(c, &clock, &reset)) != 0)
+		goto out;
+	error = native ? cixclk_acpi_get_native(clock, scmi, 0x43, &c->clock) :
+	    cixclk_acpi_get(clock, 0x43, &c->clock);
+	if (error != 0 ||
 	    (error = cixreset_acpi_get(reset, 0x0e, &c->reset)) != 0 ||
 	    (error = cixreset_acpi_get(reset, 0x8e, &c->rcsu)) != 0)
 		goto out;
@@ -440,4 +494,21 @@ out:
 	if (error != 0)
 		aprint_error_dev(c->dev, "VPU resource probe failed: %d\n", error);
 	return error != 0 ? error : cleanup_error;
+}
+
+int
+cixvpu_acpi_control_probe(struct cixvpu_acpi_control *c, device_t dev,
+    const struct acpi_attach_args *aa, const struct cixvpu_resources *resources,
+    bool activate)
+{
+
+	return cixvpu_probe(c, dev, aa, resources, activate, false);
+}
+
+int
+cixvpu_acpi_control_probe_native(struct cixvpu_acpi_control *c, device_t dev,
+    const struct acpi_attach_args *aa, const struct cixvpu_resources *resources)
+{
+
+	return cixvpu_probe(c, dev, aa, resources, true, true);
 }

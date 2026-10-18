@@ -35,11 +35,16 @@ cixvpu_acpi_deferred(device_t self)
 	if (sc->sc_probe_ran)
 		return;
 	sc->sc_probe_ran = true;
-	error = cixvpu_acpi_control_probe(&sc->sc_control, self, &sc->sc_aa,
-	    &sc->sc_resources, sc->sc_mode == 2);
+	if (sc->sc_mode == 3)
+		error = cixvpu_acpi_control_probe_native(&sc->sc_control, self,
+		    &sc->sc_aa, &sc->sc_resources);
+	else
+		error = cixvpu_acpi_control_probe(&sc->sc_control, self, &sc->sc_aa,
+		    &sc->sc_resources, sc->sc_mode == 2);
 	aprint_normal_dev(self,
 	    "%s: rate query attempted %s, rate valid %s\n",
-	    sc->sc_mode == 1 ? "resource query" : "identity probe",
+	    sc->sc_mode == 1 ? "resource query" :
+	    sc->sc_mode == 3 ? "native identity probe" : "identity probe",
 	    r->rate_query_attempted ? "yes" : "no",
 	    r->rate_valid ? "yes" : "no");
 	if (r->rate_valid)
@@ -112,8 +117,8 @@ cixvpu_acpi_attach(device_t parent, device_t self, void *aux)
 	aprint_normal(": CIX P1 video codec (diagnostic attachment)\n");
 	sc->sc_dev = self;
 	sc->sc_mode = device_cfdata(self)->cf_flags;
-	if (sc->sc_mode > 2) {
-		aprint_error_dev(self, "unsupported flags %#x; use 0, 1 or 2\n",
+	if (sc->sc_mode > 3) {
+		aprint_error_dev(self, "unsupported flags %#x; use 0, 1, 2 or 3\n",
 		    sc->sc_mode);
 		return;
 	}
