@@ -36,9 +36,50 @@
 #define CIXVPU_BOOT_RPC_DEBUG_REPLIED MODEL_BOOT_RPC_DEBUG_REPLIED
 #define CIXVPU_BOOT_RPC_RESIZE_REPLIED MODEL_BOOT_RPC_RESIZE_REPLIED
 #define CIXVPU_BOOT_RPC_SECOND_ALLOC_REPLIED MODEL_BOOT_RPC_SECOND_ALLOC_REPLIED
+#define cixvpu_queue_identity MODEL_cixvpu_queue_identity
+#define cixvpu_queue_command_kind MODEL_cixvpu_queue_command_kind
+#define CIXVPU_Q_JOB_ONE MODEL_CIXVPU_Q_JOB_ONE
+#define CIXVPU_Q_NALU_START_CODES MODEL_CIXVPU_Q_NALU_START_CODES
+#define CIXVPU_Q_BFRAMES_ZERO MODEL_CIXVPU_Q_BFRAMES_ZERO
+#define CIXVPU_Q_PFRAMES_ZERO MODEL_CIXVPU_Q_PFRAMES_ZERO
+#define CIXVPU_Q_HEVC_MAIN MODEL_CIXVPU_Q_HEVC_MAIN
+#define CIXVPU_Q_FIXED_QP MODEL_CIXVPU_Q_FIXED_QP
+#define CIXVPU_Q_GO MODEL_CIXVPU_Q_GO
+#define CIXVPU_Q_STOP MODEL_CIXVPU_Q_STOP
+#define CIXVPU_Q_INPUT_FLUSH MODEL_CIXVPU_Q_INPUT_FLUSH
+#define CIXVPU_Q_OUTPUT_FLUSH MODEL_CIXVPU_Q_OUTPUT_FLUSH
+#define CIXVPU_Q_PING MODEL_CIXVPU_Q_PING
+#define CIXVPU_Q_IDLE_ACK MODEL_CIXVPU_Q_IDLE_ACK
+#define cixvpu_queue_command MODEL_cixvpu_queue_command
+#define cixvpu_queue_param_kind MODEL_cixvpu_queue_param_kind
+#define CIXVPU_Q_FRAME_RATE MODEL_CIXVPU_Q_FRAME_RATE
+#define CIXVPU_Q_RC_OFF MODEL_CIXVPU_Q_RC_OFF
+#define cixvpu_queue_input_param MODEL_cixvpu_queue_input_param
+#define cixvpu_queue_slot MODEL_cixvpu_queue_slot
+#define CIXVPU_Q_INPUT_ONCE MODEL_CIXVPU_Q_INPUT_ONCE
+#define CIXVPU_Q_OUTPUT_EMPTY MODEL_CIXVPU_Q_OUTPUT_EMPTY
+#define cixvpu_queue_event_kind MODEL_cixvpu_queue_event_kind
+#define CIXVPU_Q_RESPONSE MODEL_CIXVPU_Q_RESPONSE
+#define CIXVPU_Q_INPUT_AVAILABLE MODEL_CIXVPU_Q_INPUT_AVAILABLE
+#define CIXVPU_Q_OUTPUT_AVAILABLE MODEL_CIXVPU_Q_OUTPUT_AVAILABLE
+#define CIXVPU_Q_PONG MODEL_CIXVPU_Q_PONG
+#define CIXVPU_Q_IDLE MODEL_CIXVPU_Q_IDLE
+#define CIXVPU_Q_INPUT_FLUSHED MODEL_CIXVPU_Q_INPUT_FLUSHED
+#define CIXVPU_Q_OUTPUT_FLUSHED MODEL_CIXVPU_Q_OUTPUT_FLUSHED
+#define cixvpu_queue_event MODEL_cixvpu_queue_event
+#define cixvpu_prepared_queue_open MODEL_cixvpu_prepared_queue_open
+#define cixvpu_prepared_queue_command MODEL_cixvpu_prepared_queue_command
+#define cixvpu_prepared_queue_input_param MODEL_cixvpu_prepared_queue_input_param
+#define cixvpu_prepared_queue_submit MODEL_cixvpu_prepared_queue_submit
+#define cixvpu_prepared_queue_receive MODEL_cixvpu_prepared_queue_receive
+#define cixvpu_prepared_queue_input_return MODEL_cixvpu_prepared_queue_input_return
+#define cixvpu_prepared_queue_output_copy MODEL_cixvpu_prepared_queue_output_copy
+#define cixvpu_prepared_queue_hold MODEL_cixvpu_prepared_queue_hold
 #define delay control_delay
 #define bus_space_read_4 control_read_4
 #define bus_space_barrier control_barrier
+#include "cixvpu_command.h"
+#include "cixvpu_buffer.h"
 #include "cixvpu-control-contract.c"
 #undef main
 #undef cixvpu_acpi_boot
@@ -79,6 +120,45 @@
 #undef bus_space_read_4
 #undef bus_space_barrier
 #undef delay
+#undef cixvpu_queue_identity
+#undef cixvpu_queue_command_kind
+#undef CIXVPU_Q_JOB_ONE
+#undef CIXVPU_Q_NALU_START_CODES
+#undef CIXVPU_Q_BFRAMES_ZERO
+#undef CIXVPU_Q_PFRAMES_ZERO
+#undef CIXVPU_Q_HEVC_MAIN
+#undef CIXVPU_Q_FIXED_QP
+#undef CIXVPU_Q_GO
+#undef CIXVPU_Q_STOP
+#undef CIXVPU_Q_INPUT_FLUSH
+#undef CIXVPU_Q_OUTPUT_FLUSH
+#undef CIXVPU_Q_PING
+#undef CIXVPU_Q_IDLE_ACK
+#undef cixvpu_queue_command
+#undef cixvpu_queue_param_kind
+#undef CIXVPU_Q_FRAME_RATE
+#undef CIXVPU_Q_RC_OFF
+#undef cixvpu_queue_input_param
+#undef cixvpu_queue_slot
+#undef CIXVPU_Q_INPUT_ONCE
+#undef CIXVPU_Q_OUTPUT_EMPTY
+#undef cixvpu_queue_event_kind
+#undef CIXVPU_Q_RESPONSE
+#undef CIXVPU_Q_INPUT_AVAILABLE
+#undef CIXVPU_Q_OUTPUT_AVAILABLE
+#undef CIXVPU_Q_PONG
+#undef CIXVPU_Q_IDLE
+#undef CIXVPU_Q_INPUT_FLUSHED
+#undef CIXVPU_Q_OUTPUT_FLUSHED
+#undef cixvpu_queue_event
+#undef cixvpu_prepared_queue_open
+#undef cixvpu_prepared_queue_command
+#undef cixvpu_prepared_queue_input_param
+#undef cixvpu_prepared_queue_submit
+#undef cixvpu_prepared_queue_receive
+#undef cixvpu_prepared_queue_input_return
+#undef cixvpu_prepared_queue_output_copy
+#undef cixvpu_prepared_queue_hold
 #ifdef CIXVPU_BOOT_ORCH_API
 #include <sys/time.h>
 #undef _DEV_IC_CIXVPU_PREPARE_H_

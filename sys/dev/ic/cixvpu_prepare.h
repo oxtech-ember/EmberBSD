@@ -5,6 +5,8 @@
 #define _DEV_IC_CIXVPU_PREPARE_H_
 
 #include <dev/ic/cixvpu_dma.h>
+#include <dev/ic/cixvpu_command.h>
+#include <dev/ic/cixvpu_buffer.h>
 
 struct cixvpu_prepared;
 
@@ -164,5 +166,88 @@ int cixvpu_prepared_boot_rpc_step(struct cixvpu_prepared *,
     enum cixvpu_boot_rpc_result *);
 int cixvpu_prepared_boot_receive_rpc(struct cixvpu_prepared *,
     struct cixvpu_boot_reply *);
+
+#define CIXVPU_PREPARE_QUEUE_API 1
+struct cixvpu_queue_identity {
+	uint64_t frame_handle, output_handle, input_tag;
+};
+enum cixvpu_queue_command_kind {
+	CIXVPU_Q_JOB_ONE, CIXVPU_Q_NALU_START_CODES, CIXVPU_Q_BFRAMES_ZERO,
+	CIXVPU_Q_PFRAMES_ZERO, CIXVPU_Q_HEVC_MAIN, CIXVPU_Q_FIXED_QP,
+	CIXVPU_Q_GO, CIXVPU_Q_STOP, CIXVPU_Q_INPUT_FLUSH,
+	CIXVPU_Q_OUTPUT_FLUSH, CIXVPU_Q_PING, CIXVPU_Q_IDLE_ACK
+};
+struct cixvpu_queue_command {
+	enum cixvpu_queue_command_kind kind;
+	uint32_t value; /* Only HEVC_MAIN and FIXED_QP use this field. */
+};
+enum cixvpu_queue_param_kind { CIXVPU_Q_FRAME_RATE, CIXVPU_Q_RC_OFF };
+struct cixvpu_queue_input_param {
+	enum cixvpu_queue_param_kind kind;
+	uint32_t value; /* Nonzero raw Q16 for FRAME_RATE; zero for RC_OFF. */
+};
+enum cixvpu_queue_slot { CIXVPU_Q_INPUT_ONCE, CIXVPU_Q_OUTPUT_EMPTY };
+enum cixvpu_queue_event_kind {
+	CIXVPU_Q_RESPONSE, CIXVPU_Q_INPUT_AVAILABLE, CIXVPU_Q_OUTPUT_AVAILABLE,
+	CIXVPU_Q_PONG, CIXVPU_Q_IDLE, CIXVPU_Q_INPUT_FLUSHED,
+	CIXVPU_Q_OUTPUT_FLUSHED
+};
+struct cixvpu_queue_event {
+	enum cixvpu_queue_event_kind kind;
+	struct cixvpu_command_response response;
+};
+/*
+ * Inactive one-slot transport for the pinned protocol3.5 sum0005 owner.
+ * No caller, MMIO, allocation, PTE change or firmware-ready claim is added.
+ * The constructor fixes geometry and storage. Open binds immutable handles
+ * and one input tag after this published owner ACKed SWITCHED_IN/core0 and
+ * PONG. It inherits the seeded TX and consumed RX state without queue reset.
+ * Legacy boot receive is EBUSY after handover; closed RPC stepping retains
+ * its original three tuples and sixteen DEBUG replies, without new grants.
+ *
+ * Thread context, external serialization and stable addressable arguments
+ * are required. All input/result spans must be disjoint from retained owner
+ * storage. Destination and result must also be disjoint. No mutable getter
+ * exists. Values not used by a command must be zero. Setup ordering, absent
+ * CONFIRM-index matching, deadlines and total budgets belong to the caller.
+ * Each successful command/param/submit publishes one record: the caller must
+ * notify firmware once before the next queue or RPC operation. No notify is
+ * due on error. A snapshot RPC PARAM returns EAGAIN; it is not atomic exclusion
+ * against later firmware publication. Payload immutability until ACK remains
+ * a protocol assumption, not physical cache qualification.
+ *
+ * Input submits once. Output can refill only after copy, and never after EOF.
+ * A notification gives one matching return credit; receive is EBUSY until it
+ * is consumed. Return codecs validate fixed identities and subtraction bounds.
+ * Output POSTREAD and bounded pagewise copy finish before BUFFER ACK. The
+ * destination is never retained and survives refill/hold. Short capacity gives
+ * EMSGSIZE without output sync/copy/ACK or result change. NULL/0 is valid only
+ * for empty output. Flags alone do not prove a complete or decodable frame.
+ *
+ * Argument/alias/unsupported-operation errors perform no I/O. EAGAIN may acquire
+ * and rearm device spans, but cannot publish or ACK. Retained-map, firmware
+ * shape/cursor/checksum/identity and counter-overflow faults are sticky and
+ * preserve the first error. Other errors preserve caller outputs. A parsed
+ * FATAL/OPTION_FAILED is returned once as an event, then future operations
+ * return EIO without I/O. Text is bounded raw bytes and is never auto-printed.
+ * Hold is irreversible: reason0 records no new error, positive reason preserves
+ * the first error. It blocks queue and RPC work. Ever-visible free stays EBUSY,
+ * including after STOP/FLUSH/hold. No reset or quiescence proof is supplied.
+ */
+int cixvpu_prepared_queue_open(struct cixvpu_prepared *,
+    const struct cixvpu_queue_identity *);
+int cixvpu_prepared_queue_command(struct cixvpu_prepared *,
+    const struct cixvpu_queue_command *);
+int cixvpu_prepared_queue_input_param(struct cixvpu_prepared *,
+    const struct cixvpu_queue_input_param *);
+int cixvpu_prepared_queue_submit(struct cixvpu_prepared *,
+    enum cixvpu_queue_slot);
+int cixvpu_prepared_queue_receive(struct cixvpu_prepared *,
+    struct cixvpu_queue_event *);
+int cixvpu_prepared_queue_input_return(struct cixvpu_prepared *,
+    struct cixvpu_buffer_frame_result *);
+int cixvpu_prepared_queue_output_copy(struct cixvpu_prepared *, void *, size_t,
+    struct cixvpu_buffer_bitstream_result *);
+int cixvpu_prepared_queue_hold(struct cixvpu_prepared *, int);
 
 #endif

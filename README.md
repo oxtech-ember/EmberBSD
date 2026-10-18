@@ -272,6 +272,10 @@ on every board in the hardware catalog.
   passed native allocation, copy, stopped PTE checks, initial sync and cancellation
   in one physical warm boot.
   It does not expose addresses to the device or submit a codec frame.
+  An [inactive queue bridge](ember/boot/cix-vpu.md#closed-active-queue-bridge)
+  binds immutable slot identities after the same owner's bootstrap handshake.
+  Source contracts check typed submission, return credits, bounded host copyout
+  and refill synchronization. No active profile calls this bridge yet.
   Every exposed owner remains held, and the terminal report masks the IRQ.
   This check submits no codec frame and does not qualify runtime DMA teardown.
   [Initially masked ARM PIC registration](ember/boot/cix-vpu.md#initially-masked-native-irq-registration)

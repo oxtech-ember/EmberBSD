@@ -195,7 +195,8 @@ The allocator accepts the explicit slot roles. Ordinary CPU constructors still
 reject all slot metadata before page borrows, writes or ownership movement.
 Only the explicit slot constructor described below accepts this layout. A manual
 CPU-only probe selects it. Command submission, output refill and one-frame encoding
-remain pending.
+remain outside that probe. The inactive bridge below supplies the transport
+mechanism; an active coordinator and physical frame acceptance remain pending.
 
 Actual-source tests compose MMU tables with discontiguous synthetic bus pages.
 They check literal slot spans, zero tails, full reserve exclusion, exact quotas,
@@ -229,6 +230,42 @@ Actual-source contracts check distinct source patterns, page tails, PTEs,
 poisoned bounce memory, aliases, failures before effects, last-fallible seal and
 retained exposure. No firmware-active profile, pixel format conversion, hardware
 frame completion or output capacity is qualified.
+
+## Closed active queue bridge
+
+The opaque prepared owner has inactive typed MESSAGE, INPUT and OUTPUT queue
+operations. `cixvpu_prepared_queue_open` requires this exposed slot owner's
+acknowledged SWITCHED_IN/core0 and PONG. It binds immutable frame/output handles
+and one input tag. Geometry and storage come from the checked constructor.
+The bridge inherits the seeded TX checksum and consumed RX cursor. It never
+resets a queue. Legacy boot receive returns EBUSY after handover; closed RPC
+stepping retains its existing three tuples and sixteen DEBUG replies.
+
+Typed commands use the existing payload codecs. Setup ordering, confirmation
+matching, deadlines and total budgets remain caller responsibilities. A successful
+publication requires one caller notification before another queue or RPC step.
+These APIs perform no MMIO and select no profile, runtime policy or allocation.
+
+One notification gives one matching buffer-return credit. Input submits once.
+Output return validates the fixed handle, correlated input tag, VA, capacity
+and subtraction bounds. All maps and caller spans are checked before output
+POSTREAD. Pagewise copy to caller-owned storage completes before BUFFER ACK.
+Short capacity preserves the buffer, credit and caller outputs. Refill rearms
+every output page with PREREAD before descriptor publication. EOF blocks refill.
+The destination is not retained and survives hold or reuse of device storage.
+No mutable view, DMA address getter or extraction service is exposed.
+
+Malformed identities, shapes, checksums, cursors and retained maps fail closed.
+A parsed fatal/option-failed event is returned once, then work stays held.
+Hold is irreversible. STOP, FLUSH and IRQ masking do not permit exposed-owner
+free. Unknown RPC tuples gain no allocation, PTE change or retry path.
+
+Actual-source contracts use independent literal descriptors, poisoned bounce
+pages, consumer/producer interleavings, cross-page partial-tail copy, queue
+wrap/full conditions and fault injection. No attachment invokes this bridge.
+The CPU-only probe and strict bootstrap profiles keep their existing behavior.
+Native active queue traffic, device DMA data correctness, one HEVC frame and
+host decode remain unqualified.
 
 ## Manual CPU-only slot probe
 

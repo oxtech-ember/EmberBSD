@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Origin: original actual-source VPU probe contracts, AI-assisted. */
+#include "cixvpu_command.h"
+#include "cixvpu_buffer.h"
 #include <assert.h>
 #include <inttypes.h>
 #include <stdarg.h>

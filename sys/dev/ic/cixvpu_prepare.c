@@ -21,10 +21,28 @@ struct cixvpu_prepare_entry {
 
 struct cixvpu_prepare_boot {
 	bool enabled, published;
+	bool switched_in, pong;
 	int error;
 	uint16_t cursor;
 	struct cixvpu_ring_checksum checksum;
 	struct cixvpu_dma_boot_snapshot snapshot;
+};
+
+struct cixvpu_prepare_tx {
+	uint16_t read, write;
+	struct cixvpu_ring_checksum checksum;
+};
+struct cixvpu_prepare_queue {
+	bool enabled, held, output_eof;
+	struct cixvpu_queue_identity identity;
+	struct cixvpu_buffer_nv12 frame;
+	struct cixvpu_buffer_bitstream output;
+	uint8_t frame_wire[CIXVPU_BUFFER_FRAME_BYTES];
+	uint8_t output_wire[CIXVPU_BUFFER_BITSTREAM_BYTES];
+	struct cixvpu_prepare_tx tx[3];
+	uint16_t rx[2];
+	unsigned int pending, input_state, output_state;
+	uint32_t submissions, returns;
 };
 
 struct cixvpu_prepared {
@@ -32,6 +50,7 @@ struct cixvpu_prepared {
 	struct cixvpu_dma *dma;
 	struct cixvpu_fw_plan plan;
 	struct cixvpu_prepare_boot boot;
+	struct cixvpu_prepare_queue queue;
 	size_t bytes;
 	uint32_t root_entry;
 	unsigned int count;
@@ -456,6 +475,8 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 			for (j = 0; j < 4; j++)
 				host[4 + i * 4 + j] = (uint8_t)(seeded.reserved[i] >> (8 * j));
 		prepared->boot.enabled = true;
+		prepared->queue.tx[0].write = next;
+		prepared->queue.tx[0].checksum = seeded;
 	}
 	error = cixvpu_dma_seal(*owned, prepared);
 
@@ -535,7 +556,7 @@ cixvpu_prepare_frame_slots_cpu(struct cixvpu_dma **owned,
 }
 
 static int
-cixvpu_prepare_boot_output(struct cixvpu_prepared *p, void *out,
+cixvpu_prepare_boot_output(struct cixvpu_prepared *p, const void *out,
     size_t size, size_t alignment, bool *fault)
 {
 	struct cixvpu_fw_plan_page page;
@@ -656,6 +677,8 @@ cixvpu_prepared_boot_debugparam(struct cixvpu_prepared *p,
 		return EINVAL;
 	if (p->boot.error != 0)
 		return p->boot.error;
+	if (p->queue.held)
+		return EBUSY;
 	error = cixvpu_prepare_boot_output(p, out, sizeof(*out),
 	    _Alignof(enum cixvpu_boot_debug_result), &fault);
 	if (error != 0) {
@@ -701,6 +724,8 @@ cixvpu_prepared_boot_rpc_step(struct cixvpu_prepared *p,
 		return EINVAL;
 	if (p->boot.error != 0)
 		return p->boot.error;
+	if (p->queue.held)
+		return EBUSY;
 	error = cixvpu_prepare_boot_output(p, out, sizeof(*out),
 	    _Alignof(enum cixvpu_boot_rpc_result), &fault);
 	if (error != 0) {
@@ -786,6 +811,8 @@ cixvpu_prepared_boot_receive_common(struct cixvpu_prepared *p,
 		}
 		return error;
 	}
+	if (p->queue.enabled || p->queue.held)
+		return p->boot.error != 0 ? p->boot.error : EBUSY;
 	if (rpc_enabled && p->plan.boot_rpc != 1)
 		return ENOTSUP;
 	if (!p->boot.published)
@@ -828,6 +855,10 @@ cixvpu_prepared_boot_receive_common(struct cixvpu_prepared *p,
 		goto failed;
 	p->boot.cursor = next;
 	p->boot.checksum = next_sum;
+	if (reply.code == 2001)
+		p->boot.switched_in = true;
+	else
+		p->boot.pong = true;
 	*out = reply;
 	return 0;
 failed:
@@ -850,4 +881,485 @@ cixvpu_prepared_boot_receive_rpc(struct cixvpu_prepared *p,
 {
 
 	return cixvpu_prepared_boot_receive_common(p, out, true);
+}
+
+int
+cixvpu_prepared_queue_open(struct cixvpu_prepared *p,
+    const struct cixvpu_queue_identity *identity)
+{
+	struct cixvpu_prepare_queue queue = { 0 };
+	struct cixvpu_fw_slot_span y, uv, output;
+	size_t length;
+	int error;
+	bool fault = false;
+
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (p == NULL || identity == NULL)
+		return EINVAL;
+	if (p->boot.error != 0)
+		return p->boot.error;
+	if (p->queue.enabled || p->queue.held || !p->boot.published ||
+	    !p->boot.switched_in || !p->boot.pong)
+		return EBUSY;
+	if (p->plan.slots_enabled != 1 || p->plan.boot_rpc != 1 ||
+	    p->plan.cores != 1)
+		return ENOTSUP;
+	error = cixvpu_prepare_boot_output(p, identity, sizeof(*identity),
+	    _Alignof(struct cixvpu_queue_identity), &fault);
+	if (error != 0) {
+		if (fault)
+			p->boot.error = error;
+		return error;
+	}
+	error = cixvpu_fw_plan_slot(&p->plan, CIXVPU_FW_SLOT_Y, &y);
+	if (error == 0)
+		error = cixvpu_fw_plan_slot(&p->plan, CIXVPU_FW_SLOT_UV, &uv);
+	if (error == 0)
+		error = cixvpu_fw_plan_slot(&p->plan, CIXVPU_FW_SLOT_BITSTREAM, &output);
+	if (error != 0) {
+		p->boot.error = error;
+		return error;
+	}
+	queue.identity = *identity;
+	queue.frame = (struct cixvpu_buffer_nv12){
+		.handle = identity->frame_handle, .tag = identity->input_tag,
+		.width = p->plan.slots.width, .height = p->plan.slots.height,
+		.stride_y = p->plan.slots.stride_y, .stride_uv = p->plan.slots.stride_uv,
+		.y = { y.address, y.bytes }, .uv = { uv.address, uv.bytes },
+		.force_idr = true, .eos = true
+	};
+	queue.output = (struct cixvpu_buffer_bitstream){
+		.handle = identity->output_handle, .tag = identity->input_tag,
+		.data = { output.address, output.bytes }
+	};
+	error = cixvpu_buffer_frame_nv12(&queue.frame, queue.frame_wire,
+	    sizeof(queue.frame_wire), &length);
+	if (error == 0)
+		error = cixvpu_buffer_bitstream(&queue.output, queue.output_wire,
+		    sizeof(queue.output_wire), &length);
+	if (error != 0)
+		return error;
+	memcpy(queue.tx, p->queue.tx, sizeof(queue.tx));
+	queue.enabled = true;
+	p->queue = queue;
+	return 0;
+}
+
+static int
+cixvpu_prepare_queue_context(struct cixvpu_prepared *p)
+{
+
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (p == NULL)
+		return EINVAL;
+	if (p->boot.error != 0)
+		return p->boot.error;
+	return !p->queue.enabled || p->queue.held ? EBUSY : 0;
+}
+
+static int
+cixvpu_prepare_queue_failure(struct cixvpu_prepared *p, int error)
+{
+
+	if (error != 0 && error != EAGAIN && error != EMSGSIZE) {
+		if (p->boot.error == 0)
+			p->boot.error = error;
+		p->queue.held = true;
+	}
+	return error;
+}
+
+static int
+cixvpu_prepare_queue_value(struct cixvpu_prepared *p, const void *value,
+    size_t bytes, size_t alignment)
+{
+	int error;
+	bool fault = false;
+
+	error = cixvpu_prepare_boot_output(p, value, bytes, alignment, &fault);
+	return fault ? cixvpu_prepare_queue_failure(p, error) : error;
+}
+
+static unsigned int
+cixvpu_prepare_queue_distance(uint16_t from, uint16_t to)
+{
+
+	return to >= from ? to - from : 1020 - from + to;
+}
+
+static int
+cixvpu_prepare_queue_send(struct cixvpu_prepared *p,
+    enum cixvpu_dma_queue queue, uint16_t code, const void *payload,
+    size_t length, bool refill)
+{
+	struct cixvpu_prepare_tx *tx = &p->queue.tx[queue];
+	struct cixvpu_ring_checksum next_sum;
+	uint16_t read, next;
+	int error;
+
+	if (p->queue.submissions == UINT32_MAX)
+		return cixvpu_prepare_queue_failure(p, EOVERFLOW);
+	error = cixvpu_dma_queue_cursor(p->dma, p, &p->plan, queue,
+	    &p->boot.snapshot, &read);
+	if (error != 0)
+		return cixvpu_prepare_queue_failure(p, error);
+	if (tx->read >= 1020 || tx->write >= 1020 ||
+	    cixvpu_prepare_queue_distance(tx->read, read) >
+	    cixvpu_prepare_queue_distance(tx->read, tx->write))
+		return cixvpu_prepare_queue_failure(p, EPROTO);
+	error = cixvpu_ring_write_sum(p->boot.snapshot.message + 16,
+	    CIXVPU_RING_BYTES, read, tx->write, code, payload, length,
+	    &tx->checksum, &next, &next_sum);
+	if (error != 0)
+		return cixvpu_prepare_queue_failure(p, error);
+	error = cixvpu_dma_queue_publish(p->dma, p, &p->plan, queue,
+	    tx->write, next, p->boot.snapshot.message + 16,
+	    next_sum.reserved, refill);
+	if (error != 0)
+		return cixvpu_prepare_queue_failure(p, error);
+	/* Publication succeeded. Caller must notify once before another step. */
+	tx->read = read;
+	tx->write = next;
+	tx->checksum = next_sum;
+	p->queue.submissions++;
+	return 0;
+}
+
+int
+cixvpu_prepared_queue_command(struct cixvpu_prepared *p,
+    const struct cixvpu_queue_command *input)
+{
+	struct cixvpu_queue_command command;
+	uint8_t payload[CIXVPU_COMMAND_SETUP_MAX_BYTES];
+	uint16_t code;
+	size_t length = 0;
+	int error;
+
+	error = cixvpu_prepare_queue_context(p);
+	if (error != 0)
+		return error;
+	if (input == NULL)
+		return EINVAL;
+	error = cixvpu_prepare_queue_value(p, input, sizeof(*input),
+	    _Alignof(struct cixvpu_queue_command));
+	if (error != 0)
+		return error;
+	command = *input;
+	if (command.kind != CIXVPU_Q_HEVC_MAIN &&
+	    command.kind != CIXVPU_Q_FIXED_QP && command.value != 0)
+		return EINVAL;
+	code = CIXVPU_COMMAND_SET_OPTION;
+	switch (command.kind) {
+	case CIXVPU_Q_JOB_ONE:
+		code = CIXVPU_COMMAND_JOB;
+		error = cixvpu_command_job(1, 1, 0, payload, sizeof(payload), &length);
+		break;
+	case CIXVPU_Q_NALU_START_CODES:
+		error = cixvpu_command_option(CIXVPU_COMMAND_NALU_FORMAT, 1,
+		    payload, sizeof(payload), &length);
+		break;
+	case CIXVPU_Q_BFRAMES_ZERO:
+		error = cixvpu_command_option(CIXVPU_COMMAND_B_FRAMES, 0,
+		    payload, sizeof(payload), &length);
+		break;
+	case CIXVPU_Q_PFRAMES_ZERO:
+		error = cixvpu_command_option(CIXVPU_COMMAND_P_FRAMES, 0,
+		    payload, sizeof(payload), &length);
+		break;
+	case CIXVPU_Q_HEVC_MAIN:
+		error = cixvpu_command_hevc_main(command.value, payload,
+		    sizeof(payload), &length);
+		break;
+	case CIXVPU_Q_FIXED_QP:
+		error = cixvpu_command_option(CIXVPU_COMMAND_FIXED_QP, command.value,
+		    payload, sizeof(payload), &length);
+		break;
+	case CIXVPU_Q_GO: code = CIXVPU_COMMAND_GO; break;
+	case CIXVPU_Q_STOP: code = CIXVPU_COMMAND_STOP; break;
+	case CIXVPU_Q_INPUT_FLUSH: code = CIXVPU_COMMAND_INPUT_FLUSH; break;
+	case CIXVPU_Q_OUTPUT_FLUSH: code = CIXVPU_COMMAND_OUTPUT_FLUSH; break;
+	case CIXVPU_Q_PING: code = CIXVPU_COMMAND_PING; break;
+	case CIXVPU_Q_IDLE_ACK: code = CIXVPU_COMMAND_IDLE_ACK; break;
+	default: return ENOTSUP;
+	}
+	if (error != 0)
+		return error;
+	return cixvpu_prepare_queue_send(p, CIXVPU_DMA_MESSAGE, code,
+	    length == 0 ? NULL : payload, length, false);
+}
+
+int
+cixvpu_prepared_queue_input_param(struct cixvpu_prepared *p,
+    const struct cixvpu_queue_input_param *input)
+{
+	uint8_t payload[CIXVPU_COMMAND_SETUP_MAX_BYTES];
+	size_t length;
+	int error;
+
+	error = cixvpu_prepare_queue_context(p);
+	if (error != 0)
+		return error;
+	if (p->queue.input_state != 0)
+		return EBUSY;
+	if (input == NULL)
+		return EINVAL;
+	error = cixvpu_prepare_queue_value(p, input, sizeof(*input),
+	    _Alignof(struct cixvpu_queue_input_param));
+	if (error != 0)
+		return error;
+	switch (input->kind) {
+	case CIXVPU_Q_FRAME_RATE:
+		error = cixvpu_command_input_frame_rate(input->value, payload,
+		    sizeof(payload), &length);
+		break;
+	case CIXVPU_Q_RC_OFF:
+		if (input->value != 0)
+			return EINVAL;
+		error = cixvpu_command_input_rate_control_off(payload,
+		    sizeof(payload), &length);
+		break;
+	default:
+		return ENOTSUP;
+	}
+	if (error != 0)
+		return error;
+	return cixvpu_prepare_queue_send(p, CIXVPU_DMA_INPUT,
+	    CIXVPU_COMMAND_INPUT_PARAM, payload, length, false);
+}
+
+int
+cixvpu_prepared_queue_submit(struct cixvpu_prepared *p, enum cixvpu_queue_slot slot)
+{
+	unsigned int *state;
+	int error;
+
+	error = cixvpu_prepare_queue_context(p);
+	if (error != 0)
+		return error;
+	if (slot == CIXVPU_Q_INPUT_ONCE) {
+		state = &p->queue.input_state;
+		if (*state != 0)
+			return EBUSY;
+		error = cixvpu_prepare_queue_send(p, CIXVPU_DMA_INPUT,
+		    CIXVPU_BUFFER_FRAME, p->queue.frame_wire,
+		    sizeof(p->queue.frame_wire), false);
+	} else if (slot == CIXVPU_Q_OUTPUT_EMPTY) {
+		state = &p->queue.output_state;
+		if (*state == 1 || p->queue.output_eof)
+			return EBUSY;
+		error = cixvpu_prepare_queue_send(p, CIXVPU_DMA_OUTPUT,
+		    CIXVPU_BUFFER_BITSTREAM, p->queue.output_wire,
+		    sizeof(p->queue.output_wire), *state == 2);
+	} else {
+		return ENOTSUP;
+	}
+	if (error == 0)
+		*state = 1;
+	return error;
+}
+
+static int
+cixvpu_prepare_queue_read(struct cixvpu_prepared *p,
+    enum cixvpu_dma_queue queue, uint16_t cursor, uint16_t *code,
+    void *payload, size_t capacity, size_t *length, uint16_t *next,
+    struct cixvpu_ring_checksum *next_sum)
+{
+	struct cixvpu_ring_checksum observed;
+	const uint8_t *page = p->boot.snapshot.message;
+	uint16_t write;
+	int error;
+
+	error = cixvpu_dma_queue_snapshot(p->dma, p, &p->plan, queue, &p->boot.snapshot);
+	if (error != 0)
+		return cixvpu_prepare_queue_failure(p, error);
+	write = (uint16_t)page[0] | (uint16_t)page[1] << 8;
+	if (queue == CIXVPU_DMA_MESSAGE) {
+		unsigned int i;
+
+		observed = p->boot.checksum;
+		for (i = 0; i < 3; i++)
+			observed.reserved[i] = cixvpu_prepare_get32(page + 4 + 4 * i);
+		error = cixvpu_ring_read_sum(page + 16, CIXVPU_RING_BYTES, cursor,
+		    write, &observed, code, payload, capacity, length, next, next_sum);
+	} else {
+		error = cixvpu_ring_read(page + 16, CIXVPU_RING_BYTES, cursor,
+		    write, code, payload, capacity, length, next);
+	}
+	if (error == EINVAL || error == EMSGSIZE)
+		error = EPROTO;
+	return cixvpu_prepare_queue_failure(p, error);
+}
+
+int
+cixvpu_prepared_queue_receive(struct cixvpu_prepared *p,
+    struct cixvpu_queue_event *out)
+{
+	struct cixvpu_queue_event event = { 0 };
+	struct cixvpu_ring_checksum next_sum;
+	uint8_t payload[CIXVPU_COMMAND_TEXT_BYTES + 4];
+	uint16_t code, next;
+	size_t length;
+	unsigned int pending = 0;
+	int error;
+	bool fatal = false;
+
+	error = cixvpu_prepare_queue_context(p);
+	if (error != 0)
+		return error;
+	if (p->queue.pending != 0)
+		return EBUSY;
+	error = cixvpu_prepare_queue_value(p, out, sizeof(*out),
+	    _Alignof(struct cixvpu_queue_event));
+	if (error != 0)
+		return error;
+	error = cixvpu_prepare_queue_read(p, CIXVPU_DMA_MESSAGE, p->boot.cursor,
+	    &code, payload, sizeof(payload), &length, &next, &next_sum);
+	if (error != 0)
+		return error;
+	if (code == 2005 || code == 2006) {
+		if (length != 0 || (code == 2005 ? p->queue.input_state :
+		    p->queue.output_state) != 1)
+			return cixvpu_prepare_queue_failure(p, EPROTO);
+		event.kind = code == 2005 ? CIXVPU_Q_INPUT_AVAILABLE : CIXVPU_Q_OUTPUT_AVAILABLE;
+		pending = code == 2005 ? 1 : 2;
+	} else if (code == 2007 || code == 2008 || code == 2009 || code == 2013) {
+		if (length != 0)
+			return cixvpu_prepare_queue_failure(p, EPROTO);
+		event.kind = code == 2007 ? CIXVPU_Q_INPUT_FLUSHED : code == 2008 ?
+		    CIXVPU_Q_OUTPUT_FLUSHED : code == 2009 ? CIXVPU_Q_PONG : CIXVPU_Q_IDLE;
+	} else {
+		event.kind = CIXVPU_Q_RESPONSE;
+		error = cixvpu_command_response(code, payload, length, &event.response);
+		if (error != 0)
+			return cixvpu_prepare_queue_failure(p, error);
+		fatal = event.response.kind == CIXVPU_COMMAND_FATAL ||
+		    event.response.kind == CIXVPU_COMMAND_OPTION_FAILED;
+	}
+	error = cixvpu_dma_queue_ack(p->dma, p, &p->plan, CIXVPU_DMA_MESSAGE, next);
+	if (error != 0)
+		return cixvpu_prepare_queue_failure(p, error);
+	p->boot.cursor = next;
+	p->boot.checksum = next_sum;
+	p->queue.pending = pending;
+	*out = event;
+	if (fatal)
+		(void)cixvpu_prepare_queue_failure(p, EIO);
+	return 0;
+}
+
+int
+cixvpu_prepared_queue_input_return(struct cixvpu_prepared *p,
+    struct cixvpu_buffer_frame_result *out)
+{
+	struct cixvpu_buffer_frame_result result;
+	struct cixvpu_ring_checksum unused;
+	uint8_t payload[CIXVPU_BUFFER_FRAME_BYTES];
+	uint16_t code, next;
+	size_t length;
+	int error;
+
+	error = cixvpu_prepare_queue_context(p);
+	if (error != 0)
+		return error;
+	if (p->queue.pending != 1 || p->queue.input_state != 1)
+		return EBUSY;
+	if (p->queue.returns == UINT32_MAX)
+		return cixvpu_prepare_queue_failure(p, EOVERFLOW);
+	error = cixvpu_prepare_queue_value(p, out, sizeof(*out),
+	    _Alignof(struct cixvpu_buffer_frame_result));
+	if (error != 0)
+		return error;
+	error = cixvpu_prepare_queue_read(p, CIXVPU_DMA_INPUT, p->queue.rx[0],
+	    &code, payload, sizeof(payload), &length, &next, &unused);
+	if (error != 0)
+		return error;
+	if (code != CIXVPU_BUFFER_FRAME)
+		return cixvpu_prepare_queue_failure(p, EPROTO);
+	error = cixvpu_buffer_frame_return(payload, length, &p->queue.frame, &result);
+	if (error != 0)
+		return cixvpu_prepare_queue_failure(p, error);
+	error = cixvpu_dma_queue_return(p->dma, p, &p->plan, CIXVPU_DMA_INPUT,
+	    next, 0, 0, NULL, 0);
+	if (error != 0)
+		return cixvpu_prepare_queue_failure(p, error);
+	p->queue.rx[0] = next;
+	p->queue.input_state = 2;
+	p->queue.pending = 0;
+	p->queue.returns++;
+	*out = result;
+	return 0;
+}
+
+int
+cixvpu_prepared_queue_output_copy(struct cixvpu_prepared *p, void *destination,
+    size_t capacity, struct cixvpu_buffer_bitstream_result *out)
+{
+	struct cixvpu_buffer_bitstream_result result;
+	struct cixvpu_ring_checksum unused;
+	struct cixvpu_prepare_span a = { destination, capacity };
+	struct cixvpu_prepare_span b = { out, sizeof(*out) };
+	uint8_t payload[CIXVPU_BUFFER_BITSTREAM_BYTES];
+	uint16_t code, next;
+	size_t length;
+	int error;
+
+	error = cixvpu_prepare_queue_context(p);
+	if (error != 0)
+		return error;
+	if (p->queue.pending != 2 || p->queue.output_state != 1)
+		return EBUSY;
+	if (p->queue.returns == UINT32_MAX)
+		return cixvpu_prepare_queue_failure(p, EOVERFLOW);
+	error = cixvpu_prepare_queue_value(p, out, sizeof(*out),
+	    _Alignof(struct cixvpu_buffer_bitstream_result));
+	if (error == 0 && capacity != 0)
+		error = cixvpu_prepare_queue_value(p, destination, capacity, 1);
+	if (error != 0)
+		return error;
+	if ((capacity == 0 && destination != NULL) ||
+	    (capacity != 0 && cixvpu_prepare_overlap(&a, &b)))
+		return EINVAL;
+	error = cixvpu_prepare_queue_read(p, CIXVPU_DMA_OUTPUT, p->queue.rx[1],
+	    &code, payload, sizeof(payload), &length, &next, &unused);
+	if (error != 0)
+		return error;
+	if (code != CIXVPU_BUFFER_BITSTREAM)
+		return cixvpu_prepare_queue_failure(p, EPROTO);
+	error = cixvpu_buffer_bitstream_return(payload, length, &p->queue.output, &result);
+	if (error != 0)
+		return cixvpu_prepare_queue_failure(p, error);
+	if (capacity < result.filled)
+		return EMSGSIZE;
+	error = cixvpu_dma_queue_return(p->dma, p, &p->plan, CIXVPU_DMA_OUTPUT,
+	    next, result.offset, result.filled, destination, capacity);
+	if (error != 0)
+		return cixvpu_prepare_queue_failure(p, error);
+	p->queue.rx[1] = next;
+	p->queue.output_state = 2;
+	p->queue.output_eof = (result.flags & UINT32_C(0x100010)) != 0;
+	p->queue.pending = 0;
+	p->queue.returns++;
+	*out = result;
+	return 0;
+}
+
+int
+cixvpu_prepared_queue_hold(struct cixvpu_prepared *p, int reason)
+{
+
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (p == NULL || reason < 0)
+		return EINVAL;
+	if (p->boot.error != 0) {
+		p->queue.held = true;
+		return p->boot.error;
+	}
+	if (!p->queue.enabled || p->queue.held)
+		return EBUSY;
+	p->queue.held = true;
+	p->boot.error = reason;
+	return 0;
 }

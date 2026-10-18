@@ -95,7 +95,7 @@ void boot_fixture_drop(struct cixvpu_prepared *p) { boot_drop(p); }
 unsigned int boot_fixture_live(void) { return depth + live_kmem; }
 void boot_fixture_map_valid(struct cixvpu_prepared *p, bool valid) { p->dma->owners[p->dma->count-1].map->dm_nsegs=valid ? 1 : 0; }
 BRIDGE
-    extra="$work/prepare-bridge.c $src/sys/dev/ic/cixvpu_mmu.c $src/sys/dev/ic/cixvpu_ring.c"
+    extra="$work/prepare-bridge.c $src/sys/dev/ic/cixvpu_mmu.c $src/sys/dev/ic/cixvpu_ring.c $src/sys/dev/ic/cixvpu_command.c $src/sys/dev/ic/cixvpu_buffer.c"
     api="$api -DCIXVPU_DMA_API -DCIXVPU_SYNC_API -DCIXVPU_PREPARE_API -DCIXVPU_BOOT_API"
 fi
 if ruby -e 'exit(File.read(ARGV[0]).include?("sc_boot_once_invoked") ? 0 : 1)' \

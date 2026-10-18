@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Reuse actual allocator and its platform boundary, never a copied algorithm. */
 #define main cixvpu_allocation_contract_main
+#include "cixvpu_command.h"
+#include "cixvpu_buffer.h"
 #include "cixvpu-dma-contract.c"
 #undef main
 #include "cixvpu_mmu.h"
@@ -1904,12 +1906,494 @@ static void frame_slot_owner_tests(void)
     }
 }
 
+#ifndef CIXVPU_PREPARE_QUEUE_API
+struct cixvpu_queue_identity { uint64_t frame_handle, output_handle, input_tag; };
+/* Missing feature is an explicit runtime boundary, never a copied implementation. */
+static int cixvpu_prepared_queue_open(struct cixvpu_prepared *p,
+    const struct cixvpu_queue_identity *identity)
+{ (void)p; (void)identity; return ENOTSUP; }
+#endif
+static struct cixvpu_prepared *queue_owner(void)
+{
+    struct cixvpu_fw_plan plan;
+    struct cixvpu_frame_source source;
+    struct cixvpu_dma *raw = frame_slots_begin(&plan, &source);
+    struct cixvpu_prepared *p = NULL;
+    CHECK(prepare_frame_slots(&raw, &plan, rpc_image, sizeof(rpc_image),
+        fixture_pin, &source, &p) == 0 && raw == NULL);
+    sync_fixture(&plan, true);
+    CHECK(cixvpu_prepared_sync_initial(p) == 0);
+    boot_host=118; boot_mve=119; boot_rpc=124;
+    boot_nevents=0; boot_unstable=boot_append=false;
+    boot_alloc_change=boot_resize_change=0; sync_observer=boot_observe;
+    return p;
+}
+static void queue_bootstrap(struct cixvpu_prepared *p)
+{
+    struct cixvpu_boot_reply reply;
+    uint32_t root;
+    CHECK(cixvpu_prepared_publish_root(p, &root) == 0);
+    boot_message(0, 2001, 4, 0, 0x000407d1);
+    CHECK(cixvpu_prepared_boot_receive_rpc(p, &reply) == 0 && reply.code == 2001);
+    boot_nevents=0; boot_message(2, 2009, 0, 0, 0x00040faa);
+    CHECK(cixvpu_prepared_boot_receive_rpc(p, &reply) == 0 && reply.code == 2009);
+    boot_nevents=0;
+}
+static void queue_open_tests(void)
+{
+    struct cixvpu_prepared *p = queue_owner();
+    struct cixvpu_queue_identity identity = {UINT64_C(0x1122334455667788),
+        UINT64_C(0x8877665544332211), UINT64_C(0x123456789abcdef0)};
+    queue_bootstrap(p);
+    unsigned int calls = native_calls;
+    CHECK(cixvpu_prepared_queue_open(p, &identity) == 0);
+    CHECK(native_calls == calls && boot_nevents == 0);
+    struct cixvpu_boot_reply reply;
+    CHECK(cixvpu_prepared_boot_receive(p, &reply) == EBUSY);
+    CHECK(cixvpu_prepared_boot_receive_rpc(p, &reply) == EBUSY);
+    CHECK(native_calls == calls && boot_nevents == 0);
+    CHECK(cixvpu_prepared_queue_open(p, &identity) == EBUSY);
+    boot_drop(p);
+}
+
+/* Breaks: lost seeded TX state, wrong queue/checksum, missing return credit,
+ * early ACK/copy, stale bounce bytes, refill before PREREAD and held retries. */
+static const uint8_t queue_frame[72] = {
+    0x88,0x77,0x66,0x55,0x44,0x33,0x22,0x11, 0xf0,0xde,0xbc,0x9a,0x78,0x56,0x34,0x12,
+    4,4,1,0, 4,0,2,0, 1,2,0,0, 0,0,0,0x70, 0,0x50,0,0x70,
+    0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0x10,0,0, 3,8,0,0,
+    0,0,0,0, 2,0,4,0, 0,0,0,0
+};
+static const uint8_t queue_stream[40] = {
+    0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88, 0xf0,0xde,0xbc,0x9a,0x78,0x56,0x34,0x12,
+    0,0,0,0, 1,0x10,0,0, 0,0,0,0, 0,0,0,0, 0,0,0x40,0x24, 0,0,0,0
+};
+#ifdef CIXVPU_PREPARE_QUEUE_API
+static unsigned int queue_reads, queue_pre_reads, queue_acks;
+static bool queue_refill, queue_check_copy, queue_churn, queue_consumer_churn;
+static uint8_t *queue_copy_target;
+static void queue_observe(unsigned int i, bus_addr_t offset, bus_size_t length, int ops)
+{
+    CHECK(i < 401 && offset <= 4096 && length <= 4096-offset);
+    CHECK(!((ops & 3) && (ops & 12)));
+    if (ops & BUS_DMASYNC_POSTREAD) {
+        memcpy((uint8_t *)resources[i].kva+offset,device_memory[i]+offset,(size_t)length);
+        if(i==392 || i==393) queue_reads++;
+    }
+    if (ops & BUS_DMASYNC_PREWRITE) {
+        if (i==122 && offset==0 && length==2 && queue_check_copy) {
+            CHECK(queue_copy_target[0]==0xd1 && queue_copy_target[1]==0xd2 && queue_copy_target[2]==0xd3);
+            queue_acks++;
+        }
+        if(i==122 && offset==2 && length==2 && queue_refill)
+            CHECK(queue_pre_reads==2);
+        memcpy(device_memory[i]+offset,(uint8_t *)resources[i].kva+offset,(size_t)length);
+    }
+    if ((i==392 || i==393) && ops==BUS_DMASYNC_PREREAD) queue_pre_reads++;
+    if (i==119 && length==4096 && ops==BUS_DMASYNC_PREREAD) {
+        if(queue_churn) device_memory[i][0]^=1;
+        if(queue_consumer_churn) device_memory[i][2]^=1;
+    }
+}
+static struct cixvpu_prepared *queue_ready(void)
+{
+    struct cixvpu_prepared *p=queue_owner();
+    const struct cixvpu_queue_identity id={UINT64_C(0x1122334455667788),
+        UINT64_C(0x8877665544332211),UINT64_C(0x123456789abcdef0)};
+    queue_bootstrap(p);
+    CHECK(cixvpu_prepared_queue_open(p,&id)==0);
+    queue_reads=queue_pre_reads=queue_acks=0;
+    queue_refill=queue_check_copy=queue_churn=queue_consumer_churn=false;
+    sync_observer=queue_observe;
+    device_memory[119][2]=2; /* Firmware consumed the seeded PING. */
+    return p;
+}
+static void queue_notify(struct cixvpu_prepared *p,uint16_t code)
+{
+    unsigned int pos=p->boot.cursor;
+    boot_message(pos,code,0,0,p->boot.checksum.sum+code);
+}
+static void queue_return_wire(unsigned int page,uint16_t pos,uint16_t code,
+    const uint8_t *payload,size_t n)
+{
+    uint8_t *m=device_memory[page];
+    put32(m+16+4*pos,(uint32_t)code|(uint32_t)n<<16);
+    for(size_t i=0;i<n;i++) m[16+(4*(pos+1)+i)%4080]=payload[i];
+    uint16_t next=(uint16_t)((pos+1+(n+3)/4)%1020);
+    m[0]=(uint8_t)next;m[1]=(uint8_t)(next>>8);
+}
+static void queue_transfer_tests(void)
+{
+    struct cixvpu_prepared *p=queue_ready();
+    struct cixvpu_queue_command command={CIXVPU_Q_JOB_ONE,0};
+    CHECK(cixvpu_prepared_queue_command(p,&command)==0);
+    CHECK(device_memory[118][2]==6);
+    CHECK(word(device_memory[118],6)==0x000803f1 && word(device_memory[118],7)==0x000907e0);
+    CHECK(word(device_memory[118],8)==0x00010001 && word(device_memory[118],9)==0);
+    CHECK(word(device_memory[118],1)==0 && word(device_memory[118],2)==1006 && word(device_memory[118],3)==0x907e0);
+    struct cixvpu_queue_input_param param={CIXVPU_Q_FRAME_RATE,0x001e0000};
+    CHECK(cixvpu_prepared_queue_input_param(p,&param)==0);
+    CHECK(device_memory[120][2]==4 && word(device_memory[120],4)==0x00080bbb);
+    CHECK(word(device_memory[120],5)==0x00260bc4 && word(device_memory[120],6)==9 && word(device_memory[120],7)==0x001e0000);
+    param=(struct cixvpu_queue_input_param){CIXVPU_Q_RC_OFF,0};
+    CHECK(cixvpu_prepared_queue_input_param(p,&param)==0 && device_memory[120][2]==10);
+    CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_INPUT_ONCE)==0);
+    CHECK(device_memory[120][2]==30 && word(device_memory[120],14)==0x00480bb9);
+    CHECK(memcmp(device_memory[120]+64,queue_frame,72)==0);
+    unsigned int calls=native_calls;
+    CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_INPUT_ONCE)==EBUSY && native_calls==calls);
+    CHECK(cixvpu_prepared_queue_input_param(p,&param)==EBUSY && native_calls==calls);
+    CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_OUTPUT_EMPTY)==0);
+    CHECK(device_memory[122][2]==12 && word(device_memory[122],4)==0x00280bba);
+    CHECK(memcmp(device_memory[122]+24,queue_stream,40)==0);
+    calls=native_calls;
+    CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_OUTPUT_EMPTY)==EBUSY && native_calls==calls);
+    struct cixvpu_queue_event event;
+    struct cixvpu_buffer_frame_result input;
+    memset(&input,0xa5,sizeof(input));
+    CHECK(cixvpu_prepared_queue_input_return(p,&input)==EBUSY && native_calls==calls);
+    queue_notify(p,2005);
+    CHECK(cixvpu_prepared_queue_receive(p,&event)==0 && event.kind==CIXVPU_Q_INPUT_AVAILABLE);
+    calls=native_calls;
+    CHECK(cixvpu_prepared_queue_receive(p,&event)==EBUSY && native_calls==calls);
+    queue_return_wire(121,0,3001,queue_frame,72);
+    CHECK(cixvpu_prepared_queue_input_return(p,&input)==0 && !input.rejected && !input.corrupt);
+    CHECK(device_memory[120][0]==19 && device_memory[120][2]==30);
+    uint8_t returned[40],copy[8];struct cixvpu_buffer_bitstream_result result,saved;
+    memcpy(returned,queue_stream,40);put32(returned+16,0x80);put32(returned+24,4094);put32(returned+28,3);
+    device_memory[392][4094]=0xd1;device_memory[392][4095]=0xd2;device_memory[393][0]=0xd3;
+    memset(resources[392].kva,0x9a,4096);memset(resources[393].kva,0x9a,4096);
+    queue_notify(p,2006);queue_return_wire(123,0,3002,returned,40);
+    CHECK(cixvpu_prepared_queue_receive(p,&event)==0 && event.kind==CIXVPU_Q_OUTPUT_AVAILABLE);
+    memset(copy,0xa5,sizeof(copy));memset(&result,0x77,sizeof(result));
+    memcpy(&saved,&result,sizeof(saved));
+    CHECK(cixvpu_prepared_queue_output_copy(p,copy,2,&result)==EMSGSIZE);
+    CHECK(copy[0]==0xa5 && memcmp(&result,&saved,sizeof(result))==0 && queue_reads==0 && device_memory[122][0]==0);
+    queue_check_copy=true;queue_copy_target=copy;
+    CHECK(cixvpu_prepared_queue_output_copy(p,copy,sizeof(copy),&result)==0);
+    CHECK(result.offset==4094 && result.filled==3 && result.flags==0x80 && queue_reads==2 && queue_acks==1);
+    CHECK(copy[0]==0xd1 && copy[1]==0xd2 && copy[2]==0xd3 && copy[3]==0xa5 && device_memory[122][0]==11);
+    queue_check_copy=false;queue_refill=true;queue_pre_reads=0;
+    CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_OUTPUT_EMPTY)==0 && queue_pre_reads==2);
+    memset(device_memory[392],0x61,4096);memset(device_memory[393],0x62,4096);
+    CHECK(copy[0]==0xd1 && copy[1]==0xd2 && copy[2]==0xd3);
+    memcpy(returned,queue_stream,40);put32(returned+16,0x10);put32(returned+24,1);put32(returned+28,5);
+    queue_notify(p,2006);queue_return_wire(123,11,3002,returned,40);
+    CHECK(cixvpu_prepared_queue_receive(p,&event)==0);
+    CHECK(cixvpu_prepared_queue_output_copy(p,copy,sizeof(copy),&result)==0 && result.filled==5 && copy[0]==0x61);
+    calls=native_calls;
+    CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_OUTPUT_EMPTY)==EBUSY && native_calls==calls);
+    CHECK(cixvpu_prepared_queue_hold(p,0)==0);
+    CHECK(cixvpu_prepared_queue_command(p,&command)==EBUSY && native_calls==calls);
+    enum cixvpu_boot_rpc_result rpc;
+    CHECK(cixvpu_prepared_boot_rpc_step(p,&rpc)==EBUSY && native_calls==calls);
+    CHECK(cixvpu_prepared_free(&p)==EBUSY);boot_drop(p);
+}
+static void queue_failure_tests(void)
+{
+    for(unsigned int kind=0;kind<9;kind++) {
+        struct cixvpu_prepared *p=queue_ready();
+        struct cixvpu_queue_command command={CIXVPU_Q_PING,0};
+        struct cixvpu_queue_event event,before;
+        memset(&event,0xa5,sizeof(event));memcpy(&before,&event,sizeof(before));
+        unsigned int calls=native_calls;
+        if(kind==0) {
+            CHECK(cixvpu_prepared_queue_command(p,NULL)==EINVAL && native_calls==calls);
+            CHECK(cixvpu_prepared_queue_command(p,(void *)resources[0].kva)==EINVAL && native_calls==calls);
+            command.value=1;CHECK(cixvpu_prepared_queue_command(p,&command)==EINVAL && native_calls==calls);
+        } else if(kind==1) {
+            p->dma->owners[400].map->dm_nsegs=2;
+            CHECK(cixvpu_prepared_queue_command(p,&command)==EIO && native_calls==calls);
+            p->dma->owners[400].map->dm_nsegs=1;
+            CHECK(cixvpu_prepared_queue_command(p,&command)==EIO && native_calls==calls);
+        } else if(kind==2) {
+            put32(device_memory[124],1);
+            CHECK(cixvpu_prepared_queue_command(p,&command)==EAGAIN);
+            CHECK(device_memory[118][2]==2);
+        } else if(kind==3) {
+            device_memory[119][2]=3;
+            CHECK(cixvpu_prepared_queue_command(p,&command)==EPROTO);
+            CHECK(device_memory[118][2]==2);
+        } else if(kind==4) {
+            queue_notify(p,2014);
+            CHECK(cixvpu_prepared_queue_receive(p,&event)==ENOTSUP);
+            CHECK(memcmp(&event,&before,sizeof(event))==0 && device_memory[118][0]==3);
+        } else if(kind==5) {
+            queue_notify(p,2006);
+            CHECK(cixvpu_prepared_queue_receive(p,&event)==EPROTO);
+            CHECK(device_memory[118][0]==3);
+        } else if(kind==6) {
+            queue_churn=true;queue_notify(p,2009);
+            CHECK(cixvpu_prepared_queue_receive(p,&event)==EAGAIN && device_memory[118][0]==3);
+        } else if(kind==7) {
+            queue_consumer_churn=true;queue_notify(p,2009);
+            CHECK(cixvpu_prepared_queue_receive(p,&event)==0 && event.kind==CIXVPU_Q_PONG);
+        } else {
+            p->queue.submissions=UINT32_MAX;
+            CHECK(cixvpu_prepared_queue_command(p,&command)==EOVERFLOW && native_calls==calls);
+        }
+        if(kind==1 || kind==3 || kind==4 || kind==5 || kind==8) {
+            calls=native_calls;
+            CHECK(cixvpu_prepared_queue_receive(p,&event)!=0 && native_calls==calls);
+        }
+        boot_drop(p);
+    }
+    for(unsigned int kind=0;kind<5;kind++) {
+        struct cixvpu_prepared *p=queue_ready();
+        struct cixvpu_queue_event event;
+        uint8_t returned[40],copy[8];struct cixvpu_buffer_bitstream_result result;
+        CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_OUTPUT_EMPTY)==0);
+        queue_notify(p,2006);CHECK(cixvpu_prepared_queue_receive(p,&event)==0);
+        memcpy(returned,queue_stream,40);put32(returned+28,3);
+        if(kind==0) returned[0]^=1;
+        if(kind==1) returned[8]^=1;
+        if(kind==2) put32(returned+24,4096);
+        if(kind==3) put32(returned+32,0x24000000);
+        if(kind==4) put32(returned+20,8192);
+        queue_return_wire(123,0,3002,returned,40);
+        memset(copy,0xa5,sizeof(copy));unsigned int reads_before=queue_reads;
+        CHECK(cixvpu_prepared_queue_output_copy(p,copy,sizeof(copy),&result)==EPROTO);
+        CHECK(copy[0]==0xa5 && queue_reads==reads_before && device_memory[122][0]==0);
+        unsigned int calls=native_calls;
+        CHECK(cixvpu_prepared_queue_output_copy(p,copy,sizeof(copy),&result)==EPROTO && native_calls==calls);
+        boot_drop(p);
+    }
+}
+static void queue_wrap_tests(void)
+{
+    struct cixvpu_prepared *p=queue_ready();
+    struct cixvpu_queue_command command={CIXVPU_Q_PING,0};
+    for(unsigned int i=0;i<508;i++) {
+        device_memory[119][2]=device_memory[118][2];device_memory[119][3]=device_memory[118][3];
+        CHECK(cixvpu_prepared_queue_command(p,&command)==0);
+    }
+    CHECK(device_memory[118][2]==0xfa && device_memory[118][3]==3);
+    device_memory[119][2]=0xfa;device_memory[119][3]=3;
+    command.kind=CIXVPU_Q_JOB_ONE;
+    CHECK(cixvpu_prepared_queue_command(p,&command)==0 && device_memory[118][2]==2 && device_memory[118][3]==0);
+    CHECK(word(device_memory[118],1022)==0x000803f1 && word(device_memory[118],4)==0x00010001 && word(device_memory[118],5)==0);
+    boot_drop(p);
+}
+static void queue_admission_tests(void)
+{
+    const struct cixvpu_queue_identity id={1,2,3};
+    struct cixvpu_prepared *p=queue_owner();
+    unsigned int calls=native_calls;
+    CHECK(cixvpu_prepared_queue_open(p,&id)==EBUSY && native_calls==calls);
+    uint32_t root;struct cixvpu_boot_reply reply;
+    CHECK(cixvpu_prepared_publish_root(p,&root)==0);
+    calls=native_calls;
+    CHECK(cixvpu_prepared_queue_open(p,&id)==EBUSY && native_calls==calls);
+    boot_message(0,2001,4,0,0x000407d1);
+    CHECK(cixvpu_prepared_boot_receive_rpc(p,&reply)==0);
+    calls=native_calls;
+    CHECK(cixvpu_prepared_queue_open(p,&id)==EBUSY && native_calls==calls);
+    boot_nevents=0;boot_message(2,2009,0,0,0x00040faa);
+    CHECK(cixvpu_prepared_boot_receive_rpc(p,&reply)==0);
+    calls=native_calls;
+    CHECK(cixvpu_prepared_queue_open(p,NULL)==EINVAL && native_calls==calls);
+    CHECK(cixvpu_prepared_queue_open(p,(void *)resources[400].kva)==EINVAL && native_calls==calls);
+    CHECK(cixvpu_prepared_queue_open(p,&id)==0 && native_calls==calls);
+    boot_drop(p);
+    /* A second owner cannot inherit the first owner's successful replies. */
+    p=queue_owner();CHECK(cixvpu_prepared_publish_root(p,&root)==0);
+    calls=native_calls;
+    CHECK(cixvpu_prepared_queue_open(p,&id)==EBUSY && native_calls==calls);
+    boot_drop(p);
+}
+static void queue_response_tests(void)
+{
+    const uint16_t codes[]={2003,2003,2004,2011,2007,2008,2009,2013,2010,2017};
+    for(unsigned int i=0;i<sizeof(codes)/sizeof(codes[0]);i++) {
+        struct cixvpu_prepared *p=queue_ready();
+        uint8_t bytes[132]={0};size_t n=0;
+        if(i==1 || i==2 || i==3) { n=4;put32(bytes,i==3?2:56); }
+        if(i>=8) { n=132;put32(bytes,0x12345678);memset(bytes+4,0xff,128); }
+        uint16_t old=p->boot.cursor;
+        uint32_t sum=p->boot.checksum.sum+codes[i]+((uint32_t)n<<16);
+        for(size_t j=0;j<n;j+=4) sum+=word(bytes,(unsigned int)(j/4));
+        queue_return_wire(119,old,codes[i],bytes,n);
+        /* Firmware return records omit TX checksum words; history covers bytes. */
+        uint8_t *m=device_memory[119];
+        put32(m+4,p->boot.checksum.reserved[1]);
+        put32(m+8,p->boot.checksum.reserved[2]);put32(m+12,sum);
+        uint16_t next=(uint16_t)((old+1+(n+3)/4)%1020);
+        m[0]=(uint8_t)next;m[1]=(uint8_t)(next>>8);
+        struct cixvpu_queue_event event;
+        CHECK(cixvpu_prepared_queue_receive(p,&event)==0);
+        CHECK(device_memory[118][0]==next && p->boot.checksum.sum==sum);
+        if(i<4 || i>=8) CHECK(event.kind==CIXVPU_Q_RESPONSE);
+        if(i<2) CHECK(event.response.index_valid==(i==1) && event.response.index==(i==1?56:0));
+        if(i==2) CHECK(event.response.valid_job==56);
+        if(i==3) CHECK(event.response.state==2);
+        if(i>=8) {
+            CHECK(event.response.text[127]==0xff);
+            CHECK((i==8?event.response.error:event.response.index)==0x12345678);
+            unsigned int calls=native_calls;
+            CHECK(cixvpu_prepared_queue_receive(p,&event)==EIO && native_calls==calls);
+        }
+        boot_drop(p);
+    }
+}
+static void queue_atomic_tests(void)
+{
+    for(unsigned int op=0;op<7;op++) {
+        struct cixvpu_prepared *p=queue_ready();
+        struct cixvpu_queue_event event;
+        struct cixvpu_buffer_frame_result input;
+        struct cixvpu_buffer_bitstream_result result;
+        struct cixvpu_queue_command command={CIXVPU_Q_PING,0};
+        struct cixvpu_queue_input_param param={CIXVPU_Q_FRAME_RATE,1};
+        uint8_t copy[8],returned[40];memset(copy,0xa5,sizeof(copy));
+        if(op>=4) {
+            CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_OUTPUT_EMPTY)==0);
+            queue_notify(p,2006);CHECK(cixvpu_prepared_queue_receive(p,&event)==0);
+            memcpy(returned,queue_stream,40);put32(returned+28,1);
+            queue_return_wire(123,0,3002,returned,40);
+            if(op==6) CHECK(cixvpu_prepared_queue_output_copy(p,copy,sizeof(copy),&result)==0);
+        } else if(op==3) {
+            CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_INPUT_ONCE)==0);
+            queue_notify(p,2005);CHECK(cixvpu_prepared_queue_receive(p,&event)==0);
+            queue_return_wire(121,0,3001,queue_frame,72);
+        }
+        p->dma->owners[400].map->dm_nsegs=2;
+        unsigned int calls=native_calls;
+        if(op==0) CHECK(cixvpu_prepared_queue_input_param(p,&param)==EIO);
+        if(op==1) CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_INPUT_ONCE)==EIO);
+        if(op==2) CHECK(cixvpu_prepared_queue_receive(p,&event)==EIO);
+        if(op==3) CHECK(cixvpu_prepared_queue_input_return(p,&input)==EIO);
+        if(op==4) CHECK(cixvpu_prepared_queue_output_copy(p,copy,sizeof(copy),&result)==EIO);
+        if(op==5) CHECK(cixvpu_prepared_queue_output_copy(p,(void *)resources[0].kva,8,&result)==EIO);
+        if(op==6) CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_OUTPUT_EMPTY)==EIO);
+        CHECK(native_calls==calls && (op==6 || copy[0]==0xa5));
+        p->dma->owners[400].map->dm_nsegs=1;
+        CHECK(cixvpu_prepared_queue_command(p,&command)==EIO && native_calls==calls);
+        boot_drop(p);
+    }
+    /* Empty output and exact partial tail remain bounded and need no fake data. */
+    for(unsigned int n=0;n<2;n++) {
+        struct cixvpu_prepared *p=queue_ready();
+        struct cixvpu_queue_event event;
+        struct cixvpu_buffer_bitstream_result result;
+        uint8_t returned[40],copy=0xa5;
+        CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_OUTPUT_EMPTY)==0);
+        queue_notify(p,2006);CHECK(cixvpu_prepared_queue_receive(p,&event)==0);
+        memcpy(returned,queue_stream,40);put32(returned+24,4096);put32(returned+28,n);
+        queue_return_wire(123,0,3002,returned,40);device_memory[393][0]=0xde;
+        CHECK(cixvpu_prepared_queue_output_copy(p,n?&copy:NULL,n,&result)==0);
+        CHECK(result.offset==4096 && result.filled==n && copy==(n?0xde:0xa5));
+        boot_drop(p);
+    }
+}
+static void queue_capacity_tests(void)
+{
+    struct cixvpu_prepared *p=queue_ready();
+    struct cixvpu_queue_event event;
+    struct cixvpu_buffer_bitstream_result result;
+    /* Real output TX fills with 84 records while FW returns their buffers.
+     * Its independent TX consumer has not advanced: refill must remain full. */
+    for(unsigned int i=0;i<84;i++) {
+        CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_OUTPUT_EMPTY)==0);
+        queue_notify(p,2006);CHECK(cixvpu_prepared_queue_receive(p,&event)==0);
+        queue_return_wire(123,p->queue.rx[1],3002,queue_stream,40);
+        CHECK(cixvpu_prepared_queue_output_copy(p,NULL,0,&result)==0);
+    }
+    CHECK(device_memory[122][2]==0xf0 && device_memory[122][3]==3);
+    unsigned int pres_before=queue_pre_reads;
+    uint8_t before[4096];memcpy(before,device_memory[122],4096);
+    CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_OUTPUT_EMPTY)==EAGAIN);
+    CHECK(queue_pre_reads==pres_before && memcmp(before,device_memory[122],4096)==0);
+    /* A real consumer advance permits exactly the same refill to proceed. */
+    device_memory[123][2]=12;
+    CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_OUTPUT_EMPTY)==0);
+    CHECK(queue_pre_reads==pres_before+2);
+    boot_drop(p);
+    p=queue_ready();
+    struct cixvpu_queue_command command={CIXVPU_Q_FIXED_QP,51};
+    for(unsigned int i=0;i<8192;i++) {
+        device_memory[119][2]=device_memory[118][2];
+        device_memory[119][3]=device_memory[118][3];
+        CHECK(cixvpu_prepared_queue_command(p,&command)==0);
+    }
+    /* 1006 + 8192*(0x000803f2 + 56 + 51), modulo uint32_t. */
+    CHECK(word(device_memory[118],3)==0x008ba3ee);
+    boot_drop(p);
+}
+static void queue_command_tests(void)
+{
+    const struct {enum cixvpu_queue_command_kind kind;uint32_t value,code,bytes,a,b;} cases[]={
+        {CIXVPU_Q_NALU_START_CODES,0,1010,8,1,1},
+        {CIXVPU_Q_BFRAMES_ZERO,0,1010,8,17,0},
+        {CIXVPU_Q_PFRAMES_ZERO,0,1010,8,16,0},
+        {CIXVPU_Q_HEVC_MAIN,13,1010,8,3,0x000d0001},
+        {CIXVPU_Q_FIXED_QP,26,1010,8,56,26},
+        {CIXVPU_Q_GO,0,1001,0,0,0}, {CIXVPU_Q_STOP,0,1002,0,0,0},
+        {CIXVPU_Q_INPUT_FLUSH,0,1003,0,0,0},
+        {CIXVPU_Q_OUTPUT_FLUSH,0,1004,0,0,0},
+        {CIXVPU_Q_PING,0,1006,0,0,0}, {CIXVPU_Q_IDLE_ACK,0,1012,0,0,0}
+    };
+    struct cixvpu_prepared *p=queue_ready();
+    for(unsigned int i=0;i<sizeof(cases)/sizeof(cases[0]);i++) {
+        const struct cixvpu_queue_command command={cases[i].kind,cases[i].value};
+        unsigned int pos=p->queue.tx[0].write;
+        CHECK(cixvpu_prepared_queue_command(p,&command)==0);
+        CHECK(word(device_memory[118],4+pos)==(cases[i].code|(cases[i].bytes<<16)));
+        if(cases[i].bytes) {
+            CHECK(word(device_memory[118],6+pos)==cases[i].a);
+            CHECK(word(device_memory[118],7+pos)==cases[i].b);
+        }
+    }
+    struct cixvpu_queue_command command={CIXVPU_Q_HEVC_MAIN,0};
+    unsigned int calls=native_calls;
+    CHECK(cixvpu_prepared_queue_command(p,&command)==EINVAL && native_calls==calls);
+    command=(struct cixvpu_queue_command){CIXVPU_Q_FIXED_QP,52};
+    CHECK(cixvpu_prepared_queue_command(p,&command)==EINVAL && native_calls==calls);
+    command=(struct cixvpu_queue_command){(enum cixvpu_queue_command_kind)999,0};
+    CHECK(cixvpu_prepared_queue_command(p,&command)==ENOTSUP && native_calls==calls);
+    struct cixvpu_queue_input_param param={CIXVPU_Q_FRAME_RATE,0};
+    CHECK(cixvpu_prepared_queue_input_param(p,&param)==EINVAL && native_calls==calls);
+    param=(struct cixvpu_queue_input_param){CIXVPU_Q_RC_OFF,1};
+    CHECK(cixvpu_prepared_queue_input_param(p,&param)==EINVAL && native_calls==calls);
+    CHECK(cixvpu_prepared_queue_hold(p,-1)==EINVAL && native_calls==calls);
+    CHECK(cixvpu_prepared_queue_hold(p,ETIMEDOUT)==0 && native_calls==calls);
+    struct cixvpu_queue_event event;struct cixvpu_buffer_frame_result frame;
+    struct cixvpu_buffer_bitstream_result stream;enum cixvpu_boot_debug_result debug;
+    CHECK(cixvpu_prepared_queue_command(p,&command)==ETIMEDOUT);
+    CHECK(cixvpu_prepared_queue_input_param(p,&param)==ETIMEDOUT);
+    CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_INPUT_ONCE)==ETIMEDOUT);
+    CHECK(cixvpu_prepared_queue_receive(p,&event)==ETIMEDOUT);
+    CHECK(cixvpu_prepared_queue_input_return(p,&frame)==ETIMEDOUT);
+    CHECK(cixvpu_prepared_queue_output_copy(p,NULL,0,&stream)==ETIMEDOUT);
+    CHECK(cixvpu_prepared_boot_debugparam(p,&debug)==ETIMEDOUT && native_calls==calls);
+    boot_drop(p);
+    for(unsigned int i=0;i<4;i++) {
+        p=queue_ready();
+        CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_INPUT_ONCE)==0);
+        queue_notify(p,2005);CHECK(cixvpu_prepared_queue_receive(p,&event)==0);
+        uint8_t returned[72];memcpy(returned,queue_frame,72);
+        returned[i==0?0:i==1?8:i==2?28:52]^=1;
+        queue_return_wire(121,0,3001,returned,72);
+        memset(&frame,0xa5,sizeof(frame));struct cixvpu_buffer_frame_result before;
+        memcpy(&before,&frame,sizeof(before));
+        CHECK(cixvpu_prepared_queue_input_return(p,&frame)==EPROTO);
+        CHECK(memcmp(&frame,&before,sizeof(frame))==0 && device_memory[120][0]==0);
+        boot_drop(p);
+    }
+}
+#endif
+
 #endif
 int main(void)
 
 {
 #ifdef CIXVPU_PREPARE_API
 #ifdef CIXVPU_FW_PLAN_FRAME_ADDRESS
+    queue_transfer_tests();
+    queue_failure_tests(); queue_wrap_tests();
+    queue_admission_tests(); queue_response_tests(); queue_atomic_tests();
+    queue_capacity_tests();
+    queue_command_tests();
+    queue_open_tests();
     frame_slot_owner_tests();
     frame_slot_failure_tests();
     frame_slot_phase_tests();

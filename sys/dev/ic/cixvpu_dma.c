@@ -1000,3 +1000,302 @@ cixvpu_dma_boot_ack(struct cixvpu_dma *dma,
 	bus_dmamap_sync(dma->tag, host->map, 0, 2, BUS_DMASYNC_PREWRITE);
 	return 0;
 }
+
+static int
+cixvpu_dma_queue_pages(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner, const struct cixvpu_fw_plan *plan,
+    enum cixvpu_dma_queue queue, struct cixvpu_dma_owner **host,
+    struct cixvpu_dma_owner **mve, struct cixvpu_dma_owner **rpc)
+{
+	struct cixvpu_dma_owner *msg, *reply;
+	enum cixvpu_fw_plan_role hrole, mrole;
+	uint32_t i;
+	int error;
+
+	switch (queue) {
+	case CIXVPU_DMA_MESSAGE:
+		hrole = CIXVPU_FW_PLAN_MSG_HOST;
+		mrole = CIXVPU_FW_PLAN_MSG_MVE;
+		break;
+	case CIXVPU_DMA_INPUT:
+		hrole = CIXVPU_FW_PLAN_BUF_IN_HOST;
+		mrole = CIXVPU_FW_PLAN_BUF_IN_MVE;
+		break;
+	case CIXVPU_DMA_OUTPUT:
+		hrole = CIXVPU_FW_PLAN_BUF_OUT_HOST;
+		mrole = CIXVPU_FW_PLAN_BUF_OUT_MVE;
+		break;
+	default:
+		return EINVAL;
+	}
+	error = cixvpu_dma_boot_pages(dma, owner, plan, &msg, &reply, rpc);
+	if (error != 0)
+		return error;
+	if (plan->slots_enabled != 1 || plan->boot_rpc != 1 || plan->cores != 1)
+		return ENOTSUP;
+	*host = *mve = NULL;
+	for (i = 0; i < dma->count; i++) {
+		if (dma->owners[i].page.role == hrole)
+			*host = &dma->owners[i];
+		if (dma->owners[i].page.role == mrole)
+			*mve = &dma->owners[i];
+	}
+	if (*host == NULL || *mve == NULL ||
+	    (uintptr_t)(*host)->kva % _Alignof(uint16_t) != 0 ||
+	    (uintptr_t)(*mve)->kva % _Alignof(uint16_t) != 0)
+		return EINVAL;
+	return 0;
+}
+
+static int
+cixvpu_dma_queue_rpc(struct cixvpu_dma *dma, struct cixvpu_dma_owner *rpc,
+    struct cixvpu_dma_boot_snapshot *snapshot)
+{
+	uint32_t state;
+
+	bus_dmamap_sync(dma->tag, rpc->map, 0, 12, BUS_DMASYNC_POSTREAD);
+	__atomic_thread_fence(__ATOMIC_ACQUIRE);
+	memcpy(snapshot->rpc_header, rpc->kva, 12);
+	bus_dmamap_sync(dma->tag, rpc->map, 0, 12, BUS_DMASYNC_PREREAD);
+	snapshot->rpc_valid = true;
+	snapshot->rpc_alloc_valid = snapshot->rpc_resize_valid = false;
+	state = le32dec(snapshot->rpc_header);
+	return state == 1 ? EAGAIN : state == 0 || state == 2 ? 0 : EPROTO;
+}
+
+int
+cixvpu_dma_queue_cursor(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner, const struct cixvpu_fw_plan *plan,
+    enum cixvpu_dma_queue queue, struct cixvpu_dma_boot_snapshot *snapshot,
+    uint16_t *out)
+{
+	struct cixvpu_dma_owner *host, *mve, *rpc;
+	const uint8_t *p;
+	uint16_t value;
+	int error;
+	bool fault;
+
+	error = cixvpu_dma_queue_pages(dma, owner, plan, queue, &host, &mve, &rpc);
+	if (error == 0)
+		error = cixvpu_dma_boot_output(dma, owner, snapshot, sizeof(*snapshot), &fault);
+	if (error == 0)
+		error = cixvpu_dma_boot_output(dma, owner, out, sizeof(*out), &fault);
+	if (error != 0)
+		return error;
+	error = cixvpu_dma_queue_rpc(dma, rpc, snapshot);
+	if (error != 0)
+		return error;
+	bus_dmamap_sync(dma->tag, mve->map, 2, 2, BUS_DMASYNC_POSTREAD);
+	__atomic_thread_fence(__ATOMIC_ACQUIRE);
+	p = (const uint8_t *)mve->kva + 2;
+	value = (uint16_t)p[0] | (uint16_t)p[1] << 8;
+	bus_dmamap_sync(dma->tag, mve->map, 2, 2, BUS_DMASYNC_PREREAD);
+	if (value >= 1020)
+		return EPROTO;
+	*out = value;
+	return 0;
+}
+
+int
+cixvpu_dma_queue_snapshot(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner, const struct cixvpu_fw_plan *plan,
+    enum cixvpu_dma_queue queue, struct cixvpu_dma_boot_snapshot *snapshot)
+{
+	struct cixvpu_dma_owner *host, *mve, *rpc;
+	uint8_t before[16], after[16];
+	unsigned int attempt;
+	int error;
+	bool fault;
+
+	error = cixvpu_dma_queue_pages(dma, owner, plan, queue, &host, &mve, &rpc);
+	if (error == 0)
+		error = cixvpu_dma_boot_output(dma, owner, snapshot, sizeof(*snapshot), &fault);
+	if (error != 0)
+		return error;
+	error = cixvpu_dma_queue_rpc(dma, rpc, snapshot);
+	if (error != 0)
+		return error;
+	for (attempt = 0; attempt < 4; attempt++) {
+		bus_dmamap_sync(dma->tag, mve->map, 0, 16, BUS_DMASYNC_POSTREAD);
+		__atomic_thread_fence(__ATOMIC_ACQUIRE);
+		memcpy(before, mve->kva, sizeof(before));
+		bus_dmamap_sync(dma->tag, mve->map, 0, 16, BUS_DMASYNC_PREREAD);
+		bus_dmamap_sync(dma->tag, mve->map, 0, CIXVPU_FW_PAGE_SIZE, BUS_DMASYNC_POSTREAD);
+		memcpy(snapshot->message, mve->kva, sizeof(snapshot->message));
+		bus_dmamap_sync(dma->tag, mve->map, 0, CIXVPU_FW_PAGE_SIZE, BUS_DMASYNC_PREREAD);
+		bus_dmamap_sync(dma->tag, mve->map, 0, 16, BUS_DMASYNC_POSTREAD);
+		__atomic_thread_fence(__ATOMIC_ACQUIRE);
+		memcpy(after, mve->kva, sizeof(after));
+		bus_dmamap_sync(dma->tag, mve->map, 0, 16, BUS_DMASYNC_PREREAD);
+		if (memcmp(before, after, 2) != 0 ||
+		    memcmp(after, snapshot->message, 2) != 0)
+			continue;
+		if (queue == CIXVPU_DMA_MESSAGE &&
+		    (memcmp(before + 4, after + 4, 12) != 0 ||
+		    memcmp(after + 4, snapshot->message + 4, 12) != 0))
+			continue;
+		return 0;
+	}
+	return EAGAIN;
+}
+
+/* The caller has validated every map/span before reaching this void boundary. */
+static void
+cixvpu_dma_queue_store(struct cixvpu_dma *dma, struct cixvpu_dma_owner *host,
+    unsigned int offset, uint16_t cursor)
+{
+	const uint8_t bytes[2] = { (uint8_t)cursor, (uint8_t)(cursor >> 8) };
+	uint16_t wire;
+
+	memcpy(&wire, bytes, sizeof(wire));
+	bus_dmamap_sync(dma->tag, host->map, offset, 2, BUS_DMASYNC_POSTWRITE);
+	atomic_store_release((uint16_t *)((uint8_t *)host->kva + offset), wire);
+	bus_dmamap_sync(dma->tag, host->map, offset, 2, BUS_DMASYNC_PREWRITE);
+}
+
+int
+cixvpu_dma_queue_publish(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner, const struct cixvpu_fw_plan *plan,
+    enum cixvpu_dma_queue queue, uint16_t previous, uint16_t next,
+    const void *data, const uint32_t history[3], bool refill)
+{
+	struct cixvpu_dma_owner *host, *mve, *rpc;
+	struct cixvpu_fw_slot_span output;
+	const uint8_t *bytes = data;
+	uint8_t *p;
+	size_t start, first, length;
+	unsigned int i;
+	int error;
+	bool fault;
+
+	if (previous >= 1020 || next >= 1020 || previous == next ||
+	    (refill && queue != CIXVPU_DMA_OUTPUT))
+		return EINVAL;
+	length = (size_t)(next >= previous ? next - previous :
+	    1020 - previous + next) * 4;
+	if (length > 80)
+		return EINVAL;
+	error = cixvpu_dma_queue_pages(dma, owner, plan, queue, &host, &mve, &rpc);
+	if (error == 0)
+		error = cixvpu_dma_boot_output(dma, owner, data, 4080, &fault);
+	if (error == 0)
+		error = cixvpu_dma_boot_output(dma, owner, history, 12, &fault);
+	if (error == 0 && refill)
+		error = cixvpu_fw_plan_slot(plan, CIXVPU_FW_SLOT_BITSTREAM, &output);
+	if (error != 0)
+		return error;
+	/* No fallible work remains, including output refill and cursor publication. */
+	if (refill)
+		for (i = 0; i < output.pages; i++)
+			bus_dmamap_sync(dma->tag, dma->owners[output.first_backing + i].map,
+			    0, CIXVPU_FW_PAGE_SIZE, BUS_DMASYNC_PREREAD);
+	start = (size_t)previous * 4;
+	first = length < 4080 - start ? length : 4080 - start;
+	p = host->kva;
+	bus_dmamap_sync(dma->tag, host->map, 16 + start, first, BUS_DMASYNC_POSTWRITE);
+	memcpy(p + 16 + start, bytes + start, first);
+	bus_dmamap_sync(dma->tag, host->map, 16 + start, first, BUS_DMASYNC_PREWRITE);
+	if (first != length) {
+		bus_dmamap_sync(dma->tag, host->map, 16, length - first, BUS_DMASYNC_POSTWRITE);
+		memcpy(p + 16, bytes, length - first);
+		bus_dmamap_sync(dma->tag, host->map, 16, length - first, BUS_DMASYNC_PREWRITE);
+	}
+	bus_dmamap_sync(dma->tag, host->map, 4, 12, BUS_DMASYNC_POSTWRITE);
+	for (i = 0; i < 3; i++) {
+		p[4 + 4 * i] = (uint8_t)history[i];
+		p[5 + 4 * i] = (uint8_t)(history[i] >> 8);
+		p[6 + 4 * i] = (uint8_t)(history[i] >> 16);
+		p[7 + 4 * i] = (uint8_t)(history[i] >> 24);
+	}
+	bus_dmamap_sync(dma->tag, host->map, 4, 12, BUS_DMASYNC_PREWRITE);
+	cixvpu_dma_queue_store(dma, host, 2, next);
+	return 0;
+}
+
+int
+cixvpu_dma_queue_ack(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner, const struct cixvpu_fw_plan *plan,
+    enum cixvpu_dma_queue queue, uint16_t cursor)
+{
+	struct cixvpu_dma_owner *host, *mve, *rpc;
+	int error;
+
+	if (cursor >= 1020)
+		return EINVAL;
+	error = cixvpu_dma_queue_pages(dma, owner, plan, queue, &host, &mve, &rpc);
+	if (error != 0)
+		return error;
+	cixvpu_dma_queue_store(dma, host, 0, cursor);
+	return 0;
+}
+
+int
+cixvpu_dma_queue_return(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner, const struct cixvpu_fw_plan *plan,
+    enum cixvpu_dma_queue queue, uint16_t cursor, uint32_t offset,
+    uint32_t length, void *destination, size_t capacity)
+{
+	struct cixvpu_dma_owner *host, *mve, *rpc;
+	struct cixvpu_fw_slot_span first, second;
+	unsigned int i;
+	int error;
+	bool fault;
+
+	if (cursor >= 1020 || (queue != CIXVPU_DMA_INPUT && queue != CIXVPU_DMA_OUTPUT))
+		return EINVAL;
+	error = cixvpu_dma_queue_pages(dma, owner, plan, queue, &host, &mve, &rpc);
+	if (error == 0)
+		error = cixvpu_fw_plan_slot(plan, queue == CIXVPU_DMA_INPUT ?
+		    CIXVPU_FW_SLOT_Y : CIXVPU_FW_SLOT_BITSTREAM, &first);
+	if (error == 0 && queue == CIXVPU_DMA_INPUT)
+		error = cixvpu_fw_plan_slot(plan, CIXVPU_FW_SLOT_UV, &second);
+	if (error != 0)
+		return error;
+	if (queue == CIXVPU_DMA_OUTPUT) {
+		if (offset > first.bytes || length > first.bytes - offset)
+			return EPROTO;
+		if (capacity < length)
+			return EMSGSIZE;
+		if (capacity != 0) {
+			error = cixvpu_dma_boot_output(dma, owner, destination, capacity, &fault);
+			if (error != 0)
+				return error;
+		} else if (length != 0 || destination != NULL) {
+			return EINVAL;
+		}
+	} else if (offset != 0 || length != 0 || capacity != 0 || destination != NULL) {
+		return EINVAL;
+	}
+	/* Preflight is complete. Copy precedes ACK and cannot fail halfway. */
+	if (queue == CIXVPU_DMA_INPUT) {
+		for (i = 0; i < first.pages; i++)
+			bus_dmamap_sync(dma->tag, dma->owners[first.first_backing + i].map,
+			    0, CIXVPU_FW_PAGE_SIZE, BUS_DMASYNC_POSTWRITE);
+		for (i = 0; i < second.pages; i++)
+			bus_dmamap_sync(dma->tag, dma->owners[second.first_backing + i].map,
+			    0, CIXVPU_FW_PAGE_SIZE, BUS_DMASYNC_POSTWRITE);
+	} else {
+		uint8_t *out = destination;
+		uint32_t page, local, remaining = length;
+
+		for (i = 0; i < first.pages; i++)
+			bus_dmamap_sync(dma->tag, dma->owners[first.first_backing + i].map,
+			    0, CIXVPU_FW_PAGE_SIZE, BUS_DMASYNC_POSTREAD);
+		page = offset / CIXVPU_FW_PAGE_SIZE;
+		local = offset % CIXVPU_FW_PAGE_SIZE;
+		while (remaining != 0) {
+			uint32_t bytes = CIXVPU_FW_PAGE_SIZE - local;
+
+			if (bytes > remaining)
+				bytes = remaining;
+			memcpy(out, (uint8_t *)dma->owners[
+			    first.first_backing + page].kva + local, bytes);
+			out += bytes;
+			remaining -= bytes;
+			page++;
+			local = 0;
+		}
+	}
+	cixvpu_dma_queue_store(dma, host, 0, cursor);
+	return 0;
+}

@@ -66,4 +66,34 @@ int cixvpu_dma_boot_snapshot_rpc(struct cixvpu_dma *,
 int cixvpu_dma_boot_ack(struct cixvpu_dma *,
     const struct cixvpu_prepared *, const struct cixvpu_fw_plan *, uint16_t);
 
+/*
+ * Closed queue copies/publications for the serialized prepared owner only.
+ * Revalidate every loaded map and known span before synchronization or stores.
+ * Snapshot copies into the preparer's retained scratch, never a page view.
+ * Publish consumes a complete CPU ring image but writes only changed spans.
+ * Refill rearms all output backing before the release cursor publication.
+ * Return validates the full destination before POSTREAD/copy/ACK; its final
+ * store and metadata commit have no remaining fallible operation. No native
+ * view, address capability, MMIO notification or lifetime reversal is added.
+ */
+enum cixvpu_dma_queue {
+	CIXVPU_DMA_MESSAGE, CIXVPU_DMA_INPUT, CIXVPU_DMA_OUTPUT
+};
+int cixvpu_dma_queue_cursor(struct cixvpu_dma *,
+    const struct cixvpu_prepared *, const struct cixvpu_fw_plan *,
+    enum cixvpu_dma_queue, struct cixvpu_dma_boot_snapshot *, uint16_t *);
+int cixvpu_dma_queue_snapshot(struct cixvpu_dma *,
+    const struct cixvpu_prepared *, const struct cixvpu_fw_plan *,
+    enum cixvpu_dma_queue, struct cixvpu_dma_boot_snapshot *);
+int cixvpu_dma_queue_publish(struct cixvpu_dma *,
+    const struct cixvpu_prepared *, const struct cixvpu_fw_plan *,
+    enum cixvpu_dma_queue, uint16_t, uint16_t, const void *,
+    const uint32_t[3], bool);
+int cixvpu_dma_queue_ack(struct cixvpu_dma *,
+    const struct cixvpu_prepared *, const struct cixvpu_fw_plan *,
+    enum cixvpu_dma_queue, uint16_t);
+int cixvpu_dma_queue_return(struct cixvpu_dma *,
+    const struct cixvpu_prepared *, const struct cixvpu_fw_plan *,
+    enum cixvpu_dma_queue, uint16_t, uint32_t, uint32_t, void *, size_t);
+
 #endif

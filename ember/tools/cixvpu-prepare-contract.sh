@@ -49,7 +49,8 @@ fi
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} $api \
     -I"$src/sys/dev/ic" -I"$work" "$src/ember/tools/cixvpu-prepare-contract.c" \
     "$src/sys/dev/ic/cixvpu_fw.c" "$src/sys/dev/ic/cixvpu_fw_plan.c" \
-    "$src/sys/dev/ic/cixvpu_mmu.c" "$src/sys/dev/ic/cixvpu_ring.c" -o "$work/test"
+    "$src/sys/dev/ic/cixvpu_mmu.c" "$src/sys/dev/ic/cixvpu_ring.c" \
+    "$src/sys/dev/ic/cixvpu_command.c" "$src/sys/dev/ic/cixvpu_buffer.c" -o "$work/test"
 if [ -n "${CIXVPU_PREPARE_TEST_OUTPUT:-}" ]; then cp "$work/test" "$CIXVPU_PREPARE_TEST_OUTPUT"; fi
 if [ "${CIXVPU_PREPARE_ANALYZE:-0}" = 1 ]; then
     ${CC:-cc} -std=c11 -dM -E -x c /dev/null > "$work/predefined.h"
