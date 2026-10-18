@@ -24,6 +24,8 @@ name: CIX platform resource contracts
       - 'ember/tools/ifconfig-mtu-*'
       - 'sys/dev/pci/if_rge.c'
       - 'sys/dev/pci/if_rgereg.h'
+      - 'sys/sys/mbuf.h'
+      - 'sys/kern/uipc_mbuf.c'
       - 'ember/tools/rge-rx-contract.*'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
@@ -96,6 +98,8 @@ name: CIX platform resource contracts
       - 'ember/tools/ifconfig-mtu-*'
       - 'sys/dev/pci/if_rge.c'
       - 'sys/dev/pci/if_rgereg.h'
+      - 'sys/sys/mbuf.h'
+      - 'sys/kern/uipc_mbuf.c'
       - 'ember/tools/rge-rx-contract.*'
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
@@ -213,6 +217,8 @@ jobs:
             /ember/tools/ifconfig-mtu-*
             /sys/dev/pci/if_rge.c
             /sys/dev/pci/if_rgereg.h
+            /sys/sys/mbuf.h
+            /sys/kern/uipc_mbuf.c
             /ember/tools/rge-rx-contract.*
             /sys/sys/queue.h
             /sys/external/bsd/acpica/dist/include/

@@ -1157,19 +1157,19 @@ The base system shell is unchanged.
 - **Reliable MTU command status:** `ifconfig` returns failure when the kernel
   rejects an MTU change. The [actual-source contract](ember/tools/ifconfig-mtu-contract.c)
   checks error preservation and stops later matched commands. Host analysis and
-  sanitizers pass; native CLI acceptance remains pending.
+  sanitizers pass. Native ifconfig returns failure for the measured RGE
+  jumbo mapping error.
 - **Realtek Ethernet allocation cleanup:** `rge` unwinds partial DMA resources
   and unmaps the TX ring through its CPU address. The [actual-source contract](ember/tools/rge-rx-contract.c)
   injects every allocation-stage failure and checks repeated cleanup. GCC16
   path analysis and sanitizers pass on the host; physical failure recovery
-  remains unqualified. RTL8126-only jumbo source supports MTU 9000 using 9216-byte
-  external buffers and a spare DMA map. Resource failures retain the old RX buffer;
-  invalid receive lengths are rejected before delivery. Default MTU 1500 and
-  other ASIC limits remain unchanged. The expanded actual-source contracts pass
-  host analysis and sanitizers. One physical MTU 9000 bring-up returned ENOBUFS;
-  jumbo traffic remains unqualified. New source diagnostics preserve the original
-  RX initialization error and report the failing index and requested size.
-  Those diagnostics still need target build and native acceptance. See the
+  remains unqualified. RTL8126-only jumbo source uses private single-segment
+  DMA storage for MTU 9000 and copies received packets into independent mbuf
+  chains before rearming each slot. Default MTU 1500 and other ASIC paths remain
+  unchanged. Host fault, copy-lifetime and sanitizer contracts pass. Native
+  diagnostics identify the previous bring-up failure as EFBIG on RX buffer 0
+  at 9216 bytes; ifconfig reports failure correctly. The new DMA-backed path
+  still needs target build and physical jumbo traffic acceptance. See the
   [CIX board limits](ember/boards/orange-pi-6-plus.md).
 - **ACPI xHCI root buses:** the frontend skips a logical USB bus when its
   initialized root-hub descriptor has no ports. Actual-source contracts cover

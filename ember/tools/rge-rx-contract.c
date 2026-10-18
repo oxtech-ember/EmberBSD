@@ -36,6 +36,19 @@ static unsigned int checks;
 #define MT_DATA 1
 #define M_PKTHDR 1U
 #define M_EXT 2U
+#define M_EXT_RW 32U
+#define M_EXTCOPYFLAGS (M_EXT|M_EXT_RW)
+#define M_DEVBUF 0
+#define M_NOWAIT 0
+#define PAGE_SIZE 4096
+#define round_page(n) (((n)+4095U)&~4095U)
+#define KASSERT(c) CHECK(c)
+#define mtod(m,t) ((t)(m)->m_data)
+#define MHLEN 128
+#define MLEN 128
+#define MINCLSIZE 128
+#define max_linkhdr 16
+#define uimin(a,b) ((a)<(b)?(a):(b))
 #define M_HASFCS 4U
 #define M_CSUM_IPv4_BAD 8U
 #define M_CSUM_TCP_UDP_BAD 16U
@@ -73,11 +86,16 @@ struct ethercom { struct ifnet ec_if; unsigned int ec_capabilities, ec_rx_mowner
 struct ifmedia { unsigned int dummy; };
 struct mbuf {
 	struct mbuf *m_next;
-	uint8_t *m_data;
+	char *m_data;
 	int m_len;
 	unsigned int m_flags, vlan;
 	struct { int len; unsigned int csum_flags; } m_pkthdr;
-	struct { uint8_t *ext_buf; size_t ext_size; } m_ext;
+	struct { char *ext_buf; size_t ext_size; unsigned int ext_refcnt;
+		void (*ext_free)(struct mbuf *,void *,size_t,void *); void *ext_arg;
+	} m_ext;
+	struct mbuf *m_ext_ref;
+	unsigned int claims;
+	char inline_data[256];
 	struct ifnet *rcvif;
 };
 
@@ -111,7 +129,11 @@ static unsigned int diagnostic_calls;
 static char diagnostic[160];
 
 struct memory { void *cpu; size_t size; bus_addr_t bus; bool allocated, mapped; };
-static struct memory memory[2];
+#define MEM_COUNT (RGE_RX_LIST_CNT+3)
+static struct memory memory[MEM_COUNT];
+static unsigned int owner_live, owner_calls, owner_fail_at, callback_calls;
+static unsigned int headers_freed, copy_claims;
+static bool copy_active;
 static bool failing(void) { return ++step == fail_at; }
 static void aprint_error_dev(device_t d, const char *s, ...)
 {
@@ -134,7 +156,7 @@ static void check_init_diagnostic(unsigned int wanted_index,
 }
 static struct memory *find_mem(bus_addr_t addr)
 {
-	for (unsigned int i=0;i<2;i++)
+	for (unsigned int i=0;i<MEM_COUNT;i++)
 		if (memory[i].allocated && memory[i].bus==addr) return &memory[i];
 	CHECK(false); return NULL;
 }
@@ -161,9 +183,9 @@ static void bus_dmamap_destroy(bus_dma_tag_t t, bus_dmamap_t m)
 static int bus_dmamem_alloc(bus_dma_tag_t t, size_t n, size_t align,
     size_t boundary, bus_dma_segment_t *seg, int maxseg, int *nseg, int flags)
 {
-	CHECK(t==&tag && align==RGE_ALIGN && boundary==0 && maxseg==1 && flags==BUS_DMA_NOWAIT);
+	CHECK(t==&tag && (align==RGE_ALIGN || align==PAGE_SIZE) && boundary==0 && maxseg==1 && flags==BUS_DMA_NOWAIT);
 	if (failing()) return ENOMEM;
-	for (unsigned int i=0;i<2;i++) if (!memory[i].allocated) {
+	for (unsigned int i=0;i<MEM_COUNT;i++) if (!memory[i].allocated) {
 		struct memory *p=&memory[i]; p->cpu=calloc(1,n); CHECK(p->cpu!=NULL);
 		p->size=n; p->bus=0x100000+(bus_addr_t)i*0x100000;
 		p->allocated=true; alloc_live++; *nseg=1;
@@ -180,7 +202,7 @@ static void bus_dmamem_free(bus_dma_tag_t t, bus_dma_segment_t *seg, int nseg)
 static int bus_dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *seg,
     int nseg, size_t n, void **out, int flags)
 {
-	CHECK(t==&tag && nseg==1 && flags==(BUS_DMA_NOWAIT|BUS_DMA_COHERENT));
+	CHECK(t==&tag && nseg==1 && (flags==BUS_DMA_NOWAIT || flags==(BUS_DMA_NOWAIT|BUS_DMA_COHERENT)));
 	if (failing()) { *out=(void *)(uintptr_t)0xbad; return ENOMEM; }
 	struct memory *p=find_mem(seg->ds_addr); CHECK(!p->mapped && p->size==n);
 	p->mapped=true; kva_live++; *out=p->cpu; return 0;
@@ -188,7 +210,7 @@ static int bus_dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *seg,
 static void bus_dmamem_unmap(bus_dma_tag_t t, void *cpu, size_t n)
 {
 	CHECK(t==&tag && kva_live>0);
-	for (unsigned int i=0;i<2;i++) if (memory[i].mapped && memory[i].cpu==cpu) {
+	for (unsigned int i=0;i<MEM_COUNT;i++) if (memory[i].mapped && memory[i].cpu==cpu) {
 		CHECK(memory[i].size==n);
 		for(unsigned int j=0;j<map_next;j++)
 			if(maps[j]!=NULL) CHECK(!maps[j]->loaded || maps[j]->cpu!=cpu);
@@ -201,7 +223,7 @@ static int bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t m, void *cpu,
 {
 	CHECK(t==&tag && m!=NULL && !m->loaded && n==m->capacity && process==NULL && flags==BUS_DMA_NOWAIT);
 	if (failing()) return ENOMEM;
-	for(unsigned int i=0;i<2;i++) if(memory[i].cpu==cpu && memory[i].mapped) {
+	for(unsigned int i=0;i<MEM_COUNT;i++) if(memory[i].cpu==cpu && memory[i].mapped) {
 		m->cpu=cpu; m->loaded=true; m->dm_mapsize=n; m->dm_nsegs=1;
 		m->dm_segs[0]=(bus_dma_segment_t){memory[i].bus,n}; loaded_live++; return 0;
 	}
@@ -210,7 +232,11 @@ static int bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t m, void *cpu,
 static void bus_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t m)
 {
 	CHECK(t==&tag && m!=NULL && m->loaded && loaded_live>0);
-	if(m->data) { free(m->device); m->device=NULL; }
+	if(m->data) {
+		for(unsigned int i=0;i<MEM_COUNT;i++)
+			if(memory[i].mapped && memory[i].cpu==m->cpu) CHECK(!m->armed);
+		free(m->device); m->device=NULL;
+	}
 	m->armed=m->data=false; m->loaded=false; m->dm_mapsize=0; m->dm_nsegs=0; m->cpu=NULL; loaded_live--;
 }
 static struct mbuf *m_gethdr(int how,int type)
@@ -218,7 +244,7 @@ static struct mbuf *m_gethdr(int how,int type)
 	CHECK(how==M_DONTWAIT && type==MT_DATA); mbuf_calls++;
 	if(mbuf_calls==mbuf_fail_at && mbuf_fail_kind==1) return NULL;
 	struct mbuf *m=calloc(1,sizeof(*m)); CHECK(m!=NULL);
-	m->m_flags=M_PKTHDR; mbufs++; return m;
+	m->m_flags=M_PKTHDR; m->m_data=m->inline_data; m->m_ext.ext_size=128; mbufs++; return m;
 }
 static void extmalloc(struct mbuf *m,size_t n,int how)
 {
@@ -231,23 +257,61 @@ static void extmalloc(struct mbuf *m,size_t n,int how)
 }
 #define MGETHDR(m,h,t) ((m)=m_gethdr((h),(t)))
 #define MEXTMALLOC(m,n,h) extmalloc((m),(n),(h))
-#define MCLAIM(m,o) do { CHECK((m)!=NULL); (void)(o); } while(0)
+#define MCLAIM(m,o) do { CHECK((m)!=NULL); (void)(o); (m)->claims++; } while(0)
+static void m_claimm(struct mbuf *m,unsigned int *owner)
+{
+	CHECK(owner==&active_sc->sc_ec.ec_rx_mowner);
+	for(;m!=NULL;m=m->m_next) { MCLAIM(m,owner); copy_claims++; }
+}
+#define mowner_ref(m,f) do { CHECK((m)!=NULL && (f)==M_EXT); external++; } while(0)
+#include "rge-mbuf.inc"
+static const unsigned int mb_cache=1;
+static void pool_cache_put(unsigned int cache,struct mbuf *m)
+{
+	CHECK(cache==mb_cache && m!=NULL && mbufs>0);
+	headers_freed++; mbufs--; free(m);
+}
 static void m_freem(struct mbuf *m)
 {
 	while(m!=NULL) {
 		struct mbuf *next=m->m_next; CHECK(mbufs>0);
-		if(m->m_flags&M_EXT) { CHECK(external>0); free(m->m_ext.ext_buf); external--; }
+		if(m->m_flags&M_EXT) { CHECK(external>0); external--;
+			if(m->m_ext.ext_free!=NULL) {
+				CHECK(m->m_ext.ext_refcnt==1 && m->m_ext_ref==m);
+				callback_calls++;
+				m->m_ext.ext_free(m,m->m_ext.ext_buf,m->m_ext.ext_size,m->m_ext.ext_arg);
+				m=next; continue;
+			}
+			free(m->m_ext.ext_buf); }
 		free(m); mbufs--; m=next;
 	}
 }
+static struct mbuf *m_get(int how,int type)
+{
+	struct mbuf *m=m_gethdr(how,type);
+	if(m!=NULL) m->m_flags=0;
+	return m;
+}
+static struct mbuf *m_free(struct mbuf *m)
+{
+	struct mbuf *next=m->m_next;
+	m->m_next=NULL; m_freem(m); return next;
+}
+#define MCLGET(m,h) extmalloc((m),MCLBYTES,(h))
 static void m_set_rcvif(struct mbuf *m,struct ifnet *ifp) { m->rcvif=ifp; }
 static void vlan_set_tag(struct mbuf *m,unsigned int tagvalue) { m->vlan=tagvalue; }
 #define if_statinc(p,f) ((p)->f++)
 static void if_percpuq_enqueue(void *queue,struct mbuf *m)
 {
 	CHECK(queue==active_sc && last_received==NULL && m->rcvif==&active_sc->sc_ec.ec_if);
-	CHECK(m->m_len>=18 && (size_t)m->m_len<=m->m_ext.ext_size);
-	CHECK(m->m_pkthdr.len==m->m_len && (m->m_flags&M_HASFCS)!=0);
+	CHECK(m->m_pkthdr.len>=18 && (m->m_flags&M_HASFCS)!=0);
+	size_t sum=0;
+	for(const struct mbuf *part=m;part!=NULL;part=part->m_next) {
+		CHECK(part->m_len>0 && (size_t)part->m_len<=part->m_ext.ext_size);
+		CHECK(part->m_ext.ext_free==NULL);
+		sum+=(size_t)part->m_len;
+	}
+	CHECK(sum==(size_t)m->m_pkthdr.len);
 	last_received=m; received++;
 }
 static int bus_dmamap_load_mbuf(bus_dma_tag_t t,bus_dmamap_t m,struct mbuf *b,int flags)
@@ -258,7 +322,21 @@ static int bus_dmamap_load_mbuf(bus_dma_tag_t t,bus_dmamap_t m,struct mbuf *b,in
 	data_load_calls++;
 	unsigned int fault=data_load_calls==data_fault_at ? data_fault_kind : 0;
 	if(fault==1 || fault==2) return fault==1 ? ENOMEM : EFBIG;
-	m->loaded=m->data=true; m->cpu=b->m_data; m->dm_mapsize=b->m_len;
+	/* Independent physical page walk: ordinary malloc VA is not PA-contiguous.
+	 * Registered DMA allocations have an explicit contiguous physical extent. */
+	bus_addr_t previous=0;
+	unsigned int segments=0;
+	for(size_t off=0;off<(size_t)b->m_len;off+=4096) {
+		bus_addr_t physical=0x400000000ULL+off*2;
+		for(unsigned int j=0;j<MEM_COUNT;j++)
+			if(memory[j].mapped && memory[j].cpu==b->m_data)
+				physical=memory[j].bus+off;
+		if(off==0 || physical!=previous+4096) segments++;
+		if(segments>(unsigned int)m->maxsegs) return EFBIG;
+		previous=physical;
+	}
+	m->loaded=m->data=true; m->cpu=b->m_data;
+ m->dm_mapsize=b->m_len;
 	m->dm_nsegs=fault==3 ? 2 : 1;
 	m->dm_segs[0]=(bus_dma_segment_t){(bus_addr_t)(uintptr_t)m+0x100000000ULL,b->m_len};
 	m->device=calloc(1,b->m_len); CHECK(m->device!=NULL); loaded_live++;
@@ -273,7 +351,7 @@ static void bus_dmamap_sync(bus_dma_tag_t t,bus_dmamap_t map,size_t off,size_t l
 		CHECK(off==0 && len==map->dm_mapsize);
 		if(ops==BUS_DMASYNC_POSTREAD) {
 			CHECK(map->armed); memcpy(map->cpu,map->device,len); map->armed=false;
-		} else if(ops==BUS_DMASYNC_PREREAD) map->armed=true;
+		} else if(ops==BUS_DMASYNC_PREREAD) { CHECK(!copy_active); map->armed=true; }
 		else CHECK(false);
 	} else if(active_sc!=NULL && map==active_sc->sc_queues->q_rx.rge_rx_list_map &&
 	    ops==(BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE)) {
@@ -300,6 +378,29 @@ static uint16_t bus_space_read_2(bus_space_tag_t t,bus_space_handle_t h,unsigned
 { (void)t;(void)h;(void)off;return 0; }
 static uint32_t bus_space_read_4(bus_space_tag_t t,bus_space_handle_t h,unsigned int off)
 { (void)t;(void)h;(void)off;return 0; }
+#include "rge-devget.inc"
+static struct mbuf *copy_devget(char *buf,int len,int off,struct ifnet *ifp)
+{
+	CHECK(!copy_active); copy_active=true;
+	bool found=false;
+	for(unsigned int i=0;i<map_next;i++)
+		if(maps[i]!=NULL && maps[i]->loaded && maps[i]->cpu==buf) {
+			CHECK(maps[i]->data && !maps[i]->armed); found=true;
+		}
+	CHECK(found && len>=18 && len<=9216 && off==0);
+	struct mbuf *m=m_devget(buf,len,off,ifp);
+	copy_active=false; return m;
+}
+static void *owner_alloc(size_t n,int type,int flags)
+{
+	CHECK(type==M_DEVBUF && flags==M_NOWAIT); owner_calls++;
+	if(owner_calls==owner_fail_at) return NULL;
+	void *p=malloc(n); CHECK(p!=NULL); owner_live++; return p;
+}
+static void owner_free(void *p,int type)
+{
+	CHECK(type==M_DEVBUF && p!=NULL && owner_live>0); owner_live--; free(p);
+}
 static void rge_rx_list_fini(struct rge_queues *);
 static void rge_stop(struct ifnet *p,int disable)
 { (void)disable; p->if_flags&=~IFF_RUNNING; prefix_writes++; rge_rx_list_fini(active_sc->sc_queues); }
@@ -325,7 +426,13 @@ static void rge_setup_intr(struct rge_softc *sc,int type) { CHECK(sc==active_sc 
 static void callout_schedule(callout_t *c,unsigned int n) { CHECK(c==&active_sc->sc_timeout && n==1); }
 static int rge_deallocmem(struct rge_softc *);
 static void rge_rx_list_fini(struct rge_queues *);
+#define malloc(n,t,f) owner_alloc((n),(t),(f))
+#define free(p,t) owner_free((p),(t))
+#define m_devget copy_devget
 #include "rge-source.inc"
+#undef m_devget
+#undef free
+#undef malloc
 
 static void fixture(struct rge_softc *sc, struct rge_queues *q)
 {
@@ -333,10 +440,11 @@ static void fixture(struct rge_softc *sc, struct rge_queues *q)
 	memset(sc,0,sizeof(*sc)); memset(q,0,sizeof(*q)); memset(maps,0,sizeof(maps));
 	memset(memory,0,sizeof(memory)); map_next=step=fail_at=0;
 	sc->sc_queues=q; sc->sc_dmat=&tag; sc->rge_type=MAC_R26_1; q->q_sc=sc;
-	CHECK(mbufs==0 && external==0 && last_received==NULL);
+	CHECK(mbufs==0 && external==0 && owner_live==0 && last_received==NULL);
 	mbuf_calls=mbuf_fail_at=mbuf_fail_kind=data_load_calls=data_fault_at=data_fault_kind=0;
 	received=chip_calls=enables=prefix_writes=0; rxmax=eee_timer=0; active_sc=sc;
 	spl_entries=spl_exits=0; ioctl_common_error=0;
+	owner_calls=owner_fail_at=callback_calls=headers_freed=copy_claims=0; copy_active=false;
 	diagnostic_calls=0; diagnostic[0]='\0';
 	sc->sc_ec.ec_if.if_softc=sc; sc->sc_ec.ec_if.if_mtu=1500; sc->sc_ec.ec_if.if_percpuq=sc;
 	CHECK(rge_jumbo_capabilities(sc)==ETHERCAP_JUMBO_MTU);
@@ -366,8 +474,12 @@ static void rx_tests(const char *mode)
 		CHECK(map->dm_mapsize==9216 && map->armed);
 		for(unsigned int i=0;i<9022;i++) map->device[i]=(uint8_t)(i*17+3);
 		q.q_rx.rge_rx_list[0].hi_qword1.rx_qword4.rge_cmdsts=RGE_RDCMDSTS_SOF|RGE_RDCMDSTS_EOF|9022;
-		CHECK(rge_rxeof(&sc)!=0 && received==1 && last_received->m_len==9022);
-		for(unsigned int i=0;i<9022;i++) CHECK(last_received->m_data[i]==(uint8_t)(i*17+3));
+		CHECK(rge_rxeof(&sc)!=0 && received==1 && last_received->m_pkthdr.len==9022);
+		unsigned int position=0;
+		for(const struct mbuf *part=last_received;part!=NULL;part=part->m_next)
+			for(int j=0;j<part->m_len;j++,position++)
+				CHECK((uint8_t)part->m_data[j]==(uint8_t)(position*17+3));
+		CHECK(position==9022 && copy_claims==5);
 		m_freem(last_received); last_received=NULL;
 	}
 	rge_rx_list_fini(&q); CHECK(mbufs==0 && external==0);
@@ -421,9 +533,16 @@ static void receive_one(struct rge_softc *sc,unsigned int len,uint32_t flags,
 	struct test_map *newmap=q->q_rx.rge_rxq[idx].rxq_dmamap;
 	CHECK(newmap->armed && newmap->loaded && !q->q_rx.rge_rx_sparemap->loaded);
 	if(accepted) {
-		CHECK(received==before+1 && last_received==old);
-		CHECK(last_received->m_len==(int)len);
-		for(unsigned int i=0;i<len;i++) CHECK(last_received->m_data[i]==(uint8_t)(i*17+3));
+		CHECK(received==before+1 && last_received->m_pkthdr.len==(int)len);
+		if(map->dm_mapsize==9216) {
+			CHECK(last_received!=old && q->q_rx.rge_rxq[idx].rxq_mbuf==old && newmap==map);
+			CHECK(last_received->m_len<=(int)MCLBYTES);
+		} else CHECK(last_received==old);
+		unsigned int position=0;
+		for(const struct mbuf *part=last_received;part!=NULL;part=part->m_next)
+			for(int j=0;j<part->m_len;j++,position++)
+				CHECK((uint8_t)part->m_data[j]==(uint8_t)(position*17+3));
+		CHECK(position==len);
 		m_freem(last_received); last_received=NULL;
 	} else {
 		CHECK(received==before && last_received==NULL);
@@ -469,7 +588,7 @@ static void rx_geometry_and_reuse(void)
 			receive_one(&sc,1518,RGE_RDCMDSTS_EOF,false);
 			receive_one(&sc,1518,whole|RGE_RDCMDSTS_RXERRSUM,false);
 			CHECK(sc.sc_ec.ec_if.if_ierrors==errors+7);
-			for(unsigned int kind=1;kind<=8;kind++) {
+			for(unsigned int kind=1;kind<=(size==9216 ? 2U : 8U);kind++) {
 				mbuf_fail_at=mbuf_fail_kind=data_fault_at=data_fault_kind=0;
 				if(kind<=3) { mbuf_fail_at=mbuf_calls+1;mbuf_fail_kind=kind; }
 				else { data_fault_at=data_load_calls+1;data_fault_kind=kind-3; }
@@ -527,6 +646,99 @@ static void rx_init_map_error(void)
 	check_init_diagnostic(17,9216,ENOMEM);
 	CHECK(rge_deallocmem(&sc)==0 && maps_live==0 && loaded_live==0);
 }
+/* Every constructor/load failure at every descriptor slot preserves ownership. */
+static void
+jumbo_faults(void)
+{
+	struct rge_softc sc; struct rge_queues q;
+	fixture(&sc,&q); CHECK(rge_allocmem(&sc)==0);
+	sc.sc_ec.ec_if.if_mtu=9000;
+	for(unsigned int i=0;i<RGE_RX_LIST_CNT;i++) {
+		for(unsigned int kind=0;kind<9;kind++) {
+			owner_fail_at=mbuf_fail_at=data_fault_at=fail_at=0;
+			if(kind==0) owner_fail_at=owner_calls+1;
+			if(kind==1) { mbuf_fail_at=mbuf_calls+1;mbuf_fail_kind=1; }
+			if(kind==2 || kind==3) fail_at=step+kind-1;
+			if(kind>=4) { data_fault_at=data_load_calls+1;data_fault_kind=kind-3; }
+			int expected=kind==1 ? ENOBUFS : (kind<=4 ? ENOMEM : EFBIG);
+			bus_dmamap_t spare=q.q_rx.rge_rx_sparemap;
+			CHECK(rge_newbuf(&q,i)==expected);
+			CHECK(q.q_rx.rge_rxq[i].rxq_mbuf==NULL && q.q_rx.rge_rx_sparemap==spare);
+			CHECK(!spare->loaded && loaded_live==2 && owner_live==0);
+			CHECK(alloc_live==2 && kva_live==2 && mbufs==0 && external==0);
+		}
+	}
+	owner_fail_at=mbuf_fail_at=data_fault_at=fail_at=0;
+	CHECK(rge_deallocmem(&sc)==0 && alloc_live==0 && kva_live==0);
+}
+
+static void
+jumbo_copy_lifetime(void)
+{
+	struct rge_softc sc; struct rge_queues q;
+	fixture(&sc,&q); CHECK(rge_allocmem(&sc)==0);
+	sc.sc_ec.ec_if.if_mtu=9000;
+	CHECK(rge_init(&sc.sc_ec.ec_if)==0);
+	CHECK(owner_live==1024 && alloc_live==1026 && kva_live==1026);
+	const struct mbuf *internal=q.q_rx.rge_rxq[0].rxq_mbuf;
+	struct test_map *map=q.q_rx.rge_rxq[0].rxq_dmamap;
+	for(unsigned int i=0;i<9216;i++) map->device[i]=(uint8_t)(i*31+7);
+	q.q_rx.rge_rx_list[0].hi_qword1.rx_qword4.rge_cmdsts=
+	    RGE_RDCMDSTS_SOF|RGE_RDCMDSTS_EOF|9216;
+	q.q_rx.rge_rx_list[0].hi_qword1.rx_qword4.rge_extsts=
+	    RGE_RDEXTSTS_IPV4|RGE_RDEXTSTS_IPCSUMERR|RGE_RDEXTSTS_VTAG|0x1234;
+	unsigned int loads=data_load_calls,owners=owner_calls;
+	CHECK(rge_rxeof(&sc)==1 && received==1);
+	CHECK(data_load_calls==loads && owner_calls==owners && callback_calls==0);
+	CHECK(q.q_rx.rge_rxq[0].rxq_mbuf==internal && map->armed);
+	CHECK(last_received->m_pkthdr.len==9216 && last_received->m_len==2048);
+	CHECK(last_received->m_pkthdr.csum_flags==M_CSUM_IPv4_BAD);
+	CHECK(last_received->vlan==bswap16(0x1234));
+	memset(map->cpu,0xa5,9216); memset(map->device,0xa5,9216);
+	/* Disposal must use callback identity, even if interface policy changed. */
+	sc.sc_ec.ec_if.if_mtu=1500;
+	rge_stop(&sc.sc_ec.ec_if,1);
+	CHECK(owner_live==0 && alloc_live==2 && callback_calls==1024 && headers_freed==1024);
+	CHECK(mbufs==5 && external==5 && copy_claims==5);
+	CHECK(rge_deallocmem(&sc)==0 && alloc_live==0 && loaded_live==0 && maps_live==0);
+	unsigned int position=0;
+	for(const struct mbuf *part=last_received;part!=NULL;part=part->m_next) {
+		CHECK(part->claims==1 && part->m_ext.ext_free==NULL);
+		for(int j=0;j<part->m_len;j++,position++)
+			CHECK((uint8_t)part->m_data[j]==(uint8_t)(position*31+7));
+	}
+	CHECK(position==9216);
+	m_freem(last_received); last_received=NULL;
+	CHECK(mbufs==0 && external==0 && owner_live==0);
+}
+
+static void
+jumbo_copy_failures(void)
+{
+	struct rge_softc sc; struct rge_queues q;
+	fixture(&sc,&q); CHECK(rge_allocmem(&sc)==0);
+	sc.sc_ec.ec_if.if_mtu=9000; CHECK(rge_init(&sc.sc_ec.ec_if)==0);
+	for(unsigned int kind=1;kind<=2;kind++) {
+		for(unsigned int at=1;at<=5;at++) {
+			unsigned int idx=q.q_rx.rge_rxq_considx;
+			const struct mbuf *internal=q.q_rx.rge_rxq[idx].rxq_mbuf;
+			const struct test_map *map=q.q_rx.rge_rxq[idx].rxq_dmamap;
+			unsigned int drops=sc.sc_ec.ec_if.if_iqdrops;
+			unsigned int loads=data_load_calls,owners=owner_calls;
+			mbuf_fail_kind=kind; mbuf_fail_at=mbuf_calls+at;
+			receive_one(&sc,9216,RGE_RDCMDSTS_SOF|RGE_RDCMDSTS_EOF,false);
+			CHECK(sc.sc_ec.ec_if.if_iqdrops==drops+1);
+			CHECK(data_load_calls==loads && owner_calls==owners && callback_calls==0);
+			CHECK(q.q_rx.rge_rxq[idx].rxq_mbuf==internal && map->armed);
+			CHECK(mbufs==1024 && external==1024 && owner_live==1024);
+		}
+	}
+	mbuf_fail_at=0;
+	rge_stop(&sc.sc_ec.ec_if,1);
+	CHECK(callback_calls==1024 && headers_freed==1024 && owner_live==0);
+	CHECK(rge_deallocmem(&sc)==0 && alloc_live==0 && loaded_live==0);
+}
+
 int main(int argc, char **argv)
 
 {
@@ -562,7 +774,11 @@ int main(int argc, char **argv)
 			CHECK(rge_deallocmem(&sc)==0);
 		}
 	}
+	if(strcmp(argv[1],"copyout")==0) {
+		jumbo_faults(); jumbo_copy_lifetime(); jumbo_copy_failures();
+	}
 	if(strcmp(argv[1],"all")==0) {
+		jumbo_faults(); jumbo_copy_lifetime(); jumbo_copy_failures();
 		rx_tests("jumbo"); rx_tests("init-failure"); rx_tests("retain");
 		rx_init_failures(); rx_geometry_and_reuse();
 		rx_ioctl_failure();

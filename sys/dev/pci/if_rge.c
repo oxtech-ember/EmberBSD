@@ -38,6 +38,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_rge.c,v 1.34.2.2 2026/02/02 17:51:58 martin Exp $
 #include <sys/callout.h>
 #include <sys/workqueue.h>
 #include <sys/module.h>
+#include <sys/pool.h>
 
 #include <net/if.h>
 
@@ -93,6 +94,78 @@ MCLGETL(struct rge_softc *sc __unused, int how,
 #define 	CALLOUT_FLAGS	0
 #endif
 #endif
+
+/* Private DMA storage.  These mbufs never leave the RX ring. */
+struct rge_jumbo_mem {
+	bus_dma_tag_t dmat;
+	bus_dma_segment_t seg;
+	int nsegs;
+	size_t size;
+	void *kva;
+};
+
+static void
+rge_jumbo_free(struct mbuf *m, void *buf, size_t size, void *arg)
+{
+	struct rge_jumbo_mem *mem = arg;
+
+	KASSERT(buf == mem->kva);
+	KASSERT(size == RGE_R26_FRAMELEN);
+	bus_dmamem_unmap(mem->dmat, mem->kva, mem->size);
+	bus_dmamem_free(mem->dmat, &mem->seg, mem->nsegs);
+	free(mem, M_DEVBUF);
+	pool_cache_put(mb_cache, m);
+}
+
+static int
+rge_jumbo_mbuf(const struct rge_softc *sc, struct mbuf **out)
+{
+	struct rge_jumbo_mem *mem;
+	struct mbuf *m;
+	int error;
+
+	mem = malloc(sizeof(*mem), M_DEVBUF, M_NOWAIT);
+	if (mem == NULL)
+		return ENOMEM;
+	MGETHDR(m, M_DONTWAIT, MT_DATA);
+	if (m == NULL) {
+		error = ENOBUFS;
+		goto free_mem;
+	}
+	mem->dmat = sc->sc_dmat;
+	mem->size = round_page(RGE_R26_FRAMELEN);
+	error = bus_dmamem_alloc(mem->dmat, mem->size, PAGE_SIZE, 0,
+	    &mem->seg, 1, &mem->nsegs, BUS_DMA_NOWAIT);
+	if (error != 0)
+		goto free_mbuf;
+	error = bus_dmamem_map(mem->dmat, &mem->seg, mem->nsegs,
+	    mem->size, &mem->kva, BUS_DMA_NOWAIT);
+	if (error != 0)
+		goto free_dma;
+	MEXTADD(m, mem->kva, RGE_R26_FRAMELEN, M_DEVBUF,
+	    rge_jumbo_free, mem);
+	m->m_flags |= M_EXT_RW;
+	*out = m;
+	return 0;
+
+free_dma:
+	bus_dmamem_free(mem->dmat, &mem->seg, mem->nsegs);
+free_mbuf:
+	m_freem(m);
+free_mem:
+	free(mem, M_DEVBUF);
+	return error;
+}
+
+static void
+rge_unload_rxbuf(const struct rge_softc *sc, struct rge_rxq *rxq)
+{
+	if (rxq->rxq_mbuf->m_ext.ext_free == rge_jumbo_free) {
+		bus_dmamap_sync(sc->sc_dmat, rxq->rxq_dmamap, 0,
+		    rxq->rxq_dmamap->dm_mapsize, BUS_DMASYNC_POSTREAD);
+	}
+	bus_dmamap_unload(sc->sc_dmat, rxq->rxq_dmamap);
+}
 
 #ifdef RGE_DEBUG
 #define DPRINTF(x)	do { if (rge_debug > 0) printf x; } while (0)
@@ -1057,8 +1130,7 @@ rge_stop(struct ifnet *ifp, int disable)
 	/* Free the RX list buffers. */
 	for (i = 0; i < RGE_RX_LIST_CNT; i++) {
 		if (q->q_rx.rge_rxq[i].rxq_mbuf != NULL) {
-			bus_dmamap_unload(sc->sc_dmat,
-			    q->q_rx.rge_rxq[i].rxq_dmamap);
+			rge_unload_rxbuf(sc, &q->q_rx.rge_rxq[i]);
 			m_freem(q->q_rx.rge_rxq[i].rxq_mbuf);
 			q->q_rx.rge_rxq[i].rxq_mbuf = NULL;
 		}
@@ -1436,9 +1508,16 @@ rge_newbuf(struct rge_queues *q, int idx)
 	unsigned int size = rge_rx_buffer_size(sc);
 	int error;
 
-	m = MCLGETL(NULL, M_DONTWAIT, size);
-	if (m == NULL)
-		return (ENOBUFS);
+	if (RGE_TYPE_R26(sc) && size == RGE_R26_FRAMELEN) {
+		error = rge_jumbo_mbuf(sc, &m);
+		if (error != 0)
+			return error;
+	} else {
+		m = MCLGETL(NULL, M_DONTWAIT, size);
+		if (m == NULL)
+			return (ENOBUFS);
+	}
+
 	if ((m->m_flags & M_EXT) == 0 || m->m_ext.ext_size < size) {
 		m_freem(m);
 		return ENOBUFS;
@@ -1506,14 +1585,13 @@ rge_rx_list_init(struct rge_queues *q)
 static void
 rge_rx_list_fini(struct rge_queues *q)
 {
-	struct rge_softc *sc = q->q_sc;
+	const struct rge_softc *sc = q->q_sc;
 	unsigned i;
 
 	/* Free the RX list buffers. */
 	for (i = 0; i < RGE_RX_LIST_CNT; i++) {
 		if (q->q_rx.rge_rxq[i].rxq_mbuf != NULL) {
-			bus_dmamap_unload(sc->sc_dmat,
-			    q->q_rx.rge_rxq[i].rxq_dmamap);
+			rge_unload_rxbuf(sc, &q->q_rx.rge_rxq[i]);
 			m_freem(q->q_rx.rge_rxq[i].rxq_mbuf);
 			q->q_rx.rge_rxq[i].rxq_mbuf = NULL;
 		}
@@ -1601,53 +1679,68 @@ rge_rxeof(struct rge_softc *sc)
 			continue;
 		}
 
-		/*
-		 * If allocating a replacement mbuf fails,
-		 * reload the current one.
-		 */
-		if (rge_newbuf(q, i) != 0) {
-			if_statinc(ifp, if_iqdrops);
+		if (m->m_ext.ext_free == rge_jumbo_free) {
+			/*
+			 * Copy while CPU-owned.  Keep DMA storage in its slot.
+			 */
+			m = m_devget(mtod(m, char *), total_len, 0, ifp);
+			rge_load_rxbuf(q, i);
+			if (m == NULL) {
+				if_statinc(ifp, if_iqdrops);
+				continue;
+			}
+			m_claimm(m, &sc->sc_ec.ec_rx_mowner);
+			m->m_flags |= M_HASFCS;
+		} else {
+			/*
+			 * If allocating a replacement mbuf fails,
+			 * reload the current one.
+			 */
+			if (rge_newbuf(q, i) != 0) {
+				if_statinc(ifp, if_iqdrops);
+				if (q->q_rx.rge_head != NULL) {
+					m_freem(q->q_rx.rge_head);
+					q->q_rx.rge_head = NULL;
+					q->q_rx.rge_tail = &q->q_rx.rge_head;
+				}
+				rge_load_rxbuf(q, i);
+				continue;
+			}
+
+
+			m_set_rcvif(m, ifp);
 			if (q->q_rx.rge_head != NULL) {
-				m_freem(q->q_rx.rge_head);
+				m->m_len = total_len;
+				/*
+				 * Special case: if there's 4 bytes or less
+				 * in this buffer, the mbuf can be discarded:
+				 * the last 4 bytes is the CRC, which we don't
+				 * care about anyway.
+				 */
+				if (m->m_len <= ETHER_CRC_LEN) {
+					(*q->q_rx.rge_tail)->m_len -=
+					    (ETHER_CRC_LEN - m->m_len);
+					m_freem(m);
+				} else {
+					m->m_len -= ETHER_CRC_LEN;
+					m->m_flags &= ~M_PKTHDR;
+					(*q->q_rx.rge_tail)->m_next = m;
+				}
+				m = q->q_rx.rge_head;
 				q->q_rx.rge_head = NULL;
 				q->q_rx.rge_tail = &q->q_rx.rge_head;
+				m->m_pkthdr.len = total_len - ETHER_CRC_LEN;
+			} else
+#if 0
+				m->m_pkthdr.len = m->m_len =
+				    (total_len - ETHER_CRC_LEN);
+#else
+			{
+				m->m_pkthdr.len = m->m_len = total_len;
+				m->m_flags |= M_HASFCS;
 			}
-			rge_load_rxbuf(q, i);
-			continue;
+#endif
 		}
-
-		m_set_rcvif(m, ifp);
-		if (q->q_rx.rge_head != NULL) {
-			m->m_len = total_len;
-			/*
-			 * Special case: if there's 4 bytes or less
-			 * in this buffer, the mbuf can be discarded:
-			 * the last 4 bytes is the CRC, which we don't
-			 * care about anyway.
-			 */
-			if (m->m_len <= ETHER_CRC_LEN) {
-				(*q->q_rx.rge_tail)->m_len -=
-				    (ETHER_CRC_LEN - m->m_len);
-				m_freem(m);
-			} else {
-				m->m_len -= ETHER_CRC_LEN;
-				m->m_flags &= ~M_PKTHDR;
-				(*q->q_rx.rge_tail)->m_next = m;
-			}
-			m = q->q_rx.rge_head;
-			q->q_rx.rge_head = NULL;
-			q->q_rx.rge_tail = &q->q_rx.rge_head;
-			m->m_pkthdr.len = total_len - ETHER_CRC_LEN;
-		} else
-	#if 0
-			m->m_pkthdr.len = m->m_len =
-			    (total_len - ETHER_CRC_LEN);
-	#else
-		{
-			m->m_pkthdr.len = m->m_len = total_len;
-			m->m_flags |= M_HASFCS;
-		}
-	#endif
 
 		/* Check IP header checksum. */
 		if ((extsts & RGE_RDEXTSTS_IPCSUMERR) &&
