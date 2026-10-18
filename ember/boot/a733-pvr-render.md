@@ -109,8 +109,14 @@ SG export does not prove that a display engine can address or scan out the BO.
 The consumer must check its own address limit, layout and cache requirements.
 This change does not add asynchronous reservation fences or `DMA_BUF_IOCTL_SYNC`.
 
-Build `ember/tools/pvr-prime-check.c` with the same GCC16 command and include
-paths as `pvr-bo-check.c` below. Run it with one PowerVR render-node path.
+Build the probe with the shared GCC16 and a verified EmberBSD sysroot:
+
+```sh
+CC=/path/to/aarch64--netbsd-gcc SYSROOT=/path/to/sysroot \
+    sh ember/tools/pvr-bo-check-build.sh /path/to/EmberBSD /new/prime-output prime
+```
+
+Run `/new/prime-output/pvr-prime-check /dev/dri/renderD128` on the target.
 It checks descriptor rights, protected BO rejection and 80 cross-process
 sharing lifecycles. Each lifecycle closes handles and descriptors before
 it checks the remaining mapping. Physical acceptance remains pending.
