@@ -2,8 +2,9 @@
 
 `sun60i_a733_de352.c` encodes one linear progressive XRGB8888 layer and
 RCQ descriptors. It performs no I/O. It does not allocate DMA memory, map a
-display aperture, submit a list, or establish scanout readiness. No native
-display driver invokes these functions yet.
+display aperture, submit a list, or establish scanout readiness. The
+[native DMA preparer](a733-de352-dma.md) uses these encoders. Native DE
+submission and output integration remain separate steps.
 
 ## One layer
 
