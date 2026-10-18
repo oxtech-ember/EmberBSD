@@ -99,10 +99,21 @@ Dir.mktmpdir('ember-external-runtime-', '/tmp') do |work|
 end
 if ARGV.length == 7
   prefix, runtime, sysroot = ARGV[3, 3].map { |p| File.realpath(p) }
-  cc = prefix + '/bin/x86_64--netbsd-gcc'
-  abort 'Require the selected GCC16 amd64 application driver' unless
+  targets = {
+    'x86_64--netbsd' => ['amd64', 'x86_64', 'Advanced Micro Devices X86-64'],
+    'aarch64--netbsd' => ['evbarm', 'aarch64', 'AArch64']
+  }
+  candidates = targets.keys.select do |target|
+    File.executable?(prefix + '/bin/' + target + '-gcc') &&
+      File.directory?(runtime + '/lib/gcc/' + target + '/16.2.0')
+  end
+  abort 'Require one matching GCC16 target compiler and runtime' unless candidates.length == 1
+  triplet = candidates.first
+  machine, machine_arch, elf_machine = targets.fetch(triplet)
+  cc = prefix + '/bin/' + triplet + '-gcc'
+  abort 'Require the selected GCC16 application driver' unless
     require_ok(*capture(cc, '-dumpfullversion')) == '16.2.0' &&
-    require_ok(*capture(cc, '-dumpmachine')) == 'x86_64--netbsd'
+    require_ok(*capture(cc, '-dumpmachine')) == triplet
   output = File.expand_path(ARGV[6])
   abort 'NEW_OUTPUT exists' if File.exist?(output)
   FileUtils.mkdir_p(output)
@@ -116,6 +127,7 @@ if ARGV.length == 7
   File.write(output + '/library.mk', setup + "LIB=runtimeprobe\nLIBISCXX=yes\nSRCS=library.cc\nSHLIB_MAJOR=1\nSHLIB_MINOR=0\nMAN=\n.include \"#{src}/share/mk/bsd.lib.mk\"\n")
   File.write(output + '/gccprobe.mk', setup + "LIB=gccprobe\nSRCS=gccprobe.c\nLDLIBC=-nodefaultlibs\nLDADD=-lgcc\nDPADD=${_GCC_LIBGCCDIR}/libgcc.a\nSHLIB_MAJOR=1\nSHLIB_MINOR=0\nMAN=\n.include \"#{src}/share/mk/bsd.lib.mk\"\n")
   args = [make, '-C', output, '-m', src + '/share/mk', 'NETBSDSRCDIR=' + src, 'DESTDIR=' + sysroot,
+    'MACHINE=' + machine, 'MACHINE_ARCH=' + machine_arch, 'MACHINE_GNU_PLATFORM=' + triplet,
     'EXTERNAL_TOOLCHAIN=' + prefix, 'EMBER_EXTERNAL_GCC_RUNTIME=' + runtime, 'MKCOMPAT=no',
     'MKREPRO=no', 'MKDEBUG=no', 'MKCTF=no', 'MKLINT=no', 'MKLLVM=no', 'MKPIC=yes']
   [['library.mk', 'libruntimeprobe.so.1.0'], ['programs.mk', 'cprobe', 'thread', 'indirect'], ['gccprobe.mk', 'libgccprobe.so.1.0']].each do |targets|
@@ -131,13 +143,13 @@ if ARGV.length == 7
     dependencies = File.read(output + '/' + name + '.d')
     abort 'C++ dependencies lost the selected target headers' unless
       dependencies.include?(runtime + '/include/c++/') &&
-      dependencies.include?(runtime + '/include/c++/x86_64--netbsd/bits/c++config.h')
+      dependencies.include?(runtime + '/include/c++/' + triplet + '/bits/c++config.h')
   end
   %w[cprobe thread indirect libruntimeprobe.so.1.0 libgccprobe.so.1.0].each do |name|
-    out, err, status = capture(prefix + '/bin/x86_64--netbsd-readelf', '-h', '-d', output + '/' + name)
+    out, err, status = capture(prefix + '/bin/' + triplet + '-readelf', '-h', '-d', output + '/' + name)
     require_ok(out, err, status)
     File.write(output + '/' + name + '.elf.txt', out)
-    abort 'Wrong target ELF' unless out.include?('Advanced Micro Devices X86-64')
+    abort 'Wrong target ELF' unless out.include?(elf_machine)
     abort 'Host RPATH leaked' if out.lines.grep(/RPATH|RUNPATH/).any? { |line| line.include?(runtime) || line.include?(sysroot) || line.include?(output) }
     abort 'Wrong C++ runtime' if %w[thread libruntimeprobe.so.1.0].include?(name) && !out.include?('[libstdc++.so.7]')
     if name == 'indirect'
@@ -146,10 +158,10 @@ if ARGV.length == 7
   end
   %w[cprobe.map thread.map libruntimeprobe.so.1.map libgccprobe.so.1.map].each do |name|
     map = File.read(output + '/' + name)
-    abort 'Link map did not select staged GCC CRT' unless map.include?(runtime + '/lib/gcc/x86_64--netbsd/16.2.0/crtbegin')
+    abort 'Link map did not select staged GCC CRT' unless map.include?(runtime + '/lib/gcc/' + triplet + '/16.2.0/crtbegin')
     abort 'Link map lost OS crti/crtn' unless map.include?(sysroot + '/usr/lib/crti.o') && map.include?(sysroot + '/usr/lib/crtn.o')
   end
-  abort 'The -nodefaultlibs link did not select staged libgcc.a' unless File.read(output + '/libgccprobe.so.1.map').include?(runtime + '/lib/gcc/x86_64--netbsd/16.2.0/libgcc.a')
+  abort 'The -nodefaultlibs link did not select staged libgcc.a' unless File.read(output + '/libgccprobe.so.1.map').include?(runtime + '/lib/gcc/' + triplet + '/16.2.0/libgcc.a')
   puts 'PASS: actual C, C++ thread/exception, indirect C-to-C++ DSO, dependency scanning and -nodefaultlibs libgcc cross links; target execution remains separate'
 end
 RUBY

@@ -88,7 +88,9 @@ sh ember/tests/external-gcc-runtime.sh /absolute/tools/bin/nbmake-amd64 \
   /absolute/new-link-results
 ```
 
-The second command links C, C++ thread/exception and shared-library fixtures.
+The second command selects amd64 or AArch64 from the matching compiler and
+runtime paths. It sets the target explicitly instead of inheriting the wrapper's
+architecture. It links C, C++ thread/exception and shared-library fixtures.
 It generates real C++ dependency files with the selected target headers.
 An indirect C-to-C++ DSO link requires the staged build-only search path.
 The C executable must not gain a direct libstdc++ dependency.
