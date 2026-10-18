@@ -160,13 +160,13 @@ each operation covers the complete 4096-byte page.
 
 Text, host-written pages and tables use PREWRITE. Device-written data pages
 also use PREREAD. PREWRITE initializes possible bounce backing, including zeros.
-No DMA address is returned. The manual preparation callback does not call this
-API yet, and no attachment calls the typed root publication API.
+No DMA address is returned. The CPU-only preparation callback does not call this
+API. The separate manual firmware trial invokes it through the boot context.
 
 Cleanup of a synchronized, never-exposed owner validates all receipts before
 matching POST operations and release. A private irreversible exposure marker
 closes every release path. There is no reset, timeout or caller-boolean bypass.
-The typed root publication API uses this marker; hardware handoff is unfinished.
+The typed root publication API uses this marker. Physical handoff is unverified.
 The guard does not implement a global stale-pointer registry or internal locking.
 
 Source `ea410dcd9b33ecf57fee7d86594454799ac776b3` passes 13349515 preparation
@@ -217,8 +217,8 @@ These results do not establish a hardware firmware boot or physical DMA.
 ## Dedicated native boot epoch source
 
 `cixvpu_acpi_boot.[ch]` implements a separate opaque manual boot context.
-The attachment does not call it yet. It accepts a fresh SEALED owner
-from the typed boot constructor. Initial DMA synchronization occurs before
+The manual firmware profile calls it after root mounts. It accepts a fresh
+SEALED owner from the typed boot constructor. Initial DMA synchronization occurs before
 ownership transfer or resource acquisition. A failed synchronization preserves
 the caller's handle and consumes the attempt without automatic cleanup.
 
@@ -253,7 +253,7 @@ Run `sh ember/tools/cixvpu-boot-contract.sh` from the repository root.
 a fresh output directory, and `CIXVPU_BOOT_SOURCE` selects a source-copy mutant.
 The linked fixture executes the actual native control and boot bodies plus
 actual DMA, preparation, MMU and ring helpers. Native platform services alone
-are modeled. It passes 24132 reported checks, including 5242 legacy checks;
+are modeled. It passes 27639 reported checks, including 8749 legacy checks;
 the imported DMA fixture also has fail-fast internal assertions.
 
 GCC16 path analysis, host CSA and ASan/UBSan pass. Seven compiled runtime
@@ -262,6 +262,33 @@ bitops findings per unit. All-category Cppcheck retains explicit header,
 isolated export and native-service signature findings. No category is disabled.
 These are source results. Hardware DMA, firmware execution, IRQ delivery and
 video acceptance remain pending.
+
+## Manual firmware handshake trial
+
+[EMBER64_CIXVPU_BOOT_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_BOOT_PROBE)
+includes the native diagnostic parent and selects VPU `flags 0x7` with SCMI
+`flags 0x80`. Build it with GCC16. Select its kernel manually and preserve the
+working default and recovery kernels. Qualify the physical resource profile,
+DMA address limits and CPU preparation before this trial.
+
+The once-only mountroot callback reuses the fixed local image pin, exact size,
+one-core plan and zero-page audit. It calls `cixvpu_prepare_boot_cpu`, then frees
+the staging image before creating and invoking the dedicated boot context.
+Only that context performs initial DMA synchronization and hardware handoff.
+An error before context invocation uses checked, never-exposed cleanup.
+After invocation, the callback retains both a preserved caller handle and any
+context-owned resources. It never infers that a failed attempt permits release.
+
+Saved reports distinguish attempt, ownership transfer, exposure, held resources,
+stage, primary and cleanup errors, identity, core power status, IRQ observations,
+SWITCHED_IN and PONG. They do not print a root address. A message or interrupt
+alone does not establish successful encoding.
+
+This is a boot-long diagnostic profile. After exposure, keep the current boot
+and resources intact while collecting results. Use a full power cycle before
+reusing them. Warm reboot, hot detach and runtime reclamation are unqualified.
+No GO, frame, video stream or general RPC is submitted. Physical execution of
+this profile remains pending.
 
 ## Initially masked native IRQ registration
 
@@ -292,7 +319,7 @@ Use fresh output paths. `CC`, `CFLAGS` and `TEST_RUNNER` select the establish
 fixture compiler, flags and execution wrapper. UP418 and MP420 checks pass,
 as do ASan/UBSan and the unchanged teardown contract. Five causal mutations
 are detected. Native GCC16 passes; all-category Cppcheck and native CSA retain
-explicit inherited diagnostics. No VPU attachment uses this API yet, and real
+explicit inherited diagnostics. The manual VPU boot context uses this API; real
 IRQ delivery remains unverified.
 
 ## Manual CPU preparation probe

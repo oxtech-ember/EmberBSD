@@ -1,0 +1,10 @@
+# Manual, boot-long CIX VPU firmware handshake trial.
+# Use the pinned local image after root mounts. Retain all resources after
+# root publication, including timeout and fault outcomes. No codec job runs.
+# Select this kernel manually. Keep the working default and recovery kernels.
+# Do not use warm reboot to reclaim exposed DMA; use a full power cycle.
+
+include "arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE"
+
+no cixvpu* at acpi?
+cixvpu* at acpi? flags 0x7
