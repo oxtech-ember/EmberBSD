@@ -356,6 +356,8 @@ release untouched claims. `flags 0x0` retains descriptions-only attachment.
 selects the native clock backend. Exact `flags 0x4` selects the
 [CPU-only allocation fixture](cix-vpu.md#manual-cpu-only-allocation-probe)
 after root mounts; it does not call this resource-control helper or select SCMI.
+Exact `flags 0x5` selects the [CPU preparation fixture](cix-vpu.md#manual-cpu-preparation-probe)
+with the same control restrictions.
 Other flags are rejected. No mode starts device DMA, executes firmware or
 registers a video device.
 The separate [EMBER64_CIXVPU_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE)

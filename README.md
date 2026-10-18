@@ -248,6 +248,9 @@ on every board in the hardware catalog.
   A separate [CPU preparation helper](ember/boot/cix-vpu.md#cpu-preparation-and-opaque-ownership)
   copies text and verifies CPU page tables before moving ownership. Its source
   checks pass; no DMA synchronization or hardware handoff occurs.
+  An explicit [manual preparation profile](ember/boot/cix-vpu.md#manual-cpu-preparation-probe)
+  calls that helper after root mounts and reports checked cleanup. Its attachment
+  source checks pass; physical preparation remains unverified.
   Synchronization, hardware publication and runtime teardown remain unfinished.
   ARM ACPI DMA tags preserve [IORT named-component address limits](ember/boot/cix-platform.md#arm-acpi-dma-address-limits)
   through the device's namespace handle. Actual-source checks cover the fix;
@@ -1082,6 +1085,8 @@ The base system shell is unchanged.
   VPU identity is valid and checked resource cleanup releases the controls.
   A separate manual CPU-only allocation profile has source and build checks;
   its physical allocation test is pending.
+  A manual CPU preparation profile adds checked firmware copying and page-table
+  construction; its physical test is also pending.
   DMA, firmware execution and video queues remain unqualified.
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request
   cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the

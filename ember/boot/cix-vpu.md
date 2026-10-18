@@ -7,7 +7,7 @@ Origin: EmberBSD contributors, AI-assisted.
 EmberBSD identifies the CIX P1 codec and validates its ACPI descriptions.
 The default resource query does not activate the codec or establish its power state.
 There is no video device or M2M interface.
-The manual allocation profile reads an image into CPU memory.
+The manual allocation and preparation profiles read an image into CPU memory.
 No mode executes firmware or encodes frames.
 The target is Orange Pi 6 Plus with CIX CD8180 and stock ACPI firmware.
 The OS owns firmware, DMA, interrupts, power/reset and the application API.
@@ -27,8 +27,8 @@ The independent BSD source in `sys/dev/ic` implements bounded foundations:
 | `cixvpu_prepare.[ch]` | Recheck the image pin and plan, copy CPU text pages, build and verify CPU page tables, then move the allocation into an opaque owner. | Preserve exclusive ownership. Add enforced exposure tracking and DMA synchronization before any hardware publication. |
 
 The attachment selects the header parser, layout planner and CPU-only allocator.
-The kernel also links CPU preparation and its MMU helper. The attachment does
-not call them yet. The ring remains an independent helper.
+The kernel also links CPU preparation and its MMU helper. Only the explicit
+manual preparation profile calls them. The ring remains an independent helper.
 `sys/videoio.h` adds the standard `V4L2_PIX_FMT_HEVC` fourcc without changing
 structure layout or ioctl numbers. The existing `video(4)` driver remains
 capture-only; the presence of M2M declarations does not implement two queues.
@@ -76,7 +76,7 @@ Checked reset/clock/power cleanup releases the controls. This does not qualify
 per-core memory repair, device-visible DMA, firmware execution or video queues.
 Parsing descriptions alone does not establish power, clock or reset ownership.
 The manual allocation profile below uses the parser, planner and allocator.
-The ring and page-entry encoders remain unused by the attachment.
+The preparation profile also uses the page-entry encoders. Neither uses the ring.
 
 The selected `-sum` protocol adds a cumulative checksum word between the TX
 header and payload. That word is outside the header's payload size.
@@ -142,6 +142,30 @@ Five compiled causal mutations are detected. The native GCC16 object and CSA
 have no findings. Native Cppcheck retains 403 header-baseline diagnostics and
 two exported-API unused-function hints in the isolated source unit.
 No synchronization, MMIO, address publication or firmware execution occurs.
+
+## Manual CPU preparation probe
+
+[EMBER64_CIXVPU_PREPARE_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_PREPARE_PROBE)
+includes ordinary EMBER64 and selects VPU `flags 0x5`, without an SCMI service.
+Build it with the common GCC16 toolchain. Select its kernel manually and retain
+the working default and recovery kernels.
+It uses the same local firmware path, exact size, SHA256 and one-core fixture
+as the allocation probe. It preserves that profile's zero-page audit.
+
+This mode keeps staging until `cixvpu_prepare_cpu` returns. Successful
+preparation moves ownership before staging is freed. The callback then calls
+`cixvpu_prepared_free`. Failed preparation keeps the allocator handle for cleanup.
+Separate output fields report the primary, close, preparation and cleanup errors,
+and both retained-owner states. A cleanup error retains the corresponding owner.
+The callback runs once. It performs no VPU control, MMIO, DMA synchronization,
+address publication or firmware execution.
+
+Source `1d68984bbe4be838906d34af68e4bd92f46cb533` passes 4254 attachment checks
+with GCC16 path analysis, Cppcheck, CSA and host ASan/UBSan. Six compiled causal
+mutations are detected. The callback test models the preparation service and
+checks its inputs and ownership transfer; it does not emulate page-table work.
+The separate actual-source preparation contract checks that work.
+Physical allocation and preparation tests remain pending.
 
 ## Source and firmware provenance
 
