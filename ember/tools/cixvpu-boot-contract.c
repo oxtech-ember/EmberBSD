@@ -24,6 +24,13 @@
 #define CIXVPU_BOOT_DEBUG_IDLE MODEL_BOOT_DEBUG_IDLE
 #define CIXVPU_BOOT_DEBUG_PENDING MODEL_BOOT_DEBUG_PENDING
 #define CIXVPU_BOOT_DEBUG_REPLIED MODEL_BOOT_DEBUG_REPLIED
+#define cixvpu_boot_rpc_result model_boot_rpc_result
+#define cixvpu_prepared_boot_rpc_step model_prepared_boot_rpc_step
+#define cixvpu_prepared_boot_receive_rpc model_prepared_boot_receive_rpc
+#define CIXVPU_BOOT_RPC_IDLE MODEL_BOOT_RPC_IDLE
+#define CIXVPU_BOOT_RPC_PENDING MODEL_BOOT_RPC_PENDING
+#define CIXVPU_BOOT_RPC_ALLOC_REPLIED MODEL_BOOT_RPC_ALLOC_REPLIED
+#define CIXVPU_BOOT_RPC_DEBUG_REPLIED MODEL_BOOT_RPC_DEBUG_REPLIED
 #define delay control_delay
 #define bus_space_read_4 control_read_4
 #define bus_space_barrier control_barrier
@@ -52,6 +59,13 @@
 #undef CIXVPU_BOOT_DEBUG_IDLE
 #undef CIXVPU_BOOT_DEBUG_PENDING
 #undef CIXVPU_BOOT_DEBUG_REPLIED
+#undef cixvpu_boot_rpc_result
+#undef cixvpu_prepared_boot_rpc_step
+#undef cixvpu_prepared_boot_receive_rpc
+#undef CIXVPU_BOOT_RPC_IDLE
+#undef CIXVPU_BOOT_RPC_PENDING
+#undef CIXVPU_BOOT_RPC_ALLOC_REPLIED
+#undef CIXVPU_BOOT_RPC_DEBUG_REPLIED
 #undef bus_space_read_4
 #undef bus_space_barrier
 #undef delay
