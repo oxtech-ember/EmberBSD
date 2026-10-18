@@ -91,19 +91,20 @@ does not by itself prove physical acceptance of the native read-only sequence.
 
 ## Physical HPD0 boundary
 
-One CM5 Rev1.0 with BCM2712D0 passed a finite HPD0 sample after a controlled
+One CM5 Rev1.0 with BCM2712D0 passed finite HPD0 samples after a controlled
 cold boot without HDMI. The kernel was `0562cd54`, firmware source was
 `c90c2a6c`, and module source was `c2e7cdca`. Source/header, option, sampled
 layout and strong-symbol checks preceded the normal module load.
-The raw register word was zero, with connected bit0 clear. HSM remained at
+The disconnected raw word was zero. After a live HDMI0 connection on the same
+boot, the raw word was `0x1`, with connected bit0 set. HSM remained at
 120 MHz and DVP lease0 remained held throughout the controller access.
 DVP gates and resets were zero, with no fault or mutation. The controller
 and DVP mappings were released, both owners were destroyed, and the module
-unloaded. The temperature after the cycle was 49.920 C, without reported
-throttling or undervoltage.
+unloaded after each cycle. The temperatures afterward were 49.920 C and
+51.569 C, without reported throttling or undervoltage.
 
-This accepts one disconnected sample on that boot. It does not accept a
-connected sample, IRQ delivery, DDC, reset control, a general power or display
+This accepts the two sampled levels on that boot. It does not accept
+IRQ delivery, DDC, reset control, a general power or display
 lifetime, KMS, hotplug, or a physical Plasma session.
 
 ## Source validation
