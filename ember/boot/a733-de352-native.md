@@ -172,7 +172,7 @@ HDMI PHY/DDC/EDID, KMS, PRIME and accelerated Plasma need their own checks.
 ## Native build integration
 
 `files.sunxi` selects the DE352 formatter, DMA adapter, and FDT coordinator
-through `sun60ide352`. `GENERIC64` includes that attachment. The coordinator
+through `sun60ide`. `GENERIC64` includes that attachment. The coordinator
 uses the public CCU memory register enum and the retained DISPLAY APIs.
 Its raw memory record stays at version 1 with seven CCU words per sample.
 The host contract extracts that enum from the public CCU header.

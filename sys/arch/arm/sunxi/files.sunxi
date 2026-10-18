@@ -110,11 +110,11 @@ file	arch/arm/sunxi/sun60i_a733_display.c	sunxi_a733_ccu | sun60i_a733_pck
 file	arch/arm/sunxi/sun60i_a733_display_owner.c	sunxi_a733_ccu | sun60i_a733_pck
 
 # Guarded native DE352 coordinator. Attach validates resources without MMIO.
-device	sun60ide352
-attach	sun60ide352 at fdt with sun60i_a733_de352
-file	arch/arm/sunxi/sun60i_a733_de352.c	sun60i_a733_de352
-file	arch/arm/sunxi/sun60i_a733_de352_dma.c	sun60i_a733_de352
-file	arch/arm/sunxi/sun60i_a733_de352_fdt.c	sun60i_a733_de352
+device	sun60ide
+attach	sun60ide at fdt with sun60i_a733_de
+file	arch/arm/sunxi/sun60i_a733_de352.c	sun60i_a733_de
+file	arch/arm/sunxi/sun60i_a733_de352_dma.c	sun60i_a733_de
+file	arch/arm/sunxi/sun60i_a733_de352_fdt.c	sun60i_a733_de
 
 # Native output dispatch remains unavailable until a hardware provider attaches.
 file	arch/arm/sunxi/sun60i_a733_output.c	sunxi_a733_ccu

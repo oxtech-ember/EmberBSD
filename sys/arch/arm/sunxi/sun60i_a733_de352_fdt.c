@@ -701,5 +701,5 @@ de352_attach(device_t parent, device_t self, void *aux)
 	    de352_sysctl_memory, 0, sc, sizeof(sc->memory), CTL_CREATE, CTL_EOL);
 }
 
-CFATTACH_DECL_NEW(sun60i_a733_de352, sizeof(struct sun60i_de352_softc),
+CFATTACH_DECL_NEW(sun60i_a733_de, sizeof(struct sun60i_de352_softc),
     de352_match, de352_attach, NULL, NULL);
