@@ -7,6 +7,7 @@
  */
 #include <sys/types.h>
 #ifdef _KERNEL
+#include <sys/errno.h>
 #include <sys/systm.h>
 #else
 #include <stdbool.h>
