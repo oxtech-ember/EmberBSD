@@ -100,8 +100,8 @@ alone does not establish ELF metadata. The separate injected
 it does not claim that upstream normally requests this library. A static
 archive lookup control independently tests implicit search isolation.
 
-The ordered series dispatches `tfa-*.diff` files to `arm-trusted-firmware`.
-Other diffs target `edk2-platforms`. The TF-A shell-slice patch terminates the
+The ordered series dispatches `tfa-*.diff` files to `arm-trusted-firmware`
+and `edk2-*.diff` files to `edk2`. Other diffs target `edk2-platforms`. The TF-A shell-slice patch terminates the
 `sed` print command before its closing group brace. It uses stock macOS
 BSD `sed` and does not require a replacement `sed`.
 
@@ -118,6 +118,24 @@ FIRMWARE_TEST_GMAKE=/absolute/host-tools/bin/gmake \
 ```
 
 This is a host-helper check. It does not establish a full firmware build.
+
+The EDK2 shell-wrapper patch uses a nonnegative last `BASH_SOURCE` index.
+It preserves the outermost sourced script and every argument on stock
+macOS Bash 3.2 and current Bash. It changes only host-tool dispatch.
+The regression exports the two actual pinned wrappers from Git. It tests
+direct execution, sourcing from `bash -c`, and nested script sourcing with
+an explicit argument-capture backend. Use explicit shell paths:
+
+```sh
+ruby ember/tools/firmware-edk2-wrapper.rb \
+    /absolute/cache/rpi5-uefi-src/edk2 /absolute/wrapper-output \
+    /bin/bash /absolute/current-bash/bin/bash
+```
+
+The upstream Bash 3.2 control emits `bad array subscript`. Its `bash -c`
+sourcing case can return zero without executing the backend. The patched
+wrapper must execute the correct backend without a diagnostic. This test
+does not compile firmware or establish acceptance on a physical board.
 
 ## Complete series source check
 

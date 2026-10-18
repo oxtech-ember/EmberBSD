@@ -212,9 +212,10 @@ fi
 series_identity=$( (cd "$ROOT/ember/firmware" && cat $(cat "$series") | shasum -a 256) | awk '{print $1}')
 if [[ ! -f "$src/.ember-series" || "$(cat "$src/.ember-series")" != "$series_identity" ]]; then
     while IFS= read -r diff; do
-        # TF-A diffs have an explicit owner prefix. Other diffs target EDK2.
+        # TF-A and EDK2 diffs have explicit owner prefixes.
         case "$diff" in
-            tfa-*.diff) patch_tree=arm-trusted-firmware ;;
+            tfa-*.diff)  patch_tree=arm-trusted-firmware ;;
+            edk2-*.diff) patch_tree=edk2 ;;
             *)         patch_tree=edk2-platforms ;;
         esac
         patch -s -t -N -p1 -F0 -d "$src/$patch_tree" < "$ROOT/ember/firmware/$diff"

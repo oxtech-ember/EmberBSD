@@ -1,0 +1,9 @@
+# Origin: EmberBSD, AI-assisted EDK2 host shell portability correction.
+# Base: edk2 7bbf1f2022f381f48cfb5411df9e5157ee0291a5.
+# Keep the outermost sourced script without a negative Bash array index.
+
+--- a/BaseTools/BinWrappers/PosixLike/GenericShellWrapper
++++ b/BaseTools/BinWrappers/PosixLike/GenericShellWrapper
+@@ -3 +3 @@
+-full_cmd=${BASH_SOURCE[-1]:-$0} # see http://mywiki.wooledge.org/BashFAQ/028 for a discussion of why $0 is not a good choice here
++full_cmd=${BASH_SOURCE[${#BASH_SOURCE[@]}-1]:-$0} # see http://mywiki.wooledge.org/BashFAQ/028 for a discussion of why $0 is not a good choice here

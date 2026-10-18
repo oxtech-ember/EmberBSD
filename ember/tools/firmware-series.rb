@@ -22,12 +22,14 @@ abort 'Series must name each diff once' unless series.uniq==series &&
   series.sort==Dir[firmware+'/*.diff'].map { |path| File.basename(path) }.sort
 pins = {'.'=>'246e70acd939d62b5a79f895984afd0a93bd83e9',
         'edk2-platforms'=>'c4b5d05de1f2ef633bdb4c175b5c118fcb2666ed',
-        'arm-trusted-firmware'=>'a5c580fd539929af41cf483b7c1434db261dd51b'}
+        'arm-trusted-firmware'=>'a5c580fd539929af41cf483b7c1434db261dd51b',
+        'edk2'=>'7bbf1f2022f381f48cfb5411df9e5157ee0291a5'}
 files = {}
 syntax = []
 hunks = 0
 series.each do |name|
-  owner = name.start_with?('tfa-') ? 'arm-trusted-firmware' : 'edk2-platforms'
+  owner = if name.start_with?('tfa-') then 'arm-trusted-firmware'
+          elsif name.start_with?('edk2-') then 'edk2' else 'edk2-platforms' end
   lines = File.readlines(firmware+'/'+name)
   path = nil
   lines.each_with_index do |line,index|
@@ -83,16 +85,18 @@ files.each do |(owner,path),first_old_count|
     abort "Missing original file: #{owner}/#{path}" unless first_old_count==0
     inputs[owner+'/'+path]={new_file:true}
   else
-    abort "Expected a regular source blob: #{owner}/#{path}" unless entry.match?(/\A100644 blob [a-f0-9]{40}\t/)
+    abort "Expected a regular source blob: #{owner}/#{path}" unless entry.match?(/\A100(?:644|755) blob [a-f0-9]{40}\t/)
     bytes=run.call('export-'+owner+'/'+path,git.call(owner,'show',revision+':'+path))
     File.binwrite(target,bytes)
-    inputs[owner+'/'+path]={sha256:Digest::SHA256.hexdigest(bytes),bytes:bytes.bytesize}
+    File.chmod(entry.start_with?('100755 ') ? 0o755 : 0o644,target)
+    inputs[owner+'/'+path]={mode:entry.split.first,sha256:Digest::SHA256.hexdigest(bytes),bytes:bytes.bytesize}
   end
 end
 # Record count errors as well as the actual patch program's diagnostic.
 File.write(output+'/hunk-count-errors.json',JSON.pretty_generate(syntax)+"\n")
 series.each do |name|
-  owner=name.start_with?('tfa-') ? 'arm-trusted-firmware' : 'edk2-platforms'
+  owner=if name.start_with?('tfa-') then 'arm-trusted-firmware'
+        elsif name.start_with?('edk2-') then 'edk2' else 'edk2-platforms' end
   run.call('apply-'+name,['patch','-s','-t','-N','-p1','-F0','-d',output+'/export/'+owner],File.binread(firmware+'/'+name))
   puts 'PASS: '+name
 end
