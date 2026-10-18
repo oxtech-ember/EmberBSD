@@ -22,6 +22,145 @@ static const uint8_t nalu_wire[] = {
 	0xf2, 3, 8, 0, 0xf4, 3, 8, 0, 1, 0, 0, 0, 1, 0, 0, 0
 };
 
+/* The absent-feature boundary yields a runtime RED against the old header. */
+#ifndef CIXVPU_COMMAND_HEVC_SETUP_API
+static int
+absent_setup(uint32_t value, void *out, size_t capacity, size_t *length)
+{
+	(void)value; (void)out; (void)capacity; (void)length;
+	return ENOTSUP;
+}
+#define cixvpu_command_hevc_main absent_setup
+#define cixvpu_command_input_frame_rate absent_setup
+#define cixvpu_command_input_rate_control_off(out, cap, len) \
+	absent_setup(0, out, cap, len)
+#endif
+
+/* Payload and framing vectors are literal protocol facts, not struct copies. */
+static const struct {
+	uint16_t code;
+	size_t bytes;
+	uint8_t payload[16], wire[24];
+} setup[] = {
+	{1010, 8, {3,0,0,0,1,0,1,0},
+	 {0xf2,3,8,0,0xf6,3,9,0,3,0,0,0,1,0,1,0}},
+	{3003, 8, {9,0,0,0,0,0,0x1e,0},
+	 {0xbb,0xb,8,0,0xc4,0xb,0x26,0,9,0,0,0,0,0,0x1e,0}},
+	{3003,16, {10,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+	 {0xbb,0xb,16,0,0xc5,0xb,16,0,10,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}},
+	{1010, 8, {16,0,0,0,0,0,0,0},
+	 {0xf2,3,8,0,2,4,8,0,16,0,0,0,0,0,0,0}},
+	{1010, 8, {56,0,0,0,26,0,0,0},
+	 {0xf2,3,8,0,0x44,4,8,0,56,0,0,0,26,0,0,0}}
+};
+
+static int
+setup_write(unsigned int kind, void *out, size_t capacity, size_t *length)
+{
+	switch (kind) {
+	case 0: return cixvpu_command_hevc_main(1, out, capacity, length);
+	case 1: return cixvpu_command_input_frame_rate(0x001e0000, out, capacity, length);
+	case 2: return cixvpu_command_input_rate_control_off(out, capacity, length);
+	case 3: return cixvpu_command_option(16, 0, out, capacity, length);
+	case 4: return cixvpu_command_option(56, 26, out, capacity, length);
+	default: CHECK(false); return EINVAL;
+	}
+}
+
+static void
+setup_tests(void)
+{
+	_Alignas(size_t) uint8_t storage[64], before[64];
+	size_t length = 99;
+	const uint32_t levels[] = {1,3,5,7,9,11,13,15,17,19,21,23,25};
+	const uint32_t bad_levels[] = {0,2,4,6,8,10,12,14,16,18,20,22,24,26,
+	    27,31,255,65535,65536,UINT32_MAX};
+
+	/* New scalar options must fail the old production allowlist causally. */
+	CHECK(cixvpu_command_option(16, 0, storage, 8, &length) == 0);
+	CHECK(cixvpu_command_option(56, 26, storage, 8, &length) == 0);
+	for (unsigned int k = 0; k < sizeof(setup) / sizeof(setup[0]); k++) {
+		memset(storage, 0xa5, sizeof(storage)); length = 99;
+		CHECK(setup_write(k, storage + 1, setup[k].bytes + 2, &length) == 0);
+		CHECK(length == setup[k].bytes);
+		CHECK(memcmp(storage + 1, setup[k].payload, length) == 0);
+		CHECK(storage[0] == 0xa5);
+		for (size_t n = length + 1; n < sizeof(storage); n++)
+			CHECK(storage[n] == 0xa5);
+		for (size_t cap = 0; cap < setup[k].bytes; cap++) {
+			memset(storage, 0xa5, sizeof(storage)); memcpy(before, storage, sizeof(before));
+			length = 99;
+			CHECK(setup_write(k, storage, cap, &length) == EMSGSIZE);
+			CHECK(length == 99 && memcmp(storage, before, sizeof(storage)) == 0);
+		}
+		CHECK(setup_write(k, NULL, 16, &length) == EINVAL);
+		CHECK(setup_write(k, storage, 16, NULL) == EINVAL);
+		CHECK(setup_write(k, storage, SIZE_MAX, &length) == EINVAL);
+		CHECK(setup_write(k, (void *)(uintptr_t)(UINTPTR_MAX - 7), 16, &length) == EINVAL);
+		CHECK(setup_write(k, storage, 16,
+		    (size_t *)(void *)(storage + 1)) == EINVAL);
+		CHECK(setup_write(k, storage, 16,
+		    (size_t *)(uintptr_t)(UINTPTR_MAX - sizeof(size_t) + 1)) == EINVAL);
+		/* Reject overlap anywhere in declared capacity, even past payload. */
+		CHECK(setup_write(k, storage, 32, (size_t *)(void *)(storage + 24)) == EINVAL);
+		CHECK(memcmp(storage, before, sizeof(storage)) == 0 && length == 99);
+	}
+	for (size_t i = 0; i < sizeof(levels) / sizeof(levels[0]); i++) {
+		CHECK(cixvpu_command_hevc_main(levels[i], storage, 8, &length) == 0);
+		const uint8_t vector[] = {3,0,0,0,1,0,(uint8_t)levels[i],0};
+		CHECK(length == 8 && memcmp(storage, vector, 8) == 0);
+	}
+	memset(storage, 0xa5, sizeof(storage)); memcpy(before, storage, sizeof(before)); length = 99;
+	for (size_t i = 0; i < sizeof(bad_levels) / sizeof(bad_levels[0]); i++) {
+		CHECK(cixvpu_command_hevc_main(bad_levels[i], storage, 8, &length) == EINVAL);
+		CHECK(length == 99 && memcmp(storage, before, sizeof(storage)) == 0);
+	}
+	CHECK(cixvpu_command_option(56, 52, storage, 8, &length) == EINVAL);
+	CHECK(cixvpu_command_option(56, UINT32_MAX, storage, 8, &length) == EINVAL);
+	CHECK(cixvpu_command_input_frame_rate(0, storage, 8, &length) == EINVAL);
+	CHECK(length == 99 && memcmp(storage, before, sizeof(storage)) == 0);
+	CHECK(cixvpu_command_option(16, UINT32_MAX, storage, 8, &length) == 0);
+	CHECK(memcmp(storage, (uint8_t[]){16,0,0,0,255,255,255,255}, 8) == 0);
+	CHECK(cixvpu_command_option(56, 0, storage, 8, &length) == 0);
+	CHECK(memcmp(storage, (uint8_t[]){56,0,0,0,0,0,0,0}, 8) == 0);
+	CHECK(cixvpu_command_option(56, 51, storage, 8, &length) == 0);
+	CHECK(memcmp(storage, (uint8_t[]){56,0,0,0,51,0,0,0}, 8) == 0);
+	CHECK(cixvpu_command_input_frame_rate(0x1234abcd, storage, 8, &length) == 0);
+	CHECK(memcmp(storage, (uint8_t[]){9,0,0,0,0xcd,0xab,0x34,0x12}, 8) == 0);
+	CHECK(cixvpu_command_input_frame_rate(1, storage, 8, &length) == 0);
+	CHECK(memcmp(storage, (uint8_t[]){9,0,0,0,1,0,0,0}, 8) == 0);
+	CHECK(cixvpu_command_input_frame_rate(UINT32_MAX, storage, 8, &length) == 0);
+	CHECK(memcmp(storage, (uint8_t[]){9,0,0,0,255,255,255,255}, 8) == 0);
+}
+
+static void
+setup_ring_tests(void)
+{
+	uint8_t ring[CIXVPU_RING_BYTES], saved[CIXVPU_RING_BYTES];
+	uint8_t payload[CIXVPU_COMMAND_SETUP_MAX_BYTES];
+	struct cixvpu_ring_checksum sum = {0}, next_sum;
+	uint16_t next;
+	size_t length;
+
+	for (unsigned int k = 0; k < sizeof(setup) / sizeof(setup[0]); k++) {
+		uint16_t transport = k == 1 || k == 2 ?
+		    CIXVPU_COMMAND_INPUT_PARAM : CIXVPU_COMMAND_SET_OPTION;
+
+		CHECK(setup_write(k, payload, sizeof(payload), &length) == 0);
+		CHECK(transport == setup[k].code);
+		memset(ring, 0xa5, sizeof(ring));
+		CHECK(cixvpu_ring_write_sum(ring, sizeof(ring), 1018, 1018,
+		    transport, payload, length, &sum, &next, &next_sum) == 0);
+		CHECK(memcmp(ring + 4072, setup[k].wire, 8) == 0);
+		CHECK(memcmp(ring, setup[k].wire + 8, length) == 0);
+		CHECK(next == (k == 2 ? 4 : 2));
+		memcpy(saved, ring, sizeof(ring)); next = 99; next_sum.sum = 99;
+		CHECK(cixvpu_ring_write_sum(ring, sizeof(ring), 1, 0,
+		    transport, payload, length, &sum, &next, &next_sum) == EAGAIN);
+		CHECK(next == 99 && next_sum.sum == 99 && memcmp(saved, ring, sizeof(ring)) == 0);
+	}
+}
+
 static void
 payload_tests(void)
 {
@@ -199,6 +338,8 @@ ring_tests(void)
 int
 main(void)
 {
+	setup_tests();
+	setup_ring_tests();
 	payload_tests();
 	response_tests();
 	ring_tests();

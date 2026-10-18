@@ -99,8 +99,19 @@ The pure `cixvpu_command` codec writes protocol payloads, without native submiss
 JOB accepts representable core and frame counts, including zero frames for unlimited
 work, and the defined boundary-manager flag. The one-frame fixture uses cores 1,
 frames 1 and flags 0. Hardware core limits remain caller policy.
-The option allowlist contains NALU format index 1 and B-frame count index 17.
-Wire validity does not establish that the selected firmware accepts an option.
+The scalar option allowlist contains NALU format index 1, P-frame count index 16,
+B-frame count index 17 and fixed-QP index 56. Counts use the full uint32 range;
+fixed QP accepts the closed HEVC range 0 through 51. Wire validity does not
+establish that the selected firmware accepts an option.
+
+A typed helper emits HEVC Main profile 1 and one of the 13 explicit main-tier
+level tokens. These are protocol values, not HEVC level_idc. No runtime level,
+frame geometry, frame rate, QP or output capacity is selected by the codec.
+Separate INPUT helpers emit FRAME_RATE type 9 with nonzero raw Q16 data, or
+RATE_CONTROL type 10 with mode, target and maximum bitrate all zero. These
+8-byte and 16-byte payloads use INPUT queue code 3003. They are not MESSAGE
+SET_OPTION requests and do not create an option-confirmation transaction.
+Global fixed QP remains an 8-byte MESSAGE option 56, separate from RC_OFF.
 
 The response decoder distinguishes confirmation, option failure, fatal error,
 state change and job dequeue. The reference describes both empty and indexed

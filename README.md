@@ -260,7 +260,8 @@ on every board in the hardware catalog.
   The second object uses four separate pages and a separate leaf.
   Source tests check mapping bounds, synchronization order and lifetime guards.
   A [pure command codec](ember/boot/cix-vpu.md#typed-control-command-codec)
-  serializes JOB and selected options and preserves typed response failures.
+  serializes JOB, selected HEVC setup and INPUT parameters, and preserves typed
+  response failures.
   It does not submit native commands or start a codec frame.
   A [closed buffer codec](ember/boot/cix-vpu.md#closed-buffer-descriptor-codec)
   checks NV12 geometry and known BITSTREAM slots without native queues or DMA access.
