@@ -1312,7 +1312,7 @@ preserve_meta_data_file(struct pkg_task *pkg, const char *name)
 static int
 start_replacing(struct pkg_task *pkg)
 {
-	int result = -1;
+	int result = 0;
 
 	if (preserve_meta_data_file(pkg, REQUIRED_BY_FNAME))
 		return -1;
