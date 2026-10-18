@@ -26,6 +26,8 @@
  * SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD, AI-assisted checked native RGB additions. */
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: dw_hdmi.c,v 1.12 2024/02/09 16:56:23 skrll Exp $");
 
@@ -294,6 +296,8 @@ dwhdmi_ddc_exec(void *priv, i2c_op_t op, i2c_addr_t addr,
 		dwhdmi_write(sc, HDMI_I2CM_OPERATION, operation);
 		for (retry = 10000; retry > 0; retry--) {
 			val = dwhdmi_read(sc, HDMI_IH_I2CM_STAT0);
+			if (sc->sc_io_error != 0)
+				return sc->sc_io_error;
 			if (val & HDMI_IH_I2CM_STAT0_ERROR) {
 				return EIO;
 			}
@@ -309,6 +313,8 @@ dwhdmi_ddc_exec(void *priv, i2c_op_t op, i2c_addr_t addr,
 		}
 
 		pbuf[n] = dwhdmi_read(sc, HDMI_I2CM_DATAI);
+		if (sc->sc_io_error != 0)
+			return sc->sc_io_error;
 	}
 
 	return 0;
@@ -317,8 +323,14 @@ dwhdmi_ddc_exec(void *priv, i2c_op_t op, i2c_addr_t addr,
 uint8_t
 dwhdmi_read(struct dwhdmi_softc *sc, bus_size_t reg)
 {
-	uint8_t val;
+	uint8_t val = 0;
 
+	if (sc->sc_io_error != 0)
+		return 0;
+	if (sc->sc_read != NULL) {
+		sc->sc_io_error = sc->sc_read(sc, reg, &val);
+		return sc->sc_io_error == 0 ? val : 0;
+	}
 	switch (sc->sc_reg_width) {
 	case 1:
 		val = bus_space_read_1(sc->sc_bst, sc->sc_bsh, reg);
@@ -337,6 +349,12 @@ dwhdmi_read(struct dwhdmi_softc *sc, bus_size_t reg)
 void
 dwhdmi_write(struct dwhdmi_softc *sc, bus_size_t reg, uint8_t val)
 {
+	if (sc->sc_io_error != 0)
+		return;
+	if (sc->sc_write != NULL) {
+		sc->sc_io_error = sc->sc_write(sc, reg, val);
+		return;
+	}
 	switch (sc->sc_reg_width) {
 	case 1:
 		bus_space_write_1(sc->sc_bst, sc->sc_bsh, reg, val);
@@ -461,7 +479,7 @@ dwhdmi_fc_init(struct dwhdmi_softc *sc, struct drm_display_mode *mode)
 }
 
 static void
-dwhdmi_mc_init(struct dwhdmi_softc *sc)
+dwhdmi_mc_init(struct dwhdmi_softc *sc, bool audio_clock)
 {
 	uint8_t val;
 	u_int n, iter;
@@ -474,6 +492,8 @@ dwhdmi_mc_init(struct dwhdmi_softc *sc)
 	      HDMI_MC_CLKDIS_CECCLK_DISABLE |
 	      HDMI_MC_CLKDIS_CSCCLK_DISABLE |
 	      HDMI_MC_CLKDIS_PREPCLK_DISABLE;
+	if (!audio_clock)
+		val |= HDMI_MC_CLKDIS_AUDCLK_DISABLE;
 	dwhdmi_write(sc, HDMI_MC_CLKDIS, val);
 
 	/* Soft reset TMDS */
@@ -485,6 +505,85 @@ dwhdmi_mc_init(struct dwhdmi_softc *sc)
 	val = dwhdmi_read(sc, HDMI_FC_INVIDCONF);
 	for (n = 0; n < iter; n++)
 		dwhdmi_write(sc, HDMI_FC_INVIDCONF, val);
+}
+
+
+/*
+ * This bounded path uses the existing packetizer, frame composer and sampler.
+ * The platform owns the external PHY and output timing. It must check the sink
+ * and the exact pixel clock before this call. Neither call starts a TCON.
+ */
+int
+dwhdmi_native_prepare(struct dwhdmi_softc *sc,
+    const struct drm_display_mode *mode)
+{
+	const unsigned sync_flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NHSYNC |
+	    DRM_MODE_FLAG_PVSYNC | DRM_MODE_FLAG_NVSYNC;
+
+	if (sc == NULL || mode == NULL)
+		return EINVAL;
+	if (sc->sc_read == NULL || sc->sc_write == NULL ||
+	    (sc->sc_flags & DWHDMI_USE_INTERNAL_PHY) != 0)
+		return EOPNOTSUPP;
+	if (sc->sc_io_error != 0)
+		return sc->sc_io_error;
+	if (sc->sc_native_prepared || sc->sc_native_started)
+		return EALREADY;
+	/* Conservative first RGB/DVI profile. Reject every truncating field. */
+	if (mode->clock <= 0 || mode->clock > 165000 ||
+	    mode->crtc_clock != mode->clock ||
+	    (mode->flags & ~sync_flags) != 0 ||
+	    (mode->flags & (DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NHSYNC)) ==
+	    (DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NHSYNC) ||
+	    (mode->flags & (DRM_MODE_FLAG_PVSYNC | DRM_MODE_FLAG_NVSYNC)) ==
+	    (DRM_MODE_FLAG_PVSYNC | DRM_MODE_FLAG_NVSYNC) ||
+	    mode->hdisplay <= 0 || mode->hdisplay > 1920 ||
+	    mode->hdisplay >= mode->hsync_start ||
+	    mode->hsync_start >= mode->hsync_end ||
+	    mode->hsync_end >= mode->htotal || mode->htotal > 65535 ||
+	    mode->vdisplay <= 0 || mode->vdisplay > 1080 ||
+	    mode->vdisplay >= mode->vsync_start ||
+	    mode->vsync_start >= mode->vsync_end ||
+	    mode->vsync_end >= mode->vtotal ||
+	    mode->vtotal - mode->vdisplay > 255 ||
+	    mode->crtc_hdisplay != mode->hdisplay ||
+	    mode->crtc_hsync_start != mode->hsync_start ||
+	    mode->crtc_hsync_end != mode->hsync_end ||
+	    mode->crtc_htotal != mode->htotal ||
+	    mode->crtc_vdisplay != mode->vdisplay ||
+	    mode->crtc_vsync_start != mode->vsync_start ||
+	    mode->crtc_vsync_end != mode->vsync_end ||
+	    mode->crtc_vtotal != mode->vtotal)
+		return EINVAL;
+	sc->sc_curmode = *mode;
+	sc->sc_connector.hdmi_monitor = false;
+	sc->sc_connector.monitor_audio = false;
+	dwhdmi_vp_init(sc);
+	dwhdmi_fc_init(sc, &sc->sc_curmode);
+	dwhdmi_tx_init(sc);
+	if (sc->sc_io_error == 0)
+		sc->sc_native_prepared = true;
+	return sc->sc_io_error;
+}
+
+int
+dwhdmi_native_start(struct dwhdmi_softc *sc)
+{
+	if (sc == NULL)
+		return EINVAL;
+	if (sc->sc_read == NULL || sc->sc_write == NULL ||
+	    (sc->sc_flags & DWHDMI_USE_INTERNAL_PHY) != 0)
+		return EOPNOTSUPP;
+	if (sc->sc_io_error != 0)
+		return sc->sc_io_error;
+	if (!sc->sc_native_prepared)
+		return EINVAL;
+	if (sc->sc_native_started)
+		return EALREADY;
+	dwhdmi_mc_init(sc, false);
+	if (sc->sc_io_error == 0)
+		sc->sc_native_started = true;
+	return sc->sc_io_error;
 }
 
 static void
@@ -654,7 +753,7 @@ dwhdmi_bridge_enable(struct drm_bridge *bridge)
 		sc->sc_enable(sc);
 
 	dwhdmi_tx_init(sc);
-	dwhdmi_mc_init(sc);
+	dwhdmi_mc_init(sc, true);
 
 	if (sc->sc_connector.monitor_audio)
 		dwhdmi_audio_init(sc);
@@ -842,6 +941,10 @@ dwhdmi_attach(struct dwhdmi_softc *sc)
 {
 	uint8_t val;
 
+	if ((sc->sc_read == NULL) != (sc->sc_write == NULL))
+		return EINVAL;
+	if (sc->sc_io_error != 0)
+		return sc->sc_io_error;
 	if (sc->sc_reg_width != 1 && sc->sc_reg_width != 4) {
 		aprint_error_dev(sc->sc_dev, "unsupported register width %d\n", sc->sc_reg_width);
 		return EINVAL;
@@ -852,6 +955,9 @@ dwhdmi_attach(struct dwhdmi_softc *sc)
 	sc->sc_version |= dwhdmi_read(sc, HDMI_REVISION_ID);
 
 	sc->sc_phytype = dwhdmi_read(sc, HDMI_CONFIG2_ID);
+
+	if (sc->sc_io_error != 0)
+		return sc->sc_io_error;
 
 	aprint_normal_dev(sc->sc_dev, "version %x.%03x, phytype 0x%02x\n",
 	    sc->sc_version >> 12, sc->sc_version & 0xfff,
@@ -889,7 +995,7 @@ dwhdmi_attach(struct dwhdmi_softc *sc)
 	sc->sc_dai.dai_dev = sc->sc_dev;
 	sc->sc_dai.dai_priv = sc;
 
-	return 0;
+	return sc->sc_io_error;
 }
 
 int

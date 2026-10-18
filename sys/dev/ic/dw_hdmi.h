@@ -68,6 +68,15 @@ struct dwhdmi_softc {
 	bus_space_tag_t		sc_bst;
 	bus_space_handle_t	sc_bsh;
 	u_int			sc_reg_width;
+	/* Optional checked I/O. Supply both callbacks before attach.
+	 * Callers serialize access and retain resource ownership before writes.
+	 * A callback returns zero or an errno. The first error stops later I/O.
+	 * No automatic error reset or native-mode teardown is provided.
+	 */
+	int (*sc_read)(struct dwhdmi_softc *, bus_size_t, uint8_t *);
+	int (*sc_write)(struct dwhdmi_softc *, bus_size_t, uint8_t);
+	int			sc_io_error;
+	bool			sc_native_prepared, sc_native_started;
 	u_int			sc_flags;
 #define	DWHDMI_USE_INTERNAL_PHY	__BIT(0)
 	u_int			sc_scl_hcnt;
@@ -102,6 +111,11 @@ struct dwhdmi_softc {
 
 int		dwhdmi_attach(struct dwhdmi_softc *);
 int		dwhdmi_bind(struct dwhdmi_softc *, struct drm_encoder *);
+
+/* Checked external-PHY RGB888/DVI path. No bridge, audio or HDCP setup. */
+int		dwhdmi_native_prepare(struct dwhdmi_softc *,
+		    const struct drm_display_mode *);
+int		dwhdmi_native_start(struct dwhdmi_softc *);
 
 uint8_t		dwhdmi_read(struct dwhdmi_softc *, bus_size_t);
 void		dwhdmi_write(struct dwhdmi_softc *, bus_size_t, uint8_t);

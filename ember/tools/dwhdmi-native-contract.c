@@ -1,0 +1,202 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 EmberBSD contributors. */
+/* Origin: EmberBSD, AI-assisted; checked I/O and register-sequence oracles. */
+#include <errno.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static unsigned checks;
+#define CHECK(c) do { if (!(c)) { fprintf(stderr, "line %d: %s\n", __LINE__, #c); exit(1); } checks++; } while (0)
+#define __BIT(n) (UINT32_C(1) << (n))
+#define __BITS(hi, lo) ((UINT32_MAX >> (31 - (hi))) & (UINT32_MAX << (lo)))
+#define __SHIFTIN(v, mask) ((v) << __builtin_ctz(mask))
+#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#define DWHDMI_USE_INTERNAL_PHY 1
+#define DRM_MODE_FLAG_PHSYNC 1
+#define DRM_MODE_FLAG_NHSYNC 2
+#define DRM_MODE_FLAG_PVSYNC 4
+#define DRM_MODE_FLAG_NVSYNC 8
+#define DRM_MODE_FLAG_INTERLACE 16
+#define I2C_OP_READ_WITH_STOP 3
+#define DDC_ADDR 0x50
+#define DDC_SEGMENT_ADDR 0x30
+
+typedef unsigned u_int;
+typedef unsigned long bus_size_t;
+typedef unsigned i2c_op_t;
+typedef unsigned i2c_addr_t;
+struct drm_display_mode {
+	int clock, crtc_clock;
+	int hdisplay, hsync_start, hsync_end, htotal;
+	int vdisplay, vsync_start, vsync_end, vtotal;
+	int crtc_hdisplay, crtc_hsync_start, crtc_hsync_end, crtc_htotal;
+	int crtc_vdisplay, crtc_vsync_start, crtc_vsync_end, crtc_vtotal;
+	unsigned flags;
+};
+struct dwhdmi_connector { bool hdmi_monitor, monitor_audio; };
+struct dwhdmi_softc {
+	int sc_bst, sc_bsh;
+	u_int sc_reg_width, sc_flags, sc_version, sc_scl_hcnt, sc_scl_lcnt;
+	int (*sc_read)(struct dwhdmi_softc *, bus_size_t, uint8_t *);
+	int (*sc_write)(struct dwhdmi_softc *, bus_size_t, uint8_t);
+	int sc_io_error;
+	bool sc_native_prepared, sc_native_started;
+	struct drm_display_mode sc_curmode;
+	struct dwhdmi_connector sc_connector;
+};
+static uint32_t registers[0x20000];
+static unsigned calls, fail_at, delay_calls, legacy_calls;
+static uint8_t dwhdmi_read(struct dwhdmi_softc *, bus_size_t);
+static void dwhdmi_write(struct dwhdmi_softc *, bus_size_t, uint8_t);
+static void delay(unsigned n) { (void)n; delay_calls++; }
+static uint8_t drm_match_cea_mode(const struct drm_display_mode *m) { (void)m; return 0; }
+static uint8_t bus_space_read_1(int t, int h, bus_size_t r) { (void)t; (void)h; legacy_calls++; return registers[r]; }
+static uint32_t bus_space_read_4(int t, int h, bus_size_t r) { (void)t; (void)h; legacy_calls++; return registers[r]; }
+static void bus_space_write_1(int t, int h, bus_size_t r, uint8_t v) { (void)t; (void)h; legacy_calls++; registers[r] = v; }
+static void bus_space_write_4(int t, int h, bus_size_t r, uint32_t v) { (void)t; (void)h; legacy_calls++; registers[r] = v; }
+#include "production.c"
+
+static int
+checked_read(struct dwhdmi_softc *sc, bus_size_t reg, uint8_t *out)
+{
+	CHECK(sc->sc_io_error == 0);
+	calls++;
+	*out = 0xee;
+	if (calls == fail_at)
+		return EFAULT;
+	CHECK(reg < __arraycount(registers));
+	*out = registers[reg];
+	return 0;
+}
+
+static int
+checked_write(struct dwhdmi_softc *sc, bus_size_t reg, uint8_t value)
+{
+	CHECK(sc->sc_io_error == 0);
+	calls++;
+	if (calls == fail_at)
+		return EFAULT;
+	CHECK(reg < __arraycount(registers));
+	registers[reg] = value;
+	if (reg == HDMI_IH_I2CM_STAT0)
+		registers[reg] = 0; /* W1C model. */
+	if (reg == HDMI_I2CM_OPERATION) {
+		registers[HDMI_IH_I2CM_STAT0] = HDMI_IH_I2CM_STAT0_DONE;
+		registers[HDMI_I2CM_DATAI] = registers[HDMI_I2CM_ADDRESS] ^ 0x5a;
+	}
+	return 0;
+}
+
+static struct dwhdmi_softc
+fresh(void)
+{
+	struct dwhdmi_softc sc = { 0 };
+
+	memset(registers, 0, sizeof(registers));
+	calls = fail_at = delay_calls = legacy_calls = 0;
+	sc.sc_reg_width = 1;
+	sc.sc_read = checked_read;
+	sc.sc_write = checked_write;
+	return sc;
+}
+
+static const struct drm_display_mode mode = {
+	108000, 108000,
+	1280, 1328, 1440, 1688, 1024, 1025, 1028, 1066,
+	1280, 1328, 1440, 1688, 1024, 1025, 1028, 1066,
+	DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC
+};
+
+static void
+io(void)
+{
+	struct dwhdmi_softc sc;
+
+	for (unsigned width = 1; width <= 4; width += 3) {
+		sc = fresh(); sc.sc_read = NULL; sc.sc_write = NULL; sc.sc_reg_width = width;
+		registers[7 * width] = 0x123456ab;
+		CHECK(dwhdmi_read(&sc, 7) == 0xab);
+		dwhdmi_write(&sc, 7, 0x35);
+		CHECK(registers[7 * width] == 0x35 && legacy_calls == 2);
+	}
+	sc = fresh(); fail_at = 1;
+	CHECK(dwhdmi_read(&sc, 7) == 0);
+	CHECK(sc.sc_io_error == EFAULT && calls == 1);
+	dwhdmi_write(&sc, 7, 0x35);
+	CHECK(dwhdmi_read(&sc, 7) == 0 && calls == 1 && legacy_calls == 0);
+	sc = fresh(); fail_at = 1;
+	dwhdmi_write(&sc, 7, 0x35);
+	CHECK(sc.sc_io_error == EFAULT && calls == 1);
+	dwhdmi_write(&sc, 8, 0x35);
+	CHECK(dwhdmi_read(&sc, 7) == 0 && calls == 1);
+}
+
+static void
+prepare(void)
+{
+	struct dwhdmi_softc sc = fresh();
+	struct drm_display_mode bad = mode;
+	unsigned count, prepare_count;
+
+	CHECK(dwhdmi_native_start(&sc) == EINVAL && calls == 0);
+	bad.crtc_htotal++;
+	CHECK(dwhdmi_native_prepare(&sc, &bad) == EINVAL && calls == 0);
+	bad = mode; bad.flags |= 16;
+	CHECK(dwhdmi_native_prepare(&sc, &bad) == EINVAL && calls == 0);
+	bad = mode; bad.crtc_vtotal = bad.vtotal = 1300;
+	CHECK(dwhdmi_native_prepare(&sc, &bad) == EINVAL && calls == 0);
+	CHECK(dwhdmi_native_prepare(&sc, &mode) == 0);
+	CHECK(sc.sc_native_prepared && !sc.sc_native_started);
+	CHECK(registers[HDMI_FC_INHACTIV0] == 0 && registers[HDMI_FC_INHACTIV1] == 5);
+	CHECK(registers[HDMI_FC_INVACTIV0] == 0 && registers[HDMI_FC_INVACTIV1] == 4);
+	CHECK(registers[HDMI_FC_INVBLANK] == 42);
+	CHECK(registers[HDMI_FC_INVIDCONF] == 0x70); /* RGB, positive sync, DVI. */
+	CHECK(registers[HDMI_MC_CLKDIS] == 0); /* prepare does not start clocks. */
+	prepare_count = count = calls;
+	CHECK(dwhdmi_native_prepare(&sc, &mode) == EALREADY && calls == count);
+	CHECK(dwhdmi_native_start(&sc) == 0 && sc.sc_native_started);
+	CHECK(registers[HDMI_MC_CLKDIS] == 0x7c); /* Only pixel and TMDS run. */
+	count = calls;
+	CHECK(dwhdmi_native_start(&sc) == EALREADY && calls == count);
+	for (unsigned failure = 1; failure <= count; failure++) {
+		sc = fresh(); fail_at = failure;
+		int error = dwhdmi_native_prepare(&sc, &mode);
+		if (error == 0)
+			error = dwhdmi_native_start(&sc);
+		CHECK(error == EFAULT && sc.sc_io_error == EFAULT);
+		CHECK(calls == failure && !sc.sc_native_started);
+		CHECK(sc.sc_native_prepared == (failure > prepare_count));
+		CHECK(dwhdmi_native_start(&sc) == EFAULT && calls == failure);
+		CHECK(dwhdmi_native_prepare(&sc, &mode) == EFAULT && calls == failure);
+	}
+}
+
+static void
+ddc(void)
+{
+	struct dwhdmi_softc sc = fresh();
+	uint8_t block = 0, data[2];
+	unsigned count;
+
+	CHECK(dwhdmi_ddc_exec(&sc, I2C_OP_READ_WITH_STOP, DDC_ADDR,
+	    &block, 1, data, sizeof(data), 0) == 0);
+	CHECK(data[0] == 0x5a && data[1] == 0x5b && delay_calls == 0);
+	count = calls;
+	for (unsigned failure = 1; failure <= count; failure++) {
+		sc = fresh(); fail_at = failure;
+		CHECK(dwhdmi_ddc_exec(&sc, I2C_OP_READ_WITH_STOP, DDC_ADDR,
+		    &block, 1, data, sizeof(data), 0) == EFAULT);
+		CHECK(calls == failure && delay_calls == 0);
+	}
+}
+
+int
+main(void)
+{
+	io(); prepare(); ddc();
+	printf("%u DW-HDMI checked I/O/native RGB checks passed\n", checks);
+	return 0;
+}

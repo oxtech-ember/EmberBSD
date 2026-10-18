@@ -97,6 +97,7 @@ operation order, failed callbacks and first-error retention.
 ASan/UBSan on a supported host supplements the contracts.
 It is not Valgrind, DMA, linked-kernel or physical HDMI acceptance.
 
+The [checked DW-HDMI RGB path](dwhdmi-native-rgb.md) supplies controller I/O.
 A native hardware provider still needs checked TV0/VO1 writes, A733 PHY control,
 DDC/EDID, clock and supply admission, HPD, and a bounded vblank lifecycle.
 The [display ownership boundary](a733-display-ownership.md) remains mandatory.
