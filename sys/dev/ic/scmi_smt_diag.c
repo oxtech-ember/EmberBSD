@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* Origin: original checked SCMI discovery wire helper, AI-assisted. */
+/* Origin: original checked SCMI wire helper, AI-assisted. */
 #ifdef _KERNEL
 #include <sys/null.h>
 #include <sys/errno.h>
@@ -27,6 +27,16 @@
 #define SMT_READY 1U
 #define SMT_BUSY 2U
 #define SMT_POISONED 3U
+
+/* Internal only. Public entry points construct fixed, validated requests. */
+struct scmi_smt_request {
+	uint32_t header;
+	uint32_t length;
+	uint32_t minimum;
+	uint32_t arguments[2];
+	bool list;
+	bool status_only;
+};
 
 static int
 scmi_smt_diag_command(enum scmi_smt_diag_cmd cmd, uint32_t argument,
@@ -133,17 +143,10 @@ scmi_smt_diag_init(struct scmi_smt_diag *s, const struct scmi_smt_diag_io *io)
 	return 0;
 }
 
-int
-scmi_smt_diag_query(struct scmi_smt_diag *s, enum scmi_smt_diag_cmd cmd,
-    uint32_t argument, struct scmi_smt_diag_reply *out,
-    struct scmi_smt_diag_trace *trace)
+static int
+scmi_smt_ready(struct scmi_smt_diag *s, const struct scmi_smt_diag_reply *out,
+    const struct scmi_smt_diag_trace *trace)
 {
-	struct scmi_smt_diag_reply reply = { 0 };
-	struct scmi_smt_diag_trace record = { .stage = SCMI_SMT_DIAG_WAIT_FREE };
-	uint32_t header, length, minimum, status, word;
-	size_t i;
-	int error;
-
 	if (s == NULL || out == NULL || trace == NULL)
 		return EINVAL;
 	if (s->state == SMT_POISONED)
@@ -152,12 +155,22 @@ scmi_smt_diag_query(struct scmi_smt_diag *s, enum scmi_smt_diag_cmd cmd,
 		return EINVAL;
 	if (s->state != SMT_READY)
 		return EBUSY;
-	error = scmi_smt_diag_command(cmd, argument, &header, &length, &minimum);
-	if (error != 0)
-		return error;
+	return 0;
+}
+
+static int
+scmi_smt_transfer(struct scmi_smt_diag *s, const struct scmi_smt_request *request,
+    struct scmi_smt_diag_reply *out, struct scmi_smt_diag_trace *trace)
+{
+	struct scmi_smt_diag_reply reply = { 0 };
+	struct scmi_smt_diag_trace record = { .stage = SCMI_SMT_DIAG_WAIT_FREE };
+	uint32_t length = request->length, status, word;
+	size_t i;
+	int error;
+
 	if (s->next_token == 0 || s->next_token > SMT_MAX_TOKEN)
 		return EOVERFLOW;
-	record.request_header = header | (uint32_t)s->next_token << 18;
+	record.request_header = request->header | (uint32_t)s->next_token << 18;
 	s->state = SMT_BUSY;
 	error = scmi_smt_diag_wait(s, 1, &record);
 	if (error != 0) {
@@ -171,8 +184,10 @@ scmi_smt_diag_query(struct scmi_smt_diag *s, enum scmi_smt_diag_cmd cmd,
 	s->io.write_4(s->io.cookie, SMT_FLAGS, 0);
 	s->io.write_4(s->io.cookie, SMT_LENGTH, length);
 	s->io.write_4(s->io.cookie, SMT_HEADER, record.request_header);
-	if (length == 8)
-		s->io.write_4(s->io.cookie, SMT_PAYLOAD, argument);
+	if (length >= 8)
+		s->io.write_4(s->io.cookie, SMT_PAYLOAD, request->arguments[0]);
+	if (length == 12)
+		s->io.write_4(s->io.cookie, SMT_PAYLOAD + 4, request->arguments[1]);
 	s->io.barrier(s->io.cookie, SCMI_SMT_DIAG_PUBLISH);
 	s->io.write_4(s->io.cookie, SMT_STATUS, 0);
 	s->next_token++;
@@ -210,19 +225,19 @@ scmi_smt_diag_query(struct scmi_smt_diag *s, enum scmi_smt_diag_cmd cmd,
 		return EIO;
 	}
 	reply.data_length = length - 8;
-	if (reply.data_length < minimum) {
+	if (reply.data_length < request->minimum) {
 		record.stage = SCMI_SMT_DIAG_LENGTH;
 		error = EPROTO;
 		goto poison;
 	}
-	for (i = 0; i < reply.data_length; i += 4) {
+	for (i = 0; !request->status_only && i < reply.data_length; i += 4) {
 		word = s->io.read_4(s->io.cookie, SMT_PAYLOAD + 4 + (uint32_t)i);
 		reply.data[i] = (uint8_t)word;
 		reply.data[i + 1] = (uint8_t)(word >> 8);
 		reply.data[i + 2] = (uint8_t)(word >> 16);
 		reply.data[i + 3] = (uint8_t)(word >> 24);
 	}
-	if (cmd == SCMI_SMT_DIAG_BASE_LIST_PROTOCOLS &&
+	if (request->list &&
 	    scmi_smt_diag_le32(reply.data) > reply.data_length - 4) {
 		record.stage = SCMI_SMT_DIAG_LENGTH;
 		error = EPROTO;
@@ -238,4 +253,46 @@ poison:
 	s->state = SMT_POISONED;
 	*trace = record;
 	return error;
+}
+
+int
+scmi_smt_diag_query(struct scmi_smt_diag *s, enum scmi_smt_diag_cmd cmd,
+    uint32_t argument, struct scmi_smt_diag_reply *out,
+    struct scmi_smt_diag_trace *trace)
+{
+	struct scmi_smt_request request = { .arguments = { argument, 0 } };
+	int error;
+
+	error = scmi_smt_ready(s, out, trace);
+	if (error != 0)
+		return error;
+	error = scmi_smt_diag_command(cmd, argument, &request.header,
+	    &request.length, &request.minimum);
+	if (error != 0)
+		return error;
+	request.list = cmd == SCMI_SMT_DIAG_BASE_LIST_PROTOCOLS;
+	return scmi_smt_transfer(s, &request, out, trace);
+}
+
+int
+scmi_smt_clock67_config_set(struct scmi_smt_diag *s, uint32_t enable,
+    struct scmi_smt_diag_trace *trace)
+{
+	const struct scmi_smt_request request = {
+		.header = 0x5007, .length = 12, .minimum = 0,
+		.arguments = { 67, enable }, .status_only = true
+	};
+	struct scmi_smt_diag_reply reply = { 0 };
+	int error;
+
+	error = scmi_smt_ready(s, &reply, trace);
+	if (error != 0)
+		return error;
+	if (enable > 1)
+		return EINVAL;
+	error = scmi_smt_transfer(s, &request, &reply, trace);
+	if (error != 0)
+		return error;
+	/* Framing completed. A semantic failure does not poison this wire. */
+	return reply.data_length == 0 ? 0 : EPROTO;
 }

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* Origin: original checked SCMI discovery wire helper, AI-assisted. */
+/* Origin: original checked SCMI wire helper, AI-assisted. */
 #ifndef _DEV_IC_SCMI_SMT_DIAG_H_
 #define _DEV_IC_SCMI_SMT_DIAG_H_
 
@@ -14,7 +14,7 @@
 #define SCMI_SMT_DIAG_INITIALIZER { 0 }
 #define SCMI_SMT_DIAG_REPLY_MAX 96U
 
-/* A closed read-only subset. No clock or performance setters are exposed. */
+/* Closed read-only query commands. Control has a separate explicit API. */
 enum scmi_smt_diag_cmd {
 	SCMI_SMT_DIAG_BASE_VERSION,
 	SCMI_SMT_DIAG_BASE_ATTRIBUTES,
@@ -94,13 +94,30 @@ struct scmi_smt_diag_trace {
  * A complete nonzero firmware response does not poison the transport.
  *
  * Each FREE/completion wait is bounded by30ms and3000 polls. Initial busy is
- * EBUSY without writes. Clock regression/wrap poisons with EIO. Failure after send or a
+ * EBUSY without writes. Clock regression/wrap poisons with EIO. Transport failure after send or a
  * corrupt channel poisons the instance. No reset, forced FREE, retry, token reuse
  * or post-poison callback is permitted. Keep the channel lease boot-long.
- * This helper does not qualify firmware capabilities or activate any resource.
+ * The query API does not qualify capabilities or activate any resource.
  */
 int scmi_smt_diag_init(struct scmi_smt_diag *, const struct scmi_smt_diag_io *);
 int scmi_smt_diag_query(struct scmi_smt_diag *, enum scmi_smt_diag_cmd, uint32_t,
     struct scmi_smt_diag_reply *, struct scmi_smt_diag_trace *);
+
+/*
+ * Explicit CLOCK_CONFIG_SET for fixed clock67 only. Enable must be0 or1.
+ * The caller must qualify capabilities, own the clock and serialize this wire.
+ * This helper shares the query token/state and context rules; it has no retries.
+ * Invalid input/state, poison and exhaustion perform no callbacks and preserve
+ * trace. A control error can follow a hardware change; retain caller ownership.
+ *
+ * Success requires status0 and no data body. An otherwise fully framed reply
+ * with unexpected data returns EPROTO with trace COMPLETE; the wire stays usable
+ * for an explicit disable attempt. The data body is not read. A framed firmware
+ * error is EIO with its full signed status and likewise leaves the wire usable.
+ * Transport faults poison as above and prohibit even rollback I/O. No public
+ * reply or arbitrary ID/message/payload argument is exposed by this operation.
+ */
+int scmi_smt_clock67_config_set(struct scmi_smt_diag *, uint32_t,
+    struct scmi_smt_diag_trace *);
 
 #endif

@@ -39,8 +39,9 @@ calling AML. Callers must use thread context and serialize claim lifetime.
 
 `sys/dev/ic/scmi_smt_diag.[ch]` provides a separate checked discovery wire
 helper. It is not a second clock provider or a fallback after AML failure.
-It exposes a closed subset of BASE and CLOCK queries, including only clock
-ID 67 for entity attributes and rate. It exposes no clock or performance setter.
+The `scmi_smt_diag_query` API exposes a closed subset of BASE and CLOCK queries,
+including only clock ID67 for entity attributes and rate. That API exposes no
+control or rate setter. Fixed clock67 control uses a separately named API below.
 
 The caller must own validated CIX TX resources, ordering callbacks, a boot-long
 exclusive channel lease and serialized thread context. The helper performs
@@ -56,14 +57,34 @@ poison the instance. Reinitialization and later callbacks are then forbidden.
 Tokens are never reused; the engine stops after 1023 issued requests.
 Replies remain unchanged on error; a separate trace reports failure evidence.
 
-The actual-source wire contract passes 52660 checks with GCC16 path analysis
-and ASan/UBSan.
+The actual-source wire contract covers the closed queries and fixed clock67
+control with GCC16 path analysis and ASan/UBSan.
 Fourteen causal mutations fail, including missing barriers and poisoned reuse.
 The source cross-compiles with actual AArch64 kernel flags and GCC path analysis.
 Target Cppcheck reports only unused public APIs and inherited header style;
 CSA reports no findings. Host Cppcheck cannot parse the macOS SDK's `errno_t`
 typedef in version 2.22.0; that failed run is retained separately.
 These source checks do not establish firmware exchange.
+
+The source-only `scmi_smt_clock67_config_set(wire, enable, trace)` API sends
+CLOCK_CONFIG_SET for fixed ID67. It accepts only the integer values0 and1.
+It shares the query engine, token counter, ordering and bounded waits. There is
+no arbitrary ID, message or payload input, and the read-only enum is unchanged.
+The request is protocol0x14/message7 with ID67 then attributes0 or1. All other
+attribute bits are zero. A successful response has status0 and no data body
+(SMT length8), per [DEN0056D section4.6.2.8](https://documentation-service.arm.com/static/6231acfc8804d00769e9db69).
+The helper does not read an unexpected data body. If framing completes but a
+successful response contains extra data, it returns EPROTO with trace COMPLETE.
+The wire remains usable for an explicit disable attempt. A framed firmware
+error returns EIO with its full signed status and also permits a later request.
+Timeout, header, channel and clock faults poison the shared wire and prohibit
+later I/O, including disable. Invalid input, state or token exhaustion performs
+no callbacks and preserves trace. There is no automatic rollback or retry.
+A control error can follow a hardware change; the caller must retain ownership
+until it confirms a safe state. Capability qualification, exclusive clock claims
+and serialized thread context belong to the caller. No ACPI binding, clock
+backend or VPU consumer calls this helper. All discovery configurations,
+including selector64, remain read-only. Physical gate control is unqualified.
 
 The separate `cixscmi_acpi` diagnostic binds CIXHA006, UID 0. Its default
 flags 0 mode performs no AML evaluation, claims, mapping or transport access.
@@ -77,7 +98,7 @@ The separate
 [EMBER64_CIXSCMI_CLOCK_QUERY](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY)
 configuration selects exact flags 2. It sends only CLOCK PROTOCOL_VERSION,
 protocol 0x14, message 0, with no clock ID argument. Flags 3 and all values
-except 0, 1, 2, 4, 8, 16 and 32 are rejected before deferred evaluation, mapping or bus access.
+except 0, 1, 2, 4, 8, 16, 32 and 64 are rejected before deferred evaluation, mapping or bus access.
 This diagnostic does not query clock attributes, rates or clock ID 67.
 The original BASE configuration and the normal EMBER64 configuration are unchanged.
 

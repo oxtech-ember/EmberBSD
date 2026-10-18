@@ -1062,7 +1062,9 @@ The base system shell is unchanged.
   contracts and passive registration. A bounded VPU control helper uses checked
   [ACPI power ownership](ember/boot/acpi-power.md). EMBER64 selects a resource
   query; the active identity probe requires explicit configuration. DMA and
-  firmware execution remain disabled.
+  firmware execution remain disabled. A source-tested, fixed clock67 SCMI gate
+  helper shares checked wire and token state. It has no binding or consumer;
+  physical clock control remains unqualified.
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request
   cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the
   active control request and preserves queued requests. Actual-function

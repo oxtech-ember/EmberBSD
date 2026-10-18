@@ -23,6 +23,13 @@ scmi_smt_diag_query(struct scmi_smt_diag *s, enum scmi_smt_diag_cmd cmd,
 	(void)s; (void)cmd; (void)arg; (void)r; (void)t;
 	return ENOTSUP;
 }
+int
+scmi_smt_clock67_config_set(struct scmi_smt_diag *s, uint32_t enable,
+    struct scmi_smt_diag_trace *t)
+{
+	(void)s; (void)enable; (void)t;
+	return ENOTSUP;
+}
 #endif
 
 static unsigned int checks, failures;
@@ -50,10 +57,10 @@ struct device {
 	uint32_t words[33], response[32];
 	const struct fixture *fixture;
 	uint32_t token, initial_status, status, header_xor, length;
-	uint32_t response_status, list_count;
+	uint32_t response_status, list_count, enable;
 	unsigned int calls, reads, writes, pauses, clock_calls, rings;
 	unsigned int published, busy, sent, received, bad_request;
-	unsigned int no_response, frozen, rollback, jump, zero_rate;
+	unsigned int no_response, frozen, rollback, jump, zero_rate, body_reads;
 	uint64_t now;
 };
 
@@ -78,6 +85,8 @@ model_read(void *cookie, uint32_t off)
 	struct device *d = cookie;
 	d->calls++;
 	d->reads++;
+	if (d->received && off >= 32)
+		d->body_reads++;
 	CHECK(off <= 0x7c && (off & 3) == 0);
 	if (off > 0x7c || (off & 3) != 0)
 		return 0;
@@ -94,6 +103,7 @@ model_request_valid(const struct device *d)
 	    d->words[5] == f->request_length &&
 	    d->words[6] == (f->header | (d->token << 18)) &&
 	    (f->request_length == 4 || d->words[7] == f->argument) &&
+	    (f->request_length != 12 || d->words[8] == d->enable) &&
 	    d->words[2] == 0x1234abcd && d->words[3] == 0x5678ef90;
 }
 
@@ -103,9 +113,10 @@ model_write(void *cookie, uint32_t off, uint32_t value)
 	struct device *d = cookie;
 	d->calls++;
 	d->writes++;
-	CHECK(off != 28 || d->fixture->request_length == 8);
+	CHECK(off != 28 || d->fixture->request_length >= 8);
+	CHECK(off != 32 || d->fixture->request_length == 12);
 	CHECK(off == 0 || off == 4 || off == 16 || off == 20 ||
-	    off == 24 || off == 28 || off == 0x80);
+	    off == 24 || off == 28 || off == 32 || off == 0x80);
 	if (off > 0x80 || (off & 3) != 0)
 		return;
 	if (off == 0x80) {
@@ -332,6 +343,7 @@ test_api(void)
 	CHECK(scmi_smt_diag_query(&s, fixtures[0].cmd, 0, &r, NULL) == EINVAL);
 	CHECK(scmi_smt_diag_query(&s, (enum scmi_smt_diag_cmd)-1, 0, &r, &t) == EINVAL);
 	CHECK(scmi_smt_diag_query(&s, (enum scmi_smt_diag_cmd)99, 0, &r, &t) == EINVAL);
+	CHECK(scmi_smt_diag_query(&s, (enum scmi_smt_diag_cmd)8, 1, &r, &t) == EINVAL);
 	CHECK(scmi_smt_diag_query(&s, SCMI_SMT_DIAG_BASE_VERSION, 1, &r, &t) == EINVAL);
 	CHECK(scmi_smt_diag_query(&s, SCMI_SMT_DIAG_BASE_LIST_PROTOCOLS, 256,
 	    &r, &t) == EINVAL);
@@ -527,9 +539,164 @@ test_token_lifetime(void)
 	}
 	before = r; tb = t; calls = d.calls;
 	CHECK(scmi_smt_diag_query(&s, fixtures[0].cmd, 0, &r, &t) == EOVERFLOW);
+	CHECK(scmi_smt_clock67_config_set(&s, 1, &t) == EOVERFLOW);
+	CHECK(scmi_smt_clock67_config_set(&s, 0, &t) == EOVERFLOW);
 	CHECK(scmi_smt_diag_init(&s, &io) == EBUSY);
 	CHECK(d.calls == calls && memcmp(&r, &before, sizeof(r)) == 0);
 	CHECK(memcmp(&t, &tb, sizeof(t)) == 0);
+}
+
+static const struct fixture clock67_control = {
+    (enum scmi_smt_diag_cmd)99, 67, 0x5007, 12, 0
+};
+
+static void
+control_failure(struct scmi_smt_diag *s, struct device *d, int expected,
+    enum scmi_smt_diag_stage stage, bool poison)
+{
+	struct scmi_smt_diag_trace t, before;
+	struct scmi_smt_diag_reply reply, rb;
+	struct scmi_smt_diag_io io = model_io(d);
+	unsigned int calls;
+
+	memset(&t, 0x5a, sizeof(t));
+	CHECK(scmi_smt_clock67_config_set(s, d->enable, &t) == expected);
+	CHECK(t.stage == stage && d->pauses <= 2999 && d->body_reads == 0);
+	CHECK(d->words[2] == 0x1234abcd && d->words[3] == 0x5678ef90);
+	if (!poison)
+		return;
+	calls = d->calls; before = t;
+	memset(&reply, 0xa5, sizeof(reply)); rb = reply;
+	CHECK(scmi_smt_clock67_config_set(s, 0, &t) == EIO);
+	CHECK(scmi_smt_clock67_config_set(s, 1, &t) == EIO);
+	CHECK(scmi_smt_diag_query(s, SCMI_SMT_DIAG_BASE_VERSION, 0,
+	    &reply, &t) == EIO);
+	CHECK(scmi_smt_diag_init(s, &io) == EBUSY);
+	CHECK(d->calls == calls && memcmp(&t, &before, sizeof(t)) == 0);
+	CHECK(memcmp(&reply, &rb, sizeof(reply)) == 0);
+}
+
+static void
+test_clock67_control(void)
+{
+	struct scmi_smt_diag s = SCMI_SMT_DIAG_INITIALIZER;
+	struct scmi_smt_diag_trace t = { 0 }, before;
+	struct scmi_smt_diag_reply reply;
+	struct device d;
+	struct scmi_smt_diag_io io = model_io(&d);
+	unsigned int calls;
+	const uint32_t invalid[] = { 2, 3, 67, 0xfffffffe, UINT32_MAX };
+
+	model_reset(&d, &clock67_control, 1);
+	memset(&t, 0x5a, sizeof(t)); before = t;
+	CHECK(scmi_smt_clock67_config_set(NULL, 1, &t) == EINVAL);
+	CHECK(scmi_smt_clock67_config_set(&s, 1, &t) == EINVAL);
+	CHECK(scmi_smt_diag_init(&s, &io) == 0);
+	CHECK(scmi_smt_clock67_config_set(&s, 1, NULL) == EINVAL);
+	for (size_t i = 0; i < sizeof(invalid)/sizeof(invalid[0]); i++) {
+		CHECK(scmi_smt_clock67_config_set(&s, invalid[i], &t) == EINVAL);
+		CHECK(d.calls == 0 && s.next_token == 1 && memcmp(&t, &before, sizeof(t)) == 0);
+	}
+	d.enable = 1;
+	CHECK(scmi_smt_clock67_config_set(&s, 1, &t) == 0);
+	CHECK(t.stage == SCMI_SMT_DIAG_COMPLETE && t.request_header == 0x45007);
+	CHECK(t.response_header == 0x45007 && t.response_length == 8);
+	CHECK(t.firmware_status_valid && t.firmware_status == 0);
+	CHECK(d.rings == 1 && d.writes == 8 && d.received && !d.bad_request && d.body_reads == 0);
+	CHECK(d.words[2] == 0x1234abcd && d.words[3] == 0x5678ef90);
+	model_reset(&d, &clock67_control, 2);
+	CHECK(scmi_smt_clock67_config_set(&s, 0, &t) == 0);
+	CHECK(t.request_header == 0x85007 && t.response_header == 0x85007);
+	CHECK(t.response_length == 8 && t.firmware_status_valid && t.firmware_status == 0);
+	CHECK(d.rings == 1 && d.writes == 8 && !d.bad_request && s.next_token == 3 && d.body_reads == 0);
+	/* Read-only queries and control use the same counter, never a fresh wire. */
+	model_reset(&d, &fixtures[0], 3);
+	CHECK(scmi_smt_diag_query(&s, SCMI_SMT_DIAG_BASE_VERSION, 0, &reply, &t) == 0);
+	CHECK(t.request_header == 0xc4000);
+	model_reset(&d, &clock67_control, 4);d.enable = 1;
+	CHECK(scmi_smt_clock67_config_set(&s, 1, &t) == 0);
+	CHECK(t.request_header == 0x105007 && s.next_token == 5);
+	calls = d.calls; before = t;
+	CHECK(scmi_smt_clock67_config_set(&s, 2, &t) == EINVAL);
+	CHECK(d.calls == calls && s.next_token == 5 && memcmp(&t, &before, sizeof(t)) == 0);
+
+	/* Strict status-only semantics do not erase a complete transport response. */
+	const uint32_t extra[] = { 12, 16, 104 };
+	for (size_t i = 0; i < sizeof(extra)/sizeof(extra[0]); i++) {
+		struct scmi_smt_diag w = SCMI_SMT_DIAG_INITIALIZER;
+		model_reset(&d, &clock67_control, 1);d.enable = 1;d.length = extra[i];
+		CHECK(scmi_smt_diag_init(&w, &io) == 0);
+		CHECK(scmi_smt_clock67_config_set(&w, 1, &t) == EPROTO);
+		CHECK(t.stage == SCMI_SMT_DIAG_COMPLETE && t.response_length == extra[i]);
+		CHECK(t.firmware_status_valid && t.firmware_status == 0 && d.body_reads == 0);
+		model_reset(&d, &clock67_control, 2);
+		CHECK(scmi_smt_clock67_config_set(&w, 0, &t) == 0);
+		CHECK(t.request_header == 0x85007 && !d.bad_request && d.body_reads == 0);
+	}
+	const uint32_t statuses[] = { 0xffffffff, 0xfffffffd, 0xfffffffc,
+	    0xfffffffa, 0xfffffff8, 0x80000000, 0x7fffffff };
+	for (size_t i = 0; i < sizeof(statuses)/sizeof(statuses[0]); i++) {
+		struct scmi_smt_diag w = SCMI_SMT_DIAG_INITIALIZER;
+		int32_t status = statuses[i] <= INT32_MAX ? (int32_t)statuses[i] :
+		    -(int32_t)(UINT32_MAX-statuses[i])-1;
+		model_reset(&d, &clock67_control, 1);d.enable = 1;d.status = statuses[i];
+		CHECK(scmi_smt_diag_init(&w, &io) == 0);
+		CHECK(scmi_smt_clock67_config_set(&w, 1, &t) == EIO);
+		CHECK(t.stage == SCMI_SMT_DIAG_FIRMWARE && t.response_length == 8);
+		CHECK(t.firmware_status_valid && t.firmware_status == status && d.body_reads == 0);
+		model_reset(&d, &clock67_control, 2);
+		CHECK(scmi_smt_clock67_config_set(&w, 0, &t) == 0);
+		CHECK(t.request_header == 0x85007 && !d.bad_request);
+	}
+	const uint32_t lengths[] = { 0, 1, 4, 7, 9, 11, 105, 108, UINT32_MAX };
+	for (size_t i = 0; i < sizeof(lengths)/sizeof(lengths[0]); i++) {
+		struct scmi_smt_diag w = SCMI_SMT_DIAG_INITIALIZER;
+		model_reset(&d, &clock67_control, 1);d.enable = 1;d.length = lengths[i];
+		CHECK(scmi_smt_diag_init(&w, &io) == 0);
+		control_failure(&w, &d, EPROTO, SCMI_SMT_DIAG_LENGTH, true);
+	}
+	const uint32_t headers[] = { 1, 0x100, 0x200, 0x300, 0x400, 0x40000,
+	    0x10000000, 0x80000000 };
+	for (size_t i = 0; i < sizeof(headers)/sizeof(headers[0]); i++) {
+		struct scmi_smt_diag w = SCMI_SMT_DIAG_INITIALIZER;
+		model_reset(&d, &clock67_control, 1);d.enable = 1;d.header_xor = headers[i];
+		CHECK(scmi_smt_diag_init(&w, &io) == 0);
+		control_failure(&w, &d, EPROTO, SCMI_SMT_DIAG_HEADER, true);
+	}
+	const uint32_t channels[] = { 2, 3, 4, 5, 0x80000000, 0x80000001 };
+	for (unsigned int phase = 0; phase < 2; phase++)
+	for (size_t i = 0; i < sizeof(channels)/sizeof(channels[0]); i++) {
+		struct scmi_smt_diag w = SCMI_SMT_DIAG_INITIALIZER;
+		model_reset(&d, &clock67_control, 1);d.enable = 1;
+		if (phase) d.response_status = channels[i]; else d.initial_status = channels[i];
+		CHECK(scmi_smt_diag_init(&w, &io) == 0);
+		control_failure(&w, &d, EPROTO, SCMI_SMT_DIAG_CHANNEL, true);
+		CHECK(d.writes == (phase ? 8u : 0u) && d.rings == phase);
+	}
+	for (unsigned int phase = 0; phase < 2; phase++)
+	for (unsigned int kind = 0; kind < 5; kind++) {
+		struct scmi_smt_diag w = SCMI_SMT_DIAG_INITIALIZER;
+		model_reset(&d, &clock67_control, 1);d.enable = 1;
+		if (phase) d.no_response = 1; else d.initial_status = 0;
+		if (kind == 1) d.frozen = 1;
+		if (kind == 2) d.rollback = 2;
+		if (kind == 3) d.now = UINT64_MAX-10;
+		if (kind == 4) d.jump = 1;
+		CHECK(scmi_smt_diag_init(&w, &io) == 0);
+		bool clock_error = kind == 2 || kind == 3;
+		control_failure(&w, &d, clock_error ? EIO : phase ? ETIMEDOUT : EBUSY,
+		    clock_error ? SCMI_SMT_DIAG_CLOCK : phase ? SCMI_SMT_DIAG_WAIT_RESPONSE : SCMI_SMT_DIAG_WAIT_FREE,
+		    phase || clock_error);
+		CHECK(d.writes == (phase ? 8u : 0u) && d.rings == phase);
+		if (kind == 1) CHECK(d.pauses == 2999);
+		if (!phase && !clock_error) {
+			uint64_t next_time = d.now + 1000;
+			model_reset(&d, &clock67_control, 1);
+			d.now = next_time;
+			CHECK(scmi_smt_clock67_config_set(&w, 0, &t) == 0);
+			CHECK(t.request_header == 0x45007);
+		}
+	}
 }
 
 int
@@ -546,6 +713,7 @@ main(void)
 		    checks, failures);
 		return 1;
 	}
+	test_clock67_control();
 	test_success();
 	test_clock_version();
 	test_api();
