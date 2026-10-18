@@ -12,10 +12,13 @@ if [ "$compile_only" = 1 ] && [ -z "${CIX_UART2_TEST_OUTPUT:-}" ]; then
 fi
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 # A console-only manual configuration must not add active device profiles.
-ruby - "$src/sys/arch/evbarm/conf/EMBER64_CIX_UART2" <<'RUBY'
-lines = File.readlines(ARGV[0]).map { |line| line.sub(/#.*/, '').strip }
-expected = ['include "arch/evbarm/conf/EMBER64"', 'options CIXP1_UART2_CONSOLE']
-abort 'manual profile differs' unless lines.reject(&:empty?) == expected
+ruby - "$src/sys/arch/evbarm/conf/EMBER64_CIX_UART2" \
+    "$src/sys/arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE" <<'RUBY'
+ARGV.zip(%w[EMBER64 EMBER64_CIXVPU_BOOT_PROBE]).each do |path, parent|
+  lines = File.readlines(path).map { |line| line.sub(/#.*/, '').strip }
+  expected = ["include \"arch/evbarm/conf/#{parent}\"", 'options CIXP1_UART2_CONSOLE']
+  abort 'manual profile differs' unless lines.reject(&:empty?) == expected
+end
 RUBY
 work=$(mktemp -d "${TMPDIR:-/tmp}/cix-uart2.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM

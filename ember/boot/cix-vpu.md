@@ -314,6 +314,11 @@ includes the native diagnostic parent and selects VPU `flags 0x7` with SCMI
 working default and recovery kernels. Qualify the physical resource profile,
 DMA address limits and CPU preparation before this trial.
 
+When the observed firmware loses SPCR, the separate
+[EMBER64_CIXVPU_UART2_BOOT_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE)
+adds only the [exact-board UART2 console gate](cix-spcr.md#manual-kernel-console-profile)
+to that boot profile. It does not change the RPC policy or exposure lifetime.
+
 The once-only mountroot callback reuses the fixed local image pin, exact size,
 one-core plan and zero-page audit. It calls `cixvpu_prepare_boot_cpu`, then frees
 the staging image before creating and invoking the dedicated boot context.

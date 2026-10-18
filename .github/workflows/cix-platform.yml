@@ -29,6 +29,7 @@ name: CIX platform resource contracts
       - 'ember/tools/acpi-iort-dma-*'
       - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/arch/evbarm/conf/EMBER64_CIX_UART2'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY'
@@ -80,6 +81,7 @@ name: CIX platform resource contracts
       - 'ember/tools/acpi-iort-dma-*'
       - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/arch/evbarm/conf/EMBER64_CIX_UART2'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY'
@@ -140,6 +142,7 @@ jobs:
             /sys/arch/arm/acpi/cix_uart2_console.*
             /sys/arch/arm/acpi/files.acpi
             /sys/arch/evbarm/conf/EMBER64_CIX_UART2
+            /sys/arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE
             /sys/arch/arm/acpi/acpi_iort.c
             /sys/arch/arm/pic/pic.c
             /sys/arch/arm/pic/picvar.h

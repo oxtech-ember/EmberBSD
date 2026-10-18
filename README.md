@@ -1092,7 +1092,8 @@ The base system shell is unchanged.
   UEFI-only shutdown. Cold boot can require re-enabling firmware Support SPCR.
   A separate [manual UART2 kernel](ember/boot/cix-spcr.md#manual-kernel-console-profile)
   has source checks for a bounded, exact-DSDT fallback when SPCR is absent.
-  It rejects instrument UART descriptions; physical cold boot is unqualified.
+  It rejects instrument UART descriptions. One physical cold boot without SPCR
+  reaches the native UART2 console, clean FFS and authenticated SSH.
   Cold power-loss recovery and a complete base release remain unqualified.
   See the [board boundary](ember/boards/orange-pi-6-plus.md) and
   [CIX GPIO](ember/boot/cix-gpio.md).
