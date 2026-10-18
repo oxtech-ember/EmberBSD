@@ -122,7 +122,10 @@ For an AArch64 desktop VM, see the [UTM framebuffer configuration](ember/boot/ut
 It documents the PCI ownership fix, the `viogpu` boot override and the
 visible-display regression check.
 
-Build Raspberry Pi 5 UEFI firmware using Docker on macOS or Linux:
+Cross-build Raspberry Pi 5 UEFI with native host tools on macOS or EmberBSD.
+The target compiler must be AArch64 GCC major 16. The host also needs GNU Make,
+iASL, DTC, Python 3 and pyelftools. Use `CROSS_COMPILE` to select an explicit
+compiler prefix. `EMBER_AARCH64_ELF_TOOLCHAIN` can add a local toolchain on macOS.
 
 ```sh
 bash ember/build-firmware.sh /absolute/cache --rp1-console
@@ -133,6 +136,11 @@ order is defined in `ember/firmware/series`. Standard, console, and diagnostic
 variants use separate output directories. Radio firmware assets are fetched
 according to `ember/boot/image-assets.tsv`, with hash verification and
 license preservation; their binaries are not included in the repository.
+The firmware receipt records the compiler path, version, machine, identity and
+SHA256. The builder checks the compiler hash again before publication.
+This identity check does not prove complete TF-A/EDK2 freestanding
+compatibility. In particular, an accepted NetBSD target identity is not a
+successful UEFI build. `--prepare` needs only Git and preserves accepted outputs.
 
 The RV32 kernels are cross-built with the stock `build.sh`:
 
@@ -156,9 +164,14 @@ they float and follow the pull resistors both ways, and only then the
 Zero 3W tree is chosen.
 
 Starting a UEFI rebuild removes the previous output for the selected
-variant. If Docker or compilation fails, an image builder will stop because
-the required input is missing. The host-side contract check covers this
-case: `python3 ember/tools/firmware-contract.py`.
+variant and its receipt before checking tools or sources. An early prerequisite
+failure cannot leave the old image available. A failed build, copy, rename or
+receipt write removes the selected image and receipt. The build log remains.
+The final image appears only after the receipt is ready.
+Invalid arguments do not select or invalidate a variant.
+The host-side controls run the actual wrapper with
+fake Git, compiler and build services: `ruby ember/tools/firmware-contract.rb`.
+They do not contact the network, build firmware or access a device.
 
 ## Installation identity
 

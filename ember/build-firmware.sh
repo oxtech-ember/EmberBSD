@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the pinned eotics UEFI with this fork's ordered hardware diffs.
-# Cross-build on the developer's machine with the host toolchain from brew.
+# Cross-build on a development host with the common AArch64 GCC16 toolchain.
 # No containers, no per-run network package installs, no cloud steps.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,17 +10,17 @@ args=()
 for arg in "$@"; do
     [[ "$arg" == "--prepare" ]] && prepare_only=1 || args+=("$arg")
 done
-set -- "${args[@]}"
+if [[ ${#args[@]} -eq 0 ]]; then set --; else set -- "${args[@]}"; fi
 [[ $# -ge 1 && $# -le 2 ]] || { echo 'usage: build-firmware.sh CACHE [--rp1-console|--rp1-trace] [--prepare]' >&2; exit 1; }
 case "$1" in /*) CACHE="$1" ;; *) echo 'CACHE must be an absolute path' >&2; exit 1 ;; esac
 revision=246e70acd939d62b5a79f895984afd0a93bd83e9
 repo=https://github.com/eotics-com/rpi5-uefi.git
-variant_flags=()
+variant_flags=(--model 5)
 variant=
 case "${2:-}" in
     '') ;;
-    --rp1-console) variant=-rp1-console; variant_flags=(--tfa-flags LOG_LEVEL=0 --edk2-flags '-D RP1_UART_CONSOLE=TRUE') ;;
-    --rp1-trace)   variant=-rp1-trace;   variant_flags=(--tfa-flags LOG_LEVEL=0 --edk2-flags '-D RP1_UART_CONSOLE=TRUE -D CM5_BOOT_TRACE=TRUE') ;;
+    --rp1-console) variant=-rp1-console; variant_flags+=(--tfa-flags LOG_LEVEL=0 --edk2-flags '-D RP1_UART_CONSOLE=TRUE') ;;
+    --rp1-trace)   variant=-rp1-trace;   variant_flags+=(--tfa-flags LOG_LEVEL=0 --edk2-flags '-D RP1_UART_CONSOLE=TRUE -D CM5_BOOT_TRACE=TRUE') ;;
     *) echo 'unknown firmware option' >&2; exit 1 ;;
 esac
 mkdir -p "$CACHE"
@@ -29,10 +29,30 @@ out="$CACHE/firmware$variant"
 src="$CACHE/rpi5-uefi-src"
 mkdir -p "$out"
 
-# Host tools. The canonical build host is EmberBSD itself with the
-# tools from pkgsrc; a developer's macOS machine is supported for
-# iteration. The firmware is a freestanding AArch64 target either way,
-# so the NetBSD sysroot of the kernel build cannot serve this build.
+if [[ $prepare_only -eq 0 ]]; then
+    firmware_cleanup()
+    {
+        firmware_status=$?
+        trap - EXIT
+        if [[ $firmware_status -ne 0 ]]; then
+            # Keep the original status and build.log if cleanup also fails.
+            rm -f "$out/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming" \
+                "$out/firmware-receipt.json" || :
+        fi
+        exit "$firmware_status"
+    }
+    trap firmware_cleanup EXIT
+    # Invalidate this variant before any fallible host, source or build check.
+    rm -f "$out/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming" \
+        "$out/firmware-receipt.json"
+fi
+
+# Use native host tools on EmberBSD or macOS. The firmware target is
+# freestanding AArch64; an application sysroot does not prove compatibility.
+if [[ $prepare_only -eq 1 ]]; then
+    # Preparing the cache needs only Git, on any host.
+    command -v git >/dev/null 2>&1 || { echo 'missing host tool: git' >&2; exit 1; }
+else
 host_system=$(uname -s)
 case "$host_system" in
     NetBSD)
@@ -65,20 +85,8 @@ case "$host_system" in
         ;;
 esac
 missing=0
-if [[ $prepare_only -eq 1 ]]; then
-    # Preparing the cache only needs git on this host.
-    command -v git >/dev/null 2>&1 || { echo 'missing host tool: git' >&2; exit 1; }
-elif [[ "$host_system" == "NetBSD" ]]; then
-    for tool in gmake iasl dtc python3; do
-        command -v "$tool" >/dev/null 2>&1 || { echo "missing host tool: $tool" >&2; missing=1; }
-    done
-    command -v aarch64-none-elf-gcc >/dev/null 2>&1 || { echo 'missing host tool: aarch64-none-elf-gcc' >&2; missing=1; }
-    python3 -c 'import elftools' >/dev/null 2>&1 || { echo 'missing python3 module: pyelftools' >&2; missing=1; }
-    [[ $missing -eq 0 ]] || exit 1
-fi
 # pkgsrc ships the bare-metal toolchain as aarch64-none-elf-;
 # accept both it and the classic aarch64-elf- prefix.
-if [[ $prepare_only -eq 0 ]]; then
 for tool in gmake iasl dtc python3; do
     command -v "$tool" >/dev/null 2>&1 || { echo "missing host tool: $tool" >&2; missing=1; }
 done
@@ -94,6 +102,33 @@ case "${CROSS_COMPILE:-}" in
 esac
 python3 -c 'import elftools' >/dev/null 2>&1 || { echo 'missing python3 module: pyelftools' >&2; missing=1; }
 [[ $missing -eq 0 ]] || exit 1
+
+compiler_path=$(command -v "${CROSS_COMPILE}gcc") || {
+    echo "missing target compiler: ${CROSS_COMPILE}gcc" >&2; exit 1;
+}
+case "$compiler_path" in /*) ;; *) compiler_path="$PWD/$compiler_path" ;; esac
+compiler_version=$("$compiler_path" -dumpfullversion) || {
+    echo 'cannot read target GCC version' >&2; exit 1;
+}
+compiler_machine=$("$compiler_path" -dumpmachine) || {
+    echo 'cannot read target GCC machine' >&2; exit 1;
+}
+compiler_identity=$("$compiler_path" --version) || {
+    echo 'cannot read target GCC identity' >&2; exit 1;
+}
+compiler_macros=$("$compiler_path" -dM -E -x c /dev/null) || {
+    echo 'cannot read target GCC predefined macros' >&2; exit 1;
+}
+if [[ ! "$compiler_version" =~ ^16(\.[0-9]+)*$ ]] ||
+    [[ "$compiler_machine" != aarch64-* ]] ||
+    ! grep -qx '#define __GNUC__ 16' <<< "$compiler_macros" ||
+    ! grep -qx '#define __aarch64__ 1' <<< "$compiler_macros" ||
+    grep -q '^#define __clang__ ' <<< "$compiler_macros"; then
+    echo 'firmware requires AArch64 GCC major 16; Clang is not a target compiler' >&2
+    exit 1
+fi
+compiler_sha256=$(shasum -a 256 "$compiler_path" | awk '{print $1}')
+# Identity checks do not prove full TF-A/EDK2 freestanding compatibility.
 fi
 
 # The firmware series must name every diff exactly once.
@@ -145,16 +180,19 @@ if [[ ! -f "$src/.ember-series" || "$(cat "$src/.ember-series")" != "$series_ide
     printf '%s\n' "$series_identity" > "$src/.ember-series"
 fi
 
-# A failed rebuild must make the previous binary unusable as an image input.
-rm -f "$out/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming"
-( cd "$src" && ./build.sh --model 5 "${variant_flags[@]}" ) > "$out/build.log" 2>&1
+( cd "$src" && ./build.sh "${variant_flags[@]}" ) > "$out/build.log" 2>&1
+compiler_final_sha256=$(shasum -a 256 "$compiler_path" | awk '{print $1}')
+[[ "$compiler_final_sha256" == "$compiler_sha256" ]] || {
+    echo 'target compiler changed during firmware build' >&2; exit 1;
+}
 cp "$src/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming"
-mv "$out/RPI_EFI.fd.incoming" "$out/RPI_EFI.fd"
 
 # Receipt: pins, series hashes and the artifact identity.
-python3 - "$out" "$variant" "$revision" "$ROOT" << 'PYEOF'
+python3 - "$out" "$variant" "$revision" "$ROOT" "$compiler_path" \
+    "$compiler_version" "$compiler_machine" "$compiler_identity" \
+    "$compiler_sha256" "$CROSS_COMPILE" << 'PYEOF'
 import hashlib, json, os, sys
-out, variant, revision, root = sys.argv[1:5]
+out, variant, revision, root, compiler, version, machine, identity, compiler_sha, prefix = sys.argv[1:11]
 def sha(path):
     h = hashlib.sha256()
     with open(path, 'rb') as f:
@@ -166,11 +204,15 @@ receipt = {
     'kind': 'firmware',
     'revision': revision,
     'variant': variant.lstrip('-'),
+    'compiler': {'path': compiler, 'version': version, 'machine': machine,
+                 'identity': identity, 'sha256': compiler_sha,
+                 'cross_compile': prefix},
     'series': {d: sha(os.path.join(root, 'ember/firmware', d)) for d in series},
-    'files': {'RPI_EFI.fd': sha(os.path.join(out, 'RPI_EFI.fd'))},
+    'files': {'RPI_EFI.fd': sha(os.path.join(out, 'RPI_EFI.fd.incoming'))},
 }
 with open(os.path.join(out, 'firmware-receipt.json'), 'w') as f:
     json.dump(receipt, f, indent=2, sort_keys=True)
     f.write('\n')
 PYEOF
+mv "$out/RPI_EFI.fd.incoming" "$out/RPI_EFI.fd"
 echo "firmware: $out/RPI_EFI.fd"
