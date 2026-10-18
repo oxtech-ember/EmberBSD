@@ -369,7 +369,9 @@ to that boot profile. It does not change the RPC policy or exposure lifetime.
 [EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE)
 selects the separate fixed RPC policy with VPU `flags 0x8` and SCMI `flags 0x80`.
 It preserves the UART2 console gate and all boot-long exposure rules.
-Its source checks pass; its physical firmware handshake remains unqualified.
+Its source checks pass. One board trial replies to the first allocation and
+issues one notification, then stops on RESIZE before SWITCHED_IN/PONG.
+The complete firmware handshake remains unqualified.
 
 The once-only mountroot callback reuses the fixed local image pin, exact size,
 one-core plan and zero-page audit. It calls `cixvpu_prepare_boot_cpu`, then frees
@@ -647,20 +649,22 @@ Device DMA data correctness and codec execution require separate board acceptanc
 ## Physical diagnostic boundary
 
 The [observed CIX board](../boards/orange-pi-6-plus.md) runs the manual GCC16
-kernel `aeff3f1c44022e7997ff79270989b8bbbbeb0112` with `flags 0x7`.
+kernel `99455ef8aca14898e600569003454a5ed921480c` with `flags 0x8`.
 The report confirms identity, active power controls, root publication and
-IRQ status mask `0x1`, with no unexpected IRQ bits. It returns ENOTSUP (86) at RECEIVE:
-one visit, zero accepted messages, no SWITCHED_IN and no PONG.
-Cached RPC diagnostics report PARAM state `1`, call ID `2` and payload size `12`.
-The pinned codec reference identifies call `2` as MEM_ALLOC.
-The checked fixed payload reports initial size `131072` bytes, maximum size
-`67108864` bytes, protected region `0` and log2 alignment `22` (4 MiB).
-Maximum size reserves virtual capacity for later growth; the reference initially
-backs only the 128 KiB request. Native diagnostics acquire twelve payload bytes
-and recheck the fixed header. Matching headers rely on committed PARAM ownership;
-they do not prove an atomic transaction or physical DMA coherence.
-The inactive DEBUGPARAM helper handles call `1` and cannot service this request.
-A checked memory response and firmware readiness remain open.
+IRQ status mask `0x1`, with no unexpected IRQ bits. The fixed allocation has
+one committed response and one notification. The next PARAM is state1,
+call3, payload8, identified as RESIZE by the pinned protocol reference.
+Its address and requested size are not captured by this kernel.
+The probe returns ENOTSUP86 at RECEIVE: one visit, zero accepted messages,
+no SWITCHED_IN and no PONG. This is protocol progress, not firmware readiness.
+
+The fixed allocator serves the separately observed MEM_ALLOC tuple:
+initial `131072` bytes, maximum `67108864` bytes, region0 and log2 alignment22.
+Maximum size reserves virtual capacity; only the initial128KiB is backed.
+The request decoder acquires twelve payload bytes and rechecks the header.
+Matching headers rely on committed PARAM ownership; they do not prove an
+atomic transaction or physical DMA coherence. No resize, live PTE change,
+free or complete allocator is implemented by this closed policy.
 
 The exposed prepared owner, core power claims and IRQ registration remain held.
 The IRQ is masked. Cleanup counters do not indicate post-exposure reclamation.

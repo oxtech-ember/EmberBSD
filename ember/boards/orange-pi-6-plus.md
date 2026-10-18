@@ -6,12 +6,12 @@ This profile records one physical sample. It is not a complete installation imag
 
 | Function | Result and limits |
 | --- | --- |
-| Boot | Stock UEFI and an SD FFS root pass five unattended warm boots with kernel `71877588c` and the reduced GCC16 userland. A RAM recovery entry remains available. See the [persistent-root check](../image/cix-p1.md#physical-reboot-check). |
-| Console | DEBUG UART2, 115200 8N1. The stock SPCR points at UART3. The loader correction selects UART2 without rewriting the firmware. A separate [manual kernel gate](../boot/cix-spcr.md#manual-kernel-console-profile) passes one cold boot with SPCR absent and hands off to native plcom2 at 115200 8N1. |
+| Boot | The installed UART2 kernel `f84fcb5ef` passes one automatic cold default boot and one automatic warm default boot with the reduced GCC16 SD/FFS root. A RAM recovery entry remains available. See the [persistent-root check](../image/cix-p1.md#physical-reboot-check). |
+| Console | DEBUG UART2, 115200 8N1. The stock SPCR points at UART3. The loader correction selects UART2 without rewriting the firmware. A separate [manual kernel gate](../boot/cix-spcr.md#manual-kernel-console-profile) passes a manual cold boot and an automatic cold default boot with SPCR absent, with native plcom2 at 115200 8N1. |
 | CPU and memory | The kernel reports 12 CPUs and about 32 GB. SMP stress and memory integrity are not qualified. |
 | Ethernet | `rge1` negotiates 1000baseT full-duplex. A short host-to-board transfer and ICMP replies pass. Board-initiated ping to the host did not receive replies; the cause is unconfirmed. The second port and sustained camera traffic remain unqualified. |
-| Video codec | The default [ACPI attachment](../boot/cix-vpu.md) queries resources. Manual GCC16 diagnostics pass native clock67 enable/disable, identity and the [seven-word profile](../boot/cix-platform.md#manual-native-hardware-profile), with checked control cleanup. The [CPU preparation fixture](../boot/cix-vpu.md#manual-cpu-preparation-probe) allocates and zero-checks 256 pages, prepares the pinned firmware/tables and releases both owners. Absent firmware stops before allocation. A [firmware boot trial](../boot/cix-vpu.md#physical-diagnostic-boundary) reaches root publication and IRQ status mask `0x1`, then returns ENOTSUP on MEM_ALLOC (PARAM1/call2/12-byte payload) before SWITCHED_IN/PONG; the fixed request asks for 128 KiB initial memory, 64 MiB virtual capacity, region0 and 4 MiB alignment. Exposed pages and claims remain held, IRQ masked. Firmware readiness, DMA data correctness, video queues, rails, waveform and fresh repair remain unqualified. |
-| Remote access | The reduced native SSH extension passes root password authentication, PTY access, wrong-password rejection and automatic startup after a warm reboot. Host identity and account databases persist. Access is administrator-provisioned; images contain no credentials. See [SSH provisioning](../image/cix-p1.md#optional-ssh-access). |
+| Video codec | The default [ACPI attachment](../boot/cix-vpu.md) queries resources. Manual GCC16 diagnostics pass native clock67 enable/disable, identity and the [seven-word profile](../boot/cix-platform.md#manual-native-hardware-profile), with checked control cleanup. The [CPU preparation fixture](../boot/cix-vpu.md#manual-cpu-preparation-probe) allocates and zero-checks 256 pages, prepares the pinned firmware/tables and releases both owners. Absent firmware stops before allocation. A [firmware boot trial](../boot/cix-vpu.md#physical-diagnostic-boundary) reaches root publication and IRQ status mask `0x1`, replies to the fixed MEM_ALLOC once and notifies firmware once, then returns ENOTSUP on RESIZE (PARAM1/call3/body8) before SWITCHED_IN/PONG. The fixed allocation serves 128 KiB initial memory, 64 MiB virtual capacity, region0 and 4 MiB alignment; resize fields remain uncaptured. Exposed pages and claims remain held, IRQ masked. Firmware readiness, DMA data correctness, video queues, rails, waveform and fresh repair remain unqualified. |
+| Remote access | The reduced native SSH extension passes root password authentication, PTY access, wrong-password rejection and automatic startup after a warm reboot and one cold default boot. The cold trial also passes 2 MiB file transfers each way with matching SHA256. Host identity and account databases persist. Access is administrator-provisioned; images contain no credentials. See [SSH provisioning](../image/cix-p1.md#optional-ssh-access). |
 | Power button | Physical short presses reach native `powerd`, sync and FFS unmount. The operator measures about 5 s to fan stop. A commanded reboot reaches FFS unmount in 0.31 s from its reason log; a new press-to-fan measurement remains pending. Warm boots report clean FFS and restore WPA2/DHCP. Restart by short press remains unresolved, including after UEFI-only shutdown: power must be removed and restored. The UART session leader passes native Ctrl-C, stopped-job and termination-without-input checks. EMBER64 selects the bounded pin6 ACPI event path; `flags 0x0` retains passive mode. See [CIX GPIO](../boot/cix-gpio.md). |
 | RTL8822CE | Physical kernel `71877588ca099bf69686a35b96a00771a26feebc` passes WPA2-PSK/CCMP and fresh DHCP on channels 8 and 149. Each band passes simultaneous 16 MiB RAM-root TCP transfers in both directions with matching SHA256. The persistent SD profile also passes automatic reboot recovery and 2 MiB checks each way. See the [source boundary and contracts](../development/rtl8822ce-proposal.md#current-source-boundary). This is a legacy 802.11a/b/g profile with software CCMP. Cold calibration retains ADC AB and DAC B residual-quality warnings. Analog qualification, higher rates, AP-loss recovery and long-term stability remain pending. |
 | Storage | SD supplies the boot payload and a new 2 GiB writable FFS root. Full image readback and forced native fsck pass before provisioning. The existing EFI and boot partitions remain. NVMe installation is not accepted. |
@@ -22,16 +22,16 @@ This profile records one physical sample. It is not a complete installation imag
 
 Use the [GCC16 kernel procedure](../development/kernel.md).
 Keep a known working kernel, its matching RAM root and UART recovery available.
-Enable `Support SPCR` in firmware. On this sample it can be lost after power removal.
-Use the [CIX SPCR loader correction](../boot/cix-spcr.md); UART1 and UART3 remain separate device interfaces.
-The separate [manual UART2 kernel profile](../boot/cix-spcr.md#manual-kernel-console-profile)
-has source checks for missing-SPCR recovery through an exact DSDT gate.
-Its physical cold boot and native UART handoff remain unqualified.
+The [UART2 kernel profile](../boot/cix-spcr.md#manual-kernel-console-profile)
+uses an exact DSDT gate when SPCR is absent. Its installed default passes one
+automatic cold boot without changing firmware settings. The loader correction
+remains applicable when the checked original SPCR exists. UART1 and UART3
+remain separate instrument interfaces; their baud and exchanges are unqualified.
 
 The [opt-in profile](../boot/cix-p1-persistent.cfg) clears initrd and selects
 `netbsd.wifi.gz` with `root=NAME=ember-cix-root`. The current development media
-uses kernel `522474e4de9f597153b5192ad579d900fff273ca`, gzip SHA256
-`f1108160847844625ac9cce4d28419042687388c9f95d794d5b3341107aa1d1c`.
+uses the UART2 kernel `f84fcb5efef545db3f148035873a99ad23d7fe60`, gzip SHA256
+`5f216069b8100d2ff6f52d05fe87fc849481432d047d856beccaf4d91b0854b2`.
 The retained `71877588c` rollback gzip SHA256 is
 `2902b98e8b604446ec7103c9efe7e1fe928ad8a07d0711cdce2ebb37b514766d`.
 The recovery menu selects the retained `/netbsd` and `root.fs` pair.
@@ -48,11 +48,11 @@ an ACPI `AE_NO_MEMORY` error. A warm retry reached the shell without a source ch
 Boot reliability and the cause of this failure remain unqualified.
 The installed profile queues `userconf disable acpibat` on each boot.
 This makes the diagnostic policy repeatable; it does not repair battery ACPI.
-All five warm boots reach the disk root without interactive commands.
-After cold power removal, firmware Support SPCR was disabled; enabling it and
-saving with F10 restores the shadow correction and kernel console.
-Cold power-loss recovery remains unqualified. RTC and hardware detection errors
-remain visible in the boot log.
+The current default also reaches the root without menu input after a full DC
+cycle. FFS is clean and WPA2/CCMP, SSH/PTY and checked file transfers recover.
+Association is initially pending; immediate network availability is not established.
+Unclean power-loss recovery, long-term reliability, RTC and hardware detection
+errors remain unqualified.
 
 For reusable board and interface references, start with
 [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards).

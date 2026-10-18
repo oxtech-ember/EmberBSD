@@ -101,7 +101,10 @@ access and wrong-password rejection. Startup source
 `1d94afe4d3f76b563e072f0ced8757dbb3709349` restores the listener and authenticated
 PTY after a warm reboot. The host identity and persistent account remain intact.
 This receipt covers that native extension and installed configuration.
-The complete expanded cohort build and cold power-loss recovery remain separate.
+The installed extension also restores authenticated SSH/PTY after one automatic
+cold default boot with the checked UART2 kernel. WPA2/CCMP and a 2 MiB file each
+way pass SHA256 checks. The complete expanded cohort build, sustained operation
+and recovery from an unclean power loss remain separate.
 
 ```sh
 ruby ember/image/test-cix-p1-userland.rb

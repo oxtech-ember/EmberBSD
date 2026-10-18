@@ -38,6 +38,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_ATTRS'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_RATE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_DMA_PROBE'
@@ -91,6 +92,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_ATTRS'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_RATE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_DMA_PROBE'
@@ -146,6 +148,8 @@ jobs:
             /sys/arch/evbarm/conf/EMBER64_CIX_UART2
             /sys/arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE
             /sys/arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE
+            /sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY
+            /sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY
             /sys/arch/arm/acpi/acpi_iort.c
             /sys/arch/arm/pic/pic.c
             /sys/arch/arm/pic/picvar.h

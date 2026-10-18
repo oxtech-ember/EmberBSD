@@ -1066,12 +1066,14 @@ The base system shell is unchanged.
   [Immediate shutdown](ember/tools/immediate-shutdown-contract.c) preserves hooks
   and sync; the trusted UART session leader and network-stop ordering have
   native checks. Restart by a short press remains unresolved, including after
-  UEFI-only shutdown. Cold boot can require re-enabling firmware Support SPCR.
-  A separate [manual UART2 kernel](ember/boot/cix-spcr.md#manual-kernel-console-profile)
-  has source checks for a bounded, exact-DSDT fallback when SPCR is absent.
-  It rejects instrument UART descriptions. One physical cold boot without SPCR
-  reaches the native UART2 console, clean FFS and authenticated SSH.
-  Cold power-loss recovery and a complete base release remain unqualified.
+  UEFI-only shutdown. A separate
+  [UART2 kernel profile](ember/boot/cix-spcr.md#manual-kernel-console-profile)
+  uses a bounded, exact-DSDT fallback when SPCR is absent.
+  It rejects instrument UART descriptions. The installed profile passes an
+  automatic cold default boot, native UART2 handoff, clean FFS, WPA2/CCMP,
+  authenticated SSH/PTY and a 2 MiB file transfer each way with matching SHA256.
+  This is one cold default cycle. A complete base release, sustained operation
+  and recovery from an unclean power loss remain unqualified.
   See the [board boundary](ember/boards/orange-pi-6-plus.md) and
   [CIX GPIO](ember/boot/cix-gpio.md).
   Native [clock/reset diagnostics](ember/boot/cix-platform.md) pass clock67
@@ -1084,8 +1086,12 @@ The base system shell is unchanged.
   pages and masks the IRQ. Physical RPC-header diagnostics identify MEM_ALLOC
   (PARAM state `1`, call ID `2`, payload size `12`): 128 KiB initial memory,
   64 MiB virtual capacity, protected region and 4 MiB alignment.
-  A separate manual RPC profile has a source-tested fixed memory response;
-  its physical handshake remains unqualified. The separate, inactive
+  A separate manual RPC profile replies to the first allocation and notifies
+  the firmware once on the board. The next request is RESIZE, call3/body8;
+  it stops with ENOTSUP before SWITCHED_IN/PONG and retains exposed owners.
+  A separate [UART rate query](ember/boot/cix-platform.md#manual-uart-rate-observations)
+  has source checks for functional clock IDs264/266; actual rates and instrument
+  exchange remain unqualified. The separate, inactive
   [DEBUGPARAM primitive](ember/boot/cix-vpu.md#inactive-debugparam-response)
   passes actual-source checks. It changes only a validated request's state word;
   the boot coordinator does not call it. Firmware readiness, DMA data
@@ -1306,7 +1312,7 @@ listed revision; it does not imply full peripheral or long-run support.
 | [Raspberry Pi Zero 2 W](ember/boards/raspberry-pi-zero-2-w.md) | AArch64 / BCM2710A1 | microSD boot, all cores, serial and 2.4 GHz Wi-Fi; large Wi-Fi transfers stall |
 | [Orange Pi Zero 4](ember/boards/orange-pi-zero-4.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Ethernet, Wi-Fi, classic Bluetooth, thermal/frequency control and USB 2.0 data; SuperSpeed unconfirmed |
 | [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry, thermal/frequency control, and PowerVR compute/GEM; accelerated GUI, USB devices, and Bluetooth pairing not tested |
-| [Orange Pi 6 Plus](ember/boards/orange-pi-6-plus.md) | AArch64 / CIX CD8180 | Experimental stock-UEFI SD/FFS root, DEBUG UART2 and passive codec resource attachment; one Ethernet link checked; native RTL8822CE WPA2/DHCP and TCP checks pass on both bands, including unattended warm reboots; hardware codec, installed NVMe root, cold power removal and sustained peripheral operation unverified |
+| [Orange Pi 6 Plus](ember/boards/orange-pi-6-plus.md) | AArch64 / CIX CD8180 | Experimental stock-UEFI SD/FFS root, DEBUG UART2 and passive codec resource attachment; one Ethernet link checked; native RTL8822CE WPA2/DHCP and TCP checks pass on both bands, including unattended warm reboots and one cold default recovery with SSH/PTY; hardware codec, installed NVMe root and sustained peripheral operation unverified |
 | [ESP32-S31 development board](ember/boards/esp32-s31.md) | RISC-V 32 / ESP32-S31 | Flash boot, Ethernet and WPA2 Wi-Fi in 16 MB; one core, vendor radio libraries, no BLE/USB |
 | [YS-M33 tablet](ember/boards/ys-m33-a133.md) | AArch64 / Allwinner A133 | Experimental eMMC boot, Ethernet and upright awesomeWM on two samples; physical touch, audible audio(4) playback, intelligible captured speech and USB-A/Pixhawk6X tested on the first; [USB-only installation and recovery](ember/boards/ys-m33-a133-cable-install.md) on one unopened factory sample; [U-Boot 2026.10 second-stage RAM kernel handoff](ember/boards/validation/2026-10-08-a133-uboot-ram.md) on the first through its FFS root, followed by a prearmed 16-second watchdog return; permanent loader installation and direct recovery through it unverified; cold cycles, factory restoration, fleet and sustained use unverified; opt-in SDIO RAM diagnostic verifies register reads and function enable/ready/restore; Wi-Fi radio initialization/association unimplemented |
 

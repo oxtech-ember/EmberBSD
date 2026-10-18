@@ -246,6 +246,21 @@ The existing ENTITY2.0 length24 check remains unchanged; this batch does not
 query or reinterpret entity data. No clock control, setter, ACK-clear, service,
 VPU access or physical mixed-batch acceptance follows from a source result.
 
+## Manual UART rate observations
+
+[EMBER64_CIXSCMI_UART_RATE_QUERY](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY)
+selects exact SCMI flags256, VPU0 and the checked UART2 console gate.
+It queries only functional clock IDs264 and266 with fresh tokens1 and2.
+It shares the checked metadata, exclusive lease, bounded waits and ACK checks.
+An error stops the sequence. A possible publication retains the boot-long lease.
+The profile publishes no native clock service and performs no UART setup.
+Exactly eight reply data bytes form each uint64 rate. Zero is raw telemetry,
+not an accepted UART input frequency. Clock67 control and entity queries keep
+their fixed ID rules. Instrument exchange, actual baud and firmware support
+for these rate requests require a separate board test.
+
+## Shared transport validation
+
 Before mapping, the binding validates each static property, resource and
 reference. It requires MBX6/7, SHM0/1, channel 8, non-coherent shared memory,
 the reviewed interrupt profile and four unowned ACPI nodes. It reserves only
