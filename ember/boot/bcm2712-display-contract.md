@@ -228,6 +228,89 @@ The pinned Linux HDMI driver rejects zero HSM clock before register access.
 It also prohibits clearing `VID_CTL_ENABLE` on BCM2712 because that operation can lock the bus.
 A future native implementation must retain these hardware constraints.
 
+## Fixed first-frame design boundary
+
+The following facts define a future static-frame stage. They do not establish
+working scanout or authorize register writes. The path is HVS channel0/output0
+through BCM2712 PixelValve0 to HDMI0. MOP and MOPlet serve TXP writeback to memory;
+they are not part of this HDMI path. Use scanout resources 3, 4 and 5 for HVS,
+its IOMMU and PV0. Resources 7 and 8 are not needed for this path.
+See the pinned [PV mapping](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_crtc.c#L1330-L1395)
+and [writeback mapping](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_txp.c#L545-L570).
+
+Select the HVS layout from its version low byte: C0 is `0x53`, D0 is `0x54`.
+The channel register offsets and opaque-alpha encoding differ. Reject an unknown
+version before writes. PV0 uses one pixel per clock for progressive modes.
+Its HDMI0 clock-select index is 0; do not substitute the legacy HDMI selector 1.
+See the [HVS register layouts](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_regs.h#L552-L763)
+and [alpha rules](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_plane.c#L1305-L1354).
+
+The proposed first frame is progressive 1920x1080 at 60 Hz, with a 148.5 MHz
+TMDS character rate and RGB8 output. Use one immutable XRGB8888 linear buffer,
+with pitch 7680, offset 0 and 8294400 bytes. In little-endian memory its bytes
+are B, G, R, X. Disable scaling, rotation, crop and blending. The fixed CEA mode
+has horizontal values `1920/2008/2052/2200`, vertical values
+`1080/1084/1089/1125`, and positive sync polarities.
+A fresh EDID must validate the current sink and selected mode.
+See the [mode entry](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/drm_edid.c#L843-L847)
+and [VC6 plane path](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_plane.c#L1930-L2357).
+
+Unity RGB avoids scaling kernels, LBM and YUV conversion, but still needs UPM.
+The pinned two-line UPM calculation gives 15616 bytes for this pitch, aligned
+to 256-byte units. Reserve dlist, UPM and COB storage without overlap.
+The dlist lives in HVS SRAM at resource3 plus `0x4000`; it is not a framebuffer
+DMA allocation. Use 32-bit writes and the selected C0/D0 layout.
+See [UPM sizing](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_plane.c#L901-L926)
+and [HVS publication](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hvs.c#L1176-L1258).
+
+The framebuffer must have one continuous HVS-visible DMA span. Physical SG
+pages require a suitable HVS IOMMU mapping. The descriptor has a 40-bit address
+field, but the pinned driver selects a 36-bit DMA mask. Keep that conservative
+bound for the complete first-frame range; never truncate addresses.
+A contiguous allocation alone does not prove the current IOMMU translation or
+pass-through state. See the [DMA mask](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_drv.c#L320-L345),
+[continuous-span check](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/drm_gem_dma_helper.c#L461-L483)
+and [IOMMU aperture policy](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/iommu/bcm2712-iommu.c#L87-L116).
+
+The current [native BO](../../sys/external/bsd/drm2/bcmv3d/bcmv3d_bo.c) permits SG
+storage. Its `bo->gpu` belongs to the V3D MMU; it is not an HVS DMA address.
+The [render driver](../../sys/external/bsd/drm2/bcmv3d/bcmv3d_drv.c) supports
+PRIME self-import and CPU mapping, but has no foreign SG export/import hooks.
+The proposed native KMS integration should share that DRM/GEM owner and preserve
+the render ABI. This avoids adding foreign PRIME solely for local scanout.
+It still needs separate V3D and HVS mappings, DMA tags, producer completion and
+cache synchronization. Do not replace the render DMA domain with the HVS domain.
+This is an EmberBSD design choice; Linux uses separate display and V3D devices.
+
+HVS also needs ownership of firmware clocks 4/core and 16/disp, beyond the
+[PHY clock prerequisites](bcm2712-display-phy-core.md#errors-and-lifetime-boundary).
+Linux enables both HVS clocks. The observation API above does not establish
+their lifetime, power or mode-specific rate policy. No current HVS rate is
+accepted here. See the [CM5 clock bindings](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/arch/arm64/boot/dts/broadcom/bcm2712-rpi-cm5.dtsi#L264-L267)
+and [HVS clock acquisition](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hvs.c#L2168-L2203).
+Firmware handoff, shared-HD/DVP quiesce and exclusion of other HVS users must
+hold through all controller and IRQ cleanup.
+
+The [enable order](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_crtc.c#L658-L703)
+places HVS publication before HDMI preparation, PV configuration, PV enable,
+HDMI pre-enable, PV video enable and HDMI post-enable. PHY programming alone
+does not provide this path. PV0 vblank uses GSI133 and `VFP_START` bit7 at
+INTEN `+0x24` and W1C INTSTAT `+0x28`. HVS EOF0 is a separate display-domain
+leaf2 event. Initial evidence needs fresh PV interrupts, the expected active
+HVS dlist, advancing frame counts and the visible known static pattern.
+Counters alone do not prove correct pixels or a working link.
+See [PV vblank and active-list checks](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_crtc.c#L801-L898).
+
+Keep the BO and internal allocations pinned until stop and DMA drain are proved.
+Linux clears PV video enable, waits for it to clear, delays 20 ms, flushes PV
+and stops HVS; VC6 checks the disabled mode. This sequence does not establish
+our native DMA-drain or owner-release predicate. Retain buffers, mappings,
+clocks and owners when cleanup is uncertain. Never clear BCM2712
+`VID_CTL.ENABLE`. HVS mapping, clock/power ownership, exclusive handoff, IRQ
+lifetime and stop/drain/release remain gates before native first-frame access.
+See the [stop sequence](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_crtc.c#L503-L551)
+and [VC6 stop check](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hvs.c#L1097-L1123).
+
 ## Physical resource observation
 
 A CM5 Rev 1.0 with BCM2712 D0 booted the complete GCC 16.2 firmware build from
