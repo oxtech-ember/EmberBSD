@@ -24,11 +24,12 @@ The independent BSD source in `sys/dev/ic` implements bounded foundations:
 | `cixvpu_mmu.[ch]` | Encode 40-bit bus addresses and checked two-level page entries. Reject invalid permissions, occupied entries and stale removals. | Allocate/map DMA memory, stop the device and manage caches/TLBs. Removal is not safe during active DMA. |
 | `cixvpu_fw_plan.[ch]` | Plan protocol-3 backing owners and firmware VA mappings without allocation. Check the text offset, BSS bounds, aliases, table coverage and page quota. | Allocate validated DMA backing, copy data, synchronize and publish only after stopped-device checks. |
 | `cixvpu_dma.[ch]` | Allocate one native `bus_dma` owner per backing page. Seal moved ownership, synchronize unique maps and reject release after recorded exposure. | Keep addresses hidden. Qualify the hardware handoff, runtime synchronization and eventual teardown separately. |
-| `cixvpu_prepare.[ch]` | Recheck the image pin and plan, copy CPU text, verify CPU page tables and move the allocation into an opaque owner. Offer initial synchronization without an address getter. | End all mutable borrows before preparation. Serialize access and retain every exposed owner until a qualified teardown exists. |
+| `cixvpu_prepare.[ch]` | Recheck the image pin and plan, verify CPU tables and move ownership. Offer initial synchronization, fixed boot messages and a guarded root capability. | End all mutable borrows before preparation. Serialize access and retain every exposed owner until a qualified teardown exists. |
 
 The attachment selects the header parser, layout planner and CPU-only allocator.
-The kernel also links CPU preparation and its MMU helper. Only the explicit
-manual preparation profile calls them. The ring remains an independent helper.
+The kernel also links CPU preparation, MMU and ring helpers. Only the explicit
+manual preparation profile calls ordinary CPU preparation. No attachment calls
+the typed boot constructor, root publication or receive helpers.
 `sys/videoio.h` adds the standard `V4L2_PIX_FMT_HEVC` fourcc without changing
 structure layout or ioctl numbers. The existing `video(4)` driver remains
 capture-only; the presence of M2M declarations does not implement two queues.
@@ -130,7 +131,8 @@ planned text bytes, builds leaf entries and root links with the real MMU helper,
 and verifies every table slot, including unmapped holes.
 
 Success moves the allocation into an opaque prepared owner. The caller's
-allocator handle becomes NULL. No mutable getter or root-address handoff exists.
+allocator handle becomes NULL. No mutable getter exists. This ordinary constructor
+does not enable the separate boot root capability described below.
 Failure preserves caller handles, but CPU bytes may be partially changed.
 The caller must free that allocation. It must not retry or publish those bytes.
 `cixvpu_prepared_free` retains the complete owner if cleanup fails.
@@ -159,12 +161,12 @@ each operation covers the complete 4096-byte page.
 Text, host-written pages and tables use PREWRITE. Device-written data pages
 also use PREREAD. PREWRITE initializes possible bounce backing, including zeros.
 No DMA address is returned. The manual preparation callback does not call this
-API yet, and no production caller marks an owner exposed.
+API yet, and no attachment calls the typed root publication API.
 
 Cleanup of a synchronized, never-exposed owner validates all receipts before
 matching POST operations and release. A private irreversible exposure marker
 closes every release path. There is no reset, timeout or caller-boolean bypass.
-This marker supports a future publication API; hardware handoff is unfinished.
+The typed root publication API uses this marker; hardware handoff is unfinished.
 The guard does not implement a global stale-pointer registry or internal locking.
 
 Source `ea410dcd9b33ecf57fee7d86594454799ac776b3` passes 13349515 preparation
@@ -175,6 +177,42 @@ are detected, including an ASan reproduction of an allocation-capacity overrun.
 Native GCC16 and CSA pass. Native Cppcheck reports no warning, performance or
 portability findings in the changed DMA/preparer scope. These checks do not
 qualify physical cache behavior, routing or DMA.
+
+## Typed boot preparation and receive
+
+`cixvpu_prepare_boot_cpu` shares the ordinary constructor and accepts one core
+with protocol3.5/r0p0-sum0005. The caller supplies the trusted full-image pin.
+It seeds fixed zero-payload PING1006 through the actual checksum-ring helper
+before seal, ownership transfer and initial synchronization. It does not start
+firmware or accept an arbitrary message, queue or mutable page request.
+
+After initial synchronization, `cixvpu_prepared_publish_root` checks output
+storage against known prepared, DMA, page and native-map storage. It marks
+irreversible exposure before returning the encoded root word. Failed validation
+or marking leaves output unchanged. Every later free remains EBUSY, even if
+no MMIO write occurs. This is a conservative capability boundary, not a claim
+that hardware received the address. No general kernel-pointer authentication exists.
+
+`cixvpu_prepared_boot_receive` copies one SWITCHED_IN2001/core0 or PONG2009 reply.
+It checks the fixed RPC header and brackets a MESSAGE-page acquisition with
+independent control acquisitions before and after. All three control tuples must
+match, with at most four attempts. Native services acquire/return MVE ownership
+through POSTREAD/PREREAD. There is no stale MVE PREWRITE.
+The real ring parser checks framing and checksum before the HOST cursor commit.
+Only that two-byte HOST field uses POSTWRITE/store/PREWRITE.
+
+Empty or unstable snapshots return EAGAIN without output or cursor advancement.
+Malformed data, unsupported RPC and retained-map faults stop further protocol I/O.
+Argument and output-alias errors before I/O preserve state. Caller serialization
+and normal C object lifetime rules remain required. No post-exposure reclamation,
+reset, clock release, GO, framebuffer, dynamic RPC or IRQ operation is implemented.
+
+The actual-source preparation suite passes 13464524 checks, and the standalone
+allocator passes 2338334 checks with 629 acquisition failures. GCC16 path analysis,
+host Cppcheck/CSA and ASan/UBSan cover the production bodies and modeled services.
+Ten causal mutations are detected. Native GCC16/CSA pass; all-category Cppcheck
+retains header, informational and isolated unused-API findings without suppression.
+These results do not establish a hardware firmware boot or physical DMA.
 
 ## Manual CPU preparation probe
 

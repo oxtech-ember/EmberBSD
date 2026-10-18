@@ -253,7 +253,10 @@ on every board in the hardware catalog.
   source checks pass; physical preparation remains unverified.
   The [initial DMA synchronization and lifetime guard](ember/boot/cix-vpu.md#initial-dma-synchronization-and-lifetime-guard)
   pass actual-source checks, including separate modeled bounce backing and
-  rejection of release after recorded exposure. No address handoff exists.
+  rejection of release after recorded exposure. Separate [typed boot helpers](ember/boot/cix-vpu.md#typed-boot-preparation-and-receive)
+  seed a fixed PING, mark exposure before returning the root word and accept
+  copied SWITCHED_IN/PONG messages from bounded snapshots. Actual-source checks
+  pass; no attachment invokes these boot helpers or writes that word to hardware.
   Physical DMA, hardware publication and runtime teardown remain unfinished.
   A separate [native hardware profile](ember/boot/cix-platform.md#manual-native-hardware-profile)
   adds seven raw VPU observations under the same clock/reset/power claims.
