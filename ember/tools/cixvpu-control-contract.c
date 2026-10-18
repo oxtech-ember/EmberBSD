@@ -12,6 +12,7 @@
 #define ACPI_APPLICATION
 #include <acpi.h>
 #include "cixvpu_resources.h"
+#include "cixvpu_fw_plan.h"
 static unsigned int checks, failures;
 #define CHECK(x) do { checks++; if (!(x)) { failures++; \
     fprintf(stderr, "FAIL line %u: %s\n", (unsigned int)__LINE__, #x); } } while (0)
@@ -31,7 +32,12 @@ struct acpi_devnode {
 };
 struct acpi_softc { struct { struct acpi_devnode *first; } sc_head; };
 #define SIMPLEQ_FOREACH(v,h,f) for ((v)=(h)->first;(v)!=NULL;(v)=(v)->next)
-struct acpi_attach_args { struct acpi_devnode *aa_node; bus_space_tag_t aa_memt; };
+typedef void *bus_dma_tag_t;
+struct acpi_attach_args {
+    struct acpi_devnode *aa_node;
+    bus_space_tag_t aa_memt;
+    bus_dma_tag_t aa_dmat, aa_dmat64;
+};
 struct cixclk { bool claimed, dirty, native; };
 struct cixreset { bool claimed, dirty; };
 static char tokens[12];
@@ -261,7 +267,8 @@ static void bus_space_unmap(bus_space_tag_t t, bus_space_handle_t h, bus_size_t 
 #include "control-header.inc"
 #include "control-source.inc"
 static struct acpi_devnode node = { .ad_handle = VPU };
-static struct acpi_attach_args aa = { &node, NULL };
+static char dma_tags[2];
+static struct acpi_attach_args aa = { &node, NULL, &dma_tags[0], &dma_tags[1] };
 static const struct cixvpu_resources description = {
     .mem = {{0x100000, 0x110000, 0x10000}, {0x300000, 0x320000, 0x10000}},
     .nmem = 2, .nirq = 1, .irq = 358, .irq_trigger = 0, .cca_present = 1, .cca = 0
@@ -446,6 +453,8 @@ static void *attach_private;
 static void (*deferred_callback)(device_t);
 static device_t deferred_device;
 static unsigned int parser_calls, cleanup_calls, defer_calls, raw_extra;
+static unsigned int mountroot_calls;
+static bool mountroot_immediate;
 static ACPI_STATUS parser_status;
 static struct cixvpu_resources attach_description;
 static struct acpi_mem parser_memory[2];
@@ -490,6 +499,82 @@ static void acpi_resource_cleanup(struct acpi_resources *r)
 { cleanup_calls++; memset(r, 0, sizeof(*r)); memset(parser_memory, 0, sizeof(parser_memory)); memset(&parser_irq, 0, sizeof(parser_irq)); }
 static void config_defer(device_t d, void (*cb)(device_t))
 { assert(d == VPU && cleanup_calls == 1); defer_calls++; deferred_device = d; deferred_callback = cb; }
+static void config_mountroot(device_t d, void (*cb)(device_t))
+{ assert(d == VPU && cleanup_calls == 1); mountroot_calls++; deferred_device = d; deferred_callback = cb; if (mountroot_immediate) cb(d); }
+/* Firmware filesystem, SHA service and DMA API are orchestration boundaries.
+ * Actual parser/planner run below. Actual allocator has its separate contract. */
+typedef void *firmware_handle_t;
+#define SHA256_DIGEST_LENGTH 32
+typedef struct { unsigned int state; } SHA256_CTX;
+static unsigned char fw_image[420736], dma_bytes[4096];
+static const char selected_digest[] = "2f745394cc8700233448d74cf4fb14d18eba547d2259de5e0bbf825a1efef56d";
+static off_t fw_size;
+static unsigned int fw_fault, fw_opens, fw_closes, fw_reads, fw_hashes, fw_live;
+static unsigned int dma_allocs, dma_views, dma_frees, dma_count;
+static bool dma_live;
+static char fw_events[64];
+static unsigned int fw_nevents;
+static void fw_event(char c)
+{ assert(fw_nevents + 1 < sizeof(fw_events)); fw_events[fw_nevents++] = c; fw_events[fw_nevents] = 0; }
+static int firmware_open(const char *driver, const char *image, firmware_handle_t *out)
+{ CHECK(strcmp(driver, "cixvpu") == 0 && strcmp(image, "hevcenc.fwb") == 0); fw_opens++; fw_event('o'); if (fw_fault == 1) return ENOENT; *out = fw_image; return 0; }
+static off_t firmware_get_size(firmware_handle_t handle)
+{ CHECK(handle == fw_image); fw_event('s'); return fw_size; }
+static void *firmware_malloc(size_t n)
+{ CHECK(n == (size_t)fw_size && fw_live == 0); fw_event('m'); if (fw_fault == 2) return NULL; void *p = malloc(n); assert(p); fw_live++; return p; }
+static void firmware_free(void *p, size_t n)
+{ CHECK(fw_live == 1 && n == (size_t)fw_size); fw_live--; fw_event('f'); free(p); }
+static int firmware_read(firmware_handle_t handle, off_t offset, void *p, size_t n)
+{ CHECK(handle == fw_image && offset == 0 && fw_live == 1 && n == (size_t)fw_size); fw_reads++; fw_event('r'); if (fw_fault == 3 || fw_fault == 13) return EIO; memcpy(p, fw_image, n); return 0; }
+static int firmware_close(firmware_handle_t handle)
+{ CHECK(handle == fw_image); fw_closes++; fw_event('c'); return fw_fault == 4 || fw_fault == 13 ? EBADF : 0; }
+static int SHA256_Init(SHA256_CTX *ctx) { ctx->state = 1; return 1; }
+static int SHA256_Update(SHA256_CTX *ctx, const uint8_t *p, size_t n)
+{ CHECK(ctx->state == 1 && fw_live == 1 && fw_closes == 1 && n == (size_t)fw_size && memcmp(p, fw_image, n) == 0); ctx->state = 2; fw_hashes++; fw_event('h'); return 1; }
+static int SHA256_Final(uint8_t out[32], SHA256_CTX *ctx)
+{
+    CHECK(ctx->state == 2); ctx->state = 3;
+    for (unsigned int i = 0; i < 32; i++) {
+        char byte[3] = {selected_digest[i * 2], selected_digest[i * 2 + 1], 0};
+        out[i] = (uint8_t)strtoul(byte, NULL, 16);
+    }
+    if (fw_fault == 5) out[0] ^= 1;
+    return 1;
+}
+#include "dma-header.inc"
+struct cixvpu_dma { unsigned int count; struct cixvpu_fw_plan plan; };
+static struct cixvpu_dma dma_owner;
+int cixvpu_dma_alloc(bus_dma_tag_t dmat, bus_dma_tag_t dmat64,
+    const struct cixvpu_fw_plan *plan, struct cixvpu_dma **out)
+{
+    CHECK(dmat == &dma_tags[0] && dmat64 == &dma_tags[1] && fw_live == 0);
+    CHECK(plan->cores == 1 && plan->backing_pages == 140 && *out == NULL);
+    dma_allocs++; fw_event('a');
+    if (fw_fault == 8) return ENOMEM;
+    dma_owner.count = plan->backing_pages; dma_owner.plan = *plan; dma_count = dma_owner.count;
+    dma_live = true; *out = &dma_owner; return 0;
+}
+int cixvpu_dma_page(struct cixvpu_dma *owner, unsigned int index,
+    struct cixvpu_dma_page *out)
+{
+    CHECK(owner == &dma_owner && dma_live && index < owner->count);
+    dma_views++;
+    if (fw_fault == 9 && index == 1) return EIO;
+    memset(dma_bytes, 0, sizeof(dma_bytes));
+    if (fw_fault == 10 && index == 1) dma_bytes[4095] = 1;
+    *out = (struct cixvpu_dma_page){ .kva = dma_bytes, .bus_address = 0x200000 };
+    CHECK(cixvpu_fw_plan_page(&owner->plan, index, &out->plan_page) == 0);
+    if (fw_fault == 12 && index == 1) out->plan_page.role = (enum cixvpu_fw_plan_role)UINT32_MAX;
+    if (fw_fault == 14 && index == 1) out->plan_page.backing_index = UINT32_MAX;
+    if (fw_fault == 15 && index == 1) out->kva = NULL;
+    return 0;
+}
+int cixvpu_dma_free(struct cixvpu_dma **owner)
+{
+    CHECK(*owner == &dma_owner && dma_live); dma_frees++; fw_event('d');
+    if (fw_fault == 11) return EIO;
+    *owner = NULL; dma_live = false; return 0;
+}
 #include "attachment-source.inc"
 static union { max_align_t align; unsigned char bytes[4096]; } attachment_storage;
 static void attach_fixture(unsigned int mode)
@@ -497,11 +582,90 @@ static void attach_fixture(unsigned int mode)
     fixture(); attach_cf.cf_flags = mode; attach_private = attachment_storage.bytes;
     memset(&attachment_storage, 0, sizeof(attachment_storage));
     deferred_callback = NULL; deferred_device = NULL; parser_calls = cleanup_calls = defer_calls = raw_extra = 0;
+    mountroot_calls = 0;
+    mountroot_immediate = false;
     parser_status = AE_OK; attach_description = description;
+}
+static void allocation_fixture(unsigned int fault)
+{
+    attach_fixture(4); fw_fault = fault; fw_size = sizeof(fw_image);
+    fw_opens = fw_closes = fw_reads = fw_hashes = fw_live = 0;
+    dma_allocs = dma_views = dma_frees = dma_count = 0;
+    dma_live = false; fw_nevents = 0; fw_events[0] = 0;
+    memset(fw_image, 0, sizeof(fw_image));
+    fw_image[4] = 5; fw_image[5] = 3;
+    fw_image[97] = 0x10; /* text 4096 */
+    fw_image[101] = 0x40; /* BSS at 16384 */
+    fw_image[104] = 1;
+    fw_image[108] = 1; /* one private BSS page */
+    fw_image[173] = 0x40; /* empty shared extent at BSS start */
+    if (fault == 6) fw_image[5] = 4;
+    if (fault == 7) { fw_image[101] = 0x10; fw_image[173] = 0x10; }
+}
+static void allocation_run(void)
+{
+    struct acpi_attach_args temporary = aa;
+    cixvpu_acpi_attach(NULL, VPU, &temporary);
+    CHECK(mountroot_calls == 1 && defer_calls == 0 && deferred_callback != NULL);
+    CHECK(fw_opens == 0 && dma_allocs == 0);
+    temporary.aa_dmat = temporary.aa_dmat64 = OTHER;
+    temporary.aa_node = NULL;
+    if (deferred_callback) {
+        deferred_callback(deferred_device);
+        unsigned int opens = fw_opens, allocs = dma_allocs, frees = dma_frees;
+        deferred_callback(deferred_device);
+        CHECK(fw_opens == opens && dma_allocs == allocs && dma_frees == frees);
+    }
+    CHECK(nevents == 0 && maps == 0 && reads == 0 && sta_count == 0);
+    CHECK(fw_live == 0);
+}
+static void allocation_tests(void)
+{
+    (void)firmware_open; (void)firmware_get_size; (void)firmware_malloc;
+    (void)firmware_read; (void)firmware_close; (void)firmware_free; (void)SHA256_Init; (void)SHA256_Update; (void)SHA256_Final;
+    (void)cixvpu_dma_alloc; (void)cixvpu_dma_page; (void)cixvpu_dma_free;
+    allocation_fixture(0); allocation_run();
+    CHECK(strcmp(fw_events, "osmrchfad") == 0);
+    CHECK(dma_count == 140 && dma_views == 140 && dma_frees == 1 && !dma_live);
+    CHECK(strstr(diagnostic, "one-core allocation fixture") != NULL);
+    CHECK(strstr(diagnostic, "allocation role 0 pages 1") != NULL);
+    CHECK(strstr(diagnostic, "allocation role 1 pages 1") != NULL);
+    CHECK(strstr(diagnostic, "allocation role 10 pages 128") != NULL);
+    CHECK(strstr(diagnostic, "allocation role 12 pages 2") != NULL);
+    CHECK(strstr(diagnostic, "allocation result 0, primary 0 close 0 cleanup 0") != NULL);
+    for (unsigned int fault = 1; fault <= 15; fault++) {
+        allocation_fixture(fault); allocation_run();
+        bool reached_dma = fault >= 8 && fault != 13;
+        CHECK(dma_allocs == (reached_dma ? 1U : 0U));
+        CHECK(dma_frees == (reached_dma && fault != 8 ? 1U : 0U));
+        CHECK(fw_closes == (fault == 1 ? 0U : 1U));
+        CHECK(fw_hashes == (fault >= 5 && fault != 13 ? 1U : 0U));
+        CHECK(dma_live == (fault == 11));
+        CHECK((((struct cixvpu_acpi_softc *)attach_private)->sc_dma != NULL) == (fault == 11));
+        int primary = fault == 1 ? ENOENT : fault == 2 || fault == 8 ? ENOMEM :
+            fault == 4 || fault == 11 ? 0 : fault >= 5 && fault <= 7 ? EINVAL : EIO;
+        int close_result = fault == 4 || fault == 13 ? EBADF : 0;
+        int cleanup_result = fault == 11 ? EIO : 0;
+        char expected[128];
+        snprintf(expected, sizeof(expected), "allocation result %d, primary %d close %d cleanup %d",
+            primary ? primary : close_result ? close_result : cleanup_result,
+            primary, close_result, cleanup_result);
+        CHECK(strstr(diagnostic, expected) != NULL);
+        if (fault >= 9 && fault != 13) CHECK(dma_views == (fault == 11 ? 140U : 2U));
+    }
+    const off_t sizes[] = {-1, 0, 179, 180, 1048576, 1048577, INT64_MAX};
+    for (unsigned int i = 0; i < __arraycount(sizes); i++) {
+        allocation_fixture(0); fw_size = sizes[i]; allocation_run();
+        CHECK(fw_closes == 1 && fw_reads == 0 && fw_hashes == 0 && dma_allocs == 0);
+    }
+    allocation_fixture(0); mountroot_immediate = true;
+    cixvpu_acpi_attach(NULL, VPU, &aa);
+    CHECK(mountroot_calls == 1 && dma_allocs == 1 && dma_frees == 1 && !dma_live);
+    CHECK(strcmp(fw_events, "osmrchfad") == 0 && nevents == 0);
 }
 static void attach_tests(void)
 {
-    (void)device_private; (void)device_cfdata; (void)config_defer; (void)attach_refs;
+    (void)device_private; (void)device_cfdata; (void)config_defer; (void)config_mountroot; (void)attach_refs;
     CHECK(attach_softc_size > 0 && attach_softc_size <= sizeof(attachment_storage));
     CHECK(cixvpu_acpi_match(NULL, NULL, &aa) != 0);
     attach_fixture(0); cixvpu_acpi_attach(NULL, VPU, &aa);
@@ -533,7 +697,10 @@ static void attach_tests(void)
         CHECK(strstr(diagnostic, "clock rate") == NULL && strstr(diagnostic, "released yes") != NULL);
         CHECK(reads == 0 && maps == 0 && sta_count == 0); released();
     } else CHECK(false);
-    const unsigned int invalid_flags[] = {4, 5, 0xffff, UINT32_MAX};
+    attach_fixture(4); cixvpu_acpi_attach(NULL, VPU, &aa);
+    CHECK(parser_calls == 1 && cleanup_calls == 1 && mountroot_calls == 1);
+    CHECK(defer_calls == 0 && deferred_callback != NULL && nevents == 0 && maps == 0);
+    const unsigned int invalid_flags[] = {5, 0xffff, UINT32_MAX};
     for (unsigned int i = 0; i < sizeof(invalid_flags)/sizeof(invalid_flags[0]); i++) {
         attach_fixture(invalid_flags[i]); cixvpu_acpi_attach(NULL, VPU, &aa);
         CHECK(parser_calls == 0 && defer_calls == 0 && nevents == 0);
@@ -685,7 +852,7 @@ int main(void)
     (void)cixclk_acpi_get_native;
     metadata_tests(); query_tests(); active_tests(); failures_tests(); rate_separation_tests(); retention_tests();
 #ifdef CIXVPU_ATTACH_API
-    attach_tests(); native_tests();
+    attach_tests(); native_tests(); allocation_tests();
 #endif
     CHECK(live == 0 && allocations != 0);
 #else

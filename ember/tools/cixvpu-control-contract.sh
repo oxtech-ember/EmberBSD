@@ -28,9 +28,12 @@ if [ -f "$src/sys/dev/acpi/cixvpu_acpi_control.c" ]; then
 fi
 ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("#include ") }.join)' \
     "$src/sys/dev/acpi/cixvpu_acpi.c" "$work/attachment-source.inc"
+ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("#include ") }.join)' \
+    "$src/sys/dev/ic/cixvpu_dma.h" "$work/dma-header.inc"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} $api \
     -isystem "$src/sys/external/bsd/acpica/dist/include" -I"$src/sys/dev/ic" -I"$work" \
-    "$src/ember/tools/cixvpu-control-contract.c" "$src/sys/dev/ic/cixvpu_resources.c" -o "$work/test"
+    "$src/ember/tools/cixvpu-control-contract.c" "$src/sys/dev/ic/cixvpu_resources.c" \
+    "$src/sys/dev/ic/cixvpu_fw.c" "$src/sys/dev/ic/cixvpu_fw_plan.c" -o "$work/test"
 if [ -n "${CIXVPU_CONTROL_TEST_OUTPUT:-}" ]; then cp "$work/test" "$CIXVPU_CONTROL_TEST_OUTPUT"; fi
 if [ "$analyze" = 1 ]; then
     ${CC:-cc} -std=c11 -dM -E -x c /dev/null > "$work/predefined.h"

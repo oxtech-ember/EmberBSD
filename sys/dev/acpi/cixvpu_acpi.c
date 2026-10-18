@@ -5,11 +5,14 @@
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/device.h>
+#include <sys/sha2.h>
 #include <sys/systm.h>
 
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/cixvpu_acpi_control.h>
+#include <dev/firmload.h>
+#include <dev/ic/cixvpu_dma.h>
 #include <dev/ic/cixvpu_resources.h>
 
 __CTASSERT(CIXVPU_ACPI_FIXED_MEMORY32 == ACPI_RESOURCE_TYPE_FIXED_MEMORY32);
@@ -21,9 +24,110 @@ struct cixvpu_acpi_softc {
 	struct acpi_attach_args sc_aa;
 	struct cixvpu_resources sc_resources;
 	struct cixvpu_acpi_control sc_control;
+	/* CPU-only owner. Retain it if cleanup unexpectedly fails. */
+	struct cixvpu_dma *sc_dma;
 	unsigned int sc_mode;
 	bool sc_probe_ran;
 };
+
+static void
+cixvpu_acpi_allocation(device_t self)
+{
+	static const uint8_t digest_expected[SHA256_DIGEST_LENGTH] = {
+		0x2f, 0x74, 0x53, 0x94, 0xcc, 0x87, 0x00, 0x23,
+		0x34, 0x48, 0xd7, 0x4c, 0xf4, 0xfb, 0x14, 0xd1,
+		0x8e, 0xba, 0x54, 0x7d, 0x22, 0x59, 0xde, 0x5e,
+		0x0b, 0xbf, 0x82, 0x5a, 0x1e, 0xfe, 0xf5, 0x6d
+	};
+	struct cixvpu_acpi_softc *sc = device_private(self);
+	struct cixvpu_fw_plan plan;
+	struct cixvpu_dma_page page;
+	firmware_handle_t firmware;
+	SHA256_CTX hash;
+	uint8_t digest[SHA256_DIGEST_LENGTH];
+	unsigned int roles[CIXVPU_FW_PLAN_LEAF + 1] = { 0 };
+	unsigned int i, j, pages = 0, checked = 0;
+	off_t extent;
+	size_t size = 0;
+	void *image = NULL;
+	int error, close_error = 0, cleanup_error = 0;
+
+	if (sc->sc_probe_ran)
+		return;
+	sc->sc_probe_ran = true;
+	/* One-core allocation fixture; no VPU power, clock, reset or MMIO. */
+	error = firmware_open("cixvpu", "hevcenc.fwb", &firmware);
+	if (error != 0)
+		goto out;
+	extent = firmware_get_size(firmware);
+	if (extent < CIXVPU_FW_HEADER_SIZE || extent > 1048576 ||
+	    extent != 420736) {
+		error = EINVAL;
+	} else {
+		size = (size_t)extent;
+		image = firmware_malloc(size);
+		error = image == NULL ? ENOMEM :
+		    firmware_read(firmware, 0, image, size);
+	}
+	/* firmware_close consumes its handle even on failure. */
+	close_error = firmware_close(firmware);
+	if (error != 0 || close_error != 0)
+		goto out;
+	(void)SHA256_Init(&hash);
+	(void)SHA256_Update(&hash, image, size);
+	(void)SHA256_Final(digest, &hash);
+	if (memcmp(digest, digest_expected, sizeof(digest)) != 0) {
+		error = EINVAL;
+		goto out;
+	}
+	error = cixvpu_fw_plan_build(image, size, 1, &plan);
+	if (error != 0)
+		goto out;
+	firmware_free(image, size);
+	image = NULL;
+	pages = plan.backing_pages;
+	error = cixvpu_dma_alloc(sc->sc_aa.aa_dmat, sc->sc_aa.aa_dmat64,
+	    &plan, &sc->sc_dma);
+	if (error != 0)
+		goto out;
+	for (i = 0; i < pages; i++) {
+		error = cixvpu_dma_page(sc->sc_dma, i, &page);
+		if (error != 0)
+			break;
+		if (page.kva == NULL || page.plan_page.backing_index != i ||
+		    (unsigned int)page.plan_page.role >= __arraycount(roles)) {
+			error = EIO;
+			break;
+		}
+		for (j = 0; j < CIXVPU_FW_PAGE_SIZE; j++) {
+			if (((const uint8_t *)page.kva)[j] != 0) {
+				error = EIO;
+				break;
+			}
+		}
+		if (error != 0)
+			break;
+		roles[page.plan_page.role]++;
+		checked++;
+	}
+out:
+	if (image != NULL)
+		firmware_free(image, size);
+	if (sc->sc_dma != NULL)
+		cleanup_error = cixvpu_dma_free(&sc->sc_dma);
+	aprint_normal_dev(self,
+	    "one-core allocation fixture: pages %u checked %u, owner retained %s\n",
+	    pages, checked, sc->sc_dma != NULL ? "yes" : "no");
+	for (i = 0; i < __arraycount(roles); i++) {
+		if (roles[i] != 0)
+			aprint_normal_dev(self, "allocation role %u pages %u\n",
+			    i, roles[i]);
+	}
+	aprint_normal_dev(self,
+	    "allocation result %d, primary %d close %d cleanup %d\n",
+	    error != 0 ? error : close_error != 0 ? close_error : cleanup_error,
+	    error, close_error, cleanup_error);
+}
 
 static void
 cixvpu_acpi_deferred(device_t self)
@@ -117,8 +221,8 @@ cixvpu_acpi_attach(device_t parent, device_t self, void *aux)
 	aprint_normal(": CIX P1 video codec (diagnostic attachment)\n");
 	sc->sc_dev = self;
 	sc->sc_mode = device_cfdata(self)->cf_flags;
-	if (sc->sc_mode > 3) {
-		aprint_error_dev(self, "unsupported flags %#x; use 0, 1, 2 or 3\n",
+	if (sc->sc_mode > 4) {
+		aprint_error_dev(self, "unsupported flags %#x; use 0, 1, 2, 3 or 4\n",
 		    sc->sc_mode);
 		return;
 	}
@@ -185,6 +289,10 @@ done:
 	/* The parser initializes its lists before any failure; free them too. */
 	acpi_resource_cleanup(&resources);
 	if (defer_probe) {
+		if (sc->sc_mode == 4) {
+			config_mountroot(self, cixvpu_acpi_allocation);
+			return;
+		}
 		/* Providers attach among the other ACPI children before this callback. */
 		config_defer(self, cixvpu_acpi_deferred);
 		return;
