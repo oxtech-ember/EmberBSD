@@ -201,13 +201,22 @@ through POSTREAD/PREREAD. There is no stale MVE PREWRITE.
 The real ring parser checks framing and checksum before the HOST cursor commit.
 Only that two-byte HOST field uses POSTWRITE/store/PREWRITE.
 
+`cixvpu_prepared_boot_rpc_header` returns the cached 12-byte RPC observation.
+It uses the existing context and output-storage guards without device I/O.
+The boot report prints raw state, call ID, size and a separate getter error.
+Size is numeric telemetry; it never selects a read or copy length.
+Validity means one copy completed, not an atomic firmware transaction.
+Sticky retries retain the observation. A new read or retained-map fault
+invalidates it until another copy; argument and alias errors preserve it.
+Unsupported RPC still stops with ENOTSUP before any response or message ACK.
+
 Empty or unstable snapshots return EAGAIN without output or cursor advancement.
 Malformed data, unsupported RPC and retained-map faults stop further protocol I/O.
 Argument and output-alias errors before I/O preserve state. Caller serialization
 and normal C object lifetime rules remain required. No post-exposure reclamation,
 reset, clock release, GO, framebuffer, dynamic RPC or IRQ operation is implemented.
 
-The actual-source preparation suite passes 13464524 checks, and the standalone
+The actual-source preparation suite passes 13499552 checks, and the standalone
 allocator passes 2338334 checks with 629 acquisition failures. GCC16 path analysis,
 host Cppcheck/CSA and ASan/UBSan cover the production bodies and modeled services.
 Ten causal mutations are detected. Native GCC16/CSA pass; all-category Cppcheck
@@ -253,7 +262,7 @@ Run `sh ember/tools/cixvpu-boot-contract.sh` from the repository root.
 a fresh output directory, and `CIXVPU_BOOT_SOURCE` selects a source-copy mutant.
 The linked fixture executes the actual native control and boot bodies plus
 actual DMA, preparation, MMU and ring helpers. Native platform services alone
-are modeled. It passes 27639 reported checks, including 8749 legacy checks;
+are modeled. It passes 28357 reported checks, including 9094 attachment checks;
 the imported DMA fixture also has fail-fast internal assertions.
 
 GCC16 path analysis, host CSA and ASan/UBSan pass. Seven compiled runtime

@@ -1092,8 +1092,10 @@ The base system shell is unchanged.
   and releases both owners on the physical board. Absent firmware stops before
   allocation. An explicit firmware boot trial reaches exposed ownership and an
   initial IRQ, then returns ENOTSUP before SWITCHED_IN/PONG. It retains exposed
-  pages and masks the IRQ. Firmware readiness, DMA data correctness and video
-  queues remain unqualified. Default EMBER64 keeps active firmware boot disabled.
+  pages and masks the IRQ. Cached RPC-header diagnostics have source checks;
+  their next physical trial requires a cold start. Firmware readiness, DMA data
+  correctness and video queues remain unqualified. Default EMBER64 keeps active
+  firmware boot disabled.
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request
   cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the
   active control request and preserves queued requests. Actual-function
