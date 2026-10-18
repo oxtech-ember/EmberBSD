@@ -50,6 +50,7 @@ __KERNEL_RCSID(1, "$NetBSD$");
 
 #include <arm/sunxi/sunxi_ccu.h>
 #include <arm/sunxi/sun60i_a733_ccu.h>
+#include <arm/sunxi/sun60i_a733_display.h>
 #include <arm/sunxi/sunxi_rtcvar.h>
 
 #include "sunxi_rtc.h"
@@ -1295,6 +1296,41 @@ sun60i_a733_ccu_npu_prepare(struct clk *npu, const void *owner, bool *retained)
 }
 
 static int
+sun60i_a733_display_ccu_read(void *arg, uint32_t reg, uint32_t *value)
+{
+	struct sunxi_ccu_softc *sc = arg;
+
+	return bus_space_peek_4(sc->sc_bst, sc->sc_bsh, reg, value) == 0 ?
+	    0 : EFAULT;
+}
+
+static void
+sun60i_a733_display_ccu_report(struct sunxi_ccu_softc *sc)
+{
+	struct sun60i_a733_display_clocks state;
+	bus_addr_t addr;
+	bus_size_t size;
+	int error;
+
+	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
+	if (error == 0)
+		error = sun60i_a733_display_read_clocks(sun60i_a733_display_ccu_read,
+		    sc, size, &state);
+	if (error != 0) {
+		aprint_error_dev(sc->sc_dev, "display CCU observation unavailable: %d\n",
+		    error);
+		return;
+	}
+	aprint_normal_dev(sc->sc_dev, "display CCU observe-only: changed 0x%04x; "
+	    "no display MMIO access authorized\n", state.changed);
+	for (u_int r = 0; r < A733_DISPLAY_NCLOCK_REGS; r++)
+		aprint_normal_dev(sc->sc_dev, "display %s [0x%04x]: 0x%08x 0x%08x\n",
+		    sun60i_a733_display_clock_regs[r].name,
+		    sun60i_a733_display_clock_regs[r].offset,
+		    state.sample[0][r], state.sample[1][r]);
+}
+
+static int
 sun60i_a733_ccu_match(device_t parent, cfdata_t cf, void *aux)
 {
 	struct fdt_attach_args * const faa = aux;
@@ -1330,4 +1366,5 @@ sun60i_a733_ccu_attach(device_t parent, device_t self, void *aux)
 	aprint_normal(": A733 CCU\n");
 
 	sunxi_ccu_print(sc);
+	sun60i_a733_display_ccu_report(sc);
 }

@@ -50,6 +50,8 @@ typedef uint64_t bus_addr_t;
 #define DEVICE_COMPAT_EOL { .compat = NULL }
 #define device_private(d) (d)
 #define aprint_error(...) ((void)0)
+#define aprint_error_dev(...) ((void)0)
+#define aprint_normal_dev(...) ((void)0)
 #define aprint_normal(...) ((void)0)
 #define aprint_naive(...) ((void)0)
 static void delay(unsigned);
@@ -63,6 +65,7 @@ struct device_compatible_entry { const char *compat; };
 #include "sunxi_rtcvar.h"
 #include "sunxi_ccu.h"
 #include "sun60i_a733_ccu.h"
+#include "sun60i_a733_display.h"
 #include "bindings.h"
 
 static uint32_t registers[0x2000 / 4], last_write;
@@ -71,7 +74,7 @@ static int ccu_reg_error;
 static unsigned reject_write_number;
 static bus_size_t write_regs[64];
 static uint32_t write_vals[64];
-static unsigned writes, barriers, checks, reads;
+static unsigned writes, barriers, checks, reads, fail_peek;
 static bool update_model, pll_model;
 static unsigned pll_delay_us, pll_lock_after_us, pll_lock_reads;
 static bool pll_glitch, pll_settle_loss, pll_output_loss, pll_gate_change;
@@ -157,6 +160,13 @@ bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, bus_size_t off)
 	    (unstable_all && reads > 13 && reads <= 26))
 		registers[off / 4] ^= unstable_mask;
 	return registers[off / 4];
+}
+static int
+bus_space_peek_4(bus_space_tag_t tag, bus_space_handle_t handle,
+    bus_size_t off, uint32_t *value)
+{
+	*value = bus_space_read_4(tag, handle, off);
+	return reads == fail_peek ? 1 : 0;
 }
 static void
 bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
@@ -281,6 +291,7 @@ static int clk_set_parent(struct clk *clk, struct clk *parent)
 #endif
 #include "sunxi_ccu_nkmp.c"
 #include "sunxi_ccu_fixed_factor.c"
+#include "sun60i_a733_display.c"
 #include "sun60i_a733_ccu.c"
 #define CHECK(c) do { assert(c); checks++; } while (0)
 #define REG(r) registers[(r) / 4]
@@ -292,7 +303,7 @@ reset(void)
 	struct fdt_attach_args args = { 0 };
 	memset(registers, 0, sizeof(registers));
 	memset(&sun60i_gpu_lease, 0, sizeof(sun60i_gpu_lease));
-	writes = barriers = reads = hosc_reads = dcxo_queries = 0;
+	writes = barriers = reads = hosc_reads = dcxo_queries = fail_peek = 0;
 	update_model = pll_model = false;
 	pll_delay_us = pll_lock_after_us = pll_lock_reads = 0;
 	pll_glitch = pll_settle_loss = pll_output_loss = pll_gate_change = false;
@@ -310,7 +321,10 @@ reset(void)
 	hosc_rate = 24000000;
 	reject_write = missing_hosc = false;
 	sun60i_a733_ccu_attach(NULL, &state, &args);
-	CHECK(writes == 0);
+	CHECK(writes == 0 && reads == 30);
+	for (u_int r = 0; r < 30; r++)
+		CHECK(read_regs[r] == sun60i_a733_display_clock_regs[r % 15].offset);
+	reads = 0;
 	/* Firmware peripheral VCO=2400 MHz, 2x=/2, 800M=/3, 480M=/5. */
 	REG(PLL_PERIPH0_CTRL_REG) = __BIT(31) | (99 << 8) |
 	    (1 << 20) | (2 << 16) | (4 << 2);
@@ -1091,6 +1105,33 @@ test_gpu_prepare_pll(void)
 	printf("A733 opt-in GPU PLL600: %u checks passed\n", checks - start);
 }
 
+static void
+test_display_observer(void)
+{
+	struct sun60i_a733_display_clocks observed, saved;
+
+	memset(&saved, 0x5a, sizeof(saved));
+	for (unsigned fault = 1; fault <= 30; fault++) {
+		reset();
+		fail_peek = fault;
+		observed = saved;
+		CHECK(sun60i_a733_display_read_clocks(sun60i_a733_display_ccu_read,
+		    &state, ccu_size, &observed) == EFAULT);
+		CHECK(reads == fault && writes == 0 && barriers == 0);
+		CHECK(memcmp(&observed, &saved, sizeof(observed)) == 0);
+	}
+	for (unsigned failure = 0; failure < 2; failure++) {
+		reset();
+		if (failure == 0)
+			ccu_size = 0x19ab;
+		else
+			ccu_reg_error = ENXIO;
+		sun60i_a733_display_ccu_report(&state);
+		CHECK(reads == 0 && writes == 0 && barriers == 0);
+	}
+	printf("PASS: 32 display CCU adapter fault/aperture scenarios\n");
+}
+
 int
 main(void)
 {
@@ -1112,6 +1153,7 @@ main(void)
 		puts("PASS: CCU without RTC rejects observation before MMIO");
 		return 0;
 	}
+	test_display_observer();
 	reset();
 	CHECK(sun60i_a733_ccu_match(NULL, NULL,
 	    &(struct fdt_attach_args){ 0 }) != 0);

@@ -12,6 +12,10 @@ sed '/^#include /d; /^__KERNEL_RCSID(/d' \
     "$src/sys/dev/fdt/fdt_powerdomain.c" > "$work/power-fdt.h"
 sed '/^#include /d; /^__KERNEL_RCSID(/d' \
     "$src/sys/arch/arm/sunxi/sun60i_a733_pck600.c" > "$work/power-driver.h"
+for name in sun60i_a733_display.h sun60i_a733_display.c; do
+    sed '/^#include /d; /^__KERNEL_RCSID(/d' \
+        "$src/sys/arch/arm/sunxi/$name" > "$work/$name"
+done
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
     ${POWER_TEST_CFLAGS:-} -I"$work" "$tools/a733-power-fixture.c" \
     -o "$work/test"

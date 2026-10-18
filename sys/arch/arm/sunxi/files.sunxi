@@ -105,6 +105,9 @@ device	sun60ipck
 attach	sun60ipck at fdt with sun60i_a733_pck
 file	arch/arm/sunxi/sun60i_a733_pck600.c	sun60i_a733_pck
 
+# Read-only display snapshots use existing CCU and PCK provider mappings.
+file	arch/arm/sunxi/sun60i_a733_display.c	sunxi_a733_ccu | sun60i_a733_pck
+
 # Origin: EmberBSD; observe-only A733 GPU attach and opt-in bootstrap.
 define	sun60ipvr: drmkms
 makeoptions sun60ipvr "CPPFLAGS.sun60ipvr"+="${CPPFLAGS.drmkms}"

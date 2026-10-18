@@ -7,7 +7,7 @@ src=${CLOCK_SOURCE_ROOT:-$(CDPATH= cd -- "$tools/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/a733-clocks.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 for name in sunxi_rtcvar.h sunxi_ccu.h sun60i_a733_ccu.h sun60i_a733_ccu.c \
-    sunxi_ccu_gate.c sunxi_ccu_div.c sunxi_ccu_nm.c \
+    sun60i_a733_display.h sun60i_a733_display.c sunxi_ccu_gate.c sunxi_ccu_div.c sunxi_ccu_nm.c \
     sunxi_ccu_nkmp.c sunxi_ccu_fixed_factor.c; do
     sed '/^#include /d; /^__KERNEL_RCSID(/d' \
         "$src/sys/arch/arm/sunxi/$name" > "$work/$name"

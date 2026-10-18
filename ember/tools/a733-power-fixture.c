@@ -89,7 +89,7 @@ static unsigned int unstable_read, state_checks;
 static bool lease_test;
 static unsigned lease_complete_peek;
 static unsigned int peeks, fail_peek, change_peek;
-static bus_size_t peek_trace[80];
+static bus_size_t peek_trace[92];
 static bus_size_t read_trace[6];
 static struct clk clock_fixture;
 
@@ -216,6 +216,8 @@ of_compatible_match(int node, const struct device_compatible_entry *data)
 {
 	return strcmp(data[0].compat, "allwinner,sun60i-a733-pck-600") == 0;
 }
+#include "sun60i_a733_display.h"
+#include "sun60i_a733_display.c"
 #include "power-driver.h"
 #undef fdtbus_register_powerdomain_controller
 
@@ -265,7 +267,10 @@ attach_controller(void)
 	sun60i_pck600_attach(NULL, &sc, &attach_args);
 	assert(mapped == 1 && unmapped == 0 && clock_fixture.enabled == 1);
 	assert(LIST_FIRST(&fdtbus_powerdomain_controllers) != NULL);
-	assert(reads == 0 && peeks == 80 && writes == 0);
+	assert(reads == 0 && peeks == 92 && writes == 0);
+	for (u_int r = 0; r < 12; r++)
+		assert(peek_trace[80 + r] ==
+		    ((r / 3) % 2 == 0 ? 0x1000 : 0xa000) + (r % 3) * 4);
 	peeks = 0;
 	reads = 0;
 }
@@ -613,7 +618,7 @@ test_diagnostic(void)
 		assert(reads == 0 && writes == 0 && barriers == 0 && delay_us == 0);
 		assert(!sc.sc_lock.held && !sc.sc_failed[5] && !sc.sc_failed[6]);
 		if (i == 0) {
-			assert(peeks == 80);
+			assert(peeks == 92);
 			assert(strstr(core_output, "GPU_TOP PPU metadata: Q-Channel, 2") != NULL);
 			assert(strstr(core_output, "GPU_CORE PPU metadata: P-Channel, 1") != NULL);
 			assert(strstr(core_output,
@@ -623,7 +628,7 @@ test_diagnostic(void)
 			assert(strstr(core_output,
 			    "GPU_CORE AIDR [0xfcc]: 0x00000011 0x00000011") != NULL);
 		} else {
-			assert(peeks == i);
+			assert(peeks == i + 12);
 			assert(strstr(core_output, "diagnostic unavailable") != NULL);
 			assert(strstr(core_output, "GPU_TOP") == NULL);
 			assert(strstr(core_output, "GPU_CORE") == NULL);
@@ -644,7 +649,50 @@ test_diagnostic(void)
 }
 
 static void
+test_display_observer(void)
+{
+	struct sun60i_a733_display_power observed, saved;
+
+	memset(&saved, 0x5a, sizeof(saved));
+	for (unsigned fault = 1; fault <= 12; fault++) {
+		diagnostic_fixture();
+		fail_peek = fault;
+		observed = saved;
+		assert(sun60i_a733_display_read_power(sun60i_a733_display_pck_read,
+		    &sc, &observed) == EFAULT);
+		assert(peeks == fault && reads == 0 && writes == 0);
+		assert(!sc.sc_lock.held && barriers == 0 && delay_us == 0);
+		assert(memcmp(&observed, &saved, sizeof(observed)) == 0);
+		assert(!sc.sc_failed[1] && !sc.sc_failed[10]);
+	}
+	for (unsigned d = 0; d < 2; d++) {
+		diagnostic_fixture();
+		sc.sc_failed[d == 0 ? 1 : 10] = true;
+		observed = saved;
+		assert(sun60i_a733_display_read_power(sun60i_a733_display_pck_read,
+		    &sc, &observed) == EIO);
+		assert(peeks == d * 3 && reads == 0 && writes == 0);
+		assert(!sc.sc_lock.held && barriers == 0 && delay_us == 0);
+		assert(memcmp(&observed, &saved, sizeof(observed)) == 0);
+	}
+	for (unsigned fault = 81; fault <= 92; fault++) {
+		diagnostic_fixture();
+		fail_peek = fault;
+		sun60i_pck600_attach(NULL, &sc, &attach_args);
+		assert(peeks == fault && reads == 0 && writes == 0);
+		assert(strstr(core_output, "display PCK observation unavailable") != NULL);
+		assert(strstr(core_output, "display DE_SYS sample") == NULL);
+		assert(strstr(core_output, "display VO1 sample") == NULL);
+		assert(!sc.sc_lock.held && !sc.sc_failed[1] && !sc.sc_failed[10]);
+		assert(LIST_FIRST(&fdtbus_powerdomain_controllers) != NULL);
+	}
+	reset_fixture();
+	puts("PASS: 26 display PCK adapter fault/quarantine/publication scenarios");
+}
+
+static void
 lease_fixture(void)
+
 {
 	reset_fixture();
 	lease_test = true;
@@ -945,6 +993,7 @@ main(void)
 	test_core_observation();
 	printf("PASS: %u A733 PCK600/FDT production regression scenarios\n", cases);
 	test_diagnostic();
+	test_display_observer();
 	reset_fixture();
 	return 0;
 }

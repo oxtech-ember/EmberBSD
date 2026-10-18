@@ -880,6 +880,9 @@ on every board in the hardware catalog.
   KICK path accepts its asynchronous zero return word and still requires CCCB,
   UFO, and fresh health checks. Graphics jobs, Zink, display output, accelerated
   Plasma, Vulkan conformance, and long-duration GPU stability remain unaccepted.
+  A bounded [A733 display observer](ember/boot/a733-display-observer.md) records
+  native CCU/PCK snapshots without enabling display hardware. It does not
+  implement HDMI output or KMS.
   The [graphics development checkpoint](ember/boot/a733-pvr-graphics.md) adds
   stream, queue, HWRT, mapping-hold, and free-list growth primitives.
   HWRT handles and paired DRM submissions are implemented. The submit path also

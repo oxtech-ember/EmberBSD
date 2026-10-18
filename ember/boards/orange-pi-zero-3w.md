@@ -37,6 +37,7 @@ Board revision: not recorded in the original support table.
 | GPU firmware and compute | Native firmware bootstrap, LOGTYPE, MMUCACHE, and a Mesa-generated compute shader pass. The output is `0x13579bdf`, the client queue reaches 184/184, and timeline reaches 1 without fresh faults or HWR. The check repeats after fresh kernel boots. Repeated submissions within one boot remain untested ([compute check](../boot/a733-gpu-fwcompute.md#physical-stages-19-21-result)) |
 | PowerVR DRM/GEM/VM | Native identity/runtime queries, libdrm discovery, 8 MiB CPU mappings, 586 per-file VM checks, and 1,712 CPU-issued syncobj checks pass. VM tables remain CPU-owned. Firmware VM publication, DRM submission, Vulkan device execution, Zink, HDMI/KMS, and accelerated Plasma remain unaccepted ([interface](../boot/a733-pvr-render.md), [VM checks](../boot/a733-pvr-vm.md#physical-result)) |
 | Mesa PowerVR Vulkan discovery | Four installed ICD enumeration lifecycles pass on `f46cd40a5f28` (`EMBER64 #13`), including the current USB series. Mesa reports API 1.2.354 through native render node 180:128. Experimental opt-in is required; Vulkan device/queue execution and conformance remain unaccepted ([Ports guide](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/powervr.md)) |
+| Display providers | [Read-only CCU/PCK observer](../boot/a733-display-observer.md); no native HDMI/KMS acceptance |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.

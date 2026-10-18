@@ -1,0 +1,149 @@
+# A733 display provider observer
+
+The A733 observer records CCU and PCK state at provider attachment. It does
+not enable a display pipeline, map DE/TCON/HDMI registers, or expose KMS.
+Equal samples do not establish power, clock, reset, memory or firmware ownership.
+This step has no physical HDMI acceptance.
+
+## Read contract
+
+The implementation uses the existing native CCU and PCK mappings. It adds no
+clock references, resets, power requests, interrupts, DMA or polling loops.
+The PCK provider already enables its own programming clock at attachment;
+this observer does not change that behavior.
+
+The CCU adapter validates the entire register aperture before any read.
+It takes two ordered samples of this allowlist, for 30 32-bit reads:
+
+| CCU offset | Register |
+|---|---|
+| `0x02e0` | PLL_DE_CTRL |
+| `0x05c0` | AHB_MASTER_GATE |
+| `0x05e0` | MBUS_MASTER_GATE |
+| `0x0a00` | DE0_CLK |
+| `0x0a04` | DE0_BGR |
+| `0x0a74` | DE_SYS_BGR |
+| `0x1604`, `0x160c` | TCONTV0_BGR, TCONTV1_BGR |
+| `0x1684`, `0x168c`, `0x1690` | HDMI_TV_CLK, HDMI_BGR, HDMI_SFR_CLK |
+| `0x16cc`, `0x16ec` | DPSS_TOP1_BGR, VIDEO_OUT1_BGR |
+| `0x1928`, `0x19a8` | DEPLL_GATE_EN, DEPLL_GATE_STAT |
+
+These registers have no documented read-to-clear fields. The observer does
+not interpret reserved bits or change the PLL, gate or reset registers.
+The table is a bounded observation contract, not the full HDMI clock tree.
+
+The PCK adapter takes two passes over DE_SYS (domain 1) and VO1 (domain 10).
+Each pass reads PWPR, PMER and PWSR at domain-relative offsets `0`, `4` and `8`.
+Domain windows are 4 KiB. The existing provider lock protects each triple
+from native writers. A quarantined domain returns `EIO` before its reads.
+No display-domain transition is requested.
+
+Both adapters use `bus_space_peek_4`. A synchronous access fault returns
+`EFAULT`. A complete snapshot is published only after every read succeeds.
+Failures print an unavailable diagnostic and leave the provider attached.
+There are no retries or fallback reads. Fault-aware access cannot bound a
+hardware transaction that stalls indefinitely.
+
+The reports contain both raw samples and a changed-register mask. CCU mask
+bits follow table order. PCK mask bits follow domain order, then PWPR, PMER,
+PWSR. A zero mask means only that these samples compare equal. Samples are
+not atomic across the providers, and the locks do not stop autonomous hardware.
+Neither report authorizes an access to a display block.
+
+The callback-based acquisition and commit-after-success pattern also serves
+the [BCM2712 resource observer](bcm2712-display-contract.md). A733 uses its own
+provider interfaces, register map and power domains. It does not use the
+BCM2712 mailbox, ACPI resources or register definitions.
+
+## Sources and license boundary
+
+The code is an original BSD-2-Clause implementation. Register facts come from
+Allwinner's A733 User Manual V1.00 (2025-08-14), sections 4.1.6.61, 82, 83,
+104, 105, 113, 225, 226, 230, 231, 232, 235, 237, 256 and 265. The public
+[manual source](https://gitlab.com/api/v4/projects/71118510/repository/files/A733%2FHardware%E7%A1%AC%E4%BB%B6%E7%B1%BB%E6%96%87%E6%A1%A3%2F%E8%8A%AF%E7%89%87%E6%89%8B%E5%86%8C%2FA733_User%20Manual_V1.00.pdf/raw?ref=d0dc4d615be00b76e3a0818d0818eff8f69ffa15)
+is pinned to repository revision `d0dc4d615be00b76e3a0818d0818eff8f69ffa15`.
+Its PDF SHA256 is
+`cdd77e5779d3c69d41b5f237f3db3db51c67fdf0f3aca9a2eedc77d9420f248d`.
+The manual retains Allwinner copyright; it is not BSD-licensed source code.
+This repository does not redistribute it or copy its implementation prose.
+
+PCK register facts and access semantics come from Arm DEN0051E. The
+[existing provider documentation](a733-power-domains.md) records that source.
+The [A733 power binding](../../sys/external/gpl2/dts/dist/include/dt-bindings/power/allwinner,sun60i-a733-pck-600.h)
+uses the `GPL-2.0-only OR BSD-2-Clause` license; the BSD option permits reuse
+of its IDs.
+The Allwinner BSP at
+[`2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f`](https://github.com/orangepi-xunlong/linux-orangepi/tree/2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f)
+provides a cross-check for platform topology. Its GPL driver implementations
+are not copied into this BSD driver.
+
+## Software checks
+
+```sh
+sh ember/tools/a733-display-observer-contract.sh
+sh ember/tools/a733-accelerator-clock-contract.sh
+sh ember/tools/a733-power-contract.sh
+```
+
+The snapshot fixture compiles the production acquisition code. It checks
+exact read order, aperture rejection before the first access, every callback
+failure, unchanged error output, raw reserved values and each changed bit.
+The existing clock and power fixtures compile the actual provider adapters.
+They check zero added writes, faults at each access, quarantine, lock release,
+and continued attachment without partial diagnostic output.
+
+Use `DISPLAY_OBSERVER_CFLAGS`, `CLOCK_TEST_CFLAGS` and `POWER_TEST_CFLAGS`
+with `-fsanitize=address,undefined -fno-omit-frame-pointer` for host sanitizer
+checks. These tests use fake MMIO. They do not validate hardware timing,
+physical display power, HDMI output, GPU rendering or KMS.
+
+## Next minimum: one RGB plane and vblank
+
+The next display milestone is one CPU-filled, linear XRGB8888 scanout buffer,
+one fixed progressive mode, one connector and measured vblank interrupts.
+Do not enable it from these raw observations. It first needs explicit resource
+ownership and a reviewed initialization and failure sequence:
+
+1. Add exact A733 DE, TCON_TV0, VO1 and HDMI FDT resources and dependencies.
+   Implement their missing CCU clocks/resets and display power ownership.
+   Preserve unrelated clock/reset fields. Confirm supplies, pinctrl and the
+   selected HDMI PHY clock source before accessing a display block.
+2. Establish the DE3.52 register contract for one RGB layer: channel routing,
+   stride/address width, format, blender output, update/latch semantics and
+   interrupt acknowledgment. Disable unused enhancement/compression/scaling
+   blocks through a documented sequence. Do not assume the existing DE2
+   `sunxi_mixer` register layout applies.
+3. Allocate and synchronize the buffer through `bus_dma`. Specify the display
+   IOMMU stream, address translation and memory ownership. Keep the buffer
+   pinned until scanout and pending register updates have stopped. Reject
+   unsupported addresses and geometry before programming hardware.
+4. Program TCON_TV0 timing, VO1 routing and the HDMI PHY/transmitter for the
+   declared mode. Confirm sink connection and a supported mode through DDC.
+   Manual section 15.2 gives VO1 at `0x05510000`, TCON_TV0 at `0x05730000`,
+   and TCON_TV1 at `0x05731000`. The BSP name `tcon3` identifies TV0, not TV1.
+5. Implement a bounded vblank wait and IRQ lifecycle. TCON_TV `GINT0` at `+4`
+   has vblank enable bit 30 and flag bit 14. The flag is **write-zero-to-clear**,
+   according to manual section 15.2.10.2. Preserve unrelated interrupt state;
+   do not apply a generic W1C acknowledgement. Confirm which pipeline event
+   completes a DE register update before implementing page flips.
+
+The manual's section 14.3 describes DE features, but does not supply the
+DE3.52 plane register map. The missing table must specify the DE3.52 channel
+register bases, linear RGB layer address/stride/format fields, channel-to-output
+routing, blender size and background, register-update/latch protocol, and
+completion/status/interrupt-clear semantics. Record each fact with a pinned
+source and its provenance before implementing that contract. A complete
+permissive driver is not required: documented register facts can support an
+independent BSD mechanism. GPL vendor C must not be copied as implementation.
+A reusable permissive DE3.52 register header has not been established.
+The existing BSD-2-Clause sunxi DE2/TCON/HDMI code can supply framework patterns;
+each A733 register and sequence still needs independent evidence.
+
+Acceptance must retain the exact kernel/DTB cohort, register prerequisites,
+mode, buffer checksum, observed image and vblank count/timing. Include timeout,
+unplug, invalid-buffer and teardown checks. A static RGB image plus interrupts
+is a separate milestone from DRM atomic modesetting and GPU-backed scanout.
+KMS, buffer import/export and explicit synchronization remain necessary for
+accelerated Plasma. A firmware framebuffer is usable only with an actual
+validated framebuffer handoff and reserved memory; it must not be inferred
+from a connected HDMI cable or offscreen GPU success.

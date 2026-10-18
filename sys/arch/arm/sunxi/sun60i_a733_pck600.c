@@ -41,6 +41,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/mutex.h>
 #include <sys/queue.h>
 #include <arm/sunxi/sun60i_a733_pck600.h>
+#include <arm/sunxi/sun60i_a733_display.h>
 #include <sys/systm.h>
 
 #include <dev/clk/clk_backend.h>
@@ -651,6 +652,60 @@ sun60i_pck600_report(struct sun60i_pck600_softc *sc)
 }
 
 static int
+sun60i_a733_display_pck_read(void *arg, u_int id, uint32_t *pwpr,
+    uint32_t *pmer, uint32_t *pwsr)
+{
+	struct sun60i_pck600_softc *sc = arg;
+
+	const bus_size_t offsets[] = { PCK600_PWPR, PCK600_PMER, PCK600_PWSR };
+	uint32_t *values[] = { pwpr, pmer, pwsr };
+	int error = 0;
+
+	if (id >= PCK600_NDOMAINS)
+		return EINVAL;
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_failed[id]) {
+		error = EIO;
+		goto out;
+	}
+	for (u_int r = 0; r < __arraycount(offsets); r++) {
+		if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh,
+		    id * PCK600_DOMAIN_SIZE + offsets[r], values[r]) != 0) {
+			error = EFAULT;
+			break;
+		}
+	}
+out:
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+static void
+sun60i_a733_display_pck_report(struct sun60i_pck600_softc *sc)
+{
+	struct sun60i_a733_display_power state;
+	int error;
+
+	error = sun60i_a733_display_read_power(sun60i_a733_display_pck_read,
+	    sc, &state);
+	if (error != 0) {
+		aprint_error_dev(sc->sc_dev, "display PCK observation unavailable: %d\n",
+		    error);
+		return;
+	}
+	aprint_normal_dev(sc->sc_dev, "display PCK observe-only: changed 0x%02x; "
+	    "no display MMIO access authorized\n", state.changed);
+	for (u_int d = 0; d < A733_DISPLAY_NDOMAINS; d++) {
+		for (u_int s = 0; s < 2; s++)
+			aprint_normal_dev(sc->sc_dev, "display %s sample %u "
+			    "PWPR/PMER/PWSR: 0x%08x/0x%08x/0x%08x\n",
+			    sun60i_a733_display_domain_names[d], s,
+			    state.sample[s][d][0], state.sample[s][d][1],
+			    state.sample[s][d][2]);
+	}
+}
+
+static int
 sun60i_pck600_get(device_t dev, const uint32_t *data, bool *enabled)
 {
 	struct sun60i_pck600_softc * const sc = device_private(dev);
@@ -731,6 +786,7 @@ sun60i_pck600_attach(device_t parent, device_t self, void *aux)
 	aprint_naive("\n");
 	aprint_normal(": A733 PCK-600 power domains\n");
 	sun60i_pck600_report(sc);
+	sun60i_a733_display_pck_report(sc);
 	return;
 unmap:
 	bus_space_unmap(sc->sc_bst, sc->sc_bsh, size);
