@@ -258,6 +258,9 @@ Exactly eight reply data bytes form each uint64 rate. Zero is raw telemetry,
 not an accepted UART input frequency. Clock67 control and entity queries keep
 their fixed ID rules. Instrument exchange, actual baud and firmware support
 for these rate requests require a separate board test.
+The optional [IO observation profile](../../sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE)
+adds only the [nonclearing header-mux snapshot](cix-gpio.md#manual-header-observation)
+to that profile. It preserves VPU0, UART2 and the GPI4 button policy.
 
 ## Shared transport validation
 

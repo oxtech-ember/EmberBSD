@@ -96,6 +96,40 @@ UART boot. The operator confirms that the fan does not start. The failure thus
 reproduces outside the native OS shutdown sequence. This does not isolate an
 EC, PDC, firmware or hardware cause; electrical rail state remains unmeasured.
 
+## Manual header observation
+
+The separate [cixgpioobs attachment](../../sys/dev/acpi/cixgpio_observe_acpi.c)
+accepts only the opt-in GPI5/MUX1 profile. It validates both namespace identities,
+fixed memory resources, the GPI5 IRQ description and bounded MUX PinGroup metadata.
+It does not apply that metadata. Both mappings must succeed before any read.
+It reads MUX offsets0x80/0x84/0x88 and GPI5 BYPASS/DIRECTION/INPUT, then unmaps
+both windows in reverse order. It never reads clear-on-read STATUS or writes
+GPIO, pinmux, IRQ, clock or reset state. No GPIO/PPS device is exposed.
+
+The CIX [primary GPIO table](https://github.com/cixtech/edk2-platforms/blob/1a48c6523a3225f3ef01b1c91eb3e3dc0dd1857f/Silicon/CIX/Sky1/Include/IoConfig.h)
+maps mode0 GPIO015/016/017 to S5 GPIO1 local0/1/2. Their header contacts are
+11/13/12. This source mapping does not establish the current mux or electrical
+state. The observer prints raw words without changing their configuration.
+
+[EMBER64_CIXGPIO_OBSERVE](../../sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE)
+selects the observer with VPU0 and the UART2 gate. The combined
+[EMBER64_CIX_IO_OBSERVE](../../sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE)
+adds the two [UART functional-rate requests](cix-platform.md#manual-uart-rate-observations).
+Default EMBER64 and the GPI4 power-button path remain unchanged.
+
+The actual-source observer contract passes1420 checks with GCC16 path analysis,
+configured Cppcheck/CSA and ASan/UBSan. Seven compiled runtime mutations fail.
+Native GCC16 passes; native CSA retains four inherited header findings.
+All-category Cppcheck adds only two callback-const hints for the required
+CFATTACH signatures. Namespace, parsed resource and bus services are models;
+this observer contract does not execute the AML resource decoder or hardware.
+The GPIO workflow is configured to run it under Linux Memcheck.
+
+```sh
+CC=gcc-16 CFLAGS='-O2 -g -fanalyzer' CIXGPIOOBS_ANALYZE=1 \
+  sh ember/tools/cixgpio-observe-contract.sh
+```
+
 ## Source contracts
 
 Run from the source root with GCC16:

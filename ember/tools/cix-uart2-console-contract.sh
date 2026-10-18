@@ -15,7 +15,9 @@ src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 ruby - "$src/sys/arch/evbarm/conf/EMBER64_CIX_UART2" \
     "$src/sys/arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE" \
     "$src/sys/arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE" \
-    "$src/sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY" <<'RUBY'
+    "$src/sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY" \
+    "$src/sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE" \
+    "$src/sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE" <<'RUBY'
 ARGV.first(2).zip(%w[EMBER64 EMBER64_CIXVPU_BOOT_PROBE]).each do |path, parent|
   lines = File.readlines(path).map { |line| line.sub(/#.*/, '').strip }
   expected = ["include \"arch/evbarm/conf/#{parent}\"", 'options CIXP1_UART2_CONSOLE']
@@ -35,6 +37,15 @@ lines = File.readlines(parent).map { |line| line.sub(/#.*/, '').strip }
 expected = ['include "arch/evbarm/conf/EMBER64"', 'no cixvpu* at acpi?',
   'cixvpu* at acpi? flags 0x0', 'cixscmi* at acpi? flags 0x1']
 abort 'manual UART rate parent differs' unless lines.reject(&:empty?) == expected
+lines = File.readlines(ARGV.fetch(4)).map { |line| line.sub(/#.*/, '').strip }
+expected = ['include "arch/evbarm/conf/EMBER64_CIX_UART2"',
+  'no cixvpu* at acpi?', 'cixvpu* at acpi? flags 0x0',
+  'cixgpioobs* at acpi? flags 0x1']
+abort 'manual GPIO observation differs' unless lines.reject(&:empty?) == expected
+lines = File.readlines(ARGV.fetch(5)).map { |line| line.sub(/#.*/, '').strip }
+expected = ['include "arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY"',
+  'cixgpioobs* at acpi? flags 0x1']
+abort 'manual IO observation differs' unless lines.reject(&:empty?) == expected
 RUBY
 work=$(mktemp -d "${TMPDIR:-/tmp}/cix-uart2.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM

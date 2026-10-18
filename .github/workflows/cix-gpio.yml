@@ -6,6 +6,9 @@ name: CIX GPIO actual source contracts
     paths:
       - '.github/workflows/cix-gpio.yml'
       - 'sys/dev/acpi/cixgpio_acpi.c'
+      - 'sys/dev/acpi/cixgpio_observe_acpi.c'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE'
+      - 'sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE'
       - 'sys/dev/acpi/acpi_event.*'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
@@ -16,6 +19,9 @@ name: CIX GPIO actual source contracts
     paths:
       - '.github/workflows/cix-gpio.yml'
       - 'sys/dev/acpi/cixgpio_acpi.c'
+      - 'sys/dev/acpi/cixgpio_observe_acpi.c'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE'
+      - 'sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE'
       - 'sys/dev/acpi/acpi_event.*'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
@@ -43,6 +49,7 @@ jobs:
           sparse-checkout: |
             /ember/tools/cixgpio-*
             /sys/dev/acpi/cixgpio_acpi.c
+            /sys/dev/acpi/cixgpio_observe_acpi.c
             /sys/dev/acpi/acpi_event.*
             /sys/external/bsd/acpica/dist/include/
             /sys/external/bsd/acpica/dist/resources/
@@ -61,7 +68,10 @@ jobs:
           CC: gcc
           CFLAGS: -O2 -g -gdwarf-4 -fanalyzer
           CIXGPIO_ANALYZE: '1'
-        run: sh ember/tools/cixgpio-contract.sh
+          CIXGPIOOBS_ANALYZE: '1'
+        run: |
+          sh ember/tools/cixgpio-contract.sh
+          sh ember/tools/cixgpio-observe-contract.sh
       - name: Run native ASan and UBSan with explicit decoder scope
         env:
           CC: gcc
@@ -69,7 +79,9 @@ jobs:
           # Only unchanged rsmisc.c uses ASan-only for direct unaligned loads.
           CIXGPIO_RSMISC_CFLAGS: -O1 -g -fsanitize=address -fno-omit-frame-pointer
           UBSAN_OPTIONS: halt_on_error=1
-        run: sh ember/tools/cixgpio-contract.sh
+        run: |
+          sh ember/tools/cixgpio-contract.sh
+          sh ember/tools/cixgpio-observe-contract.sh
       - name: Run complete actual source contract under Memcheck
         env:
           CC: gcc
@@ -84,3 +96,4 @@ jobs:
           chmod 755 "$RUNNER_TEMP/cix-gpio-memcheck"
           export TEST_RUNNER="$RUNNER_TEMP/cix-gpio-memcheck"
           sh ember/tools/cixgpio-contract.sh
+          sh ember/tools/cixgpio-observe-contract.sh

@@ -1,0 +1,6 @@
+# Manual UART rate queries and nonclearing GPI5/header-mux observations.
+# VPU remains inactive. Preserve the DEBUG UART2 console and GPI4 power button.
+
+include "arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY"
+
+cixgpioobs* at acpi? flags 0x1
