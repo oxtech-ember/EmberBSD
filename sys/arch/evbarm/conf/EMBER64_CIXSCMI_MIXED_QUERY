@@ -1,0 +1,8 @@
+# Explicit CIX five-request read-only SCMI batch. Keep the VPU inactive.
+# No ACK writes, clock control, setters or extended-name requests.
+# Use a manual boot entry and preserve a working recovery kernel.
+
+include "arch/evbarm/conf/EMBER64_CIXSCMI_QUERY"
+
+no cixscmi* at acpi?
+cixscmi* at acpi? flags 0x40

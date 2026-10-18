@@ -42,7 +42,8 @@ static const struct fixture fixtures[] = {
 	{ SCMI_SMT_DIAG_CLOCK_ATTRIBUTES, 0, 0x5001, 4, 4 },
 	{ SCMI_SMT_DIAG_CLOCK_ENTITY_ATTRIBUTES, 67, 0x5003, 8, 20 },
 	{ SCMI_SMT_DIAG_CLOCK_RATE_GET, 67, 0x5006, 8, 8 },
-	{ SCMI_SMT_DIAG_CLOCK_VERSION, 0, 0x5000, 4, 4 }
+	{ SCMI_SMT_DIAG_CLOCK_VERSION, 0, 0x5000, 4, 4 },
+	{ SCMI_SMT_DIAG_CLOCK_MESSAGE_ATTRIBUTES, 7, 0x5002, 8, 4 }
 };
 
 struct device {
@@ -338,6 +339,10 @@ test_api(void)
 		CHECK(scmi_smt_diag_query(&s, SCMI_SMT_DIAG_CLOCK_ENTITY_ATTRIBUTES,
 		    ids[i], &r, &t) == EINVAL);
 		CHECK(scmi_smt_diag_query(&s, SCMI_SMT_DIAG_CLOCK_RATE_GET,
+		    ids[i], &r, &t) == EINVAL);
+	}
+	for (i = 0; i < sizeof(ids) / sizeof(ids[0]); i++) {
+		CHECK(scmi_smt_diag_query(&s, SCMI_SMT_DIAG_CLOCK_MESSAGE_ATTRIBUTES,
 		    ids[i], &r, &t) == EINVAL);
 	}
 	CHECK(d.calls == 0 && memcmp(&r, &rb, sizeof(r)) == 0);

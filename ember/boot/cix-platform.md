@@ -174,8 +174,31 @@ reinitializes the channel or starts a fourth request. It retains the lease after
 a possible publication. Each FREE/completion wait keeps the existing 30ms and
 3000-poll ceilings, including a frozen-clock ceiling. Three queries permit at
 most six waits. Earlier selectors still issue exactly one request; flags0 stays
-passive. No result changes a clock or VPU resource. Physical repeated-request
-acceptance is pending a separate manual boot.
+passive. No result changes a clock or VPU resource. The physical receipt below
+qualifies only this fixed three-request cold-boot sequence.
+
+The separate
+[EMBER64_CIXSCMI_MIXED_QUERY](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY)
+configuration selects exact flags 64 and keeps the VPU at flags0. One initialized
+wire and lease carry five read-only requests: BASE_VERSION, CLOCK_VERSION,
+CLOCK_PROTOCOL_ATTRIBUTES, CLOCK_PROTOCOL_MESSAGE_ATTRIBUTES for message7, and
+CLOCK_RATE_GET for ID67. Tokens1 through5 produce headers `0x44000`, `0x85000`,
+`0xc5001`, `0x105002` and `0x145006`. This fixed batch accepts exact BASE2.0
+and CLOCK2.0. Unknown versions remain valid raw output; exact2.0 is a local
+review policy, not a firmware-unsupported claim.
+The protocol attribute word must have bits31:24 clear and count greater than67.
+Message7 attributes must be exactly four data bytes with value0, as specified
+by [DEN0056D section4.6.2.3](https://documentation-service.arm.com/static/6231acfc8804d00769e9db69).
+RATE_GET must have exactly eight data bytes; zero is valid telemetry.
+Each record separates helper, firmware, decode, policy and ACK results. A raw
+word is published only after the exact body length passes. Typed attribute and
+rate values have separate validity. Fresh read-only ACK snapshots bound each
+request, and any failure stops the batch before another request. Logs are
+emitted only after the sequence ends. Initial pending ACK rejects before send;
+later failures retain the lease. Five requests permit at most ten bounded waits.
+The existing ENTITY2.0 length24 check remains unchanged; this batch does not
+query or reinterpret entity data. No clock control, setter, ACK-clear, service,
+VPU access or physical mixed-batch acceptance follows from a source result.
 
 Before mapping, the binding validates each static property, resource and
 reference. It requires MBX6/7, SHM0/1, channel 8, non-coherent shared memory,
@@ -187,8 +210,8 @@ its NUL terminator. It does not require unused capacity bytes to be zero.
 Pre-query rejection prints a constant validation stage, role and native error.
 Those diagnostics add no firmware evaluation or transport access.
 Mappings use Device memory and explicit completion barriers. One selected
-discovery request runs in serialized cold-boot thread context. No IRQ is installed or
-cleared. The binding exposes no retry, setter, clock service or detach path.
+discovery request or fixed batch runs in serialized cold-boot thread context.
+No IRQ is installed or cleared. The binding exposes no retry, setter, clock service or detach path.
 Once a request can be published, mappings and claims remain until reboot,
 including on timeout or malformed reply. Before that point, failures release
 only resources that the diagnostic still owns.

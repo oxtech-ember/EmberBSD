@@ -31,6 +31,27 @@ struct cixscmi_repeat_result {
 	struct scmi_smt_diag_trace trace;
 };
 
+/* Fixed mixed read-only batch. Values remain distinct from local policy. */
+struct cixscmi_batch_result {
+	bool query_called;
+	bool word_valid;
+	bool value_valid;
+	bool ack_after_valid;
+	bool id67_in_range;
+	int helper_return;
+	int decode_error;
+	int policy_error;
+	int ack_error;
+	uint32_t raw_low;
+	uint32_t raw_high;
+	uint32_t num_clocks;
+	uint32_t max_async;
+	uint32_t ack_before;
+	uint32_t ack_after;
+	uint64_t rate_hz;
+	struct scmi_smt_diag_trace trace;
+};
+
 /* Boot-only diagnostic. No clock service, detach, notification or retry API. */
 struct cixscmi_acpi_softc {
 	device_t sc_dev;
@@ -74,6 +95,10 @@ struct cixscmi_acpi_softc {
 	unsigned int sc_repeat_count;
 	unsigned int sc_repeat_queries;
 	bool sc_repeat_qualified;
+	struct cixscmi_batch_result sc_batch[5];
+	unsigned int sc_batch_count;
+	unsigned int sc_batch_queries;
+	bool sc_batch_qualified;
 };
 
 /* cold boot autoconfiguration serializes publication and the four aliases. */
@@ -575,6 +600,127 @@ cixscmi_repeat_base(struct cixscmi_acpi_softc *sc)
 	    sc->sc_repeat_qualified, sc->sc_repeat_count, sc->sc_error);
 }
 
+/* One fixed sequence. There are no setters or extended-name queries. */
+static void
+cixscmi_mixed_batch(struct cixscmi_acpi_softc *sc)
+{
+	static const struct {
+		enum scmi_smt_diag_cmd command;
+		uint32_t argument;
+		const char *name;
+		size_t length;
+	} requests[] = {
+		{ SCMI_SMT_DIAG_BASE_VERSION, 0, "BASE_VERSION", 4 },
+		{ SCMI_SMT_DIAG_CLOCK_VERSION, 0, "CLOCK_VERSION", 4 },
+		{ SCMI_SMT_DIAG_CLOCK_ATTRIBUTES, 0, "CLOCK_PROTOCOL_ATTRIBUTES", 4 },
+		{ SCMI_SMT_DIAG_CLOCK_MESSAGE_ATTRIBUTES, 7,
+		    "CLOCK_MESSAGE_ATTRIBUTES7", 4 },
+		{ SCMI_SMT_DIAG_CLOCK_RATE_GET, 67, "CLOCK_RATE_GET67", 8 }
+	};
+	unsigned int i;
+
+	for (i = 0; i < __arraycount(requests); i++) {
+		struct cixscmi_batch_result *r = &sc->sc_batch[i];
+		struct scmi_smt_diag_reply reply;
+
+		r->ack_before = i == 0 ? sc->sc_ack_before :
+		    bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
+		sc->sc_batch_count++;
+		if ((r->ack_before & 2) != 0) {
+			r->ack_error = EBUSY;
+			sc->sc_error = EBUSY;
+			break;
+		}
+		r->query_called = true;
+		sc->sc_batch_queries++;
+		r->helper_return = scmi_smt_diag_query(&sc->sc_wire,
+		    requests[i].command, requests[i].argument, &reply, &r->trace);
+		/* A poisoned attempt permits no further I/O, including status reads. */
+		if (r->trace.stage == SCMI_SMT_DIAG_COMPLETE ||
+		    r->trace.stage == SCMI_SMT_DIAG_FIRMWARE) {
+			r->ack_after = bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
+			r->ack_after_valid = true;
+			if ((r->ack_after & 2) != 0)
+				r->ack_error = EBUSY;
+		}
+		if (r->helper_return == 0) {
+			if (r->trace.stage != SCMI_SMT_DIAG_COMPLETE ||
+			    reply.data_length != requests[i].length) {
+				r->decode_error = EPROTO;
+			} else {
+				r->raw_low = (uint32_t)reply.data[0] |
+				    (uint32_t)reply.data[1] << 8 |
+				    (uint32_t)reply.data[2] << 16 |
+				    (uint32_t)reply.data[3] << 24;
+				if (i == 4)
+					r->raw_high = (uint32_t)reply.data[4] |
+					    (uint32_t)reply.data[5] << 8 |
+					    (uint32_t)reply.data[6] << 16 |
+					    (uint32_t)reply.data[7] << 24;
+				r->word_valid = true;
+				if (i < 2) {
+					r->value_valid = true;
+					/* Exact2.0 is this batch's local review policy. */
+					if (r->raw_low != 0x20000)
+						r->policy_error = ENOTSUP;
+				} else if (i == 2) {
+					if ((r->raw_low & 0xff000000) != 0) {
+						r->decode_error = EPROTO;
+					} else {
+						r->value_valid = true;
+						r->num_clocks = r->raw_low & 0xffff;
+						r->max_async = (r->raw_low >> 16) & 0xff;
+						r->id67_in_range = r->num_clocks > 67;
+						if (!r->id67_in_range)
+							r->policy_error = ENOTSUP;
+					}
+				} else if (i == 3) {
+					if (r->raw_low != 0)
+						r->decode_error = EPROTO;
+					else
+						r->value_valid = true;
+				} else {
+					r->rate_hz = (uint64_t)r->raw_low |
+					    (uint64_t)r->raw_high << 32;
+					r->value_valid = true;
+				}
+			}
+		}
+		sc->sc_trace = r->trace;
+		sc->sc_error = r->helper_return != 0 ? r->helper_return :
+		    r->decode_error != 0 ? r->decode_error :
+		    r->policy_error != 0 ? r->policy_error : r->ack_error;
+		if (sc->sc_error != 0)
+			break;
+	}
+	/* Do not insert UART logging between consecutive transactions. */
+	for (i = 0; i < sc->sc_batch_count; i++) {
+		const struct cixscmi_batch_result *r = &sc->sc_batch[i];
+
+		aprint_normal_dev(sc->sc_dev, "CLOCK_BATCH index=%u command=%s "
+		    "query_called=%u helper_return=%d decode_error=%d policy_error=%d ack_error=%d "
+		    "word_valid=%u value_valid=%u raw_low=%#x raw_high=%#x "
+		    "num_clocks=%u max_async=%u id67_in_range=%u rate_hz=%" PRIu64 " "
+		    "stage=%u request_header=%#x response_header=%#x length=%u "
+		    "status_valid=%u status=%d tx_status_before=%#x "
+		    "tx_status_after_valid=%u tx_status_after=%#x\n",
+		    i + 1, requests[i].name, r->query_called, r->helper_return,
+		    r->decode_error, r->policy_error, r->ack_error,
+		    r->word_valid, r->value_valid, r->raw_low, r->raw_high,
+		    r->num_clocks, r->max_async, r->id67_in_range, r->rate_hz,
+		    (unsigned int)r->trace.stage, r->trace.request_header,
+		    r->trace.response_header, r->trace.response_length,
+		    r->trace.firmware_status_valid, r->trace.firmware_status,
+		    r->ack_before, r->ack_after_valid, r->ack_after);
+	}
+	sc->sc_batch_qualified = sc->sc_batch_queries == __arraycount(requests) &&
+	    sc->sc_error == 0;
+	aprint_normal_dev(sc->sc_dev,
+	    "CLOCK_BATCH attempted=%u qualified=%u records=%u error=%d; "
+	    "read-only batch; boot-long lease retained\n", sc->sc_batch_queries,
+	    sc->sc_batch_qualified, sc->sc_batch_count, sc->sc_error);
+}
+
 static void
 cixscmi_acpi_deferred(device_t self)
 {
@@ -636,7 +782,8 @@ cixscmi_acpi_deferred(device_t self)
 		goto failed;
 	}
 	sc->sc_ack_before = bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
-	if (sc->sc_selector == 32 && (sc->sc_ack_before & 2) != 0) {
+	if ((sc->sc_selector == 32 || sc->sc_selector == 64) &&
+	    (sc->sc_ack_before & 2) != 0) {
 		sc->sc_stage = "ack-ownership";
 		sc->sc_error = EBUSY;
 		goto failed;
@@ -648,6 +795,10 @@ cixscmi_acpi_deferred(device_t self)
 	/* A request may be published from here. Retain mappings and leases forever. */
 	sc->sc_query_started = true;
 	sc->sc_stage = "query";
+	if (sc->sc_selector == 64) {
+		cixscmi_mixed_batch(sc);
+		goto out;
+	}
 	if (sc->sc_selector == 32) {
 		cixscmi_repeat_base(sc);
 		goto out;
@@ -855,11 +1006,13 @@ cixscmi_acpi_attach(device_t parent, device_t self, void *aux)
 	sc->sc_role = cixscmi_roles[0];
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 	aprint_naive("\n");
-	if (flags == 32)
+	if (flags == 64)
+		aprint_normal(": CIX five-request read-only SCMI diagnostic\n");
+	else if (flags == 32)
 		aprint_normal(": CIX three-request BASE SCMI diagnostic\n");
 	else
 		aprint_normal(": CIX single-request SCMI diagnostic\n");
-	if (flags == 1 || flags == 2 || flags == 4 || flags == 8 || flags == 16 || flags == 32)
+	if (flags == 1 || flags == 2 || flags == 4 || flags == 8 || flags == 16 || flags == 32 || flags == 64)
 		config_defer(self, cixscmi_acpi_deferred);
 	else if (flags != 0)
 		aprint_error_dev(self, "unsupported diagnostic flags %#x\n", flags);

@@ -22,7 +22,8 @@ enum scmi_smt_diag_cmd {
 	SCMI_SMT_DIAG_CLOCK_ATTRIBUTES,
 	SCMI_SMT_DIAG_CLOCK_ENTITY_ATTRIBUTES,
 	SCMI_SMT_DIAG_CLOCK_RATE_GET,
-	SCMI_SMT_DIAG_CLOCK_VERSION
+	SCMI_SMT_DIAG_CLOCK_VERSION,
+	SCMI_SMT_DIAG_CLOCK_MESSAGE_ATTRIBUTES
 };
 
 enum scmi_smt_diag_barrier {
@@ -82,7 +83,8 @@ struct scmi_smt_diag_trace {
  * and serialization. Callbacks must not reenter. No concurrent or IRQ use.
  *
  * Query accepts argument0 for no-argument commands, skip0..255 for BASE LIST,
- * or clock67 for entity attributes/rate. Other commands/arguments return EINVAL
+ * clock67 for entity attributes/rate, or message7 for CLOCK MESSAGE ATTRIBUTES.
+ * Other commands/arguments return EINVAL
  * without callbacks. Each issued request gets a fresh10-bit token; exhaustion
  * is EOVERFLOW, without callbacks. A poisoned instance returns EIO likewise.
  *

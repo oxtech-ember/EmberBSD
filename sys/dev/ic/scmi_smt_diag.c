@@ -47,6 +47,12 @@ scmi_smt_diag_command(enum scmi_smt_diag_cmd cmd, uint32_t argument,
 		*header = 0x4006;
 		*length = 8;
 		return 0;
+	case SCMI_SMT_DIAG_CLOCK_MESSAGE_ATTRIBUTES:
+		if (argument != 7)
+			return EINVAL;
+		*header = 0x5002;
+		*length = 8;
+		return 0;
 	case SCMI_SMT_DIAG_CLOCK_ATTRIBUTES:
 		*header = 0x5001;
 		break;
