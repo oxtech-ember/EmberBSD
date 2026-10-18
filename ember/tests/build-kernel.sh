@@ -35,7 +35,7 @@ cp "$repo/ember/build-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
 # Model only dispatcher arguments and exit status. These fixtures do not
 # execute A733, GPU, Ruby, CEMAC, or Wi-Fi production-code contracts.
-for contract in a733-accelerator-clock a733-power a733-gpu-identification \
+for contract in a733-accelerator-clock a733-power a733-display-observer a733-gpu-identification \
     a733-gpu-fwinfo a733-gpu-fwimage a733-gpu-mips a733-gpu-fwabi \
     a733-gpu-fwmem a733-gpu-fwinit a733-gpu-fwstart a733-gpu-fwboot \
     a733-gpu-fwprobe a733-gpu-fwcompute a733-gpu-fwfile a733-gpu-mmu \
@@ -56,7 +56,7 @@ for contract in bcm2712-display bcm2712-display-irq bcm2712-display-hsm bcm2712-
     bcm2712-v3d bcm2712-v3d-takeover bcm2712-v3d-dma \
     bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault \
     bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-sg bcm2712-v3d-job bcm2712-v3d-csd \
-    bcm2712-v3d-cl bcm2712-v3d-sync drm-syncobj-wait \
+    bcm2712-v3d-cl bcm2712-v3d-wait bcm2712-v3d-sync drm-syncobj-wait \
     drm-syncobj-dispatch drm-syncobj-find dma-fence-chain drm-jiffies; do
     cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
 #!/bin/sh
@@ -207,8 +207,8 @@ export PATH="$work/bin:$PATH" NETBSD2_PYTHON="$work/bin/python3" NETBSD2_JOBS=2
 export RUBY="$work/bin/ruby"
 check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
-    test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 20
-    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 22
+    test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 21
+    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 23
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 6
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 8
 }
@@ -223,7 +223,7 @@ grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 2
+check_contract_counts 3
 # Reuse all objects, but the selected kernel must embed the new build identity.
 printf 'old-source-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.c"
 printf 'old-object-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.o"
@@ -242,7 +242,7 @@ test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.o")" = new-source-id
 test "$(cat "$TEST_OUT/obj/kernels/EMBER64/keep.o")" = keep-object
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.c")" = other-source-id
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.o")" = other-object-id
-check_contract_counts 2
+check_contract_counts 3
 outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
 if_cemac_acpi.kmod bcm2712btcom.kmod rp1wmcodec.kmod rpi5button.kmod'
@@ -289,14 +289,14 @@ TEST_HOST=NetBSD EMBER_EXTERNAL_TOOLCHAIN=/cross/gcc16 \
 grep -q 'EXTERNAL_TOOLCHAIN=/cross/gcc16' "$TEST_LOG"
 grep -q 'TOOLCHAIN_MISSING=yes' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 6
+check_contract_counts 7
 export TEST_OUT="$work/native"
 : > "$TEST_LOG"
 TEST_HOST=NetBSD EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 grep -q native-make "$TEST_LOG"
 ! grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
-check_contract_counts 6
+check_contract_counts 7
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi
