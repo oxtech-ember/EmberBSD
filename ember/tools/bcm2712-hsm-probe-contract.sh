@@ -54,7 +54,9 @@ run
 if [ "${HSM_PROBE_SKIP_MUTANT:-0}" = 1 ]; then exit 0; fi
 cp "$work/probe.h" "$work/probe-good.h"
 for mutation in fdt-full mode-fallback selected-reset hsm-held retained-map \
-    hpd-inherited-gate hpd-mutation hpd-offset hpd-held hpd-conflict; do
+    hpd-inherited-gate hpd-mutation hpd-offset hpd-held hpd-conflict \
+    ddc-range ddc-offset ddc-extra-read ddc-held ddc-mask ddc-busy-cleanup \
+    ddc-partial ddc-conflict ddc-value; do
     case "$mutation" in
         fdt-full)
             from='fdt_check_full(fdt, fdt_totalsize(fdt))'; to='fdt_check_header(fdt)' ;;
@@ -76,8 +78,31 @@ for mutation in fdt-full mode-fallback selected-reset hsm-held retained-map \
             from='dvp->hpd_raw = bus_space_read_4'
             to='(void)bcm2712_display_dvp_release(dvp->owner, 0); dvp->hpd_raw = bus_space_read_4' ;;
         hpd-conflict)
-            from='prop_dictionary_get(properties, "dvp-mode") != NULL ||'
-            to='false ||' ;;
+            from='if (prop_dictionary_get(properties, "dvp-mode") != NULL ||'
+            to='if (false ||' ;;
+        ddc-range)
+            from='&contract->memory[14]'; to='&contract->memory[15]' ;;
+        ddc-offset)
+            from='ddc->handle, 0x2c);'; to='ddc->handle, 0x24);' ;;
+        ddc-extra-read)
+            from='ddc->valid = true;'
+            to='(void)bus_space_read_4(&arm_generic_bs_tag, ddc->handle, 0x50); ddc->valid = true;' ;;
+        ddc-held)
+            from='dvp->stage = "BSC-map";'
+            to='(void)bcm2712_display_dvp_release(dvp->owner, 0); dvp->stage = "BSC-map";' ;;
+        ddc-mask)
+            from='(ddc->mask & 2U) != 0 &&'; to='true &&' ;;
+        ddc-busy-cleanup)
+            from='hsm_probe_ddc_snapshot(dev, "sample", ddc);'
+            to='hsm_probe_ddc_snapshot(dev, "sample", ddc); if (ddc->enable & 3U) return EBUSY;' ;;
+        ddc-partial)
+            from='ddc->bsc_valid = true;'
+            to='ddc->bsc_valid = true; ddc->valid = true;' ;;
+        ddc-conflict)
+            from='if (prop_dictionary_get(properties, "hpd-mode") != NULL ||'
+            to='if (false ||' ;;
+        ddc-value)
+            from='strcmp(ddc_mode, "observe0") != 0'; to='false' ;;
         retained-map)
             from='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp);'
             to='error = hsm_probe_dvp_cycle(dev, handle, mode, &dvp); if (error != 0 && dvp.mapped) bus_space_unmap(&arm_generic_bs_tag, dvp.handle, 0x10);' ;;
@@ -100,8 +125,8 @@ for mutation in fdt-full mode-fallback selected-reset hsm-held retained-map \
     fi
     compile
     if (ulimit -c 0; run) >"$work/mutant.log" 2>&1; then
-        echo "HSM/DVP/HPD probe accepted causal mutant: $mutation" >&2
+        echo "HSM/DVP/HPD/DDC probe accepted causal mutant: $mutation" >&2
         exit 1
     fi
-    echo "HSM/DVP/HPD probe: rejected causal mutant $mutation"
+    echo "HSM/DVP/HPD/DDC probe: rejected causal mutant $mutation"
 done

@@ -30,7 +30,13 @@ enum hsm_probe_mode {
 	HSM_PROBE_CLOCK,
 	HSM_PROBE_OBSERVE,
 	HSM_PROBE_GATE0,
-	HSM_PROBE_HPD0
+	HSM_PROBE_HPD0,
+	HSM_PROBE_DDC0
+};
+struct hsm_probe_ddc {
+	bus_space_handle_t bsc_handle, handle;
+	bool bsc_mapped, mapped, bsc_valid, valid;
+	uint32_t status, mask, ctl, enable, ctlhi;
 };
 struct hsm_probe_dvp {
 	struct bcm2712_dvp_provider *owner;
@@ -38,6 +44,7 @@ struct hsm_probe_dvp {
 	bool mapped, hpd_mapped, hpd_valid;
 	bus_space_handle_t hpd_handle;
 	uint32_t hpd_raw;
+	struct hsm_probe_ddc ddc;
 	const char *stage;
 	struct bcm2712_dvp_status sample;
 	const char *sample_stage;
@@ -85,6 +92,71 @@ hsm_probe_hpd0(device_t dev, const struct bcm2712_display_contract *contract,
 	return 0;
 }
 
+static void
+hsm_probe_ddc_snapshot(device_t dev, const char *stage,
+    const struct hsm_probe_ddc *ddc)
+{
+	bool candidate;
+
+	if (ddc->bsc_valid)
+		aprint_normal_dev(dev, "DDC0 probe %s: BSC status %#x mask %#x\n",
+		    stage, ddc->status, ddc->mask);
+	if (!ddc->valid)
+		return;
+	candidate = (ddc->mask & 2U) != 0 && (ddc->status & 2U) == 0 &&
+	    (ddc->ctl & 0x40U) == 0 && (ddc->enable & 3U) == 0;
+	aprint_normal_dev(dev, "DDC0 probe %s: ctl %#x enable %#x ctlhi %#x "
+	    "candidate_quiescent %u; non-atomic snapshot only; no SCL/SDA "
+	    "or free-bus guarantee\n", stage, ddc->ctl, ddc->enable,
+	    ddc->ctlhi, candidate);
+}
+
+/* Sampling does not start a transfer or acquire the BSC interrupt domain. */
+static int
+hsm_probe_ddc0(device_t dev, const struct bcm2712_display_contract *contract,
+    struct hsm_probe_dvp *dvp)
+{
+	const struct bcm2712_display_memory *bsc = &contract->memory[13];
+	const struct bcm2712_display_memory *memory = &contract->memory[14];
+	struct hsm_probe_ddc *ddc = &dvp->ddc;
+	int error;
+
+	dvp->stage = "BSC-map";
+	error = bus_space_map(&arm_generic_bs_tag, bsc->address, bsc->length,
+	    0, &ddc->bsc_handle);
+	if (error != 0)
+		return error;
+	ddc->bsc_mapped = true;
+	dvp->stage = "BSC-read";
+	aprint_normal_dev(dev, "DDC0 probe observe0: normal-active-SoC prior-art "
+	    "assumption; first BSC resource13 MMIO; bus_space stall/abort "
+	    "is not recoverable; no ACPI power or display-lifetime claim\n");
+	ddc->status = bus_space_read_4(&arm_generic_bs_tag, ddc->bsc_handle, 0);
+	ddc->mask = bus_space_read_4(&arm_generic_bs_tag, ddc->bsc_handle, 4);
+	ddc->bsc_valid = true;
+	dvp->stage = "DDC0-map";
+	error = bus_space_map(&arm_generic_bs_tag, memory->address,
+	    memory->length, 0, &ddc->handle);
+	if (error != 0)
+		return error;
+	ddc->mapped = true;
+	dvp->stage = "DDC0-read";
+	aprint_normal_dev(dev, "DDC0 probe: first controller resource14 MMIO; "
+	    "three raw control reads only; bus_space stall/abort is not "
+	    "recoverable\n");
+	ddc->ctl = bus_space_read_4(&arm_generic_bs_tag, ddc->handle, 0x28);
+	ddc->enable = bus_space_read_4(&arm_generic_bs_tag, ddc->handle, 0x2c);
+	ddc->ctlhi = bus_space_read_4(&arm_generic_bs_tag, ddc->handle, 0x50);
+	ddc->valid = true;
+	hsm_probe_ddc_snapshot(dev, "sample", ddc);
+	bus_space_unmap(&arm_generic_bs_tag, ddc->handle, memory->length);
+	ddc->mapped = false;
+	bus_space_unmap(&arm_generic_bs_tag, ddc->bsc_handle, bsc->length);
+	ddc->bsc_mapped = false;
+	dvp->stage = "DDC0-unmapped";
+	return 0;
+}
+
 /* The caller holds a verified HSM lease for this entire DVP/controller cycle. */
 static int
 hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
@@ -109,7 +181,8 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 	    "assumption; first shared resource10 MMIO; bus_space stall/abort "
 	    "is not recoverable; no ACPI power or display-lifetime claim\n",
 	    mode == HSM_PROBE_OBSERVE ? "observe" :
-	    mode == HSM_PROBE_HPD0 ? "HPD0" : "gate0");
+	    mode == HSM_PROBE_HPD0 ? "HPD0" :
+	    mode == HSM_PROBE_DDC0 ? "DDC0" : "gate0");
 	dvp->stage = "create";
 	error = bcm2712_display_dvp_create(dev, &contract,
 	    &contract.memory[BCM2712_DVP_RESOURCE], &arm_generic_bs_tag,
@@ -130,7 +203,10 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 	/* Do not combine first controller access with an unaccepted gate write. */
 	if (mode == HSM_PROBE_HPD0 && (initial.gates & (1U << 3)) != 0)
 		return EBUSY;
-	if (mode == HSM_PROBE_GATE0 || mode == HSM_PROBE_HPD0) {
+	if (mode == HSM_PROBE_DDC0 && (initial.gates & (1U << 3)) != 0)
+		return EBUSY;
+	if (mode == HSM_PROBE_GATE0 || mode == HSM_PROBE_HPD0 ||
+	    mode == HSM_PROBE_DDC0) {
 		dvp->stage = "acquire0";
 		error = bcm2712_display_dvp_acquire(dvp->owner, 0);
 		if (error != 0)
@@ -146,11 +222,14 @@ hsm_probe_dvp_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode,
 		    status.gates != (initial.gates & ~(1U << 3)) ||
 		    status.resets != initial.resets)
 			return EIO;
-		if (mode == HSM_PROBE_HPD0) {
+		if (mode == HSM_PROBE_HPD0 || mode == HSM_PROBE_DDC0) {
 			/* Acquire can write if an external owner changed the gate. */
 			if (status.mutation_attempted)
 				return EIO;
-			error = hsm_probe_hpd0(dev, &contract, dvp);
+			if (mode == HSM_PROBE_HPD0)
+				error = hsm_probe_hpd0(dev, &contract, dvp);
+			else
+				error = hsm_probe_ddc0(dev, &contract, dvp);
 			if (error != 0)
 				return error;
 		}
@@ -351,6 +430,7 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 	    "complete; %s; no reset or clock-lifetime claim\n",
 	    mode == HSM_PROBE_CLOCK ? "no display MMIO or HPD" :
 	    mode == HSM_PROBE_HPD0 ? "one HPD0 sample" :
+	    mode == HSM_PROBE_DDC0 ? "DDC0 snapshot complete; no idle or transfer claim" :
 	    "shared DVP resource10 only; no HPD");
 	return 0;
 stop:
@@ -378,6 +458,14 @@ retained:
 			    "retained %u sample valid %u; cached raw %#x connected "
 			    "%u; no current connector-state claim\n", dvp.hpd_mapped,
 			    dvp.hpd_valid, dvp.hpd_raw, dvp.hpd_raw & 1U);
+		if (mode == HSM_PROBE_DDC0) {
+			aprint_error_dev(dev, "DDC0 probe resource13 mapping retained "
+			    "%u resource14 mapping retained %u; BSC sample valid %u "
+			    "DDC sample valid %u; cached values only\n",
+			    dvp.ddc.bsc_mapped, dvp.ddc.mapped,
+			    dvp.ddc.bsc_valid, dvp.ddc.valid);
+			hsm_probe_ddc_snapshot(dev, "retained cached", &dvp.ddc);
+		}
 		aprint_error_dev(dev, "DVP probe sample valid %u at %s; "
 		    "pre-failure cached values only; current status unknown\n",
 		    dvp.sample_stage != NULL,
@@ -401,7 +489,7 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 	prop_dictionary_t properties = argument;
 	struct drm_minor *minor;
 	ACPI_HANDLE handle;
-	const char *expected, *dvp_mode, *hpd_mode;
+	const char *expected, *dvp_mode, *hpd_mode, *ddc_mode;
 	enum hsm_probe_mode mode = HSM_PROBE_CLOCK;
 	bool cold_headless = false;
 	size_t length;
@@ -416,7 +504,14 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 	    !cold_headless || !prop_dictionary_get_cstring_nocopy(properties,
 	    "expected-buildinfo", &expected))
 		return EINVAL;
-	if (prop_dictionary_get(properties, "hpd-mode") != NULL) {
+	if (prop_dictionary_get(properties, "ddc-mode") != NULL) {
+		if (prop_dictionary_get(properties, "hpd-mode") != NULL ||
+		    prop_dictionary_get(properties, "dvp-mode") != NULL ||
+		    !prop_dictionary_get_cstring_nocopy(properties, "ddc-mode",
+		    &ddc_mode) || strcmp(ddc_mode, "observe0") != 0)
+			return EINVAL;
+		mode = HSM_PROBE_DDC0;
+	} else if (prop_dictionary_get(properties, "hpd-mode") != NULL) {
 		if (prop_dictionary_get(properties, "dvp-mode") != NULL ||
 		    !prop_dictionary_get_cstring_nocopy(properties, "hpd-mode",
 		    &hpd_mode) || strcmp(hpd_mode, "sample0") != 0)

@@ -135,7 +135,7 @@ operation and cannot clear a retained owner.
 
 The default HSM-only mode does not access display MMIO. The explicit
 [HPD0 sample](bcm2712-display-dvp.md#finite-hpd0-sample) reads one controller register.
-No mode performs DDC or reset operations. The framebuffer gate does not establish
+No mode sends a DDC transfer or resets hardware. The framebuffer gate does not establish
 a general firmware clock lifetime. Run the actual-source host contract with:
 
 ```sh
@@ -144,7 +144,7 @@ sh ember/tools/bcm2712-hsm-probe-contract.sh "$PWD"
 
 The fixture uses the real decoder, HSM/DVP cores/providers, module and libfdt.
 Controlled kernel services test early refusal, malformed trees, zero rate,
-inherited state, failures, retained ownership, cleanup and exact HPD MMIO order.
+inherited state, failures, retained ownership, cleanup and exact HPD/DDC MMIO order.
 `CC`, `CFLAGS`, `HSM_PROBE_COMPILE_ONLY=1`,
 `HSM_PROBE_OUTPUT` and `TEST_RUNNER` support cross-built and memory-checked tests.
 `HSM_PROBE_SKIP_MUTANT=1` runs only the positive source contract.
@@ -152,7 +152,7 @@ Host execution does not establish physical acceptance.
 
 ### Explicit shared-DVP modes
 
-Absent `dvp-mode` and `hpd-mode` properties keep the HSM-only cycle above.
+Absent `dvp-mode`, `hpd-mode` and `ddc-mode` properties keep the HSM-only cycle above.
 Empty, unknown, non-string or conflicting modes fail before HSM, mapping and MMIO.
 `dvp-mode=observe` and `dvp-mode=gate0` use the same headless, framebuffer,
 render and selected-kernel guards. Both acquire and hold a verified HSM lease

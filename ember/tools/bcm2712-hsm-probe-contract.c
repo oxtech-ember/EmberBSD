@@ -33,7 +33,8 @@
 typedef int modcmd_t;
 typedef struct { unsigned int next; } deviter_t;
 struct properties { const char *expected; bool cold; const char *mode;
-    bool wrong_mode_type; const char *hpd_mode; bool wrong_hpd_type; };
+    bool wrong_mode_type; const char *hpd_mode; bool wrong_hpd_type;
+    const char *ddc_mode; bool wrong_ddc_type; };
 typedef struct properties *prop_dictionary_t;
 const char buildinfo[] = "EmberBSD:accepted-kernel\n";
 static char blob[4096] __aligned(8);
@@ -64,6 +65,10 @@ static bool prop_dictionary_get_cstring_nocopy(prop_dictionary_t p,
 		if (p->wrong_mode_type) return false;
 		*v = p->mode; return *v != NULL;
 	}
+	if (strcmp(n, "ddc-mode") == 0) {
+		if (p->wrong_ddc_type) return false;
+		*v = p->ddc_mode; return *v != NULL;
+	}
 	if (strcmp(n, "hpd-mode") == 0) {
 		if (p->wrong_hpd_type) return false;
 		*v = p->hpd_mode; return *v != NULL;
@@ -73,6 +78,8 @@ static bool prop_dictionary_get_cstring_nocopy(prop_dictionary_t p,
 }
 static void *prop_dictionary_get(prop_dictionary_t p, const char *n)
 {
+	if (strcmp(n, "ddc-mode") == 0)
+		return p->ddc_mode || p->wrong_ddc_type ? p : NULL;
 	if (strcmp(n, "hpd-mode") == 0)
 		return p->hpd_mode || p->wrong_hpd_type ? p : NULL;
 	assert(strcmp(n, "dvp-mode") == 0);
@@ -133,6 +140,9 @@ static struct {
 	bool mapped, waiting, disturb_lease, hpd_mapped, external_gate;
 	uint32_t hpd_raw;
 	unsigned int hpd_maps, hpd_reads, hpd_unmaps;
+	bool bsc_mapped, ddc_mapped;
+	uint32_t bsc_status, bsc_mask, ddc_ctl, ddc_enable, ddc_ctlhi;
+	unsigned int bsc_maps, bsc_reads, bsc_unmaps, ddc_maps, ddc_reads, ddc_unmaps;
 } hw;
 static char events[128];
 static unsigned int event_count, fail_step;
@@ -154,6 +164,21 @@ static void held_dvp(void);
 static int bus_space_map(bus_space_tag_t tag, uint64_t base, uint64_t size,
     int flags, bus_space_handle_t *handle)
 {
+	if (base == UINT64_C(0x107d508380)) {
+		assert(tag == &arm_generic_bs_tag && size == 0x10 && flags == 0);
+		assert(!hw.bsc_mapped && hw.bsc_maps == 0 && !hw.hpd_mapped);
+		held_hsm(); held_dvp(); hw.bsc_maps++;
+		if (step('B')) return EIO;
+		hw.bsc_mapped = true; *handle = 29; return 0;
+	}
+	if (base == UINT64_C(0x107d508200)) {
+		assert(tag == &arm_generic_bs_tag && size == 0x58 && flags == 0);
+		assert(hw.bsc_mapped && hw.bsc_reads == 2 && !hw.ddc_mapped);
+		assert(hw.ddc_maps == 0 && !hw.hpd_mapped);
+		held_hsm(); held_dvp(); hw.ddc_maps++;
+		if (step('E')) return EIO;
+		hw.ddc_mapped = true; *handle = 31; return 0;
+	}
 	if (base == UINT64_C(0x107c701400)) {
 		assert(tag == &arm_generic_bs_tag && size == 0x300 && flags == 0);
 		assert(!hw.hpd_mapped && hw.hpd_maps == 0);
@@ -170,6 +195,24 @@ static int bus_space_map(bus_space_tag_t tag, uint64_t base, uint64_t size,
 static uint32_t bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle,
     unsigned int offset)
 {
+	if (handle == 29) {
+		const unsigned int offsets[] = { 0, 4 };
+		assert(tag == &arm_generic_bs_tag && hw.bsc_mapped && !hw.ddc_mapped);
+		assert(hw.bsc_reads < 2 && offset == offsets[hw.bsc_reads]);
+		assert(strstr(log_text, "first BSC resource13 MMIO") != NULL);
+		held_hsm(); held_dvp(); hw.bsc_reads++; (void)step(offset == 0 ? 'b' : 'm');
+		return offset == 0 ? hw.bsc_status : hw.bsc_mask;
+	}
+	if (handle == 31) {
+		const unsigned int offsets[] = { 0x28, 0x2c, 0x50 };
+		assert(tag == &arm_generic_bs_tag && hw.ddc_mapped && hw.bsc_mapped);
+		assert(hw.ddc_reads < 3 && offset == offsets[hw.ddc_reads]);
+		assert(strstr(log_text, "first controller resource14 MMIO") != NULL);
+		held_hsm(); held_dvp(); hw.ddc_reads++;
+		(void)step(offset == 0x28 ? 't' : offset == 0x2c ? 'e' : 'f');
+		return offset == 0x28 ? hw.ddc_ctl : offset == 0x2c ?
+		    hw.ddc_enable : hw.ddc_ctlhi;
+	}
 	if (handle == 23) {
 		assert(tag == &arm_generic_bs_tag && hw.hpd_mapped && offset == 0x1c8);
 		assert(hw.hpd_reads == 0 && !hw.waiting);
@@ -220,6 +263,19 @@ static void held_dvp(void)
 }
 static void bus_space_unmap(bus_space_tag_t tag, bus_space_handle_t handle, uint64_t size)
 {
+	if (handle == 31) {
+		assert(tag == &arm_generic_bs_tag && size == 0x58 && hw.ddc_mapped);
+		assert(hw.bsc_mapped && hw.bsc_reads == 2 && hw.ddc_reads == 3);
+		held_hsm(); held_dvp(); (void)step('v');
+		hw.ddc_unmaps++; hw.ddc_mapped = false; return;
+	}
+	if (handle == 29) {
+		assert(tag == &arm_generic_bs_tag && size == 0x10 && hw.bsc_mapped);
+		assert(!hw.ddc_mapped && hw.ddc_unmaps == 1);
+		held_hsm(); held_dvp(); (void)step('w');
+		hw.bsc_unmaps++; hw.bsc_mapped = false; return;
+	}
+	assert(!hw.bsc_mapped && !hw.ddc_mapped);
 	if (handle == 23) {
 		assert(tag == &arm_generic_bs_tag && size == 0x300 && hw.hpd_mapped);
 		assert(hw.hpd_reads == 1);
@@ -247,9 +303,9 @@ static int bcm2712_display_hsm_acquire(struct bcm2712_hsm_provider *p,
     unsigned int port, uint32_t rate)
 { PROVIDER_CALL('A', actual_hsm_acquire(p, port, rate)); }
 static int bcm2712_display_hsm_release(struct bcm2712_hsm_provider *p, unsigned int port)
-{ assert(!hw.mapped && !hw.hpd_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('R', actual_hsm_release(p, port)); }
+{ assert(!hw.mapped && !hw.hpd_mapped && !hw.bsc_mapped && !hw.ddc_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('R', actual_hsm_release(p, port)); }
 static int bcm2712_display_hsm_destroy(struct bcm2712_hsm_provider *p)
-{ assert(!hw.mapped && !hw.hpd_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('D', actual_hsm_destroy(p)); }
+{ assert(!hw.mapped && !hw.hpd_mapped && !hw.bsc_mapped && !hw.ddc_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('D', actual_hsm_destroy(p)); }
 static int bcm2712_display_acpi_resources(device_t d, ACPI_HANDLE h,
     struct bcm2712_display_contract *out)
 {
@@ -285,7 +341,7 @@ static int bcm2712_display_dvp_acquire(struct bcm2712_dvp_provider *p, unsigned 
 	PROVIDER_CALL('a', actual_dvp_acquire(p, port));
 }
 static int bcm2712_display_dvp_release(struct bcm2712_dvp_provider *p, unsigned int port)
-{ assert(port == 0 && !hw.hpd_mapped); held_hsm(); PROVIDER_CALL('r', actual_dvp_release(p, port)); }
+{ assert(port == 0 && !hw.hpd_mapped && !hw.bsc_mapped && !hw.ddc_mapped); held_hsm(); PROVIDER_CALL('r', actual_dvp_release(p, port)); }
 static int bcm2712_display_dvp_destroy(struct bcm2712_dvp_provider *p)
 { held_hsm(); PROVIDER_CALL('d', actual_dvp_destroy(p)); }
 #undef PROVIDER_CALL
@@ -322,6 +378,7 @@ refusal(struct properties *p, int expected)
 	CHECK(fw.calls == 0 && fw.sets == 0 && references == 0);
 	CHECK(hw.maps == 0 && hw.reads == 0 && hw.writes == 0);
 	CHECK(hw.hpd_maps == 0 && hw.hpd_reads == 0 && hw.hpd_unmaps == 0);
+	CHECK(hw.bsc_maps == 0 && hw.bsc_reads == 0 && hw.ddc_maps == 0 && hw.ddc_reads == 0);
 	CHECK(event_count == 0 && resource_calls == 0);
 	CHECK(bcm2712_hsm_owner == NULL);
 	CHECK(strstr(log_text, "finite cycle complete") == NULL);
@@ -334,7 +391,7 @@ static void reboot_model(void)
 		kmem_free(bcm2712_dvp_owner, sizeof(*bcm2712_dvp_owner));
 		bcm2712_dvp_owner = NULL;
 	}
-	hw.mapped = hw.hpd_mapped = hw.waiting = false;
+	hw.mapped = hw.hpd_mapped = hw.bsc_mapped = hw.ddc_mapped = hw.waiting = false;
 	if (bcm2712_hsm_owner != NULL) {
 		kmem_free(bcm2712_hsm_owner, sizeof(*bcm2712_hsm_owner));
 		bcm2712_hsm_owner = NULL;
@@ -533,6 +590,111 @@ static void hpd_probe_tests(void)
 	CHECK(strstr(log_text, "finite cycle complete") == NULL); reboot_model();
 }
 
+static void ddc_probe_tests(void)
+{
+	struct properties p = { .expected = "EmberBSD:accepted-kernel", .cold = true,
+	    .ddc_mode = "observe0" };
+	const char *order = "CSASQMcsasBbmEtefvwrsdURSD";
+	unsigned int flags, i, stop;
+
+	prepare(1, 0); p.ddc_mode = ""; refusal(&p, EINVAL);
+	prepare(1, 0); p.ddc_mode = "other"; refusal(&p, EINVAL);
+	prepare(1, 0); p.ddc_mode = NULL; p.wrong_ddc_type = true; refusal(&p, EINVAL);
+	p.ddc_mode = "observe0"; p.wrong_ddc_type = false;
+	prepare(1, 0); p.mode = "observe"; refusal(&p, EINVAL);
+	prepare(1, 0); p.mode = "gate0"; refusal(&p, EINVAL);
+	prepare(1, 0); p.mode = ""; refusal(&p, EINVAL);
+	prepare(1, 0); p.mode = NULL; p.wrong_mode_type = true; refusal(&p, EINVAL);
+	p.wrong_mode_type = false;
+	prepare(1, 0); p.hpd_mode = "sample0"; refusal(&p, EINVAL);
+	prepare(1, 0); p.hpd_mode = ""; refusal(&p, EINVAL);
+	prepare(1, 0); p.hpd_mode = NULL; p.wrong_hpd_type = true; refusal(&p, EINVAL);
+	p.wrong_hpd_type = false;
+	prepare(1, 0); early_framebuffer = 1; refusal(&p, EBUSY);
+	prepare(1, 0); tree = NULL; refusal(&p, EIO);
+	prepare(1, 0); render = false; refusal(&p, ENODEV);
+	/* Every predicate combination is still a successful read-only snapshot. */
+	for (flags = 0; flags < 32; flags++) {
+		prepare(flags == 0 ? 0 : 1, flags == 31 ? 240000000 : 0);
+		hw.gates &= ~(1U << 3);
+		hw.bsc_mask = 0xa5a50002U & ~((flags & 1U) << 1);
+		hw.bsc_status = 0xa5a50000U | (flags & 2U);
+		hw.ddc_ctl = 0x90U | ((flags & 4U) << 4);
+		/* Latched NOACK/condition/unknown bits do not prove active transfer. */
+		hw.ddc_enable = 0x80000074U | ((flags >> 3) & 3U);
+		hw.ddc_ctlhi = flags & 1U ? 0 : UINT32_MAX;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+		CHECK(strcmp(events, order) == 0);
+		CHECK(hw.maps == 1 && hw.unmaps == 1 && !hw.mapped);
+		CHECK(hw.bsc_maps == 1 && hw.bsc_reads == 2 && hw.bsc_unmaps == 1);
+		CHECK(hw.ddc_maps == 1 && hw.ddc_reads == 3 && hw.ddc_unmaps == 1);
+		CHECK(!hw.bsc_mapped && !hw.ddc_mapped && hw.hpd_maps == 0);
+		CHECK(hw.reads == 6 && hw.writes == 0 && hw.barriers == 0);
+		CHECK(hw.bsc_mask == (0xa5a50002U & ~((flags & 1U) << 1)));
+		CHECK(hw.bsc_status == (0xa5a50000U | (flags & 2U)));
+		CHECK(hw.ddc_ctl == (0x90U | ((flags & 4U) << 4)));
+		CHECK(hw.ddc_enable == (0x80000074U | ((flags >> 3) & 3U)));
+		CHECK(hw.ddc_ctlhi == (flags & 1U ? 0 : UINT32_MAX));
+		CHECK(strstr(log_text, flags == 0 ? "candidate_quiescent 1" :
+		    "candidate_quiescent 0") != NULL);
+		CHECK(strstr(log_text, "DDC0 snapshot complete; no idle or transfer claim") != NULL);
+		CHECK(bcm2712_hsm_owner == NULL && bcm2712_dvp_owner == NULL);
+		CHECK(allocated == freed && references == 0);
+	}
+	for (i = 1; i <= strlen(order); i++) {
+		char operation = order[i - 1];
+		if (strchr("bmtefvwU", operation) != NULL) continue;
+		prepare(1, 120000000); hw.gates &= ~(1U << 3); fail_step = i;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) ==
+		    (strchr("QMBE", operation) != NULL ? EIO : EWOULDBLOCK));
+		CHECK(strstr(log_text, "finite cycle complete") == NULL);
+		CHECK(strncmp(events, order, i) == 0);
+		CHECK(!hw.ddc_mapped && hw.bsc_mapped == (i > 11 && i < 19));
+		CHECK(hw.bsc_reads == (i > 13 ? 2U : 0U));
+		CHECK(hw.ddc_reads == (i > 19 ? 3U : 0U));
+		CHECK(hw.mapped == (i >= 7 && i <= 22));
+		CHECK((bcm2712_dvp_owner != NULL) == (i >= 8 && i <= 22));
+		if (i >= 4) CHECK(bcm2712_hsm_owner != NULL);
+		if (hw.mapped) CHECK(bcm2712_hsm_owner->core.status.leases == 1);
+		if (operation == 'S' || operation == 's') CHECK(event_count == i);
+		if (i == 11 || i == 14) {
+			CHECK(strstr(log_text, i == 11 ? "stopped at BSC-map" : "stopped at DDC0-map") != NULL);
+			CHECK(strstr(log_text, i == 11 ? "BSC sample valid 0 DDC sample valid 0" :
+			    "BSC sample valid 1 DDC sample valid 0") != NULL);
+			CHECK(strstr(log_text, "candidate_quiescent") == NULL);
+			CHECK(strstr(log_text, "retained cached: ctl") == NULL);
+		}
+		if (i > 19) {
+			CHECK(strstr(log_text, "BSC sample valid 1 DDC sample valid 1") != NULL);
+			CHECK(strstr(log_text, "retained cached: ctl") != NULL);
+		}
+		stop = event_count;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_FINI, NULL) == 0);
+		CHECK(event_count == stop); reboot_model();
+	}
+	for (i = 1; i <= 18; i++) {
+		prepare(0, 0); hw.gates &= ~(1U << 3); fw.fail_call = i;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == ETIMEDOUT);
+		CHECK(fw.calls == i && !hw.mapped && !hw.bsc_mapped && !hw.ddc_mapped);
+		CHECK(bcm2712_dvp_owner == NULL);
+		CHECK(hw.bsc_reads == (i >= 12 ? 2U : 0U) && hw.ddc_reads == (i >= 12 ? 3U : 0U));
+		CHECK(strstr(log_text, "finite cycle complete") == NULL); reboot_model();
+	}
+	for (i = 0; i < 2; i++) {
+		prepare(1, 120000000);
+		if (i == 1) { hw.gates &= ~(1U << 3); hw.resets = 1U << 1; }
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EBUSY);
+		CHECK(hw.reads == 2 && hw.writes == 0 && hw.bsc_maps == 0 && hw.ddc_maps == 0);
+		CHECK(bcm2712_dvp_owner->core.status.leases == 0);
+		CHECK(bcm2712_hsm_owner->core.status.leases == 1); reboot_model();
+	}
+	prepare(1, 120000000); hw.gates &= ~(1U << 3); hw.external_gate = true;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EIO);
+	CHECK(hw.writes == 1 && hw.bsc_maps == 0 && hw.ddc_maps == 0);
+	CHECK(hw.mapped && bcm2712_dvp_owner->core.status.leases == 1);
+	CHECK(bcm2712_dvp_owner->core.status.mutation_attempted); reboot_model();
+}
+
 int
 main(void)
 {
@@ -624,6 +786,7 @@ main(void)
 	CHECK(allocated == freed);
 	dvp_probe_tests();
 	hpd_probe_tests();
+	ddc_probe_tests();
 	printf("HSM probe: %u checks PASS; real libfdt and native owner, host only\n", checks);
 	return 0;
 }

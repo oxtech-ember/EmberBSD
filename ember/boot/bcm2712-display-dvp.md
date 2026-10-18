@@ -107,6 +107,53 @@ This accepts the two sampled levels on that boot. It does not accept
 IRQ delivery, DDC, reset control, a general power or display
 lifetime, KMS, hotplug, or a physical Plasma session.
 
+## Finite DDC0 snapshot
+
+The finite module accepts `-s ddc-mode=observe0` after the same selected-kernel,
+render and cold-headless checks. Any `dvp-mode` or `hpd-mode` property conflicts
+with this mode. Empty, unknown or non-string values fail before HSM, mapping
+and MMIO. No mode advances itself to a transfer.
+
+It holds HSM at least 120 MHz and a DVP port0 lease throughout the snapshot.
+Before either new mapping, it requires inherited gate bit3 clear, reset bit1
+clear, no fault and no DVP mutation. It assumes no concurrent firmware writer.
+An unexpected gate change can make native acquire write; any observed mutation
+then stops before BSC or DDC access and retains the owners and shared mapping.
+The normal-active-SoC prior-art assumption remains explicit. Native bus_space
+cannot recover a stalled transaction or synchronous external abort.
+
+The only new mappings are BSC resource13, `0x107d508380/0x10`, and DDC0
+resource14, `0x107d508200/0x58`. Exactly five 32-bit reads occur in this order:
+BSC status `0x00`, BSC mask status `0x04`, DDC CTL `0x28`, ENABLE `0x2c`,
+and CTLHI `0x50`. Logs precede the first MMIO in each resource.
+CTLHI is a raw diagnostic value and has no acceptance predicate.
+The module reports `candidate_quiescent` only when all five values are valid:
+
+```c
+(mask & 2) != 0 && (status & 2) == 0 &&
+    (ctl & 0x40) == 0 && (enable & 3) == 0
+```
+
+These bits describe masked leaf1, no pending leaf1, interrupt enable clear,
+and transfer-enable/completion bits clear. The reads are not atomic.
+They do not establish SCL/SDA levels, a free bus, a working clock, or a safe
+transfer. Other ENABLE bits do not change this candidate predicate.
+A busy candidate still takes the normal cleanup path. A zero return means
+only that the snapshot and cleanup completed; it does not mean idle.
+
+Cleanup unmaps resource14, then resource13, releases and destroys DVP,
+unmaps resource10, then releases and destroys HSM. Native status is sampled
+before each owner is destroyed. Errors retain the remaining owners and maps.
+Partial and retained samples carry validity flags and cached-value labels.
+This mode sends no BSC, DDC or IRQ write. It performs no transfer, EDID read,
+poll, interrupt activation, reset or HPD sample. It does not establish an ACPI
+power or general display-lifetime contract.
+
+The module fixture uses the actual decoder, HSM/DVP cores and native providers.
+It checks exact ranges, offsets, read count, held leases, inverse unmap order,
+busy cleanup, invalid properties, partial validity and retained failures.
+Causal mutants test those boundaries. Host checks do not accept physical DDC.
+
 ## Source validation
 
 ```sh
@@ -152,3 +199,8 @@ This implementation uses register and interface facts. It does not copy Linux dr
 The HPD register facts use the same pinned Linux revision:
 [VC6 register tables](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hdmi_regs.h#L437-L477)
 and [connected bit0](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_regs.h#L768).
+
+The DDC/BSC register facts use the same pinned Linux revision:
+[register layout and control bits](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/i2c/busses/i2c-brcmstb.c#L24-L78)
+and [level status and mask registers](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/irqchip/irq-brcmstb-l2.c#L45-L51).
+Only interface facts are used; Linux driver implementation is not copied.
