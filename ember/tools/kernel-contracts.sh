@@ -49,8 +49,8 @@ sh "$src/ember/tools/bcm2712-v3d-uapi-contract.sh" "$src"
 sh "$src/ember/tools/bcm2712-v3d-bo-contract.sh" "$src"
 sh "$src/ember/tools/bcm2712-v3d-sg-contract.sh" "$src"
 "${RUBY:-ruby}" "$src/ember/tools/bcm2712-v3d-bo-stats-contract.rb"
-"${RUBY:-ruby}" "$src/ember/tools/drm-prime-map-contract.rb"
-"${RUBY:-ruby}" "$src/ember/tools/drm-dmabuf-lifetime-contract.rb"
+"$python" "$src/ember/tools/drm-dmabuf-contract.py" map
+"$python" "$src/ember/tools/drm-dmabuf-contract.py" lifetime
 "${RUBY:-ruby}" "$src/ember/tools/bcm2712-v3d-prime-contract.rb"
 sh "$src/ember/tools/bcm2712-v3d-job-contract.sh" "$src"
 sh "$src/ember/tools/bcm2712-v3d-csd-contract.sh" "$src"

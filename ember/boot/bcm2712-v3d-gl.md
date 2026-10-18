@@ -152,7 +152,15 @@ the generic legacy fake-offset path. Native dma-buf fileops translate callback
 errors to positive native errno. Both former error paths fail the actual-source
 regression before repair; the new mmap passes 1,260 ASan/UBSan boundary cases.
 
-Run `ruby ember/tools/drm-prime-map-contract.rb` and
+The native descriptor stores read/write access from `O_ACCMODE`. Unknown
+fd flags and the invalid access mode fail before descriptor allocation.
+The mmap wrapper rejects protection beyond those access rights before the
+provider callback. It caps the provider's maximum protection to the same
+rights, so later `mprotect` cannot grant more access. Execute protection
+returns `EINVAL`. These descriptor controls have actual-source host tests;
+they do not extend the physical acceptance below.
+
+Run `python3 ember/tools/drm-dmabuf-contract.py map` and
 `ruby ember/tools/bcm2712-v3d-prime-contract.rb` on the host. Cross-build
 `bcm2712-v3d-prime-check-build.sh` with the same `CC`/`SYSROOT` convention as the
 CL checker, then run `prime-check /dev/dri/renderD128`. It transfers descriptors
@@ -171,10 +179,13 @@ by a passing repair. The callback is mandatory at export, consistent with the
 The other in-tree fd callers (TTM and i915 GVT) also transfer their reference
 on success and retain cleanup responsibility on failure.
 
-`ruby ember/tools/drm-dmabuf-lifetime-contract.rb` exercises the actual export,
+`python3 ember/tools/drm-dmabuf-contract.py lifetime` exercises the actual export,
 fd, put, cache-removal and GEM release functions. It checks allocation failure,
 repeated export, 80,000 concurrent get/put pairs, internal/external reservation
-objects and exactly one final release under ASan/UBSan. Missing callbacks are
+objects and exactly one final release under ASan/UBSan. The same Python
+standard-library controller runs the map and lifetime cases. `CC` selects
+the host compiler; `DRM_SOURCE_ROOT` selects source for causal comparisons.
+It preserves both fixtures' sanitizer flags. Missing callbacks are
 rejected before allocation. Cppcheck retains 16/16 GEM and 9/9 dma-buf findings
 against the previous build; GCC Analyzer adds none.
 

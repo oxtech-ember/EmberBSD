@@ -18,6 +18,12 @@
 #define IPL_NONE 0
 #define DTYPE_MISC 7
 #define O_CLOEXEC 0x400000
+#define O_ACCMODE 3
+#define O_RDONLY 0
+#define O_WRONLY 1
+#define O_RDWR 2
+#define FREAD 1
+#define FWRITE 2
 struct dma_buf;
 struct dma_resv { int active; };
 struct poll { int active; };
@@ -33,6 +39,7 @@ struct drm_device { unsigned refs; };
 struct drm_gem_object { struct drm_device *dev; struct dma_buf *dma_buf; unsigned refs; };
 static int dmabuf_fileops,curlwp,curproc,allocation_error,affixed,cloexec;
 static unsigned allocations,freed,gem_puts,dev_puts,poll_fini,resv_fini;
+static unsigned fd_alloc_calls;
 static struct file files[2];
 static void *kmem_zalloc(size_t n,int flags) { void *p=calloc(1,n); assert(p); allocations++; return p; }
 static void kmem_free(void *p,size_t n) { assert(n>=sizeof(struct dma_buf)); freed++; free(p); }
@@ -47,7 +54,7 @@ static unsigned atomic_dec_uint_nv(unsigned *v) { return __atomic_sub_fetch(v,1,
 static void membar_release(void) { __atomic_thread_fence(__ATOMIC_RELEASE); }
 static void membar_acquire(void) { __atomic_thread_fence(__ATOMIC_ACQUIRE); }
 static int fd_allocfile(struct file **f,int *fd)
-{ if(allocation_error) return EMFILE; assert(affixed<2); *fd=affixed; *f=&files[affixed]; return 0; }
+{ fd_alloc_calls++; if(allocation_error) return EMFILE; assert(affixed<2); *fd=affixed; *f=&files[affixed]; return 0; }
 static void fd_set_exclose(int l,int fd,int set) { cloexec=set; }
 static void fd_affix(int p,struct file *f,int fd) { assert(f==&files[fd]); affixed++; }
 static void drm_dev_get(struct drm_device *d) { d->refs++; }
@@ -55,6 +62,30 @@ static void drm_dev_put(struct drm_device *d) { assert(d->refs>1); d->refs--; de
 static void drm_gem_object_get(struct drm_gem_object *o) { o->refs++; }
 static void drm_gem_object_put_unlocked(struct drm_gem_object *o) { assert(o->refs>1); o->refs--; gem_puts++; }
 #include "bodies.h"
+/* AI-assisted: descriptor flags must not change reference transfer. */
+static void
+fd_modes(struct dma_buf *buf)
+{
+ const int modes[] = {O_RDONLY, O_WRONLY, O_RDWR};
+ const int rights[] = {FREAD, FWRITE, FREAD | FWRITE};
+ const int invalid[] = {O_ACCMODE, O_ACCMODE | O_CLOEXEC, 0x10, -1};
+ for (unsigned i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+  unsigned calls = fd_alloc_calls;
+  assert(dma_buf_fd(buf, invalid[i]) == -EINVAL);
+  assert(buf->db_refcnt == 1 && fd_alloc_calls == calls);
+ }
+ for (unsigned i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+  for (unsigned close_exec = 0; close_exec < 2; close_exec++) {
+   affixed = 0;
+   get_dma_buf(buf);
+   assert(dma_buf_fd(buf, modes[i] | (close_exec ? O_CLOEXEC : 0)) == 0);
+   assert(files[0].f_flag == rights[i]);
+   assert(cloexec == (int)close_exec && buf->db_refcnt == 2);
+   assert(dmabuf_fop_close(&files[0]) == 0 && buf->db_refcnt == 1);
+  }
+ }
+ affixed = 0;
+}
 static void *worker(void *p)
 {
  for(unsigned i=0;i<10000;i++) { get_dma_buf(p); dma_buf_put(p); }
@@ -75,6 +106,7 @@ int main(void)
   struct dma_buf *buf=drm_gem_dmabuf_export(&dev,&info);
   pthread_t threads[4];
   assert(buf->db_refcnt==1 && obj.refs==2 && dev.refs==2);
+  fd_modes(buf);
   /* Failure consumes nothing: caller can retry or put the same reference. */
   allocation_error=1;
   assert(dma_buf_fd(buf,O_CLOEXEC)==-EMFILE && buf->db_refcnt==1);

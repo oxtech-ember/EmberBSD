@@ -39,6 +39,8 @@ __KERNEL_RCSID(0, "$NetBSD: linux_dma_buf.c,v 1.17 2024/05/20 11:35:10 riastradh
 #include <sys/kmem.h>
 #include <sys/mutex.h>
 
+#include <uvm/uvm_prot.h>
+
 #include <linux/dma-buf.h>
 #include <linux/err.h>
 #include <linux/dma-resv.h>
@@ -102,8 +104,25 @@ int
 dma_buf_fd(struct dma_buf *dmabuf, int flags)
 {
 	struct file *file;
-	int fd;
+	int fd, fflags;
 	int ret;
+
+	/* EmberBSD, AI-assisted: validate before transferring a reference. */
+	if (flags & ~(O_ACCMODE | O_CLOEXEC))
+		return -EINVAL;
+	switch (flags & O_ACCMODE) {
+	case O_RDONLY:
+		fflags = FREAD;
+		break;
+	case O_WRONLY:
+		fflags = FWRITE;
+		break;
+	case O_RDWR:
+		fflags = FREAD | FWRITE;
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	/* XXX errno NetBSD->Linux */
 	ret = -fd_allocfile(&file, &fd);
@@ -113,7 +132,7 @@ dma_buf_fd(struct dma_buf *dmabuf, int flags)
 	/* On success the file owns the caller's reference, as on Linux. */
 
 	file->f_type = DTYPE_MISC;
-	file->f_flag = 0;	/* XXX DRM code allows only O_CLOEXEC.  */
+	file->f_flag = fflags;
 	file->f_ops = &dmabuf_fileops;
 	file->f_data = dmabuf;
 	fd_set_exclose(curlwp, fd, (flags & O_CLOEXEC) != 0);
@@ -287,13 +306,28 @@ dmabuf_fop_mmap(struct file *file, off_t *offp, size_t size, int prot,
     int *flagsp, int *advicep, struct uvm_object **uobjp, int *maxprotp)
 {
 	struct dma_buf *dmabuf = file->f_data;
+	int allowed = 0, maxprot, error;
 
 	if (size > dmabuf->size || *offp < 0 || *offp > dmabuf->size - size)
 		return EINVAL;
+	if (prot & ~(VM_PROT_READ | VM_PROT_WRITE))
+		return EINVAL;
+	if (file->f_flag & FREAD)
+		allowed |= VM_PROT_READ;
+	if (file->f_flag & FWRITE)
+		allowed |= VM_PROT_WRITE;
+	if (prot & ~allowed)
+		return EACCES;
 
 	/* DRM callbacks use negative Linux errno; fileops use native errno. */
-	return -dmabuf->ops->mmap(dmabuf, offp, size, prot, flagsp, advicep,
-	    uobjp, maxprotp);
+	maxprot = allowed;
+	error = -dmabuf->ops->mmap(dmabuf, offp, size, prot, flagsp, advicep,
+	    uobjp, &maxprot);
+	if (error == 0) {
+		/* A provider cannot grant later mprotect access beyond this fd. */
+		*maxprotp = maxprot & allowed;
+	}
+	return error;
 }
 
 /*

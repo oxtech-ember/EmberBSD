@@ -86,7 +86,7 @@ if [ "${FAIL_AT:-}" = network-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; the
 fi
 SH
 done
-for contract in drm-prime-map drm-dmabuf-lifetime bcm2712-v3d-prime simplefb drm-hotplug bcm2712-v3d-bo-stats; do
+for contract in bcm2712-v3d-prime simplefb drm-hotplug bcm2712-v3d-bo-stats; do
     : > "$work/src/ember/tools/$contract-contract.rb"
 done
 cat > "$work/bin/ruby" <<'SCRIPT'
@@ -112,6 +112,13 @@ SH
 cat > "$work/bin/python3" <<'SH'
 #!/bin/sh
 echo "contract $*" >> "$TEST_LOG"
+case $1 in
+    */drm-dmabuf-contract.py)
+        [ "$#" -eq 2 ] || exit 1
+        case $2 in map|lifetime) ;; *) exit 1;; esac
+        [ "${FAIL_AT:-}" != "dmabuf-$2" ] || exit 1
+        ;;
+esac
 if [ "${TEST_HOST:-Darwin}" != NetBSD ]; then
     case $1 in */btuart-contract.py|*/codec-contract.py|*/bluetooth-control-contract.py|*/bluetooth-pair-contract.py) exit 1;; esac
 fi
@@ -209,7 +216,7 @@ check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
     test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 21
     test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 23
-    test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 6
+    test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 4
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 8
 }
 export TEST_OUT="$work/cross"
@@ -223,7 +230,7 @@ grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 3
+check_contract_counts 5
 # Reuse all objects, but the selected kernel must embed the new build identity.
 printf 'old-source-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.c"
 printf 'old-object-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.o"
@@ -242,13 +249,13 @@ test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.o")" = new-source-id
 test "$(cat "$TEST_OUT/obj/kernels/EMBER64/keep.o")" = keep-object
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.c")" = other-source-id
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.o")" = other-object-id
-check_contract_counts 3
+check_contract_counts 5
 outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
 if_cemac_acpi.kmod bcm2712btcom.kmod rp1wmcodec.kmod rpi5button.kmod'
 for failure in tools module cpp dtb contract a733-contract \
     a733-gpu-vm-contract.sh gpu-contract bcm2712-display-contract.sh \
-    bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh bcm2712-display-dvp-contract.sh ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
+    bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh bcm2712-display-dvp-contract.sh dmabuf-map dmabuf-lifetime ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
     bcm2712-v3d-prime-contract.rb bcm2712-v3d-bo-stats-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
     aicwf-sta.sh aicwf-vht.sh publish; do
     : > "$TEST_LOG"
@@ -289,14 +296,14 @@ TEST_HOST=NetBSD EMBER_EXTERNAL_TOOLCHAIN=/cross/gcc16 \
 grep -q 'EXTERNAL_TOOLCHAIN=/cross/gcc16' "$TEST_LOG"
 grep -q 'TOOLCHAIN_MISSING=yes' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 7
+check_contract_counts 9
 export TEST_OUT="$work/native"
 : > "$TEST_LOG"
 TEST_HOST=NetBSD EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 grep -q native-make "$TEST_LOG"
 ! grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
-check_contract_counts 7
+check_contract_counts 9
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi
