@@ -1,0 +1,8 @@
+# Manual, read-only GPI5/header-mux observation with the UART2 console gate.
+# Preserve the GPI4 power button. No SCMI service or VPU activation is selected.
+
+include "arch/evbarm/conf/EMBER64_CIX_UART2"
+
+no cixvpu* at acpi?
+cixvpu* at acpi? flags 0x0
+cixgpioobs* at acpi? flags 0x1

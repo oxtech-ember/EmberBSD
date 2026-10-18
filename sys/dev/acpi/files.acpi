@@ -301,6 +301,10 @@ device	cixgpio
 attach	cixgpio at acpinodebus with cixgpio_acpi
 file	dev/acpi/cixgpio_acpi.c		cixgpio_acpi
 
+device	cixgpioobs
+attach	cixgpioobs at acpinodebus with cixgpioobs_acpi
+file	dev/acpi/cixgpio_observe_acpi.c	cixgpioobs_acpi
+
 # DesignWare I2C controller
 attach	dwiic at acpinodebus with dwiic_acpi
 file	dev/acpi/dwiic_acpi.c		dwiic_acpi
