@@ -5,9 +5,20 @@ src=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/bcm2712-hsm-contract.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 for unit in clock hsm hsm_acpi; do
+    input=$unit
+    if [ "$unit" = hsm_acpi ]; then input=clock_acpi; fi
     sed '/^#include /d; /^__KERNEL_RCSID(/d' \
-        "$src/sys/arch/arm/broadcom/bcm2712_display_${unit}.c" > "$work/$unit.h"
+        "$src/sys/arch/arm/broadcom/bcm2712_display_${input}.c" > "$work/$unit.h"
 done
+sed '/^#include /d' "$src/sys/arch/arm/broadcom/bcm2712_display_bvb.h" > "$work/bvb-types.h"
+{
+    echo '#ifndef __CTASSERT'
+    echo '#define __CTASSERT(e) _Static_assert(e, #e)'
+    echo '#endif'
+    echo '#include "bvb-types.h"'
+    cat "$work/hsm_acpi.h"
+} > "$work/native.h"
+mv "$work/native.h" "$work/hsm_acpi.h"
 cp "$src/sys/arch/arm/broadcom/bcm2712_display_hsm.h" "$work/hsm-types.h"
 cp "$src/sys/arch/arm/broadcom/bcm2712_display_clockvar.h" "$work/clockvar.h"
 cp "$src/sys/arch/arm/broadcom/bcm2712_display.h" "$work/display.h"

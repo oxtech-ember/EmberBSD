@@ -5,8 +5,8 @@ HSM firmware clock 13 and BVB firmware clock 14.
 It shares the EmberBSD HSM packet validation, two-port minimum leases and fault policy.
 The HSM facade is the first native consumer.
 The [HSM compatibility facade](../../sys/arch/arm/broadcom/bcm2712_display_hsm.c) now calls this engine.
-The existing [native HSM owner](bcm2712-display-hsm.md), both HSM structures and their headers remain unchanged.
-The kernel selects the shared engine with `bcmv3d_acpi`. Native BVB ownership remains a separate step.
+The [native HSM API](bcm2712-display-hsm.md), both public HSM structures and their headers remain unchanged.
+The kernel selects the shared engine and native adapter with `bcmv3d_acpi`. Neither profile attaches automatically.
 
 ## Private interface
 
@@ -18,7 +18,7 @@ There is no arbitrary firmware clock-ID or property-tag interface.
 The caller supplies an exchange callback and its argument.
 The callback finishes before each operation returns.
 The caller serializes all operations and keeps the core and callback storage alive.
-The future native adapter must supply kernel-resident callbacks and exclusive ownership.
+The native adapter supplies a kernel-resident callback and fixed per-profile owner slots.
 This pure core does not implement native locking, a registry, IRQ-context checks or resource validation.
 It performs no MMIO, reset, power-domain operation or automatic attachment.
 
@@ -48,7 +48,7 @@ Its create transcript is GET_STATE, GET_RATE, GET_MAX.
 BVB adds GET_MIN after those reads. A zero minimum or minimum above maximum fails before SET.
 There is no guessed 75 MHz unleased floor and no initial-rate floor for BVB.
 The BVB minimum is cached for the owner lifetime; the maximum is read again on each operation.
-A future native owner must exclude firmware and unregistered OS consumers before reducing an inherited rate.
+The lifecycle caller must exclude firmware and unregistered OS consumers before reducing an inherited rate.
 
 BVB uses explicit lazy activation. Creating an off object does not enable the clock.
 The first acquisition enables it after rate verification.
@@ -104,7 +104,7 @@ Causal mutants remove the corresponding guards.
 `TEST_RUNNER` can invoke a supported memory checker.
 The actual kernel translation unit must also compile with the selected kernel's GCC16 flags and headers.
 A portable fixture does not replace that check.
-A linked coherent kernel, native BVB ownership, physical BVB control and PHY/KMS acceptance remain separate checks.
+Native adapter checks, a linked coherent kernel, physical BVB control and PHY/KMS acceptance have separate boundaries.
 
 ## Sources
 

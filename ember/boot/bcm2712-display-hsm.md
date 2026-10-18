@@ -14,6 +14,7 @@ It neither reads nor changes firmware clocks. Failure leaves the output unchange
 The existing `bcm2712_display_acpi_query` still requires resources and an enabled clock snapshot.
 
 The native API is declared in `bcm2712_display_acpi.h`.
+The [shared native adapter](bcm2712-native-display-clocks.md) also provides explicit BVB14 ownership.
 Its status type is declared in `bcm2712_display_hsm.h`.
 
 1. Call `bcm2712_display_hsm_create` from the GPU0 process-context owner.
@@ -74,7 +75,7 @@ HSM_SKIP_MUTANTS=1 CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer 
 ```
 
 The HSM test compiles the actual [shared clock engine and HSM facade](bcm2712-display-clock-core.md),
-and the unchanged native adapter. The public HSM structures and signatures are unchanged.
+and the shared native adapter. The public HSM structures and signatures are unchanged.
 Only ACPI, mailbox, allocation, and kernel synchronization boundaries are replaced.
 The adapter test uses a real host pthread mutex and concurrent port acquisition.
 The resource test separately compiles the actual ACPI parser.
