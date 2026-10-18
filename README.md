@@ -711,9 +711,11 @@ on every board in the hardware catalog.
   The opt-in [native DDC0 owner](ember/boot/bcm2712-display-ddc.md) adds a base-EDID API
   with source/host validation and retained faults. One [finite base-block transfer](ember/boot/bcm2712-display-edid-probe.md#physical-base-block-boundary)
   passed on CM5 after a cold-headless boot and live HDMI0 connection.
-  A source-only [shared firmware-clock core](ember/boot/bcm2712-display-clock-core.md)
-  adds fixed HSM13/BVB14 lease profiles and fault contracts. It is not wired to a native consumer yet.
-  Runtime HPD delivery, extension reads and KMS scanout remain open.
+  A [shared firmware-clock core](ember/boot/bcm2712-display-clock-core.md) and
+  [kernel-native owners](ember/boot/bcm2712-native-display-clocks.md) provide fixed HSM13/BVB14 leases and retained faults.
+  The opt-in [finite BVB0 clock probe](ember/boot/bcm2712-bvb-clock-probe.md) is source-tested.
+  Physical BVB clock control remains unaccepted.
+  DRM hotplug delivery, extension reads and KMS scanout remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.

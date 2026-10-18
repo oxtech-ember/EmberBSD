@@ -6,6 +6,12 @@
 #define bcm2712_display_hsm_status actual_hsm_status
 #define bcm2712_display_hsm_destroy actual_hsm_destroy
 #define bcm2712_display_acpi_resources fixture_hsm_resources
+#define bcm2712_display_bvb_create actual_bvb_create
+#define bcm2712_display_bvb_acquire actual_bvb_acquire
+#define bcm2712_display_bvb_update actual_bvb_update
+#define bcm2712_display_bvb_release actual_bvb_release
+#define bcm2712_display_bvb_status actual_bvb_status
+#define bcm2712_display_bvb_destroy actual_bvb_destroy
 #define main existing_hsm_main
 #include "hsm-services.c"
 #undef main
@@ -15,6 +21,12 @@
 #undef bcm2712_display_hsm_status
 #undef bcm2712_display_hsm_destroy
 #undef bcm2712_display_acpi_resources
+#undef bcm2712_display_bvb_create
+#undef bcm2712_display_bvb_acquire
+#undef bcm2712_display_bvb_update
+#undef bcm2712_display_bvb_release
+#undef bcm2712_display_bvb_status
+#undef bcm2712_display_bvb_destroy
 #include <stdarg.h>
 #include <sys/time.h>
 #include "time-ops.h"
@@ -37,7 +49,7 @@ typedef int modcmd_t;
 typedef struct { unsigned int next; } deviter_t;
 struct properties { const char *expected; bool cold; const char *mode;
     bool wrong_mode_type; const char *hpd_mode; bool wrong_hpd_type;
-    const char *ddc_mode; bool wrong_ddc_type; };
+    const char *ddc_mode; bool wrong_ddc_type; const char *clock_mode; bool wrong_clock_type; };
 typedef struct properties *prop_dictionary_t;
 const char buildinfo[] = "EmberBSD:accepted-kernel\n";
 static char blob[4096] __aligned(8);
@@ -64,6 +76,10 @@ static bool prop_dictionary_get_bool(prop_dictionary_t p, const char *n, bool *v
 static bool prop_dictionary_get_cstring_nocopy(prop_dictionary_t p,
     const char *n, const char **v)
 {
+	if (strcmp(n, "clock-mode") == 0) {
+		if (p->wrong_clock_type) return false;
+		*v = p->clock_mode; return *v != NULL;
+	}
 	if (strcmp(n, "dvp-mode") == 0) {
 		if (p->wrong_mode_type) return false;
 		*v = p->mode; return *v != NULL;
@@ -81,6 +97,8 @@ static bool prop_dictionary_get_cstring_nocopy(prop_dictionary_t p,
 }
 static void *prop_dictionary_get(prop_dictionary_t p, const char *n)
 {
+	if (strcmp(n, "clock-mode") == 0)
+		return p->clock_mode || p->wrong_clock_type ? p : NULL;
 	if (strcmp(n, "ddc-mode") == 0)
 		return p->ddc_mode || p->wrong_ddc_type ? p : NULL;
 	if (strcmp(n, "hpd-mode") == 0)
@@ -203,7 +221,16 @@ static struct {
 } hw;
 static void cv_destroy(kcondvar_t *cv)
 { assert(irq_api.cv_live && !irq_api.live && !irq_api.aon_mapped && !hw.hpd_mapped); assert(pthread_cond_destroy(cv) == 0); irq_api.cv_live = false; irq_api.cv_destroys++; }
+/* Controlled BVB API observations. The native clock algorithm has its own test. */
+static struct {
+	struct bcm2712_bvb_provider owner;
+	struct bcm2712_bvb_status sample[3], failed;
+	unsigned int creates, statuses, acquires, releases, destroys, status_error;
+	int create_error, acquire_error, acquire_result, release_error, destroy_error;
+	bool live, failed_owner, null_owner, hsm_status_low;
+} native_bvb;
 static char events[128];
+
 static unsigned int event_count, fail_step;
 static bool step(char event)
 {
@@ -381,14 +408,21 @@ static int bcm2712_display_hsm_create(device_t d, ACPI_HANDLE h,
 { PROVIDER_CALL('C', actual_hsm_create(d, h, out)); }
 static int bcm2712_display_hsm_status(struct bcm2712_hsm_provider *p,
     struct bcm2712_hsm_status *out)
-{ PROVIDER_CALL('S', actual_hsm_status(p, out)); }
+{
+	bool saved_irq = in_irq; int result;
+	if (step('S')) in_irq = true;
+	result = actual_hsm_status(p, out); in_irq = saved_irq;
+	if (result == 0 && out->leases == 1 && native_bvb.hsm_status_low)
+		out->rate = 149984999;
+	return result;
+}
 static int bcm2712_display_hsm_acquire(struct bcm2712_hsm_provider *p,
     unsigned int port, uint32_t rate)
 { PROVIDER_CALL('A', actual_hsm_acquire(p, port, rate)); }
 static int bcm2712_display_hsm_release(struct bcm2712_hsm_provider *p, unsigned int port)
-{ assert(!irq_api.aon_mapped && !irq_api.live && !hw.mapped && !hw.hpd_mapped && !hw.bsc_mapped && !hw.ddc_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('R', actual_hsm_release(p, port)); }
+{ assert(!native_bvb.live && !irq_api.aon_mapped && !irq_api.live && !hw.mapped && !hw.hpd_mapped && !hw.bsc_mapped && !hw.ddc_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('R', actual_hsm_release(p, port)); }
 static int bcm2712_display_hsm_destroy(struct bcm2712_hsm_provider *p)
-{ assert(!irq_api.aon_mapped && !irq_api.live && !hw.mapped && !hw.hpd_mapped && !hw.bsc_mapped && !hw.ddc_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('D', actual_hsm_destroy(p)); }
+{ assert(!native_bvb.live && !irq_api.aon_mapped && !irq_api.live && !hw.mapped && !hw.hpd_mapped && !hw.bsc_mapped && !hw.ddc_mapped && bcm2712_dvp_owner == NULL); PROVIDER_CALL('D', actual_hsm_destroy(p)); }
 static int bcm2712_display_acpi_resources(device_t d, ACPI_HANDLE h,
     struct bcm2712_display_contract *out)
 {
@@ -428,6 +462,69 @@ static int bcm2712_display_dvp_release(struct bcm2712_dvp_provider *p, unsigned 
 static int bcm2712_display_dvp_destroy(struct bcm2712_dvp_provider *p)
 { held_hsm(); PROVIDER_CALL('d', actual_dvp_destroy(p)); }
 #undef PROVIDER_CALL
+/* These callbacks model only the native API boundary, not firmware clocks. */
+static void bvb_guard(void)
+{
+	held_hsm();
+	assert(bcm2712_hsm_owner->core.status.minimum[0] == 149985000);
+	assert(bcm2712_hsm_owner->core.status.rate >= 149985000);
+	assert(hw.maps == 0 && hw.reads == 0 && hw.writes == 0);
+	assert(hw.hpd_maps == 0 && hw.bsc_maps == 0 && hw.ddc_maps == 0);
+	assert(!irq_api.live && !irq_api.cv_live && references == 1);
+}
+static int bcm2712_display_bvb_create(device_t dev, ACPI_HANDLE handle,
+    struct bcm2712_bvb_provider **out)
+{
+	int error;
+
+	bvb_guard(); assert(dev == &device_token && handle == &device_token);
+	assert(!native_bvb.live); native_bvb.creates++;
+	error = step('V') ? EIO : native_bvb.create_error;
+	if ((error == 0 && !native_bvb.null_owner) || native_bvb.failed_owner) {
+		native_bvb.live = true; *out = &native_bvb.owner;
+	}
+	return error;
+}
+static int bcm2712_display_bvb_status(struct bcm2712_bvb_provider *owner,
+    struct bcm2712_bvb_status *out)
+{
+	bvb_guard(); assert(native_bvb.live && owner == &native_bvb.owner);
+	native_bvb.statuses++;
+	if (step('v') || native_bvb.statuses == native_bvb.status_error) return EIO;
+	*out = native_bvb.acquire_result != 0 ? native_bvb.failed :
+	    native_bvb.sample[native_bvb.acquires == 0 ? 0 : native_bvb.releases == 0 ? 1 : 2];
+	return 0;
+}
+static int bcm2712_display_bvb_acquire(struct bcm2712_bvb_provider *owner,
+    unsigned int port, uint32_t minimum)
+{
+	bvb_guard(); assert(native_bvb.live && owner == &native_bvb.owner);
+	assert(port == 0 && minimum == 75000000 && native_bvb.statuses == 1);
+	assert(native_bvb.acquires == 0); native_bvb.acquires++;
+	native_bvb.acquire_result = step('G') ? EIO : native_bvb.acquire_error;
+	return native_bvb.acquire_result;
+}
+static int bcm2712_display_bvb_release(struct bcm2712_bvb_provider *owner,
+    unsigned int port)
+{
+	bvb_guard(); assert(native_bvb.live && owner == &native_bvb.owner);
+	assert(port == 0 && native_bvb.acquires == 1 && native_bvb.acquire_result == 0);
+	assert(native_bvb.statuses == 2 && native_bvb.releases == 0);
+	native_bvb.releases++;
+	return step('L') ? EIO : native_bvb.release_error;
+}
+static int bcm2712_display_bvb_destroy(struct bcm2712_bvb_provider *owner)
+{
+	bvb_guard(); assert(native_bvb.live && owner == &native_bvb.owner);
+	assert((native_bvb.acquire_result == 0 && native_bvb.releases == 1 &&
+	    native_bvb.statuses == 3) || (native_bvb.acquire_result != 0 &&
+	    native_bvb.releases == 0 && native_bvb.statuses == 2 &&
+	    native_bvb.failed.fault == 0 && !native_bvb.failed.mutation_attempted &&
+	    native_bvb.failed.leases == 0));
+	native_bvb.destroys++;
+	if (step('Z') || native_bvb.destroy_error) return EIO;
+	native_bvb.live = false; return 0;
+}
 /* Controlled lifecycle boundary only. Native IRQ workqueue/core is tested separately. */
 static void irq_event(void)
 {
@@ -575,6 +672,15 @@ static void
 prepare(uint32_t state, uint32_t rate)
 {
 	reset(state, rate);
+	assert(!native_bvb.live);
+	memset(&native_bvb, 0, sizeof(native_bvb));
+	native_bvb.sample[0] = (struct bcm2712_bvb_status){ .floor = 23000000 };
+	native_bvb.sample[1] = (struct bcm2712_bvb_status){ .floor = 23000000,
+	    .state = 1, .rate = 75000000, .leases = 1, .minimum = { 75000000, 0 },
+	    .mutation_attempted = true };
+	native_bvb.sample[2] = (struct bcm2712_bvb_status){ .floor = 23000000,
+	    .state = 1, .rate = 23000000, .mutation_attempted = true };
+	native_bvb.failed = native_bvb.sample[0];
 	assert(bcm2712_dvp_owner == NULL && !hw.mapped);
 	assert(!irq_api.live && !irq_api.cv_live);
 	memset(&irq_api, 0, sizeof(irq_api)); irq_api.aon_mask = UINT32_MAX;
@@ -608,6 +714,7 @@ refusal(struct properties *p, int expected)
 		    checks, actual, expected);
 	CHECK(actual == expected);
 	CHECK(fw.calls == 0 && fw.sets == 0 && references == 0);
+	CHECK(native_bvb.creates == 0 && native_bvb.statuses == 0);
 	CHECK(hw.maps == 0 && hw.reads == 0 && hw.writes == 0);
 	CHECK(hw.hpd_maps == 0 && hw.hpd_reads == 0 && hw.hpd_unmaps == 0);
 	CHECK(hw.bsc_maps == 0 && hw.bsc_reads == 0 && hw.ddc_maps == 0 && hw.ddc_reads == 0);
@@ -619,6 +726,7 @@ refusal(struct properties *p, int expected)
 /* Only the test's simulated reboot can discard retained native owners/maps. */
 static void reboot_model(void)
 {
+	native_bvb.live = false;
 	if (irq_api.cv_live) {
 		irq_api.live = false; irq_api.aon_mapped = false; hw.hpd_mapped = false;
 		assert(pthread_cond_destroy(&hsm_probe_irq0.cv) == 0);
@@ -640,6 +748,143 @@ static void reboot_model(void)
 	}
 	CHECK(allocated == freed && references == 0);
 }
+static void bvb_probe_tests(void)
+{
+	struct properties p = { .expected = "EmberBSD:accepted-kernel", .cold = true,
+	    .clock_mode = "bvb0" };
+	unsigned int i, calls;
+
+	prepare(1, 0); p.clock_mode = ""; refusal(&p, EINVAL);
+	prepare(1, 0); p.clock_mode = "other"; refusal(&p, EINVAL);
+	prepare(1, 0); p.clock_mode = "bvb0"; p.wrong_clock_type = true; refusal(&p, EINVAL);
+	p.wrong_clock_type = false;
+	prepare(1, 0); p.mode = "observe"; refusal(&p, EINVAL); p.mode = NULL;
+	prepare(1, 0); p.hpd_mode = "sample0"; refusal(&p, EINVAL); p.hpd_mode = NULL;
+	prepare(1, 0); p.ddc_mode = "edid0"; refusal(&p, EINVAL); p.ddc_mode = NULL;
+	prepare(1, 0); genfb = true; refusal(&p, EBUSY);
+	prepare(1, 0); tree = NULL; refusal(&p, EIO);
+	prepare(1, 0); render = false; refusal(&p, ENODEV);
+	prepare(1, 0); p.expected = "wrong"; refusal(&p, EPROGMISMATCH);
+	p.expected = "EmberBSD:accepted-kernel";
+	for (i = 0; i < 3; i++) {
+		prepare(i == 0 ? 0 : 1, i == 2 ? 240000000 : 0);
+		native_bvb.sample[0].state = i == 0 ? 0 : 1;
+		native_bvb.sample[0].rate = i == 2 ? 240000000 : 0;
+		if (i == 2) {
+			native_bvb.sample[1].rate += 1000;
+			native_bvb.sample[2].rate += 1000;
+		}
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == 0);
+		CHECK(strcmp(events, "CSASVvGvLvZRSD") == 0);
+		CHECK(!native_bvb.live && bcm2712_hsm_owner == NULL && allocated == freed);
+		CHECK(native_bvb.statuses == 3 && native_bvb.acquires == 1 &&
+		    native_bvb.releases == 1 && native_bvb.destroys == 1);
+		CHECK(fw.rate >= 120000000 && fw.state == (i == 0 ? 0U : 1U));
+		CHECK(strstr(log_text, "finite cycle complete") != NULL);
+		CHECK(hw.maps == 0 && hw.reads == 0 && hw.writes == 0);
+		CHECK(strstr(log_text, "BVB0 firmware-clock cycle only") != NULL);
+	}
+	/* A mode-specific HSM sample must be valid before the first BVB call. */
+	prepare(1, 0); native_bvb.hsm_status_low = true;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EIO);
+	CHECK(native_bvb.creates == 0 && bcm2712_hsm_owner != NULL);
+	reboot_model();
+	/* A GET-only create failure, including a zero firmware minimum, is clean. */
+	prepare(1, 0); native_bvb.create_error = ERANGE;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == ERANGE);
+	CHECK(strcmp(events, "CSASVRSD") == 0 && !native_bvb.live);
+	CHECK(bcm2712_hsm_owner == NULL && native_bvb.acquires == 0);
+	CHECK(strstr(log_text, "finite cycle complete") == NULL);
+	prepare(1, 0); native_bvb.acquire_error = ERANGE;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == ERANGE);
+	CHECK(strcmp(events, "CSASVvGvZRSD") == 0 && !native_bvb.live);
+	CHECK(bcm2712_hsm_owner == NULL && native_bvb.releases == 0);
+	CHECK(strstr(log_text, "no success or retry") != NULL);
+	CHECK(strstr(log_text, "finite cycle complete") == NULL);
+	/* Any uncertain acquisition retains both owners, even without a new lease. */
+	for (i = 0; i < 3; i++) {
+		prepare(1, 0); native_bvb.acquire_error = ETIMEDOUT;
+		if (i == 0) native_bvb.failed.fault = ETIMEDOUT;
+		if (i == 1) native_bvb.failed.mutation_attempted = true;
+		if (i == 2) native_bvb.failed.leases = 1;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == ETIMEDOUT);
+		CHECK(native_bvb.live && bcm2712_hsm_owner != NULL);
+		CHECK(native_bvb.statuses == 2 && native_bvb.releases == 0 && native_bvb.destroys == 0);
+		CHECK(bcm2712_hsm_owner->core.status.leases == 1);
+		CHECK(strstr(log_text, "finite cycle complete") == NULL);
+		calls = event_count;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_FINI, NULL) == 0 && event_count == calls);
+		reboot_model();
+	}
+	/* Every cached status failure is terminal; no status retry or blind cleanup. */
+	for (i = 1; i <= 3; i++) {
+		prepare(1, 0); native_bvb.status_error = i;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EIO);
+		CHECK(native_bvb.live && native_bvb.statuses == i && native_bvb.destroys == 0);
+		CHECK(native_bvb.releases == (i == 3 ? 1U : 0U));
+		CHECK(bcm2712_hsm_owner->core.status.leases == 1);
+		reboot_model();
+	}
+	prepare(1, 0); native_bvb.acquire_error = ETIMEDOUT; native_bvb.status_error = 2;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == ETIMEDOUT);
+	CHECK(native_bvb.live && native_bvb.statuses == 2 && native_bvb.destroys == 0);
+	reboot_model();
+	/* Cached invalid states cannot advance the cycle. */
+	for (i = 0; i < 6; i++) {
+		prepare(1, 0);
+		if (i == 0) native_bvb.sample[1].rate = 74999999;
+		if (i == 1) native_bvb.sample[1].state = 0;
+		if (i == 2) native_bvb.sample[1].leases = 0;
+		if (i == 3) native_bvb.sample[1].fault = EIO;
+		if (i == 4) native_bvb.sample[1].minimum[0] = 1;
+		if (i == 5) native_bvb.sample[1].minimum[1] = 1;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EIO);
+		CHECK(native_bvb.live && native_bvb.releases == 0 && native_bvb.destroys == 0);
+		reboot_model();
+	}
+	for (i = 0; i < 6; i++) {
+		prepare(1, 0);
+		if (i == 0) native_bvb.sample[2].rate = 22999999;
+		if (i == 1) native_bvb.sample[2].state = 0;
+		if (i == 2) native_bvb.sample[2].leases = 1;
+		if (i == 3) native_bvb.sample[2].fault = EIO;
+		if (i == 4) native_bvb.sample[2].minimum[0] = 1;
+		if (i == 5) native_bvb.sample[2].minimum[1] = 1;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EIO);
+		CHECK(native_bvb.live && native_bvb.releases == 1 && native_bvb.destroys == 0);
+		reboot_model();
+	}
+	prepare(1, 0); native_bvb.sample[0].floor = 0;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EIO);
+	CHECK(native_bvb.acquires == 0 && native_bvb.destroys == 0); reboot_model();
+	prepare(1, 0); native_bvb.null_owner = true;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EIO);
+	CHECK(native_bvb.statuses == 0 && bcm2712_hsm_owner != NULL); reboot_model();
+	prepare(1, 0); native_bvb.create_error = EIO; native_bvb.failed_owner = true;
+	CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EIO);
+	CHECK(native_bvb.live && native_bvb.statuses == 0); reboot_model();
+	for (i = 0; i < 2; i++) {
+		prepare(1, 0);
+		if (i == 0) native_bvb.release_error = EIO; else native_bvb.destroy_error = EIO;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) == EIO);
+		CHECK(native_bvb.live && bcm2712_hsm_owner->core.status.leases == 1);
+		CHECK(native_bvb.releases == 1 && native_bvb.destroys == i);
+		CHECK(native_bvb.statuses == (i == 0 ? 2U : 3U));
+		CHECK(strstr(log_text, "current hardware state unknown") != NULL);
+		reboot_model();
+	}
+	/* Each public boundary can fail. No new mode may map or read display MMIO. */
+	for (i = 1; i <= 14; i++) {
+		prepare(1, 0); fail_step = i;
+		CHECK(bcm2712_hsm_probe_modcmd(MODULE_CMD_INIT, &p) != 0);
+		CHECK(strstr(log_text, "finite cycle complete") == NULL);
+		CHECK(hw.maps == 0 && hw.reads == 0 && hw.writes == 0 && !irq_api.live);
+		CHECK(!native_bvb.live || (bcm2712_hsm_owner != NULL &&
+		    bcm2712_hsm_owner->core.status.leases == 1));
+		reboot_model();
+	}
+}
+
 static void dvp_probe_tests(void)
 {
 	struct properties p = { .expected = "EmberBSD:accepted-kernel", .cold = true };
@@ -1380,6 +1625,7 @@ main(void)
 	kmem_free(bcm2712_hsm_owner, sizeof(*bcm2712_hsm_owner));
 	bcm2712_hsm_owner = NULL;
 	CHECK(allocated == freed);
+	bvb_probe_tests();
 	dvp_probe_tests();
 	hpd_probe_tests();
 	ddc_probe_tests();

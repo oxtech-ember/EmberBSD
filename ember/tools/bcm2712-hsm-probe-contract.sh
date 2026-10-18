@@ -113,7 +113,9 @@ for feature in ${HSM_PROBE_FEATURES:-off on}; do
     echo "HSM probe feature $feature: PASS"
     if [ "${HSM_PROBE_SKIP_MUTANT:-0}" = 1 ]; then continue; fi
     # Shared behavior is mutated once. The disabled feature gets its own gate mutant.
-    if [ "$feature" = off ]; then
+    if [ -n "${HSM_PROBE_MUTANTS:-}" ]; then
+        mutations=$HSM_PROBE_MUTANTS
+    elif [ "$feature" = off ]; then
         mutations='edid-feature'
     else
         mutations='fdt-full mode-fallback selected-reset hsm-held retained-map
@@ -125,10 +127,49 @@ for feature in ${HSM_PROBE_FEATURES:-off on}; do
             edid-payload-order edid-payload-format edid-destroy
             irq-range irq-owned irq-offset irq-mask irq-pending irq-stale-phase irq-label
             irq-deadline irq-callback-deadline irq-destroy-lock irq-unmap
-            irq-retain irq-fini irq-render'
+            irq-retain irq-fini irq-render
+            bvb-conflict bvb-hsm-floor bvb-hsm-verify bvb-minimum bvb-clean-error
+            bvb-fault bvb-mutation bvb-lease bvb-held bvb-after-free
+            bvb-initial-floor bvb-acquired-rate bvb-released-rate'
     fi
 for mutation in $mutations; do
     case "$mutation" in
+        bvb-conflict)
+            from='if (prop_dictionary_get(properties, "dvp-mode") != NULL ||'
+            to='if (false ||' ;;
+        bvb-hsm-floor)
+            from='#define HSM_PROBE_BVB_HSM_MIN 149985000U'
+            to='#define HSM_PROBE_BVB_HSM_MIN 120000000U' ;;
+        bvb-hsm-verify)
+            from='status.rate < minimum || status.fault != 0 ||'
+            to='status.rate < BCM2712_DISPLAY_HSM_MIN_RATE || status.fault != 0 ||' ;;
+        bvb-minimum)
+            from='#define HSM_PROBE_BVB_MIN 75000000U'
+            to='#define HSM_PROBE_BVB_MIN 74000000U' ;;
+        bvb-clean-error)
+            from='clock_error = error;'; to='clock_error = 0;' ;;
+        bvb-fault)
+            from='status->fault != 0 || status->mutation_attempted ||'
+            to='false || status->mutation_attempted ||' ;;
+        bvb-mutation)
+            from='status->fault != 0 || status->mutation_attempted ||'
+            to='status->fault != 0 || false ||' ;;
+        bvb-lease)
+            from='status->leases != 0)'; to='false)' ;;
+        bvb-held)
+            from='error = hsm_probe_bvb_cycle(dev, handle, &bvb);'
+            to='(void)bcm2712_display_hsm_release(provider, 0); error = hsm_probe_bvb_cycle(dev, handle, &bvb);' ;;
+        bvb-after-free)
+            from='bvb->owner = NULL;'
+            to='(void)hsm_probe_bvb_sample(dev, bvb, "after-free"); bvb->owner = NULL;' ;;
+        bvb-initial-floor)
+            from='if (status->floor == 0 ||'; to='if (false ||' ;;
+        bvb-acquired-rate)
+            from='status->rate < MAX(status->floor, HSM_PROBE_BVB_MIN)'
+            to='false' ;;
+        bvb-released-rate)
+            from='status->rate < status->floor || status->minimum[0] != 0 ||'
+            to='false || status->minimum[0] != 0 ||' ;;
         irq-range)
             from='const struct bcm2712_display_memory *aon = &contract->memory[12];'
             to='const struct bcm2712_display_memory *aon = &contract->memory[13];' ;;
@@ -258,6 +299,14 @@ for mutation in $mutations; do
             /module registered for/ { retained=1 }
             retained && /return 0;/ { sub(/return 0;/, "drm_minor_release(minor); return 0;"); changed++; retained=0 }
             { print } END { if (changed != 1) exit 1 }
+        ' "$work/probe-good.h" > "$work/probe.h"
+    elif [ "$mutation" = hpd-conflict ]; then
+        awk -v from="$from" -v to="$to" '
+            /else if \(prop_dictionary_get\(properties, "hpd-mode"\) != NULL\)/ { selected=1; branches++ }
+            selected && !changed { p = index($0, from); if (p) {
+                $0 = substr($0,1,p-1) to substr($0,p+length(from)); changed++
+            } }
+            { print } END { if (branches != 1 || changed != 1) exit 1 }
         ' "$work/probe-good.h" > "$work/probe.h"
     elif [ "$mutation" = mode-fallback ]; then
         awk '

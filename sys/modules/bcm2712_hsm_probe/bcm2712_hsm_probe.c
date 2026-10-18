@@ -21,6 +21,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arm/fdt/arm_simplefb.h>
 #include <arm/broadcom/bcm2712_display_acpi.h>
 #include <arm/broadcom/bcm2712_display_hsm.h>
+#include <arm/broadcom/bcm2712_display_bvb.h>
 #include <arm/broadcom/bcm2712_display_dvp.h>
 #include <arm/broadcom/bcm2712_display_irq.h>
 #ifdef BCM2712_DISPLAY_DDC
@@ -39,6 +40,7 @@ extern struct bus_space arm_generic_bs_tag;
 
 enum hsm_probe_mode {
 	HSM_PROBE_CLOCK,
+	HSM_PROBE_BVB0,
 	HSM_PROBE_OBSERVE,
 	HSM_PROBE_GATE0,
 	HSM_PROBE_HPD0,
@@ -46,7 +48,18 @@ enum hsm_probe_mode {
 	HSM_PROBE_EDID0,
 	HSM_PROBE_IRQ0
 };
+#define HSM_PROBE_BVB_HSM_MIN 149985000U
+#define HSM_PROBE_BVB_MIN 75000000U
+
+struct hsm_probe_bvb {
+	struct bcm2712_bvb_provider *owner;
+	struct bcm2712_bvb_status sample;
+	const char *stage, *sample_stage;
+	bool retained;
+};
+
 struct hsm_probe_ddc {
+
 	bus_space_handle_t bsc_handle, handle;
 	bool bsc_mapped, mapped, bsc_valid, valid;
 	uint32_t status, mask, ctl, enable, ctlhi;
@@ -675,15 +688,118 @@ hsm_probe_snapshot(device_t dev, const char *stage,
 }
 
 static int
+hsm_probe_bvb_sample(device_t dev, struct hsm_probe_bvb *bvb,
+    const char *stage)
+{
+	struct bcm2712_bvb_status status;
+	int error;
+
+	error = bcm2712_display_bvb_status(bvb->owner, &status);
+	if (error != 0)
+		return error;
+	bvb->sample = status;
+	bvb->sample_stage = stage;
+	aprint_normal_dev(dev, "BVB0 probe %s: cached state %#x rate %u Hz "
+	    "floor %u Hz minima %u/%u leases %#x fault %d mutation %u\n",
+	    stage, status.state, status.rate, status.floor,
+	    status.minimum[0], status.minimum[1], status.leases,
+	    status.fault, status.mutation_attempted);
+	return 0;
+}
+
+/* The caller holds a verified HSM lease throughout this clock-only cycle. */
+static int
+hsm_probe_bvb_cycle(device_t dev, ACPI_HANDLE handle, struct hsm_probe_bvb *bvb)
+{
+	const struct bcm2712_bvb_status *status = &bvb->sample;
+	int error, operation_error = 0;
+
+	bvb->stage = "create";
+	error = bcm2712_display_bvb_create(dev, handle, &bvb->owner);
+	if (error != 0) {
+		/* Native create is GET-only and leaves its output unchanged. */
+		bvb->retained = bvb->owner != NULL;
+		return error;
+	}
+	if (bvb->owner == NULL) {
+		error = EIO;
+		goto retained;
+	}
+	bvb->stage = "initial-status";
+	error = hsm_probe_bvb_sample(dev, bvb, bvb->stage);
+	if (error != 0)
+		goto retained;
+	if (status->floor == 0 || status->leases != 0 || status->fault != 0 ||
+	    status->mutation_attempted || status->minimum[0] != 0 ||
+	    status->minimum[1] != 0) {
+		error = EIO;
+		goto retained;
+	}
+	bvb->stage = "acquire0";
+	error = bcm2712_display_bvb_acquire(bvb->owner, 0, HSM_PROBE_BVB_MIN);
+	if (error != 0) {
+		operation_error = error;
+		bvb->stage = "failed-acquire-status";
+		/* One cached sample classifies a known failure before any SET. */
+		if (hsm_probe_bvb_sample(dev, bvb, bvb->stage) != 0 ||
+		    status->fault != 0 || status->mutation_attempted ||
+		    status->leases != 0)
+			goto retained;
+		goto destroy;
+	}
+	bvb->stage = "acquired-status";
+	error = hsm_probe_bvb_sample(dev, bvb, bvb->stage);
+	if (error != 0)
+		goto retained;
+	if (status->state != 1 || status->leases != 1 || status->fault != 0 ||
+	    status->minimum[0] != HSM_PROBE_BVB_MIN || status->minimum[1] != 0 ||
+	    status->rate < MAX(status->floor, HSM_PROBE_BVB_MIN)) {
+		error = EIO;
+		goto retained;
+	}
+	bvb->stage = "release0";
+	error = bcm2712_display_bvb_release(bvb->owner, 0);
+	if (error != 0)
+		goto retained;
+	bvb->stage = "released-status";
+	error = hsm_probe_bvb_sample(dev, bvb, bvb->stage);
+	if (error != 0)
+		goto retained;
+	if (status->state != 1 || status->leases != 0 || status->fault != 0 ||
+	    status->rate < status->floor || status->minimum[0] != 0 ||
+	    status->minimum[1] != 0) {
+		error = EIO;
+		goto retained;
+	}
+destroy:
+	bvb->stage = "destroy";
+	error = bcm2712_display_bvb_destroy(bvb->owner);
+	if (error != 0)
+		goto retained;
+	/* No status call is valid after successful destroy. */
+	bvb->owner = NULL;
+	aprint_normal_dev(dev, "BVB0 probe destroy succeeded; operation error "
+	    "%d; HSM still held; no MMIO or measured-clock claim\n",
+	    operation_error);
+	return operation_error;
+retained:
+	bvb->retained = true;
+	return error;
+}
+
+static int
 hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 {
 	struct bcm2712_hsm_provider *provider;
 	struct bcm2712_hsm_status status, sample = { 0 };
+	struct hsm_probe_bvb bvb = { .stage = "not-entered" };
 	struct hsm_probe_dvp local_dvp = { .stage = "not-entered" };
 	struct hsm_probe_dvp *dvp = &local_dvp;
 	const char *stage, *sample_stage = NULL;
 	bool entered_lease = false;
-	int error, cleanup;
+	uint32_t minimum = mode == HSM_PROBE_BVB0 ?
+	    HSM_PROBE_BVB_HSM_MIN : BCM2712_DISPLAY_HSM_MIN_RATE;
+	int error, cleanup, clock_error = 0;
 
 	if (mode == HSM_PROBE_IRQ0)
 		dvp = &hsm_probe_irq0.dvp;
@@ -704,8 +820,7 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 		goto stop;
 	}
 	stage = "acquire0";
-	error = bcm2712_display_hsm_acquire(provider, 0,
-	    BCM2712_DISPLAY_HSM_MIN_RATE);
+	error = bcm2712_display_hsm_acquire(provider, 0, minimum);
 	if (error != 0)
 		goto stop;
 	entered_lease = true;
@@ -717,11 +832,18 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 	sample_stage = stage;
 	hsm_probe_snapshot(dev, "acquired", &status);
 	if (status.leases != 1 || status.state != 1 ||
-	    status.rate < BCM2712_DISPLAY_HSM_MIN_RATE || status.fault != 0) {
+	    status.rate < minimum || status.fault != 0 ||
+	    (mode == HSM_PROBE_BVB0 && status.minimum[0] != minimum)) {
 		error = EIO;
 		goto stop;
 	}
-	if (mode != HSM_PROBE_CLOCK) {
+	if (mode == HSM_PROBE_BVB0) {
+		stage = "BVB0-cycle";
+		error = hsm_probe_bvb_cycle(dev, handle, &bvb);
+		if (bvb.retained)
+			goto retained;
+		clock_error = error;
+	} else if (mode != HSM_PROBE_CLOCK) {
 		stage = "DVP-cycle";
 		error = hsm_probe_dvp_cycle(dev, handle, mode, dvp);
 		if (error != 0)
@@ -771,9 +893,15 @@ hsm_probe_cycle(device_t dev, ACPI_HANDLE handle, enum hsm_probe_mode mode)
 		hsm_probe_edid0_payload(dev, dvp->ddc.edid);
 	}
 #endif
+	if (clock_error != 0) {
+		aprint_error_dev(dev, "BVB0 probe cleanup complete; operation "
+		    "error %d; no success or retry\n", clock_error);
+		return clock_error;
+	}
 	aprint_normal_dev(dev, "HSM probe destroy succeeded; finite cycle "
 	    "complete; %s; no reset or clock-lifetime claim\n",
 	    mode == HSM_PROBE_CLOCK ? "no display MMIO or HPD" :
+	    mode == HSM_PROBE_BVB0 ? "BVB0 firmware-clock cycle only; no display MMIO" :
 	    mode == HSM_PROBE_HPD0 ? "one HPD0 sample" :
 	    mode == HSM_PROBE_DDC0 ? "DDC0 snapshot complete; no idle or transfer claim" :
 	    mode == HSM_PROBE_EDID0 ? "EDID0 base block complete" :
@@ -796,7 +924,20 @@ stop:
 	}
 retained:
 	/* Native storage has no module callback and keeps exclusive ownership. */
-	if (mode != HSM_PROBE_CLOCK) {
+	if (mode == HSM_PROBE_BVB0) {
+		aprint_error_dev(dev, "BVB0 probe stopped at %s: error %d "
+		    "native owner retained %u; cached sample valid %u at %s; "
+		    "current hardware state unknown; no retry or clock release; "
+		    "kernel-resident callbacks permit module removal; controlled reboot\n",
+		    bvb.stage, error, bvb.owner != NULL, bvb.sample_stage != NULL,
+		    bvb.sample_stage != NULL ? bvb.sample_stage : "none");
+		if (bvb.sample_stage != NULL)
+			aprint_error_dev(dev, "BVB0 last cached state %#x rate %u "
+			    "floor %u leases %#x fault %d mutation %u; "
+			    "cached fields only\n", bvb.sample.state,
+			    bvb.sample.rate, bvb.sample.floor, bvb.sample.leases,
+			    bvb.sample.fault, bvb.sample.mutation_attempted);
+	} else if (mode != HSM_PROBE_CLOCK) {
 		aprint_error_dev(dev, "DVP probe stopped at %s: error %d "
 		    "mapping retained %u native owner retained %u\n", dvp->stage,
 		    error, dvp->mapped, dvp->owner != NULL);
@@ -851,7 +992,7 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 	prop_dictionary_t properties = argument;
 	struct drm_minor *minor;
 	ACPI_HANDLE handle;
-	const char *expected, *dvp_mode, *hpd_mode, *ddc_mode;
+	const char *expected, *dvp_mode, *hpd_mode, *ddc_mode, *clock_mode;
 	enum hsm_probe_mode mode = HSM_PROBE_CLOCK;
 	bool cold_headless = false;
 	size_t length;
@@ -868,7 +1009,15 @@ bcm2712_hsm_probe_modcmd(modcmd_t command, void *argument)
 	    !cold_headless || !prop_dictionary_get_cstring_nocopy(properties,
 	    "expected-buildinfo", &expected))
 		return EINVAL;
-	if (prop_dictionary_get(properties, "ddc-mode") != NULL) {
+	if (prop_dictionary_get(properties, "clock-mode") != NULL) {
+		if (prop_dictionary_get(properties, "dvp-mode") != NULL ||
+		    prop_dictionary_get(properties, "hpd-mode") != NULL ||
+		    prop_dictionary_get(properties, "ddc-mode") != NULL ||
+		    !prop_dictionary_get_cstring_nocopy(properties, "clock-mode",
+		    &clock_mode) || strcmp(clock_mode, "bvb0") != 0)
+			return EINVAL;
+		mode = HSM_PROBE_BVB0;
+	} else if (prop_dictionary_get(properties, "ddc-mode") != NULL) {
 		if (prop_dictionary_get(properties, "hpd-mode") != NULL ||
 		    prop_dictionary_get(properties, "dvp-mode") != NULL ||
 		    !prop_dictionary_get_cstring_nocopy(properties, "ddc-mode",
