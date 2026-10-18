@@ -13,7 +13,7 @@ The PCK provider already enables its own programming clock at attachment;
 this observer does not change that behavior.
 
 The CCU adapter validates the entire register aperture before any read.
-It takes two ordered samples of this allowlist, for 30 32-bit reads:
+It takes two ordered samples of this allowlist, for 46 32-bit reads:
 
 | CCU offset | Register |
 |---|---|
@@ -27,6 +27,10 @@ It takes two ordered samples of this allowlist, for 30 32-bit reads:
 | `0x1684`, `0x168c`, `0x1690` | HDMI_TV_CLK, HDMI_BGR, HDMI_SFR_CLK |
 | `0x16cc`, `0x16ec` | DPSS_TOP1_BGR, VIDEO_OUT1_BGR |
 | `0x1928`, `0x19a8` | DEPLL_GATE_EN, DEPLL_GATE_STAT |
+| `0x02e8`, `0x02ec` | PLL_DE_PAT0, PLL_DE_PAT1 |
+| `0x0580` | NSI_CLK |
+| `0x0a80`, `0x0a88` | VE_ENC0_CLK, VE_DEC_CLK |
+| `0x0b00`, `0x0c00`, `0x1840` | NPU_CLK, DRAM0_CLK, CSI_CLK |
 
 These registers have no documented read-to-clear fields. The observer does
 not interpret reserved bits or change the PLL, gate or reset registers.
@@ -55,11 +59,52 @@ the [BCM2712 resource observer](bcm2712-display-contract.md). A733 uses its own
 provider interfaces, register map and power domains. It does not use the
 BCM2712 mailbox, ACPI resources or register definitions.
 
+## Decoded clock observations
+
+The pure decoder accepts only equal samples with a zero changed mask. It
+compares the samples itself and leaves the output unchanged on error.
+It performs no I/O. Documented PLL control and pattern fields remain raw;
+post-PLL gate control/status is separate from PLL enable and lock. Open
+post-PLL gates can coexist with a disabled, unlocked PLL. No rate is inferred.
+
+The selected-source and module-gate bitmaps use this order:
+
+| Bit | Consumer | CCU register | DE3X selector | DE4X selector |
+| --- | --- | --- | --- | --- |
+| 0 | DE0 | `0x0a00` | 0 | 1 |
+| 1 | NSI | `0x0580` | 5 | none |
+| 2 | VE_ENC0 | `0x0a80` | 5 | none |
+| 3 | VE_DEC | `0x0a88` | 5 | none |
+| 4 | NPU | `0x0b00` | 6 | none |
+| 5 | DRAM0 | `0x0c00` | 3 | none |
+| 6 | CSI | `0x1840` | none | 1 |
+| 7 | HDMI_TV | `0x1684` | none | none |
+| 8 | HDMI_SFR | `0x1690` | none | none |
+
+Selectors occupy bits 26:24. Module gates use bit 31. The decoder reports
+selection even when that gate is off. Reserved selectors set a separate
+unknown mask. NSI/DRAM0 update bit 27 and NSI dynamic mode bit 28 remain
+separate observations; equal samples do not mean an update completed.
+DRAM0 bit 16 also selects the external memory clock path. The decoder does
+not infer memory ownership or an idle DRAM path from that bit or its gate.
+
+DE0 and HDMI_TV divisors are linear fields plus one. HDMI_TV has two such
+fields (4:0 and 12:8); its second divisor is not a power of two. HDMI_SFR
+has no divider. Bus-gate and reset bitmaps use snapshot register indices;
+HDMI reset bits 18:16 are reported separately as bits 2:0. DE_SYS and VO1
+registers contain reset bit 16, not a bus gate at bit 0.
+
+This census is a list of potential consumers, not a lease or proof that all
+firmware consumers are known. DEPLL3X can feed DRAM0, NSI, VE and NPU; DEPLL4X
+can feed CSI. The source must not be treated as a dedicated display PLL.
+No new clock/reset providers, FDT consumers or power requests are added.
+
 ## Sources and license boundary
 
 The code is an original BSD-2-Clause implementation. Register facts come from
 Allwinner's A733 User Manual V1.00 (2025-08-14), sections 4.1.6.61, 82, 83,
-104, 105, 113, 225, 226, 230, 231, 232, 235, 237, 256 and 265. The public
+63, 64, 74, 104, 105, 113-115, 119, 123, 225, 226, 230-232, 235, 237,
+244, 256 and 265. The public
 [manual source](https://gitlab.com/api/v4/projects/71118510/repository/files/A733%2FHardware%E7%A1%AC%E4%BB%B6%E7%B1%BB%E6%96%87%E6%A1%A3%2F%E8%8A%AF%E7%89%87%E6%89%8B%E5%86%8C%2FA733_User%20Manual_V1.00.pdf/raw?ref=d0dc4d615be00b76e3a0818d0818eff8f69ffa15)
 is pinned to repository revision `d0dc4d615be00b76e3a0818d0818eff8f69ffa15`.
 Its PDF SHA256 is
@@ -90,7 +135,9 @@ exact read order, aperture rejection before the first access, every callback
 failure, unchanged error output, raw reserved values and each changed bit.
 The existing clock and power fixtures compile the actual provider adapters.
 They check zero added writes, faults at each access, quarantine, lock release,
-and continued attachment without partial diagnostic output.
+and continued attachment without partial diagnostic output. Decoder checks cover
+every mux selector, divider and gate, stale or inconsistent change masks,
+reserved bits, pending updates, SDM fields and disabled PLLs with open gates.
 
 Use `DISPLAY_OBSERVER_CFLAGS`, `CLOCK_TEST_CFLAGS` and `POWER_TEST_CFLAGS`
 with `-fsanitize=address,undefined -fno-omit-frame-pointer` for host sanitizer
@@ -147,3 +194,29 @@ KMS, buffer import/export and explicit synchronization remain necessary for
 accelerated Plasma. A firmware framebuffer is usable only with an actual
 validated framebuffer handoff and reserved memory; it must not be inferred
 from a connected HDMI cable or offscreen GPU success.
+
+## Boundary before the first initialization write
+
+The next code stage can reserve resources without writing hardware. Reuse
+the native provider arbitration pattern: count in-flight CCU writers before
+acquisition, protect shared ancestor mutations, and reserve DE_SYS/VO1 under
+the PCK lock. Existing GPU reservations must continue to work. The generic
+FDT power API does not reference-count these shared domains. A future
+consumer must use `netbsd,consumer-managed-power` to prevent automatic power
+changes before its own validation.
+
+Before a separately reviewed DE0 clock/reset initialization can run, the
+consumer must hold those reservations and take fresh stable snapshots. Both
+power domains must remain strict static ON with no emulation, dynamic policy,
+quarantine or pending transition. DE0 must be gated and held in reset. The
+chosen parent must have a separately proven running rate and a retained lease;
+no parent, NSI, DRAM or shared-domain reset is retuned or toggled. Unknown or
+pending muxes fail closed. Any attempted write retains the reservations until
+reboot unless a separate stop/rollback contract proves release safe.
+
+These conditions permit only the reviewed local clock/reset experiment.
+They do not permit DE/TCON/HDMI MMIO, DMA or scanout. That next boundary still
+needs Q/clock sequencing, VO1/PHY/supply ownership and the RGB/RCQ contract
+above. If no already-running parent can be borrowed, a PLL_DE start needs a
+separate complete consumer and firmware handoff audit. A zero census mask
+cannot authorize it.

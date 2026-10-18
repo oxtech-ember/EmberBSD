@@ -1308,6 +1308,7 @@ static void
 sun60i_a733_display_ccu_report(struct sunxi_ccu_softc *sc)
 {
 	struct sun60i_a733_display_clocks state;
+	struct sun60i_a733_display_clock_facts facts;
 	bus_addr_t addr;
 	bus_size_t size;
 	int error;
@@ -1328,6 +1329,17 @@ sun60i_a733_display_ccu_report(struct sunxi_ccu_softc *sc)
 		    sun60i_a733_display_clock_regs[r].name,
 		    sun60i_a733_display_clock_regs[r].offset,
 		    state.sample[0][r], state.sample[1][r]);
+	error = sun60i_a733_display_decode_clocks(&state, &facts);
+	if (error != 0) {
+		aprint_normal_dev(sc->sc_dev, "display clock decode unavailable: %d\n",
+		    error);
+		return;
+	}
+	aprint_normal_dev(sc->sc_dev, "display mux selection: DE3X 0x%x "
+	    "DE4X 0x%x; gates 0x%x unknown 0x%x update 0x%x dynamic 0x%x; "
+	    "not ownership or readiness\n", facts.de3x_selected,
+	    facts.de4x_selected, facts.gates_enabled, facts.unknown_selectors,
+	    facts.update_pending, facts.dynamic_mode);
 }
 
 static int

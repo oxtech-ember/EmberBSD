@@ -321,9 +321,9 @@ reset(void)
 	hosc_rate = 24000000;
 	reject_write = missing_hosc = false;
 	sun60i_a733_ccu_attach(NULL, &state, &args);
-	CHECK(writes == 0 && reads == 30);
-	for (u_int r = 0; r < 30; r++)
-		CHECK(read_regs[r] == sun60i_a733_display_clock_regs[r % 15].offset);
+	CHECK(writes == 0 && reads == 46);
+	for (u_int r = 0; r < 46; r++)
+		CHECK(read_regs[r] == sun60i_a733_display_clock_regs[r % 23].offset);
 	reads = 0;
 	/* Firmware peripheral VCO=2400 MHz, 2x=/2, 800M=/3, 480M=/5. */
 	REG(PLL_PERIPH0_CTRL_REG) = __BIT(31) | (99 << 8) |
@@ -1111,7 +1111,7 @@ test_display_observer(void)
 	struct sun60i_a733_display_clocks observed, saved;
 
 	memset(&saved, 0x5a, sizeof(saved));
-	for (unsigned fault = 1; fault <= 30; fault++) {
+	for (unsigned fault = 1; fault <= 46; fault++) {
 		reset();
 		fail_peek = fault;
 		observed = saved;
@@ -1129,7 +1129,7 @@ test_display_observer(void)
 		sun60i_a733_display_ccu_report(&state);
 		CHECK(reads == 0 && writes == 0 && barriers == 0);
 	}
-	printf("PASS: 32 display CCU adapter fault/aperture scenarios\n");
+	printf("PASS: 48 display CCU adapter fault/aperture scenarios\n");
 }
 
 int
