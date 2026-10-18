@@ -186,6 +186,13 @@ It feeds those resources to the actual OS decoder.
 `DISPLAY_EVIDENCE` saves the AML, generated test inputs, hashes, and command arguments.
 This component check does not link a complete UEFI image or load an SSDT namespace.
 
+Set `DISPLAY_COMPILED_AML` to a full build's `Dsdt.aml` to validate its GPU0
+package through the same resource checks and OS decoder. The tool still compiles
+the source component. It reads the selected DSDT without changing it and records
+its SHA256, size, and checked bytes in the evidence directory. The DSDT must have
+a valid signature, length, checksum, and exactly one GPU0 device declaration.
+This check does not prove that an FD contains the DSDT or that firmware loads it.
+
 The RPi5 `AcpiTables.inf` uses its local DSDT. Older platform GPU ASL modules are separate inputs.
 The new diff changes only GPU0 and named register constants.
 Thermal references to `\_SB.GPU0` keep the same path.

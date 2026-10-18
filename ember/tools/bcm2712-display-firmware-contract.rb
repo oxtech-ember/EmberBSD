@@ -78,6 +78,22 @@ def consume(bytes, offset, expected)
   offset + expected.bytesize
 end
 
+def gpu_aml(aml)
+  raise 'invalid DSDT header' unless aml[0, 4] == 'DSDT' &&
+    aml[4, 4]&.unpack1('V') == aml.bytesize && aml.bytes.sum % 256 == 0
+  # A full table can reference GPU0 before it declares the device.
+  packages = aml.to_enum(:scan, /GPU0/n).flat_map do
+    name = Regexp.last_match.begin(0)
+    (name - 6...name).filter_map do |at|
+      next unless aml[at, 2] == "\x5b\x82".b
+      length, count = package_length(aml, at + 2)
+      aml[name, length - count] if at + 2 + count == name
+    end
+  end
+  raise 'expected one GPU0 device package' unless packages.length == 1
+  packages.first
+end
+
 def gpu_component(source)
   # Mask comments and strings while preserving offsets for balanced braces.
   masked = source.gsub(%r{//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"}m) { |s| ' ' * s.bytesize }
@@ -119,17 +135,11 @@ Dir.mktmpdir('bcm2712-display-asl-') do |work|
   cpp = Shellwords.split(ENV.fetch('HOST_CC', 'cc'))
   run(*cpp, '-E', '-P', '-x', 'c', '-I' + work, work + '/gpu.asl', '-o', work + '/gpu.pre.asl')
   run(*iasl, '-we', '-p', work + '/gpu', work + '/gpu.pre.asl')
-  aml = File.binread(work + '/gpu.aml')
-  raise 'invalid DSDT header' unless aml[0, 4] == 'DSDT' && aml[4, 4].unpack1('V') == aml.bytesize && aml.bytes.sum % 256 == 0
-  name = aml.index('GPU0') or raise 'GPU0 missing from AML'
-  pkg = (name - 6...name).filter_map do |at|
-    next unless aml[at, 2] == "\x5b\x82".b
-    length, count = package_length(aml, at + 2)
-    [at + 2, length, count] if at + 2 + count == name
-  end
-  raise 'GPU0 package boundary' unless pkg.length == 1
-  at, length, count = pkg[0]
-  gpu = aml[name, length - count]
+  compiled_input = ENV['DISPLAY_COMPILED_AML']
+  aml_path = compiled_input ? File.realpath(compiled_input) : work + '/gpu.aml'
+  raise 'compiled AML input must be a regular file' unless File.file?(aml_path)
+  aml = File.binread(aml_path)
+  gpu = gpu_aml(aml)
   dsd = gpu.index("\x08_DSD".b) or raise 'missing display _DSD'
   properties, = object(gpu, dsd + 5)
   uuid = ['14d8ffda ba6e8c4d8a91bc9bbf4aa301'.delete(' ')].pack('H*')
@@ -206,14 +216,18 @@ Dir.mktmpdir('bcm2712-display-asl-') do |work|
   if ENV['DISPLAY_EVIDENCE']
     FileUtils.mkdir_p(ENV['DISPLAY_EVIDENCE'])
     %w[gpu.asl gpu.pre.asl gpu.aml test.c hardware.h core.h display.h properties.h].each { |f| FileUtils.cp(work + '/' + f, ENV['DISPLAY_EVIDENCE'] + '/' + f) }
+    File.binwrite(ENV['DISPLAY_EVIDENCE'] + '/checked.aml', aml)
     inputs = [asl_path, macros_path, hardware_path,
               os + '/sys/arch/arm/broadcom/bcm2712_display.c',
               os + '/sys/arch/arm/broadcom/bcm2712_display.h',
               os + '/sys/arch/evbarm/rpi/vcprop.h',
               os + '/ember/tools/bcm2712-display-contract.c']
+    inputs << aml_path if compiled_input
     receipt = { version: 1, memory: memory, irq: irq, commands: COMMANDS,
+                aml: { kind: compiled_input ? 'compiled-dsdt' : 'component',
+                       sha256: Digest::SHA256.hexdigest(aml), bytes: aml.bytesize },
                 inputs: inputs.to_h { |f| [f, Digest::SHA256.file(f).hexdigest] },
-                scope: 'GPU0 ASL component and actual OS decoder; no complete firmware build or device execution' }
+                scope: 'GPU0 ASL and actual OS decoder; optional compiled DSDT input. No image packaging, live namespace, or device execution check.' }
     File.write(ENV['DISPLAY_EVIDENCE'] + '/resources.json', JSON.pretty_generate(receipt) + "\n")
   end
 end
