@@ -173,7 +173,10 @@ cixvpu_acpi_deferred(device_t self)
 	if (sc->sc_probe_ran)
 		return;
 	sc->sc_probe_ran = true;
-	if (sc->sc_mode == 3)
+	if (sc->sc_mode == 6)
+		error = cixvpu_acpi_control_probe_native_profile(&sc->sc_control,
+		    self, &sc->sc_aa, &sc->sc_resources);
+	else if (sc->sc_mode == 3)
 		error = cixvpu_acpi_control_probe_native(&sc->sc_control, self,
 		    &sc->sc_aa, &sc->sc_resources);
 	else
@@ -182,7 +185,8 @@ cixvpu_acpi_deferred(device_t self)
 	aprint_normal_dev(self,
 	    "%s: rate query attempted %s, rate valid %s\n",
 	    sc->sc_mode == 1 ? "resource query" :
-	    sc->sc_mode == 3 ? "native identity probe" : "identity probe",
+	    sc->sc_mode == 3 ? "native identity probe" :
+	    sc->sc_mode == 6 ? "native hardware profile" : "identity probe",
 	    r->rate_query_attempted ? "yes" : "no",
 	    r->rate_valid ? "yes" : "no");
 	if (r->rate_valid)
@@ -196,6 +200,19 @@ cixvpu_acpi_deferred(device_t self)
 	    error, r->error, r->cleanup_error,
 	    AcpiFormatException(r->acpi_status),
 	    AcpiFormatException(r->cleanup_acpi_status));
+	if (sc->sc_mode == 6) {
+		const struct cixvpu_hw_profile *p = &sc->sc_control.profile;
+
+		aprint_normal_dev(self, "profile valid %s\n", p->valid ? "yes" : "no");
+		if (p->valid) {
+			aprint_normal_dev(self, "STRAP_PIN2 %#x STRAP_PIN0 %#x PGCTRL %#x\n",
+			    p->strap_pin2, p->strap_pin0, p->pgctrl);
+			aprint_normal_dev(self, "repair raw PASS %#x ENBL %#x BUSY %#x\n",
+			    p->repair_pass, p->repair_enable, p->repair_busy);
+			aprint_normal_dev(self, "CLKFORCE %#x harvesting %#x usable core mask %#x\n",
+			    p->clkforce, p->harvesting_mask, p->usable_core_mask);
+		}
+	}
 }
 
 static const struct device_compatible_entry cixvpu_acpi_compat[] = {
@@ -255,8 +272,8 @@ cixvpu_acpi_attach(device_t parent, device_t self, void *aux)
 	aprint_normal(": CIX P1 video codec (diagnostic attachment)\n");
 	sc->sc_dev = self;
 	sc->sc_mode = device_cfdata(self)->cf_flags;
-	if (sc->sc_mode > 5) {
-		aprint_error_dev(self, "unsupported flags %#x; use 0, 1, 2, 3, 4 or 5\n",
+	if (sc->sc_mode > 6) {
+		aprint_error_dev(self, "unsupported flags %#x; use 0, 1, 2, 3, 4, 5 or 6\n",
 		    sc->sc_mode);
 		return;
 	}

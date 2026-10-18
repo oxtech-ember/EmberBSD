@@ -7,6 +7,7 @@
 #include <sys/cpu.h>
 #include <sys/device.h>
 #include <sys/errno.h>
+#include <sys/kernel.h>
 #include <sys/systm.h>
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
@@ -314,6 +315,76 @@ cixvpu_native_scmi(const struct acpi_attach_args *aa, ACPI_HANDLE *out)
 	return 0;
 }
 
+/* This pinned diagnostic policy does not narrow the general resource API. */
+static bool
+cixvpu_profile_resources(const struct cixvpu_resources *r)
+{
+
+	return r->mem[0].base == 0x14230000 &&
+	    r->mem[0].translated == 0x14230000 &&
+	    r->mem[1].base == 0x14240000 &&
+	    r->mem[1].translated == 0x14240000 &&
+	    r->mem[0].length == 0x10000 && r->mem[1].length == 0x10000 &&
+	    r->cca == 0 && r->irq == 358;
+}
+
+static bool
+cixvpu_profile_bound(bus_size_t span, bus_size_t offset)
+{
+
+	return (offset & 3) == 0 && offset <= span && 4 <= span - offset;
+}
+
+/* No arbitrary register API: only this control transaction owns both maps. */
+static int
+cixvpu_profile_read(struct cixvpu_acpi_control *c,
+    struct cixvpu_hw_profile *out)
+{
+	static const bus_size_t offsets[] = {
+		0x308, 0x300, 0x21c, 0x10, 0x14, 0x18
+	};
+	struct cixvpu_hw_profile p = { 0 };
+	unsigned int i;
+
+	if (c == NULL || out == NULL)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (cold != 1)
+		return ENOTSUP;
+	if (!c->started || !c->mapped || !c->profile_mapped ||
+	    !c->power_attempted || !c->clock_attempted || c->reset_safe ||
+	    c->power_released_fault || !c->report.identity_valid ||
+	    c->clock == NULL || c->reset == NULL || c->rcsu == NULL ||
+	    c->report.id != 0x56648002 || c->report.ncores != 4 ||
+	    c->report.nlsid != 4 || c->report.svn != 0xe0c1afe1)
+		return EINVAL;
+	for (i = 0; i < __arraycount(offsets); i++)
+		if (!cixvpu_profile_bound(c->profile_span, offsets[i]))
+			return EINVAL;
+	if (!cixvpu_profile_bound(c->span, 0x24))
+		return EINVAL;
+	bus_space_barrier(c->bst, c->profile_bsh, 0x10, 0x2fc,
+	    BUS_SPACE_BARRIER_READ);
+	p.strap_pin2 = bus_space_read_4(c->bst, c->profile_bsh, 0x308);
+	p.strap_pin0 = bus_space_read_4(c->bst, c->profile_bsh, 0x300);
+	p.pgctrl = bus_space_read_4(c->bst, c->profile_bsh, 0x21c);
+	p.repair_pass = bus_space_read_4(c->bst, c->profile_bsh, 0x10);
+	p.repair_enable = bus_space_read_4(c->bst, c->profile_bsh, 0x14);
+	p.repair_busy = bus_space_read_4(c->bst, c->profile_bsh, 0x18);
+	bus_space_barrier(c->bst, c->profile_bsh, 0x10, 0x2fc,
+	    BUS_SPACE_BARRIER_READ);
+	bus_space_barrier(c->bst, c->bsh, 0x24, 4, BUS_SPACE_BARRIER_READ);
+	p.clkforce = bus_space_read_4(c->bst, c->bsh, 0x24);
+	bus_space_barrier(c->bst, c->bsh, 0x24, 4, BUS_SPACE_BARRIER_READ);
+	p.harvesting_mask = (~p.strap_pin2 >> 4) & 0xf;
+	p.usable_core_mask = p.harvesting_mask & ((1U << c->report.ncores) - 1);
+	/* bus_space reads have no errno. No recovery from an external abort. */
+	p.valid = true;
+	*out = p;
+	return 0;
+}
+
 int
 cixvpu_acpi_control_cleanup(struct cixvpu_acpi_control *c)
 {
@@ -325,6 +396,10 @@ cixvpu_acpi_control_cleanup(struct cixvpu_acpi_control *c)
 	if (cpu_intr_p() || cpu_softintr_p())
 		return EWOULDBLOCK;
 	/* No DMA has ever started. This order is not a DMA detach sequence. */
+	if (c->profile_mapped) {
+		bus_space_unmap(c->bst, c->profile_bsh, c->profile_span);
+		c->profile_mapped = false;
+	}
 	if (c->mapped) {
 		bus_space_unmap(c->bst, c->bsh, c->span);
 		c->mapped = false;
@@ -411,7 +486,7 @@ cixvpu_identity(const struct cixvpu_acpi_report *r)
 static int
 cixvpu_probe(struct cixvpu_acpi_control *c, device_t dev,
     const struct acpi_attach_args *aa, const struct cixvpu_resources *resources,
-    bool activate, bool native)
+    bool activate, bool native, bool profile)
 {
 	ACPI_HANDLE clock, reset, scmi = NULL;
 	ACPI_STATUS rv;
@@ -425,12 +500,18 @@ cixvpu_probe(struct cixvpu_acpi_control *c, device_t dev,
 		return EWOULDBLOCK;
 	if (c->started)
 		return EALREADY;
+	if (profile && cold != 1)
+		return ENOTSUP;
 	c->started = true;
 	c->dev = dev;
 	c->consumer = aa->aa_node->ad_handle;
 	c->bst = aa->aa_memt;
 	if (cixvpu_resources_validate(resources) != CIXVPU_RESOURCE_OK) {
 		error = EINVAL;
+		goto out;
+	}
+	if (profile && !cixvpu_profile_resources(resources)) {
+		error = ENOTSUP;
 		goto out;
 	}
 	if (native && (error = cixvpu_native_scmi(aa, &scmi)) != 0)
@@ -488,7 +569,22 @@ cixvpu_probe(struct cixvpu_acpi_control *c, device_t dev,
 	c->report.svn = bus_space_read_4(c->bst, c->bsh, 0x30);
 	c->report.identity_valid = cixvpu_identity(&c->report);
 	error = c->report.identity_valid ? 0 : ENODEV;
+	if (profile) {
+		if (c->report.id != 0x56648002 || c->report.ncores != 4 ||
+		    c->report.nlsid != 4 || c->report.svn != 0xe0c1afe1) {
+			error = ENOTSUP;
+			goto out;
+		}
+		c->profile_span = resources->mem[0].length;
+		error = bus_space_map(c->bst, resources->mem[0].translated,
+		    c->profile_span, 0, &c->profile_bsh);
+		if (error != 0)
+			goto out;
+		c->profile_mapped = true;
+		error = cixvpu_profile_read(c, &c->profile);
+	}
 out:
+
 	c->report.error = error;
 	cleanup_error = cixvpu_acpi_control_cleanup(c);
 	if (error != 0)
@@ -502,7 +598,7 @@ cixvpu_acpi_control_probe(struct cixvpu_acpi_control *c, device_t dev,
     bool activate)
 {
 
-	return cixvpu_probe(c, dev, aa, resources, activate, false);
+	return cixvpu_probe(c, dev, aa, resources, activate, false, false);
 }
 
 int
@@ -510,5 +606,14 @@ cixvpu_acpi_control_probe_native(struct cixvpu_acpi_control *c, device_t dev,
     const struct acpi_attach_args *aa, const struct cixvpu_resources *resources)
 {
 
-	return cixvpu_probe(c, dev, aa, resources, true, true);
+	return cixvpu_probe(c, dev, aa, resources, true, true, false);
+}
+
+int
+cixvpu_acpi_control_probe_native_profile(struct cixvpu_acpi_control *c,
+    device_t dev, const struct acpi_attach_args *aa,
+    const struct cixvpu_resources *resources)
+{
+
+	return cixvpu_probe(c, dev, aa, resources, true, true, true);
 }

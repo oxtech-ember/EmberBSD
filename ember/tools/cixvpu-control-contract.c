@@ -63,10 +63,16 @@ static bool native_poison;
 static unsigned int native_disable_calls;
 static unsigned int delays, reads, maps, unmaps;
 static ACPI_STATUS attach_cca_status;
+static ACPI_INTEGER attach_cca_value;
 /* Opaque provider turns SCMI status -4 (NOT_FOUND) into EIO. */
 static int32_t rate_status;
 static uint64_t clock_rate;
-static uint32_t id, ncores, nlsid;
+static uint32_t id, ncores, nlsid, svn;
+static int cold = 1;
+static bool profile_mode;
+static uint32_t profile_words[7];
+#define BUS_SPACE_BARRIER_READ 1
+#define F_PROFILE_MAP (1U << 21)
 enum {
     F_CLOCK_GET = 1U << 0, F_RESET_GET = 1U << 1, F_RCSU_GET = 1U << 2,
     F_RATE = 1U << 3, F_RCSU_STATE = 1U << 4, F_POWER_ON = 1U << 5,
@@ -202,7 +208,7 @@ ACPI_STATUS AcpiGetType(ACPI_HANDLE h, ACPI_OBJECT_TYPE *out)
 }
 static ACPI_STATUS acpi_eval_integer(ACPI_HANDLE h, const char *n, ACPI_INTEGER *v)
 {
-    if (h == VPU && strcmp(n, "_CCA") == 0) { *v = 0; return attach_cca_status; }
+    if (h == VPU && strcmp(n, "_CCA") == 0) { *v = attach_cca_value; return attach_cca_status; }
     if (strcmp(n, "_UID") == 0) {
         assert(h == CLOCK || h == RESET);
         if (bad == 28) return AE_ERROR;
@@ -256,14 +262,50 @@ static int cixclk_acpi_put(struct cixclk *c)
 static void delay(unsigned int usec)
 { assert(usec == 20 && power_live && clock_live); event('d'); delays++; }
 static int bus_space_map(bus_space_tag_t t, bus_addr_t a, bus_size_t n, int f, bus_space_handle_t *h)
-{ (void)t; assert(a == 0x320000 && n == 0x10000 && f == 0); assert(clock_live && power_live && main_claim.dirty); event('B'); maps++; if (faults & F_MAP) return ENOMEM; *h = 1; return 0; }
+{
+    (void)t; assert(n == 0x10000 && f == 0);
+    assert(clock_live && power_live && main_claim.dirty);
+    if (profile_mode && a == 0x14230000) {
+        event('V'); maps++; if (faults & F_PROFILE_MAP) return ENOMEM; *h = 2; return 0;
+    }
+    assert(a == (profile_mode ? 0x14240000U : 0x320000U));
+    event('B'); maps++; if (faults & F_MAP) return ENOMEM; *h = 1; return 0;
+}
 static uint32_t bus_space_read_4(bus_space_tag_t t, bus_space_handle_t h, bus_size_t o)
 {
-    (void)t; assert(h == 1 && clock_live && power_live && main_claim.dirty); reads++;
-    switch (o) { case 0: event('0'); return id; case 8: event('1'); return ncores; case 0xc: event('2'); return nlsid; case 0x30: event('3'); return 0x12345678; default: abort(); }
+    (void)t; assert(clock_live && power_live && main_claim.dirty); reads++;
+    if (h == 2) {
+        assert(profile_mode);
+        switch (o) {
+        case 0x308: event('4'); return profile_words[0];
+        case 0x300: event('5'); return profile_words[1];
+        case 0x21c: event('6'); return profile_words[2];
+        case 0x10: event('7'); return profile_words[3];
+        case 0x14: event('8'); return profile_words[4];
+        case 0x18: event('9'); return profile_words[5];
+        default: abort();
+        }
+    }
+    assert(h == 1);
+    switch (o) {
+    case 0: event('0'); return id;
+    case 8: event('1'); return ncores;
+    case 0xc: event('2'); return nlsid;
+    case 0x30: event('3'); return svn;
+    case 0x24: assert(profile_mode); event('F'); return profile_words[6];
+    default: abort();
+    }
+}
+static void bus_space_barrier(bus_space_tag_t t, bus_space_handle_t h,
+    bus_size_t offset, bus_size_t length, int flags)
+{
+    (void)t; CHECK(profile_mode && flags == BUS_SPACE_BARRIER_READ);
+    CHECK(h == 1 || h == 2); CHECK(offset <= 0x10000 && length <= 0x10000 - offset);
+    CHECK(clock_live && power_live && main_claim.dirty); event(h == 2 ? 'q' : 'b');
 }
 static void bus_space_unmap(bus_space_tag_t t, bus_space_handle_t h, bus_size_t n)
-{ (void)t; assert(h == 1 && n == 0x10000); event('U'); unmaps++; }
+{ (void)t; assert((h == 1 || (profile_mode && h == 2)) && n == 0x10000); event(h == 2 ? 'X' : 'U'); unmaps++; }
+#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #include "control-header.inc"
 #include "control-source.inc"
 static struct acpi_devnode node = { .ad_handle = VPU };
@@ -280,8 +322,9 @@ static void fixture(void)
     bad = faults = sta_count = nevents = delays = reads = maps = unmaps = 0; events[0] = 0;
     interrupt_context = power_live = clock_live = rc_asserted = false;
     native_poison = false; native_disable_calls = 0;
-    attach_cca_status = AE_OK;
-    rate_status = 0; clock_rate = 600000000; id = 0x56621234; ncores = 2; nlsid = 4;
+    cold = 1; profile_mode = false;
+    attach_cca_status = AE_OK; attach_cca_value = 0;
+    rate_status = 0; clock_rate = 600000000; id = 0x56621234; ncores = 2; nlsid = 4; svn = 0x12345678;
     memset(&scmi_cache, 0, sizeof(scmi_cache));
     scmi_info.info = (void *)scmi_cache.bytes;
     scmi_info.hid = (char *)(scmi_info.info + 1); scmi_info.uid = scmi_info.hid + 9;
@@ -432,7 +475,6 @@ static void retention_tests(void)
 }
 #ifdef CIXVPU_ATTACH_API
 /* The actual consumer uses modeled parser ownership and a deferred queue. */
-#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #define __CTASSERT(x) _Static_assert(x, #x)
 struct device_compatible_entry { const char *compat; };
 #define DEVICE_COMPAT_EOL { NULL }
@@ -792,7 +834,7 @@ static void attach_tests(void)
     attach_fixture(5); cixvpu_acpi_attach(NULL, VPU, &aa);
     CHECK(parser_calls == 1 && cleanup_calls == 1 && mountroot_calls == 1);
     CHECK(defer_calls == 0 && deferred_callback != NULL && nevents == 0 && maps == 0);
-    const unsigned int invalid_flags[] = {6, 0xffff, UINT32_MAX};
+    const unsigned int invalid_flags[] = {7, 0xffff, UINT32_MAX};
     for (unsigned int i = 0; i < sizeof(invalid_flags)/sizeof(invalid_flags[0]); i++) {
         attach_fixture(invalid_flags[i]); cixvpu_acpi_attach(NULL, VPU, &aa);
         CHECK(parser_calls == 0 && defer_calls == 0 && nevents == 0);
@@ -824,6 +866,169 @@ static void attach_tests(void)
         CHECK(strstr(diagnostic, "native identity probe") != NULL);
         released();
     } else CHECK(false);
+}
+static void profile_fixture(void)
+{
+    attach_fixture(6); profile_mode = true;
+    attach_description.mem[0] = (struct cixvpu_mem_resource){0x14230000,0x14230000,0x10000};
+    attach_description.mem[1] = (struct cixvpu_mem_resource){0x14240000,0x14240000,0x10000};
+    id = 0x56648002; ncores = nlsid = 4; svn = 0xe0c1afe1;
+    profile_words[0] = 0x12345600; profile_words[1] = 0xabcdef01;
+    profile_words[2] = 0x87651000; profile_words[3] = 0x11223344;
+    profile_words[4] = 0x55667788; profile_words[5] = 0x99aabbcc;
+    profile_words[6] = 0xddeeff00;
+}
+static void profile_run(void)
+{
+    cixvpu_acpi_attach(NULL, VPU, &aa);
+    CHECK(defer_calls == 1 && deferred_callback != NULL && mountroot_calls == 0);
+    if (deferred_callback) {
+        deferred_callback(deferred_device);
+        unsigned int before = nevents;
+        deferred_callback(deferred_device); CHECK(nevents == before);
+    }
+}
+static void profile_checks(const struct cixvpu_acpi_control *c)
+{
+    const struct cixvpu_hw_profile *p = &c->profile;
+    CHECK(p->valid && p->strap_pin2 == profile_words[0] && p->strap_pin0 == profile_words[1]);
+    CHECK(p->pgctrl == profile_words[2] && p->repair_pass == profile_words[3]);
+    CHECK(p->repair_enable == profile_words[4] && p->repair_busy == profile_words[5]);
+    CHECK(p->clkforce == profile_words[6]);
+    CHECK(p->harvesting_mask == ((~profile_words[0] >> 4) & 0xf));
+    CHECK(p->usable_core_mask == p->harvesting_mask);
+    CHECK(!c->report.rate_query_attempted && !c->report.rate_valid);
+}
+static void profile_preflight_tests(void)
+{
+    profile_fixture();
+    struct cixvpu_acpi_control good = { .started = true, .mapped = true,
+        .profile_mapped = true, .power_attempted = true, .clock_attempted = true,
+        .clock = &clock_claim, .reset = &main_claim, .rcsu = &rcsu_claim,
+        .span = 0x10000, .profile_span = 0x10000,
+        .report = { .id = 0x56648002, .ncores = 4, .nlsid = 4,
+            .svn = 0xe0c1afe1, .identity_valid = true }};
+    struct cixvpu_hw_profile out, saved;
+    memset(&out, 0xa5, sizeof(out)); memcpy(&saved, &out, sizeof(out));
+    CHECK(cixvpu_profile_read(NULL, &out) == EINVAL);
+    CHECK(cixvpu_profile_read(&good, NULL) == EINVAL);
+    for (unsigned int i = 0; i < 18; i++) {
+        struct cixvpu_acpi_control c = good;
+        switch (i) {
+        case 0: c.started = false; break;
+        case 1: c.mapped = false; break;
+        case 2: c.profile_mapped = false; break;
+        case 3: c.power_attempted = false; break;
+        case 4: c.clock_attempted = false; break;
+        case 5: c.reset_safe = true; break;
+        case 6: c.clock = NULL; break;
+        case 7: c.reset = NULL; break;
+        case 8: c.rcsu = NULL; break;
+        case 9: c.report.id ^= 1; break;
+        case 10: c.report.ncores = 0; break;
+        case 11: c.report.nlsid = 5; break;
+        case 12: c.report.svn ^= 1; break;
+        case 13: c.profile_span = 0x30b; break;
+        case 14: c.span = 0x27; break;
+        case 15: c.report.identity_valid = false; break;
+        case 16: c.power_released_fault = true; break;
+        case 17: c.profile_span = 0; break;
+        }
+        CHECK(cixvpu_profile_read(&c, &out) == EINVAL);
+        CHECK(memcmp(&out, &saved, sizeof(out)) == 0 && reads == 0 && nevents == 0);
+    }
+    interrupt_context = true;
+    CHECK(cixvpu_profile_read(&good, &out) == EWOULDBLOCK);
+    interrupt_context = false; cold = 0;
+    CHECK(cixvpu_profile_read(&good, &out) == ENOTSUP);
+    CHECK(memcmp(&out, &saved, sizeof(out)) == 0 && reads == 0);
+    cold = 1;
+    CHECK(!cixvpu_profile_bound(3, 0) && !cixvpu_profile_bound(8, 1));
+    CHECK(!cixvpu_profile_bound(0x10000, UINT64_MAX));
+    CHECK(!cixvpu_profile_bound(0x10000, 0x10000));
+    CHECK(cixvpu_profile_bound(0x10000, 0xfffc));
+}
+static void profile_tests(void)
+{
+    profile_fixture(); profile_run();
+    struct cixvpu_acpi_control *c = &((struct cixvpu_acpi_softc *)attach_private)->sc_control;
+    CHECK(reads == 11 && maps == 2 && unmaps == 2 && delays == 2);
+    CHECK(strcmp(events, "NMRSPTEAdDdB0123Vq456789qbFbXUAKOtrmc") == 0);
+    CHECK(strstr(diagnostic, "native hardware profile") != NULL);
+    CHECK(strstr(diagnostic, "profile valid yes") != NULL);
+    CHECK(strstr(diagnostic, "STRAP_PIN2 0x12345600 STRAP_PIN0 0xabcdef01 PGCTRL 0x87651000") != NULL);
+    CHECK(strstr(diagnostic, "repair raw PASS 0x11223344 ENBL 0x55667788 BUSY 0x99aabbcc") != NULL);
+    CHECK(strstr(diagnostic, "CLKFORCE 0xddeeff00 harvesting 0xf usable core mask 0xf") != NULL);
+    CHECK(!c->mapped && !c->profile_mapped); profile_checks(c); released();
+    for (unsigned int mask = 0; mask < 16; mask++) {
+        profile_fixture(); profile_words[0] = 0xffff000f | ((~mask & 0xf) << 4);
+        profile_run(); c = &((struct cixvpu_acpi_softc *)attach_private)->sc_control;
+        CHECK(c->profile.valid && c->profile.harvesting_mask == mask && c->profile.usable_core_mask == mask);
+        CHECK(c->report.error == 0 && c->report.released && reads == 11); profile_checks(c); released();
+    }
+    for (unsigned int bad_profile = 0; bad_profile < 10; bad_profile++) {
+        profile_fixture();
+        switch (bad_profile) {
+        case 0: attach_description.mem[0].base = attach_description.mem[0].translated = 0x14030000; break;
+        case 1: attach_description.mem[0].translated += 0x400000; break;
+        case 2: attach_description.mem[1].base = attach_description.mem[1].translated = 0x15040000; break;
+        case 3: attach_description.mem[1].translated += 0x400000; break;
+        case 4: attach_description.mem[1].length += 4; break;
+        case 5: attach_cca_value = 1; break;
+        case 6: attach_description.irq++; break;
+        case 7: cold = 0; break;
+        case 8: interrupt_context = true; break;
+        case 9: cold = 2; break;
+        }
+        profile_run(); c = &((struct cixvpu_acpi_softc *)attach_private)->sc_control;
+        CHECK(!c->profile.valid && reads == 0 && maps == 0 && nevents == 0);
+        char result[64]; snprintf(result, sizeof(result), "probe result %d", bad_profile == 8 ? EWOULDBLOCK : ENOTSUP);
+        CHECK(strstr(diagnostic, result) != NULL); released();
+    }
+    for (unsigned int bad_identity = 0; bad_identity < 4; bad_identity++) {
+        profile_fixture();
+        switch (bad_identity) { case 0: id ^= 1; break; case 1: ncores = 2; break;
+        case 2: nlsid = 2; break; case 3: svn ^= 1; break; }
+        profile_run(); c = &((struct cixvpu_acpi_softc *)attach_private)->sc_control;
+        CHECK(c->report.error == ENOTSUP && !c->profile.valid && reads == 4 && maps == 1 && unmaps == 1);
+        CHECK(strchr(events, 'V') == NULL && c->report.released); released();
+    }
+    const unsigned int cases[] = {F_CLOCK_GET,F_RESET_GET,F_RCSU_GET,F_RCSU_STATE,
+        F_POWER_ON,F_STA_ON,F_STA_ON_FAIL,F_CLOCK_ON,F_RESET_ASSERT,
+        F_RESET_DEASSERT,F_MAP,F_PROFILE_MAP,F_CLOCK_OFF,F_POWER_OFF,
+        F_STA_OFF,F_STA_OFF_FAIL,F_NATIVE_POISON,F_PUT_MAIN,F_PUT_RCSU,F_PUT_CLOCK};
+    for (unsigned int i = 0; i < __arraycount(cases); i++) {
+        profile_fixture(); faults = cases[i]; profile_run();
+        c = &((struct cixvpu_acpi_softc *)attach_private)->sc_control;
+        bool snap = cases[i] == F_CLOCK_OFF || cases[i] == F_POWER_OFF ||
+            cases[i] == F_STA_OFF || cases[i] == F_STA_OFF_FAIL ||
+            cases[i] == F_PUT_MAIN || cases[i] == F_PUT_RCSU || cases[i] == F_PUT_CLOCK;
+        CHECK(c->report.error != 0 || c->report.cleanup_error != 0);
+        CHECK(c->profile.valid == snap && !c->mapped && !c->profile_mapped);
+        CHECK(reads == (snap ? 11U : cases[i] == F_PROFILE_MAP ? 4U : 0U));
+        CHECK(unmaps == (snap ? 2U : cases[i] == F_PROFILE_MAP ? 1U : 0U));
+        if (snap) {
+            profile_checks(c);
+            CHECK(strstr(diagnostic, "profile valid yes") != NULL);
+            CHECK(strchr(events, 'X') < strchr(events, 'U'));
+            CHECK(strchr(events, 'U') < strrchr(events, 'A'));
+        } else CHECK(strstr(diagnostic, "profile valid no") != NULL);
+        if (cases[i] == F_NATIVE_POISON) {
+            CHECK(reads == 0 && maps == 0 && power_live && native_disable_calls == 1);
+            unsigned int before = nevents;
+            CHECK(cixvpu_acpi_control_cleanup(c) == EIO && nevents == before);
+            CHECK(clock_claim.claimed && main_claim.claimed && rcsu_claim.claimed);
+            continue;
+        }
+        if (cases[i] == F_STA_OFF || cases[i] == F_STA_OFF_FAIL) {
+            CHECK(c->power_released_fault && !power_live && !c->report.released);
+            continue;
+        }
+        faults = 0;
+        if (!c->report.released) CHECK(cixvpu_acpi_control_cleanup(c) == 0);
+        released();
+    }
+    profile_preflight_tests();
 }
 static struct cixvpu_acpi_report native_run(void)
 {
@@ -944,7 +1149,7 @@ int main(void)
     (void)cixclk_acpi_get_native;
     metadata_tests(); query_tests(); active_tests(); failures_tests(); rate_separation_tests(); retention_tests();
 #ifdef CIXVPU_ATTACH_API
-    attach_tests(); native_tests(); allocation_tests(); prepare_tests();
+    attach_tests(); native_tests(); allocation_tests(); prepare_tests(); profile_tests();
 #endif
     CHECK(live == 0 && allocations != 0);
 #else

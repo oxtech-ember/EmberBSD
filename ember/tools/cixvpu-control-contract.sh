@@ -17,17 +17,19 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
     SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
 fi
+control_source=${CIXVPU_CONTROL_SOURCE:-"$src/sys/dev/acpi/cixvpu_acpi_control.c"}
+attachment_source=${CIXVPU_ATTACH_SOURCE:-"$src/sys/dev/acpi/cixvpu_acpi.c"}
 api=
-if [ -f "$src/sys/dev/acpi/cixvpu_acpi_control.c" ]; then
+if [ -f "$control_source" ]; then
     api="-DCIXVPU_CONTROL_API -DCIXVPU_ATTACH_API"
     for part in source header; do
-        case "$part" in source) ext=c;; header) ext=h;; esac
+        case "$part" in source) input=$control_source;; header) input=$src/sys/dev/acpi/cixvpu_acpi_control.h;; esac
         ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("#include ") }.join)' \
-            "$src/sys/dev/acpi/cixvpu_acpi_control.$ext" "$work/control-$part.inc"
+            "$input" "$work/control-$part.inc"
     done
 fi
 ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("#include ") }.join)' \
-    "$src/sys/dev/acpi/cixvpu_acpi.c" "$work/attachment-source.inc"
+    "$attachment_source" "$work/attachment-source.inc"
 ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("#include ") }.join)' \
     "$src/sys/dev/ic/cixvpu_dma.h" "$work/dma-header.inc"
 ruby -e 'File.write(ARGV[1],File.readlines(ARGV[0]).reject { |s| s.start_with?("#include ") }.join)' \

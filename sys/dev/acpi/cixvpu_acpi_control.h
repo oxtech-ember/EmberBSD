@@ -25,6 +25,14 @@ struct cixvpu_acpi_report {
 	bool rate_query_attempted, rate_valid;
 };
 
+/* Ordered raw observations only; valid does not prove fresh repair or rates. */
+struct cixvpu_hw_profile {
+	uint32_t strap_pin2, strap_pin0, pgctrl;
+	uint32_t repair_pass, repair_enable, repair_busy, clkforce;
+	uint32_t harvesting_mask, usable_core_mask;
+	bool valid;
+};
+
 struct cixvpu_acpi_control {
 	device_t dev;
 	ACPI_HANDLE consumer, power;
@@ -37,6 +45,10 @@ struct cixvpu_acpi_control {
 	/* OFF released the native lease, but _STA did not confirm power off. */
 	bool power_released_fault;
 	struct cixvpu_acpi_report report;
+	struct cixvpu_hw_profile profile;
+	bus_space_handle_t profile_bsh;
+	bus_size_t profile_span;
+	bool profile_mapped;
 };
 
 /*
@@ -61,6 +73,15 @@ int cixvpu_acpi_control_probe(struct cixvpu_acpi_control *, device_t,
 /* Explicit native clock backend; active identity only, with no AML fallback. */
 int cixvpu_acpi_control_probe_native(struct cixvpu_acpi_control *, device_t,
     const struct acpi_attach_args *, const struct cixvpu_resources *);
+/*
+ * Separate boot-only native profile. Seven additional fixed raw reads under
+ * the same control claims; no repair, sync, DMA, IRQ or functional clock call.
+ * Other resource locations or revisions return ENOTSUP for this local profile.
+ * Cleanup and identity error semantics above remain in effect. A valid profile
+ * can coexist with cleanup failure; it is neither atomic nor a repair proof.
+ */
+int cixvpu_acpi_control_probe_native_profile(struct cixvpu_acpi_control *,
+    device_t, const struct acpi_attach_args *, const struct cixvpu_resources *);
 int cixvpu_acpi_control_cleanup(struct cixvpu_acpi_control *);
 
 #endif /* _DEV_ACPI_CIXVPU_ACPI_CONTROL_H_ */
