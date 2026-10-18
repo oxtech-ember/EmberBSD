@@ -69,7 +69,9 @@ result cannot establish accelerator execution.
 
 ## Typed resource preparation
 
-Stage 3 is a read-free EBUSY preflight. Stage 4 resolves the fixed NPU provider
+Stages 1 and 2 query the domain and nominal clock rates without console
+output. They do not establish hardware readiness. Stage 3 is a read-free
+EBUSY preflight. Stage 4 resolves the fixed NPU provider
 handles, reserves PCK4 and the NPU CCU slot, then retains PCK before the
 first CCU write attempt. Clean acquisition failures release only these
 unretained reservations. After retention, failures keep the resources.
@@ -109,6 +111,8 @@ READ_REG offset range. The reader publishes a new identifier triple only
 when all three reads succeed. Cold, failed and stale ownership cause no
 NPU mapping or peek. The actual consumer sequence checks retention before
 write, clean unwind, failed writes, ID faults and wrong observed IDs.
+The preliminary-stage control requires no console output and checks every
+missing clock handle and its reference cleanup.
 The accelerator-clock control tests all 32 stale divider values, both
 GPU/NPU orderings, current parent proofs and retained write failures.
 These are host controls. They do not validate device access, native ioctl

@@ -58,11 +58,15 @@ def main():
             function(driver, "sun60i_npu_power_node", "int") +
             function(driver, "sun60i_npu_read_ids", "int") +
             function(driver, "sun60i_npu_stage_power_id", "int"))
+        (work / "npu-preflight.h").write_text(
+            function(driver, "sun60i_npu_stage_domain", "int") +
+            function(driver, "sun60i_npu_stage_clocks", "int"))
         flags = ["-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter"]
         flags += shlex.split(os.environ.get("NPU_TEST_CFLAGS", ""))
         compiler = shlex.split(os.environ.get("CC", "cc"))
         for name in ("a733-npu-observe-contract", "a733-npu-vip-smoke-contract",
-                     "a733-npu-register-contract", "a733-npu-power-contract"):
+                     "a733-npu-register-contract", "a733-npu-power-contract",
+                     "a733-npu-preflight-contract"):
             binary = work / name
             subprocess.run(compiler + flags + ["-I" + str(work),
                 str(root / "ember/tools" / (name + ".c")), "-o", str(binary)], check=True)

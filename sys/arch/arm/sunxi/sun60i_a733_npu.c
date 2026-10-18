@@ -176,13 +176,10 @@ sun60i_npu_stage_domain(struct sun60i_npu_softc *sc, int power_node)
 	    &pwsr);
 	if (error != 0)
 		return error;
-	aprint_normal_dev(sc->sc_dev,
-	    "NPU domain: PWPR 0x%08x PMER 0x%08x PWSR 0x%08x\n",
-	    pwpr, pmer, pwsr);
 	return (pwpr & __BITS(3, 0)) == 8 ? 0 : EBUSY;
 }
 
-/* Stage 2: decoded state of the five vendor clocks; read-only. */
+/* Stage 2: resolve and query the five nominal clocks without console I/O. */
 static int
 sun60i_npu_stage_clocks(struct sun60i_npu_softc *sc)
 {
@@ -191,15 +188,12 @@ sun60i_npu_stage_clocks(struct sun60i_npu_softc *sc)
 		"clk_ahb_gate",
 	};
 	struct clk *clk;
-	u_int rate;
 
 	for (u_int i = 0; i < __arraycount(names); i++) {
 		clk = fdtbus_clock_get(sc->sc_phandle, names[i]);
 		if (clk == NULL)
 			return ENXIO;
-		rate = clk_get_rate(clk);
-		aprint_normal_dev(sc->sc_dev, "clock %s: %u Hz\n",
-		    names[i], rate);
+		(void)clk_get_rate(clk);
 		clk_put(clk);
 	}
 	return 0;
