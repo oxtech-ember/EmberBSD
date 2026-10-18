@@ -42,3 +42,35 @@ Separate actual-source contracts cover the native DDC provider and I2C core.
 These checks do not establish a physical EDID read, bus freedom, ACPI power,
 KMS output or a Plasma session. Native MMIO stalls and aborts remain outside
 recoverable probe errors.
+
+## Physical base-block boundary
+
+One CM5 Rev1.0 with BCM2712D0 passed one explicit EDID0 load and unload.
+The kernel source was `6e548fea09ffc04cb844c0d55c799ce25173a74b`.
+The module source was `e44bb120e36bd5d65b588606eb51e8f9828e61f9`.
+The firmware source was `c90c2a6cee52208fbc1fbe794a72c597f2bd9fd3`.
+All selected source dependencies, generated headers, sampled ABI values and
+strong symbols were checked before loading. Compatibility checks remained on.
+
+The operator performed a cold boot without HDMI, then connected a powered
+monitor to HDMI0 without rebooting. No firmware framebuffer or wsdisplay was
+present. The provider completed five commands and 1195 polls. Native fault,
+core fault and active were zero. Cached BSC status was zero; its mask was
+`0xf`. Both cache-validity flags were set. No BSC mask or reset was written.
+
+The EDID base block had a valid signature and checksum. Its SHA256 was
+`b3db5c53386c0f5b46400a414c44c738dda5f494060c1f10ce4e4b94b1a44f5b`.
+Its descriptor name was `PM1561`. The first detailed timing declared 1920 by
+1080 at 60 Hz with a 148.5 MHz pixel clock. It declared one extension block;
+this probe did not read that block. No independent monitor reference was
+available, so an exact sink-reference comparison remains untested.
+
+The DDC owner and mappings were released before DVP and HSM. DVP mutation
+remained zero. HSM completed its 0 to 120 MHz request and released its lease.
+Only then did the payload appear. The module unloaded successfully. The
+reported temperature was 49.370 C before and after the transfer, then
+48.821 C after unload. No throttling or undervoltage was reported.
+
+This accepts one finite base-block transfer on this configuration. It does
+not accept other monitors, extensions, disconnect during transfer, IRQ event
+delivery, PHY programming, modesetting, scanout or a physical Plasma session.

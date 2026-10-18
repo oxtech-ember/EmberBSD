@@ -135,19 +135,23 @@ operation and cannot clear a retained owner.
 
 The default HSM-only mode does not access display MMIO. The explicit
 [HPD0 sample](bcm2712-display-dvp.md#finite-hpd0-sample) reads one controller register.
-The explicit [EDID0 transfer](bcm2712-display-edid-probe.md) requires\n`BCM2712_DISPLAY_DDC`. No mode resets hardware. The framebuffer gate does not establish
+The explicit [EDID0 transfer](bcm2712-display-edid-probe.md) requires
+`BCM2712_DISPLAY_DDC`. No mode resets hardware. The framebuffer gate does not establish
 a general firmware clock lifetime. Run the actual-source host contract with:
 
 ```sh
 sh ember/tools/bcm2712-hsm-probe-contract.sh "$PWD"
 ```
 
-The fixture uses the real decoder, HSM/DVP cores/providers, module and libfdt.\nIt controls the DDC API boundary; separate contracts test the native DDC and I2C code.
+The fixture uses the real decoder, HSM/DVP cores/providers, module and libfdt.
+It controls the DDC API boundary; separate contracts test the native DDC and I2C code.
 Controlled kernel services test early refusal, malformed trees, zero rate,
 inherited state, failures, retained ownership, cleanup and exact HPD/DDC MMIO order.
 `CC`, `CFLAGS`, `NM`, `HSM_PROBE_COMPILE_ONLY=1`,
 `HSM_PROBE_OUTPUT` and `TEST_RUNNER` support cross-built and memory-checked tests.
-`HSM_PROBE_SKIP_MUTANT=1` runs only the positive source contract. Both DDC feature\nconfigurations run by default. `HSM_PROBE_FEATURES=off` selects the empty fixture\noption header; it checks early `EOPNOTSUPP` and absence of DDC symbols.
+`HSM_PROBE_SKIP_MUTANT=1` runs only the positive source contract. Both DDC feature
+configurations run by default. `HSM_PROBE_FEATURES=off` selects the empty fixture
+option header; it checks early `EOPNOTSUPP` and absence of DDC symbols.
 For cross compile-only checks, set `CC` to GCC16 and `NM` to the matching
 `aarch64--netbsd-nm`; the host nm cannot inspect target ELF symbols.
 Host execution does not establish physical acceptance.

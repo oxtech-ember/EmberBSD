@@ -687,8 +687,9 @@ on every board in the hardware catalog.
   A [bounded BRCMSTB I2C core](ember/boot/brcmstb-i2c.md) adds combined reads
   with actual-source fault and deadline contracts.
   The opt-in [native DDC0 owner](ember/boot/bcm2712-display-ddc.md) adds a base-EDID API
-  with source/host validation and retained faults. Physical DDC transfer acceptance,
-  runtime HPD delivery and KMS scanout remain open.
+  with source/host validation and retained faults. One [finite base-block transfer](ember/boot/bcm2712-display-edid-probe.md#physical-base-block-boundary)
+  passed on CM5 after a cold-headless boot and live HDMI0 connection.
+  Runtime HPD delivery, extension reads and KMS scanout remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.
