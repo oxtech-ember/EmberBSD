@@ -479,7 +479,8 @@ on every board in the hardware catalog.
   frames, end of media, process restart and failure controls. All 111 loaded
   package-library hashes match the common sysroot. Quick3D's complete package
   and native asset generators also pass their build checks; target 3D scenes,
-  physical media output and full Plasma remain unaccepted.
+  physical media output remains unaccepted. Full virtual Plasma coverage is
+  described below.
   [Complete speech packages](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/speech.md)
   also pass language, PCM and shutdown regressions on CM5. Qt TextToSpeech
   runs both installed Flite and speech-dispatcher/eSpeak engines; KCMUtils
@@ -490,7 +491,7 @@ on every board in the hardware catalog.
   native KPackage tooling and the common Mesa EGL provider preserved.
   [Current Noto fonts](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/fonts.md)
   pass payload, target indexing and Cyrillic/CJK selection checks. These remain
-  component results; the complete accelerated Plasma Desktop remains pending.
+  component results. The complete virtual Plasma Desktop is checked below.
   The complete [KWin Wayland package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/kwin.md)
   now cross-builds with the full feature set and a payload that matches the
   common sysroot file for file. On Orange Pi Zero 3W (A733) it passes a
@@ -507,17 +508,27 @@ on every board in the hardware catalog.
   with LLD and passes the previously linked consumer on CM5. The installed
   [Plasma shell check](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/plasma-desktop)
   passes the default desktop and panel models, a 320x256 containment pixel check,
-  30 seconds of responsiveness, and normal shell exit. All 20 temperature
-  samples remain between 63.659 and 66.956 degrees Celsius. This bounded
-  virtual-output run does not establish a full login or physical HDMI output.
-  The installed Xwayland runtime service and private Xauthority checks pass.
-  The full session reaches the panel models, then fails BO allocation and
-  responsiveness checks. A failed render job also retains its buffers until reboot.
+  30 seconds of responsiveness, and normal shell exit. The installed
+  [full-session check](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/plasma-session)
+  also passes twice with Qtbase 6.12.0nb2 and kernel
+  `ecb7a4258aa2263da18088f7ee0a76233ffce92f`. It reaches readiness in 18.408
+  and 15.661 seconds from controller start. Both runs retain the five-second
+  query deadline, 30 seconds of liveness and normal logout in about two seconds.
+  BO usage returns to its initial value without allocation failures. Recorded
+  temperature stays below 58 degrees Celsius without undervoltage or throttling.
+  The installed Qt process matrix passes 320 child exits and 16 expected failed
+  launches. Its source repair prevents detached launch from leaving forkfd
+  state in the parent without the required SIGCHLD handler. The runs use
+  ordinary installed libraries without private QtCore or tracing.
+  These short virtual-output sessions do not establish login-manager operation,
+  physical input, HDMI, hotplug, remote display or long-duration stability.
+  An earlier instrumented kernel reported a separate CL completion failure
+  and retained BO until reboot. The successful runs do not establish its cause.
   Read-only [BO diagnostics](ember/boot/bcm2712-v3d-bo-stats.md) now distinguish
   budget refusal, DMA allocation, and handle publication failures. Bounded CL
   error snapshots report the correct PCS register and render-list position.
-  Their source contracts and complete GCC16 kernel build pass. Hardware
-  correlation and a stable full session remain pending; quotas are unchanged.
+  Their source contracts and complete GCC16 kernel build pass. The earlier
+  CL failure still needs hardware correlation; long-run recovery is unaccepted.
   The [native scatter/gather allocator](ember/boot/bcm2712-v3d-render.md) now
   passes CM5 allocations through 16 MiB, three held buffers, and the existing
   TFU/CSD/sync/CL checks. The updated Mesa package passes four V3D EGL

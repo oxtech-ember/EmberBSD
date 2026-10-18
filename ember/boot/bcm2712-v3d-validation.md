@@ -10,7 +10,10 @@ passed a separate physical acceptance. The subsequent
 The [native CL path](bcm2712-v3d-gl.md) then passed 325 userspace bin/render
 pairs with 1,331,200 verified pixels. The subsequent
 [Mesa GLES, desktop OpenGL and PRIME checks](bcm2712-v3d-gl.md#physical-mesa-acceptance-2026-10-11)
-passed on CM5. HDMI scanout and accelerated Plasma remain separate acceptance gates.
+passed on CM5. The installed Qtbase 6.12.0nb2 runtime also passes
+[two complete accelerated Plasma sessions](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/plasma-session)
+on a virtual output. Physical HDMI scanout, hotplug and long-duration stability
+remain separate acceptance gates.
 
 The 2026-10-11 review reproduced false success in the interrupt and fault
 experiments. It also found that the combined DMA/queue configuration continued
