@@ -1479,15 +1479,20 @@ rge_newbuf(struct rge_queues *q, int idx)
 static int
 rge_rx_list_init(struct rge_queues *q)
 {
+	struct rge_softc *sc = q->q_sc;
 	unsigned i;
+	int error;
 
 	memset(q->q_rx.rge_rx_list, 0, RGE_RX_LIST_SZ);
 
 	for (i = 0; i < RGE_RX_LIST_CNT; i++) {
 		q->q_rx.rge_rxq[i].rxq_mbuf = NULL;
-		if (rge_newbuf(q, i) != 0) {
+		if ((error = rge_newbuf(q, i)) != 0) {
+			aprint_error_dev(sc->sc_dev,
+			    "can't initialize RX buffer %u (size %u): error %d\n",
+			    i, rge_rx_buffer_size(sc), error);
 			rge_rx_list_fini(q);
-			return (ENOBUFS);
+			return error;
 		}
 	}
 

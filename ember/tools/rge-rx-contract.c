@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -106,11 +107,31 @@ static struct rge_softc *active_sc;
 static uint16_t rxmax, eee_timer;
 static unsigned int spl_entries, spl_exits;
 static int ioctl_common_error;
+static unsigned int diagnostic_calls;
+static char diagnostic[160];
 
 struct memory { void *cpu; size_t size; bus_addr_t bus; bool allocated, mapped; };
 static struct memory memory[2];
 static bool failing(void) { return ++step == fail_at; }
-static void aprint_error_dev(device_t d, const char *s) { (void)d; (void)s; }
+static void aprint_error_dev(device_t d, const char *s, ...)
+{
+	(void)d;
+	va_list args;
+	va_start(args,s);
+	CHECK(vsnprintf(diagnostic,sizeof(diagnostic),s,args)>0);
+	va_end(args);
+	diagnostic_calls++;
+}
+static void check_init_diagnostic(unsigned int wanted_index,
+    unsigned int wanted_size,int wanted_error)
+{
+	unsigned int index,size; int error;
+	CHECK(diagnostic_calls==1);
+	/* Numeric payload matters; prose is not an asserted protocol. */
+	CHECK(sscanf(diagnostic,"%*[^0-9]%u%*[^0-9]%u%*[^0-9]%d",
+	    &index,&size,&error)==3);
+	CHECK(index==wanted_index && size==wanted_size && error==wanted_error);
+}
 static struct memory *find_mem(bus_addr_t addr)
 {
 	for (unsigned int i=0;i<2;i++)
@@ -316,6 +337,7 @@ static void fixture(struct rge_softc *sc, struct rge_queues *q)
 	mbuf_calls=mbuf_fail_at=mbuf_fail_kind=data_load_calls=data_fault_at=data_fault_kind=0;
 	received=chip_calls=enables=prefix_writes=0; rxmax=eee_timer=0; active_sc=sc;
 	spl_entries=spl_exits=0; ioctl_common_error=0;
+	diagnostic_calls=0; diagnostic[0]='\0';
 	sc->sc_ec.ec_if.if_softc=sc; sc->sc_ec.ec_if.if_mtu=1500; sc->sc_ec.ec_if.if_percpuq=sc;
 	CHECK(rge_jumbo_capabilities(sc)==ETHERCAP_JUMBO_MTU);
 }
@@ -362,16 +384,20 @@ static void rx_init_failures(void)
 			mbuf_fail_at=mbuf_fail_kind=data_fault_at=data_fault_kind=0;
 			if(kind<=3) { mbuf_fail_at=at; mbuf_fail_kind=kind; }
 			else { data_fault_at=at; data_fault_kind=kind-3; }
-			prefix_writes=chip_calls=enables=0;
-			CHECK(rge_init(&sc.sc_ec.ec_if)==ENOBUFS);
+			prefix_writes=chip_calls=enables=diagnostic_calls=0;
+			int expected=kind<=3 ? ENOBUFS : (kind==4 ? ENOMEM : EFBIG);
+			CHECK(rge_init(&sc.sc_ec.ec_if)==expected);
 			CHECK(prefix_writes==2 && chip_calls==0 && enables==0);
 			CHECK(!(sc.sc_ec.ec_if.if_flags&IFF_RUNNING));
 			CHECK(mbufs==0 && external==0 && loaded_live==2);
 			CHECK(!q.q_rx.rge_rx_sparemap->loaded);
+			check_init_diagnostic(at-1,2046,expected);
 		}
 	}
 	mbuf_fail_at=data_fault_at=0;
+	diagnostic_calls=0;
 	CHECK(rge_init(&sc.sc_ec.ec_if)==0);
+	CHECK(diagnostic_calls==0);
 	rge_stop(&sc.sc_ec.ec_if,1);
 	CHECK(mbufs==0 && external==0 && loaded_live==2);
 	CHECK(rge_deallocmem(&sc)==0 && loaded_live==0 && maps_live==0);
@@ -453,6 +479,7 @@ static void rx_geometry_and_reuse(void)
 			}
 			mbuf_fail_at=data_fault_at=0;
 			for(unsigned int i=0;i<RGE_RX_LIST_CNT+3;i++) receive_one(&sc,18,whole,true);
+			CHECK(diagnostic_calls==0); /* No per-packet failure log flood. */
 		}
 		sc.sc_ec.ec_if.if_mtu=9001; prefix_writes=chip_calls=enables=0;
 		CHECK(rge_init(&sc.sc_ec.ec_if)==EINVAL && prefix_writes==1 && chip_calls==0 && enables==0);
@@ -485,11 +512,29 @@ static void rx_ioctl_failure(void)
 	CHECK(mbufs==0 && external==0);
 	CHECK(rge_deallocmem(&sc)==0 && maps_live==0 && loaded_live==0);
 }
+
+static void rx_init_map_error(void)
+{
+	struct rge_softc sc; struct rge_queues q;
+	fixture(&sc,&q); CHECK(rge_allocmem(&sc)==0);
+	sc.sc_ec.ec_if.if_mtu=9000;
+	data_fault_at=18; data_fault_kind=1;
+	CHECK(rge_init(&sc.sc_ec.ec_if)==ENOMEM);
+	CHECK(prefix_writes==2 && chip_calls==0 && enables==0);
+	CHECK(!(sc.sc_ec.ec_if.if_flags&IFF_RUNNING));
+	CHECK(mbufs==0 && external==0 && loaded_live==2);
+	CHECK(!q.q_rx.rge_rx_sparemap->loaded);
+	check_init_diagnostic(17,9216,ENOMEM);
+	CHECK(rge_deallocmem(&sc)==0 && maps_live==0 && loaded_live==0);
+}
 int main(int argc, char **argv)
 
 {
 	struct rge_softc sc; struct rge_queues q;
 	CHECK(argc==2);
+	if(strcmp(argv[1],"init-map-error")==0) {
+		rx_init_map_error(); printf("rge-rx: %u checks, 0 failures\n",checks);return 0;
+	}
 	if(strcmp(argv[1],"jumbo")==0 || strcmp(argv[1],"init-failure")==0 || strcmp(argv[1],"retain")==0) {
 		rx_tests(argv[1]); printf("rge-rx: %u checks, 0 failures\n",checks);return 0;
 	}
@@ -521,6 +566,7 @@ int main(int argc, char **argv)
 		rx_tests("jumbo"); rx_tests("init-failure"); rx_tests("retain");
 		rx_init_failures(); rx_geometry_and_reuse();
 		rx_ioctl_failure();
+		rx_init_map_error();
 	}
 	printf("rge-rx actual source: %u checks, 0 failures\n",checks); return 0;
 }

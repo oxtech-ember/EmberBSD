@@ -1157,8 +1157,11 @@ The base system shell is unchanged.
   external buffers and a spare DMA map. Resource failures retain the old RX buffer;
   invalid receive lengths are rejected before delivery. Default MTU 1500 and
   other ASIC limits remain unchanged. The expanded actual-source contracts pass
-  host analysis and sanitizers. Target build and physical jumbo acceptance remain
-  pending. See the [CIX board limits](ember/boards/orange-pi-6-plus.md).
+  host analysis and sanitizers. One physical MTU 9000 bring-up returned ENOBUFS;
+  jumbo traffic remains unqualified. New source diagnostics preserve the original
+  RX initialization error and report the failing index and requested size.
+  Those diagnostics still need target build and native acceptance. See the
+  [CIX board limits](ember/boards/orange-pi-6-plus.md).
 - **ACPI xHCI root buses:** the frontend skips a logical USB bus when its
   initialized root-hub descriptor has no ports. Actual-source contracts cover
   USB2-only, USB3-only, mixed and empty profiles. This source-only fix avoids
