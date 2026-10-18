@@ -80,6 +80,10 @@ def main():
     mmu_env.setdefault("NPU_MMU_CFLAGS", os.environ.get("NPU_TEST_CFLAGS", ""))
     subprocess.run([sys.executable, str(root / "ember/tools/a733-npu-mmu-contract.py")],
                    env=mmu_env, check=True)
+    dma_env = dict(os.environ, NPU_DMA_SOURCE_ROOT=str(source))
+    dma_env.setdefault("NPU_DMA_CFLAGS", os.environ.get("NPU_TEST_CFLAGS", ""))
+    subprocess.run([sys.executable, str(root / "ember/tools/a733-npu-dma-contract.py")],
+                   env=dma_env, check=True)
     print("PASS: Zero 3W NPU DT scope and source controls")
 
 

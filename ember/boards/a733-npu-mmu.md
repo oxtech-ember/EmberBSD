@@ -2,7 +2,8 @@
 
 `sun60i_a733_npu_mmu_build()` encodes one CPU-owned VIP page-table image.
 It does not allocate DMA memory, access registers, attach an IRQ or change the
-VIP ioctl ABI. No production consumer calls this helper yet.
+VIP ioctl ABI. The native DMA context calls this helper during CPU preparation.
+The NPU device driver does not call the context yet.
 
 The initial native profile uses VA32 and PA32. It maps 1 to 64 consecutive
 virtual pages in one 16 MiB MTLB slot. The physical pages can be noncontiguous.
@@ -70,3 +71,35 @@ The next consumer must own low-address DMA allocations, map and synchronize
 both table images, retain allocations after the first hardware attempt, and
 prove fresh clock/power ownership before MMIO. IRQ event and command-terminal
 evidence must prove execution. An idle bit alone is not that proof.
+
+## Native DMA context
+
+`sun60i_a733_npu_dma_prepare()` owns three low32 allocations: a 4096-byte root,
+a 16384-byte STLB and a 4096-byte command page. Its opaque context accepts a
+trusted stable kernel command image of 8 to 4096 bytes, in 8-byte units.
+It copies the image and zero-fills the remaining command page. It does not
+validate command semantics. The sole payload mapping is read-only at device
+VA `0x01001000`. Model and data buffers are outside this first profile.
+
+The context uses `bus_dmatag_subregion()`, the native memory/map API and loaded
+`ds_addr` values. It requires exactly one allocation segment and one complete
+loaded segment per buffer. It rejects bounce maps, non-exact lengths, alignment
+errors, high addresses and overlap between any buffer pair. It propagates tag
+errors. It has no unrestricted allocation fallback. Tag cleanup uses
+`bus_dmatag_destroy()` even when the native API returns a referenced parent tag.
+A prepare failure preserves the caller's output and unwinds owned resources in
+reverse order. The info API returns values and exposes no mutable CPU pointer.
+
+`sun60i_a733_npu_dma_retain()` makes the lifetime sticky before the first
+`BUS_DMASYNC_PREWRITE` operation. It synchronizes the complete three maps.
+Call it before any attempt to publish a root address to hardware. A second
+retain returns `EBUSY` without more syncs. Destroy also returns `EBUSY` after
+retain, including after a failed hardware write or timeout. This code has no
+reset, stop or retained-release path. The caller serializes all context access.
+The context grants no clock, power, IRQ, MMIO or execution readiness.
+
+Run `python3 ember/tools/a733-npu-dma-contract.py` for the actual-source lifetime
+contract. Its variables are `CC`, `NPU_DMA_CFLAGS` and `NPU_DMA_SOURCE_ROOT`.
+The existing NPU source dispatcher also runs it. Fault controls cover all
+acquisition steps, strict map shape, bounce/range/alias rejection, native tag
+references, byte images, sync order and retained cleanup refusal.
