@@ -506,9 +506,8 @@ on every board in the hardware catalog.
   [OpenGL ES/V3D compositing](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
   under an ordinary user on a virtual output. Plasma Desktop 6.8.0 also
   selects V3D OpenGL 3.1. libudev now classifies its DRM render node correctly.
-  The complete MesaLib 26.2.4nb8 package repairs an uninitialized V3D cache
-  mutex identified by an earlier Plasma core. It preserves symbol versions
-  with LLD and passes the previously linked consumer on CM5. The installed
+  The complete MesaLib 26.2.4nb8 package initializes the V3D cache mutex and
+  preserves symbol versions with LLD. The installed
   [Plasma shell check](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/plasma-desktop)
   passes the default desktop and panel models, a 320x256 containment pixel check,
   30 seconds of responsiveness, and normal shell exit. The installed
@@ -525,13 +524,12 @@ on every board in the hardware catalog.
   ordinary installed libraries without private QtCore or tracing.
   These short virtual-output sessions do not establish login-manager operation,
   physical input, HDMI, hotplug, remote display or long-duration stability.
-  An earlier instrumented kernel reported a separate CL completion failure
-  and retained BO until reboot. The successful runs do not establish its cause.
+  CL completion recovery remains unqualified. An uncertain GPU job retains
+  its BO until reboot; short successful sessions do not establish its cause.
   Read-only [BO diagnostics](ember/boot/bcm2712-v3d-bo-stats.md) now distinguish
   budget refusal, DMA allocation, and handle publication failures. Bounded CL
   error snapshots report the correct PCS register and render-list position.
-  Their source contracts and complete GCC16 kernel build pass. The earlier
-  CL failure still needs hardware correlation; long-run recovery is unaccepted.
+  Their source contracts and complete GCC16 kernel build pass.
   The [native scatter/gather allocator](ember/boot/bcm2712-v3d-render.md) now
   passes CM5 allocations through 16 MiB, three held buffers, and the existing
   TFU/CSD/sync/CL checks. The updated Mesa package passes four V3D EGL
@@ -539,30 +537,22 @@ on every board in the hardware catalog.
   NIR cases remain disabled. Qt's mutex regression holds three descriptors
   under 145 threads. KDED also passes its installed runtime-helper check.
   KCoreAddons nb3 limits native watches and preserves recursive polling events.
-  Its unchanged CM5 consumer now uses 519 descriptors for 1200 paths, then
-  returns to four after cleanup; nb2 exhausted its limit of 1024.
+  Its CM5 consumer uses 519 descriptors for 1200 paths and returns to four
+  after cleanup.
   Full-session stability, physical HDMI and hotplug still need acceptance.
   The fixed
   [Milou](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit/tests/milou)
   package passes its fresh-board acceptance on the same board.
-  plasma-workspace 6.7.5 itself now cross-builds completely (BROKEN
-  removed, the Wayland KWin package replaces kwin-x11, 6121-file payload
-  matching the sysroot) together with its full dependency chain:
-  Poppler with boost-libs and NSS ported for cross building, exiv2,
-  libkexiv2, phonon-qt6/PulseAudio, kirigami-addons, kio-extras, kpty,
-  syntax-highlighting with a native indexer, kded, taglib and the
-  kfilemetadata extractors. Orange Pi Zero 3W carries the complete set
-  (365 packages): plasmashell, krunner, ksmserver and startplasma-wayland
-  are installed with clean dynamic dependencies, and the private KWin
-  session acceptance still passes. A startplasma session on the virtual
-  output remains a separate acceptance step for that A733 package set.
-  CM5 now has complete Desktop and Workspace 6.8.0 packages, including the
-  separate `org.kde.plasma.desktop` shell and its compiled plugins.
+  Complete Desktop and Workspace packages include the separate
+  `org.kde.plasma.desktop` shell, compiled plugins, native generators and
+  a Wayland KWin dependency. The A733 package set still needs complete
+  accelerated-session acceptance; CM5 results do not qualify that platform.
   [Desktop package preparation](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-package-set.md)
   now covers Activities, current Xwayland/libei/basu, correct target XKB paths
   and native QtDBus generators that retain KWin's complex property signatures.
-  Offline package and full-session runner host controls pass; board startup,
-  visible desktop content and normal full-session logout still require acceptance.
+  Offline package and full-session runner host controls pass. The CM5
+  installed session above qualifies startup, content and normal logout on
+  a virtual output; physical display and graphical login remain unaccepted.
   Its current xdg-user-dirs 0.20
   dependency now cross-builds and passes private-profile checks on CM5.
   [Current desktop providers](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-providers.md)
