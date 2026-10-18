@@ -122,6 +122,28 @@ acquisition failures. The full manual kernel links with GCC16.2.
 The physical CPU preparation fixture below also exercises native allocation.
 Device DMA data correctness, firmware readiness and video queues remain unqualified.
 
+## Fixed bootstrap memory reserve
+
+`cixvpu_fw_plan_build_boot_rpc` selects a separate one-core protocol-3.5 plan.
+The ordinary builder keeps `boot_rpc` zero. The selected plan uses value one.
+It maps 32 zeroed `RPC_DATA` pages at firmware VA `0x20000000` and reserves
+`[0x20000000,0x24000000)` for the observed 64 MiB logical capacity.
+Only the initial 128 KiB has physical backing. One extra leaf links root slot128.
+The observed image shape has 289 owners and 285 mappings in this plan.
+
+Unused leaf and root entries stay invalid zero. This differs from the vendor
+NOACCESS dummy-page encoding; identical fault behavior is not claimed.
+CPU preparation rebuilds the selected plan and compares its semantic fields
+before writes. It checks all table entries, zeroed data and unique loaded bus
+addresses. Initial data PREWRITE|PREREAD precedes leaf and root PREWRITE.
+Never-exposed cleanup and irreversible exposed hold keep their existing rules.
+
+The planner contract passes 678050 checks. Actual preparation passes 13943467
+checks with GCC16 path analysis, configured Cppcheck/CSA and ASan/UBSan.
+Independent reviews and causal runtime mutations cover the new boundaries.
+The native attachment does not select this plan yet. No active RPC response,
+runtime allocation, resize, free, PTE change or physical coherency is accepted.
+
 ## CPU preparation and opaque ownership
 
 `cixvpu_prepare_cpu` takes an existing CPU-only allocator owner, an immutable

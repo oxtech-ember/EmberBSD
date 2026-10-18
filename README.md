@@ -230,62 +230,30 @@ on every board in the hardware catalog.
   [results](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-media/rtp/results.md)
   do not establish hardware-codec, RTSP or production-network performance.
 - **CIX P1 codec foundations:** original [firmware, layout, message-ring and MMU helpers](ember/boot/cix-vpu.md)
-  pass GCC16 source contracts. The firmware, message-ring and MMU units also
-  pass AArch64 VM checks. Ports cross-builds the
-  actual FFmpeg M2M backend and GStreamer V4L2 plugin; missing-device and
-  semaphore cleanup checks pass in EmberBSD. A checked ACPI attachment validates
-  the codec's resource description. Native clock/reset providers, shared ACPI
-  power ownership and a bounded resource probe have source contracts.
-  The default attachment queries resources without activating the codec. DMA, firmware execution
-  and M2M queues are unfinished. Hardware H.265 is unverified.
-  The pure layout planner checks unique backing owners and aliases before
-  allocation. It does not allocate DMA pages, load firmware or execute the codec.
-  A separate native allocation helper owns validated, disjoint bus pages and
-  reverses partial failures. A manual [CPU-only allocation profile](ember/boot/cix-vpu.md#manual-cpu-only-allocation-probe)
-  reads a selected local image after root mounts, then checks a one-core page
-  set and reports checked cleanup. Its source contracts and GCC16 kernel link pass; physical
-  allocation remains unverified. No address is published to the VPU.
-  A separate [CPU preparation helper](ember/boot/cix-vpu.md#cpu-preparation-and-opaque-ownership)
-  copies text and verifies CPU page tables before moving ownership. Its source
-  checks pass; no DMA synchronization or hardware handoff occurs.
-  An explicit [manual preparation profile](ember/boot/cix-vpu.md#manual-cpu-preparation-probe)
-  calls that helper after root mounts and reports checked cleanup. Its attachment
-  source checks pass; physical preparation remains unverified.
-  The [initial DMA synchronization and lifetime guard](ember/boot/cix-vpu.md#initial-dma-synchronization-and-lifetime-guard)
-  pass actual-source checks, including separate modeled bounce backing and
-  rejection of release after recorded exposure. Separate [typed boot helpers](ember/boot/cix-vpu.md#typed-boot-preparation-and-receive)
-  seed a fixed PING, mark exposure before returning the root word and accept
-  copied SWITCHED_IN/PONG messages from bounded snapshots. Actual-source checks
-  pass. An explicit [manual firmware trial](ember/boot/cix-vpu.md#manual-firmware-handshake-trial)
-  invokes them after root mounts. Physical DMA, hardware publication and runtime
-  teardown remain unverified.
+  pass GCC16 source contracts. Firmware parsing, rings and MMU helpers also
+  pass AArch64 VM checks. Native ACPI clock/reset providers and shared power
+  ownership have bounded source contracts. Physical diagnostics enable and
+  disable clock67, read VPU identity and validate a fixed hardware profile.
+  CPU preparation on the board allocates and audits 256 pages, copies the
+  pinned local image, builds page tables and completes checked cleanup.
+  A separate [manual boot epoch](ember/boot/cix-vpu.md#manual-firmware-handshake-trial)
+  publishes its root and observes an IRQ plus a memory-allocation request.
+  It retains every exposed owner and masks the IRQ at the terminal result.
+  SWITCHED_IN, PONG, firmware readiness and hardware encoding remain unqualified.
+  The [fixed bootstrap reserve](ember/boot/cix-vpu.md#fixed-bootstrap-memory-reserve)
+  adds a checked plan and CPU/DMA preparation for the observed initial request.
+  It maps 128 KiB of real pages and reserves 64 MiB of virtual capacity.
+  Source tests verify all mapped entries, invalid tail entries, synchronization
+  order and lifetime guards. The native boot attachment does not select it yet;
+  it does not implement an active memory response or qualify physical DMA.
   [Initially masked ARM PIC registration](ember/boot/cix-vpu.md#initially-masked-native-irq-registration)
-  lets a consumer publish its context before enabling an exclusive interrupt.
-  Actual-source ordering checks pass; physical VPU IRQ delivery is pending.
-  A [dedicated native boot epoch](ember/boot/cix-vpu.md#dedicated-native-boot-epoch-source)
-  retains ownership after root publication and separates rollback from held outcomes.
-  Source fault checks pass. The manual attachment preserves both moved and
-  caller-retained owners after every attempt. Hardware execution remains pending.
-  A separate [native hardware profile](ember/boot/cix-platform.md#manual-native-hardware-profile)
-  adds seven raw VPU observations under the same clock/reset/power claims.
-  Source checks pass; physical harvesting and repair-state observation is pending.
-  ARM ACPI DMA tags preserve [IORT named-component address limits](ember/boot/cix-platform.md#arm-acpi-dma-address-limits)
-  through the device's namespace handle. Actual-source checks cover the fix;
-  physical stream routing still needs qualification.
-  A checked SCMI discovery wire helper validates replies, ordering and bounded
-  waits. An explicit diagnostic ACPI binding sends one BASE-version request
-  with a boot-long channel lease. One physical trial returns BASE version 2.0
-  with the expected header, length and successful firmware status. A separate
-  one-request boot returns CLOCK version 2.0 with valid framing and status.
-  A further single-request boot reports 273 clocks and eight asynchronous slots.
-  Clock ID 67 is in range. A separate rate read returns valid zero-Hertz
-  telemetry. The entity reply omits the CLOCK 2.0 enable-delay field and stays
-  rejected. Its raw name prefix spells `vpu_apbclk`. Separate fixed three-BASE
-  and five-request mixed read-only boots pass with unchanged ACK status. The
-  mixed batch confirms message7 availability. A separate native probe enables
-  and disables ID67, reads VPU ID `0x56648002` with four cores and four slots,
-  and completes checked reset/clock/power cleanup. Waveform, DMA, firmware
-  execution and general runtime clock control remain unqualified.
+  publishes the consumer context before enabling an exclusive interrupt.
+  ARM ACPI tags retain [IORT address limits](ember/boot/cix-platform.md#arm-acpi-dma-address-limits).
+  Physical stream routing, functional clock271 and electrical waveforms remain
+  outside these checks. Default EMBER64 keeps active firmware boot disabled.
+  Ports cross-builds the actual FFmpeg M2M backend and GStreamer V4L2 plugin.
+  Missing-device and semaphore cleanup checks pass in EmberBSD; operational
+  M2M queues, codec jobs and runtime DMA teardown remain unfinished.
 - **Four H.265 views in Qt:** the [Qt Multimedia CPU profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media/qt-four-streams)
   cross-builds Qt 6.12 with GCC16 and the common FFmpeg9 provider for amd64.
   The [four-player example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/media/qt-four-streams)
