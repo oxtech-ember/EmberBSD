@@ -1576,9 +1576,60 @@ static void boot_api_tests(void)
 #endif
 
 #endif
+#if defined(CIXVPU_PREPARE_API) && defined(CIXVPU_FW_PLAN_FRAME_ADDRESS)
+/* Ordinary preparation must never erase an unsupported slot request. */
+static void closed_slot_profile_tests(void)
+{
+    const struct cixvpu_fw_slot_request request = {2, 4, 4097, 2051, 4097};
+    struct cixvpu_fw_plan base, slots;
+    struct cixvpu_dma *owner = rpc_reserve_begin(&base);
+    static uint8_t canary[4096];
+    memset(canary, 0xa5, sizeof(canary));
+    CHECK(cixvpu_fw_plan_build_frame_slots(rpc_image, sizeof(rpc_image), 1,
+        &request, &slots) == 0);
+    CHECK(cixvpu_dma_free(&owner) == 0);
+    reset();
+    CHECK(cixvpu_dma_alloc(&tag32, &tag64, &slots, &owner) == EINVAL);
+    CHECK(owner == NULL && native_calls == 0 && live_kmem == 0 && depth == 0);
+    for (unsigned int boot = 0; boot < 2; boot++) {
+        for (unsigned int fault = 0; fault < 9; fault++) {
+            owner = rpc_reserve_begin(&base);
+            struct cixvpu_dma *saved = owner;
+            struct cixvpu_prepared *out = NULL;
+            struct cixvpu_fw_plan bad = base;
+            if (fault == 0) { bad.slots_enabled = 1; bad.slots = request; }
+            if (fault == 1) bad = slots; /* Valid but unsupported profile. */
+            if (fault == 2) bad.slots_enabled = UINT32_MAX;
+            if (fault == 3) bad.slots.width = 2;
+            if (fault == 4) bad.slots.height = 4;
+            if (fault == 5) bad.slots.stride_y = 4097;
+            if (fault == 6) bad.slots.stride_uv = 2051;
+            if (fault == 7) bad.slots.bitstream_bytes = 4097;
+            if (fault == 8) bad.slots = request; /* Disabled with all data set. */
+            unsigned int calls = native_calls;
+            int error = boot ? cixvpu_prepare_boot_cpu(&owner, &bad, rpc_image,
+                sizeof(rpc_image), fixture_pin, &out) :
+                cixvpu_prepare_cpu(&owner, &bad, rpc_image, sizeof(rpc_image),
+                fixture_pin, &out);
+            CHECK(error == EINVAL && owner == saved && out == NULL);
+            CHECK(hashes == 0 && meta_calls == 0 && page_calls == 0 &&
+                map_calls == 0 && link_calls == 0 && encode_calls == 0 &&
+                native_calls == calls && owner->phase == CIXVPU_DMA_ALLOC &&
+                !owner->ever_visible);
+            for (unsigned int i = 0; i < 390; i++)
+                CHECK(memcmp(resources[i].kva, canary, 4096) == 0);
+            CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
+        }
+    }
+}
+#endif
 int main(void)
+
 {
 #ifdef CIXVPU_PREPARE_API
+#ifdef CIXVPU_FW_PLAN_FRAME_ADDRESS
+    closed_slot_profile_tests();
+#endif
     debugparam_tests(); success_tests(); failure_tests(); handle_alias_tests(); argument_tests(); boundary_tests();
 #ifdef CIXVPU_SYNC_API
     sync_success_tests(); sync_failure_tests(); sync_owner_tests(); exposure_tests();

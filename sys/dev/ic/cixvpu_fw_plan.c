@@ -21,6 +21,53 @@
 #define PLAN_COMMON_BASE UINT32_C(0x10079000)
 #define PLAN_PRINT_BASE UINT32_C(0x10100000)
 #define PLAN_COMMON_LEAF UINT32_C(0x10000000)
+#define PLAN_LEAF_BYTES UINT32_C(0x00400000)
+
+/* All products and rounded spans are checked before narrowing to uint32_t. */
+static int
+cixvpu_fw_slots(const struct cixvpu_fw_slot_request *r, uint32_t enabled,
+    struct cixvpu_fw_slot_span spans[3])
+{
+	uint64_t bytes[3];
+	unsigned int i;
+
+	if (enabled > 1)
+		return EINVAL;
+	if (enabled == 0) {
+		if (r->width != 0 || r->height != 0 || r->stride_y != 0 ||
+		    r->stride_uv != 0 || r->bitstream_bytes != 0)
+			return EINVAL;
+		for (i = 0; i < 3; i++)
+			spans[i] = (struct cixvpu_fw_slot_span){ 0 };
+		return 0;
+	}
+	if (r->width == 0 || r->height == 0 || r->width > 65535 ||
+	    r->height > 65535 || (r->width & 1) != 0 ||
+	    (r->height & 1) != 0 || r->stride_y < r->width ||
+	    r->stride_uv < r->width || r->stride_y > INT32_MAX ||
+	    r->stride_uv > INT32_MAX || r->bitstream_bytes == 0)
+		return EINVAL;
+	bytes[0] = (uint64_t)r->stride_y * r->height;
+	bytes[1] = (uint64_t)r->stride_uv * (r->height / 2);
+	bytes[2] = r->bitstream_bytes;
+	for (i = 0; i < 3; i++) {
+		uint64_t rounded;
+
+		rounded = (bytes[i] + CIXVPU_FW_PAGE_SIZE - 1) /
+		    CIXVPU_FW_PAGE_SIZE * CIXVPU_FW_PAGE_SIZE;
+		if (rounded > PLAN_LEAF_BYTES)
+			return E2BIG;
+		spans[i] = (struct cixvpu_fw_slot_span){ 0, (uint32_t)bytes[i],
+		    (uint32_t)rounded, 0,
+		    (uint32_t)(rounded / CIXVPU_FW_PAGE_SIZE) };
+	}
+	if (spans[0].rounded_bytes > PLAN_LEAF_BYTES - spans[1].rounded_bytes)
+		return E2BIG;
+	spans[0].address = CIXVPU_FW_PLAN_FRAME_ADDRESS;
+	spans[1].address = spans[0].address + spans[0].rounded_bytes;
+	spans[2].address = CIXVPU_FW_PLAN_BITSTREAM_ADDRESS;
+	return 0;
+}
 
 _Static_assert(CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_SIZE % CIXVPU_FW_PAGE_SIZE == 0 &&
     CIXVPU_FW_PLAN_BOOT_RPC_RESIZE_SIZE % CIXVPU_FW_PAGE_SIZE == 0 &&
@@ -38,15 +85,36 @@ _Static_assert(CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS ==
     CIXVPU_FW_PLAN_BOOT_RPC_SECOND_SIZE <= UINT32_C(0x70000000),
     "second object must follow the first reserve inside the v3 protected VA");
 
+_Static_assert(CIXVPU_FW_PLAN_FRAME_ADDRESS % PLAN_LEAF_BYTES == 0 &&
+    CIXVPU_FW_PLAN_FRAME_ADDRESS >= UINT32_C(0x70000000) &&
+    CIXVPU_FW_PLAN_FRAME_ADDRESS < UINT32_C(0xf0000000) &&
+    PLAN_LEAF_BYTES <= UINT32_C(0xf0000000) - CIXVPU_FW_PLAN_FRAME_ADDRESS &&
+    CIXVPU_FW_PLAN_BITSTREAM_ADDRESS % PLAN_LEAF_BYTES == 0 &&
+    CIXVPU_FW_PLAN_BITSTREAM_ADDRESS >=
+    CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS + CIXVPU_FW_PLAN_BOOT_RPC_CAPACITY &&
+    CIXVPU_FW_PLAN_BITSTREAM_ADDRESS >=
+    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS + CIXVPU_FW_PLAN_BOOT_RPC_SECOND_SIZE &&
+    CIXVPU_FW_PLAN_BITSTREAM_ADDRESS < UINT32_C(0x70000000) &&
+    PLAN_LEAF_BYTES <= UINT32_C(0x70000000) - CIXVPU_FW_PLAN_BITSTREAM_ADDRESS,
+    "closed slot leaves must fit their apertures and exclude both RPC objects");
+
 /* Recheck metadata on every public call, before any bitmap or index use. */
 static int
 cixvpu_fw_plan_check(const struct cixvpu_fw_info *info, unsigned int cores,
-    uint32_t boot_rpc, struct cixvpu_fw_plan *checked)
+    uint32_t boot_rpc, uint32_t slots_enabled,
+    const struct cixvpu_fw_slot_request *slots, struct cixvpu_fw_plan *checked)
 {
+	struct cixvpu_fw_slot_span spans[3];
 	uint32_t text_pages, shared_pages, bss_end, first, private_pages = 0;
 	uint32_t i;
 	uint64_t backing, mappings;
+	int error;
 
+	error = cixvpu_fw_slots(slots, slots_enabled, spans);
+	if (error != 0)
+		return error;
+	if (slots_enabled != 0 && boot_rpc != 1)
+		return EINVAL;
 	if (boot_rpc > 1 || (boot_rpc != 0 &&
 	    (cores != 1 || info->minor != 5)))
 		return EINVAL;
@@ -97,6 +165,11 @@ cixvpu_fw_plan_check(const struct cixvpu_fw_info *info, unsigned int cores,
 	    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES + 2);
 	mappings += (uint64_t)boot_rpc * (CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES +
 	    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES);
+	for (i = 0; i < 3; i++) {
+		backing += spans[i].pages;
+		mappings += spans[i].pages;
+	}
+	backing += 2 * slots_enabled;
 	if (backing > CIXVPU_FW_PLAN_MAX_PAGES || mappings > UINT32_MAX)
 		return E2BIG;
 	checked->info = *info;
@@ -104,6 +177,8 @@ cixvpu_fw_plan_check(const struct cixvpu_fw_info *info, unsigned int cores,
 	checked->boot_rpc = boot_rpc;
 	checked->backing_pages = (uint32_t)backing;
 	checked->mappings = (uint32_t)mappings;
+	checked->slots_enabled = slots_enabled;
+	checked->slots = *slots;
 	return 0;
 }
 
@@ -116,7 +191,7 @@ cixvpu_fw_plan_validate(const struct cixvpu_fw_plan *plan)
 	if (plan == NULL)
 		return EINVAL;
 	error = cixvpu_fw_plan_check(&plan->info, plan->cores, plan->boot_rpc,
-	    &checked);
+	    plan->slots_enabled, &plan->slots, &checked);
 	if (error != 0)
 		return error;
 	if (plan->backing_pages != checked.backing_pages ||
@@ -127,15 +202,18 @@ cixvpu_fw_plan_validate(const struct cixvpu_fw_plan *plan)
 
 static int
 cixvpu_fw_plan_build_profile(const void *image, size_t size,
-    unsigned int cores, uint32_t boot_rpc, struct cixvpu_fw_plan *out)
+    unsigned int cores, uint32_t boot_rpc,
+    const struct cixvpu_fw_slot_request *slots, struct cixvpu_fw_plan *out)
 {
+	const struct cixvpu_fw_slot_request empty = { 0 };
 	struct cixvpu_fw_info info;
 	struct cixvpu_fw_plan checked;
 	int error;
 
 	if (out == NULL || cixvpu_fw_parse(image, size, &info) != CIXVPU_FW_OK)
 		return EINVAL;
-	error = cixvpu_fw_plan_check(&info, cores, boot_rpc, &checked);
+	error = cixvpu_fw_plan_check(&info, cores, boot_rpc, slots != NULL,
+	    slots != NULL ? slots : &empty, &checked);
 	if (error != 0)
 		return error;
 	*out = checked;
@@ -147,7 +225,7 @@ cixvpu_fw_plan_build(const void *image, size_t size, unsigned int cores,
     struct cixvpu_fw_plan *out)
 {
 
-	return cixvpu_fw_plan_build_profile(image, size, cores, 0, out);
+	return cixvpu_fw_plan_build_profile(image, size, cores, 0, NULL, out);
 }
 
 int
@@ -155,7 +233,65 @@ cixvpu_fw_plan_build_boot_rpc(const void *image, size_t size, unsigned int cores
     struct cixvpu_fw_plan *out)
 {
 
-	return cixvpu_fw_plan_build_profile(image, size, cores, 1, out);
+	return cixvpu_fw_plan_build_profile(image, size, cores, 1, NULL, out);
+}
+
+static int
+cixvpu_fw_plan_overlap(const void *a, size_t as, const void *b, size_t bs)
+{
+	uintptr_t x = (uintptr_t)a, y = (uintptr_t)b;
+
+	return x <= y ? y - x < as : x - y < bs;
+}
+
+int
+cixvpu_fw_plan_build_frame_slots(const void *image, size_t size,
+    unsigned int cores, const struct cixvpu_fw_slot_request *request,
+    struct cixvpu_fw_plan *out)
+{
+
+	if (image == NULL || request == NULL || out == NULL ||
+	    CIXVPU_FW_HEADER_SIZE > UINTPTR_MAX - (uintptr_t)image ||
+	    sizeof(*request) > UINTPTR_MAX - (uintptr_t)request ||
+	    sizeof(*out) > UINTPTR_MAX - (uintptr_t)out ||
+	    cixvpu_fw_plan_overlap(out, sizeof(*out), image,
+	    CIXVPU_FW_HEADER_SIZE) ||
+	    cixvpu_fw_plan_overlap(out, sizeof(*out), request, sizeof(*request)))
+		return EINVAL;
+	return cixvpu_fw_plan_build_profile(image, size, cores, 1, request, out);
+}
+
+int
+cixvpu_fw_plan_slot(const struct cixvpu_fw_plan *plan, unsigned int id,
+    struct cixvpu_fw_slot_span *out)
+{
+	struct cixvpu_fw_slot_span spans[3];
+	uint32_t first;
+	unsigned int i;
+	int error;
+
+	if (plan == NULL || out == NULL ||
+	    sizeof(*out) > UINTPTR_MAX - (uintptr_t)out ||
+	    sizeof(*plan) > UINTPTR_MAX - (uintptr_t)plan ||
+	    cixvpu_fw_plan_overlap(plan, sizeof(*plan), out, sizeof(*out)))
+		return EINVAL;
+	error = cixvpu_fw_plan_validate(plan);
+	if (error != 0)
+		return error;
+	if (plan->slots_enabled == 0)
+		return ENOTSUP;
+	if (id > CIXVPU_FW_SLOT_BITSTREAM)
+		return ERANGE;
+	(void)cixvpu_fw_slots(&plan->slots, plan->slots_enabled, spans);
+	first = plan->info.text_pages + plan->cores * plan->info.private_pages +
+	    plan->info.shared_pages + PLAN_COMMON_PAGES + PLAN_PRINT_PAGES +
+	    CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES +
+	    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES;
+	for (i = 0; i < id; i++)
+		first += spans[i].pages;
+	spans[id].first_backing = first;
+	*out = spans[id];
+	return 0;
 }
 
 /* Called only after validation and an index bound check. */
@@ -165,14 +301,17 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 {
 	const struct cixvpu_fw_info *info = &plan->info;
 	struct cixvpu_fw_plan_page page = { 0 };
-	uint32_t shared, common, print, rpc, second, root;
+	struct cixvpu_fw_slot_span spans[3];
+	uint32_t shared, common, print, rpc, second, slots, root;
 
 	shared = info->text_pages + plan->cores * info->private_pages;
 	common = shared + info->shared_pages;
 	print = common + PLAN_COMMON_PAGES;
 	rpc = print + PLAN_PRINT_PAGES;
 	second = rpc + plan->boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES;
-	root = second + plan->boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES;
+	slots = second + plan->boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES;
+	(void)cixvpu_fw_slots(&plan->slots, plan->slots_enabled, spans);
+	root = slots + spans[0].pages + spans[1].pages + spans[2].pages;
 	page.backing_index = index;
 	page.core = CIXVPU_FW_PLAN_NO_CORE;
 	page.attribute = CIXVPU_MMU_PRIVATE;
@@ -204,9 +343,19 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 		page.role = CIXVPU_FW_PLAN_RPC_DATA;
 		page.ordinal = index - rpc;
 		page.attribute = CIXVPU_MMU_SHARED_RW;
-	} else if (index < root) {
+	} else if (index < slots) {
 		page.role = CIXVPU_FW_PLAN_RPC_SECOND_DATA;
 		page.ordinal = index - second;
+		page.attribute = CIXVPU_MMU_SHARED_RW;
+	} else if (index < root) {
+		uint32_t local, i;
+
+		local = index - slots;
+		for (i = 0; i < 2 && local >= spans[i].pages; i++)
+			local -= spans[i].pages;
+		page.role = i == 0 ? CIXVPU_FW_PLAN_FRAME_Y :
+		    i == 1 ? CIXVPU_FW_PLAN_FRAME_UV : CIXVPU_FW_PLAN_BITSTREAM;
+		page.ordinal = local;
 		page.attribute = CIXVPU_MMU_SHARED_RW;
 	} else if (index == root) {
 		page.role = CIXVPU_FW_PLAN_ROOT;
@@ -221,8 +370,12 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 			page.leaf_address = PLAN_COMMON_LEAF;
 		} else if (page.ordinal == plan->cores + 1) {
 			page.leaf_address = CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS;
-		} else {
+		} else if (page.ordinal == plan->cores + 2) {
 			page.leaf_address = CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS;
+		} else if (page.ordinal == plan->cores + 3) {
+			page.leaf_address = CIXVPU_FW_PLAN_FRAME_ADDRESS;
+		} else {
+			page.leaf_address = CIXVPU_FW_PLAN_BITSTREAM_ADDRESS;
 		}
 	}
 	*out = page;
@@ -251,6 +404,7 @@ cixvpu_fw_plan_mapping(const struct cixvpu_fw_plan *plan, unsigned int index,
 {
 	struct cixvpu_fw_plan_mapping map = { 0 };
 	struct cixvpu_fw_plan_page page;
+	struct cixvpu_fw_slot_span spans[3];
 	const struct cixvpu_fw_info *info;
 	uint32_t per_core, core_maps, first_leaf, shared, first, core, local;
 	uint32_t i, private_index = 0;
@@ -266,8 +420,26 @@ cixvpu_fw_plan_mapping(const struct cixvpu_fw_plan *plan, unsigned int index,
 	info = &plan->info;
 	per_core = info->text_pages + info->private_pages + info->shared_pages;
 	core_maps = per_core * plan->cores;
-	first_leaf = plan->backing_pages - plan->cores - 1 - 2 * plan->boot_rpc;
+	first_leaf = plan->backing_pages - plan->cores - 1 - 2 * plan->boot_rpc -
+	    2 * plan->slots_enabled;
 	shared = info->text_pages + plan->cores * info->private_pages;
+	first = core_maps + PLAN_COMMON_PAGES + PLAN_PRINT_PAGES +
+	    plan->boot_rpc * (CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES +
+	    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES);
+	if (plan->slots_enabled != 0 && index >= first) {
+		(void)cixvpu_fw_slots(&plan->slots, plan->slots_enabled, spans);
+		local = index - first;
+		for (i = 0; i < 2 && local >= spans[i].pages; i++)
+			local -= spans[i].pages;
+		map.backing_index = shared + info->shared_pages +
+		    PLAN_COMMON_PAGES + PLAN_PRINT_PAGES +
+		    CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES +
+		    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES + index - first;
+		map.leaf_backing_index = first_leaf + plan->cores +
+		    (i == 2 ? 4 : 3);
+		map.address = spans[i].address + local * CIXVPU_FW_PAGE_SIZE;
+		goto ready;
+	}
 	if (index >= core_maps + PLAN_COMMON_PAGES + PLAN_PRINT_PAGES) {
 		local = index - core_maps - PLAN_COMMON_PAGES - PLAN_PRINT_PAGES;
 		map.backing_index = shared + info->shared_pages +

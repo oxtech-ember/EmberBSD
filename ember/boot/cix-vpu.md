@@ -143,8 +143,8 @@ numeric observations. Parsing success does not mean consumption, a complete
 access unit, successful encoding or permission to release an exposed owner.
 
 The aperture checks do not prove mapped backing or authorize an address.
-A future stopped-only planner must exclude existing RPC logical reservations
-and bind each slot to owned pages. No physical geometry or buffer capacity is
+The [stopped slot layout foundation](#stopped-slot-layout-foundation) excludes
+existing RPC logical reservations. Actual owner binding remains separate. No physical geometry or buffer capacity is
 selected here. The module does not access pixel/encoded data, modify page tables,
 synchronize DMA, submit native queues or issue GO.
 
@@ -160,7 +160,41 @@ CC=gcc-16 CFLAGS=-fanalyzer CIXVPU_BUFFER_ANALYZE=1 \
     sh ember/tools/cixvpu-buffer-contract.sh
 ```
 
+## Stopped slot layout foundation
+
+`cixvpu_fw_plan_build_frame_slots` adds an inactive one-core protocol3.5 layout.
+The caller supplies even NV12 geometry, both strides and BITSTREAM capacity.
+The planner computes required plane bytes and rounds each storage span to pages.
+Y starts at firmware VA `0x70000000`; UV follows its rounded storage.
+BITSTREAM starts at `0x24400000`. Each buffer kind fits one extra 4 MiB leaf.
+These addresses are local layout policy, not bus addresses or hardware defaults.
+
+The full first RPC reservation `[0x20000000,0x24000000)` stays excluded,
+including invalid holes. The second 16 KiB RPC object also stays separate.
+The selected bootstrap's 390 owners and 385 mappings become `392+P` owners
+and `385+P` mappings, where `P` counts all slot pages. Seven tables include
+both new leaves. The unchanged 2048-owner limit leaves at most 1656 slot pages
+for that image. Other images use their validated base count.
+
+Slot accessors return checked VA spans and unique backing indices. They do
+not allocate, copy pixels, build live PTEs, synchronize DMA or grant ownership.
+Ordinary plans keep their existing indices and mappings with slots disabled.
+The allocator rejects new roles before allocation. Existing CPU preparation
+rejects any slot metadata before page borrows, writes or ownership movement.
+No attachment selects this layout. Native owner integration, command submission,
+output refill and one-frame encoding remain pending.
+
+Actual-source tests compose MMU tables with discontiguous synthetic bus pages.
+They check literal slot spans, zero tails, full reserve exclusion, exact quotas,
+invalid metadata and the existing consumers' refusal before side effects.
+
+```sh
+CC=gcc-16 CFLAGS=-fanalyzer CIXVPU_PLAN_ANALYZE=1 \
+    sh ember/tools/cixvpu-fw-plan-contract.sh
+```
+
 ## Manual CPU-only allocation probe
+
 
 [EMBER64_CIXVPU_DMA_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_DMA_PROBE)
 includes ordinary EMBER64 and selects VPU `flags 0x4`, without an SCMI service.

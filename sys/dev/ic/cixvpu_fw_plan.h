@@ -31,6 +31,19 @@
 #define CIXVPU_FW_PLAN_BOOT_RPC_SECOND_LOG2_ALIGNMENT 12U
 #define CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES 4U
 
+/* Optional stopped-only local slot layout, not an encoder geometry default. */
+#define CIXVPU_FW_PLAN_FRAME_ADDRESS UINT32_C(0x70000000)
+#define CIXVPU_FW_PLAN_BITSTREAM_ADDRESS UINT32_C(0x24400000)
+struct cixvpu_fw_slot_request {
+	uint32_t width, height, stride_y, stride_uv, bitstream_bytes;
+};
+enum cixvpu_fw_slot_id {
+	CIXVPU_FW_SLOT_Y, CIXVPU_FW_SLOT_UV, CIXVPU_FW_SLOT_BITSTREAM
+};
+struct cixvpu_fw_slot_span {
+	uint32_t address, bytes, rounded_bytes, first_backing, pages;
+};
+
 enum cixvpu_fw_plan_role {
 	CIXVPU_FW_PLAN_TEXT,
 	CIXVPU_FW_PLAN_PRIVATE,
@@ -46,7 +59,10 @@ enum cixvpu_fw_plan_role {
 	CIXVPU_FW_PLAN_RPC_DATA,
 	CIXVPU_FW_PLAN_ROOT,
 	CIXVPU_FW_PLAN_LEAF,
-	CIXVPU_FW_PLAN_RPC_SECOND_DATA
+	CIXVPU_FW_PLAN_RPC_SECOND_DATA,
+	CIXVPU_FW_PLAN_FRAME_Y,
+	CIXVPU_FW_PLAN_FRAME_UV,
+	CIXVPU_FW_PLAN_BITSTREAM
 };
 
 /* Immutable value, opaque by contract. Getters recheck all layout fields. */
@@ -56,6 +72,8 @@ struct cixvpu_fw_plan {
 	uint32_t boot_rpc;             /* Closed reserve profile: exactly 0 or 1. */
 	uint32_t backing_pages;
 	uint32_t mappings;
+	uint32_t slots_enabled;        /* Exactly0/1; disabled request is all zero. */
+	struct cixvpu_fw_slot_request slots;
 };
 
 struct cixvpu_fw_plan_page {
@@ -115,6 +133,29 @@ int cixvpu_fw_plan_build(const void *, size_t, unsigned int,
  */
 int cixvpu_fw_plan_build_boot_rpc(const void *, size_t, unsigned int,
     struct cixvpu_fw_plan *);
+/*
+ * Pure one-core protocol3.5 boot_rpc1 slot variant. Positive even dimensions
+ * <=65535 and int32 positive strides>=width. Capacity is explicit, not a board
+ * default. Y/UV required bytes are stride*rows, rounded separately for storage.
+ * Y starts FRAME_ADDRESS; UV follows rounded Y. They fit one4MiB leaf.
+ * BITSTREAM starts BITSTREAM_ADDRESS and fits one4MiB leaf. Both exclude the
+ * full64MiB RPC logical reserve and second16KiB object. New unique data pages
+ * precede ROOT and two leaves follow the existing leaves; the2048-page quota
+ * includes them. PTE attributes are SHARED_RW/WRITE, not a host sync assertion.
+ * Existing builders retain their indices, counts and mappings with slots off.
+ *
+ * Neither allocation, input copy, preparation nor sync is added. Existing native
+ * consumers reject this new profile; no active attachment or GO selects it.
+ * slot returns checked firmware VA metadata, never a KVA, bus address or owner
+ * capability. It returns ENOTSUP with slots off, ERANGE for an unknown slot.
+ * New builder/slot reject output overlap with the request, plan or inspected
+ * image header. The parser still reads only the header, not the claimed extent. All errors preserve out.
+ * Getters recheck metadata; this is not caller-pointer authentication.
+ */
+int cixvpu_fw_plan_build_frame_slots(const void *, size_t, unsigned int,
+    const struct cixvpu_fw_slot_request *, struct cixvpu_fw_plan *);
+int cixvpu_fw_plan_slot(const struct cixvpu_fw_plan *, unsigned int,
+    struct cixvpu_fw_slot_span *);
 int cixvpu_fw_plan_page(const struct cixvpu_fw_plan *, unsigned int,
     struct cixvpu_fw_plan_page *);
 int cixvpu_fw_plan_mapping(const struct cixvpu_fw_plan *, unsigned int,

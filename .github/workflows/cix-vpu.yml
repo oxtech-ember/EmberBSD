@@ -79,7 +79,7 @@ jobs:
           sh ember/tools/cixvpu-ring-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-mmu-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/cixvpu-resources-contract.sh "$GITHUB_WORKSPACE"
-          sh ember/tools/cixvpu-fw-plan-contract.sh "$GITHUB_WORKSPACE"
+          CIXVPU_PLAN_ANALYZE=1 sh ember/tools/cixvpu-fw-plan-contract.sh "$GITHUB_WORKSPACE"
           CIXVPU_COMMAND_ANALYZE=1 sh ember/tools/cixvpu-command-contract.sh "$GITHUB_WORKSPACE"
           CIXVPU_BUFFER_ANALYZE=1 sh ember/tools/cixvpu-buffer-contract.sh "$GITHUB_WORKSPACE"
           sh ember/tools/scmi-smt-diag-contract.sh

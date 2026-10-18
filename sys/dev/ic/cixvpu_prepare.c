@@ -292,6 +292,11 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 			if (cixvpu_prepare_overlap(&spans[i], &spans[j]))
 				return EINVAL;
 	snapshot = *expected_plan;
+	/* This constructor does not yet own or synchronize frame slots. */
+	if (snapshot.slots_enabled != 0 || snapshot.slots.width != 0 ||
+	    snapshot.slots.height != 0 || snapshot.slots.stride_y != 0 ||
+	    snapshot.slots.stride_uv != 0 || snapshot.slots.bitstream_bytes != 0)
+		return EINVAL;
 	memcpy(pin, expected_digest, sizeof(pin));
 	(void)SHA256_Init(&hash);
 	(void)SHA256_Update(&hash, image, image_size);
