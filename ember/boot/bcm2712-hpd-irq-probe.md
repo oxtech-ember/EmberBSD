@@ -50,3 +50,25 @@ all earlier modes. It controls the IRQ lifecycle API and kernel time/CV
 services. Separate actual-source contracts test the native IRQ provider.
 Software checks do not establish a physical HPD cycle, ACPI power, KMS output
 or a Plasma session. Native bus_space stalls and aborts remain unrecoverable.
+
+## Physical boundary
+
+One finite cycle passed on CM5 Rev 1.0 with BCM2712D0 on 2026-10-18.
+Kernel `6e548fea09ffc04cb844c0d55c799ce25173a74b` and firmware `c90c2a6c`
+were loaded before this test. The module was built from `0df8d45c` with
+GCC 16.2.0. Source headers, generated options, 50 ABI values and strong
+symbols matched the selected kernel. The 57416-byte module has SHA256
+`8e05b1b8ab55e25946efca4fdac21dba16aa6f0005761072ed99e3d34b326fcb`.
+
+The controlled boot had no firmware framebuffer. HDMI0 was connected after
+boot. Initial AON status was `0x80`, mask was `0xffff`, and raw HPD was 1.
+GSI271 delivered three callbacks: stale `0x80/raw1/phase0`, disconnect
+`0x100/raw0/phase1`, and reconnect `0x80/raw1/phase2`. Every service error was
+zero. The sampled disconnected interval was 5.710058 seconds. The cycle
+completed 79.997706 seconds after arming, within the fixed wait budget.
+
+IRQ drain, controller unmap and DVP/HSM cleanup completed. Module unload
+succeeded. Temperature was 50.469 C before the cycle, 51.569 C after it, and
+50.469 C after unload. No throttling or undervoltage was reported.
+Repeated cycles, DRM connector notifications, display power transitions,
+PHY, scanout, KMS and a physical Plasma session remain unverified.
