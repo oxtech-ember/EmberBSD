@@ -716,7 +716,7 @@ on every board in the hardware catalog.
   returns five BSC/DDC control values and completes cleanup on that boot.
   A [bounded BRCMSTB I2C core](ember/boot/brcmstb-i2c.md) adds combined reads
   with actual-source fault and deadline contracts.
-  The opt-in [native DDC0 owner](ember/boot/bcm2712-display-ddc.md) adds a base-EDID API
+  The opt-in [native DDC0 owner](ember/boot/bcm2712-display-ddc.md) adds base-block and bounded 128/256-byte EDID APIs
   with source/host validation and retained faults. One [finite base-block transfer](ember/boot/bcm2712-display-edid-probe.md#physical-base-block-boundary)
   passed on CM5 after a cold-headless boot and live HDMI0 connection.
   A [shared firmware-clock core](ember/boot/bcm2712-display-clock-core.md) and
@@ -732,7 +732,7 @@ on every board in the hardware catalog.
   1080p60 controller payloads with source-tested packing. It performs no I/O or activation.
   A private [HVS memory preparation probe](ember/boot/bcmv3d-hvs-memory-prepare.md)
   source-tests a contiguous GEM frame and separate consumer DMA map without publication.
-  DRM hotplug delivery, extension reads and KMS scanout remain open.
+  DRM hotplug delivery, physical extension reads and KMS scanout remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.

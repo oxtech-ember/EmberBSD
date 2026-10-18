@@ -10,6 +10,7 @@
 #include <arm/broadcom/bcm2712_display.h>
 
 #define BCM2712_DDC_EDID_LENGTH 128
+#define BCM2712_DDC_EDID_COMPLETE_CAPACITY (2 * BCM2712_DDC_EDID_LENGTH)
 
 struct bcm2712_ddc_provider;
 struct bcm2712_ddc_status {
@@ -40,6 +41,17 @@ int bcm2712_display_ddc_create(device_t,
  */
 int bcm2712_display_ddc_read_edid(struct bcm2712_ddc_provider *, uint8_t *,
     size_t);
+/*
+ * Complete base plus at most one extension: address 0x50, offsets 0 and 128.
+ * Capacity must be at least 256. Success initializes exactly the first 256
+ * bytes; a base-only result has a zeroed second half and out_length 128.
+ * One extension gives out_length 256 after its independent checksum passes.
+ * More extensions return EOPNOTSUPP. Both outputs are unchanged on error.
+ * Bytes beyond the first 256 are unchanged, including on success.
+ * The caller supplies valid, disjoint writable out and out_length storage.
+ */
+int bcm2712_display_ddc_read_edid_complete(struct bcm2712_ddc_provider *,
+    uint8_t *, size_t, size_t *);
 /* Cached, non-atomic observations only. No MMIO is performed. */
 int bcm2712_display_ddc_status(struct bcm2712_ddc_provider *,
     struct bcm2712_ddc_status *);

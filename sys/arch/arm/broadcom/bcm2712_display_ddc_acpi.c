@@ -206,11 +206,27 @@ unlock:
 	return error;
 }
 
+/* The caller holds the provider lock and has acquired the private iic bus. */
+static int
+bcm2712_ddc_read_block(struct bcm2712_ddc_provider *sc, uint8_t command,
+    uint8_t *data)
+{
+	int error;
+
+	error = iic_exec(&sc->tag, I2C_OP_READ_WITH_STOP, 0x50, &command, 1,
+	    data, BCM2712_DDC_EDID_LENGTH, I2C_F_POLL);
+	if (error != 0 && sc->fault == 0)
+		sc->fault = error;
+	if (error == 0)
+		error = bcm2712_ddc_guard(sc, true);
+	return error;
+}
+
 int
 bcm2712_display_ddc_read_edid(struct bcm2712_ddc_provider *sc, uint8_t *out,
     size_t length)
 {
-	uint8_t data[BCM2712_DDC_EDID_LENGTH], command = 0;
+	uint8_t data[BCM2712_DDC_EDID_LENGTH];
 	int error;
 
 	if (out == NULL || length != sizeof(data))
@@ -225,12 +241,7 @@ bcm2712_display_ddc_read_edid(struct bcm2712_ddc_provider *sc, uint8_t *out,
 	error = iic_acquire_bus(&sc->tag, I2C_F_POLL);
 	if (error != 0)
 		goto unlock;
-	error = iic_exec(&sc->tag, I2C_OP_READ_WITH_STOP, 0x50, &command, 1,
-	    data, sizeof(data), I2C_F_POLL);
-	if (error != 0 && sc->fault == 0)
-		sc->fault = error;
-	if (error == 0)
-		error = bcm2712_ddc_guard(sc, true);
+	error = bcm2712_ddc_read_block(sc, 0, data);
 	/* Release the iic mutex even after failure. This does not reset hardware. */
 	iic_release_bus(&sc->tag, I2C_F_POLL);
 	if (error != 0)
@@ -240,6 +251,62 @@ bcm2712_display_ddc_read_edid(struct bcm2712_ddc_provider *sc, uint8_t *out,
 		goto unlock;
 	}
 	memcpy(out, data, sizeof(data));
+unlock:
+	mutex_exit(&bcm2712_ddc_lock);
+	return error;
+}
+
+int
+bcm2712_display_ddc_read_edid_complete(struct bcm2712_ddc_provider *sc,
+    uint8_t *out, size_t capacity, size_t *out_length)
+{
+	uint8_t data[BCM2712_DDC_EDID_COMPLETE_CAPACITY] = { 0 };
+	uint8_t checksum = 0;
+	size_t length = BCM2712_DDC_EDID_LENGTH, i;
+	int error;
+
+	if (out == NULL || out_length == NULL || capacity < sizeof(data))
+		return EINVAL;
+	error = bcm2712_ddc_owned(sc);
+	if (error != 0)
+		return error;
+	if (sc->fault != 0) {
+		error = sc->fault;
+		goto unlock;
+	}
+	error = iic_acquire_bus(&sc->tag, I2C_F_POLL);
+	if (error != 0)
+		goto unlock;
+	error = bcm2712_ddc_read_block(sc, 0, data);
+	if (error != 0)
+		goto release;
+	if (edid_is_valid(data) != 0) {
+		error = EBADMSG;
+		goto release;
+	}
+	if (data[126] > 1) {
+		error = EOPNOTSUPP;
+		goto release;
+	}
+	if (data[126] == 1) {
+		error = bcm2712_ddc_read_block(sc, 128,
+		    data + BCM2712_DDC_EDID_LENGTH);
+		if (error != 0)
+			goto release;
+		for (i = BCM2712_DDC_EDID_LENGTH; i < sizeof(data); i++)
+			checksum += data[i];
+		if (checksum != 0) {
+			error = EBADMSG;
+			goto release;
+		}
+		length = sizeof(data);
+	}
+release:
+	iic_release_bus(&sc->tag, I2C_F_POLL);
+	if (error == 0) {
+		memcpy(out, data, sizeof(data));
+		*out_length = length;
+	}
 unlock:
 	mutex_exit(&bcm2712_ddc_lock);
 	return error;

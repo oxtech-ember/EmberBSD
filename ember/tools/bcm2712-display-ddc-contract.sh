@@ -98,16 +98,24 @@ if [ "${DDC_COMPILE_ONLY:-0}" = 1 ]; then exit 0; fi
 run
 if [ "${DDC_SKIP_MUTANTS:-0}" = 1 ]; then exit 0; fi
 cp "$work/adapter.h" "$work/good.h"
-for mutant in size tag-init cookie exec post-guard mask pending early-copy edid \
-    native-fault destroy-fault release-acquire status-zero; do
-    nth=1
+for mutant in ${DDC_MUTANTS:-size tag-init cookie exec post-guard mask pending early-copy edid \
+    native-fault destroy-fault release-acquire status-zero \
+    complete-capacity complete-offset complete-count complete-checksum \
+    complete-signature complete-tail complete-length complete-copy \
+    complete-early-copy complete-early-length complete-acquire complete-null}; do
+    nth=1; scope=
+    case "$mutant" in
+        complete-*) scope=bcm2712_display_ddc_read_edid_complete ;;
+        size|early-copy|edid|release-acquire) scope=bcm2712_display_ddc_read_edid ;;
+        post-guard) scope=bcm2712_ddc_read_block ;;
+    esac
     case "$mutant" in
         status-zero) from='memset(&status, 0, sizeof(status));'; to='memset(&status, 0xa5, sizeof(status));' ;;
         size) from='length != sizeof(data)'; to='length > sizeof(data)' ;;
         tag-init) from='sc->tag.ic_exec = brcmstb_i2c_exec;'; to='sc->tag.ic_exec = brcmstb_i2c_exec; iic_tag_init(&sc->tag);' ;;
         cookie) from='sc->tag.ic_cookie = &sc->core;'; to='sc->tag.ic_cookie = &sc->tag;' ;;
         exec) from='sc->tag.ic_exec = brcmstb_i2c_exec;'; to='sc->tag.ic_exec = NULL;' ;;
-        post-guard) from='error = bcm2712_ddc_guard(sc, true);'; to='error = 0;'; nth=2 ;;
+        post-guard) from='error = bcm2712_ddc_guard(sc, true);'; to='error = 0;' ;;
         mask) from='if ((sc->bsc_mask & 2U) == 0 ||'; to='if (false ||' ;;
         pending) from='(idle && (sc->bsc_status & 2U) != 0))'; to='false)' ;;
         early-copy) from='if (edid_is_valid(data) != 0) {'; to='memcpy(out, data, sizeof(data)); if (edid_is_valid(data) != 0) {' ;;
@@ -115,17 +123,40 @@ for mutant in size tag-init cookie exec post-guard mask pending early-copy edid 
         native-fault) from='sc->fault = error;'; to='sc->fault = 0;' ;;
         destroy-fault) from='sc->fault != 0 ? sc->fault : brcmstb_i2c_fini(&sc->core)'; to='brcmstb_i2c_fini(&sc->core)' ;;
         release-acquire) from='error = iic_acquire_bus(&sc->tag, I2C_F_POLL);'; to='error = iic_acquire_bus(&sc->tag, I2C_F_POLL); if (error != 0) iic_release_bus(&sc->tag, I2C_F_POLL);' ;;
+        complete-capacity) from='capacity < sizeof(data)'; to='capacity != sizeof(data)' ;;
+        complete-offset) from='bcm2712_ddc_read_block(sc, 128,'; to='bcm2712_ddc_read_block(sc, 0,' ;;
+        complete-count) from='if (data[126] > 1)'; to='if (false)' ;;
+        complete-checksum) from='if (checksum != 0)'; to='if ((checksum != 0) && false)' ;;
+        complete-signature) from='if (edid_is_valid(data) != 0) {'; to='if (false) {' ;;
+        complete-tail) from='data[BCM2712_DDC_EDID_COMPLETE_CAPACITY] = { 0 }'; to='data[BCM2712_DDC_EDID_COMPLETE_CAPACITY] = { [128] = 0xa5 }' ;;
+        complete-length) from='*out_length = length;'; to='*out_length = length == 256 ? 128 : length;' ;;
+        complete-copy) from='memcpy(out, data, sizeof(data));'; to='memcpy(out, data, 128);' ;;
+        complete-early-copy) from='if (edid_is_valid(data) != 0) {'; to='memcpy(out, data, sizeof(data)); if (edid_is_valid(data) != 0) {' ;;
+        complete-early-length) from='error = bcm2712_ddc_read_block(sc, 0, data);'; to='*out_length = length; error = bcm2712_ddc_read_block(sc, 0, data);' ;;
+        complete-acquire) from='error = bcm2712_ddc_read_block(sc, 128,'; to='iic_release_bus(&sc->tag, I2C_F_POLL); (void)iic_acquire_bus(&sc->tag, I2C_F_POLL); error = bcm2712_ddc_read_block(sc, 128,' ;;
+        complete-null) from='out_length == NULL'; to='false' ;;
         *) echo "Unknown DDC adapter mutant: $mutant" >&2; exit 1 ;;
     esac
-    awk -v from="$from" -v to="$to" -v nth="$nth" '
-        !changed { p=index($0,from); if (p && ++seen == nth) {
-            $0=substr($0,1,p-1) to substr($0,p+length(from)); changed++
-        } }
-        { print } END { if (changed != 1) exit 1 }
+awk -v from="$from" -v to="$to" -v nth="$nth" -v scope="$scope" '
+        scope != "" && index($0,scope "(") == 1 { active=1; functions++ }
+        scope == "" || active {
+            p=index($0,from)
+            if (p && ++seen == nth) {
+                $0=substr($0,1,p-1) to substr($0,p+length(from)); changed++
+            }
+        }
+        { print }
+        active && $0 == "}" { active=0 }
+        END { if (changed != 1 || seen != nth || (scope != "" && functions != 1)) exit 1 }
     ' "$work/good.h" > "$work/adapter.h"
     compile
     if (run) >"$work/mutant.log" 2>&1; then
         echo "Surviving native DDC causal mutant: $mutant" >&2; exit 1
+    fi
+if [ -n "${DDC_EVIDENCE:-}" ]; then
+        mkdir -p "$DDC_EVIDENCE/mutants"
+        cp "$work/adapter.h" "$DDC_EVIDENCE/mutants/$mutant.h"
+        cp "$work/mutant.log" "$DDC_EVIDENCE/mutants/$mutant.log"
     fi
     printf 'Native DDC causal mutant rejected: %s\n' "$mutant"
 done
