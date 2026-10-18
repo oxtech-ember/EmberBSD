@@ -136,6 +136,53 @@ CC=gcc-16 CFLAGS='-O2 -g -fanalyzer' CIXGPIOOBS_ANALYZE=1 \
   sh ember/tools/cixgpio-observe-contract.sh
 ```
 
+## Manual fixed GPI5 inputs
+
+The separate [cixgpioin attachment](../../sys/dev/acpi/cixgpio_inputs_acpi.c)
+provides three fixed S0 inputs in the manual
+[EMBER64_CIXGPIO_INPUT](../../sys/arch/evbarm/conf/EMBER64_CIXGPIO_INPUT) profile.
+It includes the UART2 console gate, sets VPU0, and preserves the default kernel,
+GPI4 power button and read-only observer. No SCMI query is selected.
+This is source-tested support. Physical input configuration and external signal
+transitions remain unverified; no PPS or GPIO interrupt service is implemented.
+
+The attachment requires the exact GPI5/MUX1 identities and resources described
+above. It requires mode0 on all three pads and bypass off on local0/1/2.
+It does not change mux, bypass, pulls, outputs, clocks or resets. Both resources
+must be validated and mapped before preflight reads. The only register write
+sets DIRECTION bits0–2 to input and preserves every other bank bit. A barrier
+and full readback precede the GPIO child. Failure publishes no input service;
+it does not restore the old output directions. The temporary MUX mapping is
+released. A successful input service retains its GPIO mapping for boot lifetime.
+It never reads clear-on-read STATUS or installs an IRQ/event callback.
+
+The native gpiobus exposes local0/1/2 as GPIO015/016/017 on header11/13/12.
+`GPIOREAD` returns current INPUT samples. All three pins remain parent-reserved;
+write, toggle, unset and child-attach requests return `EBUSY`. Output, pull and
+alternate-function settings are not capabilities. Non-null inert write/control
+callbacks also prevent the generic GPIO resume path from driving outputs.
+S0 firmware ownership is assumed. Hot detach, suspend/resume, wake, active reed
+polarity, debounce, PPS edges, electrical levels and timestamp accuracy are
+not qualified by these tests. Existing `gpioctl` can read a pin without a value;
+device nodes and that utility must be present in the selected userland.
+
+The actual-source input contract passes1977 checks with GCC16 path analysis
+and ASan/UBSan. It imports complete native GPIO ioctl, mapping, print and resume
+bodies with modeled services. The inherited `gpio_pin_can_map` dead-store CSA
+finding is shown and matched against the consumer baseline; no category is
+disabled. Native driver CSA retains four inherited header findings. The native
+GPIO consumer also retains that dead store. A four-line unsigned-mask fix in
+`gpio.c` removes signed `1 << 31` undefined behavior. Tests cover bit31, all32
+pins and map-buffer guards. Seven driver mutations and four individual signed
+shift regressions fail at runtime. The GPIO workflow is configured to run the
+input contract with GCC16/fanalyzer, Cppcheck/CSA, sanitizers and Linux Memcheck;
+that configuration is not a completed exact-head CI or physical acceptance.
+
+```sh
+CC=gcc-16 CFLAGS='-O2 -g -fanalyzer' CIXGPIOINPUT_ANALYZE=1 \
+  sh ember/tools/cixgpio-input-contract.sh
+```
+
 ## Source contracts
 
 Run from the source root with GCC16:

@@ -1,0 +1,8 @@
+# Manual fixed GPI5 input profile. No PPS/IRQ, mux or clock programming.
+# Preserve DEBUG UART2 and the separate GPI4 power button; VPU stays off.
+
+include "arch/evbarm/conf/EMBER64_CIX_UART2"
+
+no cixvpu* at acpi?
+cixvpu* at acpi? flags 0x0
+cixgpioin* at acpi? flags 0x1

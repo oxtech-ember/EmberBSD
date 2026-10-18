@@ -1098,8 +1098,10 @@ The base system shell is unchanged.
   Baud programming and instrument exchange remain unqualified. An opt-in
   [GPIO observation profile](ember/boot/cix-gpio.md#manual-header-observation)
   validates GPI5/MUX1, reads six nonclearing registers and unmaps both windows.
-  One physical snapshot passes. GPIO/PPS devices and pin configuration remain
-  unimplemented by that observer.
+  One physical snapshot passes. That observer exposes no GPIO device.
+  A separate [manual input profile](ember/boot/cix-gpio.md#manual-fixed-gpi5-inputs)
+  provides three parent-reserved input-only GPIO pins in source tests.
+  Physical input configuration, external signals and PPS remain unqualified.
   The separate, inactive
   [DEBUGPARAM primitive](ember/boot/cix-vpu.md#inactive-debugparam-response)
   passes actual-source checks. It changes only a validated request's state word;
