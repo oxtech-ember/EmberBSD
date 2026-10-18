@@ -131,8 +131,10 @@ maps EmberBSD Development skills to preparation, validation, and submission.
 ## What this fork adds to NetBSD 11
 
 The [RGE raw-wire correctness probe](ember/boot/rge-wire-probe.md) tests
-raw Ethernet frame integrity through two native BPF descriptors. Its source
-contract is separate from native wire and throughput acceptance.
+raw Ethernet frame integrity through two native BPF descriptors. One CIX sample
+passes 4096 alternating frames, including 9014-byte jumbo frames, with exact
+payload/FCS and zero observed error deltas. Throughput and sustained load
+remain unqualified.
 
 EmberBSD builds on NetBSD 11 to make useful device workflows reproducible:
 local inference, robot telemetry, vision and positioning, and graphical
@@ -1177,8 +1179,11 @@ The base system shell is unchanged.
   chains before rearming each slot. Default MTU 1500 and other ASIC paths remain
   unchanged. Host fault, copy-lifetime and sanitizer contracts pass. One physical
   CIX sample passes repeated MTU 1500/9000 initialization on both ports without
-  carrier, including stop and reallocation. This does not qualify jumbo wire
-  traffic, throughput or sustained camera operation. See the
+  carrier, including stop and reallocation. A separate physical
+  [raw-wire check](ember/boot/rge-wire-probe.md#physical-finite-wire-check) passes
+  4096 frames in both directions, including 9014-byte frames, with exact payload
+  and FCS. It exercises at least two ring revolutions. IP/TCP, throughput and
+  sustained camera operation remain unqualified. See the
   [CIX board limits](ember/boards/orange-pi-6-plus.md).
 - **ACPI xHCI root buses:** the frontend skips a logical USB bus when its
   initialized root-hub descriptor has no ports. Actual-source contracts cover

@@ -4,9 +4,9 @@
 ports connected by one cable. It sends raw Ethernet frames through BPF.
 It does not use IP routing or change interface configuration.
 
-This probe is source-tested. Native compilation and physical wire acceptance
-must be recorded separately. It does not qualify throughput, sustained load,
-camera traffic, VLANs, or other Ethernet drivers.
+The source contract and one physical CIX sample pass the checks below.
+This does not qualify throughput, sustained load, camera traffic, VLANs,
+or other Ethernet drivers.
 
 ## Build and run
 
@@ -94,3 +94,32 @@ Configured Cppcheck and Clang Static Analyzer inspect this host test closure.
 CI also executes it under ASan/UBSan and Valgrind Memcheck.
 The host contract does not exercise native BPF ioctls or physical hardware.
 The native program must be compiled with real target headers before transfer.
+
+## Physical finite-wire check
+
+One CIX P1 sample passes the native self-test and a 4096-frame cable test. Both RTL8126 ports negotiate 5GBASE-T full-duplex.
+The running combined manual peripherals kernel has source
+`24b6895ecf30aed8f8301fa1b62e3565b80b58fb`.
+The probe has source `dd745157b9d8ca7b277546dce13920b14b3faaf3`.
+It is a GCC16.2.0 static AArch64 executable with SHA256:
+
+```text
+dd6e7363799bd947286c49f40d278d5218b608dcc67e5c307f61e4695dcc9895
+```
+
+The larger test completes all 4096 frames with error 0. Each port transmits
+and receives 2048 frames. Each direction includes 512 frames of each length:
+60, 1514, 1515 and 9014 bytes excluding FCS. The probe requires exact payload
+and FCS, 2048 captured packets per descriptor, zero BPF drops, and unchanged
+native input/output error counters. All checks pass.
+
+Each RX ring has 1024 descriptors, so 2048 received frames exercise two ring
+revolutions. Jumbo TX packets use multiple descriptors. This test therefore
+covers at least two ring revolutions; it does not assert exactly two TX
+revolutions. It does not measure throughput.
+
+The operator restores MTU 1500 and the original administrative/IPv4 state.
+The Wi-Fi default route remains unchanged. Normal IPv6 state changes are
+recorded separately. This is raw Ethernet traffic through the physical cable,
+not IP/TCP, routed local-address traffic, camera data, or a 30-minute load test.
+No physical power-button press or default-boot promotion is part of this check.
