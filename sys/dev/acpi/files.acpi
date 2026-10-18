@@ -291,7 +291,7 @@ file	dev/ic/scmi_smt_diag.c		cixscmi
 
 device	cixclk
 attach	cixclk at acpinodebus with cixclk_acpi
-file	dev/acpi/cixclk_acpi.c		cixclk_acpi
+file	dev/acpi/cixclk_acpi.c		cixclk_acpi | cixscmi needs-flag
 
 device	cixreset
 attach	cixreset at acpinodebus with cixreset_acpi
