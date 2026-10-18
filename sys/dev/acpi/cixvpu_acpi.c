@@ -13,6 +13,7 @@
 #include <dev/acpi/cixvpu_acpi_control.h>
 #include <dev/firmload.h>
 #include <dev/ic/cixvpu_dma.h>
+#include <dev/ic/cixvpu_prepare.h>
 #include <dev/ic/cixvpu_resources.h>
 
 __CTASSERT(CIXVPU_ACPI_FIXED_MEMORY32 == ACPI_RESOURCE_TYPE_FIXED_MEMORY32);
@@ -26,6 +27,7 @@ struct cixvpu_acpi_softc {
 	struct cixvpu_acpi_control sc_control;
 	/* CPU-only owner. Retain it if cleanup unexpectedly fails. */
 	struct cixvpu_dma *sc_dma;
+	struct cixvpu_prepared *sc_prepared;
 	unsigned int sc_mode;
 	bool sc_probe_ran;
 };
@@ -51,6 +53,8 @@ cixvpu_acpi_allocation(device_t self)
 	size_t size = 0;
 	void *image = NULL;
 	int error, close_error = 0, cleanup_error = 0;
+	int prepare_error = 0, prepared_cleanup_error = 0;
+	bool prepare_attempted = false;
 
 	if (sc->sc_probe_ran)
 		return;
@@ -83,8 +87,10 @@ cixvpu_acpi_allocation(device_t self)
 	error = cixvpu_fw_plan_build(image, size, 1, &plan);
 	if (error != 0)
 		goto out;
-	firmware_free(image, size);
-	image = NULL;
+	if (sc->sc_mode == 4) {
+		firmware_free(image, size);
+		image = NULL;
+	}
 	pages = plan.backing_pages;
 	error = cixvpu_dma_alloc(sc->sc_aa.aa_dmat, sc->sc_aa.aa_dmat64,
 	    &plan, &sc->sc_dma);
@@ -110,23 +116,51 @@ cixvpu_acpi_allocation(device_t self)
 		roles[page.plan_page.role]++;
 		checked++;
 	}
+	if (sc->sc_mode == 5 && error == 0) {
+		/* No page view is used after this CPU-only ownership MOVE. */
+		prepare_attempted = true;
+		prepare_error = cixvpu_prepare_cpu(&sc->sc_dma, &plan,
+		    image, size, digest_expected, &sc->sc_prepared);
+		error = prepare_error;
+	}
 out:
 	if (image != NULL)
 		firmware_free(image, size);
+	if (sc->sc_prepared != NULL)
+		prepared_cleanup_error = cixvpu_prepared_free(&sc->sc_prepared);
 	if (sc->sc_dma != NULL)
 		cleanup_error = cixvpu_dma_free(&sc->sc_dma);
-	aprint_normal_dev(self,
-	    "one-core allocation fixture: pages %u checked %u, owner retained %s\n",
-	    pages, checked, sc->sc_dma != NULL ? "yes" : "no");
+	if (sc->sc_mode == 5) {
+		aprint_normal_dev(self,
+		    "one-core CPU prepare fixture: pages %u checked %u, "
+		    "retained DMA %s prepared %s\n",
+		    pages, checked, sc->sc_dma != NULL ? "yes" : "no",
+		    sc->sc_prepared != NULL ? "yes" : "no");
+		aprint_normal_dev(self, "prepare attempted %s, error %d\n",
+		    prepare_attempted ? "yes" : "no", prepare_error);
+	} else {
+		aprint_normal_dev(self,
+		    "one-core allocation fixture: pages %u checked %u, owner retained %s\n",
+		    pages, checked, sc->sc_dma != NULL ? "yes" : "no");
+	}
 	for (i = 0; i < __arraycount(roles); i++) {
 		if (roles[i] != 0)
 			aprint_normal_dev(self, "allocation role %u pages %u\n",
 			    i, roles[i]);
 	}
-	aprint_normal_dev(self,
-	    "allocation result %d, primary %d close %d cleanup %d\n",
-	    error != 0 ? error : close_error != 0 ? close_error : cleanup_error,
-	    error, close_error, cleanup_error);
+	if (sc->sc_mode == 5) {
+		aprint_normal_dev(self,
+		    "prepare result %d, primary %d close %d "
+		    "prepared cleanup %d DMA cleanup %d\n",
+		    error != 0 ? error : close_error != 0 ? close_error :
+		    prepared_cleanup_error != 0 ? prepared_cleanup_error : cleanup_error,
+		    error, close_error, prepared_cleanup_error, cleanup_error);
+	} else {
+		aprint_normal_dev(self,
+		    "allocation result %d, primary %d close %d cleanup %d\n",
+		    error != 0 ? error : close_error != 0 ? close_error : cleanup_error,
+		    error, close_error, cleanup_error);
+	}
 }
 
 static void
@@ -221,8 +255,8 @@ cixvpu_acpi_attach(device_t parent, device_t self, void *aux)
 	aprint_normal(": CIX P1 video codec (diagnostic attachment)\n");
 	sc->sc_dev = self;
 	sc->sc_mode = device_cfdata(self)->cf_flags;
-	if (sc->sc_mode > 4) {
-		aprint_error_dev(self, "unsupported flags %#x; use 0, 1, 2, 3 or 4\n",
+	if (sc->sc_mode > 5) {
+		aprint_error_dev(self, "unsupported flags %#x; use 0, 1, 2, 3, 4 or 5\n",
 		    sc->sc_mode);
 		return;
 	}
@@ -289,7 +323,7 @@ done:
 	/* The parser initializes its lists before any failure; free them too. */
 	acpi_resource_cleanup(&resources);
 	if (defer_probe) {
-		if (sc->sc_mode == 4) {
+		if (sc->sc_mode == 4 || sc->sc_mode == 5) {
 			config_mountroot(self, cixvpu_acpi_allocation);
 			return;
 		}

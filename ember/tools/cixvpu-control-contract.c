@@ -512,6 +512,8 @@ static off_t fw_size;
 static unsigned int fw_fault, fw_opens, fw_closes, fw_reads, fw_hashes, fw_live;
 static unsigned int dma_allocs, dma_views, dma_frees, dma_count;
 static bool dma_live;
+static unsigned int prepare_calls, prepared_frees;
+static bool prepared_live;
 static char fw_events[64];
 static unsigned int fw_nevents;
 static void fw_event(char c)
@@ -547,7 +549,7 @@ static struct cixvpu_dma dma_owner;
 int cixvpu_dma_alloc(bus_dma_tag_t dmat, bus_dma_tag_t dmat64,
     const struct cixvpu_fw_plan *plan, struct cixvpu_dma **out)
 {
-    CHECK(dmat == &dma_tags[0] && dmat64 == &dma_tags[1] && fw_live == 0);
+    CHECK(dmat == &dma_tags[0] && dmat64 == &dma_tags[1] && fw_live == (attach_cf.cf_flags == 5 ? 1U : 0U));
     CHECK(plan->cores == 1 && plan->backing_pages == 140 && *out == NULL);
     dma_allocs++; fw_event('a');
     if (fw_fault == 8) return ENOMEM;
@@ -572,8 +574,38 @@ int cixvpu_dma_page(struct cixvpu_dma *owner, unsigned int index,
 int cixvpu_dma_free(struct cixvpu_dma **owner)
 {
     CHECK(*owner == &dma_owner && dma_live); dma_frees++; fw_event('d');
-    if (fw_fault == 11) return EIO;
+    if (fw_fault == 11 || fw_fault == 19) return EIO;
     *owner = NULL; dma_live = false; return 0;
+}
+#include "prepare-header.inc"
+/* Preparation is a service boundary here. No firmware copy/PTE emulation.
+ * Its real implementation, allocator and MMU run in the separate D1 contract. */
+struct cixvpu_prepared { struct cixvpu_dma *owner; };
+static struct cixvpu_prepared prepared_owner;
+int cixvpu_prepare_cpu(struct cixvpu_dma **owner, const struct cixvpu_fw_plan *plan,
+    const void *bytes, size_t size, const uint8_t pin[32], struct cixvpu_prepared **out)
+{
+    CHECK(*owner == &dma_owner && dma_live && *out == NULL && !prepared_live);
+    CHECK(fw_live == 1 && fw_closes == 1 && dma_views == 140);
+    CHECK(bytes != NULL);
+    if (bytes == NULL) return EINVAL;
+    CHECK(size == sizeof(fw_image) && memcmp(bytes, fw_image, size) == 0);
+    CHECK(plan->cores == 1 && plan->backing_pages == 140);
+    for (unsigned int i = 0; i < 32; i++) {
+        char byte[3] = {selected_digest[i * 2], selected_digest[i * 2 + 1], 0};
+        CHECK(pin[i] == (uint8_t)strtoul(byte, NULL, 16));
+    }
+    prepare_calls++; fw_event('p');
+    if (fw_fault == 16 || fw_fault == 19) return EIO;
+    prepared_owner.owner = *owner; *owner = NULL; *out = &prepared_owner;
+    prepared_live = true; return 0;
+}
+int cixvpu_prepared_free(struct cixvpu_prepared **owner)
+{
+    CHECK(*owner == &prepared_owner && prepared_live && dma_live && fw_live == 0);
+    prepared_frees++; fw_event('q');
+    if (fw_fault == 17) return EBUSY;
+    prepared_live = false; dma_live = false; *owner = NULL; return 0;
 }
 #include "attachment-source.inc"
 static union { max_align_t align; unsigned char bytes[4096]; } attachment_storage;
@@ -591,6 +623,7 @@ static void allocation_fixture(unsigned int fault)
     attach_fixture(4); fw_fault = fault; fw_size = sizeof(fw_image);
     fw_opens = fw_closes = fw_reads = fw_hashes = fw_live = 0;
     dma_allocs = dma_views = dma_frees = dma_count = 0;
+    prepare_calls = prepared_frees = 0; prepared_live = false;
     dma_live = false; fw_nevents = 0; fw_events[0] = 0;
     memset(fw_image, 0, sizeof(fw_image));
     fw_image[4] = 5; fw_image[5] = 3;
@@ -663,6 +696,62 @@ static void allocation_tests(void)
     CHECK(mountroot_calls == 1 && dma_allocs == 1 && dma_frees == 1 && !dma_live);
     CHECK(strcmp(fw_events, "osmrchfad") == 0 && nevents == 0);
 }
+static void prepare_fixture(unsigned int fault)
+{ allocation_fixture(fault); attach_cf.cf_flags = 5; }
+static void prepare_run(void)
+{
+    allocation_run();
+    if (deferred_callback) {
+        unsigned int p = prepare_calls, q = prepared_frees;
+        deferred_callback(deferred_device);
+        CHECK(prepare_calls == p && prepared_frees == q);
+    }
+}
+static void prepare_tests(void)
+{
+    (void)cixvpu_prepare_cpu; (void)cixvpu_prepared_free;
+    prepare_fixture(0); prepare_run();
+    CHECK(strcmp(fw_events, "osmrchapfq") == 0);
+    CHECK(prepare_calls == 1 && prepared_frees == 1 && dma_frees == 0);
+    CHECK(!dma_live && !prepared_live);
+    CHECK(strstr(diagnostic, "one-core CPU prepare fixture") != NULL);
+    CHECK(strstr(diagnostic, "prepare attempted yes, error 0") != NULL);
+    CHECK(strstr(diagnostic, "retained DMA no prepared no") != NULL);
+    CHECK(strstr(diagnostic, "prepare result 0, primary 0 close 0 prepared cleanup 0 DMA cleanup 0") != NULL);
+    const unsigned int faults_to_test[] = {1,2,3,4,5,6,7,8,9,10,12,13,14,15,16,17,19};
+    for (unsigned int i = 0; i < __arraycount(faults_to_test); i++) {
+        unsigned int f = faults_to_test[i];
+        prepare_fixture(f); prepare_run();
+        bool reached_prepare = f >= 16;
+        CHECK(prepare_calls == (reached_prepare ? 1U : 0U));
+        CHECK(prepared_frees == (f == 17 ? 1U : 0U));
+        bool reached_dma = f >= 8 && f != 13;
+        CHECK(dma_allocs == (reached_dma ? 1U : 0U));
+        CHECK(dma_frees == (reached_dma && f != 8 && f != 17 ? 1U : 0U));
+        CHECK(fw_closes == (f == 1 ? 0U : 1U));
+        CHECK(dma_live == (f == 17 || f == 19) && prepared_live == (f == 17));
+        CHECK((((struct cixvpu_acpi_softc *)attach_private)->sc_dma != NULL) == (f == 19));
+        int primary = f == 1 ? ENOENT : f == 2 || f == 8 ? ENOMEM :
+            f == 4 || f == 17 ? 0 : f >= 5 && f <= 7 ? EINVAL : EIO;
+        int close_result = f == 4 || f == 13 ? EBADF : 0;
+        int prepare_result = f == 16 || f == 19 ? EIO : 0;
+        int prepared_cleanup = f == 17 ? EBUSY : 0;
+        int dma_cleanup = f == 19 ? EIO : 0;
+        char expected[192];
+        snprintf(expected, sizeof(expected), "prepare result %d, primary %d close %d prepared cleanup %d DMA cleanup %d",
+            primary ? primary : close_result ? close_result : prepared_cleanup ? prepared_cleanup : dma_cleanup,
+            primary, close_result, prepared_cleanup, dma_cleanup);
+        CHECK(strstr(diagnostic, expected) != NULL);
+        snprintf(expected, sizeof(expected), "prepare attempted %s, error %d", reached_prepare ? "yes" : "no", prepare_result);
+        CHECK(strstr(diagnostic, expected) != NULL);
+        snprintf(expected, sizeof(expected), "retained DMA %s prepared %s", f == 19 ? "yes" : "no", f == 17 ? "yes" : "no");
+        CHECK(strstr(diagnostic, expected) != NULL);
+    }
+    prepare_fixture(0); mountroot_immediate = true;
+    cixvpu_acpi_attach(NULL, VPU, &aa);
+    CHECK(mountroot_calls == 1 && prepare_calls == 1 && prepared_frees == 1);
+    CHECK(strcmp(fw_events, "osmrchapfq") == 0 && !dma_live && !prepared_live && nevents == 0);
+}
 static void attach_tests(void)
 {
     (void)device_private; (void)device_cfdata; (void)config_defer; (void)config_mountroot; (void)attach_refs;
@@ -700,7 +789,10 @@ static void attach_tests(void)
     attach_fixture(4); cixvpu_acpi_attach(NULL, VPU, &aa);
     CHECK(parser_calls == 1 && cleanup_calls == 1 && mountroot_calls == 1);
     CHECK(defer_calls == 0 && deferred_callback != NULL && nevents == 0 && maps == 0);
-    const unsigned int invalid_flags[] = {5, 0xffff, UINT32_MAX};
+    attach_fixture(5); cixvpu_acpi_attach(NULL, VPU, &aa);
+    CHECK(parser_calls == 1 && cleanup_calls == 1 && mountroot_calls == 1);
+    CHECK(defer_calls == 0 && deferred_callback != NULL && nevents == 0 && maps == 0);
+    const unsigned int invalid_flags[] = {6, 0xffff, UINT32_MAX};
     for (unsigned int i = 0; i < sizeof(invalid_flags)/sizeof(invalid_flags[0]); i++) {
         attach_fixture(invalid_flags[i]); cixvpu_acpi_attach(NULL, VPU, &aa);
         CHECK(parser_calls == 0 && defer_calls == 0 && nevents == 0);
@@ -852,7 +944,7 @@ int main(void)
     (void)cixclk_acpi_get_native;
     metadata_tests(); query_tests(); active_tests(); failures_tests(); rate_separation_tests(); retention_tests();
 #ifdef CIXVPU_ATTACH_API
-    attach_tests(); native_tests(); allocation_tests();
+    attach_tests(); native_tests(); allocation_tests(); prepare_tests();
 #endif
     CHECK(live == 0 && allocations != 0);
 #else
