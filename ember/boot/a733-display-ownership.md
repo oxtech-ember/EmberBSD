@@ -96,8 +96,9 @@ If that borrowed path cannot work, a dedicated PLL_DE start needs separate
 factor, voltage, lock and complete consumer-handoff evidence. A disabled
 PLL_DE is an expected starting state, not a permanent rejection condition.
 
-The following milestone is one CPU-filled XRGB8888 plane with DE3.52 RCQ
-updates and measured TV0 vblank. It still needs a validated DMA/IOMMU path,
+The [RGB/RCQ format encoder](a733-de352-format.md) supplies checked register
+values and descriptor bytes. The following milestone is one CPU-filled
+XRGB8888 plane with DE3.52 RCQ updates and measured TV0 vblank. It still needs a validated DMA/IOMMU path,
 unused-block disable sequence, TCON/VO1 timing, HDMI PHY, HPD and DDC/EDID.
 The [observer document](a733-display-observer.md) defines those boundaries.
 No result from this core is KMS, HDMI, PRIME or accelerated Plasma acceptance.
