@@ -1,10 +1,13 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Origin: EmberBSD actual-source PRIME callback/error contract. */
-#include <assert.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+/* Keep controls active when the caller supplies -DNDEBUG. */
+#define CHECK(x) do { if (!(x)) { \
+ fprintf(stderr, "CHECK failed at line %d: %s\n", __LINE__, #x); \
+ abort(); } } while (0)
 #include <sys/types.h>
 #define ERR_PTR(e) ((void *)(intptr_t)(e))
 #define IS_ERR(p) ((uintptr_t)(p) >= (uintptr_t)-4095)
@@ -39,9 +42,9 @@ static int map_ok, mmap_error, provider_maxprot = 7;
 static struct sg_table table, *provider_result;
 static struct sg_table *provider(struct drm_gem_object *obj) { return provider_result; }
 static int dma_map_sg_attrs(void *dev, void *sg, unsigned n, int dir, int flags)
-{ map_calls++; assert(sg == &table && n == 1); return map_ok; }
-static void sg_free_table(struct sg_table *sg) { assert(sg == &table); frees++; }
-static void kfree(void *p) { assert(p == &table); frees++; }
+{ map_calls++; CHECK(sg == &table && n == 1); return map_ok; }
+static void sg_free_table(struct sg_table *sg) { CHECK(sg == &table); frees++; }
+static void kfree(void *p) { CHECK(p == &table); frees++; }
 static int do_mmap(struct dma_buf *buf, off_t *off, size_t len, int prot,
  int *flags, int *advice, struct uvm_object **obj, int *maxprot)
 { mmap_calls++; *maxprot=provider_maxprot; return mmap_error; }
@@ -56,20 +59,20 @@ access_modes(struct file *file)
  for (unsigned rights = 0; rights < 4; rights++) {
   file->f_flag = rights;
   for (unsigned prot = 0; prot < 16; prot++) {
-   for (unsigned provider = 0; provider < 8; provider++) {
+   for (unsigned provider_mask = 0; provider_mask < 8; provider_mask++) {
     unsigned calls = mmap_calls;
     off = 0;
     maxprot = 0x55;
-    provider_maxprot = provider;
+    provider_maxprot = provider_mask;
     int error = dmabuf_fop_mmap(file, &off, 4096, prot, &flags,
         &advice, &uobj, &maxprot);
     if (prot & ~(VM_PROT_READ | VM_PROT_WRITE)) {
-     assert(error == EINVAL && mmap_calls == calls && maxprot == 0x55);
+     CHECK(error == EINVAL && mmap_calls == calls && maxprot == 0x55);
     } else if (prot & ~rights) {
-     assert(error == EACCES && mmap_calls == calls && maxprot == 0x55);
+     CHECK(error == EACCES && mmap_calls == calls && maxprot == 0x55);
     } else {
-     assert(error == 0 && mmap_calls == calls + 1);
-     assert(maxprot == (int)(provider & rights));
+     CHECK(error == 0 && mmap_calls == calls + 1);
+     CHECK(maxprot == (int)(provider_mask & rights));
     }
    }
   }
@@ -79,9 +82,9 @@ access_modes(struct file *file)
  mmap_error = -EIO;
  maxprot = 0x55;
  off = 0;
- assert(dmabuf_fop_mmap(file, &off, 4096, VM_PROT_READ, &flags,
+ CHECK(dmabuf_fop_mmap(file, &off, 4096, VM_PROT_READ, &flags,
      &advice, &uobj, &maxprot) == EIO);
- assert(maxprot == 0x55);
+ CHECK(maxprot == 0x55);
  mmap_error = 0;
 }
 int main(void)
@@ -99,34 +102,34 @@ int main(void)
  off_t off;
  table.sgl=&table; table.nents=1;
  provider_result=ERR_PTR(-ENOMEM);
- assert(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)==provider_result);
- assert(map_calls==0 && frees==0);
+ CHECK(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)==provider_result);
+ CHECK(map_calls==0 && frees==0);
  provider_result=ERR_PTR(-EIO);
- assert(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)==provider_result);
+ CHECK(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)==provider_result);
  provider_result=NULL;
- assert(IS_ERR(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)));
+ CHECK(IS_ERR(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)));
  funcs.get_sg_table=NULL; driver.gem_prime_get_sg_table=NULL;
- assert(IS_ERR(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)));
- assert(map_calls==0 && frees==0);
+ CHECK(IS_ERR(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)));
+ CHECK(map_calls==0 && frees==0);
  driver.gem_prime_get_sg_table=provider; provider_result=&table; map_ok=1;
- assert(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)==&table);
+ CHECK(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)==&table);
  obj.funcs=NULL;
- assert(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)==&table);
+ CHECK(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)==&table);
  obj.funcs=&funcs; funcs.get_sg_table=provider; map_ok=0;
- assert(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)==ERR_PTR(-ENOMEM));
- assert(map_calls==3 && frees==2);
- assert(drm_gem_map_dma_buf(&attach,DMA_NONE)==ERR_PTR(-EINVAL));
+ CHECK(drm_gem_map_dma_buf(&attach,DMA_BIDIRECTIONAL)==ERR_PTR(-ENOMEM));
+ CHECK(map_calls==3 && frees==2);
+ CHECK(drm_gem_map_dma_buf(&attach,DMA_NONE)==ERR_PTR(-EINVAL));
  off=4096; mmap_error=-EINVAL;
- assert(dmabuf_fop_mmap(&file,&off,4096,0,&flags,&advice,&uobj,&maxprot)==EINVAL);
+ CHECK(dmabuf_fop_mmap(&file,&off,4096,0,&flags,&advice,&uobj,&maxprot)==EINVAL);
  mmap_error=0;
- assert(dmabuf_fop_mmap(&file,&off,4096,0,&flags,&advice,&uobj,&maxprot)==0);
+ CHECK(dmabuf_fop_mmap(&file,&off,4096,0,&flags,&advice,&uobj,&maxprot)==0);
  off=-4096;
- assert(dmabuf_fop_mmap(&file,&off,4096,0,&flags,&advice,&uobj,&maxprot)==EINVAL);
+ CHECK(dmabuf_fop_mmap(&file,&off,4096,0,&flags,&advice,&uobj,&maxprot)==EINVAL);
  off=8192;
- assert(dmabuf_fop_mmap(&file,&off,4096,0,&flags,&advice,&uobj,&maxprot)==EINVAL);
+ CHECK(dmabuf_fop_mmap(&file,&off,4096,0,&flags,&advice,&uobj,&maxprot)==EINVAL);
  off=0;
- assert(dmabuf_fop_mmap(&file,&off,SIZE_MAX,0,&flags,&advice,&uobj,&maxprot)==EINVAL);
- assert(mmap_calls==2);
+ CHECK(dmabuf_fop_mmap(&file,&off,SIZE_MAX,0,&flags,&advice,&uobj,&maxprot)==EINVAL);
+ CHECK(mmap_calls==2);
  access_modes(&file);
  puts("PASS: PRIME absent/error providers, DMA map cleanup and native mmap errno/range and descriptor access limits");
  return 0;
