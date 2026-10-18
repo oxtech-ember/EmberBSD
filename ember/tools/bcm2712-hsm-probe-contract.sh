@@ -130,10 +130,59 @@ for feature in ${HSM_PROBE_FEATURES:-off on}; do
             irq-retain irq-fini irq-render
             bvb-conflict bvb-hsm-floor bvb-hsm-verify bvb-minimum bvb-clean-error
             bvb-fault bvb-mutation bvb-lease bvb-held bvb-after-free
-            bvb-initial-floor bvb-acquired-rate bvb-released-rate'
+            bvb-initial-floor bvb-acquired-rate bvb-released-rate
+            hd-conflict hd-value hd-initial-hsm hd-hsm-mutation hd-gates hd-resets hd-port0-mutation hd-port1-status hd-range hd-offset hd-extra-read hd-held hd-unmap hd-release-order hd-candidate hd-partial hd-busy-cleanup'
     fi
 for mutation in $mutations; do
     case "$mutation" in
+        hd-conflict)
+            from='if (prop_dictionary_get(properties, "clock-mode") != NULL ||'
+            to='if (false ||' ;;
+        hd-value)
+            from='strcmp(hd_mode, "observe") != 0)'; to='false)' ;;
+        hd-initial-hsm)
+            from='if (mode == HSM_PROBE_HD && (status.state != 1 ||'
+            to='if (false && (status.state != 1 ||' ;;
+        hd-hsm-mutation)
+            from='(mode == HSM_PROBE_HD && (status.mutation_attempted ||'
+            to='(mode == HSM_PROBE_HD && (false ||' ;;
+        hd-gates)
+            from='if ((initial.gates & 0x18U) != 0 || (initial.resets & 6U) != 0)'
+            to='if ((initial.gates & 8U) != 0 || (initial.resets & 6U) != 0)' ;;
+        hd-resets)
+            from='if ((initial.gates & 0x18U) != 0 || (initial.resets & 6U) != 0)'
+            to='if ((initial.gates & 0x18U) != 0 || (initial.resets & 2U) != 0)' ;;
+        hd-port0-mutation)
+            from='if (status.leases != 1 || status.fault != 0 || status.mutation_attempted ||'
+            to='if (status.leases != 1 || status.fault != 0 || false ||' ;;
+        hd-port1-status)
+            from='if (status.leases != 3 || status.fault != 0 || status.mutation_attempted ||'
+            to='if (false || false || status.mutation_attempted ||' ;;
+        hd-range)
+            from='const unsigned int resource[] = { 11, 17, 25 };'
+            to='const unsigned int resource[] = { 12, 17, 25 };' ;;
+        hd-offset)
+            from='hd->handle[0], 0x48);'; to='hd->handle[0], 0x44);' ;;
+        hd-extra-read)
+            from='hd->valid = true;'
+            to='(void)bus_space_read_4(&arm_generic_bs_tag, hd->handle[2], 0xbc); hd->valid = true;' ;;
+        hd-held)
+            from='dvp->stage = "HD-read";'
+            to='(void)bcm2712_display_dvp_release(dvp->owner, 1); dvp->stage = "HD-read";' ;;
+        hd-unmap)
+            from='bus_space_unmap(&arm_generic_bs_tag, hd->handle[i - 1],'
+            to='bus_space_unmap(&arm_generic_bs_tag, hd->handle[0],' ;;
+        hd-release-order)
+            from='error = bcm2712_display_dvp_release(dvp->owner, i - 1);'
+            to='error = bcm2712_display_dvp_release(dvp->owner, 2 - i);' ;;
+        hd-candidate)
+            from='((hd->video[0] | hd->video[1]) &'
+            to='((hd->video[0] | 0U) &' ;;
+        hd-partial)
+            from='hd->mapped |= 1U << i;'; to='hd->mapped = 7;' ;;
+        hd-busy-cleanup)
+            from='hsm_probe_hd_snapshot(dev, hd);'
+            to='hsm_probe_hd_snapshot(dev, hd); if ((hd->video[1] & (1U << 31)) != 0) return EBUSY;' ;;
         bvb-conflict)
             from='if (prop_dictionary_get(properties, "dvp-mode") != NULL ||'
             to='if (false ||' ;;
@@ -299,6 +348,14 @@ for mutation in $mutations; do
             /module registered for/ { retained=1 }
             retained && /return 0;/ { sub(/return 0;/, "drm_minor_release(minor); return 0;"); changed++; retained=0 }
             { print } END { if (changed != 1) exit 1 }
+        ' "$work/probe-good.h" > "$work/probe.h"
+    elif [ "$mutation" = hd-conflict ]; then
+        awk -v from="$from" -v to="$to" '
+            /^\tif \(prop_dictionary_get\(properties, "hd-mode"\) != NULL\)/ { selected=1; branches++ }
+            selected && !changed { p = index($0, from); if (p) {
+                $0 = substr($0,1,p-1) to substr($0,p+length(from)); changed++
+            } }
+            { print } END { if (branches != 1 || changed != 1) exit 1 }
         ' "$work/probe-good.h" > "$work/probe.h"
     elif [ "$mutation" = hpd-conflict ]; then
         awk -v from="$from" -v to="$to" '

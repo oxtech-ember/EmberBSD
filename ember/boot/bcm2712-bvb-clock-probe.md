@@ -7,6 +7,13 @@ The selected kernel must contain the [native HSM/BVB owner](bcm2712-native-displ
 Audit the module against that kernel's exact source, headers, options and strong symbols.
 Buildinfo alone does not prove ABI. The optional ABI sample includes the BVB status layout.
 
+Before this clock-only mode, accept the separate [HD observation](bcm2712-hd-observe-probe.md)
+on the same boot. Its two-port snapshot must match the reset-side candidate.
+Establish controlled exclusion of firmware and native writers for both HDMI controllers.
+The snapshot, absence of a framebuffer and ACPI resources do not prove ownership or idle.
+The caller must preserve that exclusion after observation. The module does not verify a prior receipt.
+BVB acquisition can reduce an inherited rate. Do not run it before these gates.
+
 Use the existing cold-headless, framebuffer, render and selected-build guards.
 Shut down, remove HDMI and perform a controlled cold boot before this probe.
 Removing the cable from a running firmware console does not satisfy that prerequisite.
