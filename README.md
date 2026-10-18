@@ -1063,8 +1063,10 @@ The base system shell is unchanged.
   [ACPI power ownership](ember/boot/acpi-power.md). EMBER64 selects a resource
   query; the active identity probe requires explicit configuration. DMA and
   firmware execution remain disabled. A source-tested, fixed clock67 SCMI gate
-  helper shares checked wire and token state. It has no binding or consumer;
-  physical clock control remains unqualified.
+  helper shares checked wire and token state. An explicit native service shares
+  the logical clock claim with AML, reserves a disable call and rejects further
+  I/O after transport faults. A separate native identity profile uses that
+  service. Physical clock control remains unqualified.
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request
   cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the
   active control request and preserves queued requests. Actual-function

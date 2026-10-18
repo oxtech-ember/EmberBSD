@@ -25,6 +25,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_RATE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE'
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cixreset-*'
@@ -58,6 +59,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_RATE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY'
+      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE'
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cixreset-*'
@@ -123,6 +125,7 @@ jobs:
           CIXSCMI_ANALYZE: '1'
         run: |
           sh ember/tools/cixclk-contract.sh
+          CIXCLK_NCIXSCMI=0 sh ember/tools/cixclk-contract.sh
           sh ember/tools/cixreset-contract.sh
           sh ember/tools/acpi-power-contract.sh
           sh ember/tools/cixvpu-control-contract.sh
@@ -135,6 +138,7 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1
         run: |
           sh ember/tools/cixclk-contract.sh
+          CIXCLK_NCIXSCMI=0 sh ember/tools/cixclk-contract.sh
           sh ember/tools/cixreset-contract.sh
           sh ember/tools/acpi-power-contract.sh
           sh ember/tools/cixvpu-control-contract.sh
@@ -154,6 +158,7 @@ jobs:
           chmod 755 "$RUNNER_TEMP/cix-platform-memcheck"
           export TEST_RUNNER="$RUNNER_TEMP/cix-platform-memcheck"
           sh ember/tools/cixclk-contract.sh
+          CIXCLK_NCIXSCMI=0 sh ember/tools/cixclk-contract.sh
           sh ember/tools/cixreset-contract.sh
           sh ember/tools/acpi-power-contract.sh
           sh ember/tools/cixvpu-control-contract.sh

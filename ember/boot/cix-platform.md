@@ -66,7 +66,7 @@ CSA reports no findings. Host Cppcheck cannot parse the macOS SDK's `errno_t`
 typedef in version 2.22.0; that failed run is retained separately.
 These source checks do not establish firmware exchange.
 
-The source-only `scmi_smt_clock67_config_set(wire, enable, trace)` API sends
+The `scmi_smt_clock67_config_set(wire, enable, trace)` API sends
 CLOCK_CONFIG_SET for fixed ID67. It accepts only the integer values0 and1.
 It shares the query engine, token counter, ordering and bounded waits. There is
 no arbitrary ID, message or payload input, and the read-only enum is unchanged.
@@ -82,9 +82,34 @@ later I/O, including disable. Invalid input, state or token exhaustion performs
 no callbacks and preserves trace. There is no automatic rollback or retry.
 A control error can follow a hardware change; the caller must retain ownership
 until it confirms a safe state. Capability qualification, exclusive clock claims
-and serialized thread context belong to the caller. No ACPI binding, clock
-backend or VPU consumer calls this helper. All discovery configurations,
-including selector64, remain read-only. Physical gate control is unqualified.
+and serialized thread context belong to the caller. Only the explicit
+selector 128 service below can call this helper through the clock backend.
+All discovery selectors through 64 remain read-only.
+Physical gate control is unqualified.
+
+### Explicit native clock67 service
+
+Exact SCMI selector 128 runs the same five read-only readiness requests as 64.
+It publishes a boot-long service only after every decode, policy and ACK check
+succeeds. Setup remains cold-only. Published operations require thread context.
+The service validates actual SCMI and logical CCLK handles in the same ACPI root.
+It checks bounded cached CCLK HID/UID metadata and current resource ownership.
+It does not activate CLKS or evaluate a replacement clock method.
+
+`cixclk_acpi_get_native(logical, scmi, 67, out)` explicitly selects this backend.
+It shares the existing clock67 claim with AML and pins the backend until put.
+Native calls never fall back to AML. The ordinary kernel still omits SCMI;
+its native acquisition returns ENOTSUP. Generated selection flags keep that
+kernel free of unresolved service references. UART clock IDs remain AML-only.
+
+Five readiness requests leave 1018 conservative helper calls. Enable requires
+at least two calls. While enabled or uncertain, rate reads cannot spend the
+last call reserved for disable. A failed final disable can exhaust the service;
+there is no token reuse, reset or unlimited cleanup retry. A failed attempted
+control retains an uncertain claim. Rejection before the helper preserves its
+previous state. Framed firmware or semantic errors permit explicit disable.
+Transport poison or an ownership/ACK fault prohibits further service I/O.
+Reports keep helper, framing, firmware, ACK, budget and cleanup results separate.
 
 The separate `cixscmi_acpi` diagnostic binds CIXHA006, UID 0. Its default
 flags 0 mode performs no AML evaluation, claims, mapping or transport access.
@@ -98,7 +123,7 @@ The separate
 [EMBER64_CIXSCMI_CLOCK_QUERY](../../sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY)
 configuration selects exact flags 2. It sends only CLOCK PROTOCOL_VERSION,
 protocol 0x14, message 0, with no clock ID argument. Flags 3 and all values
-except 0, 1, 2, 4, 8, 16, 32 and 64 are rejected before deferred evaluation, mapping or bus access.
+except 0, 1, 2, 4, 8, 16, 32, 64 and 128 are rejected before deferred evaluation, mapping or bus access.
 This diagnostic does not query clock attributes, rates or clock ID 67.
 The original BASE configuration and the normal EMBER64 configuration are unchanged.
 
@@ -304,13 +329,23 @@ parsed resource lists before deferring; it retains no stack arguments.
 
 EMBER64 selects `flags 0x1`: validate metadata, acquire claims, query GCLK and
 release untouched claims. `flags 0x0` retains descriptions-only attachment.
-`flags 0x2` explicitly selects the active identity probe. Other flags are
+`flags 0x2` explicitly selects the AML identity probe. Exact `flags 0x3`
+selects the native clock backend. Other flags are
 rejected. No mode starts DMA, loads firmware or registers a video device.
 The separate [EMBER64_CIXVPU_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE)
 configuration selects mode 2. Build it with the common GCC16 toolchain.
 Select its kernel manually and retain the working default and recovery paths.
 The callback reports primary and cleanup errors, ACPI statuses, identity
 validity and released controls. It runs at most once per attachment.
+
+The separate
+[EMBER64_CIXVPU_NATIVE_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE)
+selects SCMI 128 and VPU 3. It requires one same-root cached SCMI HID/UID match
+and a ready native service. Missing or ambiguous providers fail before power
+or reset control. It keeps the same power, RCSU, main-reset and cleanup sequence.
+An enable error prevents VPU mapping and identity reads. Failed native disable
+retains reset, power and claims. This explicit profile does not start DMA,
+load firmware or establish an interrupt handler.
 
 The helper supports a strict rate query with no power or reset operation.
 It records query-attempted and rate-valid separately; a decoded zero can be valid.

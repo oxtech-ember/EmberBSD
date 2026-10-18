@@ -1,0 +1,11 @@
+# Explicit native CIX clock67 and VPU identity probe. No DMA or firmware boot.
+# Qualify the five-read SCMI service, power the block, enable APB clock67,
+# pulse the main reset, read identity, then perform checked cleanup.
+# Use a manual boot entry and preserve a working recovery kernel.
+
+include "arch/evbarm/conf/EMBER64_CIXSCMI_QUERY"
+
+no cixscmi* at acpi?
+cixscmi* at acpi? flags 0x80
+no cixvpu* at acpi?
+cixvpu* at acpi? flags 0x3
