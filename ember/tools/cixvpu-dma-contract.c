@@ -366,6 +366,40 @@ page_error(struct cixvpu_dma *pool, unsigned int index)
     CHECK(memcmp(&page, &before, sizeof(page)) == 0);
     CHECK(native_calls == calls);
 }
+/* New data/table owners use the real native allocation and unwind path. */
+static void
+second_object_allocation_tests(void)
+{
+    uint8_t header[CIXVPU_FW_HEADER_SIZE] = { 0 };
+    struct cixvpu_fw_plan plan;
+    struct cixvpu_dma *pool = NULL;
+    struct cixvpu_dma_page page;
+    header[4]=5; header[5]=3;
+    put32(header+96,420736); put32(header+100,0x70000);
+    put32(header+104,15); put32(header+108,0x7fff);
+    put32(header+172,0x7f000);
+    CHECK(cixvpu_fw_plan_build_boot_rpc(header,420736,1,&plan)==0);
+    CHECK(plan.backing_pages==390 && plan.mappings==385);
+    reset();
+    CHECK(cixvpu_dma_alloc(&tag32,&tag64,&plan,&pool)==0);
+    CHECK(next_owner==390);
+    for(unsigned int i=381;i<390;i++) {
+        CHECK(cixvpu_dma_page(pool,i,&page)==0);
+        CHECK(resources[i].flags==0);
+        for(unsigned int j=0;j<4096;j++) CHECK(((uint8_t *)page.kva)[j]==0);
+        if(i<385) CHECK(page.plan_page.role==CIXVPU_FW_PLAN_RPC_SECOND_DATA);
+    }
+    CHECK(cixvpu_dma_free(&pool)==0 && depth==0 && live_kmem==0);
+    for(unsigned int i=381;i<390;i++) for(unsigned int op=1;op<=4;op++) {
+        reset(); fail_at=2+4*i+(op-1);
+        allocation_error(&plan);
+    }
+    const unsigned int owners[]={381,384,389};
+    for(unsigned int i=0;i<3;i++) for(unsigned int kind=1;kind<=12;kind++) {
+        reset(); malformed_owner=owners[i]; malformed=kind;
+        allocation_error(&plan);
+    }
+}
 int
 main(void)
 {
@@ -440,6 +474,7 @@ main(void)
     CHECK(cixvpu_dma_page(pool, 0, &page) == 0);
     CHECK(page.bus_address == (UINT64_C(1) << 40) - 4096);
     CHECK(cixvpu_dma_free(&pool) == 0 && depth == 0 && live_kmem == 0);
-    printf("cixvpu-dma: %u checks, 629 failure positions, 0 failures\n", checks);
+    second_object_allocation_tests();
+    printf("cixvpu-dma: %u checks, 665 native failure positions, 0 failures\n", checks);
     return 0;
 }

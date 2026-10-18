@@ -110,21 +110,25 @@ enum cixvpu_boot_rpc_result {
 	CIXVPU_BOOT_RPC_PENDING,
 	CIXVPU_BOOT_RPC_ALLOC_REPLIED,
 	CIXVPU_BOOT_RPC_DEBUG_REPLIED,
-	CIXVPU_BOOT_RPC_RESIZE_REPLIED
+	CIXVPU_BOOT_RPC_RESIZE_REPLIED,
+	CIXVPU_BOOT_RPC_SECOND_ALLOC_REPLIED
 };
 /*
  * Closed plan1 bootstrap only. The published owner remains externally
  * serialized in thread context. Basic context/NULL checks precede a sticky
  * error check; that error permits no I/O and preserves outputs/diagnostics.
  * FREE/RETURN ignore stale call/size and return IDLE/PENDING without writes.
- * Exact PARAM/call2/size12 accepts only the fixed observed allocation tuple.
- * One allocation, one fixed RESIZE and sixteen DEBUG completions are allowed.
+ * Exact PARAM/call2/size12 accepts only the two observed allocation tuples.
+ * Two exact allocations, one fixed RESIZE and sixteen DEBUG completions
+ * are allowed.
  * Slots are consumed before the first response store and never reused.
  * Reply body/size precede the release RETURN store and its DMA publication.
  * The caller must notify firmware once after REPLIED, before another step.
  * No MMIO, heap access, runtime allocation, PTE change or free occurs here.
  * RESIZE requires the accepted ALLOC, exact base and size524288. Its backing
  * is mapped and synchronized before exposure; no live PTE change occurs.
+ * Second ALLOC requires the committed RESIZE. Early and unknown tuples
+ * fail closed.
  * Duplicate ALLOC/RESIZE returns EBUSY; DEBUG17 E2BIG; unsupported calls/tuples
  * ENOTSUP; malformed state/shape EPROTO. These faults are sticky. Four
  * unstable observations return nonsticky EAGAIN. Errors preserve out.

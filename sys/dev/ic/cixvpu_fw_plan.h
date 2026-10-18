@@ -25,6 +25,12 @@
 /* Compatibility name for the initial ALLOC request, not physical backing. */
 #define CIXVPU_FW_PLAN_BOOT_RPC_PAGES CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_PAGES
 
+/* Exact second object, after the first logical capacity reservation. */
+#define CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS UINT32_C(0x24000000)
+#define CIXVPU_FW_PLAN_BOOT_RPC_SECOND_SIZE UINT32_C(0x00004000)
+#define CIXVPU_FW_PLAN_BOOT_RPC_SECOND_LOG2_ALIGNMENT 12U
+#define CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES 4U
+
 enum cixvpu_fw_plan_role {
 	CIXVPU_FW_PLAN_TEXT,
 	CIXVPU_FW_PLAN_PRIVATE,
@@ -39,7 +45,8 @@ enum cixvpu_fw_plan_role {
 	CIXVPU_FW_PLAN_PRINT,
 	CIXVPU_FW_PLAN_RPC_DATA,
 	CIXVPU_FW_PLAN_ROOT,
-	CIXVPU_FW_PLAN_LEAF
+	CIXVPU_FW_PLAN_LEAF,
+	CIXVPU_FW_PLAN_RPC_SECOND_DATA
 };
 
 /* Immutable value, opaque by contract. Getters recheck all layout fields. */
@@ -97,7 +104,8 @@ int cixvpu_fw_plan_build(const void *, size_t, unsigned int,
     struct cixvpu_fw_plan *);
 /*
  * Pure one-core protocol-3.5 closed reserve variant.
- * Adds 128 SHARED_RW/WRITE pages at ADDRESS, plus one PRIVATE/READ leaf.
+ * Adds 128 SHARED_RW/WRITE pages at ADDRESS and four at SECOND_ADDRESS,
+ * each arena with a separate PRIVATE/READ leaf.
  * Initial ALLOC remains 128 KiB; measured RESIZE backing is 512 KiB.
  * The complete [ADDRESS, ADDRESS+CAPACITY) interval is logically reserved.
  * The 128-to-512 KiB tail is RW before exposure, unlike reference growth

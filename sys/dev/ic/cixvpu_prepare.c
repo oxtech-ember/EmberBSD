@@ -156,7 +156,7 @@ cixvpu_prepare_gather(struct cixvpu_dma *dma,
 		}
 		work->owners[work->count++] = i;
 	}
-	if (roots != 1 || work->count != plan->cores + 2 + plan->boot_rpc)
+	if (roots != 1 || work->count != plan->cores + 2 + 2 * plan->boot_rpc)
 		return EINVAL;
 	/* The caller's allocator snapshot must contain exactly these owners. */
 	error = cixvpu_dma_page(dma, plan->backing_pages, &extra);
@@ -225,7 +225,8 @@ cixvpu_prepare_tables(struct cixvpu_prepared *prepared,
 			return EINVAL;
 		p = &work->pages[map.backing_index].plan_page;
 		if (p->role != map.role || p->attribute != map.attribute ||
-		    p->permission != map.permission || p->role >= CIXVPU_FW_PLAN_ROOT)
+		    p->permission != map.permission || p->role == CIXVPU_FW_PLAN_ROOT ||
+		    p->role == CIXVPU_FW_PLAN_LEAF)
 			return EINVAL;
 		error = cixvpu_prepare_record(prepared, work, map.leaf_backing_index,
 		    map.backing_index, map.address, map.attribute, map.permission, false);
@@ -316,7 +317,7 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 	    boot_version, sizeof(checked.info.version)) != 0))
 		return ENOTSUP;
 	capacity = (size_t)checked.mappings + CIXVPU_FW_PLAN_MAX_CORES + 1 +
-	    checked.boot_rpc;
+	    2 * checked.boot_rpc;
 	pages = checked.backing_pages;
 
 	if (checked.backing_pages > CIXVPU_FW_PLAN_MAX_PAGES ||
@@ -491,7 +492,7 @@ cixvpu_prepare_boot_output(struct cixvpu_prepared *p, void *out,
 		return error;
 	}
 	capacity = (size_t)p->plan.mappings + CIXVPU_FW_PLAN_MAX_CORES + 1 +
-	    p->plan.boot_rpc;
+	    2 * p->plan.boot_rpc;
 	if (capacity > (SIZE_MAX - sizeof(*p)) / sizeof(p->entries[0]) ||
 	    p->bytes != sizeof(*p) + capacity * sizeof(p->entries[0])) {
 		*fault = true;
@@ -671,6 +672,9 @@ cixvpu_prepared_boot_rpc_step(struct cixvpu_prepared *p,
 		break;
 	case CIXVPU_DMA_RPC_DEBUG_REPLIED:
 		result = CIXVPU_BOOT_RPC_DEBUG_REPLIED;
+		break;
+	case CIXVPU_DMA_RPC_SECOND_ALLOC_REPLIED:
+		result = CIXVPU_BOOT_RPC_SECOND_ALLOC_REPLIED;
 		break;
 	case CIXVPU_DMA_RPC_RESIZE_REPLIED:
 		result = CIXVPU_BOOT_RPC_RESIZE_REPLIED;

@@ -262,14 +262,17 @@ cixvpu_boot_receive(struct cixvpu_acpi_boot *b)
 					return error;
 				if (result == CIXVPU_BOOT_RPC_ALLOC_REPLIED ||
 				    result == CIXVPU_BOOT_RPC_DEBUG_REPLIED ||
-				    result == CIXVPU_BOOT_RPC_RESIZE_REPLIED) {
+				    result == CIXVPU_BOOT_RPC_RESIZE_REPLIED ||
+				    result == CIXVPU_BOOT_RPC_SECOND_ALLOC_REPLIED) {
 					/* The closed step has already committed RETURN. */
 					b->report.rpc_commits++;
 					if (result == CIXVPU_BOOT_RPC_ALLOC_REPLIED)
 						b->report.rpc_alloc_replied = true;
 					if (result == CIXVPU_BOOT_RPC_RESIZE_REPLIED)
 						b->report.rpc_resize_replied = true;
-					if (b->report.rpc_commits > 18)
+					if (result == CIXVPU_BOOT_RPC_SECOND_ALLOC_REPLIED)
+						b->report.rpc_second_alloc_replied = true;
+					if (b->report.rpc_commits > 19)
 						return EPROTO;
 					if (atomic_load_acquire(&b->irq_unexpected) != 0)
 						return EIO;

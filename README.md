@@ -1090,8 +1090,11 @@ The base system shell is unchanged.
   The first request asks for 128 KiB initial memory, 64 MiB virtual capacity,
   region0 and 4 MiB alignment. The next request is another MEM_ALLOC,
   PARAM1/call2/body12, size/max_size 16384, region0 and log2 alignment12.
-  That second allocation is not implemented. The probe returns ENOTSUP before
-  SWITCHED_IN/PONG and retains exposed owners with the IRQ masked.
+  That measured kernel does not reply to the second allocation. It returns
+  ENOTSUP before SWITCHED_IN/PONG and retains exposed owners with the IRQ masked.
+  The newer source prepares four separate pages and one leaf before exposure
+  and replies once to that exact second tuple after the committed resize.
+  This extension still needs a target build and physical acceptance.
   Firmware readiness and DMA data correctness remain unqualified.
   A separate [UART rate query](ember/boot/cix-platform.md#manual-uart-rate-observations)
   reads functional clock IDs264/266 as 100 MHz on the physical sample.

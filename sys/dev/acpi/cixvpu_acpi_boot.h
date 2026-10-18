@@ -33,7 +33,7 @@ struct cixvpu_boot_report {
 	bool started, moved, exposed, held, switched_in, pong, prepared_retained;
 	bool irq_registered, irq_masked;
 	bool rpc_alloc_valid, rpc_resize_valid;
-	bool rpc_alloc_replied, rpc_resize_replied;
+	bool rpc_alloc_replied, rpc_resize_replied, rpc_second_alloc_replied;
 	bool rpc_header_valid; /* One-copy observation, not transaction stability. */
 };
 /*
@@ -55,7 +55,7 @@ struct cixvpu_boot_report {
  */
 int cixvpu_acpi_boot_create(device_t, const struct acpi_attach_args *,
     const struct cixvpu_resources *, struct cixvpu_acpi_boot **);
-/* Separate manual policy for fixed ALLOC, one 512 KiB RESIZE and DEBUG. */
+/* Separate manual policy for two exact ALLOCs, one 512 KiB RESIZE and DEBUG. */
 int cixvpu_acpi_boot_create_rpc(device_t, const struct acpi_attach_args *,
     const struct cixvpu_resources *, struct cixvpu_acpi_boot **);
 int cixvpu_acpi_boot_once(struct cixvpu_acpi_boot *, struct cixvpu_prepared **);

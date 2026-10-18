@@ -92,6 +92,8 @@ cixvpu_acpi_boot_print(device_t self, const struct cixvpu_acpi_softc *sc,
 	    r->rpc_alloc_replied ? "yes" : "no");
 	aprint_normal_dev(self, "boot RPC resize replied %s\n",
 	    r->rpc_resize_replied ? "yes" : "no");
+	aprint_normal_dev(self, "boot RPC second allocation replied %s\n",
+	    r->rpc_second_alloc_replied ? "yes" : "no");
 	for (i = 0; i < __arraycount(r->core_status); i++) {
 		aprint_normal_dev(self,
 		    "boot core %u attempted %s released %s status %s cleanup %s\n",
@@ -117,7 +119,7 @@ cixvpu_acpi_allocation(device_t self)
 	firmware_handle_t firmware;
 	SHA256_CTX hash;
 	uint8_t digest[SHA256_DIGEST_LENGTH];
-	unsigned int roles[CIXVPU_FW_PLAN_LEAF + 1] = { 0 };
+	unsigned int roles[CIXVPU_FW_PLAN_RPC_SECOND_DATA + 1] = { 0 };
 	unsigned int i, j, pages = 0, checked = 0;
 	off_t extent;
 	size_t size = 0;

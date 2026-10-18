@@ -54,7 +54,8 @@ enum cixvpu_dma_rpc_result {
 	CIXVPU_DMA_RPC_PENDING,
 	CIXVPU_DMA_RPC_ALLOC_REPLIED,
 	CIXVPU_DMA_RPC_DEBUG_REPLIED,
-	CIXVPU_DMA_RPC_RESIZE_REPLIED
+	CIXVPU_DMA_RPC_RESIZE_REPLIED,
+	CIXVPU_DMA_RPC_SECOND_ALLOC_REPLIED
 };
 int cixvpu_dma_boot_rpc_step(struct cixvpu_dma *,
     const struct cixvpu_prepared *, const struct cixvpu_fw_plan *,

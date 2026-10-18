@@ -117,8 +117,8 @@ Allocation has a bounded page quota; WAITOK is not a wall-clock deadline.
 Source `61c007019a992103eced1adead758c881b14822a` passes 2194 actual-attachment
 checks with GCC16 path analysis, Cppcheck, CSA and host ASan/UBSan.
 Firmware, hash and DMA services are modeled; the parser and planner are real.
-The separate actual-source allocator passes 2338334 checks, including 629
-acquisition failures. The full manual kernel links with GCC16.2.
+The separate actual-source allocator passes 3276792 checks, including 665
+acquisition failures. The accepted physical manual kernel below links with GCC16.2.
 The physical CPU preparation fixture below also exercises native allocation.
 Device DMA data correctness, firmware readiness and video queues remain unqualified.
 
@@ -129,8 +129,12 @@ The ordinary builder keeps `boot_rpc` zero. The selected plan uses value one.
 It maps 128 zeroed `RPC_DATA` pages at firmware VA `0x20000000` and reserves
 `[0x20000000,0x24000000)` for the observed 64 MiB logical capacity.
 The initial ALLOC remains 128 KiB. The measured RESIZE backing is 512 KiB.
-One extra leaf links root slot128. The observed image shape has 385 owners
-and 381 mappings in this plan. The ordinary plan remains 256 owners/253 mappings.
+Two extra leaves link root slots128 and144. The second object has four zeroed
+SHARED_RW/WRITE pages at `[0x24000000,0x24004000)`, after the first logical reserve.
+This host placement follows the reference's capacity cursor inside the v3
+protected VA region. It is not a firmware-specified or physically accepted VA.
+The observed image shape has 390 owners, 385 mappings and five tables in this
+plan. The ordinary plan remains 256 owners/253 mappings.
 
 Unused leaf and root entries stay invalid zero. This differs from the vendor
 NOACCESS dummy-page encoding; identical fault behavior is not claimed.
@@ -141,12 +145,13 @@ before writes. It checks all table entries, zeroed data and unique loaded bus
 addresses. Initial data PREWRITE|PREREAD precedes leaf and root PREWRITE.
 Never-exposed cleanup and irreversible exposed hold keep their existing rules.
 
-The planner contract passes 680043 checks. Actual preparation passes 14984972
+The planner contract passes 682182 checks. Actual preparation passes 15724748
 checks with GCC16 path analysis, configured Cppcheck/CSA and ASan/UBSan.
-Independent reviews and causal runtime mutations cover the new boundaries.
+Causal runtime mutations cover the new boundaries.
 Only the separate manual RPC profile selects this plan. Default and strict
-manual profiles keep the ordinary plan. General allocation, resize/free, live
-PTE changes and physical coherency remain unqualified.
+manual profiles keep the ordinary plan. The second-object extension still
+needs a target build and physical acceptance. General allocation, resize/free,
+live PTE changes and physical coherency remain unqualified.
 
 ## CPU preparation and opaque ownership
 
@@ -293,9 +298,12 @@ Complete RPC service and firmware readiness still require physical acceptance.
 
 `cixvpu_prepared_boot_rpc_step` and `cixvpu_prepared_boot_receive_rpc` are
 separate plan1-only APIs. They cannot resume an owner with a sticky error.
-Fresh bounded observations accept the exact first MEM_ALLOC tuple, one fixed
-RESIZE and at most sixteen DEBUG calls. RESIZE requires the accepted allocation,
+Fresh bounded observations accept two exact MEM_ALLOC tuples, one fixed RESIZE
+and at most sixteen DEBUG calls. RESIZE requires the accepted first allocation,
 base `0x20000000` and new_size 524288. Its backing is prepared before exposure.
+The second allocation requires committed RESIZE, size=max_size16384, region0
+and log2_alignment12. It returns VA `0x24000000`; its backing and leaf already
+exist before exposure. A consumed but uncommitted resize cannot authorize it.
 Each allocation or resize slot is consumed before its first response store.
 The fixed VA and payload size 4 become visible before the release RETURN store.
 Partial DMA synchronization preserves unchanged request and neighboring bytes.
@@ -306,16 +314,17 @@ FREE and RETURN do not repeat a response. Receive permits their ordinary queue
 progress; a newly observed PARAM defers without reading or advancing that queue.
 The manual native coordinator services RPC before messages and issues exactly
 one IRQHOST notification after each commit. Reports count commits, notifications
-and allocation/resize replies separately. The maximum is 18 committed replies.
+and first allocation, resize and second allocation replies separately.
+The maximum is 19 committed replies.
 Unexpected IRQs before or after notification
 retain ownership and stop the epoch. Transient EAGAIN waits for the next visit
 within the original one-second/1001-visit bound. Terminal errors are not retried.
 
-Actual-source preparation passes 14984972 checks. The composed native contract
-passes 37527 checks, including 13438 attachment checks, with GCC16 path analysis,
+Actual-source preparation passes 15724748 checks. The composed native contract
+passes 39952 checks, including 13510 attachment checks, with GCC16 path analysis,
 configured Cppcheck/CSA and ASan/UBSan. Causal runtime mutations detect missing
-or repeated notification and faults around commit. Native analysis retains its
-explicit inherited findings. These are models, not physical firmware readiness.
+or repeated notification and faults around commit. Native analysis uses modeled
+bus-DMA, ACPI and IRQ services. These are models, not physical firmware readiness.
 
 ## Dedicated native boot epoch source
 
@@ -382,10 +391,10 @@ to that boot profile. It does not change the RPC policy or exposure lifetime.
 [EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE)
 selects the separate fixed RPC policy with VPU `flags 0x8` and SCMI `flags 0x80`.
 It preserves the UART2 console gate and all boot-long exposure rules.
-Its source checks pass, including ALLOC, fixed RESIZE, notification and the
-modeled SWITCHED_IN/PONG exchange. The physical diagnostic below commits the
-first ALLOC and fixed RESIZE. It stops on a second, unsupported ALLOC.
-That second object is not implemented.
+Its source checks pass, including both exact ALLOCs, fixed RESIZE, notifications
+and the modeled SWITCHED_IN/PONG exchange. The physical diagnostic below commits
+the first ALLOC and fixed RESIZE. That measured kernel stops on the second ALLOC.
+The newer second-object extension needs a target build and physical acceptance.
 The complete firmware handshake remains unqualified.
 
 The once-only mountroot callback reuses the fixed local image pin, exact size,
@@ -670,8 +679,8 @@ IRQ status mask `0x1`, with no unexpected IRQ bits. The first MEM_ALLOC and
 fixed RESIZE each have one committed response and one notification.
 The resize serves address `0x20000000` and new_size 524288.
 The next request is PARAM state1, call2, payload12: MEM_ALLOC with size and
-max_size 16384, region0 and log2 alignment12. No response to that second
-allocation is implemented. The probe returns ENOTSUP86 at RECEIVE, last stage9,
+max_size 16384, region0 and log2 alignment12. That measured kernel does not
+respond to the second allocation. It returns ENOTSUP86 at RECEIVE, last stage9,
 without SWITCHED_IN or PONG. This is protocol progress, not firmware readiness.
 
 The first MEM_ALLOC tuple remains initial `131072` bytes, maximum `67108864`
@@ -680,7 +689,9 @@ bytes, region0 and log2 alignment22. Maximum size reserves virtual capacity;
 allocate pages or change live PTEs while servicing the fixed resize.
 Checked payloads and matching headers rely on committed PARAM ownership;
 they do not prove an atomic transaction or physical DMA coherence.
-No second object, free or complete allocator is implemented by this policy.
+The newer source adds one fixed second-object response after committed RESIZE.
+Its target build and physical response remain pending. Free and a complete
+allocator are not implemented by this closed policy.
 
 The exposed prepared owner, core power claims and IRQ registration remain held.
 The IRQ is masked. Cleanup counters do not indicate post-exposure reclamation.

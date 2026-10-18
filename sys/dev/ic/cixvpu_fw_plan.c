@@ -29,6 +29,15 @@ _Static_assert(CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_SIZE % CIXVPU_FW_PAGE_SIZE == 0 &
     CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES <= 1024,
     "closed RPC backing must fit one leaf and the logical reserve");
 
+_Static_assert(CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS ==
+    CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS + CIXVPU_FW_PLAN_BOOT_RPC_CAPACITY &&
+    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS % (UINT32_C(1) << 22) == 0 &&
+    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_SIZE ==
+    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES * CIXVPU_FW_PAGE_SIZE &&
+    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS +
+    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_SIZE <= UINT32_C(0x70000000),
+    "second object must follow the first reserve inside the v3 protected VA");
+
 /* Recheck metadata on every public call, before any bitmap or index use. */
 static int
 cixvpu_fw_plan_check(const struct cixvpu_fw_info *info, unsigned int cores,
@@ -84,8 +93,10 @@ cixvpu_fw_plan_check(const struct cixvpu_fw_info *info, unsigned int cores,
 	    shared_pages + PLAN_COMMON_PAGES + PLAN_PRINT_PAGES + cores + 2;
 	mappings = (uint64_t)cores * (text_pages + private_pages + shared_pages) +
 	    PLAN_COMMON_PAGES + PLAN_PRINT_PAGES;
-	backing += (uint64_t)boot_rpc * (CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES + 1);
-	mappings += (uint64_t)boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES;
+	backing += (uint64_t)boot_rpc * (CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES +
+	    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES + 2);
+	mappings += (uint64_t)boot_rpc * (CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES +
+	    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES);
 	if (backing > CIXVPU_FW_PLAN_MAX_PAGES || mappings > UINT32_MAX)
 		return E2BIG;
 	checked->info = *info;
@@ -154,13 +165,14 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 {
 	const struct cixvpu_fw_info *info = &plan->info;
 	struct cixvpu_fw_plan_page page = { 0 };
-	uint32_t shared, common, print, rpc, root;
+	uint32_t shared, common, print, rpc, second, root;
 
 	shared = info->text_pages + plan->cores * info->private_pages;
 	common = shared + info->shared_pages;
 	print = common + PLAN_COMMON_PAGES;
 	rpc = print + PLAN_PRINT_PAGES;
-	root = rpc + plan->boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES;
+	second = rpc + plan->boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES;
+	root = second + plan->boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES;
 	page.backing_index = index;
 	page.core = CIXVPU_FW_PLAN_NO_CORE;
 	page.attribute = CIXVPU_MMU_PRIVATE;
@@ -188,9 +200,13 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 		page.role = CIXVPU_FW_PLAN_PRINT;
 		page.ordinal = index - print;
 		page.attribute = CIXVPU_MMU_SHARED_RW;
-	} else if (index < root) {
+	} else if (index < second) {
 		page.role = CIXVPU_FW_PLAN_RPC_DATA;
 		page.ordinal = index - rpc;
+		page.attribute = CIXVPU_MMU_SHARED_RW;
+	} else if (index < root) {
+		page.role = CIXVPU_FW_PLAN_RPC_SECOND_DATA;
+		page.ordinal = index - second;
 		page.attribute = CIXVPU_MMU_SHARED_RW;
 	} else if (index == root) {
 		page.role = CIXVPU_FW_PLAN_ROOT;
@@ -203,8 +219,10 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 			page.leaf_address = page.core * PLAN_CORE_STRIDE;
 		} else if (page.ordinal == plan->cores) {
 			page.leaf_address = PLAN_COMMON_LEAF;
-		} else {
+		} else if (page.ordinal == plan->cores + 1) {
 			page.leaf_address = CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS;
+		} else {
+			page.leaf_address = CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS;
 		}
 	}
 	*out = page;
@@ -248,15 +266,22 @@ cixvpu_fw_plan_mapping(const struct cixvpu_fw_plan *plan, unsigned int index,
 	info = &plan->info;
 	per_core = info->text_pages + info->private_pages + info->shared_pages;
 	core_maps = per_core * plan->cores;
-	first_leaf = plan->backing_pages - plan->cores - 1 - plan->boot_rpc;
+	first_leaf = plan->backing_pages - plan->cores - 1 - 2 * plan->boot_rpc;
 	shared = info->text_pages + plan->cores * info->private_pages;
 	if (index >= core_maps + PLAN_COMMON_PAGES + PLAN_PRINT_PAGES) {
 		local = index - core_maps - PLAN_COMMON_PAGES - PLAN_PRINT_PAGES;
 		map.backing_index = shared + info->shared_pages +
 		    PLAN_COMMON_PAGES + PLAN_PRINT_PAGES + local;
 		map.leaf_backing_index = first_leaf + plan->cores + 1;
-		map.address = CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS +
-		    local * CIXVPU_FW_PAGE_SIZE;
+		if (local < CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES) {
+			map.address = CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS +
+			    local * CIXVPU_FW_PAGE_SIZE;
+		} else {
+			map.leaf_backing_index++;
+			map.address = CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS +
+			    (local - CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES) *
+			    CIXVPU_FW_PAGE_SIZE;
+		}
 		goto ready;
 	}
 	if (index >= core_maps) {

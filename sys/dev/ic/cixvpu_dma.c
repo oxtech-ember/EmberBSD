@@ -35,7 +35,8 @@ struct cixvpu_dma {
 	bus_dma_tag_t tag;
 	bool tag_acquired;
 	bool ever_visible;
-	bool rpc_alloc_used, rpc_resize_used;
+	bool rpc_alloc_used, rpc_resize_used, rpc_resize_committed;
+	bool rpc_second_alloc_used;
 	unsigned int rpc_debug_count;
 	enum cixvpu_dma_phase phase;
 	const struct cixvpu_prepared *prepared_owner;
@@ -57,7 +58,7 @@ cixvpu_dma_record(const struct cixvpu_fw_plan_page *page, uint32_t index)
 
 	if (page->backing_index != index ||
 	    page->role < CIXVPU_FW_PLAN_TEXT ||
-	    page->role > CIXVPU_FW_PLAN_LEAF ||
+	    page->role > CIXVPU_FW_PLAN_RPC_SECOND_DATA ||
 	    page->attribute > CIXVPU_MMU_SHARED_RW ||
 	    page->permission < CIXVPU_MMU_READ ||
 	    page->permission > CIXVPU_MMU_WRITE ||
@@ -319,6 +320,7 @@ cixvpu_dma_initial_ops(enum cixvpu_fw_plan_role role)
 	case CIXVPU_FW_PLAN_RPC:
 	case CIXVPU_FW_PLAN_PRINT:
 	case CIXVPU_FW_PLAN_RPC_DATA:
+	case CIXVPU_FW_PLAN_RPC_SECOND_DATA:
 		return BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD;
 	default:
 		return 0;
@@ -739,6 +741,7 @@ cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
 	}
 	if (call == 2) {
 		uint32_t *words;
+		uint32_t address;
 		uint64_t pages, capacity;
 
 		if (bytes != sizeof(observed)) {
@@ -747,30 +750,48 @@ cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
 		}
 		pages = ((uint64_t)le32dec(observed + 12) + 4095) / 4096;
 		capacity = ((uint64_t)le32dec(observed + 16) + 4095) / 4096;
-		if (le32dec(observed + 12) != CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_SIZE ||
-		    le32dec(observed + 16) != CIXVPU_FW_PLAN_BOOT_RPC_CAPACITY ||
-		    observed[20] != CIXVPU_FW_PLAN_BOOT_RPC_REGION ||
-		    observed[21] != CIXVPU_FW_PLAN_BOOT_RPC_LOG2_ALIGNMENT ||
-		    pages != CIXVPU_FW_PLAN_BOOT_RPC_PAGES || capacity != 16384) {
+		if (le32dec(observed + 12) == CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_SIZE &&
+		    le32dec(observed + 16) == CIXVPU_FW_PLAN_BOOT_RPC_CAPACITY &&
+		    observed[20] == CIXVPU_FW_PLAN_BOOT_RPC_REGION &&
+		    observed[21] == CIXVPU_FW_PLAN_BOOT_RPC_LOG2_ALIGNMENT &&
+		    pages == CIXVPU_FW_PLAN_BOOT_RPC_PAGES && capacity == 16384) {
+			if (dma->rpc_alloc_used) {
+				error = EBUSY;
+				goto rearm;
+			}
+			dma->rpc_alloc_used = true;
+			address = CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS;
+			result = CIXVPU_DMA_RPC_ALLOC_REPLIED;
+		} else if (le32dec(observed + 12) ==
+		    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_SIZE &&
+		    le32dec(observed + 16) == CIXVPU_FW_PLAN_BOOT_RPC_SECOND_SIZE &&
+		    observed[20] == CIXVPU_FW_PLAN_BOOT_RPC_REGION &&
+		    observed[21] == CIXVPU_FW_PLAN_BOOT_RPC_SECOND_LOG2_ALIGNMENT) {
+			if (dma->rpc_second_alloc_used) {
+				error = EBUSY;
+				goto rearm;
+			}
+			if (!dma->rpc_alloc_used || !dma->rpc_resize_committed) {
+				error = ENOTSUP;
+				goto rearm;
+			}
+			dma->rpc_second_alloc_used = true;
+			address = CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS;
+			result = CIXVPU_DMA_RPC_SECOND_ALLOC_REPLIED;
+		} else {
 			error = ENOTSUP;
 			goto rearm;
 		}
-		if (dma->rpc_alloc_used) {
-			error = EBUSY;
-			goto rearm;
-		}
-		dma->rpc_alloc_used = true;
 		/* Retire host writes, then rearm clean neighbors before dirtying. */
 		bus_dmamap_sync(dma->tag, rpc->map, 0, 4, BUS_DMASYNC_POSTWRITE);
 		bus_dmamap_sync(dma->tag, rpc->map, 8, 8, BUS_DMASYNC_POSTWRITE);
 		bus_dmamap_sync(dma->tag, rpc->map, 4, 4, BUS_DMASYNC_PREREAD);
 		bus_dmamap_sync(dma->tag, rpc->map, 16, 8, BUS_DMASYNC_PREREAD);
 		words = rpc->kva;
-		words[3] = htole32(CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS);
+		words[3] = htole32(address);
 		words[2] = htole32(4);
 		bus_dmamap_sync(dma->tag, rpc->map, 8, 8,
 		    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
-		result = CIXVPU_DMA_RPC_ALLOC_REPLIED;
 	} else if (call == 3) {
 		uint32_t *words;
 
@@ -816,6 +837,8 @@ cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
 	atomic_store_release((uint32_t *)rpc->kva, htole32(2));
 	bus_dmamap_sync(dma->tag, rpc->map, 0, 4,
 	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+	if (result == CIXVPU_DMA_RPC_RESIZE_REPLIED)
+		dma->rpc_resize_committed = true;
 	*out = result;
 	return 0;
 rearm:

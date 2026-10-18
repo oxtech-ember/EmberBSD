@@ -122,7 +122,7 @@ compose(const struct cixvpu_fw_plan *plan)
     }
     CHECK(root_owner != UINT32_MAX);
 #ifdef CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS
-    CHECK(leaf_count == plan->cores + 1 + plan->boot_rpc);
+    CHECK(leaf_count == plan->cores + 1 + 2 * plan->boot_rpc);
 #else
     CHECK(leaf_count == plan->cores + 1);
 #endif
@@ -148,7 +148,7 @@ compose(const struct cixvpu_fw_plan *plan)
     }
 #ifdef CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS
     if (plan->boot_rpc) {
-        CHECK(leaf_count==3);
+        CHECK(leaf_count==4);
         for (i=0;i<128;i++) {
             CHECK(cixvpu_mmu_lookup(leaves[2],4096,i,&value)==0);
             /* The measured resize backing exists before exposure. */
@@ -158,7 +158,13 @@ compose(const struct cixvpu_fw_plan *plan)
             CHECK(cixvpu_mmu_lookup(leaves[2],4096,i,&value)==0);
             CHECK(value==0); /* Tail is invalid, not a dummy physical page. */
         }
+        CHECK(cixvpu_mmu_lookup(root,4096,144,&value)==0 && value!=0);
+        for (i=0;i<1024;i++) {
+            CHECK(cixvpu_mmu_lookup(leaves[3],4096,i,&value)==0);
+            CHECK(i<4 ? value!=0 : value==0);
+        }
         for (i=129;i<144;i++) {
+
             CHECK(cixvpu_mmu_lookup(root,4096,i,&value)==0 && value==0);
         }
     }
@@ -199,7 +205,7 @@ boot_rpc_tests(void)
     CHECK(cixvpu_fw_plan_build(image,420736,1,&old)==0);
     CHECK(old.backing_pages==256 && old.mappings==253);
     CHECK(build_boot_rpc(image,420736,1,&plan)==0);
-    CHECK(plan.backing_pages==385 && plan.mappings==381);
+    CHECK(plan.backing_pages==390 && plan.mappings==385);
 #ifdef CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS
     CHECK(old.boot_rpc==0 && plan.boot_rpc==1);
     CHECK(CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS==0x20000000);
@@ -231,7 +237,7 @@ boot_rpc_tests(void)
         CHECK(cixvpu_fw_plan_mapping(&plan,i,&m)==0);
         CHECK(previous.address==m.address && previous.backing_index==m.backing_index &&
             previous.role==m.role && previous.attribute==m.attribute && previous.permission==m.permission);
-        CHECK(m.leaf_backing_index==previous.leaf_backing_index+128);
+        CHECK(m.leaf_backing_index==previous.leaf_backing_index+132);
     }
     for(unsigned int i=0;i<128;i++) {
         CHECK(cixvpu_fw_plan_page(&plan,253+i,&after)==0);
@@ -240,19 +246,31 @@ boot_rpc_tests(void)
             after.attribute==CIXVPU_MMU_SHARED_RW && after.permission==CIXVPU_MMU_WRITE);
         CHECK(cixvpu_fw_plan_mapping(&plan,253+i,&m)==0);
         CHECK(m.address==0x20000000+i*4096 && m.backing_index==253+i &&
-            m.leaf_backing_index==384 && m.role==CIXVPU_FW_PLAN_RPC_DATA &&
+            m.leaf_backing_index==388 && m.role==CIXVPU_FW_PLAN_RPC_DATA &&
             m.attribute==CIXVPU_MMU_SHARED_RW && m.permission==CIXVPU_MMU_WRITE);
     }
     CHECK(cixvpu_fw_plan_page(&old,253,&before)==0 && before.role==CIXVPU_FW_PLAN_ROOT);
-    CHECK(cixvpu_fw_plan_page(&plan,381,&after)==0 && after.role==CIXVPU_FW_PLAN_ROOT);
-    static const uint32_t leaf_addresses[]={0,0x10000000,0x20000000};
-    for(unsigned int i=0;i<3;i++) {
-        CHECK(cixvpu_fw_plan_page(&plan,382+i,&after)==0);
+    CHECK(cixvpu_fw_plan_page(&plan,385,&after)==0 && after.role==CIXVPU_FW_PLAN_ROOT);
+    static const uint32_t leaf_addresses[]={0,0x10000000,0x20000000,0x24000000};
+    for(unsigned int i=0;i<4;i++) {
+        CHECK(cixvpu_fw_plan_page(&plan,386+i,&after)==0);
         CHECK(after.role==CIXVPU_FW_PLAN_LEAF && after.ordinal==i &&
             after.leaf_address==leaf_addresses[i] && after.attribute==CIXVPU_MMU_PRIVATE &&
             after.permission==CIXVPU_MMU_READ && (i==0 ? after.core==0 : after.core==CIXVPU_FW_PLAN_NO_CORE));
     }
+    for (unsigned int i=0;i<4;i++) {
+        CHECK(cixvpu_fw_plan_page(&plan,381+i,&after)==0);
+        CHECK(after.role!=CIXVPU_FW_PLAN_RPC_DATA &&
+            after.role!=CIXVPU_FW_PLAN_ROOT && after.role!=CIXVPU_FW_PLAN_LEAF &&
+            after.ordinal==i && after.core==UINT32_MAX &&
+            after.attribute==CIXVPU_MMU_SHARED_RW && after.permission==CIXVPU_MMU_WRITE);
+        CHECK(cixvpu_fw_plan_mapping(&plan,381+i,&m)==0);
+        CHECK(m.address==0x24000000+i*4096 && m.backing_index==381+i &&
+            m.leaf_backing_index==389 && m.role==after.role &&
+            m.attribute==CIXVPU_MMU_SHARED_RW && m.permission==CIXVPU_MMU_WRITE);
+    }
     compose(&plan);
+
     struct cixvpu_fw_plan bad, canary;
     memset(&canary,0xa5,sizeof(canary));
     unsigned int cores[]={0,2,4,UINT32_MAX};
@@ -272,8 +290,8 @@ boot_rpc_tests(void)
     image[5]=3;
     CHECK(build_boot_rpc(image,420736,1,NULL)==EINVAL);
     CHECK(build_boot_rpc(image,SIZE_MAX,1,&bad)==0 && bad.boot_rpc==1);
-    CHECK(cixvpu_fw_plan_page(&plan,385,&after)==ERANGE);
-    CHECK(cixvpu_fw_plan_mapping(&plan,381,&m)==ERANGE);
+    CHECK(cixvpu_fw_plan_page(&plan,390,&after)==ERANGE);
+    CHECK(cixvpu_fw_plan_mapping(&plan,385,&m)==ERANGE);
     /* Old 128KiB-only metadata cannot describe the 512KiB backing profile. */
     bad=plan; bad.backing_pages=289; bad.mappings=285; tampered(&bad);
     bad=plan; bad.boot_rpc=2; tampered(&bad);

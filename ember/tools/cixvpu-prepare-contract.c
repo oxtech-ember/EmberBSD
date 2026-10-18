@@ -321,6 +321,7 @@ static const unsigned int want_pre[] = {
     [CIXVPU_FW_PLAN_BUF_OUT_HOST]=4, [CIXVPU_FW_PLAN_BUF_OUT_MVE]=5,
     [CIXVPU_FW_PLAN_RPC]=5, [CIXVPU_FW_PLAN_PRINT]=5,
     [CIXVPU_FW_PLAN_RPC_DATA]=5,
+    [CIXVPU_FW_PLAN_RPC_SECOND_DATA]=5,
     [CIXVPU_FW_PLAN_ROOT]=4, [CIXVPU_FW_PLAN_LEAF]=4
 };
 static uint8_t *device_bytes(unsigned int i)
@@ -338,7 +339,7 @@ static void observe_sync(unsigned int i, bus_addr_t offset, bus_size_t length, i
             for (unsigned int j = 0; j < sync_plan.backing_pages; j++) {
                 struct cixvpu_fw_plan_page q;
                 CHECK(cixvpu_fw_plan_page(&sync_plan, j, &q) == 0);
-                if (q.role >= CIXVPU_FW_PLAN_ROOT && p.role != CIXVPU_FW_PLAN_ROOT) continue;
+                if (q.role == CIXVPU_FW_PLAN_LEAF && p.role != CIXVPU_FW_PLAN_ROOT) continue;
                 if (q.role == CIXVPU_FW_PLAN_ROOT) continue;
                 CHECK(pres[j] != 0);
                 CHECK(memcmp(device_bytes(j), resources[j].kva, 4096) == 0);
@@ -393,6 +394,7 @@ static void sync_success_tests(void)
             unsigned int calls = native_calls;
             CHECK(cixvpu_prepared_sync_initial(out) == EBUSY && native_calls == calls);
             struct cixvpu_dma_page view;
+
             CHECK(cixvpu_dma_page(out->dma, 0, &view) == EBUSY);
             unload_observer = observe_unload;
             CHECK(cixvpu_prepared_free(&out) == 0 && out == NULL);
@@ -776,9 +778,9 @@ static struct cixvpu_dma *rpc_reserve_begin(struct cixvpu_fw_plan *plan)
     put32(rpc_image+172,0x7f000); put32(rpc_image+176,0);
     memcpy(rpc_pinned,rpc_image,sizeof(rpc_image));
     CHECK(cixvpu_fw_plan_build_boot_rpc(rpc_image,sizeof(rpc_image),1,plan)==0);
-    CHECK(plan->backing_pages==385 && plan->mappings==381 && plan->boot_rpc==1);
+    CHECK(plan->backing_pages==390 && plan->mappings==385 && plan->boot_rpc==1);
     CHECK(cixvpu_dma_alloc(&tag32,&tag64,plan,&owner)==0);
-    for(unsigned int i=0;i<385;i++) memset(resources[i].kva,0xa5,4096);
+    for(unsigned int i=0;i<390;i++) memset(resources[i].kva,0xa5,4096);
     hashes=page_calls=map_calls=link_calls=encode_calls=meta_calls=0;
     fail_meta=fail_page=fail_map=fail_link=fail_encode=view_fault=duplicate_map=rpc_table_fault=0;
     fail_free=fail_seal=false;
@@ -794,32 +796,36 @@ static void rpc_reserve_tests(void)
         struct cixvpu_dma *owner=rpc_reserve_begin(&plan),*old=owner;
         struct cixvpu_prepared *out=NULL;
         CHECK(cixvpu_prepare_boot_cpu(&owner,&plan,rpc_image,sizeof(rpc_image),fixture_pin,&out)==0);
-        CHECK(owner==NULL && out!=NULL && out->plan.boot_rpc==1 && out->count==384);
-        CHECK(map_calls==381 && link_calls==3);
+        CHECK(owner==NULL && out!=NULL && out->plan.boot_rpc==1 && out->count==389);
+        CHECK(map_calls==385 && link_calls==4);
         for(unsigned int i=0;i<103;i++) {
             size_t n=i==102 ? 2944 : 4096;
             CHECK(memcmp(resources[i].kva,rpc_image+i*4096,n)==0);
             CHECK(memcmp((uint8_t *)resources[i].kva+n,zero,4096-n)==0);
         }
-        for(unsigned int i=253;i<381;i++) CHECK(memcmp(resources[i].kva,zero,4096)==0);
-        const void *root=resources[381].kva,*leaf=resources[384].kva;
-        CHECK(word(root,0)==((uint32_t)(bus_address(382)>>12)<<2|1));
-        CHECK(word(root,64)==((uint32_t)(bus_address(383)>>12)<<2|1));
-        CHECK(word(root,128)==((uint32_t)(bus_address(384)>>12)<<2|1));
+        for(unsigned int i=253;i<385;i++) CHECK(memcmp(resources[i].kva,zero,4096)==0);
+        const void *root=resources[385].kva,*leaf=resources[388].kva;
+        CHECK(word(root,0)==((uint32_t)(bus_address(386)>>12)<<2|1));
+        CHECK(word(root,64)==((uint32_t)(bus_address(387)>>12)<<2|1));
+        CHECK(word(root,128)==((uint32_t)(bus_address(388)>>12)<<2|1));
         for(unsigned int i=0;i<1024;i++) {
             CHECK(word(leaf,i)==(i<128 ? (uint32_t)(bus_address(253+i)>>12)<<2|0xc0000003U : 0));
-            if(i!=0 && i!=64 && i!=128) CHECK(word(root,i)==0);
+            if(i!=0 && i!=64 && i!=128 && i!=144) CHECK(word(root,i)==0);
         }
         struct cixvpu_dma_page view;
+        CHECK(word(root,144)==((uint32_t)(bus_address(389)>>12)<<2|1));
+        const void *second=resources[389].kva;
+        for(unsigned int i=0;i<1024;i++)
+            CHECK(word(second,i)==(i<4 ? (uint32_t)(bus_address(381+i)>>12)<<2|0xc0000003U : 0));
         CHECK(cixvpu_dma_page(old,253,&view)==EBUSY);
         sync_fixture(&plan,mode!=0);
         /* A late new data-map fault must prevent every native sync. */
-        old->owners[380].map->dm_segs[0].ds_addr++;
+        old->owners[384].map->dm_segs[0].ds_addr++;
         unsigned int calls=native_calls;
         CHECK(cixvpu_prepared_sync_initial(out)==ERANGE && sync_calls==0 && native_calls==calls);
-        old->owners[380].map->dm_segs[0].ds_addr--;
-        CHECK(cixvpu_prepared_sync_initial(out)==0 && sync_calls==385);
-        for(unsigned int i=253;i<381;i++) {
+        old->owners[384].map->dm_segs[0].ds_addr--;
+        CHECK(cixvpu_prepared_sync_initial(out)==0 && sync_calls==390);
+        for(unsigned int i=253;i<385;i++) {
             CHECK(pres[i]==5 && posts[i]==0);
             CHECK(memcmp(device_bytes(i),zero,4096)==0);
         }
@@ -827,37 +833,55 @@ static void rpc_reserve_tests(void)
         CHECK(cixvpu_prepared_sync_initial(out)==EBUSY && native_calls==calls);
         if(mode==0) {
             unload_observer=observe_unload;
-            CHECK(cixvpu_prepared_free(&out)==0 && out==NULL && sync_calls==770);
+            CHECK(cixvpu_prepared_free(&out)==0 && out==NULL && sync_calls==780);
         } else {
             uint32_t address=0xa5a5a5a5;
             CHECK(cixvpu_prepared_publish_root(out,&address)==0);
-            CHECK(address==((uint32_t)(bus_address(381)>>12)<<2|3));
+            CHECK(address==((uint32_t)(bus_address(385)>>12)<<2|3));
             calls=native_calls;
             CHECK(cixvpu_prepared_free(&out)==EBUSY && out!=NULL && native_calls==calls);
             boot_drop(out); /* Host-only quarantine teardown, never production. */
         }
         CHECK(depth==0 && live_kmem==0);
     }
-    for(unsigned int fault=0;fault<9;fault++) {
+    const unsigned int arenas[]={253,381,384};
+    for(unsigned int arena=0;arena<3;arena++) for(unsigned int fault=0;fault<9;fault++) {
+        unsigned int at=arenas[arena];
         struct cixvpu_fw_plan plan;
         struct cixvpu_dma *owner=rpc_reserve_begin(&plan),*saved=owner;
         struct cixvpu_prepared *out=NULL;
-        struct cixvpu_dma_owner original=owner->owners[253];
+        struct cixvpu_dma_owner original=owner->owners[at];
         if(fault==0) plan.boot_rpc=0;
         if(fault==1) plan.boot_rpc=2;
         if(fault==2) plan.mappings--;
-        if(fault==3) owner->owners[253].page.role=CIXVPU_FW_PLAN_PRINT;
-        if(fault==4) owner->owners[253].bus_address=bus_address(0);
-        if(fault==5) owner->owners[253].kva=resources[0].kva;
+        if(fault==3) owner->owners[at].page.role=CIXVPU_FW_PLAN_PRINT;
+        if(fault==4) owner->owners[at].bus_address=bus_address(0);
+        if(fault==5) owner->owners[at].kva=resources[0].kva;
         if(fault==6) rpc_table_fault=1;
         if(fault==7) rpc_table_fault=2;
         if(fault==8) rpc_image[4000]^=1;
         CHECK(cixvpu_prepare_boot_cpu(&owner,&plan,rpc_image,sizeof(rpc_image),fixture_pin,&out)!=0);
         CHECK(owner==saved && out==NULL && owner->phase==CIXVPU_DMA_ALLOC);
-        if(fault<6 || fault==8) for(unsigned int i=0;i<385;i++)
+        if(fault<6 || fault==8) for(unsigned int i=0;i<390;i++)
             CHECK(memcmp(resources[i].kva,canary,4096)==0);
-        owner->owners[253]=original; rpc_table_fault=0;
+        owner->owners[at]=original; rpc_table_fault=0;
         CHECK(cixvpu_dma_free(&owner)==0 && depth==0 && live_kmem==0);
+    }
+    /* Each new gather/map/link boundary retains a reclaimable stopped owner. */
+    for(unsigned int stage=0;stage<3;stage++) {
+        unsigned int first=stage==0 ? 382 : stage==1 ? 382 : 4;
+        unsigned int last=stage==0 ? 391 : stage==1 ? 385 : 4;
+        for(unsigned int at=first;at<=last;at++) {
+            struct cixvpu_fw_plan plan;
+            struct cixvpu_dma *owner=rpc_reserve_begin(&plan),*saved=owner;
+            struct cixvpu_prepared *out=NULL;
+            if(stage==0) fail_page=at;
+            if(stage==1) fail_map=at;
+            if(stage==2) fail_link=at;
+            CHECK(cixvpu_prepare_boot_cpu(&owner,&plan,rpc_image,sizeof(rpc_image),fixture_pin,&out)==EIO);
+            CHECK(owner==saved && out==NULL && !owner->ever_visible);
+            CHECK(cixvpu_dma_free(&owner)==0 && depth==0 && live_kmem==0);
+        }
     }
     struct cixvpu_fw_plan plan;
     struct cixvpu_dma *owner=rpc_reserve_begin(&plan);
@@ -879,19 +903,19 @@ static void rpc_observe(unsigned int i, bus_addr_t off, bus_size_t len, int ops)
     CHECK(i==boot_rpc && off+len<=24);
     uint8_t *cpu=resources[i].kva,*dev=device_memory[i];
     if(ops==BUS_DMASYNC_POSTWRITE && off==0) {
-        if(word(dev,1)==2) CHECK(rpc_active->dma->rpc_alloc_used);
-        if(word(dev,1)==3) CHECK(rpc_active->dma->rpc_resize_used);
+        if(word(dev,1)==2) CHECK(word(dev,4)==16384 ? rpc_active->dma->rpc_second_alloc_used : rpc_active->dma->rpc_alloc_used);
+        if(word(dev,1)==3) CHECK(rpc_active->dma->rpc_resize_used && !rpc_active->dma->rpc_resize_committed);
         if(word(dev,1)==1) CHECK(rpc_active->dma->rpc_debug_count>0 && rpc_active->dma->rpc_debug_count<=16);
     }
     if(ops & BUS_DMASYNC_PREWRITE) {
         CHECK(ops==5 && ((off==8 && len==8) || (off==0 && len==4)));
         CHECK(word(dev,0)==1);
         if(off==8) {
-            CHECK(word(cpu,0)==1 && (word(cpu,1)==2 || word(cpu,1)==3) && word(cpu,2)==4 && word(cpu,3)==0x20000000);
+            CHECK(word(cpu,0)==1 && (word(cpu,1)==2 || word(cpu,1)==3) && word(cpu,2)==4 && word(cpu,3)==(word(dev,4)==16384 ? 0x24000000U : 0x20000000U));
             CHECK(memcmp(cpu+16,dev+16,rpc_cacheline ? 48 : word(cpu,1)==3 ? 4 : 8)==0);
         } else {
             CHECK(word(cpu,0)==2);
-            if(word(dev,1)==2 || word(dev,1)==3) CHECK(word(dev,2)==4 && word(dev,3)==0x20000000);
+            if(word(dev,1)==2 || word(dev,1)==3) CHECK(word(dev,2)==4 && word(dev,3)==(word(dev,4)==16384 ? 0x24000000U : 0x20000000U));
             CHECK(memcmp(cpu+4,dev+4,rpc_cacheline ? 60 : 8)==0);
         }
     }
@@ -1070,6 +1094,71 @@ static void rpc_resize_request(uint32_t address,uint32_t size)
     put32(device_memory[boot_rpc]+12,address);
     put32(device_memory[boot_rpc]+16,size);
 }
+static void rpc_second_request(void)
+{
+    rpc_request(1,2,12);
+    put32(device_memory[boot_rpc]+12,16384);
+    put32(device_memory[boot_rpc]+16,16384);
+    device_memory[boot_rpc][21]=12;
+}
+/* Breaks caught: absent second reply, early/duplicate admission, broad tuples,
+ * first-reserve collision, wrong response ordering and live allocation. */
+static void boot_rpc_second_tests(void)
+{
+    enum cixvpu_boot_rpc_result result;
+    uint8_t original[4096];
+    for(unsigned int mode=0;mode<2;mode++) {
+        struct cixvpu_prepared *p=rpc_protocol_begin(true);
+        rpc_cacheline=mode!=0;
+        rpc_request(1,2,12);
+        CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==0);
+        rpc_resize_request(0x20000000,524288);
+        CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==0);
+        rpc_second_request(); memcpy(original,device_memory[boot_rpc],4096);
+        unsigned int calls=native_calls,heap=live_kmem,owners=depth;
+        CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==0);
+        CHECK(result==CIXVPU_BOOT_RPC_SECOND_ALLOC_REPLIED);
+        CHECK(native_calls==calls+9 && heap==live_kmem && owners==depth && boot_nevents==9);
+        CHECK(word(device_memory[boot_rpc],0)==2 && word(device_memory[boot_rpc],2)==4 && word(device_memory[boot_rpc],3)==0x24000000);
+        CHECK(memcmp(original+4,device_memory[boot_rpc]+4,4)==0 && memcmp(original+16,device_memory[boot_rpc]+16,4080)==0);
+        rpc_second_request(); result=CIXVPU_BOOT_RPC_IDLE;
+        CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==EBUSY && result==CIXVPU_BOOT_RPC_IDLE);
+        calls=native_calls;
+        CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==EBUSY && native_calls==calls);
+        CHECK(cixvpu_prepared_free(&p)==EBUSY && p!=NULL);
+        boot_drop(p);
+    }
+    for(unsigned int fault=0;fault<10;fault++) {
+        struct cixvpu_prepared *p=rpc_protocol_begin(true);
+        if(fault!=0) {
+            rpc_request(1,2,12); CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==0);
+            if(fault!=1 && fault!=9) {
+                rpc_resize_request(0x20000000,524288);
+                CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==0);
+            }
+        }
+        if(fault==9) p->dma->rpc_resize_used=true; /* Consumed is not committed. */
+        rpc_second_request();
+        int want=ENOTSUP;
+        if(fault==2) put32(device_memory[boot_rpc]+12,16383);
+        if(fault==3) put32(device_memory[boot_rpc]+16,16385);
+        if(fault==4) device_memory[boot_rpc][20]=1;
+        if(fault==5) device_memory[boot_rpc][21]=13;
+        if(fault==6) put32(device_memory[boot_rpc]+12,UINT32_MAX);
+        if(fault==7) {put32(device_memory[boot_rpc]+8,11);want=EPROTO;}
+        if(fault==8) {put32(device_memory[boot_rpc],3);want=EPROTO;}
+        memcpy(original,device_memory[boot_rpc],4096);
+        unsigned int calls,heap=live_kmem,owners=depth;
+        result=CIXVPU_BOOT_RPC_IDLE;
+        CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==want && result==CIXVPU_BOOT_RPC_IDLE);
+        CHECK(p->boot.error==want && heap==live_kmem && owners==depth);
+        CHECK(memcmp(original,device_memory[boot_rpc],4096)==0);
+        for(unsigned int i=0;i<boot_nevents;i++) CHECK(!(boot_events[i].ops & BUS_DMASYNC_PREWRITE));
+        calls=native_calls;
+        CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==want && native_calls==calls);
+        boot_drop(p);
+    }
+}
 static void boot_rpc_resize_runtime_tests(void)
 {
     for(unsigned int mode=0;mode<2;mode++) {
@@ -1083,7 +1172,7 @@ static void boot_rpc_resize_runtime_tests(void)
         uint8_t original[4096];memcpy(original,device_memory[boot_rpc],4096);
         unsigned int calls=native_calls,heap=live_kmem,owners=depth;
         CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==0 && result==CIXVPU_BOOT_RPC_RESIZE_REPLIED);
-        CHECK(p->dma->rpc_resize_used && native_calls==calls+11 && boot_nevents==11);
+        CHECK(p->dma->rpc_resize_used && p->dma->rpc_resize_committed && native_calls==calls+11 && boot_nevents==11);
         CHECK(heap==live_kmem && owners==depth);
         static const unsigned int offsets[]={0,0,0,0,0,0,8,4,16,8,0};
         static const unsigned int lengths[]={12,12,20,12,12,4,8,4,4,8,4};
@@ -1494,7 +1583,7 @@ int main(void)
 #ifdef CIXVPU_SYNC_API
     sync_success_tests(); sync_failure_tests(); sync_owner_tests(); exposure_tests();
 #ifdef CIXVPU_BOOT_API
-    rpc_reserve_tests(); rpc_protocol_tests(); boot_rpc_resize_runtime_tests(); boot_rpc_resize_tests(); boot_rpc_alloc_tests(); boot_rpc_header_tests(); boot_api_tests();
+    rpc_reserve_tests(); rpc_protocol_tests(); boot_rpc_second_tests(); boot_rpc_resize_runtime_tests(); boot_rpc_resize_tests(); boot_rpc_alloc_tests(); boot_rpc_header_tests(); boot_api_tests();
 #else
     fprintf(stderr, "FAIL: no typed boot seed/publication/receive API\n"); return 1;
 #endif
