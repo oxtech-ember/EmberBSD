@@ -531,7 +531,7 @@ arm_acpi_dma_init_ranges(struct acpi_softc *sc, struct acpi_devnode *ad,
 	module = arm_acpi_dma_module(sc, ad->ad_parent);
 	if (module == NULL) {
 default_tag:
-		rv = acpi_iort_named_component(ad, &nc);
+		rv = acpi_iort_named_component(ad->ad_handle, &nc);
 		if (ACPI_SUCCESS(rv) && nc->MemoryAddressLimit != 0) {
 			dma_mask = __BITS(nc->MemoryAddressLimit - 1, 0);
 		} else {
