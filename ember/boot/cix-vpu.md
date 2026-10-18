@@ -22,6 +22,7 @@ The independent BSD source in `sys/dev/ic` implements bounded foundations:
 |---|---|---|
 | `cixvpu_fw.[ch]` | Validate the protocol 3 firmware header, text extent, BSS bitmap and shared-region layout. Reject invalid input without publishing partial output. | Select an authorized blob, allocate pages and load/boot firmware. Structural validity is not authentication. |
 | `cixvpu_ring.[ch]` | Pack and unpack bounded message rings, including the selected `-sum` firmware's asymmetric checksum framing. | Own coherent snapshots, locking, DMA synchronization, barriers and index publication. |
+| `cixvpu_command.[ch]` | Serialize JOB and selected option payloads. Decode bounded control replies without losing option failures or missing indices. | Own session policy, ring framing, command submission, response matching and DMA synchronization. |
 | `cixvpu_mmu.[ch]` | Encode 40-bit bus addresses and checked two-level page entries. Reject invalid permissions, occupied entries and stale removals. | Allocate/map DMA memory, stop the device and manage caches/TLBs. Removal is not safe during active DMA. |
 | `cixvpu_fw_plan.[ch]` | Plan protocol-3 backing owners and firmware VA mappings without allocation. Check the text offset, BSS bounds, aliases, table coverage and page quota. | Allocate validated DMA backing, copy data, synchronize and publish only after stopped-device checks. |
 | `cixvpu_dma.[ch]` | Allocate one native `bus_dma` owner per backing page. Seal moved ownership, synchronize unique maps and reject release after recorded exposure. | Keep addresses hidden. Qualify the hardware handoff, runtime synchronization and eventual teardown separately. |
@@ -90,6 +91,35 @@ snapshot, prior consumed total and three published cumulative totals.
 The helpers preserve payload bytes and checksum state on malformed input or
 insufficient space. A short receive buffer can report the required payload length.
 They do not emulate firmware or publish device-visible indices.
+
+## Typed control command codec
+
+The pure `cixvpu_command` codec writes protocol payloads, without native submission.
+JOB accepts representable core and frame counts, including zero frames for unlimited
+work, and the defined boundary-manager flag. The one-frame fixture uses cores 1,
+frames 1 and flags 0. Hardware core limits remain caller policy.
+The option allowlist contains NALU format index 1 and B-frame count index 17.
+Wire validity does not establish that the selected firmware accepts an option.
+
+The response decoder distinguishes confirmation, option failure, fatal error,
+state change and job dequeue. The reference describes both empty and indexed
+confirmations. The decoder accepts exactly zero or four bytes and reports
+`index_valid`; an absent index does not imply a matching pending option.
+State replies accept STOPPED 0 or RUNNING 2. Failure text remains 128 bounded raw
+bytes, without an assumed NUL terminator. Malformed recognized replies and
+unknown codes fail without changing output.
+
+The actual-source contract uses independent literal bytes and the existing ring
+codec. It checks endian layout, bounds, aliases, unaligned wire bytes, short
+buffers, failure semantics, ring wrap and checksum wrap. CI runs the portable
+sources with GCC16 analysis, Cppcheck, CSA, sanitizers and Linux Memcheck.
+No attachment calls this codec. It adds no GO operation, framebuffer, DMA owner,
+interrupt handling or session state machine. One-frame encoding remains pending.
+
+```sh
+CC=gcc-16 CFLAGS=-fanalyzer CIXVPU_COMMAND_ANALYZE=1 \
+    sh ember/tools/cixvpu-command-contract.sh
+```
 
 ## Manual CPU-only allocation probe
 
