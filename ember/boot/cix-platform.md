@@ -419,8 +419,20 @@ The full CLOCK 2.0 entity record still reports EPROTO96 and invalid outputs;
 enable delay is absent. This does not establish a compatibility policy or
 clock-control permission. Both boots report clean FFS and retain their channel
 leases without clearing ACK. Exact-head CI passes Memcheck and ASan/UBSan.
-Each boot issues only one request. Repeated transactions, clock control and
-VPU MMIO, IRQ, DMA and firmware execution remain unqualified.
+Each of those two boots issues only one request.
+
+A manual boot of GCC16.2 kernel `7777a2bc7e9053950d5b2960a77aa3a8c92a0f2a`
+qualifies three consecutive BASE_VERSION requests on one initialized wire and
+one lease. The gzip SHA256 is
+`1ba197821ac177c6c7e3d49f95b290be7c6c0fcd7160b04babbc7a5b861afe16`.
+Headers `0x44000`, `0x84000` and `0xc4000` match their replies. Each response
+reports version 2.0, length 12, firmware status 0, helper return 0 and decode
+error 0. TX status remains `0x8` before and after each query. No ACK is written.
+The summary reports three attempted requests and `qualified=1`. Exact-head CI,
+including Memcheck and ASan/UBSan, passes. FFS is clean. After initial loss,
+WPA2/DHCP recovers and 20 gateway probes pass on native channel149.
+This bounded cold-boot result does not qualify an exported runtime service,
+concurrent access, clock control, VPU MMIO, IRQ, DMA or firmware execution.
 
 ## Primary provenance
 
