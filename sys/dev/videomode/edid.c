@@ -41,6 +41,7 @@ __KERNEL_RCSID(0, "$NetBSD: edid.c,v 1.18 2022/09/25 21:27:39 thorpej Exp $");
 #include <sys/kernel.h>
 #else
 #include <stdlib.h>
+#include <stdbool.h>
 #include <inttypes.h>
 #include <string.h>
 #include <errno.h>
@@ -528,11 +529,9 @@ edid_block(struct edid_info *edid, uint8_t *data)
 	}
 }
 
-/*
- * Gets EDID version in BCD, e.g. EDID v1.3  returned as 0x0103
- */
-int
-edid_parse(uint8_t *data, struct edid_info *edid)
+/* Share the parser between diagnostic and quiet consumers. */
+static int
+edid_parse_data(uint8_t *data, struct edid_info *edid, bool quiet)
 {
 	uint16_t		manfid, estmodes;
 	const struct videomode	*vmp;
@@ -611,7 +610,7 @@ edid_parse(uint8_t *data, struct edid_info *edid)
 				edid->edid_nmodes++;
 			}
 #ifdef DIAGNOSTIC
-			  else
+			  else if (!quiet)
 				printf("no data for est. mode %s\n",
 				    _edid_modes[i]);
 #endif
@@ -656,8 +655,9 @@ edid_parse(uint8_t *data, struct edid_info *edid)
 			max_dotclock = edid->edid_modes[i].dot_clock;
 
 #ifdef _KERNEL
-	aprint_debug("max_dotclock according to supported modes: %d\n",
-	    max_dotclock);
+	if (!quiet)
+		aprint_debug("max_dotclock according to supported modes: %d\n",
+		    max_dotclock);
 #endif
 
 	mhz = (max_dotclock + 999) / 1000;
@@ -671,3 +671,18 @@ edid_parse(uint8_t *data, struct edid_info *edid)
 	return 0;
 }
 
+/* Preserve the diagnostic behavior of existing callers. */
+int
+edid_parse(uint8_t *data, struct edid_info *edid)
+{
+
+	return edid_parse_data(data, edid, false);
+}
+
+/* Parse the same base block without console diagnostics. */
+int
+edid_parse_quiet(uint8_t *data, struct edid_info *edid)
+{
+
+	return edid_parse_data(data, edid, true);
+}

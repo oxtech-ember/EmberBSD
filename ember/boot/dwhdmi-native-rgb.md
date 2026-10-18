@@ -94,3 +94,19 @@ The address pairs match the pinned
 [A733 DDC map](https://github.com/orangepi-xunlong/linux-orangepi/blob/2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f/bsp/drivers/drm/sunxi_device/hardware/lowlevel_hdmi20/dw_i2cm.h)
 and the independent
 [Linux DW-HDMI map](https://github.com/torvalds/linux/blob/f909e534f5e34feb2ea2701d54df63e21aa506fc/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h).
+
+## Quiet EDID parsing
+
+`edid_parse_quiet` uses the existing base-block parser.
+Pass one complete 128-byte block and a zeroed `edid_info`.
+It returns zero for a valid block or -1 for an invalid signature or checksum.
+It does not print kernel or `DIAGNOSTIC` messages.
+`edid_parse` retains its existing diagnostic behavior.
+Neither entry point selects a PHY clock or admits a native output mode.
+The platform must check its supported geometry, sync type and exact clock.
+
+Run `python3 -B ember/tools/edid-quiet-contract.py` for the shared-parser check.
+Set `CC`, `EDID_CFLAGS`, `EDID_SOURCE_ROOT` or `TEST_RUNNER` as required.
+The fixture checks legacy parity, DMT and GTF timings, a detailed timing,
+quiet error paths and unchanged invalid-block output.
+It does not establish physical DDC or monitor acceptance.
