@@ -63,7 +63,7 @@ The [native syncobj check](drm-syncobj.md#native-api-acceptance) passes on Zero 
 The accepted hardware results cover CPU-issued synchronization.
 The experimental compute path connects real firmware completion to these syncobjs.
 Paired graphics and transfer submissions have source contracts. Their physical execution remains unaccepted.
-PRIME and display modes remain unsupported.
+Same-device PRIME uses the native GEM helpers. Display modes remain unsupported.
 
 ## Buffer objects and CPU mappings
 
@@ -85,6 +85,35 @@ are rejected. Another file cannot use the offset without an allowed handle.
 Closing the handle and file does not invalidate a live CPU mapping.
 The last reference releases the GEM object, DMA memory, and device reference.
 Native `GEM_CLOSE` provides handle release; there is no private close ioctl.
+
+## PRIME sharing
+
+`PRIME_HANDLE_TO_FD` exports the native BO through the common DMA-BUF helper.
+`PRIME_FD_TO_HANDLE` reuses the object on the same DRM device.
+A different DRM device cannot import a foreign BO into PowerVR yet.
+The driver does not install the generic CMA import hook.
+That hook cannot construct the PowerVR BO flags or its ownership state.
+
+A DMA-BUF offset is relative to the BO, in bytes.
+Mappings require a nonempty page-aligned range and `MAP_SHARED`.
+They require `ALLOW_CPU_USERSPACE_ACCESS`.
+The common native DMA-BUF fileops also enforce descriptor access rights.
+They bound later `mprotect` access to those rights.
+Each successful mapping retains a GEM reference until the CMA pager detaches.
+The last mapping can outlive all GEM handles, DRM files and DMA-BUF descriptors.
+
+`PM_FW_PROTECT` BOs cannot be exported.
+The SG export checks the complete native DMA mapping before it returns pages.
+It rejects bounce buffers and incomplete or split DMA mappings.
+SG export does not prove that a display engine can address or scan out the BO.
+The consumer must check its own address limit, layout and cache requirements.
+This change does not add asynchronous reservation fences or `DMA_BUF_IOCTL_SYNC`.
+
+Build `ember/tools/pvr-prime-check.c` with the same GCC16 command and include
+paths as `pvr-bo-check.c` below. Run it with one PowerVR render-node path.
+It checks descriptor rights, protected BO rejection and 80 cross-process
+sharing lifecycles. Each lifecycle closes handles and descriptors before
+it checks the remaining mapping. Physical acceptance remains pending.
 
 ## Source checks and board acceptance
 

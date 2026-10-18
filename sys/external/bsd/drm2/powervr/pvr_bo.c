@@ -18,6 +18,7 @@
 #include <drm/drm_file.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_gem_cma_helper.h>
+#include <drm/drm_prime.h>
 #include <drm/drm_vma_manager.h>
 #include <arm/sunxi/sun60i_a733_gpu_mmu.h>
 #include "pvr_drm.h"
@@ -65,7 +66,12 @@ pvr_bo_free(struct drm_gem_object *obj)
 	drm_dev_put(dev);
 }
 
+static struct dma_buf *pvr_bo_export(struct drm_gem_object *, int);
+static struct sg_table *pvr_bo_get_sg_table(struct drm_gem_object *);
+
 static const struct drm_gem_object_funcs pvr_bo_funcs = {
+	.export = pvr_bo_export,
+	.get_sg_table = pvr_bo_get_sg_table,
 	.free = pvr_bo_free,
 };
 
@@ -101,6 +107,54 @@ pvr_bo_mapping(struct drm_gem_object *obj, uint64_t offset, uint64_t size,
 		options |= A733_GPU_MMU_PTE_PM_FW_PROTECT;
 	*address = pa + offset;
 	*flags = options;
+	return 0;
+}
+
+/* Keep protected firmware memory private to this DRM device. */
+static struct dma_buf *
+pvr_bo_export(struct drm_gem_object *obj, int flags)
+{
+
+	if ((pvr_to_bo(obj)->flags & DRM_PVR_BO_PM_FW_PROTECT) != 0)
+		return ERR_PTR(-EACCES);
+	return drm_gem_prime_export(obj, flags);
+}
+
+static struct sg_table *
+pvr_bo_get_sg_table(struct drm_gem_object *obj)
+{
+	uint64_t address, flags;
+	int error;
+
+	/* An exported page list must describe the original, complete BO. */
+	error = pvr_bo_mapping(obj, 0, obj->size, &address, &flags);
+	if (error != 0)
+		return ERR_PTR(-error);
+	if ((pvr_to_bo(obj)->flags & DRM_PVR_BO_PM_FW_PROTECT) != 0)
+		return ERR_PTR(-EACCES);
+	return drm_gem_cma_prime_get_sg_table(obj);
+}
+
+/* A PRIME fd authorizes this BO; its offset is relative, in bytes. */
+int
+pvr_prime_mmap(struct drm_gem_object *obj, off_t *offp, size_t size,
+    int prot, int *flagsp, int *advicep, struct uvm_object **uobjp,
+    int *maxprotp)
+{
+
+	if (*offp < 0 || (*offp & (PAGE_SIZE - 1)) != 0 || size == 0 ||
+	    (size & (PAGE_SIZE - 1)) != 0 || (uint64_t)*offp > obj->size ||
+	    size > obj->size - (size_t)*offp ||
+	    (prot & ~(PROT_READ | PROT_WRITE)) != 0 ||
+	    (*flagsp & MAP_SHARED) == 0 || (*flagsp & MAP_PRIVATE) != 0)
+		return -EINVAL;
+	if ((pvr_to_bo(obj)->flags & DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS) == 0 ||
+	    (pvr_to_bo(obj)->flags & DRM_PVR_BO_PM_FW_PROTECT) != 0)
+		return -EACCES;
+	/* The native CMA pager drops this reference after the last mapping. */
+	drm_gem_object_get(obj);
+	*uobjp = &obj->gemo_uvmobj;
+	*maxprotp = PROT_READ | PROT_WRITE;
 	return 0;
 }
 

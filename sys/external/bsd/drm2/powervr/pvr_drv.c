@@ -14,6 +14,7 @@
 #include <drm/drm_drv.h>
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_ioctl.h>
+#include <drm/drm_prime.h>
 #include "pvr_drm.h"
 #include "pvr_backend.h"
 #include "pvr_drv.h"
@@ -271,6 +272,9 @@ static struct drm_driver pvr_driver = {
 	.postclose = pvr_file_close,
 	.release = pvr_release,
 	.mmap_object = pvr_mmap_object,
+	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
+	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
+	.gem_prime_mmap = pvr_prime_mmap,
 	.gem_uvm_ops = &drm_gem_cma_uvm_ops,
 	.name = "powervr",
 	.desc = "EmberBSD experimental PowerVR GEM and VM interface",

@@ -51,6 +51,7 @@ struct uvm_object;
 /* UVM exports this kernel type in uvm_param.h, not user sys/types.h. */
 typedef off_t voff_t;
 struct drm_device;
+struct drm_gem_object;
 struct drm_ioctl_desc {
 	unsigned long cmd;
 	int (*func)(struct drm_device *, void *, struct drm_file *);
@@ -68,6 +69,10 @@ struct drm_driver {
 	void (*release)(struct drm_device *);
 	int (*mmap_object)(struct drm_device *, off_t, size_t, int,
 	    struct uvm_object **, voff_t *, struct file *);
+	int (*prime_handle_to_fd)(struct drm_device *, struct drm_file *, uint32_t, uint32_t, int *);
+	int (*prime_fd_to_handle)(struct drm_device *, struct drm_file *, int, uint32_t *);
+	int (*gem_prime_mmap)(struct drm_gem_object *, off_t *, size_t, int, int *, int *,
+	    struct uvm_object **, int *);
 	const void *gem_uvm_ops;
 	const char *name, *desc, *date;
 	unsigned int major, minor, patchlevel;
@@ -239,6 +244,13 @@ drm_dev_register(struct drm_device *dev, unsigned int flags)
 
 /* BO behavior has a separate production-source contract. */
 static const int drm_gem_cma_uvm_ops;
+static int drm_gem_prime_handle_to_fd(struct drm_device *d, struct drm_file *f,
+    uint32_t h, uint32_t flags, int *fd) { abort(); }
+static int drm_gem_prime_fd_to_handle(struct drm_device *d, struct drm_file *f,
+    int fd, uint32_t *handle) { abort(); }
+static int pvr_prime_mmap(struct drm_gem_object *o, off_t *off, size_t n, int prot,
+    int *flags, int *advice, struct uvm_object **u, int *maxprot) { abort(); }
+
 static int pvr_create_bo(struct drm_device *d, void *a, struct drm_file *f)
 { abort(); }
 static int pvr_get_bo_mmap_offset(struct drm_device *d, void *a, struct drm_file *f)
@@ -690,6 +702,9 @@ main(void)
 	CHECK(owner->driver->ioctls[5].func == pvr_vm_map_ioctl);
 	CHECK(owner->driver->ioctls[6].func == pvr_vm_unmap_ioctl);
 	CHECK(owner->driver->mmap_object == pvr_mmap_object);
+	CHECK(owner->driver->prime_handle_to_fd == drm_gem_prime_handle_to_fd);
+	CHECK(owner->driver->prime_fd_to_handle == drm_gem_prime_fd_to_handle);
+	CHECK(owner->driver->gem_prime_mmap == pvr_prime_mmap);
 	CHECK(owner->driver->gem_uvm_ops == &drm_gem_cma_uvm_ops);
 	CHECK(owner->driver->ioctls[0].flags == (DRM_RENDER_ALLOW | DRM_UNLOCKED));
 	calls = registered;

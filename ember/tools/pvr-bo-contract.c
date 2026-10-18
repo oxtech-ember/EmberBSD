@@ -26,6 +26,8 @@
 #define PROT_READ 1
 #define PROT_WRITE 2
 #define PROT_EXEC 4
+#define MAP_SHARED 1
+#define MAP_PRIVATE 2
 #define DRIVER_GEM 1
 #define roundup2(x, a) (((x) + (a) - 1) & ~((a) - 1))
 #define container_of(p, t, m) ((t *)((char *)(p) - offsetof(t, m)))
@@ -66,7 +68,13 @@ struct drm_device {
 	struct drm_vma_offset_manager *vma_offset_manager;
 };
 struct drm_gem_object;
-struct drm_gem_object_funcs { void (*free)(struct drm_gem_object *); };
+struct dma_buf { struct drm_gem_object *obj; int flags; };
+struct sg_table { struct drm_gem_object *obj; };
+struct drm_gem_object_funcs {
+	void (*free)(struct drm_gem_object *);
+	struct dma_buf *(*export)(struct drm_gem_object *, int);
+	struct sg_table *(*get_sg_table)(struct drm_gem_object *);
+};
 struct drm_gem_object {
 	struct drm_device *dev;
 	size_t size;
@@ -271,6 +279,25 @@ static bool drm_vma_node_is_allowed(struct drm_vma_offset_node *n,
     struct drm_file *file)
 { CHECK(!manager.locked); return n->allowed == file; }
 
+static unsigned int exports, sg_exports;
+static int export_error, sg_error;
+static struct dma_buf exported;
+static struct sg_table exported_sg;
+static struct dma_buf *
+drm_gem_prime_export(struct drm_gem_object *obj, int flags)
+{
+	exports++;
+	if (export_error) return ERR_PTR(export_error);
+	exported = (struct dma_buf){ obj, flags }; return &exported;
+}
+static struct sg_table *
+drm_gem_cma_prime_get_sg_table(struct drm_gem_object *obj)
+{
+	sg_exports++;
+	if (sg_error) return ERR_PTR(sg_error);
+	exported_sg.obj = obj; return &exported_sg;
+}
+
 #include "pvr-bo-body.h"
 #include "pvr-gem-core-body.h"
 
@@ -405,6 +432,74 @@ cpu_and_dma_contract(struct drm_gem_object *obj)
 	pvr_bo_sync(obj, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 }
 
+static void
+prime_contract(struct drm_gem_object *obj)
+{
+	struct pvr_bo *bo = pvr_to_bo(obj);
+	unsigned int references = obj->refcount.refs;
+	unsigned int before = exports, sg_before = sg_exports;
+	const int denied = (bo->flags & DRM_PVR_BO_PM_FW_PROTECT) ? -EACCES : 0;
+
+	CHECK(obj->funcs->export != NULL && obj->funcs->get_sg_table != NULL);
+	if (denied) {
+		CHECK(PTR_ERR(obj->funcs->export(obj, 0x123)) == denied);
+		CHECK(PTR_ERR(obj->funcs->get_sg_table(obj)) == denied);
+		CHECK(exports == before && sg_exports == sg_before);
+	} else {
+		CHECK(obj->funcs->export(obj, 0x123) == &exported);
+		CHECK(exported.obj == obj && exported.flags == 0x123);
+		export_error = -ENOMEM;
+		CHECK(PTR_ERR(obj->funcs->export(obj, 7)) == -ENOMEM);
+		export_error = 0;
+		CHECK(obj->funcs->get_sg_table(obj) == &exported_sg);
+		CHECK(exported_sg.obj == obj);
+		sg_error = -ENOMEM;
+		CHECK(PTR_ERR(obj->funcs->get_sg_table(obj)) == -ENOMEM);
+		sg_error = 0;
+		bo->cma.dmamap->_dm_flags = _BUS_DMAMAP_IS_BOUNCING;
+		sg_before = sg_exports;
+		CHECK(PTR_ERR(obj->funcs->get_sg_table(obj)) == -EOPNOTSUPP);
+		CHECK(sg_before == sg_exports);
+		bo->cma.dmamap->_dm_flags = 0;
+	}
+	/* Every rejection leaves all output arguments and references unchanged. */
+	for (int mode = 0; mode < 4; mode++) {
+		for (int prot = 0; prot < 16; prot++) {
+			struct uvm_object dummy, *uobj = &dummy;
+			off_t off = 0;
+			int flags = mode, advice = 0x456, maxprot = 0xabc;
+			int want = (mode != MAP_SHARED || (prot & ~3)) ? -EINVAL :
+			    ((bo->flags & DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS) ? 0 : -EACCES);
+			CHECK(pvr_prime_mmap(obj, &off, PAGE_SIZE, prot, &flags,
+			    &advice, &uobj, &maxprot) == want);
+			CHECK(off == 0 && flags == mode && advice == 0x456);
+			if (want != 0) {
+				CHECK(uobj == &dummy && maxprot == 0xabc);
+				CHECK(obj->refcount.refs == references);
+			} else {
+				CHECK(uobj == &obj->gemo_uvmobj && maxprot == 3);
+				CHECK(obj->refcount.refs == references + 1);
+				drm_gem_pager_detach(uobj);
+			}
+		}
+	}
+	{
+		const off_t offsets[] = { -1, 1, (off_t)obj->size, INT64_MAX };
+		const size_t sizes[] = { 0, PAGE_SIZE - 1, obj->size + PAGE_SIZE, SIZE_MAX };
+		for (unsigned int n = 0; n < 8; n++) {
+			struct uvm_object dummy, *uobj = &dummy;
+			off_t off = n < 4 ? offsets[n] : 0, saved = off;
+			size_t size = n < 4 ? PAGE_SIZE : sizes[n - 4];
+			int flags = MAP_SHARED, advice = 7, maxprot = 8;
+			CHECK(pvr_prime_mmap(obj, &off, size, PROT_READ, &flags,
+			    &advice, &uobj, &maxprot) == -EINVAL);
+			CHECK(off == saved && flags == MAP_SHARED && advice == 7);
+			CHECK(uobj == &dummy && maxprot == 8 && obj->refcount.refs == references);
+		}
+	}
+	CHECK(obj->refcount.refs == references);
+}
+
 int
 main(void)
 {
@@ -455,6 +550,7 @@ main(void)
 		obj = a.handles[create.handle];
 		CHECK(obj->size == PAGE_SIZE && obj->refcount.refs == 1 && dev.refs == 2);
 		CHECK(pvr_to_bo(obj)->flags == flags);
+		prime_contract(obj);
 		mapping_contract(obj, flags);
 		cpu_and_dma_contract(obj);
 		mmap_args = (struct drm_pvr_ioctl_get_bo_mmap_offset_args){ create.handle, 0, 0xdead };
@@ -512,6 +608,17 @@ main(void)
 	close_args = (struct drm_gem_close){ create.handle, 0 };
 	CHECK(drm_gem_close_ioctl(&dev, &close_args, &a) == 0);
 	CHECK(obj->refcount.refs == 2 && objects == 1 && dev.refs == 2);
+	{
+		off_t relative = PAGE_SIZE;
+		int flags = MAP_SHARED, advice = 9, maxprot = 0;
+		struct uvm_object *prime_uobj = NULL;
+		CHECK(pvr_prime_mmap(obj, &relative, PAGE_SIZE, PROT_READ | PROT_WRITE,
+		    &flags, &advice, &prime_uobj, &maxprot) == 0);
+		CHECK(relative == PAGE_SIZE && prime_uobj == uobj && maxprot == 3);
+		CHECK(obj->refcount.refs == 3);
+		drm_gem_pager_detach(prime_uobj);
+	}
+
 	reject_map(&dev, &fa, offset, PAGE_SIZE, PROT_READ, -EACCES);
 	CHECK(pvr_get_bo_mmap_offset(&dev, &mmap_args, &a) == -ENOENT);
 	drm_dev_put(&dev); /* The DRM fd/owner closes before both CPU mappings. */
