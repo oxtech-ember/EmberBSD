@@ -40,7 +40,8 @@ calling AML. Callers must use thread context and serialize claim lifetime.
 `sys/dev/ic/scmi_smt_diag.[ch]` provides a separate checked discovery wire
 helper. It is not a second clock provider or a fallback after AML failure.
 The `scmi_smt_diag_query` API exposes a closed subset of BASE and CLOCK queries,
-including only clock ID67 for entity attributes and rate. That API exposes no
+including only clock ID67 for entity attributes and IDs67/264/266 for rate.
+That API exposes no
 control or rate setter. Fixed clock67 control uses a separately named API below.
 
 The caller must own validated CIX TX resources, ordering callbacks, a boot-long
@@ -256,11 +257,19 @@ An error stops the sequence. A possible publication retains the boot-long lease.
 The profile publishes no native clock service and performs no UART setup.
 Exactly eight reply data bytes form each uint64 rate. Zero is raw telemetry,
 not an accepted UART input frequency. Clock67 control and entity queries keep
-their fixed ID rules. Instrument exchange, actual baud and firmware support
-for these rate requests require a separate board test.
+their fixed ID rules. Instrument exchange and actual baud require separate
+board tests.
 The optional [IO observation profile](../../sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE)
 adds only the [nonclearing header-mux snapshot](cix-gpio.md#manual-header-observation)
 to that profile. It preserves VPU0, UART2 and the GPI4 button policy.
+
+One physical CD8180 trial with source `db0adb0378` reports 100000000 Hz for
+both IDs264 and266. Both replies contain eight data bytes, status0, matching
+request headers and successful ACK checks. The summary reports two attempts,
+two records, qualification and error0. The combined profile keeps the VPU
+inactive and reaches the native UART2 root console. This accepts the fixed
+rate observations only. It does not program PL011 divisors, enable a UART
+clock or qualify serial data exchange. The measured rates are not defaults.
 
 ## Shared transport validation
 

@@ -1091,11 +1091,12 @@ The base system shell is unchanged.
   the firmware once on the board. The next request is RESIZE, call3/body8;
   it stops with ENOTSUP before SWITCHED_IN/PONG and retains exposed owners.
   A separate [UART rate query](ember/boot/cix-platform.md#manual-uart-rate-observations)
-  has source checks for functional clock IDs264/266; actual rates and instrument
-  exchange remain unqualified. An opt-in
+  reads functional clock IDs264/266 as 100 MHz on the physical sample.
+  Baud programming and instrument exchange remain unqualified. An opt-in
   [GPIO observation profile](ember/boot/cix-gpio.md#manual-header-observation)
   validates GPI5/MUX1, reads six nonclearing registers and unmaps both windows.
-  GPIO/PPS devices and pin configuration remain unimplemented by that observer.
+  One physical snapshot passes. GPIO/PPS devices and pin configuration remain
+  unimplemented by that observer.
   The separate, inactive
   [DEBUGPARAM primitive](ember/boot/cix-vpu.md#inactive-debugparam-response)
   passes actual-source checks. It changes only a validated request's state word;

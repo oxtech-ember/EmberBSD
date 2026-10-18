@@ -117,6 +117,12 @@ selects the observer with VPU0 and the UART2 gate. The combined
 adds the two [UART functional-rate requests](cix-platform.md#manual-uart-rate-observations).
 Default EMBER64 and the GPI4 power-button path remain unchanged.
 
+One physical CD8180 trial with source `db0adb0378` reaches the native root
+console with the combined profile. MUX80/84/88 each read `0x57`; GPI5 BYPASS
+and DIRECTION read0, and INPUT reads `0x3ff`. The snapshot completes without
+an MMIO fault. These raw values accept register observation only. They do not
+qualify input configuration, interrupt delivery, external signals or PPS.
+
 The actual-source observer contract passes1420 checks with GCC16 path analysis,
 configured Cppcheck/CSA and ASan/UBSan. Seven compiled runtime mutations fail.
 Native GCC16 passes; native CSA retains four inherited header findings.
