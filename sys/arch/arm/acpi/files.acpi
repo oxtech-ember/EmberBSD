@@ -19,6 +19,8 @@ file	arch/arm/acpi/acpi_pci_n1sdp.c		acpi & pci
 file	arch/arm/acpi/acpi_pci_smccc.c		acpi & pci & pci_smccc
 file	arch/arm/acpi/acpi_platform.c		acpi
 file	arch/arm/acpi/acpi_table.c		acpi
+defflag opt_cix_uart2_console.h CIXP1_UART2_CONSOLE
+file	arch/arm/acpi/cix_uart2_console.c	acpi & cixp1_uart2_console
 
 attach	cpu at acpimadtbus with cpu_acpi
 file	arch/arm/acpi/cpu_acpi.c		cpu_acpi

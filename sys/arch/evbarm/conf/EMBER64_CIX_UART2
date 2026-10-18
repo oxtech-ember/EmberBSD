@@ -1,0 +1,7 @@
+# Manual console-only profile for the exact historical CIX P1 DSDT.
+# Missing-SPCR fallback requires the exact DSDT; present SPCR must select UART2.
+# No EARLYCONS/CONSADDR, SCMI service or active VPU probe is enabled.
+
+include "arch/evbarm/conf/EMBER64"
+
+options CIXP1_UART2_CONSOLE

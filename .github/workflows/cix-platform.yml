@@ -18,6 +18,9 @@ name: CIX platform resource contracts
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/arm/acpi/acpi_machdep.c'
+      - 'sys/arch/arm/acpi/acpi_platform.c'
+      - 'sys/arch/arm/acpi/files.acpi'
+      - 'sys/arch/arm/acpi/cix_uart2_console.*'
       - 'sys/arch/arm/acpi/acpi_iort.c'
       - 'sys/arch/arm/pic/pic.c'
       - 'sys/arch/arm/pic/picvar.h'
@@ -25,6 +28,7 @@ name: CIX platform resource contracts
       - 'ember/tools/pic-teardown-*'
       - 'ember/tools/acpi-iort-dma-*'
       - 'sys/arch/evbarm/conf/EMBER64'
+      - 'sys/arch/evbarm/conf/EMBER64_CIX_UART2'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY'
@@ -40,6 +44,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_BOOT_PROBE'
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
+      - 'ember/tools/cix-uart2-console-*'
       - 'ember/tools/cixreset-*'
       - 'ember/tools/cixvpu-*'
       - 'ember/tools/acpi-power-*'
@@ -64,6 +69,9 @@ name: CIX platform resource contracts
       - 'sys/sys/queue.h'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/arm/acpi/acpi_machdep.c'
+      - 'sys/arch/arm/acpi/acpi_platform.c'
+      - 'sys/arch/arm/acpi/files.acpi'
+      - 'sys/arch/arm/acpi/cix_uart2_console.*'
       - 'sys/arch/arm/acpi/acpi_iort.c'
       - 'sys/arch/arm/pic/pic.c'
       - 'sys/arch/arm/pic/picvar.h'
@@ -71,6 +79,7 @@ name: CIX platform resource contracts
       - 'ember/tools/pic-teardown-*'
       - 'ember/tools/acpi-iort-dma-*'
       - 'sys/arch/evbarm/conf/EMBER64'
+      - 'sys/arch/evbarm/conf/EMBER64_CIX_UART2'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY'
@@ -86,6 +95,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_BOOT_PROBE'
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
+      - 'ember/tools/cix-uart2-console-*'
       - 'ember/tools/cixreset-*'
       - 'ember/tools/cixvpu-*'
       - 'ember/tools/acpi-power-*'
@@ -113,6 +123,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /ember/tools/cixclk-*
+            /ember/tools/cix-uart2-console-*
             /ember/tools/cixreset-*
             /ember/tools/cixvpu-*
             /ember/tools/acpi-power-*
@@ -125,6 +136,10 @@ jobs:
             /sys/dev/acpi/cixvpu_acpi.c
             /sys/dev/acpi/acpi_power.*
             /sys/arch/arm/acpi/acpi_machdep.c
+            /sys/arch/arm/acpi/acpi_platform.c
+            /sys/arch/arm/acpi/cix_uart2_console.*
+            /sys/arch/arm/acpi/files.acpi
+            /sys/arch/evbarm/conf/EMBER64_CIX_UART2
             /sys/arch/arm/acpi/acpi_iort.c
             /sys/arch/arm/pic/pic.c
             /sys/arch/arm/pic/picvar.h
@@ -157,6 +172,7 @@ jobs:
           XHCI_ACPI_ANALYZE: '1'
           CIXSCMI_ANALYZE: '1'
           IORT_DMA_ANALYZE: '1'
+          CIX_UART2_ANALYZE: '1'
         run: |
           sh ember/tools/cixclk-contract.sh
           CIXCLK_NCIXSCMI=0 sh ember/tools/cixclk-contract.sh
@@ -169,6 +185,7 @@ jobs:
           sh ember/tools/cixvpu-boot-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
+          sh ember/tools/cix-uart2-console-contract.sh
       - name: Run ASan and UBSan
         env:
           CC: gcc
@@ -186,6 +203,7 @@ jobs:
           sh ember/tools/cixvpu-boot-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
+          sh ember/tools/cix-uart2-console-contract.sh
       - name: Run complete contracts under Memcheck
         env:
           CC: gcc
@@ -211,3 +229,4 @@ jobs:
           sh ember/tools/cixvpu-boot-contract.sh
           sh ember/tools/xhci-acpi-rootbus-contract.sh
           sh ember/tools/cixscmi-contract.sh
+          sh ember/tools/cix-uart2-console-contract.sh
