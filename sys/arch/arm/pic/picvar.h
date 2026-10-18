@@ -90,6 +90,16 @@ void	*intr_establish(int irq, int ipl, int type, int (*func)(void *),
 	    void *arg);
 void	*intr_establish_xname(int irq, int ipl, int type, int (*func)(void *),
 	    void *arg, const char *xname);
+/*
+ * Origin: EmberBSD (AI-assisted). Exclusive, initially masked registration.
+ * Thread context; callers serialize establish/teardown. The controller's
+ * pic_establish_irq callback must preserve the mask (GICv3 wired SPI does).
+ * Publish the returned cookie and ready context before intr_unmask releases
+ * its one initial mask reference. Abort with native intr_disestablish.
+ * Existing per-CPU unmask affinity and teardown synchronization still apply.
+ */
+void	*intr_establish_xname_masked(int irq, int ipl, int type,
+	    int (*func)(void *), void *arg, const char *xname);
 void	intr_disestablish(void *);
 void	intr_mask(void *);
 void	intr_unmask(void *);

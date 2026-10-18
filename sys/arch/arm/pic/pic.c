@@ -772,9 +772,9 @@ pic_unblock_percpu(void *arg1, void *arg2)
 	    __BIT(is->is_irq & 0x1f));
 }
 
-void *
-pic_establish_intr(struct pic_softc *pic, int irq, int ipl, int type,
-	int (*func)(void *), void *arg, const char *xname)
+static void *
+pic_establish_intr_common(struct pic_softc *pic, int irq, int ipl, int type,
+	int (*func)(void *), void *arg, const char *xname, bool initially_masked)
 {
 	struct intrsource *is;
 	int off, nipl;
@@ -792,6 +792,11 @@ pic_establish_intr(struct pic_softc *pic, int irq, int ipl, int type,
 	is->is_type = type & 0xff;
 	is->is_func = func;
 	is->is_arg = arg;
+	if (initially_masked) {
+		is->is_mask_count = 1;
+		(*pic->pic_ops->pic_block_irqs)(pic, irq & ~0x1f,
+		    __BIT(irq & 0x1f));
+	}
 #ifdef MULTIPROCESSOR
 	is->is_mpsafe = (type & IST_MPSAFE) || ipl != IPL_VM;
 #endif
@@ -850,12 +855,14 @@ pic_establish_intr(struct pic_softc *pic, int irq, int ipl, int type,
 
 	(*pic->pic_ops->pic_establish_irq)(pic, is);
 
-	if (!mp_online || !is->is_mpsafe || !is->is_percpu) {
-		(*pic->pic_ops->pic_unblock_irqs)(pic, is->is_irq & ~0x1f,
-		    __BIT(is->is_irq & 0x1f));
-	} else {
-		uint64_t xc = xc_broadcast(0, pic_unblock_percpu, pic, is);
-		xc_wait(xc);
+	if (!initially_masked) {
+		if (!mp_online || !is->is_mpsafe || !is->is_percpu) {
+			(*pic->pic_ops->pic_unblock_irqs)(pic, is->is_irq & ~0x1f,
+			    __BIT(is->is_irq & 0x1f));
+		} else {
+			uint64_t xc = xc_broadcast(0, pic_unblock_percpu, pic, is);
+			xc_wait(xc);
+		}
 	}
 
 	if (xname) {
@@ -868,6 +875,15 @@ pic_establish_intr(struct pic_softc *pic, int irq, int ipl, int type,
 
 	/* We're done. */
 	return is;
+}
+
+void *
+pic_establish_intr(struct pic_softc *pic, int irq, int ipl, int type,
+	int (*func)(void *), void *arg, const char *xname)
+{
+
+	return pic_establish_intr_common(pic, irq, ipl, type, func, arg,
+	    xname, false);
 }
 
 static void
@@ -916,9 +932,9 @@ intr_establish(int irq, int ipl, int type, int (*func)(void *), void *arg)
 	return intr_establish_xname(irq, ipl, type, func, arg, NULL);
 }
 
-void *
-intr_establish_xname(int irq, int ipl, int type, int (*func)(void *), void *arg,
-    const char *xname)
+static void *
+intr_establish_xname_common(int irq, int ipl, int type, int (*func)(void *),
+    void *arg, const char *xname, bool initially_masked)
 {
 	KASSERT(!cpu_intr_p());
 	KASSERT(!cpu_softintr_p());
@@ -929,12 +945,30 @@ intr_establish_xname(int irq, int ipl, int type, int (*func)(void *), void *arg,
 			continue;
 		if (pic->pic_irqbase <= irq
 		    && irq < pic->pic_irqbase + pic->pic_maxsources) {
-			return pic_establish_intr(pic, irq - pic->pic_irqbase,
-			    ipl, type, func, arg, xname);
+			return pic_establish_intr_common(pic, irq - pic->pic_irqbase,
+			    ipl, type, func, arg, xname, initially_masked);
 		}
 	}
 
 	return NULL;
+}
+
+void *
+intr_establish_xname(int irq, int ipl, int type, int (*func)(void *), void *arg,
+    const char *xname)
+{
+
+	return intr_establish_xname_common(irq, ipl, type, func, arg, xname,
+	    false);
+}
+
+void *
+intr_establish_xname_masked(int irq, int ipl, int type, int (*func)(void *),
+    void *arg, const char *xname)
+{
+
+	return intr_establish_xname_common(irq, ipl, type, func, arg, xname,
+	    true);
 }
 
 void
