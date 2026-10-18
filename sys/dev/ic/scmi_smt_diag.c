@@ -71,7 +71,8 @@ scmi_smt_diag_command(enum scmi_smt_diag_cmd cmd, uint32_t argument,
 		break;
 	case SCMI_SMT_DIAG_CLOCK_ENTITY_ATTRIBUTES:
 	case SCMI_SMT_DIAG_CLOCK_RATE_GET:
-		if (argument != 67)
+		if (argument != 67 && (cmd != SCMI_SMT_DIAG_CLOCK_RATE_GET ||
+		    (argument != 264 && argument != 266)))
 			return EINVAL;
 		*header = cmd == SCMI_SMT_DIAG_CLOCK_ENTITY_ATTRIBUTES ?
 		    0x5003 : 0x5006;

@@ -733,6 +733,89 @@ cixscmi_mixed_batch(struct cixscmi_acpi_softc *sc)
 	    sc->sc_batch_qualified, sc->sc_batch_count, sc->sc_error);
 }
 
+/* Fixed UART functional-rate observations. No UART or clock control writes. */
+static void
+cixscmi_uart_rates(struct cixscmi_acpi_softc *sc)
+{
+	static const uint32_t ids[] = { 264, 266 };
+	unsigned int i;
+
+	for (i = 0; i < __arraycount(ids); i++) {
+		struct cixscmi_batch_result *r = &sc->sc_batch[i];
+		struct scmi_smt_diag_reply reply;
+
+		r->ack_before = i == 0 ? sc->sc_ack_before :
+		    bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
+		sc->sc_batch_count++;
+		if ((r->ack_before & 2) != 0) {
+			r->ack_error = EBUSY;
+			sc->sc_error = EBUSY;
+			break;
+		}
+		r->query_called = true;
+		sc->sc_batch_queries++;
+		r->helper_return = scmi_smt_diag_query(&sc->sc_wire,
+		    SCMI_SMT_DIAG_CLOCK_RATE_GET, ids[i], &reply, &r->trace);
+		/* Poison forbids every later callback, including ACK reads. */
+		if (r->trace.stage == SCMI_SMT_DIAG_COMPLETE ||
+		    r->trace.stage == SCMI_SMT_DIAG_FIRMWARE) {
+			r->ack_after = bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
+			r->ack_after_valid = true;
+			if ((r->ack_after & 2) != 0)
+				r->ack_error = EBUSY;
+		}
+		if (r->helper_return == 0) {
+			if (r->trace.stage != SCMI_SMT_DIAG_COMPLETE ||
+			    reply.data_length != 8) {
+				r->decode_error = EPROTO;
+			} else {
+				r->raw_low = (uint32_t)reply.data[0] |
+				    (uint32_t)reply.data[1] << 8 |
+				    (uint32_t)reply.data[2] << 16 |
+				    (uint32_t)reply.data[3] << 24;
+				r->raw_high = (uint32_t)reply.data[4] |
+				    (uint32_t)reply.data[5] << 8 |
+				    (uint32_t)reply.data[6] << 16 |
+				    (uint32_t)reply.data[7] << 24;
+				r->rate_hz = (uint64_t)r->raw_low |
+				    (uint64_t)r->raw_high << 32;
+				r->word_valid = true;
+				r->value_valid = true;
+			}
+		}
+		sc->sc_trace = r->trace;
+		sc->sc_error = r->helper_return != 0 ? r->helper_return :
+		    r->decode_error != 0 ? r->decode_error : r->ack_error;
+		if (sc->sc_error != 0)
+			break;
+	}
+	/* Log only after the consecutive transactions have ended. */
+	for (i = 0; i < sc->sc_batch_count; i++) {
+		const struct cixscmi_batch_result *r = &sc->sc_batch[i];
+
+		aprint_normal_dev(sc->sc_dev,
+		    "UART_RATE index=%u clock_id=%u rate_valid=%u rate_hz=%" PRIu64 " "
+		    "raw_low=%#x raw_high=%#x query_called=%u helper_return=%d "
+		    "decode_error=%d ack_error=%d selected_schema=0x20000 "
+		    "version_queried=0 stage=%u request_header=%#x "
+		    "response_header=%#x length=%u status_valid=%u status=%d "
+		    "tx_status_before=%#x tx_status_after_valid=%u tx_status_after=%#x\n",
+		    i + 1, ids[i], r->value_valid, r->rate_hz, r->raw_low,
+		    r->raw_high, r->query_called, r->helper_return, r->decode_error,
+		    r->ack_error, (unsigned int)r->trace.stage, r->trace.request_header,
+		    r->trace.response_header, r->trace.response_length,
+		    r->trace.firmware_status_valid, r->trace.firmware_status,
+		    r->ack_before, r->ack_after_valid, r->ack_after);
+	}
+	sc->sc_batch_qualified = sc->sc_batch_queries == __arraycount(ids) &&
+	    sc->sc_error == 0;
+	aprint_normal_dev(sc->sc_dev,
+	    "UART_RATE attempted=%u qualified=%u records=%u error=%d; "
+	    "read-only observations; boot-long lease retained\n",
+	    sc->sc_batch_queries, sc->sc_batch_qualified,
+	    sc->sc_batch_count, sc->sc_error);
+}
+
 static bool
 cixscmi_service_live(struct cixscmi_acpi_softc *sc)
 {
@@ -969,7 +1052,8 @@ cixscmi_acpi_deferred(device_t self)
 		goto failed;
 	}
 	sc->sc_ack_before = bus_space_read_4(sc->sc_memt, sc->sc_io[0], 0xc8);
-	if ((sc->sc_selector == 32 || sc->sc_selector == 64 || sc->sc_selector == 128) &&
+	if ((sc->sc_selector == 32 || sc->sc_selector == 64 ||
+	    sc->sc_selector == 128 || sc->sc_selector == 256) &&
 	    (sc->sc_ack_before & 2) != 0) {
 		sc->sc_stage = "ack-ownership";
 		sc->sc_error = EBUSY;
@@ -982,6 +1066,10 @@ cixscmi_acpi_deferred(device_t self)
 	/* A request may be published from here. Retain mappings and leases forever. */
 	sc->sc_query_started = true;
 	sc->sc_stage = "query";
+	if (sc->sc_selector == 256) {
+		cixscmi_uart_rates(sc);
+		goto out;
+	}
 	if (sc->sc_selector == 64 || sc->sc_selector == 128) {
 		cixscmi_mixed_batch(sc);
 		if (sc->sc_selector == 128 && sc->sc_batch_qualified) {
@@ -1198,7 +1286,9 @@ cixscmi_acpi_attach(device_t parent, device_t self, void *aux)
 	sc->sc_role = cixscmi_roles[0];
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 	aprint_naive("\n");
-	if (flags == 128)
+	if (flags == 256)
+		aprint_normal(": CIX two-request UART rate diagnostic\n");
+	else if (flags == 128)
 		aprint_normal(": CIX fixed native clock67 service\n");
 	else if (flags == 64)
 		aprint_normal(": CIX five-request read-only SCMI diagnostic\n");
@@ -1206,7 +1296,8 @@ cixscmi_acpi_attach(device_t parent, device_t self, void *aux)
 		aprint_normal(": CIX three-request BASE SCMI diagnostic\n");
 	else
 		aprint_normal(": CIX single-request SCMI diagnostic\n");
-	if (flags == 1 || flags == 2 || flags == 4 || flags == 8 || flags == 16 || flags == 32 || flags == 64 || flags == 128)
+	if (flags == 1 || flags == 2 || flags == 4 || flags == 8 ||
+	    flags == 16 || flags == 32 || flags == 64 || flags == 128 || flags == 256)
 		config_defer(self, cixscmi_acpi_deferred);
 	else if (flags != 0)
 		aprint_error_dev(self, "unsupported diagnostic flags %#x\n", flags);

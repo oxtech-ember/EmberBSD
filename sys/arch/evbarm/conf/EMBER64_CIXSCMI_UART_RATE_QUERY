@@ -1,0 +1,9 @@
+# Explicit UART1/3 functional-rate observations. Two read-only requests only.
+# Keep the VPU inactive and preserve DEBUG UART2 when SPCR is absent.
+# No UART setup, rate changes, clock enable, reset or pinmux operations.
+
+include "arch/evbarm/conf/EMBER64_CIXSCMI_QUERY"
+
+options CIXP1_UART2_CONSOLE
+no cixscmi* at acpi?
+cixscmi* at acpi? flags 0x100

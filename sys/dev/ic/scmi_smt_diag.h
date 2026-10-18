@@ -83,7 +83,9 @@ struct scmi_smt_diag_trace {
  * and serialization. Callbacks must not reenter. No concurrent or IRQ use.
  *
  * Query accepts argument0 for no-argument commands, skip0..255 for BASE LIST,
- * clock67 for entity attributes/rate, or message7 for CLOCK MESSAGE ATTRIBUTES.
+ * clock67 for entity attributes, clocks67/264/266 for rate, or message7 for
+ * CLOCK MESSAGE ATTRIBUTES. UART264/266 are read-only functional clock IDs;
+ * this does not qualify their firmware support, rate or UART operation.
  * Other commands/arguments return EINVAL
  * without callbacks. Each issued request gets a fresh10-bit token; exhaustion
  * is EOVERFLOW, without callbacks. A poisoned instance returns EIO likewise.

@@ -50,7 +50,9 @@ static const struct fixture fixtures[] = {
 	{ SCMI_SMT_DIAG_CLOCK_ENTITY_ATTRIBUTES, 67, 0x5003, 8, 20 },
 	{ SCMI_SMT_DIAG_CLOCK_RATE_GET, 67, 0x5006, 8, 8 },
 	{ SCMI_SMT_DIAG_CLOCK_VERSION, 0, 0x5000, 4, 4 },
-	{ SCMI_SMT_DIAG_CLOCK_MESSAGE_ATTRIBUTES, 7, 0x5002, 8, 4 }
+	{ SCMI_SMT_DIAG_CLOCK_MESSAGE_ATTRIBUTES, 7, 0x5002, 8, 4 },
+	{ SCMI_SMT_DIAG_CLOCK_RATE_GET, 264, 0x5006, 8, 8 },
+	{ SCMI_SMT_DIAG_CLOCK_RATE_GET, 266, 0x5006, 8, 8 }
 };
 
 struct device {
@@ -270,7 +272,7 @@ test_success(void)
 		CHECK(t.response_header == t.request_header);
 		CHECK(t.response_length == 8 + fixtures[i].data_length);
 		CHECK(r.data[0] == (i == 2 ? 4 : 0x78));
-		if (i == 5) {
+		if (fixtures[i].cmd == SCMI_SMT_DIAG_CLOCK_RATE_GET) {
 			static const uint8_t rate[] = { 0x78, 0x56, 0x34, 0x12,
 			    0xf0, 0xde, 0xbc, 0x9a };
 			CHECK(memcmp(r.data, rate, sizeof(rate)) == 0);
@@ -316,7 +318,7 @@ test_api(void)
 	struct scmi_smt_diag_trace t = { 0 }, tb;
 	struct device d;
 	struct scmi_smt_diag_io io = model_io(&d), bad;
-	uint32_t ids[] = { 0, 66, 68, 264, 266, 271, UINT32_MAX };
+	uint32_t ids[] = { 0, 66, 68, 247, 249, 263, 264, 265, 266, 267, 271, UINT32_MAX };
 	size_t i;
 	model_reset(&d, &fixtures[0], 1);
 	memset(&r, 0xa5, sizeof(r)); rb = r;
@@ -350,8 +352,9 @@ test_api(void)
 	for (i = 0; i < sizeof(ids) / sizeof(ids[0]); i++) {
 		CHECK(scmi_smt_diag_query(&s, SCMI_SMT_DIAG_CLOCK_ENTITY_ATTRIBUTES,
 		    ids[i], &r, &t) == EINVAL);
-		CHECK(scmi_smt_diag_query(&s, SCMI_SMT_DIAG_CLOCK_RATE_GET,
-		    ids[i], &r, &t) == EINVAL);
+		if (ids[i] != 264 && ids[i] != 266)
+			CHECK(scmi_smt_diag_query(&s, SCMI_SMT_DIAG_CLOCK_RATE_GET,
+			    ids[i], &r, &t) == EINVAL);
 	}
 	for (i = 0; i < sizeof(ids) / sizeof(ids[0]); i++) {
 		CHECK(scmi_smt_diag_query(&s, SCMI_SMT_DIAG_CLOCK_MESSAGE_ATTRIBUTES,
@@ -430,6 +433,29 @@ test_status_and_list(void)
 		CHECK(memcmp(&r, &before, sizeof(r)) == 0);
 		model_reset(&d, &fixtures[5], 2);
 		CHECK(scmi_smt_diag_query(&s, fixtures[5].cmd, 67, &r, &t) == 0);
+	}
+	for (size_t uart = 8; uart <= 9; uart++) {
+		for (i = 0; i < sizeof(statuses) / sizeof(statuses[0]); i++) {
+			struct scmi_smt_diag s = SCMI_SMT_DIAG_INITIALIZER;
+			struct scmi_smt_diag_reply r = { 0 }, before;
+			struct scmi_smt_diag_trace t = { 0 };
+			struct device d;
+			struct scmi_smt_diag_io io = model_io(&d);
+
+			model_reset(&d, &fixtures[uart], 1);
+			d.status = statuses[i]; d.length = 8;
+			memset(&r, 0xa5, sizeof(r)); before = r;
+			CHECK(scmi_smt_diag_init(&s, &io) == 0);
+			CHECK(scmi_smt_diag_query(&s, fixtures[uart].cmd,
+			    fixtures[uart].argument, &r, &t) == EIO);
+			CHECK(t.firmware_status_valid &&
+			    (uint32_t)t.firmware_status == statuses[i]);
+			CHECK(t.stage == SCMI_SMT_DIAG_FIRMWARE);
+			CHECK(memcmp(&r, &before, sizeof(r)) == 0);
+			model_reset(&d, &fixtures[uart], 2);
+			CHECK(scmi_smt_diag_query(&s, fixtures[uart].cmd,
+			    fixtures[uart].argument, &r, &t) == 0);
+		}
 	}
 	for (i = 0; i < sizeof(counts) / sizeof(counts[0]); i++) {
 		struct scmi_smt_diag s = SCMI_SMT_DIAG_INITIALIZER;
@@ -539,6 +565,10 @@ test_token_lifetime(void)
 	}
 	before = r; tb = t; calls = d.calls;
 	CHECK(scmi_smt_diag_query(&s, fixtures[0].cmd, 0, &r, &t) == EOVERFLOW);
+	CHECK(scmi_smt_diag_query(&s, SCMI_SMT_DIAG_CLOCK_RATE_GET,
+	    264, &r, &t) == EOVERFLOW);
+	CHECK(scmi_smt_diag_query(&s, SCMI_SMT_DIAG_CLOCK_RATE_GET,
+	    266, &r, &t) == EOVERFLOW);
 	CHECK(scmi_smt_clock67_config_set(&s, 1, &t) == EOVERFLOW);
 	CHECK(scmi_smt_clock67_config_set(&s, 0, &t) == EOVERFLOW);
 	CHECK(scmi_smt_diag_init(&s, &io) == EBUSY);
