@@ -100,6 +100,19 @@ int	sun60i_a733_ccu_display_status(struct clk *, const void *,
 /* Sticky accounting only. This function performs no hardware write. */
 int	sun60i_a733_ccu_display_fault(struct clk *, const void *, int);
 
+/* Fixed raw memory-path order. A snapshot does not establish DMA readiness. */
+enum sun60i_a733_display_memory_reg {
+	A733_DISPLAY_MEMORY_IOMMU1, A733_DISPLAY_MEMORY_NSI_CFG,
+	A733_DISPLAY_MEMORY_MBUS, A733_DISPLAY_MEMORY_MBUS_MASTER,
+	A733_DISPLAY_MEMORY_PERIPH_GATE, A733_DISPLAY_MEMORY_PERIPH_STATUS,
+	A733_DISPLAY_MEMORY_NSI, A733_DISPLAY_NMEMORY_REGS
+};
+/* Claim before begin_de0. Clean CCU release also releases this subclaim. */
+int	sun60i_a733_ccu_display_memory_reserve(struct clk *, const void *);
+/* Complete fresh raw samples under the matching claim and PCK lease. */
+int	sun60i_a733_ccu_display_memory_state(struct clk *, const void *,
+	    uint32_t [2][A733_DISPLAY_NMEMORY_REGS]);
+
 /* Read-only readiness observation, not a reservation against future writers. */
 int	sun60i_a733_ccu_gpu_ready(struct clk *, u_int *, u_int *);
 

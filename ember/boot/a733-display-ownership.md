@@ -127,6 +127,40 @@ to prevent automatic FDT power changes. Output preparation, PLL_DE start,
 physical timing, supply/Q-channel constraints and a stop contract remain
 separate acceptance boundaries.
 
+## Borrowed memory subclaim
+
+Before `begin_de0`, the same coordinator calls
+`sun60i_a733_ccu_display_memory_reserve(de0, cookie)`. No in-flight native
+writer can overlap acquisition. The subclaim protects the fixed fields below
+until clean CCU release or the retained provider lifetime. It performs no
+write and does not enable a memory path. There is no separate release API.
+
+`sun60i_a733_ccu_display_memory_state` returns two fresh raw samples in the
+`sun60i_a733_display_memory_reg` order. It requires the matching CCU and PCK
+reservation, equal protected samples and unchanged claimed fields. Errors
+leave the caller's output unchanged. After PCK retention, a failed proof
+sets the same sticky fault. `begin_de0` and `ready` also repeat this proof
+when the memory subclaim exists.
+
+| Index | CCU offset | Protected mask |
+| --- | --- | --- |
+| IOMMU1_BGR | `0x05b4` | `0x00010007` |
+| NSI_CFG_BGR | `0x0584` | `0x00010001` |
+| MBUS_CLK | `0x0588` | `0x9f00001f` |
+| MBUS_MASTER | `0x05e0` | bits1/11 |
+| PERIPH_GATE | `0x1908` | bits9/25; the base claim protects the full register |
+| PERIPH_STATUS | `0x1988` | bit25; read-only |
+| NSI_CLK | `0x0580` | `0xdf00001f` |
+
+The DE consumer must validate the finite running profile before any IOMMU/NSI
+access or DMA publication. This includes IOMMU/NSI reset and gate fields,
+MBUS/NSI selectors and dividers, no DFS/update, and running manual/configured/
+effective PERIPH0-600M gates. Raw getter success is not that policy check.
+The subclaim does not access IOMMU, change its bypass, translate an address,
+allocate DMA or establish command completion. It does not exclude firmware.
+Manual sections 4.1.6.95–96, 99–100 and 102–103 define the added bus and gate
+fields. The existing display observer defines the NSI clock fields.
+
 The [RGB/RCQ format encoder](a733-de352-format.md) supplies checked register
 values and descriptor bytes. The following milestone is one CPU-filled
 XRGB8888 plane with DE3.52 RCQ updates and measured TV0 vblank. It still needs a validated DMA/IOMMU path,

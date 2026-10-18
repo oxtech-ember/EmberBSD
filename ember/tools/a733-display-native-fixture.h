@@ -127,6 +127,18 @@ test_display_native(void)
 	REG(MBUS_MASTER_GATE_REG) ^= __BIT(16) | __BIT(18);
 	REG(NPU_CLK_REG) = UINT32_C(0x82000000);
 	CHECK(sun60i_a733_ccu_display_ready(CLOCK(A733_CLK_DE0), &display_cookie) == 0);
+	static const struct { bus_size_t reg; uint32_t mask; } expected_masks[] = {
+		{0, UINT32_MAX}, {0xa0, UINT32_MAX}, {0xa8, UINT32_MAX},
+		{0xac, UINT32_MAX}, {0x500, UINT32_MAX}, {0x1908, UINT32_MAX},
+		{0x1988, UINT32_MAX}, {0x2e0, UINT32_MAX}, {0x2e8, UINT32_MAX},
+		{0x2ec, UINT32_MAX}, {0x1928, UINT32_MAX}, {0x19a8, UINT32_MAX},
+		{0xa00, 0x8700001f}, {0xa04, 0x10001}, {0xa74, 0x10000},
+		{0x1604, 0x10001}, {0x16cc, 0x10001}, {0x16ec, 0x10001},
+		{0x1684, 0x87001f1f}, {0x168c, 0x70001}, {0x1690, 0x87000000},
+		{0x5c0, 0x80000030}, {0x5e0, 0x800}
+	};
+	for (unsigned i = 0; i < __arraycount(expected_masks); i++)
+		CHECK(sun60i_a733_display_mask(expected_masks[i].reg) == expected_masks[i].mask);
 	/* Both admission and actual raw RMW reject each protected display bit. */
 	for (unsigned reg = 0; reg < 0x2000; reg += 4) {
 		uint32_t mask = sun60i_a733_display_mask(reg);

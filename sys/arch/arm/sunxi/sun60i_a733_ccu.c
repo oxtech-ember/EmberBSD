@@ -1039,7 +1039,8 @@ static struct {
 static struct {
 	struct sun60i_a733_display_owner core;
 	int power, fault;
-	bool pck_retained, prepared;
+	bool pck_retained, prepared, memory_claimed;
+	uint32_t memory[2][A733_DISPLAY_NMEMORY_REGS];
 	struct sun60i_a733_display_inputs after;
 } sun60i_display_lease;
 
@@ -1073,7 +1074,15 @@ sun60i_a733_display_mask(bus_size_t reg)
 	case AHB_MASTER_GATE_REG:
 		return __BIT(31) | __BIT(5) | __BIT(4);
 	case MBUS_MASTER_GATE_REG:
-		return __BIT(11);
+		return __BIT(11) | (sun60i_display_lease.memory_claimed ? __BIT(1) : 0);
+	case 0x5b4:
+		return sun60i_display_lease.memory_claimed ? UINT32_C(0x00010007) : 0;
+	case 0x584:
+		return sun60i_display_lease.memory_claimed ? UINT32_C(0x00010001) : 0;
+	case 0x588:
+		return sun60i_display_lease.memory_claimed ? UINT32_C(0x9f00001f) : 0;
+	case 0x580:
+		return sun60i_display_lease.memory_claimed ? UINT32_C(0xdf00001f) : 0;
 	default:
 		return 0;
 	}
@@ -1949,6 +1958,136 @@ sun60i_a733_display_fault_locked(int error)
 		    sun60i_display_lease.core.owner, error);
 }
 
+/* Raw memory-path observations. The DE consumer owns the finite policy. */
+static const struct {
+	bus_size_t reg;
+	uint32_t mask;
+} sun60i_a733_display_memory_regs[A733_DISPLAY_NMEMORY_REGS] = {
+	{ 0x5b4, UINT32_C(0x00010007) },
+	{ 0x584, UINT32_C(0x00010001) },
+	{ 0x588, UINT32_C(0x9f00001f) },
+	{ MBUS_MASTER_GATE_REG, __BIT(1) | __BIT(11) },
+	{ PERI0PLL_GATE_EN_REG, __BIT(9) | __BIT(25) },
+	{ PERI0PLL_GATE_STAT_REG, __BIT(25) },
+	{ 0x580, UINT32_C(0xdf00001f) },
+};
+
+static int
+sun60i_a733_display_memory_read(struct sunxi_ccu_softc *sc,
+    uint32_t out[2][A733_DISPLAY_NMEMORY_REGS])
+{
+	struct sun60i_a733_display_power power;
+	uint32_t words[2][A733_DISPLAY_NMEMORY_REGS];
+	bus_addr_t addr;
+	bus_size_t size;
+	int error;
+
+	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
+	if (fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size) != 0 ||
+	    size < PERI0PLL_GATE_STAT_REG + sizeof(uint32_t))
+		return ENXIO;
+	error = sun60i_a733_pck_display_snapshot(sun60i_display_lease.power,
+	    sun60i_display_lease.core.owner, &power);
+	if (error != 0)
+		return error;
+	for (u_int s = 0; s < 2; s++) {
+		for (u_int i = 0; i < A733_DISPLAY_NMEMORY_REGS; i++) {
+			if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh,
+			    sun60i_a733_display_memory_regs[i].reg, &words[s][i]) != 0)
+				return EFAULT;
+		}
+	}
+	for (u_int i = 0; i < A733_DISPLAY_NMEMORY_REGS; i++) {
+		if (((words[0][i] ^ words[1][i]) &
+		    sun60i_a733_display_memory_regs[i].mask) != 0)
+			return EBUSY;
+	}
+	memcpy(out, words, sizeof(words));
+	return 0;
+}
+
+static int
+sun60i_a733_display_memory_check(struct sunxi_ccu_softc *sc,
+    uint32_t out[2][A733_DISPLAY_NMEMORY_REGS])
+{
+	uint32_t words[2][A733_DISPLAY_NMEMORY_REGS];
+	int error = sun60i_a733_display_memory_read(sc, words);
+
+	if (error != 0)
+		return error;
+	for (u_int s = 0; s < 2; s++) {
+		for (u_int i = 0; i < A733_DISPLAY_NMEMORY_REGS; i++) {
+			if (((words[s][i] ^ sun60i_display_lease.memory[s][i]) &
+			    sun60i_a733_display_memory_regs[i].mask) != 0)
+				return EBUSY;
+		}
+	}
+	memcpy(out, words, sizeof(words));
+	return 0;
+}
+
+int
+sun60i_a733_ccu_display_memory_reserve(struct clk *de0, const void *owner)
+{
+	struct sunxi_ccu_softc *sc;
+	uint32_t words[2][A733_DISPLAY_NMEMORY_REGS];
+	int error = sun60i_a733_display_handle(de0, &sc);
+
+	if (error != 0)
+		return error;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (owner == NULL || sun60i_display_lease.core.owner != owner) {
+		error = EINVAL;
+		goto out;
+	}
+	if (sun60i_display_lease.memory_claimed ||
+	    sun60i_display_lease.pck_retained || sun60i_display_lease.fault != 0 ||
+	    sun60i_display_lease.core.writers != 0) {
+		error = EBUSY;
+		goto out;
+	}
+	error = sun60i_a733_display_memory_read(sc, words);
+	if (error == 0) {
+		memcpy(sun60i_display_lease.memory, words, sizeof(words));
+		sun60i_display_lease.memory_claimed = true;
+	}
+out:
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
+int
+sun60i_a733_ccu_display_memory_state(struct clk *de0, const void *owner,
+    uint32_t out[2][A733_DISPLAY_NMEMORY_REGS])
+{
+	struct sunxi_ccu_softc *sc;
+	uint32_t words[2][A733_DISPLAY_NMEMORY_REGS];
+	int error = sun60i_a733_display_handle(de0, &sc);
+
+	if (error != 0)
+		return error;
+	if (out == NULL)
+		return EINVAL;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (owner == NULL || sun60i_display_lease.core.owner != owner ||
+	    !sun60i_display_lease.memory_claimed) {
+		error = EINVAL;
+		goto out;
+	}
+	if (sun60i_display_lease.fault != 0) {
+		error = EBUSY;
+		goto out;
+	}
+	error = sun60i_a733_display_memory_check(sc, words);
+	if (error == 0)
+		memcpy(out, words, sizeof(words));
+	else if (sun60i_display_lease.pck_retained)
+		sun60i_a733_display_fault_locked(error);
+out:
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
 int
 sun60i_a733_ccu_display_reserve(struct clk *de0, int power, const void *owner)
 {
@@ -1997,6 +2136,8 @@ sun60i_a733_ccu_display_release(struct clk *de0, const void *owner)
 		if (error == 0) {
 			sun60i_display_lease.power = 0;
 			sun60i_display_lease.prepared = false;
+			sun60i_display_lease.memory_claimed = false;
+			memset(sun60i_display_lease.memory, 0, sizeof(sun60i_display_lease.memory));
 			memset(&sun60i_display_lease.after, 0, sizeof(sun60i_display_lease.after));
 		}
 	}
@@ -2042,6 +2183,7 @@ sun60i_a733_ccu_display_begin_de0(struct clk *de0, const void *owner,
 		{ DE0_CLK_REG, __BIT(31), __BIT(31) },
 	};
 	struct sun60i_a733_display_inputs in, expected;
+	uint32_t memory[2][A733_DISPLAY_NMEMORY_REGS];
 	struct sun60i_a733_display_read_arg arg;
 	struct sunxi_ccu_softc *sc;
 	int error;
@@ -2072,6 +2214,11 @@ sun60i_a733_ccu_display_begin_de0(struct clk *de0, const void *owner,
 	    owner, sun60i_a733_display_inputs_read, &arg);
 	if (error != 0)
 		goto failed;
+	if (sun60i_display_lease.memory_claimed) {
+		error = sun60i_a733_display_memory_check(sc, memory);
+		if (error != 0)
+			goto failed;
+	}
 	for (u_int i = 0; i < __arraycount(steps); i++) {
 		error = sun60i_a733_display_de0_write(sc, steps[i].reg,
 		    steps[i].mask, steps[i].bits);
@@ -2108,6 +2255,7 @@ int
 sun60i_a733_ccu_display_ready(struct clk *de0, const void *owner)
 {
 	struct sun60i_a733_display_inputs in;
+	uint32_t memory[2][A733_DISPLAY_NMEMORY_REGS];
 	struct sun60i_a733_display_read_arg arg;
 	struct sunxi_ccu_softc *sc;
 	int error = sun60i_a733_display_handle(de0, &sc);
@@ -2129,6 +2277,8 @@ sun60i_a733_ccu_display_ready(struct clk *de0, const void *owner)
 		error = sun60i_a733_display_check(&in);
 	if (error == 0 && !sun60i_a733_display_same(&sun60i_display_lease.after, &in))
 		error = EBUSY;
+	if (error == 0 && sun60i_display_lease.memory_claimed)
+		error = sun60i_a733_display_memory_check(sc, memory);
 	if (error != 0)
 		sun60i_a733_display_fault_locked(error);
 out:
