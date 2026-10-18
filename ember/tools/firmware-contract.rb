@@ -72,6 +72,7 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
     executable.call('patch', <<~RUBY)
       #!#{RbConfig.ruby}
       require 'json'
+      abort 'Patch requires noninteractive forward flags' unless ARGV[0,5]==%w[-s -t -N -p1 -F0]
       tfa=STDIN.read.include?('--- a/make_helpers/utilities.mk')
       directory=ARGV.fetch(ARGV.index('-d')+1)
       File.open(ENV.fetch('FIXTURE_TRACE'),'a') { |f| f.puts JSON.generate(['fake-patch',ARGV,tfa]) }

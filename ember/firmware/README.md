@@ -118,3 +118,23 @@ FIRMWARE_TEST_GMAKE=/absolute/host-tools/bin/gmake \
 ```
 
 This is a host-helper check. It does not establish a full firmware build.
+
+## Complete series source check
+
+Use a prepared canonical firmware Git checkout as SOURCE. The checker reads
+only pinned Git blobs, even if a failed build changed its working files.
+It exports only referenced source paths into EMPTY_OUTPUT. It verifies the
+top-level and patched-submodule pins, rejects unsafe paths, and applies the
+whole ordered series forward with `-t -N -p1 -F0`. It performs no fetch,
+checkout, reset, compiler invocation, or changes to SOURCE.
+
+```sh
+ruby ember/tools/firmware-series.rb \
+    /absolute/cache/rpi5-uefi-src /absolute/series-output
+```
+
+The receipt records input, patch and final source hashes. C/ASL source
+assertions preserve the 125/255 enabled-PWM handoff, the existing FRQS mask
+and cooling mapping, and unavailable RPM reporting. A repeated-patch control
+must fail without a prompt or reverse application. These checks do not
+establish C/ASL compilation, a complete build, or physical acceptance.

@@ -1,26 +1,8 @@
-Origin:
+Origin: EmberBSD ACPI fan telemetry correction.
 
-diff --git a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
---- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
-+++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
-@@ -215 +214,0 @@
--#define RP1_FAN_PWM_LOW                75U
-@@ -440 +439 @@
--  // Start at the lowest cooling level; ACPI takes ownership from here.
-+  // Hand ACPI an off fan so the OS can establish its own resource references.
-@@ -442,4 +441 @@
--  MmioWrite32 (
--    Base + RP1_PWM_CHANNEL3_DUTY,
--    (RP1_FAN_PWM_RANGE * RP1_FAN_PWM_LOW) / 255
--    );
-+  MmioWrite32 (Base + RP1_PWM_CHANNEL3_DUTY, 0);
-@@ -452 +448,2 @@
--  Register |= RP1_PWM_CHANNEL3_ENABLE | RP1_PWM_SET_UPDATE;
-+  Register &= ~RP1_PWM_CHANNEL3_ENABLE;
-+  Register |= RP1_PWM_SET_UPDATE;
-@@ -663 +660 @@
--             0x1
-+             0x0
+Report unavailable RPM without reading an unqualified tachometer value.
+The fan-handoff diff owns the initial PWM state.
+
 diff --git a/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.asi b/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.asi
 --- a/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.asi
 +++ b/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.asi
