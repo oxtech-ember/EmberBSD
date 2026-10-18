@@ -332,6 +332,10 @@ on every board in the hardware catalog.
   [Wayland 1.26](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/wayland.md)
   separates its runtime from the developer package. All 24 upstream target
   invocations pass before and after normal removal/reinstallation.
+  [GObject Introspection](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/introspection.md)
+  passes all 64 native tests and installs its complete AArch64 SDK payload.
+  Real VM queries generate all seven GLib metadata pairs; four cycles verify
+  namespace loading and checked introspection/libffi calls.
   KiCad's target package and CAD workflows remain pending.
 - **Offline visual SLAM:** ORB-SLAM3 runs with the common Eigen 5.0.1 and
   OpenCV 5.0.0 through a [headless Ports adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/orb-slam3).
