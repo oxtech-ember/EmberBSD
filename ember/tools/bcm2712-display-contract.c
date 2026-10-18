@@ -107,7 +107,9 @@ static size_t nresources;
 static ACPI_INTEGER version, sta, cca;
 static ACPI_STATUS dsd_status, eval_status, walk_status;
 static unsigned int exchanges, walks;
-static int bad_word, fail_at, fail_errno;
+static int bad_word, bad_at, fail_at, fail_errno;
+static char diagnostic[1024];
+static size_t diagnostic_size;
 static uint32_t clock_state, clock_rate;
 static int bad_clock;
 
@@ -136,7 +138,9 @@ reset(void)
 	version = 1; sta = 15; cca = 0;
 	dsd_status = eval_status = walk_status = AE_OK;
 	exchanges = walks = 0;
-	bad_word = fail_at = bad_clock = -1;
+	bad_word = bad_at = fail_at = bad_clock = -1;
+	diagnostic[0] = 0;
+	diagnostic_size = 0;
 	fail_errno = ETIMEDOUT; clock_state = 1; clock_rate = 120000000;
 }
 static ACPI_STATUS
@@ -188,14 +192,26 @@ bcmmbox_request(unsigned int channel, void *buffer, size_t length, uint32_t *rep
 	p[6] = htole32(index % 2 ? 120000000 : 1);
 	if ((int)(index / 2) == bad_clock)
 		p[6] = htole32(index % 2 ? clock_rate : clock_state);
-	if (bad_word >= 0) p[bad_word] ^= htole32(1);
+	if (bad_word >= 0 && (bad_at < 0 || (int)index == bad_at))
+		p[bad_word] ^= htole32(1);
 	*reply = 0;
 	return 0;
 }
 static void
 aprint_normal_dev(device_t dev, const char *format, ...)
 {
-	(void)dev; (void)format;
+	va_list ap;
+	int length;
+
+	(void)dev;
+	va_start(ap, format);
+	length = vsnprintf(diagnostic + diagnostic_size,
+	    sizeof(diagnostic) - diagnostic_size, format, ap);
+	va_end(ap);
+	assert(length >= 0 && (size_t)length <
+	    sizeof(diagnostic) - diagnostic_size);
+	diagnostic_size += (size_t)length;
+
 }
 static void
 expect(int error, unsigned int requests)
@@ -324,6 +340,63 @@ main(void)
 		assert(bcm2712_display_acpi_resources(NULL, &resources, &cold) == EOPNOTSUPP);
 		assert(memcmp(&cold, &saved, sizeof(cold)) == 0 && exchanges == 0);
 	}
+	/* Resource validation is visible even when the clock snapshot fails. */
+	reset();
+	bcm2712_display_acpi_observe(NULL, &resources);
+	assert(exchanges == 8);
+	assert(strstr(diagnostic,
+	    "display resources v1 validated: 32 MMIO, 7 IRQ") != NULL);
+	assert(strstr(diagnostic, "firmware clock snapshot validated;") != NULL);
+	reset(); dsd_status = AE_NOT_FOUND;
+	bcm2712_display_acpi_observe(NULL, &resources);
+	assert(exchanges == 0 && walks == 0);
+	assert(strstr(diagnostic, "display resources unavailable:") != NULL);
+	assert(strstr(diagnostic, "resources v1 validated") == NULL);
+	assert(strstr(diagnostic, "clock snapshot") == NULL);
+	for (i = 0; i < 4; i++) {
+		char expected[128];
+		reset(); bad_clock = (int)i; clock_state = 0;
+		bcm2712_display_acpi_observe(NULL, &resources);
+		assert(exchanges == 2 * (i + 1));
+		assert(strstr(diagnostic,
+		    "display resources v1 validated: 32 MMIO, 7 IRQ") != NULL);
+		(void)snprintf(expected, sizeof(expected),
+		    "validated clock %u check tag %#x (state != 1), "
+		    "state 0 rate 120000000 Hz", golden_clock[i],
+		    VCPROPTAG_GET_CLOCKSTATE);
+		assert(strstr(diagnostic, expected) != NULL);
+		assert(strstr(diagnostic, "clock snapshot validated;") == NULL);
+		reset(); bad_clock = (int)i; clock_rate = 0;
+		bcm2712_display_acpi_observe(NULL, &resources);
+		assert(exchanges == 2 * (i + 1));
+		(void)snprintf(expected, sizeof(expected),
+		    "validated clock %u check tag %#x (rate == 0), "
+		    "state 0x1 rate 0 Hz", golden_clock[i],
+		    VCPROPTAG_GET_CLOCKRATE);
+		assert(strstr(diagnostic, expected) != NULL);
+	}
+	reset(); bad_clock = 0; clock_rate = 119999999;
+	bcm2712_display_acpi_observe(NULL, &resources);
+	assert(exchanges == 2);
+	assert(strstr(diagnostic, "(rate below HSM minimum)") != NULL);
+	assert(strstr(diagnostic, "state 0x1 rate 119999999 Hz") != NULL);
+	for (i = 0; i < 8; i++) {
+		reset(); fail_at = (int)i; fail_errno = EBUSY;
+		bcm2712_display_acpi_observe(NULL, &resources);
+		assert(exchanges == i + 1);
+		assert(strstr(diagnostic, "resources v1 validated") != NULL);
+		assert(strstr(diagnostic, "no complete validated response") != NULL);
+		assert(strstr(diagnostic, "validated clock ") == NULL);
+		assert(strstr(diagnostic, "check tag") == NULL);
+		reset(); bad_word = 5; bad_at = (int)i;
+		bcm2712_display_acpi_observe(NULL, &resources);
+		assert(exchanges == i + 1);
+		assert(strstr(diagnostic, "resources v1 validated") != NULL);
+		assert(strstr(diagnostic, "no complete validated response") != NULL);
+		assert(strstr(diagnostic, "validated clock ") == NULL);
+		assert(strstr(diagnostic, "check tag") == NULL);
+	}
+	puts("BCM2712 display observer: resource and validated-clock diagnostics PASS");
 	puts("BCM2712 display contract: resources, flags, versions and bounded clock failures PASS");
 	return 0;
 }

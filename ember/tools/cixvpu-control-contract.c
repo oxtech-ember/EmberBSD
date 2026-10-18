@@ -836,7 +836,10 @@ static void allocation_tests(void)
     CHECK(strstr(diagnostic, "allocation role 0 pages 1") != NULL);
     CHECK(strstr(diagnostic, "allocation role 1 pages 1") != NULL);
     CHECK(strstr(diagnostic, "allocation role 10 pages 128") != NULL);
-    CHECK(strstr(diagnostic, "allocation role 12 pages 2") != NULL);
+    char leaf_diagnostic[64];
+    CHECK(snprintf(leaf_diagnostic,sizeof(leaf_diagnostic),
+        "allocation role %u pages 2\n",(unsigned int)CIXVPU_FW_PLAN_LEAF)>0);
+    CHECK(strstr(diagnostic,leaf_diagnostic)!=NULL);
     CHECK(strstr(diagnostic, "allocation result 0, primary 0 close 0 cleanup 0") != NULL);
     for (unsigned int fault = 1; fault <= 15; fault++) {
         allocation_fixture(fault); allocation_run();
@@ -957,6 +960,7 @@ static void boot_attach_tests(void)
     CHECK(strstr(diagnostic,"native boot: once invoked yes")!=NULL);
     CHECK(strstr(diagnostic,"SWITCHED_IN yes PONG yes")!=NULL);
     CHECK(strstr(diagnostic,"RPC header valid no")!=NULL);
+    CHECK(strstr(diagnostic,"RPC alloc valid no size 0 max_size 0 region 0 log2_alignment 0")!=NULL);
     CHECK(strstr(diagnostic,"deadbeef")==NULL);
     CHECK(strstr(diagnostic,"header error 0 stage 9 primary 0")!=NULL);
 #ifdef CIXVPU_BOOT_ATTACH_API
@@ -970,8 +974,15 @@ static void boot_attach_tests(void)
     attachment_boot.report.rpc_state=1;
     attachment_boot.report.rpc_callid=0x12345678;
     attachment_boot.report.rpc_size=0xfedcba98;
+    attachment_boot.report.rpc_alloc_valid=true;
+    attachment_boot.report.rpc_alloc_size=UINT32_MAX;
+    attachment_boot.report.rpc_alloc_max_size=0x12345678;
+    attachment_boot.report.rpc_alloc_region=255;
+    attachment_boot.report.rpc_alloc_log2_alignment=31;
+
     boot_attach_run();
     CHECK(strstr(diagnostic,"RPC header valid yes state 0x1 callid 0x12345678 size 0xfedcba98")!=NULL);
+    CHECK(strstr(diagnostic,"RPC alloc valid yes size 4294967295 max_size 305419896 region 255 log2_alignment 31")!=NULL);
     boot_attach_drop();
 
     const unsigned int faults_to_test[]={1,2,3,4,5,6,7,8,9,10,12,13,14,15,16,19,20,21,22,23};

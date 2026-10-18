@@ -681,8 +681,11 @@ on every board in the hardware catalog.
   A [versioned BCM2712 display contract](ember/boot/bcm2712-display-contract.md)
   validates shared register ownership, interrupt domains and bounded firmware
   clock snapshots. The UEFI series declares these resources while preserving the
-  legacy V3D indices. ASL-to-AML component checks pass; full firmware deployment
-  remains unverified. The observer does not enable clocks or map display registers.
+  legacy V3D indices. A complete GCC 16.2 firmware build booted on CM5;
+  its live DSDT passed the OS decoder with 32 memory ranges and seven IRQs.
+  The installed observer separately found HSM clock ID 13 enabled at a reported
+  zero rate. Clock control remains unaccepted. The observer does not enable
+  clocks or map display registers.
   An [explicit native display IRQ provider](ember/boot/bcm2712-display-irq.md)
   adds bounded leaf dispatch and synchronized teardown. Source contracts and
   kernel object analysis pass. An explicit [HSM clock owner](ember/boot/bcm2712-display-hsm.md)
@@ -1096,7 +1099,8 @@ The base system shell is unchanged.
   UEFI-only shutdown. Cold boot can require re-enabling firmware Support SPCR.
   A separate [manual UART2 kernel](ember/boot/cix-spcr.md#manual-kernel-console-profile)
   has source checks for a bounded, exact-DSDT fallback when SPCR is absent.
-  It rejects instrument UART descriptions; physical cold boot is unqualified.
+  It rejects instrument UART descriptions. One physical cold boot without SPCR
+  reaches the native UART2 console, clean FFS and authenticated SSH.
   Cold power-loss recovery and a complete base release remain unqualified.
   See the [board boundary](ember/boards/orange-pi-6-plus.md) and
   [CIX GPIO](ember/boot/cix-gpio.md).
@@ -1107,8 +1111,10 @@ The base system shell is unchanged.
   and releases both owners on the physical board. Absent firmware stops before
   allocation. An explicit firmware boot trial reaches exposed ownership and an
   initial IRQ, then returns ENOTSUP before SWITCHED_IN/PONG. It retains exposed
-  pages and masks the IRQ. Cached RPC-header diagnostics have source checks;
-  their next physical trial requires a cold start. A separate, inactive
+  pages and masks the IRQ. Physical RPC-header diagnostics identify MEM_ALLOC
+  (PARAM state `1`, call ID `2`, payload size `12`): 128 KiB initial memory,
+  64 MiB virtual capacity, protected region and 4 MiB alignment.
+  A checked memory response is not implemented. A separate, inactive
   [DEBUGPARAM primitive](ember/boot/cix-vpu.md#inactive-debugparam-response)
   passes actual-source checks. It changes only a validated request's state word;
   the boot coordinator does not call it. Firmware readiness, DMA data
@@ -1290,7 +1296,10 @@ The base system shell is unchanged.
   target ELF metadata, package replacement and extraction rollback on the host.
   The Binutils port also fixes mixed DWARF32/64 source lookup and passes
   installed GNU CTF and C++ DSO checks with explicit GNU tool selection.
-  Migrating GCC16's hardcoded bootstrap as/ld defaults remains pending.
+  The [GCC16 AArch64 cross recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
+  now builds and selects Ports Binutils 2.47 by default. C/C++ `collect2`/LTO
+  links produce AArch64 ELF executables. The installed native GCC16 package
+  still hardcodes base `as`/`ld`; that migration remains pending.
   [Developer skills](#connect-developer-skills) help
   AI coding assistants find the owning project, test changes and prepare
   contributions. [User skills](#connect-user-skills) guide OS installation, application use,

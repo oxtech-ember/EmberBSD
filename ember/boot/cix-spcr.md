@@ -104,6 +104,17 @@ Later ACPI attachment remains responsible for the native UART and interrupt.
 The profile changes no firmware table, variable, pinmux or clock setting.
 It does not repair NVRAM retention or restart by the power button.
 
+On the observed board, GCC16 kernel `f84fcb5efef545db3f148035873a99ad23d7fe60`
+passes one cold boot with SPCR absent. It selects UART2, hands the console to
+`plcom2` at 115200 8N1 and reaches a clean FFS root and authenticated SSH.
+WPA2/CCMP association and an assigned IPv4 address recover. This is one board
+and one cold cycle; firmware settings retention and S5 wake remain unresolved.
+
+`EMBER64_CIXVPU_UART2_BOOT_PROBE` combines this console gate with the existing
+manual VPU boot profile. It retains VPU7/SCMI128 and all exposure guards.
+It is a separate manual configuration; the console-only and default profiles
+keep their existing activation policy.
+
 Run its actual-source host contract with GCC16:
 
 ```sh
@@ -118,7 +129,7 @@ These checks do not establish a physical cold boot or UART handoff.
 Existing PSCI/MADT discovery still uses its native ACPI routines;
 this profile does not harden the complete ACPI parser.
 
-## Loader validation and ownership
+## Validation and ownership
 
 Before any write the loader checks:
 

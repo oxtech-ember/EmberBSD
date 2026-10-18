@@ -1,0 +1,7 @@
+# Manual, boot-long VPU trial with the exact-board UART2 console gate.
+# Preserve the working default and recovery kernels. Retain exposed owners.
+# This profile does not repair firmware settings or power-button wake.
+
+include "arch/evbarm/conf/EMBER64_CIXVPU_BOOT_PROBE"
+
+options CIXP1_UART2_CONSOLE

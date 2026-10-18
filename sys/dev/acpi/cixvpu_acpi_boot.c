@@ -235,6 +235,11 @@ cixvpu_boot_receive(struct cixvpu_acpi_boot *b)
 			b->report.rpc_state = header.state;
 			b->report.rpc_callid = header.callid;
 			b->report.rpc_size = header.size;
+			b->report.rpc_alloc_valid = header.alloc_valid;
+			b->report.rpc_alloc_size = header.alloc_size;
+			b->report.rpc_alloc_max_size = header.alloc_max_size;
+			b->report.rpc_alloc_region = header.alloc_region;
+			b->report.rpc_alloc_log2_alignment = header.alloc_log2_alignment;
 			if (error == EAGAIN)
 				break;
 			if (error != 0)

@@ -42,7 +42,9 @@ struct cixvpu_boot_reply {
 };
 struct cixvpu_boot_rpc_header {
 	uint32_t state, callid, size;
-	bool valid;
+	uint32_t alloc_size, alloc_max_size;
+	uint8_t alloc_region, alloc_log2_alignment;
+	bool valid, alloc_valid;
 };
 /*
  * Fixed one-core protocol3.5 sum0005 CPU initializer. Reuses prepare_cpu rules.
@@ -65,6 +67,9 @@ int cixvpu_prepared_boot_receive(struct cixvpu_prepared *,
  * Cache only, with the same context/output guards as receive. No device access.
  * valid means twelve bytes were copied in one existing RPC observation, not an
  * atomic/stable firmware transaction. size is numeric telemetry only.
+ * alloc_valid requires exact PARAM/call2/size12 and matching headers around a
+ * fixed twelve-byte payload copy. Fields describe an observation, not an
+ * accepted allocation. Committed PARAM immutability remains a firmware promise.
  * After initial sync, before the first read, fields are zero and valid=false.
  * A sticky retry retains the last diagnostic. A new attempt or retained-map
  * fault invalidates it until

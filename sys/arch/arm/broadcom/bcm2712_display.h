@@ -72,6 +72,20 @@ struct bcm2712_display_clocks {
 	struct bcm2712_display_clock clock[BCM2712_DISPLAY_NCLOCK];
 };
 
+enum bcm2712_display_clock_check {
+	BCM2712_DISPLAY_CLOCK_STATE,
+	BCM2712_DISPLAY_CLOCK_RATE,
+	BCM2712_DISPLAY_CLOCK_HSM_MIN
+};
+
+/* Valid only after both response packets pass the complete wire checks. */
+struct bcm2712_display_clock_failure {
+	struct bcm2712_display_clock clock;
+	uint32_t check_tag;
+	enum bcm2712_display_clock_check check;
+	bool valid;
+};
+
 extern const struct bcm2712_display_resource
     bcm2712_display_resources[BCM2712_DISPLAY_NMEM];
 extern const struct bcm2712_display_irq
@@ -89,6 +103,10 @@ int bcm2712_display_decode(uint64_t, const struct bcm2712_display_memory *,
 typedef int (*bcm2712_display_exchange_fn)(void *, uint32_t *);
 int bcm2712_display_read_clocks(bcm2712_display_exchange_fn, void *,
     struct bcm2712_display_clocks *);
+
+/* The optional failure record is cleared on entry; out is unchanged on error. */
+int bcm2712_display_read_clocks_report(bcm2712_display_exchange_fn, void *,
+    struct bcm2712_display_clocks *, struct bcm2712_display_clock_failure *);
 
 /* Success validates these stages only. It never authorizes display MMIO. */
 #endif

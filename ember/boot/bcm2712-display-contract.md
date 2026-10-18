@@ -129,6 +129,13 @@ Each clock must report state 1 and a nonzero rate.
 HSM must report at least 120 MHz, the minimum in the pinned firmware clock provider.
 The observer validates the complete response header, length, tag, echoed ID, and terminator.
 It sends at most eight requests and stops on the first failure.
+The observer reports resource validation separately from the clock snapshot.
+A rejected snapshot does not invalidate a successful version-1 resource check.
+For `EBUSY` after two valid clock responses, it reports the clock ID, state,
+rate, and failed state, nonzero-rate, or HSM-minimum check. The printed tag
+identifies that predicate; it does not identify a transport failure.
+Transport and malformed-response failures do not expose clock values.
+The existing query and clock-output APIs retain all-or-nothing results.
 It does not set rates, enable clocks, release resets, or claim a power domain.
 
 This snapshot is not a clock lifetime guarantee or a mode-specific rate check.
@@ -221,7 +228,18 @@ The pinned Linux HDMI driver rejects zero HSM clock before register access.
 It also prohibits clearing `VID_CTL_ENABLE` on BCM2712 because that operation can lock the bus.
 A future native implementation must retain these hardware constraints.
 
-A complete firmware build and device validation, native interrupt and DDC providers, power and clock ownership,
+## Physical resource observation
+
+A CM5 Rev 1.0 with BCM2712 D0 booted the complete GCC 16.2 firmware build from
+`c90c2a6cee52208fbc1fbe794a72c597f2bd9fd3`. Its live DSDT passed the actual
+OS decoder: contract version 1, 32 memory ranges, and seven interrupts.
+Kernel `0562cd54544965f1405fa09dd8cbf395212b352a` then identified the clock
+failure separately. Both HSM replies passed wire validation. Clock ID 13
+reported state 1 and rate 0 Hz, so the observer returned `EBUSY` without
+display MMIO. A firmware console and the native V3D render device remained available.
+This accepts resource discovery, not clock control or physical KMS.
+
+Native interrupt and DDC providers, power and clock ownership,
 HVS IOMMU support, atomic KMS, buffer import, synchronization, and console handoff remain separate stages.
 The firmware framebuffer descriptor does not supply those interfaces.
 An accelerated virtual output does not display a frame on HDMI.
