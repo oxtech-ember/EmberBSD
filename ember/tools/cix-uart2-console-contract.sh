@@ -17,7 +17,8 @@ ruby - "$src/sys/arch/evbarm/conf/EMBER64_CIX_UART2" \
     "$src/sys/arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE" \
     "$src/sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY" \
     "$src/sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE" \
-    "$src/sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE" <<'RUBY'
+    "$src/sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE" \
+    "$src/sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS" <<'RUBY'
 ARGV.first(2).zip(%w[EMBER64 EMBER64_CIXVPU_BOOT_PROBE]).each do |path, parent|
   lines = File.readlines(path).map { |line| line.sub(/#.*/, '').strip }
   expected = ["include \"arch/evbarm/conf/#{parent}\"", 'options CIXP1_UART2_CONSOLE']
@@ -46,6 +47,15 @@ lines = File.readlines(ARGV.fetch(5)).map { |line| line.sub(/#.*/, '').strip }
 expected = ['include "arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY"',
   'cixgpioobs* at acpi? flags 0x1']
 abort 'manual IO observation differs' unless lines.reject(&:empty?) == expected
+lines = File.readlines(ARGV.fetch(6)).map { |line| line.sub(/#.*/, '').strip }
+expected = ['include "arch/evbarm/conf/EMBER64_CIXUART_NATIVE"',
+  'cixgpioin* at acpi? flags 0x1']
+abort 'combined peripherals profile differs' unless lines.reject(&:empty?) == expected
+parent = File.join(File.dirname(ARGV.fetch(6)), 'EMBER64_CIXUART_NATIVE')
+lines = File.readlines(parent).map { |line| line.sub(/#.*/, '').strip }
+expected = ['include "arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY"',
+  'no plcom* at acpi?', 'plcom* at acpi? flags 0x1']
+abort 'combined UART parent differs' unless lines.reject(&:empty?) == expected
 RUBY
 work=$(mktemp -d "${TMPDIR:-/tmp}/cix-uart2.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM

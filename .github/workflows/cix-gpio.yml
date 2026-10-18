@@ -14,6 +14,7 @@ name: CIX GPIO actual source contracts
       - 'sys/sys/ioccom.h'
       - 'sys/sys/queue.h'
       - 'sys/arch/evbarm/conf/EMBER64_CIXGPIO_INPUT'
+      - 'sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS'
       - 'sys/arch/evbarm/conf/EMBER64_CIX_UART2'
       - 'sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE'
       - 'sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE'
@@ -35,6 +36,7 @@ name: CIX GPIO actual source contracts
       - 'sys/sys/ioccom.h'
       - 'sys/sys/queue.h'
       - 'sys/arch/evbarm/conf/EMBER64_CIXGPIO_INPUT'
+      - 'sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS'
       - 'sys/arch/evbarm/conf/EMBER64_CIX_UART2'
       - 'sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE'
       - 'sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE'
@@ -67,6 +69,7 @@ jobs:
             /sys/dev/acpi/cixgpio_acpi.c
             /sys/dev/acpi/cixgpio_observe_acpi.c
             /sys/dev/acpi/cixgpio_inputs_acpi.c
+            /sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS
             /sys/dev/gpio/gpio.c
             /sys/dev/gpio/gpiovar.h
             /sys/sys/gpio.h

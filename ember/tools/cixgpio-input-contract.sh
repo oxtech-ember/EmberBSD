@@ -6,6 +6,13 @@ set -eu
 case ${CIXGPIOINPUT_ANALYZE:-0} in 0|1) ;; *) exit 2 ;; esac
 case ${CIXGPIOINPUT_COMPILE_ONLY:-0} in 0|1) ;; *) exit 2 ;; esac
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+# This manual composition must retain the checked UART parent and fixed inputs.
+ruby - "$src/sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS" <<'PROFILE'
+lines=File.readlines(ARGV.fetch(0)).map{|line|line.sub(/#.*/,'').strip}.reject(&:empty?)
+abort 'combined peripherals profile differs' unless lines==[
+    'include "arch/evbarm/conf/EMBER64_CIXUART_NATIVE"',
+    'cixgpioin* at acpi? flags 0x1']
+PROFILE
 work=$(mktemp -d "${TMPDIR:-/tmp}/cixgpio-input.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then

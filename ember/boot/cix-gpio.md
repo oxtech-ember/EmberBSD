@@ -143,8 +143,11 @@ provides three fixed S0 inputs in the manual
 [EMBER64_CIXGPIO_INPUT](../../sys/arch/evbarm/conf/EMBER64_CIXGPIO_INPUT) profile.
 It includes the UART2 console gate, sets VPU0, and preserves the default kernel,
 GPI4 power button and read-only observer. No SCMI query is selected.
-This is source-tested support. Physical input configuration and external signal
-transitions remain unverified; no PPS or GPIO interrupt service is implemented.
+One cold boot with source `8a9ae94e2` exposes three pins through native
+`gpio0`. All three initial `GPIOREAD` samples are 1. Native write, toggle and
+unset requests return `EBUSY`; an out-of-range read returns `EINVAL`. External
+signal transitions remain unverified; no PPS or GPIO interrupt service is
+implemented. The direction-only write and readback do not measure voltage.
 
 The attachment requires the exact GPI5/MUX1 identities and resources described
 above. It requires mode0 on all three pads and bypass off on local0/1/2.
@@ -176,12 +179,22 @@ GPIO consumer also retains that dead store. A four-line unsigned-mask fix in
 pins and map-buffer guards. Seven driver mutations and four individual signed
 shift regressions fail at runtime. The GPIO workflow is configured to run the
 input contract with GCC16/fanalyzer, Cppcheck/CSA, sanitizers and Linux Memcheck;
-that configuration is not a completed exact-head CI or physical acceptance.
+source checks do not qualify external transitions, interrupts or PPS.
 
 ```sh
 CC=gcc-16 CFLAGS='-O2 -g -fanalyzer' CIXGPIOINPUT_ANALYZE=1 \
   sh ember/tools/cixgpio-input-contract.sh
 ```
+
+## Combined manual peripherals profile
+
+[EMBER64_CIX_PERIPHERALS](../../sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS)
+includes [the native UART1/3 profile](cix-uart.md) and adds `cixgpioin` flags1.
+Its GPI5 input service has the same policy as the individual input profile.
+DEBUG UART2, the GPI4 power button and VPU0 are retained; SCMI256 supplies only
+the checked UART rate cache. The default kernel and individual profiles remain
+unchanged. Configuration tests pass; physical combined-profile acceptance is
+pending. This profile adds no PPS, GPIO IRQ or instrument protocol service.
 
 ## Source contracts
 

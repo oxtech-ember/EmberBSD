@@ -4,7 +4,8 @@
 read-only UART rate profile, keeps the VPU inactive, and retains the UART2
 console gate. It enables the closed UART1/3 consumer with `plcom` flags 1.
 The default profile and generic non-CIX, BCM and RP1 attachments keep their
-existing paths. DEBUG UART2 (ACPI UID 3) bypasses the new rate consumer.
+existing paths. DEBUG UART2 (ACPI UID 3) bypasses the new rate consumer. CIXCOM0 remains
+outside the closed UART1/3 profile; it is not a generic fallback.
 
 The provider publishes a cache only after both functional rate requests,
 IDs 264 and 266, pass framing, firmware status, body length and ACK checks in
@@ -33,9 +34,23 @@ and `ember/tools/cixscmi-contract.sh`. Set `CIX_PLCOM_ANALYZE=1` and
 `CIXSCMI_ANALYZE=1` for configured static analysis; the platform workflow also
 runs sanitizers and Memcheck. Source checks do not prove physical serial traffic.
 
-[Physical rate discovery](cix-platform.md) returned 100000000 Hz for each
-functional clock. This consumer has not passed a physical UART1/3 traffic test.
-Pinmux, electrical connections, interrupt delivery and requested wire speeds
-still require separate acceptance. Do not infer a device unit from COM names or ACPI UID;
-use the boot log to identify each `plcom` node. Reduced images may need the
-corresponding native `MAKEDEV plcomN` nodes.
+## Physical configuration boundary
+
+On one physical sample, source `10105af84` attaches UART1 as `plcom1` with
+cached clock264 at 100000000 Hz and UART3 as `plcom3` with clock266 at the
+same rate. Native `stty` on the same open dialout descriptor sets and reads
+UART1 at 230400 8N1, and UART3 at 9600 and 115200 8N1. DEBUG UART2 remains
+the console. These checks do not measure the wire baud or exchange instrument
+data. External pinmux, electrical connections and interrupt delivery remain
+unqualified. Do not infer a device unit from COM names or ACPI UID; use the
+boot log. Reduced images need the corresponding native `MAKEDEV plcomN` nodes.
+
+## Combined manual peripherals profile
+
+[EMBER64_CIX_PERIPHERALS](../../sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS)
+includes `EMBER64_CIXUART_NATIVE` and adds the same fixed GPI5 input attachment
+as [the separate GPIO profile](cix-gpio.md#manual-fixed-gpi5-inputs). It retains
+the UART2 console gate, checked SCMI256 rate cache and GPI4 power button; the
+VPU stays inactive. The default kernel and both individual profiles are
+unchanged. Generated configuration checks cover the combined attachment flags
+and provider counts. The combined kernel has not passed a physical boot.

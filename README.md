@@ -1114,14 +1114,20 @@ The base system shell is unchanged.
   reads functional clock IDs264/266 as 100 MHz on the physical sample.
   A separate [native UART1/3 profile](ember/boot/cix-uart.md) consumes the checked
   per-boot rate cache after provider initialization and validates PL011 divisors
-  in actual-source tests. DEBUG UART2 keeps its existing path. Physical baud
-  programming and instrument exchange remain unqualified. An opt-in
+  in actual-source tests. One physical boot attaches UART1/3 from that cache;
+  same-open native termios checks pass 230400 8N1 on UART1 and 9600/115200 8N1
+  on UART3. Wire traffic remains unqualified. DEBUG UART2 keeps its existing
+  path. An opt-in
   [GPIO observation profile](ember/boot/cix-gpio.md#manual-header-observation)
   validates GPI5/MUX1, reads six nonclearing registers and unmaps both windows.
   One physical snapshot passes. That observer exposes no GPIO device.
   A separate [manual input profile](ember/boot/cix-gpio.md#manual-fixed-gpi5-inputs)
-  provides three parent-reserved input-only GPIO pins in source tests.
-  Physical input configuration, external signals and PPS remain unqualified.
+  exposes three parent-reserved GPIO inputs on one cold boot; initial reads
+  are all 1 and output-changing requests are refused. External transitions
+  and PPS remain unqualified. A [combined manual profile](ember/boot/cix-uart.md#combined-manual-peripherals-profile)
+  composes both services with VPU0 and the UART2 console gate. Its generated
+  configuration passes source checks; combined physical acceptance is pending.
+  The normal default kernel remains unchanged.
   The separate, inactive
   [DEBUGPARAM primitive](ember/boot/cix-vpu.md#inactive-debugparam-response)
   passes actual-source checks. It changes only a validated request's state word;

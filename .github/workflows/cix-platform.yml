@@ -46,6 +46,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXUART_NATIVE'
+      - 'sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS'
       - 'sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE'
       - 'sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY'
@@ -110,6 +111,7 @@ name: CIX platform resource contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY'
       - 'sys/arch/evbarm/conf/EMBER64_CIXUART_NATIVE'
+      - 'sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS'
       - 'sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE'
       - 'sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE'
       - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY'
@@ -175,6 +177,7 @@ jobs:
             /sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY
             /sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY
             /sys/arch/evbarm/conf/EMBER64_CIXUART_NATIVE
+            /sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS
             /sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE
             /sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE
             /sys/arch/arm/acpi/acpi_iort.c

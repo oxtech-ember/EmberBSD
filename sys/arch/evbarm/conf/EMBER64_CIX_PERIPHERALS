@@ -1,0 +1,4 @@
+# Manual UART1/3 and fixed GPI5 inputs. Keep DEBUG UART2; VPU stays inactive.
+include "arch/evbarm/conf/EMBER64_CIXUART_NATIVE"
+
+cixgpioin* at acpi? flags 0x1

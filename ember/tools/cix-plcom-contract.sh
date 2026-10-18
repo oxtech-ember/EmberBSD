@@ -27,6 +27,8 @@ parent=File.read(root+'/sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY')
 abort 'native UART2/SCMI profile missing' unless parent.include?('options CIXP1_UART2_CONSOLE')&&parent.include?('cixscmi* at acpi? flags 0x100')
 base=File.read(root+'/sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY')
 abort 'native UART profile activates VPU' unless base.include?('cixvpu* at acpi? flags 0x0')
+combined=File.readlines(root+'/sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS').map{|l|l.sub(/#.*/,'').strip}.reject(&:empty?)
+abort 'combined peripherals profile differs' unless combined==['include "arch/evbarm/conf/EMBER64_CIXUART_NATIVE"','cixgpioin* at acpi? flags 0x1']
 RUBYCONFIG
 if [ "${CIX_PLCOM_ANALYZE:-0}" = 1 ]; then ${CC:-cc} -std=c11 -dM -E -x c /dev/null > "$work/predefined.h"; fi
 for count in 0 1; do
