@@ -64,12 +64,25 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
       exit 41 if ENV['FIXTURE_FAIL'] == 'git' && ARGV.include?('fetch')
       if ARGV.first == 'clone'
         destination = ARGV.last
-        FileUtils.mkdir_p(%w[.git edk2 edk2-platforms].map { |p| destination + '/' + p })
+        FileUtils.mkdir_p(%w[.git edk2 edk2-platforms arm-trusted-firmware].map { |p| destination + '/' + p })
         File.write(destination + '/build.sh', #{fake_build.dump})
         File.chmod(0o700, destination + '/build.sh')
       end
     RUBY
-    executable.call('patch', "#!/bin/sh\nprintf '%s\\n' fake-patch >> \"$FIXTURE_TRACE\"\n[ \"$FIXTURE_FAIL\" != patch ] || exit 42\n")
+    executable.call('patch', <<~RUBY)
+      #!#{RbConfig.ruby}
+      require 'json'
+      tfa=STDIN.read.include?('--- a/make_helpers/utilities.mk')
+      directory=ARGV.fetch(ARGV.index('-d')+1)
+      File.open(ENV.fetch('FIXTURE_TRACE'),'a') { |f| f.puts JSON.generate(['fake-patch',ARGV,tfa]) }
+      expected=tfa ? '/arm-trusted-firmware' : '/edk2-platforms'
+      unless directory.end_with?(expected)
+        warn 'Patch was dispatched to the wrong source tree'
+        exit 48
+      end
+      exit 49 if tfa && ENV['FIXTURE_FAIL']=='patch-tfa'
+      exit(ENV['FIXTURE_FAIL']=='patch' ? 42 : 0)
+    RUBY
     executable.call('python3', <<~RUBY)
       #!#{RbConfig.ruby}
       require 'json'
@@ -254,6 +267,12 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
   test.call('profile-search-env-standard',['CACHE'],search_env,0)
   test.call('profile-search-env-console',['CACHE','--rp1-console'],search_env,0,'firmware-rp1-console')
   test.call('profile-search-env-trace',['CACHE','--rp1-trace'],search_env,0,'firmware-rp1-trace')
+  [['standard',[], 'firmware'],['console',['--rp1-console'],'firmware-rp1-console'],
+   ['trace',['--rp1-trace'],'firmware-rp1-trace']].each do |name,args,selected|
+    test.call('tfa-owner-success-'+name,['CACHE',*args],{},0,selected)
+    test.call('tfa-owner-failure-'+name,['CACHE',*args],{'FIXTURE_FAIL'=>'patch-tfa'},49,selected)
+  end
+  test.call('tfa-owner-prepare',['CACHE','--prepare'],{},0,'firmware',true)
   [['input-empty',[]],['input-prepare-only',['--prepare']],['input-relative',['relative']],['input-unknown-option',['CACHE','--unknown']],
    ['input-extra',['CACHE','--rp1-console','extra']],['input-prepare-unknown',['CACHE','--prepare','--unknown']]].each do |name,args|
     test.call(name,args,{},1,'firmware',true)

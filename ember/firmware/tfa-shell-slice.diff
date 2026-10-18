@@ -1,0 +1,11 @@
+# Origin: EmberBSD, AI-assisted TF-A host portability correction.
+# Base: arm-trusted-firmware a5c580fd539929af41cf483b7c1434db261dd51b.
+# Terminate the p command before the closing brace for POSIX/BSD sed.
+
+--- a/make_helpers/utilities.mk
++++ b/make_helpers/utilities.mk
+@@ -520,3 +520,3 @@
+         printf '%s\n' "$$@" $\
+-                | sed -n "$${n},$${m}{ $${m}!p }; $${m}q" $\
++                | sed -n "$${n},$${m}{ $${m}!p; }; $${m}q" $\
+                 | sed "s/'/'\\\\''/g; s/^/'/; s/\$$/'/";

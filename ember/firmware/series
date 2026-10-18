@@ -25,3 +25,4 @@ fan-state-fix.diff
 power-button.diff
 bcm2712-display-resources.diff
 gcc-freestanding.diff
+tfa-shell-slice.diff

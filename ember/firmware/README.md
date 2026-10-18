@@ -100,8 +100,21 @@ alone does not establish ELF metadata. The separate injected
 it does not claim that upstream normally requests this library. A static
 archive lookup control independently tests implicit search isolation.
 
-The pinned TF-A `make_helpers/utilities.mk` shell-argument helper uses a
-`sed` grouped command that stock macOS `sed` rejects. The tool-selection
-control records this diagnostic while checking its selected commands.
-This upstream portability issue remains a separate full-build boundary.
-The firmware profile does not install or require a replacement `sed`.
+The ordered series dispatches `tfa-*.diff` files to `arm-trusted-firmware`.
+Other diffs target `edk2-platforms`. The TF-A shell-slice patch terminates the
+`sed` print command before its closing group brace. It uses stock macOS
+BSD `sed` and does not require a replacement `sed`.
+
+The host regression executes the actual pinned `utilities.mk` through GNU
+Make. It preserves a failing upstream control and checks slice boundaries,
+spaces, quotes, and an empty argument. Use the unmodified helper from the
+pinned source before a normal build applies the series:
+
+```sh
+FIRMWARE_TEST_GMAKE=/absolute/host-tools/bin/gmake \
+    ruby ember/tools/firmware-tfa-host.rb \
+    /absolute/cache/rpi5-uefi-src/arm-trusted-firmware/make_helpers/utilities.mk \
+    /absolute/tfa-host-output
+```
+
+This is a host-helper check. It does not establish a full firmware build.
