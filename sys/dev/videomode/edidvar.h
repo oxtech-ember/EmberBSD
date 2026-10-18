@@ -92,7 +92,7 @@ struct edid_info {
 
 int edid_is_valid(uint8_t *);
 int edid_parse(uint8_t *, struct edid_info *);
-/* Same base-block input, zeroed output and 0/-1 result; no diagnostics. */
+/* Caller clears the output. Same base block and 0/-1 result; no diagnostics. */
 int edid_parse_quiet(uint8_t *, struct edid_info *);
 void edid_print(struct edid_info *);
 
