@@ -19,7 +19,7 @@ done
 awk '/^#define LOG_MAX / { copying=1 } copying && /^static void$/ { exit } copying { print }' \
     "$src/ember/tools/bcm2712-display-clock-contract.c" > "$work/clock-firmware.h"
 test -s "$work/clock-firmware.h"
-awk '/^#define[ \t]+(VCPROP_CLK_M2MC|VCPROP_CLK_PIXEL_BVB|VCPROP_REQ_SUCCESS|VCPROPTAG_RESPONSE|VCPROPTAG_GET_CLOCKSTATE|VCPROPTAG_GET_CLOCKRATE|VCPROPTAG_GET_MIN_CLOCKRATE|VCPROPTAG_GET_MAX_CLOCKRATE|VCPROPTAG_SET_CLOCKSTATE|VCPROPTAG_SET_CLOCKRATE)[ \t]/' \
+awk '/^#define[ \t]+(VCPROP_CLK_M2MC|VCPROP_CLK_PIXEL_BVB|VCPROP_CLK_DISP|VCPROP_REQ_SUCCESS|VCPROPTAG_RESPONSE|VCPROPTAG_GET_CLOCKSTATE|VCPROPTAG_GET_CLOCKRATE|VCPROPTAG_GET_MIN_CLOCKRATE|VCPROPTAG_GET_MAX_CLOCKRATE|VCPROPTAG_SET_CLOCKSTATE|VCPROPTAG_SET_CLOCKRATE)[ \t]/' \
     "$src/sys/arch/evbarm/rpi/vcprop.h" > "$work/properties.h"
 compile()
 {
@@ -68,7 +68,7 @@ for mutant in ${NATIVE_CLOCK_MUTANTS:-irq-context hsm-slot bvb-slot hsm-identity
         bvb-retention) from='if (error == 0) {'; to='if (true) {'; occurrence=2 ;;
         bvb-disable)
             target=clock-core
-            from='sc->profile == BCM2712_CLOCK_HSM &&'; to='true &&' ;;
+            from='sc->profile != BCM2712_CLOCK_BVB &&'; to='true &&' ;;
         *) echo "Unknown native clock mutant: $mutant" >&2; exit 1 ;;
     esac
     awk -v from="$from" -v to="$to" -v occurrence="$occurrence" '

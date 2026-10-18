@@ -29,7 +29,7 @@ sed '/^#include /d; /^__KERNEL_RCSID(/d' "$reference" > "$work/hsm-reference.h"
 cp "$src/sys/arch/arm/broadcom/bcm2712_display_clockvar.h" "$work/clockvar.h"
 cp "$src/sys/arch/arm/broadcom/bcm2712_display_hsm.h" "$work/hsm-types.h"
 cp "$src/sys/arch/arm/broadcom/bcm2712_display.h" "$work/display.h"
-awk '/^#define[ \t]+(VCPROP_CLK_M2MC|VCPROP_CLK_PIXEL_BVB|VCPROP_REQ_SUCCESS|VCPROPTAG_RESPONSE|VCPROPTAG_GET_CLOCKSTATE|VCPROPTAG_GET_CLOCKRATE|VCPROPTAG_GET_MIN_CLOCKRATE|VCPROPTAG_GET_MAX_CLOCKRATE|VCPROPTAG_SET_CLOCKSTATE|VCPROPTAG_SET_CLOCKRATE)[ \t]/' \
+awk '/^#define[ \t]+(VCPROP_CLK_M2MC|VCPROP_CLK_PIXEL_BVB|VCPROP_CLK_DISP|VCPROP_REQ_SUCCESS|VCPROPTAG_RESPONSE|VCPROPTAG_GET_CLOCKSTATE|VCPROPTAG_GET_CLOCKRATE|VCPROPTAG_GET_MIN_CLOCKRATE|VCPROPTAG_GET_MAX_CLOCKRATE|VCPROPTAG_SET_CLOCKSTATE|VCPROPTAG_SET_CLOCKRATE)[ \t]/' \
     "$src/sys/arch/evbarm/rpi/vcprop.h" > "$work/properties.h"
 compile()
 {
@@ -63,8 +63,19 @@ for mutant in ${CLOCK_MUTANTS:-clock-id hsm-trace bvb-floor bvb-inherited bvb-of
     clock-id) sed 's/le32toh(packet\[5\]) != id/false/' "$work/good.h" > "$work/clock-core.h" ;;
     hsm-trace) sed -e 's/VCPROPTAG_GET_CLOCKSTATE, 0, state/VCPROPTAG_GET_CLOCKRATE, 0, rate/' -e t -e 's/VCPROPTAG_GET_CLOCKRATE, 0, rate/VCPROPTAG_GET_CLOCKSTATE, 0, state/' "$work/good.h" > "$work/clock-core.h" ;;
     bvb-floor) sed 's/sc.initial_state = sc.status.state;/sc.status.floor = MAX(sc.status.floor, sc.status.rate); sc.initial_state = sc.status.state;/' "$work/good.h" > "$work/clock-core.h" ;;
-    bvb-inherited) sed 's/sc->profile == BCM2712_CLOCK_BVB || sc->rate_changed/sc->rate_changed/' "$work/good.h" > "$work/clock-core.h" ;;
-    bvb-off) sed 's/sc->profile == BCM2712_CLOCK_HSM \&\&/true \&\&/' "$work/good.h" > "$work/clock-core.h" ;;
+    bvb-inherited) sed 's/sc->profile != BCM2712_CLOCK_HSM || sc->rate_changed/sc->rate_changed/' "$work/good.h" > "$work/clock-core.h" ;;
+    bvb-off)
+        awk '
+        BEGIN { old = "sc->profile != BCM2712_CLOCK_BVB &&" }
+        { at = index($0, old)
+          if (at) {
+              count++
+              $0 = substr($0, 1, at - 1) "true &&" substr($0, at + length(old))
+          }
+          print
+        }
+        END { if (count != 1) exit 1 }
+        ' "$work/good.h" > "$work/clock-core.h" ;;
     min-zero) sed 's/sc.status.floor == 0/false/' "$work/good.h" > "$work/clock-core.h" ;;
     other-lease) sed 's/(sc->status.leases \& (1U << i)) != 0/false/' "$work/good.h" > "$work/clock-core.h" ;;
     rate-response) sed 's/reply < wanted || reply > maximum/false/' "$work/good.h" > "$work/clock-core.h" ;;
