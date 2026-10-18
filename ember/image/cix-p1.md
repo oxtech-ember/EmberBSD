@@ -116,26 +116,36 @@ ruby ember/image/test-cix-p1-root-image.rb
 
 On 2026-10-18, one physical CIX P1 board passes isolated chroot checks with
 fork C libraries and loader from source `4b2a919a119ddbd4f8a3893913e8ce46e5d9573d`.
-The GCC16.2 POSIX runtime includes a fresh locale libstdc++ build through
-[Ports `19a2c7ce`](https://github.com/oxtech-ember/EmberBSD-Ports/blob/19a2c7ce6cd4ac3112329663059017f9a41864b0/profiles/development-toolchain/bootstrap/libstdcxx.md).
+The GCC16.2 POSIX runtime is rebuilt through
+[Ports `f2823cb8`](https://github.com/oxtech-ember/EmberBSD-Ports/blob/f2823cb8940440be478963fcc07a0d2dce1e1b89/profiles/development-toolchain/bootstrap/external-compiler.md).
+The owning stage verifier accepts the math-capable `gcc16-runtime-16.2.0nb4`
+inventory and all 43 required math capability declarations. This is stage
+verification, not package installation.
 Loaded shared providers match the recorded hashes. The installed reduced base
 remains unchanged.
 
 C11 atomics, two pthreads and independent TLS pass. The unchanged
-[C++20 consumer](https://github.com/oxtech-ember/EmberBSD-Ports/blob/19a2c7ce6cd4ac3112329663059017f9a41864b0/profiles/development-toolchain/tests/boundary-main.cc)
+[C++20 consumer](https://github.com/oxtech-ember/EmberBSD-Ports/blob/f2823cb8940440be478963fcc07a0d2dce1e1b89/profiles/development-toolchain/tests/boundary-main.cc)
 passes `std::span`, string exchange, exception cleanup across a DSO, threads
 and TLS. Its statically linked variant also passes.
 
-The unchanged [locale contract](https://github.com/oxtech-ember/EmberBSD-Ports/blob/19a2c7ce6cd4ac3112329663059017f9a41864b0/profiles/development-toolchain/tests/locale/contract.cpp)
+The unchanged [locale contract](https://github.com/oxtech-ember/EmberBSD-Ports/blob/f2823cb8940440be478963fcc07a0d2dce1e1b89/profiles/development-toolchain/tests/locale/contract.cpp)
 passes float/double/long-double conversion, stream semantics and two workers
 that preserve the ambient comma decimal locale. Five genuine `fr_FR.UTF-8`
 categories load individually: CTYPE, MONETARY, NUMERIC, TIME and MESSAGES.
 The native Citrus UTF8 module passes decoding. `LC_COLLATE` remains `C`;
 named C++ locales remain unsupported by the generic libstdc++ backend.
 
+Both complete upstream `std` and `std.compat` module sources cross-compile
+with the same staged headers and runtime. Each module path links the
+[43-import math consumer](https://github.com/oxtech-ember/EmberBSD-Ports/blob/f2823cb8940440be478963fcc07a0d2dce1e1b89/profiles/development-toolchain/tests/cross-math/imports.cc);
+both executables exit 0 on the physical board. This checks module consumption
+and symbol binding, not numerical accuracy for every math function. No compiler
+is installed on the target.
+
 These checks qualify an isolated runtime foundation. They do not qualify
-runtime installation in the normal root, a complete C++ image, application workloads,
-standard C++ modules or performance. Package lifecycle and installed SDK
+runtime installation in the normal root, a complete C++ image, application workloads
+or performance. Package lifecycle and installed SDK
 acceptance remain separate.
 
 ## Startup and shutdown

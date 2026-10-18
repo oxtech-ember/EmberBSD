@@ -151,8 +151,10 @@ on every board in the hardware catalog.
   [GCC16 runtime check](ember/image/cix-p1.md#isolated-c-and-c-foundation)
   passes C11 atomics/pthreads/TLS, C++20 strings, `std::span`, DSO exceptions
   and a static consumer. Native UTF8 decoding and a numeric/stream contract pass
-  with genuine French locale data. Runtime package installation in the normal
-  root, complete C++ images, standard C++ modules and applications remain unqualified.
+  with genuine French locale data. Cross-built full `std`/`std.compat` modules
+  also link consumers with 43 math imports; both consumers execute on CIX.
+  Runtime package installation in the normal root, complete C++ images and
+  application workloads remain unqualified.
 
 ### Local AI and robotics
 
