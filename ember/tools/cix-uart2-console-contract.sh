@@ -18,7 +18,8 @@ ruby - "$src/sys/arch/evbarm/conf/EMBER64_CIX_UART2" \
     "$src/sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY" \
     "$src/sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE" \
     "$src/sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE" \
-    "$src/sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS" <<'RUBY'
+    "$src/sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS" \
+    "$src/sys/arch/evbarm/conf/EMBER64_CIXVPU_HEVC_FRAME_PROBE" <<'RUBY'
 ARGV.first(2).zip(%w[EMBER64 EMBER64_CIXVPU_BOOT_PROBE]).each do |path, parent|
   lines = File.readlines(path).map { |line| line.sub(/#.*/, '').strip }
   expected = ["include \"arch/evbarm/conf/#{parent}\"", 'options CIXP1_UART2_CONSOLE']
@@ -56,6 +57,23 @@ lines = File.readlines(parent).map { |line| line.sub(/#.*/, '').strip }
 expected = ['include "arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY"',
   'no plcom* at acpi?', 'plcom* at acpi? flags 0x1']
 abort 'combined UART parent differs' unless lines.reject(&:empty?) == expected
+lines = File.readlines(ARGV.fetch(7)).map { |line| line.sub(/#.*/, '').strip }.reject(&:empty?)
+expected = ['include "arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE"',
+  'no cixvpu* at acpi?', 'cixvpu* at acpi? flags 0xa']
+abort 'manual HEVC frame profile differs' unless lines == expected
+# Validate the exact inherited active-clock dependency, not just the leaf.
+conf = File.dirname(ARGV.fetch(7))
+expected_chain = {
+  'EMBER64_CIXVPU_BOOT_PROBE' => ['include "arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE"',
+    'no cixvpu* at acpi?', 'cixvpu* at acpi? flags 0x7'],
+  'EMBER64_CIXVPU_NATIVE_PROBE' => ['include "arch/evbarm/conf/EMBER64_CIXSCMI_QUERY"',
+    'no cixscmi* at acpi?', 'cixscmi* at acpi? flags 0x80',
+    'no cixvpu* at acpi?', 'cixvpu* at acpi? flags 0x3']
+}
+expected_chain.each do |file, expected|
+  lines = File.readlines(File.join(conf, file)).map { |line| line.sub(/#.*/, '').strip }.reject(&:empty?)
+  abort 'manual HEVC SCMI dependency differs' unless lines == expected
+end
 RUBY
 work=$(mktemp -d "${TMPDIR:-/tmp}/cix-uart2.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM

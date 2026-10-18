@@ -197,8 +197,8 @@ struct cixvpu_queue_event {
 	struct cixvpu_command_response response;
 };
 /*
- * Inactive one-slot transport for the pinned protocol3.5 sum0005 owner.
- * No caller, MMIO, allocation, PTE change or firmware-ready claim is added.
+ * Closed one-slot transport for the pinned protocol3.5 sum0005 owner.
+ * No MMIO, allocation, PTE change or firmware-ready claim is added.
  * The constructor fixes geometry and storage. Open binds immutable handles
  * and one input tag after this published owner ACKed SWITCHED_IN/core0 and
  * PONG. It inherits the seeded TX and consumed RX state without queue reset.
@@ -236,6 +236,18 @@ struct cixvpu_queue_event {
  */
 int cixvpu_prepared_queue_open(struct cixvpu_prepared *,
     const struct cixvpu_queue_identity *);
+#define CIXVPU_QUEUE_RPC_PENDING_API 1
+/*
+ * Fresh read-only RPC gate for a caller with no publication credit left.
+ * Same thread/held/span/map guards apply. Argument errors preserve the cache.
+ * After preflight, invalidate the old observation before acquiring a new one.
+ * PARAM yields true; FREE/RETURN yields false. EAGAIN without a new valid
+ * observation preserves out, so a stale PARAM is never used as fresh authority.
+ * The header is one copied advisory observation, not an atomic transaction.
+ * This reuses the private MESSAGE-consumer reader: FREE/RETURN also acquires
+ * and rearms its two-byte consumer cursor. No response, ACK, store or MMIO.
+ */
+int cixvpu_prepared_queue_rpc_pending(struct cixvpu_prepared *, bool *);
 int cixvpu_prepared_queue_command(struct cixvpu_prepared *,
     const struct cixvpu_queue_command *);
 int cixvpu_prepared_queue_input_param(struct cixvpu_prepared *,

@@ -262,7 +262,7 @@ on every board in the hardware catalog.
   A [pure command codec](ember/boot/cix-vpu.md#typed-control-command-codec)
   serializes JOB, selected HEVC setup and INPUT parameters, and preserves typed
   response failures.
-  It does not submit native commands or start a codec frame.
+  A separate manual policy selects these commands for one fixed frame.
   A [closed buffer codec](ember/boot/cix-vpu.md#closed-buffer-descriptor-codec)
   checks NV12 geometry and known BITSTREAM slots without native queues or DMA access.
   An [inactive slot planner](ember/boot/cix-vpu.md#stopped-slot-layout-foundation)
@@ -272,12 +272,14 @@ on every board in the hardware catalog.
   passed native allocation, copy, stopped PTE checks, initial sync and cancellation
   in one physical warm boot.
   It does not expose addresses to the device or submit a codec frame.
-  An [inactive queue bridge](ember/boot/cix-vpu.md#closed-active-queue-bridge)
+  An [opaque queue bridge](ember/boot/cix-vpu.md#closed-active-queue-bridge)
   binds immutable slot identities after the same owner's bootstrap handshake.
   Source contracts check typed submission, return credits, bounded host copyout
-  and refill synchronization. No active profile calls this bridge yet.
-  Every exposed owner remains held, and the terminal report masks the IRQ.
-  This check submits no codec frame and does not qualify runtime DMA teardown.
+  and refill synchronization. A [manual first-frame profile](ember/boot/cix-vpu.md#manual-first-frame-experiment)
+  selects a bounded 128×128 NV12 experiment and immutable host-copy export.
+  Native active queue traffic, encoded output and independent host decode remain
+  unqualified. Every exposed owner stays held with its IRQ masked.
+  No runtime DMA teardown is qualified.
   [Initially masked ARM PIC registration](ember/boot/cix-vpu.md#initially-masked-native-irq-registration)
   publishes the consumer context before enabling an exclusive interrupt.
   ARM ACPI tags retain [IORT address limits](ember/boot/cix-platform.md#arm-acpi-dma-address-limits).
@@ -340,7 +342,9 @@ on every board in the hardware catalog.
   passes full GCC16 cross builds, installed C API/ORC JIT and runtime package
   lifecycle checks in E34 VM. Its sealed Linux metadata helper agrees with
   all 16 target query groups and passes Mesa's production LLVM guards.
-  Mesa build/rendering on this stack and KiCad's package/CAD workflows remain pending.
+  The resulting [Mesa26 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-linux-aarch64.md)
+  passes installed llvmpipe rendering, all 39 target invocations and normal
+  removal/reinstallation on this stack. KiCad's package/CAD workflows remain pending.
 - **Offline visual SLAM:** ORB-SLAM3 runs with the common Eigen 5.0.1 and
   OpenCV 5.0.0 through a [headless Ports adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/orb-slam3).
   Ports adapts current dependencies and repairs worker shutdown, cancellation
@@ -707,9 +711,11 @@ on every board in the hardware catalog.
   The opt-in [native DDC0 owner](ember/boot/bcm2712-display-ddc.md) adds a base-EDID API
   with source/host validation and retained faults. One [finite base-block transfer](ember/boot/bcm2712-display-edid-probe.md#physical-base-block-boundary)
   passed on CM5 after a cold-headless boot and live HDMI0 connection.
-  A source-only [shared firmware-clock core](ember/boot/bcm2712-display-clock-core.md)
-  adds fixed HSM13/BVB14 lease profiles and fault contracts. It is not wired to a native consumer yet.
-  Runtime HPD delivery, extension reads and KMS scanout remain open.
+  A [shared firmware-clock core](ember/boot/bcm2712-display-clock-core.md) and
+  [kernel-native owners](ember/boot/bcm2712-native-display-clocks.md) provide fixed HSM13/BVB14 leases and retained faults.
+  The opt-in [finite BVB0 clock probe](ember/boot/bcm2712-bvb-clock-probe.md) is source-tested.
+  Physical BVB clock control remains unaccepted.
+  DRM hotplug delivery, extension reads and KMS scanout remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.

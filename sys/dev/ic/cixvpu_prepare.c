@@ -989,6 +989,41 @@ cixvpu_prepare_queue_distance(uint16_t from, uint16_t to)
 	return to >= from ? to - from : 1020 - from + to;
 }
 
+int
+cixvpu_prepared_queue_rpc_pending(struct cixvpu_prepared *p, bool *out)
+{
+	uint16_t consumer;
+	uint32_t state;
+	int error;
+
+	error = cixvpu_prepare_queue_context(p);
+	if (error != 0)
+		return error;
+	error = cixvpu_prepare_queue_value(p, out, sizeof(*out), _Alignof(bool));
+	if (error != 0)
+		return error;
+	p->boot.snapshot.rpc_valid = false;
+	p->boot.snapshot.rpc_alloc_valid = false;
+	p->boot.snapshot.rpc_resize_valid = false;
+	error = cixvpu_dma_queue_cursor(p->dma, p, &p->plan,
+	    CIXVPU_DMA_MESSAGE, &p->boot.snapshot, &consumer);
+	if (error != 0 && error != EAGAIN)
+		return cixvpu_prepare_queue_failure(p, error);
+	if (!p->boot.snapshot.rpc_valid)
+		return EAGAIN;
+	state = cixvpu_prepare_get32(p->boot.snapshot.rpc_header);
+	if (error == EAGAIN && state == 1) {
+		*out = true;
+		return 0;
+	}
+	if (error != 0)
+		return error;
+	if (state != 0 && state != 2)
+		return cixvpu_prepare_queue_failure(p, EPROTO);
+	*out = false;
+	return 0;
+}
+
 static int
 cixvpu_prepare_queue_send(struct cixvpu_prepared *p,
     enum cixvpu_dma_queue queue, uint16_t code, const void *payload,

@@ -20,6 +20,7 @@
 #include <arm/broadcom/bcm2712_display_acpi.h>
 #include <arm/broadcom/bcm2712_display_dvp.h>
 #include <arm/broadcom/bcm2712_display_hsm.h>
+#include <arm/broadcom/bcm2712_display_bvb.h>
 #include <drm/drm_device.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
@@ -64,6 +65,15 @@ const uint64_t bcm2712_hsm_probe_abi[]
 	OFFSET(bcm2712_hsm_status, leases),
 	OFFSET(bcm2712_hsm_status, fault),
 	OFFSET(bcm2712_hsm_status, mutation_attempted),
+	sizeof(struct bcm2712_bvb_status),
+	OFFSET(bcm2712_bvb_status, minimum),
+	OFFSET(bcm2712_bvb_status, floor),
+	OFFSET(bcm2712_bvb_status, rate),
+	OFFSET(bcm2712_bvb_status, state),
+	OFFSET(bcm2712_bvb_status, leases),
+	OFFSET(bcm2712_bvb_status, fault),
+	OFFSET(bcm2712_bvb_status, mutation_attempted),
+
 	sizeof(struct bcm2712_dvp_status),
 	OFFSET(bcm2712_dvp_status, gates),
 	OFFSET(bcm2712_dvp_status, resets),

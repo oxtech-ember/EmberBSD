@@ -125,8 +125,9 @@ The actual-source contract uses independent literal bytes and the existing ring
 codec. It checks endian layout, bounds, aliases, unaligned wire bytes, short
 buffers, failure semantics, ring wrap and checksum wrap. CI runs the portable
 sources with GCC16 analysis, Cppcheck, CSA, sanitizers and Linux Memcheck.
-No attachment calls this codec. It adds no GO operation, framebuffer, DMA owner,
-interrupt handling or session state machine. One-frame encoding remains pending.
+The manual first-frame policy uses this codec through the opaque bridge.
+The codec adds no MMIO, DMA owner or interrupt handling. Physical one-frame
+encoding and independent decode remain pending.
 
 ```sh
 CC=gcc-16 CFLAGS=-fanalyzer CIXVPU_COMMAND_ANALYZE=1 \
@@ -195,8 +196,8 @@ The allocator accepts the explicit slot roles. Ordinary CPU constructors still
 reject all slot metadata before page borrows, writes or ownership movement.
 Only the explicit slot constructor described below accepts this layout. A manual
 CPU-only probe selects it. Command submission, output refill and one-frame encoding
-remain outside that probe. The inactive bridge below supplies the transport
-mechanism; an active coordinator and physical frame acceptance remain pending.
+remain outside that probe. The bridge below supplies the transport for the
+separate manual first-frame source policy. Physical frame acceptance is pending.
 
 Actual-source tests compose MMU tables with discontiguous synthetic bus pages.
 They check literal slot spans, zero tails, full reserve exclusion, exact quotas,
@@ -233,7 +234,7 @@ frame completion or output capacity is qualified.
 
 ## Closed active queue bridge
 
-The opaque prepared owner has inactive typed MESSAGE, INPUT and OUTPUT queue
+The opaque prepared owner has typed MESSAGE, INPUT and OUTPUT queue
 operations. `cixvpu_prepared_queue_open` requires this exposed slot owner's
 acknowledged SWITCHED_IN/core0 and PONG. It binds immutable frame/output handles
 and one input tag. Geometry and storage come from the checked constructor.
@@ -262,10 +263,80 @@ free. Unknown RPC tuples gain no allocation, PTE change or retry path.
 
 Actual-source contracts use independent literal descriptors, poisoned bounce
 pages, consumer/producer interleavings, cross-page partial-tail copy, queue
-wrap/full conditions and fault injection. No attachment invokes this bridge.
-The CPU-only probe and strict bootstrap profiles keep their existing behavior.
+wrap/full conditions and fault injection. Only the separate manual first-frame
+policy selects active operations. The CPU-only probe and strict bootstrap
+profiles keep their existing behavior.
 Native active queue traffic, device DMA data correctness, one HEVC frame and
 host decode remain unqualified.
+
+## Manual first-frame experiment
+
+[EMBER64_CIXVPU_HEVC_FRAME_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_HEVC_FRAME_PROBE)
+is a source-only manual experiment. It inherits the accepted RPC/UART2 profile,
+including SCMI service 128, and selects VPU flags 0xa. The default remains inactive.
+Its complete kernel build, native trial and host decode remain pending. Preserve working
+default and recovery entries. Do not reuse a boot-long held owner.
+
+The selected synthetic fixture is 128×128 progressive NV12 with both strides 128.
+Y uses `16+28*((x/16+2*(y/16))%8)`; UV pairs use 90,160. The 24576-byte fixture
+SHA256 is `30e6c0ed6b3eba1891dd011bfdc98641689a21c5ed40b731c6e589229fc66e40`.
+The checked plan has 414 owners,407 mappings and 7 tables, with a 65536-byte OUTPUT
+slot. Firmware and pixel staging are freed after typed preparation and before
+initial DMA sync. CPU-only mode 9 retains its separate 2×4 padded fixture.
+
+A fresh boot policy waits for both acknowledged SWITCHED_IN/PONG and all three
+committed bootstrap RPC replies. It does not reset those budgets. It then sends
+JOB_ONE; NALU start codes, HEVC Main/token13, P0, B0 and QP26; GO; PING;
+FRAME_RATE 30<<16; RC_OFF; one FORCE_IDR+EOS input; and one empty output slot.
+Only one option waits for CONFIRM. An indexed CONFIRM must match it.
+Every committed publication gets one notification before another operation.
+
+The active phase allows 5001 visits, 5 seconds, 128 messages, 32 publications,
+65536 received protocol bytes, 4 output returns and 262144 accumulated host bytes.
+Each visit allows 16 protocol actions and 4096 bytes. RPC work runs first.
+At publication credit zero, a fresh read-only gate permits bounded final RX
+drain under FREE/RETURN. A new PARAM is held without response or notification.
+The gate observes one advisory header copy and the private MESSAGE consumer;
+it does not ACK, store, notify or create a transaction-stability guarantee.
+
+Output copy completes before ACK. CODECCONFIG bytes are retained. Up to three
+refills rearm output with PREREAD before publication. Completion requires an
+accepted input return and correlated EOF/BSEOF with a nonempty result.
+A JOB_DEQUEUED, STATE or PONG event alone is not frame completion.
+Unknown RPC tuples, malformed metadata, timeout and clock/IRQ faults fail closed.
+All exposure-success outcomes hold owners, claims and handlers permanently.
+No automatic STOP, reset, free, new allocation or PTE growth occurs.
+
+One successful constructor consumes the sole frame-export claim for that boot.
+Constructor failure removes its owned sysctl nodes before freeing host storage.
+After terminal freeze, `hw.cixvpu0.frame_status` exports 96 bytes: 24 LE32 words.
+They are version 1, length 96, primary, cleanup, last stage, action, option,
+transport-complete, byte count, output-return count, input/output flags, visits,
+messages, received bytes, host publications/notifications, RPC commits/notifications,
+IRQ seen/unexpected masks, and RPC state/call/size. Every byte is initialized.
+This status is not a native struct or an address getter.
+
+`hw.cixvpu0.hevc_frame` exports only the immutable host copy. Before freeze,
+reads return EAGAIN. An empty result returns ENODATA. A failed nonempty prefix
+remains readable; inspect status before using it. Owned child discovery preserves
+native scalar metadata and clears pointer fields. Discovery supports current
+ABI flags with node version zero. Nonzero node versions and emulation overlays
+return ENOTSUP. It copies the request once; concurrent user changes cannot
+redirect a second read into native versioned-query handling. Generic root/hw metadata retains its native sysctl ABI.
+The callback permits a short copy; the user wrapper returns ENOMEM with required
+size after a successful short copy. EFAULT does not guarantee required size.
+
+For a reviewed physical trial, extract with `sysctl -b hw.cixvpu0.hevc_frame`.
+Check exit status, complete length and SHA256 separately from encoder status.
+Transfer the exact bytes to the development host. Require a real HEVC decoder
+to produce exactly one 128×128 frame, then measure per-plane error and spatial
+variation against the retained fixture. Lossy QP26 does not imply byte equality.
+The bounded synthetic host contracts do not prove that real firmware accepts
+this setup, tag policy, output capacity or post-GO closed RPC reserve.
+
+Full 2048×1500 NV12 needs 4608000 bytes and exceeds the current single 4 MiB FRAME
+leaf. This experiment does not qualify team geometry, two streams, 9 fps,
+sustained operation, runtime DMA teardown or the public M2M interface.
 
 ## Manual CPU-only slot probe
 

@@ -8,7 +8,9 @@
 #include <sys/device.h>
 #include <sys/errno.h>
 #include <sys/kmem.h>
+#include <sys/proc.h>
 #include <sys/systm.h>
+#include <sys/sysctl.h>
 #include <sys/time.h>
 #include <arm/pic/picvar.h>
 #include <dev/acpi/acpivar.h>
@@ -27,9 +29,166 @@ struct cixvpu_acpi_boot {
 	ACPI_HANDLE cores[4], powers[4];
 	void *irq_cookie;
 	volatile unsigned int irq_ready, irq_masked, irq_seen, irq_unexpected;
-	bool rpc_enabled;
+	bool rpc_enabled, frame_enabled;
+	uint8_t *frame_result;
+	struct sysctllog *frame_log;
+	uint8_t frame_status[96];
+	volatile unsigned int frame_frozen;
 	struct cixvpu_boot_report report;
 };
+
+static volatile unsigned int cixvpu_frame_claimed;
+
+static int
+cixvpu_frame_parent(SYSCTLFN_ARGS)
+{
+	struct sysctlnode request, children[2];
+	int error;
+
+	if (name == NULL || namelen != 1 || rnode == NULL)
+		return EINVAL;
+	if (name[0] == CTL_QUERY) {
+		unsigned int i;
+
+		/* Copy one request; a second user read could change its version. */
+		if (newp == NULL || newlen != sizeof(request))
+			return EINVAL;
+		error = sysctl_copyin(l, newp, &request, sizeof(request));
+		if (error != 0)
+			return error;
+		if (SYSCTL_VERS(request.sysctl_flags) != SYSCTL_VERSION)
+			return EINVAL;
+		/* libc discovery uses zero. Do not enter native versioned-query. */
+		if (request.sysctl_ver != 0)
+			return ENOTSUP;
+
+		if (rnode->sysctl_clen > __arraycount(children) ||
+		    (rnode->sysctl_clen != 0 && rnode->sysctl_child == NULL))
+			return EIO;
+		/* An overlay could replace this sanitized list with foreign nodes. */
+		if (l != NULL && l->l_proc->p_emul->e_sysctlovly != NULL)
+			return ENOTSUP;
+		memset(children, 0, sizeof(children));
+		for (i = 0; i < rnode->sysctl_clen; i++) {
+			const struct sysctlnode *source = &rnode->sysctl_child[i];
+
+			children[i].sysctl_flags = source->sysctl_flags;
+			children[i].sysctl_num = source->sysctl_num;
+			memcpy(children[i].sysctl_name, source->sysctl_name,
+			    sizeof(children[i].sysctl_name));
+			children[i].sysctl_ver = source->sysctl_ver;
+			children[i].sysctl_size = source->sysctl_size;
+		}
+		/* Match the native full-record short-buffer rule, never a prefix. */
+		for (i = 0; i < rnode->sysctl_clen; i++) {
+			if (oldp != NULL && *oldlenp >= (i + 1) * sizeof(children[0])) {
+				error = sysctl_copyout(l, &children[i],
+				    (uint8_t *)oldp + i * sizeof(children[0]),
+				    sizeof(children[0]));
+				if (error != 0)
+					return error;
+			}
+		}
+		*oldlenp = rnode->sysctl_clen * sizeof(children[0]);
+		return 0;
+
+	}
+	if (newp != NULL)
+		return EPERM;
+	if (name[0] == CTL_DESCRIBE)
+		return sysctl_describe(SYSCTLFN_CALL(rnode));
+	return EINVAL;
+
+}
+
+static int
+cixvpu_frame_lookup(bool status, SYSCTLFN_ARGS)
+{
+	struct sysctlnode node;
+	const struct cixvpu_acpi_boot *b;
+
+	if (newp != NULL)
+		return EPERM;
+	if (namelen != 0 || rnode == NULL || rnode->sysctl_data == NULL)
+		return EINVAL;
+	b = rnode->sysctl_data;
+	if (atomic_load_acquire(&b->frame_frozen) == 0)
+		return EAGAIN;
+	if (!status && b->report.frame_output_bytes == 0)
+		return ENODATA;
+	node = *rnode;
+	node.sysctl_data = status ? __UNCONST(b->frame_status) : b->frame_result;
+	node.sysctl_size = status ? sizeof(b->frame_status) :
+	    b->report.frame_output_bytes;
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static int
+cixvpu_frame_bytes(SYSCTLFN_ARGS)
+{
+
+	return cixvpu_frame_lookup(false, SYSCTLFN_CALL(rnode));
+}
+
+static int
+cixvpu_frame_status(SYSCTLFN_ARGS)
+{
+
+	return cixvpu_frame_lookup(true, SYSCTLFN_CALL(rnode));
+}
+
+static int
+cixvpu_frame_register(struct cixvpu_acpi_boot *b)
+{
+	const struct sysctlnode *parent = NULL;
+	int error;
+
+	error = sysctl_createv(&b->frame_log, 0, NULL, &parent,
+	    CTLFLAG_READONLY | CTLFLAG_PRIVATE, CTLTYPE_NODE, device_xname(b->dev),
+	    SYSCTL_DESCR("Closed CIX VPU frame trial"), cixvpu_frame_parent,
+	    0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
+	if (error == 0)
+		error = sysctl_createv(&b->frame_log, 0, &parent, NULL,
+		    CTLFLAG_READONLY, CTLTYPE_STRUCT, "hevc_frame",
+		    SYSCTL_DESCR("Immutable host copy; inspect frame_status first"),
+		    cixvpu_frame_bytes, 0, b, CIXVPU_BOOT_FRAME_BYTES,
+		    CTL_CREATE, CTL_EOL);
+	if (error == 0)
+		error = sysctl_createv(&b->frame_log, 0, &parent, NULL,
+		    CTLFLAG_READONLY, CTLTYPE_STRUCT, "frame_status",
+		    SYSCTL_DESCR("Version1, twenty-four LE32 numeric words"),
+		    cixvpu_frame_status, 0, b, sizeof(b->frame_status),
+		    CTL_CREATE, CTL_EOL);
+	return error;
+}
+
+static void
+cixvpu_frame_freeze(struct cixvpu_acpi_boot *b)
+{
+	const struct cixvpu_boot_report *r = &b->report;
+	const uint32_t words[24] = {
+		1, 96, (uint32_t)r->error, (uint32_t)r->cleanup_error,
+		(uint32_t)r->last_stage, r->frame_action, r->frame_option,
+		r->frame_complete ? 1 : 0, r->frame_output_bytes, r->frame_output_returns,
+		r->frame_input_flags, r->frame_output_flags,
+		r->frame_visits, r->frame_messages, r->frame_received_bytes,
+		r->frame_publications, r->frame_notifications,
+		r->rpc_commits, r->rpc_notifications,
+		atomic_load_acquire(&b->irq_seen), atomic_load_acquire(&b->irq_unexpected),
+		r->rpc_state, r->rpc_callid, r->rpc_size
+	};
+	unsigned int i;
+
+	if (!b->frame_enabled)
+		return;
+	for (i = 0; i < __arraycount(words); i++) {
+		b->frame_status[4 * i] = (uint8_t)words[i];
+		b->frame_status[4 * i + 1] = (uint8_t)(words[i] >> 8);
+		b->frame_status[4 * i + 2] = (uint8_t)(words[i] >> 16);
+		b->frame_status[4 * i + 3] = (uint8_t)(words[i] >> 24);
+	}
+	atomic_store_release(&b->frame_frozen, 1);
+}
 
 static uint64_t
 cixvpu_boot_now(void)
@@ -232,6 +391,16 @@ cixvpu_boot_observe_rpc(struct cixvpu_acpi_boot *b)
 	b->report.rpc_resize_new_size = header.resize_new_size;
 }
 
+static bool
+cixvpu_boot_bootstrap_complete(const struct cixvpu_acpi_boot *b)
+{
+	const struct cixvpu_boot_report *r = &b->report;
+
+	return r->switched_in && r->pong && (!b->frame_enabled ||
+	    (r->rpc_alloc_replied && r->rpc_resize_replied &&
+	    r->rpc_second_alloc_replied));
+}
+
 static int
 cixvpu_boot_receive(struct cixvpu_acpi_boot *b)
 {
@@ -280,6 +449,8 @@ cixvpu_boot_receive(struct cixvpu_acpi_boot *b)
 					b->report.rpc_notifications++;
 					if (atomic_load_acquire(&b->irq_unexpected) != 0)
 						return EIO;
+					if (cixvpu_boot_bootstrap_complete(b))
+						return 0;
 					continue;
 				}
 				if (result != CIXVPU_BOOT_RPC_IDLE &&
@@ -306,7 +477,7 @@ cixvpu_boot_receive(struct cixvpu_acpi_boot *b)
 			} else {
 				return EPROTO;
 			}
-			if (b->report.switched_in && b->report.pong)
+			if (cixvpu_boot_bootstrap_complete(b))
 				return 0;
 		}
 		now = cixvpu_boot_now();
@@ -416,6 +587,360 @@ cixvpu_acpi_boot_create_rpc(device_t dev, const struct acpi_attach_args *aa,
 }
 
 int
+cixvpu_acpi_boot_create_frame(device_t dev, const struct acpi_attach_args *aa,
+    const struct cixvpu_resources *resources, struct cixvpu_acpi_boot **out)
+{
+	int error;
+
+	error = cixvpu_boot_create(dev, aa, resources, out, true);
+	if (error != 0)
+		return error;
+	if (atomic_cas_uint(&cixvpu_frame_claimed, 0, 1) != 0) {
+		kmem_free(*out, sizeof(**out));
+		*out = NULL;
+		return EBUSY;
+	}
+	(*out)->frame_result = kmem_zalloc(CIXVPU_BOOT_FRAME_BYTES, KM_NOSLEEP);
+	if ((*out)->frame_result == NULL) {
+		kmem_free(*out, sizeof(**out));
+		*out = NULL;
+		atomic_store_release(&cixvpu_frame_claimed, 0);
+		return ENOMEM;
+	}
+	(*out)->frame_enabled = true;
+	error = cixvpu_frame_register(*out);
+	if (error != 0) {
+		sysctl_teardown(&(*out)->frame_log);
+		kmem_free((*out)->frame_result, CIXVPU_BOOT_FRAME_BYTES);
+		kmem_free(*out, sizeof(**out));
+		*out = NULL;
+		atomic_store_release(&cixvpu_frame_claimed, 0);
+	}
+	return error;
+}
+
+/* Separate fixed one-frame policy. No caller can restart a held attempt. */
+static int
+cixvpu_frame_guard(const struct cixvpu_acpi_boot *b, uint64_t start)
+{
+	uint64_t now;
+
+	if (atomic_load_acquire(&b->irq_unexpected) != 0)
+		return EIO;
+	now = cixvpu_boot_now();
+	if (now < start)
+		return EIO;
+	return now - start >= 5000000 ? ETIMEDOUT : 0;
+}
+
+/* Called only after a successful commit. No retry of a partial notification. */
+static int
+cixvpu_frame_notify(struct cixvpu_acpi_boot *b, uint64_t start, bool rpc)
+{
+	int error;
+
+	error = cixvpu_frame_guard(b, start);
+	if (error != 0)
+		return error;
+	cixvpu_boot_write(b, false, 0x220, 1);
+	b->report.frame_notifications++;
+	if (rpc)
+		b->report.rpc_notifications++;
+	return cixvpu_frame_guard(b, start);
+}
+
+static void
+cixvpu_frame_charge(struct cixvpu_acpi_boot *b, unsigned int *visit_bytes,
+    unsigned int bytes)
+{
+
+	/* The maximum next shape was reserved before its consuming operation. */
+	*visit_bytes += bytes;
+	b->report.frame_received_bytes += bytes;
+}
+
+static int
+cixvpu_frame_rpc(struct cixvpu_acpi_boot *b, uint64_t start,
+    unsigned int *bytes, bool *progress)
+{
+	enum cixvpu_boot_rpc_result result;
+	bool pending;
+	int error;
+
+	/* At a global limit, acquire a fresh read-only gate, never stale cache. */
+	if (b->report.frame_publications == 32 ||
+	    b->report.frame_received_bytes > 65536 - 1024 || *bytes > 4096 - 1024) {
+		error = cixvpu_prepared_queue_rpc_pending(b->prepared, &pending);
+		cixvpu_boot_observe_rpc(b);
+		if (error != 0 || !pending)
+			return error;
+		return *bytes > 4096 - 1024 ? EWOULDBLOCK : E2BIG;
+	}
+	error = cixvpu_prepared_boot_rpc_step(b->prepared, &result);
+	cixvpu_boot_observe_rpc(b);
+	if (error != 0)
+		return error;
+	if (result == CIXVPU_BOOT_RPC_IDLE || result == CIXVPU_BOOT_RPC_PENDING)
+		return 0;
+	if (result != CIXVPU_BOOT_RPC_DEBUG_REPLIED &&
+	    result != CIXVPU_BOOT_RPC_ALLOC_REPLIED &&
+	    result != CIXVPU_BOOT_RPC_RESIZE_REPLIED &&
+	    result != CIXVPU_BOOT_RPC_SECOND_ALLOC_REPLIED)
+		return EPROTO;
+	b->report.rpc_commits++;
+	b->report.frame_publications++;
+	cixvpu_frame_charge(b, bytes, 12 + b->report.rpc_size);
+	*progress = true;
+	return cixvpu_frame_notify(b, start, true);
+}
+
+static int
+cixvpu_frame_publish(struct cixvpu_acpi_boot *b, unsigned int action,
+    bool idle_ack, bool refill)
+{
+	struct cixvpu_queue_command command = { CIXVPU_Q_JOB_ONE, 0 };
+	struct cixvpu_queue_input_param param;
+	static const enum cixvpu_queue_command_kind options[] = {
+		CIXVPU_Q_NALU_START_CODES, CIXVPU_Q_HEVC_MAIN,
+		CIXVPU_Q_PFRAMES_ZERO, CIXVPU_Q_BFRAMES_ZERO, CIXVPU_Q_FIXED_QP
+	};
+
+	if (idle_ack) {
+		command.kind = CIXVPU_Q_IDLE_ACK;
+	} else if (refill || action == 11) {
+		return cixvpu_prepared_queue_submit(b->prepared, CIXVPU_Q_OUTPUT_EMPTY);
+	} else if (action == 10) {
+		return cixvpu_prepared_queue_submit(b->prepared, CIXVPU_Q_INPUT_ONCE);
+	} else if (action == 8 || action == 9) {
+		param.kind = action == 8 ? CIXVPU_Q_FRAME_RATE : CIXVPU_Q_RC_OFF;
+		param.value = action == 8 ? 30U << 16 : 0;
+		return cixvpu_prepared_queue_input_param(b->prepared, &param);
+	} else if (action >= 1 && action <= 5) {
+		command.kind = options[action - 1];
+		command.value = action == 2 ? 13 : action == 5 ? 26 : 0;
+	} else if (action == 6 || action == 7) {
+		command.kind = action == 6 ? CIXVPU_Q_GO : CIXVPU_Q_PING;
+	} else if (action != 0) {
+		return EINVAL;
+	}
+	return cixvpu_prepared_queue_command(b->prepared, &command);
+}
+
+static int
+cixvpu_frame_event(struct cixvpu_acpi_boot *b,
+    const struct cixvpu_queue_event *event, bool *waiting,
+    unsigned int *pending,
+    bool *idle_ack, unsigned int *size)
+{
+	const struct cixvpu_command_response *r = &event->response;
+
+	*size = 4;
+	switch (event->kind) {
+	case CIXVPU_Q_INPUT_AVAILABLE:
+		*pending = 1;
+		return 0;
+	case CIXVPU_Q_OUTPUT_AVAILABLE:
+		*pending = 2;
+		return 0;
+	case CIXVPU_Q_PONG:
+		return 0;
+	case CIXVPU_Q_IDLE:
+		if (*idle_ack)
+			return EPROTO;
+		*idle_ack = true;
+		return 0;
+	case CIXVPU_Q_RESPONSE:
+		break;
+	default:
+		return EPROTO;
+	}
+	switch (r->kind) {
+	case CIXVPU_COMMAND_CONFIRMED:
+		*size += r->index_valid ? 4 : 0;
+		if (!*waiting || (r->index_valid && r->index != b->report.frame_option))
+			return EPROTO;
+		*waiting = false;
+		return 0;
+	case CIXVPU_COMMAND_JOB_DEQUEUED:
+	case CIXVPU_COMMAND_STATE:
+		*size += 4;
+		return 0;
+	case CIXVPU_COMMAND_FATAL:
+	case CIXVPU_COMMAND_OPTION_FAILED:
+		*size += 132;
+		return EIO;
+	default:
+		return EPROTO;
+	}
+}
+
+static int
+cixvpu_frame_run(struct cixvpu_acpi_boot *b)
+{
+	const struct cixvpu_queue_identity identity = { 1, 2, 3 };
+	static const uint32_t indices[] = { 1, 3, 16, 17, 56 };
+	uint64_t start = cixvpu_boot_now();
+	unsigned int action = 0, pending = 0, visit;
+	bool waiting = false, idle_ack = false, refill = false;
+	int error;
+
+	b->report.stage = CIXVPU_BOOT_FRAME_OPEN;
+	error = cixvpu_frame_guard(b, start);
+	if (error == 0)
+		error = cixvpu_prepared_queue_open(b->prepared, &identity);
+	if (error != 0)
+		return error;
+	for (visit = 0; visit < 5001; visit++) {
+		unsigned int calls = 0, bytes = 0;
+		bool progress = false;
+
+		b->report.frame_visits++;
+		while (calls < 16) {
+			bool rpc_progress = false;
+
+			error = cixvpu_frame_guard(b, start);
+			if (error != 0)
+				return error;
+			calls++;
+			error = cixvpu_frame_rpc(b, start, &bytes, &rpc_progress);
+			if (error == EAGAIN || error == EWOULDBLOCK)
+				break;
+			if (error != 0)
+				return error;
+			if (rpc_progress) {
+				progress = true;
+				continue;
+			}
+			/* A read-only RPC observation can race a clock/IRQ fault too. */
+			error = cixvpu_frame_guard(b, start);
+			if (error != 0)
+				return error;
+			if (calls == 16)
+				break;
+			if (pending != 0) {
+				unsigned int maximum = pending == 1 ? 76 : 44;
+
+				if (bytes > 4096 - maximum)
+					break;
+				if (b->report.frame_received_bytes > 65536 - maximum)
+					return E2BIG;
+				calls++;
+				b->report.stage = CIXVPU_BOOT_FRAME_COPY;
+				if (pending == 1) {
+					struct cixvpu_buffer_frame_result result;
+
+					error = cixvpu_prepared_queue_input_return(b->prepared, &result);
+					if (error == 0) {
+						b->report.frame_input_flags = result.flags;
+						if (result.rejected || result.corrupt)
+							return EIO;
+						b->report.frame_input_accepted = true;
+					}
+				} else {
+					struct cixvpu_buffer_bitstream_result result;
+
+					if (b->report.frame_output_returns == 4)
+						return E2BIG;
+					error = cixvpu_prepared_queue_output_copy(b->prepared,
+					    b->frame_result + b->report.frame_output_bytes,
+					    CIXVPU_BOOT_FRAME_BYTES - b->report.frame_output_bytes, &result);
+					if (error == 0) {
+						b->report.frame_output_returns++;
+						b->report.frame_output_bytes += result.filled;
+						b->report.frame_output_flags = result.flags;
+						if ((result.flags & ~UINT32_C(0x1000b1)) != 0)
+							return ENOTSUP;
+						b->report.frame_output_eof = (result.flags & UINT32_C(0x100010)) != 0;
+						refill = !b->report.frame_output_eof;
+						if (refill && b->report.frame_output_returns == 4)
+							return E2BIG;
+					}
+				}
+				if (error == EAGAIN)
+					break;
+				if (error != 0)
+					return error;
+				cixvpu_frame_charge(b, &bytes, maximum);
+				pending = 0;
+				progress = true;
+				if (b->report.frame_input_accepted && b->report.frame_output_eof) {
+					if (b->report.frame_output_bytes == 0)
+						return EPROTO;
+					error = cixvpu_frame_guard(b, start);
+					if (error != 0)
+						return error;
+					b->report.frame_complete = true;
+					b->report.stage = CIXVPU_BOOT_FRAME_COMPLETE;
+					return 0;
+				}
+				continue;
+			}
+			if (bytes > 4096 - 136)
+				break;
+			if (b->report.frame_received_bytes > 65536 - 136)
+				return E2BIG;
+			if (b->report.frame_messages == 128)
+				return E2BIG;
+			{
+				struct cixvpu_queue_event event;
+				unsigned int size;
+
+				calls++;
+				error = cixvpu_prepared_queue_receive(b->prepared, &event);
+				if (error == 0) {
+					b->report.frame_messages++;
+					error = cixvpu_frame_event(b, &event, &waiting,
+					    &pending, &idle_ack, &size);
+					cixvpu_frame_charge(b, &bytes, size);
+					if (error != 0)
+						return error;
+					progress = true;
+					continue;
+				}
+			}
+			if (error != EAGAIN)
+				return error;
+			if (calls == 16 || (waiting && !idle_ack) ||
+			    (action == 12 && !refill && !idle_ack))
+				break;
+			if (b->report.frame_publications == 32)
+				return E2BIG;
+			error = cixvpu_frame_guard(b, start);
+			if (error != 0)
+				return error;
+			calls++;
+			b->report.frame_action = action;
+			b->report.stage = action <= 5 ? CIXVPU_BOOT_FRAME_SETUP :
+			    CIXVPU_BOOT_FRAME_RUN;
+			error = cixvpu_frame_publish(b, action, idle_ack, refill);
+			if (error == EAGAIN)
+				break;
+			if (error != 0)
+				return error;
+			b->report.frame_publications++;
+			if (idle_ack) {
+				idle_ack = false;
+			} else if (refill) {
+				refill = false;
+			} else {
+				if (action >= 1 && action <= 5) {
+					b->report.frame_option = indices[action - 1];
+					waiting = true;
+				}
+				action++;
+			}
+			error = cixvpu_frame_notify(b, start, false);
+			if (error != 0)
+				return error;
+			progress = true;
+		}
+		if (!progress && visit != 5000)
+			delay(1000);
+	}
+	return ETIMEDOUT;
+}
+
+int
 cixvpu_acpi_boot_once(struct cixvpu_acpi_boot *b,
     struct cixvpu_prepared **owned)
 {
@@ -437,6 +962,7 @@ cixvpu_acpi_boot_once(struct cixvpu_acpi_boot *b,
 	if (error != 0) {
 		b->report.error = error;
 		b->report.last_stage = b->report.stage;
+		cixvpu_frame_freeze(b);
 		return error;
 	}
 	b->prepared = *owned;
@@ -489,7 +1015,11 @@ cixvpu_acpi_boot_once(struct cixvpu_acpi_boot *b,
 	b->report.stage = CIXVPU_BOOT_START;
 	if ((error = cixvpu_boot_start(b, root)) == 0)
 		error = cixvpu_boot_receive(b);
+	if (error == 0 && b->frame_enabled)
+		error = cixvpu_frame_run(b);
 held:
+	if (b->frame_enabled)
+		(void)cixvpu_prepared_queue_hold(b->prepared, error);
 	cixvpu_boot_mask(b);
 	/* A final receive/ACK can observe a fault after the visit check. */
 	if (error == 0 && atomic_load_acquire(&b->irq_unexpected) != 0)
@@ -499,12 +1029,14 @@ held:
 	b->report.last_stage = b->report.stage;
 	b->report.stage = CIXVPU_BOOT_HELD;
 	b->report.error = error;
+	cixvpu_frame_freeze(b);
 	return error;
 failed:
 	b->report.error = error;
 	b->report.last_stage = b->report.stage;
 	b->report.cleanup_error = cixvpu_boot_unwind(b);
 	b->report.held = b->report.cleanup_error != 0;
+	cixvpu_frame_freeze(b);
 	return error;
 }
 

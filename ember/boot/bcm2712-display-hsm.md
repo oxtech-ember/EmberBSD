@@ -104,7 +104,7 @@ headers, source include paths, and warning policy. Generic DRM module defaults
 can select different architecture and legacy configuration definitions.
 Record matching source, headers, options, build settings and strong symbols.
 Buildinfo alone does not prove ABI. The optional [ABI sample](../tools/bcm2712-hsm-probe-abi.c)
-checks three configuration definitions and selected DRM, ACPI, HSM, DVP and bus_space layouts.
+checks three configuration definitions and selected DRM, ACPI, HSM, BVB, DVP and bus_space layouts.
 It does not replace source, option or symbol audits. Use the selected profile.
 
 The operator must first shut down, remove HDMI, and perform a controlled cold
@@ -135,7 +135,8 @@ restores an unknown clock state, or clears mailbox quarantine. Empty unmutated
 owners can be destroyed during failure cleanup. Module unload performs no HSM
 operation and cannot clear a retained owner.
 
-The default HSM-only mode does not access display MMIO. The explicit
+The default HSM-only mode does not access display MMIO.
+The explicit [BVB0 clock probe](bcm2712-bvb-clock-probe.md) also sends only native firmware-clock requests. The explicit
 [HPD0 sample](bcm2712-display-dvp.md#finite-hpd0-sample) reads one controller register.
 The explicit [EDID0 transfer](bcm2712-display-edid-probe.md) requires
 `BCM2712_DISPLAY_DDC`. The separate [HPD IRQ0 probe](bcm2712-hpd-irq-probe.md) waits for an IRQ-driven
@@ -147,7 +148,7 @@ sh ember/tools/bcm2712-hsm-probe-contract.sh "$PWD"
 ```
 
 The fixture uses the real decoder, HSM/DVP cores/providers, module and libfdt.
-It controls the DDC API boundary; separate contracts test the native DDC and I2C code.
+It controls the BVB and DDC API boundaries; separate contracts test the native DDC and I2C code.
 Controlled kernel services test early refusal, malformed trees, zero rate,
 inherited state, failures, retained ownership, cleanup and exact HPD/DDC MMIO order.
 `CC`, `CFLAGS`, `NM`, `HSM_PROBE_COMPILE_ONLY=1`,
@@ -161,7 +162,7 @@ Host execution does not establish physical acceptance.
 
 ### Explicit shared-DVP modes
 
-Absent `dvp-mode`, `hpd-mode` and `ddc-mode` properties keep the HSM-only cycle above.
+Absent `clock-mode`, `dvp-mode`, `hpd-mode` and `ddc-mode` properties keep the HSM-only cycle above.
 Empty, unknown, non-string or conflicting modes fail before HSM, mapping and MMIO.
 `dvp-mode=observe` and `dvp-mode=gate0` use the same headless, framebuffer,
 render and selected-kernel guards. Both acquire and hold a verified HSM lease

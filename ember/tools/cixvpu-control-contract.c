@@ -597,6 +597,7 @@ static void acpi_resource_cleanup(struct acpi_resources *r)
 { cleanup_calls++; memset(r, 0, sizeof(*r)); memset(parser_memory, 0, sizeof(parser_memory)); memset(&parser_irq, 0, sizeof(parser_irq)); }
 static void config_defer(device_t d, void (*cb)(device_t))
 { assert(d == VPU && cleanup_calls == 1); defer_calls++; deferred_device = d; deferred_callback = cb; }
+static const char *device_xname(device_t d) { CHECK(d==VPU); return "cixvpu0"; }
 static void config_mountroot(device_t d, void (*cb)(device_t))
 { assert(d == VPU && cleanup_calls == 1); mountroot_calls++; deferred_device = d; deferred_callback = cb; if (mountroot_immediate) cb(d); }
 /* Firmware filesystem, SHA service and DMA API are orchestration boundaries.
@@ -618,7 +619,7 @@ static void *slot_staging;
 #define KM_NOSLEEP 0x00000002
 static void *kmem_alloc(size_t n, int flags)
 {
-    CHECK(n == 20490 && flags == KM_NOSLEEP && slot_live == 0);
+    CHECK(n == (attach_cf.cf_flags == 10 ? 24576U : 20490U) && flags == KM_NOSLEEP && slot_live == 0);
     slot_allocs++; fw_event('x');
     if (fw_fault == 24) return NULL;
     slot_staging = malloc(n); assert(slot_staging); slot_live = 1;
@@ -626,7 +627,7 @@ static void *kmem_alloc(size_t n, int flags)
 }
 static void kmem_free(void *p, size_t n)
 {
-    CHECK(p == slot_staging && n == 20490 && slot_live == 1);
+    CHECK(p == slot_staging && n == (attach_cf.cf_flags == 10 ? 24576U : 20490U) && slot_live == 1);
     slot_frees++; slot_live = 0; fw_event('z'); free(p); slot_staging = NULL;
 }
 static char fw_events[64];
@@ -664,9 +665,9 @@ static struct cixvpu_dma dma_owner;
 int cixvpu_dma_alloc(bus_dma_tag_t dmat, bus_dma_tag_t dmat64,
     const struct cixvpu_fw_plan *plan, struct cixvpu_dma **out)
 {
-    CHECK(dmat == &dma_tags[0] && dmat64 == &dma_tags[1] && fw_live == (attach_cf.cf_flags == 5 || attach_cf.cf_flags == 7 || attach_cf.cf_flags == 8 || attach_cf.cf_flags == 9 ? 1U : 0U));
-    CHECK(plan->cores == 1 && plan->backing_pages == (attach_cf.cf_flags == 9 ? 401U : attach_cf.cf_flags == 8 ? 274U : 140U) && *out == NULL);
-    CHECK(plan->boot_rpc == (attach_cf.cf_flags == 8 || attach_cf.cf_flags == 9 ? 1U : 0U));
+    CHECK(dmat == &dma_tags[0] && dmat64 == &dma_tags[1] && fw_live == (attach_cf.cf_flags == 5 || attach_cf.cf_flags == 7 || attach_cf.cf_flags == 8 || attach_cf.cf_flags == 9 || attach_cf.cf_flags == 10 ? 1U : 0U));
+    CHECK(plan->cores == 1 && plan->backing_pages == (attach_cf.cf_flags == 10 ? 414U : attach_cf.cf_flags == 9 ? 401U : attach_cf.cf_flags == 8 ? 274U : 140U) && *out == NULL);
+    CHECK(plan->boot_rpc == (attach_cf.cf_flags == 8 || attach_cf.cf_flags == 9 || attach_cf.cf_flags == 10 ? 1U : 0U));
     if (attach_cf.cf_flags == 9) {
         CHECK(plan->mappings == 394 && plan->slots_enabled == 1);
         CHECK(slot_live == 1 && slot_allocs == 1 && slot_frees == 0);
@@ -707,12 +708,12 @@ static int fixture_prepare(struct cixvpu_dma **owner, const struct cixvpu_fw_pla
     const void *bytes, size_t size, const uint8_t pin[32], struct cixvpu_prepared **out)
 {
     CHECK(*owner == &dma_owner && dma_live && *out == NULL && !prepared_live);
-    CHECK(fw_live == 1 && fw_closes == 1 && dma_views == (attach_cf.cf_flags == 9 ? 401U : attach_cf.cf_flags == 8 ? 274U : 140U));
+    CHECK(fw_live == 1 && fw_closes == 1 && dma_views == (attach_cf.cf_flags == 10 ? 414U : attach_cf.cf_flags == 9 ? 401U : attach_cf.cf_flags == 8 ? 274U : 140U));
     CHECK(bytes != NULL);
     if (bytes == NULL) return EINVAL;
     CHECK(size == sizeof(fw_image) && memcmp(bytes, fw_image, size) == 0);
-    CHECK(plan->cores == 1 && plan->backing_pages == (attach_cf.cf_flags == 9 ? 401U : attach_cf.cf_flags == 8 ? 274U : 140U));
-    CHECK(plan->boot_rpc == (attach_cf.cf_flags == 8 || attach_cf.cf_flags == 9 ? 1U : 0U));
+    CHECK(plan->cores == 1 && plan->backing_pages == (attach_cf.cf_flags == 10 ? 414U : attach_cf.cf_flags == 9 ? 401U : attach_cf.cf_flags == 8 ? 274U : 140U));
+    CHECK(plan->boot_rpc == (attach_cf.cf_flags == 8 || attach_cf.cf_flags == 9 || attach_cf.cf_flags == 10 ? 1U : 0U));
     for (unsigned int i = 0; i < 32; i++) {
         char byte[3] = {selected_digest[i * 2], selected_digest[i * 2 + 1], 0};
         CHECK(pin[i] == (uint8_t)strtoul(byte, NULL, 16));
@@ -729,7 +730,7 @@ struct cixvpu_acpi_boot {
     struct cixvpu_boot_report report;
 };
 static struct cixvpu_acpi_boot attachment_boot;
-static unsigned int boot_create_calls, boot_once_calls, boot_report_calls, boot_rpc_create_calls;
+static unsigned int boot_create_calls, boot_once_calls, boot_report_calls, boot_rpc_create_calls, boot_frame_create_calls;
 static unsigned int boot_prepare_calls, ordinary_prepare_calls, initial_sync_calls;
 static int boot_create_result;
 int cixvpu_prepare_boot_cpu(struct cixvpu_dma **owner,
@@ -744,16 +745,25 @@ int cixvpu_prepare_frame_slots_cpu(struct cixvpu_dma **owner,
     const uint8_t pin[32], const struct cixvpu_frame_source *source,
     struct cixvpu_prepared **out)
 {
-    CHECK(attach_cf.cf_flags == 9 && slot_live == 1 && slot_frees == 0);
-    CHECK(source->y == slot_staging && source->uv == (uint8_t *)slot_staging + 16388);
-    CHECK(source->y_bytes == 16388 && source->uv_bytes == 4102);
-    CHECK(plan->slots.width == 2 && plan->slots.height == 4);
-    CHECK(plan->slots.stride_y == 4097 && plan->slots.stride_uv == 2051);
-    CHECK(plan->slots.bitstream_bytes == 4097 && plan->mappings == 394);
-    for (unsigned int i = 0; i < 16388; i++)
-        CHECK(((const uint8_t *)source->y)[i] == (uint8_t)(i * 17U + 3U));
-    for (unsigned int i = 0; i < 4102; i++)
-        CHECK(((const uint8_t *)source->uv)[i] == (uint8_t)(i * 29U + 0x91U));
+    CHECK((attach_cf.cf_flags == 9 || attach_cf.cf_flags == 10) && slot_live == 1 && slot_frees == 0);
+    if (attach_cf.cf_flags == 10) {
+        CHECK(source->y == slot_staging && source->uv == (uint8_t *)slot_staging + 16384);
+        CHECK(source->y_bytes == 16384 && source->uv_bytes == 8192);
+        CHECK(plan->slots.width == 128 && plan->slots.height == 128);
+        CHECK(plan->slots.stride_y == 128 && plan->slots.stride_uv == 128);
+        CHECK(plan->slots.bitstream_bytes == 65536 && plan->mappings == 407);
+        for (unsigned int y=0;y<128;y++) for(unsigned int x=0;x<128;x++)
+            CHECK(((const uint8_t *)source->y)[128*y+x] == (uint8_t)(16+28*((x/16+2*(y/16))%8)));
+        for (unsigned int i=0;i<8192;i++) CHECK(((const uint8_t *)source->uv)[i] == (i%2 ? 160 : 90));
+    } else {
+        CHECK(source->y == slot_staging && source->uv == (uint8_t *)slot_staging + 16388);
+        CHECK(source->y_bytes == 16388 && source->uv_bytes == 4102);
+        CHECK(plan->slots.width == 2 && plan->slots.height == 4);
+        CHECK(plan->slots.stride_y == 4097 && plan->slots.stride_uv == 2051);
+        CHECK(plan->slots.bitstream_bytes == 4097 && plan->mappings == 394);
+        for (unsigned int i=0;i<16388;i++) CHECK(((const uint8_t *)source->y)[i] == (uint8_t)(i*17U+3U));
+        for (unsigned int i=0;i<4102;i++) CHECK(((const uint8_t *)source->uv)[i] == (uint8_t)(i*29U+0x91U));
+    }
     slot_prepare_calls++;
     return fixture_prepare(owner, plan, bytes, size, pin, out);
 }
@@ -791,7 +801,7 @@ int cixvpu_acpi_boot_create(device_t dev, const struct acpi_attach_args *aux,
     CHECK(aux->aa_dmat==&dma_tags[0] && aux->aa_dmat64==&dma_tags[1]);
     CHECK(resources->irq==358 && resources->nmem==2);
     CHECK(fw_live==0 && prepared_live && dma_live && *out==NULL);
-    CHECK(boot_prepare_calls==1 && ordinary_prepare_calls==0 && initial_sync_calls==0);
+    CHECK((attach_cf.cf_flags==10 ? slot_prepare_calls : boot_prepare_calls)==1 && ordinary_prepare_calls==0 && initial_sync_calls==0);
     boot_create_calls++; fw_event('C');
     if(boot_create_result!=0) return boot_create_result;
     if(fw_fault==21) return ENOMEM;
@@ -804,11 +814,20 @@ int cixvpu_acpi_boot_create_rpc(device_t dev, const struct acpi_attach_args *aux
     boot_rpc_create_calls++;
     return cixvpu_acpi_boot_create(dev,aux,resources,out);
 }
+int cixvpu_acpi_boot_create_frame(device_t dev, const struct acpi_attach_args *aux,
+    const struct cixvpu_resources *resources, struct cixvpu_acpi_boot **out)
+{
+    CHECK(attach_cf.cf_flags==10 && dma_owner.plan.slots_enabled==1 && slot_live==0);
+    CHECK(slot_allocs==1 && slot_frees==1 && fw_live==0 && initial_sync_calls==0);
+    boot_frame_create_calls++;
+    return cixvpu_acpi_boot_create(dev,aux,resources,out);
+}
 int cixvpu_acpi_boot_once(struct cixvpu_acpi_boot *ctx,
     struct cixvpu_prepared **owner)
 {
     CHECK(ctx==&attachment_boot && *owner==&prepared_owner && prepared_live);
     CHECK(fw_live==0 && initial_sync_calls==0);
+    if(attach_cf.cf_flags==10) CHECK(slot_live==0 && slot_frees==1);
 #ifdef CIXVPU_BOOT_ATTACH_API
     CHECK(((struct cixvpu_acpi_softc *)attach_private)->sc_boot_once_invoked);
 #endif
@@ -1092,7 +1111,7 @@ static void boot_attach_fixture(unsigned int fault)
 {
     allocation_fixture(fault); attach_cf.cf_flags=7;
     boot_prepare_calls=ordinary_prepare_calls=initial_sync_calls=0;
-    boot_create_calls=boot_once_calls=boot_report_calls=boot_rpc_create_calls=0; boot_create_result=0;
+    boot_create_calls=boot_once_calls=boot_report_calls=boot_rpc_create_calls=boot_frame_create_calls=0; boot_create_result=0;
     memset(&attachment_boot,0,sizeof(attachment_boot));
 }
 static void boot_attach_run(void)
@@ -1109,6 +1128,29 @@ static void boot_attach_drop(void)
     /* Quarantine teardown after assertions, never a production reclaim path. */
     prepared_live=dma_live=false;
     attachment_boot.prepared=NULL;
+}
+static void frame_attach_tests(void)
+{
+    const unsigned int cases[]={0,1,2,3,4,5,6,7,8,9,10,12,13,14,15,16,19,20,21,22,23,24,27};
+    for(unsigned int i=0;i<__arraycount(cases);i++) {
+        unsigned int f=cases[i];boot_attach_fixture(f);slot_probe_fixture(f);attach_cf.cf_flags=10;boot_attach_run();
+        bool invoked=f==0 || f==20 || f==22 || f==23;
+        bool source=f==0 || (f>=8 && f!=13);
+        bool prepared=f==0 || f==16 || f==19 || f==20 || f==21 || f==22 || f==23;
+        CHECK(fw_live==0 && slot_live==0 && slot_staging==NULL);
+        CHECK(slot_allocs==(source?1U:0U) && slot_frees==(source && f!=24?1U:0U));
+        CHECK(slot_prepare_calls==(prepared?1U:0U));
+        CHECK(boot_frame_create_calls==((invoked || f==21)?1U:0U));
+        CHECK(boot_rpc_create_calls==0 && boot_prepare_calls==0 && ordinary_prepare_calls==0);
+        CHECK(boot_once_calls==(invoked?1U:0U) && boot_report_calls==(invoked?1U:0U));
+        CHECK(initial_sync_calls==0 && prepared_frees==(f==21?1U:0U));
+        if(f==0) {
+            CHECK(dma_count==414 && dma_views==414 && dma_owner.plan.mappings==407);
+            CHECK(strcmp(fw_events,"osmrchxapfzCUV")==0);
+            CHECK(attachment_boot.prepared==&prepared_owner && prepared_live);
+        }
+        boot_attach_drop();
+    }
 }
 static void boot_attach_tests(void)
 {
@@ -1264,7 +1306,7 @@ static void attach_tests(void)
     attach_fixture(5); cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     CHECK(parser_calls == 1 && cleanup_calls == 1 && mountroot_calls == 1);
     CHECK(defer_calls == 0 && deferred_callback != NULL && nevents == 0 && maps == 0);
-    const unsigned int invalid_flags[] = {10, 0xffff, UINT32_MAX};
+    const unsigned int invalid_flags[] = {11, 0xffff, UINT32_MAX};
     for (unsigned int i = 0; i < sizeof(invalid_flags)/sizeof(invalid_flags[0]); i++) {
         attach_fixture(invalid_flags[i]); cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
         CHECK(parser_calls == 0 && defer_calls == 0 && nevents == 0);
@@ -1579,7 +1621,7 @@ int main(void)
     (void)cixclk_acpi_get_native;
     metadata_tests(); query_tests(); active_tests(); failures_tests(); rate_separation_tests(); retention_tests();
 #ifdef CIXVPU_ATTACH_API
-    attach_tests(); native_tests(); allocation_tests(); prepare_tests(); slot_probe_tests(); profile_tests(); boot_attach_tests();
+    attach_tests(); native_tests(); allocation_tests(); prepare_tests(); slot_probe_tests(); profile_tests(); boot_attach_tests(); frame_attach_tests();
 #endif
     CHECK(live == 0 && allocations != 0);
 #else
