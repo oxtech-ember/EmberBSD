@@ -1498,6 +1498,7 @@ test_generic_rmw_fallback(void)
 }
 
 #include "a733-display-native-fixture.h"
+#include "a733-display-memory-fixture.h"
 
 int
 main(void)
@@ -1674,6 +1675,7 @@ main(void)
 	test_gpu_prepare();
 	test_npu_prepare_divider();
 	test_display_native();
+	test_display_memory();
 	test_gpu_update_completion();
 	test_gpu_prepare_pll();
 	printf("A733 accelerator clocks: %u production checks passed\n", checks);
