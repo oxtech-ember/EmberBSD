@@ -315,6 +315,13 @@ on every board in the hardware catalog.
   BER 0.516113 when carrier correction is removed. This verifies bounded
   software processing with known carrier and timing parameters; physical SDR,
   real-time deadlines, GUI and Python bindings remain unverified.
+- **KiCad portability prerequisites:** Ports supplies current
+  [ngspice 47 source repairs](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/kicad/ngspice)
+  with native numerical checks, and [protobuf 36.2/Abseil prerequisites](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/kicad/protobuf)
+  with fourteen native C++ checks and four causal allocation-failure controls.
+  The [runtime-only GCC16 package](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/runtime)
+  passes C11/C++20, OpenMP, large atomics and removal/reinstallation in the
+  verified AArch64 E34 guest. KiCad's target package and CAD workflows remain pending.
 - **Offline visual SLAM:** ORB-SLAM3 runs with the common Eigen 5.0.1 and
   OpenCV 5.0.0 through a [headless Ports adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/orb-slam3).
   Ports adapts current dependencies and repairs worker shutdown, cancellation
