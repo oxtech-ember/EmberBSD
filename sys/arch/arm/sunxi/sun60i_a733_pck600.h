@@ -21,4 +21,9 @@ int	sun60i_a733_pck_display_retain(int, const void *);
 int	sun60i_a733_pck_display_release(int, const void *);
 int	sun60i_a733_pck_display_ready(int, const void *);
 
+struct sun60i_a733_display_power;
+/* Complete strict-ON samples under the matching reservation, with no writes. */
+int	sun60i_a733_pck_display_snapshot(int, const void *,
+	    struct sun60i_a733_display_power *);
+
 #endif

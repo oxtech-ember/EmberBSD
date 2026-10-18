@@ -1,9 +1,10 @@
 # A733 display resource ownership core
 
 The core in `sun60i_a733_display_owner.c` supplies native writer arbitration
-and a retained reservation boundary. It performs no I/O. No driver invokes
-it yet. It does not enable a display clock, change power or reset state,
-access DE/TCON/HDMI registers, or establish scanout readiness.
+and a retained reservation boundary. The core performs no I/O. The native
+CCU adapter uses this core under the same mutex as native writer admission
+and masked RMW. It can prepare one fixed local DE0 clock profile. It does
+not access DE/TCON/HDMI apertures or establish scanout readiness.
 
 ## Resource and lifetime contract
 
@@ -79,22 +80,52 @@ or stopped ancestors fail explicitly; there is no fallback PLL enable.
 
 ## Native adapter boundary
 
-The next adapter must connect this state to the CCU writer guard and PCK
-reservations for domains 1 and 10. It must coexist with GPU/NPU reservations,
-reserve before reading, define one lock order, and reverse only reservations
-that have not crossed a write boundary. It must cover all mutation paths,
-including recursive parent operations, reset operations and direct native
-prepare helpers. A read callback must use fault-aware bounded accesses and
-publish only a complete snapshot. The future consumer must use
-`netbsd,consumer-managed-power` to prevent automatic FDT power changes.
+The native CCU API uses the decoded `CLK_DE0` handle and one coordinator
+cookie. The caller first reserves PCK domains 1/10, then calls
+`sun60i_a733_ccu_display_reserve(de0, power_phandle, cookie)`. This operation
+requires the matching PCK reservation and fresh strict ON samples. It checks
+the documented borrowed ancestors before accepting the reservation. It uses
+fault-aware provider reads, validates the full CCU aperture before acquisition,
+and brackets the two CCU samples with RTC observations. Lock order is CCU
+then PCK. No PCK callback acquires CCU. No mutex spans recursive clock dispatch.
+The ordinary DE0 enable/rate/parent paths fail without touching hardware.
 
-Only after those adapters pass software review can a separate local DE0
-clock/reset experiment be considered. It needs a documented order, field
-preservation, bounded readback, supply/Q-channel constraints and retention
-on any attempted write. It must leave PLL_DE and shared ancestors unchanged.
-If that borrowed path cannot work, a dedicated PLL_DE start needs separate
-factor, voltage, lock and complete consumer-handoff evidence. A disabled
-PLL_DE is an expected starting state, not a permanent rejection condition.
+`sun60i_a733_ccu_display_begin_de0(de0, cookie, &retained)` first retains PCK.
+It then invokes the pure core's fresh before-state and running-ancestor checks.
+The returned flag means that resources are retained, including a failure after
+PCK retention but before a CCU write. The local sequence has four masked steps:
+
+1. Configure DE0 selector 3 and divider 1 at `0x0a00`, while gate31 is off.
+2. Release DE0 reset16 at `0x0a04`.
+3. Open DE0 bus gate0 at `0x0a04`.
+4. Open DE0 module gate31 at `0x0a00`.
+
+Each changed field has a bounded masked readback. The provider preserves
+unrelated fields. It does not write PLL_DE, shared ancestors, master gates,
+power controls, TV0 or HDMI. The pinned BSP `sunxi_de.c` reset/clock admission
+at lines 889–939 supplies the reset-before-bus/module order. Manual sections
+4.1.6.104–105 define the DE0 mux, divider, gate and reset fields. The 400 MHz
+choice is an explicit native profile, not a claim about the BSP's selected rate.
+
+Before retention, release the CCU claim first, then the PCK claim. A failed
+release keeps both claims. After retention, no release or rollback is permitted.
+`sun60i_a733_ccu_display_fault` records the first error without any hardware
+write. A fresh `ready` call checks the matching retained PCK lease, running
+ancestors and completed local profile. Status returns cached ownership, fault
+and last verified rates. It is not a fresh readiness probe.
+
+Native mutation guards protect the documented local display fields, shared
+REF/PERIPH/AHB state, DE/VO1 AHB bits5/4 and auto-gating bit31, and DE_SYS MBUS
+bit11. GPU/NPU local masks remain independent. Fresh post-state comparisons
+ignore their disjoint AHB/MBUS fields. The initial pure-core full snapshot
+comparison remains unchanged. These guards do not exclude autonomous firmware.
+
+This boundary proves only the reviewed CCU/PCK local profile. A separate
+retained memory claim must protect IOMMU/NSI/MBUS dependencies before their
+MMIO or DMA publication. The consumer must use `netbsd,consumer-managed-power`
+to prevent automatic FDT power changes. Output preparation, PLL_DE start,
+physical timing, supply/Q-channel constraints and a stop contract remain
+separate acceptance boundaries.
 
 The [RGB/RCQ format encoder](a733-de352-format.md) supplies checked register
 values and descriptor bytes. The following milestone is one CPU-filled
@@ -128,4 +159,8 @@ wrapper. The runner only replaces kernel include plumbing; it compiles the
 complete production bodies. Fixtures cover in-flight and protected writers,
 partial or stale observations, fractional and stopped parents, each required
 gate, actual RTC normalization, error publication, retention and sticky faults.
-A host fixture does not validate physical timing or autonomous firmware.
+The existing clock and power contracts also compile the complete native
+adapter. They exercise every provider peek fault, local write/readback error,
+PCK-before-write retention, pending writers, protected native masks, sticky
+faults and complete snapshot publication. A host fixture does not validate
+physical timing or autonomous firmware.

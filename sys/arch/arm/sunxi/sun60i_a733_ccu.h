@@ -87,6 +87,19 @@ int	sun60i_a733_ccu_npu_release(struct clk *, const void *);
 int	sun60i_a733_ccu_npu_ready(struct clk *, const void *);
 int	sun60i_a733_ccu_gpu_release(struct clk *, const void *);
 
+/* One native DISPLAY coordinator borrows PCK1/10 and unchanged parents. */
+struct sun60i_a733_display_owner_status;
+int	sun60i_a733_ccu_display_reserve(struct clk *, int, const void *);
+int	sun60i_a733_ccu_display_release(struct clk *, const void *);
+/* PCK retention precedes local DE0 writes. Errors can still retain both. */
+int	sun60i_a733_ccu_display_begin_de0(struct clk *, const void *, bool *);
+/* Fresh local CCU/PCK proof only. This does not authorize DMA or output MMIO. */
+int	sun60i_a733_ccu_display_ready(struct clk *, const void *);
+int	sun60i_a733_ccu_display_status(struct clk *, const void *,
+	    struct sun60i_a733_display_owner_status *);
+/* Sticky accounting only. This function performs no hardware write. */
+int	sun60i_a733_ccu_display_fault(struct clk *, const void *, int);
+
 /* Read-only readiness observation, not a reservation against future writers. */
 int	sun60i_a733_ccu_gpu_ready(struct clk *, u_int *, u_int *);
 
@@ -123,6 +136,7 @@ int	sun60i_a733_ccu_gpu_ready(struct clk *, u_int *, u_int *);
 #define	A733_CLK_MBUS_CE		86
 #define	A733_CLK_MBUS_GMAC0		91
 #define	A733_CLK_BUS_PWM0		98
+#define	A733_CLK_DE0			114
 #define	A733_CLK_CE			127
 #define	A733_CLK_BUS_CE		128
 #define	A733_CLK_BUS_CE_SYS		129
