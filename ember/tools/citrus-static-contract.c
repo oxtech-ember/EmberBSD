@@ -164,7 +164,7 @@ registry(void)
 	static const char *interfaces[] = {
 		"stdenc", "iconv", "mapper", "mapper"
 	};
-	_citrus_module_t handle, again;
+	_citrus_module_t handle, again = NULL;
 	size_t i;
 
 	for (i = 0; i < __arraycount(names); i++) {
@@ -180,6 +180,7 @@ registry(void)
 		CHECK(_citrus_load_module(&again, names[i]) == 0);
 		CHECK(handle == again);
 	}
+	CHECK(again != NULL);
 	handle = again;
 	CHECK(_citrus_load_module(&handle, "UTF1632") == EINVAL);
 	CHECK(handle == again);
