@@ -268,12 +268,14 @@ dwhdmi_ddc_exec(void *priv, i2c_op_t op, i2c_addr_t addr,
 	int off, n, retry;
 
 	if (addr != DDC_ADDR || op != I2C_OP_READ_WITH_STOP || cmdlen == 0 || buf == NULL) {
-		printf("dwhdmi_ddc_exec: bad args addr=%#x op=%#x cmdlen=%d buf=%p\n",
-		    addr, op, (int)cmdlen, buf);
+		if (!sc->sc_native_initialized)
+			printf("dwhdmi_ddc_exec: bad args addr=%#x op=%#x cmdlen=%d buf=%p\n",
+			    addr, op, (int)cmdlen, buf);
 		return ENXIO;
 	}
 	if (len > 256) {
-		printf("dwhdmi_ddc_exec: bad len %d\n", (int)len);
+		if (!sc->sc_native_initialized)
+			printf("dwhdmi_ddc_exec: bad len %d\n", (int)len);
 		return ERANGE;
 	}
 
@@ -317,7 +319,8 @@ dwhdmi_ddc_exec(void *priv, i2c_op_t op, i2c_addr_t addr,
 			delay(1);
 		}
 		if (retry == 0) {
-			printf("dwhdmi_ddc_exec: timeout waiting for xfer, stat0=%#x\n", dwhdmi_read(sc, HDMI_IH_I2CM_STAT0));
+			if (!sc->sc_native_initialized)
+				printf("dwhdmi_ddc_exec: timeout waiting for xfer, stat0=%#x\n", dwhdmi_read(sc, HDMI_IH_I2CM_STAT0));
 			return ETIMEDOUT;
 		}
 
@@ -945,8 +948,8 @@ static const struct audio_hw_if dwhdmi_dai_hw_if = {
 	.query_devinfo = dwhdmi_audio_query_devinfo,
 };
 
-int
-dwhdmi_attach(struct dwhdmi_softc *sc)
+static int
+dwhdmi_init(struct dwhdmi_softc *sc, bool quiet)
 {
 	uint8_t val;
 
@@ -955,7 +958,8 @@ dwhdmi_attach(struct dwhdmi_softc *sc)
 	if (sc->sc_io_error != 0)
 		return sc->sc_io_error;
 	if (sc->sc_reg_width != 1 && sc->sc_reg_width != 4) {
-		aprint_error_dev(sc->sc_dev, "unsupported register width %d\n", sc->sc_reg_width);
+		if (!quiet)
+			aprint_error_dev(sc->sc_dev, "unsupported register width %d\n", sc->sc_reg_width);
 		return EINVAL;
 	}
 
@@ -968,9 +972,10 @@ dwhdmi_attach(struct dwhdmi_softc *sc)
 	if (sc->sc_io_error != 0)
 		return sc->sc_io_error;
 
-	aprint_normal_dev(sc->sc_dev, "version %x.%03x, phytype 0x%02x\n",
-	    sc->sc_version >> 12, sc->sc_version & 0xfff,
-	    sc->sc_phytype);
+	if (!quiet)
+		aprint_normal_dev(sc->sc_dev, "version %x.%03x, phytype 0x%02x\n",
+		    sc->sc_version >> 12, sc->sc_version & 0xfff,
+		    sc->sc_phytype);
 
 	sc->sc_swvol = 255;
 
@@ -994,6 +999,39 @@ dwhdmi_attach(struct dwhdmi_softc *sc)
 		val |= HDMI_PHY_CONF0_ENHPDRXSENSE;
 		dwhdmi_write(sc, HDMI_PHY_CONF0, val);
 	}
+
+	return sc->sc_io_error;
+}
+
+int
+dwhdmi_native_init(struct dwhdmi_softc *sc)
+{
+	int error;
+
+	if (sc->sc_io_error != 0)
+		return sc->sc_io_error;
+	if (sc->sc_native_initialized)
+		return EALREADY;
+	if (sc->sc_read == NULL || sc->sc_write == NULL ||
+	    sc->sc_reg_width != 1 ||
+	    (sc->sc_flags & DWHDMI_USE_INTERNAL_PHY) != 0 ||
+	    sc->sc_native_prepared || sc->sc_native_started)
+		return EINVAL;
+
+	error = dwhdmi_init(sc, true);
+	if (error == 0)
+		sc->sc_native_initialized = true;
+	return error;
+}
+
+int
+dwhdmi_attach(struct dwhdmi_softc *sc)
+{
+	int error;
+
+	error = dwhdmi_init(sc, false);
+	if (error != 0)
+		return error;
 
 	/*
 	 * Initialize audio DAI

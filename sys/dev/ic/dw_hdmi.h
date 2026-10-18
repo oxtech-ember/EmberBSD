@@ -76,6 +76,7 @@ struct dwhdmi_softc {
 	int (*sc_read)(struct dwhdmi_softc *, bus_size_t, uint8_t *);
 	int (*sc_write)(struct dwhdmi_softc *, bus_size_t, uint8_t);
 	int			sc_io_error;
+	bool			sc_native_initialized;
 	bool			sc_native_prepared, sc_native_started;
 	u_int			sc_flags;
 #define	DWHDMI_USE_INTERNAL_PHY	__BIT(0)
@@ -114,6 +115,8 @@ int		dwhdmi_attach(struct dwhdmi_softc *);
 int		dwhdmi_bind(struct dwhdmi_softc *, struct drm_encoder *);
 
 /* Checked external-PHY RGB888/DVI path. No bridge, audio or HDCP setup. */
+/* Quiet identification and DDC setup. Call before native DDC transfers. */
+int		dwhdmi_native_init(struct dwhdmi_softc *);
 int		dwhdmi_native_prepare(struct dwhdmi_softc *,
 		    const struct drm_display_mode *);
 int		dwhdmi_native_start(struct dwhdmi_softc *);

@@ -36,19 +36,33 @@ struct drm_display_mode {
 	int crtc_vdisplay, crtc_vsync_start, crtc_vsync_end, crtc_vtotal;
 	unsigned flags;
 };
+struct i2c_controller {
+	void *ic_cookie;
+	int (*ic_exec)(void *, i2c_op_t, i2c_addr_t, const void *, size_t,
+	    void *, size_t, int);
+};
 struct dwhdmi_connector { bool hdmi_monitor, monitor_audio; };
 struct dwhdmi_softc {
-	int sc_bst, sc_bsh;
+	int sc_bst, sc_bsh, sc_dev;
+	u_int sc_phytype;
+	uint8_t sc_swvol;
+	struct i2c_controller *sc_ic, sc_ic_builtin;
 	u_int sc_reg_width, sc_flags, sc_version, sc_scl_hcnt, sc_scl_lcnt;
 	int (*sc_read)(struct dwhdmi_softc *, bus_size_t, uint8_t *);
 	int (*sc_write)(struct dwhdmi_softc *, bus_size_t, uint8_t);
 	int sc_io_error;
-	bool sc_native_prepared, sc_native_started;
+	bool sc_native_initialized, sc_native_prepared, sc_native_started;
 	struct drm_display_mode sc_curmode;
 	struct dwhdmi_connector sc_connector;
 };
 static uint32_t registers[0x20000];
 static unsigned calls, fail_at, delay_calls, legacy_calls;
+static unsigned prints, tag_inits, writes;
+static bool ddc_timeout;
+static void iic_tag_init(struct i2c_controller *ic) { (void)ic; tag_inits++; }
+static int count_print(const char *fmt, ...) { (void)fmt; prints++; return 0; }
+#define aprint_error_dev(dev, ...) count_print(__VA_ARGS__)
+#define aprint_normal_dev(dev, ...) count_print(__VA_ARGS__)
 static uint8_t dwhdmi_read(struct dwhdmi_softc *, bus_size_t);
 static void dwhdmi_write(struct dwhdmi_softc *, bus_size_t, uint8_t);
 static void delay(unsigned n) { (void)n; delay_calls++; }
@@ -57,7 +71,9 @@ static uint8_t bus_space_read_1(int t, int h, bus_size_t r) { (void)t; (void)h; 
 static uint32_t bus_space_read_4(int t, int h, bus_size_t r) { (void)t; (void)h; legacy_calls++; return registers[r]; }
 static void bus_space_write_1(int t, int h, bus_size_t r, uint8_t v) { (void)t; (void)h; legacy_calls++; registers[r] = v; }
 static void bus_space_write_4(int t, int h, bus_size_t r, uint32_t v) { (void)t; (void)h; legacy_calls++; registers[r] = v; }
+#define printf count_print
 #include "production.c"
+#undef printf
 
 static int
 checked_read(struct dwhdmi_softc *sc, bus_size_t reg, uint8_t *out)
@@ -80,10 +96,11 @@ checked_write(struct dwhdmi_softc *sc, bus_size_t reg, uint8_t value)
 	if (calls == fail_at)
 		return EFAULT;
 	CHECK(reg < __arraycount(registers));
+	writes++;
 	registers[reg] = value;
 	if (reg == HDMI_IH_I2CM_STAT0)
 		registers[reg] = 0; /* W1C model. */
-	if (reg == HDMI_I2CM_OPERATION) {
+	if (reg == HDMI_I2CM_OPERATION && !ddc_timeout) {
 		registers[HDMI_IH_I2CM_STAT0] = HDMI_IH_I2CM_STAT0_DONE;
 		registers[HDMI_I2CM_DATAI] = registers[HDMI_I2CM_ADDRESS] ^ 0x5a;
 	}
@@ -97,6 +114,8 @@ fresh(void)
 
 	memset(registers, 0, sizeof(registers));
 	calls = fail_at = delay_calls = legacy_calls = 0;
+	prints = tag_inits = writes = 0;
+	ddc_timeout = false;
 	sc.sc_reg_width = 1;
 	sc.sc_read = checked_read;
 	sc.sc_write = checked_write;
@@ -197,7 +216,7 @@ static void
 ddc_counts(void)
 {
 	struct dwhdmi_softc sc = fresh();
-	uint8_t block = 0, data;
+	uint8_t block = 0, data = 0;
 
 	sc.sc_scl_hcnt = 0x1234;
 	sc.sc_scl_lcnt = 0xabcd;
@@ -229,10 +248,65 @@ ddc_counts(void)
 	    &block, 1, &data, sizeof(data), 0) == ERANGE && calls == 0);
 }
 
+static void
+initialization(void)
+{
+	struct dwhdmi_softc sc = fresh();
+	uint8_t block = 0, data = 0;
+	unsigned count;
+
+	registers[0] = 0x21; registers[1] = 0x34; registers[6] = 0xf3;
+	CHECK(dwhdmi_native_init(&sc) == 0);
+	CHECK(sc.sc_native_initialized && sc.sc_version == 0x2134);
+	CHECK(sc.sc_phytype == 0xf3 && calls == 3 && writes == 0);
+	CHECK(sc.sc_ic == &sc.sc_ic_builtin && sc.sc_ic->ic_cookie == &sc);
+	CHECK(sc.sc_ic->ic_exec == dwhdmi_ddc_exec && tag_inits == 1);
+	CHECK(prints == 0 && !sc.sc_native_prepared && !sc.sc_native_started);
+	CHECK(dwhdmi_native_init(&sc) == EALREADY && tag_inits == 1 && calls == 3);
+	for (unsigned failure = 1; failure <= 3; failure++) {
+		sc = fresh(); fail_at = failure;
+		CHECK(dwhdmi_native_init(&sc) == EFAULT && calls == failure);
+		CHECK(!sc.sc_native_initialized && tag_inits == 0 && writes == 0);
+		CHECK(dwhdmi_native_init(&sc) == EFAULT && calls == failure);
+		CHECK(prints == 0);
+	}
+	for (unsigned invalid = 0; invalid < 5; invalid++) {
+		sc = fresh();
+		if (invalid == 0) sc.sc_read = NULL;
+		if (invalid == 1) sc.sc_write = NULL;
+		if (invalid == 2) sc.sc_reg_width = 4;
+		if (invalid == 3) sc.sc_flags = DWHDMI_USE_INTERNAL_PHY;
+		if (invalid == 4) sc.sc_native_prepared = true;
+		CHECK(dwhdmi_native_init(&sc) == EINVAL);
+		CHECK(calls == 0 && prints == 0 && tag_inits == 0);
+	}
+	/* The same production initializer keeps legacy identification output. */
+	sc = fresh();
+	CHECK(dwhdmi_init(&sc, false) == 0 && prints == 1 && tag_inits == 1);
+	sc = fresh(); sc.sc_reg_width = 2;
+	CHECK(dwhdmi_init(&sc, false) == EINVAL && prints == 1 && calls == 0);
+
+	/* Quiet DDC errors retain their errno and do not add diagnostic I/O. */
+	sc = fresh(); CHECK(dwhdmi_native_init(&sc) == 0); count = calls;
+	CHECK(dwhdmi_ddc_exec(&sc, 0, DDC_ADDR, &block, 1, &data, 1, 0) == ENXIO);
+	CHECK(dwhdmi_ddc_exec(&sc, I2C_OP_READ_WITH_STOP, DDC_ADDR,
+	    &block, 1, &data, 257, 0) == ERANGE);
+	CHECK(calls == count && prints == 0);
+	ddc_timeout = true;
+	CHECK(dwhdmi_ddc_exec(&sc, I2C_OP_READ_WITH_STOP, DDC_ADDR,
+	    &block, 1, &data, 1, 0) == ETIMEDOUT);
+	CHECK(delay_calls == 10000 && prints == 0);
+	count = calls;
+	sc = fresh(); ddc_timeout = true;
+	CHECK(dwhdmi_ddc_exec(&sc, I2C_OP_READ_WITH_STOP, DDC_ADDR,
+	    &block, 1, &data, 1, 0) == ETIMEDOUT);
+	CHECK(prints == 1 && delay_calls == 10000 && calls == count - 3 + 1);
+}
+
 int
 main(void)
 {
-	io(); prepare(); ddc(); ddc_counts();
+	io(); prepare(); ddc(); ddc_counts(); initialization();
 	printf("%u DW-HDMI checked I/O/native RGB checks passed\n", checks);
 	return 0;
 }

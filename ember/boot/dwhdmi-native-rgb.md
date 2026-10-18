@@ -19,6 +19,17 @@ These callbacks do not prove firmware exclusion or bound a stalled bus transacti
 
 ## Native RGB calls
 
+Call `dwhdmi_native_init` before native DDC transfers.
+It requires byte registers, both checked callbacks and an external PHY.
+It reads the controller IDs and initializes the existing DDC bus tag.
+It does not print identification or DDC error messages.
+It returns the same DDC error codes as the legacy path.
+It does not configure audio, start clocks or write PHY registers.
+A repeated successful initialization returns `EALREADY`.
+An I/O failure prevents bus-tag publication and retains the first error.
+Do not mix native initialization with `dwhdmi_attach` on one controller.
+The legacy attach path keeps its identification messages and audio setup.
+
 `dwhdmi_native_prepare` requires the checked callbacks and an external PHY.
 It accepts progressive RGB888 with no repetition or scan transform.
 The initial bound is 1920 by 1080 at up to 165 MHz.
