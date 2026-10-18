@@ -77,8 +77,10 @@ partly initialized data. Each new proof clears the previous capture.
 
 ## Internal DE and first frame
 
-Before internal writes, every DE module clock must be closed. All present
-channels must select core 0. Other output muxes must not select TV0. The probe
+Before internal writes, every DE module clock must be closed and core 0
+reset must still be asserted. A closed gate does not prove that retained
+RTMX/DMA registers are inactive. The consumer never asserts reset to replace
+unknown state. All present channels must select core 0. Other output muxes must not select TV0. The probe
 releases internal core 0 reset, opens its gate, then releases the shared MBUS
 reset and opens its gate. It preserves other fields. It does not open WB.
 The older A733 top implementation supports this per-core gate operation;

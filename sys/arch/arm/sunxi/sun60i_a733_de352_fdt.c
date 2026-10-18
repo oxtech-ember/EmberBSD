@@ -177,6 +177,10 @@ de352_open_core(struct sun60i_de352_softc *sc)
 	/* No known or unknown module gate may be open before shared MBUS. */
 	if (value != 0)
 		return EBUSY;
+	/* A closed gate alone must not revive a retained RTMX/DMA state. */
+	error = de352_read(sc, 0x8000, &value);
+	if (error != 0 || (value & 1) != 0)
+		return error != 0 ? error : EBUSY;
 	error = de352_read(sc, 0x8028, &value);
 	if (error != 0 || (value & 0xfff) != 0)
 		return error != 0 ? error : EOPNOTSUPP;

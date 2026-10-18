@@ -236,6 +236,7 @@ int main(void)
  init(&sc);begin_error=EIO;CHECK(de352_run(&sc)==EIO&&sc.retained&&releases==0&&faults==1&&ccu_faults==1&&writes==0);
  const unsigned idle_bad[]={0x8004,0x8100,0x8110,0x80d0,0x8020,0x281000,0x105000,0x105100,0x105400,0x125400,0x1c5400,0x1e5400,0x101000,0x121030,0x141090,0x1c1060,0x1e1000,0x201040,0x221060,0x285000,0x289040,0x28b000};
  for(unsigned i=0;i<__arraycount(idle_bad);i++){init(&sc);de[idle_bad[i]/4]=1;CHECK(de352_run(&sc)==EBUSY&&sc.retained&&sc.dma==NULL&&releases==0);}
+ init(&sc);de[0x8000/4]=1;CHECK(de352_run(&sc)==EBUSY&&sc.retained&&writes==0&&sc.dma==NULL);
  init(&sc);de[0x8028/4]=1;CHECK(de352_run(&sc)==EOPNOTSUPP&&writes==0&&sc.retained);
  init(&sc);de[0x8010/4]=0x30;CHECK(de352_run(&sc)==EBUSY&&writes==0&&sc.retained);
  init(&sc);write_fault=0x8004;CHECK(de352_run(&sc)==EIO&&sc.retained&&sc.dma==NULL&&releases==0);
