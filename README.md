@@ -1292,7 +1292,10 @@ The base system shell is unchanged.
   target ELF metadata, package replacement and extraction rollback on the host.
   The Binutils port also fixes mixed DWARF32/64 source lookup and passes
   installed GNU CTF and C++ DSO checks with explicit GNU tool selection.
-  Migrating GCC16's hardcoded bootstrap as/ld defaults remains pending.
+  The [GCC16 AArch64 cross recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
+  now builds and selects Ports Binutils 2.47 by default. C/C++ `collect2`/LTO
+  links produce AArch64 ELF executables. The installed native GCC16 package
+  still hardcodes base `as`/`ld`; that migration remains pending.
   [Developer skills](#connect-developer-skills) help
   AI coding assistants find the owning project, test changes and prepare
   contributions. [User skills](#connect-user-skills) guide OS installation, application use,
