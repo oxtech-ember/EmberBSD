@@ -241,8 +241,11 @@ on every board in the hardware catalog.
   The pure layout planner checks unique backing owners and aliases before
   allocation. It does not allocate DMA pages, load firmware or execute the codec.
   A separate native allocation helper owns validated, disjoint bus pages and
-  reverses partial failures. Its pages stay CPU-owned and never device-visible;
-  synchronization, hardware publication and runtime teardown remain unfinished.
+  reverses partial failures. A manual [CPU-only allocation profile](ember/boot/cix-vpu.md#manual-cpu-only-allocation-probe)
+  reads a selected local image after root mounts, then checks and frees a
+  one-core page set. Its source contracts and GCC16 kernel link pass; physical
+  allocation remains unverified. No address is published to the VPU.
+  Synchronization, hardware publication and runtime teardown remain unfinished.
   A checked SCMI discovery wire helper validates replies, ordering and bounded
   waits. An explicit diagnostic ACPI binding sends one BASE-version request
   with a boot-long channel lease. One physical trial returns BASE version 2.0
@@ -1063,13 +1066,16 @@ The base system shell is unchanged.
   Native [CIX clock/reset providers](ember/boot/cix-platform.md) have checked source
   contracts and passive registration. A bounded VPU control helper uses checked
   [ACPI power ownership](ember/boot/acpi-power.md). EMBER64 selects a resource
-  query; the active identity probe requires explicit configuration. DMA and
-  firmware execution remain disabled. A source-tested, fixed clock67 SCMI gate
-  helper shares checked wire and token state. An explicit native service shares
+  query; the active identity probe requires explicit configuration. Default
+  EMBER64 keeps device-visible DMA and firmware execution disabled.
+  A source-tested, fixed clock67 SCMI gate helper shares checked wire and token
+  state. An explicit native service shares
   the logical clock claim with AML, reserves a disable call and rejects further
   I/O after transport faults. A separate native identity profile uses that
   service. On the physical board, fixed native enable/disable replies succeed,
   VPU identity is valid and checked resource cleanup releases the controls.
+  A separate manual CPU-only allocation profile has source and build checks;
+  its physical allocation test is pending.
   DMA, firmware execution and video queues remain unqualified.
 - **USB control recovery:** xHCI serializes stalled-ring recovery with request
   cancellation. The writable ugen `USB_ABORT_REQUEST` interface cancels the

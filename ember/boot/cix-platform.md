@@ -330,8 +330,11 @@ parsed resource lists before deferring; it retains no stack arguments.
 EMBER64 selects `flags 0x1`: validate metadata, acquire claims, query GCLK and
 release untouched claims. `flags 0x0` retains descriptions-only attachment.
 `flags 0x2` explicitly selects the AML identity probe. Exact `flags 0x3`
-selects the native clock backend. Other flags are
-rejected. No mode starts DMA, loads firmware or registers a video device.
+selects the native clock backend. Exact `flags 0x4` selects the
+[CPU-only allocation fixture](cix-vpu.md#manual-cpu-only-allocation-probe)
+after root mounts; it does not call this resource-control helper or select SCMI.
+Other flags are rejected. No mode starts device DMA, executes firmware or
+registers a video device.
 The separate [EMBER64_CIXVPU_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE)
 configuration selects mode 2. Build it with the common GCC16 toolchain.
 Select its kernel manually and retain the working default and recovery paths.

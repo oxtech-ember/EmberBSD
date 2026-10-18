@@ -7,7 +7,8 @@ Origin: EmberBSD contributors, AI-assisted.
 EmberBSD identifies the CIX P1 codec and validates its ACPI descriptions.
 The default resource query does not activate the codec or establish its power state.
 There is no video device or M2M interface.
-The attachment and helpers do not load firmware or encode frames.
+The manual allocation profile reads an image into CPU memory.
+No mode executes firmware or encodes frames.
 The target is Orange Pi 6 Plus with CIX CD8180 and stock ACPI firmware.
 The OS owns firmware, DMA, interrupts, power/reset and the application API.
 Ports owns FFmpeg and GStreamer consumers.
@@ -24,7 +25,8 @@ The independent BSD source in `sys/dev/ic` implements bounded foundations:
 | `cixvpu_fw_plan.[ch]` | Plan protocol-3 backing owners and firmware VA mappings without allocation. Check the text offset, BSS bounds, aliases, table coverage and page quota. | Allocate validated DMA backing, copy data, synchronize and publish only after stopped-device checks. |
 | `cixvpu_dma.[ch]` | Allocate one native `bus_dma` owner per planned backing page. Validate loaded bus addresses and reverse partial allocation failures. | Keep all addresses hidden from hardware. Add synchronization, publication tracking and runtime teardown before integration. |
 
-These helpers are not selected by a kernel configuration or attachment.
+The attachment selects the header parser, layout planner and CPU-only allocator.
+The ring and MMU encoder remain independent helpers without a device consumer.
 `sys/videoio.h` adds the standard `V4L2_PIX_FMT_HEVC` fourcc without changing
 structure layout or ioctl numbers. The existing `video(4)` driver remains
 capture-only; the presence of M2M declarations does not implement two queues.
@@ -71,7 +73,8 @@ accepts clock67 enable/disable and reads ID `0x56648002`, four cores and four sl
 Checked reset/clock/power cleanup releases the controls. This does not qualify
 per-core memory repair, device-visible DMA, firmware execution or video queues.
 Parsing descriptions alone does not establish power, clock or reset ownership.
-The existing firmware, ring and page-entry helpers remain unused by the attachment.
+The manual allocation profile below uses the parser, planner and allocator.
+The ring and page-entry encoders remain unused by the attachment.
 
 The selected `-sum` protocol adds a cumulative checksum word between the TX
 header and payload. That word is outside the header's payload size.
@@ -80,6 +83,37 @@ snapshot, prior consumed total and three published cumulative totals.
 The helpers preserve payload bytes and checksum state on malformed input or
 insufficient space. A short receive buffer can report the required payload length.
 They do not emulate firmware or publish device-visible indices.
+
+## Manual CPU-only allocation probe
+
+[EMBER64_CIXVPU_DMA_PROBE](../../sys/arch/evbarm/conf/EMBER64_CIXVPU_DMA_PROBE)
+includes ordinary EMBER64 and selects VPU `flags 0x4`, without an SCMI service.
+Select it manually and retain the working default and recovery kernels.
+After root mounts, one `config_mountroot` callback calls
+`firmware_open("cixvpu", "hevcenc.fwb", ...)`.
+Supply a user-provided local file, normally at
+`/libdata/firmware/cixvpu/hevcenc.fwb`, under its applicable terms.
+The profile provides no downloader, package or firmware blob.
+The applicable individual firmware licence remains unestablished.
+
+The callback requires exactly 420736 bytes and the SHA256 recorded below.
+It reads and closes the file, hashes all bytes, and calls the actual parser
+and layout planner. The one-core fixture has 256 unique backing owners for
+this image; it is not a claim about runtime geometry on the four-core device.
+Staging is freed before native `bus_dma` allocation. The callback checks each
+CPU page for zeros, reports role counts, then performs checked cleanup.
+A cleanup failure retains the owner.
+It prints no DMA addresses. It does not call VPU controls, access VPU MMIO,
+copy firmware into DMA pages, build PTEs, synchronize or expose addresses.
+Allocation has a bounded page quota; WAITOK is not a wall-clock deadline.
+
+Source `61c007019a992103eced1adead758c881b14822a` passes 2194 actual-attachment
+checks with GCC16 path analysis, Cppcheck, CSA and host ASan/UBSan.
+Firmware, hash and DMA services are modeled; the parser and planner are real.
+The separate actual-source allocator passes 2338334 checks, including 629
+acquisition failures. The full manual kernel links with GCC16.2.
+No physical allocation result is established. Device DMA, firmware execution
+and video queues remain unqualified.
 
 ## Source and firmware provenance
 
