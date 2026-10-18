@@ -39,6 +39,11 @@ This permits DE top access only. It does not prove internal clocks or DMA.
 The initial binding accepts `allwinner,display-engine-v352` at
 `0x05000000`, size `0x400000`, with one DE0 clock and PCK domain 1.
 `output` identifies the output provider.
+The common A733 DTS keeps DE and both memory resource nodes disabled.
+It does not supply an output phandle. A board integration must select its
+native output provider before it enables DE. The zero-length
+`netbsd,consumer-managed-power` property keeps generic FDT attachment from
+requesting a power transition before the explicit driver operation.
 
 The `iommus` cells must select ID 8 and bypass flag 1 from a disabled
 `allwinner,iommu-v20` node at `0x03900000`, size `0x20000`, with two cells.

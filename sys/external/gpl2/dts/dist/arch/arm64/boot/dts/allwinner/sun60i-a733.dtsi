@@ -721,6 +721,35 @@
 			};
 		};
 
+		/* Origin: EmberBSD, AI-assisted; native DE memory resource facts.
+		 * These nodes do not register active IOMMU or NSI providers. */
+		display_iommu: iommu@3900000 {
+			compatible = "allwinner,iommu-v20";
+			reg = <0x03900000 0x20000>;
+			#iommu-cells = <2>;
+			status = "disabled";
+		};
+
+		display_nsi: nsi@2020000 {
+			compatible = "allwinner,sunxi-nsi-v2";
+			reg = <0x02020000 0x10000>;
+			#nsi-cells = <1>;
+			status = "disabled";
+		};
+
+		/* An enabled board must supply its native output provider. */
+		de0: display-engine@5000000 {
+			compatible = "allwinner,display-engine-v352";
+			reg = <0x05000000 0x400000>;
+			clocks = <&ccu CLK_DE0>;
+			clock-names = "de0";
+			power-domains = <&pck600 PD_DE_SYS>;
+			iommus = <&display_iommu 8 1>;
+			nsi = <&display_nsi 2>;
+			netbsd,consumer-managed-power;
+			status = "disabled";
+		};
+
 		/* Origin: EmberBSD; GPU identity only, no automatic power-on. */
 		gpu: gpu@1800000 {
 			compatible = "allwinner,sun60i-a733-gpu",
