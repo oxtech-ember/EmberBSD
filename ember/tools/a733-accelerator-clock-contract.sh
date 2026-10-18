@@ -25,6 +25,11 @@ sed -n '1,/^#include /p' "$src/sys/arch/arm/sunxi/sunxi_ccu.c" |
 sed -n '/^sunxi_ccu_clock_get_rate(/,/^static const struct clk_funcs/p' \
     "$src/sys/arch/arm/sunxi/sunxi_ccu.c" | sed '$d' |
     { printf 'static u_int\n'; cat; } >> "$work/dispatch.h"
+if grep -q '^sunxi_ccu_update_bits(' "$src/sys/arch/arm/sunxi/sunxi_ccu.c"; then
+    sed -n '/^sunxi_ccu_update_bits(/,/^static int$/p' \
+        "$src/sys/arch/arm/sunxi/sunxi_ccu.c" | sed '$d' |
+        { printf 'int\n'; cat; } >> "$work/dispatch.h"
+fi
 sed -n '/^sunxi_ccu_reset_assert_unguarded(/,/^static const struct fdtbus_reset/p' \
     "$src/sys/arch/arm/sunxi/sunxi_ccu.c" | sed '$d' |
     { printf 'static int\n'; cat; } >> "$work/dispatch.h"
@@ -32,3 +37,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
     ${CLOCK_TEST_CFLAGS:-} -I"$work" "$tools/a733-accelerator-clock-fixture.c" \
     -o "$work/test"
 "$work/test"
+# The owning portable contract also runs the forced concurrent source control.
+if [ "${CLOCK_RMW_ONLY:-}" != 1 ]; then
+    "${NETBSD2_PYTHON:-python3}" "$tools/a733-ccu-rmw-contract.py"
+fi

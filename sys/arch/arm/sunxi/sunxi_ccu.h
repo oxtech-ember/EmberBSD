@@ -497,9 +497,14 @@ struct sunxi_ccu_softc {
 	int (*sc_guard_enter)(struct sunxi_ccu_softc *, struct clk *,
 	    struct sunxi_ccu_reset *, enum sunxi_ccu_mutation, bool *);
 	void (*sc_guard_exit)(struct sunxi_ccu_softc *);
+	/* Optional provider serialization of one masked gate/reset update. */
+	int (*sc_update_bits)(struct sunxi_ccu_softc *, bus_size_t,
+	    uint32_t, uint32_t);
 };
 
 int	sunxi_ccu_attach(struct sunxi_ccu_softc *);
+int	sunxi_ccu_update_bits(struct sunxi_ccu_softc *, bus_size_t,
+	    uint32_t, uint32_t);
 struct sunxi_ccu_clk *sunxi_ccu_clock_find(struct sunxi_ccu_softc *,
 					   const char *);
 void	sunxi_ccu_print(struct sunxi_ccu_softc *);

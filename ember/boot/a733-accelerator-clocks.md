@@ -145,3 +145,29 @@ separate experimental DTB; see the [physical result](a733-gpu-identification.md#
 That earlier attempt did not reach identification. The current 53,475-check
 fixture and physical PLL result above extend it. GPU rendering and NPU
 inference have separate acceptance.
+
+## Masked native updates
+
+A733 serializes each accelerator RMW and each generic gate/reset RMW with
+one provider mutex. The native writer guard releases that mutex before
+recursive parent dispatch. An owner preparation path holds the same mutex
+and calls the internal locked update. It does not enter a native callback
+while it holds the mutex. A write/readback error returns to its caller.
+This mechanism does not add a new reservation or grant resource ownership.
+
+`sunxi_ccu_update_bits` has an optional provider hook. Other CCU providers
+keep the previous gate/reset fallback and return behavior when the hook is
+absent. This change does not claim new synchronization for those providers.
+
+The accelerator source contract also runs a two-thread control of the
+actual A733 RMW body. A forced interleave reproduces a lost GPU/NPU MBUS
+bit before serialization. The fixed control preserves both bits and the
+unrelated fields. Run only that control with the standard-library runner:
+
+```sh
+python3 ember/tools/a733-ccu-rmw-contract.py
+```
+
+The existing `CLOCK_TEST_CFLAGS` and `CC` settings select native sanitizer
+flags and the host compiler. These host checks do not execute target code,
+validate physical timing, or exclude autonomous firmware writers.

@@ -40,25 +40,18 @@ int
 sunxi_ccu_gate_enable(struct sunxi_ccu_softc *sc, struct sunxi_ccu_clk *clk,
     int enable)
 {
-	struct sunxi_ccu_gate *gate = &clk->u.gate;
-	uint32_t val;
+	const struct sunxi_ccu_gate *gate = &clk->u.gate;
 
 	KASSERT(clk->type == SUNXI_CCU_GATE);
 
-	val = CCU_READ(sc, gate->reg);
-	if (enable)
-		val |= gate->mask;
-	else
-		val &= ~gate->mask;
-	CCU_WRITE(sc, gate->reg, val);
-
-	return 0;
+	return sunxi_ccu_update_bits(sc, gate->reg, gate->mask,
+	    enable ? gate->mask : 0);
 }
 
 const char *
 sunxi_ccu_gate_get_parent(struct sunxi_ccu_softc *sc, struct sunxi_ccu_clk *clk)
 {
-	struct sunxi_ccu_gate *gate = &clk->u.gate;
+	const struct sunxi_ccu_gate *gate = &clk->u.gate;
 
 	KASSERT(clk->type == SUNXI_CCU_GATE);
 

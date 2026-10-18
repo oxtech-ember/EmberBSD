@@ -70,6 +70,9 @@ sun60i_a733_dcxo_query(int phandle, struct sunxi_rtc_dcxo_state *state)
 #endif
 }
 
+/* Serialize physical RMW only. Never hold this over parent recursion. */
+static kmutex_t sun60i_a733_ccu_lock;
+
 #define	PLL_REF_CTRL_REG		0x000
 #define	PLL_PERIPH0_CTRL_REG	0x0a0
 #define	PLL_GPU0_CTRL_REG	0x0e0
@@ -275,11 +278,12 @@ sun60i_a733_accel_pll_enable(struct sunxi_ccu_softc *sc,
 
 /* Check only writable fields: the GPU update bit may clear itself. */
 static int
-sun60i_a733_accel_write(struct sunxi_ccu_softc *sc, bus_size_t reg,
+sun60i_a733_accel_write_locked(struct sunxi_ccu_softc *sc, bus_size_t reg,
     uint32_t mask, uint32_t bits)
 {
 	uint32_t old, val;
 
+	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
 	old = CCU_READ(sc, reg);
 	val = (old & ~mask) | bits;
 	if (val == old)
@@ -290,6 +294,19 @@ sun60i_a733_accel_write(struct sunxi_ccu_softc *sc, bus_size_t reg,
 	bus_space_barrier(sc->sc_bst, sc->sc_bsh, reg, 4,
 	    BUS_SPACE_BARRIER_WRITE | BUS_SPACE_BARRIER_READ);
 	return (CCU_READ(sc, reg) & mask) == bits ? 0 : EIO;
+}
+
+/* Native callbacks acquire the same mutex as the typed preparation paths. */
+static int
+sun60i_a733_accel_write(struct sunxi_ccu_softc *sc, bus_size_t reg,
+    uint32_t mask, uint32_t bits)
+{
+	int error;
+
+	mutex_enter(&sun60i_a733_ccu_lock);
+	error = sun60i_a733_accel_write_locked(sc, reg, mask, bits);
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
 }
 
 static int
@@ -946,7 +963,6 @@ sun60i_a733_ccu_gpu_ready(struct clk *gpu, u_int *core_rate, u_int *bus_rate)
  * Recursive parent dispatch does not hold the mutex across the recursive call.
  */
 static struct {
-	kmutex_t lock;
 	struct sunxi_ccu_softc *sc;
 	const void *owner;
 	u_int writers;
@@ -961,7 +977,7 @@ sun60i_a733_gpu_guard_enter(struct sunxi_ccu_softc *sc, struct clk *clk,
 	bool shared = false, local = false;
 	int error = 0;
 
-	mutex_enter(&sun60i_gpu_lease.lock);
+	mutex_enter(&sun60i_a733_ccu_lock);
 	if (sun60i_gpu_lease.owner != NULL) {
 		if (reset != NULL)
 			local = reset->reg == GPU0_BGR_REG;
@@ -984,17 +1000,17 @@ sun60i_a733_gpu_guard_enter(struct sunxi_ccu_softc *sc, struct clk *clk,
 	} else {
 		sun60i_gpu_lease.writers++;
 	}
-	mutex_exit(&sun60i_gpu_lease.lock);
+	mutex_exit(&sun60i_a733_ccu_lock);
 	return error;
 }
 
 static void
 sun60i_a733_gpu_guard_exit(struct sunxi_ccu_softc *sc)
 {
-	mutex_enter(&sun60i_gpu_lease.lock);
+	mutex_enter(&sun60i_a733_ccu_lock);
 	KASSERT(sun60i_gpu_lease.writers != 0);
 	sun60i_gpu_lease.writers--;
-	mutex_exit(&sun60i_gpu_lease.lock);
+	mutex_exit(&sun60i_a733_ccu_lock);
 }
 
 /* Only compare actual observations; the trial decode below is not readiness. */
@@ -1029,7 +1045,7 @@ sun60i_a733_ccu_gpu_reserve(struct clk *gpu, const void *owner)
 		return error;
 	if (gpu->domain->priv != sun60i_gpu_lease.sc)
 		return ENXIO;
-	mutex_enter(&sun60i_gpu_lease.lock);
+	mutex_enter(&sun60i_a733_ccu_lock);
 	if (sun60i_gpu_lease.owner != NULL || sun60i_gpu_lease.writers != 0) {
 		error = EBUSY;
 		goto out;
@@ -1058,7 +1074,7 @@ sun60i_a733_ccu_gpu_reserve(struct clk *gpu, const void *owner)
 	sun60i_gpu_lease.owner = owner;
 	sun60i_gpu_lease.attempted = false;
 out:
-	mutex_exit(&sun60i_gpu_lease.lock);
+	mutex_exit(&sun60i_a733_ccu_lock);
 	return error;
 }
 
@@ -1070,14 +1086,14 @@ sun60i_a733_ccu_gpu_release(struct clk *gpu, const void *owner)
 	if (gpu != &sun60i_a733_ccu_clks[A733_CLK_GPU0].base || owner == NULL ||
 	    sun60i_gpu_lease.sc == NULL)
 		return EINVAL;
-	mutex_enter(&sun60i_gpu_lease.lock);
+	mutex_enter(&sun60i_a733_ccu_lock);
 	if (sun60i_gpu_lease.owner != owner)
 		error = EINVAL;
 	else if (sun60i_gpu_lease.attempted)
 		error = EBUSY;
 	else
 		sun60i_gpu_lease.owner = NULL;
-	mutex_exit(&sun60i_gpu_lease.lock);
+	mutex_exit(&sun60i_a733_ccu_lock);
 	return error;
 }
 
@@ -1091,7 +1107,7 @@ sun60i_a733_ccu_gpu_prepare(struct clk *gpu, const void *owner, bool *retained)
 	if (gpu != &sun60i_a733_ccu_clks[A733_CLK_GPU0].base || owner == NULL ||
 	    retained == NULL || sc == NULL)
 		return EINVAL;
-	mutex_enter(&sun60i_gpu_lease.lock);
+	mutex_enter(&sun60i_a733_ccu_lock);
 	if (sun60i_gpu_lease.owner != owner || sun60i_gpu_lease.attempted) {
 		error = EBUSY;
 		goto out;
@@ -1106,18 +1122,18 @@ sun60i_a733_ccu_gpu_prepare(struct clk *gpu, const void *owner, bool *retained)
 	/* Even an unconfirmed configuration write forbids release/retry. */
 	sun60i_gpu_lease.attempted = true;
 	*retained = true;
-	error = sun60i_a733_accel_write(sc, GPU0_CLK_REG,
+	error = sun60i_a733_accel_write_locked(sc, GPU0_CLK_REG,
 	    ACCEL_CLK_SEL | __BITS(3,0), __SHIFTIN(3, ACCEL_CLK_SEL));
 	if (error != 0)
 		goto out;
 	/* BSP local order: release bus reset, bus gate, then module gate. */
-	error = sun60i_a733_accel_write(sc, GPU0_BGR_REG, __BIT(16), __BIT(16));
+	error = sun60i_a733_accel_write_locked(sc, GPU0_BGR_REG, __BIT(16), __BIT(16));
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_accel_write(sc, GPU0_BGR_REG, __BIT(0), __BIT(0));
+	error = sun60i_a733_accel_write_locked(sc, GPU0_BGR_REG, __BIT(0), __BIT(0));
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_accel_write(sc, GPU0_CLK_REG,
+	error = sun60i_a733_accel_write_locked(sc, GPU0_CLK_REG,
 	    ACCEL_CLK_ENABLE, ACCEL_CLK_ENABLE);
 	if (error != 0)
 		goto out;
@@ -1132,7 +1148,7 @@ sun60i_a733_ccu_gpu_prepare(struct clk *gpu, const void *owner, bool *retained)
 		delay(GPU_UPDATE_POLL_US);
 	}
 out:
-	mutex_exit(&sun60i_gpu_lease.lock);
+	mutex_exit(&sun60i_a733_ccu_lock);
 	return error;
 }
 
@@ -1163,7 +1179,7 @@ sun60i_a733_ccu_gpu_prepare_pll(struct clk *gpu, const void *owner,
 	if (gpu != &sun60i_a733_ccu_clks[A733_CLK_GPU0].base || owner == NULL ||
 	    retained == NULL || sc == NULL)
 		return EINVAL;
-	mutex_enter(&sun60i_gpu_lease.lock);
+	mutex_enter(&sun60i_a733_ccu_lock);
 	if (sun60i_gpu_lease.owner != owner || sun60i_gpu_lease.attempted) {
 		error = EBUSY;
 		goto out;
@@ -1192,19 +1208,19 @@ sun60i_a733_ccu_gpu_prepare_pll(struct clk *gpu, const void *owner,
 	/* Preserve reserved fields, including the firmware's bit 24 value. */
 	sun60i_gpu_lease.attempted = true;
 	*retained = true;
-	error = sun60i_a733_accel_write(sc, PLL_GPU0_CTRL_REG,
+	error = sun60i_a733_accel_write_locked(sc, PLL_GPU0_CTRL_REG,
 	    ACCEL_PLL_N | ACCEL_PLL_M, factors);
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_accel_write(sc, PLL_GPU0_CTRL_REG,
+	error = sun60i_a733_accel_write_locked(sc, PLL_GPU0_CTRL_REG,
 	    ACCEL_PLL_LDO, ACCEL_PLL_LDO);
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_accel_write(sc, PLL_GPU0_CTRL_REG,
+	error = sun60i_a733_accel_write_locked(sc, PLL_GPU0_CTRL_REG,
 	    ACCEL_PLL_ENABLE, ACCEL_PLL_ENABLE);
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_accel_write(sc, PLL_GPU0_CTRL_REG,
+	error = sun60i_a733_accel_write_locked(sc, PLL_GPU0_CTRL_REG,
 	    ACCEL_PLL_LOCK_ENABLE, ACCEL_PLL_LOCK_ENABLE);
 	if (error != 0)
 		goto out;
@@ -1228,21 +1244,21 @@ sun60i_a733_ccu_gpu_prepare_pll(struct clk *gpu, const void *owner,
 		error = EIO;
 		goto out;
 	}
-	error = sun60i_a733_accel_write(sc, PLL_GPU0_CTRL_REG,
+	error = sun60i_a733_accel_write_locked(sc, PLL_GPU0_CTRL_REG,
 	    ACCEL_PLL_OUTPUT, ACCEL_PLL_OUTPUT);
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_accel_write(sc, GPU0_CLK_REG,
+	error = sun60i_a733_accel_write_locked(sc, GPU0_CLK_REG,
 	    ACCEL_CLK_SEL | __BITS(3,0), 0);
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_accel_write(sc, GPU0_BGR_REG, __BIT(16), __BIT(16));
+	error = sun60i_a733_accel_write_locked(sc, GPU0_BGR_REG, __BIT(16), __BIT(16));
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_accel_write(sc, GPU0_BGR_REG, __BIT(0), __BIT(0));
+	error = sun60i_a733_accel_write_locked(sc, GPU0_BGR_REG, __BIT(0), __BIT(0));
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_accel_write(sc, GPU0_CLK_REG,
+	error = sun60i_a733_accel_write_locked(sc, GPU0_CLK_REG,
 	    ACCEL_CLK_ENABLE, ACCEL_CLK_ENABLE);
 	if (error != 0)
 		goto out;
@@ -1264,7 +1280,7 @@ sun60i_a733_ccu_gpu_prepare_pll(struct clk *gpu, const void *owner,
 	    state.bus_hz != 200000000 || CCU_READ(sc, GPUPLL_GATE_EN_REG) != gate))
 		error = EIO;
 out:
-	mutex_exit(&sun60i_gpu_lease.lock);
+	mutex_exit(&sun60i_a733_ccu_lock);
 	return error;
 }
 
@@ -1281,17 +1297,17 @@ sun60i_a733_ccu_npu_prepare(struct clk *npu, const void *owner, bool *retained)
 	if (npu != &sun60i_a733_ccu_clks[A733_CLK_NPU].base || owner == NULL ||
 	    retained == NULL || sc == NULL)
 		return EINVAL;
-	mutex_enter(&sun60i_gpu_lease.lock);
+	mutex_enter(&sun60i_a733_ccu_lock);
 	if (sun60i_gpu_lease.owner != NULL && sun60i_gpu_lease.owner != owner) {
-		mutex_exit(&sun60i_gpu_lease.lock);
+		mutex_exit(&sun60i_a733_ccu_lock);
 		return EBUSY;
 	}
 	sun60i_gpu_lease.attempted = true;
 	*retained = true;
 	/* npu_parents[2] = pll-periph0-600M; GPU uses index 3 = 400M. */
-	int error = sun60i_a733_accel_write(sc, NPU_CLK_REG,
+	int error = sun60i_a733_accel_write_locked(sc, NPU_CLK_REG,
 	    ACCEL_CLK_SEL | __BITS(4,0), __SHIFTIN(2, ACCEL_CLK_SEL));
-	mutex_exit(&sun60i_gpu_lease.lock);
+	mutex_exit(&sun60i_a733_ccu_lock);
 	return error;
 }
 
@@ -1366,13 +1382,16 @@ sun60i_a733_ccu_attach(device_t parent, device_t self, void *aux)
 	sc->sc_clks = sun60i_a733_ccu_clks;
 	sc->sc_nclks = __arraycount(sun60i_a733_ccu_clks);
 
-	if (sunxi_ccu_attach(sc) != 0)
-		return;
-
-	sun60i_gpu_lease.sc = sc;
-	mutex_init(&sun60i_gpu_lease.lock, MUTEX_DEFAULT, IPL_NONE);
+	mutex_init(&sun60i_a733_ccu_lock, MUTEX_DEFAULT, IPL_NONE);
 	sc->sc_guard_enter = sun60i_a733_gpu_guard_enter;
 	sc->sc_guard_exit = sun60i_a733_gpu_guard_exit;
+	sc->sc_update_bits = sun60i_a733_accel_write;
+	if (sunxi_ccu_attach(sc) != 0) {
+		mutex_destroy(&sun60i_a733_ccu_lock);
+		return;
+	}
+
+	sun60i_gpu_lease.sc = sc;
 
 	aprint_naive("\n");
 	aprint_normal(": A733 CCU\n");

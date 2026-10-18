@@ -10,12 +10,53 @@
 #include <limits.h>
 
 typedef unsigned int u_int;
-typedef struct { bool held; } kmutex_t;
 #define MUTEX_DEFAULT 0
 #define IPL_NONE 0
+#ifdef CLOCK_RMW_THREADS
+#include <pthread.h>
+#include <time.h>
+static pthread_mutex_t rmw_model_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t rmw_model_changed = PTHREAD_COND_INITIALIZER;
+static _Thread_local unsigned rmw_worker_id;
+static bool rmw_active, rmw_first_read, rmw_second_waiting, rmw_second_written;
+typedef struct { pthread_mutex_t native; pthread_t owner; bool held; } kmutex_t;
+static void mutex_init(kmutex_t *m, int type, int level) {
+	assert(pthread_mutex_init(&m->native, NULL) == 0); m->held = false;
+}
+static void mutex_enter(kmutex_t *m) {
+	if (rmw_active && rmw_worker_id == 2) {
+		assert(pthread_mutex_lock(&rmw_model_lock) == 0);
+		rmw_second_waiting = true;
+		assert(pthread_cond_broadcast(&rmw_model_changed) == 0);
+		assert(pthread_mutex_unlock(&rmw_model_lock) == 0);
+	}
+	assert(pthread_mutex_lock(&m->native) == 0);
+	m->owner = pthread_self(); m->held = true;
+}
+static void mutex_exit(kmutex_t *m) {
+	assert(m->held && pthread_equal(m->owner, pthread_self()));
+	m->held = false; assert(pthread_mutex_unlock(&m->native) == 0);
+}
+#define mutex_owned(m) ((m)->held && pthread_equal((m)->owner, pthread_self()))
+static void mutex_destroy(kmutex_t *m) { assert(pthread_mutex_destroy(&m->native) == 0); }
+static void
+rmw_wait(bool *first, bool *second)
+{
+	struct timespec deadline;
+	assert(timespec_get(&deadline, TIME_UTC) == TIME_UTC);
+	deadline.tv_sec += 5;
+	while (!*first && (second == NULL || !*second))
+		assert(pthread_cond_timedwait(&rmw_model_changed, &rmw_model_lock,
+		    &deadline) == 0);
+}
+#else
+typedef struct { bool held; } kmutex_t;
 static void mutex_init(kmutex_t *m, int type, int level) { m->held = false; }
 static void mutex_enter(kmutex_t *m) { assert(!m->held); m->held = true; }
 static void mutex_exit(kmutex_t *m) { assert(m->held); m->held = false; }
+#define mutex_owned(m) ((m)->held)
+static void mutex_destroy(kmutex_t *m) { assert(!m->held); }
+#endif
 
 typedef void *device_t;
 typedef void *cfdata_t;
@@ -134,6 +175,23 @@ bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, bus_size_t off)
 {
 	assert(off < sizeof(registers) && off % 4 == 0);
 	assert(off + sizeof(uint32_t) <= ccu_size);
+#ifdef CLOCK_RMW_THREADS
+	if (rmw_active) {
+		uint32_t value;
+		assert(off == 0x5e0);
+		assert(pthread_mutex_lock(&rmw_model_lock) == 0);
+		value = registers[off / 4];
+		if (rmw_worker_id == 1 && !rmw_first_read) {
+			rmw_first_read = true;
+			assert(pthread_cond_broadcast(&rmw_model_changed) == 0);
+			/* With serialization B waits for the RMW mutex. Without it,
+			 * B finishes its write before A commits its old sample. */
+			rmw_wait(&rmw_second_waiting, &rmw_second_written);
+		}
+		assert(pthread_mutex_unlock(&rmw_model_lock) == 0);
+		return value;
+	}
+#endif
 	if (reads < __arraycount(read_regs))
 		read_regs[reads] = off;
 	reads++;
@@ -172,6 +230,19 @@ static void
 bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
     bus_size_t off, uint32_t val)
 {
+#ifdef CLOCK_RMW_THREADS
+	if (rmw_active) {
+		assert(off == 0x5e0);
+		assert(pthread_mutex_lock(&rmw_model_lock) == 0);
+		registers[off / 4] = val;
+		if (rmw_worker_id == 2) {
+			rmw_second_written = true;
+			assert(pthread_cond_broadcast(&rmw_model_changed) == 0);
+		}
+		assert(pthread_mutex_unlock(&rmw_model_lock) == 0);
+		return;
+	}
+#endif
 	assert(off < sizeof(registers) && off % 4 == 0);
 	if (writes < __arraycount(write_regs)) {
 		write_regs[writes] = off; write_vals[writes] = val;
@@ -217,6 +288,10 @@ bus_space_barrier(bus_space_tag_t tag, bus_space_handle_t handle,
     bus_size_t off, bus_size_t len, int flags)
 {
 	assert(len == 4 && flags == 3);
+#ifdef CLOCK_RMW_THREADS
+	if (rmw_active)
+		return;
+#endif
 	barriers++;
 }
 static int
@@ -1160,9 +1235,99 @@ test_display_observer(void)
 	printf("PASS: 48 display CCU adapter fault/aperture scenarios\n");
 }
 
+#ifdef CLOCK_RMW_THREADS
+static void *
+rmw_update(void *arg)
+{
+	const unsigned worker = (unsigned)(uintptr_t)arg;
+	const uint32_t bit = worker == 1 ? __BIT(16) : __BIT(18);
+	rmw_worker_id = worker;
+	int error = sun60i_a733_accel_write(&state, MBUS_MASTER_GATE_REG,
+	    bit, bit);
+	return (void *)(intptr_t)error;
+}
+
+static int
+test_rmw_preserves_disjoint_bits(void)
+{
+	const uint32_t original = UINT32_C(0xa0000003);
+	const uint32_t expected = original | __BIT(16) | __BIT(18);
+	pthread_t first, second;
+	void *first_result, *second_result;
+
+	reset();
+	REG(MBUS_MASTER_GATE_REG) = original;
+	rmw_active = true;
+	assert(pthread_create(&first, NULL, rmw_update, (void *)(uintptr_t)1) == 0);
+	assert(pthread_mutex_lock(&rmw_model_lock) == 0);
+	rmw_wait(&rmw_first_read, NULL);
+	assert(pthread_mutex_unlock(&rmw_model_lock) == 0);
+	assert(pthread_create(&second, NULL, rmw_update, (void *)(uintptr_t)2) == 0);
+	assert(pthread_join(first, &first_result) == 0);
+	assert(pthread_join(second, &second_result) == 0);
+	rmw_active = false;
+	if (first_result != NULL || second_result != NULL ||
+	    REG(MBUS_MASTER_GATE_REG) != expected) {
+		fprintf(stderr, "FAIL: disjoint MBUS RMW lost a bit: expected "
+		    "0x%08x, observed 0x%08x; errors %ld/%ld\n", expected,
+		    REG(MBUS_MASTER_GATE_REG), (long)(intptr_t)first_result,
+		    (long)(intptr_t)second_result);
+		return 1;
+	}
+	puts("PASS: actual-source threaded RMW preserves GPU/NPU and unrelated bits");
+	return 0;
+}
+#endif
+
+static void
+test_generic_rmw_fallback(void)
+{
+	const uint32_t before = UINT32_C(0xa5a400a4);
+	unsigned start = checks;
+
+	reset();
+	state.sc_update_bits = NULL;
+	REG(PWM0_BGR_REG) = before;
+	CHECK(sunxi_ccu_gate_enable(&state,
+	    &state.sc_clks[A733_CLK_BUS_PWM0], 1) == 0);
+	CHECK(REG(PWM0_BGR_REG) == (before | __BIT(0)) && writes == 1);
+	CHECK(sunxi_ccu_reset_deassert(&state,
+	    &state.sc_resets[A733_RST_BUS_PWM0]) == 0);
+	CHECK(REG(PWM0_BGR_REG) == (before | __BIT(0) | __BIT(16)));
+	CHECK(sunxi_ccu_reset_assert(&state,
+	    &state.sc_resets[A733_RST_BUS_PWM0]) == 0);
+	CHECK(REG(PWM0_BGR_REG) == (before | __BIT(0)));
+	CHECK(sunxi_ccu_gate_enable(&state,
+	    &state.sc_clks[A733_CLK_BUS_PWM0], 0) == 0);
+	CHECK(REG(PWM0_BGR_REG) == before && writes == 4 && barriers == 0);
+
+	reset();
+	reject_write = true;
+	CHECK(sunxi_ccu_gate_enable(&state,
+	    &state.sc_clks[A733_CLK_BUS_PWM0], 1) == EIO);
+	CHECK(sunxi_ccu_reset_deassert(&state,
+	    &state.sc_resets[A733_RST_BUS_PWM0]) == EIO);
+	CHECK(writes == 2 && barriers == 2 &&
+	    sun60i_gpu_lease.writers == 0);
+	/* A provider without a hook keeps its old unverified return contract. */
+	state.sc_update_bits = NULL;
+	CHECK(sunxi_ccu_gate_enable(&state,
+	    &state.sc_clks[A733_CLK_BUS_PWM0], 1) == 0);
+	CHECK(sunxi_ccu_reset_deassert(&state,
+	    &state.sc_resets[A733_RST_BUS_PWM0]) == 0);
+	CHECK(writes == 4 && barriers == 2 &&
+	    sun60i_gpu_lease.writers == 0);
+	printf("A733 native RMW hook and generic fallback: %u checks passed\n",
+	    checks - start);
+}
+
 int
 main(void)
 {
+#ifdef CLOCK_RMW_THREADS
+	if (getenv("CLOCK_RMW_ONLY") != NULL)
+		return test_rmw_preserves_disjoint_bits();
+#endif
 	const u_int gate_ids[] = { A733_CLK_AHB_NPU, A733_CLK_AHB_GPU0,
 	    A733_CLK_MBUS_GPU0, A733_CLK_MBUS_NPU, A733_CLK_BUS_NPU,
 	    A733_CLK_BUS_GPU0 };
@@ -1322,6 +1487,7 @@ main(void)
 	CHECK(sunxi_ccu_reset_deassert(&state,
 	    &state.sc_resets[A733_RST_BUS_PWM0]) == 0);
 	CHECK(REG(PWM0_BGR_REG) == 0xa5a500a5);
+	test_generic_rmw_fallback();
 	test_gpu_ready();
 
 	test_gpu_inspect();

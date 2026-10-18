@@ -72,16 +72,30 @@ sunxi_ccu_reset_release(device_t dev, void *priv)
 {
 }
 
+/*
+ * Origin: EmberBSD; AI-assisted provider RMW serialization.
+ * Keep the generic fallback unchanged for providers without an RMW hook.
+ */
+int
+sunxi_ccu_update_bits(struct sunxi_ccu_softc *sc, bus_size_t reg,
+    uint32_t mask, uint32_t bits)
+{
+	uint32_t val;
+
+	if (sc->sc_update_bits != NULL)
+		return sc->sc_update_bits(sc, reg, mask, bits);
+	val = CCU_READ(sc, reg);
+	CCU_WRITE(sc, reg, (val & ~mask) | bits);
+	return 0;
+}
+
 static int
-sunxi_ccu_reset_assert_unguarded(device_t dev, void *priv)
+sunxi_ccu_reset_assert_unguarded(device_t dev, const void *priv)
 {
 	struct sunxi_ccu_softc * const sc = device_private(dev);
-	struct sunxi_ccu_reset * const reset = priv;
+	const struct sunxi_ccu_reset * const reset = priv;
 
-	const uint32_t val = CCU_READ(sc, reset->reg);
-	CCU_WRITE(sc, reset->reg, val & ~reset->mask);
-
-	return 0;
+	return sunxi_ccu_update_bits(sc, reset->reg, reset->mask, 0);
 }
 
 static int
@@ -104,15 +118,12 @@ sunxi_ccu_reset_assert(device_t dev, void *priv)
 }
 
 static int
-sunxi_ccu_reset_deassert_unguarded(device_t dev, void *priv)
+sunxi_ccu_reset_deassert_unguarded(device_t dev, const void *priv)
 {
 	struct sunxi_ccu_softc * const sc = device_private(dev);
-	struct sunxi_ccu_reset * const reset = priv;
+	const struct sunxi_ccu_reset * const reset = priv;
 
-	const uint32_t val = CCU_READ(sc, reset->reg);
-	CCU_WRITE(sc, reset->reg, val | reset->mask);
-
-	return 0;
+	return sunxi_ccu_update_bits(sc, reset->reg, reset->mask, reset->mask);
 }
 
 static int
