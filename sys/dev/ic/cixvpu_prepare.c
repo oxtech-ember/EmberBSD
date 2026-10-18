@@ -611,8 +611,67 @@ cixvpu_prepared_boot_debugparam(struct cixvpu_prepared *p,
 }
 
 int
-cixvpu_prepared_boot_receive(struct cixvpu_prepared *p,
-    struct cixvpu_boot_reply *out)
+cixvpu_prepared_boot_rpc_step(struct cixvpu_prepared *p,
+    enum cixvpu_boot_rpc_result *out)
+{
+	enum cixvpu_dma_rpc_result observed;
+	enum cixvpu_boot_rpc_result result;
+	int error;
+	bool fault = false;
+
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (p == NULL || out == NULL)
+		return EINVAL;
+	if (p->boot.error != 0)
+		return p->boot.error;
+	error = cixvpu_prepare_boot_output(p, out, sizeof(*out),
+	    _Alignof(enum cixvpu_boot_rpc_result), &fault);
+	if (error != 0) {
+		if (fault && p->boot.published) {
+			p->boot.error = error;
+			p->boot.snapshot.rpc_valid = false;
+			p->boot.snapshot.rpc_alloc_valid = false;
+		}
+		return error;
+	}
+	if (p->plan.boot_rpc != 1)
+		return ENOTSUP;
+	if (!p->boot.published)
+		return EBUSY;
+	p->boot.snapshot.rpc_valid = false;
+	p->boot.snapshot.rpc_alloc_valid = false;
+	error = cixvpu_dma_boot_rpc_step(p->dma, p, &p->plan,
+	    &p->boot.snapshot, &observed);
+	if (error != 0) {
+		if (error != EAGAIN)
+			p->boot.error = error;
+		return error;
+	}
+	switch (observed) {
+	case CIXVPU_DMA_RPC_IDLE:
+		result = CIXVPU_BOOT_RPC_IDLE;
+		break;
+	case CIXVPU_DMA_RPC_PENDING:
+		result = CIXVPU_BOOT_RPC_PENDING;
+		break;
+	case CIXVPU_DMA_RPC_ALLOC_REPLIED:
+		result = CIXVPU_BOOT_RPC_ALLOC_REPLIED;
+		break;
+	case CIXVPU_DMA_RPC_DEBUG_REPLIED:
+		result = CIXVPU_BOOT_RPC_DEBUG_REPLIED;
+		break;
+	default:
+		p->boot.error = EPROTO;
+		return EPROTO;
+	}
+	*out = result;
+	return 0;
+}
+
+static int
+cixvpu_prepared_boot_receive_common(struct cixvpu_prepared *p,
+    struct cixvpu_boot_reply *out, bool rpc_enabled)
 {
 	struct cixvpu_boot_reply reply = { 0 };
 	struct cixvpu_ring_checksum observed, next_sum;
@@ -624,6 +683,14 @@ cixvpu_prepared_boot_receive(struct cixvpu_prepared *p,
 	int error;
 	bool fault = false;
 
+	if (rpc_enabled) {
+		if (cpu_intr_p() || cpu_softintr_p())
+			return EWOULDBLOCK;
+		if (p == NULL || out == NULL)
+			return EINVAL;
+		if (p->boot.error != 0)
+			return p->boot.error;
+	}
 	error = cixvpu_prepare_boot_output(p, out, sizeof(*out),
 	    _Alignof(struct cixvpu_boot_reply), &fault);
 	if (error != 0) {
@@ -634,13 +701,20 @@ cixvpu_prepared_boot_receive(struct cixvpu_prepared *p,
 		}
 		return error;
 	}
+	if (rpc_enabled && p->plan.boot_rpc != 1)
+		return ENOTSUP;
 	if (!p->boot.published)
 		return EBUSY;
 	if (p->boot.error != 0)
 		return p->boot.error;
 	p->boot.snapshot.rpc_valid = false;
 	p->boot.snapshot.rpc_alloc_valid = false;
-	error = cixvpu_dma_boot_snapshot(p->dma, p, &p->plan, &p->boot.snapshot);
+	if (rpc_enabled)
+		error = cixvpu_dma_boot_snapshot_rpc(p->dma, p, &p->plan,
+		    &p->boot.snapshot);
+	else
+		error = cixvpu_dma_boot_snapshot(p->dma, p, &p->plan,
+		    &p->boot.snapshot);
 	if (error != 0)
 		goto failed;
 	message = p->boot.snapshot.message;
@@ -674,4 +748,20 @@ failed:
 	if (error != EAGAIN)
 		p->boot.error = error;
 	return error;
+}
+
+int
+cixvpu_prepared_boot_receive(struct cixvpu_prepared *p,
+    struct cixvpu_boot_reply *out)
+{
+
+	return cixvpu_prepared_boot_receive_common(p, out, false);
+}
+
+int
+cixvpu_prepared_boot_receive_rpc(struct cixvpu_prepared *p,
+    struct cixvpu_boot_reply *out)
+{
+
+	return cixvpu_prepared_boot_receive_common(p, out, true);
 }

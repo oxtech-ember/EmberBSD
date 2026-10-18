@@ -35,6 +35,8 @@ struct cixvpu_dma {
 	bus_dma_tag_t tag;
 	bool tag_acquired;
 	bool ever_visible;
+	bool rpc_alloc_used;
+	unsigned int rpc_debug_count;
 	enum cixvpu_dma_phase phase;
 	const struct cixvpu_prepared *prepared_owner;
 	uint32_t count;
@@ -650,9 +652,133 @@ cixvpu_dma_boot_debugparam(struct cixvpu_dma *dma,
 }
 
 int
-cixvpu_dma_boot_snapshot(struct cixvpu_dma *dma,
+cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
     const struct cixvpu_prepared *owner, const struct cixvpu_fw_plan *plan,
-    struct cixvpu_dma_boot_snapshot *snapshot)
+    struct cixvpu_dma_boot_snapshot *snapshot, enum cixvpu_dma_rpc_result *out)
+{
+	struct cixvpu_dma_owner *host, *mve, *rpc;
+	enum cixvpu_dma_rpc_result result;
+	uint8_t before[12], observed[24];
+	uint32_t state, call, size;
+	size_t bytes;
+	unsigned int attempt;
+	int error;
+	bool fault;
+
+	if (plan == NULL || out == NULL)
+		return EINVAL;
+	if (plan->boot_rpc != 1)
+		return ENOTSUP;
+	error = cixvpu_dma_boot_pages(dma, owner, plan, &host, &mve, &rpc);
+	if (error != 0)
+		return error;
+	error = cixvpu_dma_boot_output(dma, owner, snapshot,
+	    sizeof(*snapshot), &fault);
+	if (error != 0)
+		return error;
+	if ((uintptr_t)rpc->kva % _Alignof(uint32_t) != 0)
+		return EINVAL;
+	for (attempt = 0; attempt < 4; attempt++) {
+		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(before),
+		    BUS_DMASYNC_POSTREAD);
+		memcpy(before, rpc->kva, sizeof(before));
+		bus_dmamap_sync(dma->tag, rpc->map, 0, sizeof(before),
+		    BUS_DMASYNC_PREREAD);
+		bytes = le32dec(before) == 1 && le32dec(before + 4) == 2 &&
+		    le32dec(before + 8) == 12 ? sizeof(observed) : sizeof(before);
+		bus_dmamap_sync(dma->tag, rpc->map, 0, bytes,
+		    BUS_DMASYNC_POSTREAD);
+		memcpy(observed, rpc->kva, bytes);
+		memcpy(snapshot->rpc_header, observed, sizeof(before));
+		snapshot->rpc_valid = true;
+		snapshot->rpc_alloc_valid = false;
+		if (memcmp(before, observed, sizeof(before)) == 0)
+			break;
+		bus_dmamap_sync(dma->tag, rpc->map, 0, bytes,
+		    BUS_DMASYNC_PREREAD);
+	}
+	if (attempt == 4)
+		return EAGAIN;
+	state = le32dec(observed);
+	call = le32dec(observed + 4);
+	size = le32dec(observed + 8);
+	if (bytes == sizeof(observed)) {
+		memcpy(snapshot->rpc_alloc, observed + 12, 12);
+		snapshot->rpc_alloc_valid = true;
+	}
+	if (state == 0 || state == 2) {
+		result = state == 0 ? CIXVPU_DMA_RPC_IDLE : CIXVPU_DMA_RPC_PENDING;
+		bus_dmamap_sync(dma->tag, rpc->map, 0, bytes,
+		    BUS_DMASYNC_PREREAD);
+		*out = result;
+		return 0;
+	}
+	if (state != 1 || (call == 1 && size > 1012) ||
+	    (call == 2 && size != 12)) {
+		error = EPROTO;
+		goto rearm;
+	}
+	if (call == 2) {
+		uint32_t *words;
+		uint64_t pages, capacity;
+
+		if (bytes != sizeof(observed)) {
+			error = EPROTO;
+			goto rearm;
+		}
+		pages = ((uint64_t)le32dec(observed + 12) + 4095) / 4096;
+		capacity = ((uint64_t)le32dec(observed + 16) + 4095) / 4096;
+		if (le32dec(observed + 12) != CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_SIZE ||
+		    le32dec(observed + 16) != CIXVPU_FW_PLAN_BOOT_RPC_CAPACITY ||
+		    observed[20] != CIXVPU_FW_PLAN_BOOT_RPC_REGION ||
+		    observed[21] != CIXVPU_FW_PLAN_BOOT_RPC_LOG2_ALIGNMENT ||
+		    pages != CIXVPU_FW_PLAN_BOOT_RPC_PAGES || capacity != 16384) {
+			error = ENOTSUP;
+			goto rearm;
+		}
+		if (dma->rpc_alloc_used) {
+			error = EBUSY;
+			goto rearm;
+		}
+		dma->rpc_alloc_used = true;
+		/* Retire host writes, then rearm clean neighbors before dirtying. */
+		bus_dmamap_sync(dma->tag, rpc->map, 0, 4, BUS_DMASYNC_POSTWRITE);
+		bus_dmamap_sync(dma->tag, rpc->map, 8, 8, BUS_DMASYNC_POSTWRITE);
+		bus_dmamap_sync(dma->tag, rpc->map, 4, 4, BUS_DMASYNC_PREREAD);
+		bus_dmamap_sync(dma->tag, rpc->map, 16, 8, BUS_DMASYNC_PREREAD);
+		words = rpc->kva;
+		words[3] = htole32(CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS);
+		words[2] = htole32(4);
+		bus_dmamap_sync(dma->tag, rpc->map, 8, 8,
+		    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+		result = CIXVPU_DMA_RPC_ALLOC_REPLIED;
+	} else if (call == 1) {
+		if (dma->rpc_debug_count >= 16) {
+			error = E2BIG;
+			goto rearm;
+		}
+		dma->rpc_debug_count++;
+		bus_dmamap_sync(dma->tag, rpc->map, 0, 4, BUS_DMASYNC_POSTWRITE);
+		bus_dmamap_sync(dma->tag, rpc->map, 4, 8, BUS_DMASYNC_PREREAD);
+		result = CIXVPU_DMA_RPC_DEBUG_REPLIED;
+	} else {
+		error = ENOTSUP;
+		goto rearm;
+	}
+	atomic_store_release((uint32_t *)rpc->kva, htole32(2));
+	bus_dmamap_sync(dma->tag, rpc->map, 0, 4,
+	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+	*out = result;
+	return 0;
+rearm:
+	bus_dmamap_sync(dma->tag, rpc->map, 0, bytes, BUS_DMASYNC_PREREAD);
+	return error;
+}
+
+static int
+cixvpu_dma_boot_snapshot_common(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner, const struct cixvpu_fw_plan *plan,
+    struct cixvpu_dma_boot_snapshot *snapshot, bool rpc_enabled)
 {
 	struct cixvpu_dma_owner *host, *mve, *rpc;
 	uint8_t before[16], control[16], rpc_header[12];
@@ -679,6 +805,8 @@ cixvpu_dma_boot_snapshot(struct cixvpu_dma *dma,
 	    (uint32_t)rpc_header[2] << 16 | (uint32_t)rpc_header[3] << 24;
 	/* Closed diagnostics only. Keep the original header and rejection. */
 	snapshot->rpc_alloc_valid = false;
+	if (rpc_enabled && state == 1)
+		return EAGAIN;
 	if (state == 1 && le32dec(rpc_header + 4) == 2 &&
 	    le32dec(rpc_header + 8) == sizeof(snapshot->rpc_alloc)) {
 		uint8_t rpc_after[12];
@@ -698,8 +826,8 @@ cixvpu_dma_boot_snapshot(struct cixvpu_dma *dma,
 		    memcmp(rpc_header, rpc_after, sizeof(rpc_header)) == 0;
 	}
 
-	if (state != 0)
-		return ENOTSUP;
+	if (state != 0 && !(rpc_enabled && state == 2))
+		return rpc_enabled ? EPROTO : ENOTSUP;
 	for (attempt = 0; attempt < 4; attempt++) {
 		/* A bounce copy need not fetch control before payload. Bracket it. */
 		bus_dmamap_sync(dma->tag, mve->map, 0, sizeof(before),
@@ -723,6 +851,28 @@ cixvpu_dma_boot_snapshot(struct cixvpu_dma *dma,
 			return 0;
 	}
 	return EAGAIN;
+}
+
+int
+cixvpu_dma_boot_snapshot(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner, const struct cixvpu_fw_plan *plan,
+    struct cixvpu_dma_boot_snapshot *snapshot)
+{
+
+	return cixvpu_dma_boot_snapshot_common(dma, owner, plan, snapshot, false);
+}
+
+int
+cixvpu_dma_boot_snapshot_rpc(struct cixvpu_dma *dma,
+    const struct cixvpu_prepared *owner, const struct cixvpu_fw_plan *plan,
+    struct cixvpu_dma_boot_snapshot *snapshot)
+{
+
+	if (plan == NULL)
+		return EINVAL;
+	if (plan->boot_rpc != 1)
+		return ENOTSUP;
+	return cixvpu_dma_boot_snapshot_common(dma, owner, plan, snapshot, true);
 }
 
 int

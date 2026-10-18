@@ -49,6 +49,18 @@ int cixvpu_dma_boot_snapshot(struct cixvpu_dma *,
 int cixvpu_dma_boot_debugparam(struct cixvpu_dma *,
     const struct cixvpu_prepared *, const struct cixvpu_fw_plan *,
     struct cixvpu_dma_boot_snapshot *);
+enum cixvpu_dma_rpc_result {
+	CIXVPU_DMA_RPC_IDLE,
+	CIXVPU_DMA_RPC_PENDING,
+	CIXVPU_DMA_RPC_ALLOC_REPLIED,
+	CIXVPU_DMA_RPC_DEBUG_REPLIED
+};
+int cixvpu_dma_boot_rpc_step(struct cixvpu_dma *,
+    const struct cixvpu_prepared *, const struct cixvpu_fw_plan *,
+    struct cixvpu_dma_boot_snapshot *, enum cixvpu_dma_rpc_result *);
+int cixvpu_dma_boot_snapshot_rpc(struct cixvpu_dma *,
+    const struct cixvpu_prepared *, const struct cixvpu_fw_plan *,
+    struct cixvpu_dma_boot_snapshot *);
 int cixvpu_dma_boot_ack(struct cixvpu_dma *,
     const struct cixvpu_prepared *, const struct cixvpu_fw_plan *, uint16_t);
 

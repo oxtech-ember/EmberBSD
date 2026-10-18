@@ -40,9 +40,13 @@ if [ -f "$src/sys/dev/acpi/cixvpu_acpi_boot.c" ]; then
     cat > "$work/prepare-bridge.c" <<'BRIDGE'
 #include "prepare-fixture.c"
 static void (*bridge_ack_hook)(void);
+static void (*bridge_rpc_commit_hook)(void);
 static unsigned int bridge_acks;
 static void bridge_observe(unsigned int i, bus_addr_t off, bus_size_t len, int ops) {
     boot_nevents=0; boot_observe(i,off,len,ops);
+    if(i==boot_rpc && off==0 && len==4 && ops==5 &&
+        word(device_memory[i],0)==2 && bridge_rpc_commit_hook!=NULL)
+        bridge_rpc_commit_hook();
     if(i==boot_host && off==0 && len==2 && ops==BUS_DMASYNC_PREWRITE) {
         bridge_acks++; if(bridge_ack_hook != NULL) bridge_ack_hook();
     }
@@ -59,8 +63,26 @@ struct cixvpu_prepared *boot_fixture_prepare_kind(bool boot) {
         if(p.role==CIXVPU_FW_PLAN_MSG_MVE) boot_mve=i;
         if(p.role==CIXVPU_FW_PLAN_RPC) boot_rpc=i;
     }
-    sync_fixture(&plan,true); bridge_ack_hook=NULL; bridge_acks=0; return out;
+    sync_fixture(&plan,true); bridge_ack_hook=bridge_rpc_commit_hook=NULL; bridge_acks=0; return out;
 }
+struct cixvpu_prepared *boot_fixture_prepare_rpc(void) {
+    struct cixvpu_fw_plan plan; struct cixvpu_dma *owner=rpc_reserve_begin(&plan);
+    struct cixvpu_prepared *out=NULL;
+    CHECK(cixvpu_prepare_boot_cpu(&owner,&plan,rpc_image,sizeof(rpc_image),fixture_pin,&out)==0);
+    boot_host=118; boot_mve=119; boot_rpc=124;
+    sync_fixture(&plan,true); bridge_ack_hook=bridge_rpc_commit_hook=NULL; bridge_acks=0;
+    return out;
+}
+void boot_fixture_set_rpc_commit(void (*hook)(void)) { bridge_rpc_commit_hook=hook; }
+void boot_fixture_rpc_words(uint32_t state,uint32_t call,uint32_t size,
+    uint32_t initial,uint32_t max,unsigned int region,unsigned int align) {
+    CHECK(region<=255 && align<=255);
+    uint8_t *p=device_memory[boot_rpc];
+    put32(p,state); put32(p+4,call); put32(p+8,size);
+    put32(p+12,initial); put32(p+16,max); p[20]=(uint8_t)region; p[21]=(uint8_t)align;
+    p[22]=0xc3; p[23]=0xd4;
+}
+uint32_t boot_fixture_rpc_word(unsigned int index) { CHECK(index<6); return word(device_memory[boot_rpc],index); }
 struct cixvpu_prepared *boot_fixture_prepare(void) { return boot_fixture_prepare_kind(true); }
 void boot_fixture_set_ack(void (*hook)(void)) { bridge_ack_hook=hook; }
 unsigned int boot_fixture_acks(void) { return bridge_acks; }

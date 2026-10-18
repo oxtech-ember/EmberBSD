@@ -101,4 +101,35 @@ enum cixvpu_boot_debug_result {
 int cixvpu_prepared_boot_debugparam(struct cixvpu_prepared *,
     enum cixvpu_boot_debug_result *);
 
+enum cixvpu_boot_rpc_result {
+	CIXVPU_BOOT_RPC_IDLE,
+	CIXVPU_BOOT_RPC_PENDING,
+	CIXVPU_BOOT_RPC_ALLOC_REPLIED,
+	CIXVPU_BOOT_RPC_DEBUG_REPLIED
+};
+/*
+ * Closed plan1 bootstrap only. The published owner remains externally
+ * serialized in thread context. Basic context/NULL checks precede a sticky
+ * error check; that error permits no I/O and preserves outputs/diagnostics.
+ * FREE/RETURN ignore stale call/size and return IDLE/PENDING without writes.
+ * Exact PARAM/call2/size12 accepts only the fixed observed allocation tuple.
+ * One allocation and at most sixteen DEBUG call1 completions are allowed.
+ * Slots are consumed before the first response store and never reused.
+ * Reply body/size precede the release RETURN store and its DMA publication.
+ * The caller must notify firmware once after REPLIED, before another step.
+ * No MMIO, heap access, runtime allocation, PTE change or free occurs here.
+ * Duplicate ALLOC returns EBUSY; DEBUG17 E2BIG; unsupported calls/tuples
+ * ENOTSUP; malformed state/shape EPROTO. These faults are sticky. Four
+ * unstable observations return nonsticky EAGAIN. Errors preserve out.
+ * Cache numeric observations before semantic rejection; cache is not authority.
+ * Committed PARAM immutability and DMA granularity remain firmware assumptions.
+ * receive_rpc permits FREE/RETURN queue processing. An observed PARAM returns
+ * EAGAIN without queue access/advance; no global atomic exclusion is implied.
+ * Legacy receive remains strict. No API bypasses an existing held error.
+ */
+int cixvpu_prepared_boot_rpc_step(struct cixvpu_prepared *,
+    enum cixvpu_boot_rpc_result *);
+int cixvpu_prepared_boot_receive_rpc(struct cixvpu_prepared *,
+    struct cixvpu_boot_reply *);
+
 #endif
