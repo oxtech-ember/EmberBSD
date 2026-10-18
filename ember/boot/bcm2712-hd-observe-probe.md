@@ -78,3 +78,23 @@ and libfdt, with controlled kernel services and MMIO. It checks exact ranges,
 five reads, both held leases, reverse cleanup, all map failures, retained uncertainty,
 external-writer mutation, mode refusals and candidate/noncandidate samples.
 These source checks do not establish a linked module or physical HD/PHY acceptance.
+
+## Physical observation boundary
+
+A CM5 Rev 1.0 with BCM2712 D0 completed this observation after a cold boot
+without HDMI, followed by live HDMI0 connection. The kernel was
+`492fe33ab60fb35868cea900d528f04346a06e3b`; the module source was
+`92186fd32100633661f342faaf93f5437bc82cec`. The 65880-byte module SHA256 was
+`29e7f0e6989c607e1deefd0bfc9b2ee3d20d8a1e8a249a33bd3daefb84cfb9a2`.
+The audit matched 350 source dependencies, 31 generated headers, 30 options,
+58 ABI values and the complete strong-symbol closure against that kernel.
+
+The five reads returned DVP_CTL `0x1`, VID_CTL0/1 `0x1c0000`, and CLOCK_STOP0/1
+`0x3`. The current reset-side candidate was 0. Both video-enable bits were
+clear and both pixel clocks were stopped; the pinned headers do not define
+DVP_CTL bit0. Do not label that bit as reset, power or ownership from this sample.
+HSM remained at 120 MHz without mutation. DVP leases changed 0, 1, 3, 1, 0,
+with unchanged gates/resets and mutation0. Cleanup and module unload completed.
+Temperature changed from 62.560 to 62.010 C without throttling or undervoltage.
+This accepts five finite reads and cleanup. BVB, PHY, scanout, DRM hotplug and
+physical Plasma remain separate acceptance boundaries.
