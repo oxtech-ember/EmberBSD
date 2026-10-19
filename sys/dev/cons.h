@@ -76,7 +76,13 @@ struct consdev {
 extern	struct consdev constab[];
 extern	struct consdev *cn_tab;
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+/* Process context with Giant. Refuse any active publication. */
+int cn_set_tab_checked(struct consdev *)
+    __attribute__((__warn_unused_result__));
+#else
 void	cn_set_tab(struct consdev *);
+#endif
 
 void	cninit(void);
 int	cngetc(void);

@@ -46,6 +46,9 @@ __KERNEL_RCSID(0, "$NetBSD: arm_simplefb.c,v 1.13 2022/10/14 22:10:15 jmcneill E
 #include <sys/systm.h>
 #endif
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include <dev/cons_handoffvar.h>
+#endif
 #include <dev/fdt/fdtvar.h>
 #include <dev/fdt/simplefbvar.h>
 #ifdef WSDISPLAY_BOOTFB_DEFER
@@ -252,13 +255,18 @@ arm_simplefb_preattach(void)
 	if (phandle == -1)
 		return;
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	error = cn_publication_enter();
+	if (error != 0)
+		return;
+#endif
 
 #ifdef WSDISPLAY_BOOTFB_DEFER
 	if (simplefb_node_cpu_domain(phandle) != 0)
-		return;
+		goto out;
 #endif
 	if (simplefb_read_node(phandle, bst, &fb) != 0)
-		return;
+		goto out;
 	addr = fb.sf_address;
 	size = fb.sf_size;
 	swapped = fb.sf_format == SIMPLEFB_FORMAT_R8G8B8A8 ||
@@ -267,12 +275,12 @@ arm_simplefb_preattach(void)
 
 #ifdef WSDISPLAY_BOOTFB_DEFER
 	if (!fdtbus_bootfb_cpu_map(bst))
-		return;
+		goto out;
 	map_method = bst->bs_map;
 #endif
 	if (bus_space_map(bst, addr, size,
 	    BUS_SPACE_MAP_LINEAR | BUS_SPACE_MAP_PREFETCHABLE, &bsh) != 0)
-		return;
+		goto out;
 
 	arm_simplefb_addr = addr;
 	arm_simplefb_size = size;
@@ -300,7 +308,7 @@ arm_simplefb_preattach(void)
 	arm_simplefb_screen.scr_flags |= VCONS_SCREEN_IS_STATIC;
 
 	if (ri->ri_rows < 1 || ri->ri_cols < 1)
-		return;
+		goto out;
 
 	arm_simplefb_stdscreen.nrows = ri->ri_rows;
 	arm_simplefb_stdscreen.ncols = ri->ri_cols;
@@ -333,6 +341,11 @@ arm_simplefb_preattach(void)
 	wsdisplay_preattach(&arm_simplefb_stdscreen, ri, 0, 0, defattr);
 	vcons_replay_msgbuf(&arm_simplefb_screen);
 #endif
+out:
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	cn_publication_exit();
+#endif
+	return;
 }
 
 #ifdef WSDISPLAY_BOOTFB_DEFER

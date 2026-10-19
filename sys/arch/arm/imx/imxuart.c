@@ -161,6 +161,9 @@ __KERNEL_RCSID(0, "$NetBSD: imxuart.c,v 1.30 2022/10/26 23:38:06 riastradh Exp $
 #include <arm/imx/imxuartreg.h>
 #include <arm/imx/imxuartvar.h>
 #include <dev/cons.h>
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
 
 #ifndef	IMXUART_RING_SIZE
 #define	IMXUART_RING_SIZE	2048
@@ -249,6 +252,10 @@ u_int imxuart_rbuf_size = IMXUART_RING_SIZE;
 /* Stop input when 3/4 of the ring is full; restart when only 1/4 is full. */
 u_int imxuart_rbuf_hiwat = (IMXUART_RING_SIZE * 1) / 4;
 u_int imxuart_rbuf_lowat = (IMXUART_RING_SIZE * 3) / 4;
+
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+extern struct consdev imxucons;
+#endif
 
 static struct imxuart_regs imxuconsregs;
 static int imxuconsattached;
@@ -373,8 +380,13 @@ imxuart_attach_subr(struct imxuart_softc *sc)
 		maj = cdevsw_lookup_major(&imxcom_cdevsw);
 
 		if (maj != NODEVMAJOR) {
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+			tp->t_dev = makedev(maj, device_unit(sc->sc_dev));
+			imxucons.cn_dev = tp->t_dev;
+#else
 			tp->t_dev = cn_tab->cn_dev = makedev(maj,
 			    device_unit(sc->sc_dev));
+#endif
 
 			aprint_normal_dev(sc->sc_dev, "console\n");
 		}

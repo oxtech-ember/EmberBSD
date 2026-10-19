@@ -30,6 +30,10 @@
  * Generic framebuffer console driver
  */
 
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: bcm2835_genfb.c,v 1.12 2021/01/27 03:10:19 thorpej Exp $");
 
@@ -45,6 +49,9 @@ __KERNEL_RCSID(0, "$NetBSD: bcm2835_genfb.c,v 1.12 2021/01/27 03:10:19 thorpej E
 #include <dev/fdt/fdtvar.h>
 
 #include <dev/wsfb/genfbvar.h>
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include <dev/wscons/wsdisplayvar.h>
+#endif
 
 struct bcmgenfb_softc {
 	struct genfb_softc	sc_gen;
@@ -101,6 +108,16 @@ bcmgenfb_attach(device_t parent, device_t self, void *aux)
 	sc->sc_wstype = WSDISPLAY_TYPE_VC4;
 	prop_dictionary_get_uint32(dict, "wsdisplay_type", &sc->sc_wstype);
 	prop_dictionary_get_bool(dict, "is_console", &is_console);
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (is_console) {
+		error = wsdisplay_console_enter(self);
+		if (error != 0) {
+			aprint_error_dev(self, "console admission failed: %d\n",
+			    error);
+			return;
+		}
+	}
+#endif
 #if BYTE_ORDER == BIG_ENDIAN
 	prop_dictionary_set_bool(dict, "is_swapped", true);
 #endif
@@ -110,7 +127,7 @@ bcmgenfb_attach(device_t parent, device_t self, void *aux)
 	if (sc->sc_gen.sc_width == 0 ||
 	    sc->sc_gen.sc_fbsize == 0) {
 		aprint_normal(": disabled\n");
-		return;
+		goto out;
 	}
 
 	pmf_device_register1(self, NULL, NULL, bcmgenfb_shutdown);
@@ -121,7 +138,7 @@ bcmgenfb_attach(device_t parent, device_t self, void *aux)
 	if (error) {
 		aprint_error_dev(self, "couldn't map framebuffer (%d)\n",
 		    error);
-		return;
+		goto out;
 	}
 	sc->sc_gen.sc_fbaddr = bus_space_vaddr(sc->sc_iot, sc->sc_ioh);
 
@@ -135,7 +152,20 @@ bcmgenfb_attach(device_t parent, device_t self, void *aux)
 	else
 		aprint_normal("\n");
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	error = genfb_attach(&sc->sc_gen, &ops);
+	if (error != 0)
+		aprint_error_dev(self, "genfb attach failed: %d; retained\n",
+		    error);
+#else
 	genfb_attach(&sc->sc_gen, &ops);
+#endif
+out:
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (is_console)
+		wsdisplay_console_exit(self);
+#endif
+	return;
 }
 
 static int

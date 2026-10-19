@@ -49,6 +49,9 @@ __KERNEL_RCSID(0, "$NetBSD: simplefb.c,v 1.15 2021/08/30 22:47:24 jmcneill Exp $
 #endif
 
 #include <dev/wsfb/genfbvar.h>
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include <dev/wscons/wsdisplayvar.h>
+#endif
 
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "simple-framebuffer" },
@@ -290,6 +293,14 @@ simplefb_attach_genfb(struct simplefb_softc *sc)
 	device_t dev = sc->sc_gen.sc_dev;
 	prop_dictionary_t dict = device_properties(dev);
 	struct genfb_ops ops;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	int error;
+#ifdef WSDISPLAY_MULTICONS
+	const bool is_console = true;
+#else
+	const bool is_console = sc->sc_phandle == simplefb_console_phandle;
+#endif
+#endif
 	const struct simplefb_framebuffer *fb = &sc->sc_framebuffer;
 	const uint32_t width = fb->sf_width, height = fb->sf_height;
 	const uint32_t stride = fb->sf_stride;
@@ -302,6 +313,14 @@ simplefb_attach_genfb(struct simplefb_softc *sc)
 		    sc->sc_framebuffer_error);
 		return sc->sc_framebuffer_error;
 	}
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (is_console) {
+		error = wsdisplay_console_enter(dev);
+		if (error != 0)
+			return error;
+	}
+	prop_dictionary_set_bool(dict, "is_console", is_console);
+#endif
 	if (fb->sf_format == SIMPLEFB_FORMAT_R8G8B8A8 ||
 	    fb->sf_format == SIMPLEFB_FORMAT_B8G8R8X8)
 		prop_dictionary_set_bool(dict, "is_swapped", true);
@@ -312,7 +331,12 @@ simplefb_attach_genfb(struct simplefb_softc *sc)
 	    BUS_SPACE_MAP_LINEAR | BUS_SPACE_MAP_PREFETCHABLE,
 	    &sc->sc_bsh) != 0) {
 		aprint_error(": failed to map fb\n");
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		error = ENXIO;
+		goto out;
+#else
 		return ENXIO;
+#endif
 	}
 
 	sc->sc_paddr = addr;
@@ -329,7 +353,12 @@ simplefb_attach_genfb(struct simplefb_softc *sc)
 
 	if (sc->sc_gen.sc_width == 0 || sc->sc_gen.sc_fbsize == 0) {
 		aprint_normal(": disabled\n");
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		error = ENXIO;
+		goto out;
+#else
 		return ENXIO;
+#endif
 	}
 
 	aprint_naive("\n");
@@ -343,10 +372,14 @@ simplefb_attach_genfb(struct simplefb_softc *sc)
 	ops.genfb_mmap = simplefb_mmap;
 
 #ifdef WSDISPLAY_MULTICONS
+#ifndef WSDISPLAY_BOOTFB_HANDOFF
 	const bool is_console = true;
+#endif
 	genfb_cnattach();
 #else
+#ifndef WSDISPLAY_BOOTFB_HANDOFF
 	const bool is_console = sc->sc_phandle == simplefb_console_phandle;
+#endif
 	if (is_console)
 		aprint_normal_dev(sc->sc_gen.sc_dev,
 		    "switching to framebuffer console\n");
@@ -354,9 +387,16 @@ simplefb_attach_genfb(struct simplefb_softc *sc)
 
 	prop_dictionary_set_bool(dict, "is_console", is_console);
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	error = genfb_attach(&sc->sc_gen, &ops);
+out:
+	if (is_console)
+		wsdisplay_console_exit(dev);
+	return error;
+#else
 	genfb_attach(&sc->sc_gen, &ops);
-
 	return 0;
+#endif
 }
 
 static int

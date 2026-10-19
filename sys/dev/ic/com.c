@@ -131,6 +131,9 @@ __KERNEL_RCSID(0, "$NetBSD: com.c,v 1.388 2025/02/12 05:15:39 imil Exp $");
 #include <dev/ic/hayespreg.h>
 #define	com_lcr	com_cfcr
 #include <dev/cons.h>
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
 
 #include "ioconf.h"
 
@@ -813,8 +816,13 @@ fifodone:
 		/* locate the major number */
 		maj = cdevsw_lookup_major(&com_cdevsw);
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		tp->t_dev = makedev(maj, device_unit(sc->sc_dev));
+		comcons.cn_dev = tp->t_dev;
+#else
 		tp->t_dev = cn_tab->cn_dev = makedev(maj,
 						     device_unit(sc->sc_dev));
+#endif
 
 		aprint_normal_dev(sc->sc_dev, "console\n");
 	}
@@ -910,6 +918,11 @@ com_detach(device_t self, int flags)
 {
 	struct com_softc *sc = device_private(self);
 	int maj, mn;
+
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (ISSET(sc->sc_hwflags, COM_HW_CONSOLE))
+		return EBUSY;
+#endif
 
 	if (ISSET(sc->sc_hwflags, COM_HW_KGDB))
 		return EBUSY;

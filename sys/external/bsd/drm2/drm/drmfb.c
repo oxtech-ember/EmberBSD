@@ -39,6 +39,10 @@
  * drmkms crap and genfb crap.
  */
 
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: drmfb.c,v 1.16 2022/09/01 17:54:47 riastradh Exp $");
 
@@ -65,6 +69,9 @@ __KERNEL_RCSID(0, "$NetBSD: drmfb.c,v 1.16 2022/09/01 17:54:47 riastradh Exp $")
 #endif
 
 #include <dev/wsfb/genfbvar.h>
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include <dev/wscons/wsdisplayvar.h>
+#endif
 
 #include <drm/drm_device.h>
 #include <drm/drm_fb_helper.h>
@@ -152,6 +159,13 @@ drmfb_attach(struct drmfb_softc *sc, const struct drmfb_attach_args *da)
 	}
 #endif
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (is_console) {
+		error = wsdisplay_console_enter(da->da_dev);
+		if (error != 0)
+			return error;
+	}
+#endif
 	prop_dictionary_set_bool(dict, "is_console", is_console);
 
 	/* Make the first EDID we find available to wsfb */
@@ -178,7 +192,14 @@ drmfb_attach(struct drmfb_softc *sc, const struct drmfb_attach_args *da)
 	KERNEL_LOCK(1, NULL);
 	error = genfb_attach(&sc->sc_genfb, &genfb_ops);
 	KERNEL_UNLOCK_ONE(NULL);
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (is_console)
+		wsdisplay_console_exit(da->da_dev);
+	if (error != 0)
+		return error;
+#else
 	KASSERTMSG(error == 0, "genfb_attach failed, error=%d", error);
+#endif
 
 	/* Success!  */
 	return 0;

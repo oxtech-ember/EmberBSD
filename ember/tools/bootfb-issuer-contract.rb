@@ -17,6 +17,21 @@ inputs = %w[sys/dev/fdt/simplefb.c sys/dev/fdt/simplefb_subr.c sys/dev/fdt/simpl
             sys/dev/wscons/wsdisplay_vcons_util.c ember/tools/earlyfb-hooks-contract.c
             ember/tools/bootfb-issuer-contract.c ember/tools/bootfb-issuer-contract.rb]
 files = inputs.to_h { |p| [p, File.read(source + '/' + p)] }
+# Retain nested option branches in the actual outer source block.
+def conditional(text, marker)
+  lines = text.lines
+  starts = lines.each_index.select { |i| lines[i, marker.lines.length].join.chomp == marker }
+  abort "conditional count #{marker}: #{starts.length}" unless starts.length == 1
+  first = starts.first
+  depth = 0
+  lines[first..].each_with_index do |line, offset|
+    depth += 1 if line.match?(/^#\s*(?:if|ifdef|ifndef)\b/)
+    depth -= 1 if line.match?(/^#\s*endif\b/)
+    return lines[first, offset + 1].join if depth.zero?
+  end
+  abort "unterminated conditional #{marker}"
+end
+
 def function(text, name)
   matches = text.scan(/^(?:static )?(?:int|void|bool|device_t)\n#{Regexp.escape(name)}\(.*?^}/m)
   abort "function count #{name}: #{matches.size}" unless matches.size == 1
@@ -111,13 +126,13 @@ Dir.mktmpdir('bootfb-issuer-', ENV.fetch('TMPDIR', '/tmp')) do |work|
     arm_body = function(arm, 'arm_simplefb_find_node') + "\n#ifdef WSDISPLAY_EARLYFB_HOOKS\n" + function(arm, 'arm_simplefb_replay') + "\n#endif\n" + function(arm, 'arm_simplefb_preattach') + "\n#ifdef WSDISPLAY_BOOTFB_DEFER\n" + %w[fdtbus_bootfb_match fdtbus_bootfb_defer].map { |n| function(arm, n) }.join("\n") + "\n#endif\n"
     File.write(work + '/arm-functions.h', license(arm) + arm_body)
     ws = files.fetch('sys/dev/wscons/wsdisplay.c')
-    state = ws[/^#ifdef WSDISPLAY_EARLYFB_HOOKS\nenum \{.*?^#endif/m]
+    state = conditional(ws, "#ifdef WSDISPLAY_EARLYFB_HOOKS\nenum {")
     abort 'actual MI state absent' unless state
     File.write(work + '/mi-state.h', license(ws) + state + "\n")
     api = files.fetch('sys/dev/wscons/wsdisplayvar.h')[/^#ifdef WSDISPLAY_EARLYFB_HOOKS\n\/\* Actual binding.*?^#endif/m]
     abort 'actual API absent' unless api
     File.write(work + '/early-api.h', api + "\nvoid wsdisplay_preattach(const struct wsscreen_descr *, void *, int, int, long);\n")
-    ws_body = %w[wsdisplay_preattach wsdisplay_cnputc wsdisplay_pollc].map { |n| function(ws, n) }.join("\n")
+    ws_body = %w[wsdisplay_preattach_impl wsdisplay_preattach wsdisplay_cnputc wsdisplay_pollc].map { |n| function(ws, n) }.join("\n")
     ws_body += "\n#ifdef WSDISPLAY_BOOTFB_DEFER\n" + function(ws, 'wsdisplay_early_binding_matches') + "\n#endif\n"
     File.write(work + '/wsdisplay-functions.h', license(ws) + ws_body)
     replay = files.fetch('sys/dev/wscons/wsdisplay_vcons_util.c')

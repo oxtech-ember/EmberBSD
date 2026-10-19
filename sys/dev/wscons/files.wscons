@@ -89,6 +89,8 @@ defflag	opt_vcons.h		VCONS_DRAW_INTR VCONS_INTR_DEBUG VCONS_DEBUG
 defflag	opt_wsdisplay_earlyfb.h	WSDISPLAY_EARLYFB_HOOKS
 # Cold fallback issuer only. No default configuration selects it.
 defflag	opt_wsdisplay_bootfb.h	WSDISPLAY_BOOTFB_DEFER: WSDISPLAY_EARLYFB_HOOKS
+# Checked publishers only. No close/drain or default caller.
+defflag	opt_wsdisplay_bootfb.h	WSDISPLAY_BOOTFB_HANDOFF: WSDISPLAY_BOOTFB_DEFER
 
 # generic support code for caching rendered glyphs in video memory
 define	glyphcache

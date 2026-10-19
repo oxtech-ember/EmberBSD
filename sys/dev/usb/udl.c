@@ -52,6 +52,10 @@
  * NetBSD by FUKAUMI Naoki with many modification.
  */
 
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: udl.c,v 1.35 2024/10/02 17:22:45 tsutsui Exp $");
 
@@ -475,8 +479,26 @@ udl_attach(device_t parent, device_t self, void *aux)
 	aa.accessops = &udl_accessops;
 	aa.accesscookie = sc;
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	{
+		device_t child;
+		int attach_error;
+
+		attach_error = wsdisplay_emul_attach_checked(sc->sc_dev, &aa,
+		    CFARGS_NONE, &child);
+		if (attach_error != 0) {
+			aprint_error_dev(sc->sc_dev, "wsdisplay attach failed: %d\n",
+			    attach_error);
+			return;
+		}
+		/* Keep the existing parent-owned weak child association. */
+		sc->sc_wsdisplay = child;
+		device_release(child);
+	}
+#else
 	sc->sc_wsdisplay =
 	    config_found(sc->sc_dev, &aa, wsemuldisplaydevprint, CFARGS_NONE);
+#endif
 
 	usbd_add_drv_event(USB_EVENT_DRIVER_ATTACH, sc->sc_udev, sc->sc_dev);
 

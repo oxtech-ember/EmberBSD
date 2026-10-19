@@ -48,6 +48,21 @@ run = lambda do |label, args|
   warn err unless err.empty?
   status.success?
 end
+# Retain nested option branches in the actual outer source block.
+def conditional(text, marker)
+  lines = text.lines
+  starts = lines.each_index.select { |i| lines[i, marker.lines.length].join.chomp == marker }
+  abort "conditional count #{marker}: #{starts.length}" unless starts.length == 1
+  first = starts.first
+  depth = 0
+  lines[first..].each_with_index do |line, offset|
+    depth += 1 if line.match?(/^#\s*(?:if|ifdef|ifndef)\b/)
+    depth -= 1 if line.match?(/^#\s*endif\b/)
+    return lines[first, offset + 1].join if depth.zero?
+  end
+  abort "unterminated conditional #{marker}"
+end
+
 def function(text, name)
   matches = text.scan(/^(?:static )?(?:int|void)\n#{Regexp.escape(name)}\(.*?^}/m)
   abort "function count #{name}: #{matches.length}" unless matches.length == 1
@@ -56,15 +71,14 @@ end
 arm = files.fetch(inputs[0])
 state = arm[/^static struct arm_simplefb_softc \{.*?^static bus_space_handle_t arm_simplefb_bsh;/m]
 abort 'missing actual ARM state' unless state
-registration = files.fetch(inputs[2])[/^#ifdef WSDISPLAY_EARLYFB_HOOKS
-enum \{.*?^#endif/m]
+registration = conditional(files.fetch(inputs[2]), "#ifdef WSDISPLAY_EARLYFB_HOOKS\nenum {")
 abort 'missing actual MI registration' unless registration
 api = files.fetch(inputs[4])[/^#ifdef WSDISPLAY_EARLYFB_HOOKS
 \/\* Actual binding.*?^#endif/m]
 abort 'missing actual MI API' unless api
 api += "\nvoid wsdisplay_preattach(const struct wsscreen_descr *, void *, int, int, long);\n"
 arm_functions = "#ifdef WSDISPLAY_EARLYFB_HOOKS\n" + function(arm, 'arm_simplefb_replay') + "\n#endif\n" + function(arm, 'arm_simplefb_preattach')
-ws_functions = %w[wsdisplay_preattach wsdisplay_cnputc wsdisplay_pollc].map do |name|
+ws_functions = %w[wsdisplay_preattach_impl wsdisplay_preattach wsdisplay_cnputc wsdisplay_pollc].map do |name|
   function(files.fetch(inputs[2]), name)
 end.join("\n\n")
 replay = function(files.fetch(inputs[3]), 'vcons_replay_msgbuf')
@@ -141,7 +155,7 @@ end
     'outer-replay' => ['mi-state.h', 's = pserialize_read_enter();', 's = 0;'],
     'ready-early' => ['mi-state.h', "\treplay(arg);", "\tatomic_store_release(&wsdisplay_early_phase, WSDISPLAY_EARLY_READY);\n\treplay(arg);"],
     'context' => ['arm-functions.h', 'panicstr != NULL || cpu_intr_p() || cpu_softintr_p()', 'false'],
-    'panic-ready' => ['mi-state.h', "if (panicstr != NULL)\n\t\treturn EWOULDBLOCK;", 'if (false) return EWOULDBLOCK;'],
+    'panic-ready' => ['mi-state.h', 'if (panicstr != NULL) {', 'if (false) {'],
 'register' => ['mi-state.h', 'WSDISPLAY_EARLY_REGISTERING);', 'WSDISPLAY_EARLY_STARTING);'],
 'identity-cookie' => ['wsdisplay-functions.h', 'wsdisplay_console_conf.emulcookie == wsdisplay_early_cookie)', 'true)'],
 'identity-screen' => ['wsdisplay-functions.h', 'wsdisplay_console_conf.scrdata == wsdisplay_early_type &&', 'true &&'],
@@ -149,7 +163,7 @@ end
 'runtime-device' => ['wsdisplay-functions.h', 'wsdisplay_console_device == NULL &&', 'true &&'],
 'repeat-arm' => ['arm-functions.h', 'wsdisplay_early_output_snapshot(&early) == 0)', 'wsdisplay_early_output_snapshot(&early) == 0 && false)'],
 'context-mi' => ['mi-state.h', 'panicstr != NULL || cpu_intr_p() || cpu_softintr_p()', 'false'],
-'post-binding' => ['mi-state.h', "\tif (!wsdisplay_early_binding())\n\t\treturn ENXIO;\n\tatomic_store_release(&wsdisplay_early_phase, WSDISPLAY_EARLY_READY);", "\tatomic_store_release(&wsdisplay_early_phase, WSDISPLAY_EARLY_READY);"],
+'post-binding' => ['mi-state.h', "\tif (!wsdisplay_early_binding()) {\n\t\terror = ENXIO;\n\t\tgoto out;\n\t}\n\tatomic_store_release(&wsdisplay_early_phase, WSDISPLAY_EARLY_READY);", "\tatomic_store_release(&wsdisplay_early_phase, WSDISPLAY_EARLY_READY);"],
 'once' => ['mi-state.h', 'WSDISPLAY_EARLY_STARTING) != WSDISPLAY_EARLY_NONE)', 'WSDISPLAY_EARLY_STARTING) != WSDISPLAY_EARLY_NONE && false)']
   }
   selected = ENV['EARLYFB_MUTANTS'] ? ENV.fetch('EARLYFB_MUTANTS').split : mutants.keys

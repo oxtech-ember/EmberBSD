@@ -27,6 +27,10 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: genfb.c,v 1.92 2025/04/29 12:20:36 tsutsui Exp $");
 
@@ -239,7 +243,7 @@ genfb_init(struct genfb_softc *sc)
 	prop_dictionary_t dict;
 	uint64_t cmap_cb, pmf_cb, mode_cb, bl_cb, br_cb, devcmap, fbaddr;
 	uint64_t fboffset;
-	bool console;
+	bool console = false;
 
 	scp = sc->sc_private = kmem_zalloc(sizeof(*sc->sc_private), KM_SLEEP);
 
@@ -369,7 +373,11 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 	paddr_t fb_phys;
 	uint16_t crow;
 	long defattr;
-	bool console;
+	bool console = false;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	device_t child;
+	int attach_error;
+#endif
 #ifdef SPLASHSCREEN
 	int i, j;
 	int error = ENXIO;
@@ -379,6 +387,13 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 
 	dict = device_properties(sc->sc_dev);
 	prop_dictionary_get_bool(dict, "is_console", &console);
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (console) {
+		attach_error = wsdisplay_console_enter(sc->sc_dev);
+		if (attach_error != 0)
+			return attach_error;
+	}
+#endif
 
 	if (prop_dictionary_get_uint16(dict, "cursor-row", &crow) == false)
 		crow = 0;
@@ -464,9 +479,17 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 		scp->sc_want_clear = 1;
 	}
 
-	if (console)
+	if (console) {
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		attach_error = wsdisplay_cnattach_checked(
+		    &scp->sc_defaultscreen_descr, ri, 0, crow, defattr);
+		if (attach_error != 0)
+			goto out;
+#else
 		wsdisplay_cnattach(&scp->sc_defaultscreen_descr, ri, 0, crow,
 		    defattr);
+#endif
+	}
 
 	/* Clear the whole screen to bring it to a known state. */
 	if (scp->sc_want_clear)
@@ -525,10 +548,20 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 		SCREEN_DISABLE_DRAWING(&scp->sc_console_screen);
 #endif
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	attach_error = wsdisplay_emul_attach_checked(sc->sc_dev, &aa,
+	    CFARGS(.iattr = "wsemuldisplaydev"), &child);
+	if (attach_error == 0)
+		device_release(child);
+out:
+	if (console)
+		wsdisplay_console_exit(sc->sc_dev);
+	return attach_error;
+#else
 	config_found(sc->sc_dev, &aa, wsemuldisplaydevprint,
 	    CFARGS(.iattr = "wsemuldisplaydev"));
-
 	return 0;
+#endif
 }
 
 static int

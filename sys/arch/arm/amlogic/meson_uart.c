@@ -57,6 +57,9 @@ __KERNEL_RCSID(1, "$NetBSD: meson_uart.c,v 1.7 2022/10/26 23:38:06 riastradh Exp
 #include <ddb/db_active.h>
 
 #include <dev/cons.h>
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
 
 #include <dev/fdt/fdtvar.h>
 
@@ -227,7 +230,11 @@ meson_uart_attach(device_t parent, device_t self, void *aux)
 
 	aprint_naive("\n");
 	if (meson_uart_console_phandle == phandle) {
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		meson_uart_consdev.cn_dev = tp->t_dev;
+#else
 		cn_tab->cn_dev = tp->t_dev;
+#endif
 		aprint_normal(": console");
 	}
 	aprint_normal("\n");

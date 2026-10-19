@@ -123,8 +123,9 @@ The existing `simplefb-contract.rb` routes current-source legacy checks through
 this shared-record fixture. Its old-export baseline controls remain available.
 
 These controls establish no real MP race or grace-period behavior. Issuer claim
-and cancel leave actual cnputc and replay enabled. Publication interlocks,
-close/drain, an independent sink and irreversible hardware handoff remain
+and cancel leave actual cnputc and replay enabled. The separate default-off
+[checked publication foundation](console-publication.md) covers selected binders.
+Close/drain, an independent sink and irreversible hardware handoff remain
 separate work. Native TU checks require actual selected warning flags, matching
 headers and explicitly generated off/on option headers. They do not establish a
 coherent kernel link or physical display handoff.

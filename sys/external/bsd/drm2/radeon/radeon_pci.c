@@ -29,6 +29,10 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: radeon_pci.c,v 1.24 2023/08/07 16:35:06 riastradh Exp $");
 
@@ -293,8 +297,17 @@ radeon_attach_real(device_t self)
 	if (prop_dictionary_get_bool(device_properties(self), "is_console",
 		&is_console) &&
 	    is_console &&
-	    genfb_is_console())
+	    genfb_is_console()) {
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		KERNEL_LOCK(1, NULL);
+		error = wsdisplay_predetach_checked();
+		KERNEL_UNLOCK_ONE(NULL);
+		if (error != 0)
+			goto out;
+#else
 		wsdisplay_predetach();
+#endif
+	}
     }
 #endif
 

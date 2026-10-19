@@ -55,8 +55,9 @@ vcons rendering thread/softinterrupt route. Reader hooks still do not prove
 that every future framebuffer writer is covered. A generic non-sleeping replay
 callback remains a caller obligation.
 
-There is no successful close/drain API. Runtime genfb/wsdisplay publication,
-serialized boot fallback exclusion, irreversible console commitment, rollback,
+There is no successful close/drain API. The default-off
+[checked publication foundation](console-publication.md) covers selected runtime
+binders. Irreversible console commitment, rollback,
 an independent output sink and firmware handoff are separate requirements.
 `genfb_disable` is not detach/drain. A future issuer must also account for actual
 render and fallback `config_finalize` ordering. No fallback state changes here.

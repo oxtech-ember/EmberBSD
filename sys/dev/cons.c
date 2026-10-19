@@ -41,11 +41,16 @@
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: cons.c,v 1.95 2023/09/02 17:44:59 riastradh Exp $");
 
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
+
 #include <sys/param.h>
 
 #include <sys/atomic.h>
 #include <sys/buf.h>
 #include <sys/conf.h>
+#include <sys/cpu.h>
 #include <sys/file.h>
 #include <sys/heartbeat.h>
 #include <sys/ioctl.h>
@@ -60,6 +65,7 @@ __KERNEL_RCSID(0, "$NetBSD: cons.c,v 1.95 2023/09/02 17:44:59 riastradh Exp $");
 #include <sys/vnode.h>
 
 #include <dev/cons.h>
+#include <dev/cons_handoffvar.h>
 
 #include "nullcons.h"
 
@@ -95,6 +101,82 @@ struct	tty *volatile constty;	/* virtual console output device */
 struct	consdev *cn_tab;	/* physical console device info */
 struct	vnode *cn_devvp[2];	/* vnode for underlying device. */
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#define CN_PUBLICATION_CLOSED (1U << 31)
+#define CN_PUBLICATION_COUNT (CN_PUBLICATION_CLOSED - 1U)
+static unsigned int cn_publication;
+
+int
+cn_publication_enter(void)
+{
+	unsigned int value;
+
+	for (;;) {
+		value = atomic_load_acquire(&cn_publication);
+		if ((value & CN_PUBLICATION_CLOSED) != 0)
+			return EBUSY;
+		if ((value & CN_PUBLICATION_COUNT) == CN_PUBLICATION_COUNT)
+			return EOVERFLOW;
+		if (atomic_cas_uint(&cn_publication, value, value + 1) == value)
+			return 0;
+	}
+}
+
+void
+cn_publication_exit(void)
+{
+	unsigned int value;
+
+	for (;;) {
+		value = atomic_load_relaxed(&cn_publication);
+		KASSERT((value & CN_PUBLICATION_COUNT) != 0);
+		if (atomic_cas_uint(&cn_publication, value, value - 1) == value)
+			return;
+	}
+}
+
+int
+cn_publication_freeze(void)
+{
+	unsigned int value;
+
+	/* No caller in this foundation. A future lease owner must stop readers. */
+	value = atomic_cas_uint(&cn_publication, 0, CN_PUBLICATION_CLOSED);
+	if (value == 0)
+		return 0;
+	return value == CN_PUBLICATION_CLOSED ? EALREADY : EBUSY;
+}
+
+bool
+cn_publication_closed(void)
+{
+
+	return (atomic_load_acquire(&cn_publication) & CN_PUBLICATION_CLOSED) != 0;
+}
+
+int
+cn_set_tab_checked(struct consdev *tab)
+{
+	int error;
+
+	if (tab == NULL)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	if (!KERNEL_LOCKED_P())
+		return EDEADLK;
+	/* This bounded setter must not replace an active publication. */
+	if (atomic_load_acquire(&cn_publication) != 0)
+		return EBUSY;
+	error = cn_publication_enter();
+	if (error != 0)
+		return error;
+	cn_tab = tab;
+	cn_publication_exit();
+	return 0;
+}
+#else
 void
 cn_set_tab(struct consdev *tab)
 {
@@ -110,6 +192,7 @@ cn_set_tab(struct consdev *tab)
 	 */
 	cn_tab = tab;
 }
+#endif
 
 int
 cnopen(dev_t dev, int flag, int mode, struct lwp *l)

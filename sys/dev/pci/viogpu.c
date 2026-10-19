@@ -43,6 +43,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
+
 #include <sys/cdefs.h>
 
 #include <sys/param.h>
@@ -279,8 +283,30 @@ viogpu_attach_postintr(device_t self)
 	long defattr;
 	int nsegs;
 	int error;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	device_t child;
+#endif
 
+#ifdef WSDISPLAY_MULTICONS
+	sc->is_console = true;
+#else
+	sc->is_console = false;
+#endif
+	dict = device_properties(self);
+	prop_dictionary_get_bool(dict, "is_console", &sc->is_console);
+
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (sc->is_console) {
+		error = wsdisplay_console_enter(self);
+		if (error != 0) {
+			aprint_error_dev(self, "console admission failed: %d\n",
+			    error);
+			return;
+		}
+	}
+#endif
 	/* Set up DMA space for sending commands. */
+
 	error = bus_dmamap_create(virtio_dmat(vsc), VIOGPU_CMD_DMA_SIZE, 1,
 	    VIOGPU_CMD_DMA_SIZE, 0, BUS_DMA_NOWAIT | BUS_DMA_ALLOCNOW,
 	    &sc->sc_dma_map);
@@ -358,13 +384,7 @@ viogpu_attach_postintr(device_t self)
 	    sc->sc_fb_height) != 0)
 		goto fb_unmap;
 
-#ifdef WSDISPLAY_MULTICONS
-	sc->is_console = true;
-#else
-	sc->is_console = false;
-#endif
-	dict = device_properties(self);
-	prop_dictionary_get_bool(dict, "is_console", &sc->is_console);
+
 
 	sc->sc_wsd = (struct wsscreen_descr){
 		"std",
@@ -392,7 +412,14 @@ viogpu_attach_postintr(device_t self)
 	sc->sc_wsd.ncols = ri->ri_cols;
 
 	if (sc->is_console) {
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		error = wsdisplay_cnattach_checked(&sc->sc_wsd, ri, 0, 0,
+		    defattr);
+		if (error != 0)
+			goto retained;
+#else
 		wsdisplay_cnattach(&sc->sc_wsd, ri, 0, 0, defattr);
+#endif
 		vcons_replay_msgbuf(&sc->sc_vcs);
 	}
 
@@ -404,9 +431,21 @@ viogpu_attach_postintr(device_t self)
 	waa.accesscookie = &sc->sc_vd;
 	waa.console = sc->is_console;
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	error = wsdisplay_emul_attach_checked(self, &waa, CFARGS_NONE, &child);
+	if (error != 0)
+		goto retained;
+	device_release(child);
+#else
 	config_found(self, &waa, wsemuldisplaydevprint, CFARGS_NONE);
-
-	return;
+#endif
+	goto publication_out;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+retained:
+	/* Scanout and vcons can already use these buffers. Do not free them. */
+	aprint_error_dev(self, "console attach failed: %d; retained\n", error);
+	goto publication_out;
+#endif
 
 fb_unmap:
 	bus_dmamem_unmap(virtio_dmat(vsc), &sc->sc_fb_dma_kva,
@@ -428,6 +467,11 @@ err:
 	virtio_child_attach_failed(vsc);
 	cv_destroy(&sc->req_wait);
 	mutex_destroy(&sc->sc_mutex);
+publication_out:
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (sc->is_console)
+		wsdisplay_console_exit(self);
+#endif
 	return;
 }
 

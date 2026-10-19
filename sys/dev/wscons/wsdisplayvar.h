@@ -169,10 +169,28 @@ struct wscons_syncops {
 /*
  * Autoconfiguration helper functions.
  */
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+struct cfargs;
+struct wsemuldisplaydev_attach_args;
+/* Process context. Success holds Giant and publication until exit. */
+int wsdisplay_console_enter(device_t) __attribute__((__warn_unused_result__));
+void wsdisplay_console_exit(device_t);
+/* Process context with Giant and the same-thread frontend reservation. */
+int wsdisplay_cnattach_checked(const struct wsscreen_descr *, void *, int, int,
+    long) __attribute__((__warn_unused_result__));
+/* Only the selected, serialized cold bootstrap caller may preattach. */
+int wsdisplay_preattach_checked(const struct wsscreen_descr *, void *, int, int,
+    long) __attribute__((__warn_unused_result__));
+/* Success transfers one acquired child reference. Error leaves output unchanged. */
+int wsdisplay_emul_attach_checked(device_t,
+    struct wsemuldisplaydev_attach_args *, const struct cfargs *, device_t *)
+    __attribute__((__warn_unused_result__));
+#else
 void	wsdisplay_cnattach(const struct wsscreen_descr *, void *, int, int,
             long);
 void	wsdisplay_preattach(const struct wsscreen_descr *, void *, int, int,
             long);
+#endif
 #ifdef WSDISPLAY_EARLYFB_HOOKS
 /* Actual binding/replay facts only. No stop, handoff or MMIO right is granted. */
 struct wsdisplay_early_output {
@@ -190,8 +208,14 @@ int wsdisplay_early_preattach(const struct wsscreen_descr *, void *, int, int,
 int wsdisplay_early_output_snapshot(struct wsdisplay_early_output *);
 #endif
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+/* Process context with Giant; no frontend reservation may be active. */
+int wsdisplay_predetach_checked(void) __attribute__((__warn_unused_result__));
+int wsdisplay_cndetach_checked(void) __attribute__((__warn_unused_result__));
+#else
 void	wsdisplay_predetach(void);
 void	wsdisplay_cndetach(void);
+#endif
 void	wsdisplay_multicons_suspend(bool);
 
 int	wsdisplaydevprint(void *, const char *);

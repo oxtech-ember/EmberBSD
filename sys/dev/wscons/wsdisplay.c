@@ -71,6 +71,7 @@ __KERNEL_RCSID(0, "$NetBSD: wsdisplay.c,v 1.166 2023/03/01 08:42:33 riastradh Ex
 #include <dev/wscons/wsemulvar.h>
 #include <dev/wscons/wscons_callbacks.h>
 #include <dev/cons.h>
+#include <dev/cons_handoffvar.h>
 
 #ifdef WSDISPLAY_EARLYFB_HOOKS
 #include <sys/atomic.h>
@@ -142,6 +143,13 @@ static int wsdisplay_delscreen(struct wsdisplay_softc *, int, int);
 
 struct wsdisplay_softc {
 	device_t sc_dev;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	bool sc_attach_done;
+	bool sc_attach_initialized;
+	bool sc_attach_hold;
+	int sc_attach_error;
+	int sc_attach_close_error;
+#endif
 
 	const struct wsdisplay_accessops *sc_accessops;
 	void	*sc_accesscookie;
@@ -238,7 +246,7 @@ static int wsdisplayparam(struct tty *, struct termios *);
 #define	WSSCREEN_HAS_EMULATOR(scr)	((scr)->scr_dconf->wsemul != NULL)
 #define	WSSCREEN_HAS_TTY(scr)	((scr)->scr_tty != NULL)
 
-static void wsdisplay_common_attach(struct wsdisplay_softc *sc,
+static int wsdisplay_common_attach(struct wsdisplay_softc *sc,
 	    int console, int kbdmux, const struct wsscreen_list *,
 	    const struct wsdisplay_accessops *accessops,
 	    void *accesscookie);
@@ -617,11 +625,200 @@ wsdisplay_delscreen(struct wsdisplay_softc *sc, int idx, int flags)
 /*
  * Autoconfiguration functions.
  */
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+static struct {
+	device_t parent;
+	struct wsemuldisplaydev_attach_args *aux;
+	struct lwp *lwp;
+} wsdisplay_parent_operation;
+
+static struct {
+	device_t device;
+	struct lwp *lwp;
+	unsigned int depth;
+} wsdisplay_console_operation;
+
+/* The selected frontends reserve before their first console effect. */
+int
+wsdisplay_console_enter(device_t device)
+{
+	int error;
+
+	if (device == NULL)
+		return EINVAL;
+
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	KERNEL_LOCK(1, NULL);
+	if (wsdisplay_console_operation.device != NULL &&
+	    (wsdisplay_console_operation.device != device ||
+	    wsdisplay_console_operation.lwp != curlwp)) {
+		KERNEL_UNLOCK_ONE(NULL);
+		return EBUSY;
+	}
+	if (wsdisplay_console_operation.depth == UINT_MAX) {
+		KERNEL_UNLOCK_ONE(NULL);
+		return EOVERFLOW;
+	}
+	error = cn_publication_enter();
+	if (error != 0) {
+		KERNEL_UNLOCK_ONE(NULL);
+		return error;
+	}
+	if (wsdisplay_console_initted >= 2 ||
+	    wsdisplay_console_device != NULL) {
+		cn_publication_exit();
+		KERNEL_UNLOCK_ONE(NULL);
+		return EBUSY;
+	}
+	wsdisplay_console_operation.device = device;
+	wsdisplay_console_operation.lwp = curlwp;
+	wsdisplay_console_operation.depth++;
+	return 0;
+}
+
+void
+wsdisplay_console_exit(device_t device)
+{
+
+	KASSERT(KERNEL_LOCKED_P());
+	KASSERT(wsdisplay_console_operation.device == device);
+	KASSERT(wsdisplay_console_operation.lwp == curlwp);
+	KASSERT(wsdisplay_console_operation.depth != 0);
+	if (--wsdisplay_console_operation.depth == 0) {
+		wsdisplay_console_operation.device = NULL;
+		wsdisplay_console_operation.lwp = NULL;
+	}
+	cn_publication_exit();
+	KERNEL_UNLOCK_ONE(NULL);
+}
+
+static int
+wsdisplay_mutation_context(bool attach)
+{
+
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	if (!KERNEL_LOCKED_P())
+		return EDEADLK;
+	if (attach) {
+		if (wsdisplay_console_operation.device == NULL ||
+		    wsdisplay_console_operation.lwp != curlwp)
+			return EBUSY;
+	} else if (wsdisplay_console_operation.device != NULL) {
+		return EBUSY;
+	}
+	return 0;
+}
+
+static bool
+wsdisplay_parent_matches(device_t parent, void *aux)
+{
+
+	return wsdisplay_parent_operation.parent == parent &&
+	    wsdisplay_parent_operation.aux == aux &&
+	    wsdisplay_parent_operation.lwp == curlwp;
+}
+
+int
+wsdisplay_emul_attach_checked(device_t parent,
+    struct wsemuldisplaydev_attach_args *aux, const struct cfargs *args,
+    device_t *out)
+{
+	struct wsdisplay_softc *sc;
+	cfdriver_t driver;
+	device_t child, live;
+	deviter_t iterator;
+	int error, close_error, unit;
+	bool console;
+
+	if (parent == NULL || aux == NULL || out == NULL)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	KERNEL_LOCK(1, NULL);
+	console = aux->console != 0;
+	if (wsdisplay_parent_operation.parent != NULL) {
+		error = EDEADLK;
+		goto unlock;
+	}
+	if (console) {
+		if (wsdisplay_console_operation.device != parent ||
+		    wsdisplay_console_operation.lwp != curlwp) {
+			error = EBUSY;
+			goto unlock;
+		}
+		error = cn_publication_enter();
+		if (error != 0)
+			goto unlock;
+	}
+	wsdisplay_parent_operation.parent = parent;
+	wsdisplay_parent_operation.aux = aux;
+	wsdisplay_parent_operation.lwp = curlwp;
+	child = config_found_acquire(parent, aux, wsemuldisplaydevprint, args);
+	wsdisplay_parent_operation.parent = NULL;
+	wsdisplay_parent_operation.aux = NULL;
+	wsdisplay_parent_operation.lwp = NULL;
+	if (child == NULL) {
+		error = ENXIO;
+		goto release;
+	}
+	if (!device_is_a(child, "wsdisplay") ||
+	    strcmp(device_cfattach(child)->ca_name, "wsdisplay_emul") != 0) {
+		/* The foreign child stays in autoconf; do not pin its drain. */
+		device_release(child);
+		error = EPROTO;
+		goto release;
+	}
+	sc = device_private(child);
+	if (sc->sc_attach_done && sc->sc_attach_error == 0) {
+		*out = child;
+		error = 0;
+		goto release;
+	}
+	error = sc->sc_attach_done ? sc->sc_attach_error : EPROTO;
+	if (error == 0)
+		error = EPROTO;
+	driver = device_cfdriver(child);
+	unit = device_unit(child);
+	/* This pins allocation, not localcount. Detach consumes the input ref. */
+	deviter_init(&iterator, 0);
+	close_error = config_detach_release(child, 0);
+	if (close_error != 0) {
+		live = device_lookup_acquire(driver, unit);
+		if (live == child) {
+			sc = device_private(live);
+			sc->sc_attach_hold = true;
+			sc->sc_attach_error = error;
+			sc->sc_attach_close_error = close_error;
+		} else if (live != NULL) {
+			device_release(live);
+		}
+		aprint_error_dev(parent, "wsdisplay attach error %d, "
+		    "detach error %d; no retry\n", error, close_error);
+	}
+	deviter_release(&iterator);
+release:
+	if (console)
+		cn_publication_exit();
+unlock:
+	KERNEL_UNLOCK_ONE(NULL);
+	return error;
+}
+#endif
+
 int
 wsdisplay_emul_match(device_t parent, cfdata_t match, void *aux)
 {
 	struct wsemuldisplaydev_attach_args *ap = aux;
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (ap->console && !wsdisplay_parent_matches(parent, aux))
+		return 0;
+#endif
 	if (match->cf_loc[WSEMULDISPLAYDEVCF_CONSOLE] !=
 	    WSEMULDISPLAYDEVCF_CONSOLE_DEFAULT) {
 		/*
@@ -646,24 +843,53 @@ wsdisplay_emul_attach(device_t parent, device_t self, void *aux)
 	struct wsemuldisplaydev_attach_args *ap = aux;
 
 	sc->sc_dev = self;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	sc->sc_attach_done = false;
+	if (ap->console && (!wsdisplay_parent_matches(parent, aux) ||
+	    wsdisplay_console_attached)) {
+		sc->sc_attach_error = EBUSY;
+		sc->sc_attach_done = true;
+		return;
+	}
+#endif
 
 	/* Don't allow more than one console to attach */
+#ifndef WSDISPLAY_BOOTFB_HANDOFF
 	if (wsdisplay_console_attached && ap->console)
 		ap->console = 0;
+#endif
 
-	wsdisplay_common_attach(sc, ap->console,
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	sc->sc_attach_error = wsdisplay_common_attach(sc, ap->console,
+#else
+	(void)wsdisplay_common_attach(sc, ap->console,
+#endif
 	     device_cfdata(self)->cf_loc[WSEMULDISPLAYDEVCF_KBDMUX],
 	     ap->scrdata, ap->accessops, ap->accesscookie);
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (sc->sc_attach_error != 0) {
+		sc->sc_attach_done = true;
+		return;
+	}
+#endif
 	if (ap->console) {
 		int maj;
 
 		/* locate the major number */
 		maj = cdevsw_lookup_major(&wsdisplay_cdevsw);
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		wsdisplay_cons.cn_dev = makedev(maj,
+		    WSDISPLAYMINOR(device_unit(self), 0));
+#else
 		cn_tab->cn_dev = makedev(maj, WSDISPLAYMINOR(device_unit(self),
 					 0));
+#endif
 	}
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	sc->sc_attach_done = true;
+#endif
 }
 
 /* Print function (for parent devices). */
@@ -689,6 +915,12 @@ wsdisplay_emul_detach(device_t dev, int how)
 	struct wsdisplay_softc *sc = device_private(dev);
 	int flag, i, res;
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (sc->sc_attach_hold)
+		return EBUSY;
+	if (!sc->sc_attach_initialized)
+		return 0;
+#endif
 	flag = (how & DETACH_FORCE ? WSDISPLAY_DELSCR_FORCE : 0);
 	for (i = 0; i < WSDISPLAY_MAXSCREEN; i++)
 		if (sc->sc_scr[i]) {
@@ -721,7 +953,7 @@ wsdisplay_noemul_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_dev = self;
 
-	wsdisplay_common_attach(sc, 0,
+	(void)wsdisplay_common_attach(sc, 0,
 	    device_cfdata(self)->cf_loc[WSDISPLAYDEVCF_KBDMUX], NULL,
 	    ap->accessops, ap->accesscookie);
 }
@@ -837,13 +1069,28 @@ wsdisplaydevprint(void *aux, const char *pnp)
 	return UNCONF;
 }
 
-static void
+static int
 wsdisplay_common_attach(struct wsdisplay_softc *sc, int console, int kbdmux,
 	const struct wsscreen_list *scrdata,
 	const struct wsdisplay_accessops *accessops,
 	void *accesscookie)
 {
 	int i, start=0;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	int error;
+
+	if (console) {
+		error = cn_publication_enter();
+		if (error != 0)
+			return error;
+		if (!wsdisplay_console_initted ||
+		    wsdisplay_console_device != NULL ||
+		    cn_tab != &wsdisplay_cons) {
+			cn_publication_exit();
+			return EBUSY;
+		}
+	}
+#endif
 #if NWSKBD > 0
 	struct wsevsrc *kme;
 #if NWSMUX > 0
@@ -899,6 +1146,9 @@ wsdisplay_common_attach(struct wsdisplay_softc *sc, int console, int kbdmux,
 
 	mutex_init(&sc->sc_flagsmtx, MUTEX_DEFAULT, IPL_NONE);
 	cv_init(&sc->sc_flagscv, "wssw");
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	sc->sc_attach_initialized = true;
+#endif
 
 	sc->sc_accessops = accessops;
 	sc->sc_accesscookie = accesscookie;
@@ -924,10 +1174,15 @@ wsdisplay_common_attach(struct wsdisplay_softc *sc, int console, int kbdmux,
 	if (!pmf_device_register(sc->sc_dev, wsdisplay_suspend, NULL))
 		aprint_error_dev(sc->sc_dev,
 		    "couldn't establish power handler\n");
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (console)
+		cn_publication_exit();
+#endif
+	return 0;
 }
 
-void
-wsdisplay_cnattach(const struct wsscreen_descr *type, void *cookie,
+static void
+wsdisplay_cnattach_impl(const struct wsscreen_descr *type, void *cookie,
 	int ccol, int crow, long defattr)
 {
 	const struct wsemul_ops *wsemul;
@@ -957,6 +1212,41 @@ wsdisplay_cnattach(const struct wsscreen_descr *type, void *cookie,
 	cn_tab = &wsdisplay_cons;
 	wsdisplay_console_initted = 2;
 }
+
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+int
+wsdisplay_cnattach_checked(const struct wsscreen_descr *type, void *cookie,
+    int ccol, int crow, long defattr)
+{
+	int error;
+
+	if (type == NULL || cookie == NULL || type->nrows <= 0 ||
+	    type->ncols <= 0 || ccol < 0 || crow < 0 ||
+	    ccol >= type->ncols || crow >= type->nrows)
+		return EINVAL;
+	error = wsdisplay_mutation_context(true);
+	if (error != 0)
+		return error;
+	error = cn_publication_enter();
+	if (error != 0)
+		return error;
+	if (wsdisplay_console_initted >= 2) {
+		cn_publication_exit();
+		return EBUSY;
+	}
+	wsdisplay_cnattach_impl(type, cookie, ccol, crow, defattr);
+	cn_publication_exit();
+	return 0;
+}
+#else
+void
+wsdisplay_cnattach(const struct wsscreen_descr *type, void *cookie,
+    int ccol, int crow, long defattr)
+{
+
+	wsdisplay_cnattach_impl(type, cookie, ccol, crow, defattr);
+}
+#endif
 
 #ifdef WSDISPLAY_EARLYFB_HOOKS
 enum {
@@ -1004,7 +1294,7 @@ int
 wsdisplay_early_preattach(const struct wsscreen_descr *type, void *cookie,
     int ccol, int crow, long defattr, void (*replay)(void *), void *arg)
 {
-	int s;
+	int s, error = 0;
 
 	if (type == NULL || cookie == NULL || replay == NULL)
 		return EINVAL;
@@ -1013,26 +1303,49 @@ wsdisplay_early_preattach(const struct wsscreen_descr *type, void *cookie,
 	/* The caller keeps the same attachment serialization as preattach. */
 	if (wsdisplay_console_initted != 0 || wsdisplay_console_device != NULL)
 		return EBUSY;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	error = cn_publication_enter();
+	if (error != 0)
+		return error;
+#endif
 	if (atomic_cas_uint(&wsdisplay_early_phase, WSDISPLAY_EARLY_NONE,
-	    WSDISPLAY_EARLY_STARTING) != WSDISPLAY_EARLY_NONE)
-		return EBUSY;
+	    WSDISPLAY_EARLY_STARTING) != WSDISPLAY_EARLY_NONE) {
+		error = EBUSY;
+		goto out;
+	}
 	wsdisplay_early_type = type;
 	wsdisplay_early_cookie = cookie;
 	/* Cover output immediately after the real preattach publishes cn_tab. */
 	atomic_store_release(&wsdisplay_early_phase, WSDISPLAY_EARLY_REGISTERING);
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	error = wsdisplay_preattach_checked(type, cookie, ccol, crow, defattr);
+	if (error != 0)
+		goto out;
+#else
 	wsdisplay_preattach(type, cookie, ccol, crow, defattr);
-	if (!wsdisplay_early_binding())
-		return ENXIO;
+#endif
+	if (!wsdisplay_early_binding()) {
+		error = ENXIO;
+		goto out;
+	}
 	atomic_store_release(&wsdisplay_early_phase, WSDISPLAY_EARLY_BOUND);
 	s = pserialize_read_enter();
 	replay(arg);
 	pserialize_read_exit(s);
-	if (panicstr != NULL)
-		return EWOULDBLOCK;
-	if (!wsdisplay_early_binding())
-		return ENXIO;
+	if (panicstr != NULL) {
+		error = EWOULDBLOCK;
+		goto out;
+	}
+	if (!wsdisplay_early_binding()) {
+		error = ENXIO;
+		goto out;
+	}
 	atomic_store_release(&wsdisplay_early_phase, WSDISPLAY_EARLY_READY);
-	return 0;
+out:
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	cn_publication_exit();
+#endif
+	return error;
 }
 #endif
 
@@ -1051,8 +1364,8 @@ wsdisplay_early_binding_matches(const struct wsscreen_descr *type, void *cookie)
 }
 #endif
 
-void
-wsdisplay_preattach(const struct wsscreen_descr *type, void *cookie,
+static void
+wsdisplay_preattach_impl(const struct wsscreen_descr *type, void *cookie,
 	int ccol, int crow, long defattr)
 {
 	const struct wsemul_ops *wsemul;
@@ -1083,8 +1396,45 @@ wsdisplay_preattach(const struct wsscreen_descr *type, void *cookie,
 	wsdisplay_console_initted = 1;
 }
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+int
+wsdisplay_preattach_checked(const struct wsscreen_descr *type, void *cookie,
+    int ccol, int crow, long defattr)
+{
+	int error;
+
+	if (type == NULL || cookie == NULL || type->nrows <= 0 ||
+	    type->ncols <= 0 || ccol < 0 || crow < 0 ||
+	    ccol >= type->ncols || crow >= type->nrows)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	/* The selected ARM caller runs once in cold bootstrap serialization. */
+	if (!cold || wsdisplay_console_operation.device != NULL)
+		return EBUSY;
+	error = cn_publication_enter();
+	if (error != 0)
+		return error;
+	if (wsdisplay_console_initted != 0) {
+		cn_publication_exit();
+		return EBUSY;
+	}
+	wsdisplay_preattach_impl(type, cookie, ccol, crow, defattr);
+	cn_publication_exit();
+	return 0;
+}
+#else
 void
-wsdisplay_predetach(void)
+wsdisplay_preattach(const struct wsscreen_descr *type, void *cookie,
+    int ccol, int crow, long defattr)
+{
+
+	wsdisplay_preattach_impl(type, cookie, ccol, crow, defattr);
+}
+#endif
+
+static void
+wsdisplay_predetach_impl(void)
 {
 	KASSERT(wsdisplay_console_initted == 1);
 
@@ -1092,14 +1442,72 @@ wsdisplay_predetach(void)
 	wsdisplay_console_initted = 0;
 }
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+int
+wsdisplay_predetach_checked(void)
+{
+	int error;
+
+	error = wsdisplay_mutation_context(false);
+	if (error != 0)
+		return error;
+	error = cn_publication_enter();
+	if (error != 0)
+		return error;
+	if (wsdisplay_console_initted != 1 || cn_tab != &wsdisplay_cons) {
+		cn_publication_exit();
+		return EBUSY;
+	}
+	wsdisplay_predetach_impl();
+	cn_publication_exit();
+	return 0;
+}
+#else
 void
-wsdisplay_cndetach(void)
+wsdisplay_predetach(void)
+{
+
+	wsdisplay_predetach_impl();
+}
+#endif
+
+static void
+wsdisplay_cndetach_impl(void)
 {
 	KASSERT(wsdisplay_console_initted == 2);
 
 	cn_tab = wsdisplay_ocn;
 	wsdisplay_console_initted = 0;
 }
+
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+int
+wsdisplay_cndetach_checked(void)
+{
+	int error;
+
+	error = wsdisplay_mutation_context(false);
+	if (error != 0)
+		return error;
+	error = cn_publication_enter();
+	if (error != 0)
+		return error;
+	if (wsdisplay_console_initted != 2 || cn_tab != &wsdisplay_cons) {
+		cn_publication_exit();
+		return EBUSY;
+	}
+	wsdisplay_cndetach_impl();
+	cn_publication_exit();
+	return 0;
+}
+#else
+void
+wsdisplay_cndetach(void)
+{
+
+	wsdisplay_cndetach_impl();
+}
+#endif
 
 /*
  * Tty and cdevsw functions.

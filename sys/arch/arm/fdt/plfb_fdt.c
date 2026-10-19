@@ -32,6 +32,10 @@
 
 #include "opt_wsdisplay_compat.h"
 
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: plfb_fdt.c,v 1.5 2021/01/27 03:10:19 thorpej Exp $");
 
@@ -45,6 +49,9 @@ __KERNEL_RCSID(0, "$NetBSD: plfb_fdt.c,v 1.5 2021/01/27 03:10:19 thorpej Exp $")
 #include <sys/sysctl.h>
 
 #include <dev/wsfb/genfbvar.h>
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include <dev/wscons/wsdisplayvar.h>
+#endif
 
 #include <dev/fdt/fdtvar.h>
 #include <dev/fdt/display_timing.h>
@@ -127,26 +134,44 @@ plfb_attach(device_t parent, device_t self, void *aux)
 	struct clk *clk;
 	bus_addr_t addr;
 	bus_size_t size;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	int error;
+#ifdef WSDISPLAY_MULTICONS
+	const bool is_console = true;
+#else
+	const bool is_console = phandle == plfb_console_phandle;
+#endif
+#endif
 
 	sc->sc_gen.sc_dev = self;
 	sc->sc_phandle = phandle;
 	sc->sc_bst = faa->faa_bst;
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (is_console) {
+		error = wsdisplay_console_enter(self);
+		if (error != 0) {
+			aprint_error_dev(self, "console admission failed: %d\n",
+			    error);
+			return;
+		}
+	}
+#endif
 	/* Enable clocks */
 	for (int i = 0; (clk = fdtbus_clock_get_index(phandle, i)); i++)
 		if (clk_enable(clk) != 0) {
 			aprint_error(": couldn't enable clock #%d\n", i);
-			return;
+			goto out;
 		}
 
 	/* Map CLCD registers */
 	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0) {
 		aprint_error(": missing 'reg' property\n");
-		return;
+		goto out;
 	}
 	if (bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_bsh)) {
 		aprint_error(": couldn't map device\n");
-		return;
+		goto out;
 	}
 
 	/* Map VRAM */
@@ -157,17 +182,17 @@ plfb_attach(device_t parent, device_t self, void *aux)
 		 * absent, we can allocate FB from main RAM. (TODO)
 		 */
 		aprint_error(": missing 'memory-region' property\n");
-		return;
+		goto out;
 	}
 	if (fdtbus_get_reg(vram_phandle, 0, &sc->sc_vram_addr,
 	    &sc->sc_vram_size) != 0) {
 		aprint_error(": missing 'reg' property on memory-region\n");
-		return;
+		goto out;
 	}
 	if (bus_space_map(sc->sc_bst, sc->sc_vram_addr, sc->sc_vram_size,
 	    BUS_SPACE_MAP_LINEAR, &sc->sc_vram_bsh)) {
 		aprint_error(": couldn't map vram\n");
-		return;
+		goto out;
 	}
 	sc->sc_vram = (uintptr_t)bus_space_vaddr(sc->sc_bst, sc->sc_vram_bsh);
 
@@ -179,10 +204,14 @@ plfb_attach(device_t parent, device_t self, void *aux)
 	sc->sc_wstype = WSDISPLAY_TYPE_PLFB;
 
 #ifdef WSDISPLAY_MULTICONS
+#ifndef WSDISPLAY_BOOTFB_HANDOFF
 	const bool is_console = true;
+#endif
 	genfb_cnattach();
 #else
+#ifndef WSDISPLAY_BOOTFB_HANDOFF
 	const bool is_console = phandle == plfb_console_phandle;
+#endif
 	if (is_console)
 		aprint_normal_dev(self, "switching to framebuffer console\n");
 #endif
@@ -194,7 +223,7 @@ plfb_attach(device_t parent, device_t self, void *aux)
 	if (sc->sc_gen.sc_width == 0 ||
 	    sc->sc_gen.sc_fbsize == 0) {
 		aprint_normal_dev(self, "disabled\n");
-		return;
+		goto out;
 	}
 
 	pmf_device_register1(self, NULL, NULL, plfb_shutdown);
@@ -203,7 +232,20 @@ plfb_attach(device_t parent, device_t self, void *aux)
 	ops.genfb_ioctl = plfb_ioctl;
 	ops.genfb_mmap = plfb_mmap;
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	error = genfb_attach(&sc->sc_gen, &ops);
+	if (error != 0)
+		aprint_error_dev(self, "genfb attach failed: %d; retained\n",
+		    error);
+#else
 	genfb_attach(&sc->sc_gen, &ops);
+#endif
+out:
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (is_console)
+		wsdisplay_console_exit(self);
+#endif
+	return;
 }
 
 static int

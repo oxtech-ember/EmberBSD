@@ -98,6 +98,10 @@
  *	-> timecounter_lock (IPL_HIGH)
  */
 
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: plcom.c,v 1.69 2023/04/11 12:58:03 riastradh Exp $");
 
@@ -224,6 +228,10 @@ u_int plcom_rbuf_hiwat = (PLCOM_RING_SIZE * 1) / 4;
 u_int plcom_rbuf_lowat = (PLCOM_RING_SIZE * 3) / 4;
 
 static int	plcomconsunit = -1;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+extern struct consdev plcomcons;
+#endif
+
 static struct plcom_instance plcomcons_info;
 
 static int plcomconsattached;
@@ -616,7 +624,12 @@ plcom_attach_subr(struct plcom_softc *sc)
 		/* locate the major number */
 		maj = cdevsw_lookup_major(&plcom_cdevsw);
 
-		tp->t_dev = cn_tab->cn_dev = makedev(maj, device_unit(sc->sc_dev));
+		tp->t_dev = makedev(maj, device_unit(sc->sc_dev));
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		plcomcons.cn_dev = tp->t_dev;
+#else
+		cn_tab->cn_dev = tp->t_dev;
+#endif
 
 		aprint_normal_dev(sc->sc_dev, "console\n");
 	}
