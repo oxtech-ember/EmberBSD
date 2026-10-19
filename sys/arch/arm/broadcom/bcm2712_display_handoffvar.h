@@ -28,7 +28,9 @@ typedef int (*bcm2712_display_handoff_exchange_fn)(void *, void *, size_t);
  * lifetime. Never reset or replace attempted status during this boot. Invalid
  * NULL arguments leave status unchanged. Nonfresh status returns EBUSY with
  * no I/O. Set attempted before the only exchange; preserve the first error.
- * Exact protocol success sets complete. Unsupported tags return EOPNOTSUPP.
+ * A valid envelope with the tag response bit sets complete. Desired length may
+ * exceed the zero-sized value buffer; no payload is read. An unchanged zero
+ * request field returns EOPNOTSUPP. Other bit-clear fields are malformed.
  * Other malformed replies return EIO. There is no retry or cleanup operation.
  *
  * The explicit native boot owner requires its successful held-serial CPU close.

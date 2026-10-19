@@ -6,6 +6,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__SANITIZE_ADDRESS__)
+#define HANDOFF_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define HANDOFF_ASAN 1
+#endif
+#endif
+#ifdef HANDOFF_ASAN
+#include <sanitizer/asan_interface.h>
+#endif
 #include "bcm2712_display_handoffvar.h"
 
 static unsigned long checks;
@@ -22,6 +32,13 @@ static const uint8_t reply_bytes[24] = {
 	0x18, 0, 0, 0, 0, 0, 0, 0x80,
 	0x66, 0, 3, 0, 0, 0, 0, 0,
 	0, 0, 0, 0x80, 0, 0, 0, 0
+};
+
+/* Independently specified firmware reply with desired length4 and no payload. */
+static const uint8_t truncated_reply_bytes[24] = {
+	0x18, 0, 0, 0, 0, 0, 0, 0x80,
+	0x66, 0, 3, 0, 0, 0, 0, 0,
+	4, 0, 0, 0x80, 0, 0, 0, 0
 };
 
 struct fake {
@@ -49,6 +66,10 @@ exchange(void *arg, void *packet, size_t size)
 		CHECK(memcmp(&saved, f->status, sizeof(saved)) == 0 && f->calls == 1);
 	}
 	memcpy(packet, f->reply, sizeof(f->reply));
+#ifdef HANDOFF_ASAN
+	/* The actual helper supplies24 bytes. Desired length creates no payload. */
+	CHECK(__asan_address_is_poisoned((uint8_t *)packet + 24));
+#endif
 	return f->error;
 }
 
@@ -80,6 +101,10 @@ main(void)
 	struct bcm2712_display_handoff_status status, saved;
 	struct fake f;
 	static const int errors[] = { EIO, ENXIO, ETIMEDOUT, EBUSY, EOPNOTSUPP, EINVAL };
+	static const uint32_t lengths[] = {
+		0, 1, 2, 3, 4, 5, 8, 16, 0xff, 0x100, 0x10000,
+		0x12345678, 0x7fffffff
+	};
 	unsigned int i, bit;
 
 	setup(&f, &status);
@@ -89,12 +114,44 @@ main(void)
 	CHECK(bcm2712_display_notify_done(exchange, &f, NULL) == EINVAL && f.calls == 0);
 	check_result(&f, 0);
 
+	/* A zero-sized value buffer can receive any truncated desired length. */
+	setup(&f, &status);
+	memcpy(f.reply, truncated_reply_bytes, sizeof(f.reply));
+	check_result(&f, 0);
+	for (i = 0; i < sizeof(lengths) / sizeof(lengths[0]); i++) {
+		uint32_t length = lengths[i];
+
+		setup(&f, &status);
+		f.reply[16] = (uint8_t)length;
+		f.reply[17] = (uint8_t)(length >> 8);
+		f.reply[18] = (uint8_t)(length >> 16);
+		f.reply[19] = (uint8_t)(0x80 | (length >> 24));
+		check_result(&f, 0);
+		if (length == 0)
+			continue;
+		setup(&f, &status);
+		f.reply[16] = (uint8_t)length;
+		f.reply[17] = (uint8_t)(length >> 8);
+		f.reply[18] = (uint8_t)(length >> 16);
+		f.reply[19] = (uint8_t)(length >> 24);
+		check_result(&f, EIO);
+	}
 	for (i = 0; i < sizeof(reply_bytes); i++) {
 		for (bit = 0; bit < 8; bit++) {
 			setup(&f, &status);
 			f.reply[i] ^= (uint8_t)(1U << bit);
-			check_result(&f, i == 19 && bit == 7 ? EOPNOTSUPP : EIO);
+			check_result(&f, i >= 16 && i <= 19 ?
+			    (i == 19 && bit == 7 ? EOPNOTSUPP : 0) : EIO);
 		}
+	}
+	/* A truncated response still requires the same fixed envelope. */
+	for (i = 0; i < sizeof(truncated_reply_bytes); i++) {
+		if (i >= 16 && i <= 19)
+			continue;
+		setup(&f, &status);
+		memcpy(f.reply, truncated_reply_bytes, sizeof(f.reply));
+		f.reply[i] ^= 1;
+		check_result(&f, EIO);
 	}
 	for (i = 0; i < sizeof(errors) / sizeof(errors[0]); i++) {
 		setup(&f, &status);

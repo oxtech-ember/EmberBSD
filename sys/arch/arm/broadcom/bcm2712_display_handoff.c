@@ -40,6 +40,7 @@ bcm2712_display_notify_done(bcm2712_display_handoff_exchange_fn exchange,
 	status->attempted = true;
 	error = exchange(arg, packet, sizeof(packet));
 	if (error == 0) {
+		/* Desired length may exceed the zero-sized, fully truncated value. */
 		response = bcm2712_handoff_word(packet + 16);
 		if (bcm2712_handoff_word(packet) != 24 ||
 		    bcm2712_handoff_word(packet + 4) != 0x80000000U ||
@@ -49,7 +50,7 @@ bcm2712_display_notify_done(bcm2712_display_handoff_exchange_fn exchange,
 			error = EIO;
 		else if (response == 0)
 			error = EOPNOTSUPP;
-		else if (response != 0x80000000U)
+		else if ((response & 0x80000000U) == 0)
 			error = EIO;
 	}
 	status->fault = error;

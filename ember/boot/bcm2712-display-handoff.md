@@ -15,10 +15,17 @@ errno. Native mailbox transport must copy into its own stable DMA allocation;
 quarantine applies to that allocation.
 
 The packet is24 little-endian bytes: `[24,0,0x30066,0,0,0]` as six words.
-Exact success is `[24,0x80000000,0x30066,0,0x80000000,0]`. An otherwise matching
-successful reply with tag-response0 returns `EOPNOTSUPP`. Other malformed replies
-return `EIO`. Success sets `complete`; it does not establish an AXI-drain or
-shared-cache/MMU2/MMU5 exclusion predicate. Callback return time is not bounded
+A valid reply is `[24,0x80000000,0x30066,0,0x80000000|desired_length,0]`.
+The tag response bit must be set. Its lower31 bits report the desired value
+length, which may exceed the zero-sized value buffer. The documented mailbox
+truncation rule permits this response. The helper reads no absent payload and
+does not derive a read size from that length. For example, desired length4
+produces `0x80000004` and succeeds without adding payload bytes.
+An otherwise valid reply with a zero tag-response field returns `EOPNOTSUPP`.
+Bit-clear nonzero fields contain reserved request bits and return `EIO`.
+The packet size, global status, tag, zero value-buffer size and end marker must
+still match exactly. Success sets `complete`; it does not establish an AXI-drain
+or shared-cache/MMU2/MMU5 exclusion predicate. Callback return time is not bounded
 by this pure helper. Existing native mailbox lifetime rules remain required.
 
 The private native call checks its actual boot softc and CLOSED owner, then the
@@ -50,9 +57,11 @@ ICAC, MMU4, HVS, PHY, scanout DMA or KMS operation. Native linkage and physical
 acceptance of this notification stage remain pending.
 
 Run `sh ember/tools/bcm2712-display-handoff-contract.sh`. The fixture compiles
-the real C source, checks independent packet bytes, every one-bit reply
-corruption, unsupported/error precedence, transport errors, re-entry and zero
-post-attempt I/O. CHECK remains fatal with `NDEBUG`. Ten compiled behavioral
+the real C source, checks independent zero-length and truncated length4 packets,
+fixed-field corruption, all response length bits, reserved request fields,
+unsupported/error precedence, transport errors, re-entry and zero post-attempt I/O.
+ASan builds check the poisoned boundary after the actual24-byte stack packet.
+CHECK remains fatal with `NDEBUG`. Twelve compiled behavioral
 mutants verify important guards. `CC`, `CFLAGS`, `TEST_RUNNER`, `HANDOFF_OUTPUT`,
 `HANDOFF_COMPILE_ONLY=1`, `HANDOFF_SKIP_MUTANTS=1` and `HANDOFF_EVIDENCE` support
 cross compilation and evidence. Use common GCC16 and an EmberBSD target sysroot.
@@ -64,7 +73,7 @@ Pinned primary facts:
 - [Notification before display component binding](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_drv.c#L391-L405).
 - [Tag identity](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/include/soc/bcm2835/raspberrypi-firmware.h#L100).
 - [Zero-payload property construction](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/firmware/raspberrypi.c#L154-L184).
-- [Mailbox format and ignored unknown tags](https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface).
+- [Mailbox truncation, response lengths and ignored unknown tags](https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface).
 
 Only protocol facts inform this independent implementation. Linux warns after
 notification failure and continues. This BSD integration requires

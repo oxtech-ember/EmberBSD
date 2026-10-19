@@ -33,6 +33,7 @@ static int renderer_error, query_error, firmware_error, firmware_reply, firmware
 static bool expect_closed;
 static unsigned firmware_calls, firmware_status_queries, firmware_diagnostics;
 static bool firmware_permitted, firmware_reenter;
+static uint32_t firmware_length;
 static int bcmv3d_bootfb_notify(struct bcmv3d_softc *);
 static void bcmv3d_bootfb_claim_job(device_t);
 extern void serial_fixture_drop_hold(void);
@@ -44,6 +45,11 @@ static const uint8_t notify_request[24] = {
 static const uint8_t notify_reply[24] = {
 	24, 0, 0, 0, 0, 0, 0, 0x80, 0x66, 0, 3, 0,
 	0, 0, 0, 0, 0, 0, 0, 0x80, 0, 0, 0, 0
+};
+/* Independent24-byte reply: desired length4, but value buffer and payload0. */
+static const uint8_t notify_truncated_reply[24] = {
+	24, 0, 0, 0, 0, 0, 0, 0x80, 0x66, 0, 3, 0,
+	0, 0, 0, 0, 4, 0, 0, 0x80, 0, 0, 0, 0
 };
 /* Mailbox service is controlled. The fixed exchange and protocol source are real. */
 static int bcmmbox_request(uint8_t channel, void *packet, size_t length, uint32_t *response)
@@ -66,6 +72,15 @@ static int bcmmbox_request(uint8_t channel, void *packet, size_t length, uint32_
 	memcpy(packet, notify_reply, sizeof(notify_reply));
 	if (firmware_reply == 1) ((uint8_t *)packet)[4] ^= 1;
 	if (firmware_reply == 2) ((uint8_t *)packet)[19] = 0;
+	if (firmware_reply == 3)
+		memcpy(packet, notify_truncated_reply, sizeof(notify_truncated_reply));
+	if (firmware_reply == 4 || firmware_reply == 5) {
+		((uint8_t *)packet)[16] = (uint8_t)firmware_length;
+		((uint8_t *)packet)[17] = (uint8_t)(firmware_length >> 8);
+		((uint8_t *)packet)[18] = (uint8_t)(firmware_length >> 16);
+		((uint8_t *)packet)[19] = (uint8_t)(firmware_length >> 24);
+		if (firmware_reply == 4) ((uint8_t *)packet)[19] |= 0x80;
+	}
 	*response = 0x100;
 	return 0;
 }
@@ -75,7 +90,12 @@ static void firmware_message(const char *format, ...)
 	char message[192], expected[192];
 	va_list ap;
 	int n;
+	uint32_t tag_response = 0x80000000U;
 
+	if (firmware_reply == 2) tag_response = 0;
+	if (firmware_reply == 3) tag_response = 0x80000004U;
+	if (firmware_reply == 4) tag_response |= firmware_length;
+	if (firmware_reply == 5) tag_response = firmware_length;
 	firmware_diagnostics++;
 	CHECK(firmware_diagnostics == 1 && firmware_calls == 1);
 	va_start(ap, format); n = vsnprintf(message, sizeof(message), format, ap); va_end(ap);
@@ -88,7 +108,7 @@ static void firmware_message(const char *format, ...)
 		    "bcmv3d: display notify transport error 0; reply "
 		    "00000018 %08x 00030066 00000000 %08x 00000000\n",
 		    firmware_reply == 1 ? 0x80000001U : 0x80000000U,
-		    firmware_reply == 2 ? 0 : 0x80000000U);
+		    tag_response);
 	}
 	CHECK(strcmp(message, expected) == 0);
 }
@@ -178,7 +198,7 @@ static void native_initialize(bool renderer_first)
 	} else CHECK(config_finalize_register(&gpu, bcmv3d_finalize) == 0);
 	renderer_calls = renderer_error = query_error = 0; expect_closed = true;
 	firmware_calls = firmware_status_queries = firmware_diagnostics = 0; firmware_error = firmware_reply = firmware_gate = 0;
-	firmware_permitted = true; firmware_reenter = false;
+	firmware_permitted = true; firmware_reenter = false; firmware_length = 0;
 	serial_puts = serial_gets = serial_on = serial_off = 0;
 	opened = 0; bcmv3d_bootfb_queue(&gpu_sc);
 	CHECK(gpu.dv_pending == 1 && !TAILQ_EMPTY(&config_pending));
@@ -359,6 +379,25 @@ for (unsigned first = 0; first < 2; first++) {
 		CHECK(memcmp(&saved, &gpu_sc.sc_bootfb.firmware, sizeof(saved)) == 0);
 		CHECK(firmware_diagnostics == 1);
 		CHECK(gpu_sc.sc_bootfb.first_error == 0);
+	}
+	/* The real truncated length4 packet must complete the same native owner. */
+	native_initialize(false); firmware_reply = 3; firmware_reenter = true; native_finish();
+	CHECK(firmware_calls == 1 && firmware_diagnostics == 1);
+	CHECK(gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.firmware.fault == 0);
+	CHECK(gpu_sc.sc_bootfb.first_error == 0 && fallback_calls == 0 && serial_fixture_held());
+	CHECK(bcmv3d_bootfb_notify(&gpu_sc) == EBUSY && firmware_calls == 1);
+	static const uint32_t lengths[] = {0, 1, 2, 3, 4, 5, 8, 0x100, 0x12345678, 0x7fffffff};
+	for (unsigned i = 0; i < sizeof(lengths) / sizeof(lengths[0]); i++) {
+		native_initialize(false); firmware_reply = 4; firmware_length = lengths[i]; native_finish();
+		CHECK(firmware_calls == 1 && firmware_diagnostics == 1);
+		CHECK(gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.firmware.fault == 0);
+		CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED && gpu_sc.sc_bootfb.first_error == 0);
+		CHECK(fallback_calls == 0 && serial_fixture_held());
+		if (lengths[i] == 0) continue;
+		native_initialize(false); firmware_reply = 5; firmware_length = lengths[i]; native_finish();
+		CHECK(!gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.firmware.fault == EIO);
+		CHECK(gpu_sc.sc_bootfb.first_error == EIO && firmware_calls == 1 && fallback_calls == 0);
+		CHECK(bcmv3d_bootfb_notify(&gpu_sc) == EIO && firmware_calls == 1);
 	}
 	for (unsigned i = 0; i < sizeof(errors) / sizeof(errors[0]); i++) {
 		native_initialize(false); firmware_error = errors[i]; native_finish();

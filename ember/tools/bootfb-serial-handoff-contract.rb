@@ -162,6 +162,9 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       abort 'native handoff positive failed' unless run.call('positive',[*runner,work+'/contract']).success?
     end
 controls={
+  'firmware-exact-length'=>['protocol.c','else if ((response & 0x80000000U) == 0)', 'else if (response != 0x80000000U)', 'gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.firmware.fault == 0'],
+  'firmware-only-four'=>['protocol.c','else if ((response & 0x80000000U) == 0)', 'else if (response != 0x80000000U && response != 0x80000004U)', 'gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.firmware.fault == 0'],
+  'firmware-response-bit'=>['protocol.c','else if ((response & 0x80000000U) == 0)', 'else if (false)', '!gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.firmware.fault == EIO'],
   'reply-on-failure'=>['native-job.h',"if (error == 0) {\n\t\taprint_normal(\"bcmv3d: display notify", "if (true) {\n\t\taprint_normal(\"bcmv3d: display notify", 'strcmp(message, expected) == 0'],
   'reply-word-order'=>['native-job.h','le32dec(reply + 8)', 'le32dec(reply + 4)', 'strcmp(message, expected) == 0'],
   'reply-errno'=>['native-job.h', "} else {\n\t\taprint_normal(\"bcmv3d: display notify", "} else {\n\t\terror = 0;\n\t\taprint_normal(\"bcmv3d: display notify", 'strcmp(message, expected) == 0'],

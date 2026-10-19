@@ -26,7 +26,7 @@ if [ -n "${HANDOFF_OUTPUT:-}" ]; then cp "$work/contract" "$HANDOFF_OUTPUT"; fi
 if [ "${HANDOFF_COMPILE_ONLY:-0}" = 1 ]; then exit 0; fi
 run
 if [ "${HANDOFF_SKIP_MUTANTS:-0}" = 1 ]; then exit 0; fi
-for mutation in tag size attempt retry global reply-tag end response fault complete; do
+for mutation in tag size attempt retry global reply-tag end response exact-length only-four fault complete; do
     case "$mutation" in
         tag) from='[8] = 0x66'; to='[8] = 0x67' ;;
         size) from='exchange(arg, packet, sizeof(packet))'; to='exchange(arg, packet, sizeof(packet) - 4)' ;;
@@ -35,7 +35,9 @@ for mutation in tag size attempt retry global reply-tag end response fault compl
         global) from='bcm2712_handoff_word(packet + 4) != 0x80000000U'; to='false' ;;
         reply-tag) from='bcm2712_handoff_word(packet + 8) != 0x00030066U'; to='false' ;;
         end) from='bcm2712_handoff_word(packet + 20) != 0'; to='false' ;;
-        response) from='else if (response != 0x80000000U)'; to='else if (false)' ;;
+        response) from='else if ((response & 0x80000000U) == 0)'; to='else if (false)' ;;
+        exact-length) from='else if ((response & 0x80000000U) == 0)'; to='else if (response != 0x80000000U)' ;;
+        only-four) from='else if ((response & 0x80000000U) == 0)'; to='else if (response != 0x80000000U && response != 0x80000004U)' ;;
         fault) from='status->fault = error;'; to='status->fault = 0;' ;;
         complete) from='status->complete = true;'; to='status->complete = false;' ;;
     esac
