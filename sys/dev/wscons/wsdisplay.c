@@ -3068,9 +3068,12 @@ wsdisplay_pollc(dev_t dev, int on)
 		wsdisplay_poll_admitted = cn_publication_enter() == 0;
 		wsdisplay_serial_pollmode = false;
 		/* A freeze may win admission. Select the pair before any callback. */
-		if (!wsdisplay_poll_admitted && cn_publication_closed())
-			wsdisplay_serial_pollmode =
-			    atomic_load_consume(&wsdisplay_serial_console) != NULL;
+		if (!wsdisplay_poll_admitted && cn_publication_closed()) {
+			struct consdev *serial =
+			    atomic_load_consume(&wsdisplay_serial_console);
+
+			wsdisplay_serial_pollmode = serial != NULL;
+		}
 	}
 	if (wsdisplay_serial_pollmode) {
 		struct consdev *serial = atomic_load_consume(&wsdisplay_serial_console);
