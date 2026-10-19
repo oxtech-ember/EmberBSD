@@ -12,14 +12,14 @@ for pair in clock-core:bcm2712_display_clock.c native-clock:bcm2712_display_cloc
 done
 for pair in display:bcm2712_display.h clockvar:bcm2712_display_clockvar.h \
     hsm-types:bcm2712_display_hsm.h acpi-types:bcm2712_display_acpi.h \
-    bvb-types:bcm2712_display_bvb.h; do
+    bvb-types:bcm2712_display_bvb.h core-types:bcm2712_display_core.h; do
     output=${pair%%:*}; input=${pair#*:}
     sed '/^#include /d' "$src/sys/arch/arm/broadcom/$input" > "$work/$output.h"
 done
 awk '/^#define LOG_MAX / { copying=1 } copying && /^static void$/ { exit } copying { print }' \
     "$src/ember/tools/bcm2712-display-clock-contract.c" > "$work/clock-firmware.h"
 test -s "$work/clock-firmware.h"
-awk '/^#define[ \t]+(VCPROP_CLK_M2MC|VCPROP_CLK_PIXEL_BVB|VCPROP_CLK_DISP|VCPROP_REQ_SUCCESS|VCPROPTAG_RESPONSE|VCPROPTAG_GET_CLOCKSTATE|VCPROPTAG_GET_CLOCKRATE|VCPROPTAG_GET_MIN_CLOCKRATE|VCPROPTAG_GET_MAX_CLOCKRATE|VCPROPTAG_SET_CLOCKSTATE|VCPROPTAG_SET_CLOCKRATE)[ \t]/' \
+awk '/^#define[ \t]+(VCPROP_CLK_M2MC|VCPROP_CLK_PIXEL_BVB|VCPROP_CLK_DISP|VCPROP_CLK_CORE|VCPROP_REQ_SUCCESS|VCPROPTAG_RESPONSE|VCPROPTAG_GET_CLOCKSTATE|VCPROPTAG_GET_CLOCKRATE|VCPROPTAG_GET_MIN_CLOCKRATE|VCPROPTAG_GET_MAX_CLOCKRATE|VCPROPTAG_SET_CLOCKSTATE|VCPROPTAG_SET_CLOCKRATE)[ \t]/' \
     "$src/sys/arch/evbarm/rpi/vcprop.h" > "$work/properties.h"
 compile()
 {

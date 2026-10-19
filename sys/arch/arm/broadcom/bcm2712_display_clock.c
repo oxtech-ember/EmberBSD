@@ -37,6 +37,9 @@ bcm2712_clock_property(struct bcm2712_clock *sc, uint32_t tag, uint32_t value,
 	case BCM2712_CLOCK_DISP:
 		id = VCPROP_CLK_DISP;
 		break;
+	case BCM2712_CLOCK_CORE:
+		id = VCPROP_CLK_CORE;
+		break;
 	default:
 		return EINVAL;
 	}
@@ -94,7 +97,7 @@ bcm2712_clock_init(struct bcm2712_clock *out,
 
 	if (out == NULL || exchange == NULL ||
 	    (profile != BCM2712_CLOCK_HSM && profile != BCM2712_CLOCK_BVB &&
-	    profile != BCM2712_CLOCK_DISP))
+	    profile != BCM2712_CLOCK_DISP && profile != BCM2712_CLOCK_CORE))
 		return EINVAL;
 	memset(&sc, 0, sizeof(sc));
 	sc.profile = profile;
@@ -115,6 +118,12 @@ bcm2712_clock_init(struct bcm2712_clock *out,
 		/* A zero firmware minimum is an unsupported unleased floor. */
 		if (sc.status.floor == 0)
 			return ERANGE;
+	}
+	/* CORE also drives shared bus consumers. Keep its inherited baseline. */
+	if (profile == BCM2712_CLOCK_CORE) {
+		if (sc.status.rate == 0)
+			return ERANGE;
+		sc.status.floor = MAX(sc.status.floor, sc.status.rate);
 	}
 	if (maximum < sc.status.floor)
 		return ERANGE;
@@ -282,6 +291,7 @@ bcm2712_clock_fini(struct bcm2712_clock *sc)
 	if (sc->status.leases != 0)
 		return EBUSY;
 	if (sc->profile != BCM2712_CLOCK_BVB &&
+	    sc->profile != BCM2712_CLOCK_CORE &&
 	    sc->initial_state == 0 && sc->state_changed) {
 		sc->status.mutation_attempted = true;
 		error = bcm2712_clock_property(sc, VCPROPTAG_SET_CLOCKSTATE, 0,
@@ -300,7 +310,7 @@ bcm2712_clock_fini(struct bcm2712_clock *sc)
 		sc->status.state = state;
 	}
 	/*
-	 * BVB stays enabled after activation, even if it was initially off.
+	 * BVB and CORE stay enabled after activation, even if initially off.
 	 * HSM and DISP keep their safe floor instead of an initial zero rate.
 	 */
 	sc->initialized = false;

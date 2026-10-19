@@ -70,6 +70,7 @@ firmware_new(enum bcm2712_clock_profile profile, uint32_t state, uint32_t rate)
 
 	memset(&f, 0, sizeof(f));
 	f.id = profile == BCM2712_CLOCK_HSM ? VCPROP_CLK_M2MC :
+	    profile == BCM2712_CLOCK_CORE ? VCPROP_CLK_CORE :
 	    VCPROP_CLK_PIXEL_BVB;
 	f.state = state;
 	f.rate = rate;
@@ -322,7 +323,7 @@ initialization(void)
 	init_unchanged(&f, BCM2712_CLOCK_HSM, ERANGE);
 	f = firmware_new(BCM2712_CLOCK_BVB, 0, 0);
 	init_unchanged(&f, (enum bcm2712_clock_profile)-1, EINVAL);
-	init_unchanged(&f, (enum bcm2712_clock_profile)3, EINVAL);
+	init_unchanged(&f, (enum bcm2712_clock_profile)4, EINVAL);
 	CHECK(f.calls == 0);
 	CHECK(bcm2712_clock_init(NULL, BCM2712_CLOCK_BVB, exchange, &f) == EINVAL);
 	CHECK(bcm2712_clock_init(&core, BCM2712_CLOCK_BVB, NULL, &f) == EINVAL);
@@ -532,6 +533,83 @@ finish_failures(void)
 	CHECK(f.calls == before && f.sets == 0 && f.state == 0);
 }
 
+static void
+core4_cases(void)
+{
+	struct bcm2712_clock core;
+	struct bcm2712_clock_status saved;
+	struct firmware f;
+	unsigned int state, call, word, operation, step, before;
+	static const unsigned int fields[] = { 0, 1, 2, 3, 4, 5, 7 };
+
+	for (state = 0; state <= 1; state++) {
+		f = firmware_new(BCM2712_CLOCK_CORE, state, 0);
+		init_unchanged(&f, BCM2712_CLOCK_CORE, ERANGE);
+		f = firmware_new(BCM2712_CLOCK_CORE, state, 240000000);
+		CHECK(bcm2712_clock_init(&core, BCM2712_CLOCK_CORE, exchange, &f) == 0);
+		CHECK(core.status.floor == 240000000 && f.calls == 4 && f.sets == 0);
+		CHECK(bcm2712_clock_acquire(&core, 0, 1) == 0);
+		CHECK(core.status.rate == 240000000 && core.status.leases == 1);
+		CHECK(bcm2712_clock_update(&core, 0, 2) == 0);
+		CHECK(bcm2712_clock_acquire(&core, 1, 270000000) == 0);
+		CHECK(bcm2712_clock_release(&core, 1) == 0);
+		CHECK(core.status.rate == 240000000 && core.status.leases == 1);
+		CHECK(bcm2712_clock_release(&core, 0) == 0);
+		CHECK(core.status.floor == 240000000 && core.status.rate == 240000000);
+		before = f.calls;
+		CHECK(bcm2712_clock_fini(&core) == 0 && f.calls == before);
+		CHECK(f.state == 1 && f.disables == 0);
+		CHECK(bcm2712_clock_init(&core, BCM2712_CLOCK_CORE, exchange, &f) == 0);
+		CHECK(core.status.floor == 240000000);
+		CHECK(bcm2712_clock_fini(&core) == 0 && f.disables == 0);
+		f = firmware_new(BCM2712_CLOCK_CORE, state, 120000000);
+		f.minimum = 260000000;
+		CHECK(bcm2712_clock_init(&core, BCM2712_CLOCK_CORE, exchange, &f) == 0);
+		CHECK(core.status.floor == 260000000 && f.sets == 0);
+		CHECK(bcm2712_clock_fini(&core) == 0 && f.state == state && f.sets == 0);
+	}
+	f = firmware_new(BCM2712_CLOCK_CORE, 1, 240000000);
+	f.maximum = 200000000;
+	init_unchanged(&f, BCM2712_CLOCK_CORE, ERANGE);
+	f = firmware_new(BCM2712_CLOCK_CORE, 0, 120000000);
+	f.minimum = 0;
+	init_unchanged(&f, BCM2712_CLOCK_CORE, ERANGE);
+	for (call = 1; call <= 4; call++) {
+		f = firmware_new(BCM2712_CLOCK_CORE, 0, 120000000);
+		f.fail_call = call;
+		init_unchanged(&f, BCM2712_CLOCK_CORE, EIO);
+		for (word = 0; word < sizeof(fields) / sizeof(fields[0]); word++) {
+			f = firmware_new(BCM2712_CLOCK_CORE, 0, 120000000);
+			f.bad_call = call; f.bad_word = fields[word]; f.bad_value = 0xdeadbeef;
+			init_unchanged(&f, BCM2712_CLOCK_CORE, EIO);
+		}
+	}
+	/* Every acquire/update/release GET, SET and verification failure. */
+	for (operation = 0; operation < 3; operation++) {
+		for (step = 1; step <= (operation == 0 ? 8U : 7U); step++) {
+			f = firmware_new(BCM2712_CLOCK_CORE, 0, 120000000);
+			CHECK(bcm2712_clock_init(&core, BCM2712_CLOCK_CORE, exchange, &f) == 0);
+			if (operation != 0)
+				CHECK(bcm2712_clock_acquire(&core, 0, operation == 2 ? 240000000 : 150000000) == 0);
+			memcpy(&saved, &core.status, sizeof(saved));
+			f.fail_call = f.calls + step; f.fail_after_set = true;
+			CHECK((operation == 0 ? bcm2712_clock_acquire(&core, 0, 240000000) :
+			    operation == 1 ? bcm2712_clock_update(&core, 0, 240000000) :
+			    bcm2712_clock_release(&core, 0)) == EIO);
+			CHECK(core.status.leases == saved.leases &&
+			    memcmp(core.status.minimum, saved.minimum, sizeof(saved.minimum)) == 0);
+			CHECK(core.status.floor == 120000000 && core.status.rate == saved.rate);
+			CHECK(core.status.fault == (step > 3 ? EIO : 0));
+			if (step > 3) {
+				before = f.calls;
+				CHECK(bcm2712_clock_acquire(&core, 1, 1) == EIO);
+				CHECK(bcm2712_clock_release(&core, 0) == EIO);
+				CHECK(bcm2712_clock_fini(&core) == EIO && f.calls == before);
+			}
+		}
+	}
+}
+
 int
 main(void)
 {
@@ -539,6 +617,11 @@ main(void)
 	static const uint32_t initial_rates[] = { 0, 120000000, 240000000 };
 	static const unsigned int fields[] = { 0, 1, 2, 3, 4, 5, 7 };
 
+	if (getenv("CORE4_ONLY") != NULL) {
+		core4_cases();
+		printf("CORE4 clock: %u checks PASS\n", checks);
+		return 0;
+	}
 	facade_inputs();
 	initialization();
 	for (state = 0; state <= 1; state++) {
@@ -570,6 +653,7 @@ main(void)
 		no_set_failures(profile);
 	}
 	finish_failures();
+	core4_cases();
 	printf("BCM2712 clock core: %u checks passed\n", checks);
 	return 0;
 }

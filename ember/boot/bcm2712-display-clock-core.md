@@ -1,7 +1,7 @@
 # BCM2712 shared firmware-clock core
 
-The [pure core](../../sys/arch/arm/broadcom/bcm2712_display_clock.c) is a source foundation for three fixed profiles:
-HSM firmware clock 13, BVB firmware clock 14 and DISP firmware clock 16.
+The [pure core](../../sys/arch/arm/broadcom/bcm2712_display_clock.c) is a source foundation for four fixed profiles:
+HSM firmware clock 13, BVB firmware clock 14, DISP firmware clock 16 and CORE firmware clock 4.
 It shares the EmberBSD HSM packet validation, two-port minimum leases and fault policy.
 The HSM facade is the first native consumer.
 The [HSM compatibility facade](../../sys/arch/arm/broadcom/bcm2712_display_hsm.c) now calls this engine.
@@ -12,7 +12,7 @@ The kernel selects the shared engine and native adapter with `bcmv3d_acpi`. No p
 
 The private types and functions are in
 [`bcm2712_display_clockvar.h`](../../sys/arch/arm/broadcom/bcm2712_display_clockvar.h).
-Only fixed `BCM2712_CLOCK_HSM`, `BCM2712_CLOCK_BVB` and `BCM2712_CLOCK_DISP` profiles are valid.
+Only fixed `BCM2712_CLOCK_HSM`, `BCM2712_CLOCK_BVB`, `BCM2712_CLOCK_DISP` and `BCM2712_CLOCK_CORE` profiles are valid.
 There is no arbitrary firmware clock-ID or property-tag interface.
 
 The caller supplies an exchange callback and its argument.
@@ -23,9 +23,9 @@ This pure core does not implement native locking, a registry, IRQ-context checks
 It performs no MMIO, reset, power-domain operation or automatic attachment.
 
 `bcm2712_clock_init` reads state, rate and the current firmware maximum.
-BVB and DISP also read the firmware minimum. Creation sends no SET.
+BVB, DISP and CORE also read the firmware minimum. Creation sends no SET.
 An invalid profile, malformed reply or failed initialization leaves the output unchanged.
-An off clock with a zero initial rate is valid before acquisition.
+An off HSM, BVB or DISP clock with a zero initial rate is valid before acquisition. CORE requires a positive initial rate in either state.
 
 `acquire` adds one nonzero minimum for port 0 or 1.
 `update` changes an active port. `release` removes an active port.
@@ -43,6 +43,17 @@ The caller must stop dependent hardware before release or finalization.
 | HSM13 | max(120 MHz, initial rate) | Preserved until the owner has changed the rate | Restores off only if initially off and enabled by this owner |
 | BVB14 | Cached positive `GET_MIN_CLOCKRATE(14)` | First acquisition can reduce it to the effective minimum | Never sends `SET_CLOCKSTATE(0)` |
 | DISP16 | Cached positive `GET_MIN_CLOCKRATE(16)` | First acquisition can reduce it to the effective minimum | Restores off only if initially off and enabled by this owner |
+| CORE4 | max(positive firmware minimum, positive initial rate) | Frozen as the owner lifetime baseline | Never sends `SET_CLOCKSTATE(0)` |
+
+CORE also serves CSI and bus consumers. Its creation requires a positive inherited
+rate, including when the initial state is off. Its frozen floor is the maximum
+of this rate and the positive firmware minimum. The floor must not exceed the
+firmware maximum. A zero rate fails with `ERANGE`; no minimum-only fallback is
+used. Create sends no SET. Acquisition activates an off clock after rate
+verification. Update, release and finalization cannot lower it below this
+baseline, and finalization never sends `SET_CLOCKSTATE(0)`. This conservative
+BSD policy does not arbitrate unregistered consumers or prove that the clock
+rate is sufficient for a display mode. The other profile policies are unchanged.
 
 HSM creation and operation order match the existing BSD HSM core.
 Its create transcript is GET_STATE, GET_RATE, GET_MAX.
@@ -101,6 +112,7 @@ rounding, malformed packet fields and every SET/readback failure boundary.
 Causal mutants remove the corresponding guards.
 `CLOCK_MUTANTS='facade-fault facade-floor facade-flags facade-ready'` selects only the facade controls.
 
+`CORE4_ONLY=1` selects the focused CORE cases. `CLOCK_EVIDENCE` preserves portable input snapshots.
 `CC`, `CFLAGS`, `CLOCK_COMPILE_ONLY=1` and `CLOCK_OUTPUT` support a cross-built fixture.
 `TEST_RUNNER` can invoke a supported memory checker.
 The actual kernel translation unit must also compile with the selected kernel's GCC16 flags and headers.
@@ -109,6 +121,8 @@ Native adapter checks, a linked coherent kernel, physical BVB control and PHY/KM
 
 ## Sources
 
+- Raspberry Pi Linux [CORE policy](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/clk/bcm/clk-raspberrypi.c#L83-L103).
+  CORE4 is a fixed critical firmware clock. The frozen inherited-rate baseline above is BSD policy.
 - Frozen EmberBSD [HSM reference](../tools/fixtures/bcm2712-hsm-reference.md).
 - Raspberry Pi Linux a1a601d4857978d810175365550c4536701df4ed:
   [firmware clock policy](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/clk/bcm/clk-raspberrypi.c#L157-L161),
@@ -119,4 +133,4 @@ Native adapter checks, a linked coherent kernel, physical BVB control and PHY/KM
 DISP16 uses the same mechanism with a noncritical finish policy. Its two slots
 are logical HVS clients, not HDMI ports. The separate [retained DISP module](bcm2712-disp-clock-probe.md)
 compiles this same engine with private function names for an installed kernel.
-The native HSM/BVB adapter and all existing public layouts remain unchanged.
+The native adapter has typed HSM, BVB and CORE slots. All existing public layouts remain unchanged.

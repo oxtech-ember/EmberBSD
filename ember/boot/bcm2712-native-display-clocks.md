@@ -2,7 +2,7 @@
 
 The [native adapter](../../sys/arch/arm/broadcom/bcm2712_display_clock_acpi.c)
 uses one kernel-resident mailbox callback and one sleepable mutex.
-Two fixed, typed slots own firmware HSM clock13 and BVB clock14.
+Three fixed, typed slots own firmware HSM clock13, BVB clock14 and CORE clock4.
 The [shared core](bcm2712-display-clock-core.md) supplies their lease mechanism.
 There is no arbitrary clock-ID or transport-callback API.
 No clock framework, display MMIO, power operation or automatic attachment is added.
@@ -12,11 +12,11 @@ No clock framework, display MMIO, power operation or automatic attachment is add
 All operations require process context. Hard and soft interrupt calls fail
 before sleeping or sending a firmware request. Creation validates the GPU0
 ACPI resource contract before clock initialization. It assigns the output
-only after success. A second owner of the same ID gets `EBUSY`; both IDs can
-coexist. One mutex serializes both IDs, their leases and mailbox exchanges.
+only after success. A second owner of the same ID gets `EBUSY`; all three IDs can
+coexist. One mutex serializes their leases and mailbox exchanges.
 
-GPU0 ACPI contract v1 declares HSM13. It does not declare a BVB14 property.
-BVB14 is this BCM2712 driver's fixed, known firmware mailbox clock ID from
+GPU0 ACPI contract v1 declares HSM13. It does not declare BVB14 or CORE4 properties.
+BVB14 and CORE4 are this BCM2712 driver's fixed, known firmware mailbox clock IDs from
 the [pinned Raspberry Pi sources](bcm2712-display-clock-core.md#sources).
 Initialization validates reply IDs, existence and rate bounds. This optional
 driver capability adds no ACPI schema or firmware change.
@@ -43,16 +43,30 @@ BVB never sends `SET_CLOCKSTATE(0)`, including destroy. An unacquired off
 provider can be destroyed without any SET. HSM retains its existing floor
 and restore-off policy.
 
+The CORE API and cached status are in
+[`bcm2712_display_core.h`](../../sys/arch/arm/broadcom/bcm2712_display_core.h).
+Use `bcm2712_display_core_create`, `acquire`, `update`, `release`, `status`
+and `destroy`. Its two slots identify logical clients, not HDMI ports.
+Create reads state, rate, maximum and minimum without SET. Both the minimum
+and initial rate must be positive, even for an off clock. The frozen floor
+is `max(firmware minimum, initial rate)` and must not exceed the maximum.
+A zero rate fails with `ERANGE`. Acquisition enables lazily after rate
+verification. No operation reduces the rate below this baseline. Destroy
+never sends `SET_CLOCKSTATE(0)`. This preserves a verified inherited rate for
+shared CSI and bus consumers; it does not provide global consumer arbitration.
+The caller must own the clock policy and exclude other writers. Clock creation
+is not proof of power availability, display access or a sufficient clock rate.
+
 ## Errors and observations
 
 A GET failure before a SET leaves the current lease unchanged without a
 sticky mutation fault. A failed SET or its verification retains that
 profile's native owner and fault. Later mutation, destroy and replacement
-cannot retry it. The other profile's software slot remains independent.
+cannot retry it. The other profiles' software slots remain independent.
 Fault retention does not establish the state of the shared firmware service.
 
 Status is cached and sends no firmware request, including after a fault.
-BVB reports both minima, floor, last verified rate/state, leases, fault and
+BVB and CORE report both minima, floor, last verified rate/state, leases, fault and
 mutation-attempted state. Failed create and status leave output unchanged.
 A successful status fills its complete output storage before copying fields;
 this is adapter behavior, not a general C structure-padding ABI guarantee.
@@ -70,16 +84,19 @@ The fixture compiles the actual adapter and common core. It reuses the
 shared-core test's firmware service. Kernel synchronization, allocation,
 mailbox and ACPI resource-call boundaries are controlled. Separate contracts
 check resource decoding and the core's complete clock policy.
-It checks both IDs, concurrent entries, IRQ refusals, unknown pointers,
+It checks all three IDs, concurrent entries, IRQ refusals, unknown pointers,
 query-free cached status, retained faults, cleanup policies and HSM layouts.
-Causal mutants test these boundaries. Earlier HSM/probe contracts remain valid.
+CORE cases also check both initial states, the inherited baseline through low
+requests and recreation, and each GET/SET/readback failure. Causal mutants test
+these boundaries. Earlier HSM/probe contracts remain valid.
 
+`CORE4_ONLY=1` selects the focused CORE cases. The fixture uses fatal CHECKs under `NDEBUG`.
 `CC`, `CFLAGS`, `NATIVE_CLOCK_COMPILE_ONLY=1` and `NATIVE_CLOCK_OUTPUT` support
 cross builds. `TEST_RUNNER` can invoke a supported memory checker.
 These checks and an actual `_KERNEL` translation-unit compile do not prove a
 linked coherent kernel, physical BVB clock control, PHY/KMS output or Plasma.
 
 The optional [DISP16 hold module](bcm2712-disp-clock-probe.md) has its own typed
-module-resident slot. It does not add a third slot or API to this kernel adapter.
+module-resident slot. It does not add a DISP slot or API to this kernel adapter.
 It uses the same core source with private function names and explicit mutex
 init/fini. Its callback cannot unload while an owner or fault is retained.

@@ -43,7 +43,7 @@ static atomic_uint checks;
 /* Reuse the actual shared-core test's firmware service, not its test cases. */
 #include "clock-firmware.h"
 
-static struct firmware firmware[2];
+static struct firmware firmware[3];
 static unsigned int allocated, freed, resource_calls, mailbox_calls, lock_calls;
 static int resource_error, device_token;
 static _Thread_local bool in_irq, in_softirq;
@@ -57,32 +57,33 @@ typedef pthread_mutex_t kmutex_t;
 #define IPL_NONE 0
 #define KM_SLEEP 0
 #define BCMMBOX_CHANARM2VC 8
-#define ASSERT_SLEEPABLE() assert(!in_irq && !in_softirq)
+#define ASSERT_SLEEPABLE() CHECK(!in_irq && !in_softirq)
 #define cpu_intr_p() in_irq
 #define cpu_softintr_p() in_softirq
 #include "acpi-types.h"
 #include "bvb-types.h"
+#include "core-types.h"
 
 static void
 mutex_init(kmutex_t *m, int type, int ipl)
 {
-	assert(type == MUTEX_DEFAULT && ipl == IPL_NONE);
-	assert(pthread_mutex_init(m, NULL) == 0);
+	CHECK(type == MUTEX_DEFAULT && ipl == IPL_NONE);
+	CHECK(pthread_mutex_init(m, NULL) == 0);
 }
 static void
 mutex_enter(kmutex_t *m)
 {
-	assert(lock_depth == 0);
-	assert(pthread_mutex_lock(m) == 0);
+	CHECK(lock_depth == 0);
+	CHECK(pthread_mutex_lock(m) == 0);
 	lock_depth++;
 	lock_calls++;
 }
 static void
 mutex_exit(kmutex_t *m)
 {
-	assert(lock_depth == 1);
+	CHECK(lock_depth == 1);
 	lock_depth--;
-	assert(pthread_mutex_unlock(m) == 0);
+	CHECK(pthread_mutex_unlock(m) == 0);
 }
 struct once { pthread_mutex_t mutex; bool done; int error; };
 #define ONCE_DECL(o) struct once o = { PTHREAD_MUTEX_INITIALIZER, false, 0 }
@@ -91,10 +92,10 @@ run_once(struct once *o, int (*fn)(void))
 {
 	int error;
 
-	assert(pthread_mutex_lock(&o->mutex) == 0);
+	CHECK(pthread_mutex_lock(&o->mutex) == 0);
 	if (!o->done) { o->error = fn(); o->done = true; }
 	error = o->error;
-	assert(pthread_mutex_unlock(&o->mutex) == 0);
+	CHECK(pthread_mutex_unlock(&o->mutex) == 0);
 	return error;
 }
 #define RUN_ONCE(o,fn) run_once(o,fn)
@@ -103,16 +104,16 @@ kmem_zalloc(size_t size, int flag)
 {
 	void *p;
 
-	assert(flag == KM_SLEEP && lock_depth == 1);
+	CHECK(flag == KM_SLEEP && lock_depth == 1);
 	p = calloc(1, size);
-	assert(p != NULL);
+	CHECK(p != NULL);
 	allocated++;
 	return p;
 }
 static void
 kmem_free(void *p, size_t size)
 {
-	assert(p != NULL && size != 0);
+	CHECK(p != NULL && size != 0);
 	freed++;
 	free(p);
 }
@@ -120,7 +121,7 @@ int
 bcm2712_display_acpi_resources(device_t dev, ACPI_HANDLE handle,
     struct bcm2712_display_contract *out)
 {
-	assert(dev == &device_token && out != NULL && lock_depth == 1);
+	CHECK(dev == &device_token && out != NULL && lock_depth == 1);
 	resource_calls++;
 	if (handle != &device_token)
 		return EINVAL;
@@ -138,18 +139,18 @@ bcmmbox_request(unsigned int channel, void *request, size_t length,
 	unsigned int active;
 	int error;
 
-	assert(channel == BCMMBOX_CHANARM2VC && response != NULL);
-	assert(lock_depth == 1 && !in_irq && !in_softirq);
-	assert(id == VCPROP_CLK_M2MC || id == VCPROP_CLK_PIXEL_BVB);
+	CHECK(channel == BCMMBOX_CHANARM2VC && response != NULL);
+	CHECK(lock_depth == 1 && !in_irq && !in_softirq);
+	CHECK(id == VCPROP_CLK_M2MC || id == VCPROP_CLK_PIXEL_BVB || id == VCPROP_CLK_CORE);
 	active = atomic_fetch_add(&transport_active, 1) + 1;
 	CHECK(active == 1);
 	atomic_store(&transport_max, active);
 	sched_yield();
 	mailbox_calls++;
 	*response = 0x1000;
-	error = exchange(&firmware[id == VCPROP_CLK_M2MC ? 0 : 1],
+	error = exchange(&firmware[id == VCPROP_CLK_M2MC ? 0 : id == VCPROP_CLK_CORE ? 2 : 1],
 	    packet, length);
-	assert(atomic_fetch_sub(&transport_active, 1) == 1);
+	CHECK(atomic_fetch_sub(&transport_active, 1) == 1);
 	return error;
 }
 #include "native-clock.h"
@@ -176,10 +177,11 @@ _Static_assert(offsetof(struct bcm2712_hsm, state_changed) == 54, "state changed
 static void
 reset(void)
 {
-	assert(bcm2712_hsm_owner == NULL && bcm2712_bvb_owner == NULL);
-	assert(allocated == freed && atomic_load(&transport_active) == 0);
+	CHECK(bcm2712_hsm_owner == NULL && bcm2712_bvb_owner == NULL && bcm2712_core_owner == NULL);
+	CHECK(allocated == freed && atomic_load(&transport_active) == 0);
 	firmware[0] = firmware_new(BCM2712_CLOCK_HSM, 0, 0);
 	firmware[1] = firmware_new(BCM2712_CLOCK_BVB, 0, 0);
+	firmware[2] = firmware_new(BCM2712_CLOCK_CORE, 0, 120000000);
 	resource_error = 0;
 	resource_calls = mailbox_calls = 0;
 	atomic_store(&transport_max, 0);
@@ -195,6 +197,10 @@ reboot_fixture(void)
 	if (bcm2712_bvb_owner != NULL) {
 		kmem_free(bcm2712_bvb_owner, sizeof(*bcm2712_bvb_owner));
 		bcm2712_bvb_owner = NULL;
+	}
+	if (bcm2712_core_owner != NULL) {
+		kmem_free(bcm2712_core_owner, sizeof(*bcm2712_core_owner));
+		bcm2712_core_owner = NULL;
 	}
 	CHECK(allocated == freed);
 }
@@ -465,12 +471,130 @@ failure_tests(void)
 	CHECK(bvb == &bvb_unknown && allocated == freed);
 }
 
+struct core4_worker {
+	struct bcm2712_core_provider *owner;
+	unsigned int slot;
+	int error;
+};
+static void *
+core4_acquire_worker(void *arg)
+{
+	struct core4_worker *w = arg;
+
+	while (!atomic_load(&workers_start)) sched_yield();
+	w->error = bcm2712_display_core_acquire(w->owner, w->slot, 1);
+	return NULL;
+}
+
+static void
+core4_tests(void)
+{
+	struct bcm2712_core_provider *core, *other, unknown;
+	struct bcm2712_core_status status, saved, expected;
+	struct bcm2712_hsm_provider *hsm;
+	struct bcm2712_bvb_provider *bvb;
+	struct core4_worker worker[2];
+	pthread_t thread[2];
+	unsigned int state, context, call, operation, step, before, i;
+
+	memset(&unknown, 0xa5, sizeof(unknown));
+	for (context = 0; context < 3; context++) {
+		reset(); in_irq = context == 1; in_softirq = context == 2;
+		memset(&status, 0xa5, sizeof(status)); memcpy(&saved, &status, sizeof(saved));
+		CHECK(bcm2712_display_core_status(NULL, NULL) == EINVAL);
+		CHECK(bcm2712_display_core_acquire(&unknown, 2, 0) == (context ? EWOULDBLOCK : ENXIO));
+		CHECK(bcm2712_display_core_update(&unknown, 0, 1) == (context ? EWOULDBLOCK : ENXIO));
+		CHECK(bcm2712_display_core_release(&unknown, 0) == (context ? EWOULDBLOCK : ENXIO));
+		CHECK(bcm2712_display_core_destroy(&unknown) == (context ? EWOULDBLOCK : ENXIO));
+		CHECK(bcm2712_display_core_status(&unknown, &status) == (context ? EWOULDBLOCK : ENXIO));
+		CHECK(memcmp(&saved, &status, sizeof(status)) == 0 && mailbox_calls == 0);
+		if (context) {
+			core = &unknown;
+			CHECK(bcm2712_display_core_create(&device_token, &device_token, &core) == EWOULDBLOCK);
+			CHECK(core == &unknown && resource_calls == 0 && mailbox_calls == 0);
+		}
+		in_irq = in_softirq = false;
+	}
+	for (state = 0; state <= 1; state++) {
+		reset(); firmware[2].state = state; firmware[2].rate = 240000000;
+		CHECK(bcm2712_display_core_create(&device_token, &device_token, &core) == 0);
+		CHECK(core->core.exchange == bcm2712_clock_exchange && core->core.arg == NULL);
+		CHECK(firmware[2].calls == 4 && firmware[2].sets == 0);
+		before = mailbox_calls; other = &unknown;
+		CHECK(bcm2712_display_core_create(&device_token, NULL, &other) == EBUSY);
+		CHECK(other == &unknown && mailbox_calls == before);
+		memset(&expected, 0, sizeof(expected)); memset(&status, 0xa5, sizeof(status));
+		expected.floor = expected.rate = 240000000; expected.state = state;
+		CHECK(bcm2712_display_core_status(core, &status) == 0);
+		CHECK(memcmp(&status, &expected, sizeof(status)) == 0 && mailbox_calls == before);
+		CHECK(bcm2712_display_hsm_create(&device_token, &device_token, &hsm) == 0);
+		CHECK(bcm2712_display_bvb_create(&device_token, &device_token, &bvb) == 0);
+		atomic_store(&workers_start, false);
+		for (i = 0; i < 2; i++) {
+			worker[i].owner = core; worker[i].slot = i; worker[i].error = -1;
+			CHECK(pthread_create(&thread[i], NULL, core4_acquire_worker, &worker[i]) == 0);
+		}
+		atomic_store(&workers_start, true);
+		for (i = 0; i < 2; i++) CHECK(pthread_join(thread[i], NULL) == 0 && worker[i].error == 0);
+		CHECK(atomic_load(&transport_max) == 1);
+		CHECK(bcm2712_display_core_update(core, 0, 1) == 0);
+		CHECK(bcm2712_display_core_destroy(core) == EBUSY);
+		CHECK(bcm2712_display_core_release(core, 0) == 0);
+		CHECK(bcm2712_display_core_release(core, 1) == 0);
+		CHECK(firmware[2].rate == 240000000 && firmware[2].state == 1 && firmware[2].disables == 0);
+		CHECK(bcm2712_display_core_destroy(core) == 0);
+		CHECK(bcm2712_display_core_create(&device_token, &device_token, &core) == 0);
+		CHECK(bcm2712_display_core_status(core, &status) == 0 && status.floor == 240000000);
+		CHECK(bcm2712_display_core_destroy(core) == 0 && firmware[2].disables == 0);
+		CHECK(bcm2712_display_hsm_destroy(hsm) == 0);
+		CHECK(bcm2712_display_bvb_destroy(bvb) == 0);
+	}
+	for (call = 1; call <= 7; call++) {
+		reset(); core = &unknown;
+		if (call <= 4) firmware[2].fail_call = call;
+		else if (call == 5) firmware[2].rate = 0;
+		else if (call == 6) firmware[2].minimum = 0;
+		else firmware[2].maximum = 100000000;
+		CHECK(bcm2712_display_core_create(&device_token, &device_token, &core) == (call <= 4 ? EIO : ERANGE));
+		CHECK(core == &unknown && allocated == freed && firmware[2].sets == 0);
+	}
+	for (operation = 0; operation < 3; operation++) {
+		for (step = 1; step <= (operation == 0 ? 8U : 7U); step++) {
+			reset();
+			CHECK(bcm2712_display_core_create(&device_token, &device_token, &core) == 0);
+			if (operation != 0)
+				CHECK(bcm2712_display_core_acquire(core, 0, operation == 2 ? 240000000 : 150000000) == 0);
+			CHECK(bcm2712_display_core_status(core, &saved) == 0);
+			firmware[2].fail_call = firmware[2].calls + step; firmware[2].fail_after_set = true;
+			CHECK((operation == 0 ? bcm2712_display_core_acquire(core, 0, 240000000) :
+			    operation == 1 ? bcm2712_display_core_update(core, 0, 240000000) :
+			    bcm2712_display_core_release(core, 0)) == EIO);
+			before = mailbox_calls;
+			CHECK(bcm2712_display_core_status(core, &status) == 0 && mailbox_calls == before);
+			CHECK(status.leases == saved.leases && memcmp(status.minimum, saved.minimum, sizeof(saved.minimum)) == 0);
+			CHECK(status.rate == saved.rate && status.floor == 120000000 && status.fault == (step > 3 ? EIO : 0));
+			if (step > 3) {
+				CHECK(bcm2712_display_core_destroy(core) == EIO);
+				CHECK(bcm2712_display_core_update(core, 0, 1) == EIO);
+				CHECK(bcm2712_display_core_release(core, 0) == EIO);
+				other = &unknown;
+				CHECK(bcm2712_display_core_create(&device_token, &device_token, &other) == EBUSY);
+				CHECK(other == &unknown && mailbox_calls == before);
+			}
+			reboot_fixture(); /* Fresh simulated boot, never a production release. */
+		}
+	}
+}
+
 int
 main(void)
 {
-	refusal_tests();
-	lifecycle_tests();
-	failure_tests();
+	if (getenv("CORE4_ONLY") == NULL) {
+		refusal_tests();
+		lifecycle_tests();
+		failure_tests();
+	}
+	core4_tests();
 	CHECK(allocated == freed);
 	printf("Native display clocks: %u checks PASS; actual source, no hardware\n",
 	    atomic_load(&checks));

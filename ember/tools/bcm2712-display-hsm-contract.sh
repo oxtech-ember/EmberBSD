@@ -11,18 +11,20 @@ for unit in clock hsm hsm_acpi; do
         "$src/sys/arch/arm/broadcom/bcm2712_display_${input}.c" > "$work/$unit.h"
 done
 sed '/^#include /d' "$src/sys/arch/arm/broadcom/bcm2712_display_bvb.h" > "$work/bvb-types.h"
+sed '/^#include /d' "$src/sys/arch/arm/broadcom/bcm2712_display_core.h" > "$work/core-types.h"
 {
     echo '#ifndef __CTASSERT'
     echo '#define __CTASSERT(e) _Static_assert(e, #e)'
     echo '#endif'
     echo '#include "bvb-types.h"'
+    echo '#include "core-types.h"'
     cat "$work/hsm_acpi.h"
 } > "$work/native.h"
 mv "$work/native.h" "$work/hsm_acpi.h"
 cp "$src/sys/arch/arm/broadcom/bcm2712_display_hsm.h" "$work/hsm-types.h"
 cp "$src/sys/arch/arm/broadcom/bcm2712_display_clockvar.h" "$work/clockvar.h"
 cp "$src/sys/arch/arm/broadcom/bcm2712_display.h" "$work/display.h"
-awk '/^#define[ \t]+(VCPROP_CLK_M2MC|VCPROP_CLK_PIXEL_BVB|VCPROP_CLK_DISP|VCPROP_REQ_SUCCESS|VCPROPTAG_RESPONSE|VCPROPTAG_GET_CLOCKSTATE|VCPROPTAG_GET_CLOCKRATE|VCPROPTAG_GET_MIN_CLOCKRATE|VCPROPTAG_GET_MAX_CLOCKRATE|VCPROPTAG_SET_CLOCKSTATE|VCPROPTAG_SET_CLOCKRATE)[ \t]/' \
+awk '/^#define[ \t]+(VCPROP_CLK_M2MC|VCPROP_CLK_PIXEL_BVB|VCPROP_CLK_DISP|VCPROP_CLK_CORE|VCPROP_REQ_SUCCESS|VCPROPTAG_RESPONSE|VCPROPTAG_GET_CLOCKSTATE|VCPROPTAG_GET_CLOCKRATE|VCPROPTAG_GET_MIN_CLOCKRATE|VCPROPTAG_GET_MAX_CLOCKRATE|VCPROPTAG_SET_CLOCKSTATE|VCPROPTAG_SET_CLOCKRATE)[ \t]/' \
     "$src/sys/arch/evbarm/rpi/vcprop.h" > "$work/properties.h"
 compile()
 {

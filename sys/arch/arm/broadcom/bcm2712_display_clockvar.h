@@ -7,11 +7,12 @@
 
 #define BCM2712_CLOCK_PORTS 2
 
-/* Private source foundation. Only these three fixed firmware clock profiles exist. */
+/* Private source foundation. Only these four fixed firmware clock profiles exist. */
 enum bcm2712_clock_profile {
 	BCM2712_CLOCK_HSM,
 	BCM2712_CLOCK_BVB,
-	BCM2712_CLOCK_DISP
+	BCM2712_CLOCK_DISP,
+	BCM2712_CLOCK_CORE
 };
 
 typedef int (*bcm2712_clock_exchange_fn)(void *, uint32_t *, size_t);
