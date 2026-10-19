@@ -6,7 +6,11 @@ Four fixed, typed slots own firmware HSM clock13, BVB clock14, CORE clock4 and
 DISP clock16.
 The [shared core](bcm2712-display-clock-core.md) supplies their lease mechanism.
 There is no arbitrary clock-ID or transport-callback API.
-No clock framework, display MMIO, power operation or automatic attachment is added.
+The provider adds no clock framework, display MMIO or power operation. The explicit
+`EMBERV3DCONSOLE` [stop continuation](bcm2712-native-display-quiesce.md) is a builtin
+consumer after its own console, firmware and renderer guards. A coherent GCC16
+kernel and four platform modules link. The separate DISP module also builds and
+resolves its builtin imports; this does not establish physical clock control.
 
 ## Ownership and lifecycle
 

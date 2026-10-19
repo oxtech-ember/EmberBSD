@@ -67,6 +67,11 @@ int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
 #include <dev/wscons/wsdisplay_bootfbvar.h>
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 #include <arm/broadcom/bcm2712_display_handoffvar.h>
+#include <arm/broadcom/bcm2712_display_hsm.h>
+#include <arm/broadcom/bcm2712_display_bvb.h>
+#include <arm/broadcom/bcm2712_display_core.h>
+#include <arm/broadcom/bcm2712_display_disp.h>
+#include <arm/broadcom/bcm2712_display_quiesce.h>
 #endif
 #endif
 #if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_DMA_PROBE)
@@ -128,7 +133,29 @@ enum bcmv3d_bootfb_phase {
 	BCMV3D_BOOTFB_CLOSED
 };
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+/* One fixed boot continuation. All providers and mappings survive every fault. */
+struct bcmv3d_display_stop {
+	struct bcm2712_hsm_provider *hsm;
+	struct bcm2712_bvb_provider *bvb;
+	struct bcm2712_core_provider *core;
+	struct bcm2712_disp_provider *disp;
+	struct bcm2712_hsm_status hsm_status;
+	struct bcm2712_bvb_status bvb_status;
+	struct bcm2712_core_status core_status;
+	struct bcm2712_disp_status disp_status;
+	struct bcm2712_display_contract contract;
+	bus_space_handle_t maps[BCM2712_QUIESCE_REGIONS];
+	unsigned int mapped;
+	struct bcm2712_quiesce_status stop;
+	const char *stage;
+	bool attempted, complete;
+	int fault;
+};
+#endif
+
 /* The ACPI device and this embedded owner remain resident until reboot. */
+
 struct bcmv3d_bootfb_owner {
 	struct wsdisplay_bootfb_lease *lease;
 	struct simplefb_framebuffer framebuffer;
@@ -136,6 +163,8 @@ struct bcmv3d_bootfb_owner {
 	int first_error, cancel_error;
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 	struct bcm2712_display_handoff_status firmware;
+	struct bcmv3d_display_stop display;
+	bool render_attached;
 #endif
 };
 #endif
@@ -189,6 +218,204 @@ bcmv3d_bootfb_exchange(void *arg, void *packet, size_t length)
 		aprint_normal("bcmv3d: display notify transport error %d; "
 		    "no response\n", error);
 	}
+	return error;
+}
+
+/* No other task can enter the attempted continuation or use these mappings. */
+static const unsigned int bcmv3d_display_indices[BCM2712_QUIESCE_REGIONS] = {
+	3, 5, 6
+};
+
+static int
+bcmv3d_display_read(void *arg, unsigned int region, uint32_t offset,
+    uint32_t *value)
+{
+	struct bcmv3d_softc *sc = arg;
+	struct bcmv3d_display_stop *d = &sc->sc_bootfb.display;
+
+	if (region >= d->mapped || offset >
+	    d->contract.memory[bcmv3d_display_indices[region]].length - 4)
+		return EINVAL;
+	return bus_space_peek_4(sc->sc_bst, d->maps[region], offset, value) == 0 ?
+	    0 : EIO;
+}
+
+static int
+bcmv3d_display_write(void *arg, unsigned int region, uint32_t offset,
+    uint32_t value)
+{
+	struct bcmv3d_softc *sc = arg;
+	struct bcmv3d_display_stop *d = &sc->sc_bootfb.display;
+
+	if (region >= d->mapped || offset >
+	    d->contract.memory[bcmv3d_display_indices[region]].length - 4)
+		return EINVAL;
+	return bus_space_poke_4(sc->sc_bst, d->maps[region], offset, value) == 0 ?
+	    0 : EIO;
+}
+
+static void
+bcmv3d_display_barrier(void *arg, unsigned int region)
+{
+	struct bcmv3d_softc *sc = arg;
+	struct bcmv3d_display_stop *d = &sc->sc_bootfb.display;
+
+	bus_space_barrier(sc->sc_bst, d->maps[region], 0,
+	    d->contract.memory[bcmv3d_display_indices[region]].length,
+	    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+}
+
+static void
+bcmv3d_display_delay(void *arg, unsigned int usec)
+{
+	(void)arg;
+	delay(usec);
+}
+
+static int
+bcmv3d_display_clocks(struct bcmv3d_softc *sc)
+{
+	struct bcmv3d_display_stop *d = &sc->sc_bootfb.display;
+	uint32_t hsm, bvb, core, disp;
+	int error;
+
+	/* Finish all GET-only creates before the first possible SET. */
+#define CREATE(n) do { \
+	d->stage = #n " create"; \
+	error = bcm2712_display_ ## n ## _create(sc->sc_dev, sc->sc_handle, &d->n); \
+	if (error != 0) return error; \
+	error = bcm2712_display_ ## n ## _status(d->n, &d->n ## _status); \
+	if (error != 0) return error; \
+} while (0)
+	CREATE(hsm);
+	CREATE(bvb);
+	CREATE(core);
+	CREATE(disp);
+#undef CREATE
+	/* Do not lower an inherited positive rate before hardware stops. */
+	hsm = MAX(149985000U, d->hsm_status.rate);
+	bvb = MAX(75000000U, MAX(d->bvb_status.floor, d->bvb_status.rate));
+	core = d->core_status.floor;
+	disp = MAX(d->disp_status.floor, d->disp_status.rate);
+#define HOLD(n) do { \
+	d->stage = #n " acquire"; \
+	error = bcm2712_display_ ## n ## _acquire(d->n, 0, n); \
+	if (error != 0) return error; \
+	error = bcm2712_display_ ## n ## _status(d->n, &d->n ## _status); \
+	if (error != 0) return error; \
+	if (d->n ## _status.fault != 0 || d->n ## _status.state != 1 || \
+	    d->n ## _status.rate < n || d->n ## _status.leases != 1) \
+		return EIO; \
+} while (0)
+	HOLD(hsm);
+	HOLD(bvb);
+	HOLD(core);
+	HOLD(disp);
+#undef HOLD
+	return 0;
+}
+
+static int
+bcmv3d_bootfb_stop_display(struct bcmv3d_softc *sc)
+{
+	static const struct bcm2712_quiesce_ops ops = {
+		.read = bcmv3d_display_read,
+		.write = bcmv3d_display_write,
+		.barrier = bcmv3d_display_barrier,
+		.delay = bcmv3d_display_delay
+	};
+	struct simplefb_console_close_status close;
+	struct bcmv3d_bootfb_owner *owner;
+	struct bcmv3d_display_stop *d;
+	const struct bcm2712_display_memory *memory;
+	unsigned int i;
+	int count, error;
+
+	if (sc == NULL)
+		return EINVAL;
+	if (cold || panicstr != NULL || cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (pserialize_in_read_section())
+		return EDEADLK;
+	ASSERT_SLEEPABLE();
+	KERNEL_LOCK(1, NULL);
+	owner = &sc->sc_bootfb;
+	d = &owner->display;
+	if (d->attempted || d->complete || d->fault != 0) {
+		error = d->fault != 0 ? d->fault : EBUSY;
+		goto out;
+	}
+	d->stage = "admission";
+	if (sc->sc_dev == NULL || device_private(sc->sc_dev) != sc ||
+	    sc->sc_bst == NULL || owner->phase != BCMV3D_BOOTFB_CLOSED ||
+	    !owner->render_attached || !owner->firmware.attempted ||
+	    !owner->firmware.complete || owner->firmware.fault != 0) {
+		error = EPERM;
+		goto publish;
+	}
+	error = simplefb_console_close_status(owner->lease, &close);
+	if (error == 0 && (!close.complete || !close.attempted || !close.closed ||
+	    !close.drained || close.error != 0 || close.mi_error != 0 ||
+	    close.md_error != 0))
+		error = ENXIO;
+	if (error == 0)
+		error = wsdisplay_bootfb_serial_closed(owner->lease);
+	if (error != 0)
+		goto publish;
+
+	/* No retry, even if create or the first map fails without a mutation. */
+	d->attempted = true;
+	/* config_finalize owns Giant. Restore its exact recursion at publication. */
+	KERNEL_UNLOCK_ALL(NULL, &count);
+	error = bcmv3d_display_clocks(sc);
+	if (error != 0)
+		goto restore;
+	d->stage = "resources";
+	error = bcm2712_display_acpi_resources(sc->sc_dev, sc->sc_handle,
+	    &d->contract);
+	if (error != 0)
+		goto restore;
+	d->stage = "map";
+	for (i = 0; i < BCM2712_QUIESCE_REGIONS; i++) {
+		memory = &d->contract.memory[bcmv3d_display_indices[i]];
+		error = bus_space_map(sc->sc_bst, memory->address, memory->length,
+		    0, &d->maps[i]);
+		if (error != 0)
+			goto restore;
+		d->mapped++;
+	}
+	d->stage = "PV0/HVS0 stop";
+	error = bcm2712_display_quiesce(&ops, sc, &d->stop);
+restore:
+	KERNEL_LOCK(count, NULL);
+publish:
+	d->fault = error;
+	d->complete = error == 0;
+	if (error != 0 && owner->first_error == 0)
+		owner->first_error = error;
+	if (sc->sc_dev == NULL)
+		goto out;
+	aprint_normal_dev(sc->sc_dev, "display stop at %s: error %d, complete %u; "
+	    "cached clocks %u/%u/%u/%u Hz, maps %u\n", d->stage, error,
+	    d->complete, d->hsm_status.rate, d->bvb_status.rate,
+	    d->core_status.rate, d->disp_status.rate, d->mapped);
+	if (d->stop.snapshot_valid) {
+		aprint_normal_dev(sc->sc_dev, "display before: HVS %08x; "
+		    "channels %08x/%08x %08x/%08x %08x/%08x; "
+		    "PV0 %08x/%08x PV1 %08x/%08x\n", d->stop.before.global,
+		    d->stop.before.control[0], d->stop.before.status[0],
+		    d->stop.before.control[1], d->stop.before.status[1],
+		    d->stop.before.control[2], d->stop.before.status[2],
+		    d->stop.before.pv_control[0], d->stop.before.pv_video[0],
+		    d->stop.before.pv_control[1], d->stop.before.pv_video[1]);
+	}
+	aprint_normal_dev(sc->sc_dev, "display last: version %08x, "
+	    "PV0 %08x/%08x, HVS0 %08x/%08x, EMPTY %u; no AXI drain "
+	    "or display ownership\n", d->stop.version, d->stop.pv_control,
+	    d->stop.pv_video, d->stop.control, d->stop.status,
+	    (d->stop.status >> 22) & 1);
+out:
+	KERNEL_UNLOCK_ONE(NULL);
 	return error;
 }
 
@@ -623,6 +850,12 @@ bcmv3d_finalize(device_t dev)
 #endif
 			if (error != 0)
 				aprint_error_dev(dev, "render attachment failed: %d\n", error);
+#if defined(WSDISPLAY_BOOTFB_DEFER) && defined(WSDISPLAY_BOOTFB_HANDOFF)
+			else {
+				sc->sc_bootfb.render_attached = true;
+				(void)bcmv3d_bootfb_stop_display(sc);
+			}
+#endif
 		}
 #endif
 	}

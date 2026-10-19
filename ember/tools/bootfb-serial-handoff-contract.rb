@@ -34,7 +34,7 @@ run = lambda do |name, argv, env = {}|
   print out; warn err unless err.empty?; last_err = err; status
 end
 def function(text,name)
-  a=text.scan(/^(?:static )?(?:void|int|bool)\n#{Regexp.escape(name)}\(.*?^}/m)
+  a=text.scan(/^(?:static )?(?:void|int|bool)\n#{Regexp.escape(name)}\(.*?^}$/m)
   abort "function count #{name}: #{a.size}" unless a.size==1
   a.first
 end
@@ -107,6 +107,26 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
     owner=acpi[/^enum bcmv3d_clock_status \{.*?(?=^static int bcmv3d_match)/m]
     abort 'owner missing' unless owner
     File.write(work+'/native-owner.h',notice(acpi)+owner)
+    %w[bcm2712_display.h bcm2712_display_clockvar.h bcm2712_display_hsm.h bcm2712_display_acpi.h bcm2712_display_bvb.h bcm2712_display_core.h bcm2712_display_disp.h].zip(%w[display-types.h clockvar.h hsm-types.h acpi-types.h bvb-types.h core-types.h disp-types.h]).each do |input,output|
+      p='sys/arch/arm/broadcom/'+input; t=File.read(source+'/'+p); files[p]=t
+      File.write(work+'/'+output,t.gsub(/^#include .*\n/,''))
+    end
+    %w[bcm2712_display_clock.c bcm2712_display_clock_acpi.c].zip(%w[clock-core.h native-clock.h]).each do |input,output|
+      p='sys/arch/arm/broadcom/'+input; t=File.read(source+'/'+p); files[p]=t
+      File.write(work+'/'+output,t.gsub(/^#include .*\n|^__KERNEL_RCSID\(.*\n/,''))
+    end
+    %w[bcm2712_display_quiesce.h bcm2712_display_quiesce.c].each do |n|
+      p='sys/arch/arm/broadcom/'+n; t=File.read(source+'/'+p);files[p]=t;File.write(work+'/'+n,t)
+    end
+    p='sys/arch/arm/broadcom/bcm2712_display.c';t=File.read(source+'/'+p);files[p]=t
+    resources=t[/^#define MEM\(.*?^#undef MEM/m] or abort 'resource table absent'
+    File.write(work+'/native-resources.h',notice(t)+resources)
+    t=File.read(source+'/ember/tools/bcm2712-display-clock-contract.c')
+    files['ember/tools/bcm2712-display-clock-contract.c']=t
+    File.write(work+'/clock-firmware.h',t[/^#define LOG_MAX .*?(?=^static void)/m] || abort('clock service absent'))
+    p='sys/arch/evbarm/rpi/vcprop.h';t=File.read(source+'/'+p);files[p]=t
+    File.write(work+'/properties.h',t.lines.grep(/^#define\s+(?:VCPROP_CLK_M2MC|VCPROP_CLK_PIXEL_BVB|VCPROP_CLK_DISP|VCPROP_CLK_CORE|VCPROP_REQ_SUCCESS|VCPROPTAG_RESPONSE|VCPROPTAG_GET_CLOCKSTATE|VCPROPTAG_GET_CLOCKRATE|VCPROPTAG_GET_MIN_CLOCKRATE|VCPROPTAG_GET_MAX_CLOCKRATE|VCPROPTAG_SET_CLOCKSTATE|VCPROPTAG_SET_CLOCKRATE)\s/).join)
+
     File.write(work+'/bcm2712_display_handoffvar.h',files.fetch('sys/arch/arm/broadcom/bcm2712_display_handoffvar.h'))
     File.write(work+'/protocol.c',files.fetch('sys/arch/arm/broadcom/bcm2712_display_handoff.c'))
     endian=files.fetch('sys/sys/endian.h')
@@ -116,8 +136,8 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       matches.first
     end
     File.write(work+'/native-endian.h',notice(endian)+"\n#ifndef __CAST\n#define __CAST(t,v) ((t)(v))\n#endif\n"+endian_functions.join("\n"))
-    helpers=%w[bcmv3d_bootfb_exchange bcmv3d_bootfb_notify bcmv3d_bootfb_claim_job bcmv3d_bootfb_queue bcmv3d_bootfb_retain bcmv3d_bootfb_cancel bcmv3d_finalize]
-    File.write(work+'/native-job.h',notice(acpi)+"static void bcmv3d_bootfb_retain(struct bcmv3d_softc *, int);\nstatic void bcmv3d_bootfb_cancel(struct bcmv3d_softc *, int);\n"+helpers.map { |n| function(acpi,n) }.join("\n"))
+    helpers=%w[bcmv3d_bootfb_exchange bcmv3d_bootfb_notify bcmv3d_display_read bcmv3d_display_write bcmv3d_display_barrier bcmv3d_display_delay bcmv3d_display_clocks bcmv3d_bootfb_stop_display bcmv3d_bootfb_claim_job bcmv3d_bootfb_queue bcmv3d_bootfb_retain bcmv3d_bootfb_cancel bcmv3d_finalize]
+    File.write(work+'/native-job.h',notice(acpi)+(acpi[/^static const unsigned int bcmv3d_display_indices.*?^};/m] || abort("indices absent"))+"\nstatic void bcmv3d_bootfb_retain(struct bcmv3d_softc *, int);\nstatic void bcmv3d_bootfb_cancel(struct bcmv3d_softc *, int);\n"+helpers.map { |n| function(acpi,n) }.join("\n"))
     ws=File.read(source+'/sys/dev/wscons/wsdisplay.c')
     commit=ws[/^\t\twsdisplay_cons.cn_dev = makedev\(maj,\n\t\t    WSDISPLAYMINOR\(device_unit\(self\), 0\)\);\n\t\twsdisplay_console_generation\+\+;/]
     abort 'actual cdev commit missing' unless commit
@@ -154,7 +174,7 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       common=[*cc,'-std=c11','-Wall','-Wextra','-Werror','-pthread',*flags,'-I'+work,'-I'+source+'/ember/tools']
       s=run.call('compile-provider-'+name,[*common,'-DSERIAL_READY_LIBRARY','-Dmain=serial_ready_original_main','-c',source+'/ember/tools/serial-console-ready-contract.c','-o',work+'/provider.o'])
       abort 'provider compile failed' unless s.success?
-      s=run.call('compile-route-'+name,[*common,'-DBCM2712_V3D_RENDER','-DBCM2712_V3D_TAKEOVER',source+'/ember/tools/bootfb-serial-handoff-contract.c',work+'/protocol.c',work+'/provider.o','-o',work+'/contract'])
+      s=run.call('compile-route-'+name,[*common,'-DBCM2712_V3D_RENDER','-DBCM2712_V3D_TAKEOVER',source+'/ember/tools/bootfb-serial-handoff-contract.c',work+'/protocol.c',work+'/bcm2712_display_quiesce.c',work+'/provider.o','-o',work+'/contract'])
       abort 'route compile failed' unless s.success?
     end
     compile.call('positive')
@@ -162,6 +182,27 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       abort 'native handoff positive failed' unless run.call('positive',[*runner,work+'/contract']).success?
     end
 controls={
+  'display-complete'=>['native-job.h','!close.complete || ', '', 'display_permitted'],
+  'display-closed'=>['native-job.h','!close.closed ||', 'false ||', 'display_permitted'],
+  'display-drained'=>['native-job.h','!close.drained ||', 'false ||', 'display_permitted'],
+  'display-error'=>['native-job.h','close.error != 0 ||', 'false ||', 'display_permitted'],
+  'display-mi-error'=>['native-job.h','close.mi_error != 0 ||', 'false ||', 'display_permitted'],
+  'display-md-error'=>['native-job.h','close.md_error != 0)', 'false)', 'display_permitted'],
+  'display-status'=>['native-job.h','error = simplefb_console_close_status(owner->lease, &close);', 'error = 0; memset(&close,1,sizeof(close)); close.error = close.mi_error = close.md_error = 0;', 'display_permitted'],
+  'display-hold'=>['native-job.h','error = wsdisplay_bootfb_serial_closed(owner->lease);', 'error = 0;', 'display_permitted'],
+  'display-fw-attempt'=>['native-job.h','!owner->firmware.attempted ||', 'false ||', 'display_permitted'],
+  'display-fw-complete'=>['native-job.h','!owner->firmware.complete ||', 'false ||', 'display_permitted'],
+  'display-fw-fault'=>['native-job.h','owner->firmware.fault != 0)', 'false)', 'display_permitted'],
+  'display-render'=>['native-job.h','!owner->render_attached ||', 'false ||', 'display_permitted'],
+  'display-repeat'=>['native-job.h','if (d->attempted || d->complete || d->fault != 0)', 'if (false)', '!display_lock && giant == 0'],
+  'display-attempt'=>['native-job.h','d->attempted = true;', '(void)d;', 'gpu_sc.sc_bootfb.display.attempted'],
+  'display-giant'=>['native-job.h','KERNEL_UNLOCK_ALL(NULL, &count);', 'count = 1; KERNEL_UNLOCK_ONE(NULL);', 'giant == 0'],
+  'native-bvb-inherit'=>['native-job.h','MAX(75000000U, MAX(d->bvb_status.floor, d->bvb_status.rate))', 'MAX(75000000U, d->bvb_status.floor)', 'le32toh(p[6]) >= display_firmware[i].rate'],
+  'native-disp-inherit'=>['native-job.h','MAX(d->disp_status.floor, d->disp_status.rate)', 'd->disp_status.floor', 'le32toh(p[6]) >= display_firmware[i].rate'],
+  'native-hsm-rate'=>['native-job.h','149985000U', '120000000U', 'display_firmware[0].rate >= 149985000'],
+  'native-bvb-rate'=>['native-job.h','75000000U', '1U', 'display_firmware[1].rate >= 75000000'],
+  'native-maps'=>['native-job.h',"\t3, 5, 6", "\t3, 6, 5", 'a == bcm2712_display_resources[indices[i]].memory.address'],
+
   'firmware-exact-length'=>['protocol.c','else if ((response & 0x80000000U) == 0)', 'else if (response != 0x80000000U)', 'gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.firmware.fault == 0'],
   'firmware-only-four'=>['protocol.c','else if ((response & 0x80000000U) == 0)', 'else if (response != 0x80000000U && response != 0x80000004U)', 'gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.firmware.fault == 0'],
   'firmware-response-bit'=>['protocol.c','else if ((response & 0x80000000U) == 0)', 'else if (false)', '!gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.firmware.fault == EIO'],
@@ -200,7 +241,14 @@ controls={
       selected.each do |name|
         path,before,after,expected=controls.fetch(name);before=before.gsub('\\n', "\n").gsub('\\t', "\t");text=File.read(work+'/'+path)
         abort 'control anchor absent '+name unless text.include?(before)
-        mutated=text.sub(before,after)
+        if name.start_with?('display-')
+          body=function(text,'bcmv3d_bootfb_stop_display')
+          abort 'scoped control anchor absent '+name unless body.include?(before)
+          mutated=text.sub(body,body.sub(before,after))
+        else
+          mutated=text.sub(before,after)
+        end
+
         if name=='poll-pair'
           mutated.sub!('!wsdisplay_poll_admitted && cn_publication_closed()', '!wsdisplay_poll_admitted && closed')
         end

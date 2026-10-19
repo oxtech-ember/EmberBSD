@@ -721,8 +721,11 @@ on every board in the hardware catalog.
   After successful CPU close, the same owner gates one
   [firmware display notification](ember/boot/bcm2712-display-handoff.md) through
   the fixed mailbox transport. Errors stay terminal without fallback or retry.
-  Native linkage and physical acceptance of this notification remain pending.
+  The CPU serial transaction and firmware notification pass coherent GCC16 builds and physical CM5 boot checks.
   A firmware ACK grants no display ownership, hardware exclusion or scanout drain.
+  After render attachment, the same owner can hold four clocks and perform a bounded
+  [PV0/HVS0 stop](ember/boot/bcm2712-native-display-quiesce.md). This continuation
+  is source-tested; its target link and physical acceptance remain pending.
 A default-off [loader source record](ember/boot/boot-framebuffer-issuer.md#loader-source-facts)
 preserves checked EFI GOP, cleanup and runtime facts.
 It grants no absence admission or display ownership.
@@ -758,7 +761,7 @@ It grants no absence admission or display ownership.
   [kernel-native owners](ember/boot/bcm2712-native-display-clocks.md) provide fixed HSM13/BVB14/CORE4/DISP16 leases and retained faults.
   All four owners share one builtin registry and transport mutex. The explicit
   [DISP hold module](ember/boot/bcm2712-disp-clock-probe.md) imports this API.
-  Native kernel/module linkage of that migration remains pending.
+  A coherent GCC16 kernel and four platform modules link successfully. The separate DISP module also builds with resolved builtin imports.
   The opt-in [finite BVB0 clock probe](ember/boot/bcm2712-bvb-clock-probe.md) is source-tested.
   Physical BVB clock control remains unaccepted.
   A separate [shared HD control initialization probe](ember/boot/bcm2712-hd-initialize-probe.md)

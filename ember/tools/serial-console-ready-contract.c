@@ -95,6 +95,9 @@ static unsigned int checks;
 #define MODEL_CHECK(x) do { if (!(x)) { \
 	fprintf(stderr, "CHECK line %u: %s\n", (unsigned int)__LINE__, #x); \
 	exit(1); } } while (0)
+/* Keep controlled service assertions active when the caller sets NDEBUG. */
+#undef assert
+#define assert(x) MODEL_CHECK(x)
 static void lifetime_effect(void);
 #ifdef SERIAL_READY_LIBRARY
 extern int *serial_test_giant(void);

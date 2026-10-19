@@ -4,7 +4,9 @@ The BSD helper sends one fixed `NOTIFY_DISPLAY_DONE` property transaction.
 The explicit `EMBERV3DCONSOLE` profile calls it from the same native boot owner
 after successful complete CPU serial close and drain. Default profiles do not
 invoke it. It adds no MMIO or power operation and changes no read-only HVS observer.
-An ACK grants no inherited-state or display ownership.
+An ACK grants no inherited-state or display ownership. The same selected profile
+can later run a separate [bounded stop](bcm2712-native-display-quiesce.md) after
+render attachment and fresh clock/resource checks.
 
 Use fresh zeroed status and serialize access. The helper marks an attempt
 before calling the transport. A re-entrant or later attempt returns `EBUSY`
@@ -53,8 +55,7 @@ Any future hardware owner must separately exclude conflicting display clients,
 then read fresh controller state under its own explicit clock/cache/MMU lifetime.
 Earlier snapshots become stale. A nonzero global HVS enable bit alone does not
 describe active channels or transfer ownership. This stage performs no clocks,
-ICAC, MMU4, HVS, PHY, scanout DMA or KMS operation. Native linkage and physical
-acceptance of this notification stage remain pending.
+ICAC, MMU4, HVS, PHY, scanout DMA or KMS operation. Coherent GCC16 linkage and physical CM5 acceptance of this notification pass.
 
 Run `sh ember/tools/bcm2712-display-handoff-contract.sh`. The fixture compiles
 the real C source, checks independent zero-length and truncated length4 packets,

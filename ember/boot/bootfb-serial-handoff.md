@@ -4,8 +4,10 @@ The manual `EMBERV3DCONSOLE` kernel profile includes `EMBERV3DHDMI` and adds
 `WSDISPLAY_BOOTFB_HANDOFF`. The joined boot job holds the serial console, closes
 and drains CPU framebuffer access, then sends one firmware display notification.
 Default profiles stay unchanged. This stage adds no HVS programming, KMS operation
-or display ownership. Native linkage and physical acceptance of the firmware
-notification remain pending.
+or display ownership. The CPU close and firmware notification pass coherent GCC16 linkage and
+physical CM5 boot checks. The
+separate [PV0/HVS0 continuation](bcm2712-native-display-quiesce.md) has source
+checks; its native link and physical acceptance remain pending.
 
 The [joined issuer](boot-framebuffer-issuer.md#native-joined-boot-job) owns the
 lease and terminal results. The [PLCOM readiness record](serial-console-ready.md)
