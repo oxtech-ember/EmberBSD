@@ -1,0 +1,9 @@
+# Origin: EmberBSD BCM2712 display integration, 2026-10-19.
+# SPDX-License-Identifier: BSD-2-Clause
+include "arch/evbarm/conf/EMBERV3DRENDER"
+
+# Attach the shared-cache software owner. Attachment does no MMIO.
+bcm2712iommuc* at acpi?
+
+# Enable the cold boot framebuffer issuer. This does not close its readers.
+options WSDISPLAY_BOOTFB_DEFER

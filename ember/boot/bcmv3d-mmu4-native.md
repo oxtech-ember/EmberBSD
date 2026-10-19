@@ -12,6 +12,15 @@ stay unchanged. The adapter, backing and frame-helper TUs require all three
 existing selectors: `bcmv3drender`, `bcm2712_display_components` and
 `bcm2712iommuc_acpi`. The provider alone has no DRM dependency.
 
+The opt-in `EMBERV3DHDMI` source-selection profile includes `EMBERV3DRENDER`,
+attaches the ICAC software owner and selects `WSDISPLAY_BOOTFB_DEFER`.
+It links the three adapter translation units with the cold framebuffer issuer.
+It is an integration profile. It does not select an exclusive console path,
+close readers, issue firmware handoff or start MMU4, scanout or a desktop.
+The ICAC attachment validates its descriptor without mapping registers.
+Use a coherent GCC16 kernel and matching modules. The ordinary `EMBER64` and
+`EMBERV3DRENDER` profiles keep their existing options and attachments.
+
 `bcmv3d_mmu4_native_create(sc, out)` validates native device/ACPI attachment,
 registered DRM/render identity, canonical GPU0, the full v1 resource contract,
 typed ICAC dependency and actual attached ICAC provider. It pins a DRM memory
