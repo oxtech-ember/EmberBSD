@@ -281,7 +281,9 @@ static void scanout_checks(void)
  CHECK(f[0].held==1&&f[0].drops==0&&sc.active.dma&&sc.pending.dma==NULL);
  CHECK(done.observed_sequence>=4&&done.observed_time_ns>0&&sc.vblank==done.observed_sequence);
  CHECK(sun60i_a733_de352_release(client)==EBUSY);
+ event_polls++;uint64_t before_sequence=sequence;
  f[1].reenter=true;CHECK(sun60i_a733_de352_submit(client,&input[1],&done)==0);
+ CHECK(done.observed_sequence==before_sequence+3);
  CHECK(f[0].held==0&&f[0].drops==1&&f[1].held==1&&posts==2);
  write_fault=0x8114;old_done=done;
  CHECK(sun60i_a733_de352_submit(client,&input[2],&done)==EIO);
