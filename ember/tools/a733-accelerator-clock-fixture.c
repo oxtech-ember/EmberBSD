@@ -433,6 +433,7 @@ sun60i_a733_pck_display_ready(int node, const void *owner)
 }
 #include "a733-display-isolation-power-model.h"
 #include "sun60i_a733_ccu.c"
+static void peer_lock_check(void) { assert(mutex_owned(&sun60i_a733_ccu_lock)); }
 static void
 display_write_check(bus_size_t off)
 {

@@ -797,7 +797,7 @@ done:
 
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Origin: EmberBSD; AI-assisted fixed VE_DEC isolation reservation. */
-/* The fixed VE_DEC lease performs no hardware writes. */
+/* Reservation and snapshot perform no hardware writes. */
 static int
 sun60i_pck600_isolation_read(struct sun60i_pck600_softc *sc,
     uint32_t out[2][3])
@@ -910,6 +910,153 @@ sun60i_a733_pck_display_isolation_snapshot(int node, const void *owner,
 	if (out == NULL)
 		return EINVAL;
 	return sun60i_pck600_isolation(node, owner, PCK600_READY, out);
+}
+
+/* The caller holds the CCU inactive-peer guard before this PCK lock. */
+static int
+sun60i_pck600_peer_parents(struct sun60i_pck600_softc *sc,
+    const void *owner)
+{
+	uint32_t words[2][3];
+	int error;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+	for (u_int n = 0; n < __arraycount(sun60i_pck600_display_domains); n++) {
+		const u_int id = sun60i_pck600_display_domains[n];
+		const struct sun60i_pck600_lease *slot = &sc->sc_lease[id];
+
+		if (slot->owner != owner || !slot->retained)
+			return EBUSY;
+		error = sun60i_pck600_borrow_read(sc, id, words);
+		if (error != 0)
+			return error;
+		if (memcmp(slot->before, words, sizeof(words)) != 0)
+			return EBUSY;
+	}
+	return 0;
+}
+
+static int
+sun60i_pck600_peer_write(struct sun60i_pck600_softc *sc, bus_size_t reg,
+    uint32_t value)
+{
+	uint32_t actual;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+	if (bus_space_poke_4(sc->sc_bst, sc->sc_bsh, reg, value) != 0)
+		return EFAULT;
+	bus_space_barrier(sc->sc_bst, sc->sc_bsh, reg, sizeof(value),
+	    BUS_SPACE_BARRIER_WRITE | BUS_SPACE_BARRIER_READ);
+	if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh, reg, &actual) != 0)
+		return EFAULT;
+	return actual == value ? 0 : EIO;
+}
+
+/* Fixed VE_DEC ON request. This does not release any peer reset or gate. */
+int
+sun60i_a733_pck_display_peer_on(int phandle, const void *owner)
+{
+	static const struct {
+		bus_size_t reg;
+		uint32_t value;
+	} steps[] = {
+		{ 0x2000 + PCK600_DCDR0, 0x1f1f1f },
+		{ 0x2000 + PCK600_DCDR1, 0x1f1f },
+		{ 0x2000 + PCK600_SWITCH0, 0x08080808 },
+		{ 0x2000 + PCK600_SWITCH1, 0x0808 },
+		{ 0x2000 + PCK600_OFF2ON, 0x08 },
+	};
+	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
+	struct sun60i_pck600_lease *slot;
+	uint32_t words[2][3], policy, emulation, status;
+	int error;
+
+	if (owner == NULL)
+		return EINVAL;
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->sc_lock);
+	slot = &sc->sc_lease[2];
+	if (slot->owner != owner || !slot->retained) {
+		error = EBUSY;
+		goto done;
+	}
+	error = sun60i_pck600_peer_parents(sc, owner);
+	if (error == 0)
+		error = sun60i_pck600_isolation_read(sc, words);
+	if (error != 0)
+		goto done;
+	if (memcmp(slot->before, words, sizeof(words)) != 0) {
+		error = EBUSY;
+		goto done;
+	}
+	if ((words[0][0] & PCK600_MODE) == PCK600_ON)
+		goto done;
+	/* The first OFF profile accepts no unknown policy or status bits. */
+	if (words[0][0] != PCK600_OFF || words[0][2] != PCK600_OFF) {
+		error = EOPNOTSUPP;
+		goto done;
+	}
+	/* All three leases are already retained before this first attempt. */
+	for (u_int n = 0; n < __arraycount(steps); n++) {
+		error = sun60i_pck600_peer_write(sc, steps[n].reg, steps[n].value);
+		if (error != 0)
+			goto failed;
+	}
+	/* A delay write is not permission to accept changed power policy. */
+	error = sun60i_pck600_peer_parents(sc, owner);
+	if (error == 0)
+		error = sun60i_pck600_isolation_read(sc, words);
+	if (error != 0)
+		goto failed;
+	if (memcmp(slot->before, words, sizeof(words)) != 0) {
+		error = EBUSY;
+		goto failed;
+	}
+	error = sun60i_pck600_peer_write(sc, 0x2000 + PCK600_PWPR, PCK600_ON);
+	if (error != 0)
+		goto failed;
+	for (u_int elapsed = 0; ; elapsed += PCK600_POLL_US) {
+		if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh,
+		    0x2000 + PCK600_PWPR, &policy) != 0 ||
+		    bus_space_peek_4(sc->sc_bst, sc->sc_bsh,
+		    0x2000 + PCK600_PMER, &emulation) != 0 ||
+		    bus_space_peek_4(sc->sc_bst, sc->sc_bsh,
+		    0x2000 + PCK600_PWSR, &status) != 0) {
+			error = EFAULT;
+			goto failed;
+		}
+		if (policy != PCK600_ON || emulation != 0 ||
+		    (status != PCK600_OFF && status != PCK600_ON)) {
+			error = EIO;
+			goto failed;
+		}
+		if (status == PCK600_ON)
+			break;
+		if (elapsed == PCK600_TIMEOUT_US) {
+			error = ETIMEDOUT;
+			goto failed;
+		}
+		delay(PCK600_POLL_US);
+	}
+	error = sun60i_pck600_peer_parents(sc, owner);
+	if (error == 0)
+		error = sun60i_pck600_borrow_read(sc, 2, words);
+	if (error != 0)
+		goto failed;
+	if (words[0][0] != PCK600_ON || words[0][2] != PCK600_ON) {
+		error = EBUSY;
+		goto failed;
+	}
+	/* Publish the new exact expectation only after complete ON proof. */
+	memcpy(slot->before, words, sizeof(words));
+	goto done;
+failed:
+	/* Never undo an attempted transition or release its retained claims. */
+	sc->sc_failed[2] = true;
+done:
+	mutex_exit(&sc->sc_lock);
+	return error;
 }
 
 static void

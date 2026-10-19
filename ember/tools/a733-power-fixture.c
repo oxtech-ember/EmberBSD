@@ -92,7 +92,11 @@ static bool checked_state;
 static kmutex_t *required_read_lock;
 static bus_size_t unstable_reg;
 static unsigned int unstable_read, state_checks;
-static bool lease_test;
+static bool lease_test, peer_on_test;
+static unsigned pokes, fail_poke, change_after_poke;
+static bus_size_t peer_change_reg;
+static uint32_t peer_change_mask;
+static void peer_retention_check(void);
 static unsigned lease_complete_peek;
 static unsigned int peeks, fail_peek, change_peek;
 static bus_size_t peek_trace[92];
@@ -191,6 +195,13 @@ bus_space_peek_4(bus_space_tag_t tag, bus_space_handle_t handle,
 		return 1;
 	if (peeks == change_peek)
 		registers[off / 4] ^= __BIT(3);
+	if (peer_on_test && policy_written && off == 0x2008) {
+		poll_reads++;
+		if (complete_after && poll_reads >= complete_after)
+			registers[off / 4] = 8;
+		if (deny_after && poll_reads >= deny_after)
+			registers[0x2000 / 4] = registers[off / 4];
+	}
 	*value = registers[off / 4];
 	return 0;
 }
@@ -203,6 +214,26 @@ bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
 	if (off == fail_write) return;
 	registers[off / 4] = value;
 	if (off % 0x1000 == 0) policy_written++;
+}
+static int
+bus_space_poke_4(bus_space_tag_t tag, bus_space_handle_t handle,
+    bus_size_t off, uint32_t value)
+{
+	static const bus_size_t offsets[] = { 0x2170, 0x2174, 0x2c00,
+	    0x2c04, 0x2c10, 0x2000 };
+	static const uint32_t values[] = { 0x1f1f1f, 0x1f1f,
+	    0x08080808, 0x0808, 0x08, 0x08 };
+	CHECK(peer_on_test && required_read_lock->held);
+	peer_retention_check();
+	CHECK(pokes < __arraycount(offsets));
+	CHECK(off == offsets[pokes] && value == values[pokes]);
+	pokes++;
+	if (pokes == fail_poke)
+		return 1;
+	bus_space_write_4(tag, handle, off, value);
+	if (pokes == change_after_poke)
+		registers[peer_change_reg / 4] ^= peer_change_mask;
+	return 0;
 }
 static void
 bus_space_barrier(bus_space_tag_t tag, bus_space_handle_t handle,
@@ -228,6 +259,11 @@ of_compatible_match(int node, const struct device_compatible_entry *data)
 #undef fdtbus_register_powerdomain_controller
 
 static struct sun60i_pck600_softc sc;
+static void peer_retention_check(void) {
+ CHECK(sc.sc_lease[1].owner!=NULL);
+ for(unsigned i=1;i<=10;i++)if(i==1||i==2||i==10)
+  CHECK(sc.sc_lease[i].retained&&sc.sc_lease[i].owner==sc.sc_lease[1].owner);
+}
 static struct fdt_attach_args attach_args = { .faa_phandle = 1 };
 static unsigned int cases;
 static void
@@ -257,6 +293,8 @@ reset_fixture(void)
 	unstable_read = 0;
 	peeks = fail_peek = change_peek = 0;
 	lease_complete_peek = 0;
+	peer_on_test=false;pokes=fail_poke=change_after_poke=0;
+	peer_change_reg=0;peer_change_mask=0;
 	memset(peek_trace, 0, sizeof(peek_trace));
 	memset(read_trace, 0, sizeof(read_trace));
 	fail_write = SIZE_MAX;
@@ -1105,6 +1143,7 @@ main(void)
 	test_diagnostic();
 	test_display_observer();
 	test_display_isolation_power();
+	test_display_peer_power();
 	reset_fixture();
 	return 0;
 }

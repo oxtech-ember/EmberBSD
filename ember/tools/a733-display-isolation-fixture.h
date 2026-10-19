@@ -88,4 +88,27 @@ static void test_display_isolation(void) {
   CHECK(sun60i_a733_ccu_display_release(CLOCK(A733_CLK_DE0),&display_cookie)==EBUSY);
  }
 
+ /* Only the retained same-cookie peer claim can request ON. */
+ isolation_setup();
+ CHECK(sun60i_a733_ccu_display_begin_peer_access(CLOCK(A733_CLK_DE0),&display_cookie)==EINVAL&&peer_on_calls==0);
+ CHECK(sun60i_a733_ccu_display_isolation_reserve(CLOCK(A733_CLK_DE0),&display_cookie)==0);
+ CHECK(sun60i_a733_ccu_display_begin_peer_access(CLOCK(A733_CLK_DE0),&display_cookie)==EBUSY&&peer_on_calls==0);
+ retained=false;CHECK(sun60i_a733_ccu_display_begin_de0(CLOCK(A733_CLK_DE0),&display_cookie,&retained)==0);
+ CHECK(sun60i_a733_ccu_display_begin_peer_access(CLOCK(A733_CLK_DE0),&wrong)==EINVAL&&peer_on_calls==0);
+ CHECK(sun60i_display_lease.fault==0);
+ CHECK(sun60i_a733_ccu_display_begin_peer_access(CLOCK(A733_CLK_DE0),&display_cookie)==0&&peer_on_calls==1&&writes==4);
+ for(unsigned test=0;test<3;test++) {
+  isolation_setup();CHECK(sun60i_a733_ccu_display_isolation_reserve(CLOCK(A733_CLK_DE0),&display_cookie)==0);
+  retained=false;CHECK(sun60i_a733_ccu_display_begin_de0(CLOCK(A733_CLK_DE0),&display_cookie,&retained)==0);
+  if(test==0)REG(0xa88)=0x80000000;
+  if(test==1)peer_on_error=ETIMEDOUT;
+  if(test==2)peer_on_post_fault=true;
+  CHECK(sun60i_a733_ccu_display_begin_peer_access(CLOCK(A733_CLK_DE0),&display_cookie)!=0);
+  CHECK(peer_on_calls==(test==0?0U:1U)&&sun60i_display_lease.fault!=0);
+  CHECK(sun60i_display_lease.pck_retained&&isolation_retained&&writes==4);
+  unsigned saved_calls=peer_on_calls;
+  CHECK(sun60i_a733_ccu_display_begin_peer_access(CLOCK(A733_CLK_DE0),&display_cookie)==EBUSY&&peer_on_calls==saved_calls);
+  CHECK(sun60i_a733_ccu_display_release(CLOCK(A733_CLK_DE0),&display_cookie)==EBUSY);
+ }
+
 }
