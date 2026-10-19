@@ -46,7 +46,13 @@ tools_path = upstream+'/edk2/BaseTools/Conf/tools_def.template'
 platform_file = 'Platform/RaspberryPi/RPi5/RPi5.dsc'
 dsc_path = output+'/platform/'+platform_file
 FileUtils.mkdir_p(File.dirname(dsc_path))
-FileUtils.cp(upstream+'/edk2-platforms/'+platform_file,dsc_path)
+# --prepare already applies the series. Always start this isolated control
+# from the original pinned DSC, without changing the shared working tree.
+pinned_dsc=run.call('pinned-DSC',['git','--no-optional-locks','-c','protocol.allow=never',
+  '-C',upstream+'/edk2-platforms','show',
+  'c4b5d05de1f2ef633bdb4c175b5c118fcb2666ed:'+platform_file],
+  {'GIT_NO_LAZY_FETCH'=>'1','GIT_OPTIONAL_LOCKS'=>'0','GIT_TERMINAL_PROMPT'=>'0'})
+File.binwrite(dsc_path,pinned_dsc)
 # Apply only this file's hunks. This does not validate the complete series.
 File.foreach(root+'/ember/firmware/series') do |entry|
   patch = File.read(root+'/ember/firmware/'+entry.strip)

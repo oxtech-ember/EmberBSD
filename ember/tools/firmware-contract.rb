@@ -46,7 +46,12 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
       search = %w[CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH LIBRARY_PATH COMPILER_PATH GCC_EXEC_PREFIX LD_RUN_PATH LD_LIBRARY_PATH CFLAGS CPPFLAGS CXXFLAGS ASFLAGS LDFLAGS LDLIBS CC CXX CPP AS LD AR NM OBJCOPY OBJDUMP RANLIB STRIP MAKEFLAGS MFLAGS MAKEOVERRIDES]
       abort 'Inherited compiler search environment reached the build' if search.any? { |key| ENV.key?(key) }
       File.open(ENV.fetch('FIXTURE_TRACE'), 'a') { |f| f.puts JSON.generate(['build', ARGV]) }
+      lock=File.dirname(Dir.pwd)+'/.ember-firmware.lock'
+      abort 'Upstream build escaped the cache lease' unless File.directory?(lock)
       exit 43 if ENV['FIXTURE_FAIL'] == 'build'
+      if ENV['FIXTURE_FAIL']=='manifest-changed'
+        File.write(File.dirname(Dir.pwd)+'/.ember-firmware-source.json','changed during build')
+      end
       File.write('RPI_EFI.fd', "new fixture firmware\n")
       if ENV['FIXTURE_FAIL'] == 'fill-root'
         directory = ARGV.join(' ').match(/EMBER_FIRMWARE_ROOT=([^ ]+)/)[1]
@@ -61,7 +66,7 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
       require 'fileutils'
       require 'json'
       File.open(ENV.fetch('FIXTURE_TRACE'), 'a') { |f| f.puts JSON.generate(['git', ARGV]) }
-      exit 41 if ENV['FIXTURE_FAIL'] == 'git' && ARGV.include?('fetch')
+      exit 41 if ENV['FIXTURE_FAIL'] == 'git' && (ARGV.include?('fetch') || ARGV.first=='clone')
       if ARGV.first == 'clone'
         destination = ARGV.last
         FileUtils.mkdir_p(%w[.git edk2 edk2-platforms arm-trusted-firmware].map { |p| destination + '/' + p })
@@ -86,6 +91,35 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
       exit 49 if tfa && ENV['FIXTURE_FAIL']=='patch-tfa'
       exit(ENV['FIXTURE_FAIL']=='patch' ? 42 : 0)
     RUBY
+    # The builder controls exercise orchestration. The separate source contract
+    # executes the real helper with real Git indexes and worktrees.
+    executable.call('ruby', <<~RUBY)
+      #!#{RbConfig.ruby}
+      require 'json'
+      require 'open3'
+      unless ARGV.first && ARGV.first.end_with?('/firmware-source.rb')
+        exec #{RbConfig.ruby.inspect}, *ARGV
+      end
+      source=ARGV.fetch(1)
+      cache=File.dirname(source)
+      lock=cache+'/.ember-firmware.lock'
+      abort 'Source helper escaped the builder lease' unless File.read(lock+'/owner').strip==Process.ppid.to_s &&
+        File.read(lock+'/source').strip==source
+      File.open(ENV.fetch('FIXTURE_TRACE'),'a') { |f| f.puts JSON.generate(['source-helper',ARGV]) }
+      if ARGV.include?('--verify-state')
+        exit 51 if ENV['FIXTURE_FAIL']=='source-post'
+        exit 0
+      end
+      firmware=File.expand_path('../firmware',File.dirname(ARGV.first))
+      File.readlines(firmware+'/series',chomp:true).each do |name|
+        owner=name.start_with?('tfa-') ? 'arm-trusted-firmware' : (name.start_with?('edk2-') ? 'edk2' : 'edk2-platforms')
+        out,err,status=Open3.capture3('patch','-s','-t','-N','-p1','-F0','-d',source+'/'+owner,
+          stdin_data:File.binread(firmware+'/'+name))
+        STDOUT.write(out); STDERR.write(err)
+        exit status.exitstatus unless status.success?
+      end
+      File.write(cache+'/.ember-firmware-source.json',JSON.generate({'fixture'=>'prepared'}))
+    RUBY
     executable.call('python3', <<~RUBY)
       #!#{RbConfig.ruby}
       require 'json'
@@ -106,8 +140,45 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
         File.write(ARGV[1] + '/firmware-receipt.json', 'partial receipt')
         exit 44
       end
+      if ENV['FIXTURE_FAIL']=='lease-owner'
+        system ENV.fetch('FIXTURE_REAL_PYTHON'), *ARGV
+        status=$?.exitstatus
+        File.write(File.dirname(output)+'/.ember-firmware.lock/owner','other owner')
+        %w[RPI_EFI.fd RPI_EFI.fd.incoming firmware-receipt.json].each do |file|
+          File.write(output+'/'+file,'foreign '+File.basename(output)+'/'+file+10.chr)
+        end
+        exit status
+      end
       exec ENV.fetch('FIXTURE_REAL_PYTHON'), *ARGV
     RUBY
+    %w[rm rmdir].each do |tool|
+      executable.call(tool, <<~RUBY)
+        #!#{RbConfig.ruby}
+        if #{tool.inspect}=='rmdir' && ENV['FIXTURE_FAIL']=='lease-rmdir' && ARGV.last.end_with?('/.ember-firmware.lock')
+          exit 52
+        end
+        if #{tool.inspect}=='rm' && ENV['FIXTURE_FAIL']=='source-cleanup' && ARGV.include?('-rf')
+          exit 53
+        end
+        if #{tool.inspect}=='rmdir' && ENV['FIXTURE_UNLOCK_PUBLISH'] && ARGV.last.end_with?('/.ember-firmware.lock')
+          require 'fileutils'
+          system '/bin/rmdir', *ARGV
+          status=$?.exitstatus
+          if status==0
+            cache=File.dirname(ARGV.last)
+            FileUtils.mkdir_p(ARGV.last)
+            File.write(ARGV.last+'/owner','new publisher')
+            File.write(ARGV.last+'/source',cache+'/rpi5-uefi-src')
+            variant=ENV.fetch('FIXTURE_SELECTED')
+            %w[RPI_EFI.fd RPI_EFI.fd.incoming firmware-receipt.json].each do |file|
+              File.write(cache+'/'+variant+'/'+file,'foreign '+variant+'/'+file+10.chr)
+            end
+          end
+          exit status
+        end
+        exec #{('/bin/'+tool).inspect}, *ARGV
+      RUBY
+    end
     %w[cp mv].each do |tool|
       executable.call(tool, <<~RUBY)
         #!#{RbConfig.ruby}
@@ -147,7 +218,7 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
     end
     env = {'PATH'=>"#{tools}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
            'FIXTURE_TRACE'=>"#{directory}/trace", 'FIXTURE_HOST'=>'Darwin',
-           'FIXTURE_FAIL'=>'', 'FIXTURE_VERSION'=>'16.2.0', 'FIXTURE_MAJOR'=>'16',
+           'FIXTURE_SELECTED'=>selected, 'FIXTURE_FAIL'=>'', 'FIXTURE_VERSION'=>'16.2.0', 'FIXTURE_MAJOR'=>'16',
            'FIXTURE_MACHINE'=>'aarch64-none-elf', 'FIXTURE_REAL_PYTHON'=>python,
            'PYTHONDONTWRITEBYTECODE'=>'1', 'CROSS_COMPILE'=>'',
            'EMBER_AARCH64_ELF_TOOLCHAIN'=>''}.merge(values)
@@ -166,6 +237,10 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
       FileUtils.mkdir_p(File.dirname(selected_builder))
       FileUtils.cp(builder,selected_builder)
     end
+    if env['FIXTURE_LOCK']
+      FileUtils.mkdir_p(cache+'/.ember-firmware.lock')
+      File.write(cache+'/.ember-firmware.lock/owner','other owner')
+    end
     command = ['/bin/bash', selected_builder, *args]
     out, err, result = Open3.capture3(env, *command)
     begin
@@ -173,7 +248,9 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
       variants.each do |variant|
         %w[RPI_EFI.fd RPI_EFI.fd.incoming firmware-receipt.json].each do |file|
           path = "#{cache}/#{variant}/#{file}"
-          if preserve || variant != selected
+          if variant==selected && (env['FIXTURE_UNLOCK_PUBLISH'] || env['FIXTURE_FAIL']=='lease-owner')
+            raise "foreign publisher's #{file} was changed" unless File.read(path)=="foreign #{variant}/#{file}\n"
+          elsif preserve || variant != selected
             raise "changed accepted #{variant}/#{file}" unless File.read(path) == "accepted #{variant}/#{file}\n"
           elsif expected != 0
             raise "stale selected #{file} survived" if File.exist?(path)
@@ -195,13 +272,19 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
         end
       end
       trace = File.exist?(env['FIXTURE_TRACE']) ? File.read(env['FIXTURE_TRACE']) : ''
+      events=trace.lines.map { |line| JSON.parse(line) }
+      raise 'destructive source reset/clean reached the cache' if events.any? do |event|
+        event[0]=='git' && (event[1].include?('reset') || event[1].include?('clean') ||
+          event[1].any? { |arg| arg.include?('git reset') || arg.include?('git clean') })
+      end
+
       if %w[build receipt copy rename compiler-changed fill-root].include?(env['FIXTURE_FAIL'])
         raise 'failed rebuild lost build.log' unless File.file?("#{cache}/#{selected}/build.log")
       end
       if env['FIXTURE_FAIL'] == 'compiler-changed'
         raise 'compiler replacement was not diagnosed' unless err.include?('target compiler changed during firmware build')
       end
-      raise 'prepare used a compiler or Python' if preserve && args.include?('--prepare') && trace.match?(/compiler|python3|"build"|fake-patch/)
+      raise 'prepare used a compiler or Python' if preserve && args.include?('--prepare') && trace.match?(/compiler|python3|"build"/)
       if name.start_with?('gcc-') && expected != 0
         raise 'invalid compiler reached Git or build' if trace.include?('["git"') || trace.include?('["build"')
       end
@@ -275,6 +358,14 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
     test.call('tfa-owner-success-'+name,['CACHE',*args],{},0,selected)
     test.call('tfa-owner-failure-'+name,['CACHE',*args],{'FIXTURE_FAIL'=>'patch-tfa'},49,selected)
   end
+  test.call('late-unlock-other-publisher',['CACHE'],{'FIXTURE_FAIL'=>'build','FIXTURE_UNLOCK_PUBLISH'=>'1'},43)
+  test.call('late-lease-rmdir',['CACHE'],{'FIXTURE_FAIL'=>'lease-rmdir'},1)
+  test.call('late-source-cleanup',['CACHE'],{'FIXTURE_FAIL'=>'source-cleanup'},1)
+  test.call('late-lease-owner',['CACHE'],{'FIXTURE_FAIL'=>'lease-owner'},1)
+  test.call('source-post-refusal',['CACHE'],{'FIXTURE_FAIL'=>'source-post'},51)
+  test.call('source-manifest-change',['CACHE'],{'FIXTURE_FAIL'=>'manifest-changed'},1)
+  test.call('cache-lease-contention',['CACHE'],{'FIXTURE_LOCK'=>'1'},1,'firmware',true)
+  test.call('prepare-lease-contention',['CACHE','--prepare'],{'FIXTURE_LOCK'=>'1'},1,'firmware',true)
   test.call('tfa-owner-prepare',['CACHE','--prepare'],{},0,'firmware',true)
   [['input-empty',[]],['input-prepare-only',['--prepare']],['input-relative',['relative']],['input-unknown-option',['CACHE','--unknown']],
    ['input-extra',['CACHE','--rp1-console','extra']],['input-prepare-unknown',['CACHE','--prepare','--unknown']]].each do |name,args|

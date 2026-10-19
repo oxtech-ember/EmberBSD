@@ -5,7 +5,7 @@ native host tools and the common AArch64 GCC major 16 toolchain.
 Set `CROSS_COMPILE` to the compiler prefix. Clang is not a target compiler.
 The compiler triplet and architecture macros remain unchanged.
 
-The host needs Git for source preparation, GNU Make, iASL, DTC, Python 3,
+The host needs Git, Ruby and patch for source preparation, GNU Make, iASL, DTC, Python 3,
 and a current pyelftools module. These are existing upstream dependencies.
 A compiler identity check and the smoke tests below do not establish a
 complete firmware build or acceptance on a physical board.
@@ -20,7 +20,9 @@ The optional console and trace variants keep their platform defines.
 Use `--rp1-trace` for the trace variant. A normal build selects the standard
 variant. Each variant has its own output and receipt. A rebuild invalidates
 its selected old image before checking tools or sources. `--prepare` needs
-only Git and preserves accepted outputs.
+Git, Ruby and patch and preserves accepted outputs. See the
+[verified source-cache contract](source-cache.md) for source manifests,
+shared-cache leases, legacy adoption and object-profile limits.
 
 ## Header and linker contract
 
@@ -61,7 +63,9 @@ and receipt and retains the build log.
 
 ## Bounded source and compiler controls
 
-The actual-script host controls use fake services. They need Ruby and a
+The actual-script host controls use fake services, including the source-helper
+boundary. The separate source controls use the actual helper and real Git.
+The builder controls need Ruby and a
 host Python 3 for the existing receipt writer. They perform no network
 requests, source resets, real firmware builds, or device access.
 
@@ -70,8 +74,9 @@ ruby ember/tools/firmware-contract.rb
 ```
 
 The real compiler controls need GCC16 and its target binutils, GNU Make,
-Ruby, `patch`, and immutable pinned firmware source inputs. Use the source
-checkout produced by `--prepare`, before a normal build applies the series.
+Ruby, `patch`, and immutable pinned firmware source inputs. Use the verified Git
+checkout produced by `--prepare`. The smoke reads the original DSC from its
+pinned Git blob, even when the working series is already applied.
 The top-level pin is `246e70acd939d62b5a79f895984afd0a93bd83e9`.
 Its TF-A pin is `a5c580fd539929af41cf483b7c1434db261dd51b`.
 Its EDK2 pin is `7bbf1f2022f381f48cfb5411df9e5157ee0291a5`.
@@ -107,14 +112,16 @@ BSD `sed` and does not require a replacement `sed`.
 
 The host regression executes the actual pinned `utilities.mk` through GNU
 Make. It preserves a failing upstream control and checks slice boundaries,
-spaces, quotes, and an empty argument. Use the unmodified helper from the
-pinned source before a normal build applies the series:
+spaces, quotes, and an empty argument. Export the original pinned helper
+without changing the prepared working file:
 
 ```sh
+git -C /absolute/cache/rpi5-uefi-src/arm-trusted-firmware show \
+    a5c580fd539929af41cf483b7c1434db261dd51b:make_helpers/utilities.mk \
+    > /absolute/reference/utilities.mk
 FIRMWARE_TEST_GMAKE=/absolute/host-tools/bin/gmake \
     ruby ember/tools/firmware-tfa-host.rb \
-    /absolute/cache/rpi5-uefi-src/arm-trusted-firmware/make_helpers/utilities.mk \
-    /absolute/tfa-host-output
+    /absolute/reference/utilities.mk /absolute/tfa-host-output
 ```
 
 This is a host-helper check. It does not establish a full firmware build.
