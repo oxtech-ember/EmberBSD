@@ -1,8 +1,9 @@
 # Explicit retained DISP16 clock gate
 
-`bcm2712_disp_probe` is an opt-in clock-only module. It uses the single
-[shared clock core](bcm2712-display-clock-core.md) source with six private
-function names. It does not replace an installed kernel or its HSM/BVB adapter.
+`bcm2712_disp_probe` is an opt-in clock-only module. It calls the kernel-resident
+[typed clock adapter](bcm2712-native-display-clocks.md). DISP16 shares one fixed
+registry and transport mutex with HSM13, BVB14 and CORE4. The module compiles no
+private engine or callback. It requires a matching kernel with this builtin API.
 There is no attachment, MMIO, reset, IRQ, frame DMA or HVS activation.
 This source contract is not physical DISP16 or scanout acceptance.
 
@@ -36,7 +37,8 @@ clock. An initially on clock remains on. Unacquired off destroy performs no SET.
 Rate is not restored to an inherited zero or a previous high rate.
 
 A failed SET or its verification latches fault before lease commit. The provider,
-callback, mutex and module must remain resident. No mutation or destroy retries
+builtin callback and mutex remain resident. The probe retains its module and
+render reference after an uncertain result. No mutation or destroy retries
 an uncertain SET. A failed GET before the operation's first SET leaves its lease
 unchanged without a mutation fault. Cached status sends no firmware query and
 reports floor, both minima, last verified state/rate, leases, fault and mutation.
@@ -55,10 +57,9 @@ INIT returns0; FINI returns `EBUSY` until reboot. A separate finite read-only
 real lease exists. This gate contains no automatic release or observation.
 
 A known error before SET with verified zero leases/fault/mutation destroys the
-provider, destroys the unlocked mutex with no callers/waiters, releases the
-render reference, and returns the original positive errno. The adapter's private
-init/fini hooks make clean load failure unloadable without leaking LOCKDEBUG
-storage. A later clean retry starts with fresh context and a new mutex.
+provider, releases the render reference, and returns the original positive errno.
+The builtin mutex stays resident for the other fixed clock owners. A later clean
+module retry creates a new provider in the same registry and mutex.
 
 An uncertain SET, status, owner or cleanup result instead returns INIT0 with an
 explicit retained-fault/no-success diagnostic and FINI `EBUSY`. It does not
@@ -71,22 +72,16 @@ or acquired through this gate.
 
 ## Selected-kernel build and checks
 
-Keep the selected installed kernel's `S`, generated headers and DRM flags.
-Build only the explicit module Makefile with GCC16. Its six namespace macros
-compile the same actual shared engine; no forked clock implementation exists.
-Audit the exact current clock C/header, new DISP C/headers and Makefile as source
-exceptions. The exact clockvar preinclude supplies the appended private profile.
-No broad source include override, weak fallback or files.bcm2835 edit is used.
-The old kernel native HSM/BVB slots and their mutex remain unchanged. The new
-DISP-only lock serializes this module. Kernel mailbox transport serializes
-packets; cross-ID atomic transactions are not promised. External writer exclusion
-and module residency are caller obligations.
-
-Require six defined `bcm2712_disp_private_*` symbols, no old common-clock import
-or duplicate definition, typed DISP exports/hooks, and the exact kernel's strong
-symbol/source/generated-header closure before load. Use
+Keep the selected installed kernel's `S`, generated headers, DRM flags and
+warning policy. Build the explicit module Makefile with GCC16. Its only source is
+`bcm2712_disp_probe.c`; the kernel supplies every `bcm2712_display_disp_*` symbol.
+Check these imports against the rebuilt kernel. There must be no private engine
+definition or namespace rename. A matching buildinfo string alone is insufficient.
+The native shared slot refuses another owner with `EBUSY`, including while a
+faulted provider remains. This migration still needs a coherent target kernel,
+module link and native import check. Use
 [`bcm2712-disp-probe-abi.c`](../tools/bcm2712-disp-probe-abi.c) for the selected
-kernel/module layout comparison. A buildinfo string alone is insufficient.
+kernel/module layout comparison.
 
 Run `sh ember/tools/bcm2712-disp-probe-contract.sh` from a complete source tree.
 The fixture executes the actual shared core, typed adapter, hold module and
@@ -96,8 +91,7 @@ A harness-only reboot resets retained host storage between cases. It is never
 reported as successful native fault cleanup. `CC`, `CFLAGS`, `TEST_RUNNER`,
 `DISP_PROBE_COMPILE_ONLY=1` and `DISP_PROBE_OUTPUT` support cross checks.
 Use `DISP_PROBE_SKIP_MUTANTS=1` for a host ASan/UBSan positive run.
-Old frozen HSM transcript/layout checks remain intact; their unknown profile
-input moves from2 to3 because2 is now DISP.
+The public HSM and DISP status layouts remain unchanged.
 
 Pinned primary facts:
 [DISP minimize/noncritical versus BVB critical](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/clk/bcm/clk-raspberrypi.c#L157-L170),

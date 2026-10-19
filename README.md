@@ -755,7 +755,10 @@ It grants no absence admission or display ownership.
   with source/host validation and retained faults. One [finite base-block transfer](ember/boot/bcm2712-display-edid-probe.md#physical-base-block-boundary)
   passed on CM5 after a cold-headless boot and live HDMI0 connection.
   A [shared firmware-clock core](ember/boot/bcm2712-display-clock-core.md) and
-  [kernel-native owners](ember/boot/bcm2712-native-display-clocks.md) provide fixed HSM13/BVB14 leases and retained faults.
+  [kernel-native owners](ember/boot/bcm2712-native-display-clocks.md) provide fixed HSM13/BVB14/CORE4/DISP16 leases and retained faults.
+  All four owners share one builtin registry and transport mutex. The explicit
+  [DISP hold module](ember/boot/bcm2712-disp-clock-probe.md) imports this API.
+  Native kernel/module linkage of that migration remains pending.
   The opt-in [finite BVB0 clock probe](ember/boot/bcm2712-bvb-clock-probe.md) is source-tested.
   Physical BVB clock control remains unaccepted.
   A separate [shared HD control initialization probe](ember/boot/bcm2712-hd-initialize-probe.md)

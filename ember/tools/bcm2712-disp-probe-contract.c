@@ -65,6 +65,7 @@ typedef struct { unsigned int next; } deviter_t;
 #define DRM_MINOR_RENDER 2
 #define MUTEX_DEFAULT 0
 #define IPL_NONE 0
+#define KM_SLEEP 0
 #define BCMMBOX_CHANARM2VC 8
 #define ACPI_FAILURE(e) ((e) != 0)
 #define IS_ERR(p) ((intptr_t)(p) < 0)
@@ -74,7 +75,9 @@ static _Thread_local unsigned int lock_depth;
 #define cpu_softintr_p() in_softirq
 #define ASSERT_SLEEPABLE() CHECK(!in_irq && !in_softirq)
 #include "disp-types.h"
-#include "disp-private-types.h"
+#include "hsm-types.h"
+#include "bvb-types.h"
+#include "core-types.h"
 struct properties { const char *expected, *mode, *conflict; bool cold, bad_type; };
 typedef struct properties *prop_dictionary_t;
 struct drm_driver { const char *name; };
@@ -91,6 +94,7 @@ static struct acpi_devnode node;
 static struct properties properties;
 static struct firmware fw;
 static unsigned int mutex_live, mutex_inits, mutex_destroys, resources, references;
+static unsigned int allocated, freed;
 static unsigned int unlock_after_error, interrupt_on_unlock;
 static int resource_error;
 static bool probe_test, find_device, right_driver, render, genfb, node_missing;
@@ -134,6 +138,34 @@ mutex_destroy(kmutex_t *m)
 	CHECK(pthread_mutex_destroy(&m->native) == 0);
 	m->live = false; mutex_live--; mutex_destroys++;
 }
+struct once { pthread_mutex_t mutex; bool done; int error; };
+#define ONCE_DECL(o) struct once o = { PTHREAD_MUTEX_INITIALIZER, false, 0 }
+static int
+run_once(struct once *o, int (*fn)(void))
+{
+	int error;
+
+	CHECK(pthread_mutex_lock(&o->mutex) == 0);
+	if (!o->done) { o->error = fn(); o->done = true; }
+	error = o->error;
+	CHECK(pthread_mutex_unlock(&o->mutex) == 0);
+	return error;
+}
+#define RUN_ONCE(o,fn) run_once(o,fn)
+static void *
+kmem_zalloc(size_t size, int flag)
+{
+	void *p;
+
+	CHECK(flag == KM_SLEEP && lock_depth == 1);
+	p = calloc(1, size); CHECK(p != NULL); allocated++;
+	return p;
+}
+static void
+kmem_free(void *p, size_t size)
+{
+	CHECK(p != NULL && size != 0); freed++; free(p);
+}
 static int
 bcm2712_display_acpi_resources(device_t dev, ACPI_HANDLE handle,
     struct bcm2712_display_contract *out)
@@ -171,8 +203,8 @@ bcmmbox_request(unsigned int channel, void *request, size_t length, uint32_t *re
 static void
 destroyed_check(void)
 {
-	CHECK(bcm2712_disp_owner == NULL);
-	CHECK(!probe_test || references == 1);
+	CHECK(bcm2712_disp_owner == NULL && lock_depth == 0);
+	CHECK(atomic_load(&transport_active) == 0);
 }
 static bool
 prop_dictionary_get_bool(prop_dictionary_t p, const char *name, bool *out)
@@ -199,7 +231,7 @@ static struct drm_minor *drm_minor_acquire(unsigned int id)
 static void
 drm_minor_release(struct drm_minor *value)
 {
-	CHECK(value == &minor && references == 1 && mutex_live == 0 && bcm2712_disp_owner == NULL);
+	CHECK(value == &minor && references == 1 && lock_depth == 0 && bcm2712_disp_owner == NULL);
 	references--;
 }
 static int AcpiGetHandle(ACPI_HANDLE parent, const char *path, ACPI_HANDLE *out)
@@ -232,10 +264,15 @@ static void
 fixture_reboot(void)
 {
 	CHECK(lock_depth == 0 && atomic_load(&transport_active) == 0);
-	if (bcm2712_disp_lock.live) CHECK(pthread_mutex_destroy(&bcm2712_disp_lock.native) == 0);
-	memset(&bcm2712_disp_lock, 0, sizeof(bcm2712_disp_lock));
-	memset(&bcm2712_disp_storage, 0, sizeof(bcm2712_disp_storage));
-	bcm2712_disp_initialized = false; bcm2712_disp_owner = NULL;
+	if (bcm2712_disp_owner != NULL) {
+		kmem_free(bcm2712_disp_owner, sizeof(*bcm2712_disp_owner));
+		bcm2712_disp_owner = NULL;
+	}
+	CHECK(bcm2712_hsm_owner == NULL && bcm2712_bvb_owner == NULL && bcm2712_core_owner == NULL);
+	if (bcm2712_clock_lock.live) mutex_destroy(&bcm2712_clock_lock);
+	memset(&bcm2712_clock_lock, 0, sizeof(bcm2712_clock_lock));
+	bcm2712_clock_once.done = false; bcm2712_clock_once.error = 0;
+	CHECK(allocated == freed); allocated = freed = 0;
 	memset(&disp_probe, 0, sizeof(disp_probe));
 	mutex_live = mutex_inits = mutex_destroys = references = resources = 0;
 	interrupt_on_unlock = unlock_after_error = 0;
@@ -260,7 +297,6 @@ create(void)
 {
 	struct bcm2712_disp_provider *owner = NULL;
 
-	CHECK(bcm2712_disp_adapter_init() == 0);
 	CHECK(bcm2712_display_disp_create(&device_token, &device_token, &owner) == 0);
 	CHECK(owner != NULL && fw.calls == 4 && fw.sets == 0);
 	return owner;
@@ -268,21 +304,22 @@ create(void)
 static void
 closed(void)
 {
-	CHECK(mutex_live == 0 && bcm2712_disp_owner == NULL && !bcm2712_disp_initialized);
-	CHECK(mutex_inits == mutex_destroys && references == 0);
+	CHECK(bcm2712_disp_owner == NULL && allocated == freed);
+	CHECK(mutex_destroys == 0 && mutex_inits == mutex_live && references == 0);
 }
 static void
 native_lifecycle(void)
 {
-	struct bcm2712_disp_provider *owner, *poison, *second;
+	struct bcm2712_disp_provider unknown, *owner, *poison, *second;
 	struct bcm2712_disp_status status, expected;
 	unsigned int state, high, before, step, word;
 	static const unsigned int fields[] = { 0, 1, 2, 3, 4, 5, 9 };
 
+	memset(&unknown, 0xa5, sizeof(unknown));
+
 	for (state = 0; state < 2; state++) for (high = 0; high < 2; high++) {
 		reset(state, high ? 240000000 : 0); owner = create(); before = fw.calls;
-		CHECK(bcm2712_disp_adapter_init() == EBUSY && fw.calls == before);
-		CHECK(bcm2712_disp_adapter_fini() == EBUSY && mutex_live == 1);
+		CHECK(bcm2712_disp_owner == owner && mutex_live == 1);
 		second = (void *)(uintptr_t)0x1234;
 		CHECK(bcm2712_display_disp_create(&device_token, &device_token, &second) == EBUSY);
 		CHECK(second == (void *)(uintptr_t)0x1234 && fw.calls == before);
@@ -299,31 +336,31 @@ native_lifecycle(void)
 		CHECK(bcm2712_display_disp_release(owner, 1) == 0 && fw.rate == fw.minimum);
 		CHECK(bcm2712_display_disp_destroy(owner) == 0);
 		CHECK(fw.state == state && fw.disables == (state == 0));
-		CHECK(bcm2712_disp_adapter_fini() == 0); closed();
+		closed();
 	}
 	reset(0, 0); owner = create(); before = fw.calls;
 	CHECK(bcm2712_display_disp_destroy(owner) == 0 && fw.calls == before && fw.sets == 0);
-	CHECK(bcm2712_disp_adapter_fini() == 0); closed();
+	closed();
 	for (step = 1; step <= 4; step++) for (word = 0; word <= __arraycount(fields); word++) {
-		reset(0, 0); CHECK(bcm2712_disp_adapter_init() == 0);
+		reset(0, 0);
 		poison = (void *)(uintptr_t)0x1234;
 		if (word == __arraycount(fields)) fw.fail_call = step;
 		else { fw.bad_call = step; fw.bad_word = fields[word]; fw.bad_value = UINT32_MAX; }
 		CHECK(bcm2712_display_disp_create(&device_token, &device_token, &poison) == EIO);
 		CHECK(poison == (void *)(uintptr_t)0x1234 && fw.sets == 0 && bcm2712_disp_owner == NULL);
-		CHECK(bcm2712_disp_adapter_fini() == 0); closed();
+		closed();
 	}
-	reset(0, 0); fw.minimum = 0; CHECK(bcm2712_disp_adapter_init() == 0);
+	reset(0, 0); fw.minimum = 0;
 	poison = (void *)(uintptr_t)0x1234;
 	CHECK(bcm2712_display_disp_create(&device_token, &device_token, &poison) == ERANGE);
 	CHECK(fw.sets == 0 && poison == (void *)(uintptr_t)0x1234);
-	CHECK(bcm2712_disp_adapter_fini() == 0); closed();
-	reset(0, 0); fw.minimum = fw.maximum + 1; CHECK(bcm2712_disp_adapter_init() == 0);
+	closed();
+	reset(0, 0); fw.minimum = fw.maximum + 1;
 	CHECK(bcm2712_display_disp_create(&device_token, &device_token, &poison) == ERANGE && fw.sets == 0);
-	CHECK(bcm2712_disp_adapter_fini() == 0); closed();
+	closed();
 	reset(0, 0); owner = create(); before = fw.calls;
 	memset(&status, 0xa5, sizeof(status)); expected = status;
-	CHECK(bcm2712_display_disp_status((void *)(uintptr_t)1, &status) == ENXIO);
+	CHECK(bcm2712_display_disp_status(&unknown, &status) == ENXIO);
 	CHECK(memcmp(&status, &expected, sizeof(status)) == 0 && fw.calls == before);
 	CHECK(bcm2712_display_disp_acquire((void *)(uintptr_t)1, 0, 1) == ENXIO);
 	CHECK(bcm2712_display_disp_update((void *)(uintptr_t)1, 0, 1) == ENXIO);
@@ -332,7 +369,7 @@ native_lifecycle(void)
 	in_irq = true; CHECK(bcm2712_display_disp_acquire(owner, 0, 1) == EWOULDBLOCK);
 	in_irq = false; in_softirq = true; CHECK(bcm2712_display_disp_status(owner, &status) == EWOULDBLOCK);
 	in_softirq = false; CHECK(fw.calls == before);
-	CHECK(bcm2712_display_disp_destroy(owner) == 0 && bcm2712_disp_adapter_fini() == 0); closed();
+	CHECK(bcm2712_display_disp_destroy(owner) == 0); closed();
 }
 static void
 native_faults(void)
@@ -349,12 +386,12 @@ native_faults(void)
 		CHECK(bcm2712_display_disp_status(owner, &status) == 0);
 		CHECK(status.leases == 1 && status.minimum[0] == 100000000);
 		CHECK(status.fault == (step <= 3 ? 0 : EIO));
-		CHECK(bcm2712_disp_adapter_fini() == EBUSY && mutex_live == 1);
+		CHECK(bcm2712_disp_owner == owner && mutex_live == 1);
 		if (step <= 3) {
 			fw.fail_call = 0;
 			CHECK(bcm2712_display_disp_release(owner, 0) == 0);
 			CHECK(bcm2712_display_disp_destroy(owner) == 0);
-			CHECK(bcm2712_disp_adapter_fini() == 0); closed();
+			closed();
 		} else {
 			before = fw.calls;
 			CHECK(bcm2712_display_disp_destroy(owner) == EIO);
@@ -374,13 +411,13 @@ native_faults(void)
 		CHECK(bcm2712_display_disp_status(owner, &status) == 0 && status.fault == EIO);
 		before = fw.calls;
 		CHECK(bcm2712_display_disp_destroy(owner) == EIO && fw.calls == before);
-		CHECK(bcm2712_disp_adapter_fini() == EBUSY && mutex_live == 1);
+		CHECK(bcm2712_disp_owner == owner && mutex_live == 1);
 	}
 	reset(0, 0); owner = create(); fw.round = 1000;
 	CHECK(bcm2712_display_disp_acquire(owner, 0, fw.minimum) == 0);
 	CHECK(fw.rate == fw.minimum + 1000);
 	CHECK(bcm2712_display_disp_release(owner, 0) == 0);
-	CHECK(bcm2712_display_disp_destroy(owner) == 0 && bcm2712_disp_adapter_fini() == 0); closed();
+	CHECK(bcm2712_display_disp_destroy(owner) == 0); closed();
 }
 
 static int
@@ -415,10 +452,10 @@ probe_tests(void)
 		CHECK(probe_run() == (i < 8 ? EIO : 0));
 		CHECK(fw.calls == i && strstr(log_text, "hold verified") == NULL);
 		if (i < 8) {
-			closed(); CHECK(mutex_destroys == 1 && fw.sets == 0);
+			closed(); CHECK(mutex_destroys == 0 && fw.sets == 0);
 			CHECK(bcm2712_disp_probe_modcmd(MODULE_CMD_FINI, NULL) == 0);
 			fw.fail_call = 0;
-			CHECK(probe_run() == 0 && mutex_inits == 2 && mutex_destroys == 1);
+			CHECK(probe_run() == 0 && mutex_inits == 1 && mutex_destroys == 0);
 		} else {
 			CHECK(disp_probe.held && references == 1 && mutex_live == 1 && bcm2712_disp_owner != NULL);
 			CHECK(disp_probe.owner->core.status.fault == EIO && disp_probe.owner->core.status.leases == 0);
@@ -434,10 +471,15 @@ probe_tests(void)
 	CHECK(disp_probe.owner->core.status.leases == 1);
 	for (variant = 2; variant <= 3; variant++) {
 		reset(0, 0); fw.fail_call = 5; interrupt_on_unlock = variant;
-		CHECK(probe_run() == 0 && disp_probe.held && references == 1 && mutex_live == 1);
+		if (variant == 2) {
+			CHECK(probe_run() == 0 && disp_probe.held && references == 1 && mutex_live == 1);
+			CHECK(strstr(log_text, "at destroy") != NULL);
+			CHECK(bcm2712_disp_probe_modcmd(MODULE_CMD_FINI, NULL) == EBUSY);
+		} else {
+			CHECK(probe_run() == EIO); closed();
+			CHECK(bcm2712_disp_probe_modcmd(MODULE_CMD_FINI, NULL) == 0);
+		}
 		CHECK(mutex_destroys == 0 && strstr(log_text, "hold verified") == NULL);
-		CHECK(strstr(log_text, variant == 2 ? "at destroy" : "at adapter-fini") != NULL);
-		CHECK(bcm2712_disp_probe_modcmd(MODULE_CMD_FINI, NULL) == EBUSY);
 	}
 }
 static void *
@@ -462,7 +504,7 @@ concurrency(void)
 	CHECK(pthread_join(a, NULL) == 0 && pthread_join(b, NULL) == 0);
 	CHECK(atomic_load(&transport_max) == 1 && owner->core.status.leases == 3 && fw.rate == 60000000);
 	CHECK(bcm2712_display_disp_release(owner, 0) == 0 && bcm2712_display_disp_release(owner, 1) == 0);
-	CHECK(bcm2712_display_disp_destroy(owner) == 0 && bcm2712_disp_adapter_fini() == 0); closed();
+	CHECK(bcm2712_display_disp_destroy(owner) == 0); closed();
 }
 int
 main(void)

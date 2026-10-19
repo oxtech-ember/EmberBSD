@@ -26,8 +26,8 @@ struct bcm2712_disp_status {
  * Release requests the firmware floor; destroy restores off only if initially
  * off and enabled by this owner. Stop all dependent consumers before release.
  * Quiesce API callers before destroy. Never retry a retained SET fault.
- * The module that supplies these functions/callbacks must remain resident while
- * an owner exists, including after faults. Failed create/status preserve out.
+ * The kernel-resident callback and fixed ID16 registry share the HSM/BVB/CORE
+ * sleepable transport lock. Failed create/status preserve out.
  */
 int bcm2712_display_disp_create(device_t, ACPI_HANDLE,
     struct bcm2712_disp_provider **);

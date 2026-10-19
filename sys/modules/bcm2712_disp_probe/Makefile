@@ -24,18 +24,8 @@ CPPFLAGS:= -I${EMBER_KERNEL_OBJDIR:Q} ${_DISP_KERNEL_CPPFLAGS} ${_DISP_DRM_CPPFL
 CPPFLAGS+= -I${S}/external/bsd/drm2/dist/drm
 
 KMOD= bcm2712_disp_probe
-# Compile the SAME shared engine with private function names. Audit the exact
-# new clock C/header and DISP files as exceptions to the selected kernel source.
-_DISP_PRIVATE_DIR:= ${.PARSEDIR}/../../arch/arm/broadcom
-.PATH: ${_DISP_PRIVATE_DIR}
-CPPFLAGS:= ${CPPFLAGS} -include ${_DISP_PRIVATE_DIR}/bcm2712_display_clockvar.h
-CPPFLAGS+= -Dbcm2712_clock_init=bcm2712_disp_private_init
-CPPFLAGS+= -Dbcm2712_clock_acquire=bcm2712_disp_private_acquire
-CPPFLAGS+= -Dbcm2712_clock_update=bcm2712_disp_private_update
-CPPFLAGS+= -Dbcm2712_clock_release=bcm2712_disp_private_release
-CPPFLAGS+= -Dbcm2712_clock_status=bcm2712_disp_private_status
-CPPFLAGS+= -Dbcm2712_clock_fini=bcm2712_disp_private_fini
-SRCS= bcm2712_disp_probe.c bcm2712_display_clock.c bcm2712_display_disp_acpi.c
+# Use the kernel-resident DISP16 owner and shared transport lock.
+SRCS= bcm2712_disp_probe.c
 
 .include <bsd.kmodule.mk>
 

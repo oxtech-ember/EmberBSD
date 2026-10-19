@@ -22,8 +22,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <linux/err.h>
 #include "drm_internal.h"
 
-#include "../../arch/arm/broadcom/bcm2712_display_disp.h"
-#include "../../arch/arm/broadcom/bcm2712_display_dispvar.h"
+#include <arm/broadcom/bcm2712_display_disp.h>
 
 MODULE(MODULE_CLASS_MISC, bcm2712_disp_probe, NULL);
 
@@ -118,7 +117,7 @@ struct disp_probe_context {
 	struct bcm2712_disp_status sample;
 	const char *stage;
 	int operation_error;
-	bool adapter_live, sample_valid, held;
+	bool sample_valid, held;
 };
 static struct disp_probe_context disp_probe;
 
@@ -144,14 +143,6 @@ disp_probe_hold(ACPI_HANDLE handle)
 	uint32_t floor;
 	int error, operation_error;
 
-	ctx->stage = "adapter-init";
-	error = bcm2712_disp_adapter_init();
-	if (error != 0) {
-		if (error == EWOULDBLOCK)
-			goto known_error;
-		goto retained;
-	}
-	ctx->adapter_live = true;
 	ctx->stage = "create";
 	error = bcm2712_display_disp_create(ctx->minor->dev->dev, handle,
 	    &ctx->owner);
@@ -215,17 +206,10 @@ known_error:
 			goto retained;
 		ctx->owner = NULL;
 	}
-	if (ctx->adapter_live) {
-		ctx->stage = "adapter-fini";
-		error = bcm2712_disp_adapter_fini();
-		if (error != 0)
-			goto retained;
-		ctx->adapter_live = false;
-	}
 	drm_minor_release(ctx->minor);
 	ctx->minor = NULL;
-	aprint_error("DISP16 hold refused at %s: error %d; provider, mutex "
-	    "and render reference released; no hold success\n", failed_stage,
+	aprint_error("DISP16 hold refused at %s: error %d; provider and "
+	    "render reference released; no hold success\n", failed_stage,
 	    operation_error);
 	return operation_error;
 retained:
@@ -235,7 +219,7 @@ retained:
 	if (ctx->sample_valid)
 		disp_probe_sample("last cached before retained failure");
 	aprint_error("DISP16 retained fault at %s: error %d operation_error %d; "
-	    "no hold success, retry or restore; module/owner/lock/reference "
+	    "no hold success, retry or restore; module/owner/reference "
 	    "retained until reboot\n", ctx->stage, error, ctx->operation_error);
 	return 0;
 }
@@ -257,11 +241,11 @@ bcm2712_disp_probe_modcmd(modcmd_t command, void *argument)
 	int error;
 
 	if (command == MODULE_CMD_FINI)
-		return ctx->held || ctx->adapter_live || ctx->owner != NULL ||
+		return ctx->held || ctx->owner != NULL ||
 		    ctx->minor != NULL ? EBUSY : 0;
 	if (command != MODULE_CMD_INIT)
 		return ENOTTY;
-	if (ctx->held || ctx->adapter_live || ctx->owner != NULL ||
+	if (ctx->held || ctx->owner != NULL ||
 	    ctx->minor != NULL)
 		return EBUSY;
 	if (cpu_intr_p() || cpu_softintr_p())

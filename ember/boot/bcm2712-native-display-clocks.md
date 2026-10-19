@@ -2,7 +2,8 @@
 
 The [native adapter](../../sys/arch/arm/broadcom/bcm2712_display_clock_acpi.c)
 uses one kernel-resident mailbox callback and one sleepable mutex.
-Three fixed, typed slots own firmware HSM clock13, BVB clock14 and CORE clock4.
+Four fixed, typed slots own firmware HSM clock13, BVB clock14, CORE clock4 and
+DISP clock16.
 The [shared core](bcm2712-display-clock-core.md) supplies their lease mechanism.
 There is no arbitrary clock-ID or transport-callback API.
 No clock framework, display MMIO, power operation or automatic attachment is added.
@@ -12,14 +13,20 @@ No clock framework, display MMIO, power operation or automatic attachment is add
 All operations require process context. Hard and soft interrupt calls fail
 before sleeping or sending a firmware request. Creation validates the GPU0
 ACPI resource contract before clock initialization. It assigns the output
-only after success. A second owner of the same ID gets `EBUSY`; all three IDs can
+only after success. A second owner of the same ID gets `EBUSY`; all four IDs can
 coexist. One mutex serializes their leases and mailbox exchanges.
 
-GPU0 ACPI contract v1 declares HSM13. It does not declare BVB14 or CORE4 properties.
-BVB14 and CORE4 are this BCM2712 driver's fixed, known firmware mailbox clock IDs from
+GPU0 ACPI contract v1 declares HSM13. It does not declare BVB14, CORE4 or DISP16 properties.
+BVB14, CORE4 and DISP16 are this BCM2712 driver's fixed, known firmware mailbox clock IDs from
 the [pinned Raspberry Pi sources](bcm2712-display-clock-core.md#sources).
 Initialization validates reply IDs, existence and rate bounds. This optional
 driver capability adds no ACPI schema or firmware change.
+
+The [DISP API](bcm2712-disp-clock-probe.md) uses this same builtin registry and
+callback. The probe module imports the public API; it has no private clock engine,
+registry or mutex lifecycle. A second DISP create refuses before GETs. The public
+DISP signatures and status layout are unchanged. The shared mutex remains resident
+when a module releases its provider and render reference after a safe refusal.
 
 The caller owns the display handoff. It must exclude firmware and
 unregistered OS clock writers. A native registry slot or valid ACPI resource
@@ -84,7 +91,7 @@ The fixture compiles the actual adapter and common core. It reuses the
 shared-core test's firmware service. Kernel synchronization, allocation,
 mailbox and ACPI resource-call boundaries are controlled. Separate contracts
 check resource decoding and the core's complete clock policy.
-It checks all three IDs, concurrent entries, IRQ refusals, unknown pointers,
+It checks all four IDs, concurrent entries, IRQ refusals, unknown pointers,
 query-free cached status, retained faults, cleanup policies and HSM layouts.
 CORE cases also check both initial states, the inherited baseline through low
 requests and recreation, and each GET/SET/readback failure. Causal mutants test
@@ -96,7 +103,9 @@ cross builds. `TEST_RUNNER` can invoke a supported memory checker.
 These checks and an actual `_KERNEL` translation-unit compile do not prove a
 linked coherent kernel, physical BVB clock control, PHY/KMS output or Plasma.
 
-The optional [DISP16 hold module](bcm2712-disp-clock-probe.md) has its own typed
-module-resident slot. It does not add a DISP slot or API to this kernel adapter.
-It uses the same core source with private function names and explicit mutex
-init/fini. Its callback cannot unload while an owner or fault is retained.
+The DISP cases exercise the same builtin adapter with all four slots present,
+GET-only create, identity checks, inherited-rate requests and retained SET faults.
+The [probe contract](bcm2712-disp-clock-probe.md#selected-kernel-build-and-checks)
+executes that adapter and the real module. It also checks that the module imports
+the API without a second engine. A coherent kernel/module link and native import
+check remain required before accepting this migration.

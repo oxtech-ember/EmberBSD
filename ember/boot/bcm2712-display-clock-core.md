@@ -131,6 +131,7 @@ Native adapter checks, a linked coherent kernel, physical BVB control and PHY/KM
   Linux is a reference for ABI and policy facts. Its implementation is not copied into this BSD core.
 
 DISP16 uses the same mechanism with a noncritical finish policy. Its two slots
-are logical HVS clients, not HDMI ports. The separate [retained DISP module](bcm2712-disp-clock-probe.md)
-compiles this same engine with private function names for an installed kernel.
-The native adapter has typed HSM, BVB and CORE slots. All existing public layouts remain unchanged.
+are logical HVS clients, not HDMI ports. The [retained DISP module](bcm2712-disp-clock-probe.md)
+imports the [builtin adapter](bcm2712-native-display-clocks.md), which has one shared
+transport lock and typed HSM, BVB, CORE and DISP slots. It compiles no private clock
+engine. All existing public layouts remain unchanged.

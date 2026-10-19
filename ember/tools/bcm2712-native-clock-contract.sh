@@ -12,7 +12,7 @@ for pair in clock-core:bcm2712_display_clock.c native-clock:bcm2712_display_cloc
 done
 for pair in display:bcm2712_display.h clockvar:bcm2712_display_clockvar.h \
     hsm-types:bcm2712_display_hsm.h acpi-types:bcm2712_display_acpi.h \
-    bvb-types:bcm2712_display_bvb.h core-types:bcm2712_display_core.h; do
+    bvb-types:bcm2712_display_bvb.h core-types:bcm2712_display_core.h disp-types:bcm2712_display_disp.h; do
     output=${pair%%:*}; input=${pair#*:}
     sed '/^#include /d' "$src/sys/arch/arm/broadcom/$input" > "$work/$output.h"
 done
@@ -47,7 +47,7 @@ run
 if [ "${NATIVE_CLOCK_SKIP_MUTANTS:-0}" = 1 ]; then exit 0; fi
 cp "$work/native-clock.h" "$work/native-good.h"
 cp "$work/clock-core.h" "$work/core-good.h"
-for mutant in ${NATIVE_CLOCK_MUTANTS:-irq-context hsm-slot bvb-slot hsm-identity bvb-identity serialization bvb-profile status-padding status-query hsm-status bvb-floor retention bvb-retention bvb-disable}; do
+for mutant in ${NATIVE_CLOCK_MUTANTS:-irq-context hsm-slot bvb-slot hsm-identity bvb-identity serialization bvb-profile status-padding status-query hsm-status bvb-floor retention bvb-retention bvb-disable disp-slot disp-identity disp-profile disp-floor disp-retention}; do
     cp "$work/native-good.h" "$work/native-clock.h"
     cp "$work/core-good.h" "$work/clock-core.h"
     target=native-clock
@@ -66,6 +66,11 @@ for mutant in ${NATIVE_CLOCK_MUTANTS:-irq-context hsm-slot bvb-slot hsm-identity
         bvb-floor) from='out->floor = sc->core.status.floor;'; to='out->floor = 0;' ;;
         retention) from='if (error == 0) {'; to='if (true) {' ;;
         bvb-retention) from='if (error == 0) {'; to='if (true) {'; occurrence=2 ;;
+        disp-slot) from='if (bcm2712_disp_owner != NULL)'; to='if (false)' ;;
+        disp-identity) from='sc == NULL || sc != bcm2712_disp_owner'; to='sc == NULL' ;;
+        disp-profile) from='BCM2712_CLOCK_DISP,'; to='BCM2712_CLOCK_BVB,' ;;
+        disp-floor) from='out->floor = sc->core.status.floor;'; to='out->floor = 0;'; occurrence=3 ;;
+        disp-retention) from='if (error == 0) {'; to='if (true) {'; occurrence=4 ;;
         bvb-disable)
             target=clock-core
             from='sc->profile != BCM2712_CLOCK_BVB &&'; to='true &&' ;;
@@ -82,6 +87,9 @@ for mutant in ${NATIVE_CLOCK_MUTANTS:-irq-context hsm-slot bvb-slot hsm-identity
     if (ulimit -c 0; run) >"$work/mutant.log" 2>&1; then
         echo "Native clock contract accepted mutant: $mutant" >&2
         exit 1
+    fi
+    if ! grep -q "FAIL line" "$work/mutant.log"; then
+        cat "$work/mutant.log" >&2; echo "Native clock mutant missed CHECK: $mutant" >&2; exit 1
     fi
     if [ -n "${NATIVE_CLOCK_EVIDENCE:-}" ]; then
         cp "$work/mutant.log" "$NATIVE_CLOCK_EVIDENCE/mutant-$mutant.log"
