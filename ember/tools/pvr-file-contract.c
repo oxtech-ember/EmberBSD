@@ -15,6 +15,7 @@
 
 #define PAGE_SIZE ((size_t)1 << PAGE_SHIFT)
 #define KM_SLEEP 1
+#define KM_NOSLEEP 0
 #define MUTEX_DEFAULT 0
 #define IPL_NONE 0
 #define GFP_KERNEL 1
@@ -80,6 +81,9 @@ static void mutex_exit(kmutex_t *m)
 { CHECK(mutex_owned(m)); m->held = false; CHECK(pthread_mutex_unlock(&m->lock) == 0); }
 static void mutex_destroy(kmutex_t *m)
 { CHECK(!m->held); CHECK(pthread_mutex_destroy(&m->lock) == 0); }
+static bool snapshot_alloc_fail;
+static void *kmem_alloc(size_t size, int flags)
+{ CHECK(flags == KM_NOSLEEP); if (snapshot_alloc_fail) return NULL; void *p = malloc(size); CHECK(p != NULL); atomic_fetch_add(&allocations, 1); return p; }
 static void *kmem_zalloc(size_t size, int flags)
 { void *p = calloc(1, size); CHECK(flags == KM_SLEEP && p != NULL); atomic_fetch_add(&allocations, 1); return p; }
 static void kmem_free(void *p, size_t size)
@@ -111,7 +115,7 @@ static void idr_destroy(struct idr *i)
 { for (int n = 0; n < SLOTS; n++) CHECK(i->slots[n] == NULL); }
 
 struct drm_device { bus_dma_tag_t dmat; };
-struct drm_gem_object { unsigned int refs; uint64_t size, pa, flags; bool pinned; unsigned holds; };
+struct drm_gem_object { unsigned int refs; uint64_t size, pa, flags; bool pinned; unsigned holds; void *resv; };
 struct drm_file { void *driver_priv; struct drm_gem_object *handles[SLOTS]; };
 struct test_map { uint64_t va, pa, size, flags; };
 struct pvr_vm { struct test_map ranges[SLOTS]; int (*invalidate)(void *); void *cookie; bool failed; };
@@ -280,6 +284,8 @@ static int unsupported(struct drm_device *d, void *a, struct drm_file *f)
 #define pvr_destroy_context unsupported
 #define pvr_create_free_list unsupported
 #define pvr_destroy_free_list unsupported
+#define pvr_create_hwrt_dataset unsupported
+#define pvr_destroy_hwrt_dataset unsupported
 #define pvr_submit_jobs unsupported
 struct test_driver {
 	int (*open)(struct drm_device *, struct drm_file *);
@@ -291,7 +297,7 @@ static struct drm_gem_object *new_bo(struct drm_file *f, unsigned h, uint64_t pa
 {
 	struct drm_gem_object *o = calloc(1, sizeof(*o));
 	CHECK(o != NULL && h != 0 && h < SLOTS && f->handles[h] == NULL);
-	*o = (struct drm_gem_object){ 1, 4 * PAGE_SIZE, pa, UINT64_C(1) << 62, false, 0 };
+	*o = (struct drm_gem_object){ 1, 4 * PAGE_SIZE, pa, UINT64_C(1) << 62, false, 0, o };
 	for (unsigned n = 0; n < SLOTS; n++) if (all_objects[n] == NULL) {
 		all_objects[n] = o; f->handles[h] = o; atomic_fetch_add(&objects, 1); return o;
 	}
@@ -540,6 +546,92 @@ hold_lifetime(struct drm_device *dev)
 	pvr_device_leave(dev);
 }
 
+static void
+snapshot_lifetime(struct drm_device *dev)
+{
+	struct drm_file file = {0};
+	struct drm_gem_object **snapshot = NULL, **failed = NULL;
+	struct drm_gem_object *a, *b, *c, *one[1];
+	struct pvr_file_vm *vm;
+	struct drm_pvr_ioctl_vm_map_args map = {0};
+	struct drm_pvr_ioctl_vm_unmap_args unmap = {0};
+	size_t count = 123, unchanged;
+	uint32_t handle;
+
+	CHECK(test_driver.open(dev, &file) == 0);
+	handle = create_vm(dev, &file);
+	a = new_bo(&file, 1, 0x42000000);
+	b = new_bo(&file, 2, 0x43000000);
+	c = new_bo(&file, 3, 0x44000000);
+	pvr_device_enter(dev);
+	vm = pvr_file_vm_get(&file, handle);
+	CHECK(vm != NULL);
+	CHECK(pvr_file_vm_objects(vm, &snapshot, &count) == 0);
+	CHECK(snapshot == NULL && count == 0);
+	CHECK(pvr_file_vm_objects_cover(vm, NULL, 0));
+	pvr_device_leave(dev);
+	map.vm_context_handle = handle;
+	map.size = PAGE_SIZE;
+	for (unsigned i = 0; i < 3; i++) {
+		map.handle = i == 1 ? 2 : 1;
+		map.device_addr = BASE + i * PAGE_SIZE;
+		CHECK(pvr_vm_map_ioctl(dev, &map, &file) == 0);
+	}
+	pvr_device_enter(dev);
+	const unsigned a_refs = a->refs, b_refs = b->refs;
+	CHECK(pvr_file_vm_objects(vm, &snapshot, &count) == 0);
+	CHECK(count == 3 && a->refs == a_refs + 2 && b->refs == b_refs + 1);
+	for (size_t i = 0; i < count; i++) for (size_t j = i + 1; j < count; j++) {
+		if ((uintptr_t)snapshot[j]->resv < (uintptr_t)snapshot[i]->resv) {
+			struct drm_gem_object *swap = snapshot[i];
+			snapshot[i] = snapshot[j]; snapshot[j] = swap;
+		}
+	}
+	CHECK(pvr_file_vm_objects_cover(vm, snapshot, count));
+	CHECK(!pvr_file_vm_objects_cover(vm, NULL, 0));
+	one[0] = a;
+	CHECK(!pvr_file_vm_objects_cover(vm, one, 1));
+	unchanged = 123;
+	snapshot_alloc_fail = true;
+	CHECK(pvr_file_vm_objects(vm, &failed, &unchanged) == ENOMEM);
+	snapshot_alloc_fail = false;
+	CHECK(failed == NULL && unchanged == 123);
+	CHECK(a->refs == a_refs + 2 && b->refs == b_refs + 1);
+	CHECK(pvr_file_vm_objects(NULL, &failed, &unchanged) == EINVAL);
+	CHECK(pvr_file_vm_objects(vm, NULL, &unchanged) == EINVAL);
+	CHECK(pvr_file_vm_objects(vm, &failed, NULL) == EINVAL);
+	CHECK(pvr_file_vm_objects(vm, &snapshot, &unchanged) == EINVAL);
+	CHECK(unchanged == 123);
+	vm->failed = true;
+	CHECK(pvr_file_vm_objects(vm, &failed, &unchanged) == EIO);
+	CHECK(failed == NULL && unchanged == 123);
+	CHECK(!pvr_file_vm_objects_cover(vm, snapshot, count));
+	vm->failed = false;
+	pvr_device_leave(dev);
+	map.handle = 3; map.device_addr = BASE + 3 * PAGE_SIZE;
+	CHECK(pvr_vm_map_ioctl(dev, &map, &file) == 0);
+	pvr_device_enter(dev);
+	CHECK(!pvr_file_vm_objects_cover(vm, snapshot, count));
+	pvr_device_leave(dev);
+	unmap.vm_context_handle = handle; unmap.size = PAGE_SIZE;
+	unmap.device_addr = map.device_addr;
+	CHECK(pvr_vm_unmap_ioctl(dev, &unmap, &file) == 0);
+	CHECK(c->refs == 1);
+	for (unsigned i = 0; i < 3; i++) {
+		unmap.device_addr = BASE + i * PAGE_SIZE;
+		CHECK(pvr_vm_unmap_ioctl(dev, &unmap, &file) == 0);
+	}
+	pvr_device_enter(dev);
+	CHECK(pvr_file_vm_objects_cover(vm, snapshot, count));
+	pvr_file_vm_put(vm);
+	pvr_device_leave(dev);
+	close_file(dev, &file);
+	CHECK(a->refs == 2 && b->refs == 1);
+	for (size_t i = 0; i < count; i++) drm_gem_object_put_unlocked(snapshot[i]);
+	kmem_free(snapshot, count * sizeof(snapshot[0]));
+	CHECK(atomic_load(&allocations) == 0 && atomic_load(&objects) == 0);
+}
+
 int
 main(void)
 {
@@ -656,7 +748,7 @@ main(void)
 finish:
 	close_file(&dev, &a); close_file(&dev, &b);
 	CHECK(atomic_load(&allocations) == 0 && atomic_load(&objects) == 0 && atomic_load(&vms) == 0);
-	if (PAGE_SHIFT == 12) { firmware_lifetime(&dev); pin_lifetime(&dev); hold_lifetime(&dev); }
+	if (PAGE_SHIFT == 12) { snapshot_lifetime(&dev); firmware_lifetime(&dev); pin_lifetime(&dev); hold_lifetime(&dev); }
 	CHECK(atomic_load(&allocations) == 0 && atomic_load(&objects) == 0 && atomic_load(&vms) == 0);
 	CHECK(exec_live == 0); mutex_destroy(&device_gate);
 	CHECK(pthread_cond_destroy(&changed) == 0 && pthread_mutex_destroy(&rendezvous) == 0);

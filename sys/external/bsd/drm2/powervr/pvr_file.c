@@ -331,6 +331,70 @@ pvr_file_vm_publish(struct pvr_file_vm *vm, const struct pvr_backend *backend,
 	return 0;
 }
 
+/* Caller holds the device and platform gates. Output failure is atomic. */
+int
+pvr_file_vm_objects(struct pvr_file_vm *vm, struct drm_gem_object ***out,
+    size_t *countp)
+{
+	struct pvr_file_mapping *mapping;
+	struct drm_gem_object **objects;
+	size_t count = 0, i = 0;
+
+	if (vm == NULL || out == NULL || countp == NULL || *out != NULL)
+		return EINVAL;
+	if (vm->failed)
+		return EIO;
+	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next) {
+		if (count == INT_MAX || count == SIZE_MAX / sizeof(objects[0]))
+			return E2BIG;
+		count++;
+	}
+	if (count == 0) {
+		*countp = 0;
+		return 0;
+	}
+	objects = kmem_alloc(count * sizeof(objects[0]), KM_NOSLEEP);
+	if (objects == NULL)
+		return ENOMEM;
+	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next) {
+		drm_gem_object_get(mapping->object);
+		objects[i++] = mapping->object;
+	}
+	KASSERT(i == count);
+	*out = objects;
+	*countp = count;
+	return 0;
+}
+
+/* The referenced array is sorted by reservation address. Duplicates are safe. */
+bool
+pvr_file_vm_objects_cover(struct pvr_file_vm *vm,
+    struct drm_gem_object * const *objects, size_t count)
+{
+	struct pvr_file_mapping *mapping;
+	size_t first, end, middle;
+	uintptr_t wanted, candidate;
+
+	if (vm == NULL || vm->failed || (objects == NULL && count != 0))
+		return false;
+	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next) {
+		wanted = (uintptr_t)mapping->object->resv;
+		first = 0;
+		end = count;
+		while (first < end) {
+			middle = first + (end - first) / 2;
+			candidate = (uintptr_t)objects[middle]->resv;
+			if (candidate < wanted)
+				first = middle + 1;
+			else
+				end = middle;
+		}
+		if (first == count || objects[first]->resv != mapping->object->resv)
+			return false;
+	}
+	return true;
+}
+
 int
 pvr_file_vm_prepare(struct pvr_file_vm *vm)
 {

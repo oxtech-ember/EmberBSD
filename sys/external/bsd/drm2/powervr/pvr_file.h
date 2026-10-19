@@ -4,12 +4,25 @@
 #define _PVR_FILE_H_
 #include <sys/types.h>
 struct drm_file;
+struct drm_gem_object;
 struct pvr_backend;
 struct pvr_file_vm;
 /* All calls require the device gate and, if present, the platform gate. */
 struct pvr_file_vm *pvr_file_vm_get(struct drm_file *, uint32_t);
 void pvr_file_vm_put(struct pvr_file_vm *);
 int pvr_file_vm_publish(struct pvr_file_vm *, const struct pvr_backend *, uint32_t *);
+/*
+ * Snapshot all current mappings with one GEM reference per array element.
+ * The output slot starts NULL. Failure leaves both outputs unchanged.
+ * Drop each reference and kmem_free the original count-sized array after use.
+ * Coverage requires an owned array sorted by reservation address. The caller
+ * locks those reservations outside the device/platform gates, then reenters
+ * both gates before checking the current VM set. A removed mapping is safe;
+ * a newly mapped reservation absent from the snapshot requires a new attempt.
+ */
+int pvr_file_vm_objects(struct pvr_file_vm *, struct drm_gem_object ***, size_t *);
+bool pvr_file_vm_objects_cover(struct pvr_file_vm *,
+    struct drm_gem_object * const *, size_t);
 int pvr_file_vm_prepare(struct pvr_file_vm *);
 void pvr_file_vm_complete(struct pvr_file_vm *);
 void pvr_file_vm_fail(struct pvr_file_vm *);
