@@ -801,6 +801,7 @@ struct iwx_softc {
 	int sc_nic_locks;
 
 	struct taskq *sc_nswq;
+	struct taskq *sc_systq;	/* OpenBSD systq(9), one per device */
 
 	struct iwx_rx_phy_info sc_last_phy_info;
 	int sc_ampdu_ref;

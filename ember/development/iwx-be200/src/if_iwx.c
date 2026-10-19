@@ -1210,7 +1210,7 @@ iwx_set_default_calib(struct iwx_softc *sc, const void *data)
 void
 iwx_fw_info_free(struct iwx_fw_info *fw)
 {
-	iwx_free(fw->fw_rawdata, M_DEVBUF, fw->fw_rawsize);
+	iwx_firmware_free(fw->fw_rawdata, fw->fw_rawsize);
 	fw->fw_rawdata = NULL;
 	fw->fw_rawsize = 0;
 	/* don't touch fw->fw_status */
@@ -1925,6 +1925,7 @@ iwx_dma_contig_alloc(bus_dma_tag_t tag, struct iwx_dma_info *dma,
 	if (err)
 		goto fail;
 	dma->vaddr = va;
+	memset(dma->vaddr, 0, size);
 
 	err = bus_dmamap_load(tag, dma->map, dma->vaddr, size, NULL,
 	    BUS_DMA_NOWAIT);
@@ -3729,7 +3730,7 @@ iwx_updatechan(struct ieee80211com *ic)
 
 	if (ic->ic_state == IEEE80211_S_RUN &&
 	    !task_pending(&sc->newstate_task))
-		iwx_add_task(sc, systq, &sc->phy_ctxt_task);
+		iwx_add_task(sc, sc->sc_systq, &sc->phy_ctxt_task);
 }
 #endif /* IWX_HT */
 #if defined(IWX_HT) /* iwx_updateprot */
@@ -3741,7 +3742,7 @@ iwx_updateprot(struct ieee80211com *ic)
 
 	if (ic->ic_state == IEEE80211_S_RUN &&
 	    !task_pending(&sc->newstate_task))
-		iwx_add_task(sc, systq, &sc->mac_ctxt_task);
+		iwx_add_task(sc, sc->sc_systq, &sc->mac_ctxt_task);
 }
 #endif /* IWX_HT */
 
@@ -3753,7 +3754,7 @@ iwx_updateslot(struct ifnet *ifp)
 
 	if (ic->ic_state == IEEE80211_S_RUN &&
 	    !task_pending(&sc->newstate_task))
-		iwx_add_task(sc, systq, &sc->mac_ctxt_task);
+		iwx_add_task(sc, sc->sc_systq, &sc->mac_ctxt_task);
 }
 #if defined(IWX_HT) /* iwx_updateedca */
 
@@ -3764,7 +3765,7 @@ iwx_updateedca(struct ieee80211com *ic)
 
 	if (ic->ic_state == IEEE80211_S_RUN &&
 	    !task_pending(&sc->newstate_task))
-		iwx_add_task(sc, systq, &sc->mac_ctxt_task);
+		iwx_add_task(sc, sc->sc_systq, &sc->mac_ctxt_task);
 }
 #endif /* IWX_HT */
 #if defined(IWX_HT) /* iwx_updatedtim */
@@ -3776,7 +3777,7 @@ iwx_updatedtim(struct ieee80211com *ic)
 
 	if (ic->ic_state == IEEE80211_S_RUN &&
 	    !task_pending(&sc->newstate_task))
-		iwx_add_task(sc, systq, &sc->mac_ctxt_task);
+		iwx_add_task(sc, sc->sc_systq, &sc->mac_ctxt_task);
 }
 #endif /* IWX_HT */
 #if defined(IWX_HT) /* iwx_sta_tx_agg_start */
@@ -3895,7 +3896,7 @@ iwx_ampdu_rx_start(struct ieee80211com *ic, struct ieee80211_node *ni,
 		return EBUSY;
 
 	sc->ba_rx.start_tidmask |= (1 << tid);
-	iwx_add_task(sc, systq, &sc->ba_task);
+	iwx_add_task(sc, sc->sc_systq, &sc->ba_task);
 
 	return EBUSY;
 }
@@ -3916,7 +3917,7 @@ iwx_ampdu_rx_stop(struct ieee80211com *ic, struct ieee80211_node *ni,
 		return;
 
 	sc->ba_rx.stop_tidmask |= (1 << tid);
-	iwx_add_task(sc, systq, &sc->ba_task);
+	iwx_add_task(sc, sc->sc_systq, &sc->ba_task);
 }
 #endif /* IWX_HT */
 #if defined(IWX_HT) /* iwx_ampdu_tx_start */
@@ -3952,7 +3953,7 @@ iwx_ampdu_tx_start(struct ieee80211com *ic, struct ieee80211_node *ni,
 		return EBUSY;
 
 	sc->ba_tx.start_tidmask |= (1 << tid);
-	iwx_add_task(sc, systq, &sc->ba_task);
+	iwx_add_task(sc, sc->sc_systq, &sc->ba_task);
 
 	return EBUSY;
 }
@@ -4449,7 +4450,7 @@ iwx_load_pnvm(struct iwx_softc *sc)
 
 				err = iwx_pnvm_parse(sc, pnvm_data, pnvm_size);
 				if (err && err != ENOENT) {
-					iwx_free(pnvm_data, M_DEVBUF, pnvm_size);
+					iwx_firmware_free(pnvm_data, pnvm_size);
 					return err;
 				}
 			}
@@ -4461,7 +4462,7 @@ iwx_load_pnvm(struct iwx_softc *sc)
 
 	if (!iwx_nic_lock(sc)) {
 		splx(s);
-		iwx_free(pnvm_data, M_DEVBUF, pnvm_size);
+		iwx_firmware_free(pnvm_data, pnvm_size);
 		return EBUSY;
 	}
 
@@ -4483,7 +4484,7 @@ iwx_load_pnvm(struct iwx_softc *sc)
 
 	splx(s);
 	iwx_nic_unlock(sc);
-	iwx_free(pnvm_data, M_DEVBUF, pnvm_size);
+	iwx_firmware_free(pnvm_data, pnvm_size);
 	return err;
 }
 
@@ -4972,6 +4973,7 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 {
 		int s = splnet();
 
+		m_set_rcvif(m, IC2IFP(ic));
 		ieee80211_input(ic, m, ni, rxi->rxi_rssi, rxi->rxi_tstamp);
 		ieee80211_free_node(ni);
 		splx(s);
@@ -8292,7 +8294,7 @@ iwx_bgscan_done(struct ieee80211com *ic,
 	iwx_free(sc->bgscan_unref_arg, M_DEVBUF, sc->bgscan_unref_arg_size);
 	sc->bgscan_unref_arg = arg;
 	sc->bgscan_unref_arg_size = arg_size;
-	iwx_add_task(sc, systq, &sc->bgscan_done_task);
+	iwx_add_task(sc, sc->sc_systq, &sc->bgscan_done_task);
 }
 #endif /* IWX_HT */
 #if defined(IWX_HT) /* iwx_bgscan_done_task */
@@ -8392,7 +8394,7 @@ done:
 		sc->bgscan_unref_arg = NULL;
 		sc->bgscan_unref_arg_size = 0;
 		if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0)
-			task_add(systq, &sc->init_task);
+			task_add(sc->sc_systq, &sc->init_task);
 	}
 	refcnt_rele_wake(&sc->task_refs);
 	splx(s);
@@ -9128,7 +9130,7 @@ iwx_set_key(struct ieee80211com *ic, struct ieee80211_node *ni,
 	a->k = k;
 	sc->setkey_cur = (sc->setkey_cur + 1) % nitems(sc->setkey_arg);
 	sc->setkey_nkeys++;
-	iwx_add_task(sc, systq, &sc->setkey_task);
+	iwx_add_task(sc, sc->sc_systq, &sc->setkey_task);
 	return EBUSY;
 }
 #endif /* IWX_HT */
@@ -9532,7 +9534,7 @@ next_scan:
 out:
 	if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0) {
 		if (err)
-			task_add(systq, &sc->init_task);
+			task_add(sc->sc_systq, &sc->init_task);
 		else
 			sc->sc_newstate(ic, nstate, arg);
 	}
@@ -9558,12 +9560,12 @@ iwx_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 
 	if (ic->ic_state == IEEE80211_S_RUN) {
 #if defined(IWX_HT)
-	iwx_del_task(sc, systq, &sc->ba_task);
-	iwx_del_task(sc, systq, &sc->setkey_task);
-	iwx_del_task(sc, systq, &sc->bgscan_done_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->ba_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->setkey_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->bgscan_done_task);
 #endif
-	iwx_del_task(sc, systq, &sc->mac_ctxt_task);
-	iwx_del_task(sc, systq, &sc->phy_ctxt_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->mac_ctxt_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->phy_ctxt_task);
 	}
 
 	sc->ns_nstate = nstate;
@@ -10217,21 +10219,24 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 	sc->sc_flags |= IWX_FLAG_SHUTDOWN; /* Disallow new tasks. */
 
 	/* Cancel scheduled tasks and let any stale tasks finish up. */
-	task_del(systq, &sc->init_task);
+	task_del(sc->sc_systq, &sc->init_task);
 	iwx_del_task(sc, sc->sc_nswq, &sc->newstate_task);
 #if defined(IWX_HT)
-	iwx_del_task(sc, systq, &sc->ba_task);
-	iwx_del_task(sc, systq, &sc->setkey_task);
-	iwx_del_task(sc, systq, &sc->bgscan_done_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->ba_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->setkey_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->bgscan_done_task);
 #endif
-	iwx_del_task(sc, systq, &sc->mac_ctxt_task);
-	iwx_del_task(sc, systq, &sc->phy_ctxt_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->mac_ctxt_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->phy_ctxt_task);
 	KASSERT(sc->task_refs.r_refs >= 1);
 	refcnt_finalize(&sc->task_refs, "iwxstop");
 
+#if defined(IWX_HT)
 	if (ic->ic_opmode == IEEE80211_M_STA &&
 	    ic->ic_state == IEEE80211_S_RUN &&
 	    (ic->ic_bss->ni_flags & IEEE80211_NODE_MFP))
+		iwx_mfp_leave(sc);
+#endif
 	iwx_stop_device(sc);
 
 	/* Reset soft state. */
@@ -10299,7 +10304,7 @@ iwx_watchdog(struct ifnet *ifp)
 					iwx_dump_driver_status(sc);
 				}
 				if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0)
-					task_add(systq, &sc->init_task);
+					task_add(sc->sc_systq, &sc->init_task);
 				if_statinc(ifp, if_oerrors);
 				return;
 			}
@@ -10896,7 +10901,7 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data)
 			    "stopping device\n",
 			    device_xname(sc->sc_dev), le16toh(notif->temperature));
 			sc->sc_flags |= IWX_FLAG_HW_ERR;
-			task_add(systq, &sc->init_task);
+			task_add(sc->sc_systq, &sc->init_task);
 			break;
 		}
 
@@ -11070,7 +11075,7 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data)
 				    device_xname(sc->sc_dev), code);
 
 			if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0)
-				task_add(systq, &sc->init_task);
+				task_add(sc->sc_systq, &sc->init_task);
 			break;
 		}
 
@@ -11299,7 +11304,7 @@ iwx_intr(void *arg)
 	if (r1 & IWX_CSR_INT_BIT_RF_KILL) {
 		handled |= IWX_CSR_INT_BIT_RF_KILL;
 		iwx_check_rfkill(sc);
-		task_add(systq, &sc->init_task);
+		task_add(sc->sc_systq, &sc->init_task);
 		rv = 1;
 		goto out_ena;
 	}
@@ -11311,7 +11316,7 @@ iwx_intr(void *arg)
 		}
 		printf("%s: fatal firmware error\n", device_xname(sc->sc_dev));
 		if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0)
-			task_add(systq, &sc->init_task);
+			task_add(sc->sc_systq, &sc->init_task);
 		rv = 1;
 		goto out;
 
@@ -11322,7 +11327,7 @@ iwx_intr(void *arg)
 		printf("%s: hardware error, stopping device \n", device_xname(sc->sc_dev));
 		if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0) {
 			sc->sc_flags |= IWX_FLAG_HW_ERR;
-			task_add(systq, &sc->init_task);
+			task_add(sc->sc_systq, &sc->init_task);
 		}
 		rv = 1;
 		goto out;
@@ -11404,7 +11409,7 @@ iwx_intr_msix(void *arg)
 	if (inta_hw & IWX_MSIX_HW_INT_CAUSES_REG_TOP_FATAL_ERR) {
 		printf("%s: fatal hardware error\n", device_xname(sc->sc_dev));
 		if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0)
-			task_add(systq, &sc->init_task);
+			task_add(sc->sc_systq, &sc->init_task);
 		return 1;
 	}
 
@@ -11417,20 +11422,20 @@ iwx_intr_msix(void *arg)
 		}
 		printf("%s: fatal firmware error\n", device_xname(sc->sc_dev));
 		if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0)
-			task_add(systq, &sc->init_task);
+			task_add(sc->sc_systq, &sc->init_task);
 		return 1;
 	}
 
 	if (inta_hw & IWX_MSIX_HW_INT_CAUSES_REG_RF_KILL) {
 		iwx_check_rfkill(sc);
-		task_add(systq, &sc->init_task);
+		task_add(sc->sc_systq, &sc->init_task);
 	}
 
 	if (inta_hw & IWX_MSIX_HW_INT_CAUSES_REG_HW_ERR) {
 		printf("%s: hardware error, stopping device \n", device_xname(sc->sc_dev));
 		if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0) {
 			sc->sc_flags |= IWX_FLAG_HW_ERR;
-			task_add(systq, &sc->init_task);
+			task_add(sc->sc_systq, &sc->init_task);
 		}
 		return 1;
 	}
@@ -12118,7 +12123,7 @@ iwx_attach(struct device *parent, struct device *self, void *aux)
 
 	/* Install interrupt handler.  MSI-X is not used in stage 1. */
 	err = pci_intr_alloc(pa, &sc->sc_pihp, NULL, 0);
-	if (err != 1) {
+	if (err) {
 		printf("%s: can't allocate interrupt\n",
 		    device_xname(sc->sc_dev));
 		return;
@@ -12402,6 +12407,9 @@ iwx_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_nswq = taskq_create("iwxns", 1, IPL_NET, 0);
 	if (sc->sc_nswq == NULL)
 		goto fail4;
+	sc->sc_systq = taskq_create("iwxsys", 1, IPL_NET, 0);
+	if (sc->sc_systq == NULL)
+		goto fail4;
 
 	ic->ic_ifp = ifp;
 	ic->ic_phytype = IEEE80211_T_OFDM;	/* not only, but not used */
@@ -12646,7 +12654,6 @@ CFATTACH_DECL_NEW(iwx, sizeof(struct iwx_softc), iwx_match, iwx_attach,
 MODULE(MODULE_CLASS_DRIVER, if_iwx, "pci");
 
 /* Compat-layer globals. */
-struct taskq *systq;
 const uint8_t iwx_etheranyaddr[ETHER_ADDR_LEN];
 
 #ifdef _MODULE

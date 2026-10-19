@@ -160,12 +160,7 @@ enum ieee80211_htprot {
 extern const uint8_t iwx_etheranyaddr[ETHER_ADDR_LEN];
 #define etheranyaddr		iwx_etheranyaddr
 
-/*
- * OpenBSD systq(9): the system task queue.  The port allocates one
- * shared workqueue in iwx_attach() and stores it here (single PCI
- * function in the target laptop; a second attach would leak one queue).
- */
-extern struct taskq *systq;
+/* OpenBSD systq(9) is a per-device queue: sc->sc_systq (see iwx_attach). */
 
 /* OpenBSD pcireg.h names of registers NetBSD spells without PCI_. */
 #define PCI_PCIE_LCSR		PCIE_LCSR
@@ -262,7 +257,7 @@ taskq_create(const char *name, unsigned int nthreads __unused, int ipl,
 	struct taskq *tq = kmem_zalloc(sizeof(*tq), KM_SLEEP);
 
 	if (workqueue_create(&tq->tq_wq, name, iwx_task_worker, NULL,
-	    PRI_NONE, ipl, WQ_MPSAFE) != 0) {
+	    PRI_NONE, ipl, 0) != 0) {
 		kmem_free(tq, sizeof(*tq));
 		return NULL;
 	}
@@ -408,6 +403,12 @@ loadfirmware(const char *name, u_char **bufp, size_t *buflen)
 	return 0;
 }
 
-#define iwx_firmware_free(_b, _l)	firmware_free((_b), (_l))
+/* Buffers from loadfirmware() come from firmware_malloc(), not malloc(9). */
+static inline void
+iwx_firmware_free(void *buf, size_t len)
+{
+	if (buf != NULL)
+		firmware_free(buf, len);
+}
 
 #endif /* _IF_IWX_COMPAT_H_ */
