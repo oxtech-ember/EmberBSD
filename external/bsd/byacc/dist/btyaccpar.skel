@@ -324,6 +324,7 @@ yyNewState(unsigned size)
     YYParseState *p = (YYParseState *) malloc(sizeof(YYParseState));
     if (p == NULL) return NULL;
 
+    memset(&p->yystack, 0, sizeof(p->yystack));
     p->yystack.stacksize = size;
     if (size == 0)
     {
@@ -335,17 +336,26 @@ yyNewState(unsigned size)
         return p;
     }
     p->yystack.s_base    = (YYINT *) malloc(size * sizeof(YYINT));
-    if (p->yystack.s_base == NULL) return NULL;
+    if (p->yystack.s_base == NULL) goto fail;
     p->yystack.l_base    = (YYSTYPE *) malloc(size * sizeof(YYSTYPE));
-    if (p->yystack.l_base == NULL) return NULL;
+    if (p->yystack.l_base == NULL) goto fail;
     memset(p->yystack.l_base, 0, size * sizeof(YYSTYPE));
 #if defined(YYLTYPE) || defined(YYLTYPE_IS_DECLARED)
     p->yystack.p_base    = (YYLTYPE *) malloc(size * sizeof(YYLTYPE));
-    if (p->yystack.p_base == NULL) return NULL;
+    if (p->yystack.p_base == NULL) goto fail;
     memset(p->yystack.p_base, 0, size * sizeof(YYLTYPE));
 #endif
 
     return p;
+
+fail:
+    free(p->yystack.s_base);
+    free(p->yystack.l_base);
+#if defined(YYLTYPE) || defined(YYLTYPE_IS_DECLARED)
+    free(p->yystack.p_base);
+#endif
+    free(p);
+    return NULL;
 }
 
 static void
@@ -405,6 +415,10 @@ YYPARSE_DECL()
 #endif
 
 %% body_3
+#if YYPURE
+    memset(&yystack, 0, sizeof(yystack));
+#endif
+
 %%ifdef YYBTYACC
     yyps = yyNewState(0); if (yyps == 0) goto yyenomem;
     yyps->save = 0;
@@ -416,10 +430,6 @@ YYPARSE_DECL()
     yyerrflag = 0;
     yychar = YYEMPTY;
     yystate = 0;
-
-#if YYPURE
-    memset(&yystack, 0, sizeof(yystack));
-#endif
 
     if (yystack.s_base == NULL && yygrowstack(&yystack) == YYENOMEM) goto yyoverflow;
     yystack.s_mark = yystack.s_base;

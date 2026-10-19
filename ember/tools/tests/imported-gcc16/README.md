@@ -71,6 +71,29 @@ The counter cannot be removed because user actions may inspect it. The
 skeleton banner identifies the changed generator as its upstream comment
 requires. Parser programs run with ASan/UBSan.
 
+## Backtracking allocation failures
+
+Build the backtracking generator after the skeleton repair. Then run:
+
+```sh
+CC=/absolute/gcc-16 python3 ember/tools/tests/imported-gcc16/byacc-oom.py \
+    --btyacc /absolute/backtracking-build/yacc \
+    --work /absolute/new-allocation-work
+```
+
+The runner generates parsers with and without location tracking. It injects a
+failure into each `yyNewState` allocation, checks zero-sized and successful
+states, and checks the first parser allocation failure. Each case runs in a
+separate process. An allocation ledger checks for leaks and invalid frees;
+ASan/UBSan and patterned automatic-variable initialization check the failure
+paths. The generated parser implementation is used without edits.
+
+For a causal comparison, pass a generator built before the repair. Its first
+parser allocation failure and partial-state allocation failures must fail the
+ownership checks. The baseline runner returns nonzero. These tests cover state
+creation and initial parser cleanup; lexical-queue reallocations and all
+backtracking grammars are outside this contract.
+
 ## Scope
 
 These are host software contracts, not a full OS build or device qualification.
