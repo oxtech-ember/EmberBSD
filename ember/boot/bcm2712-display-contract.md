@@ -408,3 +408,7 @@ publication, cache ownership or stop/drain permission.
 The [pure MMU4 initialization sequencer](bcm2712-mmu4-init-core.md) source-tests
 one retained full-translation transaction. It adds no native caller, MMIO grant,
 power/access proof, automatic caller or DMA-drain/release predicate.
+
+The [private native MMU4 backing helper](bcmv3d-mmu4-backing.md) validates CPU
+physical pages against complete parent DMA maps. It prepares zeroed backing
+and full PREWRITE without MMIO. It does not supply an MMU owner or publisher.
