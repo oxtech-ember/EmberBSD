@@ -1,8 +1,9 @@
 # Private native MMU4 display owner
 
 This source-only component combines native backing, the fixed MMU4 sequencer
-and the shared ICAC executor. It has no default caller or attachment action.
-It does not establish physical access, translation, scanout, handoff or drain.
+and the shared ICAC executor. Default profiles do not call it. The manual
+`EMBERV3DCONSOLE` profile calls it after its same-owner dual-pipeline stop.
+Completion does not prove physical translation, scanout, display ownership or AXI drain.
 
 The canonical BCMV3D ACPI attachment passes its actual `aa_memt` through the sole
 `bcmv3d_render_attach` call. The renderer stores that tag and one private owner
@@ -20,6 +21,65 @@ close readers, issue firmware handoff or start MMU4, scanout or a desktop.
 The ICAC attachment validates its descriptor without mapping registers.
 Use a coherent GCC16 kernel and matching modules. The ordinary `EMBER64` and
 `EMBERV3DRENDER` profiles keep their existing options and attachments.
+
+The private renderer attach returns the actual registered `bcmv3d_device *` only
+on success. An error preserves output storage. The ACPI owner stores this borrowed
+boot-lifetime object. A read-only validator compares its device, bus-space tag,
+DMA tag, ACPI handle and opaque boot owner. No global render-minor lookup or copied
+status bit can replace that exact tuple. The signature change needs a coherent
+kernel and module rebuild.
+
+The manual profile keeps normal active resident devices. It has no competing
+modesetting driver, suspend, detach or manual display probe. After both PV/HVS
+pipelines stop, its fixed continuation rechecks the exact issued CLOSED lease,
+complete CPU close/drain, actual held serial route, successful firmware result,
+both per-pipe stop results and all four held clock records. Under Giant, it marks
+one attempt before any map or allocation. It releases the finalizer's entire
+Giant recursion across native calls, then restores that exact depth before
+publishing the terminal result. It holds no DRM or ICAC lock across those calls.
+
+MOP and MOPlet share MMU4. Disabled HVS channels alone do not prove writeback idle.
+The owner retains fixed resource7 `0x107c500000/0x28` and resource8
+`0x107c501000/0x20` mappings through its real bus-space tag. It reads each
+TXP_DST_CTRL at `+0x0c`. GO bit0 or BUSY bit1 refuses the attempt before native
+create, ICAC observation or local MMU4 access. There is no ABORT, reset or write
+through these mappings. A read failure is terminal. A map or raw sample is not
+an independent access grant.
+
+The same owner then calls real native create, prepare and program in that order.
+It queries the actual cached native status after prepare/program, including errors.
+A diagnostic error cannot replace an earlier operation error. Success requires
+completed native and sequencer stages, actual prepared/sealed backing, completed
+shared flush and retained MMU4 lease. Every outcome retains the owner, renderer,
+clock providers, mappings and allocated backing until reboot. There is no retry,
+rollback, unmap or fallback after CLOSED. This stage does not enable HVS/PV, publish
+a display list, allocate HVS SRAM/UPM/COB ranges or start KMS.
+
+The joined actual-source check is:
+
+```sh
+ruby ember/tools/bootfb-serial-handoff-contract.rb "$PWD"
+SKIP_MUTANTS=1 CFLAGS='-DNDEBUG -fsanitize=address,undefined -fno-omit-frame-pointer' \
+    ruby ember/tools/bootfb-serial-handoff-contract.rb "$PWD"
+```
+
+It composes actual close, firmware, clock, dual-stop, native MMU4, ICAC executor,
+backing, frame helper and encoder bodies. The real renderer attach/output/tuple
+body is checked by `bootfb-claim-job-contract.rb`. The joined fixture uses controlled
+renderer storage and a tuple service; it does not establish native ABI or hardware
+identity. ACPI, DRM, heap, DMA/pmap, scheduling, mailbox and bus services are
+controlled. Explicit fixture reboots free only fake allocations between independent
+boots. No production cleanup API is introduced. Tests cover prerequisite refusals
+before map, both writeback masters, map/read faults, reentry, exact operation order,
+status failures and retained first errors. Compiled causal controls must reach a
+named CHECK; `NDEBUG` does not disable it. ASan/UBSan is host execution, not Valgrind
+or a kernel memory checker. Target GCC16 linkage, full-TU analysis and physical
+acceptance of this MMU4 continuation remain pending.
+
+Writeback facts derive from pinned
+[vc4_txp.c](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_txp.c#L140-L144)
+and [BCM2712 shared-MMU4 masters](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/arch/arm64/boot/dts/broadcom/bcm2712-ds.dtsi#L284-L290).
+Only register and ordering facts inform this independent BSD implementation.
 
 `bcmv3d_mmu4_native_create(sc, out)` validates native device/ACPI attachment,
 registered DRM/render identity, canonical GPU0, the full v1 resource contract,
@@ -134,4 +194,4 @@ See the [backing](bcmv3d-mmu4-backing.md),
 [ICAC owner](bcm2712-iommuc-native.md) contracts. Register facts derive from
 [Raspberry Pi Linux bcm2712-iommu.c](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/iommu/bcm2712-iommu.c).
 Its lack of clock/reset/power requests is prior art, not an always-on ACPI
-guarantee. No GPL implementation is copied. No current boot call is authorized.
+guarantee. No GPL implementation is copied. Only the explicit manual profile\ncontains the bounded same-owner boot continuation described above.

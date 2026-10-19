@@ -94,10 +94,20 @@ static int display_mailbox(uint8_t channel,void *packet,size_t length,uint32_t *
 static int display_map(bus_space_tag_t t,uint64_t a,uint64_t n,int f,bus_space_handle_t *out)
 {
 	static const unsigned indices[] = {3,5,6};
-	unsigned i = display_map_calls++;
+if (a == bcm2712_display_resources[7].memory.address || a == bcm2712_display_resources[8].memory.address) {
+	unsigned i = writeback_maps++;
+	CHECK(mmu4_permitted && i < 2 && giant == 0 && t == &tag && f == 0 && out != NULL);
+	CHECK(gpu_sc.sc_bootfb.mmu4.attempted && gpu_sc.sc_bootfb.display.complete);
+	CHECK(a == bcm2712_display_resources[7+i].memory.address && n == bcm2712_display_resources[7+i].memory.length);
+	CHECK(serial_fixture_held() && bootfb_mmu4_calls() == 0);
+	if (writeback_maps == writeback_fail_map) return ENOMEM;
+	*out = (bus_space_handle_t)(uintptr_t)(4+i); return 0;
+}
+unsigned i = display_map_calls++;
+
 	CHECK(display_permitted && giant == 0 && t == &tag && f == 0 && out != NULL);
 	CHECK(i < 3 && a == bcm2712_display_resources[indices[i]].memory.address && n == bcm2712_display_resources[indices[i]].memory.length);
-	CHECK(gpu_sc.sc_bootfb.display.attempted && renderer_calls == 1 && gpu_sc.sc_bootfb.render_attached);
+	CHECK(gpu_sc.sc_bootfb.display.attempted && renderer_calls == 1 && gpu_sc.sc_bootfb.renderer == fixture_renderer);
 	CHECK(gpu_sc.sc_bootfb.firmware.complete && serial_fixture_held());
 	for (unsigned j = 0; j < 4; j++) CHECK(display_firmware[j].state == 1 && display_firmware[j].rate > 0);
 	if (display_map_calls == display_fail_map) return ENOMEM;
@@ -106,7 +116,18 @@ static int display_map(bus_space_tag_t t,uint64_t a,uint64_t n,int f,bus_space_h
 static unsigned display_region(bus_space_tag_t t,bus_space_handle_t h)
 { CHECK(giant == 0 && t == &tag && (uintptr_t)h >= 1 && (uintptr_t)h <= 3); return (unsigned)(uintptr_t)h-1; }
 static int display_peek(bus_space_tag_t t,bus_space_handle_t h,uint32_t o,uint32_t *v)
-{ return qb_read(display_region(t,h),o,v); }
+{
+	if ((uintptr_t)h >= 4) {
+		unsigned i = (unsigned)(uintptr_t)h-4;
+		CHECK(mmu4_permitted && giant == 0 && t == &tag && i < 2 && o == 0x0c && v != NULL);
+		CHECK(gpu_sc.sc_bootfb.mmu4.attempted && bootfb_mmu4_calls() == 0);
+		writeback_reads++;
+		if (writeback_reads == writeback_fail_read) return EIO;
+		*v = writeback_control[i]; return 0;
+	}
+	return qb_read(display_region(t,h),o,v);
+}
+
 static int display_poke(bus_space_tag_t t,bus_space_handle_t h,uint32_t o,uint32_t v)
 { return qb_write(display_region(t,h),o,v); }
 static void display_barrier(bus_space_tag_t t,bus_space_handle_t h,unsigned o,uint64_t n,int f)

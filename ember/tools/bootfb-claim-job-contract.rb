@@ -37,7 +37,7 @@ run = lambda do |name, argv, env = {}|
   status
 end
 def function(text, name)
-  found = text.scan(/^(?:static )?(?:int|void|bool)\n#{Regexp.escape(name)}\(.*?^}/m)
+  found = text.scan(/^(?:static )?(?:int|void|bool)\n#{Regexp.escape(name)}\(.*?^}$/m)
   abort "actual function count #{name}: #{found.size}" unless found.size == 1
   found.first
 end
@@ -86,7 +86,7 @@ Dir.mktmpdir('bootfb-claim-job-', ENV.fetch('TMPDIR', '/tmp')) do |work|
     File.write(work + '/bcmv3d_bo_stats.h', files.fetch('sys/external/bsd/drm2/bcmv3d/bcmv3d_bo_stats.h'))
     File.write(work + '/renderer-types.h', notice(drv) + constants + type + "\n" + param + "\n")
     render = files.fetch('sys/external/bsd/drm2/bcmv3d/bcmv3d_drv.c')
-    File.write(work + '/renderer-function.h', notice(render) + function(render, 'bcmv3d_render_attach'))
+    File.write(work + '/renderer-function.h', notice(render) + function(render, 'bcmv3d_render_attach') + "\n" + function(render, 'bcmv3d_render_bootfb_validate'))
     cc = Shellwords.split(ENV.fetch('CC', 'cc')); flags = Shellwords.split(ENV.fetch('CFLAGS', ''))
     prefix = ENV['TEST_RUNNER'] ? [ENV.fetch('TEST_RUNNER')] : []
     compile = lambda do |label, enabled|
@@ -110,6 +110,10 @@ Dir.mktmpdir('bootfb-claim-job-', ENV.fetch('TMPDIR', '/tmp')) do |work|
         'queue-after' => ['acpi-functions.h', 'bcmv3d_bootfb_queue', "owner->phase = BCMV3D_BOOTFB_QUEUED;\n\tconfig_interrupts(sc->sc_dev, bcmv3d_bootfb_claim_job);", "config_interrupts(sc->sc_dev, bcmv3d_bootfb_claim_job);\n\towner->phase = BCMV3D_BOOTFB_QUEUED;", 'sc_bootfb.phase == BCMV3D_BOOTFB_QUEUED'],
         'warm-queue' => ['acpi-functions.h', 'bcmv3d_bootfb_queue', '!cold ||', 'false ||', 'queue_calls == 0'],
         'owner-argument' => ['acpi-functions.h', 'bcmv3d_finalize', 'bootfb = &sc->sc_bootfb;', 'bootfb = NULL;', 'flags == 0 && s->bootfb == expected_owner'],
+        'output-store' => ['renderer-function.h', 'bcmv3d_render_attach', '*out = sc;', '(void)out;', 'out == published_renderer'],
+        'tuple-owner' => ['renderer-function.h', 'bcmv3d_render_bootfb_validate', 'sc->bootfb != owner', 'false', 'tuple == ENXIO'],
+        'tuple-dmat' => ['renderer-function.h', 'bcmv3d_render_bootfb_validate', 'sc->dmat != dmat', 'false', 'tuple == ENXIO'],
+
         'owner-store' => ['renderer-function.h', 'bcmv3d_render_attach', 'sc->bootfb = bootfb;', 'sc->bootfb = NULL;', 'flags == 0 && s->bootfb == expected_owner'],
         'observe-cancel' => ['acpi-functions.h', 'bcmv3d_finalize', "\t\tbcmv3d_bootfb_cancel(sc, error);\n#endif\n\t}\n#ifdef BCM2712_V3D_TAKEOVER", "\t\tbcmv3d_bootfb_retain(sc, error);\n#endif\n\t}\n#ifdef BCM2712_V3D_TAKEOVER", 'gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CANCELED && genfb_attaches == 1'],
         'takeover-retain' => ['acpi-functions.h', 'bcmv3d_finalize', "if (error != 0)\n\t\t\tbcmv3d_bootfb_retain(sc, error);", "if (error != 0)\n\t\t\tbcmv3d_bootfb_cancel(sc, error);", 'gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_RETAINED && wsdisplay_bootfb.phase == BOOTFB_RETAINED'],

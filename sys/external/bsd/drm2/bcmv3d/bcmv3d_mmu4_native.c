@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* AI-assisted fixed native MMU4 consumer. No default caller or release path. */
+/* AI-assisted private explicit boot consumer. No release path. */
 #include <sys/param.h>
 #include <sys/cpu.h>
 #include <sys/errno.h>

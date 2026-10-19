@@ -73,7 +73,7 @@ first error and completion fields. A second-pipeline failure can retain a comple
 first channel. It cannot turn the overall result into success or permit retry.
 
 RESET need not self-clear. EMPTY bit 22 is logged only as an observation. Global
-HVS enable is never changed. The operation writes no HVS2, HDMI
+HVS enable is never changed. The stop mechanism writes no HVS2, HDMI
 VID_CTL, encoder, PHY, shared cache, MMU4, scanout table or framebuffer memory.
 Bus probing errors and partial writes are terminal. Diagnostic output uses only
 cached observations after a failure; it does not add fresh I/O.
@@ -101,8 +101,12 @@ disable CHECK. These host tests do not prove real bus timing or hardware exclusi
 
 `QUIESCE_EVIDENCE` and `SERIAL_HANDOFF_EVIDENCE` select new evidence directories.
 `SKIP_MUTANTS=1` runs positives. `CC`, `CFLAGS` and a one-executable `TEST_RUNNER`
-select compilation/execution. Native full-TU analysis, coherent kernel/module
-linkage and physical acceptance of this continuation remain pending. Prior CPU
+select compilation/execution. The two-pipeline stop has passed paired target
+full-TU analysis and coherent GCC16 kernel/four-module linkage. A physical boot
+completed both pipeline stops with error0 and retained the serial console. This
+proves the bounded stop receipt, not AXI drain or display ownership. The same
+owner can next run the separately bounded
+[MMU4 continuation](bcmv3d-mmu4-native.md); stop alone grants no MMU4 access. Prior CPU
 serial close/firmware ACK and unified clock registry kernel/module linkage pass.
 
 Register and ordering facts come from pinned Raspberry Pi Linux

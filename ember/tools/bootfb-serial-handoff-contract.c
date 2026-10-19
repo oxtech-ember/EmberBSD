@@ -32,7 +32,26 @@ typedef void *ACPI_HANDLE;
 #include "core-types.h"
 #include "disp-types.h"
 #include "bcm2712_display_quiesce.h"
+#include "mmu4-core-types.h"
+#include "mmu4-native-types.h"
+#include "mmu4-mmu4-types.h"
+#include "mmu4-backing-types.h"
+#include "mmu4-adapter-types.h"
 #include "native-owner.h"
+extern void *bootfb_mmu4_reboot(void);
+extern void bootfb_mmu4_failure(int);
+extern unsigned bootfb_mmu4_calls(void);
+extern int bootfb_native_create(struct bcmv3d_device *, struct bcmv3d_mmu4_native **);
+extern int bootfb_native_prepare(struct bcmv3d_mmu4_native *);
+extern int bootfb_native_program(struct bcmv3d_mmu4_native *);
+extern int bootfb_native_status(struct bcmv3d_mmu4_native *, struct bcmv3d_mmu4_native_status *);
+static struct bcmv3d_device *fixture_renderer;
+static unsigned mmu4_gate, writeback_maps, writeback_reads, writeback_fail_map, writeback_fail_read;
+static uint32_t writeback_control[2];
+static bool mmu4_permitted, mmu4_reenter;
+static int mmu4_tuple_error;
+static int bcmv3d_bootfb_program_mmu4(struct bcmv3d_softc *);
+
 static struct device gpu;
 static struct bcmv3d_softc gpu_sc;
 static unsigned renderer_calls, joined;
@@ -124,14 +143,57 @@ static void firmware_message(const char *format, ...)
 #undef aprint_normal
 #define aprint_normal firmware_message
 #include "native-endian.h"
-static void print_device_message(device_t d, const char *f, ...) { (void)d; (void)f; }
+/* Inject a changed prerequisite after actual stop publication, before MMU4. */
+static void print_device_message(device_t dev, const char *f, ...)
+{
+	struct bcmv3d_bootfb_owner *o = &gpu_sc.sc_bootfb;
+	struct bcmv3d_display_stop *d = &o->display;
+	(void)dev;
+	if (strncmp(f,"display stop at ",16) != 0 || !d->complete) return;
+	switch (mmu4_gate) {
+	case 11: o->firmware.attempted = false; break;
+	case 12: o->firmware.complete = false; break;
+	case 13: o->firmware.fault = EIO; break;
+	case 14: o->renderer = NULL; break;
+	case 15: d->attempted = false; break;
+	case 16: d->complete = false; break;
+	case 17: d->fault = EIO; break;
+	case 18: d->mapped = 2; break;
+	case 19: d->stop.attempted = false; break;
+	case 20: d->stop.snapshot_valid = false; break;
+	case 21: d->stop.complete = false; break;
+	case 22: d->stop.error = EIO; break;
+	case 23: d->hsm = NULL; break;
+	case 24: d->bvb = NULL; break;
+	case 25: d->core = NULL; break;
+	case 26: d->disp = NULL; break;
+	case 27: d->stop.pipe[0].complete = false; break;
+	case 28: d->stop.pipe[1].complete = false; break;
+	case 29: d->stop.pipe[0].error = EIO; break;
+	case 30: d->stop.pipe[1].error = EIO; break;
+	case 31: d->stop.pipe[0].pv_disabled = false; break;
+	case 32: d->stop.pipe[1].pv_disabled = false; break;
+	case 33: d->stop.pipe[0].hvs_disabled = false; break;
+	case 34: d->stop.pipe[1].hvs_disabled = false; break;
+	case 35: d->hsm_status.fault = EIO; break;
+	case 36: d->bvb_status.state = 0; break;
+	case 37: d->core_status.leases = 0; break;
+	case 38: d->disp_status.minimum[0] = 0; break;
+	case 39: d->bvb_status.rate = 0; break;
+	case 40: gpu.private = NULL; break;
+	case 41: o->phase = BCMV3D_BOOTFB_RETAINED; break;
+	case 42: CHECK(o->lease != NULL); o->lease->issued = false; break;
+	case 43: o->first_error = EPROTO; break;
+	}
+}
+
 #define aprint_normal_dev print_device_message
 #define aprint_error_dev print_device_message
 void bcm2712_display_acpi_observe(device_t d, ACPI_HANDLE h) { CHECK(d == &gpu && h == &gpu); }
 static int bcmv3d_observe(struct bcmv3d_softc *s) { CHECK(s == &gpu_sc && gpu.dv_pending == 0); return 0; }
 int bcmv3d_takeover_probe(device_t d, bus_space_tag_t t) { CHECK(d == &gpu && t == &tag); return 0; }
 static int bcmv3d_render_attach(device_t d, bus_space_tag_t t, bus_dma_tag_t m,
-    ACPI_HANDLE h, const struct bcmv3d_bootfb_owner *owner)
+    ACPI_HANDLE h, const struct bcmv3d_bootfb_owner *owner, struct bcmv3d_device **out)
 {
 	CHECK(d == &gpu && t == &tag && m == &gpu && h == &gpu);
 	CHECK(gpu.dv_pending == 0 && joined == 1);
@@ -142,10 +204,35 @@ static int bcmv3d_render_attach(device_t d, bus_space_tag_t t, bus_dma_tag_t m,
 	if (display_gate == 13) gpu_sc.sc_bootfb.firmware.fault = EIO;
 	if (display_gate == 14) gpu_sc.sc_bst = NULL;
 	if (display_gate == 15) gpu.private = NULL;
-	if (display_gate == 16) gpu_sc.sc_bootfb.lease->issued = false;
+	if (display_gate == 16) { CHECK(gpu_sc.sc_bootfb.lease != NULL); gpu_sc.sc_bootfb.lease->issued = false; }
 	if (display_gate == 17) gpu_sc.sc_bootfb.phase = BCMV3D_BOOTFB_RETAINED;
+	CHECK(out != NULL);
+	if (renderer_error == 0) *out = fixture_renderer;
 	return renderer_error;
 
+}
+/* Exact tuple policy body is tested with the real renderer in claim-job fixture. */
+static int bcmv3d_render_bootfb_validate(const struct bcmv3d_device *r, device_t d,
+    bus_space_tag_t t, bus_dma_tag_t m, ACPI_HANDLE h, const struct bcmv3d_bootfb_owner *o)
+{
+	CHECK(r == fixture_renderer && d == &gpu && t == &tag && m == &gpu && h == &gpu);
+	CHECK(o == &gpu_sc.sc_bootfb && giant > 0);
+	return mmu4_tuple_error;
+}
+void bootfb_mmu4_check(unsigned stage, const void *p)
+{
+	CHECK(mmu4_permitted && giant == 0 && !cold);
+	CHECK(gpu_sc.sc_bootfb.mmu4.attempted && !gpu_sc.sc_bootfb.mmu4.complete);
+	CHECK(gpu_sc.sc_bootfb.renderer == fixture_renderer && serial_fixture_held());
+	CHECK(gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.display.complete);
+	CHECK(writeback_maps == 2 && writeback_reads == 2);
+	CHECK((writeback_control[0] & 3) == 0 && (writeback_control[1] & 3) == 0);
+	if (stage == 1) CHECK(p == fixture_renderer);
+	else CHECK(p != NULL && p == gpu_sc.sc_bootfb.mmu4.native);
+	if (mmu4_reenter) {
+		CHECK(bcmv3d_bootfb_program_mmu4(&gpu_sc) == EBUSY && giant == 0);
+		CHECK(!gpu_sc.sc_bootfb.mmu4.complete && gpu_sc.sc_bootfb.mmu4.fault == 0);
+	}
 }
 static int native_status(struct wsdisplay_bootfb_lease *l, struct simplefb_console_close_status *out)
 {
@@ -183,6 +270,20 @@ static int native_status(struct wsdisplay_bootfb_lease *l, struct simplefb_conso
 		case 10: gpu_sc.sc_bootfb.lease = &foreign; break;
 		}
 	}
+	if (error == 0 && firmware_status_queries == 4) {
+		switch (mmu4_gate) {
+		case 1: out->complete = false; break;
+		case 2: out->closed = false; break;
+		case 3: out->drained = false; break;
+		case 4: out->error = EIO; break;
+		case 5: out->mi_error = EIO; break;
+		case 6: out->md_error = EIO; break;
+		case 7: out->attempted = false; break;
+		case 8: return EIO;
+		case 9: serial_fixture_drop_hold(); break;
+		case 10: gpu_sc.sc_bootfb.lease = &foreign; break;
+		}
+	}
 	return error;
 }
 #define simplefb_console_close_status(...) native_status(__VA_ARGS__)
@@ -191,7 +292,16 @@ static int native_status(struct wsdisplay_bootfb_lease *l, struct simplefb_conso
 #define bus_space_poke_4 display_poke
 #define bus_space_barrier display_barrier
 #define delay(us) display_delay(us)
+#define bcmv3d_mmu4_native_create bootfb_native_create
+#define bcmv3d_mmu4_native_prepare bootfb_native_prepare
+#define bcmv3d_mmu4_native_program bootfb_native_program
+#define bcmv3d_mmu4_native_cached_status bootfb_native_status
 #include "native-job.h"
+#undef bcmv3d_mmu4_native_create
+#undef bcmv3d_mmu4_native_prepare
+#undef bcmv3d_mmu4_native_program
+#undef bcmv3d_mmu4_native_cached_status
+
 #undef bus_space_map
 #undef bus_space_peek_4
 #undef bus_space_poke_4
@@ -223,7 +333,12 @@ static void native_initialize(bool renderer_first)
 {
 	CHECK(TAILQ_EMPTY(&config_finalize_list) && TAILQ_EMPTY(&config_pending));
 	CHECK(TAILQ_EMPTY(&interrupt_config_queue));
-	display_initialize();
+fixture_renderer = bootfb_mmu4_reboot();
+mmu4_gate = writeback_maps = writeback_reads = writeback_fail_map = writeback_fail_read = 0;
+writeback_control[0] = 0x80010000; writeback_control[1] = 0x40020000;
+mmu4_permitted = true; mmu4_reenter = false; mmu4_tuple_error = 0;
+display_initialize();
+
 	config_finalize_done = 0; init_started = false; joined = 0;
 	KERNEL_LOCK(1, NULL);
 	fixture_previous = serial_fixture_setup(); serial_dev = fixture_previous->cn_dev; open_expected_dev = serial_dev;
@@ -601,7 +716,7 @@ static void tests_display(void)
 	}
 	/* A failed renderer never invokes the continuation or creates a provider. */
 	native_initialize(false); renderer_error = EIO; display_permitted = false; native_finish();
-	CHECK(!gpu_sc.sc_bootfb.render_attached && !gpu_sc.sc_bootfb.display.attempted);
+	CHECK(gpu_sc.sc_bootfb.renderer == NULL && !gpu_sc.sc_bootfb.display.attempted);
 	CHECK(bcmv3d_bootfb_stop_display(&gpu_sc) == EPERM);
 	CHECK(display_clock_calls == 0 && display_map_calls == 0 && qb.operations == 0);
 	/* Raw CPU close cannot upgrade itself with copied firmware value facts. */
@@ -609,18 +724,97 @@ static void tests_display(void)
 	struct wsdisplay_bootfb_lease *raw;
 	CHECK(simplefb_console_claim(&raw,&parsed) == 0 && simplefb_console_close(raw) == 0);
 	gpu_sc.sc_bootfb.lease = raw; gpu_sc.sc_bootfb.phase = BCMV3D_BOOTFB_CLOSED;
-	gpu_sc.sc_bootfb.firmware.attempted = gpu_sc.sc_bootfb.firmware.complete = gpu_sc.sc_bootfb.render_attached = true;
+	gpu_sc.sc_bootfb.firmware.attempted = gpu_sc.sc_bootfb.firmware.complete = true; gpu_sc.sc_bootfb.renderer = fixture_renderer;
 	display_permitted = false;
 	CHECK(bcmv3d_bootfb_stop_display(&gpu_sc) == ENXIO && display_clock_calls == 0 && display_map_calls == 0);
 	native_finish(); CHECK(fallback_calls == 0);
+}
+static void mmu4_retry(int expected)
+{
+	struct bcmv3d_bootfb_mmu4 saved = gpu_sc.sc_bootfb.mmu4;
+	unsigned maps = writeback_maps, reads = writeback_reads, calls = bootfb_mmu4_calls();
+	int first = gpu_sc.sc_bootfb.first_error;
+
+	CHECK(bcmv3d_bootfb_program_mmu4(&gpu_sc) == expected);
+	bcmv3d_bootfb_claim_job(&gpu); CHECK(bcmv3d_finalize(&gpu) == 0);
+	CHECK(memcmp(&saved,&gpu_sc.sc_bootfb.mmu4,sizeof(saved)) == 0);
+	CHECK(writeback_maps == maps && writeback_reads == reads && bootfb_mmu4_calls() == calls);
+	CHECK(gpu_sc.sc_bootfb.first_error == first && fallback_calls == 0 && serial_fixture_held());
+}
+static void tests_mmu4(void)
+{
+	struct bcmv3d_bootfb_mmu4 *m;
+	unsigned i, port;
+
+	native_initialize(false); mmu4_permitted = false;
+	CHECK(bcmv3d_bootfb_program_mmu4(NULL) == EINVAL);
+	CHECK(bcmv3d_bootfb_program_mmu4(&gpu_sc) == EWOULDBLOCK);
+	cold = false; hard_irq = true;
+	CHECK(bcmv3d_bootfb_program_mmu4(&gpu_sc) == EWOULDBLOCK); hard_irq = false;
+	soft_irq = true; CHECK(bcmv3d_bootfb_program_mmu4(&gpu_sc) == EWOULDBLOCK); soft_irq = false;
+	panicstr = "MMU4 context"; CHECK(bcmv3d_bootfb_program_mmu4(&gpu_sc) == EWOULDBLOCK); panicstr = NULL;
+	int rs = pserialize_read_enter(); CHECK(bcmv3d_bootfb_program_mmu4(&gpu_sc) == EDEADLK); pserialize_read_exit(rs);
+	CHECK(!gpu_sc.sc_bootfb.mmu4.attempted && bootfb_mmu4_calls() == 0 && writeback_maps == 0);
+	mmu4_permitted = true; native_finish();
+	for (i = 0; i < 2; i++) {
+		native_initialize(i); qb_initialize(0x54,3); mmu4_reenter = true; native_finish();
+		m = &gpu_sc.sc_bootfb.mmu4;
+		CHECK(m->attempted && m->complete && m->fault == 0 && m->native != NULL);
+		CHECK(m->status_valid && m->status.backing.prepared && m->status.backing.sealed);
+		CHECK(m->status.sequence.sequence_complete && m->status.shared.flush_complete);
+		CHECK(writeback_maps == 2 && writeback_reads == 2 && bootfb_mmu4_calls() == 4);
+		CHECK(qb.writes == 10 && gpu_sc.sc_bootfb.first_error == 0);
+		mmu4_retry(EBUSY);
+	}
+	for (i = 1; i <= 42; i++) {
+		native_initialize(false); mmu4_gate = i; mmu4_permitted = false; native_finish();
+		if (i == 40) gpu.private = &gpu_sc;
+		m = &gpu_sc.sc_bootfb.mmu4;
+		CHECK(!m->complete && !m->attempted && m->fault != 0);
+		CHECK(writeback_maps == 0 && writeback_reads == 0 && bootfb_mmu4_calls() == 0);
+		if (i != 9) mmu4_retry(m->fault); /* This test deliberately revoked its hold. */
+	}
+	native_initialize(false); mmu4_tuple_error = ENXIO; mmu4_permitted = false; native_finish();
+	CHECK(!gpu_sc.sc_bootfb.mmu4.attempted && gpu_sc.sc_bootfb.mmu4.fault == ENXIO && writeback_maps == 0);
+	mmu4_retry(ENXIO);
+	for (port = 0; port < 2; port++) {
+		for (i = 0; i < 4; i++) {
+			native_initialize(false);
+			if (i < 2) writeback_control[port] |= 1U << i;
+			if (i == 2) writeback_fail_map = port+1;
+			if (i == 3) writeback_fail_read = port+1;
+			native_finish(); m = &gpu_sc.sc_bootfb.mmu4;
+			CHECK(m->attempted && !m->complete && m->native == NULL);
+			CHECK(m->fault == (i < 2 ? EBUSY : i == 2 ? ENOMEM : EIO));
+			CHECK(bootfb_mmu4_calls() == 0 && writeback_maps == port+1);
+			CHECK(m->writeback_mapped == (i == 2 ? port : port+1));
+			CHECK(writeback_reads == (i == 2 ? port : port+1));
+			CHECK(m->writeback_valid[port] == (i < 2));
+			mmu4_retry(m->fault);
+		}
+	}
+	for (i = 1; i <= 23; i++) {
+		native_initialize(false); bootfb_mmu4_failure(i); native_finish();
+		m = &gpu_sc.sc_bootfb.mmu4;
+		CHECK(m->attempted && !m->complete && m->fault != 0);
+		CHECK(m->native != NULL || i == 1);
+		CHECK(gpu_sc.sc_bootfb.first_error == m->fault);
+		CHECK(bootfb_mmu4_calls() == (i == 1 ? 1U : i == 2 || i == 5 || i == 8 ? 3U : 4U));
+		if (i == 23) CHECK(m->fault == EIO && m->status_error == EFAULT);
+		mmu4_retry(m->fault);
+	}
+	/* A prior failure is retained even if this stage has its own terminal errno. */
+	native_initialize(false); mmu4_gate = 43; bootfb_mmu4_failure(1); native_finish();
+	CHECK(gpu_sc.sc_bootfb.first_error == EPROTO); mmu4_retry(ENOMEM);
 }
 int main(void)
 {
 	pthread_mutexattr_t a;
 	CHECK(pthread_mutexattr_init(&a) == 0 && pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE) == 0);
 	CHECK(pthread_mutex_init(&giant_mutex, &a) == 0 && pthread_mutexattr_destroy(&a) == 0);
-	tests_native(); tests_firmware(); tests_display();
+	tests_native(); tests_firmware(); tests_display(); tests_mmu4();
 	CHECK(giant == 0 && read_depth == 0 && creates == destroys && init_started);
+	(void)bootfb_mmu4_reboot();
 	display_initialize();
 	CHECK(pthread_mutex_destroy(&giant_mutex) == 0);
 	printf("native serial boot handoff: %u actual-source checks PASS\n", atomic_load(&checks));

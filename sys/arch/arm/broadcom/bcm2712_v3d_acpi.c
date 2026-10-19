@@ -14,6 +14,7 @@
 __KERNEL_RCSID(0, "$NetBSD$");
 
 #include "opt_bcmv3d.h"
+#include "opt_bcm2712_display_components.h"
 #include "opt_wsdisplay_bootfb.h"
 
 #include <sys/param.h>
@@ -72,6 +73,10 @@ int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
 #include <arm/broadcom/bcm2712_display_core.h>
 #include <arm/broadcom/bcm2712_display_disp.h>
 #include <arm/broadcom/bcm2712_display_quiesce.h>
+#include <external/bsd/drm2/bcmv3d/bcmv3d_mmu4_native.h>
+#ifndef BCM2712_DISPLAY_COMPONENTS
+#error "BCM2712 native handoff requires the builtin display components"
+#endif
 #endif
 #endif
 #if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_DMA_PROBE)
@@ -154,6 +159,20 @@ struct bcmv3d_display_stop {
 };
 #endif
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+struct bcmv3d_bootfb_mmu4 {
+	struct bcmv3d_mmu4_native *native;
+	struct bcmv3d_mmu4_native_status status;
+	bus_space_handle_t writeback_maps[2];
+	uint32_t writeback_control[2];
+	unsigned int writeback_mapped;
+	bool writeback_valid[2];
+	const char *stage;
+	bool attempted, complete, status_valid;
+	int fault, status_error;
+};
+#endif
+
 /* The ACPI device and this embedded owner remain resident until reboot. */
 
 struct bcmv3d_bootfb_owner {
@@ -164,7 +183,8 @@ struct bcmv3d_bootfb_owner {
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 	struct bcm2712_display_handoff_status firmware;
 	struct bcmv3d_display_stop display;
-	bool render_attached;
+	struct bcmv3d_device *renderer;
+	struct bcmv3d_bootfb_mmu4 mmu4;
 #endif
 };
 #endif
@@ -348,7 +368,7 @@ bcmv3d_bootfb_stop_display(struct bcmv3d_softc *sc)
 	d->stage = "admission";
 	if (sc->sc_dev == NULL || device_private(sc->sc_dev) != sc ||
 	    sc->sc_bst == NULL || owner->phase != BCMV3D_BOOTFB_CLOSED ||
-	    !owner->render_attached || !owner->firmware.attempted ||
+	    owner->renderer == NULL || !owner->firmware.attempted ||
 	    !owner->firmware.complete || owner->firmware.fault != 0) {
 		error = EPERM;
 		goto publish;
@@ -419,6 +439,162 @@ publish:
 		    (d->stop.pipe[i].status >> 22) & 1, d->stop.pipe[i].stage,
 		    d->stop.pipe[i].error, d->stop.pipe[i].mutation_attempted,
 		    d->stop.pipe[i].complete);
+	}
+out:
+	KERNEL_UNLOCK_ONE(NULL);
+	return error;
+}
+
+/* MOP and MOPlet also use MMU4. This gate performs no writeback control write. */
+static int
+bcmv3d_bootfb_writeback_idle(struct bcmv3d_softc *sc)
+{
+	struct bcmv3d_bootfb_mmu4 *m = &sc->sc_bootfb.mmu4;
+	const struct bcm2712_display_memory *memory;
+	unsigned int i;
+	int error;
+
+	for (i = 0; i < 2; i++) {
+		memory = &sc->sc_bootfb.display.contract.memory[7 + i];
+		m->stage = "writeback map";
+		error = bus_space_map(sc->sc_bst, memory->address, memory->length,
+		    0, &m->writeback_maps[i]);
+		if (error != 0)
+			return error;
+		m->writeback_mapped++;
+		m->stage = "writeback read";
+		if (bus_space_peek_4(sc->sc_bst, m->writeback_maps[i], 0x0c,
+		    &m->writeback_control[i]) != 0)
+			return EIO;
+		m->writeback_valid[i] = true;
+		if ((m->writeback_control[i] & 3U) != 0)
+			return EBUSY;
+	}
+	return 0;
+}
+
+static int
+bcmv3d_bootfb_program_mmu4(struct bcmv3d_softc *sc)
+{
+	struct simplefb_console_close_status close;
+	struct bcmv3d_bootfb_owner *owner;
+	struct bcmv3d_display_stop *d;
+	struct bcmv3d_bootfb_mmu4 *m;
+	unsigned int i;
+	int count, error;
+
+	if (sc == NULL)
+		return EINVAL;
+	if (cold || panicstr != NULL || cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (pserialize_in_read_section())
+		return EDEADLK;
+	ASSERT_SLEEPABLE();
+	KERNEL_LOCK(1, NULL);
+	owner = &sc->sc_bootfb;
+	d = &owner->display;
+	m = &owner->mmu4;
+	if (m->attempted || m->complete || m->fault != 0) {
+		error = m->fault != 0 ? m->fault : EBUSY;
+		goto out;
+	}
+	m->stage = "admission";
+	if (sc->sc_dev == NULL || device_private(sc->sc_dev) != sc ||
+	    owner->phase != BCMV3D_BOOTFB_CLOSED || owner->renderer == NULL ||
+	    !owner->firmware.attempted || !owner->firmware.complete ||
+	    owner->firmware.fault != 0 || !d->attempted || !d->complete ||
+	    d->fault != 0 || d->mapped != BCM2712_QUIESCE_REGIONS ||
+	    !d->stop.attempted || !d->stop.snapshot_valid || !d->stop.complete ||
+	    d->stop.error != 0 || d->hsm == NULL || d->bvb == NULL ||
+	    d->core == NULL || d->disp == NULL) {
+		error = EPERM;
+		goto publish;
+	}
+	for (i = 0; i < 2; i++) {
+		if (!d->stop.pipe[i].complete || d->stop.pipe[i].error != 0 ||
+		    !d->stop.pipe[i].pv_disabled || !d->stop.pipe[i].hvs_disabled) {
+			error = ENXIO;
+			goto publish;
+		}
+	}
+#define HELD(n) do { \
+	if (d->n ## _status.fault != 0 || d->n ## _status.state != 1 || \
+	    d->n ## _status.leases != 1 || d->n ## _status.minimum[0] == 0 || \
+	    d->n ## _status.rate < d->n ## _status.minimum[0]) { \
+		error = ENXIO; \
+		goto publish; \
+	} \
+} while (0)
+	HELD(hsm);
+	HELD(bvb);
+	HELD(core);
+	HELD(disp);
+#undef HELD
+	error = simplefb_console_close_status(owner->lease, &close);
+	if (error == 0 && (!close.complete || !close.attempted || !close.closed ||
+	    !close.drained || close.error != 0 || close.mi_error != 0 ||
+	    close.md_error != 0))
+		error = ENXIO;
+	if (error == 0)
+		error = wsdisplay_bootfb_serial_closed(owner->lease);
+	if (error == 0)
+		error = bcmv3d_render_bootfb_validate(owner->renderer, sc->sc_dev,
+		    sc->sc_bst, sc->sc_dmat, sc->sc_handle, owner);
+	if (error != 0)
+		goto publish;
+
+	m->attempted = true;
+	KERNEL_UNLOCK_ALL(NULL, &count);
+	error = bcmv3d_bootfb_writeback_idle(sc);
+	if (error != 0)
+		goto restore;
+	/* The actual constructor checks identity and pins this exact renderer. */
+	m->stage = "create";
+	error = bcmv3d_mmu4_native_create(owner->renderer, &m->native);
+	if (error != 0)
+		goto restore;
+	m->stage = "prepare";
+	error = bcmv3d_mmu4_native_prepare(m->native);
+	if (error == 0) {
+		m->stage = "program";
+		error = bcmv3d_mmu4_native_program(m->native);
+	}
+	/* Preserve the primary operation errno if the diagnostic query fails. */
+	m->status_error = bcmv3d_mmu4_native_cached_status(m->native, &m->status);
+	m->status_valid = m->status_error == 0;
+	if (error == 0)
+		error = m->status_error;
+	if (error == 0 && m->status.fault != 0)
+		error = m->status.fault;
+	if (error == 0 && (m->status.stage != BCMV3D_MMU4_NATIVE_COMPLETE ||
+	    !m->status.backing_valid || !m->status.backing.prepared ||
+	    !m->status.backing.sealed || m->status.backing.first_error != 0 ||
+	    !m->status.sequence_valid || !m->status.sequence.sequence_complete ||
+	    !m->status.sequence.retained || m->status.sequence.fault != 0 ||
+	    !m->status.shared_valid || !m->status.shared.flush_complete ||
+	    (m->status.shared.retained & 2U) == 0 || !m->status.icac_valid))
+		error = EIO;
+restore:
+	KERNEL_LOCK(count, NULL);
+publish:
+	m->fault = error;
+	m->complete = error == 0;
+	if (error != 0 && owner->first_error == 0)
+		owner->first_error = error;
+	if (sc->sc_dev != NULL) {
+		aprint_normal_dev(sc->sc_dev, "boot MMU4 at %s: error %d, "
+		    "complete %u; writeback maps %u, control %08x/%08x, "
+		    "valid %u/%u; cached status %d, backing prepared %u "
+		    "sealed %u, sequence complete %u; no HVS activation\n",
+		    m->stage, error, m->complete, m->writeback_mapped,
+		    m->writeback_control[0], m->writeback_control[1],
+		    m->writeback_valid[0], m->writeback_valid[1], m->status_error,
+		    m->status_valid && m->status.backing_valid &&
+		    m->status.backing.prepared,
+		    m->status_valid && m->status.backing_valid &&
+		    m->status.backing.sealed,
+		    m->status_valid && m->status.sequence_valid &&
+		    m->status.sequence.sequence_complete);
 	}
 out:
 	KERNEL_UNLOCK_ONE(NULL);
@@ -789,6 +965,7 @@ bcmv3d_finalize(device_t dev)
 	struct bcmv3d_softc *sc = device_private(dev);
 #ifdef BCM2712_V3D_RENDER
 	const struct bcmv3d_bootfb_owner *bootfb = NULL;
+	struct bcmv3d_device *renderer = NULL;
 #endif
 	int error;
 
@@ -845,7 +1022,7 @@ bcmv3d_finalize(device_t dev)
 				bootfb = &sc->sc_bootfb;
 #endif
 			error = bcmv3d_render_attach(dev, sc->sc_bst,
-			    sc->sc_dmat, sc->sc_handle, bootfb);
+			    sc->sc_dmat, sc->sc_handle, bootfb, &renderer);
 #if defined(WSDISPLAY_BOOTFB_DEFER)
 			/*
 			 * Render setup has no display or MMU4 calls. Release only a
@@ -858,8 +1035,9 @@ bcmv3d_finalize(device_t dev)
 				aprint_error_dev(dev, "render attachment failed: %d\n", error);
 #if defined(WSDISPLAY_BOOTFB_DEFER) && defined(WSDISPLAY_BOOTFB_HANDOFF)
 			else {
-				sc->sc_bootfb.render_attached = true;
-				(void)bcmv3d_bootfb_stop_display(sc);
+				sc->sc_bootfb.renderer = renderer;
+				if (bcmv3d_bootfb_stop_display(sc) == 0)
+					(void)bcmv3d_bootfb_program_mmu4(sc);
 			}
 #endif
 		}

@@ -167,7 +167,8 @@ simplefb or renderer finalizer runs. The job does not wait for a finalizer.
 
 The sole private renderer attach interface passes the same borrowed opaque owner
 as its fifth argument, after device, bus-space tag, DMA tag and ACPI handle.
-The actual renderer stores that pointer. MI/FDT fields stay in the native owner;
+The actual renderer stores that pointer and returns its registered object through
+a sixth output argument only on success. MI/FDT fields stay in the native owner;
 there is no raw getter or permission flag. All callers need a coherent rebuild.
 A null owner or a refused claim grants no headless or display access.
 
@@ -191,7 +192,8 @@ serial close. Firmware errors retain CLOSED and cannot restore fallback. The
 manual `EMBERV3DCONSOLE` profile selects this path. After successful render
 attachment, its same resident owner can hold clocks and run the
 [bounded two-pipeline stop](bcm2712-native-display-quiesce.md). The renderer's opaque
-pointer still grants no display access.
+pointer still grants no display access. After both pipelines stop, that exact
+renderer and owner can enter the separately guarded [MMU4 stage](bcmv3d-mmu4-native.md).
 
 ## Source checks
 

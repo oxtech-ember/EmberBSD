@@ -145,7 +145,8 @@ static struct drm_driver bcmv3d_driver = {
 
 int
 bcmv3d_render_attach(device_t self, bus_space_tag_t bst, bus_dma_tag_t dmat,
-    ACPI_HANDLE handle, const struct bcmv3d_bootfb_owner *bootfb)
+    ACPI_HANDLE handle, const struct bcmv3d_bootfb_owner *bootfb,
+    struct bcmv3d_device **out)
 {
 	struct bcmv3d_device *sc;
 	struct drm_device *dev;
@@ -153,6 +154,8 @@ bcmv3d_render_attach(device_t self, bus_space_tag_t bst, bus_dma_tag_t dmat,
 	unsigned int i;
 	int error;
 
+	if (out == NULL)
+		return EINVAL;
 	if (!bcmv3d_takeover_complete())
 		return EPERM;
 	error = drm_guarantee_initialized();
@@ -207,6 +210,7 @@ bcmv3d_render_attach(device_t self, bus_space_tag_t bst, bus_dma_tag_t dmat,
 	aprint_normal_dev(self, "native V3D render interface: GEM and "
 	    "serialized CL/TFU/CSD with binary syncobj; experimental render interface\n");
 	/* Device, IRQ and MMU lifetime ends at reboot; no hot removal. */
+	*out = sc;
 	return 0;
 fail:
 	sysctl_teardown(&sc->sysctllog);
@@ -218,4 +222,19 @@ fail:
 	kmem_free(sc, sizeof(*sc));
 	drm_dev_put(dev);
 	return error;
+}
+
+int
+bcmv3d_render_bootfb_validate(const struct bcmv3d_device *sc, device_t dev,
+    bus_space_tag_t bst, bus_dma_tag_t dmat, ACPI_HANDLE handle,
+    const struct bcmv3d_bootfb_owner *owner)
+{
+
+	if (sc == NULL || dev == NULL || bst == NULL || dmat == NULL ||
+	    handle == NULL || owner == NULL)
+		return EINVAL;
+	if (sc->dev != dev || sc->bst != bst || sc->dmat != dmat ||
+	    sc->handle != handle || sc->bootfb != owner)
+		return ENXIO;
+	return 0;
 }

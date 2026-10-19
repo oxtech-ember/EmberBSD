@@ -345,10 +345,55 @@ static void gate_cases(void)
 	expected_owner = &gpu_sc.sc_bootfb; run_finish();
 #endif
 }
+static void renderer_output_cases(void)
+{
+	struct bcmv3d_device canary, *out;
+	struct bcmv3d_device *sc;
+	unsigned n;
+	int tuple;
+
+	claim_fresh();
+	CHECK(bcmv3d_render_attach(&gpu, &arm_generic_bs_tag, &gpu, &gpu,
+	    NULL, NULL) == EINVAL);
+	CHECK(hook_allocations == hook_frees && drm_objects == 0);
+	for (n = 1; n <= 14; n++) {
+		claim_fresh(); render_failure = n; out = &canary;
+		CHECK(bcmv3d_render_attach(&gpu, &arm_generic_bs_tag, &gpu, &gpu,
+		    NULL, &out) != 0);
+		CHECK(out == &canary && published_renderer == NULL);
+	}
+	claim_fresh(); out = &canary;
+#ifdef WSDISPLAY_BOOTFB_DEFER
+	expected_owner = &gpu_sc.sc_bootfb;
+#else
+	expected_owner = (const struct bcmv3d_bootfb_owner *)&gpu_sc;
+#endif
+	CHECK(bcmv3d_render_attach(&gpu, &arm_generic_bs_tag, &gpu, &gpu,
+	    expected_owner, &out) == 0);
+	CHECK(out == published_renderer && out != &canary);
+	sc = out;
+	CHECK(bcmv3d_render_bootfb_validate(sc, &gpu, &arm_generic_bs_tag,
+	    &gpu, &gpu, expected_owner) == 0);
+	for (n = 0; n < 5; n++) {
+		struct bcmv3d_device saved = *sc;
+		if (n == 0) sc->dev = (device_t)&canary;
+		if (n == 1) sc->bst = (bus_space_tag_t)&canary;
+		if (n == 2) sc->dmat = &canary;
+		if (n == 3) sc->handle = &canary;
+		if (n == 4) sc->bootfb = NULL;
+		tuple = bcmv3d_render_bootfb_validate(sc, &gpu, &arm_generic_bs_tag,
+		    &gpu, &gpu, expected_owner);
+		CHECK(tuple == ENXIO);
+		*sc = saved;
+	}
+	CHECK(bcmv3d_render_bootfb_validate(NULL, &gpu, &arm_generic_bs_tag,
+	    &gpu, &gpu, expected_owner) == EINVAL);
+	dispose_renderer_services();
+}
 int main(void)
 {
 	config_process_deferred(&interrupt_config_queue, NULL);
-	success_cases(); failure_cases(); gate_cases(); dispose_renderer_services();
+	success_cases(); failure_cases(); gate_cases(); renderer_output_cases(); dispose_renderer_services();
 	CHECK(hook_allocations == hook_frees && kernel_depth == 1);
 	printf("boot framebuffer claim job: %u checks PASS\n", checks);
 	return 0;

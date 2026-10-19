@@ -57,6 +57,16 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
     s=run.call('export-ready',[RbConfig.ruby,source+'/ember/tools/serial-console-ready-contract.rb',source],
       {'SKIP_MUTANTS'=>'1','COMPILE_ONLY'=>'1','SERIAL_READY_EVIDENCE'=>work+'/ready'})
     abort 'provider export failed' unless s.success?
+    s=run.call('export-mmu4',[RbConfig.ruby,source+'/ember/tools/bcmv3d-mmu4-native-contract.rb',source],
+      {'MMU4_NATIVE_COMPILE_ONLY'=>'1','MMU4_NATIVE_EVIDENCE'=>work+'/mmu4'})
+    abort 'MMU4 export failed' unless s.success?
+    native_ref=File.read(source+'/ember/tools/bcmv3d-mmu4-native-contract.c')
+    abort 'native main changed' unless native_ref.scan(/main\(void\)/).size == 1
+    files['ember/tools/bcmv3d-mmu4-native-contract.c']=native_ref
+    File.write(work+'/mmu4/native-reference.h',native_ref.sub('main(void)','reference_native_mmu4_main(void)'))
+    %w[core-types.h native-types.h mmu4-types.h backing-types.h adapter-types.h].each do |n|
+      FileUtils.cp(work+'/mmu4/'+n,work+'/mmu4-'+n)
+    end
     FileUtils.cp_r(work+'/close/inputs/.',work)
     FileUtils.cp_r(work+'/ready/actual-inputs/.',work)
     auto=files.fetch(paths[0]); acpi=files.fetch(paths[1])
@@ -136,7 +146,7 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       matches.first
     end
     File.write(work+'/native-endian.h',notice(endian)+"\n#ifndef __CAST\n#define __CAST(t,v) ((t)(v))\n#endif\n"+endian_functions.join("\n"))
-    helpers=%w[bcmv3d_bootfb_exchange bcmv3d_bootfb_notify bcmv3d_display_read bcmv3d_display_write bcmv3d_display_barrier bcmv3d_display_delay bcmv3d_display_clocks bcmv3d_bootfb_stop_display bcmv3d_bootfb_claim_job bcmv3d_bootfb_queue bcmv3d_bootfb_retain bcmv3d_bootfb_cancel bcmv3d_finalize]
+    helpers=%w[bcmv3d_bootfb_exchange bcmv3d_bootfb_notify bcmv3d_display_read bcmv3d_display_write bcmv3d_display_barrier bcmv3d_display_delay bcmv3d_display_clocks bcmv3d_bootfb_stop_display bcmv3d_bootfb_writeback_idle bcmv3d_bootfb_program_mmu4 bcmv3d_bootfb_claim_job bcmv3d_bootfb_queue bcmv3d_bootfb_retain bcmv3d_bootfb_cancel bcmv3d_finalize]
     File.write(work+'/native-job.h',notice(acpi)+(acpi[/^static const unsigned int bcmv3d_display_indices.*?^};/m] || abort("indices absent"))+"\nstatic void bcmv3d_bootfb_retain(struct bcmv3d_softc *, int);\nstatic void bcmv3d_bootfb_cancel(struct bcmv3d_softc *, int);\n"+helpers.map { |n| function(acpi,n) }.join("\n"))
     ws=File.read(source+'/sys/dev/wscons/wsdisplay.c')
     commit=ws[/^\t\twsdisplay_cons.cn_dev = makedev\(maj,\n\t\t    WSDISPLAYMINOR\(device_unit\(self\), 0\)\);\n\t\twsdisplay_console_generation\+\+;/]
@@ -146,6 +156,7 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
     # The real ACPI attachment must use the actual common activate guard only on.
     front=File.read(source+'/sys/arch/arm/acpi/plcom_acpi.c')
     abort 'conditional provider guard missing' unless front.include?("#ifdef WSDISPLAY_BOOTFB_HANDOFF\n    plcom_activate);\n#else\n    NULL);")
+    %w[bootfb-display-services.h bcm2712-quiesce-fixture.h bootfb-mmu4-services.c bootfb-mmu4-backing-services.c].each { |n| files['ember/tools/'+n]=File.binread(source+'/ember/tools/'+n) }
     cc=Shellwords.split(ENV.fetch('CC','cc'));flags=Shellwords.split(ENV.fetch('CFLAGS',''))
     declaration=front[/^CFATTACH_DECL_NEW\(plcom_acpi,.*?^#endif/m]
     abort 'actual attachment declaration missing' unless declaration
@@ -170,11 +181,26 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       abort 'provider conditional ABI failed' unless ENV['COMPILE_ONLY']=='1' || run.call('profile-'+on.to_s,[*runner,work+'/profile']).success?
     end
     runner=ENV['TEST_RUNNER'] ? [ENV.fetch('TEST_RUNNER')] : []
+    mmu_common=[*cc,'-std=c11','-Wall','-Wextra','-Werror',*flags]
+    mmu_objects=[]
+    back=work+'/mmu4/icac/backing'
+    %w[bcmv3d_mmu4_backing.c bcmv3d_hvs_prepare.c arm/broadcom/bcm2712_mmu4_table.c].each do |n|
+      out=work+'/'+File.basename(n)+'.o'
+      abort 'MMU4 backing compile failed' unless run.call('mmu4-'+File.basename(n),mmu_common+['-I'+back,'-c',back+'/'+n,'-o',out]).success?
+      mmu_objects << out
+    end
+    %w[bootfb-mmu4-services.c bootfb-mmu4-backing-services.c].each do |n|
+      out=work+'/'+n+'.o'
+      inc=n.include?('backing') ? back : work+'/mmu4'
+      argv=mmu_common+['-I'+inc,'-I'+source+'/sys/external/bsd/acpica/dist/include','-I'+source+'/ember/tools','-c',source+'/ember/tools/'+n,'-o',out]
+      abort 'MMU4 service compile failed' unless run.call('mmu4-'+n,argv).success?
+      mmu_objects << out
+    end
     compile=lambda do |name|
       common=[*cc,'-std=c11','-Wall','-Wextra','-Werror','-pthread',*flags,'-I'+work,'-I'+source+'/ember/tools']
       s=run.call('compile-provider-'+name,[*common,'-DSERIAL_READY_LIBRARY','-Dmain=serial_ready_original_main','-c',source+'/ember/tools/serial-console-ready-contract.c','-o',work+'/provider.o'])
       abort 'provider compile failed' unless s.success?
-      s=run.call('compile-route-'+name,[*common,'-DBCM2712_V3D_RENDER','-DBCM2712_V3D_TAKEOVER',source+'/ember/tools/bootfb-serial-handoff-contract.c',work+'/protocol.c',work+'/bcm2712_display_quiesce.c',work+'/provider.o','-o',work+'/contract'])
+      s=run.call('compile-route-'+name,[*common,'-DBCM2712_V3D_RENDER','-DBCM2712_V3D_TAKEOVER',source+'/ember/tools/bootfb-serial-handoff-contract.c',work+'/protocol.c',work+'/bcm2712_display_quiesce.c',work+'/provider.o',*mmu_objects,'-o',work+'/contract'])
       abort 'route compile failed' unless s.success?
     end
     compile.call('positive')
@@ -182,6 +208,28 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       abort 'native handoff positive failed' unless run.call('positive',[*runner,work+'/contract']).success?
     end
 controls={
+  'mmu4-context'=>['native-job.h','if (cold || panicstr != NULL || cpu_intr_p() || cpu_softintr_p())','if (false)','bcmv3d_bootfb_program_mmu4(&gpu_sc) == EWOULDBLOCK'],
+  'mmu4-closed'=>['native-job.h','owner->phase != BCMV3D_BOOTFB_CLOSED ||','false ||','mmu4_permitted'],
+  'mmu4-fw'=>['native-job.h','!owner->firmware.complete ||','false ||','mmu4_permitted'],
+  'mmu4-stop'=>['native-job.h','!d->complete ||','false ||','mmu4_permitted'],
+  'mmu4-pipe1'=>['native-job.h','for (i = 0; i < 2; i++) {','for (i = 0; i < 1; i++) {','mmu4_permitted'],
+  'mmu4-clock'=>['native-job.h','HELD(disp);','/* no DISP lease check */','mmu4_permitted'],
+  'mmu4-held'=>['native-job.h','error = wsdisplay_bootfb_serial_closed(owner->lease);','error = 0;','mmu4_permitted'],
+  'mmu4-lease'=>['native-job.h','error = simplefb_console_close_status(owner->lease, &close);','error = 0; memset(&close,1,sizeof(close)); close.error = close.mi_error = close.md_error = 0;','mmu4_permitted'],
+  'mmu4-tuple'=>['native-job.h',"error = bcmv3d_render_bootfb_validate(owner->renderer, sc->sc_dev,\n\t\t    sc->sc_bst, sc->sc_dmat, sc->sc_handle, owner);",'error = ((void)bcmv3d_render_bootfb_validate, 0);','mmu4_permitted'],
+  'mmu4-attempt'=>['native-job.h','m->attempted = true;','/* no publication */','gpu_sc.sc_bootfb.mmu4.attempted'],
+  'mmu4-giant'=>['native-job.h','KERNEL_UNLOCK_ALL(NULL, &count);','count = 1; KERNEL_UNLOCK_ONE(NULL);','giant == 0'],
+  'mmu4-repeat'=>['native-job.h','if (m->attempted || m->complete || m->fault != 0)','if (false)','i < 2'],
+  'mmu4-no-program-on-error'=>['native-job.h','if (error == 0) {','if (true) {','bootfb_mmu4_calls() =='],
+  'mmu4-first-error'=>['native-job.h','error != 0 && owner->first_error == 0','error != 0','gpu_sc.sc_bootfb.first_error == EPROTO'],
+  'mmu4-primary'=>['native-job.h',"if (error == 0)\n\t\terror = m->status_error;",'error = m->status_error;','m->fault == EIO && m->status_error == EFAULT'],
+  'mmu4-backing'=>['native-job.h','!m->status.backing.prepared ||','false ||','m->attempted && !m->complete && m->fault != 0'],
+  'mmu4-sequence'=>['native-job.h','!m->status.sequence.sequence_complete ||','false ||','m->attempted && !m->complete && m->fault != 0'],
+  'mmu4-shared'=>['native-job.h','!m->status.shared.flush_complete ||','false ||','m->attempted && !m->complete && m->fault != 0'],
+  'writeback-go'=>['native-job.h','& 3U','& 2U','(writeback_control[0] & 3) == 0'],
+  'writeback-busy'=>['native-job.h','& 3U','& 1U','(writeback_control[0] & 3) == 0'],
+  'writeback-offset'=>['native-job.h','m->writeback_maps[i], 0x0c,','m->writeback_maps[i], 0x08,','o == 0x0c'],
+
   'display-complete'=>['native-job.h','!close.complete || ', '', 'display_permitted'],
   'display-closed'=>['native-job.h','!close.closed ||', 'false ||', 'display_permitted'],
   'display-drained'=>['native-job.h','!close.drained ||', 'false ||', 'display_permitted'],
@@ -193,7 +241,7 @@ controls={
   'display-fw-attempt'=>['native-job.h','!owner->firmware.attempted ||', 'false ||', 'display_permitted'],
   'display-fw-complete'=>['native-job.h','!owner->firmware.complete ||', 'false ||', 'display_permitted'],
   'display-fw-fault'=>['native-job.h','owner->firmware.fault != 0)', 'false)', 'display_permitted'],
-  'display-render'=>['native-job.h','!owner->render_attached ||', 'false ||', 'display_permitted'],
+  'display-render'=>['native-job.h','owner->renderer == NULL ||', 'false ||', 'display_permitted'],
   'display-repeat'=>['native-job.h','if (d->attempted || d->complete || d->fault != 0)', 'if (false)', '!display_lock && giant == 0'],
   'display-attempt'=>['native-job.h','d->attempted = true;', '(void)d;', 'gpu_sc.sc_bootfb.display.attempted'],
   'display-giant'=>['native-job.h','KERNEL_UNLOCK_ALL(NULL, &count);', 'count = 1; KERNEL_UNLOCK_ONE(NULL);', 'giant == 0'],
@@ -241,7 +289,12 @@ controls={
       selected.each do |name|
         path,before,after,expected=controls.fetch(name);before=before.gsub('\\n', "\n").gsub('\\t', "\t");text=File.read(work+'/'+path)
         abort 'control anchor absent '+name unless text.include?(before)
-        if name.start_with?('display-')
+        if name.start_with?('mmu4-') || name.start_with?('writeback-')
+          fn=name.start_with?('writeback-') ? 'bcmv3d_bootfb_writeback_idle' : 'bcmv3d_bootfb_program_mmu4'
+          body=function(text,fn)
+          abort 'scoped control anchor absent '+name unless body.include?(before)
+          mutated=text.sub(body,body.sub(before,after))
+        elsif name.start_with?('display-')
           body=function(text,'bcmv3d_bootfb_stop_display')
           abort 'scoped control anchor absent '+name unless body.include?(before)
           mutated=text.sub(body,body.sub(before,after))
@@ -268,6 +321,7 @@ controls={
       FileUtils.mkdir_p(evidence+'/inputs')
       Dir.children(work).reject { |n| %w[close ready contract provider.o].include?(n) }.each { |n| FileUtils.cp_r(work+'/'+n,evidence+'/inputs/'+n) }
       FileUtils.cp_r(work+'/close/source.json',evidence+'/close-source.json') if File.exist?(work+'/close/source.json')
+      FileUtils.cp_r(work+'/mmu4/source.json',evidence+'/mmu4-source.json') if File.exist?(work+'/mmu4/source.json')
       FileUtils.cp_r(work+'/ready/sources.json',evidence+'/ready-source.json') if File.exist?(work+'/ready/sources.json')
       File.write(evidence+'/source.json',JSON.pretty_generate(files.transform_values { |t| Digest::SHA256.hexdigest(t) })+"\n")
     end
