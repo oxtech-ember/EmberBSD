@@ -8,6 +8,14 @@ The separate [firmware display notification](bcm2712-display-handoff.md) is a
 source-only one-attempt protocol. It has no default caller and is not an AXI
 drain, power or shared-MMU/cache exclusion grant.
 
+## Kernel building blocks
+
+`BCM2712_DISPLAY_COMPONENTS` links the explicit ICAC descriptor queries, typed
+shared-cache core, MMU4 table encoder and firmware display notification. It is
+selected by `EMBERV3DRENDER` when `bcmv3d_acpi` is present. It adds no attachment,
+mailbox transaction or MMIO invocation. Linking these APIs does not grant display
+ownership or enable scanout. `BCM2712_DISPLAY_DDC` remains a separate option.
+
 ## Firmware opt-in
 
 GPU0 keeps `_HID = "BCM2712"`, `_CID = "BCM2850"`, `_STA = 15`, and `_CCA = 0`.
