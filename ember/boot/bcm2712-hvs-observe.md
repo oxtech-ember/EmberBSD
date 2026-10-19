@@ -66,7 +66,10 @@ aborted bus-space access is not a recoverable callback error.
 
 Build only the explicit module with GCC16 and the selected configured kernel's
 real `S`, DRM flags and generated headers. Query the actual expanded `COMPILE.c`
-before compiling; do not substitute a hand-built compiler profile. Audit the
+before compiling; do not substitute a hand-built compiler profile. Keep the
+parent `sys/modules/Makefile.inc` in the source checkout. It supplies the inherited
+module warning policy. Require expanded `COMPILE.c` to contain
+`-Wsystem-headers`, `-Wshadow` and `-Werror`. Audit the
 kernel's strong symbol closure and all selected source/header inputs before
 loading. There is no default attachment, kernel option or API change.
 The existing [57-word ABI sample](../tools/bcm2712-iommu-observe-abi.c) covers the

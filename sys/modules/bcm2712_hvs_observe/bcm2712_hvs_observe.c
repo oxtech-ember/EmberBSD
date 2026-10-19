@@ -56,10 +56,10 @@ hvs_observe_exchange(void *arg, uint32_t *request)
 }
 
 static int
-hvs_observe_layout(uint32_t version)
+hvs_observe_layout(uint32_t hvs_version)
 {
 
-	switch (version & 0xffU) {
+	switch (hvs_version & 0xffU) {
 	case 0x53:
 		return 0;
 	case 0x54:

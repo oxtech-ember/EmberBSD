@@ -60,7 +60,7 @@ for mutation in ${HVS_OBSERVE_MUTANTS:-cold conflict resource c0-offset d0-offse
         resource) from='contract.memory[3].address != UINT64_C(0x107c580000)'; to='contract.memory[3].address != UINT64_C(0x107c580004)' ;;
         c0-offset) from='0x30, 0x44'; to='0x30, 0x48' ;;
         d0-offset) from='0x100, 0x118'; to='0x100, 0x11c' ;;
-        layout) from='version & 0xffU'; to='version & 0xffffU' ;;
+        layout) from='hvs_version & 0xffU'; to='hvs_version & 0xffffU' ;;
         first-version) from='if (layout < 0)'; to='if (false)' ;;
         second-version) from='} else if (i == 0 && (sample->word[1][0] & 0xffU) !='; to='} else if (false && (sample->word[1][0] & 0xffU) !=' ;;
         global) from='(word[1] & (1U << 31)) != 0'; to='false' ;;
