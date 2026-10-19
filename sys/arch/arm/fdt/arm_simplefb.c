@@ -32,6 +32,7 @@
 #include "pci.h"
 #include "opt_pci.h"
 #include "opt_vcons.h"
+#include "opt_wsdisplay_earlyfb.h"
 
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: arm_simplefb.c,v 1.13 2022/10/14 22:10:15 jmcneill Exp $");
@@ -40,6 +41,9 @@ __KERNEL_RCSID(0, "$NetBSD: arm_simplefb.c,v 1.13 2022/10/14 22:10:15 jmcneill E
 #include <sys/bus.h>
 #include <sys/cpu.h>
 #include <sys/device.h>
+#ifdef WSDISPLAY_EARLYFB_HOOKS
+#include <sys/systm.h>
+#endif
 
 #include <dev/fdt/fdtvar.h>
 #include <arm/fdt/arm_fdtvar.h>
@@ -180,6 +184,16 @@ arm_simplefb_physaddr(void)
 	return arm_simplefb_addr;
 }
 
+#ifdef WSDISPLAY_EARLYFB_HOOKS
+/* This callback is synchronous. MI keeps no pointer after the wrapper returns. */
+static void
+arm_simplefb_replay(void *arg)
+{
+
+	vcons_replay_msgbuf(arg);
+}
+#endif
+
 void
 arm_simplefb_preattach(void)
 {
@@ -195,8 +209,18 @@ arm_simplefb_preattach(void)
 	long defattr;
 	bool swapped = false;
 	bool is_10bit = false;
+#ifdef WSDISPLAY_EARLYFB_HOOKS
+	struct wsdisplay_early_output early;
+#endif
 
 	const int phandle = arm_simplefb_find_node();
+#ifdef WSDISPLAY_EARLYFB_HOOKS
+	/* This real attachment follows MI bootstrap. It must not start in panic/IRQ. */
+	if (panicstr != NULL || cpu_intr_p() || cpu_softintr_p())
+		return;
+	if (wsdisplay_early_output_snapshot(&early) == 0)
+		return;
+#endif
 	if (phandle == -1)
 		return;
 
@@ -273,7 +297,11 @@ arm_simplefb_preattach(void)
 	arm_simplefb_stdscreen.textops = &ri->ri_ops;
 	arm_simplefb_stdscreen.capabilities = ri->ri_caps;
 
+#ifdef WSDISPLAY_EARLYFB_HOOKS
+	(void)wsdisplay_early_preattach(&arm_simplefb_stdscreen, ri, 0, 0,
+	    defattr, arm_simplefb_replay, &arm_simplefb_screen);
+#else
 	wsdisplay_preattach(&arm_simplefb_stdscreen, ri, 0, 0, defattr);
-
 	vcons_replay_msgbuf(&arm_simplefb_screen);
+#endif
 }

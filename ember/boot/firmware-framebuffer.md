@@ -93,3 +93,7 @@ kernel, physical display output or an accelerated Plasma session.
 A fixed-mode KMS consumer still needs GEM buffers, atomic presentation,
 console recovery and integration with the separate V3D render device.
 The descriptor provides no vblank, mode switching, PRIME import or acceleration.
+
+The optional [early output reader hooks](early-framebuffer-readers.md) cover
+actual boot binding and replay readers. They provide no close, detach, ownership
+or firmware handoff operation.
