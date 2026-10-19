@@ -101,6 +101,22 @@ def main():
             require("OPT.dw_hdmi.c+= dwhdmi_core" in makefile and
                     "CPPFLAGS.dwhdmi_core+=${CPPFLAGS.drmkms}" in makefile,
                     name + ": missing common DRM build flags")
+            kms = name != "GENERIC"
+            for path in ("sun60i_a733_drm.c", "sun60i_a733_drm_atomic.c",
+                         "sun60i_a733_drm_frame.c"):
+                require(files.count("arch/arm/sunxi/" + path) == int(kms),
+                        name + ": incorrect KMS source selection " + path)
+            require(("sun60i_a733_drm_ca" in ioconf) == kms,
+                    name + ": incorrect KMS attachment selection")
+            require("\nCPPFLAGS+=${CPPFLAGS.drmkms}\n" not in makefile,
+                    name + ": KMS must not change global CPPFLAGS")
+            if kms:
+                require("CPPFLAGS.sun60i_a733_drm+=${CPPFLAGS.drmkms}" in makefile,
+                        name + ": missing attachment KMS flags")
+                for path in ("sun60i_a733_de352.c", "sun60i_a733_de352_dma.c",
+                             "sun60i_a733_de352_fdt.c"):
+                    require("arch/arm/sunxi/" + path in files,
+                            name + ": missing native scanout provider " + path)
             reports.append({"config": name, "a733_hdmi": enabled,
                             "legacy_hdmi": name != "A733_ONLY",
                             "common_core": "selected once"})

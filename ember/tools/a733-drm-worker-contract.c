@@ -117,6 +117,7 @@ static int setup_error, prepare_error, swap_error, submit_error, check_error,
     lookup_error, event_error;
 static unsigned lookup_step;
 static bool modeset_lock, fail_before_pointer;
+static bool caller_released, heap_state, heap_freed;
 static char order[32];
 static size_t order_length;
 static void step(char c){
@@ -229,7 +230,7 @@ static void drm_atomic_state_get(struct drm_atomic_state *s){
 	s->refs++;
 }
 static void drm_atomic_helper_commit_hw_done(struct drm_atomic_state *s){
-	CHECK(current->busy && s->crtc.event == NULL && s->refs == 2);
+	CHECK(current->busy && s->crtc.event == NULL && s->refs == (caller_released ? 1u : 2u));
 	hw_done++;
 	step('H');
 }
@@ -240,15 +241,19 @@ static void drm_atomic_helper_cleanup_planes(struct drm_device *dev, struct drm_
 	step('C');
 }
 static void drm_atomic_helper_commit_cleanup_done(struct drm_atomic_state *s){
-	CHECK(current->busy && s->refs == 2 && hw_done == 1);
+	CHECK(current->busy && s->refs == (caller_released ? 1u : 2u) && hw_done == 1);
 	cleanup_done++;
 	step('D');
 }
 static void drm_atomic_state_put(struct drm_atomic_state *s){
-	CHECK(current->busy && s->refs == 2 && cleanup_done == 1);
+	CHECK(current->busy && s->refs == (caller_released ? 1u : 2u) && cleanup_done == 1);
 	s->refs--;
 	state_puts++;
 	step('P');
+	if (heap_state && s->refs == 0) {
+		free(s);
+		heap_freed = true;
+	}
 }
 static void workqueue_enqueue(void *q, struct work *w, void *cpu){
 	CHECK(q == current->queue && !cpu && !pending && current->busy);
@@ -334,6 +339,7 @@ reset(struct a733_drm *sc, struct drm_device *dev, struct drm_atomic_state *stat
 	setup_error = prepare_error = swap_error = submit_error = check_error = lookup_error = event_error = 0;
 	lookup_step = 0;
 	fail_before_pointer = false;
+	caller_released = heap_state = heap_freed = false;
 	modeset_lock = false;
 	order_length = 0;
 	order[0] = 0;
@@ -492,6 +498,22 @@ main(void)
 	reset(&sc, &dev, &state, &fb, &object);
 	state.async_update = true;
 	CHECK(a733_drm_atomic_commit(&dev, &state, true) == -EOPNOTSUPP && !allocations && !sc.busy);
+	/* The nonblocking ioctl can drop its state before the worker runs. */
+	for (unsigned fail = 0; fail < 2; fail++) {
+		struct drm_atomic_state *heap = calloc(1, sizeof(*heap));
+		CHECK(heap != NULL);
+		reset(&sc, &dev, heap, &fb, &object);
+		heap_state = true;
+		submit_error = fail ? EIO : 0;
+		CHECK(a733_drm_atomic_commit(&dev, heap, true) == 0);
+		CHECK(heap->refs == 2);
+		heap->refs--;
+		caller_released = true;
+		run_worker();
+		CHECK(heap_freed && !pending && !sc.busy);
+		CHECK(!allocations && !completions && state_puts == 1);
+		CHECK(object.refs == 2 && retained_reads == 1);
+	}
 	printf("PASS %u bounded worker and atomic admission checks\n", checks);
 	return 0;
 }

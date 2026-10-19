@@ -14,6 +14,10 @@
 #include <dt-bindings/power/allwinner,sun60i-a733-pck-600.h>
 
 / {
+	interrupt-parent = <&gic>;
+	#address-cells = <2>;
+	#size-cells = <2>;
+
 	/* This frontend does not enable DE, clocks or output at attach. */
 	display: display {
 		compatible = "allwinner,sun60i-a733-display";
@@ -21,9 +25,6 @@
 		status = "disabled";
 	};
 
-	interrupt-parent = <&gic>;
-	#address-cells = <2>;
-	#size-cells = <2>;
 
 	/*
 	 * Rates and supply voltages per speed grade. Bit n of

@@ -71,7 +71,7 @@ static struct drm_framebuffer *
 a733_fb_create(struct drm_device *dev, struct drm_file *file,
     const struct drm_mode_fb_cmd2 *cmd)
 {
-	struct a733_drm *sc = dev->dev_private;
+	const struct a733_drm *sc = dev->dev_private;
 	struct drm_gem_object *gem;
 	struct drm_gem_cma_object *obj;
 	struct a733_drm_fb *fb;

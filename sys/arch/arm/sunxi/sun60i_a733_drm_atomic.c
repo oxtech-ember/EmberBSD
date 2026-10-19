@@ -193,8 +193,8 @@ a733_drm_atomic_check(struct drm_device *dev, struct drm_atomic_state *state)
 {
 	struct a733_drm *sc = dev->dev_private;
 	struct drm_crtc_state *crtc;
-	struct drm_plane_state *plane;
-	struct drm_connector_state *connector;
+	const struct drm_plane_state *plane;
+	const struct drm_connector_state *connector;
 	const struct sun60i_a733_output_mode *mode = &sc->native.mode;
 	int error;
 

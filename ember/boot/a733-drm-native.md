@@ -129,11 +129,14 @@ python3 -B ember/tools/a733-drm-admission-contract.py
 python3 -B ember/tools/a733-drm-buffer-contract.py
 python3 -B ember/tools/a733-drm-event-contract.py
 python3 -B ember/tools/a733-drm-register-contract.py
+python3 -B ember/tools/a733-drm-stage-contract.py
 python3 -B ember/tools/a733-drm-worker-contract.py
 ```
 
 These contracts model the external DRM, DMA and scheduling interfaces.
 They check the actual admission, cleanup, event and worker functions.
+They check stage retries, sticky failures and a nested registration request.
+They also release the caller's atomic-state reference before the worker runs.
 They keep assertions active with `NDEBUG`.
 They do not execute the DRM core or establish physical HDMI page flips.
 Physical KMS and desktop acceptance requires a matched kernel and native DE stage.

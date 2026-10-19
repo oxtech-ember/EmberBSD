@@ -122,7 +122,7 @@ attach	sun60idrm at fdt with sun60i_a733_drm
 file	arch/arm/sunxi/sun60i_a733_drm.c	sun60i_a733_drm
 file	arch/arm/sunxi/sun60i_a733_drm_atomic.c	sun60i_a733_drm
 file	arch/arm/sunxi/sun60i_a733_drm_frame.c	sun60i_a733_drm
-makeoptions	sun60i_a733_drm	CPPFLAGS+="${CPPFLAGS.drmkms}"
+makeoptions	sun60i_a733_drm	"CPPFLAGS.sun60i_a733_drm"+="${CPPFLAGS.drmkms}"
 
 # Native output dispatch remains unavailable until a hardware provider attaches.
 file	arch/arm/sunxi/sun60i_a733_output.c	sunxi_a733_ccu
