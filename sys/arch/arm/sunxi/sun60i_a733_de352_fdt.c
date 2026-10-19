@@ -221,15 +221,18 @@ de352_memory_manageable(const struct de352_memory_snapshot *m)
 static int
 de352_memory_cold(struct sun60i_de352_softc *sc)
 {
-	uint32_t peers[2][A733_DISPLAY_NISOLATION_REGS], word;
+	uint32_t word;
 	int error;
 
 	if (!sc->reserved || !sc->power_reserved || !sc->retained ||
 	    !sc->mapped || sc->dma != NULL)
 		return EINVAL;
 	error = sun60i_a733_ccu_display_ready(sc->de0, sc);
-	if (error == 0)
+	if (error == 0) {
+		uint32_t peers[2][A733_DISPLAY_NISOLATION_REGS];
+
 		error = sun60i_a733_ccu_display_isolation_state(sc->de0, sc, peers);
+	}
 	if (error != 0)
 		return error;
 	error = de352_read(sc, 0x8004, &word);
@@ -255,8 +258,8 @@ de352_memory_prepare(struct sun60i_de352_softc *sc)
 		{ true, 0x10, 4, 4, 1 },
 	};
 	struct de352_memory_snapshot expected = sc->memory;
-	bus_space_handle_t ih, nh, handle;
-	uint32_t before, after, value, *words;
+	bus_space_handle_t ih, nh;
+	uint32_t before, after;
 	int error;
 
 	error = de352_memory_cold(sc);
@@ -274,6 +277,9 @@ de352_memory_prepare(struct sun60i_de352_softc *sc)
 		return error;
 	}
 	for (u_int i = 0; i < __arraycount(updates); i++) {
+		bus_space_handle_t handle;
+		uint32_t value, *words;
+
 		/* Repeat the retained owner, cold-core and exact snapshot proof. */
 		error = de352_memory_cold(sc);
 		if (error != 0)
