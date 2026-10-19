@@ -151,6 +151,28 @@ A planned image must offer the stock GENERIC kernel as a distinct recovery choic
 Keep each kernel and its modules from the same pinned build.
 Boot-menu integration, the complete trial build and physical acceptance are separate stages.
 
+## Execlist submission queue
+
+Gen11 engines take context descriptors through the ELSQ registers.
+Each port holds one 64-bit descriptor in two dwords.
+Port `n` has its lower dword at `RING_EXECLIST_SQ_CONTENTS + n * 8` and its upper dword at `+ n * 8 + 4`.
+The native `write_desc()` uses a byte offset for `submit_reg`, not a Linux `u32 __iomem` pointer.
+The previous code added `port * 2` and `port * 2 + 1` bytes.
+Because of this, most writes went to wrong, unaligned offsets, and the engines did not start.
+On a Jasper Lake laptop, `intel_gt_wait_for_idle()` then timed out in `__engines_record_defaults()`.
+The fix multiplies the dword index by `sizeof(u32)`.
+Pre-Gen11 ELSP keeps its upper-then-lower writes to one register.
+
+```sh
+sh ember/tools/i915-elsq-desc-contract.sh
+```
+
+The contract extracts the real `write_desc()` and logs each `bus_space_write_4()` call.
+It checks ELSQ offsets and values for ports 1 and 0, 4-byte alignment and the ELSP order.
+The previous code fails the first ELSQ offset check.
+With the fix, a JSL trial kernel completes GT initialization without the idle timeout.
+Rendering acceptance is a separate stage.
+
 ## Remaining port work
 
 The [workaround adaptation](i915-jasperlake-workarounds.md) adds FBC, power, GT and firmware selection.

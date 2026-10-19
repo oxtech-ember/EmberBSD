@@ -1414,9 +1414,18 @@ static u64 execlists_update_context(struct i915_request *rq)
 static inline void write_desc(struct intel_engine_execlists *execlists, u64 desc, u32 port)
 {
 #ifdef __NetBSD__
+	/*
+	 * submit_reg is a byte offset here, not a u32 __iomem pointer as
+	 * in Linux.  Each ELSQ port is a 64-bit descriptor: the lower
+	 * dword at port * 8 and the upper dword at port * 8 + 4.
+	 */
 	if (execlists->ctrl_reg) {
-		bus_space_write_4(execlists->bst, execlists->bsh, execlists->submit_reg + port * 2, lower_32_bits(desc));
-		bus_space_write_4(execlists->bst, execlists->bsh, execlists->submit_reg + port * 2 + 1, upper_32_bits(desc));
+		bus_space_write_4(execlists->bst, execlists->bsh,
+		    execlists->submit_reg + port * 2 * sizeof(u32),
+		    lower_32_bits(desc));
+		bus_space_write_4(execlists->bst, execlists->bsh,
+		    execlists->submit_reg + (port * 2 + 1) * sizeof(u32),
+		    upper_32_bits(desc));
 	} else {
 		bus_space_write_4(execlists->bst, execlists->bsh, execlists->submit_reg, upper_32_bits(desc));
 		bus_space_write_4(execlists->bst, execlists->bsh, execlists->submit_reg, lower_32_bits(desc));
