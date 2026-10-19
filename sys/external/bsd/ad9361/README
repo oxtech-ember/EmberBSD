@@ -73,3 +73,14 @@ uses generic synthetic FDT properties, runs staged bootstrap/configure, and
 injects each bootstrap SPI failure plus invalid calibration/PLL status. Its
 register backend supplies synthetic lock, ENSM and PN acknowledgements; it
 does not qualify the radio, DMA, ADC clock wiring or physical PN timing.
+
+Analysis scope
+--------------
+
+The actual-source host harness exercises native transport failures and lease
+operations. Static analysis of the imported core also reports inherited
+style, signed-conversion and dead-store diagnostics; it is not warning-free.
+The split gain-table helper is not reachable with HAVE_SPLIT_GAIN_TABLE=0
+in app_config.h. Enabling that unsupported configuration requires separate
+validation, including table-index bounds. Host shims do not establish target
+MMIO, interrupt or physical converter behavior.

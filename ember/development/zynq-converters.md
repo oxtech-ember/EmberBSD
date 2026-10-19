@@ -38,8 +38,9 @@ The ARM pmap path recognizes normal non-cacheable DMA mappings.
 
 ## Checks and limits
 
-These are source and software-contract interfaces. The current integrated
-revision is not a board image or fresh physical-radio qualification.
+The selected production objects compile for ARMv7 with GCC 16.2.0 and the
+generic configuration below. This is an object build, not a linked kernel,
+board image or fresh physical-radio qualification.
 Synthetic register acknowledgements do not establish RF performance,
 digital eye margins, bus timing or actual DMA quiescence.
 
@@ -47,6 +48,7 @@ Run the focused checks from the source root:
 
 ```sh
 sh ember/tools/check-zynq-gpio.sh .
+python3 ember/tools/tests/zynq-core/run.py
 sh ember/tools/test-spi-configure-error.sh
 CC=cc python3 ember/tools/tests/zynq-spi-attach/run.py
 sh ember/tools/arm-dma-coherency-contract.sh .
