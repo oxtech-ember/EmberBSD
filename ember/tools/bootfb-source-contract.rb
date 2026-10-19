@@ -11,7 +11,7 @@ require 'timeout'
 source = File.realpath(ARGV[0] || File.expand_path('../..', __dir__))
 lib = source + '/sys/external/bsd/libfdt/dist'
 units = %w[fdt_overlay.c fdt_addresses.c fdt.c fdt_ro.c fdt_rw.c fdt_sw.c fdt_wip.c fdt_empty_tree.c fdt_strerror.c]
-inputs = %w[sys/stand/efiboot/efiboot.c sys/stand/efiboot/efiboot.h sys/stand/efiboot/efifdt.c sys/stand/efiboot/efifdt.h sys/external/bsd/gnu-efi/dist/lib/hand.c sys/dev/fdt/bootfb_source.h ember/tools/bootfb-source-contract.c ember/tools/bootfb-source-contract.rb] + units.map { |p| 'sys/external/bsd/libfdt/dist/' + p }
+inputs = %w[sys/arch/arm/fdt/arm_simplefb.c sys/arch/arm/fdt/arm_simplefb.h sys/arch/evbarm/fdt/fdt_machdep.c sys/sys/sha2.h common/lib/libc/hash/sha2/sha2.c sys/stand/efiboot/efiboot.c sys/stand/efiboot/efiboot.h sys/stand/efiboot/efifdt.c sys/stand/efiboot/efifdt.h sys/external/bsd/gnu-efi/dist/lib/hand.c sys/dev/fdt/bootfb_source.h ember/tools/bootfb-source-contract.c ember/tools/bootfb-source-contract.rb] + units.map { |p| 'sys/external/bsd/libfdt/dist/' + p }
 # Extract complete named functions. Keep source lines and licenses in evidence.
 # Service types and external functions are controlled in the host fixture.
 def function_body(text, name)
@@ -65,7 +65,9 @@ run = lambda do |label, argv|
 end
 Dir.mktmpdir('bootfb-source-', ENV.fetch('TMPDIR', '/tmp')) do |work|
   puts "boot framebuffer source temporary directory: #{work}"
-  FileUtils.mkdir_p(work + '/sys'); FileUtils.mkdir_p(work + '/dev/fdt')
+  FileUtils.mkdir_p(work + '/lib/libkern'); File.write(work + '/lib/libkern/libkern.h', "#include <stdint.h>\n#include <stddef.h>\n#include <string.h>\n");
+  FileUtils.cp(source + '/sys/sys/sha2.h', work + '/sys-sha2.h');
+  FileUtils.mkdir_p(work + '/sys'); FileUtils.cp(work + '/sys-sha2.h', work + '/sys/sha2.h'); FileUtils.mkdir_p(work + '/dev/fdt')
   # Host service boundary: standard big-endian loads/stores. Target builds use
   # the actual source header. Literals in the fixture independently check bytes.
   File.write(work + '/sys/endian.h', <<~H)
@@ -77,8 +79,15 @@ Dir.mktmpdir('bootfb-source-', ENV.fetch('TMPDIR', '/tmp')) do |work|
     static inline uint64_t be64dec(const void *p) { const uint8_t *b=p; return (uint64_t)be32dec(b)<<32 | be32dec(b+4); }
     static inline void be32enc(void *p,uint32_t v) { uint8_t *b=p; b[0]=v>>24; b[1]=v>>16; b[2]=v>>8; b[3]=v; }
     static inline void be64enc(void *p,uint64_t v) { uint8_t *b=p; be32enc(b,v>>32); be32enc(b+4,v); }
-    #endif
-  H
+  #ifndef htobe64
+  #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+  #define htobe64(v) __builtin_bswap64(v)
+  #else
+  #define htobe64(v) (v)
+  #endif
+  #endif
+  #endif
+H
   File.write(work + '/sys/errno.h', "#include_next <sys/errno.h>\n")
   FileUtils.cp(source + '/sys/dev/fdt/bootfb_source.h', work + '/dev/fdt/bootfb_source.h')
   fdt_path = source + '/sys/stand/efiboot/efifdt.c'
@@ -99,6 +108,21 @@ Dir.mktmpdir('bootfb-source-', ENV.fetch('TMPDIR', '/tmp')) do |work|
   %w[efi_cleanup_checked efi_cleanup].each { |n| producer += emit_function(boot, boot_path, n) }
   producer += emit_function(fdt, fdt_path, 'efi_fdt_prepare_boot')
   File.write(work + '/producer.inc', producer)
+arm_path = source + '/sys/arch/arm/fdt/arm_simplefb.c'
+mach_path = source + '/sys/arch/evbarm/fdt/fdt_machdep.c'
+arm = File.read(arm_path); mach = File.read(mach_path)
+capture_start = arm.index("#ifdef WSDISPLAY_BOOTFB_HANDOFF\n/* Source facts only.")
+capture_end = arm.index("\nstatic const struct device_compatible_entry", capture_start)
+abort 'capture state boundary' unless capture_start && capture_end
+declaration = mach[/#define FDT_BUF_SIZE[^\n]*\nstatic uint8_t fdt_data\[FDT_BUF_SIZE\];\n/]
+abort 'actual FDT declaration' unless declaration
+capture = [arm, mach].map { |text| text[0...text.index('#include')] }.join("\n")
+capture += "#line #{arm[0...capture_start].count("\n") + 1} #{arm_path.dump}\n" + arm[capture_start...capture_end]
+capture += "\n#define fdt_data bootfb_capture_fdt_data\n" + declaration
+capture += emit_function(mach, mach_path, 'fdt_device_register')
+capture += "\n#undef fdt_data\n"
+File.write(work + '/capture.inc', capture)
+
   cc = Shellwords.split(ENV.fetch('CC', 'cc')); flags = Shellwords.split(ENV.fetch('CFLAGS', ''))
   # Unchanged libfdt retains all -Wall/-Wextra diagnostics. Its inherited signed
   # comparisons are baseline warnings. The actual fixture also retains inherited
@@ -109,6 +133,10 @@ Dir.mktmpdir('bootfb-source-', ENV.fetch('TMPDIR', '/tmp')) do |work|
     abort "library compile failed #{unit}" unless status.success? && !timeout
     object
   end
+sha_object = work + '/sha2.o'
+status, _, timeout = run.call('library-sha2', [*cc, '-std=c11', '-Wall', '-Wextra', *flags, '-D_STANDALONE', '-D__KERNEL_RCSID(x,y)=', '-DHAVE_SYS_ENDIAN_H=1', '-I' + work, '-c', source + '/common/lib/libc/hash/sha2/sha2.c', '-o', sha_object])
+abort 'actual SHA2 compile failed' unless status.success? && !timeout
+objects << sha_object
   # Extracted unchanged loader bodies also retain inherited unused/sign warnings.
   # Keep all diagnostics visible. Native TU checks use the real loader flags.
   argv = [*cc, '-std=c11', '-Wall', '-Wextra', *flags, '-I' + work, '-I' + lib, '-I' + source + '/sys/external/bsd/gnu-efi/dist/inc', source + '/ember/tools/bootfb-source-contract.c', *(ENV['COMPILE_ONLY'] == '1' ? ['-c'] : objects), '-o', work + '/contract']
@@ -120,7 +148,7 @@ Dir.mktmpdir('bootfb-source-', ENV.fetch('TMPDIR', '/tmp')) do |work|
       FileUtils.mkdir_p(File.dirname(target)); FileUtils.cp(source + '/' + path, target)
     end
     FileUtils.cp_r(work, evidence + '/inputs')
-    File.write(evidence + '/source.json', JSON.pretty_generate({sha256: inputs.to_h { |p| [p, Digest::SHA256.file(source + '/' + p).hexdigest] }, scope: 'Actual source-fact codec and selected full EFI producer/cleanup/runtime/prepare functions plus real libfdt. EFI/storage/allocation and unrelated prepare services are controlled; service ABI is not modeled as a native loader acceptance. Source and extracted line provenance are preserved. No admission, kernel MP, coherent link or hardware claim.'}) + "\n")
+    File.write(evidence + '/source.json', JSON.pretty_generate({sha256: inputs.to_h { |p| [p, Digest::SHA256.file(source + '/' + p).hexdigest] }, scope: 'Actual source-fact codec, selected full EFI producer/cleanup/runtime/prepare functions, complete MD capture/registration bodies, real libfdt and actual SHA2. MD FDT storage uses the unchanged declaration with a scoped symbol rename to separate it from the EFI pointer. EFI/storage/allocation and unrelated prepare services are controlled; service ABI is not modeled as a native loader acceptance. Source and extracted line provenance are preserved. No admission, kernel MP, coherent link or hardware claim.'}) + "\n")
   end
   next if ENV['COMPILE_ONLY'] == '1'
   executor = ENV['TEST_RUNNER'] ? [ENV.fetch('TEST_RUNNER')] : []
@@ -129,6 +157,20 @@ Dir.mktmpdir('bootfb-source-', ENV.fetch('TMPDIR', '/tmp')) do |work|
 next if ENV['BOOTFB_SOURCE_SKIP_MUTANTS'] == '1'
 header = File.read(work + '/dev/fdt/bootfb_source.h')
 changes = {
+'md-registration-call' => [:capture, 'arm_simplefb_source_capture(fdt_data, sizeof(fdt_data));', ';', nil, true],
+'md-registration-capacity' => [:capture, 'arm_simplefb_source_capture(fdt_data, sizeof(fdt_data));', 'arm_simplefb_source_capture(fdt_data, fdt_totalsize(fdt_data));', nil, true],
+'md-registration-order' => [:capture, "#ifdef WSDISPLAY_BOOTFB_HANDOFF\n\t\tarm_simplefb_source_capture(fdt_data, sizeof(fdt_data));\n#endif\n\t\tarm_simplefb_preattach();", "\t\tarm_simplefb_preattach();\n\t\tarm_simplefb_source_capture(fdt_data, sizeof(fdt_data));", nil, true],
+'md-cold' => [:capture, '!cold || ', '', nil, true],
+'md-giant' => [:capture, '!KERNEL_LOCKED_P() || ', '', nil, true],
+'md-panic' => [:capture, 'panicstr != NULL ||', 'false ||', nil, true],
+'md-irq' => [:capture, 'cpu_intr_p() || ', '', nil, true],
+'md-softirq' => [:capture, 'cpu_softintr_p()', 'false', nil, true],
+'md-one-shot' => [:capture, "!=\n\t    ARM_SIMPLEFB_SOURCE_UNATTEMPTED)", "==\n\t    UINT32_MAX)", nil, true],
+'md-live-pointer' => [:capture, 'fact->blob != fdtbus_get_data() ||', 'false ||', nil, true],
+'md-digest' => [:capture, 'memcmp(digest, fact->digest, sizeof(digest)) != 0', 'false', nil, true],
+'md-precommit' => [:capture, 'arm_simplefb_source_revalidate(&value) != 0', 'false', nil, true],
+'md-provenance' => [:capture, ["tree.record.producer != BOOTFB_SOURCE_EFI_ACPI64 ||\n\t    tree.record.disposition != BOOTFB_SOURCE_ABSENT ||", "tree.record.producer != BOOTFB_SOURCE_EFI_ACPI64 ||\n\t    tree.record.disposition != BOOTFB_SOURCE_ABSENT)"], ['false ||', 'false)'], nil, true],
+'md-full-shape' => [:header, 'bootfb_source_shape(fdt) != 0 ||', 'false ||', nil, true],
   'wire-length' => [:header, 'length != BOOTFB_SOURCE_SIZE', 'length < BOOTFB_SOURCE_SIZE'],
   'wire-reserved' => [:header, 'be32dec(bytes + 12) != 0', 'false'],
   'duplicate-record' => [:header, '++record_count != 1', '++record_count == 0'],
@@ -156,18 +198,22 @@ changes = {
 selected = ENV['BOOTFB_SOURCE_MUTANTS'] ? ENV.fetch('BOOTFB_SOURCE_MUTANTS').split(',') : changes.keys
 abort 'unknown mutant' unless (selected - changes.keys).empty?
 selected.each do |name|
-  target, from, to, late_case = changes.fetch(name)
-  text = (target == :header ? header : producer).dup
-  abort "mutant anchor #{name}" unless text.scan(Regexp.new(Regexp.escape(from))).length == 1
-  text.sub!(from) { to }
+  target, from, to, late_case, md_only = changes.fetch(name)
+  text = {header: header, producer: producer, capture: capture}.fetch(target).dup
+  Array(from).zip(Array(to)).each do |before, after|
+    abort "mutant anchor #{name}" unless text.scan(Regexp.new(Regexp.escape(before))).length == 1
+    text.sub!(before) { after }
+  end
   File.write(work + '/dev/fdt/bootfb_source.h', target == :header ? text : header)
   File.write(work + '/producer.inc', target == :producer ? text : producer)
-  st, _, late = run.call('compile-' + name, argv + ['-DNDEBUG', *(late_case.nil? ? [] : ['-DBOOTFB_SOURCE_LATE_CASE=' + late_case.to_s])])
+  File.write(work + '/capture.inc', target == :capture ? text : capture)
+  st, _, late = run.call('compile-' + name, argv + ['-DNDEBUG', *(late_case.nil? ? [] : ['-DBOOTFB_SOURCE_LATE_CASE=' + late_case.to_s]), *(md_only ? ['-DBOOTFB_SOURCE_MD_ONLY=1'] : [])])
   abort "mutant compile failed #{name}" unless st.success? && !late
   st, diagnostic, late = run.call('mutant-' + name, [*executor, work + '/contract'])
   abort "mutant did not reach CHECK #{name}" unless !late && st.signaled? && st.termsig == Signal.list.fetch('ABRT') && diagnostic.include?('bootfb source CHECK ')
 end
 File.write(work + '/dev/fdt/bootfb_source.h', header)
 File.write(work + '/producer.inc', producer)
+File.write(work + '/capture.inc', capture)
 
 end

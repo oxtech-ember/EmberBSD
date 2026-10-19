@@ -48,7 +48,8 @@ These are source facts. They do not prove native ownership or access readiness.
 
 ```sh
 ruby ember/tools/bootfb-source-contract.rb /absolute/os/source
-CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
+ASAN_OPTIONS=abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
+    CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
     BOOTFB_SOURCE_SKIP_MUTANTS=1 ruby ember/tools/bootfb-source-contract.rb /absolute/os/source
 ```
 
@@ -64,9 +65,33 @@ and reach a fatal CHECK. A crash, compile failure or timeout is not a rejection.
 `BOOTFB_SOURCE_SKIP_MUTANTS=1`, `BOOTFB_SOURCE_MUTANTS` and a new
 `BOOTFB_SOURCE_EVIDENCE` directory select tools and evidence. Native checks must
 also compile both complete loader TUs with actual off/on Makefile flags.
-No ARM cold capture, absence admission, coherent loader link or physical result
-is claimed by this source contract. Valgrind is unsupported on the Darwin host;
+No absence admission, coherent loader link or physical result is claimed by
+this source contract. Valgrind is unsupported on the Darwin host;
 the executable fixture uses ASan/UBSan instead.
+
+## ARM cold source capture
+
+With `WSDISPLAY_BOOTFB_HANDOFF`, actual ARM FDT device registration calls
+`arm_simplefb_source_capture` before simplefb preattach. It passes the real
+512 KiB FDT array and its capacity. The first call consumes the only attempt.
+Capture requires cold process context under Giant, without panic or interrupt.
+A failed context, pointer, structure or source check leaves typed UNKNOWN.
+Later calls cannot retry or replace that result.
+
+The private record accepts only the strict absent EFI ACPI64 source with no
+framebuffer-compatible node. It stores the actual blob, capacity, validated
+length, chosen offset, typed source fields and SHA256. A private revalidation
+repeats identity, full-tree, record and digest checks before capture commits.
+It detects later changes without rewriting the original facts. There is no
+public record getter, admission token or new display policy.
+
+The same source runner includes complete actual capture and registration
+bodies, the real FDT array declaration and the actual SHA2 implementation.
+It checks call order, full capacity, one attempt, context failures, malformed
+trees and changes to identity, length and same-length bytes. Its controlled
+kernel services do not establish an MP race or native ABI. Native validation
+requires both complete ARM TUs with matching generated headers and explicit
+off/on options. No coherent kernel or physical handoff result is claimed.
 
 ## Association
 

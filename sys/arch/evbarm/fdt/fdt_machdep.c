@@ -38,6 +38,7 @@ __KERNEL_RCSID(0, "$NetBSD: fdt_machdep.c,v 1.109 2025/03/08 14:30:05 jmcneill E
 #include "opt_machdep.h"
 #include "opt_multiprocessor.h"
 #include "opt_soc.h"
+#include "opt_wsdisplay_bootfb.h"
 
 #include "genfb.h"
 #include "pci.h"
@@ -495,6 +496,9 @@ fdt_device_register(device_t self, void *aux)
 		/*
 		 * Setup framebuffer console, if present.
 		 */
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		arm_simplefb_source_capture(fdt_data, sizeof(fdt_data));
+#endif
 		arm_simplefb_preattach();
 #endif
 	}

@@ -47,7 +47,12 @@ __KERNEL_RCSID(0, "$NetBSD: arm_simplefb.c,v 1.13 2022/10/14 22:10:15 jmcneill E
 #endif
 
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include <sys/atomic.h>
+#include <sys/kernel.h>
+#include <sys/sha2.h>
+#include <sys/systm.h>
 #include <dev/cons_handoffvar.h>
+#include <dev/fdt/bootfb_source.h>
 #endif
 #include <dev/fdt/fdtvar.h>
 #include <dev/fdt/simplefbvar.h>
@@ -122,6 +127,98 @@ static struct {
 	void *cookie;
 } arm_simplefb_boot;
 static unsigned int arm_simplefb_captured;
+#endif
+
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+/* Source facts only. The first capture attempt is final until reboot. */
+enum arm_simplefb_source_phase {
+	ARM_SIMPLEFB_SOURCE_UNATTEMPTED,
+	ARM_SIMPLEFB_SOURCE_UNKNOWN,
+	ARM_SIMPLEFB_SOURCE_CAPTURED
+};
+struct arm_simplefb_source_fact {
+	const void *blob;
+	size_t capacity;
+	size_t length;
+	int chosen;
+	struct bootfb_source_record record;
+	uint8_t digest[SHA256_DIGEST_LENGTH];
+};
+static struct arm_simplefb_source_fact arm_simplefb_source_fact;
+static unsigned int arm_simplefb_source_phase;
+
+/* A change detector for trusted boot data, not an access-permission query. */
+static int
+arm_simplefb_source_revalidate(const struct arm_simplefb_source_fact *fact)
+{
+	struct bootfb_source_tree tree;
+	SHA256_CTX hash;
+	uint8_t digest[SHA256_DIGEST_LENGTH];
+	int error;
+
+	if (fact->blob == NULL || fact->blob != fdtbus_get_data() ||
+	    fact->capacity < sizeof(struct fdt_header))
+		return EINVAL;
+	error = bootfb_source_scan(fact->blob, fact->capacity, &tree);
+	if (error != 0)
+		return error;
+	if (!tree.record_present || tree.framebuffer ||
+	    tree.record.producer != BOOTFB_SOURCE_EFI_ACPI64 ||
+	    tree.record.disposition != BOOTFB_SOURCE_ABSENT ||
+	    fact->length != fdt_totalsize(fact->blob) ||
+	    fact->chosen != tree.chosen ||
+	    fact->record.producer != tree.record.producer ||
+	    fact->record.disposition != tree.record.disposition ||
+	    fact->record.status != tree.record.status ||
+	    fact->record.count != tree.record.count)
+		return EINVAL;
+	if (SHA256_Init(&hash) != 1 ||
+	    SHA256_Update(&hash, fact->blob, fact->length) != 1 ||
+	    SHA256_Final(digest, &hash) != 1)
+		return EIO;
+	if (memcmp(digest, fact->digest, sizeof(digest)) != 0)
+		return EINVAL;
+	return 0;
+}
+
+void
+arm_simplefb_source_capture(const void *blob, size_t capacity)
+{
+	struct arm_simplefb_source_fact value = {0};
+	struct bootfb_source_tree tree;
+	SHA256_CTX hash;
+	int error;
+
+	if (atomic_cas_uint(&arm_simplefb_source_phase,
+	    ARM_SIMPLEFB_SOURCE_UNATTEMPTED, ARM_SIMPLEFB_SOURCE_UNKNOWN) !=
+	    ARM_SIMPLEFB_SOURCE_UNATTEMPTED)
+		return;
+	if (!cold || !KERNEL_LOCKED_P() || panicstr != NULL ||
+	    cpu_intr_p() || cpu_softintr_p())
+		return;
+	if (blob == NULL || blob != fdtbus_get_data() ||
+	    capacity < sizeof(struct fdt_header))
+		return;
+	error = bootfb_source_scan(blob, capacity, &tree);
+	if (error != 0 || !tree.record_present || tree.framebuffer ||
+	    tree.record.producer != BOOTFB_SOURCE_EFI_ACPI64 ||
+	    tree.record.disposition != BOOTFB_SOURCE_ABSENT)
+		return;
+	value.blob = blob;
+	value.capacity = capacity;
+	value.length = fdt_totalsize(blob);
+	value.chosen = tree.chosen;
+	value.record = tree.record;
+	if (SHA256_Init(&hash) != 1 ||
+	    SHA256_Update(&hash, blob, value.length) != 1 ||
+	    SHA256_Final(value.digest, &hash) != 1)
+		return;
+	if (arm_simplefb_source_revalidate(&value) != 0)
+		return;
+	arm_simplefb_source_fact = value;
+	atomic_store_release(&arm_simplefb_source_phase,
+	    ARM_SIMPLEFB_SOURCE_CAPTURED);
+}
 #endif
 
 static const struct device_compatible_entry compat_data[] = {

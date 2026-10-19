@@ -32,6 +32,10 @@
 #ifndef _ARM_ARM_SIMPLEFB_H
 #define _ARM_ARM_SIMPLEFB_H
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+void		arm_simplefb_source_capture(const void *, size_t);
+#endif
+
 void		arm_simplefb_preattach(void);
 uint64_t	arm_simplefb_physaddr(void);
 

@@ -10,6 +10,7 @@
 #include <inttypes.h>
 #include <setjmp.h>
 #include <dev/fdt/bootfb_source.h>
+#include <sys/sha2.h>
 static unsigned checks;
 #define CHECK(x) do { checks++; if (!(x)) { \
 	fprintf(stderr, "bootfb source CHECK %s:%d: %s\n", __FILE__, __LINE__, #x); \
@@ -446,7 +447,7 @@ for (unsigned count = 0; count <= 3; count++) {
 			if (count && format != 3) {
 				int node = fdt_path_offset(fdt_data, "/chosen/framebuffer@0"); CHECK(node >= 0);
 				int size; const fdt64_t *reg = fdt_getprop(fdt_data, node, "reg", &size);
-				CHECK(size == 16 && fdt64_to_cpu(reg[0]) == 0); /* PA0 is present. */
+				CHECK(size == 16 && fdt64_ld(reg) == 0); /* PA0 is present. */
 			}
 		}
 	}
@@ -526,14 +527,389 @@ reset_producer(); service.no_root = true; CHECK(run_producer(&value) == EINVAL &
 	reset_producer();
 }
 
+/* Cold capture keeps the actual MD bodies and digest implementation. Context,
+ * device, property and preattach services are controlled. No MP claim is made.
+ */
+static bool md_cold, md_locked, md_irq, md_softirq;
+static const char *md_panic;
+static void *md_live_blob;
+static unsigned md_preattach_calls, md_initrd_calls, md_expected_phase,
+    md_data_calls, md_change_at;
+#define cold md_cold
+#define panicstr md_panic
+#define KERNEL_LOCKED_P() md_locked
+
+static bool
+cpu_intr_p(void)
+{
+	return md_irq;
+}
+
+static bool
+cpu_softintr_p(void)
+{
+	return md_softirq;
+}
+
+static void *
+fdtbus_get_data(void)
+{
+	md_data_calls++;
+	return md_change_at && md_data_calls >= md_change_at ? tree
+							     : md_live_blob;
+}
+
+static unsigned int
+atomic_cas_uint(volatile unsigned int *p, unsigned int old, unsigned int value)
+{
+	__atomic_compare_exchange_n(
+	    p, &old, value, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+	return old;
+}
+
+#define atomic_store_release(p, value)                                         \
+	__atomic_store_n(p, value, __ATOMIC_RELEASE)
+#define atomic_load_acquire(p) __atomic_load_n(p, __ATOMIC_ACQUIRE)
+#define NWSDISPLAY 1
+#define NGENFB 1
+#define NPCI 0
+typedef const char *device_t;
+typedef void *prop_dictionary_t;
+
+struct fdt_platform {
+	void (*fp_device_register)(device_t, void *);
+};
+
+static const struct fdt_platform *
+fdt_platform_find(void)
+{
+	return NULL;
+}
+
+static bool
+device_is_a(device_t d, const char *name)
+{
+	return strcmp(d, name) == 0;
+}
+
+static prop_dictionary_t
+device_properties(device_t d)
+{
+	(void)d;
+	return NULL;
+}
+
+static void
+prop_dictionary_set_uint64(
+    prop_dictionary_t p, const char *name, uint64_t value)
+{
+	(void)p;
+	(void)name;
+	(void)value;
+}
+
+static void
+fdt_setup_initrd(void)
+{
+	md_initrd_calls++;
+	CHECK(md_preattach_calls == 0);
+}
+
+static void arm_simplefb_preattach(void);
+
+static uint64_t
+arm_simplefb_physaddr(void)
+{
+	return 0;
+}
+
+#include "capture.inc"
+
+static void
+arm_simplefb_preattach(void)
+{
+	CHECK(md_initrd_calls == 1);
+	CHECK(atomic_load_acquire(&arm_simplefb_source_phase) ==
+	    md_expected_phase);
+	md_preattach_calls++;
+}
+
+/* Test-only resets delimit independent simulated boots. Production has none. */
+static void
+md_reset(void)
+{
+	memset(&arm_simplefb_source_fact, 0, sizeof(arm_simplefb_source_fact));
+	atomic_store_release(
+	    &arm_simplefb_source_phase, ARM_SIMPLEFB_SOURCE_UNATTEMPTED);
+	memset(bootfb_capture_fdt_data, 0, sizeof(bootfb_capture_fdt_data));
+	md_live_blob = bootfb_capture_fdt_data;
+	md_cold = md_locked = true;
+	md_irq = md_softirq = false;
+	md_panic = NULL;
+	md_preattach_calls = md_initrd_calls = md_data_calls = md_change_at = 0;
+	md_expected_phase = ARM_SIMPLEFB_SOURCE_CAPTURED;
+	create_tree();
+	set_record(absent_wire, 32);
+	CHECK(fdt_setprop_string(tree, 0, "model", "capture-model-a") == 0);
+	CHECK(fdt_pack(tree) == 0);
+	memcpy(bootfb_capture_fdt_data, tree, fdt_totalsize(tree));
+}
+
+static void
+md_unknown(void)
+{
+	CHECK(atomic_load_acquire(&arm_simplefb_source_phase) ==
+	    ARM_SIMPLEFB_SOURCE_UNKNOWN);
+	CHECK(arm_simplefb_source_fact.blob == NULL &&
+	    arm_simplefb_source_fact.capacity == 0);
+	CHECK(arm_simplefb_source_fact.length == 0 &&
+	    arm_simplefb_source_fact.chosen == 0);
+	CHECK(arm_simplefb_source_fact.record.producer == 0 &&
+	    arm_simplefb_source_fact.record.disposition == 0);
+	CHECK(arm_simplefb_source_fact.record.status == 0 &&
+	    arm_simplefb_source_fact.record.count == 0);
+	static const uint8_t zero[32];
+	CHECK(memcmp(arm_simplefb_source_fact.digest, zero, 32) == 0);
+}
+
+static void
+md_register(void)
+{
+	fdt_device_register("armfdt", NULL);
+	CHECK(md_preattach_calls == 1);
+}
+
+static void
+md_edit(void)
+{
+	CHECK(fdt_open_into(bootfb_capture_fdt_data, bootfb_capture_fdt_data,
+		  sizeof(bootfb_capture_fdt_data)) == 0);
+}
+
+static void
+md_pack(void)
+{
+	CHECK(fdt_pack(bootfb_capture_fdt_data) == 0);
+}
+
+static void
+md_capture_tests(void)
+{
+	static const uint8_t abc_digest[32] = {0xba, 0x78, 0x16, 0xbf, 0x8f,
+	    0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+	    0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff,
+	    0x61, 0xf2, 0x00, 0x15, 0xad};
+	SHA256_CTX hash;
+	uint8_t digest[32];
+	CHECK(SHA256_Init(&hash) == 1 &&
+	    SHA256_Update(&hash, (const uint8_t *)"abc", 3) == 1 &&
+	    SHA256_Final(digest, &hash) == 1);
+	CHECK(memcmp(digest, abc_digest, 32) == 0);
+	md_reset();
+	md_register();
+	CHECK(arm_simplefb_source_fact.blob == bootfb_capture_fdt_data);
+	CHECK(arm_simplefb_source_fact.capacity == 512U * 1024U);
+	CHECK(arm_simplefb_source_fact.record.disposition ==
+	    BOOTFB_SOURCE_ABSENT);
+	CHECK(arm_simplefb_source_revalidate(&arm_simplefb_source_fact) == 0);
+	struct arm_simplefb_source_fact saved = arm_simplefb_source_fact;
+	md_cold = false;
+	arm_simplefb_source_capture(NULL, 0);
+	CHECK(atomic_load_acquire(&arm_simplefb_source_phase) ==
+	    ARM_SIMPLEFB_SOURCE_CAPTURED);
+	CHECK(arm_simplefb_source_fact.blob == saved.blob &&
+	    arm_simplefb_source_fact.capacity == saved.capacity &&
+	    arm_simplefb_source_fact.length == saved.length);
+	CHECK(arm_simplefb_source_fact.chosen == saved.chosen &&
+	    arm_simplefb_source_fact.record.producer == saved.record.producer &&
+	    arm_simplefb_source_fact.record.disposition ==
+		saved.record.disposition);
+	CHECK(arm_simplefb_source_fact.record.status == saved.record.status &&
+	    arm_simplefb_source_fact.record.count == saved.record.count);
+	CHECK(memcmp(arm_simplefb_source_fact.digest, saved.digest, 32) == 0);
+	CHECK(arm_simplefb_source_revalidate(&arm_simplefb_source_fact) == 0);
+	md_live_blob = tree;
+	CHECK(arm_simplefb_source_revalidate(&arm_simplefb_source_fact) != 0);
+	md_live_blob = bootfb_capture_fdt_data;
+	uint32_t length = fdt_totalsize(bootfb_capture_fdt_data);
+	fdt_set_totalsize(bootfb_capture_fdt_data, length + 4);
+	CHECK(arm_simplefb_source_revalidate(&arm_simplefb_source_fact) != 0);
+	fdt_set_totalsize(bootfb_capture_fdt_data, length);
+	/* A valid same-length non-record mutation keeps the schema but changes
+	 * digest. */
+	int size;
+	uint8_t *changed =
+	    fdt_getprop_w(bootfb_capture_fdt_data, 0, "model", &size);
+	CHECK(changed != NULL && size == 16);
+	changed[size - 2] = 'b';
+	struct bootfb_source_tree scan;
+	CHECK(bootfb_source_scan(bootfb_capture_fdt_data,
+		  sizeof(bootfb_capture_fdt_data), &scan) == 0);
+	CHECK(arm_simplefb_source_revalidate(&arm_simplefb_source_fact) != 0);
+	CHECK(memcmp(arm_simplefb_source_fact.digest, saved.digest, 32) == 0);
+	for (unsigned failure = 0; failure < 5; failure++) {
+		md_reset();
+		md_expected_phase = ARM_SIMPLEFB_SOURCE_UNKNOWN;
+		if (failure == 0)
+			md_cold = false;
+		if (failure == 1)
+			md_locked = false;
+		if (failure == 2)
+			md_panic = "controlled panic";
+		if (failure == 3)
+			md_irq = true;
+		if (failure == 4)
+			md_softirq = true;
+		md_register();
+		md_unknown();
+		md_cold = md_locked = true;
+		md_panic = NULL;
+		md_irq = md_softirq = false;
+		arm_simplefb_source_capture(
+		    bootfb_capture_fdt_data, sizeof(bootfb_capture_fdt_data));
+		md_unknown();
+	}
+	for (unsigned failure = 0; failure < 7; failure++) {
+		md_reset();
+		const void *blob = bootfb_capture_fdt_data;
+		size_t capacity = sizeof(bootfb_capture_fdt_data);
+		if (failure == 0)
+			blob = NULL;
+		if (failure == 1)
+			blob = tree;
+		if (failure == 2)
+			md_live_blob = tree;
+		if (failure == 3)
+			capacity = sizeof(struct fdt_header) - 1;
+		if (failure == 4)
+			capacity = fdt_totalsize(blob) - 1;
+		if (failure == 5)
+			fdt_set_totalsize(
+			    bootfb_capture_fdt_data, capacity + 1);
+		if (failure == 6)
+			md_change_at = 2;
+		arm_simplefb_source_capture(blob, capacity);
+		md_unknown();
+	}
+	for (unsigned failure = 0; failure < 6; failure++) {
+		md_reset();
+		md_edit();
+		int n = fdt_path_offset(bootfb_capture_fdt_data, "/chosen");
+		CHECK(n > 0);
+		uint8_t wire[32];
+		memcpy(wire, absent_wire, 32);
+		if (failure == 0)
+			CHECK(fdt_delprop(bootfb_capture_fdt_data, n,
+				  BOOTFB_SOURCE_PROPERTY) == 0);
+		if (failure == 1) {
+			wire[7] = 0;
+			wire[11] = 0;
+			CHECK(fdt_setprop(bootfb_capture_fdt_data, n,
+				  BOOTFB_SOURCE_PROPERTY, wire, 32) == 0);
+		}
+		if (failure == 2) {
+			struct bootfb_source_record present = {1, 1, 0, 1};
+			CHECK(bootfb_source_encode(&present, wire, 32) == 0);
+			CHECK(fdt_setprop(bootfb_capture_fdt_data, n,
+				  BOOTFB_SOURCE_PROPERTY, wire, 32) == 0);
+		}
+		if (failure == 3)
+			CHECK(fdt_setprop(bootfb_capture_fdt_data, n,
+				  BOOTFB_SOURCE_PROPERTY, wire, 31) == 0);
+		if (failure == 4)
+			CHECK(fdt_setprop_string(bootfb_capture_fdt_data, 0,
+				  "compatible", "unknown,tree") == 0);
+		if (failure == 5)
+			CHECK(fdt_setprop_string(bootfb_capture_fdt_data, n,
+				  "compatible", "") == 0);
+		md_pack();
+		arm_simplefb_source_capture(
+		    bootfb_capture_fdt_data, sizeof(bootfb_capture_fdt_data));
+		md_unknown();
+	}
+	for (unsigned kind = 0; kind < 6; kind++) {
+		md_reset();
+		void *blob = bootfb_capture_fdt_data;
+		CHECK(fdt_create(blob, sizeof(bootfb_capture_fdt_data)) == 0);
+		CHECK(fdt_finish_reservemap(blob) == 0);
+		CHECK(fdt_begin_node(blob, kind == 4 ? "named-root" : "") == 0);
+		CHECK(fdt_property_string(
+			  blob, "compatible", "netbsd,generic-acpi") == 0);
+		CHECK(fdt_begin_node(blob, "chosen") == 0);
+		CHECK(fdt_property(
+			  blob, BOOTFB_SOURCE_PROPERTY, absent_wire, 32) == 0);
+		if (kind == 0)
+			CHECK(fdt_property(blob, BOOTFB_SOURCE_PROPERTY,
+				  absent_wire, 32) == 0);
+		if (kind == 3)
+			CHECK(fdt_property(blob, "compatible", "bad", 3) == 0);
+		CHECK(fdt_end_node(blob) == 0);
+		if (kind == 1 || kind == 2) {
+			CHECK(fdt_begin_node(blob,
+				  kind == 1 ? "chosen@0" : "chosen") == 0);
+			CHECK(fdt_end_node(blob) == 0);
+		}
+		CHECK(fdt_end_node(blob) == 0);
+		if (kind == 5) {
+			CHECK(fdt_begin_node(blob, "") == 0);
+			CHECK(fdt_end_node(blob) == 0);
+		}
+		CHECK(fdt_finish(blob) == 0);
+		arm_simplefb_source_capture(
+		    blob, sizeof(bootfb_capture_fdt_data));
+		md_unknown();
+	}
+	for (unsigned disabled = 0; disabled < 2; disabled++) {
+		md_reset();
+		md_edit();
+		int parent = fdt_add_subnode(
+		    bootfb_capture_fdt_data, 0, "outside-chosen");
+		CHECK(parent > 0);
+		int fb = fdt_add_subnode(
+		    bootfb_capture_fdt_data, parent, "framebuffer@0");
+		CHECK(fb > 0);
+		CHECK(fdt_setprop_string(bootfb_capture_fdt_data, fb,
+			  "compatible", "simple-framebuffer") == 0);
+		CHECK(fdt_setprop_string(bootfb_capture_fdt_data, fb, "status",
+			  disabled ? "disabled" : "okay") == 0);
+		md_pack();
+		arm_simplefb_source_capture(
+		    bootfb_capture_fdt_data, sizeof(bootfb_capture_fdt_data));
+		md_unknown();
+	}
+	md_reset();
+	CHECK(fdt_create(bootfb_capture_fdt_data,
+		  sizeof(bootfb_capture_fdt_data)) == 0);
+	CHECK(fdt_finish_reservemap(bootfb_capture_fdt_data) == 0);
+	CHECK(fdt_begin_node(bootfb_capture_fdt_data, "") == 0);
+	CHECK(fdt_property_string(bootfb_capture_fdt_data, "compatible",
+		  "netbsd,generic-acpi") == 0);
+	CHECK(fdt_begin_node(bootfb_capture_fdt_data, "chosen") == 0);
+	CHECK(fdt_property(bootfb_capture_fdt_data, BOOTFB_SOURCE_PROPERTY,
+		  absent_wire, 32) == 0);
+	CHECK(fdt_begin_node(bootfb_capture_fdt_data, "child") == 0);
+	CHECK(fdt_end_node(bootfb_capture_fdt_data) == 0);
+	CHECK(fdt_property(bootfb_capture_fdt_data, BOOTFB_SOURCE_PROPERTY,
+		  absent_wire, 32) == 0);
+	CHECK(fdt_end_node(bootfb_capture_fdt_data) == 0);
+	CHECK(fdt_end_node(bootfb_capture_fdt_data) == 0);
+	CHECK(fdt_finish(bootfb_capture_fdt_data) == 0);
+	arm_simplefb_source_capture(
+	    bootfb_capture_fdt_data, sizeof(bootfb_capture_fdt_data));
+	md_unknown();
+	md_reset();
+}
+
 int main(void)
 {
-	#ifdef BOOTFB_SOURCE_LATE_CASE
+#if defined(BOOTFB_SOURCE_MD_ONLY)
+	md_capture_tests();
+#elif defined(BOOTFB_SOURCE_LATE_CASE)
 	late_property_test(BOOTFB_SOURCE_LATE_CASE);
 #else
 	wire_tests(); tree_tests(); malformed_tree_tests(); mixed_chosen_tests();
 	late_property_test(0); late_property_test(1); named_root_test();
-	producer_tests();
+	producer_tests(); md_capture_tests();
 #endif
 	printf("boot framebuffer source contract: %u PASS\n", checks);
 	return 0;
