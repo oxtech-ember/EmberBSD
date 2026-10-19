@@ -281,7 +281,12 @@ fdtbus_get_reg(int phandle, u_int index, bus_addr_t *paddr, bus_size_t *psize)
 	if (error)
 		return error;
 
-	if (sizeof(bus_addr_t) == 4 && (addr + size) > 0x100000000)
+	/* Reject overflow and narrowing before publishing either output. */
+	if (size > UINT64_MAX - addr ||
+	    (uint64_t)(bus_addr_t)addr != addr ||
+	    (uint64_t)(bus_size_t)size != size ||
+	    (sizeof(bus_addr_t) == 4 &&
+	    addr + size > UINT64_C(0x100000000)))
 		return ERANGE;
 
 	if (paddr)
