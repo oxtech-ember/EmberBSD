@@ -424,6 +424,11 @@ static void cold_checks(void) {
  for(unsigned i=0;i<16384;i++)CHECK(((unsigned char *)sc.guard->directory.cpu)[i]==0);
  CHECK(sun60i_a733_de352_guard_destroy(sc.guard)==EBUSY);
  CHECK(sequence>=2&&started&&sc.dma->published);
+ CHECK(sc.cold_trace.version==1&&sc.cold_trace.phase==CT_DONE&&sc.cold_trace.error==0);
+ CHECK(sc.cold_trace.op==UINT32_MAX&&sc.cold_trace.valid==0);
+ CHECK(sc.cold_trace.capture_attempt==31&&sc.cold_trace.capture_generation==31);
+ CHECK(sc.cold_trace.capture_words==2*CI_COUNT&&sc.cold_trace.capture_valid==7);
+ CHECK(memcmp(&sc.cold_trace.snapshot,&sc.cold,sizeof(sc.cold))==0);
  static const uint32_t expected_regs[]={0x80,0x430,0x630,0x830,0xa30,0xc30,0xe30,
   0x404,0x604,0x804,0xa04,0xc04,0xe04,0x20,0x2c,0x40,0x60,0x10,0x30,
   0x418,0x618,0x818,0xa18,0xc18,0xe18,0x30,0x14};
@@ -441,6 +446,14 @@ static void cold_checks(void) {
   if(result==0||!sc.retained||!sc.guard||!sc.guard->published||sc.dma!=NULL)fprintf(stderr,"cold fault=%u kind=%u result=%d writes=%u\n",fault,kind,result,cold_writes);
   CHECK(result!=0&&sc.retained&&sc.guard&&sc.guard->published&&sc.dma==NULL);
   CHECK(cold_writes==fault&&writes==0&&!started&&ccu_faults==1&&releases==0);
+  CHECK(sc.cold_trace.error==(uint32_t)result&&sc.cold_trace.capture_valid==7);
+  if(kind<2){
+   CHECK(sc.cold_trace.reg==expected_regs[fault-1]);
+   CHECK(sc.cold_trace.requested==expected_values[fault-1]);
+   CHECK(sc.cold_trace.phase==(kind==0?CT_WRITE:CT_AFTER));
+   CHECK(sc.cold_trace.valid==(kind==0?7U:15U));
+   if(kind==1)CHECK(sc.cold_trace.after!=sc.cold_trace.requested);
+  }else CHECK(sc.cold_trace.phase==CT_STEP_COMPARE||sc.cold_trace.phase==CT_FINAL_COMPARE);
   reboot_fixture(&sc);
  }
  for(unsigned i=0;i<CI_COUNT;i++){
@@ -463,7 +476,11 @@ static void cold_checks(void) {
   CHECK(de352_run(&sc)==EIO&&cold_writes==0&&writes==0&&sc.guard==NULL);reboot_fixture(&sc);
  }
  cold_init(&sc);peer_power_error=ETIMEDOUT;
- CHECK(de352_run(&sc)==ETIMEDOUT&&!peer_power_on&&cold_writes==0&&sc.guard==NULL);reboot_fixture(&sc);
+ CHECK(de352_run(&sc)==ETIMEDOUT&&!peer_power_on&&cold_writes==0&&sc.guard==NULL);
+ CHECK(sc.cold_trace.phase==CT_PEER_ACCESS&&sc.cold_trace.error==ETIMEDOUT);
+ CHECK(sc.cold_trace.op==UINT32_MAX&&sc.cold_trace.valid==0&&sc.cold_trace.capture_attempt==0);
+ CHECK(sc.cold_trace.capture_valid==0&&sc.cold_trace.capture_generation==0);
+ reboot_fixture(&sc);
  cold_init(&sc);iommu[0x1c/4]=0x7fff0003;
  CHECK(de352_run(&sc)==0&&iommu[0x1c/4]==0x7fff0003);reboot_fixture(&sc);
  cold_init(&sc);cold_flush_clear=true;
@@ -472,6 +489,29 @@ static void cold_checks(void) {
   cold_init(&sc);fail_call=f;
   CHECK(de352_run(&sc)==EIO&&cold_writes==0&&sc.guard==NULL);reboot_fixture(&sc);
  }
+}
+/* A failed new capture cannot publish uninitialized partial words. */
+static void cold_trace_checks(void) {
+ struct sun60i_de352_softc sc;struct de352_cold_state out, saved;
+ struct de352_cold_trace trace={0};
+ cold_init(&sc);CHECK(de352_run(&sc)==0);
+ CHECK(de352_cold_read(&sc,2,&out,&trace)==0);
+ CHECK(trace.capture_attempt==1&&trace.capture_generation==1&&trace.capture_valid==7);
+ CHECK(trace.capture_words==2*CI_COUNT);saved=trace.snapshot;
+ memset(&out,0xa5,sizeof(out));struct de352_cold_state sentinel=out;
+ read_fault_region=2;read_fault_reg=0xe38;
+ CHECK(de352_cold_read(&sc,2,&out,&trace)==EIO);
+ CHECK(trace.capture_attempt==2&&trace.capture_generation==1&&trace.capture_valid==7);
+ CHECK(trace.capture_words==CI_COUNT-1&&trace.capture_reg==0xe38);
+ CHECK(memcmp(&trace.snapshot,&saved,sizeof(saved))==0&&memcmp(&out,&sentinel,sizeof(out))==0);
+ struct sysctlnode node={&sc,sizeof(sc.cold_trace)};
+ struct de352_cold_trace before=sc.cold_trace;
+ int old_reads=reads,old_writes=writes,old_maps=space_maps;
+ CHECK(de352_sysctl_cold_trace(&node,NULL)==0);
+ CHECK(de352_sysctl_cold_trace(&node,&sc)==EROFS);
+ CHECK(reads==old_reads&&writes==old_writes&&space_maps==old_maps);
+ CHECK(memcmp(&sc.cold_trace,&before,sizeof(before))==0);
+ reboot_fixture(&sc);
 }
 /* Released MIC reset bits with a bypass that is already set. */
 static void cold_reset_checks(void) {
@@ -495,6 +535,7 @@ int main(void)
  guard_checks();
  cold_checks();
  cold_reset_checks();
+ cold_trace_checks();
  struct sun60i_de352_softc sc;struct fdt_attach_args faa={1,NULL,(void *)(uintptr_t)2};
  init(&sc);CHECK(de352_match(NULL,NULL,&faa));de352_attach(NULL,&sc,&faa);CHECK(sc.valid&&reads==0&&writes==0&&space_maps==0);
  CHECK(de352_bindings(&sc));iommu_status="okay";CHECK(!de352_bindings(&sc));iommu_status=NULL;CHECK(!de352_bindings(&sc));iommu_status="disabled";

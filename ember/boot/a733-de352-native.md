@@ -249,3 +249,38 @@ The memory-provider nodes remain disabled; the coordinator still requires its
 strict memory proof before DMA. The output provider registers under the same
 phandle and validates the same owner cookie. Kernel build, memory readiness
 and physical scanout acceptance remain separate requirements.
+
+## Cached cold-init diagnostics
+
+`hw.sun60ide0.cold_trace` returns cached data under the DE lock. It does not
+read or write hardware. Version 0 means that no cold-init map was attempted.
+Version 1 contains 89 native-endian `uint32_t` words (356 bytes):
+
+- Words 0–4: version, phase, operation index, field-valid bits, error.
+- Words 5–9: register offset, mask, before, requested value, after.
+- Words 10–14: capture attempt, last complete capture generation, completed
+  read count in the current attempt, last capture flags, current capture offset.
+- Words 15–88: the last complete pair of 37 IOMMU samples. Their order is the
+  fixed global and six-MIC register order in `de352_cold_reg()`.
+
+The operation index is zero-based. `UINT32_MAX` means no indexed operation.
+Field-valid bits are 1 for register and mask, 2 for before, 4 for requested,
+and 8 for after. A delay has only requested valid; its value is microseconds.
+Invalid fields contain zero, except the invalid offset sentinel `UINT32_MAX`.
+
+Capture flags are 1 for two complete samples, 2 for equal samples, and 4 for
+successful checks after the samples. These flags describe the saved generation.
+A new capture increments the attempt and resets its read count. It does not
+replace the saved pair until all 74 reads succeed. If generation differs from
+attempt, the saved pair belongs to an earlier attempt. A partial read never
+publishes uninitialized words. Neither equal samples nor flags establish DMA
+readiness or flush completion.
+
+Phases are: 0 none; 1 DE map; 2 cold precondition; 3 peer power access;
+4 IOMMU map; 5 initial capture; 6 admission; 7 guard allocation; 8 guard
+publication; 9 operation precondition; 10 operation capture; 11 comparison;
+12 delay; 13 direct read; 14 write attempt; 15 readback; 16 final precondition;
+17 final capture; 18 final comparison; 19 cold sequence complete.
+The returned error identifies the phase that failed. A later output failure
+can coexist with a completed cold sequence and zero cold error. The record
+adds no MMIO calls and does not change masks, delays, retention, or admission.

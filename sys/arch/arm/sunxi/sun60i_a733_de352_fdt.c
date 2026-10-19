@@ -50,6 +50,32 @@ enum {
 };
 struct de352_cold_state { uint32_t words[2][CI_COUNT]; };
 
+/* Cached diagnostics only. These values do not establish hardware readiness. */
+enum {
+	CT_NONE, CT_DE_MAP, CT_COLD_CHECK, CT_PEER_ACCESS, CT_IOMMU_MAP,
+	CT_CAPTURE, CT_ADMIT, CT_GUARD, CT_PUBLISH, CT_STEP_CHECK,
+	CT_STEP_CAPTURE, CT_STEP_COMPARE, CT_DELAY, CT_BEFORE, CT_WRITE,
+	CT_AFTER, CT_FINAL_CHECK, CT_FINAL_CAPTURE, CT_FINAL_COMPARE, CT_DONE
+};
+enum { CT_REG = 1, CT_BEFORE_VALID = 2, CT_REQUESTED = 4, CT_AFTER_VALID = 8 };
+struct de352_cold_trace {
+	uint32_t version, phase, op, valid, error;
+	uint32_t reg, mask, before, requested, after;
+	uint32_t capture_attempt, capture_generation, capture_words;
+	uint32_t capture_valid, capture_reg;
+	struct de352_cold_state snapshot;
+};
+CTASSERT(sizeof(struct de352_cold_trace) == (15 + 2 * CI_COUNT) * 4);
+
+static void
+de352_trace_phase(struct de352_cold_trace *trace, uint32_t phase)
+{
+	trace->phase = phase;
+	trace->valid = 0;
+	trace->reg = UINT32_MAX;
+	trace->mask = trace->before = trace->requested = trace->after = 0;
+}
+
 struct sun60i_a733_de352_client {
 	const void *owner;
 	bool busy, attempted;
@@ -75,6 +101,7 @@ struct sun60i_de352_softc {
 	struct de352_memory_snapshot memory;
 	struct sun60i_a733_de352_guard *guard;
 	struct de352_cold_state cold;
+	struct de352_cold_trace cold_trace;
 	bool cold_initialized;
 	bool valid, mapped, power_reserved, reserved, retained;
 	int stage, step, result, release_error;
@@ -275,12 +302,17 @@ de352_cold_reg(u_int index)
 
 static int
 de352_cold_read(struct sun60i_de352_softc *sc, bus_space_handle_t ih,
-    struct de352_cold_state *out)
+    struct de352_cold_state *out, struct de352_cold_trace *trace)
 {
 	struct de352_cold_state state;
 	uint32_t peers[2][A733_DISPLAY_NISOLATION_REGS];
 	int error;
 
+	if (trace != NULL) {
+		trace->capture_attempt++;
+		trace->capture_words = 0;
+		trace->capture_reg = UINT32_MAX;
+	}
 	error = sun60i_a733_ccu_display_ready(sc->de0, sc);
 	if (error == 0)
 		error = sun60i_a733_ccu_display_isolation_state(sc->de0, sc, peers);
@@ -288,19 +320,32 @@ de352_cold_read(struct sun60i_de352_softc *sc, bus_space_handle_t ih,
 		return error;
 	for (u_int sample = 0; sample < 2; sample++) {
 		for (u_int i = 0; i < CI_COUNT; i++) {
+			if (trace != NULL)
+				trace->capture_reg = de352_cold_reg(i);
 			error = bus_space_peek_4(sc->bst, ih, de352_cold_reg(i),
 			    &state.words[sample][i]);
 			if (error != 0)
 				return error;
+			if (trace != NULL)
+				trace->capture_words++;
 		}
+	}
+	if (trace != NULL) {
+		trace->snapshot = state;
+		trace->capture_generation = trace->capture_attempt;
+		trace->capture_valid = 1;
 	}
 	if (memcmp(state.words[0], state.words[1], sizeof(state.words[0])) != 0)
 		return EBUSY;
+	if (trace != NULL)
+		trace->capture_valid |= 2;
 	error = sun60i_a733_ccu_display_ready(sc->de0, sc);
 	if (error == 0)
 		error = sun60i_a733_ccu_display_isolation_state(sc->de0, sc, peers);
 	if (error != 0)
 		return error;
+	if (trace != NULL)
+		trace->capture_valid |= 4;
 	*out = state;
 	return 0;
 }
@@ -353,7 +398,7 @@ de352_cold_verify(struct sun60i_de352_softc *sc)
 	error = bus_space_map(sc->bst, DE352_IOMMU1_BASE, DE352_IOMMU1_SIZE, 0, &ih);
 	if (error != 0)
 		return error;
-	error = de352_cold_read(sc, ih, &current);
+	error = de352_cold_read(sc, ih, &current, NULL);
 	if (error == 0)
 		error = de352_cold_same(&sc->cold, &current);
 	bus_space_unmap(sc->bst, ih, DE352_IOMMU1_SIZE);
@@ -366,27 +411,35 @@ de352_cold_prepare(struct sun60i_de352_softc *sc)
 {
 	struct { u_int index; uint32_t mask, value; } steps[32];
 	struct de352_cold_state expected, current;
+	struct de352_cold_trace *trace = &sc->cold_trace;
 	bus_space_handle_t ih;
 	uint32_t before, after, value;
 	u_int count = 0;
 	int error;
 
+	de352_trace_phase(trace, CT_COLD_CHECK);
 	error = de352_memory_cold(sc);
-	if (error == 0)
-		error = sun60i_a733_ccu_display_begin_peer_access(sc->de0, sc);
 	if (error != 0)
-		return error;
+		goto done;
+	de352_trace_phase(trace, CT_PEER_ACCESS);
+	error = sun60i_a733_ccu_display_begin_peer_access(sc->de0, sc);
+	if (error != 0)
+		goto done;
 	/* Domain 2 is now retained ON. Only now may MIC0/1 be accessed. */
+	de352_trace_phase(trace, CT_IOMMU_MAP);
 	error = bus_space_map(sc->bst, DE352_IOMMU1_BASE, DE352_IOMMU1_SIZE, 0, &ih);
 	if (error != 0)
-		return error;
-	error = de352_cold_read(sc, ih, &expected);
+		goto done;
+	de352_trace_phase(trace, CT_CAPTURE);
+	error = de352_cold_read(sc, ih, &expected, trace);
 	if (error != 0)
 		goto out;
+	de352_trace_phase(trace, CT_ADMIT);
 	if (!de352_cold_admit(&expected)) {
 		error = EOPNOTSUPP;
 		goto out;
 	}
+	de352_trace_phase(trace, CT_GUARD);
 	error = sun60i_a733_de352_guard_prepare(sc->dmat, &sc->guard);
 	if (error != 0)
 		goto out;
@@ -414,6 +467,7 @@ de352_cold_prepare(struct sun60i_de352_softc *sc)
 	CI_STEP(CI_ENABLE, 1, 1);
 #undef CI_STEP
 	/* No later uncertainty permits release of this guard directory. */
+	de352_trace_phase(trace, CT_PUBLISH);
 	error = sun60i_a733_de352_guard_publish(sc->guard);
 	if (error != 0)
 		goto out;
@@ -421,37 +475,58 @@ de352_cold_prepare(struct sun60i_de352_softc *sc)
 		const u_int index = steps[n].index;
 		uint32_t reg;
 
+		trace->op = n;
+		de352_trace_phase(trace, CT_STEP_CHECK);
 		error = de352_memory_cold(sc);
-		if (error == 0)
-			error = de352_cold_read(sc, ih, &current);
-		if (error == 0)
-			error = de352_cold_same(&expected, &current);
+		if (error != 0)
+			goto out;
+		de352_trace_phase(trace, CT_STEP_CAPTURE);
+		error = de352_cold_read(sc, ih, &current, trace);
+		if (error != 0)
+			goto out;
+		de352_trace_phase(trace, CT_STEP_COMPARE);
+		error = de352_cold_same(&expected, &current);
 		if (error != 0)
 			goto out;
 		if (index == CI_COUNT) {
 			/* Pinned BSP timing input, not observed completion. */
+			de352_trace_phase(trace, CT_DELAY);
+			trace->requested = steps[n].value;
+			trace->valid = CT_REQUESTED;
 			delay(steps[n].value);
 			continue;
 		}
 		reg = de352_cold_reg(index);
+		de352_trace_phase(trace, CT_BEFORE);
+		trace->reg = reg;
+		trace->mask = steps[n].mask;
+		trace->valid = CT_REG;
 		error = bus_space_peek_4(sc->bst, ih, reg, &before);
 		if (error != 0)
 			goto out;
+		trace->before = before;
+		trace->valid |= CT_BEFORE_VALID;
 		if (before != expected.words[0][index]) {
 			error = EBUSY;
 			goto out;
 		}
 		value = (before & ~steps[n].mask) | steps[n].value;
+		trace->requested = value;
+		trace->valid |= CT_REQUESTED;
 		if (value == before)
 			continue;
+		trace->phase = CT_WRITE;
 		error = bus_space_poke_4(sc->bst, ih, reg, value);
 		if (error != 0)
 			goto out;
 		bus_space_barrier(sc->bst, ih, reg, 4,
 		    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+		trace->phase = CT_AFTER;
 		error = bus_space_peek_4(sc->bst, ih, reg, &after);
 		if (error != 0)
 			goto out;
+		trace->after = after;
+		trace->valid |= CT_AFTER_VALID;
 		if (after != value && !(index >= CI_MIC_BASE &&
 		    (index - CI_MIC_BASE) % 4 == 1 && after == 0)) {
 			error = EIO;
@@ -459,14 +534,21 @@ de352_cold_prepare(struct sun60i_de352_softc *sc)
 		}
 		expected.words[0][index] = expected.words[1][index] = after;
 	}
+	trace->op = UINT32_MAX;
+	de352_trace_phase(trace, CT_FINAL_CHECK);
 	error = de352_memory_cold(sc);
-	if (error == 0)
-		error = de352_cold_read(sc, ih, &current);
-	if (error == 0)
-		error = de352_cold_same(&expected, &current);
+	if (error != 0)
+		goto out;
+	de352_trace_phase(trace, CT_FINAL_CAPTURE);
+	error = de352_cold_read(sc, ih, &current, trace);
+	if (error != 0)
+		goto out;
+	de352_trace_phase(trace, CT_FINAL_COMPARE);
+	error = de352_cold_same(&expected, &current);
 	if (error == 0) {
 		sc->cold = expected;
 		sc->cold_initialized = true;
+		de352_trace_phase(trace, CT_DONE);
 	}
 out:
 	bus_space_unmap(sc->bst, ih, DE352_IOMMU1_SIZE);
@@ -474,6 +556,8 @@ out:
 		(void)sun60i_a733_de352_guard_destroy(sc->guard);
 		sc->guard = NULL;
 	}
+done:
+	trace->error = error;
 	return error;
 }
 
@@ -884,9 +968,19 @@ de352_run(struct sun60i_de352_softc *sc)
 	if (error != 0)
 		goto fail;
 	sc->step = 4;
+	if (cold) {
+		memset(&sc->cold_trace, 0, sizeof(sc->cold_trace));
+		sc->cold_trace.version = 1;
+		sc->cold_trace.op = UINT32_MAX;
+		sc->cold_trace.capture_reg = UINT32_MAX;
+		de352_trace_phase(&sc->cold_trace, CT_DE_MAP);
+	}
 	error = bus_space_map(sc->bst, DE352_BASE, DE352_SIZE, 0, &sc->bsh);
-	if (error != 0)
+	if (error != 0) {
+		if (cold)
+			sc->cold_trace.error = error;
 		goto fail;
+	}
 	sc->mapped = true;
 	if (cold) {
 		error = de352_cold_prepare(sc);
@@ -1012,6 +1106,23 @@ de352_sysctl_memory(SYSCTLFN_ARGS)
 	mutex_exit(&sc->lock);
 	node.sysctl_data = &snapshot;
 	node.sysctl_size = sizeof(snapshot);
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static int
+de352_sysctl_cold_trace(SYSCTLFN_ARGS)
+{
+	struct sun60i_de352_softc *sc = rnode->sysctl_data;
+	struct sysctlnode node = *rnode;
+	struct de352_cold_trace trace;
+
+	if (newp != NULL)
+		return EROFS;
+	mutex_enter(&sc->lock);
+	trace = sc->cold_trace;
+	mutex_exit(&sc->lock);
+	node.sysctl_data = &trace;
+	node.sysctl_size = sizeof(trace);
 	return sysctl_lookup(SYSCTLFN_CALL(&node));
 }
 
@@ -1142,6 +1253,10 @@ de352_attach(device_t parent, device_t self, void *aux)
 	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_STRUCT, "memory", SYSCTL_DESCR("Complete raw memory samples"),
 	    de352_sysctl_memory, 0, sc, sizeof(sc->memory), CTL_CREATE, CTL_EOL);
+	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRUCT, "cold_trace", SYSCTL_DESCR("Cached cold-init diagnostics"),
+	    de352_sysctl_cold_trace, 0, sc, sizeof(sc->cold_trace),
+	    CTL_CREATE, CTL_EOL);
 }
 
 CFATTACH_DECL_NEW(sun60i_a733_de, sizeof(struct sun60i_de352_softc),
