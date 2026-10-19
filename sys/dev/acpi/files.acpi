@@ -347,10 +347,7 @@ file	dev/acpi/ipmi_acpi.c		ipmi_acpi
 attach	genet at acpinodebus with genet_acpi
 file	dev/acpi/genet_acpi.c		genet_acpi
 
-# Cadence GEM (Raspberry Pi 5 RP1 under UEFI). The device itself is
-# defined in files.zynq, which aarch64 kernels do not include.
-device	cemac: ether, ifnet, arp, mii, bus_dma_generic
-file	dev/cadence/if_cemac.c		cemac
+# Cadence GEM ACPI attachment.
 attach	cemac at acpinodebus with cemac_acpi
 file	dev/acpi/cemac_acpi.c		cemac_acpi
 

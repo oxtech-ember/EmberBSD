@@ -814,6 +814,10 @@ file	dev/ic/hme.c			hme
 device	gem: arp, ether, ifnet, mii
 file	dev/ic/gem.c			gem
 
+# Cadence GEM Ethernet core
+device	cemac: ether, ifnet, arp, mii, bus_dma_generic
+file	dev/cadence/if_cemac.c		cemac
+
 # Synopsys DesignWare GMAC core, as found on allwinner a20
 # and other SoCs
 device	awge: arp, ether, ifnet, mii
