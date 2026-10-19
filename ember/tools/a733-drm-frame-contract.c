@@ -271,6 +271,12 @@ sun60i_a733_de352_submit(struct sun60i_a733_de352_client *client,
 		frame->release(frame->cookie);
 		return EIO;
 	}
+	if (provider_mode == 6) {
+		/* Model later proven retirement before this caller resumes. */
+		frame->release(frame->cookie);
+		*done = (struct sun60i_a733_de352_completion){7, 100};
+		return 0;
+	}
 	if (provider_mode == 3) {
 		uncertain = *frame;
 		client->quarantine = true;
@@ -344,7 +350,7 @@ int
 main(void)
 {
 	reset();
-	for (unsigned invalid = 0; invalid < 18; invalid++) {
+	for (unsigned invalid = 0; invalid < 19; invalid++) {
 		reset();
 		unsigned calls = allocations;
 		switch (invalid) {
@@ -399,8 +405,11 @@ main(void)
 		case 16:
 			map.dm_segs[0].ds_addr = UINT32_MAX - 63;
 			break;
-		default:
+		case 17:
 			map.dm_segs[0].ds_addr++;
+			break;
+		default:
+			state.max_dma_address = UINT64_MAX;
 			break;
 		}
 		struct sun60i_a733_de352_completion done = {123, 456},
@@ -446,7 +455,10 @@ main(void)
 	CHECK(waits == 2 && done.observed_sequence == 7 &&
 	      object.base.refs == 2);
 	CHECK(resv.readers[0]->status == 0 && resv.readers[0]->refs == 2);
+	CHECK(active.retain(active.cookie) == EINVAL);
+	void *retired_cookie = active.cookie;
 	retire_active();
+	CHECK(scanout_retain(retired_cookie) == EINVAL);
 	CHECK(object.base.refs == 1 && resv.readers[0]->status == 1);
 	/* The retired reservation reference does not pin its own GEM object. */
 	CHECK(resv.readers[0]->refs == 1);
@@ -482,6 +494,25 @@ main(void)
 	reset();
 	provider_mode = 5;
 	expect_failure(EPROTO);
+	reset();
+	provider_mode = 6;
+	CHECK(sun60i_a733_drm_frame_submit(&client, &state, &object, &desc,
+					   &done) == 0);
+	CHECK(object.base.refs == 1 && resv.readers[0]->status == 1);
+	clear_readers();
+	CHECK(allocations == frees);
+	reset();
+	state.mode.hdisplay = desc.width = 16;
+	state.mode.vdisplay = desc.height = 1;
+	desc.pitch = 64;
+	map.dm_mapsize = map.dm_segs[0].ds_len = 64;
+	object.base.size = object.dmasize = 64;
+	map.dm_segs[0].ds_addr = UINT32_MAX - 63;
+	CHECK(sun60i_a733_drm_frame_submit(&client, &state, &object, &desc,
+					   &done) == 0);
+	retire_active();
+	clear_readers();
+	CHECK(object.base.refs == 1 && allocations == frees);
 	printf("A733 DRM frame: %u checks PASS\n", checks);
 	return 0;
 }
