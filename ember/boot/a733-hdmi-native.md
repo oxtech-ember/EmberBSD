@@ -2,7 +2,9 @@
 
 The native provider connects the existing DISPLAY coordinator to checked
 CCU, PHY, DW-HDMI and TV0 mechanisms.
-It uses the existing `dwhdmi` configuration attachment.
+It uses the separate `sun60ihdmi` device in `GENERIC64`.
+The device shares `dwhdmi_core` with the existing DW-HDMI attachments.
+The common `dwhdmi` device does not select A733 providers in ARM32 kernels.
 Attach maps three fixed apertures and registers the output provider.
 It does not read or write output registers or enable clocks and power.
 The DE coordinator must retain its DISPLAY cookie before `get_mode`.
@@ -77,6 +79,17 @@ An error retains the owner, mappings and attempted writes.
 No automatic rollback or retry follows an error.
 
 ## Validation boundary
+
+Run the kernel configuration contract with a built native `nbconfig`:
+
+```sh
+python3 -B ember/tools/evbarm-config-contract.py \
+    --nbconfig "$NBCONFIG" --work "$PROBE_PARENT"
+```
+
+The test checks actual `GENERIC` and `EMBER64` source and attachment selection.
+It also checks separate A733-only and legacy-only HDMI configurations.
+The test does not compile or link an ARM32 kernel.
 
 Run `python3 -B ember/tools/a733-hdmi-native-contract.py` for the native adapter contract.
 Use `A733_HDMI_NATIVE_CFLAGS` to add native sanitizer flags.

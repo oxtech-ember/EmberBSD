@@ -1559,10 +1559,11 @@ device	ipmi: sysmon_envsys, sysmon_wdog
 attach	ipmi at ipmibus
 
 # Designware HDMI TX
-device	dwhdmi: edid, videomode, drmkms, drmkms_i2c, ddc_read_edid
-file	dev/ic/dw_hdmi.c		dwhdmi
-file	dev/ic/dw_hdmi_phy.c		dwhdmi
-makeoptions	dwhdmi	"CPPFLAGS.dwhdmi"+="${CPPFLAGS.drmkms}"
+define	dwhdmi_core: edid, videomode, drmkms, drmkms_i2c, ddc_read_edid
+device	dwhdmi: dwhdmi_core
+file	dev/ic/dw_hdmi.c		dwhdmi_core
+file	dev/ic/dw_hdmi_phy.c		dwhdmi_core
+makeoptions	dwhdmi_core	"CPPFLAGS.dwhdmi_core"+="${CPPFLAGS.drmkms}"
 
 # Analogix DisplayPort
 device	anxdp: edid, videomode, drmkms, drmkms_i2c
