@@ -41,14 +41,16 @@ struct frame {
 	uint32_t fb;
 };
 
-static uint64_t milliseconds(void)
+static uint64_t
+milliseconds(void)
 {
 	struct timespec ts;
 	CHECK(clock_gettime(CLOCK_MONOTONIC, &ts) == 0 && ts.tv_sec >= 0);
 	return (uint64_t)ts.tv_sec * 1000 + (unsigned)ts.tv_nsec / 1000000;
 }
 
-static uint32_t property(
+static uint32_t
+property(
     int fd, uint32_t object, uint32_t type, const char *name, uint64_t *value)
 {
 	uint32_t ids[NPROP];
@@ -77,7 +79,8 @@ static uint32_t property(
 	return found;
 }
 
-static void query(int fd, struct output *o)
+static void
+query(int fd, struct output *o)
 {
 	char name[32] = {0};
 	struct drm_version version = {
@@ -154,8 +157,8 @@ static void query(int fd, struct output *o)
 	    o->mode.clock);
 }
 
-static void create_frame(
-    int fd, const struct output *o, struct frame *f, uint32_t color)
+static void
+create_frame(int fd, const struct output *o, struct frame *f, uint32_t color)
 {
 	struct drm_mode_map_dumb map;
 	struct drm_mode_fb_cmd2 fb = {.width = o->mode.hdisplay,
@@ -194,7 +197,8 @@ static void create_frame(
 	f->fb = fb.fb_id;
 }
 
-static void commit(int fd, const struct output *o, uint32_t fb, uint32_t blob,
+static void
+commit(int fd, const struct output *o, uint32_t fb, uint32_t blob,
     uint32_t flags, uint64_t token)
 {
 	uint32_t objects[3] = {o->crtc, o->connector, o->plane};
@@ -224,8 +228,8 @@ static void commit(int fd, const struct output *o, uint32_t fb, uint32_t blob,
 	}
 }
 
-static uint64_t wait_flip(
-    int fd, uint32_t crtc, uint64_t token, uint64_t previous)
+static uint64_t
+wait_flip(int fd, uint32_t crtc, uint64_t token, uint64_t previous)
 {
 	struct pollfd pfd = {.fd = fd, .events = POLLIN};
 	struct drm_event_vblank event;
@@ -253,7 +257,8 @@ static uint64_t wait_flip(
 	return stamp;
 }
 
-int main(int argc, char **argv)
+int
+main(int argc, char **argv)
 {
 	struct output output = {0};
 	struct frame frames[NFRAME] = {0};

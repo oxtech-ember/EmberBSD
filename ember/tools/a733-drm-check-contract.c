@@ -84,29 +84,34 @@ static _Noreturn void fake_exit(int);
 #undef munmap
 #undef exit
 
-static int fake_open(const char *path, int flags, ...)
+static int
+fake_open(const char *path, int flags, ...)
 {
 	VERIFY(strcmp(path, "/dev/dri/card7") == 0);
 	VERIFY(flags == (O_RDWR | O_CLOEXEC));
 	return 3;
 }
-static int fake_close(int fd)
+static int
+fake_close(int fd)
 {
 	VERIFY(fd == 3);
 	closed++;
 	return 0;
 }
-static unsigned fake_alarm(unsigned seconds)
+static unsigned
+fake_alarm(unsigned seconds)
 {
 	VERIFY(seconds == 30);
 	return 0;
 }
-static _Noreturn void fake_exit(int status)
+static _Noreturn void
+fake_exit(int status)
 {
 	VERIFY(status == 1);
 	longjmp(failed, 1);
 }
-static int fake_clock_gettime(clockid_t id, struct timespec *ts)
+static int
+fake_clock_gettime(clockid_t id, struct timespec *ts)
 {
 	VERIFY(id == CLOCK_MONOTONIC);
 	tick++;
@@ -114,7 +119,8 @@ static int fake_clock_gettime(clockid_t id, struct timespec *ts)
 	    .tv_sec = tick / 1000, .tv_nsec = (long)(tick % 1000) * 1000000};
 	return 0;
 }
-static int fake_poll(struct pollfd *p, nfds_t n, int timeout)
+static int
+fake_poll(struct pollfd *p, nfds_t n, int timeout)
 {
 	VERIFY(timeout > 0 && timeout <= 5000);
 	if (!p) {
@@ -135,7 +141,8 @@ static int fake_poll(struct pollfd *p, nfds_t n, int timeout)
 	p->revents = POLLIN;
 	return 1;
 }
-static ssize_t fake_read(int fd, void *buf, size_t size)
+static ssize_t
+fake_read(int fd, void *buf, size_t size)
 {
 	struct drm_event_vblank e = {
 	    .base = {DRM_EVENT_FLIP_COMPLETE, sizeof(e)},
@@ -162,8 +169,8 @@ static ssize_t fake_read(int fd, void *buf, size_t size)
 	memcpy(buf, &e, sizeof(e));
 	return fault == 21 ? (ssize_t)sizeof(e) - 1 : (ssize_t)sizeof(e);
 }
-static void *fake_mmap(
-    void *addr, size_t length, int prot, int flags, int fd, off_t off)
+static void *
+fake_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t off)
 {
 	VERIFY(addr == NULL && length == 640 * 480 * 4 &&
 	       prot == (PROT_READ | PROT_WRITE));
@@ -174,7 +181,8 @@ static void *fake_mmap(
 	VERIFY(allocation != NULL);
 	return allocation;
 }
-static int fake_munmap(void *addr, size_t length)
+static int
+fake_munmap(void *addr, size_t length)
 {
 	static const uint32_t colors[4] = {
 	    0xff0000, 0x00ff00, 0x0000ff, 0xffffff};
@@ -188,7 +196,8 @@ static int fake_munmap(void *addr, size_t length)
 }
 static const char *const plane_names[] = {"type", "FB_ID", "CRTC_ID", "SRC_X",
     "SRC_Y", "SRC_W", "SRC_H", "CRTC_X", "CRTC_Y", "CRTC_W", "CRTC_H"};
-static int fake_ioctl(int fd, unsigned long op, ...)
+static int
+fake_ioctl(int fd, unsigned long op, ...)
 {
 	void *arg;
 	va_list ap;
@@ -365,11 +374,12 @@ static int fake_ioctl(int fd, unsigned long op, ...)
 		VERIFY(false);
 	return 0;
 }
-int main(void)
+int
+main(void)
 {
 	char *query_args[] = {"check", "--query", "/dev/dri/card7", NULL};
 	char *commit_args[] = {"check", "--commit", "/dev/dri/card7", NULL};
-	for (unsigned scenario = 0; scenario <= 27; scenario++) {
+	for (volatile unsigned scenario = 0; scenario <= 27; scenario++) {
 		errno = 0;
 		fault = scenario == 23 ? 0 : scenario;
 		calls = frames = flips = tests = masters = closed = retries = 0;
