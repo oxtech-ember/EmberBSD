@@ -513,6 +513,7 @@ rkfb*		at rkdrm?		# Rockchip DRM framebuffer
 rkvop*		at fdt?			# Rockchip Visual Output Processor
 sun60ihdmi*	at fdt?			# A733 guarded HDMI output
 sun60ide*	at fdt?			# A733 guarded DE352 coordinator
+sun60idrm*	at fdt?			# A733 fixed-mode native KMS
 sunxide2bus*	at fdt? pass 4		# Allwinner DE2 bus
 sunxidrm*	at fdt?	pass 5		# Allwinner Display Pipeline
 sunxifb*	at sunxidrm?		# Allwinner DRM framebuffer
