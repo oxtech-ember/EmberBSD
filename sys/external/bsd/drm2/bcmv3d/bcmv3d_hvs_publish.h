@@ -39,11 +39,23 @@ enum bcmv3d_hvs_publish_stage {
 	BCMV3D_PUBLISH_COMPLETE
 };
 
+/*
+ * Read-only timing snapshot, in register order:
+ * PV0 VCONTROL, VSYNCD_EVEN, HORZA/B, VERTA/B;
+ * HDMI0 HORZA/B, VERTA0/1, VERTB0/1.
+ * words counts only successful reads, PV0 first. A fault retains the prefix.
+ */
+struct bcmv3d_hvs_publish_timing {
+	uint32_t pv[6], hdmi[6];
+	unsigned int words;
+};
+
 /* Fresh zeroed storage in the retained boot owner. No release predicate. */
 struct bcmv3d_hvs_publish_status {
 	struct bcmv3d_mmu4_native_status native;
 	struct bcm2712_hvs_frame frame;
 	struct bcm2712_hvs_dlist list;
+	struct bcmv3d_hvs_publish_timing timing;
 	enum bcmv3d_hvs_publish_stage stage;
 	enum bcmv3d_hvs_publish_window window;
 	uint32_t version, offset, raw, reject_mask, reject_expected;

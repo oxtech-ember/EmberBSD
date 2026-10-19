@@ -82,9 +82,16 @@ begin
         'native-primary' => ["\tif (n->program_error != 0)\n\t\treturn n->program_error;\n\tif (n->prepare_error != 0)\n\t\treturn n->prepare_error;\n\tif (n->fault != 0)\n\t\treturn n->fault;", "\tif (n->fault != 0)\n\t\treturn n->fault;\n\tif (n->program_error != 0)\n\t\treturn n->program_error;\n\tif (n->prepare_error != 0)\n\t\treturn n->prepare_error;", '0:real-combined:0', 'error == expected'],
         'eof-complete' => ['(s->channel_status & 0x6000) == 0x4000)', '(s->channel_status & 0x4000) != 0)', '0:eof:0', 'error == expected'],
         'firmware-policy' => ['0x00e0003d, pv.control & 0x00e0003d', '0x06fff03d, pv.control & 0x06fff03d', '0:firmware:0', 'error == expected'],
-        'vcontrol-29' => ['0xdfffffff,\n\t    pv.v_control & 0xdfffffff', '0xffffffff,\n\t    pv.v_control', '0:firmware:0', 'error == expected'],
-        'vcontrol-31' => ['0xdfffffff,\n\t    pv.v_control & 0xdfffffff', '0x5fffffff,\n\t    pv.v_control & 0x5fffffff', '0:vcontrol-high:0', 'error == expected'],
-        'vcontrol-23' => ['0xdfffffff,\n\t    pv.v_control & 0xdfffffff', '0xdf7fffff,\n\t    pv.v_control & 0xdf7fffff', '0:vcontrol-high:1', 'error == expected'],
+        'ppc2-horza' => ['horza = 0x004a0016;', 'horza = pv.horza;', '0:firmware:0', 'error == expected'],
+        'ppc2-horzb' => ['horzb = 0x002c03c0;', 'horzb = pv.horzb;', '1:firmware:0', 'error == expected'],
+        'vcontrol-31' => ['s->timing.pv[0], 0xffffffff, value);', 's->timing.pv[0], 0x7fffffff, value);', '0:vcontrol-high:0', 'error == expected'],
+        'vcontrol-23' => ['s->timing.pv[0], 0xffffffff, value);', 's->timing.pv[0], 0xff7fffff, value);', '0:vcontrol-high:1', 'error == expected'],
+        'vcontrol-interlace' => ['s->timing.pv[0], 0xffffffff, value);', 's->timing.pv[0], 0xffffffef, value);', '0:interlace:0', 'error == expected'],
+        'snapshot-prefix' => ['s->timing.pv[i] = s->raw;', 's->timing.pv[i] = 0;', '0:positive:0', 'error == expected'],
+        'snapshot-complete' => ['i < __arraycount(hdmi_offsets)', 'i + 1 < __arraycount(hdmi_offsets)', '0:first-timing:0', 'pb.status.timing.words == 12'],
+        'snapshot-cached' => ['CACHED(BCMV3D_PUBLISH_PV0, 0xc, s->timing.pv[2], 0xffffffff, horza);', 'EXPECT(BCMV3D_PUBLISH_PV0, 0xc, 0xffffffff, horza);', '0:positive:0', 'pb.timing_reads[i] == (i == 0 ? 2U : 1U)'],
+        'snapshot-diagnostic' => ['s->offset = offset;\n\ts->raw = value;', 's->offset = offset ^ 4;\n\ts->raw = value;', '0:first-timing:0', 'pb.status.offset =='],
+        'snapshot-read-error' => ['READ(BCMV3D_PUBLISH_PV0, pv_offsets[i]);', '(void)publish_read(io, arg, s, BCMV3D_PUBLISH_PV0, pv_offsets[i]);', '0:read:18', 'arg == &pb && !pb.faulted && !pb.pending'],
         'prepared' => ['!n->backing.prepared ||', 'false ||', '0:native:17', 'pb.status.native_valid && pb.status.native.backing.prepared'],
         'presync' => ['n->backing.syncs != 5 ||', 'false ||', '0:native:21', 'pb.status.native.backing.sealed && pb.status.native.backing.syncs == 5'],
         'dma' => ['frame->dma_base != 0 ||', 'false ||', '0:invalid:0', 'value == plane_word(pb.dlist_writes)'],
@@ -99,7 +106,9 @@ begin
         'geometry' => ['WRITE(BCMV3D_PUBLISH_HVS, ctrl, 0x877f0437);', 'WRITE(BCMV3D_PUBLISH_HVS, ctrl, 0x87800438);', '0:positive:0', 'value == 0x877f0437'],
         'phy-rate' => ['{ BCMV3D_PUBLISH_RM0, 0x18, 0xffffffff, 0x98100000 }', '{ BCMV3D_PUBLISH_RM0, 0x18, 0, 0 }', '0:profile:36', 'error == expected'],
         'rgb' => ['{ BCMV3D_PUBLISH_DVP0, 0xf4, 0xffffff, 0x354021 }', '{ BCMV3D_PUBLISH_DVP0, 0xf4, 0, 0 }', '0:profile:24', 'error == expected'],
-        'pv-timing' => ['EXPECT(BCMV3D_PUBLISH_PV0, 0x10, 0xffffffff, pv.horzb);', 'if (false) EXPECT(BCMV3D_PUBLISH_PV0, 0x10, 0xffffffff, pv.horzb);', '0:profile:5', 'error == expected'],
+        'ppc2-crossed-horza' => ['CACHED(BCMV3D_PUBLISH_PV0, 0xc, s->timing.pv[2], 0xffffffff, horza);', 'if (false) CACHED(BCMV3D_PUBLISH_PV0, 0xc, s->timing.pv[2], 0xffffffff, horza);', '1:packing:4', 'error == expected'],
+        'ppc2-crossed-horzb' => ['CACHED(BCMV3D_PUBLISH_PV0, 0x10, s->timing.pv[3], 0xffffffff, horzb);', 'if (false) CACHED(BCMV3D_PUBLISH_PV0, 0x10, s->timing.pv[3], 0xffffffff, horzb);', '0:packing:5', 'error == expected'],
+        'pv-timing' => ['CACHED(BCMV3D_PUBLISH_PV0, 0x10, s->timing.pv[3], 0xffffffff, horzb);', 'if (false) CACHED(BCMV3D_PUBLISH_PV0, 0x10, s->timing.pv[3], 0xffffffff, horzb);', '0:profile:5', 'error == expected'],
         'hdmi-enable' => ['{ BCMV3D_PUBLISH_HD, 0x44, 0x99040000, 0x80000000 }', '{ BCMV3D_PUBLISH_HD, 0x44, 0, 0 }', '0:profile:17', 'error == expected'],
         'write-error' => ['error = io->write(arg, window, offset, value);', 'error = io->write(arg, window, offset, value); error = 0;', '0:write:1', '!pb.faulted && pb.pending'],
         'poll-bound' => ['#define PUBLISH_POLLS\t\t100U', '#define PUBLISH_POLLS\t\t99U', '0:timeout:0', 'pb.delays == 100 && pb.status.polls == 100'],
@@ -127,7 +136,7 @@ ensure
   File.binwrite(work + '/commands.json', JSON.pretty_generate(commands) + "\n")
   File.binwrite(work + '/source.json', JSON.pretty_generate({sha256: inputs,
     extraction: 'Complete actual C/H bodies; include/RCS lines alone removed. The complete existing native fixture main is renamed and reused without edits. Real adapter, ICAC, backing and fixed encoder bodies execute.',
-    scope: 'Controlled kernel/bus/allocation services. Native admission, clocks, mappings and real SRAM/UPM/COB ownership are external requirements. No native HVS caller or hardware proof.'}) + "\n")
+    scope: 'Controlled kernel/bus/allocation services. Native admission, clocks, mappings and real SRAM/UPM/COB ownership are external requirements. The real native boot caller is covered separately by the joined fixture. No hardware proof.'}) + "\n")
   if ENV['HVS_PUBLISH_EVIDENCE']
     dest = ENV.fetch('HVS_PUBLISH_EVIDENCE')
     abort 'new evidence required' if File.exist?(dest)

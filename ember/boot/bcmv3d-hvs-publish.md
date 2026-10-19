@@ -66,8 +66,13 @@ capacity, RUN status and active list. After helper completion, a single 20 ms
 diagnostic sample records STATUS and the six-bit frame counter. An unchanged
 counter does not fail completion. A failed diagnostic read retains its error and
 the separate completed helper result. No sample proves visible pixels or AXI drain.
-Target GCC16 linkage, actual target-TU analysis and physical acceptance of this
-publication continuation remain pending.
+A coherent GCC16 kernel and four-module kit links successfully. Actual target-TU
+GCC, Cppcheck and Clang Static Analyzer checks pass their recorded classifications.
+On one BCM2712 board, native MMU4 completes and the four GPU tests pass. HVS
+publication refuses PV0 HORZA=004a0016 before any write. The complete inherited
+mode is not yet confirmed. The coupled-profile correction below has host checks
+only. Physical HVS publication
+and a first visible frame remain pending.
 
 ## Conservative inherited profile
 
@@ -84,8 +89,10 @@ A future owner can then implement complete mode programming from actual facts.
 | HVS global +20 | 807d30f0 | 802000f0 |
 | HVS priority maps | ffffffff | ffffffff, ffffffff |
 | HVS COB0/1/2 | ffffffff | 87004b10, 4b000f10, 0f000000 |
-| PV0 +0 / +4 | 00e0003d / dfffffff | 0 / 2 |
-| PV0 +8, +c, +10, +14, +18 | ffffffff | 0, 0094002c, 00580780, 00240005, 00040438 |
+| PV0 +0 | 00e0003d | 0 |
+| PV0 +4 / +c / +10, native PPC1 | ffffffff | 20000002 / 0094002c / 00580780 |
+| PV0 +4 / +c / +10, inherited PPC2 | ffffffff | 2 / 004a0016 / 002c03c0 |
+| PV0 +8 / +14 / +18 | ffffffff | 0 / 00240005 / 00040438 |
 | PV0 +24 / +34 / +94 | 3ff / 3c / ff0 | 0 / 20 / 110 |
 | HDMI0 +ec / +f0 | 1fffffff / 07ff07ff | 0058c780 / 0094002c |
 | HDMI0 +f4 / +100 | 1f7f1fff | 05040438 |
@@ -101,12 +108,19 @@ A future owner can then implement complete mode programming from actual facts.
 All table numbers are hexadecimal. PV CONTROL retains the inherited FIFO levels,
 CLR_AT_START, WAIT_HSTART and underflow policy. They are driver tuning, not a
 format or routing proof. Only FORMAT24, PIXEL_REP0, CLK_SELECT0 and EN0 are
-checked there. VCONTROL accepts exactly 2 and 20000002. The former was observed
-after native firmware quiesce; the latter is the pinned progressive native
-encoder word. Only bit 29 is ignored. All other VCONTROL bits, including unknown
-bits 31 and 23, must match 2. The pinned source sets bit 29 in its progressive branch
-but does not document its hardware semantics. This helper does not infer those
-semantics or write that bit. The exact timing, link and PHY checks still apply.
+checked there. Exact VCONTROL selects one complete horizontal pair. VCONTROL
+20000002 requires native PPC1 HORZA/HORZB 0094002c/00580780. VCONTROL 2 requires
+inherited PPC2 004a0016/002c03c0. Crossed or mixed pairs are refused. Interlace
+and every other VCONTROL encoding, including unknown bits 31 and 23, are refused.
+The native BCM2712 encoder remains progressive PPC1. The helper does not write
+VCONTROL bit 29 or treat it as an independent permission to halve a mode.
+
+The pinned PV configuration divides all four horizontal components by the chosen
+pixels-per-clock value. The progressive BCM2712 variant selects PPC1; its
+interlaced variant selects PPC2. The retained firmware progressive packing is
+accepted only as the exact additional tuple above. Vertical words, HDMI timing,
+PHY, clocks, HVS width and frame span remain unchanged. The partial hardware
+observation of HORZA alone does not establish the full inherited mode.
 
 CSC coefficients must match the pinned full
 RGB identity matrix or limited RGB matrix. The helper rejects YCbCr conversion,
@@ -122,6 +136,17 @@ C0 channel0 CTRL0/CTRL1/LPTR/COB/STATUS/active-DL offsets are 30/34/3c/40/44/48;
 D0 offsets are 100/104/110/114/118/11c. Channel stride is 20 or 40. Priority maps
 are b8/bc or 38/3c. The generation must match the supplied reservation variant.
 All three HVS channels and both PVs must be inactive. RESET can remain set.
+
+After actual native admission, generation, all inactive-pipeline checks and the
+inherited HVS configuration checks, the helper captures twelve timing words. It
+reads PV0 VCONTROL, VSYNCD_EVEN, HORZA/B and VERTA/B, then HDMI0 HORZA/B,
+VERTA0/1 and VERTB0/1. It captures the complete group before evaluating a timing
+member. The retained status records raw words and the successful prefix length.
+A callback fault stops immediately and leaves later slots zero. Timing checks
+use only the saved words. They retain the first mismatch window, offset, raw,
+mask and expected value. The owner prints this cached snapshot after success or
+refusal. Printing causes no additional register access. This bounded sequential
+snapshot does not imply an atomic hardware sample or a confirmed physical mode.
 
 All native and inherited-profile checks finish before the first write. The helper
 uses the actual plane encoder, writes ten SRAM words at +4080 through +40a4 and
@@ -158,7 +183,9 @@ bodies and real fixed encoders. Kernel, allocation and bus services are controll
 Independent literals check both layouts, word addresses, all ten list words,
 PREWRITE status, fresh RMW, barriers, first 128 preservation, inherited profiles,
 all read/write faults, partial writes, ignored writes, retained state and one-shot
-refusal. Each causal mutant must compile, then fail its named CHECK with SIGABRT.
+refusal. Both exact PPC tuples, crossed and mixed pairs, all snapshot read faults,
+pre-snapshot refusals, complete snapshots before a timing mismatch and cached
+diagnostics are checked. Each causal mutant must compile, then fail its named CHECK with SIGABRT.
 `HVS_PUBLISH_EVIDENCE`, `HVS_PUBLISH_SELECT`, `HVS_PUBLISH_MUTANTS`, `CC`, `CFLAGS`
 and `TEST_RUNNER` preserve or select bounded host checks. These tests do not prove
 native pool ownership or a working display.

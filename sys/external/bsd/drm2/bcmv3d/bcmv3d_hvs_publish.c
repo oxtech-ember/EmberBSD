@@ -108,6 +108,23 @@ publish_read(const struct bcmv3d_hvs_publish_io *io, void *arg,
 }
 
 static int
+publish_cached(struct bcmv3d_hvs_publish_status *s,
+    enum bcmv3d_hvs_publish_window window, uint32_t offset, uint32_t value,
+    uint32_t mask, uint32_t expected)
+{
+
+	s->window = window;
+	s->offset = offset;
+	s->raw = value;
+	s->raw_valid = true;
+	s->reject_mask = mask;
+	s->reject_expected = expected;
+	if ((value & mask) == expected)
+		return 0;
+	return s->mutation_attempted ? EIO : EOPNOTSUPP;
+}
+
+static int
 publish_expect(const struct bcmv3d_hvs_publish_io *io, void *arg,
     struct bcmv3d_hvs_publish_status *s, enum bcmv3d_hvs_publish_window window,
     uint32_t offset, uint32_t mask, uint32_t expected)
@@ -117,11 +134,7 @@ publish_expect(const struct bcmv3d_hvs_publish_io *io, void *arg,
 	error = publish_read(io, arg, s, window, offset);
 	if (error != 0)
 		return error;
-	s->reject_mask = mask;
-	s->reject_expected = expected;
-	if ((s->raw & mask) == expected)
-		return 0;
-	return s->mutation_attempted ? EIO : EOPNOTSUPP;
+	return publish_cached(s, window, offset, s->raw, mask, expected);
 }
 
 static int
@@ -155,7 +168,12 @@ bcmv3d_hvs_publish_1080p60(struct bcmv3d_mmu4_native *native,
 	struct bcm2712_pv0_timing pv;
 	struct bcm2712_hdmi0_timing hdmi;
 	const struct publish_profile_word *word;
+	static const uint32_t pv_offsets[] = { 4, 8, 0xc, 0x10, 0x14, 0x18 };
+	static const uint32_t hdmi_offsets[] = {
+		0xec, 0xf0, 0xf4, 0x100, 0xf8, 0x104
+	};
 	uint32_t ctrl, stat, stride, lptr, cob, dl, pri, value, scale, offset;
+	uint32_t horza, horzb;
 	unsigned int i, poll;
 	int error;
 
@@ -193,6 +211,10 @@ bcmv3d_hvs_publish_1080p60(struct bcmv3d_mmu4_native *native,
 } while (0)
 #define EXPECT(w, o, m, e) do { \
 	error = publish_expect(io, arg, s, (w), (o), (m), (e)); \
+	if (error != 0) goto done; \
+} while (0)
+#define CACHED(w, o, v, m, e) do { \
+	error = publish_cached(s, (w), (o), (v), (m), (e)); \
 	if (error != 0) goto done; \
 } while (0)
 #define WRITE(w, o, v) do { \
@@ -248,25 +270,50 @@ bcmv3d_hvs_publish_1080p60(struct bcmv3d_mmu4_native *native,
 	EXPECT(BCMV3D_PUBLISH_HVS, cob, 0xffffffff, 0x87004b10);
 	EXPECT(BCMV3D_PUBLISH_HVS, cob + stride, 0xffffffff, 0x4b000f10);
 	EXPECT(BCMV3D_PUBLISH_HVS, cob + 2 * stride, 0xffffffff, 0x0f000000);
+	/* Capture all timing words before checking any member of the group. */
+	for (i = 0; i < __arraycount(pv_offsets); i++) {
+		READ(BCMV3D_PUBLISH_PV0, pv_offsets[i]);
+		s->timing.pv[i] = s->raw;
+		s->timing.words++;
+	}
+	for (i = 0; i < __arraycount(hdmi_offsets); i++) {
+		READ(BCMV3D_PUBLISH_HDMI0, hdmi_offsets[i]);
+		s->timing.hdmi[i] = s->raw;
+		s->timing.words++;
+	}
 	/* Retain FIFO/start policy. Check only format, repetition and route. */
 	EXPECT(BCMV3D_PUBLISH_PV0, 0, 0x00e0003d, pv.control & 0x00e0003d);
-	/* Both observed firmware 2 and native 0x20000002 are accepted. */
-	EXPECT(BCMV3D_PUBLISH_PV0, 4, 0xdfffffff,
-	    pv.v_control & 0xdfffffff);
-	EXPECT(BCMV3D_PUBLISH_PV0, 8, 0xffffffff, pv.vsyncd_even);
-	EXPECT(BCMV3D_PUBLISH_PV0, 0xc, 0xffffffff, pv.horza);
-	EXPECT(BCMV3D_PUBLISH_PV0, 0x10, 0xffffffff, pv.horzb);
-	EXPECT(BCMV3D_PUBLISH_PV0, 0x14, 0xffffffff, pv.verta);
-	EXPECT(BCMV3D_PUBLISH_PV0, 0x18, 0xffffffff, pv.vertb);
+	/* Exact VCONTROL selects one complete horizontal packing profile. */
+	if (s->timing.pv[0] == 2) {
+		value = 2;
+		horza = 0x004a0016;
+		horzb = 0x002c03c0;
+	} else {
+		value = pv.v_control;
+		horza = pv.horza;
+		horzb = pv.horzb;
+	}
+	CACHED(BCMV3D_PUBLISH_PV0, 4, s->timing.pv[0], 0xffffffff, value);
+	CACHED(BCMV3D_PUBLISH_PV0, 8, s->timing.pv[1], 0xffffffff, pv.vsyncd_even);
+	CACHED(BCMV3D_PUBLISH_PV0, 0xc, s->timing.pv[2], 0xffffffff, horza);
+	CACHED(BCMV3D_PUBLISH_PV0, 0x10, s->timing.pv[3], 0xffffffff, horzb);
+	CACHED(BCMV3D_PUBLISH_PV0, 0x14, s->timing.pv[4], 0xffffffff, pv.verta);
+	CACHED(BCMV3D_PUBLISH_PV0, 0x18, s->timing.pv[5], 0xffffffff, pv.vertb);
 	EXPECT(BCMV3D_PUBLISH_PV0, 0x24, 0x3ff, 0);
 	EXPECT(BCMV3D_PUBLISH_PV0, 0x34, 0x3c, pv.mux_cfg);
 	EXPECT(BCMV3D_PUBLISH_PV0, 0x94, 0xff0, pv.pipe_init_ctrl & 0xff0);
-	EXPECT(BCMV3D_PUBLISH_HDMI0, 0xec, 0x1fffffff, hdmi.horza);
-	EXPECT(BCMV3D_PUBLISH_HDMI0, 0xf0, 0x07ff07ff, hdmi.horzb);
-	EXPECT(BCMV3D_PUBLISH_HDMI0, 0xf4, 0x1f7f1fff, hdmi.verta0);
-	EXPECT(BCMV3D_PUBLISH_HDMI0, 0x100, 0x1f7f1fff, hdmi.verta1);
-	EXPECT(BCMV3D_PUBLISH_HDMI0, 0xf8, 0x3fff01ff, hdmi.vertb0);
-	EXPECT(BCMV3D_PUBLISH_HDMI0, 0x104, 0x3fff01ff, hdmi.vertb1);
+	CACHED(BCMV3D_PUBLISH_HDMI0, 0xec, s->timing.hdmi[0],
+	    0x1fffffff, hdmi.horza);
+	CACHED(BCMV3D_PUBLISH_HDMI0, 0xf0, s->timing.hdmi[1],
+	    0x07ff07ff, hdmi.horzb);
+	CACHED(BCMV3D_PUBLISH_HDMI0, 0xf4, s->timing.hdmi[2],
+	    0x1f7f1fff, hdmi.verta0);
+	CACHED(BCMV3D_PUBLISH_HDMI0, 0x100, s->timing.hdmi[3],
+	    0x1f7f1fff, hdmi.verta1);
+	CACHED(BCMV3D_PUBLISH_HDMI0, 0xf8, s->timing.hdmi[4],
+	    0x3fff01ff, hdmi.vertb0);
+	CACHED(BCMV3D_PUBLISH_HDMI0, 0x104, s->timing.hdmi[5],
+	    0x3fff01ff, hdmi.vertb1);
 	for (i = 0; i < __arraycount(publish_link); i++) {
 		word = &publish_link[i];
 		EXPECT(word->window, word->offset, word->mask, word->expected);
@@ -336,5 +383,6 @@ done:
 	return error;
 #undef READ
 #undef EXPECT
+#undef CACHED
 #undef WRITE
 }

@@ -885,6 +885,18 @@ publish:
 		    p->progress[0], p->progress[1], p->progress_valid[0],
 		    p->progress_valid[1], p->progress_error,
 		    (p->progress[0] >> 16) & 0x3f, (p->progress[1] >> 16) & 0x3f);
+		aprint_normal_dev(sc->sc_dev, "boot HVS timing: saved words %u/12; "
+		    "PV VCTRL/VSYNCD/HORZA/HORZB/VERTA/VERTB "
+		    "%08x/%08x/%08x/%08x/%08x/%08x; "
+		    "HDMI HORZA/HORZB/VERTA0/VERTA1/VERTB0/VERTB1 "
+		    "%08x/%08x/%08x/%08x/%08x/%08x\n",
+		    p->status.timing.words, p->status.timing.pv[0],
+		    p->status.timing.pv[1], p->status.timing.pv[2],
+		    p->status.timing.pv[3], p->status.timing.pv[4],
+		    p->status.timing.pv[5], p->status.timing.hdmi[0],
+		    p->status.timing.hdmi[1], p->status.timing.hdmi[2],
+		    p->status.timing.hdmi[3], p->status.timing.hdmi[4],
+		    p->status.timing.hdmi[5]);
 	}
 out:
 	KERNEL_UNLOCK_ONE(NULL);

@@ -251,6 +251,8 @@ controls={
 'hvs-helper-version'=>['publish-body.h','READ(BCMV3D_PUBLISH_HVS, 0);','READ(BCMV3D_PUBLISH_HVS, 0x20);','window == 0 && offset == 0'],
 'hvs-helper-lptr'=>['publish-body.h','WRITE(BCMV3D_PUBLISH_HVS, lptr, PUBLISH_HEAD);','WRITE(BCMV3D_PUBLISH_HVS, lptr, 128);','pb.barriers == 10 && value == 32'],
 'hvs-owner-native'=>['native-job.h','bcmv3d_hvs_publish_1080p60(owner->mmu4.native,','bcmv3d_hvs_publish_1080p60(NULL,','p->attempted && p->complete'],
+'hvs-timing-log'=>['native-job.h','p->status.timing.pv[2],','p->status.timing.pv[3],','strcmp(actual,expected) == 0'],
+
 
   'mmu4-context'=>['native-job.h','if (cold || panicstr != NULL || cpu_intr_p() || cpu_softintr_p())','if (false)','bcmv3d_bootfb_program_mmu4(&gpu_sc) == EWOULDBLOCK'],
   'mmu4-closed'=>['native-job.h','owner->phase != BCMV3D_BOOTFB_CLOSED ||','false ||','mmu4_permitted'],

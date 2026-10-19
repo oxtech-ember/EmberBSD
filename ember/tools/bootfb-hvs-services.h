@@ -23,13 +23,17 @@ static void hvs_before_publish(void)
 		pb.regs[0][(pb.stat+i*pb.stride)/4] = qb.regs[0][(qb.stat+i*qb.stride)/4];
 	}
 	for (unsigned i = 1; i <= 2; i++) { pb.regs[i][0] = qb.regs[i][0]; pb.regs[i][1] = qb.regs[i][1]; }
-	memcpy(pb.saved,pb.regs,sizeof(pb.regs));
+	if (pb.regs[1][1] == 2) {
+		pb.regs[1][0xc / 4] = 0x004a0016;
+		pb.regs[1][0x10 / 4] = 0x002c03c0;
+	}
 	pb.fail_read = hvs_read_fault; pb.fail_write = hvs_write_fault;
 	pb.partial = hvs_partial; pb.ignore_write = hvs_ignore_write;
 	if (hvs_profile_fault != 0) {
 		const struct profile_case *r = &profile[hvs_profile_fault-1];
 		pb.regs[r->window][r->offset/4] ^= r->flip;
 	}
+	memcpy(pb.saved,pb.regs,sizeof(pb.regs));
 	writeback_control[0] |= hvs_busy[0]; writeback_control[1] |= hvs_busy[1];
 	bootfb_publish_fault(hvs_native_fault);
 	switch (hvs_gate) {

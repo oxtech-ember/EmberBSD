@@ -173,6 +173,24 @@ static void print_device_message(device_t dev, const char *f, ...)
 	struct bcmv3d_bootfb_owner *o = &gpu_sc.sc_bootfb;
 	struct bcmv3d_display_stop *d = &o->display;
 	(void)dev;
+	if (strncmp(f,"boot HVS timing:",16) == 0) {
+		char actual[512], expected[512];
+		const struct bcmv3d_hvs_publish_timing *t = &o->publish.status.timing;
+		va_list ap;
+
+		CHECK(giant > 0 && !o->publish.executing);
+		va_start(ap,f); CHECK(vsnprintf(actual,sizeof(actual),f,ap) > 0); va_end(ap);
+		CHECK(snprintf(expected,sizeof(expected),
+		    "boot HVS timing: saved words %u/12; "
+		    "PV VCTRL/VSYNCD/HORZA/HORZB/VERTA/VERTB "
+		    "%08x/%08x/%08x/%08x/%08x/%08x; "
+		    "HDMI HORZA/HORZB/VERTA0/VERTA1/VERTB0/VERTB1 "
+		    "%08x/%08x/%08x/%08x/%08x/%08x\n",t->words,
+		    t->pv[0],t->pv[1],t->pv[2],t->pv[3],t->pv[4],t->pv[5],
+		    t->hdmi[0],t->hdmi[1],t->hdmi[2],t->hdmi[3],t->hdmi[4],t->hdmi[5]) > 0);
+		CHECK(strcmp(actual,expected) == 0);
+		return;
+	}
 	if (strncmp(f,"boot MMU4 cached native:",24) == 0) {
 		char actual[512], expected[512];
 		const struct bcmv3d_bootfb_mmu4 *m = &o->mmu4;
@@ -916,24 +934,33 @@ static void tests_hvs(void)
 	CHECK(!gpu_sc.sc_bootfb.publish.attempted && hvs_native_queries == 0 && hvs_maps == 0);
 	hvs_permitted = true; native_finish();
 	for (unsigned first = 0; first < 2; first++) {
-		for (unsigned variant = 0x53; variant <= 0x54; variant++) {
-			hvs_profile_boot(variant,first); hvs_reenter = true; native_finish();
-			p = &gpu_sc.sc_bootfb.publish;
-			CHECK(p->attempted && p->complete && !p->executing && p->fault == 0);
-			CHECK(p->status.native_valid && p->status.native.backing.prepared && p->status.native.backing.sealed);
-			CHECK(p->status.complete && p->status.active_list == 32 && (p->status.channel_status & 0x6000) == 0x4000);
-			CHECK(p->mapped == 0x1ff && hvs_maps == 6 && hvs_writeback_reads == 2 && hvs_native_queries == 1);
-			CHECK(p->dlist_first == 32 && p->dlist_words == 10 && p->frame.upm_offset == 0 && p->frame.upm_length == 15616 && p->frame.upm_slot == 0);
-			CHECK(p->frame.dma_base == 0 && p->frame.dma_span == 8294400 && p->frame.variant == variant);
-			CHECK(p->cxm_valid && p->cxm_words == 1024);
-			CHECK(p->cob[0] == 0x87004b10 && p->cob[1] == 0x4b000f10 && p->cob[2] == 0x0f000000);
-			CHECK(p->progress_valid[0] && p->progress_valid[1] && p->progress_error == 0);
-			CHECK(((p->progress[1] >> 16) & 0x3f) == 1 && p->progress[0] == 0x4000);
-			CHECK(pb.writes == 16 && pb.barriers == 16 && memcmp(pb.regs[0]+0x1000,pb.saved[0]+0x1000,128) == 0);
-			CHECK(gpu_sc.sc_bootfb.first_error == 0 && serial_fixture_held());
-			reads = pb.reads; writes = pb.writes; hvs_retry(EBUSY);
-			CHECK(bcmv3d_publish_read(&gpu_sc,BCMV3D_PUBLISH_HVS,0,&value) == EPERM && pb.reads == reads);
-			CHECK(bcmv3d_publish_write(&gpu_sc,BCMV3D_PUBLISH_HVS,0,0) == EPERM && pb.writes == writes);
+		for (unsigned packing = 0; packing < 2; packing++) {
+			for (unsigned variant = 0x53; variant <= 0x54; variant++) {
+				hvs_profile_boot(variant,first);
+				if (packing != 0) qb.regs[1][1] = 0x20000003;
+				hvs_reenter = true; native_finish();
+				p = &gpu_sc.sc_bootfb.publish;
+				CHECK(p->attempted && p->complete && !p->executing && p->fault == 0);
+				CHECK(p->status.native_valid && p->status.native.backing.prepared && p->status.native.backing.sealed);
+				CHECK(p->status.complete && p->status.active_list == 32 && (p->status.channel_status & 0x6000) == 0x4000);
+				CHECK(p->mapped == 0x1ff && hvs_maps == 6 && hvs_writeback_reads == 2 && hvs_native_queries == 1);
+				CHECK(p->dlist_first == 32 && p->dlist_words == 10 && p->frame.upm_offset == 0 && p->frame.upm_length == 15616 && p->frame.upm_slot == 0);
+				CHECK(p->frame.dma_base == 0 && p->frame.dma_span == 8294400 && p->frame.variant == variant);
+				CHECK(p->cxm_valid && p->cxm_words == 1024);
+				CHECK(p->cob[0] == 0x87004b10 && p->cob[1] == 0x4b000f10 && p->cob[2] == 0x0f000000);
+				CHECK(p->progress_valid[0] && p->progress_valid[1] && p->progress_error == 0);
+				CHECK(((p->progress[1] >> 16) & 0x3f) == 1 && p->progress[0] == 0x4000);
+				CHECK(pb.writes == 16 && pb.barriers == 16 && memcmp(pb.regs[0]+0x1000,pb.saved[0]+0x1000,128) == 0);
+				CHECK(p->status.timing.words == 12);
+				CHECK(p->status.timing.pv[0] == (packing == 0 ? 2U : 0x20000002U));
+				CHECK(p->status.timing.pv[2] == (packing == 0 ? 0x004a0016U : 0x0094002cU));
+				CHECK(p->status.timing.pv[3] == (packing == 0 ? 0x002c03c0U : 0x00580780U));
+				snapshot_check();
+				CHECK(gpu_sc.sc_bootfb.first_error == 0 && serial_fixture_held());
+				reads = pb.reads; writes = pb.writes; hvs_retry(EBUSY);
+				CHECK(bcmv3d_publish_read(&gpu_sc,BCMV3D_PUBLISH_HVS,0,&value) == EPERM && pb.reads == reads);
+				CHECK(bcmv3d_publish_write(&gpu_sc,BCMV3D_PUBLISH_HVS,0,0) == EPERM && pb.writes == writes);
+			}
 		}
 	}
 	for (unsigned gate = 1; gate <= 40; gate++) {

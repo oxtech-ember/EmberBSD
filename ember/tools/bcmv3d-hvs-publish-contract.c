@@ -70,6 +70,7 @@ static struct {
 	unsigned int accesses, reads, writes, barriers, delays;
 	unsigned int fail_read, fail_write, ignore_write, latch_delay;
 	unsigned int dlist_writes, dlist_reads, reset_writes, channel_writes;
+	unsigned int timing_reads[12];
 	bool pending, faulted, partial, timeout, reenter, eof;
 	enum bcmv3d_hvs_publish_window pending_window;
 	struct bcmv3d_hvs_publish_status status;
@@ -103,11 +104,48 @@ started(void)
 	    (pb.regs[1][0] & 1) != 0 && (pb.regs[1][1] & 1) != 0;
 }
 
+/* Independent snapshot register order. Never use a production offset table. */
+static unsigned int
+snapshot_index(enum bcmv3d_hvs_publish_window window, uint32_t offset)
+{
+	static const uint32_t pv[] = { 4, 8, 0xc, 0x10, 0x14, 0x18 };
+	static const uint32_t hdmi[] = { 0xec, 0xf0, 0xf4, 0x100, 0xf8, 0x104 };
+	unsigned int i;
+
+	for (i = 0; i < 6; i++) {
+		if (window == BCMV3D_PUBLISH_PV0 && offset == pv[i])
+			return i;
+		if (window == BCMV3D_PUBLISH_HDMI0 && offset == hdmi[i])
+			return i + 6;
+	}
+	return 12;
+}
+
+static void
+snapshot_check(void)
+{
+	unsigned int i, index;
+
+	CHECK(pb.status.timing.words <= 12);
+	for (i = 0; i < __arraycount(profile); i++) {
+		index = snapshot_index(profile[i].window, profile[i].offset);
+		if (index < 6) {
+			CHECK(pb.status.timing.pv[index] ==
+			    (index < pb.status.timing.words ?
+			    pb.saved[profile[i].window][profile[i].offset / 4] : 0));
+		} else if (index < 12) {
+			CHECK(pb.status.timing.hdmi[index - 6] ==
+			    (index < pb.status.timing.words ?
+			    pb.saved[profile[i].window][profile[i].offset / 4] : 0));
+		}
+	}
+}
+
 static int
 publish_test_read(void *arg, enum bcmv3d_hvs_publish_window window,
     uint32_t offset, uint32_t *out)
 {
-	unsigned int before;
+	unsigned int before, index;
 	uint32_t value;
 
 	CHECK(arg == &pb && !pb.faulted && !pb.pending);
@@ -123,6 +161,9 @@ publish_test_read(void *arg, enum bcmv3d_hvs_publish_window window,
 		    &pb.frame, &pb.status) == EBUSY);
 		CHECK(pb.accesses == before);
 	}
+	index = snapshot_index(window, offset);
+	if (pb.writes == 0 && index < 12)
+		pb.timing_reads[index]++;
 	if (++pb.reads == pb.fail_read) {
 		pb.faulted = true;
 		return EIO;
@@ -157,6 +198,10 @@ publish_test_write(void *arg, enum bcmv3d_hvs_publish_window window,
 	CHECK(pb.status.native_valid && pb.status.native.backing.prepared);
 	CHECK(pb.status.native.backing.sealed && pb.status.native.backing.syncs == 5);
 	CHECK(pb.status.mutation_attempted);
+	CHECK(pb.status.timing.words == 12);
+	snapshot_check();
+	for (unsigned int i = 0; i < 12; i++)
+		CHECK(pb.timing_reads[i] == (i == 0 ? 2U : 1U));
 	pb.accesses++;
 	pb.writes++;
 	failed = pb.writes == pb.fail_write;
@@ -420,9 +465,35 @@ publication_scenario(unsigned int variant, const char *kind, unsigned int id,
 		else
 			pb.regs[1 + (id - 6) / 2][(id - 6) & 1] |= 1;
 		expected = EOPNOTSUPP;
+	} else if (strcmp(kind, "hvs-profile") == 0) {
+		CHECK(id < 5);
+		pb.regs[0][(id < 2 ? pb.pri + 4 * id :
+		    pb.cob + (id - 2) * pb.stride) / 4] ^= 1;
+		expected = EOPNOTSUPP;
 	} else if (strcmp(kind, "firmware") == 0) {
 		pb.regs[1][0] = 0x07174000;
 		pb.regs[1][1] = 2;
+		pb.regs[1][0xc / 4] = 0x004a0016;
+		pb.regs[1][0x10 / 4] = 0x002c03c0;
+	} else if (strcmp(kind, "packing") == 0) {
+		CHECK(id < 6);
+		if (id >= 3) {
+			pb.regs[1][1] = 2;
+			pb.regs[1][0xc / 4] = 0x004a0016;
+			pb.regs[1][0x10 / 4] = 0x002c03c0;
+		}
+		if (id % 3 != 2)
+			pb.regs[1][0xc / 4] = id < 3 ? 0x004a0016 : 0x0094002c;
+		if (id % 3 != 1)
+			pb.regs[1][0x10 / 4] = id < 3 ? 0x002c03c0 : 0x00580780;
+		expected = EOPNOTSUPP;
+	} else if (strcmp(kind, "interlace") == 0) {
+		pb.regs[1][1] |= 0x10;
+		expected = EOPNOTSUPP;
+	} else if (strcmp(kind, "first-timing") == 0) {
+		pb.regs[1][0xc / 4] ^= 1;
+		pb.regs[4][0x104 / 4] ^= 1;
+		expected = EOPNOTSUPP;
 	} else if (strcmp(kind, "vcontrol-high") == 0) {
 		pb.regs[1][1] |= id == 0 ? 0x80000000 : 0x00800000;
 		expected = EOPNOTSUPP;
@@ -531,6 +602,30 @@ invalid_result:
 	    native_accesses);
 	CHECK(pb.status.attempted && pb.status.complete == (error == 0));
 	CHECK(pb.status.first_error == expected);
+	snapshot_check();
+	if (strcmp(kind, "native") == 0 || strcmp(kind, "real-unready") == 0 ||
+	    strcmp(kind, "real-partial") == 0 || strcmp(kind, "real-combined") == 0 ||
+	    strcmp(kind, "context") == 0 || strcmp(kind, "version") == 0 ||
+	    strcmp(kind, "busy") == 0 || strcmp(kind, "hvs-profile") == 0 ||
+	    (strcmp(kind, "profile") == 0 && id == 0))
+		CHECK(pb.status.timing.words == 0);
+	else if (strcmp(kind, "read") != 0)
+		CHECK(pb.status.timing.words == 12);
+	if (pb.status.timing.words == 12) {
+		for (before = 0; before < 12; before++)
+			CHECK(pb.timing_reads[before] == (before == 0 ? 2U : 1U));
+	}
+	if (strcmp(kind, "packing") == 0 || strcmp(kind, "interlace") == 0 ||
+	    strcmp(kind, "vcontrol-high") == 0 || strcmp(kind, "first-timing") == 0) {
+		CHECK(pb.writes == 0 && pb.status.raw_valid);
+		CHECK(pb.status.window == BCMV3D_PUBLISH_PV0);
+		CHECK(pb.status.offset == (strcmp(kind, "packing") == 0 ?
+		    (id % 3 == 2 ? 0x10U : 0xcU) :
+		    strcmp(kind, "first-timing") == 0 ? 0xcU : 4U));
+		CHECK(pb.status.raw == pb.saved[1][pb.status.offset / 4]);
+		CHECK(pb.status.reject_mask == 0xffffffff);
+		CHECK(pb.status.raw != pb.status.reject_expected);
+	}
 	if (error == 0) {
 		CHECK(pb.writes == 16 && pb.barriers == 16 && !pb.pending);
 		CHECK(pb.status.native.backing.prepared && pb.status.native.backing.sealed);
@@ -568,10 +663,13 @@ invalid_result:
 	for (before = 2; before < BCMV3D_PUBLISH_WINDOWS; before++)
 		CHECK(memcmp(pb.regs[before], pb.saved[before],
 		    sizeof(pb.regs[before])) == 0);
+	saved = pb.status;
 	before = pb.accesses;
 	CHECK(bcmv3d_hvs_publish_1080p60(owner, &publish_io, &pb,
 	    &pb.frame, &pb.status) == (error != 0 ? error : EBUSY));
 	CHECK(pb.accesses == before);
+	CHECK(memcmp(&saved, &pb.status, sizeof(saved)) == 0);
+	snapshot_check();
 	CHECK(heap_frees == 0 && drm_puts == 0);
 	*read_count = pb.reads;
 	*write_count = pb.writes;
@@ -634,7 +732,8 @@ main(void)
 	unsigned int variant, i, nreads = 100, nwrites = 16, r = 0, w = 0;
 	static const char *const single[] = {
 		"limited", "upm", "reserved", "timeout", "delay", "eof", "reenter",
-		"real-unready", "real-partial", "real-combined", "context", "firmware"
+		"real-unready", "real-partial", "real-combined", "context", "firmware",
+		"interlace", "first-timing"
 	};
 
 	for (variant = 0; variant < 2; variant++) {
@@ -650,6 +749,10 @@ main(void)
 			run_publication(variant, "vcontrol-high", i, &r, &w);
 			run_publication(variant, "pv-format", i, &r, &w);
 		}
+		for (i = 0; i < 6; i++)
+			run_publication(variant, "packing", i, &r, &w);
+		for (i = 0; i < 5; i++)
+			run_publication(variant, "hvs-profile", i, &r, &w);
 		for (i = 0; i < 13; i++)
 			run_publication(variant, "invalid", i, &r, &w);
 		for (i = 0; i < 10; i++)
