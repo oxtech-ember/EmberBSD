@@ -175,9 +175,14 @@ static void gt_sanitize(struct intel_gt *gt, bool force)
 
 void intel_gt_pm_fini(struct intel_gt *gt)
 {
-	intel_rps_fini(&gt->rps);
+	/*
+	 * intel_gt_init_early() creates the GT wakeref and the RPS locks.
+	 * Display and request boosting use them after a failed GT
+	 * initialization, which also calls this function before
+	 * intel_gt_driver_release().  intel_gt_driver_late_release()
+	 * destroys them once.
+	 */
 	intel_rc6_fini(&gt->rc6);
-	intel_wakeref_fini(&gt->wakeref);
 }
 
 int intel_gt_resume(struct intel_gt *gt)

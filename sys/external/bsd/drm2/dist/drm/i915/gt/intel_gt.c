@@ -666,4 +666,6 @@ void intel_gt_driver_late_release(struct intel_gt *gt)
 	intel_gt_fini_reset(gt);
 	intel_gt_fini_timelines(gt);
 	intel_engines_free(gt);
+	intel_rps_fini(&gt->rps);
+	intel_wakeref_fini(&gt->wakeref);
 }

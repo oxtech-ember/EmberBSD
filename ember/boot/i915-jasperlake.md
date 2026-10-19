@@ -173,6 +173,30 @@ The previous code fails the first ELSQ offset check.
 With the fix, a JSL trial kernel completes GT initialization without the idle timeout.
 Rendering acceptance is a separate stage.
 
+## GT lock lifetime after a failed initialization
+
+`intel_gt_init_early()` creates the GT wakeref and the RPS locks.
+The `intel_gt_init()` error path calls `intel_gt_pm_fini()`.
+`intel_gt_driver_release()` calls it again during detach.
+When `intel_gt_init()` returns `-EIO`, `i915_gem_init()` marks the GT wedged and keeps KMS.
+Because of this, the display stays attached after the failure.
+`intel_prepare_plane_fb()` then calls `intel_rps_mark_interactive()`, which takes `rps->lock`.
+Previously, `intel_gt_pm_fini()` destroyed these locks.
+Because of this, the first framebuffer task used a destroyed mutex and the kernel panicked before the console started.
+Now `intel_gt_driver_late_release()` destroys the wakeref and RPS locks once.
+
+```sh
+sh ember/tools/i915-rps-lifetime-contract.sh
+```
+
+The contract extracts `intel_rps_init_early()` and the real fini and release functions.
+It models `intel_gt_pm_init_early()`, the error sequence and each mutex state.
+It covers a failed GT initialization with display use, a normal detach and an early probe failure.
+It requires one destroy for each lock and no use after destroy.
+The previous code fails the first use after `intel_gt_pm_fini()`.
+A JSL kernel with the RPS part of the fix reaches the console after the GT failure.
+The wakeref part has no hardware test.
+
 ## Remaining port work
 
 The [workaround adaptation](i915-jasperlake-workarounds.md) adds FBC, power, GT and firmware selection.
