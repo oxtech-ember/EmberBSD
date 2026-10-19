@@ -394,7 +394,8 @@ release:
 static int
 a733_stage(SYSCTLFN_ARGS)
 {
-	struct a733_drm *sc = rnode->sysctl_data;
+	struct a733_drm *sc = container_of((int *)rnode->sysctl_data,
+	    struct a733_drm, stage);
 	struct sysctlnode node = *rnode;
 	int stage, error;
 
@@ -434,7 +435,8 @@ a733_stage(SYSCTLFN_ARGS)
 static int
 a733_fault(SYSCTLFN_ARGS)
 {
-	struct a733_drm *sc = rnode->sysctl_data;
+	struct a733_drm *sc = container_of((int *)rnode->sysctl_data,
+	    struct a733_drm, fault);
 	struct sysctlnode node = *rnode;
 	int fault;
 
@@ -449,7 +451,10 @@ a733_fault(SYSCTLFN_ARGS)
 static int
 a733_match(device_t parent, cfdata_t cf, void *aux)
 {
-	static const char *const compat[] = {"allwinner,sun60i-a733-display", NULL};
+	static const struct device_compatible_entry compat[] = {
+		{ .compat = "allwinner,sun60i-a733-display" },
+		DEVICE_COMPAT_EOL
+	};
 	const struct fdt_attach_args *faa = aux;
 	(void)parent;
 	(void)cf;
@@ -478,10 +483,11 @@ a733_attach(device_t parent, device_t self, void *aux)
 		return;
 	error = sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READWRITE,
 	    CTLTYPE_INT, "stage", SYSCTL_DESCR("Register KMS after accepted native scanout"),
-	    a733_stage, 0, sc, 0, CTL_CREATE, CTL_EOL);
+	    a733_stage, 0, &sc->stage, sizeof(sc->stage), CTL_CREATE, CTL_EOL);
 	if (error == 0)
 		error = sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
-		    CTLTYPE_INT, "fault", NULL, a733_fault, 0, sc, 0, CTL_CREATE, CTL_EOL);
+		    CTLTYPE_INT, "fault", NULL, a733_fault, 0, &sc->fault,
+		    sizeof(sc->fault), CTL_CREATE, CTL_EOL);
 	if (error != 0)
 		sysctl_teardown(&sc->sysctllog);
 }

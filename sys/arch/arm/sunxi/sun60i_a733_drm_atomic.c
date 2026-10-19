@@ -14,6 +14,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_file.h>
 #include <drm/drm_fourcc.h>
+#include <drm/drm_vblank.h>
 #include <arm/sunxi/sun60i_a733_drm_frame.h>
 #include "sun60i_a733_drm.h"
 
