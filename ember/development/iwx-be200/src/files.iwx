@@ -1,0 +1,5 @@
+
+# Intel Wi-Fi 6/7 (AX2xx, BE200), ported from OpenBSD iwx(4)
+device	iwx: ifnet, arp, wlan, firmload
+attach	iwx at pci
+file	dev/pci/if_iwx.c		iwx
