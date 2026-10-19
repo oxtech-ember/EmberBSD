@@ -92,8 +92,10 @@ static	int	ipcap_open(fname)
 	else if ((fd = open(fname, O_RDONLY)) == -1)
 		return -1;
 
-	if (read(fd, (char *)&ph, sizeof(ph)) != sizeof(ph))
+	if (read(fd, (char *)&ph, sizeof(ph)) != sizeof(ph)) {
+		(void) close(fd);
 		return -2;
+	}
 
 	if (ph.id != 0xa1b2c3d4) {
 		if (SWAPLONG(ph.id) != 0xa1b2c3d4) {
@@ -138,13 +140,15 @@ static	int	ipcap_read_rec(rec)
 	packetheader_t *rec;
 {
 	int	n, p, i;
+	char	*s = (char *)rec;
 
 	n = sizeof(*rec);
 
 	while (n > 0) {
-		i = read(pfd, (char *)rec, sizeof(*rec));
+		i = read(pfd, s, n);
 		if (i <= 0)
 			return -2;
+		s += i;
 		n -= i;
 	}
 

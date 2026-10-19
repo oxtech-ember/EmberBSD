@@ -18,7 +18,7 @@
 
 const char *const banner[] =
 {
-    "/* original parser id follows */",
+    "/* EmberBSD parser skeleton; original parser id follows. */",
     "/* yysccsid[] = \"@(#)yaccpar	1.9 (Berkeley) 02/21/93\" */",
     "/* (use YYMAJOR/YYMINOR for ifdefs dependent on parser version) */",
     "",
@@ -232,6 +232,7 @@ const char *const body_3[] =
     "    /* yym is set below */",
     "    /* yyn is set below */",
     "    yynerrs = 0;",
+    "    (void)yynerrs; /* User actions may omit the error count. */",
     "    yyerrflag = 0;",
     "    yychar = YYEMPTY;",
     "    yystate = 0;",

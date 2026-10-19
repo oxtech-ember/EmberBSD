@@ -141,11 +141,6 @@ prepare_elf32(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf32_t *dep)
 	uint32_t count = 0;
 	size_t base;
 	Elf32_Sym *sym;
-#ifdef __sparc
-	Elf32_Rela *rel;
-#else
-	Elf32_Rel *rel;
-#endif
 
 	/*LINTED*/
 	dofs = (dof_sec_t *)((char *)dof + dof->dofh_secoff);
@@ -203,7 +198,6 @@ prepare_elf32(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf32_t *dep)
 	count = 0;
 	strtabsz = 1;
 	dep->de_strtab[0] = '\0';
-	rel = dep->de_rel;
 	sym = dep->de_sym;
 	dep->de_global = 1;
 
@@ -245,9 +239,9 @@ printf("%s:%s(%d): DOODAD\n",__FUNCTION__,__FILE__,__LINE__);
 /* XXX */
 printf("%s:%s(%d): DOODAD\n",__FUNCTION__,__FILE__,__LINE__);
 #elif defined(__i386) || defined(__amd64)
-			rel->r_offset = s->dofs_offset +
+			dep->de_rel[count].r_offset = s->dofs_offset +
 			    dofr[j].dofr_offset;
-			rel->r_info = ELF32_R_INFO(count + dep->de_global,
+			dep->de_rel[count].r_info = ELF32_R_INFO(count + dep->de_global,
 			    R_386_PC32);
 #elif defined(__mips__)
 /* XXX */
@@ -257,18 +251,18 @@ printf("%s:%s(%d): DOODAD\n",__FUNCTION__,__FILE__,__LINE__);
 			 * Add 4 bytes to hit the low half of this 64-bit
 			 * big-endian address.
 			 */
-			rel->r_offset = s->dofs_offset +
+			dep->de_rel[count].r_offset = s->dofs_offset +
 			    dofr[j].dofr_offset + 4;
-			rel->r_info = ELF32_R_INFO(count + dep->de_global,
+			dep->de_rel[count].r_info = ELF32_R_INFO(count + dep->de_global,
 			    R_PPC_REL32);
 #elif defined(__sparc)
 			/*
 			 * Add 4 bytes to hit the low half of this 64-bit
 			 * big-endian address.
 			 */
-			rel->r_offset = s->dofs_offset +
+			dep->de_rel[count].r_offset = s->dofs_offset +
 			    dofr[j].dofr_offset + 4;
-			rel->r_info = ELF32_R_INFO(count + dep->de_global,
+			dep->de_rel[count].r_info = ELF32_R_INFO(count + dep->de_global,
 			    R_SPARC_32);
 #elif defined(__riscv__)
 /* XXX */
@@ -284,7 +278,6 @@ printf("%s:%s(%d): DOODAD\n",__FUNCTION__,__FILE__,__LINE__);
 			sym->st_other = 0;
 			sym->st_shndx = SHN_UNDEF;
 
-			rel++;
 			sym++;
 			count++;
 		}
@@ -346,7 +339,6 @@ prepare_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf64_t *dep)
 #endif
 	size_t base;
 	Elf64_Sym *sym;
-	Elf64_Rela *rel;
 
 	/*LINTED*/
 	dofs = (dof_sec_t *)((char *)dof + dof->dofh_secoff);
@@ -404,7 +396,6 @@ prepare_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf64_t *dep)
 	count = 0;
 	strtabsz = 1;
 	dep->de_strtab[0] = '\0';
-	rel = dep->de_rel;
 	sym = dep->de_sym;
 	dep->de_global = 1;
 
@@ -446,9 +437,9 @@ prepare_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf64_t *dep)
 #elif defined(__mips__)
 /* XXX */
 #elif defined(__powerpc__)
-			rel->r_offset = s->dofs_offset +
+			dep->de_rel[count].r_offset = s->dofs_offset +
 			    dofr[j].dofr_offset;
-			rel->r_info = ELF64_R_INFO(count + dep->de_global,
+			dep->de_rel[count].r_info = ELF64_R_INFO(count + dep->de_global,
 			    R_PPC64_REL64);
 #elif defined(__riscv__)
 /* XXX */
@@ -456,9 +447,9 @@ prepare_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf64_t *dep)
 #ifndef R_X86_64_PC64
 #define R_X86_64_PC64           24
 #endif
-			rel->r_offset = s->dofs_offset +
+			dep->de_rel[count].r_offset = s->dofs_offset +
 			    dofr[j].dofr_offset;
-			rel->r_info = ELF64_R_INFO(count + dep->de_global,
+			dep->de_rel[count].r_info = ELF64_R_INFO(count + dep->de_global,
 			    R_X86_64_PC64);
 #else
 #error unknown ISA
@@ -471,7 +462,6 @@ prepare_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf64_t *dep)
 			sym->st_other = 0;
 			sym->st_shndx = SHN_UNDEF;
 
-			rel++;
 			sym++;
 			count++;
 		}

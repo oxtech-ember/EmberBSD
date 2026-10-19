@@ -25,6 +25,7 @@ __RCSID("$NetBSD: delete.c,v 1.4 2017/11/22 12:47:30 rin Exp $");
 #include <bitstring.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -119,6 +120,11 @@ del(SCR *sp, MARK *fm, MARK *tm, int lmode)
 		/* EmberBSD: cursor offset never exceeds the line length. */
 		if (tlen > len)
 			tlen = len;
+		/* Include allocation slack before converting characters to bytes. */
+		if (tlen > SIZE_MAX / sizeof(CHAR_T) - 256) {
+			msgq(sp, M_ERR, "002|Line length overflow");
+			return (1);
+		}
 		GET_SPACE_RETW(sp, bp, blen, tlen + 256);
 		MEMCPYW(bp, p, tlen);
 	}

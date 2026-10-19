@@ -324,7 +324,7 @@ find_icmpsubtype(int type, icmp_subtype_t *table, size_t tablesz)
 	if ((type < 0) || (type > table[tablesz - 2].ist_val))
 		return NULL;
 
-	if (table[type].ist_val == type)
+	if ((size_t)type < tablesz && table[type].ist_val == type)
 		return table + type;
 
 	for (ist = table; ist->ist_val != -2; ist++)
@@ -345,7 +345,7 @@ find_icmptype(int type, icmp_type_t *table, size_t tablesz)
 	if ((type < 0) || (type > table[tablesz - 2].it_val))
 		return NULL;
 
-	if (table[type].it_val == type)
+	if ((size_t)type < tablesz && table[type].it_val == type)
 		return table + type;
 
 	for (it = table; it->it_val != -2; it++)
