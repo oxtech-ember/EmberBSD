@@ -534,9 +534,7 @@ void	iwx_get_crf_id(struct iwx_softc *);
 void	iwx_rx_pkt(struct iwx_softc *, struct iwx_rx_data *);
 void	iwx_notif_intr(struct iwx_softc *);
 int	iwx_intr(void *);
-#if defined(IWX_HT) /* MSI-X, stage 1 uses MSI/INTx */
 int	iwx_intr_msix(void *);
-#endif
 int	iwx_match(struct device *, cfdata_t, void *);
 int	iwx_preinit(struct iwx_softc *);
 void	iwx_attach_hook(struct device *);
@@ -1117,14 +1115,20 @@ iwx_ctxt_info_gen3_init(struct iwx_softc *sc, const struct iwx_fw_sects *fws)
 		return EBUSY;
 	}
 	iwx_set_ltr(sc);
+	if (sc->sc_device_family < IWX_DEVICE_FAMILY_BZ)
+		iwx_write_umac_prph(sc, IWX_UREG_CPU_INIT_RUN, 1);
+	iwx_nic_unlock(sc);
+
+	/*
+	 * BZ: start the ROM with the MAC access request released, in the
+	 * order of Linux iwl_trans_pcie_gen2_start_fw().
+	 */
 	if (sc->sc_device_family >= IWX_DEVICE_FAMILY_BZ) {
 		IWX_WRITE(sc, IWX_CSR_FUNC_SCRATCH,
 		    IWX_CSR_FUNC_SCRATCH_INIT_VALUE);
 		IWX_SETBITS(sc, IWX_CSR_GP_CNTRL,
 		    IWX_CSR_GP_CNTRL_REG_FLAG_ROM_START);
-	} else
-		iwx_write_umac_prph(sc, IWX_UREG_CPU_INIT_RUN, 1);
-	iwx_nic_unlock(sc);
+	}
 
 	/* Context info will be released upon alive or failure to get one */
 	return 0;
@@ -4104,6 +4108,30 @@ out:
 	return err;
 }
 
+/* EmberBSD stage-1 bring-up: report why the firmware did not come alive. */
+static void
+iwx_dump_fwload_state(struct iwx_softc *sc)
+{
+	printf("%s: fw %s hw_rev 0x%08x rf_id 0x%08x family %d intr %d\n",
+	    device_xname(sc->sc_dev), sc->sc_fwname, sc->sc_hw_rev,
+	    sc->sc_hw_rf_id, sc->sc_device_family, sc->sc_uc.uc_intr);
+	printf("%s: GP_CNTRL 0x%08x INT 0x%08x INT_MASK 0x%08x FH_INT 0x%08x\n",
+	    device_xname(sc->sc_dev), IWX_READ(sc, IWX_CSR_GP_CNTRL),
+	    IWX_READ(sc, IWX_CSR_INT), IWX_READ(sc, IWX_CSR_INT_MASK),
+	    IWX_READ(sc, IWX_CSR_FH_INT_STATUS));
+	printf("%s: BOOT_CTRL 0x%08x FUNC_SCRATCH 0x%08x\n",
+	    device_xname(sc->sc_dev), IWX_READ(sc, IWX_CSR_CTXT_INFO_BOOT_CTRL),
+	    IWX_READ(sc, IWX_CSR_FUNC_SCRATCH));
+	if (iwx_nic_lock(sc)) {
+		printf("%s: UMAC_PC 0x%08x LMAC1_PC 0x%08x CPU1 0x%08x CPU2 0x%08x\n",
+		    device_xname(sc->sc_dev),
+		    iwx_read_umac_prph(sc, 0xa05c18), iwx_read_umac_prph(sc, 0xa05c1c),
+		    iwx_read_prph(sc, 0xa01e30), iwx_read_prph(sc, 0xa01e34));
+		iwx_nic_unlock(sc);
+	} else
+		printf("%s: NIC lock failed\n", device_xname(sc->sc_dev));
+}
+
 int
 iwx_load_firmware(struct iwx_softc *sc)
 {
@@ -4129,6 +4157,7 @@ iwx_load_firmware(struct iwx_softc *sc)
 	err = tsleep_nsec(&sc->sc_uc, 0, "iwxuc", SEC_TO_NSEC(1));
 	if (err || !sc->sc_uc.uc_ok) {
 		printf("%s: could not load firmware, %d\n", device_xname(sc->sc_dev), err);
+		iwx_dump_fwload_state(sc);
 		iwx_ctxt_info_free_paging(sc);
 	}
 
@@ -11377,7 +11406,6 @@ iwx_intr(void *arg)
  out:
 	return rv;
 }
-#if defined(IWX_HT) /* iwx_intr_msix */
 
 int
 iwx_intr_msix(void *arg)
@@ -11464,7 +11492,6 @@ iwx_intr_msix(void *arg)
 	IWX_WRITE(sc, IWX_CSR_MSIX_AUTOMASK_ST_AD, 1 << vector);
 	return 1;
 }
-#endif /* IWX_HT */
 
 typedef void *iwx_match_t;
 
@@ -12127,19 +12154,19 @@ iwx_attach(struct device *parent, struct device *self, void *aux)
 		return;
 	}
 
-	/* Install interrupt handler.  MSI-X is not used in stage 1. */
 	/*
-	 * Stage 1 programs the device for MSI/INTx only (sc_msix = 0), so do
-	 * not let pci_intr_alloc() pick an MSI-X vector.
+	 * Install the interrupt handler.  Prefer one MSI-X vector with all
+	 * causes mapped to it (the OpenBSD configuration, required in practice
+	 * by BZ-family devices), then MSI, then INTx.
 	 */
 	{
 		int counts[PCI_INTR_TYPE_SIZE] = {
 			[PCI_INTR_TYPE_INTX] = 1,
 			[PCI_INTR_TYPE_MSI] = 1,
-			[PCI_INTR_TYPE_MSIX] = 0,
+			[PCI_INTR_TYPE_MSIX] = 1,
 		};
 		err = pci_intr_alloc(pa, &sc->sc_pihp, counts,
-		    PCI_INTR_TYPE_MSI);
+		    PCI_INTR_TYPE_MSIX);
 	}
 	if (err) {
 		printf("%s: can't allocate interrupt\n",
@@ -12154,8 +12181,11 @@ iwx_attach(struct device *parent, struct device *self, void *aux)
 	pci_conf_write(sc->sc_pct, sc->sc_pcitag, PCI_COMMAND_STATUS_REG, reg);
 	intrstr = pci_intr_string(sc->sc_pct, sc->sc_pihp[0], intrbuf,
 	    sizeof(intrbuf));
+	sc->sc_msix = (pci_intr_type(sc->sc_pct, sc->sc_pihp[0]) ==
+	    PCI_INTR_TYPE_MSIX);
 	sc->sc_ih = pci_intr_establish_xname(sc->sc_pct, sc->sc_pihp[0],
-	    IPL_NET, iwx_intr, sc, device_xname(sc->sc_dev));
+	    IPL_NET, sc->sc_msix ? iwx_intr_msix : iwx_intr, sc,
+	    device_xname(sc->sc_dev));
 	if (sc->sc_ih == NULL) {
 		printf("%s: can't establish interrupt",
 		    device_xname(sc->sc_dev));
