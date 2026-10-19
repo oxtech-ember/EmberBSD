@@ -385,6 +385,7 @@ struct iwx_reorder_buffer {
  * struct iwx_reorder_buf_entry - reorder buffer entry per frame sequence number
  * @frames: list of mbufs stored (A-MSDU subframes share a sequence number)
  */
+#if defined(IWX_HT)
 struct iwx_reorder_buf_entry {
 	struct mbuf_list frames;
 	uint32_t rx_pkt_status;
@@ -394,6 +395,7 @@ struct iwx_reorder_buf_entry {
 	uint32_t device_timestamp;
 	struct ieee80211_rxinfo rxi;
 };
+#endif
 
 /**
  * struct iwx_rxba_data - BA session data
@@ -408,6 +410,7 @@ struct iwx_reorder_buf_entry {
  * @reorder_buf: reorder buffer
  * @reorder_buf_data: buffered frames, one entry per sequence number
  */
+#if defined(IWX_HT)
 struct iwx_rxba_data {
 	uint8_t sta_id;
 	uint8_t tid;
@@ -433,21 +436,24 @@ iwx_rxba_data_from_reorder_buf(struct iwx_reorder_buffer *buf)
  * @last_seq: last sequence per tid for duplicate packet detection
  * @last_sub_frame: last subframe packet
  */
+#endif
 struct iwx_rxq_dup_data {
 	uint16_t last_seq[IWX_MAX_TID_COUNT + 1];
 	uint8_t last_sub_frame[IWX_MAX_TID_COUNT + 1];
 };
 
+#if defined(IWX_HT)
 struct iwx_setkey_task_arg {
 	int sta_id;
 	struct ieee80211_node *ni;
 	struct ieee80211_key *k;
 };
 
-struct iwx_ba_task_data {
+struct iwx_ba_taskdata {
 	uint32_t		start_tidmask;
 	uint32_t		stop_tidmask;
 };
+#endif
 
 
 /*
@@ -649,10 +655,11 @@ struct iwx_softc {
 
 	int			deauth_sent;
 
+#if defined(IWX_HT)
 	/* Task for firmware BlockAck setup/teardown and its arguments. */
 	struct task		ba_task;
-	struct iwx_ba_task_data	ba_rx;
-	struct iwx_ba_task_data	ba_tx;
+	struct iwx_ba_taskdata	ba_rx;
+	struct iwx_ba_taskdata	ba_tx;
 
 	/* Task for setting encryption keys and its arguments. */
 	struct task		setkey_task;
@@ -667,6 +674,7 @@ struct iwx_softc {
 	int setkey_cur;
 	int setkey_tail;
 	int setkey_nkeys;
+#endif
 
 	/* Task for ERP/HT prot/slot-time/EDCA updates. */
 	struct task		mac_ctxt_task;
@@ -760,6 +768,7 @@ struct iwx_softc {
 	int sc_generation;
 
 	krwlock_t ioctl_rwl;
+	kmutex_t sc_media_mtx;	/* ieee80211_media_init_with_lock */
 
 	int sc_cap_off; /* PCIe caps */
 
@@ -776,9 +785,11 @@ struct iwx_softc {
 	int sc_tx_timer[IWX_NUM_TX_QUEUES];
 	int sc_rx_ba_sessions;
 
+#if defined(IWX_HT)
 	struct task bgscan_done_task;
 	struct ieee80211_node_switch_bss_arg *bgscan_unref_arg;
 	size_t	bgscan_unref_arg_size;
+#endif
 
 	int sc_scan_last_antenna;
 
@@ -793,7 +804,9 @@ struct iwx_softc {
 
 	struct iwx_rx_phy_info sc_last_phy_info;
 	int sc_ampdu_ref;
+#if defined(IWX_HT)
 	struct iwx_rxba_data sc_rxba_data[IWX_MAX_BAID];
+#endif
 
 	uint32_t sc_time_event_uid;
 

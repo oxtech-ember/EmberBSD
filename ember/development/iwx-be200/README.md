@@ -1,8 +1,37 @@
 # Intel BE200 Wi-Fi: iwx(4) port proposal (work in progress)
 
-Status: **does not build yet** (782 compiler errors at the first full
-build). Nothing here is part of the kernel build: the files live outside
-`sys/` until the module compiles, attaches and passes the checks below.
+Status (2026-10-19, GLM-5.3 session): **compiles clean with kernel flags
+(-Werror) and loads**: `if_iwx.kmod` builds on the MSI (clang 21.1.8),
+`modload` succeeds and the driver attaches to the BE200 —
+`iwx0 at pci11 dev 0 function 0` — but attach stops at
+`can't allocate interrupt` (pci_intr_alloc). Nothing here is part of the
+kernel build: the files live outside `sys/` until the module attaches,
+passes firmware load and the checks below.
+
+Porting state relative to the original 782-error snapshot:
+
+- All HT/VHT/BA/bgscan/MFP/UAPSD/hw-key paths are compiled out behind
+  `#if defined(IWX_HT)` (never defined); station-mode legacy 11a/b/g only.
+- NetBSD glue rewritten after if_iwm(4): attach/interrupt setup (MSI/INTx,
+  no MSI-X in stage 1), ethercom + if_initialize/if_percpuq/if_register,
+  ieee80211_media_init_with_lock, newstate task, init/start/stop/ioctl/
+  watchdog signatures, RX via ieee80211_input (no mbuf_list), TX software
+  crypto via ieee80211_crypto_encap, EDCA from ic_wme, match table with
+  PCI_PRODUCT_INTEL_WIFI7 (BE200) and a GL/FM device-config case
+  (fw `iwx-gl-c0-fm-c0-100`, PNVM `iwx-gl-c0-fm-c0.pnvm`, BZ family).
+- `if_iwx_compat.h` grew OpenBSD kernel/net80211 shims (taskq/timeout/refcnt
+  on NetBSD primitives, fls, flags, HT/VHT constant values, a minimal
+  ieee80211_rxinfo, the systq workqueue allocated lazily in attach).
+- `modules/if_iwx/ioconf.c` is hand-written (EmberBSD bsd.kmodule.mk has
+  no IOCONF support; component arrays must be non-static for modcmd);
+  the module carries its own `MODULE()` + `if_iwx_modcmd()`.
+- Firmware installed from linux-firmware `intel/iwlwifi/` (main):
+  `iwx-gl-c0-fm-c0-100` SHA256
+  `f8cc54927ae551025a7550cf2117bdda30dc1f392ee925e5c60d80a9cdb0179b`,
+  `iwx-gl-c0-fm-c0.pnvm` SHA256
+  `f481e3b0403ca43a0a444b01c04fa4d1582868afcb026b1e697905f0039ccfa3`.
+- The running kernel cannot `modunload` (no FINI): each hardware probe
+  needs an MSI reboot.
 
 ## Target
 

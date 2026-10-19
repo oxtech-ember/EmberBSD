@@ -18,6 +18,7 @@ grep -q 'file	dev/pci/if_iwx.c' /usr/src/sys/dev/pci/files.pci ||
     cat "$src"/files.iwx >> /usr/src/sys/dev/pci/files.pci
 mkdir -p /usr/src/sys/modules/if_iwx
 cp "$src"/modules/if_iwx/Makefile "$src"/modules/if_iwx/if_iwx.ioconf \
+    "$src"/modules/if_iwx/ioconf.c \
     /usr/src/sys/modules/if_iwx/
 cd /usr/src/sys/modules/if_iwx
 rm -f ./*.o ./*.kmod
