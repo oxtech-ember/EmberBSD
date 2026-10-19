@@ -11,8 +11,9 @@ drain, power or shared-MMU/cache exclusion grant.
 ## Kernel building blocks
 
 `BCM2712_DISPLAY_COMPONENTS` links the explicit ICAC descriptor queries, typed
-shared-cache core, MMU4 table encoder and firmware display notification. It is
-selected by `EMBERV3DRENDER` when `bcmv3d_acpi` is present. It adds no attachment,
+shared-cache core, MMU4 table encoder and initialization sequencer, and firmware
+display notification. `EMBERV3DRENDER` selects it when `bcmv3d_acpi` is present.
+It adds no attachment,
 mailbox transaction or MMIO invocation. Linking these APIs does not grant display
 ownership or enable scanout. `BCM2712_DISPLAY_DDC` remains a separate option.
 
@@ -403,3 +404,7 @@ MMU table programming, power/access grant or DMA-drain predicate.
 The [fixed MMU4 table encoder](bcm2712-mmu4-table-core.md) prepares byte images
 for one full-translation frame profile. It grants no native DMA, MMIO access,
 publication, cache ownership or stop/drain permission.
+
+The [pure MMU4 initialization sequencer](bcm2712-mmu4-init-core.md) source-tests
+one retained full-translation transaction. It adds no native caller, MMIO grant,
+power/access proof, automatic caller or DMA-drain/release predicate.
