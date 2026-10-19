@@ -222,3 +222,203 @@ test_display_native(void)
 	printf("A733 typed native DISPLAY admission: %u checks passed\n", checks - first);
 	prepare_test = false;
 }
+
+/* Numeric addresses and values are independent of the production step table. */
+static void
+display_output_fixture(uint32_t sfr, bool tv0)
+{
+	bool retained;
+
+	display_fixture();
+	/* Physical 26 MHz DCXO with exact 24 MHz REF normalization. */
+	dcxo_rate = 26000000;
+	dcxo_raw = UINT32_C(0x183fb0f7);
+	REG(PLL_REF_CTRL_REG) = UINT32_C(0xf8675f00);
+	REG(0x168c) = UINT32_C(0x00040080);
+	REG(0x1690) = sfr;
+	REG(0x1604) = UINT32_C(0x00000080);
+	REG(0x1684) = UINT32_C(0x00000300);
+	REG(0x1694) = UINT32_C(0x80000000);
+	REG(0x5b4) = UINT32_C(0x00010007);
+	REG(0x584) = UINT32_C(0x00010001);
+	REG(0x588) = UINT32_C(0x81000000);
+	REG(0x5e0) |= __BIT(1);
+	REG(0x580) = UINT32_C(0xc3000000);
+	CHECK(sun60i_a733_ccu_display_reserve(CLOCK(A733_CLK_DE0), 17,
+	    &display_cookie) == 0);
+	CHECK(sun60i_a733_ccu_display_memory_reserve(CLOCK(A733_CLK_DE0),
+	    &display_cookie) == 0);
+	CHECK(sun60i_a733_ccu_display_begin_de0(CLOCK(A733_CLK_DE0),
+	    &display_cookie, &retained) == 0 && retained);
+	if (tv0)
+		CHECK(sun60i_a733_ccu_display_begin_hdmi(CLOCK(A733_CLK_DE0),
+		    &display_cookie) == 0);
+	writes = reads = barriers = pokes = 0;
+}
+
+static int
+display_output_begin(bool tv0, const void *owner)
+{
+	return tv0 ? sun60i_a733_ccu_display_begin_tv0(CLOCK(A733_CLK_DE0), owner) :
+	    sun60i_a733_ccu_display_begin_hdmi(CLOCK(A733_CLK_DE0), owner);
+}
+
+static void
+test_display_output(void)
+{
+	const int other = 73;
+	struct sun60i_a733_display_inputs before;
+	unsigned first = checks;
+
+	/* The owner, retained DE0 and phase order are prerequisites before reads. */
+	display_fixture();
+	CHECK(display_output_begin(false, &display_cookie) == EBUSY);
+	CHECK(reads == 0 && writes == 0);
+	CHECK(sun60i_a733_ccu_display_begin_hdmi(&hosc, &display_cookie) == EINVAL);
+	display_output_fixture(UINT32_C(0x01000200), false);
+	CHECK(display_output_begin(true, &display_cookie) == EBUSY);
+	CHECK(display_output_begin(false, &other) == EBUSY);
+	CHECK(display_output_begin(false, NULL) == EBUSY);
+	CHECK(reads == 0 && writes == 0 && sun60i_display_lease.fault == 0);
+	CHECK(display_output_begin(false, &display_cookie) == 0);
+	CHECK(writes == 5 && barriers == 5);
+	static const bus_size_t hdmi_regs[] = {0x168c, 0x168c, 0x1690, 0x1690, 0x168c};
+	static const uint32_t hdmi_vals[] = {0x50080, 0x70080, 0x200, 0x80000200, 0x70081};
+	for (unsigned i = 0; i < 5; i++) {
+		CHECK(write_regs[i] == hdmi_regs[i]);
+		CHECK(write_vals[i] == hdmi_vals[i]);
+	}
+	CHECK(REG(0x1684) == UINT32_C(0x00000300));
+	CHECK(REG(0x1694) == UINT32_C(0x80000000));
+	CHECK(sun60i_display_lease.hdmi_prepared && !sun60i_display_lease.tv0_prepared);
+	CHECK(sun60i_a733_ccu_display_ready(CLOCK(A733_CLK_DE0), &display_cookie) == 0);
+	unsigned old_reads = reads;
+	CHECK(display_output_begin(false, &display_cookie) == EBUSY);
+	CHECK(reads == old_reads && writes == 5 && sun60i_display_lease.fault == 0);
+	writes = barriers = pokes = 0;
+	CHECK(display_output_begin(true, &display_cookie) == 0);
+	CHECK(writes == 2 && barriers == 2);
+	CHECK(write_regs[0] == 0x1604 && write_vals[0] == 0x10080);
+	CHECK(write_regs[1] == 0x1604 && write_vals[1] == 0x10081);
+	CHECK(sun60i_display_lease.tv0_prepared);
+	CHECK(sun60i_a733_ccu_display_ready(CLOCK(A733_CLK_DE0), &display_cookie) == 0);
+	old_reads = reads;
+	CHECK(display_output_begin(true, &display_cookie) == EBUSY);
+	CHECK(reads == old_reads && writes == 2);
+
+	/* An active different source fails before any write. A matching one is borrowed. */
+	for (unsigned source = 0; source < 2; source++) {
+		display_output_fixture(UINT32_C(0x80000200) | (source << 24), false);
+		CHECK(display_output_begin(false, &display_cookie) == (source == 0 ? 0 : EBUSY));
+		CHECK(writes == (source == 0 ? 3 : 0));
+		CHECK(sun60i_display_lease.hdmi_prepared == (source == 0));
+		CHECK((sun60i_display_lease.fault != 0) == (source != 0));
+	}
+	/* Reserved selectors are refused by the existing initial admission. */
+	for (unsigned source = 2; source < 8; source++) {
+		display_fixture();
+		REG(0x1690) = UINT32_C(0x80000200) | (source << 24);
+		CHECK(sun60i_a733_ccu_display_reserve(CLOCK(A733_CLK_DE0), 17,
+		    &display_cookie) == EOPNOTSUPP);
+		CHECK(sun60i_display_lease.core.owner == NULL && writes == 0);
+	}
+	for (unsigned phase = 0; phase < 2; phase++) {
+		const bool tv0 = phase != 0;
+		unsigned total_reads, total_writes;
+
+		display_output_fixture(UINT32_C(0x01000200), tv0);
+		CHECK(display_output_begin(tv0, &display_cookie) == 0);
+		total_reads = reads;
+		total_writes = writes;
+		CHECK(total_reads > 100 && total_writes == (tv0 ? 2 : 5));
+		/* Each failed read keeps the old accepted snapshot and first error. */
+		for (unsigned fault = 1; fault <= total_reads; fault++) {
+			display_output_fixture(UINT32_C(0x01000200), tv0);
+			before = sun60i_display_lease.after;
+			fail_peek = fault;
+			CHECK(display_output_begin(tv0, &display_cookie) == EFAULT);
+			CHECK(memcmp(&before, &sun60i_display_lease.after, sizeof(before)) == 0);
+			CHECK(sun60i_display_lease.fault == EFAULT);
+			CHECK(!(tv0 ? sun60i_display_lease.tv0_prepared : sun60i_display_lease.hdmi_prepared));
+			old_reads = reads;
+			unsigned old_writes = writes;
+			CHECK(display_output_begin(tv0, &display_cookie) == EBUSY);
+			CHECK(sun60i_a733_ccu_display_ready(CLOCK(A733_CLK_DE0), &display_cookie) == EBUSY);
+			CHECK(reads == old_reads && writes == old_writes);
+			CHECK(sun60i_a733_ccu_display_fault(CLOCK(A733_CLK_DE0), &display_cookie, EIO) == 0);
+			CHECK(sun60i_display_lease.fault == EFAULT && display_power_retained);
+		}
+		for (unsigned kind = 0; kind < 2; kind++) {
+			for (unsigned fault = 1; fault <= total_writes; fault++) {
+				display_output_fixture(UINT32_C(0x01000200), tv0);
+				before = sun60i_display_lease.after;
+				if (kind == 0) fail_poke_number = fault;
+				else reject_write_number = fault;
+				CHECK(display_output_begin(tv0, &display_cookie) == (kind == 0 ? EFAULT : EIO));
+				CHECK(writes == fault && sun60i_display_lease.fault != 0);
+				CHECK(memcmp(&before, &sun60i_display_lease.after, sizeof(before)) == 0);
+			}
+		}
+		/* Changes after the last local write still fail final acceptance. */
+		for (unsigned drift = 0; drift < 2; drift++) {
+			display_output_fixture(UINT32_C(0x01000200), tv0);
+			before = sun60i_display_lease.after;
+			output_drift_after = total_writes;
+			output_drift_reg = drift == 0 ? 0x2e0 : 0x580;
+			output_drift_mask = drift == 0 ? 1 : UINT32_C(0x80000000);
+			CHECK(display_output_begin(tv0, &display_cookie) == EBUSY);
+			CHECK(writes == total_writes && sun60i_display_lease.fault == EBUSY);
+			CHECK(memcmp(&before, &sun60i_display_lease.after, sizeof(before)) == 0);
+		}
+		/* PCK, parent and claimed-memory drift must prevent the first write. */
+		for (unsigned drift = 0; drift < 4; drift++) {
+			display_output_fixture(UINT32_C(0x01000200), tv0);
+			switch (drift) {
+			case 0: display_power_error = EIO; break;
+			case 1: REG(PLL_REF_CTRL_REG) ^= __BIT(8); break;
+			case 2: REG(0x580) ^= __BIT(31); break;
+			case 3: REG(0x168c) ^= __BIT(18); break;
+			}
+			CHECK(display_output_begin(tv0, &display_cookie) != 0);
+			CHECK(writes == 0 && sun60i_display_lease.fault != 0);
+			if (drift == 0) CHECK(reads == 0);
+		}
+	}
+	/* DDC obtains a fresh typed SFR clock, distinct from the physical DCXO. */
+	struct sun60i_a733_display_hdmi_clock clock, saved_clock;
+	display_output_fixture(UINT32_C(0x01000200), false);
+	memset(&clock, 0xa5, sizeof(clock));
+	saved_clock = clock;
+	CHECK(sun60i_a733_ccu_display_hdmi_clock_state(CLOCK(A733_CLK_DE0),
+	    &display_cookie, &clock) == EBUSY);
+	CHECK(reads == 0 && memcmp(&clock, &saved_clock, sizeof(clock)) == 0);
+	CHECK(display_output_begin(false, &display_cookie) == 0);
+	CHECK(sun60i_a733_ccu_display_hdmi_clock_state(CLOCK(A733_CLK_DE0),
+	    &display_cookie, &clock) == 0);
+	CHECK(clock.source == 0 && clock.divisor == 1 && clock.hz == 24000000);
+	CHECK(dcxo_rate == 26000000 && clock.hz != dcxo_rate);
+	saved_clock = clock;
+	old_reads = reads;
+	CHECK(sun60i_a733_ccu_display_hdmi_clock_state(CLOCK(A733_CLK_DE0),
+	    &other, &clock) == EBUSY);
+	CHECK(reads == old_reads && memcmp(&clock, &saved_clock, sizeof(clock)) == 0);
+	CHECK(sun60i_a733_ccu_display_hdmi_clock_state(CLOCK(A733_CLK_DE0),
+	    &display_cookie, NULL) == EINVAL);
+	CHECK(reads == old_reads);
+	REG(0x1690) ^= UINT32_C(0x01000000);
+	CHECK(sun60i_a733_ccu_display_hdmi_clock_state(CLOCK(A733_CLK_DE0),
+	    &display_cookie, &clock) == EBUSY);
+	CHECK(memcmp(&clock, &saved_clock, sizeof(clock)) == 0);
+	CHECK(sun60i_display_lease.fault == EBUSY);
+	/* The private fixed writer cannot write HDCP or a pixel-clock register. */
+	display_output_fixture(UINT32_C(0x01000200), false);
+	mutex_enter(&sun60i_a733_ccu_lock);
+	CHECK(sun60i_a733_display_local_write(&state, 0x168c, __BIT(18), 0) == EINVAL);
+	CHECK(sun60i_a733_display_local_write(&state, 0x1684, __BIT(31), 0) == EINVAL);
+	CHECK(sun60i_a733_display_local_write(&state, 0x1694, __BIT(31), 0) == EINVAL);
+	CHECK(sun60i_a733_display_local_write(&state, 0x1604, __BIT(17), 0) == EINVAL);
+	mutex_exit(&sun60i_a733_ccu_lock);
+	CHECK(reads == 0 && writes == 0);
+	printf("A733 typed HDMI/TV0 phases: %u checks passed\n", checks - first);
+	prepare_test = false;
+}

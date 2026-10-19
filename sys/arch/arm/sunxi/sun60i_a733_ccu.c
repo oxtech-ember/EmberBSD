@@ -1040,6 +1040,7 @@ static struct {
 	struct sun60i_a733_display_owner core;
 	int power, fault;
 	bool pck_retained, prepared, memory_claimed;
+	bool hdmi_prepared, tv0_prepared;
 	uint32_t memory[2][A733_DISPLAY_NMEMORY_REGS];
 	struct sun60i_a733_display_inputs after;
 } sun60i_display_lease;
@@ -2136,6 +2137,8 @@ sun60i_a733_ccu_display_release(struct clk *de0, const void *owner)
 		if (error == 0) {
 			sun60i_display_lease.power = 0;
 			sun60i_display_lease.prepared = false;
+			sun60i_display_lease.hdmi_prepared = false;
+			sun60i_display_lease.tv0_prepared = false;
 			sun60i_display_lease.memory_claimed = false;
 			memset(sun60i_display_lease.memory, 0, sizeof(sun60i_display_lease.memory));
 			memset(&sun60i_display_lease.after, 0, sizeof(sun60i_display_lease.after));
@@ -2147,7 +2150,7 @@ sun60i_a733_ccu_display_release(struct clk *de0, const void *owner)
 
 /* No caller can select another register or mask. */
 static int
-sun60i_a733_display_de0_write(struct sunxi_ccu_softc *sc, bus_size_t reg,
+sun60i_a733_display_local_write(struct sunxi_ccu_softc *sc, bus_size_t reg,
     uint32_t mask, uint32_t bits)
 {
 	uint32_t old, value, allowed;
@@ -2155,7 +2158,9 @@ sun60i_a733_display_de0_write(struct sunxi_ccu_softc *sc, bus_size_t reg,
 	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
 	KASSERT(sun60i_display_lease.pck_retained && sun60i_display_lease.core.retained);
 	allowed = reg == DE0_CLK_REG ? UINT32_C(0x8700001f) :
-	    reg == DE0_BGR_REG ? UINT32_C(0x00010001) : 0;
+	    reg == DE0_BGR_REG || reg == 0x1604 ? UINT32_C(0x00010001) :
+	    reg == 0x168c ? UINT32_C(0x00030001) :
+	    reg == 0x1690 ? UINT32_C(0x87000000) : 0;
 	if (mask == 0 || (mask & ~allowed) != 0 || (bits & ~mask) != 0)
 		return EINVAL;
 	if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh, reg, &old) != 0)
@@ -2220,7 +2225,7 @@ sun60i_a733_ccu_display_begin_de0(struct clk *de0, const void *owner,
 			goto failed;
 	}
 	for (u_int i = 0; i < __arraycount(steps); i++) {
-		error = sun60i_a733_display_de0_write(sc, steps[i].reg,
+		error = sun60i_a733_display_local_write(sc, steps[i].reg,
 		    steps[i].mask, steps[i].bits);
 		if (error != 0)
 			goto failed;
@@ -2251,36 +2256,190 @@ out:
 	return error;
 }
 
-int
-sun60i_a733_ccu_display_ready(struct clk *de0, const void *owner)
+/* The caller holds the provider lock and has checked the retained owner. */
+static int
+sun60i_a733_display_verify_locked(struct sunxi_ccu_softc *sc,
+    const void *owner, const struct sun60i_a733_display_inputs *expected,
+    struct sun60i_a733_display_inputs *out)
 {
 	struct sun60i_a733_display_inputs in;
 	uint32_t memory[2][A733_DISPLAY_NMEMORY_REGS];
-	struct sun60i_a733_display_read_arg arg;
+	struct sun60i_a733_display_read_arg arg = {
+	    sc, sun60i_display_lease.power, owner
+	};
+	int error;
+
+	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
+	error = sun60i_a733_pck_display_ready(arg.power, owner);
+	if (error == 0)
+		error = sun60i_a733_display_inputs_read(&arg, &in);
+	if (error == 0)
+		error = sun60i_a733_display_check(&in);
+	if (error == 0 && !sun60i_a733_display_same(expected, &in))
+		error = EBUSY;
+	if (error == 0 && sun60i_display_lease.memory_claimed)
+		error = sun60i_a733_display_memory_check(sc, memory);
+	if (error == 0)
+		*out = in;
+	return error;
+}
+
+static int
+sun60i_a733_display_ready_locked(struct sunxi_ccu_softc *sc,
+    const void *owner)
+{
+	struct sun60i_a733_display_inputs in;
+	int error;
+
+	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
+	if (owner == NULL || sun60i_display_lease.core.owner != owner ||
+	    !sun60i_display_lease.pck_retained || !sun60i_display_lease.prepared ||
+	    sun60i_display_lease.fault != 0)
+		return EBUSY;
+	error = sun60i_a733_display_verify_locked(sc, owner,
+	    &sun60i_display_lease.after, &in);
+	if (error != 0)
+		sun60i_a733_display_fault_locked(error);
+	return error;
+}
+
+int
+sun60i_a733_ccu_display_ready(struct clk *de0, const void *owner)
+{
 	struct sunxi_ccu_softc *sc;
 	int error = sun60i_a733_display_handle(de0, &sc);
 
 	if (error != 0)
 		return error;
 	mutex_enter(&sun60i_a733_ccu_lock);
+	error = sun60i_a733_display_ready_locked(sc, owner);
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
+/* Fixed phases only. No caller supplies a register, mask, parent or rate. */
+static int
+sun60i_a733_display_output_begin(struct clk *de0, const void *owner,
+    bool tv0)
+{
+	static const struct {
+		bus_size_t reg;
+		uint32_t mask, bits;
+		enum sun60i_a733_display_clock_index index;
+	} steps[] = {
+		{ 0x168c, __BIT(16), __BIT(16), A733_DISPLAY_HDMI_BUS },
+		{ 0x168c, __BIT(17), __BIT(17), A733_DISPLAY_HDMI_BUS },
+		{ 0x1690, UINT32_C(0x07000000), 0, A733_DISPLAY_HDMI_SFR },
+		{ 0x1690, __BIT(31), __BIT(31), A733_DISPLAY_HDMI_SFR },
+		{ 0x168c, __BIT(0), __BIT(0), A733_DISPLAY_HDMI_BUS },
+		{ 0x1604, __BIT(16), __BIT(16), A733_DISPLAY_TV0_BUS },
+		{ 0x1604, __BIT(0), __BIT(0), A733_DISPLAY_TV0_BUS },
+	};
+	struct sun60i_a733_display_inputs expected, in;
+	struct sunxi_ccu_softc *sc;
+	int error = sun60i_a733_display_handle(de0, &sc);
+
+	if (error != 0)
+		return error;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	/* Wrong owners and invalid phase order do not change the valid lease. */
 	if (owner == NULL || sun60i_display_lease.core.owner != owner ||
 	    !sun60i_display_lease.pck_retained || !sun60i_display_lease.prepared ||
-	    sun60i_display_lease.fault != 0) {
+	    sun60i_display_lease.fault != 0 ||
+	    (tv0 ? (!sun60i_display_lease.hdmi_prepared ||
+	    sun60i_display_lease.tv0_prepared) : sun60i_display_lease.hdmi_prepared)) {
 		error = EBUSY;
 		goto out;
 	}
-	arg = (struct sun60i_a733_display_read_arg){ sc, sun60i_display_lease.power, owner };
-	error = sun60i_a733_pck_display_ready(arg.power, owner);
-	if (error == 0)
-		error = sun60i_a733_display_inputs_read(&arg, &in);
-	if (error == 0)
-		error = sun60i_a733_display_check(&in);
-	if (error == 0 && !sun60i_a733_display_same(&sun60i_display_lease.after, &in))
-		error = EBUSY;
-	if (error == 0 && sun60i_display_lease.memory_claimed)
-		error = sun60i_a733_display_memory_check(sc, memory);
+	error = sun60i_a733_display_ready_locked(sc, owner);
 	if (error != 0)
+		goto out;
+	expected = sun60i_display_lease.after;
+	if (!tv0 &&
+	    (expected.clocks.sample[0][A733_DISPLAY_HDMI_SFR] & __BIT(31)) != 0 &&
+	    (expected.clocks.sample[0][A733_DISPLAY_HDMI_SFR] &
+	    UINT32_C(0x07000000)) != 0) {
+		/* Never change the source of a running SFR clock. */
+		error = EBUSY;
+		goto failed;
+	}
+	for (u_int i = tv0 ? 5 : 0; i < (tv0 ? 7 : 5); i++) {
+		error = sun60i_a733_display_local_write(sc, steps[i].reg,
+		    steps[i].mask, steps[i].bits);
+		if (error != 0)
+			goto failed;
+		for (u_int s = 0; s < 2; s++) {
+			expected.clocks.sample[s][steps[i].index] =
+			    (expected.clocks.sample[s][steps[i].index] & ~steps[i].mask) |
+			    steps[i].bits;
+		}
+	}
+	error = sun60i_a733_display_verify_locked(sc, owner, &expected, &in);
+	if (error != 0)
+		goto failed;
+	/* Publish the new expected state only after the complete phase passes. */
+	sun60i_display_lease.after = in;
+	if (tv0)
+		sun60i_display_lease.tv0_prepared = true;
+	else
+		sun60i_display_lease.hdmi_prepared = true;
+	goto out;
+failed:
+	sun60i_a733_display_fault_locked(error);
+out:
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
+int
+sun60i_a733_ccu_display_begin_hdmi(struct clk *de0, const void *owner)
+{
+	return sun60i_a733_display_output_begin(de0, owner, false);
+}
+
+int
+sun60i_a733_ccu_display_begin_tv0(struct clk *de0, const void *owner)
+{
+	return sun60i_a733_display_output_begin(de0, owner, true);
+}
+
+int
+sun60i_a733_ccu_display_hdmi_clock_state(struct clk *de0, const void *owner,
+    struct sun60i_a733_display_hdmi_clock *out)
+{
+	struct sun60i_a733_display_hdmi_clock state;
+	struct sun60i_a733_display_rates rates;
+	struct sunxi_ccu_softc *sc;
+	uint32_t sfr;
+	int error;
+
+	if (out == NULL)
+		return EINVAL;
+	error = sun60i_a733_display_handle(de0, &sc);
+	if (error != 0)
+		return error;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (!sun60i_display_lease.hdmi_prepared) {
+		error = EBUSY;
+		goto out;
+	}
+	error = sun60i_a733_display_ready_locked(sc, owner);
+	if (error != 0)
+		goto out;
+	/* ready_locked proved that these protected fields still match hardware. */
+	sfr = sun60i_display_lease.after.clocks.sample[0][A733_DISPLAY_HDMI_SFR];
+	error = sun60i_a733_display_running_ancestors(&sun60i_display_lease.after,
+	    &rates);
+	if (error == 0 && (sfr & UINT32_C(0x87000000)) != UINT32_C(0x80000000))
+		error = EBUSY;
+	if (error != 0) {
 		sun60i_a733_display_fault_locked(error);
+		goto out;
+	}
+	state.source = (sfr >> 24) & 7;
+	state.divisor = 1; /* HDMI_SFR has no divider field. */
+	state.hz = rates.reference_hz;
+	*out = state;
 out:
 	mutex_exit(&sun60i_a733_ccu_lock);
 	return error;

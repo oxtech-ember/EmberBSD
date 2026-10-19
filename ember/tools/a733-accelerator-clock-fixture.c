@@ -9,6 +9,16 @@
 #include <errno.h>
 #include <limits.h>
 
+/* Keep hardware-model calls and checks active in release sanitizer builds. */
+static void
+contract_failed(const char *condition, const char *file, int line)
+{
+	fprintf(stderr, "%s:%d: %s\n", file, line, condition);
+	abort();
+}
+#undef assert
+#define assert(c) ((c) ? (void)0 : contract_failed(#c, __FILE__, __LINE__))
+
 typedef unsigned int u_int;
 #define MUTEX_DEFAULT 0
 #define IPL_NONE 0
@@ -115,6 +125,9 @@ static uint32_t registers[0x2000 / 4], last_write;
 static bus_size_t ccu_size, read_regs[64];
 static int ccu_reg_error;
 static unsigned reject_write_number, fail_poke_number, pokes;
+static unsigned output_drift_after;
+static bus_size_t output_drift_reg;
+static uint32_t output_drift_mask;
 static bus_size_t write_regs[64];
 static uint32_t write_vals[64];
 static unsigned writes, barriers, checks, reads, fail_peek;
@@ -265,6 +278,8 @@ bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
 		    (val & __BIT(31)) != 0)
 			registers[0xe0 / 4] ^= __BIT(8);
 	}
+	if (writes == output_drift_after)
+		registers[output_drift_reg / 4] ^= output_drift_mask;
 }
 static void
 delay(unsigned us)
@@ -420,7 +435,8 @@ sun60i_a733_pck_display_ready(int node, const void *owner)
 static void
 display_write_check(bus_size_t off)
 {
-	if (off == DE0_CLK_REG || off == DE0_BGR_REG) {
+	if (off == DE0_CLK_REG || off == DE0_BGR_REG || off == 0x168c ||
+	    off == 0x1690 || off == 0x1604) {
 		assert(display_power_retained && sun60i_display_lease.pck_retained);
 		assert(sun60i_display_lease.core.retained);
 		assert(mutex_owned(&sun60i_a733_ccu_lock));
@@ -446,6 +462,8 @@ reset(void)
 	pll_factor_change = pll_settled = false;
 	update_clear_us = update_delay_us = update_reads = 0;
 	reject_write_number = fail_poke_number = pokes = 0;
+	output_drift_after = output_drift_mask = 0;
+	output_drift_reg = 0;
 	prepare_test = false;
 	display_power_owner = NULL;
 	display_power_retained = false;
@@ -1675,6 +1693,7 @@ main(void)
 	test_gpu_prepare();
 	test_npu_prepare_divider();
 	test_display_native();
+	test_display_output();
 	test_display_memory();
 	test_gpu_update_completion();
 	test_gpu_prepare_pll();

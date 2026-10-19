@@ -93,6 +93,17 @@ int	sun60i_a733_ccu_display_reserve(struct clk *, int, const void *);
 int	sun60i_a733_ccu_display_release(struct clk *, const void *);
 /* PCK retention precedes local DE0 writes. Errors can still retain both. */
 int	sun60i_a733_ccu_display_begin_de0(struct clk *, const void *, bool *);
+/* The same retained DE0 owner enables HDMI SFR at exact SYS_CLK24M. */
+int	sun60i_a733_ccu_display_begin_hdmi(struct clk *, const void *);
+/* Call after begin_hdmi and native PHY preparation. No pixel rate is set here. */
+int	sun60i_a733_ccu_display_begin_tv0(struct clk *, const void *);
+/* Fresh admitted SFR clock fields. Failure leaves the output unchanged. */
+struct sun60i_a733_display_hdmi_clock {
+	uint32_t source;
+	u_int divisor, hz;
+};
+int	sun60i_a733_ccu_display_hdmi_clock_state(struct clk *, const void *,
+	    struct sun60i_a733_display_hdmi_clock *);
 /* Fresh local CCU/PCK proof only. This does not authorize DMA or output MMIO. */
 int	sun60i_a733_ccu_display_ready(struct clk *, const void *);
 int	sun60i_a733_ccu_display_status(struct clk *, const void *,
