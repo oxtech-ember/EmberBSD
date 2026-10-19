@@ -291,7 +291,9 @@ static struct drm_driver a733_driver = {
 	.name = "sun60idrm",
 	.desc = "A733 fixed-mode native KMS",
 	.date = "20261019",
-	.major = 1,.minor = 0,.patchlevel = 0,
+	.major = 1,
+	.minor = 0,
+	.patchlevel = 0,
 };
 
 static int
@@ -342,8 +344,10 @@ a733_register(struct a733_drm *sc)
 	    sizeof(dev->native_platform.compatible));
 	drm_mode_config_init(dev);
 	dev->mode_config.funcs = &a733_mode_funcs;
-	dev->mode_config.min_width = dev->mode_config.max_width = sc->native.mode.hdisplay;
-	dev->mode_config.min_height = dev->mode_config.max_height = sc->native.mode.vdisplay;
+	dev->mode_config.min_width = sc->native.mode.hdisplay;
+	dev->mode_config.max_width = sc->native.mode.hdisplay;
+	dev->mode_config.min_height = sc->native.mode.vdisplay;
+	dev->mode_config.max_height = sc->native.mode.vdisplay;
 	error = -drm_universal_plane_init(dev, &sc->plane, 1, &a733_plane_funcs,
 	    formats, __arraycount(formats), modifiers, DRM_PLANE_TYPE_PRIMARY, NULL);
 	if (error != 0)

@@ -118,3 +118,8 @@
 	output = <&hdmi_output>;
 	status = "okay";
 };
+
+/* Register DRM only through its explicit stage after native DE admission. */
+&display {
+	status = "okay";
+};

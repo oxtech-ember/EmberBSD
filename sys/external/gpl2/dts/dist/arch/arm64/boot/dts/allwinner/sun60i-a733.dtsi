@@ -14,6 +14,13 @@
 #include <dt-bindings/power/allwinner,sun60i-a733-pck-600.h>
 
 / {
+	/* This frontend does not enable DE, clocks or output at attach. */
+	display: display {
+		compatible = "allwinner,sun60i-a733-display";
+		display-engine = <&de0>;
+		status = "disabled";
+	};
+
 	interrupt-parent = <&gic>;
 	#address-cells = <2>;
 	#size-cells = <2>;
