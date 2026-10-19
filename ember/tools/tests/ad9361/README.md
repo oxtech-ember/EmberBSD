@@ -65,3 +65,22 @@ and an ID mismatch that preserves the product-family mask. Each failure
 keeps the first transport error, asserts reset and prevents reuse of that
 lease. A new lease repeats the conservative probe. Rates below 1 MHz remain
 unchanged. These host checks do not qualify a physical board's SPI timing.
+
+## AUXADC transport errors
+
+```sh
+python3 -B ember/tools/tests/ad9361/auxadc-test.py "$PWD" --sanitize
+python3 -B ember/tools/tests/ad9361/auxadc-test.py "$PWD" --memcheck
+CC=gcc python3 -B ember/tools/tests/ad9361/auxadc-test.py "$PWD" --analyze
+```
+
+The standard-library Python runner extracts the actual AUXADC accessor and
+register definitions. Its SPI fixture checks 12-bit conversion and propagating
+the first error from each of the three transfers without using unread data or
+issuing further transfers. The analysis mode runs GCC's analyzer and Cppcheck;
+the other modes run ASan/UBSan or Valgrind separately.
+
+For a causal comparison, `--source-file /path/to/ad9361.c` selects an alternate
+accessor. The unmodified ADI source at the revision cited above fails the
+transport-error assertion. These host checks do not model the analog converter
+or qualify a physical SPI link.

@@ -4305,10 +4305,17 @@ int32_t ad9361_get_temp(struct ad9361_rf_phy *phy)
 int32_t ad9361_get_auxadc(struct ad9361_rf_phy *phy)
 {
 	uint8_t buf[2];
+	int32_t ret;
 
-	ad9361_spi_writef(phy->spi, REG_AUXADC_CONFIG, AUXADC_POWER_DOWN, 1);
-	ad9361_spi_readm(phy->spi, REG_AUXADC_LSB, buf, 2);
-	ad9361_spi_writef(phy->spi, REG_AUXADC_CONFIG, AUXADC_POWER_DOWN, 0);
+	ret = ad9361_spi_writef(phy->spi, REG_AUXADC_CONFIG, AUXADC_POWER_DOWN, 1);
+	if (ret < 0)
+		return ret;
+	ret = ad9361_spi_readm(phy->spi, REG_AUXADC_LSB, buf, 2);
+	if (ret < 0)
+		return ret;
+	ret = ad9361_spi_writef(phy->spi, REG_AUXADC_CONFIG, AUXADC_POWER_DOWN, 0);
+	if (ret < 0)
+		return ret;
 
 	return (buf[1] << 4) | AUXADC_WORD_LSB(buf[0]);
 }
