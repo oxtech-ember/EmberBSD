@@ -3,7 +3,8 @@
 `sun60i_a733_npu_mmu_build()` encodes one CPU-owned VIP page-table image.
 It does not allocate DMA memory, access registers, attach an IRQ or change the
 VIP ioctl ABI. The native DMA context calls this helper during CPU preparation.
-The NPU device driver does not call the context yet.
+[Engine1 preparation](a733-npu-fe.md) calls the context after read-only
+admission. It does not publish the context to hardware.
 
 The initial native profile uses VA32 and PA32. It maps 1 to 64 consecutive
 virtual pages in one 16 MiB MTLB slot. The physical pages can be noncontiguous.
@@ -67,9 +68,9 @@ input/output overlap and complete output preservation after rejection.
 The target translation unit must also pass the common GCC16 build and required
 source analyzers. Host sanitizer execution is not hardware MMU acceptance.
 
-The next consumer must own low-address DMA allocations, map and synchronize
-both table images, retain allocations after the first hardware attempt, and
-prove fresh clock/power ownership before MMIO. IRQ event and command-terminal
+A future hardware submitter must synchronize both owned table images, retain
+allocations before its first attempt, and prove fresh clock/power ownership
+before MMIO. IRQ event and command-terminal
 evidence must prove execution. An idle bit alone is not that proof.
 
 ## Native DMA context

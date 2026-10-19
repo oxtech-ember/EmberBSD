@@ -179,7 +179,9 @@ sun60i_a733_npu_dma_info(const struct sun60i_a733_npu_dma *m,
 	if (m == NULL || out == NULL)
 		return EINVAL;
 	*out = (struct sun60i_a733_npu_dma_info){
-		.mtlb_address = m->buffers[0].address, .pd_entry = m->pd_entry,
+		.mtlb_address = m->buffers[0].address,
+		.stlb_address = m->buffers[1].address,
+		.command_address = m->buffers[2].address, .pd_entry = m->pd_entry,
 		.command_virtual = NPU_DMA_COMMAND_VA,
 		.command_bytes = m->command_bytes, .retained = m->retained
 	};

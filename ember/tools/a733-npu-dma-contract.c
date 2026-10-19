@@ -165,6 +165,7 @@ static void success(bool borrow, size_t bytes, bool retain)
 	CHECK(syncs == 0 && calls == 13 && depth == 14);
 	CHECK(sun60i_a733_npu_dma_info(active, &info) == 0);
 	CHECK(info.mtlb_address == 0x100000 && info.pd_entry == 0x1001);
+	CHECK(info.stlb_address == 0x110000 && info.command_address == 0x120000);
 	CHECK(info.command_virtual == 0x01001000 && info.command_bytes == bytes);
 	CHECK(!info.retained);
 	CHECK(sun60i_a733_npu_dma_info(active, NULL) == EINVAL);
