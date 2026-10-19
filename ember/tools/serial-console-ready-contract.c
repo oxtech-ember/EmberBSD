@@ -62,7 +62,26 @@ struct tty {
 	dev_t t_dev;
 	tcflag_t t_cflag;
 };
-struct consdev { dev_t cn_dev; };
+struct consdev {
+	void (*cn_halt)(dev_t);
+	void (*cn_putc)(dev_t, int);
+	void (*cn_pollc)(dev_t, int);
+	int (*cn_getc)(dev_t);
+	dev_t cn_dev;
+};
+struct cfattach { const char *ca_name; };
+struct cfattach plcom_acpi_ca = { "plcom_acpi" };
+static struct cfattach *device_cfattach(device_t d) { (void)d; return &plcom_acpi_ca; }
+struct wsdisplay_bootfb_lease;
+#ifndef SERIAL_READY_LIBRARY
+static bool lease_live;
+static device_t wsdisplay_bootfb_lease_device(struct wsdisplay_bootfb_lease *l)
+{ return l != NULL && lease_live ? (device_t)(uintptr_t)1 : NULL; }
+static bool cn_publication_closed(void) { return false; }
+#else
+extern device_t wsdisplay_bootfb_lease_device(struct wsdisplay_bootfb_lease *);
+extern bool cn_publication_closed(void);
+#endif
 struct cfdriver { int unused; };
 struct cdevsw { int unused; };
 #include "plcomvar.inc"
@@ -77,8 +96,20 @@ static unsigned int checks;
 	fprintf(stderr, "CHECK line %u: %s\n", (unsigned int)__LINE__, #x); \
 	exit(1); } } while (0)
 static void lifetime_effect(void);
-static int giant, cold, in_irq, in_softirq, major_number = 12;
+#ifdef SERIAL_READY_LIBRARY
+extern int *serial_test_giant(void);
+extern bool *serial_test_cold(void), *serial_test_irq(void), *serial_test_softirq(void);
+extern const char **serial_test_panic(void);
+#define giant (*serial_test_giant())
+#define cold (*serial_test_cold())
+#define in_irq (*serial_test_irq())
+#define in_softirq (*serial_test_softirq())
+#define panicstr (*serial_test_panic())
+#else
+static int giant, cold, in_irq, in_softirq;
 static const char *panicstr;
+#endif
+static int major_number = 12;
 static unsigned int writes, maps, hard_calls, soft_calls, attached, freed;
 static unsigned int sequence, tty_step, soft_step, hard_step, publish_step;
 static bool fail_map, fail_hard, fail_soft, foreign_lookup;
@@ -90,8 +121,8 @@ static unsigned char ring[8192];
 static int hard_cookie, soft_cookie, bus_tag, alternate_tag;
 struct cfdriver plcom_cd;
 static const struct cdevsw plcom_cdevsw;
-struct consdev plcomcons = { NODEV };
-static struct consdev foreign_cons = { 77 }, *cn_tab;
+struct consdev plcomcons = { .cn_dev = NODEV };
+static struct consdev foreign_cons = { .cn_dev = 77 }, *cn_tab;
 static int timecounter_lock;
 static u_int plcom_rbuf_size = PLCOM_RING_SIZE;
 struct cnm_state { int unused; };
@@ -341,6 +372,7 @@ static int tests(void)
 		for (unsigned int failure = 0; failure < 3; failure++) {
 			reset(); fail_map = failure == 0; fail_soft = failure == 1; fail_hard = failure == 2;
 			attach_path(path); CHECK(absent() == 0);
+			if (path == 0 && fail_soft) CHECK(hard_calls == 0);
 		}
 	}
 	reset();
@@ -402,6 +434,41 @@ static int tests(void)
 	CHECK(!plcom_console_ready.revoked);
 	return 0;
 }
+#ifdef SERIAL_READY_LIBRARY
+extern void serial_test_putc(dev_t, int), serial_test_pollc(dev_t, int);
+extern int serial_test_getc(dev_t);
+struct consdev *serial_fixture_setup(void)
+{
+	reset(); attach_path(0);
+	plcomcons.cn_putc = serial_test_putc;
+	plcomcons.cn_getc = serial_test_getc;
+	plcomcons.cn_pollc = serial_test_pollc;
+	return &plcomcons;
+}
+void serial_fixture_held_mutations(void)
+{
+	struct plcom_instance pi = plcomcons_info;
+	unsigned before = writes, before_freed = freed, before_maps = maps, before_irq = hard_calls;
+	MODEL_CHECK(plcom_console_ready.held_lease != NULL);
+	plcom_acpi_attach(&rootdev, &device, &acpi_sc.pa_aa);
+	MODEL_CHECK(maps == before_maps && hard_calls == before_irq && writes == before);
+	MODEL_CHECK(plcom_activate(&device, DVACT_DEACTIVATE) == EBUSY);
+	plcomcndetach();
+	MODEL_CHECK(plcomcnattach(&pi, 115200, 100000000, 0, -1) == EBUSY);
+	plcom_attach_subr(live_sc);
+	struct plcom_softc replacement = *live_sc;
+	replacement.sc_dev = &rootdev; rootdev.private = &replacement;
+	plcom_attach_subr(&replacement);
+	plcom_acpi_attach(NULL, &rootdev, &acpi_sc.pa_aa);
+	MODEL_CHECK(maps == before_maps && hard_calls == before_irq && writes == before);
+	MODEL_CHECK(writes == before && freed == before_freed);
+	live_sc->disable = disable_model; plcom_shutdown(live_sc);
+	MODEL_CHECK(live_sc->enabled && !plcom_console_ready.revoked);
+	MODEL_CHECK(plcom_console_ready.held_lease != NULL);
+}
+void serial_fixture_revoke(void) { MODEL_CHECK(plcom_console_ready_revoke(NULL)); }
+bool serial_fixture_held(void) { return plcom_console_ready.held_lease != NULL; }
+#endif
 int main(void)
 {
 	int error = tests();

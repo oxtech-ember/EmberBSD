@@ -1,0 +1,7 @@
+# Origin: EmberBSD explicit BCM2712 CPU console handoff experiment.
+# SPDX-License-Identifier: BSD-2-Clause
+include "arch/evbarm/conf/EMBERV3DHDMI"
+
+# Close only CPU framebuffer output after holding the actual serial tty.
+# This grants no firmware ACK, display, HVS, MMIO, DMA or KMS authority.
+options WSDISPLAY_BOOTFB_HANDOFF

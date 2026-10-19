@@ -154,6 +154,8 @@ __KERNEL_RCSID(0, "$NetBSD: plcom.c,v 1.69 2023/04/11 12:58:03 riastradh Exp $")
 #include <evbarm/dev/plcomvar.h>
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 #include <evbarm/dev/plcom_consolevar.h>
+#include <dev/cons_handoffvar.h>
+#include <dev/wscons/wsdisplay_bootfbvar.h>
 #endif
 
 #include <dev/cons.h>
@@ -257,8 +259,10 @@ struct plcom_console_ready {
 	int unit;
 	bool published;
 	bool revoked;
+	struct wsdisplay_bootfb_lease *held_lease;
 };
 static struct plcom_console_ready plcom_console_ready;
+extern struct cfattach plcom_acpi_ca;
 
 static int
 plcom_console_ready_context(void)
@@ -377,7 +381,60 @@ plcom_console_ready_get(const struct plcom_console_ready **out)
 	return 0;
 }
 
-static void
+int
+cn_bootfb_serial_hold(struct wsdisplay_bootfb_lease *lease,
+    const struct consdev *previous, dev_t *out)
+{
+	dev_t dev;
+	int error;
+
+	if (out == NULL)
+		return EINVAL;
+	error = plcom_console_ready_context();
+	if (error != 0)
+		return error;
+	if (wsdisplay_bootfb_lease_device(lease) == NULL)
+		return EPERM;
+	if (plcom_console_ready.held_lease != NULL)
+		return EBUSY;
+	error = plcom_console_ready_validate(&plcom_console_ready, previous, &dev);
+	if (error != 0)
+		return error;
+	/* This built-in attachment cannot detach and has the held activate guard. */
+	if (device_cfattach(plcom_console_ready.device) != &plcom_acpi_ca)
+		return EOPNOTSUPP;
+	plcom_console_ready.held_lease = lease;
+	*out = dev;
+	return 0;
+}
+
+int
+cn_bootfb_serial_validate(struct wsdisplay_bootfb_lease *lease,
+    const struct consdev *previous, dev_t *out)
+{
+	int error;
+
+	if (out == NULL)
+		return EINVAL;
+	error = plcom_console_ready_context();
+	if (error != 0)
+		return error;
+	if (lease == NULL || plcom_console_ready.held_lease != lease)
+		return EPERM;
+	return plcom_console_ready_validate(&plcom_console_ready, previous, out);
+}
+
+void
+cn_bootfb_serial_release(struct wsdisplay_bootfb_lease *lease)
+{
+
+	KASSERT(KERNEL_LOCKED_P());
+	if (lease != NULL && plcom_console_ready.held_lease == lease &&
+	    !cn_publication_closed())
+		plcom_console_ready.held_lease = NULL;
+}
+
+static bool
 plcom_console_ready_revoke(device_t device)
 {
 
@@ -385,10 +442,26 @@ plcom_console_ready_revoke(device_t device)
 	if (!cold)
 		KERNEL_LOCK(1, NULL);
 	if (plcom_console_ready.published && (device == NULL ||
-	    device == plcom_console_ready.device))
+	    device == plcom_console_ready.device)) {
+		if (plcom_console_ready.held_lease != NULL) {
+			if (!cold)
+				KERNEL_UNLOCK_ONE(NULL);
+			return false;
+		}
 		plcom_console_ready.revoked = true;
+	}
 	if (!cold)
 		KERNEL_UNLOCK_ONE(NULL);
+	return true;
+}
+
+bool
+plcom_console_attach_begin(device_t device, bus_space_tag_t iot, bus_addr_t base)
+{
+
+	return plcom_console_ready_revoke(plcomcons_info.pi_iot != NULL &&
+	    bus_space_is_equal(iot, plcomcons_info.pi_iot) &&
+	    base == plcomcons_info.pi_iobase ? NULL : device);
 }
 #endif
 
@@ -654,7 +727,9 @@ plcom_attach_subr(struct plcom_softc *sc)
 	struct tty *tp;
 
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
-	plcom_console_ready_revoke(sc->sc_dev);
+	/* A new device with the same console registers is also a replacement. */
+	if (!plcom_console_attach_begin(sc->sc_dev, pi->pi_iot, pi->pi_iobase))
+		return;
 #endif
 	callout_init(&sc->sc_diag_callout, 0);
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_HIGH);
@@ -859,7 +934,8 @@ plcom_detach(device_t self, int flags)
 		return EBUSY;
 
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
-	plcom_console_ready_revoke(self);
+	if (!plcom_console_ready_revoke(self))
+		return EBUSY;
 #endif
 	if (sc->disable != NULL && sc->enabled != 0) {
 		(*sc->disable)(sc);
@@ -916,7 +992,10 @@ plcom_activate(device_t self, enum devact act)
 	case DVACT_DEACTIVATE:
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 		KERNEL_LOCK(1, NULL);
-		plcom_console_ready_revoke(self);
+		if (!plcom_console_ready_revoke(self)) {
+			KERNEL_UNLOCK_ONE(NULL);
+			return EBUSY;
+		}
 #endif
 		sc->enabled = 0;
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
@@ -995,7 +1074,9 @@ plcom_shutdown(struct plcom_softc *sc)
 	mutex_spin_exit(&sc->sc_lock);
 	if (sc->disable) {
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
-		plcom_console_ready_revoke(sc->sc_dev);
+		/* Last tty close must not disable the held boot console. */
+		if (!plcom_console_ready_revoke(sc->sc_dev))
+			return;
 #endif
 #ifdef DIAGNOSTIC
 		if (!sc->enabled)
@@ -2857,7 +2938,11 @@ plcomcnattach(struct plcom_instance *pi, int rate, int frequency,
 		ASSERT_SLEEPABLE();
 		KERNEL_LOCK(1, NULL);
 	}
-	plcom_console_ready_revoke(NULL);
+	if (!plcom_console_ready_revoke(NULL)) {
+		if (warm)
+			KERNEL_UNLOCK_ONE(NULL);
+		return EBUSY;
+	}
 #endif
 
 	plcomcons_info = *pi;
@@ -2895,7 +2980,11 @@ plcomcndetach(void)
 		ASSERT_SLEEPABLE();
 		KERNEL_LOCK(1, NULL);
 	}
-	plcom_console_ready_revoke(NULL);
+	if (!plcom_console_ready_revoke(NULL)) {
+		if (warm)
+			KERNEL_UNLOCK_ONE(NULL);
+		return;
+	}
 #endif
 
 	bus_space_unmap(plcomcons_info.pi_iot, plcomcons_info.pi_ioh,

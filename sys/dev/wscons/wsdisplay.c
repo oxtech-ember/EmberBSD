@@ -264,6 +264,12 @@ static struct wsscreen_internal wsdisplay_console_conf;
 /* Actual checked binding commits. Giant or cold bootstrap serializes updates. */
 static uint64_t wsdisplay_console_generation;
 static bool wsdisplay_poll_admitted;
+static bool wsdisplay_serial_pollmode;
+/* Published before freeze. The provider hold makes this backend resident. */
+static struct consdev *wsdisplay_serial_console;
+static struct wsdisplay_bootfb_lease *wsdisplay_serial_lease;
+static uint64_t wsdisplay_serial_generation;
+static dev_t wsdisplay_serial_dev;
 #endif
 
 static int wsdisplay_getc(dev_t);
@@ -1379,6 +1385,72 @@ wsdisplay_early_binding_matches(const struct wsscreen_descr *type, void *cookie)
 	    wsdisplay_early_binding();
 }
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
+int
+wsdisplay_early_serial_prepare(const struct wsscreen_descr *type, void *cookie,
+    struct wsdisplay_bootfb_lease *lease)
+{
+	dev_t dev;
+	int error;
+
+	KASSERT(KERNEL_LOCKED_P());
+	if (!wsdisplay_early_binding_matches(type, cookie))
+		return ENXIO;
+	if (wsdisplay_serial_console != NULL || wsdisplay_cons.cn_dev != NODEV ||
+	    wsdisplay_cons_pollmode || cn_publication_closed())
+		return EBUSY;
+	error = cn_bootfb_console_unused();
+	if (error != 0)
+		return error;
+	/* Only MI's own saved backend can satisfy the fixed provider identity. */
+	error = cn_bootfb_serial_hold(lease, wsdisplay_ocn, &dev);
+	if (error != 0)
+		return error;
+	wsdisplay_serial_lease = lease;
+	wsdisplay_cons.cn_dev = dev;
+	wsdisplay_console_generation++;
+	wsdisplay_serial_generation = wsdisplay_console_generation;
+	wsdisplay_serial_dev = dev;
+	atomic_store_release(&wsdisplay_serial_console, wsdisplay_ocn);
+	return 0;
+}
+
+int
+wsdisplay_early_serial_validate(struct wsdisplay_bootfb_lease *lease)
+{
+	dev_t dev;
+	int error;
+
+	KASSERT(KERNEL_LOCKED_P());
+	if (lease == NULL || wsdisplay_serial_lease != lease ||
+	    wsdisplay_serial_console == NULL ||
+	    wsdisplay_serial_console != wsdisplay_ocn)
+		return ENXIO;
+	error = cn_bootfb_serial_validate(lease, wsdisplay_ocn, &dev);
+	if (error != 0)
+		return error;
+	return wsdisplay_cons.cn_dev == dev ? 0 : ENXIO;
+}
+
+void
+wsdisplay_early_serial_cancel(struct wsdisplay_bootfb_lease *lease)
+{
+
+	KASSERT(KERNEL_LOCKED_P());
+	if (lease == NULL || wsdisplay_serial_lease != lease ||
+	    cn_publication_closed())
+		return;
+	atomic_store_release(&wsdisplay_serial_console, NULL);
+	wsdisplay_serial_lease = NULL;
+	/* Allocation can yield to a checked competing console commit. */
+	if (wsdisplay_console_generation == wsdisplay_serial_generation &&
+	    wsdisplay_cons.cn_dev == wsdisplay_serial_dev &&
+	    wsdisplay_early_binding()) {
+		wsdisplay_cons.cn_dev = NODEV;
+		wsdisplay_console_generation++;
+	}
+	cn_bootfb_serial_release(lease);
+}
+
 int
 wsdisplay_early_close(const struct wsscreen_descr *type, void *cookie,
     pserialize_t psz, struct wsdisplay_bootfb_close_status *out)
@@ -2916,8 +2988,13 @@ wsdisplay_cnputc(dev_t dev, int i)
 #endif
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 	/* Keep this check inside the admitted early read section. */
-	if (cn_publication_closed())
+	if (cn_publication_closed()) {
+		struct consdev *serial = atomic_load_consume(&wsdisplay_serial_console);
+
+		if (serial != NULL)
+			serial->cn_putc(serial->cn_dev, i);
 		goto out;
+	}
 #endif
 
 	if (!wsdisplay_console_initted)
@@ -2948,6 +3025,14 @@ static int
 wsdisplay_getc(dev_t dev)
 {
 	int c;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (cn_publication_closed()) {
+		struct consdev *serial = atomic_load_consume(&wsdisplay_serial_console);
+
+		if (serial != NULL)
+			return serial->cn_getc(serial->cn_dev);
+	}
+#endif
 
 	if (wsdisplay_cons_kbd_getc) {
 		c = wsdisplay_cons_kbd_getc(wsdisplay_cons.cn_dev);
@@ -2979,8 +3064,24 @@ wsdisplay_pollc(dev_t dev, int on)
 {
 
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
-	if (on)
+	if (on) {
 		wsdisplay_poll_admitted = cn_publication_enter() == 0;
+		wsdisplay_serial_pollmode = false;
+		/* A freeze may win admission. Select the pair before any callback. */
+		if (!wsdisplay_poll_admitted && cn_publication_closed())
+			wsdisplay_serial_pollmode =
+			    atomic_load_consume(&wsdisplay_serial_console) != NULL;
+	}
+	if (wsdisplay_serial_pollmode) {
+		struct consdev *serial = atomic_load_consume(&wsdisplay_serial_console);
+
+		KASSERT(serial != NULL);
+		wsdisplay_cons_pollmode = on;
+		serial->cn_pollc(serial->cn_dev, on);
+		if (!on)
+			wsdisplay_serial_pollmode = false;
+		return;
+	}
 #endif
 	wsdisplay_cons_pollmode = on;
 

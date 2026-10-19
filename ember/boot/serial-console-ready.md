@@ -1,10 +1,11 @@
 # Resident PLCOM console readiness
 
 This private kernel interface describes one real attached serial tty. It is
-compiled only with the default-off `WSDISPLAY_BOOTFB_HANDOFF` option. No kernel
-configuration selects that option. This slice has no consumer and performs no
-console routing, framebuffer close, display handoff or new hardware operation.
-It does not establish a boot console-open or physical serial acceptance result.
+compiled only with the default-off `WSDISPLAY_BOOTFB_HANDOFF` option. The manual
+`EMBERV3DCONSOLE` profile selects the joined CPU console transaction described in
+[the issuer guide](boot-framebuffer-issuer.md#native-joined-boot-job). Default
+profiles stay unchanged. A coherent kernel link and physical serial acceptance
+remain pending. This interface grants no display or firmware authority.
 
 ## Provider and validation
 
@@ -42,18 +43,30 @@ The record and its opaque token stay resident until reboot. The first published
 provider is fixed. There is no replacement, reissue or token-address reuse.
 Revocation is permanent. Queries check revocation and a fresh driver lookup before
 dereferencing former provider storage. Console detach keeps its existing refusal.
-Reattachment, console replacement/unmap, deactivation, free and a shutdown disable
-revoke the matching record before their effects. Warm console mutations serialize
+Without a hold, reattachment, console replacement/unmap, deactivation, free and
+last-close disable revoke the matching record before their effects. Warm console mutations serialize
 with Giant. The existing cold bootstrap remains serialized; consumers cannot get
 a token there.
 
-The record does not add a localcount reference or a hold across a reader barrier.
-It is a readiness fact while the caller holds Giant. Revalidate after dropping
-Giant. A future lease-bound route transaction must supply its own admission,
-consumer lifetime and terminal boot join. This API supplies no route commit,
-publication thaw or display/MMIO/firmware authority. Temporary interrupt masking
-by the existing console halt path does not remove the installed IRQ handler;
-normal `plcomopen` retains responsibility for ordinary tty activation.
+The readiness query alone adds no hold. The fixed `cn_bootfb_serial_hold` consumer
+in the private MI console header binds this same record to one real CLAIMED lease.
+MI passes its own recorded previous backend. No caller boolean or provider address
+can substitute for these identities. Only the actual built-in `plcom_acpi_ca`
+attachment supports this hold. Its detach callback remains NULL. The HANDOFF-on
+profile installs the actual common activate guard; the option-off callback stays
+NULL. Missing selected provider support fails the link instead of reporting ready.
+
+While held, the selected ACPI frontend refuses replacement before changing
+console storage, mapping registers or installing another IRQ. An incomplete common
+attach also refuses its hard IRQ; its possibly published storage stays resident.
+The common mutation guard additionally refuses replacement, unmap, reattachment,
+deactivation and disable before their destructive effects. Ordinary last-close
+`plcom_shutdown` cannot disable this provider. No localcount is held across the
+reader barrier because the selected built-in attachment has no detach route.
+A pre-freeze rollback releases the exact hold. CLOSED retains it until reboot.
+Temporary console halt masking keeps the installed IRQ handler; normal `plcomopen`
+retains responsibility for ordinary tty activation. No publication thaw, display,
+MMIO or firmware authority is supplied.
 
 ## Software checks
 

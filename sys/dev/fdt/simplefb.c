@@ -228,6 +228,7 @@ static struct {
 	device_t device;
 	bool active;
 	bool terminal;
+	bool serial;
 	struct simplefb_console_close_status status;
 } simplefb_close;
 
@@ -255,8 +256,8 @@ simplefb_console_close_status(struct wsdisplay_bootfb_lease *lease,
 	return error;
 }
 
-int
-simplefb_console_close(struct wsdisplay_bootfb_lease *lease)
+static int
+simplefb_console_close_impl(struct wsdisplay_bootfb_lease *lease, bool serial)
 {
 	struct simplefb_console_close_status value;
 	struct wsdisplay_bootfb_close_status mi;
@@ -272,6 +273,11 @@ simplefb_console_close(struct wsdisplay_bootfb_lease *lease)
 	KERNEL_LOCK(1, NULL);
 	if (simplefb_close.lease == lease && lease != NULL &&
 	    simplefb_close.terminal) {
+		/* A raw CPU close cannot be upgraded to an unheld serial route. */
+		if (serial && !simplefb_close.serial) {
+			error = EPERM;
+			goto out;
+		}
 		error = simplefb_close.status.error;
 		goto out;
 	}
@@ -292,8 +298,10 @@ simplefb_console_close(struct wsdisplay_bootfb_lease *lease)
 	simplefb_close.lease = lease;
 	simplefb_close.device = dev;
 	simplefb_close.active = true;
+	simplefb_close.serial = serial;
 	memset(&value, 0, sizeof(value));
-	error = wsdisplay_bootfb_close(lease);
+	error = serial ? wsdisplay_bootfb_close_serial(lease) :
+	    wsdisplay_bootfb_close(lease);
 	value.mi_error = error;
 	status_error = wsdisplay_bootfb_close_status(lease, &mi);
 	if (status_error != 0) {
@@ -320,6 +328,22 @@ simplefb_console_close(struct wsdisplay_bootfb_lease *lease)
 out:
 	KERNEL_UNLOCK_ONE(NULL);
 	return error;
+}
+#endif
+
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+int
+simplefb_console_close(struct wsdisplay_bootfb_lease *lease)
+{
+
+	return simplefb_console_close_impl(lease, false);
+}
+
+int
+simplefb_console_close_serial(struct wsdisplay_bootfb_lease *lease)
+{
+
+	return simplefb_console_close_impl(lease, true);
 }
 #endif
 

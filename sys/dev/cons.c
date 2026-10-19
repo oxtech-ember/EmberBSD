@@ -55,6 +55,7 @@ __KERNEL_RCSID(0, "$NetBSD: cons.c,v 1.95 2023/09/02 17:44:59 riastradh Exp $");
 #include <sys/heartbeat.h>
 #include <sys/ioctl.h>
 #include <sys/kauth.h>
+#include <sys/kernel.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/poll.h>
@@ -152,6 +153,23 @@ cn_publication_closed(void)
 {
 
 	return (atomic_load_acquire(&cn_publication) & CN_PUBLICATION_CLOSED) != 0;
+}
+
+int
+cn_bootfb_console_unused(void)
+{
+
+	if (cold || panicstr != NULL || cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	if (!KERNEL_LOCKED_P())
+		return EDEADLK;
+	/* The cold-created job joins before init can open or redirect console. */
+	if (curlwp->l_proc != &proc0)
+		return EPERM;
+	if (cn_devvp[0] != NULLVP || cn_devvp[1] != NULLVP || constty != NULL)
+		return EBUSY;
+	return 0;
 }
 
 int

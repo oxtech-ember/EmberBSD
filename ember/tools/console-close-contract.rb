@@ -40,14 +40,14 @@ ws = files.fetch('sys/dev/wscons/wsdisplay.c')
 fb = files.fetch('sys/dev/fdt/simplefb.c')
 arm = files.fetch('sys/arch/arm/fdt/arm_simplefb.c')
 api = block(files.fetch('sys/dev/wscons/wsdisplayvar.h'), "#ifdef WSDISPLAY_EARLYFB_HOOKS\n/* Actual binding/replay facts only. No stop, handoff or MMIO right is granted. */")
-state = ws[/^static uint64_t wsdisplay_console_generation;\nstatic bool wsdisplay_poll_admitted;/]
+state = ws[/^static uint64_t wsdisplay_console_generation;\nstatic bool wsdisplay_poll_admitted;.*?^static dev_t wsdisplay_serial_dev;/m]
 operation = ws[/^static struct \{\n\tdevice_t device;\n\tstruct lwp \*lwp;\n\tunsigned int depth;\n} wsdisplay_console_operation;/]
 abort 'actual binding state missing' unless state && operation
 fbstate = fb[/^struct simplefb_softc \{.*?^};/m]
 armstate = block(arm, "#ifdef WSDISPLAY_BOOTFB_DEFER\n/* Written only by the real preattach, then published once after replay. */")
-display = %w[wsdisplay_preattach_impl wsdisplay_preattach_checked].map { |n| function(ws, n) }.join("\n")
+display = %w[wsdisplay_console_enter wsdisplay_console_exit wsdisplay_mutation_context wsdisplay_cnattach_impl wsdisplay_cnattach_checked wsdisplay_preattach_impl wsdisplay_preattach_checked].map { |n| function(ws, n) }.join("\n")
 display += "\n" + block(ws, "#ifdef WSDISPLAY_EARLYFB_HOOKS\nenum {")
-display += "\n" + %w[wsdisplay_early_binding_matches wsdisplay_early_close wsdisplay_cnputc wsdisplay_getc wsdisplay_pollc].map { |n| function(ws, n) }.join("\n")
+display += "\n" + %w[wsdisplay_early_binding_matches wsdisplay_early_serial_prepare wsdisplay_early_serial_validate wsdisplay_early_serial_cancel wsdisplay_early_close wsdisplay_cnputc wsdisplay_getc wsdisplay_pollc].map { |n| function(ws, n) }.join("\n")
 # These three unchanged callback parameters are unused in the kernel source.
 # Annotate only their extracted declarations. Keep all bodies and -Wextra.
 %w[wsdisplay_cnputc wsdisplay_getc wsdisplay_pollc].each do |name|
@@ -64,7 +64,7 @@ originals = {
   'issuer.c' => files.fetch('sys/dev/wscons/wsdisplay_bootfb.c'),
   'simplefb-state.h' => license(fb) + fbstate,
   'arm-binding.h' => license(arm) + armstate + "\n" + function(arm, 'fdtbus_bootfb_match'),
-  'fdt-close.h' => license(fb) + %w[simplefb_console_claim simplefb_console_cancel].map { |n| function(fb, n) }.join("\n") + "\n" + block(fb, "#ifdef WSDISPLAY_BOOTFB_HANDOFF\n/* This wrapper owns the unified result, including a failed post-drain rematch. */"),
+  'fdt-close.h' => license(fb) + %w[simplefb_console_claim simplefb_console_cancel].map { |n| function(fb, n) }.join("\n") + "\n" + block(fb, "#ifdef WSDISPLAY_BOOTFB_HANDOFF\n/* This wrapper owns the unified result, including a failed post-drain rematch. */") + "\n" + %w[simplefb_console_close simplefb_console_close_serial].map { |n| function(fb, n) }.join("\n"),
   'putone.h' => license(files.fetch('sys/kern/subr_prf.c')) + function(files.fetch('sys/kern/subr_prf.c'), 'putone'),
   'replay.h' => license(files.fetch('sys/dev/wscons/wsdisplay_vcons_util.c')) + function(files.fetch('sys/dev/wscons/wsdisplay_vcons_util.c'), 'vcons_replay_msgbuf')
 }
@@ -148,7 +148,7 @@ Dir.mktmpdir('console-close-', ENV.fetch('TMPDIR', '/tmp')) do |work|
   next if ENV['SKIP_MUTANTS'] == '1' || ENV['COMPILE_ONLY'] == '1'
   mutants = {
     'mi-read-context' => ['issuer.c', "if (pserialize_in_read_section())\n\t\treturn EDEADLK;", 'if (false) return EDEADLK;'],
-    'reader-closed' => ['display.h', 'if (cn_publication_closed())\n\t\tgoto out;'.gsub('\\n', "\n").gsub('\\t', "\t"), 'if (false) goto out;'],
+    'reader-closed' => ['display.h', 'if (cn_publication_closed()) {', 'if (false) {'],
     'writer-barrier' => ['display.h', 'pserialize_perform(psz);', 'if (false) pserialize_perform(psz);'],
     'giant-release' => ['display.h', 'KERNEL_UNLOCK_ALL(NULL, &count);', 'count = 0; if (false) KERNEL_UNLOCK_ALL(NULL, &count);'],
     'giant-restore' => ['display.h', 'KERNEL_LOCK(count, NULL);', '(void)count;'],
@@ -168,8 +168,10 @@ Dir.mktmpdir('console-close-', ENV.fetch('TMPDIR', '/tmp')) do |work|
   selected.each do |name|
     target, before, after = mutants.fetch(name)
     text = originals.fetch(target)
-    abort "mutant anchor #{name}" unless text.scan(Regexp.new(Regexp.escape(before))).size == 1
-    File.write(work + '/' + target, text.sub(before, after))
+    scope = target == 'issuer.c' ? function(text, 'wsdisplay_bootfb_close') :
+      name == 'reader-closed' ? function(text, 'wsdisplay_cnputc') : text
+    abort "mutant anchor #{name}" unless scope.scan(Regexp.new(Regexp.escape(before))).size == 1
+    File.write(work + '/' + target, text.sub(scope, scope.sub(before, after)))
     compile.call(name)
     status, stderr, timeout = run.call(name, [*executor, work + '/contract'])
     abort "mutant not a causal CHECK #{name}" unless !timeout && status.termsig == Signal.list.fetch('ABRT') && stderr.include?('close CHECK ')

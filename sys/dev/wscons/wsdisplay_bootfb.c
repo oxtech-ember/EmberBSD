@@ -312,6 +312,64 @@ wsdisplay_bootfb_close_status(struct wsdisplay_bootfb_lease *lease,
 }
 
 int
+wsdisplay_bootfb_close_serial(struct wsdisplay_bootfb_lease *lease)
+{
+	struct wsdisplay_bootfb_close_status value;
+	pserialize_t psz;
+	int error;
+
+	if (pserialize_in_read_section())
+		return EDEADLK;
+	error = wsdisplay_bootfb_context();
+	if (error != 0)
+		return error;
+	if (cold)
+		return EWOULDBLOCK;
+	KERNEL_LOCK(1, NULL);
+	if (!wsdisplay_bootfb_issued(lease)) {
+		error = EPERM;
+		goto out;
+	}
+	if (wsdisplay_bootfb.phase == BOOTFB_CLOSED) {
+		error = wsdisplay_early_serial_validate(lease);
+		if (error == 0)
+			error = lease->close.error;
+		goto out;
+	}
+	if (wsdisplay_bootfb.phase != BOOTFB_CLAIMED) {
+		error = EBUSY;
+		goto out;
+	}
+	error = wsdisplay_early_serial_prepare(wsdisplay_bootfb.type,
+	    wsdisplay_bootfb.cookie, lease);
+	if (error != 0)
+		goto out;
+	/* Refuse concurrent cancel while KM_SLEEP or the barrier drops Giant. */
+	wsdisplay_bootfb.phase = BOOTFB_CLOSING;
+	KERNEL_UNLOCK_ONE(NULL);
+	psz = pserialize_create();
+	KERNEL_LOCK(1, NULL);
+	memset(&value, 0, sizeof(value));
+	error = wsdisplay_early_serial_validate(lease);
+	if (error == 0)
+		error = wsdisplay_early_close(wsdisplay_bootfb.type,
+		    wsdisplay_bootfb.cookie, psz, &value);
+	if (!value.closed)
+		wsdisplay_early_serial_cancel(lease);
+	else if (error == 0)
+		error = wsdisplay_early_serial_validate(lease);
+	value.error = error;
+	memcpy(&lease->close, &value, sizeof(value));
+	wsdisplay_bootfb.phase = value.closed ? BOOTFB_CLOSED : BOOTFB_CLAIMED;
+	KERNEL_UNLOCK_ONE(NULL);
+	pserialize_destroy(psz);
+	return error;
+out:
+	KERNEL_UNLOCK_ONE(NULL);
+	return error;
+}
+
+int
 wsdisplay_bootfb_close(struct wsdisplay_bootfb_lease *lease)
 {
 	struct wsdisplay_bootfb_close_status value;

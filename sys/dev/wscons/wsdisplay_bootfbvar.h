@@ -37,6 +37,14 @@ struct wsdisplay_bootfb_close_status {
 	bool closed;
 	bool drained;
 };
+/* Built-in boot transaction. Exact lease only; pre-freeze failures may cancel. */
+int wsdisplay_bootfb_close_serial(struct wsdisplay_bootfb_lease *)
+    __attribute__((__warn_unused_result__));
+int wsdisplay_early_serial_prepare(const struct wsscreen_descr *, void *,
+    struct wsdisplay_bootfb_lease *) __attribute__((__warn_unused_result__));
+int wsdisplay_early_serial_validate(struct wsdisplay_bootfb_lease *)
+    __attribute__((__warn_unused_result__));
+void wsdisplay_early_serial_cancel(struct wsdisplay_bootfb_lease *);
 int wsdisplay_bootfb_close(struct wsdisplay_bootfb_lease *)
     __attribute__((__warn_unused_result__));
 int wsdisplay_bootfb_close_status(struct wsdisplay_bootfb_lease *,

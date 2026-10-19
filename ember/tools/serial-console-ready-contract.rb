@@ -38,6 +38,12 @@ originals = {
   'acpi.inc' => %w[plcom_acpi_attach plcom_acpi_cix_deferred].map { |name| function(files.fetch(paths[4]), name) }.join("\n"),
   'fdt.inc' => function(files.fetch(paths[5]), 'plcom_fdt_attach')
 }
+def notice(text)
+  text.split(/^#(?:include|ifdef|ifndef)/,2).first
+end
+%w[provider.inc common.inc].each { |name| originals[name] = notice(mi) + originals[name] }
+originals['acpi.inc'] = notice(files.fetch(paths[4])) + originals.fetch('acpi.inc')
+originals['fdt.inc'] = notice(files.fetch(paths[5])) + originals.fetch('fdt.inc')
 # Only unused unchanged callback parameters receive fixture declaration attributes.
 originals['common.inc'].sub!('plcom_detach(device_t self, int flags)',
   'plcom_detach(device_t self, int flags __attribute__((__unused__)))')
@@ -53,8 +59,9 @@ controls = {
   'tty-attach' => ['common.inc', "\ttty_attach(tp);", "\t(void)tp;"],
   'acpi-hook' => ['acpi.inc', "\tplcom_console_attach_complete(sc, ih);", "\t(void)ih;"],
   'deferred-hook' => ['acpi.inc', "\tplcom_console_attach_complete(sc, ih);\n#endif\n\taprint_normal_dev", "\t(void)ih;\n#endif\n\taprint_normal_dev"],
-  'detach-revoke' => ['common.inc', "\tplcom_console_ready_revoke(NULL);\n#endif\n\n\tbus_space_unmap", "#endif\n\n\tbus_space_unmap"],
-  'fdt-hook' => ['fdt.inc', "\tplcom_console_attach_complete(sc, ih);", "\t(void)ih;"]
+  'detach-revoke' => ['common.inc', "\tif (!plcom_console_ready_revoke(NULL)) {\n\t\tif (warm)\n\t\t\tKERNEL_UNLOCK_ONE(NULL);\n\t\treturn;\n\t}\n#endif\n\n\tbus_space_unmap", "#endif\n\n\tbus_space_unmap"],
+  'fdt-hook' => ['fdt.inc', "\tplcom_console_attach_complete(sc, ih);", "\t(void)ih;"],
+  'incomplete-irq' => ['acpi.inc', '(sc->sc_hwflags & PLCOM_HW_DEV_OK) == 0 || sc->sc_si == NULL', 'false']
 }
 selected = ENV.fetch('SERIAL_READY_MUTANTS', controls.keys.join(',')).split(',')
 abort 'unknown control' unless (selected - controls.keys).empty?

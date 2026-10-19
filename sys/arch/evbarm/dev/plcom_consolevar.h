@@ -4,12 +4,17 @@
 #define _EVBARM_DEV_PLCOM_CONSOLEVAR_H_
 
 #include <sys/types.h>
+#include <sys/bus.h>
+#include <sys/device.h>
 
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 struct consdev;
 struct plcom_softc;
 struct plcom_console_ready;
 
+/* Selected frontend only. Refuse replacement before changing storage or maps. */
+bool plcom_console_attach_begin(device_t, bus_space_tag_t, bus_addr_t)
+    __attribute__((__warn_unused_result__));
 /* Frontend only. Call after its real hard interrupt establishment succeeds. */
 void plcom_console_attach_complete(struct plcom_softc *, void *);
 

@@ -120,7 +120,8 @@ enum bcmv3d_bootfb_phase {
 	BCMV3D_BOOTFB_REFUSED,
 	BCMV3D_BOOTFB_CLAIMED,
 	BCMV3D_BOOTFB_CANCELED,
-	BCMV3D_BOOTFB_RETAINED
+	BCMV3D_BOOTFB_RETAINED,
+	BCMV3D_BOOTFB_CLOSED
 };
 
 /* The ACPI device and this embedded owner remain resident until reboot. */
@@ -157,6 +158,9 @@ CFATTACH_DECL_NEW(bcmv3d_acpi, sizeof(struct bcmv3d_softc),
     bcmv3d_match, bcmv3d_attach, NULL, NULL);
 
 #if defined(BCM2712_V3D_RENDER) && defined(WSDISPLAY_BOOTFB_DEFER)
+static void bcmv3d_bootfb_cancel(struct bcmv3d_softc *, int);
+static void bcmv3d_bootfb_retain(struct bcmv3d_softc *, int);
+
 static void
 bcmv3d_bootfb_claim_job(device_t dev)
 {
@@ -179,6 +183,29 @@ bcmv3d_bootfb_claim_job(device_t dev)
 	owner->lease = lease;
 	owner->framebuffer = framebuffer;
 	owner->phase = BCMV3D_BOOTFB_CLAIMED;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	/* This pending job joins before either finalizer and before init console. */
+	error = simplefb_console_close_serial(lease);
+	owner->first_error = error;
+	{
+		struct simplefb_console_close_status status;
+		int status_error = simplefb_console_close_status(lease, &status);
+
+		if (status_error != 0) {
+			/* Unknown admission cannot authorize fallback. */
+			bcmv3d_bootfb_retain(sc, status_error);
+		} else if (status.closed) {
+			owner->phase = BCMV3D_BOOTFB_CLOSED;
+			aprint_normal_dev(dev,
+			    "boot framebuffer CPU console closed: error %d, drained %d; "
+			    "serial console retained, no display handoff\n",
+			    error, status.drained);
+		} else {
+			/* No irreversible admission occurred. Preserve genfb fallback. */
+			bcmv3d_bootfb_cancel(sc, error);
+		}
+	}
+#endif
 }
 
 static void
@@ -491,17 +518,20 @@ bcmv3d_finalize(device_t dev)
 #ifdef BCM2712_V3D_RENDER
 		if (error == 0) {
 #if defined(WSDISPLAY_BOOTFB_DEFER)
-			if (sc->sc_bootfb.phase == BCMV3D_BOOTFB_CLAIMED)
+			if (sc->sc_bootfb.phase == BCMV3D_BOOTFB_CLAIMED
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+			    || sc->sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED
+#endif
+			    )
 				bootfb = &sc->sc_bootfb;
 #endif
 			error = bcmv3d_render_attach(dev, sc->sc_bst,
 			    sc->sc_dmat, sc->sc_handle, bootfb);
 #if defined(WSDISPLAY_BOOTFB_DEFER)
 			/*
-			 * Render setup has no display or MMU4 calls. It cannot replace
-			 * the boot console. Release its lease on success as well as
-			 * failure so that genfb can publish a real console device.
-			 * A future display caller needs a separate lifetime contract.
+			 * Render setup has no display or MMU4 calls. Release only a
+			 * live pre-close lease after setup cleanup. A CLOSED owner
+			 * retains its serial route and CPU drain on every outcome.
 			 */
 			bcmv3d_bootfb_cancel(sc, error);
 #endif

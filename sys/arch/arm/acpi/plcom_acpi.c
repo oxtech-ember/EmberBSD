@@ -70,7 +70,12 @@ static int	plcom_acpi_match(device_t, cfdata_t, void *);
 static void	plcom_acpi_attach(device_t, device_t, void *);
 
 CFATTACH_DECL_NEW(plcom_acpi, sizeof(struct plcom_acpi_softc),
-    plcom_acpi_match, plcom_acpi_attach, NULL, NULL);
+    plcom_acpi_match, plcom_acpi_attach, NULL,
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+    plcom_activate);
+#else
+    NULL);
+#endif
 
 enum plcom_acpi_variant {
 	PLCOM_ACPI_GENERIC,
@@ -378,6 +383,10 @@ plcom_acpi_attach(device_t parent, device_t self, void *aux)
 		goto done;
 	}
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (!plcom_console_attach_begin(self, aa->aa_memt, mem->ar_base))
+		goto done;
+#endif
 	sc->sc_hwflags = 0;
 	sc->sc_swflags = 0;
 	sc->sc_fifolen = 0;
@@ -408,6 +417,11 @@ plcom_acpi_attach(device_t parent, device_t self, void *aux)
 	}
 
 	plcom_attach_subr(sc);
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	/* Common attach can refuse or leave incomplete console/tty storage. */
+	if ((sc->sc_hwflags & PLCOM_HW_DEV_OK) == 0 || sc->sc_si == NULL)
+		goto done;
+#endif
 
 	/* RP1 shares PCIe INTA with USB and Ethernet at IPL_VM. */
 	if (ACPI_SUCCESS(acpi_dsd_integer(aa->aa_node->ad_handle,

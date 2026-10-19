@@ -1,8 +1,8 @@
 # Cold boot framebuffer defer issuer
 
 `WSDISPLAY_BOOTFB_DEFER` is default-off. It selects
-`WSDISPLAY_EARLYFB_HOOKS`. No default configuration or native display caller
-selects it. It can defer one actual cold simplefb fallback and issue one opaque
+`WSDISPLAY_EARLYFB_HOOKS`. No default configuration selects it. The explicit `EMBERV3DHDMI` profile
+selects the issuer. `EMBERV3DCONSOLE` additionally selects CPU console handoff. It can defer one actual cold simplefb fallback and issue one opaque
 lease. It does not close console output, drain writers, install a replacement
 console, issue a firmware request or grant MMIO, DMA or display ownership.
 
@@ -156,10 +156,10 @@ and native leases cannot convert into each other. They exclude each other.
 The issuer does not reorder render or fallback finalizers. A future cold caller
 must claim before fallback. It cannot recover a lease after genfb publication.
 
-## Native claim-only job
+## Native joined boot job
 
 With both `BCM2712_V3D_RENDER` and `WSDISPLAY_BOOTFB_DEFER`, the validated cold
-BCM2712 ACPI attachment queues one claim-only `config_interrupts` job after its
+BCM2712 ACPI attachment queues one `config_interrupts` job after its
 renderer finalizer is registered. It retains the real lease and descriptor in
 its boot-lifetime softc. The real pending join completes the job before either
 simplefb or renderer finalizer runs. The job does not wait for a finalizer.
@@ -176,17 +176,15 @@ renderer setup error paths cancel only after their existing cleanup returns.
 This is certified against its setup-only call graph: no MODESET, display or MMU4
 operation occurs there. Adding such a call invalidates this cancellation rule.
 Cancellation failure or unknown binding retains the owner and records the error.
-Successful render-only attachment also cancels the live lease. The renderer keeps
-only the same resident opaque record, now CANCELED with no lease. It receives no
-display authority. Both finalizer orders must attach the deferred genfb console
-exactly once before init opens `/dev/console`. A retained early console without a
-real tty leaves `cn_dev` at NODEV and triggers `cnopen: no console device`.
-A future native display caller must provide a valid console-open contract and a
-separate handoff lifetime. No framebuffer guard is bypassed.
+With `WSDISPLAY_BOOTFB_HANDOFF` off, successful render-only attachment still
+cancels the live lease. Both finalizer orders attach genfb exactly once before
+init opens `/dev/console`. The resident renderer pointer grants no display access.
 
-This job adds no close/drain, sink, firmware request or display attempt. Existing
-console output/replay stay active. Neither a claim nor the stored pointer grants
-MMIO, DMA or a later handoff. The options remain default-off.
+With that option on, the joined job performs the
+[CPU console transaction](bootfb-serial-handoff.md). It holds the actual previous
+serial tty before allocation and CPU reader drain. A pre-freeze refusal preserves
+fallback. CLOSED and unknown admitted outcomes retain the opaque owner without
+hardware authority. The manual `EMBERV3DCONSOLE` profile selects this path.
 
 ## Source checks
 
@@ -218,8 +216,8 @@ this shared-record fixture. Its old-export baseline controls remain available.
 These controls establish no real MP race or grace-period behavior. Issuer claim
 and cancel leave actual cnputc and replay enabled. The separate default-off
 [checked publication foundation](console-publication.md) covers selected binders.
-Close/drain, an independent sink and irreversible hardware handoff remain
-separate work. Native TU checks require actual selected warning flags, matching
+The separate serial transaction below source-tests a held sink and CPU drain.
+Irreversible hardware handoff remains separate work. Native TU checks require actual selected warning flags, matching
 headers and explicitly generated off/on option headers. They do not establish a
 coherent kernel link or physical display handoff.
 
@@ -245,3 +243,7 @@ controls. `CLAIM_JOB_SKIP_POSITIVES=1` omits positives for a scoped control run.
 `CLAIM_JOB_EVIDENCE` must name a new directory. It preserves source hashes,
 extracted inputs, exact argv and raw outputs. A control must compile and reach
 its expected fatal CHECK; an unrelated abort or a timeout does not pass.
+
+
+The integrated serial transaction has a separate
+[source contract](bootfb-serial-handoff.md).

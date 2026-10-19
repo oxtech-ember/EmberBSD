@@ -55,6 +55,8 @@ struct simplefb_console_close_status {
 /* Process context; no owner, callback, printf or spin lock across close.
  * The exact issued lease and all metadata stay resident after admission.
  * A terminal result is sticky. There is no reopen, detach or hardware IO. */
+int simplefb_console_close_serial(struct wsdisplay_bootfb_lease *)
+    __attribute__((__warn_unused_result__));
 int simplefb_console_close(struct wsdisplay_bootfb_lease *)
     __attribute__((__warn_unused_result__));
 int simplefb_console_close_status(struct wsdisplay_bootfb_lease *,

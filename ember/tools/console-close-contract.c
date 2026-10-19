@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <unistd.h>
@@ -48,11 +49,14 @@ static void unlock_all(int *n) { *n = giant; while (giant) unlock_giant(); }
 #define ASSERT_SLEEPABLE() CHECK(!hard_irq && !soft_irq && read_depth == 0)
 static bool cpu_intr_p(void) { return hard_irq; }
 static bool cpu_softintr_p(void) { return soft_irq; }
-#define atomic_load_acquire(p) __atomic_load_n((p), __ATOMIC_ACQUIRE)
+static unsigned fixture_load(const unsigned *);
+static void (*admission_hook)(void);
+#define atomic_load_acquire(p) fixture_load(p)
 #define atomic_load_relaxed(p) __atomic_load_n((p), __ATOMIC_RELAXED)
-static void fixture_store(unsigned *, unsigned);
+static void fixture_stored(const void *);
 static bool inject_closed_replay;
-#define atomic_store_release(p, v) fixture_store((p), (v))
+#define atomic_store_release(p, v) do { __atomic_store_n((p), (v), __ATOMIC_RELEASE); fixture_stored(p); } while (0)
+#define atomic_load_consume(p) __atomic_load_n((p), __ATOMIC_ACQUIRE)
 static unsigned atomic_cas_uint(unsigned *p, unsigned before, unsigned after)
 {
 	(void)__atomic_compare_exchange_n(p, &before, after, false,
@@ -106,6 +110,32 @@ struct consdev {
 	dev_t cn_dev;
 };
 static struct consdev wsdisplay_cons, old_cons, *cn_tab, *wsdisplay_ocn;
+static struct consdev *fixture_previous;
+struct proc { int token; };
+struct lwp { struct proc *l_proc; };
+static struct proc proc0;
+static struct lwp fixture_lwp = { &proc0 }, *curlwp = &fixture_lwp;
+struct cfattach { const char *ca_name; };
+struct device {
+	void *private; const char *driver; struct cfattach attachment;
+	struct device *dv_parent; int dv_pending;
+#ifdef BOOTFB_SERIAL_CONTRACT
+	TAILQ_ENTRY(device) dv_pending_list;
+#endif
+};
+static void *device_private(device_t d);
+struct vnode;
+#define NULLVP NULL
+static struct vnode *cn_devvp[2];
+struct tty;
+static struct tty *constty;
+#ifndef BOOTFB_SERIAL_CONTRACT
+int cn_bootfb_serial_hold(struct wsdisplay_bootfb_lease *l, const struct consdev *c, dev_t *d)
+{ (void)l; (void)c; (void)d; return ENXIO; }
+int cn_bootfb_serial_validate(struct wsdisplay_bootfb_lease *l, const struct consdev *c, dev_t *d)
+{ (void)l; (void)c; (void)d; return ENXIO; }
+void cn_bootfb_serial_release(struct wsdisplay_bootfb_lease *l) { (void)l; }
+#endif
 static struct display_device *wsdisplay_console_device;
 static struct wsscreen_internal wsdisplay_console_conf;
 static int wsdisplay_console_initted, wsdisplay_cons_pollmode;
@@ -148,24 +178,34 @@ static struct wsscreen_descr screen = { 10, 20, NULL };
 static char cookie;
 static int (*finalizer)(device_t);
 static unsigned fallback_calls;
+#ifndef BOOTFB_SERIAL_CONTRACT
 static int config_finalize_register(device_t d, int (*f)(device_t)) { CHECK(d != NULL); finalizer = f; return 0; }
+#else
+#include "native-config.h"
+#endif
 static int fallback(device_t d) { CHECK(d != NULL); fallback_calls++; return 0; }
 #include "publication.h"
+static unsigned fixture_load(const unsigned *p)
+{
+	unsigned value = __atomic_load_n(p, __ATOMIC_ACQUIRE);
+	if (p == &cn_publication && admission_hook != NULL) {
+		void (*hook)(void) = admission_hook;
+		admission_hook = NULL; hook();
+	}
+	return value;
+}
 #include "early-api.h"
 #include "display.h"
 #include "issuer.c"
-static void fixture_store(unsigned *p, unsigned value)
+static void fixture_stored(const void *p)
 {
-	__atomic_store_n(p, value, __ATOMIC_RELEASE);
 	/* Defensive CLOSED-guard injection bypasses normal admitted freeze. */
 	if (inject_closed_replay && p == &wsdisplay_early_phase &&
-	    value == WSDISPLAY_EARLY_BOUND)
+	    wsdisplay_early_phase == WSDISPLAY_EARLY_BOUND)
 		cn_publication |= CN_PUBLICATION_CLOSED;
 }
 
 /* Actual FDT association matcher; parser/platform services have fixed inputs. */
-struct cfattach { const char *ca_name; };
-struct device { void *private; const char *driver; struct cfattach attachment; };
 static struct device device;
 static void *device_private(device_t d) { return d->private; }
 static bool device_is_a(device_t d, const char *s) { return strcmp(d->driver, s) == 0; }
@@ -234,8 +274,10 @@ static void initialize(void)
 	memset(&arm_simplefb_boot, 0, sizeof(arm_simplefb_boot));
 	cn_publication = 0; wsdisplay_early_phase = 0; wsdisplay_console_generation = 0;
 	wsdisplay_early_type = NULL; wsdisplay_early_cookie = NULL; wsdisplay_console_device = NULL;
-	wsdisplay_cons_pollmode = 0; wsdisplay_poll_admitted = false; wsdisplay_console_initted = 0;
-	panicstr = NULL; hard_irq = soft_irq = false; cn_tab = &old_cons; wsdisplay_ocn = NULL;
+	wsdisplay_cons_pollmode = 0; wsdisplay_poll_admitted = false; wsdisplay_serial_pollmode = false; wsdisplay_console_initted = 0;
+	wsdisplay_serial_generation = 0; wsdisplay_serial_dev = NODEV; admission_hook = NULL;
+	panicstr = NULL; hard_irq = soft_irq = false; cn_tab = fixture_previous != NULL ? fixture_previous : &old_cons; wsdisplay_ocn = NULL;
+	wsdisplay_serial_console = NULL; wsdisplay_serial_lease = NULL; wsdisplay_cons.cn_dev = NODEV; cn_devvp[0] = cn_devvp[1] = NULL; constty = NULL; curlwp->l_proc = &proc0;
 	old_cons.cn_putc = old_putc; old_cons.cn_pollc = old_poll; old_cons.cn_getc = old_getc;
 	wsdisplay_cons_kbd_getc = kbd_getc; wsdisplay_cons_kbd_pollc = kbd_poll;
 	wsdisplay_multicons_enable = true; wsdisplay_multicons_suspended = false;
@@ -254,7 +296,10 @@ static void initialize(void)
 	KERNEL_LOCK(1, NULL);
 	CHECK(wsdisplay_bootfb_defer(&device, &screen, &cookie, fallback) == 0);
 	KERNEL_UNLOCK_ONE(NULL);
-	lease = NULL; CHECK(simplefb_console_claim(&lease, &parsed) == 0 && lease != NULL);
+	lease = NULL;
+#ifndef BOOTFB_SERIAL_CONTRACT
+	CHECK(simplefb_console_claim(&lease, &parsed) == 0 && lease != NULL);
+#endif
 	barriers = creates = destroys = matches = node_reads = 0; allocations_hook = 0;
 	output_calls = old_output = old_gets = kbd_gets = 0; old_on = old_off = kbd_on = kbd_off = 0;
 	barrier_action = getc_action = 0; allocation_hook = perform_hook = NULL;
@@ -294,7 +339,6 @@ static void *close_thread(void *arg)
 #define atomic_load_consume(p) __atomic_load_n((p), __ATOMIC_ACQUIRE)
 #define atomic_store_relaxed(p, v) __atomic_store_n((p), (v), __ATOMIC_RELAXED)
 struct tty { int token; };
-static struct tty *constty;
 static unsigned logged, routed;
 static int tputchar(int c, int f, struct tty *t) { (void)c; (void)f; (void)t; return 0; }
 static void atomic_cas_ptr(struct tty **p, struct tty *old, struct tty *value)
@@ -311,6 +355,8 @@ static void tests(void)
 		initialize(); KERNEL_LOCK(depth, NULL); CHECK(simplefb_console_close(lease) == 0);
 		CHECK(giant == depth); while (giant) KERNEL_UNLOCK_ONE(NULL);
 		status_is(true, 0); CHECK(barriers == 1 && creates == 1 && destroys == 1);
+		CHECK(simplefb_console_close_serial(lease) == EPERM);
+		cold = false; CHECK(wsdisplay_bootfb_close_serial(lease) == ENXIO); cold = true;
 		unsigned m = matches; CHECK(simplefb_console_close(lease) == 0 && barriers == 1 && matches == m);
 		check_resident();
 		logged = routed = 0; cold = false; putone('l', TOLOG | TOCONS, NULL); cold = true;

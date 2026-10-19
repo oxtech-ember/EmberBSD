@@ -47,7 +47,14 @@ struct cfdata { int cf_loc[2]; };
 typedef struct cfdata *cfdata_t;
 struct cfattach { const char *ca_name; };
 struct cfargs { int unused; };
-struct lwp { int token; };
+struct proc { int token; };
+struct lwp { int token; struct proc *l_proc; };
+static struct proc proc0;
+struct vnode;
+#define NULLVP NULL
+static struct vnode *cn_devvp[2];
+struct tty;
+static struct tty *constty;
 static struct lwp thread_a, thread_b, *curlwp = &thread_a;
 static int giant;
 static bool hard_irq, soft_irq, cold = true;

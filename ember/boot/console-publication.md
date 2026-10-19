@@ -1,10 +1,11 @@
 # Checked console publication and present-lease drain
 
 `WSDISPLAY_BOOTFB_HANDOFF` is default-off. It selects
-`WSDISPLAY_BOOTFB_DEFER` and the early framebuffer reader hooks. No ordinary or
-experimental kernel configuration enables this new option. There is no native
-caller, replacement output sink or hardware operation. The explicit present-lease
-close below is source-tested. No boot or physical handoff is accepted.
+`WSDISPLAY_BOOTFB_DEFER` and the early framebuffer reader hooks. The explicit
+`EMBERV3DCONSOLE` profile enables its joined CPU console transaction. Default
+profiles stay unchanged. The exact-lease close and retained serial route are
+source-tested. A coherent HANDOFF-on kernel and physical handoff remain pending.
+No display or firmware operation is authorized.
 
 ## Publication contract
 
@@ -142,12 +143,22 @@ The early READY/type/cookie metadata, descriptor, mappings, emulator and device
 remain resident. The exact metadata remains matchable after CPU output closes;
 it does not restore cancel or output authority. The cn_tab pointer is not swapped.
 The existing TOLOG path records a character in msgbuf before v_putc. Closed output
-does not call printf or logputchar again. Direct cnputc, TOCONS-only and DDB output
-are not redirected or promised visible.
+does not call printf or logputchar again. The raw close API alone does not redirect
+direct cnputc, TOCONS-only or DDB output, and does not change `cn_dev`.
 
-This API does not create a tty or change cn_dev. A resident early console can
-still have NODEV. A future boot-integrated caller must provide a valid console
-open/tty contract independently; this source slice does not make that boot safe.
+The joined `simplefb_console_close_serial` transaction adds the fixed held PLCOM
+backend. MI validates its own previous console and checks that no console vnode
+or redirected tty exists. It commits the validated serial `cn_dev` before freeze.
+CLOSED putc/getc/pollc route to that same backend. The route is published before
+freeze and is immutable after CLOSED. Existing old getc and active poll admission
+still exclude freeze. Pre-freeze rollback restores NODEV only for its own generation, cdev and early
+binding. It preserves a competing checked console commit and releases the hold.
+A poll pair records its backend before callbacks. Failed admission selects the
+held serial route before any keyboard callback; off uses the same recorded route.
+Each cn_dev commit advances the actual binding generation. A terminal raw close
+cannot be upgraded into a successful unheld serial route. The source fixture
+executes real cnopen dispatch against controlled vnode/tty services. It does not
+establish a physical serial session. See [the boot transaction](boot-framebuffer-issuer.md#native-joined-boot-job).
 A CPU drain proves neither firmware/audio/DMA/scanout exclusion nor power or
 MMIO accessibility. ENXIO, no framebuffer and a NULL owner do not grant access.
 Future verified-absence admission is a separate typed contract. Boot GOP is not

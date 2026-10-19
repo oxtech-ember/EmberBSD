@@ -715,7 +715,10 @@ on every board in the hardware catalog.
   A default-off [checked console publication foundation](ember/boot/console-publication.md)
   adds recoverable admission for selected framebuffer parents and console writers.
   The source-tested exact-lease CPU close/drain remains default-off.
-It grants no display ownership or physical handoff acceptance.
+  The manual `EMBERV3DCONSOLE` profile adds a joined lease-to-serial transaction.
+  It holds the actual PLCOM tty across allocation and CPU reader drain, preserves
+  console-open dispatch, and routes CLOSED kernel output/input to that backend.
+  No firmware ACK, display ownership or physical handoff acceptance is claimed.
 A default-off [loader source record](ember/boot/boot-framebuffer-issuer.md#loader-source-facts)
 preserves checked EFI GOP, cleanup and runtime facts.
 It grants no absence admission or display ownership.
