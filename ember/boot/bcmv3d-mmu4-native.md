@@ -87,7 +87,13 @@ are sticky; unlocked misuse does not mutate owner state. Public prepare/program
 also refuse a prior sticky fault before new work. Repeats preserve their original
 result first. No retry, fault reset or replacement owner exists.
 
-Status is copied BEFORE untouched fini. Primary and close errors stay separate.
+Sequencer status is copied BEFORE untouched fini. Primary and close errors stay
+separate. After the synchronous executor and ICAC snapshot, the owner refreshes
+actual backing status on success and failure. The cached prepared, sealed and
+first-error fields therefore describe the completed attempt. A failed backing
+snapshot clears `backing_valid`. Its error fills an empty `status_error` and
+uses the existing sticky fault path. It replaces the operation result only when
+no earlier operation error exists.
 Never close retained, mutated, faulted or unknown state. Shared status failure
 is an operation error if no earlier error exists. Only value snapshots escape.
 Borrowed stack/core pointers are cleared before return. The shared lease survives

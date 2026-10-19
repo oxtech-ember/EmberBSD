@@ -518,6 +518,19 @@ bcmv3d_mmu4_native_program(struct bcmv3d_mmu4_native *n)
 	}
 	if (n->status.icac_valid && n->status.icac.mmu4.fault != 0)
 		(void)mmu4_native_fault(n, n->status.icac.mmu4.fault);
+	/* The executor can prepare backing even when later programming fails. */
+	n->status.backing_valid = false;
+	status_error = bcmv3d_mmu4_backing_status(n->backing,
+	    &n->status.backing);
+	if (status_error == 0)
+		n->status.backing_valid = true;
+	else {
+		if (n->status.status_error == 0)
+			n->status.status_error = status_error;
+		(void)mmu4_native_fault(n, status_error);
+		if (error == 0)
+			error = status_error;
+	}
 	if (error == 0 && n->status.fault != 0)
 		error = n->status.fault;
 	if (error == 0)

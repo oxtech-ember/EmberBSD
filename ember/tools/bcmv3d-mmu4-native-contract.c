@@ -56,6 +56,7 @@ static unsigned int drm_gets, drm_puts, heap_allocs, heap_frees;
 static unsigned int local_maps, local_reads, local_writes, local_barriers;
 static unsigned int snapshots, observes, backing_creates;
 static unsigned int snapshot_failure, backing_failure;
+static unsigned int backing_snapshots, backing_snapshot_failure;
 static int local_map_error;
 static bool race_observation, fail_pages, fail_close, race_slot;
 static bool reenter_io, fail_shared;
@@ -95,6 +96,8 @@ static int adapter_cached(struct bcm2712_iommuc_provider *, struct bcm2712_iommu
 static int adapter_observe(struct bcm2712_iommuc_provider *);
 static int adapter_backing_create(struct bcmv3d_device *, uint32_t, struct bcmv3d_mmu4_backing **);
 static int adapter_pages(void *, const struct bcm2712_mmu4_config *);
+static int adapter_backing_status(const struct bcmv3d_mmu4_backing *,
+    struct bcmv3d_mmu4_backing_status *);
 static int adapter_fini(struct bcm2712_mmu4_core *);
 static int adapter_shared(struct bcm2712_iommuc_core *, struct bcm2712_iommuc_status *);
 static int bus_space_map(bus_space_tag_t, uint64_t, uint64_t, int,
@@ -106,11 +109,13 @@ static void bus_space_barrier(bus_space_tag_t, bus_space_handle_t, size_t, size_
 #define bcm2712_iommuc_observe_control adapter_observe
 #define bcmv3d_mmu4_backing_create adapter_backing_create
 #define bcmv3d_mmu4_backing_prepare adapter_pages
+#define bcmv3d_mmu4_backing_status adapter_backing_status
 #define bcm2712_mmu4_core_fini adapter_fini
 #define bcm2712_iommuc_core_status adapter_shared
 #include "adapter-body.h"
 #undef bcm2712_mmu4_core_fini
 #undef bcm2712_iommuc_core_status
+#undef bcmv3d_mmu4_backing_status
 #undef bcmv3d_mmu4_backing_prepare
 #undef bcmv3d_mmu4_backing_create
 #undef bcm2712_iommuc_observe_control
@@ -152,6 +157,16 @@ static int adapter_pages(void *arg, const struct bcm2712_mmu4_config *cfg)
 	CHECK(owner->status.sealed && owner->executing);
 	return native_backing_prepare(arg, cfg, fail_pages);
 }
+static int
+adapter_backing_status(const struct bcmv3d_mmu4_backing *b,
+    struct bcmv3d_mmu4_backing_status *out)
+{
+	CHECK(owner->lock.held && !bcm2712_iommuc_mutex.held);
+	if (++backing_snapshots == backing_snapshot_failure)
+		return EAGAIN;
+	return bcmv3d_mmu4_backing_status(b, out);
+}
+
 static int adapter_shared(struct bcm2712_iommuc_core *cache,
     struct bcm2712_iommuc_status *out)
 {
@@ -298,6 +313,28 @@ retained(void)
 }
 
 static void
+backing_snapshot_check(void)
+{
+	struct bcmv3d_mmu4_native_status cached;
+	struct bcmv3d_mmu4_backing_status actual;
+
+	CHECK(bcmv3d_mmu4_native_cached_status(owner, &cached) == 0);
+	CHECK(bcmv3d_mmu4_backing_status(owner->backing, &actual) == 0);
+	CHECK(cached.backing_valid);
+	CHECK(cached.backing.prepared == actual.prepared);
+	CHECK(cached.backing.sealed == actual.sealed);
+	CHECK(cached.backing.first_error == actual.first_error);
+	CHECK(cached.backing.prepare_started == actual.prepare_started);
+	CHECK(cached.backing.mapping_uncertain == actual.mapping_uncertain);
+	CHECK(cached.backing.stage == actual.stage);
+	CHECK(cached.backing.frame_bytes == actual.frame_bytes);
+	CHECK(cached.backing.control_bytes == actual.control_bytes);
+	CHECK(cached.backing.fragments == actual.fragments);
+	CHECK(cached.backing.pmap_calls == actual.pmap_calls);
+	CHECK(cached.backing.syncs == actual.syncs);
+}
+
+static void
 scenario(unsigned int which)
 {
 	struct bcmv3d_mmu4_native *out = &foreign_native;
@@ -400,8 +437,12 @@ scenario(unsigned int which)
 	if(which==54) operational_value=8;
 	if(which==55) reenter_io=true;
 	if(which==56) fail_shared=true;
+	if(which>=67 && which<=69) backing_snapshot_failure=3;
+	if(which==68) fail_pages=true;
+	if(which==69) fail_shared=true;
+	if(which==70) snapshot_failure=snapshots+2;
 	error=bcmv3d_mmu4_native_program(owner);
-	if((which>=46 && which<=54) || which==56) {
+	if((which>=46 && which<=54) || which==56 || which>=67) {
 		CHECK(error!=0 && owner->status.stage!=BCMV3D_MMU4_NATIVE_COMPLETE);
 		if(which<48) CHECK(!owner->status.sealed && local_writes==0);
 		else {
@@ -431,7 +472,32 @@ scenario(unsigned int which)
 		CHECK(bcmv3d_mmu4_native_program(owner)==EALREADY);
 		native_backing_check(owner->backing);
 	}
-	if(which>=57) {
+	if(which<67 || which==70) {
+		backing_snapshot_check();
+		if(which==51) {
+			CHECK(!owner->status.backing.prepared);
+			CHECK(owner->status.backing.prepare_started);
+			CHECK(owner->status.backing.first_error==EFAULT);
+			CHECK(owner->status.backing.mapping_uncertain);
+		}
+		if(which==53 || which==54 || which==56 || which==70) {
+			CHECK(owner->status.backing.prepared);
+			CHECK(owner->status.backing.first_error==0);
+			CHECK(owner->status.backing.syncs==5);
+		}
+	} else {
+		struct bcmv3d_mmu4_backing_status actual;
+
+		CHECK(bcmv3d_mmu4_backing_status(owner->backing,&actual)==0);
+		CHECK(!owner->status.backing_valid && actual.sealed);
+		CHECK(actual.prepared==(which!=68));
+		CHECK(actual.first_error==(which==68 ? EFAULT : 0));
+		CHECK(error==(which==67 ? EAGAIN : which==68 ? EFAULT : EIO));
+		CHECK(owner->status.operation_error==(which==67 ? 0 : which==68 ? EFAULT : EIO));
+		CHECK(owner->status.status_error==(which==69 ? EIO : EAGAIN));
+		CHECK(owner->status.fault==(which==69 ? EIO : EAGAIN));
+	}
+	if(which>=57 && which<=66) {
 		struct bcm2712_mmu4_core local;
 		uint32_t value;
 		unsigned int accesses=local_reads+local_writes+local_barriers;
@@ -471,7 +537,7 @@ main(void)
 
 {
 	unsigned int which, total=0;
-	for(which=0;which<67;which++) {
+	for(which=0;which<71;which++) {
 		int fd[2], status;
 		pid_t child, waited;
 		unsigned int count = 0;
@@ -525,6 +591,6 @@ main(void)
 		}
 		total+=count;
 	}
-	printf("BCMV3D native MMU4 contract: %u checks, 67 isolated boots PASS\n",total+checks);
+	printf("BCMV3D native MMU4 contract: %u checks, 71 isolated boots PASS\n",total+checks);
 	return 0;
 }

@@ -100,6 +100,10 @@ begin
     unless ENV['MMU4_NATIVE_SKIP_MUTANTS']=='1'
       original=File.read(work+'/adapter-body.h')
       mutations={
+        'stale-backing'=>["status_error = bcmv3d_mmu4_backing_status(n->backing,\n\t    &n->status.backing);", 'status_error = 0;', 'cached.backing.prepared == actual.prepared'],
+        'backing-valid'=>["n->status.backing_valid = false;\n\tstatus_error = bcmv3d_mmu4_backing_status", "n->status.backing_valid = true;\n\tstatus_error = bcmv3d_mmu4_backing_status"],
+        'backing-diagnostic'=>['if (n->status.status_error == 0)', 'if (true)'],
+        'backing-primary'=>["if (error == 0)\n\t\t\terror = status_error;\n\t}\n\tif (error == 0 && n->status.fault", "error = status_error;\n\t}\n\tif (error == 0 && n->status.fault"],
         'context'=>['if (cpu_intr_p() || cpu_softintr_p())','if (false)'],
         'device-private'=>['sc->drm->dev_private != sc ||','false ||'],
         'native-driver'=>['!device_is_a(sc->dev, "bcmv3d") ||','false ||'],
@@ -136,10 +140,11 @@ begin
       }
       selected=ENV.fetch('MMU4_NATIVE_MUTANTS',mutations.keys.join(' ')).split
       selected.each do |name|
-        old,new_value=mutations.fetch(name);abort "ambiguous #{name}" unless original.scan(old).size==1
+        old,new_value,expected_check=mutations.fetch(name);abort "ambiguous #{name}" unless original.scan(old).size==1
         write.call('adapter-body.h',original.sub(old,new_value));compile.call('mutant-'+name)
         _,err,status,timed_out=run.call('mutant-'+name,executor+[work+'/contract'],false)
         abort "#{name} was not a compiled fatal CHECK" unless fatal_check.call(err,status,timed_out)
+        abort "#{name} missed its expected CHECK" if expected_check && !err.include?(expected_check)
         puts "Rejected compiled mutant #{name}"
       end
       write.call('adapter-body.h',original)
