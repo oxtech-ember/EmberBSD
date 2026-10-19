@@ -384,3 +384,7 @@ clock and translation registers. Its diagnostic candidate never authorizes DMA.
 The explicit [HVS state observer](bcm2712-hvs-observe.md) samples only resource3
 identity, global control and all three channel control/status pairs. Its finite
 initial-inactivity snapshot grants no ownership, translation or stop/drain.
+
+The [typed shared-cache core](bcm2712-iommuc-core.md) source-tests one bounded
+transaction and irreversible member retention. It adds no native cache caller,
+MMU table programming, power/access grant or DMA-drain predicate.
