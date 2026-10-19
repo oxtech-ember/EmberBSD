@@ -53,6 +53,7 @@ struct cemac_softc {
 	struct ethercom		sc_ethercom;
 	mii_data_t		sc_mii;
 	int			sc_phyno;
+	int			(*sc_set_ref_clock)(struct cemac_softc *, u_int);
 
 	void			*rbqpage;
 	unsigned		rbqlen;
@@ -85,6 +86,7 @@ struct cemac_softc {
 	bool sc_txbusy;			/* i: no Tx because down or busy */
 	bool sc_stopping;		/* i: ignore intr because down */
 	bool sc_tx_sending;		/* i: expecting tx complete irq */
+	bool sc_tx_recovering;		/* i: GEM halted or recovery in progress */
 	bool sc_trigger_reset;		/* i */
 
 	struct workqueue *sc_reset_wq;

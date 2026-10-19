@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Compile integration for the generic Zynq and ADI providers.
+# No device tree, application pipeline, or board image is selected here.
+include "arch/evbarm/conf/GENERIC"
+
+zynqspi* at fdt?
+ad9361phy* at spi? slave ?
+adiaxidmac* at fdt?
+adiaxiadc* at fdt?

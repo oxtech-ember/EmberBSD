@@ -130,6 +130,11 @@ maps EmberBSD Development skills to preparation, validation, and submission.
 
 ## What this fork adds to NetBSD 11
 
+[Zynq-7000 and ADI converter providers](ember/development/zynq-converters.md)
+supply native SPI, ADC and finite DMA ownership interfaces, AD9361 adapters,
+and shared GEM Ethernet repairs. Their software contracts and compile
+integration remain separate from qualification of a physical radio or board image.
+
 The [RGE raw-wire correctness probe](ember/boot/rge-wire-probe.md) tests
 raw Ethernet frame integrity through two native BPF descriptors. One CIX sample
 passes 4096 alternating frames, including 9014-byte jumbo frames, with exact

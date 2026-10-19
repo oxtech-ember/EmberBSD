@@ -1,0 +1,75 @@
+AD9361 native converter support
+===============================
+
+Origin: Analog Devices no-OS, commit
+ce7107f957d19858f2dffc85bf3d7f2c70367000
+https://github.com/analogdevicesinc/no-OS/tree/ce7107f957d19858f2dffc85bf3d7f2c70367000/drivers/rf-transceiver/ad9361
+
+The imported AD9361 core, API, utility declarations and external band control
+retain their BSD-3-Clause notices. LICENSE_BSD accompanies the import. New
+native transport, FDT, converter and receive-tuning code carries BSD-2-Clause
+notices. The FDT defaults retain the original 2013 Analog Devices copyright,
+author and BSD-3-Clause notice from that revision's AD9361 example;
+board-specific settings remain in the board's device tree.
+
+The native attachment uses the kernel SPI and FDT GPIO/clock interfaces. It
+performs only a product-ID probe and raw status reads during RX attachment.
+TX attachment keeps GPIO reset asserted and defers all radio SPI access until
+an exclusive owner requests bootstrap.
+Disruptive work requires the generic ADI converter's exclusive capture lease
+and explicit adi,rx-only opt-in. This implementation accepts two receive
+channels in FDD mode, internal receive LO, and SPI-controlled ENSM. External
+TX LO, independent FDD and ENSM pin control are rejected.
+
+Bootstrap programs RX clocks and analog calibration without ADC register
+access. The capture owner must subsequently prove actual quiescence; cold
+admission is not evidence of drained AXI transactions. Normal configuration
+changes RX frequency, sample rate, bandwidth and gain, then performs a new
+receive PN9 eye search at that sample rate through the ADC owner's callbacks.
+There is no rate-independent calibration cache.
+
+RX-only adaptations clear both TX channel-enable bits, apply synthesizer
+power-down overrides and attenuation, and skip TX analog/filter/quadrature
+calibrations and TX digital tuning. The transport validates every descending
+multi-register write before sending it, prohibits unsafe transmitter and
+external-control values, and freshly reads the TX inhibit registers before
+ENSM writes. A transport error is sticky: no subsequent SPI transaction is
+issued, configuration fails and RESETB is asserted with physical pin readback.
+These checks describe register state; they are not an RF emission measurement.
+
+Native adaptations also provide kmem allocation and delay callbacks, use
+native errno values, prefix clock/arithmetic compatibility helpers, reject
+the userland FIR text parser, and return EOPNOTSUPP from the unused legacy
+AXI tuning bridge. Typed FIR APIs remain imported but are not exposed by the
+native converter interface. Checked clock/calibration readbacks prevent
+invalid shifts, zero divisors and zero-duration RSSI indexing after transport
+failure. Synthesizer and clock setter errors propagate before cache updates.
+
+An independent TX provider requires adi,tx-enable and rejects adi,rx-only.
+It accepts internal-LO FDD, SPI-controlled ENSM and 2R2T, with a fixed native
+13 MSPS / 2 MHz bootstrap profile. The owner must arm an independent hardware
+reset deadline and zero the DAC before releasing GPIO reset. Bootstrap performs
+the normal no-OS reset and TX calibration at maximum attenuation. TX2 remains
+at 89750 mdB; TX1 attenuation and retuning require the same exclusive owner.
+Operational errors assert RESETB and invalidate the lease. Fresh status reads
+verify clocks, PLL locks, attenuation and both quadrature calibration results.
+
+Native TX explicitly uses the device-tree delay taps and bypasses the unused
+legacy AXI bridge. This is not a successful digital eye search:
+digital_tuning_valid remains false, and physical interface qualification is
+required. The generic provider has no application protocol, user identity,
+RF policy or private FPGA dependency. See sys/dev/spi/ad9361var.h for owner
+lifetime and reset ordering, and ember/tools/tests/ad9361/README.md for tests.
+
+Build integration is in sys/dev/spi/files.spi under ad9361phy. The generic
+ADC/converter and DMA providers are separate drivers.
+
+Host regression, from the source root:
+
+  AD9361_SANITIZE=1 sh ember/tools/tests/ad9361/native-test.sh "$PWD"
+
+The regression compiles the actual imported code with small kernel API shims,
+uses generic synthetic FDT properties, runs staged bootstrap/configure, and
+injects each bootstrap SPI failure plus invalid calibration/PLL status. Its
+register backend supplies synthetic lock, ENSM and PN acknowledgements; it
+does not qualify the radio, DMA, ADC clock wiring or physical PN timing.

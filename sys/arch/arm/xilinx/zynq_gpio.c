@@ -43,15 +43,20 @@ __KERNEL_RCSID(0, "$NetBSD: zynq_gpio.c,v 1.4 2022/10/31 23:04:50 jmcneill Exp $
 #include <dev/fdt/fdtvar.h>
 #include <dev/gpio/gpiovar.h>
 
-#define	ZYNQ_GPIO_NPINS		(4 * 32)
+/*
+ * Origin: EmberBSD Zynq-7000 GPIO bank mapping, following the hardware
+ * banks of 32, 22, 32 and 32 pins and the contiguous FDT GPIO numbering.
+ */
+#define	ZYNQ_GPIO_NPINS		118
+#define	GPIO_REG_PIN(pin)	((pin) < 54 ? (pin) : (pin) + 10)
 
-#define	MASK_DATA_REG(pin)	(0x000 + 0x4 * ((pin) / 16))
-#define	DATA_RO_REG(pin)	(0x060 + 0x4 * ((pin) / 32))
-#define	DATA_RO_BIT(pin)	__BIT((pin) % 32)
-#define	DIRM_REG(pin)		(0x204 + 0x40 * ((pin) / 32))
-#define	DIRM_BIT(pin)		__BIT((pin) % 32)
-#define	OEN_REG(pin)		(0x208 + 0x40 * ((pin) / 32))
-#define	OEN_BIT(pin)		__BIT((pin) % 32)
+#define	MASK_DATA_REG(pin)	(0x000 + 0x4 * (GPIO_REG_PIN(pin) / 16))
+#define	DATA_RO_REG(pin)	(0x060 + 0x4 * (GPIO_REG_PIN(pin) / 32))
+#define	DATA_RO_BIT(pin)	__BIT(GPIO_REG_PIN(pin) % 32)
+#define	DIRM_REG(pin)		(0x204 + 0x40 * (GPIO_REG_PIN(pin) / 32))
+#define	DIRM_BIT(pin)		__BIT(GPIO_REG_PIN(pin) % 32)
+#define	OEN_REG(pin)		(0x208 + 0x40 * (GPIO_REG_PIN(pin) / 32))
+#define	OEN_BIT(pin)		__BIT(GPIO_REG_PIN(pin) % 32)
 
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "xlnx,zynq-gpio-1.0" },
@@ -122,7 +127,7 @@ zynq_gpio_acquire(device_t dev, const void *data, size_t len, int flags)
 	if (len != 12)
 		return NULL;
 
-	const uint8_t pin = be32toh(gpio[1]) & 0xff;
+	const u_int pin = be32toh(gpio[1]);
 	const bool actlo = be32toh(gpio[2]) & 1;
 
 	if (pin >= __arraycount(sc->sc_pins))
@@ -201,7 +206,7 @@ zynq_gpio_pin_read(void *priv, int pin)
 	uint32_t data;
 	int val;
 
-	KASSERT(pin < __arraycount(sc->sc_pins));
+	KASSERT(pin >= 0 && pin < __arraycount(sc->sc_pins));
 
 	data = RD4(sc, DATA_RO_REG(pin));
 	val = __SHIFTOUT(data, DATA_RO_BIT(pin));
@@ -215,11 +220,11 @@ zynq_gpio_pin_write(void *priv, int pin, int val)
 	struct zynq_gpio_softc * const sc = priv;
 	uint32_t mask_data;
 
-	KASSERT(pin < __arraycount(sc->sc_pins));
+	KASSERT(pin >= 0 && pin < __arraycount(sc->sc_pins));
 
-	mask_data = (0xffff & ~__BIT(pin % 16)) << 16;
+	mask_data = (0xffff & ~__BIT(GPIO_REG_PIN(pin) % 16)) << 16;
 	if (val) {
-		mask_data |= __BIT(pin % 16);
+		mask_data |= __BIT(GPIO_REG_PIN(pin) % 16);
 	}
 	WR4(sc, MASK_DATA_REG(pin), mask_data);
 }
@@ -229,7 +234,7 @@ zynq_gpio_pin_ctl(void *priv, int pin, int flags)
 {
 	struct zynq_gpio_softc * const sc = priv;
 
-	KASSERT(pin < __arraycount(sc->sc_pins));
+	KASSERT(pin >= 0 && pin < __arraycount(sc->sc_pins));
 
 	mutex_enter(&sc->sc_lock);
 	zynq_gpio_ctl(sc, pin, flags);

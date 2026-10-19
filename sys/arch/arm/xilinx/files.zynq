@@ -40,3 +40,8 @@ file	arch/arm/xilinx/zynq7000_usb.c		zynqusb
 device	zynqxadc: sysmon_envsys
 attach	zynqxadc at fdt
 file	arch/arm/xilinx/zynq_xadc.c		zynqxadc
+
+# Cadence Zynq PS SPI
+device	zynqspi: spibus
+attach	zynqspi at fdt
+file	arch/arm/xilinx/zynq_spi.c		zynqspi

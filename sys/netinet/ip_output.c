@@ -1,3 +1,5 @@
+/* Origin: EmberBSD IPv4 per-socket fragmentation control. */
+
 /*	$NetBSD: ip_output.c,v 1.330 2025/07/17 06:48:39 ozaki-r Exp $	*/
 
 /*
@@ -283,6 +285,17 @@ ip_output(struct mbuf *m0, struct mbuf *opt, struct route *ro, int flags,
 		IP_STATINC(IP_STAT_LOCALOUT);
 	} else {
 		hlen = ip->ip_hl << 2;
+	}
+
+	/*
+	 * A socket fragmentation prohibition is independent of path MTU
+	 * discovery and remains effective when the route MTU is locked.
+	 * Preserve any DF bit supplied by a raw socket when the option is off.
+	 */
+	if (inp != NULL && inp->inp_af == AF_INET &&
+	    (inp->inp_flags & INP_DONTFRAG) != 0) {
+		ip->ip_off |= htons(IP_DF);
+		flags |= IP_RETURNMTU;
 	}
 
 	/*
@@ -1108,6 +1121,9 @@ ip_ctloutput(int op, struct socket *so, struct sockopt *sopt)
 		return ENOPROTOOPT;
 	}
 
+	if (sopt->sopt_name == IP_DONTFRAG && inp->inp_af != AF_INET)
+		return ENOPROTOOPT;
+
 	switch (op) {
 	case PRCO_SETOPT:
 		switch (sopt->sopt_name) {
@@ -1128,6 +1144,7 @@ ip_ctloutput(int op, struct socket *so, struct sockopt *sopt)
 		case IP_RECVPKTINFO:
 		case IP_RECVTTL:
 		case IP_BINDANY:
+		case IP_DONTFRAG:
 			error = sockopt_getint(sopt, &optval);
 			if (error)
 				break;
@@ -1175,6 +1192,10 @@ ip_ctloutput(int op, struct socket *so, struct sockopt *sopt)
 
 			case IP_RECVTTL:
 				OPTSET(INP_RECVTTL);
+				break;
+
+			case IP_DONTFRAG:
+				OPTSET(INP_DONTFRAG);
 				break;
 
 			case IP_BINDANY:
@@ -1312,6 +1333,7 @@ ip_ctloutput(int op, struct socket *so, struct sockopt *sopt)
 		case IP_RECVTTL:
 		case IP_ERRORMTU:
 		case IP_BINDANY:
+		case IP_DONTFRAG:
 			switch (sopt->sopt_name) {
 			case IP_TOS:
 				optval = ip->ip_tos;
@@ -1353,6 +1375,10 @@ ip_ctloutput(int op, struct socket *so, struct sockopt *sopt)
 
 			case IP_RECVTTL:
 				optval = OPTBIT(INP_RECVTTL);
+				break;
+
+			case IP_DONTFRAG:
+				optval = OPTBIT(INP_DONTFRAG);
 				break;
 
 			case IP_BINDANY:

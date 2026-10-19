@@ -60,7 +60,7 @@ static struct timecounter a9tmr_timecounter = {
 	.tc_get_timecount = a9tmr_get_timecount,
 	.tc_poll_pps = 0,
 	.tc_counter_mask = ~0u,
-	.tc_frequency = 0,			/* set by cpu_initclocks() */
+	.tc_frequency = 0,			/* set by attach */
 	.tc_name = NULL,			/* set by attach */
 	.tc_quality = 500,
 	.tc_priv = &a9tmr_sc,
@@ -161,6 +161,20 @@ a9tmr_attach(device_t parent, device_t self, void *aux)
 		aprint_normal_dev(sc->sc_dev, "interrupting on irq %d\n",
 		    mpcaa->mpcaa_irq);
 	}
+
+	/*
+	 * The free-running global counter is also usable when another timer
+	 * supplies hardclock (for example, the private timer on an SMP system).
+	 * Its registration must not depend on a9tmr_cpu_initclocks().
+	 */
+	a9tmr_timecounter.tc_name = device_xname(self);
+	if (sc->sc_freq != 0) {
+		a9tmr_timecounter.tc_frequency = sc->sc_freq;
+		tc_init(&a9tmr_timecounter);
+	} else {
+		aprint_error_dev(self,
+		    "frequency unavailable; timecounter not registered\n");
+	}
 }
 
 static inline uint64_t
@@ -253,11 +267,6 @@ a9tmr_cpu_initclocks(void)
 	sc->sc_autoinc = sc->sc_freq / hz;
 
 	a9tmr_init_cpu_clock(curcpu());
-
-	a9tmr_timecounter.tc_name = device_xname(sc->sc_dev);
-	a9tmr_timecounter.tc_frequency = sc->sc_freq;
-
-	tc_init(&a9tmr_timecounter);
 }
 
 static void
@@ -270,18 +279,22 @@ void
 a9tmr_update_freq(uint32_t freq)
 {
 	struct a9tmr_softc * const sc = &a9tmr_sc;
-	uint64_t xc;
 
 	KASSERT(sc->sc_dev != NULL);
 	KASSERT(freq != 0);
 
-	tc_detach(&a9tmr_timecounter);
+	if (a9tmr_timecounter.tc_frequency != 0)
+		tc_detach(&a9tmr_timecounter);
 
 	sc->sc_freq = freq;
-	sc->sc_autoinc = sc->sc_freq / hz;
 
-	xc = xc_broadcast(0, a9tmr_update_freq_cb, NULL, NULL);
-	xc_wait(xc);
+	/* Do not enable global timer interrupts on a timecounter-only device. */
+	if (sc->sc_autoinc != 0) {
+		sc->sc_autoinc = sc->sc_freq / hz;
+		const uint64_t xc = xc_broadcast(0, a9tmr_update_freq_cb,
+		    NULL, NULL);
+		xc_wait(xc);
+	}
 
 	a9tmr_timecounter.tc_frequency = sc->sc_freq;
 	tc_init(&a9tmr_timecounter);

@@ -220,3 +220,14 @@ file	dev/fdt/genet_fdt.c			genet_fdt
 # Google Goldfish RTC
 attach	gfrtc at fdt with gfrtc_fdt
 file	dev/fdt/gfrtc_fdt.c			gfrtc_fdt
+
+# ADI converter registry and AXI acquisition controllers
+define adiaxiconverter
+file dev/fdt/adi_axi_converter.c adiaxiconverter
+define adiaxidma
+file dev/fdt/adi_axi_dmac.c adiaxidma
+device adiaxidmac: adiaxidma
+attach adiaxidmac at fdt
+device adiaxiadc: adiaxiconverter, adiaxidma
+attach adiaxiadc at fdt
+file dev/fdt/adi_axi_adc.c adiaxiadc

@@ -2850,8 +2850,8 @@ pmap_page_remove(struct vm_page_md *md, paddr_t pa)
 	pt_entry_t *ptep;
 #ifndef ARM_MMU_EXTENDED
 	bool flush = false;
-#endif
 	u_int flags = 0;
+#endif
 
 	UVMHIST_FUNC(__func__);
 	UVMHIST_CALLARGS(maphist, "md %#jx pa %#jx", (uintptr_t)md, pa, 0, 0);
@@ -2958,7 +2958,9 @@ pmap_page_remove(struct vm_page_md *md, paddr_t pa)
 		if (pv->pv_flags & PVF_WIRED)
 			--pm->pm_stats.wired_count;
 
+#ifndef ARM_MMU_EXTENDED
 		flags |= pv->pv_flags;
+#endif
 
 		/*
 		 * Invalidate the PTEs.
@@ -3991,6 +3993,16 @@ pmap_extract(pmap_t pm, vaddr_t va, paddr_t *pap)
 	return pmap_extract_coherency(pm, va, pap, NULL);
 }
 
+/* Origin: EmberBSD; recognize the normal non-cacheable DMA mapping. */
+static bool
+pmap_dma_coherent_p(pt_entry_t pte, pt_entry_t mask, pt_entry_t nocache)
+{
+
+	/* Shareability does not make a non-cacheable mapping cacheable. */
+	pte &= mask;
+	return pte == 0 || pte == (nocache & mask);
+}
+
 bool
 pmap_extract_coherency(pmap_t pm, vaddr_t va, paddr_t *pap, bool *coherentp)
 {
@@ -4022,7 +4034,8 @@ pmap_extract_coherency(pmap_t pm, vaddr_t va, paddr_t *pap, bool *coherentp)
 		} else
 #endif
 			pa = (pde & L1_S_FRAME) | (va & L1_S_OFFSET);
-		coherent = (pde & L1_S_CACHE_MASK) == 0;
+		coherent = pmap_dma_coherent_p(pde,
+		    L1_S_CACHE_MASK & ~L1_S_V6_S, pte_l1_s_nocache_mode);
 	} else {
 		/*
 		 * Note that we can't rely on the validity of the L1
@@ -4049,12 +4062,14 @@ pmap_extract_coherency(pmap_t pm, vaddr_t va, paddr_t *pap, bool *coherentp)
 		switch (pte & L2_TYPE_MASK) {
 		case L2_TYPE_L:
 			pa = (pte & L2_L_FRAME) | (va & L2_L_OFFSET);
-			coherent = (pte & L2_L_CACHE_MASK) == 0;
+			coherent = pmap_dma_coherent_p(pte,
+			    L2_L_CACHE_MASK & ~L2_XS_S, pte_l2_l_nocache_mode);
 			break;
 
 		default:
 			pa = (pte & ~PAGE_MASK) | (va & PAGE_MASK);
-			coherent = (pte & L2_S_CACHE_MASK) == 0;
+			coherent = pmap_dma_coherent_p(pte,
+			    L2_S_CACHE_MASK & ~L2_XS_S, pte_l2_s_nocache_mode);
 			break;
 		}
 	}

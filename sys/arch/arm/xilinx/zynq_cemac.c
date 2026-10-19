@@ -43,9 +43,23 @@ __KERNEL_RCSID(0, "$NetBSD: zynq_cemac.c,v 1.10 2024/10/15 00:58:15 lloyd Exp $"
 #include <net/if_ether.h>
 
 #include <dev/fdt/fdtvar.h>
+#include <dev/clk/clk.h>
 
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
+
+struct zynq_cemac_softc {
+	struct cemac_softc sc_cemac; /* Must be first for the common driver. */
+	struct clk *sc_txclk;
+};
+
+static int
+zynq_cemac_set_ref_clock(struct cemac_softc *sc, u_int rate)
+{
+	struct zynq_cemac_softc * const zsc = (void *)sc;
+
+	return clk_set_rate(zsc->sc_txclk, rate);
+}
 
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "cdns,zynq-gem" },
@@ -82,7 +96,8 @@ static void
 cemac_attach(device_t parent, device_t self, void *aux)
 {
 	struct fdt_attach_args * const faa = aux;
-	struct cemac_softc *sc = device_private(self);
+	struct zynq_cemac_softc *zsc = device_private(self);
+	struct cemac_softc *sc = &zsc->sc_cemac;
 	const int phandle = faa->faa_phandle;
 	prop_dictionary_t prop = device_properties(self);
 	char intrstr[128];
@@ -95,6 +110,13 @@ cemac_attach(device_t parent, device_t self, void *aux)
 		aprint_error(": couldn't get registers\n");
 		return;
 	}
+
+	zsc->sc_txclk = fdtbus_clock_get(phandle, "tx_clk");
+	if (zsc->sc_txclk == NULL) {
+		aprint_error(": couldn't get TX reference clock\n");
+		return;
+	}
+	sc->sc_set_ref_clock = zynq_cemac_set_ref_clock;
 
 	error = bus_space_map(faa->faa_bst, addr, size, 0, &sc->sc_ioh);
 	if (error) {
@@ -131,5 +153,5 @@ cemac_attach(device_t parent, device_t self, void *aux)
 }
 
 
-CFATTACH_DECL_NEW(cemac, sizeof(struct cemac_softc),
+CFATTACH_DECL_NEW(cemac, sizeof(struct zynq_cemac_softc),
     cemac_match, cemac_attach, NULL, NULL);

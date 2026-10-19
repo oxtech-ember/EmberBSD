@@ -203,9 +203,7 @@ typedef struct zynquart_softc {
 	(sc->sc_rbuf_size - (sc->sc_rbuf_out - sc->sc_rbuf_in)))
 
 #define	ZYNQUART_RBUF_SPACE(sc)	\
-	((sc->sc_rbuf_in <= sc->sc_rbuf_out ?			    \
-	    sc->sc_rbuf_size - (sc->sc_rbuf_out - sc->sc_rbuf_in) : \
-	    sc->sc_rbuf_in - sc->sc_rbuf_out) - 1)
+	(sc->sc_rbuf_size - ZYNQUART_RBUF_AVAIL(sc) - 1)
 /* increment ringbuffer pointer */
 #define	ZYNQUART_RBUF_INC(sc,v,i)	(((v) + (i))&((sc->sc_rbuf_size)-1))
 	u_int	sc_r_lowat;
@@ -1664,7 +1662,8 @@ zynquartintr(void *arg)
 		sts = bus_space_read_4(iot, ioh, UART_CHANNEL_STS);
 		if (!(sts & STS_REMPTY))
 			zynquartintr_read(sc);
-	} while (!(sts & STS_REMPTY));
+	} while (!(sts & STS_REMPTY) &&
+	    !ISSET(sc->sc_rx_flags, ZYNQUART_RX_IBUF_OVERFLOWED));
 
 	if (sts & STS_TEMPTY)
 		zynquartintr_send(sc);

@@ -1,3 +1,5 @@
+/* Origin: EmberBSD IPv4 per-socket fragmentation control. */
+
 /*	$NetBSD: in_pcb.h,v 1.76 2022/11/04 09:03:20 ozaki-r Exp $	*/
 
 /*
@@ -178,6 +180,7 @@ LIST_HEAD(inpcbhead, inpcb);
 #define	INP_RECVTTL		0x0800	/* receive incoming IP TTL */
 #define	INP_RECVPKTINFO		0x1000	/* receive IP dst if/addr */
 #define	INP_BINDANY		0x2000	/* allow bind to any address */
+#define	INP_DONTFRAG		0x10000000 /* prohibit IPv4 fragmentation */
 #define	INP_CONTROLOPTS		(INP_RECVOPTS|INP_RECVRETOPTS|INP_RECVDSTADDR|\
 				INP_RECVIF|INP_RECVTTL|INP_RECVPKTINFO)
 

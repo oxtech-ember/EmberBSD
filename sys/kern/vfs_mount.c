@@ -487,12 +487,16 @@ vfs_vnode_iterator_next1(struct vnode_iterator *vni,
 	vnode_t *vp;
 	vnode_impl_t *vip;
 	kmutex_t *lock;
+	unsigned int skipped;
 	int error;
 
 	KASSERT(vnis_marker(VIMPL_TO_VNODE(mvip)));
 
 	lock = mp->mnt_vnodelock;
 	do {
+restart:
+		preempt_point();
+		skipped = 0;
 		mutex_enter(lock);
 		vip = TAILQ_NEXT(mvip, vi_mntvnodes);
 		TAILQ_REMOVE(&mp->mnt_vnodelist, mvip, vi_mntvnodes);
@@ -509,6 +513,19 @@ again:
 		    vdead_check(vp, (do_wait ? 0 : VDEAD_NOWAIT)) ||
 		    (f && !(*f)(cl, vp))) {
 			mutex_exit(vp->v_interlock);
+			if (++skipped == 128) {
+				/*
+				 * Bound a scan of rejected vnodes.  Keep the
+				 * marker linked while the list lock is dropped:
+				 * either neighbour may be reclaimed meanwhile.
+				 * Resume from the marker, not a saved vnode.
+				 */
+				TAILQ_INSERT_AFTER(&mp->mnt_vnodelist, vip, mvip,
+				    vi_mntvnodes);
+				VIMPL_TO_VNODE(mvip)->v_usecount = 1;
+				mutex_exit(lock);
+				goto restart;
+			}
 			vip = TAILQ_NEXT(vip, vi_mntvnodes);
 			goto again;
 		}

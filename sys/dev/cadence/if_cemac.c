@@ -104,6 +104,7 @@ static int cemac_watchdog_timeout = CEMAC_WATCHDOG_TIMEOUT;
 
 static void	cemac_init(struct cemac_softc *);
 static int	cemac_gctx(struct cemac_softc *);
+static int	cemac_gem_recover_tx(struct cemac_softc *);
 static int	cemac_mediachange(struct ifnet *);
 static void	cemac_mediastatus(struct ifnet *, struct ifmediareq *);
 static int	cemac_mii_readreg(device_t, int, int, uint16_t *);
@@ -139,7 +140,19 @@ cemac_handle_reset_work(struct work *work, void *arg)
 	IFNET_LOCK(ifp);
 	if ((ifp->if_flags & IFF_UP) != 0) {
 		printf("%s: watchdog timeout -- resetting\n", ifp->if_xname);
-		restarted = cemac_ifinit(ifp) == 0;
+		if (ISSET(sc->cemac_flags, CEMAC_FLAG_GEM) &&
+		    !sc->sc_stopping) {
+			restarted = cemac_gem_recover_tx(sc) == 0;
+			if (restarted)
+				callout_reset(&sc->cemac_tick_ch, hz,
+				    cemac_tick, sc);
+			else
+				aprint_error_ifnet(ifp,
+				    "TX did not halt; mappings retained, "
+				    "TX admission disabled\n");
+		} else {
+			restarted = cemac_ifinit(ifp) == 0;
+		}
 	}
 	IFNET_UNLOCK(ifp);
 
@@ -290,11 +303,22 @@ cemac_attach_common(struct cemac_softc *sc)
 	cemac_init(sc);
 }
 
+/*
+ * A clear TXGO is not a descriptor completion: it can be observed before
+ * a newly kicked DMA starts. Only USED returns a GEM buffer to the CPU.
+ */
 static int
 cemac_gctx(struct cemac_softc *sc)
 {
+	struct ifnet *ifp = &sc->sc_ethercom.ec_if;
+	const bool gem = ISSET(sc->cemac_flags, CEMAC_FLAG_GEM);
+	const bool sync_tx = gem && sc->txqc != 0;
 	uint32_t tsr;
+	unsigned int retired = 0;
 
+	KASSERT(mutex_owned(sc->sc_intr_lock));
+	if (sc->sc_tx_recovering)
+		return 0;
 	tsr = CEMAC_READ(ETH_TSR);
 	if (tsr & ETH_TSR_UND)
 		sc->sc_stat_tx_underrun++;
@@ -302,58 +326,132 @@ cemac_gctx(struct cemac_softc *sc)
 		sc->sc_stat_tx_rle++;
 	if (tsr & ETH_TSR_COL)
 		sc->sc_stat_tx_coll++;
-	if (!ISSET(sc->cemac_flags, CEMAC_FLAG_GEM)) {
-		// no space left
-		if (!(tsr & ETH_TSR_BNQ)) {
-			sc->sc_stat_tx_busy++;
-			return 0;
-		}
-	} else {
-		if (tsr & GEM_TSR_TXGO) {
-			sc->sc_stat_tx_busy++;
-			return 0;
-		}
+	if (!gem && !(tsr & ETH_TSR_BNQ)) {
+		sc->sc_stat_tx_busy++;
+		return 0;
 	}
 	CEMAC_WRITE(ETH_TSR, tsr);
+	if (sync_tx)
+		bus_dmamap_sync(sc->sc_dmat, sc->tbqpage_dmamap, 0,
+		    sc->tbqlen, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
-	// free sent frames
-	while (sc->txqc > (ISSET(sc->cemac_flags, CEMAC_FLAG_GEM) ? 0 :
-		(tsr & ETH_TSR_IDLE ? 0 : 1))) {
-		int bi = sc->txqi % TX_QLEN;
+	while (sc->txqc > (gem ? 0 : (tsr & ETH_TSR_IDLE ? 0 : 1))) {
+		int bi = sc->txqi;
 
-		DPRINTFN(3,("%s: TDSC[%i].Addr 0x%08x\n",
-			__FUNCTION__, bi, sc->TDSC[bi].Addr));
-		DPRINTFN(3,("%s: TDSC[%i].Info 0x%08x\n",
-			__FUNCTION__, bi, sc->TDSC[bi].Info));
-
-		if (sc->TDSC[bi].Info & ETH_TDSC_I_RETRY_ERR)
-			sc->sc_stat_tx_retry_err++;
-		if (sc->TDSC[bi].Info & ETH_TDSC_I_LATE_COLL)
-			sc->sc_stat_tx_late_coll++;
-		if (sc->TDSC[bi].Info & ETH_TDSC_I_AHB_ERR)
-			sc->sc_stat_tx_ahb_err++;
-
+		if (gem && !(sc->TDSC[bi].Info & ETH_TDSC_I_USED))
+			break;
+		KASSERT(sc->txq[bi].m != NULL);
+		if (gem) {
+			if (sc->TDSC[bi].Info & ETH_TDSC_I_RETRY_ERR)
+				sc->sc_stat_tx_retry_err++;
+			if (sc->TDSC[bi].Info & ETH_TDSC_I_LATE_COLL)
+				sc->sc_stat_tx_late_coll++;
+			if (sc->TDSC[bi].Info & ETH_TDSC_I_AHB_ERR)
+				sc->sc_stat_tx_ahb_err++;
+		}
+		if (gem && (sc->TDSC[bi].Info & (ETH_TDSC_I_RETRY_ERR |
+		    ETH_TDSC_I_AHB_ERR | ETH_TDSC_I_LATE_COLL)))
+			if_statinc(ifp, if_oerrors);
+		else
+			if_statinc(ifp, if_opackets);
 		bus_dmamap_sync(sc->sc_dmat, sc->txq[bi].m_dmamap, 0,
-		    sc->txq[bi].m->m_pkthdr.len, BUS_DMASYNC_POSTWRITE);
+		    sc->txq[bi].m_dmamap->dm_mapsize, BUS_DMASYNC_POSTWRITE);
 		bus_dmamap_unload(sc->sc_dmat, sc->txq[bi].m_dmamap);
 		m_freem(sc->txq[bi].m);
-		DPRINTFN(2,("%s: freed idx #%i mbuf %p (txqc=%i)\n",
-		    __FUNCTION__, bi, sc->txq[bi].m, sc->txqc));
 		sc->txq[bi].m = NULL;
 		sc->txqi = (bi + 1) % TX_QLEN;
 		sc->txqc--;
+		retired++;
 	}
+	if (sync_tx)
+		bus_dmamap_sync(sc->sc_dmat, sc->tbqpage_dmamap, 0,
+		    sc->tbqlen, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	if (sc->txqc == 0)
 		sc->sc_tx_sending = false;
+	else if (retired != 0)
+		sc->sc_tx_lastsent = time_uptime;
 
-	// mark we're free
-	if (sc->sc_txbusy) {
-		sc->sc_txbusy = false;
-		/* Disable transmit-buffer-free interrupt */
-		/*CEMAC_WRITE(ETH_IDR, ETH_ISR_TBRE);*/
+	/* Keep a USED sentinel so the DMA cannot lap the producer. */
+	if (gem && sc->txqc >= TX_QLEN - 1) {
+		sc->sc_stat_tx_busy++;
+		return 0;
 	}
-
+	sc->sc_txbusy = false;
 	return 1;
+}
+
+/*
+ * The halt command finishes the current frame. Do not release any mapping
+ * if the bounded acknowledgement fails. RX keeps its buffers and remains
+ * enabled throughout this TX-only recovery.
+ */
+static int
+cemac_gem_recover_tx(struct cemac_softc *sc)
+{
+	struct ifnet *ifp = &sc->sc_ethercom.ec_if;
+	const uint32_t txints = ETH_ISR_TBRE | ETH_ISR_TIDLE | ETH_ISR_TCOM;
+	uint32_t ctl;
+	unsigned int retry;
+
+	KASSERT(IFNET_LOCKED(ifp));
+	mutex_enter(sc->sc_intr_lock);
+	sc->sc_tx_recovering = true;
+	sc->sc_txbusy = true;
+	CEMAC_WRITE(ETH_IDR, txints);
+	ctl = CEMAC_READ(ETH_CTL);
+	CEMAC_WRITE(ETH_CTL, (ctl & ~GEM_CTL_STARTTX) | GEM_CTL_HALTTX);
+	(void)CEMAC_READ(ETH_CTL);
+	mutex_exit(sc->sc_intr_lock);
+
+	for (retry = 0; retry < 10000; retry++) {
+		if (!(CEMAC_READ(ETH_TSR) & GEM_TSR_TXGO))
+			break;
+		delay(10);
+	}
+	if (retry == 10000)
+		return ETIMEDOUT;
+
+	mutex_enter(sc->sc_intr_lock);
+	ctl = CEMAC_READ(ETH_CTL);
+	CEMAC_WRITE(ETH_CTL,
+	    ctl & ~(ETH_CTL_TE | GEM_CTL_STARTTX | GEM_CTL_HALTTX));
+	if ((CEMAC_READ(ETH_CTL) & ETH_CTL_TE) ||
+	    (CEMAC_READ(ETH_TSR) & GEM_TSR_TXGO)) {
+		mutex_exit(sc->sc_intr_lock);
+		return EIO;
+	}
+	bus_dmamap_sync(sc->sc_dmat, sc->tbqpage_dmamap, 0,
+	    sc->tbqlen, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	for (unsigned int i = 0; i < TX_QLEN; i++) {
+		if (sc->txq[i].m != NULL) {
+			bus_dmamap_sync(sc->sc_dmat, sc->txq[i].m_dmamap, 0,
+			    sc->txq[i].m_dmamap->dm_mapsize, BUS_DMASYNC_POSTWRITE);
+			bus_dmamap_unload(sc->sc_dmat, sc->txq[i].m_dmamap);
+			m_freem(sc->txq[i].m);
+			sc->txq[i].m = NULL;
+			if_statinc(ifp, if_oerrors);
+		}
+		sc->TDSC[i].Addr = 0;
+		sc->TDSC[i].Info = ETH_TDSC_I_USED |
+		    (i == TX_QLEN - 1 ? ETH_TDSC_I_WRAP : 0);
+	}
+	sc->txqi = sc->txqc = 0;
+	bus_dmamap_sync(sc->sc_dmat, sc->tbqpage_dmamap, 0,
+	    sc->tbqlen, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	CEMAC_WRITE(ETH_TBQP, (uint32_t)sc->tbqpage_dsaddr);
+	CEMAC_WRITE(ETH_TSR, CEMAC_READ(ETH_TSR));
+	CEMAC_WRITE(ETH_ISR, txints);
+	sc->sc_tx_sending = false;
+	sc->sc_txbusy = false;
+	sc->sc_trigger_reset = false;
+	sc->sc_tx_recovering = false;
+	CEMAC_WRITE(ETH_CTL, (ctl | ETH_CTL_TE) &
+	    ~(GEM_CTL_STARTTX | GEM_CTL_HALTTX));
+	if (!sc->sc_stopping)
+		CEMAC_WRITE(ETH_IER, txints);
+	(void)CEMAC_READ(ETH_IMR);
+	mutex_exit(sc->sc_intr_lock);
+	return 0;
 }
 
 int
@@ -741,6 +839,10 @@ cemac_init(struct cemac_softc *sc)
 	/* Program each queue's start addr, cur addr, and len registers
 	 * with the physical addresses.
 	 */
+	bus_dmamap_sync(sc->sc_dmat, sc->rbqpage_dmamap, 0,
+	    sc->rbqlen, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	bus_dmamap_sync(sc->sc_dmat, sc->tbqpage_dmamap, 0,
+	    sc->tbqlen, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	CEMAC_WRITE(ETH_RBQP, (uint32_t)sc->rbqpage_dsaddr);
 	CEMAC_WRITE(ETH_TBQP, (uint32_t)sc->tbqpage_dsaddr);
 
@@ -873,6 +975,8 @@ cemac_statchg(struct ifnet *ifp)
 	struct cemac_softc * const sc = ifp->if_softc;
 	struct mii_data *mii = &sc->sc_mii;
 	uint32_t reg;
+	u_int rate = 0;
+	int error;
 
 	/*
 	 * We must keep the MAC and the PHY in sync as
@@ -888,15 +992,31 @@ cemac_statchg(struct ifnet *ifp)
 		reg &= ~GEM_CFG_GEN;
 	switch (IFM_SUBTYPE(mii->mii_media_active)) {
 	case IFM_10_T:
+		rate = 2500000;
 		break;
 	case IFM_100_TX:
+		rate = 25000000;
 		reg |= ETH_CFG_SPD;
 		break;
 	case IFM_1000_T:
+		rate = 125000000;
 		reg |= ETH_CFG_SPD | GEM_CFG_GEN;
 		break;
 	default:
 		break;
+	}
+	if (rate != 0 && (mii->mii_media_status & IFM_ACTIVE) != 0 &&
+	    sc->sc_set_ref_clock != NULL) {
+		error = sc->sc_set_ref_clock(sc, rate);
+		if (error != 0) {
+			aprint_error_dev(sc->sc_dev,
+			    "cannot set TX reference clock to %u Hz: %d\n",
+			    rate, error);
+			mii->mii_media_status &= ~IFM_ACTIVE;
+			mii->mii_media_active = IFM_ETHER | IFM_NONE;
+			if_link_state_change(ifp, LINK_STATE_DOWN);
+			return;
+		}
 	}
 	CEMAC_WRITE(ETH_CFG, reg);
 }
@@ -1032,6 +1152,10 @@ cemac_ifstart_locked(struct ifnet *ifp)
 	KASSERT(mutex_owned(sc->sc_intr_lock));
 
 start:
+	if (sc->sc_tx_recovering) {
+		sc->sc_txbusy = true;
+		return;
+	}
 	if (cemac_gctx(sc) == 0) {
 		/* Enable transmit-buffer-free interrupt */
 		CEMAC_WRITE(ETH_IER, ETH_ISR_TBRE);
@@ -1071,8 +1195,13 @@ start:
 		IFQ_DEQUEUE(&ifp->if_snd, m);
 		m_freem(m);
 		m = mn;
-		bus_dmamap_load_mbuf(sc->sc_dmat, sc->txq[bi].m_dmamap, m,
-		    BUS_DMA_NOWAIT);
+		err = bus_dmamap_load_mbuf(sc->sc_dmat, sc->txq[bi].m_dmamap,
+		    m, BUS_DMA_NOWAIT);
+		if (err != 0) {
+			m_freem(m);
+			if_statinc(ifp, if_oerrors);
+			goto start;
+		}
 	} else {
 		IFQ_DEQUEUE(&ifp->if_snd, m);
 	}
@@ -1099,8 +1228,9 @@ start:
 	    sc->txq[bi].m_dmamap->dm_mapsize, BUS_DMASYNC_PREWRITE);
 
 	if (ISSET(sc->cemac_flags, CEMAC_FLAG_GEM)) {
+		KASSERT(sc->TDSC[bi].Info & ETH_TDSC_I_USED);
 		sc->TDSC[bi].Addr = segs->ds_addr;
-		sc->TDSC[bi].Info =
+		sc->TDSC[bi].Info = ETH_TDSC_I_USED |
 		    __SHIFTIN(m->m_pkthdr.len, ETH_TDSC_I_LEN) |
 		    ETH_TDSC_I_LAST_BUF |
 		    (bi == (TX_QLEN - 1) ? ETH_TDSC_I_WRAP : 0);
@@ -1110,9 +1240,13 @@ start:
 		DPRINTFN(3,("%s: TDSC[%i].Info 0x%08x\n",
 			__FUNCTION__, bi, sc->TDSC[bi].Info));
 
-		/* The descriptor must reach memory before the doorbell. */
-		bus_dmamap_sync(sc->sc_dmat, sc->tbqpage_dmamap, 0,
-		    sc->tbqlen, BUS_DMASYNC_PREWRITE);
+		/* Publish the address and length before handing ownership to DMA. */
+		bus_dmamap_sync(sc->sc_dmat, sc->tbqpage_dmamap,
+		    bi * ETH_DSC_SIZE, ETH_DSC_SIZE, BUS_DMASYNC_PREWRITE);
+		sc->TDSC[bi].Info &= ~ETH_TDSC_I_USED;
+		bus_dmamap_sync(sc->sc_dmat, sc->tbqpage_dmamap,
+		    bi * ETH_DSC_SIZE, ETH_DSC_SIZE,
+		    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 		uint32_t ctl = CEMAC_READ(ETH_CTL) | GEM_CTL_STARTTX;
 		CEMAC_WRITE(ETH_CTL, ctl);
 		DPRINTFN(3,("%s: ETH_CTL 0x%08x\n", __FUNCTION__,
@@ -1153,6 +1287,13 @@ cemac_ifinit(struct ifnet *ifp)
 
 	/* Stop software service and mask IRQs; DMA allocations stay owned. */
 	cemac_ifstop(ifp, 0);
+
+	/* An explicit restart can retry a previously unacknowledged halt. */
+	if (sc->sc_tx_recovering) {
+		error = cemac_gem_recover_tx(sc);
+		if (error != 0)
+			return error;
+	}
 
 	if (ISSET(sc->cemac_flags, CEMAC_FLAG_GEM)) {
 

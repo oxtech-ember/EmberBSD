@@ -26,6 +26,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD PS SPI and FPGA clock support, using the Zynq-7000 clock register layout. */
+
 #include <sys/cdefs.h>
 
 __KERNEL_RCSID(0, "$NetBSD: zynq7000_clkc.c,v 1.5 2022/11/11 20:29:47 jmcneill Exp $");
@@ -43,6 +45,18 @@ __KERNEL_RCSID(0, "$NetBSD: zynq7000_clkc.c,v 1.5 2022/11/11 20:29:47 jmcneill E
 #include <dev/fdt/fdtvar.h>
 #include <dev/fdt/syscon.h>
 
+/* Zynq-7000 UG585: GEM reference clock uses two six-bit divisors. */
+#define SLCR_LOCK       0x004
+#define SLCR_UNLOCK     0x008
+#define SLCR_LOCKSTA    0x00c
+#define SLCR_LOCK_KEY   0x767b
+#define SLCR_UNLOCK_KEY 0xdf0d
+#define GEM0_CLK_CTRL   0x140
+#define GEM1_CLK_CTRL   0x144
+#define GEM_CLK_DIV0    __BITS(13,8)
+#define GEM_CLK_DIV1    __BITS(25,20)
+#define GEM_CLK_EMIO    __BIT(6)
+
 #define	ARM_PLL_CTRL	0x100
 #define	DDR_PLL_CTRL	0x104
 #define	IO_PLL_CTRL	0x108
@@ -58,11 +72,18 @@ __KERNEL_RCSID(0, "$NetBSD: zynq7000_clkc.c,v 1.5 2022/11/11 20:29:47 jmcneill E
 #define	 UART0_CPU_1XCLKACT	__BIT(20)
 #define	 I2C1_CPU_1XCLKACT	__BIT(19)
 #define	 I2C0_CPU_1XCLKACT	__BIT(18)
+#define	 SPI1_CPU_1XCLKACT	__BIT(15)
+#define	 SPI0_CPU_1XCLKACT	__BIT(14)
 #define	 SDI1_CPU_1XCLKACT	__BIT(11)
 #define	 SDI0_CPU_1XCLKACT	__BIT(10)
 #define	SDIO_CLK_CTRL	0x150
 #define	UART_CLK_CTRL	0x154
+#define	SPI_CLK_CTRL	0x158
 #define	PCAP_CLK_CTRL	0x168
+#define	FPGA_CLK_CTRL(n)	(0x170 + 0x10 * (n))
+#define	FPGA_THR_CNT(n)	(0x178 + 0x10 * (n))
+#define	 FPGA_CLK_DIVISOR1	__BITS(25,20)
+#define	 FPGA_CLK_STOP		__BIT(0)
 #define	 CLK_CTRL_DIVISOR	__BITS(13,8)
 #define	 CLK_CTRL_SRCSEL	__BITS(5,4)
 #define	 CLK_CTRL_CLKACT1	__BIT(1)
@@ -201,7 +222,107 @@ zynq7000_clkc_get_rate_iop(struct zynq7000_clkc_softc *sc,
 		    &sc->sc_clk[clkid_iopll]);
 	}
 
+	if (__SHIFTOUT(val, CLK_CTRL_DIVISOR) == 0)
+		return 0;
 	return prate / __SHIFTOUT(val, CLK_CTRL_DIVISOR);
+}
+
+/* Caller holds the syscon lock; keep the parent and divisors coherent. */
+static u_int
+zynq7000_clkc_gem_parent(struct zynq7000_clkc_softc *sc, uint32_t val)
+{
+	bus_addr_t reg;
+	uint32_t pll;
+
+	if (val & GEM_CLK_EMIO)
+		return 0; /* The PS clock controller cannot program an EMIO clock. */
+	switch (__SHIFTOUT(val, CLK_CTRL_SRCSEL)) {
+	case 2: reg = ARM_PLL_CTRL; break;
+	case 3: reg = DDR_PLL_CTRL; break;
+	default: reg = IO_PLL_CTRL; break;
+	}
+	pll = syscon_read_4(sc->sc_syscon, reg);
+	if (pll & __BIT(4)) /* PLL_BYPASS_FORCE */
+		return sc->sc_ps_clk_frequency;
+	if (pll & (__BIT(0) | __BIT(1))) /* reset or power down */
+		return 0;
+	return sc->sc_ps_clk_frequency * __SHIFTOUT(pll, PLL_FDIV);
+}
+
+static u_int
+zynq7000_clkc_get_rate_gem(struct zynq7000_clkc_softc *sc, bus_addr_t reg)
+{
+	uint32_t val;
+	u_int prate, div0, div1;
+
+	syscon_lock(sc->sc_syscon);
+	val = syscon_read_4(sc->sc_syscon, reg);
+	prate = zynq7000_clkc_gem_parent(sc, val);
+	syscon_unlock(sc->sc_syscon);
+	div0 = __SHIFTOUT(val, GEM_CLK_DIV0);
+	div1 = __SHIFTOUT(val, GEM_CLK_DIV1);
+	return div0 != 0 && div1 != 0 ? prate / div0 / div1 : 0;
+}
+
+static int
+zynq7000_clkc_clk_set_rate(void *priv, struct clk *clk, u_int rate)
+{
+	struct zynq7000_clkc_softc * const sc = priv;
+	bus_addr_t reg;
+	uint32_t val, next, locked;
+	u_int prate, div0, div1, actual, diff, bestdiff = UINT_MAX;
+	u_int best0 = 0, best1 = 0;
+	int error = 0;
+
+	if (clk == &sc->sc_clk[clkid_gem0])
+		reg = GEM0_CLK_CTRL;
+	else if (clk == &sc->sc_clk[clkid_gem1])
+		reg = GEM1_CLK_CTRL;
+	else
+		return ENXIO;
+	if (rate != 2500000 && rate != 25000000 && rate != 125000000)
+		return EINVAL;
+
+	syscon_lock(sc->sc_syscon);
+	val = syscon_read_4(sc->sc_syscon, reg);
+	prate = zynq7000_clkc_gem_parent(sc, val);
+	if (prate == 0) {
+		error = EINVAL;
+		goto out;
+	}
+	/* At most 63 candidates; no parent PLL or other consumer is changed. */
+	for (div0 = 63; div0 != 0; div0--) {
+		const uint64_t denom = (uint64_t)rate * div0;
+		div1 = (prate + denom / 2) / denom;
+		div1 = MAX(1, MIN(63, div1));
+		actual = prate / div0 / div1;
+		diff = actual > rate ? actual - rate : rate - actual;
+		if (diff < bestdiff) {
+			bestdiff = diff;
+			best0 = div0;
+			best1 = div1;
+		}
+	}
+	/* Allow integer rounding, but never silently select an unusable rate. */
+	if ((uint64_t)bestdiff * 1000000 > (uint64_t)rate * 50) {
+		error = ERANGE;
+		goto out;
+	}
+	next = (val & ~(GEM_CLK_DIV0 | GEM_CLK_DIV1)) |
+	    __SHIFTIN(best0, GEM_CLK_DIV0) | __SHIFTIN(best1, GEM_CLK_DIV1);
+	if (next != val) {
+		/* Preserve the firmware's lock state for other SLCR consumers. */
+		locked = syscon_read_4(sc->sc_syscon, SLCR_LOCKSTA) & 1;
+		syscon_write_4(sc->sc_syscon, SLCR_UNLOCK, SLCR_UNLOCK_KEY);
+		syscon_write_4(sc->sc_syscon, reg, next);
+		if (syscon_read_4(sc->sc_syscon, reg) != next)
+			error = EIO;
+		if (locked)
+			syscon_write_4(sc->sc_syscon, SLCR_LOCK, SLCR_LOCK_KEY);
+	}
+out:
+	syscon_unlock(sc->sc_syscon);
+	return error;
 }
 
 static u_int
@@ -209,12 +330,18 @@ zynq7000_clkc_clk_get_rate(void *priv, struct clk *clk)
 {
 	struct zynq7000_clkc_softc * const sc = priv;
 	uint32_t val;
-	u_int prate;
+	u_int prate, div0, div1, sel, unit;
 
 	if (clk == &sc->sc_clk[clkid_armpll]) {
 		return zynq7000_clkc_get_rate_pll(sc, ARM_PLL_CTRL);
+	} else if (clk == &sc->sc_clk[clkid_ddrpll]) {
+		return zynq7000_clkc_get_rate_pll(sc, DDR_PLL_CTRL);
 	} else if (clk == &sc->sc_clk[clkid_iopll]) {
 		return zynq7000_clkc_get_rate_pll(sc, IO_PLL_CTRL);
+	} else if (clk == &sc->sc_clk[clkid_gem0]) {
+		return zynq7000_clkc_get_rate_gem(sc, GEM0_CLK_CTRL);
+	} else if (clk == &sc->sc_clk[clkid_gem1]) {
+		return zynq7000_clkc_get_rate_gem(sc, GEM1_CLK_CTRL);
 	} else if (clk == &sc->sc_clk[clkid_cpu_6or4x]) {
 		prate = zynq7000_clkc_clk_get_rate(sc,
 		    &sc->sc_clk[clkid_cpu_1x]);
@@ -248,12 +375,32 @@ zynq7000_clkc_clk_get_rate(void *priv, struct clk *clk)
 	} else if (clk == &sc->sc_clk[clkid_uart0] ||
 		   clk == &sc->sc_clk[clkid_uart1]) {
 		return zynq7000_clkc_get_rate_iop(sc, UART_CLK_CTRL);
+	} else if (clk == &sc->sc_clk[clkid_spi0] ||
+		   clk == &sc->sc_clk[clkid_spi1]) {
+		return zynq7000_clkc_get_rate_iop(sc, SPI_CLK_CTRL);
+	} else if (clk >= &sc->sc_clk[clkid_fclk0] &&
+		   clk <= &sc->sc_clk[clkid_fclk3]) {
+		unit = clk - &sc->sc_clk[clkid_fclk0];
+		syscon_lock(sc->sc_syscon);
+		val = syscon_read_4(sc->sc_syscon, FPGA_CLK_CTRL(unit));
+		syscon_unlock(sc->sc_syscon);
+		sel = __SHIFTOUT(val, CLK_CTRL_SRCSEL);
+		div0 = __SHIFTOUT(val, CLK_CTRL_DIVISOR);
+		div1 = __SHIFTOUT(val, FPGA_CLK_DIVISOR1);
+		if (div0 == 0 || div1 == 0)
+			return 0;
+		prate = zynq7000_clkc_clk_get_rate(sc, &sc->sc_clk[
+		    sel == 2 ? clkid_armpll :
+		    sel == 3 ? clkid_ddrpll : clkid_iopll]);
+		return prate / div0 / div1;
 	} else if (clk == &sc->sc_clk[clkid_pcap]) {
 		return zynq7000_clkc_get_rate_iop(sc, PCAP_CLK_CTRL);
 	} else if (clk == &sc->sc_clk[clkid_uart0_aper] ||
 		   clk == &sc->sc_clk[clkid_uart1_aper] ||
 		   clk == &sc->sc_clk[clkid_i2c0_aper] ||
-		   clk == &sc->sc_clk[clkid_i2c1_aper]) {
+		   clk == &sc->sc_clk[clkid_i2c1_aper] ||
+		   clk == &sc->sc_clk[clkid_spi0_aper] ||
+		   clk == &sc->sc_clk[clkid_spi1_aper]) {
 		return zynq7000_clkc_clk_get_rate(sc,
 		    &sc->sc_clk[clkid_cpu_1x]);
 	} else {
@@ -269,6 +416,16 @@ zynq7000_clkc_clk_enable(void *priv, struct clk *clk)
 	uint32_t val, mask;
 	bus_addr_t reg;
 
+	/* FPGA threshold count bit zero is an active-high stop gate. */
+	if (clk >= &sc->sc_clk[clkid_fclk0] &&
+	    clk <= &sc->sc_clk[clkid_fclk3]) {
+		reg = FPGA_THR_CNT(clk - &sc->sc_clk[clkid_fclk0]);
+		syscon_lock(sc->sc_syscon);
+		val = syscon_read_4(sc->sc_syscon, reg);
+		syscon_write_4(sc->sc_syscon, reg, val & ~FPGA_CLK_STOP);
+		syscon_unlock(sc->sc_syscon);
+		return 0;
+	}
 	if (clk == &sc->sc_clk[clkid_cpu_1x]) {
 		reg = ARM_CLK_CTRL;
 		mask = ARM_CLK_CTRL_CPU_1XCLKACT;
@@ -293,6 +450,18 @@ zynq7000_clkc_clk_enable(void *priv, struct clk *clk)
 	} else if (clk == &sc->sc_clk[clkid_uart1]) {
 		reg = UART_CLK_CTRL;
 		mask = CLK_CTRL_CLKACT1;
+	} else if (clk == &sc->sc_clk[clkid_spi0]) {
+		reg = SPI_CLK_CTRL;
+		mask = CLK_CTRL_CLKACT0;
+	} else if (clk == &sc->sc_clk[clkid_spi1]) {
+		reg = SPI_CLK_CTRL;
+		mask = CLK_CTRL_CLKACT1;
+	} else if (clk == &sc->sc_clk[clkid_spi0_aper]) {
+		reg = APER_CLK_CTRL;
+		mask = SPI0_CPU_1XCLKACT;
+	} else if (clk == &sc->sc_clk[clkid_spi1_aper]) {
+		reg = APER_CLK_CTRL;
+		mask = SPI1_CPU_1XCLKACT;
 	} else if (clk == &sc->sc_clk[clkid_pcap]) {
 		reg = PCAP_CLK_CTRL;
 		mask = CLK_CTRL_CLKACT0;
@@ -336,6 +505,7 @@ static const struct clk_funcs zynq7000_clkc_clk_funcs = {
 	.get = zynq7000_clkc_clk_get,
 	.put = zynq7000_clkc_clk_put,
 	.get_rate = zynq7000_clkc_clk_get_rate,
+	.set_rate = zynq7000_clkc_clk_set_rate,
 	.enable = zynq7000_clkc_clk_enable,
 	.disable = zynq7000_clkc_clk_disable,
 };

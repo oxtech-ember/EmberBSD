@@ -14,7 +14,7 @@ fi
 cp "$src/sys/dev/cadence/cemacreg.h" "$work/cemacreg.h"
 sed '/^#include /d' "$src/sys/dev/cadence/if_cemacvar.h" > "$work/if_cemacvar.h"
 : > "$work/cemac-bodies.h"
-for name in cemac_gctx cemac_intr cemac_watchdog_check cemac_watchdog_tick \
+for name in cemac_gctx cemac_gem_recover_tx cemac_ifstart_locked cemac_statchg cemac_intr cemac_watchdog_check cemac_watchdog_tick \
     cemac_tick cemac_ifstop cemac_ifinit cemac_mediachange cemac_handle_reset_work; do
     awk -v name="$name" '
         $0 ~ "^" name "\\(" { print previous; copying = 1; found = 1 }

@@ -1,3 +1,4 @@
+.\" Origin: EmberBSD IPv4 per-socket fragmentation control.
 .\"	$NetBSD: ip.4,v 1.47 2020/09/08 17:30:44 wiz Exp $
 .\"
 .\" Copyright (c) 1983, 1991, 1993
@@ -84,6 +85,34 @@ setsockopt(s, IPPROTO_IP, IP_TOS, &tos, sizeof(tos));
 
 int ttl = 60;                   /* max = 255 */
 setsockopt(s, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+.Ed
+.Pp
+.Dv IP_DONTFRAG
+is an integer boolean option that prohibits IPv4 fragmentation for packets
+sent by an
+.Dv AF_INET
+socket.
+The default is zero.
+When enabled, outgoing IPv4 packets have the Don't Fragment (DF) bit set,
+including when the route's MTU is locked.
+A packet larger than the outgoing MTU fails with
+.Er EMSGSIZE
+instead of being fragmented.
+For a unicast packet rejected because of the DF bit, the MTU can be retrieved with
+.Dv IP_ERRORMTU .
+Disabling this option does not clear a DF bit supplied through
+.Dv IP_HDRINCL
+or set by another protocol's path MTU discovery.
+This option does not configure IPv6 fragmentation or enable automatic
+path MTU discovery for UDP.
+It is not supported on
+.Dv AF_INET6
+sockets, including IPv4-mapped destinations.
+Packet filter rules and IPsec tunnel policies remain independent of this option.
+For example,
+.Bd -literal
+int on = 1;
+setsockopt(s, IPPROTO_IP, IP_DONTFRAG, &on, sizeof(on));
 .Ed
 .Pp
 .Dv IP_IPSEC_POLICY

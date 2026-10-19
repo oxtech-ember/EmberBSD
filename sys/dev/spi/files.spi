@@ -51,3 +51,18 @@ file	dev/spi/scmdspi.c		scmdspi
 # Bosch BMP280 / BME280 sensor
 attach  bmx280thp at spi with bmx280thpspi
 file	dev/spi/bmx280thpspi.c		bmx280thpspi
+
+# AD9361 RF converter (FDT platform attachment)
+device ad9361phy: adiaxiconverter
+attach ad9361phy at spi
+file dev/spi/ad9361.c ad9361phy
+
+file	external/bsd/ad9361/dist/ad9361_api.c	ad9361phy
+file	external/bsd/ad9361/dist/ad9361_conv.c	ad9361phy
+file	external/bsd/ad9361/dist/ad9361_ext_band_ctrl.c	ad9361phy
+file	external/bsd/ad9361/dist/ad9361_native.c	ad9361phy
+file	external/bsd/ad9361/dist/ad9361_native_control.c	ad9361phy
+file	external/bsd/ad9361/dist/ad9361_native_fdt.c	ad9361phy
+file	external/bsd/ad9361/dist/ad9361_noos.c	ad9361phy
+file	external/bsd/ad9361/dist/ad9361_rx_tune.c	ad9361phy
+file	external/bsd/ad9361/dist/ad9361_util.c	ad9361phy

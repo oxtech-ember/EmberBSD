@@ -1,3 +1,5 @@
+/* Origin: EmberBSD IPv4 per-socket fragmentation control. */
+
 /*	$NetBSD: in.h,v 1.115 2023/06/16 03:02:30 rin Exp $	*/
 
 /*
@@ -297,6 +299,7 @@ struct ip_opts {
 #define	IP_PKTINFO		25   /* struct; set default src if/addr */
 #define	IP_RECVPKTINFO		26   /* int; receive dst if/addr w/dgram */
 #define	IP_BINDANY		27   /* bool: allow bind to any address */
+#define	IP_DONTFRAG		28   /* bool; prohibit IPv4 fragmentation */
 #define IP_SENDSRCADDR IP_RECVDSTADDR /* FreeBSD compatibility */
 
 /*

@@ -41,6 +41,8 @@
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD completion of SPI configuration failures. */
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: spi.c,v 1.26 2022/05/17 05:05:20 andvar Exp $");
 
@@ -557,8 +559,15 @@ spi_transfer(struct spi_handle *sh, struct spi_transfer *st)
 	    || sc->sc_speed != sh->sh_speed) {
 		error = (*tag->sct_configure)(tag->sct_cookie,
 				sh->sh_slave, sh->sh_mode, sh->sh_speed);
-		if (error)
-			return error;
+		if (error) {
+			/*
+			 * Complete the accepted transaction even if configuration
+			 * fails. spi_wait() must observe the error and release the
+			 * controller; synchronous wrappers always call it.
+			 */
+			spi_done(st, error);
+			return 0;
+		}
 	}
 	sc->sc_mode = sh->sh_mode;
 	sc->sc_speed = sh->sh_speed;
