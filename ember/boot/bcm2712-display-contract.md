@@ -380,3 +380,7 @@ An accelerated virtual output does not display a frame on HDMI.
 
 The explicit [finite IOMMU4 observer](bcm2712-iommu-observe.md) samples inherited
 clock and translation registers. Its diagnostic candidate never authorizes DMA.
+
+The explicit [HVS state observer](bcm2712-hvs-observe.md) samples only resource3
+identity, global control and all three channel control/status pairs. Its finite
+initial-inactivity snapshot grants no ownership, translation or stop/drain.
