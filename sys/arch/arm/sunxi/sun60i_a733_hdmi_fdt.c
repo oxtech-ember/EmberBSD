@@ -302,14 +302,14 @@ native_resistor(struct sun60i_a733_hdmi_softc *sc)
 
 /* Pinned BSP uses ceil(SFR[Hz] * time[ns] / 1e9), not the physical DCXO. */
 static int
-native_ddc_counts(uint32_t hz, u_int *high, u_int *low)
+native_ddc_counts(uint32_t rate_hz, u_int *high, u_int *low)
 {
 	uint64_t h, l;
 
-	if (hz == 0 || high == NULL || low == NULL)
+	if (rate_hz == 0 || high == NULL || low == NULL)
 		return EINVAL;
-	h = ((uint64_t)hz * 9184 + 999999999) / 1000000000;
-	l = ((uint64_t)hz * 10204 + 999999999) / 1000000000;
+	h = ((uint64_t)rate_hz * 9184 + 999999999) / 1000000000;
+	l = ((uint64_t)rate_hz * 10204 + 999999999) / 1000000000;
 	if (h == 0 || l == 0 || h > UINT16_MAX || l > UINT16_MAX)
 		return ERANGE;
 	*high = h;
