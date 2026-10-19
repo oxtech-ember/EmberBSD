@@ -1046,12 +1046,12 @@ iwx_ctxt_info_gen3_init(struct iwx_softc *sc, const struct iwx_fw_sects *fws)
 	memset(prph_scratch, 0, sizeof(*prph_scratch));
 	prph_sc_ctrl = &prph_scratch->ctrl_cfg;
 	prph_sc_ctrl->version.version = 0;
-	if (sc->sc_device_family >= IWX_DEVICE_FAMILY_BZ)
-		prph_sc_ctrl->version.mac_id = htole16(sc->sc_hw_rev);
-	else {
-		prph_sc_ctrl->version.mac_id = htole16(IWX_READ(sc,
-		    IWX_CSR_HW_REV));
-	}
+	/*
+	 * Linux passes the raw CSR_HW_REV for every family (trans.c keeps
+	 * info->hw_rev unconverted); the converted sc_hw_rev differs in the
+	 * step bits on BZ/GL.
+	 */
+	prph_sc_ctrl->version.mac_id = htole16(IWX_READ(sc, IWX_CSR_HW_REV));
 	prph_sc_ctrl->version.size = htole16(sizeof(*prph_scratch) / 4);
 
 	control_flags = IWX_PRPH_SCRATCH_RB_SIZE_4K |
@@ -4112,13 +4112,45 @@ out:
 static void
 iwx_dump_fwload_state(struct iwx_softc *sc)
 {
-	printf("%s: fw %s hw_rev 0x%08x rf_id 0x%08x family %d intr %d\n",
+	printf("%s: fw %s hw_rev 0x%08x raw 0x%08x rf_id 0x%08x family %d intr %d\n",
 	    device_xname(sc->sc_dev), sc->sc_fwname, sc->sc_hw_rev,
+	    IWX_READ(sc, IWX_CSR_HW_REV),
 	    sc->sc_hw_rf_id, sc->sc_device_family, sc->sc_uc.uc_intr);
 	printf("%s: GP_CNTRL 0x%08x INT 0x%08x INT_MASK 0x%08x FH_INT 0x%08x\n",
 	    device_xname(sc->sc_dev), IWX_READ(sc, IWX_CSR_GP_CNTRL),
 	    IWX_READ(sc, IWX_CSR_INT), IWX_READ(sc, IWX_CSR_INT_MASK),
 	    IWX_READ(sc, IWX_CSR_FH_INT_STATUS));
+	{
+		struct iwx_self_init_dram *dram = &sc->init_dram;
+		struct iwx_prph_scratch *ps = sc->prph_scratch_dma.vaddr;
+		struct iwx_context_info_gen3 *ci = sc->ctxt_info_dma.vaddr;
+
+		printf("%s: dma ctxt 0x%llx scratch 0x%llx info 0x%llx iml 0x%llx/%zu\n",
+		    device_xname(sc->sc_dev),
+		    (unsigned long long)sc->ctxt_info_dma.paddr,
+		    (unsigned long long)sc->prph_scratch_dma.paddr,
+		    (unsigned long long)sc->prph_info_dma.paddr,
+		    (unsigned long long)sc->iml_dma.paddr, sc->sc_fw.iml_len);
+		printf("%s: csr ctxt 0x%08x%08x iml 0x%08x%08x iml_size %u\n",
+		    device_xname(sc->sc_dev),
+		    IWX_READ(sc, IWX_CSR_CTXT_INFO_ADDR + 4),
+		    IWX_READ(sc, IWX_CSR_CTXT_INFO_ADDR),
+		    IWX_READ(sc, IWX_CSR_IML_DATA_ADDR + 4),
+		    IWX_READ(sc, IWX_CSR_IML_DATA_ADDR),
+		    IWX_READ(sc, IWX_CSR_IML_SIZE_ADDR));
+		printf("%s: sects lmac %d umac %d paging %d; umac0 0x%llx lmac0 0x%llx\n",
+		    device_xname(sc->sc_dev), dram->lmac_cnt, dram->umac_cnt,
+		    dram->paging_cnt,
+		    (unsigned long long)le64toh(ps->dram.umac_img[0]),
+		    (unsigned long long)le64toh(ps->dram.lmac_img[0]));
+		printf("%s: ci scratch 0x%llx/%u mtr 0x%llx mcr 0x%llx sizes %u/%u\n",
+		    device_xname(sc->sc_dev),
+		    (unsigned long long)le64toh(ci->prph_scratch_base_addr),
+		    le32toh(ci->prph_scratch_size),
+		    (unsigned long long)le64toh(ci->mtr_base_addr),
+		    (unsigned long long)le64toh(ci->mcr_base_addr),
+		    le16toh(ci->mtr_size), le16toh(ci->mcr_size));
+	}
 	printf("%s: BOOT_CTRL 0x%08x FUNC_SCRATCH 0x%08x\n",
 	    device_xname(sc->sc_dev), IWX_READ(sc, IWX_CSR_CTXT_INFO_BOOT_CTRL),
 	    IWX_READ(sc, IWX_CSR_FUNC_SCRATCH));
