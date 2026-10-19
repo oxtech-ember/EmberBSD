@@ -234,12 +234,11 @@ wait_flip(int fd, uint32_t crtc, uint64_t token, uint64_t previous)
 	struct pollfd pfd = {.fd = fd, .events = POLLIN};
 	struct drm_event_vblank event;
 	uint64_t deadline = milliseconds() + 5000, stamp;
-	int ready;
 
 	for (;;) {
 		uint64_t now = milliseconds();
 		CHECK(now < deadline);
-		ready = poll(&pfd, 1, (int)(deadline - now));
+		int ready = poll(&pfd, 1, (int)(deadline - now));
 		if (ready < 0 && errno == EINTR)
 			continue;
 		CHECK(ready == 1 && pfd.revents == POLLIN);
@@ -285,7 +284,7 @@ main(int argc, char **argv)
 		CHECK(close(fd) == 0);
 		return 0;
 	}
-	CHECK(ioctl(fd, DRM_IOCTL_SET_MASTER, NULL) == 0);
+	CHECK(ioctl(fd, DRM_IOCTL_SET_MASTER, (void *)NULL) == 0);
 	blob = (struct drm_mode_create_blob){
 	    .data = PTR(&output.mode), .length = sizeof(output.mode)};
 	CHECK(ioctl(fd, DRM_IOCTL_MODE_CREATEPROPBLOB, &blob) == 0 &&

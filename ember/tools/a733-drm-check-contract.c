@@ -36,7 +36,7 @@ typedef unsigned long drm_handle_t;
 #include <drm/drm.h>
 #include <drm/drm_fourcc.h>
 
-static unsigned checks, fault, calls, frames, flips, tests, masters, closed;
+static unsigned checks, fault, calls, created_frames, flips, tests, masters, closed;
 static unsigned retries;
 static uint64_t tick, pending;
 static void *allocation;
@@ -57,7 +57,7 @@ static int fake_clock_gettime(clockid_t, struct timespec *);
 static int fake_poll(struct pollfd *, nfds_t, int);
 static ssize_t fake_read(int, void *, size_t);
 static int fake_ioctl(int, unsigned long, ...);
-static void *fake_mmap(void *, size_t, int, int, int, off_t);
+static void *fake_mmap(const void *, size_t, int, int, int, off_t);
 static int fake_munmap(void *, size_t);
 static _Noreturn void fake_exit(int);
 #define open fake_open
@@ -170,11 +170,11 @@ fake_read(int fd, void *buf, size_t size)
 	return fault == 21 ? (ssize_t)sizeof(e) - 1 : (ssize_t)sizeof(e);
 }
 static void *
-fake_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t off)
+fake_mmap(const void *addr, size_t length, int prot, int flags, int fd, off_t off)
 {
 	VERIFY(addr == NULL && length == 640 * 480 * 4 &&
 	       prot == (PROT_READ | PROT_WRITE));
-	VERIFY(flags == MAP_SHARED && fd == 3 && off == (off_t)(4096 * frames));
+	VERIFY(flags == MAP_SHARED && fd == 3 && off == (off_t)(4096 * created_frames));
 	VERIFY(allocation == NULL);
 	allocation_size = length;
 	allocation = calloc(1, length);
@@ -186,10 +186,10 @@ fake_munmap(void *addr, size_t length)
 {
 	static const uint32_t colors[4] = {
 	    0xff0000, 0x00ff00, 0x0000ff, 0xffffff};
-	VERIFY(addr == allocation && length == allocation_size && frames >= 1 &&
-	       frames <= 4);
+	VERIFY(addr == allocation && length == allocation_size && created_frames >= 1 &&
+	       created_frames <= 4);
 	for (size_t i = 0; i < length / 4; i++)
-		VERIFY(((uint32_t *)addr)[i] == colors[frames - 1]);
+		VERIFY(((uint32_t *)addr)[i] == colors[created_frames - 1]);
 	free(allocation);
 	allocation = NULL;
 	return 0;
@@ -217,7 +217,7 @@ fake_ioctl(int fd, unsigned long op, ...)
 		VERIFY(c->capability == DRM_CAP_DUMB_BUFFER);
 		c->value = fault == 2 ? 0 : 1;
 	} else if (op == DRM_IOCTL_SET_CLIENT_CAP) {
-		struct drm_set_client_cap *c = arg;
+		const struct drm_set_client_cap *c = arg;
 		VERIFY(c->capability == DRM_CLIENT_CAP_ATOMIC && c->value == 1);
 	} else if (op == DRM_IOCTL_MODE_GETRESOURCES) {
 		struct drm_mode_card_res *r = arg;
@@ -244,7 +244,7 @@ fake_ioctl(int fd, unsigned long op, ...)
 		e->encoder_type = DRM_MODE_ENCODER_TMDS;
 		e->possible_crtcs = 1;
 	} else if (op == DRM_IOCTL_MODE_GETPLANERESOURCES) {
-		struct drm_mode_get_plane_res *r = arg;
+		const struct drm_mode_get_plane_res *r = arg;
 		VERIFY(r->count_planes == 1);
 		*(uint32_t *)(uintptr_t)r->plane_id_ptr = 30;
 	} else if (op == DRM_IOCTL_MODE_GETPLANE) {
@@ -310,28 +310,28 @@ fake_ioctl(int fd, unsigned long op, ...)
 		struct drm_mode_create_dumb *d = arg;
 		VERIFY(d->width == 640 && d->height == 480 && d->bpp == 32 &&
 		       !d->flags);
-		frames++;
-		d->handle = 1000 + frames;
+		created_frames++;
+		d->handle = 1000 + created_frames;
 		d->pitch = fault == 9 ? 1 : 2560;
 		d->size = fault == 10 ? 1 : 2560 * 480;
 	} else if (op == DRM_IOCTL_MODE_MAP_DUMB) {
 		struct drm_mode_map_dumb *m = arg;
-		VERIFY(m->handle == 1000 + frames);
-		m->offset = 4096 * frames;
+		VERIFY(m->handle == 1000 + created_frames);
+		m->offset = UINT64_C(4096) * created_frames;
 	} else if (op == DRM_IOCTL_MODE_ADDFB2) {
 		struct drm_mode_fb_cmd2 *f = arg;
-		VERIFY(f->handles[0] == 1000 + frames &&
+		VERIFY(f->handles[0] == 1000 + created_frames &&
 		       f->pitches[0] == 2560 && f->width == 640 &&
 		       f->height == 480 &&
 		       f->pixel_format == DRM_FORMAT_XRGB8888 &&
 		       !f->offsets[0] && !f->flags);
-		f->fb_id = 2000 + frames;
+		f->fb_id = 2000 + created_frames;
 	} else if (op == DRM_IOCTL_MODE_ATOMIC) {
-		struct drm_mode_atomic *a = arg;
-		uint32_t *objs = (void *)(uintptr_t)a->objs_ptr,
+		const struct drm_mode_atomic *a = arg;
+		const uint32_t *objs = (void *)(uintptr_t)a->objs_ptr,
 			 *count = (void *)(uintptr_t)a->count_props_ptr,
 			 *props = (void *)(uintptr_t)a->props_ptr;
-		uint64_t *v = (void *)(uintptr_t)a->prop_values_ptr;
+		const uint64_t *v = (void *)(uintptr_t)a->prop_values_ptr;
 		static const uint32_t wantprops[] = {100, 101, 200, 301, 302,
 		    303, 304, 305, 306, 307, 308, 309, 310};
 		VERIFY(a->count_objs == 3 && objs[0] == 10 && objs[1] == 20 &&
@@ -339,7 +339,7 @@ fake_ioctl(int fd, unsigned long op, ...)
 		       count[2] == 10);
 		VERIFY(memcmp(props, wantprops, sizeof(wantprops)) == 0);
 		VERIFY(v[0] == 50 && v[1] == 1 && v[2] == 10 &&
-		       v[3] == 2000 + frames && v[4] == 10 && v[5] == 0 &&
+		       v[3] == 2000 + created_frames && v[4] == 10 && v[5] == 0 &&
 		       v[6] == 0 && v[7] == (640U << 16) &&
 		       v[8] == (480U << 16) && v[9] == 0 && v[10] == 0 &&
 		       v[11] == 640 && v[12] == 480);
@@ -366,7 +366,7 @@ fake_ioctl(int fd, unsigned long op, ...)
 			VERIFY(a->flags == (DRM_MODE_ATOMIC_NONBLOCK |
 					       DRM_MODE_ATOMIC_ALLOW_MODESET |
 					       DRM_MODE_PAGE_FLIP_EVENT) &&
-			       a->user_data == frames);
+			       a->user_data == created_frames);
 			flips++;
 			pending = a->user_data;
 		}
@@ -382,7 +382,7 @@ main(void)
 	for (volatile unsigned scenario = 0; scenario <= 27; scenario++) {
 		errno = 0;
 		fault = scenario == 23 ? 0 : scenario;
-		calls = frames = flips = tests = masters = closed = retries = 0;
+		calls = created_frames = flips = tests = masters = closed = retries = 0;
 		tick = pending = 0;
 		int failed_check = setjmp(failed);
 		if (!failed_check)
@@ -391,10 +391,10 @@ main(void)
 			       0);
 		if (scenario == 0 || scenario == 22 || scenario == 25 ||
 		    scenario == 26) {
-			VERIFY(!failed_check && frames == 4 && flips == 4 &&
+			VERIFY(!failed_check && created_frames == 4 && flips == 4 &&
 			       tests == 4 && masters == 1 && closed == 1);
 		} else if (scenario == 23) {
-			VERIFY(!failed_check && frames == 0 && flips == 0 &&
+			VERIFY(!failed_check && created_frames == 0 && flips == 0 &&
 			       tests == 0 && masters == 0 && closed == 1);
 		} else {
 			VERIFY(failed_check);
