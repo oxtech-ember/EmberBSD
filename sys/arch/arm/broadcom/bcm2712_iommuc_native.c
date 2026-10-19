@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* Descriptor attachment only. No native MMIO backend exists here. */
+/* Optional descriptor owner and explicit one-shot read. No cache-write API. */
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/cpu.h>
@@ -20,6 +20,8 @@ struct bcm2712_iommuc_provider {
 	bus_space_tag_t bst;
 	struct bcm2712_iommuc_contract contract;
 	struct bcm2712_iommuc_core core;
+	struct bcm2712_iommuc_observation observation;
+	bus_space_handle_t bsh;
 	bool software_attached;
 };
 
@@ -175,6 +177,7 @@ bcm2712_iommuc_cached_status(struct bcm2712_iommuc_provider *sc,
 	memset(&status, 0, sizeof(status));
 	status.software_attached = true;
 	status.core_initialized = sc->core.initialized;
+	status.observation = sc->observation;
 	if (status.core_initialized) {
 		error = bcm2712_iommuc_core_status(&sc->core, &status.core);
 		if (error != 0)
@@ -182,6 +185,71 @@ bcm2712_iommuc_cached_status(struct bcm2712_iommuc_provider *sc,
 	}
 	*out = status;
 	error = 0;
+done:
+	mutex_exit(&bcm2712_iommuc_mutex);
+	return error;
+}
+
+/* The fixed v1 CONTROL fields are ENABLE0, FLUSH1 and FLUSHING2. */
+#define IOMMUC_CONTROL_FLUSHING	0x4U
+#define IOMMUC_CONTROL_KNOWN	0x7U
+
+int
+bcm2712_iommuc_observe_control(struct bcm2712_iommuc_provider *sc)
+{
+	struct bcm2712_iommuc_observation *observation;
+	uint32_t value;
+	int error;
+
+	if (sc == NULL)
+		return EINVAL;
+	if ((error = bcm2712_iommuc_enter()) != 0)
+		return error;
+	error = ENXIO;
+	if (sc != bcm2712_iommuc_owner || !sc->software_attached ||
+	    sc->bst == NULL || sc->contract.version != BCM2712_IOMMUC_VERSION ||
+	    sc->contract.address != BCM2712_IOMMUC_ADDRESS ||
+	    sc->contract.length != BCM2712_IOMMUC_LENGTH)
+		goto done;
+	observation = &sc->observation;
+	if (observation->started) {
+		error = observation->first_error != 0 ?
+		    observation->first_error : EALREADY;
+		goto done;
+	}
+	/* Do not introduce a new observation into a future active core. */
+	if (sc->core.initialized) {
+		error = EBUSY;
+		goto done;
+	}
+	observation->started = true;
+	observation->stage = BCM2712_IOMMUC_OBSERVE_MAP;
+	error = bus_space_map(sc->bst, BCM2712_IOMMUC_ADDRESS,
+	    BCM2712_IOMMUC_LENGTH, 0, &sc->bsh);
+	if (error != 0) {
+		observation->first_error = error;
+		goto done;
+	}
+	observation->mapped = true;
+	observation->stage = BCM2712_IOMMUC_OBSERVE_READ;
+	observation->reads_attempted = 1;
+	aprint_normal_dev(sc->dev, "ICAC one-shot CONTROL read: experimental "
+	    "normal-active SoC assumption; firmware/MMU2/4/5 exclusion required; "
+	    "bus stall/abort is not recoverable\n");
+	value = bus_space_read_4(sc->bst, sc->bsh, 0);
+	observation->reads_completed = 1;
+	observation->raw_control = value;
+	observation->raw_valid = true;
+	if ((value & ~IOMMUC_CONTROL_KNOWN) != 0)
+		error = EOPNOTSUPP;
+	else if ((value & IOMMUC_CONTROL_FLUSHING) != 0)
+		error = EBUSY;
+	else
+		error = 0;
+	if (error != 0)
+		observation->first_error = error;
+	else
+		observation->stage = BCM2712_IOMMUC_OBSERVE_COMPLETE;
 done:
 	mutex_exit(&bcm2712_iommuc_mutex);
 	return error;

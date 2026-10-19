@@ -13,6 +13,7 @@
 #include "native-types.h"
 
 typedef void *bus_space_tag_t;
+typedef uintptr_t bus_space_handle_t;
 typedef void *cfdata_t;
 typedef struct { bool initialized, held; } kmutex_t;
 struct fixture_device { void *private; const char *driver; };
@@ -44,6 +45,12 @@ static int once_error;
 static struct acpi_devnode namespace_node;
 static bool missing_node;
 static int tag_token, foreign_token;
+static unsigned int map_calls, read_calls;
+static int map_error;
+static uint32_t control_value;
+static int bus_space_map(bus_space_tag_t, uint64_t, uint64_t, int,
+    bus_space_handle_t *);
+static uint32_t bus_space_read_4(bus_space_tag_t, bus_space_handle_t, size_t);
 
 static int bcm2712_iommuc_acpi_resources(ACPI_HANDLE handle,
     struct bcm2712_iommuc_contract *out)
@@ -109,6 +116,41 @@ static void aprint_error_dev(device_t dev, const char *format, ...)
 #include "core.h"
 #include "native.h"
 
+static int
+bus_space_map(bus_space_tag_t tag, uint64_t address, uint64_t length,
+    int flags, bus_space_handle_t *out)
+{
+	CHECK(bcm2712_iommuc_mutex.held && bcm2712_iommuc_owner != NULL);
+	CHECK(tag == &tag_token && address == UINT64_C(0x1000005b00));
+	CHECK(length == UINT64_C(0x80) && flags == 0 && out != NULL);
+	CHECK(!bcm2712_iommuc_owner->core.initialized);
+	CHECK(bcm2712_iommuc_owner->observation.started);
+	CHECK(bcm2712_iommuc_owner->observation.stage == BCM2712_IOMMUC_OBSERVE_MAP);
+	CHECK(!bcm2712_iommuc_owner->observation.mapped);
+	CHECK(!bcm2712_iommuc_owner->observation.raw_valid);
+	CHECK(bcm2712_iommuc_owner->observation.reads_attempted == 0);
+	CHECK(++map_calls == 1);
+	if (map_error != 0)
+		return map_error;
+	*out = 0x1234;
+	return 0;
+}
+static uint32_t
+bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, size_t offset)
+{
+	CHECK(bcm2712_iommuc_mutex.held && bcm2712_iommuc_owner != NULL);
+	CHECK(tag == &tag_token && handle == 0x1234 && offset == 0);
+	CHECK(!bcm2712_iommuc_owner->core.initialized && print_calls == 2);
+	CHECK(bcm2712_iommuc_owner->observation.started);
+	CHECK(bcm2712_iommuc_owner->observation.mapped);
+	CHECK(bcm2712_iommuc_owner->observation.stage == BCM2712_IOMMUC_OBSERVE_READ);
+	CHECK(bcm2712_iommuc_owner->observation.reads_attempted == 1);
+	CHECK(bcm2712_iommuc_owner->observation.reads_completed == 0);
+	CHECK(!bcm2712_iommuc_owner->observation.raw_valid);
+	CHECK(map_calls == 1 && ++read_calls == 1);
+	return control_value;
+}
+
 static struct bcm2712_iommuc_provider storage, duplicate, foreign_storage;
 static struct fixture_device device = { &storage, "bcm2712iommuc" };
 static struct fixture_device other_device = { &duplicate, "bcm2712iommuc" };
@@ -128,6 +170,8 @@ native_setup(void)
 	decoder_calls = lock_calls = unlock_calls = node_calls = 0;
 	print_calls = error_prints = once_calls = 0;
 	once_error = 0;
+	map_calls = read_calls = 0;
+	map_error = 0; control_value = 0;
 	missing_node = false;
 	device.private = &storage;
 	device.driver = "bcm2712iommuc";
@@ -191,11 +235,20 @@ snapshot(struct bcm2712_iommuc_provider *owner, bool accepted)
 		memset(&expected, 0, sizeof(expected));
 		expected.software_attached = true;
 		expected.core_initialized = storage.core.initialized;
+		expected.observation = storage.observation;
 		if (storage.core.initialized)
 			expected.core = storage.core.status;
 		CHECK(out.data.software_attached == expected.software_attached);
 		CHECK(out.data.core_initialized == expected.core_initialized);
 		compare_core_status(&out.data.core, &expected.core);
+		CHECK(out.data.observation.stage == expected.observation.stage);
+		CHECK(out.data.observation.raw_control == expected.observation.raw_control);
+		CHECK(out.data.observation.first_error == expected.observation.first_error);
+		CHECK(out.data.observation.started == expected.observation.started);
+		CHECK(out.data.observation.mapped == expected.observation.mapped);
+		CHECK(out.data.observation.raw_valid == expected.observation.raw_valid);
+		CHECK(out.data.observation.reads_attempted == expected.observation.reads_attempted);
+		CHECK(out.data.observation.reads_completed == expected.observation.reads_completed);
 	} else {
 		CHECK(memcmp(&out, &saved, sizeof(out)) == 0);
 	}
@@ -215,6 +268,86 @@ static int forbidden_write(void *arg, uint32_t value)
 static void forbidden_barrier(void *arg)
 {
 	(void)arg; abort();
+}
+
+static void
+observation_tests(void)
+{
+	static const uint32_t samples[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, UINT32_MAX };
+	static const int map_errors[] = { ENOMEM, EIO, EBUSY, EOPNOTSUPP };
+	struct bcm2712_iommuc_observation *o;
+	struct bcm2712_iommuc_io io = {
+		forbidden_read, forbidden_write, forbidden_barrier, &foreign_token
+	};
+	unsigned int aml, decoded, locks;
+	int error;
+
+	native_setup();
+	CHECK(bcm2712_iommuc_observe_control(NULL) == EINVAL);
+	CHECK(bcm2712_iommuc_observe_control(&foreign_storage) == ENXIO);
+	attach(); lookup(true); snapshot(&storage, true);
+	CHECK(map_calls == 0 && read_calls == 0 && !storage.observation.started);
+	for (unsigned int i = 0; i < 2; i++) {
+		hard_irq = i == 0; soft_irq = i == 1;
+		aml = calls; decoded = decoder_calls; locks = lock_calls;
+		CHECK(bcm2712_iommuc_observe_control(&storage) == EWOULDBLOCK);
+		CHECK(calls == aml && decoder_calls == decoded && lock_calls == locks);
+		CHECK(map_calls == 0 && read_calls == 0 && !storage.observation.started);
+	}
+	for (unsigned int i = 0; i < __arraycount(samples); i++) {
+		native_setup(); attach(); control_value = samples[i];
+		o = &storage.observation;
+		aml = calls; decoded = decoder_calls;
+		error = i < 4 ? 0 : i < 8 ? EBUSY : EOPNOTSUPP;
+		CHECK(bcm2712_iommuc_observe_control(&storage) == error);
+		CHECK(calls == aml && decoder_calls == decoded);
+		CHECK(o->started && o->mapped && o->raw_valid);
+		CHECK(o->raw_control == samples[i] && o->first_error == error);
+		CHECK(o->stage == (error == 0 ? BCM2712_IOMMUC_OBSERVE_COMPLETE :
+		    BCM2712_IOMMUC_OBSERVE_READ));
+		CHECK(o->reads_attempted == 1 && o->reads_completed == 1);
+		CHECK(map_calls == 1 && read_calls == 1 && !storage.core.initialized);
+		compare_core_status(&storage.core.status,
+		    &(struct bcm2712_iommuc_status){ 0 });
+		snapshot(&storage, true); snapshot(&storage, true);
+		CHECK(bcm2712_iommuc_observe_control(&storage) == (error == 0 ? EALREADY : error));
+		CHECK(map_calls == 1 && read_calls == 1);
+		CHECK(bcm2712iommuc_acpi_ca.detach(&device, 0) == EBUSY);
+		CHECK(bcm2712_iommuc_owner == &storage && storage.bsh == 0x1234);
+	}
+	for (unsigned int i = 0; i < __arraycount(map_errors); i++) {
+		native_setup(); attach(); map_error = map_errors[i];
+		o = &storage.observation;
+		CHECK(bcm2712_iommuc_observe_control(&storage) == map_errors[i]);
+		CHECK(o->started && !o->mapped && !o->raw_valid);
+		CHECK(o->stage == BCM2712_IOMMUC_OBSERVE_MAP);
+		CHECK(o->first_error == map_errors[i] && o->raw_control == 0);
+		CHECK(o->reads_attempted == 0 && o->reads_completed == 0);
+		CHECK(map_calls == 1 && read_calls == 0 && !storage.core.initialized);
+		snapshot(&storage, true);
+		CHECK(bcm2712_iommuc_observe_control(&storage) == map_errors[i]);
+		CHECK(map_calls == 1 && read_calls == 0);
+		CHECK(bcm2712iommuc_acpi_ca.detach(&device, 0) == EBUSY);
+		CHECK(bcm2712_iommuc_owner == &storage);
+	}
+	for (unsigned int i = 0; i < 6; i++) {
+		native_setup(); attach();
+		switch (i) {
+		case 0: storage.software_attached = false; break;
+		case 1: storage.bst = NULL; break;
+		case 2: storage.contract.version++; break;
+		case 3: storage.contract.address++; break;
+		case 4: storage.contract.length++; break;
+		case 5: bcm2712_iommuc_owner = &foreign_storage; break;
+		}
+		CHECK(bcm2712_iommuc_observe_control(&storage) == ENXIO);
+		CHECK(!storage.observation.started && map_calls == 0 && read_calls == 0);
+	}
+	native_setup(); attach();
+	CHECK(bcm2712_iommuc_core_init(&storage.core, &io) == 0);
+	CHECK(bcm2712_iommuc_observe_control(&storage) == EBUSY);
+	CHECK(!storage.observation.started && map_calls == 0 && read_calls == 0);
+	CHECK(lock_calls == unlock_calls && !bcm2712_iommuc_mutex.held);
 }
 
 int
@@ -334,6 +467,7 @@ main(void)
 		CHECK(snapshot(&storage, false) == EWOULDBLOCK);
 		CHECK(calls == aml && decoder_calls == decoded);
 	}
+	observation_tests();
 	printf("BCM2712 ICAC native contract: %u checks passed\n", checks);
 	return 0;
 }
