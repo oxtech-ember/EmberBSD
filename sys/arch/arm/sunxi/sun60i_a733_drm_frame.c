@@ -4,6 +4,7 @@
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
+#include <sys/container_of.h>
 #include <sys/errno.h>
 #include <sys/systm.h>
 #include <linux/dma-fence.h>
@@ -20,7 +21,7 @@ struct a733_scanout {
 	struct dma_fence fence;
 	spinlock_t lock;
 	struct drm_gem_object *gem;
-	bool held, finished;
+	bool held, retained_once, finished;
 };
 CTASSERT(offsetof(struct a733_scanout, fence) == 0);
 
@@ -68,6 +69,7 @@ scanout_retain(void *cookie)
 		error = EINVAL;
 	else {
 		s->held = true;
+		s->retained_once = true;
 		dma_fence_get(&s->fence);
 	}
 	spin_unlock(&s->lock);
@@ -209,6 +211,12 @@ sun60i_a733_drm_frame_submit(struct sun60i_a733_de352_client *client,
 	error = scanout_publish(s, obj->base.resv);
 	if (error == 0)
 		error = sun60i_a733_de352_submit(client, &frame, &done);
+	if (error == 0) {
+		spin_lock(&s->lock);
+		if (!s->retained_once)
+			error = EPROTO;
+		spin_unlock(&s->lock);
+	}
 	/* A retained provider reference prevents this path from ending DMA use. */
 	scanout_finish(s, false);
 	dma_fence_put(&s->fence);
