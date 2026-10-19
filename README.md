@@ -134,8 +134,13 @@ maps EmberBSD Development skills to preparation, validation, and submission.
 preserves binary test inputs, selects the Objective-C dependency frontend,
 and enables the ARMv7 crypto instructions required by each source.
 [ARM standalone checks](ember/boot/cross-build.md) cover module flags,
-disk ioctl dispatch and linker layouts. These checks do not qualify a full
-base image or a physical board.
+disk ioctl dispatch and linker layouts.
+[Userland contracts](ember/tests/gcc16-userland-recovery.md) cover short writes,
+list ownership, terminal input and buffer boundaries.
+[Imported-source checks](ember/tools/tests/imported-gcc16/README.md) cover
+fragmented PCAP reads, descriptor cleanup, sparse ICMP lookups, nvi size limits
+and generated parser error counts. Host regressions and isolated ARMv7 object
+builds do not qualify a full base image or a physical board.
 
 [Zynq-7000 and ADI converter providers](ember/development/zynq-converters.md)
 supply native SPI, ADC and finite DMA ownership interfaces, AD9361 adapters,
