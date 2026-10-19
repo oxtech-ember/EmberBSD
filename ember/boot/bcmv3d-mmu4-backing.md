@@ -49,7 +49,16 @@ invokes the actual fixed encoder, zeros the whole frame and all four control
 allocations, and copies all four images. It then completes full PREWRITE for
 all four control maps and the frame consumer map. No allocation, MMIO, firmware
 request, address publication, lease change or CPU mutation follows those syncs.
-The initial XRGB8888 frame is black. Preparation is one-shot, including failure.
+Preparation is one-shot, including failure.
+
+After zeroing the frame, preparation fills the logical 1920 by 1080 XRGB8888
+image with eight fixed vertical bars. Each bar is 240 pixels wide. From left to
+right, the colors are white, yellow, cyan, green, magenta, red, blue and black.
+Each pixel stores B, G, R and a zero X byte. The 7680-byte pitch is unchanged.
+The fill completes before every control-map and frame-map PREWRITE. Native
+allocation padding stays zero. This immutable experimental initial frame makes
+scanout distinguishable from a black output. It is not a Plasma compositor frame
+and does not establish a compositor, display ownership or physical scanout.
 
 All errors are positive BSD errno. Invalid arguments, aliases and geometry use
 EINVAL; unsupported geometry/debug or translation/bounce uses EOPNOTSUPP;
@@ -88,10 +97,15 @@ The runner copies unchanged backing, frame-helper and encoder sources and real
 public headers into separate translation units. Only kernel DMA/pmap/GEM/BO
 services are controlled. The BO allocator implementation itself has separate
 contracts. Tests cover4KiB/64KiB geometry, every pmap callback failure, first/last
-bytes, padding, full map identities, alias/range errors, exact bytes/sync order,
+bytes, complete patterned rows and their boundary pixels, zero padding, full map
+identities, alias/range errors, exact bytes/sync order,
 reverse cleanup, cached outputs, process context, one-shot preparation and
 retention. Uncertain objects stay allocated in isolated child processes until
-exit. Mutants must compile before behavioral rejection counts. A shortened
+exit. The actual PREWRITE callbacks check every frame row against an independent
+literal reference and verify zero padding. Pattern controls remove the fill, skip
+the last row, move a band boundary, swap a channel or defer the fill until after
+sync. Mutants must compile and reach a CHECK before behavioral rejection counts;
+pattern controls require their specific pixel or padding CHECK. A shortened
 failure sweep is used only for mutants and the second sealed-failure invocation.
 The full positive and sanitizer sweeps retain every failure position.
 

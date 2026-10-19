@@ -259,14 +259,76 @@ void bus_dmamap_destroy(bus_dma_tag_t t, bus_dmamap_t m)
 	if (region_maps[m->region] == m) region_maps[m->region] = NULL;
 	maps--; free(m);
 }
+static void
+frame_check(void)
+{
+	static const struct {
+		unsigned int x;
+		uint32_t pixel;
+	} edges[] = {
+		{ 0, 0x00ffffff }, { 239, 0x00ffffff },
+		{ 240, 0x00ffff00 }, { 479, 0x00ffff00 },
+		{ 480, 0x0000ffff }, { 719, 0x0000ffff },
+		{ 720, 0x0000ff00 }, { 959, 0x0000ff00 },
+		{ 960, 0x00ff00ff }, { 1199, 0x00ff00ff },
+		{ 1200, 0x00ff0000 }, { 1439, 0x00ff0000 },
+		{ 1440, 0x000000ff }, { 1679, 0x000000ff },
+		{ 1680, 0x00000000 }, { 1919, 0x00000000 }
+	};
+	static const uint8_t zero[28672];
+	static uint8_t expected_row[7680];
+	static bool initialized;
+	const uint8_t *frame = regions[0].kva;
+	uint32_t pixel;
+	unsigned int x, y, i;
+	size_t padding;
+
+	/* Literal intervals do not use the production palette or band division. */
+	if (!initialized) {
+		for (x = 0; x < 1920; x++) {
+			if (x < 240)
+				pixel = 0x00ffffff;
+			else if (x < 480)
+				pixel = 0x00ffff00;
+			else if (x < 720)
+				pixel = 0x0000ffff;
+			else if (x < 960)
+				pixel = 0x0000ff00;
+			else if (x < 1200)
+				pixel = 0x00ff00ff;
+			else if (x < 1440)
+				pixel = 0x00ff0000;
+			else if (x < 1680)
+				pixel = 0x000000ff;
+			else
+				pixel = 0;
+			expected_row[x * 4] = (uint8_t)pixel;
+			expected_row[x * 4 + 1] = (uint8_t)(pixel >> 8);
+			expected_row[x * 4 + 2] = (uint8_t)(pixel >> 16);
+			expected_row[x * 4 + 3] = 0;
+		}
+		initialized = true;
+	}
+	CHECK(regions[0].size >= 8294400);
+	for (y = 0; y < 1080; y++)
+		CHECK(memcmp(frame + y * 7680, expected_row, 7680) == 0);
+	for (i = 0; i < sizeof(edges) / sizeof(edges[0]); i++) {
+		CHECK(load32(frame + edges[i].x * 4) == edges[i].pixel);
+		CHECK(load32(frame + 1079 * 7680 + edges[i].x * 4) ==
+		    edges[i].pixel);
+	}
+	padding = regions[0].size - 8294400;
+	CHECK(padding <= sizeof(zero));
+	CHECK(memcmp(frame + 8294400, zero, padding) == 0);
+}
+
 static void image_check(void)
 {
 	uint64_t i, n;
 	uint32_t expected;
 	unsigned r;
 
-	for (i = 0; i < regions[0].size; i++)
-		CHECK(((uint8_t *)regions[0].kva)[i] == 0);
+	frame_check();
 	for (r = 1; r < 5; r++) {
 		for (i = 0; i < PAGE_SIZE / 4; i++) {
 			expected = 0;

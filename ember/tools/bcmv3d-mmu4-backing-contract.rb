@@ -25,9 +25,9 @@ run = lambda do |name, argv, required = true, env = {}|
   out, err, status = Open3.capture3(env, *argv)
   write.call(name + '.stdout', out)
   write.call(name + '.stderr', err)
-  commands << {name: name, argv: argv, environment: env, status: status.exitstatus}
+  commands << {name: name, argv: argv, environment: env, status: status.exitstatus, signal: status.termsig}
   abort "#{name} failed: #{err}" if required && !status.success?
-  [out, status]
+  [out, status, err]
 end
 begin
   driver = 'sys/external/bsd/drm2/bcmv3d/'
@@ -35,7 +35,8 @@ begin
      bcmv3d_hvs_prepare.h bcmv3d_drv.h bcmv3d_bo_stats.h].each do |name|
     write.call(name, read.call(driver + name))
   end
-  %w[bcm2712_mmu4_table.c bcm2712_mmu4_tablevar.h bcm2712_mmu4_corevar.h].each do |name|
+  %w[bcm2712_mmu4_table.c bcm2712_mmu4_tablevar.h bcm2712_mmu4_corevar.h
+     bcm2712_v3d_render.h].each do |name|
     write.call('arm/broadcom/' + name, read.call('sys/arch/arm/broadcom/' + name))
   end
   fixture = File.join(source, 'ember/tools/bcmv3d-mmu4-backing-contract.c')
@@ -79,6 +80,21 @@ begin
     path = 'bcmv3d_mmu4_backing.c'
     original = File.binread(File.join(work, path))
     mutations = {
+      'frame-pattern' => ['mmu4_frame_init(b->frame->vaddr);',
+                          '(void)mmu4_frame_init;',
+                          'memcmp(frame + y * 7680, expected_row, 7680) == 0'],
+      'frame-last-row' => ['y < BCMV3D_HVS_HEIGHT;', 'y < BCMV3D_HVS_HEIGHT - 1;',
+                           'memcmp(frame + y * 7680, expected_row, 7680) == 0'],
+      'frame-band-boundary' => ['x / (BCMV3D_HVS_WIDTH / 8)',
+                                'x / (BCMV3D_HVS_WIDTH / 8 + 1)',
+                                'memcmp(frame + y * 7680, expected_row, 7680) == 0'],
+      'frame-channel' => ['pixel[0] = (uint8_t)color;',
+                          'pixel[0] = (uint8_t)(color >> 16);',
+                          'memcmp(frame + y * 7680, expected_row, 7680) == 0'],
+      'frame-after-sync' => [["\tmmu4_frame_init(b->frame->vaddr);\n",
+                              "\tbcmv3d_hvs_prewrite(b->frame);\n"],
+                             ['', "\tbcmv3d_hvs_prewrite(b->frame);\n\tmmu4_frame_init(b->frame->vaddr);\n"],
+                             'memcmp(frame + y * 7680, expected_row, 7680) == 0'],
       'native-stride' => ['offset += BCM2712_MMU4_PAGE_BYTES', 'offset += PAGE_SIZE'],
       'last-byte' => ['va + offset + 4095,', 'va + offset + 4094,'],
       'parent-address' => ['cma->dmamap->dm_segs[0].ds_addr != pa[0]', 'false'],
@@ -86,7 +102,8 @@ begin
       'iommu' => ['map->_dm_iommu != NULL', 'false'],
       'control-bound' => ['start > (UINT64_C(1) << 32) - size', 'false'],
       'frame-padding' => ['memset(b->frame->vaddr, 0, b->status.frame_bytes);',
-                          'memset(b->frame->vaddr, 0, BCMV3D_HVS_BYTES);'],
+                          'memset(b->frame->vaddr, 0, BCMV3D_HVS_BYTES);',
+                          'memcmp(frame + 8294400, zero, padding) == 0'],
       'control-padding' => ['memset(b->control[i].kva, 0, b->status.control_bytes);',
                             'memset(b->control[i].kva, 0, 4096);'],
       'control-sync' => ["b->status.control_bytes, BUS_DMASYNC_PREWRITE);",
@@ -100,16 +117,26 @@ begin
     }
     selected = ENV.fetch('BACKING_MUTANTS', mutations.keys.join(' ')).split
     selected.each do |name|
-      old, replacement = mutations.fetch(name)
-      abort "Non-unique mutant anchor: #{name}" unless original.scan(old).length == 1
-      write.call(path, original.sub(old) { replacement })
+      old, replacement, expected_check = mutations.fetch(name)
+      changed = original.dup
+      Array(old).zip(Array(replacement)).each do |before, after|
+        abort "Non-unique mutant anchor: #{name}" unless changed.scan(before).length == 1
+        changed.sub!(before) { after }
+      end
+      write.call(path, changed)
       rejected = false
       pages.each do |page|
         next if page == '16384'
         output = compile.call(name, page)
-        _, status = run.call(name + '-' + page, executor + [output], false,
+        _, status, diagnostic = run.call(name + '-' + page, executor + [output], false,
                             {'BACKING_SHORT_FAILURES' => '1'})
-        rejected ||= !status.success?
+        unless status.success?
+          abort "Mutant did not reach expected CHECK: #{name}" unless
+            status.signaled? && status.termsig == Signal.list.fetch('ABRT') &&
+            diagnostic.include?('CHECK ') &&
+            (expected_check.nil? || diagnostic.include?(expected_check))
+          rejected = true
+        end
       end
       abort "Mutant survived: #{name}" unless rejected
       write.call(path, original)

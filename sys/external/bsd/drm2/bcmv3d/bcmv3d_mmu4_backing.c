@@ -267,6 +267,31 @@ bcmv3d_mmu4_backing_get_config(const struct bcmv3d_mmu4_backing *b,
 	return 0;
 }
 
+/* Fixed experimental first frame. XRGB8888 bytes are B, G, R, zero. */
+static void
+mmu4_frame_init(void *vaddr)
+{
+	static const uint32_t colors[8] = {
+		0x00ffffff, 0x00ffff00, 0x0000ffff, 0x0000ff00,
+		0x00ff00ff, 0x00ff0000, 0x000000ff, 0x00000000
+	};
+	uint8_t *pixel;
+	uint32_t color;
+	unsigned int x, y;
+
+	for (y = 0; y < BCMV3D_HVS_HEIGHT; y++) {
+		pixel = (uint8_t *)vaddr + y * BCMV3D_HVS_PITCH;
+		for (x = 0; x < BCMV3D_HVS_WIDTH; x++) {
+			color = colors[x / (BCMV3D_HVS_WIDTH / 8)];
+			pixel[0] = (uint8_t)color;
+			pixel[1] = (uint8_t)(color >> 8);
+			pixel[2] = (uint8_t)(color >> 16);
+			pixel[3] = 0;
+			pixel += 4;
+		}
+	}
+}
+
 int
 bcmv3d_mmu4_backing_prepare(void *arg, const struct bcm2712_mmu4_config *cfg)
 {
@@ -301,6 +326,7 @@ bcmv3d_mmu4_backing_prepare(void *arg, const struct bcm2712_mmu4_config *cfg)
 		goto done;
 	b->status.stage = BCMV3D_MMU4_BACKING_ZERO;
 	memset(b->frame->vaddr, 0, b->status.frame_bytes);
+	mmu4_frame_init(b->frame->vaddr);
 	for (i = 0; i < 4; i++)
 		memset(b->control[i].kva, 0, b->status.control_bytes);
 	image[0] = b->image.top;
