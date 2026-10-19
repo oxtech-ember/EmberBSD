@@ -6,7 +6,7 @@ and drains CPU framebuffer access, then sends one firmware display notification.
 Default profiles stay unchanged. This stage adds no HVS programming, KMS operation
 or display ownership. The CPU close and firmware notification pass coherent GCC16 linkage and
 physical CM5 boot checks. The
-separate [PV0/HVS0 continuation](bcm2712-native-display-quiesce.md) has source
+separate [two-pipeline continuation](bcm2712-native-display-quiesce.md) has source
 checks; its native link and physical acceptance remain pending.
 
 The [joined issuer](boot-framebuffer-issuer.md#native-joined-boot-job) owns the

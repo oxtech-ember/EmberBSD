@@ -28,17 +28,33 @@ struct bcm2712_quiesce_snapshot {
 	uint32_t pv_control[2], pv_video[2];
 };
 
+enum bcm2712_quiesce_stage {
+	BCM2712_QUIESCE_OBSERVED,
+	BCM2712_QUIESCE_VIDEO,
+	BCM2712_QUIESCE_CONTROL,
+	BCM2712_QUIESCE_CHANNEL,
+	BCM2712_QUIESCE_COMPLETE
+};
+
+struct bcm2712_quiesce_pipe {
+	uint32_t pv_control, pv_video, control, status;
+	enum bcm2712_quiesce_stage stage;
+	bool mutation_attempted, pv_disabled, hvs_disabled, complete;
+	int error;
+};
+
 /* Zero-initialize once. A partial snapshot is invalid unless snapshot_valid. */
 struct bcm2712_quiesce_status {
 	struct bcm2712_quiesce_snapshot before;
-	uint32_t version, pv_control, pv_video, control, status;
+	struct bcm2712_quiesce_pipe pipe[2];
+	uint32_t version;
 	bool attempted, snapshot_valid, mutation_attempted, complete;
 	int error;
 };
 
 /*
  * The caller holds clocks and mappings, and excludes other display writers.
- * Stop only PV0/HVS0. Keep global HVS enable and all other pipelines unchanged.
+ * Stop both PVs before HVS0/1. Refuse active HVS2; keep global enable unchanged.
  * RESET may remain set. EMPTY is an observation; this is not an AXI drain.
  * Every read/write error is terminal. No retry, rollback or release is done.
  */

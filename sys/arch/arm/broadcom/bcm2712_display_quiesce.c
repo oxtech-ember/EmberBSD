@@ -30,8 +30,10 @@ bcm2712_display_quiesce(const struct bcm2712_quiesce_ops *ops, void *arg,
     struct bcm2712_quiesce_status *s)
 {
 	struct bcm2712_quiesce_snapshot *b;
+	struct bcm2712_quiesce_pipe *p;
 	uint32_t ctrl, stat, stride, value;
-	unsigned int i;
+	unsigned int i, channel = 2, poll;
+	bool active[2], settle = false;
 	int error;
 
 	if (s == NULL || ops == NULL || ops->read == NULL ||
@@ -47,6 +49,7 @@ bcm2712_display_quiesce(const struct bcm2712_quiesce_ops *ops, void *arg,
 } while (0)
 #define WRITE(r, o, v) do { \
 	s->mutation_attempted = true; \
+	s->pipe[channel].mutation_attempted = true; \
 	error = ops->write(arg, (r), (o), (v)); \
 	if (error != 0) goto done; \
 	ops->barrier(arg, (r)); \
@@ -74,69 +77,108 @@ bcm2712_display_quiesce(const struct bcm2712_quiesce_ops *ops, void *arg,
 		READ(BCM2712_QUIESCE_PV0 + i, 4, b->pv_video[i]);
 	}
 	s->snapshot_valid = true;
-	s->pv_control = b->pv_control[0];
-	s->pv_video = b->pv_video[0];
-	s->control = b->control[0];
-	s->status = b->status[0];
-	if (((b->pv_control[1] | b->pv_video[1]) & PV_EN) != 0 ||
-	    (b->pv_control[0] & PV_CLOCK) != 0 ||
-	    ((b->control[1] | b->control[2]) & HVS_ENB) != 0 ||
-	    ((b->status[1] | b->status[2]) & HVS_MODE) != 0) {
+	for (i = 0; i < 2; i++) {
+		p = &s->pipe[i];
+		p->pv_control = b->pv_control[i];
+		p->pv_video = b->pv_video[i];
+		p->control = b->control[i];
+		p->status = b->status[i];
+		active[i] = ((p->pv_control | p->pv_video) & PV_EN) != 0;
+		p->pv_disabled = !active[i];
+		p->hvs_disabled = (p->control & HVS_ENB) == 0 &&
+		    (p->status & HVS_MODE) == 0;
+	}
+	/* Global firmware handoff covers both PVs, not a third HVS channel. */
+	if ((b->control[2] & HVS_ENB) != 0 || (b->status[2] & HVS_MODE) != 0) {
 		error = EBUSY;
 		goto done;
 	}
-	/* A consistently disabled pipeline needs no register write or delay. */
-	if (((s->pv_control | s->pv_video) & PV_EN) == 0 &&
-	    (s->control & HVS_ENB) == 0 && (s->status & HVS_MODE) == 0)
-		goto complete;
-
-	READ(BCM2712_QUIESCE_PV0, 4, value);
-	WRITE(BCM2712_QUIESCE_PV0, 4, value & ~PV_EN);
-	for (i = 0;; i++) {
-		READ(BCM2712_QUIESCE_PV0, 4, s->pv_video);
-		if ((s->pv_video & PV_EN) == 0)
-			break;
-		if (i == POLL_STEPS) {
-			error = ETIMEDOUT;
+	for (channel = 0; channel < 2; channel++) {
+		if ((s->pipe[channel].pv_control & PV_CLOCK) != 0) {
+			error = EBUSY;
 			goto done;
 		}
-		ops->delay(arg, POLL_US);
 	}
-	/* Keep the documented PV-to-HDMI FIFO settling interval. */
-	ops->delay(arg, 20000);
-	READ(BCM2712_QUIESCE_PV0, 0, value);
-	WRITE(BCM2712_QUIESCE_PV0, 0, value & ~PV_EN);
-	READ(BCM2712_QUIESCE_PV0, 0, s->pv_control);
-	if ((s->pv_control & PV_EN) != 0) {
-		error = EIO;
-		goto done;
+	/* Stop both video feeds before assuming either HVS-to-PV routing. */
+	for (channel = 0; channel < 2; channel++) {
+		p = &s->pipe[channel];
+		if (!active[channel])
+			continue;
+		p->stage = BCM2712_QUIESCE_VIDEO;
+		READ(BCM2712_QUIESCE_PV0 + channel, 4, value);
+		WRITE(BCM2712_QUIESCE_PV0 + channel, 4, value & ~PV_EN);
+		for (poll = 0;; poll++) {
+			READ(BCM2712_QUIESCE_PV0 + channel, 4, p->pv_video);
+			if ((p->pv_video & PV_EN) == 0)
+				break;
+			if (poll == POLL_STEPS) {
+				error = ETIMEDOUT;
+				goto done;
+			}
+			ops->delay(arg, POLL_US);
+		}
+		settle = true;
 	}
-	WRITE(BCM2712_QUIESCE_PV0, 0, s->pv_control | PV_FIFO_CLR);
-	READ(BCM2712_QUIESCE_PV0, 0, s->pv_control);
-	if ((s->pv_control & PV_EN) != 0) {
-		error = EIO;
-		goto done;
-	}
-	READ(BCM2712_QUIESCE_HVS, ctrl, value);
-	WRITE(BCM2712_QUIESCE_HVS, ctrl, value | HVS_RESET);
-	/* Use a new read after RESET. Preserve unrelated hardware changes. */
-	READ(BCM2712_QUIESCE_HVS, ctrl, value);
-	WRITE(BCM2712_QUIESCE_HVS, ctrl, value & ~HVS_ENB);
-	for (i = 0;; i++) {
-		READ(BCM2712_QUIESCE_HVS, ctrl, s->control);
-		READ(BCM2712_QUIESCE_HVS, stat, s->status);
-		if ((s->control & HVS_ENB) == 0 && (s->status & HVS_MODE) == 0)
-			break;
-		if (i == POLL_STEPS) {
-			error = ETIMEDOUT;
+	/* One interval starts only after the last active VIDEN has cleared. */
+	if (settle)
+		ops->delay(arg, 20000);
+	for (channel = 0; channel < 2; channel++) {
+		p = &s->pipe[channel];
+		if (!active[channel])
+			continue;
+		p->stage = BCM2712_QUIESCE_CONTROL;
+		READ(BCM2712_QUIESCE_PV0 + channel, 0, value);
+		WRITE(BCM2712_QUIESCE_PV0 + channel, 0, value & ~PV_EN);
+		READ(BCM2712_QUIESCE_PV0 + channel, 0, p->pv_control);
+		if ((p->pv_control & PV_EN) != 0) {
+			error = EIO;
 			goto done;
 		}
-		ops->delay(arg, POLL_US);
+		WRITE(BCM2712_QUIESCE_PV0 + channel, 0,
+		    p->pv_control | PV_FIFO_CLR);
+		READ(BCM2712_QUIESCE_PV0 + channel, 0, p->pv_control);
+		if ((p->pv_control & PV_EN) != 0) {
+			error = EIO;
+			goto done;
+		}
+		p->pv_disabled = true;
 	}
-complete:
+	/* Both PVs are disabled before the first channel reset. */
+	for (channel = 0; channel < 2; channel++) {
+		p = &s->pipe[channel];
+		if (!p->hvs_disabled) {
+			p->stage = BCM2712_QUIESCE_CHANNEL;
+			READ(BCM2712_QUIESCE_HVS, ctrl + channel * stride, value);
+			WRITE(BCM2712_QUIESCE_HVS, ctrl + channel * stride,
+			    value | HVS_RESET);
+			/* Read again after RESET; preserve unrelated hardware changes. */
+			READ(BCM2712_QUIESCE_HVS, ctrl + channel * stride, value);
+			WRITE(BCM2712_QUIESCE_HVS, ctrl + channel * stride,
+			    value & ~HVS_ENB);
+			for (poll = 0;; poll++) {
+				READ(BCM2712_QUIESCE_HVS, ctrl + channel * stride,
+				    p->control);
+				READ(BCM2712_QUIESCE_HVS, stat + channel * stride,
+				    p->status);
+				if ((p->control & HVS_ENB) == 0 &&
+				    (p->status & HVS_MODE) == 0)
+					break;
+				if (poll == POLL_STEPS) {
+					error = ETIMEDOUT;
+					goto done;
+				}
+				ops->delay(arg, POLL_US);
+			}
+			p->hvs_disabled = true;
+		}
+		p->complete = true;
+		p->stage = BCM2712_QUIESCE_COMPLETE;
+	}
 	s->complete = true;
 	error = 0;
 done:
+	if (channel < 2 && error != 0 && s->pipe[channel].error == 0)
+		s->pipe[channel].error = error;
 	s->error = error;
 	return error;
 #undef READ

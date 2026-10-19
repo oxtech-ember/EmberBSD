@@ -513,16 +513,33 @@ static void tests_display(void)
 	display_permitted = true; native_finish();
 	for (unsigned first = 0; first < 2; first++) {
 		for (unsigned gen = 0x53; gen <= 0x54; gen++) {
-			native_initialize(first); qb_initialize(gen,true); display_reenter = true; native_finish();
-			CHECK(gpu_sc.sc_bootfb.display.complete && gpu_sc.sc_bootfb.display.fault == 0);
-			CHECK(gpu_sc.sc_bootfb.display.stop.complete && gpu_sc.sc_bootfb.display.mapped == 3);
-			CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED && serial_fixture_held());
-			CHECK(qb.writes == 5 && qb.microseconds == 20000 && (gpu_sc.sc_bootfb.display.stop.control & 0x40000000U) != 0);
-			for (unsigned i = 0; i < 4; i++) CHECK(display_firmware[i].sets == 0 && display_firmware[i].rate == 240000000);
-			calls = display_clock_calls; operations = qb.operations;
-			display_retry(EBUSY);
+			for (unsigned mask = 1; mask < 4; mask++) {
+				native_initialize(first); qb_initialize(gen,mask); display_reenter = true; native_finish();
+				CHECK(gpu_sc.sc_bootfb.display.complete && gpu_sc.sc_bootfb.display.fault == 0);
+				CHECK(gpu_sc.sc_bootfb.display.stop.complete && gpu_sc.sc_bootfb.display.mapped == 3);
+				CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED && serial_fixture_held());
+				CHECK(qb.writes == (mask == 3 ? 10U : 5U) && qb.microseconds == 20000 && qb.long_delays == 1);
+				for (unsigned i = 0; i < 2; i++) CHECK(gpu_sc.sc_bootfb.display.stop.pipe[i].complete && gpu_sc.sc_bootfb.display.stop.pipe[i].error == 0);
+				for (unsigned i = 0; i < 4; i++) CHECK(display_firmware[i].sets == 0 && display_firmware[i].rate == 240000000);
+				calls = display_clock_calls; operations = qb.operations;
+				display_retry(EBUSY);
+			}
 		}
 	}
+	/* Independent actual two-pipeline firmware words; keep all unrelated bits. */
+	native_initialize(false); qb_initialize(0x54,3);
+	qb.regs[0][0] = 0x00002454; qb.regs[0][8] = 0x802000f0;
+	qb.regs[0][0x100/4] = 0x877f0437; qb.regs[0][0x118/4] = 0x00b841eb;
+	qb.regs[0][0x140/4] = 0x827f01df; qb.regs[0][0x158/4] = 0x00b8409f;
+	qb.regs[0][0x180/4] = 0; qb.regs[0][0x198/4] = 0x00400000;
+	for (unsigned i = 1; i <= 2; i++) { qb.regs[i][0] = 0x07174001; qb.regs[i][1] = 3; }
+	native_finish(); CHECK(gpu_sc.sc_bootfb.display.complete && qb.writes == 10);
+	CHECK(qb.regs[0][8] == 0x802000f0 && qb.regs[0][0x180/4] == 0);
+	for (unsigned i = 0; i < 2; i++) {
+		CHECK(gpu_sc.sc_bootfb.display.stop.pipe[i].pv_video == 2);
+		CHECK((gpu_sc.sc_bootfb.display.stop.pipe[i].control & 0x40000000U) != 0);
+	}
+	display_retry(EBUSY);
 	/* Activation is positive and never lowers any inherited clock rate. */
 	native_initialize(false); qb_initialize(0x54,true);
 	for (unsigned i = 0; i < 4; i++) display_firmware[i].state = 0;
@@ -548,7 +565,7 @@ static void tests_display(void)
 		CHECK(gpu_sc.sc_bootfb.display.mapped == fault-1 && qb.operations == 0); display_retry(ENOMEM);
 	}
 	for (unsigned fault = 1; fault <= operations; fault++) {
-		native_initialize(false); qb_initialize(0x53,true); qb.fault_at = fault; native_finish();
+		native_initialize(false); qb_initialize(0x53,3); qb.fault_at = fault; native_finish();
 		CHECK(gpu_sc.sc_bootfb.display.fault == EIO && qb.operations == fault);
 		CHECK(gpu_sc.sc_bootfb.display.mapped == 3 && !gpu_sc.sc_bootfb.display.complete); display_retry(EIO);
 	}
@@ -559,20 +576,24 @@ static void tests_display(void)
 		CHECK(display_clock_calls == 0 && display_map_calls == 0 && qb.operations == 0);
 		display_retry(gpu_sc.sc_bootfb.display.fault);
 	}
-	for (unsigned stuck = 0; stuck < 3; stuck++) {
-		native_initialize(false); qb_initialize(0x53,true);
-		qb.vid_stuck = stuck == 0; qb.pv_stuck = stuck == 1; qb.hvs_stuck = stuck == 2;
-		native_finish(); CHECK(!gpu_sc.sc_bootfb.display.complete);
-		CHECK(gpu_sc.sc_bootfb.display.fault == (stuck == 1 ? EIO : ETIMEDOUT));
-		CHECK(qb.writes == (stuck == 0 ? 1U : stuck == 1 ? 2U : 5U));
-		display_retry(gpu_sc.sc_bootfb.display.fault);
+	for (unsigned port = 0; port < 2; port++) {
+		for (unsigned stuck = 0; stuck < 3; stuck++) {
+			native_initialize(false); qb_initialize(0x54,3);
+			qb.vid_stuck[port] = stuck == 0; qb.pv_stuck[port] = stuck == 1; qb.hvs_stuck[port] = stuck == 2;
+			native_finish(); CHECK(!gpu_sc.sc_bootfb.display.complete);
+			CHECK(gpu_sc.sc_bootfb.display.fault == (stuck == 1 ? EIO : ETIMEDOUT));
+			CHECK(gpu_sc.sc_bootfb.display.stop.pipe[port].error == gpu_sc.sc_bootfb.display.fault);
+			CHECK(qb.writes == (stuck == 0 ? port+1 : stuck == 1 ? 3+2*port : 8+2*port));
+			if (port == 1 && stuck == 2) CHECK(gpu_sc.sc_bootfb.display.stop.pipe[0].complete);
+			display_retry(gpu_sc.sc_bootfb.display.fault);
+		}
 	}
-	/* Unknown version, active second pipeline, and mismatched PV clock stop before writes. */
+	/* Unknown version, active HVS2, and mismatched PV clocks stop before writes. */
 	for (unsigned gate = 0; gate < 5; gate++) {
 		native_initialize(false); qb_initialize(0x54,true);
 		if (gate == 0) qb.regs[0][0] = 0x55;
-		if (gate == 1) qb.regs[2][0] |= 1;
-		if (gate == 2) qb.regs[0][(qb.ctrl+0x40)/4] |= 0x80000000U;
+		if (gate == 1) qb.regs[2][0] |= 4;
+		if (gate == 2) qb.regs[0][(qb.ctrl+0x80)/4] |= 0x80000000U;
 		if (gate == 3) qb.regs[0][(qb.stat+0x80)/4] |= 0x2000;
 		if (gate == 4) qb.regs[1][0] |= 4;
 		native_finish(); CHECK(gpu_sc.sc_bootfb.display.fault == (gate == 0 ? EOPNOTSUPP : EBUSY));

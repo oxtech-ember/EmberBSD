@@ -724,7 +724,7 @@ on every board in the hardware catalog.
   The CPU serial transaction and firmware notification pass coherent GCC16 builds and physical CM5 boot checks.
   A firmware ACK grants no display ownership, hardware exclusion or scanout drain.
   After render attachment, the same owner can hold four clocks and perform a bounded
-  [PV0/HVS0 stop](ember/boot/bcm2712-native-display-quiesce.md). This continuation
+  [two-pipeline stop](ember/boot/bcm2712-native-display-quiesce.md). This continuation
   is source-tested; its target link and physical acceptance remain pending.
 A default-off [loader source record](ember/boot/boot-framebuffer-issuer.md#loader-source-facts)
 preserves checked EFI GOP, cleanup and runtime facts.

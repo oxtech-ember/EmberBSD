@@ -2,7 +2,7 @@
 
 `WSDISPLAY_BOOTFB_DEFER` is default-off. It selects
 `WSDISPLAY_EARLYFB_HOOKS`. No default configuration selects it. The explicit `EMBERV3DHDMI` profile
-selects the issuer. `EMBERV3DCONSOLE` additionally selects the CPU serial close, firmware notification and bounded PV0/HVS0 stop.
+selects the issuer. `EMBERV3DCONSOLE` additionally selects the CPU serial close, firmware notification and bounded two-pipeline stop.
 The issuer alone can defer one actual cold simplefb fallback and issue one opaque
 lease. It does not close console output, drain writers, install a replacement
 console, issue a firmware request or grant MMIO, DMA or display ownership.
@@ -190,7 +190,7 @@ hardware authority. The same owner then gates one
 serial close. Firmware errors retain CLOSED and cannot restore fallback. The
 manual `EMBERV3DCONSOLE` profile selects this path. After successful render
 attachment, its same resident owner can hold clocks and run the
-[bounded PV0/HVS0 stop](bcm2712-native-display-quiesce.md). The renderer's opaque
+[bounded two-pipeline stop](bcm2712-native-display-quiesce.md). The renderer's opaque
 pointer still grants no display access.
 
 ## Source checks

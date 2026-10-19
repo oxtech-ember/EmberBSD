@@ -384,7 +384,7 @@ bcmv3d_bootfb_stop_display(struct bcmv3d_softc *sc)
 			goto restore;
 		d->mapped++;
 	}
-	d->stage = "PV0/HVS0 stop";
+	d->stage = "PV0/1 and HVS0/1 stop";
 	error = bcm2712_display_quiesce(&ops, sc, &d->stop);
 restore:
 	KERNEL_LOCK(count, NULL);
@@ -409,11 +409,17 @@ publish:
 		    d->stop.before.pv_control[0], d->stop.before.pv_video[0],
 		    d->stop.before.pv_control[1], d->stop.before.pv_video[1]);
 	}
-	aprint_normal_dev(sc->sc_dev, "display last: version %08x, "
-	    "PV0 %08x/%08x, HVS0 %08x/%08x, EMPTY %u; no AXI drain "
-	    "or display ownership\n", d->stop.version, d->stop.pv_control,
-	    d->stop.pv_video, d->stop.control, d->stop.status,
-	    (d->stop.status >> 22) & 1);
+	for (i = 0; i < 2; i++) {
+		aprint_normal_dev(sc->sc_dev, "display last %u: version %08x, "
+		    "PV %08x/%08x, HVS %08x/%08x, EMPTY %u, stage %u, "
+		    "error %d, mutation %u, complete %u; no AXI drain or "
+		    "display ownership\n", i, d->stop.version,
+		    d->stop.pipe[i].pv_control, d->stop.pipe[i].pv_video,
+		    d->stop.pipe[i].control, d->stop.pipe[i].status,
+		    (d->stop.pipe[i].status >> 22) & 1, d->stop.pipe[i].stage,
+		    d->stop.pipe[i].error, d->stop.pipe[i].mutation_attempted,
+		    d->stop.pipe[i].complete);
+	}
 out:
 	KERNEL_UNLOCK_ONE(NULL);
 	return error;

@@ -1,9 +1,9 @@
-# Native held clocks and PV0/HVS0 stop
+# Native held clocks and two-pipeline stop
 
 The manual `EMBERV3DCONSOLE` profile extends its existing CPU serial close and
 firmware notification. After successful `bcmv3d_render_attach`, the same resident
 boot owner runs one fixed continuation. Default profiles remain unchanged.
-This is a bounded stop of the inherited port0 pipeline. It is not KMS, display
+This is a bounded stop of both inherited firmware PV/HVS pipelines. It is not KMS, display
 ownership, an AXI drain, a cache/MMU exclusion proof or a suspend interface.
 
 ## Admission and lifetime
@@ -23,7 +23,9 @@ No DRM memory lock, cache lock or spinlock is held across these operations.
 The boot profile has resident active devices and no suspend or detach path. It
 admits no competing display driver or manual display probe. There is no invented
 power token or generic caller permission flag. Firmware ACK alone does not prove
-hardware exclusion. The fixed consumer refuses conflicting fresh pipeline state.
+hardware exclusion. The firmware notification is global. The firmware can leave
+both PVs and HVS0/1 active with one connected display. The fixed consumer covers
+both pipelines and refuses an active HVS2 or unsupported PV clock source.
 
 All created typed providers, acquired leases and completed mappings remain in
 this owner until reboot, including every failure. There is no release, unmap,
@@ -51,19 +53,27 @@ with stride 0x40. Any other generation stops before other register reads.
 Fresh observations include global HVS control, all three channel control/status
 pairs and both PV control/video pairs.
 
-Before writes, refuse active PV1, enabled or non-disabled HVS channels 1/2 and
-PV0 clock selection other than 0 in bits 3:2. A consistently disabled PV0/HVS0
-succeeds without writes or delay. Otherwise:
+Before writes, refuse enabled or non-disabled HVS channel 2 and clock selection
+other than 0 in bits 3:2 for either PV. Disabled components remain observational.
+Active components use this phased order:
 
-1. Read PV0+4 and clear VIDEN bit 0 with RMW. Barrier and read back. Poll for at
-   most 100 delays of 10 us. A timeout ends all later MMIO.
-2. Delay 20 ms. Read PV0+0 and clear EN bit 0 with RMW. Barrier and verify disabled.
-   Set FIFO_CLR bit 1 from the fresh readback, barrier and read back.
-3. Read HVS0 CTRL and set RESET bit 30. Barrier. Read again and clear ENB bit 31.
-   Barrier, then poll ENB 0 and STATUS MODE bits 14:13 equal 0 for at most 1 ms.
+1. Read each active PV+4 and clear VIDEN bit 0 with RMW. Barrier and read back.
+   Poll each for at most 100 delays of 10 us. Finish both before the next phase.
+2. Delay 20 ms once, after the last active VIDEN has cleared.
+3. For each active PV, read PV+0 and clear EN bit 0 with RMW. Barrier and verify
+   disabled. Set FIFO_CLR bit 1 from the fresh readback, barrier and read back.
+4. Only after both PVs are disabled, stop HVS0 and HVS1. Read each active channel's
+   CTRL and set RESET bit 30. Barrier. Read again and clear ENB bit 31. Barrier,
+   then poll ENB 0 and STATUS MODE bits 14:13 equal 0 for at most 1 ms per channel.
+
+This ordering does not depend on a guessed firmware HVS-to-PV route. Both pipelines
+must finish before the overall result is complete. Every failure stops all later
+I/O. Each pipeline retains its last raw PV/HVS values, stage, mutation-attempted,
+first error and completion fields. A second-pipeline failure can retain a completed
+first channel. It cannot turn the overall result into success or permit retry.
 
 RESET need not self-clear. EMPTY bit 22 is logged only as an observation. Global
-HVS enable is never changed. The operation writes no other pipeline, HDMI
+HVS enable is never changed. The operation writes no HVS2, HDMI
 VID_CTL, encoder, PHY, shared cache, MMU4, scanout table or framebuffer memory.
 Bus probing errors and partial writes are terminal. Diagnostic output uses only
 cached observations after a failure; it does not add fresh I/O.
@@ -85,8 +95,8 @@ MI/simplefb/PLCOM close, firmware protocol, builtin clock adapter and shared cor
 Only kernel scheduling, ACPI, mailbox and bus services are controlled. Tests cover
 both finalizer orders and generations, exact admission, raw/foreign/stale leases,
 mailbox reentry, all GET/map/read/write failures, first-error retention, off-clock
-activation, inherited rates, second-pipeline refusal, timeouts and persistent
-RESET. Compiled causal controls must reach a named fatal CHECK. `NDEBUG` does not
+activation, inherited rates, PV1-only and both-active states, phased ordering,
+HVS2/clock-source refusal, second-pipeline faults, timeouts and persistent RESET. Compiled causal controls must reach a named fatal CHECK. `NDEBUG` does not
 disable CHECK. These host tests do not prove real bus timing or hardware exclusion.
 
 `QUIESCE_EVIDENCE` and `SERIAL_HANDOFF_EVIDENCE` select new evidence directories.
@@ -100,5 +110,7 @@ Register and ordering facts come from pinned Raspberry Pi Linux
 [vc4_regs.h](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_regs.h),
 [PV disable/reset](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_crtc.c#L505-L549)
 and [HVS6 stop](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hvs.c#L1095-L1122).
-Only facts inform this independent BSD implementation. No GPL implementation code
+The [global notification and all-CRTC disable](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_drv.c#L395-L425)
+and [both BCM2712 PV definitions](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_crtc.c#L1330-L1356)
+cover the two firmware pipelines. Only facts inform this independent BSD implementation. No GPL implementation code
 is copied.

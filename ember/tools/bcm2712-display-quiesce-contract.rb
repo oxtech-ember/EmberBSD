@@ -34,13 +34,17 @@ Dir.mktmpdir('display-quiesce-',ENV.fetch('TMPDIR','/tmp')) do |work|
   compile.call('positive');out,err,s=run.call('positive',runner+[work+'/contract']);abort(out+err) unless s.success?;print out
   controls={
     'version-first'=>['READ(BCM2712_QUIESCE_HVS, 0, s->version);','READ(BCM2712_QUIESCE_HVS, 0x20, s->version);','r == 0 && o == 0'],
-    'second-pv'=>['((b->pv_control[1] | b->pv_video[1]) & PV_EN) != 0','false','== EBUSY'],
-    'other-channels'=>['((b->control[1] | b->control[2]) & HVS_ENB) != 0','false','== EBUSY'],
-    'other-modes'=>['((b->status[1] | b->status[2]) & HVS_MODE) != 0','false','== EBUSY'],
-    'pv-clock'=>['(b->pv_control[0] & PV_CLOCK) != 0','false','== EBUSY'],
+    'third-channel'=>['(b->control[2] & HVS_ENB) != 0','false','== EBUSY'],
+    'third-mode'=>['(b->status[2] & HVS_MODE) != 0','false','== EBUSY'],
+    'pv-clock'=>['(s->pipe[channel].pv_control & PV_CLOCK) != 0','false','== EBUSY'],
+    'both-video'=>['/* Stop both video feeds before assuming either HVS-to-PV routing. */\n\tfor (channel = 0; channel < 2; channel++)', '/* Stop both video feeds before assuming either HVS-to-PV routing. */\n\tfor (channel = 0; channel < 1; channel++)','(qb.regs[1][1] & 1) == 0 && (qb.regs[2][1] & 1) == 0'],
+    'both-control'=>['/* Both PVs are disabled before the first channel reset. */','/* Both PVs are disabled before the first channel reset. */','CONTROL_SCOPE'],
     'settle'=>['ops->delay(arg, 20000);','ops->delay(arg, 10);','qb.microseconds >= 20000'],
-    'fresh-rmw'=>['READ(BCM2712_QUIESCE_HVS, ctrl, value);\n\tWRITE(BCM2712_QUIESCE_HVS, ctrl, value & ~HVS_ENB);','WRITE(BCM2712_QUIESCE_HVS, ctrl, value & ~HVS_ENB);','(v & 0x44000000U) == 0x44000000U'],
-    'reset-clear'=>['(s->control & HVS_ENB) == 0 && (s->status & HVS_MODE) == 0)','(s->control & (HVS_ENB | HVS_RESET)) == 0 && (s->status & HVS_MODE) == 0)','== 0'],
+    'settle-before-last'=>['settle = true;', 'if (channel == 0) ops->delay(arg, 20000); settle = false;', 'qb.microseconds >= 20000 && qb.settled > qb.last_video'],
+    'fresh-rmw'=>['/* Read again after RESET; preserve unrelated hardware changes. */\n\t\t\tREAD(BCM2712_QUIESCE_HVS, ctrl + channel * stride, value);','/* Missing fresh read. */','last.kind == 0 && last.region == r && last.offset == o'],
+    'reset-clear'=>['(p->control & HVS_ENB) == 0 &&','(p->control & (HVS_ENB | HVS_RESET)) == 0 &&','== 0'],
+    'second-hvs'=>['if (!p->hvs_disabled) {','if (channel == 0 && !p->hvs_disabled) {','qb.writes =='],
+    'pipe-error'=>['s->pipe[channel].error = error;','s->pipe[channel].error = 0;','s.pipe[port].error == e'],
     'poll-bound'=>['#define POLL_STEPS\t100','#define POLL_STEPS\t99','qb.microseconds =='],
     'io-after-fault'=>['if (error != 0) goto done;','if (false) goto done;','== EIO'],
     'write-fault'=>['error = ops->write(arg, (r), (o), (v));','error = ops->write(arg, (r), (o), (v)); error = 0;','!qb.faulted && qb.barrier_pending'],
@@ -52,8 +56,13 @@ Dir.mktmpdir('display-quiesce-',ENV.fetch('TMPDIR','/tmp')) do |work|
     controls.each do |name,(before,after,check)|
       before=before.gsub('\n',"\n").gsub('\t',"\t"); after=after.gsub('\n',"\n").gsub('\t',"\t")
       abort 'anchor absent '+name unless text.include?(before)
-      # Require RESET to clear only in the post-write poll, not inactive fast path.
-      changed = name == 'reset-clear' ? text.sub('if ((s->control & HVS_ENB) == 0 && (s->status & HVS_MODE) == 0)', 'if ((s->control & (HVS_ENB | HVS_RESET)) == 0 && (s->status & HVS_MODE) == 0)') : text.sub(before,after)
+      changed = text.sub(before,after)
+      if name == 'both-control'
+        scope=text[/\tif \(settle\).*?(?=\t\/\* Both PVs)/m] || abort('control phase scope absent')
+        changed=text.sub(scope,scope.sub('channel < 2','channel < 1'))
+        check='((qb.regs[1][0] | qb.regs[1][1] | qb.regs[2][0] | qb.regs[2][1]) & 1) == 0'
+      end
+
       File.write(work+'/bcm2712_display_quiesce.c',changed);compile.call(name)
       out,err,s=run.call('control-'+name,runner+[work+'/contract'])
       abort 'control did not reach CHECK '+name+"\n"+err unless !s.success? && err.include?('quiesce CHECK') && err.include?(check)
