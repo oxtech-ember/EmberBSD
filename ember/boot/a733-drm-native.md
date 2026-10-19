@@ -37,7 +37,8 @@ Producer errors, timeout and repeated writer replacement stop submission.
 
 The DE retain callback takes a fence reference before its first pointer attempt.
 The release callback runs only after proven retirement or a pre-DMA abort.
-It signals the READ fence and drops the GEM reference outside the fence lock.
+It signals the READ fence under the fence lock.
+It drops the GEM reference after it releases that lock.
 This breaks the GEM-to-reservation-to-fence-to-GEM reference cycle.
 The reservation can retain a signaled fence without retaining its own object.
 
