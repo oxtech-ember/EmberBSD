@@ -244,7 +244,10 @@ static int sun60i_a733_npu_dma_set_commands(struct sun60i_a733_npu_dma *m,
   0,0,0,0x48,1,7,0,0x30,1,0x0e,1,8,0x44,0,0,0,0,0,0,0x10,0,0,0,0 };
  CHECK(!in_irq && m == &dma && !m->retained && count == 40);
  CHECK(memcmp(bytes, expected, 40) == 0); setters++;
- if (fail_set) return EIO; m->bytes = count; return 0;
+ if (fail_set)
+  return EIO;
+ m->bytes = count;
+ return 0;
 }
 static int sun60i_a733_npu_dma_retain(struct sun60i_a733_npu_dma *m)
 {
