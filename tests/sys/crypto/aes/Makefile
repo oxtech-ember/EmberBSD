@@ -40,6 +40,11 @@ COPTS.aes_neon_subr.c+=${CLANG_NO_NONPORTABLE_VECTOR_INITIALIZATION}
 SRCS.t_aes+=	aes_neon_32.S
 .endif
 
+.if !empty(MACHINE_ARCH:Mearmv7hf*)
+COPTS.aes_neon.c+=	-mfpu=neon
+COPTS.aes_neon_subr.c+=	-mfpu=neon
+.endif
+
 .if !empty(MACHINE_ARCH:Mearmv7*) && empty(MACHINE_ARCH:Mearmv7hf*)
 COPTS.aes_neon.c+=	-mfloat-abi=softfp -mfpu=neon
 COPTS.aes_neon_subr.c+=	-mfloat-abi=softfp -mfpu=neon

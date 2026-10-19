@@ -130,6 +130,13 @@ maps EmberBSD Development skills to preparation, validation, and submission.
 
 ## What this fork adds to NetBSD 11
 
+[GCC16 build and test compatibility](ember/tests/gcc16-build-recovery.md)
+preserves binary test inputs, selects the Objective-C dependency frontend,
+and enables the ARMv7 crypto instructions required by each source.
+[ARM standalone checks](ember/boot/cross-build.md) cover module flags,
+disk ioctl dispatch and linker layouts. These checks do not qualify a full
+base image or a physical board.
+
 [Zynq-7000 and ADI converter providers](ember/development/zynq-converters.md)
 supply native SPI, ADC and finite DMA ownership interfaces, AD9361 adapters,
 and shared GEM Ethernet repairs. Their software contracts and compile

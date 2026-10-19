@@ -32,6 +32,10 @@ SRCS.t_chacha+=	chacha_neon_64.S
 .endif
 SRCS.t_chacha+=	chacha_neon_impl.c
 
+.if !empty(MACHINE_ARCH:Mearmv7hf*)
+COPTS.chacha_neon.c+=	-mfpu=neon
+.endif
+
 .if !empty(MACHINE_ARCH:Mearmv7*) && empty(MACHINE_ARCH:Mearmv7hf*)
 COPTS.chacha_neon.c+=		-mfloat-abi=softfp -mfpu=neon
 AOPTS.chacha_neon_32.S+=	-D__SOFTFP__

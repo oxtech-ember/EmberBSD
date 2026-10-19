@@ -1755,6 +1755,10 @@ MKDEP		Construct Makefile dependency list.  [mkdep]
 
 MKDEPCXX	Construct Makefile dependency list for C++ files.  [mkdep]
 
+MKDEPOBJC	Construct Makefile dependency list for Objective-C files.
+		With USETOOLS=yes, selects ${OBJC} for preprocessing.
+		Otherwise defaults to ${MKDEP}.
+
 NM		List symbols from object files.  [nm]
 
 PC		Pascal compiler.  [pc]	(Not present)

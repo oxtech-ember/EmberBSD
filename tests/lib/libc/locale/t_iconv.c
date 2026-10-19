@@ -317,7 +317,7 @@ ATF_TC_HEAD(iconv_pr59019_hz8, tc)
 ATF_TC_BODY(iconv_pr59019_hz8, tc)
 {
 	const char title[] = "iconv_pr59019_hz8";
-	char in[5] = "\x7e\x7b\x7e\x7e";	/* ~{~~ */
+	char in[4] = { 0x7e, 0x7b, 0x7e, 0x7e };	/* ~{~~ */
 	char out[4096], guard = arc4random();
 	char *src0, *src, *dst0, *dst;
 	size_t srcleft0, srcleft, dstleft0, dstleft;
