@@ -32,10 +32,17 @@ It checks 800000 and 1800000 microvolts through the native regulator API.
 It does not change a rail voltage or enable state.
 A missing enabled rail requires a separate owned power preparation step.
 
-No board is enabled by this source change.
-A board integration must supply the complete binding and connect
+The SoC nodes stay disabled by default.
+The Zero 3W board supplies this complete binding and connects
 `output = <&hdmi_output>` on its DE coordinator.
+Attach registers the provider and coordinator. It does not start output.
+The explicit DE stage still requires its strict memory and ownership proofs.
+A device-tree node does not establish DMA readiness or visible HDMI.
 Do not add assigned clocks, resets or automatic pin control to this profile.
+
+The rail and external-resistor wiring comes from the
+[pinned board source](https://github.com/orangepi-xunlong/linux-orangepi/blob/2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero3w.dts).
+The native binding uses no vendor control implementation.
 
 ## Explicit operation sequence
 
