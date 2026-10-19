@@ -139,8 +139,27 @@ static void event(void)
 	CHECK(memcmp(bytes + 1, expected, 16) == 0);
 	CHECK(bytes[0] == 0xa5 && bytes[17] == 0xa5 && bytes[23] == 0xa5);
 }
+static void run_image(void)
+{
+	const uint8_t expected[40] = {
+		0x61, 0, 1, 8, 0x7f, 0xff, 0xff, 0xff,
+		2, 0x0e, 1, 8, 1, 7, 0, 0x30,
+		0, 0, 0, 0x48, 1, 7, 0, 0x30,
+		1, 0x0e, 1, 8, 0x44, 0, 0, 0,
+		0, 0, 0, 0x10, 0, 0, 0, 0
+	};
+	uint8_t bytes[48], saved[48];
+	memset(bytes, 0xa5, sizeof(bytes)); memcpy(saved, bytes, sizeof(bytes));
+	CHECK(sun60i_a733_npu_fe_run_image(NULL, 40) == EINVAL);
+	CHECK(sun60i_a733_npu_fe_run_image(bytes, 39) == EINVAL);
+	CHECK(sun60i_a733_npu_fe_run_image((void *)(UINTPTR_MAX - 31), 40) == EINVAL);
+	CHECK(memcmp(bytes, saved, sizeof(bytes)) == 0);
+	CHECK(sun60i_a733_npu_fe_run_image(bytes + 1, 47) == 0);
+	CHECK(memcmp(bytes + 1, expected, sizeof(expected)) == 0);
+	CHECK(bytes[0] == 0xa5 && bytes[41] == 0xa5 && bytes[47] == 0xa5);
+}
 int main(void)
 {
-	failures(); admissions(); event();
+	failures(); admissions(); event(); run_image();
 	printf("A733 NPU FE admission: %u checks passed\n", checks); return 0;
 }

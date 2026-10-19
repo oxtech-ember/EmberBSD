@@ -192,6 +192,91 @@ static void success(bool borrow, size_t bytes, bool retain)
 	}
 	CHECK(sun60i_a733_npu_dma_destroy(active) == 0); reset();
 }
+static void replacement_reject(const void *commands, size_t bytes, int error)
+{
+	uint8_t saved[4096];
+	size_t count = active->command_bytes;
+	memcpy(saved, slots[2].cpu, sizeof(saved));
+	CHECK(sun60i_a733_npu_dma_set_commands(active, commands, bytes) == error);
+	CHECK(active->command_bytes == count && syncs == 0 && calls == 13);
+	CHECK(memcmp(saved, slots[2].cpu, sizeof(saved)) == 0);
+}
+static void replacement(void)
+{
+	uint8_t root[4096], stlb[16384];
+	struct sun60i_a733_npu_dma_info old, now;
+	reset();
+	CHECK(!npu_dma_spans_overlap((void *)0x1000, 0x1000,
+	    (void *)0x2000, 0x1000));
+	CHECK(!npu_dma_spans_overlap((void *)0x2000, 0x1000,
+	    (void *)0x1000, 0x1000));
+	CHECK(npu_dma_spans_overlap((void *)0x1000, 0x1001,
+	    (void *)0x2000, 0x1000));
+	CHECK(npu_dma_spans_overlap((void *)0x2000, 0x1000,
+	    (void *)0x1000, 0x1001));
+	CHECK(sun60i_a733_npu_dma_set_commands(NULL, test_commands, 40) == EINVAL);
+	CHECK(sun60i_a733_npu_dma_prepare(&parent_tag, test_commands, 4096,
+	    &active) == 0);
+	CHECK(sun60i_a733_npu_dma_info(active, &old) == 0);
+	memcpy(root, slots[0].cpu, sizeof(root));
+	memcpy(stlb, slots[1].cpu, sizeof(stlb));
+	replacement_reject(NULL, 40, EINVAL);
+	const size_t bad[] = { 0, 7, 9, 4097, SIZE_MAX };
+	for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
+		replacement_reject(test_commands, bad[i], EINVAL);
+	replacement_reject((void *)(UINTPTR_MAX - 7), 16, EINVAL);
+	replacement_reject(active, 16, EINVAL);
+	replacement_reject((void *)((uintptr_t)active - 8), 16, EINVAL);
+	replacement_reject((void *)((uintptr_t)active + sizeof(*active) - 8),
+	    16, EINVAL);
+	for (unsigned i = 0; i < 3; i++) {
+		uintptr_t start = (uintptr_t)slots[i].cpu;
+		replacement_reject((void *)start, 16, EINVAL);
+		replacement_reject((void *)(start - 8), 16, EINVAL);
+		replacement_reject((void *)(start + slots[i].bytes - 8), 16, EINVAL);
+		active->buffers[i].bytes++;
+		replacement_reject(test_commands, 40, EINVAL);
+		active->buffers[i].bytes--;
+		void *saved_cpu = active->buffers[i].cpu;
+		active->buffers[i].cpu = (void *)(UINTPTR_MAX - slots[i].bytes + 1);
+		replacement_reject(test_commands, 40, EINVAL);
+		active->buffers[i].cpu = saved_cpu;
+		active->buffers[i].loaded = false;
+		replacement_reject(test_commands, 40, EINVAL);
+		active->buffers[i].loaded = true;
+		void *cpu = active->buffers[i].cpu;
+		active->buffers[i].cpu = NULL;
+		replacement_reject(test_commands, 40, EINVAL);
+		active->buffers[i].cpu = cpu;
+		bus_dmamap_t map = active->buffers[i].map;
+		active->buffers[i].map = NULL;
+		replacement_reject(test_commands, 40, EINVAL);
+		active->buffers[i].map = map;
+	}
+	active->retained = true;
+	replacement_reject(test_commands, 40, EBUSY);
+	active->retained = false;
+	const size_t sizes[] = { 40, 8, 4096, 16 };
+	for (size_t n = 0; n < sizeof(sizes) / sizeof(sizes[0]); n++) {
+		CHECK(sun60i_a733_npu_dma_set_commands(active, test_commands,
+		    sizes[n]) == 0);
+		CHECK(syncs == 0 && calls == 13 && !active->retained);
+		CHECK(memcmp(slots[2].cpu, test_commands, sizes[n]) == 0);
+		for (size_t i = sizes[n]; i < 4096; i++)
+			CHECK(((uint8_t *)slots[2].cpu)[i] == 0);
+		CHECK(sun60i_a733_npu_dma_info(active, &now) == 0);
+		old.command_bytes = sizes[n];
+		CHECK(now.mtlb_address == old.mtlb_address &&
+		    now.stlb_address == old.stlb_address &&
+		    now.command_address == old.command_address &&
+		    now.command_virtual == old.command_virtual &&
+		    now.pd_entry == old.pd_entry && now.command_bytes == sizes[n]);
+		CHECK(memcmp(root, slots[0].cpu, sizeof(root)) == 0);
+		CHECK(memcmp(stlb, slots[1].cpu, sizeof(stlb)) == 0);
+	}
+	CHECK(sun60i_a733_npu_dma_destroy(active) == 0);
+	reset();
+}
 int main(void)
 {
 	struct sun60i_a733_npu_dma *out = (void *)(uintptr_t)1;
@@ -226,6 +311,7 @@ int main(void)
 	CHECK(memcmp(&info, &saved, sizeof(info)) == 0);
 	CHECK(sun60i_a733_npu_dma_retain(NULL) == EINVAL);
 	CHECK(sun60i_a733_npu_dma_destroy(NULL) == EINVAL);
+	replacement();
 	success(false, 8, false); success(true, 16, false);
 	success(false, 4096, true); success(true, 16, true);
 	printf("A733 NPU DMA32: %u checks passed\n", checks); return 0;

@@ -104,3 +104,18 @@ contract. Its variables are `CC`, `NPU_DMA_CFLAGS` and `NPU_DMA_SOURCE_ROOT`.
 The existing NPU source dispatcher also runs it. Fault controls cover all
 acquisition steps, strict map shape, bounce/range/alias rejection, native tag
 references, byte images, sync order and retained cleanup refusal.
+
+
+## Command replacement before retention
+
+`sun60i_a733_npu_dma_set_commands(context, bytes, count)` replaces the command
+image before retention. The trusted kernel input must stay stable for the call.
+Its size is 8 to 4096 bytes and a multiple of 8. The input must not overlap the
+context descriptor or any CPU span of the three owned buffers. The function
+checks pointer wrap and complete buffer state before it changes output.
+
+Success clears the whole command page, copies the new bytes and updates the
+command count. Root/STLB bytes, maps, VA and DMA addresses stay unchanged.
+Failure preserves the command page and count. Retained contexts return `EBUSY`.
+The function performs no allocation, DMA synchronization or register access.
+It does not validate command semantics or prove power/clock readiness.
