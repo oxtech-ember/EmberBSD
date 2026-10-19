@@ -73,6 +73,8 @@ select 0x418 bit 0 must be 1. Priority 0x414 is recorded without an ownership cl
 No IOMMU or NSI register is written. The proof repeats before DMA publication
 and after RCQ completion plus vblank. An unsupported state returns an error.
 The next managed mapping profile must have its own typed claims and tests.
+The [inactive-peer lease](a733-iommu1-isolation.md) excludes native changes
+to the other IOMMU1 masters. That lease alone grants no IOMMU write.
 
 The read-only `memory` sysctl returns native-endian 32-bit unsigned words:
 version,valid,clocks[2][7],iommu[2][5],nsi[2][3]. Version is 1. Valid bit 0

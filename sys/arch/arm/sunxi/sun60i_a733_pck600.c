@@ -795,6 +795,123 @@ done:
 	return error;
 }
 
+/* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD; AI-assisted fixed VE_DEC isolation reservation. */
+/* The fixed VE_DEC lease performs no hardware writes. */
+static int
+sun60i_pck600_isolation_read(struct sun60i_pck600_softc *sc,
+    uint32_t out[2][3])
+{
+	static const bus_size_t regs[] = { PCK600_PWPR, PCK600_PMER, PCK600_PWSR };
+	uint32_t words[2][3], mode;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+	if (sc->sc_failed[2])
+		return EIO;
+	for (u_int s = 0; s < 2; s++)
+		for (u_int i = 0; i < 3; i++)
+			if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh,
+			    2 * PCK600_DOMAIN_SIZE + regs[i], &words[s][i]) != 0)
+				return EFAULT;
+	if (memcmp(words[0], words[1], sizeof(words[0])) != 0)
+		return EBUSY;
+	if (((words[0][0] | words[0][2]) & PCK600_DYNAMIC) != 0 ||
+	    words[0][1] != 0)
+		return EOPNOTSUPP;
+	mode = words[0][0] & PCK600_MODE;
+	if ((mode != PCK600_OFF && mode != PCK600_ON) ||
+	    (words[0][2] & PCK600_MODE) != mode)
+		return EBUSY;
+	memcpy(out, words, sizeof(words));
+	return 0;
+}
+
+static int
+sun60i_pck600_isolation(int phandle, const void *owner,
+    enum sun60i_pck600_lease_op op, uint32_t out[2][3])
+{
+	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
+	struct sun60i_pck600_lease *slot;
+	uint32_t words[2][3];
+	int error = 0;
+
+	if (owner == NULL)
+		return EINVAL;
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->sc_lock);
+	slot = &sc->sc_lease[2];
+	for (u_int i = 0; i < __arraycount(sun60i_pck600_display_domains); i++) {
+		struct sun60i_pck600_lease *parent =
+		    &sc->sc_lease[sun60i_pck600_display_domains[i]];
+		if (parent->owner != owner) {
+			error = EINVAL;
+			goto done;
+		}
+		if (((op == PCK600_RESERVE || op == PCK600_RELEASE) &&
+		    parent->retained) ||
+		    (op == PCK600_RETAIN && !parent->retained)) {
+			error = EBUSY;
+			goto done;
+		}
+	}
+	if (op == PCK600_RESERVE ? slot->owner != NULL : slot->owner != owner) {
+		error = op == PCK600_RESERVE ? EBUSY : EINVAL;
+		goto done;
+	}
+	if ((op == PCK600_RELEASE || op == PCK600_RETAIN) && slot->retained) {
+		error = EBUSY;
+		goto done;
+	}
+	if (op == PCK600_RELEASE) {
+		memset(slot, 0, sizeof(*slot));
+		goto done;
+	}
+	error = sun60i_pck600_isolation_read(sc, words);
+	if (error != 0)
+		goto done;
+	if (op != PCK600_RESERVE &&
+	    memcmp(slot->before, words, sizeof(words)) != 0) {
+		error = EBUSY;
+		goto done;
+	}
+	if (op == PCK600_RESERVE) {
+		memcpy(slot->before, words, sizeof(words));
+		slot->owner = owner;
+	} else if (op == PCK600_RETAIN) {
+		slot->retained = true;
+	}
+	if (out != NULL)
+		memcpy(out, words, sizeof(words));
+done:
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+int
+sun60i_a733_pck_display_isolation_reserve(int node, const void *owner)
+{
+	return sun60i_pck600_isolation(node, owner, PCK600_RESERVE, NULL);
+}
+int
+sun60i_a733_pck_display_isolation_retain(int node, const void *owner)
+{
+	return sun60i_pck600_isolation(node, owner, PCK600_RETAIN, NULL);
+}
+int
+sun60i_a733_pck_display_isolation_release(int node, const void *owner)
+{
+	return sun60i_pck600_isolation(node, owner, PCK600_RELEASE, NULL);
+}
+int
+sun60i_a733_pck_display_isolation_snapshot(int node, const void *owner,
+    uint32_t out[2][3])
+{
+	if (out == NULL)
+		return EINVAL;
+	return sun60i_pck600_isolation(node, owner, PCK600_READY, out);
+}
+
 static void
 sun60i_pck600_report(struct sun60i_pck600_softc *sc)
 {
