@@ -35,6 +35,7 @@ __KERNEL_RCSID(0, "$NetBSD: linux_dma_buf.c,v 1.17 2024/05/20 11:35:10 riastradh
 #include <sys/types.h>
 #include <sys/atomic.h>
 #include <sys/file.h>
+#include <sys/dmabuf.h>
 #include <sys/filedesc.h>
 #include <sys/kmem.h>
 #include <sys/mutex.h>
@@ -42,9 +43,12 @@ __KERNEL_RCSID(0, "$NetBSD: linux_dma_buf.c,v 1.17 2024/05/20 11:35:10 riastradh
 #include <uvm/uvm_prot.h>
 
 #include <linux/dma-buf.h>
+#include <linux/dma-fence-array.h>
+#include <linux/sync_file.h>
 #include <linux/err.h>
 #include <linux/dma-resv.h>
 
+static int	dmabuf_fop_ioctl(struct file *, u_long, void *);
 static int	dmabuf_fop_poll(struct file *, int);
 static int	dmabuf_fop_close(struct file *);
 static int	dmabuf_fop_kqfilter(struct file *, struct knote *);
@@ -57,7 +61,7 @@ static const struct fileops dmabuf_fileops = {
 	.fo_name = "dmabuf",
 	.fo_read = fbadop_read,
 	.fo_write = fbadop_write,
-	.fo_ioctl = fbadop_ioctl,
+	.fo_ioctl = dmabuf_fop_ioctl,
 	.fo_fcntl = fnullop_fcntl,
 	.fo_poll = dmabuf_fop_poll,
 	.fo_stat = fbadop_stat,
@@ -67,6 +71,227 @@ static const struct fileops dmabuf_fileops = {
 	.fo_mmap = dmabuf_fop_mmap,
 	.fo_seek = dmabuf_fop_seek,
 };
+
+/* A vector holds borrowed references until the snapshot owns its leaves. */
+struct dmabuf_fence_vector {
+	struct dma_fence **items;
+	unsigned count;
+	unsigned capacity;
+};
+
+static int
+dmabuf_fence_append(struct dmabuf_fence_vector *v, struct dma_fence *fence)
+{
+	struct dma_fence **items;
+	unsigned capacity, i;
+
+	if (fence == NULL)
+		return 0;
+	for (i = 0; i < v->count; i++) {
+		if (v->items[i] == fence)
+			return 0;
+	}
+	if (v->count == v->capacity) {
+		if (v->capacity >= INT_MAX / 2)
+			return ENOMEM;
+		capacity = v->capacity ? 2 * v->capacity : 8;
+		items = kmalloc_array(capacity, sizeof(*items), GFP_KERNEL);
+		if (items == NULL)
+			return ENOMEM;
+		if (v->count)
+			memcpy(items, v->items, v->count * sizeof(*items));
+		kfree(v->items);
+		v->items = items;
+		v->capacity = capacity;
+	}
+	v->items[v->count++] = fence;
+	return 0;
+}
+
+/*
+ * Take a real snapshot while the reservation lock excludes device submission.
+ * The reservation and extra fence own all traversed references. Keep OR arrays
+ * opaque. Visit each AND node once, so export/import loops do not grow trees.
+ */
+static int
+dmabuf_fence_snapshot(struct dma_resv *resv, bool write,
+    struct dma_fence *extra, struct dma_fence **result)
+{
+	struct dmabuf_fence_vector walk = {0}, leaves = {0};
+	struct dma_resv_list *list;
+	struct dma_fence_array *array;
+	struct dma_fence *fence;
+	unsigned i, j;
+	int error, status;
+
+	dma_resv_assert_held(resv);
+	error = dmabuf_fence_append(&walk, dma_resv_get_excl(resv));
+	if (error)
+		goto out;
+	if (write && (list = dma_resv_get_list(resv)) != NULL) {
+		for (i = 0; i < list->shared_count; i++) {
+			error = dmabuf_fence_append(&walk, list->shared[i]);
+			if (error)
+				goto out;
+		}
+	}
+	error = dmabuf_fence_append(&walk, extra);
+	if (error)
+		goto out;
+	for (i = 0; i < walk.count; i++) {
+		fence = walk.items[i];
+		status = dma_fence_get_status(fence);
+		if (status > 0)
+			continue;
+		if (status == 0 && dma_fence_is_array(fence) &&
+		    !(array = to_dma_fence_array(fence))->dfa_signal_on_any) {
+			for (j = 0; j < array->num_fences; j++) {
+				error = dmabuf_fence_append(&walk, array->fences[j]);
+				if (error)
+					goto out;
+			}
+		} else {
+			error = dmabuf_fence_append(&leaves, fence);
+			if (error)
+				goto out;
+		}
+	}
+	if (leaves.count == 0) {
+		fence = dma_fence_get_stub();
+	} else if (leaves.count == 1) {
+		fence = dma_fence_get(leaves.items[0]);
+	} else {
+		for (i = 0; i < leaves.count; i++)
+			dma_fence_get(leaves.items[i]);
+		array = dma_fence_array_create((int)leaves.count, leaves.items,
+		    dma_fence_context_alloc(1), 1, false);
+		if (array == NULL) {
+			for (i = 0; i < leaves.count; i++)
+				dma_fence_put(leaves.items[i]);
+			error = ENOMEM;
+			goto out;
+		}
+		leaves.items = NULL; /* The array owns the vector and references. */
+		fence = &array->base;
+	}
+	*result = fence;
+	error = 0;
+out:
+	kfree(leaves.items);
+	kfree(walk.items);
+	return error;
+}
+
+static int
+dmabuf_sync_flags(const struct file *fp, uint32_t flags)
+{
+
+	if (flags == 0 || (flags & ~DMA_BUF_SYNC_RW) != 0)
+		return EINVAL;
+	if (((flags & DMA_BUF_SYNC_READ) && !(fp->f_flag & FREAD)) ||
+	    ((flags & DMA_BUF_SYNC_WRITE) && !(fp->f_flag & FWRITE)))
+		return EACCES;
+	return 0;
+}
+
+static int
+dmabuf_export_sync_file(struct file *fp,
+    struct dma_buf_export_sync_file *args)
+{
+	struct dma_buf *dmabuf = fp->f_data;
+	struct dma_fence *fence;
+	struct file *syncfp;
+	int fd, error;
+
+	error = dmabuf_sync_flags(fp, args->flags);
+	if (error)
+		return error;
+	error = fd_allocfile(&syncfp, &fd);
+	if (error)
+		return error;
+	error = -dma_resv_lock_interruptible(dmabuf->resv, NULL);
+	if (error)
+		goto abort;
+	error = dmabuf_fence_snapshot(dmabuf->resv,
+	    (args->flags & DMA_BUF_SYNC_WRITE) != 0, NULL, &fence);
+	dma_resv_unlock(dmabuf->resv);
+	if (error)
+		goto abort;
+	if (sync_file_create(fence, syncfp) == NULL) {
+		dma_fence_put(fence);
+		error = ENOMEM;
+		goto abort;
+	}
+	dma_fence_put(fence);
+	fd_set_exclose(curlwp, fd, true);
+	fd_affix(curproc, syncfp, fd);
+	args->fd = fd;
+	return 0;
+abort:
+	fd_abort(curproc, syncfp, fd);
+	return error;
+}
+
+static int
+dmabuf_import_sync_file(struct file *fp,
+    const struct dma_buf_import_sync_file *args)
+{
+	struct dma_buf *dmabuf = fp->f_data;
+	struct dma_fence *fence, *merged;
+	struct dma_resv_list *list;
+	unsigned i;
+	int error;
+
+	error = dmabuf_sync_flags(fp, args->flags);
+	if (error)
+		return error;
+	fence = sync_file_get_fence(args->fd);
+	if (fence == NULL)
+		return EINVAL;
+	error = -dma_resv_lock_interruptible(dmabuf->resv, NULL);
+	if (error)
+		goto out;
+	if (args->flags & DMA_BUF_SYNC_WRITE) {
+		error = dmabuf_fence_snapshot(dmabuf->resv, false, fence, &merged);
+		if (error)
+			goto unlock;
+		dma_resv_replace_excl_fence(dmabuf->resv, merged);
+		dma_fence_put(merged);
+	} else {
+		/* Do not replace a later fence on the same ordered timeline. */
+		list = dma_resv_get_list(dmabuf->resv);
+		if (list != NULL) {
+			for (i = 0; i < list->shared_count; i++) {
+				if (list->shared[i]->context == fence->context &&
+				    !dma_fence_is_later(fence, list->shared[i]))
+					goto unlock;
+			}
+		}
+		error = -dma_resv_reserve_shared(dmabuf->resv, 1);
+		if (error)
+			goto unlock;
+		dma_resv_add_shared_fence(dmabuf->resv, fence);
+	}
+unlock:
+	dma_resv_unlock(dmabuf->resv);
+out:
+	dma_fence_put(fence);
+	return error;
+}
+
+static int
+dmabuf_fop_ioctl(struct file *fp, u_long command, void *data)
+{
+
+	switch (command) {
+	case DMA_BUF_IOCTL_EXPORT_SYNC_FILE:
+		return dmabuf_export_sync_file(fp, data);
+	case DMA_BUF_IOCTL_IMPORT_SYNC_FILE:
+		return dmabuf_import_sync_file(fp, data);
+	default:
+		return ENOTTY;
+	}
+}
 
 struct dma_buf *
 dma_buf_export(struct dma_buf_export_info *info)
