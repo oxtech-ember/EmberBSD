@@ -33,6 +33,7 @@
 #include "opt_pci.h"
 #include "opt_vcons.h"
 #include "opt_wsdisplay_earlyfb.h"
+#include "opt_wsdisplay_bootfb.h"
 
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: arm_simplefb.c,v 1.13 2022/10/14 22:10:15 jmcneill Exp $");
@@ -46,6 +47,13 @@ __KERNEL_RCSID(0, "$NetBSD: arm_simplefb.c,v 1.13 2022/10/14 22:10:15 jmcneill E
 #endif
 
 #include <dev/fdt/fdtvar.h>
+#include <dev/fdt/simplefbvar.h>
+#ifdef WSDISPLAY_BOOTFB_DEFER
+#include <sys/atomic.h>
+#include <sys/kernel.h>
+#include <dev/fdt/simplefb_bootvar.h>
+#include <dev/wscons/wsdisplay_bootfbvar.h>
+#endif
 #include <arm/fdt/arm_fdtvar.h>
 
 #include <dev/wscons/wsconsio.h>
@@ -94,6 +102,24 @@ static struct vcons_screen arm_simplefb_screen;
 static bus_addr_t arm_simplefb_addr;
 static bus_size_t arm_simplefb_size;
 static bus_space_handle_t arm_simplefb_bsh;
+
+#ifdef WSDISPLAY_BOOTFB_DEFER
+/* Written only by the real preattach, then published once after replay. */
+static struct {
+	const void *blob;
+	int phandle;
+	uint64_t address, size;
+	struct simplefb_framebuffer framebuffer;
+	bus_space_handle_t handle;
+	int flags;
+	bool map_present;
+	int (*map_method)(void *, bus_addr_t, bus_size_t, int,
+	    bus_space_handle_t *);
+	const struct wsscreen_descr *type;
+	void *cookie;
+} arm_simplefb_boot;
+static unsigned int arm_simplefb_captured;
+#endif
 
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "simple-framebuffer" },
@@ -201,16 +227,18 @@ arm_simplefb_preattach(void)
 	struct rasops_info *ri = &arm_simplefb_screen.scr_ri;
 	bus_space_tag_t bst = &arm_generic_bs_tag;
 	bus_space_handle_t bsh;
-	uint32_t width, height, stride;
-	const char *format;
+	struct simplefb_framebuffer fb;
 	bus_addr_t addr;
 	bus_size_t size;
-	uint16_t depth;
 	long defattr;
-	bool swapped = false;
-	bool is_10bit = false;
+	bool swapped, is_10bit;
 #ifdef WSDISPLAY_EARLYFB_HOOKS
 	struct wsdisplay_early_output early;
+	int error;
+#ifdef WSDISPLAY_BOOTFB_DEFER
+	int (*map_method)(void *, bus_addr_t, bus_size_t, int,
+	    bus_space_handle_t *);
+#endif
 #endif
 
 	const int phandle = arm_simplefb_find_node();
@@ -224,42 +252,24 @@ arm_simplefb_preattach(void)
 	if (phandle == -1)
 		return;
 
-	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0 || size == 0)
-		return;
 
-	if (of_getprop_uint32(phandle, "width", &width) != 0 ||
-	    of_getprop_uint32(phandle, "height", &height) != 0 ||
-	    of_getprop_uint32(phandle, "stride", &stride) != 0 ||
-	    (format = fdtbus_get_string(phandle, "format")) == NULL)
+#ifdef WSDISPLAY_BOOTFB_DEFER
+	if (simplefb_node_cpu_domain(phandle) != 0)
 		return;
-
-	if (width == 0 || height == 0)
+#endif
+	if (simplefb_read_node(phandle, bst, &fb) != 0)
 		return;
+	addr = fb.sf_address;
+	size = fb.sf_size;
+	swapped = fb.sf_format == SIMPLEFB_FORMAT_R8G8B8A8 ||
+	    fb.sf_format == SIMPLEFB_FORMAT_B8G8R8X8;
+	is_10bit = fb.sf_format == SIMPLEFB_FORMAT_X2R10G10B10;
 
-	if (strcmp(format, "a8b8g8r8") == 0 ||
-	    strcmp(format, "x8r8g8b8") == 0) {
-		depth = 32;
-	} else if (strcmp(format, "r8g8b8a8") == 0 ||
-		   strcmp(format, "b8g8r8x8") == 0) {
-		depth = 32;
-		swapped = true;
-	} else if (strcmp(format, "x2r10g10b10") == 0) {
-		depth = 32;
-		is_10bit = true;
-	} else if (strcmp(format, "r5g6b5") == 0) {
-		depth = 16;
-	} else {
+#ifdef WSDISPLAY_BOOTFB_DEFER
+	if (!fdtbus_bootfb_cpu_map(bst))
 		return;
-	}
-
-	/*
-	 * Make sure that the size of the linear FB mapping is big enough
-	 * to fit the requested screen dimensions.
-	 */
-	if (size < stride * height) {
-		return;
-	}
-
+	map_method = bst->bs_map;
+#endif
 	if (bus_space_map(bst, addr, size,
 	    BUS_SPACE_MAP_LINEAR | BUS_SPACE_MAP_PREFETCHABLE, &bsh) != 0)
 		return;
@@ -268,10 +278,10 @@ arm_simplefb_preattach(void)
 	arm_simplefb_size = size;
 	arm_simplefb_bsh = bsh;
 
-	sc->sc_width = width;
-	sc->sc_height = height;
-	sc->sc_depth = depth;
-	sc->sc_stride = stride;
+	sc->sc_width = fb.sf_width;
+	sc->sc_height = fb.sf_height;
+	sc->sc_depth = fb.sf_depth;
+	sc->sc_stride = fb.sf_stride;
 	sc->sc_bits = bus_space_vaddr(bst, bsh);
 	sc->sc_swapped = swapped;
 	sc->sc_10bit = is_10bit;
@@ -298,10 +308,92 @@ arm_simplefb_preattach(void)
 	arm_simplefb_stdscreen.capabilities = ri->ri_caps;
 
 #ifdef WSDISPLAY_EARLYFB_HOOKS
-	(void)wsdisplay_early_preattach(&arm_simplefb_stdscreen, ri, 0, 0,
+	error = wsdisplay_early_preattach(&arm_simplefb_stdscreen, ri, 0, 0,
 	    defattr, arm_simplefb_replay, &arm_simplefb_screen);
+#ifdef WSDISPLAY_BOOTFB_DEFER
+	if (error == 0) {
+		arm_simplefb_boot.blob = fdtbus_get_data();
+		arm_simplefb_boot.phandle = phandle;
+		arm_simplefb_boot.address = fb.sf_address;
+		arm_simplefb_boot.size = fb.sf_size;
+		arm_simplefb_boot.framebuffer = fb;
+		arm_simplefb_boot.handle = bsh;
+		arm_simplefb_boot.flags = BUS_SPACE_MAP_LINEAR |
+		    BUS_SPACE_MAP_PREFETCHABLE;
+		arm_simplefb_boot.map_present = true;
+		arm_simplefb_boot.map_method = map_method;
+		arm_simplefb_boot.type = &arm_simplefb_stdscreen;
+		arm_simplefb_boot.cookie = ri;
+		atomic_store_release(&arm_simplefb_captured, 1);
+	}
+#else
+	(void)error;
+#endif
 #else
 	wsdisplay_preattach(&arm_simplefb_stdscreen, ri, 0, 0, defattr);
 	vcons_replay_msgbuf(&arm_simplefb_screen);
 #endif
 }
+
+#ifdef WSDISPLAY_BOOTFB_DEFER
+int
+fdtbus_bootfb_match(device_t self, int phandle, bus_space_tag_t bst,
+    const struct simplefb_framebuffer *checked)
+{
+	struct simplefb_framebuffer fb;
+	const struct simplefb_framebuffer *saved = &arm_simplefb_boot.framebuffer;
+	int error;
+
+	KASSERT(KERNEL_LOCKED_P());
+	if (self == NULL || checked == NULL || bst == NULL)
+		return EINVAL;
+	if (!device_is_a(self, "genfb") ||
+	    strcmp(device_cfattach(self)->ca_name, "simplefb") != 0)
+		return EINVAL;
+	if (atomic_load_acquire(&arm_simplefb_captured) == 0 ||
+	    !arm_simplefb_boot.map_present ||
+	    arm_simplefb_boot.blob != fdtbus_get_data() ||
+	    arm_simplefb_boot.phandle != phandle ||
+	    phandle != fdtbus_get_stdout_phandle())
+		return ENXIO;
+	error = simplefb_node_cpu_domain(phandle);
+	if (error != 0)
+		return error;
+	if (!fdtbus_bootfb_cpu_map(bst) ||
+	    arm_simplefb_boot.map_method != arm_generic_bs_tag.bs_map ||
+	    arm_simplefb_boot.flags !=
+	    (BUS_SPACE_MAP_LINEAR | BUS_SPACE_MAP_PREFETCHABLE))
+		return EOPNOTSUPP;
+	error = simplefb_read_node(phandle, bst, &fb);
+	if (error != 0)
+		return error;
+	/* Compare fields, not padding or a visible-byte-only subrange. */
+	if (checked->sf_bst != bst || fb.sf_address != arm_simplefb_boot.address ||
+	    fb.sf_size != arm_simplefb_boot.size ||
+	    fb.sf_address != checked->sf_address || fb.sf_size != checked->sf_size ||
+	    fb.sf_fbsize != saved->sf_fbsize || fb.sf_fbsize != checked->sf_fbsize ||
+	    fb.sf_width != saved->sf_width || fb.sf_width != checked->sf_width ||
+	    fb.sf_height != saved->sf_height || fb.sf_height != checked->sf_height ||
+	    fb.sf_stride != saved->sf_stride || fb.sf_stride != checked->sf_stride ||
+	    fb.sf_format != saved->sf_format || fb.sf_format != checked->sf_format ||
+	    fb.sf_depth != saved->sf_depth || fb.sf_depth != checked->sf_depth)
+		return EINVAL;
+	return 0;
+}
+
+int
+fdtbus_bootfb_defer(device_t self, int phandle, bus_space_tag_t bst,
+    const struct simplefb_framebuffer *checked, int (*fallback)(device_t))
+{
+	int error;
+
+	KASSERT(KERNEL_LOCKED_P());
+	if (!cold)
+		return EBUSY;
+	error = fdtbus_bootfb_match(self, phandle, bst, checked);
+	if (error != 0)
+		return error;
+	return wsdisplay_bootfb_defer(self, arm_simplefb_boot.type,
+	    arm_simplefb_boot.cookie, fallback);
+}
+#endif

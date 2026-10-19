@@ -9,6 +9,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
+#include <limits.h>
+#include <sys/bus.h>
+#include "simplefbvar.h"
+#ifdef WSDISPLAY_BOOTFB_DEFER
+#include "simplefb_bootvar.h"
+#include "wsdisplay_bootfbvar.h"
+#endif
 
 static atomic_uint checks;
 #define CHECK(x) do { checks++; if (!(x)) { \
@@ -16,10 +23,6 @@ static atomic_uint checks;
 	abort(); } } while (0)
 #define KASSERT(x) CHECK(x)
 typedef unsigned char u_char;
-typedef unsigned long bus_addr_t, bus_size_t;
-typedef uintptr_t bus_space_handle_t;
-struct bus_space { int token; };
-typedef struct bus_space *bus_space_tag_t;
 struct bus_space arm_generic_bs_tag;
 #define BUS_SPACE_MAP_LINEAR 1
 #define BUS_SPACE_MAP_PREFETCHABLE 2
@@ -128,39 +131,86 @@ static void arm_simplefb_init_screen(void *cookie, struct vcons_screen *screen,
 	CHECK(cookie != NULL && screen != NULL && existing == 1);
 	*attr = 0;
 }
+#ifndef BOOTFB_ISSUER_CONTRACT
 static int arm_simplefb_find_node(void) { return no_node ? -1 : 1; }
-static int fdtbus_get_reg(int node, int index, bus_addr_t *addr, bus_size_t *size)
+#endif
+/* FDT is a controlled service; the descriptor parser is actual separate C. */
+static uint64_t fixture_address = 4096, fixture_size = 8192;
+static uint32_t fixture_width = 32, fixture_height = 16, fixture_stride = 128;
+static const char *fixture_format = "x8r8g8b8";
+static int fixture_address_cells = 2, fixture_size_cells = 2;
+static int fixture_reg_length = 16, fixture_ranges_length;
+static int fixture_chosen_parent = 3, fixture_node_parent = 2;
+static int fixture_stdout = 1, fixture_get_reg_calls;
+static bool fixture_reg_error;
+static char fixture_blob_a;
+#if defined(BOOTFB_ISSUER_CONTRACT) && defined(WSDISPLAY_BOOTFB_DEFER)
+static char fixture_blob_b;
+#endif
+static const void *fixture_blob = &fixture_blob_a;
+static bus_space_handle_t fixture_handle = 1;
+int OF_finddevice(const char *path)
 {
-	CHECK(node == 1 && index == 0);
-	*addr = 4096; *size = 8192;
+	if (strcmp(path, "/chosen") == 0) return 2;
+	CHECK(strcmp(path, "/") == 0); return 3;
+}
+int OF_parent(int node)
+{
+	return node == 1 || node == 4 ? fixture_node_parent : fixture_chosen_parent;
+}
+int OF_getproplen(int node, const char *name)
+{
+	if (strcmp(name, "reg") == 0) { CHECK(node == 1 || node == 4); return fixture_reg_length; }
+	CHECK(node == 2 && strcmp(name, "ranges") == 0);
+	return fixture_ranges_length;
+}
+int fdtbus_get_addr_cells(int parent)
+{
+	CHECK(parent == fixture_node_parent); return fixture_address_cells;
+}
+int fdtbus_get_size_cells(int parent)
+{
+	CHECK(parent == fixture_node_parent); return fixture_size_cells;
+}
+int fdtbus_get_reg64(int node, int index, uint64_t *addr, uint64_t *size)
+{
+	CHECK((node == 1 || node == 4) && index == 0); fixture_get_reg_calls++;
+	if (fixture_reg_error) return ENXIO;
+	*addr = fixture_address; *size = fixture_size;
 	return 0;
 }
-static int of_getprop_uint32(int node, const char *name, uint32_t *out)
+int of_getprop_uint32(int node, const char *name, uint32_t *out)
 {
-	CHECK(node == 1);
-	if (strcmp(name, "width") == 0) *out = 32;
-	else if (strcmp(name, "height") == 0) *out = 16;
-	else { CHECK(strcmp(name, "stride") == 0); *out = 128; }
+	CHECK(node == 1 || node == 4);
+	if (strcmp(name, "width") == 0) *out = fixture_width;
+	else if (strcmp(name, "height") == 0) *out = fixture_height;
+	else { CHECK(strcmp(name, "stride") == 0); *out = fixture_stride; }
 	return 0;
 }
-static const char *fdtbus_get_string(int node, const char *name)
+const char *fdtbus_get_string(int node, const char *name)
 {
-	CHECK(node == 1 && strcmp(name, "format") == 0);
-	return "x8r8g8b8";
+	CHECK((node == 1 || node == 4) && strcmp(name, "format") == 0);
+	return fixture_format;
 }
+const void *fdtbus_get_data(void) { return fixture_blob; }
+int fdtbus_get_stdout_phandle(void) { return fixture_stdout; }
+
 static int bus_space_map(bus_space_tag_t tag, bus_addr_t addr, bus_size_t size,
     int flags, bus_space_handle_t *out)
 {
-	CHECK(tag == &arm_generic_bs_tag && addr == 4096 && size == 8192);
+	CHECK(tag != NULL && addr == fixture_address && size == fixture_size);
 	CHECK(flags == (BUS_SPACE_MAP_LINEAR | BUS_SPACE_MAP_PREFETCHABLE));
+#ifdef BOOTFB_ISSUER_CONTRACT
+	fixture_before_map(tag);
+#endif
 	maps++;
 	if (fail_map) return EIO;
-	*out = 1;
+	*out = fixture_handle;
 	return 0;
 }
 static void *bus_space_vaddr(bus_space_tag_t tag, bus_space_handle_t handle)
 {
-	CHECK(tag == &arm_generic_bs_tag && handle == 1);
+	CHECK(tag != NULL && handle == fixture_handle);
 	return &arm_generic_bs_tag;
 }
 static void wsfont_init(void) { }
@@ -285,6 +335,12 @@ static void reset(void)
 	cn_tab = &old_cons; wsdisplay_ocn = NULL;
 	wsdisplay_multicons_enable = true; wsdisplay_multicons_suspended = false;
 	wsdisplay_cons_kbd_pollc = kbd_pollc;
+	fixture_address = 4096; fixture_size = 8192; fixture_width = 32;
+	fixture_height = 16; fixture_stride = 128; fixture_format = "x8r8g8b8";
+	fixture_address_cells = fixture_size_cells = 2; fixture_reg_length = 16;
+	fixture_ranges_length = 0; fixture_node_parent = 2; fixture_chosen_parent = 3;
+	fixture_stdout = 1; fixture_get_reg_calls = 0; fixture_reg_error = false;
+	fixture_blob = &fixture_blob_a; fixture_handle = 1;
 	panicstr = NULL; hard_interrupt = soft_interrupt = false;
 	maps = updates = attaches = output_calls = 0;
 	kbd_on = kbd_off = old_on = old_off = old_output = 0;

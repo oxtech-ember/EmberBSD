@@ -26,6 +26,8 @@
  * SUCH DAMAGE.
  */
 
+#include "opt_wsdisplay_bootfb.h"
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: fdt_bus_machdep.c,v 1.3 2023/04/07 08:55:31 skrll Exp $");
 
@@ -67,3 +69,25 @@ fdtbus_bus_tag_create(int phandle, uint32_t flags)
 
 	return tagp;
 }
+
+#ifdef WSDISPLAY_BOOTFB_DEFER
+#include <dev/fdt/simplefb_bootvar.h>
+
+#ifdef __aarch64__
+bs_map_proto(generic);
+#define BOOTFB_CPU_MAP generic_bs_map
+#else
+bs_map_proto(armv7_generic);
+#define BOOTFB_CPU_MAP armv7_generic_bs_map
+#endif
+
+bool
+fdtbus_bootfb_cpu_map(bus_space_tag_t bst)
+{
+
+	/* Tags copied by fdtbus preserve this actual mapping function. */
+	return bst != NULL && arm_generic_bs_tag.bs_map == BOOTFB_CPU_MAP &&
+	    (bst->bs_map == BOOTFB_CPU_MAP ||
+	    bst->bs_map == nonposted_mmio_bs_map);
+}
+#endif

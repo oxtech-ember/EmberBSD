@@ -133,6 +133,7 @@ file	dev/fdt/display_timing.c		fdt_display_timing
 # Display controller
 attach	genfb at fdt with simplefb
 file	dev/fdt/simplefb.c			simplefb
+file	dev/fdt/simplefb_subr.c			simplefb | (arm_fdt & wsdisplay & genfb)
 
 # NS 8250 compatible UART
 attach	com at fdt with ns8250_uart

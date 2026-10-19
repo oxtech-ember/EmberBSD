@@ -27,6 +27,21 @@ struct simplefb_framebuffer {
 	uint8_t sf_depth;
 };
 
+/* Shared read-only parser. Error leaves the output unchanged. */
+int simplefb_node_cpu_domain(int);
+int simplefb_read_node(int, bus_space_tag_t, struct simplefb_framebuffer *);
+int simplefb_framebuffer_set_address(struct simplefb_framebuffer *, uint64_t);
+
+#ifdef WSDISPLAY_BOOTFB_DEFER
+struct wsdisplay_bootfb_lease;
+/* Process context. The two claim outputs must be disjoint caller storage.
+ * Cancel is valid only before any hardware handoff.
+ * These calls do not close or drain console output, or grant device access. */
+int simplefb_console_claim(struct wsdisplay_bootfb_lease **,
+    struct simplefb_framebuffer *);
+int simplefb_console_cancel(struct wsdisplay_bootfb_lease *);
+#endif
+
 /*
  * Boot attachment only, before config_finalize ends the reservation window.
  * reserve does not require a readable descriptor: VirtGPU replaces scanout.

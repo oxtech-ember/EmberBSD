@@ -29,6 +29,7 @@
 
 #include "opt_wsdisplay_compat.h"
 #include "opt_virtgpu_console.h"
+#include "opt_wsdisplay_bootfb.h"
 
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: simplefb.c,v 1.15 2021/08/30 22:47:24 jmcneill Exp $");
@@ -36,10 +37,16 @@ __KERNEL_RCSID(0, "$NetBSD: simplefb.c,v 1.15 2021/08/30 22:47:24 jmcneill Exp $
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/device.h>
+#include <sys/cpu.h>
+#include <sys/kernel.h>
 #include <sys/systm.h>
 
 #include <dev/fdt/fdtvar.h>
 #include <dev/fdt/simplefbvar.h>
+#include <dev/wscons/wsdisplay_bootfbvar.h>
+#ifdef WSDISPLAY_BOOTFB_DEFER
+#include <dev/fdt/simplefb_bootvar.h>
+#endif
 
 #include <dev/wsfb/genfbvar.h>
 
@@ -61,67 +68,27 @@ struct simplefb_softc {
 
 static int simplefb_console_phandle = -1;
 
-static struct simplefb_softc *simplefb_deferred;
-static device_t simplefb_owner;
-static bool simplefb_committed;
-
 /* This snapshot is valid for the existing genfb signed arithmetic. */
 static int
 simplefb_read_framebuffer(struct simplefb_softc *sc,
     struct simplefb_framebuffer *framebuffer)
 {
-	struct simplefb_framebuffer fb = { .sf_bst = sc->sc_bst };
+	struct simplefb_framebuffer fb;
 	prop_dictionary_t dict = device_properties(sc->sc_gen.sc_dev);
-	const int phandle = sc->sc_phandle;
-	const char *format;
-	uint64_t address, span;
+	uint64_t address;
+	int error;
 
-	if (fdtbus_get_reg(phandle, 0, &fb.sf_address, &fb.sf_size) != 0 ||
-	    fb.sf_size == 0)
-		return ENXIO;
-	if (of_getprop_uint32(phandle, "width", &fb.sf_width) != 0 ||
-	    of_getprop_uint32(phandle, "height", &fb.sf_height) != 0 ||
-	    of_getprop_uint32(phandle, "stride", &fb.sf_stride) != 0 ||
-	    (format = fdtbus_get_string(phandle, "format")) == NULL)
-		return ENXIO;
-
-	if (strcmp(format, "a8b8g8r8") == 0)
-		fb.sf_format = SIMPLEFB_FORMAT_A8B8G8R8;
-	else if (strcmp(format, "x8r8g8b8") == 0)
-		fb.sf_format = SIMPLEFB_FORMAT_X8R8G8B8;
-	else if (strcmp(format, "r8g8b8a8") == 0)
-		fb.sf_format = SIMPLEFB_FORMAT_R8G8B8A8;
-	else if (strcmp(format, "b8g8r8x8") == 0)
-		fb.sf_format = SIMPLEFB_FORMAT_B8G8R8X8;
-	else if (strcmp(format, "x2r10g10b10") == 0)
-		fb.sf_format = SIMPLEFB_FORMAT_X2R10G10B10;
-	else if (strcmp(format, "r5g6b5") == 0)
-		fb.sf_format = SIMPLEFB_FORMAT_R5G6B5;
-	else
-		return EINVAL;
-	fb.sf_depth = fb.sf_format == SIMPLEFB_FORMAT_R5G6B5 ? 16 : 32;
-
-	if (fb.sf_width == 0 || fb.sf_height == 0 || fb.sf_stride == 0 ||
-	    fb.sf_width > INT_MAX || fb.sf_height > INT_MAX ||
-	    fb.sf_stride > INT_MAX ||
-	    (uint64_t)fb.sf_width * (fb.sf_depth / 8) > fb.sf_stride)
-		return EINVAL;
-	span = (uint64_t)fb.sf_stride * fb.sf_height;
-	if (span > INT_MAX || span > fb.sf_size)
-		return EINVAL;
-	fb.sf_fbsize = (size_t)span;
+	error = simplefb_read_node(sc->sc_phandle, sc->sc_bst, &fb);
+	if (error != 0)
+		return error;
 
 	/* MD attachment may replace the firmware physical address. */
 	if (prop_dictionary_get_uint64(dict, "simplefb-physaddr", &address) &&
 	    address != 0) {
-		if ((uint64_t)(bus_addr_t)address != address)
-			return EOVERFLOW;
-		fb.sf_address = (bus_addr_t)address;
+		error = simplefb_framebuffer_set_address(&fb, address);
+		if (error != 0)
+			return error;
 	}
-	/* bus_space_map rounds the exclusive end up to a page boundary. */
-	if (fb.sf_size > (bus_addr_t)-1 - fb.sf_address ||
-	    fb.sf_address + fb.sf_size > (bus_addr_t)-1 - PAGE_MASK)
-		return EOVERFLOW;
 
 	*framebuffer = fb;
 	return 0;
@@ -130,65 +97,124 @@ simplefb_read_framebuffer(struct simplefb_softc *sc,
 bool
 simplefb_console_reserve(device_t owner)
 {
-	if (owner == NULL || simplefb_deferred == NULL ||
-	    simplefb_owner != NULL || simplefb_committed)
-		return false;
+	bool reserved;
 
-	simplefb_owner = owner;
-	return true;
+	KERNEL_LOCK(1, NULL);
+	reserved = wsdisplay_bootfb_reserve(owner);
+	KERNEL_UNLOCK_ONE(NULL);
+	return reserved;
 }
 
 int
 simplefb_console_get_framebuffer(device_t owner,
     struct simplefb_framebuffer *framebuffer)
 {
+	struct simplefb_softc *sc;
+	device_t dev;
+	int error;
+
 	if (framebuffer == NULL)
 		return EINVAL;
-	if (owner == NULL || simplefb_deferred == NULL ||
-	    simplefb_owner != owner || simplefb_committed)
-		return EPERM;
-	if (simplefb_deferred->sc_framebuffer_error != 0)
-		return simplefb_deferred->sc_framebuffer_error;
-	*framebuffer = simplefb_deferred->sc_framebuffer;
-	return 0;
+	KERNEL_LOCK(1, NULL);
+	dev = wsdisplay_bootfb_legacy_device(owner);
+	if (dev == NULL) {
+		error = EPERM;
+	} else {
+		sc = device_private(dev);
+		error = sc->sc_framebuffer_error;
+		if (error == 0)
+			*framebuffer = sc->sc_framebuffer;
+	}
+	KERNEL_UNLOCK_ONE(NULL);
+	return error;
 }
 
 bool
 simplefb_console_release(device_t owner)
 {
-	if (owner == NULL || simplefb_deferred == NULL ||
-	    simplefb_owner != owner || simplefb_committed)
-		return false;
-	simplefb_owner = NULL;
-	return true;
+	bool released;
+
+	KERNEL_LOCK(1, NULL);
+	released = wsdisplay_bootfb_release(owner);
+	KERNEL_UNLOCK_ONE(NULL);
+	return released;
 }
 
 void
 simplefb_console_commit(device_t owner)
 {
-	if (owner == NULL || simplefb_deferred == NULL ||
-	    simplefb_owner != owner || simplefb_committed) {
-		KASSERTMSG(false, "invalid firmware console commit");
-		return;
-	}
-	simplefb_committed = true;
+	KERNEL_LOCK(1, NULL);
+	wsdisplay_bootfb_commit(owner);
+	KERNEL_UNLOCK_ONE(NULL);
 }
 
-/* config_finalize runs after every config_interrupts job has completed. */
+/* MI sets FALLBACK_STARTING before this built-in callback can have effects. */
 static int simplefb_attach_genfb(struct simplefb_softc *);
-#ifdef VIRTGPU_CONSOLE
 static int
 simplefb_console_fallback(device_t dev)
 {
-	struct simplefb_softc *sc = device_private(dev);
+	return simplefb_attach_genfb(device_private(dev));
+}
 
-	if (simplefb_deferred == NULL || simplefb_deferred != sc)
-		return 0;
-	simplefb_deferred = NULL;
-	simplefb_owner = NULL;
-	if (!simplefb_committed)
-		(void)simplefb_attach_genfb(sc);
-	return 0;
+#ifdef WSDISPLAY_BOOTFB_DEFER
+int
+simplefb_console_claim(struct wsdisplay_bootfb_lease **out,
+    struct simplefb_framebuffer *framebuffer)
+{
+	struct simplefb_softc *sc;
+	struct wsdisplay_bootfb_lease *lease;
+	device_t dev;
+	int error;
+
+	if (out == NULL || framebuffer == NULL)
+		return EINVAL;
+	if (panicstr != NULL || cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	KERNEL_LOCK(1, NULL);
+	dev = wsdisplay_bootfb_native_device();
+	if (dev == NULL) {
+		error = ENXIO;
+	} else {
+		sc = device_private(dev);
+		error = fdtbus_bootfb_match(dev, sc->sc_phandle, sc->sc_bst,
+		    &sc->sc_framebuffer);
+		if (error == 0)
+			error = wsdisplay_bootfb_claim(dev, &lease);
+		if (error == 0) {
+			*framebuffer = sc->sc_framebuffer;
+			*out = lease;
+		}
+	}
+	KERNEL_UNLOCK_ONE(NULL);
+	return error;
+}
+
+int
+simplefb_console_cancel(struct wsdisplay_bootfb_lease *lease)
+{
+	struct simplefb_softc *sc;
+	device_t dev;
+	int error;
+
+	if (panicstr != NULL || cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	KERNEL_LOCK(1, NULL);
+	dev = wsdisplay_bootfb_lease_device(lease);
+	if (dev == NULL) {
+		error = EPERM;
+	} else {
+		sc = device_private(dev);
+		error = fdtbus_bootfb_match(dev, sc->sc_phandle, sc->sc_bst,
+		    &sc->sc_framebuffer);
+		if (error != 0)
+			wsdisplay_bootfb_retain(lease);
+		else
+			error = wsdisplay_bootfb_cancel(lease);
+	}
+	KERNEL_UNLOCK_ONE(NULL);
+	return error;
 }
 #endif
 
@@ -351,22 +377,32 @@ simplefb_attach(device_t parent, device_t self, void *aux)
 	sc->sc_gen.sc_dev = self;
 	sc->sc_phandle = phandle;
 	sc->sc_bst = faa->faa_bst;
-	sc->sc_framebuffer_error = simplefb_read_framebuffer(sc,
-	    &sc->sc_framebuffer);
-
-#ifdef VIRTGPU_CONSOLE
-	/* Keep the early arm renderer until exactly one final attachment. */
-	if (phandle == simplefb_console_phandle && simplefb_deferred == NULL) {
-		simplefb_deferred = sc;
-		if (config_finalize_register(self, simplefb_console_fallback) == 0) {
-			aprint_normal(": reserving early firmware console\n");
-			return;
-		}
-		simplefb_deferred = NULL;
-	}
+#ifdef WSDISPLAY_BOOTFB_DEFER
+	/* Prove this native CPU domain before get_reg64 decodes any ranges. */
+	sc->sc_framebuffer_error = phandle == simplefb_console_phandle ?
+	    simplefb_node_cpu_domain(phandle) : 0;
+	if (sc->sc_framebuffer_error == 0)
 #endif
-	if (simplefb_attach_genfb(sc) != 0)
+		sc->sc_framebuffer_error = simplefb_read_framebuffer(sc,
+		    &sc->sc_framebuffer);
+
+	if (phandle == simplefb_console_phandle) {
+#ifdef WSDISPLAY_BOOTFB_DEFER
+		if (sc->sc_framebuffer_error == 0 &&
+		    fdtbus_bootfb_defer(self, phandle, sc->sc_bst,
+		    &sc->sc_framebuffer, simplefb_console_fallback) == 0)
+			return;
+#endif
+#ifdef VIRTGPU_CONSOLE
+		/* Legacy reservation deliberately permits an unreadable descriptor. */
+		if (wsdisplay_bootfb_register_legacy(self,
+		    simplefb_console_fallback) == 0)
+			return;
+#endif
+		(void)wsdisplay_bootfb_fallback(self, simplefb_console_fallback);
 		return;
+	}
+	(void)simplefb_attach_genfb(sc);
 
 }
 

@@ -31,9 +31,10 @@ authorize access without the ownership sequence below.
 
 ## Boot-console ownership
 
-The current selection policy defers the firmware console only when
-`VIRTGPU_CONSOLE` is enabled. Other configurations attach genfb immediately.
-This patch does not add a new selection policy for physical KMS devices.
+The legacy selection policy defers the firmware console when `VIRTGPU_CONSOLE`
+is enabled. The separate default-off [cold issuer](boot-framebuffer-issuer.md)
+can defer an exactly associated actual ARM early mapping. Neither route adds a
+physical KMS caller. Other configurations attach genfb immediately.
 
 1. Call `simplefb_console_reserve(owner)` before `config_finalize` ends.
    The owner must be non-NULL. Only one reservation can exist.
@@ -73,20 +74,13 @@ sh ember/tools/virtgpu-console-contract.sh
 sh ember/tests/build-kernel.sh
 ```
 
-The new runner compiles the actual parser, attachment and ownership functions.
-It covers ordinary attachment, deferred selection and multi-console selection.
-The firmware, property, bus-map and genfb services are controlled adapters.
-Seven baseline cases reject narrowed addresses and strides, malformed geometry,
-address overflow and NULL ownership. Seven source mutants verify format,
-query, release, commit and exactly-once fallback guards.
-The kernel contract dispatcher runs this test in both modes.
-
-Baseline and changed translation units pass GCC 16 path analysis and Clang
-Static Analyzer with the retained AArch64 kernel headers and compile flags.
-The extra deferred variant defines `VIRTGPU_CONSOLE` for that translation unit.
-Cppcheck reports the same seven existing style findings in both versions.
-No categories are suppressed. Host ASan/UBSan checks pass.
-Valgrind Memcheck is unavailable on the macOS/arm64 host.
+The current runner uses the shared-record issuer fixture for actual parser,
+attachment and legacy ownership checks. It covers ordinary and deferred
+selection with controlled kernel, FDT, bus-map, property and genfb services.
+The old-export baseline route remains available. See the
+[issuer source checks](boot-framebuffer-issuer.md#source-checks) for controls
+and their limits. Valgrind Memcheck is unavailable on the macOS/arm64 host;
+ASan/UBSan is a distinct check.
 
 These are source and translation-unit checks. They do not establish a linked
 kernel, physical display output or an accelerated Plasma session.

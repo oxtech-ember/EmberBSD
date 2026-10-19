@@ -37,6 +37,7 @@ __KERNEL_RCSID(0, "$NetBSD: wsdisplay.c,v 1.166 2023/03/01 08:42:33 riastradh Ex
 #include "opt_wsdisplay_compat.h"
 #include "opt_wsmsgattrs.h"
 #include "opt_wsdisplay_earlyfb.h"
+#include "opt_wsdisplay_bootfb.h"
 #endif
 
 #include "wskbd.h"
@@ -1032,6 +1033,21 @@ wsdisplay_early_preattach(const struct wsscreen_descr *type, void *cookie,
 		return ENXIO;
 	atomic_store_release(&wsdisplay_early_phase, WSDISPLAY_EARLY_READY);
 	return 0;
+}
+#endif
+
+#ifdef WSDISPLAY_BOOTFB_DEFER
+#include <dev/wscons/wsdisplay_bootfbvar.h>
+
+bool
+wsdisplay_early_binding_matches(const struct wsscreen_descr *type, void *cookie)
+{
+
+	KASSERT(KERNEL_LOCKED_P());
+	return atomic_load_acquire(&wsdisplay_early_phase) ==
+	    WSDISPLAY_EARLY_READY && type == wsdisplay_early_type &&
+	    cookie == wsdisplay_early_cookie && panicstr == NULL &&
+	    wsdisplay_early_binding();
 }
 #endif
 

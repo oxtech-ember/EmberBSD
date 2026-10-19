@@ -4,11 +4,19 @@
 require 'tmpdir'
 require 'fileutils'
 require 'shellwords'
+require 'rbconfig'
 
 root = File.expand_path('../..', __dir__)
 source = ARGV[0] || root
 c = File.read(source + '/sys/dev/fdt/simplefb.c')
 baseline = !c.include?('simplefb_console_get_framebuffer')
+# Current ownership uses the one MI record. Keep old-export baseline controls.
+if c.include?('wsdisplay_bootfb_legacy_device')
+  env = { 'BOOTFB_LEGACY_ONLY' => '1' }
+  env['BOOTFB_SKIP_MUTANTS'] = '1' if ENV['SIMPLEFB_SKIP_MUTANTS'] == '1'
+  env['BOOTFB_EVIDENCE'] = ENV['SIMPLEFB_CAPTURE'] if ENV['SIMPLEFB_CAPTURE']
+  exec(env, RbConfig.ruby, root + '/ember/tools/bootfb-issuer-contract.rb', source)
+end
 Dir.mktmpdir('simplefb-', ENV.fetch('TMPDIR', '/tmp')) do |work|
   FileUtils.mkdir_p(work + '/sys')
   File.write(work + '/sys/bus.h', <<~HEADER)

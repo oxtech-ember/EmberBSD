@@ -11,7 +11,8 @@ require 'timeout'
 source = File.realpath(File.expand_path(ARGV[0] || '../..', ARGV[0] ? Dir.pwd : __dir__))
 inputs = %w[sys/arch/arm/fdt/arm_simplefb.c sys/arch/arm/fdt/arm_simplefb.h
             sys/dev/wscons/wsdisplay.c sys/dev/wscons/wsdisplay_vcons_util.c
-            sys/dev/wscons/wsdisplayvar.h]
+            sys/dev/wscons/wsdisplayvar.h sys/dev/fdt/simplefb_subr.c
+            sys/dev/fdt/simplefbvar.h]
 files = inputs.to_h { |p| [p, File.read(source + '/' + p)] }
 licenses = files.to_h { |p, body| [p, body.split(/^#(?:include|ifndef|ifdef _KERNEL_OPT)/, 2).first] }
 commands = []
@@ -72,6 +73,33 @@ flags = Shellwords.split(ENV.fetch('CFLAGS', ''))
 prefix = ENV['TEST_RUNNER'] ? [ENV.fetch('TEST_RUNNER')] : []
 Dir.mktmpdir('earlyfb-hooks-', ENV.fetch('TMPDIR', '/tmp')) do |work|
   puts "early framebuffer fixture temporary directory: #{work}"
+FileUtils.mkdir_p(work + '/sys')
+FileUtils.mkdir_p(work + '/dev/fdt')
+File.write(work + '/sys/bus.h', <<~H)
+  #ifndef EARLYFB_TEST_BUS_H
+  #define EARLYFB_TEST_BUS_H
+  #include <stdint.h>
+  typedef unsigned long bus_addr_t, bus_size_t, fixture_paddr_t;
+  typedef uintptr_t bus_space_handle_t;
+  struct bus_space { int token; int (*bs_map)(void *, bus_addr_t, bus_size_t, int, bus_space_handle_t *); };
+  typedef struct bus_space *bus_space_tag_t;
+  #define paddr_t fixture_paddr_t
+  #endif
+H
+File.write(work + '/sys/device.h', "typedef void *device_t;\n")
+File.write(work + '/sys/param.h', "#include <stdint.h>\n#include <stddef.h>\n#include <stdbool.h>\n#include <limits.h>\n#define PAGE_SIZE 4096\n")
+File.write(work + '/sys/errno.h', "#include_next <sys/errno.h>\n")
+File.write(work + '/sys/systm.h', "#include <string.h>\n")
+File.write(work + '/dev/fdt/fdtvar.h', <<~H)
+  int OF_finddevice(const char *); int OF_parent(int); int OF_getproplen(int, const char *);
+  int fdtbus_get_addr_cells(int); int fdtbus_get_size_cells(int);
+  int fdtbus_get_reg64(int, int, uint64_t *, uint64_t *);
+  int of_getprop_uint32(int, const char *, uint32_t *);
+  const char *fdtbus_get_string(int, const char *);
+H
+FileUtils.cp(source + '/sys/dev/fdt/simplefbvar.h', work + '/simplefbvar.h')
+FileUtils.cp(source + '/sys/dev/fdt/simplefbvar.h', work + '/dev/fdt/simplefbvar.h')
+FileUtils.cp(source + '/sys/dev/fdt/simplefb_subr.c', work + '/simplefb_subr.c')
   File.write(work + '/early-api.h', licenses.fetch(inputs[4]) + api)
   File.write(work + '/mi-state.h', licenses.fetch(inputs[2]) + registration + "\n")
   File.write(work + '/arm-state.h', licenses.fetch(inputs[0]) + state + "\n")
@@ -84,7 +112,7 @@ Dir.mktmpdir('earlyfb-hooks-', ENV.fetch('TMPDIR', '/tmp')) do |work|
     compilation += 1
     args = [*cc, '-std=c11', '-Wall', '-Werror', '-pthread', *flags,
             *(multi ? ['-DWSDISPLAY_MULTICONS'] : []), *(enabled ? ['-DWSDISPLAY_EARLYFB_HOOKS'] : []),
-            '-I' + work, source + '/ember/tools/earlyfb-hooks-contract.c',
+            '-I' + work, work + '/simplefb_subr.c', source + '/ember/tools/earlyfb-hooks-contract.c',
             '-o', work + '/contract']
     puts Shellwords.join(args)
     abort 'fixture compile failed' unless run.call("compile-#{compilation}-#{enabled}-#{multi}", args)
@@ -98,6 +126,8 @@ end
     to = evidence
     Dir.glob(work + '/*.h').each { |p| FileUtils.cp(p, to) }
     FileUtils.cp(source + '/ember/tools/earlyfb-hooks-contract.c', to + '/fixture.c')
+    FileUtils.cp(work + '/simplefb_subr.c', to + '/simplefb_subr.c')
+    %w[sys dev].each { |d| FileUtils.cp_r(work + '/' + d, to + '/' + d) }
     File.write(to + '/source.json', JSON.pretty_generate({
       source_sha256: (inputs + %w[ember/tools/earlyfb-hooks-contract.c ember/tools/earlyfb-hooks-contract.rb]).to_h { |p| [p, Digest::SHA256.file(source + '/' + p).hexdigest] },
       extraction: 'Unchanged complete named functions and exact static state/API blocks. Original licenses are preserved. Only kernel/FDT/rasops/atomic/pserialize services are controlled.',
