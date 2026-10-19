@@ -45,7 +45,9 @@ contract. No fake drain flag, POSTWRITE inference or fault registry is added.
 configuration, automatic attachment or new kernel API. Its Makefile reuses the
 selected configured kernel's actual DRM flags and headers. Set
 `EMBER_KERNEL_OBJDIR` to that matching kernel object directory. Audit the new
-helper/header/module and Makefile as source exceptions; all existing native
+frame-helper C/H, MMU4 backing C/H, table encoder C/H, MMU4 corevar header,
+module and Makefile as source exceptions. Audit every selected-S include against
+the selected kernel; its pathname alone does not prove compatibility. All existing native
 interfaces, generated options and strong symbols must match the selected kernel.
 The [sampled ABI helper](../tools/bcmv3d-hvs-prepare-abi.c) supplies an additional
 configuration/layout comparison, not a complete compatibility proof.
@@ -60,12 +62,41 @@ modload -b prepare-only=true -s "expected-buildinfo=EmberBSD:${kernel_commit}" \
 modunload bcmv3d_hvs_prepare
 ```
 
-INIT is finite and leaves no frame behind. Wrong properties, interrupt context,
+The normal INIT cycle is finite and leaves no frame behind. Wrong properties, interrupt context,
 framebuffer/console presence or unverified absence, wrong render/GPU0 identity and
 invalid display resources refuse before allocation. It rejects all display-probe
 mode properties. The operation does not map display resources, access MMIO, query
 or change clocks, invoke PHY/IOMMU owners, submit DMA, or expose a GEM handle.
 No compatibility claim permits use of a retained PHY owner's references.
+
+## Optional MMU4 backing cycle
+
+Add `mmu4-prepare-only=true` and `expected-mmu4-debug` to the required properties
+for an explicit MMU4 memory cycle. The supplied DEBUG is only an encoder profile.
+It is not a live register sample, an access grant or an MMU ownership claim.
+The module calls the [native backing helper](bcmv3d-mmu4-backing.md), checks its
+cached completion, complete-page counts and five PREWRITE operations, and checks
+BO accounting before and after destruction. It does not seal or program backing.
+The plain pattern cycle remains the default when both added properties are absent.
+
+```sh
+: "${kernel_commit:?Set the verified selected kernel commit}"
+: "${mmu4_debug:?Set the verified encoder profile in decimal}"
+modload -b prepare-only=true -b mmu4-prepare-only=true \
+    -i "expected-mmu4-debug=${mmu4_debug}" \
+    -s "expected-buildinfo=EmberBSD:${kernel_commit}" \
+    ./bcmv3d_hvs_prepare.kmod
+```
+
+Require the successful preparation and equal before/after accounting messages.
+If private cleanup refuses, INIT retains the backing, render reference and module
+code. Its return0 then preserves lifetime; it is not a successful preparation.
+FINI returns `EBUSY`. There is no retry or force-unload recovery. Keep these
+objects until controlled reboot. Constructor and clean pre-publication errors
+otherwise release their owned data and return the original positive errno.
+This cycle proves native allocation, PA/map correspondence and synchronization
+only. It does not prove hardware translation, HVS DMA, cache accessibility,
+firmware handoff, clocks, power, physical scanout or drain.
 
 ## Actual-source checks
 
@@ -88,3 +119,9 @@ pattern/PREWRITE, exact map/GEM/minor cleanup, process/property/framebuffer guar
 and focused causal mutants. Host sanitizers and static analyzers do not establish
 physical HVS or DMA behavior. See the [HVS core](bcm2712-display-hvs-core.md) for
 separate list, address-path and hardware-ownership boundaries.
+
+The module fixture also controls only the new backing API boundary. It checks
+mode/type rejection, constructor/prepare/status failures, complete geometry,
+error precedence, BO cleanup and retained render/code lifetime. Retained cleanup
+cases run in separate child processes without restoring uncertain map metadata.
+The backing helper's own fixture tests its actual implementation separately.

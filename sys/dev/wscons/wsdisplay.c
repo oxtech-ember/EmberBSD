@@ -36,6 +36,7 @@ __KERNEL_RCSID(0, "$NetBSD: wsdisplay.c,v 1.166 2023/03/01 08:42:33 riastradh Ex
 #ifdef _KERNEL_OPT
 #include "opt_wsdisplay_compat.h"
 #include "opt_wsmsgattrs.h"
+#include "opt_wsdisplay_earlyfb.h"
 #endif
 
 #include "wskbd.h"
@@ -69,6 +70,13 @@ __KERNEL_RCSID(0, "$NetBSD: wsdisplay.c,v 1.166 2023/03/01 08:42:33 riastradh Ex
 #include <dev/wscons/wsemulvar.h>
 #include <dev/wscons/wscons_callbacks.h>
 #include <dev/cons.h>
+
+#ifdef WSDISPLAY_EARLYFB_HOOKS
+#include <sys/atomic.h>
+#include <sys/cpu.h>
+#include <sys/errno.h>
+#include <sys/pserialize.h>
+#endif
 
 #include "locators.h"
 #include "ioconf.h"
@@ -948,6 +956,84 @@ wsdisplay_cnattach(const struct wsscreen_descr *type, void *cookie,
 	cn_tab = &wsdisplay_cons;
 	wsdisplay_console_initted = 2;
 }
+
+#ifdef WSDISPLAY_EARLYFB_HOOKS
+enum {
+	WSDISPLAY_EARLY_NONE,
+	WSDISPLAY_EARLY_STARTING,
+	WSDISPLAY_EARLY_REGISTERING,
+	WSDISPLAY_EARLY_BOUND,
+	WSDISPLAY_EARLY_READY
+};
+static unsigned int wsdisplay_early_phase;
+static const struct wsscreen_descr *wsdisplay_early_type;
+static void *wsdisplay_early_cookie;
+
+static bool
+wsdisplay_early_binding(void)
+{
+
+	return wsdisplay_console_initted == 1 &&
+	    wsdisplay_console_device == NULL && cn_tab == &wsdisplay_cons &&
+	    wsdisplay_console_conf.scrdata == wsdisplay_early_type &&
+	    wsdisplay_console_conf.emulcookie == wsdisplay_early_cookie;
+}
+
+int
+wsdisplay_early_output_snapshot(struct wsdisplay_early_output *out)
+{
+	struct wsdisplay_early_output value;
+	unsigned int phase;
+
+	if (out == NULL)
+		return EINVAL;
+	phase = atomic_load_acquire(&wsdisplay_early_phase);
+	if (phase < WSDISPLAY_EARLY_REGISTERING)
+		return ENXIO;
+	memset(&value, 0, sizeof(value));
+	value.bound = phase >= WSDISPLAY_EARLY_BOUND &&
+	    wsdisplay_early_binding();
+	value.ready = phase == WSDISPLAY_EARLY_READY && value.bound &&
+	    panicstr == NULL;
+	memcpy(out, &value, sizeof(value));
+	return 0;
+}
+
+int
+wsdisplay_early_preattach(const struct wsscreen_descr *type, void *cookie,
+    int ccol, int crow, long defattr, void (*replay)(void *), void *arg)
+{
+	int s;
+
+	if (type == NULL || cookie == NULL || replay == NULL)
+		return EINVAL;
+	if (panicstr != NULL || cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	/* The caller keeps the same attachment serialization as preattach. */
+	if (wsdisplay_console_initted != 0 || wsdisplay_console_device != NULL)
+		return EBUSY;
+	if (atomic_cas_uint(&wsdisplay_early_phase, WSDISPLAY_EARLY_NONE,
+	    WSDISPLAY_EARLY_STARTING) != WSDISPLAY_EARLY_NONE)
+		return EBUSY;
+	wsdisplay_early_type = type;
+	wsdisplay_early_cookie = cookie;
+	/* Cover output immediately after the real preattach publishes cn_tab. */
+	atomic_store_release(&wsdisplay_early_phase, WSDISPLAY_EARLY_REGISTERING);
+	wsdisplay_preattach(type, cookie, ccol, crow, defattr);
+	if (!wsdisplay_early_binding())
+		return ENXIO;
+	atomic_store_release(&wsdisplay_early_phase, WSDISPLAY_EARLY_BOUND);
+	s = pserialize_read_enter();
+	replay(arg);
+	pserialize_read_exit(s);
+	if (panicstr != NULL)
+		return EWOULDBLOCK;
+	if (!wsdisplay_early_binding())
+		return ENXIO;
+	atomic_store_release(&wsdisplay_early_phase, WSDISPLAY_EARLY_READY);
+	return 0;
+}
+#endif
 
 void
 wsdisplay_preattach(const struct wsscreen_descr *type, void *cookie,
@@ -2318,14 +2404,31 @@ wsdisplay_cnputc(dev_t dev, int i)
 {
 	struct wsscreen_internal *dc;
 	u_char c = i;
+#ifdef WSDISPLAY_EARLYFB_HOOKS
+	bool early_section = false;
+	int early_s = 0;
+
+	/* This wrapper publishes facts only after MI bootstrap. */
+	if (atomic_load_acquire(&wsdisplay_early_phase) >=
+	    WSDISPLAY_EARLY_REGISTERING) {
+		early_s = pserialize_read_enter();
+		if (wsdisplay_console_initted == 1 &&
+		    wsdisplay_console_device == NULL &&
+		    wsdisplay_console_conf.scrdata == wsdisplay_early_type &&
+		    wsdisplay_console_conf.emulcookie == wsdisplay_early_cookie)
+			early_section = true;
+		else
+			pserialize_read_exit(early_s);
+	}
+#endif
 
 	if (!wsdisplay_console_initted)
-		return;
+		goto out;
 
 	if ((wsdisplay_console_device != NULL) &&
 	    (wsdisplay_console_device->sc_scr[0] != NULL) &&
 	    (wsdisplay_console_device->sc_scr[0]->scr_flags & SCR_GRAPHICS))
-		return;
+		goto out;
 
 	dc = &wsdisplay_console_conf;
 	(*dc->wsemul->output)(dc->wsemulcookie, &c, 1, 1);
@@ -2335,6 +2438,12 @@ wsdisplay_cnputc(dev_t dev, int i)
 	    wsdisplay_multicons_enable && wsdisplay_ocn && wsdisplay_ocn->cn_putc)
 		wsdisplay_ocn->cn_putc(wsdisplay_ocn->cn_dev, i);
 #endif
+out:
+#ifdef WSDISPLAY_EARLYFB_HOOKS
+	if (early_section)
+		pserialize_read_exit(early_s);
+#endif
+	return;
 }
 
 static int

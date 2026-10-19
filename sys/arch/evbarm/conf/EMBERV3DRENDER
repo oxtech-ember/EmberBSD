@@ -6,3 +6,6 @@ options BCM2712_V3D_RENDER
 
 # Explicit DDC API only. The acceptance module starts each transfer.
 options BCM2712_DISPLAY_DDC
+
+# Link explicit ICAC, MMU4 and firmware-handoff APIs. No default caller.
+options BCM2712_DISPLAY_COMPONENTS

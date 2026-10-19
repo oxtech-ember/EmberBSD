@@ -173,6 +173,23 @@ void	wsdisplay_cnattach(const struct wsscreen_descr *, void *, int, int,
             long);
 void	wsdisplay_preattach(const struct wsscreen_descr *, void *, int, int,
             long);
+#ifdef WSDISPLAY_EARLYFB_HOOKS
+/* Actual binding/replay facts only. No stop, handoff or MMIO right is granted. */
+struct wsdisplay_early_output {
+	bool bound;
+	bool ready;
+};
+/*
+ * Use at the existing serialized boot preattach, after pserialize_init.
+ * The caller keeps all data stable. The synchronous callback can render, must
+ * not sleep, and is not retained. An error does not undo an actual binding.
+ * No close, drain, claim, fallback transition or ready setter exists here.
+ */
+int wsdisplay_early_preattach(const struct wsscreen_descr *, void *, int, int,
+    long, void (*)(void *), void *);
+int wsdisplay_early_output_snapshot(struct wsdisplay_early_output *);
+#endif
+
 void	wsdisplay_predetach(void);
 void	wsdisplay_cndetach(void);
 void	wsdisplay_multicons_suspend(bool);

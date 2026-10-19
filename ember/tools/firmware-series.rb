@@ -6,7 +6,13 @@ require 'fileutils'
 require 'json'
 require 'open3'
 
-abort 'usage: firmware-series.rb SOURCE EMPTY_OUTPUT' unless ARGV.length == 2
+recipe_ref = nil
+if ARGV.length == 4 && ARGV[2] == '--recipe-ref'
+  recipe_ref = ARGV[3]
+  abort 'Recipe ref must be a complete commit SHA' unless recipe_ref.match?(/\A[a-f0-9]{40}\z/)
+end
+abort 'usage: firmware-series.rb SOURCE EMPTY_OUTPUT [--recipe-ref COMMIT]' unless
+  ARGV.length == 2 || recipe_ref
 source = File.realpath(ARGV[0])
 output = File.expand_path(ARGV[1])
 abort 'Output must not be a symlink' if File.symlink?(output)
@@ -16,10 +22,27 @@ abort 'Source and output must not overlap' if output==source ||
 abort 'Output must be empty' if File.exist?(output) && (!File.directory?(output) || !Dir.empty?(output))
 root = File.expand_path('../..',__dir__)
 firmware = root+'/ember/firmware'
-series = File.readlines(firmware+'/series',chomp:true)
+# Historical recipes are read from immutable OS Git blobs, not a checkout.
+recipe_git = lambda do |*args|
+  out,err,status=Open3.capture3({'GIT_OPTIONAL_LOCKS'=>'0','GIT_NO_LAZY_FETCH'=>'1',
+    'GIT_TERMINAL_PROMPT'=>'0'},'git','--no-optional-locks','-C',root,*args)
+  abort "Cannot read recipe: #{err}" unless status.success?
+  out
+end
+read_recipe = lambda do |name|
+  recipe_ref ? recipe_git.call('show',recipe_ref+':ember/firmware/'+name) :
+    File.binread(firmware+'/'+name)
+end
+if recipe_ref
+  abort 'Recipe ref must identify a commit' unless recipe_git.call('cat-file','-t',recipe_ref).strip=='commit'
+end
+recipe_revision=recipe_ref || recipe_git.call('rev-parse','HEAD').strip
+series = read_recipe.call('series').lines.map(&:chomp)
+names = recipe_ref ? recipe_git.call('ls-tree','--name-only',recipe_ref+':ember/firmware').lines.map(&:chomp).grep(/\.diff\z/) :
+  Dir[firmware+'/*.diff'].map { |path| File.basename(path) }
 abort 'Series must name each diff once' unless series.uniq==series &&
-  series.all? { |name| name.match?(/\A[a-z0-9][a-z0-9-]*\.diff\z/) } &&
-  series.sort==Dir[firmware+'/*.diff'].map { |path| File.basename(path) }.sort
+  series.all? { |name| name.match?(/\A[a-z0-9][a-z0-9-]*\.diff\z/) } && series.sort==names.sort
+patches=series.to_h { |name| [name,read_recipe.call(name)] }
 pins = {'.'=>'246e70acd939d62b5a79f895984afd0a93bd83e9',
         'edk2-platforms'=>'c4b5d05de1f2ef633bdb4c175b5c118fcb2666ed',
         'arm-trusted-firmware'=>'a5c580fd539929af41cf483b7c1434db261dd51b',
@@ -30,7 +53,7 @@ hunks = 0
 series.each do |name|
   owner = if name.start_with?('tfa-') then 'arm-trusted-firmware'
           elsif name.start_with?('edk2-') then 'edk2' else 'edk2-platforms' end
-  lines = File.readlines(firmware+'/'+name)
+  lines = patches.fetch(name).lines
   path = nil
   lines.each_with_index do |line,index|
     if line.start_with?('--- ')
@@ -57,8 +80,8 @@ series.each do |name|
   abort "No file hunks in #{name}" unless path
 end
 FileUtils.mkdir_p(output+'/series')
-FileUtils.cp(firmware+'/series',output+'/series/series')
-series.each { |name| FileUtils.cp(firmware+'/'+name,output+'/series/'+name) }
+File.binwrite(output+'/series/series',read_recipe.call('series'))
+series.each { |name| File.binwrite(output+'/series/'+name,patches.fetch(name)) }
 commands = []
 run=lambda do |name,argv,input=nil,success=true|
   env={'GIT_NO_LAZY_FETCH'=>'1','GIT_OPTIONAL_LOCKS'=>'0','GIT_TERMINAL_PROMPT'=>'0'}
@@ -97,7 +120,7 @@ File.write(output+'/hunk-count-errors.json',JSON.pretty_generate(syntax)+"\n")
 series.each do |name|
   owner=if name.start_with?('tfa-') then 'arm-trusted-firmware'
         elsif name.start_with?('edk2-') then 'edk2' else 'edk2-platforms' end
-  run.call('apply-'+name,['patch','-s','-t','-N','-p1','-F0','-d',output+'/export/'+owner],File.binread(firmware+'/'+name))
+  run.call('apply-'+name,['patch','-s','-t','-N','-p1','-F0','-d',output+'/export/'+owner],patches.fetch(name))
   puts 'PASS: '+name
 end
 abort 'Invalid hunk counts: '+syntax.join('; ') unless syntax.empty?
@@ -139,13 +162,13 @@ FileUtils.mkdir_p(File.dirname(repeat_file))
 FileUtils.cp(output+'/export/arm-trusted-firmware/make_helpers/utilities.mk',repeat_file)
 repeat_sha=Digest::SHA256.file(repeat_file).hexdigest
 run.call('reject-repeated-patch',['patch','-s','-t','-N','-p1','-F0','-d',output+'/repeat-control'],
-  File.binread(firmware+'/tfa-shell-slice.diff'),false)
+  patches.fetch('tfa-shell-slice.diff'),false)
 repeat_command=commands.last
 abort 'Repeated patch prompted or reversed output' if
   (repeat_command[:stdout]+repeat_command[:stderr]).match?(/Assume -R|\[[yn]\]|\? /) ||
   Digest::SHA256.file(repeat_file).hexdigest!=repeat_sha
 puts 'PASS: repeated patch fails without prompt or reverse'
-File.write(output+'/receipt.json',JSON.pretty_generate({pins:pins,series:series,hunks:hunks,
-  patch_sha256:series.to_h { |name| [name,Digest::SHA256.file(firmware+'/'+name).hexdigest] },
+File.write(output+'/receipt.json',JSON.pretty_generate({recipe_revision:recipe_revision,pins:pins,series:series,hunks:hunks,
+  patch_sha256:series.to_h { |name| [name,Digest::SHA256.hexdigest(patches.fetch(name))] },
   inputs:inputs,outputs:results,fan_contract:fan_contract,repeat_control:true,scope:'All ordered patches applied forward with -t -N -p1 -F0 to only diff-referenced pinned Git blobs. No cache changes, fetch, reset, compiler, complete firmware build or device access.'})+"\n")
 puts "PASS: #{series.length} ordered patches, #{hunks} hunks, #{files.length} source paths"

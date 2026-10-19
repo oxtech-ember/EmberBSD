@@ -1035,11 +1035,22 @@ static struct {
 	struct sun60i_a733_npu_state before, after;
 } sun60i_npu_lease;
 
+/* Fixed inactive IOMMU1 peers. A733 manual v1.00 sections 4.1.6.84,106-116. */
+static const struct {
+	bus_size_t reg;
+	uint32_t mask;
+} sun60i_a733_display_isolation_regs[A733_DISPLAY_NISOLATION_REGS] = {
+	{ 0xa20, __BIT(31) }, { 0xa24, __BIT(16) | __BIT(0) },
+	{ 0xa40, __BIT(31) }, { 0xa44, __BIT(16) | __BIT(0) },
+	{ 0xa60, __BIT(31) }, { 0xa64, __BIT(31) },
+	{ 0xa6c, __BIT(16) | __BIT(0) }, { 0xa88, __BIT(31) },
+	{ 0xa8c, __BIT(18) | __BIT(2) }, { 0x5e4, __BIT(18) },
+};
 /* The pure DISPLAY core and native admission share this provider mutex. */
 static struct {
 	struct sun60i_a733_display_owner core;
 	int power, fault;
-	bool pck_retained, prepared, memory_claimed;
+	bool pck_retained, prepared, memory_claimed, isolation_claimed;
 	bool hdmi_prepared, tv0_prepared;
 	uint32_t memory[2][A733_DISPLAY_NMEMORY_REGS];
 	struct sun60i_a733_display_inputs after;
@@ -1048,6 +1059,10 @@ static struct {
 static uint32_t
 sun60i_a733_display_mask(bus_size_t reg)
 {
+	if (sun60i_display_lease.isolation_claimed)
+		for (u_int i = 0; i < A733_DISPLAY_NISOLATION_REGS; i++)
+			if (reg == sun60i_a733_display_isolation_regs[i].reg)
+				return sun60i_a733_display_isolation_regs[i].mask;
 	switch (reg) {
 	case PLL_REF_CTRL_REG:
 	case PLL_PERIPH0_CTRL_REG:
@@ -2089,6 +2104,121 @@ out:
 	return error;
 }
 
+/* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD; AI-assisted fixed IOMMU1 peer isolation admission. */
+/* Register facts: A733 manual v1.00. No peer MMIO or hardware writes. */
+static int
+sun60i_a733_display_isolation_read(struct sunxi_ccu_softc *sc,
+    uint32_t out[2][A733_DISPLAY_NISOLATION_REGS])
+{
+	uint32_t words[2][A733_DISPLAY_NISOLATION_REGS], power[2][3], after[2][3];
+	bus_addr_t addr;
+	bus_size_t size;
+	int error;
+
+	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
+	if (fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size) != 0 || size < 0xa90)
+		return ENXIO;
+	error = sun60i_a733_pck_display_isolation_snapshot(
+	    sun60i_display_lease.power, sun60i_display_lease.core.owner, power);
+	if (error != 0)
+		return error;
+	for (u_int s = 0; s < 2; s++) {
+		for (u_int i = 0; i < A733_DISPLAY_NISOLATION_REGS; i++) {
+			if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh,
+			    sun60i_a733_display_isolation_regs[i].reg,
+			    &words[s][i]) != 0)
+				return EFAULT;
+		}
+	}
+	for (u_int s = 0; s < 2; s++)
+		for (u_int i = 0; i < A733_DISPLAY_NISOLATION_REGS; i++)
+			if ((words[s][i] &
+			    sun60i_a733_display_isolation_regs[i].mask) != 0)
+				return EBUSY;
+	error = sun60i_a733_pck_display_isolation_snapshot(
+	    sun60i_display_lease.power, sun60i_display_lease.core.owner, after);
+	if (error != 0)
+		return error;
+	if (memcmp(power, after, sizeof(power)) != 0)
+		return EBUSY;
+	memcpy(out, words, sizeof(words));
+	return 0;
+}
+
+int
+sun60i_a733_ccu_display_isolation_reserve(struct clk *de0, const void *owner)
+{
+	struct sunxi_ccu_softc *sc;
+	uint32_t words[2][A733_DISPLAY_NISOLATION_REGS];
+	int error = sun60i_a733_display_handle(de0, &sc), cleanup;
+
+	if (error != 0)
+		return error;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (owner == NULL || sun60i_display_lease.core.owner != owner ||
+	    !sun60i_display_lease.memory_claimed) {
+		error = EINVAL;
+		goto done;
+	}
+	if (sun60i_display_lease.isolation_claimed ||
+	    sun60i_display_lease.pck_retained || sun60i_display_lease.fault != 0 ||
+	    sun60i_display_lease.core.writers != 0) {
+		error = EBUSY;
+		goto done;
+	}
+	error = sun60i_a733_pck_display_isolation_reserve(
+	    sun60i_display_lease.power, owner);
+	if (error != 0)
+		goto done;
+	/* Keep the masks until a failed acquisition releases its PCK slot. */
+	sun60i_display_lease.isolation_claimed = true;
+	error = sun60i_a733_display_isolation_read(sc, words);
+	if (error != 0) {
+		cleanup = sun60i_a733_pck_display_isolation_release(
+		    sun60i_display_lease.power, owner);
+		if (cleanup == 0)
+			sun60i_display_lease.isolation_claimed = false;
+		else
+			sun60i_display_lease.fault = error;
+	}
+done:
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
+int
+sun60i_a733_ccu_display_isolation_state(struct clk *de0, const void *owner,
+    uint32_t out[2][A733_DISPLAY_NISOLATION_REGS])
+{
+	struct sunxi_ccu_softc *sc;
+	uint32_t words[2][A733_DISPLAY_NISOLATION_REGS];
+	int error = sun60i_a733_display_handle(de0, &sc);
+
+	if (error != 0)
+		return error;
+	if (out == NULL)
+		return EINVAL;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (owner == NULL || sun60i_display_lease.core.owner != owner ||
+	    !sun60i_display_lease.isolation_claimed) {
+		error = EINVAL;
+		goto done;
+	}
+	if (sun60i_display_lease.fault != 0) {
+		error = EBUSY;
+		goto done;
+	}
+	error = sun60i_a733_display_isolation_read(sc, words);
+	if (error == 0)
+		memcpy(out, words, sizeof(words));
+	else if (sun60i_display_lease.pck_retained)
+		sun60i_a733_display_fault_locked(error);
+done:
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
 int
 sun60i_a733_ccu_display_reserve(struct clk *de0, int power, const void *owner)
 {
@@ -2132,7 +2262,21 @@ sun60i_a733_ccu_display_release(struct clk *de0, const void *owner)
 		error = EINVAL;
 	else if (sun60i_display_lease.pck_retained || sun60i_display_lease.fault != 0)
 		error = EBUSY;
+
+	else if (sun60i_display_lease.core.retained ||
+	    sun60i_display_lease.core.checking ||
+	    sun60i_display_lease.core.fault != 0)
+		error = EBUSY;
 	else {
+		if (sun60i_display_lease.isolation_claimed) {
+			error = sun60i_a733_pck_display_isolation_release(
+		    sun60i_display_lease.power, owner);
+			if (error != 0) {
+				mutex_exit(&sun60i_a733_ccu_lock);
+				return error;
+			}
+			sun60i_display_lease.isolation_claimed = false;
+		}
 		error = sun60i_a733_display_release(&sun60i_display_lease.core, owner);
 		if (error == 0) {
 			sun60i_display_lease.power = 0;
@@ -2214,13 +2358,27 @@ sun60i_a733_ccu_display_begin_de0(struct clk *de0, const void *owner,
 	error = sun60i_a733_pck_display_retain(arg.power, owner);
 	if (error != 0)
 		goto out;
+
 	sun60i_display_lease.pck_retained = *retained = true;
+	if (sun60i_display_lease.isolation_claimed) {
+		error = sun60i_a733_pck_display_isolation_retain(arg.power, owner);
+		if (error != 0)
+			goto failed;
+	}
 	error = sun60i_a733_display_begin_de0(&sun60i_display_lease.core,
 	    owner, sun60i_a733_display_inputs_read, &arg);
 	if (error != 0)
 		goto failed;
 	if (sun60i_display_lease.memory_claimed) {
 		error = sun60i_a733_display_memory_check(sc, memory);
+		if (error != 0)
+			goto failed;
+	}
+
+	if (sun60i_display_lease.isolation_claimed) {
+		uint32_t isolation[2][A733_DISPLAY_NISOLATION_REGS];
+
+		error = sun60i_a733_display_isolation_read(sc, isolation);
 		if (error != 0)
 			goto failed;
 	}
@@ -2279,6 +2437,12 @@ sun60i_a733_display_verify_locked(struct sunxi_ccu_softc *sc,
 		error = EBUSY;
 	if (error == 0 && sun60i_display_lease.memory_claimed)
 		error = sun60i_a733_display_memory_check(sc, memory);
+
+	if (error == 0 && sun60i_display_lease.isolation_claimed) {
+		uint32_t isolation[2][A733_DISPLAY_NISOLATION_REGS];
+
+		error = sun60i_a733_display_isolation_read(sc, isolation);
+	}
 	if (error == 0)
 		*out = in;
 	return error;

@@ -84,6 +84,9 @@ file	dev/wscons/wsdisplay_vcons.c		vcons
 file	dev/wscons/wsdisplay_vcons_util.c	vcons
 defflag	opt_vcons.h		VCONS_DRAW_INTR VCONS_INTR_DEBUG VCONS_DEBUG
 
+# Optional early framebuffer reader hooks. No stop or ownership API.
+defflag	opt_wsdisplay_earlyfb.h	WSDISPLAY_EARLYFB_HOOKS
+
 # generic support code for caching rendered glyphs in video memory
 define	glyphcache
 file	dev/wscons/wsdisplay_glyphcache.c	glyphcache
