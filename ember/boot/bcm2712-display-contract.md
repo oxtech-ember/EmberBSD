@@ -391,3 +391,7 @@ initial-inactivity snapshot grants no ownership, translation or stop/drain.
 The [typed shared-cache core](bcm2712-iommuc-core.md) source-tests one bounded
 transaction and irreversible member retention. It adds no native cache caller,
 MMU table programming, power/access grant or DMA-drain predicate.
+
+The [fixed MMU4 table encoder](bcm2712-mmu4-table-core.md) prepares byte images
+for one full-translation frame profile. It grants no native DMA, MMIO access,
+publication, cache ownership or stop/drain permission.
