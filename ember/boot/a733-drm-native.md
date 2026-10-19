@@ -140,3 +140,57 @@ They also release the caller's atomic-state reference before the worker runs.
 They keep assertions active with `NDEBUG`.
 They do not execute the DRM core or establish physical HDMI page flips.
 Physical KMS and desktop acceptance requires a matched kernel and native DE stage.
+
+
+## Direct KMS consumer
+
+`ember/tools/a733-drm-check.c` uses the native DRM UAPI and libc.
+It does not require Mesa, GBM or libdrm.
+Build it with the accepted GCC16 application compiler and EmberBSD sysroot:
+
+```sh
+"$CC" --sysroot="$SYSROOT" -O2 -static -std=c11 -D_NETBSD_SOURCE \
+    -Wall -Wextra -Werror \
+    -I"$SOURCE/sys/external/bsd/drm2/dist/include/uapi" \
+    "$SOURCE/ember/tools/a733-drm-check.c" -o a733-drm-check
+```
+
+After native DE and KMS registration succeed, select the actual display node.
+Use `--query` to check its driver, connector, mode, plane and properties:
+
+```sh
+./a733-drm-check --query /dev/dri/cardN
+```
+
+Use `--commit` for four finite atomic updates:
+
+```sh
+./a733-drm-check --commit /dev/dri/cardN
+```
+
+The consumer requires the `sun60idrm` driver and its single fixed-mode profile.
+It submits distinct red, green, blue and white XRGB8888 buffers.
+Each update first passes an atomic test-only request.
+The consumer waits for a matching page-flip event and an increasing timestamp.
+It accepts sequence zero without claiming a hardware vblank counter.
+A bounded `EBUSY` retry covers worker cleanup after the preceding event.
+It rejects unrelated errors, wrong events and timeouts.
+It does not modify a submitted image.
+
+The consumer does not request disable or remove an active framebuffer.
+Close releases its userspace handles.
+The provider retains the final active frame under its native lifetime contract.
+The final white image can remain active until another accepted frame or reboot.
+Page-flip completion does not replace independent physical image observation.
+
+Run the actual-consumer host fixture:
+
+```sh
+python3 -B ember/tools/a733-drm-check-contract.py
+```
+
+The fixture uses the native UAPI declarations with host I/O models.
+It checks property selection, atomic arguments, every generated pixel,
+malformed events, bounded retries and failure admission.
+It keeps checks active with `NDEBUG`.
+It does not access a DRM device or prove an HDMI image.
