@@ -33,10 +33,11 @@ struct sun60i_a733_npu_dma_info {
 #include "sun60i_a733_npu_run.h"
 #include "sun60i_a733_npu_fe.h"
 static struct sun60i_a733_npu_run state;
-static struct sun60i_a733_npu_dma dma;
+static struct sun60i_a733_npu_dma context;
 static struct clk clock1;
 static const int cookie;
-static uint32_t regs[1024], offsets[64], values[64];
+static int bus_token, irq_token;
+static uint32_t regs[1024], write_offsets[64], values[64];
 static unsigned maps, unmaps, established, removed, proofs, peeks, pokes;
 static unsigned writes, ordinary_reads, barriers, delays, setters, retains;
 static unsigned fail_proof, fail_peek, fail_poke;
@@ -92,14 +93,14 @@ static int of_getprop_uint32_array(int phandle, const char *name,
  out[1] = bad_route == 12 ? 64 : 65;
  out[2] = bad_route == 13 ? 1 : 4; return bad_route == 14 ? EIO : 0;
 }
-static int fdtbus_get_reg(int phandle, unsigned index, bus_addr_t *addr, bus_size_t *size)
+static int fdtbus_get_reg(int phandle, unsigned slot, bus_addr_t *addr, bus_size_t *size)
 {
- CHECK(phandle == 8 && index < 2);
- *addr = index == 0 ? 0x03400000 : 0x03460000;
- *size = index == 0 ? 0x10000 : 0x100000;
- if (bad_route == 15 + index * 3) return EIO;
- if (bad_route == 16 + index * 3) (*addr)++;
- if (bad_route == 17 + index * 3) (*size)++;
+ CHECK(phandle == 8 && slot < 2);
+ *addr = slot == 0 ? 0x03400000 : 0x03460000;
+ *size = slot == 0 ? 0x10000 : 0x100000;
+ if (bad_route == 15 + slot * 3) return EIO;
+ if (bad_route == 16 + slot * 3) (*addr)++;
+ if (bad_route == 17 + slot * 3) (*size)++;
  return 0;
 }
 static int sun60i_a733_ccu_npu_ready(struct clk *clock, const void *owner)
@@ -120,12 +121,12 @@ static int sun60i_a733_pck_npu_ready(int power, const void *owner)
 static int bus_space_map(bus_space_tag_t tag, uint64_t addr, bus_size_t size,
     int flags, bus_space_handle_t *handle)
 {
- CHECK(!in_irq && tag == (void *)1 && addr == 0x03600000 && size == 4096 && !flags);
+ CHECK(!in_irq && tag == &bus_token && addr == 0x03600000 && size == 4096 && !flags);
  maps++; if (fail_map) return ENOMEM; *handle = 0x55; return 0;
 }
 static void bus_space_unmap(bus_space_tag_t tag, bus_space_handle_t handle,
     bus_size_t bytes)
-{ CHECK(!in_irq && !dma.retained && tag == (void *)1 && handle == 0x55 && bytes == 4096); unmaps++; }
+{ CHECK(!in_irq && !context.retained && tag == &bus_token && handle == 0x55 && bytes == 4096); unmaps++; }
 static bool valid_offset(bus_size_t offset)
 {
  static const unsigned allowed[] = { 0,4,0x10,0x14,0x24,0x30,0x388,0x3a4,
@@ -137,12 +138,12 @@ static bool valid_offset(bus_size_t offset)
 static int bus_space_peek_4(bus_space_tag_t tag, bus_space_handle_t h,
     bus_size_t offset, uint32_t *out)
 {
- CHECK(!in_irq && tag == (void *)1 && h == 0x55 && valid_offset(offset));
+ CHECK(!in_irq && tag == &bus_token && h == 0x55 && valid_offset(offset));
  if (++peeks == fail_peek) return EFAULT;
  *out = regs[offset / 4];
  if (peeks == unstable_peek) *out ^= 2;
  if (mismatch_step && state.status.step == mismatch_step && pokes != 0 &&
-     offset == offsets[writes - 1]) {
+     offset == write_offsets[writes - 1]) {
   *out ^= offset == 0x10c ? 0x20000 : offset == 0x90 ? 0x40 : 1;
   mismatch_step = 0;
  }
@@ -153,20 +154,20 @@ static int bus_space_peek_4(bus_space_tag_t tag, bus_space_handle_t h,
 }
 static void record_write(bus_size_t offset, uint32_t value)
 {
- CHECK(dma.retained && state.status.publication_attempted && writes < 64);
- offsets[writes] = (uint32_t)offset; values[writes++] = value;
+ CHECK(context.retained && state.status.publication_attempted && writes < 64);
+ write_offsets[writes] = (uint32_t)offset; values[writes++] = value;
 }
 static void bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t h,
     bus_size_t offset, uint32_t value)
 {
- CHECK(in_irq && state.irq_lock.held && tag == (void *)1 && h == 0x55);
+ CHECK(in_irq && state.irq_lock.held && tag == &bus_token && h == 0x55);
  CHECK(offset == 0x14 && value == 0); record_write(offset, value); regs[5] = value; mask_drained = false;
  if (late_error) regs[4] = 0x40000000;
 }
 static uint32_t bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t h,
     bus_size_t offset)
 {
- CHECK(in_irq && state.irq_lock.held && tag == (void *)1 && h == 0x55);
+ CHECK(in_irq && state.irq_lock.held && tag == &bus_token && h == 0x55);
  CHECK(offset == 0x10 || offset == 0x14); ordinary_reads++;
  uint32_t value = regs[offset / 4];
  if (offset == 0x10) regs[4] = 0;
@@ -177,7 +178,7 @@ static uint32_t bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t h,
 static void bus_space_barrier(bus_space_tag_t tag, bus_space_handle_t h,
     bus_size_t offset, bus_size_t bytes, int flags)
 {
- CHECK(tag == (void *)1 && h == 0x55 && bytes == 4);
+ CHECK(tag == &bus_token && h == 0x55 && bytes == 4);
  CHECK((offset == 0x14 || offset == 0x654 || offset == 0x3a4) && flags == BUS_SPACE_BARRIER_WRITE);
  if (in_irq) CHECK(offset == 0x14 && state.irq_lock.held);
  if (offset == 0x14) mask_drained = true;
@@ -188,8 +189,8 @@ static void bus_space_barrier(bus_space_tag_t tag, bus_space_handle_t h,
 static int bus_space_poke_4(bus_space_tag_t tag, bus_space_handle_t h,
     bus_size_t offset, uint32_t value)
 {
- CHECK(!in_irq && tag == (void *)1 && h == 0x55 && valid_offset(offset));
- CHECK(dma.retained && state.status.publication_attempted);
+ CHECK(!in_irq && tag == &bus_token && h == 0x55 && valid_offset(offset));
+ CHECK(context.retained && state.status.publication_attempted);
  if (++pokes == fail_poke) return EFAULT;
  record_write(offset, value); regs[offset / 4] = value;
  if (offset == 0x14 && value == 0) mask_drained = false;
@@ -202,25 +203,25 @@ static int bus_space_poke_4(bus_space_tag_t tag, bus_space_handle_t h,
  }
  return 0;
 }
-static void *fdtbus_intr_establish_xname(int phandle, unsigned index, int ipl,
+static void *fdtbus_intr_establish_xname(int phandle, unsigned slot, int ipl,
     int flags, int (*fn)(void *), void *arg, const char *name)
 {
- CHECK(!in_irq && phandle == 7 && index == 0 && ipl == IPL_VM);
- CHECK(flags == FDT_INTR_MPSAFE && name != NULL && dma.retained);
+ CHECK(!in_irq && phandle == 7 && slot == 0 && ipl == IPL_VM);
+ CHECK(flags == FDT_INTR_MPSAFE && name != NULL && context.retained);
  established++; if (fail_irq) return NULL;
  callback = fn; callback_arg = arg;
  unsigned reads = peeks + ordinary_reads;
  in_irq = true; CHECK(fn(arg) == 0); in_irq = false;
- CHECK(peeks + ordinary_reads == reads); return (void *)2;
+ CHECK(peeks + ordinary_reads == reads); return &irq_token;
 }
 static void fdtbus_intr_disestablish(int phandle, void *ih)
-{ CHECK(!in_irq && !dma.retained && phandle == 7 && ih == (void *)2); removed++; }
+{ CHECK(!in_irq && !context.retained && phandle == 7 && ih == &irq_token); removed++; }
 static void delay(unsigned us)
 { CHECK(!in_irq && us == 1000); delays++; CHECK(delays <= 100); }
 static int sun60i_a733_npu_dma_info(const struct sun60i_a733_npu_dma *m,
     struct sun60i_a733_npu_dma_info *out)
 {
- CHECK(!in_irq && m == &dma);
+ CHECK(!in_irq && m == &context);
  if (++infos == fail_info) return EIO;
  *out = (struct sun60i_a733_npu_dma_info){ 0x100000,0x110000,0x120000,
   0x1001,0x01001000,m->bytes,m->retained };
@@ -242,7 +243,7 @@ static int sun60i_a733_npu_dma_set_commands(struct sun60i_a733_npu_dma *m,
  static const uint8_t expected[40] = {
   0x61,0,1,8,0x7f,0xff,0xff,0xff,2,0x0e,1,8,1,7,0,0x30,
   0,0,0,0x48,1,7,0,0x30,1,0x0e,1,8,0x44,0,0,0,0,0,0,0x10,0,0,0,0 };
- CHECK(!in_irq && m == &dma && !m->retained && count == 40);
+ CHECK(!in_irq && m == &context && !m->retained && count == 40);
  CHECK(memcmp(bytes, expected, 40) == 0); setters++;
  if (fail_set)
   return EIO;
@@ -251,7 +252,7 @@ static int sun60i_a733_npu_dma_set_commands(struct sun60i_a733_npu_dma *m,
 }
 static int sun60i_a733_npu_dma_retain(struct sun60i_a733_npu_dma *m)
 {
- CHECK(!in_irq && m == &dma && !m->retained && state.status.publication_attempted); retains++;
+ CHECK(!in_irq && m == &context && !m->retained && state.status.publication_attempted); retains++;
  m->retained = !clean_retain; return fail_retain ? EIO : 0;
 }
 #include "sun60i_a733_npu_fe.c"
@@ -267,35 +268,35 @@ static void reset(void)
  mask_drained=address_drained=terminal_unstable=false; dma_reads=0;
  terminal_idle=0x7fffffff; terminal_address=0x01001028;
  callback=NULL; callback_arg=NULL; property_bytes=12; irq_value=0x10; bad_route=0;
- dma=(struct sun60i_a733_npu_dma){false,16};
+ context=(struct sun60i_a733_npu_dma){false,16};
  regs[1]=0x7fffffff; regs[0x24/4]=0x9202; regs[0x30/4]=0x1000003b;
  regs[0x10c/4]=0x1000000; regs[0x90/4]=0x80000000; regs[0x414/4]=3;
 }
 static int run(void)
-{ return sun60i_a733_npu_run_once(&state,(void *)1,&clock1,9,&cookie,7,"npu",&dma); }
+{ return sun60i_a733_npu_run_once(&state,&bus_token,&clock1,9,&cookie,7,"npu",&context); }
 int main(void)
 {
  reset(); CHECK(run()==0);
  CHECK(state.status.retained && state.status.terminal && state.status.started);
  CHECK(state.status.irq_count > state.status.irq_baseline && state.status.irq_bits==0x10);
  CHECK(state.status.irq_mask_readback==0 && state.status.terminal_status==0);
- CHECK(maps==1 && unmaps==0 && established==1 && removed==0 && dma.bytes==40);
+ CHECK(maps==1 && unmaps==0 && established==1 && removed==0 && context.bytes==40);
  unsigned complete_peeks = peeks;
- CHECK(writes>=14 && offsets[0]==0 && values[0]==0x70900);
- CHECK(offsets[1]==0 && values[1]==0x70100 && offsets[2]==0x3a8 && values[2]==2);
- CHECK(offsets[3]==0x100 && values[3]==0x140021);
- CHECK(offsets[4]==0x3b4 && values[4]==0x1001 && offsets[5]==0x388 && values[5]==0x21);
+ CHECK(writes>=14 && write_offsets[0]==0 && values[0]==0x70900);
+ CHECK(write_offsets[1]==0 && values[1]==0x70100 && write_offsets[2]==0x3a8 && values[2]==2);
+ CHECK(write_offsets[3]==0x100 && values[3]==0x140021);
+ CHECK(write_offsets[4]==0x3b4 && values[4]==0x1001 && write_offsets[5]==0x388 && values[5]==0x21);
  CHECK(values[7]==0x1020000 && values[8]==0x80000040 && values[9]==2);
  unsigned oldio=peeks+pokes+ordinary_reads+maps+proofs;
  CHECK(run()==EALREADY && oldio==peeks+pokes+ordinary_reads+maps+proofs);
  struct sun60i_a733_npu_run_status copy;
  sun60i_a733_npu_run_status(&state,&copy); CHECK(copy.terminal && oldio==peeks+pokes+ordinary_reads+maps+proofs);
- for(unsigned i=1;i<=10;i++) { reset(); fail_proof=i; CHECK(run()!=0); CHECK(!state.status.terminal); if(dma.retained) CHECK(regs[5]==0); }
- for(unsigned i=1;i<=36;i++) { reset(); fail_peek=i; CHECK(run()!=0); CHECK(!writes && !dma.retained && unmaps==1); }
- for(unsigned i=1;i<=14;i++) { reset(); fail_poke=i; CHECK(run()!=0); CHECK(dma.retained && !unmaps && !removed && !state.status.terminal); CHECK(writes && offsets[writes-1]==0x14 && values[writes-1]==0); }
+ for(unsigned i=1;i<=10;i++) { reset(); fail_proof=i; CHECK(run()!=0); CHECK(!state.status.terminal); if(context.retained) CHECK(regs[5]==0); }
+ for(unsigned i=1;i<=36;i++) { reset(); fail_peek=i; CHECK(run()!=0); CHECK(!writes && !context.retained && unmaps==1); }
+ for(unsigned i=1;i<=14;i++) { reset(); fail_poke=i; CHECK(run()!=0); CHECK(context.retained && !unmaps && !removed && !state.status.terminal); CHECK(writes && write_offsets[writes-1]==0x14 && values[writes-1]==0); }
  for (unsigned i=37; i<=complete_peeks; i++) {
   reset(); fail_peek=i; CHECK(run()!=0);
-  CHECK(dma.retained && !unmaps && !removed && !state.status.terminal);
+  CHECK(context.retained && !unmaps && !removed && !state.status.terminal);
  }
  for (unsigned i=19; i<=36; i++) {
   reset(); unstable_peek=i; CHECK(run()==EBUSY);
@@ -303,14 +304,14 @@ int main(void)
  }
  for (unsigned i=1; i<=12; i++) {
   reset(); mismatch_step=i; CHECK(run()==EIO);
-  CHECK(dma.retained && !state.status.terminal && !unmaps && !removed);
+  CHECK(context.retained && !state.status.terminal && !unmaps && !removed);
  }
  for (unsigned i=1; i<=5; i++) {
   reset(); bad_info=i; CHECK(run()==EINVAL && !maps && !writes && !retains && !established);
  }
  for (unsigned i=1; i<=2; i++) {
   reset(); fail_info=i; CHECK(run()!=0 && !writes && !established);
-  CHECK(i==1 ? (!maps && !retains) : (dma.retained && !unmaps));
+  CHECK(i==1 ? (!maps && !retains) : (context.retained && !unmaps));
  }
  reset(); clean_retain=true; CHECK(run()==EIO && !writes && !unmaps && !established);
  CHECK(state.status.publication_attempted && !state.status.retained);
@@ -320,7 +321,7 @@ int main(void)
   CHECK(run()==EBUSY && !writes && !retains && unmaps==1);
  }
  reset(); prestart_irq=true; CHECK(run()==EIO && state.status.irq_fault && !state.status.started);
- CHECK(dma.retained && !unmaps && !removed && regs[0x3a4/4]==0);
+ CHECK(context.retained && !unmaps && !removed && regs[0x3a4/4]==0);
  reset(); irq_value=0; CHECK(run()==ETIMEDOUT && !state.status.terminal && state.status.irq_count==0);
  reset(); state.status.irq_count=17; no_irq=true;
  CHECK(run()==ETIMEDOUT && state.status.irq_baseline==17 && !state.status.terminal);
@@ -332,13 +333,13 @@ int main(void)
   if (i==1) terminal_address=0x01000fff;
   if (i==2) terminal_address=0x01002000;
   if (i==3) terminal_address=0xffffffff;
-  CHECK(run()==ETIMEDOUT && !state.status.terminal && delays==100 && dma.retained);
+  CHECK(run()==ETIMEDOUT && !state.status.terminal && delays==100 && context.retained);
  }
  reset(); terminal_unstable=true; CHECK(run()==ETIMEDOUT && !state.status.terminal && delays==100);
  reset(); fail_map=true; CHECK(run()==ENOMEM && !peeks && !writes);
- reset(); fail_irq=true; CHECK(run()!=0 && !writes && !unmaps && dma.retained);
- reset(); fail_set=true; CHECK(run()!=0 && !writes && !dma.retained);
- reset(); fail_retain=true; CHECK(run()!=0 && dma.retained && !unmaps && !removed);
+ reset(); fail_irq=true; CHECK(run()!=0 && !writes && !unmaps && context.retained);
+ reset(); fail_set=true; CHECK(run()!=0 && !writes && !context.retained);
+ reset(); fail_retain=true; CHECK(run()!=0 && context.retained && !unmaps && !removed);
  reset(); regs[1]=1; CHECK(run()==EBUSY && !writes && !retains);
  reset(); regs[5]=1; CHECK(run()==EBUSY && !writes && !retains);
  reset(); bad_mask=true; CHECK(run()!=0 && state.status.irq_fault && !state.status.terminal);
