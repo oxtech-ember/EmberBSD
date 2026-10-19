@@ -33,13 +33,13 @@ de352_buffer_free(bus_dma_tag_t tag, struct sun60i_a733_de352_buffer *b)
 }
 
 static int
-de352_buffer_alloc(bus_dma_tag_t tag, size_t bytes, int flags,
+de352_buffer_alloc(bus_dma_tag_t tag, size_t bytes, size_t alignment, int flags,
     struct sun60i_a733_de352_buffer *b)
 {
 	int error;
 
 	b->bytes = bytes;
-	error = bus_dmamem_alloc(tag, bytes, DE352_DMA_PAGE, 0, &b->segment,
+	error = bus_dmamem_alloc(tag, bytes, alignment, 0, &b->segment,
 	    1, &b->nsegments, flags);
 	if (error != 0) {
 		b->nsegments = 0;
@@ -71,7 +71,7 @@ de352_buffer_alloc(bus_dma_tag_t tag, size_t bytes, int flags,
 		goto fail;
 	}
 	b->address = b->map->dm_segs[0].ds_addr;
-	if ((b->address & (DE352_DMA_PAGE - 1)) != 0 ||
+	if ((b->address & (alignment - 1)) != 0 ||
 	    b->address >= DE352_DMA_LIMIT || bytes > DE352_DMA_LIMIT - b->address) {
 		error = ERANGE;
 		goto fail;
@@ -172,10 +172,12 @@ sun60i_a733_de352_dma_prepare(bus_dma_tag_t parent, uint32_t width,
 		return error;
 	}
 	m->pixel_tag = m->tag;
-	error = de352_buffer_alloc(m->tag, bytes, BUS_DMA_WAITOK, &m->pixels);
+	error = de352_buffer_alloc(m->tag, bytes, DE352_DMA_PAGE, BUS_DMA_WAITOK,
+	    &m->pixels);
 	if (error != 0)
 		goto fail;
-	error = de352_buffer_alloc(m->tag, DE352_DMA_QUEUE_BYTES, BUS_DMA_WAITOK,
+	error = de352_buffer_alloc(m->tag, DE352_DMA_QUEUE_BYTES,
+	    DE352_DMA_PAGE, BUS_DMA_WAITOK,
 	    &m->queue);
 	if (error != 0)
 		goto fail;
@@ -268,7 +270,8 @@ sun60i_a733_de352_dma_prepare_map(bus_dma_tag_t parent, bus_dmamap_t map,
 	m->height = height;
 	m->pitch = pitch;
 	m->layer = words;
-	error = de352_buffer_alloc(m->tag, DE352_DMA_QUEUE_BYTES, BUS_DMA_NOWAIT,
+	error = de352_buffer_alloc(m->tag, DE352_DMA_QUEUE_BYTES,
+	    DE352_DMA_PAGE, BUS_DMA_NOWAIT,
 	    &m->queue);
 	if (error != 0)
 		goto fail;
@@ -299,4 +302,57 @@ sun60i_a733_de352_dma_retire(struct sun60i_a733_de352_dma *m)
 	    BUS_DMASYNC_POSTWRITE);
 	m->published = false;
 	return sun60i_a733_de352_dma_destroy(m);
+}
+
+/* A zero V2 directory grants no translated page. It is not a DMA map. */
+int
+sun60i_a733_de352_guard_prepare(bus_dma_tag_t parent,
+    struct sun60i_a733_de352_guard **out)
+{
+	struct sun60i_a733_de352_guard *g;
+	int error;
+
+	if (parent == NULL || out == NULL)
+		return EINVAL;
+	g = kmem_zalloc(sizeof(*g), KM_SLEEP);
+	error = bus_dmatag_subregion(parent, 0, DE352_DMA_LIMIT - 1,
+	    &g->tag, BUS_DMA_WAITOK);
+	if (error != 0) {
+		kmem_free(g, sizeof(*g));
+		return error;
+	}
+	error = de352_buffer_alloc(g->tag, 16384, 16384, BUS_DMA_WAITOK,
+	    &g->directory);
+	if (error != 0) {
+		bus_dmatag_destroy(g->tag);
+		kmem_free(g, sizeof(*g));
+		return error;
+	}
+	*out = g;
+	return 0;
+}
+
+int
+sun60i_a733_de352_guard_publish(struct sun60i_a733_de352_guard *g)
+{
+	if (g == NULL || !g->directory.loaded || g->published)
+		return EINVAL;
+	bus_dmamap_sync(g->tag, g->directory.map, 0, g->directory.bytes,
+	    BUS_DMASYNC_PREWRITE);
+	/* Retain before any operation that can make the table observable. */
+	g->published = true;
+	return 0;
+}
+
+int
+sun60i_a733_de352_guard_destroy(struct sun60i_a733_de352_guard *g)
+{
+	if (g == NULL)
+		return EINVAL;
+	if (g->published)
+		return EBUSY;
+	de352_buffer_free(g->tag, &g->directory);
+	bus_dmatag_destroy(g->tag);
+	kmem_free(g, sizeof(*g));
+	return 0;
 }

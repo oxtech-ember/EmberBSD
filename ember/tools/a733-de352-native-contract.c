@@ -57,10 +57,15 @@ static int isolation_error, isolation_calls, isolation_fault_call;
 static unsigned memory_writes, memory_write_fault, memory_readback_fault;
 static unsigned memory_change_call, cold_change_call, memory_map_fault;
 static unsigned memory_order[4];
+static bool cold_test, peer_power_on, cold_flush_clear;
+static int peer_power_error;
+static unsigned cold_writes, cold_fault_write, cold_readback_write;
+static unsigned cold_change_write;
+static uint32_t cold_write_regs[64], cold_write_values[64];
 static uint64_t sequence;
 static unsigned event_polls, event_limit;
 static uint32_t corrupt_copy_reg;
-static uint32_t de[0x400000/4], iommu[0x840/4], nsi[0x420/4], clocks[2][7];
+static uint32_t de[0x400000/4], iommu[0xe40/4], nsi[0x420/4], clocks[2][7];
 static struct clk clock_de0;
 static const void *lease_owner;
 static uint32_t power_cells[2], iommu_cells[3], nsi_cells[2];
@@ -123,7 +128,7 @@ static int OF_parent(int node) { return node==1?2:node==2?3:0; }
 static int OF_getproplen(int node,const char *name) { (void)name;return translated==node?24:-1; }
 static bool of_hasprop(int node,const char *name) { (void)node;(void)name;return false; }
 static int bus_space_map(bus_space_tag_t t,bus_addr_t a,bus_size_t n,int flags,bus_space_handle_t *h)
-{ (void)t;(void)flags;CHECK((a==0x5000000&&n==0x400000)||(a==0x3910000&&n==0x840)||(a==0x2020000&&n==0x420));*h=a==0x5000000?1:a==0x3910000?2:3;if(memory_map_fault==*h&&retained)return ENOMEM;space_maps++;return 0; }
+{ (void)t;(void)flags;CHECK((a==0x5000000&&n==0x400000)||(a==0x3910000&&n==0xe40)||(a==0x2020000&&n==0x420));*h=a==0x5000000?1:a==0x3910000?2:3;if(memory_map_fault==*h&&retained)return ENOMEM;space_maps++;return 0; }
 static void bus_space_unmap(bus_space_tag_t t,bus_space_handle_t h,bus_size_t n)
 { (void)t;(void)n;CHECK(h>=1&&h<=3);space_unmaps++; }
 static int bus_space_peek_4(bus_space_tag_t,bus_space_handle_t,bus_size_t,uint32_t *);
@@ -142,6 +147,8 @@ int sun60i_a733_ccu_display_isolation_reserve(struct clk *c,const void *owner)
 { CHECK(c==&clock_de0&&claimed&&memory_claimed&&!retained&&owner==lease_owner);if(isolation_error)return isolation_error;isolation_claimed=true;return 0; }
 int sun60i_a733_ccu_display_isolation_state(struct clk *c,const void *owner,uint32_t out[2][A733_DISPLAY_NISOLATION_REGS])
 { CHECK(c==&clock_de0&&isolation_claimed&&retained&&owner==lease_owner);isolation_calls++;if(isolation_calls==isolation_fault_call)return EBUSY;if((unsigned)isolation_calls==memory_change_call)nsi[0x414/4]^=8;if((unsigned)isolation_calls==cold_change_call)de[0x8000/4]=1;memset(out,0,2*A733_DISPLAY_NISOLATION_REGS*sizeof(uint32_t));return 0; }
+static int sun60i_a733_ccu_display_begin_peer_access(struct clk *c,const void *owner)
+{ CHECK(c==&clock_de0&&isolation_claimed&&retained&&owner==lease_owner);if(peer_power_error)return peer_power_error;peer_power_on=true;return 0; }
 static int sun60i_a733_ccu_display_release(struct clk *c,const void *owner)
 { CHECK(c==&clock_de0&&claimed&&!retained&&owner==lease_owner);releases++;if(ccu_release_error)return ccu_release_error;claimed=memory_claimed=isolation_claimed=false;return 0; }
 static int sun60i_a733_ccu_display_memory_state(struct clk *c,const void *owner,uint32_t out[2][7])
@@ -172,7 +179,9 @@ static int bus_space_peek_4(bus_space_tag_t tag,bus_space_handle_t h,bus_size_t 
  (void)tag;reads++;CHECK((off&3)==0);
  if((int)h==read_fault_region&&off==read_fault_reg)return EIO;
  if(h==1){CHECK(retained&&off<sizeof(de));*out=de[off/4];}
- else if(h==2){CHECK(memory_claimed&&off<sizeof(iommu));*out=iommu[off/4];}
+ else if(h==2){CHECK(memory_claimed&&off<sizeof(iommu));
+  if(cold_test&&off>=0x400&&off<0x800)CHECK(peer_power_on);
+  *out=iommu[off/4];}
  else {CHECK(h==3&&memory_claimed&&off<sizeof(nsi));*out=nsi[off/4];}
  return 0;
 }
@@ -181,6 +190,20 @@ static int bus_space_poke_4(bus_space_tag_t tag,bus_space_handle_t h,bus_size_t 
  struct sun60i_de352_softc *sc=active_softc;
  struct sun60i_a733_de352_dma *dma=sc->pending.dma?sc->pending.dma:sc->dma;
  (void)tag;
+ if(cold_test&&h==2){
+  CHECK(retained&&claimed&&memory_claimed&&isolation_claimed&&peer_power_on);
+  CHECK(sc->dma==NULL&&de[0x8004/4]==0&&(de[0x8000/4]&1)==0);
+  CHECK(sc->guard&&sc->guard->published&&sc->guard->directory.map->prewrites==1);
+  CHECK(off!=0x84&&off!=0x1c);
+  CHECK(cold_writes<__arraycount(cold_write_regs));
+  cold_write_regs[cold_writes]=(uint32_t)off;cold_write_values[cold_writes]=value;cold_writes++;
+  if(cold_writes==cold_fault_write)return EIO;
+  bool mic_flush=off>=0x400&&(off-0x400)%0x200==0x18;
+  if(cold_writes!=cold_readback_write)iommu[off/4]=cold_flush_clear&&mic_flush?0:value;
+  else if(mic_flush)iommu[off/4]=2; /* Invalid readback, not a permitted self-clear. */
+  if(cold_writes==cold_change_write)iommu[0x88/4]=1;
+  return 0;
+ }
  if(h==2||h==3){
   CHECK(retained&&claimed&&memory_claimed&&isolation_claimed&&sc->dma==NULL&&de[0x8004/4]==0&&(de[0x8000/4]&1)==0);
   CHECK(iommu[0]==0x16&&iommu[0x14/4]==1&&iommu[0x838/4]==0);
@@ -218,6 +241,7 @@ static void init(struct sun60i_de352_softc *sc)
  reserve_error=memory_error=begin_error=mode_error=prepare_error=start_error=0;
  attempt_begin=true;claimed=memory_claimed=retained=started=irq_masked=power_claimed=false;lease_owner=NULL;
  isolation_claimed=false;isolation_error=isolation_calls=isolation_fault_call=0;
+ cold_test=peer_power_on=cold_flush_clear=false;peer_power_error=0;cold_writes=cold_fault_write=cold_readback_write=cold_change_write=0;
  memory_writes=memory_write_fault=memory_readback_fault=memory_change_call=cold_change_call=memory_map_fault=0;memset(memory_order,0,sizeof(memory_order));
  no_busy=no_finish=no_copy=no_vblank=same_sequence=bad_w1c=false;
  read_fault_region=write_fault=memory_calls=memory_fault_call=0;read_fault_reg=0;sequence=0;event_polls=event_limit=corrupt_copy_reg=0;
@@ -233,6 +257,8 @@ static void init(struct sun60i_de352_softc *sc)
 }
 static void reboot_fixture(struct sun60i_de352_softc *sc)
 {
+ if(sc->guard){sc->guard->published=false;CHECK(sun60i_a733_de352_guard_destroy(sc->guard)==0);sc->guard=NULL;}
+
  /* The fixture models a reset after asserting retention. Production cannot do this. */
  struct de352_frame *frames[]={&sc->active,&sc->pending};
  for(unsigned i=0;i<2;i++)if(frames[i]->dma){frames[i]->dma->published=false;de352_frame_drop(frames[i],false);memset(frames[i],0,sizeof(*frames[i]));}
@@ -377,10 +403,69 @@ managed_checks(void)
  }
  managed_init(&sc);de[0x8004/4]=1;CHECK(de352_run(&sc)==EBUSY&&memory_writes==0&&writes==0&&sc.retained);
  managed_init(&sc);de[0x8000/4]=1;CHECK(de352_run(&sc)==EBUSY&&memory_writes==0&&writes==0&&sc.retained);
- managed_init(&sc);iommu[0x14/4]=0;CHECK(de352_run(&sc)==EOPNOTSUPP&&begins==0&&memory_writes==0&&writes==0&&!sc.retained);
+ managed_init(&sc);iommu[0x14/4]=2;CHECK(de352_run(&sc)==EOPNOTSUPP&&begins==0&&memory_writes==0&&writes==0&&!sc.retained);
+}
+static void cold_init(struct sun60i_de352_softc *sc) {
+ init(sc);cold_test=true;memset(iommu,0,sizeof(iommu));iommu[0]=0x16;
+ iommu[0x10/4]=0xffffffc0; /* Preserve all unrelated reset bits. */
+ iommu[0x2c/4]=0x3007f;iommu[0x80/4]=3;
+ for(unsigned i=0;i<6;i++)iommu[(0x400+i*0x200+0x30)/4]=1;
+}
+static void cold_checks(void) {
+ struct sun60i_de352_softc sc;unsigned count;
+ cold_init(&sc);CHECK(de352_run(&sc)==0&&sc.cold_initialized&&sc.guard->published);
+ CHECK(iommu[0x14/4]==1&&iommu[0x10/4]==UINT32_MAX&&iommu[0x1c/4]==0);
+ CHECK(iommu[0x20/4]==sc.guard->directory.address>>14);
+ for(unsigned i=0;i<16384;i++)CHECK(((unsigned char *)sc.guard->directory.cpu)[i]==0);
+ CHECK(sun60i_a733_de352_guard_destroy(sc.guard)==EBUSY);
+ CHECK(sequence>=2&&started&&sc.dma->published);
+ count=cold_writes;CHECK(count>15&&cold_write_regs[count-1]==0x14&&cold_write_values[count-1]==1);
+ for(unsigned i=0;i<6;i++){CHECK(iommu[(0x404+i*0x200)/4]==1);CHECK(iommu[(0x430+i*0x200)/4]==0);}
+ CHECK(de352_memory(&sc)==0);
+ iommu[0xe38/4]=1;CHECK(de352_memory(&sc)==EBUSY);
+ reboot_fixture(&sc);
+ for(unsigned fault=1;fault<=count;fault++)for(unsigned kind=0;kind<3;kind++){
+  cold_init(&sc);if(kind==0)cold_fault_write=fault;if(kind==1)cold_readback_write=fault;if(kind==2)cold_change_write=fault;
+  int result=de352_run(&sc);
+  if(result==0||!sc.retained||!sc.guard||!sc.guard->published||sc.dma!=NULL)fprintf(stderr,"cold fault=%u kind=%u result=%d writes=%u\n",fault,kind,result,cold_writes);
+  CHECK(result!=0&&sc.retained&&sc.guard&&sc.guard->published&&sc.dma==NULL);
+  CHECK(cold_writes==fault&&writes==0&&!started&&ccu_faults==1&&releases==0);
+  reboot_fixture(&sc);
+ }
+ for(unsigned i=0;i<CI_COUNT;i++){
+  cold_init(&sc);uint32_t reg=de352_cold_reg(i);
+  if(i==CI_RESET)continue;
+  if(i==CI_VERSION||i==CI_ENABLE)iommu[reg/4]=2;
+  else if(i==CI_AUTOGATE)iommu[reg/4]=1;
+  else if(i==CI_TTB)iommu[reg/4]=0x40000;
+  else if(i==CI_PREFETCH)iommu[reg/4]=0x80000000;
+  else if(i==CI_TLB_MODE||i==CI_PTW_MODE)iommu[reg/4]=2;
+  else if(i==CI_IRQ_MASK)iommu[reg/4]=4;
+  else if(i>=CI_MIC_BASE&&(i-CI_MIC_BASE)%4==0)iommu[reg/4]=2;
+  else if(i>=CI_MIC_BASE&&(i-CI_MIC_BASE)%4==2)iommu[reg/4]=2;
+  else iommu[reg/4]=1;
+  CHECK(de352_run(&sc)!=0&&cold_writes==0&&writes==0&&sc.guard==NULL);
+  reboot_fixture(&sc);
+ }
+ for(unsigned i=0;i<CI_COUNT;i++){
+  cold_init(&sc);read_fault_region=2;read_fault_reg=de352_cold_reg(i);
+  CHECK(de352_run(&sc)==EIO&&cold_writes==0&&writes==0&&sc.guard==NULL);reboot_fixture(&sc);
+ }
+ cold_init(&sc);peer_power_error=ETIMEDOUT;
+ CHECK(de352_run(&sc)==ETIMEDOUT&&!peer_power_on&&cold_writes==0&&sc.guard==NULL);reboot_fixture(&sc);
+ cold_init(&sc);iommu[0x1c/4]=0x7fff0003;
+ CHECK(de352_run(&sc)==0&&iommu[0x1c/4]==0x7fff0003);reboot_fixture(&sc);
+ cold_init(&sc);cold_flush_clear=true;
+ CHECK(de352_run(&sc)==0&&sc.cold_initialized);reboot_fixture(&sc);
+ for(int f=1;f<=5;f++){
+  cold_init(&sc);fail_call=f;
+  CHECK(de352_run(&sc)==EIO&&cold_writes==0&&sc.guard==NULL);reboot_fixture(&sc);
+ }
 }
 int main(void)
 {
+ guard_checks();
+ cold_checks();
  struct sun60i_de352_softc sc;struct fdt_attach_args faa={1,NULL,(void *)(uintptr_t)2};
  init(&sc);CHECK(de352_match(NULL,NULL,&faa));de352_attach(NULL,&sc,&faa);CHECK(sc.valid&&reads==0&&writes==0&&space_maps==0);
  CHECK(de352_bindings(&sc));iommu_status="okay";CHECK(!de352_bindings(&sc));iommu_status=NULL;CHECK(!de352_bindings(&sc));iommu_status="disabled";
@@ -403,7 +488,7 @@ int main(void)
  init(&sc);memory_error=EBUSY;pck_release_error=EIO;
  CHECK(de352_run(&sc)==EBUSY&&!sc.reserved&&sc.power_reserved&&!claimed&&power_claimed&&power_releases==1&&sc.release_error==EIO);
  CHECK(de352_run(&sc)==EBUSY&&releases==1&&power_releases==1);
- const unsigned ir[]={0,0x14,0x838};for(unsigned i=0;i<3;i++){init(&sc);iommu[ir[i]/4]=i==2?1:0;CHECK(de352_run(&sc)==EOPNOTSUPP&&writes==0&&begins==0&&releases==1&&power_releases==1);}
+ const unsigned ir[]={0,0x14,0x838};for(unsigned i=0;i<3;i++){init(&sc);iommu[ir[i]/4]=i==2?1:(i==1?2:0);CHECK(de352_run(&sc)==EOPNOTSUPP&&writes==0&&begins==0&&releases==1&&power_releases==1);}
  init(&sc);iommu[0x804/4]=2;CHECK(de352_run(&sc)==EOPNOTSUPP&&writes==0&&releases==1&&power_releases==1);
  init(&sc);read_fault_region=2;CHECK(de352_run(&sc)==EIO&&writes==0&&releases==1&&power_releases==1);
  init(&sc);attempt_begin=false;begin_error=EBUSY;CHECK(de352_run(&sc)==EBUSY&&!sc.retained&&releases==1&&power_releases==1&&writes==0);

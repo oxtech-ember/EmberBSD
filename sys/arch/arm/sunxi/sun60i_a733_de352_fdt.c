@@ -30,7 +30,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define DE352_BASE 0x05000000
 #define DE352_SIZE 0x400000
 #define DE352_IOMMU1_BASE 0x03910000
-#define DE352_IOMMU1_SIZE 0x840
+#define DE352_IOMMU1_SIZE 0xe40
 #define DE352_NSI_BASE 0x02020000
 #define DE352_NSI_SIZE 0x420
 #define DE352_TIMEOUT_NS UINT64_C(100000000)
@@ -42,6 +42,13 @@ struct de352_memory_snapshot {
 	uint32_t version, valid;
 	uint32_t clocks[2][A733_DISPLAY_NMEMORY_REGS], iommu[2][5], nsi[2][3];
 };
+
+enum {
+	CI_VERSION, CI_RESET, CI_ENABLE, CI_AUTOGATE, CI_TTB, CI_PREFETCH,
+	CI_FLUSH, CI_TLB_MODE, CI_TLB_REQUEST, CI_PTW_MODE, CI_PTW_REQUEST,
+	CI_IRQ_MASK, CI_IRQ_STATUS, CI_MIC_BASE, CI_COUNT = CI_MIC_BASE + 6 * 4
+};
+struct de352_cold_state { uint32_t words[2][CI_COUNT]; };
 
 struct sun60i_a733_de352_client {
 	const void *owner;
@@ -66,6 +73,9 @@ struct sun60i_de352_softc {
 	struct sun60i_a733_de352_dma *dma;
 	struct sun60i_a733_output_mode mode;
 	struct de352_memory_snapshot memory;
+	struct sun60i_a733_de352_guard *guard;
+	struct de352_cold_state cold;
+	bool cold_initialized;
 	bool valid, mapped, power_reserved, reserved, retained;
 	int stage, step, result, release_error;
 	uint32_t last_status;
@@ -147,6 +157,8 @@ de352_field(struct sun60i_de352_softc *sc, uint32_t reg,
 	return (after & mask) == value ? 0 : EIO;
 }
 
+static int de352_cold_verify(struct sun60i_de352_softc *);
+
 /* Caller holds the one display reservation. No IOMMU or NSI write is made. */
 static int
 de352_memory(struct sun60i_de352_softc *sc)
@@ -205,7 +217,7 @@ de352_memory(struct sun60i_de352_softc *sc)
 	    iommu[0][2] != 1 || iommu[0][3] != 1 || iommu[0][4] != 0 ||
 	    (nsi[0][0] & 3) != 0 || (nsi[0][2] & 1) == 0)
 		return EOPNOTSUPP;
-	return 0;
+	return sc->cold_initialized ? de352_cold_verify(sc) : 0;
 }
 
 /* A complete stable capture must precede this restricted local profile. */
@@ -242,6 +254,227 @@ de352_memory_cold(struct sun60i_de352_softc *sc)
 	if (error != 0 || (word & 1) != 0)
 		return error != 0 ? error : EBUSY;
 	return 0;
+}
+
+/* Fixed v0x16 global and MIC controls. No error-clear register is included. */
+static uint32_t
+de352_cold_reg(u_int index)
+{
+	static const uint32_t global[] = {
+		0, 0x10, 0x14, 0x1c, 0x20, 0x2c, 0x30, 0x40, 0x54,
+		0x60, 0x6c, 0x80, 0x88
+	};
+	static const uint32_t micro[] = { 4, 0x18, 0x30, 0x38 };
+
+	KASSERT(index < CI_COUNT);
+	if (index < CI_MIC_BASE)
+		return global[index];
+	return 0x400 + ((index - CI_MIC_BASE) / 4) * 0x200 +
+	    micro[(index - CI_MIC_BASE) % 4];
+}
+
+static int
+de352_cold_read(struct sun60i_de352_softc *sc, bus_space_handle_t ih,
+    struct de352_cold_state *out)
+{
+	struct de352_cold_state state;
+	uint32_t peers[2][A733_DISPLAY_NISOLATION_REGS];
+	int error;
+
+	error = sun60i_a733_ccu_display_ready(sc->de0, sc);
+	if (error == 0)
+		error = sun60i_a733_ccu_display_isolation_state(sc->de0, sc, peers);
+	if (error != 0)
+		return error;
+	for (u_int sample = 0; sample < 2; sample++) {
+		for (u_int i = 0; i < CI_COUNT; i++) {
+			error = bus_space_peek_4(sc->bst, ih, de352_cold_reg(i),
+			    &state.words[sample][i]);
+			if (error != 0)
+				return error;
+		}
+	}
+	if (memcmp(state.words[0], state.words[1], sizeof(state.words[0])) != 0)
+		return EBUSY;
+	error = sun60i_a733_ccu_display_ready(sc->de0, sc);
+	if (error == 0)
+		error = sun60i_a733_ccu_display_isolation_state(sc->de0, sc, peers);
+	if (error != 0)
+		return error;
+	*out = state;
+	return 0;
+}
+
+static bool
+de352_cold_admit(const struct de352_cold_state *state)
+{
+	const uint32_t *w = state->words[0];
+
+	if (w[CI_VERSION] != 0x16 || w[CI_ENABLE] != 0 ||
+	    (w[CI_AUTOGATE] != 0 && w[CI_AUTOGATE] != 0x7fff0003) ||
+	    w[CI_TTB] > 0x3ffff || (w[CI_PREFETCH] & ~0x3007fU) != 0 ||
+	    w[CI_FLUSH] != 0 || w[CI_TLB_MODE] > 1 || w[CI_TLB_REQUEST] != 0 ||
+	    w[CI_PTW_MODE] > 1 || w[CI_PTW_REQUEST] != 0 ||
+	    (w[CI_IRQ_MASK] & ~3U) != 0 || w[CI_IRQ_STATUS] != 0)
+		return false;
+	for (u_int i = CI_MIC_BASE; i < CI_COUNT; i += 4) {
+		if (w[i] > 1 || w[i + 1] != 0 || w[i + 2] > 1 || w[i + 3] != 0)
+			return false;
+	}
+	return true;
+}
+
+/* A MIC request can clear. This is not a flush-completion assertion. */
+static int
+de352_cold_same(struct de352_cold_state *expected,
+    const struct de352_cold_state *actual)
+{
+	for (u_int i = 0; i < CI_COUNT; i++) {
+		if (actual->words[0][i] == expected->words[0][i])
+			continue;
+		if (i >= CI_MIC_BASE && (i - CI_MIC_BASE) % 4 == 1 &&
+		    expected->words[0][i] == 1 && actual->words[0][i] == 0)
+			continue;
+		return EBUSY;
+	}
+	*expected = *actual;
+	return 0;
+}
+
+static int
+de352_cold_verify(struct sun60i_de352_softc *sc)
+{
+	struct de352_cold_state current;
+	bus_space_handle_t ih;
+	int error;
+
+	if (sc->guard == NULL || !sc->guard->published)
+		return EINVAL;
+	error = bus_space_map(sc->bst, DE352_IOMMU1_BASE, DE352_IOMMU1_SIZE, 0, &ih);
+	if (error != 0)
+		return error;
+	error = de352_cold_read(sc, ih, &current);
+	if (error == 0)
+		error = de352_cold_same(&sc->cold, &current);
+	bus_space_unmap(sc->bst, ih, DE352_IOMMU1_SIZE);
+	return error;
+}
+
+/* A bounded native request sequence. Physical RCQ remains the acceptance test. */
+static int
+de352_cold_prepare(struct sun60i_de352_softc *sc)
+{
+	struct { u_int index; uint32_t mask, value; } steps[32];
+	struct de352_cold_state expected, current;
+	bus_space_handle_t ih;
+	uint32_t before, after, value;
+	u_int count = 0;
+	int error;
+
+	error = de352_memory_cold(sc);
+	if (error == 0)
+		error = sun60i_a733_ccu_display_begin_peer_access(sc->de0, sc);
+	if (error != 0)
+		return error;
+	/* Domain 2 is now retained ON. Only now may MIC0/1 be accessed. */
+	error = bus_space_map(sc->bst, DE352_IOMMU1_BASE, DE352_IOMMU1_SIZE, 0, &ih);
+	if (error != 0)
+		return error;
+	error = de352_cold_read(sc, ih, &expected);
+	if (error != 0)
+		goto out;
+	if (!de352_cold_admit(&expected)) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	error = sun60i_a733_de352_guard_prepare(sc->dmat, &sc->guard);
+	if (error != 0)
+		goto out;
+#define CI_STEP(i, m, v) do { \
+	KASSERT(count < __arraycount(steps)); \
+	steps[count].index = (i); steps[count].mask = (m); \
+	steps[count++].value = (v); \
+} while (0)
+	CI_STEP(CI_RESET, 0x3f, 0);
+	CI_STEP(CI_IRQ_MASK, 3, 0);
+	for (u_int i = CI_MIC_BASE; i < CI_COUNT; i += 4)
+		CI_STEP(i + 2, 1, 0);
+	for (u_int i = CI_MIC_BASE; i < CI_COUNT; i += 4)
+		CI_STEP(i, 1, 1);
+	CI_STEP(CI_TTB, 0x3ffff, (uint32_t)(sc->guard->directory.address >> 14));
+	CI_STEP(CI_PREFETCH, 0x3007f, 0);
+	CI_STEP(CI_TLB_MODE, 1, 1);
+	CI_STEP(CI_PTW_MODE, 1, 1);
+	CI_STEP(CI_RESET, 0x3f, 0x3f);
+	CI_STEP(CI_FLUSH, 3, 3);
+	for (u_int i = CI_MIC_BASE; i < CI_COUNT; i += 4)
+		CI_STEP(i + 1, 1, 1);
+	CI_STEP(CI_COUNT, 0, 10);
+	CI_STEP(CI_FLUSH, 3, 0);
+	CI_STEP(CI_ENABLE, 1, 1);
+#undef CI_STEP
+	/* No later uncertainty permits release of this guard directory. */
+	error = sun60i_a733_de352_guard_publish(sc->guard);
+	if (error != 0)
+		goto out;
+	for (u_int n = 0; n < count; n++) {
+		const u_int index = steps[n].index;
+		uint32_t reg;
+
+		error = de352_memory_cold(sc);
+		if (error == 0)
+			error = de352_cold_read(sc, ih, &current);
+		if (error == 0)
+			error = de352_cold_same(&expected, &current);
+		if (error != 0)
+			goto out;
+		if (index == CI_COUNT) {
+			/* Pinned BSP timing input, not observed completion. */
+			delay(steps[n].value);
+			continue;
+		}
+		reg = de352_cold_reg(index);
+		error = bus_space_peek_4(sc->bst, ih, reg, &before);
+		if (error != 0)
+			goto out;
+		if (before != expected.words[0][index]) {
+			error = EBUSY;
+			goto out;
+		}
+		value = (before & ~steps[n].mask) | steps[n].value;
+		if (value == before)
+			continue;
+		error = bus_space_poke_4(sc->bst, ih, reg, value);
+		if (error != 0)
+			goto out;
+		bus_space_barrier(sc->bst, ih, reg, 4,
+		    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+		error = bus_space_peek_4(sc->bst, ih, reg, &after);
+		if (error != 0)
+			goto out;
+		if (after != value && !(index >= CI_MIC_BASE &&
+		    (index - CI_MIC_BASE) % 4 == 1 && after == 0)) {
+			error = EIO;
+			goto out;
+		}
+		expected.words[0][index] = expected.words[1][index] = after;
+	}
+	error = de352_memory_cold(sc);
+	if (error == 0)
+		error = de352_cold_read(sc, ih, &current);
+	if (error == 0)
+		error = de352_cold_same(&expected, &current);
+	if (error == 0) {
+		sc->cold = expected;
+		sc->cold_initialized = true;
+	}
+out:
+	bus_space_unmap(sc->bst, ih, DE352_IOMMU1_SIZE);
+	if (sc->guard != NULL && !sc->guard->published) {
+		(void)sun60i_a733_de352_guard_destroy(sc->guard);
+		sc->guard = NULL;
+	}
+	return error;
 }
 
 /* No global IOMMU, table, interrupt, shared clock or peer register is written. */
@@ -610,7 +843,7 @@ de352_submit(struct sun60i_de352_softc *sc)
 static int
 de352_run(struct sun60i_de352_softc *sc)
 {
-	bool held = false, managed = false;
+	bool held = false, managed = false, cold = false;
 	int error;
 
 	if (!sc->valid)
@@ -632,7 +865,11 @@ de352_run(struct sun60i_de352_softc *sc)
 	if (error != 0)
 		goto fail;
 	error = de352_memory(sc);
-	if (error == EOPNOTSUPP && de352_memory_manageable(&sc->memory)) {
+	if (error == EOPNOTSUPP && sc->memory.valid == 3 &&
+	    sc->memory.iommu[0][0] == 0x16 && sc->memory.iommu[0][2] == 0 &&
+	    sc->memory.iommu[0][3] <= 1 && sc->memory.iommu[0][4] == 0)
+		cold = true;
+	if (error == EOPNOTSUPP && (cold || de352_memory_manageable(&sc->memory))) {
 		/* Reserve inactive peers before any retained local write. */
 		error = sun60i_a733_ccu_display_isolation_reserve(sc->de0, sc);
 		managed = error == 0;
@@ -651,6 +888,14 @@ de352_run(struct sun60i_de352_softc *sc)
 	if (error != 0)
 		goto fail;
 	sc->mapped = true;
+	if (cold) {
+		error = de352_cold_prepare(sc);
+		if (error != 0)
+			goto fail;
+		error = de352_memory(sc);
+		if (error != 0 && error != EOPNOTSUPP)
+			goto fail;
+	}
 	if (managed) {
 		error = de352_memory_prepare(sc);
 		if (error != 0)

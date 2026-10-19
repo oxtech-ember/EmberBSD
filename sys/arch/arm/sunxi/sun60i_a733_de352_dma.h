@@ -52,4 +52,15 @@ int sun60i_a733_de352_dma_publish(struct sun60i_a733_de352_dma *);
 /* No destruction after publication, including failed or timed-out writes. */
 int sun60i_a733_de352_dma_destroy(struct sun60i_a733_de352_dma *);
 
+/* Retained zeroed 16 KiB V2 IOMMU directory. No translated entries exist. */
+struct sun60i_a733_de352_guard {
+	bus_dma_tag_t tag;
+	struct sun60i_a733_de352_buffer directory;
+	bool published;
+};
+int sun60i_a733_de352_guard_prepare(bus_dma_tag_t,
+    struct sun60i_a733_de352_guard **);
+int sun60i_a733_de352_guard_publish(struct sun60i_a733_de352_guard *);
+int sun60i_a733_de352_guard_destroy(struct sun60i_a733_de352_guard *);
+
 #endif

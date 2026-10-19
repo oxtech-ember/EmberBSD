@@ -90,8 +90,9 @@ Any failure after retention keeps all claims and records sticky failure.
 
 This profile does not write global IOMMU enable/reset, table addresses,
 interrupt controls, TLB invalidation, shared clocks or peer registers. A
-global-off IOMMU1 still requires a separate cold-init contract and physical
-acceptance. The inactive-peer lease alone does not authorize global writes.
+global-off IOMMU1 uses the separate [bounded cold-init sequence](a733-iommu1-cold-init.md).
+That sequence still needs physical acceptance. The inactive-peer lease alone
+does not authorize global writes.
 
 The read-only `memory` sysctl returns native-endian 32-bit unsigned words:
 version,valid,clocks[2][7],iommu[2][5],nsi[2][3]. Version is 1. Valid bit 0

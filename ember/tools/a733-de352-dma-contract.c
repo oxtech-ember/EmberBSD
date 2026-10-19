@@ -32,7 +32,7 @@ static int calls, fail_call, tags, allocations, cpus, maps, loads, syncs, posts;
 static int bad_alloc_segments, bad_map_segments, short_map, overlap;
 static uint64_t address_override;
 static int loaded_count;
-static bool published_seen, fail_nosleep;
+static bool published_seen, fail_nosleep, guard_allocating;
 static void *kmem_zalloc(size_t n, int f)
 { if (f == KM_NOSLEEP && fail_nosleep) return NULL; void *p = calloc(1,n); CHECK(p != NULL); return p; }
 static void kmem_free(void *p, size_t n) { (void)n; free(p); }
@@ -48,9 +48,9 @@ static void bus_dmatag_destroy(bus_dma_tag_t p) { CHECK(tags > 0); tags--; free(
 static int bus_dmamem_alloc(bus_dma_tag_t t, size_t n, size_t align,
     size_t boundary, bus_dma_segment_t *seg, int maxseg, int *count, int flags)
 {
-	(void)t; (void)flags; CHECK(align == 4096 && boundary == 0 && maxseg == 1);
+	(void)t; (void)flags; CHECK((align == 4096 || (align == 16384 && n == 16384)) && boundary == 0 && maxseg == 1);
 	if (fails()) return EIO;
-	seg->ds_len = n; seg->ds_addr = 0;
+	seg->ds_len = n; seg->ds_addr = 0; guard_allocating = align == 16384;
 	*count = bad_alloc_segments ? 2 : 1; allocations++; return 0;
 }
 static void bus_dmamem_free(bus_dma_tag_t t, bus_dma_segment_t *s, int n)
@@ -83,9 +83,9 @@ static int bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t m, void *p,
 	m->dm_mapsize = n;
 	m->dm_segs[0].ds_len = short_map ? n-4 : n;
 	m->dm_segs[0].ds_addr = address_override ? address_override :
-	    (loaded_count == 0 || overlap ? 0x100000 :
+	    (guard_allocating ? 0x30000000 : loaded_count == 0 || overlap ? 0x100000 :
 	    0x1000000 + (uint64_t)(loaded_count - 1) * 0x10000);
-	loaded_count++; loads++; return 0;
+	if (!guard_allocating) loaded_count++; guard_allocating=false; loads++; return 0;
 }
 static void bus_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t p)
 { (void)t; (void)p; CHECK(loads > 0); loads--; }
@@ -115,7 +115,7 @@ static void reset(void)
 	CHECK(tags == 0 && allocations == 0 && cpus == 0 && maps == 0 && loads == 0);
 	calls = fail_call = syncs = posts = loaded_count = 0;
 	bad_alloc_segments = bad_map_segments = short_map = overlap = 0;
-	address_override = 0; published_seen = fail_nosleep = false;
+	address_override = 0; published_seen = fail_nosleep = guard_allocating = false;
 }
 static void reject(int expected)
 {
@@ -124,8 +124,34 @@ static void reject(int expected)
 	CHECK(m == (void *)(uintptr_t)1 && syncs == 0);
 	reset();
 }
+static void guard_checks(void)
+{
+ struct sun60i_a733_de352_guard *g;
+ for(int fault=1;fault<=5;fault++){
+  reset();g=(void *)(uintptr_t)1;fail_call=fault;
+  CHECK(sun60i_a733_de352_guard_prepare((void *)2,&g)==EIO&&g==(void *)(uintptr_t)1);
+  reset();
+ }
+ reset();g=(void *)(uintptr_t)1;address_override=0x101000;
+ CHECK(sun60i_a733_de352_guard_prepare((void *)2,&g)==ERANGE&&g==(void *)(uintptr_t)1);reset();
+ address_override=UINT64_C(0x100000000);
+ CHECK(sun60i_a733_de352_guard_prepare((void *)2,&g)==ERANGE);reset();
+ short_map=1;CHECK(sun60i_a733_de352_guard_prepare((void *)2,&g)==EINVAL);reset();
+ CHECK(sun60i_a733_de352_guard_prepare(NULL,&g)==EINVAL);
+ CHECK(sun60i_a733_de352_guard_prepare((void *)2,NULL)==EINVAL);
+ CHECK(sun60i_a733_de352_guard_prepare((void *)2,&g)==0);
+ CHECK(g->directory.bytes==16384&&(g->directory.address&16383)==0&&!g->published);
+ for(unsigned i=0;i<16384;i++)CHECK(((unsigned char *)g->directory.cpu)[i]==0);
+ CHECK(sun60i_a733_de352_guard_publish(NULL)==EINVAL);
+ CHECK(sun60i_a733_de352_guard_publish(g)==0&&g->published&&syncs==1);
+ CHECK(sun60i_a733_de352_guard_publish(g)==EINVAL&&syncs==1);
+ CHECK(sun60i_a733_de352_guard_destroy(g)==EBUSY&&allocations==1);
+ g->published=false; /* Only this host fixture models reboot isolation. */
+ CHECK(sun60i_a733_de352_guard_destroy(g)==0);reset();
+}
 int main(void)
 {
+ guard_checks();
 	struct sun60i_a733_de352_dma *m;
 	reset();
 	for (int i = 1; i <= 9; i++) { fail_call=i; reject(EIO); }

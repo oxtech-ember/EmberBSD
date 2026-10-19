@@ -63,28 +63,13 @@ transition or releases retained resources. This mechanism permits a later
 admitted all-MIC access; it does not authorize global IOMMU initialization.
 The existing master-2 local operation does not call it.
 
-## Required global-init continuation
+## Global-init consumer
 
-1. Hold this peer lease, retained base/memory ownership and cold DE internal
-   reset/gates with no allocated or published DMA. Refuse an active peer.
-2. Capture IOMMU1 only after the existing exact CCU aperture/clock proof.
-   Check version 0x16, global enable, all six micro resets/bypass/error states,
-   global errors and register values needed by the selected init profile.
-3. Establish the exact managed sequence before native writes. A bypass-only
-   profile may omit tables or invalidation only with separate evidence. The
-   available BSP init does not prove flush completion. No fallback DMA tag
-   or unproved global-enable shortcut is admitted.
-4. Retain any table allocation before publishing its address. Recheck owned
-   state before each attempted operation and preserve claims on any failure.
-5. Only after actual completion and strict memory admission may DE internal
-   reset/gates and the existing RGB/RCQ path start.
-
-Unresolved hardware facts: IOMMU v0x16 global/system reset cache semantics;
-exact full-flush completion/status; safe initialized TTB alignment/extent and
-all-bypass operation. The BSP flush and local invalidation functions each
-wait 10 us, write the control back to zero, and return 0 without a status poll.
-These functions cannot serve as a successful-completion oracle. An asserted
-peer reset is an isolation condition, not a proved bus-drain event.
+The native DE consumer uses this lease for the separate
+[bounded IOMMU1 cold-init sequence](a733-iommu1-cold-init.md).
+That sequence retains a zero guard directory before its first write attempt.
+It has no flush-completion oracle. Source checks do not establish working DMA.
+The first physical RCQ and TV0 experiment must qualify that boundary.
 
 ## Provenance
 
