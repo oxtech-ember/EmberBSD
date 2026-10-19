@@ -162,6 +162,8 @@ probes, including nanosleep. No target program is executed by this check.
 These host checks pass on Apple Silicon macOS with GCC 16.2.0. They do not
 establish a complete tools build, amd64 userland, boot or image acceptance.
 
+Cross sysroots also need the [relative loader links](ld-elf-so-link.md).
+
 ## Acceptance is separate from host selection
 
 The wrapper runs the portable contracts listed in `ember/tools/kernel-contracts.sh`.

@@ -183,9 +183,10 @@ _PROGDEBUG.${PROG} := ${PROG}.debug
 
 
 .if ${SHLINKINSTALLDIR} != "/usr/libexec"
-SYMLINKS+=	${SHLINKINSTALLDIR}/${PROG} /usr/libexec/${PROG}
+# A relative target also resolves inside a DESTDIR or a cross sysroot.
+SYMLINKS+=	../..${SHLINKINSTALLDIR}/${PROG} /usr/libexec/${PROG}
 .if ${MKDEBUG} != "no"
-SYMLINKS+=	${DEBUGDIR}${BINDIR}/${PROG}.debug \
+SYMLINKS+=	../..${BINDIR}/${PROG}.debug \
 		${DEBUGDIR}/usr${BINDIR}/${PROG}.debug
 .endif
 .endif
