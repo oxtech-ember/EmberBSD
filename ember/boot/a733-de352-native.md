@@ -182,8 +182,10 @@ uses the public CCU memory register enum and the retained DISPLAY APIs.
 Its raw memory record stays at version 1 with seven CCU words per sample.
 The host contract extracts that enum from the public CCU header.
 
-This integration does not add or enable an FDT node. A board description
-must provide the complete DE, disabled memory-provider, and output bindings
-before attach can expose the explicit stage. The output provider must register
-under the same phandle and validate the same owner cookie. Kernel build and
-physical scanout acceptance remain separate requirements.
+The SoC DE, memory-provider and output nodes are disabled by default.
+The Zero 3W board provides the complete DE and native output bindings.
+Attach exposes the explicit stage. It does not start DMA or scanout.
+The memory-provider nodes remain disabled; the coordinator still requires its
+strict memory proof before DMA. The output provider registers under the same
+phandle and validates the same owner cookie. Kernel build, memory readiness
+and physical scanout acceptance remain separate requirements.
