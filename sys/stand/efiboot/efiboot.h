@@ -72,6 +72,16 @@ int ischar(void);
 extern EFI_HANDLE IH;
 extern EFI_DEVICE_PATH *efi_bootdp;
 extern EFI_LOADED_IMAGE *efi_li;
+/* Local outcomes from the actual cleanup chain. No display authority. */
+struct efi_cleanup_result {
+	EFI_STATUS ebs_status;
+	EFI_STATUS runtime_status;
+	int runtime_fdt_error;
+	bool map_available;
+	bool ebs_attempted;
+	bool runtime_attempted;
+};
+void efi_cleanup_checked(struct efi_cleanup_result *);
 void efi_cleanup(void);
 void efi_exit(void);
 void efi_delay(int);

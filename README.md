@@ -710,7 +710,11 @@ on every board in the hardware catalog.
   Source contracts pass; this interface does not supply KMS or physical scanout.
   A default-off [checked console publication foundation](ember/boot/console-publication.md)
   adds recoverable admission for selected framebuffer parents and console writers.
-  Source tests and target TU checks do not establish close/drain or display ownership.
+  The source-tested exact-lease CPU close/drain remains default-off.
+It grants no display ownership or physical handoff acceptance.
+A default-off [loader source record](ember/boot/boot-framebuffer-issuer.md#loader-source-facts)
+preserves checked EFI GOP, cleanup and runtime facts.
+It grants no absence admission or display ownership.
   [Native DRM change events](ember/boot/drm-hotplug-events.md) publish registered
   primary-node notifications through the device monitor. Source contracts and
   target object compilation pass; physical HDMI detection and modesetting remain separate.

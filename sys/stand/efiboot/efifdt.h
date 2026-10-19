@@ -52,5 +52,8 @@ void efi_fdt_system_table(void);
 int efi_fdt_prepare_boot(const char *, const char *, u_long *);
 void efi_fdt_cleanup_boot(void);
 size_t efi_fdt_alloc_size(void);
+struct efi_cleanup_result;
+void efi_fdt_set_virtual_address_map_checked(EFI_MEMORY_DESCRIPTOR *, UINTN,
+    UINTN, UINTN, UINT32, struct efi_cleanup_result *);
 void efi_fdt_set_virtual_address_map(EFI_MEMORY_DESCRIPTOR *, UINTN, UINTN,
     UINTN, UINT32);

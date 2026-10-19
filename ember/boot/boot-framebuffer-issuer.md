@@ -6,6 +6,68 @@ selects it. It can defer one actual cold simplefb fallback and issue one opaque
 lease. It does not close console output, drain writers, install a replacement
 console, issue a firmware request or grant MMIO, DMA or display ownership.
 
+## Loader source facts
+
+The optional `WSDISPLAY_BOOTFB_HANDOFF` loader path writes a source record.
+It does not select or change `WSDISPLAY_BOOTFB_DEFER`. No default loader Makefile
+selects it. The [shared decoder](../../sys/dev/fdt/bootfb_source.h) has no issuer,
+provider, close, capture, MMIO or display permission API.
+
+`/chosen/ember,bootfb-source-v1` is exactly 32 bytes in big-endian order:
+
+| Offset | Width | Value |
+| --- | --- | --- |
+| 0 | 4 | Version 1 |
+| 4 | 4 | Producer: unknown 0, selected EFI ACPI64 1 |
+| 8 | 4 | Unclassified 0, present 1, unsupported 2, absent 3 |
+| 12 | 4 | Reserved zero |
+| 16 | 8 | Exact EFI GOP enumeration status |
+| 24 | 8 | Exact handle count returned by `LibLocateHandle` |
+
+Only the actual 64-bit ACPI tree constructor establishes producer 1. An external
+DTB selection or any nonempty overlay-file attempt makes the source unknown,
+including a failed load or apply. Compatible properties alone do not establish
+origin. GOP classification occurs before ExitBootServices. Physical address zero
+is present. Unsupported formats, protocol errors, EFI warnings and errors other
+than exact EFI_NOT_FOUND with count zero do not establish absence.
+
+The actual checked cleanup reports memory-map, ExitBootServices, runtime-call and
+runtime-property results. The existing void cleanup and runtime wrappers remain.
+After that real chain, the producer validates the complete tree, neutralizes any
+copied fixed-size source record and commits its new record. It uses the existing
+writable FDT capacity. It makes no new EFI allocation after ExitBootServices.
+The existing checked pack still runs. The final packed query follows it. A failed
+map, EBS, runtime call or relevant FDT write cannot create an accepted absent
+record. A framebuffer compatible anywhere, including a disabled node outside
+`/chosen`, prevents that classification. The strict query rejects malformed or
+duplicate records, invalid strings, ambiguous chosen nodes and incomplete v17
+structure. It requires an empty root name and one exact `chosen` node. It rejects
+`chosen@*` siblings and properties after child nodes. It uses caller-supplied
+readable capacity, not encoded totalsize alone.
+These are source facts. They do not prove native ownership or access readiness.
+
+```sh
+ruby ember/tools/bootfb-source-contract.rb /absolute/os/source
+CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
+    BOOTFB_SOURCE_SKIP_MUTANTS=1 ruby ember/tools/bootfb-source-contract.rb /absolute/os/source
+```
+
+The runner composes complete actual EFI producer, GOP, prepare, cleanup and
+runtime functions with the real libfdt. EFI types, storage, allocation and
+unrelated prepare services are controlled. FDT failures wrap real operations;
+they do not replace the producer. Extracted functions retain source paths,
+lines and notices. These host services do not validate the native EFI ABI.
+Tests cover wire bytes, full-tree errors, status/count/format/PA0, source history,
+cleanup errors and record-after-runtime ordering. Each causal control must compile
+and reach a fatal CHECK. A crash, compile failure or timeout is not a rejection.
+`CC`, `CFLAGS`, `TEST_RUNNER`, `TMPDIR`, `COMPILE_ONLY=1`,
+`BOOTFB_SOURCE_SKIP_MUTANTS=1`, `BOOTFB_SOURCE_MUTANTS` and a new
+`BOOTFB_SOURCE_EVIDENCE` directory select tools and evidence. Native checks must
+also compile both complete loader TUs with actual off/on Makefile flags.
+No ARM cold capture, absence admission, coherent loader link or physical result
+is claimed by this source contract. Valgrind is unsupported on the Darwin host;
+the executable fixture uses ASan/UBSan instead.
+
 ## Association
 
 The shared [FDT reader](../../sys/dev/fdt/simplefb_subr.c) validates one complete

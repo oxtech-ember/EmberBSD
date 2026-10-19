@@ -176,32 +176,53 @@ efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE *systemTable)
 }
 
 void
-efi_cleanup(void)
+efi_cleanup_checked(struct efi_cleanup_result *out)
 {
 	EFI_STATUS status;
 	EFI_MEMORY_DESCRIPTOR *memmap;
-	UINTN nentries, mapkey, descsize;
-	UINT32 descver;
+	UINTN nentries = 0, mapkey = 0, descsize = 0;
+	UINT32 descver = 0;
+	struct efi_cleanup_result value;
+
+	memset(&value, 0, sizeof(value));
 
 	efi_cm5_pending("before memory map");
 	memmap = LibMemoryMap(&nentries, &mapkey, &descsize, &descver);
+	value.map_available = memmap != NULL;
+	if (memmap == NULL) {
+		printf("WARNING: memory map unavailable before ExitBootServices\n");
+		goto done;
+	}
 
 	efi_cm5_trace("[CM5 EFI] calling ExitBootServices\r\n");
 	efi_cm5_pending("before EBS");
+	value.ebs_attempted = true;
 	status = uefi_call_wrapper(BS->ExitBootServices, 2, IH, mapkey);
+	value.ebs_status = status;
 	efi_cm5_trace("[CM5 EFI] ExitBootServices call returned\r\n");
 	efi_cm5_pending("after EBS");
 	if (EFI_ERROR(status)) {
 		printf("WARNING: ExitBootServices failed\n");
-		return;
+		goto done;
 	}
 
 #ifdef EFIBOOT_RUNTIME_ADDRESS
 	efi_cm5_trace("[CM5 EFI] SetVirtualAddressMap enter\r\n");
-	efi_fdt_set_virtual_address_map(memmap, nentries, mapkey, descsize, descver);
+	efi_fdt_set_virtual_address_map_checked(memmap, nentries, mapkey,
+	    descsize, descver, &value);
 	efi_cm5_trace("[CM5 EFI] SetVirtualAddressMap returned\r\n");
 	efi_cm5_pending("after VA map");
 #endif
+done:
+	if (out != NULL)
+		*out = value;
+}
+
+void
+efi_cleanup(void)
+{
+
+	efi_cleanup_checked(NULL);
 }
 
 void

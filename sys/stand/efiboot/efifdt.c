@@ -67,6 +67,110 @@ static EFI_GUID FdtTableGuid = FDT_TABLE_GUID;
 static void *fdt_data = NULL;
 static size_t fdt_data_size = 512*1024;
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include <dev/fdt/bootfb_source.h>
+/* Actual loader history and outcomes, not caller-supplied permission. */
+static struct {
+	void *blob;
+	size_t capacity;
+	EFI_STATUS status;
+	UINTN count;
+	uint32_t disposition;
+	int fdt_error;
+	int final_error;
+	bool acpi_created;
+	bool overlay_attempted;
+	bool external_dtb;
+	bool gop_attempted;
+	bool protocol_failed;
+	bool packed_valid;
+} efi_bootfb_source;
+
+static int
+efi_fdt_source_note(int result)
+{
+
+	if (result < 0 && efi_bootfb_source.fdt_error == 0)
+		efi_bootfb_source.fdt_error = result;
+	return result;
+}
+#define EFI_BOOTFB_FDT(expr) efi_fdt_source_note((expr))
+
+static void
+efi_fdt_source_finish(const struct efi_cleanup_result *cleanup)
+{
+	struct bootfb_source_record record;
+	struct bootfb_source_tree tree;
+	uint8_t bytes[BOOTFB_SOURCE_SIZE];
+	void *old;
+	int chosen, length, error;
+	bool known;
+
+	efi_bootfb_source.packed_valid = false;
+	if (efi_bootfb_source.blob != fdt_data ||
+	    efi_bootfb_source.capacity < sizeof(struct fdt_header) ||
+	    fdt_check_full(fdt_data, efi_bootfb_source.capacity) != 0) {
+		efi_bootfb_source.final_error = EINVAL;
+		return;
+	}
+	/*
+	 * A copied external record is not evidence from this loader attempt.
+	 * Neutralize a fixed-size payload in our validated writable copy first.
+	 * Malformed sizes/duplicates remain a strict-query refusal.
+	 */
+	chosen = fdt_path_offset(fdt_data, "/chosen");
+	old = chosen < 0 ? NULL : fdt_getprop_w(fdt_data, chosen,
+	    BOOTFB_SOURCE_PROPERTY, &length);
+	record = (struct bootfb_source_record){0};
+	if (old != NULL && length == BOOTFB_SOURCE_SIZE) {
+		error = bootfb_source_encode(&record, old, (size_t)length);
+		if (error != 0) {
+			efi_bootfb_source.final_error = error;
+			return;
+		}
+	}
+	error = bootfb_source_scan(fdt_data, efi_bootfb_source.capacity, &tree);
+	if (error != 0) {
+		efi_bootfb_source.final_error = error;
+		return;
+	}
+	known = efi_bootfb_source.acpi_created &&
+	    !efi_bootfb_source.overlay_attempted && !efi_bootfb_source.external_dtb &&
+	    sizeof(EFI_STATUS) == 8 && sizeof(UINTN) == 8;
+	record.producer = known ? BOOTFB_SOURCE_EFI_ACPI64 : BOOTFB_SOURCE_UNKNOWN;
+	record.status = (uint64_t)efi_bootfb_source.status;
+	record.count = (uint64_t)efi_bootfb_source.count;
+	record.disposition = efi_bootfb_source.disposition;
+	if (!known || !efi_bootfb_source.gop_attempted ||
+	    efi_bootfb_source.protocol_failed || efi_bootfb_source.fdt_error != 0 ||
+	    !cleanup->map_available || !cleanup->ebs_attempted ||
+	    EFI_ERROR(cleanup->ebs_status) || !cleanup->runtime_attempted ||
+	    EFI_ERROR(cleanup->runtime_status) || cleanup->runtime_fdt_error != 0)
+		record.disposition = BOOTFB_SOURCE_UNCLASSIFIED;
+	if (record.disposition == BOOTFB_SOURCE_ABSENT && tree.framebuffer)
+		record.disposition = BOOTFB_SOURCE_UNCLASSIFIED;
+	error = bootfb_source_encode(&record, bytes, sizeof(bytes));
+	if (error == 0)
+		error = fdt_setprop(fdt_data, tree.chosen, BOOTFB_SOURCE_PROPERTY,
+		    bytes, sizeof(bytes));
+	efi_bootfb_source.final_error = error;
+}
+
+static void
+efi_fdt_source_packed(void)
+{
+	struct bootfb_source_record record;
+	int error;
+
+	error = bootfb_source_query(fdt_data, efi_bootfb_source.capacity, &record);
+	if (efi_bootfb_source.final_error == 0)
+		efi_bootfb_source.final_error = error;
+	efi_bootfb_source.packed_valid = efi_bootfb_source.final_error == 0;
+}
+#else
+#define EFI_BOOTFB_FDT(expr) (expr)
+#endif
+
 static EFI_PHYSICAL_ADDRESS initrd_addr, dtb_addr, rndseed_addr;
 static u_long initrd_size = 0, dtb_size = 0, rndseed_size = 0;
 
@@ -101,6 +205,11 @@ efi_fdt_set_data(void *data)
 {
 	int err;
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	efi_bootfb_source.acpi_created = false;
+	efi_bootfb_source.blob = NULL;
+	efi_bootfb_source.capacity = 0;
+#endif
 	if (fdt_check_header(data) != 0)
 		return EINVAL;
 
@@ -172,6 +281,9 @@ efi_fdt_overlay_is_compatible(void *dtbo)
 int
 efi_fdt_overlay_apply(void *dtbo, int *fdterr)
 {
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	efi_bootfb_source.overlay_attempted = true;
+#endif
 	int err = fdt_overlay_apply(fdt_data, dtbo);
 	if (fdterr)
 		*fdterr = err;
@@ -188,6 +300,10 @@ efi_fdt_init(u_long addr, u_long len)
 		panic("fdt_open_into failed: %d", error);
 
 	fdt_data = (void *)addr;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	efi_bootfb_source.blob = fdt_data;
+	efi_bootfb_source.capacity = (size_t)len;
+#endif
 }
 
 void
@@ -334,18 +450,39 @@ efi_fdt_gop(void)
 	EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
 	EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *mode;
 	EFI_HANDLE *gop_handle;
-	UINTN ngop_handle, n;
+	UINTN ngop_handle = 0, n;
 	char buf[48];
 	int fb, chosen;
 
 	status = LibLocateHandle(ByProtocol, &GraphicsOutputProtocol, NULL, &ngop_handle, &gop_handle);
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	efi_bootfb_source.gop_attempted = true;
+	efi_bootfb_source.status = status;
+	efi_bootfb_source.count = ngop_handle;
+	efi_bootfb_source.disposition = BOOTFB_SOURCE_UNCLASSIFIED;
+	if (status == EFI_NOT_FOUND && ngop_handle == 0 && sizeof(EFI_STATUS) == 8)
+		efi_bootfb_source.disposition = BOOTFB_SOURCE_ABSENT;
+	else if (status == EFI_SUCCESS && ngop_handle != 0)
+		efi_bootfb_source.disposition = BOOTFB_SOURCE_UNSUPPORTED;
+#endif
+
 	if (EFI_ERROR(status) || ngop_handle == 0)
 		return;
 
 	for (n = 0; n < ngop_handle; n++) {
 		status = uefi_call_wrapper(BS->HandleProtocol, 3, gop_handle[n], &GraphicsOutputProtocol, (void **)&gop);
-		if (EFI_ERROR(status))
+		if (EFI_ERROR(status)) {
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+			efi_bootfb_source.protocol_failed = true;
+#endif
 			continue;
+		}
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		if (gop == NULL || gop->Mode == NULL || gop->Mode->Info == NULL) {
+			efi_bootfb_source.protocol_failed = true;
+			continue;
+		}
+#endif
 
 		mode = gop->Mode;
 		if (mode == NULL)
@@ -370,25 +507,25 @@ efi_fdt_gop(void)
 		}
 
 		chosen = efi_fdt_chosen();
-		fdt_setprop_u32(fdt_data, chosen, "#address-cells", 2);
-		fdt_setprop_u32(fdt_data, chosen, "#size-cells", 2);
-		fdt_setprop_empty(fdt_data, chosen, "ranges");
+		EFI_BOOTFB_FDT(fdt_setprop_u32(fdt_data, chosen, "#address-cells", 2));
+		EFI_BOOTFB_FDT(fdt_setprop_u32(fdt_data, chosen, "#size-cells", 2));
+		EFI_BOOTFB_FDT(fdt_setprop_empty(fdt_data, chosen, "ranges"));
 
 		snprintf(buf, sizeof(buf), "framebuffer@%" PRIx64, mode->FrameBufferBase);
-		fb = fdt_add_subnode(fdt_data, chosen, buf);
+		fb = EFI_BOOTFB_FDT(fdt_add_subnode(fdt_data, chosen, buf));
 		if (fb < 0) {
 			/* Framebuffer node already exists. No need to create a new one! */
 			return;
 		}
 
-		fdt_appendprop_string(fdt_data, fb, "compatible", "simple-framebuffer");
-		fdt_appendprop_string(fdt_data, fb, "status", "okay");
-		fdt_appendprop_u64(fdt_data, fb, "reg", mode->FrameBufferBase);
-		fdt_appendprop_u64(fdt_data, fb, "reg", mode->FrameBufferSize);
-		fdt_appendprop_u32(fdt_data, fb, "width", mode->Info->HorizontalResolution);
-		fdt_appendprop_u32(fdt_data, fb, "height", mode->Info->VerticalResolution);
-		fdt_appendprop_u32(fdt_data, fb, "stride", mode->Info->PixelsPerScanLine * 4);	/* XXX */
-		fdt_appendprop_string(fdt_data, fb, "format", "a8b8g8r8");
+		EFI_BOOTFB_FDT(fdt_appendprop_string(fdt_data, fb, "compatible", "simple-framebuffer"));
+		EFI_BOOTFB_FDT(fdt_appendprop_string(fdt_data, fb, "status", "okay"));
+		EFI_BOOTFB_FDT(fdt_appendprop_u64(fdt_data, fb, "reg", mode->FrameBufferBase));
+		EFI_BOOTFB_FDT(fdt_appendprop_u64(fdt_data, fb, "reg", mode->FrameBufferSize));
+		EFI_BOOTFB_FDT(fdt_appendprop_u32(fdt_data, fb, "width", mode->Info->HorizontalResolution));
+		EFI_BOOTFB_FDT(fdt_appendprop_u32(fdt_data, fb, "height", mode->Info->VerticalResolution));
+		EFI_BOOTFB_FDT(fdt_appendprop_u32(fdt_data, fb, "stride", mode->Info->PixelsPerScanLine * 4));	/* XXX */
+		EFI_BOOTFB_FDT(fdt_appendprop_string(fdt_data, fb, "format", "a8b8g8r8"));
 
 #ifdef EFIBOOT_ACPI
 		/*
@@ -396,8 +533,15 @@ efi_fdt_gop(void)
 		 */
 		if (efi_acpi_available()) {
 			snprintf(buf, sizeof(buf), "/chosen/framebuffer@%" PRIx64, mode->FrameBufferBase);
-			fdt_setprop_string(fdt_data, chosen, "stdout-path", buf);
+			EFI_BOOTFB_FDT(fdt_setprop_string(fdt_data, chosen, "stdout-path", buf));
 		}
+#endif
+
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		if (efi_bootfb_source.status == EFI_SUCCESS &&
+		    (mode->Info->PixelFormat == PixelRedGreenBlueReserved8BitPerColor ||
+		    mode->Info->PixelFormat == PixelBlueGreenRedReserved8BitPerColor))
+			efi_bootfb_source.disposition = BOOTFB_SOURCE_PRESENT;
 #endif
 
 		return;
@@ -541,6 +685,9 @@ apply_overlay_file(const char *path)
 
 	if (strlen(path) == 0)
 		return;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	efi_bootfb_source.overlay_attempted = true;
+#endif
 
 	if (load_file(path, 0, false, &dtbo_addr, &dtbo_size) != 0 ||
 	    dtbo_addr == 0) {
@@ -601,6 +748,14 @@ efi_fdt_prepare_boot(const char *fname, const char *args, u_long *marks)
 {
 	int error;
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	struct efi_cleanup_result cleanup;
+	bool overlay_attempted = efi_bootfb_source.overlay_attempted;
+
+	memset(&efi_bootfb_source, 0, sizeof(efi_bootfb_source));
+	efi_bootfb_source.overlay_attempted = overlay_attempted;
+	efi_bootfb_source.external_dtb = get_dtb_path()[0] != 0;
+#endif
 	load_file(get_initrd_path(), 0, false, &initrd_addr, &initrd_size);
 	load_file(get_dtb_path(), 0, false, &dtb_addr, &dtb_size);
 
@@ -644,11 +799,21 @@ efi_fdt_prepare_boot(const char *fname, const char *args, u_long *marks)
 		efi_fdt_memory_map();
 	}
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	efi_cleanup_checked(&cleanup);
+#else
 	efi_cleanup();
+#endif
 	efi_cm5_trace("[CM5 EFI] cleanup done\r\n");
 
 	if (efi_fdt_size() > 0) {
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		efi_fdt_source_finish(&cleanup);
+#endif
 		efi_fdt_fini();
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		efi_fdt_source_packed();
+#endif
 		efi_cm5_trace("[CM5 EFI] FDT ready\r\n");
 	}
 
@@ -706,20 +871,32 @@ efi_fdt_create_acpifdt(void)
 
 	const char *model = efi_acpi_get_model();
 
-	fdt_setprop_string(fdt, fdt_path_offset(fdt, "/"), "compatible", "netbsd,generic-acpi");
-	fdt_setprop_string(fdt, fdt_path_offset(fdt, "/"), "model", model);
-	fdt_setprop_cell(fdt, fdt_path_offset(fdt, "/"), "#address-cells", 2);
-	fdt_setprop_cell(fdt, fdt_path_offset(fdt, "/"), "#size-cells", 2);
+	EFI_BOOTFB_FDT(fdt_setprop_string(fdt, fdt_path_offset(fdt, "/"), "compatible",
+	    "netbsd,generic-acpi"));
+	EFI_BOOTFB_FDT(fdt_setprop_string(fdt, fdt_path_offset(fdt, "/"), "model", model));
+	EFI_BOOTFB_FDT(fdt_setprop_cell(fdt, fdt_path_offset(fdt, "/"), "#address-cells", 2));
+	EFI_BOOTFB_FDT(fdt_setprop_cell(fdt, fdt_path_offset(fdt, "/"), "#size-cells", 2));
 
-	fdt_add_subnode(fdt, fdt_path_offset(fdt, "/"), "chosen");
-	fdt_setprop_u64(fdt, fdt_path_offset(fdt, "/chosen"), "netbsd,acpi-root-table", (uint64_t)(uintptr_t)acpi_root);
+	EFI_BOOTFB_FDT(fdt_add_subnode(fdt, fdt_path_offset(fdt, "/"), "chosen"));
+	EFI_BOOTFB_FDT(fdt_setprop_u64(fdt, fdt_path_offset(fdt, "/chosen"), "netbsd,acpi-root-table",
+	    (uint64_t)(uintptr_t)acpi_root));
 	if (smbios_table)
-		fdt_setprop_u64(fdt, fdt_path_offset(fdt, "/chosen"), "netbsd,smbios-table", (uint64_t)(uintptr_t)smbios_table);
+		EFI_BOOTFB_FDT(fdt_setprop_u64(fdt, fdt_path_offset(fdt, "/chosen"), "netbsd,smbios-table",
+		    (uint64_t)(uintptr_t)smbios_table));
 
-	fdt_add_subnode(fdt, fdt_path_offset(fdt, "/"), "acpi");
-	fdt_setprop_string(fdt, fdt_path_offset(fdt, "/acpi"), "compatible", "netbsd,acpi");
+	EFI_BOOTFB_FDT(fdt_add_subnode(fdt, fdt_path_offset(fdt, "/"), "acpi"));
+	EFI_BOOTFB_FDT(fdt_setprop_string(fdt, fdt_path_offset(fdt, "/acpi"), "compatible",
+	    "netbsd,acpi"));
 
-	return efi_fdt_set_data(fdt);
+	error = efi_fdt_set_data(fdt);
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (error == 0 && efi_bootfb_source.fdt_error == 0) {
+		efi_bootfb_source.acpi_created = true;
+		efi_bootfb_source.blob = fdt_data;
+		efi_bootfb_source.capacity = fdt_data_size;
+	}
+#endif
+	return error;
 }
 #endif
 
@@ -747,9 +924,18 @@ efi_fdt_runtime_alloc_va(uint64_t pa, uint64_t npages)
 #endif
 }
 
+static void
+efi_fdt_runtime_note(int error, struct efi_cleanup_result *result)
+{
+
+	if (result != NULL && result->runtime_fdt_error == 0 && error != 0)
+		result->runtime_fdt_error = error;
+}
+
 void
-efi_fdt_set_virtual_address_map(EFI_MEMORY_DESCRIPTOR *memmap, UINTN nentries,
-    UINTN mapkey, UINTN descsize, UINT32 descver)
+efi_fdt_set_virtual_address_map_checked(EFI_MEMORY_DESCRIPTOR *memmap,
+    UINTN nentries, UINTN mapkey, UINTN descsize, UINT32 descver,
+    struct efi_cleanup_result *result)
 {
 	EFI_MEMORY_DESCRIPTOR *md, *vmd, *vmemmap;
 	EFI_STATUS status;
@@ -775,31 +961,40 @@ efi_fdt_set_virtual_address_map(EFI_MEMORY_DESCRIPTOR *memmap, UINTN nentries,
 
 		switch (md->Type) {
 		case EfiRuntimeServicesCode:
-			fdt_appendprop_u64(fdt, fdt_path_offset(fdt, "/chosen"),
-			    "netbsd,uefi-runtime-code", md->PhysicalStart);
-			fdt_appendprop_u64(fdt, fdt_path_offset(fdt, "/chosen"),
-			    "netbsd,uefi-runtime-code", md->VirtualStart);
-			fdt_appendprop_u64(fdt, fdt_path_offset(fdt, "/chosen"),
+			efi_fdt_runtime_note(fdt_appendprop_u64(fdt,
+			    fdt_path_offset(fdt, "/chosen"),
+			    "netbsd,uefi-runtime-code", md->PhysicalStart), result);
+			efi_fdt_runtime_note(fdt_appendprop_u64(fdt,
+			    fdt_path_offset(fdt, "/chosen"),
+			    "netbsd,uefi-runtime-code", md->VirtualStart), result);
+			efi_fdt_runtime_note(fdt_appendprop_u64(fdt,
+			    fdt_path_offset(fdt, "/chosen"),
 			    "netbsd,uefi-runtime-code",
-			    md->NumberOfPages * EFI_PAGE_SIZE);
+			    md->NumberOfPages * EFI_PAGE_SIZE), result);
 			break;
 		case EfiRuntimeServicesData:
-			fdt_appendprop_u64(fdt, fdt_path_offset(fdt, "/chosen"),
-			    "netbsd,uefi-runtime-data", md->PhysicalStart);
-			fdt_appendprop_u64(fdt, fdt_path_offset(fdt, "/chosen"),
-			    "netbsd,uefi-runtime-data", md->VirtualStart);
-			fdt_appendprop_u64(fdt, fdt_path_offset(fdt, "/chosen"),
+			efi_fdt_runtime_note(fdt_appendprop_u64(fdt,
+			    fdt_path_offset(fdt, "/chosen"),
+			    "netbsd,uefi-runtime-data", md->PhysicalStart), result);
+			efi_fdt_runtime_note(fdt_appendprop_u64(fdt,
+			    fdt_path_offset(fdt, "/chosen"),
+			    "netbsd,uefi-runtime-data", md->VirtualStart), result);
+			efi_fdt_runtime_note(fdt_appendprop_u64(fdt,
+			    fdt_path_offset(fdt, "/chosen"),
 			    "netbsd,uefi-runtime-data",
-			    md->NumberOfPages * EFI_PAGE_SIZE);
+			    md->NumberOfPages * EFI_PAGE_SIZE), result);
 			break;
 		case EfiMemoryMappedIO:
-			fdt_appendprop_u64(fdt, fdt_path_offset(fdt, "/chosen"),
-			    "netbsd,uefi-runtime-mmio", md->PhysicalStart);
-			fdt_appendprop_u64(fdt, fdt_path_offset(fdt, "/chosen"),
-			    "netbsd,uefi-runtime-mmio", md->VirtualStart);
-			fdt_appendprop_u64(fdt, fdt_path_offset(fdt, "/chosen"),
+			efi_fdt_runtime_note(fdt_appendprop_u64(fdt,
+			    fdt_path_offset(fdt, "/chosen"),
+			    "netbsd,uefi-runtime-mmio", md->PhysicalStart), result);
+			efi_fdt_runtime_note(fdt_appendprop_u64(fdt,
+			    fdt_path_offset(fdt, "/chosen"),
+			    "netbsd,uefi-runtime-mmio", md->VirtualStart), result);
+			efi_fdt_runtime_note(fdt_appendprop_u64(fdt,
+			    fdt_path_offset(fdt, "/chosen"),
 			    "netbsd,uefi-runtime-mmio",
-			    md->NumberOfPages * EFI_PAGE_SIZE);
+			    md->NumberOfPages * EFI_PAGE_SIZE), result);
 			break;
 		default:
 			break;
@@ -810,11 +1005,24 @@ efi_fdt_set_virtual_address_map(EFI_MEMORY_DESCRIPTOR *memmap, UINTN nentries,
 		++nrt;
 	}
 
+	if (result != NULL)
+		result->runtime_attempted = true;
 	status = uefi_call_wrapper(RT->SetVirtualAddressMap, 4, nrt * descsize,
 	    descsize, descver, vmemmap);
+	if (result != NULL)
+		result->runtime_status = status;
 	if (EFI_ERROR(status)) {
 		printf("WARNING: SetVirtualAddressMap failed\n");
 		return;
 	}
+}
+
+void
+efi_fdt_set_virtual_address_map(EFI_MEMORY_DESCRIPTOR *memmap, UINTN nentries,
+    UINTN mapkey, UINTN descsize, UINT32 descver)
+{
+
+	efi_fdt_set_virtual_address_map_checked(memmap, nentries, mapkey,
+	    descsize, descver, NULL);
 }
 #endif
