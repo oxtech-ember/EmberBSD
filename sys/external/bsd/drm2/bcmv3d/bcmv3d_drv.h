@@ -63,6 +63,10 @@ bcmv3d_to_bo(struct drm_gem_object *obj)
 
 extern const struct uvm_pagerops bcmv3d_bo_uvm_ops;
 
+/* Verify native BO identity and acquire one actual GEM reference. */
+int bcmv3d_bo_reference(struct bcmv3d_device *, struct drm_gem_object *,
+    struct bcmv3d_bo **);
+
 /* The engine page table and scratch require contiguous DMA storage. */
 struct bcmv3d_bo *bcmv3d_bo_alloc(struct bcmv3d_device *, uint32_t);
 int bcmv3d_create_bo(struct drm_device *, void *, struct drm_file *);

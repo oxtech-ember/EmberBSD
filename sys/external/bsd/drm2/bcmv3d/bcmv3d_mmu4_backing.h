@@ -5,6 +5,7 @@
 
 #include <sys/types.h>
 
+struct drm_gem_object;
 struct bcmv3d_device;
 struct bcmv3d_mmu4_backing;
 struct bcm2712_mmu4_config;
@@ -59,5 +60,17 @@ int bcmv3d_mmu4_backing_status(const struct bcmv3d_mmu4_backing *,
     struct bcmv3d_mmu4_backing_status *);
 int bcmv3d_mmu4_backing_seal(struct bcmv3d_mmu4_backing *);
 int bcmv3d_mmu4_backing_destroy_unexposed(struct bcmv3d_mmu4_backing *);
+
+/*
+ * Private unpublished GEM staging in three fixed IOVA windows. The caller
+ * holds a live GEM reference and serializes access. No content/fence readiness,
+ * DMA sync, active table change or hardware publication is implied. Initial
+ * backing must be prepared. Seal does not prevent this separate staging.
+ * Discard frees only never-published slot resources, not retired scanout.
+ */
+int bcmv3d_mmu4_backing_stage_gem(struct bcmv3d_mmu4_backing *, unsigned int,
+    struct drm_gem_object *);
+int bcmv3d_mmu4_backing_discard_staged_gem(struct bcmv3d_mmu4_backing *,
+    unsigned int);
 
 #endif /* _BCMV3D_MMU4_BACKING_H_ */

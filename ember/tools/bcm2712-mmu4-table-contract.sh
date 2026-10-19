@@ -49,7 +49,8 @@ for mutant in ${MMU4_TABLE_MUTANTS:-valid writable pagesize shift endian top-ind
         *) echo "Unknown MMU4 table mutant: $mutant" >&2; exit 1 ;;
     esac
     awk -v from="$from" -v to="$to" '
-        { p=index($0,from); if (p) { count++; $0=substr($0,1,p-1) to substr($0,p+length(from)) } print }
+        /^bcm2712_mmu4_encode_range[(]/ { range=1 }
+        { p=range ? 0 : index($0,from); if (p) { count++; $0=substr($0,1,p-1) to substr($0,p+length(from)) } print }
         END { if (count != 1) exit 1 }
     ' "$work/good.c" > "$work/core.c"
     cmp -s "$work/good.c" "$work/core.c" && exit 1

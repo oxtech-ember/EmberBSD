@@ -7,6 +7,7 @@
 #include <arm/broadcom/bcm2712_mmu4_corevar.h>
 #include "bcmv3d_mmu4_backing.h"
 
+struct drm_gem_object;
 struct bcmv3d_device;
 struct bcmv3d_mmu4_native;
 
@@ -63,5 +64,17 @@ int bcmv3d_mmu4_native_prepare(struct bcmv3d_mmu4_native *);
 int bcmv3d_mmu4_native_program(struct bcmv3d_mmu4_native *);
 int bcmv3d_mmu4_native_cached_status(struct bcmv3d_mmu4_native *,
     struct bcmv3d_mmu4_native_status *);
+
+/*
+ * Process context, with a caller-held live GEM reference. Serialize through
+ * the existing native mutex. These calls do not enter ICAC, perform MMIO or
+ * change initial backing/status. Slots 0..2 use IOVA 8/16/24 MiB, offset 0,
+ * span 8294400. Staging is not content, fence or scanout readiness. Discard
+ * releases only allocations and references that have never been published.
+ */
+int bcmv3d_mmu4_native_stage_gem(struct bcmv3d_mmu4_native *, unsigned int,
+    struct drm_gem_object *);
+int bcmv3d_mmu4_native_discard_staged_gem(struct bcmv3d_mmu4_native *,
+    unsigned int);
 
 #endif /* _BCMV3D_MMU4_NATIVE_H_ */

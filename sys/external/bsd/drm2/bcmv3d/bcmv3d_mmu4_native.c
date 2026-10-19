@@ -541,6 +541,34 @@ done:
 }
 
 int
+bcmv3d_mmu4_native_stage_gem(struct bcmv3d_mmu4_native *n, unsigned int slot,
+    struct drm_gem_object *obj)
+{
+	int error;
+
+	if ((error = mmu4_native_enter(n)) != 0)
+		return error;
+	error = n->backing == NULL ? ENXIO :
+	    bcmv3d_mmu4_backing_stage_gem(n->backing, slot, obj);
+	mutex_exit(&n->lock);
+	return error;
+}
+
+int
+bcmv3d_mmu4_native_discard_staged_gem(struct bcmv3d_mmu4_native *n,
+    unsigned int slot)
+{
+	int error;
+
+	if ((error = mmu4_native_enter(n)) != 0)
+		return error;
+	error = n->backing == NULL ? ENXIO :
+	    bcmv3d_mmu4_backing_discard_staged_gem(n->backing, slot);
+	mutex_exit(&n->lock);
+	return error;
+}
+
+int
 bcmv3d_mmu4_native_cached_status(struct bcmv3d_mmu4_native *n,
     struct bcmv3d_mmu4_native_status *out)
 {

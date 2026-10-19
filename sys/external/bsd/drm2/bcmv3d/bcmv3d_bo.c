@@ -120,6 +120,21 @@ static const struct drm_gem_object_funcs bcmv3d_bo_funcs = {
 	.free = bcmv3d_bo_free,
 };
 
+/* The caller holds a live GEM reference through identity and acquisition. */
+int
+bcmv3d_bo_reference(struct bcmv3d_device *sc, struct drm_gem_object *obj,
+    struct bcmv3d_bo **out)
+{
+
+	if (sc == NULL || sc->drm == NULL || obj == NULL || out == NULL)
+		return EINVAL;
+	if (obj->dev != sc->drm || obj->funcs != &bcmv3d_bo_funcs)
+		return ENXIO;
+	drm_gem_object_get(obj);
+	*out = bcmv3d_to_bo(obj);
+	return 0;
+}
+
 static struct bcmv3d_bo *
 bcmv3d_bo_alloc_internal(struct bcmv3d_device *sc, uint32_t requested,
     bool contiguous)

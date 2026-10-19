@@ -42,4 +42,27 @@ struct bcm2712_mmu4_image {
 int bcm2712_mmu4_encode(const struct bcm2712_mmu4_pages *,
     struct bcm2712_mmu4_image *);
 
+#define BCM2712_MMU4_SCANOUT_SLOTS 3U
+/* One fixed 8 MiB window at IOVA (slot + 1) * 8 MiB. */
+struct bcm2712_mmu4_range_pages {
+	uint32_t debug;
+	uint64_t top_pa, l2_pa[2];
+	uint64_t frame_pa[BCM2712_MMU4_FRAME_PAGES];
+};
+
+/* Two top entries and two L2 pages. No active table is modified. */
+struct bcm2712_mmu4_range_image {
+	uint8_t top[8];
+	uint8_t l2[2][BCM2712_MMU4_PAGE_BYTES];
+};
+
+/*
+ * Encode exactly 2025 read-only leaves for slot 0..2. The caller owns the
+ * two L2 allocations and preserves all other top entries. Input/output must
+ * be accessible, aligned and disjoint. All checks precede output writes.
+ * Return positive errno. This operation provides no DMA sync or publication.
+ */
+int bcm2712_mmu4_encode_range(const struct bcm2712_mmu4_range_pages *,
+    unsigned int, struct bcm2712_mmu4_range_image *);
+
 #endif /* _ARM_BROADCOM_BCM2712_MMU4_TABLEVAR_H_ */

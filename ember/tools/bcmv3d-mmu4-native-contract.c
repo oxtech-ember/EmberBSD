@@ -98,6 +98,8 @@ static int adapter_backing_create(struct bcmv3d_device *, uint32_t, struct bcmv3
 static int adapter_pages(void *, const struct bcm2712_mmu4_config *);
 static int adapter_backing_status(const struct bcmv3d_mmu4_backing *,
     struct bcmv3d_mmu4_backing_status *);
+static int adapter_stage(struct bcmv3d_mmu4_backing *, unsigned int, struct drm_gem_object *);
+static int adapter_discard(struct bcmv3d_mmu4_backing *, unsigned int);
 static int adapter_fini(struct bcm2712_mmu4_core *);
 static int adapter_shared(struct bcm2712_iommuc_core *, struct bcm2712_iommuc_status *);
 static int bus_space_map(bus_space_tag_t, uint64_t, uint64_t, int,
@@ -112,7 +114,11 @@ static void bus_space_barrier(bus_space_tag_t, bus_space_handle_t, size_t, size_
 #define bcmv3d_mmu4_backing_status adapter_backing_status
 #define bcm2712_mmu4_core_fini adapter_fini
 #define bcm2712_iommuc_core_status adapter_shared
+#define bcmv3d_mmu4_backing_stage_gem adapter_stage
+#define bcmv3d_mmu4_backing_discard_staged_gem adapter_discard
 #include "adapter-body.h"
+#undef bcmv3d_mmu4_backing_stage_gem
+#undef bcmv3d_mmu4_backing_discard_staged_gem
 #undef bcm2712_mmu4_core_fini
 #undef bcm2712_iommuc_core_status
 #undef bcmv3d_mmu4_backing_status
@@ -120,6 +126,23 @@ static void bus_space_barrier(bus_space_tag_t, bus_space_handle_t, size_t, size_
 #undef bcmv3d_mmu4_backing_create
 #undef bcm2712_iommuc_observe_control
 #undef bcm2712_iommuc_cached_status
+
+static int
+adapter_stage(struct bcmv3d_mmu4_backing *b, unsigned int slot,
+    struct drm_gem_object *obj)
+{
+	CHECK(owner->lock.held && !bcm2712_iommuc_mutex.held);
+	CHECK(b == owner->backing);
+	return bcmv3d_mmu4_backing_stage_gem(b, slot, obj);
+}
+
+static int
+adapter_discard(struct bcmv3d_mmu4_backing *b, unsigned int slot)
+{
+	CHECK(owner->lock.held && !bcm2712_iommuc_mutex.held);
+	CHECK(b == owner->backing);
+	return bcmv3d_mmu4_backing_discard_staged_gem(b, slot);
+}
 
 static struct bcmv3d_mmu4_native foreign_native;
 
@@ -334,6 +357,36 @@ backing_snapshot_check(void)
 	CHECK(cached.backing.syncs == actual.syncs);
 }
 
+/* The separate joined GEM contract uses the actual BO reference allocator. */
+static void
+staging_wrappers(bool prepared)
+{
+	struct bcmv3d_mmu4_native_status saved = owner->status;
+	struct drm_gem_object obj;
+	unsigned int accesses = local_maps + local_reads + local_writes +
+	    local_barriers + snapshots + observes;
+
+	memset(&obj, 0, sizeof(obj));
+	CHECK(bcmv3d_mmu4_native_stage_gem(NULL, 0, &obj) == EINVAL);
+	CHECK(bcmv3d_mmu4_native_discard_staged_gem(NULL, 0) == EINVAL);
+	hard_irq = true;
+	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 0, &obj) == EWOULDBLOCK);
+	CHECK(bcmv3d_mmu4_native_discard_staged_gem(owner, 0) == EWOULDBLOCK);
+	hard_irq = false;
+	mutex_enter(&owner->lock);
+	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 0, &obj) == EDEADLK);
+	CHECK(bcmv3d_mmu4_native_discard_staged_gem(owner, 0) == EDEADLK);
+	mutex_exit(&owner->lock);
+	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 0, &obj) ==
+	    (prepared ? EOPNOTSUPP : ENXIO));
+	CHECK(bcmv3d_mmu4_native_discard_staged_gem(owner, 0) ==
+	    (prepared ? ENOENT : ENXIO));
+	CHECK(memcmp(&saved, &owner->status, sizeof(saved)) == 0);
+	CHECK(!owner->lock.held && !bcm2712_iommuc_mutex.held);
+	CHECK(local_maps + local_reads + local_writes + local_barriers +
+	    snapshots + observes == accesses);
+}
+
 static void
 scenario(unsigned int which)
 {
@@ -370,6 +423,8 @@ scenario(unsigned int which)
 		return;
 	}
 	make_owner();
+	if (which == 54)
+		staging_wrappers(false);
 	if(which==17) {
 		mutex_enter(&owner->lock);
 		CHECK(mmu4_native_backend(owner)==EPROTO);
@@ -477,6 +532,8 @@ scenario(unsigned int which)
 		CHECK(bcmv3d_mmu4_native_program(owner)==EALREADY);
 		native_backing_check(owner->backing);
 	}
+	if (which == 54)
+		staging_wrappers(true);
 	if(which<67 || which==70) {
 		backing_snapshot_check();
 		if(which==51) {

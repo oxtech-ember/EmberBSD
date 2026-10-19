@@ -100,6 +100,8 @@ begin
     unless ENV['MMU4_NATIVE_SKIP_MUTANTS']=='1'
       original=File.read(work+'/adapter-body.h')
       mutations={
+        'stage-delegate'=>['bcmv3d_mmu4_backing_stage_gem(n->backing, slot, obj);', '(bcmv3d_mmu4_backing_stage_gem(n->backing, slot, obj), 0);', 'prepared ? EOPNOTSUPP : ENXIO'],
+        'discard-delegate'=>['bcmv3d_mmu4_backing_discard_staged_gem(n->backing, slot);', '(bcmv3d_mmu4_backing_discard_staged_gem(n->backing, slot), 0);', 'prepared ? ENOENT : ENXIO'],
         'stale-backing'=>["status_error = bcmv3d_mmu4_backing_status(n->backing,\n\t    &n->status.backing);", 'status_error = 0;', 'cached.backing.prepared == actual.prepared'],
         'backing-valid'=>["n->status.backing_valid = false;\n\tstatus_error = bcmv3d_mmu4_backing_status", "n->status.backing_valid = true;\n\tstatus_error = bcmv3d_mmu4_backing_status"],
         'backing-diagnostic'=>['if (n->status.status_error == 0)', 'if (true)'],

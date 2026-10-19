@@ -79,6 +79,10 @@ begin
   if ENV['BACKING_COMPILE_ONLY'] != '1' && ENV['BACKING_SKIP_MUTANTS'] != '1'
     path = 'bcmv3d_mmu4_backing.c'
     original = File.binread(File.join(work, path))
+    # These controls retain their original initial-backing scope.
+    boundary = original.index("\nstatic int\nmmu4_gem_map(")
+    legacy = boundary ? original[0...boundary] : original
+    staging = boundary ? original[boundary..] : ''
     mutations = {
       'frame-pattern' => ['mmu4_frame_init(b->frame->vaddr);',
                           '(void)mmu4_frame_init;',
@@ -118,12 +122,12 @@ begin
     selected = ENV.fetch('BACKING_MUTANTS', mutations.keys.join(' ')).split
     selected.each do |name|
       old, replacement, expected_check = mutations.fetch(name)
-      changed = original.dup
+      changed = legacy.dup
       Array(old).zip(Array(replacement)).each do |before, after|
         abort "Non-unique mutant anchor: #{name}" unless changed.scan(before).length == 1
         changed.sub!(before) { after }
       end
-      write.call(path, changed)
+      write.call(path, changed + staging)
       rejected = false
       pages.each do |page|
         next if page == '16384'

@@ -27,7 +27,18 @@ struct mmu4_allocation {
 	bool allocated, mapped, loaded;
 };
 
+/* Only private, never-published storage. No hardware owns these slots. */
+struct mmu4_gem_slot {
+	struct bcmv3d_bo *bo;
+	bus_dmamap_t map;
+	struct mmu4_allocation control[2];
+	struct bcm2712_mmu4_range_pages pages;
+	struct bcm2712_mmu4_range_image image;
+	bool loaded;
+};
+
 struct bcmv3d_mmu4_backing {
+
 	struct bcmv3d_device *sc;
 	struct bcmv3d_hvs_frame *frame;
 	struct mmu4_allocation control[4];
@@ -36,7 +47,12 @@ struct bcmv3d_mmu4_backing {
 	struct bcm2712_mmu4_config cfg;
 	struct bcmv3d_mmu4_backing_status status;
 	bool running;
+	struct mmu4_gem_slot *staged[BCM2712_MMU4_SCANOUT_SLOTS];
+	uint8_t candidate_top[BCM2712_MMU4_PAGE_BYTES];
 };
+
+static void mmu4_gem_free(struct bcmv3d_mmu4_backing *,
+    struct mmu4_gem_slot *);
 
 static bool
 mmu4_overlap(uint64_t a, uint64_t asize, uint64_t b, uint64_t bsize)
@@ -173,6 +189,10 @@ mmu4_free(struct bcmv3d_mmu4_backing *b)
 	struct mmu4_allocation *a;
 	unsigned int i;
 
+	for (i = BCM2712_MMU4_SCANOUT_SLOTS; i > 0; i--) {
+		if (b->staged[i - 1] != NULL)
+			mmu4_gem_free(b, b->staged[i - 1]);
+	}
 	for (i = 4; i > 0; i--) {
 		a = &b->control[i - 1];
 		if (a->loaded)
@@ -389,5 +409,382 @@ bcmv3d_mmu4_backing_destroy_unexposed(struct bcmv3d_mmu4_backing *b)
 	if (b->running || b->status.sealed || b->status.mapping_uncertain)
 		return EBUSY;
 	mmu4_free(b);
+	return 0;
+}
+
+static int
+mmu4_gem_map(bus_dmamap_t map, uint64_t size, unsigned int maxsegs)
+{
+	uint64_t remaining;
+	bus_addr_t pa;
+	bus_size_t length;
+	unsigned int i, j;
+
+	if (map == NULL || map->dm_mapsize != size || map->dm_nsegs <= 0 ||
+	    (unsigned int)map->dm_nsegs > maxsegs)
+		return EINVAL;
+	if ((map->_dm_flags & _BUS_DMAMAP_IS_BOUNCING) != 0 ||
+	    map->_dm_iommu != NULL)
+		return EOPNOTSUPP;
+	remaining = size;
+	for (i = 0; i < (unsigned int)map->dm_nsegs; i++) {
+		pa = map->dm_segs[i].ds_addr;
+		length = map->dm_segs[i].ds_len;
+		if (length == 0 || length > remaining ||
+		    ((pa | length) & (BCM2712_MMU4_PAGE_BYTES - 1)) != 0)
+			return EINVAL;
+		if (length > (UINT64_C(1) << 32) ||
+		    pa > (UINT64_C(1) << 32) - length)
+			return ERANGE;
+		for (j = 0; j < i; j++) {
+			if (mmu4_overlap(pa, length, map->dm_segs[j].ds_addr,
+			    map->dm_segs[j].ds_len))
+				return EINVAL;
+		}
+		remaining -= length;
+	}
+	return remaining == 0 ? 0 : EINVAL;
+}
+
+/* Check every native allocation byte through its 4 KiB fragment endpoints. */
+static int
+mmu4_gem_control(struct mmu4_allocation *a, uint64_t size, uint64_t *out)
+{
+	uintptr_t va = (uintptr_t)a->kva;
+	uint64_t offset, start;
+	paddr_t first, last;
+	bool coherent;
+	int error;
+
+	error = mmu4_map_check(a->map, size);
+	if (error != 0)
+		return error;
+	if (a->kva == NULL || (va & (PAGE_SIZE - 1)) != 0 ||
+	    size == 0 || size - 1 > UINTPTR_MAX - va)
+		return EINVAL;
+	start = a->map->dm_segs[0].ds_addr;
+	if (start == 0 || (start & (PAGE_SIZE - 1)) != 0)
+		return EINVAL;
+	if (size > (UINT64_C(1) << 32) ||
+	    start > (UINT64_C(1) << 32) - size)
+		return ERANGE;
+	for (offset = 0; offset < size; offset += BCM2712_MMU4_PAGE_BYTES) {
+		if (!pmap_extract_coherency(pmap_kernel(), va + offset,
+		    &first, &coherent) ||
+		    !pmap_extract_coherency(pmap_kernel(), va + offset + 4095,
+		    &last, &coherent))
+			return EFAULT;
+		if (first != start + offset || last != first + 4095)
+			return EAGAIN;
+	}
+	*out = start;
+	return 0;
+}
+
+static int
+mmu4_gem_pages(struct mmu4_gem_slot *g)
+{
+	struct drm_gem_cma_object *cma = &g->bo->cma;
+	bus_dmamap_t parent = cma->dmamap;
+	uintptr_t va = (uintptr_t)cma->vaddr;
+	uint64_t offset, poff = 0, coff = 0;
+	unsigned int pseg = 0, cseg = 0;
+	paddr_t first, last;
+	bool coherent;
+
+	for (offset = 0; offset < cma->dmasize;
+	    offset += BCM2712_MMU4_PAGE_BYTES) {
+		if (!pmap_extract_coherency(pmap_kernel(), va + offset,
+		    &first, &coherent) ||
+		    !pmap_extract_coherency(pmap_kernel(), va + offset + 4095,
+		    &last, &coherent))
+			return EFAULT;
+		if ((first & (BCM2712_MMU4_PAGE_BYTES - 1)) != 0 ||
+		    last != first + 4095)
+			return EAGAIN;
+		if (first != parent->dm_segs[pseg].ds_addr + poff ||
+		    first != g->map->dm_segs[cseg].ds_addr + coff)
+			return EOPNOTSUPP;
+		if (offset < BCMV3D_HVS_BYTES)
+			g->pages.frame_pa[offset / BCM2712_MMU4_PAGE_BYTES] = first;
+		poff += BCM2712_MMU4_PAGE_BYTES;
+		coff += BCM2712_MMU4_PAGE_BYTES;
+		if (poff == parent->dm_segs[pseg].ds_len) {
+			poff = 0;
+			pseg++;
+		}
+		if (coff == g->map->dm_segs[cseg].ds_len) {
+			coff = 0;
+			cseg++;
+		}
+	}
+	return 0;
+}
+
+static bool
+mmu4_gem_map_overlap(bus_dmamap_t map, uint64_t pa, uint64_t size)
+{
+	int i;
+
+	for (i = 0; i < map->dm_nsegs; i++) {
+		if (mmu4_overlap(pa, size, map->dm_segs[i].ds_addr,
+		    map->dm_segs[i].ds_len))
+			return true;
+	}
+	return false;
+}
+
+static bool
+mmu4_gem_allocation_overlap(const struct mmu4_allocation *a,
+    const struct mmu4_allocation *other, uint64_t size)
+{
+
+	return mmu4_overlap(a->pa, size, other->pa, size) ||
+	    mmu4_overlap((uintptr_t)a->kva, size, (uintptr_t)other->kva, size);
+}
+
+static int
+mmu4_gem_aliases(struct bcmv3d_mmu4_backing *b, struct mmu4_gem_slot *g)
+{
+	struct drm_gem_cma_object *cma = &g->bo->cma;
+	struct mmu4_gem_slot *other;
+	struct mmu4_allocation *a;
+	uint64_t size = b->status.control_bytes;
+	unsigned int i, j, k;
+	int seg;
+
+	if (mmu4_overlap((uintptr_t)cma->vaddr, cma->dmasize,
+	    (uintptr_t)b->frame->vaddr, b->frame->size) ||
+	    mmu4_gem_map_overlap(cma->dmamap, b->pages.frame_pa[0],
+	    b->status.frame_bytes))
+		return EINVAL;
+	for (i = 0; i < 4; i++) {
+		a = &b->control[i];
+		if (mmu4_overlap((uintptr_t)cma->vaddr, cma->dmasize,
+		    (uintptr_t)a->kva, size) ||
+		    mmu4_gem_map_overlap(cma->dmamap, a->pa, size))
+			return EINVAL;
+	}
+	for (i = 0; i < 2; i++) {
+		a = &g->control[i];
+		if (mmu4_overlap((uintptr_t)a->kva, size,
+		    (uintptr_t)cma->vaddr, cma->dmasize) ||
+		    mmu4_overlap((uintptr_t)a->kva, size,
+		    (uintptr_t)b->frame->vaddr, b->frame->size) ||
+		    mmu4_overlap(a->pa, size, b->pages.frame_pa[0],
+		    b->status.frame_bytes) ||
+		    mmu4_gem_map_overlap(cma->dmamap, a->pa, size))
+			return EINVAL;
+		for (j = 0; j < i; j++) {
+			if (mmu4_gem_allocation_overlap(a, &g->control[j], size))
+				return EINVAL;
+		}
+		for (j = 0; j < 4; j++) {
+			if (mmu4_gem_allocation_overlap(a, &b->control[j], size))
+				return EINVAL;
+		}
+	}
+	for (i = 0; i < BCM2712_MMU4_SCANOUT_SLOTS; i++) {
+		other = b->staged[i];
+		if (other == NULL)
+			continue;
+		if (mmu4_overlap((uintptr_t)cma->vaddr, cma->dmasize,
+		    (uintptr_t)other->bo->cma.vaddr, other->bo->cma.dmasize))
+			return EINVAL;
+		for (seg = 0; seg < cma->dmamap->dm_nsegs; seg++) {
+			if (mmu4_gem_map_overlap(other->map,
+			    cma->dmamap->dm_segs[seg].ds_addr,
+			    cma->dmamap->dm_segs[seg].ds_len))
+				return EINVAL;
+		}
+		for (j = 0; j < 2; j++) {
+			if (mmu4_gem_map_overlap(cma->dmamap,
+			    other->control[j].pa, size))
+				return EINVAL;
+			for (k = 0; k < 2; k++) {
+				if (mmu4_gem_allocation_overlap(&g->control[k],
+				    &other->control[j], size) ||
+				    mmu4_gem_map_overlap(other->map,
+				    g->control[k].pa, size))
+					return EINVAL;
+			}
+		}
+	}
+	return 0;
+}
+
+static void
+mmu4_gem_free(struct bcmv3d_mmu4_backing *b, struct mmu4_gem_slot *g)
+{
+	struct mmu4_allocation *a;
+	unsigned int i;
+
+	for (i = 2; i > 0; i--) {
+		a = &g->control[i - 1];
+		if (a->loaded)
+			bus_dmamap_unload(b->sc->dmat, a->map);
+		if (a->map != NULL)
+			bus_dmamap_destroy(b->sc->dmat, a->map);
+		if (a->mapped)
+			bus_dmamem_unmap(b->sc->dmat, a->kva,
+			    b->status.control_bytes);
+		if (a->allocated)
+			bus_dmamem_free(b->sc->dmat, &a->segment, 1);
+	}
+	if (g->loaded)
+		bus_dmamap_unload(b->sc->dmat, g->map);
+	if (g->map != NULL)
+		bus_dmamap_destroy(b->sc->dmat, g->map);
+	if (g->bo != NULL)
+		drm_gem_object_put_unlocked(&g->bo->cma.base);
+	kmem_free(g, sizeof(*g));
+}
+
+int
+bcmv3d_mmu4_backing_stage_gem(struct bcmv3d_mmu4_backing *b, unsigned int slot,
+    struct drm_gem_object *obj)
+{
+	struct mmu4_gem_slot *g;
+	struct drm_gem_cma_object *cma;
+	struct mmu4_allocation *a;
+	uint64_t pa;
+	uintptr_t va;
+	unsigned int i, maxsegs;
+	int error, nsegments;
+
+	if (b == NULL || obj == NULL || slot >= BCM2712_MMU4_SCANOUT_SLOTS)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	if (b->running || !b->status.prepared || b->status.first_error != 0 ||
+	    b->status.mapping_uncertain || b->staged[slot] != NULL)
+		return EBUSY;
+	for (i = 0; i < BCM2712_MMU4_SCANOUT_SLOTS; i++) {
+		if (b->staged[i] != NULL && &b->staged[i]->bo->cma.base == obj)
+			return EEXIST;
+	}
+	b->running = true;
+	g = kmem_zalloc(sizeof(*g), KM_SLEEP);
+	error = bcmv3d_bo_reference(b->sc, obj, &g->bo);
+	if (error != 0)
+		goto fail;
+	cma = &g->bo->cma;
+	va = (uintptr_t)cma->vaddr;
+	if (cma->dmat != b->sc->dmat || cma->base.size != cma->dmasize ||
+	    cma->dmasize < BCMV3D_HVS_BYTES || cma->dmasize > BCMV3D_BO_MAX ||
+	    (cma->dmasize & (PAGE_SIZE - 1)) != 0 || cma->vaddr == NULL ||
+	    (va & (PAGE_SIZE - 1)) != 0 ||
+	    cma->dmasize - 1 > UINTPTR_MAX - va || g->bo->maxsegs <= 0 ||
+	    g->bo->nsegs <= 0 || g->bo->nsegs > g->bo->maxsegs) {
+		error = EINVAL;
+		goto fail;
+	}
+	error = mmu4_gem_map(cma->dmamap, cma->dmasize, g->bo->maxsegs);
+	if (error != 0)
+		goto fail;
+	maxsegs = cma->dmasize / PAGE_SIZE;
+	error = bus_dmamap_create(b->sc->dmat, cma->dmasize, maxsegs,
+	    cma->dmasize, 0, BUS_DMA_WAITOK, &g->map);
+	if (error != 0)
+		goto fail;
+	error = bus_dmamap_load(b->sc->dmat, g->map, cma->vaddr,
+	    cma->dmasize, NULL, BUS_DMA_WAITOK | BUS_DMA_WRITE);
+	if (error != 0)
+		goto fail;
+	g->loaded = true;
+	error = mmu4_gem_map(g->map, cma->dmasize, maxsegs);
+	if (error != 0)
+		goto fail;
+	error = mmu4_gem_pages(g);
+	if (error != 0)
+		goto fail;
+	/* Read-only proofs leave all initial plan/image/status bytes intact. */
+	for (i = 0; i < 4; i++) {
+		error = mmu4_gem_control(&b->control[i],
+		    b->status.control_bytes, &pa);
+		if (error != 0)
+			goto fail;
+		if (pa != b->control[i].pa) {
+			error = EAGAIN;
+			goto fail;
+		}
+	}
+	for (i = 0; i < 2; i++) {
+		a = &g->control[i];
+		error = bus_dmamem_alloc(b->sc->dmat, b->status.control_bytes,
+		    PAGE_SIZE, 0, &a->segment, 1, &nsegments, BUS_DMA_WAITOK);
+		if (error != 0)
+			goto fail;
+		a->allocated = true;
+		if (nsegments != 1 || a->segment.ds_len != b->status.control_bytes) {
+			error = EINVAL;
+			goto fail;
+		}
+		error = bus_dmamem_map(b->sc->dmat, &a->segment, 1,
+		    b->status.control_bytes, &a->kva, BUS_DMA_WAITOK);
+		if (error != 0)
+			goto fail;
+		a->mapped = true;
+		error = bus_dmamap_create(b->sc->dmat, b->status.control_bytes, 1,
+		    b->status.control_bytes, 0, BUS_DMA_WAITOK, &a->map);
+		if (error != 0)
+			goto fail;
+		error = bus_dmamap_load(b->sc->dmat, a->map, a->kva,
+		    b->status.control_bytes, NULL, BUS_DMA_WAITOK | BUS_DMA_WRITE);
+		if (error != 0)
+			goto fail;
+		a->loaded = true;
+		error = mmu4_gem_control(a, b->status.control_bytes, &a->pa);
+		if (error != 0)
+			goto fail;
+		g->pages.l2_pa[i] = a->pa;
+	}
+	error = mmu4_gem_aliases(b, g);
+	if (error != 0)
+		goto fail;
+	g->pages.debug = b->cfg.debug;
+	g->pages.top_pa = b->cfg.top_pa;
+	error = bcm2712_mmu4_encode_range(&g->pages, slot, &g->image);
+	if (error != 0)
+		goto fail;
+	for (i = 0; i < 2; i++) {
+		memset(g->control[i].kva, 0, b->status.control_bytes);
+		memcpy(g->control[i].kva, g->image.l2[i],
+		    BCM2712_MMU4_PAGE_BYTES);
+	}
+	if (b->staged[0] == NULL && b->staged[1] == NULL && b->staged[2] == NULL)
+		memcpy(b->candidate_top, b->image.top, sizeof(b->candidate_top));
+	memcpy(b->candidate_top + (slot + 1) * 8, g->image.top, 8);
+	b->staged[slot] = g;
+	b->running = false;
+	return 0;
+fail:
+	mmu4_gem_free(b, g);
+	b->running = false;
+	return error;
+}
+
+int
+bcmv3d_mmu4_backing_discard_staged_gem(struct bcmv3d_mmu4_backing *b,
+    unsigned int slot)
+{
+	struct mmu4_gem_slot *g;
+
+	if (b == NULL || slot >= BCM2712_MMU4_SCANOUT_SLOTS)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	if (b->running)
+		return EBUSY;
+	g = b->staged[slot];
+	if (g == NULL)
+		return ENOENT;
+	b->running = true;
+	mmu4_gem_free(b, g);
+	memset(b->candidate_top + (slot + 1) * 8, 0, 8);
+	b->staged[slot] = NULL;
+	b->running = false;
 	return 0;
 }

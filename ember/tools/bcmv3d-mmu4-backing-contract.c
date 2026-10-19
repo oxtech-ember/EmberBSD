@@ -352,6 +352,17 @@ void bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t m, bus_addr_t offset,
 	CHECK(m->region == (syncs < 4 ? syncs + 1 : 0));
 	image_check(); syncs++;
 }
+/* User GEM staging has its own joined actual-allocator contract. */
+int
+bcmv3d_bo_reference(struct bcmv3d_device *sc, struct drm_gem_object *obj,
+    struct bcmv3d_bo **out)
+{
+	(void)sc;
+	(void)obj;
+	(void)out;
+	return EOPNOTSUPP;
+}
+
 struct bcmv3d_bo *bcmv3d_bo_alloc(struct bcmv3d_device *sc, uint32_t requested)
 {
 	size_t size = ((size_t)8294400 + PAGE_SIZE - 1) & ~((size_t)PAGE_SIZE - 1);
