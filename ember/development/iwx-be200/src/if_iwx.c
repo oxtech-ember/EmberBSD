@@ -11956,7 +11956,7 @@ iwx_preinit(struct iwx_softc *sc)
 void
 iwx_attach_hook(struct device *self)
 {
-	struct iwx_softc *sc = (void *)self;
+	struct iwx_softc *sc = device_private(self);
 
 	KASSERT(!cold);
 
@@ -12079,7 +12079,7 @@ iwx_get_crf_id(struct iwx_softc *sc)
 void
 iwx_attach(struct device *parent, struct device *self, void *aux)
 {
-	struct iwx_softc *sc = (void *)self;
+	struct iwx_softc *sc = device_private(self);
 	struct pci_attach_args *pa = aux;
 	pcireg_t reg, memtype;
 	char intrbuf[PCI_INTRSTR_LEN];
@@ -12091,6 +12091,7 @@ iwx_attach(struct device *parent, struct device *self, void *aux)
 	int txq_i, i;
 	size_t ctxt_info_size;
 
+	sc->sc_dev = self;
 	sc->sc_pid = PCI_PRODUCT(pa->pa_id);
 	sc->sc_pct = pa->pa_pc;
 	sc->sc_pcitag = pa->pa_tag;
@@ -12630,7 +12631,7 @@ iwx_wakeup(struct iwx_softc *sc)
 int
 iwx_activate(struct device *self, enum devact act)
 {
-	struct iwx_softc *sc = (struct iwx_softc *)self;
+	struct iwx_softc *sc = device_private(self);
 	struct ifnet *ifp = &sc->sc_ec.ec_if;
 
 	switch (act) {
