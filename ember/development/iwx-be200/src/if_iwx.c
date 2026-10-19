@@ -4951,7 +4951,23 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 		chanidx = ieee80211_chan2ieee(ic, ic->ic_ibss_chan);
 
 	wh = mtod(m, struct ieee80211_frame *);
+
+	/*
+	 * The firmware scans all channels on its own.  NetBSD net80211
+	 * drops beacons whose DS channel differs from ic_curchan, so follow
+	 * the receive channel while scanning, as iwm_fix_channel() does.
+	 */
+	if (ic->ic_state == IEEE80211_S_SCAN &&
+	    (wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_MGT) {
+		uint8_t subtype = wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK;
+
+		if (subtype == IEEE80211_FC0_SUBTYPE_BEACON ||
+		    subtype == IEEE80211_FC0_SUBTYPE_PROBE_RESP)
+			ic->ic_curchan = &ic->ic_channels[chanidx];
+	}
+
 	ni = ieee80211_find_rxnode(ic, (struct ieee80211_frame_min *)wh);
+	ni->ni_chan = &ic->ic_channels[chanidx];
 
 #if NBPFILTER > 0
 	if (sc->sc_drvbpf != NULL) {
@@ -9839,7 +9855,7 @@ iwx_send_update_mcc_cmd(struct iwx_softc *sc, const char *alpha2)
 
 	resp_version = iwx_lookup_notif_ver(sc, IWX_LONG_GROUP,
 	    IWX_MCC_UPDATE_CMD);
-	if (resp_version >= 8) {
+	if (resp_version > 8) {
 		printf("%s: unsupported MCC update command response "
 		    "version %u\n", device_xname(sc->sc_dev), resp_version);
 		return ENOTSUP;
@@ -9868,8 +9884,23 @@ iwx_send_update_mcc_cmd(struct iwx_softc *sc, const char *alpha2)
 
 	resp_len = iwx_rx_packet_payload_len(pkt);
 
+	if (resp_version == 8) {
+		struct iwx_mcc_update_resp_v8 *resp;
 
-	if (isset(sc->sc_enabled_capa,
+		if (resp_len < sizeof(*resp)) {
+			err = EIO;
+			goto out;
+		}
+		resp = (void *)pkt->data;
+		if (resp_len != sizeof(*resp) +
+		    le32toh(resp->n_channels) * sizeof(resp->channels[0])) {
+			err = EIO;
+			goto out;
+		}
+		/* Update channel map and our scan configuration. */
+		iwx_init_channel_map(sc, NULL, resp->channels,
+		    le32toh(resp->n_channels));
+	} else if (isset(sc->sc_enabled_capa,
 	    IWX_UCODE_TLV_CAPA_MCC_UPDATE_11AX_SUPPORT)) {
 		struct iwx_mcc_update_resp_v4 *resp;
 
@@ -10382,18 +10413,24 @@ iwx_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 	struct iwx_softc *sc = ifp->if_softc;
 	struct ieee80211com *ic = &sc->sc_ic;
 	int s, err = 0, generation = sc->sc_generation;
+	/*
+	 * NetBSD re-enters if_ioctl from the same thread (for example
+	 * SIOCINITIFADDR from in6_ifattach() while SIOCSIFFLAGS brings the
+	 * interface up), so only take the lock when we do not own it yet.
+	 */
+	const bool locked = !rw_write_held(&sc->ioctl_rwl);
 
 	/*
 	 * Prevent processes from entering this function while another
 	 * process is tsleep'ing in it.
 	 */
-	rw_enter_write(&sc->ioctl_rwl);
-	if (generation != sc->sc_generation) {
-		rw_exit(&sc->ioctl_rwl);
-		return ENXIO;
+	if (locked) {
+		rw_enter_write(&sc->ioctl_rwl);
+		if (generation != sc->sc_generation) {
+			rw_exit(&sc->ioctl_rwl);
+			return ENXIO;
+		}
 	}
-	if (err)
-		return err;
 	s = splnet();
 
 	switch (cmd) {
@@ -10401,6 +10438,9 @@ iwx_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 		ifp->if_flags |= IFF_UP;
 		/* FALLTHROUGH */
 	case SIOCSIFFLAGS:
+		err = ifioctl_common(ifp, cmd, data);
+		if (err)
+			break;
 		if (ifp->if_flags & IFF_UP) {
 			if (!(ifp->if_flags & IFF_RUNNING)) {
 				/* Force reload of firmware image from disk. */
@@ -10428,6 +10468,18 @@ iwx_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 		}
 		break;
 
+	case SIOCADDMULTI:
+	case SIOCDELMULTI: {
+		const struct sockaddr *sa = ifreq_getaddr(cmd,
+		    (struct ifreq *)data);
+		err = (cmd == SIOCADDMULTI) ?
+		    ether_addmulti(sa, &sc->sc_ec) :
+		    ether_delmulti(sa, &sc->sc_ec);
+		if (err == ENETRESET)
+			err = 0;
+		break;
+	}
+
 	default:
 		err = ieee80211_ioctl(ic, cmd, data);
 	}
@@ -10442,7 +10494,8 @@ iwx_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 	}
 
 	splx(s);
-	rw_exit(&sc->ioctl_rwl);
+	if (locked)
+		rw_exit(&sc->ioctl_rwl);
 
 	return err;
 }
@@ -12012,6 +12065,77 @@ iwx_preinit(struct iwx_softc *sc)
 	return 0;
 }
 
+/*
+ * Attach the interface once the firmware has reported the MAC address and
+ * the channel map (NVM): ieee80211_ifattach() derives the supported modes
+ * from ic_channels and the link address from ic_myaddr.  Same order as
+ * iwm_config_complete().
+ */
+static void
+iwx_config_complete(struct iwx_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ifnet *ifp = &sc->sc_ec.ec_if;
+	int i;
+
+	(void)i;
+	if_initialize(ifp);
+	ieee80211_ifattach(ic);
+	/* Use common softint-based if_input */
+	ifp->if_percpuq = if_percpuq_create(ifp);
+	if_register(ifp);
+
+#if defined(IWX_HT)
+	for (i = 0; i < nitems(sc->sc_rxba_data); i++) {
+		struct iwx_rxba_data *rxba = &sc->sc_rxba_data[i];
+		rxba->baid = IWX_RX_REORDER_DATA_INVALID_BAID;
+		rxba->sc = sc;
+		timeout_set(&rxba->session_timer, iwx_rx_ba_session_expired,
+		    rxba);
+		for (j = 0; j < nitems(rxba->entries); j++)
+			ml_init(&rxba->entries[j].frames);
+	}
+#endif
+	task_set(&sc->init_task, iwx_init_task, sc);
+	task_set(&sc->newstate_task, iwx_newstate_task, sc);
+	task_set(&sc->mac_ctxt_task, iwx_mac_ctxt_task, sc);
+	task_set(&sc->phy_ctxt_task, iwx_phy_ctxt_task, sc);
+#if defined(IWX_HT)
+	task_set(&sc->ba_task, iwx_ba_task, sc);
+	task_set(&sc->setkey_task, iwx_setkey_task, sc);
+	task_set(&sc->bgscan_done_task, iwx_bgscan_done_task, sc);
+#endif
+
+	ic->ic_node_alloc = iwx_node_alloc;
+#if defined(IWX_HT)
+	ic->ic_bgscan_start = iwx_bgscan;
+	ic->ic_bgscan_done = iwx_bgscan_done;
+	ic->ic_set_key = iwx_set_key;
+	ic->ic_delete_key = iwx_delete_key;
+#endif
+
+	/* Override 802.11 state transition machine. */
+	sc->sc_newstate = ic->ic_newstate;
+	ic->ic_newstate = iwx_newstate;
+	ic->ic_updateslot = iwx_updateslot;
+#if defined(IWX_HT)
+	ic->ic_ampdu_rx_start = iwx_ampdu_rx_start;
+	ic->ic_ampdu_rx_stop = iwx_ampdu_rx_stop;
+	ic->ic_ampdu_tx_start = iwx_ampdu_tx_start;
+	ic->ic_ampdu_tx_stop = NULL;
+#endif
+
+	mutex_init(&sc->sc_media_mtx, MUTEX_DEFAULT, IPL_SOFTNET);
+	ieee80211_media_init_with_lock(ic, iwx_media_change,
+	    ieee80211_media_status, &sc->sc_media_mtx);
+
+	if (pmf_device_register(sc->sc_dev, NULL, NULL))
+		pmf_class_network_register(sc->sc_dev, ifp);
+	else
+		printf("%s: couldn't establish power handler\n",
+		    device_xname(sc->sc_dev));
+}
+
 void
 iwx_attach_hook(struct device *self)
 {
@@ -12019,7 +12143,8 @@ iwx_attach_hook(struct device *self)
 
 	KASSERT(!cold);
 
-	iwx_preinit(sc);
+	if (iwx_preinit(sc) == 0)
+		iwx_config_complete(sc);
 }
 
 const struct iwx_device_cfg *
@@ -12527,61 +12652,6 @@ iwx_attach(struct device *parent, struct device *self, void *aux)
 	IFQ_SET_READY(&ifp->if_snd);
 	memcpy(ifp->if_xname, device_xname(sc->sc_dev), IFNAMSIZ);
 
-	if_initialize(ifp);
-	ieee80211_ifattach(ic);
-	/* Use common softint-based if_input */
-	ifp->if_percpuq = if_percpuq_create(ifp);
-	if_register(ifp);
-
-#if defined(IWX_HT)
-	for (i = 0; i < nitems(sc->sc_rxba_data); i++) {
-		struct iwx_rxba_data *rxba = &sc->sc_rxba_data[i];
-		rxba->baid = IWX_RX_REORDER_DATA_INVALID_BAID;
-		rxba->sc = sc;
-		timeout_set(&rxba->session_timer, iwx_rx_ba_session_expired,
-		    rxba);
-		for (j = 0; j < nitems(rxba->entries); j++)
-			ml_init(&rxba->entries[j].frames);
-	}
-#endif
-	task_set(&sc->init_task, iwx_init_task, sc);
-	task_set(&sc->newstate_task, iwx_newstate_task, sc);
-	task_set(&sc->mac_ctxt_task, iwx_mac_ctxt_task, sc);
-	task_set(&sc->phy_ctxt_task, iwx_phy_ctxt_task, sc);
-#if defined(IWX_HT)
-	task_set(&sc->ba_task, iwx_ba_task, sc);
-	task_set(&sc->setkey_task, iwx_setkey_task, sc);
-	task_set(&sc->bgscan_done_task, iwx_bgscan_done_task, sc);
-#endif
-
-	ic->ic_node_alloc = iwx_node_alloc;
-#if defined(IWX_HT)
-	ic->ic_bgscan_start = iwx_bgscan;
-	ic->ic_bgscan_done = iwx_bgscan_done;
-	ic->ic_set_key = iwx_set_key;
-	ic->ic_delete_key = iwx_delete_key;
-#endif
-
-	/* Override 802.11 state transition machine. */
-	sc->sc_newstate = ic->ic_newstate;
-	ic->ic_newstate = iwx_newstate;
-	ic->ic_updateslot = iwx_updateslot;
-#if defined(IWX_HT)
-	ic->ic_ampdu_rx_start = iwx_ampdu_rx_start;
-	ic->ic_ampdu_rx_stop = iwx_ampdu_rx_stop;
-	ic->ic_ampdu_tx_start = iwx_ampdu_tx_start;
-	ic->ic_ampdu_tx_stop = NULL;
-#endif
-
-	mutex_init(&sc->sc_media_mtx, MUTEX_DEFAULT, IPL_SOFTNET);
-	ieee80211_media_init_with_lock(ic, iwx_media_change,
-	    ieee80211_media_status, &sc->sc_media_mtx);
-
-	if (pmf_device_register(self, NULL, NULL))
-		pmf_class_network_register(self, ifp);
-	else
-		printf("%s: couldn't establish power handler\n",
-		    device_xname(sc->sc_dev));
 	/*
 	 * We cannot read the MAC address without loading the
 	 * firmware from disk. Postpone until mountroot is done.

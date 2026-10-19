@@ -8757,6 +8757,20 @@ struct iwx_mcc_update_resp {
 	uint32_t channels[0];
 } __packed; /* LAR_UPDATE_MCC_CMD_RESP_S_VER_4 */
 
+/* Linux fw/api/nvm-reg.h: LAR_UPDATE_MCC_CMD_RESP_S_VER_8 (BZ firmware). */
+struct iwx_mcc_update_resp_v8 {
+	uint32_t status;
+	uint16_t mcc;
+	uint8_t padding[2];
+	uint32_t cap;
+	uint16_t time;
+	uint16_t geo_info;
+	uint8_t source_id;
+	uint8_t reserved[3];
+	uint32_t n_channels;
+	uint32_t channels[];
+} __packed; /* LAR_UPDATE_MCC_CMD_RESP_S_VER_8 */
+
 /**
  * struct iwx_mcc_chub_notif - chub notifies of mcc change
  * (MCC_CHUB_UPDATE_CMD = 0xc9)
