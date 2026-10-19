@@ -359,14 +359,14 @@ native_select(struct sun60i_a733_hdmi_softc *sc)
 	int error = EOPNOTSUPP;
 
 	if (edid->edid_nmodes <= 0 ||
-	    edid->edid_nmodes > __arraycount(edid->edid_modes))
+	    (u_int)edid->edid_nmodes > __arraycount(edid->edid_modes))
 		return EINVAL;
 	/* Only use pointers that refer to a mode in this parsed base block. */
-	for (u_int i = 0; i < edid->edid_nmodes; i++)
+	for (int i = 0; i < edid->edid_nmodes; i++)
 		if (&edid->edid_modes[i] == edid->edid_preferred_mode &&
 		    native_mode(sc->dcxo.rate_hz, &edid->edid_modes[i], &sc->mode) == 0)
 			return 0;
-	for (u_int i = 0; i < edid->edid_nmodes; i++) {
+	for (int i = 0; i < edid->edid_nmodes; i++) {
 		error = native_mode(sc->dcxo.rate_hz, &edid->edid_modes[i], &sc->mode);
 		if (error == 0)
 			break;
@@ -400,6 +400,8 @@ native_get_mode(void *arg, const void *owner, struct sun60i_a733_output_mode *ou
 	if (sc->vdd08 == NULL)
 		return native_fail(sc, ENXIO);
 	sc->vcc18 = fdtbus_regulator_acquire(sc->phandle, "vcc18-supply");
+	if (sc->vcc18 == NULL)
+		return native_fail(sc, ENXIO);
 	error = native_ready(sc, owner);
 	if (error == 0)
 		error = sun60i_a733_ccu_display_begin_hdmi(sc->de0, owner);
@@ -536,6 +538,8 @@ sun60i_a733_hdmi_match(device_t parent, cfdata_t cf, void *aux)
 {
 	struct fdt_attach_args *faa = aux;
 
+	(void)parent;
+	(void)cf;
 	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
@@ -621,6 +625,7 @@ sun60i_a733_hdmi_attach(device_t parent, device_t self, void *aux)
 	u_int mapped = 0;
 	int error = EINVAL;
 
+	(void)parent;
 	sc->phandle = faa->faa_phandle;
 	sc->bst = faa->faa_bst;
 	sc->dw.sc_dev = self;

@@ -24,9 +24,11 @@ def main():
     source = root / "sys/arch/arm/sunxi"
     with tempfile.TemporaryDirectory(prefix="a733-hdmi-native-") as directory:
         work = Path(directory)
+        headers = work / "arm/sunxi"
+        headers.mkdir(parents=True)
         for name in ("sun60i_a733_output.h", "sun60i_a733_hdmi_phy.h",
                      "sun60i_a733_tv0.h", "sun60i_a733_ccu.h", "sunxi_rtcvar.h"):
-            (work / name).write_bytes((source / name).read_bytes())
+            (headers / name).write_bytes((source / name).read_bytes())
         for name in ("videomode.h", "edidvar.h"):
             (work / name).write_text(body(root / "sys/dev/videomode" / name))
         for name in ("sun60i_a733_output.c", "sun60i_a733_hdmi_fdt.c"):
@@ -42,7 +44,8 @@ def main():
         command = (shlex.split(os.environ.get("CC", "cc")) +
                    ["-std=c11", "-Wall", "-Wextra", "-Werror"] +
                    shlex.split(os.environ.get("A733_HDMI_NATIVE_CFLAGS", "")) +
-                   ["-I" + str(work), str(tools / "a733-hdmi-native-contract.c"),
+                   ["-I" + str(work), "-I" + str(headers),
+                    str(tools / "a733-hdmi-native-contract.c"),
                     "-o", str(binary)])
         subprocess.run(command, check=True)
         subprocess.run(shlex.split(os.environ.get("TEST_RUNNER", "")) +

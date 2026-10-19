@@ -193,6 +193,44 @@ static void attach(void)
 { struct fdt_attach_args fa={1,NULL};CHECK(sun60i_a733_hdmi_match(NULL,NULL,&fa)!=0);sun60i_a733_hdmi_attach(NULL,&sc,&fa); }
 static int pipeline(struct sun60i_a733_output_mode *mode,uint64_t *sequence)
 { int e=native_get_mode(&sc,&owner_cookie,mode);if(!e)e=native_prepare(&sc,&owner_cookie,mode);if(!e)e=native_start(&sc,&owner_cookie);if(!e)e=native_observe(&sc,&owner_cookie,sequence);return e; }
+static void adapter_access_checks(void)
+{
+ struct sun60i_a733_output_mode mode;
+ uint64_t sequence;
+ uint32_t value;
+ uint8_t byte;
+ unsigned before;
+ int error;
+
+ for (unsigned which=0;which<5;which++) {
+  for (unsigned reject=0;reject<2;reject++) {
+   fixture();attach();CHECK(pipeline(&mode,&sequence)==0);
+   calls=events=0;fail=reject;value=0x12345678;byte=0x42;before=reads;
+   core8[2]=0xa5;top[16]=0x11223344;vo1[0]=0x55667788;tvregs[0x340/4]=0x99aabbcc;
+   switch(which) {
+   case 0: error=native_phy_read(&sc,A733_HDMI_CORE8,2,&value);break;
+   case 1: error=native_phy_read(&sc,A733_HDMI_TOP32,0x40,&value);break;
+   case 2: error=native_tv_read(&sc,A733_VO1_REGS,0,&value);break;
+   case 3: error=native_tv_read(&sc,A733_TV0_REGS,0x340,&value);break;
+   default: error=native_dw_read(&sc.dw,2,&byte);break;
+   }
+   CHECK(reads==before+1&&calls==1);
+   if(reject) CHECK(error==EFAULT&&value==0x12345678&&byte==0x42&&sc.fault==EFAULT);
+   else {
+    const uint32_t expected[]={0xa5,0x11223344,0x55667788,0x99aabbcc};
+    CHECK(error==0&&sc.fault==0);
+    if(which<4)CHECK(value==expected[which]);else CHECK(byte==0xa5);
+   }
+  }
+ }
+ fixture();attach();CHECK(pipeline(&mode,&sequence)==0);
+ CHECK(native_dw_write(&sc.dw,2,0x7a)==0&&core8[2]==0x7a);
+ calls=events=0;fail=1;CHECK(native_dw_write(&sc.dw,3,0x7b)==EFAULT&&core8[3]==0x7b);
+ before=writes;CHECK(native_dw_write(&sc.dw,4,0)==EFAULT&&writes==before);
+ fixture();attach();fail=1;CHECK(native_phy_read(&sc,A733_HDMI_CORE8,0,&value)==EACCES&&reads==0);
+ fixture();fail=1;attach();CHECK(!registered&&maps==3&&unmaps==3&&clock_puts==1&&reads==0&&writes==0);
+}
+
 int main(void)
 {
  struct sun60i_a733_output_mode mode, saved;
@@ -206,7 +244,10 @@ int main(void)
  CHECK(sysreg[0]==0xa5a515a5&&sysreg[1]==0x00a5a5a5);count=calls;
  for(unsigned n=1;n<=count;n++) {
   fixture();attach();calls=events=0;fail=n;memset(&mode,0x5a,sizeof(mode));saved=mode;sequence=0x1234;
-  error=pipeline(&mode,&sequence);CHECK(error!=0&&sc.fault==error&&faults==1&&calls==n&&sequence==0x1234);
+  error=pipeline(&mode,&sequence);
+  if(!(error!=0&&sc.fault==error&&faults==1&&calls==n&&sequence==0x1234))
+   fprintf(stderr,"failure %u: error=%d fault=%d faults=%u calls=%u sequence=%llu\n",n,error,sc.fault,faults,calls,(unsigned long long)sequence);
+  CHECK(error!=0&&sc.fault==error&&faults==1&&calls==n&&sequence==0x1234);
   old_reads=reads;old_writes=writes;old_calls=calls;
   CHECK(native_get_mode(&sc,&owner_cookie,&mode)==error);
   CHECK(native_prepare(&sc,&owner_cookie,&mode)==error);
@@ -238,6 +279,7 @@ int main(void)
  bad=fixture_mode;bad.hsync_start=-1;CHECK(native_mode(26000000,&bad,&mode)!=0);
  CHECK(native_mode(26000000,NULL,&mode)==EINVAL);
  fixture();attach();CHECK(native_get_mode(&sc,&owner_cookie,&mode)==0);old_reads=reads;old_writes=writes;CHECK(native_phy_write(&sc,A733_HDMI_CORE8,0x8000,0)==ERANGE&&reads==old_reads&&writes==old_writes);
+ adapter_access_checks();
  printf("A733 native HDMI adapter: %u checks passed (%u fallible calls)\n",checks,count);
  return 0;
 }
