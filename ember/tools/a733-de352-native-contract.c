@@ -60,7 +60,8 @@ static unsigned memory_order[4];
 static bool cold_test, peer_power_on, cold_flush_clear;
 static int peer_power_error;
 static unsigned cold_writes, cold_fault_write, cold_readback_write;
-static unsigned cold_change_write;
+static unsigned cold_change_write, cold_flush_masters;
+static uint64_t cold_flush_time;
 static uint32_t cold_write_regs[64], cold_write_values[64];
 static uint64_t sequence;
 static unsigned event_polls, event_limit;
@@ -196,6 +197,9 @@ static int bus_space_poke_4(bus_space_tag_t tag,bus_space_handle_t h,bus_size_t 
   CHECK(sc->guard&&sc->guard->published&&sc->guard->directory.map->prewrites==1);
   CHECK(off!=0x84&&off!=0x1c);
   CHECK(cold_writes<__arraycount(cold_write_regs));
+  if(off==0x30&&value==3)cold_flush_time=tick;
+  if(off>=0x400&&(off-0x400)%0x200==0x18)cold_flush_masters|=1U<<((off-0x400)/0x200);
+  if(off==0x14){CHECK(value==1&&cold_flush_masters==0x3f&&iommu[0x30/4]==0);CHECK(tick-cold_flush_time>=10000);}
   cold_write_regs[cold_writes]=(uint32_t)off;cold_write_values[cold_writes]=value;cold_writes++;
   if(cold_writes==cold_fault_write)return EIO;
   bool mic_flush=off>=0x400&&(off-0x400)%0x200==0x18;
@@ -241,6 +245,7 @@ static void init(struct sun60i_de352_softc *sc)
  reserve_error=memory_error=begin_error=mode_error=prepare_error=start_error=0;
  attempt_begin=true;claimed=memory_claimed=retained=started=irq_masked=power_claimed=false;lease_owner=NULL;
  isolation_claimed=false;isolation_error=isolation_calls=isolation_fault_call=0;
+ cold_flush_masters=0;cold_flush_time=0;
  cold_test=peer_power_on=cold_flush_clear=false;peer_power_error=0;cold_writes=cold_fault_write=cold_readback_write=cold_change_write=0;
  memory_writes=memory_write_fault=memory_readback_fault=memory_change_call=cold_change_call=memory_map_fault=0;memset(memory_order,0,sizeof(memory_order));
  no_busy=no_finish=no_copy=no_vblank=same_sequence=bad_w1c=false;
@@ -419,7 +424,13 @@ static void cold_checks(void) {
  for(unsigned i=0;i<16384;i++)CHECK(((unsigned char *)sc.guard->directory.cpu)[i]==0);
  CHECK(sun60i_a733_de352_guard_destroy(sc.guard)==EBUSY);
  CHECK(sequence>=2&&started&&sc.dma->published);
- count=cold_writes;CHECK(count>15&&cold_write_regs[count-1]==0x14&&cold_write_values[count-1]==1);
+ static const uint32_t expected_regs[]={0x80,0x430,0x630,0x830,0xa30,0xc30,0xe30,
+  0x404,0x604,0x804,0xa04,0xc04,0xe04,0x20,0x2c,0x40,0x60,0x10,0x30,
+  0x418,0x618,0x818,0xa18,0xc18,0xe18,0x30,0x14};
+ static const uint32_t expected_values[]={0,0,0,0,0,0,0,1,1,1,1,1,1,0xc000,0,1,1,UINT32_MAX,3,1,1,1,1,1,1,0,1};
+ count=cold_writes;CHECK(count==__arraycount(expected_regs));
+ CHECK(memcmp(cold_write_regs,expected_regs,sizeof(expected_regs))==0);
+ CHECK(memcmp(cold_write_values,expected_values,sizeof(expected_values))==0);
  for(unsigned i=0;i<6;i++){CHECK(iommu[(0x404+i*0x200)/4]==1);CHECK(iommu[(0x430+i*0x200)/4]==0);}
  CHECK(de352_memory(&sc)==0);
  iommu[0xe38/4]=1;CHECK(de352_memory(&sc)==EBUSY);
