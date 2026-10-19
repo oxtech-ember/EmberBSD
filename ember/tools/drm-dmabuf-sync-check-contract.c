@@ -89,7 +89,8 @@ static int model_ioctl(int fd,unsigned long command,void *data) {
   if(scenario==FD_LEAK&&!leaked){CHECK(allocfd(LEAK,O_RDONLY,0)>=0);leaked=true;}
   return a->fd<0?-1:0;}
  struct dma_buf_import_sync_file *a=data;
- if(a->fd<0||a->fd>=32||descriptors[a->fd].kind!=SYNC){if(scenario!=BAD_IDENTITY)return fail(EINVAL);}
+ if(a->fd<0||a->fd>=32)return fail(EINVAL);
+ if(descriptors[a->fd].kind!=SYNC&&scenario!=BAD_IDENTITY)return fail(EINVAL);
  completed_imports++;return 0;
 }
 #define open model_open
