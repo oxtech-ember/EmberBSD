@@ -24,12 +24,15 @@ def main():
             (work / name).write_text(text + "\n")
         driver = (root / "sys/arch/arm/sunxi/sun60i_a733_npu.c").read_text()
         for name in ("sun60i_npu_mmio_ready", "sun60i_npu_engine_prepare",
-                     "sun60i_npu_sysctl_engine_value"):
+                     "sun60i_npu_engine_run", "sun60i_npu_sysctl_engine_value"):
             match = re.search(r"^" + name + r"\(.*?^}", driver,
                               re.MULTILINE | re.DOTALL)
             if match is None:
                 raise RuntimeError("missing production function: " + name)
             (work / (name + ".h")).write_text("static int\n" + match.group(0) + "\n")
+        run_header = (root / "sys/arch/arm/sunxi/sun60i_a733_npu_run.h").read_text()
+        (work / "sun60i_a733_npu_run.h").write_text("\n".join(
+            line for line in run_header.splitlines() if not line.startswith("#include ")) + "\n")
         dma_header = (root / "sys/arch/arm/sunxi/sun60i_a733_npu_dma.h").read_text()
         (work / "sun60i_a733_npu_dma.h").write_text("\n".join(
             line for line in dma_header.splitlines() if not line.startswith("#include ")) + "\n")

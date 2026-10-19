@@ -117,5 +117,6 @@ The accelerator-clock control tests all 32 stale divider values, both
 GPU/NPU orderings, current parent proofs and retained write failures.
 These are host controls. They do not validate device access, native ioctl
 copying, power sequencing, DMA, IRQ delivery, command completion, or a
-model result. The earlier [board evidence](../boards/orange-pi-zero-3w.md)
+model result. See the [native FE stages](a733-npu-engine.md) for the separate DMA/IRQ contract.
+The earlier [board evidence](../boards/orange-pi-zero-3w.md)
 remains a separate hardware cohort.

@@ -166,6 +166,7 @@ file	arch/arm/sunxi/sun60i_a733_npu.c	sun60i_a733_npu
 file	arch/arm/sunxi/sun60i_a733_npu_mmu.c	sun60i_a733_npu
 file	arch/arm/sunxi/sun60i_a733_npu_dma.c	sun60i_a733_npu
 file	arch/arm/sunxi/sun60i_a733_npu_fe.c	sun60i_a733_npu
+file	arch/arm/sunxi/sun60i_a733_npu_run.c	sun60i_a733_npu
 
 # A733 processor clocks
 device	sun60icpupll

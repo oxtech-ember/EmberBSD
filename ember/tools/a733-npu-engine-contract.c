@@ -10,11 +10,18 @@
 typedef unsigned int u_int;
 typedef void *bus_space_tag_t;
 typedef void *bus_dma_tag_t;
+typedef uintptr_t bus_space_handle_t;
+typedef int kmutex_t;
 struct clk { int unused; };
 #include "sun60i_a733_npu_fe.h"
 #include "sun60i_a733_npu_dma.h"
+#include "sun60i_a733_npu_run.h"
 struct sun60i_a733_npu_dma { int id; };
 struct sun60i_npu_softc {
+	struct sun60i_a733_npu_run sc_engine_run;
+	struct sun60i_a733_npu_run_status sc_engine_run_cache;
+	void *sc_dev;
+	int sc_phandle;
 	int sc_run_lock;
 	bool sc_mmio_ready, sc_run_pass;
 	u_int sc_run_stage, sc_run_result;
@@ -90,6 +97,38 @@ int sun60i_a733_npu_dma_destroy(struct sun60i_a733_npu_dma *m)
 { CHECK(m == &context); releases++; return release_error; }
 #include "sun60i_npu_mmio_ready.h"
 #include "sun60i_npu_engine_prepare.h"
+static unsigned run_calls, run_copies;
+static int run_error;
+static bool run_attempt;
+static const char *device_xname(void *dev)
+{ CHECK(dev == &context); return "npu0"; }
+int sun60i_a733_npu_run_once(struct sun60i_a733_npu_run *run, bus_space_tag_t tag,
+    struct clk *clock, int power, const void *owner, int phandle,
+    const char *name, struct sun60i_a733_npu_dma *m)
+{
+	CHECK(state.sc_run_lock == 1 && !state.sc_mmio_ready);
+	CHECK(run == &state.sc_engine_run && tag == state.sc_bst);
+	CHECK(clock == &clock1 && power == 7 && owner == &state);
+	CHECK(phandle == 13 && !strcmp(name, "npu0") && m == &context);
+	run_calls++;
+	if (run_attempt) {
+		run->status.attempted = 1;
+		run->status.publication_attempted = 1;
+		run->status.retained = 1;
+		run->status.command_bytes = 40;
+		run->status.error = run_error;
+		run->status.terminal = run_error == 0;
+	}
+	return run_error;
+}
+void sun60i_a733_npu_run_status(struct sun60i_a733_npu_run *run,
+    struct sun60i_a733_npu_run_status *out)
+{
+	CHECK(state.sc_run_lock == 1 && run == &state.sc_engine_run);
+	run_copies++; *out = run->status;
+}
+#include "sun60i_npu_engine_run.h"
+
 #define CTLTYPE_INT 2
 #define CTLTYPE_QUAD 4
 #define SYSCTL_TYPE(x) ((x) & 15)
@@ -154,6 +193,8 @@ static void reset(void)
 	proofs = snapshots = allocations = infos = releases = 0;
 	proof_error = snapshot_error = allocation_error = info_error = release_error = 0;
 	identity = false;
+	run_calls = run_copies = 0; run_error = 0; run_attempt = true;
+	state.sc_dev = &context; state.sc_phandle = 13;
 }
 static void cold(void)
 {
@@ -217,6 +258,40 @@ static void failures(void)
 	CHECK(state.sc_engine_release_error == EBUSY && state.sc_engine_dma == &context);
 	CHECK(!state.sc_engine_prepared && releases == 1 && !state.sc_mmio_ready);
 }
+static void runs(void)
+{
+	for (unsigned why = 0; why < 7; why++) {
+		reset(); state.sc_engine_dma = &context; state.sc_engine_prepared = 1;
+		switch (why) {
+		case 0: state.sc_run_stage = 0; break;
+		case 1: state.sc_run_pass = false; break;
+		case 2: state.sc_pid = 0; break;
+		case 3: state.sc_engine_prepared = 0; break;
+		case 4: state.sc_engine_dma = NULL; break;
+		case 5: state.sc_engine_release_error = EBUSY; break;
+		case 6: proof_error = EIO; break;
+		}
+		CHECK(sun60i_npu_engine_run(&state) != 0);
+		CHECK(!state.sc_mmio_ready && !run_calls && !run_copies);
+	}
+	for (unsigned kind = 0; kind < 3; kind++) {
+		reset(); state.sc_engine_dma = &context; state.sc_engine_prepared = 1;
+		run_error = kind == 0 ? 0 : EIO; run_attempt = kind != 2;
+		CHECK(sun60i_npu_engine_run(&state) == run_error);
+		CHECK(!state.sc_mmio_ready && run_calls == 1 && run_copies == 1);
+		CHECK(state.sc_engine_stage == (run_attempt ? 2U : 0U));
+		CHECK(state.sc_engine_command_bytes == (run_attempt ? 40U : 0U));
+		CHECK(state.sc_engine_run_cache.retained == (unsigned)run_attempt);
+		unsigned old_proofs = proofs;
+		if (run_attempt) {
+			CHECK(sun60i_npu_engine_run(&state) == EALREADY);
+			/* A later legacy ID stage cannot reopen user register access. */
+			state.sc_mmio_ready = true;
+			CHECK(sun60i_npu_mmio_ready(&state) == EBUSY);
+		}
+		CHECK(proofs == old_proofs && run_calls == 1 && run_copies == 1);
+	}
+}
 int main(void)
 {
 	cold(); failures(); reset();
@@ -227,6 +302,6 @@ int main(void)
 	CHECK(state.sc_mmio_ready && sun60i_npu_mmio_ready(&state) == 0);
 	CHECK(sun60i_npu_engine_prepare(&state) == EALREADY);
 	CHECK(snapshots == 1 && allocations == 1 && releases == 0);
-	cache();
-	printf("A733 NPU Engine1 consumer: %u checks passed\n", checks); return 0;
+	cache(); runs();
+	printf("A733 NPU native consumer: %u checks passed\n", checks); return 0;
 }

@@ -54,6 +54,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arm/sunxi/sun60i_a733_pck600.h>
 #include <arm/sunxi/sun60i_a733_npu_dma.h>
 #include <arm/sunxi/sun60i_a733_npu_fe.h>
+#include <arm/sunxi/sun60i_a733_npu_run.h>
 
 #define A733_NPU_BASE		0x03600000
 #define A733_NPU_ID_SIZE	0x34
@@ -144,6 +145,8 @@ struct sun60i_npu_softc {
 	struct sun60i_a733_npu_fe_snapshot sc_engine_snapshot;
 	struct sun60i_a733_npu_dma_info sc_engine_dma_info;
 	struct sun60i_a733_npu_dma *sc_engine_dma;
+	struct sun60i_a733_npu_run sc_engine_run;
+	struct sun60i_a733_npu_run_status sc_engine_run_cache;
 	/* VIPLite dispatch state */
 	devmajor_t sc_cmajor;
 	bool sc_cdev_attached;
@@ -347,7 +350,8 @@ sun60i_npu_mmio_ready(struct sun60i_npu_softc *sc)
 	int error;
 
 	KASSERT(mutex_owned(&sc->sc_run_lock));
-	if (!sc->sc_mmio_ready || sc->sc_run_stage != A733_NPU_STAGE_POWER_ID ||
+	if (sc->sc_engine_run.status.publication_attempted ||
+	    !sc->sc_mmio_ready || sc->sc_run_stage != A733_NPU_STAGE_POWER_ID ||
 	    sc->sc_run_result != 0 || !sc->sc_run_pass ||
 	    sc->sc_pid != A733_NPU_EXPECTED_PID || sc->sc_rev != A733_NPU_EXPECTED_REV)
 		return EBUSY;
@@ -406,6 +410,33 @@ sun60i_npu_engine_prepare(struct sun60i_npu_softc *sc)
 	sc->sc_engine_prepared = 1;
 	sc->sc_mmio_ready = true;
 	return 0;
+}
+
+/* Caller holds sc_run_lock. A run attempt never restores legacy access. */
+static int
+sun60i_npu_engine_run(struct sun60i_npu_softc *sc)
+{
+	int error;
+
+	KASSERT(mutex_owned(&sc->sc_run_lock));
+	if (sc->sc_engine_run.status.attempted)
+		return EALREADY;
+	error = sun60i_npu_mmio_ready(sc);
+	sc->sc_mmio_ready = false;
+	if (error != 0)
+		return error;
+	if (!sc->sc_engine_prepared || sc->sc_engine_dma == NULL ||
+	    sc->sc_engine_release_error != 0)
+		return EINVAL;
+	error = sun60i_a733_npu_run_once(&sc->sc_engine_run, sc->sc_bst,
+	    sc->sc_owned_clock, sc->sc_owned_power, sc, sc->sc_phandle,
+	    device_xname(sc->sc_dev), sc->sc_engine_dma);
+	sun60i_a733_npu_run_status(&sc->sc_engine_run, &sc->sc_engine_run_cache);
+	if (sc->sc_engine_run_cache.attempted)
+		sc->sc_engine_stage = 2;
+	if (sc->sc_engine_run_cache.command_bytes != 0)
+		sc->sc_engine_command_bytes = sc->sc_engine_run_cache.command_bytes;
+	return error;
 }
 
 /* One bounded register access through a freshly verified retained profile. */
@@ -654,6 +685,8 @@ sun60i_npu_sysctl_engine_stage(SYSCTLFN_ARGS)
 		error = 0;
 	else if (value == 1)
 		error = sun60i_npu_engine_prepare(sc);
+	else if (value == 2)
+		error = sun60i_npu_engine_run(sc);
 	else
 		error = EINVAL;
 	sc->sc_engine_result = error;
@@ -678,7 +711,28 @@ sun60i_npu_sysctl_engine_setup(struct sun60i_npu_softc *sc,
 		{ "engine_command_va",
 		    (int *)&sc->sc_engine_dma_info.command_virtual },
 		{ "engine_pd", (int *)&sc->sc_engine_dma_info.pd_entry },
-		{ "engine_command_bytes", (int *)&sc->sc_engine_command_bytes }
+		{ "engine_command_bytes", (int *)&sc->sc_engine_command_bytes },
+		{ "run_attempted", (int *)&sc->sc_engine_run_cache.attempted },
+		{ "run_publication_attempted", (int *)&sc->sc_engine_run_cache.publication_attempted },
+		{ "run_retained", (int *)&sc->sc_engine_run_cache.retained },
+		{ "run_started", (int *)&sc->sc_engine_run_cache.started },
+		{ "run_terminal", (int *)&sc->sc_engine_run_cache.terminal },
+		{ "run_snapshot_valid", (int *)&sc->sc_engine_run_cache.snapshot_valid },
+		{ "run_step", (int *)&sc->sc_engine_run_cache.step },
+		{ "run_error", (int *)&sc->sc_engine_run_cache.error },
+		{ "run_last_readback", (int *)&sc->sc_engine_run_cache.last_readback },
+		{ "run_command_bytes", (int *)&sc->sc_engine_run_cache.command_bytes },
+		{ "run_irq_raw", (int *)&sc->sc_engine_run_cache.irq_raw },
+		{ "run_irq_bits", (int *)&sc->sc_engine_run_cache.irq_bits },
+		{ "run_irq_fault", (int *)&sc->sc_engine_run_cache.irq_fault },
+		{ "run_irq_mask_readback", (int *)&sc->sc_engine_run_cache.irq_mask_readback },
+		{ "run_terminal_status", (int *)&sc->sc_engine_run_cache.terminal_status },
+		{ "run_stale0", (int *)&sc->sc_engine_run_cache.stale[0] },
+		{ "run_stale1", (int *)&sc->sc_engine_run_cache.stale[1] },
+		{ "run_terminal_idle0", (int *)&sc->sc_engine_run_cache.terminal_idle[0] },
+		{ "run_terminal_idle1", (int *)&sc->sc_engine_run_cache.terminal_idle[1] },
+		{ "run_terminal_dma0", (int *)&sc->sc_engine_run_cache.terminal_dma[0] },
+		{ "run_terminal_dma1", (int *)&sc->sc_engine_run_cache.terminal_dma[1] }
 	};
 	const struct {
 		const char *name;
@@ -689,7 +743,9 @@ sun60i_npu_sysctl_engine_setup(struct sun60i_npu_softc *sc,
 		{ "engine_stlb",
 		    (int64_t *)&sc->sc_engine_dma_info.stlb_address },
 		{ "engine_command_dma",
-		    (int64_t *)&sc->sc_engine_dma_info.command_address }
+		    (int64_t *)&sc->sc_engine_dma_info.command_address },
+		{ "run_irq_count", (int64_t *)&sc->sc_engine_run_cache.irq_count },
+		{ "run_irq_baseline", (int64_t *)&sc->sc_engine_run_cache.irq_baseline }
 	};
 	static const char * const names[2][A733_NPU_FE_NREGS] = {
 		{
@@ -706,10 +762,29 @@ sun60i_npu_sysctl_engine_setup(struct sun60i_npu_softc *sc,
 		}
 	};
 
+	static const char * const run_names[2][A733_NPU_RUN_NREGS] = {
+		{
+			"run_s0_r000", "run_s0_r004", "run_s0_r014",
+			"run_s0_r024", "run_s0_r030", "run_s0_r388",
+			"run_s0_r3a4", "run_s0_r3b4", "run_s0_r654",
+			"run_s0_r664", "run_s0_r668", "run_s0_r66c",
+			"run_s0_r090", "run_s0_r100", "run_s0_r104",
+			"run_s0_r10c", "run_s0_r3a8", "run_s0_r414"
+		},
+		{
+			"run_s1_r000", "run_s1_r004", "run_s1_r014",
+			"run_s1_r024", "run_s1_r030", "run_s1_r388",
+			"run_s1_r3a4", "run_s1_r3b4", "run_s1_r654",
+			"run_s1_r664", "run_s1_r668", "run_s1_r66c",
+			"run_s1_r090", "run_s1_r100", "run_s1_r104",
+			"run_s1_r10c", "run_s1_r3a8", "run_s1_r414"
+		}
+	};
+
 	/* The framework restricts writes without CTLFLAG_ANYWRITE. */
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
 	    CTLTYPE_INT, "engine_stage",
-	    SYSCTL_DESCR("0 dry; 1 read-only admission and DMA preparation"),
+	    SYSCTL_DESCR("0 dry; 1 prepare; 2 one retained native FE run"),
 	    sun60i_npu_sysctl_engine_stage, 0, NULL, 0,
 	    CTL_CREATE, CTL_EOL) != 0)
 		aprint_error_dev(sc->sc_dev,
@@ -742,6 +817,18 @@ sun60i_npu_sysctl_engine_setup(struct sun60i_npu_softc *sc,
 			    CTL_CREATE, CTL_EOL) != 0)
 				aprint_error_dev(sc->sc_dev,
 				    "cannot create engine raw node\n");
+		}
+	}
+	for (size_t row = 0; row < 2; row++) {
+		for (size_t i = 0; i < A733_NPU_RUN_NREGS; i++) {
+			if (sysctl_createv(NULL, 0, &rnode, NULL,
+			    CTLFLAG_READONLY, CTLTYPE_INT, run_names[row][i],
+			    SYSCTL_DESCR("cached pre-run raw peek32 sample"),
+			    sun60i_npu_sysctl_engine_value, 0,
+			    (int *)&sc->sc_engine_run_cache.raw[row][i], 0,
+			    CTL_CREATE, CTL_EOL) != 0)
+				aprint_error_dev(sc->sc_dev,
+				    "cannot create run raw node\n");
 		}
 	}
 }

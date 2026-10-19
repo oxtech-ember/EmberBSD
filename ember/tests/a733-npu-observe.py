@@ -88,6 +88,10 @@ def main():
     fe_env.setdefault("NPU_FE_CFLAGS", os.environ.get("NPU_TEST_CFLAGS", ""))
     subprocess.run([sys.executable, str(root / "ember/tools/a733-npu-fe-contract.py")],
                    env=fe_env, check=True)
+    run_env = dict(os.environ, NPU_RUN_SOURCE_ROOT=str(source))
+    run_env.setdefault("NPU_RUN_CFLAGS", os.environ.get("NPU_TEST_CFLAGS", ""))
+    subprocess.run([sys.executable, str(root / "ember/tools/a733-npu-run-contract.py")],
+                   env=run_env, check=True)
     print("PASS: Zero 3W NPU DT scope and source controls")
 
 
