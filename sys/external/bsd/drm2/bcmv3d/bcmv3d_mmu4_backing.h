@@ -28,8 +28,9 @@ struct bcmv3d_mmu4_backing_status {
 };
 
 /*
- * Private fixed, initially black 1920x1080 XRGB8888 backing. Process context
- * only. The caller holds the native render/device/tag references, serializes
+ * Private fixed 1920x1080 XRGB8888 backing. Prepare fills an immutable
+ * eight-bar initial test pattern before PREWRITE. Process context only.
+ * The caller holds the native render/device/tag references, serializes
  * all access and preserves callback storage/text. No object may be exposed to
  * a user, job, device or another writer. Supply accessible live objects and
  * disjoint output storage. Constructor/get-config/status preserve output on
