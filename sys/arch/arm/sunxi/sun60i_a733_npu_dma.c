@@ -188,6 +188,47 @@ sun60i_a733_npu_dma_info(const struct sun60i_a733_npu_dma *m,
 	return 0;
 }
 
+static bool
+npu_dma_spans_overlap(const void *p, size_t bytes, const void *q, size_t size)
+{
+	uintptr_t a = (uintptr_t)p, b = (uintptr_t)q;
+
+	if (bytes > UINTPTR_MAX - a || size > UINTPTR_MAX - b)
+		return true;
+	return a < b + size && b < a + bytes;
+}
+
+int
+sun60i_a733_npu_dma_set_commands(struct sun60i_a733_npu_dma *m,
+    const void *commands, size_t bytes)
+{
+	static const size_t sizes[NPU_DMA_NBUFFERS] = {
+		NPU_DMA_PAGE, A733_NPU_MMU_STLB_BYTES, NPU_DMA_PAGE
+	};
+
+	if (m == NULL || commands == NULL || bytes < 8 ||
+	    bytes > NPU_DMA_PAGE || (bytes & 7) != 0 ||
+	    bytes > UINTPTR_MAX - (uintptr_t)commands)
+		return EINVAL;
+	if (m->retained)
+		return EBUSY;
+	if (npu_dma_spans_overlap(commands, bytes, m, sizeof(*m)))
+		return EINVAL;
+	for (size_t i = 0; i < NPU_DMA_NBUFFERS; i++) {
+		const struct npu_dma_buffer *b = &m->buffers[i];
+
+		if (!b->loaded || b->map == NULL || b->cpu == NULL ||
+		    b->bytes != sizes[i] ||
+		    npu_dma_spans_overlap(commands, bytes, b->cpu, b->bytes))
+			return EINVAL;
+	}
+	/* Every validation precedes the first output change. No DMA sync occurs. */
+	memset(m->buffers[2].cpu, 0, NPU_DMA_PAGE);
+	memcpy(m->buffers[2].cpu, commands, bytes);
+	m->command_bytes = bytes;
+	return 0;
+}
+
 int
 sun60i_a733_npu_dma_retain(struct sun60i_a733_npu_dma *m)
 {

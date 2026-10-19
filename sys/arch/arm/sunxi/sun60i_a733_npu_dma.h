@@ -25,6 +25,9 @@ int sun60i_a733_npu_dma_prepare(bus_dma_tag_t, const void *, size_t,
     struct sun60i_a733_npu_dma **);
 int sun60i_a733_npu_dma_info(const struct sun60i_a733_npu_dma *,
     struct sun60i_a733_npu_dma_info *);
+/* Replace only the command page before retain. Failure preserves all bytes. */
+int sun60i_a733_npu_dma_set_commands(struct sun60i_a733_npu_dma *,
+    const void *, size_t);
 /* Mark retained before the first sync. Call before hardware publication. */
 int sun60i_a733_npu_dma_retain(struct sun60i_a733_npu_dma *);
 /* Retained storage cannot be destroyed, including after errors or timeouts. */

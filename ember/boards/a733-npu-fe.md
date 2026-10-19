@@ -88,3 +88,20 @@ Engine2 must separately prove a finite local-init/PD write list, IRQ ownership,
 stale-status handling, fetch bounds inside owned memory, retention before the
 first attempt and new event plus terminal evidence. It must block public
 READ_REG before map after publication. This change adds no Engine2 path.
+
+
+## Fixed flush image for a later run stage
+
+`sun60i_a733_npu_fe_run_image(output, capacity)` encodes a fixed 40-byte image.
+It prefixes the 16-byte event/END image with the BSP MMU flush, semaphore and
+stall format words: `0x08010061, 0xffffff7f, 0x08010e02, 0x30000701,
+0x48000000, 0x30000701`. The source is `vip_drv_mmu.c`, lines 1131 to 1159,
+at the pinned BSP commit above. The encoder writes little-endian bytes and
+preserves output on a bad pointer span or insufficient capacity. Bytes after
+the fixed image stay unchanged. This is original code from format facts.
+
+The native pre-retain command replacement API can store these bytes in the
+owned command page. Engine1 still prepares its original 16-byte image.
+Neither API enables an IRQ, writes an NPU register or starts execution.
+The later Engine2 run path requires a separately reviewed finite write list,
+IRQ admission and terminal proof. The fixed image is not model acceptance.

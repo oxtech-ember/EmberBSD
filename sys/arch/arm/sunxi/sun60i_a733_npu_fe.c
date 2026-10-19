@@ -95,3 +95,24 @@ sun60i_a733_npu_fe_event_image(void *out, size_t bytes)
 	}
 	return 0;
 }
+
+int
+sun60i_a733_npu_fe_run_image(void *out, size_t bytes)
+{
+	/* Pinned VIP2 MMU flush/semaphore/stall, then event4 and END. */
+	static const uint32_t words[10] = {
+		0x08010061, 0xffffff7f, 0x08010e02, 0x30000701,
+		0x48000000, 0x30000701, 0x08010e01, 0x44,
+		0x10000000, 0
+	};
+	uint8_t *p = out;
+
+	if (out == NULL || bytes < A733_NPU_FE_RUN_BYTES ||
+	    A733_NPU_FE_RUN_BYTES > UINTPTR_MAX - (uintptr_t)out)
+		return EINVAL;
+	for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); i++) {
+		for (size_t byte = 0; byte < 4; byte++)
+			p[i * 4 + byte] = (uint8_t)(words[i] >> (byte * 8));
+	}
+	return 0;
+}

@@ -14,6 +14,7 @@ enum sun60i_a733_npu_fe_register {
 	A733_NPU_FE_NREGS
 };
 #define A733_NPU_FE_EVENT_BYTES 16
+#define A733_NPU_FE_RUN_BYTES 40
 struct sun60i_a733_npu_fe_snapshot {
 	uint32_t words[2][A733_NPU_FE_NREGS];
 	bool valid;
@@ -26,4 +27,6 @@ int sun60i_a733_npu_fe_snapshot(bus_space_tag_t, struct clk *, int,
 int sun60i_a733_npu_fe_admit(const struct sun60i_a733_npu_fe_snapshot *);
 /* Exact event4/block6 + END bytes. No command execution or semantic proof. */
 int sun60i_a733_npu_fe_event_image(void *, size_t);
+/* Fixed MMU flush, event4 and END bytes. No execution proof. */
+int sun60i_a733_npu_fe_run_image(void *, size_t);
 #endif
