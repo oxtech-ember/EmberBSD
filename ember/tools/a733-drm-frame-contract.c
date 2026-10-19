@@ -71,9 +71,10 @@ struct drm_gem_cma_object {
 	bus_dmamap_t dmamap;
 	size_t dmasize;
 };
+#include "sun60i_a733_output.h"
+
 #include "sun60i_a733_de352_scanout.h"
 #include "sun60i_a733_drm_frame.h"
-#include "sun60i_a733_output.h"
 struct sun60i_a733_de352_client {
 	bool quarantine;
 };
