@@ -18,11 +18,11 @@ struct sun60i_a733_de352_buffer {
 };
 
 struct sun60i_a733_de352_dma {
-	bus_dma_tag_t tag;
+	bus_dma_tag_t tag, pixel_tag;
 	struct sun60i_a733_de352_buffer pixels, queue;
 	struct sun60i_a733_de352_rgb_words layer;
 	uint32_t width, height, pitch;
-	bool synchronized, published;
+	bool synchronized, published, external_pixels;
 };
 
 /*
@@ -33,6 +33,20 @@ struct sun60i_a733_de352_dma {
  */
 int sun60i_a733_de352_dma_prepare(bus_dma_tag_t, uint32_t, uint32_t,
     struct sun60i_a733_de352_dma **);
+/*
+ * Build the same two-descriptor list for a caller-owned loaded map. The caller
+ * pins the map and storage before this call and keeps both immutable. The
+ * allocator owns only its queue and child tag. It never unloads the pixel map.
+ * This profile accepts a single segment below 4 GiB and an offset of zero.
+ */
+int sun60i_a733_de352_dma_prepare_map(bus_dma_tag_t, bus_dmamap_t, size_t,
+    uint32_t, uint32_t, uint32_t, struct sun60i_a733_de352_dma **);
+/*
+ * The native coordinator may retire an external frame only after a later
+ * accepted RCQ list and two fresh TV0 observations. This function does not
+ * establish that proof. It releases only the owned queue and child tag.
+ */
+int sun60i_a733_de352_dma_retire(struct sun60i_a733_de352_dma *);
 /* Synchronize both maps, then mark before the first address-register write. */
 int sun60i_a733_de352_dma_publish(struct sun60i_a733_de352_dma *);
 /* No destruction after publication, including failed or timed-out writes. */

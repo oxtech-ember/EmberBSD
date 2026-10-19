@@ -27,6 +27,10 @@ def main():
                 text = "\n".join(line for line in source.splitlines()
                                  if not line.startswith(("#include ", "__KERNEL_RCSID(")))
                 (work / name).write_text(text + "\n")
+        source = (root / "sys/arch/arm/sunxi/sun60i_a733_de352_scanout.h").read_text()
+        (work / "sun60i_a733_de352_scanout.h").write_text(
+            "\n".join(line for line in source.splitlines()
+                      if not line.startswith("#include ")) + "\n")
         source = (root / "sys/arch/arm/sunxi/sun60i_a733_de352_fdt.c").read_text()
         text = "\n".join(line for line in source.splitlines()
                          if not line.startswith(("#include ", "__KERNEL_RCSID(")))
