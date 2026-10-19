@@ -13,11 +13,12 @@ typedef int devmajor_t;
 struct sun60i_npu_softc {
 	void *sc_dev;
 	int sc_phandle, sc_bst, sc_run_lock;
+	void *sc_dmat;
 	bool sc_run_pass, sc_cdev_attached;
 	devmajor_t sc_cmajor;
 };
 typedef struct sun60i_npu_softc *device_t;
-struct fdt_attach_args { int faa_phandle, faa_bst; };
+struct fdt_attach_args { int faa_phandle, faa_bst; void *faa_dmat; };
 struct fdt_node {
 	bool n_pinctrl_init;
 	int n_phandle;
@@ -106,7 +107,7 @@ int
 main(void)
 {
 	static struct sun60i_npu_softc sc;
-	struct fdt_attach_args args = { 17, 3 };
+	struct fdt_attach_args args = { 17, 3, (void *)(uintptr_t)5 };
 	struct fdt_node node = { .n_phandle = 17, .n_name = "npu" };
 	int error;
 
@@ -122,7 +123,7 @@ main(void)
 	assert(error == 0 && power_calls == 1);
 	sun60i_npu_attach(NULL, &sc, &args);
 	assert(sc.sc_dev == &sc && sc.sc_phandle == 17 && sc.sc_bst == 3);
-	assert(sc.sc_run_pass && sc.sc_run_lock == 1);
+	assert(sc.sc_run_pass && sc.sc_run_lock == 1 && sc.sc_dmat == args.faa_dmat);
 	assert(sysctls == 1 && registrations == 1);
 	assert(sc.sc_cdev_attached && sc.sc_cmajor == 368);
 	puts("PASS: actual-source FDT managed power and NPU attach; no MMIO API");

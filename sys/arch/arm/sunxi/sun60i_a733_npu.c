@@ -52,6 +52,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/fdt/fdtvar.h>
 #include <arm/sunxi/sun60i_a733_ccu.h>
 #include <arm/sunxi/sun60i_a733_pck600.h>
+#include <arm/sunxi/sun60i_a733_npu_dma.h>
+#include <arm/sunxi/sun60i_a733_npu_fe.h>
 
 #define A733_NPU_BASE		0x03600000
 #define A733_NPU_ID_SIZE	0x34
@@ -125,6 +127,7 @@ struct sun60i_npu_softc {
 	device_t sc_dev;
 	int sc_phandle;
 	bus_space_tag_t sc_bst;
+	bus_dma_tag_t sc_dmat;
 	kmutex_t sc_run_lock;
 	struct sysctllog *sc_sysctllog;
 	u_int sc_run_stage;
@@ -134,6 +137,13 @@ struct sun60i_npu_softc {
 	bool sc_mmio_ready;
 	struct clk *sc_owned_clock;
 	int sc_owned_power;
+	/* Engine1 is CPU preparation and a non-destructive raw snapshot only. */
+	u_int sc_engine_attempted, sc_engine_prepared, sc_engine_stage;
+	u_int sc_engine_result, sc_engine_release_error, sc_engine_snapshot_valid;
+	u_int sc_engine_command_bytes;
+	struct sun60i_a733_npu_fe_snapshot sc_engine_snapshot;
+	struct sun60i_a733_npu_dma_info sc_engine_dma_info;
+	struct sun60i_a733_npu_dma *sc_engine_dma;
 	/* VIPLite dispatch state */
 	devmajor_t sc_cmajor;
 	bool sc_cdev_attached;
@@ -347,6 +357,57 @@ sun60i_npu_mmio_ready(struct sun60i_npu_softc *sc)
 	return sun60i_a733_pck_npu_ready(sc->sc_owned_power, sc);
 }
 
+/* Caller holds sc_run_lock. No NPU register writes or FE start occur here. */
+static int
+sun60i_npu_engine_prepare(struct sun60i_npu_softc *sc)
+{
+	struct sun60i_a733_npu_fe_snapshot snapshot;
+	struct sun60i_a733_npu_dma_info info;
+	uint8_t image[A733_NPU_FE_EVENT_BYTES];
+	int error;
+
+	KASSERT(mutex_owned(&sc->sc_run_lock));
+	if (sc->sc_engine_attempted)
+		return EALREADY;
+	error = sun60i_npu_mmio_ready(sc);
+	/* A failed new observation must not leave the older MMIO proof usable. */
+	sc->sc_mmio_ready = false;
+	if (error != 0)
+		return error;
+	sc->sc_engine_attempted = 1;
+	sc->sc_engine_stage = 1;
+	error = sun60i_a733_npu_fe_snapshot(sc->sc_bst, sc->sc_owned_clock,
+	    sc->sc_owned_power, sc, &snapshot);
+	if (error != 0)
+		return error;
+	sc->sc_engine_snapshot = snapshot;
+	sc->sc_engine_snapshot_valid = snapshot.valid;
+	error = sun60i_a733_npu_fe_admit(&snapshot);
+	if (error != 0)
+		return error;
+	error = sun60i_a733_npu_fe_event_image(image, sizeof(image));
+	if (error != 0)
+		return error;
+	error = sun60i_a733_npu_dma_prepare(sc->sc_dmat, image, sizeof(image),
+	    &sc->sc_engine_dma);
+	if (error != 0)
+		return error;
+	error = sun60i_a733_npu_dma_info(sc->sc_engine_dma, &info);
+	if (error == 0 && info.command_address == info.command_virtual)
+		error = EADDRINUSE;
+	if (error != 0) {
+		sc->sc_engine_release_error = sun60i_a733_npu_dma_destroy(sc->sc_engine_dma);
+		if (sc->sc_engine_release_error == 0)
+			sc->sc_engine_dma = NULL;
+		return error;
+	}
+	sc->sc_engine_dma_info = info;
+	sc->sc_engine_command_bytes = (u_int)info.command_bytes;
+	sc->sc_engine_prepared = 1;
+	sc->sc_mmio_ready = true;
+	return 0;
+}
+
 /* One bounded register access through a freshly verified retained profile. */
 static int
 sun60i_npu_vip_read_reg(struct sun60i_npu_softc *sc,
@@ -540,6 +601,151 @@ sun60i_npu_sysctl_stage(SYSCTLFN_ARGS)
 	return sc->sc_run_result;
 }
 
+/* Copy cached values under the run mutex. No register access is permitted. */
+static int
+sun60i_npu_sysctl_engine_value(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct sun60i_npu_softc *sc = sun60i_npu_instance;
+	union { uint32_t word; uint64_t quad; } value;
+	size_t bytes;
+
+	if (sc == NULL)
+		return ENXIO;
+	if (newp != NULL)
+		return EPERM;
+	switch (SYSCTL_TYPE(rnode->sysctl_flags)) {
+	case CTLTYPE_INT:
+		node.sysctl_data = &value.word;
+		bytes = sizeof(value.word);
+		break;
+	case CTLTYPE_QUAD:
+		node.sysctl_data = &value.quad;
+		bytes = sizeof(value.quad);
+		break;
+	default:
+		return EINVAL;
+	}
+	mutex_enter(&sc->sc_run_lock);
+	memcpy(node.sysctl_data, rnode->sysctl_data, bytes);
+	mutex_exit(&sc->sc_run_lock);
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static int
+sun60i_npu_sysctl_engine_stage(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct sun60i_npu_softc *sc = sun60i_npu_instance;
+	u_int value;
+	int error;
+
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->sc_run_lock);
+	value = sc->sc_engine_stage;
+	mutex_exit(&sc->sc_run_lock);
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	mutex_enter(&sc->sc_run_lock);
+	if (value == 0)
+		error = 0;
+	else if (value == 1)
+		error = sun60i_npu_engine_prepare(sc);
+	else
+		error = EINVAL;
+	sc->sc_engine_result = error;
+	mutex_exit(&sc->sc_run_lock);
+	return error;
+}
+
+static void
+sun60i_npu_sysctl_engine_setup(struct sun60i_npu_softc *sc,
+    const struct sysctlnode *rnode)
+{
+	const struct {
+		const char *name;
+		int *data;
+	} integers[] = {
+		{ "engine_result", (int *)&sc->sc_engine_result },
+		{ "engine_attempted", (int *)&sc->sc_engine_attempted },
+		{ "engine_prepared", (int *)&sc->sc_engine_prepared },
+		{ "engine_snapshot_valid",
+		    (int *)&sc->sc_engine_snapshot_valid },
+		{ "engine_release_error", (int *)&sc->sc_engine_release_error },
+		{ "engine_command_va",
+		    (int *)&sc->sc_engine_dma_info.command_virtual },
+		{ "engine_pd", (int *)&sc->sc_engine_dma_info.pd_entry },
+		{ "engine_command_bytes", (int *)&sc->sc_engine_command_bytes }
+	};
+	const struct {
+		const char *name;
+		int64_t *data;
+	} addresses[] = {
+		{ "engine_mtlb",
+		    (int64_t *)&sc->sc_engine_dma_info.mtlb_address },
+		{ "engine_stlb",
+		    (int64_t *)&sc->sc_engine_dma_info.stlb_address },
+		{ "engine_command_dma",
+		    (int64_t *)&sc->sc_engine_dma_info.command_address }
+	};
+	static const char * const names[2][A733_NPU_FE_NREGS] = {
+		{
+			"engine_s0_r000", "engine_s0_r004", "engine_s0_r014",
+			"engine_s0_r024", "engine_s0_r030", "engine_s0_r388",
+			"engine_s0_r3a4", "engine_s0_r3b4", "engine_s0_r654",
+			"engine_s0_r664", "engine_s0_r668", "engine_s0_r66c"
+		},
+		{
+			"engine_s1_r000", "engine_s1_r004", "engine_s1_r014",
+			"engine_s1_r024", "engine_s1_r030", "engine_s1_r388",
+			"engine_s1_r3a4", "engine_s1_r3b4", "engine_s1_r654",
+			"engine_s1_r664", "engine_s1_r668", "engine_s1_r66c"
+		}
+	};
+
+	/* The framework restricts writes without CTLFLAG_ANYWRITE. */
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
+	    CTLTYPE_INT, "engine_stage",
+	    SYSCTL_DESCR("0 dry; 1 read-only admission and DMA preparation"),
+	    sun60i_npu_sysctl_engine_stage, 0, NULL, 0,
+	    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev,
+		    "cannot create engine stage node\n");
+	for (size_t i = 0; i < __arraycount(integers); i++) {
+		if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+		    CTLTYPE_INT, integers[i].name,
+		    SYSCTL_DESCR("cached native NPU engine value"),
+		    sun60i_npu_sysctl_engine_value, 0, integers[i].data, 0,
+		    CTL_CREATE, CTL_EOL) != 0)
+			aprint_error_dev(sc->sc_dev,
+			    "cannot create cached engine node\n");
+	}
+	for (size_t i = 0; i < __arraycount(addresses); i++) {
+		if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+		    CTLTYPE_QUAD, addresses[i].name,
+		    SYSCTL_DESCR("cached owned NPU DMA address"),
+		    sun60i_npu_sysctl_engine_value, 0, addresses[i].data, 0,
+		    CTL_CREATE, CTL_EOL) != 0)
+			aprint_error_dev(sc->sc_dev,
+			    "cannot create cached DMA node\n");
+	}
+	for (size_t row = 0; row < 2; row++) {
+		for (size_t i = 0; i < A733_NPU_FE_NREGS; i++) {
+			if (sysctl_createv(NULL, 0, &rnode, NULL,
+			    CTLFLAG_READONLY, CTLTYPE_INT, names[row][i],
+			    SYSCTL_DESCR("cached raw peek32 sample"),
+			    sun60i_npu_sysctl_engine_value, 0,
+			    (int *)&sc->sc_engine_snapshot.words[row][i], 0,
+			    CTL_CREATE, CTL_EOL) != 0)
+				aprint_error_dev(sc->sc_dev,
+				    "cannot create engine raw node\n");
+		}
+	}
+}
+
 static void
 sun60i_npu_sysctl_setup(struct sun60i_npu_softc *sc)
 {
@@ -551,6 +757,7 @@ sun60i_npu_sysctl_setup(struct sun60i_npu_softc *sc)
 		aprint_error_dev(sc->sc_dev, "cannot create sysctl node\n");
 		return;
 	}
+	sun60i_npu_sysctl_engine_setup(sc, rnode);
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
 	    CTLTYPE_INT, "stage",
 		    SYSCTL_DESCR("run NPU diagnostic stage 0..4"),
@@ -602,6 +809,7 @@ sun60i_npu_attach(device_t parent, device_t self, void *aux)
 	sc->sc_dev = self;
 	sc->sc_phandle = faa->faa_phandle;
 	sc->sc_bst = faa->faa_bst;
+	sc->sc_dmat = faa->faa_dmat;
 	sc->sc_run_pass = true;
 	mutex_init(&sc->sc_run_lock, MUTEX_DEFAULT, IPL_NONE);
 	sun60i_npu_instance = sc;

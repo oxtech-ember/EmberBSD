@@ -7,7 +7,7 @@
 
 struct sun60i_a733_npu_dma;
 struct sun60i_a733_npu_dma_info {
-	uint64_t mtlb_address;
+	uint64_t mtlb_address, stlb_address, command_address;
 	uint32_t pd_entry, command_virtual;
 	size_t command_bytes;
 	bool retained;

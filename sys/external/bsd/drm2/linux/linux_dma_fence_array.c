@@ -34,6 +34,8 @@ __KERNEL_RCSID(0, "$NetBSD: linux_dma_fence_array.c,v 1.4 2021/12/19 12:39:56 ri
 
 #include <sys/systm.h>
 
+/* EmberBSD: AI-assisted native callback and error synchronization. */
+
 #include <linux/dma-fence-array.h>
 
 static const char *
@@ -55,13 +57,12 @@ dma_fence_array_done1(struct dma_fence *fence, struct dma_fence_cb *cb)
 	    container_of(cb, struct dma_fence_array_cb, dfac_cb);
 	struct dma_fence_array *A = C->dfac_array;
 
-	KASSERT(spin_is_locked(&A->dfa_lock));
-
-	if (fence->error && A->base.error == 1) {
-		KASSERT(fence->error != 1);
-		A->base.error = fence->error;
+	/* The caller holds the child lock, not the array lock. */
+	if (fence->error) {
+		KASSERT(fence->error < 0);
+		atomic_cmpxchg(&A->dfa_error, 0, fence->error);
 	}
-	if (--A->dfa_npending) {
+	if (atomic_dec_return(&A->dfa_npending) != 0) {
 		dma_fence_put(&A->base);
 		return;
 	}
@@ -77,9 +78,10 @@ dma_fence_array_done(struct irq_work *W)
 	    dfa_work);
 
 	spin_lock(&A->dfa_lock);
-	if (A->base.error == 1)
-		A->base.error = 0;
-	dma_fence_signal_locked(&A->base);
+	if (!dma_fence_is_signaled_locked(&A->base)) {
+		A->base.error = atomic_read(&A->dfa_error);
+		dma_fence_signal_locked(&A->base);
+	}
 	spin_unlock(&A->dfa_lock);
 
 	dma_fence_put(&A->base);
@@ -103,14 +105,12 @@ dma_fence_array_enable_signaling(struct dma_fence *fence)
 			dma_fence_array_done1)) {
 			error = A->fences[i]->error;
 			if (error) {
-				KASSERT(error != 1);
-				if (A->base.error == 1)
-					A->base.error = error;
+				KASSERT(error < 0);
+				atomic_cmpxchg(&A->dfa_error, 0, error);
 			}
 			dma_fence_put(&A->base);
-			if (--A->dfa_npending == 0) {
-				if (A->base.error == 1)
-					A->base.error = 0;
+			if (atomic_dec_return(&A->dfa_npending) == 0) {
+				A->base.error = atomic_read(&A->dfa_error);
 				return false;
 			}
 		}
@@ -126,7 +126,12 @@ dma_fence_array_signaled(struct dma_fence *fence)
 
 	KASSERT(spin_is_locked(&A->dfa_lock));
 
-	return A->dfa_npending == 0;
+	if (atomic_read(&A->dfa_npending) > 0)
+		return false;
+	/* Pair with the completing callback's atomic decrement. */
+	membar_consumer();
+	A->base.error = atomic_read(&A->dfa_error);
+	return true;
 }
 
 static void
@@ -153,7 +158,7 @@ static const struct dma_fence_ops dma_fence_array_ops = {
 
 struct dma_fence_array *
 dma_fence_array_create(int num_fences, struct dma_fence **fences,
-    unsigned context, unsigned seqno, bool signal_on_any)
+    uint64_t context, unsigned seqno, bool signal_on_any)
 {
 	struct dma_fence_array *A;
 
@@ -167,7 +172,9 @@ dma_fence_array_create(int num_fences, struct dma_fence **fences,
 
 	A->fences = fences;
 	A->num_fences = num_fences;
-	A->dfa_npending = signal_on_any ? 1 : num_fences;
+	A->dfa_signal_on_any = signal_on_any;
+	atomic_set(&A->dfa_npending, signal_on_any ? 1 : num_fences);
+	atomic_set(&A->dfa_error, 0);
 
 	spin_lock_init(&A->dfa_lock);
 	dma_fence_init(&A->base, &dma_fence_array_ops, &A->dfa_lock,
