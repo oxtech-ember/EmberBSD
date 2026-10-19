@@ -473,10 +473,28 @@ static void cold_checks(void) {
   CHECK(de352_run(&sc)==EIO&&cold_writes==0&&sc.guard==NULL);reboot_fixture(&sc);
  }
 }
+/* Released MIC reset bits with a bypass that is already set. */
+static void cold_reset_checks(void) {
+ struct sun60i_de352_softc sc;
+ cold_init(&sc);iommu[0x10/4]=0x37fff;iommu[0x804/4]=1;
+ CHECK(de352_run(&sc)==0&&sc.cold_initialized&&sc.step==10);
+ CHECK(cold_write_regs[0]==0x10&&cold_write_values[0]==0x37fc0);
+ CHECK(iommu[0x10/4]==0x37fff&&iommu[0x804/4]==1);
+ for(unsigned i=0;i<cold_writes;i++)CHECK(cold_write_regs[i]!=0x804);
+ reboot_fixture(&sc);
+ for(unsigned kind=0;kind<3;kind++){
+  cold_init(&sc);iommu[0x10/4]=0x37fff;iommu[0x804/4]=1;
+  if(kind==0)cold_fault_write=1;if(kind==1)cold_readback_write=1;if(kind==2)cold_change_write=1;
+  CHECK(de352_run(&sc)!=0&&sc.retained&&sc.guard&&sc.guard->published&&sc.dma==NULL);
+  CHECK(cold_writes==1&&cold_write_regs[0]==0x10&&writes==0&&!started&&ccu_faults==1&&releases==0);
+  reboot_fixture(&sc);
+ }
+}
 int main(void)
 {
  guard_checks();
  cold_checks();
+ cold_reset_checks();
  struct sun60i_de352_softc sc;struct fdt_attach_args faa={1,NULL,(void *)(uintptr_t)2};
  init(&sc);CHECK(de352_match(NULL,NULL,&faa));de352_attach(NULL,&sc,&faa);CHECK(sc.valid&&reads==0&&writes==0&&space_maps==0);
  CHECK(de352_bindings(&sc));iommu_status="okay";CHECK(!de352_bindings(&sc));iommu_status=NULL;CHECK(!de352_bindings(&sc));iommu_status="disabled";
