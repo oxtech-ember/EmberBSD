@@ -197,6 +197,12 @@ The previous code fails the first use after `intel_gt_pm_fini()`.
 A JSL kernel with the RPS part of the fix reaches the console after the GT failure.
 The wakeref part has no hardware test.
 
+## User engine maps
+
+Mesa 26 Iris sets `I915_CONTEXT_PARAM_ENGINES` when it creates a context.
+The [`rcu_replace_pointer` repair](linux-rcu-replace-pointer.md) keeps the new engine map in the context.
+Before the repair, the first Iris `execbuffer` pinned a destroyed context, and the kernel panicked.
+
 ## Remaining port work
 
 The [workaround adaptation](i915-jasperlake-workarounds.md) adds FBC, power, GT and firmware selection.

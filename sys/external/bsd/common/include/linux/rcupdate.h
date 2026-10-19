@@ -53,11 +53,13 @@
 	(P);								      \
 })
 
-#define	rcu_replace_pointer(PTRP, NEWPTR, C) ({				      \
-	__typeof__(PTRP) __rrp_ptrp = (PTRP);				      \
-	__typeof__(PTRP) __rrp_oldptr =					      \
-		rcu_dereference_protected(__rrp_ptrp, C);		      \
-	rcu_assign_pointer(__rrp_ptrp, NEWPTR);				      \
+/*
+ * Like Linux, P is the RCU-protected pointer lvalue itself.  Store the
+ * new value in P, not in a local copy, and return the old value.
+ */
+#define	rcu_replace_pointer(P, NEWPTR, C) ({				      \
+	__typeof__(P) __rrp_oldptr = rcu_dereference_protected(P, C);	      \
+	rcu_assign_pointer(P, NEWPTR);					      \
 	__rrp_oldptr;							      \
 })
 
