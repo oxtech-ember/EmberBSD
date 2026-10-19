@@ -32,4 +32,7 @@ int sun60i_a733_pck_display_isolation_release(int, const void *);
 int sun60i_a733_pck_display_isolation_snapshot(int, const void *,
     uint32_t [2][3]);
 
+/* Internal fixed ON helper. Caller must hold the CCU inactive-peer guard. */
+int sun60i_a733_pck_display_peer_on(int, const void *);
+
 #endif

@@ -64,3 +64,87 @@ static void test_display_isolation_power(void) {
  }
  printf("Actual PCK peer isolation: %u always-active scenarios passed\n",cases);
 }
+
+static void peer_power_setup(const void *owner,unsigned mode) {
+ isolation_power_setup(owner,mode);
+ CHECK(sun60i_a733_pck_display_isolation_reserve(1,owner)==0);
+ CHECK(sun60i_a733_pck_display_retain(1,owner)==0);
+ CHECK(sun60i_a733_pck_display_isolation_retain(1,owner)==0);
+ peer_on_test=lease_test=true;peeks=0;complete_after=3;
+}
+static void test_display_peer_power(void) {
+ const int owner=101,other=103;unsigned scenarios=0,total_peeks;
+ uint32_t before[2][3],after[2][3];
+ for(unsigned mode=0;mode<=8;mode+=8) {
+  peer_power_setup(&owner,mode);
+  CHECK(sun60i_a733_pck_display_peer_on(1,&other)==EBUSY&&peeks==0&&pokes==0);
+  CHECK(sun60i_a733_pck_display_peer_on(1,NULL)==EINVAL&&peeks==0);
+  CHECK(sun60i_a733_pck_display_peer_on(7,&owner)==ENXIO&&peeks==0);
+  CHECK(sun60i_a733_pck_display_peer_on(1,&owner)==0);
+  CHECK(pokes==(mode==0?6U:0U)&&writes==pokes&&!sc.sc_failed[2]);
+  CHECK(sc.sc_lease[2].before[0][0]==8&&sc.sc_lease[2].before[1][2]==8);
+  CHECK(sun60i_a733_pck_display_isolation_snapshot(1,&owner,after)==0);
+  CHECK(sun60i_a733_pck_display_peer_on(1,&owner)==0);
+  CHECK(pokes==(mode==0?6U:0U));
+  CHECK(sun60i_a733_pck_display_isolation_release(1,&owner)==EBUSY);
+  scenarios++;
+ }
+ for(unsigned slot=1;slot<=10;slot++)if(slot==1||slot==2||slot==10) {
+  peer_power_setup(&owner,0);sc.sc_lease[slot].retained=false;
+  CHECK(sun60i_a733_pck_display_peer_on(1,&owner)==EBUSY&&pokes==0);scenarios++;
+  peer_power_setup(&owner,0);sc.sc_lease[slot].owner=&other;
+  CHECK(sun60i_a733_pck_display_peer_on(1,&owner)==EBUSY&&pokes==0);scenarios++;
+ }
+ /* Every OFF policy/status bit outside MODE must refuse a write. */
+ for(unsigned bit=4;bit<32;bit++) {
+  peer_power_setup(&owner,0);
+  registers[0x2000/4]=registers[0x2008/4]=1U<<bit;
+  for(unsigned sample=0;sample<2;sample++)
+   sc.sc_lease[2].before[sample][0]=sc.sc_lease[2].before[sample][2]=1U<<bit;
+  CHECK(sun60i_a733_pck_display_peer_on(1,&owner)!=0&&pokes==0);scenarios++;
+ }
+ for(unsigned test=0;test<5;test++) {
+  peer_power_setup(&owner,0);
+  switch(test) {
+  case 0:registers[0x2004/4]=1;break;
+  case 1:registers[0x1008/4]=0;break;
+  case 2:registers[0xa004/4]=1;break;
+  case 3:registers[0x2000/4]=8;break;
+  case 4:sc.sc_failed[2]=true;break;
+  }
+  CHECK(sun60i_a733_pck_display_peer_on(1,&owner)!=0&&pokes==0);scenarios++;
+ }
+ peer_power_setup(&owner,0);
+ CHECK(sun60i_a733_pck_display_peer_on(1,&owner)==0);total_peeks=peeks;
+ /* Cover every actual read, including the final complete ON capture. */
+ for(unsigned fault=1;fault<=total_peeks;fault++) {
+  peer_power_setup(&owner,0);memcpy(before,sc.sc_lease[2].before,sizeof(before));fail_peek=fault;
+  CHECK(sun60i_a733_pck_display_peer_on(1,&owner)==EFAULT);
+  CHECK(memcmp(before,sc.sc_lease[2].before,sizeof(before))==0);
+  CHECK(sc.sc_lease[2].retained&&sc.sc_failed[2]==(pokes!=0));
+  unsigned saved_pokes=pokes;
+  if(pokes)CHECK(sun60i_a733_pck_display_peer_on(1,&owner)==EIO&&pokes==saved_pokes);
+  CHECK(sun60i_a733_pck_display_isolation_release(1,&owner)==EBUSY);scenarios++;
+ }
+ static const bus_size_t written[]={0x2170,0x2174,0x2c00,0x2c04,0x2c10,0x2000};
+ for(unsigned n=1;n<=6;n++)for(unsigned kind=0;kind<2;kind++) {
+  peer_power_setup(&owner,0);memcpy(before,sc.sc_lease[2].before,sizeof(before));
+  if(kind==0)fail_poke=n;else fail_write=written[n-1];
+  CHECK(sun60i_a733_pck_display_peer_on(1,&owner)==(kind==0?EFAULT:EIO));
+  CHECK(pokes==n&&sc.sc_failed[2]&&memcmp(before,sc.sc_lease[2].before,sizeof(before))==0);
+  CHECK(sun60i_a733_pck_display_peer_on(1,&owner)==EIO&&pokes==n);scenarios++;
+ }
+ for(unsigned test=0;test<5;test++) {
+  peer_power_setup(&owner,0);memcpy(before,sc.sc_lease[2].before,sizeof(before));
+  if(test==0)complete_after=0;
+  if(test==1){complete_after=0;deny_after=2;}
+  if(test>=2){change_after_poke=5;peer_change_mask=1;peer_change_reg=test==2?0x2004:(test==3?0x1004:0x2000);}
+  CHECK(sun60i_a733_pck_display_peer_on(1,&owner)!=0);
+  CHECK(sc.sc_failed[2]&&memcmp(before,sc.sc_lease[2].before,sizeof(before))==0);
+  CHECK(pokes==(test<2?6U:5U));
+  if(test==0)CHECK(delay_us==PCK600_TIMEOUT_US);
+  CHECK(delay_us<=PCK600_TIMEOUT_US);scenarios++;
+ }
+ printf("Actual PCK peer ON: %u always-active scenarios passed\n",scenarios);
+ peer_on_test=lease_test=false;
+}

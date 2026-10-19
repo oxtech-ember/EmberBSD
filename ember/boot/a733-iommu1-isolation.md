@@ -1,8 +1,9 @@
 # A733 IOMMU1 inactive-peer lease
 
 This is an original BSD-2-Clause native CCU/PCK mechanism with AI assistance.
-It performs no clock, reset, power or IOMMU writes. It does not establish DMA
-readiness. Use it before a separately admitted managed DE memory operation.
+Reservation performs no clock, reset, power or IOMMU writes. A separate
+fixed operation can request domain 2 ON. Neither operation establishes DMA
+readiness. Use them before a separately admitted managed DE memory operation.
 
 ## Fixed admission
 
@@ -34,6 +35,33 @@ error. The fresh isolation check precedes the existing DE0 writes.
 The raw state getter publishes only after complete successful capture.
 A clean pre-retention release frees domain 2 before dropping CCU masks.
 No global IOMMU operation is authorized by this read-only subclaim.
+
+## Retained peer register access
+
+`sun60i_a733_ccu_display_begin_peer_access` holds the CCU mutex. It requires
+prepared DE0, retained same-cookie base power, memory and inactive-peer claims.
+It checks the complete current profile before calling the fixed PCK helper.
+The lock order is CCU, then PCK. No peer clock or reset is changed.
+
+`sun60i_a733_pck_display_peer_on` is an internal provider operation. Call it
+only through the CCU wrapper. It requires retained slots 1, 10 and 2 with the
+same owner. It checks both base domains and the exact reserved domain-2 state.
+Static ON needs no write. The first OFF profile requires PWPR/PWSR/PMER all
+zero. Locked, dynamic, emulated or unknown OFF bits refuse the request.
+
+The OFF operation writes the existing five PCK delay values, then requests
+static ON. Every write uses fault-aware poke, a bus barrier and exact readback.
+It rechecks the power profile after the delay writes. Policy denial, emulation,
+unknown status or an access error stops the operation. Status polling has a
+10 ms limit. A complete new two-sample ON state replaces the old expectation
+only after final parent and domain checks. The CCU wrapper then rechecks its
+full retained profile. No peer or IOMMU MMIO is part of this operation.
+
+Any failed write attempt quarantines domain 2. The wrapper keeps the first
+error and all claims. The code never powers the domain OFF, reverses a partial
+transition or releases retained resources. This mechanism permits a later
+admitted all-MIC access; it does not authorize global IOMMU initialization.
+The existing master-2 local operation does not call it.
 
 ## Required global-init continuation
 
@@ -78,5 +106,7 @@ Run `sh ember/tools/a733-accelerator-clock-contract.sh` and
 `sh ember/tools/a733-power-contract.sh`. The existing actual-provider fixtures
 include inactive-peer acquisition, conflicting native writers, incomplete
 samples, cleanup failure, retained ownership and changed peer/power state.
+The fixed ON controls cover every read and write failure, exact write order,
+denial, timeout, post-transition proof and sticky retention.
 Use `CLOCK_TEST_CFLAGS` or `POWER_TEST_CFLAGS` for host sanitizer flags.
 The checks remain active with `-DNDEBUG`. They do not enable a board device.

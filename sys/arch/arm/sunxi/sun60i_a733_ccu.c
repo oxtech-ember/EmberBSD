@@ -2481,6 +2481,35 @@ sun60i_a733_ccu_display_ready(struct clk *de0, const void *owner)
 	return error;
 }
 
+/* Keep inactive leaf masks locked while domain 2 becomes accessible. */
+int
+sun60i_a733_ccu_display_begin_peer_access(struct clk *de0, const void *owner)
+{
+	struct sunxi_ccu_softc *sc;
+	int error = sun60i_a733_display_handle(de0, &sc);
+
+	if (error != 0)
+		return error;
+	mutex_enter(&sun60i_a733_ccu_lock);
+	if (owner == NULL || sun60i_display_lease.core.owner != owner ||
+	    !sun60i_display_lease.memory_claimed ||
+	    !sun60i_display_lease.isolation_claimed) {
+		error = EINVAL;
+		goto done;
+	}
+	error = sun60i_a733_display_ready_locked(sc, owner);
+	if (error != 0)
+		goto done;
+	error = sun60i_a733_pck_display_peer_on(sun60i_display_lease.power, owner);
+	if (error == 0)
+		error = sun60i_a733_display_ready_locked(sc, owner);
+	if (error != 0)
+		sun60i_a733_display_fault_locked(error);
+done:
+	mutex_exit(&sun60i_a733_ccu_lock);
+	return error;
+}
+
 /* Fixed phases only. No caller supplies a register, mask, parent or rate. */
 static int
 sun60i_a733_display_output_begin(struct clk *de0, const void *owner,

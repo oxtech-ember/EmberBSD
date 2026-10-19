@@ -245,6 +245,8 @@ int	sun60i_a733_ccu_gpu_ready(struct clk *, u_int *, u_int *);
  * State publishes two complete raw samples only on success.
  */
 enum { A733_DISPLAY_NISOLATION_REGS = 10 };
+/* Retained same-cookie domains 1/10/2; no peer clock or reset writes. */
+int sun60i_a733_ccu_display_begin_peer_access(struct clk *, const void *);
 int sun60i_a733_ccu_display_isolation_reserve(struct clk *, const void *);
 int sun60i_a733_ccu_display_isolation_state(struct clk *, const void *,
     uint32_t [2][A733_DISPLAY_NISOLATION_REGS]);
