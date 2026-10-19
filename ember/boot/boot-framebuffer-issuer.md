@@ -69,7 +69,34 @@ and native leases cannot convert into each other. They exclude each other.
 The issuer does not reorder render or fallback finalizers. A future cold caller
 must claim before fallback. It cannot recover a lease after genfb publication.
 
+## Native claim-only job
+
+With both `BCM2712_V3D_RENDER` and `WSDISPLAY_BOOTFB_DEFER`, the validated cold
+BCM2712 ACPI attachment queues one claim-only `config_interrupts` job after its
+renderer finalizer is registered. It retains the real lease and descriptor in
+its boot-lifetime softc. The real pending join completes the job before either
+simplefb or renderer finalizer runs. The job does not wait for a finalizer.
+
+The sole private renderer attach interface passes the same borrowed opaque owner
+as its fifth argument, after device, bus-space tag, DMA tag and ACPI handle.
+The actual renderer stores that pointer. MI/FDT fields stay in the native owner;
+there is no raw getter or permission flag. All callers need a coherent rebuild.
+A null owner or a refused claim grants no headless or display access.
+
+Read-only observation failure cancels the lease. A takeover error retains it,
+because the error does not identify pre-seal versus uncertain writes. The current
+renderer setup error paths cancel only after their existing cleanup returns.
+This is certified against its setup-only call graph: no MODESET, display or MMU4
+operation occurs there. Adding such a call invalidates this cancellation rule.
+Cancellation failure or unknown binding retains the owner and records the error.
+Successful render attachment keeps the owner. No framebuffer guard is bypassed.
+
+This job adds no close/drain, sink, firmware request or display attempt. Existing
+console output/replay stay active. Neither a claim nor the stored pointer grants
+MMIO, DMA or a later handoff. The options remain default-off.
+
 ## Source checks
+
 
 ```sh
 ruby ember/tools/bootfb-issuer-contract.rb /absolute/os/source
@@ -101,3 +128,26 @@ close/drain, an independent sink and irreversible hardware handoff remain
 separate work. Native TU checks require actual selected warning flags, matching
 headers and explicitly generated off/on option headers. They do not establish a
 coherent kernel link or physical display handoff.
+
+The focused job contract is separate:
+
+```sh
+ruby ember/tools/bootfb-claim-job-contract.rb /absolute/os/source
+```
+
+It reuses the actual issuer/reader fixture and compiles complete unchanged
+configintr/pending/finalize, ACPI attach/job/finalize and renderer attach bodies.
+Only ACPI, scheduler, V3D engine, DRM and other native services are controlled.
+The real renderer argument/store and each setup-error unwind are exercised.
+The controlled transition to a warm immediate callback still calls the actual
+`config_interrupts` body. No real scheduler race is established. Fake renderer
+services are disposed only between independent simulated boots; this is not a
+native detach or release protocol.
+
+`CLAIM_JOB_SKIP_MUTANTS=1` selects positives. `CLAIM_JOB_MUTANTS` selects named
+controls. `CLAIM_JOB_SKIP_POSITIVES=1` omits positives for a scoped control run.
+`CLAIM_JOB_COMPILE_ONLY=1` supports target compilation without execution.
+`CC`, `CFLAGS`, `TEST_RUNNER` and `TMPDIR` select tools and work storage.
+`CLAIM_JOB_EVIDENCE` must name a new directory. It preserves source hashes,
+extracted inputs, exact argv and raw outputs. A control must compile and reach
+its expected fatal CHECK; an unrelated abort or a timeout does not pass.

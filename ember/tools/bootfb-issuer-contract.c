@@ -82,6 +82,10 @@ struct device {
 	const char *driver;
 	struct cfattach attachment;
 	struct properties properties;
+#ifdef BOOTFB_CLAIM_JOB_CONTRACT
+	struct device *dv_parent;
+	int dv_pending;
+#endif
 	TAILQ_ENTRY(device) dv_pending_list;
 };
 static struct device display, legacy_owner;
@@ -161,7 +165,12 @@ static unsigned getticks(void) { return 0; }
 static unsigned mstohz(unsigned n) { return n; }
 static int cv_timedwait(int *c, int *m, unsigned n)
 {
-	(void)c; (void)m; (void)n; CHECK(false); return 0;
+	(void)c; (void)m; (void)n;
+#ifdef BOOTFB_CLAIM_JOB_CONTRACT
+	return fixture_config_wait();
+#else
+	CHECK(false); return 0;
+#endif
 }
 static unsigned hook_allocations, hook_frees;
 #define KM_SLEEP 1

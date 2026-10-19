@@ -14,11 +14,13 @@
 __KERNEL_RCSID(0, "$NetBSD$");
 
 #include "opt_bcmv3d.h"
+#include "opt_wsdisplay_bootfb.h"
 
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/device.h>
 #include <sys/endian.h>
+#include <sys/kernel.h>
 #include <sys/systm.h>
 
 #include <dev/acpi/acpivar.h>
@@ -57,7 +59,11 @@ int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
 #error "V3D render and boot probes cannot share one boot"
 #endif
 #ifdef BCM2712_V3D_RENDER
-int bcmv3d_render_attach(device_t, bus_space_tag_t, bus_dma_tag_t, ACPI_HANDLE);
+#include <arm/broadcom/bcm2712_v3d_render.h>
+#endif
+#if defined(BCM2712_V3D_RENDER) && defined(WSDISPLAY_BOOTFB_DEFER)
+#include <dev/fdt/simplefbvar.h>
+#include <dev/wscons/wsdisplay_bootfbvar.h>
 #endif
 #if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_DMA_PROBE)
 int bcmv3d_dma_probe(device_t, bus_dma_tag_t);
@@ -107,6 +113,26 @@ struct bcmv3d_clock_result {
 	uint32_t value;
 };
 
+#if defined(BCM2712_V3D_RENDER) && defined(WSDISPLAY_BOOTFB_DEFER)
+enum bcmv3d_bootfb_phase {
+	BCMV3D_BOOTFB_IDLE,
+	BCMV3D_BOOTFB_QUEUED,
+	BCMV3D_BOOTFB_REFUSED,
+	BCMV3D_BOOTFB_CLAIMED,
+	BCMV3D_BOOTFB_LINKED,
+	BCMV3D_BOOTFB_CANCELED,
+	BCMV3D_BOOTFB_RETAINED
+};
+
+/* The ACPI device and this embedded owner remain resident until reboot. */
+struct bcmv3d_bootfb_owner {
+	struct wsdisplay_bootfb_lease *lease;
+	struct simplefb_framebuffer framebuffer;
+	enum bcmv3d_bootfb_phase phase;
+	int first_error, cancel_error;
+};
+#endif
+
 struct bcmv3d_softc {
 	device_t sc_dev;
 	bus_space_tag_t sc_bst;
@@ -119,6 +145,9 @@ struct bcmv3d_softc {
 	bool sc_pm_valid;
 	uint32_t sc_sms[2], sc_ident1, sc_ident3, sc_core_ident0, sc_mmu;
 	bool sc_observed;
+#if defined(BCM2712_V3D_RENDER) && defined(WSDISPLAY_BOOTFB_DEFER)
+	struct bcmv3d_bootfb_owner sc_bootfb;
+#endif
 };
 
 static int bcmv3d_match(device_t, cfdata_t, void *);
@@ -127,6 +156,83 @@ static int bcmv3d_finalize(device_t);
 
 CFATTACH_DECL_NEW(bcmv3d_acpi, sizeof(struct bcmv3d_softc),
     bcmv3d_match, bcmv3d_attach, NULL, NULL);
+
+#if defined(BCM2712_V3D_RENDER) && defined(WSDISPLAY_BOOTFB_DEFER)
+static void
+bcmv3d_bootfb_claim_job(device_t dev)
+{
+	struct bcmv3d_softc *sc = device_private(dev);
+	struct bcmv3d_bootfb_owner *owner = &sc->sc_bootfb;
+	struct wsdisplay_bootfb_lease *lease;
+	struct simplefb_framebuffer framebuffer;
+	int error;
+
+	if (owner->phase != BCMV3D_BOOTFB_QUEUED)
+		return;
+	owner->phase = BCMV3D_BOOTFB_REFUSED;
+	error = simplefb_console_claim(&lease, &framebuffer);
+	owner->first_error = error;
+	if (error != 0) {
+		aprint_normal_dev(dev, "boot framebuffer claim refused: %d\n",
+		    error);
+		return;
+	}
+	owner->lease = lease;
+	owner->framebuffer = framebuffer;
+	owner->phase = BCMV3D_BOOTFB_CLAIMED;
+}
+
+static void
+bcmv3d_bootfb_queue(struct bcmv3d_softc *sc)
+{
+	struct bcmv3d_bootfb_owner *owner = &sc->sc_bootfb;
+
+	if (!cold || sc->sc_bst == NULL || sc->sc_dmat == NULL ||
+	    owner->phase != BCMV3D_BOOTFB_IDLE)
+		return;
+	owner->lease = NULL;
+	memset(&owner->framebuffer, 0, sizeof(owner->framebuffer));
+	owner->first_error = owner->cancel_error = 0;
+	owner->phase = BCMV3D_BOOTFB_QUEUED;
+	config_interrupts(sc->sc_dev, bcmv3d_bootfb_claim_job);
+}
+
+static void
+bcmv3d_bootfb_retain(struct bcmv3d_softc *sc, int error)
+{
+	struct bcmv3d_bootfb_owner *owner = &sc->sc_bootfb;
+
+	if (owner->phase != BCMV3D_BOOTFB_CLAIMED)
+		return;
+	if (owner->first_error == 0)
+		owner->first_error = error;
+	KERNEL_LOCK(1, NULL);
+	wsdisplay_bootfb_retain(owner->lease);
+	KERNEL_UNLOCK_ONE(NULL);
+	owner->phase = BCMV3D_BOOTFB_RETAINED;
+	aprint_error_dev(sc->sc_dev,
+	    "boot framebuffer retained: error %d, cancel error %d; "
+	    "no display handoff\n", owner->first_error, owner->cancel_error);
+}
+
+static void
+bcmv3d_bootfb_cancel(struct bcmv3d_softc *sc, int error)
+{
+	struct bcmv3d_bootfb_owner *owner = &sc->sc_bootfb;
+
+	if (owner->phase != BCMV3D_BOOTFB_CLAIMED)
+		return;
+	if (owner->first_error == 0)
+		owner->first_error = error;
+	owner->cancel_error = simplefb_console_cancel(owner->lease);
+	if (owner->cancel_error != 0) {
+		bcmv3d_bootfb_retain(sc, error);
+		return;
+	}
+	owner->lease = NULL;
+	owner->phase = BCMV3D_BOOTFB_CANCELED;
+}
+#endif
 
 /* A single property tag has eight payload bytes and a four-byte terminator. */
 static int
@@ -336,6 +442,9 @@ static int
 bcmv3d_finalize(device_t dev)
 {
 	struct bcmv3d_softc *sc = device_private(dev);
+#ifdef BCM2712_V3D_RENDER
+	const struct bcmv3d_bootfb_owner *bootfb = NULL;
+#endif
 	int error;
 
 	if (sc->sc_observed)
@@ -343,12 +452,21 @@ bcmv3d_finalize(device_t dev)
 	sc->sc_observed = true;
 	bcm2712_display_acpi_observe(dev, sc->sc_handle);
 	error = bcmv3d_observe(sc);
-	if (error != 0)
+	if (error != 0) {
 		aprint_normal_dev(dev, "observation stopped at %s: error %d; "
 		    "GPU state unchanged\n", sc->sc_stage, error);
+#if defined(BCM2712_V3D_RENDER) && defined(WSDISPLAY_BOOTFB_DEFER)
+		bcmv3d_bootfb_cancel(sc, error);
+#endif
+	}
 #ifdef BCM2712_V3D_TAKEOVER
 	else {
 		error = bcmv3d_takeover_probe(dev, sc->sc_bst);
+#if defined(BCM2712_V3D_RENDER) && defined(WSDISPLAY_BOOTFB_DEFER)
+		/* The takeover errno does not distinguish pre/post-seal errors. */
+		if (error != 0)
+			bcmv3d_bootfb_retain(sc, error);
+#endif
 #ifdef BCM2712_V3D_DMA_PROBE
 		/* The bounded DMA experiment runs only after a full takeover. */
 		if (error == 0)
@@ -373,8 +491,20 @@ bcmv3d_finalize(device_t dev)
 #endif
 #ifdef BCM2712_V3D_RENDER
 		if (error == 0) {
+#if defined(WSDISPLAY_BOOTFB_DEFER)
+			if (sc->sc_bootfb.phase == BCMV3D_BOOTFB_CLAIMED)
+				bootfb = &sc->sc_bootfb;
+#endif
 			error = bcmv3d_render_attach(dev, sc->sc_bst,
-			    sc->sc_dmat, sc->sc_handle);
+			    sc->sc_dmat, sc->sc_handle, bootfb);
+#if defined(WSDISPLAY_BOOTFB_DEFER)
+			/* Certified setup-only call graph: no display/MMU4 calls.
+			 * Revalidate error cancellation if that call graph changes. */
+			if (error != 0)
+				bcmv3d_bootfb_cancel(sc, error);
+			else if (sc->sc_bootfb.phase == BCMV3D_BOOTFB_CLAIMED)
+				sc->sc_bootfb.phase = BCMV3D_BOOTFB_LINKED;
+#endif
 			if (error != 0)
 				aprint_error_dev(dev, "render attachment failed: %d\n", error);
 		}
@@ -445,4 +575,8 @@ bcmv3d_attach(device_t parent, device_t self, void *aux)
 	error = config_finalize_register(self, bcmv3d_finalize);
 	if (error != 0)
 		aprint_error_dev(self, "cannot defer observation: %d\n", error);
+#if defined(BCM2712_V3D_RENDER) && defined(WSDISPLAY_BOOTFB_DEFER)
+	else
+		bcmv3d_bootfb_queue(sc);
+#endif
 }

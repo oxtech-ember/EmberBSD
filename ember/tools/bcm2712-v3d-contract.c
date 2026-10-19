@@ -119,6 +119,7 @@ bcm2712_display_acpi_observe(device_t dev, ACPI_HANDLE handle)
 	(void)handle;
 }
 
+#include "render-platform.h"
 #include "driver.h"
 
 static struct bcmv3d_softc sc;
@@ -183,8 +184,9 @@ bcmv3d_fault_probe(device_t device, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 #ifdef BCM2712_V3D_RENDER
 int
 bcmv3d_render_attach(device_t device, bus_space_tag_t bst, bus_dma_tag_t dmat,
-    ACPI_HANDLE handle)
+    ACPI_HANDLE handle, const struct bcmv3d_bootfb_owner *bootfb)
 {
+	assert(bootfb == NULL);
 	assert(bst == aa.aa_memt);
 	assert(dmat == aa.aa_dmat && handle == node.ad_handle);
 	return probe_result(device, PROBE_RENDER);

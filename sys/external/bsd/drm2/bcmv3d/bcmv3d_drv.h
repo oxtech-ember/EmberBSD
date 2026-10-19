@@ -9,6 +9,7 @@
 #include <sys/mutex.h>
 #include <sys/vmem.h>
 #include <dev/acpi/acpivar.h>
+#include <arm/broadcom/bcm2712_v3d_render.h>
 #include <drm/drm_device.h>
 #include <drm/drm_file.h>
 #include <drm/drm_gem_cma_helper.h>
@@ -40,6 +41,7 @@ struct bcmv3d_device {
 	struct bcmv3d_job *job;
 	bus_space_tag_t bst;
 	struct bcmv3d_mmu4_native *mmu4_native;
+	const struct bcmv3d_bootfb_owner *bootfb;
 };
 
 /* Keep the CMA base layout; allocation, segments and pager are private. */
@@ -73,6 +75,5 @@ int bcmv3d_submit_csd(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_submit_cl(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_job_init(struct bcmv3d_device *);
 void bcmv3d_job_fini(struct bcmv3d_device *);
-int bcmv3d_render_attach(device_t, bus_space_tag_t, bus_dma_tag_t, ACPI_HANDLE);
 
 #endif

@@ -145,7 +145,7 @@ static struct drm_driver bcmv3d_driver = {
 
 int
 bcmv3d_render_attach(device_t self, bus_space_tag_t bst, bus_dma_tag_t dmat,
-    ACPI_HANDLE handle)
+    ACPI_HANDLE handle, const struct bcmv3d_bootfb_owner *bootfb)
 {
 	struct bcmv3d_device *sc;
 	struct drm_device *dev;
@@ -167,6 +167,7 @@ bcmv3d_render_attach(device_t self, bus_space_tag_t bst, bus_dma_tag_t dmat,
 	sc->dmat = dmat;
 	sc->bst = bst;
 	sc->handle = handle;
+	sc->bootfb = bootfb;
 	dev->dev_private = sc;
 	dev->bus_dmat = dev->bus_dmat32 = dev->dmat = dmat;
 	sc->bo_total = bcmv3d_bo_total();

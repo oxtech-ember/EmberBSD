@@ -14,6 +14,8 @@ awk '/^#define BCM2712_PM_GRAFX[ \t]/' \
 printf 'int\n' > "$work/pm-accessor.h"
 sed -n '/^bcmpmwdog_v3d_status(/,/^}/p' \
     "$src/sys/arch/arm/broadcom/bcm2835_pmwdog_acpi.c" >> "$work/pm-accessor.h"
+sed '/^#include /d' \
+    "$src/sys/arch/arm/broadcom/bcm2712_v3d_render.h" > "$work/render-platform.h"
 compile_contract()
 {
     output=$1
