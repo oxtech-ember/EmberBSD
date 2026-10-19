@@ -127,8 +127,48 @@ The fixed list length 32 does not establish a full 32-bit writable length field.
 
 DMA publication is irreversible before the first address write attempt.
 An error or timeout after publication retains both buffers. The driver has
-no stop, unpublish, detach or unload operation. A future reusable scanout
-and KMS path requires independently proved stop/isolation and page flips.
+no stop, detach or unload operation. The repeated-frame interface below
+can retire a replaced external frame. It cannot release the retained hardware
+claims or establish a general stop/isolation operation.
+
+## Repeated linear frames
+
+`sun60i_a733_de352_scanout.h` exposes a cached state query, one opaque client,
+and synchronous frame submission. The query performs no display I/O. It
+requires successful explicit stage 1. The stable DMA tag belongs to the retained
+bootstrap allocation. It is valid for the whole boot. It restricts all pixels
+and queues to addresses below 4 GiB. A client must not substitute a parent tag.
+
+The first profile accepts linear XRGB8888, offset zero, one loaded DMA segment,
+and the exact admitted dimensions. The extent must cover the complete pitch
+and height. Each frame has its own immutable two-entry, 32-byte RCQ list. The
+layer high address byte remains zero. This profile does not expand the list
+length or establish the unverified length-field width.
+
+A sleepable frontend worker first waits for producers. Under the reservation
+lock it rechecks writers and publishes a pending READ scanout fence. It then
+unlocks the reservation and submits. A producer wait alone does not exclude
+later writers. Submission must not hold DRM, reservation or provider locks.
+The retain callback pins the loaded map, backing storage and callback code.
+The DE provider synchronizes pixels and the queue with PREWRITE before its
+first pointer attempt. It never unloads the caller's pixel map.
+
+Before each replacement, the coordinator verifies the owned old queue and
+route. It requires a new RCQ finish and all seven expected layer words plus
+the blend pipe word. It consumes a possible prior TV0 event, then requires two
+new distinct observations. The completion sequence and time describe software
+observations. They are not an exact hardware frame counter or timestamp.
+
+Only that proof retires the previous external frame. The provider performs
+POSTWRITE and releases its queue, then calls the frontend release callback
+outside the DE lock. That callback can signal the READ fence and drop the GEM
+reference. A pre-DMA failure also releases a successfully retained new frame.
+An error after the first pointer attempt retains both old and new frames,
+queues and pending fences until reboot. No implicit stop or reset occurs.
+Client release is permitted only before its first pointer attempt.
+
+These source contracts do not establish physical page flips or a DRM frontend.
+The bootstrap buffer and its DMA tag remain retained even after replacement.
 
 ## Source facts and checks
 

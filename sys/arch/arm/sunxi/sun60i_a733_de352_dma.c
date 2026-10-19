@@ -33,14 +33,14 @@ de352_buffer_free(bus_dma_tag_t tag, struct sun60i_a733_de352_buffer *b)
 }
 
 static int
-de352_buffer_alloc(bus_dma_tag_t tag, size_t bytes,
+de352_buffer_alloc(bus_dma_tag_t tag, size_t bytes, int flags,
     struct sun60i_a733_de352_buffer *b)
 {
 	int error;
 
 	b->bytes = bytes;
 	error = bus_dmamem_alloc(tag, bytes, DE352_DMA_PAGE, 0, &b->segment,
-	    1, &b->nsegments, BUS_DMA_WAITOK);
+	    1, &b->nsegments, flags);
 	if (error != 0) {
 		b->nsegments = 0;
 		return error;
@@ -50,19 +50,19 @@ de352_buffer_alloc(bus_dma_tag_t tag, size_t bytes,
 		goto fail;
 	}
 	error = bus_dmamem_map(tag, &b->segment, 1, bytes, &b->cpu,
-	    BUS_DMA_WAITOK);
+	    flags);
 	if (error != 0) {
 		b->cpu = NULL;
 		goto fail;
 	}
-	error = bus_dmamap_create(tag, bytes, 1, bytes, 0, BUS_DMA_WAITOK,
+	error = bus_dmamap_create(tag, bytes, 1, bytes, 0, flags,
 	    &b->map);
 	if (error != 0) {
 		b->map = NULL;
 		goto fail;
 	}
 	error = bus_dmamap_load(tag, b->map, b->cpu, bytes, NULL,
-	    BUS_DMA_WAITOK);
+	    flags);
 	if (error != 0)
 		goto fail;
 	b->loaded = true;
@@ -98,9 +98,47 @@ sun60i_a733_de352_dma_destroy(struct sun60i_a733_de352_dma *m)
 	if (m->published)
 		return EBUSY;
 	de352_buffer_free(m->tag, &m->queue);
-	de352_buffer_free(m->tag, &m->pixels);
+	if (!m->external_pixels)
+		de352_buffer_free(m->tag, &m->pixels);
 	bus_dmatag_destroy(m->tag);
 	kmem_free(m, sizeof(*m));
+	return 0;
+}
+
+static int
+de352_queue_encode(struct sun60i_a733_de352_dma *m)
+{
+	struct sun60i_a733_de352_rcq_block block;
+	uint32_t words[7];
+	uint8_t *p;
+	int error;
+
+	words[0] = m->layer.attribute;
+	words[1] = m->layer.size;
+	words[2] = m->layer.coordinate;
+	words[3] = m->layer.pitch;
+	words[4] = m->layer.address_low;
+	words[5] = m->layer.bottom_low;
+	words[6] = m->layer.fill_color;
+	p = (uint8_t *)m->queue.cpu + DE352_DMA_LAYER_OFFSET;
+	for (u_int i = 0; i < __arraycount(words); i++)
+		de352_put32(p + i * 4, words[i]);
+	/* The native submitter must first establish exclusive pipe ownership. */
+	de352_put32((uint8_t *)m->queue.cpu + DE352_DMA_BLEND_OFFSET, 0x100);
+	block = (struct sun60i_a733_de352_rcq_block) {
+		.dma = m->queue.address + DE352_DMA_LAYER_OFFSET,
+		.bytes = sizeof(words), .destination = 0x1c1000, .dirty = true
+	};
+	error = sun60i_a733_de352_rcq_encode(&block, m->queue.cpu);
+	if (error != 0)
+		return error;
+	block.dma = m->queue.address + DE352_DMA_BLEND_OFFSET;
+	block.bytes = 4;
+	block.destination = 0x281000;
+	error = sun60i_a733_de352_rcq_encode(&block,
+	    (uint8_t *)m->queue.cpu + A733_DE352_RCQ_DESCRIPTOR_BYTES);
+	if (error != 0)
+		return error;
 	return 0;
 }
 
@@ -114,8 +152,6 @@ sun60i_a733_de352_dma_prepare(bus_dma_tag_t parent, uint32_t width,
 	};
 	struct sun60i_a733_de352_dma *m;
 	struct sun60i_a733_de352_rgb rgb;
-	struct sun60i_a733_de352_rcq_block block;
-	uint32_t words[7];
 	uint8_t *p;
 	size_t bytes;
 	int error;
@@ -135,10 +171,12 @@ sun60i_a733_de352_dma_prepare(bus_dma_tag_t parent, uint32_t width,
 		kmem_free(m, sizeof(*m));
 		return error;
 	}
-	error = de352_buffer_alloc(m->tag, bytes, &m->pixels);
+	m->pixel_tag = m->tag;
+	error = de352_buffer_alloc(m->tag, bytes, BUS_DMA_WAITOK, &m->pixels);
 	if (error != 0)
 		goto fail;
-	error = de352_buffer_alloc(m->tag, DE352_DMA_QUEUE_BYTES, &m->queue);
+	error = de352_buffer_alloc(m->tag, DE352_DMA_QUEUE_BYTES, BUS_DMA_WAITOK,
+	    &m->queue);
 	if (error != 0)
 		goto fail;
 	if (m->pixels.address < m->queue.address + m->queue.bytes &&
@@ -158,30 +196,7 @@ sun60i_a733_de352_dma_prepare(bus_dma_tag_t parent, uint32_t width,
 		for (uint32_t x = 0; x < width; x++)
 			de352_put32(p + x * 4, colors[(x * 8) / width]);
 	}
-	words[0] = m->layer.attribute;
-	words[1] = m->layer.size;
-	words[2] = m->layer.coordinate;
-	words[3] = m->layer.pitch;
-	words[4] = m->layer.address_low;
-	words[5] = m->layer.bottom_low;
-	words[6] = m->layer.fill_color;
-	p = (uint8_t *)m->queue.cpu + DE352_DMA_LAYER_OFFSET;
-	for (u_int i = 0; i < __arraycount(words); i++)
-		de352_put32(p + i * 4, words[i]);
-	/* The native submitter must first establish exclusive pipe ownership. */
-	de352_put32((uint8_t *)m->queue.cpu + DE352_DMA_BLEND_OFFSET, 0x100);
-	block = (struct sun60i_a733_de352_rcq_block) {
-		.dma = m->queue.address + DE352_DMA_LAYER_OFFSET,
-		.bytes = sizeof(words), .destination = 0x1c1000, .dirty = true
-	};
-	error = sun60i_a733_de352_rcq_encode(&block, m->queue.cpu);
-	if (error != 0)
-		goto fail;
-	block.dma = m->queue.address + DE352_DMA_BLEND_OFFSET;
-	block.bytes = 4;
-	block.destination = 0x281000;
-	error = sun60i_a733_de352_rcq_encode(&block,
-	    (uint8_t *)m->queue.cpu + A733_DE352_RCQ_DESCRIPTOR_BYTES);
+	error = de352_queue_encode(m);
 	if (error != 0)
 		goto fail;
 	*out = m;
@@ -198,7 +213,7 @@ sun60i_a733_de352_dma_publish(struct sun60i_a733_de352_dma *m)
 		return EINVAL;
 	if (m->published)
 		return EBUSY;
-	bus_dmamap_sync(m->tag, m->pixels.map, 0, m->pixels.bytes,
+	bus_dmamap_sync(m->pixel_tag, m->pixels.map, 0, m->pixels.bytes,
 	    BUS_DMASYNC_PREWRITE);
 	bus_dmamap_sync(m->tag, m->queue.map, 0, m->queue.bytes,
 	    BUS_DMASYNC_PREWRITE);
@@ -206,4 +221,82 @@ sun60i_a733_de352_dma_publish(struct sun60i_a733_de352_dma *m)
 	/* No later error authorizes freeing either map. */
 	m->published = true;
 	return 0;
+}
+
+int
+sun60i_a733_de352_dma_prepare_map(bus_dma_tag_t parent, bus_dmamap_t map,
+    size_t bytes, uint32_t width, uint32_t height, uint32_t pitch,
+    struct sun60i_a733_de352_dma **out)
+{
+	struct sun60i_a733_de352_dma *m;
+	struct sun60i_a733_de352_rgb_words words;
+	struct sun60i_a733_de352_rgb rgb;
+	uint64_t address;
+	int error;
+
+	if (parent == NULL || map == NULL || out == NULL || bytes == 0 ||
+	    width == 0 || width > 1920 || height == 0 || height > 1080 ||
+	    map->dm_nsegs != 1 || bytes > map->dm_mapsize ||
+	    bytes > map->dm_segs[0].ds_len)
+		return EINVAL;
+	address = map->dm_segs[0].ds_addr;
+	if (address >= DE352_DMA_LIMIT || bytes > DE352_DMA_LIMIT - address)
+		return ERANGE;
+	rgb = (struct sun60i_a733_de352_rgb) {
+		.width = width, .height = height, .pitch = pitch,
+		.dma = address, .mapped_bytes = bytes
+	};
+	error = sun60i_a733_de352_rgb_encode(&rgb, &words);
+	if (error != 0)
+		return error;
+	m = kmem_zalloc(sizeof(*m), KM_NOSLEEP);
+	if (m == NULL)
+		return ENOMEM;
+	error = bus_dmatag_subregion(parent, 0, DE352_DMA_LIMIT - 1,
+	    &m->tag, BUS_DMA_NOWAIT);
+	if (error != 0) {
+		kmem_free(m, sizeof(*m));
+		return error;
+	}
+	m->external_pixels = true;
+	m->pixel_tag = parent;
+	m->pixels.map = map;
+	m->pixels.bytes = bytes;
+	m->pixels.address = address;
+	m->pixels.loaded = true;
+	m->width = width;
+	m->height = height;
+	m->pitch = pitch;
+	m->layer = words;
+	error = de352_buffer_alloc(m->tag, DE352_DMA_QUEUE_BYTES, BUS_DMA_NOWAIT,
+	    &m->queue);
+	if (error != 0)
+		goto fail;
+	if (address < m->queue.address + m->queue.bytes &&
+	    m->queue.address < address + bytes) {
+		error = EEXIST;
+		goto fail;
+	}
+	error = de352_queue_encode(m);
+	if (error != 0)
+		goto fail;
+	*out = m;
+	return 0;
+fail:
+	(void)sun60i_a733_de352_dma_destroy(m);
+	return error;
+}
+
+int
+sun60i_a733_de352_dma_retire(struct sun60i_a733_de352_dma *m)
+{
+	if (m == NULL || !m->external_pixels || !m->published || !m->synchronized)
+		return EINVAL;
+	/* The native coordinator owns the completion proof and pixel lifetime. */
+	bus_dmamap_sync(m->pixel_tag, m->pixels.map, 0, m->pixels.bytes,
+	    BUS_DMASYNC_POSTWRITE);
+	bus_dmamap_sync(m->tag, m->queue.map, 0, m->queue.bytes,
+	    BUS_DMASYNC_POSTWRITE);
+	m->published = false;
+	return sun60i_a733_de352_dma_destroy(m);
 }
