@@ -1,12 +1,29 @@
 # Intel BE200 Wi-Fi: iwx(4) port proposal (work in progress)
 
-Status (2026-10-19, GLM-5.3 session): **compiles clean with kernel flags
-(-Werror) and loads**: `if_iwx.kmod` builds on the MSI (clang 21.1.8),
-`modload` succeeds and the driver attaches to the BE200 —
-`iwx0 at pci11 dev 0 function 0` — but attach stops at
-`can't allocate interrupt` (pci_intr_alloc). Nothing here is part of the
-kernel build: the files live outside `sys/` until the module attaches,
-passes firmware load and the checks below.
+Status (2026-10-20): **stage 1 works on the MSI**.  The module loads at
+boot, the BE200 runs firmware `100.3f3ef548.0` with PNVM `1464be58`,
+scans 2.4/5 GHz, associates with WPA2-PSK (CCMP) through
+`wpa_supplicant`, gets a DHCP lease and carries SSH and internet traffic
+with Ethernet unplugged.  Still outside `sys/`: no detach/unload, legacy
+rates only, all 5 GHz channels passive (LAR), software crypto.
+
+Boot setup used on the MSI:
+
+| Item | Value |
+| --- | --- |
+| Module | `/stand/amd64/11.0/modules/if_iwx/if_iwx.kmod`, listed in `/etc/modules.conf`, `modules=YES` |
+| Firmware | `/libdata/firmware/if_iwx/iwx-gl-c0-fm-c0-100` and `iwx-gl-c0-fm-c0.pnvm` (linux-firmware `iwlwifi-gl-c0-fm-c0-100.ucode`, `.pnvm`) |
+| WPA | `wpa_supplicant=YES`, `wpa_supplicant_flags="-B -s -i iwx0 -c /etc/wpa_supplicant.iwx0.conf"` |
+| DHCP | `dhcpcd_flags="-qM rge0 iwx0"` |
+| Country | `modload -s mcc=XX` (default `ZZ`) |
+
+Bring-up fixes on NetBSD (commits 579e0ec..bcc5a61): raw `CSR_HW_REV` as
+prph scratch `mac_id` (the GL ROM ignored the converted value), 94
+firmware sections, PCI bus mastering, softc via `device_private()`,
+interface attach after NVM, `ifioctl_common()`, re-entrant ioctl lock,
+MCC response v8, PHY context v5/v6, receive-channel tracking while
+scanning, `IEEE80211_F_SCAN` for firmware scans, MIC/FCS tail stripped
+from MPDUs, NULL-safe `free()`, 2 KB RX clusters.
 
 Porting state relative to the original 782-error snapshot:
 
