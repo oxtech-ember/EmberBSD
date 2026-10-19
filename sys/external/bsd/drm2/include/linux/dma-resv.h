@@ -62,6 +62,7 @@ struct dma_resv_poll {
 	bool			rp_claimed;
 };
 
+#define	dma_resv_replace_excl_fence	linux_dma_resv_replace_excl_fence
 #define	dma_resv_add_excl_fence		linux_dma_resv_add_excl_fence
 #define	dma_resv_add_shared_fence	linux_dma_resv_add_shared_fence
 #define	dma_resv_assert_held		linux_dma_resv_assert_held
@@ -114,6 +115,7 @@ struct dma_fence *
 struct dma_resv_list *
 	dma_resv_get_list(struct dma_resv *);
 int	dma_resv_reserve_shared(struct dma_resv *, unsigned int);
+void	dma_resv_replace_excl_fence(struct dma_resv *, struct dma_fence *);
 void	dma_resv_add_excl_fence(struct dma_resv *,
 	    struct dma_fence *);
 void	dma_resv_add_shared_fence(struct dma_resv *,

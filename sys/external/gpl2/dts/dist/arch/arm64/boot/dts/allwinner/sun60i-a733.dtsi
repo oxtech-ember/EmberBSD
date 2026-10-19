@@ -737,6 +737,28 @@
 			status = "disabled";
 		};
 
+		/* Shared SYS_CFG access uses the native syscon mutex. */
+		sys_cfg: syscon@3000000 {
+			compatible = "allwinner,sun60i-a733-system-control", "syscon";
+			reg = <0x03000000 0x1000>;
+			status = "disabled";
+		};
+
+		/* Register the native provider. The DE coordinator starts output. */
+		hdmi_output: hdmi@5520000 {
+			compatible = "allwinner,sun60i-a733-hdmi";
+			reg = <0x05520000 0x100000>, <0x05510000 0x1000>,
+			      <0x05730000 0x1000>;
+			reg-names = "hdmi", "vo1", "tv0";
+			clocks = <&ccu CLK_DE0>;
+			clock-names = "de0";
+			power-domains = <&pck600 PD_VO1>;
+			netbsd,consumer-managed-power;
+			netbsd,dcxo-source = <&rtc>;
+			syscon = <&sys_cfg>;
+			status = "disabled";
+		};
+
 		/* An enabled board must supply its native output provider. */
 		de0: display-engine@5000000 {
 			compatible = "allwinner,display-engine-v352";

@@ -17,7 +17,7 @@ INCS=	acct.h acl.h agpio.h aio.h ansi.h aout_mids.h ataio.h atomic.h \
 	device.h device_if.h \
 	dir.h dirent.h \
 	disk.h disklabel.h disklabel_acorn.h disklabel_gpt.h disklabel_rdb.h \
-	dkbad.h dkio.h dkstat.h domain.h drvctlio.h dvdio.h \
+	dkbad.h dkio.h dkstat.h dmabuf.h domain.h drvctlio.h dvdio.h \
 	efiio.h endian.h envsys.h errno.h evcnt.h event.h eventfd.h exec.h \
 	exec_aout.h exec_coff.h exec_ecoff.h exec_elf.h exec_script.h \
 	extattr.h extent.h \

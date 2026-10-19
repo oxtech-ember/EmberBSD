@@ -13,6 +13,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/device.h>
 #include <sys/container_of.h>
 #include <sys/mutex.h>
+#include <sys/once.h>
 #include <sys/intr.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
@@ -24,6 +25,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arm/sunxi/sun60i_a733_display_owner.h>
 #include <arm/sunxi/sun60i_a733_de352_dma.h>
 #include <arm/sunxi/sun60i_a733_output.h>
+#include <arm/sunxi/sun60i_a733_de352_scanout.h>
 
 #define DE352_BASE 0x05000000
 #define DE352_SIZE 0x400000
@@ -39,6 +41,17 @@ CTASSERT(A733_DISPLAY_NMEMORY_REGS == 7);
 struct de352_memory_snapshot {
 	uint32_t version, valid;
 	uint32_t clocks[2][A733_DISPLAY_NMEMORY_REGS], iommu[2][5], nsi[2][3];
+};
+
+struct sun60i_a733_de352_client {
+	const void *owner;
+	bool busy, attempted;
+};
+
+struct de352_frame {
+	struct sun60i_a733_de352_frame info;
+	struct sun60i_a733_de352_dma *dma;
+	bool held;
 };
 
 struct sun60i_de352_softc {
@@ -57,7 +70,36 @@ struct sun60i_de352_softc {
 	int stage, step, result, release_error;
 	uint32_t last_status;
 	uint64_t vblank;
+	struct sun60i_a733_de352_client client;
+	struct de352_frame active, pending;
 };
+
+static ONCE_DECL(de352_once);
+static kmutex_t de352_registry_lock;
+static struct sun60i_de352_softc *de352_provider;
+
+static int
+de352_registry_init(void)
+{
+	mutex_init(&de352_registry_lock, MUTEX_DEFAULT, IPL_NONE);
+	return 0;
+}
+
+static struct sun60i_de352_softc *
+de352_lookup(int phandle, const struct sun60i_a733_de352_client *client)
+{
+	struct sun60i_de352_softc *sc;
+
+	RUN_ONCE(&de352_once, de352_registry_init);
+	mutex_enter(&de352_registry_lock);
+	sc = de352_provider;
+	if (sc != NULL && (client != NULL ? client != &sc->client :
+	    phandle != sc->phandle))
+		sc = NULL;
+	mutex_exit(&de352_registry_lock);
+	/* This provider has no detach operation. Its lifetime is the whole boot. */
+	return sc;
+}
 
 static const struct device_compatible_entry de352_compat[] = {
 	{ .compat = "allwinner,display-engine-v352" }, DEVICE_COMPAT_EOL
@@ -164,6 +206,133 @@ de352_memory(struct sun60i_de352_softc *sc)
 	    (nsi[0][0] & 3) != 0 || (nsi[0][2] & 1) == 0)
 		return EOPNOTSUPP;
 	return 0;
+}
+
+/* A complete stable capture must precede this restricted local profile. */
+static bool
+de352_memory_manageable(const struct de352_memory_snapshot *m)
+{
+	return m->valid == 3 && m->iommu[0][0] == 0x16 &&
+	    m->iommu[0][2] == 1 && m->iommu[0][3] <= 1 &&
+	    m->iommu[0][4] == 0;
+}
+
+/* No allocated DMA or released internal core may precede local preparation. */
+static int
+de352_memory_cold(struct sun60i_de352_softc *sc)
+{
+	uint32_t word;
+	int error;
+
+	if (!sc->reserved || !sc->power_reserved || !sc->retained ||
+	    !sc->mapped || sc->dma != NULL)
+		return EINVAL;
+	error = sun60i_a733_ccu_display_ready(sc->de0, sc);
+	if (error == 0) {
+		uint32_t peers[2][A733_DISPLAY_NISOLATION_REGS];
+
+		error = sun60i_a733_ccu_display_isolation_state(sc->de0, sc, peers);
+	}
+	if (error != 0)
+		return error;
+	error = de352_read(sc, 0x8004, &word);
+	if (error != 0 || word != 0)
+		return error != 0 ? error : EBUSY;
+	error = de352_read(sc, 0x8000, &word);
+	if (error != 0 || (word & 1) != 0)
+		return error != 0 ? error : EBUSY;
+	return 0;
+}
+
+/* No global IOMMU, table, interrupt, shared clock or peer register is written. */
+static int
+de352_memory_prepare(struct sun60i_de352_softc *sc)
+{
+	static const struct {
+		bool iommu;
+		uint32_t reg, mask, value, sample;
+	} updates[] = {
+		{ true, 0x804, 1, 1, 3 },
+		{ false, 0x410, 3, 0, 0 },
+		{ false, 0x418, 1, 1, 2 },
+		{ true, 0x10, 4, 4, 1 },
+	};
+	struct de352_memory_snapshot expected = sc->memory;
+	bus_space_handle_t ih, nh;
+	uint32_t before, after;
+	int error;
+
+	error = de352_memory_cold(sc);
+	if (error != 0)
+		return error;
+	if (!de352_memory_manageable(&expected))
+		return EOPNOTSUPP;
+	error = bus_space_map(sc->bst, DE352_IOMMU1_BASE, DE352_IOMMU1_SIZE,
+	    0, &ih);
+	if (error != 0)
+		return error;
+	error = bus_space_map(sc->bst, DE352_NSI_BASE, DE352_NSI_SIZE, 0, &nh);
+	if (error != 0) {
+		bus_space_unmap(sc->bst, ih, DE352_IOMMU1_SIZE);
+		return error;
+	}
+	for (u_int i = 0; i < __arraycount(updates); i++) {
+		bus_space_handle_t handle;
+		uint32_t value, *words;
+
+		/* Repeat the retained owner, cold-core and exact snapshot proof. */
+		error = de352_memory_cold(sc);
+		if (error != 0)
+			break;
+		error = de352_memory(sc);
+		if (error != 0 && error != EOPNOTSUPP)
+			break;
+		if (!de352_memory_manageable(&sc->memory) ||
+		    memcmp(&expected, &sc->memory, sizeof(expected)) != 0) {
+			error = EBUSY;
+			break;
+		}
+		handle = updates[i].iommu ? ih : nh;
+		words = updates[i].iommu ? expected.iommu[0] : expected.nsi[0];
+		error = bus_space_peek_4(sc->bst, handle, updates[i].reg, &before);
+		if (error != 0)
+			break;
+		if (before != words[updates[i].sample]) {
+			error = EBUSY;
+			break;
+		}
+		value = (before & ~updates[i].mask) | updates[i].value;
+		if (value == before)
+			continue;
+		/* The retained lease also covers a faulting first write attempt. */
+		error = bus_space_poke_4(sc->bst, handle, updates[i].reg, value);
+		if (error != 0)
+			break;
+		bus_space_barrier(sc->bst, handle, updates[i].reg, 4,
+		    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+		error = bus_space_peek_4(sc->bst, handle, updates[i].reg, &after);
+		if (error != 0)
+			break;
+		if (after != value) {
+			error = EIO;
+			break;
+		}
+		for (u_int sample = 0; sample < 2; sample++) {
+			words = updates[i].iommu ? expected.iommu[sample] :
+			    expected.nsi[sample];
+			words[updates[i].sample] = value;
+		}
+	}
+	bus_space_unmap(sc->bst, nh, DE352_NSI_SIZE);
+	bus_space_unmap(sc->bst, ih, DE352_IOMMU1_SIZE);
+	if (error == 0)
+		error = de352_memory_cold(sc);
+	if (error == 0)
+		error = de352_memory(sc);
+	if (error == 0 && memcmp(&expected, &sc->memory, sizeof(expected)) != 0)
+		error = EBUSY;
+	/* The outer coordinator quarantines failure. This helper never releases. */
+	return error;
 }
 
 /* Read only DE top until the internal core clock and reset are established. */
@@ -375,8 +544,12 @@ de352_vblank(struct sun60i_de352_softc *sc)
 }
 
 static int
-de352_submit(struct sun60i_de352_softc *sc)
+de352_submit_dma(struct sun60i_de352_softc *sc,
+    struct sun60i_a733_de352_dma *dma, bool initial)
 {
+	const uint32_t words[] = { dma->layer.attribute, dma->layer.size,
+	    dma->layer.coordinate, dma->layer.pitch, dma->layer.address_low,
+	    dma->layer.bottom_low, dma->layer.fill_color };
 	uint32_t value;
 	int error;
 
@@ -384,16 +557,16 @@ de352_submit(struct sun60i_de352_softc *sc)
 	if (error != 0)
 		return error;
 	/* Retain both maps before even the first attempted pointer write. */
-	error = sun60i_a733_de352_dma_publish(sc->dma);
+	error = sun60i_a733_de352_dma_publish(dma);
 	if (error != 0)
 		return error;
-	error = de352_field(sc, 0x8114, UINT32_MAX, (uint32_t)sc->dma->queue.address);
+	error = de352_field(sc, 0x8114, UINT32_MAX, (uint32_t)dma->queue.address);
 	if (error == 0)
 		error = de352_field(sc, 0x8118, 0xff, 0);
 	if (error == 0)
-		/* Only zero -> 32 is admitted; no full-width length field claim. */
+		/* Admit only initial zero -> 32, or an owned 32-byte replacement. */
 		error = de352_read(sc, 0x811c, &value);
-	if (error == 0 && value != 0)
+	if (error == 0 && value != (initial ? 0 : 32))
 		error = EOPNOTSUPP;
 	if (error == 0)
 		error = bus_space_poke_4(sc->bst, sc->bsh, 0x811c, 32);
@@ -419,20 +592,25 @@ de352_submit(struct sun60i_de352_softc *sc)
 	if (error != 0)
 		return error;
 	/* A flag alone is not proof that this list reached the owned registers. */
-	error = de352_read(sc, 0x1c1000, &value);
-	if (error != 0 || value != sc->dma->layer.attribute)
-		return error != 0 ? error : EIO;
-	error = de352_read(sc, 0x1c1010, &value);
-	if (error != 0 || value != sc->dma->layer.address_low)
-		return error != 0 ? error : EIO;
+	for (u_int i = 0; i < __arraycount(words); i++) {
+		error = de352_read(sc, 0x1c1000 + 4 * i, &value);
+		if (error != 0 || value != words[i])
+			return error != 0 ? error : EIO;
+	}
 	error = de352_read(sc, 0x281000, &value);
 	return error != 0 ? error : value == 0x100 ? 0 : EIO;
 }
 
 static int
+de352_submit(struct sun60i_de352_softc *sc)
+{
+	return de352_submit_dma(sc, sc->dma, true);
+}
+
+static int
 de352_run(struct sun60i_de352_softc *sc)
 {
-	bool held = false;
+	bool held = false, managed = false;
 	int error;
 
 	if (!sc->valid)
@@ -454,6 +632,11 @@ de352_run(struct sun60i_de352_softc *sc)
 	if (error != 0)
 		goto fail;
 	error = de352_memory(sc);
+	if (error == EOPNOTSUPP && de352_memory_manageable(&sc->memory)) {
+		/* Reserve inactive peers before any retained local write. */
+		error = sun60i_a733_ccu_display_isolation_reserve(sc->de0, sc);
+		managed = error == 0;
+	}
 	if (error != 0)
 		goto fail;
 	sc->step = 3;
@@ -468,6 +651,11 @@ de352_run(struct sun60i_de352_softc *sc)
 	if (error != 0)
 		goto fail;
 	sc->mapped = true;
+	if (managed) {
+		error = de352_memory_prepare(sc);
+		if (error != 0)
+			goto fail;
+	}
 	error = de352_open_core(sc);
 	if (error == 0)
 		error = de352_idle(sc);
@@ -679,6 +867,16 @@ de352_attach(device_t parent, device_t self, void *aux)
 		sc->de0 = NULL;
 		return;
 	}
+	RUN_ONCE(&de352_once, de352_registry_init);
+	mutex_enter(&de352_registry_lock);
+	if (de352_provider != NULL) {
+		mutex_exit(&de352_registry_lock);
+		clk_put(sc->de0);
+		sc->de0 = NULL;
+		return;
+	}
+	de352_provider = sc;
+	mutex_exit(&de352_registry_lock);
 	sc->valid = true;
 	if (sysctl_createv(&sc->sysctllog, 0, NULL, &node, 0, CTLTYPE_NODE,
 	    device_xname(self), NULL, NULL, 0, NULL, 0,
@@ -703,3 +901,244 @@ de352_attach(device_t parent, device_t self, void *aux)
 
 CFATTACH_DECL_NEW(sun60i_a733_de, sizeof(struct sun60i_de352_softc),
     de352_match, de352_attach, NULL, NULL);
+
+static int
+de352_state_locked(struct sun60i_de352_softc *sc,
+    struct sun60i_a733_de352_state *state)
+{
+	KASSERT(mutex_owned(&sc->lock));
+	if (!sc->valid)
+		return ENXIO;
+	if (sc->stage != 1)
+		return EAGAIN;
+	if (sc->result != 0)
+		return sc->result;
+	if (sc->step != 10 || !sc->retained || sc->dma == NULL ||
+	    !sc->dma->published || !sc->dma->synchronized)
+		return EIO;
+	/* Bootstrap storage and its restricted native tag stay retained. */
+	state->mode = sc->mode;
+	state->dmat = sc->dma->tag;
+	state->max_dma_address = UINT32_MAX;
+	state->observed_sequence = sc->vblank;
+	return 0;
+}
+
+int
+sun60i_a733_de352_get_state(int phandle, struct sun60i_a733_de352_state *out)
+{
+	struct sun60i_a733_de352_state state = { 0 };
+	struct sun60i_de352_softc *sc;
+	int error;
+
+	if (out == NULL)
+		return EINVAL;
+	sc = de352_lookup(phandle, NULL);
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->lock);
+	error = de352_state_locked(sc, &state);
+	if (error == 0)
+		*out = state;
+	mutex_exit(&sc->lock);
+	return error;
+}
+
+int
+sun60i_a733_de352_acquire(int phandle, const void *owner,
+    struct sun60i_a733_de352_client **out)
+{
+	struct sun60i_a733_de352_state state = { 0 };
+	struct sun60i_de352_softc *sc;
+	int error;
+
+	if (out == NULL || owner == NULL)
+		return EINVAL;
+	sc = de352_lookup(phandle, NULL);
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->lock);
+	error = de352_state_locked(sc, &state);
+	if (error == 0 && sc->client.owner != NULL)
+		error = EBUSY;
+	if (error == 0) {
+		sc->client.owner = owner;
+		*out = &sc->client;
+	}
+	mutex_exit(&sc->lock);
+	return error;
+}
+
+int
+sun60i_a733_de352_release(struct sun60i_a733_de352_client *client)
+{
+	struct sun60i_de352_softc *sc;
+	int error = 0;
+
+	if (client == NULL || (sc = de352_lookup(0, client)) == NULL)
+		return EINVAL;
+	mutex_enter(&sc->lock);
+	if (client->owner == NULL)
+		error = EINVAL;
+	else if (client->busy || client->attempted)
+		error = EBUSY;
+	else
+		client->owner = NULL;
+	mutex_exit(&sc->lock);
+	return error;
+}
+
+/* Check the owned old list before replacing any pointer. No writes here. */
+static int
+de352_replace_ready(struct sun60i_de352_softc *sc)
+{
+	const struct sun60i_a733_de352_dma *old =
+	    sc->active.dma != NULL ? sc->active.dma : sc->dma;
+	const struct { uint32_t reg, mask, value; } fields[] = {
+		{ 0x8110, UINT32_MAX, 0 },
+		{ 0x8114, UINT32_MAX, (uint32_t)old->queue.address },
+		{ 0x8118, 0xff, 0 }, { 0x811c, UINT32_MAX, 32 },
+		{ 0x1c1080, 0xff, 0 }, { 0x8100, 1, 1 }
+	};
+	uint32_t value;
+	int error;
+
+	error = sun60i_a733_ccu_display_ready(sc->de0, sc);
+	if (error != 0)
+		return error;
+	for (u_int i = 0; i < __arraycount(fields); i++) {
+		error = de352_read(sc, fields[i].reg, &value);
+		if (error != 0)
+			return error;
+		if ((value & fields[i].mask) != fields[i].value)
+			return EBUSY;
+	}
+	return 0;
+}
+
+/* Discard a pending old event; only later observed events retire old storage. */
+static int
+de352_replacement_vblank(struct sun60i_de352_softc *sc,
+    struct sun60i_a733_de352_completion *completion)
+{
+	const uint64_t start = de352_now();
+	uint64_t sequence, last = sc->vblank;
+	u_int count = 0;
+	int error;
+
+	error = sun60i_a733_output_observed_vblank(sc->output_phandle, sc,
+	    &sequence);
+	if (error == 0)
+		last = sequence;
+	else if (error != ENOENT)
+		return error;
+	do {
+		error = sun60i_a733_output_observed_vblank(sc->output_phandle,
+		    sc, &sequence);
+		if (error == 0) {
+			if (sequence <= last)
+				return EPROTO;
+			last = sequence;
+			if (++count == 2) {
+				completion->observed_sequence = sequence;
+				completion->observed_time_ns = de352_now();
+				return 0;
+			}
+		} else if (error != ENOENT) {
+			return error;
+		}
+		delay(10);
+	} while (de352_now() - start < DE352_TIMEOUT_NS);
+	return ETIMEDOUT;
+}
+
+static void
+de352_frame_drop(struct de352_frame *frame, bool retired)
+{
+	if (frame->dma != NULL) {
+		int error = retired ? sun60i_a733_de352_dma_retire(frame->dma) :
+		    sun60i_a733_de352_dma_destroy(frame->dma);
+		KASSERT(error == 0);
+		if (error != 0)
+			return; /* Preserve the pixel reference on an internal fault. */
+	}
+	if (frame->held)
+		frame->info.release(frame->info.cookie);
+}
+
+int
+sun60i_a733_de352_submit(struct sun60i_a733_de352_client *client,
+    const struct sun60i_a733_de352_frame *frame,
+    struct sun60i_a733_de352_completion *out)
+{
+	struct sun60i_a733_de352_completion completion;
+	struct sun60i_a733_de352_state state = { 0 };
+	struct de352_frame next = { 0 }, retired = { 0 };
+	struct sun60i_de352_softc *sc;
+	int error;
+
+	if (client == NULL || frame == NULL || out == NULL ||
+	    frame->retain == NULL || frame->release == NULL || frame->map == NULL)
+		return EINVAL;
+	sc = de352_lookup(0, client);
+	if (sc == NULL)
+		return EINVAL;
+	next.info = *frame;
+	mutex_enter(&sc->lock);
+	error = de352_state_locked(sc, &state);
+	if (error == 0 && (client->owner == NULL || client->busy))
+		error = EBUSY;
+	if (error == 0 && (next.info.dmat != state.dmat ||
+	    next.info.width != state.mode.hdisplay ||
+	    next.info.height != state.mode.vdisplay))
+		error = EINVAL;
+	if (error != 0) {
+		mutex_exit(&sc->lock);
+		return error;
+	}
+	client->busy = true;
+	mutex_exit(&sc->lock);
+
+	/* Both callbacks, allocation and producer lifetime are outside our lock. */
+	error = next.info.retain(next.info.cookie);
+	if (error == 0) {
+		next.held = true;
+		error = sun60i_a733_de352_dma_prepare_map(state.dmat, next.info.map,
+		    next.info.bytes, next.info.width, next.info.height,
+		    next.info.pitch, &next.dma);
+	}
+	mutex_enter(&sc->lock);
+	if (error == 0) {
+		error = de352_replace_ready(sc);
+		if (error == 0) {
+			sc->pending = next;
+			error = de352_submit_dma(sc, next.dma, false);
+		}
+		if (next.dma->published)
+			client->attempted = true;
+		if (error == 0)
+			error = de352_replacement_vblank(sc, &completion);
+		if (error == 0)
+			error = de352_memory(sc);
+		if (error != 0) {
+			sc->result = error;
+			(void)sun60i_a733_ccu_display_fault(sc->de0, sc, error);
+			(void)sun60i_a733_output_fault(sc->output_phandle, sc, error);
+		} else {
+			retired = sc->active;
+			sc->active = next;
+			sc->vblank = completion.observed_sequence;
+			*out = completion;
+		}
+	}
+	if (error == 0 || next.dma == NULL || !next.dma->published)
+		memset(&sc->pending, 0, sizeof(sc->pending));
+	client->busy = false;
+	mutex_exit(&sc->lock);
+
+	if (error != 0 && (next.dma == NULL || !next.dma->published))
+		de352_frame_drop(&next, false);
+	if (retired.dma != NULL)
+		de352_frame_drop(&retired, true);
+	return error;
+}

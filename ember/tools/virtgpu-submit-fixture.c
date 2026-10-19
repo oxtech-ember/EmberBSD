@@ -21,6 +21,8 @@ typedef int atomic_t;
 #define atomic_inc(p) (++*(p))
 #define atomic_dec(p) (--*(p))
 #define atomic_dec_and_test(p) (--*(p)==0)
+#define atomic_dec_return(p) (--*(p))
+#define atomic_cmpxchg(p,o,n) __sync_val_compare_and_swap((p),(o),(n))
 #define atomic_read(p) (*(p))
 #define atomic_set(p,v) (*(p)=(v))
 #define WARN_ON_ONCE(c) WARN_ON(c)
@@ -615,13 +617,12 @@ run_case(unsigned which)
 	case 20: input_base.signaled=false; expected=-EIO; break;
 	case 21:
 		array=calloc(1,sizeof(*array)+sizeof(array->dfa_cb[0])); assert(array);
-		array->base=input_base; array->base.refs=2; array->base.error=1;
+		array->base=input_base; array->base.refs=2; array->base.error=0;
 		array->base.signaled=false; array->base.lock=&array->dfa_lock;
 		array->dfa_npending=1; array->dfa_work.fn=dma_fence_array_done;
 		array->dfa_cb[0].dfac_array=array;
-		spin_lock(&array->dfa_lock);
+		/* A child callback does not own the array's lock. */
 		dma_fence_array_done1(&child,&array->dfa_cb[0].dfac_cb);
-		spin_unlock(&array->dfa_lock);
 		dma_fence_array_done(&array->dfa_work);
 		assert(array->base.error==-EIO && array->base.refs==1);
 		expected=-EIO; break;

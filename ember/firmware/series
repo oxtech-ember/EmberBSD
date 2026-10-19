@@ -27,3 +27,4 @@ bcm2712-display-resources.diff
 gcc-freestanding.diff
 tfa-shell-slice.diff
 edk2-shell-wrapper.diff
+bcm2712-iommuc-resources.diff

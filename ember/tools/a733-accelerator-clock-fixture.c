@@ -431,6 +431,7 @@ sun60i_a733_pck_display_ready(int node, const void *owner)
 	return display_power_error != 0 ? display_power_error :
 	    node == 17 && owner == display_power_owner && display_power_retained ? 0 : EINVAL;
 }
+#include "a733-display-isolation-power-model.h"
 #include "sun60i_a733_ccu.c"
 static void
 display_write_check(bus_size_t off)
@@ -467,6 +468,7 @@ reset(void)
 	prepare_test = false;
 	display_power_owner = NULL;
 	display_power_retained = false;
+	isolation_model_reset();
 	display_power_error = display_retain_error = 0;
 	ccu_size = sizeof(registers); ccu_reg_error = 0;
 	unstable_read = 0;
@@ -1517,6 +1519,7 @@ test_generic_rmw_fallback(void)
 
 #include "a733-display-native-fixture.h"
 #include "a733-display-memory-fixture.h"
+#include "a733-display-isolation-fixture.h"
 
 int
 main(void)
@@ -1695,6 +1698,7 @@ main(void)
 	test_display_native();
 	test_display_output();
 	test_display_memory();
+	test_display_isolation();
 	test_gpu_update_completion();
 	test_gpu_prepare_pll();
 	printf("A733 accelerator clocks: %u production checks passed\n", checks);

@@ -70,9 +70,28 @@ The two complete IOMMU1 samples must show version 0x16, master 2 reset bit 2
 released, global enable 1, master 2 bypass 1, and no master 2 interrupt status.
 The offsets are 0,0x10,0x14,0x804,0x838. NSI mode 0x410 bits 1:0 must be 0;
 select 0x418 bit 0 must be 1. Priority 0x414 is recorded without an ownership claim.
-No IOMMU or NSI register is written. The proof repeats before DMA publication
-and after RCQ completion plus vblank. An unsupported state returns an error.
-The next managed mapping profile must have its own typed claims and tests.
+The strict proof repeats before DMA publication and after RCQ completion plus
+vblank. The already valid borrowed profile needs no IOMMU or NSI write.
+
+If the clocks are valid but the local master profile differs, the coordinator
+can prepare master 2 before DMA allocation. This requires version 0x16,
+global enable exactly 1, no unknown bypass bits and no master 2 interrupt.
+It first acquires the [inactive-peer lease](a733-iommu1-isolation.md), before
+retention. After DE0 top access is available, every internal DE module gate
+must remain closed and core 0 reset asserted. No DMA object may exist.
+
+The finite sequence sets master 2 bypass, NSI port 2 mode 0, NSI port 2 select
+1, then releases master 2 reset. It preserves all other bits. Before each
+step, the coordinator checks the retained owner, peer lease, cold DE state
+and complete expected memory snapshot. It checks the full field word again
+before a write and verifies the full written word afterward. It repeats the
+cold-state and strict memory proof before it opens the internal DE core.
+Any failure after retention keeps all claims and records sticky failure.
+
+This profile does not write global IOMMU enable/reset, table addresses,
+interrupt controls, TLB invalidation, shared clocks or peer registers. A
+global-off IOMMU1 still requires a separate cold-init contract and physical
+acceptance. The inactive-peer lease alone does not authorize global writes.
 
 The read-only `memory` sysctl returns native-endian 32-bit unsigned words:
 version,valid,clocks[2][7],iommu[2][5],nsi[2][3]. Version is 1. Valid bit 0
@@ -127,8 +146,48 @@ The fixed list length 32 does not establish a full 32-bit writable length field.
 
 DMA publication is irreversible before the first address write attempt.
 An error or timeout after publication retains both buffers. The driver has
-no stop, unpublish, detach or unload operation. A future reusable scanout
-and KMS path requires independently proved stop/isolation and page flips.
+no stop, detach or unload operation. The repeated-frame interface below
+can retire a replaced external frame. It cannot release the retained hardware
+claims or establish a general stop/isolation operation.
+
+## Repeated linear frames
+
+`sun60i_a733_de352_scanout.h` exposes a cached state query, one opaque client,
+and synchronous frame submission. The query performs no display I/O. It
+requires successful explicit stage 1. The stable DMA tag belongs to the retained
+bootstrap allocation. It is valid for the whole boot. It restricts all pixels
+and queues to addresses below 4 GiB. A client must not substitute a parent tag.
+
+The first profile accepts linear XRGB8888, offset zero, one loaded DMA segment,
+and the exact admitted dimensions. The extent must cover the complete pitch
+and height. Each frame has its own immutable two-entry, 32-byte RCQ list. The
+layer high address byte remains zero. This profile does not expand the list
+length or establish the unverified length-field width.
+
+A sleepable frontend worker first waits for producers. Under the reservation
+lock it rechecks writers and publishes a pending READ scanout fence. It then
+unlocks the reservation and submits. A producer wait alone does not exclude
+later writers. Submission must not hold DRM, reservation or provider locks.
+The retain callback pins the loaded map, backing storage and callback code.
+The DE provider synchronizes pixels and the queue with PREWRITE before its
+first pointer attempt. It never unloads the caller's pixel map.
+
+Before each replacement, the coordinator verifies the owned old queue and
+route. It requires a new RCQ finish and all seven expected layer words plus
+the blend pipe word. It consumes a possible prior TV0 event, then requires two
+new distinct observations. The completion sequence and time describe software
+observations. They are not an exact hardware frame counter or timestamp.
+
+Only that proof retires the previous external frame. The provider performs
+POSTWRITE and releases its queue, then calls the frontend release callback
+outside the DE lock. That callback can signal the READ fence and drop the GEM
+reference. A pre-DMA failure also releases a successfully retained new frame.
+An error after the first pointer attempt retains both old and new frames,
+queues and pending fences until reboot. No implicit stop or reset occurs.
+Client release is permitted only before its first pointer attempt.
+
+These source contracts do not establish physical page flips or a DRM frontend.
+The bootstrap buffer and its DMA tag remain retained even after replacement.
 
 ## Source facts and checks
 
@@ -182,8 +241,10 @@ uses the public CCU memory register enum and the retained DISPLAY APIs.
 Its raw memory record stays at version 1 with seven CCU words per sample.
 The host contract extracts that enum from the public CCU header.
 
-This integration does not add or enable an FDT node. A board description
-must provide the complete DE, disabled memory-provider, and output bindings
-before attach can expose the explicit stage. The output provider must register
-under the same phandle and validate the same owner cookie. Kernel build and
-physical scanout acceptance remain separate requirements.
+The SoC DE, memory-provider and output nodes are disabled by default.
+The Zero 3W board provides the complete DE and native output bindings.
+Attach exposes the explicit stage. It does not start DMA or scanout.
+The memory-provider nodes remain disabled; the coordinator still requires its
+strict memory proof before DMA. The output provider registers under the same
+phandle and validates the same owner cookie. Kernel build, memory readiness
+and physical scanout acceptance remain separate requirements.

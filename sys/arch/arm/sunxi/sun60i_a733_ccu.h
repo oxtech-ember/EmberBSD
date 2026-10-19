@@ -238,4 +238,15 @@ int	sun60i_a733_ccu_gpu_ready(struct clk *, u_int *, u_int *);
 #define	A733_RST_BUS_GMAC0		93
 #define	A733_RST_BUS_GMAC0_AXI		94
 
+/*
+ * Reserve inactive IOMMU1 peers before DISPLAY retention. Requires the
+ * memory claim. Zero gate/reset fields and a static PCK2 snapshot are kept
+ * under the same native ownership lock. No global IOMMU operation is granted.
+ * State publishes two complete raw samples only on success.
+ */
+enum { A733_DISPLAY_NISOLATION_REGS = 10 };
+int sun60i_a733_ccu_display_isolation_reserve(struct clk *, const void *);
+int sun60i_a733_ccu_display_isolation_state(struct clk *, const void *,
+    uint32_t [2][A733_DISPLAY_NISOLATION_REGS]);
+
 #endif /* _SUN60I_A733_CCU_H */

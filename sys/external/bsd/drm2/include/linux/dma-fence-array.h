@@ -34,6 +34,7 @@
 
 #include <sys/stdbool.h>
 
+#include <linux/atomic.h>
 #include <linux/dma-fence.h>
 #include <linux/irq_work.h>
 
@@ -52,13 +53,15 @@ struct dma_fence_array {
 	unsigned			num_fences;
 
 	spinlock_t			dfa_lock;
-	int				dfa_npending;
+	atomic_t			dfa_npending;
+	atomic_t			dfa_error;
+	bool				dfa_signal_on_any;
 	struct irq_work			dfa_work;
 	struct dma_fence_array_cb	dfa_cb[];
 };
 
 struct dma_fence_array *
-	dma_fence_array_create(int, struct dma_fence **, unsigned, unsigned,
+	dma_fence_array_create(int, struct dma_fence **, uint64_t, unsigned,
 	    bool);
 
 bool	dma_fence_is_array(struct dma_fence *);

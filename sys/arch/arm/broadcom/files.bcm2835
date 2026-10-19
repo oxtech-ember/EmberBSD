@@ -54,6 +54,19 @@ file	arch/arm/broadcom/bcm2712_display_dvp_acpi.c	bcmv3d_acpi
 file	arch/arm/broadcom/bcm2712_display_irq.c	bcmv3d_acpi
 file	arch/arm/broadcom/bcm2712_display_irq_acpi.c	bcmv3d_acpi
 
+# Explicit display building blocks. No attachment or automatic invocation.
+defflag opt_bcm2712_display_components.h BCM2712_DISPLAY_COMPONENTS
+# Descriptor-only shared-cache owner. Enable the device explicitly.
+device bcm2712iommuc
+attach bcm2712iommuc at acpinodebus with bcm2712iommuc_acpi
+file	arch/arm/broadcom/bcm2712_iommuc_native.c	bcm2712iommuc_acpi
+file	arch/arm/broadcom/bcm2712_iommuc_acpi.c	bcm2712iommuc_acpi | (bcmv3d_acpi & bcm2712_display_components)
+file	arch/arm/broadcom/bcm2712_iommuc_core.c	bcm2712iommuc_acpi | (bcmv3d_acpi & bcm2712_display_components)
+file	arch/arm/broadcom/bcm2712_iommuc_dependency.c	bcmv3d_acpi & bcm2712_display_components
+file	arch/arm/broadcom/bcm2712_mmu4_table.c	bcmv3d_acpi & bcm2712_display_components
+file	arch/arm/broadcom/bcm2712_mmu4_core.c	bcmv3d_acpi & bcm2712_display_components
+file	arch/arm/broadcom/bcm2712_display_handoff.c	bcmv3d_acpi & bcm2712_display_components
+
 # Explicit DDC0 API only. No default attachment or interrupt activation.
 defflag opt_bcm2712_ddc.h BCM2712_DISPLAY_DDC: brcmstb_i2c, i2cexec, edid
 file	arch/arm/broadcom/bcm2712_display_ddc_acpi.c	bcmv3d_acpi & bcm2712_display_ddc

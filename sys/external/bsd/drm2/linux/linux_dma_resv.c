@@ -613,6 +613,25 @@ dma_resv_add_excl_fence(struct dma_resv *robj,
 }
 
 /*
+ * EmberBSD addition, AI-assisted. Replace the exclusive fence without
+ * discarding independent shared dependencies. The caller holds the lock.
+ */
+void
+dma_resv_replace_excl_fence(struct dma_resv *robj, struct dma_fence *fence)
+{
+	struct dma_resv_write_ticket ticket;
+	struct dma_fence *old;
+
+	KASSERT(dma_resv_held(robj));
+	old = robj->fence_excl;
+	dma_fence_get(fence);
+	dma_resv_write_begin(robj, &ticket);
+	atomic_store_relaxed(&robj->fence_excl, fence);
+	dma_resv_write_commit(robj, &ticket);
+	dma_fence_put(old);
+}
+
+/*
  * dma_resv_add_shared_fence(robj, fence)
  *
  *	Acquire a reference to fence and add it to robj's shared list.

@@ -2,6 +2,9 @@
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Actual helper, module and contiguous BO bodies; kernel services are controlled. */
 #include <libfdt.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <stdarg.h>
 #define main bo_reference_main
 #include "bo-services.h"
 #undef main
@@ -11,6 +14,8 @@
 #define BUS_DMA_WRITE 4
 #define BUS_DMASYNC_PREWRITE 8
 #include "prepare-types.h"
+#include "mmu4-core-types.h"
+#include "mmu4-backing-types.h"
 
 static unsigned consumer_fail, consumer_geometry, backing_geometry;
 static unsigned creates, loads, unloads, destroys, gem_puts, syncs;
@@ -193,7 +198,12 @@ typedef unsigned deviter_t;
 struct drm_driver { const char *name; };
 struct drm_minor { int type; struct drm_device *dev; };
 struct acpi_devnode { device_t ad_device; };
-struct properties { bool prepare, wrong_bool, wrong_string; const char *build, *conflict; };
+struct properties {
+	bool prepare, wrong_bool, wrong_string;
+	const char *build, *conflict;
+	bool mmu4_present, mmu4_value, mmu4_wrong, debug_present, debug_wrong;
+	uint32_t debug;
+};
 typedef struct properties *prop_dictionary_t;
 struct bcm2712_display_contract { unsigned version; };
 static const char buildinfo[] = "EmberBSD:test\n";
@@ -228,22 +238,149 @@ static int cpu_intr_p(void) { return interrupt_kind == 1; }
 static int cpu_softintr_p(void) { return interrupt_kind == 2; }
 static void aprint_normal_dev(device_t dev, const char *format, ...)
 { (void)dev; (void)format; }
-static void aprint_error(const char *format, ...) { (void)format; }
+static int last_module_error, last_cleanup_error;
+static void aprint_error(const char *format, ...)
+{
+	va_list ap;
+	if (strncmp(format, "MMU4 preparation failed:", 24) != 0)
+		return;
+	va_start(ap, format); last_module_error = va_arg(ap, int); va_end(ap);
+}
+static void aprint_error_dev(device_t dev, const char *format, ...)
+{
+	va_list ap;
+	CHECK(dev == device.dev);
+	if (strncmp(format, "MMU4 preparation cleanup failed:", 32) != 0)
+		return;
+	va_start(ap, format); last_cleanup_error = va_arg(ap, int); va_end(ap);
+}
 static bool prop_dictionary_get_bool(prop_dictionary_t p, const char *key, bool *v)
-{ CHECK(strcmp(key, "prepare-only") == 0); *v = p->prepare; return !p->wrong_bool; }
+{
+	if (strcmp(key, "mmu4-prepare-only") == 0) {
+		*v = p->mmu4_value;
+		return p->mmu4_present && !p->mmu4_wrong;
+	}
+	CHECK(strcmp(key, "prepare-only") == 0);
+	*v = p->prepare;
+	return !p->wrong_bool;
+}
+static bool prop_dictionary_get_uint32(prop_dictionary_t p, const char *key, uint32_t *v)
+{
+	CHECK(strcmp(key, "expected-mmu4-debug") == 0);
+	*v = p->debug;
+	return p->debug_present && !p->debug_wrong;
+}
 static bool prop_dictionary_get_cstring_nocopy(prop_dictionary_t p, const char *key, const char **v)
 { CHECK(strcmp(key, "expected-buildinfo") == 0); *v = p->build; return p->build != NULL && !p->wrong_string; }
 static const void *prop_dictionary_get(prop_dictionary_t p, const char *key)
-{ return p->conflict != NULL && strcmp(p->conflict, key) == 0 ? p : NULL; }
+{
+	if (strcmp(key, "mmu4-prepare-only") == 0)
+		return p->mmu4_present ? p : NULL;
+	if (strcmp(key, "expected-mmu4-debug") == 0)
+		return p->debug_present ? p : NULL;
+	return p->conflict != NULL && strcmp(p->conflict, key) == 0 ? p : NULL;
+}
 static int bcm2712_display_acpi_resources(device_t dev, ACPI_HANDLE h, struct bcm2712_display_contract *c)
 { CHECK(dev == device.dev && h == device.handle); c->version = 1; return gate_failure == 5 ? EINVAL : 0; }
+/* Controlled backing API only. Its actual implementation has separate tests. */
+struct bcmv3d_mmu4_backing {
+	struct bcmv3d_hvs_frame *frame;
+	uint32_t debug;
+	bool prepared, uncertain;
+};
+static struct bcmv3d_mmu4_backing *mmu4_live;
+static unsigned mmu4_failure, mmu4_malformed, mmu4_calls[5];
+int bcmv3d_mmu4_backing_create(struct bcmv3d_device *sc, uint32_t debug,
+    struct bcmv3d_mmu4_backing **out)
+{
+	struct bcmv3d_mmu4_backing *b;
+	int error;
+
+	CHECK(sc == &device && debug == 0x20804774U && minor_refs == 1);
+	mmu4_calls[0]++;
+	if (mmu4_failure == 1)
+		return ENOMEM;
+	CHECK(mmu4_live == NULL);
+	b = calloc(1, sizeof(*b));
+	CHECK(b != NULL);
+	error = bcmv3d_hvs_prepare(sc, sc->dmat, &b->frame);
+	if (error != 0) { free(b); return error; }
+	b->debug = debug;
+	mmu4_live = *out = b;
+	return 0;
+}
+int bcmv3d_mmu4_backing_get_config(const struct bcmv3d_mmu4_backing *b,
+    struct bcm2712_mmu4_config *out)
+{
+	CHECK(b == mmu4_live);
+	mmu4_calls[1]++;
+	if (mmu4_failure == 2)
+		return EINVAL;
+	memset(out, 0, sizeof(*out)); out->debug = b->debug;
+	return 0;
+}
+int bcmv3d_mmu4_backing_prepare(void *arg, const struct bcm2712_mmu4_config *cfg)
+{
+	struct bcmv3d_mmu4_backing *b = arg;
+	CHECK(b == mmu4_live && cfg->debug == b->debug);
+	mmu4_calls[2]++;
+	if (mmu4_failure == 3)
+		return EINVAL;
+	if (mmu4_failure == 6) { b->uncertain = true; return EAGAIN; }
+	bcmv3d_hvs_prewrite(b->frame);
+	b->prepared = true;
+	return 0;
+}
+int bcmv3d_mmu4_backing_status(const struct bcmv3d_mmu4_backing *b,
+    struct bcmv3d_mmu4_backing_status *out)
+{
+	CHECK(b == mmu4_live);
+	mmu4_calls[3]++;
+	if (mmu4_failure == 4)
+		return EIO;
+	memset(out, 0, sizeof(*out));
+	out->stage = b->prepared ? BCMV3D_MMU4_BACKING_PREPARED : BCMV3D_MMU4_BACKING_IDLE;
+	out->frame_bytes = b->frame->size; out->control_bytes = PAGE_SIZE;
+	out->fragments = (out->frame_bytes + 4 * PAGE_SIZE) / 4096;
+	out->pmap_calls = 2 * out->fragments; out->syncs = b->prepared ? 5 : 0;
+	out->prepare_started = out->prepared = b->prepared;
+	out->mapping_uncertain = b->uncertain;
+	switch (mmu4_malformed) {
+	case 1: out->frame_bytes -= 4096; break;
+	case 2: out->control_bytes -= 4096; break;
+	case 3: out->fragments--; break;
+	case 4: out->pmap_calls--; break;
+	case 5: out->syncs--; break;
+	case 6: out->prepared = false; break;
+	case 7: out->sealed = true; break;
+	case 8: out->first_error = EIO; break;
+	case 9: out->mapping_uncertain = true; break;
+	case 10: out->stage = BCMV3D_MMU4_BACKING_IDLE; break;
+	}
+	return 0;
+}
+int bcmv3d_mmu4_backing_destroy_unexposed(struct bcmv3d_mmu4_backing *b)
+{
+	CHECK(b == mmu4_live);
+	mmu4_calls[4]++;
+	if (mmu4_failure == 5 || b->uncertain)
+		return EBUSY;
+	bcmv3d_hvs_destroy(b->frame);
+	mmu4_live = NULL; free(b);
+	return 0;
+}
 #include "module-body.h"
 
 static void
 reset(void)
 {
 
+	CHECK(mmu4_live == NULL && hvs_retained_backing == NULL &&
+	    hvs_retained_minor == NULL);
 	empty(&device);
+	mmu4_failure = mmu4_malformed = 0;
+	last_module_error = last_cleanup_error = 0;
+	memset(mmu4_calls, 0, sizeof(mmu4_calls));
 	consumer_fail = consumer_geometry = backing_geometry = 0;
 	creates = loads = unloads = destroys = gem_puts = syncs = 0;
 	nevents = 0; events[0] = 0; verify_sync = false;
@@ -365,6 +502,60 @@ properties.prepare = true;
 		reset(); consumer_fail = i;
 		CHECK(bcmv3d_hvs_prepare_modcmd(MODULE_CMD_INIT, &properties) != 0);
 		CHECK(gem_puts == 1 && minor_refs == 0); empty(&device);
+	}
+	/* Exercise the real dispatch/cycle with a controlled backing boundary. */
+	properties.mmu4_present = properties.mmu4_value = properties.debug_present = true;
+	properties.debug = 0x20804774U;
+	reset();
+	CHECK(bcmv3d_hvs_prepare_modcmd(MODULE_CMD_INIT, &properties) == 0);
+	for (unsigned i = 0; i < 5; i++) CHECK(mmu4_calls[i] == 1);
+	CHECK(minor_refs == 0 && mmu4_live == NULL);
+	CHECK(bcmv3d_hvs_prepare_modcmd(MODULE_CMD_FINI, NULL) == 0);
+	for (unsigned i = 1; i <= 4; i++) {
+		reset(); mmu4_failure = i;
+		CHECK(bcmv3d_hvs_prepare_modcmd(MODULE_CMD_INIT, &properties) ==
+		    (i == 1 ? ENOMEM : i == 4 ? EIO : EINVAL));
+		CHECK(minor_refs == 0 && mmu4_live == NULL);
+		CHECK(mmu4_calls[0] == 1 && mmu4_calls[4] == (i != 1));
+		CHECK(mmu4_calls[3] == (i == 4));
+	}
+	for (unsigned i = 1; i <= 10; i++) {
+		reset(); mmu4_malformed = i;
+		CHECK(bcmv3d_hvs_prepare_modcmd(MODULE_CMD_INIT, &properties) == EIO);
+		CHECK(mmu4_calls[4] == 1 && minor_refs == 0 && mmu4_live == NULL);
+	}
+	for (unsigned i = 0; i < 5; i++) {
+		struct properties bad = properties;
+		reset();
+		switch (i) {
+		case 0: bad.mmu4_value = false; break;
+		case 1: bad.mmu4_wrong = true; break;
+		case 2: bad.debug_present = false; break;
+		case 3: bad.debug_wrong = true; break;
+		case 4: bad.mmu4_present = false; break;
+		}
+		CHECK(bcmv3d_hvs_prepare_modcmd(MODULE_CMD_INIT, &bad) == EINVAL);
+		CHECK(nevents == 0 && mmu4_calls[0] == 0);
+	}
+	/* Never restore unknown mapping metadata to make fixture cleanup pass. */
+	for (unsigned i = 5; i <= 6; i++) {
+		int status;
+		pid_t child = fork();
+		CHECK(child >= 0);
+		if (child == 0) {
+			reset(); mmu4_failure = i;
+			CHECK(bcmv3d_hvs_prepare_modcmd(MODULE_CMD_INIT, &properties) == 0);
+			CHECK(hvs_retained_backing == mmu4_live && mmu4_live != NULL);
+			CHECK(hvs_retained_minor == &minor && minor_refs == 1);
+			CHECK(last_cleanup_error == EBUSY);
+			CHECK(last_module_error == (i == 5 ? EBUSY : EAGAIN));
+			CHECK(bcmv3d_hvs_prepare_modcmd(MODULE_CMD_FINI, NULL) == EBUSY);
+			CHECK(bcmv3d_hvs_prepare_modcmd(MODULE_CMD_INIT, &properties) == EBUSY);
+			CHECK(mmu4_calls[0] == 1 && mmu4_calls[4] == 1);
+			_Exit(0);
+		}
+		CHECK(waitpid(child, &status, 0) == child);
+		CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 	}
 	printf("PASS: %u HVS preparation actual-source checks (PAGE_SIZE %u)\n", checks, (unsigned)PAGE_SIZE);
 	return 0;

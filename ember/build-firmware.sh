@@ -4,7 +4,7 @@
 # No containers, no per-run network package installs, no cloud steps.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# --prepare pins the source cache and exits; it may appear anywhere.
+# --prepare verifies and updates pinned sources without a target compiler.
 prepare_only=0
 args=()
 for arg in "$@"; do
@@ -37,29 +37,90 @@ if [[ $prepare_only -eq 0 ]]; then
     done
 fi
 mkdir -p "$CACHE"
-CACHE="$(cd "$CACHE" && pwd)"
+CACHE="$(cd "$CACHE" && pwd -P)"
 out="$CACHE/firmware$variant"
 src="$CACHE/rpi5-uefi-src"
-mkdir -p "$out"
-
-if [[ $prepare_only -eq 0 ]]; then
-    firmware_empty_root=
-    firmware_cleanup()
-    {
-        firmware_status=$?
-        trap - EXIT
-        if [[ -n "$firmware_empty_root" ]] && ! rmdir "$firmware_empty_root"; then
-            [[ $firmware_status -ne 0 ]] || firmware_status=1
-        fi
-        if [[ $firmware_status -ne 0 ]]; then
-            # Keep the original status and build.log if cleanup also fails.
-            rm -f "$out/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming" \
-                "$out/firmware-receipt.json" || :
-        fi
+# One lease covers preparation, build, the upstream SD-patch EXIT trap,
+# source postcheck and publication. Never steal a stale lease.
+firmware_lock="$CACHE/.ember-firmware.lock"
+mkdir "$firmware_lock" 2>/dev/null || {
+    echo 'firmware cache is locked; preserve and inspect any stale lease' >&2; exit 1;
+}
+printf '%s\n' "$$" > "$firmware_lock/owner"
+printf '%s\n' "$src" > "$firmware_lock/source"
+firmware_empty_root=
+firmware_source_work=
+firmware_lock_inode=$(ls -di "$firmware_lock" | awk '{print $1}')
+firmware_owns_lease()
+{
+    [[ ! -L "$firmware_lock" && -d "$firmware_lock" && \
+        -f "$firmware_lock/owner" && ! -L "$firmware_lock/owner" && \
+        -f "$firmware_lock/source" && ! -L "$firmware_lock/source" && \
+        $(cat "$firmware_lock/owner") == "$$" && \
+        $(cat "$firmware_lock/source") == "$src" ]]
+}
+firmware_original_lease()
+{
+    # A failed release must still block new owners before invalidation.
+    [[ -d "$firmware_lock" && ! -L "$firmware_lock" && \
+        $(ls -di "$firmware_lock" | awk '{print $1}') == "$firmware_lock_inode" ]] || return 1
+    if [[ -e "$firmware_lock/owner" || -L "$firmware_lock/owner" ]]; then
+        [[ -f "$firmware_lock/owner" && ! -L "$firmware_lock/owner" && \
+            $(cat "$firmware_lock/owner") == "$$" ]] || return 1
+    fi
+    if [[ -e "$firmware_lock/source" || -L "$firmware_lock/source" ]]; then
+        [[ -f "$firmware_lock/source" && ! -L "$firmware_lock/source" && \
+            $(cat "$firmware_lock/source") == "$src" ]] || return 1
+    fi
+}
+firmware_invalidate_output()
+{
+    if [[ $prepare_only -eq 0 ]]; then
+        rm -f "$out/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming" \
+            "$out/firmware-receipt.json" || echo 'cannot invalidate failed firmware output' >&2
+    fi
+}
+firmware_cleanup()
+{
+    firmware_status=$?
+    trap - EXIT
+    if [[ -n "$firmware_empty_root" ]] && ! rmdir "$firmware_empty_root"; then
+        [[ $firmware_status -ne 0 ]] || firmware_status=1
+    fi
+    if ! firmware_owns_lease; then
+        echo 'firmware cache lease changed; preserve foreign outputs and lease' >&2
+        [[ $firmware_status -ne 0 ]] || firmware_status=1
         exit "$firmware_status"
-    }
-    trap firmware_cleanup EXIT
-    # Invalidate this variant before any fallible host, source or build check.
+    fi
+    if [[ -n "$firmware_source_work" ]]; then
+        if [[ $firmware_status -eq 0 && ! -e "$CACHE/.ember-firmware-pending.json" ]]; then
+            if ! rm -rf -- "$firmware_source_work"; then
+                echo "cannot remove own source evidence: $firmware_source_work" >&2
+                firmware_status=1
+            fi
+        else
+            echo "preserved firmware source evidence: $firmware_source_work" >&2
+        fi
+    fi
+    # Invalidation must finish while the lease excludes another publisher.
+    [[ $firmware_status -eq 0 ]] || firmware_invalidate_output
+    if ! rm -f "$firmware_lock/source" "$firmware_lock/owner" || \
+        ! rmdir "$firmware_lock"; then
+        echo 'cannot release firmware cache lease; preserve it for inspection' >&2
+        [[ $firmware_status -ne 0 ]] || firmware_status=1
+        if firmware_original_lease; then
+            firmware_invalidate_output
+        else
+            echo 'original lease was lost; preserve potentially foreign outputs' >&2
+        fi
+    fi
+    # No shared output writes are permitted after a successful unlock.
+    exit "$firmware_status"
+}
+trap firmware_cleanup EXIT
+mkdir -p "$out"
+if [[ $prepare_only -eq 0 ]]; then
+    # Invalidate this variant before fallible tool, source and build checks.
     rm -f "$out/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming" \
         "$out/firmware-receipt.json"
     source "$ROOT/ember/firmware/gcc-profile.sh"
@@ -68,8 +129,10 @@ fi
 # Use native host tools on EmberBSD or macOS. The firmware target is
 # freestanding AArch64; an application sysroot does not prove compatibility.
 if [[ $prepare_only -eq 1 ]]; then
-    # Preparing the cache needs only Git, on any host.
-    command -v git >/dev/null 2>&1 || { echo 'missing host tool: git' >&2; exit 1; }
+    # Source preparation uses Git, Ruby and patch, with no target compiler.
+    for tool in git ruby patch; do
+        command -v "$tool" >/dev/null 2>&1 || { echo "missing host tool: $tool" >&2; exit 1; }
+    done
 else
 host_system=$(uname -s)
 case "$host_system" in
@@ -105,7 +168,7 @@ esac
 missing=0
 # pkgsrc ships the bare-metal toolchain as aarch64-none-elf-;
 # accept both it and the classic aarch64-elf- prefix.
-for tool in gmake iasl dtc python3; do
+for tool in git ruby patch gmake iasl dtc python3; do
     command -v "$tool" >/dev/null 2>&1 || { echo "missing host tool: $tool" >&2; missing=1; }
 done
 case "${CROSS_COMPILE:-}" in
@@ -173,58 +236,66 @@ series="$ROOT/ember/firmware/series"
 [[ "$(sort "$series")" == "$(cd "$ROOT/ember/firmware" && ls ./*.diff | sed 's|^\./||' | sort)" ]] \
     || { echo 'firmware series must name every diff once' >&2; exit 1; }
 
-# A persistent source cache keeps the pinned revision and submodules.
-# A cache prepared on a machine with git carries .ember-pinned with the
-# revision; a build host without git (an EmberBSD board with the toolchain
-# packages) trusts that marker instead of re-fetching. The series
-# application is tracked by .ember-series with the combined series hash.
-if [[ ! -d "$src/.git" ]]; then
-    command -v git >/dev/null 2>&1 || {
-        echo "no git and no source cache: prepare the cache on a host with git" >&2
-        exit 1
-    }
+# Only a newly created checkout may be pinned or populate its submodules.
+# Existing shared source is checked and updated only at known patch targets.
+if [[ ! -e "$src" && ! -L "$src" ]]; then
     git clone -q "$repo" "$src"
-fi
-if [[ -f "$src/.ember-pinned" && "$(cat "$src/.ember-pinned")" == "$revision" ]] \
-    && ! command -v git >/dev/null 2>&1; then
-    : # Prepared cache on a host without git: keep the transferred state.
-else
-    command -v git >/dev/null 2>&1 || {
-        echo "cache is not pinned to $revision and git is unavailable" >&2
-        exit 1
-    }
-    git -C "$src" fetch -q origin
     git -C "$src" checkout -q "$revision"
     git -C "$src" submodule update -q --init --depth 1
-    git -C "$src" submodule -q foreach 'git submodule update --init --depth 1 --recursive'
-    for tree in . edk2 edk2-platforms; do
-        git -C "$src/$tree" reset -q --hard
-        git -C "$src/$tree" clean -qfdx
-    done
-    # Nested submodule checkouts can hold files from a fetched tip that
-    # conflict with the pinned commit; restore them too.
-    git -C "$src" submodule -q foreach --recursive 'git reset -q --hard && git clean -qfdx'
-    printf '%s\n' "$revision" > "$src/.ember-pinned"
-    [[ $prepare_only -eq 0 ]] || { echo "prepared: $src"; exit 0; }
+    git -C "$src" submodule -q foreach \
+        'git submodule update --init --depth 1 --recursive'
 fi
-
-# Apply the ordered fork diffs once; the marker makes re-runs idempotent.
-series_identity=$( (cd "$ROOT/ember/firmware" && cat $(cat "$series") | shasum -a 256) | awk '{print $1}')
-if [[ ! -f "$src/.ember-series" || "$(cat "$src/.ember-series")" != "$series_identity" ]]; then
-    while IFS= read -r diff; do
-        # TF-A and EDK2 diffs have explicit owner prefixes.
-        case "$diff" in
-            tfa-*.diff)  patch_tree=arm-trusted-firmware ;;
-            edk2-*.diff) patch_tree=edk2 ;;
-            *)         patch_tree=edk2-platforms ;;
-        esac
-        patch -s -t -N -p1 -F0 -d "$src/$patch_tree" < "$ROOT/ember/firmware/$diff"
-    done < "$series"
-    printf '%s\n' "$series_identity" > "$src/.ember-series"
+[[ -d "$src/.git" && ! -L "$src" ]] || {
+    echo 'firmware source must be the pinned Git checkout' >&2; exit 1;
+}
+firmware_source_work=$(mktemp -d "$out/source-state.XXXXXXXX")
+if [[ $prepare_only -eq 0 ]]; then
+    # Record actual complete flag strings. Normalize only verified empty-root
+    # and specs roles when comparing the saved option profile.
+    ruby -rjson -rdigest -e '
+        path,variant,revision,compiler,version,machine,sha,prefix,include_dir,empty,specs,profile,tfa,edk=ARGV
+        record={"variant"=>variant,"revision"=>revision,
+          "compiler"=>{"path"=>compiler,"version"=>version,"machine"=>machine,
+            "sha256"=>sha,"cross_compile"=>prefix},
+          "freestanding"=>{"include"=>include_dir,"empty_root"=>empty,
+            "specs_sha256"=>Digest::SHA256.file(specs).hexdigest,
+            "profile_sha256"=>Digest::SHA256.file(profile).hexdigest,
+            "tfa_flags"=>tfa,"edk2_flags"=>edk}}
+        File.write(path,JSON.pretty_generate(record)+"\n")
+    ' "$firmware_source_work/build-options.json" "${variant#-}" "$revision" \
+        "$compiler_path" "$compiler_version" "$compiler_machine" \
+        "$compiler_sha256" "$CROSS_COMPILE" "$firmware_gcc_include" \
+        "$firmware_empty_root" "$firmware_specs" \
+        "$ROOT/ember/firmware/gcc-profile.sh" "${variant_flags[3]}" \
+        "${variant_flags[5]}"
 fi
+if [[ $prepare_only -eq 1 ]]; then
+    ruby "$ROOT/ember/tools/firmware-source.rb" "$src" \
+        "$firmware_source_work/update" --parent-lock "$$" --apply \
+        > "$out/source-check.log" 2>&1
+else
+    ruby "$ROOT/ember/tools/firmware-source.rb" "$src" \
+        "$firmware_source_work/update" --parent-lock "$$" --apply \
+        --build-profile "$firmware_source_work/build-options.json" \
+        > "$out/source-check.log" 2>&1
+fi
+if [[ $prepare_only -eq 1 ]]; then
+    echo "prepared: $src"
+    exit 0
+fi
+firmware_source_sha256=$(shasum -a 256 "$CACHE/.ember-firmware-source.json" | awk '{print $1}')
 
 # Use host defaults and the selected CROSS_COMPILE, not implicit caller flags.
 ( cd "$src" && firmware_gcc_query ./build.sh "${variant_flags[@]}" ) > "$out/build.log" 2>&1
+# The upstream SD patch must have been restored. No unknown source change
+# or changed manifest may be accepted as a successful firmware build.
+ruby "$ROOT/ember/tools/firmware-source.rb" "$src" \
+    "$firmware_source_work/postcheck" --parent-lock "$$" --verify-state \
+    >> "$out/source-check.log" 2>&1
+[[ $(shasum -a 256 "$CACHE/.ember-firmware-source.json" | awk '{print $1}') == "$firmware_source_sha256" ]] || {
+    echo 'firmware source manifest changed during build' >&2; exit 1;
+}
+
 compiler_final_sha256=$(shasum -a 256 "$compiler_path" | awk '{print $1}')
 [[ "$compiler_final_sha256" == "$compiler_sha256" ]] || {
     echo 'target compiler changed during firmware build' >&2; exit 1;
@@ -265,5 +336,9 @@ with open(os.path.join(out, 'firmware-receipt.json'), 'w') as f:
     json.dump(receipt, f, indent=2, sort_keys=True)
     f.write('\n')
 PYEOF
+firmware_owns_lease || {
+    echo 'firmware cache lease changed before publication; preserve foreign outputs' >&2
+    exit 1
+}
 mv "$out/RPI_EFI.fd.incoming" "$out/RPI_EFI.fd"
 echo "firmware: $out/RPI_EFI.fd"

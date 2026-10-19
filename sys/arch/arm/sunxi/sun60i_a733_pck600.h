@@ -26,4 +26,10 @@ struct sun60i_a733_display_power;
 int	sun60i_a733_pck_display_snapshot(int, const void *,
 	    struct sun60i_a733_display_power *);
 
+int sun60i_a733_pck_display_isolation_reserve(int, const void *);
+int sun60i_a733_pck_display_isolation_retain(int, const void *);
+int sun60i_a733_pck_display_isolation_release(int, const void *);
+int sun60i_a733_pck_display_isolation_snapshot(int, const void *,
+    uint32_t [2][3]);
+
 #endif

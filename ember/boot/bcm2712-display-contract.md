@@ -4,6 +4,18 @@ This interface defines the firmware resources for a native BCM2712 display drive
 The current code validates resources and reads a firmware clock snapshot.
 It does not implement HDMI hotplug, DDC, modesetting, scanout, or framebuffer takeover.
 A successful snapshot does not authorize display register access.
+The separate [firmware display notification](bcm2712-display-handoff.md) is a
+source-only one-attempt protocol. It has no default caller and is not an AXI
+drain, power or shared-MMU/cache exclusion grant.
+
+## Kernel building blocks
+
+`BCM2712_DISPLAY_COMPONENTS` links the explicit ICAC descriptor queries, typed
+shared-cache core, MMU4 table encoder and initialization sequencer, and firmware
+display notification. `EMBERV3DRENDER` selects it when `bcmv3d_acpi` is present.
+It adds no attachment,
+mailbox transaction or MMIO invocation. Linking these APIs does not grant display
+ownership or enable scanout. `BCM2712_DISPLAY_DDC` remains a separate option.
 
 ## Firmware opt-in
 
@@ -384,3 +396,19 @@ clock and translation registers. Its diagnostic candidate never authorizes DMA.
 The explicit [HVS state observer](bcm2712-hvs-observe.md) samples only resource3
 identity, global control and all three channel control/status pairs. Its finite
 initial-inactivity snapshot grants no ownership, translation or stop/drain.
+
+The [typed shared-cache core](bcm2712-iommuc-core.md) source-tests one bounded
+transaction and irreversible member retention. It adds no native cache caller,
+MMU table programming, power/access grant or DMA-drain predicate.
+
+The [fixed MMU4 table encoder](bcm2712-mmu4-table-core.md) prepares byte images
+for one full-translation frame profile. It grants no native DMA, MMIO access,
+publication, cache ownership or stop/drain permission.
+
+The [pure MMU4 initialization sequencer](bcm2712-mmu4-init-core.md) source-tests
+one retained full-translation transaction. It adds no native caller, MMIO grant,
+power/access proof, automatic caller or DMA-drain/release predicate.
+
+The [private native MMU4 backing helper](bcmv3d-mmu4-backing.md) validates CPU
+physical pages against complete parent DMA maps. It prepares zeroed backing
+and full PREWRITE without MMIO. It does not supply an MMU owner or publisher.

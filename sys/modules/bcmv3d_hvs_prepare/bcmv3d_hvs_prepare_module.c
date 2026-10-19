@@ -18,8 +18,14 @@
 #include "drm_internal.h"
 #include "bcmv3d_drv.h"
 #include "bcmv3d_hvs_prepare.h"
+#include "bcmv3d_mmu4_backing.h"
+#include <arm/broadcom/bcm2712_mmu4_corevar.h>
 
 MODULE(MODULE_CLASS_MISC, bcmv3d_hvs_prepare, NULL);
+
+/* A failed private cleanup must not discard the render reference or code. */
+static struct bcmv3d_mmu4_backing *hvs_retained_backing;
+static struct drm_minor *hvs_retained_minor;
 
 static int
 hvs_prepare_device(struct drm_minor **out, ACPI_HANDLE *handle)
@@ -158,6 +164,65 @@ destroy:
 	return error;
 }
 
+/* The supplied DEBUG is an encoder profile, not a live MMIO observation. */
+static int
+hvs_prepare_mmu4_cycle(struct bcmv3d_device *sc, uint32_t debug)
+{
+	struct bcmv3d_mmu4_backing *backing = NULL;
+	struct bcmv3d_mmu4_backing_status status;
+	struct bcm2712_mmu4_config cfg;
+	struct bcmv3d_bo_stats before, during, after;
+	uint64_t fragments;
+	int error, close_error;
+
+	bcmv3d_bo_snapshot(sc, &before);
+	error = bcmv3d_mmu4_backing_create(sc, debug, &backing);
+	if (error != 0)
+		goto account;
+	error = bcmv3d_mmu4_backing_get_config(backing, &cfg);
+	if (error == 0)
+		error = bcmv3d_mmu4_backing_prepare(backing, &cfg);
+	if (error == 0)
+		error = bcmv3d_mmu4_backing_status(backing, &status);
+	if (error == 0) {
+		fragments = (status.frame_bytes + 4 * status.control_bytes) / 4096;
+		if (status.frame_bytes != (((size_t)BCMV3D_HVS_BYTES + PAGE_SIZE - 1) &
+		    ~((size_t)PAGE_SIZE - 1)) || status.control_bytes != PAGE_SIZE ||
+		    !status.prepare_started || !status.prepared || status.sealed ||
+		    status.mapping_uncertain ||
+		    status.stage != BCMV3D_MMU4_BACKING_PREPARED ||
+		    status.first_error != 0 || status.syncs != 5 ||
+		    status.fragments != fragments ||
+		    status.pmap_calls != 2 * fragments)
+			error = EIO;
+		bcmv3d_bo_snapshot(sc, &during);
+		if (error == 0 && (during.reserved_bytes < before.reserved_bytes ||
+		    during.reserved_bytes - before.reserved_bytes != status.frame_bytes))
+			error = EBUSY;
+		aprint_normal_dev(sc->dev, "MMU4 preparation: error %d, frame %ju, "
+		    "control %ju, fragments %u, pmap calls %u, syncs %u; "
+		    "supplied DEBUG profile %#x; no MMIO or address publication\n",
+		    error, (uintmax_t)status.frame_bytes,
+		    (uintmax_t)status.control_bytes, status.fragments,
+		    status.pmap_calls, status.syncs, debug);
+	}
+	close_error = bcmv3d_mmu4_backing_destroy_unexposed(backing);
+	if (close_error != 0) {
+		hvs_retained_backing = backing;
+		aprint_error_dev(sc->dev, "MMU4 preparation cleanup failed: %d; "
+		    "retaining private backing until reboot\n", close_error);
+		return error != 0 ? error : close_error;
+	}
+account:
+	bcmv3d_bo_snapshot(sc, &after);
+	aprint_normal_dev(sc->dev, "MMU4 preparation accounting: before %ju "
+	    "after %ju; no concurrent GPU clients is an external prerequisite\n",
+	    (uintmax_t)before.reserved_bytes, (uintmax_t)after.reserved_bytes);
+	if (after.reserved_bytes != before.reserved_bytes && error == 0)
+		error = EBUSY;
+	return error;
+}
+
 static int
 bcmv3d_hvs_prepare_modcmd(modcmd_t command, void *argument)
 {
@@ -167,12 +232,14 @@ bcmv3d_hvs_prepare_modcmd(modcmd_t command, void *argument)
 	struct bcmv3d_device *sc;
 	ACPI_HANDLE handle;
 	const char *expected;
-	bool prepare_only = false;
+	bool prepare_only = false, mmu4_prepare = false;
+	uint32_t debug = 0;
 	size_t length;
 	int error;
 
 	if (command == MODULE_CMD_FINI)
-		return 0;
+		return hvs_retained_backing != NULL || hvs_retained_minor != NULL ?
+		    EBUSY : 0;
 	if (command != MODULE_CMD_INIT)
 		return ENOTTY;
 	if (cpu_intr_p() || cpu_softintr_p())
@@ -192,6 +259,20 @@ bcmv3d_hvs_prepare_modcmd(modcmd_t command, void *argument)
 	    !prop_dictionary_get_cstring_nocopy(properties,
 	    "expected-buildinfo", &expected))
 		return EINVAL;
+	if (hvs_retained_backing != NULL || hvs_retained_minor != NULL)
+		return EBUSY;
+	if (prop_dictionary_get(properties, "mmu4-prepare-only") != NULL &&
+	    (!prop_dictionary_get_bool(properties,
+	    "mmu4-prepare-only", &mmu4_prepare) ||
+	    !mmu4_prepare))
+		return EINVAL;
+	if (mmu4_prepare) {
+		if (!prop_dictionary_get_uint32(properties,
+		    "expected-mmu4-debug", &debug))
+			return EINVAL;
+	} else if (prop_dictionary_get(properties, "expected-mmu4-debug") != NULL) {
+		return EINVAL;
+	}
 	length = strlen(buildinfo);
 	if (length != 0 && buildinfo[length - 1] == '\n')
 		length--;
@@ -211,7 +292,15 @@ bcmv3d_hvs_prepare_modcmd(modcmd_t command, void *argument)
 	else
 		error = bcm2712_display_acpi_resources(sc->dev, handle, &contract);
 	if (error == 0)
-		error = hvs_prepare_cycle(sc);
+		error = mmu4_prepare ? hvs_prepare_mmu4_cycle(sc, debug) :
+		    hvs_prepare_cycle(sc);
+	if (hvs_retained_backing != NULL) {
+		hvs_retained_minor = minor;
+		aprint_error("MMU4 preparation failed: %d; retaining module and "
+		    "render reference for failed cleanup, not successful preparation\n",
+		    error);
+		return 0;
+	}
 	/* All unexposed maps/GEM refs are gone before the render reference. */
 	drm_minor_release(minor);
 	if (error != 0)

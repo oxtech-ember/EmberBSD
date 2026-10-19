@@ -101,3 +101,20 @@
 		bias-disable;
 	};
 };
+
+/* The native provider borrows exact enabled rails. Attach does not start output. */
+&sys_cfg {
+	status = "okay";
+};
+
+&hdmi_output {
+	vdd08-supply = <&reg_dcdc2>;
+	vcc18-supply = <&reg_cldo2>;
+	allwinner,external-resistor;
+	status = "okay";
+};
+
+&de0 {
+	output = <&hdmi_output>;
+	status = "okay";
+};

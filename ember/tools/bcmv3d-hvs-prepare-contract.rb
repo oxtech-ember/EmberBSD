@@ -49,7 +49,9 @@ begin
   services = services.sub('#include "../../sys/external/bsd/drm2/bcmv3d/bcmv3d_bo_stats.h"', '#include "bo-stats.h"')
   write.call('bo-services.h', services)
   write.call('prepare-types.h', strip.call(read.call(driver + 'bcmv3d_hvs_prepare.h')))
-  helper = strip.call(read.call(driver + 'bcmv3d_hvs_prepare.c'))
+write.call('mmu4-core-types.h', strip.call(read.call('sys/arch/arm/broadcom/bcm2712_mmu4_corevar.h')))
+write.call('mmu4-backing-types.h', strip.call(read.call(driver + 'bcmv3d_mmu4_backing.h')))
+helper = strip.call(read.call(driver + 'bcmv3d_hvs_prepare.c'))
   mod = strip.call(read.call('sys/modules/bcmv3d_hvs_prepare/bcmv3d_hvs_prepare_module.c'))
   # Keep the real BSD round_page and Linux PAGE_MASK interaction in the fixture.
   uvm = read.call('sys/uvm/uvm_param.h')
@@ -103,7 +105,14 @@ begin
         'prewrite' => [:module, 'bcmv3d_hvs_prewrite(frame);', '/* missing PREWRITE */'],
         'process' => [:module, 'cpu_intr_p() || cpu_softintr_p()', '(cpu_intr_p() || cpu_softintr_p()) && false'],
         'conflict' => [:module, 'prop_dictionary_get(properties, "phy-mode") != NULL', 'false'],
-        'minor-order' => [:module, 'bcmv3d_hvs_destroy(frame);', 'drm_minor_release(&minor); bcmv3d_hvs_destroy(frame);']
+        'minor-order' => [:module, 'bcmv3d_hvs_destroy(frame);', 'drm_minor_release(&minor); bcmv3d_hvs_destroy(frame);'],
+        'mmu4-prepare' => [:module, 'error = bcmv3d_mmu4_backing_prepare(backing, &cfg);', 'error = 0;'],
+        'mmu4-destroy' => [:module, 'close_error = bcmv3d_mmu4_backing_destroy_unexposed(backing);', 'close_error = 0;'],
+        'mmu4-retain-minor' => [:module, 'hvs_retained_minor = minor;', '/* lost render reference */'],
+        'mmu4-retain-code' => [:module, "\t\treturn 0;\n\t}\n\t/* All unexposed maps/GEM refs", "\t\treturn error;\n\t}\n\t/* All unexposed maps/GEM refs"],
+        'mmu4-fini' => [:module, "return hvs_retained_backing != NULL || hvs_retained_minor != NULL ?\n\t\t    EBUSY : 0;", 'return 0;'],
+        'mmu4-uncertain' => [:module, 'status.mapping_uncertain ||', 'false ||'],
+        'mmu4-first-error' => [:module, 'return error != 0 ? error : close_error;', 'return close_error;']
       }
       selected = ENV.fetch('HVS_PREPARE_MUTANTS', mutations.keys.join(' ')).split
       selected.each do |name|

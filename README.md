@@ -732,6 +732,13 @@ on every board in the hardware catalog.
   1080p60 controller payloads with source-tested packing. It performs no I/O or activation.
   A private [HVS memory preparation probe](ember/boot/bcmv3d-hvs-memory-prepare.md)
   source-tests a contiguous GEM frame and separate consumer DMA map without publication.
+  A separate [shared IOMMU-cache descriptor](ember/boot/bcm2712-iommuc-resources.md)
+  source-tests ACPI resources and typed dependencies without granting MMIO or power access.
+  Its optional [native ICAC attachment](ember/boot/bcm2712-iommuc-native.md) adds one
+  software owner and cached status with no automatic map or MMIO. An explicit
+  one-shot CONTROL observation retains its mapping and grants no mutation permission.
+  A private synchronous MMU4 executor source-tests shared serialization and retained
+  leases without a default caller or physical programming acceptance.
   DRM hotplug delivery, physical extension reads and KMS scanout remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,

@@ -19,7 +19,10 @@ def main():
         enums = re.findall(r"^enum sun60i_a733_display_memory_reg \{.*?^};", ccu, re.M | re.S)
         if len(enums) != 1:
             raise RuntimeError("Expected the public DISPLAY memory register enum")
-        (work / "display-memory-regs.h").write_text(enums[0] + "\n")
+        isolation = re.findall(r"^enum \{ A733_DISPLAY_NISOLATION_REGS = [0-9]+ \};", ccu, re.M)
+        if len(isolation) != 1:
+            raise RuntimeError("Expected the public DISPLAY isolation register count")
+        (work / "display-memory-regs.h").write_text(enums[0] + "\n" + isolation[0] + "\n")
         for stem in ("sun60i_a733_de352", "sun60i_a733_de352_dma"):
             for suffix in ("c", "h"):
                 name = f"{stem}.{suffix}"
@@ -27,6 +30,10 @@ def main():
                 text = "\n".join(line for line in source.splitlines()
                                  if not line.startswith(("#include ", "__KERNEL_RCSID(")))
                 (work / name).write_text(text + "\n")
+        source = (root / "sys/arch/arm/sunxi/sun60i_a733_de352_scanout.h").read_text()
+        (work / "sun60i_a733_de352_scanout.h").write_text(
+            "\n".join(line for line in source.splitlines()
+                      if not line.startswith("#include ")) + "\n")
         source = (root / "sys/arch/arm/sunxi/sun60i_a733_de352_fdt.c").read_text()
         text = "\n".join(line for line in source.splitlines()
                          if not line.startswith(("#include ", "__KERNEL_RCSID(")))

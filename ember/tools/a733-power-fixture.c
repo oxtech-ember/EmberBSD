@@ -2,6 +2,12 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/queue.h>
 #include <assert.h>
+/* Keep the inherited assertion calls active with every host compiler mode. */
+#undef assert
+#define CHECK(c) do { if (!(c)) { \
+    fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #c); abort(); \
+} } while (0)
+#define assert(c) CHECK(c)
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -812,6 +818,7 @@ test_borrowed_domains(void)
 }
 
 #include "a733-display-power-fixture.h"
+#include "a733-display-isolation-pck-fixture.h"
 
 static void
 test_gpu_lease(void)
@@ -1097,6 +1104,7 @@ main(void)
 	printf("PASS: %u A733 PCK600/FDT production regression scenarios\n", cases);
 	test_diagnostic();
 	test_display_observer();
+	test_display_isolation_power();
 	reset_fixture();
 	return 0;
 }
