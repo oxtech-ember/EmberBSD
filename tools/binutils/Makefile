@@ -26,6 +26,13 @@ CONFIGURE_ARGS=	--disable-nls --disable-werror \
 
 MAKE_ARGS=	MACHINE= MAKEINFO=${TOOL_MAKEINFO:Q}
 
+# Use the shipped parsers for normal host-tools builds.  GNU ld otherwise
+# regenerates them in the source tree during install.  Maintainers who edit
+# the grammars must set BINUTILS_REGENERATE_PARSERS=yes to update the C files.
+.if ${BINUTILS_REGENERATE_PARSERS:Uno} != "yes"
+MAKE_ARGS+=	am__skiplex='test -f $$@ ||' am__skipyacc='test -f $$@ ||'
+.endif
+
 ALL_TARGET=	all-binutils all-gas all-ld
 INSTALL_TARGET=	install-binutils install-gas install-ld
 .if ${MKCROSSGPROF:Uno} != "no"
