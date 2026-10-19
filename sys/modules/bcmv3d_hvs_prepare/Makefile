@@ -29,7 +29,11 @@ KMOD= bcmv3d_hvs_prepare
 _HVS_PRIVATE_DIR:= ${.PARSEDIR}/../../external/bsd/drm2/bcmv3d
 .PATH: ${_HVS_PRIVATE_DIR}
 CPPFLAGS+= -I${_HVS_PRIVATE_DIR:Q}
-SRCS= bcmv3d_hvs_prepare_module.c bcmv3d_hvs_prepare.c
+# The encoder and backing contain no shared-cache owner or MMIO backend.
+_MMU4_PRIVATE_DIR:= ${.PARSEDIR}/../../arch/arm/broadcom
+.PATH: ${_MMU4_PRIVATE_DIR}
+SRCS= bcmv3d_hvs_prepare_module.c bcmv3d_hvs_prepare.c \
+    bcmv3d_mmu4_backing.c bcm2712_mmu4_table.c
 
 .include <bsd.kmodule.mk>
 
