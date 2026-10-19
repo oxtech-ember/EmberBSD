@@ -21,6 +21,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/device.h>
 #include <sys/endian.h>
 #include <sys/kernel.h>
+#include <sys/pserialize.h>
 #include <sys/systm.h>
 
 #include <dev/acpi/acpivar.h>
@@ -64,6 +65,9 @@ int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
 #if defined(BCM2712_V3D_RENDER) && defined(WSDISPLAY_BOOTFB_DEFER)
 #include <dev/fdt/simplefbvar.h>
 #include <dev/wscons/wsdisplay_bootfbvar.h>
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include <arm/broadcom/bcm2712_display_handoffvar.h>
+#endif
 #endif
 #if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_DMA_PROBE)
 int bcmv3d_dma_probe(device_t, bus_dma_tag_t);
@@ -130,6 +134,9 @@ struct bcmv3d_bootfb_owner {
 	struct simplefb_framebuffer framebuffer;
 	enum bcmv3d_bootfb_phase phase;
 	int first_error, cancel_error;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	struct bcm2712_display_handoff_status firmware;
+#endif
 };
 #endif
 
@@ -160,6 +167,69 @@ CFATTACH_DECL_NEW(bcmv3d_acpi, sizeof(struct bcmv3d_softc),
 #if defined(BCM2712_V3D_RENDER) && defined(WSDISPLAY_BOOTFB_DEFER)
 static void bcmv3d_bootfb_cancel(struct bcmv3d_softc *, int);
 static void bcmv3d_bootfb_retain(struct bcmv3d_softc *, int);
+
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+/* bcmmbox_request owns the stable DMA copy, including timeout quarantine. */
+static int
+bcmv3d_bootfb_exchange(void *arg, void *packet, size_t length)
+{
+	uint32_t response;
+
+	if (arg != NULL || packet == NULL || length != 24)
+		return EINVAL;
+	return bcmmbox_request(BCMMBOX_CHANARM2VC, packet, length, &response);
+}
+
+static int
+bcmv3d_bootfb_notify(struct bcmv3d_softc *sc)
+{
+	struct simplefb_console_close_status close;
+	struct bcmv3d_bootfb_owner *owner;
+	int error;
+
+	if (sc == NULL)
+		return EINVAL;
+	if (cold || panicstr != NULL || cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (pserialize_in_read_section())
+		return EDEADLK;
+	ASSERT_SLEEPABLE();
+	KERNEL_LOCK(1, NULL);
+	owner = &sc->sc_bootfb;
+	if (owner->firmware.attempted || owner->firmware.complete ||
+	    owner->firmware.fault != 0) {
+		error = owner->firmware.fault != 0 ? owner->firmware.fault : EBUSY;
+		goto out;
+	}
+	if (sc->sc_dev == NULL || device_private(sc->sc_dev) != sc ||
+	    owner->phase != BCMV3D_BOOTFB_CLOSED) {
+		error = EPERM;
+		goto refused;
+	}
+	error = simplefb_console_close_status(owner->lease, &close);
+	if (error == 0 && (!close.complete || !close.attempted || !close.closed ||
+	    !close.drained || close.error != 0 || close.mi_error != 0 ||
+	    close.md_error != 0))
+		error = ENXIO;
+	if (error == 0)
+		error = wsdisplay_bootfb_serial_closed(owner->lease);
+	if (error != 0)
+		goto refused;
+	/* The helper sets attempted before the fixed transport can yield. */
+	error = bcm2712_display_notify_done(bcmv3d_bootfb_exchange, NULL,
+	    &owner->firmware);
+	if (error != 0 && owner->first_error == 0)
+		owner->first_error = error;
+	goto out;
+refused:
+	owner->firmware.fault = error;
+	if (owner->first_error == 0)
+		owner->first_error = error;
+out:
+	KERNEL_UNLOCK_ONE(NULL);
+	return error;
+}
+#endif
 
 static void
 bcmv3d_bootfb_claim_job(device_t dev)
@@ -200,6 +270,10 @@ bcmv3d_bootfb_claim_job(device_t dev)
 			    "boot framebuffer CPU console closed: error %d, drained %d; "
 			    "serial console retained, no display handoff\n",
 			    error, status.drained);
+			error = bcmv3d_bootfb_notify(sc);
+			aprint_normal_dev(dev,
+			    "firmware display notification: error %d, complete %d; "
+			    "no display ownership\n", error, owner->firmware.complete);
 		} else {
 			/* No irreversible admission occurred. Preserve genfb fallback. */
 			bcmv3d_bootfb_cancel(sc, error);

@@ -4,8 +4,9 @@
 `WSDISPLAY_BOOTFB_DEFER` and the early framebuffer reader hooks. The explicit
 `EMBERV3DCONSOLE` profile enables its joined CPU console transaction. Default
 profiles stay unchanged. The exact-lease close and retained serial route are
-source-tested. A coherent HANDOFF-on kernel and physical handoff remain pending.
-No display or firmware operation is authorized.
+source-tested. The separate native owner gates one
+[firmware notification](bcm2712-display-handoff.md) after successful CPU close.
+The publication layer itself grants no display or firmware authority.
 
 ## Publication contract
 

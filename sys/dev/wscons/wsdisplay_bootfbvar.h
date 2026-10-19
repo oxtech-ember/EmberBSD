@@ -37,6 +37,9 @@ struct wsdisplay_bootfb_close_status {
 	bool closed;
 	bool drained;
 };
+/* Exact successful serial CPU close only. This grants no hardware authority. */
+int wsdisplay_bootfb_serial_closed(struct wsdisplay_bootfb_lease *)
+    __attribute__((__warn_unused_result__));
 /* Built-in boot transaction. Exact lease only; pre-freeze failures may cancel. */
 int wsdisplay_bootfb_close_serial(struct wsdisplay_bootfb_lease *)
     __attribute__((__warn_unused_result__));

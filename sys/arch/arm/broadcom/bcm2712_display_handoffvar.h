@@ -31,9 +31,9 @@ typedef int (*bcm2712_display_handoff_exchange_fn)(void *, void *, size_t);
  * Exact protocol success sets complete. Unsupported tags return EOPNOTSUPP.
  * Other malformed replies return EIO. There is no retry or cleanup operation.
  *
- * No native caller, MMIO, power operation or default invocation is provided.
- * A future owner must remove conflicting framebuffer/native display clients
- * and notify firmware BEFORE new PHY/HVS changes. ACK does not prove AXI drain,
+ * The explicit native boot owner requires its successful held-serial CPU close.
+ * The raw protocol helper supplies no caller admission or hardware authority.
+ * Notify firmware BEFORE new PHY/HVS changes. ACK does not prove AXI drain,
  * shared MMU/cache exclusion, clock ownership or current register contents.
  */
 int bcm2712_display_notify_done(bcm2712_display_handoff_exchange_fn, void *,

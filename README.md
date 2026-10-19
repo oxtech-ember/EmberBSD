@@ -718,7 +718,11 @@ on every board in the hardware catalog.
   The manual `EMBERV3DCONSOLE` profile adds a joined lease-to-serial transaction.
   It holds the actual PLCOM tty across allocation and CPU reader drain, preserves
   console-open dispatch, and routes CLOSED kernel output/input to that backend.
-  No firmware ACK, display ownership or physical handoff acceptance is claimed.
+  After successful CPU close, the same owner gates one
+  [firmware display notification](ember/boot/bcm2712-display-handoff.md) through
+  the fixed mailbox transport. Errors stay terminal without fallback or retry.
+  Native linkage and physical acceptance of this notification remain pending.
+  A firmware ACK grants no display ownership, hardware exclusion or scanout drain.
 A default-off [loader source record](ember/boot/boot-framebuffer-issuer.md#loader-source-facts)
 preserves checked EFI GOP, cleanup and runtime facts.
 It grants no absence admission or display ownership.

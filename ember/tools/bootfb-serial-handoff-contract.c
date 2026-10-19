@@ -23,12 +23,51 @@ void serial_test_pollc(dev_t d, int on) { CHECK(d == serial_dev); if (on) serial
 
 typedef void *bus_dma_tag_t;
 typedef void *ACPI_HANDLE;
+#include "bcm2712_display_handoffvar.h"
 #include "native-owner.h"
 static struct device gpu;
 static struct bcmv3d_softc gpu_sc;
 static unsigned renderer_calls, joined;
-static int renderer_error, query_error;
+static int renderer_error, query_error, firmware_error, firmware_reply, firmware_gate;
 static bool expect_closed;
+static unsigned firmware_calls, firmware_status_queries;
+static bool firmware_permitted, firmware_reenter;
+static int bcmv3d_bootfb_notify(struct bcmv3d_softc *);
+static void bcmv3d_bootfb_claim_job(device_t);
+extern void serial_fixture_drop_hold(void);
+#define BCMMBOX_CHANARM2VC 8
+static const uint8_t notify_request[24] = {
+	24, 0, 0, 0, 0, 0, 0, 0, 0x66, 0, 3, 0,
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+static const uint8_t notify_reply[24] = {
+	24, 0, 0, 0, 0, 0, 0, 0x80, 0x66, 0, 3, 0,
+	0, 0, 0, 0, 0, 0, 0, 0x80, 0, 0, 0, 0
+};
+/* Mailbox service is controlled. The fixed exchange and protocol source are real. */
+static int bcmmbox_request(uint8_t channel, void *packet, size_t length, uint32_t *response)
+{
+	CHECK(firmware_permitted);
+	CHECK(channel == 8 && length == 24 && response != NULL);
+	CHECK(packet != NULL && ((uintptr_t)packet & 15) == 0);
+	CHECK(memcmp(packet, notify_request, sizeof(notify_request)) == 0);
+	CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED && serial_fixture_held());
+	CHECK(!cold && !init_started && giant > 0 && cn_publication_closed());
+	CHECK(gpu_sc.sc_bootfb.firmware.attempted && !gpu_sc.sc_bootfb.firmware.complete);
+	firmware_calls++;
+	if (firmware_reenter) {
+		CHECK(bcmv3d_bootfb_notify(&gpu_sc) == EBUSY && firmware_calls == 1);
+		bcmv3d_bootfb_claim_job(&gpu);
+		CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED && firmware_calls == 1);
+	}
+	if (firmware_error != 0)
+		return firmware_error;
+	memcpy(packet, notify_reply, sizeof(notify_reply));
+	if (firmware_reply == 1) ((uint8_t *)packet)[4] ^= 1;
+	if (firmware_reply == 2) ((uint8_t *)packet)[19] = 0;
+	*response = 0x100;
+	return 0;
+}
 static void print_device_message(device_t d, const char *f, ...) { (void)d; (void)f; }
 #define aprint_normal_dev print_device_message
 #define aprint_error_dev print_device_message
@@ -44,7 +83,29 @@ static int bcmv3d_render_attach(device_t d, bus_space_tag_t t, bus_dma_tag_t m,
 	renderer_calls++; return renderer_error;
 }
 static int native_status(struct wsdisplay_bootfb_lease *l, struct simplefb_console_close_status *out)
-{ return query_error ? EIO : simplefb_console_close_status(l, out); }
+{
+	static struct wsdisplay_bootfb_lease foreign;
+	int error;
+
+	firmware_status_queries++;
+	if (query_error || (firmware_gate == 8 && firmware_status_queries == 2))
+		return EIO;
+	error = simplefb_console_close_status(l, out);
+	if (error == 0 && firmware_status_queries == 2) {
+		switch (firmware_gate) {
+		case 1: out->complete = false; break;
+		case 2: out->closed = false; break;
+		case 3: out->drained = false; break;
+		case 4: out->error = EIO; break;
+		case 5: out->mi_error = EIO; break;
+		case 6: out->md_error = EIO; break;
+		case 7: out->attempted = false; break;
+		case 9: serial_fixture_drop_hold(); break;
+		case 10: gpu_sc.sc_bootfb.lease = &foreign; break;
+		}
+	}
+	return error;
+}
 #define simplefb_console_close_status(...) native_status(__VA_ARGS__)
 #include "native-job.h"
 #undef simplefb_console_close_status
@@ -89,6 +150,8 @@ static void native_initialize(bool renderer_first)
 		TAILQ_INSERT_TAIL(&config_finalize_list, fb, f_list);
 	} else CHECK(config_finalize_register(&gpu, bcmv3d_finalize) == 0);
 	renderer_calls = renderer_error = query_error = 0; expect_closed = true;
+	firmware_calls = firmware_status_queries = 0; firmware_error = firmware_reply = firmware_gate = 0;
+	firmware_permitted = true; firmware_reenter = false;
 	serial_puts = serial_gets = serial_on = serial_off = 0;
 	opened = 0; bcmv3d_bootfb_queue(&gpu_sc);
 	CHECK(gpu.dv_pending == 1 && !TAILQ_EMPTY(&config_pending));
@@ -208,8 +271,12 @@ static void tests_native(void)
 		CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED && gpu_sc.sc_bootfb.first_error != 0);
 		CHECK(wsdisplay_bootfb.phase == BOOTFB_CLOSED && serial_fixture_held() && fallback_calls == 0);
 		CHECK(simplefb_console_cancel(gpu_sc.sc_bootfb.lease) == EPERM);
+		CHECK(firmware_calls == 0 && !gpu_sc.sc_bootfb.firmware.attempted);
+		int first_error = gpu_sc.sc_bootfb.first_error;
+		CHECK(bcmv3d_bootfb_notify(&gpu_sc) != 0);
+		CHECK(gpu_sc.sc_bootfb.first_error == first_error && firmware_calls == 0);
 	}
-	native_initialize(false); query_error = 1; expect_closed = false; native_finish();
+	native_initialize(false); query_error = 1; expect_closed = false; firmware_permitted = false; native_finish();
 	CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_RETAINED && serial_fixture_held());
 	CHECK(gpu_sc.sc_bootfb.cancel_error == 0);
 	CHECK(wsdisplay_bootfb.phase == BOOTFB_CLOSED && fallback_calls == 0);
@@ -217,12 +284,105 @@ static void tests_native(void)
 	native_initialize(false); renderer_error = EIO; native_finish();
 	CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED && fallback_calls == 0 && serial_fixture_held());
 }
+static void tests_firmware(void)
+{
+	static const int errors[] = { ETIMEDOUT, ENXIO, EIO, EBUSY, EOPNOTSUPP, EINVAL };
+	struct bcm2712_display_handoff_status saved;
+unsigned calls;
+
+/* Context refusals precede state changes and every mailbox operation. */
+native_initialize(false); firmware_permitted = false;
+CHECK(bcmv3d_bootfb_notify(NULL) == EINVAL);
+CHECK(bcmv3d_bootfb_notify(&gpu_sc) == EWOULDBLOCK);
+CHECK(wsdisplay_bootfb_serial_closed(NULL) == EWOULDBLOCK);
+cold = false;
+CHECK(wsdisplay_bootfb_serial_closed(NULL) == EPERM);
+hard_irq = true;
+CHECK(bcmv3d_bootfb_notify(&gpu_sc) == EWOULDBLOCK);
+CHECK(wsdisplay_bootfb_serial_closed(NULL) == EWOULDBLOCK); hard_irq = false;
+soft_irq = true;
+CHECK(bcmv3d_bootfb_notify(&gpu_sc) == EWOULDBLOCK);
+CHECK(wsdisplay_bootfb_serial_closed(NULL) == EWOULDBLOCK); soft_irq = false;
+panicstr = "firmware context";
+CHECK(bcmv3d_bootfb_notify(&gpu_sc) == EWOULDBLOCK);
+CHECK(wsdisplay_bootfb_serial_closed(NULL) == EWOULDBLOCK); panicstr = NULL;
+int rs = pserialize_read_enter();
+CHECK(bcmv3d_bootfb_notify(&gpu_sc) == EDEADLK);
+CHECK(wsdisplay_bootfb_serial_closed(NULL) == EDEADLK); pserialize_read_exit(rs);
+CHECK(firmware_status_queries == 0 && firmware_calls == 0);
+CHECK(!gpu_sc.sc_bootfb.firmware.attempted && !gpu_sc.sc_bootfb.firmware.complete);
+CHECK(gpu_sc.sc_bootfb.firmware.fault == 0 && gpu_sc.sc_bootfb.first_error == 0);
+firmware_permitted = true; native_finish();
+CHECK(wsdisplay_bootfb_serial_closed(gpu_sc.sc_bootfb.lease) == 0);
+struct wsdisplay_bootfb_lease foreign = {0};
+CHECK(wsdisplay_bootfb_serial_closed(&foreign) == EPERM);
+
+for (unsigned first = 0; first < 2; first++) {
+
+		native_initialize(first); firmware_reenter = true; native_finish();
+		CHECK(firmware_calls == 1 && gpu_sc.sc_bootfb.firmware.attempted);
+		CHECK(gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.firmware.fault == 0);
+		CHECK(gpu_sc.sc_bootfb.first_error == 0 && gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED);
+		CHECK(fallback_calls == 0 && serial_fixture_held());
+		memcpy(&saved, &gpu_sc.sc_bootfb.firmware, sizeof(saved));
+		bcmv3d_bootfb_claim_job(&gpu);
+		CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED);
+		CHECK(bcmv3d_bootfb_notify(&gpu_sc) == EBUSY && firmware_calls == 1);
+		CHECK(memcmp(&saved, &gpu_sc.sc_bootfb.firmware, sizeof(saved)) == 0);
+		CHECK(gpu_sc.sc_bootfb.first_error == 0);
+	}
+	for (unsigned i = 0; i < sizeof(errors) / sizeof(errors[0]); i++) {
+		native_initialize(false); firmware_error = errors[i]; native_finish();
+		CHECK(firmware_calls == 1 && gpu_sc.sc_bootfb.firmware.attempted);
+		CHECK(!gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.firmware.fault == errors[i]);
+		CHECK(gpu_sc.sc_bootfb.first_error == errors[i] && fallback_calls == 0);
+		CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED && serial_fixture_held());
+		calls = firmware_status_queries; bcmv3d_bootfb_claim_job(&gpu);
+		CHECK(bcmv3d_bootfb_notify(&gpu_sc) == errors[i] && firmware_calls == 1);
+		CHECK(firmware_status_queries == calls && gpu_sc.sc_bootfb.first_error == errors[i]);
+		CHECK(simplefb_console_cancel(gpu_sc.sc_bootfb.lease) == EPERM);
+	}
+	for (int response = 1; response <= 2; response++) {
+		int expected = response == 1 ? EIO : EOPNOTSUPP;
+		native_initialize(false); firmware_reply = response; native_finish();
+		CHECK(firmware_calls == 1 && gpu_sc.sc_bootfb.firmware.attempted);
+		CHECK(!gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.firmware.fault == expected);
+		CHECK(gpu_sc.sc_bootfb.first_error == expected && fallback_calls == 0);
+		CHECK(bcmv3d_bootfb_notify(&gpu_sc) == expected && firmware_calls == 1);
+	}
+	for (int gate = 1; gate <= 10; gate++) {
+		native_initialize(false); firmware_gate = gate; firmware_permitted = false; native_finish();
+		CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED && fallback_calls == 0);
+		CHECK(firmware_calls == 0 && !gpu_sc.sc_bootfb.firmware.attempted);
+		CHECK(!gpu_sc.sc_bootfb.firmware.complete && gpu_sc.sc_bootfb.firmware.fault != 0);
+		CHECK(gpu_sc.sc_bootfb.first_error == gpu_sc.sc_bootfb.firmware.fault);
+		calls = firmware_status_queries;
+		CHECK(bcmv3d_bootfb_notify(&gpu_sc) == gpu_sc.sc_bootfb.firmware.fault);
+		CHECK(firmware_calls == 0 && firmware_status_queries == calls);
+	}
+	/* A raw CPU close has complete value facts, but no held serial route. */
+	native_initialize(false); cold = false;
+	struct wsdisplay_bootfb_lease *raw;
+	CHECK(simplefb_console_claim(&raw, &parsed) == 0 && simplefb_console_close(raw) == 0);
+	gpu_sc.sc_bootfb.lease = raw; gpu_sc.sc_bootfb.phase = BCMV3D_BOOTFB_CLOSED;
+	firmware_permitted = false;
+	CHECK(bcmv3d_bootfb_notify(&gpu_sc) == ENXIO);
+	CHECK(firmware_calls == 0 && !gpu_sc.sc_bootfb.firmware.attempted && !serial_fixture_held());
+	native_finish(); CHECK(fallback_calls == 0);
+	/* Fixed transport rejects foreign context, size and NULL packet before I/O. */
+	native_initialize(false); firmware_permitted = false;
+	uint8_t packet[24] = {0};
+	CHECK(bcmv3d_bootfb_exchange(&gpu, packet, sizeof(packet)) == EINVAL);
+	CHECK(bcmv3d_bootfb_exchange(NULL, packet, sizeof(packet) - 4) == EINVAL);
+	CHECK(bcmv3d_bootfb_exchange(NULL, NULL, sizeof(packet)) == EINVAL && firmware_calls == 0);
+	firmware_permitted = true; native_finish();
+}
 int main(void)
 {
 	pthread_mutexattr_t a;
 	CHECK(pthread_mutexattr_init(&a) == 0 && pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE) == 0);
 	CHECK(pthread_mutex_init(&giant_mutex, &a) == 0 && pthread_mutexattr_destroy(&a) == 0);
-	tests_native();
+	tests_native(); tests_firmware();
 	CHECK(giant == 0 && read_depth == 0 && creates == destroys && init_started);
 	CHECK(pthread_mutex_destroy(&giant_mutex) == 0);
 	printf("native serial boot handoff: %u actual-source checks PASS\n", atomic_load(&checks));

@@ -312,6 +312,34 @@ wsdisplay_bootfb_close_status(struct wsdisplay_bootfb_lease *lease,
 }
 
 int
+wsdisplay_bootfb_serial_closed(struct wsdisplay_bootfb_lease *lease)
+{
+	int error;
+
+	if (pserialize_in_read_section())
+		return EDEADLK;
+	error = wsdisplay_bootfb_context();
+	if (error != 0)
+		return error;
+	if (cold)
+		return EWOULDBLOCK;
+	KERNEL_LOCK(1, NULL);
+	if (!wsdisplay_bootfb_issued(lease) ||
+	    wsdisplay_bootfb.phase != BOOTFB_CLOSED) {
+		error = EPERM;
+	} else if (lease->close.error != 0) {
+		error = lease->close.error;
+	} else if (!lease->close.attempted || !lease->close.closed ||
+	    !lease->close.drained) {
+		error = ENXIO;
+	} else {
+		error = wsdisplay_early_serial_validate(lease);
+	}
+	KERNEL_UNLOCK_ONE(NULL);
+	return error;
+}
+
+int
 wsdisplay_bootfb_close_serial(struct wsdisplay_bootfb_lease *lease)
 {
 	struct wsdisplay_bootfb_close_status value;

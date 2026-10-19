@@ -468,6 +468,8 @@ void serial_fixture_held_mutations(void)
 }
 void serial_fixture_revoke(void) { MODEL_CHECK(plcom_console_ready_revoke(NULL)); }
 bool serial_fixture_held(void) { return plcom_console_ready.held_lease != NULL; }
+/* Fault injection bypasses the production release refusal after CLOSED. */
+void serial_fixture_drop_hold(void) { plcom_console_ready.held_lease = NULL; }
 #endif
 int main(void)
 {

@@ -2,7 +2,7 @@
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Protocol facts: Raspberry Pi Linux a1a601d4857978d810175365550c4536701df4ed,
  * vc4_drv.c:391-405, raspberrypi-firmware.h:100 and raspberrypi.c:154-184.
- * No Linux implementation code is copied here. No native invocation exists.
+ * No Linux implementation code is copied here. The private boot owner gates I/O.
  */
 #include <sys/cdefs.h>
 #ifdef _KERNEL

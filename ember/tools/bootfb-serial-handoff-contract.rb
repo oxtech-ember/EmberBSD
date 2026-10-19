@@ -42,7 +42,11 @@ def notice(text)
   text.split(/^#(?:include|ifdef|ifndef)/,2).first
 end
 paths=%w[sys/kern/subr_autoconf.c sys/arch/arm/broadcom/bcm2712_v3d_acpi.c sys/dev/cons.c
-  ember/tools/bootfb-serial-handoff-contract.c ember/tools/bootfb-serial-handoff-contract.rb]
+  ember/tools/bootfb-serial-handoff-contract.c ember/tools/bootfb-serial-handoff-contract.rb
+  sys/arch/arm/broadcom/bcm2712_display_handoff.c
+  sys/arch/arm/broadcom/bcm2712_display_handoffvar.h
+  sys/dev/wscons/wsdisplay_bootfb.c sys/dev/wscons/wsdisplay_bootfbvar.h
+  sys/arch/arm/broadcom/bcm2835_mbox.c sys/arch/arm/broadcom/bcm2835_mbox.h]
 files=paths.to_h { |p| [p,File.binread(source+'/'+p)] }
 Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
   puts 'native serial handoff temporary directory: '+work
@@ -103,7 +107,9 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
     owner=acpi[/^enum bcmv3d_clock_status \{.*?(?=^static int bcmv3d_match)/m]
     abort 'owner missing' unless owner
     File.write(work+'/native-owner.h',notice(acpi)+owner)
-    helpers=%w[bcmv3d_bootfb_claim_job bcmv3d_bootfb_queue bcmv3d_bootfb_retain bcmv3d_bootfb_cancel bcmv3d_finalize]
+    File.write(work+'/bcm2712_display_handoffvar.h',files.fetch('sys/arch/arm/broadcom/bcm2712_display_handoffvar.h'))
+    File.write(work+'/protocol.c',files.fetch('sys/arch/arm/broadcom/bcm2712_display_handoff.c'))
+    helpers=%w[bcmv3d_bootfb_exchange bcmv3d_bootfb_notify bcmv3d_bootfb_claim_job bcmv3d_bootfb_queue bcmv3d_bootfb_retain bcmv3d_bootfb_cancel bcmv3d_finalize]
     File.write(work+'/native-job.h',notice(acpi)+"static void bcmv3d_bootfb_retain(struct bcmv3d_softc *, int);\nstatic void bcmv3d_bootfb_cancel(struct bcmv3d_softc *, int);\n"+helpers.map { |n| function(acpi,n) }.join("\n"))
     ws=File.read(source+'/sys/dev/wscons/wsdisplay.c')
     commit=ws[/^\t\twsdisplay_cons.cn_dev = makedev\(maj,\n\t\t    WSDISPLAYMINOR\(device_unit\(self\), 0\)\);\n\t\twsdisplay_console_generation\+\+;/]
@@ -141,14 +147,23 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       common=[*cc,'-std=c11','-Wall','-Wextra','-Werror','-pthread',*flags,'-I'+work,'-I'+source+'/ember/tools']
       s=run.call('compile-provider-'+name,[*common,'-DSERIAL_READY_LIBRARY','-Dmain=serial_ready_original_main','-c',source+'/ember/tools/serial-console-ready-contract.c','-o',work+'/provider.o'])
       abort 'provider compile failed' unless s.success?
-      s=run.call('compile-route-'+name,[*common,'-DBCM2712_V3D_RENDER','-DBCM2712_V3D_TAKEOVER',source+'/ember/tools/bootfb-serial-handoff-contract.c',work+'/provider.o','-o',work+'/contract'])
+      s=run.call('compile-route-'+name,[*common,'-DBCM2712_V3D_RENDER','-DBCM2712_V3D_TAKEOVER',source+'/ember/tools/bootfb-serial-handoff-contract.c',work+'/protocol.c',work+'/provider.o','-o',work+'/contract'])
       abort 'route compile failed' unless s.success?
     end
     compile.call('positive')
     unless ENV['COMPILE_ONLY']=='1'
       abort 'native handoff positive failed' unless run.call('positive',[*runner,work+'/contract']).success?
     end
-    controls={
+controls={
+  'firmware-complete'=>['native-job.h','!close.complete || ', '', 'firmware_permitted'],
+  'firmware-closed'=>['native-job.h','!close.closed ||', 'false ||', 'firmware_permitted'],
+  'firmware-drained'=>['native-job.h','!close.drained ||', 'false ||', 'firmware_permitted'],
+  'firmware-status'=>['native-job.h','close.error != 0 ||', 'false ||', 'firmware_permitted'],
+  'firmware-held'=>['native-job.h','error = wsdisplay_bootfb_serial_closed(owner->lease);','error = 0;', 'firmware_permitted'],
+  'firmware-transport'=>['native-job.h','return bcmmbox_request(BCMMBOX_CHANARM2VC, packet, length, &response);','(void)bcmmbox_request(BCMMBOX_CHANARM2VC, packet, length, &response); return 0;', 'gpu_sc.sc_bootfb.firmware.fault == errors[i]'],
+  'firmware-malformed'=>['protocol.c','bcm2712_handoff_word(packet + 4) != 0x80000000U ||', 'false ||', 'gpu_sc.sc_bootfb.firmware.fault == expected'],
+  'firmware-unsupported'=>['protocol.c','else if (response == 0)', 'else if (false)', 'gpu_sc.sc_bootfb.firmware.fault == expected'],
+  'firmware-repeated-job'=>['native-job.h','if (owner->phase != BCMV3D_BOOTFB_QUEUED)', 'if (false)', 'gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED'],
       'poll-pair'=>['display.h','wsdisplay_poll_admitted = cn_publication_enter() == 0;',"const bool closed = cn_publication_closed();\n\t\twsdisplay_poll_admitted = cn_publication_enter() == 0;",'serial_on == 1 && serial_off == 1 && kbd_on == 0 && kbd_off == 0'],
       'competing-rollback'=>['display.h','wsdisplay_console_generation == wsdisplay_serial_generation &&\n\t    wsdisplay_cons.cn_dev == wsdisplay_serial_dev &&\n\t    wsdisplay_early_binding()', 'true', 'wsdisplay_console_initted == 2 && wsdisplay_cons.cn_dev == competing_dev'],
       'previous'=>['display.h','cn_bootfb_serial_hold(lease, wsdisplay_ocn, &dev)','cn_bootfb_serial_hold(lease, fixture_previous, &dev)','owner == (expect_closed'],

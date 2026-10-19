@@ -2,7 +2,8 @@
 
 `WSDISPLAY_BOOTFB_DEFER` is default-off. It selects
 `WSDISPLAY_EARLYFB_HOOKS`. No default configuration selects it. The explicit `EMBERV3DHDMI` profile
-selects the issuer. `EMBERV3DCONSOLE` additionally selects CPU console handoff. It can defer one actual cold simplefb fallback and issue one opaque
+selects the issuer. `EMBERV3DCONSOLE` additionally selects the CPU serial close and firmware notification.
+The issuer alone can defer one actual cold simplefb fallback and issue one opaque
 lease. It does not close console output, drain writers, install a replacement
 console, issue a firmware request or grant MMIO, DMA or display ownership.
 
@@ -184,7 +185,10 @@ With that option on, the joined job performs the
 [CPU console transaction](bootfb-serial-handoff.md). It holds the actual previous
 serial tty before allocation and CPU reader drain. A pre-freeze refusal preserves
 fallback. CLOSED and unknown admitted outcomes retain the opaque owner without
-hardware authority. The manual `EMBERV3DCONSOLE` profile selects this path.
+hardware authority. The same owner then gates one
+[firmware display notification](bcm2712-display-handoff.md) on the exact successful
+serial close. Firmware errors retain CLOSED and cannot restore fallback. The
+manual `EMBERV3DCONSOLE` profile selects this path.
 
 ## Source checks
 
