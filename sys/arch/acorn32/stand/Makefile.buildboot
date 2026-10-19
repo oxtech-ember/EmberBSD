@@ -1,4 +1,5 @@
 #	$NetBSD: Makefile.buildboot,v 1.27 2020/09/07 07:08:35 mrg Exp $
+# Origin: Compile relocatable RISC OS module code and private libraries as PIC.
 
 S?=	${.CURDIR}/../../../..
 
@@ -24,7 +25,6 @@ LINKFLAGS+=--no-dynamic-linker --noinhibit-exec
 .if ${MKMODULE} == "yes"
 RISCOSTYPE ?= ffa
 LINKFLAGS+=-shared -Bsymbolic --no-undefined -T ${.CURDIR}/../module.ldscript
-CFLAGS+=-DRISCOS_MODULE
 .else
 RISCOSTYPE ?= ff8
 RELOC=8000
@@ -45,6 +45,10 @@ CPUFLAGS=
 CFLAGS=		-O2
 CFLAGS+=	-ffreestanding -fno-unwind-tables
 CFLAGS+=	-Wall -Wstrict-prototypes -Wmissing-prototypes
+
+.if ${MKMODULE} == "yes"
+CFLAGS+=	-fPIC -DRISCOS_MODULE
+.endif
 
 CLEANFILES+= machine ${MACHINE_ARCH}
 

@@ -1,4 +1,5 @@
 /*	$NetBSD: riscosdisk.c,v 1.4 2011/07/17 20:54:35 joerg Exp $	*/
+/* Origin: Provide the standalone disk ioctl fallback for sector-size queries. */
 
 /*-
  * Copyright (c) 2001, 2006 Ben Harris
@@ -154,4 +155,11 @@ rodisk_strategy(void *devdata, int flag, daddr_t dblk, size_t size,
 eio:
 	printf("Error: %s\n", err->errmess);
 	return EIO;
+}
+
+int
+rodisk_ioctl(struct open_file *f, u_long cmd, void *data)
+{
+
+	return noioctl(f, cmd, data);
 }

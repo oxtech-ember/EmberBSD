@@ -195,6 +195,24 @@ contract dispatch and failure propagation. Its fixtures
 are not a kernel build. For underlying build options see [BUILDING](../../BUILDING)
 and the [NetBSD cross-build guide](https://www.netbsd.org/docs/guide/en/chap-build.html).
 
+## ARM32 standalone checks
+
+The ARM standalone contract checks the RISC OS module flags, the real libsa
+single-device ioctl link, and the RISC OS and ARM EFI ELF layouts. It requires
+GCC16, matching ARM binutils, NetBSD make, and explicitly selected EmberBSD ARM
+headers. Use an empty output directory:
+
+```sh
+python3 ember/tools/tests/arm-standalone/contract.py \
+  --cc "$ARM_GCC" --objcopy "$ARM_OBJCOPY" --bmake "$NBMAKE" \
+  --sysroot "$ARM_SYSROOT" --output "$CHECK_OUTPUT"
+```
+
+The check rejects an uncovered ELF program-header segment and verifies that the
+flat payload starts at address zero. It checks both module and non-module flags.
+These object and link checks do not establish a complete loader build, firmware
+execution, or compatibility with a different sysroot revision.
+
 ## Verified scope
 
 On 2026-10-10, the same cross path on Apple Silicon macOS also built the

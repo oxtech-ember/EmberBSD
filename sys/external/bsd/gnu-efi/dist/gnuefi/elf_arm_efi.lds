@@ -1,8 +1,14 @@
 /*	$NetBSD: elf_arm_efi.lds,v 1.1.1.1 2018/08/16 18:17:47 jmcneill Exp $	*/
+/* Origin: Describe only loadable payload and dynamic data for PE conversion. */
 
 OUTPUT_FORMAT("elf32-littlearm", "elf32-littlearm", "elf32-littlearm")
 OUTPUT_ARCH(arm)
 ENTRY(_start)
+PHDRS
+{
+  text PT_LOAD;
+  dynamic PT_DYNAMIC;
+}
 SECTIONS
 {
   .text 0x0 : {
@@ -14,10 +20,10 @@ SECTIONS
     *(.srodata)
     *(.rodata*)
     . = ALIGN(16);
-  }
+  } :text
   _etext = .;
   _text_size = . - _text;
-  .dynamic  : { *(.dynamic) }
+  .dynamic  : { *(.dynamic) } :text :dynamic
   .data :
   {
    _data = .;
@@ -40,7 +46,7 @@ SECTIONS
    *(COMMON)
    . = ALIGN(16);
    _bss_end = .;
-  }
+  } :text
 
   .rel.dyn : { *(.rel.dyn) }
   .rel.plt : { *(.rel.plt) }
