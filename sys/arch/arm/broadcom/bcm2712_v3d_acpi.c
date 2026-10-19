@@ -609,6 +609,15 @@ publish:
 		    m->status.backing.sealed,
 		    m->status_valid && m->status.sequence_valid &&
 		    m->status.sequence.sequence_complete);
+		aprint_normal_dev(sc->sc_dev, "boot MMU4 cached native: valid %u, "
+		    "stage %u, DEBUG %08x valid %u; ICAC valid %u, observation "
+		    "stage %u, CONTROL %08x valid %u error %d; prepare %d, program %d\n",
+		    m->status_valid, m->status.stage, m->status.debug,
+		    m->status.debug_valid, m->status.icac_valid,
+		    m->status.icac.observation.stage, m->status.icac.observation.raw_control,
+		    m->status.icac.observation.raw_valid,
+		    m->status.icac.observation.first_error,
+		    m->status.prepare_error, m->status.program_error);
 	}
 out:
 	KERNEL_UNLOCK_ONE(NULL);

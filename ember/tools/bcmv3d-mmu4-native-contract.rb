@@ -116,7 +116,7 @@ begin
         'observe-result'=>["if (error != 0)\n\t\t\treturn error;\n\t\tif (snapshot_error", "if (false)\n\t\t\treturn error;\n\t\tif (snapshot_error"],
         'prefix-count'=>['o->reads_attempted != 1','false'],
         'prefix-map'=>['!o->started || !o->mapped ||','!o->started || false ||'],
-        'prefix-known'=>['(o->raw_control & ~0x7U) != 0','false'],
+        'prefix-known'=>['if ((o->raw_control & 0x4U) != 0)', 'if ((o->raw_control & ~0x7U) != 0) return EOPNOTSUPP; if ((o->raw_control & 0x4U) != 0)', 'error==0 && owner->status.stage==BCMV3D_MMU4_NATIVE_PREPARED'],
         'prefix-busy'=>['(o->raw_control & 0x4U) != 0','false'],
         'prefix-order'=>['error = mmu4_native_prefix(n, true);','error = 0;'],
         'map-address'=>['MMU4_ADDRESS, MMU4_LENGTH, 0, &n->bsh','MMU4_ADDRESS + 4, MMU4_LENGTH, 0, &n->bsh'],

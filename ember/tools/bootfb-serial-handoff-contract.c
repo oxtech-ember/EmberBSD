@@ -166,11 +166,30 @@ static void firmware_message(const char *format, ...)
 #define aprint_normal firmware_message
 #include "native-endian.h"
 /* Inject a changed prerequisite after actual stop publication, before MMU4. */
+static void print_device_message(device_t, const char *, ...)
+    __attribute__((format(printf, 2, 3)));
 static void print_device_message(device_t dev, const char *f, ...)
 {
 	struct bcmv3d_bootfb_owner *o = &gpu_sc.sc_bootfb;
 	struct bcmv3d_display_stop *d = &o->display;
 	(void)dev;
+	if (strncmp(f,"boot MMU4 cached native:",24) == 0) {
+		char actual[512], expected[512];
+		const struct bcmv3d_bootfb_mmu4 *m = &o->mmu4;
+		va_list ap;
+
+		va_start(ap,f); CHECK(vsnprintf(actual,sizeof(actual),f,ap) > 0); va_end(ap);
+		CHECK(snprintf(expected,sizeof(expected),
+		    "boot MMU4 cached native: valid %u, stage %u, DEBUG %08x valid %u; "
+		    "ICAC valid %u, observation stage %u, CONTROL %08x valid %u error %d; "
+		    "prepare %d, program %d\n",m->status_valid,m->status.stage,
+		    m->status.debug,m->status.debug_valid,m->status.icac_valid,
+		    m->status.icac.observation.stage,m->status.icac.observation.raw_control,
+		    m->status.icac.observation.raw_valid,m->status.icac.observation.first_error,
+		    m->status.prepare_error,m->status.program_error) > 0);
+		CHECK(strcmp(actual,expected) == 0);
+		return;
+	}
 	if (strncmp(f,"boot MMU4 at ",13) == 0 && o->mmu4.complete) hvs_before_publish();
 	if (strncmp(f,"display stop at ",16) != 0 || !d->complete) return;
 	switch (mmu4_gate) {

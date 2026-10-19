@@ -208,7 +208,6 @@ done:
 
 /* The fixed v1 CONTROL fields are ENABLE0, FLUSH1 and FLUSHING2. */
 #define IOMMUC_CONTROL_FLUSHING	0x4U
-#define IOMMUC_CONTROL_KNOWN	0x7U
 
 int
 bcm2712_iommuc_observe_control(struct bcm2712_iommuc_provider *sc)
@@ -256,9 +255,8 @@ bcm2712_iommuc_observe_control(struct bcm2712_iommuc_provider *sc)
 	observation->reads_completed = 1;
 	observation->raw_control = value;
 	observation->raw_valid = true;
-	if ((value & ~IOMMUC_CONTROL_KNOWN) != 0)
-		error = EOPNOTSUPP;
-	else if ((value & IOMMUC_CONTROL_FLUSHING) != 0)
+	/* Other bits remain raw diagnostics, not full-word validity fields. */
+	if ((value & IOMMUC_CONTROL_FLUSHING) != 0)
 		error = EBUSY;
 	else
 		error = 0;

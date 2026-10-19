@@ -16,7 +16,6 @@
 #define IOMMUC_ENABLE		0x1U
 #define IOMMUC_FLUSH		0x2U
 #define IOMMUC_FLUSHING		0x4U
-#define IOMMUC_KNOWN		0x7U
 #define IOMMUC_POLL_LIMIT	1024U
 
 static int
@@ -176,8 +175,6 @@ bcm2712_iommuc_core_enable_flush(struct bcm2712_iommuc_core *sc,
 		return bcm2712_iommuc_fault(sc, error);
 	if ((s->raw_control & IOMMUC_FLUSHING) != 0)
 		return bcm2712_iommuc_fault(sc, EBUSY);
-	if ((s->raw_control & ~IOMMUC_KNOWN) != 0)
-		return bcm2712_iommuc_fault(sc, EOPNOTSUPP);
 
 	s->stage = BCM2712_IOMMUC_WRITE;
 	s->writes_attempted = 1;
@@ -193,12 +190,9 @@ bcm2712_iommuc_core_enable_flush(struct bcm2712_iommuc_core *sc,
 		error = bcm2712_iommuc_read(sc);
 		if (error != 0)
 			return bcm2712_iommuc_fault(sc, error);
-		if ((s->raw_control & ~IOMMUC_KNOWN) != 0)
-			return bcm2712_iommuc_fault(sc, EIO);
+		/* Completion tests only FLUSHING. Preserve all other raw bits. */
 		if ((s->raw_control & IOMMUC_FLUSHING) != 0)
 			continue;
-		if ((s->raw_control & IOMMUC_ENABLE) == 0)
-			return bcm2712_iommuc_fault(sc, EIO);
 		s->stage = BCM2712_IOMMUC_COMPLETE;
 		s->flush_complete = true;
 		return 0;

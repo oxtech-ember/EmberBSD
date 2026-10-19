@@ -31,13 +31,15 @@ fi
 if [ "${IOMMUC_COMPILE_ONLY:-0}" = 1 ]; then exit 0; fi
 run
 if [ "${IOMMUC_SKIP_MUTANTS:-0}" = 1 ]; then exit 0; fi
-for mutation in ${IOMMUC_MUTANTS:-command poll-limit enable known preflight retain release fault alias reinit mutation raw barrier fini member fault-retain}; do
+for mutation in ${IOMMUC_MUTANTS:-command poll-limit enable known poll-known echo preflight retain release fault alias reinit mutation raw barrier fini member fault-retain}; do
     expected=1
     case "$mutation" in
         command) from='IOMMUC_ENABLE | IOMMUC_FLUSH'; to='IOMMUC_ENABLE' ;;
         poll-limit) from='1024U'; to='1025U' ;;
-        enable) from='if ((s->raw_control & IOMMUC_ENABLE) == 0)'; to='if (false)' ;;
-        known) from='0x7U'; to='0xfU' ;;
+        enable) from='s->stage = BCM2712_IOMMUC_COMPLETE;'; to='if ((s->raw_control & 1U) == 0) return bcm2712_iommuc_fault(sc, EIO); s->stage = BCM2712_IOMMUC_COMPLETE;' ;;
+        known) from='s->stage = BCM2712_IOMMUC_WRITE;'; to='if ((s->raw_control & ~7U) != 0) return bcm2712_iommuc_fault(sc, EOPNOTSUPP); s->stage = BCM2712_IOMMUC_WRITE;' ;;
+        poll-known) from='/* Completion tests only FLUSHING. Preserve all other raw bits. */'; to='if ((s->raw_control & ~7U) != 0) return bcm2712_iommuc_fault(sc, EIO); /* Completion tests only FLUSHING. Preserve all other raw bits. */' ;;
+        echo) from='IOMMUC_ENABLE | IOMMUC_FLUSH'; to='s->raw_control | IOMMUC_ENABLE | IOMMUC_FLUSH' ;;
         preflight) from='return bcm2712_iommuc_fault(sc, EBUSY);'; to='return 0;' ;;
         retain) from='if ((sc->status.retained & bit) == 0)'; to='if (false)' ;;
         release) from='if ((sc->status.retained & bit) != 0)'; to='if (false)'; expected=2 ;;
@@ -62,6 +64,10 @@ for mutation in ${IOMMUC_MUTANTS:-command poll-limit enable known preflight reta
     }
     if (ulimit -c 0; run) > "$work/mutant.log" 2>&1; then
         echo "Mutation survived: $mutation" >&2; exit 1
+    fi
+    if ! grep -F "check failed at" "$work/mutant.log" >/dev/null; then
+        cat "$work/mutant.log" >&2
+        echo "Mutation did not reach a fatal CHECK: $mutation" >&2; exit 1
     fi
     if [ -n "${IOMMUC_EVIDENCE:-}" ]; then
         cp "$work/mutant.log" "$IOMMUC_EVIDENCE/mutant-$mutation.log"

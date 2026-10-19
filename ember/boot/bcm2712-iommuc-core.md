@@ -1,8 +1,8 @@
 # Typed shared IOMMU-cache mechanism
 
 This source-only BSD core implements the fixed shared-cache enable/flush
-transaction. It has no native caller, mapping, provider, default attachment,
-MMU programming or power operation. The separate [ICAC resource contract](bcm2712-iommuc-resources.md)
+transaction. The [private native owner](bcm2712-iommuc-native.md) supplies its
+callbacks. The core has no mapping, attachment, MMU programming or power operation. The separate [ICAC resource contract](bcm2712-iommuc-resources.md)
 describes geometry and dependencies. Neither contract grants hardware access.
 
 The caller serializes all operations across MMU2, MMU4 and MMU5. These physical
@@ -20,16 +20,18 @@ a successful flush. There is no source-backed shared disable/write0 operation.
 
 A retained member can request one transaction:
 
-1. Read fixed CONTROL+0. Reject FLUSHING=1 and unknown bits outside0x7.
+1. Read fixed CONTROL+0. Reject FLUSHING=1. Preserve all raw bits for diagnostics.
 2. Mark the shared write attempt before calling the write callback with3.
 3. Order a successful write with the mandatory barrier.
-4. Poll CONTROL at most1024 times. Require no unknown bits. Completion requires
-   FLUSHING=0 and ENABLE=1. Either FLUSH command-bit readback is accepted.
+4. Poll CONTROL at most1024 times. Completion tests only FLUSHING=0.
+   Neither ENABLE nor FLUSH readback is required. Other bits remain diagnostics.
 
 The maximum is1025 reads, including preflight, one write and one barrier.
 This is an operation-count bound. Callback latency, native bus stalls and
-aborts have no recovery or deadline guarantee. The preflight/unknown-bit and
-ENABLE readback checks are conservative BSD policy beyond the Linux busy test.
+aborts have no recovery or deadline guarantee. The command is exactly3, without
+read-modify-write or echoing diagnostic bits. The pinned protocol polls only
+FLUSHING. It does not define the meaning or write behavior of other returned bits.
+The initial busy refusal remains a local exclusion guard.
 
 Every valid transaction error latches the first global fault and retains all
 member obligations. No subsequent operation performs I/O, retry, restore or
@@ -47,6 +49,9 @@ actual C source and header as separate translation units. Literal3/bit/poll
 oracles are independent of production constants. It checks all member leases,
 init aliasing, closure, re-entry rejection, completion at polls1/1024, timeout,
 every injected callback failure, global fault retention and zero post-fault I/O.
+High bits, including raw80000000, remain intact through preflight and polling.
+All four low-bit states with FLUSHING clear complete. Compiled controls reintroduce
+the old full-word/ENABLE guards and verify that unknown bits never reach writes.
 Assertions in the fixture remain fatal when `NDEBUG` is set.
 
 `CC`, `CFLAGS`, `TEST_RUNNER`, `IOMMUC_COMPILE_ONLY=1`, `IOMMUC_OUTPUT` and

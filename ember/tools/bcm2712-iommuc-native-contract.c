@@ -342,7 +342,7 @@ static void forbidden_barrier(void *arg)
 static void
 observation_tests(void)
 {
-	static const uint32_t samples[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, UINT32_MAX };
+	static const uint32_t samples[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, UINT32_MAX, 0x80000000U, 0x80000003U, 0xfffffffbU };
 	static const int map_errors[] = { ENOMEM, EIO, EBUSY, EOPNOTSUPP };
 	struct bcm2712_iommuc_observation *o;
 	struct bcm2712_iommuc_io io = {
@@ -367,7 +367,7 @@ observation_tests(void)
 		native_setup(); attach(); control_value = samples[i];
 		o = &storage.observation;
 		aml = calls; decoded = decoder_calls;
-		error = i < 4 ? 0 : i < 8 ? EBUSY : EOPNOTSUPP;
+		error = (samples[i] & 4U) != 0 ? EBUSY : 0;
 		CHECK(bcm2712_iommuc_observe_control(&storage) == error);
 		CHECK(calls == aml && decoder_calls == decoded);
 		CHECK(o->started && o->mapped && o->raw_valid);
@@ -683,11 +683,18 @@ executor_tests(void)
 	core_init_error = 0; fresh = new_operation();
 	CHECK(bcm2712_iommuc_execute_mmu4(&storage, operation, &fresh) == ERANGE);
 	CHECK(fresh.callbacks == 0 && core_init_calls == 1 && !storage.core.initialized);
+	for (unsigned int sample = 0; sample < 4; sample++) {
+		executor_setup(); op = new_operation();
+		operational_value = 0x80000000U | sample;
+		CHECK(bcm2712_iommuc_execute_mmu4(&storage, operation, &op) == 0);
+		CHECK(storage.core.status.flush_complete && writes == 1 && barriers == 1);
+		CHECK(storage.core.status.raw_valid && storage.core.status.raw_control == operational_value);
+	}
 	for (unsigned int i = 0; i < 3; i++) {
 		executor_setup(); op = new_operation();
-		operational_value = i == 0 ? 4U : i == 1 ? 8U : 0;
+		operational_value = i == 0 ? 4U : i == 1 ? 0x80000004U : 0;
 		poll_timeout = i == 2;
-		expected = i == 0 ? EBUSY : i == 1 ? EOPNOTSUPP : ETIMEDOUT;
+		expected = i < 2 ? EBUSY : ETIMEDOUT;
 		CHECK(bcm2712_iommuc_execute_mmu4(&storage, operation, &op) == expected);
 		CHECK(op.preclose.retained && !op.close_attempted && op.borrowed == NULL);
 		CHECK(storage.mmu4.fault == expected && storage.core.status.fault == expected);

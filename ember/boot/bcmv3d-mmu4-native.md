@@ -103,7 +103,8 @@ do not prove them. HVS global ENABLE with disabled channels is not handoff.
 Prepare consumes one attempt. It obtains real ICAC cached status. Only a
 pristine uninitialized/unconsumed provider performs a new one-shot CONTROL read.
 It then requires COMPLETE, mapped/valid data, exactly one attempted/completed
-read, zero error, known bits and FLUSHING clear. An existing accepted prefix
+read, zero error and FLUSHING clear. All other raw bits remain diagnostics.
+An existing accepted prefix
 gets no new read. Reuse needs the same externally continuous access/exclusion
 lifetime since that sample. Unknown continuity forbids prepare. Returned
 EALREADY is failure even if a following snapshot is accepted. Failed, partial
@@ -198,4 +199,5 @@ See the [backing](bcmv3d-mmu4-backing.md),
 [ICAC owner](bcm2712-iommuc-native.md) contracts. Register facts derive from
 [Raspberry Pi Linux bcm2712-iommu.c](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/iommu/bcm2712-iommu.c).
 Its lack of clock/reset/power requests is prior art, not an always-on ACPI
-guarantee. No GPL implementation is copied. Only the explicit manual profile\ncontains the bounded same-owner boot continuation described above.
+guarantee. No GPL implementation is copied. Only the explicit manual profile
+contains the bounded same-owner boot continuation described above.

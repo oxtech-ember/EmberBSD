@@ -383,7 +383,7 @@ scenario(unsigned int which)
 	CHECK(bcmv3d_mmu4_native_create(&render_sc,&out) == EBUSY);
 	CHECK(calls==before && drm_gets==1 && heap_allocs==1);
 	CHECK(out == &foreign_native);
-	if (which >= 20 && which < 35) {
+	if (which >= 20 && which < 35 && which != 27) {
 		struct bcm2712_iommuc_observation *o=&storage.observation;
 		if (which != 20 && which != 21) CHECK(bcm2712_iommuc_observe_control(&storage)==0);
 		switch(which) {
@@ -394,7 +394,6 @@ scenario(unsigned int which)
 		case 24: o->reads_attempted=2; break;
 		case 25: o->reads_completed=0; break;
 		case 26: o->first_error=EIO; break;
-		case 27: o->raw_control=8; break;
 		case 28: o->raw_control=4; break;
 		case 29: storage.mmu4.attempted=true; storage.mmu4.first_error=ERANGE; break;
 		case 30: storage.mmu4.attempted=true; break;
@@ -414,17 +413,22 @@ scenario(unsigned int which)
 	if(which==35) snapshot_failure=2;
 	if(which==36) map_error=ENOMEM;
 	if(which==37) control_value=4;
-	if(which==38) control_value=8;
+	if(which==38) control_value=0x80000000U;
 	if(which==39) local_map_error=ENOMEM;
 	if(which==40) backing_failure=1;
 	if(which==41) debug_value=0;
 	if(which>=42 && which<=45) { control_value=which-42; CHECK(bcm2712_iommuc_observe_control(&storage)==0); }
+	if(which==27) {
+		control_value=0x80000000U;
+		CHECK(bcm2712_iommuc_observe_control(&storage)==0);
+	}
 	error=bcmv3d_mmu4_native_prepare(owner);
-	if(which>=35 && which<=41) {
+	if(which>=35 && which<=41 && which!=38) {
 		CHECK(error!=0 && local_writes==0 && writes==0 && !storage.core.initialized);
 		CHECK(bcmv3d_mmu4_native_prepare(owner)==error);retained();return;
 	}
 	CHECK(error==0 && owner->status.stage==BCMV3D_MMU4_NATIVE_PREPARED);
+	if(which==27 || which==38) CHECK(owner->status.icac.observation.raw_control==0x80000000U);
 	CHECK(bcmv3d_mmu4_native_prepare(owner)==EALREADY);
 	if(which==46) { storage.mmu4.attempted=true; storage.mmu4.first_error=EAGAIN; }
 	if(which==47) snapshot_failure=snapshots+1;
@@ -434,7 +438,7 @@ scenario(unsigned int which)
 	if(which==51) fail_pages=true;
 	if(which==52) { debug_value++;fail_close=true; }
 	if(which==53) poll_timeout=true;
-	if(which==54) operational_value=8;
+	if(which==54) operational_value=0x80000000U;
 	if(which==55) reenter_io=true;
 	if(which==56) fail_shared=true;
 	if(which>=67 && which<=69) backing_snapshot_failure=3;
@@ -442,7 +446,7 @@ scenario(unsigned int which)
 	if(which==69) fail_shared=true;
 	if(which==70) snapshot_failure=snapshots+2;
 	error=bcmv3d_mmu4_native_program(owner);
-	if((which>=46 && which<=54) || which==56 || which>=67) {
+	if((which>=46 && which<=53) || which==56 || which>=67) {
 		CHECK(error!=0 && owner->status.stage!=BCMV3D_MMU4_NATIVE_COMPLETE);
 		if(which<48) CHECK(!owner->status.sealed && local_writes==0);
 		else {
@@ -468,6 +472,7 @@ scenario(unsigned int which)
 		CHECK(owner->status.sequence.retained && storage.core.status.retained==2);
 		CHECK(owner->status.icac.mmu4.attempted && owner->status.icac.core_initialized);
 		CHECK(owner->status.shared_valid && owner->status.shared.retained==2);
+		if(which==54) CHECK(owner->status.shared.raw_control==0x80000000U);
 		CHECK(owner->status.sealed && owner->status.write_attempted);
 		CHECK(bcmv3d_mmu4_native_program(owner)==EALREADY);
 		native_backing_check(owner->backing);

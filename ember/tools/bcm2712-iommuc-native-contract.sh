@@ -111,7 +111,7 @@ pairs={
   'observe-raw'=>['observation->raw_control = value;','observation->raw_control = value ^ 1;'],
   'observe-map-error'=>["\t\tobservation->first_error = error;\n\t\tgoto done;", "\t\tobservation->first_error = 0;\n\t\tgoto done;"],
   'observe-busy'=>['value & IOMMUC_CONTROL_FLUSHING','value & 0'],
-  'observe-unknown'=>['value & ~IOMMUC_CONTROL_KNOWN','value & 0'],
+  'observe-unknown'=>['if ((value & IOMMUC_CONTROL_FLUSHING) != 0)', 'if ((value & ~7U) != 0) return EOPNOTSUPP; if ((value & IOMMUC_CONTROL_FLUSHING) != 0)'],
   'exec-once'=>['if (sc->mmu4.attempted) {','if (sc->mmu4.attempted && false) {'],
   'exec-latch'=>['sc->mmu4.attempted = true;','sc->mmu4.attempted = false;'],
   'exec-error'=>['sc->mmu4.first_error = error;','sc->mmu4.first_error = 0;'],

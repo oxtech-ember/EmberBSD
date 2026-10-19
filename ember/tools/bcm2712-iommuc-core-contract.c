@@ -219,8 +219,8 @@ transactions(void)
 	unsigned int m, initial, command, last, bit;
 
 	for (m = 0; m < 3; m++) for (initial = 0; initial < 4; initial++)
-	for (command = 0; command < 2; command++) for (last = 0; last < 2; last++) {
-		setup(&sc, &f, m); f.initial = initial; f.complete = command ? 3 : 1;
+	for (command = 0; command < 4; command++) for (last = 0; last < 2; last++) {
+		setup(&sc, &f, m); f.initial = initial; f.complete = command;
 		f.complete_at = last ? 1024 : 1;
 		no_reinit(&sc, &f);
 		CHECK(bcm2712_iommuc_core_release(&sc, members[m]) == EBUSY);
@@ -244,15 +244,18 @@ transactions(void)
 		CHECK(!sc.status.raw_valid && sc.status.mutation_attempted);
 		fault_stops(&sc, &f, EIO, 1U << m, 1U << m);
 	}
-	for (bit = 3; bit < 32; bit++) {
-		setup(&sc, &f, 1); f.initial = UINT32_C(1) << bit;
-		CHECK(bcm2712_iommuc_core_enable_flush(&sc, members[1]) == EOPNOTSUPP);
-		CHECK(f.reads == 1 && f.writes == 0 && !sc.status.mutation_attempted);
-		fault_stops(&sc, &f, EOPNOTSUPP, 2, 2);
-		setup(&sc, &f, 1); f.complete = 1 | (UINT32_C(1) << bit);
-		CHECK(bcm2712_iommuc_core_enable_flush(&sc, members[1]) == EIO);
-		CHECK(f.reads == 2 && f.writes == 1 && sc.status.raw_valid);
-		fault_stops(&sc, &f, EIO, 2, 2);
+	for (bit = 3; bit < 32; bit++)
+	for (initial = 0; initial < 4; initial++)
+	for (command = 0; command < 4; command++) {
+		setup(&sc, &f, 1);
+		f.initial = (UINT32_C(1) << bit) | initial;
+		f.busy = (UINT32_C(1) << bit) | 4;
+		f.complete = (UINT32_C(1) << bit) | command;
+		f.complete_at = 2;
+		CHECK(bcm2712_iommuc_core_enable_flush(&sc, members[1]) == 0);
+		CHECK(f.reads == 3 && f.writes == 1 && f.barriers == 1);
+		CHECK(sc.status.raw_valid && sc.status.raw_control == f.complete);
+		CHECK(sc.status.flush_complete && sc.status.retained == 2);
 	}
 	for (initial = 4; initial < 8; initial++) {
 		setup(&sc, &f, 1); f.initial = initial;
@@ -261,9 +264,13 @@ transactions(void)
 		fault_stops(&sc, &f, EBUSY, 2, 2);
 	}
 	setup(&sc, &f, 1); f.complete = 0;
-	CHECK(bcm2712_iommuc_core_enable_flush(&sc, members[1]) == EIO);
-	fault_stops(&sc, &f, EIO, 2, 2);
-	setup(&sc, &f, 1); f.complete_at = 0;
+	CHECK(bcm2712_iommuc_core_enable_flush(&sc, members[1]) == 0);
+	CHECK(sc.status.flush_complete && sc.status.raw_valid && sc.status.raw_control == 0);
+	setup(&sc, &f, 1); f.initial = 0x80000004U;
+	CHECK(bcm2712_iommuc_core_enable_flush(&sc, members[1]) == EBUSY);
+	CHECK(sc.status.raw_control == 0x80000004U && f.writes == 0);
+	fault_stops(&sc, &f, EBUSY, 2, 2);
+	setup(&sc, &f, 1); f.complete_at = 0; f.busy = 0x80000004U;
 	CHECK(bcm2712_iommuc_core_enable_flush(&sc, members[1]) == ETIMEDOUT);
 	CHECK(f.reads == 1025 && sc.status.poll == 1024 && sc.status.raw_valid);
 	fault_stops(&sc, &f, ETIMEDOUT, 2, 2);

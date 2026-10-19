@@ -126,8 +126,6 @@ mmu4_native_prefix(struct bcmv3d_mmu4_native *n, bool observe)
 	    !o->raw_valid || o->stage != BCM2712_IOMMUC_OBSERVE_COMPLETE ||
 	    o->reads_attempted != 1 || o->reads_completed != 1)
 		return EBUSY;
-	if ((o->raw_control & ~0x7U) != 0)
-		return EOPNOTSUPP;
 	if ((o->raw_control & 0x4U) != 0)
 		return EBUSY;
 	return 0;

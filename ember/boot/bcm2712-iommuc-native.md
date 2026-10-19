@@ -80,9 +80,12 @@ The operation latches its attempt before mapping the fixed ICAC address/length
 with `aa_memt` and flags0. After successful mapping, it records the read attempt
 and logs the native bus stall/abort boundary before exactly one `read_4` at
 CONTROL+0. It caches the returned value and completion separately. The fixed
-known fields are ENABLE bit0, FLUSH bit1 and FLUSHING bit2. Values0..3 are accepted
-samples, not idle or mutation permission. Unknown bits return `EOPNOTSUPP`;
-FLUSHING returns `EBUSY`. Both keep a valid raw sample and the first error.
+command uses ENABLE bit0 and FLUSH bit1; FLUSHING bit2 is the busy criterion.
+The observer rejects FLUSHING with `EBUSY` and retains the full raw sample and
+first error. Other bits are diagnostics, not a full-word validity mask. A sample
+with FLUSHING clear is not idle, ownership or mutation permission. The executor
+writes exactly3 and polls only FLUSHING; it does not require ENABLE readback.
+These semantics follow the pinned [cache command and poll](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/iommu/bcm2712-iommu-cache.c#L15-L37).
 
 A map error is cached with no read attempt or valid raw value. Every operational
 attempt, including map failure, consumes this one-shot. Repetition returns the
