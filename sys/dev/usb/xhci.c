@@ -168,7 +168,9 @@ static usbd_status xhci_stop_endpoint_cmd(struct xhci_softc *,
 static usbd_status xhci_stop_endpoint(struct usbd_pipe *);
 
 static void xhci_host_dequeue(struct xhci_ring * const);
-static void xhci_set_dequeue(struct usbd_pipe *);
+static bool xhci_set_dequeue(struct usbd_pipe *);
+static void xhci_command_diag(struct xhci_softc *, const char *,
+    struct usbd_pipe *, usbd_status, uint32_t, uint64_t);
 
 static usbd_status xhci_do_command(struct xhci_softc * const,
     struct xhci_soft_trb * const, int);
@@ -1929,6 +1931,33 @@ xhci_unconfigure_endpoint(struct usbd_pipe *pipe)
 }
 #endif
 
+/*
+ * Report why an endpoint recovery command failed.  A real timeout never
+ * updates trb_2, so the completion code is valid only for command errors.
+ */
+static void
+xhci_command_diag(struct xhci_softc *sc, const char *what,
+    struct usbd_pipe *pipe, usbd_status err, uint32_t code, uint64_t target)
+{
+	struct xhci_slot * const xs = pipe->up_dev->ud_hcpriv;
+	const u_int dci = xhci_ep_get_dci(pipe->up_endpoint->ue_edesc);
+	const uint32_t *cp, *sp;
+
+	usb_syncmem(&xs->xs_dc_dma, 0, sc->sc_pgsz, BUS_DMASYNC_POSTREAD);
+	cp = xhci_slot_get_dcv(sc, xs, dci);
+	sp = xhci_slot_get_dcv(sc, xs, XHCI_DCI_SLOT);
+
+	device_printf(sc->sc_dev,
+	    "%s: endpoint 0x%x: %s: completion code %ju, slot state %ju, "
+	    "ep state %ju, tr_dq %#x %#x, target %#jx\n",
+	    what, pipe->up_endpoint->ue_edesc->bEndpointAddress,
+	    err == USBD_TIMEOUT ? "timed out" : "command failed",
+	    (uintmax_t)code,
+	    (uintmax_t)XHCI_SCTX_3_SLOT_STATE_GET(le32toh(sp[3])),
+	    (uintmax_t)XHCI_EPCTX_0_EPSTATE_GET(le32toh(cp[0])),
+	    le32toh(cp[2]), le32toh(cp[3]), (uintmax_t)target);
+}
+
 /* 4.6.8, 6.4.3.7 */
 static void
 xhci_reset_endpoint(struct usbd_pipe *pipe)
@@ -1937,6 +1966,7 @@ xhci_reset_endpoint(struct usbd_pipe *pipe)
 	struct xhci_slot * const xs = pipe->up_dev->ud_hcpriv;
 	const u_int dci = xhci_ep_get_dci(pipe->up_endpoint->ue_edesc);
 	struct xhci_soft_trb trb;
+	usbd_status err;
 
 	XHCIHIST_FUNC();
 	XHCIHIST_CALLARGS("slot %ju dci %ju", xs->xs_idx, dci, 0, 0);
@@ -1949,9 +1979,10 @@ xhci_reset_endpoint(struct usbd_pipe *pipe)
 	    XHCI_TRB_3_EP_SET(dci) |
 	    XHCI_TRB_3_TYPE_SET(XHCI_TRB_TYPE_RESET_EP);
 
-	if (xhci_do_command_locked(sc, &trb, USBD_DEFAULT_TIMEOUT)) {
-		device_printf(sc->sc_dev, "%s: endpoint 0x%x: timed out\n",
-		    __func__, pipe->up_endpoint->ue_edesc->bEndpointAddress);
+	err = xhci_do_command_locked(sc, &trb, USBD_DEFAULT_TIMEOUT);
+	if (err) {
+		xhci_command_diag(sc, __func__, pipe, err,
+		    XHCI_TRB_2_ERROR_GET(trb.trb_2), 0);
 	}
 }
 
@@ -2002,12 +2033,15 @@ xhci_stop_endpoint(struct usbd_pipe *pipe)
 /*
  * Set TR Dequeue Pointer.
  * xHCI 1.1  4.6.10  6.4.3.9
- * Purge all of the TRBs on ring and reinitialize ring.
+ * Purge all of TRBs on ring and reinitialize ring.
  * Set TR dequeue Pointer to 0 and Cycle State to 1.
  * EPSTATE of endpoint must be ERROR or STOPPED, otherwise CONTEXT_STATE
  * error will be generated.
+ *
+ * Return false when the command failed, so the caller can keep the ring
+ * halted and retry on the next request instead of wedging the pipe.
  */
-static void
+static bool
 xhci_set_dequeue(struct usbd_pipe *pipe)
 {
 	struct xhci_softc * const sc = XHCI_PIPE2SC(pipe);
@@ -2015,6 +2049,7 @@ xhci_set_dequeue(struct usbd_pipe *pipe)
 	const u_int dci = xhci_ep_get_dci(pipe->up_endpoint->ue_edesc);
 	struct xhci_ring * const xr = xs->xs_xr[dci];
 	struct xhci_soft_trb trb;
+	usbd_status err;
 
 	XHCIHIST_FUNC();
 	XHCIHIST_CALLARGS("slot %ju dci %ju", xs->xs_idx, dci, 0, 0);
@@ -2022,19 +2057,38 @@ xhci_set_dequeue(struct usbd_pipe *pipe)
 	KASSERT(mutex_owned(&sc->sc_lock));
 	KASSERT(xr != NULL);
 
-	xhci_host_dequeue(xr);
+	/*
+	 * RP1 xHCI rejects Set TR Dequeue with a Context State error while
+	 * its internal endpoint state still says Running, even though the
+	 * endpoint context reads Stopped.  A Stop Endpoint command settles
+	 * the state and the command is then accepted; a delayed retry is
+	 * kept as the last resort.
+	 */
+	for (unsigned attempt = 0; attempt < 3; attempt++) {
+		if (attempt > 0) {
+			(void)xhci_stop_endpoint_cmd(sc, xs, dci, 0);
+			if (attempt == 2)
+				usb_delay_ms_locked(&sc->sc_bus, 1,
+				    &sc->sc_lock);
+		}
 
-	/* set DCS */
-	trb.trb_0 = xhci_ring_trbp(xr, 0) | 1; /* XXX */
-	trb.trb_2 = 0;
-	trb.trb_3 = XHCI_TRB_3_SLOT_SET(xs->xs_idx) |
-	    XHCI_TRB_3_EP_SET(dci) |
-	    XHCI_TRB_3_TYPE_SET(XHCI_TRB_TYPE_SET_TR_DEQUEUE);
+		xhci_host_dequeue(xr);
 
-	if (xhci_do_command_locked(sc, &trb, USBD_DEFAULT_TIMEOUT)) {
-		device_printf(sc->sc_dev, "%s: endpoint 0x%x: timed out\n",
-		    __func__, pipe->up_endpoint->ue_edesc->bEndpointAddress);
+		/* set DCS */
+		trb.trb_0 = xhci_ring_trbp(xr, 0) | 1; /* XXX */
+		trb.trb_2 = 0;
+		trb.trb_3 = XHCI_TRB_3_SLOT_SET(xs->xs_idx) |
+		    XHCI_TRB_3_EP_SET(dci) |
+		    XHCI_TRB_3_TYPE_SET(XHCI_TRB_TYPE_SET_TR_DEQUEUE);
+
+		err = xhci_do_command_locked(sc, &trb, USBD_DEFAULT_TIMEOUT);
+		if (err == USBD_NORMAL_COMPLETION)
+			return true;
+		xhci_command_diag(sc, __func__, pipe, err,
+		    XHCI_TRB_2_ERROR_GET(trb.trb_2), xhci_ring_trbp(xr, 0));
 	}
+
+	return false;
 }
 
 /*
@@ -2311,13 +2365,19 @@ xhci_pipe_restart(struct usbd_pipe *pipe, bool force)
 		    pipe->up_endpoint->ue_edesc->bEndpointAddress);
 	}
 
-	xhci_set_dequeue(pipe);
-	tr->is_halted = false;
+	/*
+	 * Keep the halted state when the ring could not be restarted.
+	 * The next request retries recovery instead of enqueueing TRBs
+	 * the controller will never fetch.
+	 */
+	bool restarted = xhci_set_dequeue(pipe);
+	if (restarted)
+		tr->is_halted = false;
 	xp->xp_restarting = false;
 	cv_broadcast(&xp->xp_restart_cv);
 
 	DPRINTFN(4, "ends", 0, 0, 0, 0);
-	return true;
+	return restarted;
 }
 
 static void
