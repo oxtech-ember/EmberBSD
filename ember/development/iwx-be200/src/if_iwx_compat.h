@@ -212,7 +212,13 @@ iwx_nsec2ticks(uint64_t nsec)
 	tsleep((_id), (_pri), (_msg), iwx_nsec2ticks(_ns))
 
 /* malloc(9)/free(9) with the OpenBSD size argument dropped. */
-#define iwx_free(_p, _t, _s)	free((_p), (_t))
+/* NetBSD kern_free() dereferences its argument: free(NULL) is not a no-op. */
+#define iwx_free(_p, _t, _s)						\
+	do {								\
+		void *iwx_free_p_ = (void *)(_p);			\
+		if (iwx_free_p_ != NULL)				\
+			free(iwx_free_p_, (_t));			\
+	} while (0)
 #define mallocarray(_n, _s, _t, _f)	malloc((size_t)(_n) * (_s), (_t), (_f))
 
 /* OpenBSD ieee80211_release_node(9) drops the com argument on NetBSD. */

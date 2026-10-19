@@ -3399,6 +3399,8 @@ struct iwx_time_quota_cmd {
  * code      011     010     001     000  |  100     101     110    111
  */
 #define IWX_PHY_VHT_CTRL_POS_1_BELOW  (0x0)
+/* Linux IWL_PHY_CTRL_POS_ABOVE: control channel above the center. */
+#define IWX_PHY_CTRL_POS_ABOVE        (0x4)
 #define IWX_PHY_VHT_CTRL_POS_2_BELOW  (0x1)
 #define IWX_PHY_VHT_CTRL_POS_3_BELOW  (0x2)
 #define IWX_PHY_VHT_CTRL_POS_4_BELOW  (0x3)

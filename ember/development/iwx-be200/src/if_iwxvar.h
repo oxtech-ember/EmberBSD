@@ -263,7 +263,12 @@ struct iwx_tx_ring {
 
 #define IWX_RX_MQ_RING_COUNT	512
 /* Linux driver optionally uses 8k buffer */
-#define IWX_RBUF_SIZE		4096
+/*
+ * 2 KB receive buffers: NetBSD mbuf clusters are physically contiguous,
+ * while MEXTMALLOC()ed 4 KB buffers may span non-contiguous pages and fail
+ * to load into the single-segment RX DMA map.  Stage 1 has no A-MSDU.
+ */
+#define IWX_RBUF_SIZE		2048
 
 struct iwx_rx_data {
 	struct mbuf	*m;

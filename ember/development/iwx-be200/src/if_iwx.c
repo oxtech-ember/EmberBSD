@@ -960,7 +960,7 @@ iwx_ctxt_info_init(struct iwx_softc *sc, const struct iwx_fw_sects *fws)
 	control_flags = IWX_CTXT_INFO_TFD_FORMAT_LONG |
 			(IWX_RX_QUEUE_CB_SIZE(IWX_MQ_RX_TABLE_SIZE) <<
 			 IWX_CTXT_INFO_RB_CB_SIZE_POS) |
-			(IWX_CTXT_INFO_RB_SIZE_4K << IWX_CTXT_INFO_RB_SIZE_POS);
+			(IWX_CTXT_INFO_RB_SIZE_2K << IWX_CTXT_INFO_RB_SIZE_POS);
 	ctxt_info->control.control_flags = htole32(control_flags);
 
 	/* initialize RX default queue */
@@ -1054,8 +1054,8 @@ iwx_ctxt_info_gen3_init(struct iwx_softc *sc, const struct iwx_fw_sects *fws)
 	prph_sc_ctrl->version.mac_id = htole16(IWX_READ(sc, IWX_CSR_HW_REV));
 	prph_sc_ctrl->version.size = htole16(sizeof(*prph_scratch) / 4);
 
-	control_flags = IWX_PRPH_SCRATCH_RB_SIZE_4K |
-	    IWX_PRPH_SCRATCH_MTR_MODE |
+	/* No RB_SIZE flag: 2 KB receive buffers (see IWX_RBUF_SIZE). */
+	control_flags = IWX_PRPH_SCRATCH_MTR_MODE |
 	    (IWX_PRPH_MTR_FORMAT_256B & IWX_PRPH_SCRATCH_MTR_FORMAT);
 	if (sc->sc_imr_enabled)
 		control_flags |= IWX_PRPH_SCRATCH_IMR_DEBUG_EN;
@@ -5376,6 +5376,20 @@ iwx_rx_mpdu_mq(struct iwx_softc *sc, struct mbuf *m, void *pktdata,
 		return;
 	}
 
+	/*
+	 * The firmware counts the MIC/FCS tail in mpdu_len; NetBSD net80211
+	 * rejects beacons whose last element then appears truncated.  Strip
+	 * it like Linux iwl_mvm_rx_mpdu_mq() (MIC_CRC_LEN in 2-byte units).
+	 */
+	{
+		uint32_t mic_crc_len = (desc->mac_flags1 &
+		    IWX_RX_MPDU_MFLG1_MIC_CRC_LEN_MASK) >>
+		    IWX_RX_MPDU_MFLG1_MIC_CRC_LEN_SHIFT;
+
+		if (len > mic_crc_len)
+			len -= mic_crc_len;
+	}
+
 	m->m_data = (uint8_t *)pktdata + desc_size;
 	m->m_pkthdr.len = m->m_len = len;
 
@@ -5770,6 +5784,20 @@ iwx_get_vht_ctrl_pos(struct ieee80211com *ic, struct ieee80211_channel *chan)
 }
 #endif /* IWX_HT */
 
+/*
+ * Linux sends rxchain_info in the PHY context only when RLC_CONFIG_CMD is
+ * older than version 2; from version 3 RLC is offloaded and, in PHY context
+ * v5/v6, the same word holds sbb_bandwidth/ctrl_loc/puncture_mask.
+ */
+static int
+iwx_rlc_ver_below_2(struct iwx_softc *sc)
+{
+	int ver = iwx_lookup_cmd_ver(sc, IWX_DATA_PATH_GROUP,
+	    IWX_RLC_CONFIG_CMD);
+
+	return ver == IWX_FW_CMD_VER_UNKNOWN || ver < 2;
+}
+
 int
 iwx_phy_ctxt_cmd_uhb_v3_v4(struct iwx_softc *sc, struct iwx_phy_ctxt *ctxt,
     uint8_t chains_static, uint8_t chains_dynamic, uint32_t action, uint8_t sco,
@@ -5798,8 +5826,7 @@ iwx_phy_ctxt_cmd_uhb_v3_v4(struct iwx_softc *sc, struct iwx_phy_ctxt *ctxt,
 	cmd.ci.width = IWX_PHY_VHT_CHANNEL_MODE20;
 	cmd.ci.ctrl_pos = IWX_PHY_VHT_CTRL_POS_1_BELOW;
 
-	if (iwx_lookup_cmd_ver(sc, IWX_DATA_PATH_GROUP,
-	    IWX_RLC_CONFIG_CMD) != 2) {
+	if (iwx_rlc_ver_below_2(sc)) {
 		idle_cnt = chains_static;
 		active_cnt = chains_dynamic;
 		cmd.rxchain_info = htole32(iwx_fw_valid_rx_ant(sc) <<
@@ -5809,6 +5836,10 @@ iwx_phy_ctxt_cmd_uhb_v3_v4(struct iwx_softc *sc, struct iwx_phy_ctxt *ctxt,
 		cmd.rxchain_info |= htole32(active_cnt <<
 		    IWX_PHY_RX_CHAIN_MIMO_CNT_POS);
 	}
+
+	/* PHY_CONTEXT v5+: secondary control channel on the other side. */
+	if (cmdver >= 5)
+		cmd.reserved = htole32(cmd.ci.ctrl_pos ^ IWX_PHY_CTRL_POS_ABOVE);
 
 	return iwx_send_cmd_pdu(sc, IWX_PHY_CONTEXT_CMD, 0, sizeof(cmd), &cmd);
 }
@@ -5841,8 +5872,7 @@ iwx_phy_ctxt_cmd_v3_v4(struct iwx_softc *sc, struct iwx_phy_ctxt *ctxt,
 	cmd.ci.width = IWX_PHY_VHT_CHANNEL_MODE20;
 	cmd.ci.ctrl_pos = IWX_PHY_VHT_CTRL_POS_1_BELOW;
 
-	if (iwx_lookup_cmd_ver(sc, IWX_DATA_PATH_GROUP,
-	    IWX_RLC_CONFIG_CMD) != 2) {
+	if (iwx_rlc_ver_below_2(sc)) {
 		idle_cnt = chains_static;
 		active_cnt = chains_dynamic;
 		cmd.rxchain_info = htole32(iwx_fw_valid_rx_ant(sc) <<
@@ -5852,6 +5882,10 @@ iwx_phy_ctxt_cmd_v3_v4(struct iwx_softc *sc, struct iwx_phy_ctxt *ctxt,
 		cmd.rxchain_info |= htole32(active_cnt <<
 		    IWX_PHY_RX_CHAIN_MIMO_CNT_POS);
 	}
+
+	/* PHY_CONTEXT v5+: secondary control channel on the other side. */
+	if (cmdver >= 5)
+		cmd.reserved = htole32(cmd.ci.ctrl_pos ^ IWX_PHY_CTRL_POS_ABOVE);
 
 	return iwx_send_cmd_pdu(sc, IWX_PHY_CONTEXT_CMD, 0, sizeof(cmd), &cmd);
 }
@@ -5864,9 +5898,9 @@ iwx_phy_ctxt_cmd(struct iwx_softc *sc, struct iwx_phy_ctxt *ctxt,
 	int cmdver;
 
 	cmdver = iwx_lookup_cmd_ver(sc, IWX_LONG_GROUP, IWX_PHY_CONTEXT_CMD);
-	if (cmdver != 3 && cmdver != 4) {
-		printf("%s: firmware does not support phy-context-cmd v3/v4\n",
-		    device_xname(sc->sc_dev));
+	if (cmdver < 3 || cmdver > 6) {
+		printf("%s: firmware does not support phy-context-cmd v%d\n",
+		    device_xname(sc->sc_dev), cmdver);
 		return ENOTSUP;
 	}
 
@@ -8305,6 +8339,26 @@ iwx_scan(struct iwx_softc *sc)
 	struct ifnet *ifp = IC2IFP(ic);
 	int err;
 
+	/*
+	 * NetBSD net80211 only files beacons into the scan table while
+	 * IEEE80211_F_SCAN is set; ieee80211_begin_scan() sets it and
+	 * ieee80211_end_scan() clears it.  The firmware scan bypasses
+	 * begin_scan(), so mark the scan here.
+	 */
+	ic->ic_flags |= IEEE80211_F_SCAN | IEEE80211_F_ASCAN;
+
+	/*
+	 * ieee80211_setupscan() forces ic_state to INIT before asking for
+	 * SCAN.  If the firmware is already scanning, keep that scan instead
+	 * of aborting it (an abort ends the scan with no results).
+	 */
+	if (sc->sc_flags & IWX_FLAG_SCANNING) {
+		ic->ic_state = IEEE80211_S_SCAN;
+		wakeup(&ic->ic_state);
+		return 0;
+	}
+	ic->ic_scan.nt_scangen++;
+
 	if (sc->sc_flags & IWX_FLAG_BGSCAN) {
 		err = iwx_scan_abort(sc);
 		if (err) {
@@ -9840,6 +9894,13 @@ iwx_send_soc_conf(struct iwx_softc *sc)
 	return err;
 }
 
+/*
+ * Regulatory country sent with MCC_UPDATE for LAR, "ZZ" (world) by default;
+ * override with "modload -s mcc=RU if_iwx.kmod".  On the tested BE200 the
+ * firmware kept every 5 GHz channel passive with either value.
+ */
+static char iwx_mcc[3] = "ZZ";
+
 int
 iwx_send_update_mcc_cmd(struct iwx_softc *sc, const char *alpha2)
 {
@@ -10054,7 +10115,7 @@ iwx_init_hw(struct iwx_softc *sc)
 	}
 
 	if (sc->sc_nvm.lar_enabled) {
-		err = iwx_send_update_mcc_cmd(sc, "ZZ");
+		err = iwx_send_update_mcc_cmd(sc, iwx_mcc);
 		if (err) {
 			printf("%s: could not init LAR (error %d)\n",
 			    device_xname(sc->sc_dev), err);
@@ -10488,8 +10549,21 @@ iwx_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 		err = 0;
 		if ((ifp->if_flags & (IFF_UP | IFF_RUNNING)) ==
 		    (IFF_UP | IFF_RUNNING)) {
-			iwx_stop(ifp, 1);
-			err = iwx_init(ifp);
+			/*
+			 * wpa_supplicant changes the desired SSID before every
+			 * scan.  While not associated, restart the scan instead
+			 * of reloading the firmware; a full reset is only needed
+			 * once a BSS is joined.
+			 */
+			if (ic->ic_opmode == IEEE80211_M_STA &&
+			    ic->ic_state != IEEE80211_S_RUN &&
+			    ic->ic_state != IEEE80211_S_ASSOC &&
+			    ic->ic_state != IEEE80211_S_AUTH) {
+				ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+			} else {
+				iwx_stop(ifp, 1);
+				err = iwx_init(ifp);
+			}
 		}
 	}
 
@@ -12820,6 +12894,17 @@ if_iwx_modcmd(modcmd_t cmd, void *opaque)
 
 	switch (cmd) {
 	case MODULE_CMD_INIT:
+		if (opaque != NULL) {
+			const char *mcc = NULL;
+
+			if (prop_dictionary_get_string((prop_dictionary_t)opaque,
+			    "mcc", &mcc) && mcc != NULL && strlen(mcc) == 2 &&
+			    isalpha((unsigned char)mcc[0]) &&
+			    isalpha((unsigned char)mcc[1])) {
+				iwx_mcc[0] = toupper((unsigned char)mcc[0]);
+				iwx_mcc[1] = toupper((unsigned char)mcc[1]);
+			}
+		}
 #ifdef _MODULE
 		error = config_init_component(cfdriver_ioconf_if_iwx,
 		    cfattach_ioconf_if_iwx, cfdata_ioconf_if_iwx);
