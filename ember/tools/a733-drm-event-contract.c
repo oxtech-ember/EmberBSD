@@ -11,7 +11,7 @@ static unsigned checks, sent, cancelled, completed, released, signalled;
 struct completion { bool done; };
 struct dma_fence { int status; unsigned refs; };
 struct drm_pending_event { struct dma_fence *fence; struct completion *completion; void (*completion_release)(struct completion *); };
-struct drm_pending_vblank_event { struct drm_pending_event base; unsigned pipe; struct { uint32_t sequence,tv_sec,tv_usec; } event; };
+struct drm_pending_vblank_event { struct drm_pending_event base; unsigned pipe; union { struct { uint32_t sequence,tv_sec,tv_usec; } vbl; } event; };
 struct drm_crtc { unsigned index; };
 struct drm_crtc_state { struct drm_pending_vblank_event *event; };
 struct drm_device { bool event_lock; };
@@ -53,7 +53,7 @@ int main(void) {
   CHECK(completed==oldcompleted+((flags&1)!=0)&&released==oldreleased+((flags&1)!=0));
   CHECK(signalled==oldsignal+((flags&2)!=0));
   if(errors[e]){CHECK(sent==oldsent&&cancelled==oldcancelled+1);if(flags&2)CHECK(fence.status==-errors[e]&&fence.refs==0);}
-  else{CHECK(sent==oldsent+1&&cancelled==oldcancelled);CHECK(observed.pipe==3&&observed.event.sequence==0&&observed.event.tv_sec==555&&observed.event.tv_usec==123456);if(flags&2)CHECK(fence.status==1&&fence.refs==0);}
+  else{CHECK(sent==oldsent+1&&cancelled==oldcancelled);CHECK(observed.pipe==3&&observed.event.vbl.sequence==0&&observed.event.vbl.tv_sec==555&&observed.event.vbl.tv_usec==123456);if(flags&2)CHECK(fence.status==1&&fence.refs==0);}
  }
  struct drm_crtc_state empty={NULL};unsigned oldsent=sent,oldcancelled=cancelled;
  a733_commit_event(&sc,&empty,&done,EIO);CHECK(sent==oldsent&&cancelled==oldcancelled&&!dev.event_lock);

@@ -41,9 +41,9 @@ a733_commit_event(struct a733_drm *sc, struct drm_crtc_state *state,
 	state->event = NULL;
 	if (error == 0) {
 		event->pipe = drm_crtc_index(&sc->crtc);
-		event->event.sequence = 0;
-		event->event.tv_sec = done->observed_time_ns / 1000000000;
-		event->event.tv_usec = (done->observed_time_ns % 1000000000) / 1000;
+		event->event.vbl.sequence = 0;
+		event->event.vbl.tv_sec = done->observed_time_ns / 1000000000;
+		event->event.vbl.tv_usec = (done->observed_time_ns % 1000000000) / 1000;
 		drm_send_event_locked(sc->dev, base);
 	} else {
 		if (base->fence != NULL) {
