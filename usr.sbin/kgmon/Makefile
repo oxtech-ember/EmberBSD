@@ -16,5 +16,3 @@ LDADD=	-lkvm
 .include "../../compat/exec.mk"
 
 .include <bsd.prog.mk>
-# EmberBSD: GCC16 -Wformat-truncation on bounded snprintf chains.
-COPTS.kgmon.c+=	-Wno-error=format-truncation

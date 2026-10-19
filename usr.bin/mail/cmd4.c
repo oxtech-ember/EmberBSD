@@ -249,6 +249,7 @@ free_name(struct name *np)
 
 	for (/*EMPTY*/; np; np = next_np) {
 		next_np = np->n_flink;
+		free(np->n_name);
 		free(np);
 	}
 }
@@ -260,11 +261,13 @@ delsmopts(char *name)
 	struct smopts_s **last_link;
 
 	last_link = &smoptstbl[hashcase(name)];
-	for (sp = *last_link; sp; sp = sp->s_link) {
+	for (; (sp = *last_link) != NULL; last_link = &sp->s_link) {
 		if (strcasecmp(sp->s_name, name) == 0) {
 			*last_link = sp->s_link;
 			free_name(sp->s_smopts);
+			free(sp->s_name);
 			free(sp);
+			return;
 		}
 	}
 }

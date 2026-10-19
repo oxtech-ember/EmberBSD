@@ -68,6 +68,3 @@ DPADD+=${LIBUTIL}
 
 .include <bsd.prog.mk>
 .include <bsd.subdir.mk>
-# EmberBSD: GCC16 -Wdangling-pointer false positive on the pargs cursor
-# in glob.c backquote loop; word[] outlives every use.
-COPTS.glob.c+=	-Wno-error=dangling-pointer

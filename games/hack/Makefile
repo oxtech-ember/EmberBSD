@@ -59,6 +59,3 @@ COPTS.hack.objnam.c+=	${CC_WNO_STRINGOP_TRUNCATION} ${CC_WNO_STRINGOP_OVERFLOW}
 COPTS.hack.pager.c+=	${CC_WNO_STRINGOP_TRUNCATION}
 
 .include <bsd.prog.mk>
-# EmberBSD: GCC16 -Wstringop-overflow false positive on topl buffer math
-# with signed size_t-like comparisons.
-COPTS.hack.topl.c+=	-Wno-error=stringop-overflow

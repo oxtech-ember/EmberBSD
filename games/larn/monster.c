@@ -1382,6 +1382,7 @@ int
 newobject(int lev, int *i)
 {
 	int    tmp = 32, j;
+	*i = 0;
 	if (level < 0 || level > MAXLEVEL + MAXVLEVEL)
 		return (0);	/* correct level? */
 	if (lev > 6)

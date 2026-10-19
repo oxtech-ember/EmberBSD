@@ -265,6 +265,9 @@ vpline(const char *line, va_list ap)
 			n0 = sizeof(toplines) - 1 - tlpos;
 			dead = 1;
 		}
+		/* A very narrow terminal can produce a negative cut point. */
+		if (n0 <= 0 || (size_t)n0 >= sizeof(toplines))
+			break;
 		(void) memcpy(tl, bp, n0);
 		tl[n0] = 0;
 		bp += n0;

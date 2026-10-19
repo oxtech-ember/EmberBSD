@@ -255,7 +255,7 @@ dumpit(void)
 
 	hp = hashtab[0];
 	hno = 1;
-	base = calloc(hcount, sizeof(*hp));
+	base = calloc(hcount, sizeof(*base));
 	if (base == NULL)
 		err(1, "calloc");
 	for (ap = base, c = hcount; c--; ap++) {

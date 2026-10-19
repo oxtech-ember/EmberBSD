@@ -108,11 +108,10 @@ cwritefn(void *dookie, const void *buf, size_t len)
 	ssize_t nr;
 	size_t l = len;
 	const char *b = buf;
-	(void)b;
 
 	while (l) {
 		size_t nw = l > INT_MAX ? INT_MAX : l;
-		nr = (*d->writefn)(d->cookie, buf, (int)nw);
+		nr = (*d->writefn)(d->cookie, b, (int)nw);
 		if (nr == -1) {
 			if (len == l)
 				return -1;

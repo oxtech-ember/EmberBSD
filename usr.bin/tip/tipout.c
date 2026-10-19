@@ -73,12 +73,24 @@ intEMT(void)
 	char c, line[256];
 	char *pline = line;
 	char reply;
+	ssize_t nread;
+	int overflow = 0;
 
-	(void)read(fildes[0], &c, 1);		/* We got the message */
-	while (c != '\n' && line + sizeof line - pline > 1) {
-		/* EmberBSD: keep one byte for the terminating NUL. */
-		*pline++ = c;
-		(void)read(fildes[0], &c, 1);
+	for (;;) {
+		do {
+			nread = read(fildes[0], &c, 1);
+		} while (nread < 0 && errno == EINTR);
+		if (nread != 1 || c == '\n')
+			break;
+		if (pline < line + sizeof(line) - 1)
+			*pline++ = c;
+		else
+			overflow = 1;
+	}
+	/* Drain an overlong command without opening a truncated filename. */
+	if (nread != 1 || overflow) {
+		reply = 'n';
+		goto out;
 	}
 	*pline = '\0';
 	if (boolean(value(SCRIPT)) && fscript != NULL)
@@ -94,6 +106,7 @@ intEMT(void)
 			setboolean(value(SCRIPT), TRUE);
 		}
 	}
+out:
 	(void)write(repdes[1], &reply, 1);	/* Now coprocess waits for us */
 }
 

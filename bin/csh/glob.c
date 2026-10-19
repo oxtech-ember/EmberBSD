@@ -582,7 +582,9 @@ tglob(Char **t)
 Char **
 dobackp(Char *cp, int literal)
 {
-    Char word[MAXPATHLEN], *ep, *lp, *rp;
+    /* Nested substitutions run in a forked child with its own state. */
+    static Char word[MAXPATHLEN];
+    Char *ep, *lp, *rp;
 
     if (pargv) {
 #ifdef notdef

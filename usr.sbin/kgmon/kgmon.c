@@ -90,7 +90,7 @@ main(int argc, char **argv)
 	struct kvmvars kvmvars;
 	size_t size;
 	char *sys, *kmemf;
-	char on_cpu[sizeof(" on cpuXXXXXXXXX")];
+	char on_cpu[sizeof(" on cpu") + sizeof(int) * CHAR_BIT];
 
 	size = sizeof(ncpu);
 	if (sysctl(ncpu_mib, 2, &ncpu, &size, NULL, 0) < 0)

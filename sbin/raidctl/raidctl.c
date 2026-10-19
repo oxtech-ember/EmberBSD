@@ -1182,7 +1182,7 @@ get_bar(char *string, double percent, int max_strlen)
 		(int)((percent * max_strlen)/ 100);
 	if (offset < 0)
 		offset = 0;
-	snprintf(string,max_strlen,"%s",stars+offset);
+	strlcpy(string, stars + offset, max_strlen);
 }
 
 static void

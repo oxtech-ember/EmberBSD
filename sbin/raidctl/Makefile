@@ -10,6 +10,3 @@ LDADD=  -lutil
 COPTS.raidctl.c+=	${CC_WNO_STRINGOP_TRUNCATION}
 
 .include <bsd.prog.mk>
-# EmberBSD: GCC16 -Wformat-truncation on PATH_MAX concatenations the
-# tool always bounded at runtime.
-COPTS.raidctl.c+=	-Wno-error=format-truncation
