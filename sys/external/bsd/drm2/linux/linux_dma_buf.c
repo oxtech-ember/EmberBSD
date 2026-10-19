@@ -82,8 +82,7 @@ struct dmabuf_fence_vector {
 static int
 dmabuf_fence_append(struct dmabuf_fence_vector *v, struct dma_fence *fence)
 {
-	struct dma_fence **items;
-	unsigned capacity, i;
+	unsigned i;
 
 	if (fence == NULL)
 		return 0;
@@ -92,6 +91,9 @@ dmabuf_fence_append(struct dmabuf_fence_vector *v, struct dma_fence *fence)
 			return 0;
 	}
 	if (v->count == v->capacity) {
+		struct dma_fence **items;
+		unsigned capacity;
+
 		if (v->capacity >= INT_MAX / 2)
 			return ENOMEM;
 		capacity = v->capacity ? 2 * v->capacity : 8;

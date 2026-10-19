@@ -39,8 +39,16 @@ struct dma_buf {
 #define FWRITE 2
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define atomic_store_relaxed(p, v) (*(p) = (v))
-#define write_seqcount_begin(s) (++(s)->value)
-#define write_seqcount_end(s) (++(s)->value)
+#define write_seqcount_begin(s)                                                \
+	do {                                                                   \
+		CHECK(((s)->value & 1) == 0);                                  \
+		++(s)->value;                                                  \
+	} while (0)
+#define write_seqcount_end(s)                                                  \
+	do {                                                                   \
+		CHECK(((s)->value & 1) == 1);                                  \
+		++(s)->value;                                                  \
+	} while (0)
 static unsigned vector_calls, fail_vector, fd_calls, file_count, aborts;
 static unsigned sync_allocs, sync_frees, lock_calls, get_calls, put_calls;
 static bool fail_fd, fail_sync;
@@ -120,10 +128,10 @@ dma_fence_get_stub(void)
 static int
 dma_fence_get_status(struct dma_fence *f)
 {
-	return status(f);
+	return fixture_status(f);
 }
 static bool
-dma_fence_is_later(struct dma_fence *a, struct dma_fence *b)
+dma_fence_is_later(const struct dma_fence *a, const struct dma_fence *b)
 {
 	CHECK(a->context == b->context);
 	return (int64_t)(a->seqno - b->seqno) > 0;
@@ -195,14 +203,14 @@ fd_allocfile(struct file **fp, int *fd)
 	return EMFILE;
 }
 static void
-fd_affix(int p, struct file *fp, int fd)
+fd_affix(int p, const struct file *fp, int fd)
 {
 	(void)p;
 	CHECK(fd_used[fd] && !fd_visible[fd] && fp == &fd_table[fd]);
 	fd_visible[fd] = true;
 }
 static void
-fd_abort(int p, struct file *fp, int fd)
+fd_abort(int p, const struct file *fp, int fd)
 {
 	(void)p;
 	CHECK(fd_used[fd] && !fd_visible[fd] && fp == &fd_table[fd]);
@@ -315,6 +323,7 @@ imported(struct file *fp, unsigned flags, int fd)
 {
 	struct dma_buf_import_sync_file a = {flags, fd};
 	CHECK(actual_ioctl(fp, DMA_BUF_IOCTL_IMPORT_SYNC_FILE, &a) == 0);
+	CHECK((((struct dma_buf *)fp->f_data)->resv->seq.value & 1) == 0);
 }
 static void
 validate_access(struct file *fp)
@@ -386,12 +395,12 @@ main(void)
 	struct dma_fence *f = fd_fence(fd);
 	enable(f);
 	child_signal(w);
-	CHECK(status(f) == 0);
+	CHECK(fixture_status(f) == 0);
 	child_signal(rd);
-	CHECK(status(f) == 0);
+	CHECK(fixture_status(f) == 0);
 	child_signal(incoming);
 	drain();
-	CHECK(status(f) == -EIO);
+	CHECK(fixture_status(f) == -EIO);
 	close_fd(fd);
 	close_fd(input);
 	set_fences(&r, NULL, NULL);
@@ -434,10 +443,10 @@ main(void)
 	CHECK(to_dma_fence_array(f)->num_fences == 2);
 	enable(f);
 	child_signal(writer);
-	CHECK(status(f) == 0);
+	CHECK(fixture_status(f) == 0);
 	child_signal(a);
 	drain();
-	CHECK(status(f) == 1);
+	CHECK(fixture_status(f) == 1);
 	child_signal(c);
 	drain();
 	close_fd(fd);
@@ -453,7 +462,7 @@ main(void)
 	input = make_sync(&extra->base);
 	for (unsigned mode = 0; mode < 6; mode++) {
 		struct dma_buf_export_sync_file ex = {DMA_BUF_SYNC_WRITE, -77};
-		struct dma_fence *before = r.fence_excl;
+		const struct dma_fence *before = r.fence_excl;
 		fail_fd = mode == 0;
 		lock_error = mode == 1 ? EINTR : 0;
 		fail_vector = mode == 2 ? vector_calls + 1 : 0;
@@ -541,11 +550,11 @@ main(void)
 	set_fences(&r, &second->base, NULL);
 	CHECK(fd_fence(fd) == &first->base);
 	child_signal(first);
-	CHECK(status(fd_fence(fd)) == -EIO);
+	CHECK(fixture_status(fd_fence(fd)) == -EIO);
 	close_fd(fd);
 	set_fences(&r, &first->base, NULL);
 	fd = exported(&fp, DMA_BUF_SYNC_READ);
-	CHECK(status(fd_fence(fd)) == -EIO);
+	CHECK(fixture_status(fd_fence(fd)) == -EIO);
 	close_fd(fd);
 	set_fences(&r, NULL, NULL);
 	dma_fence_put(&first->base);

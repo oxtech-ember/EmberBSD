@@ -46,7 +46,7 @@ spin_lock_init(spinlock_t *p)
 	CHECK(pthread_mutex_init(p, NULL) == 0);
 }
 static bool
-spin_is_locked(spinlock_t *p)
+spin_is_locked(const spinlock_t *p)
 {
 	for (unsigned i = 0; i < nlocks; i++)
 		if (locks[i] == p)
@@ -279,7 +279,7 @@ enable(struct dma_fence *f)
 	spin_unlock(f->lock);
 }
 static int
-status(struct dma_fence *f)
+fixture_status(struct dma_fence *f)
 {
 	spin_lock(f->lock);
 	int v = dma_fence_is_signaled_locked(f) ? (f->error ? f->error : 1) : 0;
@@ -310,14 +310,14 @@ run(unsigned n, bool any, unsigned complete, int error, bool threaded)
 	CHECK(a->base.refs == 1);
 	enable(&a->base);
 	if (!complete)
-		CHECK(status(&a->base) == 0);
+		CHECK(fixture_status(&a->base) == 0);
 	if (!threaded) {
 		for (unsigned i = complete; i < n; i++) {
 			child_signal(c[i]);
 			if (!any && i + 1 < n)
-				CHECK(status(&a->base) == 0);
+				CHECK(fixture_status(&a->base) == 0);
 			if (any || i + 1 == n)
-				CHECK(status(&a->base) == (error ? error : 1));
+				CHECK(fixture_status(&a->base) == (error ? error : 1));
 		}
 	} else {
 		pthread_t threads[8];
@@ -328,7 +328,7 @@ run(unsigned n, bool any, unsigned complete, int error, bool threaded)
 			CHECK(pthread_join(threads[i], NULL) == 0);
 	}
 	drain();
-	CHECK(status(&a->base) == (error ? error : 1));
+	CHECK(fixture_status(&a->base) == (error ? error : 1));
 	CHECK(a->base.refs == 1);
 	dma_fence_put(&a->base);
 	for (unsigned i = 0; i < n; i++) {
@@ -365,10 +365,10 @@ main(int argc, char **argv)
 		CHECK(a);
 		enable(&a->base);
 		child_signal(first);
-		CHECK(status(&a->base) == 1);
+		CHECK(fixture_status(&a->base) == 1);
 		child_signal(late);
 		drain();
-		CHECK(status(&a->base) == 1);
+		CHECK(fixture_status(&a->base) == 1);
 		dma_fence_put(&a->base);
 		dma_fence_put(&first->base);
 		dma_fence_put(&late->base);
