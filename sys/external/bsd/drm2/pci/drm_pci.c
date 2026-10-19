@@ -58,6 +58,33 @@ drm_pci_attach_args(struct drm_device *dev)
 	return &dev->pdev->pd_pa;
 }
 
+/*
+ * Publish the PCI identity cached by the Linux pci_dev shim.  DRM
+ * registration copies it into hw.drm2.identity<minor>, as described in
+ * ember/boot/drm-native-identity.md.  drm_dev_init() cleared the record.
+ */
+static void
+drm_pci_native_identity(struct drm_device *dev, const struct pci_dev *pdev)
+{
+	const struct pci_attach_args *pa = &pdev->pd_pa;
+	struct drm_native_pci_record *r = &dev->native_pci;
+
+	memset(r, 0, sizeof(*r));
+	r->version = DRM_NATIVE_PCI_VERSION;
+	r->length = sizeof(*r);
+	r->flags = DRM_NATIVE_REVISION;
+	r->bus_type = DRM_NATIVE_BUS_PCI;
+	r->domain = pci_get_segment(pa->pa_pc);
+	r->bus = pa->pa_bus;
+	r->device = pa->pa_device;
+	r->function = pa->pa_function;
+	r->vendor = pdev->vendor;
+	r->product = pdev->device;
+	r->subvendor = pdev->subsystem_vendor;
+	r->subproduct = pdev->subsystem_device;
+	r->revision = pdev->revision;
+}
+
 int
 drm_pci_attach(struct drm_device *dev, struct pci_dev *pdev)
 {
@@ -130,6 +157,8 @@ drm_pci_attach(struct drm_device *dev, struct pci_dev *pdev)
 			dev->agp->agp_mtrr = arch_phys_wc_add(dev->agp->base,
 				dev->agp->agp_info.aki_info.ai_aperture_size);
 	}
+
+	drm_pci_native_identity(dev, pdev);
 
 	/* Success!  */
 	return 0;

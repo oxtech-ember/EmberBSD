@@ -1,7 +1,8 @@
 # Native DRM PCI identity
 
-Experimental native VirtGPU publishes immutable, read-only PCI metadata at
-`hw.drm2.identity<minor>`. A primary or render minor addresses the same
+Experimental native VirtGPU and PCI DRM drivers with a Linux `pci_dev`
+publish immutable, read-only PCI metadata at `hw.drm2.identity<minor>`.
+A primary or render minor addresses the same
 record. Readers need no DRM master, primary-node open, `/dev/pci` or
 `/dev/drvctl` access. This exposes public identity only and grants no KMS,
 PCI configuration, buffer-allocation or rendering authority.
@@ -9,8 +10,17 @@ PCI configuration, buffer-allocation or rendering authority.
 The native VirtIO child has no Linux `pci_dev`. Its existing bus-ID attach
 path identifies the actual PCI parent, segment, bus and transport locators.
 It snapshots ID, class/revision and subsystem-ID registers once at attach.
-Non-PCI transport attachment does not fabricate PCI metadata. Other drivers
-which do not fill the cache retain their established discovery behavior.
+Non-PCI transport attachment does not fabricate PCI metadata.
+
+PCI DRM drivers with a Linux `pci_dev` attach through `drm_pci_attach()`.
+These include i915, amdgpu, radeon, nouveau, vmwgfx and via.
+After its last failure return, `drm_pci_attach()` fills the record from the
+shim's attach arguments and cached IDs. The segment is the domain.
+The record always sets the revision flag; the shim reads the revision at attach.
+`drm_dev_init()` clears the record first, and `drm_dev_register()` copies it.
+Other drivers which do not fill the cache retain their established discovery
+behavior. A metadata registration failure now also fails `drm_dev_register()`
+for these PCI drivers.
 
 ## Version 1 record
 
@@ -69,6 +79,7 @@ the existing VirtGPU EXEC caller converts that to `EINVAL`.
 
 ```sh
 sh ember/tools/drm-native-identity-contract.sh
+sh ember/tools/drm-pci-identity-contract.sh
 sh ember/tools/virtgpu-contract.sh
 sh ember/tools/virtgpu-console-contract.sh
 sh ember/tools/virtio-transport-contract.sh
@@ -78,13 +89,17 @@ The new host contract compiles actual registration, unregister, PCI snapshot
 and sync-fd functions. It checks partial failures, absent cache, independent
 indices, immutable storage, a concurrent reader, node reuse and foreign fds.
 Mocks represent sysctl/autoconf/file boundaries, not replacements for the
-production algorithms. Host checks do not establish native kernel compilation
+production algorithms. The PCI shim contract runs the actual
+`drm_pci_native_identity()` and checks every record field.
+It also requires one call after the last failure return of `drm_pci_attach()`. Host checks do not establish native kernel compilation
 or hardware concurrency behavior.
 
 Native `-Werror` compilation of the four changed translation units and the
 new contracts passes on NetBSD 11/aarch64. This does not link a kernel: the
 changed `drm_device` layout requires rebuilding every dependent object for
 both complete kernel configurations. Runtime acceptance is still pending.
+A GCC16 cross-built Jasper Lake trial kernel with the `drm_pci.c` change boots;
+its sysctl record and libdrm lookup have no hardware check yet.
 Live acceptance
 must use the matched libdrm for `drmGetDevices2`, `drmGetDevice2(render_fd)`,
 render-name and node-type lookup, with no primary master and no global PCI
