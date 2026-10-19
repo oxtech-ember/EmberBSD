@@ -139,6 +139,8 @@ shipped parser sources during normal builds and keep explicit regeneration avail
 disk ioctl dispatch and linker layouts.
 [Userland contracts](ember/tests/gcc16-userland-recovery.md) cover short writes,
 list ownership, terminal input and buffer boundaries.
+[Static Citrus archive checks](ember/boot/static-citrus.md) cover default and
+explicit library policy before and after native make initializes its rules.
 [Imported-source checks](ember/tools/tests/imported-gcc16/README.md) cover
 fragmented PCAP reads, descriptor cleanup, sparse ICMP lookups, nvi size limits
 and generated parser error counts. Host regressions and isolated ARMv7 object

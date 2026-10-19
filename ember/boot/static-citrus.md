@@ -53,7 +53,8 @@ executable wrapper, such as Valgrind.
 Run `sh ember/tools/citrus-static-make-contract.sh` with native make or bmake.
 Set `CITRUS_MAKE` to select it. The contract queries the actual native archive
 rules for static/shared and profiling/debug configurations. It creates no
-target objects.
+target objects. It covers the early `MKLINKLIB` default before `bsd.lib.mk`
+defines `MAKELINKLIB`, and explicit enabled/disabled archive overrides.
 
 [The owning CI workflow](../../.github/workflows/citrus-static.yml) runs GCC16
 path analysis, Cppcheck, CSA, ASan/UBSan, and Linux Memcheck. Native mapper-area

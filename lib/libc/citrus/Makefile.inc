@@ -37,9 +37,10 @@ CPPFLAGS.${src}+= -I${LIBCDIR}/citrus
 .endfor
 DPSRCS+= ${CITRUS_STATIC_SRCS}
 STOBJS+= ${CITRUS_STATIC_SRCS:.c=.o}
-.if ${MKPROFILE} != "no" && ${MAKELINKLIB} != "no"
+# bsd.lib.mk defines MAKELINKLIB after this fragment is included.
+.if ${MKPROFILE} != "no" && ${MAKELINKLIB:U${MKLINKLIB}} != "no"
 POBJS+= ${CITRUS_STATIC_SRCS:.c=.po}
 .endif
-.if ${MKDEBUGLIB} != "no" && ${MAKELINKLIB} != "no"
+.if ${MKDEBUGLIB} != "no" && ${MAKELINKLIB:U${MKLINKLIB}} != "no"
 GOBJS+= ${CITRUS_STATIC_SRCS:.c=.go}
 .endif
