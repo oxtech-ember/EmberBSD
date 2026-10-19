@@ -123,7 +123,8 @@ struct iwx_tx_radiotap_header {
 	 (1 << IEEE80211_RADIOTAP_RATE) |				\
 	 (1 << IEEE80211_RADIOTAP_CHANNEL))
 
-#define IWX_UCODE_SECT_MAX 69
+/* 69 in OpenBSD; BE200 (gl-c0-fm-c0-100) ships 73 RT sections, Linux allows 94. */
+#define IWX_UCODE_SECT_MAX 94
 
 /*
  * fw_status is used to determine if we've already parsed the firmware file

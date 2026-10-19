@@ -12123,7 +12123,19 @@ iwx_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 	/* Install interrupt handler.  MSI-X is not used in stage 1. */
-	err = pci_intr_alloc(pa, &sc->sc_pihp, NULL, 0);
+	/*
+	 * Stage 1 programs the device for MSI/INTx only (sc_msix = 0), so do
+	 * not let pci_intr_alloc() pick an MSI-X vector.
+	 */
+	{
+		int counts[PCI_INTR_TYPE_SIZE] = {
+			[PCI_INTR_TYPE_INTX] = 1,
+			[PCI_INTR_TYPE_MSI] = 1,
+			[PCI_INTR_TYPE_MSIX] = 0,
+		};
+		err = pci_intr_alloc(pa, &sc->sc_pihp, counts,
+		    PCI_INTR_TYPE_MSI);
+	}
 	if (err) {
 		printf("%s: can't allocate interrupt\n",
 		    device_xname(sc->sc_dev));
