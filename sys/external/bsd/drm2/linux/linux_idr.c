@@ -339,13 +339,17 @@ idr_alloc(struct idr *idr, void *data, int start, int end, gfp_t gfp)
 	int maximum = (end <= 0? INT_MAX : (end - 1));
 	struct idr_cache *cache;
 	struct idr_node *node, *search, *collision __diagused;
-	int id = start;
+	int id;
 
 	/* Sanity-check inputs.  */
 	if (ISSET(gfp, __GFP_WAIT))
 		ASSERT_SLEEPABLE();
 	if (__predict_false(start < 0))
 		return -EINVAL;
+	/* Like Linux, never allocate below the base from idr_init_base.  */
+	if (start < idr->idr_base)
+		start = idr->idr_base;
+	id = start;
 	if (__predict_false(maximum < start))
 		return -ENOSPC;
 
