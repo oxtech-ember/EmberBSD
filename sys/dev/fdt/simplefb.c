@@ -221,6 +221,108 @@ simplefb_console_cancel(struct wsdisplay_bootfb_lease *lease)
 }
 #endif
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+/* This wrapper owns the unified result, including a failed post-drain rematch. */
+static struct {
+	struct wsdisplay_bootfb_lease *lease;
+	device_t device;
+	bool active;
+	bool terminal;
+	struct simplefb_console_close_status status;
+} simplefb_close;
+
+int
+simplefb_console_close_status(struct wsdisplay_bootfb_lease *lease,
+    struct simplefb_console_close_status *out)
+{
+	struct wsdisplay_bootfb_close_status mi;
+	int error;
+
+	if (out == NULL)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	KERNEL_LOCK(1, NULL);
+	error = wsdisplay_bootfb_close_status(lease, &mi);
+	if (error == 0) {
+		if (simplefb_close.lease != lease)
+			error = ENXIO;
+		else
+			memcpy(out, &simplefb_close.status, sizeof(*out));
+	}
+	KERNEL_UNLOCK_ONE(NULL);
+	return error;
+}
+
+int
+simplefb_console_close(struct wsdisplay_bootfb_lease *lease)
+{
+	struct simplefb_console_close_status value;
+	struct wsdisplay_bootfb_close_status mi;
+	struct simplefb_softc *sc;
+	device_t dev;
+	int error, status_error;
+
+	if (panicstr != NULL || cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (pserialize_in_read_section())
+		return EDEADLK;
+	ASSERT_SLEEPABLE();
+	KERNEL_LOCK(1, NULL);
+	if (simplefb_close.lease == lease && lease != NULL &&
+	    simplefb_close.terminal) {
+		error = simplefb_close.status.error;
+		goto out;
+	}
+	if (simplefb_close.active) {
+		error = EBUSY;
+		goto out;
+	}
+	dev = wsdisplay_bootfb_lease_device(lease);
+	if (dev == NULL) {
+		error = EPERM;
+		goto out;
+	}
+	sc = device_private(dev);
+	error = fdtbus_bootfb_match(dev, sc->sc_phandle, sc->sc_bst,
+	    &sc->sc_framebuffer);
+	if (error != 0)
+		goto out;
+	simplefb_close.lease = lease;
+	simplefb_close.device = dev;
+	simplefb_close.active = true;
+	memset(&value, 0, sizeof(value));
+	error = wsdisplay_bootfb_close(lease);
+	value.mi_error = error;
+	status_error = wsdisplay_bootfb_close_status(lease, &mi);
+	if (status_error != 0) {
+		/* An admitted outcome must not be retried after identity is lost. */
+		if (error == 0)
+			error = status_error;
+		simplefb_close.terminal = true;
+	} else {
+		value.generation = mi.generation;
+		value.attempted = mi.attempted;
+		value.closed = mi.closed;
+		value.drained = mi.drained;
+		simplefb_close.terminal = mi.closed;
+		if (error == 0) {
+			value.md_error = fdtbus_bootfb_match(dev,
+			    sc->sc_phandle, sc->sc_bst, &sc->sc_framebuffer);
+			error = value.md_error;
+		}
+	}
+	value.error = error;
+	value.complete = value.closed && value.drained && error == 0;
+	memcpy(&simplefb_close.status, &value, sizeof(value));
+	simplefb_close.active = false;
+out:
+	KERNEL_UNLOCK_ONE(NULL);
+	return error;
+}
+#endif
+
 static bool
 simplefb_shutdown(device_t self, int flags)
 {

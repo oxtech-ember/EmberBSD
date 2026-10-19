@@ -260,6 +260,11 @@ static int wsdisplay_console_initted;
 static int wsdisplay_console_attached;
 static struct wsdisplay_softc *wsdisplay_console_device;
 static struct wsscreen_internal wsdisplay_console_conf;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+/* Actual checked binding commits. Giant or cold bootstrap serializes updates. */
+static uint64_t wsdisplay_console_generation;
+static bool wsdisplay_poll_admitted;
+#endif
 
 static int wsdisplay_getc(dev_t);
 static void wsdisplay_pollc(dev_t, int);
@@ -882,6 +887,7 @@ wsdisplay_emul_attach(device_t parent, device_t self, void *aux)
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 		wsdisplay_cons.cn_dev = makedev(maj,
 		    WSDISPLAYMINOR(device_unit(self), 0));
+		wsdisplay_console_generation++;
 #else
 		cn_tab->cn_dev = makedev(maj, WSDISPLAYMINOR(device_unit(self),
 					 0));
@@ -1175,8 +1181,10 @@ wsdisplay_common_attach(struct wsdisplay_softc *sc, int console, int kbdmux,
 		aprint_error_dev(sc->sc_dev,
 		    "couldn't establish power handler\n");
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
-	if (console)
+	if (console) {
+		wsdisplay_console_generation++;
 		cn_publication_exit();
+	}
 #endif
 	return 0;
 }
@@ -1235,6 +1243,7 @@ wsdisplay_cnattach_checked(const struct wsscreen_descr *type, void *cookie,
 		return EBUSY;
 	}
 	wsdisplay_cnattach_impl(type, cookie, ccol, crow, defattr);
+	wsdisplay_console_generation++;
 	cn_publication_exit();
 	return 0;
 }
@@ -1330,8 +1339,15 @@ wsdisplay_early_preattach(const struct wsscreen_descr *type, void *cookie,
 	}
 	atomic_store_release(&wsdisplay_early_phase, WSDISPLAY_EARLY_BOUND);
 	s = pserialize_read_enter();
-	replay(arg);
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (cn_publication_closed())
+		error = EBUSY;
+	else
+#endif
+		replay(arg);
 	pserialize_read_exit(s);
+	if (error != 0)
+		goto out;
 	if (panicstr != NULL) {
 		error = EWOULDBLOCK;
 		goto out;
@@ -1362,6 +1378,56 @@ wsdisplay_early_binding_matches(const struct wsscreen_descr *type, void *cookie)
 	    cookie == wsdisplay_early_cookie && panicstr == NULL &&
 	    wsdisplay_early_binding();
 }
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+int
+wsdisplay_early_close(const struct wsscreen_descr *type, void *cookie,
+    pserialize_t psz, struct wsdisplay_bootfb_close_status *out)
+{
+	struct wsdisplay_bootfb_close_status value;
+	uint64_t generation;
+	int count, error;
+
+	KASSERT(KERNEL_LOCKED_P());
+	if (type == NULL || cookie == NULL || psz == NULL || out == NULL)
+		return EINVAL;
+	if (panicstr != NULL || cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (pserialize_in_read_section())
+		return EDEADLK;
+	ASSERT_SLEEPABLE();
+	if (!wsdisplay_early_binding_matches(type, cookie))
+		return ENXIO;
+	if (wsdisplay_cons_pollmode)
+		return EBUSY;
+	generation = wsdisplay_console_generation;
+	error = cn_publication_freeze();
+	if (error != 0 && error != EALREADY)
+		return error;
+	memset(&value, 0, sizeof(value));
+	value.generation = generation;
+	value.attempted = true;
+	value.closed = true;
+	if (error != 0)
+		goto done;
+	/* Readers finish with no Giant recursion held by this writer. */
+	KERNEL_UNLOCK_ALL(NULL, &count);
+	pserialize_perform(psz);
+	KERNEL_LOCK(count, NULL);
+	if (panicstr != NULL) {
+		/* perform may return without a barrier during panic. */
+		error = EWOULDBLOCK;
+	} else if (generation != wsdisplay_console_generation ||
+	    !wsdisplay_early_binding_matches(type, cookie)) {
+		error = ENXIO;
+	} else {
+		value.drained = true;
+	}
+done:
+	value.error = error;
+	memcpy(out, &value, sizeof(value));
+	return error;
+}
+#endif
 #endif
 
 static void
@@ -1420,6 +1486,7 @@ wsdisplay_preattach_checked(const struct wsscreen_descr *type, void *cookie,
 		return EBUSY;
 	}
 	wsdisplay_preattach_impl(type, cookie, ccol, crow, defattr);
+	wsdisplay_console_generation++;
 	cn_publication_exit();
 	return 0;
 }
@@ -1459,6 +1526,7 @@ wsdisplay_predetach_checked(void)
 		return EBUSY;
 	}
 	wsdisplay_predetach_impl();
+	wsdisplay_console_generation++;
 	cn_publication_exit();
 	return 0;
 }
@@ -1497,6 +1565,7 @@ wsdisplay_cndetach_checked(void)
 		return EBUSY;
 	}
 	wsdisplay_cndetach_impl();
+	wsdisplay_console_generation++;
 	cn_publication_exit();
 	return 0;
 }
@@ -2845,6 +2914,11 @@ wsdisplay_cnputc(dev_t dev, int i)
 			pserialize_read_exit(early_s);
 	}
 #endif
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	/* Keep this check inside the admitted early read section. */
+	if (cn_publication_closed())
+		goto out;
+#endif
 
 	if (!wsdisplay_console_initted)
 		goto out;
@@ -2884,7 +2958,15 @@ wsdisplay_getc(dev_t dev)
 #ifdef WSDISPLAY_MULTICONS
 	if (!wsdisplay_multicons_suspended &&
 	    wsdisplay_multicons_enable && wsdisplay_ocn && wsdisplay_ocn->cn_getc) {
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		/* Standalone getc need not have a surrounding poll pair. */
+		if (cn_publication_enter() != 0)
+			return -1;
+#endif
 		c = wsdisplay_ocn->cn_getc(wsdisplay_ocn->cn_dev);
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		cn_publication_exit();
+#endif
 		if (c >= 0)
 			return c;
 	}
@@ -2896,10 +2978,18 @@ static void
 wsdisplay_pollc(dev_t dev, int on)
 {
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (on)
+		wsdisplay_poll_admitted = cn_publication_enter() == 0;
+#endif
 	wsdisplay_cons_pollmode = on;
 
 	/* notify to fb drivers */
-	if (wsdisplay_console_device != NULL &&
+	if (
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	    wsdisplay_poll_admitted &&
+#endif
+	    wsdisplay_console_device != NULL &&
 	    wsdisplay_console_device->sc_accessops->pollc != NULL)
 		(*wsdisplay_console_device->sc_accessops->pollc)
 			(wsdisplay_console_device->sc_accesscookie, on);
@@ -2910,9 +3000,19 @@ wsdisplay_pollc(dev_t dev, int on)
 
 #ifdef WSDISPLAY_MULTICONS
 	/* notify to old console driver */
-	if (!wsdisplay_multicons_suspended &&
+	if (
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	    wsdisplay_poll_admitted &&
+#endif
+	    !wsdisplay_multicons_suspended &&
 	    wsdisplay_multicons_enable && wsdisplay_ocn && wsdisplay_ocn->cn_pollc)
 		wsdisplay_ocn->cn_pollc(wsdisplay_ocn->cn_dev, on);
+#endif
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (!on && wsdisplay_poll_admitted) {
+		wsdisplay_poll_admitted = false;
+		cn_publication_exit();
+	}
 #endif
 }
 

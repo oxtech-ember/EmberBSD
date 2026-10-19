@@ -18,7 +18,7 @@ bool wsdisplay_bootfb_release(device_t);
 void wsdisplay_bootfb_commit(device_t);
 
 #ifdef WSDISPLAY_BOOTFB_DEFER
-/* No close, writer drain, hardware handoff or access grant is implemented. */
+/* Claim identifies the resident binding. It grants no hardware access. */
 bool wsdisplay_early_binding_matches(const struct wsscreen_descr *, void *);
 int wsdisplay_bootfb_defer(device_t, const struct wsscreen_descr *, void *,
     int (*)(device_t));
@@ -27,5 +27,25 @@ int wsdisplay_bootfb_claim(device_t, struct wsdisplay_bootfb_lease **);
 device_t wsdisplay_bootfb_lease_device(struct wsdisplay_bootfb_lease *);
 int wsdisplay_bootfb_cancel(struct wsdisplay_bootfb_lease *);
 void wsdisplay_bootfb_retain(struct wsdisplay_bootfb_lease *);
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include <sys/pserialize.h>
+/* Private value facts. Neither closed nor drained grants hardware access. */
+struct wsdisplay_bootfb_close_status {
+	uint64_t generation;
+	int error;
+	bool attempted;
+	bool closed;
+	bool drained;
+};
+int wsdisplay_bootfb_close(struct wsdisplay_bootfb_lease *)
+    __attribute__((__warn_unused_result__));
+int wsdisplay_bootfb_close_status(struct wsdisplay_bootfb_lease *,
+    struct wsdisplay_bootfb_close_status *)
+    __attribute__((__warn_unused_result__));
+/* Issuer-only: Giant held on entry and return; all of it drops at the barrier. */
+int wsdisplay_early_close(const struct wsscreen_descr *, void *, pserialize_t,
+    struct wsdisplay_bootfb_close_status *)
+    __attribute__((__warn_unused_result__));
+#endif
 #endif
 #endif

@@ -17,7 +17,9 @@ enum wsdisplay_bootfb_phase {
 	BOOTFB_CLAIMED,
 	BOOTFB_FALLBACK_STARTING,
 	BOOTFB_FALLBACK_DONE,
-	BOOTFB_RETAINED
+	BOOTFB_RETAINED,
+	BOOTFB_CLOSING,
+	BOOTFB_CLOSED
 };
 
 /* One record serves both legacy reservations and the native opaque lease. */
@@ -36,6 +38,9 @@ static struct {
 #ifdef WSDISPLAY_BOOTFB_DEFER
 struct wsdisplay_bootfb_lease {
 	bool issued;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	struct wsdisplay_bootfb_close_status close;
+#endif
 };
 static struct wsdisplay_bootfb_lease wsdisplay_bootfb_lease;
 #endif
@@ -276,4 +281,78 @@ wsdisplay_bootfb_cancel(struct wsdisplay_bootfb_lease *lease)
 	KERNEL_UNLOCK_ONE(NULL);
 	return error;
 }
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+static bool
+wsdisplay_bootfb_issued(struct wsdisplay_bootfb_lease *lease)
+{
+
+	KASSERT(KERNEL_LOCKED_P());
+	return lease == &wsdisplay_bootfb_lease &&
+	    wsdisplay_bootfb_lease.issued;
+}
+
+int
+wsdisplay_bootfb_close_status(struct wsdisplay_bootfb_lease *lease,
+    struct wsdisplay_bootfb_close_status *out)
+{
+	int error = 0;
+
+	if (out == NULL)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	KERNEL_LOCK(1, NULL);
+	if (!wsdisplay_bootfb_issued(lease))
+		error = EPERM;
+	else
+		memcpy(out, &lease->close, sizeof(*out));
+	KERNEL_UNLOCK_ONE(NULL);
+	return error;
+}
+
+int
+wsdisplay_bootfb_close(struct wsdisplay_bootfb_lease *lease)
+{
+	struct wsdisplay_bootfb_close_status value;
+	pserialize_t psz = NULL;
+	int error;
+
+	if (pserialize_in_read_section())
+		return EDEADLK;
+	error = wsdisplay_bootfb_context();
+	if (error != 0)
+		return error;
+	KERNEL_LOCK(1, NULL);
+again:
+	if (!wsdisplay_bootfb_issued(lease)) {
+		error = EPERM;
+	} else if (wsdisplay_bootfb.phase == BOOTFB_CLOSED) {
+		error = lease->close.error;
+	} else if (wsdisplay_bootfb.phase != BOOTFB_CLAIMED) {
+		error = EBUSY;
+	} else if (psz == NULL) {
+		/* KM_SLEEP can yield Giant. Revalidate after allocation. */
+		KERNEL_UNLOCK_ONE(NULL);
+		psz = pserialize_create();
+		KERNEL_LOCK(1, NULL);
+		goto again;
+	} else {
+		memset(&value, 0, sizeof(value));
+		wsdisplay_bootfb.phase = BOOTFB_CLOSING;
+		error = wsdisplay_early_close(wsdisplay_bootfb.type,
+		    wsdisplay_bootfb.cookie, psz, &value);
+		value.error = error;
+		memcpy(&lease->close, &value, sizeof(value));
+		wsdisplay_bootfb.phase = value.closed ?
+		    BOOTFB_CLOSED : BOOTFB_CLAIMED;
+	}
+	KERNEL_UNLOCK_ONE(NULL);
+	if (psz != NULL)
+		pserialize_destroy(psz);
+	return error;
+}
+
+#endif
+
 #endif

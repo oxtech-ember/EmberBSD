@@ -1,19 +1,19 @@
-# Checked console publication foundation
+# Checked console publication and present-lease drain
 
 `WSDISPLAY_BOOTFB_HANDOFF` is default-off. It selects
 `WSDISPLAY_BOOTFB_DEFER` and the early framebuffer reader hooks. No ordinary or
 experimental kernel configuration enables this new option. There is no native
-caller, close/drain actuator, replacement output sink or hardware operation.
+caller, replacement output sink or hardware operation. The explicit present-lease
+close below is source-tested. No boot or physical handoff is accepted.
 
 ## Publication contract
 
 The private [console counter](../../sys/dev/cons_handoffvar.h) records active
 publication operations. It does not serialize their binding updates. Runtime
 binders also hold Giant; selected early preattach uses bootstrap serialization.
-Its CLOSED state only refuses new binding publication.
-It does not stop a reader, drain a callback, close a poll session or detach a
-device. The foundation has no production caller of `cn_publication_freeze`.
-It does not make CLOSED a display ownership grant.
+Its CLOSED state refuses new binding publication and admitted old input. The
+counter alone does not drain a reader or detach a device. The explicit actuator
+uses a separate real reader barrier. CLOSED is not a display ownership grant.
 
 The checked profile exports errno-returning `wsdisplay_cnattach_checked`,
 `wsdisplay_preattach_checked`, `wsdisplay_predetach_checked`,
@@ -102,6 +102,72 @@ and known console binders, including conditional branches. It refuses a new
 publisher. This lexical check is separate from target object symbol closure.
 Host controls, isolated compilation and
 static analysis do not establish a coherent kernel link or physical handoff.
-The existing TOLOG/msgbuf behavior is unchanged. Direct `cnputc` and TOCONS-only
-output is not redirected. Reader close/drain, a stable post-close sink and the
-exact owner actuator remain separate from this foundation.
+
+## Exact present-lease close
+
+The [FDT wrapper](../../sys/dev/fdt/simplefbvar.h) accepts only a real issued
+`wsdisplay_bootfb_lease` for the exact resident early binding. Call
+`simplefb_console_close` in process context. Do not hold an owner, callback,
+printf or spin lock across it. This contract permits Giant recursion; the writer
+drops all Giant levels for `pserialize_perform` and restores the same depth.
+It creates a real local pserialize handle before irreversible admission.
+Its KM_SLEEP allocation can yield, so the issuer revalidates the lease afterward.
+
+Before freeze, an active publisher, old getc, poll session or initial replay
+returns EBUSY. The lease remains CLAIMED and cancelable. After freeze, cancel,
+fallback and new checked publications refuse. Actual binding commits supply the
+saved generation. The writer checks the same binding and generation after the
+barrier. Panic can make the real barrier return without draining; that outcome
+remains closed with an error. No reopen, detach, unmap or retry is provided.
+
+Actual cnputc checks CLOSED inside its early pserialize section before the
+emulator and old MULTICONS callbacks. Each standalone old getc holds separate CAS
+admission until the callback returns; it can block and is not a pserialize
+reader. A poll pair holds admission through its final old callback. A closed
+pair still balances keyboard callbacks, and closed getc keeps keyboard input.
+The external cons.c poll refcount, preemption and heartbeat logic is unchanged.
+Whole initial replay keeps publisher admission through final vcons update and
+READY. It cannot race a valid issued close. The additional CLOSED replay guard
+is defensive; its fixture fault injection bypasses the normal freeze protocol.
+
+`simplefb_console_close_status` returns cached value facts: generation, separate
+MI and MD errors, unified error, attempted, closed, drained and complete. Invalid
+queries leave output unchanged. The FDT wrapper checks the real association
+before MI close and rematches it after a successful MI drain. A failed rematch
+is a sticky unified failure even if the descriptor later recovers. Valid-context
+repeats for the same terminal lease return its original result without another
+barrier or rematch. Concurrent close refuses with EBUSY.
+
+The early READY/type/cookie metadata, descriptor, mappings, emulator and device
+remain resident. The exact metadata remains matchable after CPU output closes;
+it does not restore cancel or output authority. The cn_tab pointer is not swapped.
+The existing TOLOG path records a character in msgbuf before v_putc. Closed output
+does not call printf or logputchar again. Direct cnputc, TOCONS-only and DDB output
+are not redirected or promised visible.
+
+This API does not create a tty or change cn_dev. A resident early console can
+still have NODEV. A future boot-integrated caller must provide a valid console
+open/tty contract independently; this source slice does not make that boot safe.
+A CPU drain proves neither firmware/audio/DMA/scanout exclusion nor power or
+MMIO accessibility. ENXIO, no framebuffer and a NULL owner do not grant access.
+Future verified-absence admission is a separate typed contract. Boot GOP is not
+an assumed permanent prerequisite for headless or hotplug operation.
+
+```sh
+ruby ember/tools/console-close-contract.rb /absolute/os/source
+SKIP_MUTANTS=1 CFLAGS='-O1 -g -fsanitize=address,undefined' \
+    ruby ember/tools/console-close-contract.rb /absolute/os/source
+```
+
+This fixture compiles the real issuer, checked bootstrap, output, getc, poll,
+writer, FDT association matcher/wrapper, vcons replay and TOLOG putone bodies.
+Only the three unchanged unused callback dev parameters have fixture-only unused
+attributes; their bodies retain the original bytes. Kernel Giant, allocation,
+pserialize, context, device and FDT parser/platform services are controlled.
+The pthread grace-period model is not a kernel MP or physical scheduling test.
+The original reader, issuer and publication positives remain separate regressions.
+`CONSOLE_CLOSE_EVIDENCE` names a new output directory. `SKIP_MUTANTS=1` skips source
+mutations. `MUTANT` selects comma-separated controls. `COMPILE_ONLY=1` performs
+cross compilation without execution. CC/CFLAGS and one-executable TEST_RUNNER
+apply to both positives and mutants. Each mutant must compile and reach an actual
+CHECK/SIGABRT; a compile error, other crash or timeout refuses the run.

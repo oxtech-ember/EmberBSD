@@ -36,10 +36,31 @@ int simplefb_framebuffer_set_address(struct simplefb_framebuffer *, uint64_t);
 struct wsdisplay_bootfb_lease;
 /* Process context. The two claim outputs must be disjoint caller storage.
  * Cancel is valid only before any hardware handoff.
- * These calls do not close or drain console output, or grant device access. */
+ * Claim/cancel do not close or drain output, or grant device access. */
 int simplefb_console_claim(struct wsdisplay_bootfb_lease **,
     struct simplefb_framebuffer *);
 int simplefb_console_cancel(struct wsdisplay_bootfb_lease *);
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+/* Value facts only. A CPU console drain grants no hardware ownership. */
+struct simplefb_console_close_status {
+	uint64_t generation;
+	int mi_error;
+	int md_error;
+	int error;
+	bool attempted;
+	bool closed;
+	bool drained;
+	bool complete;
+};
+/* Process context; no owner, callback, printf or spin lock across close.
+ * The exact issued lease and all metadata stay resident after admission.
+ * A terminal result is sticky. There is no reopen, detach or hardware IO. */
+int simplefb_console_close(struct wsdisplay_bootfb_lease *)
+    __attribute__((__warn_unused_result__));
+int simplefb_console_close_status(struct wsdisplay_bootfb_lease *,
+    struct simplefb_console_close_status *)
+    __attribute__((__warn_unused_result__));
+#endif
 #endif
 
 /*

@@ -6,9 +6,11 @@
 #include <sys/types.h>
 
 /*
- * Count active publications; this does not serialize their binding updates.
+ * Count active publications and admitted input sessions. This does not serialize
+ * their binding updates.
  * Supported runtime binders also hold Giant. The selected cold preattach path
- * uses bootstrap serialization. This does not stop or drain any reader.
+ * uses bootstrap serialization. Freeze closes admission, not existing readers.
+ * The present-lease actuator separately performs the real reader barrier.
  */
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 int cn_publication_enter(void) __attribute__((__warn_unused_result__));

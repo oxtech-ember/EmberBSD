@@ -87,7 +87,9 @@ common = function(display, 'wsdisplay_common_attach')
 parent = block(display, "#ifdef WSDISPLAY_BOOTFB_HANDOFF\nstatic struct {")
 early_body = block(display, "#ifdef WSDISPLAY_EARLYFB_HOOKS\nenum {")
 early_api = block(files.fetch('sys/dev/wscons/wsdisplayvar.h'), "#ifdef WSDISPLAY_EARLYFB_HOOKS\n/* Actual binding/replay facts only. No stop, handoff or MMIO right is granted. */")
-display_body = [common, parent, *%w[wsdisplay_emul_match wsdisplay_emul_attach
+generation = display[/^static uint64_t wsdisplay_console_generation;/]
+abort 'actual binding generation missing' unless generation
+display_body = [generation, common, parent, *%w[wsdisplay_emul_match wsdisplay_emul_attach
   wsdisplay_emul_detach wsdisplay_cnattach_impl wsdisplay_cnattach_checked
   wsdisplay_preattach_impl wsdisplay_preattach_checked wsdisplay_predetach_impl
   wsdisplay_predetach_checked wsdisplay_cndetach_impl wsdisplay_cndetach_checked].map { |n| function(display, n) }, early_body].join("\n\n")
