@@ -44,7 +44,30 @@ runtime module containing a second owner, mutable core getter, ready flag,
 public address/callback argument, recovery operation or provider replacement API.
 This slice does not implement suspend/resume or hardware access admission.
 
+## Optional cached-status module
+
+The optional [bcm2712_iommuc_status module](../../sys/modules/bcm2712_iommuc_status/)
+is a stateless diagnostic. INIT resolves the canonical ICAC handle, uses the real
+provider lookup and prints one cached status. It reports software attachment,
+core initialization, every observation field and the MMU4 execution result.
+A failed API returns its error without printing invalid output. FINI succeeds.
+Other commands return ENOTTY. No provider pointer survives the command.
+
+The module does not call CONTROL observation, map registers, access MMIO, change
+clocks or retry a retained transaction. It can report a previous rejected raw
+sample without repeating that read. Cached values describe the earlier attempt;
+they do not prove current hardware state or authorize display access.
+
+Build it with the exact running kernel's configured object directory through
+`EMBER_KERNEL_OBJDIR`, its GCC16 toolchain and matching headers. The Makefile
+requires that preprocessing contract. Check kernel identity, module ABI and
+imported symbol closure before loading it. There is no new global kernel ABI.
+The [controlled-API fixture](../tools/bcm2712-iommuc-status-contract.rb) checks the
+actual module body, call order, error paths, output fields and stateless unload.
+Host checks do not establish target linkage or physical ICAC state.
+
 ## Explicit CONTROL observation
+
 
 `bcm2712_iommuc_observe_control(owner)` is an experimental, process-context,
 one-shot operation. Its external prerequisites are a normal-active BCM2712
