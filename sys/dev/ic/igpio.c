@@ -29,6 +29,7 @@
 #include <sys/cdefs.h>
 
 #include <sys/param.h>
+#include <sys/bitops.h>
 #include <sys/bus.h>
 #include <sys/device.h>
 #include <sys/intr.h>
@@ -129,7 +130,7 @@ igpio_padcfg0_print(uint32_t val, int idx)
 		wr += snprintf(buf + wr, len - wr, ", pmode gpio");
 		break;
 	default:
-		wr += snprintf(buf + wr, len - wr, ", pmode %d", pmode);
+		wr += snprintf(buf + wr, len - wr, ", pmode %u", pmode);
 		break;
 	}
 
@@ -193,10 +194,319 @@ out:
 	return ib;
 }
 
+static bus_addr_t igpio_pincfg(struct igpio_bank *, int, int);
+
 static int
 igpio_bank_pin(struct igpio_bank *ib, int pin)
 {
 	return pin - ib->ib_setup->ibs_first_pin;
+}
+
+/*
+ * Origin: EmberBSD (AI-assisted), group based ACPI GPIO numbering.
+ *
+ * For a controller listed in igpio_gpp_devices, gpio pin numbers are the
+ * ACPI GPIO numbers.  Numbers between groups have no pad.
+ */
+static const struct igpio_gpp_device *
+igpio_find_gpp_device(const char *hid)
+{
+	size_t i;
+
+	for (i = 0; i < __arraycount(igpio_gpp_devices); i++) {
+		if (strcmp(hid, igpio_gpp_devices[i].igd_acpi_hid) == 0)
+			return &igpio_gpp_devices[i];
+	}
+
+	return NULL;
+}
+
+static const struct igpio_gpp *
+igpio_find_gpp(const struct igpio_gpp_device *igd, int pin)
+{
+	const struct igpio_gpp *gg;
+	int i;
+
+	for (i = 0; i < igd->igd_ngpps; i++) {
+		gg = &igd->igd_gpps[i];
+		if (pin >= gg->igg_gpio_base &&
+		    pin < gg->igg_gpio_base + gg->igg_npads)
+			return gg;
+	}
+
+	return NULL;
+}
+
+/* Find the bank and the pad index within it for a gpio pin number. */
+static struct igpio_bank *
+igpio_pin_bank(struct igpio_softc *sc, int pin, int *padp,
+    const struct igpio_gpp **ggp)
+{
+	const struct igpio_gpp *gg;
+	struct igpio_bank *ib;
+
+	if (sc->sc_gpp_device == NULL) {
+		ib = igpio_find_bank(sc, pin);
+		if (ib != NULL)
+			*padp = igpio_bank_pin(ib, pin);
+		return ib;
+	}
+
+	gg = igpio_find_gpp(sc->sc_gpp_device, pin);
+	if (gg == NULL)
+		return NULL;
+
+	ib = &sc->sc_banks[gg->igg_barno];
+	*padp = gg->igg_first_pad + (pin - gg->igg_gpio_base) -
+	    ib->ib_setup->ibs_first_pin;
+	if (ggp != NULL)
+		*ggp = gg;
+
+	return ib;
+}
+
+/* Map a firmware GPIO number to a gpio pin, or -1 if it has no pad. */
+int
+igpio_pin_lookup(struct igpio_softc *sc, uint64_t pin)
+{
+	int pad;
+
+	if (sc->sc_pins == NULL || pin >= (uint64_t)sc->sc_npins)
+		return -1;
+	if (igpio_pin_bank(sc, (int)pin, &pad, NULL) == NULL)
+		return -1;
+
+	return (int)pin;
+}
+
+static uint32_t
+igpio_gpp_bit(const struct igpio_gpp *gg, int pin)
+{
+	return __BIT(pin - gg->igg_gpio_base);
+}
+
+static uint32_t
+igpio_gpp_mask(const struct igpio_gpp *gg)
+{
+	return __BITS(gg->igg_npads - 1, 0);
+}
+
+static bool
+igpio_gpp_attach(struct igpio_softc *sc)
+{
+	const struct igpio_gpp_device *igd = sc->sc_gpp_device;
+	const struct igpio_gpp *gg;
+	struct igpio_bank_setup *ibs;
+	bus_space_handle_t bsh;
+	int i, npins = 0;
+
+	for (i = 0; i < igd->igd_ngpps; i++) {
+		gg = &igd->igd_gpps[i];
+		if (gg->igg_barno >= sc->sc_nbar) {
+			aprint_error_dev(sc->sc_dev,
+			    "missing community %d\n", gg->igg_barno);
+			return false;
+		}
+		ibs = sc->sc_banks[gg->igg_barno].ib_setup;
+		KASSERT(gg->igg_npads > 0 && gg->igg_npads <= 32);
+		KASSERT(gg->igg_first_pad >= ibs->ibs_first_pin);
+		KASSERT(gg->igg_first_pad + gg->igg_npads - 1 <=
+		    ibs->ibs_last_pin);
+		npins = MAX(npins, gg->igg_gpio_base + gg->igg_npads);
+	}
+
+	sc->sc_npins = npins;
+	sc->sc_gpp_intr =
+	    kmem_zalloc(sizeof(*sc->sc_gpp_intr) * npins, KM_SLEEP);
+
+	/* Mask and clear every GPI interrupt; drivers enable their own. */
+	for (i = 0; i < igd->igd_ngpps; i++) {
+		gg = &igd->igd_gpps[i];
+		bsh = sc->sc_bsh[gg->igg_barno];
+		bus_space_write_4(sc->sc_bst, bsh,
+		    igd->igd_gpi_ie + gg->igg_regno * 4, 0);
+		bus_space_write_4(sc->sc_bst, bsh,
+		    igd->igd_gpi_is + gg->igg_regno * 4, igpio_gpp_mask(gg));
+	}
+
+	return true;
+}
+
+static void
+igpio_gpp_set_ie(struct igpio_softc *sc, struct igpio_intr *ii, bool on)
+{
+	const struct igpio_gpp_device *igd = sc->sc_gpp_device;
+	struct igpio_bank *ib = ii->ii_bank;
+	const struct igpio_gpp *gg = igpio_find_gpp(igd, ii->ii_pin);
+	bus_space_handle_t bsh = sc->sc_bsh[ib->ib_barno];
+	bus_size_t ie = igd->igd_gpi_ie + gg->igg_regno * 4;
+	uint32_t bit = igpio_gpp_bit(gg, ii->ii_pin);
+	uint32_t val;
+
+	KASSERT(mutex_owned(&ib->ib_mtx));
+	val = bus_space_read_4(sc->sc_bst, bsh, ie);
+	val = on ? (val | bit) : (val & ~bit);
+	bus_space_write_4(sc->sc_bst, bsh, ie, val);
+}
+
+static void *
+igpio_gpp_intr_establish(struct igpio_softc *sc, int pin, int irqmode,
+    int (*func)(void *), void *arg)
+{
+	const struct igpio_gpp_device *igd = sc->sc_gpp_device;
+	const struct igpio_gpp *gg;
+	struct igpio_bank *ib;
+	struct igpio_intr *ii;
+	bus_space_handle_t bsh;
+	bus_addr_t cfg0;
+	uint32_t val, rxev, bit;
+	int pad;
+
+	ib = igpio_pin_bank(sc, pin, &pad, &gg);
+	if (ib == NULL)
+		return NULL;
+
+	switch (irqmode & GPIO_INTR_MODE_MASK) {
+	case GPIO_INTR_POS_EDGE:
+	case GPIO_INTR_NEG_EDGE:
+		rxev = IGPIO_PADCFG0_RXEVCFG_EDGE;
+		break;
+	case GPIO_INTR_DOUBLE_EDGE:
+		rxev = IGPIO_PADCFG0_RXEVCFG_EDGE_BOTH;
+		break;
+	case GPIO_INTR_HIGH_LEVEL:
+	case GPIO_INTR_LOW_LEVEL:
+		rxev = IGPIO_PADCFG0_RXEVCFG_LEVEL;
+		break;
+	default:
+		return NULL;
+	}
+
+	ii = &sc->sc_gpp_intr[pin];
+	bsh = sc->sc_bsh[ib->ib_barno];
+	bit = igpio_gpp_bit(gg, pin);
+	cfg0 = igpio_pincfg(ib, pad, IGPIO_PADCFG0);
+
+	mutex_enter(&ib->ib_mtx);
+
+	if (ii->ii_func != NULL) {
+		mutex_exit(&ib->ib_mtx);
+		return NULL;
+	}
+
+	/* A pad still owned by ACPI signals GPEs, not GPI interrupts. */
+	val = bus_space_read_4(sc->sc_bst, bsh,
+	    igd->igd_hostsw_own + gg->igg_regno * 4);
+	if ((val & bit) == 0) {
+		mutex_exit(&ib->ib_mtx);
+		aprint_error_dev(sc->sc_dev, "pin %d is owned by ACPI\n",
+		    pin);
+		return NULL;
+	}
+
+	val = bus_space_read_4(sc->sc_bst, bsh, cfg0);
+	val &= ~IGPIO_PADCFG0_PMODE_MASK;
+	val |= __SHIFTIN(IGPIO_PADCFG0_PMODE_GPIO, IGPIO_PADCFG0_PMODE_MASK);
+	val &= ~IGPIO_PADCFG0_GPIORXDIS;
+	val |= IGPIO_PADCFG0_GPIOTXDIS;
+	val &= ~(IGPIO_PADCFG0_GPIROUTIOXAPIC | IGPIO_PADCFG0_GPIROUTSCI);
+	val &= ~(IGPIO_PADCFG0_GPIROUTSMI | IGPIO_PADCFG0_GPIROUTNMI);
+	val &= ~(IGPIO_PADCFG0_RXEVCFG_MASK | IGPIO_PADCFG0_RXINV);
+	val |= __SHIFTIN(rxev, IGPIO_PADCFG0_RXEVCFG_MASK);
+	if (irqmode & (GPIO_INTR_NEG_EDGE | GPIO_INTR_LOW_LEVEL))
+		val |= IGPIO_PADCFG0_RXINV;
+	bus_space_write_4(sc->sc_bst, bsh, cfg0, val);
+
+	ii->ii_func = func;
+	ii->ii_arg = arg;
+	ii->ii_bank = ib;
+	ii->ii_pin = pin;
+
+	bus_space_write_4(sc->sc_bst, bsh,
+	    igd->igd_gpi_is + gg->igg_regno * 4, bit);
+	igpio_gpp_set_ie(sc, ii, true);
+
+	mutex_exit(&ib->ib_mtx);
+
+	return ii;
+}
+
+static void
+igpio_gpp_intr_disestablish(struct igpio_softc *sc, struct igpio_intr *ii)
+{
+	struct igpio_bank *ib = ii->ii_bank;
+
+	mutex_enter(&ib->ib_mtx);
+	igpio_gpp_set_ie(sc, ii, false);
+	ii->ii_func = NULL;
+	ii->ii_arg = NULL;
+	mutex_exit(&ib->ib_mtx);
+}
+
+static void
+igpio_gpp_intr_mask(void *priv, void *ih)
+{
+	struct igpio_softc *sc = priv;
+	struct igpio_intr *ii = ih;
+
+	mutex_enter(&ii->ii_bank->ib_mtx);
+	igpio_gpp_set_ie(sc, ii, false);
+	mutex_exit(&ii->ii_bank->ib_mtx);
+}
+
+static void
+igpio_gpp_intr_unmask(void *priv, void *ih)
+{
+	struct igpio_softc *sc = priv;
+	struct igpio_intr *ii = ih;
+
+	mutex_enter(&ii->ii_bank->ib_mtx);
+	igpio_gpp_set_ie(sc, ii, true);
+	mutex_exit(&ii->ii_bank->ib_mtx);
+}
+
+static int
+igpio_gpp_intr(struct igpio_softc *sc)
+{
+	const struct igpio_gpp_device *igd = sc->sc_gpp_device;
+	const struct igpio_gpp *gg;
+	struct igpio_bank *ib;
+	struct igpio_intr *ii;
+	bus_space_handle_t bsh;
+	bus_size_t is, ie;
+	uint32_t pending;
+	int (*func)(void *);
+	void *arg;
+	int i, b, ret = 0;
+
+	for (i = 0; i < igd->igd_ngpps; i++) {
+		gg = &igd->igd_gpps[i];
+		ib = &sc->sc_banks[gg->igg_barno];
+		bsh = sc->sc_bsh[gg->igg_barno];
+		is = igd->igd_gpi_is + gg->igg_regno * 4;
+		ie = igd->igd_gpi_ie + gg->igg_regno * 4;
+
+		mutex_enter(&ib->ib_mtx);
+		pending = bus_space_read_4(sc->sc_bst, bsh, is) &
+		    bus_space_read_4(sc->sc_bst, bsh, ie) &
+		    igpio_gpp_mask(gg);
+		if (pending != 0)
+			bus_space_write_4(sc->sc_bst, bsh, is, pending);
+		mutex_exit(&ib->ib_mtx);
+
+		/* Handlers may mask their pin, so call them unlocked. */
+		while (pending != 0) {
+			b = ffs32(pending) - 1;
+			pending &= ~__BIT(b);
+			ii = &sc->sc_gpp_intr[gg->igg_gpio_base + b];
+			func = ii->ii_func;
+			arg = ii->ii_arg;
+			if (func != NULL)
+				ret |= func(arg);
+		}
+	}
+
+	return ret;
 }
 
 #if 0
@@ -229,6 +539,7 @@ igpio_attach(struct igpio_softc *sc)
 
 	sc->sc_banks =
 	    kmem_zalloc(sizeof(*sc->sc_banks) * sc->sc_nbar, KM_SLEEP);
+	sc->sc_gpp_device = igpio_find_gpp_device(sc->sc_acpi_hid);
 
 	sc->sc_npins = 0;
 
@@ -325,6 +636,9 @@ igpio_attach(struct igpio_softc *sc)
 		sc->sc_npins += npins;
 	}
 
+	if (sc->sc_gpp_device != NULL && !igpio_gpp_attach(sc))
+		goto out;
+
 	if (sc->sc_npins < 1 || sc->sc_npins > 4096) {
 		printf("Unexpected pin count %d\n", sc->sc_npins);
 		goto out;
@@ -334,7 +648,11 @@ igpio_attach(struct igpio_softc *sc)
 	    kmem_zalloc(sizeof(*sc->sc_pins) * sc->sc_npins, KM_SLEEP);
 
 	for (j = 0; j < sc->sc_npins; j++) {
+		int pad;
+
 		sc->sc_pins[j].pin_num = j;
+		if (igpio_pin_bank(sc, j, &pad, NULL) == NULL)
+			continue;
 		sc->sc_pins[j].pin_caps =
 		    GPIO_PIN_INPUT | GPIO_PIN_OUTPUT | GPIO_PIN_INOUT |
 		    GPIO_PIN_PULLUP | GPIO_PIN_PULLDOWN | GPIO_PIN_INVIN;
@@ -352,6 +670,10 @@ igpio_attach(struct igpio_softc *sc)
 	sc->sc_gc.gp_intr_establish = igpio_intr_establish;
 	sc->sc_gc.gp_intr_disestablish = igpio_intr_disestablish;
 	sc->sc_gc.gp_intr_str = igpio_intr_str;
+	if (sc->sc_gpp_device != NULL) {
+		sc->sc_gc.gp_intr_mask = igpio_gpp_intr_mask;
+		sc->sc_gc.gp_intr_unmask = igpio_gpp_intr_unmask;
+	}
 
 	memset(&gba, 0, sizeof(gba));
 	gba.gba_gc = &sc->sc_gc;
@@ -359,7 +681,8 @@ igpio_attach(struct igpio_softc *sc)
 	gba.gba_npins = sc->sc_npins;
 
 #if NGPIO > 0
-	config_found(sc->sc_dev, &gba, gpiobus_print, CFARGS_NONE);
+	sc->sc_gpiodev = config_found(sc->sc_dev, &gba, gpiobus_print,
+	    CFARGS_NONE);
 #endif
 
 	success = 1;
@@ -375,10 +698,16 @@ igpio_detach(struct igpio_softc *sc)
 {
 	int i;
 
-	for (i = 0; i < sc->sc_nbar; i++) {
+	/* A failed attach already detached; the front end detaches again. */
+	for (i = 0; sc->sc_banks != NULL && i < sc->sc_nbar; i++) {
 		struct igpio_bank *ib = &sc->sc_banks[i];
 		struct igpio_bank_setup *ibs = ib->ib_setup;
-		int npins = 1 + ibs->ibs_last_pin - ibs->ibs_first_pin;
+		int npins;
+
+		/* Attach may fail before every bank has a setup. */
+		if (ibs == NULL)
+			continue;
+		npins = 1 + ibs->ibs_last_pin - ibs->ibs_first_pin;
 
 		if (ib->ib_intr != NULL) {
 			kmem_free(ib->ib_intr, sizeof(*ib->ib_intr) * npins);
@@ -389,6 +718,12 @@ igpio_detach(struct igpio_softc *sc)
 	if (sc->sc_pins != NULL) {
 		kmem_free(sc->sc_pins, sizeof(*sc->sc_pins) * sc->sc_npins);
 		sc->sc_pins = NULL;
+	}
+
+	if (sc->sc_gpp_intr != NULL) {
+		kmem_free(sc->sc_gpp_intr,
+		    sizeof(*sc->sc_gpp_intr) * sc->sc_npins);
+		sc->sc_gpp_intr = NULL;
 	}
 
 	if (sc->sc_banks != NULL) {
@@ -467,11 +802,13 @@ int
 igpio_pin_read(void *priv, int pin)
 {
 	struct igpio_softc *sc = priv;
-	struct igpio_bank *ib = igpio_find_bank(sc, pin);
+	struct igpio_bank *ib;
 	bus_addr_t cfg0;
 	uint32_t val;
 
-	pin = igpio_bank_pin(ib, pin);
+	ib = igpio_pin_bank(sc, pin, &pin, NULL);
+	if (ib == NULL)
+		return 0;
 	cfg0  = igpio_pincfg(ib, pin, IGPIO_PADCFG0);
 
 	mutex_enter(&ib->ib_mtx);
@@ -494,11 +831,13 @@ void
 igpio_pin_write(void *priv, int pin, int value)
 {
 	struct igpio_softc *sc = priv;
-	struct igpio_bank *ib = igpio_find_bank(sc, pin);
+	struct igpio_bank *ib;
 	bus_addr_t cfg0;
 	uint32_t val, newval;
 
-	pin = igpio_bank_pin(ib, pin);
+	ib = igpio_pin_bank(sc, pin, &pin, NULL);
+	if (ib == NULL)
+		return;
 	cfg0 = igpio_pincfg(ib, pin, IGPIO_PADCFG0);
 
 	mutex_enter(&ib->ib_mtx);
@@ -526,12 +865,14 @@ void
 igpio_pin_ctl(void *priv, int pin, int flags)
 {
 	struct igpio_softc *sc = priv;
-	struct igpio_bank *ib = igpio_find_bank(sc, pin);
+	struct igpio_bank *ib;
 	bus_addr_t cfg0, cfg1;
 	uint32_t val0, newval0;
 	uint32_t val1, newval1;
 
-	pin = igpio_bank_pin(ib, pin);
+	ib = igpio_pin_bank(sc, pin, &pin, NULL);
+	if (ib == NULL)
+		return;
 	cfg0  = igpio_pincfg(ib, pin, IGPIO_PADCFG0);
 	cfg1  = igpio_pincfg(ib, pin, IGPIO_PADCFG1);
 
@@ -602,11 +943,17 @@ igpio_intr_establish(void *priv, int pin, int ipl, int irqmode,
     int (*func)(void *), void *arg)
 {
 	struct igpio_softc *sc = priv;
-	struct igpio_bank *ib = igpio_find_bank(sc, pin);
+	struct igpio_bank *ib;
 	bus_addr_t cfg0;
 	uint32_t val, newval;
 	struct igpio_intr *ii;
 
+	if (sc->sc_gpp_device != NULL)
+		return igpio_gpp_intr_establish(sc, pin, irqmode, func, arg);
+
+	ib = igpio_find_bank(sc, pin);
+	if (ib == NULL)
+		return NULL;
 	pin = igpio_bank_pin(ib, pin);
 	cfg0 = igpio_pincfg(ib, pin, IGPIO_PADCFG0);
 
@@ -688,9 +1035,14 @@ igpio_intr_disestablish(void *priv, void *ih)
 	if (ih == NULL)
 		return;
 
+	if (sc->sc_gpp_device != NULL) {
+		igpio_gpp_intr_disestablish(sc, ii);
+		return;
+	}
+
+	/* ii_pin is already relative to ii_bank. */
 	pin = ii->ii_pin;
-	ib = igpio_find_bank(sc, pin);
-	pin = igpio_bank_pin(ib, pin);
+	ib = ii->ii_bank;
 	cfg0  = igpio_pincfg(ib, pin, IGPIO_PADCFG0);
 
 	mutex_enter(&ib->ib_mtx);
@@ -739,6 +1091,9 @@ igpio_intr(void *priv)
 	int i;
 	int ret = 0;
 
+	if (sc->sc_gpp_device != NULL)
+		return igpio_gpp_intr(sc);
+
 	for (i = 0; i < sc->sc_nbar; i++) {
 		struct igpio_bank *ib = &sc->sc_banks[i];
 		struct igpio_bank_setup *ibs = ib->ib_setup;
@@ -778,7 +1133,7 @@ igpio_intr(void *priv)
 				int (*func)(void *);
 				void *arg;
 
-				if ((pending & (1 << b)) == 0)
+				if ((pending & __BIT(b)) == 0)
 					continue;
 
 				pin = ipg->ipg_first_pin + b;
@@ -786,7 +1141,7 @@ igpio_intr(void *priv)
 				arg = ib->ib_intr[pin].ii_arg;
 
 				/* XXX ack intr, handled or not? */
-				raised &= ~(1 << b);
+				raised &= ~__BIT(b);
 
 				if (func == NULL)
 					continue;

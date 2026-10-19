@@ -6814,6 +6814,12 @@
 #define	PCI_PRODUCT_INTEL_USB32_MTL	0x7e7d		/* Meteor Lake USB 3.2 Gen 2x1 xHCI Host Controller */
 #define	PCI_PRODUCT_INTEL_MPM_MTL	0x7e7f		/* Meteor Lake Memory Power Management */
 #define	PCI_PRODUCT_INTEL_TB4USB_MTL	0x7ec0		/* Meteor Lake Thunderbolt 4 USB Controller */
+#define	PCI_PRODUCT_INTEL_800SERIES_S_I2C_0	0x7f4c		/* 800 Series PCH-S I2C 0 */
+#define	PCI_PRODUCT_INTEL_800SERIES_S_I2C_1	0x7f4d		/* 800 Series PCH-S I2C 1 */
+#define	PCI_PRODUCT_INTEL_800SERIES_S_I2C_2	0x7f4e		/* 800 Series PCH-S I2C 2 */
+#define	PCI_PRODUCT_INTEL_800SERIES_S_I2C_3	0x7f4f		/* 800 Series PCH-S I2C 3 */
+#define	PCI_PRODUCT_INTEL_800SERIES_S_I2C_4	0x7f7a		/* 800 Series PCH-S I2C 4 */
+#define	PCI_PRODUCT_INTEL_800SERIES_S_I2C_5	0x7f7b		/* 800 Series PCH-S I2C 5 */
 #define	PCI_PRODUCT_INTEL_SCH_IDE	0x811a		/* SCH IDE Controller */
 #define	PCI_PRODUCT_INTEL_E600_HDA	0x811b		/* E600 HD Audio */
 #define	PCI_PRODUCT_INTEL_E600_PCIB_0	0x8180		/* E600 Virtual PCI-PCI Bridge */

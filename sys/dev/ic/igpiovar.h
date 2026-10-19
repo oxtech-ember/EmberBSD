@@ -45,6 +45,11 @@ struct igpio_softc {
 	uint32_t		sc_reserved_mask;
 
 	struct igpio_bank	*sc_banks;
+
+	/* Origin: EmberBSD (AI-assisted), ACPI GPIO numbering by group. */
+	const struct igpio_gpp_device *sc_gpp_device;
+	struct igpio_intr	*sc_gpp_intr;
+	device_t		sc_gpiodev;
 };
 
 void igpio_attach(struct igpio_softc *);
@@ -57,6 +62,7 @@ void	*igpio_intr_establish(void *, int, int, int, int (*)(void *), void *);
 void	igpio_intr_disestablish(void *, void *);
 bool	igpio_intr_str(void *, int, int, char *, size_t);
 int	igpio_intr(void *);
+int	igpio_pin_lookup(struct igpio_softc *, uint64_t);
 
 
 

@@ -177,6 +177,13 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .id = VIDDID(INTEL, JSL_LPSS_I2C_3) },
 	{ .id = VIDDID(INTEL, JSL_LPSS_I2C_4) },
 	{ .id = VIDDID(INTEL, JSL_LPSS_I2C_5) },
+	/* Origin: EmberBSD (AI-assisted), 800 Series PCH-S IDs from Linux. */
+	{ .id = VIDDID(INTEL, 800SERIES_S_I2C_0) },
+	{ .id = VIDDID(INTEL, 800SERIES_S_I2C_1) },
+	{ .id = VIDDID(INTEL, 800SERIES_S_I2C_2) },
+	{ .id = VIDDID(INTEL, 800SERIES_S_I2C_3) },
+	{ .id = VIDDID(INTEL, 800SERIES_S_I2C_4) },
+	{ .id = VIDDID(INTEL, 800SERIES_S_I2C_5) },
 
 	PCI_COMPAT_EOL
 };

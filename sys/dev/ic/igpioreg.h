@@ -93,7 +93,66 @@ struct igpio_pin_group {
 	const char *ipg_name;
 };
 
+/*
+ * Origin: EmberBSD (AI-assisted), ACPI GPIO numbering for 800 Series PCH-S.
+ *
+ * Newer PCHs number ACPI GPIO resources from a per-group base aligned to
+ * 32, not from the pad index.  Each group owns one GPI_IS/GPI_IE register
+ * in its community.  igg_first_pad uses igpio_bank_setup numbering.
+ */
+struct igpio_gpp {
+	int igg_barno;		/* community, as ordered in _CRS */
+	int igg_regno;		/* GPI register within the community */
+	int igg_first_pad;
+	int igg_npads;
+	int igg_gpio_base;	/* first ACPI GPIO number */
+};
+
+struct igpio_gpp_device {
+	const char *igd_acpi_hid;
+	int igd_hostsw_own;
+	int igd_gpi_is;
+	int igd_gpi_ie;
+	const struct igpio_gpp *igd_gpps;
+	int igd_ngpps;
+};
+
+/* Meteor Point-S (800 Series PCH-S), Linux pinctrl-meteorpoint.c */
+static const struct igpio_gpp igpio_mtps_gpps[] = {
+	{ 0, 0,   0, 25,   0 },	/* GPP_D */
+	{ 0, 1,  25, 14,  32 },	/* GPP_R */
+	{ 0, 2,  39, 18,  64 },	/* GPP_J */
+	{ 0, 3,  57, 31,  96 },	/* vGPIO */
+	{ 1, 0,  88, 15, 128 },	/* GPP_A */
+	{ 1, 1, 103, 12, 160 },	/* DIR_ESPI */
+	{ 1, 2, 115, 22, 192 },	/* GPP_B */
+	{ 2, 0, 137,  9, 224 },	/* SPI0 */
+	{ 2, 1, 146, 24, 256 },	/* GPP_C */
+	{ 2, 2, 170, 20, 288 },	/* GPP_H */
+	{ 2, 3, 190,  4, 320 },	/* vGPIO_3 */
+	{ 2, 4, 194,  8, 352 },	/* vGPIO_0 */
+	{ 2, 5, 202, 31, 384 },	/* vGPIO_4 */
+	{ 3, 0, 233,  8, 416 },	/* GPP_S */
+	{ 3, 1, 241, 23, 448 },	/* GPP_E */
+	{ 3, 2, 264, 14, 480 },	/* GPP_K */
+	{ 3, 3, 278, 24, 512 },	/* GPP_F */
+	{ 4, 0, 302, 21, 544 },	/* GPP_I */
+	{ 4, 1, 323, 16, 576 },	/* JTAG_CPU */
+};
+
+static const struct igpio_gpp_device igpio_gpp_devices[] = {
+	{ "INTC1084", 0x150, 0x200, 0x220,
+	    igpio_mtps_gpps, __arraycount(igpio_mtps_gpps) },
+};
+
 struct igpio_bank_setup igpio_bank_setup[] = {
+	/* Meteor Point-S (800 Series PCH-S) */
+	{ "INTC1084",   0,   0,  87, 0x200, 0x220 },
+	{ "INTC1084",   1,  88, 136, 0x200, 0x220 },
+	{ "INTC1084",   2, 137, 232, 0x200, 0x220 },
+	{ "INTC1084",   3, 233, 301, 0x200, 0x220 },
+	{ "INTC1084",   4, 302, 338, 0x200, 0x220 },
+
 	/* Sunrisepoint-LP */
 	{ "INT344B",    0,   0,  47, 0x100, 0x120 },
 	{ "INT344B",    1,  48, 119, 0x100, 0x120 },

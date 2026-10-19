@@ -1470,6 +1470,11 @@ The base system shell is unchanged.
   passed 2.4/5 GHz scan, WPA2-PSK on 5 GHz with DHCP and a 30 MB transfer
   with the module. Station mode and legacy rates only; boot with the
   built-in driver and long-run operation are not tested.
+- **Arrow Lake HX laptop touchpad:** `dwiic(4)` and `igpio(4)` now match the
+  [800 Series PCH-S I2C and GPIO controllers](ember/boot/arrowlake-touchpad.md)
+  that carry the HID-over-I2C touchpad of an MSI Vector 17 HX AI.
+  Host contracts and a GCC16 amd64 kernel build pass; touchpad input on
+  the laptop is not yet verified.
 
 The costs are equally plain. Fixes from upstream are merged by hand.
 Only what the linked board pages mark "Tested" is claimed on physical

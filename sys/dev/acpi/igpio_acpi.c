@@ -40,6 +40,7 @@ __KERNEL_RCSID(0, "$NetBSD: igpio_acpi.c,v 1.3 2024/02/02 22:14:05 andvar Exp $"
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/acpi_intr.h>
 #include <dev/acpi/acpi_event.h>
+#include <dev/acpi/acpi_gpio.h>
 
 #include <dev/gpio/gpiovar.h>
 #include <dev/ic/igpiovar.h>
@@ -58,6 +59,7 @@ static int	igpio_acpi_detach(device_t, int);
 
 static void	igpio_acpi_register_event(void *, struct acpi_event *, ACPI_RESOURCE_GPIO *);
 static int	igpio_acpi_intr(void *);
+static int	igpio_acpi_translate(void *, ACPI_RESOURCE_GPIO *, void **);
 
 CFATTACH_DECL_NEW(igpio_acpi, sizeof(struct igpio_acpi_softc), igpio_acpi_match, igpio_acpi_attach, igpio_acpi_detach, NULL);
 
@@ -78,6 +80,8 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "INTC1056" },	/* alderlake */
 	{ .compat = "INTC1057" },	/* tigerlake */
 	{ .compat = "INTC1071" },	/* emmitsburg */
+	/* Origin: EmberBSD (AI-assisted), 800 Series PCH-S GPIO. */
+	{ .compat = "INTC1084" },	/* meteorpoint-s */
 	{ .compat = "INTC3000" },	/* denverton */
 	{ .compat = "INTC3001" },	/* cedarfork */
 #ifdef notyet
@@ -165,18 +169,26 @@ igpio_acpi_attach(device_t parent, device_t self, void *aux)
 		goto done;
 	}
 
+	/* GpioInt consumers need the interrupt even without _AEI events. */
 	rv = acpi_event_create_gpio(self, asc->sc_handle, igpio_acpi_register_event, asc);
-	if (ACPI_FAILURE(rv)) {
-		if (rv != AE_NOT_FOUND)
-			aprint_error_dev(self, "failed to create events: %s\n", AcpiFormatException(rv));
-		goto done;
-	}
+	if (ACPI_FAILURE(rv) && rv != AE_NOT_FOUND)
+		aprint_error_dev(self, "failed to create events: %s\n", AcpiFormatException(rv));
 
 	asc->sc_intr = acpi_intr_establish(self,
 	    (uint64_t)(uintptr_t)asc->sc_handle,
 	    IPL_VM, false, igpio_acpi_intr, asc, device_xname(self));
 	if (asc->sc_intr == NULL)
 		aprint_error_dev(self, "couldn't establish interrupt\n");
+
+	/*
+	 * Let ihidev(4) and AML resolve GPIO resources.  Only controllers
+	 * with checked ACPI numbering are exposed; linear pad numbers do
+	 * not match firmware numbers on newer PCHs.
+	 */
+	if (asc->sc_isc.sc_gpp_device != NULL &&
+	    asc->sc_isc.sc_gpiodev != NULL)
+		(void)acpi_gpio_register(aa->aa_node, self,
+		    igpio_acpi_translate, &asc->sc_isc);
 
 done:
 	acpi_resource_cleanup(&res);
@@ -191,7 +203,10 @@ igpio_acpi_detach(device_t self, int flags)
 	struct igpio_softc * const isc = &asc->sc_isc;
 	int nbar = isc->sc_nbar;
 
-	acpi_intr_disestablish(asc->sc_intr);
+	if (asc->sc_intr != NULL) {
+		acpi_intr_disestablish(asc->sc_intr);
+		asc->sc_intr = NULL;
+	}
 
 	igpio_detach(&asc->sc_isc);
 
@@ -222,6 +237,21 @@ static void
 igpio_acpi_register_event(void *priv, struct acpi_event *ev, ACPI_RESOURCE_GPIO *gpio)
 {
 	return;
+}
+
+static int
+igpio_acpi_translate(void *priv, ACPI_RESOURCE_GPIO *gpio, void **gpiop)
+{
+	struct igpio_softc * const isc = priv;
+	int pin;
+
+	pin = igpio_pin_lookup(isc, gpio->PinTable[0]);
+	if (pin == -1 || isc->sc_gpiodev == NULL)
+		return -1;
+	if (gpiop != NULL)
+		*gpiop = device_private(isc->sc_gpiodev);
+
+	return pin;
 }
 
 static int
