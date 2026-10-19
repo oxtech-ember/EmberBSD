@@ -4,6 +4,9 @@ This interface defines the firmware resources for a native BCM2712 display drive
 The current code validates resources and reads a firmware clock snapshot.
 It does not implement HDMI hotplug, DDC, modesetting, scanout, or framebuffer takeover.
 A successful snapshot does not authorize display register access.
+The separate [firmware display notification](bcm2712-display-handoff.md) is a
+source-only one-attempt protocol. It has no default caller and is not an AXI
+drain, power or shared-MMU/cache exclusion grant.
 
 ## Firmware opt-in
 
