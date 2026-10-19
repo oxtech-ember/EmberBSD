@@ -208,6 +208,127 @@ de352_memory(struct sun60i_de352_softc *sc)
 	return 0;
 }
 
+/* A complete stable capture must precede this restricted local profile. */
+static bool
+de352_memory_manageable(const struct de352_memory_snapshot *m)
+{
+	return m->valid == 3 && m->iommu[0][0] == 0x16 &&
+	    m->iommu[0][2] == 1 && m->iommu[0][3] <= 1 &&
+	    m->iommu[0][4] == 0;
+}
+
+/* No allocated DMA or released internal core may precede local preparation. */
+static int
+de352_memory_cold(struct sun60i_de352_softc *sc)
+{
+	uint32_t peers[2][A733_DISPLAY_NISOLATION_REGS], word;
+	int error;
+
+	if (!sc->reserved || !sc->power_reserved || !sc->retained ||
+	    !sc->mapped || sc->dma != NULL)
+		return EINVAL;
+	error = sun60i_a733_ccu_display_ready(sc->de0, sc);
+	if (error == 0)
+		error = sun60i_a733_ccu_display_isolation_state(sc->de0, sc, peers);
+	if (error != 0)
+		return error;
+	error = de352_read(sc, 0x8004, &word);
+	if (error != 0 || word != 0)
+		return error != 0 ? error : EBUSY;
+	error = de352_read(sc, 0x8000, &word);
+	if (error != 0 || (word & 1) != 0)
+		return error != 0 ? error : EBUSY;
+	return 0;
+}
+
+/* No global IOMMU, table, interrupt, shared clock or peer register is written. */
+static int
+de352_memory_prepare(struct sun60i_de352_softc *sc)
+{
+	static const struct {
+		bool iommu;
+		uint32_t reg, mask, value, sample;
+	} updates[] = {
+		{ true, 0x804, 1, 1, 3 },
+		{ false, 0x410, 3, 0, 0 },
+		{ false, 0x418, 1, 1, 2 },
+		{ true, 0x10, 4, 4, 1 },
+	};
+	struct de352_memory_snapshot expected = sc->memory;
+	bus_space_handle_t ih, nh, handle;
+	uint32_t before, after, value, *words;
+	int error;
+
+	error = de352_memory_cold(sc);
+	if (error != 0)
+		return error;
+	if (!de352_memory_manageable(&expected))
+		return EOPNOTSUPP;
+	error = bus_space_map(sc->bst, DE352_IOMMU1_BASE, DE352_IOMMU1_SIZE,
+	    0, &ih);
+	if (error != 0)
+		return error;
+	error = bus_space_map(sc->bst, DE352_NSI_BASE, DE352_NSI_SIZE, 0, &nh);
+	if (error != 0) {
+		bus_space_unmap(sc->bst, ih, DE352_IOMMU1_SIZE);
+		return error;
+	}
+	for (u_int i = 0; i < __arraycount(updates); i++) {
+		/* Repeat the retained owner, cold-core and exact snapshot proof. */
+		error = de352_memory_cold(sc);
+		if (error != 0)
+			break;
+		error = de352_memory(sc);
+		if (error != 0 && error != EOPNOTSUPP)
+			break;
+		if (!de352_memory_manageable(&sc->memory) ||
+		    memcmp(&expected, &sc->memory, sizeof(expected)) != 0) {
+			error = EBUSY;
+			break;
+		}
+		handle = updates[i].iommu ? ih : nh;
+		words = updates[i].iommu ? expected.iommu[0] : expected.nsi[0];
+		error = bus_space_peek_4(sc->bst, handle, updates[i].reg, &before);
+		if (error != 0)
+			break;
+		if (before != words[updates[i].sample]) {
+			error = EBUSY;
+			break;
+		}
+		value = (before & ~updates[i].mask) | updates[i].value;
+		if (value == before)
+			continue;
+		/* The retained lease also covers a faulting first write attempt. */
+		error = bus_space_poke_4(sc->bst, handle, updates[i].reg, value);
+		if (error != 0)
+			break;
+		bus_space_barrier(sc->bst, handle, updates[i].reg, 4,
+		    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+		error = bus_space_peek_4(sc->bst, handle, updates[i].reg, &after);
+		if (error != 0)
+			break;
+		if (after != value) {
+			error = EIO;
+			break;
+		}
+		for (u_int sample = 0; sample < 2; sample++) {
+			words = updates[i].iommu ? expected.iommu[sample] :
+			    expected.nsi[sample];
+			words[updates[i].sample] = value;
+		}
+	}
+	bus_space_unmap(sc->bst, nh, DE352_NSI_SIZE);
+	bus_space_unmap(sc->bst, ih, DE352_IOMMU1_SIZE);
+	if (error == 0)
+		error = de352_memory_cold(sc);
+	if (error == 0)
+		error = de352_memory(sc);
+	if (error == 0 && memcmp(&expected, &sc->memory, sizeof(expected)) != 0)
+		error = EBUSY;
+	/* The outer coordinator quarantines failure. This helper never releases. */
+	return error;
+}
+
 /* Read only DE top until the internal core clock and reset are established. */
 static int
 de352_open_core(struct sun60i_de352_softc *sc)
@@ -483,7 +604,7 @@ de352_submit(struct sun60i_de352_softc *sc)
 static int
 de352_run(struct sun60i_de352_softc *sc)
 {
-	bool held = false;
+	bool held = false, managed = false;
 	int error;
 
 	if (!sc->valid)
@@ -505,6 +626,11 @@ de352_run(struct sun60i_de352_softc *sc)
 	if (error != 0)
 		goto fail;
 	error = de352_memory(sc);
+	if (error == EOPNOTSUPP && de352_memory_manageable(&sc->memory)) {
+		/* Reserve inactive peers before any retained local write. */
+		error = sun60i_a733_ccu_display_isolation_reserve(sc->de0, sc);
+		managed = error == 0;
+	}
 	if (error != 0)
 		goto fail;
 	sc->step = 3;
@@ -519,6 +645,11 @@ de352_run(struct sun60i_de352_softc *sc)
 	if (error != 0)
 		goto fail;
 	sc->mapped = true;
+	if (managed) {
+		error = de352_memory_prepare(sc);
+		if (error != 0)
+			goto fail;
+	}
 	error = de352_open_core(sc);
 	if (error == 0)
 		error = de352_idle(sc);

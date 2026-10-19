@@ -70,11 +70,28 @@ The two complete IOMMU1 samples must show version 0x16, master 2 reset bit 2
 released, global enable 1, master 2 bypass 1, and no master 2 interrupt status.
 The offsets are 0,0x10,0x14,0x804,0x838. NSI mode 0x410 bits 1:0 must be 0;
 select 0x418 bit 0 must be 1. Priority 0x414 is recorded without an ownership claim.
-No IOMMU or NSI register is written. The proof repeats before DMA publication
-and after RCQ completion plus vblank. An unsupported state returns an error.
-The next managed mapping profile must have its own typed claims and tests.
-The [inactive-peer lease](a733-iommu1-isolation.md) excludes native changes
-to the other IOMMU1 masters. That lease alone grants no IOMMU write.
+The strict proof repeats before DMA publication and after RCQ completion plus
+vblank. The already valid borrowed profile needs no IOMMU or NSI write.
+
+If the clocks are valid but the local master profile differs, the coordinator
+can prepare master 2 before DMA allocation. This requires version 0x16,
+global enable exactly 1, no unknown bypass bits and no master 2 interrupt.
+It first acquires the [inactive-peer lease](a733-iommu1-isolation.md), before
+retention. After DE0 top access is available, every internal DE module gate
+must remain closed and core 0 reset asserted. No DMA object may exist.
+
+The finite sequence sets master 2 bypass, NSI port 2 mode 0, NSI port 2 select
+1, then releases master 2 reset. It preserves all other bits. Before each
+step, the coordinator checks the retained owner, peer lease, cold DE state
+and complete expected memory snapshot. It checks the full field word again
+before a write and verifies the full written word afterward. It repeats the
+cold-state and strict memory proof before it opens the internal DE core.
+Any failure after retention keeps all claims and records sticky failure.
+
+This profile does not write global IOMMU enable/reset, table addresses,
+interrupt controls, TLB invalidation, shared clocks or peer registers. A
+global-off IOMMU1 still requires a separate cold-init contract and physical
+acceptance. The inactive-peer lease alone does not authorize global writes.
 
 The read-only `memory` sysctl returns native-endian 32-bit unsigned words:
 version,valid,clocks[2][7],iommu[2][5],nsi[2][3]. Version is 1. Valid bit 0

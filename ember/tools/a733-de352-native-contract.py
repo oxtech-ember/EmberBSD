@@ -19,7 +19,10 @@ def main():
         enums = re.findall(r"^enum sun60i_a733_display_memory_reg \{.*?^};", ccu, re.M | re.S)
         if len(enums) != 1:
             raise RuntimeError("Expected the public DISPLAY memory register enum")
-        (work / "display-memory-regs.h").write_text(enums[0] + "\n")
+        isolation = re.findall(r"^enum \{ A733_DISPLAY_NISOLATION_REGS = [0-9]+ \};", ccu, re.M)
+        if len(isolation) != 1:
+            raise RuntimeError("Expected the public DISPLAY isolation register count")
+        (work / "display-memory-regs.h").write_text(enums[0] + "\n" + isolation[0] + "\n")
         for stem in ("sun60i_a733_de352", "sun60i_a733_de352_dma"):
             for suffix in ("c", "h"):
                 name = f"{stem}.{suffix}"
