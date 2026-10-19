@@ -16,7 +16,10 @@ static void isolation_model_reset(void) {
 int sun60i_a733_pck_display_isolation_reserve(int node,const void *owner) {
  assert(node==17&&owner==display_power_owner&&!display_power_retained);
  if(isolation_reserve_error)return isolation_reserve_error;
- if(isolation_owner)return EBUSY;isolation_owner=owner;return 0;
+ if (isolation_owner)
+  return EBUSY;
+ isolation_owner = owner;
+ return 0;
 }
 int sun60i_a733_pck_display_isolation_release(int node,const void *owner) {
  assert(node==17&&owner==isolation_owner&&!display_power_retained&&!isolation_retained);

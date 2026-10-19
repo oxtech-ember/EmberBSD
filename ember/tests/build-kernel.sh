@@ -3,7 +3,7 @@
 # Exercise build orchestration without substituting these fixtures for a build.
 set -eu
 # Fixtures select their own build mode and toolchain, independent of the shell.
-unset EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN
+unset EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN PVR_QUERY_FIRMWARE
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/ember-build-kernel.XXXXXX")
 work=$(CDPATH= cd -- "$work" && pwd -P)
@@ -40,7 +40,7 @@ for contract in a733-accelerator-clock a733-power a733-display-observer a733-gpu
     a733-gpu-fwmem a733-gpu-fwinit a733-gpu-fwstart a733-gpu-fwboot \
     a733-gpu-fwprobe a733-gpu-fwcompute a733-gpu-fwfile a733-gpu-mmu \
     a733-gpu-vm pvr-freelist pvr-exec-hwrt a733-gpu-fwbridge \
-    a733-gpu-fwservice; do
+    a733-gpu-fwservice a733-gpu-fwcompute-vm a733-gpu-fwheap-observe pvr-exec; do
     cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
 #!/bin/sh
 set -eu
@@ -57,7 +57,8 @@ for contract in bcm2712-display bcm2712-display-irq bcm2712-display-hsm bcm2712-
     bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault \
     bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-sg bcm2712-v3d-job bcm2712-v3d-csd \
     bcm2712-v3d-cl bcm2712-v3d-wait bcm2712-v3d-sync drm-syncobj-wait \
-    drm-syncobj-dispatch drm-syncobj-find dma-fence-chain drm-jiffies; do
+    drm-syncobj-dispatch drm-syncobj-find dma-fence-chain drm-jiffies \
+    pvr-render pvr-heap pvr-bo pvr-vm pvr-file pvr-stream pvr-context pvr-hwrt pvr-submit pvr-render-attach; do
     cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
 #!/bin/sh
 set -eu
@@ -70,6 +71,19 @@ if [ "${FAIL_AT:-}" = gpu-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; then
 fi
 SH
 done
+cat > "$work/src/ember/tools/pvr-query-contract.sh" <<'SH'
+#!/bin/sh
+set -eu
+echo "pvr-query-contract $*" >> "$TEST_LOG"
+test "$#" -eq 1
+test "$1" = "$TEST_ROOT/src"
+test "$PVR_QUERY_FIRMWARE" = "$TEST_ROOT/pinned firmware"
+test -f "$PVR_QUERY_FIRMWARE"
+if [ "${FAIL_AT:-}" = pvr-query-contract.sh ]; then
+    echo 'injected contract failure: pvr-query-contract.sh' >&2
+    exit 1
+fi
+SH
 for contract in cemac-stop bwfm-link-events bwfm-link-check bwfm-sta aicwf-sta aicwf-vht \
     bwfm-scan-padding bwfm-key-epoch; do
 cat > "$work/src/ember/tests/$contract.sh" <<'SH'
@@ -214,8 +228,8 @@ export PATH="$work/bin:$PATH" NETBSD2_PYTHON="$work/bin/python3" NETBSD2_JOBS=2
 export RUBY="$work/bin/ruby"
 check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
-    test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 21
-    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 23
+    test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 24
+    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 33
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 4
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 8
 }
@@ -250,11 +264,32 @@ test "$(cat "$TEST_OUT/obj/kernels/EMBER64/keep.o")" = keep-object
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.c")" = other-source-id
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.o")" = other-object-id
 check_contract_counts 7
+# A firmware-dependent contract is pending by default, never silently passed.
+! grep -q '^pvr-query-contract ' "$TEST_LOG"
+grep -q 'PowerVR metadata query contract pending:' "$TEST_OUT/contracts.log"
+: > "$work/pinned firmware"
+: > "$TEST_LOG"
+PVR_QUERY_FIRMWARE="$work/pinned firmware" sh "$work/src/ember/tools/kernel-contracts.sh" \
+    "$work/src" portable > "$work/query.log" 2>&1
+test "$(grep -c '^pvr-query-contract ' "$TEST_LOG")" -eq 1
+! grep -q 'PowerVR metadata query contract pending:' "$work/query.log"
+: > "$TEST_LOG"
+if PVR_QUERY_FIRMWARE="$work/pinned firmware" FAIL_AT=pvr-query-contract.sh \
+    sh "$work/src/ember/tools/kernel-contracts.sh" "$work/src" portable \
+    > "$work/query.log" 2>&1; then
+    echo 'accepted firmware query failure' >&2; exit 1
+fi
+grep -q 'injected contract failure: pvr-query-contract.sh' "$work/query.log"
+! grep -q '^gpu-contract bcm2712-display-contract.sh ' "$TEST_LOG"
 outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
 if_cemac_acpi.kmod bcm2712btcom.kmod rp1wmcodec.kmod rpi5button.kmod'
 for failure in tools module cpp dtb contract a733-contract \
-    a733-gpu-vm-contract.sh gpu-contract bcm2712-display-contract.sh \
+    a733-gpu-vm-contract.sh a733-gpu-fwcompute-vm-contract.sh \
+    a733-gpu-fwheap-observe-contract.sh a733-gpu-fwbridge-contract.sh \
+    a733-gpu-fwservice-contract.sh pvr-exec-contract.sh \
+    pvr-render-contract.sh pvr-heap-contract.sh pvr-bo-contract.sh pvr-vm-contract.sh pvr-file-contract.sh pvr-stream-contract.sh pvr-context-contract.sh pvr-hwrt-contract.sh pvr-submit-contract.sh pvr-render-attach-contract.sh \
+    gpu-contract bcm2712-display-contract.sh \
     bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh bcm2712-display-dvp-contract.sh dmabuf-map dmabuf-lifetime dmabuf-array dmabuf-sync ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
     bcm2712-v3d-prime-contract.rb bcm2712-v3d-bo-stats-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
     aicwf-sta.sh aicwf-vht.sh publish; do
@@ -272,6 +307,10 @@ for failure in tools module cpp dtb contract a733-contract \
     a733-contract|a733-gpu-vm-contract.sh)
         grep -Fq 'injected contract failure: a733-' "$TEST_OUT/contracts.log"
         ! grep -q '^gpu-contract ' "$TEST_LOG"
+        ;;
+    a733-gpu-fwcompute-vm-contract.sh|a733-gpu-fwheap-observe-contract.sh|a733-gpu-fwbridge-contract.sh|a733-gpu-fwservice-contract.sh|pvr-*-contract.sh)
+        grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
+        ! grep -q '^gpu-contract bcm2712-display-contract.sh ' "$TEST_LOG"
         ;;
     bcm2712-display-contract.sh|bcm2712-display-irq-contract.sh|bcm2712-display-hsm-contract.sh|bcm2712-display-dvp-contract.sh)
         grep -Fq "gpu-contract $failure " "$TEST_LOG"

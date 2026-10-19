@@ -63,6 +63,9 @@ Account for kernel/userland interfaces and each dependent consumer when an ABI c
 
 The portable kernel suite has one owner: `ember/tools/kernel-contracts.sh`.
 Native-only contracts remain separate when the host cannot execute them.
+The source-encoding regression is `python3 ember/tests/contract-source-encoding.py`;
+it exercises the owning PRIME and DMA-BUF runners with UTF-8 source comments
+under an ASCII locale.
 The build orchestration regression is `sh ember/tests/build-kernel.sh`.
 Its controlled fixtures test routing, version refresh and failure cleanup.
 The stale-`BUILDINFO` case keeps unrelated objects and another configuration.

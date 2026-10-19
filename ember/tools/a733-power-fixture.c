@@ -5,7 +5,7 @@
 /* Keep the inherited assertion calls active with every host compiler mode. */
 #undef assert
 #define CHECK(c) do { if (!(c)) { \
-    fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #c); abort(); \
+    fprintf(stderr, "Assertion failed: %s:%d: %s\n", __FILE__, __LINE__, #c); abort(); \
 } } while (0)
 #define assert(c) CHECK(c)
 #include <stdbool.h>

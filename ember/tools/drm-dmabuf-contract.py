@@ -21,13 +21,13 @@ def prepare_sync(root, base, work):
     def function(source, name):
         return extract(source, rf"^(?:static )?(?:struct [\w]+ \*|[\w]+)\n{name}\(.*?^}}\n")
 
-    header = (base / "include/linux/dma-resv.h").read_text()
+    header = (base / "include/linux/dma-resv.h").read_text(encoding="utf-8")
     layout = "\n".join(extract(header, rf"^struct {name} \{{.*?^}};")
                        for name in ("dma_resv", "dma_resv_list"))
-    header = (base / "include/linux/sync_file.h").read_text()
+    header = (base / "include/linux/sync_file.h").read_text(encoding="utf-8")
     layout += "\n" + extract(header, r"^struct sync_file \{.*?^};")
-    (work / "sync-layout.h").write_text(layout)
-    source = (base / "linux/linux_dma_resv.c").read_text()
+    (work / "sync-layout.h").write_text(layout, encoding="utf-8")
+    source = (base / "linux/linux_dma_resv.c").read_text(encoding="utf-8")
     bodies = "struct dma_resv_write_ticket {};\n"
     for name in ("objlist_alloc", "objlist_free", "dma_resv_reserve_shared",
                  "dma_resv_write_begin", "dma_resv_write_commit",
@@ -36,20 +36,20 @@ def prepare_sync(root, base, work):
                  "dma_resv_get_list"):
         bodies += function(source, name).replace("dma_resv_reserve_shared(",
                                                 "production_reserve_shared(")
-    (work / "resv-bodies.h").write_text(bodies)
-    source = (base / "linux/linux_sync_file.c").read_text()
+    (work / "resv-bodies.h").write_text(bodies, encoding="utf-8")
+    source = (base / "linux/linux_sync_file.c").read_text(encoding="utf-8")
     bodies = "".join(function(source, name).replace("sync_file_create(",
                                                  "production_sync_file_create(")
                      for name in ("sync_file_create", "sync_file_close",
                                   "sync_file_get_fence"))
-    (work / "sync-file-bodies.h").write_text(bodies)
-    source = (base / "linux/linux_dma_buf.c").read_text()
+    (work / "sync-file-bodies.h").write_text(bodies, encoding="utf-8")
+    source = (base / "linux/linux_dma_buf.c").read_text(encoding="utf-8")
     bodies = extract(source, r"^struct dmabuf_fence_vector \{.*?(?=^struct dma_buf \*\ndma_buf_export\()")
-    (work / "ioctl-bodies.h").write_text(bodies)
+    (work / "ioctl-bodies.h").write_text(bodies, encoding="utf-8")
     dispatch = extract(source, r"\.fo_ioctl = (\w+),")
     (work / "ioctl-dispatch.h").write_text(
         "static int (*actual_ioctl)(struct file *, u_long, void *) = " +
-        dispatch + ";\n")
+        dispatch + ";\n", encoding="utf-8")
     (work / "dmabuf-abi.h").write_bytes((root / "sys/sys/dmabuf.h").read_bytes())
 
 
@@ -61,9 +61,9 @@ def main():
     tools = Path(__file__).resolve().parent
     root = Path(os.environ.get("DRM_SOURCE_ROOT", tools.parent.parent))
     base = root / "sys/external/bsd/drm2"
-    native = (base / "linux/linux_dma_buf.c").read_text()
-    prime = (base / "dist/drm/drm_prime.c").read_text()
-    gem = (base / "dist/drm/drm_gem.c").read_text()
+    native = (base / "linux/linux_dma_buf.c").read_text(encoding="utf-8")
+    prime = (base / "dist/drm/drm_prime.c").read_text(encoding="utf-8")
+    gem = (base / "dist/drm/drm_gem.c").read_text(encoding="utf-8")
     cases = ("map", "lifetime", "array", "sync") if args.case == "all" else (args.case,)
     for case in cases:
         if case == "map":
@@ -84,16 +84,16 @@ def main():
         else:
             name = ("drm-fence-array-contract.c" if case == "array"
                     else "drm-dmabuf-sync-contract.c")
-            source = (base / "linux/linux_dma_fence_array.c").read_text()
+            source = (base / "linux/linux_dma_fence_array.c").read_text(encoding="utf-8")
             bodies = [source[source.index("static const char *"):]]
         with tempfile.TemporaryDirectory(prefix="drm-dmabuf-") as directory:
             work = Path(directory)
-            (work / "bodies.h").write_text("\n".join(bodies))
+            (work / "bodies.h").write_text("\n".join(bodies), encoding="utf-8")
             if case in ("array", "sync"):
-                header = (base / "include/linux/dma-fence-array.h").read_text()
+                header = (base / "include/linux/dma-fence-array.h").read_text(encoding="utf-8")
                 layout = "\n".join(extract(header, rf"^struct {name} \{{.*?^}};")
                                    for name in ("dma_fence_array_cb", "dma_fence_array"))
-                (work / "layout.h").write_text(layout + "\n#define ARRAY_MODE_FIELD 1\n")
+                (work / "layout.h").write_text(layout + "\n#define ARRAY_MODE_FIELD 1\n", encoding="utf-8")
             if case == "sync":
                 prepare_sync(root, base, work)
             # Preserve the existing doubles' unused callback parameters and

@@ -956,7 +956,9 @@ on every board in the hardware catalog.
   The [experimental execution path](ember/boot/a733-pvr-execution.md) now adds
   firmware VM publication, contexts, free lists, and synchronous compute submission.
   Its production-source contracts pass. Host fixtures use the current bridge and
-  metadata interfaces. They reject diagnostics after bridge adoption and render
+  metadata interfaces. The [shared host suite](ember/development/kernel.md#validate-the-change)
+  runs self-contained PowerVR contracts; firmware-derived query checks require
+  an explicit input image. The fixtures reject diagnostics after bridge adoption and render
   registration with incomplete metadata. On Zero 3W, Mesa 26.2.4nb5 now passes
   three complete Vulkan compute lifecycles in one boot with kernel `4d9b68f3ec48`.
   Device creation, all 16 GPU-written words, fence completion, host readback,

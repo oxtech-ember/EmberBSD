@@ -84,6 +84,11 @@ CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' \
     sh ember/tools/pvr-query-contract.sh
 ```
 
+The shared `kernel-contracts.sh` dispatcher runs the self-contained PowerVR
+contracts in both modes. It also runs this query contract when
+`PVR_QUERY_FIRMWARE` is set; without that input it explicitly reports the query
+contract as pending. A supplied file that fails validation stops the dispatcher.
+
 The tests use real firmware metadata and change individual input facts.
 They check arithmetic bounds, missing features, version rejection, two-phase
 queries, short objects, array capacity, padding, extension bytes, and copy faults.

@@ -13,7 +13,7 @@
 static void
 contract_failed(const char *condition, const char *file, int line)
 {
-	fprintf(stderr, "%s:%d: %s\n", file, line, condition);
+	fprintf(stderr, "Assertion failed: %s:%d: %s\n", file, line, condition);
 	abort();
 }
 #undef assert
@@ -981,6 +981,11 @@ test_gpu_prepare(void)
 		CHECK(clk_set_parent(c, CLOCK(A733_CLK_PLL_REF)) == EBUSY);
 		CHECK(writes == 0 && sun60i_gpu_lease.writers == 0);
 	}
+	/* Admission must reject a leased reset before the native RMW backstop. */
+	handled = false;
+	CHECK(sun60i_a733_gpu_guard_enter(&state, NULL,
+	    &state.sc_resets[A733_RST_BUS_GPU0], SUNXI_CCU_ASSERT, &handled) == EBUSY);
+	CHECK(handled && sun60i_gpu_lease.writers == 0 && writes == 0);
 	CHECK(sunxi_ccu_reset_assert(&state,
 	    &state.sc_resets[A733_RST_BUS_GPU0]) == EBUSY);
 	CHECK(sunxi_ccu_reset_deassert(&state,

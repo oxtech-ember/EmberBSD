@@ -3,7 +3,7 @@
 # Origin: EmberBSD. Actual native PRIME mapping boundary and reference tests.
 require 'tmpdir'
 root=File.expand_path('../..',__dir__)
-source=File.read(root+'/sys/external/bsd/drm2/bcmv3d/bcmv3d_drv.c')
+source=File.read(root+'/sys/external/bsd/drm2/bcmv3d/bcmv3d_drv.c', encoding: 'UTF-8')
 body=source[/^static int\nbcmv3d_prime_mmap\(.*?^}\n/m] or abort 'PRIME mmap missing'
 %w[prime_handle_to_fd prime_fd_to_handle].each do |field|
  abort "missing #{field}" unless source.include?(".#{field} = drm_gem_#{field},")
