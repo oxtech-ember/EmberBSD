@@ -1,0 +1,34 @@
+Origin: EmberBSD, AI-assisted RP1 serial console policy.
+
+Keep SPCR when the RP1 serial console variant is selected. GOP and
+the existing graphical device-tree stdout policy remain available.
+The standard firmware variant keeps the upstream console preference.
+
+--- a/EmbeddedPkg/Drivers/ConsolePrefDxe/ConsolePrefDxe.c
++++ b/EmbeddedPkg/Drivers/ConsolePrefDxe/ConsolePrefDxe.c
+@@ -139,6 +139,7 @@
+   }
+ }
+ 
++#ifndef RP1_UART_CONSOLE
+ STATIC
+ VOID
+ RemoveSpcrTable (
+@@ -199,6 +200,7 @@
+     break;
+   } while (TRUE);
+ }
++#endif
+ 
+ STATIC
+ VOID
+@@ -255,7 +257,9 @@
+   }
+ 
+   RemoveDtStdoutPath ();
++#ifndef RP1_UART_CONSOLE
+   RemoveSpcrTable ();
++#endif
+ }
+ 
+ /**

@@ -28,3 +28,4 @@ gcc-freestanding.diff
 tfa-shell-slice.diff
 edk2-shell-wrapper.diff
 bcm2712-iommuc-resources.diff
+edk2-rp1-console-retain.diff

@@ -17,12 +17,35 @@ CROSS_COMPILE=/absolute/gcc16/bin/aarch64--netbsd- \
 ```
 
 The optional console and trace variants keep their platform defines.
-Use `--rp1-trace` for the trace variant. A normal build selects the standard
+Use `--rp1-trace` for the trace variant. Both serial variants retain ACPI
+SPCR when a GOP display is connected. The kernel can attach the real RP1 tty
+before it replaces the firmware framebuffer. GOP and its screen output remain
+available. This does not perform a kernel console or display handoff.
+The standard variant keeps the upstream graphical preference and can remove
+SPCR when GOP exists. A normal build selects the standard
 variant. Each variant has its own output and receipt. A rebuild invalidates
 its selected old image before checking tools or sources. `--prepare` needs
 Git, Ruby and patch and preserves accepted outputs. See the
 [verified source-cache contract](source-cache.md) for source manifests,
 shared-cache leases, legacy adoption and object-profile limits.
+
+## Serial console preference regression
+
+Run the callback check against a prepared EDK2 tree:
+
+```sh
+ruby ember/tools/firmware-console-pref-contract.rb \
+    /absolute/cache/rpi5-uefi-src/edk2 /absolute/new-check-output
+```
+
+The fixture compiles the complete actual `OnReadyToBoot` callback. EFI
+variable, protocol and removal services are controlled. It checks the
+standard, RP1 console and RP1 trace profiles, including variable and GOP
+errors. `CC`, `CFLAGS`, `TMPDIR` and `COMPILE_ONLY=1` select host checks
+or target compilation. The output records source hashes, commands and
+raw results. A complete firmware build must also check the real compiler
+define and table retention on the target. Callback checks do not establish
+a native tty, kernel handoff or HDMI scanout.
 
 ## Header and linker contract
 
