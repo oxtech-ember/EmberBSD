@@ -13,6 +13,9 @@ for pair in display:bcm2712_display.h iommuc:bcm2712_iommuc.h \
     sed '/^#include /d; /^__KERNEL_RCSID(/d' \
         "$src/sys/arch/arm/broadcom/$input" > "$work/$name.h"
 done
+# Keep both actual query TUs in the existing causal fixture.
+sed '/^#include /d; /^__KERNEL_RCSID(/d' \
+    "$src/sys/arch/arm/broadcom/bcm2712_iommuc_dependency.c" >> "$work/iommuc-adapter.h"
 # Keep the exact complete BSD function, including its return type and license.
 awk '/^#include/ { exit } { print }' "$src/sys/dev/acpi/acpi_util.c" > "$work/reference-helper.h"
 awk '
@@ -47,7 +50,7 @@ if [ -n "${ICAC_EVIDENCE:-}" ]; then
     cp "$src/ember/tools/bcm2712-iommuc-contract.c" "$ICAC_EVIDENCE/fixture.c"
     ICAC_SOURCE="$src" ICAC_HEADERS="$acpica" ICAC_SAVED="$ICAC_EVIDENCE" ruby -rjson -rdigest -e '
         root=ENV.fetch("ICAC_SOURCE"); output=ENV.fetch("ICAC_SAVED")
-        paths=%w[bcm2712_display.h bcm2712_display.c bcm2712_display_acpi.c bcm2712_iommuc.h bcm2712_iommuc_acpi.c].map { |p| root+"/sys/arch/arm/broadcom/"+p }
+        paths=%w[bcm2712_display.h bcm2712_display.c bcm2712_display_acpi.c bcm2712_iommuc.h bcm2712_iommuc_acpi.c bcm2712_iommuc_dependency.c].map { |p| root+"/sys/arch/arm/broadcom/"+p }
         paths += [root+"/sys/dev/acpi/acpi_util.c",root+"/ember/tools/bcm2712-iommuc-contract.c",root+"/sys/arch/evbarm/rpi/vcprop.h"]
         paths += %w[actypes.h acrestyp.h acexcep.h platform/acenv.h].map { |p| ENV.fetch("ICAC_HEADERS")+"/"+p }
         receipt={source_sha256:paths.to_h { |p| [p,Digest::SHA256.file(p).hexdigest] },extraction:"Only include/RCS lines removed from actual query/core sources; complete unchanged reference helper plus original license. Real ACPICA public type headers.",scope:"Controlled namespace services only; no provider/readiness/permission or MMIO model."}

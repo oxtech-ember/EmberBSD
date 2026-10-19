@@ -3,7 +3,7 @@
 This source-only contract adds a separate ACPI `\_SB.ICAC` description for the
 cache shared by IOMMU2, IOMMU4 and IOMMU5. It preserves GPU0 v1, its 32 MMIO
 resources and seven IRQs. GPU0 gains only an `_DEP` object reference.
-It does not add a mapping, provider, registry, readiness result, permission,
+The descriptor does not add a mapping, readiness result, permission,
 clock/reset/power operation, MMIO or default attachment.
 
 ## Fixed firmware contract
@@ -24,8 +24,10 @@ is not D0, power ownership or an MMIO accessibility guarantee.
 ## Native descriptor queries
 
 [bcm2712_iommuc.h](../../sys/arch/arm/broadcom/bcm2712_iommuc.h) and the
-[ACPI query source](../../sys/arch/arm/broadcom/bcm2712_iommuc_acpi.c) are not yet
-wired into a kernel configuration. Both queries require process context.
+[resource query source](../../sys/arch/arm/broadcom/bcm2712_iommuc_acpi.c) are selected
+by explicit display components or the optional [native ICAC owner](bcm2712-iommuc-native.md).
+The [GPU dependency query](../../sys/arch/arm/broadcom/bcm2712_iommuc_dependency.c)
+remains GPU-only. Both queries require process context.
 
 `bcm2712_iommuc_acpi_resources(cache, out)` requires the exact `\_SB.ICAC`
 Device handle and validates the identity, version, status and full resource
@@ -40,7 +42,7 @@ accepts some of them. Exactly one reference must name canonical ICAC. Other vali
 Device dependencies are allowed; this does not mean those devices are attached
 or ready. The 32-reference limit is an explicit v1 implementation boundary.
 The caller supplies valid, disjoint outputs. Both outputs remain unchanged on
-failure. No provider lookup or readiness query exists in this patch.
+failure. The separate native owner supplies strict software lookup, not readiness.
 
 The native ACPI enumerator scans `_DEP` devices first. It can still attach a
 consumer after an unmatched or failed dependency. A future cache consumer must
@@ -91,7 +93,7 @@ framebuffer absence and a prior MMU4 snapshot do not establish cache accessibili
 or exclude firmware writers. Do not invent a power resource or reuse V3D's SMS
 power owner for the cache.
 
-A later real native provider must own the cache mapping and serialization for
+A later access bridge in the native provider must own the cache mapping and serialization for
 all cooperating MMU2/4/5 users. Its lifecycle must retain faults and all exposed
 translation obligations after uncertainty. GPU0 cannot claim exclusive ownership
 of this shared block. Resolve the actual platform access/power contract and
