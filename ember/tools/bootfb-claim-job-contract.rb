@@ -106,6 +106,7 @@ Dir.mktmpdir('bootfb-claim-job-', ENV.fetch('TMPDIR', '/tmp')) do |work|
     end
     unless ENV['CLAIM_JOB_SKIP_MUTANTS'] == '1' || ENV['CLAIM_JOB_COMPILE_ONLY'] == '1'
       controls = {
+        'success-cancel' => ['acpi-functions.h', 'bcmv3d_finalize', "\t\t\tbcmv3d_bootfb_cancel(sc, error);\n#endif\n\t\t\tif (error", "\t\t\tif (error != 0)\n\t\t\t\tbcmv3d_bootfb_cancel(sc, error);\n#endif\n\t\t\tif (error", 'genfb_attaches == 1'],
         'queue-after' => ['acpi-functions.h', 'bcmv3d_bootfb_queue', "owner->phase = BCMV3D_BOOTFB_QUEUED;\n\tconfig_interrupts(sc->sc_dev, bcmv3d_bootfb_claim_job);", "config_interrupts(sc->sc_dev, bcmv3d_bootfb_claim_job);\n\towner->phase = BCMV3D_BOOTFB_QUEUED;", 'sc_bootfb.phase == BCMV3D_BOOTFB_QUEUED'],
         'warm-queue' => ['acpi-functions.h', 'bcmv3d_bootfb_queue', '!cold ||', 'false ||', 'queue_calls == 0'],
         'owner-argument' => ['acpi-functions.h', 'bcmv3d_finalize', 'bootfb = &sc->sc_bootfb;', 'bootfb = NULL;', 'flags == 0 && s->bootfb == expected_owner'],

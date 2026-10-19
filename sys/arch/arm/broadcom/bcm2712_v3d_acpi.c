@@ -119,7 +119,6 @@ enum bcmv3d_bootfb_phase {
 	BCMV3D_BOOTFB_QUEUED,
 	BCMV3D_BOOTFB_REFUSED,
 	BCMV3D_BOOTFB_CLAIMED,
-	BCMV3D_BOOTFB_LINKED,
 	BCMV3D_BOOTFB_CANCELED,
 	BCMV3D_BOOTFB_RETAINED
 };
@@ -498,12 +497,13 @@ bcmv3d_finalize(device_t dev)
 			error = bcmv3d_render_attach(dev, sc->sc_bst,
 			    sc->sc_dmat, sc->sc_handle, bootfb);
 #if defined(WSDISPLAY_BOOTFB_DEFER)
-			/* Certified setup-only call graph: no display/MMU4 calls.
-			 * Revalidate error cancellation if that call graph changes. */
-			if (error != 0)
-				bcmv3d_bootfb_cancel(sc, error);
-			else if (sc->sc_bootfb.phase == BCMV3D_BOOTFB_CLAIMED)
-				sc->sc_bootfb.phase = BCMV3D_BOOTFB_LINKED;
+			/*
+			 * Render setup has no display or MMU4 calls. It cannot replace
+			 * the boot console. Release its lease on success as well as
+			 * failure so that genfb can publish a real console device.
+			 * A future display caller needs a separate lifetime contract.
+			 */
+			bcmv3d_bootfb_cancel(sc, error);
 #endif
 			if (error != 0)
 				aprint_error_dev(dev, "render attachment failed: %d\n", error);

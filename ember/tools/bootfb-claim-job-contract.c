@@ -274,10 +274,11 @@ static void success_cases(void)
 		run_finish();
 		CHECK(published_renderer != NULL && published_renderer->bootfb == expected_owner);
 #ifdef WSDISPLAY_BOOTFB_DEFER
-		CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_LINKED);
-		CHECK(gpu_sc.sc_bootfb.lease == &wsdisplay_bootfb_lease);
+		CHECK(genfb_attaches == 1);
+		CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CANCELED);
+		CHECK(gpu_sc.sc_bootfb.lease == NULL);
 		CHECK(gpu_sc.sc_bootfb.framebuffer.sf_address == 0 && gpu_sc.sc_bootfb.framebuffer.sf_width == fixture_width);
-		CHECK(wsdisplay_bootfb.pending && genfb_attaches == 0 && pending_waits == 1);
+		CHECK(wsdisplay_bootfb.phase == BOOTFB_FALLBACK_DONE && pending_waits == 1);
 		bcmv3d_bootfb_claim_job(&gpu); bcmv3d_bootfb_queue(&gpu_sc); CHECK(queue_calls == 1);
 #endif
 		calls = observe_calls; CHECK(bcmv3d_finalize(&gpu) == 0 && observe_calls == calls);

@@ -89,7 +89,13 @@ renderer setup error paths cancel only after their existing cleanup returns.
 This is certified against its setup-only call graph: no MODESET, display or MMU4
 operation occurs there. Adding such a call invalidates this cancellation rule.
 Cancellation failure or unknown binding retains the owner and records the error.
-Successful render attachment keeps the owner. No framebuffer guard is bypassed.
+Successful render-only attachment also cancels the live lease. The renderer keeps
+only the same resident opaque record, now CANCELED with no lease. It receives no
+display authority. Both finalizer orders must attach the deferred genfb console
+exactly once before init opens `/dev/console`. A retained early console without a
+real tty leaves `cn_dev` at NODEV and triggers `cnopen: no console device`.
+A future native display caller must provide a valid console-open contract and a
+separate handoff lifetime. No framebuffer guard is bypassed.
 
 This job adds no close/drain, sink, firmware request or display attempt. Existing
 console output/replay stay active. Neither a claim nor the stored pointer grants
