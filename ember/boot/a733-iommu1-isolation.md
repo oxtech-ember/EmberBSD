@@ -25,7 +25,7 @@ future generic dispatch and direct native masked RMW for the display lifetime.
 | 5 EINK | 0xa60 and 0xa64 bit31 | 0xa6c bits16/0 | None |
 
 Zero reset bits mean asserted. Zero gate bits mean closed. VE encoder fields
-in 0xa8c and other0x5e4 masters remain available. No peer MMIO is read.
+in 0xa8c and other 0x5e4 masters remain available. No peer MMIO is read.
 
 `begin_de0` first retains the existing display power lease, then domain 2.
 Any failure after the first retention preserves all claims and the first
@@ -42,9 +42,10 @@ No global IOMMU operation is authorized by this read-only subclaim.
 2. Capture IOMMU1 only after the existing exact CCU aperture/clock proof.
    Check version 0x16, global enable, all six micro resets/bypass/error states,
    global errors and register values needed by the selected init profile.
-3. Establish a documented reset/table/invalidation sequence before native
-   writes. The available BSP init is evidence of operations, not proof of a
-   completed flush. No fallback DMA tag or global-enable shortcut is admitted.
+3. Establish the exact managed sequence before native writes. A bypass-only
+   profile may omit tables or invalidation only with separate evidence. The
+   available BSP init does not prove flush completion. No fallback DMA tag
+   or unproved global-enable shortcut is admitted.
 4. Retain any table allocation before publishing its address. Recheck owned
    state before each attempted operation and preserve claims on any failure.
 5. Only after actual completion and strict memory admission may DE internal
@@ -61,9 +62,21 @@ peer reset is an isolation condition, not a proved bus-drain event.
 
 Allwinner A733 manual v1.00 SHA256
 cdd77e5779d3c69d41b5f237f3db3db51c67fdf0f3aca9a2eedc77d9420f248d:
-chapter 10 master map; sections4.1.6.84 and 106-116 leaf fields/reset meanings.
-BSP orangepi-xunlong/linux-orangepi
-2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f:
-bsp/drivers/iommu/sunxi-iommu-v2.c offsets, table-base shift, bypass/reset and
-flush/invalidation sequence. GPL source provides hardware facts only.
+chapter 10 master map; sections 4.1.6.84 and 106-116 leaf fields/reset meanings.
+The pinned [BSP](https://github.com/orangepi-xunlong/linux-orangepi/tree/2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f)
+uses commit `2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f`.
+`bsp/configs/linux-5.15/sun60iw2p1.dtsi` maps IOMMU1 masters 0/1 to
+VE_DEC power and masters 2-5 to DE_SYS power. The DTS is GPL-2.0+ or MIT.
+`bsp/drivers/iommu/sunxi-iommu-v2.c` supplies offsets, table-base shift,
+bypass/reset and flush/invalidation facts. Its SPDX identifier is
+GPL-2.0-or-later. No GPL implementation is copied.
 New native code is independently written BSD-2-Clause, AI-assisted.
+
+## Checks
+
+Run `sh ember/tools/a733-accelerator-clock-contract.sh` and
+`sh ember/tools/a733-power-contract.sh`. The existing actual-provider fixtures
+include inactive-peer acquisition, conflicting native writers, incomplete
+samples, cleanup failure, retained ownership and changed peer/power state.
+Use `CLOCK_TEST_CFLAGS` or `POWER_TEST_CFLAGS` for host sanitizer flags.
+The checks remain active with `-DNDEBUG`. They do not enable a board device.

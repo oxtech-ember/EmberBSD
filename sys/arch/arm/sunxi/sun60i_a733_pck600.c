@@ -842,7 +842,7 @@ sun60i_pck600_isolation(int phandle, const void *owner,
 	mutex_enter(&sc->sc_lock);
 	slot = &sc->sc_lease[2];
 	for (u_int i = 0; i < __arraycount(sun60i_pck600_display_domains); i++) {
-		struct sun60i_pck600_lease *parent =
+		const struct sun60i_pck600_lease *parent =
 		    &sc->sc_lease[sun60i_pck600_display_domains[i]];
 		if (parent->owner != owner) {
 			error = EINVAL;

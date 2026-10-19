@@ -2333,7 +2333,6 @@ sun60i_a733_ccu_display_begin_de0(struct clk *de0, const void *owner,
 	};
 	struct sun60i_a733_display_inputs in, expected;
 	uint32_t memory[2][A733_DISPLAY_NMEMORY_REGS];
-	uint32_t isolation[2][A733_DISPLAY_NISOLATION_REGS];
 	struct sun60i_a733_display_read_arg arg;
 	struct sunxi_ccu_softc *sc;
 	int error;
@@ -2377,6 +2376,8 @@ sun60i_a733_ccu_display_begin_de0(struct clk *de0, const void *owner,
 	}
 
 	if (sun60i_display_lease.isolation_claimed) {
+		uint32_t isolation[2][A733_DISPLAY_NISOLATION_REGS];
+
 		error = sun60i_a733_display_isolation_read(sc, isolation);
 		if (error != 0)
 			goto failed;
@@ -2421,7 +2422,6 @@ sun60i_a733_display_verify_locked(struct sunxi_ccu_softc *sc,
 {
 	struct sun60i_a733_display_inputs in;
 	uint32_t memory[2][A733_DISPLAY_NMEMORY_REGS];
-	uint32_t isolation[2][A733_DISPLAY_NISOLATION_REGS];
 	struct sun60i_a733_display_read_arg arg = {
 	    sc, sun60i_display_lease.power, owner
 	};
@@ -2438,8 +2438,11 @@ sun60i_a733_display_verify_locked(struct sunxi_ccu_softc *sc,
 	if (error == 0 && sun60i_display_lease.memory_claimed)
 		error = sun60i_a733_display_memory_check(sc, memory);
 
-	if (error == 0 && sun60i_display_lease.isolation_claimed)
+	if (error == 0 && sun60i_display_lease.isolation_claimed) {
+		uint32_t isolation[2][A733_DISPLAY_NISOLATION_REGS];
+
 		error = sun60i_a733_display_isolation_read(sc, isolation);
+	}
 	if (error == 0)
 		*out = in;
 	return error;
