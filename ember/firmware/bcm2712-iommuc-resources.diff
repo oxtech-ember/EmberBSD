@@ -1,0 +1,56 @@
+Origin: EmberBSD shared BCM2712 IOMMU cache resource contract.
+
+Register facts: Raspberry Pi Linux a1a601d4857978d810175365550c4536701df4ed
+arch/arm64/boot/dts/broadcom/bcm2712-ds.dtsi. No GPL implementation is copied.
+Keep the GPU0 v1 resource program unchanged. _DEP adds ordering only.
+No MMIO, clock, reset, power operation or cache provider is added.
+
+--- a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
++++ b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+@@ -535,12 +535,35 @@
+       }
+     } // Device (SDC1)
+ 
++    // Shared translation cache for IOMMU2, IOMMU4 and IOMMU5.
++    // Resource authority only. This device grants no MMIO or power lifetime.
++    Device (ICAC) {
++      Name (_HID, "PRP0001")
++      Name (_UID, Zero)
++      Name (_STA, 0x0F)
++      Name (_DSD, Package () {
++        ToUUID ("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
++        Package () {
++          Package () { "compatible", "brcm,bcm2712-iommuc" },
++          Package () { "emberbsd,iommuc-contract-version", One }
++        }
++      })
++      Method (_CRS, 0, Serialized) {
++        Name (RBUF, ResourceTemplate () {
++          QWORDMEMORY_BUF (00, ResourceConsumer)
++        })
++        QWORD_SET (00, BCM2712_IOMMUC_BASE, BCM2712_IOMMUC_LENGTH, 0)
++        Return (RBUF)
++      }
++    }
++
+     // VideoCore VII GPU (V3D 7.1) + HVS/PixelValve display pipeline.
+     Device (GPU0) {
+       Name (_HID, "BCM2712")
+       Name (_CID, "BCM2850")
+       Name (_UID, 0x0)
+       Name (_CCA, 0x0)
++      Name (_DEP, Package () { \_SB.ICAC })
+ 
+       // Versioned EmberBSD display resources. Keep the legacy 10/4 prefix.
+       Name (_DSD, Package () {
+--- a/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h
++++ b/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h
+@@ -152,4 +152,8 @@
+ #define BCM2712_AON_IRQ_INTERRUPT                         271   // GIC_SPI 239 + 32
+ #define BCM2712_BSC_IRQ_INTERRUPT                         274   // GIC_SPI 242 + 32
+ 
++// Shared by IOMMU2, IOMMU4 and IOMMU5; not a GPU0 resource.
++#define BCM2712_IOMMUC_BASE                              0x1000005b00
++#define BCM2712_IOMMUC_LENGTH                            0x80
++
+ #endif // __BCM2712_H__
