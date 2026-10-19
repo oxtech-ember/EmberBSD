@@ -112,11 +112,19 @@ query(int fd, struct output *o)
 	CHECK(ioctl(fd, DRM_IOCTL_MODE_GETRESOURCES, &res) == 0);
 	CHECK(res.count_crtcs == 1 && res.count_connectors == 1 &&
 	      res.count_encoders == 1 && o->crtc && o->connector && encoder);
+	/* A zero mode count requests discovery, including on a fresh connector. */
 	connector.connector_id = o->connector;
-	connector.count_modes = 1;
-	connector.modes_ptr = PTR(&o->mode);
-	connector.count_encoders = 1;
-	connector.encoders_ptr = PTR(&encoder);
+	CHECK(ioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, &connector) == 0);
+	CHECK(connector.connection == 1 && connector.count_modes == 1 &&
+	      connector.count_encoders == 1 &&
+	      connector.connector_type == DRM_MODE_CONNECTOR_HDMIA);
+	/* Do not reuse returned property counts with empty property pointers. */
+	connector = (struct drm_mode_get_connector){
+	    .connector_id = o->connector,
+	    .count_modes = 1,
+	    .modes_ptr = PTR(&o->mode),
+	    .count_encoders = 1,
+	    .encoders_ptr = PTR(&encoder)};
 	CHECK(ioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, &connector) == 0);
 	/* Native DRM connector_status_connected is 1. */
 	CHECK(connector.connection == 1 && connector.count_modes == 1 &&

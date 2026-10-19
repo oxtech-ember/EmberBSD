@@ -37,7 +37,8 @@ typedef unsigned long drm_handle_t;
 #include <drm/drm_fourcc.h>
 
 static unsigned checks, fault, calls, created_frames, flips, tests, masters, closed;
-static unsigned retries;
+static unsigned retries, connector_calls;
+static bool modes_populated;
 static uint64_t tick, pending;
 static void *allocation;
 static size_t allocation_size;
@@ -230,14 +231,46 @@ fake_ioctl(int fd, unsigned long op, ...)
 			r->count_crtcs = 2;
 	} else if (op == DRM_IOCTL_MODE_GETCONNECTOR) {
 		struct drm_mode_get_connector *c = arg;
-		VERIFY(c->connector_id == 20 && c->count_modes == 1 &&
-		       c->count_encoders == 1);
-		*(struct drm_mode_modeinfo *)(uintptr_t)c->modes_ptr =
-		    (struct drm_mode_modeinfo){
-			.clock = 25175, .hdisplay = 640, .vdisplay = 480};
-		*(uint32_t *)(uintptr_t)c->encoders_ptr = 40;
-		c->connection = fault == 4 ? 2 : 1;
+		uint32_t mode_count, encoder_count = 1;
+		bool probe = c->count_modes == 0;
+
+		VERIFY(c->connector_id == 20 && ++connector_calls <= 2);
+		if (fault == 37 || (fault == 38 && !probe)) {
+			errno = EIO;
+			return -1;
+		}
+		/* Match drm_mode_getconnector: only a zero count probes modes. */
+		if (probe)
+			modes_populated = true;
+		mode_count = modes_populated ? 1 : 0;
+		if ((fault == 30 && probe) || (fault == 33 && !probe))
+			mode_count = 0;
+		if ((fault == 31 && probe) || (fault == 34 && !probe))
+			mode_count = 2;
+		if ((fault == 32 && probe) || (fault == 35 && !probe))
+			encoder_count = 2;
+		if (c->count_modes >= mode_count && mode_count != 0) {
+			VERIFY(mode_count == 1 && c->modes_ptr != 0);
+			*(struct drm_mode_modeinfo *)(uintptr_t)c->modes_ptr =
+			    (struct drm_mode_modeinfo){
+				.clock = 25175, .hdisplay = 640, .vdisplay = 480};
+		}
+		if (c->count_encoders >= encoder_count) {
+			VERIFY(encoder_count == 1 && c->encoders_ptr != 0);
+			*(uint32_t *)(uintptr_t)c->encoders_ptr = 40;
+		}
+		c->count_modes = mode_count;
+		c->count_encoders = encoder_count;
+		c->connection = fault == 4 || (fault == 36 && !probe) ? 2 :
+		    (modes_populated ? 1 : 3);
 		c->connector_type = DRM_MODE_CONNECTOR_HDMIA;
+		/* Discovery returns counts without copying properties. */
+		if (c->count_props != 0 &&
+		    (c->props_ptr == 0 || c->prop_values_ptr == 0)) {
+			errno = EFAULT;
+			return -1;
+		}
+		c->count_props = 1;
 	} else if (op == DRM_IOCTL_MODE_GETENCODER) {
 		struct drm_mode_get_encoder *e = arg;
 		VERIFY(e->encoder_id == 40);
@@ -375,36 +408,50 @@ fake_ioctl(int fd, unsigned long op, ...)
 	return 0;
 }
 int
-main(void)
+main(int argc, char **argv)
 {
+	volatile unsigned first = 0, last = 38;
 	char *query_args[] = {"check", "--query", "/dev/dri/card7", NULL};
 	char *commit_args[] = {"check", "--commit", "/dev/dri/card7", NULL};
-	for (volatile unsigned scenario = 0; scenario <= 27; scenario++) {
+	VERIFY(argc == 1 || argc == 2);
+	if (argc == 2) {
+		char *end;
+		unsigned long selected = strtoul(argv[1], &end, 10);
+		VERIFY(argv[1][0] != '\0' && *end == '\0' && selected <= last);
+		first = last = (unsigned)selected;
+	}
+	for (volatile unsigned scenario = first; scenario <= last; scenario++) {
 		errno = 0;
-		fault = scenario == 23 ? 0 : scenario;
+		fault = scenario == 23 || scenario == 28 || scenario == 29 ?
+		    0 : scenario;
+		modes_populated = scenario == 28 || scenario == 29;
+		connector_calls = 0;
 		calls = created_frames = flips = tests = masters = closed = retries = 0;
 		tick = pending = 0;
 		int failed_check = setjmp(failed);
 		if (!failed_check)
 			VERIFY(consumer_main(3,
-				   scenario == 23 ? query_args : commit_args) ==
+				   scenario == 23 || scenario == 29 ?
+				       query_args : commit_args) ==
 			       0);
 		if (scenario == 0 || scenario == 22 || scenario == 25 ||
-		    scenario == 26) {
+		    scenario == 26 || scenario == 28) {
 			VERIFY(!failed_check && created_frames == 4 && flips == 4 &&
 			       tests == 4 && masters == 1 && closed == 1);
-		} else if (scenario == 23) {
+		} else if (scenario == 23 || scenario == 29) {
 			VERIFY(!failed_check && created_frames == 0 && flips == 0 &&
 			       tests == 0 && masters == 0 && closed == 1);
 		} else {
 			VERIFY(failed_check);
 			VERIFY(closed == 0);
+			if (scenario >= 30)
+				VERIFY(created_frames == 0 && masters == 0);
 		}
 		free(allocation);
 		allocation = NULL;
 	}
 	printf(
-	    "PASS %u native-UAPI consumer checks, 28 success/fault scenarios\n",
-	    checks);
+	    "PASS %u native-UAPI consumer checks, %u success/fault scenarios\n",
+	    checks, last - first + 1);
 	return 0;
 }

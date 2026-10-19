@@ -169,6 +169,8 @@ Use `--commit` for four finite atomic updates:
 ```
 
 The consumer requires the `sun60idrm` driver and its single fixed-mode profile.
+It first probes modes with a zero-count connector request.
+It checks the profile before and after the bounded mode fetch.
 It submits distinct red, green, blue and white XRGB8888 buffers.
 Each update first passes an atomic test-only request.
 The consumer waits for a matching page-flip event and an increasing timestamp.
@@ -192,5 +194,6 @@ python3 -B ember/tools/a733-drm-check-contract.py
 The fixture uses the native UAPI declarations with host I/O models.
 It checks property selection, atomic arguments, every generated pixel,
 malformed events, bounded retries and failure admission.
+It covers fresh and populated connectors and changes between discovery and fetch.
 It keeps checks active with `NDEBUG`.
 It does not access a DRM device or prove an HDMI image.

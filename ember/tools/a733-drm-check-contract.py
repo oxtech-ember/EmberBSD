@@ -19,6 +19,7 @@ def main():
                         default=tools / "a733-drm-check.c")
     parser.add_argument("--uapi", type=Path,
                         default=tools.parents[1] / "sys/external/bsd/drm2/dist/include/uapi")
+    parser.add_argument("--scenario", type=int, choices=range(39))
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="a733-drm-check-") as directory:
         work = Path(directory)
@@ -30,8 +31,9 @@ def main():
                    ["-I" + str(args.uapi), str(work / "contract.c"),
                     "-o", str(work / "contract")])
         subprocess.run(command, check=True)
+        arguments = [] if args.scenario is None else [str(args.scenario)]
         subprocess.run(shlex.split(os.environ.get("TEST_RUNNER", "")) +
-                       [str(work / "contract")], check=True)
+                       [str(work / "contract")] + arguments, check=True)
 
 
 if __name__ == "__main__":
