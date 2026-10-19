@@ -13,6 +13,7 @@
 #define NPU_DMA_LIMIT (UINT64_C(1) << 32)
 #define NPU_DMA_COMMAND_VA UINT32_C(0x01001000)
 #define NPU_DMA_NBUFFERS 3
+#define NPU_DMA_TASK_NBUFFERS 6
 
 struct npu_dma_buffer {
 	bus_dma_segment_t segment;
@@ -26,11 +27,19 @@ struct npu_dma_buffer {
 
 struct sun60i_a733_npu_dma {
 	bus_dma_tag_t tag;
-	struct npu_dma_buffer buffers[NPU_DMA_NBUFFERS];
-	size_t command_bytes;
-	uint32_t pd_entry;
+	struct npu_dma_buffer buffers[NPU_DMA_TASK_NBUFFERS];
+	size_t command_bytes, constants_bytes, input_bytes;
+	uint32_t pd_entry, profile;
 	bool retained;
 };
+
+static size_t
+npu_dma_buffer_count(const struct sun60i_a733_npu_dma *m)
+{
+
+	return m->profile == A733_NPU_DMA_PROFILE_FE ? NPU_DMA_NBUFFERS :
+	    m->profile == A733_NPU_DMA_PROFILE_TASK ? NPU_DMA_TASK_NBUFFERS : 0;
+}
 
 static void
 npu_dma_buffer_free(bus_dma_tag_t tag, struct npu_dma_buffer *b)
@@ -104,11 +113,16 @@ fail:
 int
 sun60i_a733_npu_dma_destroy(struct sun60i_a733_npu_dma *m)
 {
+	size_t count;
+
 	if (m == NULL)
+		return EINVAL;
+	count = npu_dma_buffer_count(m);
+	if (count == 0)
 		return EINVAL;
 	if (m->retained)
 		return EBUSY;
-	for (size_t i = NPU_DMA_NBUFFERS; i > 0; i--)
+	for (size_t i = count; i > 0; i--)
 		npu_dma_buffer_free(m->tag, &m->buffers[i - 1]);
 	bus_dmatag_destroy(m->tag);
 	kmem_free(m, sizeof(*m));
@@ -132,6 +146,7 @@ sun60i_a733_npu_dma_prepare(bus_dma_tag_t parent, const void *commands,
 	    bytes > UINTPTR_MAX - (uintptr_t)commands)
 		return EINVAL;
 	m = kmem_zalloc(sizeof(*m), KM_SLEEP);
+	m->profile = A733_NPU_DMA_PROFILE_FE;
 	error = bus_dmatag_subregion(parent, 0, NPU_DMA_LIMIT - 1,
 	    &m->tag, BUS_DMA_WAITOK);
 	if (error != 0) {
@@ -183,7 +198,8 @@ sun60i_a733_npu_dma_info(const struct sun60i_a733_npu_dma *m,
 		.stlb_address = m->buffers[1].address,
 		.command_address = m->buffers[2].address, .pd_entry = m->pd_entry,
 		.command_virtual = NPU_DMA_COMMAND_VA,
-		.command_bytes = m->command_bytes, .retained = m->retained
+		.command_bytes = m->command_bytes, .retained = m->retained,
+		.profile = m->profile
 	};
 	return 0;
 }
@@ -199,6 +215,117 @@ npu_dma_spans_overlap(const void *p, size_t bytes, const void *q, size_t size)
 }
 
 int
+sun60i_a733_npu_dma_task_prepare(bus_dma_tag_t parent, const void *commands,
+    size_t command_bytes, const void *constants, size_t constants_bytes,
+    const void *input, size_t input_bytes, struct sun60i_a733_npu_dma **out)
+{
+	static const size_t sizes[NPU_DMA_TASK_NBUFFERS] = {
+		NPU_DMA_PAGE, A733_NPU_MMU_STLB_BYTES, NPU_DMA_PAGE,
+		NPU_DMA_PAGE, NPU_DMA_PAGE, NPU_DMA_PAGE
+	};
+	struct sun60i_a733_npu_mmu_page pages[4];
+	struct sun60i_a733_npu_mmu_plan plan;
+	struct sun60i_a733_npu_dma *m;
+	int error;
+
+	if (parent == NULL || commands == NULL || constants == NULL ||
+	    input == NULL || out == NULL || command_bytes < 8 ||
+	    command_bytes > NPU_DMA_PAGE || (command_bytes & 7) != 0 ||
+	    constants_bytes == 0 || constants_bytes > NPU_DMA_PAGE ||
+	    input_bytes == 0 || input_bytes > NPU_DMA_PAGE ||
+	    command_bytes > UINTPTR_MAX - (uintptr_t)commands ||
+	    constants_bytes > UINTPTR_MAX - (uintptr_t)constants ||
+	    input_bytes > UINTPTR_MAX - (uintptr_t)input ||
+	    sizeof(*out) > UINTPTR_MAX - (uintptr_t)out ||
+	    npu_dma_spans_overlap(out, sizeof(*out), commands, command_bytes) ||
+	    npu_dma_spans_overlap(out, sizeof(*out), constants, constants_bytes) ||
+	    npu_dma_spans_overlap(out, sizeof(*out), input, input_bytes))
+		return EINVAL;
+	m = kmem_zalloc(sizeof(*m), KM_SLEEP);
+	m->profile = A733_NPU_DMA_PROFILE_TASK;
+	error = bus_dmatag_subregion(parent, 0, NPU_DMA_LIMIT - 1,
+	    &m->tag, BUS_DMA_WAITOK);
+	if (error != 0) {
+		kmem_free(m, sizeof(*m));
+		return error;
+	}
+	for (size_t i = 0; i < NPU_DMA_TASK_NBUFFERS; i++) {
+		error = npu_dma_buffer_alloc(m->tag, sizes[i], &m->buffers[i]);
+		if (error != 0)
+			goto fail;
+		for (size_t j = 0; j < i; j++) {
+			if (m->buffers[i].address < m->buffers[j].address + sizes[j] &&
+			    m->buffers[j].address < m->buffers[i].address + sizes[i]) {
+				error = EEXIST;
+				goto fail;
+			}
+		}
+	}
+	if (m->buffers[2].address == NPU_DMA_COMMAND_VA) {
+		error = EADDRINUSE;
+		goto fail;
+	}
+	for (size_t i = 0; i < 4; i++) {
+		pages[i] = (struct sun60i_a733_npu_mmu_page){
+			m->buffers[i + 2].address,
+			i == 3 ? A733_NPU_MMU_WRITABLE : 0
+		};
+	}
+	plan = (struct sun60i_a733_npu_mmu_plan){
+		.mtlb_physical = m->buffers[0].address,
+		.stlb_physical = m->buffers[1].address,
+		.virtual_base = NPU_DMA_COMMAND_VA, .pages = pages, .page_count = 4
+	};
+	error = sun60i_a733_npu_mmu_build(&plan, m->buffers[0].cpu, sizes[0],
+	    m->buffers[1].cpu, sizes[1]);
+	if (error != 0)
+		goto fail;
+	error = sun60i_a733_npu_mmu_pd_entry(m->buffers[0].address, &m->pd_entry);
+	if (error != 0)
+		goto fail;
+	memcpy(m->buffers[2].cpu, commands, command_bytes);
+	memcpy(m->buffers[3].cpu, constants, constants_bytes);
+	memcpy(m->buffers[4].cpu, input, input_bytes);
+	memset(m->buffers[5].cpu, A733_NPU_DMA_TASK_OUTPUT_POISON, NPU_DMA_PAGE);
+	m->command_bytes = command_bytes;
+	m->constants_bytes = constants_bytes;
+	m->input_bytes = input_bytes;
+	*out = m;
+	return 0;
+fail:
+	(void)sun60i_a733_npu_dma_destroy(m);
+	return error;
+}
+
+int
+sun60i_a733_npu_dma_task_info(const struct sun60i_a733_npu_dma *m,
+    struct sun60i_a733_npu_dma_task_info *out)
+{
+	struct sun60i_a733_npu_dma_task_info info = { 0 };
+
+	if (m == NULL || out == NULL || m->profile != A733_NPU_DMA_PROFILE_TASK ||
+	    npu_dma_spans_overlap(out, sizeof(*out), m, sizeof(*m)))
+		return EINVAL;
+	for (size_t i = 0; i < NPU_DMA_TASK_NBUFFERS; i++) {
+		if (npu_dma_spans_overlap(out, sizeof(*out), m->buffers[i].cpu,
+		    m->buffers[i].bytes))
+			return EINVAL;
+	}
+	(void)sun60i_a733_npu_dma_info(m, &info.memory);
+	info.constants_address = m->buffers[3].address;
+	info.input_address = m->buffers[4].address;
+	info.output_address = m->buffers[5].address;
+	info.constants_virtual = NPU_DMA_COMMAND_VA + NPU_DMA_PAGE;
+	info.input_virtual = NPU_DMA_COMMAND_VA + 2 * NPU_DMA_PAGE;
+	info.output_virtual = NPU_DMA_COMMAND_VA + 3 * NPU_DMA_PAGE;
+	info.constants_bytes = m->constants_bytes;
+	info.input_bytes = m->input_bytes;
+	info.output_bytes = NPU_DMA_PAGE;
+	*out = info;
+	return 0;
+}
+
+int
 sun60i_a733_npu_dma_set_commands(struct sun60i_a733_npu_dma *m,
     const void *commands, size_t bytes)
 {
@@ -206,7 +333,8 @@ sun60i_a733_npu_dma_set_commands(struct sun60i_a733_npu_dma *m,
 		NPU_DMA_PAGE, A733_NPU_MMU_STLB_BYTES, NPU_DMA_PAGE
 	};
 
-	if (m == NULL || commands == NULL || bytes < 8 ||
+	if (m == NULL || m->profile != A733_NPU_DMA_PROFILE_FE ||
+	    commands == NULL || bytes < 8 ||
 	    bytes > NPU_DMA_PAGE || (bytes & 7) != 0 ||
 	    bytes > UINTPTR_MAX - (uintptr_t)commands)
 		return EINVAL;
@@ -232,18 +360,25 @@ sun60i_a733_npu_dma_set_commands(struct sun60i_a733_npu_dma *m,
 int
 sun60i_a733_npu_dma_retain(struct sun60i_a733_npu_dma *m)
 {
+	size_t count;
+
 	if (m == NULL)
+		return EINVAL;
+	count = npu_dma_buffer_count(m);
+	if (count == 0)
 		return EINVAL;
 	if (m->retained)
 		return EBUSY;
-	for (size_t i = 0; i < NPU_DMA_NBUFFERS; i++) {
+	for (size_t i = 0; i < count; i++) {
 		if (!m->buffers[i].loaded)
 			return EINVAL;
 	}
 	/* Retain before the first sync and every later hardware write attempt. */
 	m->retained = true;
-	for (size_t i = 0; i < NPU_DMA_NBUFFERS; i++)
+	for (size_t i = 0; i < count; i++)
 		bus_dmamap_sync(m->tag, m->buffers[i].map, 0, m->buffers[i].bytes,
-		    BUS_DMASYNC_PREWRITE);
+		    BUS_DMASYNC_PREWRITE |
+		    (m->profile == A733_NPU_DMA_PROFILE_TASK && i == 5 ?
+		    BUS_DMASYNC_PREREAD : 0));
 	return 0;
 }

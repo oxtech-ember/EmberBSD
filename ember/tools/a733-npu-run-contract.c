@@ -28,8 +28,10 @@ struct sun60i_a733_npu_dma { bool retained; size_t bytes; };
 struct sun60i_a733_npu_dma_info {
  uint64_t mtlb_address, stlb_address, command_address;
  uint32_t pd_entry, command_virtual;
- size_t command_bytes; bool retained;
+ size_t command_bytes; bool retained; uint32_t profile;
 };
+#define A733_NPU_DMA_PROFILE_FE 1
+#define A733_NPU_DMA_PROFILE_TASK 2
 #include "sun60i_a733_npu_run.h"
 #include "sun60i_a733_npu_fe.h"
 static struct sun60i_a733_npu_run state;
@@ -229,7 +231,7 @@ static int sun60i_a733_npu_dma_info(const struct sun60i_a733_npu_dma *m,
  CHECK(!in_irq && m == &context);
  if (++infos == fail_info) return EIO;
  *out = (struct sun60i_a733_npu_dma_info){ 0x100000,0x110000,0x120000,
-  0x1001,0x01001000,m->bytes,m->retained };
+  0x1001,0x01001000,m->bytes,m->retained,A733_NPU_DMA_PROFILE_FE };
  if (infos == 1) {
   switch (bad_info) {
   case 1: out->retained = true; break;
@@ -237,6 +239,8 @@ static int sun60i_a733_npu_dma_info(const struct sun60i_a733_npu_dma *m,
   case 3: out->command_address = out->command_virtual; break;
   case 4: out->command_bytes = 40; break;
   case 5: out->pd_entry ^= 1; break;
+  case 6: out->profile = A733_NPU_DMA_PROFILE_TASK; break;
+  case 7: out->profile = 0; break;
   }
  }
  return 0;
@@ -336,7 +340,7 @@ int main(void)
   reset(); mismatch_step=i; CHECK(run()==EIO);
   CHECK(context.retained && !state.status.terminal && !unmaps && !removed);
  }
- for (unsigned i=1; i<=5; i++) {
+ for (unsigned i=1; i<=7; i++) {
   reset(); bad_info=i; CHECK(run()==EINVAL && !maps && !writes && !retains && !established);
  }
  for (unsigned i=1; i<=2; i++) {

@@ -20,6 +20,7 @@ typedef struct fake_map {
 } *bus_dmamap_t;
 #define BUS_DMA_WAITOK 1
 #define BUS_DMASYNC_PREWRITE 2
+#define BUS_DMASYNC_PREREAD 4
 #define KM_SLEEP 1
 #define _BUS_DMAMAP_IS_BOUNCING 0x20000
 static unsigned checks;
@@ -28,11 +29,11 @@ static unsigned checks;
 	    checks, __LINE__, #c); exit(1); } } while (0)
 
 static struct fake_tag parent_tag = { 0, true };
-static struct slot { void *cpu; size_t bytes; uint64_t address; } slots[3];
+static struct slot { void *cpu; size_t bytes; uint64_t address; } slots[6];
 static unsigned stack[32], depth, calls, fail_call, allocated, current, syncs;
-static bool borrowed;
+static bool borrowed, task_mode;
 static unsigned bad_at, bad_kind;
-static uint64_t addresses[3];
+static uint64_t addresses[6];
 static bool retained_now(void);
 static void push(unsigned token) { CHECK(depth < 32); stack[depth++] = token; }
 static void pop(unsigned token) { CHECK(depth > 0 && stack[--depth] == token); }
@@ -64,7 +65,7 @@ static int bus_dmamem_alloc(bus_dma_tag_t tag, bus_size_t n,
 {
 	CHECK(tag->refs == 1 && align == 4096 && boundary == 0);
 	CHECK(maxseg == 1 && flags == BUS_DMA_WAITOK); if (fails()) return EIO;
-	CHECK(allocated < 3); current = allocated++;
+	CHECK(allocated < (task_mode ? 6U : 3U)); current = allocated++;
 	slots[current].bytes = n; slots[current].address = addresses[current];
 	*seg = (bus_dma_segment_t){ addresses[current], n, current };
 	*count = 1; push(10 + current * 4); return 0;
@@ -82,8 +83,8 @@ static int bus_dmamem_map(bus_dma_tag_t tag, bus_dma_segment_t *seg,
 static void bus_dmamem_unmap(bus_dma_tag_t tag, void *cpu, size_t n)
 {
 	CHECK(tag->refs == 1); unsigned id;
-	for (id = 0; id < 3; id++) if (slots[id].cpu == cpu) break;
-	CHECK(id < 3 && n == slots[id].bytes); pop(11 + id * 4); free(cpu);
+	for (id = 0; id < 6; id++) if (slots[id].cpu == cpu) break;
+	CHECK(id < 6 && n == slots[id].bytes); pop(11 + id * 4); free(cpu);
 }
 static int bus_dmamap_create(bus_dma_tag_t tag, bus_size_t n,
     int maxseg, bus_size_t maxsize, bus_size_t boundary, int flags,
@@ -124,7 +125,8 @@ static void bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map,
 {
 	CHECK(tag->refs == 1 && retained_now());
 	CHECK(map->id == syncs && offset == 0 && n == slots[map->id].bytes);
-	CHECK(flags == BUS_DMASYNC_PREWRITE); syncs++;
+	CHECK(flags == (BUS_DMASYNC_PREWRITE |
+	    (task_mode && map->id == 5 ? BUS_DMASYNC_PREREAD : 0))); syncs++;
 }
 #include "sun60i_a733_npu_mmu.h"
 #include "sun60i_a733_npu_mmu.c"
@@ -141,8 +143,9 @@ static void reset(void)
 {
 	CHECK(depth == 0 && parent_tag.refs == 0);
 	memset(slots, 0, sizeof(slots)); calls = fail_call = allocated = syncs = 0;
-	bad_at = bad_kind = 0; borrowed = false; active = NULL;
+	bad_at = bad_kind = 0; borrowed = task_mode = false; active = NULL;
 	addresses[0] = 0x100000; addresses[1] = 0x110000; addresses[2] = 0x120000;
+	addresses[3] = 0x130000; addresses[4] = 0x140000; addresses[5] = 0x150000;
 }
 static uint8_t test_commands[4096];
 static void reject(int error)
@@ -167,7 +170,7 @@ static void success(bool borrow, size_t bytes, bool retain)
 	CHECK(info.mtlb_address == 0x100000 && info.pd_entry == 0x1001);
 	CHECK(info.stlb_address == 0x110000 && info.command_address == 0x120000);
 	CHECK(info.command_virtual == 0x01001000 && info.command_bytes == bytes);
-	CHECK(!info.retained);
+	CHECK(!info.retained && info.profile == A733_NPU_DMA_PROFILE_FE);
 	CHECK(sun60i_a733_npu_dma_info(active, NULL) == EINVAL);
 	for (size_t i = 0; i < 3; i++) {
 		active->buffers[i].loaded = false;
@@ -277,6 +280,200 @@ static void replacement(void)
 	CHECK(sun60i_a733_npu_dma_destroy(active) == 0);
 	reset();
 }
+
+static uint8_t test_constants[4096], test_input[4096];
+
+static int
+task_prepare(struct sun60i_a733_npu_dma **out)
+{
+
+	task_mode = true;
+	return sun60i_a733_npu_dma_task_prepare(&parent_tag,
+	    test_commands, 16, test_constants, 64, test_input, 64, out);
+}
+
+static void
+task_reject(int error)
+{
+	struct sun60i_a733_npu_dma *out = (void *)(uintptr_t)1;
+
+	CHECK(task_prepare(&out) == error);
+	CHECK(out == (void *)(uintptr_t)1 && !syncs && !depth);
+	reset();
+}
+
+static void
+task_arguments(void)
+{
+	struct sun60i_a733_npu_dma *out = (void *)(uintptr_t)1;
+	uint8_t saved_commands[4096], saved_constants[4096], saved_input[4096];
+	const size_t bad[] = { 0, 4097, SIZE_MAX };
+	const void *sources[] = { test_commands, test_constants, test_input };
+
+	reset(); task_mode = true;
+	memcpy(saved_commands, test_commands, sizeof(saved_commands));
+	memcpy(saved_constants, test_constants, sizeof(saved_constants));
+	memcpy(saved_input, test_input, sizeof(saved_input));
+	for (unsigned which = 0; which < 3; which++) {
+		for (unsigned n = 0; n < 3; n++) {
+			size_t sizes[] = { 16, 64, 64 };
+			sizes[which] = bad[n];
+			CHECK(sun60i_a733_npu_dma_task_prepare(&parent_tag,
+			    test_commands, sizes[0], test_constants, sizes[1],
+			    test_input, sizes[2], &out) == EINVAL);
+		}
+		for (unsigned n = 0; n < 2; n++) {
+			const void *inputs[] = { test_commands, test_constants, test_input };
+			inputs[which] = n == 0 ? NULL : (void *)(UINTPTR_MAX - 7);
+			CHECK(sun60i_a733_npu_dma_task_prepare(&parent_tag,
+			    inputs[0], 16, inputs[1], 64, inputs[2], 64, &out) == EINVAL);
+		}
+		for (unsigned n = 0; n < 3; n++) {
+			uintptr_t base = (uintptr_t)sources[which];
+			size_t length = which == 0 ? 16 : 64;
+			uintptr_t address = n == 0 ? base : n == 1 ? base - 1 : base + length - 1;
+			CHECK(sun60i_a733_npu_dma_task_prepare(&parent_tag,
+			    test_commands, 16, test_constants, 64, test_input, 64,
+			    (struct sun60i_a733_npu_dma **)address) == EINVAL);
+		}
+	}
+	CHECK(sun60i_a733_npu_dma_task_prepare(NULL, test_commands, 16,
+	    test_constants, 64, test_input, 64, &out) == EINVAL);
+	CHECK(sun60i_a733_npu_dma_task_prepare(&parent_tag, test_commands, 16,
+	    test_constants, 64, test_input, 64, NULL) == EINVAL);
+	CHECK(sun60i_a733_npu_dma_task_prepare(&parent_tag, test_commands, 16,
+	    test_constants, 64, test_input, 64,
+	    (struct sun60i_a733_npu_dma **)(UINTPTR_MAX - 3)) == EINVAL);
+	CHECK(sun60i_a733_npu_dma_task_prepare(&parent_tag, test_commands, 9,
+	    test_constants, 64, test_input, 64, &out) == EINVAL);
+	CHECK(out == (void *)(uintptr_t)1 && !calls && !depth && !syncs);
+	CHECK(memcmp(saved_commands, test_commands, sizeof(saved_commands)) == 0);
+	CHECK(memcmp(saved_constants, test_constants, sizeof(saved_constants)) == 0);
+	CHECK(memcmp(saved_input, test_input, sizeof(saved_input)) == 0);
+	reset();
+}
+
+static void
+task_success(bool borrow, bool retain)
+{
+	struct sun60i_a733_npu_dma_task_info info, saved;
+	struct sun60i_a733_npu_dma_info common;
+	const uint32_t virtuals[] = { 0x01001000, 0x01002000, 0x01003000, 0x01004000 };
+	uint8_t image[4096];
+
+	reset(); borrowed = borrow;
+	CHECK(task_prepare(&active) == 0 && calls == 25 && depth == 26 && !syncs);
+	CHECK(sun60i_a733_npu_dma_info(active, &common) == 0);
+	CHECK(common.profile == A733_NPU_DMA_PROFILE_TASK && !common.retained);
+	CHECK(sun60i_a733_npu_dma_task_info(active, &info) == 0);
+	CHECK(info.memory.profile == A733_NPU_DMA_PROFILE_TASK);
+	CHECK(info.constants_address == addresses[3] && info.input_address == addresses[4]);
+	CHECK(info.output_address == addresses[5] && info.output_bytes == 4096);
+	CHECK(info.constants_virtual == virtuals[1] && info.input_virtual == virtuals[2]);
+	CHECK(info.output_virtual == virtuals[3] && info.constants_bytes == 64 && info.input_bytes == 64);
+	for (size_t i = 0; i < 256; i++)
+		word((uint8_t *)slots[0].cpu + i * 4, i == 1 ? (uint32_t)addresses[1] | 1 : 2);
+	for (size_t i = 1024; i < 4096; i++) CHECK(((uint8_t *)slots[0].cpu)[i] == 0);
+	for (size_t i = 0; i < 4096; i++)
+		word((uint8_t *)slots[1].cpu + i * 4,
+		    i >= 1 && i <= 4 ? (uint32_t)addresses[i + 1] | (i == 4 ? 7 : 3) : 2);
+	for (unsigned b = 2; b < 6; b++) {
+		const uint8_t *expected = b == 2 ? test_commands : b == 3 ? test_constants : test_input;
+		size_t bytes = b == 2 ? 16 : 64;
+		for (size_t i = 0; i < 4096; i++)
+			CHECK(((uint8_t *)slots[b].cpu)[i] == (b == 5 ?
+			    A733_NPU_DMA_TASK_OUTPUT_POISON : i < bytes ? expected[i] : 0));
+	}
+	CHECK(sun60i_a733_npu_dma_task_info(active, NULL) == EINVAL);
+	for (unsigned b = 0; b < 6; b++) {
+		memcpy(image, slots[b].cpu, sizeof(image));
+		CHECK(sun60i_a733_npu_dma_set_commands(active, test_commands, 40) == EINVAL);
+		CHECK(memcmp(image, slots[b].cpu, sizeof(image)) == 0);
+		active->buffers[b].loaded = false;
+		CHECK(sun60i_a733_npu_dma_retain(active) == EINVAL && !syncs && !active->retained);
+		active->buffers[b].loaded = true;
+	}
+	CHECK(sun60i_a733_npu_dma_task_info(active,
+	    (struct sun60i_a733_npu_dma_task_info *)active) == EINVAL);
+	CHECK(sun60i_a733_npu_dma_task_info(active,
+	    (struct sun60i_a733_npu_dma_task_info *)(UINTPTR_MAX - 3)) == EINVAL);
+	for (unsigned b = 0; b < 6; b++) {
+		CHECK(sun60i_a733_npu_dma_task_info(active,
+		    (struct sun60i_a733_npu_dma_task_info *)slots[b].cpu) == EINVAL);
+	}
+	active->profile = 0;
+	CHECK(sun60i_a733_npu_dma_destroy(active) == EINVAL && depth == 26);
+	CHECK(sun60i_a733_npu_dma_retain(active) == EINVAL && !syncs);
+	active->profile = A733_NPU_DMA_PROFILE_TASK;
+	memcpy(&saved, &info, sizeof(saved));
+	CHECK(sun60i_a733_npu_dma_task_info(NULL, &info) == EINVAL);
+	CHECK(memcmp(&saved, &info, sizeof(info)) == 0);
+	CHECK(calls == 25 && !syncs && active->command_bytes == 16);
+	if (retain) {
+		CHECK(sun60i_a733_npu_dma_retain(active) == 0 && syncs == 6 && active->retained);
+		CHECK(sun60i_a733_npu_dma_destroy(active) == EBUSY && depth == 26);
+		CHECK(sun60i_a733_npu_dma_retain(active) == EBUSY && syncs == 6);
+		/* Only fixture cleanup ends this simulated retained lifetime. */
+		active->retained = false;
+	}
+	CHECK(sun60i_a733_npu_dma_destroy(active) == 0);
+	reset();
+}
+
+static void
+task_contract(void)
+{
+	struct sun60i_a733_npu_dma_task_info info, saved;
+	const uint64_t bad[] = { 1, 0x100000001, 0x100000000, UINT64_MAX };
+
+	memset(test_constants, 0x3a, sizeof(test_constants));
+	memset(test_input, 0xbd, sizeof(test_input));
+	task_arguments();
+	for (unsigned i = 1; i <= 25; i++) { fail_call = i; task_reject(EIO); }
+	for (unsigned b = 0; b < 6; b++) {
+		for (unsigned kind = 1; kind <= 6; kind++) {
+			bad_at = b; bad_kind = kind;
+			task_reject(kind == 1 ? EOPNOTSUPP : EINVAL);
+		}
+		for (unsigned i = 0; i < 4; i++) {
+			addresses[b] = bad[i]; task_reject(ERANGE);
+		}
+	}
+	addresses[1] = 0xfffff000; task_reject(ERANGE);
+	for (unsigned i = 0; i < 6; i++) {
+		for (unsigned j = i + 1; j < 6; j++) {
+			addresses[j] = addresses[i]; task_reject(EEXIST);
+		}
+	}
+	addresses[5] = addresses[1] + 0x3000; task_reject(EEXIST);
+	addresses[2] = 0x01001000; task_reject(EADDRINUSE);
+	CHECK(sun60i_a733_npu_dma_prepare(&parent_tag, test_commands, 16, &active) == 0);
+	memset(&info, 0xa5, sizeof(info)); saved = info;
+	CHECK(sun60i_a733_npu_dma_task_info(active, &info) == EINVAL);
+	CHECK(memcmp(&info, &saved, sizeof(info)) == 0);
+	CHECK(sun60i_a733_npu_dma_destroy(active) == 0); reset();
+	task_success(false, false); task_success(true, false);
+	task_success(false, true); task_success(true, true);
+	for (unsigned n = 0; n < 2; n++) {
+		task_mode = true;
+		size_t bytes = n == 0 ? 8 : 4096, data_bytes = n == 0 ? 1 : 4096;
+		CHECK(sun60i_a733_npu_dma_task_prepare(&parent_tag,
+		    test_commands, bytes, test_constants, data_bytes,
+		    test_input, data_bytes, &active) == 0);
+		CHECK(sun60i_a733_npu_dma_task_info(active, &info) == 0);
+		CHECK(info.memory.command_bytes == bytes && info.constants_bytes == data_bytes &&
+		    info.input_bytes == data_bytes);
+		CHECK(memcmp(slots[2].cpu, test_commands, bytes) == 0);
+		CHECK(memcmp(slots[3].cpu, test_constants, data_bytes) == 0);
+		CHECK(memcmp(slots[4].cpu, test_input, data_bytes) == 0);
+		CHECK(sun60i_a733_npu_dma_destroy(active) == 0); reset();
+	}
+	/* Four-page STLB alignment is not a sixteen-KiB alignment requirement. */
+	addresses[1] = 0x111000;
+	CHECK(task_prepare(&active) == 0);
+	CHECK(sun60i_a733_npu_dma_destroy(active) == 0); reset();
+}
+
 int main(void)
 {
 	struct sun60i_a733_npu_dma *out = (void *)(uintptr_t)1;
@@ -314,5 +511,6 @@ int main(void)
 	replacement();
 	success(false, 8, false); success(true, 16, false);
 	success(false, 4096, true); success(true, 16, true);
+	task_contract();
 	printf("A733 NPU DMA32: %u checks passed\n", checks); return 0;
 }

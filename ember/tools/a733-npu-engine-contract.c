@@ -90,7 +90,7 @@ int sun60i_a733_npu_dma_info(const struct sun60i_a733_npu_dma *m,
 		return info_error;
 	*out = (struct sun60i_a733_npu_dma_info){ .mtlb_address = 0x40000000,
 	    .stlb_address = 0x40010000, .command_address = identity ? 0x01001000 : 0x40020000,
-	    .pd_entry = 0x400001, .command_virtual = 0x01001000, .command_bytes = 16 };
+	    .profile = A733_NPU_DMA_PROFILE_FE, .pd_entry = 0x400001, .command_virtual = 0x01001000, .command_bytes = 16 };
 	return 0;
 }
 int sun60i_a733_npu_dma_destroy(struct sun60i_a733_npu_dma *m)

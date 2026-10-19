@@ -75,6 +75,33 @@ leases survive success, faults, and timeout until reboot. There is no
 reset, retry, stop, or release operation. A failed mask remains a fault;
 it does not establish that the interrupt line is quiescent.
 
+## CPU-only task storage
+
+The kernel-private task DMA constructor creates a separate 36 KiB profile.
+It owns six low32, non-bounce, single-segment maps: root 4 KiB, STLB 16 KiB,
+command 4 KiB, constants 4 KiB, input 4 KiB, and output 4 KiB. All 15 physical
+pairs must be disjoint. STLB alignment is 4 KiB. Command VA must differ
+from its DMA PA. Trusted command bytes are 8..4096 and a multiple of 8.
+Trusted constants and input spans each contain 1..4096 stable bytes.
+
+The fixed VA pages are command 0x01001000, constants 0x01002000, input
+0x01003000, and output 0x01004000. The first three are read-only. Output is
+writable. Pages 0x01000000 and 0x01005000 remain unmapped. Prepare clears
+all unused input tails and fills the output page with poison 0xa5. It checks
+all pointer spans and output-parameter aliases before any output change.
+Allocation failure preserves caller data and the output parameter.
+
+Each context has an explicit FE or TASK profile identity. The old FE run
+and command replacement reject a TASK context before I/O or mutation.
+Task metadata access exposes addresses and byte counts only. Retain becomes
+sticky before the first sync. Tables, command, constants, and input use
+PREWRITE. Output uses PREWRITE | PREREAD to publish poison before device
+writes. Retained storage cannot be freed after an error or timeout.
+
+This interface does not perform MMIO, register an IRQ, start FE or NN, or
+add a task stage or user ioctl. It has no POSTREAD, output copy, or completion
+API. A later native terminal contract must authorize result access.
+
 ## Cached evidence and verification
 
 `engine_result` records the stage return value. `run_attempted`,

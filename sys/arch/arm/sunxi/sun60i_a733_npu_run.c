@@ -310,7 +310,8 @@ sun60i_a733_npu_run_once(struct sun60i_a733_npu_run *s, bus_space_tag_t bst,
 	error = sun60i_a733_npu_dma_info(dma, &info);
 	if (error != 0)
 		goto out;
-	if (info.retained || info.command_virtual != 0x01001000 ||
+	if (info.profile != A733_NPU_DMA_PROFILE_FE ||
+	    info.retained || info.command_virtual != 0x01001000 ||
 	    info.command_address == info.command_virtual ||
 	    info.command_bytes != 16 ||
 	    info.pd_entry != ((info.mtlb_address >> 12) << 4 | 1)) {
