@@ -120,6 +120,7 @@ file	arch/arm/sunxi/sun60i_a733_de352_fdt.c	sun60i_a733_de
 file	arch/arm/sunxi/sun60i_a733_output.c	sunxi_a733_ccu
 file	arch/arm/sunxi/sun60i_a733_output_provider.c	sunxi_a733_ccu
 file	arch/arm/sunxi/sun60i_a733_hdmi_phy.c	sunxi_a733_ccu
+file	arch/arm/sunxi/sun60i_a733_tv0.c		sunxi_a733_ccu
 
 # Origin: EmberBSD; observe-only A733 GPU attach and opt-in bootstrap.
 define	sun60ipvr: drmkms

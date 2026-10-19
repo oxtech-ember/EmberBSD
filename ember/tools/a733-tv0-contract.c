@@ -1,0 +1,178 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD; AI-assisted actual-source TV0 controls. */
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#include "sun60i_a733_output.c"
+#include "sun60i_a733_tv0.c"
+static unsigned checks;
+#define CHECK(c) do { checks++; if (!(c)) { \
+	fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #c); \
+	abort(); } } while (0)
+struct event { unsigned space, reg; uint32_t value; };
+struct model {
+	uint32_t reg[2][256];
+	unsigned ops, reads, writes, fail, reject;
+	bool retained, late;
+	struct event events[64];
+};
+static const int cookie;
+static struct model m;
+static struct sun60i_a733_tv0 s;
+static const struct sun60i_a733_output_mode mode = {
+	108000000, 1280, 1328, 1440, 1688, 1024, 1025, 1028, 1066, true, true
+};
+static int
+ready(void *arg, const void *owner)
+{
+	struct model *p = arg;
+	CHECK(p == &m && owner == &cookie && p->retained);
+	return ++p->ops == p->fail ? EFAULT : 0;
+}
+static int
+read_reg(void *arg, enum sun60i_a733_tv0_space space, uint32_t reg,
+    uint32_t *value)
+{
+	struct model *p = arg;
+
+	CHECK(space <= A733_VO1_REGS && reg < 0x400 && reg % 4 == 0);
+	p->reads++;
+	*value = p->reg[space][reg / 4];
+	return ++p->ops == p->fail ? EFAULT : 0;
+}
+static int
+write_reg(void *arg, enum sun60i_a733_tv0_space space, uint32_t reg,
+    uint32_t value)
+{
+	struct model *p = arg;
+
+	CHECK(space <= A733_VO1_REGS && reg < 0x400 && reg % 4 == 0);
+	CHECK(p->retained && s.written);
+	CHECK(p->writes < 64);
+	p->events[p->writes++] = (struct event){space, reg, value};
+	uint32_t *v = &p->reg[space][reg / 4];
+	if (p->writes != p->reject) {
+		if (space == A733_TV0_REGS && reg == 4) {
+			if (p->late)
+				*v |= UINT32_C(0x1000);
+			*v = (value & UINT32_C(0x5f000000)) |
+			    (*v & value & UINT32_C(0x5f00));
+		} else if (space == A733_TV0_REGS && reg == 0xfc)
+			*v &= value | ~UINT32_C(0x60000000);
+		else
+			*v = value;
+	}
+	return ++p->ops == p->fail ? EFAULT : 0;
+}
+static const struct sun60i_a733_tv0_io io = {&m, ready, read_reg, write_reg};
+static void
+fixture(void)
+{
+	memset(&m, 0, sizeof(m));
+	for (unsigned space = 0; space < 2; space++)
+		for (unsigned reg = 0; reg < 256; reg++)
+			m.reg[space][reg] = UINT32_C(0xa5a5a5a5);
+	m.reg[A733_VO1_REGS][0] |= 0xa;
+	m.reg[A733_TV0_REGS][0x90 / 4] &= ~UINT32_C(0x80000000);
+	m.reg[A733_TV0_REGS][0xfc / 4] = UINT32_C(0x60000000);
+	m.retained = true;
+	s = (struct sun60i_a733_tv0){.io = &io, .owner = &cookie};
+}
+static int
+pipeline(uint64_t *seq)
+{
+	int error = sun60i_a733_tv0_route(&s);
+	if (error == 0)
+		error = sun60i_a733_tv0_prepare(&s, &mode,
+		    A733_TV0_EXPERIMENT_VENDOR_ZERO);
+	if (error == 0)
+		error = sun60i_a733_tv0_start(&s);
+	if (error == 0) {
+		m.reg[A733_TV0_REGS][1] |= UINT32_C(0x4100);
+		error = sun60i_a733_tv0_observe(&s, seq);
+	}
+	return error;
+}
+int
+main(void)
+{
+	uint64_t seq = 0;
+	unsigned ops, writes;
+	struct sun60i_a733_output_mode invalid;
+	fixture();
+	CHECK(pipeline(&seq) == 0 && seq == 1 && s.started && s.prepared && s.routed);
+	ops = m.ops; writes = m.writes;
+	CHECK(writes == 26);
+	CHECK(m.reg[A733_VO1_REGS][0] == UINT32_C(0xa5a5a5a5));
+	CHECK(m.reg[A733_VO1_REGS][8] == UINT32_C(0xb5b5a5a5));
+	CHECK((m.reg[0][0x98/4] & UINT32_C(0x8001ffff)) == 0x854);
+	CHECK((m.reg[0][0x9c/4] & UINT32_C(0x7fff7fff)) == 0x04ff03ff);
+	CHECK((m.reg[0][0xa0/4] & UINT32_C(0xffff7fff)) == 0x06970167);
+	CHECK((m.reg[0][0xa4/4] & UINT32_C(0x7fff)) == 0x28);
+	CHECK((m.reg[0][0xa8/4] & UINT32_C(0x0fff0fff)) == 0x006f0002);
+	CHECK((m.reg[0][0x90/4] & UINT32_C(0x800ffff0)) == 0x800001f0);
+	CHECK((m.reg[0][0x88/4] & UINT32_C(0x0f000000)) == 0x03000000);
+	CHECK((m.reg[0][0x340/4] & UINT32_C(0xc0ffff77)) == 0);
+	CHECK(m.reg[0][0] == (UINT32_C(0xa5a5a5a5) & ~UINT32_C(0x31)));
+	CHECK((m.reg[0][1] & 0x4100) == 0x100);
+	for (unsigned i = 0; i < writes; i++)
+		printf("WRITE %u %#x %#x\n", m.events[i].space, m.events[i].reg, m.events[i].value);
+	CHECK(sun60i_a733_tv0_observe(&s, &seq) == ENOENT && s.fault == 0 && seq == 1);
+	m.reg[0][1] |= 0x4000; m.late = true;
+	CHECK(sun60i_a733_tv0_observe(&s, &seq) == 0 && seq == 2);
+	CHECK((m.reg[0][1] & 0x1100) == 0x1100);
+	/* Every callback failure retains the first error and prevents later I/O. */
+	for (unsigned fail = 1; fail <= ops; fail++) {
+		fixture(); m.fail = fail; seq = UINT64_C(0x1234);
+		CHECK(pipeline(&seq) == EFAULT && s.fault == EFAULT);
+		CHECK(m.ops == fail && seq == UINT64_C(0x1234));
+		CHECK(s.written == (m.writes != 0));
+		CHECK(sun60i_a733_tv0_route(&s) == EFAULT);
+		CHECK(sun60i_a733_tv0_prepare(&s, &mode,
+		    A733_TV0_EXPERIMENT_VENDOR_ZERO) == EFAULT);
+		CHECK(sun60i_a733_tv0_start(&s) == EFAULT);
+		CHECK(sun60i_a733_tv0_observe(&s, &seq) == EFAULT && m.ops == fail);
+	}
+	for (unsigned reject = 1; reject <= writes; reject++) {
+		fixture(); m.reject = reject;
+		CHECK(pipeline(&seq) == EIO && s.fault == EIO && m.writes == reject);
+	}
+	for (unsigned loss = 0; loss < 4; loss++) {
+		fixture(); CHECK(pipeline(&seq) == 0);
+		if (loss < 2) m.reg[0][0xfc/4] |= UINT32_C(0x40000000) >> loss;
+		if (loss == 2) m.reg[0][0x90/4] &= ~UINT32_C(0x80000000);
+		if (loss == 3) m.reg[0][1] &= ~UINT32_C(0x40000000);
+		unsigned old_writes = m.writes;
+		CHECK(sun60i_a733_tv0_observe(&s, &seq) == EIO && m.writes == old_writes);
+	}
+	fixture(); CHECK(sun60i_a733_tv0_route(&s) == 0);
+	unsigned old_writes = m.writes;
+	CHECK(sun60i_a733_tv0_prepare(&s, &mode, 0) == EOPNOTSUPP && m.writes == old_writes);
+	fixture(); CHECK(pipeline(&seq) == 0); s.sequence = UINT64_MAX; m.reg[0][1] |= 0x4000;
+	CHECK(sun60i_a733_tv0_observe(&s, &seq) == EOVERFLOW);
+	/* Reserved GCTL bit31 stays clear when the hardware reports it clear. */
+	fixture(); m.reg[0][0] = 0;
+	CHECK(pipeline(&seq) == 0 && m.reg[0][0] == 0);
+	/* Reject unsupported timing and phase before any timing write. */
+	fixture(); CHECK(sun60i_a733_tv0_route(&s) == 0);
+	invalid = mode; invalid.vtotal = invalid.vdisplay + 5;
+	old_writes = m.writes;
+	CHECK(sun60i_a733_tv0_prepare(&s, &invalid,
+	    A733_TV0_EXPERIMENT_VENDOR_ZERO) == ERANGE);
+	CHECK(m.writes == old_writes && !s.prepared);
+	fixture(); CHECK(sun60i_a733_tv0_start(&s) == EINVAL);
+	CHECK(m.writes == 0 && !s.started);
+	fixture(); CHECK(sun60i_a733_tv0_route(&s) == 0);
+	m.reg[0][0x90 / 4] |= UINT32_C(0x80000000);
+	old_writes = m.writes;
+	CHECK(sun60i_a733_tv0_prepare(&s, &mode,
+	    A733_TV0_EXPERIMENT_VENDOR_ZERO) == EBUSY);
+	CHECK(m.writes == old_writes && !s.prepared);
+	CHECK(sun60i_a733_tv0_route(NULL) == EINVAL);
+	printf("A733 TV0 actual-source contract: %u checks passed\n", checks);
+	return 0;
+}
