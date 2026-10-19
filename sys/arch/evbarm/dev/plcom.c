@@ -123,6 +123,9 @@ __KERNEL_RCSID(0, "$NetBSD: plcom.c,v 1.69 2023/04/11 12:58:03 riastradh Exp $")
 	} while (/* CONSTCOND */ 0)
 
 #include <sys/param.h>
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include <sys/cpu.h>
+#endif
 #include <sys/systm.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
@@ -149,6 +152,9 @@ __KERNEL_RCSID(0, "$NetBSD: plcom.c,v 1.69 2023/04/11 12:58:03 riastradh Exp $")
 
 #include <evbarm/dev/plcomreg.h>
 #include <evbarm/dev/plcomvar.h>
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include <evbarm/dev/plcom_consolevar.h>
+#endif
 
 #include <dev/cons.h>
 
@@ -238,6 +244,153 @@ static int plcomconsattached;
 static int plcomconsrate;
 static tcflag_t plcomconscflag;
 static struct cnm_state plcom_cnm_state;
+
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+/* The record is never recycled for a replacement device or attachment. */
+struct plcom_console_ready {
+	device_t device;
+	struct plcom_softc *softc;
+	struct tty *tty;
+	void *soft_ih;
+	void *hard_ih;
+	dev_t dev;
+	int unit;
+	bool published;
+	bool revoked;
+};
+static struct plcom_console_ready plcom_console_ready;
+
+static int
+plcom_console_ready_context(void)
+{
+
+	if (cold || panicstr != NULL || cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	if (!KERNEL_LOCKED_P())
+		return EDEADLK;
+	return 0;
+}
+
+/* Read software attachment state only. The frontend supplies the IRQ proof. */
+static int
+plcom_console_ready_live(struct plcom_softc *sc, dev_t *out)
+{
+	struct tty *tp;
+	dev_t dev;
+	int maj;
+
+	KASSERT(KERNEL_LOCKED_P());
+	if (sc == NULL || sc->sc_dev == NULL ||
+	    device_private(sc->sc_dev) != sc ||
+	    device_lookup_private(&plcom_cd, device_unit(sc->sc_dev)) != sc ||
+	    !device_is_active(sc->sc_dev) || !sc->enabled ||
+	    (sc->sc_hwflags & (PLCOM_HW_CONSOLE | PLCOM_HW_DEV_OK |
+	    PLCOM_HW_KGDB)) != (PLCOM_HW_CONSOLE | PLCOM_HW_DEV_OK) ||
+	    sc->sc_rbuf == NULL || sc->sc_si == NULL ||
+	    !plcomconsattached || plcomcons_info.pi_iot == NULL ||
+	    !bus_space_is_equal(sc->sc_pi.pi_iot, plcomcons_info.pi_iot) ||
+	    sc->sc_pi.pi_iobase != plcomcons_info.pi_iobase)
+		return ENXIO;
+	tp = sc->sc_tty;
+	maj = cdevsw_lookup_major(&plcom_cdevsw);
+	if (tp == NULL || maj < 0 || tp->t_oproc != plcomstart ||
+	    tp->t_param != plcomparam || tp->t_hwiflow != plcomhwiflow)
+		return ENXIO;
+	dev = makedev(maj, device_unit(sc->sc_dev));
+	if (dev == NODEV || tp->t_dev != dev || plcomcons.cn_dev != dev)
+		return ENXIO;
+	*out = dev;
+	return 0;
+}
+
+void
+plcom_console_attach_complete(struct plcom_softc *sc, void *hard_ih)
+{
+	dev_t dev;
+
+	if (panicstr != NULL || cpu_intr_p() || cpu_softintr_p())
+		return;
+	ASSERT_SLEEPABLE();
+	KERNEL_LOCK(1, NULL);
+	if (!plcom_console_ready.published && !plcom_console_ready.revoked &&
+	    hard_ih != NULL && plcom_console_ready_live(sc, &dev) == 0) {
+		plcom_console_ready.device = sc->sc_dev;
+		plcom_console_ready.softc = sc;
+		plcom_console_ready.tty = sc->sc_tty;
+		plcom_console_ready.soft_ih = sc->sc_si;
+		plcom_console_ready.hard_ih = hard_ih;
+		plcom_console_ready.dev = dev;
+		plcom_console_ready.unit = device_unit(sc->sc_dev);
+		plcom_console_ready.published = true;
+	}
+	KERNEL_UNLOCK_ONE(NULL);
+}
+
+int
+plcom_console_ready_validate(const struct plcom_console_ready *ready,
+    const struct consdev *previous, dev_t *out)
+{
+	struct plcom_softc *sc;
+	dev_t dev;
+	int error;
+
+	if (out == NULL)
+		return EINVAL;
+	error = plcom_console_ready_context();
+	if (error != 0)
+		return error;
+	if (ready != &plcom_console_ready)
+		return EPERM;
+	if (!ready->published || ready->revoked)
+		return ENXIO;
+	if (previous != &plcomcons)
+		return EPERM;
+	/* Compare a fresh lookup before dereferencing former provider storage. */
+	sc = device_lookup_private(&plcom_cd, ready->unit);
+	if (sc == NULL || sc != ready->softc || sc->sc_dev != ready->device ||
+	    sc->sc_tty != ready->tty || sc->sc_si != ready->soft_ih ||
+	    ready->hard_ih == NULL)
+		return ENXIO;
+	error = plcom_console_ready_live(sc, &dev);
+	if (error != 0)
+		return error;
+	if (dev != ready->dev)
+		return ENXIO;
+	*out = dev;
+	return 0;
+}
+
+int
+plcom_console_ready_get(const struct plcom_console_ready **out)
+{
+	dev_t dev;
+	int error;
+
+	if (out == NULL)
+		return EINVAL;
+	error = plcom_console_ready_validate(&plcom_console_ready, &plcomcons,
+	    &dev);
+	if (error != 0)
+		return error;
+	*out = &plcom_console_ready;
+	return 0;
+}
+
+static void
+plcom_console_ready_revoke(device_t device)
+{
+
+	/* Cold bootstrap is serialized. No consumer can get a token there. */
+	if (!cold)
+		KERNEL_LOCK(1, NULL);
+	if (plcom_console_ready.published && (device == NULL ||
+	    device == plcom_console_ready.device))
+		plcom_console_ready.revoked = true;
+	if (!cold)
+		KERNEL_UNLOCK_ONE(NULL);
+}
+#endif
 
 static int ppscap =
 	PPS_TSFMT_TSPEC |
@@ -500,6 +653,9 @@ plcom_attach_subr(struct plcom_softc *sc)
 	struct plcom_instance *pi = &sc->sc_pi;
 	struct tty *tp;
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	plcom_console_ready_revoke(sc->sc_dev);
+#endif
 	callout_init(&sc->sc_diag_callout, 0);
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_HIGH);
 
@@ -702,6 +858,9 @@ plcom_detach(device_t self, int flags)
 	if (sc->sc_hwflags & (PLCOM_HW_CONSOLE|PLCOM_HW_KGDB))
 		return EBUSY;
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	plcom_console_ready_revoke(self);
+#endif
 	if (sc->disable != NULL && sc->enabled != 0) {
 		(*sc->disable)(sc);
 		sc->enabled = 0;
@@ -755,7 +914,14 @@ plcom_activate(device_t self, enum devact act)
 
 	switch (act) {
 	case DVACT_DEACTIVATE:
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		KERNEL_LOCK(1, NULL);
+		plcom_console_ready_revoke(self);
+#endif
 		sc->enabled = 0;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		KERNEL_UNLOCK_ONE(NULL);
+#endif
 		return 0;
 	default:
 		return EOPNOTSUPP;
@@ -828,6 +994,9 @@ plcom_shutdown(struct plcom_softc *sc)
 
 	mutex_spin_exit(&sc->sc_lock);
 	if (sc->disable) {
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		plcom_console_ready_revoke(sc->sc_dev);
+#endif
 #ifdef DIAGNOSTIC
 		if (!sc->enabled)
 			panic("plcom_shutdown: not enabled?");
@@ -2679,12 +2848,23 @@ plcomcnattach(struct plcom_instance *pi, int rate, int frequency,
     tcflag_t cflag, int unit)
 {
 	int res;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	const bool warm = !cold;
+
+	if (warm) {
+		if (cpu_intr_p() || cpu_softintr_p())
+			return EWOULDBLOCK;
+		ASSERT_SLEEPABLE();
+		KERNEL_LOCK(1, NULL);
+	}
+	plcom_console_ready_revoke(NULL);
+#endif
 
 	plcomcons_info = *pi;
 
 	res = plcominit(&plcomcons_info, rate, frequency, cflag);
 	if (res)
-		return res;
+		goto out;
 	plcom_copy_attach(&plcomcons_info);
 
 	cn_tab = &plcomcons;
@@ -2695,18 +2875,38 @@ plcomcnattach(struct plcom_instance *pi, int rate, int frequency,
 	plcomconsrate = rate;
 	plcomconscflag = cflag;
 
-	return 0;
+	res = 0;
+out:
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (warm)
+		KERNEL_UNLOCK_ONE(NULL);
+#endif
+	return res;
 }
 
 void
 plcomcndetach(void)
 {
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	const bool warm = !cold;
+
+	if (warm) {
+		KASSERT(!cpu_intr_p() && !cpu_softintr_p());
+		ASSERT_SLEEPABLE();
+		KERNEL_LOCK(1, NULL);
+	}
+	plcom_console_ready_revoke(NULL);
+#endif
 
 	bus_space_unmap(plcomcons_info.pi_iot, plcomcons_info.pi_ioh,
 	    plcomcons_info.pi_size);
 	plcomcons_info.pi_iot = NULL;
 
 	cn_tab = NULL;
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (warm)
+		KERNEL_UNLOCK_ONE(NULL);
+#endif
 }
 
 int

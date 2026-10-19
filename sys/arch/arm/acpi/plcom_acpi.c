@@ -30,6 +30,9 @@
  */
 
 #include "cixscmi_acpi.h"
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: plcom_acpi.c,v 1.4 2023/01/24 06:56:40 mlelstv Exp $");
 
@@ -49,6 +52,9 @@ __KERNEL_RCSID(0, "$NetBSD: plcom_acpi.c,v 1.4 2023/01/24 06:56:40 mlelstv Exp $
 
 #include <evbarm/dev/plcomreg.h>
 #include <evbarm/dev/plcomvar.h>
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include <evbarm/dev/plcom_consolevar.h>
+#endif
 
 struct plcom_acpi_softc {
 	struct plcom_softc pa_sc;
@@ -214,6 +220,7 @@ plcom_acpi_cix_deferred(device_t self)
 	struct plcom_softc *sc = &psc->pa_sc;
 	ACPI_HANDLE provider;
 	uint64_t rate = 0;
+	void *ih;
 	int error;
 
 	if (psc->pa_once)
@@ -252,11 +259,16 @@ plcom_acpi_cix_deferred(device_t self)
 		goto failed;
 	}
 	plcom_attach_subr(sc);
-	if (acpi_intr_establish(self, (uint64_t)psc->pa_aa.aa_node->ad_handle,
-	    IPL_SERIAL, true, plcomintr, sc, device_xname(self)) == NULL) {
+	ih = acpi_intr_establish(self,
+	    (uint64_t)psc->pa_aa.aa_node->ad_handle, IPL_SERIAL, true,
+	    plcomintr, sc, device_xname(self));
+	if (ih == NULL) {
 		aprint_error_dev(self, "couldn't install interrupt handler\n");
 		return;
 	}
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	plcom_console_attach_complete(sc, ih);
+#endif
 	aprint_normal_dev(self, "native cached clock %u frequency %d Hz\n",
 	    psc->pa_clock_id, sc->sc_frequency);
 	return;
@@ -413,6 +425,9 @@ plcom_acpi_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	plcom_console_attach_complete(sc, ih);
+#endif
 done:
 	acpi_resource_cleanup(&res);
 }

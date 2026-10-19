@@ -26,6 +26,9 @@
  * SUCH DAMAGE.
  */
 
+#ifdef _KERNEL_OPT
+#include "opt_wsdisplay_bootfb.h"
+#endif
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: plcom_fdt.c,v 1.6 2023/01/24 06:56:40 mlelstv Exp $");
 
@@ -39,6 +42,9 @@ __KERNEL_RCSID(0, "$NetBSD: plcom_fdt.c,v 1.6 2023/01/24 06:56:40 mlelstv Exp $"
 
 #include <evbarm/dev/plcomreg.h>
 #include <evbarm/dev/plcomvar.h>
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include <evbarm/dev/plcom_consolevar.h>
+#endif
 
 static int	plcom_fdt_match(device_t, cfdata_t, void *);
 static void	plcom_fdt_attach(device_t, device_t, void *);
@@ -125,6 +131,9 @@ plcom_fdt_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(self, "couldn't install interrupt handler\n");
 		return;
 	}
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	plcom_console_attach_complete(sc, ih);
+#endif
 }
 
 static int
