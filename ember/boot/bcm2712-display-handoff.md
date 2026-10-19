@@ -36,6 +36,12 @@ DMA allocation. Timeout or unknown completion quarantines that allocation and
 channel until reboot. A firmware failure leaves the CPU owner CLOSED with its
 serial route retained; it cannot cancel, fall back or admit hardware operations.
 
+The one native transport call prints a tagged errno line. Only transport success
+prints the six little-endian response words from its24-byte packet. A transport
+error prints no response words because the caller buffer may still be the request.
+This diagnostic does not relax protocol validation, retry or grant an ACK.
+
+
 Any future hardware owner must separately exclude conflicting display clients,
 then read fresh controller state under its own explicit clock/cache/MMU lifetime.
 Earlier snapshots become stale. A nonzero global HVS enable bit alone does not

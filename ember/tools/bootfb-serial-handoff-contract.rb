@@ -46,7 +46,7 @@ paths=%w[sys/kern/subr_autoconf.c sys/arch/arm/broadcom/bcm2712_v3d_acpi.c sys/d
   sys/arch/arm/broadcom/bcm2712_display_handoff.c
   sys/arch/arm/broadcom/bcm2712_display_handoffvar.h
   sys/dev/wscons/wsdisplay_bootfb.c sys/dev/wscons/wsdisplay_bootfbvar.h
-  sys/arch/arm/broadcom/bcm2835_mbox.c sys/arch/arm/broadcom/bcm2835_mbox.h]
+  sys/arch/arm/broadcom/bcm2835_mbox.c sys/arch/arm/broadcom/bcm2835_mbox.h sys/sys/endian.h]
 files=paths.to_h { |p| [p,File.binread(source+'/'+p)] }
 Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
   puts 'native serial handoff temporary directory: '+work
@@ -109,6 +109,13 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
     File.write(work+'/native-owner.h',notice(acpi)+owner)
     File.write(work+'/bcm2712_display_handoffvar.h',files.fetch('sys/arch/arm/broadcom/bcm2712_display_handoffvar.h'))
     File.write(work+'/protocol.c',files.fetch('sys/arch/arm/broadcom/bcm2712_display_handoff.c'))
+    endian=files.fetch('sys/sys/endian.h')
+    endian_functions=%w[le16dec le32dec].map do |n|
+      matches=endian.scan(/^static __inline uint(?:16|32)_t __unused\n#{n}\(.*?^}/m)
+      abort 'endian function missing '+n unless matches.size==1
+      matches.first
+    end
+    File.write(work+'/native-endian.h',notice(endian)+"\n#ifndef __CAST\n#define __CAST(t,v) ((t)(v))\n#endif\n"+endian_functions.join("\n"))
     helpers=%w[bcmv3d_bootfb_exchange bcmv3d_bootfb_notify bcmv3d_bootfb_claim_job bcmv3d_bootfb_queue bcmv3d_bootfb_retain bcmv3d_bootfb_cancel bcmv3d_finalize]
     File.write(work+'/native-job.h',notice(acpi)+"static void bcmv3d_bootfb_retain(struct bcmv3d_softc *, int);\nstatic void bcmv3d_bootfb_cancel(struct bcmv3d_softc *, int);\n"+helpers.map { |n| function(acpi,n) }.join("\n"))
     ws=File.read(source+'/sys/dev/wscons/wsdisplay.c')
@@ -155,12 +162,16 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       abort 'native handoff positive failed' unless run.call('positive',[*runner,work+'/contract']).success?
     end
 controls={
+  'reply-on-failure'=>['native-job.h',"if (error == 0) {\n\t\taprint_normal(\"bcmv3d: display notify", "if (true) {\n\t\taprint_normal(\"bcmv3d: display notify", 'strcmp(message, expected) == 0'],
+  'reply-word-order'=>['native-job.h','le32dec(reply + 8)', 'le32dec(reply + 4)', 'strcmp(message, expected) == 0'],
+  'reply-errno'=>['native-job.h', "} else {\n\t\taprint_normal(\"bcmv3d: display notify", "} else {\n\t\terror = 0;\n\t\taprint_normal(\"bcmv3d: display notify", 'strcmp(message, expected) == 0'],
+  'reply-duplicate'=>['native-job.h',"\t\t    le32dec(reply + 12), le32dec(reply + 16), le32dec(reply + 20));", "\t\t    le32dec(reply + 12), le32dec(reply + 16), le32dec(reply + 20));\n\t\taprint_normal(\"duplicate\");", 'firmware_diagnostics == 1 && firmware_calls == 1'],
   'firmware-complete'=>['native-job.h','!close.complete || ', '', 'firmware_permitted'],
   'firmware-closed'=>['native-job.h','!close.closed ||', 'false ||', 'firmware_permitted'],
   'firmware-drained'=>['native-job.h','!close.drained ||', 'false ||', 'firmware_permitted'],
   'firmware-status'=>['native-job.h','close.error != 0 ||', 'false ||', 'firmware_permitted'],
   'firmware-held'=>['native-job.h','error = wsdisplay_bootfb_serial_closed(owner->lease);','error = 0;', 'firmware_permitted'],
-  'firmware-transport'=>['native-job.h','return bcmmbox_request(BCMMBOX_CHANARM2VC, packet, length, &response);','(void)bcmmbox_request(BCMMBOX_CHANARM2VC, packet, length, &response); return 0;', 'gpu_sc.sc_bootfb.firmware.fault == errors[i]'],
+  'firmware-transport'=>['native-job.h','error = bcmmbox_request(BCMMBOX_CHANARM2VC, packet, length, &response);','(void)bcmmbox_request(BCMMBOX_CHANARM2VC, packet, length, &response); error = 0;', 'strcmp(message, expected) == 0'],
   'firmware-malformed'=>['protocol.c','bcm2712_handoff_word(packet + 4) != 0x80000000U ||', 'false ||', 'gpu_sc.sc_bootfb.firmware.fault == expected'],
   'firmware-unsupported'=>['protocol.c','else if (response == 0)', 'else if (false)', 'gpu_sc.sc_bootfb.firmware.fault == expected'],
   'firmware-repeated-job'=>['native-job.h','if (owner->phase != BCMV3D_BOOTFB_QUEUED)', 'if (false)', 'gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED'],

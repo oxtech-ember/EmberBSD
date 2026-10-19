@@ -2,6 +2,7 @@
 /* Actual joined boot job, issuer, close, facade and PLCOM provider. */
 #include <sys/queue.h>
 #include <limits.h>
+#include <stdarg.h>
 #define BOOTFB_SERIAL_CONTRACT 1
 #define main console_close_original_main
 #include "console-close-contract.c"
@@ -30,7 +31,7 @@ static struct bcmv3d_softc gpu_sc;
 static unsigned renderer_calls, joined;
 static int renderer_error, query_error, firmware_error, firmware_reply, firmware_gate;
 static bool expect_closed;
-static unsigned firmware_calls, firmware_status_queries;
+static unsigned firmware_calls, firmware_status_queries, firmware_diagnostics;
 static bool firmware_permitted, firmware_reenter;
 static int bcmv3d_bootfb_notify(struct bcmv3d_softc *);
 static void bcmv3d_bootfb_claim_job(device_t);
@@ -68,6 +69,32 @@ static int bcmmbox_request(uint8_t channel, void *packet, size_t length, uint32_
 	*response = 0x100;
 	return 0;
 }
+/* Capture exactly the real diagnostic. Request bytes are never a failed reply. */
+static void firmware_message(const char *format, ...)
+{
+	char message[192], expected[192];
+	va_list ap;
+	int n;
+
+	firmware_diagnostics++;
+	CHECK(firmware_diagnostics == 1 && firmware_calls == 1);
+	va_start(ap, format); n = vsnprintf(message, sizeof(message), format, ap); va_end(ap);
+	CHECK(n > 0 && (size_t)n < sizeof(message));
+	if (firmware_error != 0) {
+		snprintf(expected, sizeof(expected),
+		    "bcmv3d: display notify transport error %d; no response\n", firmware_error);
+	} else {
+		snprintf(expected, sizeof(expected),
+		    "bcmv3d: display notify transport error 0; reply "
+		    "00000018 %08x 00030066 00000000 %08x 00000000\n",
+		    firmware_reply == 1 ? 0x80000001U : 0x80000000U,
+		    firmware_reply == 2 ? 0 : 0x80000000U);
+	}
+	CHECK(strcmp(message, expected) == 0);
+}
+#undef aprint_normal
+#define aprint_normal firmware_message
+#include "native-endian.h"
 static void print_device_message(device_t d, const char *f, ...) { (void)d; (void)f; }
 #define aprint_normal_dev print_device_message
 #define aprint_error_dev print_device_message
@@ -150,7 +177,7 @@ static void native_initialize(bool renderer_first)
 		TAILQ_INSERT_TAIL(&config_finalize_list, fb, f_list);
 	} else CHECK(config_finalize_register(&gpu, bcmv3d_finalize) == 0);
 	renderer_calls = renderer_error = query_error = 0; expect_closed = true;
-	firmware_calls = firmware_status_queries = 0; firmware_error = firmware_reply = firmware_gate = 0;
+	firmware_calls = firmware_status_queries = firmware_diagnostics = 0; firmware_error = firmware_reply = firmware_gate = 0;
 	firmware_permitted = true; firmware_reenter = false;
 	serial_puts = serial_gets = serial_on = serial_off = 0;
 	opened = 0; bcmv3d_bootfb_queue(&gpu_sc);
@@ -162,6 +189,7 @@ static void native_finish(void)
 	config_finalize();
 	CHECK(gpu.dv_pending == 0 && TAILQ_EMPTY(&config_pending));
 	CHECK(TAILQ_EMPTY(&config_finalize_list) && joined == 1 && giant == 0);
+	CHECK(firmware_diagnostics == firmware_calls);
 	init_started = true;
 }
 static void held_at_allocation(void)
@@ -329,6 +357,7 @@ for (unsigned first = 0; first < 2; first++) {
 		CHECK(gpu_sc.sc_bootfb.phase == BCMV3D_BOOTFB_CLOSED);
 		CHECK(bcmv3d_bootfb_notify(&gpu_sc) == EBUSY && firmware_calls == 1);
 		CHECK(memcmp(&saved, &gpu_sc.sc_bootfb.firmware, sizeof(saved)) == 0);
+		CHECK(firmware_diagnostics == 1);
 		CHECK(gpu_sc.sc_bootfb.first_error == 0);
 	}
 	for (unsigned i = 0; i < sizeof(errors) / sizeof(errors[0]); i++) {
@@ -358,7 +387,7 @@ for (unsigned first = 0; first < 2; first++) {
 		CHECK(gpu_sc.sc_bootfb.first_error == gpu_sc.sc_bootfb.firmware.fault);
 		calls = firmware_status_queries;
 		CHECK(bcmv3d_bootfb_notify(&gpu_sc) == gpu_sc.sc_bootfb.firmware.fault);
-		CHECK(firmware_calls == 0 && firmware_status_queries == calls);
+		CHECK(firmware_calls == 0 && firmware_status_queries == calls && firmware_diagnostics == 0);
 	}
 	/* A raw CPU close has complete value facts, but no held serial route. */
 	native_initialize(false); cold = false;
@@ -374,7 +403,7 @@ for (unsigned first = 0; first < 2; first++) {
 	uint8_t packet[24] = {0};
 	CHECK(bcmv3d_bootfb_exchange(&gpu, packet, sizeof(packet)) == EINVAL);
 	CHECK(bcmv3d_bootfb_exchange(NULL, packet, sizeof(packet) - 4) == EINVAL);
-	CHECK(bcmv3d_bootfb_exchange(NULL, NULL, sizeof(packet)) == EINVAL && firmware_calls == 0);
+	CHECK(bcmv3d_bootfb_exchange(NULL, NULL, sizeof(packet)) == EINVAL && firmware_calls == 0 && firmware_diagnostics == 0);
 	firmware_permitted = true; native_finish();
 }
 int main(void)

@@ -173,11 +173,23 @@ static void bcmv3d_bootfb_retain(struct bcmv3d_softc *, int);
 static int
 bcmv3d_bootfb_exchange(void *arg, void *packet, size_t length)
 {
+	const uint8_t *reply = packet;
 	uint32_t response;
+	int error;
 
 	if (arg != NULL || packet == NULL || length != 24)
 		return EINVAL;
-	return bcmmbox_request(BCMMBOX_CHANARM2VC, packet, length, &response);
+	error = bcmmbox_request(BCMMBOX_CHANARM2VC, packet, length, &response);
+	if (error == 0) {
+		aprint_normal("bcmv3d: display notify transport error %d; "
+		    "reply %08x %08x %08x %08x %08x %08x\n", error,
+		    le32dec(reply), le32dec(reply + 4), le32dec(reply + 8),
+		    le32dec(reply + 12), le32dec(reply + 16), le32dec(reply + 20));
+	} else {
+		aprint_normal("bcmv3d: display notify transport error %d; "
+		    "no response\n", error);
+	}
+	return error;
 }
 
 static int
