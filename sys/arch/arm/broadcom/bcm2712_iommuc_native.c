@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* Optional descriptor owner and explicit one-shot read. No cache-write API. */
+/* Optional ICAC owner, explicit read and private synchronous composition. */
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/cpu.h>
@@ -13,6 +13,7 @@
 #include <dev/acpi/acpivar.h>
 #include <arm/broadcom/bcm2712_iommuc.h>
 #include <arm/broadcom/bcm2712_iommuc_native.h>
+#include <arm/broadcom/bcm2712_iommuc_executor.h>
 
 struct bcm2712_iommuc_provider {
 	device_t dev;
@@ -21,6 +22,8 @@ struct bcm2712_iommuc_provider {
 	struct bcm2712_iommuc_contract contract;
 	struct bcm2712_iommuc_core core;
 	struct bcm2712_iommuc_observation observation;
+	struct bcm2712_iommuc_execution mmu4;
+	bool executing;
 	bus_space_handle_t bsh;
 	bool software_attached;
 };
@@ -56,7 +59,7 @@ bcm2712_iommuc_native_context(void)
 }
 
 static int
-bcm2712_iommuc_enter(void)
+bcm2712_iommuc_entry(void)
 {
 	int error;
 
@@ -64,6 +67,18 @@ bcm2712_iommuc_enter(void)
 		return error;
 	error = RUN_ONCE(&bcm2712_iommuc_once, bcm2712_iommuc_once_init);
 	if (error != 0)
+		return error;
+	if (mutex_owned(&bcm2712_iommuc_mutex))
+		return EDEADLK;
+	return 0;
+}
+
+static int
+bcm2712_iommuc_enter(void)
+{
+	int error;
+
+	if ((error = bcm2712_iommuc_entry()) != 0)
 		return error;
 	mutex_enter(&bcm2712_iommuc_mutex);
 	return 0;
@@ -132,7 +147,7 @@ bcm2712_iommuc_lookup(ACPI_HANDLE handle,
 
 	if (handle == NULL || out == NULL)
 		return EINVAL;
-	if ((error = bcm2712_iommuc_native_context()) != 0)
+	if ((error = bcm2712_iommuc_entry()) != 0)
 		return error;
 	error = bcm2712_iommuc_acpi_resources(handle, &contract);
 	if (error != 0)
@@ -178,6 +193,7 @@ bcm2712_iommuc_cached_status(struct bcm2712_iommuc_provider *sc,
 	status.software_attached = true;
 	status.core_initialized = sc->core.initialized;
 	status.observation = sc->observation;
+	status.mmu4 = sc->mmu4;
 	if (status.core_initialized) {
 		error = bcm2712_iommuc_core_status(&sc->core, &status.core);
 		if (error != 0)
@@ -250,6 +266,198 @@ bcm2712_iommuc_observe_control(struct bcm2712_iommuc_provider *sc)
 		observation->first_error = error;
 	else
 		observation->stage = BCM2712_IOMMUC_OBSERVE_COMPLETE;
+done:
+	mutex_exit(&bcm2712_iommuc_mutex);
+	return error;
+}
+
+/* The initial private executor owns only logical member MMU4 (bit1). */
+#define IOMMUC_MMU4_MEMBER	0x2U
+
+static int bcm2712_iommuc_read_control(void *, uint32_t *);
+static int bcm2712_iommuc_write_control(void *, uint32_t);
+static void bcm2712_iommuc_control_barrier(void *);
+
+static bool
+bcm2712_iommuc_callbacks(const struct bcm2712_iommuc_provider *sc)
+{
+
+	return sc->core.initialized &&
+	    sc->core.io.read_control == bcm2712_iommuc_read_control &&
+	    sc->core.io.write_control == bcm2712_iommuc_write_control &&
+	    sc->core.io.barrier == bcm2712_iommuc_control_barrier &&
+	    sc->core.io.arg == sc;
+}
+
+static int
+bcm2712_iommuc_native_fault(struct bcm2712_iommuc_provider *sc, int error)
+{
+
+	if (sc != NULL && mutex_owned(&bcm2712_iommuc_mutex) &&
+	    sc == bcm2712_iommuc_owner && sc->software_attached &&
+	    sc->mmu4.fault == 0)
+		sc->mmu4.fault = error;
+	return error;
+}
+
+static int
+bcm2712_iommuc_backend(struct bcm2712_iommuc_provider *sc)
+{
+
+	if (sc == NULL)
+		return EINVAL;
+	if (!mutex_owned(&bcm2712_iommuc_mutex))
+		return EDEADLK;
+	if (sc != bcm2712_iommuc_owner || !sc->software_attached)
+		return ENXIO;
+	if (sc->mmu4.fault != 0)
+		return EIO;
+	if (sc->core.status.fault != 0) {
+		(void)bcm2712_iommuc_native_fault(sc, sc->core.status.fault);
+		return EIO;
+	}
+	if (!sc->executing || !sc->mmu4.attempted ||
+	    !sc->observation.mapped || !bcm2712_iommuc_callbacks(sc))
+		return bcm2712_iommuc_native_fault(sc, EINVAL);
+	return 0;
+}
+
+static int
+bcm2712_iommuc_read_control(void *arg, uint32_t *out)
+{
+	struct bcm2712_iommuc_provider *sc = arg;
+	int error;
+
+	if ((error = bcm2712_iommuc_backend(sc)) != 0)
+		return error;
+	if (out == NULL)
+		return bcm2712_iommuc_native_fault(sc, EINVAL);
+	*out = bus_space_read_4(sc->bst, sc->bsh, 0);
+	return 0;
+}
+
+static int
+bcm2712_iommuc_write_control(void *arg, uint32_t value)
+{
+	struct bcm2712_iommuc_provider *sc = arg;
+	int error;
+
+	if ((error = bcm2712_iommuc_backend(sc)) != 0)
+		return error;
+	if (value != 3U)
+		return bcm2712_iommuc_native_fault(sc, EINVAL);
+	bus_space_write_4(sc->bst, sc->bsh, 0, value);
+	return 0;
+}
+
+static void
+bcm2712_iommuc_control_barrier(void *arg)
+{
+	struct bcm2712_iommuc_provider *sc = arg;
+	int error;
+
+	error = bcm2712_iommuc_backend(sc);
+	if (error != 0) {
+		(void)bcm2712_iommuc_native_fault(sc, error);
+		return;
+	}
+	bus_space_barrier(sc->bst, sc->bsh, 0, 4,
+	    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+}
+
+int
+bcm2712_iommuc_execute_mmu4(struct bcm2712_iommuc_provider *sc,
+    bcm2712_iommuc_mmu4_operation operation, void *arg)
+{
+	struct bcm2712_iommuc_status before, after;
+	const struct bcm2712_iommuc_io io = {
+		.read_control = bcm2712_iommuc_read_control,
+		.write_control = bcm2712_iommuc_write_control,
+		.barrier = bcm2712_iommuc_control_barrier,
+		.arg = sc
+	};
+	int error, fault = 0;
+
+	if (sc == NULL || operation == NULL)
+		return EINVAL;
+	if ((error = bcm2712_iommuc_enter()) != 0)
+		return error;
+	error = ENXIO;
+	if (sc != bcm2712_iommuc_owner || !sc->software_attached ||
+	    sc->bst == NULL || sc->contract.version != BCM2712_IOMMUC_VERSION ||
+	    sc->contract.address != BCM2712_IOMMUC_ADDRESS ||
+	    sc->contract.length != BCM2712_IOMMUC_LENGTH)
+		goto done;
+	/* The cached result precedes gates affected by our previous attempt. */
+	if (sc->mmu4.attempted) {
+		error = sc->mmu4.first_error != 0 ?
+		    sc->mmu4.first_error : EALREADY;
+		goto done;
+	}
+	error = EBUSY;
+	if (!sc->observation.started || !sc->observation.mapped ||
+	    !sc->observation.raw_valid || sc->observation.first_error != 0 ||
+	    sc->observation.reads_attempted != 1 ||
+	    sc->observation.reads_completed != 1 ||
+	    sc->observation.stage != BCM2712_IOMMUC_OBSERVE_COMPLETE)
+		goto done;
+	error = EIO;
+	if (sc->mmu4.fault != 0)
+		goto done;
+	if (sc->core.initialized) {
+		if (!bcm2712_iommuc_callbacks(sc) || sc->core.status.fault != 0)
+			goto done;
+		error = EBUSY;
+		if ((sc->core.status.reserved & IOMMUC_MMU4_MEMBER) != 0 ||
+		    sc->core.status.stage == BCM2712_IOMMUC_CLOSED)
+			goto done;
+	}
+	/* Consume the provider attempt before init, callback and operational IO. */
+	sc->mmu4.attempted = true;
+	if (!sc->core.initialized) {
+		error = bcm2712_iommuc_core_init(&sc->core, &io);
+		if (error != 0)
+			goto result;
+	}
+	error = bcm2712_iommuc_core_status(&sc->core, &before);
+	if (error != 0) {
+		fault = error;
+		goto result;
+	}
+	sc->executing = true;
+	/* Trusted synchronous kernel composition, not a callback whitelist. */
+	error = operation(arg, &sc->core);
+	if (error < 0) {
+		error = EINVAL;
+		fault = EINVAL;
+	}
+	if (!bcm2712_iommuc_callbacks(sc) ||
+	    sc->core.status.stage == BCM2712_IOMMUC_CLOSED) {
+		fault = EPROTO;
+		goto result;
+	}
+	if (bcm2712_iommuc_core_status(&sc->core, &after) != 0) {
+		fault = EPROTO;
+		goto result;
+	}
+	if ((before.reserved & ~IOMMUC_MMU4_MEMBER) !=
+	    (after.reserved & ~IOMMUC_MMU4_MEMBER) ||
+	    (before.retained & ~IOMMUC_MMU4_MEMBER) !=
+	    (after.retained & ~IOMMUC_MMU4_MEMBER) ||
+	    (after.retained & ~after.reserved) != 0)
+		fault = EPROTO;
+	if (after.fault != 0 && fault == 0)
+		fault = after.fault;
+	if (error != 0 && ((after.reserved | after.retained) &
+	    IOMMUC_MMU4_MEMBER) != 0 && fault == 0)
+		fault = error;
+result:
+	sc->executing = false;
+	if (fault != 0 && sc->mmu4.fault == 0)
+		sc->mmu4.fault = fault;
+	if (error == 0 && sc->mmu4.fault != 0)
+		error = sc->mmu4.fault;
+	sc->mmu4.first_error = error;
 done:
 	mutex_exit(&bcm2712_iommuc_mutex);
 	return error;

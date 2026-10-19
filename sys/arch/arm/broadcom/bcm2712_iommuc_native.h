@@ -23,12 +23,18 @@ struct bcm2712_iommuc_observation {
 	bool started, mapped, raw_valid;
 };
 
+struct bcm2712_iommuc_execution {
+	int first_error, fault;
+	bool attempted;
+};
+
 struct bcm2712_iommuc_native_status {
 
 	bool software_attached;
 	bool core_initialized;
 	struct bcm2712_iommuc_status core;
 	struct bcm2712_iommuc_observation observation;
+	struct bcm2712_iommuc_execution mmu4;
 };
 
 /*

@@ -2,9 +2,11 @@
 
 The optional `bcm2712iommuc` ACPI device owns one built-in, boot-lifetime software
 object for the cache shared by MMU2, MMU4 and MMU5. This source-only slice provides
-attachment, strict lookup, cached status and an explicit one-shot CONTROL read.
-Attach, lookup and cached status perform no mapping or MMIO. No cache write,
-clock or power operation exists. GPU0 does not own the shared cache.
+attachment, strict lookup, cached status, an explicit one-shot CONTROL read and
+a private synchronous MMU4 executor.
+Attach, lookup and cached status perform no mapping or MMIO. No default caller
+uses the executor. No clock or power operation exists. GPU0 does not own the
+shared cache.
 
 ## Configuration and identity
 
@@ -30,16 +32,16 @@ orders enumeration; it does not require successful dependency attachment.
 `bcm2712_iommuc_cached_status(owner, out)` uses the one process-context mutex.
 It evaluates no AML. `software_attached` describes software construction only.
 `core_initialized=false` and zero core fields honestly describe the current
-uninitialized core; they are not a successful core status query. If a later
-reviewed bridge initializes this same core, the snapshot copies its cached state
-under that mutex. No current API, including observation, can initialize it or change its logical leases.
+uninitialized core; they are not a successful core status query. Only the
+explicit private executor initializes this same core. Status then copies its
+cached state under the mutex. Observation cannot initialize or mutate it.
 Both APIs reject interrupt context and preserve outputs on error. Outputs must
 use valid caller storage. The caller must not free the opaque owner.
 
 The owner and mutex remain built into the kernel for the whole boot. Detach
 returns `EBUSY`, including after a retained obligation or fault. There is no
 runtime module containing a second owner, mutable core getter, ready flag,
-address/callback argument, recovery operation or provider replacement API.
+public address/callback argument, recovery operation or provider replacement API.
 This slice does not implement suspend/resume or hardware access admission.
 
 ## Explicit CONTROL observation
@@ -74,33 +76,85 @@ The output API is cached status; its NULL/foreign/interrupt errors preserve the
 caller's output. The added status fields require matching kernel/client headers.
 No physical cache observation is claimed by these source checks.
 
-## Later access bridge
+## Private synchronous MMU4 executor
 
-A future bridge must resolve the platform access lifetime and exclusion of
-firmware and all shared-cache writers first. Missing Linux clock/reset/power
-properties are not an always-on guarantee. Descriptor validity, `_DEP`, active
-clocks, framebuffer absence and previous display samples do not grant access.
+The [private executor header](../../sys/arch/arm/broadcom/bcm2712_iommuc_executor.h)
+provides `bcm2712_iommuc_execute_mmu4(owner, operation, arg)`. This is trusted
+built-in kernel composition. The runtime callback check is `NULL` only; no
+whitelist, identity token or client registration is implied. There is no default
+caller or native MMU4 programming adapter in this slice.
 
-The bridge must initialize this actual core once with immutable native callbacks.
-A local MMU owner must hold its own lock before the ICAC lock. A complete fixed
-sequencer transaction must borrow the core only while the ICAC mutex is held.
-The bridge must not return an unlocked mutable core or duplicate it. A bounded
-executor must forbid re-entry, pointer retention and callbacks after return.
-The final executor and sequencer ownership contract is a separate reviewed step.
-No flush, readiness, permission, public mapping primitive or arbitrary transaction
-API exists in this patch. The explicit observation does not authorize that bridge. No physical cache access, MMU publication or DMA drain is claimed.
+The caller establishes accessibility and excludes firmware and all shared-cache
+writers. Missing Linux clock/reset/power properties are not an always-on grant.
+A completed CONTROL observation is a recorded prefix only. It does not establish
+these external conditions. The caller resolves ICAC before the transaction and
+holds its local MMU4 lock before the common ICAC mutex. Preallocate backing,
+plans, maps and native references outside that common mutex. Seal backing before
+sequencer entry. Do not perform AML, allocation or clock operations inside it.
+
+The provider sets its boot-lifetime MMU4 attempt before core initialization or
+the callback. Even a clean pre-retain error with a released reservation consumes
+that attempt. A new callback/argument cannot retry it. After entry validation,
+repeat returns the cached first error, or `EALREADY` after success, before gates
+changed by the previous attempt. Invalid context/owner/NULL callback does not
+consume the attempt. Cached attempted, first-error and fault fields are separate.
+Clean error can have attempted=true and fault0.
+
+The operation uses a local actual MMU4 sequencer under the ICAC mutex. Its
+`init -> program -> status` and permitted untouched `fini` all complete before
+return. The init stores a cache pointer, so the local object must not escape.
+Copy its status before `fini`. Preserve the primary error and separate close
+error in the persistent native MMU4 owner. Never close after retention, mutation,
+fault or unknown status. That native owner retains backing, maps, render/tag
+references and callback storage/text. The shared MMU4 lease remains in this
+provider after the local sequencer disappears. The provider does not save the
+operation or argument. No asynchronous callback path exists in the sequencer.
+
+This explicit entry initializes one actual cache core with immutable native
+callbacks. They use its existing `aa_memt` mapping, read only CONTROL+0, accept
+only write3 at CONTROL+0 and issue a four-byte READ|WRITE bus barrier. The core
+retains its fixed preflight/write/1024-poll protocol. A valid-owner/locked native
+protocol rejection latches the first fault. Native and actual core faults block
+later callbacks before MMIO, even if the operation ignores an error. Bus stalls
+and aborts remain unrecoverable; void native access returns success only after
+the actual access/barrier returns.
+
+The operation must not re-enter a provider API, export a core pointer, replace
+its callbacks, close/re-initialize the shared core or change MMU2/5 leases.
+Re-entry returns `EDEADLK` before AML or mutex acquisition. Return checks detect
+callback/initialization and unrelated-lease changes. An operation error with a
+remaining reservation/retention also faults the native provider. These checks
+cannot undo trusted C misuse or sandbox it. Any uncertainty retains remaining
+objects; no retry, disable, write0, restore, unmap or detach follows. This is not
+hardware access admission, physical cache acceptance, MMU publication or DMA drain.
 
 ## Source checks
 
 The [native actual-source fixture](../tools/bcm2712-iommuc-native-contract.c)
-includes the complete native, pure-core and split query sources. It uses real
-ACPICA public types and the existing bounded reference helper. Only kernel
-namespace, device, mutex, once, log and fixed bus map/read services are controlled. Private fixture
-initialization of the real core tests cached retained/fault state with callbacks
-that abort if called. The observation checks exact map geometry/tag/flags, read
+includes the complete native, cache/MMU4 core and split query sources. It uses
+real ACPICA public types and the existing bounded reference helper. Kernel
+namespace, device, mutex, once, log and native bus services are controlled. A
+[separate test bridge](../tools/bcm2712-iommuc-executor-backing.c) reuses the full
+existing backing fixture with actual backing, frame-helper and table-encoder
+translation units. Only its kernel allocation/BO/DMA/pmap services are doubled.
+The real prepare path validates, fills and PREWRITEs preallocated storage under
+the controlled ICAC lock. It does not allocate. The fixture instruments the
+cache-init call before invoking unchanged `actual_cache_init`. It separately
+injects one synthetic init error to test attempt consumption. This is not a
+firmware failure or a changed core algorithm. The local native owner lock does
+not exist in this slice. The fixture supplies `local_locked=true` as a controlled
+caller precondition; it does not prove a future native owner lock implementation. Other scoped local-IO failure cases
+control the prepare boundary; they do not replace the successful actual path.
+Private fixture initialization also tests cached state without callbacks. The observation checks exact map geometry/tag/flags, read
 offset/count/latch/log order, no automatic I/O, cached errors, one-shot refusal
 and mapping retention. Each reset starts a fresh simulated boot; no simulated
-unmap/free route exists. This is not hardware execution.
+unmap/free route exists for ICAC. Sealed backing cases run in separate simulated
+boot processes; their storage remains retained until process exit. This is not
+hardware execution. Executor cases check no pointer escape, pre-close snapshots,
+separate primary/close errors, provider attempts across fresh argument objects,
+first-fault callback suppression, unrelated leases and exact native write/barrier.
+Mutants must compile and fail by the fixture CHECK with SIGABRT, not an arbitrary
+nonzero status.
 
 ```sh
 sh ember/tools/bcm2712-iommuc-native-contract.sh /absolute/os/source
