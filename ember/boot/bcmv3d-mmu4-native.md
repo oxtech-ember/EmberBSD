@@ -53,7 +53,8 @@ completed native and sequencer stages, actual prepared/sealed backing, completed
 shared flush and retained MMU4 lease. Every outcome retains the owner, renderer,
 clock providers, mappings and allocated backing until reboot. There is no retry,
 rollback, unmap or fallback after CLOSED. This stage does not enable HVS/PV, publish
-a display list, allocate HVS SRAM/UPM/COB ranges or start KMS.
+a display list, allocate HVS SRAM/UPM/COB ranges or start KMS. The same selected
+profile then enters the separately guarded [fixed HVS/PV0 publication](bcmv3d-hvs-publish.md).
 
 The joined actual-source check is:
 
@@ -73,8 +74,11 @@ boots. No production cleanup API is introduced. Tests cover prerequisite refusal
 before map, both writeback masters, map/read faults, reentry, exact operation order,
 status failures and retained first errors. Compiled causal controls must reach a
 named CHECK; `NDEBUG` does not disable it. ASan/UBSan is host execution, not Valgrind
-or a kernel memory checker. Target GCC16 linkage, full-TU analysis and physical
-acceptance of this MMU4 continuation remain pending.
+or a kernel memory checker. The coherent GCC16 kernel and four matched modules
+linked successfully. Paired actual target-TU Cppcheck, GCC analyzer and Clang Static
+Analyzer checks found no new safety defect. Existing style, inter-TU unused-symbol
+and inherited analyzer findings remain classified separately. Physical acceptance
+of this MMU4 continuation remains pending.
 
 Writeback facts derive from pinned
 [vc4_txp.c](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_txp.c#L140-L144)

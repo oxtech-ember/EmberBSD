@@ -1,9 +1,10 @@
-# Origin: EmberBSD explicit BCM2712 CPU, firmware and two-pipeline stop experiment.
+# Origin: EmberBSD explicit BCM2712 retained fixed-frame display experiment.
 # SPDX-License-Identifier: BSD-2-Clause
 include "arch/evbarm/conf/EMBERV3DHDMI"
 
 # Hold the serial tty, close CPU framebuffer output, then notify firmware once.
 # After render attachment, hold four clocks and stop both inherited PV/HVS pipelines.
 # Retain MMU4 backing after CPU close, firmware ACK and both pipeline stops.
-# No suspend, hardware release, HVS/PV activation, PHY or KMS admission.
+# Publish one sealed fixed test frame through HVS0/PV0 after actual MMU4 completion.
+# No suspend, hardware release, HDMI/PHY mode changes or KMS admission.
 options WSDISPLAY_BOOTFB_HANDOFF

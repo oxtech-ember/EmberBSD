@@ -125,6 +125,28 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       p='sys/arch/arm/broadcom/'+input; t=File.read(source+'/'+p); files[p]=t
       File.write(work+'/'+output,t.gsub(/^#include .*\n|^__KERNEL_RCSID\(.*\n/,''))
     end
+    drv='sys/external/bsd/drm2/bcmv3d/'
+    arm='sys/arch/arm/broadcom/'
+    {'publish-types.h'=>drv+'bcmv3d_hvs_publish.h',
+     'publish-body.h'=>drv+'bcmv3d_hvs_publish.c',
+     'publish-hvs-types.h'=>arm+'bcm2712_display_hvsvar.h',
+     'publish-hvs-body.h'=>arm+'bcm2712_display_hvs.c',
+     'publish-pv-types.h'=>arm+'bcm2712_display_pv0var.h',
+     'publish-pv-body.h'=>arm+'bcm2712_display_pv0.c',
+     'publish-hdmi-types.h'=>arm+'bcm2712_display_hdmi0var.h',
+     'publish-hdmi-body.h'=>arm+'bcm2712_display_hdmi0.c'}.each do |name,path|
+      t=File.binread(source+'/'+path);files[path]=t
+      File.write(work+'/'+name,t.gsub(/^#include .*\n|^__KERNEL_RCSID\(.*\n/,''))
+    end
+    # Reuse the published independent bus oracle. Only fixture wiring changes.
+    p='ember/tools/bcmv3d-hvs-publish-contract.c';t=File.binread(source+'/'+p);files[p]=t
+    oracle=t[/^struct profile_case \{.*?(?=^static void\nnative_gate)/m] or abort 'publish oracle absent'
+    File.write(work+'/mmu4/publish-native-gates.h',notice(t)+function(t,'native_gate'))
+    oracle.sub!('CHECK(!owner->lock.held && !bcm2712_iommuc_mutex.held);','bootfb_publish_locks();')
+    oracle.gsub!('bcmv3d_hvs_publish_1080p60(owner,','bcmv3d_hvs_publish_1080p60(gpu_sc.sc_bootfb.mmu4.native,')
+    oracle.gsub!('pb.status','gpu_sc.sc_bootfb.publish.status')
+    oracle.sub!('value = pb.eof ? 0x006000 : 0x004000;', 'value = (pb.eof ? 0x006000 : 0x004000) | (hvs_progress_delayed ? 0x10000 : 0);')
+    File.write(work+'/publish-oracle.h',notice(t)+oracle)
     %w[bcm2712_display_quiesce.h bcm2712_display_quiesce.c].each do |n|
       p='sys/arch/arm/broadcom/'+n; t=File.read(source+'/'+p);files[p]=t;File.write(work+'/'+n,t)
     end
@@ -146,8 +168,8 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       matches.first
     end
     File.write(work+'/native-endian.h',notice(endian)+"\n#ifndef __CAST\n#define __CAST(t,v) ((t)(v))\n#endif\n"+endian_functions.join("\n"))
-    helpers=%w[bcmv3d_bootfb_exchange bcmv3d_bootfb_notify bcmv3d_display_read bcmv3d_display_write bcmv3d_display_barrier bcmv3d_display_delay bcmv3d_display_clocks bcmv3d_bootfb_stop_display bcmv3d_bootfb_writeback_idle bcmv3d_bootfb_program_mmu4 bcmv3d_bootfb_claim_job bcmv3d_bootfb_queue bcmv3d_bootfb_retain bcmv3d_bootfb_cancel bcmv3d_finalize]
-    File.write(work+'/native-job.h',notice(acpi)+(acpi[/^static const unsigned int bcmv3d_display_indices.*?^};/m] || abort("indices absent"))+"\nstatic void bcmv3d_bootfb_retain(struct bcmv3d_softc *, int);\nstatic void bcmv3d_bootfb_cancel(struct bcmv3d_softc *, int);\n"+helpers.map { |n| function(acpi,n) }.join("\n"))
+    helpers=%w[bcmv3d_bootfb_exchange bcmv3d_bootfb_notify bcmv3d_display_read bcmv3d_display_write bcmv3d_display_barrier bcmv3d_display_delay bcmv3d_display_clocks bcmv3d_bootfb_stop_display bcmv3d_bootfb_writeback_idle bcmv3d_bootfb_program_mmu4 bcmv3d_publish_io_error bcmv3d_publish_read bcmv3d_publish_write bcmv3d_publish_barrier bcmv3d_publish_delay bcmv3d_bootfb_publish bcmv3d_bootfb_claim_job bcmv3d_bootfb_queue bcmv3d_bootfb_retain bcmv3d_bootfb_cancel bcmv3d_finalize]
+    File.write(work+'/native-job.h',notice(acpi)+(acpi[/^static const unsigned int bcmv3d_display_indices.*?^};/m] || abort("indices absent"))+"\n"+(acpi[/^static const unsigned int bcmv3d_publish_indices.*?^};/m] || abort('publish indices absent'))+"\nstatic void bcmv3d_bootfb_retain(struct bcmv3d_softc *, int);\nstatic void bcmv3d_bootfb_cancel(struct bcmv3d_softc *, int);\n"+helpers.map { |n| function(acpi,n) }.join("\n"))
     ws=File.read(source+'/sys/dev/wscons/wsdisplay.c')
     commit=ws[/^\t\twsdisplay_cons.cn_dev = makedev\(maj,\n\t\t    WSDISPLAYMINOR\(device_unit\(self\), 0\)\);\n\t\twsdisplay_console_generation\+\+;/]
     abort 'actual cdev commit missing' unless commit
@@ -156,7 +178,7 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
     # The real ACPI attachment must use the actual common activate guard only on.
     front=File.read(source+'/sys/arch/arm/acpi/plcom_acpi.c')
     abort 'conditional provider guard missing' unless front.include?("#ifdef WSDISPLAY_BOOTFB_HANDOFF\n    plcom_activate);\n#else\n    NULL);")
-    %w[bootfb-display-services.h bcm2712-quiesce-fixture.h bootfb-mmu4-services.c bootfb-mmu4-backing-services.c].each { |n| files['ember/tools/'+n]=File.binread(source+'/ember/tools/'+n) }
+    %w[bootfb-display-services.h bcm2712-quiesce-fixture.h bootfb-mmu4-services.c bootfb-mmu4-backing-services.c bootfb-hvs-services.h].each { |n| files['ember/tools/'+n]=File.binread(source+'/ember/tools/'+n) }
     cc=Shellwords.split(ENV.fetch('CC','cc'));flags=Shellwords.split(ENV.fetch('CFLAGS',''))
     declaration=front[/^CFATTACH_DECL_NEW\(plcom_acpi,.*?^#endif/m]
     abort 'actual attachment declaration missing' unless declaration
@@ -208,6 +230,28 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       abort 'native handoff positive failed' unless run.call('positive',[*runner,work+'/contract']).success?
     end
 controls={
+'hvs-owner-attempt'=>['native-job.h','p->attempted = p->executing = true;','p->executing = true;','gpu_sc.sc_bootfb.publish.attempted'],
+'hvs-owner-giant'=>['native-job.h','KERNEL_UNLOCK_ALL(NULL, &count);','count = 1; KERNEL_UNLOCK_ONE(NULL);','hvs_permitted && giant == 0'],
+'hvs-owner-repeat'=>['native-job.h','if (p->attempted || p->complete || p->fault != 0)','if (false)','bcmv3d_bootfb_publish(&gpu_sc) == EBUSY && giant == 0'],
+'hvs-owner-mmu4'=>['native-job.h','!owner->mmu4.complete ||','false ||','hvs_permitted'],
+'hvs-owner-hold'=>['native-job.h','error = wsdisplay_bootfb_serial_closed(owner->lease);','error = 0;','hvs_permitted'],
+'hvs-owner-close'=>['native-job.h','error = simplefb_console_close_status(owner->lease, &close);','error = 0; memset(&close,1,sizeof(close)); close.error = close.mi_error = close.md_error = 0;','hvs_permitted'],
+'hvs-owner-clock'=>['native-job.h','HELD(disp);','/* skip DISP lifetime */','hvs_permitted'],
+'hvs-owner-pipe1'=>['native-job.h','for (i = 0; i < 2; i++) {','for (i = 0; i < 1; i++) {','hvs_permitted'],
+'hvs-owner-first'=>['native-job.h','error != 0 && owner->first_error == 0','error != 0','gpu_sc.sc_bootfb.first_error == EPROTO'],
+'hvs-owner-upm'=>['native-job.h','.upm_offset = 0,','.upm_offset = 256,','value == plane_word(pb.dlist_writes)'],
+'hvs-read-busy'=>['native-job.h','(p->writeback[i] & 3U) != 0','false','p->fault == (mode < 2 ? EBUSY : EIO)'],
+'hvs-read-cxm'=>['native-job.h','p->cxm_words < p->dlist_first + p->dlist_words','p->cxm_words < p->dlist_first','p->fault == EOPNOTSUPP && hvs_maps == 0 && pb.writes == 0'],
+'hvs-read-align'=>['native-job.h','(offset & 3U) != 0 || memory->length < 4','false || memory->length < 4','hvs_callback_case == 0'],
+'hvs-read-sticky'=>['native-job.h','if (p->io_error != 0)','if (false)','hvs_callback_case == 0'],
+'hvs-read-executing'=>['native-job.h','if (!p->executing)','if (false)','bcmv3d_publish_read(&gpu_sc,BCMV3D_PUBLISH_HVS,0,&value) == EPERM'],
+'hvs-write-ro'=>['native-job.h','if (window != BCMV3D_PUBLISH_HVS && window != BCMV3D_PUBLISH_PV0)','if (false)','error == (hvs_callback_case == 6 ? EACCES : EINVAL)'],
+'hvs-index'=>['native-job.h','3, 5, 6, 11, 16, 17, 18, 19, 22','3, 5, 6, 11, 17, 17, 18, 19, 22','i == (unsigned)gpu_sc.sc_bootfb.publish.status.window'],
+'hvs-helper-native'=>['publish-body.h','error = bcmv3d_mmu4_native_cached_status(native, &s->native);','error = 0;','p->attempted && p->complete'],
+'hvs-helper-version'=>['publish-body.h','READ(BCMV3D_PUBLISH_HVS, 0);','READ(BCMV3D_PUBLISH_HVS, 0x20);','window == 0 && offset == 0'],
+'hvs-helper-lptr'=>['publish-body.h','WRITE(BCMV3D_PUBLISH_HVS, lptr, PUBLISH_HEAD);','WRITE(BCMV3D_PUBLISH_HVS, lptr, 128);','pb.barriers == 10 && value == 32'],
+'hvs-owner-native'=>['native-job.h','bcmv3d_hvs_publish_1080p60(owner->mmu4.native,','bcmv3d_hvs_publish_1080p60(NULL,','p->attempted && p->complete'],
+
   'mmu4-context'=>['native-job.h','if (cold || panicstr != NULL || cpu_intr_p() || cpu_softintr_p())','if (false)','bcmv3d_bootfb_program_mmu4(&gpu_sc) == EWOULDBLOCK'],
   'mmu4-closed'=>['native-job.h','owner->phase != BCMV3D_BOOTFB_CLOSED ||','false ||','mmu4_permitted'],
   'mmu4-fw'=>['native-job.h','!owner->firmware.complete ||','false ||','mmu4_permitted'],
@@ -289,7 +333,12 @@ controls={
       selected.each do |name|
         path,before,after,expected=controls.fetch(name);before=before.gsub('\\n', "\n").gsub('\\t', "\t");text=File.read(work+'/'+path)
         abort 'control anchor absent '+name unless text.include?(before)
-        if name.start_with?('mmu4-') || name.start_with?('writeback-')
+        if name.start_with?('hvs-owner-') || name.start_with?('hvs-read-') || name.start_with?('hvs-write-')
+          fn=name.start_with?('hvs-read-') ? 'bcmv3d_publish_read' : name.start_with?('hvs-write-') ? 'bcmv3d_publish_write' : 'bcmv3d_bootfb_publish'
+          body=function(text,fn)
+          abort 'scoped control anchor absent '+name unless body.include?(before)
+          mutated=text.sub(body,body.sub(before,after))
+        elsif name.start_with?('mmu4-') || name.start_with?('writeback-')
           fn=name.start_with?('writeback-') ? 'bcmv3d_bootfb_writeback_idle' : 'bcmv3d_bootfb_program_mmu4'
           body=function(text,fn)
           abort 'scoped control anchor absent '+name unless body.include?(before)

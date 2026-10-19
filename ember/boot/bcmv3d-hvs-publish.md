@@ -1,10 +1,12 @@
 # Fixed private HVS/PV0 publication mechanism
 
 The [helper](../../sys/external/bsd/drm2/bcmv3d/bcmv3d_hvs_publish.c) publishes
-one sealed initial test frame through HVS0 and PV0. It has no native caller,
-attachment, clock control, mapping, allocation or default activation. The caller
-must first establish the native boot owner's complete admission. This source
-slice does not establish physical scanout, DRM/KMS or a Plasma compositor frame.
+one sealed initial test frame through HVS0 and PV0. The manual
+`EMBERV3DCONSOLE` profile calls it from the same retained ACPI boot owner after
+[actual native MMU4 completion](bcmv3d-mmu4-native.md). Ordinary profiles do not
+select this caller. The mechanism has no attachment, clock control, mapping or
+allocation. This source slice does not establish physical scanout, DRM/KMS or a
+Plasma compositor frame.
 
 ## Input and ownership
 
@@ -24,7 +26,7 @@ Before this call it must own SRAM words 32..41, the supplied UPM reservation and
 the inherited COB partition. Disabled MODE, EMPTY, firmware ACK and matching
 registers do not prove a free pool, ownership or AXI drain. No new permission
 token or allocator facade replaces these obligations. The helper and its fixture
-do not construct a native reservation. Native integration remains separate.
+do not construct a native reservation. The fixed native policy below owns it.
 
 The callback windows map canonical resources 3, 5, 6, 11, 16, 17, 18, 19 and 22:
 HVS, PV0, PV1, shared HD, HDMI0 core, DVP0, PHY0, RM0 and CSC0. Only HVS and PV0
@@ -33,7 +35,42 @@ quantization and sink policy remain inherited. All backing, storage, callbacks,
 mappings, reservations and clock references remain alive after every outcome.
 There is no retry, rollback, free, unmap, stop or drain interface.
 
+## Fixed native boot owner
+
+The selected profile permits one canonical GPU0 boot owner and one HVS writer.
+It excludes other display drivers, manual probes, suspend and detach until reboot.
+The same owner retains the exact CLOSED issuer lease, successful CPU close/drain,
+real held serial route, firmware ACK, four clock leases, both stopped PV/HVS pipes,
+actual renderer tuple and programmed MMU4 native object. These are required before
+the attempt. The helper queries the actual full native cached status before any
+callback, map or register read. No copied success flag replaces that query.
+
+This first and only writer reserves SRAM words 32..41 and UPM bytes 0..15615 in
+slot 0. It retains the inherited COB partition. The backing is the actual sealed
+fixed IOVA 0/span 8294400 object. The HVS encoder bounds the UPM range against the
+pinned 262144-byte pool and 32 handles. The native callback reads CXM_SIZE at +4
+after a recognized matching VERSION and requires at least 42 list words. This
+bounds the concrete list; it does not measure a free pool or acquire ownership.
+The helper checks all three inherited COB words before any write.
+
+The owner borrows its retained HVS/PV0/PV1 mappings. After actual native admission,
+it freshly reads both retained MOP/MOPlet control words and refuses GO or BUSY.
+It lazily maps only the six required read-only canonical windows. Callbacks check
+the closed window enum, alignment, complete register bounds and active execution.
+Read-only writes are refused. The attempt is published before all Giant recursion
+is dropped. The exact recursion depth is restored after the synchronous helper.
+Every error stops later I/O and retains maps, backing and reservations until reboot.
+
+The terminal log reports the first profile mismatch, retained MOP words, list
+capacity, RUN status and active list. After helper completion, a single 20 ms
+diagnostic sample records STATUS and the six-bit frame counter. An unchanged
+counter does not fail completion. A failed diagnostic read retains its error and
+the separate completed helper result. No sample proves visible pixels or AXI drain.
+Target GCC16 linkage, actual target-TU analysis and physical acceptance of this
+publication continuation remain pending.
+
 ## Conservative inherited profile
+
 
 The helper uses the actual fixed PV0 and HDMI0 encoders for 1920/2008/2052/2200,
 1080/1084/1089/1125, progressive positive syncs. A GOP size, an HSM rate or an
@@ -126,11 +163,31 @@ refusal. Each causal mutant must compile, then fail its named CHECK with SIGABRT
 and `TEST_RUNNER` preserve or select bounded host checks. These tests do not prove
 native pool ownership or a working display.
 
+The native composition check runs the actual cold/warm job, held serial route,
+firmware protocol, clock engine, dual stop, native MMU4, encoders and helper:
+
+```sh
+SERIAL_HANDOFF_MUTANTS=hvs-owner-mmu4,hvs-read-busy,hvs-helper-native \
+  ruby ember/tools/bootfb-serial-handoff-contract.rb "$PWD"
+SKIP_MUTANTS=1 CFLAGS='-DNDEBUG -fsanitize=address,undefined -fno-omit-frame-pointer' \
+  ruby ember/tools/bootfb-serial-handoff-contract.rb "$PWD"
+```
+
+Controlled services supply kernel, ACPI, renderer tuple, DMA and bus behavior.
+Tests inject faults into the actual completed native object; they do not borrow
+a fabricated positive MMU4 status. Both layouts, finalizer orders, all owner and
+native refusals, fresh writeback gates, every profile/read/write/map fault,
+one-shot reentry, read-only windows, partial writes and retained errors are checked.
+Host sanitizer execution does not establish target ABI, pool ownership or pixels.
+
 Numeric facts use Raspberry Pi Linux
+
 [a1a601d](https://github.com/raspberrypi/linux/tree/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4):
 [HVS registers](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_regs.h#L550-L763),
 [HVS install/start](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hvs.c#L1025-L1258),
 [PV configure/enable](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_crtc.c#L346-L703),
 [HDMI timing/CSC](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hdmi.c#L964-L1372)
 and [VC6 PHY](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hdmi_phy.c#L960-L1005).
+Capacity and partition facts use [HVS allocation](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hvs.c#L1637-L1722)
+and [COB initialization](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hvs.c#L2087-L2110).
 Only numeric facts inform this independent BSD implementation.

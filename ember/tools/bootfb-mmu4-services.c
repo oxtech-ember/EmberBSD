@@ -86,3 +86,22 @@ int bootfb_native_status(struct bcmv3d_mmu4_native *n, struct bcmv3d_mmu4_native
 	}
 	return error;
 }
+
+/* Actual native owner diagnostics are fault-injected, never replaced by a fake owner. */
+#include "publish-native-gates.h"
+static unsigned publish_fault;
+void bootfb_publish_check(const void *);
+void bootfb_publish_locks(void)
+{ CHECK(owner != NULL && !owner->lock.held && !bcm2712_iommuc_mutex.held); }
+void bootfb_publish_fault(unsigned n)
+{
+	publish_fault = n;
+	CHECK(owner != NULL && owner->status.stage == BCMV3D_MMU4_NATIVE_COMPLETE);
+	if (n > 0 && n < 100) native_gate(n-1);
+}
+int bootfb_publish_status(struct bcmv3d_mmu4_native *n, struct bcmv3d_mmu4_native_status *s)
+{
+	bootfb_publish_check(n);
+	if (publish_fault == 100) return EAGAIN;
+	return bcmv3d_mmu4_native_cached_status(n,s);
+}

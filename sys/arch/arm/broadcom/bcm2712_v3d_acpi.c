@@ -74,6 +74,7 @@ int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
 #include <arm/broadcom/bcm2712_display_disp.h>
 #include <arm/broadcom/bcm2712_display_quiesce.h>
 #include <external/bsd/drm2/bcmv3d/bcmv3d_mmu4_native.h>
+#include <external/bsd/drm2/bcmv3d/bcmv3d_hvs_publish.h>
 #ifndef BCM2712_DISPLAY_COMPONENTS
 #error "BCM2712 native handoff requires the builtin display components"
 #endif
@@ -172,6 +173,18 @@ struct bcmv3d_bootfb_mmu4 {
 	int fault, status_error;
 };
 #endif
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+struct bcmv3d_bootfb_publish {
+	struct bcmv3d_hvs_publish_status status;
+	struct bcm2712_hvs_frame frame;
+	bus_space_handle_t maps[BCMV3D_PUBLISH_WINDOWS];
+	uint32_t mapped, cob[3], writeback[2], progress[2], cxm_words;
+	unsigned int dlist_first, dlist_words;
+	bool writeback_valid[2], progress_valid[2], cxm_valid;
+	bool attempted, complete, executing;
+	int fault, io_error, progress_error;
+};
+#endif
 
 /* The ACPI device and this embedded owner remain resident until reboot. */
 
@@ -185,6 +198,7 @@ struct bcmv3d_bootfb_owner {
 	struct bcmv3d_display_stop display;
 	struct bcmv3d_device *renderer;
 	struct bcmv3d_bootfb_mmu4 mmu4;
+	struct bcmv3d_bootfb_publish publish;
 #endif
 };
 #endif
@@ -595,6 +609,273 @@ publish:
 		    m->status.backing.sealed,
 		    m->status_valid && m->status.sequence_valid &&
 		    m->status.sequence.sequence_complete);
+	}
+out:
+	KERNEL_UNLOCK_ONE(NULL);
+	return error;
+}
+
+/* Canonical contract indices. Only HVS and PV0 have a write route. */
+static const unsigned int bcmv3d_publish_indices[BCMV3D_PUBLISH_WINDOWS] = {
+	3, 5, 6, 11, 16, 17, 18, 19, 22
+};
+
+static int
+bcmv3d_publish_io_error(struct bcmv3d_bootfb_publish *p, int error)
+{
+
+	if (p->io_error == 0)
+		p->io_error = error;
+	return p->io_error;
+}
+
+static int
+bcmv3d_publish_read(void *arg, enum bcmv3d_hvs_publish_window window,
+    uint32_t offset, uint32_t *out)
+{
+	struct bcmv3d_softc *sc = arg;
+	struct bcmv3d_bootfb_owner *owner = &sc->sc_bootfb;
+	struct bcmv3d_bootfb_publish *p = &owner->publish;
+	const struct bcm2712_display_memory *memory;
+	uint32_t value, cob, stride;
+	unsigned int i;
+	int error;
+
+	if (!p->executing)
+		return EPERM;
+	if (p->io_error != 0)
+		return p->io_error;
+	if ((unsigned int)window >= BCMV3D_PUBLISH_WINDOWS || out == NULL)
+		return bcmv3d_publish_io_error(p, EINVAL);
+	memory = &owner->display.contract.memory[bcmv3d_publish_indices[window]];
+	if ((offset & 3U) != 0 || memory->length < 4 ||
+	    offset > memory->length - 4)
+		return bcmv3d_publish_io_error(p, EINVAL);
+	/* The fixed helper has completed its full actual-native status gate. */
+	for (i = 0; i < 2; i++) {
+		if (p->writeback_valid[i])
+			continue;
+		if (bus_space_peek_4(sc->sc_bst, owner->mmu4.writeback_maps[i],
+		    0x0c, &p->writeback[i]) != 0)
+			return bcmv3d_publish_io_error(p, EIO);
+		p->writeback_valid[i] = true;
+		if ((p->writeback[i] & 3U) != 0)
+			return bcmv3d_publish_io_error(p, EBUSY);
+	}
+	if ((p->mapped & (1U << window)) == 0) {
+		/* New windows are read-only and map only after native admission. */
+		error = bus_space_map(sc->sc_bst, memory->address, memory->length,
+		    0, &p->maps[window]);
+		if (error != 0)
+			return bcmv3d_publish_io_error(p, error);
+		p->mapped |= 1U << window;
+	}
+	if (bus_space_peek_4(sc->sc_bst, p->maps[window], offset, &value) != 0)
+		return bcmv3d_publish_io_error(p, EIO);
+	/* CXM_SIZE is a word count, not proof that this region is unowned. */
+	if (window == BCMV3D_PUBLISH_HVS && offset == 0 &&
+	    (value & 0xff) == (uint32_t)p->frame.variant && !p->cxm_valid) {
+		if (bus_space_peek_4(sc->sc_bst, p->maps[window], 4,
+		    &p->cxm_words) != 0)
+			return bcmv3d_publish_io_error(p, EIO);
+		p->cxm_valid = true;
+		if (p->cxm_words < p->dlist_first + p->dlist_words)
+			return bcmv3d_publish_io_error(p, EOPNOTSUPP);
+	}
+	/* Record the inherited partition. A matching value is not a free pool. */
+	cob = p->frame.variant == BCM2712_HVS_C0 ? 0x40 : 0x114;
+	stride = p->frame.variant == BCM2712_HVS_C0 ? 0x20 : 0x40;
+	for (i = 0; i < 3; i++) {
+		if (window == BCMV3D_PUBLISH_HVS && offset == cob + i * stride)
+			p->cob[i] = value;
+	}
+	*out = value;
+	return 0;
+}
+
+static int
+bcmv3d_publish_write(void *arg, enum bcmv3d_hvs_publish_window window,
+    uint32_t offset, uint32_t value)
+{
+	struct bcmv3d_softc *sc = arg;
+	struct bcmv3d_bootfb_publish *p = &sc->sc_bootfb.publish;
+	const struct bcm2712_display_memory *memory;
+
+	if (!p->executing)
+		return EPERM;
+	if (p->io_error != 0)
+		return p->io_error;
+	if (window != BCMV3D_PUBLISH_HVS && window != BCMV3D_PUBLISH_PV0)
+		return bcmv3d_publish_io_error(p, EACCES);
+	memory = &sc->sc_bootfb.display.contract.memory[bcmv3d_publish_indices[window]];
+	if ((p->mapped & (1U << window)) == 0 || (offset & 3U) != 0 ||
+	    memory->length < 4 || offset > memory->length - 4)
+		return bcmv3d_publish_io_error(p, EINVAL);
+	if (bus_space_poke_4(sc->sc_bst, p->maps[window], offset, value) != 0)
+		return bcmv3d_publish_io_error(p, EIO);
+	return 0;
+}
+
+static void
+bcmv3d_publish_barrier(void *arg, enum bcmv3d_hvs_publish_window window)
+{
+	struct bcmv3d_softc *sc = arg;
+	struct bcmv3d_bootfb_publish *p = &sc->sc_bootfb.publish;
+
+	if (!p->executing || p->io_error != 0)
+		return;
+	if ((window != BCMV3D_PUBLISH_HVS && window != BCMV3D_PUBLISH_PV0) ||
+	    (p->mapped & (1U << window)) == 0) {
+		(void)bcmv3d_publish_io_error(p, EINVAL);
+		return;
+	}
+	bus_space_barrier(sc->sc_bst, p->maps[window], 0,
+	    sc->sc_bootfb.display.contract.memory[bcmv3d_publish_indices[window]].length,
+	    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+}
+
+static void
+bcmv3d_publish_delay(void *arg, unsigned int usec)
+{
+	struct bcmv3d_softc *sc = arg;
+
+	if (sc->sc_bootfb.publish.executing && sc->sc_bootfb.publish.io_error == 0)
+		delay(usec);
+}
+
+static int
+bcmv3d_bootfb_publish(struct bcmv3d_softc *sc)
+{
+	static const struct bcmv3d_hvs_publish_io io = {
+		.read = bcmv3d_publish_read,
+		.write = bcmv3d_publish_write,
+		.barrier = bcmv3d_publish_barrier,
+		.delay = bcmv3d_publish_delay
+	};
+	struct bcmv3d_bootfb_owner *owner;
+	struct bcmv3d_bootfb_publish *p;
+	struct bcmv3d_display_stop *d;
+	struct simplefb_console_close_status close;
+	unsigned int i;
+	uint32_t stat;
+	int count, error;
+
+	if (sc == NULL)
+		return EINVAL;
+	if (cold || panicstr != NULL || cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	if (pserialize_in_read_section())
+		return EDEADLK;
+	ASSERT_SLEEPABLE();
+	KERNEL_LOCK(1, NULL);
+	owner = &sc->sc_bootfb;
+	p = &owner->publish;
+	d = &owner->display;
+	if (p->attempted || p->complete || p->fault != 0) {
+		error = p->fault != 0 ? p->fault : EBUSY;
+		goto out;
+	}
+	if (sc->sc_dev == NULL || device_private(sc->sc_dev) != sc ||
+	    owner->phase != BCMV3D_BOOTFB_CLOSED || owner->first_error != 0 ||
+	    !owner->firmware.complete || owner->firmware.fault != 0 ||
+	    !d->complete || d->fault != 0 || d->mapped != BCM2712_QUIESCE_REGIONS ||
+	    !d->stop.complete || d->stop.error != 0 ||
+	    !owner->mmu4.complete || owner->mmu4.fault != 0 ||
+	    owner->mmu4.native == NULL || owner->mmu4.writeback_mapped != 2) {
+		error = EPERM;
+		goto publish;
+	}
+	for (i = 0; i < 2; i++) {
+		if (!d->stop.pipe[i].complete || d->stop.pipe[i].error != 0 ||
+		    !d->stop.pipe[i].pv_disabled || !d->stop.pipe[i].hvs_disabled) {
+			error = ENXIO;
+			goto publish;
+		}
+	}
+#define HELD(n) do { \
+	if (d->n == NULL || d->n ## _status.fault != 0 || \
+	    d->n ## _status.state != 1 || d->n ## _status.leases != 1 || \
+	    d->n ## _status.minimum[0] == 0 || \
+	    d->n ## _status.rate < d->n ## _status.minimum[0]) { \
+		error = ENXIO; goto publish; \
+	} \
+} while (0)
+	HELD(hsm);
+	HELD(bvb);
+	HELD(core);
+	HELD(disp);
+#undef HELD
+	error = simplefb_console_close_status(owner->lease, &close);
+	if (error == 0 && (!close.attempted || !close.complete || !close.closed ||
+	    !close.drained || close.error != 0 || close.mi_error != 0 ||
+	    close.md_error != 0))
+		error = ENXIO;
+	if (error == 0)
+		error = wsdisplay_bootfb_serial_closed(owner->lease);
+	if (error == 0)
+		error = bcmv3d_render_bootfb_validate(owner->renderer, sc->sc_dev,
+		    sc->sc_bst, sc->sc_dmat, sc->sc_handle, owner);
+	if (error != 0)
+		goto publish;
+	/*
+	 * This fixed profile is the first and only HVS boot writer. The same
+	 * canonical GPU owner reserves SRAM32..41, UPM0..15615/slot0 and keeps
+	 * the inherited COB partition. No other display driver/probe may run.
+	 * Stopped channels, firmware ACK and metadata do not prove free space.
+	 * The actual native helper validates fixed IOVA0 backing before I/O.
+	 */
+	p->dlist_first = 32;
+	p->dlist_words = BCM2712_HVS_DLIST_WORDS;
+	p->frame = (struct bcm2712_hvs_frame) {
+		.variant = d->stop.version & 0xff,
+		.dma_base = 0, .dma_span = 8294400,
+		.upm_offset = 0, .upm_length = 15616, .upm_slot = 0
+	};
+	for (i = 0; i < BCM2712_QUIESCE_REGIONS; i++)
+		p->maps[i] = d->maps[i];
+	p->mapped = 7;
+	p->attempted = p->executing = true;
+	KERNEL_UNLOCK_ALL(NULL, &count);
+	/* Fresh actual native status precedes every callback/map/register read. */
+	error = bcmv3d_hvs_publish_1080p60(owner->mmu4.native, &io, sc,
+	    &p->frame, &p->status);
+	if (error == 0)
+		error = p->io_error;
+	if (error == 0) {
+		/* Diagnostic samples only. No progress value authorizes later I/O. */
+		stat = p->frame.variant == BCM2712_HVS_C0 ? 0x44 : 0x118;
+		p->progress[0] = p->status.channel_status;
+		p->progress_valid[0] = true;
+		delay(20000);
+		p->progress_error = bcmv3d_publish_read(sc, BCMV3D_PUBLISH_HVS,
+		    stat, &p->progress[1]);
+		p->progress_valid[1] = p->progress_error == 0;
+		if (p->progress_error != 0)
+			error = p->progress_error;
+	}
+	p->executing = false;
+	KERNEL_LOCK(count, NULL);
+publish:
+	p->fault = error;
+	p->complete = error == 0;
+	if (error != 0 && owner->first_error == 0)
+		owner->first_error = error;
+	if (sc->sc_dev != NULL) {
+		aprint_normal_dev(sc->sc_dev, "boot HVS publish: error %d, complete %u, "
+		    "helper %u/stage %u, maps %x, CXM %u valid %u; "
+		    "MOP %08x/%08x valid %u/%u; mismatch window %u offset %x "
+		    "raw %08x valid %u mask %08x expected %08x; RUN %08x "
+		    "active DL %u; progress %08x/%08x valid %u/%u error %d "
+		    "frame count %u/%u; no KMS or drain\n", error, p->complete,
+		    p->status.complete, p->status.stage, p->mapped, p->cxm_words,
+		    p->cxm_valid, p->writeback[0], p->writeback[1],
+		    p->writeback_valid[0], p->writeback_valid[1],
+		    p->status.window, p->status.offset, p->status.raw,
+		    p->status.raw_valid, p->status.reject_mask, p->status.reject_expected,
+		    p->status.channel_status, p->status.active_list,
+		    p->progress[0], p->progress[1], p->progress_valid[0],
+		    p->progress_valid[1], p->progress_error,
+		    (p->progress[0] >> 16) & 0x3f, (p->progress[1] >> 16) & 0x3f);
 	}
 out:
 	KERNEL_UNLOCK_ONE(NULL);
@@ -1036,8 +1317,9 @@ bcmv3d_finalize(device_t dev)
 #if defined(WSDISPLAY_BOOTFB_DEFER) && defined(WSDISPLAY_BOOTFB_HANDOFF)
 			else {
 				sc->sc_bootfb.renderer = renderer;
-				if (bcmv3d_bootfb_stop_display(sc) == 0)
-					(void)bcmv3d_bootfb_program_mmu4(sc);
+				if (bcmv3d_bootfb_stop_display(sc) == 0 &&
+				    bcmv3d_bootfb_program_mmu4(sc) == 0)
+					(void)bcmv3d_bootfb_publish(sc);
 			}
 #endif
 		}

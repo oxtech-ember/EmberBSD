@@ -93,6 +93,7 @@ static int display_mailbox(uint8_t channel,void *packet,size_t length,uint32_t *
 #define BUS_SPACE_BARRIER_WRITE 2
 static int display_map(bus_space_tag_t t,uint64_t a,uint64_t n,int f,bus_space_handle_t *out)
 {
+	if (gpu_sc.sc_bootfb.publish.attempted) return hvs_bus_map(t,a,n,f,out);
 	static const unsigned indices[] = {3,5,6};
 if (a == bcm2712_display_resources[7].memory.address || a == bcm2712_display_resources[8].memory.address) {
 	unsigned i = writeback_maps++;
@@ -117,6 +118,7 @@ static unsigned display_region(bus_space_tag_t t,bus_space_handle_t h)
 { CHECK(giant == 0 && t == &tag && (uintptr_t)h >= 1 && (uintptr_t)h <= 3); return (unsigned)(uintptr_t)h-1; }
 static int display_peek(bus_space_tag_t t,bus_space_handle_t h,uint32_t o,uint32_t *v)
 {
+	if (gpu_sc.sc_bootfb.publish.attempted) return hvs_bus_read(t,h,o,v);
 	if ((uintptr_t)h >= 4) {
 		unsigned i = (unsigned)(uintptr_t)h-4;
 		CHECK(mmu4_permitted && giant == 0 && t == &tag && i < 2 && o == 0x0c && v != NULL);
@@ -129,10 +131,10 @@ static int display_peek(bus_space_tag_t t,bus_space_handle_t h,uint32_t o,uint32
 }
 
 static int display_poke(bus_space_tag_t t,bus_space_handle_t h,uint32_t o,uint32_t v)
-{ return qb_write(display_region(t,h),o,v); }
+{ if (gpu_sc.sc_bootfb.publish.attempted) return hvs_bus_write(t,h,o,v); return qb_write(display_region(t,h),o,v); }
 static void display_barrier(bus_space_tag_t t,bus_space_handle_t h,unsigned o,uint64_t n,int f)
-{ unsigned r = display_region(t,h); CHECK(o == 0 && n == (r == 0 ? 0x1a000U : 0x100U) && f == 3); qb_barrier(r); }
-static void display_delay(unsigned us) { CHECK(giant == 0); qb_delay(us); }
+{ if (gpu_sc.sc_bootfb.publish.attempted) { hvs_bus_barrier(t,h,o,n,f); return; } unsigned r = display_region(t,h); CHECK(o == 0 && n == (r == 0 ? 0x1a000U : 0x100U) && f == 3); qb_barrier(r); }
+static void display_delay(unsigned us) { CHECK(giant == 0); if (gpu_sc.sc_bootfb.publish.attempted) hvs_bus_delay(us); else qb_delay(us); }
 static void display_initialize(void)
 {
 	/* Explicit simulated reboot. Production never releases these providers. */

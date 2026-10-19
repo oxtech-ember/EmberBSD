@@ -194,6 +194,9 @@ attachment, its same resident owner can hold clocks and run the
 [bounded two-pipeline stop](bcm2712-native-display-quiesce.md). The renderer's opaque
 pointer still grants no display access. After both pipelines stop, that exact
 renderer and owner can enter the separately guarded [MMU4 stage](bcmv3d-mmu4-native.md).
+Its actual completed native object can then enter the fixed
+[HVS/PV0 publication](bcmv3d-hvs-publish.md) in the same retained owner. These source
+stages do not establish a KMS interface or physical compositor output.
 
 ## Source checks
 
