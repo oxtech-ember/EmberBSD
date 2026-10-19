@@ -497,6 +497,9 @@ makeoptions	sunxi_fb	"CPPFLAGS.sunxi_fb"+="${CPPFLAGS.drmkms}"
 
 # Allwinner HDMI (Designware based)
 attach	dwhdmi at fdt with sunxi_dwhdmi
+attach	dwhdmi at fdt with sun60i_a733_hdmi
+file	arch/arm/sunxi/sun60i_a733_hdmi_fdt.c	sun60i_a733_hdmi
+makeoptions	sun60i_a733_hdmi	"CPPFLAGS.sun60i_a733_hdmi"+="${CPPFLAGS.drmkms}"
 file	arch/arm/sunxi/sunxi_dwhdmi.c		sunxi_dwhdmi
 makeoptions	sunxi_dwhdmi	"CPPFLAGS.sunxi_dwhdmi"+="${CPPFLAGS.drmkms}"
 
