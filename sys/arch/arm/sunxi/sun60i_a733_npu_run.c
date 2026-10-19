@@ -111,7 +111,7 @@ npu_run_snapshot(struct sun60i_a733_npu_run *s)
 		return error;
 	if ((s->status.raw[1][0] & 0x80000) != 0 ||
 	    (s->status.raw[1][15] & 1) != 0 ||
-	    (s->status.raw[1][16] & 1) != 0)
+	    (s->status.raw[1][16] & ~0x10U) != 0)
 		return EBUSY;
 	return 0;
 }
@@ -127,7 +127,7 @@ npu_run_step(struct sun60i_a733_npu_run *s, unsigned op,
 	} steps[] = {
 		{ 0x000, 0x00070900, UINT32_MAX },
 		{ 0x000, 0x00070100, UINT32_MAX },
-		{ 0x3a8, 2, UINT32_MAX },
+		{ 0x3a8, 2, UINT32_MAX ^ 0x10U },
 		{ 0x100, 0x00140021, UINT32_MAX },
 		{ 0x3b4, 0, UINT32_MAX },
 		{ 0x388, 0x21, UINT32_MAX },
@@ -149,7 +149,14 @@ npu_run_step(struct sun60i_a733_npu_run *s, unsigned op,
 		value = info->pd_entry;
 	if (op == 11)
 		value = info->command_virtual;
-	if (steps[op].mask != UINT32_MAX && steps[op].mask != 0) {
+	if (op == 2) {
+		/* JOB_STATUS bit 4 is read-only. Keep the literal init write. */
+		if (bus_space_peek_4(s->bst, s->bsh, steps[op].offset,
+		    &before) != 0)
+			return EFAULT;
+		if ((before & ~0x10U) != 0)
+			return EBUSY;
+	} else if (steps[op].mask != UINT32_MAX && steps[op].mask != 0) {
 		if (bus_space_peek_4(s->bst, s->bsh, steps[op].offset,
 		    &before) != 0)
 			return EFAULT;

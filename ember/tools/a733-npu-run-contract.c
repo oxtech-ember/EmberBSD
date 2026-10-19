@@ -50,6 +50,7 @@ static bool prestart_irq, clean_retain;
 static uint32_t terminal_idle, terminal_address;
 static bool mask_drained, address_drained, terminal_unstable;
 static unsigned dma_reads;
+static uint32_t job_status_xor, fresh_reset_unknown;
 static int (*callback)(void *);
 static void *callback_arg;
 static void mutex_init(kmutex_t *m, int type, int ipl)
@@ -192,7 +193,11 @@ static int bus_space_poke_4(bus_space_tag_t tag, bus_space_handle_t h,
  CHECK(!in_irq && tag == &bus_token && h == 0x55 && valid_offset(offset));
  CHECK(context.retained && state.status.publication_attempted);
  if (++pokes == fail_poke) return EFAULT;
+ uint32_t before = regs[offset / 4];
  record_write(offset, value); regs[offset / 4] = value;
+ if (offset == 0x3a8)
+  regs[offset / 4] = ((value & ~0x10U) | (before & 0x10U)) ^ job_status_xor;
+ if (pokes == 2) regs[0x3a8 / 4] |= fresh_reset_unknown;
  if (offset == 0x14 && value == 0) mask_drained = false;
  if (offset == 0x654) address_drained = false;
  if (offset == 0x3a4) {
@@ -266,6 +271,7 @@ static void reset(void)
  pending_irq=start_drained=prestart_irq=clean_retain=false;
  unstable_peek=mismatch_step=bad_info=infos=fail_info=0;
  mask_drained=address_drained=terminal_unstable=false; dma_reads=0;
+ job_status_xor=fresh_reset_unknown=0; regs[0x3a8/4]=0x10;
  terminal_idle=0x7fffffff; terminal_address=0x01001028;
  callback=NULL; callback_arg=NULL; property_bytes=12; irq_value=0x10; bad_route=0;
  context=(struct sun60i_a733_npu_dma){false,16};
@@ -287,6 +293,30 @@ int main(void)
  CHECK(write_offsets[3]==0x100 && values[3]==0x140021);
  CHECK(write_offsets[4]==0x3b4 && values[4]==0x1001 && write_offsets[5]==0x388 && values[5]==0x21);
  CHECK(values[7]==0x1020000 && values[8]==0x80000040 && values[9]==2);
+ CHECK(regs[0x3a8/4]==0x12);
+ for (unsigned status=0; status<=1; status++) {
+  for (unsigned flip=0; flip<=1; flip++) {
+   reset(); regs[0x3a8/4]=status*0x10; job_status_xor=flip*0x10;
+   CHECK(run()==0 && state.status.terminal);
+   CHECK(write_offsets[2]==0x3a8 && values[2]==2);
+   CHECK(regs[0x3a8/4]==(2|((status^flip)*0x10)));
+  }
+ }
+ for (unsigned bit=0; bit<32; bit++) {
+  if (bit==4) continue;
+  reset(); regs[0x3a8/4]|=UINT32_C(1)<<bit;
+  CHECK(run()==EBUSY && state.status.snapshot_valid);
+  CHECK(!writes && !retains && !established && !state.status.publication_attempted && unmaps==1);
+  reset(); fresh_reset_unknown=UINT32_C(1)<<bit;
+  CHECK(run()==EBUSY && context.retained && !state.status.started && !state.status.terminal);
+  CHECK(writes==3 && write_offsets[0]==0 && write_offsets[1]==0 && write_offsets[2]==0x14);
+  CHECK(values[2]==0 && !unmaps && !removed && regs[0x3a4/4]==0);
+  reset(); job_status_xor=UINT32_C(1)<<bit;
+  CHECK(run()==EIO && state.status.step==3 && context.retained);
+  CHECK(values[2]==2 && write_offsets[2]==0x3a8 && writes==4 && write_offsets[3]==0x14);
+  CHECK(!state.status.started && !state.status.terminal && !unmaps && !removed && regs[0x3a4/4]==0);
+ }
+ reset(); CHECK(run()==0);
  unsigned oldio=peeks+pokes+ordinary_reads+maps+proofs;
  CHECK(run()==EALREADY && oldio==peeks+pokes+ordinary_reads+maps+proofs);
  struct sun60i_a733_npu_run_status copy;

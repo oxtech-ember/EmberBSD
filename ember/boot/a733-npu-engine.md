@@ -35,8 +35,10 @@ audit. No FDT, GIC, or PIC framework behavior changes.
 
 The helper reads two stable samples of the original 12 registers plus
 0x090, 0x100, 0x104, 0x10c, 0x3a8, and 0x414. It also requires isolation,
-MMU load, and internal reset bits clear. It replaces the command page with
-one fixed 40-byte little-endian MMU flush, semaphore, stall, event4, and END
+MMU load, and internal reset bits clear. At 0x3a8 it permits only zero or
+JOB_STATUS bit 4 (0x10). It repeats this check immediately before the
+literal init write of 2. It does not copy status bits into the write.
+It replaces the command page with one fixed 40-byte little-endian MMU flush, semaphore, stall, event4, and END
 image. Replacement is allowed only before retain. The trusted image and
 all native DMA mappings remain stable.
 
@@ -46,7 +48,10 @@ FE start. The handler returns zero without MMIO while unarmed. Local init
 uses a finite private operation table. PD comes from the owned MTLB map.
 The command address uses VA, not PA. Fetch control `0x00010200` bounds
 prefetch to the owned 4096-byte command page. Register readbacks are literal
-or use the specified RMW mask. An unexpected value is a refusal.
+or use the specified RMW mask. The 0x3a8 init readback excludes only
+read-only JOB_STATUS bit 4. All other bits must equal the literal value 2.
+The status bit can change between samples and readback. Any other
+unexpected value is a refusal.
 
 The IRQ handler reads only the owned NPU status at 0x010. It uses ordinary
 bus-space operations, not fault-recovering peek. The first nonzero status
@@ -89,8 +94,9 @@ spurious events, late faults, timeout, and false terminal evidence.
 
 The local init and command format facts come from VIP2 commit
 `2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f`, `vip_drv_hardware.c` and
-`vip_drv_mmu.c`. The adapted local sequence preserves the Vivante MIT
-notice. Unmapped MTLB exception value 2 remains a source-format choice
+`vip_drv_mmu.c`. In `vip_drv_hardware.c`, lines 445-449 write literal 2
+to 0x3a8. Lines 1180-1194 poll bit 4 and name it JOB_STATUS. The adapted
+local sequence preserves the Vivante MIT notice. Unmapped MTLB exception value 2 remains a source-format choice
 that requires hardware proof. Source controls and successful compilation
 do not establish IRQ delivery, MMU translation, FE completion, NN execution,
 or a model result. The fixed FE stream contains no NN model operation.
