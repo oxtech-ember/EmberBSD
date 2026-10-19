@@ -28,6 +28,7 @@
 typedef uint64_t bus_addr_t, bus_size_t, paddr_t, vmem_addr_t;
 typedef uintptr_t vaddr_t;
 typedef void *device_t, *ACPI_HANDLE;
+typedef void *bus_space_tag_t;
 typedef unsigned kmutex_t;
 typedef void vmem_t;
 struct drm_device { void *dev_private; };

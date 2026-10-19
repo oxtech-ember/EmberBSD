@@ -739,6 +739,9 @@ on every board in the hardware catalog.
   one-shot CONTROL observation retains its mapping and grants no mutation permission.
   A private synchronous MMU4 executor source-tests shared serialization and retained
   leases without a default caller or physical programming acceptance.
+  A private [native MMU4 owner](ember/boot/bcmv3d-mmu4-native.md) source-tests
+  canonical tag/resource identity, sealed backing and one fixed executor operation.
+  It has no default caller or physical access/translation acceptance.
   DRM hotplug delivery, physical extension reads and KMS scanout remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,

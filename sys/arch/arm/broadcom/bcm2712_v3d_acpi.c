@@ -57,7 +57,7 @@ int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
 #error "V3D render and boot probes cannot share one boot"
 #endif
 #ifdef BCM2712_V3D_RENDER
-int bcmv3d_render_attach(device_t, bus_dma_tag_t, ACPI_HANDLE);
+int bcmv3d_render_attach(device_t, bus_space_tag_t, bus_dma_tag_t, ACPI_HANDLE);
 #endif
 #if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_DMA_PROBE)
 int bcmv3d_dma_probe(device_t, bus_dma_tag_t);
@@ -373,7 +373,8 @@ bcmv3d_finalize(device_t dev)
 #endif
 #ifdef BCM2712_V3D_RENDER
 		if (error == 0) {
-			error = bcmv3d_render_attach(dev, sc->sc_dmat, sc->sc_handle);
+			error = bcmv3d_render_attach(dev, sc->sc_bst,
+			    sc->sc_dmat, sc->sc_handle);
 			if (error != 0)
 				aprint_error_dev(dev, "render attachment failed: %d\n", error);
 		}

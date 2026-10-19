@@ -30,6 +30,7 @@ typedef int32_t __s32;
 typedef int64_t __s64;
 typedef void *device_t;
 typedef void *ACPI_HANDLE;
+typedef void *bus_space_tag_t;
 typedef void *bus_dma_tag_t;
 typedef size_t bus_size_t;
 typedef uint64_t bus_addr_t;

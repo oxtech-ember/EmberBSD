@@ -69,7 +69,8 @@ Before a future call to sequencer program, the owner must irreversibly `seal`
 the backing. Destroy then returns EBUSY, including after a pre-retain refusal.
 The owner keeps the frame, control pages, maps, callback text and render/device/
 tag references alive. There is no unseal, retry or release-after-publication API.
-A native MMIO adapter must check seal itself. No adapter is added here.
+The [private native adapter](bcmv3d-mmu4-native.md) checks seal itself.
+Its source-only composition does not establish hardware access or drain.
 
 Calls need process context and external serialization. Sleeping paths refuse
 interrupt/softinterrupt context and use ASSERT_SLEEPABLE. The caller excludes

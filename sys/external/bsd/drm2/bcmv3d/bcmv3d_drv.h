@@ -24,6 +24,7 @@
 #define BCMV3D_VA_SIZE	UINT64_C(0xffe00000)
 
 struct bcmv3d_job;
+struct bcmv3d_mmu4_native;
 struct bcmv3d_device {
 	struct drm_device *drm;
 	device_t dev;
@@ -37,6 +38,8 @@ struct bcmv3d_device {
 	struct sysctllog *sysctllog;
 	uint32_t ident[7];
 	struct bcmv3d_job *job;
+	bus_space_tag_t bst;
+	struct bcmv3d_mmu4_native *mmu4_native;
 };
 
 /* Keep the CMA base layout; allocation, segments and pager are private. */
@@ -70,6 +73,6 @@ int bcmv3d_submit_csd(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_submit_cl(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_job_init(struct bcmv3d_device *);
 void bcmv3d_job_fini(struct bcmv3d_device *);
-int bcmv3d_render_attach(device_t, bus_dma_tag_t, ACPI_HANDLE);
+int bcmv3d_render_attach(device_t, bus_space_tag_t, bus_dma_tag_t, ACPI_HANDLE);
 
 #endif

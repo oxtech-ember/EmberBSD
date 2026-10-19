@@ -182,8 +182,10 @@ bcmv3d_fault_probe(device_t device, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 #endif
 #ifdef BCM2712_V3D_RENDER
 int
-bcmv3d_render_attach(device_t device, bus_dma_tag_t dmat, ACPI_HANDLE handle)
+bcmv3d_render_attach(device_t device, bus_space_tag_t bst, bus_dma_tag_t dmat,
+    ACPI_HANDLE handle)
 {
+	assert(bst == aa.aa_memt);
 	assert(dmat == aa.aa_dmat && handle == node.ad_handle);
 	return probe_result(device, PROBE_RENDER);
 }
