@@ -9,7 +9,8 @@ callback alone does not enable `DRIVER_MODESET` or create display objects.
 The callback accepts nonzero width and height, 32 bits per pixel and zero flags.
 It calculates a 64-byte-aligned pitch with 64-bit arithmetic. It rejects product
 overflow, a pitch that cannot fit the 32-bit DRM output and a pixel allocation
-over the native 16 MiB BO limit. Handle, pitch and size outputs stay zero on
+over the native 256 MiB BO ceiling. The remaining device quota can reject a
+smaller allocation with `ENOMEM`. Handle, pitch and size outputs stay zero on
 failure. Input dimensions and format fields stay unchanged. Errors use the DRM
 convention: zero on success and a negative errno on failure.
 
@@ -45,7 +46,7 @@ ruby ember/tools/bcm2712-v3d-bo-stats-contract.rb
 The new contract executes the actual callback and complete native allocator
 with controlled kernel, DMA and DRM handle services. It takes the callback
 argument from the actual DRM UAPI. It checks pitch boundaries, the inclusive
-16 MiB limit, overflow refusal, 4 KiB and 64 KiB pages, scattered allocation,
+256 MiB ceiling, overflow refusal, 4 KiB and 64 KiB pages, scattered allocation,
 allocation and handle failures, original errno signs, output clearing and
 balanced constructor/handle references. Compiled callback controls must fail
 through a contract assertion. Crashes and timeouts are not valid rejections.

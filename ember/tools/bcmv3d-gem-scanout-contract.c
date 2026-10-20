@@ -296,6 +296,13 @@ main(void)
 	fragment_pages = 3;
 	for (i = 0; i < 3; i++)
 		bo[i] = user_bo();
+	/* Render storage can exceed the separately admitted HVS consumer range. */
+	struct drm_v3d_create_bo large = { .size = 32 * 1024 * 1024 };
+	CHECK(bcmv3d_create_bo(&drm, &large, &file) == 0);
+	out = bcmv3d_to_bo(file.handles[large.handle]);
+	stage_failure(out, EINVAL);
+	file.handles[large.handle] = NULL;
+	drm_gem_object_put_unlocked(&out->cma.base);
 	quota = device.allocated;
 	sealed_discard(bo[0]);
 	out = bo[1];

@@ -111,11 +111,12 @@ struct drm_mode_create_dumb {
 #include "drv-body.h"
 /* Use the smallest kernel budget to keep the exhaustion cases short. */
 #define BCMV3D_BO_TOTAL BCMV3D_BO_TOTAL_MIN
+#define TEST_BO_CHUNK ((size_t)16 * 1024 * 1024)
 
 static unsigned checks, fail, allocated, mapped, maps, loaded, ranges, gems;
 static unsigned bad_geometry, fragment_pages, fragmented_allocations;
 static size_t contiguous_limit;
-static unsigned kmem_blocks;
+static unsigned kmem_blocks, kmem_calls;
 static int dma_counts[16];
 static bus_dma_segment_t *dma_lists[16];
 static size_t va_sizes[16];
@@ -133,7 +134,18 @@ static void mutex_exit(kmutex_t *m)
  if (on_mutex_exit != NULL) on_mutex_exit(m);
 #endif
 }
-static void *kmem_zalloc(size_t n, int f) { void *p=calloc(1,n); CHECK(p!=NULL); kmem_blocks++; return p; }
+static void *
+kmem_zalloc(size_t n, int f)
+{
+	void *p = calloc(1, n);
+
+	CHECK(p != NULL);
+	/* Sleep allocations return storage, never an encoded errno pointer. */
+	CHECK(!IS_ERR(p));
+	kmem_blocks++;
+	kmem_calls++;
+	return p;
+}
 static void kmem_free(void *p, size_t n) { CHECK(p!=NULL && kmem_blocks>0); kmem_blocks--; free(p); }
 static int vmem_alloc(vmem_t *v, size_t n, int f, vmem_addr_t *a)
 {
@@ -375,13 +387,13 @@ main(void)
 	for(unsigned cycle=0;cycle<3;cycle++) {
 		unsigned handles[4];
 		for(unsigned i=0;i<4;i++) {
-			a=(struct drm_v3d_create_bo){.size=BCMV3D_BO_MAX};
+			a=(struct drm_v3d_create_bo){.size=TEST_BO_CHUNK};
 			CHECK(bcmv3d_create_bo(&d,&a,&f)==0); handles[i]=a.handle;
 		}
 		CHECK(c.allocated==BCMV3D_BO_TOTAL);
 		uint32_t reused=bcmv3d_to_bo(f.handles[handles[1]])->gpu;
 		close_handle(&f,handles[1]);
-		a=(struct drm_v3d_create_bo){.size=BCMV3D_BO_MAX};
+		a=(struct drm_v3d_create_bo){.size=TEST_BO_CHUNK};
 		CHECK(bcmv3d_create_bo(&d,&a,&f)==0 && a.offset==reused);
 		handles[1]=a.handle;
 		a=(struct drm_v3d_create_bo){.size=4096};

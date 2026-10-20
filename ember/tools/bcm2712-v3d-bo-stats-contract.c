@@ -137,7 +137,7 @@ main(void)
 	CHECK(!IS_ERR(internal));
 	uint32_t handles[4];
 	for (unsigned i=0;i<4;i++) {
-		a=(struct drm_v3d_create_bo){.size=i<3 ? BCMV3D_BO_MAX : 12*1024*1024-3*PAGE_SIZE};
+		a=(struct drm_v3d_create_bo){.size=i<3 ? TEST_BO_CHUNK : 12*1024*1024-3*PAGE_SIZE};
 		CHECK(bcmv3d_create_bo(&d,&a,i&1 ? &other : &f)==0);
 		handles[i]=a.handle;
 	}
@@ -155,7 +155,7 @@ main(void)
 	close_handle(&f,handles[0]);
 	CHECK(snapshot(&c).reserved_bytes==BCMV3D_BO_TOTAL);
 	drm_gem_object_put_unlocked(held);
-	CHECK(snapshot(&c).reserved_bytes==BCMV3D_BO_TOTAL-BCMV3D_BO_MAX);
+	CHECK(snapshot(&c).reserved_bytes==BCMV3D_BO_TOTAL-TEST_BO_CHUNK);
 	for (unsigned i=1;i<4;i++) close_handle(i&1 ? &other : &f,handles[i]);
 	drm_gem_object_put_unlocked(&internal->cma.base);
 	empty(&c);

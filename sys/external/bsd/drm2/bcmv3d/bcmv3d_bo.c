@@ -158,8 +158,6 @@ bcmv3d_bo_alloc_internal(struct bcmv3d_device *sc, uint32_t requested,
 	cma->dmat = sc->dmat;
 	cma->dmasize = size;
 	bo->maxsegs = contiguous ? 1 : size / PAGE_SIZE;
-	bo->dmasegs = kmem_zalloc(bo->maxsegs * sizeof(*bo->dmasegs),
-	    KM_SLEEP);
 	mutex_enter(&sc->memory_lock);
 	if (size > sc->bo_total - sc->allocated) {
 		bcmv3d_bo_failure_locked(sc, BCMV3D_BO_STAGE_QUOTA,
@@ -180,6 +178,10 @@ bcmv3d_bo_alloc_internal(struct bcmv3d_device *sc, uint32_t requested,
 	if (sc->allocated > sc->bo_stats.highwater_bytes)
 		sc->bo_stats.highwater_bytes = sc->allocated;
 	mutex_exit(&sc->memory_lock);
+
+	/* Reserve backing before allocating its potentially large segment list. */
+	bo->dmasegs = kmem_zalloc(bo->maxsegs * sizeof(*bo->dmasegs),
+	    KM_SLEEP);
 
 	error = bus_dmamem_alloc(sc->dmat, size, PAGE_SIZE, 0,
 	    bo->dmasegs, bo->maxsegs, &bo->nsegs, BUS_DMA_WAITOK);
@@ -258,7 +260,8 @@ release_va:
 	bcmv3d_bo_count(&sc->bo_stats.releases);
 	mutex_exit(&sc->memory_lock);
 free_bo:
-	kmem_free(bo->dmasegs, bo->maxsegs * sizeof(*bo->dmasegs));
+	if (bo->dmasegs != NULL)
+		kmem_free(bo->dmasegs, bo->maxsegs * sizeof(*bo->dmasegs));
 	kmem_free(bo, sizeof(*bo));
 	return ERR_PTR(-error);
 }

@@ -144,6 +144,7 @@ C
   end
   unless ENV['SCANOUT_COMPILE_ONLY'] == '1' || ENV['SCANOUT_SKIP_MUTANTS'] == '1'
     mutations = {
+      'hvs-size-scope' => ['backing-body.h', 'bcmv3d_mmu4_backing_stage_gem', 'cma->dmasize > BCMV3D_HVS_BO_MAX', 'cma->dmasize > BCMV3D_BO_MAX'],
       'bo-reference' => ['bo-body.h', 'bcmv3d_bo_reference', 'drm_gem_object_get(obj);', '(void)obj;'],
       'bo-functions' => ['bo-body.h', 'bcmv3d_bo_reference', 'obj->funcs != &bcmv3d_bo_funcs', 'false'],
       'bo-device' => ['bo-body.h', 'bcmv3d_bo_reference', 'obj->dev != sc->drm', 'false'],

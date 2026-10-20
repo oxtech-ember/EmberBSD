@@ -12,12 +12,15 @@ internal page tables and scratch storage, userspace BOs, and allocations still
 inside bus_dma. `highwater_bytes` is the largest reservation since attachment.
 Neither value is a measurement of physical residency or process memory.
 
-The limit is 16 MiB per BO. The device limit is 1/16 of physical memory,
-with a 64 MiB floor and a 256 MiB cap. A 4 GiB CM5 gets 256 MiB.
-`limit_bytes` reports the active device limit. The internal
-4 MiB page table and three scratch pages consume this budget. Reservations
-start after GPU virtual-range allocation. They end on allocation rollback or
-final GEM release. A closed GEM handle can leave a mapping, PRIME reference,
+`max_bo_bytes` reports the 256 MiB per-BO ceiling. It is not an available-memory
+measurement. The device limit is 1/16 of physical memory,
+with a 64 MiB floor and a 256 MiB cap. The calculation uses kernel `physmem`,
+not the named RAM capacity. `limit_bytes` reports the active device limit.
+A request below `max_bo_bytes` must still fit the remaining device budget
+after page rounding. Available budget does not guarantee DMA allocation.
+The internal 4 MiB page table and three scratch pages consume this budget. Reservations
+start after GPU virtual-range allocation and before segment-list allocation.
+They end on allocation rollback or final GEM release. A closed GEM handle can leave a mapping, PRIME reference,
 cache entry, or submitted job alive. A handle trace cannot replace this snapshot.
 
 `reservations` and `releases` count these transitions. `failures` counts each

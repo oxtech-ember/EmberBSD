@@ -20,6 +20,9 @@
 #include "bcmv3d_scanout.h"
 #endif
 
+/* Preserve the admitted fixed-mode consumer range independently of render BOs. */
+#define BCMV3D_HVS_BO_MAX	((size_t)16 * 1024 * 1024)
+
 /*
  * Reuse native bus_dma/pmap and the fixed BSD encoder. The encoder's numeric
  * MMU facts derive from Linux a1a601d4857978d810175365550c4536701df4ed,
@@ -724,7 +727,7 @@ bcmv3d_mmu4_backing_stage_gem(struct bcmv3d_mmu4_backing *b, unsigned int slot,
 	cma = &g->bo->cma;
 	va = (uintptr_t)cma->vaddr;
 	if (cma->dmat != b->sc->dmat || cma->base.size != cma->dmasize ||
-	    cma->dmasize < BCMV3D_HVS_BYTES || cma->dmasize > BCMV3D_BO_MAX ||
+	    cma->dmasize < BCMV3D_HVS_BYTES || cma->dmasize > BCMV3D_HVS_BO_MAX ||
 	    (cma->dmasize & (PAGE_SIZE - 1)) != 0 || cma->vaddr == NULL ||
 	    (va & (PAGE_SIZE - 1)) != 0 ||
 	    cma->dmasize - 1 > UINTPTR_MAX - va || g->bo->maxsegs <= 0 ||

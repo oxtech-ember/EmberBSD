@@ -15,7 +15,7 @@ struct dumb_geometry {
 static void
 check_success(const struct dumb_geometry *geometry)
 {
-	struct bcmv3d_device native = { .bo_total = BCMV3D_BO_TOTAL };
+	struct bcmv3d_device native = { .bo_total = BCMV3D_BO_TOTAL_MAX };
 	struct drm_device dev = { .dev_private = &native };
 	struct drm_file file = { 0 };
 	struct drm_mode_create_dumb args = {
@@ -137,7 +137,9 @@ main(void)
 		{ 1920, 1080, 7680, PAGE_SIZE == 4096 ? 8294400 : 8323072 },
 		{ 4096, 1024, 16384, 16777216 },
 		{ 4194304, 1, 16777216, 16777216 },
-		{ 1, 262144, 64, 16777216 }
+		{ 1, 262144, 64, 16777216 },
+		{ 4096, 1025, 16384, PAGE_SIZE == 4096 ? 16793600 : 16842752 },
+		{ 67108864, 1, 268435456, 268435456 }
 	};
 	const uint32_t invalid_bpp[] = { 0, 1, 8, 16, 24, 64, UINT32_MAX };
 	unsigned int i;
@@ -156,9 +158,9 @@ main(void)
 	check_refusal(UINT32_MAX, UINT32_MAX, 32, 0);
 	check_refusal(UINT32_MAX, 1, 32, 0);
 	check_refusal(UINT32_C(0x40000000), UINT32_C(0x40000000), 32, 0);
-	check_refusal(4194305, 1, 32, 0);
-	check_refusal(1, 262145, 32, 0);
-	check_refusal(4096, 1025, 32, 0);
+	check_refusal(67108865, 1, 32, 0);
+	check_refusal(1, 4194305, 32, 0);
+	check_refusal(4096, 16385, 32, 0);
 	for (i = 0; i < sizeof(invalid_bpp) / sizeof(invalid_bpp[0]); i++)
 		check_refusal(1, 1, invalid_bpp[i], 0);
 	check_refusal(1, 1, 32, 1);

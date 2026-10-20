@@ -24,13 +24,14 @@ each loaded segment for page alignment, length and the 36-bit address limit.
 CPU faults use allocation segments; GPU PTEs use translated DMA map segments.
 Each BO has a separately allocated GPU virtual range; GPU addresses
 are not physical addresses. GEM handles, mappings and submitted jobs own
-references. The last reference releases the range and storage. Limit one
-BO to 16 MiB. Limit total BO storage to 1/16 of physical memory, with a
-64 MiB floor and a 256 MiB cap. A full Plasma session needs more than
-64 MiB. The engine's
-4 MiB page table and three scratch pages also count against that total.
-They retain their strict contiguous allocation contract. The shared CMA helper
-is unchanged. PRIME self-import and UVM reference ownership remain unchanged.
+references. The last reference releases the range and storage. One BO can use
+at most the existing 256 MiB resource ceiling. Every allocation must also fit
+the remaining device budget. Limit total BO storage to 1/16 of physical memory,
+with a 64 MiB floor and a 256 MiB cap. A full Plasma session needs more than
+64 MiB. The engine's 4 MiB page table and three scratch pages also count against that total.
+They retain their strict contiguous allocation contract. Quota and GPU VA
+reservation precede segment-list allocation. The fixed-mode HVS consumer keeps
+its separate 16 MiB storage limit. The shared CMA helper is unchanged. PRIME self-import and UVM reference ownership remain unchanged.
 
 The scatter/gather change passed physical CM5 checks on 2026-10-16 with
 kernel source `93dc0e3167a2e1381c9c4971cf8e4ee00f282685`. The unchanged
@@ -163,6 +164,16 @@ observed busy BOs separately. Each successful operation verifies every word.
 Record the kernel and test hashes, output, duration and kernel log.
 
 Host contracts compile the actual production sources with modeled services.
+Run `ruby ember/tools/bcmv3d-bo-size-contract.rb` for the actual allocator,
+whole-BO PRIME mmap, final-page pager and renderer PTE bounds. The contract
+accepts 16 MiB plus padding through the inclusive 256 MiB ceiling. It rejects
+zero, overflow-sized requests, quota exhaustion and injected allocation errors.
+It checks size/accounting/ref cleanup with 4 KiB and 64 KiB allocator pages.
+Engine PTE coverage is checked only with its existing 4 KiB page contract.
+The 4 MiB renderer table contains 1,048,576 PTEs. The existing GPU VA arena
+reserves the first and last 1 MiB of that 4 GiB range. A larger software limit
+does not prove that physical allocation, GPU execution or Plasma succeeds.
+
 Run `sh ember/tools/bcm2712-v3d-sg-contract.sh` for fragmented allocation,
 error unwinding, mapped lifetime, and PTE coverage. The TFU test crosses a
 segment boundary and stops within the next segment at its 16 KiB limit.

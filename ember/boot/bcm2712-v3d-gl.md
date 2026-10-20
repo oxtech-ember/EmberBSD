@@ -131,8 +131,9 @@ llvmpipe/LLVM23 cycles. See the Ports
 Kernel ELF SHA256: `889fc52e3b083486414a5473e1626dd035b3093ac295600031d476b6a2872553`.
 Image SHA256: `bf3963a0a0eb01714d8065eb6747a4b6ed9702b0a307531eee68cc9edb1c7f91`.
 All four companion modules are byte-identical to the accepted CL bundle.
-The ordinary bundle remains preserved. The experimental driver still limits
-individual BOs to 16 MiB and total allocation to 64 MiB. Sharing buffers between
+The ordinary bundle remains preserved. This recorded kernel limited
+individual BOs to 16 MiB and total allocation to 64 MiB. Current source limits
+are defined by the [native allocator contract](bcm2712-v3d-render.md). Sharing buffers between
 clients passed the subsequent PRIME gate below. HDMI presentation and the
 current common Qt/KWin/Plasma package migration remain subsequent gates.
 No long-run desktop claim follows.
