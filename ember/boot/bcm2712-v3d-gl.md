@@ -73,8 +73,41 @@ CC=/absolute/cross/bin/aarch64--netbsd-gcc SYSROOT=/absolute/emberbsd-sysroot \
 The builder extracts the unchanged, accepted queue-probe packet generator.
 Record the actual base headers, libraries and compiler provenance. On CM5,
 run `./cl-check /dev/dri/renderD128` with the matched kernel/module bundle.
-It checks 325 bin/render pairs, 1,331,200 pixels, command/BO guard regions,
-binary fences, two clients and CL/TFU/CL transitions.
+The checker retains 325 bin/render pairs, command/BO guard regions, binary
+fences, two clients and 32 TFU copies with CL/TFU/CL transitions. It then runs
+four CL pairs with 72 distinct BOs and four with 91 distinct BOs. The complete
+run checks 333 CL pairs and 1,363,968 pixels. The command encoder is unchanged.
+Each added job uses the original command, tile-allocation, tile-state and
+output BOs, plus admitted guard BOs. Every guard BO has a different pattern.
+The checker verifies unique handles and non-overlapping GPU address ranges.
+It checks every output pixel and every command, tile and unrelated-BO guard.
+Successful phases close all handles, unmap all BOs and check descriptor close.
+Descriptor close releases each file-owned binary syncobj.
+
+The largest phase requests 91 BOs of 20 KiB each: 1,863,680 live bytes.
+A kernel with 64 KiB allocation pages can round those BOs to 5,963,776 bytes.
+These bounds exclude driver metadata, page tables and other GPU clients.
+A kernel that caps a job at 64 BO handles rejects the first 72-BO submit with
+`EINVAL`; the checker exits with status one. It does not retry or change the
+kernel limit. Error exit releases process descriptors and mappings. Record
+native allocation/job counters before and after execution to check reference
+and PTE retirement; userspace close alone does not prove kernel BO return.
+Keep an external bounded controller for device execution. No userspace alarm
+is added around kernel ioctls.
+
+Run the checker/caller host contract separately:
+
+```sh
+ruby ember/tools/bcm2712-v3d-cl-check-contract.rb --source /absolute/source
+```
+
+It compiles the actual checker, unchanged GEM/TFU helpers and extracted packet
+builder. Controlled DRM services check the exact job counts, 72/91 unique
+lists, distinct guards, cleanup and failure exits. Compiled causal controls
+must reject omitted scenarios, truncated lists, guards and cleanup. This host
+contract does not execute GPU commands or prove physical rendering. The older
+physical acceptance below covers the 325-pair checker; the new 72/91-BO gate
+requires a separate result with its exact source and kernel revisions.
 
 ## Physical CL acceptance, 2026-10-11
 
