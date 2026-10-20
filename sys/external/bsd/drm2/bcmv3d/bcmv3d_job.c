@@ -20,6 +20,7 @@
 #include "bcmv3d_drv.h"
 #include "bcmv3d_resv.h"
 #include "bcmv3d_cl_reject.h"
+#include "bcmv3d_tfu_reject.h"
 
 #define V3D_INT_STS	0x50
 #define V3D_INT_CLR	0x58
@@ -62,7 +63,7 @@ struct bcmv3d_job {
 	struct drm_gem_object **bos;
 	unsigned int nbo;
 	/* Per-device, per-boot admission receipts. Never reset or wrap. */
-	volatile unsigned int cl_rejections;
+	volatile unsigned int cl_rejections, tfu_rejections;
 	void *ih, *core_ih;
 	const char *stage;
 	bool published, poisoned, controller_masked, core_masked;
@@ -511,6 +512,76 @@ bcmv3d_diagnose(struct bcmv3d_device *sc)
 	}
 }
 
+/* Metadata is copied while the existing GEM lookup reference is live. */
+struct bcmv3d_tfu_reject_bo {
+	uint64_t bytes;
+	uint32_t gpu;
+	bool known;
+};
+
+static void
+bcmv3d_tfu_reject_snapshot(struct bcmv3d_tfu_reject_bo *info,
+    const struct bcmv3d_bo *bo)
+{
+
+	info->bytes = bo->cma.dmasize;
+	info->gpu = bo->gpu;
+	info->known = true;
+}
+
+/* This budget is independent of CL receipts and never resets or wraps. */
+static bool
+bcmv3d_tfu_reject_take(struct bcmv3d_job *job, unsigned int *sample)
+{
+	unsigned int before;
+
+	for (;;) {
+		before = atomic_load_relaxed(&job->tfu_rejections);
+		if (before >= BCMV3D_TFU_REJECT_MAX)
+			return false;
+		if (atomic_cas_uint(&job->tfu_rejections, before, before + 1) ==
+		    before) {
+			*sample = before + 1;
+			return true;
+		}
+	}
+}
+
+/* No BO references, user pointers or register reads are needed to print. */
+static void
+bcmv3d_tfu_reject(struct bcmv3d_device *sc,
+    const struct drm_v3d_submit_tfu *a, enum bcmv3d_tfu_reject_reason reason,
+    int error, const struct bcmv3d_tfu_reject_bo *src,
+    const struct bcmv3d_tfu_reject_bo *dst)
+{
+	static const char * const names[] = {
+		"none", "dst-lookup", "src-lookup", "payload", "sync",
+		"reservation", "poisoned", "fence-publish", "resv-publish"
+	};
+	unsigned int i, count = 0, sample;
+
+	if (error == 0 || reason <= BCMV3D_TFU_REJECT_NONE ||
+	    (unsigned int)reason >= __arraycount(names))
+		return;
+	if (!bcmv3d_tfu_reject_take(sc->job, &sample))
+		return;
+	for (i = 0; i < __arraycount(a->bo_handles); i++)
+		count += a->bo_handles[i] != 0;
+	aprint_error_dev(sc->dev, "TFU rejected: sample=%u reason=%s errno=%d "
+	    "bos=%u flags=%#x pad=%#x extensions-present=%u "
+	    "icfg=%#x iia=%#x ica=%#x iis=%#x iua=%#x "
+	    "ioa=%#x ios=%#x ioc=%#x "
+	    "coef0=%#x coef1=%#x coef2=%#x coef3=%#x in=%u out=%u "
+	    "src-known=%u src-bytes=%llu src-gpu=%#x "
+	    "dst-known=%u dst-bytes=%llu dst-gpu=%#x\n",
+	    sample, names[reason], error, count, a->flags, a->v71.pad,
+	    (unsigned int)(a->extensions != 0), a->icfg, a->iia, a->ica,
+	    a->iis, a->iua, a->ioa, a->ios, a->v71.ioc, a->coef[0],
+	    a->coef[1], a->coef[2], a->coef[3], a->in_sync, a->out_sync,
+	    (unsigned int)src->known, (unsigned long long)src->bytes, src->gpu,
+	    (unsigned int)dst->known, (unsigned long long)dst->bytes, dst->gpu);
+}
+
 int
 bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 {
@@ -520,39 +591,55 @@ bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 	struct drm_gem_object *src, *dst, *objects[2];
 	struct bcmv3d_resv reservations = {0};
 	struct bcmv3d_sync sync = {0};
+	struct bcmv3d_tfu_reject_bo source = {0}, destination = {0};
+	enum bcmv3d_tfu_reject_reason reason;
 	int error;
 
 	dst = drm_gem_object_lookup(file, args->bo_handles[0]);
-	if (dst == NULL)
+	if (dst == NULL) {
+		bcmv3d_tfu_reject(sc, args, BCMV3D_TFU_REJECT_DST_LOOKUP,
+		    ENOENT, &source, &destination);
 		return -ENOENT;
+	}
+	bcmv3d_tfu_reject_snapshot(&destination, bcmv3d_to_bo(dst));
 	src = drm_gem_object_lookup(file, args->bo_handles[1]);
 	if (src == NULL) {
 		drm_gem_object_put_unlocked(dst);
+		bcmv3d_tfu_reject(sc, args, BCMV3D_TFU_REJECT_SRC_LOOKUP,
+		    ENOENT, &source, &destination);
 		return -ENOENT;
 	}
+	bcmv3d_tfu_reject_snapshot(&source, bcmv3d_to_bo(src));
+	reason = BCMV3D_TFU_REJECT_PAYLOAD;
 	error = bcmv3d_payload(args, bcmv3d_to_bo(src), bcmv3d_to_bo(dst));
 	if (error != 0)
 		goto release;
+	reason = BCMV3D_TFU_REJECT_SYNC;
 	error = bcmv3d_sync_prepare(file, args->in_sync, args->out_sync, &sync);
 	if (error != 0)
 		goto release;
 	objects[0] = src;
 	objects[1] = dst;
+	reason = BCMV3D_TFU_REJECT_RESERVATION;
 	error = bcmv3d_resv_prepare(&reservations, objects, 2,
 	    MAX(1, mstohz(1000)));
 	if (error != 0)
 		goto release;
 	mutex_enter(&job->lock);
+	reason = BCMV3D_TFU_REJECT_POISONED;
 	if (job->poisoned) {
 		error = EIO;
 		goto unlock;
 	}
+	reason = BCMV3D_TFU_REJECT_FENCE_PUBLISH;
 	error = bcmv3d_sync_publish(job, &sync);
 	if (error != 0)
 		goto unlock;
+	reason = BCMV3D_TFU_REJECT_RESV_PUBLISH;
 	error = bcmv3d_resv_publish(&reservations, sync.fence);
 	if (error != 0)
 		goto unlock;
+	reason = BCMV3D_TFU_REJECT_NONE;
 	/* Completion cannot need a reservation held by this submission. */
 	bcmv3d_resv_unlock(&reservations);
 	job->src = bcmv3d_to_bo(src);
@@ -587,6 +674,7 @@ release:
 	bcmv3d_sync_fini(&sync);
 	drm_gem_object_put_unlocked(src);
 	drm_gem_object_put_unlocked(dst);
+	bcmv3d_tfu_reject(sc, args, reason, error, &source, &destination);
 	return -error;
 }
 

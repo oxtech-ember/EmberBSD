@@ -120,8 +120,37 @@ Set `CL_REJECT_EVIDENCE` to a new directory to retain input hashes, extracted
 bodies, exact commands and compiled causal-control results. `CC`, `CFLAGS`
 and `TEST_RUNNER` select the compiler, instrumentation and execution runner.
 
+## TFU rejection receipts
+
+TFU has a separate per-device budget of eight admission receipts per boot.
+Its CAS counter saturates and has no reset interface. Any admission errno can
+produce a receipt. Successful jobs and execution failures do not consume this
+budget. The existing payload whitelist, errno, waits and retained-fault path
+remain unchanged.
+
+`reason` identifies `dst-lookup`, `src-lookup`, `payload`, `sync`, `reservation`,
+`poisoned`, `fence-publish` or `resv-publish`. A receipt records the saved errno,
+all scalar TFU configuration words and coefficients, flags, pad, extension
+presence, sync IDs and the number of nonzero inline BO handles. It records
+size and GPU base only for the source and destination BOs already found by
+the submission. `src-known=0` or `dst-known=0` means that lookup did not obtain
+that BO. Its metadata fields remain zero. Extra handles are counted but not
+looked up for diagnostics.
+
+BO metadata is copied while the existing GEM reference is live. Receipts run
+after the original reference and lock unwind. The logger does not read MMIO,
+user pointers, extension memory or BO contents. Concurrent sample lines can
+appear out of order. These receipts locate a rejection boundary; they do not
+establish compatibility with the rejected payload or a working Plasma session.
+
+Run `ruby ember/tools/bcmv3d-tfu-reject-contract.rb` for the actual payload,
+submission, private structures, snapshot and bounded logger contract.
+`TFU_REJECT_EVIDENCE` retains source pins, commands and causal controls in a new
+directory. `CC`, `CFLAGS` and `TEST_RUNNER` select compilation and execution.
+Controlled helper errors prove routing, not hardware or helper reachability.
 
 ## Interfaces and ownership
+
 
 The UAPI follows the Broadcom-licensed header at Linux
 `a5ebb76233b79db01e82e061173cb73c6d2b5c6b`, blob

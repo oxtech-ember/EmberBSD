@@ -4,6 +4,7 @@
 #define BCMV3D_RESV_CONTRACT
 #include "bcm2712-v3d-bo-contract.c"
 #include "../../sys/external/bsd/drm2/bcmv3d/bcmv3d_cl_reject.h"
+#include "../../sys/external/bsd/drm2/bcmv3d/bcmv3d_tfu_reject.h"
 #include <time.h>
 #include <limits.h>
 #include <stdarg.h>
