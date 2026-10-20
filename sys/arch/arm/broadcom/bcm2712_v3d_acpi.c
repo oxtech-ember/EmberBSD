@@ -75,6 +75,7 @@ int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
 #include <arm/broadcom/bcm2712_display_quiesce.h>
 #include <external/bsd/drm2/bcmv3d/bcmv3d_mmu4_native.h>
 #include <external/bsd/drm2/bcmv3d/bcmv3d_hvs_publish.h>
+#include <external/bsd/drm2/bcmv3d/bcmv3d_mmu4_check.h>
 #ifndef BCM2712_DISPLAY_COMPONENTS
 #error "BCM2712 native handoff requires the builtin display components"
 #endif
@@ -199,6 +200,7 @@ struct bcmv3d_bootfb_owner {
 	struct bcmv3d_device *renderer;
 	struct bcmv3d_bootfb_mmu4 mmu4;
 	struct bcmv3d_bootfb_publish publish;
+	struct bcmv3d_mmu4_check_status range_check;
 #endif
 };
 #endif
@@ -767,7 +769,7 @@ bcmv3d_bootfb_publish(struct bcmv3d_softc *sc)
 	struct simplefb_console_close_status close;
 	unsigned int i;
 	uint32_t stat;
-	int count, error;
+	int count, error, check_error = 0;
 
 	if (sc == NULL)
 		return EINVAL;
@@ -863,6 +865,10 @@ bcmv3d_bootfb_publish(struct bcmv3d_softc *sc)
 			error = p->progress_error;
 	}
 	p->executing = false;
+	/* The same retained owner checks only never-HVS-latched private windows. */
+	if (error == 0)
+		check_error = bcmv3d_mmu4_check_ranges(owner->renderer,
+		    owner->mmu4.native, &owner->range_check);
 	KERNEL_LOCK(count, NULL);
 publish:
 	p->fault = error;
@@ -912,6 +918,16 @@ publish:
 		    "%08x/%08x/%08x/%08x/%08x/%08x\n",
 		    p->status.link[20], p->status.link[21], p->status.link[22],
 		    p->status.link[23], p->status.link[24], p->status.link[25]);
+	}
+	if (owner->range_check.attempted) {
+		struct bcmv3d_mmu4_check_status *r = &owner->range_check;
+
+		aprint_normal_dev(sc->sc_dev, "boot MMU4 unused ranges: error %d, "
+		    "complete %u, cycles %u, staged/published/unmapped %u/%u/%u; "
+		    "BO bytes %ju/%ju reservations/releases %ju/%ju; no HVS submit\n",
+		    check_error, r->complete, r->cycles, r->staged, r->published,
+		    r->unmapped, (uintmax_t)r->before_bytes, (uintmax_t)r->after_bytes,
+		    (uintmax_t)r->reservations, (uintmax_t)r->releases);
 	}
 out:
 	KERNEL_UNLOCK_ONE(NULL);

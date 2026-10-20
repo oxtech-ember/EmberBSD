@@ -127,7 +127,8 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
     end
     drv='sys/external/bsd/drm2/bcmv3d/'
     arm='sys/arch/arm/broadcom/'
-    {'publish-types.h'=>drv+'bcmv3d_hvs_publish.h',
+    {'range-check-types.h'=>drv+'bcmv3d_mmu4_check.h',
+     'publish-types.h'=>drv+'bcmv3d_hvs_publish.h',
      'publish-body.h'=>drv+'bcmv3d_hvs_publish.c',
      'publish-hvs-types.h'=>arm+'bcm2712_display_hvsvar.h',
      'publish-hvs-body.h'=>arm+'bcm2712_display_hvs.c',
@@ -231,6 +232,9 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
     end
 controls={
 'hvs-owner-attempt'=>['native-job.h','p->attempted = p->executing = true;','p->executing = true;','gpu_sc.sc_bootfb.publish.attempted'],
+'hvs-owner-range-call'=>['native-job.h',"if (error == 0)\n\t\tcheck_error = bcmv3d_mmu4_check_ranges", "if (error != 0)\n\t\tcheck_error = bcmv3d_mmu4_check_ranges",'gpu_sc.sc_bootfb.publish.status.complete'],
+'hvs-owner-range-lifetime'=>['native-job.h',"if (error == 0)\n\t\tcheck_error = bcmv3d_mmu4_check_ranges", "if (error == 0 && (p->executing = true))\n\t\tcheck_error = bcmv3d_mmu4_check_ranges",'!gpu_sc.sc_bootfb.publish.executing'],
+'hvs-owner-range-result'=>['native-job.h','p->fault = error;','p->fault = error != 0 ? error : check_error;','gpu_sc.sc_bootfb.publish.fault == 0'],
 'hvs-owner-giant'=>['native-job.h','KERNEL_UNLOCK_ALL(NULL, &count);','count = 1; KERNEL_UNLOCK_ONE(NULL);','hvs_permitted && giant == 0'],
 'hvs-owner-repeat'=>['native-job.h','if (p->attempted || p->complete || p->fault != 0)','if (false)','bcmv3d_bootfb_publish(&gpu_sc) == EBUSY && giant == 0'],
 'hvs-owner-mmu4'=>['native-job.h','!owner->mmu4.complete ||','false ||','hvs_permitted'],

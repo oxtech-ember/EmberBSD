@@ -90,3 +90,45 @@ runs positives only. Each source mutant compiles before it must fail through
 CHECK and SIGABRT. Separate crash, bare-abort and timeout controls cannot count
 as source rejection. Host contracts do not establish hardware translation,
 visible pixels, display latency, HVS retirement or Plasma/KMS operation.
+
+## Manual boot check
+
+`EMBERV3DCONSOLE` runs `bcmv3d_mmu4_check_ranges` after successful fixed HVS
+publication and its two progress samples. The same actual renderer and native
+owner remain held. Giant stays fully released for this sleepable check.
+The check stages three new contiguous native BOs, publishes all three private
+windows, then unmaps them. It repeats that cycle once. Caller references are
+released after staging. Successful completion requires six BO reservations,
+six releases and unchanged reserved bytes and failure count. The six resident
+L2 allocations are not BO quota. Their identity is checked by the joined
+range contract. No userspace or competing BO allocator may run during this
+manual boot check.
+
+A first allocation, stage, publish or unmap error stops further publication.
+Discard runs only for slots successfully staged by this check. Existing backing
+rules refuse release of exposed or uncertain storage. A check failure does not
+rewrite the separate fixed HVS publication result. The serial diagnostic starts
+with `boot MMU4 unused ranges`. It reports actual return codes and BO accounting.
+It does not prove an HVS fetch through these private windows or scanout retirement.
+Default profiles do not select this check TU or call it.
+
+Run the actual check caller with controlled BO/native services:
+
+```sh
+ruby ember/tools/bcmv3d-mmu4-check-contract.rb
+```
+
+The caller contract covers all 24 failure positions, reference transfer,
+post-exposure retention, one-shot use and four independent accounting defects.
+Nine source controls must compile and fail through CHECK/SIGABRT. The separate
+`bootfb-serial-handoff-contract.rb` composes the actual boot owner and checks
+HVS success, complete Giant release, exact owner arguments, one call and error
+isolation. Its native check service is controlled. The full range contract
+executes the actual provider/backing/BO implementation separately.
+
+`CC` and `CFLAGS` select the compiler and target options. `TEST_RUNNER` selects
+an execution prefix. `MMU4_CHECK_COMPILE_ONLY=1` builds without execution.
+`MMU4_CHECK_OUTPUT` preserves the target binary. `MMU4_CHECK_EVIDENCE` must name
+a new directory. `MMU4_CHECK_SKIP_MUTANTS=1` runs only the positive contract.
+ASan/UBSan checks are host execution. They are not a native kernel memory test.
+Physical protocol and continued HDMI/V3D operation require board acceptance.

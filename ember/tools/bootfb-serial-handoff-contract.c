@@ -41,6 +41,7 @@ typedef void *ACPI_HANDLE;
 #include "publish-pv-types.h"
 #include "publish-hdmi-types.h"
 #include "publish-types.h"
+#include "range-check-types.h"
 #include "native-owner.h"
 extern void *bootfb_mmu4_reboot(void);
 extern void bootfb_mmu4_failure(int);
@@ -415,6 +416,24 @@ static int native_status(struct wsdisplay_bootfb_lease *l, struct simplefb_conso
 #define bcmv3d_mmu4_native_prepare bootfb_native_prepare
 #define bcmv3d_mmu4_native_program bootfb_native_program
 #define bcmv3d_mmu4_native_cached_status bootfb_native_status
+/* The bounded caller has its separate actual-source contract. */
+static unsigned range_check_calls;
+static int range_check_error;
+int
+bcmv3d_mmu4_check_ranges(struct bcmv3d_device *renderer,
+    struct bcmv3d_mmu4_native *native, struct bcmv3d_mmu4_check_status *s)
+{
+	CHECK(giant == 0 && !cold && !init_started && serial_fixture_held());
+	CHECK(renderer == fixture_renderer && native == gpu_sc.sc_bootfb.mmu4.native);
+	CHECK(s == &gpu_sc.sc_bootfb.range_check && !s->attempted);
+	CHECK(gpu_sc.sc_bootfb.publish.status.complete && !gpu_sc.sc_bootfb.publish.executing);
+	CHECK(gpu_sc.sc_bootfb.mmu4.complete && gpu_sc.sc_bootfb.first_error == 0);
+	range_check_calls++;
+	s->attempted = true;
+	s->complete = range_check_error == 0;
+	s->first_error = range_check_error;
+	return range_check_error;
+}
 #include "native-job.h"
 #undef bcmv3d_mmu4_native_create
 #undef bcmv3d_mmu4_native_prepare
@@ -461,6 +480,7 @@ display_initialize();
 	hvs_fail_map = hvs_fail_writeback = hvs_native_fault = 0;
 	hvs_permitted = true; hvs_reenter = hvs_progress_delayed = hvs_progress_stuck = false;
 	hvs_tuple_error = 0; hvs_partial = hvs_bypass = false; hvs_bypass_mix = 0;
+	range_check_calls = 0; range_check_error = 0;
 	hvs_profile_fault = hvs_read_fault = hvs_write_fault = hvs_ignore_write = 0;
 	hvs_query_error = 0; hvs_cxm = 1024; hvs_timeout = hvs_eof = false; hvs_busy[0] = hvs_busy[1] = 0; hvs_callback_case = 0;
 	config_finalize_done = 0; init_started = false; joined = 0;
@@ -974,6 +994,7 @@ static void tests_hvs(void)
 				hvs_reenter = true; native_finish();
 				p = &gpu_sc.sc_bootfb.publish;
 				CHECK(p->attempted && p->complete && !p->executing && p->fault == 0);
+				CHECK(range_check_calls == 1 && gpu_sc.sc_bootfb.range_check.complete);
 				CHECK(p->status.native_valid && p->status.native.backing.prepared && p->status.native.backing.sealed);
 				CHECK(p->status.complete && p->status.active_list == 32 && (p->status.channel_status & 0x6000) == 0x4000);
 				CHECK(p->mapped == 0x1ff && hvs_maps == 6 && hvs_writeback_reads == 2 && hvs_native_queries == 1);
@@ -996,14 +1017,26 @@ static void tests_hvs(void)
 			}
 		}
 	}
-	for (unsigned variant = 0x53; variant <= 0x54; variant++) {
-		for (unsigned mix = 1; mix <= 11; mix++) {
+/* A range failure does not rewrite the accepted fixed HVS result. */
+for (unsigned failure = 0; failure < 2; failure++) {
+	hvs_profile_boot(0x54, false);
+	range_check_error = failure == 0 ? EIO : ETIMEDOUT;
+	native_finish();
+	CHECK(gpu_sc.sc_bootfb.publish.complete && gpu_sc.sc_bootfb.publish.fault == 0);
+	CHECK(gpu_sc.sc_bootfb.first_error == 0 && range_check_calls == 1);
+	CHECK(!gpu_sc.sc_bootfb.range_check.complete && gpu_sc.sc_bootfb.range_check.first_error == range_check_error);
+	hvs_retry(EBUSY);
+	CHECK(range_check_calls == 1);
+}
+for (unsigned variant = 0x53; variant <= 0x54; variant++) {
+	for (unsigned mix = 1; mix <= 11; mix++) {
 			hvs_profile_boot(variant, false);
 			hvs_bypass = true;
 			hvs_bypass_mix = mix;
 			native_finish();
 			p = &gpu_sc.sc_bootfb.publish;
 			CHECK(p->attempted && !p->complete && p->fault == EOPNOTSUPP);
+			CHECK(range_check_calls == 0 && !gpu_sc.sc_bootfb.range_check.attempted);
 			CHECK(!p->status.mutation_attempted && pb.writes == 0);
 			CHECK(serial_fixture_held() && p->status.native.backing.sealed);
 			hvs_retry(EOPNOTSUPP);
