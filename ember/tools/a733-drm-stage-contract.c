@@ -22,7 +22,33 @@ struct a733_drm {
 };
 static unsigned registrations;
 static int registration_error, lookup_error, captured;
-static bool acquired, reenter;
+static bool acquired, reenter, tree_locked;
+static unsigned tree_releases, tree_reacquires;
+static struct a733_drm *active;
+static int invoke(int (*)(SYSCTLFN_ARGS), SYSCTLFN_ARGS);
+
+/* Model the tree lock held by sys_sysctl, and its native release hooks. */
+void
+sysctl_unlock(void)
+{
+	CHECK(tree_locked && !active->lock && active->registering);
+	tree_locked = false;
+	tree_releases++;
+}
+void
+sysctl_relock(void)
+{
+	CHECK(!tree_locked && !active->lock && active->registering);
+	tree_locked = true;
+	tree_reacquires++;
+}
+static void
+tree_write_enter(void)
+{
+	/* sysctl_createv takes this nonrecursive writer lock. */
+	CHECK(!tree_locked);
+	tree_locked = true;
+}
 static void mutex_enter(bool *lock){
 	CHECK(!*lock);
 	*lock = true;
@@ -34,6 +60,7 @@ static void mutex_exit(bool *lock){
 static int
 sysctl_lookup(SYSCTLFN_ARGS)
 {
+	CHECK(tree_locked);
 	CHECK(rnode->sysctl_size == sizeof(int));
 	captured = *(int *)rnode->sysctl_data;
 	if (!lookup_error && newp)
@@ -46,16 +73,35 @@ a733_register(struct a733_drm *sc)
 {
 	CHECK(!sc->lock && sc->registering);
 	registrations++;
+	tree_write_enter();
+	tree_locked = false;
 	if (reenter) {
 		int one = 1;
 		struct sysctlnode node = {&sc->stage, sizeof(int)};
-		CHECK(a733_stage(&node, &one) == EBUSY);
+		CHECK(invoke(a733_stage, &node, &one) == EBUSY);
+		CHECK(invoke(a733_stage, &node, NULL) == 0 && captured == 0);
 		CHECK(registrations == 1);
 	}
 	sc->registration_started = acquired;
 	return registration_error;
 }
 #include "stage.c"
+static int
+invoke(int (*handler)(SYSCTLFN_ARGS), SYSCTLFN_ARGS)
+{
+	unsigned calls = registrations, releases = tree_releases;
+	unsigned reacquires = tree_reacquires;
+	int error;
+
+	CHECK(!tree_locked);
+	tree_locked = true;
+	error = handler(rnode, newp);
+	CHECK(tree_locked && !active->lock);
+	CHECK(tree_releases - releases == registrations - calls);
+	CHECK(tree_reacquires - reacquires == registrations - calls);
+	tree_locked = false;
+	return error;
+}
 int
 main(void)
 {
@@ -64,7 +110,9 @@ main(void)
 		struct sysctlnode stage = {&sc.stage, sizeof(int)}, fault = {&sc.fault, sizeof(int)};
 		int desired = 1, expected = 0;
 		const void *value = &desired;
-		registrations = 0;
+		active = &sc;
+		tree_locked = false;
+		tree_releases = tree_reacquires = registrations = 0;
 		registration_error = lookup_error = 0;
 		acquired = reenter = false;
 		switch (scenario) {
@@ -125,7 +173,7 @@ main(void)
 			expected = ETIMEDOUT;
 			break;
 		}
-		CHECK(a733_stage(&stage, value) == expected && !sc.lock);
+		CHECK(invoke(a733_stage, &stage, value) == expected && !sc.lock);
 		CHECK(registrations == ((scenario >= 6 && scenario <= 12) ? 1u : 0u));
 		if (scenario == 6 || scenario == 7)
 			CHECK(sc.fault == 0 && !sc.registering && !sc.stage);
@@ -134,15 +182,15 @@ main(void)
 		if (scenario == 11 || scenario == 12)
 			CHECK(sc.stage == 1 && !sc.fault && !sc.registering);
 		lookup_error = 0;
-		CHECK(a733_fault(&fault, NULL) == 0 && captured == sc.fault && !sc.lock);
+		CHECK(invoke(a733_fault, &fault, NULL) == 0 && captured == sc.fault && !sc.lock);
 		if (scenario == 6 || scenario == 7) {
 			registration_error = 0;
 			acquired = true;
-			CHECK(a733_stage(&stage, &desired) == 0 && registrations == 2 && sc.stage == 1);
+			CHECK(invoke(a733_stage, &stage, &desired) == 0 && registrations == 2 && sc.stage == 1);
 		}
 		if (scenario >= 8 && scenario <= 10) {
 			registration_error = 0;
-			CHECK(a733_stage(&stage, &desired) == expected && registrations == 1);
+			CHECK(invoke(a733_stage, &stage, &desired) == expected && registrations == 1);
 		}
 	}
 	printf("PASS %u explicit registration stage checks\n", checks);

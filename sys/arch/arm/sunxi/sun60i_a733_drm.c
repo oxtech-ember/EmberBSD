@@ -424,7 +424,10 @@ a733_stage(SYSCTLFN_ARGS)
 	mutex_exit(&sc->lock);
 	if (error != 0)
 		return error;
+	/* DRM registration creates sysctl nodes. Keep the tree lock outside it. */
+	sysctl_unlock();
 	error = a733_register(sc);
+	sysctl_relock();
 	mutex_enter(&sc->lock);
 	sc->registering = false;
 	if (error == 0)

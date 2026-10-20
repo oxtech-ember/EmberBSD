@@ -93,6 +93,13 @@ A failure after client acquisition is sticky.
 `hw.sun60idrm0.fault` returns the first registration or commit error.
 There is no detach, restart or display-stop contract in this profile.
 
+The stage handler reserves registration under the frontend lock.
+It releases that lock and the sysctl tree lock before DRM registration.
+DRM registration creates its own sysctl nodes. The handler reacquires the
+tree lock without holding the frontend lock, then publishes its result.
+Concurrent requests see the registration guard and return `EBUSY`.
+The no-detach contract keeps the frontend alive while the tree is unlocked.
+
 The connector advertises one exact cached EDID mode.
 The frontend accepts linear XRGB8888 at offset zero.
 It rejects scaling, rotation, alternate modes and noncontiguous imports.
