@@ -275,6 +275,36 @@ static int sun60i_a733_npu_dma_retain(struct sun60i_a733_npu_dma *m)
  CHECK(!in_irq && m == &context && !m->retained && state.status.publication_attempted); retains++;
  m->retained = !clean_retain; return fail_retain ? EIO : 0;
 }
+struct sun60i_a733_npu_dma_task_reference;
+static int
+sun60i_a733_npu_dma_task_validate(const struct sun60i_a733_npu_dma *m,
+    const struct sun60i_a733_npu_dma_task_reference *r)
+{
+	(void)m;
+	(void)r;
+	CHECK(false);
+	return EINVAL;
+}
+static int
+sun60i_a733_npu_dma_task_retain_checked(struct sun60i_a733_npu_dma *m,
+    struct sun60i_a733_npu_run *run,
+    const struct sun60i_a733_npu_dma_task_reference *r)
+{
+	(void)m;
+	(void)run;
+	(void)r;
+	CHECK(false);
+	return EINVAL;
+}
+static bool
+sun60i_a733_npu_dma_task_verified(const struct sun60i_a733_npu_dma *m,
+    const struct sun60i_a733_npu_run *run)
+{
+	(void)m;
+	(void)run;
+	CHECK(false);
+	return false;
+}
 #include "sun60i_a733_npu_fe.c"
 #include "sun60i_a733_npu_run.c"
 static void reset(void)
@@ -308,11 +338,14 @@ completion_contract(void)
 	CHECK(!sun60i_a733_npu_run_task_completed(NULL, &context));
 	CHECK(!sun60i_a733_npu_run_task_completed(&state, NULL));
 	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+	CHECK(sun60i_a733_npu_run_task_finish(&state, &context, &clock1, 9,
+	    &cookie) == EINVAL);
 	CHECK(run() == 0);
 	io = peeks + ordinary_reads + writes + maps + removed;
 	/* Real FE completion cannot grant a TASK output read. */
 	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
 	state.profile = A733_NPU_DMA_PROFILE_TASK;
+	state.task_retained = true;
 	state.bound_dma = &context;
 	state.status.command_bytes = 144;
 	/* This cache-only fixture state is not a hardware TASK result. */
@@ -363,6 +396,9 @@ completion_contract(void)
 		CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
 		state.status = saved;
 	}
+	state.task_retained = false;
+	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+	state.task_retained = true;
 	state.armed = true;
 	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
 	state.armed = false;

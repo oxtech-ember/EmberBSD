@@ -116,6 +116,38 @@ npu_run_snapshot(struct sun60i_a733_npu_run *s)
 	return 0;
 }
 
+/* Stable model/MORE proof precedes any access to minor feature 5. */
+static int
+npu_run_task_features(struct sun60i_a733_npu_run *s)
+{
+	for (size_t row = 0; row < 2; row++) {
+		if (bus_space_peek_4(s->bst, s->bsh, 0x020,
+		    &s->status.task_features[row][0]) != 0)
+			return EFAULT;
+	}
+	if (s->status.task_features[0][0] != 0x9000 ||
+	    s->status.task_features[1][0] != 0x9000)
+		return ENODEV;
+	for (size_t row = 0; row < 2; row++) {
+		if (bus_space_peek_4(s->bst, s->bsh, 0x034,
+		    &s->status.task_features[row][1]) != 0)
+			return EFAULT;
+	}
+	if (s->status.task_features[0][1] != s->status.task_features[1][1] ||
+	    (s->status.task_features[1][1] & 0x00200000) == 0)
+		return EOPNOTSUPP;
+	for (size_t row = 0; row < 2; row++) {
+		if (bus_space_peek_4(s->bst, s->bsh, 0x0a0,
+		    &s->status.task_features[row][2]) != 0)
+			return EFAULT;
+	}
+	s->status.task_features_valid = 1;
+	if (s->status.task_features[0][2] != s->status.task_features[1][2] ||
+	    (s->status.task_features[1][2] & 0x80000000) != 0)
+		return EOPNOTSUPP;
+	return 0;
+}
+
 /* Only the literal operation index is accepted. There is no register API. */
 static int
 npu_run_step(struct sun60i_a733_npu_run *s, unsigned op,
@@ -294,16 +326,12 @@ sun60i_a733_npu_run_status(struct sun60i_a733_npu_run *s,
 		mutex_exit(&s->irq_lock);
 }
 
-bool
-sun60i_a733_npu_run_task_completed(struct sun60i_a733_npu_run *s,
+static bool
+npu_run_task_completed_locked(const struct sun60i_a733_npu_run *s,
     const struct sun60i_a733_npu_dma *dma)
 {
-	bool completed;
 
-	if (s == NULL || dma == NULL || !s->lock_initialized)
-		return false;
-	mutex_enter(&s->irq_lock);
-	completed = s->profile == A733_NPU_DMA_PROFILE_TASK &&
+	return s->profile == A733_NPU_DMA_PROFILE_TASK && s->task_retained &&
 	    s->bound_dma == dma && s->mapped && s->ih != NULL && !s->armed &&
 	    s->status.attempted == 1 && s->status.publication_attempted == 1 &&
 	    s->status.retained == 1 && s->status.started == 1 &&
@@ -319,18 +347,96 @@ sun60i_a733_npu_run_task_completed(struct sun60i_a733_npu_run *s,
 	    s->status.terminal_dma[0] == s->status.terminal_dma[1] &&
 	    s->status.terminal_dma[1] >= 0x01001000 &&
 	    s->status.terminal_dma[1] - 0x01001000 < 4096;
+}
+
+bool
+sun60i_a733_npu_run_task_completed(struct sun60i_a733_npu_run *s,
+    const struct sun60i_a733_npu_dma *dma)
+{
+	bool completed;
+
+	if (s == NULL || dma == NULL || !s->lock_initialized)
+		return false;
+	mutex_enter(&s->irq_lock);
+	completed = npu_run_task_completed_locked(s, dma);
 	mutex_exit(&s->irq_lock);
 	return completed;
 }
 
 int
-sun60i_a733_npu_run_once(struct sun60i_a733_npu_run *s, bus_space_tag_t bst,
+sun60i_a733_npu_run_task_finish(struct sun60i_a733_npu_run *s,
+    const struct sun60i_a733_npu_dma *dma, struct clk *clock, int power,
+    const void *owner)
+{
+	int error;
+
+	if (s == NULL || dma == NULL || clock == NULL || power <= 0 ||
+	    owner == NULL || !s->lock_initialized)
+		return EINVAL;
+	mutex_enter(&s->irq_lock);
+	if (s->status.final_attempted) {
+		mutex_exit(&s->irq_lock);
+		return EALREADY;
+	}
+	if (!npu_run_task_completed_locked(s, dma) ||
+	    !sun60i_a733_npu_dma_task_verified(dma, s)) {
+		mutex_exit(&s->irq_lock);
+		return EBUSY;
+	}
+	s->status.final_attempted = 1;
+	mutex_exit(&s->irq_lock);
+	/* Clock and power helpers can sleep. Never call them under irq_lock. */
+	error = npu_run_ready(clock, power, owner);
+	mutex_enter(&s->irq_lock);
+	if (error == 0 && (!npu_run_task_completed_locked(s, dma) ||
+	    !sun60i_a733_npu_dma_task_verified(dma, s)))
+		error = EIO;
+	if (error == 0 && bus_space_peek_4(s->bst, s->bsh, 0x014,
+	    &s->status.final_mask[0]) != 0)
+		error = EFAULT;
+	for (size_t row = 0; error == 0 && row < 2; row++) {
+		if (bus_space_peek_4(s->bst, s->bsh, 0x004,
+		    &s->status.final_idle[row]) != 0 ||
+		    bus_space_peek_4(s->bst, s->bsh, 0x664,
+		    &s->status.final_dma[row]) != 0)
+			error = EFAULT;
+	}
+	if (error == 0 && bus_space_peek_4(s->bst, s->bsh, 0x014,
+	    &s->status.final_mask[1]) != 0)
+		error = EFAULT;
+	/* ACK is last: a late error cannot hide behind cached completion. */
+	if (error == 0 && bus_space_peek_4(s->bst, s->bsh, 0x010,
+	    &s->status.final_status) != 0)
+		error = EFAULT;
+	if (error == 0) {
+		s->status.final_valid = 1;
+		if (s->status.final_mask[0] != 0 || s->status.final_mask[1] != 0 ||
+		    s->status.final_idle[0] != 0x7fffffff ||
+		    s->status.final_idle[1] != 0x7fffffff ||
+		    s->status.final_dma[0] != s->status.final_dma[1] ||
+		    s->status.final_dma[1] < 0x01001000 ||
+		    s->status.final_dma[1] - 0x01001000 >= 4096 ||
+		    s->status.final_status != 0 || s->status.irq_fault != 0)
+			error = EIO;
+	}
+	/* The final reads and success publication have the same IRQ lock. */
+	if (error == 0)
+		s->status.model_pass = 1;
+	else
+		s->status.error = error;
+	mutex_exit(&s->irq_lock);
+	return error;
+}
+
+static int
+npu_run_once(struct sun60i_a733_npu_run *s, bus_space_tag_t bst,
     struct clk *clock, int power, const void *owner, int phandle,
-    const char *name, struct sun60i_a733_npu_dma *dma)
+    const char *name, struct sun60i_a733_npu_dma *dma,
+    const struct sun60i_a733_npu_dma_task_reference *reference)
 {
 	struct sun60i_a733_npu_dma_info info;
 	uint8_t image[A733_NPU_FE_RUN_BYTES];
-	bool mask_done = false;
+	bool mask_done = false, task = reference != NULL;
 	int error, mask_error;
 
 	if (s == NULL || bst == NULL || clock == NULL || power <= 0 ||
@@ -345,10 +451,11 @@ sun60i_a733_npu_run_once(struct sun60i_a733_npu_run *s, bus_space_tag_t bst,
 	error = sun60i_a733_npu_dma_info(dma, &info);
 	if (error != 0)
 		goto out;
-	if (info.profile != A733_NPU_DMA_PROFILE_FE ||
+	if (info.profile != (task ? A733_NPU_DMA_PROFILE_TASK :
+	    A733_NPU_DMA_PROFILE_FE) ||
 	    info.retained || info.command_virtual != 0x01001000 ||
 	    info.command_address == info.command_virtual ||
-	    info.command_bytes != 16 ||
+	    info.command_bytes != (task ? A733_NPU_NN_COMMAND_BYTES : 16) ||
 	    info.pd_entry != ((info.mtlb_address >> 12) << 4 | 1)) {
 		error = EINVAL;
 		goto out;
@@ -364,22 +471,37 @@ sun60i_a733_npu_run_once(struct sun60i_a733_npu_run *s, bus_space_tag_t bst,
 		goto out;
 	s->mapped = true;
 	error = npu_run_snapshot(s);
+	if (error == 0 && task)
+		error = npu_run_task_features(s);
 	if (error == 0)
 		error = npu_run_ready(clock, power, owner);
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_npu_fe_run_image(image, sizeof(image));
-	if (error == 0)
-		error = sun60i_a733_npu_dma_set_commands(dma, image, sizeof(image));
+	if (task) {
+		error = sun60i_a733_npu_dma_task_validate(dma, reference);
+	} else {
+		error = sun60i_a733_npu_fe_run_image(image, sizeof(image));
+		if (error == 0)
+			error = sun60i_a733_npu_dma_set_commands(dma, image,
+			    sizeof(image));
+	}
 	if (error != 0)
 		goto out;
-	s->status.command_bytes = sizeof(image);
+	s->status.command_bytes = task ? A733_NPU_NN_COMMAND_BYTES : sizeof(image);
 	error = npu_run_ready(clock, power, owner);
 	if (error != 0)
 		goto out;
 	/* Native DMA retain sets its sticky flag before the first PREWRITE sync. */
+	s->profile = task ? A733_NPU_DMA_PROFILE_TASK : A733_NPU_DMA_PROFILE_FE;
+	s->bound_dma = dma;
 	s->status.publication_attempted = 1;
-	error = sun60i_a733_npu_dma_retain(dma);
+	if (task) {
+		/* Retain the native context and references before the first sync. */
+		s->task_retained = true;
+		error = sun60i_a733_npu_dma_task_retain_checked(dma, s, reference);
+	} else {
+		error = sun60i_a733_npu_dma_retain(dma);
+	}
 	if (sun60i_a733_npu_dma_info(dma, &info) == 0)
 		s->status.retained = info.retained;
 	if (error == 0 && !s->status.retained)
@@ -462,4 +584,26 @@ out:
 	}
 	s->status.error = error;
 	return error;
+}
+
+int
+sun60i_a733_npu_run_once(struct sun60i_a733_npu_run *s, bus_space_tag_t bst,
+    struct clk *clock, int power, const void *owner, int phandle,
+    const char *name, struct sun60i_a733_npu_dma *dma)
+{
+
+	return npu_run_once(s, bst, clock, power, owner, phandle, name, dma, NULL);
+}
+
+int
+sun60i_a733_npu_run_task_once(struct sun60i_a733_npu_run *s, bus_space_tag_t bst,
+    struct clk *clock, int power, const void *owner, int phandle,
+    const char *name, struct sun60i_a733_npu_dma *dma,
+    const struct sun60i_a733_npu_dma_task_reference *reference)
+{
+
+	if (reference == NULL)
+		return EINVAL;
+	return npu_run_once(s, bst, clock, power, owner, phandle, name, dma,
+	    reference);
 }
