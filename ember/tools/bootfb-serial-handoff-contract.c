@@ -165,6 +165,9 @@ static void firmware_message(const char *format, ...)
 }
 #undef aprint_normal
 #define aprint_normal firmware_message
+/* Keep the actual extracted decoders distinct from target libc inlines. */
+#define le16dec bootfb_fixture_le16dec
+#define le32dec bootfb_fixture_le32dec
 #include "native-endian.h"
 /* Inject a changed prerequisite after actual stop publication, before MMU4. */
 static void print_device_message(device_t, const char *, ...)
@@ -233,9 +236,10 @@ static void print_device_message(device_t dev, const char *f, ...)
 		CHECK(snprintf(expected,sizeof(expected),
 		    "boot MMU4 cached native: valid %u, stage %u, DEBUG %08x valid %u; "
 		    "ICAC valid %u, observation stage %u, CONTROL %08x valid %u error %d; "
-		    "prepare %d, program %d\n",m->status_valid,m->status.stage,
+		    "prepare %d, program %d\n",m->status_valid,(unsigned)m->status.stage,
 		    m->status.debug,m->status.debug_valid,m->status.icac_valid,
-		    m->status.icac.observation.stage,m->status.icac.observation.raw_control,
+		    (unsigned)m->status.icac.observation.stage,
+		    m->status.icac.observation.raw_control,
 		    m->status.icac.observation.raw_valid,m->status.icac.observation.first_error,
 		    m->status.prepare_error,m->status.program_error) > 0);
 		CHECK(strcmp(actual,expected) == 0);
