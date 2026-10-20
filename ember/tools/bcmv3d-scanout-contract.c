@@ -9,6 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include "target-errno.h"
 static unsigned long checks;
 #define CHECK(v) do { checks++; if (!(v)) { \
 	fprintf(stderr,"CHECK %s:%d: %s\n",__FILE__,__LINE__,#v);exit(1); \
@@ -58,7 +59,7 @@ struct bcmv3d_device {
 #include "scanout-types.h"
 #include "hvs-types.h"
 #include "hvs-body.h"
-struct dma_fence { bool pending, poisoned; };
+struct dma_fence { bool pending, poisoned; unsigned refs; int error; };
 struct slot { struct drm_gem_object *object; struct bcmv3d_read *reader;
     bool synced, published, exposed; };
 static struct slot slots[3];
@@ -80,6 +81,8 @@ static bool publish_fail, retire_fail, expose_fail, bind_fail, wq_fail;
 static bool reservation_locked, unmap_fail, wait_route_fault, reserve_reentry;
 static bool writer_error, reserve_fail;
 static struct dma_fence original_writer;
+static unsigned retirement_mode, retirement_waits;
+static void retirement_progress(struct dma_fence *);
 static bool retire_route_fault, expose_route_fault, end_route_fault, construction_delay;
 static bool read_completion_committed(struct bcmv3d_read *);
 static struct bcmv3d_read *last_reader;
@@ -158,7 +161,40 @@ static void emit(uint32_t head,unsigned advance,int error)
 	regs[(snapshot.channel_status==0x53?0x48:0x11c)/4]=head;
 	in_irq=true;pv_notify(pv_arg,&snapshot);in_irq=false;
 }
+static struct dma_fence *dma_fence_get(struct dma_fence *f)
+{
+	CHECK(f&&f->refs>0&&process_locks==1&&irq_locks==0);
+	f->refs++;return f;
+}
+static void dma_fence_put(struct dma_fence *f)
+{
+	if(f==NULL)return;
+	CHECK(f->refs>0&&irq_locks==0);
+	if(--f->refs==0)free(f);
+}
+static long dma_fence_wait_timeout(struct dma_fence *f,bool intr,long timeout)
+{
+	CHECK(!in_irq&&process_locks==0&&irq_locks==0&&!reservation_locked);
+	CHECK(f&&f->refs==2&&intr&&timeout==5*hz);retirement_waits++;
+	if(retirement_mode==1)return 0;
+	if(retirement_mode==2)return -EINTR;
+	if(retirement_mode==13)return -ERESTARTSYS;
+	if(retirement_mode==15)return -(ELAST+2);
+	if(retirement_mode==14||retirement_mode==16) {
+		f->pending=false;f->error=retirement_mode==14?ERESTARTSYS:ELAST+2;return 1;
+	}
+	if(retirement_mode==3){f->pending=false;f->poisoned=true;return 1;}
+	if(retirement_mode==5)return 1;
+	if(retirement_mode==7){f->pending=false;return 1;}
+	retirement_progress(f);return 1;
+}
+static int dma_fence_get_status(struct dma_fence *f)
+{
+	CHECK(f&&f->refs>0&&process_locks==0&&irq_locks==0);
+	return f->pending?0:f->error?-f->error:f->poisoned?-EIO:1;
+}
 int bcmv3d_read_reserve(struct bcmv3d_read *r,struct drm_gem_object *o)
+
 {
 	struct bcmv3d_scanout_frame *other=NULL;
 	CHECK(!in_irq&&process_locks==0&&irq_locks==0&&!reservation_locked);
@@ -171,7 +207,7 @@ int bcmv3d_read_reserve(struct bcmv3d_read *r,struct drm_gem_object *o)
 	}
 	if(begin_route_fault) { emit(32,1,EIO);drain(); }
 	r->fence=calloc(1,sizeof(*r->fence));CHECK(r->fence);
-	r->fence->pending=true;r->object=o;r->owner=r;r->prior=&original_writer;
+	r->fence->pending=true;r->fence->refs=1;r->object=o;r->owner=r;r->prior=&original_writer;
 	o->refs++;last_reader=r;return 0;
 }
 int bcmv3d_read_wait(struct bcmv3d_read *r,long timeout)
@@ -186,13 +222,13 @@ int bcmv3d_read_wait(struct bcmv3d_read *r,long timeout)
 }
 int bcmv3d_read_end(struct bcmv3d_read *r)
 {
-	unsigned i;
+	unsigned i;struct dma_fence *f;
 	CHECK(!in_irq&&irq_locks==0);
 	if(!r->fence) { CHECK(!r->owner&&!r->object&&!r->poisoned);return 0; }
 	CHECK(r->owner==r&&!r->poisoned&&r->fence->pending);
 	for(i=0;i<3;i++) CHECK(slots[i].reader!=r);
 	if(end_route_fault) { CHECK(read_completion_committed(r));emit(snapshot.active_list,0,EIO); }
-	r->fence->pending=false;free(r->fence);r->fence=NULL;r->prior=NULL;
+	f=r->fence;f->pending=false;r->fence=NULL;r->prior=NULL;dma_fence_put(f);
 	drm_gem_object_put_unlocked(r->object);r->owner=NULL;r->object=NULL;ends++;
 	return 0;
 }
@@ -280,6 +316,20 @@ static void bus_space_barrier(bus_space_tag_t tag,bus_space_handle_t handle,
 	CHECK(offset==0&&length==0x1a000&&flags==3);barriers++;
 }
 #include "scanout-body.h"
+
+static void retirement_progress(struct dma_fence *f)
+{
+	struct bcmv3d_scanout *n=device.scanout;
+	CHECK(n->frame[0].read.fence==f&&f->pending);
+	if(retirement_mode==4) { emit(52,1,EIO);drain();return; }
+	if(n->flip.slot[0].state==BCMV3D_FLIP_RETIRING)emit(52,1,0);
+	drain();
+	CHECK(!f->pending&&f->refs==1&&n->frame[0].read.fence==NULL);
+	CHECK(n->frame[0].completion_committed&&n->flip.slot[0].state==BCMV3D_FLIP_FREE);
+	if(retirement_mode==6)emit(52,0,EIO);
+	if(retirement_mode==17)emit(52,0,ERESTARTSYS);
+	if(retirement_mode==12)n->flip.slot[0].state=BCMV3D_FLIP_RETIRED;
+}
 
 static bool
 read_completion_committed(struct bcmv3d_read *r)
@@ -562,6 +612,71 @@ static void reserved(unsigned scenario)
 	CHECK(bcmv3d_scanout_put(a)==0 && bo[0].cma.base.refs==1);
 }
 
+static void retirement(unsigned scenario)
+{
+	struct bcmv3d_scanout *n=start(0x54);
+	struct bcmv3d_scanout_frame *a,*b,copy;
+	unsigned refs,io_before;
+	int expected=0;
+	CHECK(bcmv3d_scanout_prepare(n,&bo[0].cma.base,&a)==0);
+	copy=*a;
+	CHECK(bcmv3d_scanout_wait_retired(NULL,5*hz)==EINVAL);
+	CHECK(bcmv3d_scanout_wait_retired(a,0)==EINVAL);
+	CHECK(bcmv3d_scanout_wait_retired(a,-1)==EINVAL);
+	mutex_enter(&device.memory_lock);
+	CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EDEADLK);
+	mutex_exit(&device.memory_lock);
+	in_irq=true;CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EWOULDBLOCK);in_irq=false;
+	CHECK(bcmv3d_scanout_wait_retired(&copy,5*hz)==EPERM);
+	CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EBUSY);
+	CHECK(bcmv3d_scanout_submit(n,a)==0);
+	CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EBUSY&&retirement_waits==0);
+	emit(42,1,0);
+	CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EBUSY&&retirement_waits==0);
+	CHECK(bcmv3d_scanout_prepare(n,&bo[1].cma.base,&b)==0);
+	CHECK(bcmv3d_scanout_submit(n,b)==0);emit(52,1,0);
+	CHECK(n->flip.slot[0].state==BCMV3D_FLIP_RETIRING);
+	refs=a->refs;io_before=io_calls;
+	if(scenario==18)emit(52,0,ERESTARTSYS);
+	if(scenario==8||scenario==9) {emit(52,1,0);if(scenario==8)drain();}
+	if(scenario==10||scenario==11) {
+		emit(52,1,0);drain();
+		if(scenario==10) {
+			a->completion_committed=false;
+			CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EBUSY);
+			a->completion_committed=true;
+		} else {
+			a->staged=true;CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EBUSY);a->staged=false;
+			a->published=true;CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EBUSY);a->published=false;
+			a->exposed=true;CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EBUSY);a->exposed=false;
+			a->read.owner=&a->read;CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EBUSY);a->read.owner=NULL;
+			a->read.object=a->object;CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EBUSY);a->read.object=NULL;
+			a->read.fence=&original_writer;CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EBUSY);a->read.fence=NULL;
+			a->read.prior=&original_writer;CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EBUSY);a->read.prior=NULL;
+			a->read.poisoned=true;CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==EBUSY);a->read.poisoned=false;
+		}
+		CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==0&&retirement_waits==0);
+	} else {
+		retirement_mode=scenario;
+		if(scenario==1)expected=ETIME;
+		if(scenario==2||scenario==13)expected=EINTR;
+		if((scenario>=3&&scenario<=6)||(scenario>=14&&scenario<=18))expected=EIO;
+		if(scenario==7||scenario==12)expected=EBUSY;
+		CHECK(bcmv3d_scanout_wait_retired(a,5*hz)==expected);
+		CHECK(retirement_waits==((scenario==8||scenario==18)?0U:1U));
+	}
+	CHECK(a->refs==refs&&a->object==&bo[0].cma.base&&io_calls==io_before);
+	if(expected==0) {
+		CHECK(n->flip.slot[0].state==BCMV3D_FLIP_FREE&&a->read.fence==NULL);
+		CHECK(ends==1&&unloads==1&&a->completion_committed);
+		CHECK(bcmv3d_scanout_put(a)==0&&bo[0].cma.base.refs==1);
+	} else if(scenario==1||scenario==2||scenario==5) {
+		CHECK(a->read.fence&&a->read.fence->refs==1&&ends==0&&unloads==0);
+	} else if(scenario==7) {
+		CHECK(a->read.fence&&a->read.fence->refs==1&&ends==0&&unloads==0);
+	}
+}
+
 static void run(unsigned scenario)
 {
 	if(scenario<2) life(scenario==0?0x53:0x54);
@@ -570,19 +685,20 @@ static void run(unsigned scenario)
 	else if(scenario<67) io_fault(scenario-14);
 	else if(scenario<76) constructor(scenario-67);
 	else if(scenario<80) races(scenario-76);
-	else reserved(scenario-80);
+	else if(scenario<88) reserved(scenario-80);
+	else retirement(scenario-88);
 	CHECK(process_locks==0&&irq_locks==0);
 }
 int main(void)
 {
 	unsigned i;int status;pid_t pid;
-	for(i=0;i<88;i++) {
+	for(i=0;i<107;i++) {
 		pid=fork();CHECK(pid>=0);
 		if(pid==0) { run(i);exit(0); }
 		CHECK(waitpid(pid,&status,0)==pid);
 		CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
 	}
-	puts("PASS actual native scanout:88 isolated boots,53 I/O fault positions, consumer ordering,"
+	puts("PASS actual native scanout:107 isolated boots,53 I/O fault positions, consumer ordering,"
 	    "same-BO lifetime, actual-head latch, extra frame retirement and quarantine");
 	return 0;
 }

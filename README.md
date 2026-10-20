@@ -797,8 +797,11 @@ It grants no absence admission or display ownership.
   mutable GEM frames, three real latches and two subsequent retirements on CM5.
   The final blue/white checkerboard displays without corruption. Four native GPU
   regressions pass while that scanout remains active. The optional
-  [KMS layer](ember/boot/bcmv3d-kms.md) is source-tested. Physical DRM page flips,
-  HDMI Plasma, persistent HPD IRQ/DDC integration and EDID mode selection remain open.
+  [KMS layer](ember/boot/bcmv3d-kms.md) passes a physical single atomic modeset
+  and normal disable with two latches, one retirement and returned BO memory.
+  Its source now defers successful events until old GEM retirement and plane
+  cleanup. Continuous page flipping, HDMI Plasma, persistent HPD IRQ/DDC
+  integration and EDID mode selection remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.

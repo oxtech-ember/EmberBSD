@@ -51,11 +51,20 @@ performs consumer PREWRITE only after that writer completes successfully.
 Neither preparation nor state copying performs HVS publication.
 
 The tail transfers its event pointer under `event_lock` before native submit.
-Only a real native latch after the captured sequence floor sends a page-flip
-event. A delayed older callback cannot complete this publication. A latch
-callback can still complete it after a newer non-latch callback updates the
-vblank count. `commit_hw_done` follows terminal latch or error processing, so
-another state swap cannot reuse the pending completion too early.
+A real latch after the sequence floor captures the current cooked DRM count
+and time. It wakes the tail without delivering the event. A delayed older
+callback cannot complete this publication. A valid latch callback can still
+complete it after a newer non-latch callback updates the count. In that case
+the cooked sample is newer; it is not an exact timestamp of the older IRQ.
+
+Successful completion also permits CPU producers to reuse the old buffer.
+The tail waits for the old GEM reader fence outside native and reservation
+locks. It then confirms full worker reclaim under the process owner lock.
+NULL and same-frame transitions do not wait on a current reader.
+It detaches event ownership before `commit_hw_done`, cleans the old plane,
+and delivers the captured sample only after one last sticky-fault check.
+This order covers the frame reference, consumer POST/unload and old-plane
+cleanup before userspace can issue its next double-buffer flip.
 
 Post-swap failure sets a sticky KMS error. The detached-event helper completes
 `flip_done`, releases its reference and signals OUT_FENCE with a valid negative
@@ -69,7 +78,8 @@ Unknown hardware state retains its resources until reboot.
 
 A disabled CRTC submits the reserved black list. HDMI timing and clocks continue.
 This is logical blanking, not complete HDMI/PHY power-down, suspend or connector
-DPMS qualification. The driver has no hardware detach or fault-reset API.
+DPMS qualification. Rapid disable/enable/disable reuse of the reserved black
+slot remains unaccepted. The driver has no hardware detach or fault-reset API.
 
 ## Source checks
 

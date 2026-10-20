@@ -16,6 +16,7 @@
 #include <drm/drm_drv.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_fourcc.h>
+#include <drm/drm_file.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_gem_framebuffer_helper.h>
@@ -46,7 +47,8 @@ struct bcmv3d_kms {
 	struct drm_pending_vblank_event *event;
 	bcmv3d_kms_detect_fn detect;
 	void *detect_arg;
-	uint64_t event_floor, vblank_sequence;
+	uint64_t event_floor, vblank_sequence, latch_sequence;
+	ktime_t latch_time;
 	int fault, pending_error;
 	bool bound, waiting, polling, vblank_on;
 };
@@ -435,16 +437,54 @@ kms_native_event(void *arg, uint64_t sequence, bool latched, int error)
 	complete = k->bound && k->fault == 0 && k->waiting && latched &&
 	    sequence > k->event_floor;
 	if (complete) {
-		if (k->event != NULL)
-			drm_crtc_send_vblank_event(&k->crtc, k->event);
-		k->event = NULL;
+		/* Capture the cooked sample now, not at later event delivery. */
+		k->latch_sequence = drm_crtc_vblank_count_and_time(&k->crtc,
+		    &k->latch_time);
 		k->waiting = false;
 		complete_all(&k->latch);
 	}
 	spin_unlock_irqrestore(&dev->event_lock, flags);
 }
 
-/* Only this tail owns the pending latch until commit_hw_done permits a swap. */
+/* A successful event also makes the old buffer reusable by CPU producers. */
+static void
+kms_complete_event(struct bcmv3d_kms *k, struct drm_pending_vblank_event *event,
+    uint64_t sequence, ktime_t time)
+{
+	struct drm_device *dev = k->sc->drm;
+	struct timespec64 tv;
+	unsigned long flags;
+	int error;
+
+	if (event == NULL)
+		return;
+	spin_lock_irqsave(&dev->event_lock, flags);
+	error = k->fault;
+	if (error == 0) {
+		event->pipe = drm_crtc_index(&k->crtc);
+		switch (event->event.base.type) {
+		case DRM_EVENT_VBLANK:
+		case DRM_EVENT_FLIP_COMPLETE:
+			tv = ktime_to_timespec64(time);
+			event->event.vbl.sequence = sequence;
+			event->event.vbl.tv_sec = tv.tv_sec;
+			event->event.vbl.tv_usec = tv.tv_nsec / 1000;
+			break;
+		case DRM_EVENT_CRTC_SEQUENCE:
+			if (sequence != 0)
+				event->event.seq.sequence = sequence;
+			event->event.seq.time_ns = ktime_to_ns(time);
+			break;
+		}
+		drm_send_event_locked(dev, &event->base);
+	}
+	spin_unlock_irqrestore(&dev->event_lock, flags);
+	if (error != 0)
+		bcmv3d_kms_event_fail(dev, event, error);
+}
+
+/* Detach terminal ownership before hw_done; deliver after old-state cleanup. */
+
 static void
 kms_commit_tail(struct drm_atomic_state *state)
 {
@@ -454,7 +494,12 @@ kms_commit_tail(struct drm_atomic_state *state)
 	struct drm_crtc_state *crtc = drm_atomic_get_new_crtc_state(state, &k->crtc);
 	struct drm_plane_state *plane = drm_atomic_get_new_plane_state(state, &k->plane);
 	struct bcmv3d_kms_plane_state *s = kms_plane_state(plane);
-	struct drm_pending_vblank_event *unclaimed;
+	struct drm_plane_state *old_plane = drm_atomic_get_old_plane_state(state,
+	    &k->plane);
+	struct bcmv3d_scanout_frame *old_frame = kms_plane_state(old_plane)->frame;
+	struct drm_pending_vblank_event *unclaimed, *event;
+	uint64_t latch_sequence;
+	ktime_t latch_time;
 	struct bcmv3d_vblank_snapshot snapshot;
 	unsigned long flags;
 	bool active = crtc->active, vblank_ref = false;
@@ -499,12 +544,20 @@ kms_commit_tail(struct drm_atomic_state *state)
 		error = bcmv3d_scanout_submit(sc->scanout, active ? s->frame : NULL);
 	if (error == 0 && wait_for_completion_timeout(&k->latch, 5 * hz) == 0)
 		error = ETIMEDOUT;
+	/* A page-flip event permits CPU reuse, not only GPU fence waits. */
+	if (error == 0 && old_frame != NULL && old_frame != s->frame)
+		error = bcmv3d_scanout_wait_retired(old_frame, 5 * hz);
 	if (error != 0)
 		kms_fault(k, error);
 	/* An event not transferred before an error still has one terminal owner. */
 	spin_lock_irqsave(&dev->event_lock, flags);
 	unclaimed = crtc->event;
 	crtc->event = NULL;
+	event = k->event;
+	k->event = NULL;
+	k->waiting = false;
+	latch_sequence = k->latch_sequence;
+	latch_time = k->latch_time;
 	error = k->pending_error != 0 ? k->pending_error : error;
 	spin_unlock_irqrestore(&dev->event_lock, flags);
 	if (unclaimed != NULL)
@@ -518,6 +571,8 @@ kms_commit_tail(struct drm_atomic_state *state)
 	/* The native owner retains exposed BOs independently of plane-state refs. */
 	drm_atomic_helper_commit_hw_done(state);
 	drm_atomic_helper_cleanup_planes(dev, state);
+	/* cleanup_fb can discover a late fault. Recheck before signalling success. */
+	kms_complete_event(k, event, latch_sequence, latch_time);
 }
 
 static const struct drm_mode_config_funcs kms_mode_funcs = {

@@ -8,6 +8,8 @@
 #include <sys/mutex.h>
 #include <sys/systm.h>
 #include <sys/workqueue.h>
+#include <linux/dma-fence.h>
+#include <linux/errno.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_gem.h>
 #include <arm/broadcom/bcm2712_display_hvsvar.h>
@@ -552,6 +554,79 @@ bcmv3d_scanout_prepare(struct bcmv3d_scanout *n, struct drm_gem_object *obj,
 	}
 	*out = f;
 	return 0;
+}
+
+/* The worker holds process_lock across reader completion and final reclaim. */
+int
+bcmv3d_scanout_wait_retired(struct bcmv3d_scanout_frame *f, long timeout)
+{
+	struct bcmv3d_scanout *n;
+	struct dma_fence *fence = NULL;
+	enum bcmv3d_flip_state state;
+	long waited;
+	int error, status;
+
+	if (f == NULL || f->owner == NULL || timeout <= 0)
+		return EINVAL;
+	n = f->owner;
+	if (f->slot >= BCMV3D_FLIP_GEM_SLOTS || f != &n->frame[f->slot])
+		return EPERM;
+	if ((error = scanout_enter(n)) != 0)
+		return error;
+	mutex_enter(&n->lock);
+	state = n->flip.slot[f->slot].state;
+	error = n->flip.fault != 0 ?
+	    n->flip.fault > 0 && n->flip.fault <= ELAST ? n->flip.fault : EIO :
+	    f->refs == 0 || f->object == NULL ? EINVAL :
+	    f->preparing || n->flip.current_slot == (int)f->slot ||
+	    n->flip.pending_slot == (int)f->slot ? EBUSY :
+	    state == BCMV3D_FLIP_FREE || state == BCMV3D_FLIP_RETIRING ||
+	    state == BCMV3D_FLIP_RETIRED ||
+	    state == BCMV3D_FLIP_RECLAIMING ? 0 : EBUSY;
+	mutex_exit(&n->lock);
+	if (error != 0)
+		goto out;
+	if (state != BCMV3D_FLIP_FREE) {
+		if (f->read.owner != &f->read || f->read.object != f->object ||
+		    f->read.fence == NULL) {
+			error = EBUSY;
+			goto out;
+		}
+		fence = dma_fence_get(f->read.fence);
+		mutex_exit(&n->process_lock);
+		waited = dma_fence_wait_timeout(fence, true, timeout);
+		if (waited <= 0) {
+			if (waited == 0)
+				error = ETIME;
+			else if (waited == -ERESTARTSYS)
+				error = EINTR;
+			else
+				error = waited >= -ELAST ? (int)-waited : EIO;
+		} else {
+			status = dma_fence_get_status(fence);
+			error = status > 0 ? 0 :
+			    status < 0 && status >= -ELAST ? -status : EIO;
+		}
+		mutex_enter(&n->process_lock);
+	}
+	mutex_enter(&n->lock);
+	if (n->flip.fault != 0)
+		error = n->flip.fault > 0 && n->flip.fault <= ELAST ?
+		    n->flip.fault : EIO;
+	else if (error == 0 && (n->flip.slot[f->slot].state != BCMV3D_FLIP_FREE ||
+	    n->flip.current_slot == (int)f->slot ||
+	    n->flip.pending_slot == (int)f->slot))
+		error = EBUSY;
+	mutex_exit(&n->lock);
+	if (error == 0 && (f->refs == 0 || f->object == NULL || f->preparing ||
+	    !f->completion_committed || f->staged || f->published || f->exposed ||
+	    f->read.owner != NULL || f->read.object != NULL || f->read.fence != NULL ||
+	    f->read.prior != NULL || f->read.poisoned))
+		error = EBUSY;
+out:
+	mutex_exit(&n->process_lock);
+	dma_fence_put(fence);
+	return error;
 }
 
 int

@@ -53,6 +53,18 @@ int bcmv3d_scanout_reserve(struct bcmv3d_scanout *, struct drm_gem_object *,
 int bcmv3d_scanout_finalize(struct bcmv3d_scanout_frame *, long);
 int bcmv3d_scanout_prepare(struct bcmv3d_scanout *, struct drm_gem_object *,
     struct bcmv3d_scanout_frame **);
+/*
+ * Wait for an old GEM consumer to retire and finish actual map/read cleanup.
+ * The caller retains its frame reference throughout this call. This function
+ * never consumes that reference. CURRENT and PENDING frames return EBUSY.
+ * Wait outside native, engine and BO reservation locks. The positive tick
+ * budget covers the reader-fence wait. Linux ERESTARTSYS becomes BSD EINTR.
+ * Other errors outside the BSD errno range become EIO. Recheck under the lock
+ * proves that the worker has completed reclaim after signalling the reader.
+ * An already retired frame with a software reference succeeds without waiting.
+ * This API does not cover the reserved empty-list slot. Positive BSD errno.
+ */
+int bcmv3d_scanout_wait_retired(struct bcmv3d_scanout_frame *, long);
 int bcmv3d_scanout_get(struct bcmv3d_scanout_frame *);
 int bcmv3d_scanout_put(struct bcmv3d_scanout_frame *);
 bool bcmv3d_scanout_matches(struct bcmv3d_scanout_frame *,

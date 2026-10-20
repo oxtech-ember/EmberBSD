@@ -69,7 +69,17 @@ The frame-count rule follows the pinned Linux reference described in the
 Mappings, clock leases, callback storage and hardware owners survive to reboot.
 There is no detach or reset API.
 
+`bcmv3d_scanout_wait_retired` waits for an old GEM reader without holding
+native, engine or reservation locks. The caller keeps its frame reference.
+After the fence completes, a process-lock recheck confirms FREE state,
+committed completion and fully cleared reader/map ownership. This also covers
+a fence signal before the worker finishes reclaim. It consumes no caller ref.
+CURRENT/PENDING frames are refused. Linux restart status is translated to BSD
+EINTR; invalid error values become EIO. Timeout never authorizes cleanup.
+The API does not cover the reserved empty-list slot.
+
 ## Reproduce the source checks
+
 
 ```sh
 ruby ember/tools/bcmv3d-scanout-contract.rb
@@ -80,11 +90,12 @@ ruby ember/tools/bootfb-serial-handoff-contract.rb
 ```
 
 The scanout test executes the actual owner, flip and list-encoder bodies with
-controlled MMU4, DMA, reader and kernel services. It checks88 isolated boots,
+controlled MMU4, DMA, reader and kernel services. It checks107 isolated boots,
 53 display I/O fault positions, delayed callbacks, slow construction, same-BO
 lifetimes, deferred writer completion, cancellation of prepublished translations
-and faults on both sides of the completion commit. Eighteen compiled
-source controls must fail a CHECK. A crash or timeout is not a valid rejection.
+and faults on both sides of the completion commit. Retirement waits check
+lock release, worker recheck, fence lifetime and target errno boundaries.
+Thirty compiled source controls must fail a CHECK. A crash or timeout is not a valid rejection.
 
 The range test executes the actual native adapter, provider, BO and backing
 code. Its controlled HVS proof tests identity refusal, successful retirement,
