@@ -518,7 +518,7 @@ static void cold_global_checks(void) {
   cold_init(&sc);cold_global_clear_phase=phase;
   iommu[0x10/4]=0x37fff;iommu[0x804/4]=1;
   int error=de352_run(&sc);
-  if(error!=0)fprintf(stderr,"global phase=%u error=%d step=%u op=%u reg=%#x requested=%u after=%u\n",phase,error,sc.step,sc.cold_trace.op,sc.cold_trace.reg,sc.cold_trace.requested,sc.cold_trace.after);
+  if(error!=0)fprintf(stderr,"global phase=%u error=%d step=%d op=%u reg=%#x requested=%u after=%u\n",phase,error,sc.step,sc.cold_trace.op,sc.cold_trace.reg,sc.cold_trace.requested,sc.cold_trace.after);
   CHECK(error==0&&sc.cold_initialized&&sc.step==10);
   CHECK(cold_global_deasserts==1&&cold_flush_masters==0x3f&&!cold_global_pending);
   CHECK(iommu[0x30/4]==0&&iommu[0x14/4]==1&&sc.guard->published&&sc.dma->published);
