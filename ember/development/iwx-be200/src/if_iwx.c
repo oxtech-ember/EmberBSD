@@ -524,9 +524,21 @@ struct mbuf *iwx_ht_tx_assoc(struct iwx_softc *, struct mbuf *,
 	    struct ieee80211_node *);
 void	iwx_ht_rx_assoc(struct iwx_softc *, struct mbuf *);
 void	iwx_ht_rx_action(struct iwx_softc *, struct mbuf *);
+void	iwx_ht_send_action(struct iwx_softc *, const uint8_t *, size_t);
+void	iwx_ba_task(void *);
+void	iwx_ba_release(void *, void *);
+void	iwx_ba_drop(void *, void *);
+void	iwx_ba_stop(struct iwx_softc *, int, int);
+void	iwx_ba_reset(struct iwx_softc *, int);
+int	iwx_ba_rx_input(struct iwx_softc *, struct mbuf *,
+	    struct iwx_rx_mpdu_desc *, int, uint32_t, int, uint32_t, uint32_t,
+	    struct ieee80211_rxinfo *);
+void	iwx_ba_frame_release(struct iwx_softc *, int, uint16_t);
 void	iwx_ht_print_ies(struct iwx_softc *, const char *, const uint8_t *,
 	    size_t);
 void	iwx_ht_setup_node(struct iwx_softc *, struct iwx_node *);
+void	iwx_dbg_rate(struct iwx_softc *, uint32_t, char *, size_t);
+void	iwx_dbg_report(struct iwx_softc *);
 void	iwx_phy_ctxt_layout(struct iwx_softc *, uint8_t, uint8_t,
 	    uint8_t *, uint8_t *);
 int	iwx_send_temp_report_ths_cmd(struct iwx_softc *);
@@ -5525,9 +5537,24 @@ iwx_rx_mpdu_mq(struct iwx_softc *sc, struct mbuf *m, void *pktdata,
 	rxi.rxi_tstamp = device_timestamp;
 	rxi.rxi_chan = chanidx;
 
-	iwx_rx_frame(sc, m, chanidx, le32toh(desc->status),
-	    (phy_info & IWX_RX_MPDU_PHY_SHORT_PREAMBLE),
-	    rate_n_flags, device_timestamp, &rxi);
+	{
+		struct ieee80211_frame *dwh = mtod(m, struct ieee80211_frame *);
+
+		if ((dwh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) ==
+		    IEEE80211_FC0_TYPE_DATA &&
+		    !IEEE80211_IS_MULTICAST(dwh->i_addr1)) {
+			sc->sc_dbg_rx_frames++;
+			sc->sc_dbg_rx_mod[(rate_n_flags >> 8) & 7]++;
+			sc->sc_dbg_rx_rate = rate_n_flags;
+		}
+	}
+	if (!iwx_ba_rx_input(sc, m, desc, chanidx, le32toh(desc->status),
+	    (phy_info & IWX_RX_MPDU_PHY_SHORT_PREAMBLE), rate_n_flags,
+	    device_timestamp, &rxi))
+		iwx_rx_frame(sc, m, chanidx, le32toh(desc->status),
+		    (phy_info & IWX_RX_MPDU_PHY_SHORT_PREAMBLE),
+		    rate_n_flags, device_timestamp, &rxi);
+	iwx_dbg_report(sc);
 }
 
 void
@@ -5615,8 +5642,17 @@ iwx_rx_tx_cmd(struct iwx_softc *sc, struct iwx_rx_packet *pkt,
 	txfail = (status != IWX_TX_STATUS_SUCCESS &&
 	    status != IWX_TX_STATUS_DIRECT_DONE);
 
-	if (txfail)
+	if (txfail) {
 		if_statinc(ifp, if_oerrors);
+		sc->sc_dbg_tx_fail++;
+		sc->sc_dbg_tx_status[sc->sc_dbg_tx_nstatus++ %
+		    nitems(sc->sc_dbg_tx_status)] = le16toh(tx_resp->status.status);
+	} else
+		sc->sc_dbg_tx_ok++;
+	sc->sc_dbg_tx_retries += tx_resp->failure_frame;
+	if (qid >= sc->first_data_qid)
+		sc->sc_dbg_tx_rate = le32toh(tx_resp->initial_rate);
+	iwx_dbg_report(sc);
 
 	/*
 	 * On hardware supported by iwx(4) the SSN counter corresponds
@@ -6277,13 +6313,23 @@ static int
 iwx_min_basic_ridx(struct ieee80211com *ic)
 {
 	const struct ieee80211_rateset *rs = &ic->ic_bss->ni_rates;
-	int i;
+	struct ieee80211_channel *c = ic->ic_bss->ni_chan;
+	int i, ridx;
+	/*
+	 * CCK does not exist on 5 GHz.  After association net80211 may keep
+	 * the rate set without basic-rate marks, and management frames
+	 * (ADDBA responses, probes) then failed at 1 Mbps CCK.
+	 */
+	int band5 = c != IEEE80211_CHAN_ANYC && IEEE80211_IS_CHAN_5GHZ(c);
 
-	for (i = 0; i < rs->rs_nrates; i++)
-		if (rs->rs_rates[i] & IEEE80211_RATE_BASIC)
-			return iwx_rval2ridx(rs->rs_rates[i] &
-			    IEEE80211_RATE_VAL);
-	return iwx_rval2ridx(2);	/* 1 Mbps CCK */
+	for (i = 0; i < rs->rs_nrates; i++) {
+		if ((rs->rs_rates[i] & IEEE80211_RATE_BASIC) == 0)
+			continue;
+		ridx = iwx_rval2ridx(rs->rs_rates[i] & IEEE80211_RATE_VAL);
+		if (ridx >= 0 && (!band5 || IWX_RIDX_IS_OFDM(ridx)))
+			return ridx;
+	}
+	return band5 ? iwx_rval2ridx(12) : iwx_rval2ridx(2); /* 6 / 1 Mbps */
 }
 
 const struct iwx_rate *
@@ -8931,8 +8977,10 @@ iwx_ht_print_ies(struct iwx_softc *sc, const char *what, const uint8_t *ies,
 }
 
 /*
- * Decline ADDBA requests from our AP.  net80211 discards action frames,
- * and an AP may disconnect an HT station that never answers.
+ * Block Ack action frames from our AP.  ADDBA requests are accepted
+ * through sc_ba_task when HT is in use and the firmware allocates BAIDs;
+ * otherwise they are declined, because net80211 discards action frames
+ * and an AP may drop an HT station that never answers.
  */
 void
 iwx_ht_rx_action(struct iwx_softc *sc, struct mbuf *m)
@@ -8940,11 +8988,13 @@ iwx_ht_rx_action(struct iwx_softc *sc, struct mbuf *m)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = IC2IFP(ic);
 	struct ieee80211_node *ni = ic->ic_bss;
-	struct ieee80211_frame *wh, *rwh;
+	struct iwx_node *in = (void *)ni;
+	struct ieee80211_frame *wh;
+	struct iwx_ht_addba a;
 	const uint8_t *body;
 	uint8_t resp[16];
-	struct mbuf *n;
 	size_t len, rlen;
+	int tid, initiator;
 
 	if (ic->ic_state != IEEE80211_S_RUN ||
 	    (size_t)m->m_len < sizeof(*wh) + 2 || m->m_len != m->m_pkthdr.len)
@@ -8962,33 +9012,350 @@ iwx_ht_rx_action(struct iwx_softc *sc, struct mbuf *m)
 	if (ifp->if_flags & IFF_DEBUG)
 		printf("%s: action frame category %u action %u\n",
 		    device_xname(sc->sc_dev), body[0], body[1]);
-	rlen = iwx_ht_addba_decline(body, len, resp);
-	if (rlen == 0)
-		return;
 
-	n = m_gethdr(M_DONTWAIT, MT_DATA);
-	if (n == NULL)
+	if (iwx_ht_delba_parse(body, len, &tid, &initiator) == 0) {
+		if (initiator && tid < 8) {
+			sc->sc_ba_stop |= 1 << tid;
+			sc->sc_ba_start &= ~(1 << tid);
+			iwx_add_task(sc, sc->sc_systq, &sc->sc_ba_task);
+		}
 		return;
-	rwh = mtod(n, struct ieee80211_frame *);
-	memset(rwh, 0, sizeof(*rwh));
-	rwh->i_fc[0] = IEEE80211_FC0_VERSION_0 | IEEE80211_FC0_TYPE_MGT |
+	}
+	if (iwx_ht_addba_parse(body, len, &a) != 0)
+		return;
+	if (ifp->if_flags & IFF_DEBUG)
+		printf("%s: ADDBA request TID %u token %u ssn %u buf %u "
+		    "timeout %u amsdu %u\n", device_xname(sc->sc_dev), a.tid,
+		    a.token, a.ssn, a.bufsize, a.timeout, a.amsdu);
+	if (in->in_ht && a.immediate && a.tid < 8 &&
+	    isset(sc->sc_enabled_capa, IWX_UCODE_TLV_CAPA_BAID_ML_SUPPORT)) {
+		sc->sc_ba_req[a.tid] = a;
+		sc->sc_ba_start |= 1 << a.tid;
+		iwx_add_task(sc, sc->sc_systq, &sc->sc_ba_task);
+		return;
+	}
+	rlen = iwx_ht_addba_decline(body, len, resp);
+	if (rlen != 0) {
+		iwx_ht_send_action(sc, resp, rlen);
+		if (ifp->if_flags & IFF_DEBUG)
+			printf("%s: declined ADDBA request for TID %u\n",
+			    device_xname(sc->sc_dev), a.tid);
+	}
+}
+
+/* Send an action frame body to our AP. */
+void
+iwx_ht_send_action(struct iwx_softc *sc, const uint8_t *body, size_t len)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ifnet *ifp = IC2IFP(ic);
+	struct ieee80211_node *ni = ic->ic_bss;
+	struct ieee80211_frame *wh;
+	struct mbuf *m;
+
+	if (sizeof(*wh) + len > MHLEN)
+		return;
+	m = m_gethdr(M_DONTWAIT, MT_DATA);
+	if (m == NULL)
+		return;
+	wh = mtod(m, struct ieee80211_frame *);
+	memset(wh, 0, sizeof(*wh));
+	wh->i_fc[0] = IEEE80211_FC0_VERSION_0 | IEEE80211_FC0_TYPE_MGT |
 	    IWX_HT_FC0_SUBTYPE_ACTION;
-	rwh->i_fc[1] = IEEE80211_FC1_DIR_NODS;
-	IEEE80211_ADDR_COPY(rwh->i_addr1, ni->ni_macaddr);
-	IEEE80211_ADDR_COPY(rwh->i_addr2, ic->ic_myaddr);
-	IEEE80211_ADDR_COPY(rwh->i_addr3, ni->ni_bssid);
+	wh->i_fc[1] = IEEE80211_FC1_DIR_NODS;
+	IEEE80211_ADDR_COPY(wh->i_addr1, ni->ni_macaddr);
+	IEEE80211_ADDR_COPY(wh->i_addr2, ic->ic_myaddr);
+	IEEE80211_ADDR_COPY(wh->i_addr3, ni->ni_bssid);
 	/* Non-QoS sequence space, as ieee80211_send_setup() uses. */
-	*(uint16_t *)&rwh->i_seq[0] =
+	*(uint16_t *)&wh->i_seq[0] =
 	    htole16(ni->ni_txseqs[0] << IEEE80211_SEQ_SEQ_SHIFT);
 	ni->ni_txseqs[0]++;
-	memcpy(rwh + 1, resp, rlen);
-	n->m_len = n->m_pkthdr.len = sizeof(*rwh) + rlen;
-	M_SETCTX(n, ieee80211_ref_node(ni));
-	IF_ENQUEUE(&ic->ic_mgtq, n);
-	if (ifp->if_flags & IFF_DEBUG)
-		printf("%s: declined ADDBA request for TID %u\n",
-		    device_xname(sc->sc_dev), (body[3] >> 2) & 0xf);
+	memcpy(wh + 1, body, len);
+	m->m_len = m->m_pkthdr.len = sizeof(*wh) + len;
+	M_SETCTX(m, ieee80211_ref_node(ni));
+	IF_ENQUEUE(&ic->ic_mgtq, m);
 	if_start_lock(ifp);
+}
+
+/* Reorder callbacks: hand a frame to net80211, or drop it. */
+void
+iwx_ba_release(void *ctx, void *pkt)
+{
+	struct iwx_softc *sc = ctx;
+	struct iwx_ba_frame *f = pkt;
+	struct mbuf *m = f->m;
+
+	f->m = NULL;
+	iwx_rx_frame(sc, m, f->chanidx, f->status, f->shortpre,
+	    f->rate_n_flags, f->tstamp, &f->rxi);
+}
+
+void
+iwx_ba_drop(void *ctx, void *pkt)
+{
+	struct iwx_ba_frame *f = pkt;
+
+	m_freem(f->m);
+	f->m = NULL;
+}
+
+/*
+ * Feed a received MPDU through its BA session.  Returns 1 if the frame
+ * was taken (released, stored or dropped), 0 if it is not part of one.
+ */
+int
+iwx_ba_rx_input(struct iwx_softc *sc, struct mbuf *m,
+    struct iwx_rx_mpdu_desc *desc, int chanidx, uint32_t status,
+    int shortpre, uint32_t rate_n_flags, uint32_t tstamp,
+    struct ieee80211_rxinfo *rxi)
+{
+	struct ieee80211_frame *wh = mtod(m, struct ieee80211_frame *);
+	uint32_t rd = le32toh(desc->reorder_data);
+	struct iwx_ba_frame tmp, *f;
+	struct iwx_ba_rx *b;
+	uint16_t sn, nssn;
+	int baid, tid, flags = 0;
+
+	if (sc->sc_ba_sessions == 0 ||
+	    (wh->i_fc[0] & (IEEE80211_FC0_TYPE_MASK | 0x80 | 0x40)) !=
+	    (IEEE80211_FC0_TYPE_DATA | 0x80) ||	/* QoS data, not null */
+	    IEEE80211_IS_MULTICAST(wh->i_addr1) ||
+	    (desc->mac_flags2 & IWX_RX_MPDU_MFLG2_AMSDU) ||
+	    (size_t)m->m_len < sizeof(struct ieee80211_qosframe) ||
+	    (wh->i_fc[1] & IEEE80211_FC1_DIR_MASK) == IEEE80211_FC1_DIR_DSTODS)
+		return 0;
+	baid = (rd & IWX_RX_MPDU_REORDER_BAID_MASK) >>
+	    IWX_RX_MPDU_REORDER_BAID_SHIFT;
+	if (baid >= IWX_MAX_BAID)
+		return 0;
+	sc->sc_dbg_ba_baid++;
+	b = &sc->sc_ba[baid];
+	tid = ((struct ieee80211_qosframe *)wh)->i_qos[0] & 0xf;
+	if (!b->active || b->tid != tid)
+		return 0;
+	sc->sc_dbg_ba_rx++;
+
+	nssn = rd & IWX_RX_MPDU_REORDER_NSSN_MASK;
+	sn = (rd & IWX_RX_MPDU_REORDER_SN_MASK) >> IWX_RX_MPDU_REORDER_SN_SHIFT;
+	if (rd & IWX_RX_MPDU_REORDER_BA_OLD_SN)
+		flags |= IWX_HT_RO_OLD_SN;
+	if (desc->status & htole32(IWX_RX_MPDU_RES_STATUS_DUPLICATE))
+		flags |= IWX_HT_RO_DUP;
+
+	/*
+	 * An occupied slot means this copy will be dropped, so its
+	 * metadata may live on the stack; otherwise it goes in the slot.
+	 */
+	f = &b->f[sn % b->ro.buf_size];
+	if (f->m != NULL)
+		f = &tmp;
+	f->m = m;
+	f->chanidx = chanidx;
+	f->status = status;
+	f->shortpre = shortpre;
+	f->rate_n_flags = rate_n_flags;
+	f->tstamp = tstamp;
+	f->rxi = *rxi;
+	iwx_ht_reorder_rx(&b->ro, sn, nssn, flags, f, iwx_ba_release,
+	    iwx_ba_drop, sc);
+	return 1;
+}
+
+/* FRAME_RELEASE / BAR_FRAME_RELEASE: the firmware moved the window. */
+void
+iwx_ba_frame_release(struct iwx_softc *sc, int baid, uint16_t nssn)
+{
+	if (baid < 0 || baid >= IWX_MAX_BAID || !sc->sc_ba[baid].active)
+		return;
+	sc->sc_dbg_ba_rel++;
+	iwx_ht_reorder_release(&sc->sc_ba[baid].ro, nssn, iwx_ba_release, sc);
+}
+
+/*
+ * End the session for `tid' (all TIDs if tid < 0).  With `cmd' the
+ * firmware BAID is removed too; stored frames are delivered in order.
+ */
+void
+iwx_ba_stop(struct iwx_softc *sc, int tid, int cmd)
+{
+	struct iwx_rx_baid_cfg_cmd c;
+	uint32_t st;
+	int i;
+
+	for (i = 0; i < IWX_MAX_BAID; i++) {
+		struct iwx_ba_rx *b = &sc->sc_ba[i];
+
+		if (!b->active || (tid >= 0 && b->tid != tid))
+			continue;
+		iwx_ht_reorder_flush(&b->ro, iwx_ba_release, sc);
+		b->active = 0;
+		sc->sc_ba_sessions--;
+		if (!cmd)
+			continue;
+		memset(&c, 0, sizeof(c));
+		c.action = htole32(IWX_RX_BAID_ACTION_REMOVE);
+		if (iwx_lookup_cmd_ver(sc, IWX_DATA_PATH_GROUP,
+		    IWX_RX_BAID_ALLOCATION_CONFIG_CMD) == 1) {
+			c.remove_v1.baid = htole32(i);
+		} else {
+			c.remove.sta_id_mask = htole32(1 << IWX_STATION_ID);
+			c.remove.tid = htole32(b->tid);
+		}
+		st = 0;
+		if (iwx_send_cmd_pdu_status(sc, IWX_WIDE_ID(IWX_DATA_PATH_GROUP,
+		    IWX_RX_BAID_ALLOCATION_CONFIG_CMD), sizeof(c), &c, &st))
+			printf("%s: could not remove BAID %d\n",
+			    device_xname(sc->sc_dev), i);
+	}
+}
+
+/* Forget all sessions without firmware commands (device stop, new BSS). */
+void
+iwx_ba_reset(struct iwx_softc *sc, int deliver)
+{
+	int i, j;
+
+	for (i = 0; i < IWX_MAX_BAID; i++) {
+		struct iwx_ba_rx *b = &sc->sc_ba[i];
+
+		if (b->active && deliver)
+			iwx_ht_reorder_flush(&b->ro, iwx_ba_release, sc);
+		for (j = 0; j < IWX_HT_RO_MAX; j++) {
+			m_freem(b->f[j].m);
+			b->f[j].m = NULL;
+		}
+		b->active = 0;
+	}
+	sc->sc_ba_sessions = 0;
+	sc->sc_ba_start = sc->sc_ba_stop = 0;
+}
+
+/* Answer pending ADDBA requests and apply DELBAs. */
+void
+iwx_ba_task(void *arg)
+{
+	struct iwx_softc *sc = arg;
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct iwx_rx_baid_cfg_cmd c;
+	uint8_t resp[16];
+	uint32_t baid;
+	int tid, s = splnet();
+
+	if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
+	    ic->ic_state != IEEE80211_S_RUN) {
+		sc->sc_ba_start = sc->sc_ba_stop = 0;
+		refcnt_rele_wake(&sc->task_refs);
+		splx(s);
+		return;
+	}
+
+	for (tid = 0; tid < 8; tid++) {
+		if (sc->sc_ba_stop & (1 << tid)) {
+			sc->sc_ba_stop &= ~(1 << tid);
+			iwx_ba_stop(sc, tid, 1);
+		}
+	}
+	for (tid = 0; tid < 8; tid++) {
+		const struct iwx_ht_addba *a = &sc->sc_ba_req[tid];
+		uint16_t size;
+
+		if ((sc->sc_ba_start & (1 << tid)) == 0)
+			continue;
+		sc->sc_ba_start &= ~(1 << tid);
+		iwx_ba_stop(sc, tid, 1);	/* a repeated ADDBA restarts */
+
+		size = (a->bufsize == 0 || a->bufsize > IWX_HT_RO_MAX) ?
+		    IWX_HT_RO_MAX : a->bufsize;
+		memset(&c, 0, sizeof(c));
+		c.action = htole32(IWX_RX_BAID_ACTION_ADD);
+		c.alloc.sta_id_mask = htole32(1 << IWX_STATION_ID);
+		c.alloc.tid = tid;
+		c.alloc.ssn = htole16(a->ssn);
+		c.alloc.win_size = htole16(size);
+		baid = IWX_MAX_BAID;
+		if (iwx_send_cmd_pdu_status(sc, IWX_WIDE_ID(IWX_DATA_PATH_GROUP,
+		    IWX_RX_BAID_ALLOCATION_CONFIG_CMD), sizeof(c), &c, &baid) ||
+		    baid >= IWX_MAX_BAID || sc->sc_ba[baid].active) {
+			uint8_t req[9] = { 3, 0, a->token };
+
+			printf("%s: could not start RX Block Ack for TID %d\n",
+			    device_xname(sc->sc_dev), tid);
+			iwx_ht_put16(req + 3, (uint16_t)((a->bufsize << 6) |
+			    (tid << 2) | 0x2));
+			iwx_ht_send_action(sc, resp,
+			    iwx_ht_addba_decline(req, sizeof(req), resp));
+			continue;
+		}
+		sc->sc_ba[baid].tid = tid;
+		iwx_ht_reorder_init(&sc->sc_ba[baid].ro, a->ssn, size);
+		sc->sc_ba[baid].active = 1;
+		sc->sc_ba_sessions++;
+		iwx_ht_send_action(sc, resp,
+		    iwx_ht_addba_accept(a, IWX_HT_RO_MAX, resp));
+		printf("%s: RX Block Ack TID %d, window %u\n",
+		    device_xname(sc->sc_dev), tid, size);
+	}
+
+	refcnt_rele_wake(&sc->task_refs);
+	splx(s);
+}
+
+/* Decode a rate_n_flags (version 2) value for diagnostics. */
+void
+iwx_dbg_rate(struct iwx_softc *sc, uint32_t r, char *buf, size_t len)
+{
+	static const char *const mod[8] = { "CCK", "OFDM", "HT", "VHT",
+	    "HE", "EHT", "?6", "?7" };
+	unsigned m = (r >> 8) & 7;
+
+	if (sc->sc_rate_n_flags_version < 2) {
+		snprintf(buf, len, "0x%08x (v1)", r);
+		return;
+	}
+	if (m <= 1)
+		snprintf(buf, len, "%s idx %u (0x%08x)", mod[m], r & 7, r);
+	else
+		snprintf(buf, len, "%s MCS %u NSS %u %u MHz (0x%08x)", mod[m],
+		    r & (m == 2 ? 7 : 15), ((r >> 4) & 1) + 1,
+		    20 << ((r >> 11) & 7), r);
+}
+
+/* With IFF_DEBUG, print link counters every 5 seconds and reset them. */
+void
+iwx_dbg_report(struct iwx_softc *sc)
+{
+	struct ifnet *ifp = IC2IFP(&sc->sc_ic);
+	char txr[48], rxr[48];
+	unsigned i, n;
+
+	if ((ifp->if_flags & IFF_DEBUG) == 0 ||
+	    time_uptime - sc->sc_dbg_last < 5)
+		return;
+	sc->sc_dbg_last = time_uptime;
+	iwx_dbg_rate(sc, sc->sc_dbg_tx_rate, txr, sizeof(txr));
+	iwx_dbg_rate(sc, sc->sc_dbg_rx_rate, rxr, sizeof(rxr));
+	printf("%s: tx ok %u fail %u retries %u rate %s\n",
+	    device_xname(sc->sc_dev), sc->sc_dbg_tx_ok, sc->sc_dbg_tx_fail,
+	    sc->sc_dbg_tx_retries, txr);
+	printf("%s: ba baid %u session %u release %u sessions %d\n",
+	    device_xname(sc->sc_dev), sc->sc_dbg_ba_baid, sc->sc_dbg_ba_rx,
+	    sc->sc_dbg_ba_rel, sc->sc_ba_sessions);
+	sc->sc_dbg_ba_baid = sc->sc_dbg_ba_rx = sc->sc_dbg_ba_rel = 0;
+	printf("%s: rx %u (cck %u ofdm %u ht %u vht %u he %u) last %s\n",
+	    device_xname(sc->sc_dev), sc->sc_dbg_rx_frames,
+	    sc->sc_dbg_rx_mod[0], sc->sc_dbg_rx_mod[1], sc->sc_dbg_rx_mod[2],
+	    sc->sc_dbg_rx_mod[3], sc->sc_dbg_rx_mod[4], rxr);
+	n = MIN(sc->sc_dbg_tx_nstatus, nitems(sc->sc_dbg_tx_status));
+	if (n > 0) {
+		printf("%s: tx failure status:", device_xname(sc->sc_dev));
+		for (i = 0; i < n; i++)
+			printf(" 0x%04x", sc->sc_dbg_tx_status[i]);
+		printf("\n");
+	}
+	sc->sc_dbg_tx_ok = sc->sc_dbg_tx_fail = sc->sc_dbg_tx_retries = 0;
+	sc->sc_dbg_tx_nstatus = 0;
+	sc->sc_dbg_rx_frames = 0;
+	memset(sc->sc_dbg_rx_mod, 0, sizeof(sc->sc_dbg_rx_mod));
 }
 
 /* Decide HT/VHT for the BSS node once the association succeeded. */
@@ -9319,6 +9686,7 @@ iwx_auth(struct iwx_softc *sc)
 	/* A new association negotiates HT/VHT from scratch. */
 	sc->sc_bss_ht_valid = 0;
 	in->in_ht = 0;
+	iwx_ba_reset(sc, 0);
 
 	splassert(IPL_NET);
 
@@ -9624,6 +9992,8 @@ iwx_run_stop(struct iwx_softc *sc)
 		iwx_sta_rx_agg(sc, ni, rxba->tid, 0, 0, 0, 0);
 	}
 #endif
+
+	iwx_ba_stop(sc, -1, 1);
 
 	err = iwx_sf_config(sc, IWX_SF_INIT_OFF);
 	if (err)
@@ -10819,6 +11189,8 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 #endif
 	iwx_del_task(sc, sc->sc_systq, &sc->mac_ctxt_task);
 	iwx_del_task(sc, sc->sc_systq, &sc->phy_ctxt_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->sc_ba_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->mcc_task);
 	KASSERT(sc->task_refs.r_refs >= 1);
 	refcnt_finalize(&sc->task_refs, "iwxstop");
 
@@ -10856,6 +11228,7 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 	sc->sc_flags &= ~IWX_FLAG_PHY_ACTIVE;
 
 	memset(sc->aggqid, 0, sizeof(sc->aggqid));
+	iwx_ba_reset(sc, 0);	/* the firmware is gone: just drop */
 
 	sc->sc_newstate(ic, IEEE80211_S_INIT, -1);
 	sc->ns_nstate = IEEE80211_S_INIT;
@@ -11403,11 +11776,31 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data)
  			break;
 		}
 
-#if defined(IWX_HT)
-		case IWX_BAR_FRAME_RELEASE:
-			iwx_rx_bar_frame_release(sc, pkt, ml);
+		case IWX_BAR_FRAME_RELEASE: {
+			struct iwx_bar_frame_release *rel;
+
+			SYNC_RESP_STRUCT(rel, pkt);
+			if (iwx_rx_packet_payload_len(pkt) < sizeof(*rel))
+				break;
+			iwx_ba_frame_release(sc,
+			    (le32toh(rel->ba_info) &
+			    IWX_BAR_FRAME_RELEASE_BAID_MASK) >>
+			    IWX_BAR_FRAME_RELEASE_BAID_SHIFT,
+			    le32toh(rel->ba_info) &
+			    IWX_BAR_FRAME_RELEASE_NSSN_MASK);
 			break;
-#endif
+		}
+
+		case IWX_FRAME_RELEASE: {
+			struct iwx_frame_release *rel;
+
+			SYNC_RESP_STRUCT(rel, pkt);
+			if (iwx_rx_packet_payload_len(pkt) < sizeof(*rel))
+				break;
+			iwx_ba_frame_release(sc, rel->baid,
+			    le16toh(rel->nssn) & 0xfff);
+			break;
+		}
 
 		case IWX_TX_CMD:
 			iwx_rx_tx_cmd(sc, pkt, data);
@@ -11742,8 +12135,17 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data)
 		    IWX_TLC_MNG_UPDATE_NOTIF): {
 			struct iwx_tlc_update_notif *notif;
 			SYNC_RESP_STRUCT(notif, pkt);
-			if (iwx_rx_packet_payload_len(pkt) == sizeof(*notif))
+			if (iwx_rx_packet_payload_len(pkt) == sizeof(*notif) &&
+			    notif->sta_id == IWX_STATION_ID &&
+			    (le32toh(notif->flags) & IWX_TLC_NOTIF_FLAG_RATE) &&
+			    le32toh(notif->rate) != sc->sc_tlc_rate) {
+				char rb[48];
 
+				sc->sc_tlc_rate = le32toh(notif->rate);
+				iwx_dbg_rate(sc, sc->sc_tlc_rate, rb, sizeof(rb));
+				printf("%s: firmware TX rate %s\n",
+				    device_xname(sc->sc_dev), rb);
+			}
 			break;
 		}
 
@@ -12620,6 +13022,7 @@ iwx_config_complete(struct iwx_softc *sc)
 	task_set(&sc->mac_ctxt_task, iwx_mac_ctxt_task, sc);
 	task_set(&sc->phy_ctxt_task, iwx_phy_ctxt_task, sc);
 	task_set(&sc->mcc_task, iwx_mcc_task, sc);
+	task_set(&sc->sc_ba_task, iwx_ba_task, sc);
 #if defined(IWX_HT)
 	task_set(&sc->ba_task, iwx_ba_task, sc);
 	task_set(&sc->setkey_task, iwx_setkey_task, sc);

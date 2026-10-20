@@ -13,18 +13,30 @@ MHz), link, STA and TLC itself; WMM is switched on (net80211 no longer
 does it, `#if 0`); ADDBA requests are declined (an AP dropped the station
 every 15 s while they went unanswered); the country the firmware detects
 (LAR) is applied, so 5 GHz channels become active. Checked on two APs:
-`802.11ac, 80 MHz, 2 spatial streams` with WMM. On OxTech the link
-held 8.5 min including the transfers, then dropped three times within
-20 s while moving between the 2.4 and 5 GHz BSS (cause not found). One
-fatal firmware error was seen while the system was shutting down.
-**Throughput did not improve yet**: about 15-17 Mbit/s each way over the
-office LAN (200 MB `nc` transfers, OxTech, channel 64). The cause is not
-found; candidates are TX errors (`ifconfig -v iwx0` shows output errors,
-`ping` sometimes gets ENETDOWN), the firmware rate choice (TLC updates are
-not logged) and the missing A-MPDU. `modload -i ht=0` restores legacy
-mode, `ht=1` disables VHT.
+`802.11ac, 80 MHz, 2 spatial streams` with WMM.
 
-Still missing: detach/unload, Block Ack (A-MPDU), hardware crypto, MFP
+RX Block Ack (A-MPDU reception) works: ADDBA requests are accepted, the
+firmware allocates a BAID (`RX_BAID_ALLOCATION_CONFIG_CMD` v2), frames go
+through a reorder buffer (`iwx_ht_reorder_*`, host-tested), DELBA and the
+firmware's FRAME_RELEASE / BAR_FRAME_RELEASE are handled; A-MSDU inside
+A-MPDU is refused because net80211's software CCMP would drop subframes
+sharing a PN. A bug that blocked it: management frames in RUN state went
+out at CCK 1 Mbit/s on 5 GHz and failed (`iwx_min_basic_ridx()`), so the
+ADDBA responses never reached the AP.
+
+Measured on OxTech (channel 64, 200 MB `nc` over the LAN): download
+3.85 MB/s (31 Mbit/s, was 17-20 without Block Ack), upload 2.1 MB/s
+(17 Mbit/s). Firmware rates are VHT MCS 8-9 NSS 2 80 MHz, TX failures
+~0, no TCP retransmissions, CPU idle. The limit now is the TX frame
+rate (~1600 frames/s, each frame and each TCP ACK in its own TXOP):
+**TX aggregation** (own ADDBA, per-TID firmware queues) is the next step.
+`ifconfig iwx0 debug` prints TX/RX/Block Ack counters every 5 s. The link
+held 9+ minutes without a drop after these fixes; earlier it dropped while
+moving between the 2.4 and 5 GHz BSS (likely the same 5 GHz management
+rate bug; not re-verified). A fatal firmware error is still seen during
+system shutdown.
+
+Still missing: detach/unload, TX Block Ack, hardware crypto, MFP
 (so WPA3-only networks do not work), RLC_CONFIG v3 (sending the v2
 layout makes the firmware fail, so it is not sent).
 

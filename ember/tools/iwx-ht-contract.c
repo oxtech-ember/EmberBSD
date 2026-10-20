@@ -405,10 +405,142 @@ test_addba(void)
 	}
 }
 
+static int released[64], nreleased, dropped;
+
+static void
+rel(void *ctx, void *pkt)
+{
+	(void)ctx;
+	released[nreleased++] = (int)(intptr_t)pkt - 1;
+}
+
+static void
+drop(void *ctx, void *pkt)
+{
+	(void)ctx; (void)pkt;
+	dropped++;
+}
+
+#define RX(r, sn, nssn, f) iwx_ht_reorder_rx((r), (sn), (nssn), (f), \
+    (void *)(intptr_t)((sn) + 1), rel, drop, NULL)	/* never NULL */
+
+static void
+test_ba_frames(void)
+{
+	static const uint8_t req[] = { 3, 0, 9, 0x1b, 0x10, 0x88, 0x13,
+	    0x50, 0x01 };
+	struct iwx_ht_addba a;
+	uint8_t resp[16];
+
+	/* params 0x101b: A-MSDU, immediate, TID 6, buffer 64; SSC 0x150. */
+	CHECK(iwx_ht_addba_parse(req, sizeof(req), &a) == 0);
+	CHECK(a.token == 9 && a.tid == 6 && a.bufsize == 64 && a.amsdu &&
+	    a.immediate && a.timeout == 5000 && a.ssn == 0x15);
+	CHECK(iwx_ht_addba_parse(req, 8, &a) == -1);
+	CHECK(iwx_ht_addba_accept(&a, 32, resp) == 9);
+	CHECK(resp[0] == 3 && resp[1] == 1 && resp[2] == 9);
+	CHECK(iwx_ht_le16(resp + 3) == 0);
+	/* immediate, TID 6, buffer 32, no A-MSDU */
+	CHECK(iwx_ht_le16(resp + 5) == ((32 << 6) | (6 << 2) | 0x2));
+	CHECK(iwx_ht_le16(resp + 7) == 5000);	/* timeout echoed */
+	{
+		/* Buffer size 0 in the request means "any": use ours. */
+		uint8_t r0[9];
+
+		memcpy(r0, req, 9);
+		iwx_ht_put16(r0 + 3, 0x0002 | (2 << 2));
+		CHECK(iwx_ht_addba_parse(r0, 9, &a) == 0 && a.bufsize == 0);
+		iwx_ht_addba_accept(&a, 64, resp);
+		CHECK(((iwx_ht_le16(resp + 5) >> 6) & 0x3ff) == 64);
+	}
+	{
+		/* DELBA from the originator for TID 5. */
+		uint8_t d[6] = { 3, 2, 0, 0, 37, 0 };
+		int tid, initiator;
+
+		iwx_ht_put16(d + 2, (5 << 12) | (1 << 11));
+		CHECK(iwx_ht_delba_parse(d, 6, &tid, &initiator) == 0 &&
+		    tid == 5 && initiator == 1);
+		CHECK(iwx_ht_delba_parse(d, 5, &tid, &initiator) == -1);
+		d[1] = 1;
+		CHECK(iwx_ht_delba_parse(d, 6, &tid, &initiator) == -1);
+	}
+}
+
+static void
+test_reorder(void)
+{
+	struct iwx_ht_reorder r;
+
+	/* In-order frames are released at once. */
+	iwx_ht_reorder_init(&r, 100, 64);
+	nreleased = dropped = 0;
+	RX(&r, 100, 101, 0);
+	RX(&r, 101, 102, 0);
+	CHECK(nreleased == 2 && released[0] == 100 && released[1] == 101);
+	CHECK(r.head_sn == 102 && r.num_stored == 0);
+
+	/* A hole: 103 and 104 wait until 102 arrives. */
+	nreleased = 0;
+	RX(&r, 103, 102, 0);
+	RX(&r, 104, 102, 0);
+	CHECK(nreleased == 0 && r.num_stored == 2);
+	RX(&r, 102, 105, 0);
+	CHECK(nreleased == 3 && released[0] == 102 && released[1] == 103 &&
+	    released[2] == 104 && r.head_sn == 105 && r.num_stored == 0);
+
+	/* Old or duplicate frames are dropped. */
+	dropped = 0;
+	RX(&r, 104, 105, IWX_HT_RO_OLD_SN);
+	RX(&r, 105, 106, IWX_HT_RO_DUP);
+	CHECK(dropped == 2 && r.head_sn == 105);
+	/* A frame stored twice: the second copy is dropped. */
+	nreleased = dropped = 0;
+	RX(&r, 107, 105, 0);
+	RX(&r, 107, 105, 0);
+	CHECK(dropped == 1 && r.num_stored == 1);
+
+	/* Firmware frame release moves the window over the hole. */
+	iwx_ht_reorder_release(&r, 108, rel, NULL);
+	CHECK(nreleased == 1 && released[0] == 107 && r.head_sn == 108 &&
+	    r.num_stored == 0);
+
+	/* Sequence numbers wrap at 4096. */
+	iwx_ht_reorder_init(&r, 4094, 64);
+	nreleased = 0;
+	RX(&r, 4095, 4094, 0);
+	RX(&r, 0, 4094, 0);
+	CHECK(nreleased == 0 && r.num_stored == 2);
+	RX(&r, 4094, 1, 0);
+	CHECK(nreleased == 3 && released[0] == 4094 && released[1] == 4095 &&
+	    released[2] == 0 && r.head_sn == 1);
+
+	/* Flush releases everything stored, in order. */
+	iwx_ht_reorder_init(&r, 10, 8);
+	nreleased = 0;
+	RX(&r, 12, 10, 0);
+	RX(&r, 15, 10, 0);
+	iwx_ht_reorder_flush(&r, rel, NULL);
+	CHECK(nreleased == 2 && released[0] == 12 && released[1] == 15 &&
+	    r.num_stored == 0);
+
+	/* The first frame of a session with an old SN passes through. */
+	iwx_ht_reorder_init(&r, 50, 64);
+	nreleased = dropped = 0;
+	RX(&r, 40, 50, IWX_HT_RO_OLD_SN);
+	CHECK(nreleased == 1 && dropped == 0 && !r.valid);
+	RX(&r, 50, 51, 0);
+	CHECK(r.valid && nreleased == 2 && r.head_sn == 51);
+	CHECK(IWX_HT_SEQ_LT(4095, 0) && !IWX_HT_SEQ_LT(0, 4095) &&
+	    !IWX_HT_SEQ_LT(7, 7));
+}
+
 int
 main(void)
 {
 	test_addba();
+	test_ba_frames();
+	test_reorder();
 	test_rewrite();
 	test_parse_and_chan();
 	test_tlc();

@@ -473,4 +473,179 @@ iwx_ht_addba_decline(const uint8_t *req, size_t len, uint8_t *resp)
 	return 9;
 }
 
+/* Block Ack (802.11-2020 9.6.4): ADDBA/DELBA and the receive reorder. */
+struct iwx_ht_addba {
+	uint8_t		token;
+	uint8_t		tid;
+	uint8_t		amsdu;
+	uint8_t		immediate;
+	uint16_t	bufsize;	/* 0: the originator lets us choose */
+	uint16_t	timeout;	/* TUs, 0 = none */
+	uint16_t	ssn;		/* starting sequence number */
+};
+
+/* Parse an ADDBA request body.  Returns 0, or -1 if it is not one. */
+static inline int
+iwx_ht_addba_parse(const uint8_t *b, size_t len, struct iwx_ht_addba *a)
+{
+	uint16_t params;
+
+	if (len < 9 || b[0] != 3 || b[1] != 0)
+		return -1;
+	params = iwx_ht_le16(b + 3);
+	a->token = b[2];
+	a->amsdu = params & 0x1;
+	a->immediate = (params >> 1) & 0x1;
+	a->tid = (params >> 2) & 0xf;
+	a->bufsize = (params >> 6) & 0x3ff;
+	a->timeout = iwx_ht_le16(b + 5);
+	a->ssn = iwx_ht_le16(b + 7) >> 4;
+	return 0;
+}
+
+/*
+ * Build an ADDBA response accepting `a' with a window of at most
+ * `ourmax' frames.  A-MSDU in A-MPDU is refused (net80211's software
+ * CCMP would drop subframes sharing a PN).  The timeout is echoed; the
+ * driver keeps no inactivity timer of its own.  Returns the length (9).
+ */
+static inline size_t
+iwx_ht_addba_accept(const struct iwx_ht_addba *a, uint16_t ourmax,
+    uint8_t *resp)
+{
+	uint16_t size = (a->bufsize == 0 || a->bufsize > ourmax) ?
+	    ourmax : a->bufsize;
+
+	resp[0] = 3;
+	resp[1] = 1;
+	resp[2] = a->token;
+	iwx_ht_put16(resp + 3, 0);	/* success */
+	iwx_ht_put16(resp + 5, (uint16_t)((size << 6) | (a->tid << 2) | 0x2));
+	iwx_ht_put16(resp + 7, a->timeout);	/* echo; we never time out */
+	return 9;
+}
+
+/* Parse a DELBA body.  Returns 0, or -1 if it is not one. */
+static inline int
+iwx_ht_delba_parse(const uint8_t *b, size_t len, int *tid, int *initiator)
+{
+	uint16_t params;
+
+	if (len < 6 || b[0] != 3 || b[1] != 2)
+		return -1;
+	params = iwx_ht_le16(b + 2);
+	*initiator = (params >> 11) & 0x1;
+	*tid = (params >> 12) & 0xf;
+	return 0;
+}
+
+#define IWX_HT_SEQ_LT(a, b)	((((a) - (b)) & 0xfff) > 2048)
+#define IWX_HT_RO_OLD_SN	0x1	/* firmware: SN below the window */
+#define IWX_HT_RO_DUP		0x2	/* firmware: duplicate */
+#define IWX_HT_RO_MAX		64
+
+/*
+ * Receive reorder buffer for one BA session, after Linux iwlwifi.  The
+ * firmware gives each MPDU its SN and the window's next expected SN
+ * (NSSN); frames are handed on strictly in SN order.
+ */
+struct iwx_ht_reorder {
+	uint16_t	head_sn;
+	uint16_t	num_stored;
+	uint16_t	buf_size;
+	int		valid;
+	void		*slot[IWX_HT_RO_MAX];
+};
+
+typedef void (*iwx_ht_pkt_fn)(void *, void *);
+
+static inline void
+iwx_ht_reorder_init(struct iwx_ht_reorder *r, uint16_t ssn, uint16_t size)
+{
+	int i;
+
+	r->head_sn = ssn & 0xfff;
+	r->num_stored = 0;
+	r->buf_size = (size == 0 || size > IWX_HT_RO_MAX) ? IWX_HT_RO_MAX : size;
+	r->valid = 0;
+	for (i = 0; i < IWX_HT_RO_MAX; i++)
+		r->slot[i] = NULL;
+}
+
+/* Release stored frames below `nssn' and move the head there. */
+static inline void
+iwx_ht_reorder_release(struct iwx_ht_reorder *r, uint16_t nssn,
+    iwx_ht_pkt_fn release, void *ctx)
+{
+	nssn &= 0xfff;
+	while (IWX_HT_SEQ_LT(r->head_sn, nssn)) {
+		int i = r->head_sn % r->buf_size;
+
+		if (r->slot[i] != NULL) {
+			void *pkt = r->slot[i];
+
+			r->slot[i] = NULL;
+			r->num_stored--;
+			release(ctx, pkt);
+		}
+		r->head_sn = (r->head_sn + 1) & 0xfff;
+	}
+}
+
+/* Release everything stored, in SN order (session teardown). */
+static inline void
+iwx_ht_reorder_flush(struct iwx_ht_reorder *r, iwx_ht_pkt_fn release,
+    void *ctx)
+{
+	int n;
+
+	for (n = 0; n < r->buf_size && r->num_stored > 0; n++)
+		iwx_ht_reorder_release(r, (r->head_sn + 1) & 0xfff, release,
+		    ctx);
+}
+
+/*
+ * Take one MPDU.  Every packet ends in exactly one call of `release'
+ * (now or later, in order) or `drop'.
+ */
+static inline void
+iwx_ht_reorder_rx(struct iwx_ht_reorder *r, uint16_t sn, uint16_t nssn,
+    int flags, void *pkt, iwx_ht_pkt_fn release, iwx_ht_pkt_fn drop,
+    void *ctx)
+{
+	int i;
+
+	sn &= 0xfff;
+	nssn &= 0xfff;
+	if (!r->valid) {
+		if (flags & IWX_HT_RO_OLD_SN) {
+			release(ctx, pkt);	/* sent before the session */
+			return;
+		}
+		r->valid = 1;
+	}
+	if (flags & (IWX_HT_RO_DUP | IWX_HT_RO_OLD_SN)) {
+		drop(ctx, pkt);
+		return;
+	}
+	if (r->num_stored == 0 && IWX_HT_SEQ_LT(sn, nssn)) {
+		r->head_sn = nssn;
+		release(ctx, pkt);
+		return;
+	}
+	if (r->num_stored == 0 && sn == r->head_sn) {
+		r->head_sn = (r->head_sn + 1) & 0xfff;
+		release(ctx, pkt);
+		return;
+	}
+	i = sn % r->buf_size;
+	if (r->slot[i] != NULL) {
+		drop(ctx, pkt);
+		return;
+	}
+	r->slot[i] = pkt;
+	r->num_stored++;
+	iwx_ht_reorder_release(r, nssn, release, ctx);
+}
+
 #endif /* _IF_IWX_HT_H_ */

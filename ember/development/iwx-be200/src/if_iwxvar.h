@@ -843,6 +843,45 @@ struct iwx_softc {
 	uint8_t sc_bss_ht_bssid[ETHER_ADDR_LEN];
 	int sc_bss_ht_valid;
 	uint8_t sc_ht_buf[2][IWX_HT_ASSOC_MAX];
+
+	/* Link diagnostics printed with IFF_DEBUG (iwx_dbg_report()). */
+	time_t sc_dbg_last;
+	uint32_t sc_dbg_tx_ok, sc_dbg_tx_fail, sc_dbg_tx_retries;
+	uint32_t sc_dbg_tx_status[8];	/* last failure codes, ring */
+	uint32_t sc_dbg_tx_nstatus;
+	uint32_t sc_dbg_tx_rate;	/* initial rate of the last data frame */
+	uint32_t sc_dbg_rx_frames;
+	uint32_t sc_dbg_rx_mod[8];	/* by modulation type */
+	uint32_t sc_dbg_rx_rate;	/* last unicast data frame */
+	uint32_t sc_tlc_rate;		/* last TLC_MNG_UPDATE rate */
+	uint32_t sc_dbg_ba_rx;		/* MPDUs that went through a BA session */
+	uint32_t sc_dbg_ba_baid;	/* MPDUs carrying any valid BAID */
+	uint32_t sc_dbg_ba_rel;		/* firmware frame releases */
+
+	/*
+	 * Receive Block Ack sessions, indexed by firmware BAID.  ADDBA and
+	 * DELBA arrive in interrupt context; firmware commands run from
+	 * sc_ba_task with the per-TID requests below.
+	 */
+	struct iwx_ba_rx {
+		int		active;
+		uint8_t		tid;
+		struct iwx_ht_reorder ro;
+		struct iwx_ba_frame {
+			struct mbuf	*m;
+			int		chanidx;
+			uint32_t	status;
+			int		shortpre;
+			uint32_t	rate_n_flags;
+			uint32_t	tstamp;
+			struct ieee80211_rxinfo rxi;
+		} f[IWX_HT_RO_MAX];
+	} sc_ba[IWX_MAX_BAID];
+	struct iwx_ht_addba sc_ba_req[8];
+	uint8_t sc_ba_start;		/* TIDs with an ADDBA to answer */
+	uint8_t sc_ba_stop;		/* TIDs the AP tore down (DELBA) */
+	int sc_ba_sessions;
+	struct task sc_ba_task;
 	int sc_umac_prph_offset;
 	int sc_imr_enabled;
 
