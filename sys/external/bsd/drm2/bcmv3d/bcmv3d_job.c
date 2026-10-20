@@ -19,6 +19,7 @@
 #include <drm/drm_syncobj.h>
 #include "bcmv3d_drv.h"
 #include "bcmv3d_resv.h"
+#include "bcmv3d_cl_reject.h"
 
 #define V3D_INT_STS	0x50
 #define V3D_INT_CLR	0x58
@@ -59,6 +60,8 @@ struct bcmv3d_job {
 	struct bcmv3d_bo *src, *dst;
 	struct bcmv3d_bo *bos[V3D_CSD_BO_MAX];
 	unsigned int nbo;
+	/* Per-device, per-boot admission receipts. Never reset or wrap. */
+	volatile unsigned int cl_rejections;
 	void *ih, *core_ih;
 	const char *stage;
 	bool published, poisoned, controller_masked, core_masked;
@@ -1015,6 +1018,52 @@ bcmv3d_cl_diagnose(struct bcmv3d_device *sc, int error, unsigned int count)
 	    atomic_load_acquire(&job->events), count);
 }
 
+/* Claim at most eight receipts without a shared engine or reservation lock. */
+static bool
+bcmv3d_cl_reject_take(struct bcmv3d_job *job, unsigned int *sample)
+{
+	unsigned int before;
+
+	for (;;) {
+		before = atomic_load_relaxed(&job->cl_rejections);
+		if (before >= BCMV3D_CL_REJECT_MAX)
+			return false;
+		if (atomic_cas_uint(&job->cl_rejections, before, before + 1) ==
+		    before) {
+			*sample = before + 1;
+			return true;
+		}
+	}
+}
+
+/* The receipt contains GPU addresses and scalar UAPI fields, not user pointers. */
+static void
+bcmv3d_cl_reject(struct bcmv3d_device *sc,
+    const struct drm_v3d_submit_cl *a, enum bcmv3d_cl_reject_reason reason,
+    int error)
+{
+	static const char * const names[] = {
+		"none", "header", "duplicate", "sync-bcl", "sync-rcl",
+		"wait-bcl", "wait-rcl", "reservation", "range",
+		"fence-publish", "resv-publish"
+	};
+	unsigned int sample;
+
+	if (error != EINVAL || reason <= BCMV3D_CL_REJECT_NONE ||
+	    (unsigned int)reason >= __arraycount(names))
+		return;
+	if (!bcmv3d_cl_reject_take(sc->job, &sample))
+		return;
+	aprint_error_dev(sc->dev, "CL rejected: sample=%u reason=%s errno=%d "
+	    "bos=%u flags=%#x pad=%#x perfmon=%u extensions-present=%u "
+	    "bcl-start=%#x bcl-end=%#x rcl-start=%#x rcl-end=%#x "
+	    "qma=%#x qms=%#x qts=%#x in-bcl=%u in-rcl=%u out=%u\n",
+	    sample, names[reason], error, a->bo_handle_count, a->flags, a->pad,
+	    a->perfmon_id, (unsigned int)(a->extensions != 0), a->bcl_start,
+	    a->bcl_end, a->rcl_start, a->rcl_end, a->qma, a->qms, a->qts,
+	    a->in_sync_bcl, a->in_sync_rcl, a->out_sync);
+}
+
 int
 bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 {
@@ -1028,14 +1077,17 @@ bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 	unsigned int i, j, count = 0;
 	bool bin = a->bcl_start != a->bcl_end;
 	int error;
+	enum bcmv3d_cl_reject_reason reason = BCMV3D_CL_REJECT_NONE;
 
 	if ((a->flags & ~DRM_V3D_SUBMIT_CL_FLUSH_CACHE) || a->pad ||
 	    a->perfmon_id || a->extensions || a->bo_handle_count == 0 ||
 	    a->bo_handle_count > V3D_CSD_BO_MAX || a->rcl_end == 0 ||
 	    a->rcl_start == a->rcl_end ||
 	    (bin && (a->bcl_end == 0 || !a->qms ||
-	    ((a->qma | a->qms | a->qts) & (PAGE_SIZE - 1)))))
+	    ((a->qma | a->qms | a->qts) & (PAGE_SIZE - 1))))) {
+		bcmv3d_cl_reject(sc, a, BCMV3D_CL_REJECT_HEADER, EINVAL);
 		return -EINVAL;
+	}
 	error = copyin((const void *)(uintptr_t)a->bo_handles, handles,
 	    a->bo_handle_count * sizeof(handles[0]));
 	if (error != 0)
@@ -1049,21 +1101,30 @@ bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 		count++;
 		for (j = 0; j < i; j++) {
 			if (objects[j] == objects[i]) {
+				reason = BCMV3D_CL_REJECT_DUPLICATE;
 				error = EINVAL;
 				goto release;
 			}
 		}
 	}
 	/* Snapshot both dependencies before replacing an aliased output fence. */
+	reason = BCMV3D_CL_REJECT_SYNC_BCL;
 	error = bcmv3d_sync_capture(file, a->in_sync_bcl, a->out_sync, &sync);
-	if (error == 0)
+	if (error == 0) {
+		reason = BCMV3D_CL_REJECT_SYNC_RCL;
 		error = bcmv3d_sync_capture(file, a->in_sync_rcl, 0, &render_sync);
-	if (error == 0)
+	}
+	if (error == 0) {
+		reason = BCMV3D_CL_REJECT_WAIT_BCL;
 		error = bcmv3d_sync_wait(&sync);
-	if (error == 0)
+	}
+	if (error == 0) {
+		reason = BCMV3D_CL_REJECT_WAIT_RCL;
 		error = bcmv3d_sync_wait(&render_sync);
+	}
 	if (error != 0)
 		goto release;
+	reason = BCMV3D_CL_REJECT_RESERVATION;
 	error = bcmv3d_resv_prepare(&reservations, objects, count,
 	    MAX(1, mstohz(1000)));
 	if (error != 0)
@@ -1083,15 +1144,20 @@ bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 	    !bcmv3d_csd_address(job, a->bcl_end - 1, 1) ||
 	    !bcmv3d_csd_address(job, a->qma, a->qms) ||
 	    !bcmv3d_csd_address(job, a->qts, 64)))) {
+		reason = BCMV3D_CL_REJECT_RANGE;
 		error = EINVAL;
 		goto clear;
 	}
+	reason = BCMV3D_CL_REJECT_FENCE_PUBLISH;
 	error = bcmv3d_sync_publish(job, &sync);
 	if (error != 0)
 		goto clear;
+	reason = BCMV3D_CL_REJECT_RESV_PUBLISH;
 	error = bcmv3d_resv_publish(&reservations, sync.fence);
 	if (error != 0)
 		goto clear;
+	/* Execution failures have a separate diagnostic and lifetime contract. */
+	reason = BCMV3D_CL_REJECT_NONE;
 	/* Completion cannot need a reservation held by this submission. */
 	bcmv3d_resv_unlock(&reservations);
 	for (i = 0; i < count; i++)
@@ -1124,6 +1190,7 @@ release:
 	bcmv3d_sync_fini(&sync);
 	while (count != 0)
 		drm_gem_object_put_unlocked(objects[--count]);
+	bcmv3d_cl_reject(sc, a, reason, error);
 	return -error;
 }
 

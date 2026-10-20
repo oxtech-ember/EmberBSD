@@ -82,6 +82,41 @@ These finite reads run only after both IRQ paths are masked and drained.
 They do not acknowledge faults, reset the engine, or release retained BOs.
 
 
+## CL rejection receipts
+
+The native device reports at most eight rejected `SUBMIT_CL` admissions per
+boot. A private per-device CAS counter saturates at eight. A receipt requires
+`EINVAL`; successful jobs and other errors do not consume this budget.
+The ioctl result, admission rules, BO limit, waits and GPU execution are unchanged.
+There is no reset interface.
+
+`reason` identifies `header`, `duplicate`, `sync-bcl`, `sync-rcl`, `wait-bcl`,
+`wait-rcl`, `reservation`, `range`, `fence-publish` or `resv-publish`.
+A reason identifies the failing boundary. It does not assert that each helper
+can currently return `EINVAL` for an otherwise valid request. After admission,
+execution failures use the existing retained-fault diagnostic instead.
+Receipts after BO lookup run after the original reference and lock unwind.
+Header rejection runs before copying the BO handle array.
+
+Each receipt records its sample number, saved errno, requested BO handle count,
+flags, pad, perfmon ID, extension presence, BCL/RCL GPU endpoints, QMA/QMS/QTS,
+and input/output sync IDs. It does not read MMIO or report user pointers,
+BO handle arrays, or BO contents. Concurrent receipts can appear out of sample
+order. These receipts can locate a rejected Mesa request; they do not establish
+that a particular BO count caused a reported draw failure.
+
+Run `ruby ember/tools/bcmv3d-cl-reject-contract.rb` to test the actual UAPI,
+private job/sync structures, range helper, bounded counter, receipt and submit
+body with controlled kernel/DRM services. The test checks every header and
+range branch, duplicate references, helper error routing, post-unwind lifetime,
+the execution poison path, device separation and concurrent saturation.
+Injected helper failures establish routing, not hardware or helper reachability.
+The existing CL, sync, TFU and CSD contracts test their actual helper bodies.
+Set `CL_REJECT_EVIDENCE` to a new directory to retain input hashes, extracted
+bodies, exact commands and compiled causal-control results. `CC`, `CFLAGS`
+and `TEST_RUNNER` select the compiler, instrumentation and execution runner.
+
+
 ## Interfaces and ownership
 
 The UAPI follows the Broadcom-licensed header at Linux

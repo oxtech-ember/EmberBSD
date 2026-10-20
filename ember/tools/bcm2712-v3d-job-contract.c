@@ -3,6 +3,7 @@
 #define BCMV3D_JOB_CONTRACT
 #define BCMV3D_RESV_CONTRACT
 #include "bcm2712-v3d-bo-contract.c"
+#include "../../sys/external/bsd/drm2/bcmv3d/bcmv3d_cl_reject.h"
 #include <time.h>
 #include <stdarg.h>
 #ifndef __arraycount
@@ -31,6 +32,7 @@ static unsigned contract_atomic_load(const volatile unsigned *p)
  return value;
 }
 #define atomic_load_acquire(p) contract_atomic_load(p)
+#define atomic_load_relaxed(p) (*(p))
 #define atomic_store_release(p,v) (*(p)=(v))
 #define atomic_store_relaxed(p,v) (*(p)=(v))
 static unsigned atomic_cas_uint(volatile unsigned *p, unsigned old, unsigned v)
