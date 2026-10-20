@@ -169,7 +169,7 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       matches.first
     end
     File.write(work+'/native-endian.h',notice(endian)+"\n#ifndef __CAST\n#define __CAST(t,v) ((t)(v))\n#endif\n"+endian_functions.join("\n"))
-    helpers=%w[bcmv3d_bootfb_exchange bcmv3d_bootfb_notify bcmv3d_display_read bcmv3d_display_write bcmv3d_display_barrier bcmv3d_display_delay bcmv3d_display_clocks bcmv3d_bootfb_stop_display bcmv3d_bootfb_writeback_idle bcmv3d_bootfb_program_mmu4 bcmv3d_publish_io_error bcmv3d_publish_read bcmv3d_publish_write bcmv3d_publish_barrier bcmv3d_publish_delay bcmv3d_bootfb_publish bcmv3d_bootfb_start_vblank bcmv3d_bootfb_claim_job bcmv3d_bootfb_queue bcmv3d_bootfb_retain bcmv3d_bootfb_cancel bcmv3d_finalize]
+    helpers=%w[bcmv3d_bootfb_exchange bcmv3d_bootfb_notify bcmv3d_display_read bcmv3d_display_write bcmv3d_display_barrier bcmv3d_display_delay bcmv3d_display_clocks bcmv3d_bootfb_stop_display bcmv3d_bootfb_writeback_idle bcmv3d_bootfb_program_mmu4 bcmv3d_publish_io_error bcmv3d_publish_read bcmv3d_publish_write bcmv3d_publish_barrier bcmv3d_publish_delay bcmv3d_bootfb_publish bcmv3d_bootfb_detect bcmv3d_bootfb_start_vblank bcmv3d_bootfb_claim_job bcmv3d_bootfb_queue bcmv3d_bootfb_retain bcmv3d_bootfb_cancel bcmv3d_finalize]
     File.write(work+'/native-job.h',notice(acpi)+(acpi[/^static const unsigned int bcmv3d_display_indices.*?^};/m] || abort("indices absent"))+"\n"+(acpi[/^static const unsigned int bcmv3d_publish_indices.*?^};/m] || abort('publish indices absent'))+"\nstatic void bcmv3d_bootfb_retain(struct bcmv3d_softc *, int);\nstatic void bcmv3d_bootfb_cancel(struct bcmv3d_softc *, int);\n"+helpers.map { |n| function(acpi,n) }.join("\n"))
     ws=File.read(source+'/sys/dev/wscons/wsdisplay.c')
     commit=ws[/^\t\twsdisplay_cons.cn_dev = makedev\(maj,\n\t\t    WSDISPLAYMINOR\(device_unit\(self\), 0\)\);\n\t\twsdisplay_console_generation\+\+;/]
@@ -231,6 +231,13 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       abort 'native handoff positive failed' unless run.call('positive',[*runner,work+'/contract']).success?
     end
 controls={
+"kms-detect-clock"=>["native-job.h", "d->hsm_status.leases != 1 ||", "false ||", "bcmv3d_bootfb_detect(&gpu_sc, &connected) == EPERM"],
+"kms-detect-map"=>["native-job.h", "(p->mapped & (1U << BCMV3D_PUBLISH_HDMI0)) == 0 ||", "false ||", "bcmv3d_bootfb_detect(&gpu_sc, &connected) == EPERM"],
+"kms-detect-bounds"=>["native-job.h", "d->contract.memory[16].length < 0x1cc", "false", "bcmv3d_bootfb_detect(&gpu_sc, &connected) == EPERM"],
+"kms-detect-firmware"=>["native-job.h", "!owner->firmware.complete ||", "false ||", "bcmv3d_bootfb_detect(&gpu_sc, &connected) == EPERM"],
+"kms-detect-bit"=>["native-job.h", "(value & 1U) != 0", "value != 0", "connected == ((raw & 1) != 0)"],
+"kms-detect-io-error"=>["native-job.h", "return EIO;", "return 0;", "bcmv3d_bootfb_detect(&gpu_sc, &connected) == EIO && connected"],
+"kms-bind-call"=>["native-job.h", "error = bcmv3d_kms_bind(owner->renderer, bcmv3d_bootfb_detect, sc);", "error = ((void)bcmv3d_kms_bind, 0);", "kms_bind_calls == 1 && kms_hpd_reads == 1"],
 'hvs-owner-attempt'=>['native-job.h','p->attempted = p->executing = true;','p->executing = true;','gpu_sc.sc_bootfb.publish.attempted'],
 'hvs-owner-range-call'=>['native-job.h',"if (error == 0)\n\t\tcheck_error = bcmv3d_mmu4_check_ranges", "if (error != 0)\n\t\tcheck_error = bcmv3d_mmu4_check_ranges",'gpu_sc.sc_bootfb.publish.status.complete'],
 'hvs-owner-range-lifetime'=>['native-job.h',"if (error == 0)\n\t\tcheck_error = bcmv3d_mmu4_check_ranges", "if (error == 0 && (p->executing = true))\n\t\tcheck_error = bcmv3d_mmu4_check_ranges",'!gpu_sc.sc_bootfb.publish.executing'],
@@ -341,7 +348,11 @@ controls={
       selected.each do |name|
         path,before,after,expected=controls.fetch(name);before=before.gsub('\\n', "\n").gsub('\\t', "\t");text=File.read(work+'/'+path)
         abort 'control anchor absent '+name unless text.include?(before)
-        if name.start_with?('hvs-owner-') || name.start_with?('hvs-read-') || name.start_with?('hvs-write-')
+        if name.start_with?('kms-detect-')
+          body=function(text,'bcmv3d_bootfb_detect')
+          abort 'scoped control anchor absent '+name unless body.include?(before)
+          mutated=text.sub(body,body.sub(before,after))
+        elsif name.start_with?('hvs-owner-') || name.start_with?('hvs-read-') || name.start_with?('hvs-write-')
           fn=name.start_with?('hvs-read-') ? 'bcmv3d_publish_read' : name.start_with?('hvs-write-') ? 'bcmv3d_publish_write' : 'bcmv3d_bootfb_publish'
           body=function(text,fn)
           abort 'scoped control anchor absent '+name unless body.include?(before)

@@ -78,6 +78,7 @@ int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
 #include <external/bsd/drm2/bcmv3d/bcmv3d_hvs_publish.h>
 #include <external/bsd/drm2/bcmv3d/bcmv3d_vblank_native.h>
 #include <external/bsd/drm2/bcmv3d/bcmv3d_scanout.h>
+#include <external/bsd/drm2/bcmv3d/bcmv3d_kms.h>
 #include <external/bsd/drm2/bcmv3d/bcmv3d_mmu4_check.h>
 #ifndef BCM2712_DISPLAY_COMPONENTS
 #error "BCM2712 native handoff requires the builtin display components"
@@ -938,7 +939,36 @@ out:
 	return error;
 }
 
+/* Read HPD through the same retained canonical HDMI0 map and clock owners. */
+static int
+bcmv3d_bootfb_detect(void *arg, bool *connected)
+{
+	struct bcmv3d_softc *sc = arg;
+	struct bcmv3d_bootfb_owner *owner = &sc->sc_bootfb;
+	struct bcmv3d_bootfb_publish *p = &owner->publish;
+	struct bcmv3d_display_stop *d = &owner->display;
+	uint32_t value;
+
+	if (connected == NULL || device_private(sc->sc_dev) != sc ||
+	    owner->phase != BCMV3D_BOOTFB_CLOSED || owner->first_error != 0 ||
+	    owner->renderer == NULL || !owner->firmware.complete ||
+	    owner->firmware.fault != 0 || !d->complete || d->fault != 0 ||
+	    d->hsm == NULL || d->bvb == NULL || d->core == NULL || d->disp == NULL ||
+	    d->hsm_status.leases != 1 || d->bvb_status.leases != 1 ||
+	    d->core_status.leases != 1 || d->disp_status.leases != 1 ||
+	    !p->complete || p->fault != 0 || p->executing ||
+	    (p->mapped & (1U << BCMV3D_PUBLISH_HDMI0)) == 0 ||
+	    d->contract.memory[16].length < 0x1cc)
+		return EPERM;
+	if (bus_space_peek_4(sc->sc_bst, p->maps[BCMV3D_PUBLISH_HDMI0],
+	    0x1c8, &value) != 0)
+		return EIO;
+	*connected = (value & 1U) != 0;
+	return 0;
+}
+
 /* A new retained runtime owner borrows maps, not the one-shot execute flag. */
+
 static int
 bcmv3d_bootfb_start_vblank(struct bcmv3d_softc *sc)
 {
@@ -974,7 +1004,14 @@ bcmv3d_bootfb_start_vblank(struct bcmv3d_softc *sc)
 		    p->frame.variant, p->cxm_words, &scanout);
 		KERNEL_LOCK(count, NULL);
 		aprint_normal_dev(sc->sc_dev, "native HVS consumer owner: "
-		    "error %d; no DRM/KMS registration\n", error);
+		    "error %d; retained native frames\n", error);
+	}
+	if (error == 0) {
+		KERNEL_UNLOCK_ALL(NULL, &count);
+		error = bcmv3d_kms_bind(owner->renderer, bcmv3d_bootfb_detect, sc);
+		KERNEL_LOCK(count, NULL);
+		aprint_normal_dev(sc->sc_dev, "native DRM/KMS bind: error %d; "
+		    "fixed1080p60, real PV0/HVS, HPD polling\n", error);
 	}
 	return error;
 }

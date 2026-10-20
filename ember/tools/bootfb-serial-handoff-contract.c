@@ -411,8 +411,27 @@ static int native_status(struct wsdisplay_bootfb_lease *l, struct simplefb_conso
 #include "bootfb-hvs-services.h"
 #define simplefb_console_close_status(...) native_status(__VA_ARGS__)
 
+static bool kms_detect_read;
+static unsigned kms_hpd_reads, kms_bind_calls;
+static int kms_hpd_error, kms_bind_error;
+static uint32_t kms_hpd_value;
+static int
+kms_display_peek(bus_space_tag_t t, bus_space_handle_t h, uint32_t offset,
+    uint32_t *value)
+{
+	if (!kms_detect_read)
+		return display_peek(t, h, offset, value);
+	CHECK(t == &tag && giant == 0 && value != NULL);
+	CHECK(h == gpu_sc.sc_bootfb.publish.maps[BCMV3D_PUBLISH_HDMI0]);
+	CHECK(offset == 0x1c8);
+	kms_hpd_reads++;
+	if (kms_hpd_error != 0)
+		return kms_hpd_error;
+	*value = kms_hpd_value;
+	return 0;
+}
 #define bus_space_map display_map
-#define bus_space_peek_4 display_peek
+#define bus_space_peek_4 kms_display_peek
 #define bus_space_poke_4 display_poke
 #define bus_space_barrier display_barrier
 #define delay(us) display_delay(us)
@@ -478,7 +497,22 @@ bcmv3d_scanout_create(struct bcmv3d_device *r,
 	*out = &scanout_fixture;
 	return 0;
 }
+static int
+bcmv3d_kms_bind(struct bcmv3d_device *r, int (*detect)(void *, bool *), void *arg)
+{
+	bool connected = false;
+
+	CHECK(giant == 0 && r == fixture_renderer && arg == &gpu_sc);
+	CHECK(vblank_calls == 1 && scanout_calls == 1 && detect != NULL);
+	CHECK(gpu_sc.sc_bootfb.publish.complete && !gpu_sc.sc_bootfb.publish.executing);
+	kms_bind_calls++;
+	kms_detect_read = true;
+	CHECK(detect(arg, &connected) == 0 && connected);
+	kms_detect_read = false;
+	return kms_bind_error;
+}
 #include "native-job.h"
+
 
 #undef bcmv3d_mmu4_native_create
 #undef bcmv3d_mmu4_native_prepare
@@ -526,6 +560,8 @@ display_initialize();
 	hvs_permitted = true; hvs_reenter = hvs_progress_delayed = hvs_progress_stuck = false;
 	hvs_tuple_error = 0; hvs_partial = hvs_bypass = false; hvs_bypass_mix = 0;
 	range_check_calls = 0; range_check_error = 0; vblank_calls = 0; scanout_calls = 0;
+	kms_bind_calls = kms_hpd_reads = 0; kms_detect_read = false;
+	kms_hpd_error = kms_bind_error = 0; kms_hpd_value = 1;
 	hvs_profile_fault = hvs_read_fault = hvs_write_fault = hvs_ignore_write = 0;
 	hvs_query_error = 0; hvs_cxm = 1024; hvs_timeout = hvs_eof = false; hvs_busy[0] = hvs_busy[1] = 0; hvs_callback_case = 0;
 	config_finalize_done = 0; init_started = false; joined = 0;
@@ -1164,12 +1200,73 @@ for (unsigned variant = 0x53; variant <= 0x54; variant++) {
 	hvs_profile_boot(0x54,false); hvs_query_error = EIO; native_finish(); p = &gpu_sc.sc_bootfb.publish;
 	CHECK(p->fault == EIO && p->status.complete && p->progress_error == EIO && !p->progress_valid[1]); hvs_retry(EIO);
 }
+static void
+tests_kms_detect(void)
+{
+	struct bcmv3d_bootfb_owner saved;
+	bool connected;
+	unsigned before;
+
+	hvs_profile_boot(0x54, false);
+	native_finish();
+	CHECK(kms_bind_calls == 1 && kms_hpd_reads == 1);
+	saved = gpu_sc.sc_bootfb;
+	for (unsigned gate = 0; gate < 21; gate++) {
+		gpu_sc.sc_bootfb = saved;
+		gpu.private = &gpu_sc;
+		switch (gate) {
+		case 0: gpu.private = NULL; break;
+		case 1: gpu_sc.sc_bootfb.phase = BCMV3D_BOOTFB_RETAINED; break;
+		case 2: gpu_sc.sc_bootfb.first_error = EIO; break;
+		case 3: gpu_sc.sc_bootfb.renderer = NULL; break;
+		case 4: gpu_sc.sc_bootfb.firmware.complete = false; break;
+		case 5: gpu_sc.sc_bootfb.firmware.fault = EIO; break;
+		case 6: gpu_sc.sc_bootfb.display.complete = false; break;
+		case 7: gpu_sc.sc_bootfb.display.fault = EIO; break;
+		case 8: gpu_sc.sc_bootfb.display.hsm = NULL; break;
+		case 9: gpu_sc.sc_bootfb.display.bvb_status.leases = 0; break;
+		case 10: gpu_sc.sc_bootfb.display.core_status.leases = 0; break;
+		case 11: gpu_sc.sc_bootfb.display.disp_status.leases = 0; break;
+		case 12: gpu_sc.sc_bootfb.publish.complete = false; break;
+		case 13: gpu_sc.sc_bootfb.publish.fault = EIO; break;
+		case 14: gpu_sc.sc_bootfb.publish.executing = true; break;
+		case 15: gpu_sc.sc_bootfb.publish.mapped &= ~(1U << BCMV3D_PUBLISH_HDMI0); break;
+		case 16: gpu_sc.sc_bootfb.display.contract.memory[16].length = 0x1c8; break;
+		case 17: gpu_sc.sc_bootfb.display.hsm_status.leases = 0; break;
+		case 18: gpu_sc.sc_bootfb.display.bvb = NULL; break;
+		case 19: gpu_sc.sc_bootfb.display.core = NULL; break;
+		case 20: gpu_sc.sc_bootfb.display.disp = NULL; break;
+		}
+		before = kms_hpd_reads;
+		connected = true;
+		kms_detect_read = true;
+		CHECK(bcmv3d_bootfb_detect(&gpu_sc, &connected) == EPERM);
+		CHECK(kms_hpd_reads == before && connected);
+		kms_detect_read = false;
+	}
+	gpu_sc.sc_bootfb = saved;
+	gpu.private = &gpu_sc;
+	kms_detect_read = true;
+	before = kms_hpd_reads;
+	CHECK(bcmv3d_bootfb_detect(&gpu_sc, NULL) == EPERM && kms_hpd_reads == before);
+	for (unsigned raw = 0; raw < 4; raw++) {
+		kms_hpd_value = raw;
+		CHECK(bcmv3d_bootfb_detect(&gpu_sc, &connected) == 0);
+		CHECK(connected == ((raw & 1) != 0));
+	}
+	kms_hpd_error = EIO;
+	connected = true;
+	CHECK(bcmv3d_bootfb_detect(&gpu_sc, &connected) == EIO && connected);
+	kms_detect_read = false;
+	kms_hpd_error = 0;
+}
 int main(void)
 {
+
 	pthread_mutexattr_t a;
 	CHECK(pthread_mutexattr_init(&a) == 0 && pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE) == 0);
 	CHECK(pthread_mutex_init(&giant_mutex, &a) == 0 && pthread_mutexattr_destroy(&a) == 0);
-	tests_native(); tests_firmware(); tests_display(); tests_mmu4(); tests_hvs();
+	tests_native(); tests_firmware(); tests_display(); tests_mmu4(); tests_hvs(); tests_kms_detect();
 	CHECK(giant == 0 && read_depth == 0 && creates == destroys && init_started);
 	(void)bootfb_mmu4_reboot();
 	display_initialize();

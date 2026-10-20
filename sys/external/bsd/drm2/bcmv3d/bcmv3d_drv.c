@@ -20,6 +20,8 @@
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 #include "bcmv3d_vblank_native.h"
 #include "bcmv3d_scanout.h"
+#include "bcmv3d_dumb.h"
+#include "bcmv3d_kms.h"
 #endif
 
 /* Compute the total BO budget once, before the first reservation. */
@@ -202,7 +204,14 @@ static const struct drm_ioctl_desc bcmv3d_ioctls[] = {
 };
 
 static struct drm_driver bcmv3d_driver = {
-	.driver_features = DRIVER_GEM | DRIVER_RENDER | DRIVER_SYNCOBJ,
+	.driver_features = DRIVER_GEM | DRIVER_RENDER | DRIVER_SYNCOBJ
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	    | DRIVER_MODESET | DRIVER_ATOMIC
+#endif
+	    ,
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	.dumb_create = bcmv3d_dumb_create,
+#endif
 	.ioctls = bcmv3d_ioctls,
 	.num_ioctls = __arraycount(bcmv3d_ioctls),
 	.mmap_object = drm_gem_mmap_object,
@@ -278,6 +287,10 @@ bcmv3d_render_attach(device_t self, bus_space_tag_t bst, bus_dma_tag_t dmat,
 	error = -drm_dev_set_unique(dev, device_xname(self));
 	if (error == 0)
 		error = bcmv3d_job_init(sc);
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	if (error == 0)
+		error = bcmv3d_kms_init(sc);
+#endif
 	if (error == 0)
 		error = -drm_dev_register(dev, 0);
 	if (error != 0)
@@ -289,6 +302,9 @@ bcmv3d_render_attach(device_t self, bus_space_tag_t bst, bus_dma_tag_t dmat,
 	*out = sc;
 	return 0;
 fail:
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	bcmv3d_kms_fini(sc);
+#endif
 	sysctl_teardown(&sc->sysctllog);
 	bcmv3d_job_fini(sc);
 	if (sc->va != NULL)

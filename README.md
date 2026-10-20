@@ -663,10 +663,12 @@ on every board in the hardware catalog.
   Shared-cache recovery and the complete Frameworks runtime remain unaccepted.
   Remaining module runtimes, playback and HDMI/remote Plasma sessions remain pending. A [firmware display probe](ember/tools/efi-display/README.md)
   confirmed a 1920x1080 HDMI console on Raspberry Pi 5 after a cold power cycle.
-  The current [CM5 display boundary](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
-  is a working firmware/genfb console at 1920x1080. The V3D render node
-  rejects DRM mode-resource queries; it does not supply a display controller.
-  Native BCM2712 KMS mode setting and accelerated scanout remain unaccepted.
+  The manual CM5 profile now presents native mutable GEM frames through HVS
+  at 1920x1080. Three real latches and two later-frame retirements pass.
+  The [fixed-mode KMS integration](ember/boot/bcmv3d-kms.md) adds DRM display
+  objects to that same V3D device. Physical DRM flips and HDMI Plasma remain
+  separate acceptance steps. The [Ports session guide](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
+  describes the previously checked virtual output.
   A complete mobile shell workflow, native display and power management
   still need validation. See the [Plasma Mobile port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile).
 
@@ -791,8 +793,12 @@ It grants no absence admission or display ownership.
   now passes native MMU4 programming and a physical [HVS/PV0 test frame](ember/boot/bcmv3d-hvs-publish.md).
   All eight color bars display in order through the retained HDMI0 profile.
   Four native GPU regressions also pass with HVS enabled.
-  DRM/KMS, page flips, buffer retirement and physical HDMI Plasma remain open.
-  DRM hotplug delivery, physical extension reads and KMS scanout remain open.
+  The [native scanout owner](ember/boot/bcmv3d-scanout.md) also passes three
+  mutable GEM frames, three real latches and two subsequent retirements on CM5.
+  The final blue/white checkerboard displays without corruption. Four native GPU
+  regressions pass while that scanout remains active. The optional
+  [KMS layer](ember/boot/bcmv3d-kms.md) is source-tested. Physical DRM page flips,
+  HDMI Plasma, persistent HPD IRQ/DDC integration and EDID mode selection remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.
@@ -1087,7 +1093,7 @@ It grants no absence admission or display ownership.
   Same-device PRIME passes 80 cross-process lifecycles and four real
   GBM/EGLImage shader/pixel cycles after native DMA-BUF lifetime repairs.
   The ordinary kernel remains a passive observer. General job recovery,
-  foreign-device sharing, Vulkan, HDMI presentation and accelerated Plasma remain unverified.
+  foreign-device sharing, Vulkan, physical DRM/KMS presentation and HDMI Plasma remain unverified. Native HVS GEM presentation is checked above.
 
 ### Optional command shells
 
