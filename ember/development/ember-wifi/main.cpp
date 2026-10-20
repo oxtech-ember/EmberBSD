@@ -20,12 +20,15 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
 
 #include <cstring>
+#include <optional>
 
 static const char *kCtrlDir = "/var/run/wpa_supplicant";
 
@@ -330,21 +333,23 @@ private:
 		}
 	}
 
-	const wpa::Network *selected()
+	// A copy: the dialogs below run a nested event loop, and the timer
+	// may rebuild nets_ while they are open.
+	std::optional<wpa::Network> selected()
 	{
 		auto *it = list_->currentItem();
 		if (!it)
-			return nullptr;
+			return std::nullopt;
 		std::string ssid = it->data(Qt::UserRole).toString().toStdString();
 		for (const auto &n : nets_)
 			if (n.ssid == ssid)
-				return &n;
-		return nullptr;
+				return n;
+		return std::nullopt;
 	}
 
 	void connectSelected()
 	{
-		const wpa::Network *n = selected();
+		const std::optional<wpa::Network> n = selected();
 		if (!n)
 			return;
 		std::string ssid = n->ssid;
@@ -394,7 +399,7 @@ private:
 
 	void forgetSelected()
 	{
-		const wpa::Network *n = selected();
+		const std::optional<wpa::Network> n = selected();
 		if (!n)
 			return;
 		int id = wpa::findNetwork(saved_, n->ssid);
@@ -461,6 +466,12 @@ private:
 
 int main(int argc, char **argv)
 {
+	// One instance per machine: the session autostart and a manual start
+	// would otherwise show two tray icons.
+	int lock = ::open("/tmp/ember-wifi.lock", O_RDWR | O_CREAT, 0600);
+	if (lock < 0 || ::flock(lock, LOCK_EX | LOCK_NB) != 0)
+		return 0;
+
 	QApplication app(argc, argv);
 	app.setQuitOnLastWindowClosed(false);
 	app.setApplicationName("ember-wifi");
