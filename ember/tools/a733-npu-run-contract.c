@@ -30,6 +30,7 @@ struct sun60i_a733_npu_dma_info {
  uint32_t pd_entry, command_virtual;
  size_t command_bytes; bool retained; uint32_t profile;
 };
+#define A733_NPU_NN_COMMAND_BYTES 144
 #define A733_NPU_DMA_PROFILE_FE 1
 #define A733_NPU_DMA_PROFILE_TASK 2
 #include "sun60i_a733_npu_run.h"
@@ -295,8 +296,102 @@ static void reset(void)
 }
 static int run(void)
 { return sun60i_a733_npu_run_once(&state,&bus_token,&clock1,9,&cookie,7,"npu",&context); }
+
+static void
+completion_contract(void)
+{
+	struct sun60i_a733_npu_dma other = { 0 };
+	struct sun60i_a733_npu_run_status saved;
+	unsigned io;
+
+	reset();
+	CHECK(!sun60i_a733_npu_run_task_completed(NULL, &context));
+	CHECK(!sun60i_a733_npu_run_task_completed(&state, NULL));
+	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+	CHECK(run() == 0);
+	io = peeks + ordinary_reads + writes + maps + removed;
+	/* Real FE completion cannot grant a TASK output read. */
+	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+	state.profile = A733_NPU_DMA_PROFILE_TASK;
+	state.bound_dma = &context;
+	state.status.command_bytes = 144;
+	/* This cache-only fixture state is not a hardware TASK result. */
+	CHECK(sun60i_a733_npu_run_task_completed(&state, &context));
+	saved = state.status;
+	uint32_t *required_one[] = {
+		&state.status.attempted, &state.status.publication_attempted,
+		&state.status.retained, &state.status.started,
+		&state.status.terminal, &state.status.snapshot_valid
+	};
+	for (unsigned i = 0;
+	    i < sizeof(required_one) / sizeof(required_one[0]); i++) {
+		for (unsigned value = 0; value <= 2; value += 2) {
+			*required_one[i] = value;
+			CHECK(!sun60i_a733_npu_run_task_completed(&state,
+			    &context));
+			state.status = saved;
+		}
+	}
+	uint32_t *required_zero[] = {
+		&state.status.error, &state.status.irq_fault,
+		&state.status.irq_mask_readback, &state.status.terminal_status
+	};
+	for (unsigned i = 0;
+	    i < sizeof(required_zero) / sizeof(required_zero[0]); i++) {
+		*required_zero[i] = 1;
+		CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+		state.status = saved;
+	}
+	uint32_t *literals[] = {
+		&state.status.step, &state.status.command_bytes,
+		&state.status.irq_raw, &state.status.irq_bits,
+		&state.status.terminal_idle[0], &state.status.terminal_idle[1],
+		&state.status.terminal_dma[0], &state.status.terminal_dma[1]
+	};
+	for (unsigned i = 0; i < sizeof(literals) / sizeof(literals[0]); i++) {
+		*literals[i] ^= 1;
+		CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+		state.status = saved;
+	}
+	state.status.irq_baseline = state.status.irq_count;
+	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+	state.status = saved;
+	const uint32_t badva[] = { 0, 0x01000fff, 0x01002000, UINT32_MAX };
+	for (unsigned i = 0; i < sizeof(badva) / sizeof(badva[0]); i++) {
+		state.status.terminal_dma[0] = state.status.terminal_dma[1] =
+		    badva[i];
+		CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+		state.status = saved;
+	}
+	state.armed = true;
+	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+	state.armed = false;
+	state.mapped = false;
+	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+	state.mapped = true;
+	void *ih = state.ih;
+	state.ih = NULL;
+	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+	state.ih = ih;
+	CHECK(!sun60i_a733_npu_run_task_completed(&state, &other));
+	state.bound_dma = &other;
+	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+	state.bound_dma = &context;
+	state.profile = A733_NPU_DMA_PROFILE_FE;
+	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+	state.profile = 0;
+	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+	state.profile = A733_NPU_DMA_PROFILE_TASK;
+	state.lock_initialized = false;
+	CHECK(!sun60i_a733_npu_run_task_completed(&state, &context));
+	state.lock_initialized = true;
+	CHECK(sun60i_a733_npu_run_task_completed(&state, &context));
+	CHECK(io == peeks + ordinary_reads + writes + maps + removed);
+}
+
 int main(void)
 {
+ completion_contract();
  reset(); int result=run();
  if (result != 0)
   fprintf(stderr,"command-address baseline: error=%d step=%u readback=%#x started=%u retained=%u irq=%llu\n",

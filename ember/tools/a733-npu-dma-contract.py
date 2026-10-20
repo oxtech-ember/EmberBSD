@@ -15,7 +15,8 @@ def main():
     root = Path(os.environ.get("NPU_DMA_SOURCE_ROOT", tools.parent.parent))
     with tempfile.TemporaryDirectory(prefix="a733-npu-dma-") as directory:
         work = Path(directory)
-        for stem in ("sun60i_a733_npu_mmu", "sun60i_a733_npu_dma"):
+        for stem in ("sun60i_a733_npu_mmu", "sun60i_a733_npu_dma",
+                     "sun60i_a733_npu_nn", "sun60i_a733_npu_run"):
             for suffix in ("c", "h"):
                 name = f"{stem}.{suffix}"
                 source = (root / "sys/arch/arm/sunxi" / name).read_text()

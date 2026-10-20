@@ -22,6 +22,8 @@ struct sun60i_a733_npu_run {
 	void *ih;
 	kmutex_t irq_lock;
 	bool lock_initialized, mapped, armed;
+	uint32_t profile;
+	const struct sun60i_a733_npu_dma *bound_dma;
 	struct sun60i_a733_npu_run_status status;
 };
 /*
@@ -34,6 +36,13 @@ struct sun60i_a733_npu_run {
 int sun60i_a733_npu_run_once(struct sun60i_a733_npu_run *, bus_space_tag_t,
     struct clk *, int, const void *, int, const char *,
     struct sun60i_a733_npu_dma *);
+/*
+ * Cache-only completion gate for the exact TASK DMA identity. FE completion
+ * never grants permission to read TASK output. Caller serializes the context.
+ * This does not replace the mandatory final live proof after comparison.
+ */
+bool sun60i_a733_npu_run_task_completed(struct sun60i_a733_npu_run *,
+    const struct sun60i_a733_npu_dma *);
 /* Copy cached state under its IRQ spin lock. This performs no hardware I/O. */
 void sun60i_a733_npu_run_status(struct sun60i_a733_npu_run *,
     struct sun60i_a733_npu_run_status *);

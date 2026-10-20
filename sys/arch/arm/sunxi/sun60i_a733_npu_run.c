@@ -294,6 +294,35 @@ sun60i_a733_npu_run_status(struct sun60i_a733_npu_run *s,
 		mutex_exit(&s->irq_lock);
 }
 
+bool
+sun60i_a733_npu_run_task_completed(struct sun60i_a733_npu_run *s,
+    const struct sun60i_a733_npu_dma *dma)
+{
+	bool completed;
+
+	if (s == NULL || dma == NULL || !s->lock_initialized)
+		return false;
+	mutex_enter(&s->irq_lock);
+	completed = s->profile == A733_NPU_DMA_PROFILE_TASK &&
+	    s->bound_dma == dma && s->mapped && s->ih != NULL && !s->armed &&
+	    s->status.attempted == 1 && s->status.publication_attempted == 1 &&
+	    s->status.retained == 1 && s->status.started == 1 &&
+	    s->status.terminal == 1 && s->status.error == 0 &&
+	    s->status.snapshot_valid == 1 && s->status.step == 13 &&
+	    s->status.irq_raw == 0x10 &&
+	    s->status.command_bytes == A733_NPU_NN_COMMAND_BYTES &&
+	    s->status.irq_count > s->status.irq_baseline &&
+	    s->status.irq_bits == 0x10 && s->status.irq_fault == 0 &&
+	    s->status.irq_mask_readback == 0 && s->status.terminal_status == 0 &&
+	    s->status.terminal_idle[0] == 0x7fffffff &&
+	    s->status.terminal_idle[1] == 0x7fffffff &&
+	    s->status.terminal_dma[0] == s->status.terminal_dma[1] &&
+	    s->status.terminal_dma[1] >= 0x01001000 &&
+	    s->status.terminal_dma[1] - 0x01001000 < 4096;
+	mutex_exit(&s->irq_lock);
+	return completed;
+}
+
 int
 sun60i_a733_npu_run_once(struct sun60i_a733_npu_run *s, bus_space_tag_t bst,
     struct clk *clock, int power, const void *owner, int phandle,

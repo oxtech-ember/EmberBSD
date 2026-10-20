@@ -8,6 +8,7 @@
 #include <sys/systm.h>
 #include <arm/sunxi/sun60i_a733_npu_mmu.h>
 #include <arm/sunxi/sun60i_a733_npu_dma.h>
+#include <arm/sunxi/sun60i_a733_npu_run.h>
 
 #define NPU_DMA_PAGE 4096
 #define NPU_DMA_LIMIT (UINT64_C(1) << 32)
@@ -31,6 +32,9 @@ struct sun60i_a733_npu_dma {
 	size_t command_bytes, constants_bytes, input_bytes;
 	uint32_t pd_entry, profile;
 	bool retained;
+	struct sun60i_a733_npu_run *task_run;
+	const struct sun60i_a733_npu_dma_task_reference *task_reference;
+	struct sun60i_a733_npu_dma_task_report task_report;
 };
 
 static size_t
@@ -381,4 +385,188 @@ sun60i_a733_npu_dma_retain(struct sun60i_a733_npu_dma *m)
 		    (m->profile == A733_NPU_DMA_PROFILE_TASK && i == 5 ?
 		    BUS_DMASYNC_PREREAD : 0));
 	return 0;
+}
+
+/* No DMA data is read by the metadata and external-span checks. */
+static int
+npu_dma_task_metadata(const struct sun60i_a733_npu_dma *m)
+{
+	static const size_t sizes[NPU_DMA_TASK_NBUFFERS] = {
+		NPU_DMA_PAGE, A733_NPU_MMU_STLB_BYTES, NPU_DMA_PAGE,
+		NPU_DMA_PAGE, NPU_DMA_PAGE, NPU_DMA_PAGE
+	};
+	uint32_t pd_entry;
+
+	if (m == NULL || sizeof(*m) > UINTPTR_MAX - (uintptr_t)m ||
+	    m->profile != A733_NPU_DMA_PROFILE_TASK || m->tag == NULL ||
+	    m->command_bytes != A733_NPU_NN_COMMAND_BYTES ||
+	    m->constants_bytes != A733_NPU_NN_CONSTANT_BYTES ||
+	    m->input_bytes != A733_NPU_NN_INPUT_BYTES)
+		return EINVAL;
+	for (size_t i = 0; i < NPU_DMA_TASK_NBUFFERS; i++) {
+		const struct npu_dma_buffer *b = &m->buffers[i];
+
+		if (!b->loaded || b->cpu == NULL || b->map == NULL ||
+		    b->bytes != sizes[i] || b->nsegments != 1 ||
+		    b->segment.ds_len != sizes[i] ||
+		    b->segment.ds_addr != b->address ||
+		    sizeof(*b->map) > UINTPTR_MAX - (uintptr_t)b->map ||
+		    sizes[i] > UINTPTR_MAX - (uintptr_t)b->cpu ||
+		    (b->address & (NPU_DMA_PAGE - 1)) != 0 ||
+		    b->address >= NPU_DMA_LIMIT || sizes[i] > NPU_DMA_LIMIT - b->address ||
+		    (b->map->_dm_flags & _BUS_DMAMAP_IS_BOUNCING) != 0 ||
+		    b->map->dm_nsegs != 1 || b->map->dm_mapsize != sizes[i] ||
+		    b->map->dm_segs[0].ds_len != sizes[i] ||
+		    b->map->dm_segs[0].ds_addr != b->address ||
+		    npu_dma_spans_overlap(b->cpu, sizes[i], m, sizeof(*m)))
+			return EINVAL;
+		for (size_t j = 0; j < i; j++) {
+			if ((b->address < m->buffers[j].address + sizes[j] &&
+			    m->buffers[j].address < b->address + sizes[i]) ||
+			    b->map == m->buffers[j].map ||
+			    npu_dma_spans_overlap(b->cpu, sizes[i],
+			    m->buffers[j].cpu, sizes[j]))
+				return EINVAL;
+		}
+	}
+	if (m->buffers[2].address == NPU_DMA_COMMAND_VA ||
+	    sun60i_a733_npu_mmu_pd_entry(m->buffers[0].address, &pd_entry) != 0 ||
+	    m->pd_entry != pd_entry)
+		return EINVAL;
+	return 0;
+}
+
+static bool
+npu_dma_task_external(const struct sun60i_a733_npu_dma *m,
+    const void *p, size_t bytes)
+{
+
+	if (p == NULL || bytes > UINTPTR_MAX - (uintptr_t)p ||
+	    npu_dma_spans_overlap(p, bytes, m, sizeof(*m)))
+		return false;
+	for (size_t i = 0; i < NPU_DMA_TASK_NBUFFERS; i++) {
+		const struct npu_dma_buffer *b = &m->buffers[i];
+
+		if (npu_dma_spans_overlap(p, bytes, b->cpu, b->bytes) ||
+		    npu_dma_spans_overlap(p, bytes, b->map, sizeof(*b->map)))
+			return false;
+	}
+	return true;
+}
+
+static struct sun60i_a733_npu_dma_task_report
+npu_dma_task_compare(const struct sun60i_a733_npu_dma *m,
+    const struct sun60i_a733_npu_dma_task_reference *r, bool output)
+{
+	const uint8_t *refs[NPU_DMA_TASK_NBUFFERS] = {
+		r->mtlb, r->stlb, r->commands, r->image.constants,
+		r->image.input, r->image.expected
+	};
+	const size_t lengths[NPU_DMA_TASK_NBUFFERS] = {
+		sizeof(r->mtlb), sizeof(r->stlb), sizeof(r->commands),
+		sizeof(r->image.constants), sizeof(r->image.input),
+		output ? sizeof(r->image.expected) : 0
+	};
+	struct sun60i_a733_npu_dma_task_report report = { .valid = 1, .pass = 1 };
+
+	for (size_t i = 0; i < NPU_DMA_TASK_NBUFFERS; i++) {
+		const uint8_t *data = m->buffers[i].cpu;
+
+		report.first[i] = UINT32_MAX;
+		for (size_t j = 0; j < m->buffers[i].bytes; j++) {
+			uint8_t expected = j < lengths[i] ? refs[i][j] :
+			    i == 5 ? A733_NPU_DMA_TASK_OUTPUT_POISON : 0;
+
+			if (data[j] == expected)
+				continue;
+			if (report.mismatches[i]++ == 0)
+				report.first[i] = j;
+			report.pass = 0;
+		}
+	}
+	return report;
+}
+
+int
+sun60i_a733_npu_dma_task_validate(const struct sun60i_a733_npu_dma *m,
+    const struct sun60i_a733_npu_dma_task_reference *r)
+{
+
+	if (npu_dma_task_metadata(m) != 0 ||
+	    !npu_dma_task_external(m, r, sizeof(*r)))
+		return EINVAL;
+	if (m->retained)
+		return EBUSY;
+	if (!npu_dma_task_compare(m, r, false).pass)
+		return EIO;
+	return 0;
+}
+
+int
+sun60i_a733_npu_dma_task_retain_checked(struct sun60i_a733_npu_dma *m,
+    struct sun60i_a733_npu_run *run,
+    const struct sun60i_a733_npu_dma_task_reference *r)
+{
+	int error;
+
+	if (npu_dma_task_metadata(m) != 0 ||
+	    !npu_dma_task_external(m, run, sizeof(*run)) ||
+	    !npu_dma_task_external(m, r, sizeof(*r)) ||
+	    npu_dma_spans_overlap(run, sizeof(*run), r, sizeof(*r)))
+		return EINVAL;
+	error = sun60i_a733_npu_dma_task_validate(m, r);
+	if (error != 0)
+		return error;
+	m->task_run = run;
+	m->task_reference = r;
+	/* The reference, context and all six maps survive the first sync. */
+	m->retained = true;
+	for (size_t i = 0; i < NPU_DMA_TASK_NBUFFERS; i++)
+		bus_dmamap_sync(m->tag, m->buffers[i].map, 0, m->buffers[i].bytes,
+		    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+	return 0;
+}
+
+int
+sun60i_a733_npu_dma_task_check(struct sun60i_a733_npu_dma *m,
+    struct sun60i_a733_npu_run *run,
+    const struct sun60i_a733_npu_dma_task_reference *r,
+    struct sun60i_a733_npu_dma_task_report *out)
+{
+	struct sun60i_a733_npu_dma_task_report report;
+
+	if (npu_dma_task_metadata(m) != 0 ||
+	    !npu_dma_task_external(m, run, sizeof(*run)) ||
+	    !npu_dma_task_external(m, r, sizeof(*r)) ||
+	    !npu_dma_task_external(m, out, sizeof(*out)) ||
+	    npu_dma_spans_overlap(run, sizeof(*run), r, sizeof(*r)) ||
+	    npu_dma_spans_overlap(out, sizeof(*out), run, sizeof(*run)) ||
+	    npu_dma_spans_overlap(out, sizeof(*out), r, sizeof(*r)))
+		return EINVAL;
+	if (!m->retained)
+		return EBUSY;
+	if (m->task_run != run || m->task_reference != r)
+		return EINVAL;
+	if (m->task_report.valid)
+		return EALREADY;
+	if (!sun60i_a733_npu_run_task_completed(run, m))
+		return EBUSY;
+	for (size_t i = 0; i < NPU_DMA_TASK_NBUFFERS; i++)
+		bus_dmamap_sync(m->tag, m->buffers[i].map, 0, m->buffers[i].bytes,
+		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	report = npu_dma_task_compare(m, r, true);
+	m->task_report = report;
+	*out = report;
+	return report.pass ? 0 : EIO;
+}
+
+bool
+sun60i_a733_npu_dma_task_verified(const struct sun60i_a733_npu_dma *m,
+    const struct sun60i_a733_npu_run *run)
+{
+
+	return m != NULL && run != NULL &&
+	    m->profile == A733_NPU_DMA_PROFILE_TASK && m->retained &&
+	    m->task_run == run && m->task_reference != NULL &&
+	    m->task_report.valid == 1 && m->task_report.pass == 1;
 }

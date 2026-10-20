@@ -9,6 +9,9 @@
 #include <errno.h>
 
 typedef uint64_t bus_addr_t;
+typedef void *bus_space_tag_t;
+typedef uintptr_t bus_space_handle_t;
+typedef struct { unsigned unused; } kmutex_t;
 typedef size_t bus_size_t;
 typedef struct fake_tag { unsigned refs; bool parent; } *bus_dma_tag_t;
 typedef struct { uint64_t ds_addr, ds_len; unsigned id; } bus_dma_segment_t;
@@ -21,6 +24,8 @@ typedef struct fake_map {
 #define BUS_DMA_WAITOK 1
 #define BUS_DMASYNC_PREWRITE 2
 #define BUS_DMASYNC_PREREAD 4
+#define BUS_DMASYNC_POSTWRITE 8
+#define BUS_DMASYNC_POSTREAD 16
 #define KM_SLEEP 1
 #define _BUS_DMAMAP_IS_BOUNCING 0x20000
 static unsigned checks;
@@ -31,7 +36,10 @@ static unsigned checks;
 static struct fake_tag parent_tag = { 0, true };
 static struct slot { void *cpu; size_t bytes; uint64_t address; } slots[6];
 static unsigned stack[32], depth, calls, fail_call, allocated, current, syncs;
-static bool borrowed, task_mode;
+static bool borrowed, task_mode, checked_mode;
+static unsigned completed_calls;
+static bool completion_allowed;
+
 static unsigned bad_at, bad_kind;
 static uint64_t addresses[6];
 static bool retained_now(void);
@@ -124,15 +132,32 @@ static void bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map,
     bus_addr_t offset, bus_size_t n, int flags)
 {
 	CHECK(tag->refs == 1 && retained_now());
-	CHECK(map->id == syncs && offset == 0 && n == slots[map->id].bytes);
-	CHECK(flags == (BUS_DMASYNC_PREWRITE |
-	    (task_mode && map->id == 5 ? BUS_DMASYNC_PREREAD : 0))); syncs++;
+	CHECK(map->id == syncs % 6 && offset == 0 && n == slots[map->id].bytes);
+	if (checked_mode) {
+		CHECK(flags == (syncs < 6 ? BUS_DMASYNC_PREWRITE |
+		    BUS_DMASYNC_PREREAD : BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD));
+		if (syncs >= 6) CHECK(completion_allowed && completed_calls != 0);
+	} else {
+		CHECK(flags == (BUS_DMASYNC_PREWRITE |
+		    (task_mode && map->id == 5 ? BUS_DMASYNC_PREREAD : 0)));
+	}
+	syncs++;
 }
 #include "sun60i_a733_npu_mmu.h"
 #include "sun60i_a733_npu_mmu.c"
+#include "sun60i_a733_npu_nn.h"
+#include "sun60i_a733_npu_nn.c"
 #include "sun60i_a733_npu_dma.h"
+#include "sun60i_a733_npu_run.h"
+static struct sun60i_a733_npu_run run_cookie, other_run_cookie;
 #include "sun60i_a733_npu_dma.c"
 static struct sun60i_a733_npu_dma *active;
+bool sun60i_a733_npu_run_task_completed(struct sun60i_a733_npu_run *run,
+    const struct sun60i_a733_npu_dma *dma)
+{
+	completed_calls++;
+	return run == (void *)&run_cookie && dma == active && completion_allowed;
+}
 static bool retained_now(void)
 {
 	struct sun60i_a733_npu_dma_info info;
@@ -143,7 +168,8 @@ static void reset(void)
 {
 	CHECK(depth == 0 && parent_tag.refs == 0);
 	memset(slots, 0, sizeof(slots)); calls = fail_call = allocated = syncs = 0;
-	bad_at = bad_kind = 0; borrowed = task_mode = false; active = NULL;
+	bad_at = bad_kind = 0; borrowed = task_mode = checked_mode = false;
+	completed_calls = 0; completion_allowed = false; active = NULL;
 	addresses[0] = 0x100000; addresses[1] = 0x110000; addresses[2] = 0x120000;
 	addresses[3] = 0x130000; addresses[4] = 0x140000; addresses[5] = 0x150000;
 }
@@ -474,6 +500,288 @@ task_contract(void)
 	CHECK(sun60i_a733_npu_dma_destroy(active) == 0); reset();
 }
 
+
+static struct sun60i_a733_npu_dma_task_reference *
+checked_prepare(void)
+{
+	struct sun60i_a733_npu_dma_task_reference *ref = calloc(1,
+	    sizeof(*ref));
+	struct sun60i_a733_npu_mmu_page pages[4];
+	struct sun60i_a733_npu_mmu_plan plan;
+
+	CHECK(ref != NULL);
+	CHECK(sun60i_a733_npu_nn_tiny_image(&ref->image,
+	    sizeof(ref->image)) == 0);
+	CHECK(sun60i_a733_npu_nn_task_commands(ref->commands,
+	    sizeof(ref->commands)) == 0);
+	task_mode = checked_mode = true;
+	CHECK(sun60i_a733_npu_dma_task_prepare(&parent_tag,
+	    ref->commands, sizeof(ref->commands), ref->image.constants,
+	    sizeof(ref->image.constants), ref->image.input,
+	        sizeof(ref->image.input), &active) == 0);
+	for (size_t i = 0; i < 4; i++)
+		pages[i] = (struct sun60i_a733_npu_mmu_page){
+			addresses[i + 2], i == 3 ? 1 : 0
+		};
+	plan = (struct sun60i_a733_npu_mmu_plan){
+		addresses[0], addresses[1], 0x01001000, pages, 4
+	};
+	CHECK(sun60i_a733_npu_mmu_build(&plan, ref->mtlb, sizeof(ref->mtlb),
+	    ref->stlb, sizeof(ref->stlb)) == 0);
+	CHECK(sun60i_a733_npu_dma_task_validate(active, ref) == 0);
+	return ref;
+}
+
+static void
+checked_cleanup(struct sun60i_a733_npu_dma_task_reference *ref)
+{
+	/*
+	 * End only this simulated retained lifetime. Native code cannot do
+	 * this.
+	 */
+	active->retained = false;
+	CHECK(sun60i_a733_npu_dma_destroy(active) == 0);
+	free(ref);
+	reset();
+}
+
+static void
+checked_contract(void)
+{
+	struct sun60i_a733_npu_dma_task_report report, saved;
+	struct sun60i_a733_npu_run *run = (void *)&run_cookie, *wrong =
+	    (void *)&other_run_cookie;
+	struct sun60i_a733_npu_dma_task_reference *ref;
+	const size_t sizes[] = { 4096, 16384, 4096, 4096, 4096, 4096 };
+
+	for (unsigned target = 0; target < 6; target++) {
+		for (unsigned end = 0; end < 2; end++) {
+			ref = checked_prepare();
+			memset(&report, 0x5a, sizeof(report));
+			saved = report;
+			CHECK(sun60i_a733_npu_dma_task_check(active, run, ref,
+			    &report) == EBUSY);
+			CHECK(!syncs && memcmp(&report, &saved,
+			    sizeof(report)) == 0);
+			CHECK(sun60i_a733_npu_dma_task_retain_checked(active,
+			    run, ref) == 0);
+			CHECK(syncs == 6 && active->retained);
+			CHECK(sun60i_a733_npu_dma_task_check(active, run, ref,
+			    &report) == EBUSY);
+			CHECK(syncs == 6 && memcmp(&report, &saved,
+			    sizeof(report)) == 0);
+			completion_allowed = true;
+			CHECK(sun60i_a733_npu_dma_task_check(active, wrong,
+			    ref, &report) == EINVAL);
+			struct sun60i_a733_npu_dma_task_reference *other =
+			    malloc(sizeof(*other));
+			CHECK(other != NULL);
+			*other = *ref;
+			CHECK(sun60i_a733_npu_dma_task_check(active, run,
+			    other, &report) == EINVAL);
+			free(other);
+			CHECK(syncs == 6);
+			/*
+			 * Simulated device work only. No production path
+			 * copies the oracle.
+			 */
+			memcpy(slots[5].cpu, ref->image.expected,
+			    sizeof(ref->image.expected));
+			size_t offset = end ? sizes[target] - 1 : 0;
+			((uint8_t *)slots[target].cpu)[offset] ^= 1;
+			CHECK(sun60i_a733_npu_dma_task_check(active, run, ref,
+			    &report) == EIO);
+			CHECK(syncs == 12 && report.valid && !report.pass);
+			for (unsigned i = 0; i < 6; i++) {
+				CHECK(report.mismatches[i] == (i == target ?
+				    1U : 0U));
+				CHECK(report.first[i] == (i == target ?
+				    offset : UINT32_MAX));
+			}
+			CHECK(!sun60i_a733_npu_dma_task_verified(active, run));
+			CHECK(sun60i_a733_npu_dma_task_check(active, run, ref,
+			    &report) == EALREADY);
+			CHECK(sun60i_a733_npu_dma_destroy(active) == EBUSY &&
+			    syncs == 12);
+			checked_cleanup(ref);
+		}
+	}
+	for (unsigned write_output = 0; write_output < 2; write_output++) {
+		ref = checked_prepare();
+		CHECK(sun60i_a733_npu_dma_task_retain_checked(active, run,
+		    ref) == 0);
+		completion_allowed = true;
+		if (write_output)
+			memcpy(slots[5].cpu, ref->image.expected, 512);
+		CHECK(sun60i_a733_npu_dma_task_check(active, run, ref,
+		    &report) ==
+		    (write_output ? 0 : EIO));
+		CHECK(report.valid && report.pass == write_output &&
+		    syncs == 12);
+		CHECK(sun60i_a733_npu_dma_task_verified(active, run) ==
+		    (write_output != 0));
+		CHECK(!sun60i_a733_npu_dma_task_verified(active, wrong));
+		checked_cleanup(ref);
+	}
+
+	/*
+	 * Every prepublication byte, tail and table class is checked without
+	 * sync.
+	 */
+	ref = checked_prepare();
+	for (unsigned b = 0; b < 6; b++) {
+		for (unsigned end = 0; end < 2; end++) {
+			size_t offset = end ? sizes[b] - 1 : 0;
+			((uint8_t *)slots[b].cpu)[offset] ^= 1;
+			CHECK(sun60i_a733_npu_dma_task_validate(active,
+			    ref) == EIO && !syncs);
+			((uint8_t *)slots[b].cpu)[offset] ^= 1;
+		}
+	}
+	for (unsigned b = 0; b < 6; b++) {
+		struct npu_dma_buffer *buf = &active->buffers[b];
+		buf->loaded = false;
+		CHECK(sun60i_a733_npu_dma_task_validate(active, ref) ==
+		    EINVAL);
+		buf->loaded = true;
+		buf->nsegments = 2;
+		CHECK(sun60i_a733_npu_dma_task_validate(active, ref) ==
+		    EINVAL);
+		buf->nsegments = 1;
+		buf->segment.ds_len--;
+		CHECK(sun60i_a733_npu_dma_task_validate(active, ref) ==
+		    EINVAL);
+		buf->segment.ds_len++;
+		buf->segment.ds_addr++;
+		CHECK(sun60i_a733_npu_dma_task_validate(active, ref) ==
+		    EINVAL);
+		buf->segment.ds_addr--;
+		buf->map->dm_segs[0].ds_addr++;
+		CHECK(sun60i_a733_npu_dma_task_validate(active, ref) ==
+		    EINVAL);
+		buf->map->dm_segs[0].ds_addr--;
+		void *cpu = buf->cpu;
+		buf->cpu = (void *)(UINTPTR_MAX - 7);
+		CHECK(sun60i_a733_npu_dma_task_validate(active, ref) ==
+		    EINVAL);
+		buf->cpu = NULL;
+		CHECK(sun60i_a733_npu_dma_task_validate(active, ref) ==
+		    EINVAL);
+		buf->cpu = cpu;
+		bus_dmamap_t map = buf->map;
+		buf->map = NULL;
+		CHECK(sun60i_a733_npu_dma_task_validate(active, ref) ==
+		    EINVAL);
+		buf->map = map;
+		bus_addr_t address = buf->address;
+		const bus_addr_t invalid[] = {1, UINT64_C(0x100000000),
+		    UINT64_MAX};
+		for (unsigned n = 0; n < 3; n++) {
+			buf->address = buf->segment.ds_addr =
+			    map->dm_segs[0].ds_addr = invalid[n];
+			CHECK(sun60i_a733_npu_dma_task_validate(active,
+			    ref) == EINVAL);
+		}
+		buf->address = buf->segment.ds_addr =
+		    map->dm_segs[0].ds_addr = address;
+		if (b == 0)
+			continue;
+		buf->cpu = slots[0].cpu;
+		CHECK(sun60i_a733_npu_dma_task_validate(active, ref) ==
+		    EINVAL);
+		buf->cpu = cpu;
+	}
+	active->pd_entry ^= 1;
+	CHECK(sun60i_a733_npu_dma_task_validate(active, ref) == EINVAL);
+	active->pd_entry ^= 1;
+	active->profile = A733_NPU_DMA_PROFILE_FE;
+	CHECK(sun60i_a733_npu_dma_task_validate(active, ref) == EINVAL);
+	active->profile = A733_NPU_DMA_PROFILE_TASK;
+	CHECK(!syncs && !active->retained);
+	checked_cleanup(ref);
+	/*
+	 * Invalid references, output alias, metadata, and all15 physical
+	 * pairs.
+	 */
+	ref = checked_prepare();
+	CHECK(sun60i_a733_npu_dma_task_validate(active, NULL) == EINVAL);
+	CHECK(sun60i_a733_npu_dma_task_validate(active,
+	    (void *)(UINTPTR_MAX - 7)) == EINVAL);
+	CHECK(sun60i_a733_npu_dma_task_validate(active, (void *)active) ==
+	    EINVAL);
+	for (unsigned i = 0; i < 6; i++) {
+		CHECK(sun60i_a733_npu_dma_task_validate(active,
+		    slots[i].cpu) == EINVAL);
+		bus_dmamap_t map = active->buffers[i].map;
+		map->_dm_flags |= _BUS_DMAMAP_IS_BOUNCING;
+		CHECK(sun60i_a733_npu_dma_task_retain_checked(active, run,
+		    ref) == EINVAL && !syncs);
+		map->_dm_flags = 0;
+		map->dm_mapsize--;
+		CHECK(sun60i_a733_npu_dma_task_validate(active, ref) ==
+		    EINVAL);
+		map->dm_mapsize++;
+		map->dm_nsegs = 2;
+		CHECK(sun60i_a733_npu_dma_task_validate(active, ref) ==
+		    EINVAL);
+		map->dm_nsegs = 1;
+		map->dm_segs[0].ds_len--;
+		CHECK(sun60i_a733_npu_dma_task_validate(active, ref) ==
+		    EINVAL);
+		map->dm_segs[0].ds_len++;
+		for (unsigned j = i + 1; j < 6; j++) {
+			bus_addr_t address = active->buffers[j].address;
+			active->buffers[j].address =
+			    active->buffers[i].address;
+			active->buffers[j].segment.ds_addr =
+			    active->buffers[j].map->dm_segs[0].ds_addr =
+			    active->buffers[j].address;
+			CHECK(sun60i_a733_npu_dma_task_validate(active,
+			    ref) == EINVAL);
+			active->buffers[j].address = address;
+			active->buffers[j].segment.ds_addr =
+			    active->buffers[j].map->dm_segs[0].ds_addr =
+			    address;
+		}
+	}
+	for (unsigned i = 0; i < 3; i++) {
+		size_t *count = i == 0 ? &active->command_bytes : i == 1 ?
+		    &active->constants_bytes : &active->input_bytes;
+		(*count)--;
+		CHECK(sun60i_a733_npu_dma_task_validate(active, ref) ==
+		    EINVAL);
+		(*count)++;
+	}
+	ref->mtlb[0] ^= 1;
+	CHECK(sun60i_a733_npu_dma_task_validate(active, ref) == EIO);
+	ref->mtlb[0] ^= 1;
+	((uint8_t *)slots[5].cpu)[4095] = 0;
+	CHECK(sun60i_a733_npu_dma_task_retain_checked(active, run, ref) ==
+	    EIO && !syncs);
+	((uint8_t *)slots[5].cpu)[4095] = 0xa5;
+	CHECK(sun60i_a733_npu_dma_task_retain_checked(active, NULL, ref) ==
+	    EINVAL && !syncs);
+	CHECK(sun60i_a733_npu_dma_task_retain_checked(active, run, ref) == 0);
+	completion_allowed = true;
+	memset(&report, 0x5a, sizeof(report));
+	saved = report;
+	CHECK(sun60i_a733_npu_dma_task_check(active, run, ref, NULL) ==
+	    EINVAL);
+	CHECK(sun60i_a733_npu_dma_task_check(active, run, ref,
+	    (void *)(UINTPTR_MAX - 7)) == EINVAL);
+	CHECK(sun60i_a733_npu_dma_task_check(active, run, ref,
+	    (void *)active) == EINVAL);
+	CHECK(sun60i_a733_npu_dma_task_check(active, run, ref, (void *)ref) ==
+	    EINVAL);
+	CHECK(sun60i_a733_npu_dma_task_check(active, run, ref, (void *)run) ==
+	    EINVAL);
+	for (unsigned i = 0; i < 6; i++)
+		CHECK(sun60i_a733_npu_dma_task_check(active, run, ref,
+		    slots[i].cpu) == EINVAL);
+	CHECK(syncs == 6 && memcmp(&report, &saved, sizeof(report)) == 0);
+	checked_cleanup(ref);
+}
+
 int main(void)
 {
 	struct sun60i_a733_npu_dma *out = (void *)(uintptr_t)1;
@@ -512,5 +820,6 @@ int main(void)
 	success(false, 8, false); success(true, 16, false);
 	success(false, 4096, true); success(true, 16, true);
 	task_contract();
+	checked_contract();
 	printf("A733 NPU DMA32: %u checks passed\n", checks); return 0;
 }
