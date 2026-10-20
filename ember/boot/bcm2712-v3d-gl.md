@@ -1,270 +1,184 @@
-# Native CM5 OpenGL integration
+# Native CM5 OpenGL and KMS
 
-Goal: run hardware OpenGL through the common Mesa package on CM5, then use
-that same provider for KWin/Plasma. The user's selected desktop target is CM5.
-This continues the accepted [binary synchronization](bcm2712-v3d-sync.md).
+The opt-in native V3D driver supports CL bin/render jobs, CSD compute, bounded
+TFU copies, binary syncobjs and same-device PRIME. The common Ports Mesa
+package uses this driver for hardware OpenGL on CM5. Native fixed-mode KMS
+presents the same GEM objects through HVS/PV0. Rendering, allocation, display
+and a complete accelerated desktop have separate acceptance boundaries.
 
-## Design and implementation plan
+## Native rendering and buffer ownership
 
-Execute inline. Preserve the existing serialized job lock, per-submission
-GEM references, MMU table, cache protocol and poison retention. Add standard
-SUBMIT_CL for optional binning followed by rendering. Both input fences must
-be snapshotted before the output replacement. Validate command-list ranges,
-tile allocation/state addresses, copied handles and unsupported extensions.
-Use the accepted native IRQ ownership, with the expected completion selected
-for each phase. An OOM or uncertain failure stops the engine and retains BOs;
-automatic overflow allocation and arbitrary-job recovery are not promised.
+The [render interface](bcm2712-v3d-render.md) owns native scatter/gather DMA
+storage, per-file GEM handles, UVM mappings and GPU virtual ranges. Its
+256 MiB per-BO ceiling is also limited by the remaining device storage budget.
+That budget is 1/16 of physical memory, with a 64 MiB floor and a 256 MiB cap.
+The renderer's page table and scratch storage count against it. The HVS
+consumer retains a separate 16 MiB limit for each scanout BO.
 
-The first hardware gate is a userspace clear/store command list with guarded
-buffers. The next is real Mesa shaders and pixel readback, with explicit V3D
-identity and no software fallback. Rendering and display/KMS are separate:
-The first presentation target is now HDMI on CM5, followed by remote Plasma.
-Both require an accepted output path and the common Qt/KWin package migration.
+CL and CSD use the [bounded object-list owner](bcmv3d-submit-lists.md).
+They accept one to 4096 handles per submission. This is a software resource
+policy, not a hardware or UAPI maximum. On a 64-bit target, the GEM pointer
+vector and temporary handle vector use at most 48 KiB per request. Native
+`kheapsort` uses fixed workspace for O(n log n) duplicate checks. Metadata
+allocation can fail with `ENOMEM`. These vectors are separate from BO storage
+accounting.
 
-- [x] Add actual-source CL contracts for validation, both dependencies,
-  completion IRQ identity/count, cache order, memory ownership and failure.
-  Confirm rejection before adding the implementation. Preserve TFU/CSD tests.
-- [x] Implement CL admission/execution in the native driver and ioctl table.
-  Check optional binning, repeated jobs, same-handle fences, close races and
-  every failing register operation. Run static and memory analysis.
-- [x] Cross-build a matched kernel and userspace clear/store acceptance tool.
-  Review ownership and MMIO sequencing before physical execution. Preserve
-  and verify the ordinary kernel/module bundle for recovery.
-- [x] Add V3D to the canonical current Mesa recipe through EmberBSD-Ports.
-  Repair actual portability failures and keep existing VirGL/LLVM consumers.
-  Build and test the package using recorded EmberBSD sysroot provenance.
-- [x] Test real EGL/GL V3D rendering on CM5. Fix the first causal failure,
-  retaining logs and regressions. Rendering success must include pixel checks.
-- [ ] Connect presentation, then current KWin/Plasma; check renderer identity,
-  input, repaint and repeated session lifecycle. Keep unaccepted stages explicit.
+A device lock serializes execution. Each job retains all submitted GEM refs.
+Both CL input fences and the output syncobj are captured before any wait or
+output replacement. Range checks cover the command lists, tile allocation
+and tile state within the referenced BOs. Unsupported flags, extensions and
+formats fail before GPU exposure. See [binary synchronization](bcm2712-v3d-sync.md)
+and [CSD computation](bcm2712-v3d-csd.md) for those interfaces.
 
-## Global constraints and review focus
+Successful completion requires the expected IRQ evidence, idle state and
+clean MMU status. The driver revokes PTEs and completes the bounded MMU flush
+before returning DMA ownership and releasing job refs. An uncertain execution,
+timeout or failed revoke/flush poisons the engine. It retains the vector,
+GEM refs, mappings and busy BOs until reboot. Later jobs fail without replacing
+that ownership. Automatic overflow allocation, general job recovery and hot
+removal are unsupported.
 
-Current Mesa is 26.2.4 (upstream release index checked 2026-10-11); reuse the
-common LLVM23/GCC16 dependencies. Cross-build on the development host and
-execute on CM5. Do not install a second permanent graphics stack. Keep source
-and reusable checks in their owning public repository, with no private paths.
+Same-device PRIME preserves the native BO, its GPU VA and DMA storage.
+Foreign-device import is rejected. Native DMA-BUF mmap validates byte offsets,
+page alignment, length and descriptor read/write rights. It permits shared
+mappings only and rejects execute protection. A mapping retains its GEM ref
+after the originating handles and descriptors close.
 
-Review command ranges crossing BO boundaries, BO handle closure during a
-wait, stale or duplicate IRQs, changed page tables with live GPU references,
-and CPU ownership returned before cache clean. Include each in the CL tests.
-The native driver must not advertise unimplemented feature bits. A compiled
-Mesa driver does not prove GL support or an accelerated desktop.
+## Display and event completion
 
-The CL host model passes 51,611 ownership/IRQ checks, 64 injected register
-failures and nine rejected causal mutants. ASan/UBSan passes. CSD, TFU,
-binary syncobj, BO and UAPI regressions pass. Fresh review exposed a dependency
-snapshot race: closing an aliased syncobj in the first input wait prevented
-capture of the second input. The regression failed before the repair. Both
-input fences and the output reference are now retained before any wait.
-The subsequent hardware CL result is recorded below; Mesa acceptance remains
-a separate gate.
+The [fixed-mode KMS layer](bcmv3d-kms.md) adds a primary plane, CRTC, TMDS
+encoder and HDMI-A connector to the same DRM device. The explicit
+`WSDISPLAY_BOOTFB_HANDOFF` profile binds the existing native HVS/PV0 owners
+after the boot console handoff. Ordinary profiles do not select that display
+ownership path.
 
-## Reproduce the native CL gate
+The supported output is 1920x1080 at 60 Hz. The primary plane accepts
+XRGB8888/LINEAR, pitch 7680, offset zero and full-screen placement. It publishes
+that exact pair in `IN_FORMATS`. Scaling, rotation, other timings, auxiliary
+planes, async flips and foreign GEM objects are rejected.
 
-Run `sh ember/tools/bcm2712-v3d-cl-contract.sh` on the build host. Cross-build
-`EMBERV3DRENDER`, then build the static checker from the same source checkout:
+Scanout uses real GEM reader leases and consumer MMU4 mappings. A real PV0
+active-list latch proves publication. A later frame epoch proves old-list
+retirement; the process worker then completes consumer POST/unload before
+signaling the reader fence. KMS waits for reclaim and old-plane cleanup before
+reporting a successful flip. A post-swap failure cancels the pending event and
+signals OUT_FENCE with an error. It does not report a successful page flip.
+
+Disable submits the reserved black list. HDMI timing and clocks continue.
+This logical BLANK operation does not establish complete HDMI/PHY power-down,
+suspend or DPMS. Connector polling uses the retained HDMI0 HPD owner;
+persistent HPD IRQ/DDC integration and EDID mode selection remain open.
+Rapid disable/enable/disable has source regressions and needs separate physical
+acceptance. See the [native scanout owner](bcmv3d-scanout.md) for lease and
+retained-fault rules.
+
+## Accepted physical scope
+
+The checks below use CM5 Rev 1.0 / BCM2712 D0 with 4 GiB RAM and 64 GB eMMC
+on a Waveshare CM5-NANO-B. Each result is finite and applies to its named
+workload and recorded kit. It does not qualify the complete firmware/base stack.
+
+| Check | Accepted result | Boundary |
+| --- | --- | --- |
+| Native CL/TFU | 333 CL pairs, 1,363,968 checked pixels and 32 TFU copies; four jobs each with 72 and 91 distinct BOs; all active pixels and requested guards pass | Native clear/store commands, binary fences, two clients and CL/TFU/CL transitions; no Mesa or display execution in this checker |
+| BO extent | Nine single allocations through 32 MiB, including 16 MiB plus 4 KiB; three held BOs totaling 17,969,152 bytes; all 12 releases return the exact native budget | Allocation and release only; no mapping, rendering or scanout qualification for a 32 MiB BO |
+| Fixed-mode KMS | Atomic modeset, 240 consecutive double-buffer flips in eight seconds, normal BLANK teardown and returned BO memory | About 30 presentations/s in the fixed 1080p60 mode; no complete DPMS or HDMI Plasma acceptance |
+| Mesa V3D | EGL 1.5, GLES 3.0 and desktop OpenGL 3.1 on V3D 7.1.10.2; real shaders and checked pixels, including four 1280x800 lifecycles per discovery path | Short context/render lifecycle; no desktop frame-rate or long-run claim |
+| Same-device PRIME | 80 cross-process 1 MiB lifecycles, SCM_RIGHTS, duplicate imports, partial mappings and retained mappings after handle/fd close; four GBM/EGLImage/GLES pixel cycles | Same-device linear sharing; no foreign-device DMA or arbitrary modifiers |
+
+The CL result uses kernel `1cc306cd0df17fa135320eb0668f092bfc46f6d8` and
+checker source `faff91f1015f194cf8d100adc5c09ba1827158c4`. Native counters record
+185 BO creates and releases, exact budget return, zero allocation failures and
+no new execution fault. The checker SHA256 is
+`f896dbf8c8999753b6678d371bb3d1b6a280313ff17dd04cf373f14b3b48b14c`.
+The installed kernel SHA256 is
+`772e16dd4c3c68f634d1e4530e9b012151d97eaf0dedbafd8e2a66572bd61e4f`.
+Physical job-list coverage stops at 91 handles. The inclusive 4096-entry limit
+and larger failure cases are covered by source contracts.
+
+The BO-extent result uses kernel `62bf77f25bebf7c362121589fd41d4b65405c6d5`.
+The KMS result was also repeated with the explicit format/modifier pair on
+kernel `29b51eb8073755849f22ccdfdedf487c8be49870`. Mesa and PRIME receipts retain
+their own provider and kernel pins in the
+[Ports graphics receipt](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-cm5.md).
+
+A physical Plasma trial with the named kernel stops during startup readiness
+on a Mesa TFU submission error. Its BOs return and no execution-fault receipt
+appears. The failed request's errno and payload are not yet captured. Native
+TFU still admits only the original 64x64 R32F copy. General Mesa TFU
+compatibility requires a separate contract and hardware check.
+
+A complete physical HDMI KWin/Plasma session is not accepted. Larger physical
+CL/CSD lists, general job recovery, foreign-device sharing, Vulkan, sustained
+allocation pressure and long-duration graphics operation remain unqualified.
+The device ABI inputs used by these consumers are not a fully qualified SDK.
+
+## Reproduce the native CL check
+
+Use a clean pinned source checkout and the matched kernel/module bundle.
+Cross-build `EMBERV3DRENDER` with GCC16. Select the recorded EmberBSD sysroot
+and build the static checker:
 
 ```sh
 CC=/absolute/cross/bin/aarch64--netbsd-gcc SYSROOT=/absolute/emberbsd-sysroot \
     sh ember/tools/bcm2712-v3d-cl-check-build.sh /absolute/source /absolute/new-output
 ```
 
-The builder extracts the unchanged, accepted queue-probe packet generator.
-Record the actual base headers, libraries and compiler provenance. On CM5,
-run `./cl-check /dev/dri/renderD128` with the matched kernel/module bundle.
-The checker retains 325 bin/render pairs, command/BO guard regions, binary
-fences, two clients and 32 TFU copies with CL/TFU/CL transitions. It then runs
-four CL pairs with 72 distinct BOs and four with 91 distinct BOs. The complete
-run checks 333 CL pairs and 1,363,968 pixels. The command encoder is unchanged.
-Each added job uses the original command, tile-allocation, tile-state and
-output BOs, plus admitted guard BOs. Every guard BO has a different pattern.
-The checker verifies unique handles and non-overlapping GPU address ranges.
-It checks every output pixel and every command, tile and unrelated-BO guard.
-Successful phases close all handles, unmap all BOs and check descriptor close.
-Descriptor close releases each file-owned binary syncobj.
+The builder extracts the existing queue-probe packet encoder. Record the
+compiler, source, header/library provenance and output hashes. On the device,
+run `./cl-check /dev/dri/renderD128` with access to the native `v3d` render node.
+Keep an external bounded controller; the checker adds no alarm around ioctls.
 
-The largest phase requests 91 BOs of 20 KiB each: 1,863,680 live bytes.
-A kernel with 64 KiB allocation pages can round those BOs to 5,963,776 bytes.
-These bounds exclude driver metadata, page tables and other GPU clients.
-A kernel that caps a job at 64 BO handles rejects the first 72-BO submit with
-`EINVAL`; the checker exits with status one. It does not retry or change the
-kernel limit. Error exit releases process descriptors and mappings. Record
-native allocation/job counters before and after execution to check reference
-and PTE retirement; userspace close alone does not prove kernel BO return.
-Keep an external bounded controller for device execution. No userspace alarm
-is added around kernel ioctls.
+The checker verifies unique handles, non-overlapping GPU address ranges,
+every output pixel and all requested command, tile and unrelated-BO guards.
+Its largest phase requests 91 BOs of 20 KiB: 1,863,680 live bytes. A kernel
+with 64 KiB allocation pages can round these BOs to 5,963,776 bytes. The bounds
+exclude metadata, page tables and other clients. They do not assert that
+padding outside the requested 20 KiB is checked.
 
-Run the checker/caller host contract separately:
+A kernel with the older 64-handle limit rejects the first 72-BO submit with
+`EINVAL`. The checker exits once without retrying or changing the limit.
+Successful phases close all handles, unmap every BO and check descriptor close.
+Error exit releases process descriptors and mappings. Compare native BO/job
+counters before and after execution; userspace close alone does not prove
+kernel reference or PTE retirement.
+
+## Source and package checks
 
 ```sh
 ruby ember/tools/bcm2712-v3d-cl-check-contract.rb --source /absolute/source
+ruby ember/tools/bcmv3d-cl-reject-contract.rb /absolute/source
+ruby ember/tools/bcmv3d-resv-contract.rb /absolute/source
+sh ember/tools/bcm2712-v3d-cl-contract.sh /absolute/source
+sh ember/tools/bcm2712-v3d-csd-contract.sh /absolute/source
+sh ember/tools/bcm2712-v3d-job-contract.sh /absolute/source
 ```
 
-It compiles the actual checker, unchanged GEM/TFU helpers and extracted packet
-builder. Controlled DRM services check the exact job counts, 72/91 unique
-lists, distinct guards, cleanup and failure exits. Compiled causal controls
-must reject omitted scenarios, truncated lists, guards and cleanup. This host
-contract does not execute GPU commands or prove physical rendering. The older
-physical acceptance below covers the 325-pair checker; the new 72/91-BO gate
-requires a separate result with its exact source and kernel revisions.
+These contracts compile actual driver/checker functions with controlled kernel
+and DRM services. They cover 64, 65, 72, 91, 4096 and rejected 4097-entry lists,
+partial lookup, capacity-sized metadata cleanup, duplicate ordering, retained
+poison across CL/CSD, and full-vector PTE mapping/revocation. The checker fixture
+covers exact workload counts, distinct guards and successful/error cleanup.
+Compiled controls must reach their expected failed checks; a crash or timeout
+is not a passing control. Host services do not execute GPU commands.
 
-## Physical CL acceptance, 2026-10-11
+The [KMS contracts](bcmv3d-kms.md#source-checks) cover plane registration,
+`IN_FORMATS`, commit/event ownership and boot binding. Run the
+[BO size contract](bcm2712-v3d-render.md#reproduce-the-userspace-check) for
+allocation, accounting, mmap and final-page bounds. Allocator checks cover
+4 KiB and 64 KiB CPU pages; renderer PTE checks retain the existing 4 KiB
+GPU-page contract.
 
-At 13:29:45 UTC, CM5 Rev 1.0 / BCM2712 D0 (4 GiB, 64 GB eMMC) on the
-Waveshare CM5-NANO-B passed the checker in 0.55 seconds, exit 0. The existing
-UEFI was preserved; its source and carrier PCB revisions remain unknown.
-All 325 bin/render pairs, 1,331,200 pixel values, guards, fences, two clients
-and 32 TFU copies passed. No engine-error diagnostic appeared in the log.
-This short clear/store check is not a shader, Mesa, KMS or desktop result.
+Use actual target preprocessing for Cppcheck, GCC Analyzer and Clang Static
+Analyzer. Classify diagnostics against the recorded baseline; a successful
+compiler exit does not imply clean analysis. ARM64 host Valgrind support is
+unavailable for the recorded checks. ASan/UBSan covers controlled host execution
+and does not verify native MMIO, DMA cache behavior or kernel execution.
 
-GCC 16.2.0 cross-built `EMBERV3DRENDER` from commit
-`246b46a2a718b7f4bba24b1e7423f6031fb95c5b` on macOS. Source export,
-compiler provenance, ELF/Image/debuglink/CTF and matching module imports
-passed verification. The ordinary kernel/module backups remain preserved.
-The checker uses the previously recorded partial device ABI inputs; the
-installed base revision remains unknown, so this is not full SDK acceptance.
-
-| Artifact | SHA256 |
-| --- | --- |
-| Kernel ELF | `faa71db5d35c65720d16e9307f6c89a3b42842dd1971ce2ab21638734c8dca30` |
-| AArch64 Image | `ea66e528e9b3f95e54c47c6da2ae09972a5209c72bd223d8b0ca580e164ed4ce` |
-| Static check | `65d19a58340099f6c3bc957a3b115e0e24537e41e5f153134792a4254308472c` |
-| Full kernel/test log | `546ffcb79e91b7b738007efb4dfd4561b0a2676a4096c29e36c1d1e5511b3e31` |
-
-Cppcheck 2.22.0 with actual target preprocessing retained 17 findings each
-in the job/driver units, with no new diagnostics against the accepted sync
-baseline. GCC 16.2 Analyzer emitted none. Apple Clang 21 retained the same
-six inherited header/macro findings. Valgrind is unavailable on these ARM64
-hosts; ASan/UBSan covered the host model instead. These tools do not prove
-device cache behavior. The hardware pixel/guard check supplies that evidence.
-
-Protocol sources: the existing queue/IRQ probes and their pinned Linux
-register references, plus the original Mesa 26.2.4 archive. Preserve licenses
-and attribution. The ordinary kernel remains unchanged until an accepted
-integration is explicitly installed; experimental bundles are identified.
-
-## Physical Mesa acceptance, 2026-10-11
-
-The matched `EMBERV3DRENDER` build from `47953f7f97c` and Ports
-MesaLib 26.2.4nb3/libdrm 2.4.134nb2 pass installed V3D OpenGL on the same
-CM5 after normal reboot. Native platform metadata removes the earlier
-`eglInitialize` failure. Both explicit render-node and default surfaceless
-discovery select `V3D 7.1.10.2`, reporting EGL 1.5 and GLES 3.0.
-
-The consumer rejects invalid GLSL, compiles real vertex/fragment shaders,
-checks clear/triangle/outside pixels and destroys objects/context. Four cycles
-pass at 16x16 and four at 1280x800; the latter take 0.19 seconds total.
-This duration is a short lifecycle check, not a desktop frame-rate benchmark.
-All 38 selected Mesa upstream invocations pass, with one internal utility skip
-and nine disabled NIR cases. Explicit software comparison also passes four
-llvmpipe/LLVM23 cycles. See the Ports
-[package receipt and commands](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-cm5.md).
-
-Kernel ELF SHA256: `889fc52e3b083486414a5473e1626dd035b3093ac295600031d476b6a2872553`.
-Image SHA256: `bf3963a0a0eb01714d8065eb6747a4b6ed9702b0a307531eee68cc9edb1c7f91`.
-All four companion modules are byte-identical to the accepted CL bundle.
-The ordinary bundle remains preserved. This recorded kernel limited
-individual BOs to 16 MiB and total allocation to 64 MiB. Current source limits
-are defined by the [native allocator contract](bcm2712-v3d-render.md). Sharing buffers between
-clients passed the subsequent PRIME gate below. HDMI presentation and the
-current common Qt/KWin/Plasma package migration remain subsequent gates.
-No long-run desktop claim follows.
-
-## Same-device PRIME integration
-
-The next native interface enables the core GEM handle/fd conversion helpers.
-Self-import preserves the actual `bcmv3d_bo`, including its VA and DMA memory.
-Foreign-device import has no SG hook and is rejected before attachment. The
-exported object has no foreign DMA mapping provider; the common helper now
-rejects missing/error providers rather than dereferencing them.
-
-The native fd-mmap callback keeps offsets in bytes within the BO, validates
-page alignment, length and read/write protection, and permits shared mappings
-only. It holds one GEM reference for the existing CMA pager. It does not use
-the generic legacy fake-offset path. Native dma-buf fileops translate callback
-errors to positive native errno. Both former error paths fail the actual-source
-regression before repair; the new mmap passes 1,260 ASan/UBSan boundary cases.
-
-The native descriptor stores read/write access from `O_ACCMODE`. Unknown
-fd flags and the invalid access mode fail before descriptor allocation.
-The mmap wrapper rejects protection beyond those access rights before the
-provider callback. It caps the provider's maximum protection to the same
-rights, so later `mprotect` cannot grant more access. Execute protection
-returns `EINVAL`. These descriptor controls have actual-source host tests;
-they do not extend the physical acceptance below.
-
-Run `python3 ember/tools/drm-dmabuf-contract.py map` and
-`ruby ember/tools/bcm2712-v3d-prime-contract.rb` on the host. Cross-build
-`bcm2712-v3d-prime-check-build.sh` with the same `CC`/`SYSROOT` convention as the
-CL checker, then run `prime-check /dev/dri/renderD128`. It transfers descriptors
-via SCM_RIGHTS to fresh DRM clients, checks duplicate imports, partial mappings,
-invalid ranges/protections and lifetime after handle/fd closure. Eighty 1 MiB
-cycles exceed the allocation quota cumulatively, detecting retained objects.
-The initial hardware failure and the accepted repaired lifecycle are recorded below.
-
-The first physical PRIME run transferred descriptors and validated mappings,
-but exhausted the 64 MiB quota before cycle 64. This exposed three inherited
-native DMA-BUF lifetime defects: fd export added an unowned reference, the
-GEM export-cache cycle was never broken, and final put omitted the exporter's
-release callback. Each now has an actual-source failing regression followed
-by a passing repair. The callback is mandatory at export, consistent with the
-[upstream DMA-BUF lifetime contract](https://docs.kernel.org/driver-api/dma-buf.html).
-The other in-tree fd callers (TTM and i915 GVT) also transfer their reference
-on success and retain cleanup responsibility on failure.
-
-`python3 ember/tools/drm-dmabuf-contract.py lifetime` exercises the actual export,
-fd, put, cache-removal and GEM release functions. It checks allocation failure,
-repeated export, 80,000 concurrent get/put pairs, internal/external reservation
-objects and exactly one final release under ASan/UBSan. The same Python
-standard-library controller runs the map and lifetime cases. `CC` selects
-the host compiler; `DRM_SOURCE_ROOT` selects source for causal comparisons.
-It preserves both fixtures' sanitizer flags. Missing callbacks are
-rejected before allocation. Cppcheck retains 16/16 GEM and 9/9 dma-buf findings
-against the previous build; GCC Analyzer adds none.
-
-### Physical PRIME acceptance, 2026-10-11
-
-CM5 booted the matched `EMBERV3DRENDER` build from `78c6715a949`.
-At 14:54:15 UTC, all 80 cross-process lifecycles passed in 0.07 seconds,
-including 80 MiB cumulative allocation, SCM_RIGHTS, duplicate imports,
-nonzero mmap offsets, rejection of private/executable/out-of-range mappings,
-and retained mapping after every handle/fd closes. The test exceeds the
-64 MiB allocation quota cumulatively; the previous kernel exhausted it.
-
-Unchanged Mesa/libdrm then passed four GBM/PRIME/EGLImage/GLES cycles on
-`V3D 7.1.10.2`, comparing all 256 CPU-mapped pixels with GPU readback each
-cycle. Four subsequent 1280x800 shader/pixel lifecycles also passed. No
-software renderer was permitted. This is same-device linear buffer sharing;
-foreign-device imports, arbitrary modifiers and a desktop remain unaccepted.
-
-| Artifact | SHA256 |
-| --- | --- |
-| Kernel ELF | `e3dd93954fa7fde09e9da0667cb67b7e0c3544e91719be8dfc05e478cd9deea4` |
-| Image | `578a5efeac0e3a3e14c9b42ecc5d7852280421ab39ef24a0b7b997ee9fd8f4ef` |
-| Static PRIME checker | `8f71c8f0ec53a5ed397d2b7d87d6faa984c45b944a68599923401a92bf8322be` |
-| Native PRIME log | `353b67b8142fd31ac8359a86e514601efddb8e92cb5bc23eceb593c278d0fd1c` |
-| Mesa PRIME/1280x800 log | `f147b8050b4ad7743ea2d945056ae49855bbf9c4c987913e2194f17851df945e` |
-
-All four modules match the previous accepted Mesa bundle byte for byte;
-source-export, compiler, debuglink/CTF and module-symbol checks passed.
-The original firmware/base provenance limits and ARM64 Valgrind gap remain.
-
-## Desktop GL and HDMI discovery, 2026-10-11
-
-With the accepted PRIME kernel (`78c6715a949`, ELF
-`e3dd93954fa7fde09e9da0667cb67b7e0c3544e91719be8dfc05e478cd9deea4`),
-the common Mesa package passes desktop OpenGL 3.1 on V3D 7.1.10.2.
-Four 1280x800 shader/pixel/context lifecycles pass for both explicit render-node
-and automatic surfaceless selection. All 30 live package libraries match the
-cross sysroot; GLES regression, explicit llvmpipe comparison and rejection
-controls pass. The [Ports receipt](https://github.com/oxtech-ember/EmberBSD-Ports/blob/84701a6/profiles/common-graphics/cross/mesa-cm5.md#desktop-opengl-2026-10-11)
-contains the cross-build instructions, exact test hashes and analysis limits.
-
-A normal reboot with an attached, powered monitor did not expose a framebuffer
-in the live FDT or attach wsdisplay. The operator reported no HDMI signal even
-before OS startup. Kernel and boot configuration hashes remained unchanged.
-This localizes the missing output before desktop startup but does not identify
-its cause: firmware initialization, monitor detection and the physical link
-still need differentiation. No firmware/EEPROM downgrade was performed.
-Rendering is accepted; HDMI/KMS and a complete Plasma session are not.
+The common Mesa package, provider versions, installed-library hashes and
+EGL/GL/PRIME commands belong to the
+[Ports graphics receipt](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-cm5.md).
+The [KWin session guide](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
+records the separate virtual-output compositing boundary. A compiled driver,
+virtual-output session or successful native checker does not establish an
+accelerated HDMI desktop.

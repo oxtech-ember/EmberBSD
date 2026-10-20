@@ -584,8 +584,10 @@ on every board in the hardware catalog.
   error snapshots report the correct PCS register and render-list position.
   Their source contracts and complete GCC16 kernel build pass.
   The [native scatter/gather allocator](ember/boot/bcm2712-v3d-render.md) now
-  passes CM5 allocations through 16 MiB, three held buffers, and the existing
-  TFU/CSD/sync/CL checks. The updated Mesa package passes four V3D EGL
+  passes allocation-only CM5 checks through 32 MiB, including 16 MiB plus
+  4 KiB, three held buffers and exact native budget return. These checks do not
+  establish rendering from a 32 MiB BO. Existing TFU/CSD/sync/CL checks also
+  pass. The updated Mesa package passes four V3D EGL
   lifecycles and 39 upstream invocations; one internal case skips and nine
   NIR cases remain disabled. Qt's mutex regression holds three descriptors
   under 145 threads. KDED also passes its installed runtime-helper check.
@@ -666,11 +668,12 @@ on every board in the hardware catalog.
   The manual CM5 profile now presents native mutable GEM frames through HVS
   at 1920x1080. Three real latches and two later-frame retirements pass.
   The [fixed-mode KMS integration](ember/boot/bcmv3d-kms.md) adds DRM display
-  objects to that same V3D device. Physical DRM flips and HDMI Plasma remain
-  separate acceptance steps. The [Ports session guide](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
+  objects to that same V3D device. A physical atomic modeset and 240 consecutive
+  double-buffer flips pass with normal BLANK teardown and returned BO memory.
+  HDMI Plasma remains a separate acceptance step. The [Ports session guide](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
   describes the previously checked virtual output.
-  A complete mobile shell workflow, native display and power management
-  still need validation. See the [Plasma Mobile port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile).
+  A complete mobile shell workflow, mobile input and power-management
+  integration still need validation. See the [Plasma Mobile port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile).
 
 ### GPU foundations and NPU direction
 
@@ -800,7 +803,7 @@ It grants no absence admission or display ownership.
   [KMS layer](ember/boot/bcmv3d-kms.md) passes a physical atomic modeset and
   240 consecutive double-buffer page flips with normal disable and returned
   BO memory. Successful events follow old GEM retirement and plane cleanup.
-  Presentation is about30 Hz in the fixed1080p60 mode; the extra observed
+  Presentation is about 30 Hz in the fixed 1080p60 mode; the extra observed
   frame retirement rule remains in place. Reserved black-list readiness also
   has source regressions. HDMI Plasma, full DPMS, persistent HPD IRQ/DDC
   integration and EDID mode selection remain open.
@@ -1031,21 +1034,29 @@ It grants no absence admission or display ownership.
   [binary synchronization check](ember/boot/bcm2712-v3d-sync.md) passed standard
   syncobj operations, finite waits, 325 CSD submissions and 64 CSD/TFU chains,
   with 5,184 verified GPU results. The [native bin/render interface](ember/boot/bcm2712-v3d-gl.md)
-  then passed 325 userspace CL pairs, 1,331,200 checked pixels and 32 TFU
-  copies, including guards and binary fences. The common Ports
+  passes 333 userspace CL pairs, 1,363,968 checked pixels and 32 TFU
+  copies, including binary fences and four guarded submissions each with
+  72 and 91 distinct BOs. Native counters record 185 creates and releases,
+  exact budget return and no allocation or new execution fault. The common Ports
   [Mesa package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-cm5.md)
   now passes real V3D 7.1.10.2 shader/pixel rendering: EGL 1.5, GLES 3.0
   and desktop OpenGL 3.1, including four 1280x800 lifecycles per display path. Native platform identity
   makes this GPU discoverable without DRM master. All 38 Mesa upstream
   invocations pass with recorded internal skips; LLVM23 llvmpipe also passes.
   The [LLVM 23.1.3 migration](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-llvm2313.md) repeats all 38 invocations and 20 additional large V3D lifecycles.
-  The newer native scatter/gather allocator passes allocations through 16 MiB
-  and three simultaneous buffers on CM5. Sustained allocation pressure remains
-  a separate acceptance step.
+  The native scatter/gather allocator passes allocation-only checks through
+  32 MiB and three simultaneous buffers on CM5. Its per-BO ceiling is
+  256 MiB, subject to the live device budget. The
+  [CL/CSD list policy](ember/boot/bcmv3d-submit-lists.md) admits up to 4096
+  handles with bounded heap metadata and native sorting. Source contracts cover
+  that limit; physical CL acceptance covers 72 and 91 handles. Sustained
+  allocation pressure and larger physical job lists remain unaccepted.
   Same-device PRIME passes 80 cross-process lifecycles and four real
   GBM/EGLImage shader/pixel cycles after native DMA-BUF lifetime repairs.
   The ordinary kernel remains a passive observer. General job recovery,
-  foreign-device sharing, Vulkan, physical DRM/KMS presentation and HDMI Plasma remain unverified. Native HVS GEM presentation is checked above.
+  foreign-device sharing, Vulkan and HDMI Plasma remain unverified. Native HVS
+  presentation, atomic KMS and 240 double-buffer flips have the separate
+  [fixed-mode acceptance boundary](ember/boot/bcm2712-v3d-gl.md#accepted-physical-scope).
 
 ### Optional command shells
 
