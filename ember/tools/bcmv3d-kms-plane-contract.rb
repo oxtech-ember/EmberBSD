@@ -39,9 +39,10 @@ def block_end(text, first)
 end
 
 def function(text, name)
-  name_pos = text.index(/^#{Regexp.escape(name)}\(/)
+  name_pos = text.index(/^#{Regexp.escape(name)}\(/) ||
+    text.index(/^static[^\n]*\b#{Regexp.escape(name)}\(/)
   abort 'Missing function: ' + name unless name_pos
-  first = text.rindex(/^static\b/, name_pos)
+  first = text[name_pos, 6] == 'static' ? name_pos : text.rindex(/^static\b/, name_pos)
   brace = text.index('{', name_pos)
   abort 'Missing static function boundary: ' + name unless first && brace
   last = block_end(text, brace)
@@ -80,6 +81,25 @@ begin
     path = __dir__ + '/bcmv3d-kms-plane-contract.' + extension
     inputs[path] = Digest::SHA256.file(path).hexdigest
   end
+  core = File.expand_path('../dist/drm/drm_plane.c', File.dirname(source))
+  uapi = File.expand_path('../dist/include/uapi/drm/drm_mode.h', File.dirname(source))
+  abort 'Actual DRM plane core and UAPI headers required' unless File.file?(core) && File.file?(uapi)
+  core_text = File.binread(core); uapi_text = File.binread(uapi)
+  inputs[core] = Digest::SHA256.hexdigest(core_text)
+  inputs[uapi] = Digest::SHA256.hexdigest(uapi_text)
+  File.write(dir + '/source-drm-plane.c', core_text)
+  File.write(dir + '/source-drm-mode.h', uapi_text)
+  # Preserve each imported source license in the generated extraction.
+  [[core, core_text], [uapi, uapi_text]].each do |path, text|
+    fragments << { name: File.basename(path) + '-license', source: path, line: 1,
+      text: text[0...text.index(/^#(?:include|ifndef)/)] }
+  end
+  %w[drm_format_modifier_blob drm_format_modifier].each do |name|
+    fragments << definition(uapi_text, name, /^struct #{name} \{/).merge(source: uapi)
+  end
+  %w[formats_ptr modifiers_ptr create_in_format_blob].each do |name|
+    fragments << function(core_text, name).merge(source: core)
+  end
   fragments << definition(original, 'plane-state', /^struct bcmv3d_kms_plane_state \{/)
   fragments << definition(original, 'fixed-mode', /^static const struct drm_display_mode bcmv3d_kms_mode = \{/)
   fragments << function(original, 'kms_plane_state')
@@ -89,14 +109,30 @@ begin
      kms_plane_duplicate kms_plane_prepare kms_plane_check].each do |name|
     fragments << function(original, name)
   end
+  fragments << function(original, 'kms_plane_format_mod_supported')
+  fragments << definition(original, 'plane-funcs', /^static const struct drm_plane_funcs kms_plane_funcs = \{/)
+  # Execute the actual init arrays and call. Do not duplicate their policy in C.
+  init = original[original.index(/^bcmv3d_kms_init\(/)..]
+  registration = %w[formats modifiers].map do |name|
+    first = init.index(/^\tstatic const uint(?:32|64)_t #{name}\[\] = \{/)
+    abort 'Missing unique init array: ' + name unless first
+    last = block_end(init, init.index('{', first))
+    abort 'Missing init array terminator' unless init[last] == ';'
+    init[first..last]
+  end.join("\n")
+  call = init.match(/^\tret = drm_universal_plane_init\([^;]+;/)
+  abort 'Missing unique actual plane registration' unless call && init.scan('ret = drm_universal_plane_init(').size == 1
+  registration += "\n\tint ret;\n" + call[0] + "\n\treturn ret;\n"
+  fragments << { name: 'plane-registration', line: original[0...original.index(/^bcmv3d_kms_init\(/)].count("\n") + 1,
+    text: "static int\nactual_plane_registration(struct drm_device *dev, struct bcmv3d_kms *k)\n{\n" + registration + "}\n" }
   write_body = lambda do |parts|
     File.write(dir + '/kms-plane-body.h', parts.map { |part|
-      '#line ' + part[:line].to_s + ' ' + source.dump + "\n" + part[:text]
+      '#line ' + part[:line].to_s + ' ' + (part[:source] || source).dump + "\n" + part[:text]
     }.join("\n"))
   end
   write_body.call(fragments)
   File.write(dir + '/fragments.json', JSON.pretty_generate(fragments.map { |part|
-    { name: part[:name], first_line: part[:line], sha256: Digest::SHA256.hexdigest(part[:text]) }
+    { name: part[:name], source: part[:source] || source, first_line: part[:line], sha256: Digest::SHA256.hexdigest(part[:text]) }
   }) + "\n")
   run = lambda do |name, argv, required = true|
     out = ''; err = ''; status = nil; timeout = false
@@ -122,6 +158,12 @@ begin
   out, = run.call('positive', execute); print out
   unless ENV['KMS_PLANE_SKIP_MUTANTS'] == '1'
     controls = {
+      'modifier-callback-missing' => ['plane-funcs', '.format_mod_supported = kms_plane_format_mod_supported,', '.format_mod_supported = NULL,'],
+      'modifier-format-rejection' => ['kms_plane_format_mod_supported', 'format == DRM_FORMAT_XRGB8888', '((void)format, true)'],
+      'modifier-value-rejection' => ['kms_plane_format_mod_supported', 'modifier == DRM_FORMAT_MOD_LINEAR', '((void)modifier, true)'],
+      'registered-format-list' => ['plane-registration', 'formats[] = { DRM_FORMAT_XRGB8888 }', 'formats[] = { DRM_FORMAT_XRGB8888, 0x34325241 }'],
+      'registered-modifier-list' => ['plane-registration', 'DRM_FORMAT_MOD_LINEAR, DRM_FORMAT_MOD_INVALID', 'DRM_FORMAT_MOD_LINEAR, 1, DRM_FORMAT_MOD_INVALID'],
+      'registered-function-table' => ['plane-registration', '&kms_plane_funcs,', 'unwired_plane_funcs(),'],
       'mode-timing' => ['kms_mode_valid', 'm->hsync_start == fixed->hsync_start', 'true'],
       'fb-format' => ['kms_fb_create', 'cmd->pixel_format != DRM_FORMAT_XRGB8888 ||', 'false ||'],
       'unused-plane' => ['kms_fb_create', 'for (i = 1; i < 4; i++)', 'for (i = 4; i < 4; i++)'],

@@ -7,6 +7,9 @@ GEM objects as V3D. HVS has a separate MMU4 consumer mapping for each frame.
 
 The supported mode is 1920x1080 at 60 Hz with the standard 148.5 MHz timing.
 The primary plane accepts only XRGB8888, LINEAR, pitch7680 and offset0.
+The plane publishes this explicit XR24/LINEAR pair in `IN_FORMATS`.
+The retained DRM core requires `format_mod_supported` to fill the modifier
+bitmap. Without that callback, a nonempty blob can contain no usable pairs.
 It covers the full CRTC at position0,0. Scaling, rotation, auxiliary planes,
 async flips, other timings and foreign GEM objects are rejected.
 
@@ -97,7 +100,10 @@ ruby ember/tools/bootfb-serial-handoff-contract.rb
 ```
 
 The plane and commit tests extract the actual production functions. They control
-DRM, native-owner and kernel services. The event test also executes the relevant
+DRM, native-owner and kernel services. The plane test also executes the actual
+DRM `IN_FORMATS` builder and the production registration with its real function
+table, format array and modifier array. It checks the client-visible pair.
+The event test also executes the relevant
 DRM cancellation, close and state-destruction bodies. Compiled source controls
 must reach their expected failed checks. A crash or timeout is not acceptance.
 The boot contract checks actual canonical-owner gates and the HPD read boundary.

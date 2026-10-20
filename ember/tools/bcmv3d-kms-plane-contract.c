@@ -17,6 +17,17 @@ static unsigned int checks, cases;
 #define IS_ERR(p) ((uintptr_t)(p) >= (uintptr_t)-4095)
 #define PTR_ERR(p) ((int)(intptr_t)(p))
 #define GFP_KERNEL 0
+#define DRM_FORMAT_MOD_INVALID UINT64_C(0x00ffffffffffffff)
+#define DRM_PLANE_TYPE_PRIMARY 1
+#ifndef __arraycount
+#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
+#define BUILD_BUG_ON(x) _Static_assert(!(x), "build condition")
+#define WARN_ON(x) (x)
+#define round_up(x, a) (((x) + (a) - 1) / (a) * (a))
+typedef uint32_t u32;
+typedef uint32_t __u32;
+typedef uint64_t __u64;
 #define DRM_FORMAT_XRGB8888 UINT32_C(0x34325258)
 #define DRM_FORMAT_MOD_LINEAR UINT64_C(0)
 #define DRM_MODE_FB_MODIFIERS 2U
@@ -71,12 +82,40 @@ struct drm_plane_state {
 	int crtc_x, crtc_y;
 	uint32_t crtc_w, crtc_h, src_x, src_y, src_w, src_h;
 };
-struct drm_plane { struct drm_device *dev; struct drm_plane_state *state; };
+struct drm_modeset_acquire_ctx;
+struct drm_plane_funcs {
+	bool (*format_mod_supported)(struct drm_plane *, uint32_t, uint64_t);
+	int (*update_plane)(struct drm_plane *, struct drm_crtc *, struct drm_framebuffer *,
+	    int, int, unsigned int, unsigned int, uint32_t, uint32_t, uint32_t,
+	    uint32_t, struct drm_modeset_acquire_ctx *);
+	int (*disable_plane)(struct drm_plane *, struct drm_modeset_acquire_ctx *);
+	void (*destroy)(struct drm_plane *);
+	void (*reset)(struct drm_plane *);
+	struct drm_plane_state *(*atomic_duplicate_state)(struct drm_plane *);
+	void (*atomic_destroy_state)(struct drm_plane *, struct drm_plane_state *);
+};
+struct drm_mode_object { uint32_t id; };
+struct drm_property { unsigned int identity; };
+struct drm_property_blob {
+	struct drm_mode_object base;
+	void *data;
+	size_t length;
+};
+struct drm_mode_config { struct drm_property *modifiers_property; };
+struct drm_plane {
+	struct drm_device *dev;
+	struct drm_plane_state *state;
+	struct drm_mode_object base;
+	const struct drm_plane_funcs *funcs;
+	const uint32_t *format_types;
+	const uint64_t *modifiers;
+	unsigned int format_count, modifier_count;
+};
 struct bcmv3d_scanout_frame { unsigned int refs; struct drm_gem_object *obj; };
 struct bcmv3d_scanout { unsigned int identity; };
-struct bcmv3d_kms { int availability, fault; };
+struct bcmv3d_kms { int availability, fault; struct drm_plane plane; };
 struct bcmv3d_device { struct bcmv3d_scanout *scanout; struct bcmv3d_kms *kms; };
-struct drm_device { struct bcmv3d_device *dev_private; };
+struct drm_device { struct bcmv3d_device *dev_private; struct drm_mode_config mode_config; };
 struct drm_file { struct drm_gem_object *handles[16]; };
 
 static struct bcmv3d_bo native_bo, foreign_bo;
@@ -124,6 +163,21 @@ static int bcmv3d_scanout_put(struct bcmv3d_scanout_frame *);
 int bcmv3d_scanout_prepare(struct bcmv3d_scanout *, struct drm_gem_object *,
     struct bcmv3d_scanout_frame **);
 int bcmv3d_scanout_finalize(struct bcmv3d_scanout_frame *, long);
+
+static struct drm_property modifiers_property;
+static struct drm_property_blob format_blob;
+static unsigned int blob_creates, blob_attaches;
+static struct drm_property_blob *drm_property_create_blob(struct drm_device *, size_t, const void *);
+static void drm_object_attach_property(struct drm_mode_object *, struct drm_property *, uint64_t);
+static int drm_atomic_helper_update_plane(struct drm_plane *, struct drm_crtc *,
+    struct drm_framebuffer *, int, int, unsigned int, unsigned int, uint32_t,
+    uint32_t, uint32_t, uint32_t, struct drm_modeset_acquire_ctx *);
+static int drm_atomic_helper_disable_plane(struct drm_plane *, struct drm_modeset_acquire_ctx *);
+static void drm_plane_cleanup(struct drm_plane *);
+static int drm_universal_plane_init(struct drm_device *, struct drm_plane *, uint32_t,
+    const struct drm_plane_funcs *, const uint32_t *, unsigned int, const uint64_t *,
+    int, const char *, ...);
+const struct drm_plane_funcs *unwired_plane_funcs(void);
 
 #include "kms-plane-body.h"
 
@@ -413,7 +467,7 @@ fixture_begin(void)
 	memset(frames, 0, sizeof(frames));
 	sc = (struct bcmv3d_device) { &owner, &kms };
 	dev.dev_private = &sc;
-	plane = (struct drm_plane) { &dev, NULL };
+	plane = (struct drm_plane) { .dev = &dev };
 	atomic_state.crtc = &crtc_state;
 	crtc_state.active = true;
 	fence = (struct dma_fence) { 0, false };
@@ -474,6 +528,156 @@ destroy_plane(void)
 	kms_plane_destroy_state(&plane, state);
 	plane.state = NULL;
 	cleanup_watch = NULL;
+}
+
+/* Other plane methods are retained only as actual table entries. */
+static int
+drm_atomic_helper_update_plane(struct drm_plane *p, struct drm_crtc *c,
+    struct drm_framebuffer *fb, int x, int y, unsigned int w, unsigned int h,
+    uint32_t sx, uint32_t sy, uint32_t sw, uint32_t sh,
+    struct drm_modeset_acquire_ctx *ctx)
+{
+	(void)p; (void)c; (void)fb; (void)x; (void)y; (void)w; (void)h;
+	(void)sx; (void)sy; (void)sw; (void)sh; (void)ctx;
+	CHECK(false);
+	return -EIO;
+}
+
+static int
+drm_atomic_helper_disable_plane(struct drm_plane *p,
+    struct drm_modeset_acquire_ctx *ctx)
+{
+	(void)p; (void)ctx;
+	CHECK(false);
+	return -EIO;
+}
+
+static void
+drm_plane_cleanup(struct drm_plane *p)
+{
+	(void)p;
+	CHECK(false);
+}
+
+const struct drm_plane_funcs *
+unwired_plane_funcs(void)
+{
+	static struct drm_plane_funcs funcs;
+
+	funcs = kms_plane_funcs;
+	funcs.format_mod_supported = NULL;
+	return &funcs;
+}
+
+static struct drm_property_blob *
+drm_property_create_blob(struct drm_device *d, size_t size, const void *data)
+{
+	CHECK(d == &dev && data == NULL && format_blob.data == NULL);
+	blob_creates++;
+	format_blob.data = kzalloc(size, GFP_KERNEL);
+	if (format_blob.data == NULL)
+		return ERR_PTR(-ENOMEM);
+	format_blob.length = size;
+	format_blob.base.id = 23;
+	return &format_blob;
+}
+
+static void
+drm_object_attach_property(struct drm_mode_object *object,
+    struct drm_property *property, uint64_t value)
+{
+	CHECK(object == &kms.plane.base && property == &modifiers_property);
+	CHECK(value == format_blob.base.id && format_blob.data != NULL);
+	blob_attaches++;
+}
+
+static int
+drm_universal_plane_init(struct drm_device *d, struct drm_plane *p,
+    uint32_t possible_crtcs, const struct drm_plane_funcs *funcs,
+    const uint32_t *formats, unsigned int count, const uint64_t *modifiers,
+    int type, const char *name, ...)
+{
+	unsigned int n = 0;
+
+	CHECK(d == &dev && p == &kms.plane && possible_crtcs == 1);
+	CHECK(type == DRM_PLANE_TYPE_PRIMARY && strcmp(name, "HVS0") == 0);
+	CHECK(count <= 64 && formats != NULL && modifiers != NULL);
+	while (modifiers[n] != DRM_FORMAT_MOD_INVALID) {
+		CHECK(n < 8);
+		n++;
+	}
+	p->dev = d;
+	p->funcs = funcs;
+	p->format_types = formats;
+	p->format_count = count;
+	p->modifiers = modifiers;
+	p->modifier_count = n;
+	return 0;
+}
+
+static void
+check_format_blob(void)
+{
+	static const uint32_t rejected_formats[] = {
+		0, UINT32_C(0x34325241), UINT32_C(0x34324258), UINT32_MAX
+	};
+	static const uint64_t rejected_modifiers[] = {
+		1, UINT64_C(0x0700000000000006), DRM_FORMAT_MOD_INVALID, UINT64_MAX
+	};
+	struct drm_format_modifier_blob header;
+	struct drm_format_modifier modifier;
+	uint32_t format;
+	unsigned int i, j, pairs = 0;
+
+	fixture_begin();
+	CHECK(kms_plane_format_mod_supported(&kms.plane,
+	    DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR));
+	for (i = 0; i < __arraycount(rejected_formats); i++)
+		CHECK(!kms_plane_format_mod_supported(&kms.plane,
+		    rejected_formats[i], DRM_FORMAT_MOD_LINEAR));
+	for (i = 0; i < __arraycount(rejected_modifiers); i++)
+		CHECK(!kms_plane_format_mod_supported(&kms.plane,
+		    DRM_FORMAT_XRGB8888, rejected_modifiers[i]));
+	dev.mode_config.modifiers_property = &modifiers_property;
+	CHECK(actual_plane_registration(&dev, &kms) == 0);
+	CHECK(create_in_format_blob(&dev, &kms.plane) == 0);
+	CHECK(blob_creates == 1 && blob_attaches == 1 && format_blob.data != NULL);
+	CHECK(format_blob.length == sizeof(header) + 8 + sizeof(modifier));
+	memcpy(&header, format_blob.data, sizeof(header));
+	CHECK(header.version == FORMAT_BLOB_CURRENT && header.flags == 0);
+	CHECK(header.count_formats == 1 && header.count_modifiers == 1);
+	CHECK(header.formats_offset == sizeof(header));
+	CHECK(header.modifiers_offset == sizeof(header) + 8);
+	memcpy(&format, (char *)format_blob.data + header.formats_offset, sizeof(format));
+	memcpy(&modifier, (char *)format_blob.data + header.modifiers_offset, sizeof(modifier));
+	CHECK(format == DRM_FORMAT_XRGB8888);
+	/* This is the hardware-observed failure: NULL callback emitted mask 0. */
+	CHECK(modifier.formats == UINT64_C(1));
+	CHECK(modifier.modifier == DRM_FORMAT_MOD_LINEAR);
+	CHECK(modifier.offset == 0 && modifier.pad == 0);
+	/* Enumerate client-visible pairs through the exported UAPI bit mask. */
+	for (i = 0; i < header.count_modifiers; i++) {
+		memcpy(&modifier, (char *)format_blob.data +
+		    header.modifiers_offset + i * sizeof(modifier), sizeof(modifier));
+		for (j = 0; j < 64; j++) {
+			if ((modifier.formats & (UINT64_C(1) << j)) == 0)
+				continue;
+			CHECK(modifier.offset + j < header.count_formats);
+			memcpy(&format, (char *)format_blob.data +
+			    header.formats_offset + (modifier.offset + j) * sizeof(format),
+			    sizeof(format));
+			CHECK(format == DRM_FORMAT_XRGB8888 &&
+			    modifier.modifier == DRM_FORMAT_MOD_LINEAR);
+			pairs++;
+		}
+	}
+	CHECK(pairs == 1 && kms.plane.funcs == &kms_plane_funcs);
+	kfree(format_blob.data);
+	format_blob.data = NULL;
+	allocation_fail = true;
+	CHECK(create_in_format_blob(&dev, &kms.plane) == -1);
+	CHECK(blob_creates == 2 && blob_attaches == 1 && format_blob.data == NULL);
+	fixture_end();
 }
 
 static void
@@ -715,11 +919,12 @@ check_plane_geometry(void)
 int
 main(void)
 {
+	check_format_blob();
 	check_modes();
 	check_framebuffers();
 	check_prepare_and_lifetime();
 	check_plane_geometry();
 	printf("PASS actual KMS framebuffer/plane: %u cases, %u checks; "
-	    "reserve-only preparation and balanced ownership\n", cases, checks);
+	    "XR24/LINEAR blob, reserve-only preparation and balanced ownership\n", cases, checks);
 	return 0;
 }

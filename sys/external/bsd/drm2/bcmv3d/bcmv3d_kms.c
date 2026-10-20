@@ -265,7 +265,17 @@ kms_plane_check(struct drm_plane *plane, struct drm_plane_state *state)
 	return 0;
 }
 
+static bool
+kms_plane_format_mod_supported(struct drm_plane *plane, uint32_t format,
+    uint64_t modifier)
+{
+
+	(void)plane;
+	return format == DRM_FORMAT_XRGB8888 && modifier == DRM_FORMAT_MOD_LINEAR;
+}
+
 static const struct drm_plane_funcs kms_plane_funcs = {
+	.format_mod_supported = kms_plane_format_mod_supported,
 	.update_plane = drm_atomic_helper_update_plane,
 	.disable_plane = drm_atomic_helper_disable_plane,
 	.destroy = drm_plane_cleanup,
