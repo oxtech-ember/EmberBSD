@@ -106,8 +106,35 @@ static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v);
 static int copyin(const void *src,void *dst,size_t n)
 { if((uintptr_t)src<4096)return EFAULT; memcpy(dst,src,n); return 0; }
 
+struct dma_fence;
+static long contract_resv_wait(struct dma_fence *, long);
 #include "bcm2712-v3d-sync-model.h"
+#include "bcm2712-v3d-resv-model.h"
 #include "job-body.h"
+
+static long
+contract_resv_wait(struct dma_fence *f, long timeout)
+{
+	CHECK(resv_engine_lock == NULL || *resv_engine_lock == 0);
+	resv_waits++;
+	return f->status ? timeout : resv_wait_fault ? resv_wait_result : input_wait_result;
+}
+static void
+contract_resv_engine(struct bcmv3d_job *job)
+{
+	CHECK(resv_locks == 0 && resv_contexts == 0 && resv_arrays == 0);
+	struct dma_fence *f = NULL;
+	unsigned count = job->nbo ? job->nbo : 2;
+	for (unsigned i = 0; i < count; i++) {
+		struct bcmv3d_bo *bo = job->nbo ? job->bos[i] : i ? job->dst : job->src;
+		CHECK(bo != NULL && bo->cma.base.resv->owner == NULL);
+		struct dma_fence *next = bo->cma.base.resv->exclusive;
+		CHECK(next && next->status == 0 && next->context == job->fence_context &&
+		    next->seqno == job->fence_seqno);
+		if (f) CHECK(f == next);
+		f = next;
+	}
+}
 
 static uint32_t core_regs[0xa00/4];
 static unsigned csd_starts, csd_writes, cache_phase, csd_owned;
@@ -159,7 +186,7 @@ static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v)
    for(unsigned i=0;i<j->nbo;i++)CHECK(j->bos[i]->cma.base.refs==1);
    close_during_submit=NULL;
   }
-  if(on_engine_start != NULL)on_engine_start();
+  contract_resv_engine(j); if(on_engine_start != NULL)on_engine_start();
   if(model_case!=1 && model_case!=11 && model_case<=40)cl_complete();
  }
  if(r>V3D_CSD_CFG0 && r<=V3D_CSD_CFG0+28)csd_writes++;
@@ -180,7 +207,7 @@ static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v)
    close_during_submit=NULL;
   }
   csd_writes=0; csd_starts++; core_regs[V3D_CSD_STATUS/4]|=2;
-  if(on_engine_start != NULL)on_engine_start();
+  contract_resv_engine(j); if(on_engine_start != NULL)on_engine_start();
   if(model_case!=1 && model_case!=11 && model_case<=40)csd_complete();
  }
  return 0;
@@ -323,7 +350,7 @@ bcmv3d_takeover_hub_poke(bus_size_t r,uint32_t v)
 		}
 		starts++; regs[V3D_TFU_CS/4]|=1;
 		if(model_case==10)((uint32_t *)j->scratch->cma.vaddr)[0]^=1;
-		if(on_engine_start != NULL)on_engine_start();
+		contract_resv_engine(j); if(on_engine_start != NULL)on_engine_start();
   if(model_case!=1 && model_case!=11 && model_case<=40)complete();
 	}
 	return 0;
@@ -360,7 +387,13 @@ setup(struct bcmv3d_device *c,struct drm_device *d,struct drm_file *f)
 	retired=revoke_synced=revoked=false;
 	close_during_submit=NULL;
 	time_ns=0;
+	resv_engine_lock = NULL;
+	CHECK(resv_locks == 0 && resv_contexts == 0 && resv_arrays == 0 && resv_objects == 0);
+	resv_lock_error = 0; resv_snapshot_fail = resv_wait_fault = false;
+	resv_lock_calls = resv_snapshot_calls = resv_fault_at = 0;
+	resv_prepares = resv_publications = resv_waits = 0;
 	CHECK(bcmv3d_job_init(c)==0);
+	resv_engine_lock = &c->job->lock;
 	CHECK(bcmv3d_create_bo(d,&a,f)==0);
 	CHECK(bcmv3d_create_bo(d,&b,f)==0);
 	return (struct drm_v3d_submit_tfu){.icfg=0x001d0001,.iia=a.offset,
@@ -388,6 +421,8 @@ cleanup(struct bcmv3d_device *c,struct drm_file *f,bool poisoned)
 	}
 	/* Model a reboot only: production never frees a published engine. */
 	j->published=false; bcmv3d_job_fini(c); empty(c);
+	CHECK(fence_count == 0 && resv_objects == 0 && resv_locks == 0 && resv_contexts == 0 && resv_arrays == 0);
+	resv_engine_lock = NULL;
 }
 int
 main(void)

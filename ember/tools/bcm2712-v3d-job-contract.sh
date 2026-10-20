@@ -12,6 +12,7 @@ for file in bo drv job; do
         "$src/sys/external/bsd/drm2/bcmv3d/bcmv3d_$file.$ext" \
         > "$work/$file-body.h"
 done
+"${RUBY:-ruby}" "$src/ember/tools/bcmv3d-resv-model-export.rb" "$src" "$work"
 sed '/^#include /d' \
     "$src/sys/external/bsd/drm2/dist/include/uapi/drm/v3d_drm.h" \
     > "$work/uapi-body.h"
@@ -23,7 +24,13 @@ compile()
         "$src/ember/tools/bcm2712-v3d-job-contract.c" -o "$work/contract"
 }
 compile
-"$work/contract"
+if [ "${V3D_COMPILE_ONLY:-0}" = 1 ]; then
+    : "${V3D_OUTPUT:?set V3D_OUTPUT for a cross-built fixture}"
+    cp "$work/contract" "$V3D_OUTPUT"
+    exit 0
+fi
+# shellcheck disable=SC2086
+${TEST_RUNNER:-} "$work/contract"
 [ "${V3D_SKIP_MUTANTS:-0}" != 1 ] || exit 0
 cp "$work/job-body.h" "$work/job-good.h"
 ulimit -c 0
@@ -51,7 +58,7 @@ for mutant in flags source-write completion-count busy unmap revoke \
         END { expected = mutant == "unmap" || mutant == "early-return-to-cpu" ? 2 : 1; if (changed != expected) exit 1 }
     ' "$work/job-good.h" > "$work/job-body.h"
     compile
-    if "$work/contract" > "$work/mutant.log" 2>&1; then
+    if ${TEST_RUNNER:-} "$work/contract" > "$work/mutant.log" 2>&1; then
         echo "surviving TFU ownership mutant: $mutant" >&2
         exit 1
     fi

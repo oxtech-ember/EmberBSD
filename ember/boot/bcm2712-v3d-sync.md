@@ -4,6 +4,11 @@ Status: native TFU/CSD binary synchronization passed physical CM5 acceptance
 on 2026-10-11. This connects the [accepted QPU path](bcm2712-v3d-csd.md) to
 standard DRM syncobj operations. Mesa execution is still a separate gate.
 
+The current [BO reservation contract](bcmv3d-bo-fences.md) also attaches
+a native producer fence to each admitted TFU/CSD/CL BO, including jobs without
+an output syncobj. Its source checks and hardware acceptance are separate from
+the historical explicit-syncobj acceptance recorded below.
+
 ## Ownership and completion
 
 `bcmv3d_job.c` uses the existing DRM syncobj and native `dma_fence` APIs.

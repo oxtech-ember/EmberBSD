@@ -18,6 +18,7 @@
 #include <linux/slab.h>
 #include <drm/drm_syncobj.h>
 #include "bcmv3d_drv.h"
+#include "bcmv3d_resv.h"
 
 #define V3D_INT_STS	0x50
 #define V3D_INT_CLR	0x58
@@ -148,8 +149,6 @@ static int
 bcmv3d_sync_publish(struct bcmv3d_job *job, struct bcmv3d_sync *sync)
 {
 
-	if (sync->output == NULL)
-		return 0;
 	if (job->fence_seqno == UINT64_MAX)
 		return EOVERFLOW;
 	sync->fence = kzalloc(sizeof(*sync->fence), GFP_KERNEL);
@@ -157,7 +156,8 @@ bcmv3d_sync_publish(struct bcmv3d_job *job, struct bcmv3d_sync *sync)
 		return ENOMEM;
 	dma_fence_init(sync->fence, &bcmv3d_fence_ops, &job->fence_lock,
 	    job->fence_context, ++job->fence_seqno);
-	drm_syncobj_replace_fence(sync->output, sync->fence);
+	if (sync->output != NULL)
+		drm_syncobj_replace_fence(sync->output, sync->fence);
 	return 0;
 }
 
@@ -512,7 +512,8 @@ bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 	struct bcmv3d_device *sc = dev->dev_private;
 	struct bcmv3d_job *job = sc->job;
 	struct drm_v3d_submit_tfu *args = data;
-	struct drm_gem_object *src, *dst;
+	struct drm_gem_object *src, *dst, *objects[2];
+	struct bcmv3d_resv reservations = {0};
 	struct bcmv3d_sync sync = {0};
 	int error;
 
@@ -530,6 +531,12 @@ bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 	error = bcmv3d_sync_prepare(file, args->in_sync, args->out_sync, &sync);
 	if (error != 0)
 		goto release;
+	objects[0] = src;
+	objects[1] = dst;
+	error = bcmv3d_resv_prepare(&reservations, objects, 2,
+	    MAX(1, mstohz(1000)));
+	if (error != 0)
+		goto release;
 	mutex_enter(&job->lock);
 	if (job->poisoned) {
 		error = EIO;
@@ -538,6 +545,11 @@ bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 	error = bcmv3d_sync_publish(job, &sync);
 	if (error != 0)
 		goto unlock;
+	error = bcmv3d_resv_publish(&reservations, sync.fence);
+	if (error != 0)
+		goto unlock;
+	/* Completion cannot need a reservation held by this submission. */
+	bcmv3d_resv_unlock(&reservations);
 	job->src = bcmv3d_to_bo(src);
 	job->dst = bcmv3d_to_bo(dst);
 	atomic_store_release(&job->src->busy, 1);
@@ -562,9 +574,11 @@ bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 	atomic_store_release(&job->dst->busy, 0);
 	job->src = job->dst = NULL;
 unlock:
+	bcmv3d_resv_unlock(&reservations);
 	bcmv3d_sync_complete(&sync, error);
 	mutex_exit(&job->lock);
 release:
+	bcmv3d_resv_unlock(&reservations);
 	bcmv3d_sync_fini(&sync);
 	drm_gem_object_put_unlocked(src);
 	drm_gem_object_put_unlocked(dst);
@@ -735,6 +749,7 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 	struct bcmv3d_device *sc;
 	struct bcmv3d_job *job;
 	struct drm_gem_object *objects[V3D_CSD_BO_MAX];
+	struct bcmv3d_resv reservations = {0};
 	struct bcmv3d_sync sync = {0};
 	uint32_t handles[V3D_CSD_BO_MAX];
 	unsigned int i, j, count = 0;
@@ -772,6 +787,10 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 	error = bcmv3d_sync_prepare(file, a->in_sync, a->out_sync, &sync);
 	if (error != 0)
 		goto release;
+	error = bcmv3d_resv_prepare(&reservations, objects, count,
+	    MAX(1, mstohz(1000)));
+	if (error != 0)
+		goto release;
 	mutex_enter(&job->lock);
 	if (job->poisoned) {
 		error = EIO;
@@ -788,6 +807,11 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 	error = bcmv3d_sync_publish(job, &sync);
 	if (error != 0)
 		goto clear;
+	error = bcmv3d_resv_publish(&reservations, sync.fence);
+	if (error != 0)
+		goto clear;
+	/* Completion cannot need a reservation held by this submission. */
+	bcmv3d_resv_unlock(&reservations);
 	for (i = 0; i < count; i++)
 		atomic_store_release(&job->bos[i]->busy, 1);
 	error = bcmv3d_csd_execute(job, a);
@@ -820,9 +844,11 @@ clear:
 	memset(job->bos, 0, sizeof(job->bos));
 	job->nbo = 0;
 unlock:
+	bcmv3d_resv_unlock(&reservations);
 	bcmv3d_sync_complete(&sync, error);
 	mutex_exit(&job->lock);
 release:
+	bcmv3d_resv_unlock(&reservations);
 	bcmv3d_sync_fini(&sync);
 	while (count != 0)
 		drm_gem_object_put_unlocked(objects[--count]);
@@ -996,6 +1022,7 @@ bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 	struct bcmv3d_device *sc = dev->dev_private;
 	struct bcmv3d_job *job = sc->job;
 	struct drm_gem_object *objects[V3D_CSD_BO_MAX];
+	struct bcmv3d_resv reservations = {0};
 	struct bcmv3d_sync sync = {0}, render_sync = {0};
 	uint32_t handles[V3D_CSD_BO_MAX];
 	unsigned int i, j, count = 0;
@@ -1037,6 +1064,10 @@ bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 		error = bcmv3d_sync_wait(&render_sync);
 	if (error != 0)
 		goto release;
+	error = bcmv3d_resv_prepare(&reservations, objects, count,
+	    MAX(1, mstohz(1000)));
+	if (error != 0)
+		goto release;
 	mutex_enter(&job->lock);
 	if (job->poisoned) {
 		error = EIO;
@@ -1058,6 +1089,11 @@ bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 	error = bcmv3d_sync_publish(job, &sync);
 	if (error != 0)
 		goto clear;
+	error = bcmv3d_resv_publish(&reservations, sync.fence);
+	if (error != 0)
+		goto clear;
+	/* Completion cannot need a reservation held by this submission. */
+	bcmv3d_resv_unlock(&reservations);
 	for (i = 0; i < count; i++)
 		atomic_store_release(&job->bos[i]->busy, 1);
 	error = bcmv3d_cl_execute(job, a);
@@ -1079,9 +1115,11 @@ clear:
 	memset(job->bos, 0, sizeof(job->bos));
 	job->nbo = 0;
 unlock:
+	bcmv3d_resv_unlock(&reservations);
 	bcmv3d_sync_complete(&sync, error);
 	mutex_exit(&job->lock);
 release:
+	bcmv3d_resv_unlock(&reservations);
 	bcmv3d_sync_fini(&render_sync);
 	bcmv3d_sync_fini(&sync);
 	while (count != 0)

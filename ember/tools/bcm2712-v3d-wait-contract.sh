@@ -11,6 +11,7 @@ for file in bo drv job; do
     sed '/^#include /d; /^__KERNEL_RCSID(/d' \
         "$src/sys/external/bsd/drm2/bcmv3d/bcmv3d_$file.$ext" > "$work/$file-body.h"
 done
+"${RUBY:-ruby}" "$src/ember/tools/bcmv3d-resv-model-export.rb" "$src" "$work"
 sed '/^#include /d' "$src/sys/external/bsd/drm2/dist/include/uapi/drm/v3d_drm.h" > "$work/uapi-body.h"
 compile()
 {
@@ -28,7 +29,8 @@ fi
 if [ -n "${V3D_WAIT_EVIDENCE:-}" ]; then
     mkdir -p "$V3D_WAIT_EVIDENCE"
     cp "$work/bo-body.h" "$work/drv-body.h" "$work/job-body.h" \
-        "$work/uapi-body.h" "$V3D_WAIT_EVIDENCE/"
+        "$work/uapi-body.h" "$work/resv-types.h" "$work/resv-body.h" \
+        "$work/gem-lock-body.h" "$V3D_WAIT_EVIDENCE/"
 fi
 # shellcheck disable=SC2086
 ${TEST_RUNNER:-} "$work/contract"
@@ -50,7 +52,7 @@ File.write(output, text)
 RUBY
     compile
     for engine in 0 1 2; do
-        if V3D_WAIT_ENGINE="$engine" "$work/contract" > "$work/mutant.log" 2>&1; then
+        if V3D_WAIT_ENGINE="$engine" ${TEST_RUNNER:-} "$work/contract" > "$work/mutant.log" 2>&1; then
             echo "surviving V3D wait mutant: $mutant, engine $engine" >&2
             exit 1
         fi

@@ -35,7 +35,7 @@ static struct dma_fence *drm_syncobj_fence_get(struct drm_syncobj *s)
 static void drm_syncobj_replace_fence(struct drm_syncobj *s,struct dma_fence *f)
 { struct dma_fence *old=s->fence; s->fence=dma_fence_get(f); dma_fence_put(old); }
 static long dma_fence_wait_timeout(struct dma_fence *f,bool intr,long timeout)
-{ CHECK(intr && timeout>0); if(on_wait)on_wait(); return f->status?1:input_wait_result; }
+{ CHECK(intr && timeout>0); if(on_wait)on_wait(); return contract_resv_wait(f,timeout); }
 static int dma_fence_get_status(struct dma_fence *f) { return f->status; }
 static void dma_fence_set_error(struct dma_fence *f,int err)
 { CHECK(err<0 && !f->status); f->status=err; }

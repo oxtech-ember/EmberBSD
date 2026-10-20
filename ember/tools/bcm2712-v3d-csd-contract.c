@@ -33,6 +33,8 @@ csd_cleanup(struct bcmv3d_device *c, struct drm_file *f, bool poison)
 		j->nbo=0;
 	} else CHECK(csd_owned==0 && !scratch_owned);
 	j->published=false; bcmv3d_job_fini(c); empty(c);
+	CHECK(fence_count == 0 && resv_objects == 0 && resv_locks == 0 && resv_contexts == 0 && resv_arrays == 0);
+	resv_engine_lock = NULL;
 }
 
 #ifndef BCMV3D_SYNC_CONTRACT

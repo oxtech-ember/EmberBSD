@@ -31,8 +31,8 @@ static void setup_sync(struct bcmv3d_device *c,struct drm_file *f)
     static const struct dma_fence_ops ops={.use_64bit_seqno=true};
     active_file=f; active_job=c->job;
     CHECK(!fence_count && !sync_count);
-    struct drm_syncobj *s=calloc(1,sizeof(*s)); s->refs=1;
-    s->fence=calloc(1,sizeof(*s->fence));
+    struct drm_syncobj *s=calloc(1,sizeof(*s)); CHECK(s != NULL); s->refs=1;
+    s->fence=calloc(1,sizeof(*s->fence)); CHECK(s->fence != NULL);
     dma_fence_init(s->fence,&ops,NULL,999,1); s->fence->status=1;
     f->syncs[1]=s; sync_count++; old_fence=s->fence;
     on_wait=inspect_wait; on_signal=inspect_signal;
@@ -41,7 +41,7 @@ static void setup_sync(struct bcmv3d_device *c,struct drm_file *f)
 static void cleanup_sync(struct drm_file *f)
 {
     if(f->syncs[1]) { drm_syncobj_put(f->syncs[1]); f->syncs[1]=NULL; }
-    CHECK(!fence_count && !sync_count); on_wait=NULL; on_signal=NULL;
+    CHECK(!sync_count); on_wait=NULL; on_signal=NULL;
 }
 #ifndef BCMV3D_CL_CONTRACT
 int main(void)
