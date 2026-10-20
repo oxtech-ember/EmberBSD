@@ -111,6 +111,38 @@ This interface does not perform MMIO, register an IRQ, start FE or NN, or
 add a task stage or user ioctl. It has no POSTREAD, output copy, or completion
 API. A later native terminal contract must authorize result access.
 
+## Physical acceptance
+
+One 4 GiB Zero 3W passed the bounded FE path on GCC16.2.0 `EMBER64` source
+`be8f96cace8fcdc1f954e2d248e6c2edc9b6571e`. The PCB revision was not recorded.
+The [board cohort](../boards/orange-pi-zero-3w.md#accelerator-acceptance-2026-10-20)
+records the kernel ELF hash and matched modules and DTBs.
+Powered PID `0x1000003b`, revision `0x9202`, and Engine1 passed while the
+GPU remained at stage 21. Engine2 submitted one fixed 40-byte MMU flush,
+semaphore, stall, event4 and END stream. The cached terminal result was:
+
+| Field | Result |
+| --- | --- |
+| `run_step`, `run_error` | 13, 0 |
+| `run_started`, `run_terminal`, `run_snapshot_valid` | 1, 1, 1 |
+| Command bytes and VA | 40, `0x01001000` |
+| `run_irq_baseline`, `run_irq_count` | 0, 1 |
+| `run_irq_raw`, `run_irq_bits`, `run_irq_fault` | `0x10`, `0x10`, 0 |
+| `run_irq_mask_readback`, `run_terminal_status` | 0, 0 |
+| Both terminal idle samples | `0x7fffffff` |
+| Both terminal DMA-address samples | `0x01001020`, inside the owned command VA page |
+
+The new event4, two terminal samples and final mask/error checks passed
+together. GPU state, display cache and four checked system hashes were
+unchanged. Mapping, DMA, IRQ storage and resource leases remain retained
+until reboot. Success does not permit another run in that boot.
+
+This is one finite FE/MMU/IRQ result. It executes no NN instruction and
+does not qualify model output, writable-output coherency, guard faults,
+write protection or sustained operation. The 36 KiB TASK storage and
+[NN image and command formatters](a733-npu-nn.md) have separate source
+contracts. They are not native NN execution acceptance.
+
 ## Cached evidence and verification
 
 `engine_result` records the stage return value. `run_attempted`,

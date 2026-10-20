@@ -962,23 +962,27 @@ It grants no absence admission or display ownership.
   The [DRM/GEM interface](ember/boot/a733-pvr-render.md),
   [per-file VMs](ember/boot/a733-pvr-vm.md), firmware-derived queries and
   [syncobjs](ember/boot/drm-syncobj.md) feed the native execution path.
-  On GCC16.2 kernel `538697de0806`, three
+  On GCC16.2 kernel `be8f96cace8f`, three
   [Vulkan compute lifecycles](ember/boot/a733-pvr-execution.md#physical-compute-boundary)
   verify all 16 output words, a fence and host readback.
   [Offscreen graphics and transfer](ember/boot/a733-pvr-graphics.md#physical-acceptance-boundary)
   verify all 256 RGBA pixels, row padding and guards. The maximum sampled
-  temperature for the GPU run is 54.56 degrees Celsius.
+  temperature for the GPU run is 52.7 degrees Celsius.
   KWin 6.8 and Qt Quick also pass four exact 640 by 480 frames through
   PowerVR/Zink on a virtual output. Native HWRT ownership, paired submission,
   final-fragment execution and transfer have bounded physical coverage.
   Firmware GROW, reset recovery, endurance and Vulkan conformance remain unaccepted.
   The [native DE/HDMI/KMS path](ember/boot/a733-de352-native.md) has separate
-  ownership and admission contracts. The same kernel stops at DE step 4
-  on global flush request readback 0. The [source repair](ember/boot/a733-iommu1-cold-init.md)
-  has software checks; physical HDMI, KMS and complete Plasma remain unaccepted.
-  NPU powered identification and the [24 KiB Engine1 preparation](ember/boot/a733-npu-engine.md)
-  pass on this kernel. Engine2 stops at command-address readback step 12;
-  FE start and IRQ counts remain zero. NPU task and model execution remain unaccepted.
+  ownership and admission contracts. Its cold IOMMU sequence completes on
+  this kernel. Mode admission returns ENXIO with no monitor connected; the
+  precise internal output failure is not recorded. Physical HDMI, KMS and
+  complete Plasma remain unaccepted.
+  NPU powered identification, 24 KiB Engine1 preparation and one
+  [finite FE/MMU/IRQ stream](ember/boot/a733-npu-engine.md#physical-acceptance)
+  pass on the same kernel. The 40-byte stream reaches terminal step 13
+  without error and records one new event4 IRQ. DMA and resource leases
+  stay retained until reboot. NN instructions, model output, output
+  coherency and guard-fault behavior remain unaccepted.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,
@@ -1258,12 +1262,12 @@ The base system shell is unchanged.
   Source changes preserve their provenance; `ember/patches` records the
   original board adaptations already applied to this tree.
 - **Current accepted accelerator kernel on Orange Pi Zero 3W:** GCC16.2
-  `EMBER64` revision `538697de0806` boots with matched modules and DTBs.
-  Its [compute and graphics boundary](ember/boot/a733-pvr-graphics.md#physical-acceptance-boundary)
+  `EMBER64` revision `be8f96cace8f` boots with matched modules and DTBs.
+  The [board acceptance boundary](ember/boards/orange-pi-zero-3w.md#accelerator-acceptance-2026-10-20)
   records all 21 diagnostic stages, three compute lifecycles, exact offscreen
-  pixels and four hardware KWin/Zink frames. HDMI and full Plasma remain pending.
-  The [board guide](ember/boards/orange-pi-zero-3w.md#accelerator-acceptance-2026-10-20)
-  separates these results from older base and network checks.
+  pixels, four hardware KWin/Zink frames and one bounded NPU FE/MMU/IRQ run.
+  HDMI, full Plasma and NN model execution remain pending. Older base,
+  network, PRIME and sync-file checks retain their own cohorts.
 - **AArch64 numerical correctness:** an [initial FP state correction](ember/boot/aarch64-fp-state.md)
   addresses lost subnormal values and NaN payloads on CPUs without AArch32.
   Production contracts and native object compilation pass. Three runtime

@@ -118,5 +118,6 @@ GPU/NPU orderings, current parent proofs and retained write failures.
 These are host controls. They do not validate device access, native ioctl
 copying, power sequencing, DMA, IRQ delivery, command completion, or a
 model result. See the [native FE stages](a733-npu-engine.md) for the separate DMA/IRQ contract.
-The earlier [board evidence](../boards/orange-pi-zero-3w.md)
-remains a separate hardware cohort.
+The [physical FE result](a733-npu-engine.md#physical-acceptance) records
+the separate bounded Engine2 hardware acceptance. It does not extend
+the diagnostic VIPLite subset or enable its memory, cache or task ioctls.
