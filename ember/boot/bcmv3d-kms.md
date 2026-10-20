@@ -50,6 +50,11 @@ Finalization waits for the original implicit writer outside owner locks. It
 performs consumer PREWRITE only after that writer completes successfully.
 Neither preparation nor state copying performs HVS publication.
 
+A disabled CRTC waits for reserved black-list readiness before it captures
+the native sequence floor. The condition-variable wait releases the process
+owner lock and keeps one tick budget across wakeups. A delayed earlier latch
+cannot complete a disable through a floor captured before that wait.
+
 The tail transfers its event pointer under `event_lock` before native submit.
 A real latch after the sequence floor captures the current cooked DRM count
 and time. It wakes the tail without delivering the event. A delayed older
@@ -78,8 +83,9 @@ Unknown hardware state retains its resources until reboot.
 
 A disabled CRTC submits the reserved black list. HDMI timing and clocks continue.
 This is logical blanking, not complete HDMI/PHY power-down, suspend or connector
-DPMS qualification. Rapid disable/enable/disable reuse of the reserved black
-slot remains unaccepted. The driver has no hardware detach or fault-reset API.
+DPMS qualification. Source tests cover rapid reserved-slot readiness, timeout
+and fault handling. Physical rapid disable/enable/disable remains a separate
+gate. The driver has no hardware detach or fault-reset API.
 
 ## Source checks
 

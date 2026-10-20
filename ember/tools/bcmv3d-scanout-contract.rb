@@ -18,8 +18,8 @@ begin
   'display-types.h'=>'sys/arch/arm/broadcom/bcm2712_display.h'
  }.each{|out,p|File.write(d+'/'+out,strip.call(read.call(p)))}
  errno=read.call('sys/sys/errno.h');linux_errno=read.call('sys/external/bsd/common/include/linux/errno.h')
- definitions=%w[ELAST ETIME].map do |name|
-  values=errno.scan(/^#define\s+#{name}\s+(\d+)\b/)
+ definitions=%w[ELAST ETIME ERESTART].map do |name|
+  values=errno.scan(/^#define\s+#{name}\s+(-?\d+)\b/)
   abort 'unique target errno required: '+name unless values.size==1
   "#undef #{name}\n#define #{name} #{values.first.first}\n"
  end.join
@@ -51,7 +51,18 @@ begin
   o,=run.call('positive',exec);reports<<o
   unless ENV['SCANOUT_SKIP_MUTANTS']=='1'
    controls={
-    'retired-wait-unlocked'=>['bcmv3d_scanout_wait_retired','waited = dma_fence_wait_timeout(fence, true, timeout);','mutex_enter(&n->process_lock); waited = dma_fence_wait_timeout(fence, true, timeout);'],
+    'blank-CV-init'=>['bcmv3d_scanout_create','cv_init(&n->blank_cv, "v3blank");','(void)cv_init;'],
+    'blank-CV-destroy'=>['bcmv3d_scanout_create','cv_destroy(&n->blank_cv);','(void)cv_destroy;'],
+    'blank-CV-broadcast'=>['scanout_work','cv_broadcast(&n->blank_cv);','(void)cv_broadcast;'],
+    'blank-broadcast-interlock'=>['scanout_work','cv_broadcast(&n->blank_cv);\n\tmutex_exit(&n->process_lock);','mutex_exit(&n->process_lock); cv_broadcast(&n->blank_cv);'],
+    'blank-native-unlocked'=>['bcmv3d_scanout_wait_blank_ready','waited = cv_timedwait_sig(&n->blank_cv, &n->process_lock,','mutex_enter(&n->lock); waited = cv_timedwait_sig(&n->blank_cv, &n->process_lock,'],
+    'blank-process-interlock'=>['bcmv3d_scanout_wait_blank_ready','waited = cv_timedwait_sig(&n->blank_cv, &n->process_lock,','waited = cv_timedwait_sig(&n->blank_cv, &n->lock,'],
+    'blank-monotonic-budget'=>['bcmv3d_scanout_wait_blank_ready','elapsed = (unsigned int)getticks() - started;','elapsed = ((void)started, 0);'],
+    'blank-predicate-before-timeout'=>['bcmv3d_scanout_wait_blank_ready','if (error != 0 || ready)','if (error != 0 || (ready && waited == 0))'],
+    'blank-retirement-proof'=>['bcmv3d_scanout_wait_blank_ready','state == BCMV3D_FLIP_READY &&','(state == BCMV3D_FLIP_READY || state == BCMV3D_FLIP_RETIRING) &&'],
+    'blank-pending-gate'=>['bcmv3d_scanout_wait_blank_ready','else if (n->flip.pending_slot >= 0)','else if (false)'],
+    'blank-restart-BSD'=>['bcmv3d_scanout_wait_blank_ready','waited == ERESTART ? EINTR :','waited == ERESTART ? ERESTART :'],
+    'blank-errno-bound'=>['bcmv3d_scanout_wait_blank_ready','waited > 0 && waited <= ELAST','waited > 0'],'retired-wait-unlocked'=>['bcmv3d_scanout_wait_retired','waited = dma_fence_wait_timeout(fence, true, timeout);','mutex_enter(&n->process_lock); waited = dma_fence_wait_timeout(fence, true, timeout);'],
     'retired-wait-ERESTARTSYS'=>['bcmv3d_scanout_wait_retired','error = EINTR;','error = ERESTARTSYS;'],
     'retired-wait-errno-bound'=>['bcmv3d_scanout_wait_retired','waited >= -ELAST','true'],
     'retired-status-errno-bound'=>['bcmv3d_scanout_wait_retired','status >= -ELAST','true'],

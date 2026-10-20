@@ -79,6 +79,13 @@ static unsigned mode, submissions, writes, sends, failures, hardware_done, clean
 static unsigned old_refs, finalize_calls, legacy_calls, vblank_refs, on_calls;
 static unsigned off_calls, handle_calls, bind_calls, client_attempts, poll_calls;
 static unsigned config_cleanups, completion_destroys, frees, retire_waits, captures;
+static unsigned blank_waits, snapshot_calls;
+enum test_blank_state { TEST_BLANK_READY, TEST_BLANK_CURRENT, TEST_BLANK_RETIRING };
+static enum test_blank_state blank_state;
+static int blank_error;
+static bool commit_snapshot, commit_vblank_on, commit_vblank_get, commit_submitted;
+static bool blank_wait_saw_snapshot;
+static uint64_t snapshot_sequence, blank_stale_sequence;
 static bool completion_live;
 static uint64_t last_counter, drm_frames, captured_sequence;
 static ktime_t cooked_time, captured_time;
@@ -128,7 +135,9 @@ static ktime_t ktime_get(void)
 static void drm_atomic_helper_update_legacy_modeset_state(
     struct drm_device *d, struct drm_atomic_state *s)
 { CHECK(d==&dev&&s==&atomic&&!dev.event_lock.held);
-  CHECK(hardware_done==cleanup);legacy_calls++; }
+  CHECK(hardware_done==cleanup);legacy_calls++;
+  commit_snapshot=commit_vblank_on=commit_vblank_get=commit_submitted=false;
+  blank_wait_saw_snapshot=false; }
 static int bcmv3d_scanout_finalize(struct bcmv3d_scanout_frame *f, long ticks)
 {
 	CHECK(f==&frame&&f->refs==(old_plane.frame==f?2U:1U)&&ticks==5*hz&&!dev.event_lock.held);
@@ -142,14 +151,21 @@ static int bcmv3d_scanout_cached_status(struct bcmv3d_scanout *n,
 { CHECK(n==&owner&&out);*out=cached;return 0; }
 static int bcmv3d_vblank_native_snapshot(struct bcmv3d_vblank_native *v,
     struct bcmv3d_vblank_snapshot *out)
-{ CHECK(v==&pv&&out);if(mode==7)return EIO;*out=irq;return 0; }
+{
+	CHECK(v==&pv&&out);snapshot_calls++;
+	CHECK(crtc.active||blank_error==0);
+	if(kms.bound)commit_snapshot=true;
+	snapshot_sequence=irq.sequence;
+	if(mode==7)return EIO;
+	*out=irq;return 0;
+}
 static void drm_crtc_vblank_on(struct drm_crtc *c)
 { CHECK(c==&kms.crtc&&!dev.event_lock.held&&!core_on);
-  CHECK(kms.bound&&kms.fault==0);core_on=true;on_calls++; }
+  CHECK(kms.bound&&kms.fault==0);core_on=true;on_calls++;commit_vblank_on=true; }
 static int drm_crtc_vblank_get(struct drm_crtc *c)
 {
 	unsigned long flags;int error;
-	CHECK(c==&kms.crtc&&core_on&&!dev.event_lock.held);
+	CHECK(c==&kms.crtc&&core_on&&!dev.event_lock.held);commit_vblank_get=true;
 	spin_lock_irqsave(&dev.event_lock,flags);
 	error=kms_vblank_enable(c);
 	spin_unlock_irqrestore(&dev.event_lock,flags);
@@ -234,19 +250,41 @@ static void emit(uint64_t sequence, bool latched, int error, unsigned advance)
 	if(sequence>irq.sequence)cached.sequence=irq.sequence=sequence;
 	in_irq=true;native_notify(native_arg,sequence,latched,error);in_irq=false;
 }
+/* The native API owns its slot state. This service only models its boundary. */
+static int bcmv3d_scanout_wait_blank_ready(struct bcmv3d_scanout *n,long ticks)
+{
+	CHECK(n==&owner&&ticks==5*hz&&!dev.event_lock.held&&!in_irq);
+	CHECK(!kms.waiting&&kms.event==NULL&&crtc.event==(no_event?NULL:&events[hardware_done]));
+	CHECK(!crtc.active&&!commit_vblank_on&&!commit_vblank_get&&!commit_submitted&&kms.fault==0);
+	blank_wait_saw_snapshot=commit_snapshot;blank_waits++;
+	if(blank_error!=0)return blank_error;
+	if(blank_state==TEST_BLANK_RETIRING) {
+		CHECK(mode==24);
+		blank_stale_sequence=irq.sequence+1;
+		/* Worker progress can advance native sequence before the fresh floor. */
+		emit(irq.sequence+3,false,0,3);
+		CHECK(!kms.waiting&&events[hardware_done].terminal==0&&writes==0);
+		blank_state=TEST_BLANK_READY;
+	}
+	CHECK(blank_state==TEST_BLANK_READY||blank_state==TEST_BLANK_CURRENT);
+	return 0;
+}
 static int bcmv3d_scanout_submit(struct bcmv3d_scanout *n,
     struct bcmv3d_scanout_frame *f)
 {
 	CHECK(n==&owner&&!dev.event_lock.held&&vblank_refs==1);
 	CHECK(kms.waiting&&kms.event==(no_event?NULL:&events[hardware_done])&&crtc.event==NULL);
-	CHECK(kms.event_floor==irq.sequence&&kms.latch.done==0);
+	CHECK(kms.event_floor==snapshot_sequence&&kms.latch.done==0);
+	if(f==NULL)CHECK(blank_state==TEST_BLANK_READY||blank_state==TEST_BLANK_CURRENT);
+	commit_submitted=true;
 	CHECK(f==(crtc.active?&frame:NULL));
 	if(f)CHECK(f->ready);
 	submissions++;writes++;
 	if(f)f->exposed=f->retained=true;
 	if(mode==10)return EIO;
 	if(mode==12){emit(irq.sequence+1,false,EIO,0);return 0;}
-	if(mode==0||mode==13||mode==15||mode==16||mode>=17)emit(irq.sequence+1,true,0,1);
+	if((mode==0||mode==13||mode==15||mode==16||mode>=17)&&mode!=24)
+		emit(irq.sequence+1,true,0,1);
 	return 0;
 }
 static int bcmv3d_scanout_wait_retired(struct bcmv3d_scanout_frame *f,long ticks)
@@ -271,7 +309,11 @@ static unsigned long wait_for_completion_timeout(struct completion *c,long ticks
 	CHECK(c==&kms.latch&&ticks==5*hz&&!dev.event_lock.held);
 	if(c->done)return 1;
 	if(mode==11)return 0;
-	if(mode==2) {
+	if(mode==24) {
+		emit(blank_stale_sequence,true,0,0);
+		CHECK(!c->done&&kms.waiting&&events[0].terminal==0);
+		emit(kms.event_floor+1,true,0,1);
+	} else if(mode==2) {
 		emit(kms.event_floor+4,false,0,4);
 		CHECK(!c->done&&events[0].terminal==0);
 		emit(kms.event_floor+2,true,0,0);
@@ -366,6 +408,9 @@ static void setup(void)
 	last_counter=drm_frames=captured_sequence=0;old_refs=1;
 	cooked_time=123456789012;captured_time=0;retire_waits=captures=0;
 	config_cleanups=completion_destroys=frees=0;completion_live=true;
+	blank_waits=snapshot_calls=0;blank_state=TEST_BLANK_READY;blank_error=0;
+	commit_snapshot=commit_vblank_on=commit_vblank_get=commit_submitted=false;
+	blank_wait_saw_snapshot=false;snapshot_sequence=blank_stale_sequence=0;
 	in_irq=core_on=core_enabled=explicit_checked=bind_fault=false;
 	simulate_first_client=initial_off=true;no_event=false;
 }
@@ -475,7 +520,47 @@ static void commit_case(unsigned which)
 	if(which==17||which==18)CHECK(retire_waits==1&&!old_frame.retired&&old_frame.refs==0);
 	if(which==19)CHECK(retire_waits==0&&frame.refs==1);
 	if(which==20||which==21||which==22)CHECK(retire_waits==1&&old_frame.retired&&old_frame.refs==0);
+	CHECK(blank_waits==((which==13||which==16||which==20)?1U:0U));
 	CHECK(!dev.event_lock.held&&!in_irq);
+}
+static void blank_readiness(void)
+{
+	/* Run the advancing wait first so a stale-snapshot control reaches its bug. */
+	const unsigned modes[]={24,23,29,25,26,27,28,30};
+	unsigned i,which;
+	int error;
+	for(i=0;i<sizeof(modes)/sizeof(modes[0]);i++) {
+		setup();boot();which=mode=modes[i];crtc.active=false;plane.frame=NULL;
+		blank_state=which==23?TEST_BLANK_CURRENT:TEST_BLANK_READY;
+		error=0;
+		if(which==24)blank_state=TEST_BLANK_RETIRING;
+		if(which>=25&&which<=28) {
+			blank_state=TEST_BLANK_RETIRING;
+			error=which==25?ETIME:which==26?EIO:which==27?EINTR:EBUSY;
+			blank_error=error;
+		}
+		if(which==30){error=EIO;kms.fault=EIO;}
+		if(which==24||error!=0)old_plane.frame=&old_frame;
+		kms_commit_tail(&atomic);
+		CHECK(blank_waits==(which==30?0U:1U)&&finalize_calls==0);
+		CHECK(!blank_wait_saw_snapshot&&snapshot_calls==(error?1U:2U));
+		CHECK(hardware_done==1&&cleanup==1&&old_refs==0&&vblank_refs==0);
+		CHECK(!kms.waiting&&kms.event==NULL&&crtc.event==NULL);
+		CHECK(frame.refs==1&&explicit_fence.refs==1);
+		if(error!=0) {
+			CHECK(kms.fault==error&&failures==1&&sends==0);
+			CHECK(events[0].terminal==2&&events[0].out_status==-error);
+			CHECK(!commit_snapshot&&!commit_vblank_on&&!commit_vblank_get&&!commit_submitted);
+			CHECK(submissions==0&&writes==0&&retire_waits==0&&captures==0);
+			CHECK(old_frame.refs==0&&!old_frame.retired&&old_frame.retained);
+		} else {
+			CHECK(kms.fault==0&&failures==0&&sends==1&&submissions==1);
+			CHECK(commit_snapshot&&commit_vblank_on&&commit_vblank_get&&commit_submitted);
+			CHECK(events[0].terminal==1&&events[0].out_status==1);
+			if(which==24)CHECK(kms.event_floor>blank_stale_sequence&&old_frame.retired);
+		}
+		CHECK(!dev.event_lock.held&&!in_irq);
+	}
 }
 /* The helper uses the callback sample for both legacy and 64-bit event payloads. */
 static void event_payloads(void)
@@ -504,10 +589,10 @@ int main(int argc, char **argv)
 	if(argc==2)invalid_finalization(argv[1]);
 	CHECK(argc==1);(void)drm_crtc_send_vblank_event;(void)ktime_get;
 	(void)drm_crtc_vblank_count_and_time;
-	binding();fault_codes();finalization();
+	binding();fault_codes();finalization();blank_readiness();
 	for(i=0;i<23;i++)if(i!=14)commit_case(i);
 	event_payloads();
 	printf("PASS actual KMS commit/IRQ/bind: %u CHECKs, bind admission, frame epoch,"
-	    "captured timestamps, retirement before delivery, late-fault cancellation and old-state cleanup\n",checks);
+	    "blank readiness before a fresh floor, captured timestamps, retirement and terminal cleanup\n",checks);
 	return 0;
 }

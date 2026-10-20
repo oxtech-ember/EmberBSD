@@ -78,6 +78,15 @@ CURRENT/PENDING frames are refused. Linux restart status is translated to BSD
 EINTR; invalid error values become EIO. Timeout never authorizes cleanup.
 The API does not cover the reserved empty-list slot.
 
+`bcmv3d_scanout_wait_blank_ready` checks that reserved slot separately.
+READY or the same CURRENT blank can be submitted when no publication is
+pending. RETIRING, RETIRED and RECLAIMING wait for the worker. The worker
+broadcasts readiness or fault under the same process-lock interlock.
+No native IRQ lock is held during the condition-variable sleep. One bounded
+tick budget spans spurious wakeups and counter wrap. BSD ERESTART becomes
+EINTR; timeout becomes ETIME. The API changes no BO lease or mapping.
+It provides readiness only. The caller must serialize the later submit.
+
 ## Reproduce the source checks
 
 
@@ -90,12 +99,14 @@ ruby ember/tools/bootfb-serial-handoff-contract.rb
 ```
 
 The scanout test executes the actual owner, flip and list-encoder bodies with
-controlled MMU4, DMA, reader and kernel services. It checks107 isolated boots,
+controlled MMU4, DMA, reader and kernel services. It checks123 isolated boots,
 53 display I/O fault positions, delayed callbacks, slow construction, same-BO
 lifetimes, deferred writer completion, cancellation of prepublished translations
 and faults on both sides of the completion commit. Retirement waits check
 lock release, worker recheck, fence lifetime and target errno boundaries.
-Thirty compiled source controls must fail a CHECK. A crash or timeout is not a valid rejection.
+The reserved-slot tests cover CV lifetime, its interlock, wakeups, one timeout
+budget, signal errors and fault delivery. Forty-two compiled source controls
+must fail a CHECK. A crash or timeout is not a valid rejection.
 
 The range test executes the actual native adapter, provider, BO and backing
 code. Its controlled HVS proof tests identity refusal, successful retirement,
@@ -107,9 +118,9 @@ the actual owner proof separately. This split does not claim physical DMA.
 test. `SCANOUT_SKIP_MUTANTS=1` selects its positive memory-check run. The GEM
 staging test has its own executable and separate evidence directory.
 
-DRM connector/CRTC/plane integration, real page-flip events, hotplug, DPMS and
-physical accelerated KWin remain integration work. Passing a controlled source
-test does not establish any of those user scenarios.
+The optional [KMS layer](bcmv3d-kms.md) passes physical modeset and repeated
+double-buffer page flips. Physical accelerated KWin, full hotplug and DPMS
+remain separate gates. Controlled source tests do not establish those scenarios.
 
 The separate [explicit cycle probe](bcmv3d-scanout-probe.md) exercises three
 native BOs through the existing owner. It preserves the final CURRENT BO and

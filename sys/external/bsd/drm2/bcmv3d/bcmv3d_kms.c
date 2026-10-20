@@ -514,6 +514,8 @@ kms_commit_tail(struct drm_atomic_state *state)
 	if (error == 0 && active)
 		error = s->frame == NULL ? EINVAL :
 		    bcmv3d_scanout_finalize(s->frame, 5 * hz);
+	if (error == 0 && !active)
+		error = bcmv3d_scanout_wait_blank_ready(sc->scanout, 5 * hz);
 	if (error == 0)
 		error = bcmv3d_vblank_native_snapshot(sc->vblank_native, &snapshot);
 	if (error == 0 && snapshot.first_error != 0)

@@ -3,6 +3,8 @@
 /* AI-assisted retained HVS consumer. No firmware framebuffer copying. */
 #include <sys/param.h>
 #include <sys/cpu.h>
+#include <sys/condvar.h>
+#include <sys/kernel.h>
 #include <sys/errno.h>
 #include <sys/kmem.h>
 #include <sys/mutex.h>
@@ -34,6 +36,7 @@ struct bcmv3d_scanout {
 	bus_space_tag_t bst;
 	bus_space_handle_t hvs;
 	kmutex_t process_lock, lock;
+	kcondvar_t blank_cv;
 	struct workqueue *workqueue;
 	struct work work;
 	struct bcmv3d_flip flip;
@@ -172,6 +175,8 @@ scanout_work(struct work *work, void *arg)
 		if (f->refs == 0)
 			scanout_drop_software(f);
 	}
+	/* Both successful reclaim and sticky faults wake readiness waiters. */
+	cv_broadcast(&n->blank_cv);
 	mutex_exit(&n->process_lock);
 }
 
@@ -247,6 +252,7 @@ bcmv3d_scanout_create(struct bcmv3d_device *sc,
 	n->control1 = variant == 0x53 ? 0x34 : 0x104;
 	mutex_init(&n->process_lock, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&n->lock, MUTEX_DEFAULT, IPL_VM);
+	cv_init(&n->blank_cv, "v3blank");
 	event = (struct bcmv3d_flip_event) { .sequence = snapshot.sequence,
 	    .active_list = snapshot.active_list, .frame_count = snapshot.frame_count };
 	initial = event;
@@ -290,6 +296,7 @@ bcmv3d_scanout_create(struct bcmv3d_device *sc,
 	*out = n;
 	return 0;
 free:
+	cv_destroy(&n->blank_cv);
 	mutex_destroy(&n->lock);
 	mutex_destroy(&n->process_lock);
 	kmem_free(n, sizeof(*n));
@@ -626,6 +633,64 @@ bcmv3d_scanout_wait_retired(struct bcmv3d_scanout_frame *f, long timeout)
 out:
 	mutex_exit(&n->process_lock);
 	dma_fence_put(fence);
+	return error;
+}
+
+/* Readiness is a predicate, not an ownership grant or a retirement token. */
+int
+bcmv3d_scanout_wait_blank_ready(struct bcmv3d_scanout *n, long timeout)
+{
+	enum bcmv3d_flip_state state;
+	unsigned int started, elapsed, budget;
+	bool ready;
+	int error, waited = 0;
+
+	if (timeout <= 0 || timeout > INT_MAX / 2)
+		return EINVAL;
+	if ((error = scanout_enter(n)) != 0)
+		return error;
+	budget = (unsigned int)timeout;
+	started = (unsigned int)getticks();
+	for (;;) {
+		mutex_enter(&n->lock);
+		state = n->flip.slot[BCMV3D_FLIP_BLANK].state;
+		ready = false;
+		error = n->flip.fault;
+		if (error != 0) {
+			if (error < 0 || error > ELAST)
+				error = EIO;
+		} else if (n->flip.pending_slot >= 0) {
+			error = EBUSY;
+		} else if ((state == BCMV3D_FLIP_READY &&
+		    n->flip.current_slot != (int)BCMV3D_FLIP_BLANK) ||
+		    (state == BCMV3D_FLIP_CURRENT &&
+		    n->flip.current_slot == (int)BCMV3D_FLIP_BLANK)) {
+			ready = true;
+		} else if (state != BCMV3D_FLIP_RETIRING &&
+		    state != BCMV3D_FLIP_RETIRED &&
+		    state != BCMV3D_FLIP_RECLAIMING) {
+			error = EBUSY;
+		}
+		mutex_exit(&n->lock);
+		/* Recheck the predicate even when wakeup races with timeout. */
+		if (error != 0 || ready)
+			break;
+		if (waited != 0) {
+			error = waited == EWOULDBLOCK ? ETIME :
+			    waited == ERESTART ? EINTR :
+			    waited > 0 && waited <= ELAST ? waited : EIO;
+			break;
+		}
+		elapsed = (unsigned int)getticks() - started;
+		if (elapsed >= budget) {
+			error = ETIME;
+			break;
+		}
+		/* cv_enter queues this waiter before releasing process_lock. */
+		waited = cv_timedwait_sig(&n->blank_cv, &n->process_lock,
+		    (int)(budget - elapsed));
+	}
+	mutex_exit(&n->process_lock);
 	return error;
 }
 

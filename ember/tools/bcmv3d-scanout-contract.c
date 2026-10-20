@@ -32,6 +32,12 @@ static unsigned long checks;
 typedef void *bus_space_tag_t;
 typedef unsigned bus_space_handle_t;
 typedef struct { bool live, held; int ipl; } kmutex_t;
+typedef struct { bool live; unsigned waiters,broadcasts; } kcondvar_t;
+static unsigned cv_lives,cv_waits,mock_ticks,blank_mode,last_cv_timeout;
+static void blank_progress(kcondvar_t *);
+static int getticks(void) { return (int)mock_ticks; }
+static int cv_timedwait_sig(kcondvar_t *,kmutex_t *,int);
+static void cv_broadcast(kcondvar_t *);
 struct work { int unused; };
 struct workqueue {
 	void (*fn)(struct work *,void *);
@@ -105,10 +111,15 @@ static void mutex_exit(kmutex_t *m)
 }
 static void mutex_destroy(kmutex_t *m)
 { CHECK(m->live&&!m->held);m->live=false; }
+static void cv_init(kcondvar_t *cv,const char *name)
+{ CHECK(!cv->live&&strcmp(name,"v3blank")==0);cv->live=true;cv_lives++; }
+static void cv_destroy(kcondvar_t *cv)
+{ CHECK(cv->live&&cv->waiters==0&&cv_lives==1);cv->live=false;cv_lives--; }
 static void *kmem_zalloc(size_t size,int flags)
+
 { void *p;CHECK(flags==KM_SLEEP&&!in_irq);p=calloc(1,size);CHECK(p);allocations++;return p; }
 static void kmem_free(void *p,size_t size)
-{ CHECK(p&&size&&allocations);allocations--;free(p); }
+{ CHECK(p&&size&&allocations&&cv_lives==0);allocations--;free(p); }
 static void drm_dev_get(struct drm_device *d) { CHECK(d==&drm);d->refs++; }
 static void drm_gem_object_put_unlocked(struct drm_gem_object *o)
 { CHECK(o&&o->refs>0&&!in_irq);o->refs--; }
@@ -316,6 +327,47 @@ static void bus_space_barrier(bus_space_tag_t tag,bus_space_handle_t handle,
 	CHECK(offset==0&&length==0x1a000&&flags==3);barriers++;
 }
 #include "scanout-body.h"
+
+static void cv_broadcast(kcondvar_t *cv)
+{
+	CHECK(cv==&device.scanout->blank_cv&&cv->live);
+	CHECK(process_locks==1&&irq_locks==0&&!in_irq);
+	cv->broadcasts++;
+}
+static int cv_timedwait_sig(kcondvar_t *cv,kmutex_t *m,int timeout)
+{
+	unsigned broadcasts=cv->broadcasts;
+	int error=0;
+	CHECK(cv==&device.scanout->blank_cv&&cv->live&&m==&device.scanout->process_lock);
+	CHECK(process_locks==1&&irq_locks==0&&!in_irq&&!reservation_locked&&m->held);
+	CHECK(timeout>0&&timeout<=5);
+	if(cv_waits>0)CHECK((unsigned)timeout<last_cv_timeout);
+	last_cv_timeout=(unsigned)timeout;cv_waits++;cv->waiters++;
+	mutex_exit(m);
+	CHECK(process_locks==0&&irq_locks==0);
+	if(blank_mode==4) {mock_ticks+=(unsigned)timeout;error=EWOULDBLOCK;}
+	else if(blank_mode==6)error=EINTR;
+	else if(blank_mode==7)error=ERESTART;
+	else if(blank_mode==8)error=ERESTARTSYS;
+	else if(blank_mode==3||blank_mode==10)mock_ticks++;
+	else if(blank_mode==0&&cv_waits==1) {mock_ticks++;emit(42,0,0);drain();}
+	else {
+		blank_progress(cv);CHECK(cv->broadcasts>broadcasts);
+		mock_ticks++;
+		if(blank_mode==5) {mock_ticks+=(unsigned)timeout;error=EWOULDBLOCK;}
+	}
+	CHECK(cv->waiters==1&&process_locks==0&&irq_locks==0);
+	cv->waiters--;mutex_enter(m);return error;
+}
+static void blank_progress(kcondvar_t *cv)
+{
+	struct bcmv3d_scanout *n=device.scanout;
+	CHECK(cv==&n->blank_cv&&cv->waiters==1);
+	if(blank_mode==9){emit(42,0,EIO);drain();return;}
+	if(n->flip.slot[BCMV3D_FLIP_BLANK].state==BCMV3D_FLIP_RETIRING)emit(42,1,0);
+	drain();CHECK(n->flip.slot[BCMV3D_FLIP_BLANK].state==BCMV3D_FLIP_READY);
+	if(blank_mode==11)emit(42,0,EIO);
+}
 
 static void retirement_progress(struct dma_fence *f)
 {
@@ -677,6 +729,59 @@ static void retirement(unsigned scenario)
 	}
 }
 
+static void blank_ready(unsigned which)
+{
+	struct bcmv3d_scanout *n=start(0x54);
+	struct bcmv3d_scanout_frame *a;
+	unsigned io_before,readers,ended,maps;
+	int error=0;
+	CHECK(cv_lives==1&&n->blank_cv.live&&cv_waits==0);
+	CHECK(bcmv3d_scanout_wait_blank_ready(NULL,5)==EINVAL);
+	CHECK(bcmv3d_scanout_wait_blank_ready(n,0)==EINVAL);
+	CHECK(bcmv3d_scanout_wait_blank_ready(n,-1)==EINVAL);
+	CHECK(bcmv3d_scanout_wait_blank_ready(n,(long)INT_MAX/2+1)==EINVAL);
+	in_irq=true;CHECK(bcmv3d_scanout_wait_blank_ready(n,5)==EWOULDBLOCK);in_irq=false;
+	mutex_enter(&device.memory_lock);
+	CHECK(bcmv3d_scanout_wait_blank_ready(n,5)==EDEADLK);
+	mutex_exit(&device.memory_lock);
+	CHECK(bcmv3d_scanout_wait_blank_ready(n,5)==0&&cv_waits==0);
+	CHECK(bcmv3d_scanout_submit(n,NULL)==0);
+	CHECK(bcmv3d_scanout_wait_blank_ready(n,5)==EBUSY&&cv_waits==0);
+	emit(72,1,0);
+	CHECK(bcmv3d_scanout_wait_blank_ready(n,5)==0&&cv_waits==0);
+	CHECK(bcmv3d_scanout_prepare(n,&bo[0].cma.base,&a)==0);
+	CHECK(bcmv3d_scanout_submit(n,a)==0);
+	CHECK(bcmv3d_scanout_wait_blank_ready(n,5)==EBUSY&&cv_waits==0);
+	emit(42,1,0);
+	CHECK(n->flip.slot[BCMV3D_FLIP_BLANK].state==BCMV3D_FLIP_RETIRING);
+	if(which==1||which==2) {emit(42,1,0);if(which==1)drain();}
+	if(which==10)mock_ticks=UINT_MAX-2U;
+	if(which==12)n->flip.slot[BCMV3D_FLIP_BLANK].state=BCMV3D_FLIP_FREE;
+	if(which==13)n->flip.slot[BCMV3D_FLIP_BLANK].state=BCMV3D_FLIP_RESERVED;
+	if(which==14)n->flip.slot[BCMV3D_FLIP_BLANK].state=BCMV3D_FLIP_CURRENT;
+	if(which==15)n->flip.fault=ERESTARTSYS;
+	io_before=io_calls;readers=begins;ended=ends;maps=unloads;blank_mode=which;
+	if(which==3||which==4||which==10)error=ETIME;
+	if(which==6||which==7)error=EINTR;
+	if(which==8||which==9||which==11||which==15)error=EIO;
+	if(which>=12&&which<=14)error=EBUSY;
+	CHECK(bcmv3d_scanout_wait_blank_ready(n,5)==error);
+	CHECK(io_calls==io_before&&begins==readers&&ends==ended&&unloads==maps);
+	CHECK(a->refs==1&&bo[0].cma.base.refs==4&&cv_lives==1&&n->blank_cv.waiters==0);
+	if(which==1||which>=12)CHECK(cv_waits==0);
+	else if(which==0)CHECK(cv_waits==2);
+	else if(which==3||which==10)CHECK(cv_waits==5&&last_cv_timeout==1);
+	else CHECK(cv_waits==1);
+	if(error==0) {
+		CHECK(n->flip.slot[BCMV3D_FLIP_BLANK].state==BCMV3D_FLIP_READY);
+		CHECK(bcmv3d_scanout_submit(n,NULL)==0);emit(72,1,0);
+		CHECK(n->flip.current_slot==BCMV3D_FLIP_BLANK&&n->flip.pending_slot<0);
+	} else if(which==3||which==4||which==6||which==7||which==8||which==10) {
+		CHECK(n->flip.slot[BCMV3D_FLIP_BLANK].state==BCMV3D_FLIP_RETIRING);
+		CHECK(n->flip.fault==0);
+	}
+}
+
 static void run(unsigned scenario)
 {
 	if(scenario<2) life(scenario==0?0x53:0x54);
@@ -686,19 +791,20 @@ static void run(unsigned scenario)
 	else if(scenario<76) constructor(scenario-67);
 	else if(scenario<80) races(scenario-76);
 	else if(scenario<88) reserved(scenario-80);
-	else retirement(scenario-88);
+	else if(scenario<107) retirement(scenario-88);
+	else blank_ready(scenario-107);
 	CHECK(process_locks==0&&irq_locks==0);
 }
 int main(void)
 {
 	unsigned i;int status;pid_t pid;
-	for(i=0;i<107;i++) {
+	for(i=0;i<123;i++) {
 		pid=fork();CHECK(pid>=0);
 		if(pid==0) { run(i);exit(0); }
 		CHECK(waitpid(pid,&status,0)==pid);
 		CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
 	}
-	puts("PASS actual native scanout:107 isolated boots,53 I/O fault positions, consumer ordering,"
+	puts("PASS actual native scanout:123 isolated boots,53 I/O fault positions, consumer ordering,"
 	    "same-BO lifetime, actual-head latch, extra frame retirement and quarantine");
 	return 0;
 }

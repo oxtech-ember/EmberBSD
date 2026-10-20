@@ -44,7 +44,9 @@ File.write(work + '/kms-event-uapi.h', (uapi_ids + uapi_types).join("\n") + "\n"
    sys/external/bsd/drm2/dist/drm/drm_atomic_helper.c sys/external/bsd/drm2/include/linux/ktime.h].each do |path|
   read.call(source + '/' + path, path)
 end
-File.write(work + '/target-errno.h', "#undef ELAST\n#define ELAST #{elast.first.first}\n#undef ERESTARTSYS\n#define ERESTARTSYS (ELAST+1)\n")
+etime = errno.scan(/^#define\s+ETIME\s+(\d+)\b/)
+abort 'unique target ETIME required' unless etime.size == 1
+File.write(work + '/target-errno.h', "#undef ELAST\n#define ELAST #{elast.first.first}\n#undef ERESTARTSYS\n#define ERESTARTSYS (ELAST+1)\n#undef ETIME\n#define ETIME #{etime.first.first}\n")
 
 extract = lambda do |text, name|
   matches = text.scan(/^(?:static )?[^\n;{}]+\n#{Regexp.escape(name)}\(.*?^}/m)
@@ -133,6 +135,38 @@ begin
         changed = replace.call(bodies.fetch(function), before, after)
         [name, [original.sub(bodies.fetch(function)) { changed }, expected]]
       end
+      blank_gate = "\tif (error == 0 && !active)\n\t\terror = bcmv3d_scanout_wait_blank_ready(sc->scanout, 5 * hz);\n"
+      blank_snapshot = "\tif (error == 0)\n\t\terror = bcmv3d_vblank_native_snapshot(sc->vblank_native, &snapshot);\n"
+      blank_controls = {
+        'blank-readiness-required' => ['bcmv3d_scanout_wait_blank_ready(sc->scanout, 5 * hz);',
+          '((void)bcmv3d_scanout_wait_blank_ready, 0);', 'blank_state==TEST_BLANK_READY||blank_state==TEST_BLANK_CURRENT'],
+        'blank-only-disabled' => ['if (error == 0 && !active)', 'if (error == 0)',
+          '!crtc.active&&!commit_vblank_on&&!commit_vblank_get&&!commit_submitted&&kms.fault==0'],
+        'blank-error-before-snapshot' => ['bcmv3d_scanout_wait_blank_ready(sc->scanout, 5 * hz);',
+          '((void)bcmv3d_scanout_wait_blank_ready(sc->scanout, 5 * hz), 0);', 'crtc.active||blank_error==0'],
+        'blank-budget' => ['bcmv3d_scanout_wait_blank_ready(sc->scanout, 5 * hz);',
+          'bcmv3d_scanout_wait_blank_ready(sc->scanout, 0);', 'n==&owner&&ticks==5*hz&&!dev.event_lock.held&&!in_irq'],
+        'blank-skip-on-sticky-fault' => ['if (error == 0 && !active)', 'if (!active)',
+          '!crtc.active&&!commit_vblank_on&&!commit_vblank_get&&!commit_submitted&&kms.fault==0']
+      }
+      blank_controls.each do |name,(before,after,expected)|
+        tail = replace.call(bodies.fetch('kms_commit_tail'),before,after)
+        mutants[name] = [original.sub(bodies.fetch('kms_commit_tail')) { tail },expected]
+      end
+      tail = replace.call(bodies.fetch('kms_commit_tail'),blank_gate,'')
+      tail = replace.call(tail,blank_snapshot,blank_snapshot+blank_gate)
+      mutants['blank-before-fresh-snapshot'] = [original.sub(bodies.fetch('kms_commit_tail')) { tail },
+        '!c->done&&kms.waiting&&events[0].terminal==0']
+      tail = replace.call(bodies.fetch('kms_commit_tail'),blank_gate,'')
+      before_arm = "\tif (error == 0) {\n\t\treinit_completion(&k->latch);"
+      tail = replace.call(tail,before_arm,blank_gate+before_arm)
+      mutants['blank-before-vblank-get'] = [original.sub(bodies.fetch('kms_commit_tail')) { tail },
+        '!crtc.active&&!commit_vblank_on&&!commit_vblank_get&&!commit_submitted&&kms.fault==0']
+      tail = replace.call(bodies.fetch('kms_commit_tail'),blank_gate,'')
+      before_submit = "\tif (error == 0)\n\t\terror = bcmv3d_scanout_submit(sc->scanout, active ? s->frame : NULL);"
+      tail = replace.call(tail,before_submit,blank_gate+before_submit)
+      mutants['blank-before-event-arm'] = [original.sub(bodies.fetch('kms_commit_tail')) { tail },
+        '!kms.waiting&&kms.event==NULL&&crtc.event==(no_event?NULL:&events[hardware_done])']
       callback = replace.call(bodies.fetch('kms_native_event'),
         "k->latch_sequence = drm_crtc_vblank_count_and_time(&k->crtc,\n\t\t    &k->latch_time);",
         "if (k->event != NULL)\n\t\t\tdrm_crtc_send_vblank_event(&k->crtc, k->event);\n\t\tk->event = NULL;")

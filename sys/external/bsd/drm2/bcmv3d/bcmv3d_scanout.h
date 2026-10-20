@@ -65,6 +65,17 @@ int bcmv3d_scanout_prepare(struct bcmv3d_scanout *, struct drm_gem_object *,
  * This API does not cover the reserved empty-list slot. Positive BSD errno.
  */
 int bcmv3d_scanout_wait_retired(struct bcmv3d_scanout_frame *, long);
+/*
+ * Wait until submit(NULL) is admissible. This does not reserve the empty slot.
+ * READY and same-current BLANK succeed only when no publication is pending.
+ * RETIRING/RETIRED/RECLAIMING wait for the process worker. The caller serializes
+ * submit against other controllers. No native, engine or BO reservation lock
+ * may be held. The CV releases process_lock while sleeping. A monotonic budget
+ * spans all wakeups. Accept 1..INT_MAX/2 ticks. Timeout returns ETIME; kernel
+ * ERESTART becomes EINTR. Sticky fault has priority. Other non-BSD errors use
+ * EIO. No DMA, HVS write, GEM lease or caller reference changes occur here.
+ */
+int bcmv3d_scanout_wait_blank_ready(struct bcmv3d_scanout *, long);
 int bcmv3d_scanout_get(struct bcmv3d_scanout_frame *);
 int bcmv3d_scanout_put(struct bcmv3d_scanout_frame *);
 bool bcmv3d_scanout_matches(struct bcmv3d_scanout_frame *,
