@@ -150,7 +150,7 @@ __fdnlist_aout(int fd, struct nlist *list)
 	}
 	if (lseek(fd, symoff, SEEK_SET) == -1)
 		return (-1);
-#if defined(__SSP__) || defined(__SSP_ALL__)
+#if defined(__SSP__) || defined(__SSP_ALL__) || defined(__SSP_STRONG__)
 	scoreboard = malloc((size_t)nent);
 #else
 	scoreboard = alloca((size_t)nent);
@@ -185,7 +185,7 @@ __fdnlist_aout(int fd, struct nlist *list)
 		}
 	}
 	munmap(strtab, strsize);
-#if defined(__SSP__) || defined(__SSP_ALL__)
+#if defined(__SSP__) || defined(__SSP_ALL__) || defined(__SSP_STRONG__)
 	free(scoreboard);
 #endif
 	return (nent);
