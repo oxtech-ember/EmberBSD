@@ -11,7 +11,9 @@
 #include <sys/types.h>
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 
+#ifndef PAGE_SIZE
 #define PAGE_SIZE 4096
+#endif
 #define KM_SLEEP 0
 #define BUS_DMA_WAITOK 1
 #define BUS_DMA_PREFETCHABLE 2
@@ -96,6 +98,15 @@ struct drm_file {
 };
 #define to_drm_gem_cma_obj(p) container_of(p,struct drm_gem_cma_object,base)
 #include "uapi-body.h"
+#ifndef BCMV3D_DUMB_CONTRACT
+/* Match the DRM callback argument; its actual UAPI is used by the dumb test. */
+struct drm_mode_create_dumb {
+	__u32 height, width, bpp, flags, handle, pitch;
+	__u64 size;
+};
+#else
+#include "dumb-uapi-body.h"
+#endif
 #include "../../sys/external/bsd/drm2/bcmv3d/bcmv3d_bo_stats.h"
 #include "drv-body.h"
 /* Use the smallest kernel budget to keep the exhaustion cases short. */

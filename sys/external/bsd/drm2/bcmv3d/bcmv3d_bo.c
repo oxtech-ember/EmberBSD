@@ -36,8 +36,10 @@
 #include <linux/err.h>
 #include <uvm/uvm_extern.h>
 #include <drm/drm_gem.h>
+#include <drm/drm_mode.h>
 #include <drm/drm_vma_manager.h>
 #include "bcmv3d_drv.h"
+#include "bcmv3d_dumb.h"
 
 /* All counters and snapshots share memory_lock with the quota reservation. */
 static void
@@ -266,6 +268,45 @@ bcmv3d_bo_alloc(struct bcmv3d_device *sc, uint32_t requested)
 {
 
 	return bcmv3d_bo_alloc_internal(sc, requested, true);
+}
+
+/* Generic CPU-written buffers use the same private native GEM allocator. */
+int
+bcmv3d_dumb_create(struct drm_file *file, struct drm_device *dev,
+    struct drm_mode_create_dumb *args)
+{
+	struct bcmv3d_bo *bo;
+	uint64_t pitch, size;
+	uint32_t handle;
+	int error;
+
+	args->handle = 0;
+	args->pitch = 0;
+	args->size = 0;
+	if (args->bpp != 32 || args->flags != 0 ||
+	    args->width == 0 || args->height == 0)
+		return -EINVAL;
+	pitch = ((uint64_t)args->width * 4 + 63) & ~UINT64_C(63);
+	if (pitch > UINT64_MAX / args->height)
+		return -EINVAL;
+	size = pitch * args->height;
+	if (pitch > UINT32_MAX || size > BCMV3D_BO_MAX)
+		return -EINVAL;
+	bo = bcmv3d_bo_alloc_internal(dev->dev_private, (uint32_t)size, false);
+	if (IS_ERR(bo))
+		return PTR_ERR(bo);
+	error = drm_gem_handle_create(file, &bo->cma.base, &handle);
+	if (error == 0) {
+		args->handle = handle;
+		args->pitch = (uint32_t)pitch;
+		args->size = bo->cma.base.size;
+	} else {
+		bcmv3d_bo_failure(dev->dev_private, BCMV3D_BO_STAGE_HANDLE,
+		    (uint32_t)size, bo->cma.dmasize, -error);
+	}
+	/* The handle owns its reference; release the constructor on both paths. */
+	drm_gem_object_put_unlocked(&bo->cma.base);
+	return error;
 }
 
 int
