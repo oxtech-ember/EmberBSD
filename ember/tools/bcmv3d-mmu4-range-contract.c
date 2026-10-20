@@ -12,6 +12,7 @@ void range_bridge_flushed(void);
 void range_bridge_verify(unsigned int, bool);
 void range_bridge_retained(unsigned int, void *);
 unsigned int range_bridge_allocated(void);
+void range_bridge_consumer_counts(unsigned int, unsigned int);
 
 static unsigned int range_case, range_local_writes, range_local_polls;
 
@@ -157,6 +158,57 @@ range_provider_gates(void)
 }
 
 static void
+range_consumer(void **bo)
+{
+	unsigned int before;
+
+	range_bridge_consumer_counts(0, 0);
+	CHECK(bcmv3d_mmu4_native_prepare_gem_read(owner, 0, NULL) == EINVAL);
+	CHECK(bcmv3d_mmu4_native_prepare_gem_read(owner, 3, bo[0]) == EINVAL);
+	CHECK(bcmv3d_mmu4_native_prepare_gem_read(owner, 0, bo[1]) == EXDEV);
+	CHECK(bcmv3d_mmu4_native_expose_gem(owner, 0, bo[0]) == EBUSY);
+	hard_irq = true;
+	CHECK(bcmv3d_mmu4_native_prepare_gem_read(owner, 0, bo[0]) == EWOULDBLOCK);
+	hard_irq = false;
+	mutex_enter(&owner->lock);
+	CHECK(bcmv3d_mmu4_native_prepare_gem_read(owner, 0, bo[0]) == EDEADLK);
+	mutex_exit(&owner->lock);
+	range_bridge_consumer_counts(0, 0);
+	CHECK(bcmv3d_mmu4_native_prepare_gem_read(owner, 0, bo[0]) == 0);
+	range_bridge_consumer_counts(1, 0);
+	CHECK(bcmv3d_mmu4_native_prepare_gem_read(owner, 0, bo[0]) == EALREADY);
+	/* Known never-published cancellation: POSTWRITE, unload, then BO put. */
+	CHECK(bcmv3d_mmu4_native_discard_staged_gem(owner, 0) == 0);
+	range_bridge_consumer_counts(1, 1);
+	CHECK(range_bridge_refs(bo[0]) == 1);
+	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 0, bo[0]) == 0);
+	CHECK(bcmv3d_mmu4_native_prepare_gem_read(owner, 0, bo[0]) == 0);
+	CHECK(range_call(0, BCMV3D_MMU4_RANGE_PUBLISH) == 0);
+	/* Known never-HVS-latched translation unmap has the same DMA pairing. */
+	CHECK(range_call(0, BCMV3D_MMU4_RANGE_UNMAP) == 0);
+	range_bridge_consumer_counts(2, 2);
+	CHECK(range_bridge_refs(bo[0]) == 1);
+	CHECK(range_call(1, BCMV3D_MMU4_RANGE_PUBLISH) == 0);
+	CHECK(bcmv3d_mmu4_native_expose_gem(owner, 1, bo[1]) == EBUSY);
+	CHECK(range_call(1, BCMV3D_MMU4_RANGE_UNMAP) == 0);
+	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 1, bo[1]) == 0);
+	CHECK(bcmv3d_mmu4_native_prepare_gem_read(owner, 1, bo[1]) == 0);
+	CHECK(range_call(1, BCMV3D_MMU4_RANGE_PUBLISH) == 0);
+	CHECK(bcmv3d_mmu4_native_expose_gem(owner, 1, bo[2]) == EXDEV);
+	CHECK(bcmv3d_mmu4_native_expose_gem(owner, 1, bo[1]) == 0);
+	range_bridge_close(bo[1]);
+	before = local_reads + local_writes + writes;
+	CHECK(bcmv3d_mmu4_native_discard_staged_gem(owner, 1) == EBUSY);
+	CHECK(bcmv3d_mmu4_native_unmap_gem(owner, 1) == EBUSY);
+	CHECK(bcmv3d_mmu4_native_publish_staged_gem(owner, 1) == EBUSY);
+	CHECK(bcmv3d_mmu4_native_expose_gem(owner, 1, bo[1]) == EBUSY);
+	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 1, bo[2]) == EBUSY);
+	CHECK(local_reads + local_writes + writes == before);
+	CHECK(range_bridge_refs(bo[1]) == 1 && owner->status.fault == 0);
+	range_bridge_consumer_counts(3, 2);
+}
+
+static void
 range_scenario(unsigned int which)
 {
 	void *bo[3];
@@ -188,6 +240,11 @@ range_scenario(unsigned int which)
 		CHECK(range_bridge_refs(bo[i]) == 2);
 	}
 	CHECK(range_bridge_allocated() == 14);
+	if (which == 10) {
+		range_case = 0;
+		range_consumer(bo);
+		return;
+	}
 	if (which == 0) {
 		for (cycle = 0; cycle < 2; cycle++) {
 			for (i = 0; i < 3; i++) {
@@ -260,7 +317,7 @@ main(void)
 		}
 		CHECK(false);
 	}
-	for (which = 0; which < 10; which++) {
+	for (which = 0; which < 11; which++) {
 		child = fork();
 		CHECK(child >= 0);
 		if (child == 0) {
@@ -272,6 +329,6 @@ main(void)
 			abort();
 	}
 	puts("PASS actual native/provider/BO range: two cycles, "
-	    "fixed6L2,10 isolated boots");
+	    "fixed6L2,11 isolated boots, consumer DMA and exposure");
 	return 0;
 }

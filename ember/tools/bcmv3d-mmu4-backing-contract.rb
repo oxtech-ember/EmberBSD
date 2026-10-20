@@ -50,6 +50,8 @@ begin
   end
   write.call('sys/types.h', "#include_next <sys/types.h>\n#include \"services.h\"\n")
   write.call('sys/errno.h', "#include_next <sys/errno.h>\n")
+  # Target libc must finish its own endian/types declarations before doubles.
+  write.call('sys/endian.h', "#ifdef __NetBSD__\n#include_next <sys/endian.h>\n#else\n#include \"services.h\"\n#endif\n")
   cc = Shellwords.split(ENV.fetch('CC', 'cc'))
   flags = Shellwords.split(ENV.fetch('CFLAGS', ''))
   executor = Shellwords.split(ENV.fetch('TEST_RUNNER', ''))

@@ -105,4 +105,25 @@ void bcmv3d_mmu4_backing_range_abort(struct bcmv3d_mmu4_backing *, int);
 int bcmv3d_mmu4_backing_reclaim_unmapped(struct bcmv3d_mmu4_backing *,
     unsigned int);
 
+/*
+ * Caller-owned reader lifetime. Before prepare, wait for the prior writer and
+ * publish/retain a bcmv3d_read lease outside the native mutex. Keep it alive and
+ * prohibit CPU writes until cancellation or actual hardware retirement.
+ * Prepare validates the exact staged BO and syncs its actual consumer DMA map.
+ * Discard/unmap pair POSTWRITE before unload/ref release only while unexposed.
+ * They do not signal or drop the caller's read lease. End that lease after map
+ * cleanup. These methods do not wait, allocate, publish HVS or acquire fences.
+ *
+ * After successful translation publication, call expose BEFORE the first HVS
+ * write that could latch this range, including a write that might fail.
+ * Exposure is irreversible here: discard, unmap and reclaim refuse it. Keep
+ * the caller's lease, BO, map and hardware resources alive on every outcome.
+ * A new retirement implementation must prove the actual consumer is finished;
+ * a programmed list pointer, timeout or disabled-channel bit is insufficient.
+ */
+int bcmv3d_mmu4_backing_prepare_gem_read(struct bcmv3d_mmu4_backing *,
+    unsigned int, struct drm_gem_object *);
+int bcmv3d_mmu4_backing_expose_gem(struct bcmv3d_mmu4_backing *,
+    unsigned int, struct drm_gem_object *);
+
 #endif /* _BCMV3D_MMU4_BACKING_H_ */

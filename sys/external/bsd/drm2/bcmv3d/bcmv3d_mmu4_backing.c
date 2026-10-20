@@ -36,7 +36,7 @@ struct mmu4_gem_slot {
 	struct mmu4_allocation control[2];
 	struct bcm2712_mmu4_range_pages pages;
 	struct bcm2712_mmu4_range_image image;
-	bool loaded, linked, published;
+	bool loaded, linked, published, read_synced, exposed;
 };
 
 struct bcmv3d_mmu4_backing {
@@ -624,12 +624,26 @@ mmu4_gem_aliases(struct bcmv3d_mmu4_backing *b, struct mmu4_gem_slot *g,
 	return 0;
 }
 
+/* Pair only the actual consumer map. Its renderer map is a different object. */
+static void
+mmu4_gem_postwrite(struct bcmv3d_mmu4_backing *b, struct mmu4_gem_slot *g)
+{
+
+	KASSERT(!g->exposed);
+	if (!g->read_synced)
+		return;
+	bus_dmamap_sync(b->sc->dmat, g->map, 0, g->bo->cma.dmasize,
+	    BUS_DMASYNC_POSTWRITE);
+	g->read_synced = false;
+}
+
 static void
 mmu4_gem_free(struct bcmv3d_mmu4_backing *b, struct mmu4_gem_slot *g)
 {
 	struct mmu4_allocation *a;
 	unsigned int i;
 
+	mmu4_gem_postwrite(b, g);
 	for (i = 2; i > 0; i--) {
 		a = &g->control[i - 1];
 		if (a->loaded)
@@ -655,6 +669,7 @@ static void
 mmu4_gem_drop_bo(struct bcmv3d_mmu4_backing *b, struct mmu4_gem_slot *g)
 {
 
+	mmu4_gem_postwrite(b, g);
 	if (g->loaded)
 		bus_dmamap_unload(b->sc->dmat, g->map);
 	if (g->map != NULL)
@@ -837,7 +852,8 @@ bcmv3d_mmu4_backing_discard_staged_gem(struct bcmv3d_mmu4_backing *b,
 		return ENOENT;
 	if (g->linked && g->bo == NULL)
 		return ENOENT;
-	if (g->published || (g->linked && b->range_fault != 0))
+	if (g->published || g->exposed ||
+	    (g->linked && b->range_fault != 0))
 		return EBUSY;
 	if (g->linked) {
 		mmu4_gem_drop_bo(b, g);
@@ -883,6 +899,9 @@ bcmv3d_mmu4_backing_range_check(struct bcmv3d_mmu4_backing *b,
 	g = b->staged[slot];
 	if (g == NULL || g->bo == NULL)
 		return ENOENT;
+	/* No translation removal can authorize or substitute for retirement. */
+	if (g->exposed)
+		return EBUSY;
 	if (op == BCMV3D_MMU4_RANGE_PUBLISH ? g->published : !g->published)
 		return EBUSY;
 	error = mmu4_gem_map(g->bo->cma.dmamap, g->bo->cma.dmasize,
@@ -1015,7 +1034,8 @@ bcmv3d_mmu4_backing_reclaim_unmapped(struct bcmv3d_mmu4_backing *b,
 	if (b->running || b->range_fault != 0)
 		return EBUSY;
 	g = b->staged[slot];
-	if (g == NULL || !g->linked || g->published || g->bo == NULL)
+	if (g == NULL || !g->linked || g->published || g->exposed ||
+	    g->bo == NULL)
 		return EBUSY;
 	mmu4_gem_drop_bo(b, g);
 	return 0;
@@ -1027,4 +1047,53 @@ bcmv3d_mmu4_backing_range_abort(struct bcmv3d_mmu4_backing *b, int error)
 
 	if (b != NULL && error > 0 && b->range_fault == 0)
 		b->range_fault = error;
+}
+
+int
+bcmv3d_mmu4_backing_prepare_gem_read(struct bcmv3d_mmu4_backing *b,
+    unsigned int slot, struct drm_gem_object *obj)
+{
+	struct mmu4_gem_slot *g;
+	int error;
+
+	if (b == NULL || obj == NULL || slot >= BCM2712_MMU4_SCANOUT_SLOTS)
+		return EINVAL;
+	error = bcmv3d_mmu4_backing_range_check(b, slot,
+	    BCMV3D_MMU4_RANGE_PUBLISH);
+	if (error != 0)
+		return error;
+	g = b->staged[slot];
+	if (&g->bo->cma.base != obj)
+		return EXDEV;
+	if (g->read_synced)
+		return EALREADY;
+	/* The lifecycle owner has already waited and published its read fence. */
+	bus_dmamap_sync(b->sc->dmat, g->map, 0, g->bo->cma.dmasize,
+	    BUS_DMASYNC_PREWRITE);
+	g->read_synced = true;
+	return 0;
+}
+
+int
+bcmv3d_mmu4_backing_expose_gem(struct bcmv3d_mmu4_backing *b,
+    unsigned int slot, struct drm_gem_object *obj)
+{
+	struct mmu4_gem_slot *g;
+	int error;
+
+	if (b == NULL || obj == NULL || slot >= BCM2712_MMU4_SCANOUT_SLOTS)
+		return EINVAL;
+	/* Revalidate the actual mapped BO and tables before the first HVS write. */
+	error = bcmv3d_mmu4_backing_range_check(b, slot,
+	    BCMV3D_MMU4_RANGE_UNMAP);
+	if (error != 0)
+		return error;
+	g = b->staged[slot];
+	if (&g->bo->cma.base != obj)
+		return EXDEV;
+	if (!g->read_synced)
+		return EBUSY;
+	/* Irreversible until a real hardware retirement protocol is implemented. */
+	g->exposed = true;
+	return 0;
 }

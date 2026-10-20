@@ -89,4 +89,10 @@ int bcmv3d_mmu4_native_publish_staged_gem(struct bcmv3d_mmu4_native *,
     unsigned int);
 int bcmv3d_mmu4_native_unmap_gem(struct bcmv3d_mmu4_native *, unsigned int);
 
+/* Actual consumer map sync and irreversible exposure; see backing contract. */
+int bcmv3d_mmu4_native_prepare_gem_read(struct bcmv3d_mmu4_native *,
+    unsigned int, struct drm_gem_object *);
+int bcmv3d_mmu4_native_expose_gem(struct bcmv3d_mmu4_native *, unsigned int,
+    struct drm_gem_object *);
+
 #endif /* _BCMV3D_MMU4_NATIVE_H_ */

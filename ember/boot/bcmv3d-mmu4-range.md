@@ -84,12 +84,38 @@ release, independent PTE contents at PREWRITE, exposure latches before stores,
 initial backing preservation, provider gates, error precedence and retention.
 The initial native owner and resident tables survive each isolated boot.
 
-CC/CFLAGS select the host compiler and sanitizers. RANGE_PAGES selects native
+CC/CFLAGS select the compiler and sanitizers. RANGE_COMPILE_ONLY=1 supports
+cross compilation without executing target programs. RANGE_PAGES selects native
 page sizes. RANGE_EVIDENCE records inputs and commands. RANGE_SKIP_MUTANTS=1
 runs positives only. Each source mutant compiles before it must fail through
 CHECK and SIGABRT. Separate crash, bare-abort and timeout controls cannot count
 as source rejection. Host contracts do not establish hardware translation,
 visible pixels, display latency, HVS retirement or Plasma/KMS operation.
+
+## Consumer DMA and exposure
+
+After the caller waits for the prior writer and publishes a retained
+[reader lease](bcmv3d-read-fences.md), call
+`bcmv3d_mmu4_native_prepare_gem_read(native, slot, obj)`. This validates the
+exact staged object and issues PREWRITE on its actual consumer DMA map.
+The renderer CMA map is a separate object. Do not hold the native mutex
+while acquiring the reader lease. Keep CPU writers excluded for its lifetime.
+Translation publication does not perform this pixel synchronization.
+
+After successful translation publication, call
+`bcmv3d_mmu4_native_expose_gem(native, slot, obj)` before the first HVS write
+that could reference the range. This includes a write that might fail.
+An exposed slot cannot be discarded, unmapped or reclaimed by the current
+never-HVS-latched APIs. Exposure is irreversible until real hardware
+retirement is implemented. Keep its reader lease and hardware resources.
+
+Known never-started cancellation pairs POSTWRITE before consumer map unload
+and GEM put. End the reader lease only after that cleanup returns. These
+mechanisms do not establish HVS retirement or connect a KMS caller yet.
+The joined range contract checks independent consumer-map selection, DMA
+pairing, exact BO identity and post-exposure retention for both page sizes.
+Seven compiled controls detect DMA and exposure defects. The fixture models
+kernel services; its exposure case does not perform a physical HVS read.
 
 ## Manual boot check
 

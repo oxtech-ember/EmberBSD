@@ -730,6 +730,44 @@ bcmv3d_mmu4_native_unmap_gem(struct bcmv3d_mmu4_native *n, unsigned int slot)
 }
 
 int
+bcmv3d_mmu4_native_prepare_gem_read(struct bcmv3d_mmu4_native *n,
+    unsigned int slot, struct drm_gem_object *obj)
+{
+	int error;
+
+	if ((error = mmu4_native_enter(n)) != 0)
+		return error;
+	if (n->status.fault != 0)
+		error = n->status.fault;
+	else if (n->status.stage != BCMV3D_MMU4_NATIVE_COMPLETE ||
+	    n->backing == NULL)
+		error = EBUSY;
+	else
+		error = bcmv3d_mmu4_backing_prepare_gem_read(n->backing, slot, obj);
+	mutex_exit(&n->lock);
+	return error;
+}
+
+int
+bcmv3d_mmu4_native_expose_gem(struct bcmv3d_mmu4_native *n,
+    unsigned int slot, struct drm_gem_object *obj)
+{
+	int error;
+
+	if ((error = mmu4_native_enter(n)) != 0)
+		return error;
+	if (n->status.fault != 0)
+		error = n->status.fault;
+	else if (n->status.stage != BCMV3D_MMU4_NATIVE_COMPLETE ||
+	    n->backing == NULL)
+		error = EBUSY;
+	else
+		error = bcmv3d_mmu4_backing_expose_gem(n->backing, slot, obj);
+	mutex_exit(&n->lock);
+	return error;
+}
+
+int
 bcmv3d_mmu4_native_cached_status(struct bcmv3d_mmu4_native *n,
     struct bcmv3d_mmu4_native_status *out)
 {

@@ -14,6 +14,7 @@ static void *range_frame, *range_initial_control[3];
 static uint32_t range_expected[2048];
 static unsigned range_slot, range_op, range_sync_mask, range_store_count;
 static bool range_first_link, range_phase;
+static unsigned int consumer_pre, consumer_post;
 static struct mmu4_allocation range_saved_control[3][2];
 
 int range_icac_owned(void);
@@ -185,8 +186,28 @@ range_dma_sync(bus_dmamap_t map, size_t size, int flags)
 	unsigned int i, j;
 	uint32_t expected;
 
-	CHECK(range_native_owned() && range_icac_owned());
+	CHECK(range_native_owned());
 	CHECK(size == map->dm_mapsize);
+	if (!range_icac_owned()) {
+		for (i = 0; i < 3; i++) {
+			g = range_backing->staged[i];
+			if (g == NULL || g->map != map)
+				continue;
+			CHECK(g->bo != NULL && g->loaded && !g->exposed);
+			CHECK(map != g->bo->cma.dmamap);
+			CHECK(size == g->bo->cma.dmasize);
+			if (flags == BUS_DMASYNC_PREWRITE) {
+				CHECK(!g->read_synced && !g->published);
+				consumer_pre++;
+			} else {
+				CHECK(flags == BUS_DMASYNC_POSTWRITE && g->read_synced);
+				consumer_post++;
+			}
+			return;
+		}
+		CHECK(false);
+	}
+
 	if (!range_phase) {
 		CHECK(flags == BUS_DMASYNC_PREWRITE);
 		syncs++;
@@ -302,4 +323,11 @@ icac_backing_retained(void *arg)
 {
 
 	native_backing_check(arg);
+}
+
+void
+range_bridge_consumer_counts(unsigned int pre, unsigned int post)
+{
+
+	CHECK(consumer_pre == pre && consumer_post == post);
 }

@@ -21,12 +21,14 @@
 #define atomic_load_relaxed(p) __atomic_load_n((p), __ATOMIC_RELAXED)
 #define atomic_store_relaxed(p, v) __atomic_store_n((p), (v), __ATOMIC_RELAXED)
 #define BUS_DMASYNC_POSTWRITE 8
+#ifndef htole32
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define htole32(v) ((uint32_t)(v))
 #define le32toh(v) ((uint32_t)(v))
 #else
 #define htole32(v) __builtin_bswap32((uint32_t)(v))
 #define le32toh(v) __builtin_bswap32((uint32_t)(v))
+#endif
 #endif
 #define BUS_DMA_WRITE 0x200
 #define BUS_DMASYNC_PREWRITE 4
@@ -67,6 +69,8 @@ struct drm_gem_cma_object {
 void *kmem_zalloc(size_t, int);
 void kmem_free(void *, size_t);
 void backing_assert_sleepable(void);
+void backing_invariant(bool);
+#define KASSERT(c) backing_invariant(c)
 #define ASSERT_SLEEPABLE() backing_assert_sleepable()
 int cpu_intr_p(void);
 int cpu_softintr_p(void);
@@ -141,6 +145,7 @@ void *kmem_zalloc(size_t n, int flags)
 void kmem_free(void *p, size_t n)
 { CHECK(p != NULL && n != 0); allocations--; free(p); }
 void backing_assert_sleepable(void) { CHECK(intr == 0); }
+void backing_invariant(bool v) { CHECK(v); }
 int cpu_intr_p(void) { return intr == 1; }
 int cpu_softintr_p(void) { return intr == 2; }
 void *pmap_kernel(void) { return &tag; }
