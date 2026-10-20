@@ -1,7 +1,7 @@
 .\"	$NetBSD: rpcgen.1,v 1.26 2024/06/17 01:28:31 uwe Exp $
 .\" from: @(#)rpcgen.new.1	1.1 90/11/09 TIRPC 1.0; from 40.10 of 10/10/89
 .\" Copyright (c) 1988,1990 Sun Microsystems, Inc. - All Rights Reserved.
-.Dd December 14, 2013
+.Dd October 20, 2026
 .Dt RPCGEN 1
 .Os
 .Sh NAME
@@ -449,6 +449,7 @@ If the
 .Ev RPCGEN_CPP
 environment variable is set, its value is used as the pathname of the
 C preprocessor to be run on the input file.
+The value must name one executable, without command arguments.
 .Sh NOTES
 The
 .Tn RPC
@@ -502,6 +503,13 @@ To create the server side stubs for the transport indicated by
 .Cm tcp ,
 use:
 .Dl $ rpcgen -n tcp -o prot_svc.c prot.x
+.Sh EXIT STATUS
+.Ex -std
+If the C preprocessor cannot start, exits unsuccessfully, or terminates
+by a signal,
+.Nm
+fails and removes the output files created by that invocation.
+Output already written to standard output cannot be removed.
 .Sh SEE ALSO
 .Xr cpp 1 ,
 .Xr inetd 8

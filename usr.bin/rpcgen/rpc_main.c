@@ -53,8 +53,12 @@ __RCSID("$NetBSD: rpc_main.c,v 1.45 2022/03/04 21:12:04 andvar Exp $");
 #include <sys/param.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#ifndef __MSDOS__
+#include <sys/wait.h>
+#endif
 #include <ctype.h>
 #include <err.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -148,6 +152,9 @@ int     tirpcflag = 1;		/* generating code for tirpc, by default */
 
 #ifdef __MSDOS__
 static char *dos_cppfile = NULL;
+#else
+static pid_t cpp_pid = -1;
+static void close_input(void);
 #endif
 
 static char *extendfile(const char *, const char *);
@@ -256,6 +263,8 @@ main(int argc, char *argv[])
 		(void) fclose(fin);
 		(void) unlink(dos_cppfile);
 	}
+#else
+	close_input();
 #endif
 	docleanup = 0;
 	exit(nonfatalerrors);
@@ -329,13 +338,48 @@ clear_args(void)
 	argcount = FIXEDARGS;
 }
 
+#ifndef __MSDOS__
+/*
+ * EOF on the pipe does not establish that the preprocessor succeeded.
+ * Reap each child before the next scan, and before accepting any output.
+ */
+static void
+close_input(void)
+{
+	int input_error = 0, status;
+	pid_t pid;
+
+	if (fin != NULL) {
+		input_error = ferror(fin);
+		if (fclose(fin) == EOF)
+			input_error = 1;
+		fin = NULL;
+	}
+	if (cpp_pid != -1) {
+		do {
+			pid = waitpid(cpp_pid, &status, 0);
+		} while (pid == -1 && errno == EINTR);
+		if (pid == -1)
+			err(EXIT_FAILURE, "waitpid");
+		cpp_pid = -1;
+		if (WIFSIGNALED(status))
+			errx(EXIT_FAILURE, "C preprocessor terminated by signal %d",
+			    WTERMSIG(status));
+		if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+			errx(EXIT_FAILURE, "C preprocessor failed");
+	}
+	if (input_error)
+		errx(EXIT_FAILURE, "Can't read C preprocessor output");
+}
+#endif
+
 /*
  * Open input file with given define for C-preprocessor
  */
 static void
 open_input(const char *infile, const char *define)
 {
-	int     pd[2];
+	int     pd[2], fd;
 
 	infilename = (infile == NULL) ? "<stdin>" : infile;
 #ifdef __MSDOS__
@@ -374,24 +418,42 @@ open_input(const char *infile, const char *define)
 		}
 	}
 #else
-	(void) pipe(pd);
-	switch (fork()) {
+	close_input();
+	if (pipe(pd) == -1)
+		err(EXIT_FAILURE, "pipe");
+	switch (cpp_pid = fork()) {
 	case 0:
+		/* Do not run the parent's output cleanup or flush its streams. */
+		docleanup = 0;
 		putarg(0, CPP);
 		putarg(1, CPPFLAGS);
 		addarg(define);
 		addarg(infile);
 		addarg(NULL);
-		(void) close(1);
-		(void) dup2(pd[1], 1);
-		(void) close(pd[0]);
+		fd = dup2(pd[1], STDOUT_FILENO);
+		if (fd == -1) {
+			warn("dup2");
+			_exit(EXIT_FAILURE);
+		}
+		if (pd[0] != STDOUT_FILENO)
+			(void) close(pd[0]);
+		if (pd[1] != STDOUT_FILENO)
+			(void) close(pd[1]);
 		execvp(arglist[0], __UNCONST(arglist));
-		err(EXIT_FAILURE, "$RPCGEN_CPP: %s", CPP);
+		warn("$RPCGEN_CPP: %s", CPP);
+		(void) close(fd);
+		_exit(EXIT_FAILURE);
 	case -1:
 		err(EXIT_FAILURE, "fork");
 	}
 	(void) close(pd[1]);
 	fin = fdopen(pd[0], "r");
+	if (fin == NULL) {
+		warn("Can't open `%s'", infilename);
+		(void) close(pd[0]);
+		close_input();
+		exit(EXIT_FAILURE);
+	}
 #endif
 	if (fin == NULL) {
 		err(EXIT_FAILURE, "Can't open `%s'", infilename);

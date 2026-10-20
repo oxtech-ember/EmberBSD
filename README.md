@@ -135,6 +135,8 @@ preserves binary test inputs, selects the Objective-C dependency frontend,
 and enables the ARMv7 crypto instructions required by each source.
 [Host Binutils parser checks](ember/tests/binutils-parser-source.md) preserve
 shipped parser sources during normal builds and keep explicit regeneration available.
+[RPC generator checks](ember/tools/tests/rpcgen/README.md) reject failed
+preprocessors, remove incomplete output files, and reap each input process.
 [ARM standalone checks](ember/boot/cross-build.md) cover module flags,
 disk ioctl dispatch and linker layouts.
 [Userland contracts](ember/tests/gcc16-userland-recovery.md) cover short writes,
