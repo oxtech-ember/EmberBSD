@@ -77,7 +77,7 @@ struct drm_gem_object {
 	unsigned refs;
 	uint64_t vma_node;
 	const struct drm_gem_object_funcs *funcs;
-#ifdef BCMV3D_JOB_CONTRACT
+#ifdef BCMV3D_RESV_CONTRACT
 	struct dma_resv *resv;
 #endif
 };
@@ -239,20 +239,20 @@ static int bus_dmamap_load(bus_dma_tag_t t,bus_dmamap_t m,const void *p,
 static void bus_dmamap_unload(bus_dma_tag_t t,bus_dmamap_t m)
 { CHECK(loaded>0); loaded--; }
 
-#ifdef BCMV3D_JOB_CONTRACT
+#ifdef BCMV3D_RESV_CONTRACT
 static void contract_resv_init(struct drm_gem_object *);
 static void contract_resv_fini(const struct drm_gem_object *);
 #endif
 static void drm_gem_private_object_init(struct drm_device *d,
     struct drm_gem_object *o,size_t n)
 { o->dev=d; o->size=n; o->refs=1; gems++;
-#ifdef BCMV3D_JOB_CONTRACT
+#ifdef BCMV3D_RESV_CONTRACT
  contract_resv_init(o);
 #endif
 }
 static void drm_gem_object_release(const struct drm_gem_object *o)
 { CHECK(o->refs==0 && gems>0); gems--;
-#ifdef BCMV3D_JOB_CONTRACT
+#ifdef BCMV3D_RESV_CONTRACT
  contract_resv_fini(o);
 #endif
 }

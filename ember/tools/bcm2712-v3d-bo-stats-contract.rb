@@ -28,7 +28,7 @@ begin
     'uapi-body.h'=>stripped.call(File.read(source+'/sys/external/bsd/drm2/dist/include/uapi/drm/v3d_drm.h'))
   }
   bodies['stats-body.h']=bodies['bo-body.h'][/\/\* All counters.*?(?=static void\nbcmv3d_bo_free)/m] or abort 'snapshot source boundary missing'
-  bodies['sysctl-body.h']=File.read(driver+'bcmv3d_drv.c')[/\/\* Copy under.*?(?=\/\* A PRIME fd)/m] or abort 'sysctl source boundary missing'
+  bodies['sysctl-body.h']=File.read(driver+'bcmv3d_drv.c')[/\/\* Copy under.*?(?=\/\* A PRIME\b)/m] or abort 'sysctl source boundary missing'
   bodies.each {|name,data| File.write(File.join(work,name),data)}
   FileUtils.mkdir_p(File.join(work,'sys'))
   File.write(File.join(work,'sys','sysctl.h'), <<~HEADER)

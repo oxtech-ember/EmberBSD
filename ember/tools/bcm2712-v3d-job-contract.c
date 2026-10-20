@@ -1,6 +1,7 @@
 /* Origin: EmberBSD actual-source TFU failure/lifetime contract, 2026-10-11. */
 /* SPDX-License-Identifier: BSD-2-Clause */
 #define BCMV3D_JOB_CONTRACT
+#define BCMV3D_RESV_CONTRACT
 #include "bcm2712-v3d-bo-contract.c"
 #include <time.h>
 #include <stdarg.h>
