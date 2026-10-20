@@ -97,6 +97,7 @@ file external/bsd/drm2/bcmv3d/bcmv3d_drv.c bcmv3drender
 file external/bsd/drm2/bcmv3d/bcmv3d_bo.c bcmv3drender
 file external/bsd/drm2/bcmv3d/bcmv3d_job.c bcmv3drender
 file external/bsd/drm2/bcmv3d/bcmv3d_resv.c bcmv3drender
+file external/bsd/drm2/bcmv3d/bcmv3d_read.c bcmv3drender
 endif
 
 # Random number generator (BCM2835_RNG_BASE)

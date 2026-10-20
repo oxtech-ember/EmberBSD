@@ -98,3 +98,6 @@ Use `V3D_SKIP_MUTANTS=1` for positive instrumented execution.
 The [shared GEM framebuffer allocation contract](drm-gem-framebuffer.md)
 checks unused plane initialization and matching allocation cleanup before KMS
 uses that helper. Producer ordering alone does not establish scanout lifetime.
+
+The [consumer read helper](bcmv3d-read-fences.md) provides a separately tested
+shared-fence lease. Its HVS/KMS binding and actual retirement remain pending.
