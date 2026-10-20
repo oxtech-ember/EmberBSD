@@ -33,6 +33,9 @@ def main():
         run_header = (root / "sys/arch/arm/sunxi/sun60i_a733_npu_run.h").read_text()
         (work / "sun60i_a733_npu_run.h").write_text("\n".join(
             line for line in run_header.splitlines() if not line.startswith("#include ")) + "\n")
+        nn_header = (root / "sys/arch/arm/sunxi/sun60i_a733_npu_nn.h").read_text()
+        (work / "sun60i_a733_npu_nn.h").write_text("\n".join(
+            line for line in nn_header.splitlines() if not line.startswith("#include ")) + "\n")
         dma_header = (root / "sys/arch/arm/sunxi/sun60i_a733_npu_dma.h").read_text()
         (work / "sun60i_a733_npu_dma.h").write_text("\n".join(
             line for line in dma_header.splitlines() if not line.startswith("#include ")) + "\n")

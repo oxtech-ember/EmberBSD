@@ -14,6 +14,7 @@ typedef uintptr_t bus_space_handle_t;
 typedef int kmutex_t;
 struct clk { int unused; };
 #include "sun60i_a733_npu_fe.h"
+#include "sun60i_a733_npu_nn.h"
 #include "sun60i_a733_npu_dma.h"
 #include "sun60i_a733_npu_run.h"
 struct sun60i_a733_npu_dma { int id; };
