@@ -8,6 +8,14 @@ select this caller. The mechanism has no attachment, clock control, mapping or
 allocation. This source slice does not establish physical scanout, DRM/KMS or a
 Plasma compositor frame.
 
+## Hardware boundary
+
+The complete manual owner produced the correct eight-bar frame on BCM2712
+hardware. The same owner completed the [unused MMU4 range check](bcmv3d-mmu4-range.md)
+while keeping the initial IOVA0 frame. Four native V3D regression programs passed.
+Only the fixed test frame has physical display acceptance. DRM/KMS, mutable HVS
+submission, page flips, active scanout retirement and physical Plasma remain open.
+
 ## Input and ownership
 
 The caller supplies the actual opaque MMU4 native owner, synchronous register

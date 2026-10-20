@@ -80,8 +80,10 @@ named CHECK; `NDEBUG` does not disable it. ASan/UBSan is host execution, not Val
 or a kernel memory checker. The coherent GCC16 kernel and four matched modules
 linked successfully. Paired actual target-TU Cppcheck, GCC analyzer and Clang Static
 Analyzer checks found no new safety defect. Existing style, inter-TU unused-symbol
-and inherited analyzer findings remain classified separately. Physical acceptance
-of this MMU4 continuation remains pending.
+and inherited analyzer findings remain classified separately. The complete manual
+owner completed MMU4 programming and a fixed HVS test frame on BCM2712 hardware.
+The retained range check also completed with active initial HVS output.
+These results do not establish mutable HVS submission, retirement or DRM/KMS.
 
 Writeback facts derive from pinned
 [vc4_txp.c](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_txp.c#L140-L144)

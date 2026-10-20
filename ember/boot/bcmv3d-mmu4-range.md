@@ -131,4 +131,10 @@ an execution prefix. `MMU4_CHECK_COMPILE_ONLY=1` builds without execution.
 `MMU4_CHECK_OUTPUT` preserves the target binary. `MMU4_CHECK_EVIDENCE` must name
 a new directory. `MMU4_CHECK_SKIP_MUTANTS=1` runs only the positive contract.
 ASan/UBSan checks are host execution. They are not a native kernel memory test.
-Physical protocol and continued HDMI/V3D operation require board acceptance.
+Hardware acceptance used source `9afdceeb7f093a60cd5de7d517588ea727ed4637`.
+The manual profile completed two cycles with six publications and six unmaps.
+All six BO references and reservations were released. The six L2 tables stayed
+resident. The initial HVS color frame remained correct. Four native V3D
+regression programs passed with unchanged reserved BO bytes and no failures.
+This checks the unused-window protocol with active initial HVS output.
+It does not prove HVS fetch through these windows or active scanout retirement.
