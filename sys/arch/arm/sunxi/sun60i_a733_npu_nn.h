@@ -9,6 +9,7 @@
 #define A733_NPU_NN_INPUT_BYTES 256
 #define A733_NPU_NN_EXPECTED_BYTES 512
 #define A733_NPU_NN_IMAGE_BYTES 1632
+#define A733_NPU_NN_COMMAND_BYTES 144
 
 struct sun60i_a733_npu_nn_image {
 	uint8_t constants[A733_NPU_NN_CONSTANT_BYTES];
@@ -26,4 +27,10 @@ struct sun60i_a733_npu_nn_image {
  * This function does not prove NN dispatch or silicon format acceptance.
  */
 int sun60i_a733_npu_nn_tiny_image(void *, size_t);
+/*
+ * Emit only the finite non-BLT TASK command stream for config VA 0x01002000.
+ * The same fixed-span, unaligned-output and tail rules apply. This is a CPU
+ * format mechanism. It does not admit, publish or complete a native TASK.
+ */
+int sun60i_a733_npu_nn_task_commands(void *, size_t);
 #endif

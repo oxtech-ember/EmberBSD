@@ -105,6 +105,49 @@ verify(const struct sun60i_a733_npu_nn_image *image)
  }
 }
 
+static void
+verify_commands(void)
+{
+ static const uint32_t addresses[18] = {
+  0x184,0x3808,0,0xa28,0x384c,0x393c,0x3940,0x3930,0x10a0,
+  0x10a4,0x380c,0x380c,0x380c,0x1650,0x3808,0,0x3804,0
+ };
+ static const uint32_t values[18] = {
+  0xffffff7f,0x30000701,0x30000701,0x11,2,0,0,0x10,0x01002000,
+  0,0xc23,0xc23,0x23,1,0x701,0x701,0x44,0
+ };
+ uint8_t commands[144], guarded[144 + 34];
+ _Static_assert(A733_NPU_NN_COMMAND_BYTES == 144, "The finite stream is 144 bytes");
+ CHECK(sun60i_a733_npu_nn_task_commands(commands, sizeof(commands)) == 0);
+ for (unsigned op = 0; op < 18; op++) {
+  uint32_t header = word(commands + op * 8);
+  CHECK(word(commands + op * 8 + 4) == values[op]);
+  if (op == 2 || op == 15) {
+   CHECK(header == 0x48000000);
+  } else if (op == 17) {
+   CHECK(header == 0x10000000);
+  } else {
+   CHECK(header >> 26 == 2 && (header >> 16 & 0x3ff) == 1);
+   CHECK((header & 0xffff) * 4 == addresses[op]);
+  }
+ }
+ CHECK(sun60i_a733_npu_nn_task_commands(NULL, 144) == EINVAL);
+ for (size_t bytes = 0; bytes < 144; bytes++) {
+  memset(guarded, 0x5a, sizeof(guarded));
+  CHECK(sun60i_a733_npu_nn_task_commands(guarded + 1, bytes) == EINVAL);
+  for (size_t i = 0; i < sizeof(guarded); i++) CHECK(guarded[i] == 0x5a);
+ }
+ for (uintptr_t tail = 0; tail < 144; tail++)
+  CHECK(sun60i_a733_npu_nn_task_commands((void *)(UINTPTR_MAX - tail), 144) == EINVAL);
+ for (size_t align = 0; align < 16; align++) {
+  memset(guarded, 0x5a, sizeof(guarded));
+  CHECK(sun60i_a733_npu_nn_task_commands(guarded + 1 + align, 144 + 16) == 0);
+  CHECK(memcmp(guarded + 1 + align, commands, sizeof(commands)) == 0);
+  for (size_t i = 0; i <= align; i++) CHECK(guarded[i] == 0x5a);
+  for (size_t i = 1 + align + 144; i < sizeof(guarded); i++) CHECK(guarded[i] == 0x5a);
+ }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -113,7 +156,13 @@ main(int argc, char **argv)
  CHECK(sun60i_a733_npu_nn_tiny_image(&image, sizeof(image)) == 0);
  if (argc == 2 && strcmp(argv[1], "--image") == 0)
   return fwrite(&image, 1, sizeof(image), stdout) == sizeof(image) ? 0 : 1;
+ if (argc == 2 && strcmp(argv[1], "--commands") == 0) {
+  uint8_t commands[144];
+  CHECK(sun60i_a733_npu_nn_task_commands(commands, sizeof(commands)) == 0);
+  return fwrite(commands, 1, sizeof(commands), stdout) == sizeof(commands) ? 0 : 1;
+ }
  CHECK(argc == 1);
+ verify_commands();
  verify(&image);
  CHECK(sun60i_a733_npu_nn_tiny_image(NULL, 1632) == EINVAL);
  for (size_t bytes = 0; bytes < 1632; bytes++) {

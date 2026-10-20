@@ -116,3 +116,26 @@ sun60i_a733_npu_nn_tiny_image(void *out, size_t bytes)
 	}
 	return 0;
 }
+
+int
+sun60i_a733_npu_nn_task_commands(void *out, size_t bytes)
+{
+	/* Mesa NN dispatch plus the non-BLT kernel completion tail. */
+	static const uint32_t words[36] = {
+		0x08010061, 0xffffff7f, 0x08010e02, 0x30000701,
+		0x48000000, 0x30000701, 0x0801028a, 0x11,
+		0x08010e13, 2, 0x08010e4f, 0, 0x08010e50, 0,
+		0x08010e4c, 0x10, 0x08010428, 0x01002000,
+		0x08010429, 0, 0x08010e03, 0xc23, 0x08010e03, 0xc23,
+		0x08010e03, 0x23, 0x08010594, 1, 0x08010e02, 0x701,
+		0x48000000, 0x701, 0x08010e01, 0x44, 0x10000000, 0
+	};
+	uint8_t *p = out;
+
+	if (out == NULL || bytes < A733_NPU_NN_COMMAND_BYTES ||
+	    A733_NPU_NN_COMMAND_BYTES > UINTPTR_MAX - (uintptr_t)out)
+		return EINVAL;
+	for (unsigned i = 0; i < 36; i++)
+		nn_store(p + i * 4, words[i]);
+	return 0;
+}

@@ -45,3 +45,32 @@ Never copy expected bytes into a DMA output page. A later TASK mechanism
 must prove NN dispatch, fence completion, terminal-gated POSTREAD, all
 512 output bytes, unchanged tails and immutable inputs. An FE event, idle
 state or unchanged output poison is not model acceptance.
+
+## Finite TASK commands
+
+`sun60i_a733_npu_nn_task_commands()` emits 144 bytes in 18 whole commands.
+It uses the same fixed-span validation and tail rules. It exposes no state
+address, device VA or command selector. The fixture decodes LOAD_STATE count,
+offset and opcode fields, verifies the whole order, and checks the stream
+SHA256 `cced6b4d080871b78f9e011fb930717ef6fc1b3926a2c57defb57534cfaa4909`.
+
+The stream has the existing MMU flush prefix, PA/OpenCL setup, OCB and NN
+configuration, and config VA 0x01002000. It then writes the two NN batch cache
+flushes, the kernel GL and TS flushes, a FE-to-PE semaphore and stall, event
+4 from PE, and END. The MMU token remains 0x30000701. The separate completion
+token is 0x701. No ring, WAIT or LINK command is emitted.
+
+This finite policy selects the non-2D, non-BLT branch. Mesa 26.2.4
+`etnaviv_screen.c` creates the NPU pipe as 3D. The exact A733 CID record in
+BSP `gc_feature_database.h` selects BltEngine 0. The kernel completion tail
+follows `drivers/gpu/drm/etnaviv/etnaviv_buffer.c` from the pinned BSP commit
+above. The byte encoding follows Mesa `etnaviv_emit.h`, `cmdstream.xml.h`,
+`state.xml.h` and `state_3d.xml.h`. The NN dispatch and two batch flushes
+follow `etnaviv_ml_nn.c` and `etnaviv_ml.c`.
+
+This function proves no native TASK admission or cache completion. The old
+FE path still refuses TASK storage. A later TASK admission must verify the
+supported identity and non-BLT profile. It must also validate DMA and image
+identity before publication, preserve retention, and gate result access on
+the complete terminal and numerical checks. CPU stream generation does not
+grant MMIO access or permit output POSTREAD.

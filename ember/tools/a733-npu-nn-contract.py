@@ -33,7 +33,11 @@ def main():
         if len(image) != 1632 or hashlib.sha256(image[1120:]).hexdigest() != \
                 "6b14aa6b1aba47323ba262ae69cba4dd3a970d172097e8d5730736b6bfaafedd":
             raise RuntimeError("The independent expected-image SHA256 differs")
-        print("A733 NN independent expected-image SHA256 passed")
+        commands = subprocess.check_output(test + ["--commands"])
+        if len(commands) != 144 or hashlib.sha256(commands).hexdigest() != \
+                "cced6b4d080871b78f9e011fb930717ef6fc1b3926a2c57defb57534cfaa4909":
+            raise RuntimeError("The pinned finite TASK command SHA256 differs")
+        print("A733 NN independent expected-image and TASK command SHA256 passed")
 
 
 if __name__ == "__main__":
