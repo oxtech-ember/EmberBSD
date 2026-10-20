@@ -12,12 +12,14 @@ for unit in clock hsm hsm_acpi; do
 done
 sed '/^#include /d' "$src/sys/arch/arm/broadcom/bcm2712_display_bvb.h" > "$work/bvb-types.h"
 sed '/^#include /d' "$src/sys/arch/arm/broadcom/bcm2712_display_core.h" > "$work/core-types.h"
+sed '/^#include /d' "$src/sys/arch/arm/broadcom/bcm2712_display_disp.h" > "$work/disp-types.h"
 {
     echo '#ifndef __CTASSERT'
     echo '#define __CTASSERT(e) _Static_assert(e, #e)'
     echo '#endif'
     echo '#include "bvb-types.h"'
     echo '#include "core-types.h"'
+    echo '#include "disp-types.h"'
     cat "$work/hsm_acpi.h"
 } > "$work/native.h"
 mv "$work/native.h" "$work/hsm_acpi.h"
