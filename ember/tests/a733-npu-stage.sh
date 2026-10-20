@@ -15,18 +15,26 @@ cat > "$work/check.c" <<'C'
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
+#include <stdlib.h>
 typedef unsigned int u_int;
 #define mutex_enter(m) do { } while (0)
 #define mutex_exit(m) do { } while (0)
 struct sun60i_npu_softc {
-	u_int sc_run_stage, sc_run_result;
+	u_int sc_run_stage, sc_run_result, sc_native_profile;
 	bool sc_run_pass, sc_have_id, sc_mmio_ready;
 	uint64_t sc_pid, sc_rev;
 };
 static struct sun60i_npu_softc sc;
 static int power_node_ok = 1;
+static unsigned power_calls;
 static int next_domain_error, next_clocks_error, next_power_error;
-static int sun60i_npu_power_node(struct sun60i_npu_softc *s) { return power_node_ok ? 2 : -1; }
+static int
+sun60i_npu_power_node(struct sun60i_npu_softc *s)
+{
+
+	power_calls++;
+	return power_node_ok ? 2 : -1;
+}
 static int of_compatible_match(int node, const void *c) { return 1; }
 static int sun60i_npu_stage_domain(struct sun60i_npu_softc *s, int p) { return next_domain_error; }
 static int sun60i_npu_stage_clocks(struct sun60i_npu_softc *s) { return next_clocks_error; }
@@ -37,6 +45,7 @@ static int sun60i_npu_stage_power_id(struct sun60i_npu_softc *s) { return next_p
 #define A733_NPU_STAGE_POWER_ID 4
 static const int power_compat[1];
 #include "npu.h"
+#define CHECK(c) do { if (!(c)) abort(); checks++; } while (0)
 int
 main(void)
 {
@@ -78,6 +87,16 @@ main(void)
 	assert(sc.sc_run_result == EINVAL && sc.sc_run_stage == 0);
 	checks++;
 
+	for (unsigned profile = 1; profile <= 2; profile++) {
+		unsigned before = power_calls;
+
+		memset(&sc, 0, sizeof(sc));
+		sc.sc_run_pass = sc.sc_mmio_ready = true;
+		sc.sc_native_profile = profile;
+		sun60i_npu_run_stage(&sc, 1);
+		CHECK(sc.sc_run_result == EBUSY && !sc.sc_mmio_ready);
+		CHECK(sc.sc_run_stage == 0 && power_calls == before);
+	}
 	printf("PASS: %u NPU staged identification checks\n", checks);
 	return 0;
 }

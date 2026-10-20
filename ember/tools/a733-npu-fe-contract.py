@@ -23,13 +23,21 @@ def main():
                              if not line.startswith(("#include ", "__KERNEL_RCSID(")))
             (work / name).write_text(text + "\n")
         driver = (root / "sys/arch/arm/sunxi/sun60i_a733_npu.c").read_text()
-        for name in ("sun60i_npu_mmio_ready", "sun60i_npu_engine_prepare",
-                     "sun60i_npu_engine_run", "sun60i_npu_sysctl_engine_value"):
+        for name, result in (("sun60i_npu_mmio_ready", "int"),
+                             ("sun60i_npu_engine_prepare", "int"),
+                             ("sun60i_npu_engine_run", "int"),
+                             ("sun60i_npu_task_cache", "void"),
+                             ("sun60i_npu_task_prepare", "int"),
+                             ("sun60i_npu_task_run", "int"),
+                             ("sun60i_npu_sysctl_task_stage", "int"),
+                             ("sun60i_npu_sysctl_task_setup", "void"),
+                             ("sun60i_npu_sysctl_engine_value", "int")):
             match = re.search(r"^" + name + r"\(.*?^}", driver,
                               re.MULTILINE | re.DOTALL)
             if match is None:
                 raise RuntimeError("missing production function: " + name)
-            (work / (name + ".h")).write_text("static int\n" + match.group(0) + "\n")
+            (work / (name + ".h")).write_text(
+                "static " + result + "\n" + match.group(0) + "\n")
         run_header = (root / "sys/arch/arm/sunxi/sun60i_a733_npu_run.h").read_text()
         (work / "sun60i_a733_npu_run.h").write_text("\n".join(
             line for line in run_header.splitlines() if not line.startswith("#include ")) + "\n")
@@ -39,6 +47,11 @@ def main():
         dma_header = (root / "sys/arch/arm/sunxi/sun60i_a733_npu_dma.h").read_text()
         (work / "sun60i_a733_npu_dma.h").write_text("\n".join(
             line for line in dma_header.splitlines() if not line.startswith("#include ")) + "\n")
+        task_header = (
+            root / "sys/arch/arm/sunxi/sun60i_a733_npu_task.h").read_text()
+        (work / "sun60i_a733_npu_task.h").write_text("\n".join(
+            line for line in task_header.splitlines()
+            if not line.startswith("#include ")) + "\n")
         fe = (root / "sys/arch/arm/sunxi/sun60i_a733_npu_fe.c").read_text()
         pure = []
         for name in ("sun60i_a733_npu_fe_admit", "sun60i_a733_npu_fe_event_image"):

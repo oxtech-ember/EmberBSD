@@ -18,7 +18,7 @@ struct sun60i_npu_softc {
 	uint64_t sc_pid, sc_rev, sc_date;
 	kmutex_t sc_run_lock;
 	bool sc_mmio_ready, sc_run_pass;
-	unsigned sc_run_stage, sc_run_result;
+	unsigned sc_run_stage, sc_run_result, sc_task_attempted;
 	struct clk *sc_owned_clock;
 	int sc_owned_power;
 	struct { struct { unsigned publication_attempted; } status; } sc_engine_run;
@@ -146,7 +146,7 @@ main(void)
 	error = sun60i_npu_read_ids(&sc);
 	CHECK(error == ENOMEM && maps == 1 && unmaps == 0 && peeks == 0);
 	/* Cold, failed and stale ownership must stop before map or NPU peek. */
-	for (unsigned test = 0; test < 13; test++) {
+	for (unsigned test = 0; test < 14; test++) {
 		reset(); ready(&sc);
 		switch (test) {
 		case 0: case 1: case 2: case 3: sc.sc_run_stage = test; break;
@@ -158,6 +158,7 @@ main(void)
 		case 9: ccu_error = EBUSY; break;
 		case 10: power_error = EBUSY; break;
 		case 11: ccu_error = EFAULT; break;
+		case 13: sc.sc_task_attempted = 1; break;
 		case 12: sc.sc_engine_run.status.publication_attempted = 1;
 		    sc.sc_mmio_ready = true; break;
 		}
@@ -167,7 +168,7 @@ main(void)
 		    unmaps == 0 && reg.value == 7 && !sc.sc_run_lock.held);
 		CHECK(test >= 9 || (ccu_calls == 0 && power_calls == 0));
 		CHECK(test != 9 || power_calls == 0);
-		CHECK(test != 12 || (ccu_calls == 0 && power_calls == 0));
+		CHECK(test < 12 || (ccu_calls == 0 && power_calls == 0));
 	}
 	sc.sc_engine_run.status.publication_attempted = 0;
 	ready(&sc);

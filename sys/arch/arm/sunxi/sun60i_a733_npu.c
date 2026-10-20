@@ -55,6 +55,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arm/sunxi/sun60i_a733_npu_dma.h>
 #include <arm/sunxi/sun60i_a733_npu_fe.h>
 #include <arm/sunxi/sun60i_a733_npu_run.h>
+#include <arm/sunxi/sun60i_a733_npu_task.h>
 
 #define A733_NPU_BASE		0x03600000
 #define A733_NPU_ID_SIZE	0x34
@@ -147,6 +148,12 @@ struct sun60i_npu_softc {
 	struct sun60i_a733_npu_dma *sc_engine_dma;
 	struct sun60i_a733_npu_run sc_engine_run;
 	struct sun60i_a733_npu_run_status sc_engine_run_cache;
+	/* One native profile is selected for this boot. TASK revokes legacy MMIO. */
+	u_int sc_native_profile, sc_task_stage, sc_task_result, sc_task_attempted;
+	uint32_t sc_task_command_bytes, sc_task_constants_bytes;
+	uint32_t sc_task_input_bytes, sc_task_output_bytes;
+	struct sun60i_a733_npu_task *sc_task;
+	struct sun60i_a733_npu_task_status sc_task_cache;
 	/* VIPLite dispatch state */
 	devmajor_t sc_cmajor;
 	bool sc_cdev_attached;
@@ -309,6 +316,12 @@ sun60i_npu_run_stage(struct sun60i_npu_softc *sc, u_int stage)
 		mutex_exit(&sc->sc_run_lock);
 		return;
 	}
+	if (sc->sc_native_profile != 0) {
+		sc->sc_run_result = EBUSY;
+		sc->sc_mmio_ready = false;
+		mutex_exit(&sc->sc_run_lock);
+		return;
+	}
 	if (stage < A733_NPU_STAGE_DOMAIN || stage > A733_NPU_STAGE_POWER_ID ||
 	    stage != sc->sc_run_stage + 1 || !sc->sc_run_pass) {
 		sc->sc_run_result = EINVAL;
@@ -350,7 +363,8 @@ sun60i_npu_mmio_ready(struct sun60i_npu_softc *sc)
 	int error;
 
 	KASSERT(mutex_owned(&sc->sc_run_lock));
-	if (sc->sc_engine_run.status.publication_attempted ||
+	if (sc->sc_task_attempted ||
+	    sc->sc_engine_run.status.publication_attempted ||
 	    !sc->sc_mmio_ready || sc->sc_run_stage != A733_NPU_STAGE_POWER_ID ||
 	    sc->sc_run_result != 0 || !sc->sc_run_pass ||
 	    sc->sc_pid != A733_NPU_EXPECTED_PID || sc->sc_rev != A733_NPU_EXPECTED_REV)
@@ -371,8 +385,12 @@ sun60i_npu_engine_prepare(struct sun60i_npu_softc *sc)
 	int error;
 
 	KASSERT(mutex_owned(&sc->sc_run_lock));
+	if (sc->sc_native_profile != 0 &&
+	    sc->sc_native_profile != A733_NPU_DMA_PROFILE_FE)
+		return EBUSY;
 	if (sc->sc_engine_attempted)
 		return EALREADY;
+	sc->sc_native_profile = A733_NPU_DMA_PROFILE_FE;
 	error = sun60i_npu_mmio_ready(sc);
 	/* A failed new observation must not leave the older MMIO proof usable. */
 	sc->sc_mmio_ready = false;
@@ -419,6 +437,8 @@ sun60i_npu_engine_run(struct sun60i_npu_softc *sc)
 	int error;
 
 	KASSERT(mutex_owned(&sc->sc_run_lock));
+	if (sc->sc_native_profile != A733_NPU_DMA_PROFILE_FE)
+		return sc->sc_native_profile == 0 ? EINVAL : EBUSY;
 	if (sc->sc_engine_run.status.attempted)
 		return EALREADY;
 	error = sun60i_npu_mmio_ready(sc);
@@ -436,6 +456,70 @@ sun60i_npu_engine_run(struct sun60i_npu_softc *sc)
 		sc->sc_engine_stage = 2;
 	if (sc->sc_engine_run_cache.command_bytes != 0)
 		sc->sc_engine_command_bytes = sc->sc_engine_run_cache.command_bytes;
+	return error;
+}
+
+/* Caller holds sc_run_lock. These values are cached, not live MMIO. */
+static void
+sun60i_npu_task_cache(struct sun60i_npu_softc *sc)
+{
+
+	KASSERT(mutex_owned(&sc->sc_run_lock));
+	sun60i_a733_npu_task_status(sc->sc_task, &sc->sc_task_cache);
+	/* Only the fixed bounded coordinator supplies these byte counts. */
+	sc->sc_task_command_bytes =
+	    (uint32_t)sc->sc_task_cache.memory.memory.command_bytes;
+	sc->sc_task_constants_bytes =
+	    (uint32_t)sc->sc_task_cache.memory.constants_bytes;
+	sc->sc_task_input_bytes = (uint32_t)sc->sc_task_cache.memory.input_bytes;
+	sc->sc_task_output_bytes = (uint32_t)sc->sc_task_cache.memory.output_bytes;
+}
+
+/* The first TASK choice permanently revokes legacy register access. */
+static int
+sun60i_npu_task_prepare(struct sun60i_npu_softc *sc)
+{
+	int error;
+
+	KASSERT(mutex_owned(&sc->sc_run_lock));
+	if (sc->sc_task_attempted)
+		return EALREADY;
+	if (sc->sc_native_profile != 0)
+		return EBUSY;
+	error = sun60i_npu_mmio_ready(sc);
+	sc->sc_native_profile = A733_NPU_DMA_PROFILE_TASK;
+	sc->sc_task_attempted = 1;
+	sc->sc_task_stage = 1;
+	sc->sc_mmio_ready = false;
+	if (error != 0)
+		return error;
+	/* This fixed constructor has no NPU MMIO, IRQ setup or DMA sync. */
+	error = sun60i_a733_npu_task_prepare(sc->sc_dmat, &sc->sc_task);
+	if (sc->sc_task != NULL)
+		sun60i_npu_task_cache(sc);
+	return error;
+}
+
+/* The closed coordinator supplies all completion and numerical predicates. */
+static int
+sun60i_npu_task_run(struct sun60i_npu_softc *sc)
+{
+	int error;
+
+	KASSERT(mutex_owned(&sc->sc_run_lock));
+	if (sc->sc_native_profile != A733_NPU_DMA_PROFILE_TASK)
+		return sc->sc_native_profile == 0 ? EINVAL : EBUSY;
+	if (sc->sc_task_stage == 2)
+		return EALREADY;
+	if (sc->sc_task_stage != 1 || sc->sc_task == NULL ||
+	    !sc->sc_task_cache.prepared || sc->sc_task_cache.release_error != 0)
+		return EINVAL;
+	sc->sc_task_stage = 2;
+	sc->sc_mmio_ready = false;
+	error = sun60i_a733_npu_task_run(sc->sc_task, sc->sc_bst,
+	    sc->sc_owned_clock, sc->sc_owned_power, sc, sc->sc_phandle,
+	    device_xname(sc->sc_dev));
+	sun60i_npu_task_cache(sc);
 	return error;
 }
 
@@ -694,6 +778,37 @@ sun60i_npu_sysctl_engine_stage(SYSCTLFN_ARGS)
 	return error;
 }
 
+static int
+sun60i_npu_sysctl_task_stage(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct sun60i_npu_softc *sc = sun60i_npu_instance;
+	u_int value;
+	int error;
+
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->sc_run_lock);
+	value = sc->sc_task_stage;
+	mutex_exit(&sc->sc_run_lock);
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	mutex_enter(&sc->sc_run_lock);
+	if (value == 0)
+		error = 0;
+	else if (value == 1)
+		error = sun60i_npu_task_prepare(sc);
+	else if (value == 2)
+		error = sun60i_npu_task_run(sc);
+	else
+		error = EINVAL;
+	sc->sc_task_result = error;
+	mutex_exit(&sc->sc_run_lock);
+	return error;
+}
+
 static void
 sun60i_npu_sysctl_engine_setup(struct sun60i_npu_softc *sc,
     const struct sysctlnode *rnode)
@@ -834,6 +949,178 @@ sun60i_npu_sysctl_engine_setup(struct sun60i_npu_softc *sc,
 }
 
 static void
+sun60i_npu_sysctl_task_setup(struct sun60i_npu_softc *sc,
+    const struct sysctlnode *rnode)
+{
+	const struct {
+		const char *name;
+		uint32_t *data;
+	} words[] = {
+		{ "native_profile", &sc->sc_native_profile },
+		{ "task_result", &sc->sc_task_result },
+		{ "task_attempted", &sc->sc_task_attempted },
+		{ "task_prepared", &sc->sc_task_cache.prepared },
+		{ "task_retained", &sc->sc_task_cache.retained },
+		{ "task_release_error", &sc->sc_task_cache.release_error },
+		{ "task_run_attempted", &sc->sc_task_cache.run.attempted },
+		{ "task_run_publication_attempted",
+		    &sc->sc_task_cache.run.publication_attempted },
+		{ "task_run_retained", &sc->sc_task_cache.run.retained },
+		{ "task_run_started", &sc->sc_task_cache.run.started },
+		{ "task_run_terminal", &sc->sc_task_cache.run.terminal },
+		{ "task_run_snapshot_valid", &sc->sc_task_cache.run.snapshot_valid },
+		{ "task_run_step", &sc->sc_task_cache.run.step },
+		{ "task_run_error", &sc->sc_task_cache.run.error },
+		{ "task_run_last_readback", &sc->sc_task_cache.run.last_readback },
+		{ "task_run_command_bytes", &sc->sc_task_cache.run.command_bytes },
+		{ "task_run_irq_raw", &sc->sc_task_cache.run.irq_raw },
+		{ "task_run_irq_bits", &sc->sc_task_cache.run.irq_bits },
+		{ "task_run_irq_fault", &sc->sc_task_cache.run.irq_fault },
+		{ "task_run_irq_mask_readback", &sc->sc_task_cache.run.irq_mask_readback },
+		{ "task_run_terminal_status", &sc->sc_task_cache.run.terminal_status },
+		{ "task_run_stale0", &sc->sc_task_cache.run.stale[0] },
+		{ "task_run_stale1", &sc->sc_task_cache.run.stale[1] },
+		{ "task_run_terminal_idle0", &sc->sc_task_cache.run.terminal_idle[0] },
+		{ "task_run_terminal_idle1", &sc->sc_task_cache.run.terminal_idle[1] },
+		{ "task_run_terminal_dma0", &sc->sc_task_cache.run.terminal_dma[0] },
+		{ "task_run_terminal_dma1", &sc->sc_task_cache.run.terminal_dma[1] },
+		{ "task_features_valid", &sc->sc_task_cache.run.task_features_valid },
+		{ "task_compare_valid", &sc->sc_task_cache.compare.valid },
+		{ "task_compare_pass", &sc->sc_task_cache.compare.pass },
+		{ "task_model_pass", &sc->sc_task_cache.run.model_pass },
+		{ "task_final_attempted", &sc->sc_task_cache.run.final_attempted },
+		{ "task_final_valid", &sc->sc_task_cache.run.final_valid },
+		{ "task_final_status", &sc->sc_task_cache.run.final_status },
+		{ "task_final_mask0", &sc->sc_task_cache.run.final_mask[0] },
+		{ "task_final_mask1", &sc->sc_task_cache.run.final_mask[1] },
+		{ "task_final_idle0", &sc->sc_task_cache.run.final_idle[0] },
+		{ "task_final_idle1", &sc->sc_task_cache.run.final_idle[1] },
+		{ "task_final_dma0", &sc->sc_task_cache.run.final_dma[0] },
+		{ "task_final_dma1", &sc->sc_task_cache.run.final_dma[1] },
+		{ "task_command_va", &sc->sc_task_cache.memory.memory.command_virtual },
+		{ "task_pd", &sc->sc_task_cache.memory.memory.pd_entry },
+		{ "task_constants_va", &sc->sc_task_cache.memory.constants_virtual },
+		{ "task_input_va", &sc->sc_task_cache.memory.input_virtual },
+		{ "task_output_va", &sc->sc_task_cache.memory.output_virtual },
+		{ "task_command_bytes", &sc->sc_task_command_bytes },
+		{ "task_constants_bytes", &sc->sc_task_constants_bytes },
+		{ "task_input_bytes", &sc->sc_task_input_bytes },
+		{ "task_output_bytes", &sc->sc_task_output_bytes },
+		{ "task_mismatch0", &sc->sc_task_cache.compare.mismatches[0] },
+		{ "task_mismatch1", &sc->sc_task_cache.compare.mismatches[1] },
+		{ "task_mismatch2", &sc->sc_task_cache.compare.mismatches[2] },
+		{ "task_mismatch3", &sc->sc_task_cache.compare.mismatches[3] },
+		{ "task_mismatch4", &sc->sc_task_cache.compare.mismatches[4] },
+		{ "task_mismatch5", &sc->sc_task_cache.compare.mismatches[5] },
+		{ "task_first0", &sc->sc_task_cache.compare.first[0] },
+		{ "task_first1", &sc->sc_task_cache.compare.first[1] },
+		{ "task_first2", &sc->sc_task_cache.compare.first[2] },
+		{ "task_first3", &sc->sc_task_cache.compare.first[3] },
+		{ "task_first4", &sc->sc_task_cache.compare.first[4] },
+		{ "task_first5", &sc->sc_task_cache.compare.first[5] },
+		{ "task_feature_s0_model", &sc->sc_task_cache.run.task_features[0][0] },
+		{ "task_feature_s0_minor0", &sc->sc_task_cache.run.task_features[0][1] },
+		{ "task_feature_s0_minor5", &sc->sc_task_cache.run.task_features[0][2] },
+		{ "task_feature_s1_model", &sc->sc_task_cache.run.task_features[1][0] },
+		{ "task_feature_s1_minor0", &sc->sc_task_cache.run.task_features[1][1] },
+		{ "task_feature_s1_minor5", &sc->sc_task_cache.run.task_features[1][2] }
+	};
+	const struct {
+		const char *name;
+		uint64_t *data;
+	} quads[] = {
+		{ "task_mtlb", &sc->sc_task_cache.memory.memory.mtlb_address },
+		{ "task_stlb", &sc->sc_task_cache.memory.memory.stlb_address },
+		{ "task_command_dma", &sc->sc_task_cache.memory.memory.command_address },
+		{ "task_constants_dma", &sc->sc_task_cache.memory.constants_address },
+		{ "task_input_dma", &sc->sc_task_cache.memory.input_address },
+		{ "task_output_dma", &sc->sc_task_cache.memory.output_address },
+		{ "task_run_irq_count", &sc->sc_task_cache.run.irq_count },
+		{ "task_run_irq_baseline", &sc->sc_task_cache.run.irq_baseline }
+	};
+	static const char * const raw_names[2][A733_NPU_RUN_NREGS] = {
+		{
+			"task_run_s0_r000",
+			"task_run_s0_r004",
+			"task_run_s0_r014",
+			"task_run_s0_r024",
+			"task_run_s0_r030",
+			"task_run_s0_r388",
+			"task_run_s0_r3a4",
+			"task_run_s0_r3b4",
+			"task_run_s0_r654",
+			"task_run_s0_r664",
+			"task_run_s0_r668",
+			"task_run_s0_r66c",
+			"task_run_s0_r090",
+			"task_run_s0_r100",
+			"task_run_s0_r104",
+			"task_run_s0_r10c",
+			"task_run_s0_r3a8",
+			"task_run_s0_r414"
+		},
+		{
+			"task_run_s1_r000",
+			"task_run_s1_r004",
+			"task_run_s1_r014",
+			"task_run_s1_r024",
+			"task_run_s1_r030",
+			"task_run_s1_r388",
+			"task_run_s1_r3a4",
+			"task_run_s1_r3b4",
+			"task_run_s1_r654",
+			"task_run_s1_r664",
+			"task_run_s1_r668",
+			"task_run_s1_r66c",
+			"task_run_s1_r090",
+			"task_run_s1_r100",
+			"task_run_s1_r104",
+			"task_run_s1_r10c",
+			"task_run_s1_r3a8",
+			"task_run_s1_r414"
+		}
+	};
+
+	/* No ANYWRITE flag: only the framework-authorized root may write. */
+	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
+	    CTLTYPE_INT, "task_stage",
+	    SYSCTL_DESCR("0 dry; 1 fixed TASK prepare; 2 one retained NN run"),
+	    sun60i_npu_sysctl_task_stage, 0, NULL, 0,
+	    CTL_CREATE, CTL_EOL) != 0)
+		aprint_error_dev(sc->sc_dev, "cannot create TASK stage node\n");
+	for (size_t i = 0; i < __arraycount(words); i++) {
+		if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+		    CTLTYPE_INT, words[i].name,
+		    SYSCTL_DESCR("cached fixed NPU TASK value"),
+		    sun60i_npu_sysctl_engine_value, 0, words[i].data, 0,
+		    CTL_CREATE, CTL_EOL) != 0)
+			aprint_error_dev(sc->sc_dev,
+			    "cannot create cached TASK node\n");
+	}
+	for (size_t i = 0; i < __arraycount(quads); i++) {
+		if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READONLY,
+		    CTLTYPE_QUAD, quads[i].name,
+		    SYSCTL_DESCR("cached fixed NPU TASK address or IRQ count"),
+		    sun60i_npu_sysctl_engine_value, 0, quads[i].data, 0,
+		    CTL_CREATE, CTL_EOL) != 0)
+			aprint_error_dev(sc->sc_dev,
+			    "cannot create TASK address node\n");
+	}
+	for (size_t row = 0; row < 2; row++) {
+		for (size_t i = 0; i < A733_NPU_RUN_NREGS; i++) {
+			if (sysctl_createv(NULL, 0, &rnode, NULL,
+			    CTLFLAG_READONLY, CTLTYPE_INT, raw_names[row][i],
+			    SYSCTL_DESCR("cached TASK pre-run raw peek32 sample"),
+			    sun60i_npu_sysctl_engine_value, 0,
+			    &sc->sc_task_cache.run.raw[row][i], 0,
+			    CTL_CREATE, CTL_EOL) != 0)
+				aprint_error_dev(sc->sc_dev,
+				    "cannot create TASK raw node\n");
+		}
+	}
+}
+
+static void
 sun60i_npu_sysctl_setup(struct sun60i_npu_softc *sc)
 {
 	const struct sysctlnode *rnode;
@@ -845,6 +1132,7 @@ sun60i_npu_sysctl_setup(struct sun60i_npu_softc *sc)
 		return;
 	}
 	sun60i_npu_sysctl_engine_setup(sc, rnode);
+	sun60i_npu_sysctl_task_setup(sc, rnode);
 	if (sysctl_createv(NULL, 0, &rnode, NULL, CTLFLAG_READWRITE,
 	    CTLTYPE_INT, "stage",
 		    SYSCTL_DESCR("run NPU diagnostic stage 0..4"),
