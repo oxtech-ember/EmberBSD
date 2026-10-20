@@ -27,6 +27,7 @@
 struct bcmv3d_job;
 struct bcmv3d_mmu4_native;
 struct bcmv3d_vblank_native;
+struct bcmv3d_scanout;
 struct bcmv3d_device {
 	struct drm_device *drm;
 	device_t dev;
@@ -44,6 +45,7 @@ struct bcmv3d_device {
 	struct bcmv3d_mmu4_native *mmu4_native;
 	const struct bcmv3d_bootfb_owner *bootfb;
 	struct bcmv3d_vblank_native *vblank_native;
+	struct bcmv3d_scanout *scanout;
 };
 
 /* Keep the CMA base layout; allocation, segments and pager are private. */

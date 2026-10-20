@@ -38,7 +38,7 @@ begin
     'callback-lock'=>['vblank_native_intr',"if ((handled || error != 0) && notify != NULL)\n\t\tnotify(notify_arg, &snapshot);","if ((handled || error != 0) && notify != NULL) { mutex_enter(&n->lock); notify(notify_arg, &snapshot); }"],
     'before-handle'=>['vblank_native_intr','if (!n->core.armed || n->fault != 0)','if (false)'],
     'parent-mask'=>['vblank_native_fault','if (n->ih != NULL && !n->masked)','if (!n->masked)'],
-    'bind-once'=>['vblank_native_bind','n->notify != NULL ? EBUSY : 0;','false ? EBUSY : 0;'],
+    'bind-once'=>['bcmv3d_vblank_native_bind_snapshot','n->notify != NULL ? EBUSY : 0;','false ? EBUSY : 0;'],
     'real-handle'=>['vblank_native_create','n->ih = ih;','n->ih = NULL;'],
     'IRQ-read-onfault'=>['vblank_native_read','if (cpu_intr_p() || cpu_softintr_p())','if (false)'],
     'IRQ-write-onfault'=>['vblank_native_write','if (cpu_intr_p() || cpu_softintr_p())','if (false)'],

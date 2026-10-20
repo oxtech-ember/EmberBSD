@@ -34,7 +34,7 @@ struct bcmv3d_flip {
 	struct bcmv3d_flip_slot slot[BCMV3D_FLIP_SLOTS];
 	uint64_t sequence, frame_epoch, queued_sequence, latch_sequence;
 	uint32_t frame_count;
-	int current, pending, fault;
+	int current_slot, pending_slot, fault;
 	bool initialized;
 };
 
@@ -68,6 +68,8 @@ int bcmv3d_flip_init(struct bcmv3d_flip *, const struct bcmv3d_flip_event *);
 int bcmv3d_flip_ready(struct bcmv3d_flip *, unsigned int);
 int bcmv3d_flip_cancel(struct bcmv3d_flip *, unsigned int);
 int bcmv3d_flip_submit(struct bcmv3d_flip *, unsigned int);
+/* Reject delayed callbacks captured at or before this native sequence. */
+int bcmv3d_flip_submit_after(struct bcmv3d_flip *, unsigned int, uint64_t);
 int bcmv3d_flip_observe(struct bcmv3d_flip *,
     const struct bcmv3d_flip_event *, struct bcmv3d_flip_update *);
 int bcmv3d_flip_claim_retired(struct bcmv3d_flip *, unsigned int);

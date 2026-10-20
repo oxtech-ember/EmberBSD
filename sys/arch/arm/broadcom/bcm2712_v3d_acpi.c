@@ -6,8 +6,9 @@
  * Register facts: raspberrypi/linux 43c132e8863c3bff3647033b6a7d2bf87b15501c,
  * v3d_regs.h, v3d_drv.c and bcm2712-ds.dtsi. ACPI layout: eotics-com/
  * edk2-platforms c4b5d05de1f2ef633bdb4c175b5c118fcb2666ed, RPi5 Dsdt.asl.
- * This observer never enables clocks, changes power/reset/SMS, or submits
- * work. An unready firmware handoff ends the probe. No DRM device is exposed.
+ * The default path observes firmware state. Explicit render/handoff profiles
+ * add native GPU and display owners after their full admission contracts.
+ * An unready handoff ends the selected operation.
  */
 
 #include <sys/cdefs.h>
@@ -76,6 +77,7 @@ int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
 #include <external/bsd/drm2/bcmv3d/bcmv3d_mmu4_native.h>
 #include <external/bsd/drm2/bcmv3d/bcmv3d_hvs_publish.h>
 #include <external/bsd/drm2/bcmv3d/bcmv3d_vblank_native.h>
+#include <external/bsd/drm2/bcmv3d/bcmv3d_scanout.h>
 #include <external/bsd/drm2/bcmv3d/bcmv3d_mmu4_check.h>
 #ifndef BCM2712_DISPLAY_COMPONENTS
 #error "BCM2712 native handoff requires the builtin display components"
@@ -831,13 +833,14 @@ bcmv3d_bootfb_publish(struct bcmv3d_softc *sc)
 		goto publish;
 	/*
 	 * This fixed profile is the first and only HVS boot writer. The same
-	 * canonical GPU owner reserves SRAM32..41, UPM0..15615/slot0 and keeps
+	 * canonical GPU owner reserves SRAM32..72 and UPM0..62463/slots0..3.
+	 * Initial publication uses only SRAM32..41 and UPM slot0. The owner keeps
 	 * the inherited COB partition. No other display driver/probe may run.
 	 * Stopped channels, firmware ACK and metadata do not prove free space.
 	 * The actual native helper validates fixed IOVA0 backing before I/O.
 	 */
 	p->dlist_first = 32;
-	p->dlist_words = BCM2712_HVS_DLIST_WORDS;
+	p->dlist_words = 41;
 	p->frame = (struct bcm2712_hvs_frame) {
 		.variant = d->stop.version & 0xff,
 		.dma_base = 0, .dma_span = 8294400,
@@ -942,6 +945,7 @@ bcmv3d_bootfb_start_vblank(struct bcmv3d_softc *sc)
 	struct bcmv3d_bootfb_owner *owner = &sc->sc_bootfb;
 	struct bcmv3d_bootfb_publish *p = &owner->publish;
 	struct bcmv3d_vblank_native *native;
+	struct bcmv3d_scanout *scanout;
 	int count, error;
 
 	if (owner->phase != BCMV3D_BOOTFB_CLOSED || owner->first_error != 0 ||
@@ -963,6 +967,15 @@ bcmv3d_bootfb_start_vblank(struct bcmv3d_softc *sc)
 	KERNEL_LOCK(count, NULL);
 	aprint_normal_dev(sc->sc_dev, "native PV0 event route: error %d, "
 	    "GSI 133; no DRM event or BO retirement\n", error);
+	if (error == 0) {
+		KERNEL_UNLOCK_ALL(NULL, &count);
+		error = bcmv3d_scanout_create(owner->renderer,
+		    &owner->display.contract, p->maps[BCMV3D_PUBLISH_HVS],
+		    p->frame.variant, p->cxm_words, &scanout);
+		KERNEL_LOCK(count, NULL);
+		aprint_normal_dev(sc->sc_dev, "native HVS consumer owner: "
+		    "error %d; no DRM/KMS registration\n", error);
+	}
 	return error;
 }
 

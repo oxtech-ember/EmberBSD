@@ -3,7 +3,8 @@
 The internal flip core tracks three GEM slots and one reserved empty list.
 It consumes real PV0 snapshots. It does not allocate buffers, access MMIO,
 publish a list, acquire fences or establish ownership of a hardware pool.
-It is not yet connected to the native HVS owner or DRM/KMS.
+The [native HVS owner](bcmv3d-scanout.md) uses this protocol. DRM/KMS
+integration and physical mutable-frame acceptance remain separate.
 
 Initial head32 remains pinned. GEM heads42/52/62 use separate IOVA and UPM
 ranges. Empty head72 has no GEM backing. The native owner must reserve these

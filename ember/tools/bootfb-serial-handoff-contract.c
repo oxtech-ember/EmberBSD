@@ -458,7 +458,28 @@ bcmv3d_vblank_native_create(struct bcmv3d_device *r,
 	*out = &vblank_fixture;
 	return 0;
 }
+struct bcmv3d_scanout { int unused; };
+static struct bcmv3d_scanout scanout_fixture;
+static unsigned scanout_calls;
+static int
+bcmv3d_scanout_create(struct bcmv3d_device *r,
+    const struct bcm2712_display_contract *c, bus_space_handle_t hvs,
+    uint32_t variant, uint32_t words, struct bcmv3d_scanout **out)
+{
+	struct bcmv3d_bootfb_publish *p = &gpu_sc.sc_bootfb.publish;
+
+	CHECK(giant == 0 && vblank_calls == 1 && !cold && !init_started);
+	CHECK(r == fixture_renderer && c == &gpu_sc.sc_bootfb.display.contract);
+	CHECK(p->complete && p->status.complete && !p->executing);
+	CHECK(p->dlist_first == 32 && p->dlist_words == 41);
+	CHECK(hvs == p->maps[BCMV3D_PUBLISH_HVS] && words == p->cxm_words);
+	CHECK(words >= 73 && variant == (uint32_t)p->frame.variant && out != NULL);
+	scanout_calls++;
+	*out = &scanout_fixture;
+	return 0;
+}
 #include "native-job.h"
+
 #undef bcmv3d_mmu4_native_create
 #undef bcmv3d_mmu4_native_prepare
 #undef bcmv3d_mmu4_native_program
@@ -504,7 +525,7 @@ display_initialize();
 	hvs_fail_map = hvs_fail_writeback = hvs_native_fault = 0;
 	hvs_permitted = true; hvs_reenter = hvs_progress_delayed = hvs_progress_stuck = false;
 	hvs_tuple_error = 0; hvs_partial = hvs_bypass = false; hvs_bypass_mix = 0;
-	range_check_calls = 0; range_check_error = 0; vblank_calls = 0;
+	range_check_calls = 0; range_check_error = 0; vblank_calls = 0; scanout_calls = 0;
 	hvs_profile_fault = hvs_read_fault = hvs_write_fault = hvs_ignore_write = 0;
 	hvs_query_error = 0; hvs_cxm = 1024; hvs_timeout = hvs_eof = false; hvs_busy[0] = hvs_busy[1] = 0; hvs_callback_case = 0;
 	config_finalize_done = 0; init_started = false; joined = 0;
@@ -1019,11 +1040,11 @@ static void tests_hvs(void)
 				p = &gpu_sc.sc_bootfb.publish;
 				CHECK(p->attempted && p->complete && !p->executing && p->fault == 0);
 				CHECK(range_check_calls == 1 && gpu_sc.sc_bootfb.range_check.complete);
-				CHECK(vblank_calls == 1);
+				CHECK(vblank_calls == 1 && scanout_calls == 1);
 				CHECK(p->status.native_valid && p->status.native.backing.prepared && p->status.native.backing.sealed);
 				CHECK(p->status.complete && p->status.active_list == 32 && (p->status.channel_status & 0x6000) == 0x4000);
 				CHECK(p->mapped == 0x1ff && hvs_maps == 6 && hvs_writeback_reads == 2 && hvs_native_queries == 1);
-				CHECK(p->dlist_first == 32 && p->dlist_words == 10 && p->frame.upm_offset == 0 && p->frame.upm_length == 15616 && p->frame.upm_slot == 0);
+				CHECK(p->dlist_first == 32 && p->dlist_words == 41 && p->frame.upm_offset == 0 && p->frame.upm_length == 15616 && p->frame.upm_slot == 0);
 				CHECK(p->frame.dma_base == 0 && p->frame.dma_span == 8294400 && p->frame.variant == variant);
 				CHECK(p->cxm_valid && p->cxm_words == 1024);
 				CHECK(p->cob[0] == 0x87004b10 && p->cob[1] == 0x4b000f10 && p->cob[2] == 0x0f000000);
@@ -1050,7 +1071,7 @@ for (unsigned failure = 0; failure < 2; failure++) {
 	CHECK(gpu_sc.sc_bootfb.publish.complete && gpu_sc.sc_bootfb.publish.fault == 0);
 	CHECK(gpu_sc.sc_bootfb.first_error == 0 && range_check_calls == 1);
 	CHECK(!gpu_sc.sc_bootfb.range_check.complete && gpu_sc.sc_bootfb.range_check.first_error == range_check_error);
-	CHECK(vblank_calls == 0);
+	CHECK(vblank_calls == 0 && scanout_calls == 0);
 	hvs_retry(EBUSY);
 	CHECK(range_check_calls == 1);
 }
@@ -1123,7 +1144,7 @@ for (unsigned variant = 0x53; variant <= 0x54; variant++) {
 		CHECK(p->fault == (fault == 6 ? EACCES : EINVAL) && pb.accesses == 0 && hvs_writeback_reads == 0 && hvs_maps == 0); hvs_retry(p->fault);
 	}
 	for (unsigned capacity = 0; capacity < 3; capacity++) {
-		hvs_profile_boot(0x54,false); hvs_cxm = capacity == 0 ? 0 : capacity == 1 ? 41 : 42;
+		hvs_profile_boot(0x54,false); hvs_cxm = capacity == 0 ? 0 : capacity == 1 ? 72 : 73;
 		native_finish(); p = &gpu_sc.sc_bootfb.publish;
 		CHECK(p->cxm_valid && p->cxm_words == hvs_cxm);
 		if (capacity < 2) { CHECK(p->fault == EOPNOTSUPP && hvs_maps == 0 && pb.writes == 0); hvs_retry(EOPNOTSUPP); }

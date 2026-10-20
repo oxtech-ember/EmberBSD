@@ -19,6 +19,7 @@
 #include "bcmv3d_drv.h"
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 #include "bcmv3d_vblank_native.h"
+#include "bcmv3d_scanout.h"
 #endif
 
 /* Compute the total BO budget once, before the first reservation. */
@@ -75,6 +76,30 @@ bcmv3d_vblank_sysctl(SYSCTLFN_ARGS)
 	node.sysctl_size = sizeof(snapshot);
 	return sysctl_lookup(SYSCTLFN_CALL(&node));
 }
+
+static int
+bcmv3d_scanout_sysctl(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct bcmv3d_device *sc = node.sysctl_data;
+	struct bcmv3d_scanout *native;
+	struct bcmv3d_scanout_status snapshot;
+	int error;
+
+	if (newp != NULL)
+		return EPERM;
+	mutex_enter(&sc->memory_lock);
+	native = sc->scanout;
+	mutex_exit(&sc->memory_lock);
+	if (native == NULL)
+		return ENXIO;
+	error = bcmv3d_scanout_cached_status(native, &snapshot);
+	if (error != 0)
+		return error;
+	node.sysctl_data = &snapshot;
+	node.sysctl_size = sizeof(snapshot);
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
 #endif
 
 static void
@@ -109,10 +134,19 @@ bcmv3d_bo_sysctl_init(struct bcmv3d_device *sc)
 	if (error != 0)
 		aprint_error_dev(sc->dev, "PV0 diagnostic sysctl unavailable: %d\n",
 		    error);
+	error = sysctl_createv(&sc->sysctllog, 0, &root, NULL,
+	    CTLFLAG_READONLY, CTLTYPE_STRUCT, "scanout",
+	    SYSCTL_DESCR("Cached native HVS consumer lifetime snapshot"),
+	    bcmv3d_scanout_sysctl, 0, sc,
+	    sizeof(struct bcmv3d_scanout_status), CTL_CREATE, CTL_EOL);
+	if (error != 0)
+		aprint_error_dev(sc->dev, "HVS consumer sysctl unavailable: %d\n",
+		    error);
 #endif
 }
 
-/* A PRIME fd authorizes this BO; the offset remains relative, in bytes. */
+/* A PRIME
+ fd authorizes this BO; the offset remains relative, in bytes. */
 static int
 bcmv3d_prime_mmap(struct drm_gem_object *obj, off_t *offp, size_t size,
     int prot, int *flagsp, int *advicep, struct uvm_object **uobjp,

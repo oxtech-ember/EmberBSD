@@ -8,6 +8,7 @@
 #include "bcmv3d_mmu4_backing.h"
 
 struct drm_gem_object;
+struct bcmv3d_scanout_frame;
 struct bcmv3d_device;
 struct bcmv3d_mmu4_native;
 
@@ -83,7 +84,8 @@ int bcmv3d_mmu4_native_discard_staged_gem(struct bcmv3d_mmu4_native *,
  * successful retained initial program. No initial one-shot guard is reset.
  * Publish/unmap can repeat after success; a runtime fault forbids later writes.
  * Unmap releases the actual BO/map outside ICAC; six linked L2 stay resident.
- * No HVS/KMS caller, producer fence or active-retirement contract is provided.
+ * These entry points cannot unmap exposed HVS objects. The separate retained
+ * worker API below requires the actual owner retirement proof.
  */
 int bcmv3d_mmu4_native_publish_staged_gem(struct bcmv3d_mmu4_native *,
     unsigned int);
@@ -94,5 +96,9 @@ int bcmv3d_mmu4_native_prepare_gem_read(struct bcmv3d_mmu4_native *,
     unsigned int, struct drm_gem_object *);
 int bcmv3d_mmu4_native_expose_gem(struct bcmv3d_mmu4_native *, unsigned int,
     struct drm_gem_object *);
+
+/* Retire only the actual native worker-owned frame after HVS completion. */
+int bcmv3d_mmu4_native_retire_gem(struct bcmv3d_mmu4_native *, unsigned int,
+    struct bcmv3d_scanout_frame *);
 
 #endif /* _BCMV3D_MMU4_NATIVE_H_ */

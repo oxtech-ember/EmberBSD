@@ -244,20 +244,31 @@ bcmv3d_vblank_native_snapshot(struct bcmv3d_vblank_native *n,
 }
 
 int
-bcmv3d_vblank_native_bind(struct bcmv3d_vblank_native *n,
-    bcmv3d_vblank_notify_fn notify, void *arg)
+bcmv3d_vblank_native_bind_snapshot(struct bcmv3d_vblank_native *n,
+    bcmv3d_vblank_notify_fn notify, void *arg,
+    struct bcmv3d_vblank_snapshot *initial)
 {
 	int error;
 
-	if (n == NULL || notify == NULL || arg == NULL)
+	if (n == NULL || notify == NULL || arg == NULL || initial == NULL)
 		return EINVAL;
 	mutex_enter(&n->lock);
 	error = n->fault != 0 ? n->fault : !n->core.armed ? ENXIO :
 	    n->notify != NULL ? EBUSY : 0;
 	if (error == 0) {
+		vblank_native_copy(n, initial);
 		n->arg = arg;
 		n->notify = notify;
 	}
 	mutex_exit(&n->lock);
 	return error;
+}
+
+int
+bcmv3d_vblank_native_bind(struct bcmv3d_vblank_native *n,
+    bcmv3d_vblank_notify_fn notify, void *arg)
+{
+	struct bcmv3d_vblank_snapshot initial;
+
+	return bcmv3d_vblank_native_bind_snapshot(n, notify, arg, &initial);
 }

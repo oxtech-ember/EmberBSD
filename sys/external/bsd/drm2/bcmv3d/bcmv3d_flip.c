@@ -54,7 +54,7 @@ bcmv3d_flip_init(struct bcmv3d_flip *s, const struct bcmv3d_flip_event *e)
 	s->owner = s;
 	s->sequence = e->sequence;
 	s->frame_count = e->frame_count;
-	s->current = s->pending = -1;
+	s->current_slot = s->pending_slot = -1;
 	s->slot[BCMV3D_FLIP_BLANK].state = BCMV3D_FLIP_READY;
 	s->initialized = true;
 	return 0;
@@ -91,7 +91,8 @@ bcmv3d_flip_cancel(struct bcmv3d_flip *s, unsigned int slot)
 }
 
 int
-bcmv3d_flip_submit(struct bcmv3d_flip *s, unsigned int slot)
+bcmv3d_flip_submit_after(struct bcmv3d_flip *s, unsigned int slot,
+    uint64_t captured_sequence)
 {
 	int error;
 
@@ -99,17 +100,26 @@ bcmv3d_flip_submit(struct bcmv3d_flip *s, unsigned int slot)
 		return error;
 	if (slot >= BCMV3D_FLIP_SLOTS)
 		return EINVAL;
-	if (s->pending >= 0)
+	if (s->pending_slot >= 0)
 		return EBUSY;
 	if (s->slot[slot].state != BCMV3D_FLIP_READY &&
-	    ((int)slot != s->current ||
+	    ((int)slot != s->current_slot ||
 	    s->slot[slot].state != BCMV3D_FLIP_CURRENT))
 		return EBUSY;
-	s->pending = slot;
-	s->queued_sequence = s->sequence;
-	if ((int)slot != s->current)
+	if (captured_sequence < s->sequence)
+		return EINVAL;
+	s->pending_slot = slot;
+	s->queued_sequence = captured_sequence;
+	if ((int)slot != s->current_slot)
 		s->slot[slot].state = BCMV3D_FLIP_PENDING;
 	return 0;
+}
+
+int
+bcmv3d_flip_submit(struct bcmv3d_flip *s, unsigned int slot)
+{
+
+	return bcmv3d_flip_submit_after(s, slot, s == NULL ? 0 : s->sequence);
 }
 
 int
@@ -140,26 +150,26 @@ bcmv3d_flip_observe(struct bcmv3d_flip *s, const struct bcmv3d_flip_event *e,
 	delta = (e->frame_count - s->frame_count) & 63U;
 	if (delta >= 32 || s->frame_epoch > UINT64_MAX - delta)
 		return bcmv3d_flip_fail(s, EOVERFLOW);
-	current_head = s->current < 0 ? 32 : bcmv3d_flip_head(s->current);
-	pending_head = s->pending < 0 ? UINT32_MAX :
-	    bcmv3d_flip_head(s->pending);
+	current_head = s->current_slot < 0 ? 32 : bcmv3d_flip_head(s->current_slot);
+	pending_head = s->pending_slot < 0 ? UINT32_MAX :
+	    bcmv3d_flip_head(s->pending_slot);
 	if (e->active_list != current_head && e->active_list != pending_head)
 		return bcmv3d_flip_fail(s, EPROTO);
 	s->sequence = e->sequence;
 	s->frame_count = e->frame_count;
 	s->frame_epoch += delta;
-	if (s->pending >= 0 && e->sequence > s->queued_sequence &&
+	if (s->pending_slot >= 0 && e->sequence > s->queued_sequence &&
 	    e->active_list == pending_head) {
-		old = s->current;
-		if (old >= 0 && old != s->pending) {
+		old = s->current_slot;
+		if (old >= 0 && old != s->pending_slot) {
 			if (s->frame_epoch == UINT64_MAX)
 				return bcmv3d_flip_fail(s, EOVERFLOW);
 			s->slot[old].retire_after = s->frame_epoch + 1;
 			s->slot[old].state = BCMV3D_FLIP_RETIRING;
 		}
-		s->current = s->pending;
-		s->slot[s->current].state = BCMV3D_FLIP_CURRENT;
-		s->pending = -1;
+		s->current_slot = s->pending_slot;
+		s->slot[s->current_slot].state = BCMV3D_FLIP_CURRENT;
+		s->pending_slot = -1;
 		s->latch_sequence = e->sequence;
 		result.latched = true;
 	}
@@ -184,7 +194,7 @@ bcmv3d_flip_claim_retired(struct bcmv3d_flip *s, unsigned int slot)
 	if (slot >= BCMV3D_FLIP_SLOTS)
 		return EINVAL;
 	if (s->slot[slot].state != BCMV3D_FLIP_RETIRED ||
-	    s->current == (int)slot || s->pending == (int)slot)
+	    s->current_slot == (int)slot || s->pending_slot == (int)slot)
 		return EBUSY;
 	s->slot[slot].state = BCMV3D_FLIP_RECLAIMING;
 	return 0;

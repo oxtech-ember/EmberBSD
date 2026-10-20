@@ -35,7 +35,7 @@ begin
    controls={
     'retire-after-frame'=>['bcmv3d_flip_observe','s->frame_epoch >= s->slot[i].retire_after','true'],
     'actual-latch'=>['bcmv3d_flip_observe','e->active_list == pending_head','true'],
-    'same-active-lifetime'=>['bcmv3d_flip_submit','if ((int)slot != s->current)','if (true)'],
+    'same-active-lifetime'=>['bcmv3d_flip_submit_after','if ((int)slot != s->current_slot)','if (true)'],
     'stale-callback'=>['bcmv3d_flip_observe','if (e->sequence <= s->sequence)','if (false)'],
     'sticky-fault'=>['bcmv3d_flip_fail','if (s->fault == 0)','if (true)'],
     'copy-owner'=>['flip_check','if (s->owner != s)','if (false)'],

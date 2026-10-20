@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* AI-assisted private explicit boot consumer. No release path. */
+#include "opt_wsdisplay_bootfb.h"
 #include <sys/param.h>
 #include <sys/cpu.h>
 #include <sys/errno.h>
@@ -662,7 +663,8 @@ done:
 
 static int
 mmu4_native_range(struct bcmv3d_mmu4_native *n, unsigned int slot,
-    enum bcmv3d_mmu4_range_operation op)
+    enum bcmv3d_mmu4_range_operation op,
+    struct bcmv3d_scanout_frame *retired)
 {
 	struct bcmv3d_mmu4_range_status *s;
 	int error, status_error;
@@ -679,7 +681,18 @@ mmu4_native_range(struct bcmv3d_mmu4_native *n, unsigned int slot,
 	    n->status.status_error != 0 || !n->status.backing_valid ||
 	    !n->status.sealed || n->backing == NULL)
 		goto done;
+	if (retired != NULL) {
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+		error = op != BCMV3D_MMU4_RANGE_UNMAP ? EINVAL :
+		    bcmv3d_mmu4_backing_authorize_retired(n->backing, slot, retired);
+#else
+		error = EOPNOTSUPP;
+#endif
+		if (error != 0)
+			goto done;
+	}
 	error = bcmv3d_mmu4_backing_range_check(n->backing, slot, op);
+
 	if (error != 0)
 		goto done;
 	s = &n->status.range;
@@ -719,14 +732,14 @@ bcmv3d_mmu4_native_publish_staged_gem(struct bcmv3d_mmu4_native *n,
     unsigned int slot)
 {
 
-	return mmu4_native_range(n, slot, BCMV3D_MMU4_RANGE_PUBLISH);
+	return mmu4_native_range(n, slot, BCMV3D_MMU4_RANGE_PUBLISH, NULL);
 }
 
 int
 bcmv3d_mmu4_native_unmap_gem(struct bcmv3d_mmu4_native *n, unsigned int slot)
 {
 
-	return mmu4_native_range(n, slot, BCMV3D_MMU4_RANGE_UNMAP);
+	return mmu4_native_range(n, slot, BCMV3D_MMU4_RANGE_UNMAP, NULL);
 }
 
 int
@@ -781,3 +794,15 @@ bcmv3d_mmu4_native_cached_status(struct bcmv3d_mmu4_native *n,
 	mutex_exit(&n->lock);
 	return 0;
 }
+
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+int
+bcmv3d_mmu4_native_retire_gem(struct bcmv3d_mmu4_native *n, unsigned int slot,
+    struct bcmv3d_scanout_frame *retired)
+{
+
+	if (retired == NULL)
+		return EINVAL;
+	return mmu4_native_range(n, slot, BCMV3D_MMU4_RANGE_UNMAP, retired);
+}
+#endif

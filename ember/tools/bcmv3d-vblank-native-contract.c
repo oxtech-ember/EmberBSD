@@ -283,7 +283,9 @@ scenario(unsigned which)
 	CHECK(error == 0 && n == device.vblank_native && establishes == 1 &&
 	      regs.enabled == 0x80);
 	CHECK(regs.barriers == 3);
-	CHECK(bcmv3d_vblank_native_bind(n, notify, &device) == 0);
+	CHECK(bcmv3d_vblank_native_bind_snapshot(n, notify, &device, NULL) == EINVAL);
+	CHECK(bcmv3d_vblank_native_bind_snapshot(n, notify, &device, &snap) == 0);
+	CHECK(snap.sequence == n->core.sequence && snap.active_list == n->core.active_list);
 	CHECK(bcmv3d_vblank_native_bind(n, notify, &device) == EBUSY);
 	before = regs.calls;
 	CHECK(

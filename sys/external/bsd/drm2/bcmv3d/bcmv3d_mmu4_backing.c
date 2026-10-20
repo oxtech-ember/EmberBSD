@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* AI-assisted private native backing and table updates. No MMIO. */
+#include "opt_wsdisplay_bootfb.h"
 #include <sys/param.h>
 #include <sys/atomic.h>
 #include <sys/endian.h>
@@ -15,6 +16,9 @@
 #include "bcmv3d_drv.h"
 #include "bcmv3d_hvs_prepare.h"
 #include "bcmv3d_mmu4_backing.h"
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include "bcmv3d_scanout.h"
+#endif
 
 /*
  * Reuse native bus_dma/pmap and the fixed BSD encoder. The encoder's numeric
@@ -36,7 +40,7 @@ struct mmu4_gem_slot {
 	struct mmu4_allocation control[2];
 	struct bcm2712_mmu4_range_pages pages;
 	struct bcm2712_mmu4_range_image image;
-	bool loaded, linked, published, read_synced, exposed;
+	bool loaded, linked, published, read_synced, exposed, retired;
 };
 
 struct bcmv3d_mmu4_backing {
@@ -629,7 +633,7 @@ static void
 mmu4_gem_postwrite(struct bcmv3d_mmu4_backing *b, struct mmu4_gem_slot *g)
 {
 
-	KASSERT(!g->exposed);
+	KASSERT(!g->exposed || g->retired);
 	if (!g->read_synced)
 		return;
 	bus_dmamap_sync(b->sc->dmat, g->map, 0, g->bo->cma.dmasize,
@@ -900,7 +904,7 @@ bcmv3d_mmu4_backing_range_check(struct bcmv3d_mmu4_backing *b,
 	if (g == NULL || g->bo == NULL)
 		return ENOENT;
 	/* No translation removal can authorize or substitute for retirement. */
-	if (g->exposed)
+	if (g->exposed && (!g->retired || op != BCMV3D_MMU4_RANGE_UNMAP))
 		return EBUSY;
 	if (op == BCMV3D_MMU4_RANGE_PUBLISH ? g->published : !g->published)
 		return EBUSY;
@@ -1034,7 +1038,8 @@ bcmv3d_mmu4_backing_reclaim_unmapped(struct bcmv3d_mmu4_backing *b,
 	if (b->running || b->range_fault != 0)
 		return EBUSY;
 	g = b->staged[slot];
-	if (g == NULL || !g->linked || g->published || g->exposed ||
+	if (g == NULL || !g->linked || g->published ||
+	    (g->exposed && !g->retired) ||
 	    g->bo == NULL)
 		return EBUSY;
 	mmu4_gem_drop_bo(b, g);
@@ -1093,7 +1098,34 @@ bcmv3d_mmu4_backing_expose_gem(struct bcmv3d_mmu4_backing *b,
 		return EXDEV;
 	if (!g->read_synced)
 		return EBUSY;
-	/* Irreversible until a real hardware retirement protocol is implemented. */
+	/* Keep exposure sticky. Only the retained worker proof can authorize unmap. */
 	g->exposed = true;
 	return 0;
 }
+
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+int
+bcmv3d_mmu4_backing_authorize_retired(struct bcmv3d_mmu4_backing *b,
+    unsigned int slot, struct bcmv3d_scanout_frame *frame)
+{
+	struct mmu4_gem_slot *g;
+	int error;
+
+	if (b == NULL || frame == NULL || slot >= BCM2712_MMU4_SCANOUT_SLOTS)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	if (b->range_fault != 0)
+		return b->range_fault;
+	g = b->staged[slot];
+	if (b->running || g == NULL || g->bo == NULL || !g->linked ||
+	    !g->published || !g->read_synced || !g->exposed || g->retired)
+		return EBUSY;
+	error = bcmv3d_scanout_retirement_check(frame, b->sc->mmu4_native,
+	    slot, &g->bo->cma.base);
+	if (error == 0)
+		g->retired = true;
+	return error;
+}
+#endif

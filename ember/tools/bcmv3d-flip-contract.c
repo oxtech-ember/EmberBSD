@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+/* Real DRM consumers define Linux current. Keep its namespace intact. */
+#define current (0)
 #include "flip-actual.c"
 
 static unsigned long checks;
@@ -22,7 +24,7 @@ start(struct bcmv3d_flip *s, uint32_t frame)
 	memset(s, 0, sizeof(*s));
 	CHECK(bcmv3d_flip_init(s, &e) == 0);
 	CHECK(bcmv3d_flip_init(s, &e) == EBUSY);
-	CHECK(s->current == -1 && s->pending == -1);
+	CHECK(s->current_slot == -1 && s->pending_slot == -1);
 }
 
 static struct bcmv3d_flip_update
@@ -51,17 +53,25 @@ protocol(void)
 	CHECK(bcmv3d_flip_submit(&s, 0) == 0);
 	CHECK(bcmv3d_flip_submit(&s, 0) == EBUSY);
 	u = observe(&s, 32, 0);
-	CHECK(!u.latched && u.retired_mask == 0 && s.current == -1);
+	CHECK(!u.latched && u.retired_mask == 0 && s.current_slot == -1);
 	u = observe(&s, 42, 1);
-	CHECK(u.latched && u.retired_mask == 0 && s.current == 0);
+	CHECK(u.latched && u.retired_mask == 0 && s.current_slot == 0);
 	CHECK(s.frame_count == 0 && s.frame_epoch == 1);
 	CHECK(bcmv3d_flip_cancel(&s, 0) == EBUSY);
 	CHECK(bcmv3d_flip_claim_retired(&s, 0) == EBUSY);
-	/* Same active BO is a new real flip event, not a new read lifetime. */
+/* A captured but delayed callback precedes this submission. */
+CHECK(bcmv3d_flip_submit_after(&s, 0, s.sequence - 1) == EINVAL);
+CHECK(s.pending_slot == -1);
+CHECK(bcmv3d_flip_submit_after(&s, 0, s.sequence + 1) == 0);
+u = observe(&s, 42, 1);
+CHECK(!u.latched && s.pending_slot == 0);
+u = observe(&s, 42, 1);
+CHECK(u.latched && s.pending_slot == -1);
+/* Same active BO is a new real flip event, not a new read lifetime. */
 	CHECK(bcmv3d_flip_submit(&s, 0) == 0);
 	CHECK(s.slot[0].state == BCMV3D_FLIP_CURRENT);
 	u = observe(&s, 42, 1);
-	CHECK(u.latched && u.retired_mask == 0 && s.current == 0);
+	CHECK(u.latched && u.retired_mask == 0 && s.current_slot == 0);
 	for (i = 0; i < 4096; i++) {
 		slot = (old + 1) % 3;
 		CHECK(bcmv3d_flip_ready(&s, slot) == 0);

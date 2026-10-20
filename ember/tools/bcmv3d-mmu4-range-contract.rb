@@ -117,13 +117,16 @@ C
   end
   unless ENV['RANGE_COMPILE_ONLY']=='1' || ENV['RANGE_SKIP_MUTANTS']=='1'
     mutations={
+      'retirement-proof'=>['backing-body.h','bcmv3d_mmu4_backing_authorize_retired','if (error == 0)', 'if (true)'],
+      'retirement-latch'=>['backing-body.h','bcmv3d_mmu4_backing_authorize_retired','g->retired = true;', 'g->retired = false;'],
+      'retirement-delegate'=>['adapter-body.h','mmu4_native_range','bcmv3d_mmu4_backing_authorize_retired(n->backing, slot, retired);','((void)bcmv3d_mmu4_backing_authorize_retired, 0);'],
       'consumer-prewrite'=>['backing-body.h','bcmv3d_mmu4_backing_prepare_gem_read','BUS_DMASYNC_PREWRITE);','BUS_DMASYNC_POSTWRITE);'],
       'consumer-map'=>['backing-body.h','bcmv3d_mmu4_backing_prepare_gem_read','b->sc->dmat, g->map, 0,','b->sc->dmat, g->bo->cma.dmamap, 0,'],
       'consumer-postwrite'=>['backing-body.h','mmu4_gem_postwrite','BUS_DMASYNC_POSTWRITE);','BUS_DMASYNC_PREWRITE);'],
       'consumer-identity'=>['backing-body.h','bcmv3d_mmu4_backing_prepare_gem_read','if (&g->bo->cma.base != obj)','if (false)'],
       'consumer-required'=>['backing-body.h','bcmv3d_mmu4_backing_expose_gem','if (!g->read_synced)','if (false)'],
       'exposure-latch'=>['backing-body.h','bcmv3d_mmu4_backing_expose_gem','g->exposed = true;','g->exposed = false;'],
-      'exposure-unmap'=>['backing-body.h','bcmv3d_mmu4_backing_range_check','if (g->exposed)','if (false)'],
+      'exposure-unmap'=>['backing-body.h','bcmv3d_mmu4_backing_range_check','if (g->exposed && (!g->retired || op != BCMV3D_MMU4_RANGE_UNMAP))','if (false)'],
       'top-index'=>['backing-body.h','bcmv3d_mmu4_backing_range','(slot + 1) * 2 + i','slot * 2 + i'],
       'top-exposure'=>['backing-body.h','bcmv3d_mmu4_backing_range',"g->linked = true;\n\t\ts->mutation_attempted = true;","g->linked = true;\n\t\ts->mutation_attempted = false;"],
       'leaf-exposure'=>['backing-body.h','bcmv3d_mmu4_backing_range',"if (g->linked)\n\t\ts->mutation_attempted = true;","if (g->linked)\n\t\ts->mutation_attempted = false;"],

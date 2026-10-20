@@ -6,6 +6,7 @@
 #include <sys/types.h>
 
 struct drm_gem_object;
+struct bcmv3d_scanout_frame;
 struct bcmv3d_device;
 struct bcmv3d_mmu4_backing;
 struct bcm2712_mmu4_config;
@@ -125,5 +126,9 @@ int bcmv3d_mmu4_backing_prepare_gem_read(struct bcmv3d_mmu4_backing *,
     unsigned int, struct drm_gem_object *);
 int bcmv3d_mmu4_backing_expose_gem(struct bcmv3d_mmu4_backing *,
     unsigned int, struct drm_gem_object *);
+
+/* Internal native worker authorization; no caller-provided completion bool. */
+int bcmv3d_mmu4_backing_authorize_retired(struct bcmv3d_mmu4_backing *,
+    unsigned int, struct bcmv3d_scanout_frame *);
 
 #endif /* _BCMV3D_MMU4_BACKING_H_ */

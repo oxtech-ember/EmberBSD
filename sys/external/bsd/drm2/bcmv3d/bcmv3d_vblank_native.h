@@ -32,12 +32,15 @@ int bcmv3d_vblank_native_create(struct bcmv3d_device *,
 int bcmv3d_vblank_native_snapshot(struct bcmv3d_vblank_native *,
     struct bcmv3d_vblank_snapshot *);
 /*
- * Bind once after the real DRM CRTC exists. Retain callback text and argument
+ * Bind one retained display consumer. Retain callback text and argument
  * until reboot. The callback runs in interrupt context outside the native
  * mutex. It must not sleep. Copy the snapshot before returning if needed.
  * A nonzero first_error reports a route fault, not a frame event.
  * Prior events are not replayed as new events.
  */
+/* Copy the baseline and bind under one IRQ mutex. No event is replayed. */
+int bcmv3d_vblank_native_bind_snapshot(struct bcmv3d_vblank_native *,
+    bcmv3d_vblank_notify_fn, void *, struct bcmv3d_vblank_snapshot *);
 int bcmv3d_vblank_native_bind(struct bcmv3d_vblank_native *,
     bcmv3d_vblank_notify_fn, void *);
 #endif

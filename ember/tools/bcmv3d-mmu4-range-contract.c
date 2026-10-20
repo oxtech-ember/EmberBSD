@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Complete actual native/provider/cache bodies and actual GEM backing TU. */
+#define WSDISPLAY_BOOTFB_HANDOFF 1
 #define BCMV3D_MMU4_RANGE_CONTRACT
 #include "bcmv3d-mmu4-native-contract.c"
 #undef main
@@ -15,6 +16,15 @@ unsigned int range_bridge_allocated(void);
 void range_bridge_consumer_counts(unsigned int, unsigned int);
 
 static unsigned int range_case, range_local_writes, range_local_polls;
+void *range_bridge_retirement(unsigned int, void *, int);
+unsigned int range_bridge_retirement_calls(void);
+
+void *
+range_native_owner(void)
+{
+
+	return owner;
+}
 
 int
 range_icac_owned(void)
@@ -209,6 +219,67 @@ range_consumer(void **bo)
 }
 
 static void
+range_retirement(void **bo, unsigned int failure)
+{
+	struct bcmv3d_scanout_frame *proof;
+	unsigned int before, calls;
+	int error;
+
+	CHECK(bcmv3d_mmu4_native_prepare_gem_read(owner, 0, bo[0]) == 0);
+	CHECK(range_call(0, BCMV3D_MMU4_RANGE_PUBLISH) == 0);
+	CHECK(bcmv3d_mmu4_native_expose_gem(owner, 0, bo[0]) == 0);
+	before = local_reads + local_writes + writes;
+	proof = range_bridge_retirement(0, bo[0], EAGAIN);
+	CHECK(bcmv3d_mmu4_native_retire_gem(owner, 0, NULL) == EINVAL);
+	CHECK(bcmv3d_mmu4_native_retire_gem(owner, 3, proof) == EINVAL);
+	hard_irq = true;
+	CHECK(bcmv3d_mmu4_native_retire_gem(owner, 0, proof) == EWOULDBLOCK);
+	hard_irq = false;
+	mutex_enter(&owner->lock);
+	CHECK(bcmv3d_mmu4_native_retire_gem(owner, 0, proof) == EDEADLK);
+	mutex_exit(&owner->lock);
+	CHECK(bcmv3d_mmu4_native_retire_gem(owner, 0, (void *)&before) == EPERM);
+	CHECK(bcmv3d_mmu4_native_retire_gem(owner, 0, proof) == EAGAIN);
+	(void)range_bridge_retirement(1, bo[0], 0);
+	CHECK(bcmv3d_mmu4_native_retire_gem(owner, 0, proof) == EPERM);
+	(void)range_bridge_retirement(0, bo[1], 0);
+	CHECK(bcmv3d_mmu4_native_retire_gem(owner, 0, proof) == EPERM);
+	CHECK(local_reads + local_writes + writes == before);
+	CHECK(owner->status.fault == 0 && range_bridge_refs(bo[0]) == 2);
+	CHECK(range_bridge_retirement_calls() == 4);
+	range_bridge_consumer_counts(1, 0);
+	CHECK(bcmv3d_mmu4_native_unmap_gem(owner, 0) == EBUSY);
+	proof = range_bridge_retirement(0, bo[0], 0);
+	calls = range_bridge_retirement_calls();
+	range_bridge_begin(0, BCMV3D_MMU4_RANGE_UNMAP);
+	range_case = failure;
+	error = bcmv3d_mmu4_native_retire_gem(owner, 0, proof);
+	CHECK(range_bridge_retirement_calls() == calls + 1);
+	CHECK(!owner->lock.held && !bcm2712_iommuc_mutex.held);
+	if (failure != 0) {
+		CHECK(error == ETIMEDOUT && owner->status.fault == ETIMEDOUT);
+		range_bridge_consumer_counts(1, 0);
+		range_bridge_retained(0, bo[0]);
+		before = local_reads + local_writes + writes;
+		CHECK(bcmv3d_mmu4_native_retire_gem(owner, 0, proof) == ETIMEDOUT);
+		CHECK(before == local_reads + local_writes + writes);
+		return;
+	}
+	CHECK(error == 0 && owner->status.range.complete);
+	range_bridge_verify(0, false);
+	range_bridge_consumer_counts(1, 1);
+	CHECK(range_bridge_refs(bo[0]) == 1);
+	CHECK(bcmv3d_mmu4_native_retire_gem(owner, 0, proof) == EBUSY);
+	/* A fresh staged object cannot inherit the prior retirement token. */
+	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 0, bo[0]) == 0);
+	CHECK(bcmv3d_mmu4_native_prepare_gem_read(owner, 0, bo[0]) == 0);
+	CHECK(range_call(0, BCMV3D_MMU4_RANGE_PUBLISH) == 0);
+	CHECK(bcmv3d_mmu4_native_expose_gem(owner, 0, bo[0]) == 0);
+	CHECK(bcmv3d_mmu4_native_unmap_gem(owner, 0) == EBUSY);
+	range_bridge_consumer_counts(2, 1);
+}
+
+static void
 range_scenario(unsigned int which)
 {
 	void *bo[3];
@@ -240,6 +311,11 @@ range_scenario(unsigned int which)
 		CHECK(range_bridge_refs(bo[i]) == 2);
 	}
 	CHECK(range_bridge_allocated() == 14);
+	if (which >= 11) {
+		range_case = 0;
+		range_retirement(bo, which == 11 ? 0 : which == 12 ? 2 : 3);
+		return;
+	}
 	if (which == 10) {
 		range_case = 0;
 		range_consumer(bo);
@@ -317,7 +393,7 @@ main(void)
 		}
 		CHECK(false);
 	}
-	for (which = 0; which < 11; which++) {
+	for (which = 0; which < 14; which++) {
 		child = fork();
 		CHECK(child >= 0);
 		if (child == 0) {
@@ -329,6 +405,6 @@ main(void)
 			abort();
 	}
 	puts("PASS actual native/provider/BO range: two cycles, "
-	    "fixed6L2,11 isolated boots, consumer DMA and exposure");
+	    "fixed6L2,14 isolated boots, consumer DMA, exposure and retirement");
 	return 0;
 }

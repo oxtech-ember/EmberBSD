@@ -1,5 +1,11 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Actual BO/backing/helper/table TUs with native service bridge. */
+#define WSDISPLAY_BOOTFB_HANDOFF 1
+struct bcmv3d_scanout_frame;
+struct bcmv3d_mmu4_native;
+struct drm_gem_object;
+int bcmv3d_scanout_retirement_check(struct bcmv3d_scanout_frame *,
+    struct bcmv3d_mmu4_native *, unsigned int, struct drm_gem_object *);
 #include "range-bridge-services.h"
 
 static struct drm_device range_drm;
@@ -17,6 +23,7 @@ static bool range_first_link, range_phase;
 static unsigned int consumer_pre, consumer_post;
 static struct mmu4_allocation range_saved_control[3][2];
 
+void *range_native_owner(void);
 int range_icac_owned(void);
 int range_native_owned(void);
 int range_exposure_latched(void);
@@ -29,6 +36,7 @@ native_backing_create(uint32_t debug, void **out, unsigned int failure)
 
 	CHECK(!range_icac_owned() && range_native_owned());
 	range_device.drm = &range_drm;
+	range_device.mmu4_native = range_native_owner();
 	range_device.dmat = &range_device;
 	range_device.bo_total = BCMV3D_BO_TOTAL_MIN;
 	range_drm.dev_private = &range_device;
@@ -193,7 +201,7 @@ range_dma_sync(bus_dmamap_t map, size_t size, int flags)
 			g = range_backing->staged[i];
 			if (g == NULL || g->map != map)
 				continue;
-			CHECK(g->bo != NULL && g->loaded && !g->exposed);
+			CHECK(g->bo != NULL && g->loaded && (!g->exposed || g->retired));
 			CHECK(map != g->bo->cma.dmamap);
 			CHECK(size == g->bo->cma.dmasize);
 			if (flags == BUS_DMASYNC_PREWRITE) {
@@ -330,4 +338,41 @@ range_bridge_consumer_counts(unsigned int pre, unsigned int post)
 {
 
 	CHECK(consumer_pre == pre && consumer_post == post);
+}
+
+/* Controlled HVS proof only. The actual owner proof has its own contract. */
+static unsigned int retirement_token, retirement_slot, retirement_calls;
+static struct drm_gem_object *retirement_object;
+static int retirement_error;
+
+void *
+range_bridge_retirement(unsigned int slot, void *obj, int error)
+{
+
+	retirement_slot = slot;
+	retirement_object = obj;
+	retirement_error = error;
+	return &retirement_token;
+}
+
+int
+bcmv3d_scanout_retirement_check(struct bcmv3d_scanout_frame *frame,
+    struct bcmv3d_mmu4_native *native, unsigned int slot,
+    struct drm_gem_object *obj)
+{
+
+	CHECK(range_native_owned() && !range_icac_owned());
+	CHECK(native == range_native_owner() && native == range_device.mmu4_native);
+	retirement_calls++;
+	if ((void *)frame != &retirement_token || slot != retirement_slot ||
+	    obj != retirement_object)
+		return EPERM;
+	return retirement_error;
+}
+
+unsigned int
+range_bridge_retirement_calls(void)
+{
+
+	return retirement_calls;
 }

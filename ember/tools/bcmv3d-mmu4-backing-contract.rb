@@ -41,6 +41,8 @@ begin
   end
   fixture = File.join(source, 'ember/tools/bcmv3d-mmu4-backing-contract.c')
   read.call('ember/tools/bcmv3d-mmu4-backing-contract.c')
+  # Preserve the real HANDOFF-off profile for this initial-backing fixture.
+  write.call('opt_wsdisplay_bootfb.h', "/* HANDOFF-off controlled context. */\n")
   write.call('services.h', "#define BACKING_TYPES\n#include #{fixture.dump}\n#undef BACKING_TYPES\n")
   %w[sys/types.h sys/bus.h sys/param.h sys/errno.h sys/cpu.h sys/kmem.h sys/atomic.h sys/endian.h
      sys/systm.h uvm/uvm_extern.h machine/pmap.h sys/device.h sys/mutex.h sys/vmem.h

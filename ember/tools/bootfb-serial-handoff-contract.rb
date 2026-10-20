@@ -245,7 +245,7 @@ controls={
 'hvs-owner-first'=>['native-job.h','error != 0 && owner->first_error == 0','error != 0','gpu_sc.sc_bootfb.first_error == EPROTO'],
 'hvs-owner-upm'=>['native-job.h','.upm_offset = 0,','.upm_offset = 256,','value == plane_word(pb.dlist_writes)'],
 'hvs-read-busy'=>['native-job.h','(p->writeback[i] & 3U) != 0','false','p->fault == (mode < 2 ? EBUSY : EIO)'],
-'hvs-read-cxm'=>['native-job.h','p->cxm_words < p->dlist_first + p->dlist_words','p->cxm_words < p->dlist_first','p->fault == EOPNOTSUPP && hvs_maps == 0 && pb.writes == 0'],
+'hvs-read-cxm'=>['native-job.h','p->cxm_words < p->dlist_first + p->dlist_words','p->cxm_words < p->dlist_first','words >= 73 && variant == (uint32_t)p->frame.variant && out != NULL'],
 'hvs-read-align'=>['native-job.h','(offset & 3U) != 0 || memory->length < 4','false || memory->length < 4','hvs_callback_case == 0'],
 'hvs-read-sticky'=>['native-job.h','if (p->io_error != 0)','if (false)','hvs_callback_case == 0'],
 'hvs-read-executing'=>['native-job.h','if (!p->executing)','if (false)','bcmv3d_publish_read(&gpu_sc,BCMV3D_PUBLISH_HVS,0,&value) == EPERM'],
