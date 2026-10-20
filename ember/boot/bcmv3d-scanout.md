@@ -83,3 +83,8 @@ staging test has its own executable and separate evidence directory.
 DRM connector/CRTC/plane integration, real page-flip events, hotplug, DPMS and
 physical accelerated KWin remain integration work. Passing a controlled source
 test does not establish any of those user scenarios.
+
+The separate [explicit cycle probe](bcmv3d-scanout-probe.md) exercises three
+native BOs through the existing owner. It preserves the final CURRENT BO and
+reports strict cached lifetime and allocation accounting. Its host contract
+and module build do not establish physical display or desktop acceptance.
