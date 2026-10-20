@@ -177,8 +177,14 @@ npu_run_step(struct sun60i_a733_npu_run *s, unsigned op,
 		    &after) != 0)
 			return EFAULT;
 		s->status.last_readback = after;
-		if ((after & steps[op].mask) != (value & steps[op].mask))
+		if (op == 11) {
+			/* The bounded observed profile permits no immediate echo. */
+			if (after != 0 && after != value)
+				return EIO;
+		} else if ((after & steps[op].mask) !=
+		    (value & steps[op].mask)) {
 			return EIO;
+		}
 	}
 	return 0;
 }

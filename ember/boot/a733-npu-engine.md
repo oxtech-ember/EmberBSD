@@ -51,7 +51,16 @@ prefetch to the owned 4096-byte command page. Register readbacks are literal
 or use the specified RMW mask. The 0x3a8 init readback excludes only
 read-only JOB_STATUS bit 4. All other bits must equal the literal value 2.
 The status bit can change between samples and readback. Any other
-unexpected value is a refusal.
+unexpected value at that register is a refusal.
+
+The command-address write at 0x654 has a separate bounded observed profile.
+The driver keeps the WRITE barrier, diagnostic peek, and cached readback.
+It accepts only zero or the exact requested command VA. Partial addresses,
+other addresses, and read failures refuse FE start. The pinned VIP2 trigger
+writes 0x654, issues a memory barrier, and enables FE without an intermediate
+echo check. This does not establish write-only or latch semantics. A zero
+readback does not prove that FE fetched the address. The post-start event,
+idle, owned-VA DMA, mask/drain, and late-error checks remain mandatory.
 
 The IRQ handler reads only the owned NPU status at 0x010. It uses ordinary
 bus-space operations, not fault-recovering peek. The first nonzero status

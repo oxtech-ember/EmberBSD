@@ -53,6 +53,9 @@ static uint32_t terminal_idle, terminal_address;
 static bool mask_drained, address_drained, terminal_unstable;
 static unsigned dma_reads;
 static uint32_t job_status_xor, fresh_reset_unknown;
+static uint32_t command_readback, command_requested;
+static unsigned command_writes;
+static bool lose_command_address;
 static int (*callback)(void *);
 static void *callback_arg;
 static void mutex_init(kmutex_t *m, int type, int ipl)
@@ -201,11 +204,18 @@ static int bus_space_poke_4(bus_space_tag_t tag, bus_space_handle_t h,
   regs[offset / 4] = ((value & ~0x10U) | (before & 0x10U)) ^ job_status_xor;
  if (pokes == 2) regs[0x3a8 / 4] |= fresh_reset_unknown;
  if (offset == 0x14 && value == 0) mask_drained = false;
- if (offset == 0x654) address_drained = false;
+ if (offset == 0x654) {
+  command_writes++; address_drained = false;
+  if (!lose_command_address) command_requested = value;
+  regs[offset / 4] = command_readback;
+ }
  if (offset == 0x3a4) {
-  CHECK(value == 0x00010200 && regs[0x654 / 4] == 0x01001000);
+  CHECK(value == 0x00010200 && command_writes == 1);
+  CHECK(command_requested == (lose_command_address ? 0 : 0x01001000));
   CHECK(state.status.started && state.irq_lock.held && address_drained);
-  regs[0x664 / 4] = terminal_address; regs[1] = terminal_idle; regs[4] = irq_value;
+  /* A zero echo and a synthetic event do not prove that FE fetched a command. */
+  regs[0x664 / 4] = lose_command_address ? 0 : terminal_address;
+  regs[1] = terminal_idle; regs[4] = irq_value;
   if (!no_irq) pending_irq = true;
  }
  return 0;
@@ -276,6 +286,7 @@ static void reset(void)
  unstable_peek=mismatch_step=bad_info=infos=fail_info=0;
  mask_drained=address_drained=terminal_unstable=false; dma_reads=0;
  job_status_xor=fresh_reset_unknown=0; regs[0x3a8/4]=0x10;
+ command_readback=command_requested=command_writes=0; lose_command_address=false;
  terminal_idle=0x7fffffff; terminal_address=0x01001028;
  callback=NULL; callback_arg=NULL; property_bytes=12; irq_value=0x10; bad_route=0;
  context=(struct sun60i_a733_npu_dma){false,16};
@@ -286,7 +297,12 @@ static int run(void)
 { return sun60i_a733_npu_run_once(&state,&bus_token,&clock1,9,&cookie,7,"npu",&context); }
 int main(void)
 {
- reset(); CHECK(run()==0);
+ reset(); int result=run();
+ if (result != 0)
+  fprintf(stderr,"command-address baseline: error=%d step=%u readback=%#x started=%u retained=%u irq=%llu\n",
+      result,state.status.step,state.status.last_readback,state.status.started,
+      state.status.retained,(unsigned long long)state.status.irq_count);
+ CHECK(result==0);
  CHECK(state.status.retained && state.status.terminal && state.status.started);
  CHECK(state.status.irq_count > state.status.irq_baseline && state.status.irq_bits==0x10);
  CHECK(state.status.irq_mask_readback==0 && state.status.terminal_status==0);
@@ -298,6 +314,33 @@ int main(void)
  CHECK(write_offsets[4]==0x3b4 && values[4]==0x1001 && write_offsets[5]==0x388 && values[5]==0x21);
  CHECK(values[7]==0x1020000 && values[8]==0x80000040 && values[9]==2);
  CHECK(regs[0x3a8/4]==0x12);
+ CHECK(state.status.last_readback==0 && command_writes==1 && address_drained);
+ CHECK(write_offsets[11]==0x654 && values[11]==0x01001000);
+ reset(); command_readback=0x01001000;
+ CHECK(run()==0 && state.status.terminal && command_writes==1);
+ CHECK(state.status.last_readback==0x01001000 && address_drained);
+ for (unsigned bit=0; bit<32; bit++) {
+  uint32_t candidates[2] = { UINT32_C(1)<<bit, UINT32_C(0x01001000)^(UINT32_C(1)<<bit) };
+  for (unsigned i=0; i<2; i++) {
+   reset(); command_readback=candidates[i];
+   CHECK(command_readback!=0 && command_readback!=0x01001000);
+   CHECK(run()==EIO && state.status.step==12 && state.status.last_readback==command_readback);
+   CHECK(command_writes==1 && address_drained && context.retained);
+   CHECK(!state.status.started && !state.status.terminal && state.status.irq_count==0);
+   CHECK(!unmaps && !removed && regs[0x3a4/4]==0);
+  }
+ }
+ const uint32_t alternate[] = {0x01001004,0x01000000,0x120000,0xffffffff};
+ for (unsigned i=0; i<sizeof(alternate)/sizeof(alternate[0]); i++) {
+  reset(); command_readback=alternate[i];
+  CHECK(run()==EIO && state.status.step==12 && state.status.last_readback==alternate[i]);
+  CHECK(command_writes==1 && !state.status.started && !state.status.terminal && context.retained);
+ }
+ reset(); lose_command_address=true;
+ CHECK(run()==ETIMEDOUT && context.retained && !state.status.terminal);
+ CHECK(state.status.started && state.status.irq_bits==0x10 && state.status.irq_count==1);
+ CHECK(regs[1]==0x7fffffff && state.status.terminal_dma[0]==0 && state.status.terminal_dma[1]==0);
+ CHECK(command_writes==1 && address_drained && !unmaps && !removed);
  for (unsigned status=0; status<=1; status++) {
   for (unsigned flip=0; flip<=1; flip++) {
    reset(); regs[0x3a8/4]=status*0x10; job_status_xor=flip*0x10;
