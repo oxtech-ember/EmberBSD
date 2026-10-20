@@ -138,3 +138,7 @@ resident. The initial HVS color frame remained correct. Four native V3D
 regression programs passed with unchanged reserved BO bytes and no failures.
 This checks the unused-window protocol with active initial HVS output.
 It does not prove HVS fetch through these windows or active scanout retirement.
+
+The separate [BO reservation helper](bcmv3d-bo-fences.md) provides checked
+lock, wait and fence publication primitives. Renderer submission does not use
+it yet. It does not change this range lifetime contract.

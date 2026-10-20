@@ -72,6 +72,7 @@ sh "$src/ember/tools/bcm2712-v3d-sg-contract.sh" "$src"
 "$python" "$src/ember/tools/drm-dmabuf-contract.py" array
 "$python" "$src/ember/tools/drm-dmabuf-contract.py" sync
 "${RUBY:-ruby}" "$src/ember/tools/bcm2712-v3d-prime-contract.rb"
+"${RUBY:-ruby}" "$src/ember/tools/bcmv3d-resv-contract.rb" "$src"
 sh "$src/ember/tools/bcm2712-v3d-job-contract.sh" "$src"
 sh "$src/ember/tools/bcm2712-v3d-csd-contract.sh" "$src"
 sh "$src/ember/tools/bcm2712-v3d-cl-contract.sh" "$src"
