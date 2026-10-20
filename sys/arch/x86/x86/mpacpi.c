@@ -1045,13 +1045,13 @@ mpacpi_configure_busses(void)
 		if (mpr->mpr_bus < 0) {
 			printf("MPACPI PCI bus number %d is negative\n",
 			    mpr->mpr_bus);
-			return;
+			continue;
 		}
 		if (mpr->mpr_bus < 0 || mpr->mpr_bus >= mpacpi_maxpci) {
 			printf("MPACPI PCI bus number %d exceeds mpacpi_maxpci"
 			    " %d\n",
 			    mpr->mpr_bus, mpacpi_maxpci);
-			return;
+			continue;
 		}
 
 		mpb = &mp_busses[mpr->mpr_bus];
@@ -1062,7 +1062,9 @@ mpacpi_configure_busses(void)
 			printf("MPACPI PCI bus number %d configuration failed:"
 			    " %d\n",
 			    mpr->mpr_bus, error);
-			return;
+			/* One broken root (e.g. a disabled PCIe root) must
+			 * not leave the remaining roots unconfigured. */
+			continue;
 		}
 	}
 #endif

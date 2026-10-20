@@ -58,9 +58,25 @@ the missing `_AEI` path and failed attach unwinding. It also covers older
 without setup, a second detach after a failed attach, and releasing an
 interrupt that was never established.
 
+## Two more pieces the hardware needed
+
+On the MS-17S3 the BIOS leaves BAR0 of the I2C controller unassigned, and
+`dwiic` reports "can't map register space". The fix has two parts:
+
+- `options PCI_RESOURCE` assigns the BAR from the ACPI `_CRS` windows and
+  leaves firmware assignments alone. It is enabled only in
+  `sys/arch/amd64/conf/GENERIC_ARL_TOUCHPAD`, which also keeps a stock
+  `GENERIC` kernel available for recovery.
+- `mpacpi_configure_busses()` gave up on all remaining PCI roots after the
+  first failing one. On this laptop roots 1 and 131 fail with `ENXIO`, so
+  the bus that holds the I2C controller was never configured. Each failing
+  root is now skipped with `continue`.
+
 ## Validation status
 
-Source, host contract and a GCC16 amd64 `GENERIC` kernel build only.
-The firmware values were read from one MS-17S3: I2C0 enabled, touchpad
-at address `0x15`, GPIO interrupt mode. The new kernel has not been booted
-on that laptop yet; touchpad input on hardware remains unverified.
+The contract test passes: 6965 checks, 0 failures. `GENERIC_ARL_TOUCHPAD`
+was built natively (clang 21) on the MS-17S3 from c5d396f sources with
+this change applied, installed as `/netbsd.tp`, and booted on 2026-10-20.
+The touchpad (ELAN 04f3:31fd, `ihidev` -> `ims` -> `wsmouse`) moves the
+cursor in Xorg, as the operator confirmed. Not verified: other Arrow Lake
+boards, detach and suspend.

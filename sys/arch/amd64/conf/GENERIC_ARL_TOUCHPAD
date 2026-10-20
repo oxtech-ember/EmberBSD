@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# MSI Vector 17 HX (Arrow Lake) touchpad kernel.  The BIOS leaves BAR0 of
+# the LPSS I2C controller (8086:7f4c) unassigned; PCI_RESOURCE assigns it
+# from the ACPI _CRS windows without moving firmware assignments.
+# Keep a separate stock GENERIC recovery kernel.
+
+include "arch/amd64/conf/GENERIC"
+
+options PCI_RESOURCE
