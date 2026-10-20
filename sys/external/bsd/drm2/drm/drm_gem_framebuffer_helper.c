@@ -103,8 +103,8 @@ drm_gem_fb_create_with_funcs(struct drm_device *dev, struct drm_file *file,
 	unsigned plane;
 	int ret;
 
-	/* Allocate a framebuffer object with kmalloc.  */
-	fb = kmalloc(sizeof(*fb), GFP_KERNEL);
+	/* Zero unused GEM planes and allocate with the matching slab API.  */
+	fb = kzalloc(sizeof(*fb), GFP_KERNEL);
 	if (fb == NULL) {
 		ret = -ENOMEM;
 		goto fail0;
@@ -155,7 +155,7 @@ drm_gem_fb_create_with_funcs(struct drm_device *dev, struct drm_file *file,
 
 fail2:	while (plane --> 0)
 		drm_gem_object_put_unlocked(fb->obj[plane]);
-fail1:	kmem_free(fb, sizeof(*fb));
+fail1:	kfree(fb);
 fail0:	KASSERT(ret);
 	return ERR_PTR(ret);
 }

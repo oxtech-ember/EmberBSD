@@ -94,3 +94,7 @@ checks execution. These are not a native scheduler or hardware test.
 cross-build and execution path. The existing job/CSD/CL/sync/wait shell
 contracts also support that cross-build path and retain their previous tests.
 Use `V3D_SKIP_MUTANTS=1` for positive instrumented execution.
+
+The [shared GEM framebuffer allocation contract](drm-gem-framebuffer.md)
+checks unused plane initialization and matching allocation cleanup before KMS
+uses that helper. Producer ordering alone does not establish scanout lifetime.
