@@ -10,6 +10,8 @@ strip=->(s){s.lines.reject{|l|l.start_with?('#include ')}.join}
 begin
  %w[c h].each{|e|File.write(d+(e=='h'?'/read-types.h':'/read-body.h'),strip.call(read.call('sys/external/bsd/drm2/bcmv3d/bcmv3d_read.'+e)))}
  %w[c h].each{|e|File.write(d+(e=='h'?'/resv-types.h':'/resv-body.h'),strip.call(read.call('sys/external/bsd/drm2/bcmv3d/bcmv3d_resv.'+e)))}
+ File.write(d+'/heapsort-body.h',strip.call(read.call('common/lib/libc/stdlib/heapsort.c')))
+ read.call('ember/tools/bcmv3d-kheapsort-model.h')
  gem=read.call('sys/external/bsd/drm2/dist/drm/drm_gem.c')
  functions=%w[drm_gem_lock_reservations drm_gem_unlock_reservations].map do |n|
   a=gem.scan(/^(?:int|void)\n#{n}\(.*?^}/m);abort 'GEM boundary '+n unless a.size==1;a.first

@@ -129,6 +129,7 @@ static int dma_resv_get_fences_rcu(const struct dma_resv *r,struct dma_fence **e
 #include "read-types.h"
 #include "read-body.h"
 #include "resv-types.h"
+#include "bcmv3d-kheapsort-model.h"
 #include "resv-body.h"
 static void reset(bool prior)
 {
