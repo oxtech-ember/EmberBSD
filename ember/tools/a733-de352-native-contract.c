@@ -62,6 +62,9 @@ static int peer_power_error;
 static unsigned cold_writes, cold_fault_write, cold_readback_write;
 static unsigned cold_change_write, cold_flush_masters;
 static uint64_t cold_flush_time;
+static unsigned cold_global_clear_phase, cold_global_deasserts;
+static uint32_t cold_global_bad;
+static bool cold_global_pending;
 static uint32_t cold_write_regs[64], cold_write_values[64];
 static uint64_t sequence;
 static unsigned event_polls, event_limit;
@@ -182,6 +185,13 @@ static int bus_space_peek_4(bus_space_tag_t tag,bus_space_handle_t h,bus_size_t 
  if(h==1){CHECK(retained&&off<sizeof(de));*out=de[off/4];}
  else if(h==2){CHECK(memory_claimed&&off<sizeof(iommu));
   if(cold_test&&off>=0x400&&off<0x800)CHECK(peer_power_on);
+  if(cold_test&&off==0x30&&cold_global_pending){
+   const struct sun60i_de352_softc *sc=active_softc;
+   if((cold_global_clear_phase==2&&sc->cold_trace.phase==CT_STEP_CAPTURE)||
+      (cold_global_clear_phase==3&&sc->cold_trace.phase==CT_BEFORE)||
+      (cold_global_clear_phase==5&&sc->cold_trace.phase==CT_STEP_CAPTURE&&sc->cold_trace.capture_words>CI_COUNT))iommu[off/4]=0;
+   if(cold_global_clear_phase==4&&sc->cold_trace.phase==CT_STEP_CAPTURE)iommu[off/4]=3;
+  }
   *out=iommu[off/4];}
  else {CHECK(h==3&&memory_claimed&&off<sizeof(nsi));*out=nsi[off/4];}
  return 0;
@@ -197,14 +207,24 @@ static int bus_space_poke_4(bus_space_tag_t tag,bus_space_handle_t h,bus_size_t 
   CHECK(sc->guard&&sc->guard->published&&sc->guard->directory.map->prewrites==1);
   CHECK(off!=0x84&&off!=0x1c);
   CHECK(cold_writes<__arraycount(cold_write_regs));
-  if(off==0x30&&value==3)cold_flush_time=tick;
+  if(off==0x30&&value==3){cold_flush_time=tick;cold_global_pending=true;}
+  if(off==0x30&&value==0){
+   CHECK(cold_global_pending&&cold_flush_masters==0x3f&&tick-cold_flush_time>=10000);
+   cold_global_deasserts++;cold_global_pending=false;
+  }
   if(off>=0x400&&(off-0x400)%0x200==0x18)cold_flush_masters|=1U<<((off-0x400)/0x200);
   if(off==0x14){CHECK(value==1&&cold_flush_masters==0x3f&&iommu[0x30/4]==0);CHECK(tick-cold_flush_time>=10000);}
   cold_write_regs[cold_writes]=(uint32_t)off;cold_write_values[cold_writes]=value;cold_writes++;
   if(cold_writes==cold_fault_write)return EIO;
   bool mic_flush=off>=0x400&&(off-0x400)%0x200==0x18;
-  if(cold_writes!=cold_readback_write)iommu[off/4]=cold_flush_clear&&mic_flush?0:value;
-  else if(mic_flush)iommu[off/4]=2; /* Invalid readback, not a permitted self-clear. */
+  if(cold_writes!=cold_readback_write){
+   iommu[off/4]=cold_flush_clear&&mic_flush?0:value;
+   if(off==0x30&&value==3){
+    if(cold_global_clear_phase==1||cold_global_clear_phase==4)iommu[off/4]=0;
+    if(cold_global_bad)iommu[off/4]=cold_global_bad;
+   }
+  }else if(mic_flush)iommu[off/4]=2; /* Invalid readback, not a permitted self-clear. */
+  else if(off==0x30&&value==3)iommu[off/4]=4; /* Zero is an observed request state. */
   if(cold_writes==cold_change_write)iommu[0x88/4]=1;
   return 0;
  }
@@ -246,6 +266,7 @@ static void init(struct sun60i_de352_softc *sc)
  attempt_begin=true;claimed=memory_claimed=retained=started=irq_masked=power_claimed=false;lease_owner=NULL;
  isolation_claimed=false;isolation_error=isolation_calls=isolation_fault_call=0;
  cold_flush_masters=0;cold_flush_time=0;
+ cold_global_clear_phase=cold_global_deasserts=cold_global_bad=0;cold_global_pending=false;
  cold_test=peer_power_on=cold_flush_clear=false;peer_power_error=0;cold_writes=cold_fault_write=cold_readback_write=cold_change_write=0;
  memory_writes=memory_write_fault=memory_readback_fault=memory_change_call=cold_change_call=memory_map_fault=0;memset(memory_order,0,sizeof(memory_order));
  no_busy=no_finish=no_copy=no_vblank=same_sequence=bad_w1c=false;
@@ -490,6 +511,54 @@ static void cold_checks(void) {
   CHECK(de352_run(&sc)==EIO&&cold_writes==0&&sc.guard==NULL);reboot_fixture(&sc);
  }
 }
+/* Global request readback is state only. Every path must still deassert it. */
+static void cold_global_checks(void) {
+ struct sun60i_de352_softc sc;
+ for(unsigned phase=0;phase<4;phase++){
+  cold_init(&sc);cold_global_clear_phase=phase;
+  iommu[0x10/4]=0x37fff;iommu[0x804/4]=1;
+  int error=de352_run(&sc);
+  if(error!=0)fprintf(stderr,"global phase=%u error=%d step=%u op=%u reg=%#x requested=%u after=%u\n",phase,error,sc.step,sc.cold_trace.op,sc.cold_trace.reg,sc.cold_trace.requested,sc.cold_trace.after);
+  CHECK(error==0&&sc.cold_initialized&&sc.step==10);
+  CHECK(cold_global_deasserts==1&&cold_flush_masters==0x3f&&!cold_global_pending);
+  CHECK(iommu[0x30/4]==0&&iommu[0x14/4]==1&&sc.guard->published&&sc.dma->published);
+  CHECK(sc.cold_trace.phase==CT_DONE&&sc.cold_trace.error==0);
+  unsigned globals=0;
+  for(unsigned i=0;i<cold_writes;i++)if(cold_write_regs[i]==0x30){
+   CHECK(globals<2&&cold_write_values[i]==(globals==0?3U:0U));globals++;
+  }
+  CHECK(globals==2);reboot_fixture(&sc);
+ }
+ static const uint32_t malformed[]={1,2,4,0x80000000,UINT32_MAX};
+ for(unsigned i=0;i<__arraycount(malformed);i++){
+  cold_init(&sc);cold_global_bad=malformed[i];
+  CHECK(de352_run(&sc)==EIO&&sc.step==4&&!sc.cold_initialized);
+  CHECK(sc.cold_trace.phase==CT_AFTER&&sc.cold_trace.op==19&&sc.cold_trace.valid==15);
+  CHECK(sc.cold_trace.reg==0x30&&sc.cold_trace.before==0&&sc.cold_trace.requested==3&&sc.cold_trace.after==malformed[i]);
+  CHECK(sc.guard&&sc.guard->published&&sc.retained&&sc.dma==NULL&&writes==0);
+  CHECK(cold_flush_masters==0&&cold_global_deasserts==0&&releases==0);
+  reboot_fixture(&sc);
+ }
+ for(unsigned phase=4;phase<=5;phase++){
+  cold_init(&sc);cold_global_clear_phase=phase;
+  CHECK(de352_run(&sc)==EBUSY&&sc.step==4&&!sc.cold_initialized);
+  CHECK(sc.cold_trace.op==20&&sc.cold_trace.phase==(phase==4?CT_STEP_COMPARE:CT_STEP_CAPTURE));
+  CHECK(sc.guard&&sc.guard->published&&sc.retained&&sc.dma==NULL&&writes==0);
+  CHECK(cold_flush_masters==0&&cold_global_deasserts==0&&releases==0);
+  reboot_fixture(&sc);
+ }
+ /* Only an outstanding full request can fall to zero in a later snapshot. */
+ for(unsigned prior=0;prior<=4;prior++)for(unsigned after=0;after<=4;after++){
+  struct de352_cold_state expected={0},actual={0};
+  expected.words[0][CI_FLUSH]=expected.words[1][CI_FLUSH]=prior;
+  actual.words[0][CI_FLUSH]=actual.words[1][CI_FLUSH]=after;
+  struct de352_cold_state saved=expected;
+  int error=de352_cold_same(&expected,&actual);
+  bool accepted=prior==after||(prior==3&&after==0);
+  CHECK(error==(accepted?0:EBUSY));
+  CHECK(memcmp(&expected,accepted?&actual:&saved,sizeof(expected))==0);
+ }
+}
 /* A failed new capture cannot publish uninitialized partial words. */
 static void cold_trace_checks(void) {
  struct sun60i_de352_softc sc;struct de352_cold_state out, saved;
@@ -533,6 +602,7 @@ static void cold_reset_checks(void) {
 int main(void)
 {
  guard_checks();
+ cold_global_checks();
  cold_checks();
  cold_reset_checks();
  cold_trace_checks();

@@ -369,7 +369,18 @@ de352_cold_admit(const struct de352_cold_state *state)
 	return true;
 }
 
-/* A MIC request can clear. This is not a flush-completion assertion. */
+/* Observed request states. Neither transition proves flush completion. */
+static bool
+de352_cold_request_cleared(u_int index, uint32_t previous, uint32_t actual)
+{
+	if (actual != 0)
+		return false;
+	if (index == CI_FLUSH)
+		return previous == 3;
+	return index >= CI_MIC_BASE && (index - CI_MIC_BASE) % 4 == 1 &&
+	    previous == 1;
+}
+
 static int
 de352_cold_same(struct de352_cold_state *expected,
     const struct de352_cold_state *actual)
@@ -377,8 +388,8 @@ de352_cold_same(struct de352_cold_state *expected,
 	for (u_int i = 0; i < CI_COUNT; i++) {
 		if (actual->words[0][i] == expected->words[0][i])
 			continue;
-		if (i >= CI_MIC_BASE && (i - CI_MIC_BASE) % 4 == 1 &&
-		    expected->words[0][i] == 1 && actual->words[0][i] == 0)
+		if (de352_cold_request_cleared(i, expected->words[0][i],
+		    actual->words[0][i]))
 			continue;
 		return EBUSY;
 	}
@@ -506,14 +517,17 @@ de352_cold_prepare(struct sun60i_de352_softc *sc)
 			goto out;
 		trace->before = before;
 		trace->valid |= CT_BEFORE_VALID;
-		if (before != expected.words[0][index]) {
+		if (before != expected.words[0][index] &&
+		    !de352_cold_request_cleared(index,
+		    expected.words[0][index], before)) {
 			error = EBUSY;
 			goto out;
 		}
 		value = (before & ~steps[n].mask) | steps[n].value;
 		trace->requested = value;
 		trace->valid |= CT_REQUESTED;
-		if (value == before)
+		/* Deassert the global request even when its readback is zero. */
+		if (value == before && !(index == CI_FLUSH && steps[n].value == 0))
 			continue;
 		trace->phase = CT_WRITE;
 		error = bus_space_poke_4(sc->bst, ih, reg, value);
@@ -527,8 +541,8 @@ de352_cold_prepare(struct sun60i_de352_softc *sc)
 			goto out;
 		trace->after = after;
 		trace->valid |= CT_AFTER_VALID;
-		if (after != value && !(index >= CI_MIC_BASE &&
-		    (index - CI_MIC_BASE) % 4 == 1 && after == 0)) {
+		if (after != value &&
+		    !de352_cold_request_cleared(index, value, after)) {
 			error = EIO;
 			goto out;
 		}

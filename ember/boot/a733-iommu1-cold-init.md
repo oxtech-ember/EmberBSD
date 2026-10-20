@@ -59,10 +59,19 @@ Each write has a bus barrier and readback. Only the following fields change:
 8. Set global enable 0x14 to 1. Preserve auto-gating.
 
 MIC is 0x400 plus 0x200 times the local master index. A MIC request readback
-can be 1 or can clear to 0. A later 1-to-0 transition is accepted as request
-state only. It does not prove completion. No native `flush_done` flag exists.
-A changed non-command field, new error, malformed readback or access fault
-stops the sequence. No error is cleared to make admission pass.
+can be 1 or can clear to 0. After the global request writes 3, its readback
+can be 3 or 0. A physical v0x16 sample returned 0 after that write. This is
+an observed request state. It does not establish a self-clear mechanism or
+flush completion. The pinned BSP does not require readback 3.
+
+Only a global 3-to-0 or MIC 1-to-0 request transition is accepted between
+stable captures or at the direct pre-read. Global values 1, 2, unknown bits
+and an unrequested 0-to-3 transition are rejected. Both samples of each
+capture must still match. The final global write of 0 is mandatory, even
+when the register already reads 0. It follows all six MIC requests and the
+10 us delay. No native `flush_done` flag exists. A changed non-command field,
+new error, malformed readback or access fault stops the sequence. No error
+is cleared to make admission pass.
 
 The consumer then prepares NSI2 with the existing master-local mechanism.
 It repeats strict memory admission before opening the DE internal core.
