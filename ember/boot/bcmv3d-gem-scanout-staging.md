@@ -61,6 +61,11 @@ endpoints use EAGAIN; range overflow uses ERANGE. Native DMA errors are
 preserved. Errors leave committed slots, candidate bytes and initial backing
 unchanged. All errors use positive BSD errno.
 
+The separate [retained range mechanism](bcmv3d-mmu4-range.md) publishes and
+unmaps only never-HVS-latched private windows. Once a table pair is linked,
+it stays resident. A later stage reuses that empty pair without changing its
+live leaves. Discard then releases only the newly staged BO and consumer map.
+
 Run the joined actual-source contract:
 
 ```sh

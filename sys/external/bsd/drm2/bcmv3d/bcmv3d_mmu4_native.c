@@ -10,6 +10,7 @@
 #include <arm/broadcom/bcm2712_display_acpi.h>
 #include <arm/broadcom/bcm2712_iommuc.h>
 #include <arm/broadcom/bcm2712_iommuc_executor.h>
+#include <arm/broadcom/bcm2712_mmu4_tablevar.h>
 #include "bcmv3d_drv.h"
 #include "bcmv3d_mmu4_native.h"
 
@@ -566,6 +567,166 @@ bcmv3d_mmu4_native_discard_staged_gem(struct bcmv3d_mmu4_native *n,
 	    bcmv3d_mmu4_backing_discard_staged_gem(n->backing, slot);
 	mutex_exit(&n->lock);
 	return error;
+}
+
+/*
+ * Never substitute a fresh initial sequencer for retained state.
+ */
+static int
+mmu4_native_range_backend(struct bcmv3d_mmu4_native *n)
+{
+
+	if (!mutex_owned(&n->lock))
+		return EDEADLK;
+	if (!n->executing || n->active != NULL || n->cache == NULL ||
+	    !n->cache->initialized || n->cache->status.reserved != MMU4_MEMBER ||
+	    n->cache->status.retained != MMU4_MEMBER)
+		return EPROTO;
+	if (n->status.fault != 0)
+		return n->status.fault;
+	if (n->cache->status.fault != 0)
+		return n->cache->status.fault;
+	return 0;
+}
+
+static int
+mmu4_native_range_invalidate(void *arg)
+{
+	struct bcmv3d_mmu4_native *n = arg;
+	struct bcmv3d_mmu4_range_status *s = &n->status.range;
+	unsigned int i;
+	int error;
+
+	if ((error = mmu4_native_range_backend(n)) != 0)
+		return error;
+	error = bcm2712_iommuc_core_enable_flush(n->cache,
+	    BCM2712_IOMMUC_MMU4);
+	if (error != 0)
+		return error;
+	if ((error = mmu4_native_range_backend(n)) != 0)
+		return error;
+	/* Keep ENABLE and the established abort/statistics policy throughout. */
+	s->writes++;
+	bus_space_write_4(n->bst, n->bsh, 0, 0x04090807U);
+	bus_space_barrier(n->bst, n->bsh, 0, MMU4_LENGTH,
+	    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+	s->barriers++;
+	for (i = 1; i <= 1024; i++) {
+		s->polls = i;
+		s->reads++;
+		s->raw_control = bus_space_read_4(n->bst, n->bsh, 0);
+		if ((s->raw_control & 0x08101100U) != 0 ||
+		    (s->raw_control & 0x070f0f03U) != 0x04090803U)
+			return EIO;
+		if ((s->raw_control & 0x80U) == 0)
+			return 0;
+	}
+	return ETIMEDOUT;
+}
+
+static int
+mmu4_native_range_operation(void *arg, struct bcm2712_iommuc_core *cache)
+{
+	struct bcmv3d_mmu4_native *n = arg;
+	struct bcmv3d_mmu4_range_status *s = &n->status.range;
+	uint32_t shoot;
+	int error;
+
+	if (n->executing || n->cache != NULL || n->active != NULL)
+		return EDEADLK;
+	n->cache = cache;
+	n->executing = true;
+	error = mmu4_native_range_backend(n);
+	if (error != 0)
+		goto done;
+	s->reads++;
+	s->raw_control = bus_space_read_4(n->bst, n->bsh, 0);
+	if ((s->raw_control & 0x08101180U) != 0 ||
+	    (s->raw_control & 0x070f0f03U) != 0x04090803U) {
+		error = EBUSY;
+		goto done;
+	}
+	s->reads++;
+	shoot = bus_space_read_4(n->bst, n->bsh, 0x18);
+	if ((shoot & 0x80000000U) != 0) {
+		error = EBUSY;
+		goto done;
+	}
+	error = bcmv3d_mmu4_backing_range(n->backing, s->slot, s->operation,
+	    mmu4_native_range_invalidate, n, s);
+done:
+	n->executing = false;
+	n->cache = NULL;
+	return error;
+}
+
+static int
+mmu4_native_range(struct bcmv3d_mmu4_native *n, unsigned int slot,
+    enum bcmv3d_mmu4_range_operation op)
+{
+	struct bcmv3d_mmu4_range_status *s;
+	int error, status_error;
+
+	if (slot >= BCM2712_MMU4_SCANOUT_SLOTS)
+		return EINVAL;
+	if ((error = mmu4_native_enter(n)) != 0)
+		return error;
+	error = n->status.fault != 0 ? n->status.fault : EBUSY;
+	if (n->status.fault != 0 ||
+	    n->status.stage != BCMV3D_MMU4_NATIVE_COMPLETE ||
+	    n->status.prepare_error != 0 || n->status.program_error != 0 ||
+	    n->status.operation_error != 0 || n->status.close_error != 0 ||
+	    n->status.status_error != 0 || !n->status.backing_valid ||
+	    !n->status.sealed || n->backing == NULL)
+		goto done;
+	error = bcmv3d_mmu4_backing_range_check(n->backing, slot, op);
+	if (error != 0)
+		goto done;
+	s = &n->status.range;
+	memset(s, 0, sizeof(*s));
+	s->slot = slot;
+	s->operation = op;
+	s->attempted = true;
+	error = bcm2712_iommuc_execute_mmu4_retained(n->provider,
+	    mmu4_native_range_operation, n);
+	n->status.icac_valid = false;
+	status_error = bcm2712_iommuc_cached_status(n->provider, &n->status.icac);
+	if (status_error == 0)
+		n->status.icac_valid = true;
+	else {
+		if (n->status.status_error == 0)
+			n->status.status_error = status_error;
+		if (error == 0)
+			error = status_error;
+	}
+	if (error == 0 && op == BCMV3D_MMU4_RANGE_UNMAP)
+		error = bcmv3d_mmu4_backing_reclaim_unmapped(n->backing, slot);
+	if (error != 0) {
+		if (s->first_error == 0)
+			s->first_error = error;
+		s->complete = false;
+		(void)mmu4_native_fault(n, error);
+		if (s->mutation_attempted)
+			bcmv3d_mmu4_backing_range_abort(n->backing, error);
+	}
+done:
+	mutex_exit(&n->lock);
+	return error;
+}
+
+int
+bcmv3d_mmu4_native_publish_staged_gem(struct bcmv3d_mmu4_native *n,
+    unsigned int slot)
+{
+
+	return mmu4_native_range(n, slot, BCMV3D_MMU4_RANGE_PUBLISH);
+}
+
+int
+bcmv3d_mmu4_native_unmap_gem(struct bcmv3d_mmu4_native *n, unsigned int slot)
+{
+
+	return mmu4_native_range(n, slot, BCMV3D_MMU4_RANGE_UNMAP);
 }
 
 int

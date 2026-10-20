@@ -55,6 +55,9 @@ clock providers, mappings and allocated backing until reboot. There is no retry,
 rollback, unmap or fallback after CLOSED. This stage does not enable HVS/PV, publish
 a display list, allocate HVS SRAM/UPM/COB ranges or start KMS. The same selected
 profile then enters the separately guarded [fixed HVS/PV0 publication](bcmv3d-hvs-publish.md).
+The separate [retained range mechanism](bcmv3d-mmu4-range.md) can publish and
+unmap the three never-HVS-latched private GEM windows. It does not unmap the
+initial frame or establish active scanout retirement. No KMS caller uses it yet.
 
 The joined actual-source check is:
 

@@ -23,6 +23,7 @@ enum bcmv3d_mmu4_native_stage {
 };
 
 struct bcmv3d_mmu4_native_status {
+	struct bcmv3d_mmu4_range_status range;
 	enum bcmv3d_mmu4_native_stage stage;
 	struct bcm2712_iommuc_native_status icac;
 	struct bcm2712_iommuc_status shared;
@@ -76,5 +77,16 @@ int bcmv3d_mmu4_native_stage_gem(struct bcmv3d_mmu4_native *, unsigned int,
     struct drm_gem_object *);
 int bcmv3d_mmu4_native_discard_staged_gem(struct bcmv3d_mmu4_native *,
     unsigned int);
+
+/*
+ * Translation only for the three never-HVS-latched private windows. Require
+ * successful retained initial program. No initial one-shot guard is reset.
+ * Publish/unmap can repeat after success; a runtime fault forbids later writes.
+ * Unmap releases the actual BO/map outside ICAC; six linked L2 stay resident.
+ * No HVS/KMS caller, producer fence or active-retirement contract is provided.
+ */
+int bcmv3d_mmu4_native_publish_staged_gem(struct bcmv3d_mmu4_native *,
+    unsigned int);
+int bcmv3d_mmu4_native_unmap_gem(struct bcmv3d_mmu4_native *, unsigned int);
 
 #endif /* _BCMV3D_MMU4_NATIVE_H_ */

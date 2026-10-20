@@ -20,6 +20,20 @@ enum bcmv3d_mmu4_backing_stage {
 	BCMV3D_MMU4_BACKING_PREPARED
 };
 
+enum bcmv3d_mmu4_range_operation {
+	BCMV3D_MMU4_RANGE_PUBLISH,
+	BCMV3D_MMU4_RANGE_UNMAP
+};
+
+/* Actual last-operation diagnostics. These fields grant no access. */
+struct bcmv3d_mmu4_range_status {
+	enum bcmv3d_mmu4_range_operation operation;
+	unsigned int slot, stores, syncs, polls, barriers, reads, writes;
+	uint32_t raw_control;
+	int first_error;
+	bool attempted, mutation_attempted, complete;
+};
+
 struct bcmv3d_mmu4_backing_status {
 	enum bcmv3d_mmu4_backing_stage stage;
 	uint64_t frame_bytes, control_bytes;
@@ -71,6 +85,24 @@ int bcmv3d_mmu4_backing_destroy_unexposed(struct bcmv3d_mmu4_backing *);
 int bcmv3d_mmu4_backing_stage_gem(struct bcmv3d_mmu4_backing *, unsigned int,
     struct drm_gem_object *);
 int bcmv3d_mmu4_backing_discard_staged_gem(struct bcmv3d_mmu4_backing *,
+    unsigned int);
+
+/*
+ * Trusted native retained-executor callback only, serialized by native mutex.
+ * invalidate completes shared and local invalidation synchronously. No memory
+ * allocation/free is allowed here. Outputs are actual operation diagnostics.
+ * Slots have never been passed to HVS: the only current HVS API uses IOVA0.
+ * Active scanout retirement is unsupported. A linked L2 pair stays resident.
+ */
+int bcmv3d_mmu4_backing_range_check(struct bcmv3d_mmu4_backing *,
+    unsigned int, enum bcmv3d_mmu4_range_operation);
+int bcmv3d_mmu4_backing_range(struct bcmv3d_mmu4_backing *, unsigned int,
+    enum bcmv3d_mmu4_range_operation, int (*)(void *), void *,
+    struct bcmv3d_mmu4_range_status *);
+/* Propagate a post-exposure native/provider error without freeing resources. */
+void bcmv3d_mmu4_backing_range_abort(struct bcmv3d_mmu4_backing *, int);
+/* After successful UNMAP, outside ICAC mutex. Does not free resident L2. */
+int bcmv3d_mmu4_backing_reclaim_unmapped(struct bcmv3d_mmu4_backing *,
     unsigned int);
 
 #endif /* _BCMV3D_MMU4_BACKING_H_ */

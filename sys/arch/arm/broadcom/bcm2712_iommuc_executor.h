@@ -25,4 +25,14 @@ typedef int (*bcm2712_iommuc_mmu4_operation)(void *,
 int bcm2712_iommuc_execute_mmu4(struct bcm2712_iommuc_provider *,
     bcm2712_iommuc_mmu4_operation, void *);
 
+/*
+ * Reuse only the same successful retained MMU4 core. Initial execution stays
+ * one-shot. The caller holds the native MMU4 mutex and borrows this window
+ * synchronously. No init, lease change, allocation or pointer escape occurs.
+ * Any callback/protocol error is a sticky provider fault. No retry or release
+ * follows a fault. This operation does not establish display retirement.
+ */
+int bcm2712_iommuc_execute_mmu4_retained(struct bcm2712_iommuc_provider *,
+    bcm2712_iommuc_mmu4_operation, void *);
+
 #endif

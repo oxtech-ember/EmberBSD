@@ -42,7 +42,7 @@ begin
   fixture = File.join(source, 'ember/tools/bcmv3d-mmu4-backing-contract.c')
   read.call('ember/tools/bcmv3d-mmu4-backing-contract.c')
   write.call('services.h', "#define BACKING_TYPES\n#include #{fixture.dump}\n#undef BACKING_TYPES\n")
-  %w[sys/types.h sys/bus.h sys/param.h sys/errno.h sys/cpu.h sys/kmem.h
+  %w[sys/types.h sys/bus.h sys/param.h sys/errno.h sys/cpu.h sys/kmem.h sys/atomic.h sys/endian.h
      sys/systm.h uvm/uvm_extern.h machine/pmap.h sys/device.h sys/mutex.h sys/vmem.h
      dev/acpi/acpivar.h drm/drm_device.h drm/drm_file.h drm/drm_gem_cma_helper.h
      drm/v3d_drm.h linux/err.h drm/drm_gem.h].each do |name|

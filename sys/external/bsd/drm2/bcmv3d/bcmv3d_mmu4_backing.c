@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* AI-assisted private native backing. No hardware publication or MMIO. */
+/* AI-assisted private native backing and table updates. No MMIO. */
 #include <sys/param.h>
+#include <sys/atomic.h>
+#include <sys/endian.h>
 #include <sys/errno.h>
 #include <sys/cpu.h>
 #include <sys/kmem.h>
@@ -34,7 +36,7 @@ struct mmu4_gem_slot {
 	struct mmu4_allocation control[2];
 	struct bcm2712_mmu4_range_pages pages;
 	struct bcm2712_mmu4_range_image image;
-	bool loaded;
+	bool loaded, linked, published;
 };
 
 struct bcmv3d_mmu4_backing {
@@ -47,6 +49,7 @@ struct bcmv3d_mmu4_backing {
 	struct bcm2712_mmu4_config cfg;
 	struct bcmv3d_mmu4_backing_status status;
 	bool running;
+	int range_fault;
 	struct mmu4_gem_slot *staged[BCM2712_MMU4_SCANOUT_SLOTS];
 	uint8_t candidate_top[BCM2712_MMU4_PAGE_BYTES];
 };
@@ -482,7 +485,7 @@ mmu4_gem_control(struct mmu4_allocation *a, uint64_t size, uint64_t *out)
 }
 
 static int
-mmu4_gem_pages(struct mmu4_gem_slot *g)
+mmu4_gem_pages(struct mmu4_gem_slot *g, bool record)
 {
 	struct drm_gem_cma_object *cma = &g->bo->cma;
 	bus_dmamap_t parent = cma->dmamap;
@@ -505,8 +508,13 @@ mmu4_gem_pages(struct mmu4_gem_slot *g)
 		if (first != parent->dm_segs[pseg].ds_addr + poff ||
 		    first != g->map->dm_segs[cseg].ds_addr + coff)
 			return EOPNOTSUPP;
-		if (offset < BCMV3D_HVS_BYTES)
-			g->pages.frame_pa[offset / BCM2712_MMU4_PAGE_BYTES] = first;
+		if (offset < BCMV3D_HVS_BYTES) {
+			if (record)
+				g->pages.frame_pa[offset / BCM2712_MMU4_PAGE_BYTES] = first;
+			else if (g->pages.frame_pa[offset /
+			    BCM2712_MMU4_PAGE_BYTES] != first)
+				return EAGAIN;
+		}
 		poff += BCM2712_MMU4_PAGE_BYTES;
 		coff += BCM2712_MMU4_PAGE_BYTES;
 		if (poff == parent->dm_segs[pseg].ds_len) {
@@ -544,7 +552,8 @@ mmu4_gem_allocation_overlap(const struct mmu4_allocation *a,
 }
 
 static int
-mmu4_gem_aliases(struct bcmv3d_mmu4_backing *b, struct mmu4_gem_slot *g)
+mmu4_gem_aliases(struct bcmv3d_mmu4_backing *b, struct mmu4_gem_slot *g,
+    const struct mmu4_gem_slot *skip)
 {
 	struct drm_gem_cma_object *cma = &g->bo->cma;
 	struct mmu4_gem_slot *other;
@@ -586,13 +595,15 @@ mmu4_gem_aliases(struct bcmv3d_mmu4_backing *b, struct mmu4_gem_slot *g)
 	}
 	for (i = 0; i < BCM2712_MMU4_SCANOUT_SLOTS; i++) {
 		other = b->staged[i];
-		if (other == NULL)
+		if (other == NULL || other == skip)
 			continue;
-		if (mmu4_overlap((uintptr_t)cma->vaddr, cma->dmasize,
+		if (other->bo != NULL &&
+		    mmu4_overlap((uintptr_t)cma->vaddr, cma->dmasize,
 		    (uintptr_t)other->bo->cma.vaddr, other->bo->cma.dmasize))
 			return EINVAL;
 		for (seg = 0; seg < cma->dmamap->dm_nsegs; seg++) {
-			if (mmu4_gem_map_overlap(other->map,
+			if (other->map != NULL &&
+			    mmu4_gem_map_overlap(other->map,
 			    cma->dmamap->dm_segs[seg].ds_addr,
 			    cma->dmamap->dm_segs[seg].ds_len))
 				return EINVAL;
@@ -604,8 +615,8 @@ mmu4_gem_aliases(struct bcmv3d_mmu4_backing *b, struct mmu4_gem_slot *g)
 			for (k = 0; k < 2; k++) {
 				if (mmu4_gem_allocation_overlap(&g->control[k],
 				    &other->control[j], size) ||
-				    mmu4_gem_map_overlap(other->map,
-				    g->control[k].pa, size))
+				    (other->map != NULL &&
+				    mmu4_gem_map_overlap(other->map, g->control[k].pa, size)))
 					return EINVAL;
 			}
 		}
@@ -640,11 +651,28 @@ mmu4_gem_free(struct bcmv3d_mmu4_backing *b, struct mmu4_gem_slot *g)
 	kmem_free(g, sizeof(*g));
 }
 
+static void
+mmu4_gem_drop_bo(struct bcmv3d_mmu4_backing *b, struct mmu4_gem_slot *g)
+{
+
+	if (g->loaded)
+		bus_dmamap_unload(b->sc->dmat, g->map);
+	if (g->map != NULL)
+		bus_dmamap_destroy(b->sc->dmat, g->map);
+	if (g->bo != NULL)
+		drm_gem_object_put_unlocked(&g->bo->cma.base);
+	g->loaded = false;
+	g->map = NULL;
+	g->bo = NULL;
+	memset(g->pages.frame_pa, 0, sizeof(g->pages.frame_pa));
+	memset(g->image.l2, 0, sizeof(g->image.l2));
+}
+
 int
 bcmv3d_mmu4_backing_stage_gem(struct bcmv3d_mmu4_backing *b, unsigned int slot,
     struct drm_gem_object *obj)
 {
-	struct mmu4_gem_slot *g;
+	struct mmu4_gem_slot *g, *old;
 	struct drm_gem_cma_object *cma;
 	struct mmu4_allocation *a;
 	uint64_t pa;
@@ -657,11 +685,16 @@ bcmv3d_mmu4_backing_stage_gem(struct bcmv3d_mmu4_backing *b, unsigned int slot,
 	if (cpu_intr_p() || cpu_softintr_p())
 		return EWOULDBLOCK;
 	ASSERT_SLEEPABLE();
+	if (b->range_fault != 0)
+		return b->range_fault;
+	old = b->staged[slot];
 	if (b->running || !b->status.prepared || b->status.first_error != 0 ||
-	    b->status.mapping_uncertain || b->staged[slot] != NULL)
+	    b->status.mapping_uncertain ||
+	    (old != NULL && (!old->linked || old->bo != NULL || old->published)))
 		return EBUSY;
 	for (i = 0; i < BCM2712_MMU4_SCANOUT_SLOTS; i++) {
-		if (b->staged[i] != NULL && &b->staged[i]->bo->cma.base == obj)
+		if (b->staged[i] != NULL && b->staged[i]->bo != NULL &&
+		    &b->staged[i]->bo->cma.base == obj)
 			return EEXIST;
 	}
 	b->running = true;
@@ -696,7 +729,7 @@ bcmv3d_mmu4_backing_stage_gem(struct bcmv3d_mmu4_backing *b, unsigned int slot,
 	error = mmu4_gem_map(g->map, cma->dmasize, maxsegs);
 	if (error != 0)
 		goto fail;
-	error = mmu4_gem_pages(g);
+	error = mmu4_gem_pages(g, true);
 	if (error != 0)
 		goto fail;
 	/* Read-only proofs leave all initial plan/image/status bytes intact. */
@@ -711,6 +744,19 @@ bcmv3d_mmu4_backing_stage_gem(struct bcmv3d_mmu4_backing *b, unsigned int slot,
 		}
 	}
 	for (i = 0; i < 2; i++) {
+		if (old != NULL) {
+			g->control[i] = old->control[i];
+			error = mmu4_gem_control(&g->control[i],
+			    b->status.control_bytes, &pa);
+			if (error != 0)
+				goto fail;
+			if (pa != old->control[i].pa) {
+				error = EAGAIN;
+				goto fail;
+			}
+			g->pages.l2_pa[i] = pa;
+			continue;
+		}
 		a = &g->control[i];
 		error = bus_dmamem_alloc(b->sc->dmat, b->status.control_bytes,
 		    PAGE_SIZE, 0, &a->segment, 1, &nsegments, BUS_DMA_WAITOK);
@@ -740,7 +786,7 @@ bcmv3d_mmu4_backing_stage_gem(struct bcmv3d_mmu4_backing *b, unsigned int slot,
 			goto fail;
 		g->pages.l2_pa[i] = a->pa;
 	}
-	error = mmu4_gem_aliases(b, g);
+	error = mmu4_gem_aliases(b, g, old);
 	if (error != 0)
 		goto fail;
 	g->pages.debug = b->cfg.debug;
@@ -748,7 +794,7 @@ bcmv3d_mmu4_backing_stage_gem(struct bcmv3d_mmu4_backing *b, unsigned int slot,
 	error = bcm2712_mmu4_encode_range(&g->pages, slot, &g->image);
 	if (error != 0)
 		goto fail;
-	for (i = 0; i < 2; i++) {
+	for (i = 0; old == NULL && i < 2; i++) {
 		memset(g->control[i].kva, 0, b->status.control_bytes);
 		memcpy(g->control[i].kva, g->image.l2[i],
 		    BCM2712_MMU4_PAGE_BYTES);
@@ -756,10 +802,18 @@ bcmv3d_mmu4_backing_stage_gem(struct bcmv3d_mmu4_backing *b, unsigned int slot,
 	if (b->staged[0] == NULL && b->staged[1] == NULL && b->staged[2] == NULL)
 		memcpy(b->candidate_top, b->image.top, sizeof(b->candidate_top));
 	memcpy(b->candidate_top + (slot + 1) * 8, g->image.top, 8);
-	b->staged[slot] = g;
+	if (old != NULL) {
+		g->linked = true;
+		*old = *g;
+		kmem_free(g, sizeof(*g));
+	} else {
+		b->staged[slot] = g;
+	}
 	b->running = false;
 	return 0;
 fail:
+	if (old != NULL)
+		memset(g->control, 0, sizeof(g->control));
 	mmu4_gem_free(b, g);
 	b->running = false;
 	return error;
@@ -781,10 +835,196 @@ bcmv3d_mmu4_backing_discard_staged_gem(struct bcmv3d_mmu4_backing *b,
 	g = b->staged[slot];
 	if (g == NULL)
 		return ENOENT;
+	if (g->linked && g->bo == NULL)
+		return ENOENT;
+	if (g->published || (g->linked && b->range_fault != 0))
+		return EBUSY;
+	if (g->linked) {
+		mmu4_gem_drop_bo(b, g);
+		return 0;
+	}
 	b->running = true;
 	mmu4_gem_free(b, g);
 	memset(b->candidate_top + (slot + 1) * 8, 0, 8);
 	b->staged[slot] = NULL;
 	b->running = false;
 	return 0;
+}
+
+static uint32_t
+mmu4_range_word(const uint8_t *p)
+{
+
+	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+	    ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+int
+bcmv3d_mmu4_backing_range_check(struct bcmv3d_mmu4_backing *b,
+    unsigned int slot, enum bcmv3d_mmu4_range_operation op)
+{
+	struct mmu4_gem_slot *g, *other;
+	uint64_t pa;
+	uint32_t expected, actual;
+	unsigned int i, j;
+	int error;
+
+	if (b == NULL || slot >= BCM2712_MMU4_SCANOUT_SLOTS ||
+	    (op != BCMV3D_MMU4_RANGE_PUBLISH && op != BCMV3D_MMU4_RANGE_UNMAP))
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	if (b->range_fault != 0)
+		return b->range_fault;
+	if (b->running || !b->status.prepared || !b->status.sealed ||
+	    b->status.first_error != 0 || b->status.mapping_uncertain)
+		return EBUSY;
+	g = b->staged[slot];
+	if (g == NULL || g->bo == NULL)
+		return ENOENT;
+	if (op == BCMV3D_MMU4_RANGE_PUBLISH ? g->published : !g->published)
+		return EBUSY;
+	error = mmu4_gem_map(g->bo->cma.dmamap, g->bo->cma.dmasize,
+	    g->bo->maxsegs);
+	if (error == 0)
+		error = mmu4_gem_map(g->map, g->bo->cma.dmasize,
+		    g->bo->cma.dmasize / PAGE_SIZE);
+	if (error == 0)
+		error = mmu4_gem_pages(g, false);
+	if (error != 0)
+		return error;
+	for (i = 0; i < 4; i++) {
+		error = mmu4_gem_control(&b->control[i],
+		    b->status.control_bytes, &pa);
+		if (error != 0)
+			return error;
+		if (pa != b->control[i].pa)
+			return EAGAIN;
+	}
+	for (i = 0; i < 2; i++) {
+		error = mmu4_gem_control(&g->control[i],
+		    b->status.control_bytes, &pa);
+		if (error != 0)
+			return error;
+		if (pa != g->pages.l2_pa[i])
+			return EAGAIN;
+		for (j = 0; j < b->status.control_bytes / 4; j++) {
+			expected = j < 1024 && (!g->linked || g->published) ?
+			    mmu4_range_word(g->image.l2[i] + j * 4) : 0;
+			actual = le32toh(atomic_load_relaxed(
+			    (uint32_t *)g->control[i].kva + j));
+			if (actual != expected)
+				return EAGAIN;
+		}
+	}
+	for (i = 0; i < b->status.control_bytes / 4; i++) {
+		expected = i < 1024 ? mmu4_range_word(b->image.top + i * 4) : 0;
+		if (i >= 2 && i < 8) {
+			other = b->staged[i / 2 - 1];
+			if (other != NULL && other->linked)
+				expected = mmu4_range_word(other->image.top + (i % 2) * 4);
+		}
+		actual = le32toh(atomic_load_relaxed(
+		    (uint32_t *)b->control[0].kva + i));
+		if (actual != expected)
+			return EAGAIN;
+	}
+	return mmu4_gem_aliases(b, g, g);
+}
+
+int
+bcmv3d_mmu4_backing_range(struct bcmv3d_mmu4_backing *b, unsigned int slot,
+    enum bcmv3d_mmu4_range_operation op, int (*invalidate)(void *), void *arg,
+    struct bcmv3d_mmu4_range_status *s)
+{
+	struct mmu4_gem_slot *g;
+	struct mmu4_allocation *a;
+	uint32_t value;
+	unsigned int i, j;
+	int error;
+
+	if (invalidate == NULL || s == NULL)
+		return EINVAL;
+	error = bcmv3d_mmu4_backing_range_check(b, slot, op);
+	if (error != 0)
+		return error;
+	g = b->staged[slot];
+	b->running = true;
+	s->attempted = true;
+	s->operation = op;
+	s->slot = slot;
+	/* A reachable leaf can be observed even before its explicit PREWRITE. */
+	if (g->linked)
+		s->mutation_attempted = true;
+	for (i = 0; i < 2; i++) {
+		a = &g->control[i];
+		bus_dmamap_sync(b->sc->dmat, a->map, 0,
+		    b->status.control_bytes, BUS_DMASYNC_POSTWRITE);
+		s->syncs++;
+		for (j = 0; j < 1024; j++) {
+			value = op == BCMV3D_MMU4_RANGE_PUBLISH ?
+			    mmu4_range_word(g->image.l2[i] + j * 4) : 0;
+			atomic_store_relaxed((uint32_t *)a->kva + j, htole32(value));
+			s->stores++;
+		}
+		bus_dmamap_sync(b->sc->dmat, a->map, 0,
+		    b->status.control_bytes, BUS_DMASYNC_PREWRITE);
+		s->syncs++;
+	}
+	if (!g->linked) {
+		a = &b->control[0];
+		bus_dmamap_sync(b->sc->dmat, a->map, 0,
+		    b->status.control_bytes, BUS_DMASYNC_POSTWRITE);
+		s->syncs++;
+		/* Retain both tables and the BO BEFORE the first top PTE store. */
+		g->linked = true;
+		s->mutation_attempted = true;
+		for (i = 0; i < 2; i++) {
+			value = mmu4_range_word(g->image.top + i * 4);
+			atomic_store_relaxed((uint32_t *)a->kva +
+			    (slot + 1) * 2 + i, htole32(value));
+			s->stores++;
+		}
+		bus_dmamap_sync(b->sc->dmat, a->map, 0,
+		    b->status.control_bytes, BUS_DMASYNC_PREWRITE);
+		s->syncs++;
+	}
+	error = invalidate(arg);
+	if (error != 0) {
+		s->first_error = b->range_fault = error;
+	} else {
+		g->published = op == BCMV3D_MMU4_RANGE_PUBLISH;
+		s->complete = true;
+	}
+	b->running = false;
+	return error;
+}
+
+int
+bcmv3d_mmu4_backing_reclaim_unmapped(struct bcmv3d_mmu4_backing *b,
+    unsigned int slot)
+{
+	struct mmu4_gem_slot *g;
+
+	if (b == NULL || slot >= BCM2712_MMU4_SCANOUT_SLOTS)
+		return EINVAL;
+	if (cpu_intr_p() || cpu_softintr_p())
+		return EWOULDBLOCK;
+	ASSERT_SLEEPABLE();
+	if (b->running || b->range_fault != 0)
+		return EBUSY;
+	g = b->staged[slot];
+	if (g == NULL || !g->linked || g->published || g->bo == NULL)
+		return EBUSY;
+	mmu4_gem_drop_bo(b, g);
+	return 0;
+}
+
+void
+bcmv3d_mmu4_backing_range_abort(struct bcmv3d_mmu4_backing *b, int error)
+{
+
+	if (b != NULL && error > 0 && b->range_fault == 0)
+		b->range_fault = error;
 }

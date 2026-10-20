@@ -10,6 +10,16 @@
 #include "bcm2712_mmu4_corevar.h"
 #include "bcm2712_mmu4_tablevar.h"
 
+#define atomic_load_relaxed(p) __atomic_load_n((p), __ATOMIC_RELAXED)
+#define atomic_store_relaxed(p, v) __atomic_store_n((p), (v), __ATOMIC_RELAXED)
+#define BUS_DMASYNC_POSTWRITE 8
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#define htole32(v) ((uint32_t)(v))
+#define le32toh(v) ((uint32_t)(v))
+#else
+#define htole32(v) __builtin_bswap32((uint32_t)(v))
+#define le32toh(v) __builtin_bswap32((uint32_t)(v))
+#endif
 #define BUS_DMA_WRITE 0x200
 #define BUS_DMASYNC_PREWRITE 4
 static unsigned intr, syncs, pmap_calls, fail_pmap, bad_last;

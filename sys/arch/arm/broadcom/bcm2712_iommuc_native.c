@@ -461,6 +461,58 @@ done:
 	return error;
 }
 
+int
+bcm2712_iommuc_execute_mmu4_retained(struct bcm2712_iommuc_provider *sc,
+    bcm2712_iommuc_mmu4_operation operation, void *arg)
+{
+	int error, fault = 0;
+
+	if (sc == NULL || operation == NULL)
+		return EINVAL;
+	if ((error = bcm2712_iommuc_enter()) != 0)
+		return error;
+	error = ENXIO;
+	if (sc != bcm2712_iommuc_owner || !sc->software_attached ||
+	    sc->bst == NULL || !sc->observation.mapped ||
+	    sc->contract.version != BCM2712_IOMMUC_VERSION ||
+	    sc->contract.address != BCM2712_IOMMUC_ADDRESS ||
+	    sc->contract.length != BCM2712_IOMMUC_LENGTH)
+		goto done;
+	error = sc->mmu4.first_error != 0 ? sc->mmu4.first_error :
+	    sc->mmu4.fault != 0 ? sc->mmu4.fault :
+	    sc->core.status.fault != 0 ? sc->core.status.fault : EBUSY;
+	if (sc->mmu4.fault != 0 || !sc->mmu4.attempted ||
+	    sc->mmu4.first_error != 0 || sc->executing ||
+	    !bcm2712_iommuc_callbacks(sc) || sc->core.status.fault != 0 ||
+	    sc->core.status.stage != BCM2712_IOMMUC_COMPLETE ||
+	    !sc->core.status.flush_complete ||
+	    sc->core.status.reserved != IOMMUC_MMU4_MEMBER ||
+	    sc->core.status.retained != IOMMUC_MMU4_MEMBER)
+		goto done;
+	sc->executing = true;
+	error = operation(arg, &sc->core);
+	if (error < 0)
+		error = EINVAL;
+	if (!bcm2712_iommuc_callbacks(sc) ||
+	    sc->core.status.stage != BCM2712_IOMMUC_COMPLETE ||
+	    !sc->core.status.flush_complete ||
+	    sc->core.status.reserved != IOMMUC_MMU4_MEMBER ||
+	    sc->core.status.retained != IOMMUC_MMU4_MEMBER)
+		fault = EPROTO;
+	if (sc->core.status.fault != 0)
+		fault = sc->core.status.fault;
+	if (fault == 0)
+		fault = error;
+	sc->executing = false;
+	if (fault != 0 && sc->mmu4.fault == 0)
+		sc->mmu4.fault = fault;
+	if (error == 0)
+		error = fault;
+done:
+	mutex_exit(&bcm2712_iommuc_mutex);
+	return error;
+}
+
 static int
 bcm2712iommuc_acpi_detach(device_t self, int flags)
 {

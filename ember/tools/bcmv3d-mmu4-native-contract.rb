@@ -66,6 +66,7 @@ begin
   {'drv-types.h'=>'bcmv3d_drv.h','bo-stats.h'=>'bcmv3d_bo_stats.h',
    'backing-types.h'=>'bcmv3d_mmu4_backing.h','adapter-types.h'=>'bcmv3d_mmu4_native.h',
    'adapter-body.h'=>'bcmv3d_mmu4_native.c'}.each { |name,path| write.call(name,strip.call(read.call(drv+path))) }
+  write.call('table-types.h',read.call('sys/arch/arm/broadcom/bcm2712_mmu4_tablevar.h'))
   fixture=File.join(source,'ember/tools/bcmv3d-mmu4-native-contract.c')
   read.call('ember/tools/bcmv3d-mmu4-native-contract.c')
   read.call('ember/tools/bcmv3d-mmu4-native-backing.c')
@@ -99,6 +100,12 @@ begin
     end
     unless ENV['MMU4_NATIVE_SKIP_MUTANTS']=='1'
       original=File.read(work+'/adapter-body.h')
+      # Preserve the original initial-program controls as range code grows.
+      first=original.index("\nstatic int\nmmu4_native_range_backend(")
+      last=original.index("\nint\nbcmv3d_mmu4_native_cached_status(", first) if first
+      range_body=first && last ? original[first...last] : ''
+      marker="\n/* Retained range source is outside initial-program mutants. */\n"
+      legacy=range_body.empty? ? original : original.sub(range_body,marker)
       mutations={
         'stage-delegate'=>['bcmv3d_mmu4_backing_stage_gem(n->backing, slot, obj);', '(bcmv3d_mmu4_backing_stage_gem(n->backing, slot, obj), 0);', 'prepared ? EOPNOTSUPP : ENXIO'],
         'discard-delegate'=>['bcmv3d_mmu4_backing_discard_staged_gem(n->backing, slot);', '(bcmv3d_mmu4_backing_discard_staged_gem(n->backing, slot), 0);', 'prepared ? ENOENT : ENXIO'],
@@ -142,8 +149,10 @@ begin
       }
       selected=ENV.fetch('MMU4_NATIVE_MUTANTS',mutations.keys.join(' ')).split
       selected.each do |name|
-        old,new_value,expected_check=mutations.fetch(name);abort "ambiguous #{name}" unless original.scan(old).size==1
-        write.call('adapter-body.h',original.sub(old,new_value));compile.call('mutant-'+name)
+        old,new_value,expected_check=mutations.fetch(name);abort "ambiguous #{name}" unless legacy.scan(old).size==1
+        changed=legacy.sub(old,new_value)
+        changed=changed.sub(marker,range_body) unless range_body.empty?
+        write.call('adapter-body.h',changed);compile.call('mutant-'+name)
         _,err,status,timed_out=run.call('mutant-'+name,executor+[work+'/contract'],false)
         abort "#{name} was not a compiled fatal CHECK" unless fatal_check.call(err,status,timed_out)
         abort "#{name} missed its expected CHECK" if expected_check && !err.include?(expected_check)

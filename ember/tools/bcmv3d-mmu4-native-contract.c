@@ -22,8 +22,9 @@ typedef void vmem_t;
 typedef uint64_t vmem_addr_t;
 struct drm_file;
 struct uvm_pagerops;
-struct drm_gem_object { int unused; };
-struct drm_gem_cma_object { struct drm_gem_object base; };
+/* Native code only forwards GEM pointers; the joined BO TU owns the layout. */
+struct drm_gem_object;
+struct drm_gem_cma_object { unsigned char base[1]; };
 struct drm_driver { const char *name; };
 struct drm_device;
 struct drm_minor { int type; struct drm_device *dev; };
@@ -42,6 +43,7 @@ struct drm_device {
 #include "drv-types.h"
 #include "backing-types.h"
 #include "adapter-types.h"
+#include "table-types.h"
 
 struct cfattach { const char *ca_name; };
 typedef struct cfattach *cfattach_t;
@@ -60,6 +62,11 @@ static unsigned int backing_snapshots, backing_snapshot_failure;
 static int local_map_error;
 static bool race_observation, fail_pages, fail_close, race_slot;
 static bool reenter_io, fail_shared;
+#ifdef BCMV3D_MMU4_RANGE_CONTRACT
+static bool range_test_active;
+static uint32_t range_local_read(size_t);
+static void range_local_write(size_t, uint32_t);
+#endif
 static uint32_t debug_value, local_control, shoot_value, misc_value;
 static uint32_t last_write;
 static size_t last_offset;
@@ -233,6 +240,10 @@ bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, size_t offset)
 		return debug_value;
 	}
 	CHECK(owner->status.sealed && owner->executing && bcm2712_iommuc_mutex.held);
+#ifdef BCMV3D_MMU4_RANGE_CONTRACT
+	if (range_test_active)
+		return range_local_read(offset);
+#endif
 	CHECK(owner->active != NULL && owner->cache == &storage.core);
 	CHECK(owner->status.fault == 0 && owner->active->status.fault == 0);
 	if (reenter_io) {
@@ -260,6 +271,12 @@ bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle, size_t offset,
 	static const size_t offsets[] = {0,0x24,0x14,0x1c,0x20,4,0x30,0};
 	CHECK(owner->lock.held && bcm2712_iommuc_mutex.held);
 	CHECK(tag == &tag_token && handle == 0x4567 && !pending);
+#ifdef BCMV3D_MMU4_RANGE_CONTRACT
+	if (range_test_active) {
+		range_local_write(offset, value);
+		return;
+	}
+#endif
 	CHECK(owner->status.write_attempted && owner->status.sealed);
 	CHECK(owner->active->status.mutation_attempted && owner->active->status.retained);
 	CHECK((storage.core.status.reserved & 2) && (storage.core.status.retained & 2));
@@ -362,22 +379,22 @@ static void
 staging_wrappers(bool prepared)
 {
 	struct bcmv3d_mmu4_native_status saved = owner->status;
-	struct drm_gem_object obj;
+	unsigned char opaque_negative_object = 0;
+	struct drm_gem_object *obj = (void *)&opaque_negative_object;
 	unsigned int accesses = local_maps + local_reads + local_writes +
 	    local_barriers + snapshots + observes;
 
-	memset(&obj, 0, sizeof(obj));
-	CHECK(bcmv3d_mmu4_native_stage_gem(NULL, 0, &obj) == EINVAL);
+	CHECK(bcmv3d_mmu4_native_stage_gem(NULL, 0, obj) == EINVAL);
 	CHECK(bcmv3d_mmu4_native_discard_staged_gem(NULL, 0) == EINVAL);
 	hard_irq = true;
-	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 0, &obj) == EWOULDBLOCK);
+	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 0, obj) == EWOULDBLOCK);
 	CHECK(bcmv3d_mmu4_native_discard_staged_gem(owner, 0) == EWOULDBLOCK);
 	hard_irq = false;
 	mutex_enter(&owner->lock);
-	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 0, &obj) == EDEADLK);
+	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 0, obj) == EDEADLK);
 	CHECK(bcmv3d_mmu4_native_discard_staged_gem(owner, 0) == EDEADLK);
 	mutex_exit(&owner->lock);
-	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 0, &obj) ==
+	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 0, obj) ==
 	    (prepared ? EOPNOTSUPP : ENXIO));
 	CHECK(bcmv3d_mmu4_native_discard_staged_gem(owner, 0) ==
 	    (prepared ? ENOENT : ENXIO));
@@ -594,6 +611,9 @@ scenario(unsigned int which)
 	retained();
 }
 
+#ifdef BCMV3D_MMU4_RANGE_CONTRACT
+#define main native_reference_main
+#endif
 int
 main(void)
 
