@@ -687,6 +687,9 @@ struct iwx_softc {
 
 	/* Task for HT 20/40 MHz channel width updates. */
 	struct task		phy_ctxt_task;
+	struct task		mcc_task;
+	char			sc_mcc_cur[3];	/* domain applied to the firmware */
+	char			sc_mcc_new[3];	/* domain the firmware detected */
 
 	bus_space_tag_t sc_st;
 	bus_space_handle_t sc_sh;
@@ -833,6 +836,13 @@ struct iwx_softc {
 	int sc_xtal_latency;
 	int sc_low_latency_xtal;
 	int sc_uhb_supported;
+
+	/* HT/VHT negotiated by the driver (if_iwx_ht.h). */
+	uint32_t sc_chflags[IEEE80211_CHAN_MAX + 1];	/* NVM channel flags */
+	struct iwx_ht_peer sc_bss_ht;	/* last association response */
+	uint8_t sc_bss_ht_bssid[ETHER_ADDR_LEN];
+	int sc_bss_ht_valid;
+	uint8_t sc_ht_buf[2][IWX_HT_ASSOC_MAX];
 	int sc_umac_prph_offset;
 	int sc_imr_enabled;
 
@@ -869,6 +879,11 @@ struct iwx_node {
 #define IWX_NODE_FLAG_HAVE_PAIRWISE_KEY		0x01
 #define IWX_NODE_FLAG_HAVE_GROUP_KEY		0x02
 #define IWX_NODE_FLAG_HAVE_INTEGRITY_GROUP_KEY	0x04
+
+	/* Negotiated HT/VHT state; in_ht is 0 for legacy. */
+	int in_ht;
+	struct iwx_ht_chan in_htc;
+	struct iwx_ht_tlc in_htt;
 };
 
 #define IWX_STATION_ID 0

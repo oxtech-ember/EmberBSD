@@ -13,7 +13,7 @@
 set -eu
 src=${1:?usage: build-native.sh <proposal dir>}/src
 cp "$src"/if_iwx.c "$src"/if_iwxreg.h "$src"/if_iwxvar.h \
-    "$src"/if_iwx_compat.h /usr/src/sys/dev/pci/
+    "$src"/if_iwx_compat.h "$src"/if_iwx_ht.h /usr/src/sys/dev/pci/
 grep -q 'file	dev/pci/if_iwx.c' /usr/src/sys/dev/pci/files.pci ||
     cat "$src"/files.iwx >> /usr/src/sys/dev/pci/files.pci
 mkdir -p /usr/src/sys/modules/if_iwx

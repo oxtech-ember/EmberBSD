@@ -1,11 +1,32 @@
 # Intel BE200 Wi-Fi: iwx(4) port proposal (work in progress)
 
-Status (2026-10-20): **stage 1 works on the MSI**.  The module loads at
-boot, the BE200 runs firmware `100.3f3ef548.0` with PNVM `1464be58`,
-scans 2.4/5 GHz, associates with WPA2-PSK (CCMP) through
-`wpa_supplicant`, gets a DHCP lease and carries SSH and internet traffic
-with Ethernet unplugged.  Still outside `sys/`: no detach/unload, legacy
-rates only, all 5 GHz channels passive (LAR), software crypto.
+Status (2026-10-20): **stage 1 works on the MSI, HT/VHT negotiates**.
+The module loads at boot, the BE200 runs firmware `100.3f3ef548.0` with
+PNVM `1464be58`, scans 2.4/5 GHz, associates with WPA2-PSK (CCMP)
+through `wpa_supplicant`, gets a DHCP lease and carries SSH and internet
+traffic with Ethernet unplugged.
+
+HT/VHT (`src/if_iwx_ht.h`, contract `ember/tools/iwx-ht-contract.sh`):
+net80211 here has no 802.11n, so the driver adds HT/VHT capabilities to
+the association request, reads the AP's answer and programs PHY (20/40/80
+MHz), link, STA and TLC itself; WMM is switched on (net80211 no longer
+does it, `#if 0`); ADDBA requests are declined (an AP dropped the station
+every 15 s while they went unanswered); the country the firmware detects
+(LAR) is applied, so 5 GHz channels become active. Checked on two APs:
+`802.11ac, 80 MHz, 2 spatial streams` with WMM. On OxTech the link
+held 8.5 min including the transfers, then dropped three times within
+20 s while moving between the 2.4 and 5 GHz BSS (cause not found). One
+fatal firmware error was seen while the system was shutting down.
+**Throughput did not improve yet**: about 15-17 Mbit/s each way over the
+office LAN (200 MB `nc` transfers, OxTech, channel 64). The cause is not
+found; candidates are TX errors (`ifconfig -v iwx0` shows output errors,
+`ping` sometimes gets ENETDOWN), the firmware rate choice (TLC updates are
+not logged) and the missing A-MPDU. `modload -i ht=0` restores legacy
+mode, `ht=1` disables VHT.
+
+Still missing: detach/unload, Block Ack (A-MPDU), hardware crypto, MFP
+(so WPA3-only networks do not work), RLC_CONFIG v3 (sending the v2
+layout makes the firmware fail, so it is not sent).
 
 Boot setup used on the MSI:
 
@@ -15,7 +36,8 @@ Boot setup used on the MSI:
 | Firmware | `/libdata/firmware/if_iwx/iwx-gl-c0-fm-c0-100` and `iwx-gl-c0-fm-c0.pnvm` (linux-firmware `iwlwifi-gl-c0-fm-c0-100.ucode`, `.pnvm`) |
 | WPA | `wpa_supplicant=YES`, `wpa_supplicant_flags="-B -s -i iwx0 -c /etc/wpa_supplicant.iwx0.conf"` |
 | DHCP | `dhcpcd_flags="-qM rge0 iwx0"` |
-| Country | `modload -s mcc=XX` (default `ZZ`) |
+| Country | `modload -s mcc=XX` (default `ZZ`); replaced by the country the firmware detects |
+| HT/VHT | `modload -i ht=N`: 0 legacy, 1 HT, 2 HT+VHT (default) |
 
 Bring-up fixes on NetBSD (commits 579e0ec..bcc5a61): raw `CSR_HW_REV` as
 prph scratch `mac_id` (the GL ROM ignored the converted value), 94
