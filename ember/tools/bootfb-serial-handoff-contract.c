@@ -434,6 +434,26 @@ bcmv3d_mmu4_check_ranges(struct bcmv3d_device *renderer,
 	s->first_error = range_check_error;
 	return range_check_error;
 }
+struct bcmv3d_vblank_native { int unused; };
+static struct bcmv3d_vblank_native vblank_fixture;
+static unsigned vblank_calls;
+static int
+bcmv3d_vblank_native_create(struct bcmv3d_device *r,
+    const struct bcm2712_display_contract *c, bus_space_handle_t pv,
+    bus_space_handle_t hvs, uint32_t variant, struct bcmv3d_vblank_native **out)
+{
+	struct bcmv3d_bootfb_publish *p = &gpu_sc.sc_bootfb.publish;
+
+	CHECK(giant == 0 && !cold && !init_started && serial_fixture_held());
+	CHECK(r == fixture_renderer && c == &gpu_sc.sc_bootfb.display.contract);
+	CHECK(p->complete && p->status.complete && !p->executing);
+	CHECK(gpu_sc.sc_bootfb.range_check.complete && range_check_calls == 1);
+	CHECK(pv == p->maps[BCMV3D_PUBLISH_PV0] && hvs == p->maps[BCMV3D_PUBLISH_HVS]);
+	CHECK(variant == (uint32_t)p->frame.variant && out != NULL);
+	vblank_calls++;
+	*out = &vblank_fixture;
+	return 0;
+}
 #include "native-job.h"
 #undef bcmv3d_mmu4_native_create
 #undef bcmv3d_mmu4_native_prepare
@@ -480,7 +500,7 @@ display_initialize();
 	hvs_fail_map = hvs_fail_writeback = hvs_native_fault = 0;
 	hvs_permitted = true; hvs_reenter = hvs_progress_delayed = hvs_progress_stuck = false;
 	hvs_tuple_error = 0; hvs_partial = hvs_bypass = false; hvs_bypass_mix = 0;
-	range_check_calls = 0; range_check_error = 0;
+	range_check_calls = 0; range_check_error = 0; vblank_calls = 0;
 	hvs_profile_fault = hvs_read_fault = hvs_write_fault = hvs_ignore_write = 0;
 	hvs_query_error = 0; hvs_cxm = 1024; hvs_timeout = hvs_eof = false; hvs_busy[0] = hvs_busy[1] = 0; hvs_callback_case = 0;
 	config_finalize_done = 0; init_started = false; joined = 0;
@@ -995,6 +1015,7 @@ static void tests_hvs(void)
 				p = &gpu_sc.sc_bootfb.publish;
 				CHECK(p->attempted && p->complete && !p->executing && p->fault == 0);
 				CHECK(range_check_calls == 1 && gpu_sc.sc_bootfb.range_check.complete);
+				CHECK(vblank_calls == 1);
 				CHECK(p->status.native_valid && p->status.native.backing.prepared && p->status.native.backing.sealed);
 				CHECK(p->status.complete && p->status.active_list == 32 && (p->status.channel_status & 0x6000) == 0x4000);
 				CHECK(p->mapped == 0x1ff && hvs_maps == 6 && hvs_writeback_reads == 2 && hvs_native_queries == 1);
@@ -1025,6 +1046,7 @@ for (unsigned failure = 0; failure < 2; failure++) {
 	CHECK(gpu_sc.sc_bootfb.publish.complete && gpu_sc.sc_bootfb.publish.fault == 0);
 	CHECK(gpu_sc.sc_bootfb.first_error == 0 && range_check_calls == 1);
 	CHECK(!gpu_sc.sc_bootfb.range_check.complete && gpu_sc.sc_bootfb.range_check.first_error == range_check_error);
+	CHECK(vblank_calls == 0);
 	hvs_retry(EBUSY);
 	CHECK(range_check_calls == 1);
 }

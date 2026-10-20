@@ -2,6 +2,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 
+#include "opt_wsdisplay_bootfb.h"
 #include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/kmem.h>
@@ -16,6 +17,9 @@
 #include <drm/drm_gem.h>
 #include <drm/drm_prime.h>
 #include "bcmv3d_drv.h"
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+#include "bcmv3d_vblank_native.h"
+#endif
 
 /* Compute the total BO budget once, before the first reservation. */
 static size_t
@@ -47,6 +51,32 @@ bcmv3d_bo_sysctl(SYSCTLFN_ARGS)
 	return sysctl_lookup(SYSCTLFN_CALL(&node));
 }
 
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+static int
+bcmv3d_vblank_sysctl(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct bcmv3d_device *sc = node.sysctl_data;
+	struct bcmv3d_vblank_native *native;
+	struct bcmv3d_vblank_snapshot snapshot;
+	int error;
+
+	if (newp != NULL)
+		return EPERM;
+	mutex_enter(&sc->memory_lock);
+	native = sc->vblank_native;
+	mutex_exit(&sc->memory_lock);
+	if (native == NULL)
+		return ENXIO;
+	error = bcmv3d_vblank_native_snapshot(native, &snapshot);
+	if (error != 0)
+		return error;
+	node.sysctl_data = &snapshot;
+	node.sysctl_size = sizeof(snapshot);
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+#endif
+
 static void
 bcmv3d_bo_sysctl_init(struct bcmv3d_device *sc)
 {
@@ -63,11 +93,23 @@ bcmv3d_bo_sysctl_init(struct bcmv3d_device *sc)
 		    SYSCTL_DESCR("V3D BO reservation and allocation failure snapshot"),
 		    bcmv3d_bo_sysctl, 0, sc, sizeof(struct bcmv3d_bo_stats),
 		    CTL_CREATE, CTL_EOL);
+
 	if (error != 0) {
 		sysctl_teardown(&sc->sysctllog);
 		aprint_error_dev(sc->dev, "BO diagnostic sysctl unavailable: %d\n",
 		    error);
+		return;
 	}
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	error = sysctl_createv(&sc->sysctllog, 0, &root, NULL,
+	    CTLFLAG_READONLY, CTLTYPE_STRUCT, "display_irq",
+	    SYSCTL_DESCR("Actual PV0 event snapshot; no BO retirement"),
+	    bcmv3d_vblank_sysctl, 0, sc,
+	    sizeof(struct bcmv3d_vblank_snapshot), CTL_CREATE, CTL_EOL);
+	if (error != 0)
+		aprint_error_dev(sc->dev, "PV0 diagnostic sysctl unavailable: %d\n",
+		    error);
+#endif
 }
 
 /* A PRIME fd authorizes this BO; the offset remains relative, in bytes. */

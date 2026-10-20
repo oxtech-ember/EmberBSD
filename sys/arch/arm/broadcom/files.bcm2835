@@ -76,6 +76,8 @@ file	arch/arm/broadcom/bcm2712_display_pv0.c	bcmv3drender & bcm2712_display_comp
 file	arch/arm/broadcom/bcm2712_display_hdmi0.c	bcmv3drender & bcm2712_display_components & bcm2712iommuc_acpi & wsdisplay_bootfb_handoff
 file	external/bsd/drm2/bcmv3d/bcmv3d_hvs_publish.c	bcmv3drender & bcm2712_display_components & bcm2712iommuc_acpi & wsdisplay_bootfb_handoff
 file	external/bsd/drm2/bcmv3d/bcmv3d_mmu4_check.c	bcmv3drender & bcm2712_display_components & bcm2712iommuc_acpi & wsdisplay_bootfb_handoff
+file	external/bsd/drm2/bcmv3d/bcmv3d_vblank.c	bcmv3drender & bcm2712_display_components & bcm2712iommuc_acpi & wsdisplay_bootfb_handoff
+file	external/bsd/drm2/bcmv3d/bcmv3d_vblank_native.c	bcmv3drender & bcm2712_display_components & bcm2712iommuc_acpi & wsdisplay_bootfb_handoff
 
 # Explicit DDC0 API only. No default attachment or interrupt activation.
 defflag opt_bcm2712_ddc.h BCM2712_DISPLAY_DDC: brcmstb_i2c, i2cexec, edid

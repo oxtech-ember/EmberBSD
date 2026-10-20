@@ -260,3 +260,8 @@ and [VC6 PHY](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365
 Capacity and partition facts use [HVS allocation](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hvs.c#L1637-L1722)
 and [COB initialization](https://github.com/raspberrypi/linux/blob/a1a601d4857978d810175365550c4536701df4ed/drivers/gpu/drm/vc4/vc4_hvs.c#L2087-L2110).
 Only numeric facts inform this independent BSD implementation.
+
+The explicit handoff profile can then start the separate
+[native PV0 event owner](bcmv3d-vblank.md). It does not reuse the one-shot
+publication flag or release the initial frame. DRM/KMS and BO retirement
+remain separate integrations.

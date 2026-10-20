@@ -75,6 +75,7 @@ int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
 #include <arm/broadcom/bcm2712_display_quiesce.h>
 #include <external/bsd/drm2/bcmv3d/bcmv3d_mmu4_native.h>
 #include <external/bsd/drm2/bcmv3d/bcmv3d_hvs_publish.h>
+#include <external/bsd/drm2/bcmv3d/bcmv3d_vblank_native.h>
 #include <external/bsd/drm2/bcmv3d/bcmv3d_mmu4_check.h>
 #ifndef BCM2712_DISPLAY_COMPONENTS
 #error "BCM2712 native handoff requires the builtin display components"
@@ -934,6 +935,37 @@ out:
 	return error;
 }
 
+/* A new retained runtime owner borrows maps, not the one-shot execute flag. */
+static int
+bcmv3d_bootfb_start_vblank(struct bcmv3d_softc *sc)
+{
+	struct bcmv3d_bootfb_owner *owner = &sc->sc_bootfb;
+	struct bcmv3d_bootfb_publish *p = &owner->publish;
+	struct bcmv3d_vblank_native *native;
+	int count, error;
+
+	if (owner->phase != BCMV3D_BOOTFB_CLOSED || owner->first_error != 0 ||
+	    owner->renderer == NULL || !owner->firmware.complete ||
+	    owner->firmware.fault != 0 || !owner->display.complete ||
+	    owner->display.fault != 0 || !owner->mmu4.complete ||
+	    owner->mmu4.fault != 0 || !p->complete || p->fault != 0 ||
+	    !p->status.complete || p->executing || p->mapped != 0x1ff ||
+	    !owner->range_check.complete || owner->range_check.first_error != 0)
+		return EPERM;
+	error = bcmv3d_render_bootfb_validate(owner->renderer, sc->sc_dev,
+	    sc->sc_bst, sc->sc_dmat, sc->sc_handle, owner);
+	if (error != 0)
+		return error;
+	KERNEL_UNLOCK_ALL(NULL, &count);
+	error = bcmv3d_vblank_native_create(owner->renderer,
+	    &owner->display.contract, p->maps[BCMV3D_PUBLISH_PV0],
+	    p->maps[BCMV3D_PUBLISH_HVS], p->frame.variant, &native);
+	KERNEL_LOCK(count, NULL);
+	aprint_normal_dev(sc->sc_dev, "native PV0 event route: error %d, "
+	    "GSI 133; no DRM event or BO retirement\n", error);
+	return error;
+}
+
 static int
 bcmv3d_bootfb_notify(struct bcmv3d_softc *sc)
 {
@@ -1370,8 +1402,9 @@ bcmv3d_finalize(device_t dev)
 			else {
 				sc->sc_bootfb.renderer = renderer;
 				if (bcmv3d_bootfb_stop_display(sc) == 0 &&
-				    bcmv3d_bootfb_program_mmu4(sc) == 0)
-					(void)bcmv3d_bootfb_publish(sc);
+				    bcmv3d_bootfb_program_mmu4(sc) == 0 &&
+				    bcmv3d_bootfb_publish(sc) == 0)
+					(void)bcmv3d_bootfb_start_vblank(sc);
 			}
 #endif
 		}
