@@ -1063,8 +1063,11 @@ bcmv3d_mmu4_backing_prepare_gem_read(struct bcmv3d_mmu4_backing *b,
 
 	if (b == NULL || obj == NULL || slot >= BCM2712_MMU4_SCANOUT_SLOTS)
 		return EINVAL;
+	g = b->staged[slot];
+	if (g == NULL || g->exposed)
+		return EBUSY;
 	error = bcmv3d_mmu4_backing_range_check(b, slot,
-	    BCMV3D_MMU4_RANGE_PUBLISH);
+	    g->published ? BCMV3D_MMU4_RANGE_UNMAP : BCMV3D_MMU4_RANGE_PUBLISH);
 	if (error != 0)
 		return error;
 	g = b->staged[slot];

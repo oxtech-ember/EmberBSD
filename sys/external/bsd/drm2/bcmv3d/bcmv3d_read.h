@@ -8,7 +8,7 @@ struct dma_fence;
 struct bcmv3d_read {
 	const struct bcmv3d_read *owner;
 	struct drm_gem_object *object;
-	struct dma_fence *fence;
+	struct dma_fence *fence, *prior;
 	bool poisoned;
 };
 /*
@@ -16,12 +16,18 @@ struct bcmv3d_read {
  * a live validated GEM reference and serializes every operation on this lease.
  * Process context. Do not hold an engine/native hardware-owner mutex or this
  * BO's reservation lock. DRM modeset locks follow the core locking rules.
- * Begin retains the BO, waits only for its prior writer, and publishes a shared
- * pending fence. timeout is a positive tick budget for the writer wait only.
+ * Reserve retains the BO and its original prior writer. It publishes a shared
+ * pending reader without waiting for rendering. Wait uses only that retained
+ * writer, without taking the reservation lock. It validates fence status.
+ * Begin combines reserve and wait. timeout is a positive tick budget for wait.
+ * A failed begin cancels its never-started reader; a signalled shared fence can
+ * remain in the BO reservation until the next reservation update.
  * Each lease has a distinct fence context, including the valid context zero.
  * Simultaneous readers cannot replace one another in the reservation list.
  * Errors use positive DRM errno, including internal ERESTARTSYS.
  */
+int bcmv3d_read_reserve(struct bcmv3d_read *, struct drm_gem_object *);
+int bcmv3d_read_wait(struct bcmv3d_read *, long);
 int bcmv3d_read_begin(struct bcmv3d_read *, struct drm_gem_object *, long);
 /*
  * Complete only after actual retirement and consumer DMA/map cleanup, or after

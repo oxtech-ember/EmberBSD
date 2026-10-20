@@ -61,7 +61,7 @@ bcmv3d_flip_init(struct bcmv3d_flip *s, const struct bcmv3d_flip_event *e)
 }
 
 int
-bcmv3d_flip_ready(struct bcmv3d_flip *s, unsigned int slot)
+bcmv3d_flip_reserve(struct bcmv3d_flip *s, unsigned int slot)
 {
 	int error;
 
@@ -70,6 +70,22 @@ bcmv3d_flip_ready(struct bcmv3d_flip *s, unsigned int slot)
 	if (slot >= BCMV3D_FLIP_GEM_SLOTS)
 		return EINVAL;
 	if (s->slot[slot].state != BCMV3D_FLIP_FREE)
+		return EBUSY;
+	s->slot[slot].state = BCMV3D_FLIP_RESERVED;
+	return 0;
+}
+
+int
+bcmv3d_flip_ready(struct bcmv3d_flip *s, unsigned int slot)
+{
+	int error;
+
+	if ((error = flip_check(s)) != 0)
+		return error;
+	if (slot >= BCMV3D_FLIP_GEM_SLOTS)
+		return EINVAL;
+	if (s->slot[slot].state != BCMV3D_FLIP_FREE &&
+	    s->slot[slot].state != BCMV3D_FLIP_RESERVED)
 		return EBUSY;
 	s->slot[slot].state = BCMV3D_FLIP_READY;
 	return 0;
@@ -84,7 +100,8 @@ bcmv3d_flip_cancel(struct bcmv3d_flip *s, unsigned int slot)
 		return error;
 	if (slot >= BCMV3D_FLIP_GEM_SLOTS)
 		return EINVAL;
-	if (s->slot[slot].state != BCMV3D_FLIP_READY)
+	if (s->slot[slot].state != BCMV3D_FLIP_READY &&
+	    s->slot[slot].state != BCMV3D_FLIP_RESERVED)
 		return EBUSY;
 	s->slot[slot].state = BCMV3D_FLIP_FREE;
 	return 0;

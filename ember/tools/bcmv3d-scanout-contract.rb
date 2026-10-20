@@ -39,14 +39,17 @@ begin
   o,=run.call('positive',exec);print o
   unless ENV['SCANOUT_SKIP_MUTANTS']=='1'
    controls={
-    'prepare-wait-unlocked'=>['bcmv3d_scanout_prepare','error = bcmv3d_read_begin(&f->read, obj, 5 * hz);','mutex_enter(&n->process_lock); error = bcmv3d_read_begin(&f->read, obj, 5 * hz);'],
+    'reserve-no-PREWRITE'=>['bcmv3d_scanout_reserve','f->staged = true;','f->staged = true; (void)bcmv3d_mmu4_native_prepare_gem_read(n->sc->mmu4_native, f->slot, obj);'],
+    'cancel-never-exposed-unmap'=>['scanout_cancel_unexposed','error = bcmv3d_mmu4_native_unmap_gem(n->sc->mmu4_native, f->slot);','error = ((void)bcmv3d_mmu4_native_unmap_gem, 0);'],
+    'finalize-sticky-fault'=>['bcmv3d_scanout_finalize','if (n->flip.fault != 0)','if (false)'],
+    'prepare-wait-unlocked'=>['bcmv3d_scanout_finalize','error = bcmv3d_read_wait(&f->read, timeout);','mutex_enter(&n->process_lock); error = bcmv3d_read_wait(&f->read, timeout);'],
     'DMA-map-before-fence'=>['scanout_work','error = bcmv3d_mmu4_native_retire_gem(n->sc->mmu4_native, i, f);','error = ((void)bcmv3d_mmu4_native_retire_gem, bcmv3d_read_end(&f->read));'],
-    'same-BO-lease'=>['bcmv3d_scanout_prepare','f->object == obj && !f->preparing &&','false && f->object == obj && !f->preparing &&'],
+    'same-BO-lease'=>['bcmv3d_scanout_reserve','if (f->object != obj)','if (true)'],
     'callback-outside-lock'=>['scanout_vblank','notify(notify_arg, snapshot->sequence, update.latched, error);','{ mutex_enter(&n->lock); notify(notify_arg, snapshot->sequence, update.latched, error); }'],
     'exposure-before-write'=>['bcmv3d_scanout_submit','error = bcmv3d_mmu4_native_expose_gem(n->sc->mmu4_native,\n\t\t    slot, f->object);','error = ((void)bcmv3d_mmu4_native_expose_gem, 0);'],
     'exact-frame-proof'=>['bcmv3d_scanout_get','f != &f->owner->frame[f->slot]','false'],
     'retire-fault-retains'=>['scanout_work','if (error == 0 && n->flip.fault != 0)','if (false)'],
-    'DMA-before-prepare'=>['bcmv3d_scanout_prepare','error = bcmv3d_mmu4_native_prepare_gem_read(n->sc->mmu4_native,\n\t    f->slot, obj);','error = ((void)bcmv3d_mmu4_native_prepare_gem_read, 0);'],
+    'DMA-before-prepare'=>['bcmv3d_scanout_finalize','error = bcmv3d_mmu4_native_prepare_gem_read(n->sc->mmu4_native,\n\t    f->slot, f->object);','error = ((void)bcmv3d_mmu4_native_prepare_gem_read, 0);'],
     'sticky-write-fault'=>['scanout_write','return scanout_fault(n, EIO);','return 0;'],
     'DRM-reference'=>['bcmv3d_scanout_create','drm_dev_get(sc->drm);','(void)drm_dev_get;'],
     'pre-MMIO-fault'=>['bcmv3d_scanout_submit','if (n->flip.fault != 0) {','if (false) {'],

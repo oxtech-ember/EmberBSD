@@ -51,18 +51,16 @@ static const struct dma_fence_ops bcmv3d_read_ops = {
 };
 
 int
-bcmv3d_read_begin(struct bcmv3d_read *s, struct drm_gem_object *obj,
-    long timeout)
+bcmv3d_read_reserve(struct bcmv3d_read *s, struct drm_gem_object *obj)
 {
 	struct bcmv3d_read_fence *read;
 	struct dma_fence *prior;
-	long waited;
 	int ret, error;
 
-	if (s == NULL || obj == NULL || obj->resv == NULL || timeout <= 0)
+	if (s == NULL || obj == NULL || obj->resv == NULL)
 		return EINVAL;
 	if (s->owner != NULL || s->object != NULL || s->fence != NULL ||
-	    s->poisoned)
+	    s->prior != NULL || s->poisoned)
 		return EBUSY;
 	read = kzalloc(sizeof(*read), GFP_KERNEL);
 	if (read == NULL)
@@ -77,22 +75,10 @@ bcmv3d_read_begin(struct bcmv3d_read *s, struct drm_gem_object *obj,
 		goto fail;
 	}
 	prior = dma_fence_get(dma_resv_get_excl(obj->resv));
-	error = 0;
-	if (prior != NULL) {
-		waited = dma_fence_wait_timeout(prior, true, timeout);
-		if (waited <= 0)
-			error = waited == 0 ? ETIME : -waited;
-		else {
-			ret = dma_fence_get_status(prior);
-			error = ret > 0 ? 0 : ret == 0 ? EIO : -ret;
-		}
-	}
-	dma_fence_put(prior);
-	if (error == 0) {
-		ret = dma_resv_reserve_shared(obj->resv, 1);
-		error = ret < 0 ? -ret : ret == 0 ? 0 : EIO;
-	}
+	ret = dma_resv_reserve_shared(obj->resv, 1);
+	error = ret < 0 ? -ret : ret == 0 ? 0 : EIO;
 	if (error != 0) {
+		dma_fence_put(prior);
 		dma_resv_unlock(obj->resv);
 		goto fail;
 	}
@@ -101,10 +87,64 @@ bcmv3d_read_begin(struct bcmv3d_read *s, struct drm_gem_object *obj,
 	s->owner = s;
 	s->object = obj;
 	s->fence = &read->base;
+	s->prior = prior;
 	return 0;
 fail:
 	drm_gem_object_put_unlocked(obj);
 	dma_fence_put(&read->base);
+	return error;
+}
+
+int
+bcmv3d_read_wait(struct bcmv3d_read *s, long timeout)
+{
+	struct dma_fence *prior;
+	long waited;
+	int ret, error;
+
+	if (s == NULL || timeout <= 0)
+		return EINVAL;
+	if (s->owner != s)
+		return EPERM;
+	if (s->object == NULL || s->fence == NULL)
+		return EINVAL;
+	if (s->poisoned)
+		return EBUSY;
+	prior = s->prior;
+	if (prior == NULL)
+		return 0;
+	waited = dma_fence_wait_timeout(prior, true, timeout);
+	if (waited <= 0)
+		error = waited == 0 ? ETIME : -waited;
+	else {
+		ret = dma_fence_get_status(prior);
+		error = ret > 0 ? 0 : ret == 0 ? EIO : -ret;
+	}
+	/* A failed wait keeps the original dependency for a retry or cancellation. */
+	if (error == 0) {
+		s->prior = NULL;
+		dma_fence_put(prior);
+	}
+	return error;
+}
+
+int
+bcmv3d_read_begin(struct bcmv3d_read *s, struct drm_gem_object *obj,
+    long timeout)
+{
+	int error, cleanup;
+
+	if (timeout <= 0)
+		return EINVAL;
+	error = bcmv3d_read_reserve(s, obj);
+	if (error != 0)
+		return error;
+	error = bcmv3d_read_wait(s, timeout);
+	if (error != 0) {
+		cleanup = bcmv3d_read_end(s);
+		if (cleanup != 0)
+			return cleanup;
+	}
 	return error;
 }
 
@@ -118,7 +158,7 @@ bcmv3d_read_end(struct bcmv3d_read *s)
 	if (s == NULL)
 		return EINVAL;
 	if (s->owner == NULL && s->object == NULL && s->fence == NULL &&
-	    !s->poisoned)
+	    s->prior == NULL && !s->poisoned)
 		return 0;
 	if (s->owner != s)
 		return EPERM;
@@ -140,6 +180,8 @@ bcmv3d_read_end(struct bcmv3d_read *s)
 	s->owner = NULL;
 	s->object = NULL;
 	s->fence = NULL;
+	dma_fence_put(s->prior);
+	s->prior = NULL;
 	drm_gem_object_put_unlocked(obj);
 	dma_fence_put(fence);
 	return 0;

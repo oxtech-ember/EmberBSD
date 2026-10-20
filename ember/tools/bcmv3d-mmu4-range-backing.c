@@ -205,7 +205,7 @@ range_dma_sync(bus_dmamap_t map, size_t size, int flags)
 			CHECK(map != g->bo->cma.dmamap);
 			CHECK(size == g->bo->cma.dmasize);
 			if (flags == BUS_DMASYNC_PREWRITE) {
-				CHECK(!g->read_synced && !g->published);
+				CHECK(!g->read_synced && !g->exposed);
 				consumer_pre++;
 			} else {
 				CHECK(flags == BUS_DMASYNC_POSTWRITE && g->read_synced);

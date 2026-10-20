@@ -43,13 +43,15 @@ begin
   unless ENV['READ_SKIP_MUTANTS']=='1'
    original=File.read(d+'/read-body.h')
    controls={
+    'reserve-no-wait'=>['prior = dma_fence_get(dma_resv_get_excl(obj->resv));','prior = dma_fence_get(dma_resv_get_excl(obj->resv)); if (prior != NULL) (void)dma_fence_wait_timeout(prior, true, 17);',1,1,'waits==0 && producer.refs==3 && a.prior==&producer'],
     'unique-context'=>['dma_fence_context_alloc(1)','0',1,1,'reservation.fence->shared_count==2 && a.fence!=b.fence && a.fence->context!=b.fence->context'],
     'writer-wait'=>['waited = dma_fence_wait_timeout(prior, true, timeout);','waited = timeout;',1,1,'error==expected'],
-    'writer-status'=>['error = ret > 0 ? 0 : ret == 0 ? EIO : -ret;','error = 0;',1,1,'error==expected'],
+    'writer-status'=>['error = ret > 0 ? 0 : ret == 0 ? EIO : -ret;','(void)ret; error = 0;',1,1,'error==expected'],
     'writer-timeout'=>['error = waited == 0 ? ETIME : -waited;','error = 0;',1,1,'error==expected'],
     'retain-GEM'=>['drm_gem_object_get(obj);','(void)obj;',1,1,'bcmv3d_read_end(&copy)==EPERM && object.refs==2 && signals==0'],
-    'prior-reference'=>['prior = dma_fence_get(dma_resv_get_excl(obj->resv));','prior = dma_resv_get_excl(obj->resv);',1,1,'f && f->refs>=3 && intr && timeout==17'],
-    'copy-owner'=>['if (s->owner != s)','if (false)',1,2,'bcmv3d_read_end(&copy)==EPERM && object.refs==2 && signals==0'],
+    'prior-reference'=>['prior = dma_fence_get(dma_resv_get_excl(obj->resv));','prior = dma_resv_get_excl(obj->resv);',1,1,'f->refs==(reservation.fence_excl==f ? 3U : 2U)'],
+    'wait-copy-owner'=>['if (s->owner != s)','if (false)',1,3,'bcmv3d_read_wait(&copy,17)==EPERM'],
+    'copy-owner'=>['if (s->owner != s)','if (false)',2,3,'bcmv3d_read_end(&copy)==EPERM && object.refs==2 && signals==0'],
     'poison-retention'=>['return ret < 0 ? -ret : ret == 0 ? 0 : EIO;','drm_gem_object_put_unlocked(s->object); return ret < 0 ? -ret : ret == 0 ? 0 : EIO;',1,1,'a.fence->status==0 && b.fence->status==-EIO && object.refs==3'],
     'completion-lock'=>['ret = dma_fence_signal(s->fence);','(void)dma_resv_lock_interruptible(s->object->resv, NULL); ret = dma_fence_signal(s->fence);',1,2,'r==&reservation && !r->locked'],
     'RCU-grace'=>['call_rcu(&fence->rcu, bcmv3d_read_free_rcu);','bcmv3d_read_free_rcu(&fence->rcu);',1,1,'rcu_running && f->refs==0 && f->initialized && f->lock->live'],

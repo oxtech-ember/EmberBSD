@@ -15,7 +15,8 @@ enum bcmv3d_flip_state {
 	BCMV3D_FLIP_CURRENT,
 	BCMV3D_FLIP_RETIRING,
 	BCMV3D_FLIP_RETIRED,
-	BCMV3D_FLIP_RECLAIMING
+	BCMV3D_FLIP_RECLAIMING,
+	BCMV3D_FLIP_RESERVED
 };
 
 struct bcmv3d_flip_event {
@@ -61,10 +62,13 @@ struct bcmv3d_flip_update {
  *
  * Native code must retain the GEM/read lease, real DMA map and SRAM/UPM slot
  * until a process worker claims actual retirement and completes map cleanup.
- * reclaimed follows that cleanup. cancel is only for never-exposed READY.
+ * reclaimed follows that cleanup. reserve allocates a never-exposed slot before
+ * its writer completes. ready accepts FREE or RESERVED after actual DMA read
+ * preparation. cancel is only for never-exposed READY or RESERVED.
  * No copy/reset/reinitialization or fault recovery is supported.
  */
 int bcmv3d_flip_init(struct bcmv3d_flip *, const struct bcmv3d_flip_event *);
+int bcmv3d_flip_reserve(struct bcmv3d_flip *, unsigned int);
 int bcmv3d_flip_ready(struct bcmv3d_flip *, unsigned int);
 int bcmv3d_flip_cancel(struct bcmv3d_flip *, unsigned int);
 int bcmv3d_flip_submit(struct bcmv3d_flip *, unsigned int);

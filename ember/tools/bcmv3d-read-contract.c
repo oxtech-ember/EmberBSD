@@ -74,7 +74,7 @@ static void dma_fence_put(struct dma_fence *f)
 { if(f){CHECK(f->refs);if(--f->refs==0){CHECK(f->ops && f->ops->release);f->ops->release(f);}} }
 static int dma_fence_get_status(struct dma_fence *f) { CHECK(f && f->refs);return f->status; }
 static long dma_fence_wait_timeout(struct dma_fence *f, bool intr, long timeout)
-{ CHECK(f && f->refs>=3 && intr && timeout==17);waits++;if(f==&producer || f==&writer){CHECK(f->refs==3);}if(f==&producer || f==&writer){if(complete_on_wait)f->status=1;}else if(reader_progress)reader_progress();return wait_result; }
+{ CHECK(f && f->refs>=2 && intr && timeout==17);waits++;if(f==&producer || f==&writer){CHECK(f->refs==(reservation.fence_excl==f ? 3U : 2U));}if(f==&producer || f==&writer){if(complete_on_wait)f->status=1;}else if(reader_progress)reader_progress();return wait_result; }
 static void dma_fence_set_error(struct dma_fence *f,int error) { CHECK(f->status==0 && error<0);f->status=error; }
 static int dma_fence_signal(struct dma_fence *f)
 { CHECK(f->refs && f->lock->live);signals++;if(!f->status)f->status=1;return 0; }
@@ -173,6 +173,38 @@ static void joined(void)
 	clear_reservation();CHECK(producer.refs==1 && writer.refs==1 && object.refs==1);
 	drain_rcu();CHECK(!allocations && !locks_live && !fences_live && !snapshot_array);
 }
+static void asynchronous(void)
+{
+	struct bcmv3d_read a={0},copy;
+	unsigned calls;
+	reset(true);producer.status=0;
+	CHECK(bcmv3d_read_reserve(&a,&object)==0);
+	CHECK(waits==0 && producer.refs==3 && a.prior==&producer);
+	CHECK(a.fence->status==0 && object.refs==2 && !reservation.locked);
+	copy=a;CHECK(bcmv3d_read_wait(&copy,17)==EPERM);
+	CHECK(bcmv3d_read_wait(&a,0)==EINVAL);
+	/* A later reservation snapshot must not replace the retained writer. */
+	writer=(struct dma_fence){.refs=1,.status=1};
+	dma_fence_put(reservation.fence_excl);
+	reservation.fence_excl=dma_fence_get(&writer);
+	CHECK(producer.refs==2 && a.prior==&producer);
+	wait_result=0;calls=lock_calls;reservation.locked=true;
+	CHECK(bcmv3d_read_wait(&a,17)==ETIME && lock_calls==calls);
+	CHECK(a.prior==&producer && a.fence->status==0);
+	producer.status=-EIO;wait_result=17;
+	CHECK(bcmv3d_read_wait(&a,17)==EIO && a.prior==&producer);
+	CHECK(bcmv3d_read_end(&a)==0 && a.prior==NULL && lock_calls==calls);
+	reservation.locked=false;
+	CHECK(producer.refs==1 && object.refs==1 && writer.refs==2);
+	clear_reservation();CHECK(writer.refs==1);drain_rcu();
+	CHECK(!allocations && !locks_live && !fences_live);
+	reset(true);memset(&a,0,sizeof(a));producer.status=0;
+	CHECK(bcmv3d_read_reserve(&a,&object)==0 && waits==0);
+	complete_on_wait=true;
+	CHECK(bcmv3d_read_wait(&a,17)==0 && a.prior==NULL && waits==1);
+	calls=waits;CHECK(bcmv3d_read_wait(&a,17)==0 && waits==calls);
+	CHECK(bcmv3d_read_end(&a)==0);finish();
+}
 int main(void)
 {
 	struct bcmv3d_read a={0},b={0},copy;
@@ -214,7 +246,11 @@ int main(void)
 		if(mode==8){fail_reserve=true;expected=ENOMEM;}
 		if(mode==9){producer.status=0;complete_on_wait=true;}
 		error=bcmv3d_read_begin(&a,&object,17);CHECK(error==expected);
-		if(expected)CHECK(!a.owner && !a.object && !a.fence && !a.poisoned && object.refs==1 && !reservation.fence);
+		if(expected) {
+			CHECK(!a.owner && !a.object && !a.fence && !a.prior && !a.poisoned && object.refs==1);
+			if(mode<=5) CHECK(reservation.fence && reservation.fence->shared_count==1 && reservation.fence->shared[0]->status==1);
+			else CHECK(!reservation.fence);
+		}
 		else CHECK(bcmv3d_read_end(&a)==0 && object.refs==1);
 		CHECK(!reservation.locked && producer.refs==2);finish();
 	}
@@ -223,7 +259,7 @@ int main(void)
 	CHECK(object.refs==1 && bcmv3d_read_end(&a)==0 && object.refs==0);
 	CHECK(!reservation.fence && allocations==1 && locks_live==1);drain_rcu();
 	CHECK(!allocations && !locks_live && !fences_live);
-	joined();
+	joined();asynchronous();
 	printf("PASS actual BO reader lifetime/shared publication: %u checks\n",checks);
 	return 0;
 }

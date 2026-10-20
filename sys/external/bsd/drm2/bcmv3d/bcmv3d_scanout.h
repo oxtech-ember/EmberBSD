@@ -36,10 +36,21 @@ int bcmv3d_scanout_bind(struct bcmv3d_scanout *, bcmv3d_scanout_notify_fn, void 
 /*
  * Caller holds a live native GEM reference. Fixed1920x1080/XRGB8888/linear,
  * pitch7680/offset0. Do not call while holding an engine/native hardware lock
- * or a BO reservation lock. Prepare waits for the actual prior writer outside
- * native owner locks, publishes one read lease and syncs the consumer DMA map.
- * It returns one software reference. A matching current BO reuses its lease.
+ * or a BO reservation lock. Reserve captures the original writer and publishes
+ * one reader without waiting for rendering. It stages and publishes only
+ * unexposed translations. It does not sync the consumer data or access HVS.
+ * A matching RESERVED/READY/PENDING/CURRENT BO reuses its original lease before
+ * reservation locking. Finalize waits for the retained writer outside native
+ * owner locks, checks its status, then syncs the real consumer DMA map to READY.
+ * Finalize allocates no storage. It takes a positive writer-wait tick budget.
+ * A failed finalize leaves the reference owned by the caller. Put cancels an
+ * unexposed RESERVED or READY slot. Uncertain cleanup retains resources.
+ * Prepare combines reserve and finalize with the existing five-second budget.
+ * Each successful reserve or prepare returns one software reference.
  */
+int bcmv3d_scanout_reserve(struct bcmv3d_scanout *, struct drm_gem_object *,
+    struct bcmv3d_scanout_frame **);
+int bcmv3d_scanout_finalize(struct bcmv3d_scanout_frame *, long);
 int bcmv3d_scanout_prepare(struct bcmv3d_scanout *, struct drm_gem_object *,
     struct bcmv3d_scanout_frame **);
 int bcmv3d_scanout_get(struct bcmv3d_scanout_frame *);

@@ -313,8 +313,50 @@ bcmv3d_scanout_bind(struct bcmv3d_scanout *n,
 	return error;
 }
 
+/* The process owner serializes cleanup. No exposed consumer may enter here. */
+static int
+scanout_cancel_unexposed(struct bcmv3d_scanout_frame *f)
+{
+	struct bcmv3d_scanout *n = f->owner;
+	int error;
+
+	KASSERT(mutex_owned(&n->process_lock));
+	KASSERT(!f->preparing && !f->exposed);
+	mutex_enter(&n->lock);
+	error = n->flip.fault;
+	mutex_exit(&n->lock);
+	if (error != 0)
+		return error;
+	if (f->published)
+		error = bcmv3d_mmu4_native_unmap_gem(n->sc->mmu4_native, f->slot);
+	else if (f->staged)
+		error = bcmv3d_mmu4_native_discard_staged_gem(n->sc->mmu4_native,
+		    f->slot);
+	if (error == 0)
+		f->staged = f->published = false;
+	mutex_enter(&n->lock);
+	if (error == 0 && n->flip.fault != 0)
+		error = n->flip.fault;
+	/* The never-exposed map is gone. A later fault cannot revoke cleanup. */
+	if (error == 0)
+		f->completion_committed = true;
+	else
+		(void)scanout_fault(n, error);
+	mutex_exit(&n->lock);
+	if (error != 0)
+		return error;
+	error = bcmv3d_read_end(&f->read);
+	mutex_enter(&n->lock);
+	if (error == 0)
+		error = bcmv3d_flip_cancel(&n->flip, f->slot);
+	if (error != 0)
+		(void)scanout_fault(n, error);
+	mutex_exit(&n->lock);
+	return error;
+}
+
 int
-bcmv3d_scanout_prepare(struct bcmv3d_scanout *n, struct drm_gem_object *obj,
+bcmv3d_scanout_reserve(struct bcmv3d_scanout *n, struct drm_gem_object *obj,
     struct bcmv3d_scanout_frame **out)
 {
 	struct bcm2712_hvs_frame plane;
@@ -342,19 +384,22 @@ bcmv3d_scanout_prepare(struct bcmv3d_scanout *n, struct drm_gem_object *obj,
 	for (i = 0; error == 0 && i < BCMV3D_FLIP_GEM_SLOTS; i++) {
 		f = &n->frame[i];
 		state = n->flip.slot[i].state;
-		if (f->object == obj && !f->preparing &&
-		    (state == BCMV3D_FLIP_READY || state == BCMV3D_FLIP_PENDING ||
-		    state == BCMV3D_FLIP_CURRENT)) {
-			if (f->refs == UINT_MAX)
-				error = EOVERFLOW;
-			else
-				f->refs++;
-			mutex_exit(&n->lock);
-			if (error == 0)
-				*out = f;
-			mutex_exit(&n->process_lock);
-			goto put;
-		}
+		if (f->object != obj)
+			continue;
+		/* A writer can hold resv while waiting for our existing reader. */
+		if (f->preparing || (state != BCMV3D_FLIP_RESERVED &&
+		    state != BCMV3D_FLIP_READY && state != BCMV3D_FLIP_PENDING &&
+		    state != BCMV3D_FLIP_CURRENT))
+			error = EBUSY;
+		else if (f->refs == UINT_MAX)
+			error = EOVERFLOW;
+		else
+			f->refs++;
+		mutex_exit(&n->lock);
+		if (error == 0)
+			*out = f;
+		mutex_exit(&n->process_lock);
+		goto put;
 	}
 	f = NULL;
 	for (i = 0; error == 0 && i < BCMV3D_FLIP_GEM_SLOTS; i++) {
@@ -366,6 +411,8 @@ bcmv3d_scanout_prepare(struct bcmv3d_scanout *n, struct drm_gem_object *obj,
 	}
 	if (error == 0 && f == NULL)
 		error = EBUSY;
+	if (error == 0)
+		error = bcmv3d_flip_reserve(&n->flip, f->slot);
 	if (error == 0) {
 		f->object = obj;
 		f->refs = 1;
@@ -376,8 +423,8 @@ bcmv3d_scanout_prepare(struct bcmv3d_scanout *n, struct drm_gem_object *obj,
 	mutex_exit(&n->process_lock);
 	if (error != 0)
 		goto put;
-	/* No native hardware or process-owner lock is held across the writer wait. */
-	error = bcmv3d_read_begin(&f->read, obj, 5 * hz);
+	/* Reservation locking never nests inside a native owner lock. */
+	error = bcmv3d_read_reserve(&f->read, obj);
 	mutex_enter(&n->process_lock);
 	f->preparing = false;
 	mutex_enter(&n->lock);
@@ -390,10 +437,6 @@ bcmv3d_scanout_prepare(struct bcmv3d_scanout *n, struct drm_gem_object *obj,
 	if (error != 0)
 		goto cancel;
 	f->staged = true;
-	error = bcmv3d_mmu4_native_prepare_gem_read(n->sc->mmu4_native,
-	    f->slot, obj);
-	if (error != 0)
-		goto cancel;
 	plane = (struct bcm2712_hvs_frame) { .variant = n->variant,
 	    .dma_base = (uint64_t)(f->slot + 1) * 8 * 1024 * 1024,
 	    .dma_span = 8294400, .upm_offset = (f->slot + 1) * 15616,
@@ -401,37 +444,31 @@ bcmv3d_scanout_prepare(struct bcmv3d_scanout *n, struct drm_gem_object *obj,
 	error = bcm2712_hvs_encode_1080p60(&plane, &f->list);
 	if (error != 0)
 		goto cancel;
-	/* A failed translation publication can leave reachable PTEs. */
+	/* PTE publication is not HVS exposure and does not sync producer data. */
 	f->published = true;
 	error = bcmv3d_mmu4_native_publish_staged_gem(n->sc->mmu4_native, f->slot);
-	if (error == 0) {
-		mutex_enter(&n->lock);
-		error = bcmv3d_flip_ready(&n->flip, f->slot);
-		if (error == 0)
-			n->prepared++;
-		mutex_exit(&n->lock);
-	}
+	if (error != 0)
+		goto retain;
+	mutex_enter(&n->lock);
+	error = n->flip.fault;
+	mutex_exit(&n->lock);
 	if (error != 0)
 		goto retain;
 	*out = f;
 	mutex_exit(&n->process_lock);
 	return 0;
 cancel:
-	cleanup = f->staged ?
-	    bcmv3d_mmu4_native_discard_staged_gem(n->sc->mmu4_native, f->slot) : 0;
-	if (cleanup == 0)
-		cleanup = bcmv3d_read_end(&f->read);
+	cleanup = scanout_cancel_unexposed(f);
 	if (cleanup != 0) {
 		error = cleanup;
 		goto retain;
 	}
-	f->staged = false;
 	f->refs = 0;
 	scanout_drop_software(f);
 	mutex_exit(&n->process_lock);
 	return error;
 retain:
-	/* No software reference escapes, but actual hardware resources survive. */
+	/* No software reference escapes, but uncertain resources survive. */
 	f->refs = 0;
 	mutex_enter(&n->lock);
 	(void)scanout_fault(n, error);
@@ -441,6 +478,80 @@ retain:
 put:
 	drm_gem_object_put_unlocked(&bo->cma.base);
 	return error;
+}
+
+int
+bcmv3d_scanout_finalize(struct bcmv3d_scanout_frame *f, long timeout)
+{
+	struct bcmv3d_scanout *n;
+	enum bcmv3d_flip_state state;
+	int error;
+
+	if (f == NULL || f->owner == NULL || timeout <= 0)
+		return EINVAL;
+	n = f->owner;
+	if (f->slot >= BCMV3D_FLIP_GEM_SLOTS || f != &n->frame[f->slot])
+		return EPERM;
+	if ((error = scanout_enter(n)) != 0)
+		return error;
+	mutex_enter(&n->lock);
+	state = n->flip.slot[f->slot].state;
+	error = n->flip.fault != 0 ? n->flip.fault :
+	    f->refs == 0 || f->object == NULL ? EINVAL :
+	    f->preparing ? EBUSY :
+	    state == BCMV3D_FLIP_RESERVED || state == BCMV3D_FLIP_READY ||
+	    state == BCMV3D_FLIP_PENDING || state == BCMV3D_FLIP_CURRENT ? 0 : EBUSY;
+	if (error == 0 && state == BCMV3D_FLIP_RESERVED)
+		f->preparing = true;
+	mutex_exit(&n->lock);
+	mutex_exit(&n->process_lock);
+	if (error != 0 || state != BCMV3D_FLIP_RESERVED)
+		return error;
+	/* Wait for the captured original writer, including its error status. */
+	error = bcmv3d_read_wait(&f->read, timeout);
+	mutex_enter(&n->process_lock);
+	f->preparing = false;
+	mutex_enter(&n->lock);
+	if (n->flip.fault != 0)
+		error = scanout_fault(n, n->flip.fault);
+	mutex_exit(&n->lock);
+	if (error != 0)
+		goto out;
+	error = bcmv3d_mmu4_native_prepare_gem_read(n->sc->mmu4_native,
+	    f->slot, f->object);
+	if (error == 0) {
+		mutex_enter(&n->lock);
+		error = bcmv3d_flip_ready(&n->flip, f->slot);
+		if (error == 0)
+			n->prepared++;
+		else
+			(void)scanout_fault(n, error);
+		mutex_exit(&n->lock);
+	}
+out:
+	mutex_exit(&n->process_lock);
+	return error;
+}
+
+int
+bcmv3d_scanout_prepare(struct bcmv3d_scanout *n, struct drm_gem_object *obj,
+    struct bcmv3d_scanout_frame **out)
+{
+	struct bcmv3d_scanout_frame *f;
+	int error, cleanup;
+
+	if (out == NULL)
+		return EINVAL;
+	error = bcmv3d_scanout_reserve(n, obj, &f);
+	if (error != 0)
+		return error;
+	error = bcmv3d_scanout_finalize(f, 5 * hz);
+	if (error != 0) {
+		cleanup = bcmv3d_scanout_put(f);
+		return cleanup != 0 ? cleanup : error;
+	}
+	*out = f;
+	return 0;
 }
 
 int
@@ -488,21 +599,14 @@ bcmv3d_scanout_put(struct bcmv3d_scanout_frame *f)
 	mutex_exit(&n->lock);
 	if (error != 0)
 		goto out;
-	if (state == BCMV3D_FLIP_READY && !f->exposed) {
-		error = bcmv3d_mmu4_native_unmap_gem(n->sc->mmu4_native, f->slot);
-		if (error == 0)
-			error = bcmv3d_read_end(&f->read);
-		mutex_enter(&n->lock);
-		if (error == 0)
-			error = bcmv3d_flip_cancel(&n->flip, f->slot);
-		if (error != 0)
-			(void)scanout_fault(n, error);
-		mutex_exit(&n->lock);
+	if ((state == BCMV3D_FLIP_RESERVED || state == BCMV3D_FLIP_READY) &&
+	    !f->exposed) {
+		error = scanout_cancel_unexposed(f);
 		if (error != 0)
 			goto out;
-		f->staged = f->published = false;
 	}
-	if (state == BCMV3D_FLIP_FREE || state == BCMV3D_FLIP_READY)
+	if (state == BCMV3D_FLIP_FREE || state == BCMV3D_FLIP_RESERVED ||
+	    state == BCMV3D_FLIP_READY)
 		scanout_drop_software(f);
 out:
 	mutex_exit(&n->process_lock);
@@ -527,7 +631,8 @@ bcmv3d_scanout_matches(struct bcmv3d_scanout_frame *f,
 	mutex_enter(&n->lock);
 	state = n->flip.slot[f->slot].state;
 	matches = n->flip.fault == 0 && f->refs != 0 && f->object == obj &&
-	    !f->preparing && (state == BCMV3D_FLIP_READY ||
+	    !f->preparing && (state == BCMV3D_FLIP_RESERVED ||
+	    state == BCMV3D_FLIP_READY ||
 	    state == BCMV3D_FLIP_PENDING || state == BCMV3D_FLIP_CURRENT);
 	mutex_exit(&n->lock);
 	mutex_exit(&n->process_lock);

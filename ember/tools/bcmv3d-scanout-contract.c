@@ -74,9 +74,12 @@ static void (*pv_notify)(void *,const struct bcmv3d_vblank_snapshot *);
 static void *pv_arg;
 static uint32_t regs[0x1a000/4];
 static unsigned process_locks, irq_locks, io_calls, io_fail_at, begins, ends;
-static unsigned poisons, unloads, notifies, latch_notifies, barriers, allocations;
+static unsigned poisons, unloads, notifies, latch_notifies, barriers, allocations, waits;
 static bool in_irq, begin_fail, begin_route_fault, stage_fail, sync_fail;
 static bool publish_fail, retire_fail, expose_fail, bind_fail, wq_fail;
+static bool reservation_locked, unmap_fail, wait_route_fault, reserve_reentry;
+static bool writer_error, reserve_fail;
+static struct dma_fence original_writer;
 static bool retire_route_fault, expose_route_fault, end_route_fault, construction_delay;
 static bool read_completion_committed(struct bcmv3d_read *);
 static struct bcmv3d_read *last_reader;
@@ -155,16 +158,31 @@ static void emit(uint32_t head,unsigned advance,int error)
 	regs[(snapshot.channel_status==0x53?0x48:0x11c)/4]=head;
 	in_irq=true;pv_notify(pv_arg,&snapshot);in_irq=false;
 }
-int bcmv3d_read_begin(struct bcmv3d_read *r,
-    struct drm_gem_object *o,long timeout)
+int bcmv3d_read_reserve(struct bcmv3d_read *r,struct drm_gem_object *o)
 {
-	CHECK(!in_irq&&process_locks==0&&irq_locks==0&&timeout==5*hz);
+	struct bcmv3d_scanout_frame *other=NULL;
+	CHECK(!in_irq&&process_locks==0&&irq_locks==0&&!reservation_locked);
 	CHECK(r->owner==NULL&&r->object==NULL&&r->fence==NULL&&!r->poisoned);
 	begins++;
+	if(reserve_fail) return ENOMEM;
+	if(reserve_reentry) {
+		reserve_reentry=false;
+		CHECK(bcmv3d_scanout_reserve(device.scanout,o,&other)==EBUSY && other==NULL);
+	}
 	if(begin_route_fault) { emit(32,1,EIO);drain(); }
-	if(begin_fail) return ETIME;
 	r->fence=calloc(1,sizeof(*r->fence));CHECK(r->fence);
-	r->fence->pending=true;r->object=o;r->owner=r;o->refs++;last_reader=r;return 0;
+	r->fence->pending=true;r->object=o;r->owner=r;r->prior=&original_writer;
+	o->refs++;last_reader=r;return 0;
+}
+int bcmv3d_read_wait(struct bcmv3d_read *r,long timeout)
+{
+	CHECK(!in_irq&&process_locks==0&&irq_locks==0&&timeout==5*hz);
+	CHECK(r->owner==r&&r->fence&&r->prior==&original_writer&&!r->poisoned);
+	waits++;
+	if(wait_route_fault) { emit(32,1,EIO);drain(); }
+	if(begin_fail) return ETIME;
+	if(writer_error) return EIO;
+	r->prior=NULL;return 0;
 }
 int bcmv3d_read_end(struct bcmv3d_read *r)
 {
@@ -174,7 +192,7 @@ int bcmv3d_read_end(struct bcmv3d_read *r)
 	CHECK(r->owner==r&&!r->poisoned&&r->fence->pending);
 	for(i=0;i<3;i++) CHECK(slots[i].reader!=r);
 	if(end_route_fault) { CHECK(read_completion_committed(r));emit(snapshot.active_list,0,EIO); }
-	r->fence->pending=false;free(r->fence);r->fence=NULL;
+	r->fence->pending=false;free(r->fence);r->fence=NULL;r->prior=NULL;
 	drm_gem_object_put_unlocked(r->object);r->owner=NULL;r->object=NULL;ends++;
 	return 0;
 }
@@ -198,14 +216,15 @@ static int bcmv3d_mmu4_native_stage_gem(struct bcmv3d_mmu4_native *n,
 static int bcmv3d_mmu4_native_prepare_gem_read(struct bcmv3d_mmu4_native *n,
     unsigned slot,struct drm_gem_object *o)
 {
-	mmu_context(n,slot);CHECK(slots[slot].object==o);
+	mmu_context(n,slot);CHECK(slots[slot].object==o && waits>0 &&
+	    slots[slot].reader->prior==NULL && !slots[slot].exposed);
 	if(sync_fail) return EINVAL;
 	slots[slot].synced=true;return 0;
 }
 static int bcmv3d_mmu4_native_publish_staged_gem(struct bcmv3d_mmu4_native *n,
     unsigned slot)
 {
-	mmu_context(n,slot);CHECK(slots[slot].synced);
+	mmu_context(n,slot);CHECK(slots[slot].object && !slots[slot].synced);
 	slots[slot].published=true;return publish_fail?EIO:0;
 }
 static void drop_map(unsigned slot)
@@ -218,7 +237,7 @@ static int bcmv3d_mmu4_native_discard_staged_gem(struct bcmv3d_mmu4_native *n,
 { mmu_context(n,slot);CHECK(!slots[slot].published&&!slots[slot].exposed);drop_map(slot);return 0; }
 static int bcmv3d_mmu4_native_unmap_gem(struct bcmv3d_mmu4_native *n,
     unsigned slot)
-{ mmu_context(n,slot);CHECK(slots[slot].published&&!slots[slot].exposed);drop_map(slot);return 0; }
+{ mmu_context(n,slot);CHECK(slots[slot].published&&!slots[slot].exposed);if(unmap_fail)return EIO;drop_map(slot);return 0; }
 static int bcmv3d_mmu4_native_expose_gem(struct bcmv3d_mmu4_native *n,
     unsigned slot,struct drm_gem_object *o)
 {
@@ -360,8 +379,13 @@ static void cancelled(unsigned failure)
 	CHECK(bcmv3d_scanout_prepare(n,&bo[0].cma.base,&f)==expected);
 	if(failure) CHECK(f==(void *)(uintptr_t)0x1000);
 	else CHECK(bcmv3d_scanout_put(f)==0);
-	CHECK(bo[0].cma.base.refs==1&&slots[0].object==NULL&&io_calls==0);
-	CHECK(poisons==0);
+	if(failure==4) {
+		drain();CHECK(bo[0].cma.base.refs==3 && slots[0].object==NULL && io_calls==0);
+		CHECK(poisons==1 && ends==0 && n->flip.fault==EIO);
+	} else {
+		CHECK(bo[0].cma.base.refs==1&&slots[0].object==NULL&&io_calls==0);
+		CHECK(poisons==0);
+	}
 }
 static void retained(unsigned failure)
 {
@@ -472,6 +496,72 @@ static void races(unsigned which)
 	CHECK(bcmv3d_scanout_submit(n,NULL)==EIO);
 }
 
+static void reserved(unsigned scenario)
+{
+	struct bcmv3d_scanout *n=start(0x54);
+	struct bcmv3d_scanout_frame *a,*again=NULL,*b;
+	unsigned before;
+	if(scenario==7) {
+		reserve_fail=true;
+		CHECK(bcmv3d_scanout_reserve(n,&bo[0].cma.base,&again)==ENOMEM);
+		CHECK(again==NULL && bo[0].cma.base.refs==1 && ends==0 && waits==0);
+		CHECK(n->flip.slot[0].state==BCMV3D_FLIP_FREE && n->frame[0].object==NULL);
+		return;
+	}
+	if(scenario==6) reserve_reentry=true;
+	CHECK(bcmv3d_scanout_reserve(n,&bo[0].cma.base,&a)==0);
+	CHECK(n->flip.slot[0].state==BCMV3D_FLIP_RESERVED && slots[0].published &&
+	    !slots[0].synced && !slots[0].exposed && waits==0 && io_calls==0);
+	CHECK(a->read.prior==&original_writer && n->prepared==0);
+	CHECK(bcmv3d_scanout_matches(a,&bo[0].cma.base));
+	CHECK(bcmv3d_scanout_submit(n,a)==EBUSY && io_calls==0);
+	reservation_locked=true;before=begins;
+	CHECK(bcmv3d_scanout_reserve(n,&bo[0].cma.base,&again)==0 && again==a);
+	CHECK(begins==before && a->refs==2 && a->read.prior==&original_writer);
+	CHECK(bcmv3d_scanout_put(again)==0);reservation_locked=false;
+	if(scenario==0 || scenario==6) {
+		CHECK(bcmv3d_scanout_put(a)==0 && bo[0].cma.base.refs==1);
+		CHECK(ends==1 && unloads==1 && n->flip.slot[0].state==BCMV3D_FLIP_FREE);
+		CHECK(n->prepared==0 && waits==0);return;
+	}
+	if(scenario==1) {
+		begin_fail=true;
+		CHECK(bcmv3d_scanout_finalize(a,5*hz)==ETIME && !slots[0].synced);
+		CHECK(a->read.prior==&original_writer && n->flip.fault==0);
+		begin_fail=false;
+		CHECK(bcmv3d_scanout_finalize(a,5*hz)==0 && waits==2);
+		before=waits;CHECK(bcmv3d_scanout_finalize(a,5*hz)==0 && waits==before);
+		CHECK(n->prepared==1 && slots[0].synced);
+		CHECK(bcmv3d_scanout_put(a)==0 && ends==1 && unloads==1);return;
+	}
+	if(scenario==2) {
+		writer_error=true;
+		CHECK(bcmv3d_scanout_finalize(a,5*hz)==EIO && !slots[0].synced);
+		CHECK(bcmv3d_scanout_put(a)==0 && ends==1 && unloads==1 && n->flip.fault==0);return;
+	}
+	if(scenario==3) {
+		unmap_fail=true;
+		CHECK(bcmv3d_scanout_put(a)==EIO);drain();
+		CHECK(ends==0 && unloads==0 && poisons==1 && bo[0].cma.base.refs==4);return;
+	}
+	if(scenario==4) {
+		wait_route_fault=true;
+		CHECK(bcmv3d_scanout_finalize(a,5*hz)==EIO);drain();
+		CHECK(!slots[0].synced && waits==1 && ends==0 && unloads==0 && poisons==1);
+		CHECK(bcmv3d_scanout_put(a)==EIO && io_calls==0);return;
+	}
+	CHECK(scenario==5);
+	CHECK(bcmv3d_scanout_finalize(a,5*hz)==0);
+	CHECK(bcmv3d_scanout_submit(n,a)==0);emit(42,1,0);
+	CHECK(bcmv3d_scanout_prepare(n,&bo[1].cma.base,&b)==0);
+	CHECK(bcmv3d_scanout_submit(n,b)==0);emit(52,1,0);
+	CHECK(n->flip.slot[0].state==BCMV3D_FLIP_RETIRING);
+	reservation_locked=true;before=begins;
+	CHECK(bcmv3d_scanout_reserve(n,&bo[0].cma.base,&again)==EBUSY && begins==before);
+	reservation_locked=false;emit(52,1,0);drain();
+	CHECK(bcmv3d_scanout_put(a)==0 && bo[0].cma.base.refs==1);
+}
+
 static void run(unsigned scenario)
 {
 	if(scenario<2) life(scenario==0?0x53:0x54);
@@ -479,19 +569,20 @@ static void run(unsigned scenario)
 	else if(scenario<14) retained(scenario-6);
 	else if(scenario<67) io_fault(scenario-14);
 	else if(scenario<76) constructor(scenario-67);
-	else races(scenario-76);
+	else if(scenario<80) races(scenario-76);
+	else reserved(scenario-80);
 	CHECK(process_locks==0&&irq_locks==0);
 }
 int main(void)
 {
 	unsigned i;int status;pid_t pid;
-	for(i=0;i<80;i++) {
+	for(i=0;i<88;i++) {
 		pid=fork();CHECK(pid>=0);
 		if(pid==0) { run(i);exit(0); }
 		CHECK(waitpid(pid,&status,0)==pid);
 		CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
 	}
-	puts("PASS actual native scanout:80 isolated boots,53 I/O fault positions, consumer ordering,"
+	puts("PASS actual native scanout:88 isolated boots,53 I/O fault positions, consumer ordering,"
 	    "same-BO lifetime, actual-head latch, extra frame retirement and quarantine");
 	return 0;
 }

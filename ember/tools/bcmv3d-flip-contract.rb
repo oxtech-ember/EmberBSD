@@ -43,7 +43,7 @@ begin
     'half-range'=>['bcmv3d_flip_observe','delta >= 32','delta > 32'],
     'claim-only-retired'=>['bcmv3d_flip_claim_retired','s->slot[slot].state != BCMV3D_FLIP_RETIRED','s->slot[slot].state != BCMV3D_FLIP_RETIRING'],
     'unknown-head'=>['bcmv3d_flip_observe','if (e->active_list != current_head && e->active_list != pending_head)','if ((void)current_head, false)'],
-    'no-slot-reuse'=>['bcmv3d_flip_ready','if (s->slot[slot].state != BCMV3D_FLIP_FREE)','if (false)'],
+    'no-slot-reuse'=>['bcmv3d_flip_ready','s->slot[slot].state != BCMV3D_FLIP_FREE &&','false &&'],
     'blank-reuse'=>['bcmv3d_flip_reclaimed','slot == BCMV3D_FLIP_BLANK ?','false ?']
    }
    controls.each do |name,(fn,before,after)|

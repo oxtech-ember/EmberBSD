@@ -23,10 +23,25 @@ framebuffer registry or a disabled-channel bit cannot grant ownership.
 
 ## Prepare, submit and complete
 
-`bcmv3d_scanout_prepare` retains the native GEM object and waits for its prior
-writer outside the owner's mutexes. It publishes a real reader fence, stages
-the actual HVS consumer map, performs PREWRITE and publishes the MMU4 range.
-Repeated preparation of the current object retains its existing read lease.
+`bcmv3d_scanout_reserve` retains the native GEM object and its original writer.
+It publishes a real reader fence without waiting for rendering. It allocates
+the actual HVS consumer map and publishes unexposed MMU4 translations. It leaves
+the slot RESERVED. It does not perform consumer PREWRITE or access HVS.
+
+`bcmv3d_scanout_finalize` waits for the captured original writer outside owner
+mutexes. It checks the writer's fence status, rechecks sticky owner faults,
+performs consumer PREWRITE and changes the slot to READY. It allocates no storage.
+Call this phase from a commit worker that can wait for rendering. A failed
+finalize leaves its software reference with the caller. Put cancels a known
+never-exposed RESERVED or READY slot after successful translation removal.
+A failed or uncertain cleanup retains the reader and mapping.
+
+`bcmv3d_scanout_prepare` combines reserve and finalize with the existing bounded
+writer wait. Repeated reservation of a RESERVED, READY, PENDING or CURRENT object
+retains its original lease before reservation locking. An in-progress reservation
+or a retiring instance of that object returns EBUSY before reservation locking.
+This prevents a cycle with a writer holding the BO reservation while it waits
+for the old reader. A reused RESERVED object keeps its original dependency.
 
 Submission exposes the consumer before the first HVS write. It writes and
 verifies only the inactive list, then publishes its pointer. Actual active-head
@@ -65,9 +80,10 @@ ruby ember/tools/bootfb-serial-handoff-contract.rb
 ```
 
 The scanout test executes the actual owner, flip and list-encoder bodies with
-controlled MMU4, DMA, reader and kernel services. It checks80 isolated boots,
+controlled MMU4, DMA, reader and kernel services. It checks88 isolated boots,
 53 display I/O fault positions, delayed callbacks, slow construction, same-BO
-lifetimes and faults on both sides of the completion commit. Fifteen compiled
+lifetimes, deferred writer completion, cancellation of prepublished translations
+and faults on both sides of the completion commit. Eighteen compiled
 source controls must fail a CHECK. A crash or timeout is not a valid rejection.
 
 The range test executes the actual native adapter, provider, BO and backing

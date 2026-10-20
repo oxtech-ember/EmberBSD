@@ -192,8 +192,10 @@ range_consumer(void **bo)
 	range_bridge_consumer_counts(1, 1);
 	CHECK(range_bridge_refs(bo[0]) == 1);
 	CHECK(bcmv3d_mmu4_native_stage_gem(owner, 0, bo[0]) == 0);
-	CHECK(bcmv3d_mmu4_native_prepare_gem_read(owner, 0, bo[0]) == 0);
 	CHECK(range_call(0, BCMV3D_MMU4_RANGE_PUBLISH) == 0);
+	range_bridge_consumer_counts(1, 1);
+	/* Prepublished but unexposed translations do not sync producer data. */
+	CHECK(bcmv3d_mmu4_native_prepare_gem_read(owner, 0, bo[0]) == 0);
 	/* Known never-HVS-latched translation unmap has the same DMA pairing. */
 	CHECK(range_call(0, BCMV3D_MMU4_RANGE_UNMAP) == 0);
 	range_bridge_consumer_counts(2, 2);
