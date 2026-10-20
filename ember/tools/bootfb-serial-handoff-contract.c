@@ -460,7 +460,7 @@ display_initialize();
 	hvs_maps = hvs_writeback_reads = hvs_native_queries = hvs_gate = 0;
 	hvs_fail_map = hvs_fail_writeback = hvs_native_fault = 0;
 	hvs_permitted = true; hvs_reenter = hvs_progress_delayed = hvs_progress_stuck = false;
-	hvs_tuple_error = 0; hvs_partial = false;
+	hvs_tuple_error = 0; hvs_partial = hvs_bypass = false; hvs_bypass_mix = 0;
 	hvs_profile_fault = hvs_read_fault = hvs_write_fault = hvs_ignore_write = 0;
 	hvs_query_error = 0; hvs_cxm = 1024; hvs_timeout = hvs_eof = false; hvs_busy[0] = hvs_busy[1] = 0; hvs_callback_case = 0;
 	config_finalize_done = 0; init_started = false; joined = 0;
@@ -966,10 +966,11 @@ static void tests_hvs(void)
 	CHECK(!gpu_sc.sc_bootfb.publish.attempted && hvs_native_queries == 0 && hvs_maps == 0);
 	hvs_permitted = true; native_finish();
 	for (unsigned first = 0; first < 2; first++) {
-		for (unsigned packing = 0; packing < 2; packing++) {
+		for (unsigned packing = 0; packing < 3; packing++) {
 			for (unsigned variant = 0x53; variant <= 0x54; variant++) {
 				hvs_profile_boot(variant,first);
-				if (packing != 0) qb.regs[1][1] = 0x20000003;
+				if (packing == 1) qb.regs[1][1] = 0x20000003;
+				hvs_bypass = packing == 2;
 				hvs_reenter = true; native_finish();
 				p = &gpu_sc.sc_bootfb.publish;
 				CHECK(p->attempted && p->complete && !p->executing && p->fault == 0);
@@ -984,15 +985,28 @@ static void tests_hvs(void)
 				CHECK(((p->progress[1] >> 16) & 0x3f) == 1 && p->progress[0] == 0x4000);
 				CHECK(pb.writes == 16 && pb.barriers == 16 && memcmp(pb.regs[0]+0x1000,pb.saved[0]+0x1000,128) == 0);
 				CHECK(p->status.timing.words == 12);
-				CHECK(p->status.timing.pv[0] == (packing == 0 ? 2U : 0x20000002U));
-				CHECK(p->status.timing.pv[2] == (packing == 0 ? 0x004a0016U : 0x0094002cU));
-				CHECK(p->status.timing.pv[3] == (packing == 0 ? 0x002c03c0U : 0x00580780U));
+				CHECK(p->status.timing.pv[0] == (packing != 1 ? 2U : 0x20000002U));
+				CHECK(p->status.timing.pv[2] == (packing != 1 ? 0x004a0016U : 0x0094002cU));
+				CHECK(p->status.timing.pv[3] == (packing != 1 ? 0x002c03c0U : 0x00580780U));
 				snapshot_check();
 				CHECK(gpu_sc.sc_bootfb.first_error == 0 && serial_fixture_held());
 				reads = pb.reads; writes = pb.writes; hvs_retry(EBUSY);
 				CHECK(bcmv3d_publish_read(&gpu_sc,BCMV3D_PUBLISH_HVS,0,&value) == EPERM && pb.reads == reads);
 				CHECK(bcmv3d_publish_write(&gpu_sc,BCMV3D_PUBLISH_HVS,0,0) == EPERM && pb.writes == writes);
 			}
+		}
+	}
+	for (unsigned variant = 0x53; variant <= 0x54; variant++) {
+		for (unsigned mix = 1; mix <= 11; mix++) {
+			hvs_profile_boot(variant, false);
+			hvs_bypass = true;
+			hvs_bypass_mix = mix;
+			native_finish();
+			p = &gpu_sc.sc_bootfb.publish;
+			CHECK(p->attempted && !p->complete && p->fault == EOPNOTSUPP);
+			CHECK(!p->status.mutation_attempted && pb.writes == 0);
+			CHECK(serial_fixture_held() && p->status.native.backing.sealed);
+			hvs_retry(EOPNOTSUPP);
 		}
 	}
 	for (unsigned gate = 1; gate <= 40; gate++) {

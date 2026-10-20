@@ -63,6 +63,28 @@ static const struct profile_case profile[] = {
 	{ BCMV3D_PUBLISH_CSC0, 0x18, 0x2000, 1 }
 };
 
+/* Complete firmware bypass delta, independent of production profile selection. */
+static const struct profile_case bypass_profile[] = {
+	{ BCMV3D_PUBLISH_PV0, 4, 2, 0 },
+	{ BCMV3D_PUBLISH_PV0, 0xc, 0x004a0016, 0 },
+	{ BCMV3D_PUBLISH_PV0, 0x10, 0x002c03c0, 0 },
+	{ BCMV3D_PUBLISH_PV0, 0x94, 0x101, 0 },
+	{ BCMV3D_PUBLISH_HDMI0, 0xf4, 0x05000438, 0 },
+	{ BCMV3D_PUBLISH_HDMI0, 0x100, 0x05000438, 0 },
+	{ BCMV3D_PUBLISH_HDMI0, 0x104, 0x24, 0 },
+	{ BCMV3D_PUBLISH_HDMI0, 0x18c, 4, 0 },
+	{ BCMV3D_PUBLISH_DVP0, 0xf4, 0x543210, 0 },
+	{ BCMV3D_PUBLISH_CSC0, 0, 0x3b, 0 },
+	{ BCMV3D_PUBLISH_PHY0, 0, 0x4f, 0 },
+	/* These six inactive coefficients must not authorize active conversion. */
+	{ BCMV3D_PUBLISH_CSC0, 4, 0x54341400, 0 },
+	{ BCMV3D_PUBLISH_CSC0, 8, 0x4a490c41, 0 },
+	{ BCMV3D_PUBLISH_CSC0, 0xc, 0xfe71ccaa, 0 },
+	{ BCMV3D_PUBLISH_CSC0, 0x10, 0x74113a90, 0 },
+	{ BCMV3D_PUBLISH_CSC0, 0x14, 0x03a120ca, 0 },
+	{ BCMV3D_PUBLISH_CSC0, 0x18, 0xe54e720c, 0 }
+};
+
 static struct {
 	uint32_t regs[BCMV3D_PUBLISH_WINDOWS][0x4200 / 4];
 	uint32_t saved[BCMV3D_PUBLISH_WINDOWS][0x4200 / 4];
@@ -455,10 +477,34 @@ publication_scenario(unsigned int variant, const char *kind, unsigned int id,
 			backing_snapshot_check();
 	}
 	publish_setup(variant);
-	if (strcmp(kind, "profile") == 0) {
+	if (strncmp(kind, "bypass", 6) == 0) {
+		for (before = 0; before < __arraycount(bypass_profile); before++) {
+			const struct profile_case *p = &bypass_profile[before];
+
+			pb.regs[p->window][p->offset / 4] = p->value;
+		}
+	}
+	if (strcmp(kind, "bypass") == 0) {
+		CHECK(id < 2);
+		if (id == 1) {
+			for (before = 1; before <= 6; before++)
+				pb.regs[BCMV3D_PUBLISH_CSC0][before] ^= 0xffffffff;
+		}
+	} else if (strcmp(kind, "bypass-mix") == 0) {
+		CHECK(id < 11);
+		for (before = 0; before < __arraycount(profile); before++) {
+			if (profile[before].window == bypass_profile[id].window &&
+			    profile[before].offset == bypass_profile[id].offset)
+				pb.regs[profile[before].window][profile[before].offset / 4] =
+				    profile[before].value;
+		}
+		expected = EOPNOTSUPP;
+	} else if (strcmp(kind, "profile") == 0 ||
+	    strcmp(kind, "bypass-profile") == 0) {
 		CHECK(id < __arraycount(profile));
 		pb.regs[profile[id].window][profile[id].offset / 4] ^= profile[id].flip;
-		expected = EOPNOTSUPP;
+		expected = strcmp(kind, "bypass-profile") == 0 && id >= 37 ?
+		    0 : EOPNOTSUPP;
 	} else if (strcmp(kind, "native") == 0) {
 		native_gate(id);
 		expected = EBUSY;
@@ -616,6 +662,8 @@ invalid_result:
 	    native_accesses);
 	CHECK(pb.status.attempted && pb.status.complete == (error == 0));
 	CHECK(pb.status.first_error == expected);
+	if (strncmp(kind, "bypass", 6) == 0 && error != 0)
+		CHECK(pb.writes == 0 && !pb.status.mutation_attempted);
 	if (strcmp(kind, "profile") == 0 && id == 10) {
 		for (before = 0; before < 26; before++)
 			CHECK(pb.link_reads[before] == 1);
@@ -625,7 +673,8 @@ invalid_result:
 	    strcmp(kind, "real-partial") == 0 || strcmp(kind, "real-combined") == 0 ||
 	    strcmp(kind, "context") == 0 || strcmp(kind, "version") == 0 ||
 	    strcmp(kind, "busy") == 0 || strcmp(kind, "hvs-profile") == 0 ||
-	    (strcmp(kind, "profile") == 0 && id == 0))
+	    ((strcmp(kind, "profile") == 0 ||
+	    strcmp(kind, "bypass-profile") == 0) && id == 0))
 		CHECK(pb.status.timing.words == 0);
 	else if (strcmp(kind, "read") != 0)
 		CHECK(pb.status.timing.words == 12);
@@ -777,6 +826,12 @@ main(void)
 			run_publication(variant, "busy", i, &r, &w);
 		for (i = 0; i < __arraycount(profile); i++)
 			run_publication(variant, "profile", i, &r, &w);
+		for (i = 0; i < 2; i++)
+			run_publication(variant, "bypass", i, &r, &w);
+		for (i = 0; i < 11; i++)
+			run_publication(variant, "bypass-mix", i, &r, &w);
+		for (i = 0; i < __arraycount(profile); i++)
+			run_publication(variant, "bypass-profile", i, &r, &w);
 		for (i = 0; i < 30; i++)
 			run_publication(variant, "native", i, &r, &w);
 		for (i = 1; i <= nreads; i++)

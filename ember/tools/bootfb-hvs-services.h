@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Existing independent publication bus oracle, with actual retained owner wiring. */
 #include "publish-oracle.h"
-static bool hvs_partial;
+static bool hvs_partial, hvs_bypass;
+static unsigned hvs_bypass_mix;
 static unsigned hvs_profile_fault, hvs_read_fault, hvs_write_fault;
 static unsigned hvs_ignore_write;
 static int hvs_query_error;
@@ -26,6 +27,24 @@ static void hvs_before_publish(void)
 	if (pb.regs[1][1] == 2) {
 		pb.regs[1][0xc / 4] = 0x004a0016;
 		pb.regs[1][0x10 / 4] = 0x002c03c0;
+	}
+	if (hvs_bypass) {
+		for (unsigned i = 0; i < __arraycount(bypass_profile); i++) {
+			const struct profile_case *r = &bypass_profile[i];
+
+			pb.regs[r->window][r->offset / 4] = r->value;
+		}
+		if (hvs_bypass_mix != 0) {
+			const struct profile_case *r;
+
+			CHECK(hvs_bypass_mix <= 11);
+			r = &bypass_profile[hvs_bypass_mix - 1];
+			for (unsigned i = 0; i < __arraycount(profile); i++) {
+				if (profile[i].window == r->window &&
+				    profile[i].offset == r->offset)
+					pb.regs[r->window][r->offset / 4] = profile[i].value;
+			}
+		}
 	}
 	pb.fail_read = hvs_read_fault; pb.fail_write = hvs_write_fault;
 	pb.partial = hvs_partial; pb.ignore_write = hvs_ignore_write;

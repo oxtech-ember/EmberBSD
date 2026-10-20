@@ -19,31 +19,31 @@
 
 struct publish_profile_word {
 	enum bcmv3d_hvs_publish_window window;
-	uint32_t offset, mask, expected;
+	uint32_t offset, mask, expected, bypass_expected;
 };
 
-/* Fixed read-only digital signature. These values do not prove PLL lock. */
+/* Two fixed read-only digital signatures. Neither proves PLL lock. */
 static const struct publish_profile_word publish_link[] = {
-	{ BCMV3D_PUBLISH_HD, 0x44, 0x99040000, 0x80000000 },
-	{ BCMV3D_PUBLISH_HDMI0, 0x18c, 0x70f, 0x200 },
-	{ BCMV3D_PUBLISH_HDMI0, 0x114, 0xf, 0 },
-	{ BCMV3D_PUBLISH_HDMI0, 0x1e4, 1, 0 },
-	{ BCMV3D_PUBLISH_HDMI0, 0x7c, 0x21, 1 },
-	{ BCMV3D_PUBLISH_DVP0, 0xbc, 2, 0 },
-	{ BCMV3D_PUBLISH_DVP0, 0xf0, 0xc, 0 },
-	{ BCMV3D_PUBLISH_DVP0, 0xf4, 0xffffff, 0x354021 },
-	{ BCMV3D_PUBLISH_CSC0, 0, 0x7f, 7 },
-	{ BCMV3D_PUBLISH_CSC0, 0x2c, 0xc0, 0 },
-	{ BCMV3D_PUBLISH_PHY0, 0x1c, 0x23ff, 0x2036 },
-	{ BCMV3D_PUBLISH_PHY0, 0x28, 0x1f, 9 },
-	{ BCMV3D_PUBLISH_PHY0, 0x2c, 0x7ff, 0x407 },
-	{ BCMV3D_PUBLISH_PHY0, 0x44, 0xf, 0 },
-	{ BCMV3D_PUBLISH_PHY0, 0x54, 3, 0 },
-	{ BCMV3D_PUBLISH_PHY0, 0, 0x7f, 0x7f },
-	{ BCMV3D_PUBLISH_PHY0, 4, 0x1cf, 0x1cf },
-	{ BCMV3D_PUBLISH_PHY0, 0x190, 1, 1 },
-	{ BCMV3D_PUBLISH_PHY0, 0x194, 1, 1 },
-	{ BCMV3D_PUBLISH_RM0, 0x18, 0xffffffff, 0x98100000 }
+	{ BCMV3D_PUBLISH_HD, 0x44, 0x99040000, 0x80000000, 0x80000000 },
+	{ BCMV3D_PUBLISH_HDMI0, 0x18c, 0x70f, 0x200, 4 },
+	{ BCMV3D_PUBLISH_HDMI0, 0x114, 0xf, 0, 0 },
+	{ BCMV3D_PUBLISH_HDMI0, 0x1e4, 1, 0, 0 },
+	{ BCMV3D_PUBLISH_HDMI0, 0x7c, 0x21, 1, 1 },
+	{ BCMV3D_PUBLISH_DVP0, 0xbc, 2, 0, 0 },
+	{ BCMV3D_PUBLISH_DVP0, 0xf0, 0xc, 0, 0 },
+	{ BCMV3D_PUBLISH_DVP0, 0xf4, 0xffffff, 0x354021, 0x543210 },
+	{ BCMV3D_PUBLISH_CSC0, 0, 0x7f, 7, 0x3b },
+	{ BCMV3D_PUBLISH_CSC0, 0x2c, 0xc0, 0, 0 },
+	{ BCMV3D_PUBLISH_PHY0, 0x1c, 0x23ff, 0x2036, 0x2036 },
+	{ BCMV3D_PUBLISH_PHY0, 0x28, 0x1f, 9, 9 },
+	{ BCMV3D_PUBLISH_PHY0, 0x2c, 0x7ff, 0x407, 0x407 },
+	{ BCMV3D_PUBLISH_PHY0, 0x44, 0xf, 0, 0 },
+	{ BCMV3D_PUBLISH_PHY0, 0x54, 3, 0, 0 },
+	{ BCMV3D_PUBLISH_PHY0, 0, 0x7f, 0x7f, 0x4f },
+	{ BCMV3D_PUBLISH_PHY0, 4, 0x1cf, 0x1cf, 0x1cf },
+	{ BCMV3D_PUBLISH_PHY0, 0x190, 1, 1, 1 },
+	{ BCMV3D_PUBLISH_PHY0, 0x194, 1, 1, 1 },
+	{ BCMV3D_PUBLISH_RM0, 0x18, 0xffffffff, 0x98100000, 0x98100000 }
 };
 
 _Static_assert(__arraycount(publish_link) + 6 == BCMV3D_PUBLISH_LINK_WORDS,
@@ -178,6 +178,7 @@ bcmv3d_hvs_publish_1080p60(struct bcmv3d_mmu4_native *native,
 	uint32_t ctrl, stat, stride, lptr, cob, dl, pri, value, scale, offset;
 	uint32_t horza, horzb;
 	unsigned int i, poll;
+	bool bypass;
 	int error;
 
 	if (native == NULL || io == NULL || frame == NULL || s == NULL ||
@@ -296,10 +297,12 @@ bcmv3d_hvs_publish_1080p60(struct bcmv3d_mmu4_native *native,
 		s->link[__arraycount(publish_link) + i] = s->raw;
 		s->link_words++;
 	}
+	/* CSC ENABLE is bit2. Only the complete inherited bypass tuple follows. */
+	bypass = (s->link[8] & 0x7f) == 0x3b;
 	/* Retain FIFO/start policy. Check only format, repetition and route. */
 	EXPECT(BCMV3D_PUBLISH_PV0, 0, 0x00e0003d, pv.control & 0x00e0003d);
 	/* Exact VCONTROL selects one complete horizontal packing profile. */
-	if (s->timing.pv[0] == 2) {
+	if (bypass || s->timing.pv[0] == 2) {
 		value = 2;
 		horza = 0x004a0016;
 		horzb = 0x002c03c0;
@@ -316,44 +319,52 @@ bcmv3d_hvs_publish_1080p60(struct bcmv3d_mmu4_native *native,
 	CACHED(BCMV3D_PUBLISH_PV0, 0x18, s->timing.pv[5], 0xffffffff, pv.vertb);
 	EXPECT(BCMV3D_PUBLISH_PV0, 0x24, 0x3ff, 0);
 	EXPECT(BCMV3D_PUBLISH_PV0, 0x34, 0x3c, pv.mux_cfg);
-	EXPECT(BCMV3D_PUBLISH_PV0, 0x94, 0xff0, pv.pipe_init_ctrl & 0xff0);
+	EXPECT(BCMV3D_PUBLISH_PV0, 0x94, 0xff0,
+	    bypass ? 0x100 : pv.pipe_init_ctrl & 0xff0);
 	CACHED(BCMV3D_PUBLISH_HDMI0, 0xec, s->timing.hdmi[0],
 	    0x1fffffff, hdmi.horza);
 	CACHED(BCMV3D_PUBLISH_HDMI0, 0xf0, s->timing.hdmi[1],
 	    0x07ff07ff, hdmi.horzb);
 	CACHED(BCMV3D_PUBLISH_HDMI0, 0xf4, s->timing.hdmi[2],
-	    0x1f7f1fff, hdmi.verta0);
+	    0x1f7f1fff, bypass ? 0x05000438 : hdmi.verta0);
 	CACHED(BCMV3D_PUBLISH_HDMI0, 0x100, s->timing.hdmi[3],
-	    0x1f7f1fff, hdmi.verta1);
+	    0x1f7f1fff, bypass ? 0x05000438 : hdmi.verta1);
 	CACHED(BCMV3D_PUBLISH_HDMI0, 0xf8, s->timing.hdmi[4],
 	    0x3fff01ff, hdmi.vertb0);
 	CACHED(BCMV3D_PUBLISH_HDMI0, 0x104, s->timing.hdmi[5],
-	    0x3fff01ff, hdmi.vertb1);
+	    0x3fff01ff, bypass ? 0x24 : hdmi.vertb1);
 	for (i = 0; i < __arraycount(publish_link); i++) {
 		word = &publish_link[i];
+		value = bypass ? word->bypass_expected : word->expected;
 		CACHED(word->window, word->offset, s->link[i],
-		    word->mask, word->expected);
+		    word->mask, value);
 	}
-	/* Accept the pinned full or limited RGB matrix. No YCbCr conversion. */
-	if (s->link[__arraycount(publish_link)] == 0x00001b80) {
-		scale = 0x1b80;
-		offset = 0x04000000;
-	} else {
-		scale = 0x2000;
-		offset = 0;
+	/*
+	 * Disabled CSC coefficients do not affect this retained bypass profile.
+	 * All timing/link fields above must match before any HVS/PV write.
+	 */
+	if (!bypass) {
+		/* Accept the pinned full or limited RGB matrix. No YCbCr conversion. */
+		if (s->link[__arraycount(publish_link)] == 0x00001b80) {
+			scale = 0x1b80;
+			offset = 0x04000000;
+		} else {
+			scale = 0x2000;
+			offset = 0;
+		}
+		CACHED(BCMV3D_PUBLISH_CSC0, 4,
+		    s->link[__arraycount(publish_link) + 0], 0xffffffff, scale);
+		CACHED(BCMV3D_PUBLISH_CSC0, 8,
+		    s->link[__arraycount(publish_link) + 1], 0xffffffff, offset);
+		CACHED(BCMV3D_PUBLISH_CSC0, 0xc,
+		    s->link[__arraycount(publish_link) + 2], 0xffffffff, scale << 16);
+		CACHED(BCMV3D_PUBLISH_CSC0, 0x10,
+		    s->link[__arraycount(publish_link) + 3], 0xffffffff, offset);
+		CACHED(BCMV3D_PUBLISH_CSC0, 0x14,
+		    s->link[__arraycount(publish_link) + 4], 0xffffffff, 0);
+		CACHED(BCMV3D_PUBLISH_CSC0, 0x18,
+		    s->link[__arraycount(publish_link) + 5], 0xffffffff, offset | scale);
 	}
-	CACHED(BCMV3D_PUBLISH_CSC0, 4,
-	    s->link[__arraycount(publish_link) + 0], 0xffffffff, scale);
-	CACHED(BCMV3D_PUBLISH_CSC0, 8,
-	    s->link[__arraycount(publish_link) + 1], 0xffffffff, offset);
-	CACHED(BCMV3D_PUBLISH_CSC0, 0xc,
-	    s->link[__arraycount(publish_link) + 2], 0xffffffff, scale << 16);
-	CACHED(BCMV3D_PUBLISH_CSC0, 0x10,
-	    s->link[__arraycount(publish_link) + 3], 0xffffffff, offset);
-	CACHED(BCMV3D_PUBLISH_CSC0, 0x14,
-	    s->link[__arraycount(publish_link) + 4], 0xffffffff, 0);
-	CACHED(BCMV3D_PUBLISH_CSC0, 0x18,
-	    s->link[__arraycount(publish_link) + 5], 0xffffffff, offset | scale);
 
 	s->stage = BCMV3D_PUBLISH_DLIST;
 	for (i = 0; i < BCM2712_HVS_DLIST_WORDS; i++)

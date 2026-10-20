@@ -79,8 +79,14 @@ begin
     unless ENV['HVS_PUBLISH_SKIP_MUTANTS'] == '1'
       original = File.binread(work + '/publish-body.h')
       controls = {
+        'bypass-selector' => ['bypass = (s->link[8] & 0x7f) == 0x3b;', 'bypass = false;', '0:bypass:0', 'error == expected'],
+        'bypass-pipe' => ['EXPECT(BCMV3D_PUBLISH_PV0, 0x94, 0xff0,\n\t    bypass ? 0x100 : pv.pipe_init_ctrl & 0xff0);', 'if (!bypass) EXPECT(BCMV3D_PUBLISH_PV0, 0x94, 0xff0, pv.pipe_init_ctrl & 0xff0);', '0:bypass-mix:3', 'error == expected'],
+        'bypass-vfp' => ['CACHED(BCMV3D_PUBLISH_HDMI0, 0xf4, s->timing.hdmi[2],\n\t    0x1f7f1fff, bypass ? 0x05000438 : hdmi.verta0);', 'if (!bypass) CACHED(BCMV3D_PUBLISH_HDMI0, 0xf4, s->timing.hdmi[2], 0x1f7f1fff, hdmi.verta0);', '0:bypass-mix:4', 'error == expected'],
+        'bypass-xbar' => ['{ BCMV3D_PUBLISH_DVP0, 0xf4, 0xffffff, 0x354021, 0x543210 }', '{ BCMV3D_PUBLISH_DVP0, 0xf4, 0xffffff, 0x354021, 0x354021 }', '0:bypass:0', 'error == expected'],
+        'bypass-inactive-coefficients' => ['if (!bypass) {', 'if (true) {', '0:bypass:1', 'error == expected'],
+        'active-coefficients' => ['if (!bypass) {', 'if (false) {', '0:profile:37', 'error == expected'],
         'link-prefix' => ['s->link[i] = s->raw;', 's->link[i] = 0;', '0:positive:0', 'error == expected'],
-        'link-cached' => ['CACHED(word->window, word->offset, s->link[i],\n\t\t    word->mask, word->expected);', 'EXPECT(word->window, word->offset, word->mask, word->expected);', '0:positive:0', 'pb.link_reads[i] == 1'],
+        'link-cached' => ['CACHED(word->window, word->offset, s->link[i],\n\t\t    word->mask, value);', 'EXPECT(word->window, word->offset, word->mask, word->expected);', '0:positive:0', 'pb.link_reads[i] == 1'],
         'link-read-error' => ['READ(word->window, word->offset);', '(void)publish_read(io, arg, s, word->window, word->offset);', '0:read:30', 'arg == &pb && !pb.faulted && !pb.pending'],
         'native-primary' => ["\tif (n->program_error != 0)\n\t\treturn n->program_error;\n\tif (n->prepare_error != 0)\n\t\treturn n->prepare_error;\n\tif (n->fault != 0)\n\t\treturn n->fault;", "\tif (n->fault != 0)\n\t\treturn n->fault;\n\tif (n->program_error != 0)\n\t\treturn n->program_error;\n\tif (n->prepare_error != 0)\n\t\treturn n->prepare_error;", '0:real-combined:0', 'error == expected'],
         'eof-complete' => ['(s->channel_status & 0x6000) == 0x4000)', '(s->channel_status & 0x4000) != 0)', '0:eof:0', 'error == expected'],
@@ -107,12 +113,12 @@ begin
         'reset' => ['WRITE(BCMV3D_PUBLISH_HVS, ctrl, 0x40000000);', 'if (false) WRITE(BCMV3D_PUBLISH_HVS, ctrl, 0x40000000);', '0:positive:0', 'pb.reset_writes == 1'],
         'fresh-ctrl1' => ['READ(BCMV3D_PUBLISH_HVS, ctrl + 4);', 'if (false) READ(BCMV3D_PUBLISH_HVS, ctrl + 4);', '0:positive:0', 'pb.channel_writes == 2 && value == 0xa55a0200'],
         'geometry' => ['WRITE(BCMV3D_PUBLISH_HVS, ctrl, 0x877f0437);', 'WRITE(BCMV3D_PUBLISH_HVS, ctrl, 0x87800438);', '0:positive:0', 'value == 0x877f0437'],
-        'phy-rate' => ['{ BCMV3D_PUBLISH_RM0, 0x18, 0xffffffff, 0x98100000 }', '{ BCMV3D_PUBLISH_RM0, 0x18, 0, 0 }', '0:profile:36', 'error == expected'],
-        'rgb' => ['{ BCMV3D_PUBLISH_DVP0, 0xf4, 0xffffff, 0x354021 }', '{ BCMV3D_PUBLISH_DVP0, 0xf4, 0, 0 }', '0:profile:24', 'error == expected'],
+        'phy-rate' => ['{ BCMV3D_PUBLISH_RM0, 0x18, 0xffffffff, 0x98100000, 0x98100000 }', '{ BCMV3D_PUBLISH_RM0, 0x18, 0, 0, 0 }', '0:profile:36', 'error == expected'],
+        'rgb' => ['{ BCMV3D_PUBLISH_DVP0, 0xf4, 0xffffff, 0x354021, 0x543210 }', '{ BCMV3D_PUBLISH_DVP0, 0xf4, 0, 0, 0 }', '0:profile:24', 'error == expected'],
         'ppc2-crossed-horza' => ['CACHED(BCMV3D_PUBLISH_PV0, 0xc, s->timing.pv[2], 0xffffffff, horza);', 'if (false) CACHED(BCMV3D_PUBLISH_PV0, 0xc, s->timing.pv[2], 0xffffffff, horza);', '1:packing:4', 'error == expected'],
         'ppc2-crossed-horzb' => ['CACHED(BCMV3D_PUBLISH_PV0, 0x10, s->timing.pv[3], 0xffffffff, horzb);', 'if (false) CACHED(BCMV3D_PUBLISH_PV0, 0x10, s->timing.pv[3], 0xffffffff, horzb);', '0:packing:5', 'error == expected'],
         'pv-timing' => ['CACHED(BCMV3D_PUBLISH_PV0, 0x10, s->timing.pv[3], 0xffffffff, horzb);', 'if (false) CACHED(BCMV3D_PUBLISH_PV0, 0x10, s->timing.pv[3], 0xffffffff, horzb);', '0:profile:5', 'error == expected'],
-        'hdmi-enable' => ['{ BCMV3D_PUBLISH_HD, 0x44, 0x99040000, 0x80000000 }', '{ BCMV3D_PUBLISH_HD, 0x44, 0, 0 }', '0:profile:17', 'error == expected'],
+        'hdmi-enable' => ['{ BCMV3D_PUBLISH_HD, 0x44, 0x99040000, 0x80000000, 0x80000000 }', '{ BCMV3D_PUBLISH_HD, 0x44, 0, 0, 0 }', '0:profile:17', 'error == expected'],
         'write-error' => ['error = io->write(arg, window, offset, value);', 'error = io->write(arg, window, offset, value); error = 0;', '0:write:1', '!pb.faulted && pb.pending'],
         'poll-bound' => ['#define PUBLISH_POLLS\t\t100U', '#define PUBLISH_POLLS\t\t99U', '0:timeout:0', 'pb.delays == 100 && pb.status.polls == 100'],
         'sticky' => ['if (s->attempted || s->complete || s->first_error != 0)', 'if (false)', '0:positive:0', '== (error != 0 ? error : EBUSY)']

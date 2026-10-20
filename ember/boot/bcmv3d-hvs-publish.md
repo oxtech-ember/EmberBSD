@@ -69,10 +69,8 @@ the separate completed helper result. No sample proves visible pixels or AXI dra
 A coherent GCC16 kernel and four-module kit links successfully. Actual target-TU
 GCC, Cppcheck and Clang Static Analyzer checks pass their recorded classifications.
 On one BCM2712 board, native MMU4 completes and the four GPU tests pass.
-The coupled horizontal profile passes. Publication refuses PIPE_INIT_CTRL101
-where the native profile requires110. The saved HDMI vertical words also differ
-from the native encoder. The complete inherited link is not yet admitted.
-Physical HVS publication and a first visible frame remain pending.
+The source supports complete converted-RGB and retained CSC-bypass signatures.
+Physical publication, color correctness and a first visible frame remain pending.
 
 ## Conservative inherited profile
 
@@ -104,6 +102,26 @@ A future owner can then implement complete mode programming from actual facts.
 | PHY0 +1c / +28 / +2c / +44 / +54 | 23ff / 1f / 7ff / f / 3 | 2036 / 9 / 407 / 0 / 0 |
 | PHY0 +0 / +4 / +190 / +194 | 7f / 1cf / 1 / 1 | 7f / 1cf / 1 / 1 |
 | RM0 +18 | ffffffff | 98100000 |
+
+The table describes the converted-RGB signature. A second complete firmware
+signature requires all of these replacements together:
+
+| Word | Bypass value |
+|---|---:|
+| PV VCONTROL / HORZA / HORZB | 2 / 004a0016 / 002c03c0 |
+| PV PIPE_INIT_CTRL under maskff0 | 100 |
+| HDMI VERTA0/1 / VERTB1 | 05000438 / 24 |
+| HDMI deep color under mask70f | 4 |
+| DVP XBAR | 543210 |
+| CSC CTL under mask7f | 3b |
+| PHY RESET_CTL under mask7f | 4f |
+
+CSC CTL3b selects this signature. ENABLE bit2 is clear and 444-to-422 bit6 is
+clear. The six inactive coefficients remain cached but do not gate admission.
+Every other table check still applies. Mixed signatures fail before the first
+write. This preserves a complete inherited path. It does not derive a new mode
+from its unusual vertical fields or program the PHY. Active CSC still requires
+the full or limited RGB matrix below. Visible colors need a display test.
 
 All table numbers are hexadecimal. PV CONTROL retains the inherited FIFO levels,
 CLR_AT_START, WAIT_HSTART and underflow policy. They are driver tuning, not a
@@ -196,7 +214,8 @@ PREWRITE status, fresh RMW, barriers, first 128 preservation, inherited profiles
 all read/write faults, partial writes, ignored writes, retained state and one-shot
 refusal. Both exact PPC tuples, crossed and mixed pairs, all snapshot read faults,
 pre-snapshot refusals, complete snapshots before a timing mismatch and cached
-diagnostics are checked. Each causal mutant must compile, then fail its named CHECK with SIGABRT.
+diagnostics are checked. Complete color profiles, eleven mixed-field refusals
+and inactive coefficients are checked. Each causal mutant must compile, then fail its named CHECK with SIGABRT.
 `HVS_PUBLISH_EVIDENCE`, `HVS_PUBLISH_SELECT`, `HVS_PUBLISH_MUTANTS`, `CC`, `CFLAGS`
 and `TEST_RUNNER` preserve or select bounded host checks. These tests do not prove
 native pool ownership or a working display.
@@ -213,7 +232,7 @@ SKIP_MUTANTS=1 CFLAGS='-DNDEBUG -fsanitize=address,undefined -fno-omit-frame-poi
 
 Controlled services supply kernel, ACPI, renderer tuple, DMA and bus behavior.
 Tests inject faults into the actual completed native object; they do not borrow
-a fabricated positive MMU4 status. Both layouts, finalizer orders, all owner and
+a fabricated positive MMU4 status. Both layouts, finalizer orders, both color profiles, eleven hybrids, owner and
 native refusals, fresh writeback gates, every profile/read/write/map fault,
 one-shot reentry, read-only windows, partial writes and retained errors are checked.
 Host sanitizer execution does not establish target ABI, pool ownership or pixels.
