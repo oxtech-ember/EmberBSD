@@ -727,7 +727,8 @@ on every board in the hardware catalog.
   A firmware ACK grants no display ownership, hardware exclusion or scanout drain.
   After render attachment, the same owner can hold four clocks and perform a bounded
   [two-pipeline stop](ember/boot/bcm2712-native-display-quiesce.md). This continuation
-  is source-tested; its target link and physical acceptance remain pending.
+  passes coherent GCC16 links and physical CM5 checks. Both pipelines stop
+  before native MMU4 programming.
 A default-off [loader source record](ember/boot/boot-framebuffer-issuer.md#loader-source-facts)
 preserves checked EFI GOP, cleanup and runtime facts.
 It grants no absence admission or display ownership.
@@ -781,10 +782,14 @@ It grants no absence admission or display ownership.
   software owner and cached status with no automatic map or MMIO. An explicit
   one-shot CONTROL observation retains its mapping and grants no mutation permission.
   A private synchronous MMU4 executor source-tests shared serialization and retained
-  leases without a default caller or physical programming acceptance.
+  leases. The manual profile couples it to the native owner below.
   A private [native MMU4 owner](ember/boot/bcmv3d-mmu4-native.md) source-tests
   canonical tag/resource identity, sealed backing and one fixed executor operation.
-  It has no default caller or physical access/translation acceptance.
+  Ordinary profiles do not select this path. The manual `EMBERV3DCONSOLE` profile
+  now passes native MMU4 programming and a physical [HVS/PV0 test frame](ember/boot/bcmv3d-hvs-publish.md).
+  All eight color bars display in order through the retained HDMI0 profile.
+  Four native GPU regressions also pass with HVS enabled.
+  DRM/KMS, page flips, buffer retirement and physical HDMI Plasma remain open.
   DRM hotplug delivery, physical extension reads and KMS scanout remain open.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,

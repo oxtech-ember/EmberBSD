@@ -70,7 +70,11 @@ A coherent GCC16 kernel and four-module kit links successfully. Actual target-TU
 GCC, Cppcheck and Clang Static Analyzer checks pass their recorded classifications.
 On one BCM2712 board, native MMU4 completes and the four GPU tests pass.
 The source supports complete converted-RGB and retained CSC-bypass signatures.
-Physical publication, color correctness and a first visible frame remain pending.
+One BCM2712 system displays the eight initial color bars in the expected order.
+The retained-bypass path reaches COMPLETE with active list32 and a progressing
+frame counter. Four native V3D regressions pass with HVS enabled.
+This accepts one fixed test frame. It does not accept DRM/KMS, page flips,
+buffer retirement, AXI drain or physical HDMI Plasma.
 
 ## Conservative inherited profile
 
