@@ -71,21 +71,26 @@ begin
   native = 'sys/external/bsd/drm2/bcmv3d/'
   job = read.call(native + 'bcmv3d_job.c')
   header = read.call(native + 'bcmv3d_cl_reject.h')
+  policy = read.call(native + 'bcmv3d_resv.h')
+  sort = read.call('common/lib/libc/stdlib/heapsort.c')
+  read.call('ember/tools/bcmv3d-kheapsort-model.h')
+  File.write(dir + '/heapsort-body.h', sort.lines.reject { |line| line.start_with?('#include ') }.join)
   uapi = read.call('sys/external/bsd/drm2/dist/include/uapi/drm/v3d_drm.h')
   %w[c rb].each { |ext| read.call('ember/tools/bcmv3d-cl-reject-contract.' + ext) }
-  types = %w[V3D_CSD_BO_MAX V3D_MSK_SET V3D_IRQ_ALL V3D_CORE_IRQ_ALL].map do |name|
+  types = %w[V3D_CSD_BO_MAX V3D_MSK_SET V3D_IRQ_ALL V3D_CORE_IRQ_ALL V3D_CSD_STATUS V3D_COPY_SIZE].map do |name|
     job[/^#define #{name}\s+[^\n]+/] || abort('Missing native constant ' + name)
-  end.join("\n") + "\n" + header + "\n" +
+  end.join("\n") + "\n" + policy[/^#define BCMV3D_RESV_MAX\s+[^\n]+/] + "\n" + header + "\n" +
     uapi[/^#define DRM_V3D_SUBMIT_CL_FLUSH_CACHE\s+[^\n]+/] + "\n" +
-    definition(uapi, 'submit-cl-uapi', /^struct drm_v3d_submit_cl \{/)[:text]
+    definition(uapi, 'submit-cl-uapi', /^struct drm_v3d_submit_cl \{/)[:text] +
+    definition(uapi, 'submit-csd-uapi', /^struct drm_v3d_submit_csd \{/)[:text]
   structs = %w[bcmv3d_job bcmv3d_sync].map do |name|
     fragment = definition(job, name, /^struct #{name} \{/)
     fragments << fragment.reject { |key, _| key == :text }; fragment[:text]
   end.join("\n")
-  names = %w[bcmv3d_csd_address bcmv3d_cl_reject_take bcmv3d_cl_reject bcmv3d_submit_cl]
-  body = names.map do |name|
+  names = %w[bcmv3d_ptes bcmv3d_sync_prepare bcmv3d_csd_address bcmv3d_object_order bcmv3d_job_lookup bcmv3d_cl_reject_take bcmv3d_cl_reject bcmv3d_submit_cl bcmv3d_submit_csd]
+  parts = {}; body = names.map do |name|
     fragment = function(job, name)
-    fragments << fragment.reject { |key, _| key == :text }; fragment[:text]
+    fragments << fragment.reject { |key, _| key == :text }; parts[name] = fragment[:text]
   end.join("\n")
   File.write(dir + '/reject-types.h', types)
   File.write(dir + '/reject-structs.h', structs)
@@ -117,28 +122,43 @@ begin
   out, = run.call('positive', execute + [compile[-1]]); print out
   unless ENV['CL_REJECT_SKIP_MUTANTS'] == '1'
     controls = {
-      'saturating-ceiling' => ['before >= BCMV3D_CL_REJECT_MAX', 'before > BCMV3D_CL_REJECT_MAX'],
-      'counter-per-device' => ['before = atomic_load_relaxed(&job->cl_rejections);',
-        "(void)job; static unsigned int shared; before = atomic_load_relaxed(&shared);"],
-      'CAS-ticket-ownership' => ['before + 1) ==', 'before + 1) !='],
-      'saved-count' => ['error, a->bo_handle_count, a->flags', 'error, 64U, a->flags'],
-      'extension-presence' => ['(unsigned int)(a->extensions != 0)', '(unsigned int)a->extensions'],
-      'only-EINVAL' => ['error != EINVAL ||', 'false ||'],
-      'sync-rcl-reason' => ['reason = BCMV3D_CL_REJECT_SYNC_RCL;', 'reason = BCMV3D_CL_REJECT_SYNC_BCL;'],
-      'wait-rcl-reason' => ['reason = BCMV3D_CL_REJECT_WAIT_RCL;', 'reason = BCMV3D_CL_REJECT_WAIT_BCL;'],
-      'post-unwind-only' => ["release:\n\tbcmv3d_resv_unlock", "release:\n\tbcmv3d_cl_reject(sc, a, reason, error);\n\tbcmv3d_resv_unlock"],
-      'execution-not-admission' => ["reason = BCMV3D_CL_REJECT_NONE;\n\t/* Completion", "reason = BCMV3D_CL_REJECT_RESV_PUBLISH;\n\t/* Completion"],
-      'original-errno' => ["\treturn -error;\n}", "\treturn error;\n}"],
-      'reference-release' => ['drm_gem_object_put_unlocked(objects[--count]);', '((void)drm_gem_object_put_unlocked, (void)objects[--count]);']
+      'saturating-ceiling' => ['bcmv3d_cl_reject_take', 'before >= BCMV3D_CL_REJECT_MAX', 'before > BCMV3D_CL_REJECT_MAX'],
+      'counter-per-device' => ['bcmv3d_cl_reject_take', 'before = atomic_load_relaxed(&job->cl_rejections);', '(void)job; static unsigned int shared; before = atomic_load_relaxed(&shared);'],
+      'CAS-ticket-ownership' => ['bcmv3d_cl_reject_take', 'before + 1) ==', 'before + 1) !='],
+      'saved-count' => ['bcmv3d_cl_reject', 'error, a->bo_handle_count, a->flags', 'error, 64U, a->flags'],
+      'extension-presence' => ['bcmv3d_cl_reject', '(unsigned int)(a->extensions != 0)', '(unsigned int)a->extensions'],
+      'only-EINVAL' => ['bcmv3d_cl_reject', 'error != EINVAL ||', 'false ||'],
+      'sync-rcl-reason' => ['bcmv3d_submit_cl', 'reason = BCMV3D_CL_REJECT_SYNC_RCL;', 'reason = BCMV3D_CL_REJECT_SYNC_BCL;'],
+      'wait-rcl-reason' => ['bcmv3d_submit_cl', 'reason = BCMV3D_CL_REJECT_WAIT_RCL;', 'reason = BCMV3D_CL_REJECT_WAIT_BCL;'],
+      'post-unwind-only' => ['bcmv3d_submit_cl', "release:\n\tbcmv3d_resv_unlock", "release:\n\tbcmv3d_cl_reject(sc, a, reason, error);\n\tbcmv3d_resv_unlock"],
+      'execution-not-admission' => ['bcmv3d_submit_cl', "reason = BCMV3D_CL_REJECT_NONE;\n\t/* Completion", "reason = BCMV3D_CL_REJECT_RESV_PUBLISH;\n\t/* Completion"],
+      'original-errno' => ['bcmv3d_submit_cl', "\treturn -error;\n}", "\treturn error;\n}"],
+      'reference-release' => ['bcmv3d_submit_cl', 'drm_gem_object_put_unlocked(objects[--count]);', '((void)drm_gem_object_put_unlocked, (void)objects[--count]);'],
+      'old-CL-limit64' => ['bcmv3d_submit_cl', 'a->bo_handle_count > V3D_CSD_BO_MAX', 'a->bo_handle_count > 64'],
+      'old-CSD-limit64' => ['bcmv3d_submit_csd', 'a->bo_handle_count > V3D_CSD_BO_MAX', 'a->bo_handle_count > 64'],
+      'maximum-inclusive' => ['bcmv3d_job_lookup', 'capacity > BCMV3D_RESV_MAX', 'capacity >= BCMV3D_RESV_MAX'],
+      'nonblocking-metadata' => ['bcmv3d_job_lookup', 'kmem_zalloc(object_bytes, KM_NOSLEEP)', 'kmem_zalloc(object_bytes, KM_SLEEP)'],
+      'no-GEM-sort' => ['bcmv3d_job_lookup', "kheapsort(objects, count, sizeof(*objects), bcmv3d_object_order,\n\t    &temporary) != 0", '((void)&temporary, (void)bcmv3d_object_order, (void)kheapsort, false)'],
+      'partial-capacity-free' => ['bcmv3d_job_lookup', 'kmem_free(objects, object_bytes);', 'kmem_free(objects, count * sizeof(*objects));'],
+      'release-partial-refs' => ['bcmv3d_job_lookup', 'drm_gem_object_put_unlocked(objects[--count]);', '((void)drm_gem_object_put_unlocked, (void)objects[--count]);'],
+      'success-vector-clear' => ['bcmv3d_submit_cl', 'job->bos = NULL;', '(void)job;'],
+      'poison-keeps-vector' => ['bcmv3d_submit_cl', 'objects = NULL; /* Transfer the vector with its retained refs. */', '/* Lost retained-vector ownership. */'],
+      'poison-keeps-CSD-vector' => ['bcmv3d_submit_csd', 'objects = NULL; /* Transfer the vector with its retained refs. */', '/* Lost retained-vector ownership. */'],
+      'second-poison-no-assignment' => ['bcmv3d_submit_cl', 'if (job->poisoned) {', "job->bos = objects;\n\tif (job->poisoned) {"],
+      'second-CSD-poison-no-assignment' => ['bcmv3d_submit_csd', 'if (job->poisoned) {', "job->bos = objects;\n\tif (job->poisoned) {"],
+      'release-after-last-unlock' => ['bcmv3d_submit_cl', "release:\n\tbcmv3d_resv_unlock(&reservations);", "release:\n\t/* Missing final reservation release. */"],
+      'full-PTE-vector' => ['bcmv3d_ptes', 'i < (job->nbo ? job->nbo : __arraycount(objects))', 'i < (job->nbo ? (job->nbo > 64 ? 64 : job->nbo) : __arraycount(objects))']
     }
-    controls.each do |name, (before, after)|
-      abort 'Nonunique control ' + name unless body.scan(before).size == 1
-      changed = body.sub(before) { after }
+    controls.each do |name, (part, before, after)|
+      text = parts.fetch(part)
+      abort 'Nonunique control ' + name unless text.scan(before).size == 1
+      changed = text.sub(before) { after }
+      mutated = body.sub(text) { changed }
       if name == 'counter-per-device'
-        changed = changed.sub('atomic_cas_uint(&job->cl_rejections, before, before + 1)',
+        mutated = mutated.sub('atomic_cas_uint(&job->cl_rejections, before, before + 1)',
           'atomic_cas_uint(&shared, before, before + 1)')
       end
-      File.write(dir + '/reject-body.h', changed)
+      File.write(dir + '/reject-body.h', mutated)
       run.call(name + '-compile', compile)
       _, err, status, timeout = run.call(name, execute + [compile[-1]], false)
       abort 'Noncausal control ' + name unless !timeout && status.exited? && status.exitstatus == 1 && err.include?('FAIL line ')
@@ -156,7 +176,7 @@ ensure
     fragments: fragments, commands: commands, limitations: [
       'Controlled kernel/DRM boundaries; no GPU, MMIO, hardware or scheduler acceptance.',
       'Injected helper EINVAL validates routing, not native helper reachability.',
-      'Actual range helper, UAPI, private job/sync structs, counter, receipt and submit body.'
+      'Actual CL/CSD lookup, range/PTE helper, UAPI, private job/sync structs, counter and receipt; native fixed-workspace sort.'
     ] }) + "\n")
   puts 'Evidence: ' + dir
   FileUtils.remove_entry(dir) unless evidence

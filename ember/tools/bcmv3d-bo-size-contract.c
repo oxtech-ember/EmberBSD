@@ -6,7 +6,8 @@
 #include "bcm2712-v3d-bo-contract.c"
 
 struct bcmv3d_job {
-	struct bcmv3d_bo *pt, *src, *dst, *bos[1];
+	struct bcmv3d_bo *pt, *src, *dst;
+	struct drm_gem_object *bos[1];
 	unsigned int nbo;
 };
 #ifndef __arraycount
@@ -74,7 +75,7 @@ check_ptes(struct bcmv3d_bo *bo)
 	const uint64_t end = BCMV3D_VA_START + BCMV3D_VA_SIZE;
 	const size_t entries = V3D_PT_SIZE / sizeof(uint32_t);
 	struct bcmv3d_bo pt = { 0 };
-	struct bcmv3d_job job = { .pt = &pt, .bos = { bo }, .nbo = 1 };
+	struct bcmv3d_job job = { .pt = &pt, .bos = { &bo->cma.base }, .nbo = 1 };
 	vmem_addr_t saved = bo->gpu;
 	uint32_t *memory = malloc((entries + 2) * sizeof(*memory));
 	uint32_t *table;

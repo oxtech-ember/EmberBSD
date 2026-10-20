@@ -26,6 +26,7 @@ struct dma_resv {
 };
 struct drm_gem_object { struct dma_resv *resv; };
 #include "resv-types.h"
+#include "bcmv3d-kheapsort-model.h"
 static struct drm_gem_object objects[64], *array[64];
 static struct dma_resv reservations[64];
 static struct dma_fence initial[64][3], producer;
@@ -204,7 +205,7 @@ main(void)
 	CHECK(bcmv3d_resv_prepare(NULL, array, 64, 1000) == EINVAL);
 	CHECK(bcmv3d_resv_prepare(&state, NULL, 64, 1000) == EINVAL);
 	CHECK(bcmv3d_resv_prepare(&state, array, 0, 1000) == EINVAL);
-	CHECK(bcmv3d_resv_prepare(&state, array, 65, 1000) == EINVAL);
+	CHECK(bcmv3d_resv_prepare(&state, array, BCMV3D_RESV_MAX + 1, 1000) == EINVAL);
 	CHECK(bcmv3d_resv_prepare(&state, array, 64, 0) == EINVAL);
 	array[1] = NULL; CHECK(bcmv3d_resv_prepare(&state, array, 64, 1000) == EINVAL);
 	array[1] = &objects[0]; CHECK(bcmv3d_resv_prepare(&state, array, 64, 1000) == EINVAL);
@@ -256,6 +257,35 @@ main(void)
 			}
 			check_released();
 		}
+	}
+	/* Large private vectors use the same actual reservation owner. */
+	static struct drm_gem_object many[BCMV3D_RESV_MAX];
+	static struct drm_gem_object *list[BCMV3D_RESV_MAX];
+	static struct dma_resv many_resv[BCMV3D_RESV_MAX];
+	const unsigned sizes[] = {64, 65, 72, 91, BCMV3D_RESV_MAX};
+	for (unsigned k = 0; k < sizeof(sizes) / sizeof(sizes[0]); k++) {
+		unsigned n = sizes[k];
+		reset(); memset(&state, 0, sizeof(state));
+		memset(many_resv, 0, sizeof(many_resv));
+		for (unsigned i = 0; i < n; i++) {
+			many[i].resv = &many_resv[i]; list[n - i - 1] = &many[i];
+		}
+		CHECK(bcmv3d_resv_prepare(&state, list, n, 1000) == 0);
+		CHECK(state.count == n && snapshots == n && waits == 0);
+		engine_locked = true;
+		CHECK(bcmv3d_resv_publish(&state, &producer) == 0);
+		CHECK(publications == n && producer.refs == n + 1);
+		bcmv3d_resv_unlock(&state); engine_locked = false;
+		for (unsigned i = 0; i < n; i++) {
+			CHECK(many_resv[i].owner == NULL);
+			dma_fence_put(many_resv[i].exclusive);
+			many_resv[i].exclusive = NULL;
+		}
+		CHECK(producer.refs == 1 && locks == unlocks && contexts == 0);
+		/* Nonadjacent aliases must be sorted before duplicate rejection. */
+		list[n - 1] = list[0];
+		CHECK(bcmv3d_resv_prepare(&state, list, n, 1000) == EINVAL);
+		CHECK(!state.locked && locks == unlocks && contexts == 0);
 	}
 	printf("PASS actual BO resv caller/GEM locks: %u checks, 1152 fault positions\n", checks);
 	return 0;

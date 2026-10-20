@@ -48,7 +48,7 @@
 #define V3D_CLE_CT1EA	0x10c
 #define V3D_CLE_CT1CA	0x114
 #define V3D_CLE_PCS	0x130
-#define V3D_CSD_BO_MAX	64
+#define V3D_CSD_BO_MAX	BCMV3D_RESV_MAX
 
 struct bcmv3d_job {
 	kmutex_t lock;
@@ -58,7 +58,8 @@ struct bcmv3d_job {
 	struct bcmv3d_bo *pt, *scratch;
 	/* Retained on poison: never release possibly GPU-owned storage. */
 	struct bcmv3d_bo *src, *dst;
-	struct bcmv3d_bo *bos[V3D_CSD_BO_MAX];
+	/* Borrowed during a job; owned with all GEM refs after poison. */
+	struct drm_gem_object **bos;
 	unsigned int nbo;
 	/* Per-device, per-boot admission receipts. Never reset or wrap. */
 	volatile unsigned int cl_rejections;
@@ -333,7 +334,8 @@ bcmv3d_ptes(struct bcmv3d_job *job, bool map)
 	unsigned int i;
 
 	for (i = 0; i < (job->nbo ? job->nbo : __arraycount(objects)); i++) {
-		struct bcmv3d_bo *bo = job->nbo ? job->bos[i] : objects[i];
+		struct bcmv3d_bo *bo = job->nbo ?
+		    bcmv3d_to_bo(job->bos[i]) : objects[i];
 		size_t remaining = job->nbo ? bo->cma.dmasize : V3D_COPY_SIZE;
 		unsigned int page = 0;
 		int seg;
@@ -616,7 +618,7 @@ bcmv3d_csd_address(struct bcmv3d_job *job, uint32_t address, size_t size)
 	unsigned int i;
 
 	for (i = 0; i < job->nbo; i++) {
-		struct bcmv3d_bo *bo = job->bos[i];
+		struct bcmv3d_bo *bo = bcmv3d_to_bo(job->bos[i]);
 
 		if (address >= bo->gpu &&
 		    (uint64_t)address + size <= bo->gpu + bo->cma.dmasize)
@@ -651,7 +653,8 @@ bcmv3d_csd_execute(struct bcmv3d_job *job, struct drm_v3d_submit_csd *a)
 	if (job->published && (error = bcmv3d_clean()) != 0)
 		return error;
 	for (i = 0; i < job->nbo; i++)
-		bcmv3d_sync(job->bos[i], BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+		bcmv3d_sync(bcmv3d_to_bo(job->bos[i]),
+		    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
 	bcmv3d_sync(job->scratch, BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
 	bcmv3d_ptes(job, true);
 	job->stage = "CSD MMU publication";
@@ -741,8 +744,84 @@ bcmv3d_csd_execute(struct bcmv3d_job *job, struct drm_v3d_submit_csd *a)
 	if ((error = bcmv3d_flush()) != 0)
 		return error;
 	for (i = 0; i < job->nbo; i++)
-		bcmv3d_sync(job->bos[i], BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
+		bcmv3d_sync(bcmv3d_to_bo(job->bos[i]),
+		    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
 	return 0;
+}
+
+static int
+bcmv3d_object_order(const void *left, const void *right)
+{
+	struct drm_gem_object * const *a = left, * const *b = right;
+	uintptr_t x = (uintptr_t)*a, y = (uintptr_t)*b;
+
+	return x < y ? -1 : x > y ? 1 : 0;
+}
+
+/* Allocate bounded metadata before lookup. Return one ref per vector element. */
+static int
+bcmv3d_job_lookup(struct drm_file *file, uint64_t user_handles,
+    unsigned int capacity, struct drm_gem_object ***result, bool *duplicate)
+{
+	struct drm_gem_object **objects, *temporary;
+	uint32_t *handles;
+	unsigned int count = 0, i;
+	size_t object_bytes, handle_bytes;
+	int error;
+
+	CTASSERT(BCMV3D_RESV_MAX <= INT_MAX);
+	CTASSERT(BCMV3D_RESV_MAX <= SIZE_MAX / sizeof(*objects));
+	CTASSERT(BCMV3D_RESV_MAX <= SIZE_MAX / sizeof(*handles));
+	*result = NULL;
+	*duplicate = false;
+	if (capacity == 0 || capacity > BCMV3D_RESV_MAX)
+		return EINVAL;
+	object_bytes = capacity * sizeof(*objects);
+	handle_bytes = capacity * sizeof(*handles);
+	objects = kmem_zalloc(object_bytes, KM_NOSLEEP);
+	if (objects == NULL)
+		return ENOMEM;
+	handles = kmem_zalloc(handle_bytes, KM_NOSLEEP);
+	if (handles == NULL) {
+		error = ENOMEM;
+		goto release;
+	}
+	error = copyin((const void *)(uintptr_t)user_handles, handles, handle_bytes);
+	if (error == 0) {
+		for (i = 0; i < capacity; i++) {
+			objects[count] = drm_gem_object_lookup(file, handles[i]);
+			if (objects[count] == NULL) {
+				error = ENOENT;
+				break;
+			}
+			count++;
+		}
+	}
+	kmem_free(handles, handle_bytes);
+	if (error != 0 && error != ENOENT)
+		goto release;
+	/* Check the live prefix even after lookup failure, preserving EINVAL. */
+	if (kheapsort(objects, count, sizeof(*objects), bcmv3d_object_order,
+	    &temporary) != 0) {
+		error = EIO;
+		goto release;
+	}
+	for (i = 1; i < count; i++) {
+		if (objects[i - 1] == objects[i]) {
+			*duplicate = true;
+			error = EINVAL;
+			goto release;
+		}
+	}
+	if (error == 0) {
+		*result = objects;
+		return 0;
+	}
+release:
+	while (count != 0)
+		drm_gem_object_put_unlocked(objects[--count]);
+	kmem_free(objects, object_bytes);
+	return error;
 }
 
 int
@@ -751,11 +830,11 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 	struct drm_v3d_submit_csd *a = data;
 	struct bcmv3d_device *sc;
 	struct bcmv3d_job *job;
-	struct drm_gem_object *objects[V3D_CSD_BO_MAX];
+	struct drm_gem_object **objects = NULL;
 	struct bcmv3d_resv reservations = {0};
 	struct bcmv3d_sync sync = {0};
-	uint32_t handles[V3D_CSD_BO_MAX];
-	unsigned int i, j, count = 0;
+	unsigned int i, capacity = a->bo_handle_count, count = 0;
+	bool duplicate;
 	int error;
 
 	/* No extensions or performance objects are silently ignored. */
@@ -767,24 +846,11 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 	    (a->cfg[2] >> 16) == 0 || (a->cfg[3] & 0xfc000000) != 0 ||
 	    a->cfg[4] == UINT32_MAX || (a->cfg[5] & 4) || (a->cfg[6] & 3))
 		return -EINVAL;
-	error = copyin((const void *)(uintptr_t)a->bo_handles, handles,
-	    a->bo_handle_count * sizeof(handles[0]));
+	error = bcmv3d_job_lookup(file, a->bo_handles, capacity, &objects,
+	    &duplicate);
 	if (error != 0)
-		return -error;
-	for (i = 0; i < a->bo_handle_count; i++) {
-		objects[count] = drm_gem_object_lookup(file, handles[i]);
-		if (objects[count] == NULL) {
-			error = ENOENT;
-			goto release;
-		}
-		count++;
-		for (j = 0; j < i; j++) {
-			if (objects[j] == objects[i]) {
-				error = EINVAL;
-				goto release;
-			}
-		}
-	}
+		goto release;
+	count = capacity;
 	sc = dev->dev_private;
 	job = sc->job;
 	error = bcmv3d_sync_prepare(file, a->in_sync, a->out_sync, &sync);
@@ -800,8 +866,7 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 		goto unlock;
 	}
 	job->nbo = count;
-	for (i = 0; i < count; i++)
-		job->bos[i] = bcmv3d_to_bo(objects[i]);
+	job->bos = objects;
 	if (!bcmv3d_csd_address(job, a->cfg[5] & ~7U, 8) ||
 	    !bcmv3d_csd_address(job, a->cfg[6], 4)) {
 		error = EINVAL;
@@ -816,7 +881,7 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 	/* Completion cannot need a reservation held by this submission. */
 	bcmv3d_resv_unlock(&reservations);
 	for (i = 0; i < count; i++)
-		atomic_store_release(&job->bos[i]->busy, 1);
+		atomic_store_release(&bcmv3d_to_bo(job->bos[i])->busy, 1);
 	error = bcmv3d_csd_execute(job, a);
 	if (error != 0) {
 		uint32_t state = 0;
@@ -827,7 +892,7 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 		bcmv3d_mask(job);
 		bcmv3d_core_mask(job);
 		for (i = 0; i < count; i++)
-			atomic_store_release(&job->bos[i]->error, EIO);
+			atomic_store_release(&bcmv3d_to_bo(job->bos[i])->error, EIO);
 		(void)bcmv3d_takeover_core_peek(V3D_CSD_STATUS, &state);
 		aprint_error_dev(sc->dev, "%s: error=%d status=%#x "
 		    "before=%#x after=%#x irq-after=%#x "
@@ -838,13 +903,14 @@ bcmv3d_submit_csd(struct drm_device *dev, void *data, struct drm_file *file)
 		    atomic_load_acquire(&job->core_error),
 		    atomic_load_acquire(&job->events), count);
 		/* Keep every BO reference, but complete the fence with an error. */
+		objects = NULL; /* Transfer the vector with its retained refs. */
 		count = 0;
 		goto unlock;
 	}
 	for (i = 0; i < count; i++)
-		atomic_store_release(&job->bos[i]->busy, 0);
+		atomic_store_release(&bcmv3d_to_bo(job->bos[i])->busy, 0);
 clear:
-	memset(job->bos, 0, sizeof(job->bos));
+	job->bos = NULL;
 	job->nbo = 0;
 unlock:
 	bcmv3d_resv_unlock(&reservations);
@@ -855,6 +921,8 @@ release:
 	bcmv3d_sync_fini(&sync);
 	while (count != 0)
 		drm_gem_object_put_unlocked(objects[--count]);
+	if (objects != NULL)
+		kmem_free(objects, capacity * sizeof(*objects));
 	return -error;
 }
 
@@ -947,7 +1015,8 @@ bcmv3d_cl_execute(struct bcmv3d_job *job, const struct drm_v3d_submit_cl *a)
 	atomic_store_relaxed(&job->events, 0);
 	atomic_store_relaxed(&job->irq_error, 0);
 	for (i = 0; i < job->nbo; i++)
-		bcmv3d_sync(job->bos[i], BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+		bcmv3d_sync(bcmv3d_to_bo(job->bos[i]),
+		    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
 	bcmv3d_sync(job->scratch, BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
 	bcmv3d_ptes(job, true);
 	if ((error = bcmv3d_publish(job)) != 0)
@@ -978,7 +1047,8 @@ bcmv3d_cl_execute(struct bcmv3d_job *job, const struct drm_v3d_submit_cl *a)
 	if ((error = bcmv3d_flush()) != 0)
 		return error;
 	for (i = 0; i < job->nbo; i++)
-		bcmv3d_sync(job->bos[i], BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
+		bcmv3d_sync(bcmv3d_to_bo(job->bos[i]),
+		    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
 	return 0;
 }
 
@@ -1070,11 +1140,11 @@ bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 	const struct drm_v3d_submit_cl *a = data;
 	struct bcmv3d_device *sc = dev->dev_private;
 	struct bcmv3d_job *job = sc->job;
-	struct drm_gem_object *objects[V3D_CSD_BO_MAX];
+	struct drm_gem_object **objects = NULL;
 	struct bcmv3d_resv reservations = {0};
 	struct bcmv3d_sync sync = {0}, render_sync = {0};
-	uint32_t handles[V3D_CSD_BO_MAX];
-	unsigned int i, j, count = 0;
+	unsigned int i, capacity = a->bo_handle_count, count = 0;
+	bool duplicate;
 	bool bin = a->bcl_start != a->bcl_end;
 	int error;
 	enum bcmv3d_cl_reject_reason reason = BCMV3D_CL_REJECT_NONE;
@@ -1088,25 +1158,14 @@ bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 		bcmv3d_cl_reject(sc, a, BCMV3D_CL_REJECT_HEADER, EINVAL);
 		return -EINVAL;
 	}
-	error = copyin((const void *)(uintptr_t)a->bo_handles, handles,
-	    a->bo_handle_count * sizeof(handles[0]));
-	if (error != 0)
-		return -error;
-	for (i = 0; i < a->bo_handle_count; i++) {
-		objects[count] = drm_gem_object_lookup(file, handles[i]);
-		if (objects[count] == NULL) {
-			error = ENOENT;
-			goto release;
-		}
-		count++;
-		for (j = 0; j < i; j++) {
-			if (objects[j] == objects[i]) {
-				reason = BCMV3D_CL_REJECT_DUPLICATE;
-				error = EINVAL;
-				goto release;
-			}
-		}
+	error = bcmv3d_job_lookup(file, a->bo_handles, capacity, &objects,
+	    &duplicate);
+	if (error != 0) {
+		if (duplicate)
+			reason = BCMV3D_CL_REJECT_DUPLICATE;
+		goto release;
 	}
+	count = capacity;
 	/* Snapshot both dependencies before replacing an aliased output fence. */
 	reason = BCMV3D_CL_REJECT_SYNC_BCL;
 	error = bcmv3d_sync_capture(file, a->in_sync_bcl, a->out_sync, &sync);
@@ -1135,8 +1194,7 @@ bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 		goto unlock;
 	}
 	job->nbo = count;
-	for (i = 0; i < count; i++)
-		job->bos[i] = bcmv3d_to_bo(objects[i]);
+	job->bos = objects;
 	/* Lists may branch between BOs; validate endpoints, not a linear span. */
 	if (!bcmv3d_csd_address(job, a->rcl_start, 1) ||
 	    !bcmv3d_csd_address(job, a->rcl_end - 1, 1) ||
@@ -1161,7 +1219,7 @@ bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 	/* Completion cannot need a reservation held by this submission. */
 	bcmv3d_resv_unlock(&reservations);
 	for (i = 0; i < count; i++)
-		atomic_store_release(&job->bos[i]->busy, 1);
+		atomic_store_release(&bcmv3d_to_bo(job->bos[i])->busy, 1);
 	error = bcmv3d_cl_execute(job, a);
 	if (error != 0) {
 		job->poisoned = true;
@@ -1170,15 +1228,16 @@ bcmv3d_submit_cl(struct drm_device *dev, void *data, struct drm_file *file)
 		bcmv3d_mask(job);
 		bcmv3d_core_mask(job);
 		for (i = 0; i < count; i++)
-			atomic_store_release(&job->bos[i]->error, EIO);
+			atomic_store_release(&bcmv3d_to_bo(job->bos[i])->error, EIO);
 		bcmv3d_cl_diagnose(sc, error, count);
+		objects = NULL; /* Transfer the vector with its retained refs. */
 		count = 0;
 		goto unlock;
 	}
 	for (i = 0; i < count; i++)
-		atomic_store_release(&job->bos[i]->busy, 0);
+		atomic_store_release(&bcmv3d_to_bo(job->bos[i])->busy, 0);
 clear:
-	memset(job->bos, 0, sizeof(job->bos));
+	job->bos = NULL;
 	job->nbo = 0;
 unlock:
 	bcmv3d_resv_unlock(&reservations);
@@ -1190,6 +1249,8 @@ release:
 	bcmv3d_sync_fini(&sync);
 	while (count != 0)
 		drm_gem_object_put_unlocked(objects[--count]);
+	if (objects != NULL)
+		kmem_free(objects, capacity * sizeof(*objects));
 	bcmv3d_cl_reject(sc, a, reason, error);
 	return -error;
 }
@@ -1243,7 +1304,7 @@ bcmv3d_job_fini(struct bcmv3d_device *sc)
 	if (job == NULL)
 		return;
 	KASSERT(!job->published && job->src == NULL && job->dst == NULL &&
-	    job->nbo == 0);
+	    job->nbo == 0 && job->bos == NULL);
 	if (job->ih != NULL) {
 		bcmv3d_mask(job);
 		acpi_intr_disestablish(job->ih);

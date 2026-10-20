@@ -15,6 +15,8 @@
 #define PAGE_SIZE 4096
 #endif
 #define KM_SLEEP 0
+#define KM_NOSLEEP 1
+#define CTASSERT(e) _Static_assert((e), #e)
 #define BUS_DMA_WAITOK 1
 #define BUS_DMA_PREFETCHABLE 2
 #define VM_BESTFIT 1

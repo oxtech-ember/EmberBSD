@@ -26,11 +26,12 @@ csd_cleanup(struct bcmv3d_device *c, struct drm_file *f, bool poison)
 	if(poison) {
 		CHECK(gems==4);
 		for(unsigned i=0;i<j->nbo;i++) {
-			CHECK(j->bos[i]->cma.base.refs==1 && j->bos[i]->error==EIO);
-			j->bos[i]->busy=0; /* Model reboot, not runtime release. */
-			drm_gem_object_put_unlocked(&j->bos[i]->cma.base);
+			CHECK(j->bos[i]->refs==1 && bcmv3d_to_bo(j->bos[i])->error==EIO);
+			bcmv3d_to_bo(j->bos[i])->busy=0; /* Model reboot, not runtime release. */
+			drm_gem_object_put_unlocked(j->bos[i]);
 		}
-		j->nbo=0;
+		kmem_free(j->bos, j->nbo * sizeof(*j->bos));
+		j->bos=NULL; j->nbo=0;
 	} else CHECK(csd_owned==0 && !scratch_owned);
 	j->published=false; bcmv3d_job_fini(c); empty(c);
 	CHECK(fence_count == 0 && resv_objects == 0 && resv_locks == 0 && resv_contexts == 0 && resv_arrays == 0);
@@ -59,7 +60,7 @@ main(void)
 		case 4:b.out_sync=1;break;
 		case 5:b.perfmon_id=1;break;
 		case 6:b.bo_handle_count=0;break;
-		case 7:b.bo_handle_count=65;break;
+		case 7:b.bo_handle_count=BCMV3D_RESV_MAX+1;break;
 		case 8:case 9:case 10:case 11:b.coef[i-8]=1;break;
 		case 12:case 13:case 14:b.cfg[i-12]=0;break;
 		case 15:b.cfg[3]|=1U<<26;break;

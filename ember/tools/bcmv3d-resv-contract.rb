@@ -41,6 +41,8 @@ end
 begin
   base = 'sys/external/bsd/drm2/bcmv3d/'
   File.write(evidence + '/resv-types.h', strip.call(read.call(base + 'bcmv3d_resv.h')))
+  File.write(evidence + '/heapsort-body.h', strip.call(read.call('common/lib/libc/stdlib/heapsort.c')))
+  read.call('ember/tools/bcmv3d-kheapsort-model.h')
   body = read.call(base + 'bcmv3d_resv.c')
   File.write(evidence + '/resv-body.h', strip.call(body))
   gem = read.call('sys/external/bsd/drm2/dist/drm/drm_gem.c')
@@ -78,7 +80,9 @@ begin
         'actual-owner' => ['dma_resv_locking_ctx(s->objects[i]->resv) != &s->acquire', 'false'],
         'complete-owner-preflight' => ["for (i = 0; i < s->count; i++) {", "for (i = 0; i + 1 < s->count; i++) {"],
         'pending-fence' => ['if (dma_fence_get_status(fence) != 0)', 'if (dma_fence_get_status(fence) < 0)'],
-        'duplicate-reservation' => ['objects[i]->resv == objects[j]->resv', 'false'],
+        'duplicate-reservation' => ['objects[i - 1]->resv == objects[i]->resv', 'false'],
+        'old-limit64' => ['count > BCMV3D_RESV_MAX || timeout', 'count > 64 || timeout'],
+        'native-resv-sort' => ["kheapsort(objects, count, sizeof(*objects), bcmv3d_resv_order,\n\t    &temporary) != 0", '((void)&temporary, (void)bcmv3d_resv_order, false)'],
         'remaining-budget' => ['*remaining = waited;', '(void)waited;'],
         'timeout-result' => ['return waited == 0 ? ETIME : -waited;', 'return waited == 0 ? 0 : -waited;']
       }
@@ -94,6 +98,8 @@ begin
         "complete-owner-preflight" => "bcmv3d_resv_publish(&state, &producer) == EPERM && publications == 0",
         "pending-fence" => "engine_locked && r->owner != NULL && r->owner->done && f == &producer",
         "duplicate-reservation" => "!engine_locked && r->owner == NULL && ctx->initialized && !ctx->done",
+        "old-limit64" => "bcmv3d_resv_prepare(&state, list, n, 1000) == 0",
+        "native-resv-sort" => "!engine_locked && r->owner == NULL && ctx->initialized && !ctx->done",
         "remaining-budget" => "timeout == budget",
         "timeout-result" => "error == (kind <= 2 || kind == 5 ? EINTR : kind == 3 ? ENOMEM : kind == 4 ? ETIME : kind == 8 ? ERESTARTSYS : EIO)"
       }

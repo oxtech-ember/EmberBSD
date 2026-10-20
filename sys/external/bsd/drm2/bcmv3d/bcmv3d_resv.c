@@ -10,6 +10,16 @@
 #include <drm/drm_gem.h>
 #include "bcmv3d_resv.h"
 
+/* Integer ordering is defined for unrelated native reservation pointers. */
+static int
+bcmv3d_resv_order(const void *left, const void *right)
+{
+	struct drm_gem_object * const *a = left, * const *b = right;
+	uintptr_t x = (uintptr_t)(*a)->resv, y = (uintptr_t)(*b)->resv;
+
+	return x < y ? -1 : x > y ? 1 : 0;
+}
+
 static int
 bcmv3d_resv_wait(struct dma_fence *fence, long *remaining)
 {
@@ -43,6 +53,7 @@ bcmv3d_resv_prepare(struct bcmv3d_resv *s, struct drm_gem_object **objects,
     unsigned int count, long timeout)
 {
 	struct dma_fence *exclusive, **shared;
+	struct drm_gem_object *temporary;
 	unsigned int i, j, nshared;
 	long remaining = timeout;
 	int error, ret;
@@ -55,11 +66,14 @@ bcmv3d_resv_prepare(struct bcmv3d_resv *s, struct drm_gem_object **objects,
 	for (i = 0; i < count; i++) {
 		if (objects[i] == NULL || objects[i]->resv == NULL)
 			return EINVAL;
-		for (j = 0; j < i; j++) {
-			if (objects[i]->resv == objects[j]->resv)
-				return EINVAL;
-		}
 	}
+	/* Fixed workspace: no allocation and bounded O(n log n) preflight. */
+	if (kheapsort(objects, count, sizeof(*objects), bcmv3d_resv_order,
+	    &temporary) != 0)
+		return EIO;
+	for (i = 1; i < count; i++)
+		if (objects[i - 1]->resv == objects[i]->resv)
+			return EINVAL;
 	ret = drm_gem_lock_reservations(objects, (int)count, &s->acquire);
 	if (ret != 0) {
 		/* The common helper ends acquisition; its caller finalizes it. */

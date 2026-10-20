@@ -57,7 +57,7 @@ main(void)
 		case 2: b.perfmon_id = 1; break;
 		case 3: b.extensions = 8; break;
 		case 4: b.bo_handle_count = 0; break;
-		case 5: b.bo_handle_count = 65; break;
+		case 5: b.bo_handle_count = BCMV3D_RESV_MAX + 1; break;
 		case 6: b.bcl_start = 0; break;
 		case 7: b.bcl_end = 0; break;
 		case 8: b.rcl_start = b.rcl_end; break;

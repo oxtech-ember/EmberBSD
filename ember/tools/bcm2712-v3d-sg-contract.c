@@ -10,7 +10,8 @@
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
 struct bcmv3d_job {
-	struct bcmv3d_bo *pt, *src, *dst, *bos[2];
+	struct bcmv3d_bo *pt, *src, *dst;
+	struct drm_gem_object *bos[2];
 	unsigned nbo;
 };
 static struct bcmv3d_bo *expected_sync;
@@ -158,7 +159,7 @@ ptes(struct bcmv3d_device *c, struct drm_device *d, struct drm_file *f)
 	bcmv3d_ptes(&job, false);
 	for (unsigned i = 0; i < 4; i++) CHECK(table[si + i] == 0 && table[di + i] == 0);
 	CHECK(table[si + 4] == 0x12345678 && table[di + 4] == 0x12345678);
-	job.nbo = 1; job.bos[0] = src;
+	job.nbo = 1; job.bos[0] = &src->cma.base;
 	bcmv3d_ptes(&job, true);
 	CHECK(table[si + 5] == (((src->dmasegs[1].ds_addr + 0x10000000) / PAGE_SIZE + 2) | V3D_PTE_VALID | V3D_PTE_WRITE));
 	bcmv3d_ptes(&job, false);

@@ -23,7 +23,7 @@ static void inspect_signal(struct dma_fence *f)
     signals++;
     if(j->poisoned) { CHECK(f->status<0); return; }
     CHECK(revoked && !src_owned && !dst_owned && !csd_owned);
-    for(unsigned i=0;i<j->nbo;i++)CHECK(!j->bos[i]->busy);
+    for(unsigned i=0;i<j->nbo;i++)CHECK(!bcmv3d_to_bo(j->bos[i])->busy);
     if(j->src)CHECK(!j->src->busy && !j->dst->busy);
 }
 static void setup_sync(struct bcmv3d_device *c,struct drm_file *f)

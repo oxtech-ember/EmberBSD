@@ -5,6 +5,7 @@
 #include "bcm2712-v3d-bo-contract.c"
 #include "../../sys/external/bsd/drm2/bcmv3d/bcmv3d_cl_reject.h"
 #include <time.h>
+#include <limits.h>
 #include <stdarg.h>
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
@@ -112,6 +113,7 @@ static int copyin(const void *src,void *dst,size_t n)
 struct dma_fence;
 static long contract_resv_wait(struct dma_fence *, long);
 #include "bcm2712-v3d-sync-model.h"
+#include "bcmv3d-kheapsort-model.h"
 #include "bcm2712-v3d-resv-model.h"
 #include "job-body.h"
 
@@ -129,7 +131,7 @@ contract_resv_engine(struct bcmv3d_job *job)
 	struct dma_fence *f = NULL;
 	unsigned count = job->nbo ? job->nbo : 2;
 	for (unsigned i = 0; i < count; i++) {
-		struct bcmv3d_bo *bo = job->nbo ? job->bos[i] : i ? job->dst : job->src;
+		struct bcmv3d_bo *bo = job->nbo ? bcmv3d_to_bo(job->bos[i]) : i ? job->dst : job->src;
 		CHECK(bo != NULL && bo->cma.base.resv->owner == NULL);
 		struct dma_fence *next = bo->cma.base.resv->exclusive;
 		CHECK(next && next->status == 0 && next->context == job->fence_context &&
@@ -173,7 +175,7 @@ static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v)
   CHECK(core_mask_count==0 && !controller_masked && cache_phase==1);
   CHECK(csd_owned==j->nbo && scratch_owned && ptes_synced);
   for(unsigned i=0;i<j->nbo;i++) {
-   struct bcmv3d_bo *bo=j->bos[i]; uint32_t *pt=j->pt->cma.vaddr;
+   struct bcmv3d_bo *bo=bcmv3d_to_bo(j->bos[i]); uint32_t *pt=j->pt->cma.vaddr;
    CHECK(bo->busy && bo->cma.base.refs>=1);
    for(unsigned p=0;p<bo->cma.dmasize/PAGE_SIZE;p++)
     CHECK((pt[(bo->gpu>>12)+p]&(V3D_PTE_VALID|V3D_PTE_WRITE))==(V3D_PTE_VALID|V3D_PTE_WRITE));
@@ -186,7 +188,7 @@ static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v)
   }
   if(close_during_submit) {
    for(unsigned h=1;h<16;h++)if(close_during_submit->handles[h])close_handle(close_during_submit,h);
-   for(unsigned i=0;i<j->nbo;i++)CHECK(j->bos[i]->cma.base.refs==1);
+   for(unsigned i=0;i<j->nbo;i++)CHECK(j->bos[i]->refs==1);
    close_during_submit=NULL;
   }
   contract_resv_engine(j); if(on_engine_start != NULL)on_engine_start();
@@ -199,14 +201,14 @@ static int bcmv3d_takeover_core_poke(bus_size_t r,uint32_t v)
   CHECK(core_mask_count==0 && !controller_masked && cache_phase==1);
   CHECK(csd_owned==j->nbo && scratch_owned && ptes_synced);
   for(unsigned i=0;i<j->nbo;i++) {
-   struct bcmv3d_bo *bo=j->bos[i]; uint32_t *pt=j->pt->cma.vaddr;
+   struct bcmv3d_bo *bo=bcmv3d_to_bo(j->bos[i]); uint32_t *pt=j->pt->cma.vaddr;
    CHECK(bo->busy && bo->cma.base.refs>=2);
    for(unsigned p=0;p<bo->cma.dmasize/PAGE_SIZE;p++)
     CHECK((pt[(bo->gpu>>12)+p]&(V3D_PTE_VALID|V3D_PTE_WRITE))==(V3D_PTE_VALID|V3D_PTE_WRITE));
   }
   if(close_during_submit) {
    for(unsigned h=1;h<16;h++)if(close_during_submit->handles[h])close_handle(close_during_submit,h);
-   for(unsigned i=0;i<j->nbo;i++)CHECK(j->bos[i]->cma.base.refs==1);
+   for(unsigned i=0;i<j->nbo;i++)CHECK(j->bos[i]->refs==1);
    close_during_submit=NULL;
   }
   csd_writes=0; csd_starts++; core_regs[V3D_CSD_STATUS/4]|=2;
@@ -251,13 +253,13 @@ bus_dmamap_sync
  if(j->nbo) {
   if(m==j->pt->cma.dmamap) {
    uint32_t *pt=j->pt->cma.vaddr; CHECK(ops==1 && csd_owned==j->nbo);
-   if(pt[j->bos[0]->gpu>>12]) { CHECK(!retired && scratch_owned); ptes_synced=true; }
+   if(pt[bcmv3d_to_bo(j->bos[0])->gpu>>12]) { CHECK(!retired && scratch_owned); ptes_synced=true; }
    else { CHECK(retired && cache_phase==3 && !scratch_owned); revoke_synced=true; }
   } else if(m==j->scratch->cma.dmamap) {
    if(ops==3) { CHECK(!scratch_owned && csd_owned==j->nbo); scratch_owned=true; }
    else { CHECK(ops==12 && scratch_owned && cache_phase==3 && retired); scratch_owned=false; }
   } else {
-   bool found=false; for(unsigned i=0;i<j->nbo;i++)if(m==j->bos[i]->cma.dmamap)found=true;
+   bool found=false; for(unsigned i=0;i<j->nbo;i++)if(m==bcmv3d_to_bo(j->bos[i])->cma.dmamap)found=true;
    CHECK(found);
    if(ops==3) { if(csd_owned==0)retired=revoke_synced=revoked=ptes_synced=false; csd_owned++; }
    else { CHECK(ops==12 && csd_owned>0 && revoked && cache_phase==3); csd_owned--; }
@@ -466,7 +468,22 @@ main(void)
 		CHECK(((uint32_t *)c.job->pt->cma.vaddr)[a.ioa>>12]==0);
 	}
 	cleanup(&c,&f,false);
+	/* Sorting reservations must not exchange TFU source and destination roles. */
+	a=setup(&c,&d,&f);
+	struct drm_gem_object *source=f.handles[a.bo_handles[1]], *destination=f.handles[a.bo_handles[0]];
+	if ((uintptr_t)source->resv < (uintptr_t)destination->resv) {
+		struct dma_resv *temporary=source->resv;
+		source->resv=destination->resv; destination->resv=temporary;
+	}
+	struct drm_gem_object *ordered[2]={source,destination};
+	struct bcmv3d_resv preflight={0};
+	CHECK(bcmv3d_resv_prepare(&preflight,ordered,2,1000)==0);
+	CHECK(ordered[0]==destination && ordered[1]==source);
+	bcmv3d_resv_unlock(&preflight);
+	CHECK(bcmv3d_submit_tfu(&d,&a,&f)==0);
+	cleanup(&c,&f,false);
 	a=setup(&c,&d,&f); close_during_submit=&f;
+
 	CHECK(bcmv3d_submit_tfu(&d,&a,&f)==0 && gems==2);
 	cleanup(&c,&f,false);
 	a=setup(&c,&d,&f); reg_calls=0;

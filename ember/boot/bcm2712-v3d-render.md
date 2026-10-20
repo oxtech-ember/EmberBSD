@@ -49,6 +49,10 @@ The [read-only BO snapshot](bcm2712-v3d-bo-stats.md) distinguishes quota,
 DMA and publication failures without changing these limits. Its counters include
 in-flight reservations and retained GEM ownership.
 
+The [CL/CSD object-list contract](bcmv3d-submit-lists.md) replaces fixed stack
+arrays with bounded heap ownership. Its 4096-entry software policy is separate
+from the BO storage budget and physical rendering acceptance.
+
 A device mutex serializes jobs. For TFU, the MMU maps only two referenced BOs:
 source read-only, destination writable. The first admitted payload is the
 accepted 64x64 R32F TFU copy. Validate every register, flag, reserved field,
