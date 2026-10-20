@@ -251,6 +251,8 @@ controls={
 'hvs-helper-version'=>['publish-body.h','READ(BCMV3D_PUBLISH_HVS, 0);','READ(BCMV3D_PUBLISH_HVS, 0x20);','window == 0 && offset == 0'],
 'hvs-helper-lptr'=>['publish-body.h','WRITE(BCMV3D_PUBLISH_HVS, lptr, PUBLISH_HEAD);','WRITE(BCMV3D_PUBLISH_HVS, lptr, 128);','pb.barriers == 10 && value == 32'],
 'hvs-owner-native'=>['native-job.h','bcmv3d_hvs_publish_1080p60(owner->mmu4.native,','bcmv3d_hvs_publish_1080p60(NULL,','p->attempted && p->complete'],
+'hvs-link-log'=>['native-job.h','p->status.link[19]','p->status.link[18]','strcmp(actual,expected) == 0'],
+'hvs-csc-log'=>['native-job.h','p->status.link[25]','p->status.link[24]','strcmp(actual,expected) == 0'],
 'hvs-timing-log'=>['native-job.h','p->status.timing.pv[2],','p->status.timing.pv[3],','strcmp(actual,expected) == 0'],
 
 

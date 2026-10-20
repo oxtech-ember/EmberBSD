@@ -70,7 +70,7 @@ static struct {
 	unsigned int accesses, reads, writes, barriers, delays;
 	unsigned int fail_read, fail_write, ignore_write, latch_delay;
 	unsigned int dlist_writes, dlist_reads, reset_writes, channel_writes;
-	unsigned int timing_reads[12];
+	unsigned int timing_reads[12], link_reads[26];
 	bool pending, faulted, partial, timeout, reenter, eof;
 	enum bcmv3d_hvs_publish_window pending_window;
 	struct bcmv3d_hvs_publish_status status;
@@ -127,6 +127,12 @@ snapshot_check(void)
 	unsigned int i, index;
 
 	CHECK(pb.status.timing.words <= 12);
+	CHECK(pb.status.link_words <= 26);
+	for (i = 17; i < __arraycount(profile); i++) {
+		CHECK(pb.status.link[i - 17] ==
+		    (i - 17 < pb.status.link_words ?
+		    pb.saved[profile[i].window][profile[i].offset / 4] : 0));
+	}
 	for (i = 0; i < __arraycount(profile); i++) {
 		index = snapshot_index(profile[i].window, profile[i].offset);
 		if (index < 6) {
@@ -160,6 +166,11 @@ publish_test_read(void *arg, enum bcmv3d_hvs_publish_window window,
 		CHECK(bcmv3d_hvs_publish_1080p60(owner, &publish_io, &pb,
 		    &pb.frame, &pb.status) == EBUSY);
 		CHECK(pb.accesses == before);
+	}
+	for (unsigned int i = 17; i < __arraycount(profile); i++) {
+		if (pb.writes == 0 && window == profile[i].window &&
+		    offset == profile[i].offset)
+			pb.link_reads[i - 17]++;
 	}
 	index = snapshot_index(window, offset);
 	if (pb.writes == 0 && index < 12)
@@ -199,7 +210,10 @@ publish_test_write(void *arg, enum bcmv3d_hvs_publish_window window,
 	CHECK(pb.status.native.backing.sealed && pb.status.native.backing.syncs == 5);
 	CHECK(pb.status.mutation_attempted);
 	CHECK(pb.status.timing.words == 12);
+	CHECK(pb.status.link_words == 26);
 	snapshot_check();
+	for (unsigned int i = 0; i < 26; i++)
+		CHECK(pb.link_reads[i] == 1);
 	for (unsigned int i = 0; i < 12; i++)
 		CHECK(pb.timing_reads[i] == (i == 0 ? 2U : 1U));
 	pb.accesses++;
@@ -602,6 +616,10 @@ invalid_result:
 	    native_accesses);
 	CHECK(pb.status.attempted && pb.status.complete == (error == 0));
 	CHECK(pb.status.first_error == expected);
+	if (strcmp(kind, "profile") == 0 && id == 10) {
+		for (before = 0; before < 26; before++)
+			CHECK(pb.link_reads[before] == 1);
+	}
 	snapshot_check();
 	if (strcmp(kind, "native") == 0 || strcmp(kind, "real-unready") == 0 ||
 	    strcmp(kind, "real-partial") == 0 || strcmp(kind, "real-combined") == 0 ||

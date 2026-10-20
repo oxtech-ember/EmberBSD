@@ -897,6 +897,21 @@ publish:
 		    p->status.timing.hdmi[1], p->status.timing.hdmi[2],
 		    p->status.timing.hdmi[3], p->status.timing.hdmi[4],
 		    p->status.timing.hdmi[5]);
+		aprint_normal_dev(sc->sc_dev, "boot HVS link: saved words %u/26; "
+		    "profile %08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/"
+		    "%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x\n",
+		    p->status.link_words,
+		    p->status.link[0], p->status.link[1], p->status.link[2],
+		    p->status.link[3], p->status.link[4], p->status.link[5],
+		    p->status.link[6], p->status.link[7], p->status.link[8],
+		    p->status.link[9], p->status.link[10], p->status.link[11],
+		    p->status.link[12], p->status.link[13], p->status.link[14],
+		    p->status.link[15], p->status.link[16], p->status.link[17],
+		    p->status.link[18], p->status.link[19]);
+		aprint_normal_dev(sc->sc_dev, "boot HVS CSC: "
+		    "%08x/%08x/%08x/%08x/%08x/%08x\n",
+		    p->status.link[20], p->status.link[21], p->status.link[22],
+		    p->status.link[23], p->status.link[24], p->status.link[25]);
 	}
 out:
 	KERNEL_UNLOCK_ONE(NULL);

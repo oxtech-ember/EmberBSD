@@ -68,11 +68,11 @@ counter does not fail completion. A failed diagnostic read retains its error and
 the separate completed helper result. No sample proves visible pixels or AXI drain.
 A coherent GCC16 kernel and four-module kit links successfully. Actual target-TU
 GCC, Cppcheck and Clang Static Analyzer checks pass their recorded classifications.
-On one BCM2712 board, native MMU4 completes and the four GPU tests pass. HVS
-publication refuses PV0 HORZA=004a0016 before any write. The complete inherited
-mode is not yet confirmed. The coupled-profile correction below has host checks
-only. Physical HVS publication
-and a first visible frame remain pending.
+On one BCM2712 board, native MMU4 completes and the four GPU tests pass.
+The coupled horizontal profile passes. Publication refuses PIPE_INIT_CTRL101
+where the native profile requires110. The saved HDMI vertical words also differ
+from the native encoder. The complete inherited link is not yet admitted.
+Physical HVS publication and a first visible frame remain pending.
 
 ## Conservative inherited profile
 
@@ -147,6 +147,17 @@ use only the saved words. They retain the first mismatch window, offset, raw,
 mask and expected value. The owner prints this cached snapshot after success or
 refusal. Printing causes no additional register access. This bounded sequential
 snapshot does not imply an atomic hardware sample or a confirmed physical mode.
+
+After the twelve timing words, the helper captures the twenty link words in the
+order from Shared HD +44 through RM0 +18 in the table. It then captures CSC0
++4, +8, +c, +10, +14 and +18. The retained `link_words` count covers only successful
+reads. A read error stops the operation and leaves the rest of the array zero.
+All link and CSC checks use these saved values. There is no repeated link read
+for validation. Both complete RGB matrices and every profile mask stay unchanged.
+The owner prints the saved twenty-word link group and six-word CSC group after
+the helper returns. Neither log path performs MMIO. The snapshot can therefore
+explain later link differences even when an earlier PV profile check refuses.
+The snapshot does not establish a valid mode, PLL lock, display ownership or drain.
 
 All native and inherited-profile checks finish before the first write. The helper
 uses the actual plane encoder, writes ten SRAM words at +4080 through +40a4 and

@@ -50,12 +50,17 @@ struct bcmv3d_hvs_publish_timing {
 	unsigned int words;
 };
 
+#define BCMV3D_PUBLISH_LINK_WORDS	26U
+
 /* Fresh zeroed storage in the retained boot owner. No release predicate. */
 struct bcmv3d_hvs_publish_status {
 	struct bcmv3d_mmu4_native_status native;
 	struct bcm2712_hvs_frame frame;
 	struct bcm2712_hvs_dlist list;
 	struct bcmv3d_hvs_publish_timing timing;
+	/* publish_link order, then CSC0 +4 through +18. Successful prefix only. */
+	uint32_t link[BCMV3D_PUBLISH_LINK_WORDS];
+	unsigned int link_words;
 	enum bcmv3d_hvs_publish_stage stage;
 	enum bcmv3d_hvs_publish_window window;
 	uint32_t version, offset, raw, reject_mask, reject_expected;

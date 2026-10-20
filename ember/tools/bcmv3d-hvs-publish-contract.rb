@@ -79,6 +79,9 @@ begin
     unless ENV['HVS_PUBLISH_SKIP_MUTANTS'] == '1'
       original = File.binread(work + '/publish-body.h')
       controls = {
+        'link-prefix' => ['s->link[i] = s->raw;', 's->link[i] = 0;', '0:positive:0', 'error == expected'],
+        'link-cached' => ['CACHED(word->window, word->offset, s->link[i],\n\t\t    word->mask, word->expected);', 'EXPECT(word->window, word->offset, word->mask, word->expected);', '0:positive:0', 'pb.link_reads[i] == 1'],
+        'link-read-error' => ['READ(word->window, word->offset);', '(void)publish_read(io, arg, s, word->window, word->offset);', '0:read:30', 'arg == &pb && !pb.faulted && !pb.pending'],
         'native-primary' => ["\tif (n->program_error != 0)\n\t\treturn n->program_error;\n\tif (n->prepare_error != 0)\n\t\treturn n->prepare_error;\n\tif (n->fault != 0)\n\t\treturn n->fault;", "\tif (n->fault != 0)\n\t\treturn n->fault;\n\tif (n->program_error != 0)\n\t\treturn n->program_error;\n\tif (n->prepare_error != 0)\n\t\treturn n->prepare_error;", '0:real-combined:0', 'error == expected'],
         'eof-complete' => ['(s->channel_status & 0x6000) == 0x4000)', '(s->channel_status & 0x4000) != 0)', '0:eof:0', 'error == expected'],
         'firmware-policy' => ['0x00e0003d, pv.control & 0x00e0003d', '0x06fff03d, pv.control & 0x06fff03d', '0:firmware:0', 'error == expected'],

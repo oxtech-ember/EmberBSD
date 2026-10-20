@@ -173,6 +173,38 @@ static void print_device_message(device_t dev, const char *f, ...)
 	struct bcmv3d_bootfb_owner *o = &gpu_sc.sc_bootfb;
 	struct bcmv3d_display_stop *d = &o->display;
 	(void)dev;
+	if (strncmp(f,"boot HVS link:",14) == 0) {
+		char actual[512], expected[512];
+		va_list ap;
+
+		CHECK(giant > 0 && !o->publish.executing);
+		va_start(ap,f); CHECK(vsnprintf(actual,sizeof(actual),f,ap) > 0); va_end(ap);
+		CHECK(snprintf(expected,sizeof(expected),
+		    "boot HVS link: saved words %u/26; profile %08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x/%08x\n", o->publish.status.link_words,
+		    o->publish.status.link[0], o->publish.status.link[1], o->publish.status.link[2],
+		    o->publish.status.link[3], o->publish.status.link[4], o->publish.status.link[5],
+		    o->publish.status.link[6], o->publish.status.link[7], o->publish.status.link[8],
+		    o->publish.status.link[9], o->publish.status.link[10], o->publish.status.link[11],
+		    o->publish.status.link[12], o->publish.status.link[13], o->publish.status.link[14],
+		    o->publish.status.link[15], o->publish.status.link[16], o->publish.status.link[17],
+		    o->publish.status.link[18], o->publish.status.link[19]) > 0);
+		CHECK(strcmp(actual,expected) == 0);
+		return;
+	}
+	if (strncmp(f,"boot HVS CSC:",13) == 0) {
+		char actual[512], expected[512];
+		va_list ap;
+
+		CHECK(giant > 0 && !o->publish.executing);
+		va_start(ap,f); CHECK(vsnprintf(actual,sizeof(actual),f,ap) > 0); va_end(ap);
+		CHECK(snprintf(expected,sizeof(expected),
+		    "boot HVS CSC: %08x/%08x/%08x/%08x/%08x/%08x\n",
+		    o->publish.status.link[20],o->publish.status.link[21],
+		    o->publish.status.link[22],o->publish.status.link[23],
+		    o->publish.status.link[24],o->publish.status.link[25]) > 0);
+		CHECK(strcmp(actual,expected) == 0);
+		return;
+	}
 	if (strncmp(f,"boot HVS timing:",16) == 0) {
 		char actual[512], expected[512];
 		const struct bcmv3d_hvs_publish_timing *t = &o->publish.status.timing;

@@ -46,6 +46,9 @@ static const struct publish_profile_word publish_link[] = {
 	{ BCMV3D_PUBLISH_RM0, 0x18, 0xffffffff, 0x98100000 }
 };
 
+_Static_assert(__arraycount(publish_link) + 6 == BCMV3D_PUBLISH_LINK_WORDS,
+    "fixed link snapshot layout");
+
 static int
 publish_native(const struct bcmv3d_mmu4_native_status *n)
 {
@@ -281,6 +284,18 @@ bcmv3d_hvs_publish_1080p60(struct bcmv3d_mmu4_native *native,
 		s->timing.hdmi[i] = s->raw;
 		s->timing.words++;
 	}
+	/* Capture the complete read-only link group before profile evaluation. */
+	for (i = 0; i < __arraycount(publish_link); i++) {
+		word = &publish_link[i];
+		READ(word->window, word->offset);
+		s->link[i] = s->raw;
+		s->link_words++;
+	}
+	for (i = 0; i < 6; i++) {
+		READ(BCMV3D_PUBLISH_CSC0, 4 + 4 * i);
+		s->link[__arraycount(publish_link) + i] = s->raw;
+		s->link_words++;
+	}
 	/* Retain FIFO/start policy. Check only format, repetition and route. */
 	EXPECT(BCMV3D_PUBLISH_PV0, 0, 0x00e0003d, pv.control & 0x00e0003d);
 	/* Exact VCONTROL selects one complete horizontal packing profile. */
@@ -316,23 +331,29 @@ bcmv3d_hvs_publish_1080p60(struct bcmv3d_mmu4_native *native,
 	    0x3fff01ff, hdmi.vertb1);
 	for (i = 0; i < __arraycount(publish_link); i++) {
 		word = &publish_link[i];
-		EXPECT(word->window, word->offset, word->mask, word->expected);
+		CACHED(word->window, word->offset, s->link[i],
+		    word->mask, word->expected);
 	}
 	/* Accept the pinned full or limited RGB matrix. No YCbCr conversion. */
-	READ(BCMV3D_PUBLISH_CSC0, 4);
-	if (s->raw == 0x00001b80) {
+	if (s->link[__arraycount(publish_link)] == 0x00001b80) {
 		scale = 0x1b80;
 		offset = 0x04000000;
 	} else {
 		scale = 0x2000;
 		offset = 0;
 	}
-	EXPECT(BCMV3D_PUBLISH_CSC0, 4, 0xffffffff, scale);
-	EXPECT(BCMV3D_PUBLISH_CSC0, 8, 0xffffffff, offset);
-	EXPECT(BCMV3D_PUBLISH_CSC0, 0xc, 0xffffffff, scale << 16);
-	EXPECT(BCMV3D_PUBLISH_CSC0, 0x10, 0xffffffff, offset);
-	EXPECT(BCMV3D_PUBLISH_CSC0, 0x14, 0xffffffff, 0);
-	EXPECT(BCMV3D_PUBLISH_CSC0, 0x18, 0xffffffff, offset | scale);
+	CACHED(BCMV3D_PUBLISH_CSC0, 4,
+	    s->link[__arraycount(publish_link) + 0], 0xffffffff, scale);
+	CACHED(BCMV3D_PUBLISH_CSC0, 8,
+	    s->link[__arraycount(publish_link) + 1], 0xffffffff, offset);
+	CACHED(BCMV3D_PUBLISH_CSC0, 0xc,
+	    s->link[__arraycount(publish_link) + 2], 0xffffffff, scale << 16);
+	CACHED(BCMV3D_PUBLISH_CSC0, 0x10,
+	    s->link[__arraycount(publish_link) + 3], 0xffffffff, offset);
+	CACHED(BCMV3D_PUBLISH_CSC0, 0x14,
+	    s->link[__arraycount(publish_link) + 4], 0xffffffff, 0);
+	CACHED(BCMV3D_PUBLISH_CSC0, 0x18,
+	    s->link[__arraycount(publish_link) + 5], 0xffffffff, offset | scale);
 
 	s->stage = BCMV3D_PUBLISH_DLIST;
 	for (i = 0; i < BCM2712_HVS_DLIST_WORDS; i++)
