@@ -1,28 +1,66 @@
-# A733 PowerVR graphics development checkpoint
+# A733 native PowerVR graphics
 
-This branch prepares native graphics resources for BXM `36.56.104.183`.
-It includes HWRT dataset handles and paired geometry/fragment DRM submissions.
-These interfaces remain unaccepted on hardware.
-The installed kernel passes three native Vulkan compute lifecycles.
-Zink rendering, HDMI/KMS, and accelerated Plasma remain unaccepted on this platform.
-Use the [native execution guide](a733-pvr-execution.md) for the implemented compute path.
+The native driver supports graphics resources for BXM `36.56.104.183`.
+It includes HWRT datasets, paired geometry/fragment jobs, a final fragment,
+and transfer submission. Bounded offscreen and hardware KWin/Zink checks pass.
+Use the [execution guide](a733-pvr-execution.md) for activation, firmware
+ownership, compute acceptance and the exact kernel artifact.
 
-## Prepared components
+## Physical acceptance boundary
 
-| Component | Software evidence | Integration boundary |
-| --- | --- | --- |
-| Geometry, fragment, and transfer stream decoders | 3,914 sanitizer checks; 1,320 comparisons with pinned Linux encoders | Paired geometry/fragment and independent transfer submission exist; physical graphics remains unverified |
-| Paired geometry/fragment queues, fragment and transfer execution | 199,607 sanitizer checks; 13 causal regressions | Paired submit caller exists; graphics execution remains unverified |
-| HWRT firmware resource owner | 14,101 sanitizer checks; 82,377 configurations compared with pinned Linux | UAPI, handle owner, and build registration exist; hardware acceptance remains pending |
-| Shared GEM and VM mapping holds | BO checks: 37,866 / 148,458; file checks: 2,158 / 127, for 4 KiB / 16 KiB hosts | HWRT handle owner retains these holds; runtime acceptance remains pending |
-| Two-phase free-list growth | 8,457,268 sanitizer checks; 44 allocation-failure cases; 11 causal regressions | Device registry and GROW callbacks have host lifecycle contracts |
+The physical 4 GiB A733 Zero 3W runs GCC16.2.0 `EMBER64` kernel
+`538697de0806efed208bb71de32d1fab42104e02` with matching modules and DTBs.
+The PCB revision was not recorded. Firmware is `1.1.6976702`.
+All 21 GPU diagnostic stages and three Vulkan compute lifecycles pass.
+Each compute lifecycle verifies all 16 output words, a fence and host readback.
 
-GCC16 target compilation, GCC path analysis, Clang analysis, and Cppcheck
-supplement these checks. Existing header diagnostics, fixture model findings,
-and analyzer path-budget limits remain recorded separately.
-Valgrind does not support the macOS ARM64 test host.
-ASan/UBSan checks are not Valgrind or physical DMA tests.
-The complete kernel is installed and compute-tested as described below.
+The offscreen Vulkan check draws a triangle into an optimal image and uses
+transfer submission for readback. All 256 RGBA pixels match the reference.
+Row padding and guard bytes remain intact. The maximum sampled temperature
+across the diagnostic, compute and offscreen run is 54.56 degrees Celsius.
+
+KWin 6.8 and a Qt Quick client use hardware OpenGL ES through PowerVR and
+Zink on a virtual output. The separately staged Mesa 26.2.4nb8 runtime does
+not replace the installed system Mesa package. Four uniform red, green,
+blue and white frames of 640 by 480 pixels pass exact capture comparison:
+1,228,800 pixels in total. The client and compositor exit successfully.
+No DMA-BUF sync-file import/export error appears in these four frames.
+Boot time and checked system hashes remain unchanged. The maximum sampled
+temperature during this check is 54.312 degrees Celsius.
+The public [KWin frame consumer](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/desktop/kwin-frame-check)
+checks the client renderer and the compositor's captured pixels separately.
+
+This uniform-frame result does not accept the separate one-LSB differences
+at texture boundaries in the quadrant image. It does not repeat the earlier
+80-cycle PRIME or 128-cycle sync-file checks from other kernel receipts.
+See the [PRIME mechanism](a733-pvr-render.md#prime-sharing) and
+[sync-file probe scope](drm-dmabuf-sync-check.md).
+No tolerance is added to the pixel comparison.
+
+Native HDMI/KMS, pending scanout retirement, a complete Plasma session,
+physical free-list GROW events, reset recovery and endurance remain unaccepted.
+The DE attempt on this kernel stops at step 4: global IOMMU flush register
+0x30 returns 0 after a request of 3. The [cold-init repair](a733-iommu1-cold-init.md)
+accepts that observed request state and keeps the final explicit write of 0.
+Its source, GCC16 and host checks pass; its physical effect is not yet accepted.
+Neither readback nor the BSP delay proves flush completion.
+Mesa still requires `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1`.
+These results do not establish Vulkan conformance or general graphics stability.
+
+## Source contracts and provenance
+
+| Component | Executable contract scope |
+| --- | --- |
+| Geometry, fragment and transfer decoders | Compare encoded streams with pinned Linux encoders; reject malformed layouts |
+| Paired queues and execution | Check ordering, queue wrapping, completion, timeouts and failure retention |
+| HWRT owner | Compare profile geometry with pinned formulas; check references and cleanup |
+| GEM and VM mapping holds | Check aliases, file lifetime, shared spans and backing pins |
+| Free-list growth | Check allocation failures, PFN publication, owner registry and callbacks |
+
+GCC16 target compilation and path analysis, Clang Static Analyzer, and
+Cppcheck supplement these contracts. Inherited header findings and analyzer
+path limits remain separate. The macOS ARM64 host cannot run Valgrind.
+ASan/UBSan tests are not Valgrind or physical DMA tests.
 
 The command encoders and FWIF use the MIT alternative from Linux revision
 `7b63ef2d55f24519e7e9e5f4d15dbea03f126e40`.
@@ -40,214 +78,98 @@ PVR_EXEC_TEST_CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointe
     sh ember/tools/pvr-exec-contract.sh
 ```
 
-## Resume integration
-
-1. Keep the accepted kernel, matched modules, DTBs, and recovery hashes together.
-2. Prepare an offscreen Vulkan consumer with independent pixel readback.
-3. Build and verify native transfer submissions for image-to-buffer readback.
-4. Test offscreen Vulkan rendering before Zink and PRIME sharing.
-5. Recheck the main compute guards after each driver change.
-
-The execution backend installs GROW handlers before it becomes available to clients.
-Unknown firmware IDs and incomplete owners fail closed.
-The submit path now identifies exact geometry-signal and fragment-wait pairs.
-It uses the existing firmware `FENCE_PR` instead of waiting before publishing the producer.
-The former host wait timed out before rendering in an actual-source regression.
-Host contracts cover the fix; hardware graphics acceptance remains pending.
-
-Keep both gates held in firmware callbacks: device first, then platform.
-A callback must not acquire the device gate again.
-Growth publishes PFNs before its response; unknown completion must retain the pages.
-Free-list reconstruction and GPU reset remain unsupported.
-A later reconstruction implementation must preserve the order of prepended PFN blocks.
-The append order of the native allocation descriptors is not that table order.
-
-The HWRT handle wrapper retains local and global free lists.
-Both lists and the rendering context must refer to the same VM.
-Use shared mapping holds for the two MLIST and region-header spans packed in one BO.
-Do not weaken the exclusive free-list backing pin.
-Release holds and free-list references only after acknowledged HWRT cleanup.
-An uncertain cleanup retains the entire owner and its dependencies.
-
-The submit path performs a full-batch copy, decode, and reference pass.
-Pair adjacent geometry and fragment jobs only after validating their dependency,
-context, HWRT owner, VM, and target index.
-Publish both queues with `pvr_context_render_pair()` before waiting for geometry.
-A matched intra-pair dependency needs firmware ordering; external waits must remain outside both gates.
-Publish both results only after both queues complete and VM synchronization succeeds.
-Mesa 26.2.4 can append a final ordinary fragment after the paired partial render.
-The native path admits this exact triple after validating the whole batch.
-All three jobs use the same context, HWRT owner, VM, and target index.
-Both fragments borrow the geometry job's single HWRT reference.
-The final fragment waits separately, then uses `pvr_context_fragment()`.
-That sender emits `FRAG` and `UPDATE`, with HWRT cleanup and fresh completion checks.
-The first pair still emits `GEOM`, `FENCE_PR`, `FRAG_PR`, and its two UFO updates.
-Geometry FIRST/LAST flags retain their existing decoder mapping.
-Standalone fragments, two ordinary fragments, and longer fragment chains fail before publication.
-
-The actual-source contracts distinguish the PR and final payloads with different clear values.
-They check final external waits, retained references, VM failure, and unsignaled failed work.
-An invalid third job prevents publication of even the first pair.
-The previous source rejects the valid triple with `EOPNOTSUPP` before firmware execution.
-This matches the observed three-job submit rejection; the new path still needs physical acceptance.
-The source contracts check these rules. Physical execution remains unverified.
-
-## Physical acceptance boundary
-
-The kernel `4d9b68f3ec4866ad46810b4257daf4333ef10f38` is installed on the 4 GiB A733 Zero 3W.
-Its exact artifact and three native compute passes are recorded in the [execution guide](a733-pvr-execution.md).
-The explicit PLL600 stages pass before native activation. Observe-only boot remains unchanged.
-This verifies compute regression coverage with the graphics code present.
-It does not execute paired graphics, physical GROW, or a pixel readback oracle.
-
-Mesa 26.2.4nb6 with Zink and the Vulkan compute consumer are prepared in
-[Ports](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/powervr.md).
-Their installation does not establish GPU execution.
-Native PRIME ownership and the A733 DE3.52/TCON/HDMI/KMS path remain separate work.
-An offscreen result does not establish a visible accelerated Plasma session.
-
 ## Firmware event dispatcher
 
-The primitives originate at `795a20d364e6f7c32c161ce787bd57890cde2e22`.
-The dispatcher and execution integration passed independent source review.
-The installed compute regression does not exercise physical GROW events.
+The backend installs GROW handlers before it becomes available to clients.
+The dispatcher validates GROW dequeue and GROW_UPDATE transport and bounds
+each service drain to 32 events. `pvr_fw_events` and `set_events` connect
+the callbacks. `pvr_freelist_current_pages()` requires a ready, quiet owner.
 
-The dispatcher adds validated GROW dequeue and GROW_UPDATE transport, a bounded
-32-event service drain, and `pvr_fw_events` / `set_events` callbacks.
-It also adds `pvr_freelist_current_pages()` for a ready, quiet owner.
-The device registry uses full 32-bit firmware IDs, separate from per-file handles.
+The device registry uses full 32-bit firmware IDs, separate from file handles.
 A native red-black tree bounds lookup without truncating the final valid ID.
-Registration reserves the owner slot before firmware creation can issue commands.
+Registration reserves an owner slot before firmware creation can issue commands.
 Successful destruction removes the entry before the owner slot is freed.
-Failed cleanup keeps the entry, VM, pin, and existing orphan device reference alive.
-One pending owner spans successful GROW preparation and its matching completion.
+Failed cleanup retains the entry, VM, pin and orphan device reference.
+One pending owner spans GROW preparation and its matching completion.
 Failed preparation creates no pending owner; failed completion retains it.
-Callbacks hold both existing gates and never acquire either gate recursively.
-Host tests use the actual tree implementation and driver/execution sources.
-They cover registration failure, two clients, ID boundaries, cleanup, and retained references.
-Reconstruction requests and physical GROW execution remain unsupported or unverified.
 
-The fixture defines `current_pages_tests()` and does not reacquire the held bridge gate.
-The page-count tests run before their two backing buffers are freed.
-The former order caused an ASan heap-use-after-free in `reset_state()`.
-Fresh normal and ASan/UBSan free-list checks pass after correcting that order.
-The unchanged dispatcher contracts also pass ASan/UBSan:
-bridge 582 checks, service 9,069 checks, and fwprobe 15,548,668 checks.
-This checks host boundary models, not physical firmware execution.
-
-The complete installed source has target analysis with real kernel build flags and generated headers.
-The scope and inherited diagnostics are summarized below.
-The getter checks assert exact equivalence; mutations of all five gating conditions fail them.
-Physical firmware must also establish whether KICK consumption precedes the
-request/response dependency. Keep bounded failure if that assumption does not hold.
-
-HWRT UAPI and paired `SUBMIT_JOBS` integration now exist as described below.
-Their free-list references share the device-wide GROW callback registry.
+Callbacks hold the device gate, then the platform gate. They do not acquire
+either gate recursively. Growth publishes PFNs before its response.
+Unknown completion retains the pages. A future reconstruction path must
+preserve prepended PFN-block order, which differs from allocation order.
+Reconstruction and GPU reset remain unsupported. Host contracts cover
+registration failure, multiple clients, ID boundaries, cleanup and retention.
+Physical GROW and its request/response timing still need acceptance.
 
 ## HWRT execution ownership
 
-`pvr_exec_hwrt.c` owns HWRT dataset handles and references. The pinned
-upstream UAPI (create `0x0b`, destroy `0x0c`) is now in `pvr_drm.h`.
-Create resolves two distinct free-list handles from one VM, keeps both
-references for the dataset lifetime, verifies the local initial size
-against `pvr_device_hwrt_info()`, recomputes the region-header and
-tail-pointer-cache spans from the pinned profile formulas and rejects
-user TPC size/stride mismatches, then places shared holds with the
-pinned cache policy (MLIST adds PM firmware protection). Destroy and
-the last reference put release holds only after the firmware cleanup
-acknowledgement; a failed cleanup retains the owner, both free lists,
-their VM and every hold through device orphan retention. `target` marks
-a render target exposed before the first KICK and accepts index 0 or 1.
+`pvr_exec_hwrt.c` owns dataset handles and references. The pinned upstream
+create and destroy operations are 0x0b and 0x0c in `pvr_drm.h`.
+Create resolves two distinct free lists in one VM and retains both.
+It checks the local initial size against `pvr_device_hwrt_info()`.
+It recomputes region-header and tail-pointer-cache spans from the profile
+formulas and rejects mismatched user sizes or strides.
 
-The geometry formulas live in `pvr-exec-hwrt-fixture.h` and are checked
-against an independent recomputation from the Mesa formulas (`pvr-exec
--hwrt-contract.sh`); the MLIST input is a page count, not bytes. Cppcheck
-and Clang Static Analyzer are clean on the new module.
-The source and build checks do not establish physical HWRT lifetime.
+Shared mapping holds protect the two MLIST and region-header spans in one BO.
+The MLIST input is a page count. Its hold adds PM firmware protection.
+The exclusive free-list backing pin remains required.
+Destroy and the last reference release these holds only after acknowledged
+firmware cleanup. Failed cleanup retains the dataset, both free lists,
+their VM and every hold. `target` records exposure before the first KICK
+and accepts index 0 or 1. Host geometry checks independently recompute the
+Mesa formulas. The bounded pixel checks do not establish every HWRT lifetime.
 
 ## Paired submission
 
-`pvr_submit_jobs` now decodes geometry and fragment jobs beside compute.
-Geometry and fragment must alternate strictly: every geometry is followed
-by its fragment, and no fragment appears alone. The pair resolves one
-HWRT reference (kept on the geometry half; the fragment reuses it, so
-exactly one get and one put per pair), checks that the dataset, the
-render context and both jobs share one VM, and rejects differing dataset
-handles, render-target indices or contexts before waits or target exposure.
-External dependencies are consumed outside both gates. A fragment wait uses
-firmware ordering only when its paired geometry signals the same retained
-sync object, handle type, and timeline point. User handle equality is insufficient.
-`pvr_context_render_pair()` emits `FENCE_PR` on the geometry timeline before
-the fragment command. It publishes both queues in one combined KICK.
-Both commands use the validated HWRT firmware address and cleanup control.
-The fragment command type (FRAG or FRAG_PR) comes from the decoded stream.
-Both results remain unpublished until queue completion and VM synchronization.
+`pvr_submit_jobs` copies and validates the complete batch before publication.
+Each geometry job must have its paired fragment. The pair retains one HWRT
+reference and uses one context, VM, dataset and target index.
+An exact fragment wait on its geometry signal uses firmware `FENCE_PR`.
+The retained sync object, handle type and timeline point must all match.
+User handle equality alone is insufficient. External waits stay outside
+the device and platform gates.
 
-The shared graphics sender accepts only zero or `CMD_EXECUTED` after KICK transport completes.
-Zero does not prove GPU completion. Both CCCB consumption and each UFO value remain required.
-Fresh health checks, finite waits, failure retention, and strict CLEANUP acknowledgements remain unchanged.
-Host contracts cover both return words for paired, fragment, and transfer senders.
-The adopted native queue accepts `COMBINED_GEOM_FRAG_KICK` after validating both 32-byte payloads.
-It preserves the single-KICK field checks and clears inactive cleanup entries and packet bytes.
-Malformed payloads cause no DMA synchronization, publication, barrier, or doorbell write.
-Named ABI assertions pin the geometry offset, fragment offset, and combined payload size.
+`pvr_context_render_pair()` publishes both queues in one combined KICK.
+It emits GEOM, FENCE_PR, FRAG or FRAG_PR, and the required UFO updates.
+The native queue validates both 32-byte payloads, including cleanup fields.
+ABI assertions pin both offsets and the combined payload size.
+Malformed payloads cause no DMA publication or doorbell write.
 The legacy diagnostic entry point still rejects combined KICK.
-The queue retains its owner, firmware identity, consumed-entry checks, finite deadline, and failure state.
-Transport completion does not replace CCCB/UFO completion in the context sender.
-Host tests cover both return words, queue wrap, invalid halves, lost consumption, and firmware faults.
-These contracts do not establish physical paired graphics or GROW execution.
 
-The synchronous submit path cannot schedule an unpublished self or forward dependency.
-It returns `EDEADLK` when a remaining job can publish the currently missing sync point.
-A later timeline signal can satisfy an earlier point, but only an exact paired
-point receives the internal `FENCE_PR` treatment. An already published external
-fence retains its normal wait, even when a later job signals that object again.
-The external fence can complete independently while this batch waits.
-Failed external fences preserve their errors. Other external waits retain their
-deadlines, interrupt handling, and retained references across handle removal.
-Each batch permits at most `1 << 20` job and sync visits across producer searches.
-Empty jobs also consume this budget. Exhaustion returns `E2BIG`.
-These are synchronous implementation limits, not firmware or UAPI limits.
-The returned job count still reports partial progress if an earlier job completed.
+Mesa can append one final ordinary fragment after the paired partial render.
+The whole triple must share the context, HWRT dataset, VM and target index.
+Both fragments borrow the geometry job's single HWRT reference.
+The final fragment has its own external waits, VM synchronization, command,
+completion and signals. `pvr_context_fragment()` emits FRAG and UPDATE.
+The partial render alone cannot complete that final signal.
+Standalone fragments and longer fragment chains fail before publication.
 
-The actual-source submit contract checks exact binary and timeline dependencies,
-duplicate points, distinct objects and types, external failures, cycles, and forward waits.
-It also checks pair identity before target exposure, bounded searches, and HWRT lifetime.
-Backend loss retains the entire batch until a separately proven reset permits release.
-Normal and ASan/UBSan runs pass. The former host-wait behavior fails the new pair case.
-These checks use kernel, DRM, and firmware boundary models; they are not hardware evidence.
-The current full-branch build below includes these submit changes.
+KICK transport accepts zero or `CMD_EXECUTED`. Neither proves job completion.
+CCCB consumption, the expected UFO value, fresh health and VM synchronization
+must all succeed before results are published. CLEANUP keeps its strict
+acknowledgement. Unknown completion retains backing objects and the batch.
+
+The synchronous path returns `EDEADLK` for an unpublished self or forward
+dependency that only a later job can satisfy. A later timeline signal can
+satisfy an earlier point, but only the exact pair uses FENCE_PR ordering.
+Published external fences retain normal waits and errors even if this batch
+signals the same object again. Each batch permits at most `1 << 20` job and
+sync visits, including empty jobs. Exhaustion returns `E2BIG`.
+These are implementation limits, not firmware or UAPI limits.
+The returned job count reports partial progress after an earlier completion.
 
 ## Native transfer submission
 
-`TRANSFER_FRAG` uses the existing 176-byte stream decoder and transfer context sender.
-The ioctl rejects unknown flags, nonzero HWRT fields, wrong context types, and malformed streams before execution.
-The copied job type retains all 32 UAPI bits; unknown high-bit values cannot alias a supported opcode.
-External waits, retained context/VM references, PRE synchronization, and firmware completion remain required.
-Only successful transfer completion performs POST synchronization and publishes its output fences.
-A failure marks the VM uncertain; the existing owner prevents premature backing-memory release.
-No separate packet encoder or new completion shortcut is introduced.
+`TRANSFER_FRAG` uses the 176-byte stream decoder and transfer context sender.
+The ioctl rejects unknown flags, nonzero HWRT fields, wrong context types
+and malformed streams before execution. Job types retain all 32 UAPI bits;
+unknown high values cannot alias a supported opcode.
+External waits, retained context/VM references, PRE synchronization and
+firmware completion remain required. Only successful completion performs
+POST synchronization and publishes output fences. Failure marks the VM
+uncertain and prevents premature backing-memory release.
 
-The actual-source submit contract passes 39,375 normal and ASan/UBSan checks.
-It covers mixed compute/transfer ordering, input-copy and allocation errors, malformed admission,
-external fence completion/failure, interrupted waits, transfer timeout, and backend-loss retention.
-The former implementation and three causal mutants fail the new assertions.
-Real target GCC16 path analysis is clean. Clang retains the same five common-header dead stores.
-Cppcheck parses both variants and reports an identical diagnostic multiset, including inherited warnings.
-The source check does not establish transfer execution on the physical board.
-The installed `4d9b68f` kernel below predates this transfer ioctl integration.
-
-## Full kernel build and target analysis
-
-The complete committed tree `4d9b68f3ec4866ad46810b4257daf4333ef10f38` builds with GCC16.2.0 and `EMBER64`.
-The normal builder checks four matched modules and three DTBs. Its portable contracts pass.
-Unchanged module dependencies permit incremental object reuse; the artifact manifest records their exact hashes.
-The ELF and raw Image formats, BUILDINFO, source blobs, and executable modes are checked separately.
-
-Target analysis covers 13 changed firmware/PowerVR units and 11 corresponding compute-baseline units.
-The two new HWRT units have no invented baseline. All 24 GCC16 `-fanalyzer` compilations pass without diagnostics.
-Clang23 reports only the same inherited dead stores in common headers for five DRM units.
-Cppcheck2.22 parses the real GCC-preprocessed inputs but returns nonzero for retained findings.
-Comparable units add style/information findings only. Common-header warnings and normal branch limits remain explicit.
-No analyzer categories are disabled. These results supplement the source contracts and bounded compute check.
-They do not establish physical paired graphics, transfer execution, or firmware GROW behavior.
+Actual-source contracts cover mixed compute/transfer order, copy and
+allocation errors, malformed admission, external fences, interruption,
+timeout and backend loss. The physical optimal-image readback above exercises
+this transfer path. It does not establish all formats or workloads.

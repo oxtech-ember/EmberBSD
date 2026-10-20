@@ -550,11 +550,11 @@ on every board in the hardware catalog.
   component results. The complete virtual Plasma Desktop is checked below.
   The complete [KWin Wayland package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/kwin.md)
   now cross-builds with the full feature set and a payload that matches the
-  common sysroot file for file. On Orange Pi Zero 3W (A733) it passes a
-  private virtual-backend session: the compositor stays active on QPainter
-  while Qt Quick clients render real pixel phases through software EGL
-  (llvmpipe) and exit cleanly. Hardware GL compositing still needs native
-  graphics execution and a validated Zink path on A733.
+  common sysroot file for file. On physical Orange Pi Zero 3W (A733),
+  [KWin 6.8 and Qt Quick use PowerVR/Zink hardware OpenGL ES](ember/boot/a733-pvr-graphics.md#physical-acceptance-boundary)
+  on a virtual output. Four uniform 640 by 480 frames match all 1,228,800
+  captured pixels. The client and compositor exit successfully.
+  Native HDMI/KMS and a complete Plasma session remain unaccepted on A733.
   On physical CM5, the installed KWin 6.8.0 reports
   [OpenGL ES/V3D compositing](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/cm5-kwin.md)
   under an ordinary user on a virtual output. Plasma Desktop 6.8.0 also
@@ -942,98 +942,41 @@ It grants no absence admission or display ownership.
   cross-builds with GCC16; its actual DSO passes 85 no-device API checks over
   four cycles on the A733 Zero 3W. Native kernel transport, DMA and model
   execution remain unverified.
-  The [A733 Ports audit](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/a733-accelerators)
-  identifies its Vivante NPU's missing Mesa TP path and pins the exact PowerVR
-  firmware. The OS now supplies an [A733 PCK600 power-domain provider](ember/boot/a733-power-domains.md)
-  with bounded transitions, error propagation and retained legacy FDT callbacks.
-  Its 45 transition scenarios and GCC16 cross object builds pass. The
-  [accelerator clock providers](ember/boot/a733-accelerator-clocks.md) add module
-  clocks, interface gates and resets while preserving firmware-owned PLLs.
-  They pass 199 software assertions and GCC12/GCC16 object builds. A complete
-  GCC16.2 kernel boots on Zero 3W with both CCUs and PCK600 attached. The default read-only
-  [GPU identification consumer](ember/boot/a733-gpu-identification.md) now
-  attaches on Zero 3W. A stable physical CCU snapshot shows the GPU module
-  and bus clocks gated and reset asserted, with DCDC4 programmed to 800 mV.
-  The native PLL cold-start path now passes two physical Zero 3W runs with
-  GCC16 kernel `498c0028e`. It locks PLL_GPU0, completes GPU_CLK UPDATE
-  and confirms 600/200 MHz configuration at the programmed 800 mV supply.
-  GPU_CORE reaches strict ON/Q readiness. Both register reads identify
-  PowerVR BXM BVNC `36.56.104.183`; Wi-Fi and the existing NPU probe return
-  after a normal reboot. Frequencies and voltage were not measured externally.
-  The [physical PLL result](ember/boot/a733-gpu-identification.md#physical-pll-result)
-  supersedes the earlier PERIPH0-400M timeout and GPU MMIO stall. The consumer
-  now blocks GPU MMIO after failed CORE ON/Q confirmation, including boot
-  error diagnostics. Zero 3W now also rejects TOP-ID after a failed CORE wait,
-  including a retry after the diagnostic stage reset. HWR diagnostics
-  preserve the full firmware snapshot within the GCC16 stack limit.
-  Normal board DTBs remain observe-only; the working cold start is an explicit
-  runtime experiment. Native `firmload` now reads the exact firmware and
-  [validates its metadata](ember/boot/a733-gpu-fwinfo.md#physical-preflight-result)
-  against the live GPU on Zero 3W. The [native memory preparer](ember/boot/a733-gpu-fwmem.md#physical-preparation-result)
-  also passes on this board: code, data and MIPS page tables occupy checked
-  DMA allocations. The [native firmware bootstrap](ember/boot/a733-gpu-fwboot.md#physical-bootstrap-result)
-  now runs on Zero 3W: firmware sets its boot flag and returns the expected
-  hardware/firmware BVNC through direct coherent memory. The
-  [native LOGTYPE and MMUCACHE commands](ember/boot/a733-gpu-fwprobe.md#physical-command-result)
-  also complete on this board: return words, queue progress and the executed
-  counter agree. Diagnostic [stage 18](ember/boot/a733-gpu-fwcompute.md#physical-stage-18-result)
-  then loads the packed Mesa-generated compute image through firmload and
-  serializes the real USC/PDS/CDM packet on the board CPU; its 33 KiB image
-  digest matches the host packer byte for byte, without mapping or
-  publication. Rogue GPU [page-table encoders](ember/boot/a733-gpu-mmu.md)
-  and [CPU-owned VM preparation](ember/boot/a733-gpu-vm.md) pass source contracts;
-  On Zero 3W, the [native compute check](ember/boot/a733-gpu-fwcompute.md#physical-stages-19-21-result)
-  now passes all 21 stages with a Mesa 26.2.4 compiler packet. A guarded
-  PowerVR shader writes `0x13579bdf` through the native GPU page tables.
-  Client queue completion, timeline, DMA output, and fresh fault/HWR checks
-  agree. This check also passes on GCC16 kernel `e876bf6d2ce2` after a fresh boot.
-  A native [PowerVR DRM/GEM interface](ember/boot/a733-pvr-render.md)
-  opens on Zero 3W and passes 115 identity/runtime checks. It reports the measured
-  BVNC through a real render node. Native GEM allocation and CPU mapping of
-  an 8 MiB buffer also pass, including file isolation and mapping lifetime
-  after handle and file closure. [Native per-file VM operations](ember/boot/a733-pvr-vm.md)
-  pass 586 physical checks, including 128 additional VMs, sparse DMA tables,
-  heap queries, and buffer retention through unmap and file closure.
-  [Firmware-derived queries](ember/boot/a733-pvr-queries.md) report runtime limits
-  and compatibility lists. [Native DRM synchronization](ember/boot/drm-syncobj.md)
-  passes 1,712 binary/timeline checks, including delayed publication transfers.
-  These tests use CPU-issued fences. The VM tables remain CPU-owned.
-  The installed [Mesa PowerVR ICD](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/powervr.md)
-  now passes four physical-device enumeration lifecycles on Zero 3W with
-  kernel `f46cd40a5f28`, which includes the current USB series. It reports
-  Vulkan 1.2.354 through the native render node. Mesa's experimental
-  conformance gate remains enabled. The same package passes four llvmpipe
-  EGL/pixel cycles and 38 upstream invocations, with recorded internal skips.
-  The [experimental execution path](ember/boot/a733-pvr-execution.md) now adds
-  firmware VM publication, contexts, free lists, and synchronous compute submission.
-  Its production-source contracts pass. Host fixtures use the current bridge and
-  metadata interfaces. The [shared host suite](ember/development/kernel.md#validate-the-change)
-  runs self-contained PowerVR contracts; firmware-derived query checks require
-  an explicit input image. The fixtures reject diagnostics after bridge adoption and render
-  registration with incomplete metadata. On Zero 3W, Mesa 26.2.4nb5 now passes
-  three complete Vulkan compute lifecycles in one boot with kernel `4d9b68f3ec48`.
-  Device creation, all 16 GPU-written words, fence completion, host readback,
-  and context cleanup pass; the execution service remains usable. The native
-  KICK path accepts its asynchronous zero return word and still requires CCCB,
-  UFO, and fresh health checks. Graphics jobs, Zink, display output, accelerated
-  Plasma, Vulkan conformance, and long-duration GPU stability remain unaccepted.
-  A bounded [A733 display observer](ember/boot/a733-display-observer.md) records
-  native CCU/PCK snapshots without enabling display hardware. It does not
-  implement HDMI output or KMS.
-  The [graphics development checkpoint](ember/boot/a733-pvr-graphics.md) adds
-  stream, queue, HWRT, mapping-hold, and free-list growth primitives.
-  HWRT handles and paired DRM submissions are implemented. The submit path also
-  accepts a validated geometry, partial-render, and final-fragment sequence.
-  Every job is checked before the first publication. Final-fragment waits,
-  completion, and signals remain separate. Source contracts and the complete
-  kernel build pass; physical graphics readback is still pending.
-  Exact intra-pair sync dependencies use firmware ordering in host contracts.
-  External waits retain their error paths and bounded forward-dependency checks.
-  Combined-KICK queue transport has actual-source validation and failure tests.
-  Device-owned free-list IDs route GROW callbacks under the existing gates.
-  The free-list fixture keeps backing buffers alive through its page-count checks.
-  The matched kernel boots and repeats all 21 preparation stages and Vulkan compute.
-  Graphics execution and firmware GROW still have no physical acceptance.
+  For A733, the [Ports audit](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/a733-accelerators)
+  pins the PowerVR firmware and identifies the Vivante NPU's missing Mesa TP path.
+  Native [PCK600](ember/boot/a733-power-domains.md) and
+  [clock/reset providers](ember/boot/a733-accelerator-clocks.md) retain shared
+  ownership and preserve unrelated firmware state. Explicit GPU preparation
+  locks the dedicated PLL and confirms 600/200 MHz at the programmed 800 mV.
+  These rates and voltage have not been measured externally.
+  The [identification consumer](ember/boot/a733-gpu-identification.md) requires
+  strict CORE ON/Q readiness before MMIO and reports BXM `36.56.104.183`.
+  Observe-only boot remains the default.
+  Native [firmware validation](ember/boot/a733-gpu-fwinfo.md),
+  [owned DMA memory](ember/boot/a733-gpu-fwmem.md),
+  [MIPS bootstrap](ember/boot/a733-gpu-fwboot.md), and
+  [LOGTYPE/MMUCACHE commands](ember/boot/a733-gpu-fwprobe.md) support the
+  [21-stage diagnostic compute check](ember/boot/a733-gpu-fwcompute.md).
+  The [DRM/GEM interface](ember/boot/a733-pvr-render.md),
+  [per-file VMs](ember/boot/a733-pvr-vm.md), firmware-derived queries and
+  [syncobjs](ember/boot/drm-syncobj.md) feed the native execution path.
+  On GCC16.2 kernel `538697de0806`, three
+  [Vulkan compute lifecycles](ember/boot/a733-pvr-execution.md#physical-compute-boundary)
+  verify all 16 output words, a fence and host readback.
+  [Offscreen graphics and transfer](ember/boot/a733-pvr-graphics.md#physical-acceptance-boundary)
+  verify all 256 RGBA pixels, row padding and guards. The maximum sampled
+  temperature for the GPU run is 54.56 degrees Celsius.
+  KWin 6.8 and Qt Quick also pass four exact 640 by 480 frames through
+  PowerVR/Zink on a virtual output. Native HWRT ownership, paired submission,
+  final-fragment execution and transfer have bounded physical coverage.
+  Firmware GROW, reset recovery, endurance and Vulkan conformance remain unaccepted.
+  The [native DE/HDMI/KMS path](ember/boot/a733-de352-native.md) has separate
+  ownership and admission contracts. The same kernel stops at DE step 4
+  on global flush request readback 0. The [source repair](ember/boot/a733-iommu1-cold-init.md)
+  has software checks; physical HDMI, KMS and complete Plasma remain unaccepted.
+  NPU powered identification and the [24 KiB Engine1 preparation](ember/boot/a733-npu-engine.md)
+  pass on this kernel. Engine2 stops at command-address readback step 12;
+  FE start and IRQ counts remain zero. NPU task and model execution remain unaccepted.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,
@@ -1312,12 +1255,13 @@ The base system shell is unchanged.
   aarch64 missing a reschedule, and the SD host controller driver.
   Source changes preserve their provenance; `ember/patches` records the
   original board adaptations already applied to this tree.
-- **Current kernel on Orange Pi Zero 3W:** GCC16 EMBER64 revision `4d9b68f3ec48`
-  boots with matched modules and DTBs. The [compute receipt](ember/boot/a733-pvr-execution.md#physical-compute-boundary)
-  records 21 preparation stages and three native Vulkan compute lifecycles.
-  The maximum of 155 temperature samples is 62.310 degrees Celsius.
-  The earlier [board receipt](ember/boards/orange-pi-zero-3w.md#current-kernel-check-2026-10-07)
-  separately records 16 memfd tests and a checked Wi-Fi round trip.
+- **Current accepted accelerator kernel on Orange Pi Zero 3W:** GCC16.2
+  `EMBER64` revision `538697de0806` boots with matched modules and DTBs.
+  Its [compute and graphics boundary](ember/boot/a733-pvr-graphics.md#physical-acceptance-boundary)
+  records all 21 diagnostic stages, three compute lifecycles, exact offscreen
+  pixels and four hardware KWin/Zink frames. HDMI and full Plasma remain pending.
+  The [board guide](ember/boards/orange-pi-zero-3w.md#accelerator-acceptance-2026-10-20)
+  separates these results from older base and network checks.
 - **AArch64 numerical correctness:** an [initial FP state correction](ember/boot/aarch64-fp-state.md)
   addresses lost subnormal values and NaN payloads on CPUs without AArch32.
   Production contracts and native object compilation pass. Three runtime
@@ -1512,7 +1456,7 @@ listed revision; it does not imply full peripheral or long-run support.
 | [Compute Module 5 (D0)](ember/boards/compute-module-5.md) | AArch64 / BCM2712 | eMMC/UEFI boot, four cores, gigabit Ethernet, WPA2/WPA3-Personal and temperature sensing; automatic fan control with a configurable minimum level; see board-specific peripheral limits |
 | [Raspberry Pi Zero 2 W](ember/boards/raspberry-pi-zero-2-w.md) | AArch64 / BCM2710A1 | microSD boot, all cores, serial and 2.4 GHz Wi-Fi; large Wi-Fi transfers stall |
 | [Orange Pi Zero 4](ember/boards/orange-pi-zero-4.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Ethernet, Wi-Fi, classic Bluetooth, thermal/frequency control and USB 2.0 data; SuperSpeed unconfirmed |
-| [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry, thermal/frequency control, and PowerVR compute/GEM; accelerated GUI, USB devices, and Bluetooth pairing not tested |
+| [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry, thermal/frequency control, PowerVR compute/offscreen graphics and hardware KWin/Zink virtual-output frames; HDMI/full Plasma, USB devices and Bluetooth pairing remain unaccepted |
 | [Orange Pi 6 Plus](ember/boards/orange-pi-6-plus.md) | AArch64 / CIX CD8180 | Experimental stock-UEFI SD/FFS root, DEBUG UART2 and passive codec resource attachment; one Ethernet link checked; native RTL8822CE WPA2/DHCP and TCP checks pass on both bands, including unattended warm reboots and one cold default recovery with SSH/PTY; hardware codec, installed NVMe root and sustained peripheral operation unverified |
 | [ESP32-S31 development board](ember/boards/esp32-s31.md) | RISC-V 32 / ESP32-S31 | Flash boot, Ethernet and WPA2 Wi-Fi in 16 MB; one core, vendor radio libraries, no BLE/USB |
 | [YS-M33 tablet](ember/boards/ys-m33-a133.md) | AArch64 / Allwinner A133 | Experimental eMMC boot, Ethernet and upright awesomeWM on two samples; physical touch, audible audio(4) playback, intelligible captured speech and USB-A/Pixhawk6X tested on the first; [USB-only installation and recovery](ember/boards/ys-m33-a133-cable-install.md) on one unopened factory sample; [U-Boot 2026.10 second-stage RAM kernel handoff](ember/boards/validation/2026-10-08-a133-uboot-ram.md) on the first through its FFS root, followed by a prearmed 16-second watchdog return; permanent loader installation and direct recovery through it unverified; cold cycles, factory restoration, fleet and sustained use unverified; opt-in SDIO RAM diagnostic verifies register reads and function enable/ready/restore; Wi-Fi radio initialization/association unimplemented |

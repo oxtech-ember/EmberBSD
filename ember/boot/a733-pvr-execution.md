@@ -3,9 +3,11 @@
 The native driver now has an experimental synchronous compute submission path.
 It connects firmware memory, per-file VMs, execution contexts, free lists, and syncobjs.
 Production-source contracts pass with native DMA and firmware boundary models.
-Three physical Vulkan compute lifecycles now pass on Zero 3W.
+Three physical Vulkan compute lifecycles pass on Zero 3W.
+Offscreen graphics and four hardware KWin/Zink frames also pass within the
+[graphics acceptance boundary](a733-pvr-graphics.md#physical-acceptance-boundary).
 The diagnostic compute packet and ICD enumeration remain separate checks.
-Graphics submission and a complete accelerated desktop are not accepted.
+Native HDMI/KMS and a complete accelerated Plasma session remain unaccepted.
 
 ## Activation and ownership
 
@@ -54,7 +56,7 @@ Such requests stop the firmware service instead of reporting false completion.
 A paired partial render can be followed by one final ordinary fragment.
 It requires the current 48-byte job and 16-byte sync-operation layouts.
 Unsupported stream extensions and job types return `EOPNOTSUPP`.
-HWRT datasets, transfer, and paired execution have source contracts, but no physical graphics acceptance.
+HWRT datasets, transfer, and paired execution have source contracts and a bounded physical offscreen check.
 See the [graphics ownership and dependency contract](a733-pvr-graphics.md).
 All job streams and synchronization records are copied before firmware execution.
 The driver acquires context references and prepares timeline storage before submission.
@@ -114,30 +116,34 @@ A successful compute check does not establish Vulkan conformance or rendering.
 
 ## Physical compute boundary
 
-GCC16 kernel `4d9b68f3ec4866ad46810b4257daf4333ef10f38` passes on A733 Zero 3W with 4 GiB RAM.
-The PCB revision was not recorded. Firmware is `1.1.6976702`, BVNC `36.56.104.183`.
-The explicit PLL600 preparation and all 21 diagnostic stages pass before native activation.
-The accepted kernel ELF SHA256 is `537b91ef2f1eaaa0f71707aee745fdf313507e8103c0aefeb25746a87e04c2e9`.
+GCC16.2.0 `EMBER64` kernel `538697de0806efed208bb71de32d1fab42104e02`
+passes on A733 Zero 3W with 4 GiB RAM. The PCB revision was not recorded.
+Firmware is `1.1.6976702`, BVNC `36.56.104.183`.
+The explicit PLL600 preparation and all 21 diagnostic stages pass before
+native activation. The accepted kernel ELF SHA256 is
+`f64057fd650140881ccbb9cae0c92f41f9c903a464554134481eac609bb2a959`.
 Matched modules and DTBs come from the same cross-build.
 
-Mesa `26.2.4nb5` and libdrm `2.4.134nb2` use the native render node.
-The Ports consumer SHA256 is `438a0dc7191abde38a3639f6562a16375ad3ccf5a475902affc3f08861f3ef84`.
+The Mesa 26.2.4 PowerVR consumer uses the native render node.
+Its SHA256 is `438a0dc7191abde38a3639f6562a16375ad3ccf5a475902affc3f08861f3ef84`.
 Three consecutive create/dispatch/destroy lifecycles pass within one boot.
 Each checks all 16 output words, a completed Vulkan fence, and host readback.
-The execution service stays enabled after cleanup; SSH and the recorded boot time remain stable during all three runs.
-All sampled temperatures remain below 63 degrees Celsius; the run stops at 80 degrees.
-Observe-only boot remains configured. The GPU is prepared only by the explicit test sequence.
-These are bounded functional runs, not an endurance or performance result.
+The execution service stays enabled after cleanup. The boot time and checked
+system hashes remain unchanged. The same run also passes the 256-pixel
+offscreen graphics check. Its maximum sampled temperature is 54.56 degrees
+Celsius. These are bounded functional runs, not endurance or performance results.
 
-The prior kernel returned `EIO` on the first KICK before its completion checks.
-Mesa mapped that errno to `VK_ERROR_OUT_OF_DEVICE_MEMORY`; this did not establish allocation failure.
-The corrected path accepts the asynchronous zero return word and checks actual completion.
-`ktrace` confirms a successful `SUBMIT_JOBS` ioctl on the corrected kernel.
-The upstream experimental gate stays enabled. No Vulkan conformance is claimed.
+Observe-only boot remains configured. The GPU is prepared by the explicit
+test sequence. Mesa's experimental gate remains required. No Vulkan
+conformance is claimed.
 
-## Remaining rendering path
+## Rendering and display boundary
 
-The [graphics checkpoint](a733-pvr-graphics.md) records the integrated graphics interfaces and their pending physical acceptance.
-Zink needs working graphics jobs and HWRT datasets in addition to compute.
-Native A733 display support also needs DE/TCON/HDMI, KMS, and shared-buffer ownership.
-Accelerated KWin and a complete Plasma Desktop session require separate physical acceptance.
+The [graphics guide](a733-pvr-graphics.md) records the native HWRT, paired
+submission, transfer and Zink/KWin results. The KWin check uses a virtual
+output on the physical A733 GPU. It does not establish HDMI scanout.
+The [native DE coordinator](a733-de352-native.md),
+[HDMI output provider](a733-hdmi-native.md), and
+[DRM/KMS frontend](a733-drm-native.md) have separate admission and ownership
+contracts. Native HDMI/KMS, a complete Plasma Desktop session, firmware GROW
+events, reset recovery and long-duration stability remain unaccepted.

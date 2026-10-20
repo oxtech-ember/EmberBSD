@@ -6,7 +6,9 @@ It also allocates native DMA-backed GEM buffer objects with CPU mappings.
 It builds CPU-owned GPU VM tables and reports heap and static-area layouts.
 It derives runtime limits and compatibility lists from prepared firmware metadata.
 The [experimental execution path](a733-pvr-execution.md) adds contexts and native submissions.
-Three bounded physical Vulkan compute lifecycles pass. Mesa graphics rendering remains unaccepted.
+Three bounded physical Vulkan compute lifecycles pass. Offscreen graphics
+and four hardware KWin/Zink frames pass within the
+[graphics acceptance boundary](a733-pvr-graphics.md#physical-acceptance-boundary).
 
 ## Ownership and registration
 
@@ -62,7 +64,10 @@ The driver advertises `DRIVER_RENDER`, `DRIVER_GEM`, and binary and timeline syn
 The [native syncobj check](drm-syncobj.md#native-api-acceptance) passes on Zero 3W.
 The accepted hardware results cover CPU-issued synchronization.
 The experimental compute path connects real firmware completion to these syncobjs.
-Paired graphics and transfer submissions have source contracts. Their physical execution remains unaccepted.
+Paired graphics and transfer submissions have source contracts and bounded
+physical offscreen coverage. The
+[graphics guide](a733-pvr-graphics.md#physical-acceptance-boundary) records
+the exact pixel checks and the remaining display limits.
 Same-device PRIME uses the native GEM helpers. Display modes remain unsupported.
 
 ## Buffer objects and CPU mappings
@@ -119,7 +124,9 @@ CC=/path/to/aarch64--netbsd-gcc SYSROOT=/path/to/sysroot \
 Run `/new/prime-output/pvr-prime-check /dev/dri/renderD128` on the target.
 It checks descriptor rights, protected BO rejection and 80 cross-process
 sharing lifecycles. Each lifecycle closes handles and descriptors before
-it checks the remaining mapping. Physical acceptance remains pending.
+it checks the remaining mapping. The earlier 80-cycle result has a separate
+kernel boundary. The [current graphics check](a733-pvr-graphics.md#physical-acceptance-boundary)
+does not repeat this probe.
 
 ## Source checks and board acceptance
 
@@ -204,7 +211,10 @@ These results accept native GEM and CPU mappings. The
 [VM acceptance](a733-pvr-vm.md#physical-result) adds CPU-owned GPU tables,
 per-file VM operations, and heap queries. All 586 VM checks passed again
 on kernel `0e89a6ffb4d7`. These short checks do not establish sustained GPU operation.
-GPU access to these BOs, DRM job submission, Vulkan device execution, display, and Plasma remain unaccepted.
+These CPU-only checks did not qualify GPU access, DRM job submission or
+Vulkan device execution. The later [compute](a733-pvr-execution.md) and
+[graphics](a733-pvr-graphics.md) results have separate acceptance boundaries.
+HDMI/KMS and a complete Plasma session remain unaccepted.
 
 On kernel `f46cd40a5f28` (`EMBER64 #13`), the same board also passed four
 installed Mesa PowerVR physical-device enumeration lifecycles. This kernel

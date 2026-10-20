@@ -94,6 +94,14 @@ fan connector and all five temperature sensors. Source contracts cover
 stepped cooling, hysteresis, hardware errors and shared PWM clocks.
 Physical speed and noise acceptance remains pending.
 
+On A733 Zero 3W, GCC16.2 kernel `538697de0806` passes all 21 GPU diagnostic
+stages, three [Vulkan compute lifecycles](ember/boot/a733-pvr-execution.md#physical-compute-boundary),
+and exact [offscreen graphics and KWin/Zink frames](ember/boot/a733-pvr-graphics.md#physical-acceptance-boundary).
+KWin 6.8 and Qt Quick use the physical PowerVR GPU on a virtual output.
+Native HDMI/KMS, a complete Plasma session, firmware GROW, endurance and
+Vulkan conformance remain unaccepted. The board guide separates
+[NPU preparation and display refusals](ember/boards/orange-pi-zero-3w.md#accelerator-acceptance-2026-10-20).
+
 ## Building
 
 Cross-compilation on the development host is the preferred path. The wrapper

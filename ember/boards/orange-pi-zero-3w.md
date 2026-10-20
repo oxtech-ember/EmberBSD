@@ -2,8 +2,9 @@
 
 [Board catalog](README.md) · [Build instructions](../../README.ember.md#building)
 
-The capability table preserves earlier published hardware results. The
-current-kernel check below records a separate physical run.
+The capability table combines separately scoped physical results.
+The accelerator section identifies the current tested kernel. Older base
+and network checks retain their own kernel and firmware boundaries.
 Board revision: not recorded in the original support table.
 
 ## Capabilities
@@ -34,11 +35,11 @@ Board revision: not recorded in the original support table.
 | GPU/NPU power domains | Native PCK600 provider; GPU_CORE ON/Q readiness passes with the dedicated GPU PLL. Command execution has separate acceptance ([guide](../boot/a733-power-domains.md)) |
 | GPU/NPU clocks and resets | Native main CCU providers; the opt-in GPU PLL cold start locks and confirms 600/200 MHz on this board. Normal boot preserves firmware state ([guide](../boot/a733-gpu-identification.md#physical-pll-result)) |
 | GPU identification | Two explicit runtime runs read BVNC `36.56.104.183` after PLL600 and strict CORE ON/Q readiness ([physical result](../boot/a733-gpu-identification.md#physical-pll-result)) |
-| GPU firmware and compute | Native firmware bootstrap, LOGTYPE, MMUCACHE, and a Mesa-generated compute shader pass. The output is `0x13579bdf`, the client queue reaches 184/184, and timeline reaches 1 without fresh faults or HWR. The check repeats after fresh kernel boots. Repeated submissions within one boot remain untested ([compute check](../boot/a733-gpu-fwcompute.md#physical-stages-19-21-result)) |
-| PowerVR DRM/GEM/VM | Native identity/runtime queries, libdrm discovery, 8 MiB CPU mappings, 586 per-file VM checks, and 1,712 CPU-issued syncobj checks pass. VM tables remain CPU-owned. Firmware VM publication, DRM submission, Vulkan device execution, Zink, HDMI/KMS, and accelerated Plasma remain unaccepted ([interface](../boot/a733-pvr-render.md), [VM checks](../boot/a733-pvr-vm.md#physical-result)) |
-| Mesa PowerVR Vulkan discovery | Four installed ICD enumeration lifecycles pass on `f46cd40a5f28` (`EMBER64 #13`), including the current USB series. Mesa reports API 1.2.354 through native render node 180:128. Experimental opt-in is required; Vulkan device/queue execution and conformance remain unaccepted ([Ports guide](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/powervr.md)) |
-| NPU diagnostic attachment | Observe-only attachment enabled in this board tree; host controls cover attachment and the VIPLite identification probe. Current-cohort power, ABI, task and model acceptance remain separate ([boundary](../boot/a733-npu-vip.md)). |
-| Display providers | [Read-only CCU/PCK observer](../boot/a733-display-observer.md); no native HDMI/KMS acceptance |
+| GPU firmware and compute | On GCC16.2 kernel `538697de0806`, all 21 diagnostic stages and three Vulkan compute lifecycles pass. Each lifecycle verifies all 16 output words, fence completion and host readback ([execution boundary](../boot/a733-pvr-execution.md#physical-compute-boundary)). |
+| PowerVR DRM/GEM/VM | Native firmware VM publication, HWRT ownership, paired graphics and transfer support exact offscreen rendering: 256 RGBA pixels, row padding and guards pass ([graphics boundary](../boot/a733-pvr-graphics.md#physical-acceptance-boundary)). |
+| PowerVR/Zink compositing | KWin 6.8 and Qt Quick pass four exact 640 by 480 uniform frames on a virtual output: 1,228,800 pixels. Experimental Mesa opt-in remains required. HDMI, full Plasma, endurance and conformance remain unaccepted ([graphics boundary](../boot/a733-pvr-graphics.md#physical-acceptance-boundary)). |
+| NPU preparation | Powered identification and 24 KiB Engine1 preparation pass on `538697de0806`. Engine2 stops at step 12 on command-address readback 0; FE start and IRQ counts stay zero. No task or model acceptance ([engine contract](../boot/a733-npu-engine.md)). |
+| Display providers | Native DE/HDMI/KMS source exists. The `538697de0806` DE attempt stops at cold-init step 4. The request-readback repair has source checks only; no physical HDMI/KMS acceptance ([coordinator](../boot/a733-de352-native.md), [cold initialization](../boot/a733-iommu1-cold-init.md)). |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.
@@ -165,17 +166,39 @@ SHA256:
 
 ## Evidence
 
-### Accelerator provider boot, 2026-10-08
+### Accelerator acceptance, 2026-10-20
 
-The matched GCC16 `EMBER64 #5` bundle from `f625fd9a0de` boots on this
-4 GiB Zero 3W with eight CPUs, microSD root and Wi-Fi/SSH. The read-only
-GPU consumer observes stable CCU snapshots with the GPU module/bus clocks
-gated and reset asserted. DCDC4 is programmed to 800 mV and GPU_TOP is
-statically ON. The probe stops before GPU MMIO. The [physical result and bundle hashes](../boot/a733-gpu-identification.md#physical-result)
-distinguish this outcome from the passing software contracts. No active
-accelerator power sequence, DMA, firmware load or command execution was tested.
+GCC16.2.0 `EMBER64` kernel `538697de0806efed208bb71de32d1fab42104e02`
+boots on the 4 GiB board with matching modules and DTBs. The PCB revision
+was not recorded. GPU firmware is `1.1.6976702`, BVNC `36.56.104.183`.
+The [execution guide](../boot/a733-pvr-execution.md#physical-compute-boundary)
+records the exact kernel hash and three compute lifecycles.
+All 21 diagnostic stages pass. Offscreen triangle and transfer readback
+match all 256 RGBA pixels with intact padding and guards.
+The GPU run's maximum sampled temperature is 54.56 degrees Celsius.
 
-### Current kernel check, 2026-10-07
+KWin 6.8 and Qt Quick use PowerVR/Zink hardware OpenGL ES on a virtual output.
+Four uniform 640 by 480 frames match all 1,228,800 pixels.
+The [graphics guide](../boot/a733-pvr-graphics.md#physical-acceptance-boundary)
+separates this result from quadrant-edge precision, older PRIME/sync-file
+cycles, physical scanout, complete Plasma and endurance.
+
+The same kernel's explicit DE stage stops with `EIO` at step 4.
+The cached trace identifies operation 19, global flush register 0x30:
+requested 3, readback 0. No KMS or HDMI run is accepted.
+The [cold-init repair](../boot/a733-iommu1-cold-init.md) permits that observed
+request state and preserves the explicit final write of 0. Source, GCC16
+and host checks pass; a corrected-kernel hardware result remains pending.
+
+NPU powered identification and Engine1 admission/24 KiB preparation pass.
+Engine2 stops with `EIO` at step 12, command-address readback 0.
+FE start and IRQ counts remain zero. No NPU task or neural-network model
+execution is accepted. GPU state and checked system hashes remain unchanged
+after these bounded accelerator checks.
+
+<a id="current-kernel-check-2026-10-07"></a>
+
+### Base and network check, 2026-10-07
 
 A physical Zero 3W with 4 GiB RAM booted `EMBER64 #0` from commit
 `aed986038b1da44cbc9cb8b124b25ec58587bd11`. The board revision was not
@@ -210,10 +233,9 @@ processes pass smoke, CAS and the masked matrix through the default loader.
 The previous libraries are retained for rollback; other userland and headers
 were not rebuilt as a complete release.
 
-These short boot, network and regression checks do not establish a full release,
-sustained uptime,
-hardware GPU/NPU execution or a physical Wayland session. Accelerators and
-the newer common development packages still need their own acceptance.
+These short boot, network and regression checks do not establish a full
+release or sustained uptime. The newer accelerator results have the separate
+scope above. Common development packages retain their own acceptance.
 
 ### Earlier support matrix
 
