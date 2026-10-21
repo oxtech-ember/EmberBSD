@@ -24,8 +24,8 @@ class Observer:
         self.events = []
         self.case = -1
 
-    def event(self, name, **fields):
-        self.events.append(dict(case=self.case, event=name, **fields))
+    def event(self, event_name, **fields):
+        self.events.append(dict(case=self.case, event=event_name, **fields))
 
     def add(self, address):
         address &= ~1

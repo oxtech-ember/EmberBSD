@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
 # Origin: EmberBSD; host protocol and admission controls, not ARM execution.
+import ast
+import inspect
+import textwrap
 import hashlib
 import json
 from pathlib import Path
@@ -44,6 +47,15 @@ class IRQControls(unittest.TestCase):
         a = {name: 0x20000000 + index * 0x100 for index, name in enumerate(sorted(irq.SYMBOLS))}
         a['harness_done'] = 0x800; a['results'] = 0x20010000
         return irq.Observer(ProtocolDouble(), a, patched.inputs(irq=True))
+
+    def test_case_complete_source_call_keeps_case_name(self):
+        observer = self.observer(); observer.case = 0; row = observer.rows[0]
+        tree = ast.parse(textwrap.dedent(inspect.getsource(irq.Observer.run)))
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'event' and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == 'case-complete']
+        self.assertEqual(len(calls), 1)
+        # Execute the real terminal call expression, not a mock event method.
+        eval(compile(ast.Expression(body=calls[0]), '<case-complete-source>', 'eval'), {'self': observer, 'row': row})
+        self.assertEqual(observer.events, [dict(case=0, event='case-complete', name=row['name'])])
 
     def test_protected_pc_causal_uses_actual_exception_frame(self):
         observer = self.observer(); r = observer.remote
