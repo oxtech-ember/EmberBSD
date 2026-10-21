@@ -100,8 +100,20 @@ static void test_signal()
 	CHECK(wpa::signalPercent(0) == 0);
 }
 
+static void test_scan_request()
+{
+	CHECK(wpa::scanRequest("COMPLETED") == "SCAN_RESULTS");
+	CHECK(wpa::scanRequest("ASSOCIATING") == "SCAN_RESULTS");
+	CHECK(wpa::scanRequest("4WAY_HANDSHAKE") == "SCAN_RESULTS");
+	CHECK(wpa::scanRequest("SCANNING") == "SCAN_RESULTS");
+	CHECK(wpa::scanRequest("") == "SCAN_RESULTS");
+	CHECK(wpa::scanRequest("DISCONNECTED") == "SCAN");
+	CHECK(wpa::scanRequest("INACTIVE") == "SCAN");
+}
+
 int main()
 {
+	test_scan_request();
 	test_unescape();
 	test_scan();
 	test_status_and_list();

@@ -13,6 +13,13 @@
 
 namespace wpa {
 
+inline std::string scanRequest(const std::string &state)
+{
+	// Foreground scans can interrupt association on station-mode drivers.
+	return state == "DISCONNECTED" || state == "INACTIVE"
+	    ? "SCAN" : "SCAN_RESULTS";
+}
+
 enum class Security { Open, Psk, SaeOnly, Enterprise, Unsupported };
 
 struct ScanEntry {

@@ -174,7 +174,8 @@ public:
 		connect(connectBtn, &QPushButton::clicked, this, [this] { connectSelected(); });
 		connect(list_, &QListWidget::itemActivated, this, [this] { connectSelected(); });
 		connect(forgetBtn, &QPushButton::clicked, this, [this] { forgetSelected(); });
-		connect(rescanBtn, &QPushButton::clicked, this, [this] { ctrlAsk("SCAN"); });
+		rescanBtn->setToolTip("При активном соединении обновляется сохранённый список сетей без разрыва связи.");
+		connect(rescanBtn, &QPushButton::clicked, this, [this] { refreshScan(); });
 
 		tray_ = new QSystemTrayIcon(wifiIcon(0, false), this);
 		auto *menu = new QMenu(this);
@@ -202,8 +203,7 @@ public:
 
 	void showWindow()
 	{
-		ctrlAsk("SCAN");
-		refreshList();
+		refreshScan();
 		show();
 		raise();
 		activateWindow();
@@ -238,6 +238,13 @@ private:
 		if (!ensureCtrl())
 			return {};
 		return ctrl_.ask(cmd);
+	}
+
+	void refreshScan()
+	{
+		auto st = wpa::parseKeyValues(ctrlAsk("STATUS"));
+		ctrlAsk(wpa::scanRequest(st["wpa_state"]));
+		refreshList();
 	}
 
 	void tick()
@@ -280,7 +287,7 @@ private:
 		if (isVisible() && ++ticks_ % 2 == 0)
 			refreshList();
 		if (isVisible() && ticks_ % 10 == 0)
-			ctrlAsk("SCAN");
+			ctrlAsk(wpa::scanRequest(state));
 	}
 
 	int signalFor(const std::string &ssid)

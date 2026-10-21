@@ -45,6 +45,8 @@ are maintained in the related repositories below.
   Normal startup is quiet, with a separate diagnostic choice and a 10-second menu.
   Console login uses the EmberBSD release greeting; full attribution stays in /etc/release.
   A fresh amd64 UEFI VM passes complete USB installation with XFCE and its Wi-Fi manager.
+  The [desktop Wi-Fi manager](ember/development/ember-wifi/README.md) reads cached
+  discoveries while connected to avoid foreground-scan interruptions.
   A separate Minimal/None HTTP installation passes cold boot and console Wi-Fi tool checks;
   SSH is enabled by default with unchanged authentication settings.
   An [amd64 UEFI VM candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-c5d396f5698b68e956b29ee5b256bc7877e6c517-amd64-no-x11)
