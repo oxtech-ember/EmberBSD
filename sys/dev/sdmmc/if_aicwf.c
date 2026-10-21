@@ -1314,6 +1314,25 @@ aicwf_chan_list(struct aicwf_softc *sc, uint8_t *chan2g, uint8_t *chan5g,
 	return n;
 }
 
+/* Running firmware must still contain both exact replacement spans. */
+static int
+aicwf_fw_bip_runtime_verify(struct aicwf_softc *sc)
+{
+	uint32_t addr, expected, actual;
+	unsigned n;
+	int error;
+
+	for (n = 0; n < 181; n++) {
+		if (!aicwf_fw_bip_word(n, &addr, &expected))
+			return EPROTO;
+		if ((error = aicwf_fw_mem_read(sc, addr, &actual)) != 0)
+			return error;
+		if (actual != expected)
+			return EPROTO;
+	}
+	return 0;
+}
+
 /* Take the firmware from its start to a station interface. */
 static int
 aicwf_fw_init(struct aicwf_softc *sc)
@@ -1435,6 +1454,9 @@ aicwf_fw_init(struct aicwf_softc *sc)
 	if (sc->sc_fw_bip_pending && cfm[1] > 3)
 		return EPROTO;
 	sc->sc_vif = cfm[1];
+	if (sc->sc_fw_bip_pending &&
+	    (error = aicwf_fw_bip_runtime_verify(sc)) != 0)
+		return error;
 	sc->sc_fw_bip_ready = sc->sc_fw_bip_pending &&
 	    sc->sc_fw_bip_verified && bip_mfp;
 

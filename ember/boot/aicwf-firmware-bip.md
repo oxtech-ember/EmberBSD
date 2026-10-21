@@ -98,10 +98,13 @@ path. They cannot send a nonzero initial IGTK IPN.
 
 For the selected image, the loader checks the exact configuration, descriptor
 and option-pair map. All four copy-block sizes must be zero. It reads all 181
-replacement words after the option writes and before START_APP. No memory
-write follows that final check. The dedicated path requires complete command
-replies while command ownership is held. It validates each copied memory
-address/data echo. BLOCK and START status words remain opaque diagnostics.
+replacement words after the option writes and before START_APP. No host
+memory-write command follows that check. After all init commands, including
+ADD_IF, it reads
+all 181 words again before it publishes the private capability. A changed word
+refuses setup. The dedicated path requires complete command replies while
+command ownership is held. It validates each copied memory address/data echo.
+BLOCK and START status words remain opaque diagnostics.
 
 The private extension capability requires a complete 28-byte VERSION reply,
 version `0x06090101`, MFP, a complete MAC/ADD_IF reply and VIF 0..3. Init must

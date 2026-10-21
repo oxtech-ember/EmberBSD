@@ -13,7 +13,7 @@ import sys
 FUNCTIONS = ('aicwf_fw_cmd', 'aicwf_fw_mem_read', 'aicwf_fw_mem_write',
              'aicwf_fw_bip_hash', 'aicwf_wlan_upload', 'aicwf_fw_options_set',
              'aicwf_fw_bip_verify', 'aicwf_fw_start', 'aicwf_wlan_load',
-             'aicwf_fw_init')
+             'aicwf_fw_bip_runtime_verify', 'aicwf_fw_init')
 
 
 def projection(source):

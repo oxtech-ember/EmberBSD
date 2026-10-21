@@ -95,7 +95,11 @@ struct aicwf_softc {
 };
 static uint8_t original[341200], ram[341200];
 static uint32_t descriptor[16], pairs[4];
-static bool seen[181];
+static bool seen[181], post_seen[181];
+static unsigned post_reads, add_if_calls;
+static bool version_seen, stack_started;
+static uint32_t start_corrupt, lastinit_corrupt;
+static unsigned post_fault;
 static unsigned code_reads, starts, mem_writes, command_count, strict_calls;
 static uint16_t short_id, error_id;
 static uint32_t bad_addr, bad_echo, bad_write, corrupt_code;
@@ -131,23 +135,39 @@ metadata(uint32_t a)
 static uint32_t
 memory_read(uint32_t a)
 {
+	bool *sample;
 	unsigned n;
 
 	if (a >= 0x120000 && a <= 0x1734cc && (a & 3) == 0) {
-		if (a >= 0x142be0 && a < 0x142d34) {
-			n = (a - 0x142be0) / 4;
-			CHECK(!seen[n]);
-			seen[n] = true;
-			code_reads++;
-		} else if (a >= 0x165e48 && a < 0x165fc8) {
-			n = 85 + (a - 0x165e48) / 4;
-			CHECK(!seen[n]);
-			seen[n] = true;
-			code_reads++;
+		if ((a >= 0x142be0 && a < 0x142d34) ||
+		    (a >= 0x165e48 && a < 0x165fc8)) {
+			n = a < 0x142d34 ? (a - 0x142be0) / 4 :
+			    85 + (a - 0x165e48) / 4;
+			CHECK(n < 181);
+			sample = starts != 0 ? post_seen : seen;
+			CHECK(!sample[n]);
+			sample[n] = true;
+			if (starts != 0)
+				post_reads++;
+			else
+				code_reads++;
 		}
 		return check_le32dec(ram + (a - 0x120000)) ^ (a == bad_addr);
 	}
 	return *metadata(a) ^ (a == bad_addr);
+}
+
+static void
+corrupt_word(uint32_t address)
+{
+	size_t offset;
+
+	if (address == 0)
+		return;
+	CHECK(address >= 0x120000);
+	offset = (size_t)address - 0x120000;
+	CHECK(offset <= sizeof(ram) - 4);
+	ram[offset] ^= 1;
 }
 static int
 reply(struct aicwf_softc *sc, uint16_t id, const void *p, size_t len,
@@ -193,7 +213,16 @@ reply(struct aicwf_softc *sc, uint16_t id, const void *p, size_t len,
 	} else if (id == AICWF_DBG_MEM_READ_REQ) {
 		CHECK(len == 4 && cfm_len == 8);
 		a = check_le32dec(b);
-		check_le32enc(cfm, a ^ (a == bad_echo));
+		if (starts != 0 && sc->sc_fw_bip_pending) {
+			CHECK(version_seen && stack_started && add_if_calls == 1);
+			CHECK(!sc->sc_fw_bip_ready);
+			if (post_fault == 1 || post_fault == 2)
+				return EPROTO; /* Short or oversized exact reply. */
+			if (post_fault == 3)
+				return EIO;
+		}
+		check_le32enc(cfm, a ^ (a == bad_echo) ^
+		    (starts != 0 && post_fault == 4));
 		check_le32enc((uint8_t *)cfm + 4, memory_read(a));
 	} else if (id == AICWF_DBG_MEM_WRITE_REQ) {
 		CHECK(len == 8 && cfm_len == 8 && code_reads == 0);
@@ -215,15 +244,21 @@ reply(struct aicwf_softc *sc, uint16_t id, const void *p, size_t len,
 				CHECK(descriptor[i] == 0);
 		}
 		starts++;
+		corrupt_word(start_corrupt);
 		check_le32enc(cfm, 0xabcdef01); /* Low byte can be hardware information. */
 	} else if (id == AICWF_MM_VERSION_REQ) {
 		CHECK(cfm_len == 28 && starts == 1);
 		check_le32enc(cfm, mac_version);
 		check_le32enc((uint8_t *)cfm + 20, features);
+		version_seen = true;
+	} else if (id == AICWF_MM_START_REQ) {
+		stack_started = true;
 	} else if (id == AICWF_MM_ADD_IF_REQ) {
 		CHECK(cfm_len == 2);
 		((uint8_t *)cfm)[0] = add_if_error;
 		((uint8_t *)cfm)[1] = add_if_vif;
+		add_if_calls++;
+		corrupt_word(lastinit_corrupt);
 	}
 	return 0;
 }
@@ -303,6 +338,10 @@ reset(void)
 	memset(descriptor, 0xa5, sizeof(descriptor));
 	memset(pairs, 0xa5, sizeof(pairs));
 	memset(seen, 0, sizeof(seen));
+	memset(post_seen, 0, sizeof(post_seen));
+	post_reads = add_if_calls = post_fault = 0;
+	start_corrupt = lastinit_corrupt = 0;
+	version_seen = stack_started = false;
 	code_reads = starts = mem_writes = command_count = strict_calls = 0;
 	short_id = error_id = 0xffff;
 	bad_addr = bad_echo = bad_write = corrupt_code = 0;
@@ -327,6 +366,23 @@ refusal(uint16_t short_reply, uint32_t bad_word, uint32_t echo,
 	CHECK(aicwf_wlan_load(&sc, false) != 0);
 	CHECK(starts == 0 && !sc.sc_fw_bip_ready);
 }
+static void
+post_refusal(uint32_t address, bool at_start, unsigned fault)
+{
+	struct aicwf_softc sc = {0};
+
+	reset();
+	if (at_start)
+		start_corrupt = address;
+	else
+		lastinit_corrupt = address;
+	post_fault = fault;
+	CHECK(aicwf_wlan_load(&sc, false) == 0);
+	CHECK(starts == 1 && code_reads == 181 && post_reads == 0);
+	CHECK(aicwf_fw_init(&sc) == (fault == 3 ? EIO : EPROTO));
+	CHECK(add_if_calls == 1 && !sc.sc_fw_bip_ready);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -339,11 +395,21 @@ main(int argc, char **argv)
 	CHECK(f != NULL);
 	CHECK(fread(original, 1, sizeof(original), f) == sizeof(original));
 	CHECK(fgetc(f) == EOF && fclose(f) == 0);
+	/* A START writer passes the old pre-start proof and must fail here. */
+	post_refusal(0x142be0, true, 0);
+	post_refusal(0x165fc4, true, 0);
+	post_refusal(0x142be0, false, 0);
+	post_refusal(0x165fc4, false, 0);
+	for (n = 1; n <= 4; n++)
+		post_refusal(0, true, n);
 	reset();
 	memset(&sc, 0, sizeof(sc));
 	CHECK(aicwf_wlan_load(&sc, false) == 0);
 	CHECK(starts == 1 && code_reads == 181 && !sc.sc_fw_bip_ready);
 	CHECK(aicwf_fw_init(&sc) == 0 && sc.sc_fw_bip_ready);
+	CHECK(post_reads == 181 && add_if_calls == 1);
+	for (n = 0; n < 181; n++)
+		CHECK(post_seen[n]);
 	CHECK(sc.sc_fw_bip_wstatus_valid && sc.sc_fw_bip_wstatus == 0xdeadbeef);
 	CHECK(sc.sc_fw_bip_bootstatus_valid && sc.sc_fw_bip_bootstatus == 0xabcdef01);
 	CHECK(strict_calls > 181);
@@ -393,6 +459,7 @@ main(int argc, char **argv)
 		CHECK(!sc.sc_fw_bip_pending && !sc.sc_fw_bip_verified);
 		CHECK(code_reads == 0 && strict_calls == 0 && starts == 1);
 		CHECK(aicwf_fw_init(&sc) == 0 && !sc.sc_fw_bip_ready);
+		CHECK(post_reads == 0);
 	}
 	printf("PASS: %u actual-source loader/order/CFM checks\n", checks);
 	return 0;
