@@ -53,14 +53,15 @@ close_handle(int fd, uint32_t handle)
 }
 
 static struct buffer
-allocate(int fd)
+allocate_bytes(int fd, uint32_t size)
 {
-	struct drm_v3d_create_bo create = { .size = BO_SIZE };
+	struct drm_v3d_create_bo create = { .size = size };
 	struct drm_v3d_mmap_bo mapping;
 	struct drm_v3d_get_bo_offset offset;
 	struct buffer bo;
 	size_t i;
 
+	check(size != 0 && size % sizeof(uint32_t) == 0, "invalid GEM test size");
 	if (ioctl(fd, DRM_IOCTL_V3D_CREATE_BO, &create) == -1)
 		err(1, "CREATE_BO");
 	check(create.handle != 0 && create.offset != 0, "zero handle/address");
@@ -73,13 +74,20 @@ allocate(int fd)
 	check(offset.offset == create.offset, "inconsistent GPU address");
 	bo = (struct buffer){ .handle = create.handle, .gpu = create.offset,
 	    .offset = mapping.offset };
-	bo.map = mmap(NULL, BO_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
+	bo.map = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
 	    fd, (off_t)mapping.offset);
 	if (bo.map == MAP_FAILED)
 		err(1, "mmap GEM");
-	for (i = 0; i < BO_SIZE / sizeof(uint32_t); i++)
+	for (i = 0; i < size / sizeof(uint32_t); i++)
 		check(bo.map[i] == 0, "new GEM allocation is not zeroed");
 	return bo;
+}
+
+static struct buffer
+allocate(int fd)
+{
+
+	return allocate_bytes(fd, BO_SIZE);
 }
 
 static uint32_t
