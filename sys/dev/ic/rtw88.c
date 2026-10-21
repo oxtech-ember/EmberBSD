@@ -1229,6 +1229,19 @@ rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
 	error = rtw88_tx_encode(buf->vaddr, buf->size, &tx);
 	if (error != 0)
 		return error;
+	/* Record the encoded descriptor under the caller's bus interrupt lock.
+	 * This is an encoding sample, not an ACK or a hardware rate report. */
+	if ((bytes[0] & 0x0c) == 0x08 && (bytes[4] & 1) == 0) {
+		unsigned rate = ((const uint8_t *)buf->vaddr)[16] & 0x7f;
+
+		sc->sc_stats.tx_data_encoded++;
+		sc->sc_stats.tx_data_rate = (uint8_t)rate;
+		sc->sc_stats.tx_data_basic = (uint16_t)sc->sc_basic_rates;
+		if (rate < __arraycount(sc->sc_stats.tx_data_rates))
+			sc->sc_stats.tx_data_rates[rate]++;
+		else
+			sc->sc_stats.tx_data_other++;
+	}
 	memcpy((uint8_t *)buf->vaddr + RTW8822C_TX_PACKET_DESC_SIZE, frame,
 	    len);
 	sc->sc_ops->dma_sync(sc->sc_bus, buf, BUS_DMASYNC_PREWRITE);

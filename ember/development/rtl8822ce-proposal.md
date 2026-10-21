@@ -127,6 +127,21 @@ passes three IPv6 address add/remove cycles. The cold calibration count stays
 at four, the station stays in WPA2 COMPLETED, and DAD leaves both addresses ready.
 A separate 60-probe link-local IPv6 run receives all replies.
 The IPv4 run loses one of 60 replies. This is a short regression, not endurance acceptance.
+The read-only `hw.rtwce_stats` output also reports the current `basic` rate
+mask and an encoded unicast DATA sample. `txdata` counts successful encodings;
+`txrate` is the last descriptor rate code, and `txbasic` is its input mask.
+`txr0` through `txr11` count encodings at 1, 2, 5.5, 11, 6, 9, 12, 18, 24,
+36, 48 and 54 Mbps. `txother` counts any encoded rate outside that legacy set.
+A zero `txdata` means no sample; rate code zero alone does not prove 1 Mbps.
+Counters remain cumulative across radio restarts. Compare snapshots around one
+transfer. Encodings count even if a later doorbell write fails. DMA completion
+and these counters do not prove an air transmission, ACK or delivered payload.
+The snapshot and updates use the existing bus interrupt lock. No addresses or
+payload bytes are retained. An undersized stats buffer returns `ENOSPC`.
+The native PCI contract checks maximum-value output and every capacity through
+2048 bytes. This diagnostic does not change selected rates or enable WME/HT.
+Target build and physical rate measurements remain separate acceptance steps.
+
 Manual SSID updates now stage the desired network without requesting a cold
 restart. Automatic and device-controlled roaming retain their reset result.
 The BSD supplicant skips a media SET when the configured media word is unchanged.

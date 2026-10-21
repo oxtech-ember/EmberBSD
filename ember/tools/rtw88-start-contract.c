@@ -1776,6 +1776,60 @@ test_tx_band_and_sequence(void)
 }
 
 static void
+test_tx_data_rate_diagnostics(void)
+{
+	struct rtw88_softc sc;
+	uint8_t data[24];
+	const uint8_t *pkt;
+	unsigned i;
+
+	if (!start_ok(&sc))
+		return;
+	memcpy(data, bcast_frame, sizeof(data));
+	data[0] = 0x08;
+	data[4] = 0x02; /* Unicast DATA, without retaining an address. */
+	for (i = 0; i < 12; i++) {
+		sc.sc_channel = i < 4 ? 1 : 36;
+		sc.sc_basic_rates = 1U << i;
+		CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, data, sizeof(data)) == 0);
+		pkt = sc.sc_txq[RTW88_TXQ_BE].buf[i].vaddr;
+		CHECK(pkt[16] == i);
+		CHECK((pkt[13] & 0x05) == 0x05); /* USE_RATE and DIS_RATE_FB unchanged. */
+		CHECK(sc.sc_stats.tx_data_encoded == i + 1);
+		CHECK(sc.sc_stats.tx_data_rate == (pkt[16] & 0x7f));
+		CHECK(sc.sc_stats.tx_data_basic == (1U << i));
+		CHECK(sc.sc_stats.tx_data_rates[i] == 1);
+	}
+	CHECK(sc.sc_stats.tx_data_other == 0);
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, data, 23) == EMSGSIZE);
+	CHECK(sc.sc_stats.tx_data_encoded == 12);
+	data[4] |= 1; /* A multicast DATA encoding is not this sample. */
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, data, sizeof(data)) == 0);
+	CHECK(sc.sc_stats.tx_data_encoded == 12);
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, bcast_frame,
+	    sizeof(bcast_frame)) == 0);
+	CHECK(sc.sc_stats.tx_data_encoded == 12);
+	CHECK(sc.sc_stats.tx_data_rate == 11 && sc.sc_stats.tx_data_basic == 0x800);
+	data[4] = 0x02;
+	sc.sc_basic_rates = 0;
+	sc.sc_channel = 36;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, data, sizeof(data)) == 0);
+	CHECK(sc.sc_stats.tx_data_encoded == 13 && sc.sc_stats.tx_data_rate == 4);
+	CHECK(sc.sc_stats.tx_data_basic == 0 && sc.sc_stats.tx_data_rates[4] == 2);
+	sc.sc_channel = 1;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, data, sizeof(data)) == 0);
+	CHECK(sc.sc_stats.tx_data_encoded == 14 && sc.sc_stats.tx_data_rate == 0);
+	CHECK(sc.sc_stats.tx_data_rates[0] == 2);
+	f.remove = 1; /* Encoding succeeds even if the later doorbell write fails. */
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, data, sizeof(data)) == ENXIO);
+	CHECK(sc.sc_stats.tx_data_encoded == 15 && sc.sc_stats.tx_data_rates[0] == 3);
+	f.remove = 0;
+	rtw88_stop(&sc);
+	CHECK(sc.sc_stats.tx_data_encoded == 15); /* Cumulative across stop. */
+	rtw88_core_detach(&sc);
+}
+
+static void
 test_tx_completion(void)
 {
 	struct rtw88_softc sc;
@@ -2083,6 +2137,7 @@ main(void)
 	test_tx_descriptors_and_full_ring();
 	test_station_config();
 	test_tx_band_and_sequence();
+	test_tx_data_rate_diagnostics();
 	test_tx_completion();
 	test_tx_refusals();
 	test_all_ac_producers();

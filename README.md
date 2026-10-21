@@ -1643,7 +1643,9 @@ remain unverified.
   because the MAC already accepts every multicast address. The actual-source
   ioctl contract passes. Three physical IPv6 address add/remove cycles preserve
   calibration count, WPA2 association and ready addresses. General AP-loss
-  recovery and reconnect latency remain unqualified. Manual SSID staging and
+  recovery and reconnect latency remain unqualified. Read-only stats now expose
+  the BASIC mask and encoded unicast DATA rate counters; target and physical
+  acceptance of this diagnostic remain pending. Manual SSID staging and
   idempotent BSD media selection now pass a native legacy-scan contract. Target
   build and physical cold-init reduction remain unverified. See the
   [native driver boundary](ember/development/rtl8822ce-proposal.md#current-source-boundary).

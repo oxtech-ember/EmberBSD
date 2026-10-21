@@ -172,9 +172,19 @@ rtwce_stats(char *buf, size_t len)
 		    " hisr0 %#x himr0 %#x hisr3 %#x himr3 %#x rxidx %#x pci %#x"
 		    " rf18a %#x rf18b %#x",
 		    r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
+	if (n > 0 && (size_t)n < len)
+		n += snprintf(buf + n, len - (size_t)n,
+		    " basic %#x txdata %llu txrate %u txbasic %#x txother %llu",
+		    sc->sc_basic_rates, (unsigned long long)st->tx_data_encoded,
+		    st->tx_data_rate, st->tx_data_basic,
+		    (unsigned long long)st->tx_data_other);
+	for (unsigned i = 0; i < __arraycount(st->tx_data_rates) &&
+	    n > 0 && (size_t)n < len; i++)
+		n += snprintf(buf + n, len - (size_t)n, " txr%u %llu", i,
+		    (unsigned long long)st->tx_data_rates[i]);
 	if (n > 0 && (size_t)n < len && psc->sc_net != NULL) {
 		rtw88_net_get_stats(psc->sc_net, &ns);
-		snprintf(buf + n, len - (size_t)n,
+		n += snprintf(buf + n, len - (size_t)n,
 		    " nrx %llu ninput %llu ninactive %llu nepoch %llu"
 		    " ninvalid %llu nsize %llu ncorrupt %llu nformat %llu"
 		    " ncrypto %llu nfull %llu nmem %llu ndinactive %llu"
@@ -202,7 +212,7 @@ rtwce_stats(char *buf, size_t len)
 	}
 	mutex_exit(&psc->sc_lock);
 	mutex_exit(&rtwce_diag_lock);
-	return 0;
+	return n < 0 || (size_t)n >= len ? ENOSPC : 0;
 }
 
 /* Operator channel switch (20 MHz); 0 reads nothing back. */

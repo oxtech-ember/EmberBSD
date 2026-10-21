@@ -39,6 +39,8 @@ static struct rtw88_pci_softc *diag_race;
 static jmp_buf diag_resume, diag_abort;
 static int diag_detaching, diag_waiting;
 static unsigned diag_waits, diag_wakes;
+static struct rtw88_pci_softc *stats_latch;
+static int stats_max;
 static int acquire(void)
 
 {
@@ -144,6 +146,10 @@ void mutex_enter(kmutex_t *m)
 	}
 	CHECK(m->initialized && !m->held);
 	m->held = 1;
+	if (stats_latch != NULL && m == &stats_latch->sc_lock) {
+		stats_latch->sc_core.sc_basic_rates = 0x55a;
+		stats_latch = NULL;
+	}
 }
 void mutex_exit(kmutex_t *m)
 {
@@ -539,6 +545,8 @@ rtw88_net_get_stats(struct rtw88_net *net, struct rtw88_net_stats *stats)
 	stats->elem_missing = 17;
 	stats->elem_toobig = 19;
 	stats->elem_toosmall = 23;
+	if (stats_max)
+		memset(stats, 0xff, sizeof(*stats));
 }
 
 int
@@ -643,6 +651,47 @@ int main(void)
 	CHECK(strstr(stats, "chanmismatch 11 badchan 13") != NULL);
 	CHECK(strstr(stats, "elem_missing 17 elem_toobig 19 elem_toosmall 23") != NULL);
 	CHECK(strstr(stats, "ssid") == NULL && strstr(stats, "private-fixture") == NULL);
+	p.sc_core.sc_basic_rates = 0x0f;
+	CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
+	CHECK(strstr(stats, " basic 0xf") != NULL);
+	CHECK(strstr(stats, " txdata 0 txrate 0 txbasic 0") != NULL);
+	CHECK(strstr(stats, " txr0 0") != NULL && strstr(stats, " txr11 0") != NULL);
+	stats_latch = &p;
+	CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
+	CHECK(stats_latch == NULL && strstr(stats, " basic 0x55a") != NULL);
+	{
+		struct rtw88_stats saved = p.sc_core.sc_stats;
+		char probe[2050];
+		size_t required;
+
+		memset(&p.sc_core.sc_stats, 0xff, sizeof(p.sc_core.sc_stats));
+		stats_max = 1;
+		CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
+		CHECK(strstr(stats, " txr11 18446744073709551615") != NULL);
+		required = strlen(stats) + 1;
+		CHECK(required < sizeof(stats));
+		for (size_t capacity = 0; capacity <= sizeof(stats); capacity++) {
+			memset(probe, 0x5a, sizeof(probe));
+			CHECK(rtwce_stats(probe + 1, capacity) ==
+			    (capacity < required ? ENOSPC : 0));
+			CHECK(probe[0] == 0x5a && probe[capacity + 1] == 0x5a);
+			CHECK(capacity == 0 || memchr(probe + 1, 0, capacity) != NULL);
+			CHECK(!p.sc_lock.held && !rtwce_diag_lock.held);
+		}
+		p.sc_core.sc_stats = saved;
+		stats_max = 0;
+	}
+
+	{
+		char bounded[34];
+
+		memset(bounded, 0x5a, sizeof(bounded));
+		CHECK(rtwce_stats(bounded + 1, 32) == ENOSPC);
+		CHECK(bounded[0] == 0x5a && bounded[33] == 0x5a);
+		CHECK(bounded[32] == 0);
+		CHECK(!p.sc_lock.held && !rtwce_diag_lock.held);
+	}
+
 	CHECK(f.io == old_io);
 	CHECK(rtwce_started() == 0 && f.master_writes == 0);
 	stages = f.step;

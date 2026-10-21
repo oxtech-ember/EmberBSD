@@ -56,6 +56,7 @@ struct rtw88_bus_ops {
 /* Published TX entries per used queue; each has a bounce buffer. */
 #define RTW88_TX_SLOTS		32U
 #define RTW88_TX_BUF_SIZE	4096U
+#define RTW88_LEGACY_RATES	12U
 #define RTW88_TXQ_MGMT		0U
 #define RTW88_TXQ_BE		1U
 #define RTW88_TXQ_BK		2U
@@ -85,6 +86,11 @@ struct rtw88_stats {
 	uint64_t tx_full;
 	uint64_t tx_dropped;	/* Posted but not completed before stop. */
 	uint64_t tx_dma_errors;	/* Read index outside the outstanding range. */
+	/* Successfully encoded unicast DATA, not delivery or air-rate reports. */
+	uint64_t tx_data_encoded, tx_data_rates[RTW88_LEGACY_RATES];
+	uint64_t tx_data_other;
+	uint16_t tx_data_basic;
+	uint8_t tx_data_rate;
 	uint64_t rx_beacons;
 	uint8_t last_bssid[6];
 	char last_ssid[33];	/* NUL-terminated; empty if malformed. */
