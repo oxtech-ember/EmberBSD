@@ -82,7 +82,23 @@ The consumer contract checks that this outcome preserves cleanup ownership and s
 GCC receives the `newbuf`/`m_freem` [allocator/deallocator relationship](https://gcc.gnu.org/onlinedocs/gcc/Common-Attributes.html) as a semantic attribute.
 The plain `malloc` aliasing attribute is not used because the initialized mbuf contains a data pointer.
 Clang analyzes the same bodies without GCC's parameterized allocation attribute.
-No analyzer warning category or production ownership check is disabled.
+The consumer analyzer uses a 100-constraint budget. GCC's default budget of 20
+can discard allocation non-NULL constraints and report impossible list leaks.
+The [GCC 16.2 constraint manager](https://github.com/gcc-mirror/gcc/blob/releases/gcc-16.2.0/gcc/analyzer/constraint-manager.cc#L1887-L1888)
+stops adding constraints when that budget is full. The larger budget increases
+analysis precision; it does not disable a diagnostic.
+No production ownership check is changed. In the host extraction, GCC's
+`deref-before-check` warning is disabled only on the result check after defrag.
+Its identity-return path triggers the assumed-nonnull heuristic; its other
+outcome consumes the mbuf and returns NULL. The generated comment links the
+GCC 16.2 checker source. Clang receives no such annotation.
+The negative runner requires real leak, double-free, NULL dereference and
+`deref-before-check` diagnostics outside that annotation. It also removes the
+actual result guard and requires UBSan to reject the consuming-NULL path.
+On Linux it additionally mutates actual consumer append ownership and delivery
+cleanup. These two static mutations require Linux preprocessing: the inspected
+Mac preprocessing paths prune them before GCC reports the faults. Portable
+allocator checks do not substitute for these Linux consumer mutations.
 The actual `m_copy_rcvif` body runs against modeled `M_PKTHDR` and interface-index fields.
 The delivery sink checks index preservation on every output.
 The legacy decap function has a narrowly scoped sign-compare diagnostic suppression in its extraction.

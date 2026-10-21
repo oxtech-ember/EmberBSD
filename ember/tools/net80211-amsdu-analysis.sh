@@ -28,5 +28,6 @@ ${CLANG:-clang} --analyze -Xanalyzer -analyzer-output=text \
     "$tools/net80211-amsdu-contract.c"
 CC=${CC:-gcc-16} AMSDU_TEST_CFLAGS='-O0 -g -gdwarf-4 -fanalyzer' \
     sh "$tools/net80211-amsdu-parser-contract.sh"
-CC=${CC:-gcc-16} AMSDU_TEST_CFLAGS='-O0 -g -gdwarf-4 -fanalyzer' \
+CC=${CC:-gcc-16} AMSDU_TEST_CFLAGS='-O0 -g -gdwarf-4 -fanalyzer --param=analyzer-max-constraints=100' \
     sh "$tools/net80211-amsdu-contract.sh"
+CC=${CC:-gcc-16} python3 "$tools/net80211-amsdu-analyzer-negative.py"
