@@ -88,8 +88,22 @@ stop the core through its existing quarantine/recovery path. This ordering
 does not flush frames already in DMA. Hardware pause after failed I/O remains
 uncertain. Full successful restart clears the core quarantine.
 
-The native wrapper also needs four-AC classification and backpressure,
-including explicit non-QoS/EAPOL routing. The changed WME and node structures
+The native wrapper classifies Ethernet traffic before encapsulation and selects
+BE, BK, VI or VO from the accepted peer context. Non-QoS data and EAPOL use BE;
+management retains its own queue. An invalid accepted QoS context requests the
+existing INIT fence outside queue and PCI locks.
+
+For a normal FIFO, target-queue capacity is checked before dequeue, sequence
+allocation and crypto. A full queue retains the original Ethernet mbuf and
+releases its node reference. Completion retries the same queued packet.
+ALTQ/TBR can change their selected head between poll and dequeue. Their path
+checks every data AC before dequeue, then classifies the actual returned frame.
+This conservative gate can block an available AC behind a full unrelated AC.
+A token-limited NULL dequeue leaves queue ownership unchanged. Giant serializes
+the non-MPSAFE producer and discipline changes. Completion accounts for all five
+hardware queues before it clears the watchdog.
+
+These paths remain prerequisites for capability enablement. The changed WME and node structures
 are an internal kernel ABI change: rebuild the kernel and affected modules
 together; do not mix old modules with the new layout. Capability advertisement,
 HT/VHT, aggregation and BA remain disabled.
@@ -98,6 +112,7 @@ HT/VHT, aggregation and BA remain disabled.
 
 ```sh
 CC=gcc-16 RTW88_START_ANALYZE=1 sh ember/tools/rtw88-start-contract.sh
+CC=gcc-16 RTW88_ROUTING_ANALYZE=1 sh ember/tools/rtw88-routing-contract.sh
 CC=gcc-16 sh ember/tools/net80211-wme-contract.sh
 CC=gcc-16 WME_TEST_CFLAGS='-O0 -g -fanalyzer' WME_ANALYZE=1 \
     sh ember/tools/net80211-wme-contract.sh
@@ -133,3 +148,12 @@ and all driver compilation/lifecycles require the full target kernel gate.
 TEST_RUNNER applies to the executable and propagates failure. CI runs optimized
 Memcheck, unoptimized GCC analyzer plus Cppcheck/CSA, and strict ASan/UBSan.
 Host checks do not establish driver or physical-device acceptance.
+
+The routing runner executes complete native start, newstate and softintr with
+actual shared classification and encapsulation, actual policy and the actual
+core on a fake bus. It extracts the owning FIFO and IFQ macros and runs both
+ALTQ and no-ALTQ builds. Scheduler services, node references, kernel services
+and unrelated RX input are modeled. A full-queue case retains all real node
+sequence slots and does not invoke the crypto consumer. This proves that the
+PN consumer is not reached; it does not execute CCMP/AES in that combined path.
+The separate crypto contracts own cipher and PN validation.

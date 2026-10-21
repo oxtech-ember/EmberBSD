@@ -6,10 +6,16 @@ name: Native RTL8822CE source contracts
     paths:
       - '.github/workflows/rtw88.yml'
       - 'sys/dev/ic/rtw*'
+      - 'sys/dev/ic/rt2661.c'
+      - 'sys/dev/ic/rt2661reg.h'
       - 'sys/dev/pci/if_rtw88_pci.c'
       - 'sys/dev/pci/rtw88_pci_sysctl.c'
       - 'sys/net80211/ieee80211.c'
       - 'sys/net80211/ieee80211_proto.c'
+      - 'sys/net80211/ieee80211_output.c'
+      - 'sys/net80211/ieee80211_input.c'
+      - 'sys/net80211/ieee80211_node.c'
+      - 'sys/net80211/ieee80211_ioctl.c'
       - 'sys/net80211/*ieee80211*.h'
       - 'sbin/ifconfig/**'
       - 'sys/sys/ioccom.h'
@@ -20,14 +26,21 @@ name: Native RTL8822CE source contracts
       - 'ember/image/cix-p1-network.subr'
       - 'ember/image/test-cix-p1-startup.rb'
       - 'ember/tools/rtw*'
+      - 'ember/tools/net80211-wme-contract.*'
   pull_request:
     paths:
       - '.github/workflows/rtw88.yml'
       - 'sys/dev/ic/rtw*'
+      - 'sys/dev/ic/rt2661.c'
+      - 'sys/dev/ic/rt2661reg.h'
       - 'sys/dev/pci/if_rtw88_pci.c'
       - 'sys/dev/pci/rtw88_pci_sysctl.c'
       - 'sys/net80211/ieee80211.c'
       - 'sys/net80211/ieee80211_proto.c'
+      - 'sys/net80211/ieee80211_output.c'
+      - 'sys/net80211/ieee80211_input.c'
+      - 'sys/net80211/ieee80211_node.c'
+      - 'sys/net80211/ieee80211_ioctl.c'
       - 'sys/net80211/*ieee80211*.h'
       - 'sbin/ifconfig/**'
       - 'sys/sys/ioccom.h'
@@ -38,6 +51,7 @@ name: Native RTL8822CE source contracts
       - 'ember/image/cix-p1-network.subr'
       - 'ember/image/test-cix-p1-startup.rb'
       - 'ember/tools/rtw*'
+      - 'ember/tools/net80211-wme-contract.*'
   workflow_dispatch:
 
 permissions:
@@ -57,11 +71,19 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /ember/tools/rtw*
+            /ember/tools/net80211-wme-contract.*
             /sys/dev/ic/rtw*
+            /sys/dev/ic/rt2661.c
+            /sys/dev/ic/rt2661reg.h
             /sys/dev/pci/if_rtw88_pci.c
             /sys/dev/pci/pcidevs.h
             /sys/net80211/ieee80211.c
             /sys/net80211/ieee80211_proto.c
+            /sys/net80211/ieee80211_output.c
+            /sys/net80211/ieee80211_input.c
+            /sys/net80211/ieee80211_node.c
+            /sys/net80211/ieee80211_ioctl.c
+            /sys/net80211/ieee80211_phy_ies.h
             /sys/net80211/_ieee80211.h
             /sys/net80211/ieee80211.h
             /sys/net80211/ieee80211_var.h
@@ -92,25 +114,4 @@ jobs:
           RTW88_STOP_ANALYZE: '1'
           RTW88_START_ANALYZE: '1'
           RTW88_MEDIA_ANALYZE: '1'
-        run: |
-          cat > "$RUNNER_TEMP/memcheck" <<'SH'
-          #!/bin/sh
-          exec valgrind --tool=memcheck --error-exitcode=97 \
-            --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=all \
-            --track-origins=yes "$@"
-          SH
-          chmod 755 "$RUNNER_TEMP/memcheck"
-          export TEST_RUNNER="$RUNNER_TEMP/memcheck"
-          for contract in ember/tools/rtw*-contract.sh; do
-            sh "$contract"
-          done
-      - name: Execute source contracts under ASan and UBSan
-        env:
-          CC: gcc
-          RTW88_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
-          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: |
-          for contract in ember/tools/rtw*-contract.sh; do
-            sh "$contract"
-          done
+          RTW88_ROUTING_ANALYZE: '1'

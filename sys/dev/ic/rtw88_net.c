@@ -483,8 +483,9 @@ rtw88_net_softintr(void *cookie)
 	mutex_enter(net->lock);
 	completed = net->tx_completed;
 	net->tx_completed = 0;
-	outstanding = net->core->sc_txq[RTW88_TXQ_MGMT].queued +
-	    net->core->sc_txq[RTW88_TXQ_BE].queued;
+	outstanding = 0;
+	for (n = 0; n < RTW88_NTXQ; n++)
+		outstanding += net->core->sc_txq[n].queued;
 	if (net->policy.queued != 0 && !net->policy.dying)
 		softint_schedule(net->softint);
 	mutex_exit(net->lock);
@@ -568,6 +569,90 @@ rtw88_net_tx_submit(struct rtw88_net *net, struct ieee80211_node *ni,
 	return rtw88_tx_fixed(net->core, q, frame, len, &fixed);
 }
 
+/* Giant serializes discipline changes and the single native TX producer. */
+static int
+rtw88_net_tx_dynamic(struct ifnet *ifp)
+{
+#ifdef ALTQ
+	int dynamic;
+
+	IFQ_LOCK(&ifp->if_snd);
+	dynamic = ALTQ_IS_ENABLED(&ifp->if_snd) ||
+	    TBR_IS_ENABLED(&ifp->if_snd);
+	IFQ_UNLOCK(&ifp->if_snd);
+	return dynamic;
+#else
+	(void)ifp;
+	return 0;
+#endif
+}
+
+/* Never retain a FIFO peek's node/AC for a different dequeued packet. */
+static struct mbuf *
+rtw88_net_tx_dequeue_same(struct ifnet *ifp, struct mbuf *expected)
+{
+	struct mbuf *m;
+
+	IFQ_LOCK(&ifp->if_snd);
+	IF_POLL(&ifp->if_snd, m);
+	if (m == expected)
+		IF_DEQUEUE(&ifp->if_snd, m);
+	else
+		m = NULL;
+	IFQ_UNLOCK(&ifp->if_snd);
+	return m;
+}
+
+static int
+rtw88_net_tx_queue(struct ieee80211com *ic, struct mbuf *m,
+    struct ieee80211_node *ni, unsigned *queue)
+{
+	static const unsigned queues[WME_NUM_AC] = { RTW88_TXQ_BE,
+	    RTW88_TXQ_BK, RTW88_TXQ_VI, RTW88_TXQ_VO };
+	struct ether_header eh;
+	unsigned slot;
+	int ac;
+
+	if (m->m_pkthdr.len < sizeof(eh))
+		return EINVAL;
+	m_copydata(m, 0, sizeof(eh), &eh);
+	if ((ni->ni_flags & (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID)) != 0) {
+		slot = ieee80211_chan2ieee(ic, ic->ic_curchan) > 14 ||
+		    (ic->ic_flags & IEEE80211_F_SHSLOT) != 0 ? 9 : 20;
+		if ((ni->ni_flags & (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID)) !=
+		    (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID) ||
+		    (ic->ic_caps & IEEE80211_C_WME) == 0 ||
+		    (ic->ic_flags & IEEE80211_F_WME) == 0 || ni != ic->ic_bss ||
+		    ni->ni_wme_applied_chan != ic->ic_curchan ||
+		    ni->ni_wme_applied_slot != slot)
+			return EPROTO;
+	}
+	if (ieee80211_classify(ic, m, ni) != 0)
+		return EINVAL;
+	/* The stack intentionally sends EAPOL without a QoS header. */
+	ac = eh.ether_type == htons(ETHERTYPE_PAE) ? WME_AC_BE : M_WME_GETAC(m);
+	if (ac < 0 || ac >= WME_NUM_AC)
+		return EINVAL;
+	*queue = queues[ac];
+	return 0;
+}
+
+static int
+rtw88_net_tx_capacity(struct rtw88_net *net, unsigned queue, int all)
+{
+	unsigned q, last;
+
+	KASSERT(mutex_owned(net->lock));
+	if (!net->policy.accepting || net->policy.dying)
+		return 0;
+	q = all ? RTW88_TXQ_BE : queue;
+	last = all ? RTW88_TXQ_VO : queue;
+	for (; q <= last; q++)
+		if (rtw88_tx_available(net->core, q) == 0)
+			return 0;
+	return 1;
+}
+
 static void
 rtw88_net_start(struct ifnet *ifp)
 {
@@ -575,28 +660,61 @@ rtw88_net_start(struct ifnet *ifp)
 	struct ieee80211com *ic = &net->ic;
 	struct ieee80211_node *ni;
 	const struct ieee80211_frame *wh;
-	const struct ether_header *eh;
-	struct mbuf *m;
+	struct ether_header eh;
+	struct mbuf *m, *head;
 	unsigned q, n;
-	int available, error;
+	int available, error, dynamic, all;
 
 	if ((ifp->if_flags & (IFF_RUNNING | IFF_OACTIVE)) != IFF_RUNNING)
 		return;
 	for (n = 0; n < RTW88_TX_SLOTS; n++) {
+		ni = NULL;
+		dynamic = all = error = 0;
 		IF_POLL(&ic->ic_mgtq, m);
 		q = m != NULL ? RTW88_TXQ_MGMT : RTW88_TXQ_BE;
 		if (m == NULL) {
 			if (ic->ic_state != IEEE80211_S_RUN)
 				return;
-			IFQ_POLL(&ifp->if_snd, m);
-			if (m == NULL)
-				return;
+			dynamic = rtw88_net_tx_dynamic(ifp);
+			if (dynamic) {
+				/* The scheduler may replace its polled head. */
+				all = (ic->ic_caps & IEEE80211_C_WME) != 0 &&
+				    (ic->ic_flags & IEEE80211_F_WME) != 0;
+			} else {
+				IFQ_POLL(&ifp->if_snd, m);
+				if (m == NULL)
+					return;
+				/* Do not classify a peer while a state request owns it. */
+				mutex_enter(net->lock);
+				available = net->policy.accepting && !net->policy.dying;
+				mutex_exit(net->lock);
+				if (!available) {
+					ifp->if_flags |= IFF_OACTIVE;
+					return;
+				}
+				if (m->m_pkthdr.len < sizeof(eh)) {
+					error = EINVAL;
+				} else {
+					m_copydata(m, 0, sizeof(eh), &eh);
+					ni = ieee80211_find_txnode(ic, eh.ether_dhost);
+					error = ni == NULL ? ENOENT :
+					    rtw88_net_tx_queue(ic, m, ni, &q);
+				}
+				if (error == EPROTO) {
+					ieee80211_free_node(ni);
+					if_statinc(ifp, if_oerrors);
+					/* No queue or PCI lock across the state request. */
+					ieee80211_new_state(ic, IEEE80211_S_INIT, EPROTO);
+					return;
+				}
+			}
 		}
 		mutex_enter(net->lock);
-		available = net->policy.accepting && !net->policy.dying &&
-		    rtw88_tx_available(net->core, q) != 0;
+		available = rtw88_net_tx_capacity(net, q, all);
 		mutex_exit(net->lock);
-		if (!available) {
+		if (error == 0 && !available) {
+			if (ni != NULL)
+				ieee80211_free_node(ni);
 			ifp->if_flags |= IFF_OACTIVE;
 			return;
 		}
@@ -607,20 +725,43 @@ rtw88_net_start(struct ifnet *ifp)
 			ni = M_GETCTX(m, struct ieee80211_node *);
 			M_CLEARCTX(m);
 		} else {
-			IFQ_DEQUEUE(&ifp->if_snd, m);
-			if (m == NULL)
-				return;
-			if ((m = m_pullup(m, sizeof(*eh))) == NULL) {
-				if_statinc(ifp, if_oerrors);
-				continue;
+			if (dynamic) {
+				IFQ_DEQUEUE(&ifp->if_snd, m);
+				if (m == NULL)
+					return;
+				if (m->m_pkthdr.len < sizeof(eh)) {
+					error = EINVAL;
+				} else {
+					m_copydata(m, 0, sizeof(eh), &eh);
+					ni = ieee80211_find_txnode(ic, eh.ether_dhost);
+					error = ni == NULL ? ENOENT :
+					    rtw88_net_tx_queue(ic, m, ni, &q);
+				}
+				if (error == EPROTO) {
+					ieee80211_free_node(ni);
+					m_freem(m);
+					if_statinc(ifp, if_oerrors);
+					ieee80211_new_state(ic, IEEE80211_S_INIT, EPROTO);
+					return;
+				}
+			} else {
+				head = m;
+				m = rtw88_net_tx_dequeue_same(ifp, head);
+				if (m == NULL) {
+					if (ni != NULL)
+						ieee80211_free_node(ni);
+					continue;
+				}
 			}
-			eh = mtod(m, struct ether_header *);
-			ni = ieee80211_find_txnode(ic, eh->ether_dhost);
-			if (ni == NULL) {
+			if (error != 0) {
 				m_freem(m);
+				if (ni != NULL)
+					ieee80211_free_node(ni);
 				if_statinc(ifp, if_oerrors);
 				continue;
 			}
+			if ((m = m_pullup(m, sizeof(eh))) == NULL)
+				goto tx_error;
 			bpf_mtap(ifp, m, BPF_D_OUT);
 			m = ieee80211_encap(ic, m, ni);
 			if (m == NULL)

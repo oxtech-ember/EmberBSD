@@ -255,7 +255,9 @@ immutable parameters synchronously
 and commits software state only after success. Its dormant native consumer
 uses core quarantine on I/O errors. Contextual default EDCA is checked through
 the actual native state worker and core with modeled scheduling. Native
-four-AC wrapper routing remains a gate before WME can be enabled.
+four-AC wrapper routing uses actual classification before encap, target-queue
+backpressure before sequence/crypto, and an all-AC capacity gate for ALTQ/TBR.
+Capability advertisement remains a separate physical acceptance gate.
 
 Run the actual-source contracts with GCC16:
 
@@ -265,53 +267,4 @@ CC=gcc-16 sh ember/tools/rtw88-pci-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-start-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-fixed-contract.sh
 CC=gcc-16 RTW88_MEDIA_ANALYZE=1 sh ember/tools/rtw88-media-contract.sh
-CC=gcc-16 sh ember/tools/rtw88-wme-contract.sh
-CC=gcc-16 sh ember/tools/rtw88-fw-init-contract.sh
-CC=gcc-16 sh ember/tools/rtw88-net-contract.sh
-CC=gcc-16 sh ember/tools/rtw88-ifconfig-roaming-contract.sh
-CC=gcc-16 sh ember/tools/rtw88-mbuf-contract.sh
-CC=gcc-16 sh ember/tools/rtw8822c-txpwr-contract.sh
-CC=gcc-16 sh ember/tools/rtw8822c-coex-contract.sh
-CC=gcc-16 sh ember/tools/rtw8822c-dack-contract.sh
-CC=gcc-16 sh ember/tools/rtw8822c-init-contract.sh
-```
-
-Both 2.4 GHz and 5 GHz pass the station checks described above.
-RF quality, higher rates, AP-loss recovery and long-term operation remain unqualified.
-
-## First acceptance scenario
-
-Use GCC16 cross builds on the development host and the physical board for
-radio execution. Keep the kernel, modules and firmware manifest coherent.
-
-1. Identify the actual silicon revision and calibration data.
-2. Validate firmware sections and DMA addresses before enabling transfers.
-3. Scan permitted channels and associate with a controlled WPA2-Personal AP.
-4. Obtain a DHCP address and transfer 16 MiB in each direction with matching SHA256.
-5. Complete three reconnect cycles and a ten-minute continuous workload.
-6. Detect AP loss, report bounded failures and recover without reboot.
-7. Repeat a cold boot using the same verified artifacts.
-
-The transfer size and duration are proposed acceptance criteria, not results.
-WPA3, HT/VHT aggregation, AP mode, monitor mode and power management are
-outside the first station scenario. Higher rates and additional bands need
-separate evidence. Do not infer them from the chip data sheet.
-
-## Validation and recovery
-
-Test firmware and efuse bounds, descriptor codecs, address overflow,
-resource failure cleanup and stale completion handling before integration.
-Add executable causal regressions, cross-build checks and applicable static
-analysis. Contracts and VM execution do not establish physical DMA or radio timing.
-The board's 32 GB memory configuration requires an explicit DMA address
-contract. Never silently truncate an address or disable the IOMMU.
-
-Retain the accepted diagnostic SD image and coherent source manifests.
-Use only the selected disposable external SD. Do not write internal storage
-or replace the stock board firmware as part of this driver proposal.
-Publish the tested capability boundaries after independent review and the
-physical station scenario. Existing DDR training and ACPI observations
-remain separate from Wi-Fi diagnosis.
-
-Follow [CONTRIBUTING](../../CONTRIBUTING.md), the
-[kernel guide](kernel.md) and the [board worksheet](board-change.md).
+CC=gcc-16 RTW88_ROUTING_ANALYZE=1 sh ember/tools/rtw88-routing-contract.sh
