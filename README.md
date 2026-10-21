@@ -1194,7 +1194,9 @@ The base system shell is unchanged.
   [host-managed k/v transport](ember/boot/aicwf-kv.md) has physical connected-scan,
   ioctl, directed reassociation and management TX/RX checks. Neighbor-list and BTM acceptance remain pending.
   Protected SA Query and recovery checks are documented
-  in the [SAE guide](ember/boot/aicwf-sae.md).
+  in the [SAE guide](ember/boot/aicwf-sae.md). A separate
+  [fixed-image BIP patch source](ember/boot/aicwf-firmware-bip.md) builds two
+  bounded firmware sections. Loader and radio acceptance remain pending.
   The [original firmware instruction fixture](ember/tools/aicwf-firmware-check/README.md)
   reproduces initial-IPN, receive-counter and same-key defects in 33 QEMU cases.
   This CPU result does not qualify a replacement image or on-air PMF.
