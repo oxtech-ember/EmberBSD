@@ -86,6 +86,9 @@
 #define RTW88_BEACON_IES	36	/* header 24, timestamp, interval, caps */
 #define RTW88_IMR_MGNTDOK	0x40
 #define RTW88_IMR_BEDOK		0x10
+#define RTW88_IMR_BKDOK		0x20
+#define RTW88_IMR_VIDOK		0x08
+#define RTW88_IMR_VODOK		0x04
 #define RTW88_QSEL_MGMT		18
 #define RTW88_RATEID_G		7
 #define RTW88_RATEID_B_20M	8
@@ -101,6 +104,9 @@ static const struct {
 } rtw88_txq_hw[RTW88_NTXQ] = {
 	[RTW88_TXQ_MGMT] = { 5, 0x0380, 0x03b0, RTW88_IMR_MGNTDOK },
 	[RTW88_TXQ_BE] = { 1, 0x0388, 0x03a8, RTW88_IMR_BEDOK },
+	[RTW88_TXQ_BK] = { 0, 0x038a, 0x03ac, RTW88_IMR_BKDOK },
+	[RTW88_TXQ_VI] = { 2, 0x0386, 0x03a4, RTW88_IMR_VIDOK },
+	[RTW88_TXQ_VO] = { 3, 0x0384, 0x03a0, RTW88_IMR_VODOK },
 };
 #define RTW88_BD_OWN		0x8000
 #define RTW88_BCN_VALID		0x8000
@@ -1177,10 +1183,12 @@ rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
 		error = rtw88_wme_map(bytes[hdrlen - 2] & 15, &map);
 		if (error != 0)
 			return error;
-		/* BK/VI/VO have no native producer lifetime yet. */
+		/* Queue ownership must match the actual QoS TID. */
 		if (map.ring != rtw88_txq_hw[q].ring)
 			return EOPNOTSUPP;
 		qsel = map.qsel;
+	} else if (q != RTW88_TXQ_MGMT && q != RTW88_TXQ_BE) {
+		return EOPNOTSUPP;
 	}
 	txq = &sc->sc_txq[q];
 	ring = &sc->sc_ring[rtw88_txq_hw[q].ring];

@@ -58,7 +58,10 @@ struct rtw88_bus_ops {
 #define RTW88_TX_BUF_SIZE	4096U
 #define RTW88_TXQ_MGMT		0U
 #define RTW88_TXQ_BE		1U
-#define RTW88_NTXQ		2U
+#define RTW88_TXQ_BK		2U
+#define RTW88_TXQ_VI		3U
+#define RTW88_TXQ_VO		4U
+#define RTW88_NTXQ		5U
 
 struct rtw88_txq {
 	struct rtw88_dma buf[RTW88_TX_SLOTS];
@@ -199,10 +202,11 @@ int rtw88_edca_apply(struct rtw88_softc *,
  * Copy one 802.11 frame into the next slot of a TX queue and kick it.
  * Lowest configured legacy basic rate, no fallback. Before station
  * setup, use 1M on 2.4 GHz or 6M on 5 GHz.
- * Management uses hardware sequence; BE retains the frame sequence.
+ * Management uses hardware sequence; all ACs retain the frame sequence.
  * At least a 24-byte header is required. The caller holds the bus
- * interrupt lock. ENOBUFS when the ring is full. QoS TIDs without a
- * native producer return EOPNOTSUPP; EDCA quarantine returns its I/O error.
+ * interrupt lock. ENOBUFS when the ring is full. QoS TIDs must match the
+ * selected AC. Unsupported TIDs, HT Control and non-QoS on BK/VI/VO return
+ * EOPNOTSUPP; EDCA quarantine returns its I/O error.
  */
 int rtw88_tx_raw(struct rtw88_softc *, unsigned, const void *, size_t);
 /* Read software ring capacity while holding the bus interrupt lock. */

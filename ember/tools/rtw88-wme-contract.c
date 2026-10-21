@@ -125,7 +125,7 @@ test_qos_descriptor(void)
 	frame[24] = 6;
 	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, frame, 26) == EOPNOTSUPP);
 	CHECK(writes == before &&
-	      syncs == ds); /* VO has no initialized producer. */
+	      syncs == ds); /* VO must not use the BE producer. */
 	frame[24] = 0;
 	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, frame, 25) == EMSGSIZE);
 	/* Addr4 moves QoS Control to byte30; TID3 still selects BE/QSEL3. */
@@ -151,7 +151,7 @@ test_qos_descriptor(void)
 	ds = syncs;
 	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, frame, 32) == EOPNOTSUPP);
 	CHECK(writes == before && syncs == ds);
-	/* The only two existing producers retain legacy queue selection. */
+	/* The two legacy paths retain their original queue selection. */
 	frame[0] = 0x08;
 	frame[1] = 2;
 	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, frame, 24) == 0);
@@ -168,6 +168,49 @@ test_qos_descriptor(void)
 	CHECK(writes == before && syncs == ds);
 	release(&sc);
 }
+/* A caller must choose the matching producer; no AC fallback is allowed. */
+static void
+test_all_tid_producers(void)
+{
+	static const unsigned queues[8] = {1, 2, 2, 1, 3, 3, 4, 4};
+	struct rtw88_softc sc;
+	uint8_t frame[26] = {0x88, 0x02};
+
+	prepare(&sc);
+	frame[22] = 0x30;
+	frame[23] = 0x12;
+	for (unsigned tid = 0; tid < 8; tid++) {
+		unsigned q = queues[tid];
+		frame[24] = (uint8_t)tid;
+		unsigned slot = q < RTW88_NTXQ ? sc.sc_txq[q].wp : 0;
+		CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == 0);
+		if (q >= RTW88_NTXQ)
+			continue;
+		const uint8_t *pkt = sc.sc_txq[q].buf[slot].vaddr;
+		CHECK(pkt[5] == tid && (pkt[33] & 0x80) == 0);
+		CHECK((pkt[37] >> 4 | (unsigned)pkt[38] << 4) == 0x123);
+		for (unsigned wrong = 1; wrong < 5; wrong++) {
+			if (wrong == q || wrong >= RTW88_NTXQ)
+				continue;
+			unsigned before = writes, ds = syncs;
+			CHECK(rtw88_tx_raw(&sc, wrong, frame, sizeof(frame)) == EOPNOTSUPP);
+			CHECK(writes == before && syncs == ds);
+		}
+		unsigned before = writes, ds = syncs;
+		sc.sc_txq[q].nbuf = 0;
+		CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == ENXIO);
+		CHECK(writes == before && syncs == ds);
+		sc.sc_txq[q].nbuf = RTW88_TX_SLOTS;
+	}
+	frame[0] = 0x08;
+	for (unsigned q = 2; q < 5; q++) {
+		unsigned before = writes, ds = syncs;
+		CHECK(rtw88_tx_raw(&sc, q, frame, 24) == EOPNOTSUPP);
+		CHECK(writes == before && syncs == ds);
+	}
+	release(&sc);
+}
+
 static void
 test_maps_and_edca(void)
 {
@@ -263,6 +306,10 @@ test_edca_apply(void)
 			CHECK(rtw88_tx_available(&sc, RTW88_TXQ_BE) == 0);
 			CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, frame,
 					   sizeof(frame)) == EIO);
+			for (unsigned q = 0; q < RTW88_NTXQ; q++) {
+				CHECK(rtw88_tx_available(&sc, q) == 0);
+				CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == EIO);
+			}
 			CHECK(io_calls == before && syncs == ds &&
 			      writes == ws);
 			CHECK(mmio[0x522] ==
@@ -277,6 +324,7 @@ int
 main(void)
 {
 	test_qos_descriptor();
+	test_all_tid_producers();
 	test_maps_and_edca();
 	test_edca_apply();
 	printf("Native RTL8822CE WME prerequisite: %u checks, %u failures\n",

@@ -57,7 +57,7 @@ static struct {
 	int ddma_bad_sum;
 	unsigned rx_hw_idx;
 	unsigned bcn_valid_sets;
-	unsigned tx_hw_rp[2];	/* MGMT, BE read index reported by the chip. */
+	unsigned tx_hw_rp[5];	/* MGMT, BE, BK, VI, VO read indices. */
 	unsigned barriers;
 	uint32_t imr_at_barrier;
 	unsigned fail_alloc_at;	/* 1-based allocation that fails, or 0. */
@@ -281,11 +281,17 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 		v = (v & 0xfff) | (uint32_t)(f.rx_hw_idx & 0xfff) << 16;
 	if (reg == 0x132c)
 		v = (v & 0xfff) | (uint32_t)f.h2c_rp << 16;
-	/* TXBD_IDX MGMTQ/BEQ: hardware read index in 27:16. */
+	/* TXBD_IDX: independent hardware read indices in 27:16. */
 	if (reg == 0x03b0)
 		v = (v & 0xfff) | (uint32_t)(f.tx_hw_rp[0] & 0xfff) << 16;
 	if (reg == 0x03a8)
 		v = (v & 0xfff) | (uint32_t)(f.tx_hw_rp[1] & 0xfff) << 16;
+	if (reg == 0x03ac)
+		v = (v & 0xfff) | (uint32_t)(f.tx_hw_rp[2] & 0xfff) << 16;
+	if (reg == 0x03a4)
+		v = (v & 0xfff) | (uint32_t)(f.tx_hw_rp[3] & 0xfff) << 16;
+	if (reg == 0x03a0)
+		v = (v & 0xfff) | (uint32_t)(f.tx_hw_rp[4] & 0xfff) << 16;
 	/*
 	 * Internal DDMA completes only after a beacon kick consumed the
 	 * host chunk. Otherwise OWN stays set and the download times out.
@@ -991,7 +997,7 @@ test_command_length(void)
 		uint32_t dma, desa;
 		uint16_t pkt_size, seg1;
 
-		CHECK(bd != NULL && pkt != NULL);
+		assert(bd != NULL && pkt != NULL);
 		dma = (uint32_t)bd[4] | (uint32_t)bd[5] << 8 |
 		    (uint32_t)bd[6] << 16 | (uint32_t)bd[7] << 24;
 		desa = (uint32_t)f.mmio[0x308] | (uint32_t)f.mmio[0x309] << 8 |
@@ -1560,6 +1566,38 @@ test_rx_buffer_alloc_failure(void)
 	CHECK(!sc.sc_resources_ready && f.dma_allocs == 0);
 }
 
+/* Partial allocation on any producer must release every preceding mapping. */
+static void
+test_tx_buffer_alloc_failure(void)
+{
+	static const unsigned slots[3] = {0, 15, 31};
+	struct rtw88_softc sc;
+	unsigned q, j, i;
+
+	for (q = 0; q < 5; q++) {
+		for (j = 0; j < 3; j++) {
+			reset_bus(&sc);
+			f.fail_alloc_at = RTW88_NRING + RTW88_RX_BUFS +
+			    q * 32 + slots[j] + 1;
+			int error = rtw88_core_attach(&sc);
+			CHECK(error == ENOMEM);
+			if (error == 0) {
+				rtw88_core_detach(&sc);
+				continue;
+			}
+			CHECK(!sc.sc_resources_ready && !sc.sc_intr_established);
+			CHECK(sc.sc_nring == 0 && sc.sc_nrxbuf == 0);
+			for (i = 0; i < RTW88_NTXQ; i++)
+				CHECK(sc.sc_txq[i].nbuf == 0);
+			CHECK(f.dma_allocs == 0);
+			f.fail_alloc_at = 0;
+			CHECK(rtw88_core_attach(&sc) == 0);
+			CHECK(rtw88_start(&sc) == 0 && sc.sc_started);
+			CHECK(rtw88_core_detach(&sc) == 0 && f.dma_allocs == 0);
+		}
+	}
+}
+
 static void
 test_diag_regs(void)
 {
@@ -1766,6 +1804,92 @@ test_tx_completion(void)
 	rtw88_core_detach(&sc);
 }
 
+/* Wrong ring/doorbell/DOK or a shared producer corrupts independent ACs. */
+static void
+test_all_ac_producers(void)
+{
+	static const unsigned rings[5] = {5, 1, 0, 2, 3};
+	static const unsigned nums[5] = {0x380, 0x388, 0x38a, 0x386, 0x384};
+	static const unsigned idxs[5] = {0x3b0, 0x3a8, 0x3ac, 0x3a4, 0x3a0};
+	static const unsigned dok[5] = {0x40, 0x10, 0x20, 0x08, 0x04};
+	static const uint8_t tids[5] = {0, 3, 1, 5, 6};
+	struct rtw88_softc sc;
+	uint8_t frame[26] = {0x88, 0x02};
+	unsigned q, i, writes;
+
+	if (!start_ok(&sc))
+		return;
+	tx_completed = 0;
+	sc.sc_net_cookie = &rx_delivered;
+	sc.sc_tx_complete = network_tx;
+	for (q = 0; q < 5; q++) {
+		frame[0] = q == 0 ? 0xb0 : 0x88;
+		frame[24] = tids[q];
+		CHECK(reg16(nums[q]) == 32);
+		CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == 0);
+		/* Keep the old two-producer baseline runnable for causal RED. */
+		if (q >= RTW88_NTXQ)
+			continue;
+		CHECK(sc.sc_txq[q].nbuf == 32);
+		CHECK(sc.sc_txq[q].queued == 1 && sc.sc_txq[q].wp == 1);
+		CHECK(reg16(idxs[q]) == 1);
+		const uint8_t *pkt = sc.sc_txq[q].buf[0].vaddr;
+		const uint8_t *bd = sc.sc_ring[rings[q]].vaddr;
+		uint32_t addr = (uint32_t)bd[4] | (uint32_t)bd[5] << 8 |
+		    (uint32_t)bd[6] << 16 | (uint32_t)bd[7] << 24;
+		CHECK(addr == sc.sc_txq[q].buf[0].addr);
+		CHECK(pkt[5] == (q == 0 ? 18 : tids[q]));
+		CHECK(memcmp(pkt + 48, frame, sizeof(frame)) == 0);
+		/* Completion for another AC must not reclaim this producer. */
+		f.tx_hw_rp[q] = 1;
+		set_hisr0(dok[(q + 1) % 5]);
+		CHECK(rtw88_intr(&sc) == 1);
+		CHECK(sc.sc_txq[q].queued == 1);
+		set_hisr0(dok[q]);
+		CHECK(rtw88_intr(&sc) == 1 && sc.sc_txq[q].queued == 0);
+		for (i = 0; i < 31; i++)
+			CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == 0);
+		CHECK(sc.sc_txq[q].wp == 0 && sc.sc_txq[q].rp == 1);
+		writes = f.writes;
+		CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == ENOBUFS);
+		CHECK(f.writes == writes && rtw88_tx_available(&sc, q) == 0);
+		/* Past outstanding and out-of-range indices retain ownership. */
+		f.tx_hw_rp[q] = 32;
+		set_hisr0(dok[q]);
+		CHECK(rtw88_intr(&sc) == 1 && sc.sc_txq[q].queued == 31);
+		f.tx_hw_rp[q] = 0;
+		set_hisr0(dok[q]);
+		CHECK(rtw88_intr(&sc) == 1 && sc.sc_txq[q].queued == 0);
+		CHECK(rtw88_tx_available(&sc, q) == 31);
+		/* Leave a frame on every producer for simultaneous IRQ/stop. */
+		CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == 0);
+	}
+	if (RTW88_NTXQ == 5) {
+		/* One bad index cannot block reclaim of the other four queues. */
+		for (q = 0; q < 5; q++)
+			f.tx_hw_rp[q] = 1;
+		f.tx_hw_rp[2] = 2;
+		set_hisr0(0x7c);
+		CHECK(rtw88_intr(&sc) == 1);
+		for (q = 0; q < 5; q++)
+			CHECK(sc.sc_txq[q].queued == (q == 2 ? 1U : 0U));
+		CHECK(sc.sc_stats.tx_done == 164 && tx_completed == 164);
+		CHECK(sc.sc_stats.tx_dma_errors == 6);
+		CHECK(rtw88_stop(&sc) == 0 && sc.sc_stats.tx_dropped == 1);
+		memset(f.tx_hw_rp, 0, sizeof(f.tx_hw_rp));
+		CHECK(rtw88_start(&sc) == 0);
+		for (q = 0; q < 5; q++) {
+			CHECK(sc.sc_txq[q].wp == 0 && sc.sc_txq[q].rp == 0 &&
+			    sc.sc_txq[q].queued == 0 && reg16(nums[q]) == 32);
+			frame[0] = q == 0 ? 0xb0 : 0x88;
+			frame[24] = tids[q];
+			CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == 0);
+		}
+		CHECK(rtw88_stop(&sc) == 0 && sc.sc_stats.tx_dropped == 6);
+	}
+	CHECK(rtw88_core_detach(&sc) == 0 && f.dma_allocs == 0);
+}
+
 static void
 test_tx_refusals(void)
 {
@@ -1949,12 +2073,14 @@ main(void)
 	test_intr_not_ours();
 	test_intr_after_stop();
 	test_rx_buffer_alloc_failure();
+	test_tx_buffer_alloc_failure();
 	test_diag_regs();
 	test_tx_descriptors_and_full_ring();
 	test_station_config();
 	test_tx_band_and_sequence();
 	test_tx_completion();
 	test_tx_refusals();
+	test_all_ac_producers();
 	test_edca_quarantine_recovery();
 	test_loopback_mode();
 	test_rf_mode_register_uses_sipi();

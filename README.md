@@ -1157,7 +1157,8 @@ The base system shell is unchanged.
   unattended reboot and Wi-Fi recovery checks on both bands. Higher rates,
   analog qualification and long-term stability remain pending.
   Multicast membership changes preserve the live radio. Shared CCMP bounds
-  and per-TID replay checks support further WLAN work. A bounded
+  and per-TID replay checks support further WLAN work. Host contracts cover
+  independent AC queue producers; WME and HT/VHT remain unadvertised. A bounded
   [A-MSDU receive path](ember/development/net80211-amsdu.md) remains disabled
   until peer negotiation and aggregation requirements are complete.
   See the [source boundary and checks](ember/development/rtl8822ce-proposal.md#current-source-boundary)
