@@ -1,0 +1,166 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
+/*
+ * Own test code: EmberBSD contributors, 2026. AI-assisted.
+ * The inserted WPA functions retain their original BSD notices.
+ * This is a source-projection test with an in-memory protocol double.
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+struct wpa_ctrl {
+	int attached;
+	int level;
+};
+static struct wpa_ctrl command_endpoint, monitor_endpoint;
+static struct wpa_ctrl *ctrl_conn, *mon_conn, *last_endpoint;
+/* The fixture covers per-interface CLI. Global IFNAME expansion is excluded. */
+static char *const ifname_prefix;
+static char last_reply[32], last_command[128];
+static unsigned requests, checks, failures;
+static int transport_result;
+
+#define os_snprintf snprintf
+#define os_strlen strlen
+
+static int
+os_snprintf_error(size_t size, int result)
+{
+	return result < 0 || (size_t)result >= size;
+}
+
+static void
+wpa_cli_msg_cb(char *message, size_t length)
+{
+	size_t used;
+
+	(void)length;
+	used = strlen(message);
+	if (used >= sizeof(last_reply)) {
+		failures++;
+		return;
+	}
+	memcpy(last_reply, message, used + 1);
+}
+
+/*
+ * Model only the source-address attachment rule of ctrl_iface_level().
+ * Transport success remains zero even when the protocol reply is FAIL.
+ * No socket, supplicant, firmware or network is used.
+ */
+static int
+wpa_ctrl_request(struct wpa_ctrl *ctrl, const char *command, size_t command_len,
+    char *reply, size_t *reply_len, void (*callback)(char *, size_t))
+{
+	const char *response;
+	size_t length;
+
+	(void)callback;
+	requests++;
+	last_endpoint = ctrl;
+	if (command_len >= sizeof(last_command))
+		return -1;
+	memcpy(last_command, command, command_len);
+	last_command[command_len] = '\0';
+	if (transport_result != 0)
+		return transport_result;
+	if (ctrl == NULL || command_len != 7 || strcmp(command, "LEVEL 2") != 0)
+		return -1;
+	response = ctrl->attached ? "OK\n" : "FAIL\n";
+	if (ctrl->attached)
+		ctrl->level = 2;
+	length = strlen(response);
+	if (*reply_len < length)
+		return -1;
+	memcpy(reply, response, length);
+	*reply_len = length;
+	return 0;
+}
+
+/* REAL_FUNCTIONS */
+
+static void
+reset(void)
+{
+	command_endpoint.attached = 0;
+	command_endpoint.level = 4;
+	monitor_endpoint.attached = 1;
+	monitor_endpoint.level = 4;
+	ctrl_conn = &command_endpoint;
+	mon_conn = NULL;
+	last_endpoint = NULL;
+	last_reply[0] = '\0';
+	last_command[0] = '\0';
+	requests = 0;
+	transport_result = 0;
+}
+
+static void
+check(int value, const char *name)
+{
+	checks++;
+	if (!value) {
+		failures++;
+		fprintf(stderr, "FAIL: %s\n", name);
+	}
+}
+
+int
+main(void)
+{
+	char *arguments[] = { "2" };
+	int result;
+
+	reset();
+	mon_conn = &monitor_endpoint;
+	result = wpa_cli_cmd_level(ctrl_conn, 1, arguments);
+	check(result == 0, "interactive transport status");
+	check(last_endpoint == &monitor_endpoint, "interactive attached endpoint");
+	check(strcmp(last_command, "LEVEL 2") == 0, "exact LEVEL wire command");
+	check(strcmp(last_reply, "OK\n") == 0, "interactive protocol OK");
+	check(monitor_endpoint.level == 2, "monitor level changed");
+	check(command_endpoint.level == 4, "command level unchanged");
+
+	reset();
+	command_endpoint.attached = 1;
+	result = wpa_cli_cmd_level(ctrl_conn, 1, arguments);
+	check(result == 0 && strcmp(last_reply, "OK\n") == 0,
+	    "legacy attached ctrl fallback succeeds");
+	check(last_endpoint == &command_endpoint && command_endpoint.level == 2,
+	    "fallback keeps passed endpoint");
+
+	reset();
+	result = wpa_cli_cmd_level(ctrl_conn, 1, arguments);
+	check(result == 0 && strcmp(last_reply, "FAIL\n") == 0,
+	    "unattached fallback preserves protocol FAIL");
+	check(command_endpoint.level == 4, "unattached ctrl does not change state");
+
+	reset();
+	command_endpoint.attached = 1;
+	monitor_endpoint.attached = 0;
+	mon_conn = &monitor_endpoint;
+	result = wpa_cli_cmd_level(ctrl_conn, 1, arguments);
+	check(result == 0 && strcmp(last_reply, "FAIL\n") == 0,
+	    "present monitor refusal is not hidden by ctrl fallback");
+	check(last_endpoint == &monitor_endpoint && command_endpoint.level == 4,
+	    "no retry on another endpoint");
+
+	reset();
+	mon_conn = &monitor_endpoint;
+	result = wpa_cli_cmd_level(ctrl_conn, 0, NULL);
+	check(result == -1 && requests == 0, "missing argument is refused before request");
+
+	reset();
+	mon_conn = &monitor_endpoint;
+	transport_result = -2;
+	result = wpa_cli_cmd_level(ctrl_conn, 1, arguments);
+	check(result == -2 && requests == 1, "transport timeout status propagates");
+
+	reset();
+	ctrl_conn = NULL;
+	result = wpa_cli_cmd_level(NULL, 1, arguments);
+	check(result == -1 && requests == 0, "disconnected fallback stays refused");
+
+	printf("checks=%u failures=%u\n", checks, failures);
+	return failures != 0;
+}

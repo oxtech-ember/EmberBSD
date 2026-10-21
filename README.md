@@ -1202,6 +1202,8 @@ The base system shell is unchanged.
   The [original firmware instruction fixture](ember/tools/aicwf-firmware-check/README.md)
   reproduces initial-IPN, receive-counter and same-key defects in 33 QEMU cases.
   This CPU result does not qualify a replacement image or on-air PMF.
+  Interactive `wpa_cli` applies `LEVEL` to its attached event socket. The
+  [command regression](ember/development/wpa-cli-level.md) checks socket selection and protocol replies.
 - **Consistent Wi-Fi discovery and CM5 cooling:** `bwfm` retains firmware
   scan channels and signal ranking across both bands. The configurable
   [ACPI minimum fan level](ember/boot/thermal-fan.md) skips a stalled low

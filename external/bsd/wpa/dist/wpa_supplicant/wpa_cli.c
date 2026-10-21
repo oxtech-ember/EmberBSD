@@ -1062,7 +1062,7 @@ static int wpa_cli_cmd_ibss_rsn(struct wpa_ctrl *ctrl, int argc, char *argv[])
 
 static int wpa_cli_cmd_level(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
-	return wpa_cli_cmd(ctrl, "LEVEL", 1, argc, argv);
+	return wpa_cli_cmd(mon_conn ? mon_conn : ctrl, "LEVEL", 1, argc, argv);
 }
 
 
