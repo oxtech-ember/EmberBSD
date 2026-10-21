@@ -1650,15 +1650,20 @@ remain unverified.
   ioctl contract passes. Three physical IPv6 address add/remove cycles preserve
   calibration count, WPA2 association and ready addresses. General AP-loss
   recovery and reconnect latency remain unqualified. Read-only stats now expose
-  the BASIC mask, encoded unicast DATA rates and successful producer writes
-  for MGMT/BE/BK/VI/VO. These counters do not prove air ACKs or delivery;
-  target and physical acceptance of this diagnostic remain pending. Explicit fixed legacy media
+  the BASIC mask and encoded unicast DATA rates. CIX physical checks confirm
+  the encoded fixed-rate policy and bidirectional file integrity. Successful
+  producer-write counters for MGMT/BE/BK/VI/VO remain source-qualified;
+  target and physical acceptance of these queue counters is pending.
+  Counters do not prove air ACKs or delivery. Explicit fixed legacy media
   now has a validated native caller-to-core path; AUTO is unchanged. Corrected
   2.4 GHz channel flags expose native 11g media selection. A separate actual-source
   attach/media contract checks explicit legacy rates and band limits. New mode
   constraints also refresh active channels after an AUTO association. OFDM with
-  required ERP protection fails closed. Target and physical acceptance remain
-  pending. Manual SSID staging and
+  required ERP protection fails closed. A GCC16 cross-built kernel passed
+  CIX WPA2/CCMP and bidirectional 1 MiB file checks at fixed 6, 24 and 54 Mbps
+  in 11g mode. AUTO still uses the lowest basic rate. Adaptive rates, HT/VHT,
+  5 GHz operation on this AP and long-run performance remain unqualified.
+  Manual SSID staging and
   idempotent BSD media selection now pass a native legacy-scan contract.
   BSD supplicant scans preserve mode and channel-list restrictions instead of
   scanning every available band. Target build and physical cold-init reduction

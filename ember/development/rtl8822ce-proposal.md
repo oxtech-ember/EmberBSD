@@ -186,7 +186,14 @@ not a full configuration rollback. Kernel services, object layout and ifmedia
 storage/lookup are models. Init and scan scheduling are modeled;
 Association runtime mode is an explicit input, not execution of station join.
 This is not an ioctl transport test.
-Target build and fixed-rate physical acceptance remain pending.
+The GCC16 cross-built CIX kernel at `287792a96` passed physical fixed-rate checks.
+Explicit 6, 24 and 54 Mbps 11g selections each completed WPA2-PSK/CCMP association.
+Each selection passed a 1 MiB file transfer in each direction with matching SHA256.
+Encoded DATA counters matched the requested rate. No new TX DMA errors, drops or
+RX ring-full events appeared during these bounded checks. AUTO was restored.
+These are short tests on one 2.4 GHz AP, not adaptive-rate or HT/VHT acceptance.
+Descriptor encodings and DMA completions do not establish over-the-air ACKs.
+PHY rate limits do not specify application throughput.
 
 Manual SSID updates now stage the desired network without requesting a cold
 restart. Automatic and device-controlled roaming retain their reset result.
@@ -300,8 +307,9 @@ CC=gcc-16 sh ember/tools/rtw8822c-dack-contract.sh
 CC=gcc-16 sh ember/tools/rtw8822c-init-contract.sh
 ```
 
-Both 2.4 GHz and 5 GHz pass the station checks described above.
-RF quality, higher rates, AP-loss recovery and long-term operation remain unqualified.
+Earlier station checks cover 2.4 GHz and 5 GHz. The fixed-rate tests above
+cover one 2.4 GHz AP. RF quality, adaptive rates, HT/VHT, AP-loss recovery and
+long-term operation remain unqualified.
 
 ## First acceptance scenario
 
