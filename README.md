@@ -1596,6 +1596,10 @@ remain unverified.
   802.11r and long-duration operation remain outside this result. The [board page](ember/boards/orange-pi-zero-3w.md#wi-fi-limits-and-connected-scan-regression)
   records the firmware, bundle and tests.
 - **Short firmware replies** still need a command-transport fix and regression.
+- **Native RTL8822CE:** multicast membership updates avoid a full radio restart
+  because the MAC already accepts every multicast address. The actual-source
+  ioctl contract passes; physical reconnect latency remains unqualified. See the
+  [native driver boundary](ember/development/rtl8822ce-proposal.md#current-source-boundary).
 - **RTL8852BE (`rtwx`):** WPA2-PSK station mode works with software crypto.
   HT/VHT/HE rates, aggregation, WPA3/PMF, power save and beacon-loss
   detection are not implemented. See the [driver limits](ember/boot/rtwx.md#limits).

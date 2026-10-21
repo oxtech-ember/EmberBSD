@@ -11,6 +11,7 @@
 #include "stop-constants.inc"
 #define SIOCSIFFLAGS 1
 #define SIOCDELMULTI 2
+#define SIOCADDMULTI 4
 #define WPA_RESET 3
 typedef unsigned long u_long;
 struct ifnet { void *if_softc; unsigned if_flags; };
@@ -74,6 +75,12 @@ test_consumer(void)
 		service_error = ENETRESET;
 		before = starts;
 		CHECK(rtw88_net_ioctl(&ifp, SIOCDELMULTI, NULL) == 0);
+		CHECK(starts == before);
+		CHECK(ifp.if_flags == states[i]);
+		CHECK(rtw88_net_ioctl(&ifp, SIOCADDMULTI, NULL) == 0);
+		CHECK(starts == before && ifp.if_flags == states[i]);
+		/* WPA configuration resets still reach the cold-start path. */
+		CHECK(rtw88_net_ioctl(&ifp, WPA_RESET, NULL) == 0);
 		CHECK(starts - before == (i == 3 ? 1U : 0U));
 	}
 	ifp.if_flags = IFF_UP | IFF_RUNNING;
@@ -94,7 +101,7 @@ test_consumer(void)
 	ifp.if_flags = IFF_UP | IFF_RUNNING;
 	service_error = ENETRESET;
 	start_error = ENXIO;
-	CHECK(rtw88_net_ioctl(&ifp, SIOCDELMULTI, NULL) == ENXIO);
+	CHECK(rtw88_net_ioctl(&ifp, WPA_RESET, NULL) == ENXIO);
 	start_error = 0;
 	service_error = 0;
 	before = starts;

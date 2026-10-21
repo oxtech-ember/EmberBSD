@@ -115,6 +115,14 @@ The separate [persistent SD profile](../image/cix-p1.md) passes five unattended
 boots, WPA2/DHCP recovery and 2 MiB TCP checks in each direction on both bands.
 AP-loss recovery and long-term stability remain pending.
 
+Multicast list changes keep the radio running. The MAC multicast hash is
+already all ones. The ioctl consumer updates the native list and acknowledges
+its `ENETRESET` result without repeating cold calibration or association.
+Other configuration reset requests retain their existing restart behavior.
+The actual-source stop contract covers both membership operations in each
+UP/RUNNING combination and preserves configuration and error handling.
+This contract does not establish reconnect latency or packet-loss recovery.
+
 The kernel configuration selects the native station wrapper and ingress
 generation policy. Use the standard interface tools when the PCI wrapper
 attaches it. Legacy diagnostic writes return EBUSY while net80211 owns the

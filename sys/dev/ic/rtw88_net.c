@@ -513,6 +513,10 @@ rtw88_net_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 		return 0;
 	}
 	error = ieee80211_ioctl(&net->ic, cmd, data);
+	/* MAR accepts every multicast address; membership needs no radio reset. */
+	if ((cmd == SIOCADDMULTI || cmd == SIOCDELMULTI) &&
+	    error == ENETRESET)
+		return 0;
 	if (error == ENETRESET) {
 		if ((ifp->if_flags & (IFF_UP | IFF_RUNNING)) ==
 		    (IFF_UP | IFF_RUNNING))
