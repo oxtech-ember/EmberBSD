@@ -1011,12 +1011,15 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	IFQ_SET_READY(&ifp->if_snd);
 	if_initialize(ifp);
 	ieee80211_ifattach(ic);
-	/* Register the consumer; capability advertisement remains disabled. */
+	/* Opt in only after the strict consumer owns STA parameter apply. */
 	ic->ic_wme.wme_sta_apply = rtw88_net_wme_apply;
+	ic->ic_caps |= IEEE80211_C_WME;
+	ic->ic_flags |= IEEE80211_F_WME;
 	net->parent_state = ic->ic_newstate;
 	ic->ic_newstate = rtw88_net_newstate;
 	ifp->if_percpuq = if_percpuq_create(ifp);
 	ieee80211_media_init(ic, rtw88_net_media_change, ieee80211_media_status);
+	ieee80211_wme_initparams(ic);
 	/* ifmedia_set selects ifm_cur; its user word remains IFM_NONE. */
 	KASSERT(ic->ic_media.ifm_cur != NULL);
 	net->configured_media = ic->ic_media.ifm_cur->ifm_media;

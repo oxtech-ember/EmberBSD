@@ -41,7 +41,7 @@ and 8-byte RX buffer descriptors. The normal firmware name is
 `rtw88/rtw8822c_fw.bin`. These values come from `rtw8822c_hw_spec`.
 They do not describe an implemented DMA mapping or PCI attachment.
 
-## Dormant WME hardware prerequisite
+## WME hardware consumer
 
 TID-to-ring/QSEL and EDCA encoding follow FreeBSD revision
 `d2145e9b96448da34d3cfede24c509af6d830c92`. The referenced rtw88 files
@@ -51,7 +51,8 @@ TID4/5 to VI and TID6/7 to VO. Data QSEL retains the actual TID.
 `mac80211.c:rtw_ops_conf_tx` and `reg.h` define AC register addresses,
 32-microsecond TXOP units, contention-window exponents and band SIFS.
 The native adapter validates the complete parameter set before any I/O.
-It does not import LinuxKPI or enable WME/HT/VHT advertisement.
+It does not import LinuxKPI. The native wrapper owns legacy WME advertisement.
+HT/VHT advertisement and physical radio QoS acceptance remain separate.
 
 | Reference file | SHA256 |
 | --- | --- |

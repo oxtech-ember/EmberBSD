@@ -53,8 +53,11 @@ hardware TX before returning an uncertain hardware error. Software rollback
 cannot undo hardware writes. The RTL8822CE consumer calls the actual core EDCA
 API under the PCI lock. Core errors quarantine TX and station configuration
 until full successful restart. Dying wrappers, pending state changes and
-mismatched core channels reject apply before I/O. Registration remains dormant
-because the wrapper does not advertise WME.
+mismatched core channels reject apply before I/O. The native wrapper explicitly
+sets C_WME and F_WME after ifattach and strict consumer registration. It prepares
+software defaults after media initialization creates the BSS node. Shared
+ifattach's disabled default policy stays unchanged. These source contracts do
+not establish physical radio QoS acceptance.
 
 Strict STA default initialization prepares software only. It does not introduce
 a failable callback after sta_join transfers node ownership. The driver owns
@@ -64,7 +67,7 @@ AP beacon_update retains its resize boolean. Manual WME parameter ioctl updates
 return EOPNOTSUPP before mutation for a strict STA. They need a separate int
 transaction before that control operation can be supported.
 
-## Required gates before wrapper WME enablement
+## Native WME initialization and producer ordering
 
 Full RTL8822CE MAC initialization restores fixed legacy EDCA register values.
 That fact does not prove appropriate AIFS for each current band and slot.
@@ -103,16 +106,17 @@ A token-limited NULL dequeue leaves queue ownership unchanged. Giant serializes
 the non-MPSAFE producer and discipline changes. Completion accounts for all five
 hardware queues before it clears the watchdog.
 
-These paths remain prerequisites for capability enablement. The changed WME and node structures
-are an internal kernel ABI change: rebuild the kernel and affected modules
-together; do not mix old modules with the new layout. Capability advertisement,
-HT/VHT, aggregation and BA remain disabled.
+These paths support native legacy WME advertisement. Physical radio QoS
+acceptance remains separate. The changed WME and node structures are an internal
+kernel ABI change: rebuild the kernel and affected modules together; do not mix
+old modules with the new layout. HT/VHT, aggregation and BA remain disabled.
 
 ## Host source contracts
 
 ```sh
 CC=gcc-16 RTW88_START_ANALYZE=1 sh ember/tools/rtw88-start-contract.sh
 CC=gcc-16 RTW88_ROUTING_ANALYZE=1 sh ember/tools/rtw88-routing-contract.sh
+CC=gcc-16 RTW88_ENABLE_ANALYZE=1 sh ember/tools/rtw88-enable-contract.sh
 CC=gcc-16 sh ember/tools/net80211-wme-contract.sh
 CC=gcc-16 WME_TEST_CFLAGS='-O0 -g -fanalyzer' WME_ANALYZE=1 \
     sh ember/tools/net80211-wme-contract.sh
@@ -157,3 +161,17 @@ and unrelated RX input are modeled. A full-queue case retains all real node
 sequence slots and does not invoke the crypto consumer. This proves that the
 PN consumer is not reached; it does not execute CCMP/AES in that combined path.
 The separate crypto contracts own cipher and PN validation.
+
+The enable runner executes complete native attach and state work, plus actual
+shared ifattach, setmode and media initialization. Registration, node allocation,
+protocol defaults, media-list services and unrelated driver entry points are
+modeled. Node allocation occurs at late attach, as in the owning stack. The
+actual management producer places a complete WME offer in a core MGMT buffer.
+A matching response carries distinct AP parameters; strict apply and the RUN
+worker must write all four exact AC words before the first data producer.
+No test setter grants QoS authorization. Negative paths include missing offers,
+malformed or mismatched responses, pending/dying state and EDCA failure before
+and after effect. Failed apply preserves software tables and prevents RUN.
+Legacy AP responses retain the non-QoS BE path. The bitset service asserts its
+256-channel input domain; foreign/ANYC IBSS pointers are not qualified by this
+model. This precondition does not repair the shared setmode implementation.

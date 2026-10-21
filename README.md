@@ -1163,8 +1163,10 @@ The base system shell is unchanged.
   independent AC queue producers and the [strict STA apply prerequisite](ember/development/net80211-wme.md).
   Contextual DCF EDCA now precedes new native producers in host contracts.
   Source contracts cover native four-AC classification, queue backpressure
-  before sequence/crypto, and completion accounting. Target acceptance remains
-  a separate gate; WME and HT/VHT remain unadvertised. A bounded
+  before sequence/crypto, and completion accounting. The native wrapper now
+  advertises legacy WME after strict apply registration and software default
+  initialization. Combined host contracts cover attach through negotiated RUN;
+  radio QoS acceptance remains separate. HT/VHT remain unadvertised. A bounded
   [A-MSDU receive path](ember/development/net80211-amsdu.md) remains disabled
   until peer negotiation and aggregation requirements are complete.
   See the [source boundary and checks](ember/development/rtl8822ce-proposal.md#current-source-boundary)
