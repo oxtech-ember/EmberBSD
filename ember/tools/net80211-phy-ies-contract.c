@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "scan-abi.h"
+#include "ieee80211_ht20.h"
 #if __has_include("ieee80211_phy_ies.h")
 #include "ieee80211_phy_ies.h"
 #else
@@ -46,6 +47,7 @@ struct ieee80211_node {
 	bool ni_rssi_dbm_valid;
 	uint32_t ni_scan_epoch;
 	struct ieee80211_phy_ies ni_phy_ies;
+	struct ieee80211_ht20_node ni_ht20;
 	unsigned ni_flags, ni_associd, ni_authmode, ni_txpower, ni_vlan;
 	unsigned ni_fhdwell, ni_fhindex, ni_dtim_count, ni_dtim_period,
 	    ni_timoff;
@@ -335,7 +337,12 @@ main(void)
 	ni.ni_wme_applied_slot = 9;
 	ni.ni_flags |= IEEE80211_NODE_QOS | IEEE80211_NODE_WME_OFFER |
 	    IEEE80211_NODE_WME_VALID;
+	ni.ni_ht20.attempt = 41;
+	ni.ni_ht20.offered = ni.ni_ht20.valid = 1;
 	node_cleanup(&ni);
+	check(ni.ni_ht20.attempt == 42 && !ni.ni_ht20.offered &&
+	    !ni.ni_ht20.valid,
+	    "native cleanup invalidates HT offer and advances attempt");
 	check(ni.ni_wme_applied_chan == NULL && ni.ni_wme_applied_slot == 0,
 	    "native cleanup retires applied EDCA context");
 	check((ni.ni_flags & (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_OFFER |
@@ -349,6 +356,10 @@ main(void)
 	node_cleanup(&ni);
 	check((ni.ni_flags & IEEE80211_NODE_QOS) != 0,
 	    "STA WME cleanup does not change the AP node contract");
+	ni.ni_ht20.attempt = UINT32_MAX;
+	node_cleanup(&ni);
+	check(ni.ni_ht20.attempt == 1,
+	    "native HT cleanup keeps a nonzero attempt after wrap");
 	struct ieee80211_node *fresh = node_alloc(&ic.ic_scan);
 	check(fresh != NULL && fresh->ni_phy_ies.len == 0,
 	      "native reset allocation starts with no observation");
