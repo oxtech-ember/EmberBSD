@@ -47,6 +47,7 @@ struct sun60i_a733_hdmi_softc {
 	struct sun60i_a733_tv0_io tv_io;
 	struct sun60i_a733_tv0 tv;
 	struct sun60i_a733_output_mode mode;
+	struct sun60i_a733_output_trace trace;
 	struct edid_info edid;
 	uint8_t edid_block[128];
 };
@@ -126,6 +127,25 @@ native_ready(void *arg, const void *owner)
 	return native_fail(sc, error);
 }
 
+static void
+native_trace_io(struct sun60i_a733_hdmi_softc *sc, bool write,
+    uint32_t space, uint32_t reg, uint32_t value)
+{
+	if (sc->trace.valid != 1)
+		return;
+	if (write) {
+		sc->trace.write_space = space;
+		sc->trace.write_reg = reg;
+		sc->trace.write_value = value;
+		sc->trace.write_valid = 0;
+	} else {
+		sc->trace.read_space = space;
+		sc->trace.read_reg = reg;
+		sc->trace.read_value = 0;
+		sc->trace.read_valid = 0;
+	}
+}
+
 static int
 native_phy_read(void *arg, enum sun60i_a733_hdmi_space space, uint32_t reg,
     uint32_t *out)
@@ -134,6 +154,10 @@ native_phy_read(void *arg, enum sun60i_a733_hdmi_space space, uint32_t reg,
 	uint32_t word;
 	uint8_t byte = 0;
 	int error;
+
+	native_trace_io(sc, false, space == A733_HDMI_CORE8 ?
+	    A733_OUTPUT_IO_CORE8 : space == A733_HDMI_TOP32 ?
+	    A733_OUTPUT_IO_TOP32 : A733_OUTPUT_IO_NONE, reg, 0);
 
 	if (sc->fault != 0)
 		return sc->fault;
@@ -149,6 +173,10 @@ native_phy_read(void *arg, enum sun60i_a733_hdmi_space space, uint32_t reg,
 	if (error != 0)
 		return native_fail(sc, EFAULT);
 	*out = word;
+	if (sc->trace.valid == 1) {
+		sc->trace.read_value = word;
+		sc->trace.read_valid = 1;
+	}
 	return 0;
 }
 
@@ -159,6 +187,10 @@ native_phy_write(void *arg, enum sun60i_a733_hdmi_space space, uint32_t reg,
 	struct sun60i_a733_hdmi_softc *sc = arg;
 	bus_size_t offset, width;
 	int error;
+
+	native_trace_io(sc, true, space == A733_HDMI_CORE8 ?
+	    A733_OUTPUT_IO_CORE8 : space == A733_HDMI_TOP32 ?
+	    A733_OUTPUT_IO_TOP32 : A733_OUTPUT_IO_NONE, reg, value);
 
 	if (sc->fault != 0)
 		return sc->fault;
@@ -178,6 +210,8 @@ native_phy_write(void *arg, enum sun60i_a733_hdmi_space space, uint32_t reg,
 	if (error != 0)
 		return native_fail(sc, EFAULT);
 	bus_space_barrier(sc->bst, sc->hdmi, offset, width, BUS_SPACE_BARRIER_WRITE);
+	if (sc->trace.valid == 1)
+		sc->trace.write_valid = 1;
 	return 0;
 }
 
@@ -245,6 +279,9 @@ native_tv_read(void *arg, enum sun60i_a733_tv0_space space, uint32_t reg,
 	uint32_t value;
 	int error;
 
+	native_trace_io(sc, false, space == A733_TV0_REGS ?
+	    A733_OUTPUT_IO_TV0 : space == A733_VO1_REGS ?
+	    A733_OUTPUT_IO_VO1 : A733_OUTPUT_IO_NONE, reg, 0);
 	if (out == NULL)
 		return native_fail(sc, EINVAL);
 	error = native_tv_access(sc, space, reg, &handle);
@@ -253,6 +290,10 @@ native_tv_read(void *arg, enum sun60i_a733_tv0_space space, uint32_t reg,
 	if (bus_space_peek_4(sc->bst, handle, reg, &value) != 0)
 		return native_fail(sc, EFAULT);
 	*out = value;
+	if (sc->trace.valid == 1) {
+		sc->trace.read_value = value;
+		sc->trace.read_valid = 1;
+	}
 	return 0;
 }
 
@@ -262,7 +303,12 @@ native_tv_write(void *arg, enum sun60i_a733_tv0_space space, uint32_t reg,
 {
 	struct sun60i_a733_hdmi_softc *sc = arg;
 	bus_space_handle_t handle;
-	int error = native_tv_access(sc, space, reg, &handle);
+	int error;
+
+	native_trace_io(sc, true, space == A733_TV0_REGS ?
+	    A733_OUTPUT_IO_TV0 : space == A733_VO1_REGS ?
+	    A733_OUTPUT_IO_VO1 : A733_OUTPUT_IO_NONE, reg, value);
+	error = native_tv_access(sc, space, reg, &handle);
 
 	if (error != 0)
 		return error;
@@ -270,6 +316,8 @@ native_tv_write(void *arg, enum sun60i_a733_tv0_space space, uint32_t reg,
 	if (bus_space_poke_4(sc->bst, handle, reg, value) != 0)
 		return native_fail(sc, EFAULT);
 	bus_space_barrier(sc->bst, handle, reg, 4, BUS_SPACE_BARRIER_WRITE);
+	if (sc->trace.valid == 1)
+		sc->trace.write_valid = 1;
 	return 0;
 }
 
@@ -457,23 +505,38 @@ native_prepare(void *arg, const void *owner,
 {
 	struct sun60i_a733_hdmi_softc *sc = arg;
 	struct drm_display_mode drm = { 0 };
-	int error = native_ready(sc, owner);
+	int error;
+
+	memset(&sc->trace, 0, sizeof(sc->trace));
+	sc->trace.version = sc->trace.valid = 1;
+	sc->trace.phase = A733_OUTPUT_PREPARE_READY;
+	error = native_ready(sc, owner);
 
 	if (error != 0)
-		return error;
-	if (!sc->mode_valid || mode == NULL)
-		return native_fail(sc, EINVAL);
+		goto done;
+	if (!sc->mode_valid || mode == NULL) {
+		error = native_fail(sc, EINVAL);
+		goto done;
+	}
+	sc->trace.phase = A733_OUTPUT_PREPARE_PHY;
 	/* The public dispatcher already compares every admitted mode field. */
 	error = sun60i_a733_hdmi_phy_prepare(&sc->phy, sc->dcxo.rate_hz,
 	    mode->pixel_clock_hz);
-	if (error == 0)
+	if (error == 0) {
+		sc->trace.phase = A733_OUTPUT_PREPARE_TV0_CLOCK;
 		error = sun60i_a733_ccu_display_begin_tv0(sc->de0, owner);
-	if (error != 0)
-		return native_fail(sc, error);
+	}
+	if (error != 0) {
+		error = native_fail(sc, error);
+		goto done;
+	}
 	sc->tv0_ready = true;
+	sc->trace.phase = A733_OUTPUT_PREPARE_TV0_TIMING;
 	error = sun60i_a733_tv0_prepare(&sc->tv, mode, A733_TV0_EXPERIMENT_VENDOR_ZERO);
-	if (error != 0)
-		return native_fail(sc, error);
+	if (error != 0) {
+		error = native_fail(sc, error);
+		goto done;
+	}
 	drm.clock = drm.crtc_clock = mode->pixel_clock_hz / 1000;
 	drm.hdisplay = drm.crtc_hdisplay = mode->hdisplay;
 	drm.hsync_start = drm.crtc_hsync_start = mode->hsync_start;
@@ -485,10 +548,20 @@ native_prepare(void *arg, const void *owner,
 	drm.vtotal = drm.crtc_vtotal = mode->vtotal;
 	drm.flags = (mode->hsync_positive ? DRM_MODE_FLAG_PHSYNC : DRM_MODE_FLAG_NHSYNC) |
 	    (mode->vsync_positive ? DRM_MODE_FLAG_PVSYNC : DRM_MODE_FLAG_NVSYNC);
+	sc->trace.phase = A733_OUTPUT_PREPARE_DW;
 	error = dwhdmi_native_prepare(&sc->dw, &drm);
-	if (error == 0)
+	if (error == 0) {
+		sc->trace.phase = A733_OUTPUT_PREPARE_FINAL_READY;
 		error = native_ready(sc, owner);
-	return native_fail(sc, error);
+	}
+	error = native_fail(sc, error);
+done:
+	sc->trace.result = error;
+	sc->trace.done = error == 0;
+	sc->trace.valid = 3;
+	if (error == 0)
+		sc->trace.phase = A733_OUTPUT_PREPARE_DONE;
+	return error;
 }
 
 static int
@@ -529,8 +602,19 @@ native_fault(void *arg, const void *owner, int error)
 	(void)native_fail(sc, error);
 }
 
+/* output_lock serializes this copy with all native provider operations. */
+static void
+native_cached_trace(const void *arg, struct sun60i_a733_output_trace *out)
+{
+	const struct sun60i_a733_hdmi_softc *sc = arg;
+
+	CTASSERT(sizeof(*out) == 13 * sizeof(uint32_t));
+	*out = sc->trace;
+}
+
 static const struct sun60i_a733_output_ops output_ops = {
-	native_get_mode, native_prepare, native_start, native_observe, native_fault
+	native_get_mode, native_prepare, native_start, native_observe, native_fault,
+	native_cached_trace
 };
 
 static int

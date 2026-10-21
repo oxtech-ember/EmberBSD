@@ -76,6 +76,13 @@ de352_trace_phase(struct de352_cold_trace *trace, uint32_t phase)
 	trace->mask = trace->before = trace->requested = trace->after = 0;
 }
 
+enum { RT_NONE, RT_OUTPUT, RT_CONFIGURE, RT_MIXER_ENABLE, RT_DE_ENABLE, RT_DONE };
+struct de352_run_trace {
+	uint32_t version, valid, phase, result, width, height, pixel_clock_hz;
+	uint32_t field_valid, reg, mask, before, requested, after;
+};
+CTASSERT(sizeof(struct de352_run_trace) == 13 * sizeof(uint32_t));
+
 struct sun60i_a733_de352_client {
 	const void *owner;
 	bool busy, attempted;
@@ -102,6 +109,7 @@ struct sun60i_de352_softc {
 	struct sun60i_a733_de352_guard *guard;
 	struct de352_cold_state cold;
 	struct de352_cold_trace cold_trace;
+	struct de352_run_trace run_trace;
 	bool cold_initialized;
 	bool valid, mapped, power_reserved, reserved, retained;
 	int stage, step, result, release_error;
@@ -164,14 +172,27 @@ static int
 de352_field(struct sun60i_de352_softc *sc, uint32_t reg,
     uint32_t mask, uint32_t value)
 {
+	struct de352_run_trace *trace = &sc->run_trace;
+	const bool capture = sc->step == 7 && trace->valid == 1;
 	uint32_t before, after;
 	int error;
 
+	if (capture) {
+		trace->field_valid = 5;
+		trace->reg = reg;
+		trace->mask = mask;
+		trace->requested = value;
+		trace->before = trace->after = 0;
+	}
 	if ((value & ~mask) != 0)
 		return EINVAL;
 	error = de352_read(sc, reg, &before);
 	if (error != 0)
 		return error;
+	if (capture) {
+		trace->before = before;
+		trace->field_valid |= 2;
+	}
 	error = bus_space_poke_4(sc->bst, sc->bsh, reg,
 	    (before & ~mask) | value);
 	if (error != 0)
@@ -181,6 +202,10 @@ de352_field(struct sun60i_de352_softc *sc, uint32_t reg,
 	error = de352_read(sc, reg, &after);
 	if (error != 0)
 		return error;
+	if (capture) {
+		trace->after = after;
+		trace->field_valid |= 8;
+	}
 	return (after & mask) == value ? 0 : EIO;
 }
 
@@ -1024,16 +1049,29 @@ de352_run(struct sun60i_de352_softc *sc)
 	if (error != 0)
 		goto fail;
 	sc->step = 7;
+	memset(&sc->run_trace, 0, sizeof(sc->run_trace));
+	sc->run_trace.version = sc->run_trace.valid = 1;
+	sc->run_trace.phase = RT_OUTPUT;
+	sc->run_trace.width = sc->mode.hdisplay;
+	sc->run_trace.height = sc->mode.vdisplay;
+	sc->run_trace.pixel_clock_hz = sc->mode.pixel_clock_hz;
 	error = sun60i_a733_output_prepare(sc->output_phandle, sc, &sc->mode);
 	if (error != 0)
 		goto fail;
+	sc->run_trace.phase = RT_CONFIGURE;
 	error = de352_configure(sc);
-	if (error == 0)
+	if (error == 0) {
+		sc->run_trace.phase = RT_MIXER_ENABLE;
 		error = de352_field(sc, 0x810c, 1, 1);
-	if (error == 0)
+	}
+	if (error == 0) {
+		sc->run_trace.phase = RT_DE_ENABLE;
 		error = de352_field(sc, 0x8100, 1, 1);
+	}
 	if (error != 0)
 		goto fail;
+	sc->run_trace.valid = 3;
+	sc->run_trace.phase = RT_DONE;
 	sc->step = 8;
 	error = sun60i_a733_output_start(sc->output_phandle, sc);
 	if (error == 0)
@@ -1049,6 +1087,10 @@ de352_run(struct sun60i_de352_softc *sc)
 		return 0;
 	}
 fail:
+	if (sc->step == 7 && sc->run_trace.valid == 1) {
+		sc->run_trace.result = error;
+		sc->run_trace.valid = 3;
+	}
 	if (sc->retained) {
 		(void)sun60i_a733_ccu_display_fault(sc->de0, sc, error);
 		(void)sun60i_a733_output_fault(sc->output_phandle, sc, error);
@@ -1135,6 +1177,44 @@ de352_sysctl_cold_trace(SYSCTLFN_ARGS)
 	mutex_enter(&sc->lock);
 	trace = sc->cold_trace;
 	mutex_exit(&sc->lock);
+	node.sysctl_data = &trace;
+	node.sysctl_size = sizeof(trace);
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static int
+de352_sysctl_run_trace(SYSCTLFN_ARGS)
+{
+	struct sun60i_de352_softc *sc = rnode->sysctl_data;
+	struct sysctlnode node = *rnode;
+	struct de352_run_trace trace;
+
+	if (newp != NULL)
+		return EROFS;
+	mutex_enter(&sc->lock);
+	trace = sc->run_trace;
+	mutex_exit(&sc->lock);
+	node.sysctl_data = &trace;
+	node.sysctl_size = sizeof(trace);
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static int
+de352_sysctl_output_trace(SYSCTLFN_ARGS)
+{
+	struct sun60i_de352_softc *sc = rnode->sysctl_data;
+	struct sysctlnode node = *rnode;
+	struct sun60i_a733_output_trace trace;
+	int error;
+
+	if (newp != NULL)
+		return EROFS;
+	/* The normal run uses this same DE -> output lock order. */
+	mutex_enter(&sc->lock);
+	error = sun60i_a733_output_cached_trace(sc->output_phandle, &trace);
+	mutex_exit(&sc->lock);
+	if (error != 0)
+		return error;
 	node.sysctl_data = &trace;
 	node.sysctl_size = sizeof(trace);
 	return sysctl_lookup(SYSCTLFN_CALL(&node));
@@ -1270,6 +1350,13 @@ de352_attach(device_t parent, device_t self, void *aux)
 	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_STRUCT, "cold_trace", SYSCTL_DESCR("Cached cold-init diagnostics"),
 	    de352_sysctl_cold_trace, 0, sc, sizeof(sc->cold_trace),
+	    CTL_CREATE, CTL_EOL);
+	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRUCT, "run_trace", SYSCTL_DESCR("Cached step 7 diagnostics"),
+	    de352_sysctl_run_trace, 0, sc, sizeof(sc->run_trace), CTL_CREATE, CTL_EOL);
+	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRUCT, "output_trace", SYSCTL_DESCR("Cached output preparation"),
+	    de352_sysctl_output_trace, 0, sc, sizeof(struct sun60i_a733_output_trace),
 	    CTL_CREATE, CTL_EOL);
 }
 

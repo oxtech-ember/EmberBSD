@@ -23,14 +23,21 @@ struct syscon { unsigned locked; };
 struct device_compatible_entry { const char *compat; };
 struct fdt_attach_args { int faa_phandle; bus_space_tag_t faa_bst; };
 #define DEVICE_COMPAT_EOL { .compat = NULL }
+#define CTASSERT(c) _Static_assert(c, #c)
+#ifndef __BIT
 #define __BIT(n) (UINT32_C(1) << (n))
+#endif
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define container_of(p,t,m) ((t *)((char *)(p) - offsetof(t,m)))
 #define BUS_SPACE_BARRIER_WRITE 2
 #define I2C_OP_READ_WITH_STOP 1
 #define DDC_ADDR 0x50
+#ifndef be32toh
 #define be32toh(x) __builtin_bswap32(x)
+#endif
 #define CFATTACH_DECL_NEW(n,s,m,a,d,r)
 #define DRM_MODE_FLAG_PHSYNC 1
 #define DRM_MODE_FLAG_NHSYNC 2
@@ -206,6 +213,9 @@ static void adapter_access_checks(void)
   for (unsigned reject=0;reject<2;reject++) {
    fixture();attach();CHECK(pipeline(&mode,&sequence)==0);
    calls=events=0;fail=reject;value=0x12345678;byte=0x42;before=reads;
+   sc.trace.version = sc.trace.valid = 1;
+   sc.trace.read_value = 0x11223344;
+   sc.trace.read_valid = 1;
    core8[2]=0xa5;top[16]=0x11223344;vo1[0]=0x55667788;tvregs[0x340/4]=0x99aabbcc;
    switch(which) {
    case 0: error=native_phy_read(&sc,A733_HDMI_CORE8,2,&value);break;
@@ -215,6 +225,12 @@ static void adapter_access_checks(void)
    default: error=native_dw_read(&sc.dw,2,&byte);break;
    }
    CHECK(reads==before+1&&calls==1);
+   CHECK(sc.trace.read_valid == (reject ? 0U : 1U));
+   CHECK(sc.trace.read_space == (which == 1 ? A733_OUTPUT_IO_TOP32 :
+       which == 2 ? A733_OUTPUT_IO_VO1 : which == 3 ? A733_OUTPUT_IO_TV0 :
+       A733_OUTPUT_IO_CORE8));
+   if (reject)
+    CHECK(sc.trace.read_value == 0);
    if(reject) CHECK(error==EFAULT&&value==0x12345678&&byte==0x42&&sc.fault==EFAULT);
    else {
     const uint32_t expected[]={0xa5,0x11223344,0x55667788,0x99aabbcc};
@@ -229,6 +245,88 @@ static void adapter_access_checks(void)
  before=writes;CHECK(native_dw_write(&sc.dw,4,0)==EFAULT&&writes==before);
  fixture();attach();fail=1;CHECK(native_phy_read(&sc,A733_HDMI_CORE8,0,&value)==EACCES&&reads==0);
  fixture();fail=1;attach();CHECK(!registered&&maps==3&&unmaps==3&&clock_puts==1&&reads==0&&writes==0);
+}
+
+static void
+prepare_trace_checks(void)
+{
+	static const struct { unsigned count; uint32_t phase; } groups[] = {
+		{ 6, A733_OUTPUT_PREPARE_READY },
+		{ 8, A733_OUTPUT_PREPARE_PHY },
+		{ 1, A733_OUTPUT_PREPARE_TV0_CLOCK },
+		{ 8, A733_OUTPUT_PREPARE_TV0_TIMING },
+		{ 1, A733_OUTPUT_PREPARE_DW },
+		{ 6, A733_OUTPUT_PREPARE_FINAL_READY }
+	};
+	struct sun60i_a733_output_mode mode;
+	struct sun60i_a733_output_trace trace, saved, zero = { 0 };
+	uint32_t value;
+	unsigned n = 0, old_calls, old_reads, old_writes;
+
+	fixture();
+	attach();
+	memset(&trace, 0xa5, sizeof(trace));
+	native_cached_trace(&sc, &trace);
+	CHECK(memcmp(&trace, &zero, sizeof(trace)) == 0);
+	for (unsigned g = 0; g < __arraycount(groups); g++) {
+		for (unsigned i = 0; i < groups[g].count; i++) {
+			fixture();
+			attach();
+			CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
+			calls = events = 0;
+			fail = ++n;
+			CHECK(native_prepare(&sc, &owner_cookie, &mode) != 0);
+			CHECK(calls == n && sc.trace.version == 1);
+			CHECK(sc.trace.valid == 3 && sc.trace.done == 0);
+			CHECK(sc.trace.phase == groups[g].phase);
+			CHECK(sc.trace.result == (uint32_t)sc.fault);
+			saved = sc.trace;
+			old_calls = calls;
+			old_reads = reads;
+			old_writes = writes;
+			native_fault(&sc, &owner_cookie, EINVAL);
+			for (unsigned j = 0; j < 3; j++) {
+				native_cached_trace(&sc, &trace);
+				CHECK(memcmp(&trace, &saved, sizeof(trace)) == 0);
+			}
+			CHECK(calls == old_calls && reads == old_reads);
+			CHECK(writes == old_writes);
+		}
+	}
+	fixture();
+	attach();
+	CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
+	calls = events = 0;
+	CHECK(native_prepare(&sc, &owner_cookie, &mode) == 0);
+	CHECK(calls == n && sc.trace.phase == A733_OUTPUT_PREPARE_DONE);
+	CHECK(sc.trace.valid == 3 && sc.trace.done == 1 && sc.trace.result == 0);
+	saved = sc.trace;
+	old_calls = calls;
+	old_reads = reads;
+	old_writes = writes;
+	for (unsigned i = 0; i < 3; i++) {
+		native_cached_trace(&sc, &trace);
+		CHECK(memcmp(&trace, &saved, sizeof(trace)) == 0);
+	}
+	CHECK(calls == old_calls && reads == old_reads && writes == old_writes);
+	native_fault(&sc, &owner_cookie, EIO);
+	CHECK(sc.fault == EIO);
+	native_cached_trace(&sc, &trace);
+	CHECK(memcmp(&trace, &saved, sizeof(trace)) == 0);
+	/* Faulting reads keep the caller's value and invalidate cached data. */
+	fixture();
+	attach();
+	CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
+	sc.trace.version = sc.trace.valid = 1;
+	sc.trace.read_value = 0x12345678;
+	sc.trace.read_valid = 1;
+	calls = events = 0;
+	fail = 1;
+	value = 0xabcdef01;
+	CHECK(native_phy_read(&sc, A733_HDMI_TOP32, 0x20, &value) == EFAULT);
+	CHECK(value == 0xabcdef01 && sc.trace.read_valid == 0);
+	CHECK(sc.trace.read_value == 0 && sc.trace.read_reg == 0x20);
+	CHECK(sc.trace.read_space == A733_OUTPUT_IO_TOP32);
 }
 
 int main(void)
@@ -280,6 +378,7 @@ int main(void)
  CHECK(native_mode(26000000,NULL,&mode)==EINVAL);
  fixture();attach();CHECK(native_get_mode(&sc,&owner_cookie,&mode)==0);old_reads=reads;old_writes=writes;CHECK(native_phy_write(&sc,A733_HDMI_CORE8,0x8000,0)==ERANGE&&reads==old_reads&&writes==old_writes);
  adapter_access_checks();
+ prepare_trace_checks();
  printf("A733 native HDMI adapter: %u checks passed (%u fallible calls)\n",checks,count);
  return 0;
 }

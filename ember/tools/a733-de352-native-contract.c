@@ -51,7 +51,8 @@ static int reserve_error, memory_error, begin_error, mode_error, prepare_error, 
 static bool attempt_begin, claimed, memory_claimed, retained, started, irq_masked, power_claimed;
 static bool no_busy, no_finish, no_copy, no_vblank, same_sequence, bad_w1c;
 static int read_fault_region, write_fault, memory_calls, memory_fault_call;
-static uint32_t read_fault_reg;
+static uint32_t read_fault_reg, run_readback_reg;
+static unsigned run_read_fault, run_read_count;
 static bool isolation_claimed;
 static int isolation_error, isolation_calls, isolation_fault_call;
 static unsigned memory_writes, memory_write_fault, memory_readback_fault;
@@ -175,12 +176,22 @@ int sun60i_a733_output_observed_vblank(int node,const void *owner,uint64_t *out)
 { CHECK(node==7&&owner==lease_owner&&retained&&started);event_polls++;if(no_vblank||event_polls%2||(event_limit&&sequence>=event_limit))return ENOENT;if(!same_sequence)sequence++;*out=sequence;return 0; }
 int sun60i_a733_output_fault(int node,const void *owner,int error)
 { CHECK(node==7&&owner==lease_owner&&retained&&error);faults++;return error; }
+int
+sun60i_a733_output_cached_trace(int node, struct sun60i_a733_output_trace *out)
+{
+	CHECK(node == 7);
+	memset(out, 0, sizeof(*out));
+	return 0;
+}
 #include "sun60i_a733_de352_scanout.h"
 #include "sun60i_a733_de352_fdt.c"
 
 static int bus_space_peek_4(bus_space_tag_t tag,bus_space_handle_t h,bus_size_t off,uint32_t *out)
 {
  (void)tag;reads++;CHECK((off&3)==0);
+ if ((int)h == 1 && ((struct sun60i_de352_softc *)active_softc)->step == 7 &&
+     off == 0x8050 && ++run_read_count == run_read_fault)
+  return EIO;
  if((int)h==read_fault_region&&off==read_fault_reg)return EIO;
  if(h==1){CHECK(retained&&off<sizeof(de));*out=de[off/4];}
  else if(h==2){CHECK(memory_claimed&&off<sizeof(iommu));
@@ -255,6 +266,8 @@ static int bus_space_poke_4(bus_space_tag_t tag,bus_space_handle_t h,bus_size_t 
   if(corrupt_copy_reg)de[corrupt_copy_reg/4]^=1;
   de[0x8104/4]|=4;return 0;
  }
+ if (sc->step == 7 && off == run_readback_reg)
+  value ^= 1;
  de[off/4]=value;return 0;
 }
 static void init(struct sun60i_de352_softc *sc)
@@ -270,6 +283,7 @@ static void init(struct sun60i_de352_softc *sc)
  cold_test=peer_power_on=cold_flush_clear=false;peer_power_error=0;cold_writes=cold_fault_write=cold_readback_write=cold_change_write=0;
  memory_writes=memory_write_fault=memory_readback_fault=memory_change_call=cold_change_call=memory_map_fault=0;memset(memory_order,0,sizeof(memory_order));
  no_busy=no_finish=no_copy=no_vblank=same_sequence=bad_w1c=false;
+ run_readback_reg=run_read_fault=run_read_count=0;
  read_fault_region=write_fault=memory_calls=memory_fault_call=0;read_fault_reg=0;sequence=0;event_polls=event_limit=corrupt_copy_reg=0;
  cell_override=property_length=translated=bad_base=wrong_compatible=0;clock_puts=0;
  iommu_status=nsi_status="disabled";
@@ -599,8 +613,66 @@ static void cold_reset_checks(void) {
   reboot_fixture(&sc);
  }
 }
+static void
+run_trace_checks(void)
+{
+	static const uint32_t regs[] = { 0x8050, 0x810c, 0x8100 };
+	static const uint32_t phases[] = {
+		RT_CONFIGURE, RT_MIXER_ENABLE, RT_DE_ENABLE
+	};
+	struct sun60i_de352_softc sc;
+	struct de352_run_trace saved;
+	int old_reads, old_writes, old_maps;
+
+	init(&sc);
+	prepare_error = EIO;
+	CHECK(de352_run(&sc) == EIO && sc.step == 7 && !started);
+	CHECK(sc.run_trace.phase == RT_OUTPUT && sc.run_trace.field_valid == 0);
+	CHECK(sc.run_trace.result == EIO && sc.run_trace.valid == 3);
+	CHECK(sc.run_trace.width == 720 && sc.run_trace.height == 480);
+	CHECK(sc.run_trace.pixel_clock_hz == 27000000);
+	for (unsigned i = 0; i < __arraycount(regs); i++) {
+		init(&sc);
+		run_readback_reg = regs[i];
+		CHECK(de352_run(&sc) == EIO && sc.step == 7 && !started);
+		CHECK(sc.run_trace.version == 1 && sc.run_trace.valid == 3);
+		CHECK(sc.run_trace.phase == phases[i] && sc.run_trace.reg == regs[i]);
+		CHECK(sc.run_trace.result == EIO && sc.run_trace.field_valid == 15);
+		CHECK((sc.run_trace.after & sc.run_trace.mask) != sc.run_trace.requested);
+		CHECK(sc.dma == NULL && sc.retained && releases == 0);
+		saved = sc.run_trace;
+		old_reads = reads;
+		old_writes = writes;
+		old_maps = space_maps;
+		struct sysctlnode node = { &sc, sizeof(saved) };
+		CHECK(de352_sysctl_run_trace(&node, NULL) == 0);
+		CHECK(de352_sysctl_run_trace(&node, &sc) == EROFS);
+		CHECK(de352_sysctl_output_trace(&node, NULL) == 0);
+		CHECK(de352_sysctl_output_trace(&node, &sc) == EROFS);
+		CHECK(memcmp(&saved, &sc.run_trace, sizeof(saved)) == 0);
+		CHECK(reads == old_reads && writes == old_writes && space_maps == old_maps);
+	}
+	for (unsigned i = 0; i < 3; i++) {
+		init(&sc);
+		if (i < 2)
+			run_read_fault = i + 1;
+		else
+			write_fault = 0x8050;
+		CHECK(de352_run(&sc) == EIO && sc.step == 7);
+		CHECK(sc.run_trace.phase == RT_CONFIGURE && sc.run_trace.reg == 0x8050);
+		CHECK(sc.run_trace.field_valid == (i == 0 ? 5U : 7U));
+		CHECK(sc.run_trace.after == 0 && sc.run_trace.result == EIO);
+	}
+	init(&sc);
+	start_error = EIO;
+	CHECK(de352_run(&sc) == EIO && sc.step == 8);
+	CHECK(sc.run_trace.phase == RT_DONE && sc.run_trace.result == 0);
+	CHECK(sc.run_trace.valid == 3);
+}
+
 int main(void)
 {
+ run_trace_checks();
  guard_checks();
  cold_global_checks();
  cold_checks();

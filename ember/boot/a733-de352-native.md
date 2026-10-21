@@ -284,3 +284,30 @@ publication; 9 operation precondition; 10 operation capture; 11 comparison;
 The returned error identifies the phase that failed. A later output failure
 can coexist with a completed cold sequence and zero cold error. The record
 adds no MMIO calls and does not change masks, delays, retention, or admission.
+
+## Cached output preparation diagnostics
+
+`hw.sun60ide0.run_trace` returns 13 native-endian `uint32_t` words (52 bytes)
+under the DE lock. It performs no hardware access. The word order is:
+
+- Version, valid bits, phase, result, width, height, pixel clock in Hz.
+- Field-valid bits, DE offset, mask, before, requested field value, after.
+
+Version 0 means step 7 was not entered. Version 1 records the admitted mode.
+Valid bit 0 means step 7 was entered. Bit 1 means its local result is complete.
+Result 0 without bit 1 does not establish completion. Phases are 0 none,
+1 output preparation, 2 DE configuration, 3 mixer enable at 0x810c,
+4 DE enable at 0x8100, and 5 step 7 complete. The existing `step` numbers
+remain unchanged. Later failures do not replace a completed step 7 result.
+Field-valid bits are 1 for offset and mask, 2 for before, 4 for requested,
+and 8 for after. Invalid values are zero. The requested value is the masked
+field value, not the full preserved-bit write. These values come from the
+existing operation and readbacks. The cache adds no register access.
+
+`hw.sun60ide0.output_trace` returns the optional provider's fixed
+[preparation cache](a733-hdmi-native.md#cached-preparation-diagnostics).
+The DE lock precedes the output lock, as in the normal operation.
+The getter remains available after a retained output failure. An absent
+provider returns `ENXIO`. A provider without the optional callback returns
+`EOPNOTSUPP`. Both sysctls reject writes with `EROFS`.
+Neither cache grants readiness, retries a stage, or establishes scanout.

@@ -27,6 +27,23 @@ int sun60i_a733_tcon_timing_encode(const struct sun60i_a733_output_mode *,
 /* Return ENOENT unless an enabled vblank is present in the supplied snapshot. */
 int sun60i_a733_tcon_vblank_ack(uint32_t, uint32_t *);
 
+/* Fixed cache layout. No word grants readiness or permits a hardware query. */
+enum {
+	A733_OUTPUT_PREPARE_NONE, A733_OUTPUT_PREPARE_READY,
+	A733_OUTPUT_PREPARE_PHY, A733_OUTPUT_PREPARE_TV0_CLOCK,
+	A733_OUTPUT_PREPARE_TV0_TIMING, A733_OUTPUT_PREPARE_DW,
+	A733_OUTPUT_PREPARE_FINAL_READY, A733_OUTPUT_PREPARE_DONE
+};
+enum {
+	A733_OUTPUT_IO_NONE, A733_OUTPUT_IO_CORE8, A733_OUTPUT_IO_TOP32,
+	A733_OUTPUT_IO_TV0, A733_OUTPUT_IO_VO1
+};
+struct sun60i_a733_output_trace {
+	uint32_t version, valid, phase, result, done;
+	uint32_t read_space, read_reg, read_value, read_valid;
+	uint32_t write_space, write_reg, write_value, write_valid;
+};
+
 /*
  * Native provider. All callbacks run under one sleep mutex. They must not
  * call these dispatch functions. Provider storage and ops have kernel lifetime.
@@ -40,6 +57,8 @@ struct sun60i_a733_output_ops {
 	int (*start)(void *, const void *);
 	int (*observed_vblank)(void *, const void *, uint64_t *);
 	void (*fault)(void *, const void *, int);
+	/* Optional. Copy initialized cache only, including after a sticky fault. */
+	void (*cached_trace)(const void *, struct sun60i_a733_output_trace *);
 };
 int sun60i_a733_output_register(int, const struct sun60i_a733_output_ops *, void *);
 int sun60i_a733_output_get_mode(int, const void *,
@@ -50,5 +69,7 @@ int sun60i_a733_output_start(int, const void *);
 /* ENOENT means no new vblank. It does not latch a fault. */
 int sun60i_a733_output_observed_vblank(int, const void *, uint64_t *);
 int sun60i_a733_output_fault(int, const void *, int);
+/* No readiness check or I/O. Failure leaves the output unchanged. */
+int sun60i_a733_output_cached_trace(int, struct sun60i_a733_output_trace *);
 
 #endif

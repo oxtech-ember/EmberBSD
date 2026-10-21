@@ -100,3 +100,38 @@ callback failures, readback rejection and no I/O after a retained fault.
 The PHY, TV0, CCU, parser and DW-HDMI have separate actual-source contracts.
 A target object and these host tests do not establish physical HDMI output.
 The implementation is independent BSD code and is AI-assisted.
+
+## Cached preparation diagnostics
+
+The optional `sun60i_a733_output_cached_trace()` API copies one initialized
+provider record under the existing output mutex. It does not check clocks,
+rails, readiness or hardware. It remains available after a sticky fault.
+The callback must only copy cache. It must not call a public output dispatcher.
+A provider without the callback remains valid for normal output operations.
+
+The record contains 13 native-endian `uint32_t` words (52 bytes):
+
+- Version, valid bits, local prepare phase, local prepare result, done.
+- Last read namespace, offset, value, read-valid flag.
+- Last write namespace, offset, requested value, write-valid flag.
+
+All words are zero before `prepare`. Version 1 identifies this layout.
+Valid bit 0 means local prepare was entered. Bit 1 means its result is complete.
+Done is 1 only after local prepare returns 0. Phases are 0 none,
+1 entry readiness, 2 PHY preparation, 3 TV0 clock admission, 4 TV0 timing,
+5 DW-HDMI preparation, 6 final readiness, and 7 local prepare complete.
+A later DE error can set the generic output fault while this local record
+still has result 0 and done 1. That state does not identify an HDMI failure.
+
+Namespaces are 0 unknown, 1 HDMI CORE8, 2 HDMI TOP32, 3 TV0, and 4 VO1.
+Offsets are local to that namespace. Each transport attempt clears its
+valid flag. A completed read sets read-valid to 1. A completed write and its
+existing write barrier set write-valid to 1. Failed reads leave value 0.
+A write-valid flag does not prove a matching readback or hardware completion.
+The last read and last write need not refer to the same register.
+The callbacks record only operations already issued during local prepare.
+They add no read, write, delay, barrier or recovery operation.
+
+The DE coordinator exposes this record through its read-only `output_trace`
+sysctl. These cached diagnostics and host contracts do not establish physical
+HDMI output. The existing masks, time limits, ownership and retention apply.

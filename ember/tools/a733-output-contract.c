@@ -17,6 +17,7 @@ static unsigned checks;
 
 /* Serial test stand-ins for kernel locking, not a concurrency acceptance. */
 typedef struct { bool held; } kmutex_t;
+#define CTASSERT(c) _Static_assert(c, #c)
 #define MUTEX_DEFAULT 0
 #define IPL_NONE 0
 #define KASSERT(c) CHECK(c)
@@ -186,7 +187,7 @@ provider_fault(void *arg, const void *owner, int error)
 
 static const struct sun60i_a733_output_ops provider_ops = {
 	provider_mode, provider_prepare, provider_start, provider_vblank,
-	provider_fault
+	provider_fault, NULL
 };
 
 static void
@@ -268,6 +269,57 @@ provider(void)
 	CHECK(f.calls[4] == 1);
 }
 
+static unsigned cache_calls;
+
+static void
+provider_trace(const void *arg, struct sun60i_a733_output_trace *out)
+{
+	CHECK(arg == output_arg && mutex_owned(&output_lock));
+	cache_calls++;
+	out->version = 1;
+	out->valid = 3;
+	out->phase = A733_OUTPUT_PREPARE_DONE;
+	out->done = 1;
+}
+
+static void
+cached_trace(void)
+{
+	struct sun60i_a733_output_ops ops = provider_ops;
+	struct provider_fixture f = { .owner = &f };
+	struct sun60i_a733_output_trace trace, saved, expected = { 0 };
+	struct sun60i_a733_output_mode mode;
+	unsigned calls[5];
+
+	CHECK(sizeof(trace) == 13 * sizeof(uint32_t));
+	provider_reset();
+	memset(&trace, 0xa5, sizeof(trace));
+	saved = trace;
+	CHECK(sun60i_a733_output_cached_trace(7, NULL) == EINVAL);
+	CHECK(sun60i_a733_output_cached_trace(7, &trace) == ENXIO);
+	CHECK(sun60i_a733_output_register(7, &ops, &f) == 0);
+	CHECK(sun60i_a733_output_cached_trace(7, &trace) == EOPNOTSUPP);
+	CHECK(memcmp(&saved, &trace, sizeof(trace)) == 0);
+	provider_reset();
+	ops.cached_trace = provider_trace;
+	CHECK(sun60i_a733_output_register(7, &ops, &f) == 0);
+	CHECK(sun60i_a733_output_cached_trace(8, &trace) == ENXIO);
+	CHECK(cache_calls == 0);
+	CHECK(sun60i_a733_output_get_mode(7, &f, &mode) == 0);
+	CHECK(sun60i_a733_output_fault(7, &f, EIO) == 0);
+	memcpy(calls, f.calls, sizeof(calls));
+	expected.version = 1;
+	expected.valid = 3;
+	expected.phase = A733_OUTPUT_PREPARE_DONE;
+	expected.done = 1;
+	for (unsigned i = 0; i < 4; i++) {
+		CHECK(sun60i_a733_output_cached_trace(7, &trace) == 0);
+		CHECK(memcmp(&trace, &expected, sizeof(trace)) == 0);
+		CHECK(memcmp(calls, f.calls, sizeof(calls)) == 0);
+	}
+	CHECK(cache_calls == 4);
+}
+
 int
 main(void)
 {
@@ -275,6 +327,7 @@ main(void)
 	timing();
 	vblank();
 	provider();
+	cached_trace();
 	printf("%u A733 output timing/W0C/provider checks passed\n", checks);
 	return 0;
 }

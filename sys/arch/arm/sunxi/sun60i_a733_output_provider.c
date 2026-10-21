@@ -208,3 +208,29 @@ sun60i_a733_output_fault(int phandle, const void *owner, int failure)
 	mutex_exit(&output_lock);
 	return error;
 }
+
+/* The diagnostic callback uses the same mutex and lifetime as the provider. */
+int
+sun60i_a733_output_cached_trace(int phandle,
+    struct sun60i_a733_output_trace *out)
+{
+	struct sun60i_a733_output_trace trace = { 0 };
+	int error = 0;
+
+	CTASSERT(sizeof(trace) == 13 * sizeof(uint32_t));
+	if (out == NULL)
+		return EINVAL;
+	RUN_ONCE(&output_once, output_init);
+	mutex_enter(&output_lock);
+	/* output_error must not hide the cache that explains that error. */
+	if (output_ops == NULL || phandle != output_phandle)
+		error = ENXIO;
+	else if (output_ops->cached_trace == NULL)
+		error = EOPNOTSUPP;
+	else {
+		output_ops->cached_trace(output_arg, &trace);
+		*out = trace;
+	}
+	mutex_exit(&output_lock);
+	return error;
+}

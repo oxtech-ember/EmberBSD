@@ -987,8 +987,10 @@ It grants no absence admission or display ownership.
   The [native DE/HDMI/KMS path](ember/boot/a733-de352-native.md) has separate
   ownership and admission contracts. Its cold IOMMU sequence completes on
   this kernel. Mode admission returns ENXIO with no monitor connected; the
-  precise internal output failure is not recorded. Physical HDMI, KMS and
-  complete Plasma remain unaccepted.
+  precise internal output failure is not recorded in that physical result.
+  [Cache-only preparation traces](ember/boot/a733-de352-native.md#cached-output-preparation-diagnostics)
+  distinguish output preparation from DE field checks in the source contract.
+  Physical HDMI, KMS and complete Plasma remain unaccepted.
   NPU powered identification, 24 KiB Engine1 preparation and one
   [finite FE/MMU/IRQ stream](ember/boot/a733-npu-engine.md#physical-acceptance)
   pass on the same kernel. The 40-byte stream reaches terminal step 13
