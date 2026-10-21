@@ -565,6 +565,8 @@ ieee80211_wme_reset(struct ieee80211_node *ni)
 	ni->ni_flags &= ~(IEEE80211_NODE_WME_OFFER | IEEE80211_NODE_WME_VALID);
 	if (ni->ni_ic->ic_opmode == IEEE80211_M_STA)
 		ni->ni_flags &= ~IEEE80211_NODE_QOS;
+	ni->ni_wme_applied_chan = NULL;
+	ni->ni_wme_applied_slot = 0;
 	ni->ni_wme_attempt++;
 }
 
@@ -640,6 +642,9 @@ static const struct phyParamType bssPhyParamForAC_VO[IEEE80211_MODE_MAX] = {
 	{ 1, 2, 2,  47, 0, },	/* IEEE80211_MODE_TURBO_A */ 
 	{ 1, 2, 2,  47, 0, },	/* IEEE80211_MODE_TURBO_G */ 
 };
+
+static void ieee80211_wme_prepare(struct ieee80211com *,
+    struct ieee80211_wme_state *, int);
 
 void
 ieee80211_wme_initparams(struct ieee80211com *ic)
@@ -726,15 +731,23 @@ ieee80211_wme_initparams(struct ieee80211com *ic)
 		 */
 		wme->wme_hipri_switch_thresh =
 			(HIGH_PRI_SWITCH_THRESH * ic->ic_bss->ni_intval) / 100;
-		ieee80211_wme_updateparams(ic);
+		if (ic->ic_opmode == IEEE80211_M_STA &&
+		    wme->wme_sta_apply != NULL) {
+			/* Opt-in driver owns hardware defaults before its first TX. */
+			ieee80211_wme_reset(ic->ic_bss);
+			ieee80211_wme_prepare(ic, wme, 0);
+		} else {
+			ieee80211_wme_updateparams(ic);
+		}
 	}
 }
 
 /*
  * Update WME parameters for ourself and the BSS.
  */
-void
-ieee80211_wme_updateparams_locked(struct ieee80211com *ic)
+static void
+ieee80211_wme_prepare(struct ieee80211com *ic,
+    struct ieee80211_wme_state *wme, int qos)
 {
 	static const paramType phyParam[IEEE80211_MODE_MAX] = {
 		{ 2, 4, 10, 64, 0, },	/* IEEE80211_MODE_AUTO */ 
@@ -745,27 +758,14 @@ ieee80211_wme_updateparams_locked(struct ieee80211com *ic)
 		{ 1, 3, 10, 64, 0, },	/* IEEE80211_MODE_TURBO_A */ 
 		{ 1, 3, 10, 64, 0, },	/* IEEE80211_MODE_TURBO_G */ 
 	};
-	struct ieee80211_wme_state *wme = &ic->ic_wme;
-	const struct wmeParams *wmep;
 	struct wmeParams *chanp, *bssp;
-	int i;
 
-       	/* set up the channel access parameters for the physical device */
-	for (i = 0; i < WME_NUM_AC; i++) {
-		chanp = &wme->wme_chanParams.cap_wmeParams[i];
-		wmep = &wme->wme_wmeChanParams.cap_wmeParams[i];
-		chanp->wmep_aifsn = wmep->wmep_aifsn;
-		chanp->wmep_logcwmin = wmep->wmep_logcwmin;
-		chanp->wmep_logcwmax = wmep->wmep_logcwmax;
-		chanp->wmep_txopLimit = wmep->wmep_txopLimit;
-
-		chanp = &wme->wme_bssChanParams.cap_wmeParams[i];
-		wmep = &wme->wme_wmeBssChanParams.cap_wmeParams[i];
-		chanp->wmep_aifsn = wmep->wmep_aifsn;
-		chanp->wmep_logcwmin = wmep->wmep_logcwmin;
-		chanp->wmep_logcwmax = wmep->wmep_logcwmax;
-		chanp->wmep_txopLimit = wmep->wmep_txopLimit;
-	}
+	/* Copy complete records; every hardware view uses the same candidate. */
+	wme->wme_chanParams = wme->wme_wmeChanParams;
+	/* The advertised count is locally owned and advances below for APs. */
+	memcpy(wme->wme_bssChanParams.cap_wmeParams,
+	    wme->wme_wmeBssChanParams.cap_wmeParams,
+	    sizeof(wme->wme_bssChanParams.cap_wmeParams));
 
 	/*
 	 * This implements aggressive mode as found in certain
@@ -778,7 +778,7 @@ ieee80211_wme_updateparams_locked(struct ieee80211com *ic)
         if ((ic->ic_opmode == IEEE80211_M_HOSTAP &&
 	     (wme->wme_flags & WME_F_AGGRMODE) == 0) ||
 	    (ic->ic_opmode != IEEE80211_M_HOSTAP &&
-	     (ic->ic_bss->ni_flags & IEEE80211_NODE_QOS) == 0) ||
+	     !qos) ||
 	    (ic->ic_flags & IEEE80211_F_WME) == 0) {
 		chanp = &wme->wme_chanParams.cap_wmeParams[WME_AC_BE];
 		bssp = &wme->wme_bssChanParams.cap_wmeParams[WME_AC_BE];
@@ -834,17 +834,89 @@ ieee80211_wme_updateparams_locked(struct ieee80211com *ic)
 		 */
 		wme->wme_bssChanParams.cap_info =
 			(wme->wme_bssChanParams.cap_info+1) & WME_QOSINFO_COUNT;
-		ic->ic_flags |= IEEE80211_F_WMEUPDATE;
 	}
 #endif /* !IEEE80211_NO_HOSTAP */
 
-	wme->wme_update(ic);
+	memcpy(wme->wme_params, wme->wme_chanParams.cap_wmeParams,
+	    sizeof(wme->wme_params));
+}
 
-	IEEE80211_DPRINTF(ic, IEEE80211_MSG_WME,
-		"%s: WME params updated, cap_info 0x%x\n", __func__,
-		ic->ic_opmode == IEEE80211_M_STA ?
-			wme->wme_wmeChanParams.cap_info :
-			wme->wme_bssChanParams.cap_info);
+void
+ieee80211_wme_updateparams_locked(struct ieee80211com *ic)
+{
+	struct ieee80211_wme_state *wme = &ic->ic_wme;
+
+	/* A void legacy entry cannot report synchronous STA apply failure. */
+	if (ic->ic_opmode == IEEE80211_M_STA && wme->wme_sta_apply != NULL) {
+		wme->wme_sta_error = EOPNOTSUPP;
+		return;
+	}
+
+	ieee80211_wme_prepare(ic, wme,
+	    ic->ic_bss != NULL && (ic->ic_bss->ni_flags & IEEE80211_NODE_QOS));
+#ifndef IEEE80211_NO_HOSTAP
+	if (ic->ic_opmode == IEEE80211_M_HOSTAP)
+		ic->ic_flags |= IEEE80211_F_WMEUPDATE;
+#endif
+	wme->wme_update(ic);
+}
+
+int
+ieee80211_wme_apply_sta(struct ieee80211com *ic, struct ieee80211_node *ni,
+    const struct chanAccParams *params, unsigned slot)
+{
+	struct ieee80211_wme_state *wme = &ic->ic_wme;
+	struct ieee80211_wme_state prepared;
+	unsigned ac;
+	int error;
+
+	if (ni == NULL || params == NULL)
+		return EINVAL;
+	if (ic->ic_opmode != IEEE80211_M_STA || ni != ic->ic_bss ||
+	    ni->ni_chan != ic->ic_curchan ||
+	    (ic->ic_caps & IEEE80211_C_WME) == 0 ||
+	    (ic->ic_flags & IEEE80211_F_WME) == 0 ||
+	    wme->wme_sta_apply == NULL)
+		return EOPNOTSUPP;
+	if ((slot != 9 && slot != 20) ||
+	    (ic->ic_curmode == IEEE80211_MODE_11A && slot != 9))
+		return EINVAL;
+	if ((params->cap_info & ~WME_QOSINFO_COUNT) != 0)
+		return EINVAL;
+	for (ac = 0; ac < WME_NUM_AC; ac++) {
+		const struct wmeParams *p = &params->cap_wmeParams[ac];
+		if (p->wmep_aifsn < 2 || p->wmep_aifsn > 15 ||
+		    p->wmep_logcwmin == 0 || p->wmep_logcwmax > 15 ||
+		    p->wmep_logcwmin > p->wmep_logcwmax ||
+		    p->wmep_acm > 1 || p->wmep_noackPolicy > 1)
+			return EINVAL;
+	}
+	IEEE80211_BEACON_LOCK(ic);
+	if ((ni->ni_flags & IEEE80211_NODE_WME_VALID) != 0 &&
+	    params->cap_info == wme->wme_wmeChanParams.cap_info &&
+	    ni->ni_wme_applied_chan == ic->ic_curchan &&
+	    ni->ni_wme_applied_slot == slot) {
+		IEEE80211_BEACON_UNLOCK(ic);
+		return 0;
+	}
+	prepared = *wme;
+	prepared.wme_wmeChanParams = *params;
+	ieee80211_wme_prepare(ic, &prepared, 1);
+	/* The callback must fence TX before returning an uncertain HW failure. */
+	error = wme->wme_sta_apply(ic, &prepared.wme_chanParams, slot);
+	wme->wme_sta_error = error;
+	if (error == 0) {
+		wme->wme_wmeChanParams = prepared.wme_wmeChanParams;
+		wme->wme_chanParams = prepared.wme_chanParams;
+		wme->wme_bssChanParams = prepared.wme_bssChanParams;
+		memcpy(wme->wme_params, prepared.wme_params,
+		    sizeof(wme->wme_params));
+		ni->ni_wme_applied_chan = ic->ic_curchan;
+		ni->ni_wme_applied_slot = slot;
+		ni->ni_flags |= IEEE80211_NODE_WME_VALID | IEEE80211_NODE_QOS;
+	}
+	IEEE80211_BEACON_UNLOCK(ic);
+	return error;
 }
 
 void

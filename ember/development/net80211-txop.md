@@ -65,12 +65,9 @@ executable and propagates failure. CI runs Memcheck, source analyzers and
 strict ASan/UBSan. Host checks do not replace full kernel compilation or
 physical acceptance of each driver.
 
-The shared WME update chain still ignores the int driver callback result.
-Local rejection prevents unsupported hardware writes, but does not propagate
-an error back to the initiating ioctl or association. That gap must be closed
-before enabling native WME negotiation. This prerequisite does not enable
-WME, HT, VHT, aggregation or any wrapper classifier.
-
-The [STA negotiation prerequisite](net80211-wme.md) adds strict peer parameter
-validation and offer lifetime without closing that callback/error contract or
-the stale compatibility applied-table gap.
+Legacy WME update callbacks retain their existing submission/error semantics.
+The [strict STA prerequisite](net80211-wme.md) adds an optional synchronous
+transaction with a coherent effective/compatibility table and software commit
+after success. Manual parameter updates on that strict path are explicitly
+unsupported until an int ioctl transaction exists. Contextual hardware defaults
+and the native wrapper producer remain gates before enabling WME.

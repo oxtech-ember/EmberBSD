@@ -34,7 +34,7 @@ output = "sys/net80211/ieee80211_output.c"
 node = "sys/net80211/ieee80211_node.c"
 parts = [read(wire), read("sys/net80211/ieee80211_phy_ies.h")]
 for path, names in ((proto, ("wmeParams", "chanAccParams", "ieee80211_wme_state")),
-                    ("sys/net80211/ieee80211_ioctl.h", ("ieee80211_stats", "ieee80211_nodestats")),
+                    ("sys/net80211/ieee80211_ioctl.h", ("ieee80211_stats", "ieee80211_nodestats", "ieee80211req")),
                     ("sys/net80211/_ieee80211.h", ("ieee80211_rateset",))):
     parts.append(read(path)[:read(path).index("#")])
     for name in names:
@@ -48,6 +48,20 @@ for path, pattern in (("sys/net80211/ieee80211_var.h", r"IEEE80211_[FC]_[A-Z0-9_
 (out / "native-wme-types.inc").write_text("\n".join(parts))
 
 parts = []
+proto_source = read("sys/net80211/ieee80211_proto.c")
+parts.append(proto_source[proto_source.index("typedef struct phyParamType"):proto_source.index("void\nieee80211_wme_initparams")])
+parts.append("#undef IEEE80211_NO_HOSTAP\n#define HIGH_PRI_SWITCH_THRESH 10\nvoid ieee80211_wme_reset(struct ieee80211_node *);\n")
+if "wme_sta_apply" in read(proto):
+    parts.append("#define NATIVE_STA_APPLY 1\n")
+for name, result in (("ieee80211_set_shortslottime", "void"),
+                     ("ieee80211_wme_prepare", "static void"),
+                     ("ieee80211_wme_apply_sta", "int"),
+                     ("ieee80211_wme_updateparams_locked", "void"),
+                     ("ieee80211_wme_updateparams", "void"),
+                     ("ieee80211_wme_initparams", "void")):
+    if "\n" + name + "(" in proto_source:
+        parts.append(function("sys/net80211/ieee80211_proto.c", name, result))
+parts.append("#define IEEE80211_NO_HOSTAP 1\n")
 for path in (ipt, output, node, "sys/net80211/ieee80211_proto.c"):
     prefix = read(path).split("#include", 1)[0]
     parts.extend(re.findall(r"/\*.*?\*/", prefix, re.S))
@@ -59,7 +73,9 @@ for name, result in (("ieee80211_wme_reset", "void"),):
     path = "sys/net80211/ieee80211_proto.c"
     if "\n" + name + "(" in read(path):
         parts.append(function(path, name, result))
-for name, result in (("ieee80211_parse_wmeparams", "static int"),):
+for name, result in (("ieee80211_decode_wmeparams", "static int"), ("ieee80211_parse_wmeparams", "static int")):
+    if "\n" + name + "(" not in read(ipt):
+        continue
     parts.append(function(ipt, name, result))
 for name, result in (("ieee80211_send_setup", "static void"),
                      ("ieee80211_mgmt_output", "static int"),
@@ -79,6 +95,12 @@ for name, result in (("ieee80211_send_setup", "static void"),
 parts.append("#define ISREASSOC(st) ((st) == IEEE80211_FC0_SUBTYPE_REASSOC_RESP)\n")
 parts.append(function(ipt, "ieee80211_recv_mgmt_assoc_resp", "static void"))
 parts.append(function(ipt, "ieee80211_recv_mgmt_beacon", "static void"))
+for line in read("sys/net80211/ieee80211_ioctl.h").splitlines():
+    if re.match(r"#define\s+IEEE80211_(IOC_WME_|WMEPARAM_)", line):
+        parts.append(line)
+parts.append(function("sys/net80211/ieee80211_ioctl.c", "ieee80211_ioctl_setwmeparam", "static int"))
+parts.append(function(node, "copy_bss", "static inline void"))
+parts.append(function(node, "ieee80211_sta_join", "int"))
 parts.append(function(node, "ieee80211_sta_leave", "void"))
 # This driver's narrow sequence consumer precedes unrelated DMA construction.
 # Retain the complete native decision block; model only its local environment.

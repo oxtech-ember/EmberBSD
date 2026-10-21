@@ -127,6 +127,8 @@ struct ieee80211_node {
 	struct ieee80211_channel *ni_wme_offer_chan;
 	u_int8_t		ni_wme_offer_bssid[IEEE80211_ADDR_LEN];
 	u_int8_t		ni_wme_offer_type;
+	struct ieee80211_channel *ni_wme_applied_chan;
+	u_int8_t		ni_wme_applied_slot;
 	u_int16_t		ni_txseqs[17];	/* non-QoS 0; QoS TID n at n+1 */
 	u_int16_t		ni_rxseqs[17];	/* same domains, previous rx seq */
 	u_int32_t		ni_rxfragstamp;	/* time stamp of last rx frag */

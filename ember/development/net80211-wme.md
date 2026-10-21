@@ -19,7 +19,7 @@ channel or subtype responses do not consume it. Missing or unsolicited WME
 retains legacy operation. Malformed or duplicate offered parameter IEs abort
 the association through the existing scan transition. Subsequent WME beacon
 updates require the current associated peer, channel and validated negotiation.
-Other beacon processing retains its existing policy.
+Slot changes use the incoming capability field before EDCA apply.
 
 Parameter parsing validates exact extent, vendor/type/subtype/version,
 reserved bits, all four unique ACIs, AIFSN and contention window ordering
@@ -37,24 +37,47 @@ association retry. rt2661 packet-burst bookkeeping follows the actual frame's
 QoS/non-QoS domain. Other slot-zero action/management producers, ioctl and
 statistics retain their layout.
 
+## Synchronous STA apply
+
+An optional wme_sta_apply callback accepts an immutable effective four-AC set
+and the new slot time. The shared pure preparation fills complete effective
+records and the compatibility wme_params view, including ACM and noack policy.
+The strict STA path commits peer/effective/compatibility tables, count and
+QoS flags only after callback success. Failure preserves the previous software
+tables and retires the association. Unchanged count skips apply only for the
+same applied channel and slot. A slot-only change uses the last valid set when
+no valid new WME IE is present.
+
+The callback must be bounded, non-sleeping and synchronous. It must fence new
+hardware TX before returning an uncertain hardware error. Software rollback
+cannot undo hardware writes. The RTL8822CE consumer calls the actual core EDCA
+API under the PCI lock. Core errors quarantine TX and station configuration
+until full successful restart. Dying wrappers, pending state changes and
+mismatched core channels reject apply before I/O. Registration remains dormant
+because the wrapper does not advertise WME.
+
+Strict STA default initialization prepares software only. It does not introduce
+a failable callback after sta_join transfers node ownership. The driver owns
+hardware defaults before producers. Legacy callbacks retain their existing
+void/queued submission contracts; their success is not hardware completion.
+AP beacon_update retains its resize boolean. Manual WME parameter ioctl updates
+return EOPNOTSUPP before mutation for a strict STA. They need a separate int
+transaction before that control operation can be supported.
+
 ## Required gates before wrapper WME enablement
 
-The shared update chain still ignores int driver callback errors. Default
-initialization and sta_join ownership need an explicit failure contract;
-sta_join cannot simply return false after replacing ic_bss. AP beacon_update
-returns a resize boolean, which must not be repurposed as errno.
+Full RTL8822CE MAC initialization restores fixed legacy EDCA register values.
+That fact does not prove appropriate AIFS for each current band and slot.
+Before enabling WME, the state worker must apply contextual legacy defaults
+after channel/slot setup and before parent state or any producer. Apply errors
+must stop that transition through the existing quarantine/recovery path.
+Current station setup changes SLOT but does not recalculate EDCA AIFS.
 
-The compatibility wme_params table is not filled by the current parser/update
-chain, although rt2860, run and iwm consume it. The canonical validated table,
-compatibility view and actual hardware apply state must be reconciled in the
-next error-propagation atom. The new valid flag denotes a validated peer set,
-not successful hardware programming. Deferred driver enqueue is not hardware
-completion. None of those remaining gaps is accepted as working WME here.
-
-The native wrapper still needs serialized EDCA apply/error handling, four-AC
-classification and backpressure, including explicit non-QoS/EAPOL routing.
-The changed node fields are an internal kernel ABI change: rebuild the kernel
-and affected modules together; do not mix old modules with the new layout.
+The native wrapper also needs four-AC classification and backpressure,
+including explicit non-QoS/EAPOL routing. The changed WME and node structures
+are an internal kernel ABI change: rebuild the kernel and affected modules
+together; do not mix old modules with the new layout. Capability advertisement,
+HT/VHT, aggregation and BA remain disabled.
 
 ## Host source contracts
 
@@ -68,6 +91,9 @@ CC=gcc-16 WME_TEST_CFLAGS='-O1 -g -fsanitize=address,undefined -fno-sanitize-rec
 
 The runner executes complete native management construction/output,
 association response, beacon, parser, classifier, encap and sta_leave functions.
+It also executes pure preparation, the strict apply transaction, slot updates,
+default initialization, sta_join and copy_bss. Reference ownership and kernel
+services are modeled; the whole generic state machine is not executed.
 Kernel services and unrelated PHY/scan services are modeled. Responses use
 actual emitted WME bytes; no test-only setter authorizes the offer. Coverage
 includes synchronous producer dispatch, malformed and optional request IEs,
@@ -75,7 +101,9 @@ attempt/peer/channel changes, count wrap, all ACI permutations, high TXOP,
 transactional malformed sets, admission masks and interleaved sequence domains.
 The consequential rt2661 test extracts its real packet-burst decision block;
 it does not execute the driver's whole DMA submission function. The PHY native
-contract separately executes node_cleanup. The complete generic state machine
+contract separately executes node_cleanup. The RTW WME contract executes the
+actual wrapper callback with the actual core and a fake bus. The startup
+contract checks fixed MAC defaults and full quarantine recovery. The complete generic state machine
 and all driver compilation/lifecycles require the full target kernel gate.
 
 TEST_RUNNER applies to the executable and propagates failure. CI runs optimized

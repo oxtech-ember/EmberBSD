@@ -222,9 +222,18 @@ struct ieee80211_wme_state {
 	struct chanAccParams wme_bssChanParams;	/* params bcast to stations */
 
 	int	(*wme_update)(struct ieee80211com *);
+	/*
+	 * Bounded synchronous STA apply; fence TX on uncertain failure.
+	 * Driver must set contextual defaults before enabling WME producers.
+	 */
+	int	(*wme_sta_apply)(struct ieee80211com *,
+	    const struct chanAccParams *, unsigned);
+	int	wme_sta_error;
 };
 
 void	ieee80211_wme_initparams(struct ieee80211com *);
+int	ieee80211_wme_apply_sta(struct ieee80211com *,
+	    struct ieee80211_node *, const struct chanAccParams *, unsigned);
 void	ieee80211_wme_reset(struct ieee80211_node *);
 void	ieee80211_wme_updateparams(struct ieee80211com *);
 void	ieee80211_wme_updateparams_locked(struct ieee80211com *);

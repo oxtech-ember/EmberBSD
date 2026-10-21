@@ -49,7 +49,7 @@ for line in source(wire).splitlines():
         parts.append(line)
 parts.append("struct ieee80211_frame { unsigned unused; };\n")
 parts.append("struct ieee80211_node { uint16_t ni_flags; };\n")
-parts.append("struct ieee80211com { struct ieee80211_wme_state ic_wme; unsigned ic_caps; struct ieee80211_node *ic_bss; };\n")
+parts.append("struct ieee80211com { struct ieee80211_wme_state ic_wme; unsigned ic_caps, ic_opmode; struct ieee80211_node *ic_bss; };\n")
 for line in source("sys/net80211/ieee80211_node.h").splitlines():
     if re.match(r"#define\s+IEEE80211_NODE_WME_VALID\s", line):
         parts.append(line)
@@ -58,7 +58,10 @@ parts.append("static void ieee80211_wme_updateparams(struct ieee80211com *ic) { 
 for line in source("sys/net80211/ieee80211_ioctl.h").splitlines():
     if re.match(r"#define\s+IEEE80211_(IOC_WME_|WMEPARAM_)", line):
         parts.append(line)
+parts.append("#define IEEE80211_M_STA 1\n")
 parts.append("#define WME_OUI_BYTES 0x00, 0x50, 0xf2\n")
+if "\nieee80211_decode_wmeparams(" in source("sys/net80211/ieee80211_input.c"):
+    parts.append(function("sys/net80211/ieee80211_input.c", "ieee80211_decode_wmeparams", "static int"))
 parts.append(function("sys/net80211/ieee80211_input.c", "ieee80211_parse_wmeparams", "static int"))
 parts.append(function("sys/net80211/ieee80211_output.c", "ieee80211_add_wme_param", "static u_int8_t *"))
 for name in ("ieee80211_ioctl_getwmeparam", "ieee80211_ioctl_setwmeparam"):

@@ -1208,6 +1208,11 @@ start_ok(struct rtw88_softc *sc)
 		return 0;
 	CHECK(rtw88_start(sc) == 0);
 	CHECK(sc->sc_running);
+	/* Full MAC initialization owns the existing legacy hardware defaults. */
+	CHECK(mmio32(0x500) == UINT32_C(0x002fa226));
+	CHECK(mmio32(0x504) == UINT32_C(0x005ea328));
+	CHECK(mmio32(0x508) == UINT32_C(0x005ea42b));
+	CHECK(mmio32(0x50c) == UINT32_C(0x0000a44f));
 	return sc->sc_running;
 }
 

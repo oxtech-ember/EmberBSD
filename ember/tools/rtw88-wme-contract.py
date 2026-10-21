@@ -19,3 +19,18 @@ for name, result in [('rtw88_put16','static void'),('rtw88_put32','static void')
     end = s.index('\n}', match.end()) + 2
     parts.extend([result, s[match.start():end]])
 (out/'native-wme-core.inc').write_text('\n'.join(parts)+'\n')
+
+proto = (src/'sys/net80211/ieee80211_proto.h').read_text()
+net = (src/'sys/dev/ic/rtw88_net.c').read_text()
+parts = []
+for name in ('wmeParams', 'chanAccParams'):
+    body = re.search(r'^struct '+name+r' \{.*?^\};', proto, re.M|re.S).group()
+    parts.append(body.replace('u_int8_t', 'uint8_t').replace('u_int16_t', 'uint16_t'))
+parts.append('typedef int (*native_sta_hook_t)(struct ieee80211com *, const struct chanAccParams *, unsigned);')
+match = re.search(r'^rtw88_net_wme_apply\(.*?^}', net, re.M|re.S)
+if match:
+    parts.extend([net[:net.index('#include')], 'static int', match.group(),
+        'static native_sta_hook_t native_sta_hook = rtw88_net_wme_apply;'])
+else:
+    parts.append('static native_sta_hook_t native_sta_hook;')
+(out/'native-wme-net.inc').write_text('\n'.join(parts)+'\n')

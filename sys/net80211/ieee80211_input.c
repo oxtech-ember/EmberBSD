@@ -2023,8 +2023,8 @@ ieee80211_parse_rsn(struct ieee80211com *ic, u_int8_t *frm,
 }
 
 static int
-ieee80211_parse_wmeparams(struct ieee80211com *ic, u_int8_t *frm,
-    const struct ieee80211_frame *wh)
+ieee80211_decode_wmeparams(struct ieee80211com *ic, u_int8_t *frm,
+    const struct ieee80211_frame *wh, struct chanAccParams *out)
 {
 #define MS(_v, _f) (((_v) & _f) >> _f##_S)
 	struct ieee80211_wme_state *wme = &ic->ic_wme;
@@ -2062,13 +2062,8 @@ ieee80211_parse_wmeparams(struct ieee80211com *ic, u_int8_t *frm,
 	}
 	if (seen != (1U << WME_NUM_AC) - 1)
 		goto invalid;
-	/* Validate even an unchanged count. Count zero is a valid first set. */
-	if ((ic->ic_bss->ni_flags & IEEE80211_NODE_WME_VALID) != 0 &&
-	    qosinfo == wme->wme_wmeChanParams.cap_info)
-		return 0;
 	candidate.cap_info = qosinfo;
-	wme->wme_wmeChanParams = candidate;
-	ic->ic_bss->ni_flags |= IEEE80211_NODE_WME_VALID;
+	*out = candidate;
 	return 1;
 invalid:
 	IEEE80211_DISCARD_IE(ic, IEEE80211_MSG_ELEMID | IEEE80211_MSG_WME,
@@ -2091,6 +2086,22 @@ ieee80211_saveie(u_int8_t **iep, const u_int8_t *ie)
 	if (*iep != NULL)
 		memcpy(*iep, ie, ielen);
 	/* XXX note failure */
+}
+
+static int
+ieee80211_parse_wmeparams(struct ieee80211com *ic, u_int8_t *frm,
+    const struct ieee80211_frame *wh)
+{
+	struct chanAccParams candidate;
+
+	if (ieee80211_decode_wmeparams(ic, frm, wh, &candidate) < 0)
+		return -1;
+	if ((ic->ic_bss->ni_flags & IEEE80211_NODE_WME_VALID) != 0 &&
+	    candidate.cap_info == ic->ic_wme.wme_wmeChanParams.cap_info)
+		return 0;
+	ic->ic_wme.wme_wmeChanParams = candidate;
+	ic->ic_bss->ni_flags |= IEEE80211_NODE_WME_VALID;
+	return 1;
 }
 
 static void
@@ -2435,18 +2446,33 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 			 */
 			ieee80211_set_shortslottime(ic,
 			    ic->ic_curmode == IEEE80211_MODE_11A ||
-			    (ni->ni_capinfo & IEEE80211_CAPINFO_SHORT_SLOTTIME));
+			    (scan.sp_capinfo & IEEE80211_CAPINFO_SHORT_SLOTTIME));
 			ni->ni_capinfo = scan.sp_capinfo;
 		}
 
-		if (!wme_duplicate && scan.sp_wme != NULL && ni == ic->ic_bss &&
+		if (ni == ic->ic_bss &&
 		    (ni->ni_flags & IEEE80211_NODE_QOS) != 0 &&
 		    (ni->ni_flags & IEEE80211_NODE_WME_VALID) != 0 &&
 		    ni->ni_chan == ic->ic_curchan &&
 		    IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_macaddr) &&
-		    IEEE80211_ADDR_EQ(wh->i_addr3, ni->ni_bssid) &&
-		    ieee80211_parse_wmeparams(ic, scan.sp_wme, wh) > 0) {
-			ieee80211_wme_updateparams(ic);
+		    IEEE80211_ADDR_EQ(wh->i_addr3, ni->ni_bssid)) {
+			if (ic->ic_wme.wme_sta_apply != NULL) {
+				struct chanAccParams candidate =
+				    ic->ic_wme.wme_wmeChanParams;
+				if (!wme_duplicate && scan.sp_wme != NULL)
+					(void)ieee80211_decode_wmeparams(ic,
+					    scan.sp_wme, wh, &candidate);
+				if (ieee80211_wme_apply_sta(ic, ni, &candidate,
+				    (ic->ic_flags & IEEE80211_F_SHSLOT) ? 9 : 20)) {
+					ni->ni_associd = 0;
+					ieee80211_wme_reset(ni);
+					ieee80211_new_state(ic, IEEE80211_S_SCAN, 0);
+					return;
+				}
+			} else if (!wme_duplicate && scan.sp_wme != NULL &&
+			    ieee80211_parse_wmeparams(ic, scan.sp_wme, wh) > 0) {
+				ieee80211_wme_updateparams(ic);
+			}
 		}
 
 		if (scan.sp_tim != NULL) {
@@ -2930,7 +2956,8 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 	u_int8_t *frm, *efrm;
 	u_int8_t *rates, *xrates, *wme;
 	u_int8_t rate;
-	int wme_offer, wme_duplicate = 0;
+	int wme_offer, wme_duplicate = 0, apply_wme = 0;
+	struct chanAccParams candidate;
 	IEEE80211_DEBUGVAR(char ebuf[3 * ETHER_ADDR_LEN]);
 	u_int16_t capinfo, associd;
 	u_int16_t status;
@@ -3049,14 +3076,22 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 	ni->ni_capinfo = capinfo;
 	ni->ni_associd = associd;
 	if (wme_offer && wme != NULL) {
-		if (wme_duplicate || ieee80211_parse_wmeparams(ic, wme, wh) < 0) {
+		int valid = wme_duplicate ? -1 :
+		    (ic->ic_wme.wme_sta_apply != NULL ?
+		     ieee80211_decode_wmeparams(ic, wme, wh, &candidate) :
+		     ieee80211_parse_wmeparams(ic, wme, wh));
+		if (valid < 0) {
 			ni->ni_associd = 0;
 			ieee80211_wme_reset(ni);
 			ieee80211_new_state(ic, IEEE80211_S_SCAN, 0);
 			return;
 		}
-		ni->ni_flags |= IEEE80211_NODE_QOS;
-		ieee80211_wme_updateparams(ic);
+		if (ic->ic_wme.wme_sta_apply != NULL)
+			apply_wme = 1;
+		else {
+			ni->ni_flags |= IEEE80211_NODE_QOS;
+			ieee80211_wme_updateparams(ic);
+		}
 	} else {
 		ni->ni_flags &= ~(IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID);
 	}
@@ -3089,6 +3124,14 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 		ic->ic_flags |= IEEE80211_F_USEPROT;
 	} else {
 		ic->ic_flags &= ~IEEE80211_F_USEPROT;
+	}
+
+	if (apply_wme && ieee80211_wme_apply_sta(ic, ni, &candidate,
+	    (ic->ic_flags & IEEE80211_F_SHSLOT) ? 9 : 20) != 0) {
+		ni->ni_associd = 0;
+		ieee80211_wme_reset(ni);
+		ieee80211_new_state(ic, IEEE80211_S_SCAN, 0);
+		return;
 	}
 
 	IEEE80211_DPRINTF(ic, IEEE80211_MSG_ASSOC,

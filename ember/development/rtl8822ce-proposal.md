@@ -195,14 +195,16 @@ only after all writes succeed. An I/O error quarantines TX and station setup
 until a full successful start; stop and failed start retain the error.
 A failed bus operation may have taken effect, so hardware pause is uncertain
 and the caller must stop the core. QoS HT-control headers are unsupported.
-The legacy wrapper does not call this API or advertise WME, HT or VHT.
-A future WME consumer still needs classification, negotiation and serialized
-parameter updates across channel changes.
+Legacy operation does not invoke EDCA apply or advertise WME, HT or VHT.
+The registered strict STA callback remains dormant until capability enablement.
 The shared [TXOP width prerequisite](net80211-txop.md) preserves wire values
-and rejects unsupported consumer widths. The shared [STA offer prerequisite](net80211-wme.md)
-validates emitted offers, peer parameters and sequence domains. Callback errors,
-the compatibility applied table and native wrapper integration remain gates
-before WME can be enabled.
+and rejects unsupported consumer widths. The shared
+[STA offer prerequisite](net80211-wme.md) validates emitted offers, peer
+parameters and sequence domains. The optional strict STA callback applies
+immutable parameters synchronously
+and commits software state only after success. Its dormant native consumer
+uses core quarantine on I/O errors. Contextual default EDCA before producers
+and native four-AC routing remain gates before WME can be enabled.
 
 Run the actual-source contracts with GCC16:
 

@@ -25,6 +25,7 @@
 #define IEEE80211_FH_CHANPAT(c) 0
 #define ieee80211_chan2ieee(ic, c) 1U
 #define ETHERTYPE_IP 0x0800
+#define IFNAMSIZ 16
 #define IEEE80211_MODE_MAX 7
 #define IEEE80211_CHAN_MAX 255
 #define IEEE80211_BINTVAL_MIN 10
@@ -83,14 +84,17 @@ struct ieee80211_channel {
 };
 struct ieee80211_node {
 	struct ieee80211com *ni_ic;
-	struct ieee80211_channel *ni_chan, *ni_wme_offer_chan;
+	struct ieee80211_channel *ni_chan, *ni_wme_offer_chan,
+	    *ni_wme_applied_chan;
+	unsigned ni_wme_applied_slot;
 	struct ieee80211_rateset ni_rates;
 	uint16_t ni_flags, ni_associd, ni_vlan, ni_capinfo, ni_txseqs[17];
 	unsigned ni_wme_attempt, ni_wme_offer_attempt;
 	uint8_t ni_macaddr[6], ni_bssid[6], ni_wme_offer_bssid[6];
 	uint8_t ni_wme_offer_type, ni_essid[32], ni_esslen, ni_erp;
 	uint8_t ni_authmode, ni_fhindex, ni_dtim_count, ni_dtim_period;
-	uint16_t ni_intval, ni_fhdwell;
+	uint16_t ni_intval, ni_fhdwell, ni_txpower;
+	unsigned ni_rsn;
 	uint32_t *ni_challenge;
 	uint8_t *ni_wme_ie;
 	unsigned ni_fails;
@@ -114,7 +118,13 @@ struct ifnet {
 struct queue {
 	struct mbuf *m;
 };
+struct ieee80211_node_table {
+	const char *nt_name;
+	unsigned nt_inact_init;
+};
 struct ieee80211com {
+	struct ieee80211_node_table ic_sta;
+	unsigned ic_inact_run;
 	struct ieee80211_wme_state ic_wme;
 	struct ieee80211_node *ic_bss;
 	struct ieee80211_channel *ic_curchan;
@@ -123,7 +133,7 @@ struct ieee80211com {
 	struct ieee80211_rateset ic_sup_rates[7];
 	unsigned ic_caps, ic_flags, ic_opmode, ic_state, ic_curmode, ic_phytype;
 	unsigned ic_lintval, ic_mgt_timer, ic_bmisstimeout, ic_fragthreshold;
-	unsigned ic_flags_ext, ic_bmiss_count;
+	unsigned ic_flags_ext, ic_bmiss_count, ic_sta_assoc;
 	uint8_t ic_chan_active[32];
 	struct ieee80211_channel ic_channels[256];
 	uint8_t ic_myaddr[6];
@@ -131,6 +141,7 @@ struct ieee80211com {
 	unsigned ic_opt_ie_len;
 	struct queue ic_mgtq;
 	void (*ic_node_cleanup)(struct ieee80211_node *);
+	void (*ic_updateslot)(struct ifnet *);
 };
 struct ether_header {
 	uint8_t ether_dhost[6], ether_shost[6];
@@ -170,11 +181,12 @@ struct ieee80211_key {
 #define ieee80211_add_wpa(frm, ...) (frm)
 #define ieee80211_add_erp(frm, ...) (frm)
 #define ieee80211_add_ath(frm, ...) (frm)
-#define ieee80211_set_shortslottime(...) ((void)0)
+
 #define ieee80211_notify_node_leave(...) ((void)0)
 static unsigned checks, failures, allocations, fail_allocation, prepends,
     fail_prepend;
 static unsigned node_refs = 1, applies, adjust_failure;
+static struct ieee80211_node *last_freed;
 static struct ieee80211com *active_ic;
 static struct mbuf *captured;
 static void (*during_start)(void);
@@ -292,7 +304,7 @@ ieee80211_ref_node(struct ieee80211_node *ni)
 static void
 ieee80211_free_node(struct ieee80211_node *ni)
 {
-	(void)ni;
+	last_freed = ni;
 	assert(node_refs > 1);
 	node_refs--;
 }
@@ -309,11 +321,43 @@ if_start_lock(struct ifnet *ifp)
 		callback();
 	}
 }
-static void
-ieee80211_wme_updateparams(struct ieee80211com *ic)
+static int apply_error, beacon_lock, expect_uncommitted;
+static struct chanAccParams applied_params;
+static unsigned applied_slot;
+#define IEEE80211_BEACON_LOCK(ic)                                              \
+	do {                                                                   \
+		(void)(ic);                                                    \
+		assert(!beacon_lock);                                          \
+		beacon_lock = 1;                                               \
+	} while (0)
+#define IEEE80211_BEACON_UNLOCK(ic)                                            \
+	do {                                                                   \
+		(void)(ic);                                                    \
+		assert(beacon_lock);                                           \
+		beacon_lock = 0;                                               \
+	} while (0)
+static int
+legacy_update(struct ieee80211com *ic)
 {
-	(void)ic;
 	applies++;
+	applied_params = ic->ic_wme.wme_chanParams;
+	return apply_error;
+}
+static int
+strict_update(struct ieee80211com *ic, const struct chanAccParams *params,
+	      unsigned slot)
+{
+	assert(beacon_lock);
+	if (expect_uncommitted) {
+		CHECK((ic->ic_bss->ni_flags &
+		    (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID)) == 0);
+		CHECK(ic->ic_wme.wme_wmeChanParams.cap_info == 7);
+		expect_uncommitted = 0;
+	}
+	applies++;
+	applied_params = *params;
+	applied_slot = slot;
+	return apply_error;
 }
 static void
 ieee80211_node_unauthorize(struct ieee80211_node *ni)
@@ -324,6 +368,7 @@ static void
 ieee80211_new_state(struct ieee80211com *ic, int state, int arg)
 {
 	(void)arg;
+	assert(!beacon_lock);
 	ic->ic_state = (unsigned)state;
 }
 static uint8_t
@@ -403,6 +448,12 @@ ieee80211_phy_ies_parse(struct ieee80211_phy_ies *ies, const uint8_t *p,
 	memset(ies, 0, sizeof(*ies));
 	return 0;
 }
+#define IEEE80211_NODE_LOCK(nt) ((void)(nt))
+#define IEEE80211_NODE_UNLOCK(nt) ((void)(nt))
+#define ieee80211_fix_rate(ni, flags) ((void)(ni), (void)(flags))
+#define ieee80211_chan2mode(ic, chan)                                          \
+	((void)(ic), (void)(chan), IEEE80211_MODE_11G)
+#define ieee80211_reset_erp(ic) ((void)(ic))
 #include "native-wme.inc"
 
 static struct ieee80211com test_ic;
@@ -455,11 +506,15 @@ setup(void)
 	for (ac = 0; ac < 4; ac++) {
 		struct wmeParams p = {0, 2, 3, 4, 47, 0};
 		test_ic.ic_wme.wme_bssChanParams.cap_wmeParams[ac] = p;
+		test_ic.ic_wme.wme_wmeBssChanParams.cap_wmeParams[ac] = p;
 	}
 	during_start = NULL;
 	adjust_failure = 0;
 	active_ic = &test_ic;
 	applies = 0;
+	apply_error = 0;
+	expect_uncommitted = 0;
+	test_ic.ic_wme.wme_update = legacy_update;
 	allocations = prepends = fail_allocation = fail_prepend = 0;
 }
 static struct mbuf *
@@ -1108,9 +1163,244 @@ test_rt2661_sequence_consumer(void)
 		m_freem(out);
 	}
 }
+static void
+install_strict(void)
+{
+#ifdef NATIVE_STA_APPLY
+	test_ic.ic_wme.wme_sta_apply = strict_update;
+#else
+	(void)strict_update;
+#endif
+}
+static void
+test_invalid_apply_candidate(void)
+{
+#ifdef NATIVE_STA_APPLY
+	setup();
+	install_strict();
+	struct chanAccParams candidate = test_ic.ic_wme.wme_wmeBssChanParams;
+	for (unsigned ac = 0; ac < 4; ac++) {
+		for (unsigned field = 0; field < 7; field++) {
+			struct chanAccParams bad = candidate;
+			struct wmeParams *p = &bad.cap_wmeParams[ac];
+			switch (field) {
+			case 0:
+				p->wmep_logcwmin = 5;
+				break;
+			case 1:
+				p->wmep_logcwmin = 0;
+				break;
+			case 2:
+				p->wmep_logcwmax = 16;
+				break;
+			case 3:
+				p->wmep_aifsn = 1;
+				break;
+			case 4:
+				p->wmep_aifsn = 16;
+				break;
+			case 5:
+				p->wmep_acm = 2;
+				break;
+			case 6:
+				p->wmep_noackPolicy = 2;
+				break;
+			}
+			CHECK(ieee80211_wme_apply_sta(&test_ic, &test_node,
+						      &bad, 20) == EINVAL);
+			CHECK(applies == 0);
+		}
+	}
+	CHECK(ieee80211_wme_apply_sta(&test_ic, NULL, &candidate, 20) ==
+	      EINVAL);
+	CHECK(ieee80211_wme_apply_sta(&test_ic, &test_node, NULL, 20) ==
+	      EINVAL);
+	CHECK(ieee80211_wme_apply_sta(&test_ic, &test_node, &candidate, 10) ==
+	      EINVAL);
+	test_ic.ic_curmode = IEEE80211_MODE_11A;
+	CHECK(ieee80211_wme_apply_sta(&test_ic, &test_node, &candidate, 20) ==
+	      EINVAL);
+	CHECK(applies == 0);
+
+#endif
+}
+static void
+test_strict_complete_views(void)
+{
+	setup();
+	install_strict();
+	for (unsigned ac = 0; ac < 4; ac++) {
+		test_ic.ic_wme.wme_wmeChanParams.cap_wmeParams[ac].wmep_noackPolicy = ac & 1;
+		test_ic.ic_wme.wme_bssChanParams.cap_wmeParams[ac].wmep_acm = (ac + 1) & 1;
+		test_ic.ic_wme.wme_bssChanParams.cap_wmeParams[ac].wmep_txopLimit = 65535;
+	}
+	test_ic.ic_wme.wme_wmeChanParams.cap_info = 7;
+	expect_uncommitted = 1;
+	CHECK(ieee80211_send_mgmt(&test_ic, &test_node,
+	    IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 0) == 0);
+	deliver(response(1, 0, IEEE80211_FC0_SUBTYPE_ASSOC_RESP),
+	    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	CHECK(test_ic.ic_state == IEEE80211_S_RUN);
+	CHECK(test_ic.ic_wme.wme_wmeChanParams.cap_info == 0);
+	for (unsigned ac = 0; ac < 4; ac++) {
+		CHECK(applied_params.cap_wmeParams[ac].wmep_acm == ((ac + 1) & 1));
+		CHECK(applied_params.cap_wmeParams[ac].wmep_noackPolicy == (ac & 1));
+		CHECK(applied_params.cap_wmeParams[ac].wmep_txopLimit == 65535);
+	}
+	CHECK(memcmp(test_ic.ic_wme.wme_params, applied_params.cap_wmeParams,
+	    sizeof(test_ic.ic_wme.wme_params)) == 0);
+}
+static void
+test_strict_ioctl_reject(void)
+{
+	setup();
+	install_strict();
+	struct ieee80211req req = {
+	    .i_type = IEEE80211_IOC_WME_TXOPLIMIT, .i_val = 123, .i_len = 0};
+	struct ieee80211_wme_state saved = test_ic.ic_wme;
+	CHECK(ieee80211_ioctl_setwmeparam(&test_ic, &req) == EOPNOTSUPP);
+	CHECK(memcmp(&saved, &test_ic.ic_wme, sizeof(saved)) == 0);
+	CHECK(applies == 0);
+}
+static void
+test_strict_reject_legacy_void_update(void)
+{
+	setup();
+	install_strict();
+	struct chanAccParams saved = test_ic.ic_wme.wme_chanParams;
+	ieee80211_wme_updateparams(&test_ic);
+	CHECK(applies == 0);
+	CHECK(memcmp(&saved, &test_ic.ic_wme.wme_chanParams, sizeof(saved)) ==
+	      0);
+#ifdef NATIVE_STA_APPLY
+	CHECK(test_ic.ic_wme.wme_sta_error == EOPNOTSUPP);
+#endif
+}
+static void
+test_legacy_ap_contract(void)
+{
+	setup();
+	install_strict();
+	test_ic.ic_opmode = IEEE80211_M_HOSTAP;
+	apply_error = EIO;
+	ieee80211_wme_initparams(&test_ic);
+	CHECK(applies == 1);
+	CHECK(test_ic.ic_flags & IEEE80211_F_WMEUPDATE);
+	CHECK(memcmp(test_ic.ic_wme.wme_params,
+		     test_ic.ic_wme.wme_chanParams.cap_wmeParams,
+		     sizeof(test_ic.ic_wme.wme_params)) == 0);
+	for (unsigned iteration = 0; iteration < 18; iteration++) {
+		unsigned count = test_ic.ic_wme.wme_bssChanParams.cap_info;
+		ieee80211_wme_updateparams(&test_ic);
+		CHECK(test_ic.ic_wme.wme_bssChanParams.cap_info ==
+		    ((count + 1) & WME_QOSINFO_COUNT));
+	}
+
+}
+static void
+test_strict_join_ownership(void)
+{
+	struct ieee80211_node old;
+	setup();
+	install_strict();
+	old = test_node;
+	old.ni_vlan = 7;
+	test_ic.ic_bss = &old;
+	node_refs++; /* Distinct selected node held by the caller. */
+	last_freed = NULL;
+	apply_error = EIO;
+	CHECK(ieee80211_sta_join(&test_ic, &test_node) == 1);
+	CHECK(test_ic.ic_bss == &test_node && last_freed == &old);
+	CHECK(node_refs == 1);
+	CHECK(test_node.ni_vlan == 7 && test_ic.ic_state == IEEE80211_S_AUTH);
+	CHECK(applies == 0);
+	last_freed = NULL;
+}
+static void
+test_apply_transaction(void)
+{
+	setup();
+	install_strict();
+	ieee80211_wme_initparams(&test_ic);
+	CHECK(applies == 0);
+	CHECK(!(test_node.ni_flags &
+		(IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID)));
+	int errors[] = {EOPNOTSUPP, EIO};
+	for (unsigned i = 0; i < 2; i++) {
+		struct chanAccParams saved;
+		setup();
+		install_strict();
+		saved = test_ic.ic_wme.wme_wmeChanParams;
+		CHECK(ieee80211_send_mgmt(&test_ic, &test_node,
+					  IEEE80211_FC0_SUBTYPE_ASSOC_REQ,
+					  0) == 0);
+		apply_error = errors[i];
+		deliver(response(1, 0, IEEE80211_FC0_SUBTYPE_ASSOC_RESP),
+			IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+		CHECK(test_ic.ic_state != IEEE80211_S_RUN);
+		CHECK(test_node.ni_associd == 0);
+		CHECK((test_node.ni_flags &
+		       (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID)) == 0);
+		CHECK(memcmp(&saved, &test_ic.ic_wme.wme_wmeChanParams,
+			     sizeof(saved)) == 0);
+	}
+	setup();
+	install_strict();
+	CHECK(ieee80211_send_mgmt(&test_ic, &test_node,
+				  IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 0) == 0);
+	deliver(response(1, 0, IEEE80211_FC0_SUBTYPE_ASSOC_RESP),
+		IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	CHECK(test_ic.ic_state == IEEE80211_S_RUN);
+	CHECK(applied_slot == 20);
+	CHECK(memcmp(test_ic.ic_wme.wme_params, applied_params.cap_wmeParams,
+		     sizeof(test_ic.ic_wme.wme_params)) == 0);
+	{
+		struct mbuf *m = beacon(0);
+		unsigned before = applies;
+		m->m_data[35] |=
+		    (uint8_t)(IEEE80211_CAPINFO_SHORT_SLOTTIME >> 8);
+		deliver_beacon(m);
+		CHECK(applies == before + 1);
+		CHECK(applied_slot == 9);
+	}
+	for (unsigned variant = 0; variant < 2; variant++) {
+		struct mbuf *m = beacon(0);
+		unsigned before = applies;
+		if (variant == 0)
+			m->m_len -= 26; /* No new WME IE. */
+		else {
+			m->m_data[35] |=
+			    (uint8_t)(IEEE80211_CAPINFO_SHORT_SLOTTIME >> 8);
+			m->m_data[48] =
+			    0xff; /* Bad WME version; retain old parameters. */
+		}
+		deliver_beacon(m);
+		CHECK(applies == before + 1);
+		CHECK(applied_slot == (variant ? 9U : 20U));
+		CHECK(test_ic.ic_wme.wme_wmeChanParams.cap_info == 0);
+	}
+	{
+		struct chanAccParams saved = test_ic.ic_wme.wme_wmeChanParams;
+		apply_error = EIO;
+		deliver_beacon(beacon(1));
+		CHECK(test_ic.ic_state != IEEE80211_S_RUN);
+		CHECK(test_node.ni_associd == 0);
+		CHECK((test_node.ni_flags &
+		       (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID)) == 0);
+		CHECK(memcmp(&saved, &test_ic.ic_wme.wme_wmeChanParams,
+			     sizeof(saved)) == 0);
+	}
+}
 int
 main(void)
 {
+	test_strict_complete_views();
+	test_strict_ioctl_reject();
+	test_strict_reject_legacy_void_update();
+	test_legacy_ap_contract();
+	test_strict_join_ownership();
+	test_invalid_apply_candidate();
+	test_apply_transaction();
 	test_exchange();
 	test_parser();
 	test_parser_boundaries();

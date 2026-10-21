@@ -6,6 +6,7 @@
 static unsigned checks, failures, writes, syncs, reads, io_calls, fail_io,
     fail_after;
 static uint8_t mmio[0x1000];
+static unsigned *hook_lock;
 #define CHECK(c)                                                               \
 	do {                                                                   \
 		checks++;                                                      \
@@ -19,6 +20,8 @@ static int
 write2(void *cookie, uint32_t reg, uint16_t value)
 {
 	(void)cookie;
+	if (hook_lock)
+		assert(*hook_lock == 1);
 	assert(reg + 2 <= sizeof(mmio));
 	writes++;
 	mmio[reg] = (uint8_t)value;
@@ -37,6 +40,8 @@ static int
 read1(void *cookie, uint32_t reg, uint8_t *value)
 {
 	(void)cookie;
+	if (hook_lock)
+		assert(*hook_lock == 1);
 	assert(reg < sizeof(mmio));
 	reads++;
 	io_calls++;
@@ -49,6 +54,8 @@ static int
 write1(void *cookie, uint32_t reg, uint8_t value)
 {
 	(void)cookie;
+	if (hook_lock)
+		assert(*hook_lock == 1);
 	assert(reg < sizeof(mmio));
 	io_calls++;
 	if (io_calls == fail_io && !fail_after)
@@ -61,6 +68,8 @@ static int
 write4(void *cookie, uint32_t reg, uint32_t value)
 {
 	(void)cookie;
+	if (hook_lock)
+		assert(*hook_lock == 1);
 	assert(reg + 4 <= sizeof(mmio));
 	io_calls++;
 	if (io_calls == fail_io && !fail_after)
@@ -110,6 +119,87 @@ release(struct rtw88_softc *sc)
 			free(sc->sc_txq[q].buf[i].vaddr);
 		free(sc->sc_ring[rtw88_txq_hw[q].ring].vaddr);
 	}
+}
+
+#define WME_NUM_AC 4
+struct ieee80211_channel {
+	unsigned number;
+};
+struct ifnet {
+	void *if_softc;
+};
+struct ieee80211com {
+	struct ifnet *ic_ifp;
+	struct ieee80211_channel *ic_curchan;
+};
+struct rtw88_net {
+	struct rtw88_softc *core;
+	unsigned *lock;
+	struct {
+		int dying;
+	} policy;
+	int work_pending;
+};
+#define ieee80211_chan2ieee(ic, chan) ((void)(ic), (chan)->number)
+#define mutex_enter(lock)                                                      \
+	do {                                                                   \
+		assert(*(lock) == 0);                                          \
+		*(lock) = 1;                                                   \
+	} while (0)
+#define mutex_exit(lock)                                                       \
+	do {                                                                   \
+		assert(*(lock) == 1);                                          \
+		*(lock) = 0;                                                   \
+	} while (0)
+#include "native-wme-net.inc"
+static void
+test_native_sta_hook(void)
+{
+	struct rtw88_softc sc;
+	unsigned lock = 0;
+	struct rtw88_net net = {.core = &sc, .lock = &lock};
+	struct ifnet ifp = {.if_softc = &net};
+	struct ieee80211_channel chan = {1};
+	struct ieee80211com ic = {.ic_ifp = &ifp, .ic_curchan = &chan};
+	struct chanAccParams params = {0};
+	for (unsigned ac = 0; ac < 4; ac++) {
+		params.cap_wmeParams[ac].wmep_aifsn = 2 + ac;
+		params.cap_wmeParams[ac].wmep_logcwmin = 3;
+		params.cap_wmeParams[ac].wmep_logcwmax = 4;
+		params.cap_wmeParams[ac].wmep_txopLimit = 65535;
+	}
+	CHECK(native_sta_hook != NULL);
+	if (!native_sta_hook)
+		return;
+	hook_lock = &lock;
+	prepare(&sc);
+	CHECK(native_sta_hook(&ic, &params, 20) == 0);
+	CHECK(lock == 0);
+	CHECK((uint16_t)(mmio[0x508] | mmio[0x509] << 8) == 0x4332);
+	release(&sc);
+	for (unsigned after = 0; after < 2; after++)
+		for (unsigned failure = 1; failure <= 7; failure++) {
+			prepare(&sc);
+			fail_io = failure;
+			fail_after = after;
+			CHECK(native_sta_hook(&ic, &params, 9) == EIO);
+			CHECK(sc.sc_edca_error == EIO && lock == 0);
+			unsigned before = io_calls;
+			CHECK(native_sta_hook(&ic, &params, 9) == EIO);
+			CHECK(io_calls == before);
+			release(&sc);
+		}
+	prepare(&sc);
+	net.policy.dying = 1;
+	CHECK(native_sta_hook(&ic, &params, 20) == ENXIO && io_calls == 0);
+	net.policy.dying = 0;
+	net.work_pending = 1;
+	CHECK(native_sta_hook(&ic, &params, 20) == EBUSY && io_calls == 0);
+	net.work_pending = 0;
+	chan.number = 36;
+	CHECK(native_sta_hook(&ic, &params, 9) == EBUSY && io_calls == 0);
+	release(&sc);
+	hook_lock = NULL;
 }
 static void
 test_qos_descriptor(void)
@@ -193,7 +283,8 @@ test_all_tid_producers(void)
 			if (wrong == q || wrong >= RTW88_NTXQ)
 				continue;
 			unsigned before = writes, ds = syncs;
-			CHECK(rtw88_tx_raw(&sc, wrong, frame, sizeof(frame)) == EOPNOTSUPP);
+			CHECK(rtw88_tx_raw(&sc, wrong, frame, sizeof(frame)) ==
+			      EOPNOTSUPP);
 			CHECK(writes == before && syncs == ds);
 		}
 		unsigned before = writes, ds = syncs;
@@ -308,7 +399,8 @@ test_edca_apply(void)
 					   sizeof(frame)) == EIO);
 			for (unsigned q = 0; q < RTW88_NTXQ; q++) {
 				CHECK(rtw88_tx_available(&sc, q) == 0);
-				CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == EIO);
+				CHECK(rtw88_tx_raw(&sc, q, frame,
+						   sizeof(frame)) == EIO);
 			}
 			CHECK(io_calls == before && syncs == ds &&
 			      writes == ws);
@@ -323,6 +415,7 @@ test_edca_apply(void)
 int
 main(void)
 {
+	test_native_sta_hook();
 	test_qos_descriptor();
 	test_all_tid_producers();
 	test_maps_and_edca();

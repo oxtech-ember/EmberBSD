@@ -2035,6 +2035,10 @@ ieee80211_ioctl_setwmeparam(struct ieee80211com *ic, struct ieee80211req *ireq)
 	if ((ic->ic_caps & IEEE80211_C_WME) == 0)
 		return EINVAL;
 
+	/* Manual STA updates need an int transaction, not the legacy void API. */
+	if (ic->ic_opmode == IEEE80211_M_STA && wme->wme_sta_apply != NULL)
+		return EOPNOTSUPP;
+
 	isbss = (ireq->i_len & IEEE80211_WMEPARAM_BSS);
 	ac = (ireq->i_len & IEEE80211_WMEPARAM_VAL);
 	if (ac >= WME_NUM_AC)

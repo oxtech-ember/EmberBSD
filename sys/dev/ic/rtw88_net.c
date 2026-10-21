@@ -80,6 +80,42 @@ rtw88_net_basic_rates(struct ieee80211com *ic)
 	return mask;
 }
 
+/*
+ * Strict STA callback: caller holds Giant and the beacon lock. This PCI
+ * operation is bounded and does not sleep. Core I/O failures latch TX and
+ * station setup until full successful restart; software rollback is not HW
+ * rollback. No PCI lock holder may enter net80211 with that lock held.
+ */
+static int
+rtw88_net_wme_apply(struct ieee80211com *ic,
+    const struct chanAccParams *params, unsigned slot)
+{
+	struct rtw88_net *net = ic->ic_ifp->if_softc;
+	struct rtw88_edca_params edca[RTW88_WME_NAC];
+	unsigned ac, channel;
+	int error;
+
+	if (params == NULL)
+		return EINVAL;
+	channel = ieee80211_chan2ieee(ic, ic->ic_curchan);
+	for (ac = 0; ac < RTW88_WME_NAC; ac++) {
+		const struct wmeParams *p = &params->cap_wmeParams[ac];
+		edca[ac].aifsn = p->wmep_aifsn;
+		edca[ac].ecw_min = p->wmep_logcwmin;
+		edca[ac].ecw_max = p->wmep_logcwmax;
+		edca[ac].txop = p->wmep_txopLimit;
+	}
+	mutex_enter(net->lock);
+	if (net->policy.dying)
+		error = ENXIO;
+	else if (net->work_pending || net->core->sc_channel != channel)
+		error = EBUSY;
+	else
+		error = rtw88_edca_apply(net->core, edca, slot);
+	mutex_exit(net->lock);
+	return error;
+}
+
 /* The workqueue has the kernel lock. Do not hold the PCI lock in net80211. */
 static void
 rtw88_net_state_work(struct work *work, void *cookie)
@@ -632,6 +668,8 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	IFQ_SET_READY(&ifp->if_snd);
 	if_initialize(ifp);
 	ieee80211_ifattach(ic);
+	/* Register the consumer; capability advertisement remains disabled. */
+	ic->ic_wme.wme_sta_apply = rtw88_net_wme_apply;
 	net->parent_state = ic->ic_newstate;
 	ic->ic_newstate = rtw88_net_newstate;
 	ifp->if_percpuq = if_percpuq_create(ifp);

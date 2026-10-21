@@ -33,6 +33,8 @@ struct ieee80211_channel {
 struct ieee80211com;
 struct ieee80211_node_table;
 struct ieee80211_node {
+	struct ieee80211_channel *ni_wme_applied_chan;
+	unsigned ni_wme_applied_slot;
 	TAILQ_ENTRY(ieee80211_node) ni_list;
 	struct ieee80211com *ni_ic;
 	struct ieee80211_channel *ni_chan;
@@ -329,9 +331,13 @@ main(void)
 	      "missing PHY IEs replace stale observation");
 	ni.ni_phy_ies = (struct ieee80211_phy_ies){.len = 73};
 	ic.ic_opmode = IEEE80211_M_STA;
+	ni.ni_wme_applied_chan = ni.ni_chan;
+	ni.ni_wme_applied_slot = 9;
 	ni.ni_flags |= IEEE80211_NODE_QOS | IEEE80211_NODE_WME_OFFER |
 	    IEEE80211_NODE_WME_VALID;
 	node_cleanup(&ni);
+	check(ni.ni_wme_applied_chan == NULL && ni.ni_wme_applied_slot == 0,
+	    "native cleanup retires applied EDCA context");
 	check((ni.ni_flags & (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_OFFER |
 	    IEEE80211_NODE_WME_VALID)) == 0,
 	    "native cleanup retires negotiated QoS and pending WME state");
