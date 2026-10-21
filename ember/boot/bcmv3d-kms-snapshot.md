@@ -7,9 +7,14 @@ Use it only within the isolated graphics test whose contents you may capture.
 
 ## Admitted input
 
-Select a plane ID from the existing DRM resource inventory. Keep the compositor
-as DRM master. Run the diagnostic as root with a second fd on the same card;
-the legacy GETFB handler otherwise returns handle zero to a nonmaster.
+Select a plane ID from the existing DRM resource inventory. Before launch, the
+private test controller must verify that the expected KWin process is alive,
+holds this primary card and remains DRM master. Run the diagnostic as root
+with a second fd on that same card. Legacy GETFB otherwise returns handle
+zero to a nonmaster. The program does not issue SET_MASTER or DROP_MASTER,
+but opening an unowned primary node can acquire master implicitly. It cannot
+prove another process still holds master. The controller must keep the tested
+compositor session active and exclude logout or restart during this operation.
 Do not run it after logout: logical BLANK no longer exposes the previous active
 framebuffer. The program does not retry frame acquisition.
 
@@ -69,7 +74,9 @@ The program opens a new file with O_EXCL and mode 0600. It never overwrites an
 existing path. Short writes are completed and zero-length writes fail. Write,
 fsync or close failure unlinks only the file created by this invocation. An
 unlink failure is reported; any remaining partial file is not an accepted
-snapshot. Use a private output directory controlled by the test controller.
+snapshot. Use an existing mode-0700 output directory controlled only by the test
+controller. The program does not validate the parent directory or protect
+against another actor that can rename entries there.
 
 ## Build and source checks
 
