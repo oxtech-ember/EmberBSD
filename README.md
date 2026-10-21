@@ -1174,8 +1174,9 @@ The base system shell is unchanged.
   Source contracts now cover bounded RTL PHY page0/page1 observations, real
   CCK gain readbacks and generation-qualified unsigned signal quality into
   native scan/node consumers. Missing PHY metadata does not invalidate DATA.
-  This is source-only coverage; calibrated dBm and firmware RSSI feedback are
-  not enabled by these changes.
+  GCC16 kernel `76ccc8959` also passes physical page0/page1 samples and two
+  controlled reconnects with fresh signal generations. Calibrated dBm and
+  firmware RSSI feedback remain unqualified.
   Raw TCP from the board reaches about 25 Mbps in a 1 MiB trial. Full AP-loss
   recovery, RF quality and endurance remain unqualified. HT/VHT remain
   unadvertised. Shared HT20 association contracts now bind queued offers to

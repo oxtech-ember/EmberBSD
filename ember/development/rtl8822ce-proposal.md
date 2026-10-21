@@ -676,3 +676,19 @@ Causal baselines retain the old core0 and queue0 results before the respective
 wire changes; both fail actual scan ranking. No physical RSSI or speed claim
 follows from these synthetic tests. Primary packet samples and a GCC16 target
 build remain required before hardware acceptance.
+
+### Physical relative-signal boundary
+
+GCC16 kernel `76ccc895977720ba2745cefcf0f6a31fcec7c1b3` passes an
+unattended warm boot, WPA2/CCMP, DHCP/SLAAC and normal SSH on one 2.4 GHz AP.
+Actual CCK page0 and legacy OFDM page1 reports have32-byte PHY records and
+current-channel metadata. Eight finite page1 snapshots yield relative quality
+62..65. After one reassociation and one administrative down/up, valid PHY
+observations and gain-cache generations advance2,4,6 together. IPv4 data returns
+in27/18 seconds; LAN link-local IPv6 SSH succeeds after each cycle.
+
+All four ACs return12/12 ICMP replies. Bidirectional1MiB transfers over SSH and
+raw IPv6 preserve SHA256; interface, DMA, crypto and queue-full error counters
+remain zero. These checks do not establish calibrated dBm, maximum speed,
+AP-loss recovery or endurance. Invalid metadata counters remain visible.
+ADCK/DACK residual warnings persist. HT admission remains disabled.
