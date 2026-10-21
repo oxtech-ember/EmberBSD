@@ -77,6 +77,12 @@ Use host GCC 16.2.0. On macOS the runners select the active SDK for host headers
 The only header shim supplies host string and integer declarations for kernel `sys/systm.h`.
 The consumer uses the actual wireless frame definitions from `ieee80211.h`.
 Its mbuf allocation, pullup, crypto and delivery boundaries are modeled host services.
+The fragmentation double has no cache. It consumes noninitial fragments and returns `NULL`.
+The consumer contract checks that this outcome preserves cleanup ownership and stops delivery.
+GCC receives the `newbuf`/`m_freem` [allocator/deallocator relationship](https://gcc.gnu.org/onlinedocs/gcc/Common-Attributes.html) as a semantic attribute.
+The plain `malloc` aliasing attribute is not used because the initialized mbuf contains a data pointer.
+Clang analyzes the same bodies without GCC's parameterized allocation attribute.
+No analyzer warning category or production ownership check is disabled.
 The actual `m_copy_rcvif` body runs against modeled `M_PKTHDR` and interface-index fields.
 The delivery sink checks index preservation on every output.
 The legacy decap function has a narrowly scoped sign-compare diagnostic suppression in its extraction.
@@ -95,7 +101,7 @@ CC=gcc-16 sh ember/tools/net80211-amsdu-analysis.sh
 
 The baseline native consumer compiled and failed the valid two-subframe delivery assertion.
 The new parser passes boundary/policy fixtures and 50000 bounded malformed inputs.
-The native consumer passes 45 behavior checks, including allocation rollback and legacy EAPOL.
+The native consumer passes 47 behavior checks, including allocation rollback and legacy EAPOL.
 GCC16 ASan/UBSan runtime checks pass on the host.
 The analysis runner covers the parser and extracted consumer with Cppcheck,
 GCC `-fanalyzer` and Clang Static Analyzer using the same host service model.

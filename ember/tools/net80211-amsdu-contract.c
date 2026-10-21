@@ -117,6 +117,12 @@ static uint8_t payload[174][1600];
 static size_t payload_len[174];
 static struct ieee80211_cipher cipher = {3};
 static struct ieee80211_key testkey = {&cipher};
+static void m_freem(struct mbuf *);
+/* Pair only: the initialized mbuf contains a pointer into its own storage. */
+#if defined(__GNUC__) && !defined(__clang__)
+static struct mbuf *newbuf(void)
+    __attribute__((malloc(m_freem, 1)));
+#endif
 static struct mbuf *
 newbuf(void)
 {
@@ -197,6 +203,12 @@ ieee80211_defrag(struct ieee80211_node *ni, struct mbuf *m, int h)
 	(void)ni;
 	(void)h;
 	defrag_calls++;
+	/* No fragment cache is modeled. A noninitial fragment is discarded. */
+	if ((mtod(m, const struct ieee80211_frame *)->i_seq[0] &
+	    IEEE80211_SEQ_FRAG_MASK) != 0) {
+		m_freem(m);
+		return NULL;
+	}
 	return m;
 }
 static void
@@ -476,6 +488,16 @@ main(void)
 	m = aggregate();
 	m->m_len = m->m_pkthdr.len = 25;
 	CHECK(input(m) == -1 && delivered == 0);
+
+	/* A noninitial legacy fragment without a cached predecessor is consumed. */
+	reset();
+	m = frame();
+	m->data[24] = 0;
+	m->data[22] = 1;
+	memcpy(m->data + 26, "\xaa\xaa\x03\0\0\0\x08\0\x42", 9);
+	m->m_len = m->m_pkthdr.len = 35;
+	CHECK(input(m) == -1 && delivered == 0 && defrag_calls == 1);
+	CHECK(bpf_count == 0 && alive == 0);
 
 	/* Legacy nonaggregate SNAP retains the exact port/privacy policy. */
 	reset();
