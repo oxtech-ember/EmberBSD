@@ -54,7 +54,8 @@ python3 -B ember/tools/aicwf-firmware-bip-test.py
 replacement hashes, addresses, lengths, source hashes, compiler target and
 commands. It also records `modified_sha256` and `kernel_header_sha256`.
 The earlier v1 schema does not have these two fields. Successful construction
-remains `assembled-not-executed`.
+remains `assembled-not-executed`. The separate instruction fixture records
+CPU execution.
 
 ## Internal contract
 
@@ -141,6 +142,6 @@ hashes and all write destinations. Vendor configuration and runtime patch
 ranges must remain disjoint. It must publish capability only after complete
 patched upload/readback and before the first extended key request. Cold reset
 and association teardown must preserve the host epoch/confirmation contract.
-Actual patched Thumb execution, boot-ROM upload and physical PMF/BIP checks
-remain separate requirements.
+The finite Cortex-M4 instruction qualification is separate from boot-ROM
+upload and physical PMF/BIP acceptance. Physical checks remain pending.
 No arbitrary firmware, model-wide compatibility or WPA3 certification is claimed.

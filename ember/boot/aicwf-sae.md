@@ -13,7 +13,8 @@ The firmware key command has no initial IGTK packet-number field. The
 legacy client therefore rejects a nonzero initial IPN instead of silently
 losing the replay boundary. A separate [fixed-image extension](aicwf-firmware-bip.md)
 has a hash-bound WLAN loader and a private initial-IPN wire contract. Its
-instruction-model and physical acceptance remain pending. Legacy images cannot
+finite CPU qualification is separate from physical acceptance, which remains
+pending. Legacy images cannot
 complete networks or rekeys that supply such an IPN. On a physical Zero 3W,
 required PMF negotiation, SAE/H2E,
 IGTK installation and bidirectional traffic pass with an accepted initial IPN.
