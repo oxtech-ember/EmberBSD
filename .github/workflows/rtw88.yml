@@ -24,6 +24,8 @@ name: Native RTL8822CE source contracts
       - 'sys/sys/sysctl.h'
       - 'sys/sys/queue.h'
       - 'sys/net/if.h'
+      - 'sys/net/if.c'
+      - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
       - 'sys/net/if_media.h'
       - 'sys/net/if_media.c'
       - 'sys/net/bpf.c'
@@ -56,6 +58,8 @@ name: Native RTL8822CE source contracts
       - 'sys/sys/sysctl.h'
       - 'sys/sys/queue.h'
       - 'sys/net/if.h'
+      - 'sys/net/if.c'
+      - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
       - 'sys/net/if_media.h'
       - 'sys/net/if_media.c'
       - 'sys/net/bpf.c'
@@ -111,6 +115,8 @@ jobs:
             /sys/sys/sysctl.h
             /sys/sys/queue.h
             /sys/net/if.h
+            /sys/net/if.c
+            /external/bsd/wpa/dist/src/drivers/driver_bsd.c
             /sys/net/if_media.h
             /sys/net/if_media.c
             /sys/net/bpf.c

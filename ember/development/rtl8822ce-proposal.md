@@ -486,6 +486,7 @@ CC=gcc-16 RTW88_ROUTING_ANALYZE=1 sh ember/tools/rtw88-routing-contract.sh
 CC=gcc-16 RTW88_ENABLE_ANALYZE=1 sh ember/tools/rtw88-enable-contract.sh
 CC=gcc-16 RTW88_RA_ANALYZE=1 sh ember/tools/rtw88-ra-contract.sh
 CC=gcc-16 RTW88_RECONNECT_ANALYZE=1 sh ember/tools/rtw88-reconnect-contract.sh
+CC=gcc-16 RTW88_RECONNECT_ANALYZE=1 sh ember/tools/rtw88-aploss-contract.sh
 CC=gcc-16 RTW88_HWFEATURE_ANALYZE=1 sh ember/tools/rtw88-hwfeature-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-wme-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-fw-init-contract.sh
@@ -538,3 +539,26 @@ remain separate from Wi-Fi diagnosis.
 
 Follow [CONTRIBUTING](../../CONTRIBUTING.md), the
 [kernel guide](kernel.md) and the [board worksheet](board-change.md).
+
+## Idle AP-loss source contract
+
+`rtw88-aploss-contract.sh` executes the actual native watchdog, state request,
+RA invalidation, policy epoch, shared beacon-miss and node-leave notification.
+It also executes the owning RUN-supervision and RUN-to-SCAN source branches.
+The interface countdown is actual source; timer dispatch and hardware worker
+completion are explicit host services. This fixture does not repeat RF restart.
+Functional mutants remove idle supervision, policy withdrawal, RA withdrawal
+and the disconnect event. Each mutant must compile and then fail assertions.
+
+The first timeout sends a directed probe; the next miss requests SCAN.
+WPA uses MANUAL roaming. The actual shared leave path emits DISASSOC and
+link-down, while the BSD userland route case delivers EVENT_DISASSOC.
+The event consumer also aborts an outstanding connected scan. The supplicant's
+subsequent network selection, scan, handshake and address recovery are outside
+this host fixture. No wpa_cli operation is used by the tested source path.
+The fixture retains the current shared beacon-miss-count lifecycle across RUN.
+
+The source path is present; this change adds regression coverage only.
+It adds no second timer, AUTO-roaming override or radio capability.
+Actual AP disappearance and return remain a separate physical acceptance gate.
+Controlled reassociation and interface down/up do not establish that gate.

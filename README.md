@@ -1656,7 +1656,11 @@ remain unverified.
   because the MAC already accepts every multicast address. The actual-source
   ioctl contract passes. Three physical IPv6 address add/remove cycles preserve
   calibration count, WPA2 association and ready addresses. General AP-loss
-  recovery and reconnect latency remain unqualified. Read-only stats use a
+  recovery and reconnect latency remain unqualified. Host contracts execute the
+  idle watchdog, directed probe, epoch withdrawal and disconnect notification.
+  Functional mutants remove each required link. The BSD supplicant event
+  consumer is separate; these tests do not simulate a successful WPA rejoin.
+  Read-only stats use a
   per-call heap snapshot to retain the kernel stack budget. They expose
   the BASIC mask and encoded unicast DATA rates. CIX physical checks confirm
   the encoded fixed-rate policy and bidirectional file integrity. Successful
