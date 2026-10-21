@@ -99,7 +99,13 @@ int main(void)
     assert(aicwf_cmd_reply(&sc, 0x24, param, 4, 0x25,
         NULL, 0, true, 18) == 0);
     assert(writes == 1 && sc.sc_lock == 0 && !sc.sc_cmd_busy);
-    puts("PASS: 10 command reply, lifetime, cleanup and erasure cases");
+    reply_len = 8;
+    assert(aicwf_cmd_reply(&sc, 0x24, param, 4, 0x25,
+        (uint8_t[4]){0}, 4, 2, 0) == EPROTO);
+    reply_len = 4;
+    assert(aicwf_cmd_reply(&sc, 0x24, param, 4, 0x25,
+        (uint8_t[4]){0}, 4, 2, 0) == 0);
+    puts("PASS: 12 command reply, lifetime, cleanup and erasure cases");
 
     return 0;
 }

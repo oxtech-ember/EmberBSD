@@ -43,6 +43,27 @@ aicwf_sae_igtk_valid(const uint8_t *p, size_t len)
 	    memcmp(p + 2, "\0\0\0\0\0\0", 6) == 0;
 }
 
+/* Private v1 tail. The public IGTK request and legacy policy stay unchanged. */
+static inline bool
+aicwf_sae_igtk_wire(uint8_t wire[44], const uint8_t *p, size_t len,
+    uint8_t vif, bool exact_capability)
+{
+	if (len != 24 || (p[0] != 4 && p[0] != 5) || p[1] != 0 ||
+	    (exact_capability && vif > 3) ||
+	    (!exact_capability && !aicwf_sae_igtk_valid(p, len)))
+		return false;
+	memset(wire, 0, 44);
+	wire[0] = p[0];
+	wire[1] = 255;
+	wire[4] = 16;
+	memcpy(wire + 8, p + 8, 16);
+	if (exact_capability)
+		memcpy(wire + 24, p + 2, 6);
+	wire[40] = 5;
+	wire[41] = vif;
+	return true;
+}
+
 /* Unfragmented unicast management traffic with the selected peer. */
 static inline bool
 aicwf_pmf_header_valid(const uint8_t *p, size_t len, const uint8_t *dest,

@@ -1196,7 +1196,9 @@ The base system shell is unchanged.
   Protected SA Query and recovery checks are documented
   in the [SAE guide](ember/boot/aicwf-sae.md). A separate
   [fixed-image BIP patch source](ember/boot/aicwf-firmware-bip.md) builds two
-  bounded firmware sections. Loader and radio acceptance remain pending.
+  bounded firmware sections. The WLAN loader checks the exact image hash and
+  all 181 replacement words before CPU start. Instruction-model and radio
+  acceptance remain separate gates.
   The [original firmware instruction fixture](ember/tools/aicwf-firmware-check/README.md)
   reproduces initial-IPN, receive-counter and same-key defects in 33 QEMU cases.
   This CPU result does not qualify a replacement image or on-air PMF.

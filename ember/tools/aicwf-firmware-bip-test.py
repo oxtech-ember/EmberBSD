@@ -43,6 +43,16 @@ class PatchContract(unittest.TestCase):
         self.assertEqual([(r['address'], len(r['data'])) for r in rows],
                          [(0x142be0, 340), (0x165e48, 384)])
 
+    def test_kernel_header_has_only_replacements_and_digests(self):
+        rows = BIP.patch_sections(bytes(fixture()))
+        header = BIP.kernel_header(rows, '11' * 32, {'aicwf-firmware-bip.S': '22' * 32})
+        self.assertIn(b'aicwf_fw_bip_key[340]', header)
+        self.assertIn(b'aicwf_fw_bip_rx[384]', header)
+        self.assertIn(b'aicwf_fw_bip_modified_sha256[32]', header)
+        self.assertNotIn(b'original_image[', header)
+        self.assertIn(b'BSD-2-Clause', header)
+        self.assertIn(b'22' * 32, header)
+
     def test_unsupported_original(self):
         for data in (b'', bytes(341200), bytes(341768)):
             with self.assertRaises(ValueError):

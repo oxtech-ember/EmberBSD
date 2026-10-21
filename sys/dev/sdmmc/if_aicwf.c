@@ -48,6 +48,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/kmem.h>
 #include <sys/mbuf.h>
 #include <sys/mutex.h>
+#include <sys/sha2.h>
 #include <sys/pool.h>
 #include <sys/proc.h>
 #include <sys/socket.h>
@@ -68,6 +69,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/firmload.h>
 #include <dev/ic/fullmac_sae.h>
 #include <dev/sdmmc/if_aicwf_sae.h>
+#include <dev/sdmmc/if_aicwf_fw_bip.h>
 #include <dev/sdmmc/if_aicwf_vht.h>
 #include <dev/sdmmc/if_aicwf_sta.h>
 #include <dev/sdmmc/sdmmcchip.h>
@@ -452,6 +454,13 @@ struct aicwf_softc {
 	uint8_t			sc_ap;		/* station index of the AP */
 	uint8_t			sc_hwkey[AICWF_KEY_SLOTS];
 	uint16_t		sc_sae_caps;
+	bool			sc_fw_bip_pending;
+	bool			sc_fw_bip_verified;
+	bool			sc_fw_bip_ready;
+	bool			sc_fw_bip_wstatus_valid;
+	bool			sc_fw_bip_bootstatus_valid;
+	uint32_t		sc_fw_bip_wstatus;
+	uint32_t		sc_fw_bip_bootstatus;
 	bool			sc_sae_enabled;
 	bool			sc_sae_pending;
 	bool			sc_sae_authenticated;
@@ -619,7 +628,7 @@ aicwf_write(struct aicwf_softc *sc, size_t len, u_int reserve)
  */
 static int
 aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id, const void *param,
-    size_t param_len, uint16_t cfm_id, void *cfm, size_t cfm_len, bool strict,
+    size_t param_len, uint16_t cfm_id, void *cfm, size_t cfm_len, int strict,
     uint64_t epoch)
 {
 	uint8_t * const buf = sc->sc_txbuf;
@@ -672,7 +681,9 @@ aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id, const void *param,
 		error = cv_timedwait(&sc->sc_cv, &sc->sc_lock,
 		    mstohz(AICWF_CMD_TIMEOUT_MS));
 	}
-	if (error == 0 && strict && sc->sc_cfm_len < cfm_len)
+	/* Mode 0 pads legacy replies; 1 requires a minimum; 2 is exact. */
+	if (error == 0 && strict && (sc->sc_cfm_len < cfm_len ||
+	    (strict == 2 && sc->sc_cfm_len != cfm_len)))
 		error = EPROTO;
 	if (error == 0 && cfm_len != 0) {
 		/* A shorter answer reads as zeros past its end. */
@@ -694,6 +705,17 @@ aicwf_cmd(struct aicwf_softc *sc, uint16_t id, const void *param,
 {
 	return aicwf_cmd_reply(sc, id, param, param_len, cfm_id, cfm,
 	    cfm_len, false, 0);
+}
+
+/* Exact reply lengths are checked under sc_cmd_busy and sc_lock. */
+static int
+aicwf_fw_cmd(struct aicwf_softc *sc, uint16_t id, const void *param,
+    size_t param_len, uint16_t cfm_id, void *cfm, size_t cfm_len)
+{
+	if (!sc->sc_fw_bip_pending)
+		return aicwf_cmd(sc, id, param, param_len, cfm_id, cfm, cfm_len);
+	return aicwf_cmd_reply(sc, id, param, param_len, cfm_id, cfm,
+	    cfm_len, 2, 0);
 }
 
 static void
@@ -863,6 +885,44 @@ aicwf_mem_write(struct aicwf_softc *sc, uint32_t addr, uint32_t data)
 }
 
 static int
+aicwf_fw_mem_read(struct aicwf_softc *sc, uint32_t addr, uint32_t *data)
+{
+	uint8_t req[4], cfm[8];
+	int error;
+
+	if (!sc->sc_fw_bip_pending)
+		return aicwf_mem_read(sc, addr, data);
+	le32enc(req, addr);
+	error = aicwf_fw_cmd(sc, AICWF_DBG_MEM_READ_REQ, req, sizeof(req),
+	    AICWF_DBG_MEM_READ_CFM, cfm, sizeof(cfm));
+	if (error != 0)
+		return error;
+	if (le32dec(cfm) != addr)
+		return EPROTO;
+	*data = le32dec(cfm + 4);
+	return 0;
+}
+
+static int
+aicwf_fw_mem_write(struct aicwf_softc *sc, uint32_t addr, uint32_t data)
+{
+	uint8_t req[8], cfm[8];
+	int error;
+
+	if (!sc->sc_fw_bip_pending)
+		return aicwf_mem_write(sc, addr, data);
+	le32enc(req, addr);
+	le32enc(req + 4, data);
+	error = aicwf_fw_cmd(sc, AICWF_DBG_MEM_WRITE_REQ, req, sizeof(req),
+	    AICWF_DBG_MEM_WRITE_CFM, cfm, sizeof(cfm));
+	if (error != 0)
+		return error;
+	if (le32dec(cfm) != addr || le32dec(cfm + 4) != data)
+		return EPROTO;
+	return 0;
+}
+
+static int
 aicwf_fw_read(struct aicwf_softc *sc, const char *name, uint8_t **datap,
     size_t *sizep)
 {
@@ -951,6 +1011,60 @@ aicwf_bt_patches(struct aicwf_softc *sc, const uint8_t *pair, u_int npairs)
 	}
 
 	return 0;
+}
+
+static void
+aicwf_fw_bip_hash(const uint8_t *data, size_t size, uint8_t digest[32])
+{
+	SHA256_CTX ctx;
+
+	SHA256_Init(&ctx);
+	SHA256_Update(&ctx, data, size);
+	SHA256_Final(digest, &ctx);
+	explicit_memset(&ctx, 0, sizeof(ctx));
+}
+
+/* WLAN owns this RAM copy. The general Bluetooth uploader stays unchanged. */
+static int
+aicwf_wlan_upload(struct aicwf_softc *sc, bool h)
+{
+	uint8_t req[8 + AICWF_BLOCK_WRITE_MAX], cfm[4];
+	uint8_t *data;
+	size_t size, off, n;
+	int error;
+
+	sc->sc_fw_bip_pending = false;
+	sc->sc_fw_bip_verified = false;
+	sc->sc_fw_bip_ready = false;
+	sc->sc_fw_bip_wstatus_valid = false;
+	sc->sc_fw_bip_bootstatus_valid = false;
+	error = aicwf_fw_read(sc, h ? AICWF_FW_NAME_H : AICWF_FW_NAME,
+	    &data, &size);
+	if (error != 0)
+		return error;
+	error = aicwf_fw_bip_patch(data, size, h, &sc->sc_fw_bip_pending,
+	    aicwf_fw_bip_hash);
+	if (error != 0)
+		goto out;
+	for (off = 0; off < size; off += n) {
+		n = MIN(size - off, AICWF_BLOCK_WRITE_MAX);
+		memset(req, 0, sizeof(req));
+		le32enc(req, AICWF_FW_ADDR + off);
+		le32enc(req + 4, n);
+		memcpy(req + 8, data + off, n);
+		error = aicwf_fw_cmd(sc, AICWF_DBG_MEM_BLOCK_WRITE_REQ, req,
+		    sizeof(req), AICWF_DBG_MEM_BLOCK_WRITE_CFM, cfm, sizeof(cfm));
+		/* wstatus is opaque. The final code readback proves these bytes. */
+		if (error != 0)
+			goto out;
+		if (sc->sc_fw_bip_pending) {
+			sc->sc_fw_bip_wstatus = le32dec(cfm);
+			sc->sc_fw_bip_wstatus_valid = true;
+		}
+	}
+out:
+	firmware_free(data, size);
+	return error;
 }
 
 /*
@@ -1049,40 +1163,85 @@ aicwf_fw_options_set(struct aicwf_softc *sc)
 	u_int n;
 	int error;
 
-	if ((error = aicwf_mem_read(sc, AICWF_FW_CONFIG_BASE,
+	if ((error = aicwf_fw_mem_read(sc, AICWF_FW_CONFIG_BASE,
 	    &config_base)) != 0 ||
-	    (error = aicwf_mem_read(sc, AICWF_FW_PATCH_DESC, &desc)) != 0 ||
-	    (error = aicwf_mem_read(sc, AICWF_FW_VERSION, &fw_version)) != 0)
+	    (error = aicwf_fw_mem_read(sc, AICWF_FW_PATCH_DESC, &desc)) != 0 ||
+	    (error = aicwf_fw_mem_read(sc, AICWF_FW_VERSION, &fw_version)) != 0)
 		return error;
 	pairs = AICWF_FW_PATCH_BUF_OLD;
 	if (fw_version > AICWF_FW_VERSION_PATCH_BUF &&
-	    (error = aicwf_mem_read(sc, AICWF_FW_PATCH_BUF, &pairs)) != 0)
+	    (error = aicwf_fw_mem_read(sc, AICWF_FW_PATCH_BUF, &pairs)) != 0)
 		return error;
 	aprint_verbose_dev(sc->sc_dev, "firmware version 0x%08x\n",
 	    fw_version);
 
-	if ((error = aicwf_mem_write(sc, desc + AICWF_PATCH_MAGIC_OFF,
+	if (sc->sc_fw_bip_pending &&
+	    !aicwf_fw_bip_map(config_base, desc, fw_version, pairs,
+	    aicwf_fw_options, __arraycount(aicwf_fw_options)))
+		return EIO;
+
+	if ((error = aicwf_fw_mem_write(sc, desc + AICWF_PATCH_MAGIC_OFF,
 	    AICWF_PATCH_MAGIC)) != 0 ||
-	    (error = aicwf_mem_write(sc, desc + AICWF_PATCH_MAGIC_2_OFF,
+	    (error = aicwf_fw_mem_write(sc, desc + AICWF_PATCH_MAGIC_2_OFF,
 	    AICWF_PATCH_MAGIC_2)) != 0 ||
-	    (error = aicwf_mem_write(sc, desc + AICWF_PATCH_PAIRS_OFF,
+	    (error = aicwf_fw_mem_write(sc, desc + AICWF_PATCH_PAIRS_OFF,
 	    pairs)) != 0 ||
-	    (error = aicwf_mem_write(sc, desc + AICWF_PATCH_COUNT_OFF,
+	    (error = aicwf_fw_mem_write(sc, desc + AICWF_PATCH_COUNT_OFF,
 	    __arraycount(aicwf_fw_options))) != 0)
 		return error;
 	for (n = 0; n < __arraycount(aicwf_fw_options); n++) {
-		if ((error = aicwf_mem_write(sc, pairs + 8 * n,
+		if ((error = aicwf_fw_mem_write(sc, pairs + 8 * n,
 		    config_base + aicwf_fw_options[n][0])) != 0 ||
-		    (error = aicwf_mem_write(sc, pairs + 8 * n + 4,
+		    (error = aicwf_fw_mem_write(sc, pairs + 8 * n + 4,
 		    aicwf_fw_options[n][1])) != 0)
 			return error;
 	}
 	for (n = 0; n < 4; n++) {
-		if ((error = aicwf_mem_write(sc,
+		if ((error = aicwf_fw_mem_write(sc,
 		    desc + AICWF_PATCH_BLOCK_SIZE_OFF + 4 * n, 0)) != 0)
 			return error;
 	}
 
+	return 0;
+}
+
+/* This is the final memory operation before START_APP in the patched path. */
+static int
+aicwf_fw_bip_verify(struct aicwf_softc *sc)
+{
+	uint32_t config, desc, fw_version, pairs, addr, expected, actual;
+	unsigned n;
+	int error;
+
+	sc->sc_fw_bip_verified = false;
+	sc->sc_fw_bip_ready = false;
+	if (!sc->sc_fw_bip_pending)
+		return 0;
+	if ((error = aicwf_fw_mem_read(sc, AICWF_FW_CONFIG_BASE, &config)) != 0 ||
+	    (error = aicwf_fw_mem_read(sc, AICWF_FW_PATCH_DESC, &desc)) != 0 ||
+	    (error = aicwf_fw_mem_read(sc, AICWF_FW_VERSION, &fw_version)) != 0 ||
+	    (error = aicwf_fw_mem_read(sc, AICWF_FW_PATCH_BUF, &pairs)) != 0)
+		return error;
+	if (!aicwf_fw_bip_map(config, desc, fw_version, pairs,
+	    aicwf_fw_options, __arraycount(aicwf_fw_options)))
+		return EIO;
+	for (n = 0; n < 12; n++) {
+		if (!aicwf_fw_bip_meta_word(n, &addr, &expected))
+			return EIO;
+		if ((error = aicwf_fw_mem_read(sc, addr, &actual)) != 0)
+			return error;
+		if (actual != expected)
+			return EIO;
+	}
+	for (n = 0; n < 181; n++) {
+		if (!aicwf_fw_bip_word(n, &addr, &expected))
+			return EIO;
+		if ((error = aicwf_fw_mem_read(sc, addr, &actual)) != 0)
+			return error;
+		if (actual != expected)
+			return EIO;
+	}
+	sc->sc_fw_bip_verified = true;
 	return 0;
 }
 
@@ -1094,8 +1253,12 @@ aicwf_fw_start(struct aicwf_softc *sc)
 
 	le32enc(req, AICWF_FW_ADDR);
 	le32enc(req + 4, AICWF_START_APP_AUTO);
-	error = aicwf_cmd(sc, AICWF_DBG_START_APP_REQ, req, sizeof(req),
+	error = aicwf_fw_cmd(sc, AICWF_DBG_START_APP_REQ, req, sizeof(req),
 	    AICWF_DBG_START_APP_CFM, cfm, sizeof(cfm));
+	if (error == 0 && sc->sc_fw_bip_pending) {
+		sc->sc_fw_bip_bootstatus = le32dec(cfm);
+		sc->sc_fw_bip_bootstatus_valid = true;
+	}
 	if (error == 0)
 		aprint_verbose_dev(sc->sc_dev,
 		    "firmware started, status 0x%x\n", le32dec(cfm));
@@ -1110,6 +1273,21 @@ aicwf_chan_set(uint8_t *chan, u_int band, u_int freq)
 	chan[2] = band;
 	chan[3] = 0;			/* flags */
 	chan[4] = AICWF_TX_POWER_DBM;
+}
+
+static int
+aicwf_wlan_load(struct aicwf_softc *sc, bool h)
+{
+	int error;
+
+	if ((error = aicwf_wlan_upload(sc, h)) != 0 ||
+	    (error = aicwf_fw_options_set(sc)) != 0 ||
+	    (error = aicwf_fw_bip_verify(sc)) != 0 ||
+	    (error = aicwf_fw_start(sc)) != 0) {
+		sc->sc_fw_bip_ready = false;
+		return error;
+	}
+	return 0;
 }
 
 /* Fill a channel list with everything the radio covers. */
@@ -1142,8 +1320,10 @@ aicwf_fw_init(struct aicwf_softc *sc)
 {
 	uint8_t req[256], cfm[64];
 	u_int n2g, n5g;
+	bool bip_mfp;
 	int error;
 
+	sc->sc_fw_bip_ready = false;
 	/* Start the stack: on, no efuse override, vendor option bit 5. */
 	memset(req, 0, sizeof(req));
 	req[0] = 1;
@@ -1176,7 +1356,7 @@ aicwf_fw_init(struct aicwf_softc *sc)
 
 	memset(req, 0, sizeof(req));
 	le32enc(req, 1);
-	error = aicwf_cmd(sc, AICWF_MM_GET_MAC_ADDR_REQ, req, 4,
+	error = aicwf_fw_cmd(sc, AICWF_MM_GET_MAC_ADDR_REQ, req, 4,
 	    AICWF_MM_GET_MAC_ADDR_CFM, cfm, ETHER_ADDR_LEN);
 	if (error != 0)
 		return error;
@@ -1189,7 +1369,7 @@ aicwf_fw_init(struct aicwf_softc *sc)
 	if (error != 0)
 		return error;
 
-	error = aicwf_cmd(sc, AICWF_MM_VERSION_REQ, NULL, 0,
+	error = aicwf_fw_cmd(sc, AICWF_MM_VERSION_REQ, NULL, 0,
 	    AICWF_MM_VERSION_CFM, cfm, 28);
 	if (error != 0)
 		return error;
@@ -1200,6 +1380,10 @@ aicwf_fw_init(struct aicwf_softc *sc)
 	    le16dec(cfm + 24), cfm[26]);
 
 	sc->sc_fw_version = le32dec(cfm);
+	bip_mfp = le32dec(cfm) == 0x06090101 &&
+	    (le32dec(cfm + 20) & AICWF_FEATURE_MFP) != 0;
+	if (sc->sc_fw_bip_pending && !bip_mfp)
+		return EPROTO;
 	if (le32dec(cfm) == 0x06090101 &&
 	    (le32dec(cfm + 20) & AICWF_FEATURE_MFP) != 0) {
 		sc->sc_sae_caps = IEEE80211_SAE_CAP_EXTERNAL |
@@ -1239,7 +1423,7 @@ aicwf_fw_init(struct aicwf_softc *sc)
 	memset(req, 0, sizeof(req));
 	req[0] = AICWF_IF_STA;
 	memcpy(req + 2, sc->sc_enaddr, ETHER_ADDR_LEN);
-	error = aicwf_cmd(sc, AICWF_MM_ADD_IF_REQ, req, 10,
+	error = aicwf_fw_cmd(sc, AICWF_MM_ADD_IF_REQ, req, 10,
 	    AICWF_MM_ADD_IF_CFM, cfm, 2);
 	if (error != 0)
 		return error;
@@ -1248,7 +1432,11 @@ aicwf_fw_init(struct aicwf_softc *sc)
 		    cfm[0]);
 		return EIO;
 	}
+	if (sc->sc_fw_bip_pending && cfm[1] > 3)
+		return EPROTO;
 	sc->sc_vif = cfm[1];
+	sc->sc_fw_bip_ready = sc->sc_fw_bip_pending &&
+	    sc->sc_fw_bip_verified && bip_mfp;
 
 	return 0;
 }
@@ -1767,17 +1955,12 @@ aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
 		if (!sc->sc_connected || !sc->sc_sae_authenticated ||
 		    ic->ic_state != IEEE80211_S_RUN)
 			break;
-		if (!aicwf_sae_igtk_valid(req->data, req->len)) {
+		if (!aicwf_sae_igtk_wire(wire, req->data, req->len,
+		    sc->sc_vif, sc->sc_fw_bip_ready)) {
 			device_printf(sc->sc_dev, "nonzero initial IGTK IPN is unsupported\n");
 			error = EOPNOTSUPP;
 			break;
 		}
-		wire[0] = index;
-		wire[1] = AICWF_STA_NONE;
-		wire[4] = 16;
-		memcpy(wire + 8, req->data + 8, 16);
-		wire[40] = AICWF_CIPHER_BIP;
-		wire[41] = sc->sc_vif;
 		error = aicwf_cmd_reply(sc, AICWF_MM_KEY_ADD_REQ, wire, sizeof(wire),
 		    AICWF_MM_KEY_ADD_CFM, cfm, sizeof(cfm), true, epoch);
 		if (!aicwf_sae_current(sc, req, epoch) ||
@@ -3943,10 +4126,7 @@ aicwf_attachhook(device_t self)
 		aprint_error_dev(self, "Bluetooth is not set up: %d\n",
 		    error);
 
-	if ((error = aicwf_upload(sc, h ? AICWF_FW_NAME_H : AICWF_FW_NAME,
-	    AICWF_FW_ADDR)) != 0 ||
-	    (error = aicwf_fw_options_set(sc)) != 0 ||
-	    (error = aicwf_fw_start(sc)) != 0) {
+	if ((error = aicwf_wlan_load(sc, h)) != 0) {
 		aprint_error_dev(self, "firmware start failed: %d\n", error);
 		return;
 	}

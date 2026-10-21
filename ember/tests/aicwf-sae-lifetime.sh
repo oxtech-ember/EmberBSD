@@ -55,7 +55,7 @@ struct ieee80211_node {uint8_t ni_bssid[6];};
 struct ieee80211com {void *ic_ifp; int ic_opmode, ic_state; struct ieee80211_node *ic_bss; uint8_t ic_myaddr[6];};
 struct ieee80211req_sae {uint32_t generation; uint16_t version, op, len, reserved[2]; uint8_t bssid[6], data[1536];};
 struct ieee80211req {int i_len,i_val; void *i_data;};
-struct aicwf_softc {struct ieee80211com sc_ic; int sc_dev, sc_vif, sc_lock, sc_epoch_lock, sc_if; uint16_t sc_sae_caps; bool sc_if_attached,sc_sae_enabled,sc_sae_pending,sc_sae_authenticated,sc_connecting,sc_connected; uint32_t sc_sae_generation; uint64_t sc_sae_epoch, sc_join_serial, sc_configure_serial; bool sc_ptk_valid; uint64_t sc_pmf_rx_pn; uint8_t sc_ptk[16]; uint8_t sc_sae_bssid[6],sc_igtk[2];};
+struct aicwf_softc {struct ieee80211com sc_ic; int sc_dev, sc_vif, sc_lock, sc_epoch_lock, sc_if; uint16_t sc_sae_caps; bool sc_fw_bip_ready; bool sc_if_attached,sc_sae_enabled,sc_sae_pending,sc_sae_authenticated,sc_connecting,sc_connected; uint32_t sc_sae_generation; uint64_t sc_sae_epoch, sc_join_serial, sc_configure_serial; bool sc_ptk_valid; uint64_t sc_pmf_rx_pn; uint8_t sc_ptk[16]; uint8_t sc_sae_bssid[6],sc_igtk[2];};
 static void mutex_enter(int *p) { assert(!*p); *p = 1; }
 static void mutex_exit(int *p) { assert(*p); *p = 0; }
 #define mutex_spin_enter mutex_enter
@@ -81,7 +81,7 @@ static void aicwf_recover_scan(struct aicwf_softc *sc, uint64_t epoch, uint64_t 
 { (void)serial; assert(epoch == sc->sc_sae_epoch); }
 static void aicwf_disconnect(struct aicwf_softc *);
 static int aicwf_sae_ioctl(struct aicwf_softc *, u_long, struct ieee80211req *);
-static int interruption, disconnect_requests;
+static int interruption, disconnect_requests, key_add_requests;
 static int aicwf_cmd(struct aicwf_softc *sc, uint16_t id, const void *p,
     size_t n, uint16_t cid, void *cfm, size_t clen)
 { (void)sc; (void)id; (void)p; (void)n; (void)cid; (void)cfm; (void)clen;
@@ -121,8 +121,11 @@ static int aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id,
         }
     }
     if (id == AICWF_MM_KEY_ADD_REQ) {
-        /* Only status and hardware index are meaningful wire bytes. */
-        assert(clen == 2);
+        const uint8_t *wire = param;
+        assert(plen == 44 && clen == 2);
+        assert(memcmp(wire + 24, "\1\2\3\4\5\6", 6) == 0);
+        assert(memcmp(wire + 30, "\0\0\0\0\0\0\0\0\0\0", 10) == 0);
+        key_add_requests++;
         memset(cfm, 0, clen);
         ((uint8_t *)cfm)[1] = 7;
     } else {
@@ -154,6 +157,7 @@ int main(void)
             sc.sc_ic.ic_state = IEEE80211_S_RUN;
             sc.sc_if_attached = sc.sc_sae_enabled = true;
             sc.sc_sae_authenticated = sc.sc_connected = true;
+            sc.sc_fw_bip_ready = true;
             sc.sc_sae_epoch = 17;
             sc.sc_sae_generation = 42;
             memcpy(sc.sc_sae_bssid, node.ni_bssid, 6);
@@ -164,6 +168,8 @@ int main(void)
             req.op = IEEE80211_SAE_SET_IGTK;
             req.len = 24;
             req.data[0] = 4;
+            if (op == 0)
+                memcpy(req.data + 2, "\1\2\3\4\5\6", 6);
             if (op == 1 || op == 2) {
                 sc.sc_igtk[0] = 6;
                 req.op = IEEE80211_SAE_DELETE_IGTK;
@@ -183,6 +189,7 @@ int main(void)
                 int result = aicwf_sae_ioctl(&sc, SIOCS80211, &ireq);
                 assert(result == (mode ? ESTALE : 0));
             }
+            assert(sc.sc_fw_bip_ready);
             if (mode == 2)
                 assert(sc.sc_igtk[0] == 9 && sc.sc_sae_authenticated);
             else if (mode == 1)
@@ -194,6 +201,33 @@ int main(void)
                 assert(sc.sc_igtk[0] == AICWF_HWKEY_NONE);
         }
     }
+    /* Nonzero IPN cannot reach KEYADD without the exact image capability. */
+    memset(&sc, 0, sizeof(sc));
+    memset(&req, 0, sizeof(req));
+    sc.sc_ic.ic_bss = &node;
+    sc.sc_ic.ic_state = IEEE80211_S_RUN;
+    sc.sc_if_attached = true;
+    sc.sc_sae_enabled = true;
+    sc.sc_sae_authenticated = true;
+    sc.sc_connected = true;
+    sc.sc_sae_epoch = 17;
+    sc.sc_sae_generation = 42;
+    memcpy(sc.sc_sae_bssid, node.ni_bssid, 6);
+    memset(sc.sc_igtk, AICWF_HWKEY_NONE, sizeof(sc.sc_igtk));
+    req.version = IEEE80211_SAE_VERSION;
+    req.generation = 42;
+    memcpy(req.bssid, node.ni_bssid, 6);
+    req.op = IEEE80211_SAE_SET_IGTK;
+    req.len = 24;
+    req.data[0] = 4;
+    memcpy(req.data + 2, "\1\2\3\4\5\6", 6);
+    key_add_requests = 0;
+    interruption = 0;
+    assert(aicwf_sae_ioctl(&sc, SIOCS80211, &ireq) == EOPNOTSUPP);
+    assert(key_add_requests == 0 && sc.sc_igtk[0] == AICWF_HWKEY_NONE);
+    sc.sc_fw_bip_ready = true;
+    assert(aicwf_sae_ioctl(&sc, SIOCS80211, &ireq) == 0);
+    assert(key_add_requests == 1 && sc.sc_igtk[0] == 7);
     sc.sc_connected = sc.sc_sae_enabled = sc.sc_sae_authenticated = true;
     sc.sc_sae_caps = 3;
     sc.sc_igtk[0] = 7;
@@ -220,7 +254,7 @@ int main(void)
     aicwf_disconnect_ind(&sc, ind, sizeof(ind));
     assert(!sc.sc_connected && sc.sc_sae_epoch == epoch + 1 &&
         sc.sc_configure_serial == 1);
-    puts("PASS: 22 SAE lifetime and disconnect VIF/bounds cases");
+    puts("PASS: 24 SAE lifetime, extension and disconnect VIF/bounds cases");
 
 
     return 0;

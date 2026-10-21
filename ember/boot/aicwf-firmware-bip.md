@@ -28,8 +28,9 @@ The [linker script](../tools/aicwf-firmware-bip.ld) refuses growth past either
 span. No new BSS or code cave is used. The producer checks an ELF32 ARM
 profile with exactly these two executable load segments. SDK's existing ELF
 reader is ELF64; this finite ARM reader does not replace that interface.
-The output contains two replacement files and a manifest. It does not
-contain a full firmware image or upload code.
+The output contains two replacement files, a kernel data header and a manifest.
+The header contains only the new bytes, digests and source provenance. The
+output does not contain a full firmware image.
 
 ## Build
 
@@ -49,9 +50,11 @@ python3 -B ember/tools/aicwf-firmware-bip.py \
 python3 -B ember/tools/aicwf-firmware-bip-test.py
 ```
 
-`manifest.json` uses schema `aicwf-bip-patch-v1`. It records original and
+`manifest.json` uses schema `aicwf-bip-patch-v2`. It records original and
 replacement hashes, addresses, lengths, source hashes, compiler target and
-commands. Successful construction remains `assembled-not-executed`.
+commands. It also records `modified_sha256` and `kernel_header_sha256`.
+The earlier v1 schema does not have these two fields. Successful construction
+remains `assembled-not-executed`.
 
 ## Internal contract
 
@@ -85,6 +88,44 @@ copy, fill, AES and subkey operations. It does not wait for IRQ completion.
 The receive length remains bounded by the original u16 input domain; no
 assumed radio-buffer length is substituted.
 
+## WLAN loader contract
+
+The [WLAN loader](../../sys/dev/sdmmc/if_aicwf.c) reads an external firmware
+file into its owned RAM buffer. Only the exact non-H input hash selects the
+extension. The loader replaces 724 bytes and checks the whole modified hash.
+It does not change the external file. H and unknown images keep the legacy
+path. They cannot send a nonzero initial IGTK IPN.
+
+For the selected image, the loader checks the exact configuration, descriptor
+and option-pair map. All four copy-block sizes must be zero. It reads all 181
+replacement words after the option writes and before START_APP. No memory
+write follows that final check. The dedicated path requires complete command
+replies while command ownership is held. It validates each copied memory
+address/data echo. BLOCK and START status words remain opaque diagnostics.
+
+The private extension capability requires a complete 28-byte VERSION reply,
+version `0x06090101`, MFP, a complete MAC/ADD_IF reply and VIF 0..3. Init must
+complete before the capability becomes ready. Any selected-image mismatch
+refuses attachment. An association epoch change does not remove an image
+capability. Extended IGTK commands still require the current association and
+successful key confirmation. Same-key requests reach the firmware maximum
+operation; the host does not reset or skip its current replay state.
+
+Run the native source contracts with an explicit SDK source and a new output
+folder. OpenSSL 3 or later supplies the independent native digest provider.
+The optional original file enables the exact-image and full loader cases.
+
+```sh
+python3 -B ember/tools/aicwf-fw-bip-contract.py \
+    --sdk-source /absolute/EmberBSD-SDK \
+    --original /absolute/fmacfw_8800d80_u02.bin \
+    --output /absolute/obj/probes/aicwf-loader-check \
+    --cflags='-O1 -g -DNDEBUG -fsanitize=address,undefined -fno-sanitize-recover=all'
+```
+
+These checks execute native projections of the actual loader. They do not
+execute ARM instructions, start firmware or establish radio acceptance.
+
 ## Acceptance gates
 
 Independent static decode and actual original/new Thumb regressions must check
@@ -97,5 +138,6 @@ hashes and all write destinations. Vendor configuration and runtime patch
 ranges must remain disjoint. It must publish capability only after complete
 patched upload/readback and before the first extended key request. Cold reset
 and association teardown must preserve the host epoch/confirmation contract.
-Loader integration and physical PMF/BIP checks remain separate requirements.
+Actual patched Thumb execution, boot-ROM upload and physical PMF/BIP checks
+remain separate requirements.
 No arbitrary firmware, model-wide compatibility or WPA3 certification is claimed.
