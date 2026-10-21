@@ -38,8 +38,9 @@ plane offsets. LINEAR/offset0 are inferred from the matched native whitelist,
 not independently queried. Other kernels/providers are outside this contract.
 GETFB2 is not implemented by the retained DRM core.
 
-The standard GETPLANE, GETFB, MAP_DUMB, CRTC_GET_SEQUENCE and GEM_CLOSE ioctls
-supply metadata, a retained handle and the native UVM mapping. The existing
+The standard GETPLANE, GETFB, PRIME_HANDLE_TO_FD, MAP_DUMB, CRTC_GET_SEQUENCE
+and GEM_CLOSE ioctls supply metadata, a retained handle and the native UVM
+mapping. The existing
 public V3D_WAIT_BO ioctl waits at most one second on that same handle. This
 wait observes native GPU busy/error state; it is not an implicit-writer fence
 snapshot or a CPU reader lease. The external test controller must also bound
@@ -55,11 +56,26 @@ The plane number is an example. Use the actual inventory for the matched kit.
 
 ## Capture and lifetime
 
-The program maps read-only with MAP_SHARED. It qualifies 4 KiB and 64 KiB CPU
-pages, rounds the mapping length up to that page size, and rejects unaligned
-or signed-overflowing mmap offsets. It copies exactly 8,294,400 requested BO
-bytes into 6,220,800 RGB bytes. Native XR24 bytes are B,G,R,X; X is ignored.
-PPM carries opaque RGB and has no alpha dependency.
+The program exports the retained GEM handle with PRIME_HANDLE_TO_FD and
+DRM_CLOEXEC. It queries the actual BO extent with `lseek(fd, 0, SEEK_END)`.
+The native dma-buf seek implementation supplies this size; its fstat operation
+does not. A failed export or size query rejects the capture. The extent must
+cover the 8,294,400 frame bytes, be aligned to the admitted 4 KiB or 64 KiB CPU
+page size, and not exceed the native 256 MiB BO limit. The program rejects
+unaligned or signed-overflowing mmap offsets.
+
+The program maps that entire BO read-only with MAP_SHARED. It copies only the
+8,294,400 frame bytes into 6,220,800 RGB bytes. It does not copy BO padding.
+The output records both the queried BO extent and the mapping length. Native
+XR24 bytes are B,G,R,X; X is ignored. PPM carries opaque RGB and has no alpha
+dependency.
+
+Mapping only the frame can be shorter than its BO. A native mapper with an
+exact-size lookup and a NULL-object success fallback can return anonymous
+zero pages for that request. An older frame-sized snapshot can therefore be
+false black. Querying and mapping the full extent is an independent consumer
+check. It does not replace repair of that mapper contract or identify a
+physical black-screen or GPU-cache cause.
 
 GETPLANE is checked before and after the copy. A changed FB/CRTC, blank plane,
 wrong shape, ioctl error or backwards CRTC sequence/time rejects the capture.
@@ -81,7 +97,9 @@ a later writer or CPU producer. mmap itself performs no fence wait or cache
 synchronization. DMA_BUF_IOCTL_SYNC and PRIME begin/end_cpu_access hooks are
 absent in this provider. No new coherency guarantee follows from this probe.
 
-Device mapping, handle and fd cleanup finish before the output is created.
+Device mapping, PRIME fd, GEM handle and card fd cleanup finish before the
+output is created. The PRIME fd is closed on every path after a successful
+export, including size-query and mapping failures.
 The program opens a new file with O_EXCL and mode 0600. It never overwrites an
 existing path. Short writes are completed and zero-length writes fail. Write,
 fsync or close failure unlinks only the file created by this invocation. An
@@ -102,7 +120,8 @@ ruby ember/tools/bcmv3d-kms-snapshot-contract.rb /absolute/source
 ```
 
 The host contract compiles the actual diagnostic with controlled DRM and OS
-services. It verifies all RGB bytes, X-byte handling, 4/64 KiB mapping bounds,
+services. It verifies all RGB bytes, X-byte handling, queried BO extents, padded BOs,
+PRIME fd cleanup, 4/64 KiB mapping bounds,
 frame changes, short writes, errors and cleanup. Named compiled controls must
 reach their exact failed assertions. Signals, watchdog expiry and sanitizer diagnostics fail the run, even with
 an expected exit or assertion. Nine host process controls check this gate.

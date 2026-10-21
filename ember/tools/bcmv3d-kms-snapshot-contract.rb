@@ -67,10 +67,25 @@ execute = lambda do |name, args, seconds = 60|
   File.write(work + '/' + name + '.stderr', err)
   [out, err, status, timeout]
 end
+faults = {
+  'prime-export' => ['prime-export', Errno::EIO::Errno],
+  'prime-negative-fd' => ['prime-export', Errno::EIO::Errno],
+  'bo-seek' => ['bo-size', Errno::EIO::Errno],
+  'bo-zero' => ['bo-size', Errno::EINVAL::Errno],
+  'bo-small' => ['bo-size', Errno::EINVAL::Errno],
+  'bo-unaligned' => ['bo-size', Errno::EINVAL::Errno],
+  'bo-oversize' => ['bo-size', Errno::EINVAL::Errno],
+  'bo-negative' => ['bo-size', Errno::EINVAL::Errno],
+  'close-prime' => ['close-prime', Errno::EIO::Errno]
+}
 run = lambda do |name, args, expected = 0, condition = nil|
   out, err, status, timeout = execute.call(name, args)
   abort 'rejected result: ' + name unless accepted_result?(out, err, status,
     timeout, expected, condition, name.end_with?('-compile'))
+  if (fault = faults[name])
+    abort 'wrong fault stage/errno: ' + name unless
+      err.lines.map(&:strip).include?("FAIL: stage=#{fault[0]} errno=#{fault[1]}")
+  end
 end
 
 begin
@@ -97,7 +112,7 @@ begin
   File.write(body, original)
   compile = Shellwords.split(ENV.fetch('CC', 'cc')) + %w[-std=c11 -Wall -Wextra -Werror] + Shellwords.split(ENV.fetch('CFLAGS', '')) + ['-I' + uapi, '-I' + work, root + '/ember/tools/bcmv3d-kms-snapshot-contract.c', '-o', work + '/contract']
   run.call('positive-compile', compile)
-  scenarios = %w[pass page64 high-offset short eintr bad-page alloc open version driver plane-first blank no-crtc format two-formats get-fb no-handle width height pitch depth bpp wait wait-timeout map-offset unaligned offset-overflow mmap seq-before inactive-before plane-before changed-before plane-after changed-after changed-crtc seq-after inactive-after seq-backwards time-backwards munmap gem-close close-card exists create write-header write-rgb write-zero fsync close-output]
+  scenarios = %w[pass page64 page4-padded page64-padded bo-max prime-zero-fd high-offset short eintr prime-export prime-negative-fd bo-seek bo-zero bo-small bo-unaligned bo-oversize bo-negative close-prime bad-page alloc open version driver plane-first blank no-crtc format two-formats get-fb no-handle width height pitch depth bpp wait wait-timeout map-offset unaligned offset-overflow mmap seq-before inactive-before plane-before changed-before plane-after changed-after changed-crtc seq-after inactive-after seq-backwards time-backwards munmap gem-close close-card exists create write-header write-rgb write-zero fsync close-output]
   scenarios.each { |s| run.call(s, [work + '/contract', s]) }
   unless ENV['SNAPSHOT_SKIP_CONTROLS'] == '1'
     result = 'result == (success ? 0 : 1)'
@@ -114,7 +129,14 @@ begin
       'one-second-wait' => ['wait.timeout_ns = UINT64_C(1000000000);', 'wait.timeout_ns = UINT64_C(2000000000);', 'pass', 'w->timeout_ns == UINT64_C(1000000000)'],
       'cleanup-handle' => ['ioctl(fd, DRM_IOCTL_GEM_CLOSE, &gem) == -1', '((void)gem, false)', 'pass', 'gem_closes == 1 && unmaps == 1 && mapped == NULL'],
       'unlink-on-error' => ['created && unlink(path) == -1', '((void)created, false) && unlink(path) == -1', 'write-rgb', 'image == success'],
-      'rounded-map' => ['length = (SNAP_BYTES + (size_t)page - 1) & ~((size_t)page - 1);', 'length = SNAP_BYTES;', 'page64', 'n == ((SNAP_BYTES + (size_t)pagesize - 1) & ~((size_t)pagesize - 1))'],
+      'whole-bo-map' => ['length = (size_t)bo_size;', 'length = (SNAP_BYTES + (size_t)page - 1) & ~((size_t)page - 1);', 'page4-padded', 'n == (size_t)bo_size && seeks == 1 && prime'],
+      'query-bo-size' => ['extent = lseek(export_fd, 0, SEEK_END);', 'extent = false ? lseek(export_fd, 0, SEEK_END) : (off_t)SNAP_BYTES;', 'pass', 'n == (size_t)bo_size && seeks == 1 && prime'],
+      'reject-small-bo' => ['(uint64_t)extent < SNAP_BYTES', 'false', 'bo-small', 'n >= SNAP_BYTES && n <= SNAP_BO_MAX && (n & ((size_t)pagesize - 1)) == 0'],
+      'reject-large-bo' => ['(uint64_t)extent > SNAP_BO_MAX', 'false', 'bo-oversize', 'n >= SNAP_BYTES && n <= SNAP_BO_MAX && (n & ((size_t)pagesize - 1)) == 0'],
+      'reject-unaligned-bo' => ['((uint64_t)extent & ((uint64_t)page - 1)) != 0', 'false', 'bo-unaligned', 'n >= SNAP_BYTES && n <= SNAP_BO_MAX && (n & ((size_t)pagesize - 1)) == 0'],
+      'prime-readonly' => ['prime.flags = DRM_CLOEXEC;', 'prime.flags = DRM_CLOEXEC | DRM_RDWR;', 'pass', 'p->flags == DRM_CLOEXEC && p->fd == -1'],
+      'cleanup-prime' => ['close(export_fd) == -1', '((void)export_fd, false)', 'bo-small', '!card && !handle && !output && !prime && allocated == NULL'],
+      'prime-close-error' => ['export_fd != -1 && close(export_fd) == -1 && error == 0', 'export_fd != -1 && close(export_fd) == -1 && false', 'close-prime', result],
       'offset-width' => ['(off_t)offset', '(off_t)(uint32_t)offset', 'high-offset', '(uint64_t)off == map_offset']
     }
     mutations.each do |name, (before, after, scenario, condition)|

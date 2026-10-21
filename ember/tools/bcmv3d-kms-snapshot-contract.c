@@ -31,6 +31,7 @@ typedef unsigned long drm_handle_t;
 #endif
 static int model_open(const char *, int, ...);
 static int model_close(int);
+static off_t model_lseek(int, off_t, int);
 static int model_ioctl(int, unsigned long, ...);
 static void *model_mmap(void *, size_t, int, int, int, off_t);
 static int model_munmap(void *, size_t);
@@ -43,6 +44,7 @@ static int model_unlink(const char *);
 #define main snapshot_main
 #define open model_open
 #define close model_close
+#define lseek model_lseek
 #define ioctl model_ioctl
 #define mmap model_mmap
 #define munmap model_munmap
@@ -56,6 +58,7 @@ static int model_unlink(const char *);
 #undef main
 #undef open
 #undef close
+#undef lseek
 #undef ioctl
 #undef mmap
 #undef munmap
@@ -75,9 +78,12 @@ static int model_unlink(const char *);
 		}                                                              \
 	} while (0)
 static const char *mode;
-static bool card, handle, output, image;
+static bool card, handle, output, image, prime, prime_exported;
 static unsigned plane_calls, seq_calls, gem_closes, unmaps, closes, unlinks;
 static size_t written;
+static unsigned prime_exports, prime_closes, seeks;
+static off_t bo_size;
+static int prime_fd = 11;
 static unsigned char *mapped, *allocated;
 static long pagesize = 4096;
 static uint64_t map_offset = 65536;
@@ -138,7 +144,7 @@ model_open(const char *path, int flags, ...)
 		return 10;
 	}
 	CHECK(strcmp(path, "model.ppm") == 0 && !card && !handle &&
-	      mapped == NULL);
+	      mapped == NULL && !prime);
 	CHECK(flags == (O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC));
 	va_start(ap, flags);
 	access = va_arg(ap, int);
@@ -158,6 +164,11 @@ static int
 model_close(int fd)
 {
 	closes++;
+	if (fd == prime_fd && prime) {
+		prime_closes++;
+		prime = false;
+		return fail("close-prime") ? -1 : 0;
+	}
 	if (fd == 10) {
 		CHECK(card);
 		card = handle = false;
@@ -166,6 +177,18 @@ model_close(int fd)
 	CHECK(fd == 20 && output);
 	output = false;
 	return fail("close-output") ? -1 : 0;
+}
+
+static off_t
+model_lseek(int fd, off_t offset, int whence)
+{
+
+	CHECK(fd == prime_fd && prime && handle && card);
+	CHECK(offset == 0 && whence == SEEK_END);
+	seeks++;
+	if (fail("bo-seek"))
+		return (off_t)-1;
+	return bo_size;
 }
 
 static int
@@ -226,6 +249,17 @@ model_ioctl(int fd, unsigned long cmd, ...)
 		f->bpp = is("bpp") ? 24 : 32;
 		return 0;
 	}
+	if (cmd == DRM_IOCTL_PRIME_HANDLE_TO_FD) {
+		struct drm_prime_handle *p = arg;
+		CHECK(handle && p->handle == 7 && !prime);
+		CHECK(p->flags == DRM_CLOEXEC && p->fd == -1);
+		prime_exports++;
+		if (fail("prime-export"))
+			return -1;
+		p->fd = is("prime-negative-fd") ? -2 : prime_fd;
+		prime = prime_exported = p->fd >= 0;
+		return 0;
+	}
 	if (cmd == DRM_IOCTL_V3D_WAIT_BO) {
 		struct drm_v3d_wait_bo *w = arg;
 		CHECK(handle && w->handle == 7);
@@ -278,8 +312,9 @@ model_mmap(void *p, size_t n, int prot, int flags, int fd, off_t off)
 
 	CHECK(p == NULL && prot == PROT_READ && flags == MAP_SHARED &&
 	      fd == 10 && card && handle);
-	CHECK(n ==
-	      ((SNAP_BYTES + (size_t)pagesize - 1) & ~((size_t)pagesize - 1)));
+	CHECK(n == (size_t)bo_size && seeks == 1 && prime);
+	CHECK(n >= SNAP_BYTES && n <= SNAP_BO_MAX &&
+	    (n & ((size_t)pagesize - 1)) == 0);
 	CHECK((uint64_t)off == map_offset);
 	if (fail("mmap"))
 		return MAP_FAILED;
@@ -298,8 +333,11 @@ model_mmap(void *p, size_t n, int prot, int flags, int fd, off_t off)
 static int
 model_munmap(void *p, size_t n)
 {
-	CHECK(p == mapped && n == ((SNAP_BYTES + (size_t)pagesize - 1) &
-				   ~((size_t)pagesize - 1)));
+	size_t i;
+
+	CHECK(p == mapped && n == (size_t)bo_size);
+	for (i = SNAP_BYTES; i < n; i++)
+		CHECK(mapped[i] == 0xcc);
 	unmaps++;
 	if (fail("munmap"))
 		return -1;
@@ -371,7 +409,7 @@ main(int argc, char **argv)
 
 	CHECK(argc == 2);
 	mode = argv[1];
-	if (is("page64"))
+	if (is("page64") || is("page64-padded"))
 		pagesize = 65536;
 	if (is("bad-page"))
 		pagesize = 16384;
@@ -382,11 +420,37 @@ main(int argc, char **argv)
 	if (is("high-offset"))
 		map_offset = ((uint64_t)INT64_MAX - SNAP_BYTES - 65536) &
 			     ~(uint64_t)(pagesize - 1);
+	bo_size = (off_t)((SNAP_BYTES + (size_t)pagesize - 1) &
+	    ~((size_t)pagesize - 1));
+	if (is("page4-padded") || is("page64-padded"))
+		bo_size += pagesize;
+	if (is("bo-max"))
+		bo_size = SNAP_BO_MAX;
+	if (is("bo-zero"))
+		bo_size = 0;
+	if (is("bo-small"))
+		bo_size = (off_t)SNAP_BYTES - pagesize;
+	if (is("bo-unaligned"))
+		bo_size++;
+	if (is("bo-oversize"))
+		bo_size = SNAP_BO_MAX + pagesize;
+	if (is("bo-negative"))
+		bo_size = -2;
+	if (is("prime-zero-fd"))
+		prime_fd = 0;
 	success = is("pass") || is("page64") || is("high-offset") ||
-		       is("short") || is("eintr");
+		       is("short") || is("eintr") || is("page4-padded") ||
+	    is("page64-padded") || is("bo-max") || is("prime-zero-fd");
 	result = snapshot("model-card", 31, "model.ppm");
 	CHECK(result == (success ? 0 : 1));
-	CHECK(!card && !handle && !output && allocated == NULL);
+	CHECK(!card && !handle && !output && !prime && allocated == NULL);
+	CHECK(prime_closes == (prime_exported ? 1U : 0U));
+	if (is("prime-export") || is("prime-negative-fd"))
+		CHECK(prime_exports == 1 && seeks == 0 && prime_closes == 0);
+	if (is("bo-seek") || is("bo-zero") || is("bo-small") ||
+	    is("bo-unaligned") || is("bo-oversize") || is("bo-negative"))
+		CHECK(prime_exports == 1 && seeks == 1 && prime_closes == 1 &&
+		    unmaps == 0 && written == 0);
 	CHECK(image == success);
 	if (success) {
 		CHECK(written == 17 + SNAP_RGB_BYTES);

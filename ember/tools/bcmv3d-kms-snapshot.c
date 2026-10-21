@@ -28,6 +28,7 @@ _Static_assert(sizeof(off_t) >= 8, "64-bit mmap offsets required");
 #define SNAP_HEIGHT 1080U
 #define SNAP_PITCH (SNAP_WIDTH * 4U)
 #define SNAP_BYTES ((size_t)SNAP_PITCH * SNAP_HEIGHT)
+#define SNAP_BO_MAX UINT64_C(268435456)
 #define SNAP_RGB_BYTES ((size_t)SNAP_WIDTH * SNAP_HEIGHT * 3U)
 
 struct snapshot_plane {
@@ -106,14 +107,16 @@ snapshot(const char *node, uint32_t plane_id, const char *path)
 	struct drm_v3d_wait_bo wait = {0};
 	struct drm_version version = {0};
 	struct drm_gem_close gem = {0};
+	struct drm_prime_handle prime = {.fd = -1};
 	const unsigned char *map = MAP_FAILED;
 	unsigned char *rgb = NULL;
 	char name[8] = {0};
 	const char *stage = "page-size";
 	long page;
 	size_t length = 0, i;
-	uint64_t offset;
-	int fd = -1, output = -1, error = 0, e;
+	uint64_t offset, bo_size = 0;
+	off_t extent;
+	int fd = -1, export_fd = -1, output = -1, error = 0, e;
 	bool created = false;
 
 	/* Qualify the two CPU page sizes covered by the native allocator tests. */
@@ -122,7 +125,6 @@ snapshot(const char *node, uint32_t plane_id, const char *path)
 		error = EINVAL;
 		goto out;
 	}
-	length = (SNAP_BYTES + (size_t)page - 1) & ~((size_t)page - 1);
 	stage = "allocate-rgb";
 	rgb = malloc(SNAP_RGB_BYTES);
 	if (rgb == NULL) {
@@ -166,6 +168,32 @@ snapshot(const char *node, uint32_t plane_id, const char *path)
 		error = EINVAL;
 		goto out;
 	}
+	stage = "prime-export";
+	prime.handle = fb.handle;
+	prime.flags = DRM_CLOEXEC;
+	if (ioctl(fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &prime) == -1) {
+		error = errno;
+		goto out;
+	}
+	if (prime.fd < 0) {
+		error = EIO;
+		goto out;
+	}
+	export_fd = prime.fd;
+	stage = "bo-size";
+	extent = lseek(export_fd, 0, SEEK_END);
+	if (extent == (off_t)-1) {
+		error = errno;
+		goto out;
+	}
+	if (extent < 0 || (uint64_t)extent < SNAP_BYTES ||
+	    (uint64_t)extent > SNAP_BO_MAX || (uint64_t)extent > SIZE_MAX ||
+	    ((uint64_t)extent & ((uint64_t)page - 1)) != 0) {
+		error = EINVAL;
+		goto out;
+	}
+	bo_size = (uint64_t)extent;
+	length = (size_t)bo_size;
 	stage = "wait-bo";
 	wait.handle = fb.handle;
 	wait.timeout_ns = UINT64_C(1000000000);
@@ -221,9 +249,10 @@ snapshot(const char *node, uint32_t plane_id, const char *path)
 		goto out;
 	}
 	printf("BO snapshot: plane=%" PRIu32 " fb=%" PRIu32 " crtc=%" PRIu32
-	    " width=%u height=%u pitch=%u depth=%u bpp=%u page=%ld map-bytes=%zu\n",
+	    " width=%u height=%u pitch=%u depth=%u bpp=%u page=%ld bo-bytes=%" PRIu64
+	    " map-bytes=%zu\n",
 	    plane_id, fb.fb_id, first.plane.crtc_id, fb.width, fb.height,
-	    fb.pitch, fb.depth, fb.bpp, page, length);
+	    fb.pitch, fb.depth, fb.bpp, page, bo_size, length);
 	printf("bracket: sequence=%" PRIu64 "..%" PRIu64 " ns=%" PRId64 "..%" PRId64
 	    "; LINEAR/offset0 inferred from the pinned native whitelist\n",
 	    (uint64_t)seq0.sequence, (uint64_t)seq1.sequence,
@@ -233,6 +262,10 @@ out:
 	if (map != MAP_FAILED && munmap((void *)map, length) == -1 && error == 0) {
 		error = errno;
 		stage = "munmap";
+	}
+	if (export_fd != -1 && close(export_fd) == -1 && error == 0) {
+		error = errno;
+		stage = "close-prime";
 	}
 	if (gem.handle != 0 && ioctl(fd, DRM_IOCTL_GEM_CLOSE, &gem) == -1 &&
 	    error == 0) {
