@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Complete native wrapper caller and core; modeled stack layout and fake bus.
  */
+#define RTW88_START_CORE_ONLY 1
 #define main native_start_main
 #include "rtw88-start-contract.c"
 #undef main
+#undef RTW88_START_CORE_ONLY
 #include "fixed-constants.inc"
 #include <net80211/_ieee80211.h>
 #include <sys/types.h>

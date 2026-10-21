@@ -159,7 +159,9 @@ returns `EOPNOTSUPP` until a separate RTS/CTS policy is qualified. This API does
 not enable WME or HT. The native fixed contract executes the complete wrapper
 handoff and core, plus actual association rate negotiation with reordered peer
 rates. Kernel object layout, channel lookup and bus services are modeled.
-It does not execute the complete media-change and station-join functions.
+The fixed contract reuses only the core startup fixture and labels it as such.
+The separate start runner retains all native state/default EDCA tests.
+The fixed contract does not execute complete media-change and station-join functions.
 Target build and fixed-rate physical acceptance remain pending.
 
 Manual SSID updates now stage the desired network without requesting a cold

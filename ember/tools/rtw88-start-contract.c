@@ -2100,7 +2100,11 @@ test_rx_beacon(void)
 	rtw88_core_detach(&sc);
 }
 
+/* The fixed-rate caller has its own stack layout. Its explicit core-only
+ * reuse excludes this state fixture. The normal start runner keeps it. */
+#ifndef RTW88_START_CORE_ONLY
 #include "rtw88-state-test.h"
+#endif
 
 int
 main(void)
@@ -2145,12 +2149,14 @@ main(void)
 	test_tx_refusals();
 	test_all_ac_producers();
 	test_edca_quarantine_recovery();
+#ifndef RTW88_START_CORE_ONLY
 	test_native_state_defaults();
 	test_native_state_edca_failures();
 	test_native_state_negotiated();
 	test_native_state_reject_context();
 	test_native_state_fixed_clear();
 	test_native_state_epoch();
+#endif
 	test_loopback_mode();
 	test_rf_mode_register_uses_sipi();
 	test_phy_and_channel_at_start();
@@ -2159,7 +2165,11 @@ main(void)
 	test_stop_during_bootstrap();
 	test_stale_generation();
 	test_success_consumes_tables();
+#ifdef RTW88_START_CORE_ONLY
+	printf("rtw88 core-only start fixture: %u assertions, %u failures\n",
+#else
 	printf("rtw88 start contract: %u assertions, %u failures\n",
+#endif
 	    assertions, failures);
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }
