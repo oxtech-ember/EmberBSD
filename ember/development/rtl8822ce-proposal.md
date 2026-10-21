@@ -157,8 +157,8 @@ to the core. The core checks the exact 12-rate legacy map before DMA. It does
 not choose the highest peer rate or apply fallback. AUTO payloads use the
 separate bounded firmware rate-adaptation path described below.
 
-The fixed path requires the current associated STA BSS in RUN, an active policy,
-no pending state work and the current core channel. Only ToDS unicast payload
+The fixed path requires the current associated STA BSS in RUN, a committed
+active policy and the current core channel. Only ToDS unicast payload
 DATA is eligible. Management, null DATA and group DATA keep their old descriptor
 bytes. For ToDS the group destination is addr3, not the AP receiver in addr1.
 Malformed explicit inputs return an error. OFDM with ERP protection requested
@@ -214,6 +214,14 @@ Only current RUN STA ToDS unicast payload DATA/QoS with a matching epoch,
 channel and firmware generation clears descriptor USE_RATE/DISDATAFB. Fixed,
 management, null and group frames keep their explicit existing descriptor path.
 A missing capsule rejects AUTO payloads before DMA.
+
+The parent RUN callback may invoke the first producer before the state worker
+releases ownership. Payload acceptance follows the committed policy and current
+numeric capsule, not the worker's scheduling flag. A new request withdraws
+acceptance and changes the epoch before any later producer. The combined
+attach/association test checks both the first posted DATA and a real SCAN
+request issued inside parent RUN. The latter retains the queued DATA without
+posting it. Worker scheduling and strict WME apply gates remain unchanged.
 
 Wide RA is eligible only without ERP protection. Initial protection or a later
 USEPROT event selects a visible legacy CCK policy only if the actual lowest
@@ -419,6 +427,18 @@ Legacy state transitions apply contextual DCF EDCA before new producers.
 Native attach now explicitly enables legacy WME after strict consumer
 registration. Software default initialization waits for the late BSS node.
 HT/VHT advertisement remains disabled.
+
+A GCC16 CIX kernel at `ee13cd4c` passed bounded physical queue/data checks on
+one 2.4 GHz AP. A complete repeat delivered twelve ICMP replies per AC, with
+matching producer counters and no new interface, DMA, drop or ring-full errors.
+The first BK probe lost one reply. Normal IPv4 SSH service recovered with its
+existing IPQoS policy. Bidirectional 1 MiB transfers over normal SSH, raw IPv4
+and raw IPv6 retained matching SHA256. WPA2-PSK/CCMP, DHCP and SLAAC remained
+available. That kernel used legacy basic-rate AUTO; it did not include the new
+RA, reconnect or hardware-report atoms above. These trials do not establish
+RF scheduling, fairness, adaptive rates, throughput limits or endurance.
+Cold-calibration quality remains unqualified.
+
 The shared [TXOP width prerequisite](net80211-txop.md) preserves wire values
 and rejects unsupported consumer widths. The shared
 [STA offer prerequisite](net80211-wme.md) validates emitted offers, peer

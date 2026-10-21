@@ -184,7 +184,11 @@ main(void)
 	reject(&sc);
 	setup_fixed(&sc);
 	net.ic.ic_fixed_rate = 11;
+	/* Current committed policy may transmit before worker ownership ends. */
 	net.work_pending = 1;
+	CHECK(rtw88_net_tx_submit(&net, &node, RTW88_TXQ_BE, frame, 24) == 0);
+	/* A real new request withdraws acceptance before another payload. */
+	(void)rtw88_net_request(&net.policy);
 	reject(&sc);
 	net.work_pending = 0;
 	net.policy.accepting = 0;

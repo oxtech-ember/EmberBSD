@@ -29,6 +29,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
     "$tools/rtw88-fixed-contract.c" \
     "$src/sys/dev/ic/rtw88.c" \
+    "$src/sys/dev/ic/rtw88_net_policy.c" \
     "$src/sys/dev/ic/rtw88_hw.c" \
     "$src/sys/dev/ic/rtw88_fw_init.c" \
     "$src/sys/dev/ic/rtw8822c.c" \

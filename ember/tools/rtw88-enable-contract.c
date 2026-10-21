@@ -6,6 +6,7 @@
 #include "enable-routing.inc"
 static struct chanAccParams enable_ap_params;
 static unsigned enable_run_callbacks,enable_first_producer;
+static int enable_reenter_run;
 static int enable_parent_state(struct ieee80211com *ic,enum ieee80211_state state,int arg)
 {
     (void)arg;ic->ic_state=state;
@@ -27,10 +28,26 @@ static int enable_parent_state(struct ieee80211com *ic,enum ieee80211_state stat
                 CHECK(mmio32(regs[ac])==expected);
             }
         }
+        CHECK(net->work_pending);
+        CHECK(net->core->sc_ra.configured && net->core->sc_ra.active);
+        CHECK(net->core->sc_ra.epoch==net->policy.epoch);
+        CHECK(net->core->sc_ra.generation==net->core->sc_generation);
         enable_run_callbacks++;
+        if(enable_reenter_run) {
+            uint64_t epoch=net->policy.epoch;
+            CHECK(rtw88_net_newstate(ic,IEEE80211_S_SCAN,0)==0);
+            CHECK(!net->policy.accepting && net->policy.epoch==epoch+1);
+            CHECK(!net->core->sc_ra.configured && net->reset_required);
+        }
         if(ic->ic_ifp->if_snd.m!=NULL) {
+            struct mbuf *head=ic->ic_ifp->if_snd.m;
+            unsigned errors=route_errors,posted=net->core->sc_txq[RTW88_TXQ_VO].queued;
             enable_first_producer++;
             rtw88_net_start(ic->ic_ifp);
+            if(enable_reenter_run) {
+                CHECK(ic->ic_ifp->if_snd.m==head && route_errors==errors);
+                CHECK(net->core->sc_txq[RTW88_TXQ_VO].queued==posted);
+            }
         }
     }
     return 0;
@@ -112,7 +129,7 @@ static struct rtw88_net *enable_attach(struct rtw88_softc *sc,kmutex_t *lock)
     }
     memset(ni->ni_macaddr,0x22,6);memset(ni->ni_bssid,0x22,6);
     ni->ni_intval=100;ni->ni_wme_ie=&observed_wme;
-    net->ec.ec_if.if_flags|=IFF_RUNNING;
+    net->ec.ec_if.if_flags|=IFF_RUNNING|IFF_UP;
     CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_ASSOC,0)==0);
     rtw88_net_state_work(&net->state_work,net);
     CHECK(!net->work_pending && net->policy.accepting);
@@ -257,6 +274,26 @@ int main(void)
     CHECK(memcmp(&before,&ic->ic_wme,sizeof(before))==0 && f.writes==writes);
     enable_destroy(net);
     enable_negatives();
+    /* A real request during parent RUN withdraws acceptance before first TX.
+     * Worker ownership alone permits the current commit; a new epoch does not. */
+    net=enable_attach(&sc,&lock);
+    if(!net)return 1;
+    ic=&net->ic;active_ic=ic;
+    CHECK(ieee80211_send_mgmt(ic,ic->ic_bss,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);
+    CHECK(enable_wire_offer(net));
+    m=enable_response(ic,1,0);
+    ieee80211_recv_mgmt_assoc_resp(ic,m,ic->ic_bss,IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);
+    m_freem(m);
+    queue_packet(&net->ec.ec_if.if_snd,ether_packet(0x30,0,0));
+    enable_reenter_run=1;
+    rtw88_net_state_work(&net->state_work,net);
+    enable_reenter_run=0;
+    CHECK(ic->ic_state==IEEE80211_S_SCAN && !net->work_pending);
+    CHECK(net->ec.ec_if.if_snd.m!=NULL && !sc.sc_ra.configured);
+    m_freem(net->ec.ec_if.if_snd.m);
+    net->ec.ec_if.if_snd.m=net->ec.ec_if.if_snd.ifq_tail=NULL;
+    net->ec.ec_if.if_snd.ifq_len=0;
+    enable_destroy(net);
     CHECK(enable_allocations==enable_releases);
     printf("Native WME attach/offer/RUN: %u checks, %u failures\n",checks,failures);
     return failures!=0 || core_failures!=0;

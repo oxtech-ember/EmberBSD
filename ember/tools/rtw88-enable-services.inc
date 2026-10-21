@@ -4,6 +4,8 @@
 #define KM_SLEEP 0
 #define PRI_NONE 0
 #define SOFTINT_NET 0
+/* Distinct service-model bits; routing owns RUNNING=1/OACTIVE=2. */
+#define IFF_UP 32
 #define IFF_BROADCAST 4
 #define IFF_SIMPLEX 8
 #define IFF_MULTICAST 16

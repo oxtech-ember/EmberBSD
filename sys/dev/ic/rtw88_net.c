@@ -660,7 +660,8 @@ rtw88_net_tx_submit(struct rtw88_net *net, struct ieee80211_node *ni,
 	    (bytes[4] & 1) != 0 ||
 	    ((bytes[1] & 3) == 1 && (bytes[16] & 1) != 0))
 		return rtw88_tx_raw(net->core, q, frame, len);
-	if (net->work_pending || !net->policy.accepting || net->policy.dying)
+	/* Parent RUN may start TX before this committed worker releases ownership. */
+	if (!net->policy.accepting || net->policy.dying)
 		return EBUSY;
 	if ((index < 0 && index != IEEE80211_FIXED_RATE_NONE) ||
 	    ic->ic_state != IEEE80211_S_RUN ||

@@ -68,7 +68,10 @@ for name,result in [('ieee80211_chan2ieee','unsigned'),('ieee80211_ieee2mhz','un
   body='#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored "-Wsign-compare"\n'+body+'#pragma GCC diagnostic pop\n'
  parts.append(body)
 (out/'enable-shared.inc').write_text('\n'.join(parts))
-parts=[net[:net.index('#include')]]
-for name,result in [('rtw88_net_basic_rates','static unsigned'),('rtw88_net_wme_apply','static int'),('rtw88_net_edca_prepare','static int'),('rtw88_net_state_work','static void'),('rtw88_net_attach','int')]:
+bsd=read('sys/net80211/ieee80211_netbsd.c')
+parts=[net[:net.index('#include')], bsd[:bsd.index('#include')],
+       '#define ifqueue queue\n', function(bsd,'ieee80211_drain_ifq','static void'),
+       '#undef ifqueue\n']
+for name,result in [('rtw88_net_basic_rates','static unsigned'),('rtw88_net_wme_apply','static int'),('rtw88_net_edca_prepare','static int'),('rtw88_net_ra_prepare','static int'),('rtw88_net_restart_peer','static int'),('rtw88_net_state_work','static void'),('rtw88_net_attach','int')]:
  parts.append(function(net,name,result))
 (out/'enable-native.inc').write_text('\n'.join(parts))

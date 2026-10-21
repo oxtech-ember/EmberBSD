@@ -1166,7 +1166,11 @@ The base system shell is unchanged.
   before sequence/crypto, and completion accounting. The native wrapper now
   advertises legacy WME after strict apply registration and software default
   initialization. Combined host contracts cover attach through negotiated RUN;
-  radio QoS acceptance remains separate. HT/VHT remain unadvertised. A bounded
+  bounded four-AC queue/data trials pass on one 2.4 GHz AP. RF QoS scheduling
+  and endurance remain unqualified. Source contracts also cover legacy AUTO
+  firmware rate adaptation, linked-peer quiescence before reconnect, and a bounded
+  boot capability report. Their firmware, RF and reconnect behavior still needs
+  target qualification. HT/VHT remain unadvertised. A bounded
   [A-MSDU receive path](ember/development/net80211-amsdu.md) remains disabled
   until peer negotiation and aggregation requirements are complete.
   See the [source boundary and checks](ember/development/rtl8822ce-proposal.md#current-source-boundary)
@@ -1652,20 +1656,29 @@ remain unverified.
   recovery and reconnect latency remain unqualified. Read-only stats now expose
   the BASIC mask and encoded unicast DATA rates. CIX physical checks confirm
   the encoded fixed-rate policy and bidirectional file integrity. Successful
-  producer-write counters for MGMT/BE/BK/VI/VO remain source-qualified.
+  producer-write counters expose MGMT/BE/BK/VI/VO separately.
   A source regression preserves the BPF duplicate marker across queue probes
   and commits WME metadata after the Ethernet tap. Raw capture consumes the
   serialized header after AC metadata is cleared.
-  Target and physical acceptance of these queue counters is pending.
-  Counters do not prove air ACKs or delivery. Explicit fixed legacy media
-  now has a validated native caller-to-core path; AUTO is unchanged. Corrected
+  A CIX kernel at `ee13cd4c` passed twelve ICMP exchanges per AC with matching
+  producer counters and no interface, DMA, drop or ring-full error increments.
+  The first BK probe lost one reply; the complete repeat passed. The same kernel
+  passed bidirectional 1 MiB SHA256 checks over normal SSH, raw IPv4 and raw IPv6.
+  These bounded trials used one 2.4 GHz AP and legacy basic-rate AUTO.
+  Counters alone do not prove air ACKs or delivery. Explicit fixed legacy media
+  now has a validated native caller-to-core path. Legacy AUTO now has a source-tested
+  numeric peer-rate policy and firmware RA command before RUN acceptance. Corrected
   2.4 GHz channel flags expose native 11g media selection. A separate actual-source
   attach/media contract checks explicit legacy rates and band limits. New mode
   constraints also refresh active channels after an AUTO association. OFDM with
   required ERP protection fails closed. A GCC16 cross-built kernel passed
   CIX WPA2/CCMP and bidirectional 1 MiB file checks at fixed 6, 24 and 54 Mbps
-  in 11g mode. AUTO still uses the lowest basic rate. Adaptive rates, HT/VHT,
-  5 GHz operation on this AP and long-run performance remain unqualified.
+  in 11g mode. Those fixed-rate trials do not qualify the new adaptive policy.
+  Reconnect contracts quiesce the linked core and drain management references
+  before restart. The bounded hardware report remains firmware telemetry,
+  separate from negotiated PHY and measured capacity. Adaptive rates, HT/VHT,
+  reconnect latency, 5 GHz operation on this AP and long-run performance
+  remain unqualified.
   Manual SSID staging and
   idempotent BSD media selection now pass a native legacy-scan contract.
   BSD supplicant scans preserve mode and channel-list restrictions instead of
