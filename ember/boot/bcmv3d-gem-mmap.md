@@ -84,3 +84,11 @@ execute a native kernel or test display output.
 ```sh
 ruby ember/tools/bcmv3d-mmap-offset-contract.rb --work NEW_DIRECTORY
 ```
+
+Kernel `8c26cd72` also passed the same five CPU mapping cases on physical
+CM5 with 4 KiB pages. The upstream `modetest` atomic route completed one
+1920x1080 mode set and normal teardown on that kernel. It created and
+released one BO. Reserved memory returned to 12,500,992 bytes. The cached
+owner recorded two latches and no owner or IRQ error. These functional
+target checks do not force concurrent first offset creation. They do not
+accept physical HDMI pixels, input, a seat provider or 64 KiB target pages.
