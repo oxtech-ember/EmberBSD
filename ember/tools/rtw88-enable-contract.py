@@ -27,12 +27,13 @@ model=replace(model,'unsigned ic_inact_run;', 'unsigned ic_inact_run;\n    unsig
 model=replace(model,'\t(void)ifp;\n\tassert(captured == NULL);','''    if(ifp->if_start!=NULL) { ifp->if_start(ifp);return; }
     (void)ifp;
     assert(captured == NULL);''')
-model=replace(model,'\t(void)arg;\n\tassert(!beacon_lock);\n\tic->ic_state = (unsigned)state;','''    assert(!beacon_lock);
-    if(ic->ic_newstate!=NULL) {
-        (void)ic->ic_newstate(ic,(enum ieee80211_state)state,arg);
-        return;
-    }
-    ic->ic_state=(unsigned)state;''')
+# The shared fixture can dispatch its own test callback before the state model.
+# Extend only that model. Preserve callback return values and fallback ordering.
+state_model=re.search(r'^static int\nieee80211_new_state\(.*?^}',model,re.M|re.S)
+if state_model is None:raise ValueError('shared new-state service model')
+old_state=state_model.group()
+new_state=replace(old_state,'\tassert(!beacon_lock);','\tassert(!beacon_lock);\n\tif (ic->ic_newstate != NULL)\n\t\treturn ic->ic_newstate(ic, (enum ieee80211_state)state, arg);')
+model=replace(model,old_state,new_state)
 (out/'routing-model.inc').write_text(model)
 # Extend only the service/layout model; never rewrite an owning production body.
 routing=read('ember/tools/rtw88-routing-contract.c')
@@ -45,10 +46,8 @@ routing=replace(routing,'#define ieee80211_new_state route_new_state\n#include "
 routing=replace(routing,'int main(void)\n{','int routing_base_main(void)\n{')
 (out/'enable-routing.inc').write_text(routing)
 # Native channel/mode constants and IFM declarations; existing WME model owns types.
-header=read('sys/net80211/_ieee80211.h')
 parts=['static int enable_isset(const uint8_t *a,unsigned n) { assert(n<256);return (a[n/8]&(1U<<(n%8)))!=0; }']
-for enum in ('ieee80211_phymode',):
- parts.append(re.search(r'enum '+enum+r'\s*{.*?};',header,re.S).group())
+# The shared WME extraction owns the actual PHY mode enum.
 for name in ('sys/net80211/_ieee80211.h','sys/net/if_media.h','sys/net80211/ieee80211_var.h'):
  text=read(name);text=re.sub(r'/\*.*?\*/','',text,flags=re.S).replace('\\\n','')
  for line in text.splitlines():
