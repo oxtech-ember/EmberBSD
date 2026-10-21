@@ -79,6 +79,8 @@ struct bcmv3d_bo *bcmv3d_bo_alloc(struct bcmv3d_device *, uint32_t);
 int bcmv3d_create_bo(struct drm_device *, void *, struct drm_file *);
 void bcmv3d_bo_snapshot(struct bcmv3d_device *, struct bcmv3d_bo_stats *);
 int bcmv3d_mmap_bo(struct drm_device *, void *, struct drm_file *);
+int bcmv3d_dumb_map_offset(struct drm_file *, struct drm_device *,
+    uint32_t, uint64_t *);
 int bcmv3d_get_bo_offset(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_wait_bo(struct drm_device *, void *, struct drm_file *);
 int bcmv3d_submit_tfu(struct drm_device *, void *, struct drm_file *);

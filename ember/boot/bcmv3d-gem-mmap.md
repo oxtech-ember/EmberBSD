@@ -71,3 +71,16 @@ native kernel or establish physical mapping, cache or display behavior.
 ```sh
 ruby ember/tools/bcm2712-v3d-mmap-check-contract.rb /absolute/source
 ```
+
+Native `V3D_MMAP_BO` and `MODE_MAP_DUMB` serialize first offset creation
+with the same device `struct_mutex`. Each caller holds a lookup reference
+until publication and reads the offset before it unlocks. Each caller drops
+that reference after it unlocks. The generic and legacy APIs are unchanged.
+The source contract pauses actual VMA allocation and insertion. It checks
+concurrent callers, alias handles, exact allocation/release counts, errors
+and closing the last handles during publication. These host checks do not
+execute a native kernel or test display output.
+
+```sh
+ruby ember/tools/bcmv3d-mmap-offset-contract.rb --work NEW_DIRECTORY
+```

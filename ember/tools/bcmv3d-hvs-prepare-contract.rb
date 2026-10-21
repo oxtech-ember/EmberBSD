@@ -33,13 +33,14 @@ begin
   write.call('bo-stats.h', read.call(driver + 'bcmv3d_bo_stats.h'))
   write.call('uapi-body.h', strip.call(read.call('sys/external/bsd/drm2/dist/include/uapi/drm/v3d_drm.h')))
   services = read.call('ember/tools/bcm2712-v3d-bo-contract.c')
-  needle = 'struct drm_device { void *dev_private; };'
+  needle = 'struct drm_device { void *dev_private; kmutex_t struct_mutex; };'
   abort 'Changed controlled DRM fixture type' unless services.scan(needle).length == 1
   services = services.sub(needle, <<~C.strip)
     struct drm_minor;
     struct drm_driver;
     struct drm_device {
       void *dev_private, *dev;
+      kmutex_t struct_mutex;
       bool registered;
       struct drm_driver *driver;
       struct drm_minor *render;

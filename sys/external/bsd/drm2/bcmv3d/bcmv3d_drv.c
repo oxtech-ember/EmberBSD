@@ -211,6 +211,7 @@ static struct drm_driver bcmv3d_driver = {
 	    ,
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 	.dumb_create = bcmv3d_dumb_create,
+	.dumb_map_offset = bcmv3d_dumb_map_offset,
 #endif
 	.ioctls = bcmv3d_ioctls,
 	.num_ioctls = __arraycount(bcmv3d_ioctls),

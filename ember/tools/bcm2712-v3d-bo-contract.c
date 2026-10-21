@@ -43,7 +43,7 @@ typedef int kmutex_t;
 typedef int vmem_t;
 typedef struct { uint64_t ds_addr, ds_len; void *memory; } bus_dma_segment_t;
 typedef struct { int dm_nsegs, maxsegs; size_t dm_mapsize; bus_dma_segment_t *dm_segs; } *bus_dmamap_t;
-struct drm_device { void *dev_private; };
+struct drm_device { void *dev_private; kmutex_t struct_mutex; };
 typedef uintptr_t vaddr_t;
 typedef uint64_t paddr_t;
 typedef int vm_prot_t;
@@ -79,6 +79,7 @@ struct drm_gem_object {
 	struct drm_device *dev;
 	size_t size;
 	unsigned refs;
+	void *import_attach;
 	uint64_t vma_node;
 	const struct drm_gem_object_funcs *funcs;
 #ifdef BCMV3D_RESV_CONTRACT
@@ -125,6 +126,8 @@ static size_t va_sizes[16];
 static bus_dma_segment_t dma_segments[16];
 #define CHECK(c) do { checks++; if (!(c)) { \
  fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#c); exit(1); } } while (0)
+#define mutex_lock mutex_enter
+#define mutex_unlock mutex_exit
 static void mutex_enter(kmutex_t *m) { CHECK((*m)++ == 0); }
 #ifdef BCMV3D_JOB_CONTRACT
 static void (*on_mutex_exit)(const kmutex_t *);

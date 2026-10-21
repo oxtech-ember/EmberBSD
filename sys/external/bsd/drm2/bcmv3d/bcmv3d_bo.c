@@ -343,6 +343,42 @@ bcmv3d_create_bo(struct drm_device *dev, void *data, struct drm_file *file)
 	return error;
 }
 
+/* The caller retains obj. Do not drop its reference under struct_mutex. */
+static int
+bcmv3d_bo_mmap_offset(struct drm_device *dev, struct drm_gem_object *obj,
+    uint64_t *offset)
+{
+	int error;
+
+	KASSERT(obj->dev == dev);
+	/* Serialize first publication across V3D_MMAP_BO and MODE_MAP_DUMB. */
+	mutex_lock(&dev->struct_mutex);
+	error = drm_gem_create_mmap_offset(obj);
+	if (error == 0)
+		*offset = drm_vma_node_offset_addr(&obj->vma_node);
+	mutex_unlock(&dev->struct_mutex);
+	return error;
+}
+
+int
+bcmv3d_dumb_map_offset(struct drm_file *file, struct drm_device *dev,
+    uint32_t handle, uint64_t *offset)
+{
+	struct drm_gem_object *obj;
+	int error;
+
+	*offset = 0;
+	obj = drm_gem_object_lookup(file, handle);
+	if (obj == NULL)
+		return -ENOENT;
+	if (obj->import_attach != NULL)
+		error = -EINVAL;
+	else
+		error = bcmv3d_bo_mmap_offset(dev, obj, offset);
+	drm_gem_object_put_unlocked(obj);
+	return error;
+}
+
 int
 bcmv3d_mmap_bo(struct drm_device *dev, void *data, struct drm_file *file)
 {
@@ -356,9 +392,7 @@ bcmv3d_mmap_bo(struct drm_device *dev, void *data, struct drm_file *file)
 	obj = drm_gem_object_lookup(file, args->handle);
 	if (obj == NULL)
 		return -ENOENT;
-	error = drm_gem_create_mmap_offset(obj);
-	if (error == 0)
-		args->offset = drm_vma_node_offset_addr(&obj->vma_node);
+	error = bcmv3d_bo_mmap_offset(dev, obj, &args->offset);
 	drm_gem_object_put_unlocked(obj);
 	return error;
 }
