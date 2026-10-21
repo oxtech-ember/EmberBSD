@@ -166,10 +166,12 @@ Existing amd64 releases and installer defaults remain unchanged.
 GitHub attestation does not claim a project signing-key distribution channel.
 
 External CI pins the full source commit and the accepted manifest's SHA256.
-From a matching Ports checkout:
+From a matching Ports checkout, use Python 3.15 and `curl`, with
+`EMBERBSD_SDK_SOURCE` pointing to a matching [EmberBSD-SDK](https://github.com/oxtech-ember/EmberBSD-SDK) checkout:
 
 ```sh
-ruby profiles/common-build-tools/cross/fetch-sysroot.rb \
+export EMBERBSD_SDK_SOURCE=/absolute/EmberBSD-SDK
+python3 -B profiles/common-build-tools/cross/fetch-sysroot.py \
   FULL_SOURCE_COMMIT MANIFEST_SHA256 /absolute/new-work
 ```
 
