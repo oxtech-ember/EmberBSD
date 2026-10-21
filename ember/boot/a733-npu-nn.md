@@ -2,8 +2,10 @@
 
 `sun60i_a733_npu_nn_tiny_image()` emits one finite byte-array image. It does
 not allocate DMA, submit commands, install IRQs or access registers. There is
-no native caller or build registration in this slice. The device profile and
-numerical oracle are source-format choices that still need hardware proof.
+no hardware admission in this CPU-only function. The
+[native TASK guide](a733-npu-tiny-task.md) and
+[acceptance record](a733-npu-tiny-task-acceptance.json) describe the separate
+fixed-profile physical result. CPU image generation alone does not prove it.
 
 The image has 864 constants bytes, 256 input bytes and 512 expected bytes.
 The 192-byte config starts at constants offset 0. A zero 64-byte gap precedes
@@ -32,7 +34,7 @@ The format mechanism follows the MIT Mesa 26.2.4
 `gc_feature_database.h` and `gc_hal_kernel_hardware_func_usc.h` from
 OrangePi BSP commit `2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f`.
 The fixed record selects HW_V83 and FLOAT_POST_MULT. These sources do not
-establish an NBG parser contract or a completed native NN task.
+by themselves establish an NBG parser contract or hardware completion.
 
 Run `python3 ember/tools/a733-npu-nn-contract.py`. Set `CC` and
 `NPU_NN_CFLAGS` for native sanitizers. The fixture compiles the actual
@@ -41,8 +43,8 @@ pipeline decoder recovers the weights. An arithmetic oracle checks all
 512 expected bytes. Their SHA256 is
 `6b14aa6b1aba47323ba262ae69cba4dd3a970d172097e8d5730736b6bfaafedd`.
 
-Never copy expected bytes into a DMA output page. A later TASK mechanism
-must prove NN dispatch, fence completion, terminal-gated POSTREAD, all
+Never copy expected bytes into a DMA output page. The separate native TASK
+mechanism requires NN dispatch, fence completion, terminal-gated POSTREAD, all
 512 output bytes, unchanged tails and immutable inputs. An FE event, idle
 state or unchanged output poison is not model acceptance.
 
@@ -69,7 +71,7 @@ above. The byte encoding follows Mesa `etnaviv_emit.h`, `cmdstream.xml.h`,
 follow `etnaviv_ml_nn.c` and `etnaviv_ml.c`.
 
 This function proves no native TASK admission or cache completion. The old
-FE path still refuses TASK storage. A later TASK admission must verify the
+FE path still refuses TASK storage. Native TASK admission must verify the
 supported identity and non-BLT profile. It must also validate DMA and image
 identity before publication, preserve retention, and gate result access on
 the complete terminal and numerical checks. CPU stream generation does not

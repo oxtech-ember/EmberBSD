@@ -2,7 +2,8 @@
 
 This interface selects one trusted NN profile. It does not accept user tensors,
 commands, device addresses, or a model file. The source and host tests define the
-contract. A physical numerical NN result is not accepted yet.
+contract. The fixed INT8 profile has bounded
+[physical acceptance](#physical-acceptance).
 
 ## Before a run
 
@@ -117,6 +118,43 @@ All published assets remain retained until reboot, including after failure or
 timeout. A failed constructor cleanup preserves its context pointer and cached
 release error; the consumer cannot run that context.
 
+## Physical acceptance
+
+The [acceptance record](a733-npu-tiny-task-acceptance.json) reports one fixed
+INT8 task on an A733 board with GCC 16.2.0 `EMBER64` kernel `8735c9333e50`.
+The 144-byte stream uses six retained DMA buffers. Native comparison verifies
+all 512 numerical output bytes and the full 4096-byte output page, including
+its 3584-byte poison tail. It also checks every read-only buffer and tail and
+both complete MMU table references. All six mismatch counts are zero.
+
+The returned task reaches step 13 with error zero, IRQ count 1 from baseline 0,
+and exactly event 4. Comparison validity/pass, final validity and model pass
+are set. Terminal and final idle samples are `0x7fffffff`. The final IRQ masks
+and ACK are zero. The context and DMA remain retained until reboot.
+
+Two complete stable identity samples match all five required values above.
+Both read masks are `0x3f`. The pinned HWDB entry supplies eight INT8 cores and
+no BLT engine. Raw minor0 is zero, so MORE is clear. Raw minor5 is **unread**;
+`task_features_valid=0` reports incomplete raw features, not failed identity.
+The cached minor5 zero is not a measured register value.
+
+GPU/display peer fields and display cached data remain unchanged through
+this task. One GPU Compute after NN completion then verifies all 16 words on
+the same boot. The
+NPU resources remain retained. All 133 TASK nodes, GPU and display cached
+state, and the eight cohort and four system-file hashes remain unchanged.
+This check does not run NN and GPU workloads simultaneously.
+
+The NN acceptance window lasts 31.389 seconds. It includes host checks and is
+not an NN execution-time benchmark. The maximum sampled temperature is
+53.196 degrees Celsius for that window and 54.002 degrees Celsius for the
+subsequent GPU check. These are sampled values, not continuous measurements.
+The PCB revision and bootloader firmware version were not recorded.
+
+This result accepts only the fixed profile. It does not accept arbitrary
+models, model frameworks, a general inference API, fault injection, sustained
+stress, physical HDMI or a complete Plasma session.
+
 ## Source checks
 
 `python3 ember/tools/a733-npu-task-contract.py` checks the actual MMU, image,
@@ -136,5 +174,5 @@ The finite capability facts use the
 Its full source SHA256 is `e067acd20f09b3fc50f742d1e86ec07687d20c702ad59d73559a896abce3a6ea`.
 Both files permit the MIT license. The native admission does not use the
 vendor query's informal-release revision wildcard. Host tests prove this
-closed software contract. Physical product/ECO capture and a numerical NN
-result require a new matched kernel and a separate cold hardware acceptance.
+closed software contract. The [physical acceptance](#physical-acceptance)
+separately records complete product/ECO capture and the fixed numerical result.

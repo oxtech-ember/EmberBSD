@@ -984,11 +984,17 @@ It grants no absence admission or display ownership.
   [finite FE/MMU/IRQ stream](ember/boot/a733-npu-engine.md#physical-acceptance)
   pass on the same kernel. The 40-byte stream reaches terminal step 13
   without error and records one new event4 IRQ. DMA and resource leases
-  stay retained until reboot. NN instructions, model output, output
-  coherency and guard-fault behavior remain unaccepted.
-  The fixed [native TASK contract](ember/boot/a733-npu-tiny-task.md) admits only
-  an exact five-field HWDB identity with eight INT8 cores and no BLT engine.
-  Physical product/ECO capture and numerical NN acceptance remain pending.
+  stay retained until reboot.
+  The fixed [native TASK contract](ember/boot/a733-npu-tiny-task.md#physical-acceptance)
+  has bounded physical numerical acceptance on GCC16.2 kernel `8735c9333e50`.
+  Two stable complete identity samples admit the exact five-field HWDB profile
+  with eight INT8 cores and no BLT engine. A 144-byte stream uses six retained
+  DMA buffers. Native comparison verifies all 512 numerical output bytes,
+  the complete 4096-byte output page, read-only tails and both MMU tables.
+  One GPU Compute then verifies all 16 words on the same boot with the NPU
+  resources retained and GPU/NPU/display cached state unchanged.
+  Arbitrary models, framework APIs, fault injection and sustained stress
+  remain unaccepted.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,
@@ -1275,13 +1281,15 @@ The base system shell is unchanged.
   aarch64 missing a reschedule, and the SD host controller driver.
   Source changes preserve their provenance; `ember/patches` records the
   original board adaptations already applied to this tree.
-- **Current accepted accelerator kernel on Orange Pi Zero 3W:** GCC16.2
-  `EMBER64` revision `be8f96cace8f` boots with matched modules and DTBs.
-  The [board acceptance boundary](ember/boards/orange-pi-zero-3w.md#accelerator-acceptance-2026-10-20)
+- **Bounded accelerator acceptance on A733:** The
+  [board acceptance boundary](ember/boards/orange-pi-zero-3w.md#accelerator-acceptance-2026-10-20)
   records all 21 diagnostic stages, three compute lifecycles, exact offscreen
   pixels, four hardware KWin/Zink frames and one bounded NPU FE/MMU/IRQ run.
-  HDMI, full Plasma and NN model execution remain pending. Older base,
-  network, PRIME and sync-file checks retain their own cohorts.
+  The [fixed NN TASK record](ember/boot/a733-npu-tiny-task-acceptance.json)
+  adds 512 verified numerical bytes on `EMBER64` revision `8735c9333e50` and
+  one subsequent GPU Compute. HDMI, full Plasma and arbitrary NN model
+  execution remain unaccepted. Base, network, PRIME and sync-file checks
+  retain their own cohorts.
 - **AArch64 numerical correctness:** an [initial FP state correction](ember/boot/aarch64-fp-state.md)
   addresses lost subnormal values and NaN payloads on CPUs without AArch32.
   Production contracts and native object compilation pass. Three runtime

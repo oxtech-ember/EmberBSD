@@ -1,0 +1,166 @@
+{
+  "schema": "emberbsd-a733-fixed-nn-acceptance-1",
+  "status": "physical-fixed-int8-task-pass",
+  "platform": {
+    "soc": "Allwinner A733",
+    "board_compatible": "xunlong,orangepi-zero3w",
+    "pcb_revision": "not recorded",
+    "bootloader_firmware_version": "not recorded"
+  },
+  "provenance": {
+    "source_commit": "8735c9333e50d62a33a64a99b39e1af4f0dce3c1",
+    "kernel_configuration": "EMBER64",
+    "compiler": {
+      "name": "GCC",
+      "version": "16.2.0",
+      "triplet": "aarch64--netbsd"
+    },
+    "kernel_elf_sha256": "570d560f9f5513a2a16a1cd443dfc83380b46afe4e327e639a3b1236d7bfe833",
+    "boot_image_sha256": "a58c5ea36144382310d62f1b66d2668fbaea83123f9e7e78c06fbadb1ee6091d",
+    "native_source_sha256": {
+      "sys/arch/arm/sunxi/sun60i_a733_npu.c": "b8873097d978f91697fb2aefc6ad47b86d060bc33f800d6a66f6a06d04aaa751",
+      "sys/arch/arm/sunxi/sun60i_a733_npu_run.c": "03903df66957cf6bb97d9e27eb5bbdcd1809256d25e2a6be41cb539edd70905e"
+    }
+  },
+  "scenario": {
+    "profile": "Fixed 8x8x4 to 8x8x8 INT8 1x1 convolution",
+    "model_file": false,
+    "command_stream_bytes": 144,
+    "retained_dma_buffers": 6,
+    "retained_dma_bytes": 36864,
+    "constants_bytes": 864,
+    "input_bytes": 256,
+    "output_page_bytes": 4096,
+    "numerical_output_bytes": 512,
+    "poison_tail_bytes": 3584
+  },
+  "identity": {
+    "stable_complete_samples": 2,
+    "read_masks": [
+      "0x3f",
+      "0x3f"
+    ],
+    "samples": [
+      {
+        "model": "0x9000",
+        "revision": "0x9202",
+        "product": "0x05090009",
+        "eco": "0x08000000",
+        "customer": "0x1000003b",
+        "model_after": "0x9000"
+      },
+      {
+        "model": "0x9000",
+        "revision": "0x9202",
+        "product": "0x05090009",
+        "eco": "0x08000000",
+        "customer": "0x1000003b",
+        "model_after": "0x9000"
+      }
+    ],
+    "capabilities": {
+      "source": "pinned HWDB",
+      "source_id": 1,
+      "int8_cores": 8,
+      "blt_engine": false
+    },
+    "raw_features": {
+      "minor0_samples": [
+        0,
+        0
+      ],
+      "more": false,
+      "read_masks": [
+        3,
+        3
+      ],
+      "complete": false,
+      "minor5": {
+        "read": false,
+        "valid": false,
+        "value": null
+      }
+    }
+  },
+  "result": {
+    "task_stage": 2,
+    "step": 13,
+    "error": 0,
+    "publication": true,
+    "started": true,
+    "terminal": true,
+    "retained_until_reboot": true,
+    "irq_count": 1,
+    "irq_baseline": 0,
+    "irq_event": 4,
+    "irq_raw": "0x10",
+    "irq_fault": 0,
+    "compare_valid": true,
+    "compare_pass": true,
+    "model_pass": true,
+    "final_valid": true,
+    "terminal_idle": [
+      "0x7fffffff",
+      "0x7fffffff"
+    ],
+    "final_idle": [
+      "0x7fffffff",
+      "0x7fffffff"
+    ],
+    "final_irq_masks": [
+      0,
+      0
+    ],
+    "final_ack": 0,
+    "buffer_mismatch_counts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "comparison_scope": [
+      "512 numerical output bytes",
+      "3584 output poison-tail bytes",
+      "all read-only buffers and their tails",
+      "both complete MMU table references"
+    ]
+  },
+  "observations": {
+    "acceptance_window_seconds": 31.389,
+    "window_is_nn_execution_time": false,
+    "maximum_sampled_temperature_c": 53.196,
+    "same_boot": true,
+    "protected_system_hashes_unchanged": true,
+    "watchdog_unarmed_after": true,
+    "gpu_and_display_peer_fields_unchanged": true,
+    "display_cached_diagnostics_unchanged": true
+  },
+  "post_nn_gpu_compute": {
+    "status": "physical-one-compute16-pass",
+    "lifecycles": 1,
+    "verified_words": 16,
+    "same_boot": true,
+    "npu_resources_retained": true,
+    "eight_cohort_and_four_system_hashes_unchanged": true,
+    "all_133_task_nodes_and_gpu_display_cached_state_unchanged": true,
+    "maximum_sampled_temperature_c": 54.002,
+    "watchdog_unarmed_after": true,
+    "scope": "One GPU compute after NN completion. This is not simultaneous NN/GPU execution."
+  },
+  "evidence_sha256": {
+    "nn_acceptance_record": "71b7c044b4e7000b803f1eda61548f6020bea2c090eed01568f9f58191947645",
+    "nn_command_record": "b5b8c5eb906e75370aadfec3ad35fe6b6f1d409b3b1c7d500b3613618171d17f",
+    "post_nn_gpu_acceptance_record": "ac52ff6706ac162e9e3b39b7bb7c15b96870160c91556f90693278e268933bf8",
+    "post_nn_gpu_command_record": "d6e5bf4a47972b7990e5d3e6df8b1b9d9d96c338c7ce0784a0e5fe1a1a0c8017"
+  },
+  "unaccepted": [
+    "arbitrary models or user tensors",
+    "model frameworks or a general inference API",
+    "simultaneous NN and GPU workloads",
+    "fault injection or recovery",
+    "sustained stress",
+    "physical HDMI or a complete Plasma session"
+  ]
+}
