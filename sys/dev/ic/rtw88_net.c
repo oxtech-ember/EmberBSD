@@ -605,13 +605,13 @@ rtw88_net_tx_dequeue_same(struct ifnet *ifp, struct mbuf *expected)
 
 static int
 rtw88_net_tx_queue(struct ieee80211com *ic, struct mbuf *m,
-    struct ieee80211_node *ni, unsigned *queue)
+    struct ieee80211_node *ni, unsigned *queue, int commit)
 {
 	static const unsigned queues[WME_NUM_AC] = { RTW88_TXQ_BE,
 	    RTW88_TXQ_BK, RTW88_TXQ_VI, RTW88_TXQ_VO };
 	struct ether_header eh;
 	unsigned slot;
-	int ac;
+	int ac, error, flags;
 
 	if (m->m_pkthdr.len < sizeof(eh))
 		return EINVAL;
@@ -627,10 +627,15 @@ rtw88_net_tx_queue(struct ieee80211com *ic, struct mbuf *m,
 		    ni->ni_wme_applied_slot != slot)
 			return EPROTO;
 	}
-	if (ieee80211_classify(ic, m, ni) != 0)
+	/* A capacity probe must retain BPF's original M_PROMISC marker. */
+	flags = m->m_flags;
+	error = ieee80211_classify(ic, m, ni);
+	ac = eh.ether_type == htons(ETHERTYPE_PAE) ? WME_AC_BE : M_WME_GETAC(m);
+	if (!commit)
+		m->m_flags = flags;
+	if (error != 0)
 		return EINVAL;
 	/* The stack intentionally sends EAPOL without a QoS header. */
-	ac = eh.ether_type == htons(ETHERTYPE_PAE) ? WME_AC_BE : M_WME_GETAC(m);
 	if (ac < 0 || ac >= WME_NUM_AC)
 		return EINVAL;
 	*queue = queues[ac];
@@ -662,7 +667,7 @@ rtw88_net_start(struct ifnet *ifp)
 	const struct ieee80211_frame *wh;
 	struct ether_header eh;
 	struct mbuf *m, *head;
-	unsigned q, n;
+	unsigned q, n, actual;
 	int available, error, dynamic, all;
 
 	if ((ifp->if_flags & (IFF_RUNNING | IFF_OACTIVE)) != IFF_RUNNING)
@@ -698,7 +703,7 @@ rtw88_net_start(struct ifnet *ifp)
 					m_copydata(m, 0, sizeof(eh), &eh);
 					ni = ieee80211_find_txnode(ic, eh.ether_dhost);
 					error = ni == NULL ? ENOENT :
-					    rtw88_net_tx_queue(ic, m, ni, &q);
+					    rtw88_net_tx_queue(ic, m, ni, &q, 0);
 				}
 				if (error == EPROTO) {
 					ieee80211_free_node(ni);
@@ -735,7 +740,7 @@ rtw88_net_start(struct ifnet *ifp)
 					m_copydata(m, 0, sizeof(eh), &eh);
 					ni = ieee80211_find_txnode(ic, eh.ether_dhost);
 					error = ni == NULL ? ENOENT :
-					    rtw88_net_tx_queue(ic, m, ni, &q);
+					    rtw88_net_tx_queue(ic, m, ni, &q, 0);
 				}
 				if (error == EPROTO) {
 					ieee80211_free_node(ni);
@@ -762,7 +767,13 @@ rtw88_net_start(struct ifnet *ifp)
 			}
 			if ((m = m_pullup(m, sizeof(eh))) == NULL)
 				goto tx_error;
+			/* BPF consumes M_PROMISC, which shares a WME metadata bit. */
 			bpf_mtap(ifp, m, BPF_D_OUT);
+			error = rtw88_net_tx_queue(ic, m, ni, &actual, 1);
+			if (error == 0 && actual != q)
+				error = EPROTO;
+			if (error != 0)
+				goto tx_error;
 			m = ieee80211_encap(ic, m, ni);
 			if (m == NULL)
 				goto tx_error;
@@ -776,6 +787,9 @@ rtw88_net_start(struct ifnet *ifp)
 		if (m->m_pkthdr.len > RTW88_TX_BUF_SIZE -
 		    RTW8822C_TX_PACKET_DESC_SIZE)
 			goto tx_error;
+		/* AC is now in the wire header, not BPF's duplicate-marker bit. */
+		if (q != RTW88_TXQ_MGMT)
+			m->m_flags &= ~M_WME_AC_MASK;
 		bpf_mtap3(ic->ic_rawbpf, m, BPF_D_OUT);
 		m_copydata(m, 0, m->m_pkthdr.len, net->txbuf);
 		mutex_enter(net->lock);
@@ -795,6 +809,10 @@ rtw88_net_start(struct ifnet *ifp)
 		m_freem(m);
 		ieee80211_free_node(ni);
 		if_statinc(ifp, if_oerrors);
+		if (error == EPROTO) {
+			ieee80211_new_state(ic, IEEE80211_S_INIT, EPROTO);
+			return;
+		}
 	}
 	softint_schedule(net->softint);
 }

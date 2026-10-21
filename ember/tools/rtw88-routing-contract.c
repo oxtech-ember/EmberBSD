@@ -21,6 +21,7 @@
 #include "routing-model.inc"
 #undef main
 #undef ieee80211_new_state
+#include "routing-bpf.inc"
 #include <dev/ic/rtw88_net_policy.h>
 #define IFF_RUNNING 1
 #define IFF_OACTIVE 2
@@ -79,8 +80,8 @@ void mutex_exit(kmutex_t *l) { assert(l->held);l->held=0; }
 static void if_statinc(struct ifnet *p, int counter) { (void)p;(void)counter;route_errors++; }
 static void if_statadd(struct ifnet *p,int counter,unsigned n)
 { (void)p;(void)counter;route_packets+=n; }
-static void bpf_mtap(void *p, struct mbuf *m, int d) { (void)p;(void)m;(void)d; }
-#define bpf_mtap3 bpf_mtap
+static void bpf_mtap(void *p,struct mbuf *m,int d) { (void)p;struct bpf_if bp={0};_bpf_mtap(&bp,m,(unsigned)d); }
+static void bpf_mtap3(void *p,struct mbuf *m,int d) { (void)p;struct bpf_if bp={1};_bpf_mtap(&bp,m,(unsigned)d); }
 static void softint_schedule(void *p) { (void)p; }
 static struct ieee80211_node *
 ieee80211_find_txnode(struct ieee80211com *ic, const uint8_t *dest)
@@ -92,7 +93,8 @@ static struct mbuf *m_pullup(struct mbuf *m, unsigned need)
     if ((unsigned)m->m_pkthdr.len<need) { m_freem(m);return NULL; }
     struct mbuf *copy=newbuf((unsigned)m->m_pkthdr.len);
     assert(copy);
-    copy->ac=m->ac;m_copydata(m,0,m->m_pkthdr.len,copy->m_data);m_freem(m);
+    m_move_pkthdr(copy,m);copy->m_len=copy->m_pkthdr.len;
+    m_copydata(m,0,m->m_pkthdr.len,copy->m_data);m_freem(m);
     return copy;
 }
 static void *ieee80211_crypto_encap(struct ieee80211com *ic, struct ieee80211_node *ni, struct mbuf *m)
@@ -174,6 +176,18 @@ int main(void)
     ni.ni_ic=&net.ic;ni.ni_chan=&ch;ni.ni_associd=1;
     ni.ni_flags=IEEE80211_NODE_QOS|IEEE80211_NODE_WME_VALID;
     ni.ni_wme_applied_chan=&ch;ni.ni_wme_applied_slot=20;ni.ni_bssid[0]=2;
+    /* Actual adjust may return NULL both after head allocation and after
+     * writable-service failure. Each path consumes its owned input chain. */
+    for(unsigned allocate=0;allocate<2;allocate++) {
+        struct mbuf *m=newbuf(sizeof(struct ether_header)+sizeof(struct ip));
+        assert(m);
+        if(allocate)m->m_data=m->data;
+        unsigned nobuf=net.ic.ic_stats.is_tx_nobuf;
+        adjust_failure=1;
+        CHECK(routing_mbuf_adjust(&net.ic,26,NULL,m)==NULL);
+        CHECK(net.ic.ic_stats.is_tx_nobuf==nobuf+allocate);
+        adjust_failure=0;
+    }
     static const unsigned tos[4]={0,8,0x28,0x30};
     static const unsigned queues[4]={RTW88_TXQ_BE,RTW88_TXQ_BK,RTW88_TXQ_VI,RTW88_TXQ_VO};
     for(unsigned ac=0;ac<4;ac++) {
@@ -189,6 +203,37 @@ int main(void)
         CHECK(node_refs==1);
     }
     CHECK(route_errors==0);CHECK(route_crypto==0);
+    /* Real BPF must see the original duplicate marker before AC metadata.
+     * Exercise split Ethernet heads, native header moves and crypto dispatch. */
+    restart_core(&sc);
+    for(unsigned ac=0;ac<4;ac++)for(unsigned injected=0;injected<2;injected++)
+    for(unsigned split=0;split<2;split++)for(unsigned privacy=0;privacy<2;privacy++) {
+        struct mbuf *m=ether_packet(tos[ac],(int)split,0);
+        if(injected)m->m_flags|=M_PROMISC;
+        unsigned eth=route_eth_delivered,raw=route_raw_delivered;
+        unsigned errors=route_errors,old=sc.sc_txq[queues[ac]].queued;
+        static struct cipher matrix_cipher={.ic_header=8};route_key.wk_cipher=&matrix_cipher;
+        route_have_key=(int)privacy;
+        if(privacy)net.ic.ic_flags|=IEEE80211_F_PRIVACY;
+        else net.ic.ic_flags&=~IEEE80211_F_PRIVACY;
+        queue_packet(&ifp.if_snd,m);rtw88_net_start(&ifp);
+        CHECK(route_eth_delivered==eth+!injected);
+        CHECK(route_raw_delivered==raw+1);
+        CHECK(sc.sc_txq[queues[ac]].queued==old+1);
+        CHECK(route_errors==errors && node_refs==1 && ifp.if_snd.m==NULL);
+    }
+    route_have_key=0;net.ic.ic_flags&=~IEEE80211_F_PRIVACY;
+    /* Management never consumes WME metadata: retain its duplicate marker. */
+    for(unsigned injected=0;injected<2;injected++) {
+        struct mbuf *m=newbuf(24);assert(m);m->m_data[0]=0xb0;
+        if(injected)m->m_flags|=M_PROMISC;
+        unsigned raw=route_raw_delivered,errors=route_errors;
+        ieee80211_ref_node(&ni);M_SETCTX(m,&ni);
+        net.ic.ic_mgtq.m=net.ic.ic_mgtq.ifq_tail=m;net.ic.ic_mgtq.ifq_len=1;
+        rtw88_net_start(&ifp);
+        CHECK(net.ic.ic_mgtq.m==NULL && node_refs==1 && route_errors==errors);
+        CHECK(route_raw_delivered==raw+!injected);
+    }
     for(unsigned ac=0;ac<4;ac++) {
         CHECK(rtw88_stop(&sc)==0);CHECK(rtw88_start(&sc)==0);
         uint8_t frame[26]={0x88,1};
@@ -201,10 +246,11 @@ int main(void)
         eh->ether_type=htons(ETHERTYPE_IP);eh->ether_dhost[0]=2;
         m->m_data[sizeof(*eh)+1]=tos[ac];ifp.if_snd.m=m;ifp.if_snd.ifq_tail=m;ifp.if_snd.ifq_len=1;
         ifp.if_flags=IFF_RUNNING;
+        m->m_flags|=M_PROMISC;int original_flags=m->m_flags;
         uint16_t seq[17];memcpy(seq,ni.ni_txseqs,sizeof(seq));
         unsigned errors=route_errors,crypto=route_crypto;
         rtw88_net_start(&ifp);
-        CHECK(ifp.if_snd.m==m);
+        CHECK(ifp.if_snd.m==m && m->m_flags==original_flags);
         CHECK(memcmp(seq,ni.ni_txseqs,sizeof(seq))==0);
         CHECK(node_refs==1 && route_errors==errors && route_crypto==crypto);
         CHECK(ifp.if_flags&IFF_OACTIVE);

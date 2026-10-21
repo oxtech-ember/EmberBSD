@@ -1652,8 +1652,11 @@ remain unverified.
   recovery and reconnect latency remain unqualified. Read-only stats now expose
   the BASIC mask and encoded unicast DATA rates. CIX physical checks confirm
   the encoded fixed-rate policy and bidirectional file integrity. Successful
-  producer-write counters for MGMT/BE/BK/VI/VO remain source-qualified;
-  target and physical acceptance of these queue counters is pending.
+  producer-write counters for MGMT/BE/BK/VI/VO remain source-qualified.
+  A source regression preserves the BPF duplicate marker across queue probes
+  and commits WME metadata after the Ethernet tap. Raw capture consumes the
+  serialized header after AC metadata is cleared.
+  Target and physical acceptance of these queue counters is pending.
   Counters do not prove air ACKs or delivery. Explicit fixed legacy media
   now has a validated native caller-to-core path; AUTO is unchanged. Corrected
   2.4 GHz channel flags expose native 11g media selection. A separate actual-source

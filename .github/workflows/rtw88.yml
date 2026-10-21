@@ -24,6 +24,10 @@ name: Native RTL8822CE source contracts
       - 'sys/net/if.h'
       - 'sys/net/if_media.h'
       - 'sys/net/if_media.c'
+      - 'sys/net/bpf.c'
+      - 'sys/net/if_ether.h'
+      - 'sys/kern/uipc_mbuf.c'
+      - 'sys/sys/mbuf.h'
       - 'ember/image/cix-p1-network.subr'
       - 'ember/image/test-cix-p1-startup.rb'
       - 'ember/tools/rtw*'
@@ -50,6 +54,10 @@ name: Native RTL8822CE source contracts
       - 'sys/net/if.h'
       - 'sys/net/if_media.h'
       - 'sys/net/if_media.c'
+      - 'sys/net/bpf.c'
+      - 'sys/net/if_ether.h'
+      - 'sys/kern/uipc_mbuf.c'
+      - 'sys/sys/mbuf.h'
       - 'ember/image/cix-p1-network.subr'
       - 'ember/image/test-cix-p1-startup.rb'
       - 'ember/tools/rtw*'
@@ -98,6 +106,12 @@ jobs:
             /sys/net/if.h
             /sys/net/if_media.h
             /sys/net/if_media.c
+            /sys/net/bpf.c
+            /sys/net/if_ether.h
+            /sys/kern/uipc_mbuf.c
+            /sys/sys/mbuf.h
+            /sys/net80211/ieee80211_netbsd.h
+            /sys/net80211/ieee80211_crypto.h
             /ember/image/cix-p1-network.subr
             /ember/image/test-cix-p1-startup.rb
             /sbin/ifconfig/ieee80211.c

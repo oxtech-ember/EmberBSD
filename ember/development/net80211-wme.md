@@ -175,3 +175,24 @@ and after effect. Failed apply preserves software tables and prevents RUN.
 Legacy AP responses retain the non-QoS BE path. The bitset service asserts its
 256-channel input domain; foreign/ANYC IBSS pointers are not qualified by this
 model. This precondition does not repair the shared setmode implementation.
+
+The native routing contract executes real WME flag macros and the complete
+BPF mbuf-tap consumer. `M_PROMISC` and the low WME AC bit both use `M_LINK1`.
+Queue-capacity probes preserve the original flags. The Ethernet tap consumes
+its duplicate marker before authoritative classification and encapsulation.
+The final class must still match the reserved queue. Data AC metadata is
+cleared before the raw tap; the serialized QoS TID remains unchanged.
+Management retains its original duplicate marker. Tests cover all four ACs,
+injected markers, split Ethernet headers and crypto dispatch. They execute
+native `m_move_pkthdr` and `ieee80211_mbuf_adjust`. Allocation, writable storage,
+BPF delivery and pullup coalescing remain host services; COW, real MMU layout
+and the complete kernel networking path are not qualified by this model.
+
+GCC16's analyzer reports `analyzer-deref-before-check` at O0 and O2 on the
+extracted encap function: it equates the original input dereference with the
+NULL check after assignment from `ieee80211_mbuf_adjust`, whose return may
+legitimately be the original buffer, a replacement or NULL. The fixture scopes
+that one diagnostic exemption to that exact post-call check on GCC16. All
+other encap lines and the complete adjust body retain analyzer diagnostics;
+Clang CSA and sanitizer checks remain enabled. No production source, storage
+service behavior or global warning policy is changed.
