@@ -186,6 +186,30 @@ rtwce_stats(char *buf, size_t len)
 	    n > 0 && (size_t)n < len; i++)
 		n += snprintf(buf + n, len - (size_t)n, " txpost%u %llu", i,
 		    (unsigned long long)st->tx_posted[i]);
+	/* Descriptor seeds and firmware reports are separate observations. */
+	if (n > 0 && (size_t)n < len)
+		n += snprintf(buf + n, len - (size_t)n,
+		    " fwra_tx %llu protection_tx %llu ra_commands %llu ra_errors %llu"
+		    " ra_reports %llu unattributed %llu malformed %llu foreign %llu"
+		    " unsupported %llu inactive %llu trailing %llu outside_mask %llu"
+		    " ra_observed_gen %u ra_last %u/%u/%u/%u"
+		    " ra_config %d/%d/%d ra_error %d",
+		    (unsigned long long)st->tx_ra_encoded,
+		    (unsigned long long)st->tx_ra_protection_limited,
+		    (unsigned long long)st->ra_commands,
+		    (unsigned long long)st->ra_command_errors,
+		    (unsigned long long)st->ra_reports,
+		    (unsigned long long)st->ra_unattributed,
+		    (unsigned long long)st->ra_malformed,
+		    (unsigned long long)st->ra_foreign,
+		    (unsigned long long)st->ra_unsupported,
+		    (unsigned long long)st->ra_inactive,
+		    (unsigned long long)st->ra_trailing,
+		    (unsigned long long)st->ra_outside_mask,
+		    st->ra_observed_generation, st->ra_report_valid,
+		    st->ra_report_rate, st->ra_report_macid, st->ra_report_bw,
+		    sc->sc_ra.configured, sc->sc_ra.active,
+		    sc->sc_ra.protection_limited, sc->sc_ra.error);
 	if (n > 0 && (size_t)n < len && psc->sc_net != NULL) {
 		rtw88_net_get_stats(psc->sc_net, &ns);
 		n += snprintf(buf + n, len - (size_t)n,

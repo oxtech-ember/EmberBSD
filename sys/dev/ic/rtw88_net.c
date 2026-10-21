@@ -206,6 +206,58 @@ rtw88_net_edca_prepare(struct ieee80211com *ic, unsigned media,
 	return 0;
 }
 
+/* Giant owns the BSS and rate tables. Publish only numeric policy. */
+static int
+rtw88_net_ra_prepare(struct ieee80211com *ic, unsigned channel,
+    unsigned basic, uint64_t epoch, struct rtw88_ra_config *cfg)
+{
+	static const uint8_t rates[] = { 2, 4, 11, 22, 12, 18, 24, 36,
+	    48, 72, 96, 108 };
+	const struct ieee80211_rateset *local, *peer;
+	struct ieee80211_node *ni = ic->ic_bss;
+	unsigned i, j, k, local_mask = 0, peer_mask = 0;
+
+	memset(cfg, 0, sizeof(*cfg));
+	if (ni == NULL || ni->ni_chan != ic->ic_curchan ||
+	    ic->ic_opmode != IEEE80211_M_STA ||
+	    (ni->ni_associd & 0x3fff) == 0 ||
+	    (ni->ni_associd & 0x3fff) > 2007 || epoch == 0)
+		return EINVAL;
+	switch (ic->ic_curmode) {
+	case IEEE80211_MODE_11A: cfg->mode = RTW88_FIXED_11A; break;
+	case IEEE80211_MODE_11B: cfg->mode = RTW88_FIXED_11B; break;
+	case IEEE80211_MODE_11G: cfg->mode = RTW88_FIXED_11G; break;
+	default: return EOPNOTSUPP;
+	}
+	if ((cfg->mode == RTW88_FIXED_11A) != (channel > 14))
+		return EINVAL;
+	local = &ic->ic_sup_rates[ic->ic_curmode];
+	peer = &ni->ni_rates;
+	if (local->rs_nrates > __arraycount(local->rs_rates) ||
+	    peer->rs_nrates > __arraycount(peer->rs_rates))
+		return EINVAL;
+	for (i = 0; i < local->rs_nrates; i++)
+		for (j = 0; j < __arraycount(rates); j++)
+			if ((local->rs_rates[i] & IEEE80211_RATE_VAL) == rates[j])
+				local_mask |= 1U << j;
+	for (i = 0; i < peer->rs_nrates; i++)
+		for (k = 0; k < __arraycount(rates); k++)
+			if ((peer->rs_rates[i] & IEEE80211_RATE_VAL) == rates[k])
+				peer_mask |= 1U << k;
+	cfg->common_rates = local_mask & peer_mask;
+	if (cfg->mode == RTW88_FIXED_11A)
+		cfg->common_rates &= 0xff0;
+	else if (cfg->mode == RTW88_FIXED_11B)
+		cfg->common_rates &= 0xf;
+	if (cfg->common_rates == 0 || basic == 0 ||
+	    (basic & ~cfg->common_rates) != 0)
+		return EINVAL;
+	cfg->channel = channel;
+	cfg->epoch = epoch;
+	cfg->use_protection = (ic->ic_flags & IEEE80211_F_USEPROT) != 0;
+	return 0;
+}
+
 /* The workqueue has the kernel lock. Do not hold the PCI lock in net80211. */
 static void
 rtw88_net_state_work(struct work *work, void *cookie)
@@ -215,10 +267,12 @@ rtw88_net_state_work(struct work *work, void *cookie)
 	struct ifnet *ifp = &net->ec.ec_if;
 	struct rtw88_net_state_diag diag;
 	struct rtw88_edca_params edca[RTW88_WME_NAC];
+	struct rtw88_ra_config ra;
 	enum ieee80211_state state;
 	uint64_t epoch;
 	unsigned channel, basic, slot, aid, i;
-	unsigned media;
+	unsigned media, prepare_stage;
+	int use_ra;
 	const uint8_t *bssid;
 	char failure[384];
 	uint8_t any;
@@ -255,6 +309,14 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		}
 		prepare_error = state == IEEE80211_S_INIT ? 0 :
 		    rtw88_net_edca_prepare(ic, media, state, channel, slot, edca);
+		prepare_stage = RTW88_NET_STAGE_EDCA;
+		use_ra = state == IEEE80211_S_RUN &&
+		    ic->ic_fixed_rate == IEEE80211_FIXED_RATE_NONE;
+		if (prepare_error == 0 && use_ra) {
+			prepare_stage = RTW88_NET_STAGE_RA;
+			prepare_error = rtw88_net_ra_prepare(ic, channel, basic,
+			    epoch, &ra);
+		}
 		mutex_enter(net->lock);
 		if (epoch != net->policy.epoch || net->policy.dying) {
 			mutex_exit(net->lock);
@@ -282,7 +344,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				diag.bssid_flags |= 4;
 		}
 		if (error != 0) {
-			diag.stage = RTW88_NET_STAGE_EDCA;
+			diag.stage = prepare_stage;
 		} else if (net->core->sc_started) {
 			if (state != IEEE80211_S_INIT) {
 				diag.stage = RTW88_NET_STAGE_CHANNEL;
@@ -297,6 +359,10 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				diag.stage = RTW88_NET_STAGE_EDCA;
 				error = rtw88_edca_apply(net->core, edca, slot);
 			}
+			if (error == 0 && use_ra) {
+				diag.stage = RTW88_NET_STAGE_RA;
+				error = rtw88_ra_configure(net->core, &ra);
+			}
 		} else if (state != IEEE80211_S_INIT) {
 			diag.stage = RTW88_NET_STAGE_CORE;
 			error = ENXIO;
@@ -305,6 +371,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		diag.error = error;
 		error = rtw88_net_commit(&net->policy, epoch, error,
 		    state != IEEE80211_S_INIT);
+		if (error != 0)
+			rtw88_ra_invalidate(net->core);
 		mutex_exit(net->lock);
 		if (error != ECANCELED) {
 			if (error != 0) {
@@ -351,6 +419,7 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
 		mutex_exit(net->lock);
 		return ENXIO;
 	}
+	rtw88_ra_invalidate(net->core);
 	(void)rtw88_net_request(&net->policy);
 	net->requested = state;
 	net->state_arg = arg;
@@ -522,8 +591,8 @@ rtw88_net_tx_submit(struct rtw88_net *net, struct ieee80211_node *ni,
 	unsigned i, j, aid;
 	int index = ic->ic_fixed_rate;
 
-	/* Keep AUTO and non-payload/group frames on the existing raw path. */
-	if (index == IEEE80211_FIXED_RATE_NONE || q == RTW88_TXQ_MGMT ||
+	/* Keep non-payload/group frames on the existing raw path. */
+	if (q == RTW88_TXQ_MGMT ||
 	    frame == NULL || len < 24 ||
 	    (bytes[0] & 0x0c) != 0x08 || (bytes[0] & 0x40) != 0 ||
 	    (bytes[4] & 1) != 0 ||
@@ -531,13 +600,17 @@ rtw88_net_tx_submit(struct rtw88_net *net, struct ieee80211_node *ni,
 		return rtw88_tx_raw(net->core, q, frame, len);
 	if (net->work_pending || !net->policy.accepting || net->policy.dying)
 		return EBUSY;
-	if (index < 0 || ic->ic_state != IEEE80211_S_RUN ||
+	if ((index < 0 && index != IEEE80211_FIXED_RATE_NONE) ||
+	    ic->ic_state != IEEE80211_S_RUN ||
 	    ic->ic_opmode != IEEE80211_M_STA || ni == NULL || ni != ic->ic_bss ||
 	    ni->ni_chan == NULL || ni->ni_chan != ic->ic_curchan)
 		return EINVAL;
 	aid = ni->ni_associd & 0x3fff;
 	if (aid == 0 || aid > 2007)
 		return EINVAL;
+	if (index == IEEE80211_FIXED_RATE_NONE)
+		return rtw88_tx_auto(net->core, q, frame, len, net->policy.epoch,
+		    (ic->ic_flags & IEEE80211_F_USEPROT) != 0);
 	memset(&fixed, 0, sizeof(fixed));
 	switch (ic->ic_curmode) {
 	case IEEE80211_MODE_11A:

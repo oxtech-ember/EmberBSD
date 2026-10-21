@@ -23,7 +23,7 @@ struct ieee80211_node {
 	struct ieee80211com *ni_ic;
 	unsigned ni_wme_attempt;
 	struct ieee80211_rateset ni_rates;
-	struct ieee80211_channel *ni_wme_applied_chan;
+	struct ieee80211_channel *ni_wme_applied_chan, *ni_chan;
 	unsigned ni_flags, ni_associd, ni_wme_applied_slot;
 	uint8_t ni_bssid[6];
 };
@@ -36,7 +36,8 @@ struct ieee80211com {
 	struct ifmedia ic_media;
 	unsigned ic_caps, ic_flags, ic_opmode;
 	enum ieee80211_phymode ic_curmode;
-	int ic_fixed_rate;
+	int ic_fixed_rate, ic_state;
+	struct ieee80211_rateset ic_sup_rates[IEEE80211_MODE_MAX];
 };
 struct work { int unused; };
 struct workqueue { int queued; };
@@ -206,7 +207,14 @@ state_station(struct rtw88_softc *sc, const uint8_t *bssid, unsigned aid,
 #define rtw88_channel state_channel
 #define rtw88_station_config state_station
 #define rtw88_edca_apply state_edca_apply
+#ifdef RTW88_STATE_RA_OBSERVE
+static int state_ra_configure(struct rtw88_softc *, const struct rtw88_ra_config *);
+#define rtw88_ra_configure state_ra_configure
+#endif
 #include "native-state.inc"
+#ifdef RTW88_STATE_RA_OBSERVE
+#undef rtw88_ra_configure
+#endif
 #undef rtw88_edca_apply
 #undef rtw88_channel
 #undef rtw88_station_config
@@ -295,6 +303,25 @@ state_parent(struct ieee80211com *ic, enum ieee80211_state state, int arg)
 	state_parent_tx++;
 	return 0;
 }
+/* A RUN request has a joined peer; SCAN tests retain their stale-mode inputs. */
+static void
+state_legacy_peer(struct rtw88_net *net, struct ieee80211_node *ni,
+    unsigned channel)
+{
+	static const uint8_t legacy[] = { 2, 4, 11, 22, 12, 18, 24, 36,
+	    48, 72, 96, 108 };
+	struct ieee80211_rateset *rs;
+	net->ic.ic_curmode=channel>14?IEEE80211_MODE_11A:IEEE80211_MODE_11G;
+	rs=&net->ic.ic_sup_rates[net->ic.ic_curmode];
+	rs->rs_nrates=channel>14?8:12;
+	memcpy(rs->rs_rates,legacy+(channel>14?4:0),rs->rs_nrates);
+	ni->ni_rates=*rs;
+	for (unsigned i=0;i<ni->ni_rates.rs_nrates;i++)
+		if (channel>14?(i==0||i==2||i==4):i<4)
+			ni->ni_rates.rs_rates[i]|=IEEE80211_RATE_BASIC;
+	ni->ni_chan=net->ic.ic_curchan;
+}
+
 static void
 test_native_state_defaults(void)
 {
@@ -339,6 +366,7 @@ test_native_state_defaults(void)
 		if (cases[i].slot==9 && cases[i].channel==1) {
 			net.ic.ic_flags|=IEEE80211_F_SHSLOT;
 			net.requested=IEEE80211_S_RUN;
+			state_legacy_peer(&net,&ni,cases[i].channel);
 			ni.ni_associd=1;ni.ni_bssid[0]=2;
 		}
 		bus.read_1=state_read1;bus.write_1=state_write1;bus.write_4=state_write4;
@@ -451,6 +479,7 @@ test_native_state_negotiated(void)
 		s.net.ic.ic_flags=IEEE80211_F_SHSLOT|IEEE80211_F_WME;
 		s.net.ic.ic_caps=IEEE80211_C_WME;
 		s.ni.ni_associd=1;s.ni.ni_bssid[0]=2;
+		state_legacy_peer(&s.net,&s.ni,1);
 		s.ni.ni_flags=IEEE80211_NODE_QOS|IEEE80211_NODE_WME_VALID;
 		s.ni.ni_wme_applied_chan=s.net.ic.ic_curchan;
 		s.ni.ni_wme_applied_slot=9;

@@ -147,8 +147,18 @@ static struct mbuf *ether_packet(unsigned tos,int chained,int pae)
 }
 static void queue_packet(struct queue *q,struct mbuf *m)
 { assert(q->m==NULL);q->m=q->ifq_tail=m;q->ifq_len=1; }
+/* Routing is tested with an explicitly committed numeric legacy peer. The
+ * separate RA fixture executes the actual RUN worker that creates this state. */
+static void route_ra(struct rtw88_softc *sc)
+{
+    const uint8_t bssid[6]={2,0,0,0,0,1};
+    const struct rtw88_ra_config cfg={.epoch=1,.channel=1,
+        .common_rates=0xfff,.mode=RTW88_FIXED_11G};
+    CHECK(rtw88_station_config(sc,bssid,1,0xf,20,1)==0);
+    CHECK(rtw88_ra_configure(sc,&cfg)==0);
+}
 static void restart_core(struct rtw88_softc *sc)
-{ CHECK(rtw88_stop(sc)==0);CHECK(rtw88_start(sc)==0); }
+{ CHECK(rtw88_stop(sc)==0);CHECK(rtw88_start(sc)==0);route_ra(sc); }
 int main(void)
 {
     int shared_result=shared_wme_main();
@@ -165,7 +175,8 @@ int main(void)
     struct ieee80211_channel ch={2412,0};
     kmutex_t lock={.initialized=1};
     reset_bus(&sc);if(!attach_ok(&sc))return 1;CHECK(rtw88_start(&sc)==0);
-    net.core=&sc;net.lock=&lock;net.wq=&wq;net.policy.accepting=1;
+    route_ra(&sc);
+    net.core=&sc;net.lock=&lock;net.wq=&wq;net.policy.accepting=1;net.policy.epoch=1;
     sc.sc_net_cookie=&net;sc.sc_tx_complete=rtw88_net_tx_complete;
     ifp.if_softc=&net;ifp.if_flags=IFF_RUNNING;
     net.ic.ic_ifp=&ifp;net.ic.ic_bss=&ni;net.ic.ic_curchan=&ch;
@@ -282,6 +293,7 @@ int main(void)
 
     /* Restore a valid, accepted peer after the deliberate quarantine cases. */
     net.policy.accepting=1;net.work_pending=0;net.policy.dying=0;
+    net.policy.epoch=1; /* Fresh modeled peer matches route_ra numeric epoch. */
     ni.ni_wme_applied_slot=20;net.ic.ic_state=IEEE80211_S_RUN;
     ifp.if_flags=IFF_RUNNING;
     restart_core(&sc);

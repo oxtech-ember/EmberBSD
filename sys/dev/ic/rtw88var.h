@@ -72,6 +72,20 @@ struct rtw88_txq {
 	unsigned queued;	/* Posted, completion not seen. */
 };
 
+/* Numeric legacy rate policy; no retained stack/peer pointer. */
+struct rtw88_ra_config {
+	uint64_t epoch;
+	unsigned channel, common_rates;
+	uint8_t mode, use_protection;
+};
+struct rtw88_ra_state {
+	uint64_t epoch;
+	uint32_t generation;
+	unsigned channel, common_rates, mask;
+	uint8_t rate_id;
+	int configured, active, protection_limited, error;
+};
+
 /* Visible counters; errors are never silently dropped. */
 struct rtw88_stats {
 	uint64_t intr;
@@ -93,6 +107,12 @@ struct rtw88_stats {
 	uint64_t tx_data_other;
 	uint16_t tx_data_basic;
 	uint8_t tx_data_rate;
+	uint64_t tx_ra_encoded, tx_ra_protection_limited;
+	uint64_t ra_commands, ra_command_errors;
+	uint64_t ra_reports, ra_unattributed, ra_malformed, ra_foreign;
+	uint64_t ra_unsupported, ra_inactive, ra_trailing, ra_outside_mask;
+	uint32_t ra_observed_generation;
+	uint8_t ra_report_rate, ra_report_macid, ra_report_bw, ra_report_valid;
 	uint64_t rx_beacons;
 	uint8_t last_bssid[6];
 	char last_ssid[33];	/* NUL-terminated; empty if malformed. */
@@ -148,6 +168,8 @@ struct rtw88_softc {
 	int sc_edca_error;	/* TX quarantine until a full successful start. */
 	unsigned sc_channel;
 	unsigned sc_basic_rates;	/* Negotiated legacy descriptor-rate bitmap. */
+	int sc_linked;
+	struct rtw88_ra_state sc_ra;
 	struct rtw88_txq sc_txq[RTW88_NTXQ];
 	/*
 	 * Optional network consumers. Called under the bus interrupt lock;
@@ -233,6 +255,12 @@ struct rtw88_tx_fixed {
 };
 int rtw88_tx_fixed(struct rtw88_softc *, unsigned, const void *, size_t,
     const struct rtw88_tx_fixed *);
+
+/* Caller holds the bus lock. Commands are posted, not firmware ACKs. */
+void rtw88_ra_invalidate(struct rtw88_softc *);
+int rtw88_ra_configure(struct rtw88_softc *, const struct rtw88_ra_config *);
+int rtw88_tx_auto(struct rtw88_softc *, unsigned, const void *, size_t,
+    uint64_t, unsigned);
 
 /* Read software ring capacity while holding the bus interrupt lock. */
 unsigned rtw88_tx_available(struct rtw88_softc *, unsigned);

@@ -19,7 +19,7 @@ parts.append(re.search(r'^enum ieee80211_state \{.*?^};', proto, re.M|re.S).grou
 parts.append('#define WME_NUM_AC 4\nstruct ieee80211com;\n')
 for name in ('wmeParams', 'chanAccParams', 'ieee80211_wme_state'):
     parts.append(re.search(r'^struct '+name+r' \{.*?^};', proto, re.M|re.S).group())
-for path, names in [('sys/net80211/ieee80211_var.h',r'IEEE80211_(C_WME|F_WME|F_SHSLOT|FIXED_RATE_NONE)'),
+for path, names in [('sys/net80211/ieee80211_var.h',r'IEEE80211_(C_WME|F_WME|F_SHSLOT|F_USEPROT|FIXED_RATE_NONE)'),
                     ('sys/net80211/ieee80211_node.h',r'IEEE80211_NODE_(QOS|WME_VALID|WME_OFFER)'),
                     ('sys/net80211/ieee80211.h',r'IEEE80211_RATE_(BASIC|VAL)'),
                     ('sys/net/if_media.h',r'_?IFM_(NONE|L_OWNLOCK|NMASK|MMASK|TMASK|ETHER|ETH_XTMASK|ETHER_SUBTYPE_GET\(x\)|SUBTYPE\(x\)|TYPE\(x\)|MODE\(x\)|AUTO|IEEE80211(?:_11[A-Z]+|_FH|_TURBO)?)')]:
@@ -39,6 +39,7 @@ parts.append(shared[:shared.index('#include')])
 parts.append('void\n'+re.search(r'^ieee80211_wme_reset\(.*?^}',shared,re.M|re.S).group()+'\n')
 for name, result in [('rtw88_net_basic_rates','static unsigned'),
                      ('rtw88_net_edca_prepare','static int'),
+                     ('rtw88_net_ra_prepare','static int'),
                      ('rtw88_net_state_work','static void'),
                      ('rtw88_net_newstate','static int'),
                      ('rtw88_net_init','static int'),
@@ -46,6 +47,7 @@ for name, result in [('rtw88_net_basic_rates','static unsigned'),
     if name == 'rtw88_net_edca_prepare' and '\n'+name+'(' not in net:
         continue
     parts.append(function(name,result))
+parts.append('#ifdef RTW88_STATE_TX_CALLER\n' + function('rtw88_net_tx_submit', 'static int') + '#endif\n')
 (out/'native-state.inc').write_text('\n'.join(parts)+'\n')
 
 media = read('sys/net/if_media.c')

@@ -134,6 +134,7 @@ jobs:
           RTW88_ROUTING_ANALYZE: '1'
           RTW88_ENABLE_ANALYZE: '1'
           RTW88_PCI_ANALYZE: '1'
+          RTW88_RA_ANALYZE: '1'
         run: |
           cat > "$RUNNER_TEMP/memcheck" <<'SH'
           #!/bin/sh

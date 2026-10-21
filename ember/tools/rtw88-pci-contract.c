@@ -638,7 +638,7 @@ int main(void)
 	CHECK(rtwce_bootstrap(0) == EBUSY);
 	int old_io = f.io;
 	int ch = 36;
-	char stats[2048] = { 0 };
+	char stats[4096] = { 0 };
 	CHECK(rtwce_h2c(0x1234) == EBUSY);
 	CHECK(rtwce_lbmode(1) == EBUSY);
 	CHECK(rtwce_loopback(1) == EBUSY);
@@ -655,6 +655,8 @@ int main(void)
 	CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
 	CHECK(strstr(stats, " basic 0xf") != NULL);
 	CHECK(strstr(stats, " txdata 0 txrate 0 txbasic 0") != NULL);
+	CHECK(strstr(stats, " fwra_tx 0 protection_tx 0") != NULL);
+	CHECK(strstr(stats, " ra_reports 0 unattributed 0") != NULL);
 	CHECK(strstr(stats, " txr0 0") != NULL && strstr(stats, " txr11 0") != NULL);
 	CHECK(strstr(stats, " txpost0 0") != NULL && strstr(stats, " txpost4 0") != NULL);
 	stats_latch = &p;
@@ -662,7 +664,7 @@ int main(void)
 	CHECK(stats_latch == NULL && strstr(stats, " basic 0x55a") != NULL);
 	{
 		struct rtw88_stats saved = p.sc_core.sc_stats;
-		char probe[2050];
+		char probe[4098];
 		size_t required;
 
 		memset(&p.sc_core.sc_stats, 0xff, sizeof(p.sc_core.sc_stats));

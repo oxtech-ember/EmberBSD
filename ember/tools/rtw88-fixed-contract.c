@@ -251,7 +251,8 @@ main(void)
 	CHECK(rtw88_net_tx_submit(&net, &node, RTW88_TXQ_BE, frame, 24) == 0);
 	setup_fixed(&sc);
 	net.ic.ic_fixed_rate = IEEE80211_FIXED_RATE_NONE;
-	old_bytes(&sc, RTW88_TXQ_BE, 24);
+	/* AUTO payload requires a committed firmware RA capsule. */
+	CHECK(rtw88_net_tx_submit(&net, &node, RTW88_TXQ_BE, frame, 24) == EBUSY);
 	net.ic.ic_fixed_rate
 	    = -99; /* Noneligible frames bypass fixed metadata. */
 	frame[0] = 0x80;

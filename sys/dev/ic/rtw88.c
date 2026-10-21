@@ -635,6 +635,9 @@ rtw88_stop(struct rtw88_softc *sc)
 	int error;
 
 	sc->sc_stop_requested = 1;
+	rtw88_ra_invalidate(sc);
+	sc->sc_linked = 0;
+	sc->sc_stats.ra_report_valid = 0;
 	sc->sc_generation++;
 	sc->sc_packet_h2c.active = 0;
 	if (sc->sc_running) {
@@ -835,6 +838,8 @@ rtw88_start(struct rtw88_softc *sc)
 	}
 	sc->sc_rf_enabled = 1;
 	sc->sc_edca_error = 0;
+	sc->sc_ra.error = 0;
+	sc->sc_stats.ra_report_valid = 0;
 	sc->sc_started = 1;
 	sc->sc_bootstrapping = 0;
 	rtw88_release_fw(sc);
@@ -949,6 +954,45 @@ rtw88_rx_beacon(struct rtw88_softc *sc, const uint8_t *p, size_t len)
 	st->last_ssid_len = (uint8_t)n;
 }
 
+/*
+ * Pinned fw.h C2H_RA_RPT: ID/sequence and seven payload bytes. The wire
+ * has no association token. These are unattributed firmware observations,
+ * never ACKs or input to host peer/rate policy.
+ */
+static void
+rtw88_ra_report(struct rtw88_softc *sc, const uint8_t *p, size_t len)
+{
+	struct rtw88_stats *st = &sc->sc_stats;
+	unsigned rate;
+
+	if (len < 9) {
+		st->ra_malformed++;
+		return;
+	}
+	if (len > 9)
+		st->ra_trailing++;
+	if (p[3] != 0) {
+		st->ra_foreign++;
+		return;
+	}
+	rate = p[2] & 0x7f;
+	if (rate >= RTW88_LEGACY_RATES || (p[2] & 0x80) != 0 || p[8] != 0) {
+		st->ra_unsupported++;
+		return;
+	}
+	st->ra_reports++;
+	st->ra_unattributed++;
+	if (!sc->sc_ra.active)
+		st->ra_inactive++;
+	if (sc->sc_ra.configured && (sc->sc_ra.mask & (1U << rate)) == 0)
+		st->ra_outside_mask++;
+	st->ra_report_rate = (uint8_t)rate;
+	st->ra_report_macid = p[3];
+	st->ra_report_bw = p[8];
+	st->ra_observed_generation = sc->sc_generation;
+	st->ra_report_valid = 1;
+}
+
 /* One received buffer: classify, count, and keep every error visible. */
 static void
 rtw88_rx_one(struct rtw88_softc *sc, unsigned idx)
@@ -971,6 +1015,8 @@ rtw88_rx_one(struct rtw88_softc *sc, unsigned idx)
 		sc->sc_stats.rx_c2h++;
 		sc->sc_stats.last_c2h_id = p[0];
 		sc->sc_stats.last_c2h_seq = p[1];
+		if (p[0] == 0x0c)
+			rtw88_ra_report(sc, p, rx.packet_size);
 		return;
 	}
 	if ((rx.flags & (RTW88_RX_CRC_ERROR | RTW88_RX_ICV_ERROR)) != 0) {
@@ -1034,7 +1080,8 @@ rtw88_tx_available(struct rtw88_softc *sc, unsigned q)
 {
 	const struct rtw88_txq *txq;
 
-	if (q >= RTW88_NTXQ || !sc->sc_running || sc->sc_edca_error != 0)
+	if (q >= RTW88_NTXQ || !sc->sc_running || sc->sc_edca_error != 0 ||
+	    sc->sc_ra.error != 0)
 		return 0;
 	txq = &sc->sc_txq[q];
 	return txq->rp > txq->wp ? txq->rp - txq->wp - 1 :
@@ -1044,7 +1091,7 @@ rtw88_tx_available(struct rtw88_softc *sc, unsigned q)
 /*
  * Port0 fields and mailbox layouts are from pinned rtw88 main.c,
  * fw.c/fw.h, sec.c and reg.h. This host-managed legacy station does
- * not enable hardware crypto, firmware rate adaptation, LPS or offload.
+ * not enable hardware crypto or LPS; RA is configured separately.
  */
 int
 rtw88_station_config(struct rtw88_softc *sc, const uint8_t *bssid,
@@ -1072,10 +1119,14 @@ rtw88_station_config(struct rtw88_softc *sc, const uint8_t *bssid,
 	}
 	if (sc->sc_edca_error != 0)
 		return sc->sc_edca_error;
+	if (sc->sc_ra.error != 0)
+		return sc->sc_ra.error;
 	if (!sc->sc_running || !sc->sc_started)
 		return ENXIO;
 	if (sc->sc_channel > 14 && (basic_rates & 0xf) != 0)
 		return EINVAL;
+	rtw88_ra_invalidate(sc);
+	sc->sc_linked = 0;
 	/* Keep data paused and port unlinked until all setup writes succeed. */
 	rtw8822c_io_wr_mask(&io, 0x0100, 0x30000, 0);
 	rtw8822c_io_set(&io, 0x0522, 1, 0x0f);
@@ -1104,8 +1155,10 @@ rtw88_station_config(struct rtw88_softc *sc, const uint8_t *bssid,
 		rtw8822c_io_wr_mask(&io, 0x0100, 0x30000, 2);
 		rtw8822c_io_clr(&io, 0x0522, 1, 0x0f);
 	}
-	if (io.error == 0)
+	if (io.error == 0) {
 		sc->sc_basic_rates = basic_rates;
+		sc->sc_linked = linked;
+	}
 	return io.error;
 }
 
@@ -1124,6 +1177,8 @@ rtw88_edca_apply(struct rtw88_softc *sc,
 
 	if (sc->sc_edca_error != 0)
 		return sc->sc_edca_error;
+	if (sc->sc_ra.error != 0)
+		return sc->sc_ra.error;
 	if (!sc->sc_resources_ready || !sc->sc_running || !sc->sc_started ||
 	    sc->sc_stop_requested)
 		return ENXIO;
@@ -1146,9 +1201,92 @@ rtw88_edca_apply(struct rtw88_softc *sc,
 	return error;
 }
 
+/* Pinned fw.c/fw.h RA_INFO register command; legacy BW20 only. */
+void
+rtw88_ra_invalidate(struct rtw88_softc *sc)
+{
+	sc->sc_ra.active = 0;
+	sc->sc_ra.configured = 0;
+}
+
+int
+rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
+{
+	struct rtw88_ra_state ra = { 0 };
+	uint8_t payload[7] = { 0 };
+	unsigned mask;
+	int error;
+
+	if (cfg == NULL || cfg->epoch == 0 || cfg->use_protection > 1 ||
+	    cfg->channel == 0 || cfg->channel != sc->sc_channel ||
+	    cfg->common_rates == 0 || (cfg->common_rates & ~0xfffU) != 0)
+		return EINVAL;
+	mask = cfg->common_rates;
+	switch (cfg->mode) {
+	case RTW88_FIXED_11A:
+		if (cfg->channel <= 14 || (mask & 0xf) != 0)
+			return EINVAL;
+		break;
+	case RTW88_FIXED_11B:
+		if (cfg->channel > 14 || (mask & ~0xfU) != 0)
+			return EINVAL;
+		break;
+	case RTW88_FIXED_11G:
+		if (cfg->channel > 14)
+			return EINVAL;
+		break;
+	default:
+		return EINVAL;
+	}
+	if (sc->sc_edca_error != 0)
+		return sc->sc_edca_error;
+	if (sc->sc_ra.error != 0)
+		return sc->sc_ra.error;
+	if (!sc->sc_running || !sc->sc_started || !sc->sc_linked ||
+	    sc->sc_stop_requested)
+		return ENXIO;
+	ra.epoch = cfg->epoch;
+	ra.generation = sc->sc_generation;
+	ra.channel = cfg->channel;
+	ra.common_rates = mask;
+	ra.configured = 1;
+	if ((mask & ~0xfU) == 0)
+		ra.rate_id = RTW88_RATEID_B_20M;
+	else if ((mask & 0xf) == 0)
+		ra.rate_id = RTW88_RATEID_G;
+	else {
+		ra.rate_id = 6; /* Pinned RTW_RATEID_BG. */
+		mask &= 0xff5;
+	}
+	ra.mask = mask;
+	if (cfg->use_protection) {
+		/* No qualified RTS policy: keep a visible legacy CCK path. */
+		if ((sc->sc_basic_rates & cfg->common_rates & 0xf) == 0)
+			return EOPNOTSUPP;
+		ra.protection_limited = 1;
+		sc->sc_ra = ra;
+		return 0;
+	}
+	payload[1] = ra.rate_id | (1U << 5); /* Initial RA level1, SGI0. */
+	payload[2] = 0x40; /* DIS_PT, BW20, LDPC0, NO_UPDATE0, VHT0. */
+	payload[3] = (uint8_t)mask;
+	payload[4] = (uint8_t)(mask >> 8);
+	error = rtw88_fw_command(sc, 0x40, payload, sizeof(payload));
+	if (error != 0) {
+		rtw88_ra_invalidate(sc);
+		sc->sc_ra.error = error;
+		sc->sc_stats.ra_command_errors++;
+		return error;
+	}
+	ra.active = 1;
+	sc->sc_ra = ra;
+	sc->sc_stats.ra_commands++;
+	return 0;
+}
+
 static int
 rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
-    size_t len, int fixed_rate)
+    size_t len, int fixed_rate, unsigned ra_mode)
 {
 	struct rtw88_tx_info tx;
 	struct rtw88_wme_map map;
@@ -1164,6 +1302,8 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 		return EINVAL;
 	if (sc->sc_edca_error != 0)
 		return sc->sc_edca_error;
+	if (sc->sc_ra.error != 0)
+		return sc->sc_ra.error;
 	if (!sc->sc_resources_ready || !sc->sc_running || !sc->sc_started ||
 	    sc->sc_stop_requested)
 		return ENXIO;
@@ -1221,6 +1361,12 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	tx.rate_id = tx.rate >= 4 ? RTW88_RATEID_G : RTW88_RATEID_B_20M;
 	tx.flags = RTW88_TX_DIS_QSELSEQ | RTW88_TX_USE_RATE |
 	    RTW88_TX_DIS_RATE_FB;
+	if (ra_mode == 1) {
+		tx.mac_id = 0;
+		tx.rate_id = sc->sc_ra.rate_id;
+		tx.rate = (uint8_t)__builtin_ctz(sc->sc_ra.mask);
+		tx.flags &= ~(RTW88_TX_USE_RATE | RTW88_TX_DIS_RATE_FB);
+	}
 	if (q == RTW88_TXQ_MGMT)
 		tx.flags |= RTW88_TX_HWSEQ;
 	else
@@ -1237,6 +1383,10 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 		unsigned rate = ((const uint8_t *)buf->vaddr)[16] & 0x7f;
 
 		sc->sc_stats.tx_data_encoded++;
+		if (ra_mode == 1)
+			sc->sc_stats.tx_ra_encoded++;
+		else if (ra_mode == 2)
+			sc->sc_stats.tx_ra_protection_limited++;
 		sc->sc_stats.tx_data_rate = (uint8_t)rate;
 		sc->sc_stats.tx_data_basic = (uint16_t)sc->sc_basic_rates;
 		if (rate < __arraycount(sc->sc_stats.tx_data_rates))
@@ -1272,7 +1422,7 @@ int
 rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
     size_t len)
 {
-	return rtw88_tx_submit(sc, q, frame, len, -1);
+	return rtw88_tx_submit(sc, q, frame, len, -1, 0);
 }
 
 int
@@ -1319,7 +1469,47 @@ rtw88_tx_fixed(struct rtw88_softc *sc, unsigned q, const void *frame,
 	/* The current descriptor API has no qualified RTS/CTS protection policy. */
 	if (rate >= 4 && fixed->use_protection)
 		return EOPNOTSUPP;
-	return rtw88_tx_submit(sc, q, frame, len, (int)rate);
+	return rtw88_tx_submit(sc, q, frame, len, (int)rate, 0);
+}
+
+int
+rtw88_tx_auto(struct rtw88_softc *sc, unsigned q, const void *frame,
+    size_t len, uint64_t epoch, unsigned use_protection)
+{
+	const uint8_t *bytes = frame;
+	unsigned basic, rate;
+
+	if (use_protection > 1)
+		return EINVAL;
+	if (frame == NULL || len < 24)
+		return EMSGSIZE;
+	if (q == RTW88_TXQ_MGMT || (bytes[0] != 0x08 && bytes[0] != 0x88) ||
+	    (bytes[1] & 3) != 1 || (bytes[1] & 0x80) != 0 ||
+	    (bytes[4] & 1) != 0 || (bytes[16] & 1) != 0)
+		return EOPNOTSUPP;
+	if (sc->sc_ra.error != 0)
+		return sc->sc_ra.error;
+	if (!sc->sc_linked || !sc->sc_ra.configured ||
+	    sc->sc_ra.epoch != epoch ||
+	    sc->sc_ra.generation != sc->sc_generation ||
+	    sc->sc_ra.channel != sc->sc_channel)
+		return EBUSY;
+	if (use_protection) {
+		sc->sc_ra.active = 0;
+		sc->sc_ra.protection_limited = 1;
+	}
+	if (sc->sc_ra.protection_limited) {
+		basic = sc->sc_basic_rates & 0xfff;
+		if (basic == 0)
+			return EOPNOTSUPP;
+		rate = (unsigned)__builtin_ctz(basic);
+		if (rate >= 4 || (sc->sc_ra.common_rates & (1U << rate)) == 0)
+			return EOPNOTSUPP;
+		return rtw88_tx_submit(sc, q, frame, len, -1, 2);
+	}
+	if (!sc->sc_ra.active)
+		return EBUSY;
+	return rtw88_tx_submit(sc, q, frame, len, -1, 1);
 }
 
 /* pci.c rtw_pci_tx_isr: completion is the chip's read index, nothing else. */

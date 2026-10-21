@@ -147,15 +147,15 @@ It injects producer-write failures before and after the modeled bus effect.
 The snapshot and updates use the existing bus interrupt lock. No addresses or
 payload bytes are retained. An undersized stats buffer returns `ENOSPC`.
 The native PCI contract checks maximum-value output and every capacity through
-2048 bytes. This diagnostic does not change selected rates or capability advertisement.
+4096 bytes. This diagnostic does not change selected rates or capability advertisement.
 Target build and physical rate measurements remain separate acceptance steps.
 
 Explicit fixed legacy media has a separate opt-in TX path. The wrapper reads
 `ic_fixed_rate` as an index into `ic_sup_rates[ic_curmode]`. It passes a numeric
 rate in 500 kbps units, the peer rate mask, mode, channel and association proof
 to the core. The core checks the exact 12-rate legacy map before DMA. It does
-not choose the highest peer rate or apply fallback. AUTO still uses the old
-lowest-basic-rate descriptor policy. This is not adaptive rate control.
+not choose the highest peer rate or apply fallback. AUTO payloads use the
+separate bounded firmware rate-adaptation path described below.
 
 The fixed path requires the current associated STA BSS in RUN, an active policy,
 no pending state work and the current core channel. Only ToDS unicast payload
@@ -194,6 +194,68 @@ RX ring-full events appeared during these bounded checks. AUTO was restored.
 These are short tests on one 2.4 GHz AP, not adaptive-rate or HT/VHT acceptance.
 Descriptor encodings and DMA completions do not establish over-the-air ACKs.
 PHY rate limits do not specify application throughput.
+
+## Legacy AUTO firmware rate adaptation
+
+The native RUN worker intersects numeric local and peer legacy rates under the
+stack lock. It copies only mode, channel, common mask, protection flag and host
+policy epoch into the core. Existing media join/leave and default-port commands
+still own MACID0. After channel, station and EDCA preparation, the worker posts
+RA_INFO H2C `0x40` before committing acceptance and calling parent RUN. Posted
+mailbox writes are not firmware acknowledgements. Command failure quarantines
+TX and station/EDCA/RA updates until a complete successful fresh start; the
+worker stops the core. It does not silently switch to a basic-rate fallback.
+
+The seven-byte command uses MACID0, BW20, SGI0, LDPC0, VHT0, initial RA level1
+and DIS_PT. Rate IDs are B8, G7 and mixed BG6; the mixed legacy mask uses the
+pinned `0xff5` filter. Missing RSSI is handled with the neutral all-rate host
+mask corresponding to reference RSSI level0. No fabricated RSSI report is sent.
+Only current RUN STA ToDS unicast payload DATA/QoS with a matching epoch,
+channel and firmware generation clears descriptor USE_RATE/DISDATAFB. Fixed,
+management, null and group frames keep their explicit existing descriptor path.
+A missing capsule rejects AUTO payloads before DMA.
+
+Wide RA is eligible only without ERP protection. Initial protection or a later
+USEPROT event selects a visible legacy CCK policy only if the actual lowest
+BASIC descriptor rate is common CCK. Otherwise transmission returns
+`EOPNOTSUPP`, counted by the native interface error path. Clearing USEPROT does
+not reopen wide RA until another successful RUN configuration. No RTS24 policy
+or per-packet mailbox mutation is introduced.
+
+C2H `0x0c` accepts at least seven payload bytes, counts trailing bytes and parses
+the known prefix. MACID must be zero, rate must be legacy0..11, BW20 and SGI0.
+Malformed, foreign and unsupported reports have separate counters. Every valid
+report is explicitly association-unattributed telemetry: the wire has no BSSID
+or association token, and MACID0 is reused. `ra_observed_gen` is the host firmware
+observation generation only. A report never selects host policy, establishes
+current peer acceptance, changes keys, or proves per-frame ACK. `outside_mask`
+is a diagnostic comparison, not evidence that a report belongs to this peer.
+`txr*`/`txrate` remain descriptor-encoding seeds; `fwra_tx` and the report fields
+are separate. DMA `txdone` remains independent of both.
+
+The pinned BSD-3-Clause protocol reference is FreeBSD revision
+`d2145e9b96448da34d3cfede24c509af6d830c92`, files
+[`fw.c`](https://github.com/freebsd/freebsd-src/blob/d2145e9b96448da34d3cfede24c509af6d830c92/sys/contrib/dev/rtw88/fw.c),
+[`fw.h`](https://github.com/freebsd/freebsd-src/blob/d2145e9b96448da34d3cfede24c509af6d830c92/sys/contrib/dev/rtw88/fw.h),
+[`main.c`](https://github.com/freebsd/freebsd-src/blob/d2145e9b96448da34d3cfede24c509af6d830c92/sys/contrib/dev/rtw88/main.c),
+[`main.h`](https://github.com/freebsd/freebsd-src/blob/d2145e9b96448da34d3cfede24c509af6d830c92/sys/contrib/dev/rtw88/main.h)
+and [`tx.c`](https://github.com/freebsd/freebsd-src/blob/d2145e9b96448da34d3cfede24c509af6d830c92/sys/contrib/dev/rtw88/tx.c).
+No new radio firmware binary or HT/VHT advertisement is added.
+
+The RA contract executes actual RUN/state/caller/core and real C2H RX dispatch
+with modeled kernel services, accepted peer tables and bus/firmware behavior.
+It does not execute a complete association exchange or firmware algorithm.
+Cases cover B/G/BG/A serializer bytes, reordered numeric peer intersections,
+first DATA ordering, stale epoch/generation, ERP closure, mailbox writes before
+and after side effect, timeout/cancellation, quarantine, restart and unattributed
+reports after MACID reuse. Core and consumer are checked separately with GCC
+analysis, Cppcheck and Clang Static Analyzer; GCC16 performs all compilation.
+ASan/UBSan executes actual core functions. Source tests do not qualify radio
+rate selection or performance. Initial physical qualification requires fresh
+firmware and one association, matching transfer SHA256 plus changing valid
+firmware telemetry and throughput. Reconnection data is a separate result:
+old queued DMA is not proven drained by this atom, and reports cannot be
+attributed across reassociation. Legacy recovery must remain available.
 
 Manual SSID updates now stage the desired network without requesting a cold
 restart. Automatic and device-controlled roaming retain their reset result.
@@ -296,6 +358,7 @@ CC=gcc-16 sh ember/tools/rtw88-fixed-contract.sh
 CC=gcc-16 RTW88_MEDIA_ANALYZE=1 sh ember/tools/rtw88-media-contract.sh
 CC=gcc-16 RTW88_ROUTING_ANALYZE=1 sh ember/tools/rtw88-routing-contract.sh
 CC=gcc-16 RTW88_ENABLE_ANALYZE=1 sh ember/tools/rtw88-enable-contract.sh
+CC=gcc-16 RTW88_RA_ANALYZE=1 sh ember/tools/rtw88-ra-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-wme-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-fw-init-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-net-contract.sh
