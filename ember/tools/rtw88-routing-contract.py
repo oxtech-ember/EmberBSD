@@ -10,10 +10,10 @@ src, out = map(pathlib.Path, sys.argv[1:])
 fixture = (src/'ember/tools/net80211-wme-contract.c').read_text()
 # Retain the complete existing suite so every shared service model is exercised.
 fixture = fixture.replace('struct mbuf *m_next;', 'struct mbuf *m_next, *m_nextpkt;')
-fixture = fixture.replace('struct ifnet {\n\tint if_timer, if_flags;\n};\nstruct queue {\n\tstruct mbuf *m;\n};', '''struct queue {
+fixture, replaced = re.subn(r'^struct ifnet \{.*?^\};\nstruct queue \{.*?^\};', """struct queue {
     union { struct mbuf *m; struct mbuf *ifq_head; };
     struct mbuf *ifq_tail;
-    int ifq_len;
+    int ifq_len, ifq_maxlen, ifq_drops;
     kmutex_t *ifq_lock;
     int altq_enabled, tbr_enabled;
 };
@@ -21,10 +21,12 @@ struct ifnet {
     int if_timer, if_flags;
     void *if_softc;
     struct queue if_snd;
-};''')
+};""", fixture, count=1, flags=re.M|re.S)
+if replaced != 1:
+    raise ValueError('shared queue model changed')
 fixture = fixture.replace('#define ieee80211_crypto_getucastkey(...) NULL', 'static struct ieee80211_key route_key;\nstatic int route_have_key;\n#define ieee80211_crypto_getucastkey(...) (route_have_key ? &route_key : NULL)')
 fixture = fixture.replace('unsigned ni_fails;', 'unsigned ni_fails;\nint ni_txrate;')
-fixture = fixture.replace('struct queue ic_mgtq;', 'struct queue ic_mgtq;\nint ic_fixed_rate;\nvoid *ic_rawbpf;')
+fixture = fixture.replace('struct queue ic_mgtq;', 'struct queue ic_mgtq;\nvoid *ic_rawbpf;')
 (out/'routing-model.inc').write_text(fixture)
 net = (src/'sys/dev/ic/rtw88_net.c').read_text()
 parts = [net[:net.index('#include')]]
@@ -36,7 +38,7 @@ if 'rtw88_net_tx_dequeue_same(' in net:
 
 var = (src/'sys/net80211/ieee80211_var.h').read_text()
 proto=(src/'sys/net80211/ieee80211_proto.h').read_text()
-(out/'routing-constants.inc').write_text(re.search(r'^enum ieee80211_state \{.*?^};',proto,re.M|re.S).group()+'\n'+re.search(r'^#define\s+IEEE80211_FIXED_RATE_NONE\s+.*$',var,re.M).group()+'\n')
+(out/'routing-constants.inc').write_text('#ifndef NATIVE_IEEE80211_STATE_DEFINED\n#define NATIVE_IEEE80211_STATE_DEFINED 1\n'+re.search(r'^enum ieee80211_state \{.*?^};',proto,re.M|re.S).group()+'\n#endif\n'+re.search(r'^#define\s+IEEE80211_FIXED_RATE_NONE\s+.*$',var,re.M).group()+'\n')
 
 # Use the complete owning FIFO/IFQ macros; only discipline service is modeled.
 ifh=(src/'sys/net/if.h').read_text()

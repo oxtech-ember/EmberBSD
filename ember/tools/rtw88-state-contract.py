@@ -17,12 +17,12 @@ def function(name, result):
         raise ValueError(name)
     return result+'\n'+match.group()+'\n'
 proto = read('sys/net80211/ieee80211_proto.h')
-parts = [read('sys/net80211/_ieee80211.h')]
+parts = [read('sys/net80211/_ieee80211.h'), read('sys/net80211/ieee80211_ht20.h')]
 parts.append(re.search(r'^enum ieee80211_state \{.*?^};', proto, re.M|re.S).group())
 parts.append('#define WME_NUM_AC 4\nstruct ieee80211com;\n')
 for name in ('wmeParams', 'chanAccParams', 'ieee80211_wme_state'):
     parts.append(re.search(r'^struct '+name+r' \{.*?^};', proto, re.M|re.S).group())
-for path, names in [('sys/net80211/ieee80211_var.h',r'IEEE80211_(C_WME|F_WME|F_SHSLOT|F_USEPROT|FIXED_RATE_NONE)'),
+for path, names in [('sys/net80211/ieee80211_var.h',r'IEEE80211_(C_WME|F_WME|F_SHSLOT|F_USEPROT|F_PRIVACY|FIXED_RATE_NONE)'),
                     ('sys/net80211/ieee80211_node.h',r'IEEE80211_NODE_(QOS|WME_VALID|WME_OFFER)'),
                     ('sys/net80211/ieee80211.h',r'IEEE80211_RATE_(BASIC|VAL)'),
                     ('sys/net/if_media.h',r'_?IFM_(NONE|L_OWNLOCK|NMASK|MMASK|TMASK|ETHER|ETH_XTMASK|ETHER_SUBTYPE_GET\(x\)|SUBTYPE\(x\)|TYPE\(x\)|MODE\(x\)|AUTO|IEEE80211(?:_11[A-Z]+|_FH|_TURBO)?)')]:
@@ -36,7 +36,8 @@ for bits in (8,16,32,64):
 s=re.sub(r'\bu_int\b','unsigned',s)
 (out/'native-state-types.inc').write_text(s+'\n')
 net = net_source
-parts=[net[:net.index('#include')]]
+ht=read('sys/net80211/ieee80211_ht20.c')
+parts=[net[:net.index('#include')], ht[:ht.index('#include')], ht[ht.index('int\nieee80211_ht20_optional'):]]
 shared=read('sys/net80211/ieee80211_proto.c')
 parts.append(shared[:shared.index('#include')])
 parts.append('void\n'+re.search(r'^ieee80211_wme_reset\(.*?^}',shared,re.M|re.S).group()+'\n')

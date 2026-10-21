@@ -36,6 +36,10 @@ name: Native RTL8822CE source contracts
       - 'ember/image/test-cix-p1-startup.rb'
       - 'ember/tools/rtw*'
       - 'ember/tools/net80211-wme-contract.*'
+      - 'ember/tools/net80211-ht20-contract.*'
+      - 'sys/net80211/ieee80211_ht20.c'
+      - 'sys/net80211/files.net80211'
+      - 'sys/net80211/Makefile'
   pull_request:
     paths:
       - '.github/workflows/rtw88.yml'
@@ -70,6 +74,10 @@ name: Native RTL8822CE source contracts
       - 'ember/image/test-cix-p1-startup.rb'
       - 'ember/tools/rtw*'
       - 'ember/tools/net80211-wme-contract.*'
+      - 'ember/tools/net80211-ht20-contract.*'
+      - 'sys/net80211/ieee80211_ht20.c'
+      - 'sys/net80211/files.net80211'
+      - 'sys/net80211/Makefile'
   workflow_dispatch:
 
 permissions:
@@ -90,6 +98,9 @@ jobs:
           sparse-checkout: |
             /ember/tools/rtw*
             /ember/tools/net80211-wme-contract.*
+            /ember/tools/net80211-ht20-contract.*
+            /sys/net80211/ieee80211_ht20.c
+            /sys/net80211/ieee80211_ht20.h
             /sys/dev/ic/rtw*
             /sys/dev/ic/rt2661.c
             /sys/dev/ic/rt2661reg.h
@@ -150,6 +161,7 @@ jobs:
           RTW88_RA_ANALYZE: '1'
           RTW88_RECONNECT_ANALYZE: '1'
           RTW88_HWFEATURE_ANALYZE: '1'
+          HT20_ANALYZE: '1'
         run: |
           cat > "$RUNNER_TEMP/memcheck" <<'SH'
           #!/bin/sh
@@ -159,7 +171,7 @@ jobs:
           SH
           chmod 755 "$RUNNER_TEMP/memcheck"
           export TEST_RUNNER="$RUNNER_TEMP/memcheck"
-          for contract in ember/tools/rtw*-contract.sh; do
+          for contract in ember/tools/rtw*-contract.sh ember/tools/net80211-ht20-contract.sh; do
             sh "$contract"
           done
       - name: Execute source contracts under ASan and UBSan
@@ -169,6 +181,6 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
-          for contract in ember/tools/rtw*-contract.sh; do
+          for contract in ember/tools/rtw*-contract.sh ember/tools/net80211-ht20-contract.sh; do
             sh "$contract"
           done

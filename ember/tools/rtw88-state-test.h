@@ -22,6 +22,8 @@ struct ifmedia {
 struct mbuf { struct mbuf *next; void *ctx; };
 struct ifqueue { struct mbuf *head; };
 struct ieee80211_node {
+	struct ieee80211_ht20_node ni_ht20;
+	struct { unsigned rsn_ucastcipher; } ni_rsn;
 	unsigned references;
 	struct ieee80211com *ni_ic;
 	unsigned ni_wme_attempt;
@@ -31,6 +33,7 @@ struct ieee80211_node {
 	uint8_t ni_bssid[6];
 };
 struct ieee80211com {
+	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
 	struct ifqueue ic_mgtq;
 	uint8_t ic_chan_active[32];
 	struct ifnet *ic_ifp;
@@ -227,6 +230,9 @@ state_station(struct rtw88_softc *sc, const uint8_t *bssid, unsigned aid,
 static int state_ra_configure(struct rtw88_softc *, const struct rtw88_ra_config *);
 #define rtw88_ra_configure state_ra_configure
 #endif
+#define IEEE80211_CIPHER_AES_CCM 3
+#define IEEE80211_ADDR_COPY(a,b) memcpy(a,b,6)
+#define IEEE80211_ADDR_EQ(a,b) (memcmp(a,b,6)==0)
 #include "native-state.inc"
 #ifdef RTW88_STATE_RA_OBSERVE
 #undef rtw88_ra_configure

@@ -62,6 +62,7 @@ struct rtw88_net {
 static void rtw88_net_start(struct ifnet *);
 static void rtw88_net_stop(struct ifnet *, int);
 static int rtw88_net_init(struct ifnet *);
+static int rtw88_net_newstate(struct ieee80211com *, enum ieee80211_state, int);
 
 static unsigned
 rtw88_net_basic_rates(struct ieee80211com *ic)
@@ -328,7 +329,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 	const uint8_t *bssid;
 	char failure[384];
 	uint8_t any;
-	int arg, error, prepare_error, restart_error;
+	int arg, error, prepare_error, restart_error, current;
 
 	(void)work;
 	for (;;) {
@@ -362,9 +363,16 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			if ((ic->ic_flags & IEEE80211_F_SHSLOT) != 0)
 				slot = 9;
 		}
-		prepare_error = state == IEEE80211_S_INIT ? 0 :
-		    rtw88_net_edca_prepare(ic, media, state, channel, slot, edca);
-		prepare_stage = RTW88_NET_STAGE_EDCA;
+		/* Profile providers and shared state mutation require Giant. The
+		 * workqueue holds Giant through this check and parent publication. */
+		prepare_error = state == IEEE80211_S_RUN ?
+		    ieee80211_ht20_state_request(ic, state) : 0;
+		prepare_stage = RTW88_NET_STAGE_CORE;
+		if (prepare_error == 0) {
+			prepare_error = state == IEEE80211_S_INIT ? 0 :
+			    rtw88_net_edca_prepare(ic, media, state, channel, slot, edca);
+			prepare_stage = RTW88_NET_STAGE_EDCA;
+		}
 		if (restart_error != 0) {
 			prepare_error = restart_error;
 			prepare_stage = RTW88_NET_STAGE_RESTART;
@@ -435,6 +443,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		mutex_exit(net->lock);
 		if (error != ECANCELED) {
 			if (error != 0) {
+				(void)ieee80211_ht20_state_request(ic, IEEE80211_S_INIT);
 				(void)rtw88_net_state_format(failure,
 				    sizeof(failure), &diag);
 				aprint_error_dev(net->dev, "%s", failure);
@@ -443,17 +452,45 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				if (diag.stage != RTW88_NET_STAGE_RESTART)
 					rtw88_stop(net->core);
 			} else {
-				(void)net->parent_state(ic, state, arg);
-				if (state == IEEE80211_S_RUN) {
+				error = net->parent_state(ic, state, arg);
+				if (error != 0) {
+					diag.stage = RTW88_NET_STAGE_CORE;
+					diag.error = error;
+					(void)rtw88_net_state_format(failure,
+					    sizeof(failure), &diag);
+					aprint_error_dev(net->dev, "%s", failure);
 					mutex_enter(net->lock);
-					if (rtw88_net_beacon_start(&net->policy,
-					    epoch, (uint32_t)getticks()) == 0)
-						ifp->if_timer = 1;
+					current = epoch == net->policy.epoch &&
+					    !net->policy.dying;
+					if (current && state == IEEE80211_S_INIT) {
+						(void)rtw88_net_commit(&net->policy, epoch,
+						    error, 0);
+						rtw88_ra_invalidate(net->core);
+					}
 					mutex_exit(net->lock);
+					if (current && state != IEEE80211_S_INIT) {
+						/* Existing request owner, no self-wait. */
+						(void)rtw88_net_newstate(ic,
+						    IEEE80211_S_INIT, -1);
+					} else if (current) {
+						/* An INIT rejection must not retry forever. */
+						ifp->if_flags &= ~(IFF_RUNNING | IFF_OACTIVE);
+						(void)ieee80211_ht20_state_request(ic,
+						    IEEE80211_S_INIT);
+						(void)rtw88_stop(net->core);
+					}
+				} else {
+					if (state == IEEE80211_S_RUN) {
+						mutex_enter(net->lock);
+						if (rtw88_net_beacon_start(&net->policy,
+						    epoch, (uint32_t)getticks()) == 0)
+							ifp->if_timer = 1;
+						mutex_exit(net->lock);
+					}
+					if (state == IEEE80211_S_SCAN)
+						callout_schedule(&net->scan, mstohz(200));
+					softint_schedule(net->softint);
 				}
-				if (state == IEEE80211_S_SCAN)
-					callout_schedule(&net->scan, mstohz(200));
-				softint_schedule(net->softint);
 			}
 		}
 		mutex_enter(net->lock);
@@ -471,12 +508,21 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
     int arg)
 {
 	struct rtw88_net *net = ic->ic_ifp->if_softc;
-	int enqueue = 0;
+	int enqueue = 0, ht20_error;
 
+	/* Shared capsule ownership is Giant-only, before taking the PCI lock. */
+	ht20_error = ieee80211_ht20_state_request(ic, state);
+	if (ht20_error != 0) {
+		/* Withdraw an already accepted peer even for a direct RUN caller.
+		 * Use the existing coalesced INIT owner; never leave TX accepting. */
+		state = IEEE80211_S_INIT;
+		arg = -1;
+	}
 	callout_stop(&net->scan);
 	mutex_enter(net->lock);
 	if (net->policy.dying) {
 		mutex_exit(net->lock);
+		(void)ieee80211_ht20_state_request(ic, IEEE80211_S_INIT);
 		return ENXIO;
 	}
 	if (net->core->sc_linked)
@@ -493,7 +539,7 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
 	mutex_exit(net->lock);
 	if (enqueue)
 		workqueue_enqueue(net->wq, &net->state_work, NULL);
-	return 0;
+	return ht20_error;
 }
 
 static void

@@ -197,9 +197,46 @@ ieee80211_wme_request_offer(const struct mbuf *m, int type)
  * dispatched to the driver, then it is responsible for freeing the
  * reference (and potentially free'ing up any associated storage).
  */
+/* Verify the actual queued producer, not merely a construction intention. */
+static int
+ieee80211_ht20_request_offer(const struct mbuf *m, int type,
+    const struct ieee80211_ht20_profile *profile)
+{
+	const uint8_t *p;
+	uint8_t expected[28];
+	size_t len, size, fixed;
+	int seen = 0;
+
+	if (profile == NULL || (type != IEEE80211_FC0_SUBTYPE_ASSOC_REQ &&
+	    type != IEEE80211_FC0_SUBTYPE_REASSOC_REQ))
+		return 0;
+	fixed = sizeof(struct ieee80211_frame) + 4 +
+	    (type == IEEE80211_FC0_SUBTYPE_REASSOC_REQ ? 6 : 0);
+	if (m->m_len < 0 || (size_t)m->m_len < fixed)
+		return 0;
+	p = mtod(m, const uint8_t *) + fixed;
+	len = (size_t)m->m_len - fixed;
+	ieee80211_ht20_write(expected, profile);
+	while (len != 0) {
+		if (len < 2 || p[1] > len - 2)
+			return 0;
+		size = (size_t)p[1] + 2;
+		if (p[0] == 45) {
+			if (seen || size != sizeof(expected) ||
+			    memcmp(p, expected, sizeof(expected)) != 0)
+				return 0;
+			seen = 1;
+		}
+		p += size;
+		len -= size;
+	}
+	return seen;
+}
+
 static int
 ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
-    struct mbuf *m, int type, int timer, int wme_offer)
+    struct mbuf *m, int type, int timer, int wme_offer,
+    const struct ieee80211_ht20_profile *ht20)
 {
 	struct ifnet *ifp = ic->ic_ifp;
 	struct ieee80211_frame *wh;
@@ -248,6 +285,22 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
 	}
 #endif
 
+	if (ht20 != NULL && (!wme_offer ||
+	    !ieee80211_wme_request_offer(m, type) ||
+	    !ieee80211_ht20_request_offer(m, type, ht20))) {
+		M_SETCTX(m, NULL);
+		m_freem(m);
+		return EINVAL;
+	}
+	/* Only the new admitted HT producer requires bounded queue admission.
+	 * The legacy path keeps its existing queue semantics. */
+	if (ht20 != NULL && ic->ic_mgtq.ifq_len >=
+	    (ic->ic_mgtq.ifq_maxlen > 0 ? ic->ic_mgtq.ifq_maxlen : IFQ_MAXLEN)) {
+		IF_DROP(&ic->ic_mgtq);
+		M_SETCTX(m, NULL);
+		m_freem(m);
+		return ENOBUFS;
+	}
 	IEEE80211_NODE_STAT(ni, tx_mgmt);
 	IF_ENQUEUE(&ic->ic_mgtq, m);
 	/* Queue admission is not a hardware transmit or acknowledgement. */
@@ -261,6 +314,8 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
 		ni->ni_wme_offer_type = type;
 		ni->ni_flags |= IEEE80211_NODE_WME_OFFER;
 	}
+	if (ieee80211_ht20_request_offer(m, type, ht20))
+		ieee80211_ht20_offer(ic, ni, type, ht20);
 	if (timer) {
 		/*
 		 * Set the mgt frame timeout.
@@ -1388,6 +1443,9 @@ ieee80211_send_probereq(struct ieee80211_node *ni,
 	struct mbuf *m;
 	u_int8_t *frm;
 
+	if (ieee80211_ht20_optional(optie, optielen) != 0)
+		return EINVAL;
+
 	/*
 	 * Hold a reference on the node so it doesn't go away until after
 	 * the xmit is complete all the way in the driver.  On error we
@@ -1470,14 +1528,18 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 	struct mbuf *m;
 	u_int8_t *frm;
 	u_int16_t capinfo;
-	int ret, timer, status, wme_offer = 0;
+	int ret, timer, status, wme_offer = 0, ht20_offer = 0;
+	struct ieee80211_ht20_profile ht20;
 
 	IASSERT(ni != NULL, ("null node"));
 	if (ic->ic_opmode == IEEE80211_M_STA &&
 	    (type == IEEE80211_FC0_SUBTYPE_AUTH ||
 	     type == IEEE80211_FC0_SUBTYPE_ASSOC_REQ ||
 	     type == IEEE80211_FC0_SUBTYPE_REASSOC_REQ))
+	{
 		ieee80211_wme_reset(ni);
+		ieee80211_ht20_reset(ni);
+	}
 
 	/*
 	 * Hold a reference on the node so it doesn't go away until after
@@ -1694,6 +1756,12 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		 *	[tlv] WME
 		 *	[tlv] user-specified ie's
 		 */
+		if (ieee80211_ht20_optional(ic->ic_opt_ie, ic->ic_opt_ie_len) != 0)
+			senderr(EINVAL, is_tx_unknownmgt);
+		ht20_offer = ieee80211_ht20_prepare(ic, ni,
+		    (ic->ic_caps & IEEE80211_C_WME) &&
+		    (ic->ic_flags & IEEE80211_F_WME) && ni->ni_wme_ie != NULL,
+		    &ht20);
 		m = ieee80211_getmgtframe(&frm,
 			 sizeof(u_int16_t)
 		       + sizeof(u_int16_t)
@@ -1702,6 +1770,7 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		       + 2 + IEEE80211_RATE_SIZE
 		       + 2 + (IEEE80211_RATE_MAXSIZE - IEEE80211_RATE_SIZE)
 		       + sizeof(struct ieee80211_wme_info)
+		       + (ht20_offer ? 28 : 0)
 		       + (ic->ic_opt_ie != NULL ? ic->ic_opt_ie_len : 0)
 		);
 		if (m == NULL)
@@ -1742,6 +1811,10 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		    (ic->ic_flags & IEEE80211_F_WME) && ni->ni_wme_ie != NULL) {
 			frm = ieee80211_add_wme_info(frm, &ic->ic_wme);
 			wme_offer = 1;
+		}
+		if (ht20_offer) {
+			ieee80211_ht20_write(frm, &ht20);
+			frm += 28;
 		}
 		if (ic->ic_opt_ie != NULL) {
 			memcpy(frm, ic->ic_opt_ie, ic->ic_opt_ie_len);
@@ -1825,7 +1898,8 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		senderr(EINVAL, is_tx_unknownmgt);
 		/* NOTREACHED */
 	}
-	ret = ieee80211_mgmt_output(ic, ni, m, type, timer, wme_offer);
+	ret = ieee80211_mgmt_output(ic, ni, m, type, timer, wme_offer,
+	    ht20_offer ? &ht20 : NULL);
 	if (ret != 0) {
 bad:
 		ieee80211_free_node(ni);

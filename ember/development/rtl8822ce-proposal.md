@@ -269,6 +269,74 @@ firmware telemetry and throughput. Reconnection data is a separate result:
 old queued DMA is not proven drained by this atom, and reports cannot be
 attributed across reassociation. Legacy recovery must remain available.
 
+## Shared HT20 association staging (driver admission remains off)
+
+The shared stack has a bounded HT20 offer/response capsule and the native
+request callback consumes its generation/peer/channel fence. Protocol attach
+initializes the optional provider to NULL. RTL8822CE does not register a provider
+in this step, so ordinary real-board association still emits legacy rates/WME
+and performs no HT/VHT radio, power, rate or aggregation configuration.
+
+A future qualified provider supplies a current generation, equal local RX/TX
+MCS masks (mandatory MCS0..7, at most0..15), an A-MPDU parameter with exponent0
+and qualified spacing, and all radio/power/protection/RXBA/scheduler/A-MSDU
+readiness bits. Missing/unknown readiness never creates capabilities. The
+initial wire profile is HT20, mixed format, long GI and SMPS disabled; no
+40MHz/SGI/LDPC/STBC/beamforming/VHT bits are emitted. TX MCS parameters explicitly
+say defined/equal to RX; unequal local masks are rejected for this profile.
+
+Actual queued association/reassociation bytes must contain a unique matching
+HT Cap IE and valid unique WME offer before publishing an offer capsule. A full
+HT queue uses the configured capacity or IFQ_MAXLEN and returns ENOBUFS through
+the existing caller/node-reference cleanup. The legacy queue policy is unchanged.
+Manual HT/VHT Cap/Operation optional IEs and known vendor HT IEs are rejected by
+association and probe producers even without an admission provider. Existing
+opaque RSN/WME optional-byte behavior is preserved.
+
+The actual association response consumer validates the current offer identity,
+full bounded TLVs, HT Cap26/Operation22 lengths, selected primary channel and
+supported basic MCS before committing. Local TX intersects peer RX MCS; this
+is not evidence of the peer's TX mask or the on-air NSS/rate. Static/dynamic
+peer SMPS restricts the accepted TX mask to one stream until a later protection
+policy exists. A malformed matching offered HT response follows the existing
+association failure cleanup; unsolicited HT cannot activate a legacy station.
+A valid legacy response can complete without HT.
+
+Fresh matching ASSOC-to-RUN state retains the capsule. The provider must request
+invalidation before replacing active configuration/profile; node cleanup also
+discards the capsule. Each native RUN request revalidates its current profile.
+The worker repeats validation before hardware setup and policy commit. Shared
+profile mutation requires Giant, held through validation and parent publication.
+The native pre-PCI consumer rejects stale active HT and withdraws existing TX acceptance/RA through the normal coalesced
+INIT request, including direct RUN callers. Failed worker acceptance cancels the
+capsule before existing parent INIT cleanup. A rejected parent state withdraws
+the current request through normal INIT ownership without waiting on its worker.
+Newer requests survive. Rejected INIT stops once and clears running state.
+No new node/key freeing path or
+media/AID ABI is introduced.
+
+The host contract executes actual shared management producers, WME/HT response
+consumers, native newstate callback, complete state worker, RA invalidation and
+request/commit epoch consumers. Allocation/queueing, locks, clocks, scheduling,
+core operations, restart and non-HT parent effects are explicit services. The
+worker fixture copies the accepted interface snapshot into its native container.
+Earlier accepted RUN is a modeled input to the direct-RUN regression. Separate
+RA/reconnect contracts execute core and restart I/O. No RF setup is claimed. It
+checks actual allocation extent, golden request bytes, all AMPDU parameter
+encodings, unaligned HT bytes, malformed/duplicate/missing IEs, basic MCS limits,
+SMPS, security/profile changes, allocation/prepend/queue failures, coalesced
+requests, delayed profile changes, parent rejection, INIT failure and unchanged
+legacy/WME paths. Disabling the actual writer, parser or
+native consumer must make the same contract fail.
+
+This staging does not establish RX BlockAck, encrypted reorder or protected HT
+operation. Those require the next separate coherent data/control/lifecycle atom,
+including narrow native forwarding of20-byte compressed BAR, CCMP replay ordering,
+A-MSDU3839, hardware BlockAck and radio/power/protection acceptance before enabling
+any real HT advertisement. Wire semantics are adapted from FreeBSD net80211 at
+`d2145e9b96448da34d3cfede24c509af6d830c92`, using its BSD license option and
+preserved notices; no LinuxKPI/vap ABI is imported.
+
 ## Firmware hardware-feature snapshot
 
 Fresh RTL8822C startup writes request `0xfd` to the dedicated MMIO event slot
@@ -488,6 +556,7 @@ CC=gcc-16 RTW88_RA_ANALYZE=1 sh ember/tools/rtw88-ra-contract.sh
 CC=gcc-16 RTW88_RECONNECT_ANALYZE=1 sh ember/tools/rtw88-reconnect-contract.sh
 CC=gcc-16 RTW88_RECONNECT_ANALYZE=1 sh ember/tools/rtw88-aploss-contract.sh
 CC=gcc-16 RTW88_HWFEATURE_ANALYZE=1 sh ember/tools/rtw88-hwfeature-contract.sh
+CC=gcc-16 HT20_ANALYZE=1 sh ember/tools/net80211-ht20-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-wme-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-fw-init-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-net-contract.sh

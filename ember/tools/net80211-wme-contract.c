@@ -65,6 +65,7 @@ struct ieee80211com;
 #define LLC_SNAP_LSAP 0xaa
 #define LLC_UI 3
 #define IEEE80211_CIPHER_WEP 0
+#define IEEE80211_CIPHER_AES_CCM 3
 #define IEEE80211_KEY_UNDEFINED(k) 1
 #define IEEE80211_KEYIX_NONE 0xffff
 #define IEEE80211_MSG_ELEMID 0
@@ -82,7 +83,9 @@ struct ieee80211com;
 struct ieee80211_channel {
 	uint16_t ic_freq, ic_flags;
 };
+struct test_rsn { uint8_t rsn_ucastcipher; };
 struct ieee80211_node {
+	struct ieee80211_ht20_node ni_ht20;
 	struct ieee80211com *ni_ic;
 	struct ieee80211_channel *ni_chan, *ni_wme_offer_chan,
 	    *ni_wme_applied_chan;
@@ -94,7 +97,7 @@ struct ieee80211_node {
 	uint8_t ni_wme_offer_type, ni_essid[32], ni_esslen, ni_erp;
 	uint8_t ni_authmode, ni_fhindex, ni_dtim_count, ni_dtim_period;
 	uint16_t ni_intval, ni_fhdwell, ni_txpower;
-	unsigned ni_rsn;
+	struct test_rsn ni_rsn;
 	uint32_t *ni_challenge;
 	uint8_t *ni_wme_ie;
 	unsigned ni_fails;
@@ -106,6 +109,7 @@ struct mbuf {
 	_Alignas(8) uint8_t data[8192];
 	uint8_t *m_data;
 	int m_len, m_flags, ac;
+	size_t model_capacity; /* Requested producer extent, independent of backing array. */
 	struct {
 		int len;
 		struct ieee80211_node *ctx;
@@ -113,16 +117,21 @@ struct mbuf {
 	struct mbuf *m_next;
 };
 struct ifnet {
+	void *if_softc;
 	int if_timer, if_flags;
 };
 struct queue {
 	struct mbuf *m;
+	int ifq_len, ifq_maxlen, ifq_drops;
 };
 struct ieee80211_node_table {
 	const char *nt_name;
 	unsigned nt_inact_init;
 };
 struct ieee80211com {
+	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
+	int ic_fixed_rate;
+	int (*ic_test_newstate)(struct ieee80211com *, int, int);
 	struct ieee80211_node_table ic_sta;
 	unsigned ic_inact_run;
 	struct ieee80211_wme_state ic_wme;
@@ -167,7 +176,8 @@ struct ieee80211_key {
 #define M_SETCTX(m, n) ((m)->m_pkthdr.ctx = (n))
 #define M_WME_SETAC(m, value) ((m)->ac = (value))
 #define M_WME_GETAC(m) ((m)->ac)
-#define IF_ENQUEUE(q, m) ((q)->m = (m))
+#define IF_ENQUEUE(q, m) ((q)->ifq_len++, (q)->m = (m))
+#define IF_DROP(q) ((q)->ifq_drops++)
 #define IEEE80211_IS_CHAN_2GHZ(c) ((c)->ic_freq < 3000)
 #define IEEE80211_IS_CHAN_FHSS(c) 0
 #define EVL_VLANOFTAG(t) ((t) & 0xfff)
@@ -217,6 +227,7 @@ newbuf(size_t len)
 	assert(m != NULL);
 	m->m_data = m->data + 128;
 	m->m_len = (int)len;
+	m->model_capacity = len;
 	m->m_pkthdr.len = (int)len;
 	return m;
 }
@@ -230,6 +241,7 @@ prepend(struct mbuf *m, int len)
 	assert(m->m_data - m->data >= len);
 	m->m_data -= len;
 	m->m_len += len;
+	m->model_capacity += len;
 	m->m_pkthdr.len += len;
 	return m;
 }
@@ -314,7 +326,10 @@ if_start_lock(struct ifnet *ifp)
 	(void)ifp;
 	assert(captured == NULL);
 	captured = active_ic->ic_mgtq.m;
+	CHECK(captured != NULL && captured->m_len >= 0 &&
+	    (size_t)captured->m_len <= captured->model_capacity);
 	active_ic->ic_mgtq.m = NULL;
+	active_ic->ic_mgtq.ifq_len--;
 	if (during_start) {
 		void (*callback)(void) = during_start;
 		during_start = NULL;
@@ -364,12 +379,15 @@ ieee80211_node_unauthorize(struct ieee80211_node *ni)
 {
 	(void)ni;
 }
-static void
+static int
 ieee80211_new_state(struct ieee80211com *ic, int state, int arg)
 {
 	(void)arg;
 	assert(!beacon_lock);
+	if (ic->ic_test_newstate)
+		return ic->ic_test_newstate(ic, state, arg);
 	ic->ic_state = (unsigned)state;
+	return 0;
 }
 static uint8_t
 ieee80211_setup_rates(struct ieee80211_node *ni, uint8_t *rates,

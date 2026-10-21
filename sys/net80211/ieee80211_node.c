@@ -959,6 +959,7 @@ node_cleanup(struct ieee80211_node *ni)
 	struct ieee80211com *ic = ni->ni_ic;
 	int i, qlen;
 
+	ieee80211_ht20_reset(ni);
 	/* NB: preserve ni_table */
 	if (ni->ni_flags & IEEE80211_NODE_PWR_MGT) {
 		ic->ic_ps_sta--;

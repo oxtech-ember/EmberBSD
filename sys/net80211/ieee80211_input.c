@@ -2958,6 +2958,9 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 	u_int8_t rate;
 	int wme_offer, wme_duplicate = 0, apply_wme = 0;
 	struct chanAccParams candidate;
+	struct ieee80211_ht20_node ht20_offer;
+	const uint8_t *ht20_ies;
+	size_t ht20_len;
 	IEEE80211_DEBUGVAR(char ebuf[3 * ETHER_ADDR_LEN]);
 	u_int16_t capinfo, associd;
 	u_int16_t status;
@@ -3002,6 +3005,8 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 	    subtype == ni->ni_wme_offer_type + 0x10;
 	/* Consume this attempt before any matching response can fail parsing. */
 	ni->ni_flags &= ~IEEE80211_NODE_WME_OFFER;
+	ht20_offer = ni->ni_ht20;
+	ni->ni_ht20.offered = ni->ni_ht20.valid = 0;
 
 	/*
 	 * asresp frame format
@@ -3012,6 +3017,8 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 	 *	[tlv] extended supported rates
 	 *	[tlv] WME
 	 */
+	if (ht20_offer.offered && efrm - frm < 6)
+		goto ht20_failure;
 	IEEE80211_VERIFY_LENGTH(efrm - frm, 6);
 	ni = ic->ic_bss;
 	capinfo = le16toh(*(u_int16_t *)frm);
@@ -3031,6 +3038,10 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 	associd = le16toh(*(u_int16_t *)frm);
 	frm += 2;
 
+	ht20_ies = frm;
+	ht20_len = efrm - frm;
+	if (ht20_offer.offered && ieee80211_ht20_check_ies(frm, ht20_len) != 0)
+		goto ht20_failure;
 	rates = xrates = wme = NULL;
 	while (frm + 1 < efrm) {
 		IEEE80211_VERIFY_LENGTH(efrm - frm, frm[1] + 2);
@@ -3144,7 +3155,19 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 	    ni->ni_flags & IEEE80211_NODE_QOS ? ", QoS" : ""
 	);
 
-	ieee80211_new_state(ic, IEEE80211_S_RUN, subtype);
+	if (ieee80211_ht20_response(ic, ni, subtype, &ht20_offer,
+	    ht20_ies, ht20_len,
+	    (ni->ni_flags & IEEE80211_NODE_QOS) != 0) != 0 ||
+	    ieee80211_new_state(ic, IEEE80211_S_RUN, subtype) != 0) {
+		goto ht20_failure;
+	}
+	return;
+ht20_failure:
+	/* Same association-failure ownership as the WME apply path above. */
+	ni->ni_associd = 0;
+	ieee80211_ht20_reset(ni);
+	ieee80211_wme_reset(ni);
+	ieee80211_new_state(ic, IEEE80211_S_SCAN, 0);
 }
 
 static void

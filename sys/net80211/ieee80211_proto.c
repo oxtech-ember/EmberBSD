@@ -119,6 +119,8 @@ ieee80211_proto_attach(struct ieee80211com *ic)
 	/* XXX room for crypto  */
 	ifp->if_hdrlen = sizeof(struct ieee80211_qosframe_addr4);
 
+	/* A qualified driver may register a provider after protocol attach. */
+	ic->ic_ht20_admit = NULL;
 	ic->ic_rtsthreshold = IEEE80211_RTS_DEFAULT;
 	ic->ic_fragthreshold = IEEE80211_FRAG_DEFAULT;
 	ic->ic_fixed_rate = IEEE80211_FIXED_RATE_NONE;
@@ -1001,6 +1003,8 @@ ieee80211_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg
 
 	KASSERT(!cpu_intr_p());
 
+	if (ieee80211_ht20_state_request(ic, nstate) != 0)
+		return EINVAL;
 	ostate = ic->ic_state;
 	IEEE80211_DPRINTF(ic, IEEE80211_MSG_STATE, "%s: %s -> %s\n", __func__,
 		ieee80211_state_name[ostate], ieee80211_state_name[nstate]);

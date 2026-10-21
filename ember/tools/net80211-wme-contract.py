@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Extract complete native WME exchange consumers for a host contract."""
 import pathlib
+import os
 import re
 import sys
 
@@ -9,7 +10,10 @@ src, out = map(pathlib.Path, sys.argv[1:])
 
 
 def read(path):
-    return (src / path).read_text()
+    overrides={"sys/net80211/ieee80211_output.c":"HT20_OUTPUT_SOURCE",
+               "sys/net80211/ieee80211_input.c":"HT20_INPUT_SOURCE",
+               "sys/net80211/ieee80211_ht20.c":"HT20_HELPER_SOURCE"}
+    return pathlib.Path(os.environ.get(overrides.get(path,""),src/path)).read_text()
 
 
 def function(path, name, result):
@@ -32,7 +36,7 @@ proto = "sys/net80211/ieee80211_proto.h"
 ipt = "sys/net80211/ieee80211_input.c"
 output = "sys/net80211/ieee80211_output.c"
 node = "sys/net80211/ieee80211_node.c"
-parts = [read(wire), read("sys/net80211/ieee80211_phy_ies.h")]
+parts = ["#ifndef NATIVE_IEEE80211_STATE_DEFINED\n#define NATIVE_IEEE80211_STATE_DEFINED 1\n" + re.search(r"^enum ieee80211_state \{.*?^\};", read(proto), re.M|re.S).group()+"\n#endif", read("sys/net80211/ieee80211_ht20.h"), read(wire), read("sys/net80211/ieee80211_phy_ies.h")]
 for path, names in ((proto, ("wmeParams", "chanAccParams", "ieee80211_wme_state")),
                     ("sys/net80211/ieee80211_ioctl.h", ("ieee80211_stats", "ieee80211_nodestats", "ieee80211req")),
                     ("sys/net80211/_ieee80211.h", ("ieee80211_rateset",))):
@@ -40,6 +44,8 @@ for path, names in ((proto, ("wmeParams", "chanAccParams", "ieee80211_wme_state"
     for name in names:
         parts.append(structure(path, name))
 parts.append(structure("sys/net80211/ieee80211_node.h", "ieee80211_scanparams"))
+parts.append(re.search(r"^enum ieee80211_phymode \{.*?^\};", read("sys/net80211/_ieee80211.h"), re.M|re.S).group())
+parts.append(re.search(r"^#define\s+IFQ_MAXLEN\s+.*$", read("sys/net/if.h"), re.M).group())
 for path, pattern in (("sys/net80211/ieee80211_var.h", r"IEEE80211_[FC]_[A-Z0-9_]+"),
                       ("sys/net80211/ieee80211_node.h", r"IEEE80211_NODE_[A-Z0-9_]+")):
     for line in read(path).splitlines():
@@ -47,7 +53,9 @@ for path, pattern in (("sys/net80211/ieee80211_var.h", r"IEEE80211_[FC]_[A-Z0-9_
             parts.append(line.split("/*", 1)[0])
 (out / "native-wme-types.inc").write_text("\n".join(parts))
 
-parts = []
+ht = read("sys/net80211/ieee80211_ht20.c")
+# Complete actual shared HT helper bodies, only includes supplied by service model.
+parts = [ht[:ht.index("#include")], ht[ht.index("int\nieee80211_ht20_optional"):]]
 proto_source = read("sys/net80211/ieee80211_proto.c")
 parts.append(proto_source[proto_source.index("typedef struct phyParamType"):proto_source.index("void\nieee80211_wme_initparams")])
 parts.append("#undef IEEE80211_NO_HOSTAP\n#define HIGH_PRI_SWITCH_THRESH 10\nvoid ieee80211_wme_reset(struct ieee80211_node *);\n")
@@ -84,6 +92,7 @@ for name, result in (("ieee80211_send_setup", "static void"),
                      ("ieee80211_add_xrates", "static uint8_t *"),
                      ("ieee80211_add_wme_info", "static uint8_t *"),
                      ("ieee80211_add_wme_param", "static uint8_t *"),
+                     ("ieee80211_send_probereq", "int"),
                      ("ieee80211_send_mgmt", "int"),
                      ("ieee80211_classify", "int"),
                      ("ieee80211_encap", "struct mbuf *")):
@@ -91,6 +100,7 @@ for name, result in (("ieee80211_send_setup", "static void"),
         parts.append("#define WME_OUI_BYTES 0x00, 0x50, 0xf2\n")
     if name == "ieee80211_mgmt_output" and "\nieee80211_wme_request_offer(" in read(output):
         parts.append(function(output, "ieee80211_wme_request_offer", "static int"))
+        parts.append(function(output, "ieee80211_ht20_request_offer", "static int"))
     parts.append(function(output, name, result))
 parts.append("#define ISREASSOC(st) ((st) == IEEE80211_FC0_SUBTYPE_REASSOC_RESP)\n")
 parts.append(function(ipt, "ieee80211_recv_mgmt_assoc_resp", "static void"))
