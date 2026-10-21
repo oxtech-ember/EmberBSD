@@ -68,10 +68,25 @@ transaction before that control operation can be supported.
 
 Full RTL8822CE MAC initialization restores fixed legacy EDCA register values.
 That fact does not prove appropriate AIFS for each current band and slot.
-Before enabling WME, the state worker must apply contextual legacy defaults
-after channel/slot setup and before parent state or any producer. Apply errors
-must stop that transition through the existing quarantine/recovery path.
-Current station setup changes SLOT but does not recalculate EDCA AIFS.
+The native state worker now applies contextual EDCA after channel/slot setup
+and before the parent state callback can submit new frames. Legacy operation
+uses the same DCF policy on all four ACs: AIFSN2, CWmax exponent10, TXOP0,
+and CWmin exponent5 for 11b or4 for ERP/OFDM. Band and slot determine AIFS.
+No uninitialized shared WME table supplies the capability-off defaults.
+
+The wrapper snapshots user-configured media separately from peer-selected
+mode. Initial attach uses the selected media entry; the user word is still
+IFM_NONE until a media ioctl. AUTO without a fixed rate uses the requested channel flags. A fixed
+rate retains its framework-resolved mode binding. Unsupported contexts fail
+before channel or station writes. The worker does not acquire the media lock;
+a media change can wait for that worker during restart.
+
+A matching negotiated RUN context reapplies the accepted effective AC set.
+A missing or mismatched QoS/channel/slot context stops the transition instead
+of substituting legacy defaults. EDCA errors leave new producers fenced and
+stop the core through its existing quarantine/recovery path. This ordering
+does not flush frames already in DMA. Hardware pause after failed I/O remains
+uncertain. Full successful restart clears the core quarantine.
 
 The native wrapper also needs four-AC classification and backpressure,
 including explicit non-QoS/EAPOL routing. The changed WME and node structures
@@ -82,6 +97,7 @@ HT/VHT, aggregation and BA remain disabled.
 ## Host source contracts
 
 ```sh
+CC=gcc-16 RTW88_START_ANALYZE=1 sh ember/tools/rtw88-start-contract.sh
 CC=gcc-16 sh ember/tools/net80211-wme-contract.sh
 CC=gcc-16 WME_TEST_CFLAGS='-O0 -g -fanalyzer' WME_ANALYZE=1 \
     sh ember/tools/net80211-wme-contract.sh
@@ -103,7 +119,15 @@ The consequential rt2661 test extracts its real packet-burst decision block;
 it does not execute the driver's whole DMA submission function. The PHY native
 contract separately executes node_cleanup. The RTW WME contract executes the
 actual wrapper callback with the actual core and a fake bus. The startup
-contract checks fixed MAC defaults and full quarantine recovery. The complete generic state machine
+contract checks fixed MAC defaults and full quarantine recovery. It also
+extracts the complete native state worker, newstate, init and media callback.
+The worker calls the actual channel, station and EDCA core operations. Its
+modeled parent callback submits an actual core frame inline and checks that
+contextual EDCA was written first. The contract covers every EDCA I/O failure
+before and after effect, mode/cache transitions, negotiated-context mismatch
+and full restart. It executes native ifmedia_init_with_lock, ifmedia_set and
+the attach media initialization block; media-list population/lookup is modeled. Scheduling, node services and the parent callback are modeled;
+the complete generic state machine
 and all driver compilation/lifecycles require the full target kernel gate.
 
 TEST_RUNNER applies to the executable and propagates failure. CI runs optimized

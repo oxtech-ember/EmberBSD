@@ -1159,7 +1159,8 @@ The base system shell is unchanged.
   Multicast membership changes preserve the live radio. Shared CCMP bounds
   and per-TID replay checks support further WLAN work. Host contracts cover
   independent AC queue producers and the [strict STA apply prerequisite](ember/development/net80211-wme.md).
-  Contextual default EDCA and wrapper routing remain gates; WME and HT/VHT
+  Contextual DCF EDCA now precedes new native producers in host contracts.
+  Wrapper routing and target acceptance remain gates; WME and HT/VHT
   remain unadvertised. A bounded
   [A-MSDU receive path](ember/development/net80211-amsdu.md) remains disabled
   until peer negotiation and aggregation requirements are complete.

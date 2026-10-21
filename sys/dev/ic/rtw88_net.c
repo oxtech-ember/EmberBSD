@@ -48,6 +48,7 @@ struct rtw88_net {
 	int work_pending;
 	enum ieee80211_state requested;
 	unsigned channel;
+	unsigned configured_media; /* User configuration, not peer-selected mode. */
 	int state_arg;
 	int (*parent_state)(struct ieee80211com *, enum ieee80211_state, int);
 	uint8_t txbuf[RTW88_TX_BUF_SIZE];
@@ -116,6 +117,95 @@ rtw88_net_wme_apply(struct ieee80211com *ic,
 	return error;
 }
 
+/* Prepare outside the PCI lock. No media lock is acquired by the worker. */
+static int
+rtw88_net_edca_prepare(struct ieee80211com *ic, unsigned media,
+    enum ieee80211_state state, unsigned channel, unsigned slot,
+    struct rtw88_edca_params edca[RTW88_WME_NAC])
+{
+	struct ieee80211_node *ni = ic->ic_bss;
+	enum ieee80211_phymode mode;
+	unsigned flags, ac, cwmin;
+
+	if (channel == 0 || channel > IEEE80211_CHAN_MAX ||
+	    ic->ic_curchan != &ic->ic_channels[channel] || ni == NULL ||
+	    (slot != 9 && slot != 20) || (channel > 14 && slot != 9) ||
+	    IFM_TYPE(media) != IFM_IEEE80211)
+		return EINVAL;
+	flags = ic->ic_channels[channel].ic_flags;
+	if ((flags & (IEEE80211_CHAN_TURBO | IEEE80211_CHAN_HALF |
+	    IEEE80211_CHAN_QUARTER | IEEE80211_CHAN_GFSK |
+	    IEEE80211_CHAN_GSM)) != 0 || (media & IFM_IEEE80211_TURBO) != 0)
+		return EOPNOTSUPP;
+	if ((flags & (IEEE80211_CHAN_2GHZ | IEEE80211_CHAN_5GHZ)) !=
+	    (channel > 14 ? IEEE80211_CHAN_5GHZ : IEEE80211_CHAN_2GHZ))
+		return EINVAL;
+	switch (IFM_MODE(media)) {
+	case IFM_AUTO:
+		/* Fixed rate locks mode in media_change or legacy cfgset. */
+		if (ic->ic_fixed_rate != IEEE80211_FIXED_RATE_NONE)
+			mode = ic->ic_curmode;
+		else if (channel > 14)
+			mode = IEEE80211_MODE_11A;
+		else if ((flags & (IEEE80211_CHAN_OFDM | IEEE80211_CHAN_DYN)) != 0)
+			mode = IEEE80211_MODE_11G;
+		else
+			mode = IEEE80211_MODE_11B;
+		break;
+	case IFM_IEEE80211_11A:
+		mode = IEEE80211_MODE_11A;
+		break;
+	case IFM_IEEE80211_11B:
+		mode = IEEE80211_MODE_11B;
+		break;
+	case IFM_IEEE80211_11G:
+		mode = IEEE80211_MODE_11G;
+		break;
+	default:
+		return EOPNOTSUPP;
+	}
+	if (mode == IEEE80211_MODE_11A) {
+		if (channel <= 14 || (flags & IEEE80211_CHAN_OFDM) == 0)
+			return EINVAL;
+	} else if (mode == IEEE80211_MODE_11B) {
+		if (channel > 14 || slot != 20 ||
+		    (flags & IEEE80211_CHAN_CCK) == 0)
+			return EINVAL;
+	} else if (mode == IEEE80211_MODE_11G) {
+		if (channel > 14 ||
+		    (flags & (IEEE80211_CHAN_OFDM | IEEE80211_CHAN_DYN)) == 0)
+			return EINVAL;
+	} else {
+		return EOPNOTSUPP;
+	}
+	if (state == IEEE80211_S_RUN &&
+	    (ni->ni_flags & (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID))) {
+		if ((ni->ni_flags & (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID)) !=
+		    (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID) ||
+		    (ic->ic_caps & IEEE80211_C_WME) == 0 ||
+		    (ic->ic_flags & IEEE80211_F_WME) == 0 ||
+		    ni->ni_wme_applied_chan != ic->ic_curchan ||
+		    ni->ni_wme_applied_slot != slot)
+			return EPROTO;
+		IEEE80211_BEACON_LOCK(ic);
+		for (ac = 0; ac < RTW88_WME_NAC; ac++) {
+			const struct wmeParams *p =
+			    &ic->ic_wme.wme_chanParams.cap_wmeParams[ac];
+			edca[ac].aifsn = p->wmep_aifsn;
+			edca[ac].ecw_min = p->wmep_logcwmin;
+			edca[ac].ecw_max = p->wmep_logcwmax;
+			edca[ac].txop = p->wmep_txopLimit;
+		}
+		IEEE80211_BEACON_UNLOCK(ic);
+	} else {
+		/* Legacy DCF on every AC; no WME policy or advertisement. */
+		cwmin = mode == IEEE80211_MODE_11B ? 5 : 4;
+		for (ac = 0; ac < RTW88_WME_NAC; ac++)
+			edca[ac] = (struct rtw88_edca_params){ 2, cwmin, 10, 0 };
+	}
+	return 0;
+}
+
 /* The workqueue has the kernel lock. Do not hold the PCI lock in net80211. */
 static void
 rtw88_net_state_work(struct work *work, void *cookie)
@@ -124,13 +214,15 @@ rtw88_net_state_work(struct work *work, void *cookie)
 	struct ieee80211com *ic = &net->ic;
 	struct ifnet *ifp = &net->ec.ec_if;
 	struct rtw88_net_state_diag diag;
+	struct rtw88_edca_params edca[RTW88_WME_NAC];
 	enum ieee80211_state state;
 	uint64_t epoch;
 	unsigned channel, basic, slot, aid, i;
+	unsigned media;
 	const uint8_t *bssid;
 	char failure[384];
 	uint8_t any;
-	int arg, error;
+	int arg, error, prepare_error;
 
 	(void)work;
 	for (;;) {
@@ -143,6 +235,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		epoch = net->policy.epoch;
 		state = net->requested;
 		channel = net->channel;
+		media = net->configured_media;
 		arg = net->state_arg;
 		mutex_exit(net->lock);
 		callout_stop(&net->scan);
@@ -160,12 +253,14 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			if ((ic->ic_flags & IEEE80211_F_SHSLOT) != 0)
 				slot = 9;
 		}
+		prepare_error = state == IEEE80211_S_INIT ? 0 :
+		    rtw88_net_edca_prepare(ic, media, state, channel, slot, edca);
 		mutex_enter(net->lock);
 		if (epoch != net->policy.epoch || net->policy.dying) {
 			mutex_exit(net->lock);
 			continue;
 		}
-		error = 0;
+		error = prepare_error;
 		memset(&diag, 0, sizeof(diag));
 		diag.state = state;
 		diag.channel = channel;
@@ -186,7 +281,9 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			if (any == 0)
 				diag.bssid_flags |= 4;
 		}
-		if (net->core->sc_started) {
+		if (error != 0) {
+			diag.stage = RTW88_NET_STAGE_EDCA;
+		} else if (net->core->sc_started) {
 			if (state != IEEE80211_S_INIT) {
 				diag.stage = RTW88_NET_STAGE_CHANNEL;
 				error = rtw88_channel(net->core, channel);
@@ -195,6 +292,10 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				diag.stage = RTW88_NET_STAGE_STATION;
 				error = rtw88_station_config(net->core, bssid, aid,
 				    basic, slot, state == IEEE80211_S_RUN);
+			}
+			if (error == 0 && state != IEEE80211_S_INIT) {
+				diag.stage = RTW88_NET_STAGE_EDCA;
+				error = rtw88_edca_apply(net->core, edca, slot);
 			}
 		} else if (state != IEEE80211_S_INIT) {
 			diag.stage = RTW88_NET_STAGE_CORE;
@@ -565,11 +666,28 @@ rtw88_net_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 static int
 rtw88_net_media_change(struct ifnet *ifp)
 {
+	struct rtw88_net *net = ifp->if_softc;
+	unsigned previous;
 	int error = ieee80211_media_change(ifp);
 
-	if (error == ENETRESET && (ifp->if_flags & IFF_UP) != 0)
-		return rtw88_net_init(ifp);
-	return error == ENETRESET ? 0 : error;
+	if (error != 0 && error != ENETRESET)
+		return error;
+	/* The media layer owns its lock here. Never take it in state_work. */
+	mutex_enter(net->lock);
+	previous = net->configured_media;
+	net->configured_media = net->ic.ic_media.ifm_media;
+	mutex_exit(net->lock);
+	if (error == ENETRESET && (ifp->if_flags & IFF_UP) != 0) {
+		error = rtw88_net_init(ifp);
+		if (error != 0) {
+			/* ifmedia restores the previous word when this callback fails. */
+			mutex_enter(net->lock);
+			net->configured_media = previous;
+			mutex_exit(net->lock);
+		}
+		return error;
+	}
+	return 0;
 }
 
 static void
@@ -674,6 +792,9 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	ic->ic_newstate = rtw88_net_newstate;
 	ifp->if_percpuq = if_percpuq_create(ifp);
 	ieee80211_media_init(ic, rtw88_net_media_change, ieee80211_media_status);
+	/* ifmedia_set selects ifm_cur; its user word remains IFM_NONE. */
+	KASSERT(ic->ic_media.ifm_cur != NULL);
+	net->configured_media = ic->ic_media.ifm_cur->ifm_media;
 	if_register(ifp);
 	mutex_enter(lock);
 	core->sc_net_cookie = net;

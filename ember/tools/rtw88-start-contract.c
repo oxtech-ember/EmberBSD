@@ -2099,6 +2099,8 @@ test_rx_beacon(void)
 	rtw88_core_detach(&sc);
 }
 
+#include "rtw88-state-test.h"
+
 int
 main(void)
 {
@@ -2142,6 +2144,12 @@ main(void)
 	test_tx_refusals();
 	test_all_ac_producers();
 	test_edca_quarantine_recovery();
+	test_native_state_defaults();
+	test_native_state_edca_failures();
+	test_native_state_negotiated();
+	test_native_state_reject_context();
+	test_native_state_fixed_clear();
+	test_native_state_epoch();
 	test_loopback_mode();
 	test_rf_mode_register_uses_sipi();
 	test_phy_and_channel_at_start();
