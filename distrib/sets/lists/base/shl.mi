@@ -439,8 +439,8 @@
 ./usr/lib/liblsan.so.3				base-sys-shlib		compatfile,cxx,gcccmds,gcc=12
 ./usr/lib/liblsan.so.3.0			base-sys-shlib		compatfile,cxx,gcccmds,gcc=12
 ./usr/lib/liblua.so				base-sys-shlib		compatfile
-./usr/lib/liblua.so.6				base-sys-shlib		compatfile
-./usr/lib/liblua.so.6.1				base-sys-shlib		compatfile
+./usr/lib/liblua.so.7				base-sys-shlib		compatfile
+./usr/lib/liblua.so.7.0				base-sys-shlib		compatfile
 ./usr/lib/liblutok.so				base-sys-shlib		kyua,compatfile
 ./usr/lib/liblutok.so.3				base-sys-shlib		kyua,compatfile
 ./usr/lib/liblutok.so.3.0			base-sys-shlib		kyua,compatfile

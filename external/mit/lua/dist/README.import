@@ -18,3 +18,8 @@ Vendor branches are usually named LUA_<<x_y_z>> but if there was a problem
 with cvs import, they can be named differently.
 
 The last imported vendor branch is called LUA_5_4_6.
+
+EmberBSD imports Lua 5.5.1 from https://www.lua.org/ftp/lua-5.5.1.tar.gz.
+SHA256: 1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce
+The import retains the NetBSD kernel and system path adaptations.
+liblua uses ABI 7. Rebuild Lua modules and consumers before installation.

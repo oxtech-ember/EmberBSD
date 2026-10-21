@@ -34,6 +34,7 @@
 #include <sys/param.h>
 #include <sys/fcntl.h>
 #include <sys/conf.h>
+#include <sys/cprng.h>
 #include <sys/condvar.h>
 #include <sys/device.h>
 #include <sys/ioctl.h>
@@ -700,7 +701,7 @@ klua_newstate(lua_Alloc f, void *ud, const char *name, const char *desc,
 	}
 
 	K = kmem_zalloc(sizeof(klua_State), KM_SLEEP);
-	K->L = lua_newstate(f, ud);
+	K->L = lua_newstate(f, ud, cprng_fast32());
 	K->ks_user = false;
 	if (K->L == NULL) {
 		kmem_free(K, sizeof(klua_State));

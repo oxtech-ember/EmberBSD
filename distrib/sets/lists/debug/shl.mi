@@ -148,7 +148,7 @@
 ./usr/libdata/debug/usr/lib/libldap_r.so.6.0.debug		comp-ldap-debug	debug,compatfile,ldap
 ./usr/libdata/debug/usr/lib/liblsan.so.2.0.debug		comp-sys-debug	debug,compatfile,cxx,gcccmds,gcc=10
 ./usr/libdata/debug/usr/lib/liblsan.so.3.0.debug		comp-sys-debug	debug,compatfile,cxx,gcccmds,gcc=12
-./usr/libdata/debug/usr/lib/liblua.so.6.1.debug			comp-sys-debug	debug,compatfile
+./usr/libdata/debug/usr/lib/liblua.so.7.0.debug			comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/liblutok.so.3.0.debug		comp-kyua-debug	debug,compatfile,kyua
 ./usr/libdata/debug/usr/lib/liblzf.so.1.0.debug			comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/liblzma.so.2.1.debug		comp-sys-debug	debug,compatfile
