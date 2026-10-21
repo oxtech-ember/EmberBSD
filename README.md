@@ -1559,6 +1559,10 @@ Add a catalog row and a board page; keep detailed feature matrices on those page
 
 ## Wi-Fi status and remaining work
 
+The shared [native WLAN crypto contracts](ember/development/net80211-crypto.md)
+cover key-ID bounds for QoS, four-address and padded headers. These are host
+source checks; they do not enable HT/VHT or qualify radio operation.
+
 The built-in CYW43455 on Pi 5 and wireless CM5 has an 802.11ac 1x1 radio
 with channels up to 80 MHz. Wi-Fi 6 (802.11ax) and 2x2 require another
 radio; a firmware update cannot add them. See the

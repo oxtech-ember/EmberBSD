@@ -611,10 +611,13 @@ ieee80211_crypto_decap(struct ieee80211com *ic,
 	KASSERT((m->m_flags & M_PKTHDR) != 0);
 
 	/*
-	 * This minimum size data frame could be bigger. It is re-checked
-	 * below.
+	 * Check the minimum frame and the key-ID byte before reading it.
+	 * QoS and four-address headers can exceed the minimum header size.
+	 * The selected cipher's full header and trailer are checked below.
 	 */
-	if (m->m_pkthdr.len < IEEE80211_WEP_MINLEN) {
+	if (m->m_pkthdr.len < IEEE80211_WEP_MINLEN ||
+	    hdrlen < (int)sizeof(struct ieee80211_frame) ||
+	    hdrlen > m->m_pkthdr.len - IEEE80211_WEP_HDRLEN) {
 		IEEE80211_DPRINTF(ic, IEEE80211_MSG_ANY,
 			"%s: WEP data frame too short, len %u\n",
 			__func__, m->m_pkthdr.len);
@@ -629,7 +632,8 @@ ieee80211_crypto_decap(struct ieee80211com *ic,
 	 * the key id in the header is meaningless (typically 0).
 	 */
 	wh = mtod(m, struct ieee80211_frame *);
-	m_copydata(m, hdrlen + IEEE80211_WEP_IVLEN, sizeof(keyid), &keyid);
+	m_copydata(m, (unsigned)hdrlen + IEEE80211_WEP_IVLEN,
+	    sizeof(keyid), &keyid);
 	if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
 	    ni->ni_ucastkey.wk_cipher == &ieee80211_cipher_none) {
 		k = &ic->ic_nw_keys[keyid >> 6];
