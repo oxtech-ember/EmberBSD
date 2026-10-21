@@ -656,6 +656,7 @@ int main(void)
 	CHECK(strstr(stats, " basic 0xf") != NULL);
 	CHECK(strstr(stats, " txdata 0 txrate 0 txbasic 0") != NULL);
 	CHECK(strstr(stats, " txr0 0") != NULL && strstr(stats, " txr11 0") != NULL);
+	CHECK(strstr(stats, " txpost0 0") != NULL && strstr(stats, " txpost4 0") != NULL);
 	stats_latch = &p;
 	CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
 	CHECK(stats_latch == NULL && strstr(stats, " basic 0x55a") != NULL);
@@ -668,6 +669,7 @@ int main(void)
 		stats_max = 1;
 		CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
 		CHECK(strstr(stats, " txr11 18446744073709551615") != NULL);
+		CHECK(strstr(stats, " txpost4 18446744073709551615") != NULL);
 		required = strlen(stats) + 1;
 		CHECK(required < sizeof(stats));
 		for (size_t capacity = 0; capacity <= sizeof(stats); capacity++) {

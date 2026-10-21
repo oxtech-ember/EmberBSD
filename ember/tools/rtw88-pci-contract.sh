@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Origin: EmberBSD RTL8822CE actual-source fake-bus runner, AI-assisted.
 set -eu
+case ${RTW88_PCI_ANALYZE:-0} in 0|1) ;; *) exit 2 ;; esac
 # TEST_RUNNER names one executable, for example a Memcheck wrapper.
 run_test() {
     if [ -n "${TEST_RUNNER:-}" ]; then
@@ -41,3 +42,20 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     "$src/sys/dev/ic/rtw8822c_txpwr.c" \
     -o "$work/test"
 run_test "$work/test"
+
+if [ "${RTW88_PCI_ANALYZE:-0}" = 1 ]; then
+    # This consumer includes the actual core and complete native PCI source.
+    ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
+        -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
+        -c "$tools/rtw88-pci-contract.c" -o "$work/analysis.o"
+    ${CC:-cc} -std=c11 -dM -E - < /dev/null > "$work/predefines.h"
+    cppcheck --enable=warning,performance,portability --error-exitcode=1 \
+        --check-level=exhaustive --include="$work/predefines.h" \
+        -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
+        "$tools/rtw88-pci-contract.c"
+    ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 \
+        -Wall -Wextra -Werror -Xanalyzer -analyzer-output=text \
+        -Xanalyzer -analyzer-werror \
+        -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
+        "$tools/rtw88-pci-contract.c" -o "$work/pci.plist"
+fi

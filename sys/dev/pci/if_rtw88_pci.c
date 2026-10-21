@@ -182,6 +182,10 @@ rtwce_stats(char *buf, size_t len)
 	    n > 0 && (size_t)n < len; i++)
 		n += snprintf(buf + n, len - (size_t)n, " txr%u %llu", i,
 		    (unsigned long long)st->tx_data_rates[i]);
+	for (unsigned i = 0; i < __arraycount(st->tx_posted) &&
+	    n > 0 && (size_t)n < len; i++)
+		n += snprintf(buf + n, len - (size_t)n, " txpost%u %llu", i,
+		    (unsigned long long)st->tx_posted[i]);
 	if (n > 0 && (size_t)n < len && psc->sc_net != NULL) {
 		rtw88_net_get_stats(psc->sc_net, &ns);
 		n += snprintf(buf + n, len - (size_t)n,

@@ -82,6 +82,8 @@ struct rtw88_stats {
 	uint64_t rx_tag_errors;	/* RX tag mismatch: PCIe DMA timeout. */
 	uint64_t rx_dma_errors;	/* Hardware index outside the ring. */
 	uint64_t tx_queued;
+	/* Successful producer writes per queue, not air ACKs or delivery. */
+	uint64_t tx_posted[RTW88_NTXQ];
 	uint64_t tx_done;	/* Counted only from the chip's read index. */
 	uint64_t tx_full;
 	uint64_t tx_dropped;	/* Posted but not completed before stop. */

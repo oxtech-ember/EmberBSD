@@ -2100,6 +2100,77 @@ test_rx_beacon(void)
 	rtw88_core_detach(&sc);
 }
 
+/* Successful producer writes are separate from DMA ownership and air ACKs. */
+static uint32_t posted_fail_idx;
+static int posted_fail_after;
+
+static int
+posted_write_2(void *cookie, uint32_t reg, uint16_t value)
+{
+	int error;
+
+	if (reg != posted_fail_idx)
+		return write_2(cookie, reg, value);
+	if (!posted_fail_after)
+		return EIO;
+	error = write_2(cookie, reg, value);
+	return error != 0 ? error : EIO;
+}
+
+static void
+test_tx_posted_diagnostics(void)
+{
+	static const uint32_t idx[5] = { 0x3b0, 0x3a8, 0x3ac, 0x3a4, 0x3a0 };
+	static const uint32_t dok[5] = { 0x40, 0x10, 0x20, 0x08, 0x04 };
+	static const uint8_t tids[5] = { 0, 0, 1, 5, 6 };
+	unsigned q, i, after;
+
+	for (q = 0; q < RTW88_NTXQ; q++) {
+		struct rtw88_softc sc;
+		uint8_t frame[26] = { 0x88, 1 };
+
+		if (!start_ok(&sc))
+			return;
+		frame[0] = q == RTW88_TXQ_MGMT ? 0xb0 : 0x88;
+		frame[24] = tids[q];
+		CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == 0);
+		for (i = 0; i < RTW88_NTXQ; i++)
+			CHECK(sc.sc_stats.tx_posted[i] == (i == q ? 1U : 0U));
+		while (rtw88_tx_available(&sc, q) != 0)
+			CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == 0);
+		CHECK(sc.sc_stats.tx_posted[q] == 31);
+		CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == ENOBUFS);
+		CHECK(sc.sc_stats.tx_posted[q] == 31);
+		CHECK(rtw88_tx_raw(&sc, RTW88_NTXQ, frame, sizeof(frame)) == EINVAL);
+		CHECK(sc.sc_stats.tx_posted[q] == 31);
+		f.tx_hw_rp[q] = sc.sc_txq[q].wp;
+		set_hisr0(dok[q]);
+		CHECK(rtw88_intr(&sc) == 1 && sc.sc_txq[q].queued == 0);
+		CHECK(sc.sc_stats.tx_posted[q] == 31);
+		CHECK(rtw88_stop(&sc) == 0 && rtw88_start(&sc) == 0);
+		CHECK(sc.sc_stats.tx_posted[q] == 31);
+		CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == 0);
+		CHECK(sc.sc_stats.tx_posted[q] == 32);
+		CHECK(rtw88_stop(&sc) == 0 && rtw88_core_detach(&sc) == 0);
+		for (after = 0; after < 2; after++) {
+			struct rtw88_bus_ops fault = ops;
+
+			if (!start_ok(&sc))
+				return;
+			posted_fail_idx = idx[q];
+			posted_fail_after = (int)after;
+			fault.write_2 = posted_write_2;
+			sc.sc_ops = &fault;
+			CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == EIO);
+			CHECK(sc.sc_stats.tx_posted[q] == 0);
+			/* An uncertain doorbell keeps the existing DMA ownership. */
+			CHECK(sc.sc_txq[q].queued == 1 && sc.sc_stats.tx_queued == 1);
+			sc.sc_ops = &ops;
+			CHECK(rtw88_stop(&sc) == 0 && rtw88_core_detach(&sc) == 0);
+		}
+	}
+}
+
 /* The fixed-rate caller has its own stack layout. Its explicit core-only
  * reuse excludes this state fixture. The normal start runner keeps it. */
 #ifndef RTW88_START_CORE_ONLY
@@ -2148,6 +2219,7 @@ main(void)
 	test_tx_completion();
 	test_tx_refusals();
 	test_all_ac_producers();
+	test_tx_posted_diagnostics();
 	test_edca_quarantine_recovery();
 #ifndef RTW88_START_CORE_ONLY
 	test_native_state_defaults();

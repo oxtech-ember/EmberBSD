@@ -1261,8 +1261,11 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	txq->wp = (txq->wp + 1) % RTW88_TX_SLOTS;
 	txq->queued++;
 	sc->sc_stats.tx_queued++;
-	return sc->sc_ops->write_2(sc->sc_bus, rtw88_txq_hw[q].idx,
+	error = sc->sc_ops->write_2(sc->sc_bus, rtw88_txq_hw[q].idx,
 	    (uint16_t)txq->wp);
+	if (error == 0)
+		sc->sc_stats.tx_posted[q]++;
+	return error;
 }
 
 int

@@ -1650,8 +1650,9 @@ remain unverified.
   ioctl contract passes. Three physical IPv6 address add/remove cycles preserve
   calibration count, WPA2 association and ready addresses. General AP-loss
   recovery and reconnect latency remain unqualified. Read-only stats now expose
-  the BASIC mask and encoded unicast DATA rate counters; target and physical
-  acceptance of this diagnostic remain pending. Explicit fixed legacy media
+  the BASIC mask, encoded unicast DATA rates and successful producer writes
+  for MGMT/BE/BK/VI/VO. These counters do not prove air ACKs or delivery;
+  target and physical acceptance of this diagnostic remain pending. Explicit fixed legacy media
   now has a validated native caller-to-core path; AUTO is unchanged. Corrected
   2.4 GHz channel flags expose native 11g media selection. A separate actual-source
   attach/media contract checks explicit legacy rates and band limits. New mode

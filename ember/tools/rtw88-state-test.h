@@ -259,6 +259,11 @@ static void if_register(struct ifnet *ifp)
 	struct rtw88_net *net=ifp->if_softc;
 	CHECK(net->configured_media==IFM_IEEE80211);
 }
+/* WME initialization is an external service in this state/media model.
+ * The enable contract executes its actual implementation and attach ordering.
+ */
+static void ieee80211_wme_initparams(struct ieee80211com *ic)
+{ CHECK(ic != NULL); }
 static void state_attach_media(struct rtw88_net *net)
 {
 	struct ieee80211com *ic=&net->ic;

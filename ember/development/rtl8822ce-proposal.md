@@ -137,10 +137,17 @@ A zero `txdata` means no sample; rate code zero alone does not prove 1 Mbps.
 Counters remain cumulative across radio restarts. Compare snapshots around one
 transfer. Encodings count even if a later doorbell write fails. DMA completion
 and these counters do not prove an air transmission, ACK or delivered payload.
+`txpost0` through `txpost4` count successful producer-index writes for MGMT,
+BE, BK, VI and VO. A failed write does not increment them, even after an
+uncertain hardware effect. Ring ownership and the existing `tx_queued` counter
+keep their previous conservative semantics on that failure. Queue counters
+remain cumulative across stop/start and do not count DMA completion or air ACKs.
+The actual core contract checks each queue, full rings, reclaim and restart.
+It injects producer-write failures before and after the modeled bus effect.
 The snapshot and updates use the existing bus interrupt lock. No addresses or
 payload bytes are retained. An undersized stats buffer returns `ENOSPC`.
 The native PCI contract checks maximum-value output and every capacity through
-2048 bytes. This diagnostic does not change selected rates or enable WME/HT.
+2048 bytes. This diagnostic does not change selected rates or capability advertisement.
 Target build and physical rate measurements remain separate acceptance steps.
 
 Explicit fixed legacy media has a separate opt-in TX path. The wrapper reads
