@@ -11,6 +11,8 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/sys/queue.h'
       - 'ember/tools/ccmp*'
       - 'ember/tools/net80211-*'
+      - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
+      - 'sys/dev/ic/rtw88_net.c'
       - 'sys/dev/ic/ath.c'
       - 'sys/dev/ic/rt2661.c'
       - 'sys/dev/ic/rt2661reg.h'
@@ -39,6 +41,8 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/sys/queue.h'
       - 'ember/tools/ccmp*'
       - 'ember/tools/net80211-*'
+      - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
+      - 'sys/dev/ic/rtw88_net.c'
       - 'sys/dev/ic/ath.c'
       - 'sys/dev/ic/rt2661.c'
       - 'sys/dev/ic/rt2661reg.h'
@@ -82,6 +86,8 @@ jobs:
             /sys/crypto/aes/
             /sys/sys/mbuf.h
             /sys/sys/queue.h
+            /external/bsd/wpa/dist/src/drivers/driver_bsd.c
+            /sys/dev/ic/rtw88_net.c
             /sys/dev/ic/ath.c
             /sys/dev/ic/rt2661.c
             /sys/dev/ic/rt2661reg.h
@@ -114,6 +120,7 @@ jobs:
           AMSDU_TEST_CFLAGS: -O2 -g -gdwarf-4
           PHY_IES_TEST_CFLAGS: -O2 -g -gdwarf-4
           WME_TEST_CFLAGS: -O2 -g -gdwarf-4
+          MANUAL_SCAN_CFLAGS: -O2 -g -gdwarf-4
           TXOP_TEST_CFLAGS: -O2 -g -gdwarf-4
         run: |
           cat > "$RUNNER_TEMP/memcheck" <<'SH'
@@ -130,6 +137,7 @@ jobs:
           sh ember/tools/net80211-amsdu-contract.sh
           sh ember/tools/net80211-phy-ies-parser-contract.sh
           sh ember/tools/net80211-phy-ies-contract.sh
+          python3 ember/tools/net80211-manual-scan-contract.py
           sh ember/tools/net80211-txop-contract.sh
           sh ember/tools/net80211-wme-contract.sh
       - name: Analyze unoptimized actual source paths
@@ -141,11 +149,14 @@ jobs:
           TXOP_ANALYZE: '1'
           WME_TEST_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
           WME_ANALYZE: '1'
+          MANUAL_SCAN_CFLAGS: -O0 -g -gdwarf-4
+          MANUAL_SCAN_ANALYZE: '1'
         run: |
           sh ember/tools/ccmp-contract.sh
           sh ember/tools/net80211-crypto-bounds-contract.sh
           sh ember/tools/net80211-amsdu-analysis.sh
           sh ember/tools/net80211-phy-ies-analysis.sh
+          python3 ember/tools/net80211-manual-scan-contract.py
           sh ember/tools/net80211-txop-contract.sh
           sh ember/tools/net80211-wme-contract.sh
       - name: Check actual sources under ASan and UBSan
@@ -155,6 +166,7 @@ jobs:
           AMSDU_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           PHY_IES_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           WME_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          MANUAL_SCAN_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           TXOP_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
@@ -165,5 +177,6 @@ jobs:
           sh ember/tools/net80211-amsdu-contract.sh
           sh ember/tools/net80211-phy-ies-parser-contract.sh
           sh ember/tools/net80211-phy-ies-contract.sh
+          python3 ember/tools/net80211-manual-scan-contract.py
           sh ember/tools/net80211-txop-contract.sh
           sh ember/tools/net80211-wme-contract.sh
