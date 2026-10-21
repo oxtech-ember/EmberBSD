@@ -14,7 +14,8 @@ awk 'BEGIN { copying=1 } copying { print; if ($0 == " */") copying=0 }' \
 awk '/^ieee80211_crypto_decap\(/ { print "struct ieee80211_key *"; copying=1 }
     copying { print } copying && /^}/ { exit }' \
     "$src/sys/net80211/ieee80211_crypto.c" >> "$work/native-crypto-bounds.inc"
-${CC:-gcc-16} -std=c11 -Wall -Werror ${CCMP_TEST_CFLAGS:-} \
+${CC:-gcc-16} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE \
+    -Wall -Werror ${CCMP_TEST_CFLAGS:-} \
     -I"$work" "$tools/net80211-crypto-bounds-contract.c" -o "$work/test"
 if [ -n "${TEST_RUNNER:-}" ]; then "$TEST_RUNNER" "$work/test"; else "$work/test"; fi
 if [ "${CCMP_ANALYZE:-0}" = 1 ]; then
@@ -22,7 +23,8 @@ if [ "${CCMP_ANALYZE:-0}" = 1 ]; then
     cppcheck --enable=warning,performance,portability --error-exitcode=1 \
         --check-level=exhaustive --include="$work/predefines.h" \
         -I"$work" "$tools/net80211-crypto-bounds-contract.c"
-    ${CLANG:-clang} --analyze -std=c11 -Wall -Werror \
+    ${CLANG:-clang} --analyze -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE \
+        -Wall -Werror \
         -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
         -I"$work" "$tools/net80211-crypto-bounds-contract.c" -o "$work/analysis.plist"
 fi

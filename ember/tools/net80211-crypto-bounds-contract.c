@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
+#include <sys/types.h>
 #define KASSERT assert
 #define IEEE80211_DPRINTF(...) ((void)0)
 #define IEEE80211_IS_MULTICAST(a) (*(a) & 1)
