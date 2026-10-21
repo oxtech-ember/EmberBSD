@@ -286,11 +286,13 @@ static unsigned command_writes;
 static bool lose_command_address;
 static int (*callback) (void *);
 static void *callback_arg;
-static unsigned final_reads, feature_reads, post_ready_calls;
-static unsigned feature_fail, feature_flip, final_fail, final_flip;
+static unsigned final_reads, admission_reads, post_ready_calls;
+static unsigned admission_fail, admission_flip, final_fail, final_flip;
 static uint32_t final_offsets[7];
 static bool output_enabled, late_after_compare, fail_post_ready;
-static unsigned corrupt_buffer, corrupt_byte;
+static unsigned corrupt_buffer, corrupt_byte, bad_capability;
+static unsigned identity_override_field;
+static uint32_t identity_override_bits;
 static int task_peek(bus_size_t, uint32_t *);
 static void task_unlock_probe(const kmutex_t *);
 static int task_ready_probe(void);
@@ -439,7 +441,7 @@ valid_offset(bus_size_t offset)
 {
 	static const unsigned allowed[] = {0, 4, 0x10, 0x14, 0x24, 0x30,
 	    0x388, 0x3a4,
-	0x20, 0x34, 0xa0, 0x3b4, 0x654, 0x664, 0x668, 0x66c, 0x90, 0x100,
+	0x20, 0x34, 0xa0, 0xa8, 0xe8, 0x3b4, 0x654, 0x664, 0x668, 0x66c, 0x90, 0x100,
 	    0x104, 0x10c, 0x3a8, 0x414};
 	for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++)
 		if (offset == allowed[i])
@@ -642,20 +644,33 @@ task_unlock_probe(const kmutex_t *m)
 static int
 task_peek(bus_size_t offset, uint32_t * value)
 {
-	static const bus_size_t features[] = {0x20, 0x20, 0x34, 0x34, 0xa0,
-	    0xa0};
+	static const bus_size_t features[] = {
+		0x20, 0x20,
+		0x20, 0x24, 0xa8, 0xe8, 0x30, 0x20,
+		0x20, 0x24, 0xa8, 0xe8, 0x30, 0x20,
+		0x34, 0x34, 0xa0, 0xa0
+	};
 	static const bus_size_t final[] = {0x14, 4, 0x664, 4, 0x664, 0x14,
 	    0x10};
 
-	if (offset == 0x20 || offset == 0x34 || offset == 0xa0) {
-		CHECK(!state.status.publication_attempted && !syncs &&
-		    !writes);
-		CHECK(feature_reads < 6 && offset == features[feature_reads]);
-		feature_reads++;
-		if (feature_reads == feature_fail)
+	if (state.status.snapshot_valid && !state.status.publication_attempted &&
+	    (offset == 0x20 || offset == 0x24 || offset == 0x30 ||
+	    offset == 0x34 || offset == 0xa0 || offset == 0xa8 || offset == 0xe8)) {
+		CHECK(!syncs && !writes && !established);
+		CHECK(admission_reads < 18 && offset == features[admission_reads]);
+		admission_reads++;
+		if (offset == 0xa8 || offset == 0xe8)
+			CHECK(state.status.task_features[0][0] == 0x9000 &&
+			    state.status.task_features[1][0] == 0x9000);
+		if (offset == 0xa0)
+			CHECK((regs[0x34 / 4] & 0x00200000) != 0);
+		if (admission_reads == admission_fail)
 			return EFAULT;
-		if (feature_reads == feature_flip)
+		if (admission_reads == admission_flip)
 			*value ^= 1;
+		if (admission_reads >= 3 && admission_reads <= 14 &&
+		    (admission_reads - 3) % 6 == identity_override_field)
+			*value ^= identity_override_bits;
 	}
 	if (current_task != NULL && current_task->status.compare.valid &&
 	    current_task->status.compare.pass) {
@@ -673,6 +688,23 @@ task_peek(bus_size_t offset, uint32_t * value)
 static int
 task_ready_probe(void)
 {
+	if (current_task != NULL && state.status.task_profile_valid &&
+	    !state.status.publication_attempted) {
+		switch (bad_capability) {
+		case 1:
+			state.status.task_capability_source = 0;
+			break;
+		case 2:
+			state.status.task_profile_valid = 0;
+			break;
+		case 3:
+			state.status.task_int8_cores = 7;
+			break;
+		case 4:
+			state.status.task_blt = 1;
+			break;
+		}
+	}
 	if (current_task == NULL || !current_task->status.compare.valid ||
 	    !current_task->status.compare.pass)
 		return 0;
@@ -756,13 +788,17 @@ reset_all(void)
 	regs[0x20 / 4] = 0x9000;
 	regs[0x34 / 4] = 0x00200000;
 	regs[0xa0 / 4] = 0;
-	final_reads = feature_reads = post_ready_calls = 0;
-	feature_fail = feature_flip = final_fail = final_flip = 0;
+	regs[0xa8 / 4] = 0x05090009;
+	regs[0xe8 / 4] = 0x08000000;
+	final_reads = admission_reads = post_ready_calls = 0;
+	admission_fail = admission_flip = final_fail = final_flip = 0;
 	memset(final_offsets, 0, sizeof(final_offsets));
 	output_enabled = true;
 	late_after_compare = fail_post_ready = false;
 	corrupt_buffer = 6;
-	corrupt_byte = 0;
+	corrupt_byte = bad_capability = 0;
+	identity_override_field = 6;
+	identity_override_bits = 0;
 }
 
 static void
@@ -809,49 +845,95 @@ cleanup(void)
 static void
 cold_refusals(void)
 {
-	for (unsigned n = 0; n < 5; n++) {
+	/* Successful read bits before each of the 18 injected read faults. */
+	static const uint32_t masks[18][4] = {
+		{0, 0, 0, 0}, {1, 0, 0, 0},
+		{1, 1, 0, 0}, {1, 1, 1, 0}, {1, 1, 3, 0},
+		{1, 1, 7, 0}, {1, 1, 15, 0}, {1, 1, 31, 0},
+		{1, 1, 63, 0}, {1, 1, 63, 1}, {1, 1, 63, 3},
+		{1, 1, 63, 7}, {1, 1, 63, 15}, {1, 1, 63, 31},
+		{1, 1, 63, 63}, {3, 1, 63, 63},
+		{3, 3, 63, 63}, {7, 3, 63, 63}
+	};
+
+	for (unsigned n = 0; n < 6; n++) {
+		unsigned io;
+
 		reset_all();
 		prepare();
 		if (n == 0)
 			regs[0x20 / 4] ^= 1;
 		if (n == 1)
-			regs[0x34 / 4] = 0;
+			regs[0xa8 / 4] ^= 1;
 		if (n == 2)
 			regs[0xa0 / 4] = 0x80000000;
 		if (n == 3)
 			regs[0x24 / 4] ^= 1;
 		if (n == 4)
 			regs[0x30 / 4] ^= 1;
+		if (n == 5)
+			regs[0xe8 / 4] ^= 1;
 		CHECK(execute() != 0);
 		CHECK(!state.status.publication_attempted && !syncs &&
-		    !established && !writes);
+		    !established && !writes && !state.status.task_profile_valid);
 		CHECK(!current_task->status.run.model_pass &&
 		    !state.status.model_pass);
 		if (n == 0)
-			CHECK(feature_reads == 2);
-		if (n == 1)
-			CHECK(feature_reads == 4);
+			CHECK(admission_reads == 2);
+		if (n == 1 || n == 5) {
+			CHECK(admission_reads == 14);
+			CHECK(state.status.task_identity_valid);
+		}
 		if (n == 2)
-			CHECK(feature_reads == 6);
-		if (n >= 3)
-			CHECK(feature_reads == 0);
+			CHECK(admission_reads == 18);
+		if (n == 3 || n == 4)
+			CHECK(admission_reads == 0);
 		CHECK(unmaps == 1);
-		unsigned io = peeks + ordinary_reads + proofs + maps + writes;
+		io = peeks + ordinary_reads + proofs + maps + writes;
 		CHECK(execute() == EALREADY);
 		CHECK(io == peeks + ordinary_reads + proofs + maps + writes);
 		cleanup();
 	}
-	for (unsigned n = 1; n <= 6; n++) {
+	/* Each fresh identity field must match every bit, not a masked revision. */
+	for (unsigned field = 0; field < 6; field++) {
+		for (unsigned bit = 0; bit < 32; bit++) {
+			reset_all();
+			prepare();
+			identity_override_field = field;
+			identity_override_bits = 1U << bit;
+			CHECK(execute() != 0 && !syncs && !writes && !established);
+			CHECK(!state.status.publication_attempted &&
+			    !state.status.task_profile_valid);
+			if (field == 0)
+				CHECK(admission_reads == 3);
+			else if (field == 5)
+				CHECK(admission_reads == 8);
+			else {
+				CHECK(admission_reads == 14);
+				CHECK(state.status.task_identity_valid);
+			}
+			cleanup();
+		}
+	}
+	for (unsigned n = 1; n <= 18; n++) {
 		reset_all();
 		prepare();
-		feature_fail = n;
-		CHECK(execute() == EFAULT && feature_reads == n && !syncs &&
-		    !writes);
+		admission_fail = n;
+		CHECK(execute() == EFAULT && admission_reads == n && !syncs &&
+		    !writes && !state.status.publication_attempted);
+		CHECK(!state.status.task_profile_valid && !established);
+		CHECK(state.status.task_feature_read_mask[0] == masks[n - 1][0]);
+		CHECK(state.status.task_feature_read_mask[1] == masks[n - 1][1]);
+		CHECK(state.status.task_identity_read_mask[0] == masks[n - 1][2]);
+		CHECK(state.status.task_identity_read_mask[1] == masks[n - 1][3]);
+		CHECK(state.status.task_identity_valid == (unsigned)(n >= 15));
+		CHECK(!state.status.task_features_valid);
 		cleanup();
 		reset_all();
 		prepare();
-		feature_flip = n;
+		admission_flip = n;
 		CHECK(execute() != 0 && !syncs && !writes && !established);
+		CHECK(!state.status.task_profile_valid);
 		cleanup();
 	}
 	for (unsigned n = 1; n <= 6; n++) {
@@ -861,6 +943,42 @@ cold_refusals(void)
 		CHECK(execute() == EIO && !writes && !syncs && !established);
 		cleanup();
 	}
+	for (unsigned n = 1; n <= 4; n++) {
+		reset_all();
+		prepare();
+		bad_capability = n;
+		CHECK(execute() == EOPNOTSUPP && !writes && !syncs && !established);
+		CHECK(!state.status.publication_attempted);
+		cleanup();
+	}
+}
+
+static void
+hwdb_without_more(void)
+{
+	reset_all();
+	prepare();
+	regs[0x34 / 4] = 0;
+	/* This poison must not be read without MORE. */
+	regs[0xa0 / 4] = 0x80000000;
+	CHECK(execute() == 0 && state.status.model_pass);
+	CHECK(admission_reads == 16 && !state.status.task_features_valid);
+	CHECK(state.status.task_identity_valid && state.status.task_profile_valid);
+	CHECK(state.status.task_capability_source == A733_NPU_TASK_CAP_HWDB);
+	CHECK(state.status.task_int8_cores == 8 && state.status.task_blt == 0);
+	for (size_t row = 0; row < 2; row++) {
+		CHECK(state.status.task_identity_read_mask[row] == 0x3f);
+		CHECK(state.status.task_feature_read_mask[row] == 3);
+		CHECK(state.status.task_features[row][1] == 0);
+		CHECK(state.status.task_features[row][2] == 0);
+		CHECK(state.status.task_identity[row][0] == 0x9000);
+		CHECK(state.status.task_identity[row][1] == 0x9202);
+		CHECK(state.status.task_identity[row][2] == 0x05090009);
+		CHECK(state.status.task_identity[row][3] == 0x08000000);
+		CHECK(state.status.task_identity[row][4] == 0x1000003b);
+		CHECK(state.status.task_identity[row][5] == 0x9000);
+	}
+	cleanup();
 }
 
 int
@@ -870,6 +988,13 @@ main(void)
 	struct sun60i_a733_npu_task *out = (void *)(uintptr_t) 1;
 	const size_t sizes[] = {4096, 16384, 4096, 4096, 4096, 4096};
 
+#ifdef NPU_TASK_IDENTITY_ONLY
+	hwdb_without_more();
+	cold_refusals();
+	printf("A733 NPU TASK identity: %u checks passed (simulated device only)\n",
+	    checks);
+	return 0;
+#endif
 #ifdef NPU_TASK_LATE_ONLY
 	reset_all();
 	prepare();
@@ -935,8 +1060,15 @@ main(void)
 	    post_ready_calls == 1);
 	CHECK(current_task->status.compare.valid && current_task->status.compare.pass &&
 	    syncs == 12);
-	CHECK(feature_reads == 6 && state.status.task_features_valid &&
+	CHECK(admission_reads == 18 && state.status.task_features_valid &&
 	    state.status.command_bytes == 144);
+	CHECK(state.status.task_identity_valid && state.status.task_profile_valid);
+	CHECK(state.status.task_capability_source == A733_NPU_TASK_CAP_HWDB);
+	CHECK(state.status.task_int8_cores == 8 && state.status.task_blt == 0);
+	for (size_t row = 0; row < 2; row++) {
+		CHECK(state.status.task_identity_read_mask[row] == 0x3f);
+		CHECK(state.status.task_feature_read_mask[row] == 7);
+	}
 	CHECK(!unmaps && !removed && command_writes == 1 && address_drained);
 	unsigned io = peeks + ordinary_reads + proofs + maps + writes;
 	sun60i_a733_npu_task_status(current_task, &status);
@@ -949,6 +1081,7 @@ main(void)
 	CHECK(io == peeks + ordinary_reads + proofs + maps + writes);
 	cleanup();
 	cold_refusals();
+	hwdb_without_more();
 	reset_all();
 	prepare();
 	output_enabled = false;

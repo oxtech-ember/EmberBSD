@@ -623,7 +623,7 @@ task_cached_nodes(void)
 
 	reset();
 	sun60i_npu_sysctl_task_setup(&state, &root);
-	CHECK(node_count > 100 && setup_errors == 0);
+	CHECK(node_count == 133 && setup_errors == 0);
 	before_proofs = proofs;
 	before_snapshots = snapshots;
 	state.sc_run_lock = 0;

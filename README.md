@@ -986,6 +986,9 @@ It grants no absence admission or display ownership.
   without error and records one new event4 IRQ. DMA and resource leases
   stay retained until reboot. NN instructions, model output, output
   coherency and guard-fault behavior remain unaccepted.
+  The fixed [native TASK contract](ember/boot/a733-npu-tiny-task.md) admits only
+  an exact five-field HWDB identity with eight INT8 cores and no BLT engine.
+  Physical product/ECO capture and numerical NN acceptance remain pending.
   For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,

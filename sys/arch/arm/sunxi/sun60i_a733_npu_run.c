@@ -4,9 +4,13 @@
 /*
  * Local init sequencing is adapted from VIP2 commit
  * 2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f, vip_drv_hardware.c,
- * under its MIT license. No Linux IRQ implementation is copied.
+ * under its MIT license. Identity and capability facts also use
+ * kernel/arch/gc_hal_kernel_hardware.c and kernel/inc/gc_feature_database.h
+ * at that pin. The exact vip9000nano-di entry has eight INT8 cores and no BLT.
+ * The dual-licensed files are used under MIT. No Linux IRQ code is copied.
  *
  * Copyright (c) 2017 - 2024 Vivante Corporation
+ * Copyright (c) 2014 - 2024 Vivante Corporation
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -116,35 +120,72 @@ npu_run_snapshot(struct sun60i_a733_npu_run *s)
 	return 0;
 }
 
-/* Stable model/MORE proof precedes any access to minor feature 5. */
+/* Exact HWDB identity precedes the fixed INT8/non-BLT capability profile. */
 static int
 npu_run_task_features(struct sun60i_a733_npu_run *s)
 {
+	static const bus_size_t offsets[A733_NPU_TASK_ID_WORDS] = {
+		0x020, 0x024, 0x0a8, 0x0e8, 0x030, 0x020
+	};
+	static const uint32_t identity[] = {
+		0x9000, 0x9202, 0x05090009, 0x08000000, 0x1000003b
+	};
+
+	/* Establish the known model before product/ECO register access. */
 	for (size_t row = 0; row < 2; row++) {
 		if (bus_space_peek_4(s->bst, s->bsh, 0x020,
 		    &s->status.task_features[row][0]) != 0)
 			return EFAULT;
+		s->status.task_feature_read_mask[row] |= 1;
 	}
 	if (s->status.task_features[0][0] != 0x9000 ||
 	    s->status.task_features[1][0] != 0x9000)
 		return ENODEV;
 	for (size_t row = 0; row < 2; row++) {
+		for (size_t i = 0; i < A733_NPU_TASK_ID_WORDS; i++) {
+			if (bus_space_peek_4(s->bst, s->bsh, offsets[i],
+			    &s->status.task_identity[row][i]) != 0)
+				return EFAULT;
+			s->status.task_identity_read_mask[row] |= 1U << i;
+			/* Each complete sample has its own model brackets. */
+			if ((i == 0 || i == A733_NPU_TASK_ID_WORDS - 1) &&
+			    s->status.task_identity[row][i] != 0x9000)
+				return ENODEV;
+		}
+	}
+	if (memcmp(s->status.task_identity[0], s->status.task_identity[1],
+	    sizeof(s->status.task_identity[0])) != 0)
+		return EBUSY;
+	s->status.task_identity_valid = 1;
+	/* Do not use the vendor database's masked-revision fallback. */
+	if (memcmp(s->status.task_identity[1], identity, sizeof(identity)) != 0)
+		return ENODEV;
+	for (size_t row = 0; row < 2; row++) {
 		if (bus_space_peek_4(s->bst, s->bsh, 0x034,
 		    &s->status.task_features[row][1]) != 0)
 			return EFAULT;
+		s->status.task_feature_read_mask[row] |= 2;
 	}
-	if (s->status.task_features[0][1] != s->status.task_features[1][1] ||
-	    (s->status.task_features[1][1] & 0x00200000) == 0)
+	if (s->status.task_features[0][1] != s->status.task_features[1][1])
 		return EOPNOTSUPP;
-	for (size_t row = 0; row < 2; row++) {
-		if (bus_space_peek_4(s->bst, s->bsh, 0x0a0,
-		    &s->status.task_features[row][2]) != 0)
-			return EFAULT;
+	/* MORE guards raw minor5 access, not the separate HWDB capability. */
+	if ((s->status.task_features[1][1] & 0x00200000) != 0) {
+		for (size_t row = 0; row < 2; row++) {
+			if (bus_space_peek_4(s->bst, s->bsh, 0x0a0,
+			    &s->status.task_features[row][2]) != 0)
+				return EFAULT;
+			s->status.task_feature_read_mask[row] |= 4;
+		}
+		s->status.task_features_valid = 1;
+		if (s->status.task_features[0][2] != s->status.task_features[1][2] ||
+		    (s->status.task_features[1][2] & 0x80000000) != 0)
+			return EOPNOTSUPP;
 	}
-	s->status.task_features_valid = 1;
-	if (s->status.task_features[0][2] != s->status.task_features[1][2] ||
-	    (s->status.task_features[1][2] & 0x80000000) != 0)
-		return EOPNOTSUPP;
+	/* Source facts for this exact entry; these are not register samples. */
+	s->status.task_capability_source = A733_NPU_TASK_CAP_HWDB;
+	s->status.task_int8_cores = 8;
+	s->status.task_blt = 0;
+	s->status.task_profile_valid = 1;
 	return 0;
 }
 
@@ -478,6 +519,12 @@ npu_run_once(struct sun60i_a733_npu_run *s, bus_space_tag_t bst,
 	if (error != 0)
 		goto out;
 	if (task) {
+		if (!s->status.task_profile_valid ||
+		    s->status.task_capability_source != A733_NPU_TASK_CAP_HWDB ||
+		    s->status.task_int8_cores != 8 || s->status.task_blt != 0) {
+			error = EOPNOTSUPP;
+			goto out;
+		}
 		error = sun60i_a733_npu_dma_task_validate(dma, reference);
 	} else {
 		error = sun60i_a733_npu_fe_run_image(image, sizeof(image));

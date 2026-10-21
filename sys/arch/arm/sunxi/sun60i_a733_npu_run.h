@@ -9,6 +9,9 @@ struct clk;
 struct sun60i_a733_npu_dma;
 struct sun60i_a733_npu_dma_task_reference;
 #define A733_NPU_RUN_NREGS 18
+#define A733_NPU_TASK_ID_WORDS 6
+#define A733_NPU_TASK_ID_READ_ALL 0x3f
+#define A733_NPU_TASK_CAP_HWDB 1
 struct sun60i_a733_npu_run_status {
 	uint32_t attempted, publication_attempted, retained, started, terminal;
 	uint32_t snapshot_valid, step, error, last_readback, command_bytes;
@@ -17,6 +20,12 @@ struct sun60i_a733_npu_run_status {
 	uint32_t stale[2], terminal_status, terminal_idle[2], terminal_dma[2];
 	uint64_t irq_count, irq_baseline;
 	uint32_t task_features[2][3], task_features_valid;
+	uint32_t task_feature_read_mask[2];
+	/* model, revision, product, ECO, customer, closing model. */
+	uint32_t task_identity[2][A733_NPU_TASK_ID_WORDS];
+	uint32_t task_identity_read_mask[2], task_identity_valid;
+	uint32_t task_capability_source, task_profile_valid, task_int8_cores;
+	uint32_t task_blt;
 	uint32_t final_attempted, final_valid, model_pass;
 	uint32_t final_mask[2], final_idle[2], final_dma[2], final_status;
 };

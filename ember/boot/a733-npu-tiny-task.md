@@ -8,7 +8,9 @@ contract. A physical numerical NN result is not accepted yet.
 
 Use a matched kernel, modules, and device tree. Start from a cold boot. Complete
 the normal NPU identification stages and the retained CCU/PCK checks first. The
-accepted identity is PID `0x1000003b`, revision `0x9202`.
+observer identity is PID `0x1000003b`, revision `0x9202`. The retained PID name
+reports the vendor CID, also named CUSTOMER_ID at register `0x030`. It is not the
+PRODUCT_ID register. TASK admission checks the full identity below.
 
 Do not prepare or run the old `engine_stage` profile on this boot. Its prepare
 step selects FE. A TASK prepare selects TASK. The selected profile cannot change
@@ -38,11 +40,36 @@ DMA map has one non-bounce segment below 4 GiB. All 15 physical buffer pairs are
 disjoint. The command PA must differ from its VA.
 
 Write `task_stage=2` once, only after prepare succeeds. The closed coordinator
-checks fresh clock/power ownership and cold NPU state. It reads the model twice,
-then the MORE feature bit, then minor feature 5. The samples must be stable.
-Model `0x9000`, MORE set, and BLT clear admit the selected command tail. The
-144-byte stream uses only the fixed image. It retains the native context, DMA
-maps, and immutable heap references before the first cache sync.
+checks fresh clock/power ownership and cold NPU state. It reads model `0x9000`
+twice before any product or ECO register access. It then captures two complete
+identity samples. Each sample starts and ends with the model register.
+
+Only this exact identity admits the fixed INT8/non-BLT profile:
+
+| Field | Register | Required value |
+| --- | --- | --- |
+| Model | `0x020` | `0x9000` |
+| Revision | `0x024` | `0x9202` |
+| Product | `0x0a8` | `0x05090009` |
+| ECO | `0x0e8` | `0x08000000` |
+| Customer | `0x030` | `0x1000003b` |
+
+Every read must succeed. Both samples and their model brackets must be stable.
+Unknown identities refuse before DMA publication. No revision mask or default
+HWDB entry is used. The source-pinned `vip9000nano-di` entry supplies eight INT8
+cores and no BLT engine. These are HWDB capabilities, not register samples.
+Read masks retain successful partial reads after a failure. `task_identity_valid`
+means that two full identity samples were stable. It does not mean that the
+identity was accepted. `task_profile_valid` is the separate capability decision.
+
+The driver also samples raw minor feature 0 at `0x034`. Its MORE bit guards raw
+minor feature 5 at `0x0a0`. With MORE clear, minor5 is not read and its raw validity
+stays clear. With MORE set, both minor5 samples must be stable and BLT bit31 must
+be clear. A raw register does not replace the exact identity requirement.
+
+The 144-byte stream uses only the fixed image. It retains the native context,
+DMA maps, and immutable heap references before the first cache sync. The
+commands, image, and numerical oracle do not depend on a model file.
 
 A transport event alone does not prove NN success. Completion must bind the
 exact run, DMA context, and immutable references. Only this capability permits
@@ -64,8 +91,17 @@ Require all of the following in the same returned run:
 - A new IRQ contains exactly event 4. IRQ fault and terminal ACK are zero.
 - Terminal and final idle samples are `0x7fffffff`. Each DMA pair is equal and
   points inside the owned command VA page. Both final IRQ masks are zero.
-- Feature validity, comparison validity/pass, final attempt/validity, and
-  `task_model_pass` are set. Final ACK is zero.
+- `task_identity_valid=1`, `task_profile_valid=1`, `task_capability_source=1`,
+  `task_int8_cores=8`, and `task_blt=0`. Source 1 means the pinned HWDB entry.
+- Both `task_identity_read_maskN` values are `0x3f`. The six fields in each
+  `task_identity_sN_*` sample are model, revision, product, ECO, customer, and
+  `model_after`. Both model fields are `0x9000`.
+- Both `task_feature_read_maskN` values are 3 when MORE is clear, or 7 when MORE
+  is set. Bits 0, 1, and 2 record successful raw model, minor0, and minor5 reads.
+  `task_features_valid` keeps its raw-completeness meaning. It is zero with MORE
+  clear. A cached minor5 zero with bit2 clear is unread, not a measurement.
+- Comparison validity/pass, final attempt/validity, and `task_model_pass` are set.
+  Final ACK is zero.
 - All six `task_mismatchN` fields are zero. Each `task_firstN` has the bit pattern
   `UINT32_MAX`. An INT sysctl can print this value as `-1`.
 
@@ -90,3 +126,15 @@ DMA output page. `python3 ember/tools/a733-npu-fe-contract.py` also checks actua
 consumer selection, cached nodes, permanent legacy revocation, and the old FE
 profile. `python3 ember/tests/a733-npu-observe.py` runs the complete NPU source
 control group. These host checks do not establish a physical NN result.
+
+## Capability provenance
+
+The register locations and identity reads use the
+[pinned vendor hardware source](https://github.com/orangepi-xunlong/linux-orangepi/blob/2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f/bsp/drivers/npu/aw_nna_galcore/kernel/arch/gc_hal_kernel_hardware.c#L178).
+The finite capability facts use the
+[exact HWDB entry](https://github.com/orangepi-xunlong/linux-orangepi/blob/2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f/bsp/drivers/npu/aw_nna_galcore/kernel/inc/gc_feature_database.h#L320993).
+Its full source SHA256 is `e067acd20f09b3fc50f742d1e86ec07687d20c702ad59d73559a896abce3a6ea`.
+Both files permit the MIT license. The native admission does not use the
+vendor query's informal-release revision wildcard. Host tests prove this
+closed software contract. Physical product/ECO capture and a numerical NN
+result require a new matched kernel and a separate cold hardware acceptance.
