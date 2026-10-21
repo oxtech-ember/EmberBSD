@@ -7,17 +7,26 @@ Use it only within the isolated graphics test whose contents you may capture.
 
 ## Admitted input
 
-Select a plane ID from the existing DRM resource inventory. The private test
-controller checks the expected live KWin process and its open primary-card fd,
-the selected DRM backend/output and the unchanged isolated session/transport.
-An open fd and compositor status do not prove current master ownership through
-an atomic standard query. Continued master ownership by that KWin is an explicit
-assumption. Run the diagnostic as root with a second fd on the same card.
-Legacy GETFB otherwise returns handle zero to a nonmaster. The program does
-not issue SET_MASTER or DROP_MASTER. Opening an unowned primary can acquire
-master implicitly. Do not use SET_MASTER as an ownership probe. Keep the
-compositor active and exclude planned logout or restart during the copy; a
-concurrent ownership change remains a diagnostic limit.
+Select a plane ID from the existing DRM resource inventory. The test controller
+checks the expected live KWin PID and owner, pinned binaries and launch
+configuration, the active DRM backend/output and the unchanged isolated
+session/transport.
+
+Native DRM uses cloned DTYPE_MISC descriptors. Use unfiltered `fstat -p PID`
+for descriptor context. Its generic misc rows identify neither the primary
+versus render node nor master ownership. A pathname filter such as
+`fstat -p PID /dev/dri/card0` suppresses these descriptors. Header-only output
+from that filter does not show that the primary card is closed.
+
+These observations do not provide an atomic query for another process's exact
+primary fd or master ownership. Continued primary-card and master ownership
+by that KWin are explicit assumptions. Run the diagnostic as root with a
+second fd on the configured card. Legacy GETFB otherwise returns handle zero
+to a nonmaster. The program does not issue SET_MASTER or DROP_MASTER. Opening
+an unowned primary can acquire master implicitly. Do not use SET_MASTER as an
+ownership probe. Keep the compositor active and exclude planned logout or
+restart during the copy. A concurrent ownership change remains a diagnostic
+limit.
 Do not run it after logout: logical BLANK no longer exposes the previous active
 framebuffer. The program does not retry frame acquisition.
 
