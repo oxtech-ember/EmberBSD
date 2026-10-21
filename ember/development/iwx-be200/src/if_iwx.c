@@ -7168,24 +7168,27 @@ iwx_mld_modify_link_fill(struct iwx_softc *sc, struct iwx_node *in,
 	cmd->short_slot
 	    = htole32((ic->ic_flags & IEEE80211_F_SHSLOT) ? 1 : 0);
 
-	for (i = 0; i < WME_NUM_AC; i++) {
-		const struct wmeParams *ac =
-		    &ic->ic_wme.wme_chanParams.cap_wmeParams[i];
-		int txf;
+	/* ACTIVE-only teardown does not carry QoS parameters. */
+	if (changes & IWX_LINK_CONTEXT_MODIFY_QOS_PARAMS) {
+		for (i = 0; i < WME_NUM_AC; i++) {
+			const struct wmeParams *ac =
+			    &ic->ic_wme.wme_chanParams.cap_wmeParams[i];
+			int txf;
 
-		if (sc->sc_device_family >= IWX_DEVICE_FAMILY_BZ)
-			txf = iwx_ac_to_bz_tx_fifo[i];
-		else
-			txf = iwx_ac_to_tx_fifo[i];
+			if (sc->sc_device_family >= IWX_DEVICE_FAMILY_BZ)
+				txf = iwx_ac_to_bz_tx_fifo[i];
+			else
+				txf = iwx_ac_to_tx_fifo[i];
 
-		cmd->ac[txf].cw_min = htole16(IWX_EXP2(ac->wmep_logcwmin));
-		cmd->ac[txf].cw_max = htole16(IWX_EXP2(ac->wmep_logcwmax));
-		cmd->ac[txf].aifsn = ac->wmep_aifsn;
-		cmd->ac[txf].fifos_mask = (1 << txf);
-		cmd->ac[txf].edca_txop = htole16(ac->wmep_txopLimit * 32);
+			cmd->ac[txf].cw_min = htole16(IWX_EXP2(ac->wmep_logcwmin));
+			cmd->ac[txf].cw_max = htole16(IWX_EXP2(ac->wmep_logcwmax));
+			cmd->ac[txf].aifsn = ac->wmep_aifsn;
+			cmd->ac[txf].fifos_mask = (1 << txf);
+			cmd->ac[txf].edca_txop = htole16(ac->wmep_txopLimit * 32);
+		}
+		if (ni->ni_flags & IEEE80211_NODE_QOS)
+			cmd->qos_flags |= htole32(IWX_MAC_QOS_FLG_UPDATE_EDCA);
 	}
-	if (ni->ni_flags & IEEE80211_NODE_QOS)
-		cmd->qos_flags |= htole32(IWX_MAC_QOS_FLG_UPDATE_EDCA);
 
 #if defined(IWX_HT)
 	if (ni->ni_flags & IEEE80211_NODE_HT) {
@@ -7257,9 +7260,17 @@ iwx_mld_add_sta_cmd(struct iwx_softc *sc, struct iwx_node *in, int update)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct iwx_link_config_cmd link_cmd;
 	struct iwx_sta_cfg_cmd_v2 sta_cmd;
+	const struct wmeParams *params =
+	    ic->ic_wme.wme_chanParams.cap_wmeParams;
 	int cmd_ver;
 	size_t cmd_size;
-	int err, changes;
+	int err, changes, ac;
+
+	/* Validate the complete QoS set before the first firmware command. */
+	if (update)
+		for (ac = 0; ac < WME_NUM_AC; ac++)
+			if (params[ac].wmep_txopLimit > 2047)
+				return EOPNOTSUPP;
 
 	cmd_ver = iwx_lookup_cmd_ver(sc, IWX_MAC_CONF_GROUP,
 	    IWX_STA_CONFIG_CMD);
@@ -8309,7 +8320,10 @@ iwx_mac_ctxt_cmd(struct iwx_softc *sc, struct iwx_node *in, uint32_t action,
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_node *ni = &in->in_ni;
 	struct iwx_mac_ctx_cmd cmd;
+	const struct wmeParams *params =
+	    ic->ic_wme.wme_chanParams.cap_wmeParams;
 	int active = (sc->sc_flags & IWX_FLAG_MAC_ACTIVE);
+	int ac;
 
 	if (action == IWX_FW_CTXT_ACTION_ADD && active)
 		panic("MAC already added");
@@ -8318,6 +8332,13 @@ iwx_mac_ctxt_cmd(struct iwx_softc *sc, struct iwx_node *in, uint32_t action,
 
 	if (sc->sc_use_mld_api)
 		return iwx_mld_mac_ctxt_cmd(sc, in, action, assoc);
+
+	/* These firmware fields hold microseconds in 16 bits. */
+	if (action != IWX_FW_CTXT_ACTION_REMOVE &&
+	    ic->ic_opmode != IEEE80211_M_MONITOR)
+		for (ac = 0; ac < WME_NUM_AC; ac++)
+			if (params[ac].wmep_txopLimit > 2047)
+				return EOPNOTSUPP;
 
 	memset(&cmd, 0, sizeof(cmd));
 

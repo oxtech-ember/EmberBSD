@@ -169,6 +169,8 @@ and the caller must stop the core. QoS HT-control headers are unsupported.
 The legacy wrapper does not call this API or advertise WME, HT or VHT.
 A future WME consumer still needs classification, negotiation and serialized
 parameter updates across channel changes.
+The shared [TXOP width prerequisite](net80211-txop.md) preserves wire values
+and rejects unsupported consumer widths. It does not enable WME negotiation.
 
 Run the actual-source contracts with GCC16:
 

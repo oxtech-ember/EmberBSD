@@ -3066,6 +3066,11 @@ rt2860_updateedca(struct ieee80211com *ic)
 	struct rt2860_softc *sc = ic->ic_ifp->if_softc;
 	int aci;
 
+	/* The MAC TXOP field has eight bits, in 32 microsecond units. */
+	for (aci = 0; aci < WME_NUM_AC; aci++)
+		if (ic->ic_wme.wme_params[aci].wmep_txopLimit > 255)
+			return EOPNOTSUPP;
+
 	/* update MAC TX configuration registers */
 	for (aci = 0; aci < WME_NUM_AC; aci++) {
 		RAL_WRITE(sc, RT2860_EDCA_AC_CFG(aci),
@@ -3092,10 +3097,10 @@ rt2860_updateedca(struct ieee80211com *ic)
 	    ic->ic_wme.wme_params[WME_AC_BK].wmep_logcwmax <<  4 |
 	    ic->ic_wme.wme_params[WME_AC_BE].wmep_logcwmax);
 	RAL_WRITE(sc, RT2860_WMM_TXOP0_CFG,
-	    ic->ic_wme.wme_params[WME_AC_BK].wmep_txopLimit << 16 |
+	    (uint32_t)ic->ic_wme.wme_params[WME_AC_BK].wmep_txopLimit << 16 |
 	    ic->ic_wme.wme_params[WME_AC_BE].wmep_txopLimit);
 	RAL_WRITE(sc, RT2860_WMM_TXOP1_CFG,
-	    ic->ic_wme.wme_params[WME_AC_VO].wmep_txopLimit << 16 |
+	    (uint32_t)ic->ic_wme.wme_params[WME_AC_VO].wmep_txopLimit << 16 |
 	    ic->ic_wme.wme_params[WME_AC_VI].wmep_txopLimit);
 	return 0;
 }

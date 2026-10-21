@@ -5712,6 +5712,8 @@ iwm_mac_ctxt_cmd_common(struct iwm_softc *sc, struct iwm_node *in,
 	cmd->id_and_color = htole32(IWM_FW_CMD_ID_AND_COLOR(in->in_id,
 	    in->in_color));
 	cmd->action = htole32(action);
+	if (action == IWM_FW_CTXT_ACTION_REMOVE)
+		return;
 
 	cmd->mac_type = htole32(IWM_FW_MAC_TYPE_BSS_STA);
 	cmd->tsf_id = htole32(IWM_TSF_ID_A);
@@ -5803,6 +5805,15 @@ iwm_mac_ctxt_cmd(struct iwm_softc *sc, struct iwm_node *in, uint32_t action,
 {
 	struct ieee80211_node *ni = &in->in_ni;
 	struct iwm_mac_ctx_cmd cmd;
+	const struct wmeParams *params =
+	    sc->sc_ic.ic_wme.wme_params;
+	int ac;
+
+	/* REMOVE has no EDCA payload and must remain available for teardown. */
+	if (action != IWM_FW_CTXT_ACTION_REMOVE)
+		for (ac = 0; ac < WME_NUM_AC; ac++)
+			if (params[ac].wmep_txopLimit > 2047)
+				return EOPNOTSUPP;
 
 	memset(&cmd, 0, sizeof(cmd));
 

@@ -980,6 +980,8 @@ iwi_wme_update(struct ieee80211com *ic)
 #define IWI_USEC(v)	htole16(IEEE80211_TXOP_TO_US(v))
 	struct iwi_softc *sc = ic->ic_ifp->if_softc;
 	struct iwi_wme_params wme[3];
+	const struct wmeParams *params =
+	    ic->ic_wme.wme_chanParams.cap_wmeParams;
 	const struct wmeParams *wmep;
 	int ac;
 
@@ -989,6 +991,11 @@ iwi_wme_update(struct ieee80211com *ic)
 	 */
 	if (!(ic->ic_flags & IEEE80211_F_WME))
 		return 0;
+
+	/* Firmware stores TXOP in 16 bits of microseconds. */
+	for (ac = 0; ac < WME_NUM_AC; ac++)
+		if (params[ac].wmep_txopLimit > 2047)
+			return EOPNOTSUPP;
 
 	for (ac = 0; ac < WME_NUM_AC; ac++) {
 		/* set WME values for current operating mode */

@@ -2346,10 +2346,10 @@ rt2661_wme_update(struct ieee80211com *ic)
 
 	/* update TxOp */
 	RAL_WRITE(sc, RT2661_AC_TXOP_CSR0,
-	    wmep[WME_AC_BE].wmep_txopLimit << 16 |
+	    (uint32_t)wmep[WME_AC_BE].wmep_txopLimit << 16 |
 	    wmep[WME_AC_BK].wmep_txopLimit);
 	RAL_WRITE(sc, RT2661_AC_TXOP_CSR1,
-	    wmep[WME_AC_VI].wmep_txopLimit << 16 |
+	    (uint32_t)wmep[WME_AC_VI].wmep_txopLimit << 16 |
 	    wmep[WME_AC_VO].wmep_txopLimit);
 
 	/* update CWmin */

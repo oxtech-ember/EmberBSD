@@ -1,4 +1,4 @@
-name: Native net80211 crypto, scan and aggregation contracts
+name: Native net80211 crypto, scan, aggregation and WME contracts
 
 'on':
   push:
@@ -11,6 +11,25 @@ name: Native net80211 crypto, scan and aggregation contracts
       - 'sys/sys/queue.h'
       - 'ember/tools/ccmp*'
       - 'ember/tools/net80211-*'
+      - 'sys/dev/ic/ath.c'
+      - 'sys/dev/ic/rt2661.c'
+      - 'sys/dev/ic/rt2661reg.h'
+      - 'sys/dev/ic/rt2860.c'
+      - 'sys/dev/ic/rt2860reg.h'
+      - 'sys/dev/ic/rtwnreg.h'
+      - 'sys/dev/pci/if_iwi.c'
+      - 'sys/dev/pci/if_iwireg.h'
+      - 'sys/dev/pci/if_iwm.c'
+      - 'sys/dev/pci/if_iwmreg.h'
+      - 'sys/dev/pci/if_iwn.c'
+      - 'sys/dev/pci/if_iwnreg.h'
+      - 'sys/dev/pci/if_rtwn.c'
+      - 'sys/dev/pci/if_wpi.c'
+      - 'sys/dev/pci/if_wpireg.h'
+      - 'sys/dev/usb/if_run.c'
+      - 'sys/dev/usb/if_urtwn.c'
+      - 'ember/development/iwx-be200/src/if_iwx.c'
+      - 'ember/development/iwx-be200/src/if_iwxreg.h'
   pull_request:
     paths:
       - '.github/workflows/net80211.yml'
@@ -20,6 +39,25 @@ name: Native net80211 crypto, scan and aggregation contracts
       - 'sys/sys/queue.h'
       - 'ember/tools/ccmp*'
       - 'ember/tools/net80211-*'
+      - 'sys/dev/ic/ath.c'
+      - 'sys/dev/ic/rt2661.c'
+      - 'sys/dev/ic/rt2661reg.h'
+      - 'sys/dev/ic/rt2860.c'
+      - 'sys/dev/ic/rt2860reg.h'
+      - 'sys/dev/ic/rtwnreg.h'
+      - 'sys/dev/pci/if_iwi.c'
+      - 'sys/dev/pci/if_iwireg.h'
+      - 'sys/dev/pci/if_iwm.c'
+      - 'sys/dev/pci/if_iwmreg.h'
+      - 'sys/dev/pci/if_iwn.c'
+      - 'sys/dev/pci/if_iwnreg.h'
+      - 'sys/dev/pci/if_rtwn.c'
+      - 'sys/dev/pci/if_wpi.c'
+      - 'sys/dev/pci/if_wpireg.h'
+      - 'sys/dev/usb/if_run.c'
+      - 'sys/dev/usb/if_urtwn.c'
+      - 'ember/development/iwx-be200/src/if_iwx.c'
+      - 'ember/development/iwx-be200/src/if_iwxreg.h'
   workflow_dispatch:
 
 permissions:
@@ -44,6 +82,25 @@ jobs:
             /sys/crypto/aes/
             /sys/sys/mbuf.h
             /sys/sys/queue.h
+            /sys/dev/ic/ath.c
+            /sys/dev/ic/rt2661.c
+            /sys/dev/ic/rt2661reg.h
+            /sys/dev/ic/rt2860.c
+            /sys/dev/ic/rt2860reg.h
+            /sys/dev/ic/rtwnreg.h
+            /sys/dev/pci/if_iwi.c
+            /sys/dev/pci/if_iwireg.h
+            /sys/dev/pci/if_iwm.c
+            /sys/dev/pci/if_iwmreg.h
+            /sys/dev/pci/if_iwn.c
+            /sys/dev/pci/if_iwnreg.h
+            /sys/dev/pci/if_rtwn.c
+            /sys/dev/pci/if_wpi.c
+            /sys/dev/pci/if_wpireg.h
+            /sys/dev/usb/if_run.c
+            /sys/dev/usb/if_urtwn.c
+            /ember/development/iwx-be200/src/if_iwx.c
+            /ember/development/iwx-be200/src/if_iwxreg.h
       - name: Prepare GCC16 and source analyzers
         run: |
           test "$(gcc -dumpfullversion)" = 16.2.0
@@ -56,6 +113,7 @@ jobs:
           CCMP_TEST_CFLAGS: -O2 -g -gdwarf-4
           AMSDU_TEST_CFLAGS: -O2 -g -gdwarf-4
           PHY_IES_TEST_CFLAGS: -O2 -g -gdwarf-4
+          TXOP_TEST_CFLAGS: -O2 -g -gdwarf-4
         run: |
           cat > "$RUNNER_TEMP/memcheck" <<'SH'
           #!/bin/sh
@@ -71,22 +129,27 @@ jobs:
           sh ember/tools/net80211-amsdu-contract.sh
           sh ember/tools/net80211-phy-ies-parser-contract.sh
           sh ember/tools/net80211-phy-ies-contract.sh
+          sh ember/tools/net80211-txop-contract.sh
       - name: Analyze unoptimized actual source paths
         env:
           CC: gcc
           CCMP_TEST_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
           CCMP_ANALYZE: '1'
+          TXOP_TEST_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
+          TXOP_ANALYZE: '1'
         run: |
           sh ember/tools/ccmp-contract.sh
           sh ember/tools/net80211-crypto-bounds-contract.sh
           sh ember/tools/net80211-amsdu-analysis.sh
           sh ember/tools/net80211-phy-ies-analysis.sh
+          sh ember/tools/net80211-txop-contract.sh
       - name: Check actual sources under ASan and UBSan
         env:
           CC: gcc
           CCMP_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           AMSDU_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           PHY_IES_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          TXOP_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
@@ -96,3 +159,4 @@ jobs:
           sh ember/tools/net80211-amsdu-contract.sh
           sh ember/tools/net80211-phy-ies-parser-contract.sh
           sh ember/tools/net80211-phy-ies-contract.sh
+          sh ember/tools/net80211-txop-contract.sh

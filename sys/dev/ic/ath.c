@@ -3455,6 +3455,14 @@ static int
 ath_wme_update(struct ieee80211com *ic)
 {
 	struct ath_softc *sc = ic->ic_ifp->if_softc;
+	const struct wmeParams *params =
+	    ic->ic_wme.wme_chanParams.cap_wmeParams;
+	int ac;
+
+	/* The HAL channel-time field holds 20 bits of microseconds. */
+	for (ac = 0; ac < WME_NUM_AC; ac++)
+		if (params[ac].wmep_txopLimit > 32767)
+			return EOPNOTSUPP;
 
 	return !ath_txq_update(sc, WME_AC_BE) ||
 	    !ath_txq_update(sc, WME_AC_BK) ||

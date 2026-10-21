@@ -1973,9 +1973,18 @@ run_newstate_cb(struct run_softc *sc, void *arg)
 static int
 run_updateedca(struct ieee80211com *ic)
 {
+	struct wmeParams params[WME_NUM_AC];
+	int ac;
+
+	/* The deferred callback must apply this validated set. */
+	memcpy(params, ic->ic_wme.wme_params, sizeof(params));
+	for (ac = 0; ac < WME_NUM_AC; ac++)
+		if (params[ac].wmep_txopLimit > 255)
+			return EOPNOTSUPP;
 
 	/* do it in a process context */
-	run_do_async(ic->ic_ifp->if_softc, run_updateedca_cb, NULL, 0);
+	run_do_async(ic->ic_ifp->if_softc, run_updateedca_cb,
+	    params, sizeof(params));
 	return 0;
 }
 
@@ -1983,41 +1992,41 @@ run_updateedca(struct ieee80211com *ic)
 static void
 run_updateedca_cb(struct run_softc *sc, void *arg)
 {
-	struct ieee80211com *ic = &sc->sc_ic;
+	const struct wmeParams *params = arg;
 	int s, aci;
 
 	s = splnet();
 	/* update MAC TX configuration registers */
 	for (aci = 0; aci < WME_NUM_AC; aci++) {
 		run_write(sc, RT2860_EDCA_AC_CFG(aci),
-		    ic->ic_wme.wme_params[aci].wmep_logcwmax << 16 |
-		    ic->ic_wme.wme_params[aci].wmep_logcwmin << 12 |
-		    ic->ic_wme.wme_params[aci].wmep_aifsn  <<  8 |
-		    ic->ic_wme.wme_params[aci].wmep_txopLimit);
+		    params[aci].wmep_logcwmax << 16 |
+		    params[aci].wmep_logcwmin << 12 |
+		    params[aci].wmep_aifsn  <<  8 |
+		    params[aci].wmep_txopLimit);
 	}
 
 	/* update SCH/DMA registers too */
 	run_write(sc, RT2860_WMM_AIFSN_CFG,
-	    ic->ic_wme.wme_params[WME_AC_VO].wmep_aifsn  << 12 |
-	    ic->ic_wme.wme_params[WME_AC_VI].wmep_aifsn  <<  8 |
-	    ic->ic_wme.wme_params[WME_AC_BK].wmep_aifsn  <<  4 |
-	    ic->ic_wme.wme_params[WME_AC_BE].wmep_aifsn);
+	    params[WME_AC_VO].wmep_aifsn  << 12 |
+	    params[WME_AC_VI].wmep_aifsn  <<  8 |
+	    params[WME_AC_BK].wmep_aifsn  <<  4 |
+	    params[WME_AC_BE].wmep_aifsn);
 	run_write(sc, RT2860_WMM_CWMIN_CFG,
-	    ic->ic_wme.wme_params[WME_AC_VO].wmep_logcwmin << 12 |
-	    ic->ic_wme.wme_params[WME_AC_VI].wmep_logcwmin <<  8 |
-	    ic->ic_wme.wme_params[WME_AC_BK].wmep_logcwmin <<  4 |
-	    ic->ic_wme.wme_params[WME_AC_BE].wmep_logcwmin);
+	    params[WME_AC_VO].wmep_logcwmin << 12 |
+	    params[WME_AC_VI].wmep_logcwmin <<  8 |
+	    params[WME_AC_BK].wmep_logcwmin <<  4 |
+	    params[WME_AC_BE].wmep_logcwmin);
 	run_write(sc, RT2860_WMM_CWMAX_CFG,
-	    ic->ic_wme.wme_params[WME_AC_VO].wmep_logcwmax << 12 |
-	    ic->ic_wme.wme_params[WME_AC_VI].wmep_logcwmax <<  8 |
-	    ic->ic_wme.wme_params[WME_AC_BK].wmep_logcwmax <<  4 |
-	    ic->ic_wme.wme_params[WME_AC_BE].wmep_logcwmax);
+	    params[WME_AC_VO].wmep_logcwmax << 12 |
+	    params[WME_AC_VI].wmep_logcwmax <<  8 |
+	    params[WME_AC_BK].wmep_logcwmax <<  4 |
+	    params[WME_AC_BE].wmep_logcwmax);
 	run_write(sc, RT2860_WMM_TXOP0_CFG,
-	    ic->ic_wme.wme_params[WME_AC_BK].wmep_txopLimit << 16 |
-	    ic->ic_wme.wme_params[WME_AC_BE].wmep_txopLimit);
+	    (uint32_t)params[WME_AC_BK].wmep_txopLimit << 16 |
+	    params[WME_AC_BE].wmep_txopLimit);
 	run_write(sc, RT2860_WMM_TXOP1_CFG,
-	    ic->ic_wme.wme_params[WME_AC_VO].wmep_txopLimit << 16 |
-	    ic->ic_wme.wme_params[WME_AC_VI].wmep_txopLimit);
+	    (uint32_t)params[WME_AC_VO].wmep_txopLimit << 16 |
+	    params[WME_AC_VI].wmep_txopLimit);
 	splx(s);
 }
 

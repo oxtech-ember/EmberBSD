@@ -1331,7 +1331,8 @@ ieee80211_ioctl_getwmeparam(struct ieee80211com *ic, struct ieee80211req *ireq)
 		ireq->i_val = wmep->wmep_aifsn;
 		break;
 	case IEEE80211_IOC_WME_TXOPLIMIT:	/* WME: txops limit */
-		ireq->i_val = wmep->wmep_txopLimit;
+		/* Preserve the unsigned wire value in the signed ioctl slot. */
+		ireq->i_val = (int16_t)wmep->wmep_txopLimit;
 		break;
 	case IEEE80211_IOC_WME_ACM:		/* WME: ACM (bss only) */
 		wmep = &wme->wme_wmeBssChanParams.cap_wmeParams[ac];
@@ -2077,12 +2078,12 @@ ieee80211_ioctl_setwmeparam(struct ieee80211com *ic, struct ieee80211req *ireq)
 		break;
 	case IEEE80211_IOC_WME_TXOPLIMIT:	/* WME: txops limit */
 		if (isbss) {
-			wmep->wmep_txopLimit = ireq->i_val;
+			wmep->wmep_txopLimit = (uint16_t)ireq->i_val;
 			if ((wme->wme_flags & WME_F_AGGRMODE) == 0)
-				chanp->wmep_txopLimit = ireq->i_val;
+				chanp->wmep_txopLimit = (uint16_t)ireq->i_val;
 		} else {
 			wmep->wmep_txopLimit = chanp->wmep_txopLimit =
-				ireq->i_val;
+				(uint16_t)ireq->i_val;
 		}
 		break;
 	case IEEE80211_IOC_WME_ACM:		/* WME: ACM (bss only) */

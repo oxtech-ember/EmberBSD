@@ -197,7 +197,7 @@ struct wmeParams {
 	u_int8_t	wmep_aifsn;
 	u_int8_t	wmep_logcwmin;		/* log2(cwmin) */
 	u_int8_t	wmep_logcwmax;		/* log2(cwmax) */
-	u_int8_t	wmep_txopLimit;
+	u_int16_t	wmep_txopLimit;	/* 32 microsecond units, as on wire */
 	u_int8_t	wmep_noackPolicy;	/* 0 (ack), 1 (no ack) */
 };
 #define	IEEE80211_TXOP_TO_US(_txop)	((_txop)<<5)

@@ -2423,11 +2423,18 @@ wpi_wme_update(struct ieee80211com *ic)
 	struct wpi_softc *sc = ic->ic_ifp->if_softc;
 	const struct wmeParams *wmep;
 	struct wpi_wme_setup wme;
+	const struct wmeParams *params =
+	    ic->ic_wme.wme_chanParams.cap_wmeParams;
 	int ac;
 
 	/* don't override default WME values if WME is not actually enabled */
 	if (!(ic->ic_flags & IEEE80211_F_WME))
 		return 0;
+
+	/* Firmware stores TXOP in 16 bits of microseconds. */
+	for (ac = 0; ac < WME_NUM_AC; ac++)
+		if (params[ac].wmep_txopLimit > 2047)
+			return EOPNOTSUPP;
 
 	wme.flags = 0;
 	for (ac = 0; ac < WME_NUM_AC; ac++) {

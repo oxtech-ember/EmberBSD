@@ -1579,7 +1579,7 @@ rtwn_wme_update(struct ieee80211com *ic)
 		/* AIFS[AC] = AIFSN[AC] * aSlotTime + aSIFSTime. */
 		aifs = wmep->wmep_aifsn * slottime + 10;
 		rtwn_write_4(sc, aci2reg[aci],
-		    SM(R92C_EDCA_PARAM_TXOP, wmep->wmep_txopLimit) |
+		    SM(R92C_EDCA_PARAM_TXOP, (uint32_t)wmep->wmep_txopLimit) |
 		    SM(R92C_EDCA_PARAM_ECWMIN, wmep->wmep_logcwmin) |
 		    SM(R92C_EDCA_PARAM_ECWMAX, wmep->wmep_logcwmax) |
 		    SM(R92C_EDCA_PARAM_AIFS, aifs));
