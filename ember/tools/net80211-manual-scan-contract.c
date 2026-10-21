@@ -6,6 +6,15 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+/* Darwin gives memcpy a symbol alias. Keep GCC's builtin overlap diagnostics
+ * active here, as on the Linux CI host. No production body is rewritten.
+ */
+#ifdef __APPLE__
+#undef memcpy
+#undef memmove
+#define memcpy __builtin_memcpy
+#define memmove __builtin_memmove
+#endif
 #include <sys/types.h>
 
 #define SIOCSIFMEDIA 1

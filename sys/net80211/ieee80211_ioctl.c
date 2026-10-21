@@ -491,7 +491,7 @@ ieee80211_setupscan(struct ieee80211com *ic, const u_int8_t chanlist[])
 		return EINVAL;
 	/* A scan request can retain the active set in place. */
 	if (chanlist != ic->ic_chan_active)
-		memcpy(ic->ic_chan_active, chanlist,
+		memmove(ic->ic_chan_active, chanlist,
 		    sizeof(ic->ic_chan_active));
 	/*
 	 * We force the state to INIT before calling ieee80211_new_state
