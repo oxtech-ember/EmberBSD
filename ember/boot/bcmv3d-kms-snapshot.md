@@ -95,7 +95,8 @@ ruby ember/tools/bcmv3d-kms-snapshot-contract.rb /absolute/source
 The host contract compiles the actual diagnostic with controlled DRM and OS
 services. It verifies all RGB bytes, X-byte handling, 4/64 KiB mapping bounds,
 frame changes, short writes, errors and cleanup. Named compiled controls must
-reach their exact failed assertions. Signals and watchdog expiry fail the run.
+reach their exact failed assertions. Signals, watchdog expiry and sanitizer diagnostics fail the run, even with
+an expected exit or assertion. Nine host process controls check this gate.
 Set SNAPSHOT_EVIDENCE to a new directory to retain source pins and command logs.
 CC and CFLAGS select the host compiler/instrumentation. Host checks do not
 execute native DMA, the target pager, hardware scanout or the compositor.

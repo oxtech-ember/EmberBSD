@@ -7,6 +7,7 @@ require 'open3'
 require 'shellwords'
 require 'tmpdir'
 require 'timeout'
+require 'rbconfig'
 Process.setrlimit(:CORE, 0, 0)
 def capture(command, seconds = 60)
   Open3.popen3(*command, pgroup: true) do |input, output, errors, waiter|
@@ -25,6 +26,18 @@ def capture(command, seconds = 60)
     end
   end
 end
+# Apply the same fail-closed classification to positives and causal controls.
+def accepted_result?(out, err, status, timeout, expected, condition = nil, compile = false)
+  return false if timeout || !status || !status.exited? || status.exitstatus != expected
+  return false if (out + err).match?(/AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer|MemorySanitizer|ThreadSanitizer|runtime error:/)
+  return true if compile
+  if condition
+    err.lines.any? { |line| line.start_with?('FAIL contract: ') &&
+      line.sub(/^FAIL contract: /, '').strip == condition }
+  else
+    out.include?('PASS controlled snapshot scenario')
+  end
+end
 root = File.realpath(ARGV[0] || File.expand_path('../..', __dir__))
 evidence = ENV['SNAPSHOT_EVIDENCE']
 abort 'new evidence directory required' if evidence && File.exist?(evidence)
@@ -35,19 +48,45 @@ uapi = root + '/sys/external/bsd/drm2/dist/include/uapi/drm'
 %w[drm.h drm_mode.h drm_fourcc.h v3d_drm.h].each { |p| paths << 'sys/external/bsd/drm2/dist/include/uapi/drm/' + p }
 pins = paths.map { |p| [p, Digest::SHA256.file(root + '/' + p).hexdigest] }.to_h
 commands = []
-run = lambda do |name, args, expected = 0, condition = nil|
-  out, err, status = capture(args)
-  commands << { name: name, argv: args, exit: status.exitstatus, signal: status.termsig }
+execute = lambda do |name, args, seconds = 60|
+  out = ''; err = ''; status = nil; timeout = false
+  begin
+    out, err, status = capture(args, seconds)
+  rescue RuntimeError => exception
+    raise unless exception.message.start_with?('command timed out:')
+    timeout = true; err = exception.message + "\n"
+  end
+  commands << { name: name, argv: args, exit: status && status.exitstatus,
+    signal: status && status.termsig, timeout: timeout }
   File.write(work + '/' + name + '.stdout', out)
   File.write(work + '/' + name + '.stderr', err)
-  abort 'unexpected exit: ' + name unless status.exited? && status.exitstatus == expected
-  if condition
-    abort 'wrong causal condition: ' + name unless err.lines.any? { |l| l.sub(/^FAIL contract: /, '').strip == condition && l.start_with?('FAIL contract: ') }
-  else
-    abort 'missing controlled result: ' + name unless name.end_with?('-compile') || out.include?('PASS controlled snapshot scenario')
-  end
+  [out, err, status, timeout]
 end
+run = lambda do |name, args, expected = 0, condition = nil|
+  out, err, status, timeout = execute.call(name, args)
+  abort 'rejected result: ' + name unless accepted_result?(out, err, status,
+    timeout, expected, condition, name.end_with?('-compile'))
+end
+
 begin
+  harness = {
+    'exact-negative' => ['warn "FAIL contract: named condition"; exit 1', 1, 'named condition', true, false],
+    'unrelated' => ['warn "FAIL contract: other condition"; exit 1', 1, 'named condition', false, false],
+    'positive' => ['puts "PASS controlled snapshot scenario"', 0, nil, true, false],
+    'signal' => ['warn "FAIL contract: named condition"; Process.kill("KILL", Process.pid)', 1, 'named condition', false, false],
+    'recovering-ubsan' => ['puts "PASS controlled snapshot scenario"; warn "x.c:1: runtime error: signed integer overflow"', 0, nil, false, false],
+    'asan-expected-check' => ['warn "ERROR: AddressSanitizer: heap-use-after-free"; warn "FAIL contract: named condition"; exit 1', 1, 'named condition', false, false],
+    'lsan-positive' => ['puts "PASS controlled snapshot scenario"; warn "ERROR: LeakSanitizer: detected memory leaks"', 0, nil, false, false],
+    'hang' => ['sleep 30', 1, 'named condition', false, true],
+    'held-pipe' => ['fork { sleep 30 }; exit 0', 1, 'named condition', false, true]
+  }
+  harness.each do |name, (code, expected, condition, accepted, must_timeout)|
+    out, err, status, timeout = execute.call('harness-' + name,
+      [RbConfig.ruby, '-e', code], must_timeout ? 0.5 : 30)
+    abort 'bad process classification: ' + name unless
+      !!accepted_result?(out, err, status, timeout, expected, condition) == accepted &&
+      timeout == must_timeout
+  end
   original = File.read(root + '/ember/tools/bcmv3d-kms-snapshot.c')
   body = work + '/snapshot-body.h'
   File.write(body, original)
