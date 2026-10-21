@@ -1,7 +1,7 @@
 # Native CM5 OpenGL and KMS
 
-The opt-in native V3D driver supports CL bin/render jobs, CSD compute, bounded
-TFU copies, binary syncobjs and same-device PRIME. The common Ports Mesa
+The opt-in native V3D driver supports CL bin/render jobs, CSD compute, a staged
+TFU subset, binary syncobjs and same-device PRIME. The common Ports Mesa
 package uses this driver for hardware OpenGL on CM5. Native fixed-mode KMS
 presents the same GEM objects through HVS/PV0. Rendering, allocation, display
 and a complete accelerated desktop have separate acceptance boundaries.
@@ -22,6 +22,13 @@ vector and temporary handle vector use at most 48 KiB per request. Native
 `kheapsort` uses fixed workspace for O(n log n) duplicate checks. Metadata
 allocation can fail with `ENOMEM`. These vectors are separate from BO storage
 accounting.
+
+The [TFU admission contract](bcmv3d-tfu.md) accepts selected Mesa 26.2.4 modes,
+file-owned BO aliases and interior addresses. It maps complete unique BOs with
+read-only inputs and a read/write output or alias. This is MMU containment,
+not validation of a complete tiled image or mipmap footprint.
+`DRM_V3D_PARAM_SUPPORTS_TFU` remains zero. TFU mipmap execution is not physically
+accepted; successful GL mipmap readback through a fallback path does not qualify it.
 
 A device lock serializes execution. Each job retains all submitted GEM refs.
 Both CL input fences and the output syncobj are captured before any wait or
@@ -81,6 +88,7 @@ workload and recorded kit. It does not qualify the complete firmware/base stack.
 | Check | Accepted result | Boundary |
 | --- | --- | --- |
 | Native CL/TFU | 333 CL pairs, 1,363,968 checked pixels and 32 TFU copies; four jobs each with 72 and 91 distinct BOs; all active pixels and requested guards pass | Native clear/store commands, binary fences, two clients and CL/TFU/CL transitions; no Mesa or display execution in this checker |
+| TFU raster | 16 copies and 67,712 checked pixels with IOC1 and IOC0, including 84x52 with stride 96 and byte offsets 256/512; exact two-BO budget return | Fixed raster workload only; no tiled or mipmap qualification |
 | BO extent | Nine single allocations through 32 MiB, including 16 MiB plus 4 KiB; three held BOs totaling 17,969,152 bytes; all 12 releases return the exact native budget | Allocation and release only; no mapping, rendering or scanout qualification for a 32 MiB BO |
 | Fixed-mode KMS | Atomic modeset, 240 consecutive double-buffer flips in eight seconds, normal BLANK teardown and returned BO memory | About 30 presentations/s in the fixed 1080p60 mode; no complete DPMS or HDMI Plasma acceptance |
 | Mesa V3D | EGL 1.5, GLES 3.0 and desktop OpenGL 3.1 on V3D 7.1.10.2; real shaders and checked pixels, including four 1280x800 lifecycles per discovery path | Short context/render lifecycle; no desktop frame-rate or long-run claim |
@@ -102,11 +110,23 @@ kernel `29b51eb8073755849f22ccdfdedf487c8be49870`. Mesa and PRIME receipts retai
 their own provider and kernel pins in the
 [Ports graphics receipt](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-cm5.md).
 
-A physical Plasma trial with the named kernel stops during startup readiness
-on a Mesa TFU submission error. Its BOs return and no execution-fault receipt
-appears. The failed request's errno and payload are not yet captured. Native
-TFU still admits only the original 64x64 R32F copy. General Mesa TFU
-compatibility requires a separate contract and hardware check.
+The TFU raster result uses kernel `cff738af94a53a1c70cd07c7a9f3cc18f6cb88f9`
+and the 16-job checker from source `ab61bcb4606655bdd368c8d8854d3a918a55ca6d`.
+Its ELF SHA256 is
+`3268a9fbc2b0c989084361e064364ce6bc4f90d52c9387b2e65409188858e3d5`.
+The installed kernel SHA256 is
+`5710c3a922efdb737a8d18fce8e6cc2831616225df94d24ce1414518dcf076c0`.
+All 64x64 and 84x52 raster jobs pass, with no new execution or admission fault.
+The same ELF rejects the first IOC0 request on the older fixed-payload kernel.
+This result qualifies the raster version only. The later
+[raster/tiled checker](bcm2712-v3d-tfu-check.md) requires its complete 24-job
+acceptance; the 16-job result does not qualify its tiled phases or mipmaps.
+
+The existing native TFU ownership, CSD, binary-syncobj and CL checkers also
+pass on kernel `cff738af94a53a1c70cd07c7a9f3cc18f6cb88f9`. Their 305 BO creates
+and releases return the exact budget, with no new execution fault. Intentional
+invalid flags and closed-handle tests exhaust the eight-sample TFU admission
+log budget. Absence of later rejection lines is not proof of no later rejection.
 
 A complete physical HDMI KWin/Plasma session is not accepted. Larger physical
 CL/CSD lists, general job recovery, foreign-device sharing, Vulkan, sustained
