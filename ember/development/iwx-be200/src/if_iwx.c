@@ -10101,30 +10101,6 @@ iwx_run_stop(struct iwx_softc *sc)
 		return err;
 	}
 
-	/* Reset Tx chains and width in case HT/VHT was in use. */
-	if (in->in_phyctxt != NULL &&
-	    (in->in_phyctxt->sco != IEEE80211_HTOP0_SCO_SCN ||
-	    in->in_phyctxt->vht_chan_width != IEEE80211_VHTOP0_CHAN_WIDTH_HT)) {
-		in->in_ht = 0;
-		if (ic->ic_opmode != IEEE80211_M_MONITOR) {
-			/* Restrict firmware Tx rates before narrowing the PHY. */
-			err = iwx_rs_init(sc, in);
-			if (err) {
-				printf("%s: could not reset rate scaling (error %d)\n",
-				    device_xname(sc->sc_dev), err);
-				return err;
-			}
-		}
-		err = iwx_phy_ctxt_update(sc, in->in_phyctxt,
-		    in->in_phyctxt->channel, 1, 1, 0,
-		    IEEE80211_HTOP0_SCO_SCN, IEEE80211_VHTOP0_CHAN_WIDTH_HT);
-		if (err) {
-			printf("%s: failed to update PHY\n",
-			    device_xname(sc->sc_dev));
-			return err;
-		}
-	}
-
 	return 0;
 }
 

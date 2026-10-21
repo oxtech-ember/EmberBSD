@@ -35,8 +35,12 @@ def main():
     args = parser.parse_args()
     driver = args.source.read_text()
     registers = args.source.with_name("if_iwxreg.h").read_text()
-    bodies = [declaration(driver, rf"^int\n{name}\(") for name in
-              ("iwx_rs_init_v3", "iwx_rs_init_v4", "iwx_rs_init", "iwx_run_stop")]
+    functions = (("int", "iwx_rs_init_v3"), ("int", "iwx_rs_init_v4"),
+                 ("int", "iwx_rs_init"), ("int", "iwx_run_stop"),
+                 ("int", "iwx_auth"), ("int", "iwx_deauth"),
+                 ("void", "iwx_phy_ctxt_task"), ("void", "iwx_newstate_task"))
+    bodies = [declaration(driver, rf"^{kind}\n{name}\(")
+              for kind, name in functions]
     wire = [declaration(registers, rf"^enum {name} \{{") + ";" for name in
             ("iwx_tlc_mng_cfg_cw", "iwx_tlc_mng_cfg_mode")]
     wire.extend(re.findall(r"^#define IWX_TLC_(?:NSS_|MCS_PER_BW_|MNG_CHAIN_)"

@@ -48,7 +48,8 @@ are maintained in the related repositories below.
   The [desktop Wi-Fi manager](ember/development/ember-wifi/README.md) reads cached
   discoveries while connected to avoid foreground-scan interruptions.
   The [BE200 port candidate](ember/development/iwx-be200/README.md) has
-  source contracts for firmware rate and PHY width ordering during teardown;
+  source contracts for station, binding, MAC and PHY removal order, and
+  separate dynamic rate/PHY width changes while associated;
   module and access-point validation remain separate acceptance steps.
   A separate Minimal/None HTTP installation passes cold boot and console Wi-Fi tool checks;
   SSH is enabled by default with unchanged authentication settings.

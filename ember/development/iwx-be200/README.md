@@ -50,18 +50,24 @@ Still missing: detach/unload, hardware crypto, MFP
 (so WPA3-only networks do not work), RLC_CONFIG v3 (sending the v2
 layout makes the firmware fail, so it is not sent).
 
-## Channel width when leaving RUN
+## Channel width and station lifecycle
 
-When an HT/VHT station leaves RUN, the driver resets its PHY to 20 MHz.
-It first submits a non-HT, 20 MHz TLC configuration while the station
-still exists in firmware. If that submission fails, it returns the error
-without narrowing the PHY. Monitor mode does not submit a TLC configuration.
-This preserves the width ordering already used by `iwx_phy_ctxt_task()`.
+When an HT/VHT station leaves RUN, `iwx_run_stop()` flushes traffic and
+marks the MAC disassociated. It does not change PHY width or rate scaling.
+This follows the teardown in OpenBSD `if_iwx.c` revision 1.230.
+`iwx_deauth()` removes the station before removing its PHY context.
+For a new association, `iwx_auth()` creates a fresh 20 MHz PHY context.
+An error removing the station stops teardown before PHY removal.
+
+Width changes while associated remain in `iwx_phy_ctxt_task()`: rate
+scaling changes before narrowing the PHY and after widening it.
 
 Firmware assert `0x20101A28` can indicate that Tx rate selection permits
 40 MHz while the PHY permits only 20 MHz. See the
 [upstream developer explanation](https://mail-archive.com/bugs@openbsd.org/msg24406.html).
-The ordering repair does not establish the cause of every firmware failure.
+The teardown contract does not establish why an AP disconnects a station
+or demonstrate that all firmware failures are resolved. Physical reconnect
+and sustained-operation acceptance remain pending for this change.
 
 Run the source contract from the repository root:
 
@@ -70,10 +76,11 @@ sh ember/tools/iwx-width-contract.sh
 sh ember/tools/iwx-ht-contract.sh
 ```
 
-The width contract extracts the actual `iwx_run_stop()` and TLC v3/v4
-functions and wire structures. Its userland transport records the command
-order and payload. It covers HT40/VHT80 teardown, stale HT state, an
-unchanged 20 MHz PHY, monitor mode, and TLC/PHY/flush errors. `CC`, `CFLAGS`
+The width contract extracts the actual state dispatcher, teardown, auth,
+dynamic-width and TLC v3/v4 functions and wire structures. Its userland
+transport records the command order and payload. It covers HT40/VHT80
+teardown, 20 MHz, monitor mode, station-removal and PHY-add failures,
+and separate dynamic narrowing and widening. `CC`, `CFLAGS`
 and `TEST_RUNNER` select the compiler, options and execution wrapper.
 An optional argument selects another `if_iwx.c` with its sibling headers.
 
