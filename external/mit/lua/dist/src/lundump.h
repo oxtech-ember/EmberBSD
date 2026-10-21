@@ -9,7 +9,9 @@
 #ifndef lundump_h
 #define lundump_h
 
+#ifndef _KERNEL
 #include <limits.h>
+#endif /* _KERNEL */
 
 #include "llimits.h"
 #include "lobject.h"

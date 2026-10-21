@@ -810,7 +810,7 @@
 #define LUA_NUMBER_FMT		LUA_INTEGER_FMT
 
 #define l_mathlim(n)		(0)
-#define l_randomizePivot()	(~0)
+#define l_randomizePivot(L)	(~0)
 
 /* setjmp.h */
 #define LUAI_THROW(L,c)		longjmp(&((c)->b))
