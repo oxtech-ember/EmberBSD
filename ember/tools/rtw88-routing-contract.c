@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Origin: EmberBSD actual wrapper AC producer contract, AI-assisted. */
+/* Expose host BSD types and endian services before the first libc header. */
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE 1
+#endif
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE 1
+#endif
 #define RTW88_START_CORE_ONLY 1
 #define main core_contract_main
 #define failures core_failures
