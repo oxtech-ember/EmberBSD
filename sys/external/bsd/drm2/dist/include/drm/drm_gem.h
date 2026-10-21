@@ -373,6 +373,8 @@ void drm_gem_pager_reference(struct uvm_object *);
 void drm_gem_pager_detach(struct uvm_object *);
 int drm_gem_mmap_object(struct drm_device *, off_t, size_t, int,
     struct uvm_object **, voff_t *, struct file *);
+int drm_gem_mmap_object_strict(struct drm_device *, off_t, size_t, int,
+    struct uvm_object **, voff_t *, struct file *);
 int drm_gem_or_legacy_mmap_object(struct drm_device *, off_t, size_t, int,
     struct uvm_object **, voff_t *, struct file *);
 #else

@@ -84,6 +84,61 @@ drm_gem_or_legacy_mmap_object(struct drm_device *dev, off_t byte_offset,
 	    uoffsetp, file);
 }
 
+/*
+ * GEM-only entry: require an exact base and a contained, page-aligned prefix.
+ * Keep the legacy NULL-object fallback in drm_gem_mmap_object unchanged.
+ * Retain a live object under the VMA lookup lock, as in drm_gem_mmap.
+ */
+int
+drm_gem_mmap_object_strict(struct drm_device *dev, off_t byte_offset,
+    size_t nbytes, int prot, struct uvm_object **uobjp, voff_t *uoffsetp,
+    struct file *fp)
+{
+	struct drm_vma_offset_node *node;
+	struct drm_gem_object *obj = NULL;
+	unsigned long startpage, npages;
+
+	if (uobjp == NULL || uoffsetp == NULL)
+		return -EINVAL;
+	*uobjp = NULL;
+	*uoffsetp = 0;
+	if (dev == NULL || fp == NULL || fp->f_data == NULL ||
+	    byte_offset < 0 || (byte_offset & (PAGE_SIZE - 1)) != 0 ||
+	    nbytes == 0 || (nbytes & (PAGE_SIZE - 1)) != 0 ||
+	    (prot & ~(PROT_READ | PROT_WRITE)) != 0)
+		return -EINVAL;
+	if ((uintmax_t)(nbytes - 1) >
+	    (uintmax_t)(__type_max(off_t) - byte_offset))
+		return -EINVAL;
+	startpage = byte_offset >> PAGE_SHIFT;
+	npages = nbytes >> PAGE_SHIFT;
+	if ((uintmax_t)startpage != (uintmax_t)byte_offset >> PAGE_SHIFT)
+		return -EINVAL;
+	KASSERT(drm_core_check_feature(dev, DRIVER_GEM));
+	KASSERT(dev->driver->gem_uvm_ops != NULL);
+
+	drm_vma_offset_lock_lookup(dev->vma_offset_manager);
+	node = drm_vma_offset_lookup_locked(dev->vma_offset_manager, startpage,
+	    npages);
+	if (node != NULL && drm_vma_node_start(node) == startpage) {
+		obj = container_of(node, struct drm_gem_object, vma_node);
+		/* A zero-reference object is already waiting to remove its node. */
+		if (!kref_get_unless_zero(&obj->refcount))
+			obj = NULL;
+	}
+	drm_vma_offset_unlock_lookup(dev->vma_offset_manager);
+	if (obj == NULL)
+		return -EINVAL;
+	KASSERT(obj->dev == dev);
+	if (!drm_vma_node_is_allowed(node, fp->f_data)) {
+		drm_gem_object_put_unlocked(obj);
+		return -EACCES;
+	}
+	*uobjp = &obj->gemo_uvmobj;
+	*uoffsetp = 0;
+	return 0;
+}
+
 int
 drm_gem_mmap_object(struct drm_device *dev, off_t byte_offset, size_t nbytes,
     int prot, struct uvm_object **uobjp, voff_t *uoffsetp, struct file *file)

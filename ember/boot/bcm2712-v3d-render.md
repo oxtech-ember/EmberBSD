@@ -232,6 +232,15 @@ observed busy BOs separately. Each successful operation verifies every word.
 Record the kernel and test hashes, output, duration and kernel log.
 
 Host contracts compile the actual production sources with modeled services.
+The native GEM mapper accepts a page-aligned prefix at the exact BO base.
+It retains the same GEM object and rejects missing, oversized and unowned
+ranges. It never returns a successful NULL object that UVM could map as
+anonymous memory. Other drivers keep the existing generic and legacy APIs.
+Run `ruby ember/tools/drm-gem-mmap-contract.rb --work NEW_DIRECTORY` for
+the actual VMA lookup, GEM lifetime, native binding and cdevsw contract.
+It tests 4 KiB and 64 KiB pages. This host model does not test UVM faults,
+physical cache attributes or rendered pixels.
+
 Run `ruby ember/tools/bcmv3d-bo-size-contract.rb` for the actual allocator,
 whole-BO PRIME mmap, final-page pager and renderer PTE bounds. The contract
 accepts 16 MiB plus padding through the inclusive 256 MiB ceiling. It rejects

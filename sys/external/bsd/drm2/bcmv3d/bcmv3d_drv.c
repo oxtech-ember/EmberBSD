@@ -214,7 +214,7 @@ static struct drm_driver bcmv3d_driver = {
 #endif
 	.ioctls = bcmv3d_ioctls,
 	.num_ioctls = __arraycount(bcmv3d_ioctls),
-	.mmap_object = drm_gem_mmap_object,
+	.mmap_object = drm_gem_mmap_object_strict,
 	.gem_uvm_ops = &bcmv3d_bo_uvm_ops,
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
