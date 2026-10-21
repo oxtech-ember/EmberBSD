@@ -1654,8 +1654,10 @@ remain unverified.
   attach/media contract checks explicit legacy rates and band limits. OFDM with
   required ERP protection fails closed. Target and physical acceptance remain
   pending. Manual SSID staging and
-  idempotent BSD media selection now pass a native legacy-scan contract. Target
-  build and physical cold-init reduction remain unverified. See the
+  idempotent BSD media selection now pass a native legacy-scan contract.
+  BSD supplicant scans preserve mode and channel-list restrictions instead of
+  scanning every available band. Target build and physical cold-init reduction
+  remain unverified. See the
   [native driver boundary](ember/development/rtl8822ce-proposal.md#current-source-boundary).
 - **RTL8852BE (`rtwx`):** WPA2-PSK station mode works with software crypto.
   HT/VHT/HE rates, aggregation, WPA3/PMF, power save and beacon-loss

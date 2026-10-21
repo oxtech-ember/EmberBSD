@@ -175,14 +175,20 @@ restart. Automatic and device-controlled roaming retain their reset result.
 The BSD supplicant skips a media SET when the configured media word is unchanged.
 Changed media requests and transport errors retain their existing behavior.
 The legacy scan path still sends an explicit `IEEE80211_IOC_SCAN_REQ` after
-SSID staging. The native stack prepares INIT and requests SCAN. Association
-remains an explicit MLME operation after scan completion.
+SSID staging. The native stack retains the active channel set selected by
+media mode or channel-list policy. It prepares INIT and requests SCAN.
+That request does not widen a fixed 11b/11g mode to 5 GHz. The setup helper accepts
+the existing active-set pointer without an overlapping copy. Distinct legacy
+configuration inputs still replace the active set. Association remains an
+explicit MLME operation after scan completion.
 
 The [manual scan contract](../tools/net80211-manual-scan-contract.py) runs the
 complete BSD legacy scan, media and SSID functions. It compiles the native
 NWID, ROAMING and SCAN_REQ switch arms, the complete `setupscan` body, and the
-complete RTL8822CE ioctl consumer. Kernel layouts, copyin, ioctl transport and
-state scheduling use explicit host models. Unrelated switch arms, WPA setup,
+complete RTL8822CE ioctl consumer. Restricted-set cases check AUTO, 11a,
+11b/11g and a configured two-channel policy as explicit inputs. The separate
+media contract checks mode-to-active-set derivation. Kernel layouts, copyin,
+ioctl transport and state scheduling use explicit host models. Unrelated switch arms, WPA setup,
 management capabilities and physical radio operations are outside this contract.
 
 Run with a native GCC16 compiler:

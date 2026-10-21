@@ -215,11 +215,72 @@ static void reset(void)
 	net.ic.ic_roaming = IEEE80211_ROAMING_MANUAL;
 	net.ic.ic_opmode = IEEE80211_M_STA;
 	memset(net.ic.ic_chan_avail, 0x5a, sizeof(net.ic.ic_chan_avail));
+	memcpy(net.ic.ic_chan_active, net.ic.ic_chan_avail,
+	    sizeof(net.ic.ic_chan_active));
 	configured_media = 0;
 	get_error = set_error = copy_error = state_error = saw_init = 0;
 	cold_starts = state_requests = media_sets = media_gets = nwid_calls =
 	    scan_calls = 0;
 }
+/* Consume mode/channel-policy output without widening it during a scan. */
+static void
+check_scan_channels(struct bsd_driver_data *drv,
+    struct wpa_driver_scan_params *scan)
+{
+	static const unsigned char available[IEEE80211_CHAN_BYTES] = {
+		[0] = 0xfe, [1] = 0x3f, [4] = 0x10, [18] = 0x20
+	};
+	static const unsigned char active[][IEEE80211_CHAN_BYTES] = {
+		/* AUTO, 11a, 11b/11g and an explicit two-channel policy. */
+		{ [0] = 0xfe, [1] = 0x3f, [4] = 0x10, [18] = 0x20 },
+		{ [4] = 0x10, [18] = 0x20 },
+		{ [0] = 0xfe, [1] = 0x3f },
+		{ [1] = 0x09 }
+	};
+	unsigned i;
+
+	for (i = 0; i < sizeof(active) / sizeof(active[0]); i++) {
+		reset();
+		memcpy(net.ic.ic_chan_avail, available, sizeof(available));
+		memcpy(net.ic.ic_chan_active, active[i], sizeof(active[i]));
+		CHECK(wpa_driver_bsd_scan(drv, scan) == 0);
+		CHECK(memcmp(net.ic.ic_chan_active, active[i],
+		    sizeof(active[i])) == 0);
+		CHECK(memcmp(net.ic.ic_chan_avail, available,
+		    sizeof(available)) == 0);
+		CHECK(state_requests == 1 && saw_init &&
+		    net.ic.ic_state == IEEE80211_S_SCAN);
+		CHECK(cold_starts == 0 && media_sets == 0);
+		CHECK(net.ic.ic_roaming == IEEE80211_ROAMING_MANUAL);
+	}
+	/* Distinct legacy channel-list input still replaces the active set. */
+	reset();
+	CHECK(ieee80211_setupscan(&net.ic, active[3]) == 0);
+	CHECK(memcmp(net.ic.ic_chan_active, active[3], sizeof(active[3])) == 0);
+	CHECK(net.ic.ic_state == IEEE80211_S_INIT);
+	/* The identical active-set pointer is a supported setupscan input. */
+	CHECK(ieee80211_setupscan(&net.ic, net.ic.ic_chan_active) == 0);
+	CHECK(memcmp(net.ic.ic_chan_active, active[3], sizeof(active[3])) == 0);
+	reset();
+	memcpy(net.ic.ic_chan_active, active[3], sizeof(active[3]));
+	interface.if_flags = IFF_UP;
+	CHECK(wpa_driver_bsd_scan(drv, scan) == -1);
+	CHECK(memcmp(net.ic.ic_chan_active, active[3], sizeof(active[3])) == 0);
+	CHECK(state_requests == 0 && net.ic.ic_state == IEEE80211_S_RUN);
+	reset();
+	memcpy(net.ic.ic_chan_active, active[3], sizeof(active[3]));
+	copy_error = EFAULT;
+	CHECK(wpa_driver_bsd_scan(drv, scan) == -1);
+	CHECK(memcmp(net.ic.ic_chan_active, active[3], sizeof(active[3])) == 0);
+	CHECK(state_requests == 0 && scan_calls == 0);
+	reset();
+	memcpy(net.ic.ic_chan_active, active[3], sizeof(active[3]));
+	state_error = EBUSY;
+	CHECK(wpa_driver_bsd_scan(drv, scan) == -1);
+	CHECK(memcmp(net.ic.ic_chan_active, active[3], sizeof(active[3])) == 0);
+	CHECK(state_requests == 1 && net.ic.ic_state == IEEE80211_S_INIT);
+}
+
 int main(void)
 {
 	struct bsd_global global = {0};
@@ -228,6 +289,7 @@ int main(void)
 	struct wpa_driver_scan_params scan = {1, {{ssid, sizeof(ssid)}}};
 	struct ieee80211_nwid nwid = {3, {0x61, 0, 0x62}};
 	struct ifreq request = {{0}, &nwid, 0};
+	check_scan_channels(&drv, &scan);
 	reset();
 	CHECK(wpa_driver_bsd_scan(&drv, &scan) == 0);
 	CHECK(media_gets == 1 && media_sets == 0);

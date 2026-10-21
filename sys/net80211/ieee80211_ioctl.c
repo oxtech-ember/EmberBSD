@@ -489,7 +489,10 @@ ieee80211_setupscan(struct ieee80211com *ic, const u_int8_t chanlist[])
 	 */
 	if (!IS_UP(ic))
 		return EINVAL;
-	memcpy(ic->ic_chan_active, chanlist, sizeof(ic->ic_chan_active));
+	/* A scan request can retain the active set in place. */
+	if (chanlist != ic->ic_chan_active)
+		memcpy(ic->ic_chan_active, chanlist,
+		    sizeof(ic->ic_chan_active));
 	/*
 	 * We force the state to INIT before calling ieee80211_new_state
 	 * to get ieee80211_begin_scan called.  We really want to scan w/o
@@ -2508,7 +2511,8 @@ ieee80211_ioctl_set80211(struct ieee80211com *ic, u_long cmd,
 	case IEEE80211_IOC_SCAN_REQ:
 		if (ic->ic_opmode == IEEE80211_M_HOSTAP)	/* XXX ignore */
 			break;
-		error = ieee80211_setupscan(ic, ic->ic_chan_avail);
+		/* Preserve the selected PHY mode and configured channel list. */
+		error = ieee80211_setupscan(ic, ic->ic_chan_active);
 		if (error == 0)		/* XXX background scan */
 			error = ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
 		break;
