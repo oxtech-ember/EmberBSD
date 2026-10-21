@@ -621,6 +621,95 @@ rtw88_fw_download(struct rtw88_softc *sc, uint32_t gen, const uint8_t *fw,
 	return error;
 }
 
+/* Dedicated startup event slot, not a DMA C2H packet or an H2C command.
+ * Protocol: FreeBSD d2145e9b main.c rtw_chip_efuse_enable/rtw_dump_hw_feature,
+ * Realtek BSD-3-Clause option. A bounded snapshot cannot detect short firmware
+ * writes: the pinned wire contract supplies exactly thirteen payload bytes. */
+#define RTW88_REG_C2HEVT 0x01a0
+
+static int
+rtw88_hw_feature_fence(struct rtw88_softc *sc, uint32_t gen)
+{
+	return sc->sc_stop_requested || sc->sc_generation != gen ? EINTR : 0;
+}
+
+static int
+rtw88_hw_feature_request(struct rtw88_softc *sc, uint32_t gen)
+{
+	int error;
+
+	if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
+		return error;
+	error = sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_C2HEVT, 0xfd);
+	if (error != 0) {
+		sc->sc_stats.hw_io_errors++;
+		return error;
+	}
+	if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
+		return error;
+	sc->sc_stats.hw_requests++;
+	sc->sc_hw_feature.requested = 1;
+	sc->sc_hw_feature.requested_generation = gen;
+	return 0;
+}
+
+static int
+rtw88_hw_feature_read(struct rtw88_softc *sc, uint32_t gen)
+{
+	struct rtw88_hw_feature report;
+	uint8_t id, stable, raw[RTW88_HW_FEATURE_LEN];
+	unsigned i;
+	int error;
+
+	if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
+		return error;
+	error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_C2HEVT, &id);
+	if (error != 0)
+		goto io_fail;
+	if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
+		return error;
+	if (id != 0x19) {
+		if (id == 0 || id == 0xfd)
+			sc->sc_stats.hw_missing++;
+		else
+			sc->sc_stats.hw_foreign++;
+		return 0; /* Do not consume an event we do not own. */
+	}
+	for (i = 0; i < sizeof(raw); i++) {
+		error = sc->sc_ops->read_1(sc->sc_bus,
+		    RTW88_REG_C2HEVT + 2 + i, &raw[i]);
+		if (error != 0)
+			goto io_fail;
+		if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
+			return error;
+	}
+	error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_C2HEVT, &stable);
+	if (error != 0)
+		goto io_fail;
+	if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
+		return error;
+	if (stable != id) {
+		sc->sc_stats.hw_unstable++;
+		return 0; /* A replaced event belongs to its other consumer. */
+	}
+	error = rtw88_hw_feature_decode(raw, sizeof(raw), &report);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_C2HEVT, 0);
+	if (error != 0)
+		goto io_fail;
+	if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
+		return error;
+	sc->sc_hw_feature.report = report;
+	sc->sc_hw_feature.observed_generation = gen;
+	sc->sc_hw_feature.observed = 1;
+	sc->sc_stats.hw_reports++;
+	return 0;
+io_fail:
+	sc->sc_stats.hw_io_errors++;
+	return error;
+}
+
 static void
 rtw88_release_fw(struct rtw88_softc *sc)
 {
@@ -635,6 +724,7 @@ rtw88_stop(struct rtw88_softc *sc)
 	int error;
 
 	sc->sc_stop_requested = 1;
+	memset(&sc->sc_hw_feature, 0, sizeof(sc->sc_hw_feature));
 	rtw88_ra_invalidate(sc);
 	sc->sc_linked = 0;
 	sc->sc_stats.ra_report_valid = 0;
@@ -725,6 +815,7 @@ rtw88_start(struct rtw88_softc *sc)
 	}
 	sc->sc_generation++;
 	gen = sc->sc_generation;
+	memset(&sc->sc_hw_feature, 0, sizeof(sc->sc_hw_feature));
 	sc->sc_stop_requested = 0;
 	sc->sc_bootstrapping = 1;
 	error = rtw8822c_identify(sc);
@@ -763,8 +854,16 @@ rtw88_start(struct rtw88_softc *sc)
 	error = rtw8822c_power_post(sc);
 	if (error != 0)
 		goto fail;
+	stage = "HW feature request";
+	error = rtw88_hw_feature_request(sc, gen);
+	if (error != 0)
+		goto fail;
 	stage = "firmware download";
 	error = rtw88_fw_download(sc, gen, fw, &info);
+	if (error != 0)
+		goto fail;
+	stage = "HW feature report";
+	error = rtw88_hw_feature_read(sc, gen);
 	if (error != 0)
 		goto fail;
 	sc->sc_h2c_box = 0;

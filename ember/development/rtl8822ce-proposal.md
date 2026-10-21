@@ -257,6 +257,51 @@ firmware telemetry and throughput. Reconnection data is a separate result:
 old queued DMA is not proven drained by this atom, and reports cannot be
 attributed across reassociation. Legacy recovery must remain available.
 
+## Firmware hardware-feature snapshot
+
+Fresh RTL8822C startup writes request `0xfd` to the dedicated MMIO event slot
+`0x01a0` immediately before firmware download. After confirmed firmware-ready,
+it accepts ID `0x19` and snapshots thirteen bytes at `0x01a2..0x01ae`, checks
+that the ID remains stable, releases the owned slot, then publishes a capsule
+fenced by the current firmware generation. This is neither an H2C command nor
+a DMA RX C2H event handler. Offset +1 is not interpreted as a length.
+
+The wire layout follows FreeBSD rtw88 at
+[`d2145e9b96448da34d3cfede24c509af6d830c92`, main.c](https://github.com/freebsd/freebsd-src/blob/d2145e9b96448da34d3cfede24c509af6d830c92/sys/contrib/dev/rtw88/main.c)
+and its `efuse.h`, under the BSD-3-Clause option. Payload bytes4..7 form an
+explicitly byte-assembled little-endian word: HCI bits3..0, bandwidth18..16,
+NSS20..19, antennas23..21 and protocol27..26. The numeric diagnostic reports
+these raw fields, independently validated known-field bits and request/observation
+generations; it does not expose the entire raw payload.
+
+Conservative validation recognizes bandwidth6 as20/40MHz and7 as20/40/80MHz,
+NSS and antenna counts1/2, and protocol3 as the reference VHT token. Zero and
+unsupported encodings remain unknown; there is no default NSS2/BW80 and no
+antenna reconfiguration. HCI is opaque telemetry. These are firmware claims,
+not measured RF capabilities, peer negotiation or admission to HT/VHT modes.
+Current channel setup, TX power limits and advertised legacy operation are
+unchanged by the report.
+
+Missing or foreign event IDs and a replaced slot leave capabilities unknown,
+with separate counters, while legacy startup continues. A foreign/replaced
+slot is not cleared. Actual request/read/release I/O failures use existing
+startup cleanup; no partially read or unreleased report is published. Stop
+and fresh-start generation creation invalidate the capsule. There is one
+bounded read attempt per fresh firmware startup and no late activation.
+The wire format has no proven length metadata; a stable ID and thirteen MMIO
+reads cannot independently detect a firmware short write or same-ID replacement.
+
+The synthetic HW-feature contract executes the complete actual core startup,
+request/read/release implementation and decoder. Firmware-ready/report publication,
+MMIO and other device services are modeled. It checks every mailbox operation
+with before/after I/O errors and stop/generation changes, unknown/foreign/unstable
+responses, restart invalidation, unaligned exact-length decoding and all numeric
+field encodings. The separate actual PCI diagnostic contract checks the stored
+capsule and every output buffer capacity, including maximum numeric values.
+No physical report bytes are fixtures. Board qualification must record private
+raw report bytes, firmware SHA/generation and continuing legacy WPA2/data operation;
+HT/VHT throughput, NSS and width still require separate physical acceptance.
+
 ## Linked-peer reconnect boundary
 
 A new native state request latches hardware-peer invalidation before changing
@@ -399,6 +444,7 @@ CC=gcc-16 RTW88_ROUTING_ANALYZE=1 sh ember/tools/rtw88-routing-contract.sh
 CC=gcc-16 RTW88_ENABLE_ANALYZE=1 sh ember/tools/rtw88-enable-contract.sh
 CC=gcc-16 RTW88_RA_ANALYZE=1 sh ember/tools/rtw88-ra-contract.sh
 CC=gcc-16 RTW88_RECONNECT_ANALYZE=1 sh ember/tools/rtw88-reconnect-contract.sh
+CC=gcc-16 RTW88_HWFEATURE_ANALYZE=1 sh ember/tools/rtw88-hwfeature-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-wme-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-fw-init-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-net-contract.sh

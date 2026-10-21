@@ -210,6 +210,28 @@ rtwce_stats(char *buf, size_t len)
 		    st->ra_report_rate, st->ra_report_macid, st->ra_report_bw,
 		    sc->sc_ra.configured, sc->sc_ra.active,
 		    sc->sc_ra.protection_limited, sc->sc_ra.error);
+	/* Firmware boot claim, not negotiated PHY or measured radio capacity. */
+	if (n > 0 && (size_t)n < len)
+		n += snprintf(buf + n, len - (size_t)n,
+		    " hw_requests %llu hw_reports %llu hw_missing %llu"
+		    " hw_foreign %llu hw_unstable %llu hw_io_errors %llu"
+		    " hw_requested %u/%u hw_observed %u/%u hw_known %#x"
+		    " hw_raw %u/%u/%u/%u/%u hw_bandwidths %#x",
+		    (unsigned long long)st->hw_requests,
+		    (unsigned long long)st->hw_reports,
+		    (unsigned long long)st->hw_missing,
+		    (unsigned long long)st->hw_foreign,
+		    (unsigned long long)st->hw_unstable,
+		    (unsigned long long)st->hw_io_errors,
+		    sc->sc_hw_feature.requested,
+		    sc->sc_hw_feature.requested_generation,
+		    sc->sc_hw_feature.observed,
+		    sc->sc_hw_feature.observed_generation,
+		    sc->sc_hw_feature.report.known,
+		    sc->sc_hw_feature.report.hci, sc->sc_hw_feature.report.bw,
+		    sc->sc_hw_feature.report.nss, sc->sc_hw_feature.report.antennas,
+		    sc->sc_hw_feature.report.protocol,
+		    sc->sc_hw_feature.report.bandwidths);
 	if (n > 0 && (size_t)n < len && psc->sc_net != NULL) {
 		rtw88_net_get_stats(psc->sc_net, &ns);
 		n += snprintf(buf + n, len - (size_t)n,

@@ -88,6 +88,9 @@ struct rtw88_ra_state {
 
 /* Visible counters; errors are never silently dropped. */
 struct rtw88_stats {
+	uint64_t hw_requests, hw_reports, hw_missing, hw_foreign;
+	uint64_t hw_unstable, hw_io_errors;
+
 	uint64_t intr;
 	uint64_t rx_frames;
 	uint64_t rx_c2h;
@@ -129,6 +132,13 @@ struct rtw88_packet_h2c {
 	int error;		/* Sticky after an uncertain DMA operation. */
 };
 
+/* Boot generation, never a peer/association identity. */
+struct rtw88_hw_feature_state {
+	struct rtw88_hw_feature report;
+	uint32_t requested_generation, observed_generation;
+	uint8_t requested, observed;
+};
+
 struct rtw88_softc {
 	const struct rtw88_bus_ops *sc_ops;
 	void *sc_bus;
@@ -158,6 +168,7 @@ struct rtw88_softc {
 	uint32_t sc_generation;
 	uint32_t sc_h2c_box;
 	struct rtw88_packet_h2c sc_packet_h2c;
+	struct rtw88_hw_feature_state sc_hw_feature;
 	unsigned sc_pg_rows;
 	unsigned sc_pwr_rows;
 	struct rtw88_dma sc_rxbuf[RTW88_RX_BUFS];

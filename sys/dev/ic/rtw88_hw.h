@@ -14,6 +14,20 @@
 #include <stdint.h>
 #endif
 
+/* Dedicated boot mailbox payload, pinned FreeBSD d2145e9b main.c/efuse.h.
+ * A firmware claim only; this does not admit any HT/VHT operating mode. */
+#define RTW88_HW_FEATURE_LEN 13
+#define RTW88_HW_KNOWN_BW 0x01
+#define RTW88_HW_KNOWN_NSS 0x02
+#define RTW88_HW_KNOWN_ANTENNAS 0x04
+#define RTW88_HW_KNOWN_PROTOCOL 0x08
+struct rtw88_hw_feature {
+	uint8_t raw[RTW88_HW_FEATURE_LEN];
+	uint8_t hci, bw, nss, antennas, protocol;
+	uint8_t known, bandwidths; /* bit0=20, bit1=40, bit2=80 MHz */
+};
+int rtw88_hw_feature_decode(const uint8_t *, size_t, struct rtw88_hw_feature *);
+
 #define RTW8822C_TX_PACKET_DESC_SIZE	48
 #define RTW8822C_TX_BUFFER_DESC_SIZE	16
 #define RTW8822C_RX_PACKET_DESC_SIZE	24

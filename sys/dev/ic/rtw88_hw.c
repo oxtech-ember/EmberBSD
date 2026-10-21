@@ -14,6 +14,41 @@
 
 #include "rtw88_hw.h"
 
+/* FreeBSD d2145e9b main.c/efuse.h; BSD-3-Clause option. No defaults for
+ * IGNORE or unsupported encodings: unknown must remain distinguishable. */
+int
+rtw88_hw_feature_decode(const uint8_t *p, size_t len,
+    struct rtw88_hw_feature *out)
+{
+	struct rtw88_hw_feature value = { 0 };
+	uint32_t word;
+	unsigned i;
+
+	if (p == NULL || out == NULL || len != RTW88_HW_FEATURE_LEN)
+		return EINVAL;
+	for (i = 0; i < RTW88_HW_FEATURE_LEN; i++)
+		value.raw[i] = p[i];
+	word = (uint32_t)p[4] | (uint32_t)p[5] << 8 |
+	    (uint32_t)p[6] << 16 | (uint32_t)p[7] << 24;
+	value.hci = word & 15;
+	value.bw = (word >> 16) & 7;
+	value.nss = (word >> 19) & 3;
+	value.antennas = (word >> 21) & 7;
+	value.protocol = (word >> 26) & 3;
+	if (value.bw == 6 || value.bw == 7) {
+		value.known |= RTW88_HW_KNOWN_BW;
+		value.bandwidths = value.bw == 6 ? 3 : 7;
+	}
+	if (value.nss == 1 || value.nss == 2)
+		value.known |= RTW88_HW_KNOWN_NSS;
+	if (value.antennas == 1 || value.antennas == 2)
+		value.known |= RTW88_HW_KNOWN_ANTENNAS;
+	if (value.protocol == 3)
+		value.known |= RTW88_HW_KNOWN_PROTOCOL;
+	*out = value;
+	return 0;
+}
+
 /*
  * WME queue and EDCA formats follow FreeBSD rtw88 at
  * d2145e9b96448da34d3cfede24c509af6d830c92, pci.c and mac80211.c.

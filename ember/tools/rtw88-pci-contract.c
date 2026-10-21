@@ -657,6 +657,21 @@ int main(void)
 	CHECK(strstr(stats, " txdata 0 txrate 0 txbasic 0") != NULL);
 	CHECK(strstr(stats, " fwra_tx 0 protection_tx 0") != NULL);
 	CHECK(strstr(stats, " ra_reports 0 unattributed 0") != NULL);
+	CHECK(strstr(stats, " hw_requested 0/0 hw_observed 0/0 hw_known 0") != NULL);
+	p.sc_core.sc_hw_feature.requested = 1;
+	p.sc_core.sc_hw_feature.requested_generation = 17;
+	p.sc_core.sc_hw_feature.observed = 1;
+	p.sc_core.sc_hw_feature.observed_generation = 17;
+	p.sc_core.sc_hw_feature.report.known = 15;
+	p.sc_core.sc_hw_feature.report.hci = 9;
+	p.sc_core.sc_hw_feature.report.bw = 7;
+	p.sc_core.sc_hw_feature.report.nss = 2;
+	p.sc_core.sc_hw_feature.report.antennas = 2;
+	p.sc_core.sc_hw_feature.report.protocol = 3;
+	p.sc_core.sc_hw_feature.report.bandwidths = 7;
+	CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
+	CHECK(strstr(stats, " hw_requested 1/17 hw_observed 1/17 hw_known 0xf") != NULL);
+	CHECK(strstr(stats, " hw_raw 9/7/2/2/3 hw_bandwidths 0x7") != NULL);
 	CHECK(strstr(stats, " txr0 0") != NULL && strstr(stats, " txr11 0") != NULL);
 	CHECK(strstr(stats, " txpost0 0") != NULL && strstr(stats, " txpost4 0") != NULL);
 	stats_latch = &p;
@@ -664,10 +679,12 @@ int main(void)
 	CHECK(stats_latch == NULL && strstr(stats, " basic 0x55a") != NULL);
 	{
 		struct rtw88_stats saved = p.sc_core.sc_stats;
+		struct rtw88_hw_feature_state saved_hw = p.sc_core.sc_hw_feature;
 		char probe[4098];
 		size_t required;
 
 		memset(&p.sc_core.sc_stats, 0xff, sizeof(p.sc_core.sc_stats));
+		memset(&p.sc_core.sc_hw_feature, 0xff, sizeof(p.sc_core.sc_hw_feature));
 		stats_max = 1;
 		CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
 		CHECK(strstr(stats, " txr11 18446744073709551615") != NULL);
@@ -683,6 +700,7 @@ int main(void)
 			CHECK(!p.sc_lock.held && !rtwce_diag_lock.held);
 		}
 		p.sc_core.sc_stats = saved;
+		p.sc_core.sc_hw_feature = saved_hw;
 		stats_max = 0;
 	}
 
