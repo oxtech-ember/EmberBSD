@@ -88,7 +88,7 @@ workload and recorded kit. It does not qualify the complete firmware/base stack.
 | Check | Accepted result | Boundary |
 | --- | --- | --- |
 | Native CL/TFU | 333 CL pairs, 1,363,968 checked pixels and 32 TFU copies; four jobs each with 72 and 91 distinct BOs; all active pixels and requested guards pass | Native clear/store commands, binary fences, two clients and CL/TFU/CL transitions; no Mesa or display execution in this checker |
-| TFU raster | 16 copies and 67,712 checked pixels with IOC1 and IOC0, including 84x52 with stride 96 and byte offsets 256/512; exact two-BO budget return | Fixed raster workload only; no tiled or mipmap qualification |
+| TFU raster/UIF | 24 copies and 100,480 checked pixels: 16 raster jobs with IOC1/IOC0 plus four independent jobs in each UIF_NO_XOR direction; source, outer guards and fences pass; exact two-BO budget return | Fixed raster shapes and 64x64 R32F UIF_NO_XOR transfers; no XOR, mipmap, other tiled formats or display qualification |
 | BO extent | Nine single allocations through 32 MiB, including 16 MiB plus 4 KiB; three held BOs totaling 17,969,152 bytes; all 12 releases return the exact native budget | Allocation and release only; no mapping, rendering or scanout qualification for a 32 MiB BO |
 | Fixed-mode KMS | Atomic modeset, 240 consecutive double-buffer flips in eight seconds, normal BLANK teardown and returned BO memory | About 30 presentations/s in the fixed 1080p60 mode; no complete DPMS or HDMI Plasma acceptance |
 | Mesa V3D | EGL 1.5, GLES 3.0 and desktop OpenGL 3.1 on V3D 7.1.10.2; real shaders and checked pixels, including four 1280x800 lifecycles per discovery path | Short context/render lifecycle; no desktop frame-rate or long-run claim |
@@ -110,17 +110,27 @@ kernel `29b51eb8073755849f22ccdfdedf487c8be49870`. Mesa and PRIME receipts retai
 their own provider and kernel pins in the
 [Ports graphics receipt](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-cm5.md).
 
-The TFU raster result uses kernel `cff738af94a53a1c70cd07c7a9f3cc18f6cb88f9`
-and the 16-job checker from source `ab61bcb4606655bdd368c8d8854d3a918a55ca6d`.
-Its ELF SHA256 is
-`3268a9fbc2b0c989084361e064364ce6bc4f90d52c9387b2e65409188858e3d5`.
+The [24-job TFU raster/tiled checker](bcm2712-v3d-tfu-check.md) from source
+`f0031cae212ba6d9b5f1cb0baa3bb860cfd757e4` passes on kernel
+`cff738af94a53a1c70cd07c7a9f3cc18f6cb88f9`. Its ELF SHA256 is
+`7f32f1ae38a8b24260fa58d2a65cc715473bb76d57ab68ef6e58abd59a4db229`.
 The installed kernel SHA256 is
 `5710c3a922efdb737a8d18fce8e6cc2831616225df94d24ce1414518dcf076c0`.
-All 64x64 and 84x52 raster jobs pass, with no new execution or admission fault.
-The same ELF rejects the first IOC0 request on the older fixed-payload kernel.
-This result qualifies the raster version only. The later
-[raster/tiled checker](bcm2712-v3d-tfu-check.md) requires its complete 24-job
-acceptance; the 16-job result does not qualify its tiled phases or mipmaps.
+All 16 raster jobs and both independent 64x64 R32F UIF_NO_XOR directions pass.
+The check compares intermediate tiled bytes with the pinned Mesa CPU oracle.
+It checks the full source, destination outer guards and binary fences.
+Two BO creates and releases return the exact budget, with zero allocation
+failures and no new execution fault. Temperature before and after the finite
+check is 53.767 and 54.866 degrees C. Throttle and under-voltage flags are false.
+This does not qualify XOR layouts, mipmaps, other tiled formats or Plasma.
+
+The prior 16-job raster checker from source
+`ab61bcb4606655bdd368c8d8854d3a918a55ca6d` also passes on that kernel.
+Its ELF SHA256 is
+`3268a9fbc2b0c989084361e064364ce6bc4f90d52c9387b2e65409188858e3d5`.
+The same prior ELF rejects the first IOC0 request on the older fixed-payload
+kernel. That causal baseline qualifies its raster version only. It does not
+provide tiled or mipmap acceptance.
 
 The existing native TFU ownership, CSD, binary-syncobj and CL checkers also
 pass on kernel `cff738af94a53a1c70cd07c7a9f3cc18f6cb88f9`. Their 305 BO creates
