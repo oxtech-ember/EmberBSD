@@ -22,8 +22,9 @@ for name in ('wmeParams', 'chanAccParams', 'ieee80211_wme_state'):
 for path, names in [('sys/net80211/ieee80211_var.h',r'IEEE80211_(C_WME|F_WME|F_SHSLOT|FIXED_RATE_NONE)'),
                     ('sys/net80211/ieee80211_node.h',r'IEEE80211_NODE_(QOS|WME_VALID|WME_OFFER)'),
                     ('sys/net80211/ieee80211.h',r'IEEE80211_RATE_(BASIC|VAL)'),
-                    ('sys/net/if_media.h',r'IFM_(NONE|L_OWNLOCK|NMASK|MMASK|TYPE\(x\)|MODE\(x\)|AUTO|IEEE80211(?:_11[A-Z]+|_FH|_TURBO)?)')]:
-    for line in read(path).splitlines():
+                    ('sys/net/if_media.h',r'_?IFM_(NONE|L_OWNLOCK|NMASK|MMASK|TMASK|ETHER|ETH_XTMASK|ETHER_SUBTYPE_GET\(x\)|SUBTYPE\(x\)|TYPE\(x\)|MODE\(x\)|AUTO|IEEE80211(?:_11[A-Z]+|_FH|_TURBO)?)')]:
+    source = re.sub(r'/\*.*?\*/', '', read(path).replace('\\\n', ''), flags=re.S)
+    for line in source.splitlines():
         if re.match(r'#define\s+'+names+r'\s',line):
             parts.append(line.split('/*',1)[0])
 s='\n'.join(parts)

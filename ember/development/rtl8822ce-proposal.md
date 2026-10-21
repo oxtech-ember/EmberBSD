@@ -166,8 +166,19 @@ The 2.4 GHz declarations include CCK, OFDM and DYN. Native `ifattach`
 requires OFDM to derive 11g mode support. The media contract executes the
 complete native attach, media registration, selection and mode consumers.
 It checks explicit 6, 24 and 54 Mbps 11g entries, 11a and 11b rate tables,
-band-limited active sets and AUTO restoration. Kernel services, object layout
-and ifmedia storage/lookup are models. This is not an ioctl transport test.
+band-limited active sets and AUTO restoration. It also executes the complete
+native media callback, real ERP/slot helpers, `setupscan` and the SCAN_REQ arm.
+An AUTO association can change runtime mode without narrowing active channels.
+The native callback uses its previous configured media word to detect a newly
+selected mode or the first fixed rate. If shared media handling keeps the same
+runtime mode, the callback reapplies that mode before restart. New constraints
+follow normal `setmode` channel-list replacement. Repeated requests and rate-only
+changes within an existing constraint preserve a narrower configured list.
+Init failure restores the wrapper cache; existing shared rate/mode mutations are
+not a full configuration rollback. Kernel services, object layout and ifmedia
+storage/lookup are models. Init and scan scheduling are modeled;
+Association runtime mode is an explicit input, not execution of station join.
+This is not an ioctl transport test.
 Target build and fixed-rate physical acceptance remain pending.
 
 Manual SSID updates now stage the desired network without requesting a cold

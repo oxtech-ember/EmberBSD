@@ -870,15 +870,36 @@ static int
 rtw88_net_media_change(struct ifnet *ifp)
 {
 	struct rtw88_net *net = ifp->if_softc;
-	unsigned previous;
-	int error = ieee80211_media_change(ifp);
+	struct ieee80211com *ic = &net->ic;
+	enum ieee80211_phymode previous_mode = ic->ic_curmode;
+	unsigned previous, media = ic->ic_media.ifm_media;
+	int error;
 
-	if (error != 0 && error != ENETRESET)
-		return error;
 	/* The media layer owns its lock here. Never take it in state_work. */
 	mutex_enter(net->lock);
 	previous = net->configured_media;
-	net->configured_media = net->ic.ic_media.ifm_media;
+	mutex_exit(net->lock);
+	error = ieee80211_media_change(ifp);
+	if (error != 0 && error != ENETRESET)
+		return error;
+	/*
+	 * AUTO association changes the runtime mode without narrowing active
+	 * channels. Refresh a new configured constraint even when the shared
+	 * consumer sees the same runtime mode. Repeats and rate-only changes
+	 * within an existing constraint retain its channel-list policy.
+	 */
+	if (ic->ic_curmode == previous_mode &&
+	    (IFM_MODE(previous) != IFM_MODE(media) ||
+	    (IFM_MODE(previous) == IFM_AUTO &&
+	    IFM_SUBTYPE(previous) == IFM_AUTO &&
+	    IFM_SUBTYPE(media) != IFM_AUTO))) {
+		error = ieee80211_setmode(ic, ic->ic_curmode);
+		if (error != 0)
+			return error;
+		error = ENETRESET;
+	}
+	mutex_enter(net->lock);
+	net->configured_media = media;
 	mutex_exit(net->lock);
 	if (error == ENETRESET && (ifp->if_flags & IFF_UP) != 0) {
 		error = rtw88_net_init(ifp);

@@ -38,10 +38,17 @@ with tempfile.TemporaryDirectory(prefix='rtw88-media-') as directory:
     types += defines(read('sys/net/if_media.h'), '_?IFM_') + '\n'
     types += defines(read('sys/net80211/ieee80211_var.h'), 'IEEE80211_') + '\n'
     types += defines(read('sys/net80211/ieee80211.h'), 'IEEE80211_RATE_') + '\n'
+    types += re.search(r'enum ieee80211_state\s*\{.*?};',
+                       read('sys/net80211/ieee80211_proto.h'), re.S).group() + '\n'
+    types += defines(read('sys/net80211/ieee80211_ioctl.h'),
+                     'IEEE80211_IOC_SCAN_REQ') + '\n'
+
     (work / 'media-types.inc').write_text(types)
     names = [('ieee80211_chan2ieee','unsigned'),
              ('ieee80211_ieee2mhz','unsigned'),
              ('ieee80211_set11gbasicrates','void'),
+             ('ieee80211_set_shortslottime','void'),
+             ('ieee80211_reset_erp','void'),
              ('ieee80211_setmode','int'),('ieee80211_ifattach','void'),
              ('ieee80211_rate2media','int'),('ieee80211_media2rate','int'),
              ('ieee80211_media_init_with_lock','void'),
@@ -51,7 +58,9 @@ with tempfile.TemporaryDirectory(prefix='rtw88-media-') as directory:
     for name in ('11a','11b','11g'):
         bodies.append(re.search(r'^const struct ieee80211_rateset ieee80211_std_rateset_'+name+r'\s*=.*?;',ieee,re.M|re.S).group())
     for name, result in names:
-        body = function(proto if name=='ieee80211_set11gbasicrates' else ieee,name,result)
+        body = function(proto if name in ('ieee80211_set11gbasicrates',
+                                   'ieee80211_set_shortslottime',
+                                   'ieee80211_reset_erp') else ieee,name,result)
         if name in ('ieee80211_ifattach', 'ieee80211_media2rate'):
             # Existing native int/u_int comparisons; do not rewrite their body.
             body = ('#pragma GCC diagnostic push\n'
@@ -59,6 +68,17 @@ with tempfile.TemporaryDirectory(prefix='rtw88-media-') as directory:
                     '#pragma GCC diagnostic pop\n')
         bodies.append(body)
     (work / 'media-native.inc').write_text('\n'.join(bodies))
+    ioctl = read('sys/net80211/ieee80211_ioctl.c')
+    setter = function(ioctl, 'ieee80211_ioctl_set80211', 'int')
+    scan = re.search(r'^\tcase IEEE80211_IOC_SCAN_REQ:.*?(?=^\tcase )',
+                     setter, re.M | re.S).group()
+    wrapper = [net[:net.index('#include')], ioctl[:ioctl.index('#include')],
+               function(net, 'rtw88_net_media_change', 'static int'),
+               function(ioctl, 'ieee80211_setupscan', 'static int'),
+               'static int native_scan_req(struct ieee80211com *ic) {\n'
+               'int error=0; switch (IEEE80211_IOC_SCAN_REQ) {\n' + scan +
+               '\n} return error;\n}']
+    (work / 'media-wrapper.inc').write_text('\n'.join(wrapper))
     # Execute the unchanged rate/channel declarations from the owning attach.
     start=net.index('\tic->ic_sup_rates[IEEE80211_MODE_11A] =')
     end=net.index('\tifp->if_softc = net;',start)

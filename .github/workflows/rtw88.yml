@@ -11,6 +11,7 @@ name: Native RTL8822CE source contracts
       - 'sys/dev/pci/if_rtw88_pci.c'
       - 'sys/dev/pci/rtw88_pci_sysctl.c'
       - 'sys/net80211/ieee80211.c'
+      - 'sys/net80211/ieee80211_ioctl.c'
       - 'sys/net80211/ieee80211_proto.c'
       - 'sys/net80211/ieee80211_output.c'
       - 'sys/net80211/ieee80211_input.c'
@@ -36,6 +37,7 @@ name: Native RTL8822CE source contracts
       - 'sys/dev/pci/if_rtw88_pci.c'
       - 'sys/dev/pci/rtw88_pci_sysctl.c'
       - 'sys/net80211/ieee80211.c'
+      - 'sys/net80211/ieee80211_ioctl.c'
       - 'sys/net80211/ieee80211_proto.c'
       - 'sys/net80211/ieee80211_output.c'
       - 'sys/net80211/ieee80211_input.c'
@@ -78,6 +80,7 @@ jobs:
             /sys/dev/pci/if_rtw88_pci.c
             /sys/dev/pci/pcidevs.h
             /sys/net80211/ieee80211.c
+            /sys/net80211/ieee80211_ioctl.c
             /sys/net80211/ieee80211_proto.c
             /sys/net80211/ieee80211_output.c
             /sys/net80211/ieee80211_input.c

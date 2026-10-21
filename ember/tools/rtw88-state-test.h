@@ -173,6 +173,14 @@ ieee80211_media_change(struct ifnet *ifp)
 		net->ic.ic_curmode=state_media_mode;
 	return state_media_error;
 }
+/* Shared media/mode policy is modeled here; the media contract executes it. */
+static int
+ieee80211_setmode(struct ieee80211com *ic, enum ieee80211_phymode mode)
+{
+	assert(!state_lock.held);
+	ic->ic_curmode=mode;
+	return 0;
+}
 static void
 rtw88_net_stop(struct ifnet *ifp, int disable)
 {

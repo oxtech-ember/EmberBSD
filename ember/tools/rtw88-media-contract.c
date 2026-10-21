@@ -20,12 +20,12 @@
 #define IF_Mbps(a) ((uint64_t)(a)*1000000)
 #define DLT_IEEE802_11 105
 struct ieee80211_frame_addr4 { uint8_t bytes[30]; };
-struct ifnet { uint64_t if_baudrate; };
+struct ifnet { uint64_t if_baudrate; void *if_softc; unsigned if_flags; };
 struct ifmedia_entry { int ifm_media; };
 struct ifmediareq { int ifm_active; };
 struct ifmedia {
  struct ifmedia_entry entries[128], *ifm_cur;
- unsigned count;
+ unsigned count; int ifm_media;
 };
 typedef int (*ifm_change_cb_t)(struct ifnet *);
 typedef void (*ifm_stat_cb_t)(struct ifnet *,struct ifmediareq *);
@@ -41,6 +41,9 @@ struct ieee80211com {
  enum ieee80211_opmode ic_opmode;
  enum ieee80211_phytype ic_phytype;
  unsigned ic_modecaps,ic_caps,ic_flags;
+ unsigned ic_nonerpsta, ic_longslotsta;
+ void (*ic_updateslot)(struct ifnet *);
+ enum ieee80211_state ic_state;
  unsigned ic_bintval,ic_bmisstimeout,ic_dtim_period,ic_lintval,ic_txpowlimit;
  int (*ic_reset)(struct ifnet *);
  int ic_fixed_rate;
@@ -62,7 +65,8 @@ static void bpf_attach2(struct ifnet *p,int type,size_t size,void **bp)
 #define ieee80211_sysctl_attach(ic) ((void)(ic))
 #define ieee80211_init_link_state(ic) ((void)(ic))
 #define ieee80211_node_lateattach(ic) ((void)(ic))
-#define ieee80211_reset_erp(ic) ((void)(ic))
+void ieee80211_reset_erp(struct ieee80211com *);
+void ieee80211_set_shortslottime(struct ieee80211com *, int);
 #define ieee80211_wme_initparams(ic) ((void)(ic))
 static int ieee80211_default_reset(struct ifnet *p)
 { (void)p; return ENETRESET; }
@@ -78,6 +82,29 @@ static void ifmedia_set(struct ifmedia *m,int word)
 static void ieee80211_media_status(struct ifnet *p,struct ifmediareq *m)
 { (void)p;m->ifm_active=IFM_MAKEWORD(IFM_IEEE80211,IFM_AUTO,0,0); }
 #include "media-native.inc"
+struct model_lock { int held; };
+struct rtw88_net {
+ struct ieee80211com ic;
+ struct model_lock *lock;
+ unsigned configured_media;
+};
+#define IFF_UP 0x0001
+#define IFF_RUNNING 0x0040
+#define IS_UP(ic) (((ic)->ic_ifp->if_flags & (IFF_UP | IFF_RUNNING)) == \
+    (IFF_UP | IFF_RUNNING))
+static unsigned init_calls, scan_requests, slot_notifications;
+static void count_slot_notification(struct ifnet *ifp)
+{ (void)ifp; slot_notifications++; }
+static int init_error;
+static void mutex_enter(struct model_lock *lock)
+{ assert(!lock->held); lock->held=1; }
+static void mutex_exit(struct model_lock *lock)
+{ assert(lock->held); lock->held=0; }
+static int rtw88_net_init(struct ifnet *ifp)
+{ struct rtw88_net *net=ifp->if_softc; assert(!net->lock->held); init_calls++; return init_error; }
+static int ieee80211_new_state(struct ieee80211com *ic, enum ieee80211_state state, int arg)
+{ (void)arg; scan_requests++; ic->ic_state=state; return 0; }
+#include "media-wrapper.inc"
 static unsigned checks,failures;
 #define CHECK(c) do{checks++;if(!(c)){failures++;fprintf(stderr,"line%u: %s\n",(unsigned)__LINE__,#c);}}while(0)
 static void driver_channels(struct ieee80211com *ic)
@@ -99,6 +126,74 @@ static int select_media(struct ieee80211com *ic,int rate,int mode)
  ifmedia_set(&ic->ic_media,word);
  return ieee80211_media_change(ic->ic_ifp);
 }
+static void
+check_driver_media_refresh(void)
+{
+ struct rtw88_net net;
+ struct ifnet ifp;
+ struct ieee80211_node bss;
+ struct model_lock lock;
+ unsigned i, oldword;
+ static const struct {
+  enum ieee80211_phymode runtime;
+  int rate, media_mode;
+  unsigned forbidden;
+ } cases[] = {
+  { IEEE80211_MODE_11G, IFM_AUTO, IFM_IEEE80211_11G, 36 },
+  { IEEE80211_MODE_11G, IFM_IEEE80211_OFDM6, IFM_IEEE80211_11G, 36 },
+  { IEEE80211_MODE_11A, IFM_IEEE80211_OFDM6, IFM_AUTO, 8 },
+  { IEEE80211_MODE_11G, IFM_IEEE80211_OFDM6, IFM_IEEE80211_11A, 8 }
+ };
+
+ for (i=0;i<__arraycount(cases);i++) {
+  memset(&net,0,sizeof(net)); memset(&ifp,0,sizeof(ifp));
+  memset(&bss,0,sizeof(bss)); memset(&lock,0,sizeof(lock));
+  net.lock=&lock; net.ic.ic_ifp=&ifp; net.ic.ic_bss=&bss;
+  net.ic.ic_opmode=IEEE80211_M_STA; net.ic.ic_phytype=IEEE80211_T_OFDM;
+  net.ic.ic_fixed_rate=IEEE80211_FIXED_RATE_NONE;
+  ifp.if_softc=&net; ifp.if_flags=IFF_UP|IFF_RUNNING; instance=&net.ic;
+  driver_channels(&net.ic); ieee80211_ifattach(&net.ic);
+  ieee80211_media_init(&net.ic,rtw88_net_media_change,ieee80211_media_status);
+  net.configured_media=net.ic.ic_media.ifm_cur->ifm_media;
+  /* Model sta_join's runtime-mode result; AUTO active channels are unchanged. */
+  net.ic.ic_curmode=cases[i].runtime;
+  net.ic.ic_curchan=&net.ic.ic_channels[cases[i].runtime==IEEE80211_MODE_11A ? 36 : 8];
+  net.ic.ic_updateslot=count_slot_notification;
+  CHECK(isset(net.ic.ic_chan_active,8)&&isset(net.ic.ic_chan_active,36));
+  ifmedia_set(&net.ic.ic_media,IFM_MAKEWORD(IFM_IEEE80211,cases[i].rate,cases[i].media_mode,0));
+  net.ic.ic_media.ifm_media=net.ic.ic_media.ifm_cur->ifm_media;
+  init_calls=scan_requests=slot_notifications=0; init_error=0;
+  CHECK(rtw88_net_media_change(&ifp)==0);
+  CHECK(!isset(net.ic.ic_chan_active,cases[i].forbidden));
+  CHECK(init_calls==1 && slot_notifications==1);
+  CHECK(native_scan_req(&net.ic)==0);
+  CHECK(!isset(net.ic.ic_chan_active,cases[i].forbidden));
+  CHECK(scan_requests==1 && net.ic.ic_state==IEEE80211_S_SCAN);
+  /* Repeated requests and rate-only changes keep a narrower active policy. */
+  memset(net.ic.ic_chan_active,0,sizeof(net.ic.ic_chan_active));
+  setbit(net.ic.ic_chan_active,cases[i].forbidden==36 ? 8 : 36);
+  net.ic.ic_flags|=IEEE80211_F_USEPROT;
+  init_calls=slot_notifications=0;
+  CHECK(rtw88_net_media_change(&ifp)==0);
+  CHECK(init_calls==0 && slot_notifications==0 && (net.ic.ic_flags&IEEE80211_F_USEPROT)!=0);
+  CHECK(!isset(net.ic.ic_chan_active,cases[i].forbidden));
+  ifmedia_set(&net.ic.ic_media,IFM_MAKEWORD(IFM_IEEE80211,IFM_IEEE80211_OFDM24,cases[i].media_mode,0));
+  net.ic.ic_media.ifm_media=net.ic.ic_media.ifm_cur->ifm_media;
+  CHECK(rtw88_net_media_change(&ifp)==0);
+  CHECK(init_calls==1);
+  CHECK(!isset(net.ic.ic_chan_active,cases[i].forbidden));
+  CHECK((net.ic.ic_flags&IEEE80211_F_USEPROT)!=0 && slot_notifications==0);
+  /* Existing init-failure behavior restores only the wrapper cache. */
+  oldword=net.configured_media; init_error=EIO;
+  ifmedia_set(&net.ic.ic_media,IFM_MAKEWORD(IFM_IEEE80211,IFM_IEEE80211_OFDM54,cases[i].media_mode,0));
+  net.ic.ic_media.ifm_media=net.ic.ic_media.ifm_cur->ifm_media;
+  CHECK(rtw88_net_media_change(&ifp)==EIO);
+  CHECK(net.configured_media==oldword);
+  CHECK(net.ic.ic_fixed_rate>=0 &&
+      (net.ic.ic_sup_rates[net.ic.ic_curmode].rs_rates[net.ic.ic_fixed_rate]&IEEE80211_RATE_VAL)==108);
+ }
+}
+
 int main(void)
 {
  struct ieee80211com ic={0}; struct ifnet ifp={0};
@@ -137,6 +232,7 @@ int main(void)
  CHECK(select_media(&ic,IFM_AUTO,0)==ENETRESET);
  CHECK(ic.ic_curmode==IEEE80211_MODE_AUTO&&ic.ic_fixed_rate==IEEE80211_FIXED_RATE_NONE);
  CHECK(isset(ic.ic_chan_active,8)&&isset(ic.ic_chan_active,36));
+ check_driver_media_refresh();
  printf("rtw88 native channel/media contract: %u checks, %u failures\n",checks,failures);
  return failures!=0;
 }
