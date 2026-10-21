@@ -47,6 +47,9 @@ are maintained in the related repositories below.
   A fresh amd64 UEFI VM passes complete USB installation with XFCE and its Wi-Fi manager.
   The [desktop Wi-Fi manager](ember/development/ember-wifi/README.md) reads cached
   discoveries while connected to avoid foreground-scan interruptions.
+  The [BE200 port candidate](ember/development/iwx-be200/README.md) has
+  source contracts for firmware rate and PHY width ordering during teardown;
+  module and access-point validation remain separate acceptance steps.
   A separate Minimal/None HTTP installation passes cold boot and console Wi-Fi tool checks;
   SSH is enabled by default with unchanged authentication settings.
   An [amd64 UEFI VM candidate](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-c5d396f5698b68e956b29ee5b256bc7877e6c517-amd64-no-x11)

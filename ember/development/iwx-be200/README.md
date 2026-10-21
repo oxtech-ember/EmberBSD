@@ -50,6 +50,38 @@ Still missing: detach/unload, hardware crypto, MFP
 (so WPA3-only networks do not work), RLC_CONFIG v3 (sending the v2
 layout makes the firmware fail, so it is not sent).
 
+## Channel width when leaving RUN
+
+When an HT/VHT station leaves RUN, the driver resets its PHY to 20 MHz.
+It first submits a non-HT, 20 MHz TLC configuration while the station
+still exists in firmware. If that submission fails, it returns the error
+without narrowing the PHY. Monitor mode does not submit a TLC configuration.
+This preserves the width ordering already used by `iwx_phy_ctxt_task()`.
+
+Firmware assert `0x20101A28` can indicate that Tx rate selection permits
+40 MHz while the PHY permits only 20 MHz. See the
+[upstream developer explanation](https://mail-archive.com/bugs@openbsd.org/msg24406.html).
+The ordering repair does not establish the cause of every firmware failure.
+
+Run the source contract from the repository root:
+
+```sh
+sh ember/tools/iwx-width-contract.sh
+sh ember/tools/iwx-ht-contract.sh
+```
+
+The width contract extracts the actual `iwx_run_stop()` and TLC v3/v4
+functions and wire structures. Its userland transport records the command
+order and payload. It covers HT40/VHT80 teardown, stale HT state, an
+unchanged 20 MHz PHY, monitor mode, and TLC/PHY/flush errors. `CC`, `CFLAGS`
+and `TEST_RUNNER` select the compiler, options and execution wrapper.
+An optional argument selects another `if_iwx.c` with its sibling headers.
+
+These checks validate driver control flow and submitted command contents.
+They do not execute kernel locking, firmware scheduling, or radio traffic.
+Module compilation and physical reconnect tests remain separate acceptance
+steps. The repair and regression were prepared with OpenAI Codex assistance.
+
 Boot setup used on the MSI:
 
 | Item | Value |
