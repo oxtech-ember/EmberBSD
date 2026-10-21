@@ -9,6 +9,7 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/crypto/aes/**'
       - 'sys/sys/mbuf.h'
       - 'sys/sys/queue.h'
+      - 'sys/net/if.h'
       - 'ember/tools/ccmp*'
       - 'ember/tools/net80211-*'
       - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
@@ -39,6 +40,7 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/crypto/aes/**'
       - 'sys/sys/mbuf.h'
       - 'sys/sys/queue.h'
+      - 'sys/net/if.h'
       - 'ember/tools/ccmp*'
       - 'ember/tools/net80211-*'
       - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
@@ -86,6 +88,7 @@ jobs:
             /sys/crypto/aes/
             /sys/sys/mbuf.h
             /sys/sys/queue.h
+            /sys/net/if.h
             /external/bsd/wpa/dist/src/drivers/driver_bsd.c
             /sys/dev/ic/rtw88_net.c
             /sys/dev/ic/ath.c
