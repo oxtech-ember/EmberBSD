@@ -45,7 +45,11 @@ for path, names in [('sys/net80211/ieee80211_var.h', ['IEEE80211_BMISS_MAX', 'IE
     for name in names:
         constants.append(re.search(r'^#define\s+'+name+r'\s+.*$', read(path), re.M).group()+'\n')
 (out/'aploss-constants.inc').write_text(''.join(constants))
-parts = [body('sys/dev/ic/rtw88.c', 'rtw88_ra_invalidate', 'static void'),
+(out/'ieee80211_ht20.h').write_text(read('sys/net80211/ieee80211_ht20.h'))
+parts = [body('sys/net80211/ieee80211_ht20.c', 'ieee80211_ht20_reset', 'void'),
+         body('sys/net80211/ieee80211_ht20.c', 'ieee80211_ht20_state_request', 'int'),
+         '#define ieee80211_ht20_state_request aploss_checked_ht20_request\n',
+         body('sys/dev/ic/rtw88.c', 'rtw88_ra_invalidate', 'static void'),
          body(net, 'rtw88_net_newstate', 'static int'),
          body('sys/net80211/ieee80211.c', 'ieee80211_watchdog', 'static void'),
          body(proto, 'ieee80211_beacon_miss', 'static void'),

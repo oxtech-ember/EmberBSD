@@ -16,6 +16,7 @@
 #include <errno.h>
 #include "rtw88_net_policy.h"
 #include "aploss-constants.inc"
+#include "ieee80211_ht20.h"
 
 static unsigned checks, failures;
 #define CHECK(e) do { checks++; if (!(e)) { failures++; \
@@ -28,7 +29,7 @@ static uint32_t ticks;
 static int giant, pci, pci_token, probe_scan;
 static struct ieee80211com *probe_ic;
 struct ieee80211com;
-struct ieee80211_node { uint8_t ni_bssid[6], ni_essid[32], ni_macaddr[6]; unsigned ni_esslen, ni_fails; };
+struct ieee80211_node { uint8_t ni_bssid[6], ni_essid[32], ni_macaddr[6]; unsigned ni_esslen, ni_fails; struct ieee80211_ht20_node ni_ht20; };
 struct ieee80211_node_table { int nt_inact_timer; void (*nt_timeout)(struct ieee80211_node_table *); };
 struct ifnet { void *if_softc; int if_timer; unsigned if_oerrors; };
 struct work { unsigned unused; };
@@ -46,6 +47,7 @@ struct ieee80211com {
     int ic_mgt_timer;
     struct ieee80211_node_table ic_scan, ic_sta;
     void (*ic_node_cleanup)(struct ieee80211_node *);
+    int (*ic_ht20_admit)(struct ieee80211com *,struct ieee80211_ht20_profile *);
 };
 struct rtw88_softc { int sc_linked; struct { int active,configured; } sc_ra; };
 struct rtw88_net {
@@ -100,6 +102,17 @@ static void model_node_cleanup(struct ieee80211_node *ni) { (void)ni;CHECK(giant
 static struct ieee80211_node *ieee80211_find_node(struct ieee80211_node_table *nt,const uint8_t *addr) { (void)nt;(void)addr;return NULL; }
 static void ieee80211_unref_node(struct ieee80211_node **ni) { (void)ni; }
 static void ieee80211_begin_scan(struct ieee80211com *ic,int arg) { (void)ic;(void)arg;CHECK(giant && !pci);begin_scans++; }
+/* This contract has no HT provider. If an active RUN capsule reaches this
+ * service, fail loudly; full current-profile semantics belong to the HT suite. */
+static int ht20_current(struct ieee80211com *ic,struct ieee80211_node *ni,
+    const struct ieee80211_ht20_node *ht) {
+    (void)ic;(void)ni;(void)ht;
+    CHECK(0 && "active HT RUN is outside the AP-loss fixture");return 0;
+}
+static int aploss_checked_ht20_request(struct ieee80211com *ic,int state) {
+    CHECK(giant && !pci && ic->ic_ht20_admit==NULL);
+    return ieee80211_ht20_state_request(ic,state);
+}
 static void ieee80211_beacon_miss(struct ieee80211com *);
 static void ieee80211_notify_node_leave(struct ieee80211com *,struct ieee80211_node *);
 static void ieee80211_sta_leave(struct ieee80211com *,struct ieee80211_node *);
@@ -204,6 +217,15 @@ static void test_clock_and_superseded_generation(void) {
     /* An explicit interface stop cancels the timer; no daemon scan is faked. */
     setup(&f);f.ifp.if_timer=0;seconds(&f,20);CHECK(!probes && !requests);
 }
+static void test_ht_off_request_reset(void) {
+    struct fixture f;setup(&f);
+    f.ni.ni_ht20.attempt=2;f.ni.ni_ht20.offered=1;
+    f.ni.ni_ht20.profile.generation=5;
+    giant=1;CHECK(rtw88_net_newstate(&f.net.ic,IEEE80211_S_SCAN,0)==0);giant=0;
+    CHECK(f.ni.ni_ht20.attempt==3 && !f.ni.ni_ht20.offered &&
+        !f.ni.ni_ht20.valid && f.ni.ni_ht20.profile.generation==0);
+    CHECK(f.net.policy.epoch==8 && !f.net.policy.accepting && !f.core.sc_ra.active);
+}
 static void test_roaming_and_userland_boundaries(void) {
     struct fixture f;setup(&f);seconds(&f,10);f.net.ic.ic_roaming=IEEE80211_ROAMING_AUTO;
     flush_scan(&f);CHECK(begin_scans==1 && events==1);
@@ -215,7 +237,8 @@ static void test_roaming_and_userland_boundaries(void) {
 }
 int main(void) {
     test_silent_idle_chain();test_refresh_and_fences();
-    test_clock_and_superseded_generation();test_roaming_and_userland_boundaries();
+    test_clock_and_superseded_generation();test_ht_off_request_reset();
+    test_roaming_and_userland_boundaries();
     printf("rtw88 AP-loss chain: %u checks, %u failures\n",checks,failures);
     return failures!=0;
 }

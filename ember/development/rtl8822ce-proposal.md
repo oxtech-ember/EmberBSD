@@ -626,6 +626,11 @@ The event consumer also aborts an outstanding connected scan. The supplicant's
 subsequent network selection, scan, handshake and address recovery are outside
 this host fixture. No wpa_cli operation is used by the tested source path.
 The fixture retains the current shared beacon-miss-count lifecycle across RUN.
+It also executes the actual HT20 state-request and reset helpers with the
+real capsule layout. The AP-loss suite has no active HT provider. An unexpected
+active RUN profile fails the host boundary check; the separate HT20 suite owns
+its validity semantics. The native helper calls must occur before the PCI lock.
+A pending offer is reset by the actual SCAN request without weakening its fence.
 
 The source path is present; this change adds regression coverage only.
 It adds no second timer, AUTO-roaming override or radio capability.
