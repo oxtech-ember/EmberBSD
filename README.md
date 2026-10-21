@@ -1173,7 +1173,10 @@ The base system shell is unchanged.
   adaptive legacy data and six controlled reconnect checks on one 2.4 GHz AP.
   Raw TCP from the board reaches about 25 Mbps in a 1 MiB trial. Full AP-loss
   recovery, RF quality and endurance remain unqualified. HT/VHT remain
-  unadvertised. A bounded
+  unadvertised. Shared HT20 association contracts now bind queued offers to
+  current peer, profile and security state. They also withdraw rejected RUN
+  transitions. Driver HT admission stays disabled until RX BA/reorder and
+  radio prerequisites are complete. A bounded
   [A-MSDU receive path](ember/development/net80211-amsdu.md) remains disabled
   until peer negotiation and aggregation requirements are complete.
   See the [source boundary and checks](ember/development/rtl8822ce-proposal.md#current-source-boundary)
