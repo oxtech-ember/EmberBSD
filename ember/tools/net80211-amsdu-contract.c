@@ -253,7 +253,10 @@ static struct mbuf *
 frame(void)
 {
 	struct mbuf *m = newbuf();
-	uint8_t *p = m->data;
+	uint8_t *p;
+
+	assert(m != NULL);
+	p = m->data;
 	m->m_pkthdr.rcvif_index = 37;
 	p[0] = 0x88;
 	p[1] = 2;

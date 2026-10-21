@@ -8,9 +8,9 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
     SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
 fi
-CC=${CC:-gcc-16} PHY_IES_TEST_CFLAGS='-O1 -g -gdwarf-4 -fanalyzer' \
+CC=${CC:-gcc-16} PHY_IES_TEST_CFLAGS='-O0 -g -gdwarf-4 -fanalyzer' \
     sh "$src/ember/tools/net80211-phy-ies-parser-contract.sh"
-PHY_IES_TEST_CFLAGS='-g -gdwarf-4 -fanalyzer' PHY_IES_TEST_KEEP=1 TMPDIR="$work" \
+PHY_IES_TEST_CFLAGS='-O0 -g -gdwarf-4 -fanalyzer' PHY_IES_TEST_KEEP=1 TMPDIR="$work" \
     sh "$src/ember/tools/net80211-phy-ies-contract.sh"
 # The extraction directory is retained by the contract inside this exact work root.
 fixture=$(find "$work" -name native-node.inc -type f)

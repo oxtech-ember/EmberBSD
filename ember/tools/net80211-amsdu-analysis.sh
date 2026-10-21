@@ -26,7 +26,7 @@ ${CLANG:-clang} --analyze -Xanalyzer -analyzer-output=text \
     "$src/sys/net80211/ieee80211_amsdu.c" \
     "$tools/net80211-amsdu-parser-contract.c" \
     "$tools/net80211-amsdu-contract.c"
-CC=${CC:-gcc-16} AMSDU_TEST_CFLAGS='-g -gdwarf-4 -fanalyzer' \
+CC=${CC:-gcc-16} AMSDU_TEST_CFLAGS='-O0 -g -gdwarf-4 -fanalyzer' \
     sh "$tools/net80211-amsdu-parser-contract.sh"
-CC=${CC:-gcc-16} AMSDU_TEST_CFLAGS='-g -gdwarf-4 -fanalyzer' \
+CC=${CC:-gcc-16} AMSDU_TEST_CFLAGS='-O0 -g -gdwarf-4 -fanalyzer' \
     sh "$tools/net80211-amsdu-contract.sh"

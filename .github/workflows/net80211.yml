@@ -50,13 +50,12 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends python3 valgrind libc6-dbg clang cppcheck
           valgrind --version
-      - name: Check actual sources under Memcheck and path analysis
+      - name: Check optimized actual sources under Memcheck
         env:
           CC: gcc
-          CCMP_TEST_CFLAGS: -O2 -g -gdwarf-4 -fanalyzer
-          AMSDU_TEST_CFLAGS: -O2 -g -gdwarf-4 -fanalyzer
-          PHY_IES_TEST_CFLAGS: -O2 -g -gdwarf-4 -fanalyzer
-          CCMP_ANALYZE: '1'
+          CCMP_TEST_CFLAGS: -O2 -g -gdwarf-4
+          AMSDU_TEST_CFLAGS: -O2 -g -gdwarf-4
+          PHY_IES_TEST_CFLAGS: -O2 -g -gdwarf-4
         run: |
           cat > "$RUNNER_TEMP/memcheck" <<'SH'
           #!/bin/sh
@@ -70,9 +69,17 @@ jobs:
           sh ember/tools/net80211-crypto-bounds-contract.sh
           sh ember/tools/net80211-amsdu-parser-contract.sh
           sh ember/tools/net80211-amsdu-contract.sh
-          sh ember/tools/net80211-amsdu-analysis.sh
           sh ember/tools/net80211-phy-ies-parser-contract.sh
           sh ember/tools/net80211-phy-ies-contract.sh
+      - name: Analyze unoptimized actual source paths
+        env:
+          CC: gcc
+          CCMP_TEST_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
+          CCMP_ANALYZE: '1'
+        run: |
+          sh ember/tools/ccmp-contract.sh
+          sh ember/tools/net80211-crypto-bounds-contract.sh
+          sh ember/tools/net80211-amsdu-analysis.sh
           sh ember/tools/net80211-phy-ies-analysis.sh
       - name: Check actual sources under ASan and UBSan
         env:
