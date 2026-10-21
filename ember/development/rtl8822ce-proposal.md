@@ -443,6 +443,24 @@ RA, reconnect or hardware-report atoms above. These trials do not establish
 RF scheduling, fairness, adaptive rates, throughput limits or endurance.
 Cold-calibration quality remains unqualified.
 
+A GCC16 CIX kernel at `e25f25939` also passes the adaptive legacy RA,
+linked-peer restart and hardware-report path on one 2.4 GHz channel 8 AP.
+Each AC delivers twelve ICMP replies without new interface or DMA errors.
+Bidirectional 1 MiB SHA256 checks pass over normal SSH, raw IPv4 and raw IPv6
+TCP. Raw downloads take 0.337 and 0.333 seconds, respectively, about 25 Mbps.
+Descriptor seed rate 0 does not establish the over-air rate. Firmware RA
+reports rate code 11 within the current firmware generation; they remain
+unattributed to an association token or air ACK.
+
+Three reassociations and three administrative down/up cycles restore
+WPA2-PSK/CCMP, IPv4 data and SLAAC. External IPv6 SSH passes after each cycle.
+IPv4 data readiness takes 28, 12, 15, 15, 15 and 18 seconds. Conflict detection
+remains enabled. Firmware generations advance from 2 to 14, with a fresh
+hardware report after each restart and no interface, DMA, drop or full errors.
+The report claims BW 20/40/80, NSS 2, two antennas and VHT. These firmware
+claims do not enable a PHY mode or qualify the analog path. Full AP-loss
+recovery, upper 5 GHz on this AP, HT/VHT and endurance remain unqualified.
+
 The shared [TXOP width prerequisite](net80211-txop.md) preserves wire values
 and rejects unsupported consumer widths. The shared
 [STA offer prerequisite](net80211-wme.md) validates emitted offers, peer

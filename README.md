@@ -1156,7 +1156,7 @@ The base system shell is unchanged.
   Physical trials pass WPA2-PSK/CCMP, DHCP and bidirectional 16 MiB file
   checks on both 2.4 and 5 GHz. Cold calibration still reports residual-quality
   warnings. The [persistent SD profile](ember/image/cix-p1.md) also passes
-  unattended reboot and Wi-Fi recovery checks on both bands. Higher rates,
+  unattended reboot and Wi-Fi recovery checks on both bands. HT/VHT,
   analog qualification and long-term stability remain pending.
   Multicast membership changes preserve the live radio. Shared CCMP bounds
   and per-TID replay checks support further WLAN work. Host contracts cover
@@ -1169,8 +1169,11 @@ The base system shell is unchanged.
   bounded four-AC queue/data trials pass on one 2.4 GHz AP. RF QoS scheduling
   and endurance remain unqualified. Source contracts also cover legacy AUTO
   firmware rate adaptation, linked-peer quiescence before reconnect, and a bounded
-  boot capability report. Their firmware, RF and reconnect behavior still needs
-  target qualification. HT/VHT remain unadvertised. A bounded
+  boot capability report. A GCC16 CIX kernel at `e25f25939` passes bounded
+  adaptive legacy data and six controlled reconnect checks on one 2.4 GHz AP.
+  Raw TCP from the board reaches about 25 Mbps in a 1 MiB trial. Full AP-loss
+  recovery, RF quality and endurance remain unqualified. HT/VHT remain
+  unadvertised. A bounded
   [A-MSDU receive path](ember/development/net80211-amsdu.md) remains disabled
   until peer negotiation and aggregation requirements are complete.
   See the [source boundary and checks](ember/development/rtl8822ce-proposal.md#current-source-boundary)
@@ -1676,10 +1679,16 @@ remain unverified.
   CIX WPA2/CCMP and bidirectional 1 MiB file checks at fixed 6, 24 and 54 Mbps
   in 11g mode. Those fixed-rate trials do not qualify the new adaptive policy.
   Reconnect contracts quiesce the linked core and drain management references
-  before restart. The bounded hardware report remains firmware telemetry,
-  separate from negotiated PHY and measured capacity. Adaptive rates, HT/VHT,
-  reconnect latency, 5 GHz operation on this AP and long-run performance
-  remain unqualified.
+  before restart. A GCC16 CIX kernel at `e25f25939` passes bidirectional
+  1 MiB SHA256 checks with legacy AUTO over SSH, raw IPv4 and raw IPv6 TCP.
+  Raw downloads take about 0.33 seconds, or 25 Mbps, on one 2.4 GHz AP.
+  Three reassociations and three administrative down/up cycles restore WPA2,
+  IPv4 data and LAN link-local IPv6 SSH after each cycle. IPv4 readiness takes
+  12 to 28 seconds with address-conflict checks preserved. Firmware generations
+  advance from 2 to 14; no interface, DMA, drop or ring-full errors appear.
+  The boot report claims 80 MHz, two streams and VHT. It remains firmware
+  telemetry, separate from negotiated PHY and measured capacity. HT/VHT,
+  full AP-loss recovery, upper 5 GHz on this AP and endurance remain unqualified.
   Manual SSID staging and
   idempotent BSD media selection now pass a native legacy-scan contract.
   BSD supplicant scans preserve mode and channel-list restrictions instead of
