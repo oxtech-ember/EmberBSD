@@ -56,9 +56,11 @@ def main():
     tools = Path(__file__).resolve().parent
     root = tools.parent.parent
     compiler = shlex.split(os.environ.get("CC", "gcc-16"))
+    # Container checkout ownership can differ. Trust only this source root.
+    git = ["git", "-c", "safe.directory=" + str(root), "-C", str(root)]
     (output / "source-head.txt").write_bytes(subprocess.check_output(
-        ["git", "-C", str(root), "rev-parse", "HEAD"]))
-    record(output / "source-status.txt", ["git", "-C", str(root), "status", "--short"])
+        git + ["rev-parse", "HEAD"]))
+    record(output / "source-status.txt", git + ["status", "--short"])
     record(output / "gcc-parameters.log", compiler + ["-Q", "--help=params"])
     variants = [("default", []), ("no-merge", ["-fno-analyzer-state-merge"]),
                 ("no-purge", ["-fno-analyzer-state-purge"]),
