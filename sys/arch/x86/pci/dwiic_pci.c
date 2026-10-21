@@ -237,6 +237,9 @@ pci_dwiic_attach(device_t parent, device_t self, void *aux)
 	sc->sc_pc = pa->pa_pc;
 	sc->sc_ptag = pa->pa_tag;
 
+	/* Set D0 before BAR access, as in OpenBSD sys/dev/pci/dwiic_pci.c. */
+	(void)pci_set_powerstate(pa->pa_pc, pa->pa_tag, PCI_PMCSR_STATE_D0);
+
 	/* register access not enabled by BIOS */
 	csr = pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG);
 	pci_conf_write(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG,

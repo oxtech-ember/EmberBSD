@@ -22,6 +22,16 @@ for pair in 0:7f4c 1:7f4d 2:7f4e 3:7f4f 4:7f7a 5:7f7b; do
     grep -Fq "{ .id = VIDDID(INTEL, 800SERIES_S_I2C_$n) }," \
         "$src/sys/arch/x86/pci/dwiic_pci.c" || fail "dwiic_pci lacks I2C $n"
 done
+# D0 must be requested before mapping Jasper Lake LPSS MMIO registers.
+dwiic="$src/sys/arch/x86/pci/dwiic_pci.c"
+d0_line=$(grep -nF 'pci_set_powerstate(pa->pa_pc, pa->pa_tag, PCI_PMCSR_STATE_D0)' \
+    "$dwiic" | cut -d: -f1 | head -n 1)
+map_line=$(grep -nF 'pci_mapreg_map(pa, PCI_BAR0' "$dwiic" | \
+    cut -d: -f1 | head -n 1)
+[ -n "$d0_line" ] || fail "dwiic PCI front end does not request D0"
+[ -n "$map_line" ] || fail "dwiic PCI front end does not map BAR0"
+[ "$d0_line" -lt "$map_line" ] || fail "dwiic maps BAR0 before requesting D0"
+
 # The GpioInt controller named by the touchpad's _CRS.
 grep -Fq '{ .compat = "INTC1084" },' "$src/sys/dev/acpi/igpio_acpi.c" ||
     fail "igpio_acpi does not match INTC1084"
