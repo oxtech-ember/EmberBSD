@@ -4,11 +4,14 @@
 #include "bcm2712-v3d-render-check.c"
 #undef main
 #include <time.h>
+#include "mesa-tfu-oracle.h"
 
 #define TFU_BO_SIZE (24U * 1024)
 #define TFU_ROUNDS 4U
 /* Mesa26.2.4 v3d_tfu.h and v3d_packet.xml: raster, unfiltered R32F. */
 #define TFU_R32F (29U << 16)
+#define TFU_IMAGE_BASE 4096U
+#define TFU_IMAGE_BYTES (64U * 64U * 4U)
 struct raster_case {
 	unsigned int width, height, stride, source, destination;
 };
@@ -43,6 +46,21 @@ raster_fence(int fd, uint32_t sync_handle)
 }
 
 static void
+tfu_complete(int fd, const struct buffer *src, const struct buffer *dst,
+    uint32_t sync_handle)
+{
+
+	raster_fence(fd, sync_handle);
+	for (unsigned int b = 0; b < 2; b++) {
+		struct drm_v3d_wait_bo wait_args = {
+		    .handle = b == 0 ? src->handle : dst->handle,
+		    .timeout_ns = UINT64_C(1000000000)};
+		if (ioctl(fd, DRM_IOCTL_V3D_WAIT_BO, &wait_args) < 0)
+			err(1, "TFU WAIT_BO");
+	}
+}
+
+static void
 raster_test(int fd, const struct buffer *src, const struct buffer *dst,
     uint32_t sync_handle, const struct raster_case *c, unsigned int ioc,
     unsigned int *jobs)
@@ -74,14 +92,7 @@ raster_test(int fd, const struct buffer *src, const struct buffer *dst,
 		if (ioctl(fd, DRM_IOCTL_V3D_SUBMIT_TFU, &tfu) < 0)
 			err(1, "SUBMIT_TFU %ux%u stride%u IOC%u round%u",
 			    c->width, c->height, c->stride, ioc, round);
-		raster_fence(fd, sync_handle);
-		for (unsigned int b = 0; b < 2; b++) {
-			struct drm_v3d_wait_bo wait_args = {
-			    .handle = b == 0 ? src->handle : dst->handle,
-			    .timeout_ns = UINT64_C(1000000000)};
-			if (ioctl(fd, DRM_IOCTL_V3D_WAIT_BO, &wait_args) < 0)
-				err(1, "TFU WAIT_BO");
-		}
+		tfu_complete(fd, src, dst, sync_handle);
 		for (size_t word = 0; word < words; word++) {
 			uint32_t expected = raster_guard(word);
 
@@ -102,6 +113,86 @@ raster_test(int fd, const struct buffer *src, const struct buffer *dst,
 	printf("PASS: TFU %ux%u stride%u offsets%u/%u IOC%u: %u jobs\n",
 	    c->width, c->height, c->stride, c->source, c->destination,
 	    ioc, TFU_ROUNDS);
+}
+
+static void
+tiled_test(int fd, const struct buffer *src, const struct buffer *dst,
+    uint32_t sync_handle, unsigned int *jobs)
+{
+	uint32_t *reference = malloc(2 * TFU_BO_SIZE);
+	uint32_t *expected, *source_snapshot;
+	const uint32_t uif_stride = 64 / (2 * v3d_utile_height(4));
+	bool visited[64 * 64] = {false};
+
+	if (reference == NULL)
+		errx(1, "TFU tiled oracle allocation");
+	expected = reference;
+	source_snapshot = reference + TFU_BO_SIZE / sizeof(uint32_t);
+	/* This shape has no tile padding. Prove the oracle covers it once. */
+	for (unsigned int y = 0; y < 64; y++) {
+		for (unsigned int x = 0; x < 64; x++) {
+			uint32_t offset =
+			    v3d_get_uif_no_xor_pixel_offset(4, 64, x, y);
+			check(offset % 4 == 0 && offset < TFU_IMAGE_BYTES &&
+			    !visited[offset / 4], "TFU tiled oracle bounds/alias");
+			visited[offset / 4] = true;
+		}
+	}
+	for (unsigned int direction = 0; direction < 2; direction++) {
+		struct drm_v3d_submit_tfu tfu = {
+		    .icfg = TFU_R32F | (direction ? V3D71_TFU_ICFG_FORMAT_UIF_NO_XOR <<
+		        V3D71_TFU_ICFG_IFORMAT_SHIFT : 0),
+		    .iia = src->gpu + TFU_IMAGE_BASE,
+		    .iis = direction ? uif_stride : 64,
+		    .ioa = dst->gpu + TFU_IMAGE_BASE,
+		    .ios = (64U << 16) | 64U,
+		    .bo_handles = {dst->handle, src->handle},
+		    .in_sync = sync_handle, .out_sync = sync_handle,
+		    .v71 = {.ioc = direction ? 64U << V3D71_TFU_IOC_STRIDE_SHIFT :
+		        (uif_stride << V3D71_TFU_IOC_STRIDE_SHIFT) |
+		        (V3D71_TFU_IOC_FORMAT_UIF_NO_XOR <<
+		        V3D71_TFU_IOC_FORMAT_SHIFT)}};
+
+		for (unsigned int round = 0; round < TFU_ROUNDS; round++) {
+			unsigned int iteration = (*jobs)++;
+
+			for (size_t word = 0; word < TFU_BO_SIZE / 4; word++) {
+				src->map[word] = raster_guard(word) ^ iteration;
+				dst->map[word] = expected[word] = raster_guard(word);
+			}
+			/* Refill the input independently before every direction/job. */
+			for (unsigned int y = 0; y < 64; y++) {
+				for (unsigned int x = 0; x < 64; x++) {
+					uint32_t linear = (y * 64 + x) * 4;
+					uint32_t tile =
+					    v3d_get_uif_no_xor_pixel_offset(4, 64, x, y);
+					uint32_t input = TFU_IMAGE_BASE +
+					    (direction ? tile : linear);
+					uint32_t output = TFU_IMAGE_BASE +
+					    (direction ? linear : tile);
+					uint32_t value = pattern(iteration, y * 64 + x);
+
+					src->map[input / 4] = value;
+					expected[output / 4] = value;
+				}
+			}
+			memcpy(source_snapshot, src->map, TFU_BO_SIZE);
+			if (ioctl(fd, DRM_IOCTL_V3D_SUBMIT_TFU, &tfu) < 0)
+				err(1, "SUBMIT_TFU tiled direction%u round%u",
+				    direction, round);
+			tfu_complete(fd, src, dst, sync_handle);
+			for (size_t word = 0; word < TFU_BO_SIZE / 4; word++) {
+				check(src->map[word] == source_snapshot[word],
+				    "TFU tiled modified source");
+				if (dst->map[word] != expected[word])
+					errx(1, "TFU tiled copy/guard job%u word%zu: %#x expected %#x",
+					    iteration, word, dst->map[word], expected[word]);
+			}
+		}
+		printf("PASS: TFU %s: %u independent jobs, tiled bytes and outer guards\n",
+		    direction ? "UIF_NO_XOR-to-raster" : "raster-to-UIF_NO_XOR", TFU_ROUNDS);
+	}
+	free(reference);
 }
 
 int
@@ -130,12 +221,14 @@ main(int argc, char **argv)
 		raster_test(fd, &src, &dst, sync_create.handle, &raster_cases[c], 1, &jobs);
 		raster_test(fd, &src, &dst, sync_create.handle, &raster_cases[c], 0, &jobs);
 	}
+	tiled_test(fd, &src, &dst, sync_create.handle, &jobs);
 	close_handle(fd, src.handle);
 	close_handle(fd, dst.handle);
 	check(munmap(src.map, TFU_BO_SIZE) == 0, "TFU source munmap");
 	check(munmap(dst.map, TFU_BO_SIZE) == 0, "TFU destination munmap");
 	check(close(fd) == 0, "TFU close");
-	check(jobs == 16, "TFU job count");
-	puts("PASS: 16 TFU copies, 67712 pixels, source/outer guards and binary fences");
+	check(jobs == 24, "TFU job count");
+	puts("PASS: 24 TFU copies, 100480 pixels, independent tiled bytes, "
+	    "source/outer guards and binary fences");
 	return 0;
 }

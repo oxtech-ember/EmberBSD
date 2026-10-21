@@ -24,12 +24,16 @@ typedef size_t __kernel_size_t;
 typedef unsigned long drm_handle_t;
 #define __user
 #endif
+#include "model-mesa-tfu-oracle.h"
+
+static void *model_malloc(size_t);
 static int model_open(const char *, int, ...);
 static int model_close(int);
 static int model_ioctl(int, unsigned long, ...);
 static void *model_mmap(const void *, size_t, int, int, int, off_t);
 static int model_munmap(const void *, size_t);
 static int model_clock_gettime(clockid_t, struct timespec *);
+#define malloc model_malloc
 #define open model_open
 #define close model_close
 #define ioctl model_ioctl
@@ -37,6 +41,7 @@ static int model_clock_gettime(clockid_t, struct timespec *);
 #define munmap model_munmap
 #define clock_gettime model_clock_gettime
 #include "checker-body.h"
+#undef malloc
 #undef open
 #undef close
 #undef ioctl
@@ -65,6 +70,15 @@ process_release(void)
 	/* Model process teardown after expected err(1) paths, not kernel refs. */
 	for (unsigned int i = 0; i < 2; i++)
 		free(bos[i].data);
+}
+
+static void *
+model_malloc(size_t length)
+{
+
+	CHECK(length == 2 * TFU_BO_SIZE);
+	if (strcmp(mode, "oracle-memory") == 0) return NULL;
+	return malloc(length);
 }
 
 static struct model_bo *
@@ -141,8 +155,49 @@ model_clock_gettime(clockid_t clock_id, struct timespec *now)
 }
 
 static int
+submit_tiled(const struct drm_v3d_submit_tfu *a)
+{
+	unsigned int direction = (submitted - 16) / 4;
+	struct model_bo *src = find(a->bo_handles[1]), *dst = find(a->bo_handles[0]);
+
+	CHECK(submitted >= 16 && submitted < 24 && direction < 2);
+	CHECK(src == &bos[0] && dst == &bos[1] && src->map_live && dst->map_live);
+	CHECK(a->icfg == ((29U << 16) | (direction ? 6U << 23 : 0)));
+	CHECK(a->iia == src->gpu + 4096 && a->ioa == dst->gpu + 4096);
+	CHECK(a->iis == (direction ? 8U : 64U) && a->ios == 0x00400040);
+	CHECK(a->v71.ioc == (direction ? 64U << 16 : (8U << 16) | (6U << 12)));
+	CHECK(a->bo_handles[2] == 0 && a->bo_handles[3] == 0);
+	CHECK(a->in_sync == 9 && a->out_sync == 9 && sync_live);
+	CHECK(a->flags == 0 && a->extensions == 0 && a->v71.pad == 0);
+	CHECK(a->ica == 0 && a->iua == 0 && a->coef[0] == 0 &&
+	    a->coef[1] == 0 && a->coef[2] == 0 && a->coef[3] == 0);
+	CHECK(fence_waits == submitted && bo_waits == submitted * 2);
+	for (unsigned int y = 0; y < 64; y++) {
+		for (unsigned int x = 0; x < 64; x++) {
+			uint32_t tile = model_v3d_get_uif_no_xor_pixel_offset(4, 64, x, y);
+			uint32_t linear = (y * 64 + x) * 4;
+			uint32_t from = (4096 + (direction ? tile : linear)) / 4;
+			uint32_t to = (4096 + (direction ? linear : tile)) / 4;
+
+			CHECK(src->data[from] == pattern(submitted, y * 64 + x));
+			if (strcmp(mode, "tiled-no-copy") != 0 &&
+			    !(strcmp(mode, "reverse-no-copy") == 0 && direction))
+				dst->data[to] = src->data[from];
+		}
+	}
+	if (strcmp(mode, "tiled-memcpy") == 0 ||
+	    (strcmp(mode, "forward-memcpy") == 0 && direction == 0))
+		memcpy(dst->data + 1024, src->data + 1024, 16384);
+	if (strcmp(mode, "tiled-source") == 0) src->data[src->size / 4 - 1] ^= 1;
+	if (strcmp(mode, "tiled-guard") == 0) dst->data[dst->size / 4 - 1] ^= 1;
+	submitted++;
+	return 0;
+}
+
+static int
 submit(const struct drm_v3d_submit_tfu *a)
 {
+	if (submitted >= 16) return submit_tiled(a);
 	const bool large = submitted >= 8;
 	const unsigned int width = large ? 84 : 64, height = large ? 52 : 64;
 	const unsigned int stride = large ? 96 : 64;
@@ -277,7 +332,7 @@ main(int argc, char **argv)
 	if (strcmp(mode, "pass") != 0 && strcmp(mode, "padding") != 0) {
 		fputs("FAIL: injected failure was not detected\n", stderr); return 99;
 	}
-	CHECK(submitted == 16 && fence_waits == 16 && bo_waits == 32);
+	CHECK(submitted == 24 && fence_waits == 24 && bo_waits == 48);
 	CHECK(created == 2 && closed == 2 && mapped == 2 && unmapped == 2);
 	CHECK(peak == 2 * TFU_BO_SIZE && live_bytes == 0 && !fd_live && !sync_live);
 	puts("PASS: actual TFU caller, raster pixels/guards, fences and lifecycle");
