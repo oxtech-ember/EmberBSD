@@ -38,6 +38,9 @@ name: Native RTL8822CE source contracts
       - 'ember/tools/net80211-wme-contract.*'
       - 'ember/tools/net80211-ht20-contract.*'
       - 'sys/net80211/ieee80211_ht20.c'
+      - 'sys/net80211/ieee80211_phy_ies.c'
+      - 'ember/tools/net80211-phy-ies-contract.c'
+      - 'ember/tools/net80211-phy-ies-extract.py'
       - 'sys/net80211/files.net80211'
       - 'sys/net80211/Makefile'
   pull_request:
@@ -76,6 +79,9 @@ name: Native RTL8822CE source contracts
       - 'ember/tools/net80211-wme-contract.*'
       - 'ember/tools/net80211-ht20-contract.*'
       - 'sys/net80211/ieee80211_ht20.c'
+      - 'sys/net80211/ieee80211_phy_ies.c'
+      - 'ember/tools/net80211-phy-ies-contract.c'
+      - 'ember/tools/net80211-phy-ies-extract.py'
       - 'sys/net80211/files.net80211'
       - 'sys/net80211/Makefile'
   workflow_dispatch:
@@ -100,6 +106,9 @@ jobs:
             /ember/tools/net80211-wme-contract.*
             /ember/tools/net80211-ht20-contract.*
             /sys/net80211/ieee80211_ht20.c
+            /sys/net80211/ieee80211_phy_ies.c
+            /ember/tools/net80211-phy-ies-contract.c
+            /ember/tools/net80211-phy-ies-extract.py
             /sys/net80211/ieee80211_ht20.h
             /sys/dev/ic/rtw*
             /sys/dev/ic/rt2661.c

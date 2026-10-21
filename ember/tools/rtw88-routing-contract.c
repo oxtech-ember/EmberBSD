@@ -36,14 +36,16 @@ struct workqueue { unsigned queued; };
 struct rtw88_net_rx {
     struct mbuf *m;
     uint64_t epoch;
-    uint32_t tsf;
+    uint32_t tsf, generation;
+    uint8_t quality;
 };
 struct rtw88_net {
     struct { struct ifnet ec_if; } ec;
     struct rtw88_net_rx rx[RTW88_NET_RX_LIMIT];
-    unsigned rx_head;
+    unsigned rx_head, rx_tail;
+    uint64_t rx_dropped;
     struct {
-        unsigned chained, first_short, beacon, chanmismatch, badchan;
+        unsigned chained, first_short, beacon, chanmismatch, badchan, nomem, fw_stale;
         unsigned elem_missing, elem_toobig, elem_toosmall, nodealloc, mgtdiscard;
     } stats;
     struct ieee80211com ic;
@@ -61,6 +63,7 @@ struct rtw88_net {
     uint8_t txbuf[RTW88_TX_BUF_SIZE];
 };
 static unsigned route_errors, route_crypto, route_packets, route_rx;
+static unsigned route_last_rssi;
 static int route_no_node, route_crypto_fail, route_pullup_fail;
 static unsigned scheduler_polls, scheduler_dequeues;
 static int scheduler_null;
@@ -106,7 +109,7 @@ static struct ieee80211_node *ieee80211_find_rxnode(struct ieee80211com *ic,cons
 { (void)wh;ieee80211_ref_node(ic->ic_bss);return ic->ic_bss; }
 static void ieee80211_input(struct ieee80211com *ic,struct mbuf *m,
     struct ieee80211_node *ni,int rssi,uint32_t tsf)
-{ (void)ic;(void)ni;(void)rssi;(void)tsf;route_rx++;m_freem(m); }
+{ (void)ic;(void)ni;(void)tsf;route_last_rssi=(unsigned)rssi;route_rx++;m_freem(m); }
 static void rtw88_net_start(struct ifnet *);
 static int rtw88_net_newstate(struct ieee80211com *,enum ieee80211_state,int);
 static void callout_stop(int *scan) { (void)scan; }
@@ -448,7 +451,8 @@ int main(void)
      * Current acceptance is a modeled worker result, not a fake RX consumer. */
     struct mbuf *old_rx=newbuf(24);
     assert(old_rx);net.rx_head=0;net.rx[0].m=old_rx;
-    net.rx[0].epoch=net.policy.epoch;net.policy.queued=1;
+    net.rx[0].epoch=net.policy.epoch;net.rx[0].generation=sc.sc_generation;
+    net.policy.queued=1;
     unsigned delivered=route_rx;
     uint64_t epoch_drops=net.policy.rx.delivery_epoch;
     CHECK(rtw88_net_newstate(&net.ic,IEEE80211_S_SCAN,-1)==0);

@@ -10,7 +10,7 @@ struct rtw88_softc;
 struct rtw88_net;
 struct rtw88_net_stats {
 	struct rtw88_net_rx_counts rx;
-	uint64_t nomem, chained, first_short;
+	uint64_t nomem, chained, first_short, fw_stale;
 	uint32_t beacon, chanmismatch, badchan, elem_missing;
 	uint32_t elem_toobig, elem_toosmall, nodealloc, mgtdiscard;
 };

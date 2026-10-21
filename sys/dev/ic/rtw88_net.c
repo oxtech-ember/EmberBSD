@@ -29,7 +29,8 @@
 struct rtw88_net_rx {
 	struct mbuf *m;
 	uint64_t epoch;
-	uint32_t tsf;
+	uint32_t tsf, generation;
+	uint8_t quality;
 };
 
 struct rtw88_net {
@@ -582,6 +583,9 @@ rtw88_net_rx_frame(void *cookie, const uint8_t *frame, size_t len,
 	rx->m = m;
 	rx->epoch = net->policy.epoch;
 	rx->tsf = info->tsf_low;
+	rx->generation = net->core->sc_generation;
+	rx->quality = info->signal.valid && info->signal.quality <= 100 &&
+	    info->signal.generation == rx->generation ? info->signal.quality : 0;
 	net->rx_tail = (net->rx_tail + 1) % RTW88_NET_RX_LIMIT;
 	softint_schedule(net->softint);
 }
@@ -619,7 +623,12 @@ rtw88_net_softintr(void *cookie)
 		net->rx[net->rx_head].m = NULL;
 		net->rx_head = (net->rx_head + 1) % RTW88_NET_RX_LIMIT;
 		rtw88_net_rx_release(&net->policy);
-		valid = rtw88_net_rx_ready(&net->policy, rx.epoch);
+		if (rx.generation != net->core->sc_generation) {
+			net->stats.fw_stale++;
+			valid = 0;
+		} else {
+			valid = rtw88_net_rx_ready(&net->policy, rx.epoch);
+		}
 		if (valid && rx.m->m_next != NULL)
 			net->stats.chained++;
 		if (valid && rx.m->m_len < rx.m->m_pkthdr.len)
@@ -638,8 +647,8 @@ rtw88_net_softintr(void *cookie)
 		}
 		ni = ieee80211_find_rxnode(ic,
 		    mtod(rx.m, struct ieee80211_frame_min *));
-		/* RSSI is unavailable until the core supplies parsed PHY data. */
-		ieee80211_input(ic, rx.m, ni, 0, rx.tsf);
+		/* Relative unsigned index only. No signed dBm is passed through this ABI. */
+		ieee80211_input(ic, rx.m, ni, rx.quality, rx.tsf);
 		ieee80211_free_node(ni);
 		/*
 		 * The stack holds Giant here. Publish a numeric snapshot under

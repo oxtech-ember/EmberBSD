@@ -78,6 +78,8 @@ int rtw8822c_mac_init(struct rtw88_softc *);
  */
 int rtw8822c_phy_pre(struct rtw88_softc *);
 int rtw8822c_phy_post(struct rtw88_softc *);
+/* Optional current-generation CCK gain readback; failure is recorded, not defaulted. */
+int rtw8822c_signal_cache(struct rtw88_softc *);
 int rtw8822c_set_channel(struct rtw88_softc *, unsigned);
 
 /*

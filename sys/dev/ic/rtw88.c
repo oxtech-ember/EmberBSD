@@ -724,6 +724,7 @@ rtw88_stop(struct rtw88_softc *sc)
 	int error;
 
 	sc->sc_stop_requested = 1;
+	memset(&sc->sc_phy, 0, sizeof(sc->sc_phy));
 	memset(&sc->sc_hw_feature, 0, sizeof(sc->sc_hw_feature));
 	rtw88_ra_invalidate(sc);
 	sc->sc_linked = 0;
@@ -895,6 +896,9 @@ rtw88_start(struct rtw88_softc *sc)
 	error = rtw8822c_phy_post(sc);
 	if (error != 0)
 		goto fail;
+	/* Optional metadata: a failed read remains visible and disables CCK RSSI.
+	 * Correct DATA and OFDM observations do not require this CCK context. */
+	(void)rtw8822c_signal_cache(sc);
 	/* rtw_core_start: RCR = hal.rcr, accepting any BSSID's beacons. */
 	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_RCR, RTW88_RCR);
 	if (error != 0)
@@ -1122,6 +1126,11 @@ rtw88_rx_one(struct rtw88_softc *sc, unsigned idx)
 		sc->sc_stats.rx_errors++;
 		return;
 	}
+	(void)rtw88_rx_signal_decode((const uint8_t *)buf->vaddr +
+	    rx.driver_info_offset, rx.driver_info_size, &rx, &sc->sc_phy,
+	    sc->sc_generation, sc->sc_channel, &rx.signal);
+	sc->sc_stats.signal = rx.signal;
+	sc->sc_stats.signal_reasons[rx.signal.reason]++;
 	if (rx.packet_size < RTW88_MIN_FRAME) {
 		sc->sc_stats.rx_short++;
 		return;

@@ -232,6 +232,25 @@ rtwce_stats(char *buf, size_t len)
 		    sc->sc_hw_feature.report.nss, sc->sc_hw_feature.report.antennas,
 		    sc->sc_hw_feature.report.protocol,
 		    sc->sc_hw_feature.report.bandwidths);
+	/* Per-frame vendor observations. Relative quality is not calibrated dBm. */
+	if (n > 0 && (size_t)n < len)
+		n += snprintf(buf + n, len - (size_t)n,
+		    " signal %u/%u/%u page %u len %u rate %u channel %u"
+		    " paths %#x bw %u rxsc %u quality %u pwdb %u/%u gain %u/%u"
+		    " power_est %d/%d gainctx %u/%u/%u/%u/%d",
+		    st->signal.valid, st->signal.reason, st->signal.generation,
+		    st->signal.page, st->signal.length, st->signal.rate,
+		    st->signal.channel, st->signal.paths, st->signal.bandwidth,
+		    st->signal.rxsc, st->signal.quality,
+		    st->signal.pwdb[0], st->signal.pwdb[1],
+		    st->signal.gain[0], st->signal.gain[1],
+		    st->signal.power[0], st->signal.power[1],
+		    sc->sc_phy.generation, sc->sc_phy.gain_valid,
+		    sc->sc_phy.gain_low, sc->sc_phy.gain_high, sc->sc_phy.gain_error);
+	for (unsigned i = 0; i < __arraycount(st->signal_reasons) &&
+	    n > 0 && (size_t)n < len; i++)
+		n += snprintf(buf + n, len - (size_t)n, " sig%u %llu", i,
+		    (unsigned long long)st->signal_reasons[i]);
 	if (n > 0 && (size_t)n < len && psc->sc_net != NULL) {
 		rtw88_net_get_stats(psc->sc_net, &ns);
 		n += snprintf(buf + n, len - (size_t)n,
@@ -241,7 +260,7 @@ rtwce_stats(char *buf, size_t len)
 		    " ndepoch %llu nchained %llu nfirstshort %llu"
 		    " nbeacon %u chanmismatch %u badchan %u"
 		    " elem_missing %u elem_toobig %u elem_toosmall %u"
-		    " nodealloc %u mgtdiscard %u",
+		    " nodealloc %u mgtdiscard %u fw_stale %llu",
 		    (unsigned long long)ns.rx.accepted,
 		    (unsigned long long)ns.rx.delivered,
 		    (unsigned long long)ns.rx.inactive,
@@ -258,7 +277,8 @@ rtwce_stats(char *buf, size_t len)
 		    (unsigned long long)ns.chained,
 		    (unsigned long long)ns.first_short,
 		    ns.beacon, ns.chanmismatch, ns.badchan, ns.elem_missing,
-		    ns.elem_toobig, ns.elem_toosmall, ns.nodealloc, ns.mgtdiscard);
+		    ns.elem_toobig, ns.elem_toosmall, ns.nodealloc, ns.mgtdiscard,
+		    (unsigned long long)ns.fw_stale);
 	}
 	mutex_exit(&psc->sc_lock);
 	mutex_exit(&rtwce_diag_lock);

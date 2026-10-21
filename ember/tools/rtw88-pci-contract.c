@@ -674,6 +674,16 @@ int main(void)
 	CHECK(strstr(stats, " hw_raw 9/7/2/2/3 hw_bandwidths 0x7") != NULL);
 	CHECK(strstr(stats, " txr0 0") != NULL && strstr(stats, " txr11 0") != NULL);
 	CHECK(strstr(stats, " txpost0 0") != NULL && strstr(stats, " txpost4 0") != NULL);
+	p.sc_core.sc_stats.signal = (struct rtw88_rx_signal){
+	    .generation=17,.valid=1,.page=1,.length=32,.rate=4,.channel=8,
+	    .paths=3,.quality=50,.pwdb={60,50},.power={-50,-60}};
+	p.sc_core.sc_phy = (struct rtw88_phy_state){.generation=17,
+	    .gain_valid=1,.gain_low=20,.gain_high=40,.paths=3};
+	CHECK(rtwce_stats(stats,sizeof(stats))==0);
+	CHECK(strstr(stats," signal 1/0/17 page 1 len 32 rate 4 channel 8")!=NULL);
+	CHECK(strstr(stats," quality 50 pwdb 60/50 gain 0/0 power_est -50/-60")!=NULL);
+	CHECK(strstr(stats," gainctx 17/1/20/40/0")!=NULL);
+	CHECK(strstr(stats," sig0 0")!=NULL && strstr(stats," sig10 0")!=NULL);
 	stats_latch = &p;
 	CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
 	CHECK(stats_latch == NULL && strstr(stats, " basic 0x55a") != NULL);

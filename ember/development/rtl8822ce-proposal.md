@@ -462,8 +462,9 @@ Its host parser and native-consumer models do not establish HT interoperability.
 The kernel configuration selects the native station wrapper and ingress
 generation policy. Use the standard interface tools when the PCI wrapper
 attaches it. Legacy diagnostic writes return EBUSY while net80211 owns the
-device. RSSI, thermal power tracking and higher-rate modes remain outside
-this profile. Source contracts do not establish a linked wireless network.
+device. The bounded source-only signal-quality path below does not enable
+firmware RSSI feedback, thermal power tracking or higher-rate modes.
+Source contracts do not establish a linked wireless network.
 
 The native `ifconfig` accepts `roaming auto|manual|device` for net80211.
 It only selects the existing roaming owner. It does not raise the interface.
@@ -636,3 +637,42 @@ The source path is present; this change adds regression coverage only.
 It adds no second timer, AUTO-roaming override or radio capability.
 Actual AP disappearance and return remain a separate physical acceptance gate.
 Controlled reassociation and interface down/up do not establish that gate.
+
+## Bounded relative signal quality
+
+`rtw88_rx_signal_decode` consumes only the descriptor-bounded driver-info bytes.
+It accepts current-generation RTL page0 CCK and page1 legacy OFDM observations
+for the actual two-path BW20 profile. CCK correction uses three real gain-bound
+readbacks after PHY initialization. Missing, malformed, stale or unsupported
+metadata has an explicit numeric reason and quality0; valid DATA is still delivered.
+Readback errors invalidate CCK context without reusing previous boot values.
+
+The core decodes before borrowed DMA bytes expire. The native callback copies
+quality and firmware generation into its bounded epoch-tagged queue. Softintr
+rejects stale firmware owners and supplies the frame's unsigned0..100 index to
+the existing stack entry point. It does not pass negative power through that ABI.
+The index follows `rtw_phy_power_2_db(signal_power)` from the pinned BSD source.
+It is relative stack quality, not the two-path firmware RSSI average or SNR.
+The optional absolute dBm scan flag remains clear. No H2C0x42 is added.
+
+`hw.rtwce_stats` exposes the last `signal valid/reason/generation`, page, length,
+rate, channel, paths, descriptor BW, RXSC, raw PWDB/gain, vendor power estimates
+and current gain-cache generation/validity/bounds/error. `sig0` counts valid
+metadata; `sig1..10` count missing/short/page/rate/channel/width/gain/generation/
+numeric/path reasons. `fw_stale` counts native queued frames from an old firmware.
+No payload, address or network name is included. These are vendor observations;
+RF calibration quality and physical signal acceptance remain separate.
+
+```sh
+CC=gcc-16 RTW88_START_ANALYZE=1 sh ember/tools/rtw88-signal-contract.sh
+```
+
+The contract executes the actual parser, core RX and native callback/softintr.
+The DMA device, mbuf allocation and stack dispatcher are explicit host services.
+A separate actual `ieee80211_add_scan`, node comparison and scan-copyout consumer
+checks weak/strong selection and unsigned ABI output. It does not replace that
+result with a parameter logger. This is not the full `ieee80211_input` path.
+Causal baselines retain the old core0 and queue0 results before the respective
+wire changes; both fail actual scan ranking. No physical RSSI or speed claim
+follows from these synthetic tests. Primary packet samples and a GCC16 target
+build remain required before hardware acceptance.

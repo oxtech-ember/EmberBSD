@@ -488,3 +488,31 @@ rtw8822c_set_channel(struct rtw88_softc *sc, unsigned ch)
 	toggle_igi(&io);
 	return io.error;
 }
+
+/* query_phy_status_page0 gain bounds, pinned RTL8822C phy_set_param.
+ * These readbacks are parser context, not an RF calibration success claim. */
+int
+rtw8822c_signal_cache(struct rtw88_softc *sc)
+{
+    struct rtw88_phy_state v = { 0 };
+    uint32_t a, b, c;
+    int error;
+
+    v.generation = sc->sc_generation;
+    v.paths = 3; /* Successful native config_trx_ab, before HCI start. */
+    error = sc->sc_ops->read_4(sc->sc_bus, 0x1a98, &a);
+    if (error == 0)
+        error = sc->sc_ops->read_4(sc->sc_bus, 0x1aa8, &b);
+    if (error == 0)
+        error = sc->sc_ops->read_4(sc->sc_bus, 0x1a70, &c);
+    if (error == 0) {
+        v.gain_high = (uint8_t)(((a >> 14) & 3) << 4 | ((b >> 16) & 15));
+        v.gain_low = (uint8_t)(((a >> 6) & 3) << 4 | ((c >> 24) & 15));
+        if (v.gain_low > v.gain_high)
+            error = EINVAL;
+    }
+    v.gain_valid = error == 0;
+    v.gain_error = error;
+    sc->sc_phy = v; /* Replace old context on success AND failure. */
+    return error;
+}

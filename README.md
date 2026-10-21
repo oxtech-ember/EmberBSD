@@ -1171,6 +1171,11 @@ The base system shell is unchanged.
   firmware rate adaptation, linked-peer quiescence before reconnect, and a bounded
   boot capability report. A GCC16 CIX kernel at `e25f25939` passes bounded
   adaptive legacy data and six controlled reconnect checks on one 2.4 GHz AP.
+  Source contracts now cover bounded RTL PHY page0/page1 observations, real
+  CCK gain readbacks and generation-qualified unsigned signal quality into
+  native scan/node consumers. Missing PHY metadata does not invalidate DATA.
+  This is source-only coverage; calibrated dBm and firmware RSSI feedback are
+  not enabled by these changes.
   Raw TCP from the board reaches about 25 Mbps in a 1 MiB trial. Full AP-loss
   recovery, RF quality and endurance remain unqualified. HT/VHT remain
   unadvertised. Shared HT20 association contracts now bind queued offers to

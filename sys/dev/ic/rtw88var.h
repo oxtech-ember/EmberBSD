@@ -88,6 +88,8 @@ struct rtw88_ra_state {
 
 /* Visible counters; errors are never silently dropped. */
 struct rtw88_stats {
+	struct rtw88_rx_signal signal;
+	uint64_t signal_reasons[RTW88_SIGNAL_REASONS];
 	uint64_t hw_requests, hw_reports, hw_missing, hw_foreign;
 	uint64_t hw_unstable, hw_io_errors;
 
@@ -169,6 +171,7 @@ struct rtw88_softc {
 	uint32_t sc_h2c_box;
 	struct rtw88_packet_h2c sc_packet_h2c;
 	struct rtw88_hw_feature_state sc_hw_feature;
+	struct rtw88_phy_state sc_phy;
 	unsigned sc_pg_rows;
 	unsigned sc_pwr_rows;
 	struct rtw88_dma sc_rxbuf[RTW88_RX_BUFS];

@@ -304,3 +304,100 @@ rtw88_dma_validate(uint64_t addr, size_t len, unsigned addr_bits)
 		return EOVERFLOW;
 	return 0;
 }
+
+/* RTL8822C query_phy_status_page0/page1 and phy.c rtw_phy_power_2_db:
+ * FreeBSD d2145e9b96448da34d3cfede24c509af6d830c92, Realtek 2018-2019,
+ * GPL-2.0 OR BSD-3-Clause. Native bounded byte loads and wide arithmetic. */
+int
+rtw88_rx_signal_decode(const uint8_t *p, size_t len,
+    const struct rtw88_rx_info *rx, const struct rtw88_phy_state *ctx,
+    uint32_t generation, unsigned channel, struct rtw88_rx_signal *out)
+{
+    struct rtw88_rx_signal v = { 0 };
+    unsigned path;
+    int value, selected;
+
+    if (out == NULL)
+        return EINVAL;
+    v.generation = generation;
+    v.length = len > UINT16_MAX ? UINT16_MAX : (uint16_t)len;
+    v.page = UINT8_MAX;
+    v.reason = RTW88_SIGNAL_MISSING;
+    if (rx == NULL || (rx->flags & RTW88_RX_PHY_STATUS) == 0 ||
+        (rx->flags & (RTW88_RX_CRC_ERROR | RTW88_RX_ICV_ERROR | RTW88_RX_C2H)) != 0)
+        goto invalid;
+    v.rate = rx->rate;
+    v.bandwidth = rx->bandwidth;
+    v.reason = RTW88_SIGNAL_SHORT;
+    if (p == NULL || len < 1 || len > 120)
+        goto invalid;
+    v.page = p[0] & 15;
+    v.reason = RTW88_SIGNAL_PAGE;
+    if (v.page > 1)
+        goto invalid;
+    v.reason = RTW88_SIGNAL_SHORT;
+    if (len < (v.page == 0 ? 20U : 8U))
+        goto invalid;
+    v.channel = p[6];
+    v.pwdb[0] = p[1];
+    v.pwdb[1] = p[v.page == 0 ? 16 : 2];
+    if (v.page == 0) {
+        v.gain[0] = p[2] & 63;
+        v.gain[1] = p[19] & 63;
+    } else {
+        v.rxsc = p[5] & 15; /* Legacy OFDM RXSC; no HT admission here. */
+    }
+    v.reason = RTW88_SIGNAL_GENERATION;
+    if (ctx == NULL || generation == 0 || ctx->generation != generation)
+        goto invalid;
+    v.paths = ctx->paths;
+    v.reason = RTW88_SIGNAL_PATH;
+    if (ctx->paths != 3) /* Actual native TRX AB profile only. */
+        goto invalid;
+    v.reason = RTW88_SIGNAL_CHANNEL;
+    if (channel == 0 || channel != v.channel ||
+        !((channel >= 1 && channel <= 13) ||
+          (channel >= 36 && channel <= 64 && channel % 4 == 0) ||
+          (channel >= 100 && channel <= 144 && channel % 4 == 0) ||
+          (channel >= 149 && channel <= 165 && (channel - 149) % 4 == 0)))
+        goto invalid;
+    v.reason = RTW88_SIGNAL_RATE;
+    if ((v.page == 0 && (rx->rate > 3 || channel > 14)) ||
+        (v.page == 1 && (rx->rate < 4 || rx->rate > 11)))
+        goto invalid;
+    v.reason = RTW88_SIGNAL_WIDTH;
+    if (rx->bandwidth != 0 || (v.page == 1 && v.rxsc > 8))
+        goto invalid;
+    v.reason = RTW88_SIGNAL_GAIN;
+    if (v.page == 0 && (!ctx->gain_valid || ctx->gain_error != 0 ||
+        ctx->gain_low > ctx->gain_high || ctx->gain_high > 63))
+        goto invalid;
+    v.reason = RTW88_SIGNAL_NUMBER;
+    for (path = 0; path < 2; path++) {
+        value = v.pwdb[path];
+        if (v.page == 0) {
+            if (v.gain[path] < ctx->gain_low)
+                value += 2 * (ctx->gain_low - v.gain[path]);
+            else if (v.gain[path] > ctx->gain_high)
+                value -= 2 * (v.gain[path] - ctx->gain_high);
+        }
+        value -= 110;
+        /* Do not reproduce signed-byte wrapping or invent a usable index. */
+        if (value < -120 || value >= 20)
+            goto invalid;
+        v.power[path] = (int16_t)value;
+    }
+    selected = v.power[0]; /* CCK reference uses pathA, not max(A,B). */
+    if (v.page == 1 && v.power[1] > selected)
+        selected = v.power[1];
+    v.quality = selected <= -100 ? 0 : selected >= 0 ? 100 :
+        (uint8_t)(100 + selected);
+    v.valid = 1;
+    v.reason = 0;
+    *out = v;
+    return 0;
+invalid:
+    v.valid = v.quality = 0;
+    *out = v;
+    return ENOENT;
+}

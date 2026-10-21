@@ -91,7 +91,32 @@ int rtw88_edca_encode(const struct rtw88_edca_params[RTW88_WME_NAC],
 #define RTW88_RX_SWDEC		0x08
 #define RTW88_RX_C2H		0x10
 
+/* Optional, generation-bound PHY observations. No calibrated dBm ABI. */
+#define RTW88_SIGNAL_MISSING 1U
+#define RTW88_SIGNAL_SHORT 2U
+#define RTW88_SIGNAL_PAGE 3U
+#define RTW88_SIGNAL_RATE 4U
+#define RTW88_SIGNAL_CHANNEL 5U
+#define RTW88_SIGNAL_WIDTH 6U
+#define RTW88_SIGNAL_GAIN 7U
+#define RTW88_SIGNAL_GENERATION 8U
+#define RTW88_SIGNAL_NUMBER 9U
+#define RTW88_SIGNAL_PATH 10U
+#define RTW88_SIGNAL_REASONS 11U
+struct rtw88_phy_state {
+    uint32_t generation;
+    int gain_error;
+    uint8_t paths, gain_valid, gain_low, gain_high;
+};
+struct rtw88_rx_signal {
+    uint32_t generation;
+    int16_t power[2]; /* Vendor power convention; not calibrated RF evidence. */
+    uint16_t length;
+    uint8_t valid, reason, page, rate, channel, paths, bandwidth, rxsc;
+    uint8_t pwdb[2], gain[2], quality; /* Unsigned relative stack index0..100. */
+};
 struct rtw88_rx_info {
+	struct rtw88_rx_signal signal;
 	size_t driver_info_offset;
 	size_t driver_info_size;
 	size_t payload_offset;
@@ -124,6 +149,12 @@ int rtw88_tx_encode(uint8_t *, size_t, const struct rtw88_tx_info *);
  * Return EINVAL for null/short/out-of-buffer input. Leave *out unchanged
  * on error. Both codecs accept unaligned byte buffers.
  */
+/* PHY bytes are bounded by driver_info_size, not payload capacity. Always
+ * replace *out, including invalid observations. Invalid PHY must not drop DATA.
+ * Native legacy BW20 only. Power conversion follows pinned RTL8822C page0/1;
+ * quality is power_2_db(signal_power), not firmware two-path averaged RSSI. */
+int rtw88_rx_signal_decode(const uint8_t *, size_t, const struct rtw88_rx_info *,
+    const struct rtw88_phy_state *, uint32_t, unsigned, struct rtw88_rx_signal *);
 int rtw88_rx_decode(const uint8_t *, size_t, struct rtw88_rx_info *);
 
 /*

@@ -413,6 +413,22 @@ A zero packet length can be structurally valid; consumers must validate
 frame or command semantics before delivery. C2H never bypasses bounds.
 Null, short, and out-of-buffer input return EINVAL without changing output.
 
+### Optional relative signal metadata
+
+The page0/page1 field mapping and gain correction follow `rtw8822c.c/.h`;
+stack normalization follows `phy.c` at FreeBSD commit
+`d2145e9b96448da34d3cfede24c509af6d830c92` (Realtek, GPL-2.0 OR BSD-3-Clause).
+The [reference parser](https://github.com/freebsd/freebsd-src/blob/d2145e9b96448da34d3cfede24c509af6d830c92/sys/contrib/dev/rtw88/rtw8822c.c)
+and [normalization](https://github.com/freebsd/freebsd-src/blob/d2145e9b96448da34d3cfede24c509af6d830c92/sys/contrib/dev/rtw88/phy.c)
+are protocol/algorithm sources. Native code uses bounded byte loads and wide
+signed arithmetic. It rejects narrowing wraps instead of reproducing them.
+
+The native parser emits an unsigned relative index for the existing stack ABI.
+It neither advertises calibrated dBm nor implements averaged firmware feedback.
+Real gain bounds, validity and firmware generations are retained separately.
+`rtw88-signal-contract.sh` documents synthetic core/queue and actual scan-consumer
+boundaries; physical signal accuracy remains unqualified.
+
 ### DMA address contract
 
 The supported native PCI profile is **32-bit DMA addressing**.
