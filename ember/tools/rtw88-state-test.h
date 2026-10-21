@@ -19,7 +19,10 @@ struct ifmedia {
 	ifm_stat_cb_t ifm_status;
 	kmutex_t *ifm_lock;
 };
+struct mbuf { struct mbuf *next; void *ctx; };
+struct ifqueue { struct mbuf *head; };
 struct ieee80211_node {
+	unsigned references;
 	struct ieee80211com *ni_ic;
 	unsigned ni_wme_attempt;
 	struct ieee80211_rateset ni_rates;
@@ -28,6 +31,8 @@ struct ieee80211_node {
 	uint8_t ni_bssid[6];
 };
 struct ieee80211com {
+	struct ifqueue ic_mgtq;
+	uint8_t ic_chan_active[32];
 	struct ifnet *ic_ifp;
 	struct ieee80211_node *ic_bss;
 	struct ieee80211_channel *ic_curchan;
@@ -53,12 +58,23 @@ struct rtw88_net {
 	void *softint;
 	callout_t scan;
 	struct rtw88_net_policy policy;
-	int work_pending;
+	int work_pending, reset_required;
+	unsigned tx_timer, tx_completed;
 	enum ieee80211_state requested;
 	unsigned channel, configured_media;
 	int state_arg;
 	int (*parent_state)(struct ieee80211com *, enum ieee80211_state, int);
 };
+static unsigned state_mbuf_frees, state_mbuf_free_while_master;
+#define IF_DEQUEUE(q,m) do { (m)=(q)->head; if ((m)!=NULL) (q)->head=(m)->next; } while (0)
+#define M_GETCTX(m,type) ((type)(m)->ctx)
+#define M_SETCTX(m,value) ((m)->ctx=(value))
+static void ieee80211_free_node(struct ieee80211_node *ni)
+{ assert(ni!=NULL && ni->references>0); ni->references--; }
+static void m_freem(struct mbuf *m)
+{ assert(m->ctx==NULL); state_mbuf_frees++;
+  state_mbuf_free_while_master+=f.master!=0; free(m); }
+#include "native-drain.inc"
 static kmutex_t state_lock;
 static unsigned state_parent_tx, state_parent_init, state_expected_cw,
     state_expected_slot, state_expected_channel, state_fail_io,

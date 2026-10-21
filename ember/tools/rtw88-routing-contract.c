@@ -50,7 +50,7 @@ struct rtw88_net {
     struct rtw88_softc *core;
     struct rtw88_net_policy policy;
     kmutex_t *lock;
-    int work_pending;
+    int work_pending, reset_required;
     int scan, state_arg;
     enum ieee80211_state requested;
     unsigned channel;
@@ -444,6 +444,19 @@ int main(void)
     restart_core(&sc);net.tx_completed=0;
     mutex_enter(&lock);rtw88_net_tx_complete(&net,1);mutex_exit(&lock);
     CHECK(net.tx_completed==1);
+    /* Actual request invalidation and softintr reject a queued old RX epoch.
+     * Current acceptance is a modeled worker result, not a fake RX consumer. */
+    struct mbuf *old_rx=newbuf(24);
+    assert(old_rx);net.rx_head=0;net.rx[0].m=old_rx;
+    net.rx[0].epoch=net.policy.epoch;net.policy.queued=1;
+    unsigned delivered=route_rx;
+    uint64_t epoch_drops=net.policy.rx.delivery_epoch;
+    CHECK(rtw88_net_newstate(&net.ic,IEEE80211_S_SCAN,-1)==0);
+    CHECK(rtw88_net_commit(&net.policy,net.policy.epoch,0,1)==0);
+    net.work_pending=0;net.ic.ic_state=IEEE80211_S_SCAN;
+    rtw88_net_softintr(&net);
+    CHECK(route_rx==delivered && net.rx[0].m==NULL && net.policy.queued==0);
+    CHECK(net.policy.rx.delivery_epoch==epoch_drops+1);
     CHECK(rtw88_stop(&sc)==0);CHECK(rtw88_core_detach(&sc)==0);
     printf("Native four-AC wrapper: %u checks, %u failures\n",checks,failures);
     printf("Actual core: %u assertions, %u failures\n",assertions,core_failures);

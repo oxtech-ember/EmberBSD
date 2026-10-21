@@ -34,6 +34,7 @@ struct rtw88_net_policy {
 #define RTW88_NET_STAGE_CORE 3U
 #define RTW88_NET_STAGE_EDCA 4U
 #define RTW88_NET_STAGE_RA 5U
+#define RTW88_NET_STAGE_RESTART 6U
 struct rtw88_net_state_diag {
 	int state, error;
 	unsigned stage, channel, core_channel, basic, slot, aid, raw_aid;

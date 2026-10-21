@@ -46,6 +46,7 @@ struct rtw88_net {
 	struct rtw88_net_rx rx[RTW88_NET_RX_LIMIT];
 	unsigned rx_head, rx_tail;
 	int work_pending;
+	int reset_required;	/* Linked-peer quiescence survives request coalescing. */
 	enum ieee80211_state requested;
 	unsigned channel;
 	unsigned configured_media; /* User configuration, not peer-selected mode. */
@@ -258,6 +259,57 @@ rtw88_net_ra_prepare(struct ieee80211com *ic, unsigned channel,
 	return 0;
 }
 
+/* Giant serializes state and queues. Never wait for this worker from itself. */
+static int
+rtw88_net_restart_peer(struct rtw88_net *net)
+{
+	struct ifnet *ifp = &net->ec.ec_if;
+	int error, start;
+
+	mutex_enter(net->lock);
+	if (!net->reset_required) {
+		mutex_exit(net->lock);
+		return 0;
+	}
+	/* A synchronous stop owner may already have withdrawn RUNNING. */
+	start = (ifp->if_flags & (IFF_UP | IFF_RUNNING)) ==
+	    (IFF_UP | IFF_RUNNING);
+	ifp->if_flags &= ~(IFF_RUNNING | IFF_OACTIVE);
+	ifp->if_timer = 0;
+	net->tx_timer = 0;
+	mutex_exit(net->lock);
+	/* Stop drains interrupt ownership, powers down and verifies bus master. */
+	error = rtw88_stop(net->core);
+	if (error != 0)
+		return error;
+	/* Coalescing can bypass shared INIT's management-queue drain. */
+	ieee80211_drain_ifq(&net->ic.ic_mgtq);
+	mutex_enter(net->lock);
+	start = start && (ifp->if_flags & IFF_UP) != 0 && !net->policy.dying;
+	mutex_exit(net->lock);
+	/* INIT must retain a real READY core for the next WPA SCAN_REQ. */
+	if (start) {
+		error = rtw88_start(net->core);
+		if (error != 0)
+			return error;
+	}
+	mutex_enter(net->lock);
+	if (start && (net->policy.dying || (ifp->if_flags & IFF_UP) == 0)) {
+		mutex_exit(net->lock);
+		error = rtw88_stop(net->core);
+		mutex_enter(net->lock);
+		if (error == 0)
+			net->reset_required = 0;
+		mutex_exit(net->lock);
+		return error != 0 ? error : ECANCELED;
+	}
+	net->reset_required = 0;
+	if (start)
+		ifp->if_flags |= IFF_RUNNING;
+	mutex_exit(net->lock);
+	return 0;
+}
+
 /* The workqueue has the kernel lock. Do not hold the PCI lock in net80211. */
 static void
 rtw88_net_state_work(struct work *work, void *cookie)
@@ -276,7 +328,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 	const uint8_t *bssid;
 	char failure[384];
 	uint8_t any;
-	int arg, error, prepare_error;
+	int arg, error, prepare_error, restart_error;
 
 	(void)work;
 	for (;;) {
@@ -293,6 +345,9 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		arg = net->state_arg;
 		mutex_exit(net->lock);
 		callout_stop(&net->scan);
+		restart_error = rtw88_net_restart_peer(net);
+		if ((ifp->if_flags & IFF_UP) == 0)
+			state = IEEE80211_S_INIT;
 		bssid = NULL;
 		aid = 0;
 		basic = channel > 14 ? 0x150 : 0x0f;
@@ -310,6 +365,10 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		prepare_error = state == IEEE80211_S_INIT ? 0 :
 		    rtw88_net_edca_prepare(ic, media, state, channel, slot, edca);
 		prepare_stage = RTW88_NET_STAGE_EDCA;
+		if (restart_error != 0) {
+			prepare_error = restart_error;
+			prepare_stage = RTW88_NET_STAGE_RESTART;
+		}
 		use_ra = state == IEEE80211_S_RUN &&
 		    ic->ic_fixed_rate == IEEE80211_FIXED_RATE_NONE;
 		if (prepare_error == 0 && use_ra) {
@@ -381,7 +440,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				aprint_error_dev(net->dev, "%s", failure);
 				ifp->if_flags &= ~(IFF_RUNNING | IFF_OACTIVE);
 				(void)net->parent_state(ic, IEEE80211_S_INIT, -1);
-				rtw88_stop(net->core);
+				if (diag.stage != RTW88_NET_STAGE_RESTART)
+					rtw88_stop(net->core);
 			} else {
 				(void)net->parent_state(ic, state, arg);
 				if (state == IEEE80211_S_RUN) {
@@ -419,6 +479,8 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
 		mutex_exit(net->lock);
 		return ENXIO;
 	}
+	if (net->core->sc_linked)
+		net->reset_required = 1;
 	rtw88_ra_invalidate(net->core);
 	(void)rtw88_net_request(&net->policy);
 	net->requested = state;

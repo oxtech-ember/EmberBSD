@@ -3,13 +3,16 @@
 # Origin: EmberBSD complete native state-consumer extraction, AI-assisted.
 """Extract complete native state-work consumers and their source types."""
 import pathlib
+import os
 import re
 import sys
 src, out = map(pathlib.Path, sys.argv[1:])
+net_source = pathlib.Path(os.environ.get('RTW88_STATE_SOURCE',
+    src/'sys/dev/ic/rtw88_net.c')).read_text()
 def read(path):
     return (src/path).read_text()
 def function(name, result):
-    match = re.search(r'^'+name+r'\(.*?^}', read('sys/dev/ic/rtw88_net.c'), re.M|re.S)
+    match = re.search(r'^'+name+r'\(.*?^}', net_source, re.M|re.S)
     if not match:
         raise ValueError(name)
     return result+'\n'+match.group()+'\n'
@@ -32,7 +35,7 @@ for bits in (8,16,32,64):
     s=s.replace('u_int'+str(bits)+'_t','uint'+str(bits)+'_t')
 s=re.sub(r'\bu_int\b','unsigned',s)
 (out/'native-state-types.inc').write_text(s+'\n')
-net = read('sys/dev/ic/rtw88_net.c')
+net = net_source
 parts=[net[:net.index('#include')]]
 shared=read('sys/net80211/ieee80211_proto.c')
 parts.append(shared[:shared.index('#include')])
@@ -40,6 +43,7 @@ parts.append('void\n'+re.search(r'^ieee80211_wme_reset\(.*?^}',shared,re.M|re.S)
 for name, result in [('rtw88_net_basic_rates','static unsigned'),
                      ('rtw88_net_edca_prepare','static int'),
                      ('rtw88_net_ra_prepare','static int'),
+                     ('rtw88_net_restart_peer','static int'),
                      ('rtw88_net_state_work','static void'),
                      ('rtw88_net_newstate','static int'),
                      ('rtw88_net_init','static int'),
@@ -60,3 +64,19 @@ for name in ('ifmedia_init_with_lock', 'ifmedia_set'):
 start = net.index('\tieee80211_media_init(ic,')
 end = net.index('\tif_register(ifp);', start) + len('\tif_register(ifp);')
 (out/'native-media-attach.inc').write_text(net[start:end]+'\n')
+
+# Exact native management-queue ownership consumer; allocator/node services modelled.
+bsd = read('sys/net80211/ieee80211_netbsd.c')
+(out/'native-drain.inc').write_text(bsd[:bsd.index('#include')] + 'void\n' + re.search(
+    r'^ieee80211_drain_ifq\(.*?^}', bsd, re.M|re.S).group() + '\n')
+
+scan = read('sys/net80211/ieee80211_ioctl.c')
+up = scan[scan.index('#ifdef __NetBSD__\n#define\tIS_UP'):]
+up = up[:up.index('#endif')]
+setup = re.search(r'^ieee80211_setupscan\(.*?^}',scan,re.M|re.S).group()
+arm = re.search(r'^\tcase IEEE80211_IOC_SCAN_REQ:.*?(?=^\tcase )',scan,re.M|re.S).group()
+request = re.search(r'^#define\s+IEEE80211_IOC_SCAN_REQ\s+.*$',read('sys/net80211/ieee80211_ioctl.h'),re.M).group()
+(out/'native-reconnect-scan.inc').write_text(scan[:scan.index('#include')] + up.replace('#ifdef __NetBSD__\n','') +
+    '\n'+request+'\nstatic int\n'+setup+'\n' +
+    'static int reconnect_scan_request(struct ieee80211com *ic) { int error=0;\n' +
+    'switch (IEEE80211_IOC_SCAN_REQ) {\n'+arm+'}\nreturn error; }\n')

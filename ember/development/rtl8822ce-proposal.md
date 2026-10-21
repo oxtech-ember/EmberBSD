@@ -257,6 +257,45 @@ firmware telemetry and throughput. Reconnection data is a separate result:
 old queued DMA is not proven drained by this atom, and reports cannot be
 attributed across reassociation. Legacy recovery must remain available.
 
+## Linked-peer reconnect boundary
+
+A new native state request latches hardware-peer invalidation before changing
+its host epoch. The latch survives coalesced RUN/INIT/SCAN requests. The worker
+reuses full core stop/start before a linked peer is replaced. It does not infer
+firmware FIFO emptiness from DMA completion or a zero host queue count. The
+existing core stop masks IRQs, drains its interrupt owner, powers down and
+verifies bus-master disable. A failed shutdown or fresh start keeps acceptance
+closed and reports stage6. No new peer table or payload is published on failure.
+
+The worker runs lifecycle operations under Giant without the PCI lock. It does
+not call net_init/net_stop, which wait for the same workqueue. After successful
+quiescence it drains the actual native management queue, including node-context
+references. Coalescing can bypass the shared INIT drain. Ethernet if_snd remains
+owned by the stack and receives fresh encapsulation/crypto later. Pending DMA
+completion accounting retains its existing global softintr semantics. Old queued RX
+keeps its epoch and is rejected by the native softintr after a new acceptance.
+
+Administrative UP retains a freshly started READY core when the interface was
+running, even when the latest state is INIT. A synchronous stop owner that has
+already withdrawn RUNNING keeps the core quiescent. IFF_RUNNING is set only after successful core start; parent INIT
+does not invent a scan. This permits the next WPA SCAN_REQ, whose shared setup
+requires both UP and RUNNING. Administrative DOWN stays stopped. A newer request
+wins after stop/start; dying during start stops the fresh core and publishes no
+obsolete parent or RX/TX acceptance. Normal subsequent scan channels do not
+repeat the cold start. Direct WME EDCA updates do not use this state barrier.
+
+The reconnect contract executes actual newstate/worker/core and native
+management-queue drain. It executes the unchanged SCAN_REQ arm and complete
+setupscan body. Kernel services, peer tables, parent state outcomes and documented
+hardware-reset effects are modeled. It checks both bands, all DATA queues,
+management references, INIT-only scan/rejoin, admin DOWN, timeout/readiness and
+allocation/shutdown failures, stale requests and dying. The separate routing
+consumer executes real newstate and softintr to check a queued old RX epoch;
+latest worker acceptance is an explicit model input in that fixture. The host
+contracts do not execute a complete WPA exchange or prove physical quiescence,
+reconnect latency, RF throughput or loss recovery. Full firmware reload and
+calibration add latency; measure it on the board before qualification.
+
 Manual SSID updates now stage the desired network without requesting a cold
 restart. Automatic and device-controlled roaming retain their reset result.
 The BSD supplicant skips a media SET when the configured media word is unchanged.
@@ -359,6 +398,7 @@ CC=gcc-16 RTW88_MEDIA_ANALYZE=1 sh ember/tools/rtw88-media-contract.sh
 CC=gcc-16 RTW88_ROUTING_ANALYZE=1 sh ember/tools/rtw88-routing-contract.sh
 CC=gcc-16 RTW88_ENABLE_ANALYZE=1 sh ember/tools/rtw88-enable-contract.sh
 CC=gcc-16 RTW88_RA_ANALYZE=1 sh ember/tools/rtw88-ra-contract.sh
+CC=gcc-16 RTW88_RECONNECT_ANALYZE=1 sh ember/tools/rtw88-reconnect-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-wme-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-fw-init-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-net-contract.sh

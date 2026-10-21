@@ -345,8 +345,11 @@ test_ra_reports_never_control_peer(void)
 	CHECK(rtw88_core_detach(&sc)==0);
 }
 
+#ifndef RTW88_RA_MAIN
+#define RTW88_RA_MAIN main
+#endif
 int
-main(void)
+RTW88_RA_MAIN(void)
 {
 	if (native_start_main() != 0)
 		return 1;
