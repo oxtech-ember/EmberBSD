@@ -49,6 +49,18 @@ accounting before and after the run. A source contract or compilation is not
 hardware acceptance. Use the same executable for a known negative kernel and
 the corrected kernel when testing the short-mapping regression.
 
+On physical CM5 with 4 KiB host pages, the checker from `7f8c1ed1`
+(ELF SHA256
+`f0f2cbcab56a639ae4d5d776ab2a7b990f6aa017716559141020472042cc632c`)
+failed on kernel `cff738af` at the first prefix byte: zero instead of the
+nonzero full-map pattern. The same executable passed on kernel `12b95ff7`:
+all five READ/RW prefix cases, whole-tail and other-object guards, exact
+`EINVAL` and `EACCES` failures, and mappings retained after owner close.
+This includes the 8,294,400-byte prefix of the 16 MiB object. All three BOs
+were released, with reserved memory returned to 12,500,992 bytes and no new
+allocation or execution fault. This accepts the tested CPU mapping contract.
+It does not accept GPU rendering, HDMI output or physical 64 KiB mappings.
+
 The controlled host contract compiles the actual caller body with modeled
 DRM and mapping services. It covers allocation failures, distinct object
 patterns, anonymous and private-copy mappings, tail changes, exact errors,
