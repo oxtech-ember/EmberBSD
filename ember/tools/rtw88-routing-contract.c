@@ -104,7 +104,8 @@ static void *ieee80211_crypto_encap(struct ieee80211com *ic, struct ieee80211_no
 { (void)ic;(void)ni;(void)m;route_crypto++;return route_crypto_fail?NULL:&route_crypto; }
 #undef ieee80211_chan2ieee
 #define ieee80211_chan2ieee(ic,ch) ((void)(ic),(void)(ch),1U)
-static unsigned getticks(void) { return 1; }
+static unsigned route_ticks=1;
+static unsigned getticks(void) { return route_ticks; }
 static struct ieee80211_node *ieee80211_find_rxnode(struct ieee80211com *ic,const void *wh)
 { (void)wh;ieee80211_ref_node(ic->ic_bss);return ic->ic_bss; }
 static void ieee80211_input(struct ieee80211com *ic,struct mbuf *m,

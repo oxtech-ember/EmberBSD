@@ -16,6 +16,20 @@ ra_write4(void *cookie, uint32_t reg, uint32_t value)
 	e=state_write4(cookie,reg,value);
 	return e==0 && ra_fault_reg==reg ? EIO:e;
 }
+/* Managed worker faults occur after the station commands, without changing
+ * the reservation's box sequence. Unmanaged core timeout tests stay below. */
+static int
+ra_read1(void *cookie, uint32_t reg, uint8_t *value)
+{
+	int error = read_1(cookie, reg, value);
+	if (error == 0 && reg == 0x1cc && ra_config_calls != 0) {
+		if (ra_fault == 3)
+			*value |= (uint8_t)(1U << f.sc->sc_h2c_box);
+		if (ra_fault == 4)
+			f.sc->sc_generation++;
+	}
+	return error;
+}
 static int
 state_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 {
@@ -23,11 +37,6 @@ state_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	ra_config_calls++;
 	if (ra_fault==1 || ra_fault==2)
 		ra_fault_reg=(ra_fault==1?0x1f0:0x1d0)+4*sc->sc_h2c_box;
-	if (ra_fault==3 || ra_fault==4) {
-		sc->sc_h2c_box=0; /* Busy-bit service model exposes box0 only. */
-		f.busy_box=1;
-		if (ra_fault==4) f.stop_at_delay=(int)f.delays+1;
-	}
 	return rtw88_ra_configure(sc,cfg);
 }
 
@@ -254,11 +263,12 @@ test_ra_worker_failures(void)
 	for (unsigned fault=1; fault<=4; fault++)
 	for (unsigned after=0; after<(fault<=2?2U:1U); after++) {
 		struct state_fixture s;
-		int expected=fault<=2?EIO:(fault==3?ETIMEDOUT:EINTR);
+		int expected=fault<=2?EIO:(fault==3?EBUSY:ESTALE);
 		if (!state_fixture_start(&s,1,20)) continue;
 		ra_setup_peer(&s);
 		s.net.parent_state=ra_parent;
 		s.bus.write_4=ra_write4;
+		s.bus.read_1=ra_read1;
 		ra_fault=fault; ra_after=after; ra_fault_reg=0; ra_config_calls=0;
 		ra_parent_data=0;
 		CHECK(rtw88_net_newstate(&s.net.ic,IEEE80211_S_RUN,-1)==0);

@@ -59,6 +59,15 @@ parts=[macro('IF_DEQUEUE'),macro('IF_POLL'),'#ifdef ALTQ\n',macro('IFQ_DEQUEUE')
 # The wrapper must not use the standalone WME model's separate AC field.
 # Execute native flags, the BPF duplicate guard, and real packet-header moves.
 fixture=(out/'routing-model.inc').read_text()
+# Native management queues may hold multiple frames during a sleeping worker.
+# Keep owning enqueue/dequeue tails; the standalone WME capture models one pop.
+old_enqueue='#define IF_ENQUEUE(q, m) ((q)->ifq_len++, (q)->m = (m))'
+if fixture.count(old_enqueue)!=1: raise ValueError('shared enqueue model changed')
+fixture=fixture.replace(old_enqueue,macro('IF_ENQUEUE')+macro('IF_DEQUEUE'))
+old_pop='\tactive_ic->ic_mgtq.m = NULL;\n\tactive_ic->ic_mgtq.ifq_len--;'
+if fixture.count(old_pop)!=1: raise ValueError('shared capture pop changed')
+fixture=fixture.replace(old_pop,'\tIF_DEQUEUE(&active_ic->ic_mgtq, captured);')
+
 fixture=fixture.replace('int m_len, m_flags, ac;', 'int m_len, m_flags, ac, m_type;')
 fixture=fixture.replace('int len;\n\t\tstruct ieee80211_node *ctx;', 'int len;\n        unsigned rcvif_index;\n        struct { void *slh_first; } tags;\n\t\tstruct ieee80211_node *ctx;')
 fixture=fixture.replace('struct cipher *wk_cipher;', 'struct cipher *wk_cipher;\n    unsigned wk_flags;')

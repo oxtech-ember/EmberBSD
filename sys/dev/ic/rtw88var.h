@@ -141,6 +141,12 @@ struct rtw88_hw_feature_state {
 	uint8_t requested, observed;
 };
 
+/* Register-mailbox reservation, used only by the managed-state worker. */
+struct rtw88_mailbox {
+	uint32_t generation;
+	uint8_t active, box, total, sent;
+};
+
 struct rtw88_softc {
 	const struct rtw88_bus_ops *sc_ops;
 	void *sc_bus;
@@ -159,6 +165,7 @@ struct rtw88_softc {
 	int sc_dma_error;	/* Last unconfirmed bus-master disable. */
 	int sc_bootstrapping;
 	int sc_stop_requested;
+	struct rtw88_mailbox sc_mailbox;
 	uint16_t sc_vendor;
 	uint16_t sc_product;
 	uint8_t sc_mac[6];	/* Validated EFUSE identity. */
@@ -222,6 +229,8 @@ int rtw88_fw_init(struct rtw88_softc *);
 int rtw88_fw_packet(struct rtw88_softc *, const uint8_t *, size_t);
 /* Caller serializes startup/stop. Errors retain unsafe ownership for a retry. */
 int rtw88_stop(struct rtw88_softc *);
+int rtw88_fw_mailbox_begin(struct rtw88_softc *, unsigned, int *);
+int rtw88_fw_mailbox_end(struct rtw88_softc *, int);
 int rtw88_fw_command(struct rtw88_softc *, uint8_t, const void *, size_t);
 /*
  * Interrupt entry; the bus serializes it against rtw88_stop's barrier.

@@ -8,7 +8,7 @@
 
 /* Actual native callback and complete worker use explicit kernel/core services.
  * RF programming and full core I/O are not claimed by this exchange. */
-struct rtw88_softc { int sc_started, sc_running; unsigned sc_channel; int sc_linked; struct { int active, configured; } sc_ra; };
+struct rtw88_softc { int sc_started, sc_running; unsigned sc_channel, sc_generation, sc_h2c_box; int sc_linked; struct { int active, configured; } sc_ra; };
 struct rtw88_net {
 	struct { struct ifnet ec_if; } ec;
 	struct ieee80211com ic;
@@ -41,7 +41,7 @@ static void workqueue_enqueue(void *q, int *w, void *arg)
 struct work { int unused; };
 #define RTW88_WME_NAC 4
 struct rtw88_edca_params { int unused; };
-struct rtw88_ra_config { int unused; };
+struct rtw88_ra_config { unsigned use_protection; };
 static unsigned worker_hw_calls, worker_parent_run, worker_parent_init, worker_restarts;
 static int worker_parent_error, worker_parent_newer, worker_init_error;
 static unsigned worker_diag_stage;
@@ -56,7 +56,7 @@ static unsigned rtw88_net_basic_rates(struct ieee80211com *ic) { (void)ic; retur
 static int rtw88_net_edca_prepare(struct ieee80211com *ic,unsigned media,unsigned state,unsigned ch,unsigned slot,struct rtw88_edca_params *p)
 { (void)ic;(void)media;(void)state;(void)ch;(void)slot;(void)p;assert(!native_lock);return 0; }
 static int rtw88_net_ra_prepare(struct ieee80211com *ic,unsigned ch,unsigned basic,uint64_t epoch,struct rtw88_ra_config *p)
-{ (void)ic;(void)ch;(void)basic;(void)epoch;(void)p;assert(!native_lock);return 0; }
+{ (void)ic;(void)ch;(void)basic;(void)epoch;p->use_protection=0;assert(!native_lock);return 0; }
 static int rtw88_channel(struct rtw88_softc *sc,unsigned ch)
 { assert(native_lock);worker_hw_calls++;sc->sc_channel=ch;return 0; }
 static int rtw88_station_config(struct rtw88_softc *sc,const uint8_t *bssid,unsigned aid,unsigned basic,unsigned slot,int linked)
@@ -74,7 +74,19 @@ static void aprint_error_dev(void *dev,const char *fmt,...)
 static void callout_schedule(int *c,unsigned when) { (void)c;(void)when; }
 static void softint_schedule(void *cookie) { (void)cookie; }
 #define mstohz(ms) (ms)
+#ifndef MAX
+#define MAX(a,b) ((a)>(b)?(a):(b))
+#endif
 static unsigned getticks(void) { return 1; }
+/* This HT exchange owns profile validation, not busy-mailbox scheduling.
+ * The enable/RA suites execute the real transport. Busy is a loud boundary. */
+static int rtw88_fw_mailbox_begin(struct rtw88_softc *sc,unsigned count,int *ready)
+{ assert(sc!=NULL && native_lock && count<=3);*ready=1;return 0; }
+static int rtw88_fw_mailbox_end(struct rtw88_softc *sc,int error)
+{ assert(sc!=NULL && native_lock);return error; }
+static inline int kpause(const char *name,bool intr,int ticks,int *lock)
+{ (void)name;(void)intr;(void)ticks;(void)lock;
+  assert(!"HT exchange does not model busy mailbox transport");return EWOULDBLOCK; }
 #include "native-ht20-worker.inc"
 static int worker_parent(struct ieee80211com *ic,enum ieee80211_state state,int arg)
 {

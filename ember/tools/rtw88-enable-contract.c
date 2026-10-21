@@ -232,8 +232,234 @@ static void enable_negatives(void)
         CHECK(rtw88_core_detach(&sc)==0);
     }
 }
+/* Causal managed-mailbox case: removing the sleeping checkpoint must expose
+ * a busy delay under PCI and prevent unrelated service from progressing. */
+static struct rtw88_net *mailbox_net;
+static unsigned mailbox_busy,mailbox_locked_waits,mailbox_pauses,mailbox_auth;
+static unsigned mailbox_reads,mailbox_fail_read,mailbox_busy_at,mailbox_cancel;
+static unsigned mailbox_fail_write,mailbox_writes,mailbox_run;
+static uint32_t mailbox_words[3],mailbox_extensions[3];
+static struct ieee80211_ht20_profile mailbox_profile;
+static int mailbox_provider(struct ieee80211com *ic,struct ieee80211_ht20_profile *p)
+{ (void)ic;CHECK(!mailbox_net->lock->held);*p=mailbox_profile;return 0; }
+static int mailbox_read1(void *cookie,uint32_t reg,uint8_t *value)
+{
+    if(reg==0x1cc) {
+        mailbox_reads++;
+        if(mailbox_reads==mailbox_fail_read)return EIO;
+        if(mailbox_busy || mailbox_reads==mailbox_busy_at) {
+            if(mailbox_busy)mailbox_busy--;
+            *value=0x0f;return 0;
+        }
+    }
+    return read_1(cookie,reg,value);
+}
+static int mailbox_write4(void *cookie,uint32_t reg,uint32_t value)
+{
+    int rc=write_4(cookie,reg,value);
+    if(reg>=0x1d0 && reg<0x1e0) {
+        if(mailbox_writes<3) {
+            mailbox_words[mailbox_writes]=value;
+            mailbox_extensions[mailbox_writes]=mmio32(0x1f0+(reg-0x1d0));
+        }
+        mailbox_writes++;
+    }
+    if(reg>=0x1d0 && reg<0x200 && mailbox_fail_write &&
+        --mailbox_fail_write==0)return EIO; /* May already have landed. */
+    return rc;
+}
+static void mailbox_delay(void *cookie,unsigned us)
+{
+    if(us==RTW88_POLL_STEP_US && mailbox_net && mailbox_net->lock->held)
+        mailbox_locked_waits++;
+    delay_us(cookie,us);
+}
+static int mailbox_pause(unsigned ticks)
+{
+    (void)ticks;assert(mailbox_net!=NULL);CHECK(!mailbox_net->lock->held);
+    mailbox_pauses++;
+    /* Actual producer/capacity must preserve DATA and MGMT owners. */
+    struct mbuf *data=mailbox_net->ec.ec_if.if_snd.m;
+    struct mbuf *mgmt=mailbox_net->ic.ic_mgtq.m;
+    unsigned crypto=route_crypto,refs=node_refs;
+    mailbox_net->ec.ec_if.if_flags&=~IFF_OACTIVE;
+    rtw88_net_start(&mailbox_net->ec.ec_if);
+    CHECK(mailbox_net->ec.ec_if.if_snd.m==data && mailbox_net->ic.ic_mgtq.m==mgmt);
+    CHECK(route_crypto==crypto && node_refs==refs);
+    mutex_enter(mailbox_net->lock);
+    for(unsigned q=0;q<RTW88_NTXQ;q++)CHECK(!rtw88_net_tx_capacity(mailbox_net,q,0));
+    mutex_exit(mailbox_net->lock);
+    if(mailbox_cancel && mailbox_pauses==1) {
+        unsigned action=mailbox_cancel;mailbox_cancel=0;mailbox_busy=0;
+        if(action==1) {
+            mailbox_net->ic.ic_curchan=&mailbox_net->ic.ic_channels[40];
+            CHECK(rtw88_net_newstate(&mailbox_net->ic,IEEE80211_S_SCAN,0)==0);
+        } else if(action==2)rtw88_net_close(&mailbox_net->policy);
+        else if(action==3)mailbox_net->core->sc_generation++;
+        else if(action==4)mailbox_net->core->sc_h2c_box^=1;
+        else if(action==6)route_ticks+=1001;
+        else if(action==5)mailbox_profile.ampdu=32; /* Same generation. */
+    }
+    return EWOULDBLOCK;
+}
+static int mailbox_parent(struct ieee80211com *ic,enum ieee80211_state state,int arg)
+{
+    int rc=enable_parent_state(ic,state,arg);
+    if(state==IEEE80211_S_RUN)mailbox_run++;
+    if(state==IEEE80211_S_AUTH) {
+        mailbox_auth++;
+        CHECK(ieee80211_send_mgmt(ic,ic->ic_bss,IEEE80211_FC0_SUBTYPE_AUTH,1)==0);
+    }
+    return rc;
+}
+static void enable_mailbox_case(void)
+{
+    struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+    struct rtw88_net *net=enable_attach(&sc,&lock);if(!net)return;
+    struct rtw88_bus_ops bus=ops;bus.read_1=mailbox_read1;bus.delay_us=mailbox_delay;
+    bus.write_4=mailbox_write4;
+    sc.sc_ops=&bus;mailbox_net=net;net->parent_state=mailbox_parent;
+    active_ic=&net->ic;enable_pause_hook=mailbox_pause;
+    mailbox_busy=3;mailbox_locked_waits=mailbox_pauses=mailbox_auth=0;
+    mailbox_reads=mailbox_writes=mailbox_run=0;
+    unsigned box=sc.sc_h2c_box,posted=sc.sc_txq[RTW88_TXQ_MGMT].queued;
+    CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_AUTH,0)==0);
+    rtw88_net_state_work(&net->state_work,net);
+    CHECK(mailbox_locked_waits==0);
+    CHECK(mailbox_pauses==3);
+    CHECK(mailbox_auth==1 && net->ic.ic_state==IEEE80211_S_AUTH);
+    CHECK(!net->work_pending && net->policy.accepting);
+    CHECK(sc.sc_h2c_box==((box+1)&3));
+    CHECK(mmio32(0x1d0+4*box)==0x01); /* Existing media-status bytes. */
+    CHECK(sc.sc_txq[RTW88_TXQ_MGMT].queued==posted+1);
+    enable_pause_hook=NULL;mailbox_net=NULL;active_ic=NULL;
+    enable_destroy(net);
+}
+
+static void enable_mailbox_edges(void)
+{
+    for(unsigned kind=0;kind<13;kind++) {
+        struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+        struct rtw88_net *net=enable_attach(&sc,&lock);if(!net)return;
+        struct rtw88_bus_ops bus=ops;
+        bus.read_1=mailbox_read1;bus.delay_us=mailbox_delay;bus.write_4=mailbox_write4;
+        sc.sc_ops=&bus;mailbox_net=net;net->parent_state=mailbox_parent;
+        active_ic=&net->ic;enable_pause_hook=mailbox_pause;
+        mailbox_reads=mailbox_writes=mailbox_run=mailbox_auth=0;
+        mailbox_pauses=mailbox_locked_waits=0;
+        mailbox_fail_read=mailbox_busy_at=mailbox_cancel=mailbox_fail_write=0;
+        mailbox_busy=kind==0?0:2;
+        if(kind==0) { /* The actual zero-command INIT must not inspect HMETFR. */
+            CHECK(rtw88_stop(&sc)==0);
+            CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_INIT,0)==0);
+        } else if(kind==11) {
+            CHECK(ieee80211_send_mgmt(&net->ic,net->ic.ic_bss,
+                IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);
+            struct mbuf *m=enable_response(&net->ic,1,0);
+            ieee80211_recv_mgmt_assoc_resp(&net->ic,m,net->ic.ic_bss,
+                IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);m_freem(m);
+            mailbox_profile=(struct ieee80211_ht20_profile){99,0xff,0xff,0x3f,16};
+            struct ieee80211_ht20_node *h=&net->ic.ic_bss->ni_ht20;
+            h->valid=1;h->profile=mailbox_profile;h->attempt=h->offer_attempt=1;
+            h->channel=net->ic.ic_curchan;memcpy(h->bssid,net->ic.ic_bss->ni_bssid,6);
+            net->ic.ic_ht20_admit=mailbox_provider;mailbox_cancel=5;
+        } else {
+            CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_AUTH,0)==0);
+            if(kind<5)mailbox_cancel=kind;
+            if(kind==12)mailbox_cancel=6;
+            if(kind==5)mailbox_busy=100000; /* Deadline, not unbounded spinning. */
+            if(kind==6 || kind==7) { mailbox_busy=0;mailbox_fail_read=kind-5; }
+            if(kind==8) { mailbox_busy=0;mailbox_busy_at=2; }
+            if(kind==9 || kind==10) { mailbox_busy=0;mailbox_fail_write=kind-8; }
+        }
+        unsigned auths=mailbox_auth,runs=mailbox_run,errors=enable_state_errors;
+        rtw88_net_state_work(&net->state_work,net);
+        CHECK(mailbox_locked_waits==0 && !sc.sc_mailbox.active);
+        CHECK(mailbox_auth==auths && mailbox_run==runs);
+        CHECK(!net->work_pending);
+        if(kind==0)CHECK(mailbox_reads==0 && mailbox_pauses==0 &&
+            mailbox_writes==0 && enable_state_errors==errors);
+        if(kind==1)CHECK(net->ic.ic_state==IEEE80211_S_SCAN && sc.sc_channel==40);
+        if(kind==2)CHECK(net->policy.dying && !net->policy.accepting &&
+            mailbox_reads==1 && mailbox_writes==0);
+        if(kind>=3)CHECK(!net->policy.accepting && !sc.sc_started);
+        if(kind==5)CHECK(mailbox_pauses==1000);
+        if(kind==8)CHECK(mailbox_pauses==0); /* Nowait commit must not fall back. */
+        if(kind==3 || kind==4 || kind==11 || kind==12)
+            CHECK(mailbox_reads==1 && mailbox_writes==0);
+        if(kind==11)CHECK(!net->ic.ic_bss->ni_ht20.valid);
+        enable_pause_hook=NULL;mailbox_net=NULL;active_ic=NULL;
+        mailbox_fail_write=0;mailbox_fail_read=0;mailbox_busy=0;
+        enable_destroy(net);
+    }
+}
+
+static void enable_mailbox_run(void)
+{
+    for(unsigned fault=0;fault<=6;fault++) {
+        struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+        struct rtw88_net *net=enable_attach(&sc,&lock);if(!net)return;
+        active_ic=&net->ic;
+        CHECK(ieee80211_send_mgmt(&net->ic,net->ic.ic_bss,
+            IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);
+        struct mbuf *m=enable_response(&net->ic,1,0);
+        ieee80211_recv_mgmt_assoc_resp(&net->ic,m,net->ic.ic_bss,
+            IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);m_freem(m);
+        struct rtw88_bus_ops bus=ops;bus.read_1=mailbox_read1;
+        bus.delay_us=mailbox_delay;bus.write_4=mailbox_write4;sc.sc_ops=&bus;
+        mailbox_net=net;net->parent_state=mailbox_parent;enable_pause_hook=mailbox_pause;
+        mailbox_reads=mailbox_writes=mailbox_run=mailbox_auth=0;
+        mailbox_pauses=mailbox_locked_waits=0;mailbox_busy=fault?0:2;
+        mailbox_fail_read=mailbox_busy_at=mailbox_cancel=0;mailbox_fail_write=fault;
+        unsigned box=sc.sc_h2c_box;
+        rtw88_net_state_work(&net->state_work,net);
+        CHECK(!sc.sc_mailbox.active && mailbox_locked_waits==0);
+        if(fault==0) {
+            CHECK(mailbox_run==1 && sc.sc_ra.active && net->policy.accepting);
+            CHECK(mailbox_writes==3 && sc.sc_h2c_box==((box+3)&3));
+            CHECK(mailbox_words[0]==0x101 && mailbox_extensions[0]==0);
+            CHECK(mailbox_words[1]==0x2c && mailbox_extensions[1]==0);
+            CHECK(mailbox_words[2]==0x40270040 && mailbox_extensions[2]==0xff0);
+        } else CHECK(mailbox_run==0 && !net->policy.accepting && !sc.sc_started);
+        enable_pause_hook=NULL;mailbox_net=NULL;active_ic=NULL;mailbox_fail_write=0;
+        enable_destroy(net);
+    }
+}
+static void enable_mailbox_queues(void)
+{
+    struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+    struct rtw88_net *net=enable_attach(&sc,&lock);if(!net)return;
+    active_ic=&net->ic;
+    CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_AUTH,0)==0);
+    queue_packet(&net->ec.ec_if.if_snd,ether_packet(0x30,0,0));
+    struct mbuf *data=net->ec.ec_if.if_snd.m;
+    CHECK(ieee80211_send_mgmt(&net->ic,net->ic.ic_bss,IEEE80211_FC0_SUBTYPE_AUTH,1)==0);
+    CHECK(net->ic.ic_mgtq.m!=NULL && sc.sc_txq[RTW88_TXQ_MGMT].queued==0);
+    struct rtw88_bus_ops bus=ops;bus.read_1=mailbox_read1;
+    bus.delay_us=mailbox_delay;bus.write_4=mailbox_write4;sc.sc_ops=&bus;
+    mailbox_net=net;net->parent_state=mailbox_parent;enable_pause_hook=mailbox_pause;
+    mailbox_reads=mailbox_writes=mailbox_run=mailbox_auth=0;
+    mailbox_pauses=mailbox_locked_waits=0;mailbox_busy=2;
+    mailbox_fail_read=mailbox_busy_at=mailbox_cancel=mailbox_fail_write=0;
+    rtw88_net_state_work(&net->state_work,net);
+    CHECK(mailbox_pauses==2 && mailbox_locked_waits==0);
+    CHECK(net->ec.ec_if.if_snd.m==data && net->ic.ic_mgtq.m!=NULL);
+    rtw88_net_softintr(net); /* Real scheduled continuation releases OACTIVE. */
+    CHECK(net->ic.ic_mgtq.m==NULL && sc.sc_txq[RTW88_TXQ_MGMT].queued==2);
+    CHECK(net->ec.ec_if.if_snd.m==data && node_refs==1);
+    m_freem(data);net->ec.ec_if.if_snd.m=NULL;
+    net->ec.ec_if.if_snd.ifq_tail=NULL;net->ec.ec_if.if_snd.ifq_len=0;
+    enable_pause_hook=NULL;mailbox_net=NULL;active_ic=NULL;
+    enable_destroy(net);
+}
+
 int main(void)
 {
+    enable_mailbox_case();
+    enable_mailbox_edges();
+    enable_mailbox_run();
+    enable_mailbox_queues();
+    enable_run_callbacks=enable_first_producer=0;
     int result=routing_base_main();
     if(result!=0)return result;
     struct rtw88_softc sc;kmutex_t lock={.initialized=1};

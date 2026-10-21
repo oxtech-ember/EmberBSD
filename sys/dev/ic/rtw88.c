@@ -724,6 +724,7 @@ rtw88_stop(struct rtw88_softc *sc)
 	int error;
 
 	sc->sc_stop_requested = 1;
+	memset(&sc->sc_mailbox, 0, sizeof(sc->sc_mailbox));
 	memset(&sc->sc_phy, 0, sizeof(sc->sc_phy));
 	memset(&sc->sc_hw_feature, 0, sizeof(sc->sc_hw_feature));
 	rtw88_ra_invalidate(sc);
@@ -954,6 +955,60 @@ fail:
 	return error;
 }
 
+/* Snapshot all needed boxes before mutation. Busy is not an IO error.
+ * Caller owns the managed worker and serializes with PCI IRQ/stop. */
+int
+rtw88_fw_mailbox_begin(struct rtw88_softc *sc, unsigned count, int *ready)
+{
+	uint8_t occupied;
+	uint32_t gen;
+	unsigned mask = 0, i, box;
+	int error;
+
+	if (ready == NULL || count > 3)
+		return EINVAL;
+	*ready = 0;
+	if (count == 0) {
+		*ready = 1;
+		return 0;
+	}
+	if (sc->sc_mailbox.active)
+		return EBUSY;
+	if (!sc->sc_started || !sc->sc_rf_enabled || sc->sc_stop_requested)
+		return ENXIO;
+	gen = sc->sc_generation;
+	box = sc->sc_h2c_box & 3;
+	for (i = 0; i < count; i++)
+		mask |= 1U << ((box + i) & 3);
+	error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_HMETFR, &occupied);
+	if (error != 0)
+		return error;
+	if (sc->sc_stop_requested || gen != sc->sc_generation ||
+	    box != (sc->sc_h2c_box & 3))
+		return ESTALE;
+	if ((occupied & mask) != 0)
+		return 0;
+	sc->sc_mailbox.generation = gen;
+	sc->sc_mailbox.box = (uint8_t)box;
+	sc->sc_mailbox.total = (uint8_t)count;
+	sc->sc_mailbox.sent = 0;
+	sc->sc_mailbox.active = 1;
+	*ready = 1;
+	return 0;
+}
+
+int
+rtw88_fw_mailbox_end(struct rtw88_softc *sc, int error)
+{
+
+	if (sc->sc_mailbox.active && error == 0 &&
+	    (sc->sc_mailbox.generation != sc->sc_generation ||
+	    sc->sc_mailbox.sent != sc->sc_mailbox.total))
+		error = EPROTO;
+	memset(&sc->sc_mailbox, 0, sizeof(sc->sc_mailbox));
+	return error;
+}
+
 int
 rtw88_fw_command(struct rtw88_softc *sc, uint8_t id, const void *payload,
     size_t size)
@@ -973,7 +1028,17 @@ rtw88_fw_command(struct rtw88_softc *sc, uint8_t id, const void *payload,
 	box.reg = RTW88_REG_HMETFR;
 	box.mask = (uint32_t)1 << (sc->sc_h2c_box & 3);
 	box.value = 0;
-	error = rtw88_poll(sc, gen, RTW88_COMMAND_US, rtw88_ready8, &box);
+	if (sc->sc_mailbox.active) {
+		if (sc->sc_mailbox.generation != gen ||
+		    sc->sc_mailbox.sent >= sc->sc_mailbox.total ||
+		    ((sc->sc_mailbox.box + sc->sc_mailbox.sent) & 3) !=
+		    (sc->sc_h2c_box & 3))
+			return ESTALE;
+		error = rtw88_ready8(sc, &box);
+		error = error < 0 ? -error : error != 0 ? EBUSY : 0;
+	} else {
+		error = rtw88_poll(sc, gen, RTW88_COMMAND_US, rtw88_ready8, &box);
+	}
 	if (error == ETIMEDOUT) {
 		uint32_t mcu = 0, imr = 0, isr = 0, boxes = 0;
 
@@ -1005,13 +1070,19 @@ rtw88_fw_command(struct rtw88_softc *sc, uint8_t id, const void *payload,
 		w1 |= (uint32_t)p[6] << 24;
 	box_reg = RTW88_REG_HMEBOX0 + 4 * (sc->sc_h2c_box & 3);
 	ex_reg = RTW88_REG_HMEBOX0_EX + 4 * (sc->sc_h2c_box & 3);
+	if (sc->sc_mailbox.active && gen != sc->sc_generation)
+		return ESTALE;
 	error = sc->sc_ops->write_4(sc->sc_bus, ex_reg, w1);
 	if (error != 0)
 		return error;
+	if (sc->sc_mailbox.active && gen != sc->sc_generation)
+		return ESTALE;
 	error = sc->sc_ops->write_4(sc->sc_bus, box_reg, w0);
 	if (error != 0)
 		return error;
 	sc->sc_h2c_box = (sc->sc_h2c_box + 1) & 3;
+	if (sc->sc_mailbox.active)
+		sc->sc_mailbox.sent++;
 	if (sc->sc_generation != gen)
 		return EINTR;
 	return 0;

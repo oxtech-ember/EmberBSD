@@ -2,6 +2,9 @@
 /* Explicit kernel registration/service model for the owning attach function. */
 #include <stdarg.h>
 #define KM_SLEEP 0
+#ifndef MAX
+#define MAX(a,b) ((a)>(b)?(a):(b))
+#endif
 #define PRI_NONE 0
 #define SOFTINT_NET 0
 /* Distinct service-model bits; routing owns RUNNING=1/OACTIVE=2. */
@@ -15,7 +18,7 @@
 #define setbit(a,n) ((a)[(n)/8]|=1U<<((n)%8))
 #define isset(a,n) enable_isset((a),(n))
 static int enable_fail_workqueue,enable_fail_softint;
-static unsigned enable_allocations,enable_releases,enable_registrations;
+static unsigned enable_allocations,enable_releases,enable_registrations,enable_state_errors;
 static kmutex_t enable_queue_lock={.initialized=1};
 static int enable_parent_state(struct ieee80211com *,enum ieee80211_state,int);
 static void rtw88_net_state_work(struct work *,void *);
@@ -39,6 +42,14 @@ static void callout_setfunc(int *c,void (*fn)(void *),void *cookie)
 static void callout_destroy(int *c) { (void)c; }
 static void callout_schedule(int *c,unsigned ticks) { (void)c;(void)ticks; }
 static unsigned mstohz(unsigned ms) { return ms; }
+/* Process sleep/clock boundary: the real kernel owns Giant release semantics. */
+static int (*enable_pause_hook)(unsigned);
+static inline int kpause(const char *name,bool intr,int ticks,kmutex_t *lock)
+{
+    (void)name;(void)intr;assert(lock==NULL);assert(ticks>0);
+    route_ticks+=(unsigned)ticks;
+    return enable_pause_hook?enable_pause_hook((unsigned)ticks):EWOULDBLOCK;
+}
 static int workqueue_create(struct workqueue **out,const char *name,
     void (*fn)(struct work *,void *),void *cookie,int priority,int ipl,int flags)
 { (void)name;(void)fn;(void)cookie;(void)priority;(void)ipl;(void)flags;
@@ -49,7 +60,7 @@ static void *softint_establish(int flags,void (*fn)(void *),void *cookie)
 { (void)flags;(void)fn;return enable_fail_softint?NULL:cookie; }
 const char *device_xname(device_t d) { (void)d;return "rtwce0"; }
 void aprint_error_dev(device_t d,const char *fmt,...)
-{ (void)d;va_list ap;va_start(ap,fmt);vfprintf(stderr,fmt,ap);va_end(ap); }
+{ (void)d;enable_state_errors++;va_list ap;va_start(ap,fmt);vfprintf(stderr,fmt,ap);va_end(ap); }
 static size_t enable_strlcpy(char *dst,const char *src,size_t n)
 { size_t len=strlen(src);if(n) { size_t copy=len<n-1?len:n-1;memcpy(dst,src,copy);dst[copy]=0; }return len; }
 #define strlcpy enable_strlcpy

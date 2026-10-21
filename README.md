@@ -1181,6 +1181,10 @@ The base system shell is unchanged.
   INIT bypass. Actual-source checks require disconnect notification and a
   fresh same-BSSID AUTH/RUN. GCC16 kernel `d175df270` passes two disruptive
   manual scans with automatic WPA2/data recovery and LAN link-local IPv6 SSH.
+
+  Managed station setup now waits for busy register mailboxes outside the PCI
+  lock. Source contracts cover request cancellation, full peer/profile checks
+  after each wake and non-waiting station/RA commit. This does not add RFK.
   Raw TCP from the board reaches about 25 Mbps in a 1 MiB trial. Full AP-loss
   recovery, RF quality and endurance remain unqualified. HT/VHT remain
   unadvertised. Shared HT20 association contracts now bind queued offers to

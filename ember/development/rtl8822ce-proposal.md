@@ -725,3 +725,32 @@ IPv6 SSH works after each cycle. Subsequent four-AC probes and 1 MiB
 SSH/raw-IPv6 transfers pass with matching hashes in both directions.
 These bounded trials do not qualify AP loss, reconnect latency or endurance.
 This change does not implement an association-preserving background scan.
+
+## Managed register-mailbox checkpoint
+
+The existing native state worker plans zero to three register-mailbox commands.
+A non-started INIT has no mailbox access or wait. Started unlinked setup sends
+media0x01; linked setup also sends port0x2c and, when needed, legacy RA0x40.
+Busy required boxes cause a bounded process sleep without holding PCI. Each
+wake returns to actual HT/BSS/security/rate/EDCA/RA preparation under Giant.
+An unchanged request epoch does not make an old profile snapshot current.
+
+Once all required boxes are free, the existing locked setup uses a scoped
+single-read command reservation. It cannot fall back to a one-second locked
+poll if a box unexpectedly becomes busy. Original bytes, order and box rotation
+remain unchanged. Request, firmware generation and basebox mismatches cancel
+old work. Every outcome releases its software reservation. The actual first
+AUTH/RUN producer remains after the complete current commit.
+
+The existing native capacity check gates management and all four DATA queues
+before dequeue while admission is closed. It retains queued mbufs and node
+owners. Source contracts execute this gate, the actual management producer,
+core descriptor post and scheduled softintr continuation. Their kernel sleep,
+clock and interrupt dispatch are explicit host services. They do not qualify
+real scheduling latency or a full concurrent stop/detach execution.
+
+The same-generation HT-spacing case executes actual provider/capsule checks.
+That test profile does not enable HT on hardware. Packet-H2C transport, RFK
+commands/completion, RX BA and R2 firmware RSSI feedback remain separate.
+Run the existing enable/routing contracts with GCC16. Target kernel and physical
+legacy/reconnect checks are required before deployment acceptance.

@@ -2,6 +2,7 @@
 /* Origin: EmberBSD native state/default EDCA regression, AI-assisted. */
 /* Complete native state consumer plus real core; kernel scheduling is modeled. */
 #include <stdarg.h>
+#include <stdbool.h>
 #include <dev/ic/rtw88_net_policy.h>
 #include "native-state-types.inc"
 #define IFF_UP 1
@@ -116,7 +117,16 @@ static unsigned state_beacon_lock;
 #define IEEE80211_BEACON_UNLOCK(ic) do { (void)(ic); assert(state_beacon_lock); state_beacon_lock=0; } while (0)
 #define ieee80211_chan2ieee(ic, ch) ((unsigned)((ch) - (ic)->ic_channels))
 #define mstohz(ms) (ms)
-static unsigned getticks(void) { return 1; }
+static unsigned state_ticks=1;
+static unsigned getticks(void) { return state_ticks; }
+#ifndef MAX
+#define MAX(a,b) ((a)>(b)?(a):(b))
+#endif
+static inline int kpause(const char *name,bool intr,int ticks,kmutex_t *lock)
+{
+    (void)name;(void)intr;assert(lock==NULL && !state_lock.held && ticks>0);
+    state_ticks+=(unsigned)ticks;return EWOULDBLOCK;
+}
 static void callout_stop(callout_t *c) { (void)c; }
 static void callout_schedule(callout_t *c, unsigned n) { (void)c; (void)n; }
 static void softint_schedule(void *cookie) { (void)cookie; }

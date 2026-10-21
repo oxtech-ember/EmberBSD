@@ -8,6 +8,7 @@
  */
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/proc.h>
 #include <sys/device.h>
 #include <sys/kmem.h>
 #include <sys/kernel.h>
@@ -312,6 +313,39 @@ rtw88_net_restart_peer(struct rtw88_net *net)
 	return 0;
 }
 
+/* No mutation before reservation. A wake always returns to the outer worker
+ * to recapture HT/BSS/EDCA/RA under Giant, including same-epoch profile changes. */
+static int
+rtw88_net_mailbox_wait(struct rtw88_net *net, uint64_t epoch, uint32_t gen,
+    unsigned box, unsigned count, unsigned deadline, int *retry)
+{
+	int error, ready = 0;
+
+	*retry = 0;
+	mutex_enter(net->lock);
+	if (epoch != net->policy.epoch || net->policy.dying)
+		error = ECANCELED;
+	else if (count != 0 && (gen != net->core->sc_generation ||
+	    box != (net->core->sc_h2c_box & 3)))
+		error = ESTALE;
+	else if (count != 0 && (int)(getticks() - deadline) >= 0)
+		error = ETIMEDOUT;
+	else
+		error = rtw88_fw_mailbox_begin(net->core, count, &ready);
+	mutex_exit(net->lock);
+	if (error != 0 || ready)
+		return error;
+	if ((int)(getticks() - deadline) >= 0)
+		return ETIMEDOUT;
+	/* kpause releases Giant. PCI is never held while sleeping. */
+	error = kpause("rtwmbx", false, 1, NULL);
+	if (error == 0 || error == EWOULDBLOCK) {
+		*retry = 1;
+		return 0;
+	}
+	return error;
+}
+
 /* The workqueue has the kernel lock. Do not hold the PCI lock in net80211. */
 static void
 rtw88_net_state_work(struct work *work, void *cookie)
@@ -323,10 +357,12 @@ rtw88_net_state_work(struct work *work, void *cookie)
 	struct rtw88_edca_params edca[RTW88_WME_NAC];
 	struct rtw88_ra_config ra;
 	enum ieee80211_state state;
-	uint64_t epoch;
+	uint64_t epoch, mailbox_epoch = 0;
+	uint32_t gen, mailbox_gen = 0;
+	unsigned mailbox_box = 0, mailbox_count, mailbox_deadline = 0;
 	unsigned channel, basic, slot, aid, i;
 	unsigned media, prepare_stage;
-	int use_ra;
+	int use_ra, mailbox_retry, mailbox_reserved;
 	const uint8_t *bssid;
 	char failure[384];
 	uint8_t any;
@@ -385,8 +421,32 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			prepare_error = rtw88_net_ra_prepare(ic, channel, basic,
 			    epoch, &ra);
 		}
+		/* Current core is stable under Giant; no pointers survive a sleep. */
+		mailbox_count = prepare_error != 0 || !net->core->sc_started ? 0 :
+		    state == IEEE80211_S_RUN ? 2 +
+		    (use_ra && !ra.use_protection) : 1;
+		gen = net->core->sc_generation;
+		if (mailbox_epoch != epoch) {
+			mailbox_epoch = epoch;
+			mailbox_gen = gen;
+			mailbox_box = net->core->sc_h2c_box & 3;
+			mailbox_deadline = (unsigned)getticks() +
+			    MAX(1, mstohz(RTW88_COMMAND_US / 1000));
+		}
+		mailbox_reserved = 0;
+		if (prepare_error == 0) {
+			prepare_stage = RTW88_NET_STAGE_CORE;
+			prepare_error = rtw88_net_mailbox_wait(net, epoch,
+			    mailbox_gen, mailbox_box, mailbox_count, mailbox_deadline,
+			    &mailbox_retry);
+			if (mailbox_retry || prepare_error == ECANCELED)
+				continue;
+			mailbox_reserved = prepare_error == 0 && mailbox_count != 0;
+		}
 		mutex_enter(net->lock);
 		if (epoch != net->policy.epoch || net->policy.dying) {
+			if (mailbox_reserved)
+				(void)rtw88_fw_mailbox_end(net->core, ECANCELED);
 			mutex_exit(net->lock);
 			continue;
 		}
@@ -435,6 +495,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			diag.stage = RTW88_NET_STAGE_CORE;
 			error = ENXIO;
 		}
+		if (mailbox_reserved)
+			error = rtw88_fw_mailbox_end(net->core, error);
 		diag.core_channel = net->core->sc_channel;
 		diag.error = error;
 		error = rtw88_net_commit(&net->policy, epoch, error,

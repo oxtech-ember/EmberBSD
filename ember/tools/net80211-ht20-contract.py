@@ -15,8 +15,15 @@ for path,name,result in [('sys/dev/ic/rtw88.c','rtw88_ra_invalidate','void'),
 (out/'native-ht20-callback.inc').write_text('\n'.join(parts)+'\n')
 
 net=pathlib.Path(os.environ.get('HT20_NATIVE_SOURCE',src/'sys/dev/ic/rtw88_net.c')).read_text()
-(out/'native-ht20-worker.inc').write_text('static void\n'+re.search(r'^rtw88_net_state_work\(.*?^}',net,re.M|re.S).group()+'\n')
+parts=[net[:net.index('#include')]]
+if re.search(r'^rtw88_net_mailbox_wait\(',net,re.M):
+ parts.extend(['static int',re.search(r'^rtw88_net_mailbox_wait\(.*?^}',net,re.M|re.S).group()])
+parts.extend(['static void',re.search(r'^rtw88_net_state_work\(.*?^}',net,re.M|re.S).group()])
+(out/'native-ht20-worker.inc').write_text('\n'.join(parts)+'\n')
 (out/'native-ht20-policy.h').write_text((src/'sys/dev/ic/rtw88_net_policy.h').read_text())
 
 with (out/'native-ht20-policy.h').open('a') as f:
  f.write(re.search(r'^#define\s+IEEE80211_FIXED_RATE_NONE\s+.*$',(src/'sys/net80211/ieee80211_var.h').read_text(),re.M).group()+'\n')
+
+with (out/'native-ht20-policy.h').open('a') as f:
+ f.write(re.search(r'^#define\s+RTW88_COMMAND_US\s+.*$',(src/'sys/dev/ic/rtw88var.h').read_text(),re.M).group()+'\n')
