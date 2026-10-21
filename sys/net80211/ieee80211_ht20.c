@@ -7,6 +7,8 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/errno.h>
+#include <sys/mutex.h>
+#include <sys/sysctl.h>
 #include <net80211/ieee80211_var.h>
 
 int
