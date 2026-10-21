@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Origin: EmberBSD; finite patch-input and desired-observation controls.
 import json
+import hashlib
+from types import SimpleNamespace
 from pathlib import Path
 import struct
 import sys
@@ -116,6 +118,49 @@ class DesiredObservations(unittest.TestCase):
                 with patch.object(driver, 'sdk', side_effect=AssertionError('SDK must not run')):
                     self.assertRaises(ValueError, driver.main, args)
                 self.assertFalse(output.exists())
+
+    def test_loaded_byte_guards_before_and_after_continue(self):
+        import policy
+        class JSON:
+            @staticmethod
+            def write_json(path, value, exclusive=True, mode=0o600):
+                with Path(path).open('x' if exclusive else 'w') as handle:json.dump(value, handle)
+        for when in ('before', 'after'):
+            calls = []
+            class Owner:
+                pid = 12345
+                def __init__(self, *args, **kwargs):pass
+                def start(self):calls.append('start')
+                def stop(self):calls.append('stop')
+            class Remote:
+                continued = False
+                def __init__(self, *args):pass
+                def breakpoint(self, address):pass
+                def close(self):calls.append('close')
+                def command(self, value):
+                    self.assert_continue(value)
+                    self.continued = True; calls.append('continue'); return b'T05'
+                def assert_continue(self, value):
+                    if value != 'c':raise AssertionError('Unexpected command')
+                def memory(self, address, size):
+                    for index, (start, end) in enumerate(policy.SPANS.values()):
+                        if address == start:
+                            if index == 0 and self.continued == (when == 'after'):return bytes(size)
+                            return bytes([index + 1]) * size
+                    if address == 0x20000000:return struct.pack('<4I', 0x55303242, 1, observations.RECORD_BYTES, 2)
+                    return bytes(size)
+            expected = {name: hashlib.sha256(bytes([index + 1]) * (end - start)).hexdigest() for index, (name, (start, end)) in enumerate(policy.SPANS.items())}
+            with tempfile.TemporaryDirectory(prefix='aic-byte-guard-') as temporary:
+                root = Path(temporary); work = root / 'work'; work.mkdir()
+                qemu = root / 'fake-qemu'; qemu.write_text('never executed'); qemu.chmod(0o700)
+                process = SimpleNamespace(sanitized_environment=lambda: {}, OwnedProcessGroup=Owner)
+                addresses = dict(harness_done=0x400, mailbox=0x20000000, results=0x20000100, frame_results=0x20000200)
+                with patch.object(driver, 'Remote', Remote):
+                    self.assertRaisesRegex(ValueError, 'slice differs' if when == 'before' else 'bytes changed', driver.execute, qemu, work, addresses, 1, process, JSON, expected, {}, [patched.make('one')])
+                self.assertEqual(calls.count('continue'), int(when == 'after'))
+                self.assertEqual(calls[-2:], ['close', 'stop'])
+                self.assertFalse((work / 'ownership-pending.json').exists())
+                self.assertFalse((work / 'results.bin').exists())
 
     def test_finite_matrix_and_irq_cases_are_not_coverage_claims(self):
         rows = patched.inputs(); irq = patched.inputs(irq=True)
