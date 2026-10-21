@@ -111,6 +111,8 @@ struct ieee80211_node {
 #define	IEEE80211_NODE_PWR_MGT	0x0010		/* power save mode enabled */
 #define	IEEE80211_NODE_AREF	0x0020		/* authentication ref held */
 #define	IEEE80211_NODE_AMSDU_RX	0x0040		/* negotiated bounded RX */
+#define	IEEE80211_NODE_WME_OFFER	0x0080		/* current queued STA offer */
+#define	IEEE80211_NODE_WME_VALID	0x0100		/* committed parameter set */
 	u_int16_t		ni_associd;	/* assoc response */
 	u_int16_t		ni_txpower;	/* current transmit power */
 	u_int16_t		ni_vlan;	/* vlan tag */
@@ -120,8 +122,13 @@ struct ieee80211_node {
 	u_int8_t		*ni_extcap_ie;	/* captured extended capabilities */
 	u_int8_t		*ni_rsnx_ie;	/* captured RSNX ie */
 	u_int8_t		*ni_wme_ie;	/* captured WME ie */
-	u_int16_t		ni_txseqs[17];	/* tx seq per-tid */
-	u_int16_t		ni_rxseqs[17];	/* rx seq previous per-tid*/
+	u_int32_t		ni_wme_attempt;
+	u_int32_t		ni_wme_offer_attempt;
+	struct ieee80211_channel *ni_wme_offer_chan;
+	u_int8_t		ni_wme_offer_bssid[IEEE80211_ADDR_LEN];
+	u_int8_t		ni_wme_offer_type;
+	u_int16_t		ni_txseqs[17];	/* non-QoS 0; QoS TID n at n+1 */
+	u_int16_t		ni_rxseqs[17];	/* same domains, previous rx seq */
 	u_int32_t		ni_rxfragstamp;	/* time stamp of last rx frag */
 	struct mbuf		*ni_rxfrag[3];	/* rx frag reassembly */
 	struct ieee80211_rsnparms ni_rsn;	/* RSN/WPA parameters */

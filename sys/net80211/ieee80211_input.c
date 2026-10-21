@@ -1655,7 +1655,7 @@ ieee80211_ssid_mismatch(struct ieee80211com *ic, const char *tag,
 	 ((((const u_int8_t *)(p))[0]      ) |		\
 	  (((const u_int8_t *)(p))[1] <<  8) |		\
 	  (((const u_int8_t *)(p))[2] << 16) |		\
-	  (((const u_int8_t *)(p))[3] << 24)))
+	  ((u_int32_t)((const u_int8_t *)(p))[3] << 24)))
 
 static __inline int
 iswpaoui(const u_int8_t *frm)
@@ -2026,40 +2026,54 @@ static int
 ieee80211_parse_wmeparams(struct ieee80211com *ic, u_int8_t *frm,
     const struct ieee80211_frame *wh)
 {
-#define	MS(_v, _f)	(((_v) & _f) >> _f##_S)
+#define MS(_v, _f) (((_v) & _f) >> _f##_S)
 	struct ieee80211_wme_state *wme = &ic->ic_wme;
-	u_int len = frm[1], qosinfo;
+	struct chanAccParams candidate = wme->wme_wmeChanParams;
+	u_int len = frm[1], qosinfo, seen = 0;
 	int i;
 
-	if (len < sizeof(struct ieee80211_wme_param)-2) {
-		IEEE80211_DISCARD_IE(ic,
-		    IEEE80211_MSG_ELEMID | IEEE80211_MSG_WME,
-		    wh, "WME", "too short, len %u", len);
-		return -1;
-	}
+	/* The caller has checked the complete TLV extent. */
+	if (ic->ic_bss == NULL ||
+	    len != sizeof(struct ieee80211_wme_param) - 2 ||
+	    frm[0] != IEEE80211_ELEMID_VENDOR ||
+	    frm[2] != 0x00 || frm[3] != 0x50 || frm[4] != 0xf2 ||
+	    frm[5] != WME_OUI_TYPE || frm[6] != WME_PARAM_OUI_SUBTYPE ||
+	    frm[7] != WME_VERSION || (frm[8] & 0x70) != 0 || frm[9] != 0)
+		goto invalid;
 
-	qosinfo = frm[offsetof(struct ieee80211_wme_param, param_qosInfo)];
-	qosinfo &= WME_QOSINFO_COUNT;
-
-	/* XXX do proper check for wraparound */
-	if (qosinfo == wme->wme_wmeChanParams.cap_info)
-		return 0;
-
+	qosinfo = frm[8] & WME_QOSINFO_COUNT;
 	frm += offsetof(struct ieee80211_wme_param, params_acParams);
 	for (i = 0; i < WME_NUM_AC; i++) {
-		struct wmeParams *wmep =
-			&wme->wme_wmeChanParams.cap_wmeParams[i];
-		/* NB: ACI not used */
+		u_int aci = MS(frm[0], WME_PARAM_ACI);
+		struct wmeParams *wmep = &candidate.cap_wmeParams[aci];
+
+		if ((frm[0] & 0x80) != 0 || (seen & (1U << aci)) != 0)
+			goto invalid;
+		seen |= 1U << aci;
 		wmep->wmep_acm = MS(frm[0], WME_PARAM_ACM);
 		wmep->wmep_aifsn = MS(frm[0], WME_PARAM_AIFSN);
 		wmep->wmep_logcwmin = MS(frm[1], WME_PARAM_LOGCWMIN);
 		wmep->wmep_logcwmax = MS(frm[1], WME_PARAM_LOGCWMAX);
-		wmep->wmep_txopLimit = LE_READ_2(frm+2);
+		wmep->wmep_txopLimit = LE_READ_2(frm + 2);
+		if (wmep->wmep_aifsn < 2 || wmep->wmep_logcwmin == 0 ||
+		    wmep->wmep_logcwmin > wmep->wmep_logcwmax)
+			goto invalid;
 		frm += 4;
 	}
-
-	wme->wme_wmeChanParams.cap_info = qosinfo;
+	if (seen != (1U << WME_NUM_AC) - 1)
+		goto invalid;
+	/* Validate even an unchanged count. Count zero is a valid first set. */
+	if ((ic->ic_bss->ni_flags & IEEE80211_NODE_WME_VALID) != 0 &&
+	    qosinfo == wme->wme_wmeChanParams.cap_info)
+		return 0;
+	candidate.cap_info = qosinfo;
+	wme->wme_wmeChanParams = candidate;
+	ic->ic_bss->ni_flags |= IEEE80211_NODE_WME_VALID;
 	return 1;
+invalid:
+	IEEE80211_DISCARD_IE(ic, IEEE80211_MSG_ELEMID | IEEE80211_MSG_WME,
+	    wh, "WME", "invalid parameters, len %u", len);
+	return -1;
 #undef MS
 }
 
@@ -2181,6 +2195,7 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 	u_int8_t *frm, *efrm;
 	IEEE80211_DEBUGVAR(char ebuf[3 * ETHER_ADDR_LEN]);
 	struct ieee80211_scanparams scan;
+	int wme_duplicate = 0;
 
 	wh = mtod(m0, struct ieee80211_frame *);
 	frm = (u_int8_t *)(wh + 1);
@@ -2300,8 +2315,11 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 			/* no length check needed */
 			if (iswpaoui(frm))
 				scan.sp_wpa = frm;
-			else if (iswmeparam(frm) || iswmeinfo(frm))
+			else if (iswmeparam(frm) || iswmeinfo(frm)) {
+				if (scan.sp_wme != NULL)
+					wme_duplicate = 1;
 				scan.sp_wme = frm;
+			}
 			/* XXX Atheros OUI support */
 			break;
 		default:
@@ -2421,7 +2439,12 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 			ni->ni_capinfo = scan.sp_capinfo;
 		}
 
-		if (scan.sp_wme != NULL && (ni->ni_flags & IEEE80211_NODE_QOS) &&
+		if (!wme_duplicate && scan.sp_wme != NULL && ni == ic->ic_bss &&
+		    (ni->ni_flags & IEEE80211_NODE_QOS) != 0 &&
+		    (ni->ni_flags & IEEE80211_NODE_WME_VALID) != 0 &&
+		    ni->ni_chan == ic->ic_curchan &&
+		    IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_macaddr) &&
+		    IEEE80211_ADDR_EQ(wh->i_addr3, ni->ni_bssid) &&
 		    ieee80211_parse_wmeparams(ic, scan.sp_wme, wh) > 0) {
 			ieee80211_wme_updateparams(ic);
 		}
@@ -2907,10 +2930,15 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 	u_int8_t *frm, *efrm;
 	u_int8_t *rates, *xrates, *wme;
 	u_int8_t rate;
+	int wme_offer, wme_duplicate = 0;
 	IEEE80211_DEBUGVAR(char ebuf[3 * ETHER_ADDR_LEN]);
 	u_int16_t capinfo, associd;
 	u_int16_t status;
 
+	if (m0->m_len < sizeof(*wh)) {
+		ic->ic_stats.is_rx_tooshort++;
+		return;
+	}
 	wh = mtod(m0, struct ieee80211_frame *);
 	frm = (u_int8_t *)(wh + 1);
 	efrm = mtod(m0, u_int8_t *) + m0->m_len;
@@ -2920,6 +2948,33 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 		ic->ic_stats.is_rx_mgtdiscard++;
 		return;
 	}
+
+	ni = ic->ic_bss;
+	if (ni == NULL || !IEEE80211_ADDR_EQ(wh->i_addr1, ic->ic_myaddr) ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_macaddr) ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr3, ni->ni_bssid)) {
+		ic->ic_stats.is_rx_mgtdiscard++;
+		return;
+	}
+	if ((ni->ni_flags & IEEE80211_NODE_WME_OFFER) != 0 &&
+	    (ni->ni_wme_offer_attempt != ni->ni_wme_attempt ||
+	     ni->ni_wme_offer_chan != ic->ic_curchan ||
+	     ni->ni_chan != ic->ic_curchan ||
+	     !IEEE80211_ADDR_EQ(ni->ni_wme_offer_bssid, wh->i_addr3) ||
+	     subtype != ni->ni_wme_offer_type + 0x10)) {
+		ic->ic_stats.is_rx_mgtdiscard++;
+		return;
+	}
+	wme_offer = (ic->ic_caps & IEEE80211_C_WME) != 0 &&
+	    (ic->ic_flags & IEEE80211_F_WME) != 0 &&
+	    (ni->ni_flags & IEEE80211_NODE_WME_OFFER) != 0 &&
+	    ni->ni_wme_offer_attempt == ni->ni_wme_attempt &&
+	    ni->ni_wme_offer_chan == ic->ic_curchan &&
+	    ni->ni_chan == ic->ic_curchan &&
+	    IEEE80211_ADDR_EQ(ni->ni_wme_offer_bssid, wh->i_addr3) &&
+	    subtype == ni->ni_wme_offer_type + 0x10;
+	/* Consume this attempt before any matching response can fail parsing. */
+	ni->ni_flags &= ~IEEE80211_NODE_WME_OFFER;
 
 	/*
 	 * asresp frame format
@@ -2961,8 +3016,11 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 			xrates = frm;
 			break;
 		case IEEE80211_ELEMID_VENDOR:
-			if (iswmeoui(frm))
+			if (iswmeoui(frm)) {
+				if (wme != NULL)
+					wme_duplicate = 1;
 				wme = frm;
+			}
 			/* XXX Atheros OUI support */
 			break;
 		}
@@ -2990,11 +3048,17 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 
 	ni->ni_capinfo = capinfo;
 	ni->ni_associd = associd;
-	if (wme != NULL && ieee80211_parse_wmeparams(ic, wme, wh) >= 0) {
+	if (wme_offer && wme != NULL) {
+		if (wme_duplicate || ieee80211_parse_wmeparams(ic, wme, wh) < 0) {
+			ni->ni_associd = 0;
+			ieee80211_wme_reset(ni);
+			ieee80211_new_state(ic, IEEE80211_S_SCAN, 0);
+			return;
+		}
 		ni->ni_flags |= IEEE80211_NODE_QOS;
 		ieee80211_wme_updateparams(ic);
 	} else {
-		ni->ni_flags &= ~IEEE80211_NODE_QOS;
+		ni->ni_flags &= ~(IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID);
 	}
 
 	/*

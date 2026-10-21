@@ -48,7 +48,11 @@ for line in source(wire).splitlines():
     if re.match(r"#define\s+(WME_(PARAM_|QOSINFO_|OUI_TYPE|PARAM_OUI_SUBTYPE|VERSION)|IEEE80211_ELEMID_VENDOR)", line):
         parts.append(line)
 parts.append("struct ieee80211_frame { unsigned unused; };\n")
-parts.append("struct ieee80211com { struct ieee80211_wme_state ic_wme; unsigned ic_caps; };\n")
+parts.append("struct ieee80211_node { uint16_t ni_flags; };\n")
+parts.append("struct ieee80211com { struct ieee80211_wme_state ic_wme; unsigned ic_caps; struct ieee80211_node *ic_bss; };\n")
+for line in source("sys/net80211/ieee80211_node.h").splitlines():
+    if re.match(r"#define\s+IEEE80211_NODE_WME_VALID\s", line):
+        parts.append(line)
 parts.append(structure("sys/net80211/ieee80211_ioctl.h", "ieee80211req"))
 parts.append("static void ieee80211_wme_updateparams(struct ieee80211com *ic) { (void)ic; }\n")
 for line in source("sys/net80211/ieee80211_ioctl.h").splitlines():

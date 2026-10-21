@@ -156,6 +156,40 @@ ieee80211_send_setup(struct ieee80211com *ic,
 #undef WH4
 }
 
+/* Authorize only one complete native WME information element on the wire. */
+static int
+ieee80211_wme_request_offer(const struct mbuf *m, int type)
+{
+	const u_int8_t *frm, *efrm;
+	int skip, found = 0;
+
+	if (type != IEEE80211_FC0_SUBTYPE_ASSOC_REQ &&
+	    type != IEEE80211_FC0_SUBTYPE_REASSOC_REQ)
+		return 0;
+	skip = sizeof(struct ieee80211_frame) +
+	    (type == IEEE80211_FC0_SUBTYPE_REASSOC_REQ ? 10 : 4);
+	if (m->m_len < skip)
+		return 0;
+	frm = mtod(m, const u_int8_t *) + skip;
+	efrm = mtod(m, const u_int8_t *) + m->m_len;
+	while (efrm - frm >= 2) {
+		u_int len = frm[1];
+
+		if (len > efrm - frm - 2)
+			return 0;
+		if (frm[0] == IEEE80211_ELEMID_VENDOR && len >= 4 &&
+		    frm[2] == 0x00 && frm[3] == 0x50 && frm[4] == 0xf2 &&
+		    frm[5] == WME_OUI_TYPE) {
+			if (found || len != sizeof(struct ieee80211_wme_info) - 2 ||
+			    frm[6] != WME_INFO_OUI_SUBTYPE || frm[7] != WME_VERSION)
+				return 0;
+			found = 1;
+		}
+		frm += len + 2;
+	}
+	return frm == efrm && found;
+}
+
 /*
  * Send a management frame to the specified node.  The node pointer
  * must have a reference as the pointer will be passed to the driver
@@ -165,7 +199,7 @@ ieee80211_send_setup(struct ieee80211com *ic,
  */
 static int
 ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
-    struct mbuf *m, int type, int timer)
+    struct mbuf *m, int type, int timer, int wme_offer)
 {
 	struct ifnet *ifp = ic->ic_ifp;
 	struct ieee80211_frame *wh;
@@ -216,6 +250,17 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
 
 	IEEE80211_NODE_STAT(ni, tx_mgmt);
 	IF_ENQUEUE(&ic->ic_mgtq, m);
+	/* Queue admission is not a hardware transmit or acknowledgement. */
+	if (wme_offer && ieee80211_wme_request_offer(m, type) &&
+	    ic->ic_opmode == IEEE80211_M_STA &&
+	    ic->ic_state == IEEE80211_S_ASSOC && ni == ic->ic_bss &&
+	    ni->ni_chan == ic->ic_curchan) {
+		ni->ni_wme_offer_attempt = ni->ni_wme_attempt;
+		ni->ni_wme_offer_chan = ic->ic_curchan;
+		IEEE80211_ADDR_COPY(ni->ni_wme_offer_bssid, wh->i_addr3);
+		ni->ni_wme_offer_type = type;
+		ni->ni_flags |= IEEE80211_NODE_WME_OFFER;
+	}
 	if (timer) {
 		/*
 		 * Set the mgt frame timeout.
@@ -288,9 +333,10 @@ int
 ieee80211_classify(struct ieee80211com *ic, struct mbuf *m,
     struct ieee80211_node *ni)
 {
+	static const u_int8_t priority[WME_NUM_AC] = { 1, 0, 2, 3 };
 	int v_wme_ac, d_wme_ac, ac;
 #ifdef INET
-	struct ether_header *eh;
+	struct ether_header eh;
 #endif
 
 	if ((ni->ni_flags & IEEE80211_NODE_QOS) == 0) {
@@ -302,7 +348,7 @@ ieee80211_classify(struct ieee80211com *ic, struct mbuf *m,
 	 * If node has a vlan tag then all traffic
 	 * to it must have a matching tag.
 	 */
-	v_wme_ac = 0;
+	v_wme_ac = -1;
 	if (ni->ni_vlan != 0) {
 		/* XXX used to check ec_nvlans. */
 		if (!vlan_has_tag(m)) {
@@ -336,14 +382,19 @@ ieee80211_classify(struct ieee80211com *ic, struct mbuf *m,
 	}
 
 #ifdef INET
-	eh = mtod(m, struct ether_header *);
-	if (eh->ether_type == htons(ETHERTYPE_IP)) {
-		const struct ip *ip = (struct ip *)
-			(mtod(m, u_int8_t *) + sizeof (*eh));
+	if (m->m_pkthdr.len < sizeof(eh))
+		return 1;
+	m_copydata(m, 0, sizeof(eh), &eh);
+	if (eh.ether_type == htons(ETHERTYPE_IP)) {
+		struct ip ip;
+
+		if (m->m_pkthdr.len < sizeof(eh) + sizeof(ip))
+			return 1;
+		m_copydata(m, sizeof(eh), sizeof(ip), &ip);
 		/*
 		 * IP frame, map the TOS field.
 		 */
-		switch (ip->ip_tos) {
+		switch (ip.ip_tos) {
 		case 0x08:
 		case 0x20:
 			d_wme_ac = WME_AC_BK;	/* background */
@@ -371,7 +422,7 @@ ieee80211_classify(struct ieee80211com *ic, struct mbuf *m,
 	/*
 	 * Use highest priority AC.
 	 */
-	if (v_wme_ac > d_wme_ac)
+	if (v_wme_ac >= 0 && priority[v_wme_ac] > priority[d_wme_ac])
 		ac = v_wme_ac;
 	else
 		ac = d_wme_ac;
@@ -386,9 +437,11 @@ ieee80211_classify(struct ieee80211com *ic, struct mbuf *m,
 			WME_AC_BE,	/* WME_AC_VI */
 			WME_AC_VI,	/* WME_AC_VO */
 		};
-		while (ac != WME_AC_BK &&
-		    ic->ic_wme.wme_wmeBssChanParams.cap_wmeParams[ac].wmep_acm)
+		while (ic->ic_wme.wme_wmeChanParams.cap_wmeParams[ac].wmep_acm) {
+			if (ac == WME_AC_BK)
+				return 1;
 			ac = acmap[ac];
+		}
 	}
 done:
 	M_WME_SETAC(m, ac);
@@ -657,6 +710,8 @@ ieee80211_encap(struct ieee80211com *ic, struct mbuf *m,
 		int ac, tid;
 
 		ac = M_WME_GETAC(m);
+		if (ac < 0 || ac >= WME_NUM_AC)
+			goto bad;
 		/* map from access class/queue to 11e header priorty value */
 		tid = WME_AC_TO_TID(ac);
 		qwh->i_qos[0] = tid & IEEE80211_QOS_TID;
@@ -666,8 +721,8 @@ ieee80211_encap(struct ieee80211com *ic, struct mbuf *m,
 		qwh->i_fc[0] |= IEEE80211_FC0_SUBTYPE_QOS;
 
 		*(u_int16_t *)wh->i_seq =
-		    htole16(ni->ni_txseqs[tid] << IEEE80211_SEQ_SEQ_SHIFT);
-		ni->ni_txseqs[tid]++;
+		    htole16(ni->ni_txseqs[tid + 1] << IEEE80211_SEQ_SEQ_SHIFT);
+		ni->ni_txseqs[tid + 1]++;
 	} else {
 		*(u_int16_t *)wh->i_seq =
 		    htole16(ni->ni_txseqs[0] << IEEE80211_SEQ_SEQ_SHIFT);
@@ -1415,9 +1470,14 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 	struct mbuf *m;
 	u_int8_t *frm;
 	u_int16_t capinfo;
-	int ret, timer, status;
+	int ret, timer, status, wme_offer = 0;
 
 	IASSERT(ni != NULL, ("null node"));
+	if (ic->ic_opmode == IEEE80211_M_STA &&
+	    (type == IEEE80211_FC0_SUBTYPE_AUTH ||
+	     type == IEEE80211_FC0_SUBTYPE_ASSOC_REQ ||
+	     type == IEEE80211_FC0_SUBTYPE_REASSOC_REQ))
+		ieee80211_wme_reset(ni);
 
 	/*
 	 * Hold a reference on the node so it doesn't go away until after
@@ -1678,8 +1738,11 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		frm = ieee80211_add_ssid(frm, ni->ni_essid, ni->ni_esslen);
 		frm = ieee80211_add_rates(frm, &ni->ni_rates);
 		frm = ieee80211_add_xrates(frm, &ni->ni_rates);
-		if ((ic->ic_flags & IEEE80211_F_WME) && ni->ni_wme_ie != NULL)
+		if ((ic->ic_caps & IEEE80211_C_WME) &&
+		    (ic->ic_flags & IEEE80211_F_WME) && ni->ni_wme_ie != NULL) {
 			frm = ieee80211_add_wme_info(frm, &ic->ic_wme);
+			wme_offer = 1;
+		}
 		if (ic->ic_opt_ie != NULL) {
 			memcpy(frm, ic->ic_opt_ie, ic->ic_opt_ie_len);
 			frm += ic->ic_opt_ie_len;
@@ -1762,7 +1825,7 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		senderr(EINVAL, is_tx_unknownmgt);
 		/* NOTREACHED */
 	}
-	ret = ieee80211_mgmt_output(ic, ni, m, type, timer);
+	ret = ieee80211_mgmt_output(ic, ni, m, type, timer, wme_offer);
 	if (ret != 0) {
 bad:
 		ieee80211_free_node(ni);

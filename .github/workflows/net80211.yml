@@ -113,6 +113,7 @@ jobs:
           CCMP_TEST_CFLAGS: -O2 -g -gdwarf-4
           AMSDU_TEST_CFLAGS: -O2 -g -gdwarf-4
           PHY_IES_TEST_CFLAGS: -O2 -g -gdwarf-4
+          WME_TEST_CFLAGS: -O2 -g -gdwarf-4
           TXOP_TEST_CFLAGS: -O2 -g -gdwarf-4
         run: |
           cat > "$RUNNER_TEMP/memcheck" <<'SH'
@@ -130,6 +131,7 @@ jobs:
           sh ember/tools/net80211-phy-ies-parser-contract.sh
           sh ember/tools/net80211-phy-ies-contract.sh
           sh ember/tools/net80211-txop-contract.sh
+          sh ember/tools/net80211-wme-contract.sh
       - name: Analyze unoptimized actual source paths
         env:
           CC: gcc
@@ -137,18 +139,22 @@ jobs:
           CCMP_ANALYZE: '1'
           TXOP_TEST_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
           TXOP_ANALYZE: '1'
+          WME_TEST_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
+          WME_ANALYZE: '1'
         run: |
           sh ember/tools/ccmp-contract.sh
           sh ember/tools/net80211-crypto-bounds-contract.sh
           sh ember/tools/net80211-amsdu-analysis.sh
           sh ember/tools/net80211-phy-ies-analysis.sh
           sh ember/tools/net80211-txop-contract.sh
+          sh ember/tools/net80211-wme-contract.sh
       - name: Check actual sources under ASan and UBSan
         env:
           CC: gcc
           CCMP_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           AMSDU_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           PHY_IES_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          WME_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           TXOP_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
@@ -160,3 +166,4 @@ jobs:
           sh ember/tools/net80211-phy-ies-parser-contract.sh
           sh ember/tools/net80211-phy-ies-contract.sh
           sh ember/tools/net80211-txop-contract.sh
+          sh ember/tools/net80211-wme-contract.sh

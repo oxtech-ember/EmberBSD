@@ -24,6 +24,7 @@ main(void)
 	static const uint16_t values[] = {0, 255, 256, 2047, 2048,
 	    32767, 32768, 65535};
 	struct ieee80211com ic;
+	struct ieee80211_node ni;
 	uint8_t frame[sizeof(struct ieee80211_wme_param)];
 	unsigned checks = 0, failures = 0;
 	size_t i;
@@ -31,8 +32,12 @@ main(void)
 
 	for (i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
 		memset(&ic, 0, sizeof(ic));
-		for (ac = 0; ac < WME_NUM_AC; ac++)
-			ic.ic_wme.wme_bssChanParams.cap_wmeParams[ac].wmep_txopLimit = values[i];
+		memset(&ni, 0, sizeof(ni));
+		ic.ic_bss = &ni;
+		for (ac = 0; ac < WME_NUM_AC; ac++) {
+			struct wmeParams p = {0, 2, 3, 4, values[i], 0};
+			ic.ic_wme.wme_bssChanParams.cap_wmeParams[ac] = p;
+		}
 		ic.ic_wme.wme_bssChanParams.cap_info = 1;
 		checks++;
 		failures += ieee80211_add_wme_param(frame, &ic.ic_wme) != frame + sizeof(frame);

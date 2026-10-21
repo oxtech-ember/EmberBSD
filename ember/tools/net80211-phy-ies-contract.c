@@ -67,7 +67,7 @@ struct ieee80211com {
 	struct ieee80211_node *ic_bss;
 	struct ieee80211_channel *ic_curchan;
 	struct ieee80211_channel ic_channels[256];
-	unsigned ic_ps_sta;
+	unsigned ic_ps_sta, ic_opmode;
 	struct {
 		unsigned is_rx_nodealloc;
 	} ic_stats;
@@ -98,6 +98,8 @@ copyout(const void *src, void *dst, size_t len)
 #define __packed __attribute__((packed))
 #include "native-layouts.h"
 #define IEEE80211_FC0_SUBTYPE_PROBE_RESP 0x50
+#define IEEE80211_M_STA 1
+#define IEEE80211_M_HOSTAP 6
 #define IEEE80211_NODE_PWR_MGT 0x10
 #define IEEE80211_NODE_AREF 0x20
 #define IEEE80211_NODE_SAVEQ_DRAIN(n, q)                                       \
@@ -326,10 +328,21 @@ main(void)
 	check(ni.ni_phy_ies.len == 0,
 	      "missing PHY IEs replace stale observation");
 	ni.ni_phy_ies = (struct ieee80211_phy_ies){.len = 73};
+	ic.ic_opmode = IEEE80211_M_STA;
+	ni.ni_flags |= IEEE80211_NODE_QOS | IEEE80211_NODE_WME_OFFER |
+	    IEEE80211_NODE_WME_VALID;
 	node_cleanup(&ni);
+	check((ni.ni_flags & (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_OFFER |
+	    IEEE80211_NODE_WME_VALID)) == 0,
+	    "native cleanup retires negotiated QoS and pending WME state");
 	check(
 	    ni.ni_phy_ies.len == 0 && key_deletes == 1,
 	    "native leave cleanup clears observation and retains key cleanup");
+	ic.ic_opmode = IEEE80211_M_HOSTAP;
+	ni.ni_flags |= IEEE80211_NODE_QOS;
+	node_cleanup(&ni);
+	check((ni.ni_flags & IEEE80211_NODE_QOS) != 0,
+	    "STA WME cleanup does not change the AP node contract");
 	struct ieee80211_node *fresh = node_alloc(&ic.ic_scan);
 	check(fresh != NULL && fresh->ni_phy_ies.len == 0,
 	      "native reset allocation starts with no observation");

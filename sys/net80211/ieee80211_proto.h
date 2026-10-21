@@ -225,6 +225,7 @@ struct ieee80211_wme_state {
 };
 
 void	ieee80211_wme_initparams(struct ieee80211com *);
+void	ieee80211_wme_reset(struct ieee80211_node *);
 void	ieee80211_wme_updateparams(struct ieee80211com *);
 void	ieee80211_wme_updateparams_locked(struct ieee80211com *);
 

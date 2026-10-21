@@ -559,6 +559,15 @@ ieee80211_set11gbasicrates(struct ieee80211_rateset *rs, enum ieee80211_phymode 
 /*
  * WME protocol support.  The following parameters come from the spec.
  */
+void
+ieee80211_wme_reset(struct ieee80211_node *ni)
+{
+	ni->ni_flags &= ~(IEEE80211_NODE_WME_OFFER | IEEE80211_NODE_WME_VALID);
+	if (ni->ni_ic->ic_opmode == IEEE80211_M_STA)
+		ni->ni_flags &= ~IEEE80211_NODE_QOS;
+	ni->ni_wme_attempt++;
+}
+
 typedef struct phyParamType {
 	u_int8_t aifsn;
 	u_int8_t logcwmin;
@@ -925,6 +934,9 @@ ieee80211_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg
 		ieee80211_state_name[ostate], ieee80211_state_name[nstate]);
 	ic->ic_state = nstate;			/* state transition */
 	ni = ic->ic_bss;			/* NB: no reference held */
+	if (ni != NULL && nstate != IEEE80211_S_ASSOC &&
+	    nstate != IEEE80211_S_RUN)
+		ieee80211_wme_reset(ni);
 	switch (nstate) {
 	case IEEE80211_S_INIT:
 		switch (ostate) {

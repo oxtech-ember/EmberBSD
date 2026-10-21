@@ -12,6 +12,8 @@ else
 fi
 awk '/^#define[[:space:]]+IEEE80211_(ADDR_LEN|NWID_LEN)[[:space:]]/ {print}' \
     "$src/sys/net80211/ieee80211.h" > "$work/scan-abi.h"
+awk '/^#define[[:space:]]+IEEE80211_NODE_(QOS|WME_OFFER|WME_VALID)[[:space:]]/ {print}' \
+    "$src/sys/net80211/ieee80211_node.h" >> "$work/scan-abi.h"
 awk '/^#define[[:space:]]+IEEE80211_RATE_MAXSIZE[[:space:]]/ {print}' \
     "$src/sys/net80211/_ieee80211.h" >> "$work/scan-abi.h"
 awk '/^#define[[:space:]]+IEEE80211_SCAN_(CAPINFO_HI|RSSI_DBM)[[:space:]]/ {print}

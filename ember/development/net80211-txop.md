@@ -70,3 +70,7 @@ Local rejection prevents unsupported hardware writes, but does not propagate
 an error back to the initiating ioctl or association. That gap must be closed
 before enabling native WME negotiation. This prerequisite does not enable
 WME, HT, VHT, aggregation or any wrapper classifier.
+
+The [STA negotiation prerequisite](net80211-wme.md) adds strict peer parameter
+validation and offer lifetime without closing that callback/error contract or
+the stale compatibility applied-table gap.

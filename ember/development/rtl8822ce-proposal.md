@@ -170,7 +170,10 @@ The legacy wrapper does not call this API or advertise WME, HT or VHT.
 A future WME consumer still needs classification, negotiation and serialized
 parameter updates across channel changes.
 The shared [TXOP width prerequisite](net80211-txop.md) preserves wire values
-and rejects unsupported consumer widths. It does not enable WME negotiation.
+and rejects unsupported consumer widths. The shared [STA offer prerequisite](net80211-wme.md)
+validates emitted offers, peer parameters and sequence domains. Callback errors,
+the compatibility applied table and native wrapper integration remain gates
+before WME can be enabled.
 
 Run the actual-source contracts with GCC16:
 

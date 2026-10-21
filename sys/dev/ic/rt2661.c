@@ -1645,7 +1645,8 @@ rt2661_tx_data(struct rt2661_softc *sc, struct mbuf *m0,
 	 * Packet Bursting: backoff after ppb=8 frames to give other STAs a
 	 * chance to contend for the wireless medium.
 	 */
-	tid = WME_AC_TO_TID(M_WME_GETAC(m0));
+	tid = IEEE80211_QOS_HAS_SEQ(wh) ?
+	    WME_AC_TO_TID(M_WME_GETAC(m0)) + 1 : 0;
 	if (ic->ic_opmode == IEEE80211_M_STA && (ni->ni_txseqs[tid] & 7))
 		flags |= RT2661_TX_IFS_SIFS;
 

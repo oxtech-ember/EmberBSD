@@ -889,6 +889,7 @@ ieee80211_sta_join(struct ieee80211com *ic, struct ieee80211_node *selbs)
 void
 ieee80211_sta_leave(struct ieee80211com *ic, struct ieee80211_node *ni)
 {
+	ieee80211_wme_reset(ni);
 	ic->ic_node_cleanup(ni);
 	ieee80211_notify_node_leave(ic, ni);
 }
@@ -983,6 +984,9 @@ node_cleanup(struct ieee80211_node *ni)
 		ic->ic_set_tim(ni, 0);
 
 	ni->ni_associd = 0;
+	ni->ni_flags &= ~(IEEE80211_NODE_WME_OFFER | IEEE80211_NODE_WME_VALID);
+	if (ic->ic_opmode == IEEE80211_M_STA)
+		ni->ni_flags &= ~IEEE80211_NODE_QOS;
 	memset(&ni->ni_phy_ies, 0, sizeof(ni->ni_phy_ies));
 	if (ni->ni_challenge != NULL) {
 		free(ni->ni_challenge, M_DEVBUF);
