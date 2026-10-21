@@ -76,7 +76,7 @@ def execute(qemu, work, addresses, timeout, process, jsonio):
         remote = None
         try:
             owner.start()
-            jsonio.write_json(pending, dict(state='ownership-pending', accepted=False, session=owner.pid, control_root=temporary))
+            jsonio.write_json(pending, dict(state='ownership-pending', accepted=False, session=owner.pid, control_root=temporary), exclusive=False, mode=0o600)
             remote = Remote(path, time.monotonic() + timeout, owner)
             remote.breakpoint(addresses['harness_done'] & ~1)
             for name, (start, end) in policy.SPANS.items():
@@ -109,7 +109,7 @@ def execute(qemu, work, addresses, timeout, process, jsonio):
                     owner.stop()
                 except BaseException as caught:
                     closure = caught
-                    jsonio.write_json(pending, dict(state='ownership-unproven', accepted=False, session=owner.pid, control_root=temporary, error=str(caught)))
+                    jsonio.write_json(pending, dict(state='ownership-unproven', accepted=False, session=owner.pid, control_root=temporary, error=str(caught)), exclusive=False, mode=0o600)
                 if closure is None:
                     pending.unlink()
                     shutil.rmtree(temporary)
@@ -146,7 +146,10 @@ def main(argv):
             state = execute(args.qemu, work, symbols(prefix, work, process), args.timeout, process, jsonio)
     except BaseException as error:
         state.update(state='refused', accepted_original_fixture=False, accepted_secure_firmware=False, error=str(error))
-        jsonio.write_json(work / 'status.json', state)
+        try:
+            jsonio.write_json(work / 'status.json', state, exclusive=False, mode=0o600)
+        except BaseException as secondary:
+            raise RuntimeError('Primary failure: ' + str(error) + '; status write also failed: ' + str(secondary)) from error
         raise
-    jsonio.write_json(work / 'status.json', state)
+    jsonio.write_json(work / 'status.json', state, exclusive=False, mode=0o600)
     return state

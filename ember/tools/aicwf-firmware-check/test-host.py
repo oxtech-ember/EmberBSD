@@ -12,6 +12,8 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import oracle
 import policy
+import driver
+import json
 import cases
 from remote import Remote
 
@@ -69,6 +71,26 @@ class HostTests(unittest.TestCase):
         self.assertEqual(remote.command('Z1,400,2'),b'OK')
         remote.deadline=time.monotonic()-1
         self.assertRaises(TimeoutError,remote.remaining)
+    def test_existing_status_replaced_and_primary_error_preserved(self):
+        class JSON:
+            @staticmethod
+            def write_json(path,value,exclusive=True,mode=0o644):
+                with Path(path).open('x' if exclusive else 'w') as handle:
+                    json.dump(value,handle)
+        for fail in (False,True):
+            with tempfile.TemporaryDirectory(prefix='aic-status-') as temporary:
+                root=Path(temporary);work=root/'work'
+                args=['--mode','build','--firmware',str(root/'external.bin'),'--output',str(work),'--compiler-prefix',str(root/'tools'),'--sdk-source',str(root/'sdk')]
+                process=SimpleNamespace(sanitized_environment=lambda:{},run_logged=lambda *a,**k:None)
+                if fail:
+                    def refused(*args,**kwargs):raise RuntimeError('primary compiler witness')
+                    process.run_logged=refused
+                with patch.object(driver,'sdk',return_value=(process,JSON)),patch.object(driver,'toolchain',return_value=root/'tools'),patch.object(policy,'prepare',side_effect=lambda original,output:output.mkdir()):
+                    if fail:self.assertRaisesRegex(RuntimeError,'primary compiler witness',driver.main,args)
+                    else:self.assertEqual(driver.main(args)['state'],'built-not-executed')
+                state=json.loads((work/'status.json').read_text())
+                self.assertFalse(state['accepted_original_fixture'])
+                self.assertEqual(state['state'],'refused' if fail else 'built-not-executed')
     def test_only_frontend_freestanding_build_commands(self):
         commands=policy.build_commands(Path('/tools'),Path('/work'),Path('/source'))
         for argv in commands:
