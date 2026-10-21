@@ -147,7 +147,11 @@ It injects producer-write failures before and after the modeled bus effect.
 The snapshot and updates use the existing bus interrupt lock. No addresses or
 payload bytes are retained. An undersized stats buffer returns `ENOSPC`.
 The native PCI contract checks maximum-value output and every capacity through
-4096 bytes. This diagnostic does not change selected rates or capability advertisement.
+4096 bytes. The stats sysctl allocates its per-call snapshot before driver locks
+and frees it after lookup or any error. The wrapper contract applies the
+3584-byte limit to its host layout and checks nested calls and buffer lifetime.
+A target kernel build must validate the native stack frame separately.
+This diagnostic does not change selected rates or capability advertisement.
 Target build and physical rate measurements remain separate acceptance steps.
 
 Explicit fixed legacy media has a separate opt-in TX path. The wrapper reads

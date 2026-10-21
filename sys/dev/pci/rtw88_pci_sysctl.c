@@ -2,6 +2,7 @@
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Origin: EmberBSD RTL8822CE operator bootstrap trigger, AI-assisted. */
 #include <sys/param.h>
+#include <sys/kmem.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <dev/ic/rtw88var.h>
@@ -27,16 +28,21 @@ static int
 rtwce_sysctl_stats(SYSCTLFN_ARGS)
 {
 	struct sysctlnode node;
-	char buf[4096];
+	const size_t buflen = 4096;
+	char *buf;
 	int error;
 
-	error = rtwce_stats(buf, sizeof(buf));
-	if (error != 0)
-		return error;
-	node = *rnode;
-	node.sysctl_data = buf;
-	node.sysctl_size = strlen(buf) + 1;
-	return sysctl_lookup(SYSCTLFN_CALL(&node));
+	/* This process-context allocation precedes the driver's stats locks. */
+	buf = kmem_alloc(buflen, KM_SLEEP);
+	error = rtwce_stats(buf, buflen);
+	if (error == 0) {
+		node = *rnode;
+		node.sysctl_data = buf;
+		node.sysctl_size = strlen(buf) + 1;
+		error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	}
+	kmem_free(buf, buflen);
+	return error;
 }
 
 static int

@@ -21,6 +21,7 @@ name: Native RTL8822CE source contracts
       - 'sys/net80211/*ieee80211*.h'
       - 'sbin/ifconfig/**'
       - 'sys/sys/ioccom.h'
+      - 'sys/sys/sysctl.h'
       - 'sys/sys/queue.h'
       - 'sys/net/if.h'
       - 'sys/net/if_media.h'
@@ -52,6 +53,7 @@ name: Native RTL8822CE source contracts
       - 'sys/net80211/*ieee80211*.h'
       - 'sbin/ifconfig/**'
       - 'sys/sys/ioccom.h'
+      - 'sys/sys/sysctl.h'
       - 'sys/sys/queue.h'
       - 'sys/net/if.h'
       - 'sys/net/if_media.h'
@@ -88,6 +90,7 @@ jobs:
             /sys/dev/ic/rt2661.c
             /sys/dev/ic/rt2661reg.h
             /sys/dev/pci/if_rtw88_pci.c
+            /sys/dev/pci/rtw88_pci_sysctl.c
             /sys/dev/pci/pcidevs.h
             /sys/net80211/ieee80211.c
             /sys/net80211/ieee80211_ioctl.c
@@ -105,6 +108,7 @@ jobs:
             /sys/net80211/ieee80211_ioctl.h
             /sys/net80211/ieee80211_node.h
             /sys/sys/ioccom.h
+            /sys/sys/sysctl.h
             /sys/sys/queue.h
             /sys/net/if.h
             /sys/net/if_media.h
