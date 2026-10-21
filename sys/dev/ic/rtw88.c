@@ -1146,9 +1146,9 @@ rtw88_edca_apply(struct rtw88_softc *sc,
 	return error;
 }
 
-int
-rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
-    size_t len)
+static int
+rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
+    size_t len, int fixed_rate)
 {
 	struct rtw88_tx_info tx;
 	struct rtw88_wme_map map;
@@ -1216,6 +1216,8 @@ rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
 	rates = sc->sc_basic_rates & (sc->sc_channel > 14 ? 0xff0U : 0xfffU);
 	if (rates != 0)
 		tx.rate = (uint8_t)__builtin_ctz(rates);
+	if (fixed_rate >= 0)
+		tx.rate = (uint8_t)fixed_rate;
 	tx.rate_id = tx.rate >= 4 ? RTW88_RATEID_G : RTW88_RATEID_B_20M;
 	tx.flags = RTW88_TX_DIS_QSELSEQ | RTW88_TX_USE_RATE |
 	    RTW88_TX_DIS_RATE_FB;
@@ -1261,6 +1263,60 @@ rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
 	sc->sc_stats.tx_queued++;
 	return sc->sc_ops->write_2(sc->sc_bus, rtw88_txq_hw[q].idx,
 	    (uint16_t)txq->wp);
+}
+
+int
+rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
+    size_t len)
+{
+	return rtw88_tx_submit(sc, q, frame, len, -1);
+}
+
+int
+rtw88_tx_fixed(struct rtw88_softc *sc, unsigned q, const void *frame,
+    size_t len, const struct rtw88_tx_fixed *fixed)
+{
+	static const uint8_t rates[] = { 2, 4, 11, 22, 12, 18, 24, 36,
+	    48, 72, 96, 108 };
+	const uint8_t *bytes = frame;
+	unsigned rate;
+
+	if (fixed == NULL || fixed->associated != 1 ||
+	    fixed->use_protection > 1 || (fixed->peer_mask & ~0xfffU) != 0 ||
+	    fixed->channel == 0 || fixed->channel != sc->sc_channel)
+		return EINVAL;
+	if (frame == NULL || len < 24)
+		return EMSGSIZE;
+	if (q == RTW88_TXQ_MGMT || (bytes[0] != 0x08 && bytes[0] != 0x88) ||
+	    (bytes[1] & 3) != 1 || (bytes[1] & 0x80) != 0 ||
+	    (bytes[4] & 1) != 0 || (bytes[16] & 1) != 0)
+		return EOPNOTSUPP;
+	for (rate = 0; rate < __arraycount(rates); rate++)
+		if (fixed->rate500 == rates[rate])
+			break;
+	if (rate == __arraycount(rates) ||
+	    (fixed->peer_mask & (1U << rate)) == 0)
+		return EINVAL;
+	switch (fixed->mode) {
+	case RTW88_FIXED_11A:
+		if (fixed->channel <= 14 || rate < 4)
+			return EINVAL;
+		break;
+	case RTW88_FIXED_11B:
+		if (fixed->channel > 14 || rate >= 4)
+			return EINVAL;
+		break;
+	case RTW88_FIXED_11G:
+		if (fixed->channel > 14)
+			return EINVAL;
+		break;
+	default:
+		return EINVAL;
+	}
+	/* The current descriptor API has no qualified RTS/CTS protection policy. */
+	if (rate >= 4 && fixed->use_protection)
+		return EOPNOTSUPP;
+	return rtw88_tx_submit(sc, q, frame, len, (int)rate);
 }
 
 /* pci.c rtw_pci_tx_isr: completion is the chip's read index, nothing else. */

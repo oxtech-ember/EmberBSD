@@ -129,7 +129,8 @@ A separate 60-probe link-local IPv6 run receives all replies.
 The IPv4 run loses one of 60 replies. This is a short regression, not endurance acceptance.
 The read-only `hw.rtwce_stats` output also reports the current `basic` rate
 mask and an encoded unicast DATA sample. `txdata` counts successful encodings;
-`txrate` is the last descriptor rate code, and `txbasic` is its input mask.
+`txrate` is the last descriptor rate code. `txbasic` is the BASIC mask at
+that encoding; an explicit fixed rate does not use this mask for selection.
 `txr0` through `txr11` count encodings at 1, 2, 5.5, 11, 6, 9, 12, 18, 24,
 36, 48 and 54 Mbps. `txother` counts any encoded rate outside that legacy set.
 A zero `txdata` means no sample; rate code zero alone does not prove 1 Mbps.
@@ -141,6 +142,25 @@ payload bytes are retained. An undersized stats buffer returns `ENOSPC`.
 The native PCI contract checks maximum-value output and every capacity through
 2048 bytes. This diagnostic does not change selected rates or enable WME/HT.
 Target build and physical rate measurements remain separate acceptance steps.
+
+Explicit fixed legacy media has a separate opt-in TX path. The wrapper reads
+`ic_fixed_rate` as an index into `ic_sup_rates[ic_curmode]`. It passes a numeric
+rate in 500 kbps units, the peer rate mask, mode, channel and association proof
+to the core. The core checks the exact 12-rate legacy map before DMA. It does
+not choose the highest peer rate or apply fallback. AUTO still uses the old
+lowest-basic-rate descriptor policy. This is not adaptive rate control.
+
+The fixed path requires the current associated STA BSS in RUN, an active policy,
+no pending state work and the current core channel. Only ToDS unicast payload
+DATA is eligible. Management, null DATA and group DATA keep their old descriptor
+bytes. For ToDS the group destination is addr3, not the AP receiver in addr1.
+Malformed explicit inputs return an error. OFDM with ERP protection requested
+returns `EOPNOTSUPP` until a separate RTS/CTS policy is qualified. This API does
+not enable WME or HT. The native fixed contract executes the complete wrapper
+handoff and core, plus actual association rate negotiation with reordered peer
+rates. Kernel object layout, channel lookup and bus services are modeled.
+It does not execute the complete media-change and station-join functions.
+Target build and fixed-rate physical acceptance remain pending.
 
 Manual SSID updates now stage the desired network without requesting a cold
 restart. Automatic and device-controlled roaming retain their reset result.
@@ -229,6 +249,7 @@ Run the actual-source contracts with GCC16:
 CC=gcc-16 sh ember/tools/rtw88-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-pci-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-start-contract.sh
+CC=gcc-16 sh ember/tools/rtw88-fixed-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-wme-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-fw-init-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-net-contract.sh

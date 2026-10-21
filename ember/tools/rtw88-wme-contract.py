@@ -11,7 +11,8 @@ parts = [notice]
 parts.extend(re.findall(r'^#define RTW88_[^\n]*(?:\\\n[^\n]*)*', s, re.M))
 parts.append(re.search(r'static const struct \{.*?\} rtw88_txq_hw\[.*?\n\};', s, re.S).group())
 for name, result in [('rtw88_put16','static void'),('rtw88_put32','static void'),
-                     ('rtw88_tx_available','unsigned'),('rtw88_tx_raw','int'),
+                     ('rtw88_tx_available','unsigned'),('rtw88_tx_submit','static int'),
+                     ('rtw88_tx_raw','int'),('rtw88_tx_fixed','int'),
                      ('rtw88_edca_apply','int')]:
     match = re.search(r'^'+name+r'\([^;]*?\n\{', s, re.M)
     if match is None:

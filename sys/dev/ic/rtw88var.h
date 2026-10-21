@@ -215,6 +215,23 @@ int rtw88_edca_apply(struct rtw88_softc *,
  * EOPNOTSUPP; EDCA quarantine returns its I/O error.
  */
 int rtw88_tx_raw(struct rtw88_softc *, unsigned, const void *, size_t);
+/*
+ * Explicit legacy media context. The stack owns association and peer proof.
+ * No node pointer escapes the caller. Rates use numeric 500 kbps units.
+ * This opt-in API is not rate control. Caller holds the bus interrupt lock.
+ * Only associated STA ToDS unicast payload DATA is eligible. Invalid metadata
+ * and OFDM requiring ERP protection fail before DMA. No fallback is applied.
+ */
+#define RTW88_FIXED_11A 1U
+#define RTW88_FIXED_11B 2U
+#define RTW88_FIXED_11G 3U
+struct rtw88_tx_fixed {
+	uint16_t rate500, peer_mask, channel;
+	uint8_t mode, associated, use_protection;
+};
+int rtw88_tx_fixed(struct rtw88_softc *, unsigned, const void *, size_t,
+    const struct rtw88_tx_fixed *);
+
 /* Read software ring capacity while holding the bus interrupt lock. */
 unsigned rtw88_tx_available(struct rtw88_softc *, unsigned);
 /*

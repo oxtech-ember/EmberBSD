@@ -63,7 +63,7 @@ static struct {
 	unsigned fail_alloc_at;	/* 1-based allocation that fails, or 0. */
 	unsigned alloc_calls;
 	unsigned delays;
-	unsigned writes;
+	unsigned writes, syncs;
 	unsigned diag_reads;
 	uint32_t fail_diag_reg;
 	uint32_t fail_edca_reg;
@@ -523,6 +523,7 @@ dma_sync(void *cookie, struct rtw88_dma *ring, int ops)
 	(void)cookie;
 	(void)ring;
 	(void)ops;
+	f.syncs++;
 }
 
 static int

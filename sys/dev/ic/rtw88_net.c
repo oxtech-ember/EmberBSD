@@ -507,6 +507,67 @@ rtw88_net_get_stats(struct rtw88_net *net, struct rtw88_net_stats *stats)
 	stats->rx = net->policy.rx;
 }
 
+/* Caller holds Giant and the bus lock; copy no node lifetime into the core. */
+static int
+rtw88_net_tx_submit(struct rtw88_net *net, struct ieee80211_node *ni,
+    unsigned q, const void *frame, size_t len)
+{
+	static const uint8_t rates[] = { 2, 4, 11, 22, 12, 18, 24, 36,
+	    48, 72, 96, 108 };
+	struct ieee80211com *ic = &net->ic;
+	const struct ieee80211_rateset *local, *peer;
+	const uint8_t *bytes = frame;
+	struct rtw88_tx_fixed fixed;
+	unsigned i, j, aid;
+	int index = ic->ic_fixed_rate;
+
+	/* Keep AUTO and non-payload/group frames on the existing raw path. */
+	if (index == IEEE80211_FIXED_RATE_NONE || q == RTW88_TXQ_MGMT ||
+	    frame == NULL || len < 24 ||
+	    (bytes[0] & 0x0c) != 0x08 || (bytes[0] & 0x40) != 0 ||
+	    (bytes[4] & 1) != 0 ||
+	    ((bytes[1] & 3) == 1 && (bytes[16] & 1) != 0))
+		return rtw88_tx_raw(net->core, q, frame, len);
+	if (net->work_pending || !net->policy.accepting || net->policy.dying)
+		return EBUSY;
+	if (index < 0 || ic->ic_state != IEEE80211_S_RUN ||
+	    ic->ic_opmode != IEEE80211_M_STA || ni == NULL || ni != ic->ic_bss ||
+	    ni->ni_chan == NULL || ni->ni_chan != ic->ic_curchan)
+		return EINVAL;
+	aid = ni->ni_associd & 0x3fff;
+	if (aid == 0 || aid > 2007)
+		return EINVAL;
+	memset(&fixed, 0, sizeof(fixed));
+	switch (ic->ic_curmode) {
+	case IEEE80211_MODE_11A:
+		fixed.mode = RTW88_FIXED_11A;
+		break;
+	case IEEE80211_MODE_11B:
+		fixed.mode = RTW88_FIXED_11B;
+		break;
+	case IEEE80211_MODE_11G:
+		fixed.mode = RTW88_FIXED_11G;
+		break;
+	default:
+		return EOPNOTSUPP;
+	}
+	local = &ic->ic_sup_rates[ic->ic_curmode];
+	peer = &ni->ni_rates;
+	if (local->rs_nrates > __arraycount(local->rs_rates) ||
+	    (unsigned)index >= local->rs_nrates ||
+	    peer->rs_nrates > __arraycount(peer->rs_rates))
+		return EINVAL;
+	fixed.rate500 = local->rs_rates[index] & IEEE80211_RATE_VAL;
+	for (i = 0; i < peer->rs_nrates; i++)
+		for (j = 0; j < __arraycount(rates); j++)
+			if ((peer->rs_rates[i] & IEEE80211_RATE_VAL) == rates[j])
+				fixed.peer_mask |= 1U << j;
+	fixed.channel = ieee80211_chan2ieee(ic, ni->ni_chan);
+	fixed.associated = 1;
+	fixed.use_protection = (ic->ic_flags & IEEE80211_F_USEPROT) != 0;
+	return rtw88_tx_fixed(net->core, q, frame, len, &fixed);
+}
+
 static void
 rtw88_net_start(struct ifnet *ifp)
 {
@@ -577,7 +638,8 @@ rtw88_net_start(struct ifnet *ifp)
 		bpf_mtap3(ic->ic_rawbpf, m, BPF_D_OUT);
 		m_copydata(m, 0, m->m_pkthdr.len, net->txbuf);
 		mutex_enter(net->lock);
-		error = rtw88_tx_raw(net->core, q, net->txbuf, m->m_pkthdr.len);
+		error = rtw88_net_tx_submit(net, ni, q, net->txbuf,
+		    m->m_pkthdr.len);
 		mutex_exit(net->lock);
 		m_freem(m);
 		ieee80211_free_node(ni);
