@@ -66,6 +66,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_input.c,v 1.117 2022/11/19 07:57:51 yamt E
 #include <net/if_llc.h>
 
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_amsdu.h>
 
 #include <net/bpf.h>
 
@@ -150,6 +151,122 @@ static void ieee80211_update_adhoc_node(struct ieee80211com *,
 
 /* -------------------------------------------------------------------------- */
 
+/* m_copydata handles a fragmented mbuf chain; parser offsets are bounded. */
+static int
+ieee80211_amsdu_read_mbuf(void *arg, size_t offset, size_t len, void *dst)
+{
+	m_copydata(arg, (int)offset, (int)len, dst);
+	return 0;
+}
+
+/* Strip the input header; the caller retains ownership on every return. */
+static struct mbuf *
+ieee80211_input_amsdu(struct ieee80211com *ic, struct mbuf *m, int hdrspace)
+{
+	struct ieee80211_amsdu_subframe sub;
+	struct mbuf *n, *head = NULL, **tail = &head;
+	size_t offset = 0, total;
+	int status;
+
+	total = m->m_pkthdr.len - hdrspace;
+	m_adj(m, hdrspace);
+	while ((status = ieee80211_amsdu_next(ieee80211_amsdu_read_mbuf, m,
+	    total, ic->ic_myaddr, &offset, &sub)) == 1) {
+		/* Validate every subframe before the first allocation. */
+	}
+	if (status != 0)
+		return NULL;
+	offset = 0;
+	while ((status = ieee80211_amsdu_next(ieee80211_amsdu_read_mbuf, m,
+	    total, ic->ic_myaddr, &offset, &sub)) == 1) {
+		MGETHDR(n, M_DONTWAIT, MT_DATA);
+		if (n == NULL)
+			goto fail;
+		if (sub.length + 6 + ETHER_ALIGN > MHLEN) {
+			MCLGET(n, M_DONTWAIT);
+			if ((n->m_flags & M_EXT) == 0) {
+				m_freem(n);
+				goto fail;
+			}
+		}
+		n->m_data += ETHER_ALIGN;
+		n->m_len = n->m_pkthdr.len = (int)sub.length + 6;
+		m_copy_rcvif(n, m);
+		memcpy(mtod(n, void *), sub.header, 12);
+		memcpy(mtod(n, uint8_t *) + 12, sub.header + 20, 2);
+		m_copydata(m, (int)sub.offset + 22, (int)sub.length - 8,
+		    mtod(n, uint8_t *) + 14);
+		n->m_nextpkt = NULL;
+		*tail = n;
+		tail = &n->m_nextpkt;
+	}
+	if (status == 0)
+		return head;
+fail:
+	while ((n = head) != NULL) {
+		head = n->m_nextpkt;
+		n->m_nextpkt = NULL;
+		m_freem(n);
+	}
+	return NULL;
+}
+
+/* Apply the same port, privacy, statistics and delivery policy per MSDU. */
+static int
+ieee80211_accept_data(struct ieee80211com *ic, struct ieee80211_node *ni,
+    struct mbuf *m, const struct ieee80211_key *key)
+{
+	struct ifnet *ifp = ic->ic_ifp;
+	const struct ether_header *eh;
+
+	eh = mtod(m, struct ether_header *);
+	if (!ieee80211_node_is_authorized(ni)) {
+		/*
+		 * Deny any non-PAE frames received prior to
+		 * authorization.  For open/shared-key
+		 * authentication the port is mark authorized
+		 * after authentication completes.  For 802.1x
+		 * the port is not marked authorized by the
+		 * authenticator until the handshake has completed.
+		 */
+		if (eh->ether_type != htons(ETHERTYPE_PAE)) {
+			IEEE80211_DISCARD_MAC(ic, IEEE80211_MSG_INPUT,
+			    eh->ether_shost, "data",
+			    "unauthorized port: ether type 0x%x len %u",
+			    eh->ether_type, m->m_pkthdr.len);
+			ic->ic_stats.is_rx_unauth++;
+			IEEE80211_NODE_STAT(ni, rx_unauth);
+			goto err;
+		}
+	} else {
+		/*
+		 * When denying unencrypted frames, discard
+		 * any non-PAE frames received without encryption.
+		 */
+		if ((ic->ic_flags & IEEE80211_F_DROPUNENC) &&
+		    key == NULL && eh->ether_type != htons(ETHERTYPE_PAE)) {
+			/*
+			 * Drop unencrypted frames.
+			 */
+			ic->ic_stats.is_rx_unencrypted++;
+			IEEE80211_NODE_STAT(ni, rx_unencrypted);
+			goto out;
+		}
+	}
+
+	if_statinc(ifp, if_ipackets);
+	IEEE80211_NODE_STAT(ni, rx_data);
+	IEEE80211_NODE_STAT_ADD(ni, rx_bytes, m->m_pkthdr.len);
+
+	ieee80211_deliver_data(ic, ni, m);
+
+	return 0;
+err:
+	if_statinc(ifp, if_ierrors);
+out:
+	return -1;
+}
+
 /*
  * Input code for a DATA frame.
  */
@@ -161,9 +278,8 @@ ieee80211_input_data(struct ieee80211com *ic, struct mbuf **mp,
 	struct ieee80211_key *key;
 	struct ieee80211_frame *wh;
 	u_int8_t dir, subtype;
-	struct ether_header *eh;
 	struct mbuf *m = *mp;
-	int hdrspace;
+	int hdrspace, amsdu;
 
 	wh = mtod(m, struct ieee80211_frame *);
 	dir = wh->i_fc[1] & IEEE80211_FC1_DIR_MASK;
@@ -177,6 +293,19 @@ ieee80211_input_data(struct ieee80211com *ic, struct mbuf **mp,
 		goto out;
 	}
 	wh = mtod(m, struct ieee80211_frame *);
+	amsdu = ieee80211_has_qos(wh) &&
+	    (((const struct ieee80211_qosframe *)wh)->i_qos[0] &
+	    IEEE80211_QOS_AMSDU) != 0;
+	if (amsdu && (ic->ic_opmode != IEEE80211_M_STA ||
+	    dir != IEEE80211_FC1_DIR_FROMDS ||
+	    subtype != IEEE80211_FC0_SUBTYPE_QOS ||
+	    (ni->ni_flags & IEEE80211_NODE_AMSDU_RX) == 0 ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr1, ic->ic_myaddr) ||
+	    (wh->i_fc[1] & (IEEE80211_FC1_MORE_FRAG | IEEE80211_FC1_ORDER)) ||
+	    (wh->i_seq[0] & IEEE80211_SEQ_FRAG_MASK) != 0)) {
+		ic->ic_stats.is_rx_decap++;
+		goto err;
+	}
 
 	switch (ic->ic_opmode) {
 	case IEEE80211_M_STA:
@@ -308,8 +437,35 @@ ieee80211_input_data(struct ieee80211com *ic, struct mbuf **mp,
 		goto out;
 	}
 
+	if (amsdu && key != NULL &&
+	    key->wk_cipher->ic_cipher != IEEE80211_CIPHER_AES_CCM) {
+		ic->ic_stats.is_rx_decap++;
+		goto err;
+	}
+
 	/* copy to listener after decrypt */
 	bpf_mtap3(ic->ic_rawbpf, m, BPF_D_IN);
+
+	if (amsdu) {
+		struct mbuf *list, *next;
+
+		list = ieee80211_input_amsdu(ic, m, hdrspace);
+		if (list == NULL) {
+			ic->ic_stats.is_rx_decap++;
+			IEEE80211_NODE_STAT(ni, rx_decap);
+			goto err;
+		}
+		m_freem(m);
+		while (list != NULL) {
+			next = list->m_nextpkt;
+			list->m_nextpkt = NULL;
+			if (ieee80211_accept_data(ic, ni, list, key) != 0)
+				m_freem(list);
+			list = next;
+		}
+		*mp = NULL;
+		return 0;
+	}
 
 	/*
 	 * Finally, strip the 802.11 header.
@@ -326,47 +482,8 @@ ieee80211_input_data(struct ieee80211com *ic, struct mbuf **mp,
 		goto err;
 	}
 
-	eh = mtod(m, struct ether_header *);
-	if (!ieee80211_node_is_authorized(ni)) {
-		/*
-		 * Deny any non-PAE frames received prior to
-		 * authorization.  For open/shared-key
-		 * authentication the port is mark authorized
-		 * after authentication completes.  For 802.1x
-		 * the port is not marked authorized by the
-		 * authenticator until the handshake has completed.
-		 */
-		if (eh->ether_type != htons(ETHERTYPE_PAE)) {
-			IEEE80211_DISCARD_MAC(ic, IEEE80211_MSG_INPUT,
-			    eh->ether_shost, "data",
-			    "unauthorized port: ether type 0x%x len %u",
-			    eh->ether_type, m->m_pkthdr.len);
-			ic->ic_stats.is_rx_unauth++;
-			IEEE80211_NODE_STAT(ni, rx_unauth);
-			goto err;
-		}
-	} else {
-		/*
-		 * When denying unencrypted frames, discard
-		 * any non-PAE frames received without encryption.
-		 */
-		if ((ic->ic_flags & IEEE80211_F_DROPUNENC) &&
-		    key == NULL && eh->ether_type != htons(ETHERTYPE_PAE)) {
-			/*
-			 * Drop unencrypted frames.
-			 */
-			ic->ic_stats.is_rx_unencrypted++;
-			IEEE80211_NODE_STAT(ni, rx_unencrypted);
-			goto out;
-		}
-	}
-
-	if_statinc(ifp, if_ipackets);
-	IEEE80211_NODE_STAT(ni, rx_data);
-	IEEE80211_NODE_STAT_ADD(ni, rx_bytes, m->m_pkthdr.len);
-
-	ieee80211_deliver_data(ic, ni, m);
-
+	if (ieee80211_accept_data(ic, ni, m, key) != 0)
+		goto out;
 	*mp = NULL;
 	return 0;
 

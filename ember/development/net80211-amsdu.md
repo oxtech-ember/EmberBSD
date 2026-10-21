@@ -1,62 +1,108 @@
-# Bounded native A-MSDU parser prerequisite
+# Bounded native A-MSDU receive prerequisite
 
-This parser does not enable HT, VHT, WME or block acknowledgement.
-Native integration and negotiation remain separate gates.
+This source prerequisite does not enable HT, VHT, WME or block acknowledgement.
+No negotiation path sets `IEEE80211_NODE_AMSDU_RX`.
+Unsolicited A-MSDU frames are rejected by default.
+The driver continues to advertise its existing legacy profile.
+
+## Owner and profile
+
+The OS owns the parser and its native `net80211` consumer.
 The starting source is `2a185206935003c0db58a28a50f785df39c0e910`.
-
-## Parser policy
-
-The intended profile is STA, three-address FromDS QoS data, and a unicast receiver.
-Every subframe destination must equal the local station address.
-Every source must be an individual, nonzero address other than this station.
+The profile is STA, three-address FromDS QoS data, and a unicast receiver.
+Each subframe destination must equal the local station address.
+Each subframe source must be a nonzero individual address other than this station.
+This conservative local policy rejects reflected traffic in the initial STA profile.
 Sources can differ across an AP's bridged subframes.
-The aggregate limit is 3839 bytes after wireless header removal.
-Every MSDU is 8 through 1508 bytes, including the SNAP header.
-This limits Ethernet payloads to the ordinary 1500-byte MTU.
-The minimum subframe length bounds iteration and storage without a count allocation.
+The aggregate limit is 3839 bytes after removal of the wireless header.
+Each MSDU is 8 through 1508 bytes, including its SNAP header.
+This deliberately limits Ethernet payloads to the ordinary 1500-byte MTU.
+The 22-byte minimum subframe bounds storage and processing without a separate count allocation.
 
-The parser validates length, inter-subframe padding extent, addresses, LLC and SNAP.
-It accepts RFC1042 and bridge-tunnel SNAP Ethernet II only.
-It rejects the RFC1042 confusion destination `aa:aa:03:00:00:00`.
-Padding bytes need not be zero.
+Only RFC1042 or bridge-tunnel SNAP Ethernet II is accepted.
+Other LLC forms and aggregate EAPOL are outside this initial profile.
+The EAPOL restriction is a local conservative policy, not a claimed universal IEEE requirement.
+Legacy individual EAPOL frames retain the existing authorization exception.
+Group receivers, address4, QoS-null, HT-control, and fragmented aggregates are rejected.
+Encrypted aggregates require CCMP; legacy ciphers are unchanged for individual MSDUs.
+An unencrypted aggregate still passes the normal port and privacy policy per MSDU.
+
+## Security and ownership
+
+The parser rejects a destination of `aa:aa:03:00:00:00`.
+This is the RFC1042 header confusion mitigation described by the FragAttacks author.
+It also validates every length, SNAP prefix, OUI, EtherType, address and intermediate pad extent.
+Padding bytes are unspecified and need not be zero.
 Trailing padding without another complete subframe is rejected.
-Aggregate EAPOL and reflected source addresses are conservative local exclusions.
-These exclusions are not claimed as universal IEEE requirements.
-Individual legacy EAPOL processing is outside this parser.
 
-The reader callback allows native mbuf-chain access without flattening the aggregate.
-Only a fully validated aggregate can become eligible for allocation and delivery.
-The future native consumer must first validate all subframes, then allocate every output.
-It must retain decrypt/MIC, port authorization, privacy, counters and delivery ownership.
-The parser alone cannot establish those native network-path properties.
+Native processing retains decrypt and MIC verification before the parser.
+The existing raw BPF tap remains after decrypt/MIC and before decapsulation.
+The parser reads mbuf chains through the existing `m_copydata` service.
+A complete validation pass precedes the first output allocation.
+A second pass creates a bounded list of independently owned Ethernet mbufs.
+Allocation failure frees the entire unpublished list.
+Malformed final subframes cannot deliver earlier subframes.
+Each successful output preserves the input receive interface through native `m_copy_rcvif`.
+Ethernet payload alignment uses `ETHER_ALIGN`.
 
-## Primary sources and provenance
+The shared `ieee80211_accept_data` helper retains the existing authorization,
+privacy, interface statistics, node statistics, and native delivery path.
+The existing `ieee80211_deliver_data` remains the delivery owner.
+The aggregate input is freed once after successful list creation.
+The caller retains cleanup ownership on every failure.
+Future negotiation must set and clear the new node flag with the peer association lifetime.
+It must also supply BA/reorder and crypto lifetime requirements before HT advertisement.
+
+## Primary sources and origin
 
 - [OpenBSD input.c](https://github.com/openbsd/src/blob/ca87a5691ce1e78583f1df3ec557f19502fb98d4/sys/net80211/ieee80211_input.c),
-  revision 1.263, 2026-05-28: RFC1042 confusion and STA destination validation policies.
-  The parser retains the original three-clause BSD author notice.
-  Its reader API, bounds and strict SNAP/EAPOL policy are original adaptations.
+  revision 1.263, 2026-05-28: STA destination checks, RFC1042 confusion rejection,
+  queued subframes and native delivery ordering.
+  The parser retains its three-clause BSD author notice.
+  The reader API, full prevalidation, bounds and strict SNAP/EAPOL policy are original adaptations.
 - [FreeBSD ht.c](https://github.com/freebsd/freebsd-src/blob/d2145e9b96448da34d3cfede24c509af6d830c92/sys/net80211/ieee80211_ht.c):
-  native splitting and padding reference, under its two-clause BSD notice.
-  Its immediate delivery sequence is not copied.
+  native subframe splitting and padding reference, under its two-clause BSD notice.
+  Its immediate delivery sequence is not copied because this profile rejects malformed aggregates atomically.
 - [FragAttacks paper](https://papers.mathyvanhoef.com/usenix2021.pdf), Mathy Vanhoef,
   section 7.2: mitigation for unauthenticated A-MSDU-bit header confusion.
-  This is a security reference; no implementation is copied from it.
+  The paper is a security reference; no implementation is copied from it.
 
 Implementation and contracts are AI-assisted Codex work.
-A source-only reviewer other than the implementer checked the parser and its proposed native consumer.
+The contracts extract complete current native function bodies and retain their existing source notice.
+They do not substitute a second implementation of the native consumer.
 
-## Host contract
+## Reproduce and interpret checks
+
+Use host GCC 16.2.0. On macOS the runners select the active SDK for host headers.
+The only header shim supplies host string and integer declarations for kernel `sys/systm.h`.
+The consumer uses the actual wireless frame definitions from `ieee80211.h`.
+Its mbuf allocation, pullup, crypto and delivery boundaries are modeled host services.
+The actual `m_copy_rcvif` body runs against modeled `M_PKTHDR` and interface-index fields.
+The delivery sink checks index preservation on every output.
+The legacy decap function has a narrowly scoped sign-compare diagnostic suppression in its extraction.
+No target source diagnostic is suppressed.
+Cppcheck suppressions name two layout-only model fields and the unchanged legacy LLC pointer.
 
 ```sh
 CC=gcc-16 sh ember/tools/net80211-amsdu-parser-contract.sh
-CC=gcc-16 AMSDU_TEST_CFLAGS='-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer' \
+CC=gcc-16 sh ember/tools/net80211-amsdu-contract.sh
+CC=gcc-16 AMSDU_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' \
   sh ember/tools/net80211-amsdu-parser-contract.sh
+CC=gcc-16 AMSDU_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' \
+  sh ember/tools/net80211-amsdu-contract.sh
+CC=gcc-16 sh ember/tools/net80211-amsdu-analysis.sh
 ```
 
-GCC 16.2.0 executes the actual parser with literal boundary and policy fixtures.
-The contract also runs 50000 bounded malformed inputs.
-The self-source rejection regression failed before the policy check and passed after it.
-ASan/UBSan pass on the macOS arm64 host.
-Valgrind is unavailable on this execution platform.
-Native integration, target builds, real cryptography, VM and physical acceptance remain unclaimed.
+The baseline native consumer compiled and failed the valid two-subframe delivery assertion.
+The new parser passes boundary/policy fixtures and 50000 bounded malformed inputs.
+The native consumer passes 45 behavior checks, including allocation rollback and legacy EAPOL.
+GCC16 ASan/UBSan runtime checks pass on the host.
+The analysis runner covers the parser and extracted consumer with Cppcheck,
+GCC `-fanalyzer` and Clang Static Analyzer using the same host service model.
+The inspected tool versions are GCC 16.2.0, Cppcheck 2.22.0 and Apple Clang 21.0.0.
+These checks do not validate native kernel mbuf services or real cryptographic authentication.
+They do check that no subframe read/delivery precedes modeled successful MIC verification.
+Valgrind is unavailable for this macOS arm64 execution platform.
+No Valgrind, target kernel build, VM, radio or timing acceptance is claimed.
+A coherent GCC16 target build and native legacy regression remain integration gates.
+HT negotiation, reorder, interoperability and physical acceptance remain separate work.
