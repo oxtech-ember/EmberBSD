@@ -162,6 +162,12 @@ rates. Kernel object layout, channel lookup and bus services are modeled.
 The fixed contract reuses only the core startup fixture and labels it as such.
 The separate start runner retains all native state/default EDCA tests.
 The fixed contract does not execute complete media-change and station-join functions.
+The 2.4 GHz declarations include CCK, OFDM and DYN. Native `ifattach`
+requires OFDM to derive 11g mode support. The media contract executes the
+complete native attach, media registration, selection and mode consumers.
+It checks explicit 6, 24 and 54 Mbps 11g entries, 11a and 11b rate tables,
+band-limited active sets and AUTO restoration. Kernel services, object layout
+and ifmedia storage/lookup are models. This is not an ioctl transport test.
 Target build and fixed-rate physical acceptance remain pending.
 
 Manual SSID updates now stage the desired network without requesting a cold
@@ -252,6 +258,7 @@ CC=gcc-16 sh ember/tools/rtw88-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-pci-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-start-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-fixed-contract.sh
+CC=gcc-16 RTW88_MEDIA_ANALYZE=1 sh ember/tools/rtw88-media-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-wme-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-fw-init-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-net-contract.sh

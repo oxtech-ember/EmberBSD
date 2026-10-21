@@ -1649,7 +1649,9 @@ remain unverified.
   recovery and reconnect latency remain unqualified. Read-only stats now expose
   the BASIC mask and encoded unicast DATA rate counters; target and physical
   acceptance of this diagnostic remain pending. Explicit fixed legacy media
-  now has a validated native caller-to-core path; AUTO is unchanged. OFDM with
+  now has a validated native caller-to-core path; AUTO is unchanged. Corrected
+  2.4 GHz channel flags expose native 11g media selection. A separate actual-source
+  attach/media contract checks explicit legacy rates and band limits. OFDM with
   required ERP protection fails closed. Target and physical acceptance remain
   pending. Manual SSID staging and
   idempotent BSD media selection now pass a native legacy-scan contract. Target

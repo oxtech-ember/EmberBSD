@@ -8,6 +8,7 @@ name: Native RTL8822CE source contracts
       - 'sys/dev/ic/rtw*'
       - 'sys/dev/pci/if_rtw88_pci.c'
       - 'sys/dev/pci/rtw88_pci_sysctl.c'
+      - 'sys/net80211/ieee80211.c'
       - 'sys/net80211/ieee80211_proto.c'
       - 'sys/net80211/*ieee80211*.h'
       - 'sbin/ifconfig/**'
@@ -25,6 +26,7 @@ name: Native RTL8822CE source contracts
       - 'sys/dev/ic/rtw*'
       - 'sys/dev/pci/if_rtw88_pci.c'
       - 'sys/dev/pci/rtw88_pci_sysctl.c'
+      - 'sys/net80211/ieee80211.c'
       - 'sys/net80211/ieee80211_proto.c'
       - 'sys/net80211/*ieee80211*.h'
       - 'sbin/ifconfig/**'
@@ -58,6 +60,7 @@ jobs:
             /sys/dev/ic/rtw*
             /sys/dev/pci/if_rtw88_pci.c
             /sys/dev/pci/pcidevs.h
+            /sys/net80211/ieee80211.c
             /sys/net80211/ieee80211_proto.c
             /sys/net80211/_ieee80211.h
             /sys/net80211/ieee80211.h
@@ -88,6 +91,7 @@ jobs:
           RTW88_TEST_CFLAGS: -O2 -g -gdwarf-4 -fanalyzer
           RTW88_STOP_ANALYZE: '1'
           RTW88_START_ANALYZE: '1'
+          RTW88_MEDIA_ANALYZE: '1'
         run: |
           cat > "$RUNNER_TEMP/memcheck" <<'SH'
           #!/bin/sh

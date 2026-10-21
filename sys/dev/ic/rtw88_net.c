@@ -827,7 +827,8 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 		ic->ic_channels[ch].ic_freq = ieee80211_ieee2mhz(ch,
 		    IEEE80211_CHAN_2GHZ);
 		ic->ic_channels[ch].ic_flags = IEEE80211_CHAN_B |
-		    IEEE80211_CHAN_G | IEEE80211_CHAN_PASSIVE;
+		    IEEE80211_CHAN_G | IEEE80211_CHAN_OFDM |
+		    IEEE80211_CHAN_PASSIVE;
 	}
 	/* Passive discovery, without DFS. Board regulatory limits still apply. */
 	for (i = 0; i < __arraycount(channels5); i++) {
