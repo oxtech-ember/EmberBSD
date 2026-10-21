@@ -141,8 +141,9 @@ The cached minor5 zero is not a measured register value.
 GPU/display peer fields and display cached data remain unchanged through
 this task. One GPU Compute after NN completion then verifies all 16 words on
 the same boot. The
-NPU resources remain retained. All 133 TASK nodes, GPU and display cached
-state, and the eight cohort and four system-file hashes remain unchanged.
+NPU resources remain retained. All 133 TASK nodes and GPU/display cached
+state remain unchanged. Hashes match for eight cohort files, three additional
+system files (loader, libc and rc.local), and three firmware/probe files.
 This check does not run NN and GPU workloads simultaneously.
 
 The NN acceptance window lasts 31.389 seconds. It includes host checks and is

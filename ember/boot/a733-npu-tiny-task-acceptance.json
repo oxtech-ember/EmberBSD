@@ -143,7 +143,13 @@
     "verified_words": 16,
     "same_boot": true,
     "npu_resources_retained": true,
-    "eight_cohort_and_four_system_hashes_unchanged": true,
+    "protected_file_hashes": {
+      "cohort_file_count": 8,
+      "additional_system_file_count": 3,
+      "additional_firmware_probe_file_count": 3,
+      "total_file_count": 14,
+      "unchanged": true
+    },
     "all_133_task_nodes_and_gpu_display_cached_state_unchanged": true,
     "maximum_sampled_temperature_c": 54.002,
     "watchdog_unarmed_after": true,
