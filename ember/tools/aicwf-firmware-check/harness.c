@@ -39,10 +39,11 @@ void
 harness_irq(void)
 {
 	const volatile u32 *context = (const volatile u32 *)active_context;
-	u32 index;
 
 	irq_count++;
 	if (active_context != 0 && active_vif != 0) {
+		u32 index;
+
 		for (index = 0; index < 30; index++)
 			irq_snapshot[index] = context[index];
 		irq_snapshot[30] = *(volatile u32 *)(active_vif + 0x4b0U);
