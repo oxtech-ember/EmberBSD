@@ -5,7 +5,7 @@
 ./usr/lib/@ARCH_SUBDIR@
 ./usr/lib/@ARCH_SUBDIR@/i18n
 ./usr/lib/@ARCH_SUBDIR@/lua
-./usr/lib/@ARCH_SUBDIR@/lua/5.4
+./usr/lib/@ARCH_SUBDIR@/lua/5.5
 ./usr/lib/@ARCH_SUBDIR@/named
 ./usr/lib/@ARCH_SUBDIR@/openssl
 ./usr/lib/@ARCH_SUBDIR@/openssl/engines
