@@ -11,7 +11,20 @@
 #define __UNCONST(a) ((void *)(uintptr_t)(const void *)(a))
 #include "media-types.inc"
 #define setbit(a,i) ((a)[(i)/8] |= 1U << ((i)%8))
-#define isset(a,i) ((a)[(i)/8] & (1U << ((i)%8)))
+/* The modeled bitmap service accepts only channel indices 0..255.
+ * The owning attach initializes IBSS to NULL or an array channel. ANYC or
+ * foreign IBSS pointers are outside this contract, not repaired by this test.
+ */
+#ifdef NDEBUG
+#error "The media channel-domain assertions must remain enabled"
+#endif
+static int
+media_isset(const uint8_t *bits, unsigned index)
+{
+ assert(index < IEEE80211_CHAN_BYTES * 8U);
+ return bits[index / 8] & (1U << (index % 8));
+}
+#define isset(a,i) media_isset((a),(i))
 #define isclr(a,i) (!isset(a,i))
 #define IASSERT(c,m) assert(c)
 #define IEEE80211_DPRINTF(...) ((void)0)
