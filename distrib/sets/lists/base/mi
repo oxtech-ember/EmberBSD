@@ -1224,7 +1224,7 @@
 ./usr/lib/lua					base-sys-usr		compatfile
 ./usr/lib/lua/5.1				base-obsolete		obsolete
 ./usr/lib/lua/5.3				base-obsolete		obsolete
-./usr/lib/lua/5.4				base-sys-usr		compatfile
+./usr/lib/lua/5.5				base-sys-usr		compatfile
 ./usr/lib/named					base-sys-usr		compatfile
 ./usr/lib/npf					base-obsolete		obsolete
 ./usr/lib/openssl				base-crypto-usr		compatfile
@@ -4691,7 +4691,7 @@
 ./usr/share/lua					base-sys-root
 ./usr/share/lua/5.1				base-obsolete		obsolete
 ./usr/share/lua/5.3				base-obsolete		obsolete
-./usr/share/lua/5.4				base-sys-root
+./usr/share/lua/5.5				base-sys-root
 ./usr/share/man					base-man-share
 ./usr/share/man/COPYRIGHT			base-obsolete		obsolete
 ./usr/share/man/cat1				base-man-share

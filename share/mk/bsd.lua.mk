@@ -35,10 +35,10 @@
 #
 # C language sources are passed though lint, when MKLINT != "no"
 #
-# The Lua binary searches /usr/share/lua/5.4/ at this time and we could
+# The Lua binary searches /usr/share/lua/5.5/ at this time and we could
 # install .lua modules there which would mean slightly less duplication
 # in compat builds. However, MKSHARE=no would prevent such modules from
-# being installed so we just install everything under /usr/lib/lua/5.4/
+# being installed so we just install everything under /usr/lib/lua/5.5/
 #
 
 .if !defined(_BSD_LUA_MK_)
@@ -64,7 +64,7 @@ CLEANFILES+= a.out [Ee]rrs mklog core *.core
 
 ##
 ##### Global variables
-LUA_VERSION?=	5.4
+LUA_VERSION?=	5.5
 LUA_LIBDIR?=	${LIBDIR}/lua/${LUA_VERSION}
 LUAC?=		/usr/bin/luac
 
