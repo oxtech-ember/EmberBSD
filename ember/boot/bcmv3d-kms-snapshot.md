@@ -132,3 +132,24 @@ execute native DMA, the target pager, hardware scanout or the compositor.
 After a separately authorized target run, retain the kernel/profile identity,
 plane and FB metadata, sequence brackets, exit status and PPM hash. This is a
 BO diagnostic result. Physical display acceptance still needs its own evidence.
+
+## Physical BO-readback boundary
+
+A bounded 1920x1080 Plasma session on a BCM2712 board used kernel
+`cff738af94a53a1c70cd07c7a9f3cc18f6cb88f9` and the reader from
+[source commit 31c9b5e6](https://github.com/oxtech-ember/EmberBSD/commit/31c9b5e6c1cdf1e038860696ef2f057409837483).
+The reader ELF SHA256 was
+`93a53ac166663b5b11cb812240d6a64744b91471092960747e803682bbb02984`.
+The queried BO extent and read-only mapping were both 8,298,496 bytes.
+The PPM contained 2,073,600 pixels, 144,396 distinct RGB colors and no RGB-black
+pixels. Inspection showed a recognizable Plasma wallpaper, panel and input
+method notification. The PPM SHA256 was
+`5700a34408ea93f2e336df9c58bb0976e4a5b38116f8318ff4f0e84850837e79`.
+
+The session completed 90 seconds of liveness checks and normal logout.
+The BO reservation budget returned to its starting value. No new execution
+fault was recorded. Board temperature changed from 53.767 to 54.316 degrees C.
+This establishes a colored CPU-readable BO result. Operator HDMI acceptance,
+actual PV-head association and general GPU-cache coherency remain unverified.
+A repeated FB ID does not associate an earlier black capture with this BO
+lifetime.
