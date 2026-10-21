@@ -13,6 +13,7 @@ Publication is required only when you submit it as a shared contribution.
 | --- | --- |
 | Kernel, drivers, board support, OS boot or firmware integration | [EmberBSD](https://github.com/oxtech-ember/EmberBSD) |
 | Third-party recipes, portability patches or shared toolchains | [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports) |
+| Agent task flow, model/MCP adapters and agent-local tools | [EmberBSD-Spark](https://github.com/oxtech-ember/EmberBSD-Spark) |
 | Applications and standalone demonstrations | [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) |
 | Planned application interfaces or execution contracts | [SDK](https://github.com/oxtech-ember/EmberBSD-SDK) / [Runtime](https://github.com/oxtech-ember/EmberBSD-Runtime); verify that the required implementation exists |
 | Developer skills, client adapters and plugin packaging | [Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills) |

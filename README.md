@@ -35,6 +35,8 @@ are maintained in the related repositories below.
   The same acceptance procedure applies to maintainers and agent-assisted development.
 - To exchange a completed sysroot between developers, use the SDK's
   [verified export and import](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/sysroot-transfer.md).
+- For an executable C/Lua agent, see [Spark](https://github.com/oxtech-ember/EmberBSD-Spark).
+  It uses installed tools and a separately configured task/model service.
 - For an AI assistant, choose [user skills](#connect-user-skills) for device use
   or [developer skills](#connect-developer-skills) for development.
 
@@ -70,6 +72,7 @@ are maintained in the related repositories below.
 | [EmberBSD-DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards) | Hardware references for developers building their own devices | Boards, carriers, SoCs, interfaces, bootloaders and configuration applicability |
 | [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports) | Third-party build recipes, portability patches and native package profiles | pkgsrc recipes and experimental probes, each with its own validation limits |
 | [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) | Standalone applications and reproducible demonstrations | Local AI, robotics and desktop scenarios with requirements and checks |
+| [EmberBSD-Spark](https://github.com/oxtech-ember/EmberBSD-Spark) | Optional C/Lua agent: task execution, model requests, MCP and local tools | Lua 5.5 application with host fixtures; target and device acceptance are separate |
 | [EmberBSD-Runtime](https://github.com/oxtech-ember/EmberBSD-Runtime) | Application execution, lifecycle, permissions and shared device operations | Design stage; no released runtime implementation |
 | [EmberBSD-SDK](https://github.com/oxtech-ember/EmberBSD-SDK) | Shared Prebuild SDK workspaces, sysroot builds and verified transfers | Python workspace/build/export/import tools; stable application API and binary SDK release remain planned |
 | [Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills) | Instructions for developers and their AI assistants | Application development, board bring-up, shared ports and tested contributions; source analysis and memory checks for own and ported code |
@@ -79,6 +82,10 @@ DevBoards helps transfer research from a reference board to a custom device.
 Start with its [reader guide](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/docs/reader-guide.md) and [catalog](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/catalog.json), then check each record's sources and applicability.
 Current support claims remain in the [OS board catalog](ember/boards/README.md).
 Drivers and executable checks remain with OS and Ports.
+
+Spark owns executable agent behavior. The skills packages supply instructions.
+Spark currently uses system interfaces directly; integration with Runtime remains planned.
+The OS does not depend on an agent, model provider, or task server.
 
 Runtime will execute applications on the device; SDK will define their
 interfaces and development tools. Examples demonstrate usable scenarios;
@@ -205,6 +212,13 @@ on every board in the hardware catalog.
   application workloads remain unqualified.
 
 ### Local AI and robotics
+
+- **Optional C/Lua agent:** [Spark](https://github.com/oxtech-ember/EmberBSD-Spark)
+  provides task recovery, Responses-compatible model calls, MCP and local tools.
+  It uses the common Lua 5.5 ABI. Its [checks and limits](https://github.com/oxtech-ember/EmberBSD-Spark/blob/main/docs/testing.md)
+  separate host fixtures from target builds and physical-device acceptance.
+  The compatible task server is external. OS mechanisms and planned Runtime contracts
+  stay separate from agent policy; see [integration boundaries](https://github.com/oxtech-ember/EmberBSD-Spark/blob/main/docs/emberbsd.md).
 
 - **Local text and speech models:** pkgsrc recipes for llama.cpp 0.6.0nb1 and
   whisper.cpp 1.9.5, with separately supplied models. Linux GCC16 cross builds
