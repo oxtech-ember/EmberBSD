@@ -51,6 +51,7 @@ struct sun60i_a733_output_trace {
  * get_mode may run DDC. It must not start scanout. prepare must check HPD again.
  * A failure is retained. There is no detach or retry after a provider failure.
  */
+struct sun60i_a733_hdmi_phy_trace;
 struct sun60i_a733_output_ops {
 	int (*get_mode)(void *, const void *, struct sun60i_a733_output_mode *);
 	int (*prepare)(void *, const void *, const struct sun60i_a733_output_mode *);
@@ -59,6 +60,8 @@ struct sun60i_a733_output_ops {
 	void (*fault)(void *, const void *, int);
 	/* Optional. Copy initialized cache only, including after a sticky fault. */
 	void (*cached_trace)(const void *, struct sun60i_a733_output_trace *);
+	/* Optional. Copy initialized PHY cache only, without any I/O. */
+	void (*cached_phy_trace)(const void *, struct sun60i_a733_hdmi_phy_trace *);
 };
 int sun60i_a733_output_register(int, const struct sun60i_a733_output_ops *, void *);
 int sun60i_a733_output_get_mode(int, const void *,
@@ -71,5 +74,7 @@ int sun60i_a733_output_observed_vblank(int, const void *, uint64_t *);
 int sun60i_a733_output_fault(int, const void *, int);
 /* No readiness check or I/O. Failure leaves the output unchanged. */
 int sun60i_a733_output_cached_trace(int, struct sun60i_a733_output_trace *);
+int sun60i_a733_output_cached_phy_trace(int,
+    struct sun60i_a733_hdmi_phy_trace *);
 
 #endif

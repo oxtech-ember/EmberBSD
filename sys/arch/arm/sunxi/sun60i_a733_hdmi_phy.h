@@ -22,6 +22,15 @@ struct sun60i_a733_hdmi_plan {
 	uint16_t mpll[3];
 };
 
+/* Fixed cache layout. Values come from existing PHY I2C operations only. */
+enum {
+	A733_HDMI_PHY_TRACE_REQUEST = 1, A733_HDMI_PHY_TRACE_STATUS = 2,
+	A733_HDMI_PHY_TRACE_OBSERVED = 4, A733_HDMI_PHY_TRACE_COMPARED = 8
+};
+struct sun60i_a733_hdmi_phy_trace {
+	uint32_t version, valid, index, address, requested, observed, status;
+};
+
 struct sun60i_a733_hdmi_phy {
 	/* Zero this storage once, before registration. Do not reset a fault. */
 	const struct sun60i_a733_hdmi_io *io;
@@ -29,6 +38,7 @@ struct sun60i_a733_hdmi_phy {
 	int fault;
 	bool written, hpd_prepared, phy_prepared;
 	struct sun60i_a733_hdmi_plan plan;
+	struct sun60i_a733_hdmi_phy_trace trace;
 };
 
 /* Callers serialize all calls. No callback may recurse into this core. */

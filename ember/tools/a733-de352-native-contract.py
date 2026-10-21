@@ -39,6 +39,7 @@ def main():
                          if not line.startswith(("#include ", "__KERNEL_RCSID(")))
         (work / "sun60i_a733_de352_fdt.c").write_text(text + "\n")
         for name, directory in (("sun60i_a733_output.h", "sys/arch/arm/sunxi"),
+                                ("sun60i_a733_hdmi_phy.h", "sys/arch/arm/sunxi"),
                                 ("a733-de352-dma-contract.c", "ember/tools")):
             (work / name).write_bytes((root / directory / name).read_bytes())
         command = (shlex.split(os.environ.get("CC", "cc")) +

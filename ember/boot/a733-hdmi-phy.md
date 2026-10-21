@@ -59,6 +59,32 @@ These delay bounds do not bound a stalled bus transaction.
 It does not establish that the sink displays an image.
 The native caller owns voltage, CCU, SYS_CFG, EDID, VO1 and TV0 policy.
 
+## Cached comparison record
+
+The core keeps the last PHY I2C comparison in initialized storage.
+The native coordinator exposes it as read-only `hw.sun60ide0.phy_trace`.
+This is a separate 28-byte record. It does not change `run_trace` or `output_trace`.
+It contains seven native `uint32_t` words in this order:
+`version`, `valid`, `index`, `address`, `requested`, `observed`, `status`.
+Version zero means no comparison request was recorded. All words are then zero.
+Version one uses these `valid` masks:
+
+| Mask | Valid fields or event |
+| --- | --- |
+| 1 | Zero-based table index, internal PHY address and requested 16-bit value |
+| 2 | Last successful read of the PHY I2C status register |
+| 4 | Complete observed 16-bit PHY value |
+| 8 | The equality comparison ran |
+
+The table address order is `0x06`, `0x10`, `0x11`, `0x19`, `0x0e`, `0x09`.
+The record uses values from existing operations. It adds no register access or delay.
+An error retains the partial record and prevents a later table entry from replacing it.
+The optional typed getter copies this cache under the output provider mutex.
+It remains available after a sticky output error. It performs no readiness query or I/O.
+A status value without mask 2 is not a measured status.
+An observed value without mask 4 is not a measured PHY value.
+These diagnostics do not change the equality check or establish visible HDMI output.
+
 ## Checks
 
 Run the actual C core and the independent host fixture:

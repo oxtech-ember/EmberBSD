@@ -1019,6 +1019,8 @@ It grants no absence admission or display ownership.
   precise internal output failure is not recorded in that physical result.
   [Cache-only preparation traces](ember/boot/a733-de352-native.md#cached-output-preparation-diagnostics)
   distinguish output preparation from DE field checks in the source contract.
+  A separate [cached PHY comparison](ember/boot/a733-hdmi-phy.md#cached-comparison-record)
+  records the internal address and complete 16-bit readback without new I/O.
   Physical HDMI, KMS and complete Plasma remain unaccepted.
   NPU powered identification, 24 KiB Engine1 preparation and one
   [finite FE/MMU/IRQ stream](ember/boot/a733-npu-engine.md#physical-acceptance)

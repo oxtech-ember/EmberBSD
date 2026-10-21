@@ -25,6 +25,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arm/sunxi/sun60i_a733_display_owner.h>
 #include <arm/sunxi/sun60i_a733_de352_dma.h>
 #include <arm/sunxi/sun60i_a733_output.h>
+#include <arm/sunxi/sun60i_a733_hdmi_phy.h>
 #include <arm/sunxi/sun60i_a733_de352_scanout.h>
 
 #define DE352_BASE 0x05000000
@@ -1220,6 +1221,26 @@ de352_sysctl_output_trace(SYSCTLFN_ARGS)
 	return sysctl_lookup(SYSCTLFN_CALL(&node));
 }
 
+static int
+de352_sysctl_phy_trace(SYSCTLFN_ARGS)
+{
+	struct sun60i_de352_softc *sc = rnode->sysctl_data;
+	struct sysctlnode node = *rnode;
+	struct sun60i_a733_hdmi_phy_trace trace;
+	int error;
+
+	if (newp != NULL)
+		return EROFS;
+	mutex_enter(&sc->lock);
+	error = sun60i_a733_output_cached_phy_trace(sc->output_phandle, &trace);
+	mutex_exit(&sc->lock);
+	if (error != 0)
+		return error;
+	node.sysctl_data = &trace;
+	node.sysctl_size = sizeof(trace);
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
 /* The initial profile permits no active IOMMU or NSI provider. */
 static bool
 de352_disabled_node(int node, const char *compatible, bus_addr_t base,
@@ -1357,6 +1378,10 @@ de352_attach(device_t parent, device_t self, void *aux)
 	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_STRUCT, "output_trace", SYSCTL_DESCR("Cached output preparation"),
 	    de352_sysctl_output_trace, 0, sc, sizeof(struct sun60i_a733_output_trace),
+	    CTL_CREATE, CTL_EOL);
+	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRUCT, "phy_trace", SYSCTL_DESCR("Cached PHY I2C comparison"),
+	    de352_sysctl_phy_trace, 0, sc, sizeof(struct sun60i_a733_hdmi_phy_trace),
 	    CTL_CREATE, CTL_EOL);
 }
 

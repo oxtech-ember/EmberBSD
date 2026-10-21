@@ -260,6 +260,7 @@ prepare_trace_checks(void)
 	};
 	struct sun60i_a733_output_mode mode;
 	struct sun60i_a733_output_trace trace, saved, zero = { 0 };
+	struct sun60i_a733_hdmi_phy_trace phy, phy_zero = { 0 };
 	uint32_t value;
 	unsigned n = 0, old_calls, old_reads, old_writes;
 
@@ -268,6 +269,19 @@ prepare_trace_checks(void)
 	memset(&trace, 0xa5, sizeof(trace));
 	native_cached_trace(&sc, &trace);
 	CHECK(memcmp(&trace, &zero, sizeof(trace)) == 0);
+	memset(&phy, 0xa5, sizeof(phy));
+	native_cached_phy_trace(&sc, &phy);
+	CHECK(memcmp(&phy, &phy_zero, sizeof(phy)) == 0);
+	sc.phy.trace = (struct sun60i_a733_hdmi_phy_trace){
+	    1, 15, 4, 14, 0x8160, 0x160, 2
+	};
+	old_calls = calls;
+	old_reads = reads;
+	old_writes = writes;
+	native_fault(&sc, &owner_cookie, EIO);
+	native_cached_phy_trace(&sc, &phy);
+	CHECK(memcmp(&phy, &sc.phy.trace, sizeof(phy)) == 0);
+	CHECK(calls == old_calls && reads == old_reads && writes == old_writes);
 	for (unsigned g = 0; g < __arraycount(groups); g++) {
 		for (unsigned i = 0; i < groups[g].count; i++) {
 			fixture();

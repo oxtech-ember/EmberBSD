@@ -27,6 +27,7 @@ struct fixture {
 	unsigned calls, writes, fail_at, ready_calls, delay_us;
 	unsigned reset_count, reset_values[2];
 	unsigned i2c_fail, top_timeout, phy_timeout, corrupt_readback;
+	unsigned corrupt_address, read_i2c_fail;
 	bool drop_level_shift;
 	int ready_error;
 	bool owned;
@@ -98,9 +99,17 @@ write_reg(void *arg, enum sun60i_a733_hdmi_space space,
 				f->internal[address] = (uint16_t)((f->core[0x3022] << 8) |
 				    f->core[0x3023]);
 			} else {
+				uint16_t data = f->internal[address];
+
 				CHECK(value == 1);
-				f->core[0x3024] = f->internal[address] >> 8;
-				f->core[0x3025] = f->internal[address] ^ f->corrupt_readback;
+				if (f->corrupt_address == 0 || f->corrupt_address == address)
+					data ^= f->corrupt_readback;
+				f->core[0x3024] = data >> 8;
+				f->core[0x3025] = data & 255;
+			}
+			if (value == 1 && f->read_i2c_fail != 0) {
+				f->core[0x0108] = f->read_i2c_fail == 1 ? 1 : 0;
+				return 0;
 			}
 			f->core[0x0108] = f->i2c_fail == 1 ? 1 :
 			    f->i2c_fail == 2 ? 0 : f->i2c_fail == 3 ? 3 : 2;
@@ -283,9 +292,67 @@ invalid_sequence(void)
 	CHECK(sun60i_a733_hdmi_hpd_prepare(NULL) == EINVAL);
 }
 
+static void
+comparison_trace(void)
+{
+	const struct {
+		unsigned slot, address, requested, mask;
+	} cases[] = {
+		{ 0, 6, 1, 1 }, { 1, 0x10, 0x20c0, 1 },
+		{ 2, 0x11, 0x060a, 1 }, { 3, 0x19, 7, 1 },
+		{ 4, 0x0e, 0x8160, 1 }, { 5, 9, 0x8188, 1 },
+		{ 4, 0x0e, 0x8160, 0x8000 }
+	};
+	struct sun60i_a733_hdmi_phy_trace zero = { 0 };
+	struct fixture f;
+
+	CHECK(sizeof(zero) == 28);
+	fresh(&f);
+	CHECK(memcmp(&f.state.trace, &zero, sizeof(zero)) == 0);
+	CHECK(complete(&f) == 0);
+	CHECK(f.state.trace.version == 1 && f.state.trace.valid == 15);
+	CHECK(f.state.trace.index == 5 && f.state.trace.address == 9);
+	CHECK(f.state.trace.requested == 0x8188 && f.state.trace.observed == 0x8188);
+	CHECK(f.state.trace.status == 2);
+	for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		struct sun60i_a733_hdmi_phy_trace saved;
+		unsigned calls;
+
+		fresh(&f);
+		f.corrupt_address = cases[i].address;
+		f.corrupt_readback = cases[i].mask;
+		CHECK(complete(&f) == EIO);
+		CHECK(f.state.trace.version == 1 && f.state.trace.valid == 15);
+		CHECK(f.state.trace.index == cases[i].slot &&
+		    f.state.trace.address == cases[i].address);
+		CHECK(f.state.trace.requested == cases[i].requested);
+		CHECK(f.state.trace.observed == (cases[i].requested ^ cases[i].mask));
+		CHECK(f.state.trace.status == 2 && !f.state.phy_prepared);
+		if (cases[i].mask == 0x8000)
+			CHECK(f.state.trace.observed == 0x0160);
+		saved = f.state.trace;
+		calls = f.calls;
+		CHECK(sun60i_a733_hdmi_phy_observe(&f.state) == EIO);
+		CHECK(sun60i_a733_hdmi_phy_prepare(&f.state,
+		    26000000, 108000000) == EIO);
+		CHECK(f.calls == calls &&
+		    memcmp(&saved, &f.state.trace, sizeof(saved)) == 0);
+	}
+	for (unsigned i = 1; i <= 2; i++) {
+		fresh(&f);
+		f.read_i2c_fail = i;
+		CHECK(complete(&f) == (i == 1 ? EIO : ETIMEDOUT));
+		CHECK(f.state.trace.version == 1 && f.state.trace.valid == 3);
+		CHECK(f.state.trace.index == 0 && f.state.trace.address == 6);
+		CHECK(f.state.trace.requested == 1 && f.state.trace.observed == 0);
+		CHECK(f.state.trace.status == (i == 1 ? 1U : 0U));
+	}
+}
+
 int
 main(void)
 {
+	comparison_trace();
 	plans_test();
 	normal_and_faults();
 	timeouts();

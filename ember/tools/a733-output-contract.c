@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "sun60i_a733_output.h"
+#include "sun60i_a733_hdmi_phy.h"
 #include "sun60i_a733_output.c"
 
 static unsigned checks;
@@ -187,7 +188,7 @@ provider_fault(void *arg, const void *owner, int error)
 
 static const struct sun60i_a733_output_ops provider_ops = {
 	provider_mode, provider_prepare, provider_start, provider_vblank,
-	provider_fault, NULL
+	provider_fault, NULL, NULL
 };
 
 static void
@@ -320,6 +321,53 @@ cached_trace(void)
 	CHECK(cache_calls == 4);
 }
 
+static void
+provider_phy_trace(const void *arg, struct sun60i_a733_hdmi_phy_trace *out)
+{
+	CHECK(arg == output_arg && mutex_owned(&output_lock));
+	out->version = 1;
+	out->valid = 15;
+	out->address = 0x0e;
+	out->requested = 0x8160;
+	out->observed = 0x0160;
+}
+
+static void
+cached_phy_trace(void)
+{
+	struct sun60i_a733_output_ops ops = provider_ops;
+	struct provider_fixture f = { .owner = &f };
+	struct sun60i_a733_hdmi_phy_trace trace, saved, expected = { 0 };
+	struct sun60i_a733_output_mode mode;
+	unsigned calls[5];
+
+	provider_reset();
+	memset(&trace, 0xa5, sizeof(trace));
+	saved = trace;
+	CHECK(sun60i_a733_output_cached_phy_trace(7, NULL) == EINVAL);
+	CHECK(sun60i_a733_output_cached_phy_trace(7, &trace) == ENXIO);
+	CHECK(sun60i_a733_output_register(7, &ops, &f) == 0);
+	CHECK(sun60i_a733_output_cached_phy_trace(7, &trace) == EOPNOTSUPP);
+	CHECK(memcmp(&saved, &trace, sizeof(trace)) == 0);
+	provider_reset();
+	ops.cached_phy_trace = provider_phy_trace;
+	CHECK(sun60i_a733_output_register(7, &ops, &f) == 0);
+	CHECK(sun60i_a733_output_cached_phy_trace(8, &trace) == ENXIO);
+	CHECK(sun60i_a733_output_get_mode(7, &f, &mode) == 0);
+	CHECK(sun60i_a733_output_fault(7, &f, EIO) == 0);
+	memcpy(calls, f.calls, sizeof(calls));
+	expected.version = 1;
+	expected.valid = 15;
+	expected.address = 0x0e;
+	expected.requested = 0x8160;
+	expected.observed = 0x0160;
+	for (unsigned i = 0; i < 3; i++) {
+		CHECK(sun60i_a733_output_cached_phy_trace(7, &trace) == 0);
+		CHECK(memcmp(&trace, &expected, sizeof(trace)) == 0);
+		CHECK(memcmp(calls, f.calls, sizeof(calls)) == 0);
+	}
+}
+
 int
 main(void)
 {
@@ -328,6 +376,7 @@ main(void)
 	vblank();
 	provider();
 	cached_trace();
+	cached_phy_trace();
 	printf("%u A733 output timing/W0C/provider checks passed\n", checks);
 	return 0;
 }

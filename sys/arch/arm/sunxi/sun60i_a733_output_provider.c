@@ -9,6 +9,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/once.h>
 #include <sys/systm.h>
 #include <arm/sunxi/sun60i_a733_output.h>
+#include <arm/sunxi/sun60i_a733_hdmi_phy.h>
 
 static ONCE_DECL(output_once);
 static kmutex_t output_lock;
@@ -229,6 +230,31 @@ sun60i_a733_output_cached_trace(int phandle,
 		error = EOPNOTSUPP;
 	else {
 		output_ops->cached_trace(output_arg, &trace);
+		*out = trace;
+	}
+	mutex_exit(&output_lock);
+	return error;
+}
+
+/* This cache remains readable after a sticky output failure. */
+int
+sun60i_a733_output_cached_phy_trace(int phandle,
+    struct sun60i_a733_hdmi_phy_trace *out)
+{
+	struct sun60i_a733_hdmi_phy_trace trace = { 0 };
+	int error = 0;
+
+	CTASSERT(sizeof(trace) == 7 * sizeof(uint32_t));
+	if (out == NULL)
+		return EINVAL;
+	RUN_ONCE(&output_once, output_init);
+	mutex_enter(&output_lock);
+	if (output_ops == NULL || phandle != output_phandle)
+		error = ENXIO;
+	else if (output_ops->cached_phy_trace == NULL)
+		error = EOPNOTSUPP;
+	else {
+		output_ops->cached_phy_trace(output_arg, &trace);
 		*out = trace;
 	}
 	mutex_exit(&output_lock);

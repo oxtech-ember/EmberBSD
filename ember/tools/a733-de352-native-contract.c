@@ -165,6 +165,7 @@ static int sun60i_a733_ccu_display_ready(struct clk *c,const void *owner)
 static int sun60i_a733_ccu_display_fault(struct clk *c,const void *owner,int error)
 { CHECK(c==&clock_de0&&owner==lease_owner&&claimed&&retained&&error);ccu_faults++;return error; }
 #include "sun60i_a733_output.h"
+#include "sun60i_a733_hdmi_phy.h"
 static struct sun60i_a733_output_mode mode={27000000,720,736,798,858,480,489,495,525,false,false};
 int sun60i_a733_output_get_mode(int node,const void *owner,struct sun60i_a733_output_mode *out)
 { CHECK(node==7&&owner==lease_owner&&retained);if(mode_error)return mode_error;*out=mode;return 0; }
@@ -178,6 +179,14 @@ int sun60i_a733_output_fault(int node,const void *owner,int error)
 { CHECK(node==7&&owner==lease_owner&&retained&&error);faults++;return error; }
 int
 sun60i_a733_output_cached_trace(int node, struct sun60i_a733_output_trace *out)
+{
+	CHECK(node == 7);
+	memset(out, 0, sizeof(*out));
+	return 0;
+}
+int
+sun60i_a733_output_cached_phy_trace(int node,
+    struct sun60i_a733_hdmi_phy_trace *out)
 {
 	CHECK(node == 7);
 	memset(out, 0, sizeof(*out));
@@ -649,6 +658,8 @@ run_trace_checks(void)
 		CHECK(de352_sysctl_run_trace(&node, &sc) == EROFS);
 		CHECK(de352_sysctl_output_trace(&node, NULL) == 0);
 		CHECK(de352_sysctl_output_trace(&node, &sc) == EROFS);
+		CHECK(de352_sysctl_phy_trace(&node, NULL) == 0);
+		CHECK(de352_sysctl_phy_trace(&node, &sc) == EROFS);
 		CHECK(memcmp(&saved, &sc.run_trace, sizeof(saved)) == 0);
 		CHECK(reads == old_reads && writes == old_writes && space_maps == old_maps);
 	}

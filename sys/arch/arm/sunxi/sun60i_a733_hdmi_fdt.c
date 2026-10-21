@@ -612,9 +612,18 @@ native_cached_trace(const void *arg, struct sun60i_a733_output_trace *out)
 	*out = sc->trace;
 }
 
+static void
+native_cached_phy_trace(const void *arg, struct sun60i_a733_hdmi_phy_trace *out)
+{
+	const struct sun60i_a733_hdmi_softc *sc = arg;
+
+	CTASSERT(sizeof(*out) == 7 * sizeof(uint32_t));
+	*out = sc->phy.trace;
+}
+
 static const struct sun60i_a733_output_ops output_ops = {
 	native_get_mode, native_prepare, native_start, native_observe, native_fault,
-	native_cached_trace
+	native_cached_trace, native_cached_phy_trace
 };
 
 static int

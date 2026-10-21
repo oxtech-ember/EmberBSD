@@ -218,6 +218,10 @@ phy_i2c(struct sun60i_a733_hdmi_phy *s, uint8_t address,
 		status = phy_read(s, A733_HDMI_CORE8, CORE_PHY_I2C_STATUS);
 		if (s->fault != 0)
 			return;
+		if (!write) {
+			s->trace.status = status;
+			s->trace.valid |= A733_HDMI_PHY_TRACE_STATUS;
+		}
 		if ((status & 1) != 0) {
 			phy_fail(s, EIO);
 			return;
@@ -237,8 +241,11 @@ phy_i2c(struct sun60i_a733_hdmi_phy *s, uint8_t address,
 
 		hi = phy_read(s, A733_HDMI_CORE8, CORE_PHY_I2C_IN_HI);
 		lo = phy_read(s, A733_HDMI_CORE8, CORE_PHY_I2C_IN_LO);
-		if (s->fault == 0)
+		if (s->fault == 0) {
 			*value = (uint16_t)((hi << 8) | lo);
+			s->trace.observed = *value;
+			s->trace.valid |= A733_HDMI_PHY_TRACE_OBSERVED;
+		}
 	}
 }
 
@@ -264,11 +271,21 @@ phy_mpll(struct sun60i_a733_hdmi_phy *s,
 	phy_update(s, A733_HDMI_CORE8, CORE_PHY_I2C_INT, 4, 0);
 	phy_update(s, A733_HDMI_CORE8, CORE_PHY_I2C_CTLINT, 0x44, 0);
 	for (i = 0; i < sizeof(addresses) / sizeof(addresses[0]); i++) {
+		if (s->fault == 0) {
+			s->trace = (struct sun60i_a733_hdmi_phy_trace){
+			    .version = 1, .valid = A733_HDMI_PHY_TRACE_REQUEST,
+			    .index = i, .address = addresses[i],
+			    .requested = values[i]
+			};
+		}
 		phy_i2c(s, addresses[i], &values[i], true);
 		observed = 0;
 		phy_i2c(s, addresses[i], &observed, false);
-		if (s->fault == 0 && observed != values[i])
-			phy_fail(s, EIO);
+		if (s->fault == 0) {
+			s->trace.valid |= A733_HDMI_PHY_TRACE_COMPARED;
+			if (observed != values[i])
+				phy_fail(s, EIO);
+		}
 	}
 	phy_update(s, A733_HDMI_CORE8, CORE_PHY_CONF, 0x18, 8);
 	phy_wait(s, A733_HDMI_CORE8, CORE_PHY_STATUS, 1, 1, 500, 5);

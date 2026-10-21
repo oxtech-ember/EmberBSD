@@ -20,7 +20,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="a733-output-") as directory:
         work = Path(directory)
         for name in ("sun60i_a733_output.h", "sun60i_a733_output.c",
-                     "sun60i_a733_output_provider.c"):
+                     "sun60i_a733_output_provider.c", "sun60i_a733_hdmi_phy.h"):
             text = (driver / name).read_text()
             # Preserve every function body. Replace only kernel include plumbing.
             text = "\n".join(line for line in text.splitlines()
