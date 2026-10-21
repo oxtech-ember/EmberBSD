@@ -7,14 +7,17 @@ Use it only within the isolated graphics test whose contents you may capture.
 
 ## Admitted input
 
-Select a plane ID from the existing DRM resource inventory. Before launch, the
-private test controller must verify that the expected KWin process is alive,
-holds this primary card and remains DRM master. Run the diagnostic as root
-with a second fd on that same card. Legacy GETFB otherwise returns handle
-zero to a nonmaster. The program does not issue SET_MASTER or DROP_MASTER,
-but opening an unowned primary node can acquire master implicitly. It cannot
-prove another process still holds master. The controller must keep the tested
-compositor session active and exclude logout or restart during this operation.
+Select a plane ID from the existing DRM resource inventory. The private test
+controller checks the expected live KWin process and its open primary-card fd,
+the selected DRM backend/output and the unchanged isolated session/transport.
+An open fd and compositor status do not prove current master ownership through
+an atomic standard query. Continued master ownership by that KWin is an explicit
+assumption. Run the diagnostic as root with a second fd on the same card.
+Legacy GETFB otherwise returns handle zero to a nonmaster. The program does
+not issue SET_MASTER or DROP_MASTER. Opening an unowned primary can acquire
+master implicitly. Do not use SET_MASTER as an ownership probe. Keep the
+compositor active and exclude planned logout or restart during the copy; a
+concurrent ownership change remains a diagnostic limit.
 Do not run it after logout: logical BLANK no longer exposes the previous active
 framebuffer. The program does not retry frame acquisition.
 
