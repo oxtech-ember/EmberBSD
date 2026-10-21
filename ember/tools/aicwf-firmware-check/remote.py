@@ -83,3 +83,22 @@ class Remote:
     def breakpoint(self, address):
         if self.command('Z1,' + format(address, 'x') + ',2') != b'OK':
             raise RuntimeError('Non-modifying TCG breakpoint is unavailable')
+
+    def remove_breakpoint(self, address):
+        if self.command('z1,' + format(address, 'x') + ',2') != b'OK':
+            raise RuntimeError('TCG breakpoint removal failed')
+
+    def register(self, number):
+        if number not in (13, 14, 15):
+            raise ValueError('Only core SP/LR/PC observation is supported')
+        data = self.command('p' + format(number, 'x'))
+        if len(data) != 8:
+            raise RuntimeError('ARM core register read is unavailable')
+        return int.from_bytes(bytes.fromhex(data.decode('ascii')), 'little')
+
+    def pend_irq31(self):
+        # One model NVIC bit only. No arbitrary memory-write interface.
+        if self.command('Me000e200,4:00000080') != b'OK':
+            raise RuntimeError('Model NVIC pending write failed')
+        if not int.from_bytes(self.memory(0xe000e200, 4), 'little') & 0x80000000:
+            raise RuntimeError('Model NVIC pending bit was not set')

@@ -17,6 +17,7 @@ import observations
 import policy
 import patched
 import patching
+import irq as irq_control
 from remote import Remote
 
 HERE = Path(__file__).resolve().parent
@@ -44,10 +45,12 @@ def toolchain(prefix, process):
     return prefix
 
 
-def symbols(prefix, work, process, patch=False):
+def symbols(prefix, work, process, patch=False, irq=False):
     data = process.capture([str(prefix / 'bin/arm-none-eabi-nm'), '-n', str(work / 'harness.elf')], env=process.sanitized_environment()).stdout.decode()
     selected = {}
     required = {'mailbox', 'results', 'harness_done'} | ({'frame_results'} if patch else set())
+    if irq:
+        required |= irq_control.SYMBOLS
     for line in data.splitlines():
         words = line.split()
         if len(words) == 3 and words[2] in required:
@@ -59,7 +62,7 @@ def symbols(prefix, work, process, patch=False):
     return selected
 
 
-def execute(qemu, work, addresses, timeout, process, jsonio, expected_hashes, patch=None, rows=None):
+def execute(qemu, work, addresses, timeout, process, jsonio, expected_hashes, patch=None, rows=None, exercise='functional'):
     if not qemu.is_absolute() or not qemu.is_file() or not os.access(qemu, os.X_OK):
         raise ValueError('Explicit host QEMU executable required')
     if set(expected_hashes) != set(policy.SPANS):
@@ -69,6 +72,8 @@ def execute(qemu, work, addresses, timeout, process, jsonio, expected_hashes, pa
     raw, error, closure = None, None, None
     rows = cases.inputs() if rows is None else rows
     frames = None
+    observer = None
+    irq_result = None
     temporary = tempfile.mkdtemp(prefix='aic-gdb-', dir=work.parent)
     path = Path(temporary) / 'gdb'
     if len(str(path).encode()) >= 100 or ',' in str(path):
@@ -93,9 +98,13 @@ def execute(qemu, work, addresses, timeout, process, jsonio, expected_hashes, pa
                     raise ValueError('Loaded original instruction slice differs: ' + name)
             jsonio.write_json(work / 'loaded-expected.json', expected_hashes, mode=0o600)
             jsonio.write_json(work / 'loaded-before.json', loaded_before, mode=0o600)
-            stopped = remote.command('c')
-            if not stopped.startswith((b'T05', b'S05')):
-                raise ValueError('Fixture did not reach a normal breakpoint')
+            if exercise == 'irq':
+                observer = irq_control.Observer(remote, addresses, rows)
+                irq_result = observer.run()
+            else:
+                stopped = remote.command('c')
+                if not stopped.startswith((b'T05', b'S05')):
+                    raise ValueError('Fixture did not reach a normal breakpoint')
             header = remote.memory(addresses['mailbox'], 16)
             (work / 'mailbox.bin').write_bytes(header)
             magic, count, stride, state = struct.unpack('<4I', header)
@@ -112,6 +121,15 @@ def execute(qemu, work, addresses, timeout, process, jsonio, expected_hashes, pa
             jsonio.write_json(work / 'loaded-after.json', loaded_after, mode=0o600)
         except BaseException as caught:
             error = caught
+            if observer is not None and observer.paused:
+                try:
+                    after_refusal = {name: hashlib.sha256(remote.memory(start, end - start)).hexdigest() for name, (start, end) in policy.SPANS.items()}
+                    jsonio.write_json(work / 'loaded-after-refusal.json', after_refusal, mode=0o600)
+                    if after_refusal != loaded_before:
+                        raise ValueError('Selected instruction bytes changed before IRQ refusal')
+                except BaseException as secondary:
+                    error = RuntimeError('Primary failure: ' + str(caught) + '; refusal byte check also failed: ' + str(secondary))
+                    error.__cause__ = caught
         finally:
             mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGHUP, signal.SIGTERM})
             try:
@@ -131,6 +149,16 @@ def execute(qemu, work, addresses, timeout, process, jsonio, expected_hashes, pa
                     shutil.rmtree(temporary)
             finally:
                 signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+    if observer is not None:
+        try:
+            jsonio.write_json(work / 'irq-events.json', dict(observer_checks_completed=irq_result is not None, process_closure_proven=closure is None, events=observer.events), mode=0o600)
+        except BaseException as secondary:
+            if error is None:
+                error = secondary
+            else:
+                primary = error
+                error = RuntimeError('Primary failure: ' + str(primary) + '; IRQ evidence write also failed: ' + str(secondary))
+                error.__cause__ = primary
     if closure is not None:
         raise closure from error
     if error is not None:
@@ -138,17 +166,22 @@ def execute(qemu, work, addresses, timeout, process, jsonio, expected_hashes, pa
     (work / 'results.bin').write_bytes(raw)
     if patch is not None:
         (work / 'frame-results.bin').write_bytes(frames)
-        return patched.compare(rows, raw, frames)
+        result = patched.compare(rows, raw, frames)
+        if irq_result is not None:
+            result.update(irq_result)
+        if patch['profile'] == 'early-enable-causal':
+            raise ValueError('Unsafe causal payload unexpectedly passed the observer')
+        return result
     return observations.compare(rows, raw)
 
 
 def main(argv):
     args = policy.arguments(argv)
     work = args.output
-    if args.exercise != 'functional':
-        raise ValueError('IRQ observation requires the next reviewed source stage')
     patch = None if args.patch_elf is None else patching.load(args.patch_elf, args.patch_manifest, args.causal_early_enable)
-    rows = None if patch is None else patched.inputs()
+    if args.exercise == 'irq' and patch['profile'] not in ('bip-v2', 'early-enable-causal'):
+        raise ValueError('IRQ scenarios require the reviewed v2 or explicit causal input')
+    rows = None if patch is None else patched.inputs(irq=args.exercise == 'irq')
     if work.exists() or work.is_symlink():
         raise ValueError('Output already exists')
     process = jsonio = prefix = None
@@ -161,7 +194,7 @@ def main(argv):
         prepared = policy.prepare(args.firmware, work, patch, rows)
     if args.mode == 'prepare':
         return dict(state='source-prepared-only', accepted_original_fixture=False, accepted_secure_firmware=False)
-    state = dict(state='build-pending', accepted_original_fixture=False, accepted_secure_firmware=False)
+    state = dict(state='build-pending', accepted_original_fixture=False, accepted_patch_fixture=False, accepted_secure_firmware=False)
     jsonio.write_json(work / 'status.json', state)
     try:
         for index, command in enumerate(policy.build_commands(prefix, work, HERE)):
@@ -170,9 +203,9 @@ def main(argv):
         if args.mode == 'build':
             state['state'] = 'built-not-executed'
         else:
-            state = execute(args.qemu, work, symbols(prefix, work, process, patch is not None), args.timeout, process, jsonio, {row['name']: row['sha256'] for row in prepared}, patch, rows)
+            state = execute(args.qemu, work, symbols(prefix, work, process, patch is not None, args.exercise == 'irq'), args.timeout, process, jsonio, {row['name']: row['sha256'] for row in prepared}, patch, rows, args.exercise)
     except BaseException as error:
-        state.update(state='refused', accepted_original_fixture=False, accepted_secure_firmware=False, error=str(error))
+        state.update(state='refused', accepted_original_fixture=False, accepted_patch_fixture=False, accepted_secure_firmware=False, error=str(error))
         try:
             jsonio.write_json(work / 'status.json', state, exclusive=False, mode=0o600)
         except BaseException as secondary:

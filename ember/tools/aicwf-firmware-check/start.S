@@ -35,6 +35,8 @@ fault:
  b fault
 .thumb_func
 irq31:
+.global harness_irq_entry
+harness_irq_entry:
  push {r4, lr}
  bl harness_irq
  pop {r4, pc}
@@ -61,6 +63,8 @@ abi_call:
  movw r9, #0x9999
  movw r10, #0xaaaa
  movw r11, #0xbbbb
+ .global harness_before_call
+harness_before_call:
  blx r12
  ldr r12, [sp, #4]
  str r0, [r12]
@@ -82,6 +86,13 @@ abi_call:
  check r10, 0xaaaa
  check r11, 0xbbbb
  str r2, [r12, #12]
+ .global harness_call_returned
+harness_call_returned:
+ .rept 8
+ nop
+ .endr
+ .global harness_before_release
+harness_before_release:
  add sp, sp, #20
  pop {r4-r11, pc}
 

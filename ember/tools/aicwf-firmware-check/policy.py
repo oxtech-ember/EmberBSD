@@ -76,6 +76,13 @@ def prepare(original, work, patch=None, fixtures=None):
     data = original.read_bytes()
     if len(data) != ORIGINAL_SIZE or hashlib.sha256(data).hexdigest() != ORIGINAL_SHA:
         raise ValueError('Unknown original U02 identity')
+    if patch is not None and patch.get('modified_sha256') is not None:
+        modified = bytearray(data)
+        for name, replacement in patch['replacements'].items():
+            start, end = SPANS[name]
+            modified[start - BASE:end - BASE] = replacement
+        if hashlib.sha256(modified).hexdigest() != patch['modified_sha256']:
+            raise ValueError('Patch modified image identity differs')
     if work.exists() or work.is_symlink():
         raise ValueError('Output already exists')
     work.mkdir(mode=0o700)

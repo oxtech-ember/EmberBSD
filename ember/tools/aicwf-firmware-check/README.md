@@ -74,9 +74,9 @@ requirements: nonzero initial floors are lost, received PN is truncated,
 bad MIC can advance the floor, and same-key installation resets state.
 
 An accepted original fixture means that those exact original observations
-were reproduced. `accepted_secure_firmware` stays false. The tool accepts no
-replacement function input. Future patch admission and comparison need a
-separate reviewed source change. Full instruction-boundary IRQ injection,
+were reproduced. `accepted_secure_firmware` stays false. The original profile accepts no
+replacement function input. The finite patch profile below has separate input
+admission and a desired-state oracle. Full instruction-boundary IRQ injection,
 cooperative ownership, reset/rekey lifetime and silicon IRQ latency remain
 separate gates. The provided model IRQ and PRIMASK observations do not close
 them. QEMU time does not measure AIC silicon cycles.
@@ -92,8 +92,12 @@ This is not WPA3/PMF certification or approval to replace device firmware.
 The default mode still uses the original 33 cases. Add both `--patch-elf` and
 `--patch-manifest` to select the finite BIP patch fixture. The consumer accepts
 only the exact reviewed v1/v2 ELF identities. It checks the original image,
-manifest, source and tool identities, two RX load segments and section hashes
-before it creates output. Only key340/RX384 replace fixture slices. Seven
+manifest, assembly/linker identities, two RX load segments and section hashes
+before it creates output. Tool and producer SHA256 values are recorded as
+provenance; they do not restrict the host to one compiler binary. V1 manifests
+have the original exact field set. V2 adds modified-image and kernel-header
+SHA256 values. The modified-image hash is checked in memory against the
+original plus both replacements before output creation. Only key340/RX384 replace fixture slices. Seven
 original slices remain unchanged. No patch ELF is loaded over the vectors.
 
 ```sh
@@ -104,6 +108,7 @@ python3 -I -B ember/tools/aicwf-firmware-check.py --mode build \
     --compiler-prefix /absolute/arm-gcc16/toolchain \
     --sdk-source /absolute/EmberBSD-SDK --output /absolute/new-patch-output
 python3 -I -B ember/tools/aicwf-firmware-check/test-patch.py
+python3 -I -B ember/tools/aicwf-firmware-check/test-irq.py
 ```
 
 The patch profile has 146 finite cases. Its independent desired-state oracle
@@ -118,6 +123,25 @@ version-dependent result. Host tests are not instruction execution evidence.
 The runner saves expected, pre-execution and post-execution hashes for all
 nine loaded slices. Patch acceptance remains CPU-fixture acceptance only.
 `accepted_secure_firmware` and `device_or_radio_acceptance` remain false.
-IRQ observation is closed in this functional source stage. It requires a
-separate reviewed extension before `--exercise irq` can run. The explicit
-`--causal-early-enable` mode is also closed; it is not a normal patch profile.
+Use `--exercise irq` with the reviewed v2 inputs to select 36 bounded model
+scenarios after separate source, opcode and build review. Six operations use
+before/during/after pending-IRQ injection with input PRIMASK0/1. Only IRQ31's
+model NVIC pending bit is written. Read-only handler snapshots retain the
+selected context and active pointers. The observer checks stacked exception
+PCs, pending delivery, the returned mask and full snapshots. Input PRIMASK1 must
+hold its pending IRQ across eight own NOPs before the harness explicitly
+releases its caller mask. That release is not selected-firmware behavior.
+
+The controller uses hardware breakpoints and `continue`; it does not issue
+single-step packets. QEMU's default step mask suppresses IRQs. Any future
+single-step extension must set and read back ENABLE1 without NOIRQ/NOTIMER
+before it can provide IRQ evidence. Unsupported remote operations refuse.
+A completed bounded fixture sets `accepted_bounded_irq_fixture`, while
+`irq_interleavings_qualified` and `full_instruction_coverage` remain false.
+It does not establish all interrupt boundaries, AIC scheduling or timing.
+
+The explicit `--causal-early-enable` flag admits only one separately compiled
+negative payload identity. Its two CPSID instructions become CPSIE. The
+identical IRQ observer must refuse delivery inside a protected interval.
+A version-dependent forced refusal does not establish this causal result.
+The negative input is never a normal accepted patch profile.

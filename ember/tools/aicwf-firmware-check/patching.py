@@ -99,21 +99,29 @@ def load(elf, manifest, causal_early_enable=False):
     rows = parse_elf(data)
     value = json_document(metadata)
     fields = {'schema', 'state', 'original_sha256', 'original_size', 'firmware_base', 'inputs', 'tools', 'sdk_api', 'sdk_inputs', 'python_version', 'compiler_version', 'compiler_target', 'commands', 'sections', 'device_access', 'execution_accepted', 'loader_accepted'}
-    if not isinstance(value, dict) or set(value) != fields or value['schema'] != 'aicwf-bip-patch-v1' or value['state'] != 'assembled-not-executed':
+    if not isinstance(value, dict) or value.get('schema') not in ('aicwf-bip-patch-v1', 'aicwf-bip-patch-v2'):
+        raise ValueError('Unknown patch manifest schema or fields')
+    extension = {'modified_sha256', 'kernel_header_sha256'} if value['schema'] == 'aicwf-bip-patch-v2' else set()
+    if set(value) != fields | extension or value['state'] != 'assembled-not-executed':
         raise ValueError('Unknown patch manifest schema or fields')
     if value['original_sha256'] != policy.ORIGINAL_SHA or type(value['original_size']) is not int or value['original_size'] != policy.ORIGINAL_SIZE or type(value['firmware_base']) is not int or value['firmware_base'] != policy.BASE:
         raise ValueError('Patch manifest original identity differs')
     if value['compiler_version'] != '16.2.0' or value['compiler_target'] != 'arm-none-eabi' or type(value['sdk_api']) is not int or value['sdk_api'] != 1 or any(value[name] is not False for name in ('device_access', 'execution_accepted', 'loader_accepted')):
         raise ValueError('Patch manifest build or acceptance boundary differs')
-    if value['inputs'] != {'aicwf-firmware-bip.S': assembly_sha, 'aicwf-firmware-bip.ld': '000227df6210ffa6f25525c9bb04558b0d179cc238ebb2505b6a484f08186e46', 'aicwf-firmware-bip.py': '6933c7ac45f1582e6c98035b30d6efb190980c9df867d9754c5158e7768d9ddd'}:
+    def sha256(value):
+        return isinstance(value, str) and re.fullmatch('[0-9a-f]{64}', value) is not None
+    inputs = value['inputs']
+    if not isinstance(inputs, dict) or set(inputs) != {'aicwf-firmware-bip.S', 'aicwf-firmware-bip.ld', 'aicwf-firmware-bip.py'} or not all(sha256(v) for v in inputs.values()) or inputs['aicwf-firmware-bip.S'] != assembly_sha or inputs['aicwf-firmware-bip.ld'] != '000227df6210ffa6f25525c9bb04558b0d179cc238ebb2505b6a484f08186e46':
         raise ValueError('Patch manifest source inputs differ')
-    tool_hashes = {'gcc': '9e66537094e51d3b1f3a91d995ddea068763a7411735cd50e6fd8fa202ca2af4', 'as': 'cb670738055056c2356a60dc8b53226695849bda239a21b365afed5b56246a03', 'ld': '24a01a10b2ad483d570b01c75eff879f22f1f460d11c5c7998cbbf77f9e7296f', 'collect2': 'c5f7c0b67421ce49cea294ea27f34bdc8cd0017335fb653ebd488cdee637f6c3'}
-    if not isinstance(value['tools'], dict) or set(value['tools']) != set(tool_hashes):
+    # Host binary and producer identities are provenance, not payload admission.
+    # The full ELF, both payloads and the assembly/linker source stay finite.
+    if not isinstance(value['tools'], dict) or set(value['tools']) != {'gcc', 'as', 'ld', 'collect2'}:
         raise ValueError('Patch manifest tool set differs')
-    for name, expected_sha in tool_hashes.items():
-        tool = value['tools'][name]
-        if not isinstance(tool, dict) or set(tool) != {'path', 'sha256'} or tool['sha256'] != expected_sha or not isinstance(tool['path'], str) or not Path(tool['path']).is_absolute():
-            raise ValueError('Patch manifest tool identity differs')
+    for tool in value['tools'].values():
+        if not isinstance(tool, dict) or set(tool) != {'path', 'sha256'} or not sha256(tool['sha256']) or not isinstance(tool['path'], str) or not Path(tool['path']).is_absolute() or any(c in tool['path'] for c in ('\0', '\n', '\r')):
+            raise ValueError('Patch manifest tool provenance differs')
+    if any(not sha256(value[name]) for name in extension):
+        raise ValueError('Patch manifest extension identity differs')
     modules = value['sdk_inputs']
     if not isinstance(modules, dict) or not {'__init__.py', 'process.py', 'paths.py', 'jsonio.py'} <= set(modules) or any(not isinstance(v, str) or re.fullmatch('[0-9a-f]{64}', v) is None for v in modules.values()):
         raise ValueError('Patch manifest SDK input identities differ')
@@ -127,7 +135,7 @@ def load(elf, manifest, causal_early_enable=False):
         wanted = dict(section=name, address=address, size=size, original_sha256=original_sha, file=name[1:] + '.bin', replacement_sha256=expected[index])
         if row != wanted or type(row['address']) is not int or type(row['size']) is not int or digest(rows[key]) != expected[index]:
             raise ValueError('Patch manifest slot/hash differs')
-    return dict(profile=profile, elf_sha256=digest(data), manifest_sha256=digest(metadata), sections=value['sections'], replacements=rows)
+    return dict(profile=profile, elf_sha256=digest(data), manifest_sha256=digest(metadata), sections=value['sections'], replacements=rows, modified_sha256=value.get('modified_sha256'), provenance={name: value[name] for name in ('schema', 'inputs', 'tools', 'sdk_api', 'sdk_inputs', 'python_version', 'compiler_version', 'compiler_target', 'commands')} | {name: value[name] for name in extension})
 
 
 def record(value):

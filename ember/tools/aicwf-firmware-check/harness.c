@@ -7,7 +7,8 @@ volatile u32 mailbox[4];
 volatile struct result results[CASE_COUNT];
 volatile u8 frame_results[CASE_COUNT][128];
 volatile u32 rng_calls, irq_count, active_context;
-volatile u32 irq_snapshot[3];
+volatile u32 irq_snapshot[32];
+volatile u32 active_vif, active_case;
 static u8 frame_buffer[65536];
 static u8 rx_state[64];
 static u8 special;
@@ -38,12 +39,14 @@ void
 harness_irq(void)
 {
 	const volatile u32 *context = (const volatile u32 *)active_context;
+	u32 index;
 
 	irq_count++;
-	if (active_context != 0) {
-		irq_snapshot[0] = context[0];
-		irq_snapshot[1] = context[1];
-		irq_snapshot[2] = *(volatile u8 *)(active_context + 0x63U);
+	if (active_context != 0 && active_vif != 0) {
+		for (index = 0; index < 30; index++)
+			irq_snapshot[index] = context[index];
+		irq_snapshot[30] = *(volatile u32 *)(active_vif + 0x4b0U);
+		irq_snapshot[31] = *(volatile u32 *)(active_vif + 0x4b4U);
 	}
 }
 
@@ -75,6 +78,10 @@ harness_main(void)
 	for (index = 0; index < CASE_COUNT; index++) {
 		u32 context, vif, slot;
 
+		__asm volatile ("cpsid i" : : : "memory");
+		write32(0xe000e280U, 0x80000000U);
+		irq_count = 0;
+		active_case = index;
 		test = &test_cases[index];
 		result = &results[index];
 		result->id = index;
@@ -84,6 +91,7 @@ harness_main(void)
 		slot = test->keyid * 0x78U + 0x1e0U;
 		context = vif + slot;
 		active_context = context;
+		active_vif = vif;
 		write32(context, test->floor_lo);
 		write32(context + 4U, test->floor_hi);
 		write32(context + 0x48U, test->tx_lo);
@@ -160,6 +168,7 @@ harness_main(void)
 		if (test->frame_len > 128)
 			harness_assert();
 		copy(frame_results[index], frame_buffer, test->frame_len);
+		__asm volatile (".global harness_case_complete\nharness_case_complete:" : : : "memory");
 	}
 	mailbox[3] = 2;
 	__asm volatile (".global harness_done\nharness_done:");
