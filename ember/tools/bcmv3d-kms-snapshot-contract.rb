@@ -48,7 +48,12 @@ uapi = root + '/sys/external/bsd/drm2/dist/include/uapi/drm'
 %w[drm.h drm_mode.h drm_fourcc.h v3d_drm.h].each { |p| paths << 'sys/external/bsd/drm2/dist/include/uapi/drm/' + p }
 pins = paths.map { |p| [p, Digest::SHA256.file(root + '/' + p).hexdigest] }.to_h
 commands = []
+used_names = {}
 execute = lambda do |name, args, seconds = 60|
+  # Preserve one raw stdout/stderr pair for every recorded command.
+  abort 'duplicate command tag: ' + name if used_names.key?(name) ||
+    File.exist?(work + '/' + name + '.stdout') || File.exist?(work + '/' + name + '.stderr')
+  used_names[name] = true
   out = ''; err = ''; status = nil; timeout = false
   begin
     out, err, status = capture(args, seconds)
@@ -115,8 +120,8 @@ begin
     mutations.each do |name, (before, after, scenario, condition)|
       abort 'nonunique control: ' + name unless original.scan(Regexp.new(Regexp.escape(before))).size == 1
       File.write(body, original.sub(before, after))
-      run.call(name + '-compile', compile)
-      run.call(name, [work + '/contract', scenario], 1, condition)
+      run.call('control-' + name + '-compile', compile)
+      run.call('control-' + name, [work + '/contract', scenario], 1, condition)
       File.write(body, original)
     end
   end
