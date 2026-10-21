@@ -54,6 +54,23 @@ struct rtw88_tx_info {
 	uint8_t packet_offset;	/* Only zero is supported by this fixed48 profile. */
 };
 
+/* Access categories use net80211 order: BE, BK, VI, VO. */
+#define RTW88_WME_NAC 4U
+struct rtw88_wme_map {
+	uint32_t edca;
+	uint8_t ac, ring, qsel;
+};
+/* TIDs 0..7 only. Publish no partial output on invalid/unsupported input. */
+int rtw88_wme_map(unsigned, struct rtw88_wme_map *);
+
+struct rtw88_edca_params {
+	unsigned aifsn, ecw_min, ecw_max;
+	unsigned txop;	/* Hardware units are 32 microseconds. */
+};
+/* Validate the complete set before publishing words in BE/BK/VI/VO order. */
+int rtw88_edca_encode(const struct rtw88_edca_params[RTW88_WME_NAC],
+    unsigned, unsigned, uint32_t[RTW88_WME_NAC]);
+
 #define RTW88_RX_CRC_ERROR	0x01
 #define RTW88_RX_ICV_ERROR	0x02
 #define RTW88_RX_PHY_STATUS	0x04

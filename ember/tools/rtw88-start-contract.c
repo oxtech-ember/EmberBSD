@@ -66,6 +66,7 @@ static struct {
 	unsigned writes;
 	unsigned diag_reads;
 	uint32_t fail_diag_reg;
+	uint32_t fail_edca_reg;
 	unsigned cfg_writes;
 	unsigned dma_allocs;
 	struct rtw88_softc *sc;
@@ -410,6 +411,9 @@ static int
 write_4(void *cookie, uint32_t reg, uint32_t val)
 {
 	int error;
+
+	if (f.fail_edca_reg != 0 && reg == f.fail_edca_reg)
+		return EIO;
 
 	(void)cookie;
 	error = access_ok(reg, 4);
@@ -1201,6 +1205,41 @@ start_ok(struct rtw88_softc *sc)
 	return sc->sc_running;
 }
 
+static void
+test_edca_quarantine_recovery(void)
+{
+	struct rtw88_softc sc;
+	const struct rtw88_edca_params params[4] = {
+		{3, 4, 10, 0}, {7, 4, 10, 0}, {2, 3, 4, 94}, {2, 2, 3, 47}
+	};
+	uint8_t frame[24] = {0x08, 0x02};
+
+	if (!start_ok(&sc))
+		return;
+	f.fail_edca_reg = 0x504;
+	CHECK(rtw88_edca_apply(&sc, params, 9) == EIO);
+	CHECK(sc.sc_edca_error == EIO && f.mmio[0x522] == 0xff);
+	const uint8_t bssid[6] = {2, 1, 2, 3, 4, 5};
+	unsigned writes = f.writes;
+	CHECK(rtw88_station_config(&sc, bssid, 1, 0xf, 9, 1) == EIO);
+	CHECK(f.writes == writes && f.mmio[0x522] == 0xff);
+	CHECK(rtw88_tx_available(&sc, RTW88_TXQ_BE) == 0);
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, frame, sizeof(frame)) == EIO);
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(sc.sc_edca_error == EIO);
+	f.fail_edca_reg = 0;
+	f.fail_efuse = 1;
+	CHECK(rtw88_start(&sc) == EIO);
+	CHECK(sc.sc_edca_error == EIO);
+	f.fail_efuse = 0;
+	CHECK(rtw88_start(&sc) == 0);
+	CHECK(sc.sc_edca_error == 0 && f.mmio[0x522] == 0);
+	CHECK(rtw88_edca_apply(&sc, params, 9) == 0);
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, frame, sizeof(frame)) == 0);
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_core_detach(&sc) == 0);
+}
+
 /*
  * Put one received packet in RX buffer idx: 24-byte RX descriptor,
  * optional C2H flag, then the payload. tag goes to the buffer
@@ -1916,6 +1955,7 @@ main(void)
 	test_tx_band_and_sequence();
 	test_tx_completion();
 	test_tx_refusals();
+	test_edca_quarantine_recovery();
 	test_loopback_mode();
 	test_rf_mode_register_uses_sipi();
 	test_phy_and_channel_at_start();

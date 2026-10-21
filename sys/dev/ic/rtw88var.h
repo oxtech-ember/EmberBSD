@@ -134,6 +134,7 @@ struct rtw88_softc {
 	unsigned sc_rx_rp;	/* Next RX descriptor the host reads. */
 	unsigned sc_rx_tag;
 	int sc_running;		/* Interrupts unmasked; rtw88_intr owns RX. */
+	int sc_edca_error;	/* TX quarantine until a full successful start. */
 	unsigned sc_channel;
 	unsigned sc_basic_rates;	/* Negotiated legacy descriptor-rate bitmap. */
 	struct rtw88_txq sc_txq[RTW88_NTXQ];
@@ -185,12 +186,23 @@ int rtw88_intr(struct rtw88_softc *);
 #define RTW88_DIAG_REGS 8
 int rtw88_diag(struct rtw88_softc *, uint32_t *);
 /*
+ * Process context. Caller exclusively owns channel/command/TX/stop operations.
+ * Validate all four ACs before I/O, pause TX, then apply and restore TXPAUSE.
+ * Any I/O error latches TX quarantine until a full successful rtw88_start;
+ * no restore is attempted after a partial update. A failed bus operation
+ * may have taken effect, so hardware pause is uncertain. Stop on error.
+ * No callback or capability enables this API in the current legacy wrapper.
+ */
+int rtw88_edca_apply(struct rtw88_softc *,
+    const struct rtw88_edca_params[RTW88_WME_NAC], unsigned);
+/*
  * Copy one 802.11 frame into the next slot of a TX queue and kick it.
  * Lowest configured legacy basic rate, no fallback. Before station
  * setup, use 1M on 2.4 GHz or 6M on 5 GHz.
  * Management uses hardware sequence; BE retains the frame sequence.
  * At least a 24-byte header is required. The caller holds the bus
- * interrupt lock. ENOBUFS when the ring is full.
+ * interrupt lock. ENOBUFS when the ring is full. QoS TIDs without a
+ * native producer return EOPNOTSUPP; EDCA quarantine returns its I/O error.
  */
 int rtw88_tx_raw(struct rtw88_softc *, unsigned, const void *, size_t);
 /* Read software ring capacity while holding the bus interrupt lock. */

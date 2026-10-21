@@ -150,12 +150,27 @@ snapshots from the most recent net80211 input. The diagnostic path reads
 that copy without entering the network stack. It does not print SSIDs or
 BSSIDs, retune the radio or change frame admission.
 
+The core contains a dormant WME hardware prerequisite: QoS TID0/3 use the
+existing BE producer with their original descriptor QSEL; BK/VI/VO and
+non-WME TIDs are rejected before DMA because their producer lifetimes are
+not implemented. Legacy BE and management keep QSEL0 and QSEL18.
+`rtw88_edca_apply` validates all four ACs before I/O, uses the current band
+and caller-supplied slot time, pauses TX, and restores the previous pause
+only after all writes succeed. An I/O error quarantines TX and station setup
+until a full successful start; stop and failed start retain the error.
+A failed bus operation may have taken effect, so hardware pause is uncertain
+and the caller must stop the core. QoS HT-control headers are unsupported.
+The legacy wrapper does not call this API or advertise WME, HT or VHT.
+A future WME consumer still needs AC producer ownership, classification,
+negotiation and serialized parameter updates across channel changes.
+
 Run the actual-source contracts with GCC16:
 
 ```sh
 CC=gcc-16 sh ember/tools/rtw88-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-pci-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-start-contract.sh
+CC=gcc-16 sh ember/tools/rtw88-wme-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-fw-init-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-net-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-ifconfig-roaming-contract.sh

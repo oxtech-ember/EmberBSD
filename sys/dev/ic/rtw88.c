@@ -828,6 +828,7 @@ rtw88_start(struct rtw88_softc *sc)
 		goto fail;
 	}
 	sc->sc_rf_enabled = 1;
+	sc->sc_edca_error = 0;
 	sc->sc_started = 1;
 	sc->sc_bootstrapping = 0;
 	rtw88_release_fw(sc);
@@ -1027,7 +1028,7 @@ rtw88_tx_available(struct rtw88_softc *sc, unsigned q)
 {
 	const struct rtw88_txq *txq;
 
-	if (q >= RTW88_NTXQ || !sc->sc_running)
+	if (q >= RTW88_NTXQ || !sc->sc_running || sc->sc_edca_error != 0)
 		return 0;
 	txq = &sc->sc_txq[q];
 	return txq->rp > txq->wp ? txq->rp - txq->wp - 1 :
@@ -1063,6 +1064,8 @@ rtw88_station_config(struct rtw88_softc *sc, const uint8_t *bssid,
 	} else if (aid != 0 || bssid != NULL) {
 		return EINVAL;
 	}
+	if (sc->sc_edca_error != 0)
+		return sc->sc_edca_error;
 	if (!sc->sc_running || !sc->sc_started)
 		return ENXIO;
 	if (sc->sc_channel > 14 && (basic_rates & 0xf) != 0)
@@ -1100,26 +1103,93 @@ rtw88_station_config(struct rtw88_softc *sc, const uint8_t *bssid,
 	return io.error;
 }
 
+/* EDCA register layout follows pinned BSD-licensed rtw88 mac80211.c. */
+int
+rtw88_edca_apply(struct rtw88_softc *sc,
+    const struct rtw88_edca_params params[RTW88_WME_NAC], unsigned slot)
+{
+	static const uint32_t regs[RTW88_WME_NAC] = {
+		0x0508, 0x050c, 0x0504, 0x0500
+	};
+	uint32_t words[RTW88_WME_NAC];
+	uint8_t pause;
+	unsigned i;
+	int error;
+
+	if (sc->sc_edca_error != 0)
+		return sc->sc_edca_error;
+	if (!sc->sc_resources_ready || !sc->sc_running || !sc->sc_started ||
+	    sc->sc_stop_requested)
+		return ENXIO;
+	if (sc->sc_channel == 0 || (sc->sc_channel > 14 && slot != 9))
+		return EINVAL;
+	error = rtw88_edca_encode(params, slot,
+	    sc->sc_channel > 14 ? 16 : 10, words);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->read_1(sc->sc_bus, 0x0522, &pause);
+	if (error == 0)
+		error = sc->sc_ops->write_1(sc->sc_bus, 0x0522, 0xff);
+	for (i = 0; error == 0 && i < RTW88_WME_NAC; i++)
+		error = sc->sc_ops->write_4(sc->sc_bus, regs[i], words[i]);
+	/* Never unpause a partial configuration or retry uncertain writes. */
+	if (error == 0)
+		error = sc->sc_ops->write_1(sc->sc_bus, 0x0522, pause);
+	if (error != 0)
+		sc->sc_edca_error = error;
+	return error;
+}
+
 int
 rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
     size_t len)
 {
 	struct rtw88_tx_info tx;
+	struct rtw88_wme_map map;
 	struct rtw88_txq *txq;
 	struct rtw88_dma *ring, *buf;
 	uint8_t *bd;
 	uint32_t addr;
-	unsigned avail, rates;
+	unsigned avail, rates, qsel, hdrlen;
+	const uint8_t *bytes = frame;
 	int error;
 
 	if (q >= RTW88_NTXQ)
 		return EINVAL;
-	if (!sc->sc_running)
+	if (sc->sc_edca_error != 0)
+		return sc->sc_edca_error;
+	if (!sc->sc_resources_ready || !sc->sc_running || !sc->sc_started ||
+	    sc->sc_stop_requested)
 		return ENXIO;
 	if (frame == NULL || len < 24 ||
 	    len > RTW88_TX_BUF_SIZE - RTW8822C_TX_PACKET_DESC_SIZE)
 		return EMSGSIZE;
+	qsel = q == RTW88_TXQ_MGMT ? RTW88_QSEL_MGMT : 0;
+	if ((bytes[0] & 0x8c) == 0x88) {
+		/* HT Control is outside this legacy/QoS hardware prerequisite. */
+		if ((bytes[1] & 0x80) != 0)
+			return EOPNOTSUPP;
+		hdrlen = (bytes[1] & 3) == 3 ? 32 : 26;
+		if (len < hdrlen)
+			return EMSGSIZE;
+		if (q == RTW88_TXQ_MGMT)
+			return EOPNOTSUPP;
+		error = rtw88_wme_map(bytes[hdrlen - 2] & 15, &map);
+		if (error != 0)
+			return error;
+		/* BK/VI/VO have no native producer lifetime yet. */
+		if (map.ring != rtw88_txq_hw[q].ring)
+			return EOPNOTSUPP;
+		qsel = map.qsel;
+	}
 	txq = &sc->sc_txq[q];
+	ring = &sc->sc_ring[rtw88_txq_hw[q].ring];
+	if (txq->nbuf != RTW88_TX_SLOTS || ring->cookie == NULL ||
+	    ring->vaddr == NULL ||
+	    ring->size < RTW88_TX_SLOTS * RTW8822C_TX_BUFFER_DESC_SIZE)
+		return ENXIO;
+	if (txq->wp >= RTW88_TX_SLOTS || txq->rp >= RTW88_TX_SLOTS)
+		return EPROTO;
 	/* pci.h avail_desc: one slot stays empty to tell full from empty. */
 	avail = rtw88_tx_available(sc, q);
 	if (avail == 0) {
@@ -1127,9 +1197,12 @@ rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
 		return ENOBUFS;
 	}
 	buf = &txq->buf[txq->wp];
+	if (buf->cookie == NULL || buf->vaddr == NULL ||
+	    buf->size < RTW8822C_TX_PACKET_DESC_SIZE + len)
+		return ENXIO;
 	memset(&tx, 0, sizeof(tx));
 	tx.packet_size = (uint32_t)len;
-	tx.queue = q == RTW88_TXQ_MGMT ? RTW88_QSEL_MGMT : 0;
+	tx.queue = (uint8_t)qsel;
 	/* main.h DESC_RATE6M and RATEID_G: CCK is invalid on 5 GHz. */
 	tx.rate = sc->sc_channel > 14 ? 4 : 0;
 	rates = sc->sc_basic_rates & (sc->sc_channel > 14 ? 0xff0U : 0xfffU);

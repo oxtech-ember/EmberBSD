@@ -41,6 +41,24 @@ and 8-byte RX buffer descriptors. The normal firmware name is
 `rtw88/rtw8822c_fw.bin`. These values come from `rtw8822c_hw_spec`.
 They do not describe an implemented DMA mapping or PCI attachment.
 
+## Dormant WME hardware prerequisite
+
+TID-to-ring/QSEL and EDCA encoding follow FreeBSD revision
+`d2145e9b96448da34d3cfede24c509af6d830c92`. The referenced rtw88 files
+retain Realtek's `GPL-2.0 OR BSD-3-Clause` notice; the BSD option applies.
+`pci.c:rtw_pci_tx_queue_mapping` maps TID0/3 to BE, TID1/2 to BK,
+TID4/5 to VI and TID6/7 to VO. Data QSEL retains the actual TID.
+`mac80211.c:rtw_ops_conf_tx` and `reg.h` define AC register addresses,
+32-microsecond TXOP units, contention-window exponents and band SIFS.
+The native adapter validates the complete parameter set before any I/O.
+It does not import LinuxKPI or enable WME/HT/VHT advertisement.
+
+| Reference file | SHA256 |
+| --- | --- |
+| [mac80211.c](https://raw.githubusercontent.com/freebsd/freebsd-src/d2145e9b96448da34d3cfede24c509af6d830c92/sys/contrib/dev/rtw88/mac80211.c) | `e979d3dc9fd9357f5d54ce1180ed9fe4433d4780b2ee13747cc5d83a74130b50` |
+| [pci.c](https://raw.githubusercontent.com/freebsd/freebsd-src/d2145e9b96448da34d3cfede24c509af6d830c92/sys/contrib/dev/rtw88/pci.c) | `c84aca85002a049c07f4ecad9394be680b148580a008e01b01e0363266023ee1` |
+| [reg.h](https://raw.githubusercontent.com/freebsd/freebsd-src/d2145e9b96448da34d3cfede24c509af6d830c92/sys/contrib/dev/rtw88/reg.h) | `c8246f9305539347fdb62b0294fe12ea24769cb3ad56c2b0235c4269a0307324` |
+
 ## Firmware assets
 
 Both fixtures come from the linux-firmware repository at revision
