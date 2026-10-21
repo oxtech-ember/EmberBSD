@@ -58,7 +58,20 @@ with tempfile.TemporaryDirectory(prefix='manual-scan-') as directory:
     command = compiler + ['-std=gnu17', '-O1', '-g', '-Wall', '-Wextra', '-Werror'] + flags + [
         '-I' + str(work), str(Path(__file__).with_suffix('.c')), '-o', str(work / 'test')]
     if os.environ.get('MANUAL_SCAN_ANALYZE') == '1':
-        subprocess.run(command[:-2] + ['-fanalyzer', '-fsyntax-only'], check=True)
+        analyzer = compiler + ['-std=gnu17', '-O0', '-g', '-Wall', '-Wextra',
+                               '-Werror', '-fanalyzer', '-c',
+            '-I' + str(work), str(Path(__file__).with_suffix('.c')),
+            '-o', str(work / 'gcc-analysis.o')]
+        probe = work / 'analyzer-null.c'
+        probe.write_text('void analyzer_causal_null(void) { int *p = 0; *p = 1; }\n')
+        negative = [str(probe) if arg == str(Path(__file__).with_suffix('.c')) else arg
+                    for arg in analyzer]
+        result = subprocess.run(negative, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if result.returncode == 0 or not re.search(rb'\[-W(?:error=)?analyzer-null-dereference\]', result.stderr):
+            raise RuntimeError('GCC analyzer did not reject the causal NULL dereference: ' + result.stderr.decode('utf-8', 'replace'))
+        print('GCC analyzer causal NULL gate: rejected with analyzer-null-dereference', flush=True)
+        print(result.stderr.decode('utf-8', 'replace'), flush=True)
+        subprocess.run(analyzer, check=True)
         subprocess.run(['cppcheck', '--enable=warning,performance,portability',
                         '--check-level=exhaustive', '--error-exitcode=1',
                         '-U__NetBSD__', '-UIEEE80211_IOC_STA_MGMT',

@@ -29,7 +29,7 @@
 #define IEEE80211_NWID_LEN 32
 #define IFF_UP 1
 #define IFF_RUNNING 64
-#define IFM_OMASK 0xF00
+#define IFM_OMASK 0xFF00
 #define IFM_AUTO 0
 #define MSG_DEBUG 0
 #define MSG_ERROR 1
@@ -262,6 +262,10 @@ int main(void)
 	configured_media = 7;
 	CHECK(bsd_set_mediaopt(&drv, IFM_OMASK, 0x200) == 0);
 	CHECK(media_sets == 1 && configured_media == 0x207);
+	reset();
+	configured_media = 0x8007;
+	CHECK(bsd_set_mediaopt(&drv, IFM_OMASK, 0x100) == 0);
+	CHECK(media_sets == 1 && configured_media == 0x107);
 	reset();
 	set_error = EIO;
 	CHECK(bsd_set_mediaopt(&drv, IFM_OMASK, 0x100) == -1);

@@ -149,7 +149,9 @@ CC=/absolute/gcc16/bin/gcc python3 ember/tools/net80211-manual-scan-contract.py
 ```
 
 `MANUAL_SCAN_CFLAGS` accepts ASan/UBSan flags. `MANUAL_SCAN_ANALYZE=1` runs
-Cppcheck, GCC `-fanalyzer` and Clang Static Analyzer on the selected source model.
+Cppcheck, GCC `-fanalyzer -c -O0` and Clang Static Analyzer on the selected
+source model. The GCC branch first requires a causal NULL dereference to fail
+with `-Wanalyzer-null-dereference`; a syntax-only invocation is insufficient.
 `MANUAL_SCAN_SOURCE` selects an explicit source tree for causal comparison.
 These host checks do not establish a target build or a lower physical cold-init
 count. Reconnect latency, DHCP DAD timing and radio acceptance remain separate.
