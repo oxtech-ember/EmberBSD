@@ -125,7 +125,8 @@ for part in bin/sh bin/cat bin/ls bin/cp bin/mv bin/rm bin/mkdir bin/chmod \
     crypto/external/bsd/openssh/bin/ssh-keygen usr.bin/passwd usr.sbin/pwd_mkdb; do
     component "$part"
 done
-component external/bsd/dhcpcd/sbin/dhcpcd SMALLPROG=1
+# Keep the reduced non-privsep profile, with both IPv4 and IPv6 clients.
+component external/bsd/dhcpcd/sbin/dhcpcd SMALLPROG=1 SMALLPROG_INET6=1
 component share/i18n/iconv
 component share/i18n/esdb 'SUBDIR=ISO646 UTF' ISO646_PART=US UTF_PART=8
 component share/i18n/csmapper SUBDIR=ISO646 PART_ISO646=US

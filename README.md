@@ -1225,6 +1225,9 @@ The base system shell is unchanged.
   [static C profile](ember/image/cix-p1-userland.md) cross-builds headers,
   libraries, network clients and recovery tools with GCC16. A pinned static
   cohort and a seven-program SSH extension pass AArch64 ELF checks.
+  The reduced DHCP profile now selects IPv4 and IPv6 clients, and its startup
+  selects dual-stack address configuration. Host orchestration checks cover
+  that selection; the new client build and live RA/SLAAC/DHCPv6 remain pending.
   The [persistent-root profile](ember/image/cix-p1.md) restores WPA2/DHCP on both
   legacy bands and passes 2 MiB TCP checks each way. Administrator-provisioned
   root password login, PTY access, persistent host identity and SSH autostart

@@ -138,6 +138,11 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   stdout, stderr, status = run.call(out)
   abort "FAIL: valid profile: #{stdout}#{stderr}" unless status.success?
   events = File.readlines(out + '/events')
+  dhcpcd = events.select { |line| line.include?('/external/bsd/dhcpcd/sbin/dhcpcd ') }
+  abort 'FAIL: reduced DHCP must retain IPv4 and enable IPv6 in every build stage' unless
+    dhcpcd.size == 3 && dhcpcd.map { |line| line.split.last } == %w[obj dependall install] &&
+    dhcpcd.all? { |line| line.include?(' SMALLPROG=1 SMALLPROG_INET6=1 ') }
+  checks += 1
   { 'iconv' => '', 'esdb' => 'SUBDIR=ISO646 UTF ISO646_PART=US UTF_PART=8 ',
     'csmapper' => 'SUBDIR=ISO646 PART_ISO646=US ' }.each do |part, selection|
     selected = events.select { |line| line.include?("/share/i18n/#{part} ") }

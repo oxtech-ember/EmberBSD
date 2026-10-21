@@ -22,7 +22,7 @@ Dir.mktmpdir('cix-startup-') do |tmp|
         case '#{command}: '"$*" in
           'ifconfig: rtwce0 down') action=down;;
           'ifconfig: rtwce0 up') action=up;;
-          'dhcpcd: -4 -k rtwce0') action=multicast;;
+          'dhcpcd: -k rtwce0'|'dhcpcd: -4 -k rtwce0') action=multicast;;
           wpa_cli:*) action=wpa;;
         esac
         if [ -n "$action" ]; then
@@ -70,7 +70,7 @@ Dir.mktmpdir('cix-startup-') do |tmp|
   assert.call(lines[1] == "ifconfig <rtwce0> <roaming> <manual>\n", 'set manual before up')
   assert.call(lines[2] == "ifconfig <rtwce0> <up>\n", 'then bring interface up')
   assert.call(lines[3]&.start_with?('wpa_supplicant <-B> <-Dbsd> <-i> <rtwce0>'), 'one background WPA process')
-  assert.call(lines[4] == "dhcpcd <-b> <-4> <-C> <wpa_supplicant> <rtwce0>\n", 'background IPv4 DHCP and disable duplicate WPA hook')
+  assert.call(lines[4] == "dhcpcd <-b> <-C> <wpa_supplicant> <rtwce0>\n", 'background dual-stack DHCP and disable duplicate WPA hook')
   assert.call(lines.size == 5, 'no synchronous association poll')
   assert.call(File.stat(File.join(tmp, 'log', 'wpa_supplicant.log')).mode & 0777 == 0600, 'private WPA log')
   %w[ifconfig:\ rtwce0\ down ifconfig:\ rtwce0\ roaming\ manual ifconfig:\ rtwce0\ up wpa_supplicant:].each do |failure|
@@ -94,13 +94,17 @@ Dir.mktmpdir('cix-startup-') do |tmp|
     assert.call(File.read(state).split.map(&:to_i) == [0, 0], "cleanup must not restart an UP radio: #{File.read(state).strip}")
   end
   assert.call(ok && text.lines.first == "ifconfig <rtwce0> <down>\n", 'quiesce radio before address cleanup')
-  assert.call(text.lines[1] == "dhcpcd <-4> <-k> <rtwce0>\n", 'stop correct IPv4 daemon after DOWN')
-  assert.call(text.lines[2]&.start_with?('wpa_cli <-p>') && text.include?('<terminate>'), 'stop the owned WPA instance')
+  assert.call(text.lines[1] == "dhcpcd <-k> <rtwce0>\n", 'stop dual-stack daemon after DOWN')
+  assert.call(text.lines[2] == "dhcpcd <-4> <-k> <rtwce0>\n", 'also stop legacy IPv4 daemon for rollback')
+  assert.call(text.lines[3]&.start_with?('wpa_cli <-p>') && text.include?('<terminate>'), 'stop the owned WPA instance')
   ok, text, = run.call('stop', 'dhcpcd:')
   assert.call(ok && text.include?('wpa_cli'), 'absent DHCP does not prevent WPA stop')
   if ENV['CIX_STOP_PROBE']
     assert.call(File.read(state).split.map(&:to_i) == [0, 0], 'DHCP failure leaves radio stopped')
   end
+  ok, text, = run.call('stop', 'dhcpcd: -4 -k')
+  assert.call(ok && text.lines[1] == "dhcpcd <-k> <rtwce0>\n" && text.include?('wpa_cli'),
+    'absent legacy IPv4 daemon retains dual-stack and WPA cleanup')
   ok, text, = run.call('stop', 'wpa_cli:')
   assert.call(ok && text.include?('dhcpcd'), 'WPA control failure retains completed DHCP cleanup')
   if ENV['CIX_STOP_PROBE']

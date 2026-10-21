@@ -158,11 +158,17 @@ The profile loads and refreshes the private entropy file with `rndctl`.
 
 Wi-Fi startup takes the interface down, sets `roaming manual`, then raises it.
 One background `wpa_supplicant` owns association and WPA authentication.
-IPv4-only `dhcpcd -b -4 -C wpa_supplicant` owns DHCP, routes and DNS hooks.
+Dual-stack `dhcpcd -b -C wpa_supplicant` owns DHCPv4, IPv6 router solicitation,
+SLAAC, DHCPv6, routes and DNS hooks. The reduced userland must be rebuilt with
+`SMALLPROG=1 SMALLPROG_INET6=1` before deploying this startup profile.
 An absent AP does not block the console. Both daemons can retry after boot.
 Startup reports launch failures on the console. WPA logs use mode `0600`.
-Shutdown releases the IPv4 daemon and lowers the interface before terminating
-WPA, because the BSD WPA backend restores automatic roaming on exit.
+Shutdown lowers the interface, then stops the dual-stack daemon and any legacy
+IPv4-only daemon before terminating WPA. The BSD WPA backend restores automatic
+roaming on exit. The legacy `-4` cleanup supports an IPv4-only rollback daemon.
+These profile changes have host orchestration coverage. The new dhcpcd target
+build, IPv4 recovery, IPv6 RA/SLAAC and DHCPv6 require physical acceptance.
+IPv6 link-local access alone does not establish SLAAC or DHCPv6 operation.
 Use `shutdown -r now` for a reboot with shutdown hooks.
 The separate `reboot` command does not execute `/etc/rc.shutdown`.
 

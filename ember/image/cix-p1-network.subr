@@ -9,7 +9,8 @@ cix_network_stop()
 	# Quiesce before DHCP removes multicast membership or WPA restores AUTO.
 	# Either cleanup can request a radio restart while the interface is UP.
 	ifconfig "$_cix_if" down || return 1
-	# dhcpcd has distinct IPv4-only and dual-stack PID files.
+	# dhcpcd has distinct dual-stack and legacy IPv4-only PID files.
+	dhcpcd -k "$_cix_if" || :
 	dhcpcd -4 -k "$_cix_if" || :
 	wpa_cli -p "$_cix_run/wpa_supplicant" -i "$_cix_if" terminate || :
 }
@@ -45,7 +46,7 @@ cix_network_start()
 	fi
 	# Return before association or DHCP completes. Both daemons retry later.
 	# Keep the route and DNS hooks, but prevent a second WPA instance.
-	if ! dhcpcd -b -4 -C wpa_supplicant "$_cix_if"; then
+	if ! dhcpcd -b -C wpa_supplicant "$_cix_if"; then
 		ifconfig "$_cix_if" down || return 1
 		wpa_cli -p "$_cix_run/wpa_supplicant" -i "$_cix_if" terminate || :
 		return 1

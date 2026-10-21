@@ -38,6 +38,14 @@ use the same static target libraries and receipt checks. PAM, Kerberos, LDAP,
 YP, S/Key and Hesiod are disabled explicitly before headers and libraries build.
 The private libssh archive stays in the object tree; it is not an installed ABI.
 
+The DHCP client uses `SMALLPROG=1 SMALLPROG_INET6=1`. The [native dhcpcd Makefile](../../external/bsd/dhcpcd/sbin/dhcpcd/Makefile)
+retains IPv4 and adds IPv6 router discovery, SLAAC and DHCPv6.
+The reduced profile still omits privilege separation, DHCP authentication and
+prefix delegation. It runs as root; it does not require a new `_dhcpcd` account.
+This retains the existing reduced-client privilege policy. It is not the full
+base-system dhcpcd profile. Host contracts check the flags at object, build and
+install stages; they do not establish a target link or live IPv6 configuration.
+
 This C-only profile does not provide C++, PAM or the complete rc system.
 The receiving root profile owns startup, console access and shutdown scripts.
 Use native getty to establish the console session before its trusted wrapper.
