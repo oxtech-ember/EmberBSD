@@ -226,6 +226,10 @@ ieee80211_crypto_resetkey(struct ieee80211com *ic,
 void	ieee80211_notify_replay_failure(struct ieee80211com *,
 		const struct ieee80211_frame *, const struct ieee80211_key *,
 		u_int64_t rsc);
+/* Report the selected replay domain without changing the event layout. */
+void	ieee80211_notify_replay_failure_rsc(struct ieee80211com *,
+	    const struct ieee80211_frame *, const struct ieee80211_key *,
+	    u_int64_t, u_int64_t);
 void	ieee80211_notify_michael_failure(struct ieee80211com *,
 		const struct ieee80211_frame *, u_int keyix);
 #endif /* defined(__KERNEL__) || defined(_KERNEL) */

@@ -66,9 +66,16 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_crypto_ccmp.c,v 1.20 2023/06/24 05:12:03 m
 
 #define AES_BLOCK_LEN 16
 
+/*
+ * Per-TID replay domains follow FreeBSD net80211 at
+ * d2145e9b96448da34d3cfede24c509af6d830c92 (BSD-2-Clause).
+ * Keep QoS state private. The key scalar remains the non-QoS RSC.
+ * Prepared with OpenAI Codex assistance.
+ */
 struct ccmp_ctx {
 	struct aesenc cc_aes;
 	struct ieee80211com *cc_ic;	/* for diagnostics */
+	uint64_t cc_rxrsc[16];		/* one replay domain per QoS TID */
 };
 
 static	void *ccmp_attach(struct ieee80211com *, struct ieee80211_key *);
@@ -127,6 +134,7 @@ static int
 ccmp_setkey(struct ieee80211_key *k)
 {
 	struct ccmp_ctx *ctx = k->wk_private;
+	unsigned i;
 
 	if (k->wk_keylen != (128/NBBY)) {
 		IEEE80211_DPRINTF(ctx->cc_ic, IEEE80211_MSG_CRYPTO,
@@ -136,6 +144,8 @@ ccmp_setkey(struct ieee80211_key *k)
 	}
 	if (k->wk_flags & IEEE80211_KEY_SWCRYPT)
 		aes_setenckey128(&ctx->cc_aes, k->wk_key);
+	for (i = 0; i < __arraycount(ctx->cc_rxrsc); i++)
+		ctx->cc_rxrsc[i] = k->wk_keyrsc;
 	return 1;
 }
 
@@ -187,7 +197,8 @@ ccmp_enmic(struct ieee80211_key *k, struct mbuf *m,
 static __inline uint64_t
 READ_6(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3, uint8_t b4, uint8_t b5)
 {
-	uint32_t iv32 = (b0 << 0) | (b1 << 8) | (b2 << 16) | (b3 << 24);
+	uint32_t iv32 = (b0 << 0) | (b1 << 8) | (b2 << 16) |
+	    ((uint32_t)b3 << 24);
 	uint16_t iv16 = (b4 << 0) | (b5 << 8);
 	return (((uint64_t)iv16) << 32) | iv32;
 }
@@ -203,13 +214,35 @@ ccmp_decap(struct ieee80211_key *k, struct mbuf *m, int hdrlen)
 	struct ccmp_ctx *ctx = k->wk_private;
 	struct ieee80211_frame *wh;
 	uint8_t *ivp;
-	uint64_t pn;
+	uint64_t pn, *rsc;
+	int minhdr;
+
+	/* Validate every header byte before selecting the replay domain. */
+	if (m->m_len < (int)sizeof(*wh) ||
+	    m->m_pkthdr.len < (int)sizeof(*wh))
+		goto badformat;
+	wh = mtod(m, struct ieee80211_frame *);
+	if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) !=
+	    IEEE80211_FC0_TYPE_DATA &&
+	    (wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) !=
+	    IEEE80211_FC0_TYPE_MGT)
+		goto badformat;
+	minhdr = ieee80211_hdrsize(wh);
+	if (hdrlen < minhdr || hdrlen > m->m_len ||
+	    ccmp.ic_header > (unsigned)(m->m_len - hdrlen) ||
+	    hdrlen > m->m_pkthdr.len ||
+	    ccmp.ic_header + ccmp.ic_trailer >=
+	    (unsigned)(m->m_pkthdr.len - hdrlen))
+		goto badformat;
+	rsc = &k->wk_keyrsc;
+	if (ieee80211_has_qos(wh))
+		rsc = &ctx->cc_rxrsc[mtod(m, uint8_t *)[minhdr - 2] &
+		    IEEE80211_QOS_TID];
 
 	/*
 	 * Header should have extended IV and sequence number;
 	 * verify the former and validate the latter.
 	 */
-	wh = mtod(m, struct ieee80211_frame *);
 	ivp = mtod(m, uint8_t *) + hdrlen;
 	if ((ivp[IEEE80211_WEP_IVLEN] & IEEE80211_WEP_EXTIV) == 0) {
 		/*
@@ -222,11 +255,12 @@ ccmp_decap(struct ieee80211_key *k, struct mbuf *m, int hdrlen)
 		return 0;
 	}
 	pn = READ_6(ivp[0], ivp[1], ivp[4], ivp[5], ivp[6], ivp[7]);
-	if (pn <= k->wk_keyrsc) {
+	if (pn <= *rsc) {
 		/*
 		 * Replay violation.
 		 */
-		ieee80211_notify_replay_failure(ctx->cc_ic, wh, k, pn);
+		ieee80211_notify_replay_failure_rsc(ctx->cc_ic, wh, k, pn,
+		    *rsc);
 		ctx->cc_ic->ic_stats.is_rx_ccmpreplay++;
 		return 0;
 	}
@@ -252,9 +286,13 @@ ccmp_decap(struct ieee80211_key *k, struct mbuf *m, int hdrlen)
 	/*
 	 * Ok to update rsc now.
 	 */
-	k->wk_keyrsc = pn;
+	*rsc = pn;
 
 	return 1;
+
+badformat:
+	ctx->cc_ic->ic_stats.is_rx_ccmpformat++;
+	return 0;
 }
 
 /*
