@@ -179,10 +179,12 @@ on every board in the hardware catalog.
 - **Shared sysroots for developers:** SDK [export and import](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/sysroot-transfer.md)
   bind completed build outputs to source commits, compiler hashes and a pinned
   manifest. Import restores a new local tree without replacing existing data.
-  Local macOS arm64 fixture checks cover aarch64 and amd64. An aarch64 fixture
-  also passed an actual SMB transfer with disconnect/reconnect. This does not
-  qualify live SMB builds, a second host, compiler relocation, target execution
-  or a binary SDK release.
+  A [source-built AArch64 sysroot](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/sysroot-transfer.md#source-built-aarch64-check)
+  on macOS arm64 passed SMB export/import with disconnect/reconnect and exact
+  inventory checks. C/C++, OpenMP and libatomic consumers passed plain and LTO
+  links at the restored path without fallback to the original sysroot.
+  This does not qualify live SMB builds, a second host, compiler relocation,
+  target execution or a binary SDK release.
 - **AArch64 development sets:** the [pinned base/comp workflow](ember/release/aarch64-sysroot.md)
   builds complete sets from one fork commit with hashes and source provenance.
   Its GCC16 C11/C++20 consumers, shared/static libc CAS checks and GNU M4
