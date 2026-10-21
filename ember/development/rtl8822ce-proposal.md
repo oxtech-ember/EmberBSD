@@ -122,6 +122,13 @@ Other configuration reset requests retain their existing restart behavior.
 The actual-source stop contract covers both membership operations in each
 UP/RUNNING combination and preserves configuration and error handling.
 This contract does not establish reconnect latency or packet-loss recovery.
+A GCC16 physical kernel at `6a1a34c93e3eb105bfdb035a9f30cbadfb678a9f`
+passes three IPv6 address add/remove cycles. The cold calibration count stays
+at four, the station stays in WPA2 COMPLETED, and DAD leaves both addresses ready.
+A separate 60-probe link-local IPv6 run receives all replies.
+The IPv4 run loses one of 60 replies. This is a short regression, not endurance acceptance.
+The [bounded A-MSDU prerequisite](net80211-amsdu.md) remains disabled.
+Its host parser and native-consumer models do not establish HT interoperability.
 
 The kernel configuration selects the native station wrapper and ingress
 generation policy. Use the standard interface tools when the PCI wrapper

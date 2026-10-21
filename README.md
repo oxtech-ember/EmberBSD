@@ -1134,6 +1134,10 @@ The base system shell is unchanged.
   warnings. The [persistent SD profile](ember/image/cix-p1.md) also passes
   unattended reboot and Wi-Fi recovery checks on both bands. Higher rates,
   analog qualification and long-term stability remain pending.
+  Multicast membership changes preserve the live radio. Shared CCMP bounds
+  and per-TID replay checks support further WLAN work. A bounded
+  [A-MSDU receive path](ember/development/net80211-amsdu.md) remains disabled
+  until peer negotiation and aggregation requirements are complete.
   See the [source boundary and checks](ember/development/rtl8822ce-proposal.md#current-source-boundary)
   and [physical board limits](ember/boards/orange-pi-6-plus.md).
 - **Raspberry Pi 5 and Compute Module 5**: UEFI firmware built from
@@ -1603,7 +1607,9 @@ remain unverified.
 - **Short firmware replies** still need a command-transport fix and regression.
 - **Native RTL8822CE:** multicast membership updates avoid a full radio restart
   because the MAC already accepts every multicast address. The actual-source
-  ioctl contract passes; physical reconnect latency remains unqualified. See the
+  ioctl contract passes. Three physical IPv6 address add/remove cycles preserve
+  calibration count, WPA2 association and ready addresses. General AP-loss
+  recovery and reconnect latency remain unqualified. See the
   [native driver boundary](ember/development/rtl8822ce-proposal.md#current-source-boundary).
 - **RTL8852BE (`rtwx`):** WPA2-PSK station mode works with software crypto.
   HT/VHT/HE rates, aggregation, WPA3/PMF, power save and beacon-loss
