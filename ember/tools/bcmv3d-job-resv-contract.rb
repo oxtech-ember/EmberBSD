@@ -40,6 +40,9 @@ begin
   %w[h c].each { |ext| read.call('sys/external/bsd/drm2/bcmv3d/bcmv3d_resv.' + ext) }
   read.call('sys/external/bsd/drm2/dist/drm/drm_gem.c')
   read.call('sys/external/bsd/drm2/bcmv3d/bcmv3d_bo_stats.h')
+  %w[bcmv3d_cl_reject.h bcmv3d_tfu_reject.h].each { |n| read.call('sys/external/bsd/drm2/bcmv3d/' + n) }
+  read.call('ember/tools/bcmv3d-kheapsort-model.h')
+  read.call('common/lib/libc/stdlib/heapsort.c')
   Dir[source + '/ember/tools/bcm2712-v3d-*-contract.c', source + '/ember/tools/bcm2712-v3d-*-model.h'].sort.each { |p| read.call(p.delete_prefix(source + '/')) }
   %w[bcmv3d-job-resv-contract.c bcmv3d-job-resv-contract.rb bcmv3d-resv-model-export.rb].each { |n| read.call('ember/tools/' + n) }
   run.call('export', ['ruby', source + '/ember/tools/bcmv3d-resv-model-export.rb', source, output])
@@ -57,8 +60,12 @@ begin
         changes[name + '-publish'] = ['error = bcmv3d_resv_publish(&reservations, sync.fence);', 'error = 0;', index + 1]
         changes[name + '-unlock'] = ["\t/* Completion cannot need a reservation held by this submission. */\n\tbcmv3d_resv_unlock(&reservations);", "\t/* Fault control: hold reservations through execution. */", index + 1]
       end
+      changes['tfu-alias-deduplicate'] = ["\t\tif (j == *count)\n\t\t\tobjects[(*count)++] = obj;", "\t\tif (true)\n\t\t\tobjects[(*count)++] = obj;", 1]
+      changes['tfu-alias-reference-release'] = ["\t\telse\n\t\t\tdrm_gem_object_put_unlocked(obj);", "\t\telse\n\t\t\t(void)obj;", 1]
       expected = {
         'no-native-fence' => 'error == expected',
+        'tfu-alias-deduplicate' => 'error == expected',
+        'tfu-alias-reference-release' => 'submitted[0]->refs == 1 && submitted[1]->refs == 1',
         'tfu-prepare' => 'submitted[0]->resv->exclusive == f && submitted[1]->resv->exclusive == f', 'csd-prepare' => 'submitted[0]->resv->exclusive == f && submitted[1]->resv->exclusive == f', 'cl-prepare' => 'submitted[0]->resv->exclusive == f && submitted[1]->resv->exclusive == f',
         'tfu-publish' => 'next && next->status == 0 && next->context == job->fence_context &&     next->seqno == job->fence_seqno',
         'csd-publish' => 'next && next->status == 0 && next->context == job->fence_context &&     next->seqno == job->fence_seqno',
@@ -70,7 +77,7 @@ begin
       changes.each do |name, (before, after, nth)|
         seen = 0
         mutated = original.gsub(before) { |match| seen += 1; seen == nth ? after : match }
-        abort 'source control anchor ' + name unless seen == (name == 'no-native-fence' ? 1 : 3)
+        abort 'source control anchor ' + name unless seen == (name == 'no-native-fence' || name.start_with?('tfu-alias-') ? 1 : 3)
         File.write(output + '/job-body.h', mutated)
         run.call(name + '-compile', argv)
         _, err, status, timeout = run.call(name, executor + [output + '/contract'], false)

@@ -3,13 +3,13 @@
 #define BCMV3D_WAIT_CONTRACT
 #include "bcm2712-v3d-cl-contract.c"
 static struct drm_gem_object *submitted[2];
-static unsigned producer_signals;
+static unsigned producer_signals, submitted_count;
 static void
 producer_signal(struct dma_fence *f)
 {
 	CHECK(resv_locks == 0 && resv_contexts == 0 && resv_arrays == 0);
 	CHECK(submitted[0]->resv->exclusive == f && submitted[1]->resv->exclusive == f);
-	CHECK(f->refs >= 3 && f->context != 0 && f->seqno != 0);
+	CHECK(f->refs >= submitted_count + 1 && f->context != 0 && f->seqno != 0);
 	producer_signals++;
 }
 static struct dma_fence *
@@ -43,9 +43,10 @@ run(unsigned engine, unsigned mode)
 	else
 		cl = cl_setup(&c, &d, &file, handles);
 	submitted[0] = file.handles[handles[0]]; submitted[1] = file.handles[handles[1]];
-	producer_signals = 0; on_signal = producer_signal;
-	/* Actual lookup order is source then destination for TFU reservations. */
-	unsigned last = engine == 0 ? 0 : 1;
+	producer_signals = 0; submitted_count = 2; on_signal = producer_signal;
+	/* The reservation helper sorts both objects by reservation address. */
+	unsigned last = (uintptr_t)submitted[0]->resv >
+	    (uintptr_t)submitted[1]->resv ? 0 : 1;
 	if (mode >= 6 && mode <= 11) {
 		prior = previous_fence(mode == 9 || mode == 11 ? -EIO : 0);
 		if (mode >= 10) submitted[last]->resv->shared = dma_fence_get(prior);
@@ -63,9 +64,16 @@ run(unsigned engine, unsigned mode)
 	if (mode == 12) { fail_fence_alloc = true; expected = -ENOMEM; }
 	if (mode == 13) { c.job->fence_seqno = UINT64_MAX; expected = -EOVERFLOW; }
 	if (mode == 14) {
-		if (engine == 0) { tfu.bo_handles[0] = tfu.bo_handles[1]; tfu.ioa = tfu.iia; }
-		else handles[1] = handles[0];
-		expected = -EINVAL;
+		if (engine == 0) {
+			/* TFU input and output may share one native BO. */
+			tfu.bo_handles[0] = tfu.bo_handles[1];
+			tfu.ioa = tfu.iia;
+			submitted[0] = submitted[1];
+			submitted_count = 1;
+		} else {
+			handles[1] = handles[0];
+			expected = -EINVAL;
+		}
 	}
 	if (mode == 15) { model_case = 1; expected = -EIO; }
 	/* Both prior reader and writer fences must be observed before replacement. */
@@ -85,7 +93,7 @@ run(unsigned engine, unsigned mode)
 		CHECK(reg_calls == before && producer_signals == 0 && resv_publications == 0);
 		CHECK(!c.job->poisoned && submitted[0]->refs == 1 && submitted[1]->refs == 1);
 	} else {
-		CHECK(producer_signals == 1 && resv_publications == 2);
+		CHECK(producer_signals == 1 && resv_publications == submitted_count);
 		struct dma_fence *f = submitted[0]->resv->exclusive;
 		CHECK(f && f == submitted[1]->resv->exclusive && f->status == (mode == 15 ? -EIO : 1));
 		CHECK(f->context == c.job->fence_context && f->seqno == 1);
@@ -101,6 +109,8 @@ run(unsigned engine, unsigned mode)
 			CHECK(f->seqno == 2 && old->refs == 1 && old->status == 1);
 		}
 	}
+	if (expected == 0)
+		CHECK(submitted[0]->refs == 1 && submitted[1]->refs == 1);
 	if (prior) CHECK(prior->refs == 2);
 	fail_fence_alloc = false; on_signal = NULL;
 	dma_fence_put(prior); dma_fence_put(old);

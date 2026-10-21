@@ -179,6 +179,7 @@ kernel reference or PTE retirement.
 ruby ember/tools/bcm2712-v3d-cl-check-contract.rb --source /absolute/source
 ruby ember/tools/bcmv3d-cl-reject-contract.rb /absolute/source
 ruby ember/tools/bcmv3d-resv-contract.rb /absolute/source
+ruby ember/tools/bcmv3d-job-resv-contract.rb /absolute/source
 sh ember/tools/bcm2712-v3d-cl-contract.sh /absolute/source
 sh ember/tools/bcm2712-v3d-csd-contract.sh /absolute/source
 sh ember/tools/bcm2712-v3d-job-contract.sh /absolute/source
@@ -189,6 +190,9 @@ and DRM services. They cover 64, 65, 72, 91, 4096 and rejected 4097-entry lists,
 partial lookup, capacity-sized metadata cleanup, duplicate ordering, retained
 poison across CL/CSD, and full-vector PTE mapping/revocation. The checker fixture
 covers exact workload counts, distinct guards and successful/error cleanup.
+The job reservation contract checks 51 TFU, CSD and CL caller cases. It checks
+one producer publication for a TFU role alias and two for distinct BOs. Named
+controls detect missing TFU deduplication and duplicate-reference release.
 Compiled controls must reach their expected failed checks; a crash or timeout
 is not a passing control. Host services do not execute GPU commands.
 
