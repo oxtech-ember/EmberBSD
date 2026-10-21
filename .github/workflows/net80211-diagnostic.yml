@@ -1,0 +1,45 @@
+name: Diagnostic-only A-MSDU analyzer capture
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: gcc@sha256:3f73339bf0d3d64081cac3f6d9fdafc6dd4cef2b9c49e0a09f91e97cb0eb139a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /ember/tools/net80211-amsdu*
+            /sys/net80211/
+            /sys/sys/mbuf.h
+      - name: Prepare diagnostic host
+        run: |
+          test "$(gcc -dumpfullversion)" = 16.2.0
+          apt-get update
+          apt-get install -y --no-install-recommends python3
+      - name: Capture actual source analyzer paths
+        env:
+          CC: gcc
+        run: python3 ember/tools/net80211-amsdu-diagnostic.py "$RUNNER_TEMP/amsdu-diagnostic"
+      - name: Save diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: amsdu-analyzer-${{ github.sha }}
+          path: ${{ runner.temp }}/amsdu-diagnostic
+          if-no-files-found: error
+          retention-days: 7
+      - name: Mark this job as diagnostic only
+        if: always()
+        run: |
+          echo 'This job captures failures. It is deliberately not an acceptance PASS.'
+          exit 1

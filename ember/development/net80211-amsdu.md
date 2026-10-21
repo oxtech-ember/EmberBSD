@@ -112,3 +112,28 @@ Valgrind is unavailable for this macOS arm64 execution platform.
 No Valgrind, target kernel build, VM, radio or timing acceptance is claimed.
 A coherent GCC16 target build and native legacy regression remain integration gates.
 HT negotiation, reorder, interoperability and physical acceptance remain separate work.
+
+## Capture analyzer diagnostics
+
+The manual-only `net80211-diagnostic.yml` workflow uses the same pinned Linux
+GCC16 image as the normal contracts. It captures four analyzer configurations:
+default, no state merge, no state purge, and neither merge nor purge.
+Each configuration enables `-Wanalyzer-too-complex` to expose analysis limits.
+The workflow always ends with a diagnostic-only failure, after artifact upload.
+It cannot supply an acceptance PASS or replace the normal contract workflow.
+
+Use the collector locally with a new output directory:
+
+```sh
+CC=gcc-16 python3 ember/tools/net80211-amsdu-diagnostic.py /tmp/amsdu-evidence
+```
+
+The collector reuses the actual consumer runner through a temporary compiler
+wrapper. Before runner cleanup, it saves `native.inc`, generated headers,
+compiler arguments, GCC version output, preprocessed translation units,
+preprocessor exit statuses, analyzer logs and runner exit statuses.
+`sha256.json` binds the retained files. Existing output directories are refused.
+The collector exits zero when collection completes, including compiler failures.
+Read `results.json` and each log to interpret the failures. Mac results do not
+establish the Linux analyzer result. State merge and purge variants are diagnostic
+experiments, not proposed acceptance flags.
