@@ -228,6 +228,9 @@ pci_dwiic_attach(device_t parent, device_t self, void *aux)
 	char intrbuf[PCI_INTRSTR_LEN];
 	pcireg_t memtype;
 	pcireg_t csr;
+	pcireg_t bar0;
+	bus_addr_t membase;
+	bus_size_t memsize;
 	uint32_t caps;
 
 	sc->sc_dwiic.sc_dev = self;
@@ -244,13 +247,21 @@ pci_dwiic_attach(device_t parent, device_t self, void *aux)
 	csr = pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG);
 	pci_conf_write(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG,
 	    csr | PCI_COMMAND_MEM_ENABLE);
+	csr = pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG);
 
+	bar0 = pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_BAR0);
 	memtype = pci_mapreg_type(pa->pa_pc, pa->pa_tag, PCI_BAR0);
+	aprint_verbose_dev(self,
+	    "BAR0 0x%x, command/status after MEM_ENABLE 0x%x, "
+	    "memory type 0x%x\n",
+	    bar0, csr, memtype);
 	if (pci_mapreg_map(pa, PCI_BAR0, memtype, 0, &sc->sc_dwiic.sc_iot,
-	    &sc->sc_dwiic.sc_ioh, NULL, NULL) != 0) {
+	    &sc->sc_dwiic.sc_ioh, &membase, &memsize) != 0) {
 		aprint_error(": can't map register space\n");
 		goto out;
 	}
+	aprint_verbose_dev(self, "mapped BAR0 0x%" PRIxBUSADDR
+	    " size 0x%" PRIxBUSSIZE "\n", membase, memsize);
 	dwiic_pci_power(&sc->sc_dwiic, 1);
 
 	caps = lpss_read(sc, LPSS_CAP);
