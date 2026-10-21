@@ -29,6 +29,12 @@ Git, Ruby and patch and preserves accepted outputs. See the
 [verified source-cache contract](source-cache.md) for source manifests,
 shared-cache leases, legacy adoption and object-profile limits.
 
+## Selected wireless instructions
+
+The separate [AIC8800D80 U02 fixture](../tools/aicwf-firmware-check/README.md)
+loads selected external instructions into a Cortex-M4 CPU model. It does not
+boot the FullMAC firmware or establish safe device firmware.
+
 ## Serial console preference regression
 
 Run the callback check against a prepared EDK2 tree:
