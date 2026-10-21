@@ -127,6 +127,33 @@ passes three IPv6 address add/remove cycles. The cold calibration count stays
 at four, the station stays in WPA2 COMPLETED, and DAD leaves both addresses ready.
 A separate 60-probe link-local IPv6 run receives all replies.
 The IPv4 run loses one of 60 replies. This is a short regression, not endurance acceptance.
+Manual SSID updates now stage the desired network without requesting a cold
+restart. Automatic and device-controlled roaming retain their reset result.
+The BSD supplicant skips a media SET when the configured media word is unchanged.
+Changed media requests and transport errors retain their existing behavior.
+The legacy scan path still sends an explicit `IEEE80211_IOC_SCAN_REQ` after
+SSID staging. The native stack prepares INIT and requests SCAN. Association
+remains an explicit MLME operation after scan completion.
+
+The [manual scan contract](../tools/net80211-manual-scan-contract.py) runs the
+complete BSD legacy scan, media and SSID functions. It compiles the native
+NWID, ROAMING and SCAN_REQ switch arms, the complete `setupscan` body, and the
+complete RTL8822CE ioctl consumer. Kernel layouts, copyin, ioctl transport and
+state scheduling use explicit host models. Unrelated switch arms, WPA setup,
+management capabilities and physical radio operations are outside this contract.
+
+Run with a native GCC16 compiler:
+
+```sh
+CC=/absolute/gcc16/bin/gcc python3 ember/tools/net80211-manual-scan-contract.py
+```
+
+`MANUAL_SCAN_CFLAGS` accepts ASan/UBSan flags. `MANUAL_SCAN_ANALYZE=1` runs
+Cppcheck, GCC `-fanalyzer` and Clang Static Analyzer on the selected source model.
+`MANUAL_SCAN_SOURCE` selects an explicit source tree for causal comparison.
+These host checks do not establish a target build or a lower physical cold-init
+count. Reconnect latency, DHCP DAD timing and radio acceptance remain separate.
+
 The [bounded A-MSDU prerequisite](net80211-amsdu.md) remains disabled.
 Its host parser and native-consumer models do not establish HT interoperability.
 

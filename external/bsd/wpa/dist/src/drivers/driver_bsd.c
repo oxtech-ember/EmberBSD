@@ -284,11 +284,15 @@ static int
 bsd_set_mediaopt(void *priv, uint32_t mask, uint32_t mode)
 {
 	int media = bsd_get_if_media(priv);
+	int requested;
 
 	if (media < 0)
 		return -1;
-	media &= ~mask;
-	media |= mode;
+	requested = (media & ~mask) | mode;
+	/* A repeated AUTO request can reset a negotiated net80211 mode. */
+	if (requested == media)
+		return 0;
+	media = requested;
 	if (bsd_set_if_media(priv, media) < 0)
 		return -1;
 	return 0;

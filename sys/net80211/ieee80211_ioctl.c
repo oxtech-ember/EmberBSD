@@ -2680,7 +2680,9 @@ ieee80211_ioctl(struct ieee80211com *ic, u_long cmd, void *data)
 		memset(ic->ic_des_essid, 0, IEEE80211_NWID_LEN);
 		ic->ic_des_esslen = nwid.i_len;
 		memcpy(ic->ic_des_essid, nwid.i_nwid, nwid.i_len);
-		error = ENETRESET;
+		/* Manual roaming stages the SSID before an explicit scan/MLME. */
+		error = ic->ic_roaming == IEEE80211_ROAMING_MANUAL ?
+		    0 : ENETRESET;
 		break;
 	case SIOCG80211NWID:
 		memset(&nwid, 0, sizeof(nwid));

@@ -1638,7 +1638,9 @@ remain unverified.
   because the MAC already accepts every multicast address. The actual-source
   ioctl contract passes. Three physical IPv6 address add/remove cycles preserve
   calibration count, WPA2 association and ready addresses. General AP-loss
-  recovery and reconnect latency remain unqualified. See the
+  recovery and reconnect latency remain unqualified. Manual SSID staging and
+  idempotent BSD media selection now pass a native legacy-scan contract. Target
+  build and physical cold-init reduction remain unverified. See the
   [native driver boundary](ember/development/rtl8822ce-proposal.md#current-source-boundary).
 - **RTL8852BE (`rtwx`):** WPA2-PSK station mode works with software crypto.
   HT/VHT/HE rates, aggregation, WPA3/PMF, power save and beacon-loss
