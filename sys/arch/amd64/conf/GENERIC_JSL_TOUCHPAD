@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Enable PCI resource support for Jasper Lake I2C BARs.
+# Keep GENERIC_JSL_TRIAL as the display recovery kernel.
+
+include "arch/amd64/conf/GENERIC_JSL_TRIAL"
+
+options PCI_RESOURCE

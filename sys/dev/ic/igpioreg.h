@@ -140,9 +140,31 @@ static const struct igpio_gpp igpio_mtps_gpps[] = {
 	{ 4, 1, 323, 16, 576 },	/* JTAG_CPU */
 };
 
+/*
+ * Jasper Lake (INT34C8) GPIO assignments adapted from Linux
+ * drivers/pinctrl/intel/pinctrl-jasperlake.c at
+ * 995832b2cebe6969d1b42635db698803ee31294d (hardware data only).
+ * AI-assisted.
+ */
+static const struct igpio_gpp igpio_jsl_gpps[] = {
+	{ 0, 0,   0, 20, 320 },	/* GPP_F */
+	{ 0, 2,  29, 26,  32 },	/* GPP_B */
+	{ 0, 3,  55, 21,  64 },	/* GPP_A */
+	{ 0, 4,  76,  8,  96 },	/* GPP_S */
+	{ 0, 5,  84,  8, 128 },	/* GPP_R */
+	{ 1, 0,  92, 24, 160 },	/* GPP_H */
+	{ 1, 1, 116, 26, 192 },	/* GPP_D */
+	{ 1, 2, 142, 29, 224 },	/* vGPIO */
+	{ 1, 3, 171, 24, 256 },	/* GPP_C */
+	{ 2, 1, 201, 24, 288 },	/* GPP_E */
+	{ 3, 0, 225,  8,   0 },	/* GPP_G */
+};
+
 static const struct igpio_gpp_device igpio_gpp_devices[] = {
 	{ "INTC1084", 0x150, 0x200, 0x220,
 	    igpio_mtps_gpps, __arraycount(igpio_mtps_gpps) },
+	{ "INT34C8", 0x0c0, 0x100, 0x120,
+	    igpio_jsl_gpps, __arraycount(igpio_jsl_gpps) },
 };
 
 struct igpio_bank_setup igpio_bank_setup[] = {

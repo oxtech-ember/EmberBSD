@@ -131,7 +131,8 @@ bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h, bus_size_t o,
 	if (h >= NBAR_MAX || o >= BAR_SIZE)
 		return;
 	reg_writes++;
-	if (o >= 0x200 && o < 0x220)	/* GPI_IS is write one to clear */
+	if ((o >= 0x200 && o < 0x220) || (o >= 0x100 && o < 0x120))
+		/* GPI_IS is write one to clear on MTP-S and Jasper Lake. */
 		regs[h][o / 4] &= ~v;
 	else
 		regs[h][o / 4] = v;
@@ -508,6 +509,95 @@ test_mtps_interrupts(void)
 }
 
 static void
+test_jsl_numbering(void)
+{
+	struct igpio_bank *ib;
+	const struct igpio_gpp *gg;
+	void *ih;
+	uint32_t v;
+	int pad;
+
+	reset_hw();
+	errors = 0;
+	handled = 0;
+	attach("INT34C8", 4);
+	CHECK(sc.sc_banks != NULL);
+	CHECK(sc.sc_gpp_device != NULL);
+	CHECK(sc.sc_npins == 340);
+	if (sc.sc_banks == NULL || sc.sc_gpp_device == NULL) {
+		if (sc.sc_banks != NULL)
+			igpio_detach(&sc);
+		return;
+	}
+
+	/* ACPI GPIO bases and BAR-relative pad indexes use separate numbering. */
+	gg = NULL;
+	pad = -1;
+	ib = igpio_pin_bank(&sc, 32, &pad, &gg);
+	CHECK(ib == &sc.sc_banks[0] && pad == 29 && gg != NULL &&
+	    gg->igg_regno == 2);
+	gg = NULL;
+	pad = -1;
+	ib = igpio_pin_bank(&sc, 160, &pad, &gg);
+	CHECK(ib == &sc.sc_banks[1] && pad == 0 && gg != NULL &&
+	    gg->igg_regno == 0);
+	gg = NULL;
+	pad = -1;
+	ib = igpio_pin_bank(&sc, 256, &pad, &gg);
+	CHECK(ib == &sc.sc_banks[1] && pad == 79 && gg != NULL &&
+	    gg->igg_regno == 3);
+	gg = NULL;
+	pad = -1;
+	ib = igpio_pin_bank(&sc, 288, &pad, &gg);
+	CHECK(ib == &sc.sc_banks[2] && pad == 6 && gg != NULL &&
+	    gg->igg_regno == 1);
+	gg = NULL;
+	pad = -1;
+	ib = igpio_pin_bank(&sc, 0, &pad, &gg);
+	CHECK(ib == &sc.sc_banks[3] && pad == 0 && gg != NULL &&
+	    gg->igg_regno == 0);
+	gg = NULL;
+	pad = -1;
+	ib = igpio_pin_bank(&sc, 320, &pad, &gg);
+	CHECK(ib == &sc.sc_banks[0] && pad == 0 && gg != NULL &&
+	    gg->igg_regno == 0);
+	CHECK(igpio_pin_bank(&sc, 20, &pad, NULL) == NULL);
+	CHECK(igpio_pin_bank(&sc, 31, &pad, NULL) == NULL);
+	CHECK(igpio_pin_bank(&sc, 220, &pad, NULL) == NULL);
+	CHECK(igpio_pin_bank(&sc, 280, &pad, NULL) == NULL);
+	CHECK(igpio_pin_bank(&sc, 287, &pad, NULL) == NULL);
+
+	/* GPP_H pin 0 uses Jasper Lake's BAR-relative interrupt registers. */
+	regs[1][0x0c0 / 4] = __BIT(0);
+	regs[1][PADBAR / 4] = IGPIO_PADCFG0_GPIORXDIS |
+	    IGPIO_PADCFG0_GPIROUTIOXAPIC | IGPIO_PADCFG0_GPIROUTSCI |
+	    __SHIFTIN(1, IGPIO_PADCFG0_PMODE_MASK) |
+	    __SHIFTIN(IGPIO_PADCFG0_RXEVCFG_DISABLED,
+	    IGPIO_PADCFG0_RXEVCFG_MASK);
+	ih = igpio_intr_establish(&sc, 160, IPL_VM, GPIO_INTR_LOW_LEVEL,
+	    handler, &handled);
+	CHECK(ih != NULL);
+	CHECK(errors == 0);
+	v = padcfg0(1, 0);
+	CHECK(__SHIFTOUT_RXEV(v) == IGPIO_PADCFG0_RXEVCFG_LEVEL);
+	CHECK(regs[1][0x120 / 4] == __BIT(0));
+
+	if (ih != NULL) {
+		handler_ih = ih;
+		regs[1][0x100 / 4] = __BIT(0);
+		CHECK(igpio_intr(&sc) == 1);
+		CHECK(handled == 1);
+		CHECK(regs[1][0x100 / 4] == 0);
+		handler_ih = NULL;
+		igpio_intr_disestablish(&sc, ih);
+		CHECK(regs[1][0x120 / 4] == 0);
+	}
+
+	igpio_detach(&sc);
+	CHECK(sc.sc_gpp_intr == NULL && sc.sc_pins == NULL);
+}
+
+static void
 test_missing_community(void)
 {
 	reset_hw();
@@ -604,6 +694,8 @@ test_acpi_front_end(void)
 	node.ad_devinfo = &devinfo;
 	aa.aa_node = &node;
 	CHECK(test_match(NULL, NULL, &aa) != 0);
+	devinfo.HardwareId.String = __UNCONST("INT34C8");
+	CHECK(test_match(NULL, NULL, &aa) != 0);
 	devinfo.HardwareId.String = __UNCONST("INTC1082");
 	CHECK(test_match(NULL, NULL, &aa) == 0);
 
@@ -632,6 +724,39 @@ test_acpi_front_end(void)
 	test_detach(&acpi_dev, 0);
 	CHECK(intr_disestablished == 1);
 
+	/* Jasper Lake GpioInt resources use the same ACPI translation path. */
+	acpi_attach("INT34C8", 4, AE_NOT_FOUND);
+	CHECK(asc->sc_isc.sc_banks != NULL);
+	CHECK(intr_established == 1);
+	CHECK(gpio_registered == 1 && model_translate != NULL);
+	if (asc->sc_isc.sc_banks == NULL || model_translate == NULL) {
+		if (asc->sc_isc.sc_banks != NULL)
+			test_detach(&acpi_dev, 0);
+		return;
+	}
+	CHECK(translate(160, &gpiop) == 160);
+	CHECK(gpiop == &gpio_softc_token);
+	CHECK(translate(20, NULL) == -1); /* SPI pads are not GPIOs. */
+	regs[1][0x0c0 / 4] = __BIT(0);
+	regs[1][PADBAR / 4] = IGPIO_PADCFG0_GPIORXDIS |
+	    IGPIO_PADCFG0_GPIROUTIOXAPIC | IGPIO_PADCFG0_GPIROUTSCI |
+	    __SHIFTIN(1, IGPIO_PADCFG0_PMODE_MASK) |
+	    __SHIFTIN(IGPIO_PADCFG0_RXEVCFG_DISABLED,
+	    IGPIO_PADCFG0_RXEVCFG_MASK);
+	ih = asc->sc_isc.sc_gc.gp_intr_establish(&asc->sc_isc, 160, IPL_VM,
+	    GPIO_INTR_LOW_LEVEL, handler, &handled);
+	CHECK(ih != NULL);
+	handled = 0;
+	if (ih != NULL) {
+		regs[1][0x100 / 4] = __BIT(0);
+		CHECK(model_intr(model_intr_arg) == 1);
+		CHECK(handled == 1);
+		asc->sc_isc.sc_gc.gp_intr_disestablish(&asc->sc_isc, ih);
+	}
+	test_detach(&acpi_dev, 0);
+	CHECK(intr_disestablished == 1);
+	CHECK(live_bytes == 0);
+
 	/* Other _AEI failures are reported but do not drop the interrupt. */
 	errors = 0;
 	acpi_attach("INTC1084", NBAR, AE_ERROR);
@@ -659,6 +784,7 @@ main(void)
 	if (sc.sc_banks != NULL)
 		igpio_detach(&sc);
 	test_mtps_interrupts();
+	test_jsl_numbering();
 	test_missing_community();
 	test_unknown_community();
 	test_legacy_linear();

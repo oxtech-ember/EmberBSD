@@ -25,6 +25,14 @@ done
 # The GpioInt controller named by the touchpad's _CRS.
 grep -Fq '{ .compat = "INTC1084" },' "$src/sys/dev/acpi/igpio_acpi.c" ||
     fail "igpio_acpi does not match INTC1084"
+grep -Fq '{ .compat = "INT34C8" },' "$src/sys/dev/acpi/igpio_acpi.c" ||
+    fail "igpio_acpi does not match INT34C8"
+# Jasper Lake ACPI GPIO resources use group-aligned numbers.
+grep -Fq '{ "INT34C8", 0x0c0, 0x100, 0x120,' "$src/sys/dev/ic/igpioreg.h" ||
+    fail "igpio has no Jasper Lake GPIO resource map"
+grep -Eq '^options[[:space:]]+PCI_RESOURCE$' \
+    "$src/sys/arch/amd64/conf/GENERIC_JSL_TOUCHPAD" ||
+    fail "Jasper Lake trial kernel does not enable PCI_RESOURCE"
 # ihidev must keep matching HID-over-I2C children by _CID PNP0C50.
 grep -Fq '{ .compat = "PNP0C50" },' "$src/sys/dev/i2c/ihidev.c" ||
     fail "ihidev does not match PNP0C50"
