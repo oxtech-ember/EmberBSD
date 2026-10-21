@@ -37,6 +37,9 @@
 #define __HAVE_PCI_MSI_MSIX
 #endif
 
+/* Keep new PCI MMIO BARs out of the first MiB, including the legacy hole. */
+#define PCI_RESOURCE_MEM_MIN	0x100000
+
 /*
  * Machine-specific definitions for PCI autoconfiguration.
  */

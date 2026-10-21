@@ -53,6 +53,10 @@ __KERNEL_RCSID(0, "$NetBSD: pci_resource.c,v 1.7 2025/03/03 19:38:43 riastradh E
 
 #define	DPRINT		aprint_debug
 
+#ifndef PCI_RESOURCE_MEM_MIN
+#define PCI_RESOURCE_MEM_MIN	VMEM_ADDR_MIN
+#endif
+
 #if defined(PCI_RESOURCE_TEST_VENDOR_ID) && \
     defined(PCI_RESOURCE_TEST_PRODUCT_ID)
 #define IS_TEST_DEVICE(_pd)						      \
@@ -701,7 +705,7 @@ pci_resource_claim(struct pci_resource_arena *arena,
  */
 static int
 pci_resource_alloc(struct pci_resource_arena *arena, vmem_size_t size,
-    vmem_size_t align,
+    vmem_size_t align, vmem_addr_t minaddr,
     uint64_t *base)
 {
 	vmem_addr_t addr;
@@ -709,7 +713,7 @@ pci_resource_alloc(struct pci_resource_arena *arena, vmem_size_t size,
 
 	KASSERT(size != 0);
 
-	error = vmem_xalloc(arena->vmem, size, align, 0, 0, VMEM_ADDR_MIN,
+	error = vmem_xalloc(arena->vmem, size, align, 0, 0, minaddr,
 	    VMEM_ADDR_MAX, VM_BESTFIT | VM_NOSLEEP, &addr);
 	if (error == 0) {
 		*base = (uint64_t)addr;
@@ -990,6 +994,7 @@ pci_resource_alloc_device(struct pci_resources *pr, struct pci_device *pd)
 	struct pci_resource_arena *arena;
 	pcireg_t cmd, ocmd, base;
 	uint64_t addr;
+	vmem_addr_t minaddr;
 	u_int enabled;
 	u_int res;
 	u_int align;
@@ -1015,10 +1020,14 @@ pci_resource_alloc_device(struct pci_resources *pr, struct pci_device *pd)
 		if (pi->pi_type == PCI_MAPREG_TYPE_IO) {
 			arena = pd->pd_bus->pb_res[PCI_RANGE_IO];
 			align = uimax(pi->pi_size, 4);
+			minaddr = VMEM_ADDR_MIN;
 		} else {
 			KASSERT(pi->pi_type == PCI_MAPREG_TYPE_MEM);
 			arena = NULL;
 			align = uimax(pi->pi_size, 16);
+			minaddr = pi->pi_mem.memtype ==
+			    PCI_MAPREG_MEM_TYPE_32BIT_1M ? VMEM_ADDR_MIN :
+			    PCI_RESOURCE_MEM_MIN;
 			if (pi->pi_mem.prefetch) {
 				arena = pd->pd_bus->pb_res[PCI_RANGE_PMEM];
 			}
@@ -1033,7 +1042,8 @@ pci_resource_alloc_device(struct pci_resources *pr, struct pci_device *pd)
 			       pi->pi_bar, pi->pi_size);
 			return;
 		}
-		error = pci_resource_alloc(arena, pi->pi_size, align, &addr);
+		error = pci_resource_alloc(arena, pi->pi_size, align, minaddr,
+		    &addr);
 		if (error != 0) {
 			DPRINT("PCI: " PCI_SBDF_FMT " BAR%u failed to"
 			       " allocate %#" PRIx64 " bytes (no space)\n",
