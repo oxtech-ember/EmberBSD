@@ -22,6 +22,7 @@
 #define PLAN_PRINT_BASE UINT32_C(0x10100000)
 #define PLAN_COMMON_LEAF UINT32_C(0x10000000)
 #define PLAN_LEAF_BYTES UINT32_C(0x00400000)
+#define PLAN_FRAME_LEAVES 2U
 
 /* All products and rounded spans are checked before narrowing to uint32_t. */
 static int
@@ -61,12 +62,22 @@ cixvpu_fw_slots(const struct cixvpu_fw_slot_request *r, uint32_t enabled,
 		    (uint32_t)rounded, 0,
 		    (uint32_t)(rounded / CIXVPU_FW_PAGE_SIZE) };
 	}
-	if (spans[0].rounded_bytes > PLAN_LEAF_BYTES - spans[1].rounded_bytes)
+	if ((uint64_t)spans[0].rounded_bytes + spans[1].rounded_bytes >
+	    (uint64_t)PLAN_FRAME_LEAVES * PLAN_LEAF_BYTES)
 		return E2BIG;
 	spans[0].address = CIXVPU_FW_PLAN_FRAME_ADDRESS;
 	spans[1].address = spans[0].address + spans[0].rounded_bytes;
 	spans[2].address = CIXVPU_FW_PLAN_BITSTREAM_ADDRESS;
 	return 0;
+}
+
+/* Spans have passed the per-plane bounds; disabled slots produce zero leaves. */
+static uint32_t
+cixvpu_fw_frame_leaves(const struct cixvpu_fw_slot_span spans[3])
+{
+	uint32_t pages = spans[0].pages + spans[1].pages;
+
+	return (pages + CIXVPU_MMU_ENTRIES - 1) / CIXVPU_MMU_ENTRIES;
 }
 
 _Static_assert(CIXVPU_FW_PLAN_BOOT_RPC_INITIAL_SIZE % CIXVPU_FW_PAGE_SIZE == 0 &&
@@ -88,7 +99,8 @@ _Static_assert(CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS ==
 _Static_assert(CIXVPU_FW_PLAN_FRAME_ADDRESS % PLAN_LEAF_BYTES == 0 &&
     CIXVPU_FW_PLAN_FRAME_ADDRESS >= UINT32_C(0x70000000) &&
     CIXVPU_FW_PLAN_FRAME_ADDRESS < UINT32_C(0xf0000000) &&
-    PLAN_LEAF_BYTES <= UINT32_C(0xf0000000) - CIXVPU_FW_PLAN_FRAME_ADDRESS &&
+    PLAN_FRAME_LEAVES * PLAN_LEAF_BYTES <=
+    UINT32_C(0xf0000000) - CIXVPU_FW_PLAN_FRAME_ADDRESS &&
     CIXVPU_FW_PLAN_BITSTREAM_ADDRESS % PLAN_LEAF_BYTES == 0 &&
     CIXVPU_FW_PLAN_BITSTREAM_ADDRESS >=
     CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS + CIXVPU_FW_PLAN_BOOT_RPC_CAPACITY &&
@@ -169,7 +181,7 @@ cixvpu_fw_plan_check(const struct cixvpu_fw_info *info, unsigned int cores,
 		backing += spans[i].pages;
 		mappings += spans[i].pages;
 	}
-	backing += 2 * slots_enabled;
+	backing += slots_enabled + cixvpu_fw_frame_leaves(spans);
 	if (backing > CIXVPU_FW_PLAN_MAX_PAGES || mappings > UINT32_MAX)
 		return E2BIG;
 	checked->info = *info;
@@ -372,8 +384,10 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 			page.leaf_address = CIXVPU_FW_PLAN_BOOT_RPC_ADDRESS;
 		} else if (page.ordinal == plan->cores + 2) {
 			page.leaf_address = CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS;
-		} else if (page.ordinal == plan->cores + 3) {
-			page.leaf_address = CIXVPU_FW_PLAN_FRAME_ADDRESS;
+		} else if (page.ordinal - plan->cores - 3 <
+		    cixvpu_fw_frame_leaves(spans)) {
+			page.leaf_address = CIXVPU_FW_PLAN_FRAME_ADDRESS +
+			    (page.ordinal - plan->cores - 3) * PLAN_LEAF_BYTES;
 		} else {
 			page.leaf_address = CIXVPU_FW_PLAN_BITSTREAM_ADDRESS;
 		}
@@ -420,14 +434,14 @@ cixvpu_fw_plan_mapping(const struct cixvpu_fw_plan *plan, unsigned int index,
 	info = &plan->info;
 	per_core = info->text_pages + info->private_pages + info->shared_pages;
 	core_maps = per_core * plan->cores;
+	(void)cixvpu_fw_slots(&plan->slots, plan->slots_enabled, spans);
 	first_leaf = plan->backing_pages - plan->cores - 1 - 2 * plan->boot_rpc -
-	    2 * plan->slots_enabled;
+	    plan->slots_enabled - cixvpu_fw_frame_leaves(spans);
 	shared = info->text_pages + plan->cores * info->private_pages;
 	first = core_maps + PLAN_COMMON_PAGES + PLAN_PRINT_PAGES +
 	    plan->boot_rpc * (CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES +
 	    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES);
 	if (plan->slots_enabled != 0 && index >= first) {
-		(void)cixvpu_fw_slots(&plan->slots, plan->slots_enabled, spans);
 		local = index - first;
 		for (i = 0; i < 2 && local >= spans[i].pages; i++)
 			local -= spans[i].pages;
@@ -435,9 +449,10 @@ cixvpu_fw_plan_mapping(const struct cixvpu_fw_plan *plan, unsigned int index,
 		    PLAN_COMMON_PAGES + PLAN_PRINT_PAGES +
 		    CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES +
 		    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES + index - first;
-		map.leaf_backing_index = first_leaf + plan->cores +
-		    (i == 2 ? 4 : 3);
 		map.address = spans[i].address + local * CIXVPU_FW_PAGE_SIZE;
+		map.leaf_backing_index = first_leaf + plan->cores + 3 +
+		    (i == 2 ? cixvpu_fw_frame_leaves(spans) :
+		    (map.address - CIXVPU_FW_PLAN_FRAME_ADDRESS) / PLAN_LEAF_BYTES);
 		goto ready;
 	}
 	if (index >= core_maps + PLAN_COMMON_PAGES + PLAN_PRINT_PAGES) {

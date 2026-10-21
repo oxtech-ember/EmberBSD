@@ -11,7 +11,8 @@
 #include <dev/ic/cixvpu_ring.h>
 #include <dev/ic/cixvpu_dma_private.h>
 
-#define PREPARE_TABLES (CIXVPU_FW_PLAN_MAX_CORES + 3U)
+/* Slots require one core: ROOT + core/common/RPC2/FRAME2/BITSTREAM leaves. */
+#define PREPARE_TABLES (CIXVPU_FW_PLAN_MAX_CORES + 4U)
 
 struct cixvpu_prepare_entry {
 	uint32_t table, backing, address, word;
@@ -126,12 +127,27 @@ cixvpu_prepare_gather(struct cixvpu_dma *dma,
     size_t nspans, struct cixvpu_prepare_work *work)
 {
 	struct cixvpu_fw_plan_page expected;
+	struct cixvpu_fw_slot_span y, uv;
 	struct cixvpu_dma_page extra;
 	struct cixvpu_prepare_span page, other;
 	uint32_t entry;
-	unsigned int i, j, roots = 0;
+	unsigned int i, j, roots = 0, tables;
 	size_t s;
 	int error;
+
+	tables = plan->cores + 2 + 2 * plan->boot_rpc;
+	if (plan->slots_enabled != 0) {
+		error = cixvpu_fw_plan_slot(plan, CIXVPU_FW_SLOT_Y, &y);
+		if (error == 0)
+			error = cixvpu_fw_plan_slot(plan, CIXVPU_FW_SLOT_UV, &uv);
+		if (error != 0)
+			return error;
+		/* Validated spans contain at most two leaves plus BITSTREAM. */
+		tables += 1 + (y.pages + uv.pages + CIXVPU_MMU_ENTRIES - 1) /
+		    CIXVPU_MMU_ENTRIES;
+	}
+	if (tables > PREPARE_TABLES)
+		return E2BIG;
 
 	for (i = 0; i < plan->backing_pages; i++) {
 		struct cixvpu_dma_page *p = &work->pages[i];
@@ -175,8 +191,7 @@ cixvpu_prepare_gather(struct cixvpu_dma *dma,
 		}
 		work->owners[work->count++] = i;
 	}
-	if (roots != 1 || work->count != plan->cores + 2 + 2 * plan->boot_rpc +
-	    2 * plan->slots_enabled)
+	if (roots != 1 || work->count != tables)
 		return EINVAL;
 	/* The caller's allocator snapshot must contain exactly these owners. */
 	error = cixvpu_dma_page(dma, plan->backing_pages, &extra);

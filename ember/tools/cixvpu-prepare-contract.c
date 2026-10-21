@@ -33,7 +33,7 @@ static struct cixvpu_fw_plan make_plan(unsigned int cores)
 typedef struct { unsigned int phase; bool matches; } SHA256_CTX;
 static unsigned int hashes, page_calls, map_calls, link_calls, encode_calls;
 static unsigned int meta_calls, fail_meta, fail_page, fail_map, fail_link, fail_encode;
-static unsigned int view_fault, duplicate_map, rpc_table_fault;
+static unsigned int view_fault, duplicate_map, rpc_table_fault, team_view_fault;
 static unsigned int success_counts[4];
 static bool fail_free, top_bus;
 #ifdef CIXVPU_SYNC_API
@@ -64,6 +64,11 @@ static int prepare_page(struct cixvpu_dma *dma, unsigned int index, struct cixvp
         if (view_fault == 5) out->kva = resources[0].kva;
         if (view_fault == 6) out->kva = (void *)(UINTPTR_MAX - 3);
         if (view_fault == 7) out->kva = image;
+    }
+    if (error == 0 && index == 1532) {
+        if (team_view_fault == 1) out->plan_page.leaf_address = 0x70000000;
+        if (team_view_fault == 2) out->bus_address = bus_address(1531);
+        if (team_view_fault == 3) out->kva = resources[1531].kva;
     }
     return error;
 }
@@ -2034,6 +2039,166 @@ static void queue_return_wire(unsigned int page,uint16_t pos,uint16_t code,
     uint16_t next=(uint16_t)((pos+1+(n+3)/4)%1020);
     m[0]=(uint8_t)next;m[1]=(uint8_t)(next>>8);
 }
+/* Actual allocator/preparer/DMA integration for the two-leaf FRAME span.
+ * Breaks: eighth table missing, plane-relative leaf selection, incomplete copy,
+ * missing data/leaf sync, truncated UV return and ACK before all input POSTs. */
+_Alignas(max_align_t) static uint8_t team_y[3072000], team_uv[1536000];
+static unsigned int team_sealed, team_returned, team_acked;
+static void team_frame_bytes(bool device)
+{
+    const uint8_t *sources[] = {team_y, team_uv};
+    const unsigned int starts[] = {385, 1135}, counts[] = {750, 375};
+    for (unsigned int plane = 0; plane < 2; plane++)
+        for (unsigned int j = 0; j < counts[plane]; j++)
+            CHECK(memcmp(device ? device_bytes(starts[plane]+j) : resources[starts[plane]+j].kva,
+                sources[plane]+j*4096, 4096) == 0);
+}
+static void team_frame_seal(void)
+{ team_frame_bytes(false); team_sealed++; }
+static struct cixvpu_dma *team_frame_begin(struct cixvpu_fw_plan *plan,
+    struct cixvpu_frame_source *source)
+{
+    struct cixvpu_dma *owner = frame_slots_begin(plan, source);
+    CHECK(cixvpu_dma_free(&owner) == 0);
+    const struct cixvpu_fw_slot_request request = {2048, 1500, 2048, 2048, 65536};
+    CHECK(cixvpu_fw_plan_build_frame_slots(rpc_image, sizeof(rpc_image), 1,
+        &request, plan) == 0 && plan->backing_pages == 1534 && plan->mappings == 1526);
+    reset();
+    CHECK(cixvpu_dma_alloc(&tag32, &tag64, plan, &owner) == 0);
+    for (unsigned int i = 0; i < 1534; i++) memset(resources[i].kva, 0xa5, 4096);
+    for (unsigned int i = 0; i < sizeof(team_y); i++) team_y[i] = (uint8_t)(17+i*37+i/251);
+    for (unsigned int i = 0; i < sizeof(team_uv); i++) team_uv[i] = (uint8_t)(0x83^(i*23+i/113));
+    *source = (struct cixvpu_frame_source){team_y, team_uv, sizeof(team_y), sizeof(team_uv)};
+    hashes=page_calls=map_calls=link_calls=encode_calls=meta_calls=0;
+    fail_meta=fail_page=fail_map=fail_link=fail_encode=view_fault=duplicate_map=rpc_table_fault=0;
+    team_view_fault=team_sealed=team_returned=team_acked=0;
+    fail_free=fail_seal=false; seal_observer=team_frame_seal;
+    return owner;
+}
+static void team_frame_tables(const struct cixvpu_fw_plan *plan)
+{
+    uint32_t expected[8][1024] = {{0}};
+    static const unsigned int indices[] = {0,64,128,144,448,449,145};
+    for (unsigned int i = 0; i < 7; i++)
+        expected[0][indices[i]] = (uint32_t)(bus_address(1527+i)>>12)<<2|1;
+    for (unsigned int i = 0; i < 1526; i++) {
+        struct cixvpu_fw_plan_mapping m;
+        CHECK(cixvpu_fw_plan_mapping(plan,i,&m)==0 &&
+            m.leaf_backing_index>=1527 && m.leaf_backing_index<=1533);
+        if (i>=385 && i<1510)
+            CHECK(m.leaf_backing_index==(i<1409 ? 1531U : 1532U) &&
+                m.address==0x70000000+(i-385)*4096);
+        expected[m.leaf_backing_index-1526][(m.address>>12)&1023] =
+            (uint32_t)(bus_address(m.backing_index)>>12)<<2|m.attribute<<30|m.permission;
+    }
+    for (unsigned int t=0;t<8;t++)
+        for (unsigned int j=0;j<1024;j++)
+            CHECK(word(resources[1526+t].kva,j)==expected[t][j]);
+    CHECK(word(resources[1531].kva,1023)==((uint32_t)(bus_address(1408)>>12)<<2|0xc0000003));
+    CHECK(word(resources[1532].kva,0)==((uint32_t)(bus_address(1409)>>12)<<2|0xc0000003));
+    CHECK(word(resources[1532].kva,100)==((uint32_t)(bus_address(1509)>>12)<<2|0xc0000003));
+    for (unsigned int j=101;j<1024;j++) CHECK(word(resources[1532].kva,j)==0);
+}
+static void team_frame_observe(unsigned int i,bus_addr_t offset,bus_size_t length,int ops)
+{
+    CHECK(i<1534 && offset<=4096 && length<=4096-offset);
+    if (ops & BUS_DMASYNC_POSTREAD)
+        memcpy((uint8_t *)resources[i].kva+offset,device_memory[i]+offset,(size_t)length);
+    if (i>=385 && i<1510 && ops==BUS_DMASYNC_POSTWRITE) {
+        CHECK(offset==0 && length==4096 && posts[i]==0);
+        const uint8_t *expected=i<1135 ? team_y+(i-385)*4096 : team_uv+(i-1135)*4096;
+        CHECK(memcmp(device_memory[i],expected,4096)==0);
+        posts[i]=BUS_DMASYNC_POSTWRITE; team_returned++;
+    }
+    if (ops & BUS_DMASYNC_PREWRITE) {
+        if (i==120 && offset==0 && length==2) {
+            for (unsigned int j=385;j<1510;j++) CHECK(posts[j]==BUS_DMASYNC_POSTWRITE);
+            CHECK(team_returned==1125); team_acked++;
+        }
+        memcpy(device_memory[i]+offset,(uint8_t *)resources[i].kva+offset,(size_t)length);
+    }
+}
+static void team_frame_owner_tests(void)
+{
+    struct cixvpu_fw_plan plan;
+    struct cixvpu_frame_source source;
+    struct cixvpu_dma *raw=team_frame_begin(&plan,&source);
+    struct cixvpu_prepared *p=NULL;
+    CHECK(prepare_frame_slots(&raw,&plan,rpc_image,sizeof(rpc_image),fixture_pin,&source,&p)==0);
+    CHECK(raw==NULL && p!=NULL && p->count==1533 && team_sealed==1 &&
+        map_calls==1526 && link_calls==7);
+    team_frame_bytes(false); team_frame_tables(&plan);
+    sync_fixture(&plan,true);
+    struct test_map *map=p->dma->owners[1532].map;
+    map->dm_nsegs=2;
+    CHECK(cixvpu_prepared_sync_initial(p)==EIO && sync_calls==0);
+    map->dm_nsegs=1;
+    CHECK(cixvpu_prepared_sync_initial(p)==0 && sync_calls==1534);
+    team_frame_bytes(true);
+    for (unsigned int i=1526;i<1534;i++)
+        CHECK(memcmp(device_memory[i],resources[i].kva,4096)==0 && pres[i]==4);
+    boot_host=118;boot_mve=119;boot_rpc=124;boot_nevents=0;
+    boot_unstable=boot_append=false;boot_alloc_change=boot_resize_change=0;
+    sync_observer=boot_observe;
+    queue_bootstrap(p);
+    const struct cixvpu_queue_identity id={UINT64_C(0x1122334455667788),
+        UINT64_C(0x8877665544332211),UINT64_C(0x123456789abcdef0)};
+    CHECK(cixvpu_prepared_queue_open(p,&id)==0);
+    sync_observer=team_frame_observe;
+    device_memory[119][2]=2;
+    uint8_t frame[72];
+    memcpy(frame,queue_frame,sizeof(frame));
+    put32(frame+20,0x080005dc);put32(frame+32,0x702ee000);
+    put32(frame+52,2048);put32(frame+56,2048);put32(frame+64,0x05dc0800);
+    CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_INPUT_ONCE)==0);
+    CHECK(memcmp(device_memory[120]+24,frame,sizeof(frame))==0);
+    queue_notify(p,2005);
+    struct cixvpu_queue_event event;
+    CHECK(cixvpu_prepared_queue_receive(p,&event)==0 && event.kind==CIXVPU_Q_INPUT_AVAILABLE);
+    queue_return_wire(121,0,3001,frame,sizeof(frame));
+    struct cixvpu_buffer_frame_result result;
+    CHECK(cixvpu_prepared_queue_input_return(p,&result)==0 && !result.corrupt && !result.rejected);
+    CHECK(team_returned==1125 && team_acked==1 && device_memory[120][0]==19);
+    CHECK(cixvpu_prepared_free(&p)==EBUSY);
+    boot_drop(p);
+}
+static void team_frame_failure_tests(void)
+{
+    static uint8_t canary[4096];
+    memset(canary,0xa5,sizeof(canary));
+    for (unsigned int fault=0;fault<9;fault++) {
+        struct cixvpu_fw_plan plan;
+        struct cixvpu_frame_source source;
+        struct cixvpu_dma *raw=team_frame_begin(&plan,&source),*saved=raw;
+        struct cixvpu_prepared *p=NULL;
+        if(fault==0) fail_page=1533;
+        if(fault>=1 && fault<=3) team_view_fault=fault;
+        if(fault==4) fail_seal=true;
+        if(fault==5) fail_link=6;
+        if(fault==6) fail_map=1410;
+        if(fault==7) fail_meta=1;
+        if(fault==8) fail_meta=2;
+        CHECK(prepare_frame_slots(&raw,&plan,rpc_image,sizeof(rpc_image),fixture_pin,&source,&p)!=0);
+        CHECK(raw==saved && p==NULL && raw->phase==CIXVPU_DMA_ALLOC &&
+            raw->prepared_owner==NULL && !raw->ever_visible);
+        if(fault<4 || fault>=7)
+            for(unsigned int i=0;i<1534;i++) CHECK(memcmp(resources[i].kva,canary,4096)==0);
+        fail_seal=false;seal_observer=NULL;
+        CHECK(cixvpu_dma_free(&raw)==0 && depth==0 && live_kmem==0);
+    }
+    /* Every native allocation stage of the added FRAME leaf fully unwinds. */
+    struct cixvpu_fw_plan plan;
+    struct cixvpu_frame_source source;
+    struct cixvpu_dma *raw=team_frame_begin(&plan,&source);
+    CHECK(cixvpu_dma_free(&raw)==0);
+    for(unsigned int stage=0;stage<4;stage++) {
+        reset();fail_at=2+1532*4+stage;
+        CHECK(cixvpu_dma_alloc(&tag32,&tag64,&plan,&raw)!=0);
+        CHECK(raw==NULL && depth==0 && live_kmem==0);
+    }
+    team_view_fault=0;seal_observer=NULL;
+}
+
 static void queue_transfer_tests(void)
 {
     struct cixvpu_prepared *p=queue_ready();
@@ -2440,6 +2605,7 @@ int main(void)
 {
 #ifdef CIXVPU_PREPARE_API
 #ifdef CIXVPU_FW_PLAN_FRAME_ADDRESS
+    team_frame_owner_tests(); team_frame_failure_tests();
     queue_transfer_tests();
     queue_failure_tests(); queue_wrap_tests();
     queue_admission_tests(); queue_response_tests(); queue_atomic_tests();

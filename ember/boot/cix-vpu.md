@@ -179,15 +179,26 @@ CC=gcc-16 CFLAGS=-fanalyzer CIXVPU_BUFFER_ANALYZE=1 \
 The caller supplies even NV12 geometry, both strides and BITSTREAM capacity.
 The planner computes required plane bytes and rounds each storage span to pages.
 Y starts at firmware VA `0x70000000`; UV follows its rounded storage.
-BITSTREAM starts at `0x24400000`. Each buffer kind fits one extra 4 MiB leaf.
+BITSTREAM starts at `0x24400000`. Each plane and BITSTREAM remains bounded to
+4 MiB; the contiguous Y+UV range uses one or two 4 MiB FRAME leaves as needed.
+Leaf selection follows each page VA, including UV crossing a leaf boundary.
 These addresses are local layout policy, not bus addresses or hardware defaults.
 
 The full first RPC reservation `[0x20000000,0x24000000)` stays excluded,
 including invalid holes. The second 16 KiB RPC object also stays separate.
-The selected bootstrap's 390 owners and 385 mappings become `392+P` owners
-and `385+P` mappings, where `P` counts all slot pages. Seven tables include
-both new leaves. The unchanged 2048-owner limit leaves at most 1656 slot pages
-for that image. Other images use their validated base count.
+The selected bootstrap's 390 owners and 385 mappings become `391+L+P` owners
+and `385+P` mappings, where `P` counts all slot pages and `L` is the required
+one or two FRAME leaves. ROOT and leaves occupy `6+L` tables; BITSTREAM retains
+its separate leaf. The unchanged 2048-owner quota includes every table and data
+owner. Other images use their validated base count.
+
+The stopped source mechanism can represent 2048×1500 NV12 with strides 2048:
+Y occupies 750 pages and UV 375, starting at `0x702ee000`. UV shares the first
+FRAME leaf, then uses 101 pages of the second at `0x70400000`. With an explicit
+64 KiB test output, this image uses 1534 owners, 1526 mappings and eight tables.
+That output size is a contract fixture, not qualified encoder capacity. The
+existing native 128×128 and CPU-only profiles retain their layouts and counts;
+this mechanism does not select a larger native experiment.
 
 Slot accessors return checked VA spans and unique backing indices. They do
 not allocate, copy pixels, build live PTEs, synchronize DMA or grant ownership.
@@ -216,7 +227,7 @@ required length, including row padding. Both source planes are copied before
 seal. Storage tails and the complete BITSTREAM backing stay zero.
 
 The constructor checks known input/handle/owner spans and all loaded page
-metadata before writing. It builds and verifies the seven stopped page tables,
+metadata before writing. It builds and verifies seven or eight stopped page tables,
 seeds the existing PING, then seals and moves the owner. Errors preserve both
 handles but can leave dirty CPU pages; free that stopped allocation instead of
 retrying it. Success exposes no mutable page view.
@@ -334,8 +345,9 @@ variation against the retained fixture. Lossy QP26 does not imply byte equality.
 The bounded synthetic host contracts do not prove that real firmware accepts
 this setup, tag policy, output capacity or post-GO closed RPC reserve.
 
-Full 2048×1500 NV12 needs 4608000 bytes and exceeds the current single 4 MiB FRAME
-leaf. This experiment does not qualify team geometry, two streams, 9 fps,
+Full 2048×1500 NV12 needs 4608000 bytes. The stopped planner/preparer can map
+its two FRAME leaves, but this 128×128 experiment does not qualify team geometry,
+two streams, 9 fps,
 sustained operation, runtime DMA teardown or the public M2M interface.
 
 ## Manual CPU-only slot probe
