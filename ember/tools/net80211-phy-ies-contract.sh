@@ -43,4 +43,8 @@ fi
 python3 "$src/ember/tools/net80211-phy-ies-extract.py" "$src" "$work"
 ${CC:-gcc-16} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -Wall -Werror ${PHY_IES_TEST_CFLAGS:-} \
     -I"$work" -I"$src/sys/net80211" "$src/ember/tools/net80211-phy-ies-contract.c" $extra -o "$work/check"
-"$work/check"
+if [ -n "${TEST_RUNNER:-}" ]; then
+    "$TEST_RUNNER" "$work/check"
+else
+    "$work/check"
+fi

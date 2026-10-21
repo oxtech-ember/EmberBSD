@@ -21,4 +21,8 @@ ${CC:-gcc-16} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE \
     -Wall -Wextra -Werror ${AMSDU_TEST_CFLAGS:-} -I"$work" \
     -I"$src/sys/net80211" "$tools/net80211-amsdu-contract.c" \
     $extra -o "$work/test"
-"$work/test"
+if [ -n "${TEST_RUNNER:-}" ]; then
+    "$TEST_RUNNER" "$work/test"
+else
+    "$work/test"
+fi

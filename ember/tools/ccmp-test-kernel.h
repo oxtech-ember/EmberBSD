@@ -34,7 +34,13 @@
 #endif
 #define __GNUC_PREREQ__(a, b)                                                  \
 	(__GNUC__ > (a) || (__GNUC__ == (a) && __GNUC_MINOR__ >= (b)))
+#ifndef le16toh
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define le16toh(n) (n)
+#else
+#define le16toh(n) __builtin_bswap16(n)
+#endif
+#endif
 #define KM_NOSLEEP 0
 #define IFNAMSIZ 16
 #define IEEE80211_KEYBUF_SIZE 16

@@ -9,7 +9,13 @@
 #include <sys/types.h>
 #include <arpa/inet.h>
 #define __packed __attribute__((__packed__))
+#ifndef le16toh
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define le16toh(x) (x)
+#else
+#define le16toh(x) __builtin_bswap16(x)
+#endif
+#endif
 #include "ieee80211.h"
 #if __has_include("ieee80211_amsdu.h")
 #include "ieee80211_amsdu.h"

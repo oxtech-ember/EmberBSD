@@ -20,12 +20,13 @@ ${CPPCHECK:-cppcheck} --enable=warning,style,performance,portability \
     "$src/sys/net80211/ieee80211_amsdu.c" \
     "$tools/net80211-amsdu-parser-contract.c" \
     "$tools/net80211-amsdu-contract.c"
-${CLANG:-clang} --analyze -Xanalyzer -analyzer-output=text -std=c11 \
+${CLANG:-clang} --analyze -Xanalyzer -analyzer-output=text \
+    -Xanalyzer -analyzer-werror -std=c11 \
     -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -I"$work" -I"$src/sys/net80211" \
     "$src/sys/net80211/ieee80211_amsdu.c" \
     "$tools/net80211-amsdu-parser-contract.c" \
     "$tools/net80211-amsdu-contract.c"
-CC=${CC:-gcc-16} AMSDU_TEST_CFLAGS=-fanalyzer \
+CC=${CC:-gcc-16} AMSDU_TEST_CFLAGS='-g -gdwarf-4 -fanalyzer' \
     sh "$tools/net80211-amsdu-parser-contract.sh"
-CC=${CC:-gcc-16} AMSDU_TEST_CFLAGS=-fanalyzer \
+CC=${CC:-gcc-16} AMSDU_TEST_CFLAGS='-g -gdwarf-4 -fanalyzer' \
     sh "$tools/net80211-amsdu-contract.sh"

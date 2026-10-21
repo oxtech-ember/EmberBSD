@@ -15,4 +15,8 @@ ${CC:-gcc-16} -std=c11 -Wall -Wextra -Werror ${AMSDU_TEST_CFLAGS:-} \
     -I"$work" -I"$src/sys/net80211" \
     "$tools/net80211-amsdu-parser-contract.c" \
     "$src/sys/net80211/ieee80211_amsdu.c" -o "$work/test"
-"$work/test"
+if [ -n "${TEST_RUNNER:-}" ]; then
+    "$TEST_RUNNER" "$work/test"
+else
+    "$work/test"
+fi
