@@ -983,6 +983,7 @@ node_cleanup(struct ieee80211_node *ni)
 		ic->ic_set_tim(ni, 0);
 
 	ni->ni_associd = 0;
+	memset(&ni->ni_phy_ies, 0, sizeof(ni->ni_phy_ies));
 	if (ni->ni_challenge != NULL) {
 		free(ni->ni_challenge, M_DEVBUF);
 		ni->ni_challenge = NULL;
@@ -1314,6 +1315,7 @@ ieee80211_add_scan(struct ieee80211com *ic,
 	}
 
 	ni->ni_scan_epoch = ic->ic_scan.nt_scan_epoch;
+	ni->ni_phy_ies = sp->sp_phy_ies;
 	IEEE80211_ADDR_COPY(ni->ni_bssid, wh->i_addr3);
 	ni->ni_rssi = rssi;
 	ni->ni_rssi_dbm = sp->sp_rssi_dbm;

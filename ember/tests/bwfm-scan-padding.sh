@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
 src=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
+src=$(CDPATH= cd -- "$src" && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/bwfm-scan-padding.XXXXXXXX")
 if [ "${BWFM_TEST_KEEP:-0}" != 1 ]; then
     trap 'rm -rf "$work"' EXIT HUP INT TERM
@@ -29,7 +30,11 @@ awk '/^ieee80211_ioctl_getscanresults\(/ {copy=1}
     }
     copy {print} copy && /^}/ {exit}' \
     "$src/sys/net80211/ieee80211_ioctl.c" >> "$work/getscanresults.h"
+mkdir -p "$work/sys" "$work/net80211"
+printf '#include <string.h>\n#include <stdint.h>\n' > "$work/sys/systm.h"
+ln -s "$src/sys/net80211/ieee80211_phy_ies.h" "$work/net80211/ieee80211_phy_ies.h"
 cp "$src/ember/tools/bwfm-scan-padding.c" "$work/check.c"
 ${CC:-cc} -std=c99 -D_DEFAULT_SOURCE -Wall -Wextra -Werror ${CFLAGS:-} \
-    -I"$work" "$work/check.c" -o "$work/check"
+    -I"$work" -I"$src/sys/net80211" "$work/check.c" \
+    "$src/sys/net80211/ieee80211_phy_ies.c" -o "$work/check"
 "$work/check"

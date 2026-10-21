@@ -37,6 +37,7 @@
 
 #include <sys/atomic.h>
 #include <net80211/ieee80211_netbsd.h>
+#include <net80211/ieee80211_phy_ies.h>
 #include <net80211/ieee80211_ioctl.h>		/* for ieee80211_nodestats */
 
 #ifdef _KERNEL
@@ -98,6 +99,7 @@ struct ieee80211_node {
 	u_int			ni_refcnt;
 	u_int			ni_scangen;	/* gen# for timeout scan */
 	u_int			ni_scan_epoch;	/* last actual radio scan */
+	struct ieee80211_phy_ies ni_phy_ies; /* observed, not negotiated */
 	int8_t			ni_rssi_dbm;	/* optional absolute signal level */
 	bool			ni_rssi_dbm_valid;
 	u_int8_t		ni_authmode;	/* authentication algorithm */
@@ -305,6 +307,7 @@ u_int8_t ieee80211_getrssi(struct ieee80211com *ic);
  * All multi-byte values must be in host byte order.
  */
 struct ieee80211_scanparams {
+	struct ieee80211_phy_ies sp_phy_ies; /* validated scan observation */
 	u_int16_t	sp_capinfo;	/* 802.11 capabilities */
 	u_int16_t	sp_fhdwell;	/* FHSS dwell interval */
 	u_int8_t	sp_chan;		/* */

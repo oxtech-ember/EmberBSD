@@ -145,6 +145,12 @@ maps EmberBSD Development skills to preparation, validation, and submission.
 
 ## What this fork adds to NetBSD 11
 
+[Bounded HT/VHT scan observations](ember/development/net80211-phy-ies.md)
+retain validated peer IEs and export them through the native scan ioctl.
+Legacy RSN/WME bytes keep priority in the existing wire budget.
+Host parser/lifetime/copyout contracts pass; HT/VHT negotiation and target
+acceptance remain separate work.
+
 [GCC16 build and test compatibility](ember/tests/gcc16-build-recovery.md)
 preserves binary test inputs, selects the Objective-C dependency frontend,
 and enables the ARMv7 crypto instructions required by each source.

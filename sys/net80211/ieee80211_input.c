@@ -2223,6 +2223,10 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 	scan.sp_bchan = ieee80211_chan2ieee(ic, ic->ic_curchan);
 	scan.sp_chan = scan.sp_bchan;
 
+	/* Observation only. Malformed PHY IEs do not change legacy validation. */
+	(void)ieee80211_phy_ies_parse(&scan.sp_phy_ies, frm,
+	    (size_t)(efrm - frm));
+
 	while (frm + 1 < efrm) {
 		IEEE80211_VERIFY_LENGTH(efrm - frm, frm[1] + 2);
 

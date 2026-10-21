@@ -1044,6 +1044,10 @@ get_scan_result(struct ieee80211req_scan_result *sr,
 	if (ni->ni_rrm_ie != NULL)
 		ielen += 2+ni->ni_rrm_ie[1];
 
+	/* Preserve legacy IE bytes when the bounded PHY tail does not fit. */
+	if (ielen <= 255 && ni->ni_scan_epoch == ic->ic_scan.nt_scan_epoch)
+		ielen += ieee80211_phy_ies_size(&ni->ni_phy_ies, 255 - ielen);
+
 	/*
 	 * The value sr->isr_ie_len is defined as a uint8_t, so we
 	 * need to be careful to avoid an integer overflow.  If the
@@ -1131,6 +1135,14 @@ ieee80211_ioctl_getscanresults(struct ieee80211com *ic, struct ieee80211req *ire
 		if (sr->isr_ie_len > 0 && ni->ni_rrm_ie != NULL) {
 			memcpy(cp, ni->ni_rrm_ie, 2+ni->ni_rrm_ie[1]);
 			cp += 2+ni->ni_rrm_ie[1];
+		}
+		if (sr->isr_ie_len > 0) {
+			size_t used = cp - (u_int8_t *)(sr + 1) - ni->ni_esslen;
+
+			if (used <= sr->isr_ie_len)
+				memcpy(cp, ni->ni_phy_ies.data,
+				    ieee80211_phy_ies_size(&ni->ni_phy_ies,
+				    sr->isr_ie_len - used));
 		}
 		error = copyout(sr, p, sr->isr_len);
 		if (error)

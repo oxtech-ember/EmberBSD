@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "scan-abi.h"
+#include "ieee80211_phy_ies.h"
 
 #ifndef roundup
 #define roundup(x, y) ((((x) + ((y) - 1)) / (y)) * (y))
@@ -32,6 +33,7 @@ struct ieee80211_node {
 	int8_t ni_rssi_dbm;
 	bool ni_rssi_dbm_valid;
 	uint32_t ni_scan_epoch;
+	struct ieee80211_phy_ies ni_phy_ies;
 	struct {
 		uint8_t rs_nrates, rs_rates[IEEE80211_RATE_MAXSIZE];
 	} ni_rates;
