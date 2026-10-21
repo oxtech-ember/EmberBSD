@@ -64,7 +64,11 @@
 /* chained list of long jump buffers */
 typedef struct lua_longjmp {
   struct lua_longjmp *previous;
+#ifdef _KERNEL
+  label_t b;
+#else
   jmp_buf b;
+#endif /* _KERNEL */
   volatile TStatus status;  /* error code */
 } lua_longjmp;
 

@@ -575,7 +575,11 @@ static int k2proto (FuncState *fs, TValue *key, TValue *v) {
   if (!tagisempty(tag)) {  /* is there an index there? */
     int k = cast_int(ivalue(&val));
     /* collisions can happen only for float keys */
+#ifndef _KERNEL
     lua_assert(ttisfloat(key) || luaV_rawequalobj(&f->k[k], v));
+#else
+    lua_assert(luaV_rawequalobj(&f->k[k], v));
+#endif /* _KERNEL */
     return k;  /* reuse index */
   }
   else {  /* constant not found; create a new entry */

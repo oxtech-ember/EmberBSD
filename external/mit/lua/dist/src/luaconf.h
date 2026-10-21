@@ -814,8 +814,8 @@
 
 /* setjmp.h */
 #define LUAI_THROW(L,c)		longjmp(&((c)->b))
-#define LUAI_TRY(L,c,a)		if (setjmp(&((c)->b)) == 0) { a }
-#define luai_jmpbuf		label_t
+#define LUAI_TRY(L,c,f,ud)	if (setjmp(&((c)->b)) == 0) ((f)(L, ud))
+
 
 /* time.h */
 #include <sys/time.h>
