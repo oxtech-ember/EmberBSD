@@ -81,6 +81,8 @@ cooperative ownership, reset/rekey lifetime and silicon IRQ latency remain
 separate gates. The provided model IRQ and PRIMASK observations do not close
 them. QEMU time does not measure AIC silicon cycles.
 
-This source foundation has host checks. ARM compilation, analyzer results and
-QEMU execution must be recorded for the exact accepted revision. It is not a
-WPA3/PMF certification or approval to replace device firmware.
+The [original acceptance receipt](original-acceptance.json) records 33 matched
+cases and 14 original-defect witnesses on QEMU 11.1.2 with GCC16.2.0.
+It binds the source, input, ELF and raw-result hashes. Own C passed Cppcheck,
+GCC `-fanalyzer` and Clang Static Analyzer; Clang produced no target objects.
+This is not WPA3/PMF certification or approval to replace device firmware.

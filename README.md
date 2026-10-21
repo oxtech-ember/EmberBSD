@@ -1166,6 +1166,9 @@ The base system shell is unchanged.
   ioctl, directed reassociation and management TX/RX checks. Neighbor-list and BTM acceptance remain pending.
   Protected SA Query and recovery checks are documented
   in the [SAE guide](ember/boot/aicwf-sae.md).
+  The [original firmware instruction fixture](ember/tools/aicwf-firmware-check/README.md)
+  reproduces initial-IPN, receive-counter and same-key defects in 33 QEMU cases.
+  This CPU result does not qualify a replacement image or on-air PMF.
 - **Consistent Wi-Fi discovery and CM5 cooling:** `bwfm` retains firmware
   scan channels and signal ranking across both bands. The configurable
   [ACPI minimum fan level](ember/boot/thermal-fan.md) skips a stalled low

@@ -1,0 +1,142 @@
+{
+  "schema": "aicwf-original-instruction-acceptance-v1",
+  "state": "original-instruction-defects-reproduced",
+  "public_equivalent_source_commit": "ebc4a2e3ffd480474888085a91d7d680fc9ba20a",
+  "source_binding": "The listed source hashes match the compiled clean revision and the public commit after a documentation-only main rebase.",
+  "source_files": {
+    "ember/firmware/README.md": "6102aff5f4fff8872be722a08c68ce3317ad764012b351d8ea35eca31118ed9f",
+    "ember/tools/aicwf-firmware-check.py": "1ca573820d7a138f758af0d28ba2052a58a20e70e267acc7ac1e0f4280721c8c",
+    "ember/tools/aicwf-firmware-check/README.md": "8699c7e15ba762deddbb790b8751c4c62e29cba5dc26eb086f03afa6bfd5c622",
+    "ember/tools/aicwf-firmware-check/cases.py": "1f827d01995a19e6dfafb30e48779d227a897c528cde9ebebd0fdf935cdf1ddf",
+    "ember/tools/aicwf-firmware-check/driver.py": "87a61f7f9f14429bf43c604ecd6f1c85ddb4081ebbb2c01348eb004e671d0eab",
+    "ember/tools/aicwf-firmware-check/harness.c": "a13f953a2c09fdd4625ceab01cb1581e82faa0b95d092b48ad9005b6568bf386",
+    "ember/tools/aicwf-firmware-check/harness.h": "2d2aa618b7dc8ea94df909f15714a50309374b070d09371d49c0c2bae99a46ab",
+    "ember/tools/aicwf-firmware-check/link.ld.in": "d737ab9b312c63d604fdde0871fd3ac217612f7052203aa40cb9e27e3a797eb2",
+    "ember/tools/aicwf-firmware-check/observations.py": "360ea3a019e2e412a8064d0cdc437565a31f063c19b98289ad97bc748ac36f34",
+    "ember/tools/aicwf-firmware-check/oracle.py": "916a1d469b1f2296179d5ba6e9a97871157a9c90d57dabf1bed37f840b8179cd",
+    "ember/tools/aicwf-firmware-check/policy.py": "7ac21b72e2d3a609e0248fc79355f6590b37d63779750391d31e37c20551d9a2",
+    "ember/tools/aicwf-firmware-check/remote.py": "3702e5f7b635f42f0c711867ac1e001ae6972daf68c1437b412229bc5fb73874",
+    "ember/tools/aicwf-firmware-check/start.S": "903c2cb52923ecfff84bd263b60fba6e30a84d55302cb13e6515b18188a6f21f",
+    "ember/tools/aicwf-firmware-check/test-host.py": "15954dd051bacd914df07f3b2e063483368485d0c672455b7e0c20d006d400b2"
+  },
+  "firmware": {
+    "repository": "https://github.com/radxa-pkg/aic8800",
+    "revision": "d13d07963cd15d731e2895e8288a04cca6152ac9",
+    "sha256": "d2c7b7ac0bf8682c976c0c2da34f204c9b2f1ef8821252c6348a3016bd638f24",
+    "bytes": 341200
+  },
+  "host": "Darwin arm64",
+  "compiler": "arm-none-eabi GCC16.2.0; Cortex-M4 Thumb soft ABI",
+  "qemu": "11.1.2; mps2-an386; TCG; no disks or network backend",
+  "elf_sha256": "02c3723e3d865300d3808288796c0e679cee2900330f3a02a91f86046af12132",
+  "raw_results_sha256": "8cd8d589b587a1207ec9431feb94f5837f94017ae4cf37a95bfdd1cfc5d7d804",
+  "raw_results_bytes": 175164,
+  "record_bytes": 5308,
+  "matched_cases": 33,
+  "case_names": [
+    "initial-0x0",
+    "initial-0x1",
+    "initial-0xffffff",
+    "initial-0x1000000",
+    "initial-0xffffffff",
+    "initial-0x100000000",
+    "initial-0xffffffffffff",
+    "rx-0x0-0x1",
+    "rx-0x1-0x1",
+    "rx-0x1-0x2-bad-mic",
+    "rx-0x0-0x1000000",
+    "rx-0x0-0x100000001",
+    "rx-0xffffffff-0x100000000",
+    "rx-0xffffffffffff-0x0",
+    "rx-key5-vif1",
+    "rx-mask1-bad",
+    "same-key-2",
+    "same-key-100",
+    "same-key-101",
+    "generic-0",
+    "generic-1",
+    "generic-2",
+    "generic-3",
+    "generic-4",
+    "generic-6",
+    "generic-255",
+    "cmac-body-2",
+    "cmac-body-14",
+    "cmac-body-15",
+    "cmac-body-16",
+    "cmac-body-17",
+    "cmac-body-30",
+    "cmac-body-65"
+  ],
+  "original_defect_witnesses": [
+    {
+      "name": "initial-0x1",
+      "boundary": "initial-floor-or-same-key-reset"
+    },
+    {
+      "name": "initial-0xffffff",
+      "boundary": "initial-floor-or-same-key-reset"
+    },
+    {
+      "name": "initial-0x1000000",
+      "boundary": "initial-floor-or-same-key-reset"
+    },
+    {
+      "name": "initial-0xffffffff",
+      "boundary": "initial-floor-or-same-key-reset"
+    },
+    {
+      "name": "initial-0x100000000",
+      "boundary": "initial-floor-or-same-key-reset"
+    },
+    {
+      "name": "initial-0xffffffffffff",
+      "boundary": "initial-floor-or-same-key-reset"
+    },
+    {
+      "name": "rx-0x1-0x2-bad-mic",
+      "boundary": "pre-MIC-commit-or-24-bit-truncation"
+    },
+    {
+      "name": "rx-0x0-0x1000000",
+      "boundary": "pre-MIC-commit-or-24-bit-truncation"
+    },
+    {
+      "name": "rx-0x0-0x100000001",
+      "boundary": "pre-MIC-commit-or-24-bit-truncation"
+    },
+    {
+      "name": "rx-0xffffffff-0x100000000",
+      "boundary": "pre-MIC-commit-or-24-bit-truncation"
+    },
+    {
+      "name": "rx-mask1-bad",
+      "boundary": "pre-MIC-commit-or-24-bit-truncation"
+    },
+    {
+      "name": "same-key-2",
+      "boundary": "initial-floor-or-same-key-reset"
+    },
+    {
+      "name": "same-key-100",
+      "boundary": "initial-floor-or-same-key-reset"
+    },
+    {
+      "name": "same-key-101",
+      "boundary": "initial-floor-or-same-key-reset"
+    }
+  ],
+  "accepted_original_fixture": true,
+  "accepted_secure_firmware": false,
+  "irq_interleavings_qualified": false,
+  "full_firmware_booted": false,
+  "device_or_radio_acceptance": false,
+  "source_and_actual_independent_review": "Passed; byte binding, actual raw records, independent AES/CMAC, bounded process closure and refusal controls.",
+  "limits": [
+    "Synthetic VIF and frame state; selected original instructions only.",
+    "RNG is a deterministic counted boundary; assertion traps.",
+    "No replacement instructions, on-air PMF, full scheduler, DMA or silicon timing acceptance.",
+    "No Valgrind or sanitizer execution claim for the bare-metal ARM target."
+  ],
+  "binary_retention": "Raw records, original slices and ELF stay in private evidence. No vendor binary is included in this repository."
+}
