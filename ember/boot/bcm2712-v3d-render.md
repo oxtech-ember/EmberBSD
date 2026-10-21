@@ -53,17 +53,17 @@ The [CL/CSD object-list contract](bcmv3d-submit-lists.md) replaces fixed stack
 arrays with bounded heap ownership. Its 4096-entry software policy is separate
 from the BO storage budget and physical rendering acceptance.
 
-A device mutex serializes jobs. For TFU, the MMU maps only two referenced BOs:
-source read-only, destination writable. The first admitted payload is the
-accepted 64x64 R32F TFU copy. Validate every register, flag, reserved field,
-handle and range before touching the GPU. Unsupported formats, extensions,
-sync objects and CL submissions failed explicitly in the initial TFU stage.
+A device mutex serializes jobs. The [TFU admission contract](bcmv3d-tfu.md)
+accepts an explicit Mesa 26.2.4 subset. It maps each unique admitted BO once.
+Inputs are read-only. The destination and an input/output alias are read/write.
+The first physical acceptance used a 64x64 R32F copy. That measurement does not
+qualify the later mode, alias or whole-BO changes.
+
 The later [syncobj](bcm2712-v3d-sync.md) and [CL](bcm2712-v3d-gl.md) stages
 add binary dependencies and bin/render execution. The subsequent
 [CSD path](bcm2712-v3d-csd.md) shares the serialized engine and maps only its
-referenced BOs. General TFU support
-is not advertised to Mesa until its full contract is implemented.
-
+referenced BOs. `GET_PARAM(SUPPORTS_TFU)` remains zero while the TFU subset is
+qualified.
 Each submission programs all TFU input registers and requires exactly one
 completion, idle TFU, one counter increment and clean MMU/HUB state. The
 HUB handler masks itself and records evidence; it never touches GEM

@@ -18,6 +18,7 @@ static unsigned checks;
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
+#define KASSERT(e) CHECK(e)
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #define mstohz(n) (n)
 #define BUS_DMASYNC_PREWRITE 1
@@ -37,7 +38,7 @@ struct bcmv3d_bo {
 #include "tfu-types.h"
 struct bcmv3d_device { struct bcmv3d_job *job; unsigned dev; };
 struct drm_device { struct bcmv3d_device *dev_private; };
-struct drm_file { struct bcmv3d_bo *objects[4]; };
+struct drm_file { struct bcmv3d_bo *objects[5]; };
 struct bcmv3d_resv { bool locked; };
 
 /* Helper errors exercise the caller's routing and unwind. They do not claim
@@ -82,6 +83,14 @@ bcmv3d_to_bo(struct drm_gem_object *obj)
 	CHECK(obj != NULL && obj->refs >= 2);
 	return (struct bcmv3d_bo *)obj;
 }
+/* Native GEM identity is exercised in the full job contract. */
+static int
+bcmv3d_bo_reference(struct bcmv3d_device *sc, struct drm_gem_object *obj,
+    struct bcmv3d_bo **bo)
+{
+	CHECK(sc == &env.sc && obj->refs >= 2);
+	obj->refs++; *bo = (struct bcmv3d_bo *)obj; return 0;
+}
 static struct drm_gem_object *
 drm_gem_object_lookup(struct drm_file *file, uint32_t handle)
 {
@@ -97,7 +106,7 @@ drm_gem_object_put_unlocked(struct drm_gem_object *obj)
 {
 	CHECK(env.job.lock == 0 && !env.reserved);
 	CHECK(obj->refs >= 2); obj->refs--;
-	if (env.poison_metadata) {
+	if (env.poison_metadata && obj->refs == 1) {
 		struct bcmv3d_bo *bo = (struct bcmv3d_bo *)obj;
 		bo->gpu = 0xdead0000; bo->cma.dmasize = UINT64_MAX;
 	}
@@ -136,7 +145,7 @@ bcmv3d_resv_prepare(struct bcmv3d_resv *r, struct drm_gem_object **objects,
     unsigned count, long ticks)
 {
 	CHECK(count == 2 && ticks > 0 && env.job.lock == 0);
-	CHECK(objects[0] == &env.bo[1].gem && objects[1] == &env.bo[0].gem);
+	CHECK(objects[0] == &env.bo[0].gem && objects[1] == &env.bo[1].gem);
 	r->locked = env.reserved = true;
 	return env.fail == F_RESV ? env.error : 0;
 }
@@ -157,6 +166,7 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *args)
 	CHECK(job->lock == 1 && !env.reserved && args == &env.args);
 	CHECK(job->src == &env.bo[1] && job->dst == &env.bo[0]);
 	CHECK(job->src->busy == 1 && job->dst->busy == 1);
+	CHECK(job->ntfu == 2 && job->tfu_bos[0] == &env.bo[0] && job->tfu_bos[1] == &env.bo[1]);
 	env.executes++; return env.fail == F_EXECUTE ? env.error : 0;
 }
 static int
@@ -196,7 +206,7 @@ setup(void)
 	for (unsigned i = 0; i < __arraycount(env.bo); i++) {
 		env.bo[i].gem.refs = 1; env.bo[i].gpu = 0x1000000 + i * 0x10000;
 		env.bo[i].cma.dmasize = 65536 + i * 4096;
-		env.file.objects[i] = &env.bo[i];
+		env.file.objects[i + 1] = &env.bo[i];
 	}
 	env.file.objects[0] = NULL;
 	env.file.objects[1] = &env.bo[0]; env.file.objects[2] = &env.bo[1];
@@ -294,51 +304,50 @@ main(void)
 	setup(); submit(0, NULL, true, true);
 	CHECK(env.executes == 1 && env.bo[0].gem.refs == 1 && env.bo[1].gem.refs == 1);
 	CHECK(!env.bo[0].busy && !env.bo[1].busy && !env.job.poisoned);
-	setup(); env.args.bo_handles[0] = 0; submit(ENOENT, "dst-lookup", false, false); CHECK(env.lookups == 1);
-	setup(); env.args.bo_handles[1] = 0; env.poison_metadata = true;
+	setup(); env.args.bo_handles[0] = 0; submit(ENOENT, "dst-lookup", false, false); CHECK(env.lookups == 0);
+	setup(); env.args.bo_handles[1] = 99; env.poison_metadata = true;
 	submit(ENOENT, "src-lookup", false, true); CHECK(env.lookups == 2);
 	setup(); env.args.bo_handles[0] = env.args.bo_handles[1] = 0;
-	submit(ENOENT, "dst-lookup", false, false); CHECK(env.lookups == 1);
+	submit(ENOENT, "dst-lookup", false, false); CHECK(env.lookups == 0);
 	setup(); env.args.bo_handles[1] = 99; submit(ENOENT, "src-lookup", false, true);
-	/* Each predicate in the actual payload whitelist remains effective. */
-	for (unsigned field = 0; field < 19; field++) {
+	/* Unsupported fields and address endpoints keep bounded receipts. */
+	for (unsigned field = 0; field < 14; field++) {
 		setup(); env.poison_metadata = true;
 		switch (field) {
-		case 0: env.args.bo_handles[1] = 1; break;
-		case 1: env.bo[1].cma.dmasize = V3D_COPY_SIZE - 1; break;
-		case 2: env.bo[0].cma.dmasize = V3D_COPY_SIZE - 1; break;
-		case 3: env.args.iia++; break;
-		case 4: env.args.ioa++; break;
-		case 5: env.args.icfg ^= 1; break;
-		case 6: env.args.iis++; break;
-		case 7: env.args.ios++; break;
-		case 8: env.args.v71.ioc++; break;
-		case 9: env.args.ica = 17; break;
-		case 10: env.args.iua = 19; break;
-		case 11: case 12: case 13: case 14: env.args.coef[field - 11] = 11 + field; break;
-		case 15: env.args.bo_handles[2] = 99; break;
-		case 16: env.args.bo_handles[3] = 99; break;
-		case 17: env.args.flags = UINT_MAX; break;
-		case 18: env.args.extensions = UINT64_C(0xfedcba9800000000); break;
+		case 0: env.args.icfg |= 2; break;
+		case 1: env.args.iis = 0; break;
+		case 2: env.args.ios = 0; break;
+		case 3: env.args.v71.ioc = 0; break;
+		case 4: env.args.ica = 17; break;
+		case 5: env.args.iua = 19; break;
+		case 6: case 7: case 8: case 9: env.args.coef[field - 6] = 11 + field; break;
+		case 10: env.args.flags = UINT_MAX; break;
+		case 11: env.args.extensions = UINT64_C(0xfedcba9800000000); break;
+		case 12: env.args.iia = env.bo[1].gpu + (uint32_t)env.bo[1].cma.dmasize; break;
+		case 13: env.args.ioa = env.bo[0].gpu + (uint32_t)env.bo[0].cma.dmasize; break;
 		}
-		/* Exact metadata differs for alias/undersize cases; routing still must
-		 * preserve references and never execute. Other cases test the receipt. */
-		if (field <= 2) {
-			CHECK(bcmv3d_submit_tfu(&env.dev, &env.args, &env.file) == -EINVAL);
-			CHECK(env.receipts == 1 && env.executes == 0 && env.fences == 0);
-		} else submit(EINVAL, "payload", true, true);
+		submit(EINVAL, "payload", field != 12, true);
 		CHECK(env.lookups == 2 && env.mmio == 0);
 	}
+	for (unsigned index = 2; index < 4; index++) {
+		setup(); env.poison_metadata = true;
+		if (index == 3) env.args.bo_handles[2] = 3;
+		env.args.bo_handles[index] = 99;
+		submit(ENOENT, "src-lookup", true, true);
+		CHECK(env.lookups == index + 1 && env.mmio == 0);
+	}
+	setup(); env.args.bo_handles[3] = 3;
+	submit(EINVAL, "payload", false, false); CHECK(env.lookups == 0);
 	setup(); env.args.v71.pad = UINT_MAX; submit(EINVAL, "payload", true, true);
 	/* One receipt gives every scalar a distinct value, and keeps extension
 	 * presence separate from its deliberately invalid pointer-shaped value. */
 	setup(); env.poison_metadata = true;
-	env.args = (struct drm_v3d_submit_tfu) {.icfg=0x10203040,.iia=0x11223344,
-	    .ica=0x22334455,.iis=0x33445566,.iua=0x44556677,.ioa=0x55667788,
-	    .ios=0x66778899,.coef={0x10,0x20,0x30,0x40},.bo_handles={1,2,99,100},
+	env.args = (struct drm_v3d_submit_tfu) {.icfg=0x10203040,.iia=0x1010004,
+	    .ica=0x22334455,.iis=0x33445566,.iua=0x44556677,.ioa=0x1000008,
+	    .ios=0x66778899,.coef={0x10,0x20,0x30,0x40},.bo_handles={1,2,3,4},
 	    .in_sync=77,.out_sync=88,.flags=0x1234,.extensions=UINT64_C(0xfedcba9800000000),
 	    .v71={.ioc=0x778899aa,.pad=0x88776655}};
-	submit(EINVAL, "payload", true, true); CHECK(env.lookups == 2);
+	submit(EINVAL, "payload", true, true); CHECK(env.lookups == 4);
 	const enum failure failures[] = {F_SYNC, F_RESV, F_FENCE, F_PUBLISH};
 	const char *const reasons[] = {"sync", "reservation", "fence-publish", "resv-publish"};
 	const int errors[] = {EINVAL, ENOMEM, EFAULT, ENOENT, EINTR, ETIMEDOUT, EIO, EBUSY};

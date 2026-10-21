@@ -77,7 +77,7 @@ begin
       'va-before-segments' => ['bo-body.h', segment, '', compile],
       'reservation-unwind' => ['bo-body.h', 'sc->allocated -= size;', '(void)sc;', compile],
       'native-page-rounding' => ['bo-body.h', '((size_t)requested + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1)', '((size_t)requested + 4095) & ~((size_t)4095)', page64],
-      'map-whole-BO' => ['size-body.h', 'job->nbo ? bo->cma.dmasize : V3D_COPY_SIZE', 'job->nbo ? MIN(bo->cma.dmasize, 16 * 1024 * 1024) : V3D_COPY_SIZE', compile],
+      'map-whole-BO' => ['size-body.h', 'size_t remaining = bo->cma.dmasize;', 'size_t remaining = MIN(bo->cma.dmasize, 16 * 1024 * 1024);', compile],
       'whole-mmap-bound' => ['size-body.h', 'size > obj->size - (size_t)*offp ||', 'false ||', compile]
     }
     controls.each do |name, (file, before, after, argv)|

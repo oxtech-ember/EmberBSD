@@ -30,6 +30,11 @@
 #define V3D_TFUC		0x02
 #define V3D_TFU_CS	0x700
 #define V3D_ICFG		0x708
+#define V3D_TFU_IOC	1U
+/* Explicit Mesa 26.2.4 V3D71 fields, not full hardware register masks. */
+#define V3D_TFU_MESA_ICFG	((7U << 23) | (31U << 16) | V3D_TFU_IOC)
+#define V3D_TFU_MESA_IOC	(0xffff0000U | (7U << 12) | (15U << 4) | 1U)
+#define V3D_TFU_MESA_MAX_DIM	16384U
 #define V3D_MMUC		0x1000
 #define V3D_MMU		0x1200
 #define V3D_PT_BASE	0x1204
@@ -59,6 +64,9 @@ struct bcmv3d_job {
 	struct bcmv3d_bo *pt, *scratch;
 	/* Retained on poison: never release possibly GPU-owned storage. */
 	struct bcmv3d_bo *src, *dst;
+	/* TFU role aliases do not own refs; this bounded vector retains them. */
+	struct bcmv3d_bo *tfu_bos[4];
+	unsigned int ntfu;
 	/* Borrowed during a job; owned with all GEM refs after poison. */
 	struct drm_gem_object **bos;
 	unsigned int nbo;
@@ -331,13 +339,13 @@ static void
 bcmv3d_ptes(struct bcmv3d_job *job, bool map)
 {
 	uint32_t *pt = job->pt->cma.vaddr;
-	struct bcmv3d_bo *objects[] = { job->src, job->dst };
+	unsigned int count = job->nbo ? job->nbo : job->ntfu;
 	unsigned int i;
 
-	for (i = 0; i < (job->nbo ? job->nbo : __arraycount(objects)); i++) {
+	for (i = 0; i < count; i++) {
 		struct bcmv3d_bo *bo = job->nbo ?
-		    bcmv3d_to_bo(job->bos[i]) : objects[i];
-		size_t remaining = job->nbo ? bo->cma.dmasize : V3D_COPY_SIZE;
+		    bcmv3d_to_bo(job->bos[i]) : job->tfu_bos[i];
+		size_t remaining = bo->cma.dmasize;
 		unsigned int page = 0;
 		int seg;
 
@@ -347,10 +355,11 @@ bcmv3d_ptes(struct bcmv3d_job *job, bool map)
 			size_t length = MIN(remaining, dma->ds_len);
 			size_t offset;
 
-			for (offset = 0; offset < length; offset += PAGE_SIZE, page++)
+			/* GPU MMU pages are 4 KiB, independent of kernel PAGE_SIZE. */
+			for (offset = 0; offset < length; offset += 4096, page++)
 				pt[(bo->gpu >> 12) + page] = map ?
-				    (pfn + offset / PAGE_SIZE) | V3D_PTE_VALID |
-				    (job->nbo || i == 1 ? V3D_PTE_WRITE : 0) : 0;
+				    (pfn + (offset >> 12)) | V3D_PTE_VALID |
+				    (job->nbo || bo == job->dst ? V3D_PTE_WRITE : 0) : 0;
 			remaining -= length;
 		}
 		KASSERT(remaining == 0);
@@ -384,23 +393,66 @@ bcmv3d_publish(struct bcmv3d_job *job)
 	return bcmv3d_flush();
 }
 
+/* Mesa v3d_tfu.h and v3dx_tfu.c, 26.2.4. This is a software subset.
+ * Initial addresses are checked here. MMU containment bounds later accesses;
+ * this does not validate the full tiled/mipmap image footprint. */
 static int
 bcmv3d_payload(const struct drm_v3d_submit_tfu *a,
     const struct bcmv3d_bo *src, const struct bcmv3d_bo *dst)
 {
+	unsigned int input = (a->icfg >> 23) & 7;
+	unsigned int output = (a->v71.ioc >> 12) & 7;
+	unsigned int type = (a->icfg >> 16) & 31;
+	unsigned int levels = (a->v71.ioc >> 4) & 15;
+	unsigned int stride = a->v71.ioc >> 16;
+	unsigned int width = a->ios & 0xffff, height = a->ios >> 16;
 
-	if (src == dst || src->cma.dmasize < V3D_COPY_SIZE ||
-	    dst->cma.dmasize < V3D_COPY_SIZE ||
-	    a->iia != src->gpu || a->ioa != dst->gpu ||
-	    a->icfg != 0x001d0001 || a->iis != 64 ||
-	    a->ios != 0x00400040 || a->v71.ioc != 0x00400000 ||
-	    a->ica != 0 || a->iua != 0 || a->coef[0] != 0 ||
-	    a->coef[1] != 0 || a->coef[2] != 0 || a->coef[3] != 0 ||
-	    a->bo_handles[2] != 0 || a->bo_handles[3] != 0 ||
-	    a->flags != 0 ||
-	    a->extensions != 0 || a->v71.pad != 0)
+	if (src == NULL || dst == NULL ||
+	    (uint64_t)a->iia < src->gpu ||
+	    (uint64_t)a->iia - src->gpu >= src->cma.dmasize ||
+	    (uint64_t)a->ioa < dst->gpu ||
+	    (uint64_t)a->ioa - dst->gpu >= dst->cma.dmasize ||
+	    (a->icfg & ~V3D_TFU_MESA_ICFG) ||
+	    (a->v71.ioc & ~V3D_TFU_MESA_IOC) ||
+	    width == 0 || height == 0 || width > V3D_TFU_MESA_MAX_DIM ||
+	    height > V3D_TFU_MESA_MAX_DIM ||
+	    a->ica || a->iua || a->coef[0] || a->coef[1] ||
+	    a->coef[2] || a->coef[3] || a->flags || a->extensions || a->v71.pad)
+		return EINVAL;
+	if ((input != 0 && input < 3) || (output != 0 && output < 3))
+		return EINVAL;
+	/* R4 is not emitted by the pinned format table. The float32 types
+	 * and RGB9_E5 are copy-only in its TFU support helper. */
+	if (type > 19 && type != 20 && (type < 29 || type > 31))
+		return EINVAL;
+	if (levels > 14 || ((a->v71.ioc & 1) != 0) != (levels != 0) ||
+	    (levels != 0 && (output == 0 || type > 19)))
+		return EINVAL;
+	if ((input == 0 && a->iis < width) ||
+	    (input >= 6 && a->iis == 0) ||
+	    (input >= 3 && input <= 5 && a->iis != 0))
+		return EINVAL;
+	if ((output == 0 && stride < width) ||
+	    (output >= 6 && stride == 0) ||
+	    (output >= 3 && output <= 5 && stride != 0))
 		return EINVAL;
 	return 0;
+}
+
+/* Destination RW includes its preserved base level, guards and padding. */
+static void
+bcmv3d_tfu_sync(struct bcmv3d_job *job, bool before)
+{
+	unsigned int i;
+
+	for (i = 0; i < job->ntfu; i++) {
+		struct bcmv3d_bo *bo = job->tfu_bos[i];
+		int ops = before ? BUS_DMASYNC_PREWRITE : BUS_DMASYNC_POSTWRITE;
+
+		if (bo == job->dst)
+			ops |= before ? BUS_DMASYNC_PREREAD : BUS_DMASYNC_POSTREAD;
+		bcmv3d_sync(bo, ops);
+	}
 }
 
 static int
@@ -426,8 +478,7 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *a)
 	/* Do not clear latched faults from a previous operation. */
 	if (job->published && (error = bcmv3d_clean()) != 0)
 		return error;
-	bcmv3d_sync(job->src, BUS_DMASYNC_PREWRITE);
-	bcmv3d_sync(job->dst, BUS_DMASYNC_PREREAD);
+	bcmv3d_tfu_sync(job, true);
 	bcmv3d_sync(job->scratch, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	bcmv3d_ptes(job, true);
 	job->stage = "MMU publication";
@@ -446,7 +497,7 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *a)
 	job->controller_masked = false;
 	error = bcmv3d_takeover_hub_poke(V3D_MSK_CLR, V3D_IRQ_ALL);
 	if (error == 0)
-		error = bcmv3d_takeover_hub_poke(V3D_ICFG, a->icfg);
+		error = bcmv3d_takeover_hub_poke(V3D_ICFG, a->icfg | V3D_TFU_IOC);
 	if (error != 0)
 		return error;
 	job->stage = "completion interrupt";
@@ -483,8 +534,7 @@ bcmv3d_execute(struct bcmv3d_job *job, struct drm_v3d_submit_tfu *a)
 	error = bcmv3d_flush();
 	if (error != 0)
 		return error;
-	bcmv3d_sync(job->src, BUS_DMASYNC_POSTWRITE);
-	bcmv3d_sync(job->dst, BUS_DMASYNC_POSTREAD);
+	bcmv3d_tfu_sync(job, false);
 	return 0;
 }
 
@@ -582,46 +632,115 @@ bcmv3d_tfu_reject(struct bcmv3d_device *sc,
 	    (unsigned int)dst->known, (unsigned long long)dst->bytes, dst->gpu);
 }
 
+/* One reference per unique native object. No user handle array is read. */
+static int
+bcmv3d_tfu_lookup(struct bcmv3d_device *sc, struct drm_file *file,
+    const struct drm_v3d_submit_tfu *a, struct drm_gem_object **objects,
+    unsigned int *count, struct bcmv3d_bo **destination,
+    enum bcmv3d_tfu_reject_reason *reason)
+{
+	unsigned int i, j;
+	bool tail = false;
+	int error;
+
+	*count = 0;
+	*destination = NULL;
+	*reason = BCMV3D_TFU_REJECT_DST_LOOKUP;
+	if (a->bo_handles[0] == 0)
+		return ENOENT;
+	*reason = BCMV3D_TFU_REJECT_PAYLOAD;
+	for (i = 0; i < __arraycount(a->bo_handles); i++) {
+		if (a->bo_handles[i] == 0)
+			tail = true;
+		else if (tail)
+			return EINVAL;
+	}
+	for (i = 0; i < __arraycount(a->bo_handles) && a->bo_handles[i]; i++) {
+		struct drm_gem_object *obj;
+		struct bcmv3d_bo *bo;
+
+		*reason = i == 0 ? BCMV3D_TFU_REJECT_DST_LOOKUP :
+		    BCMV3D_TFU_REJECT_SRC_LOOKUP;
+		obj = drm_gem_object_lookup(file, a->bo_handles[i]);
+		if (obj == NULL)
+			return ENOENT;
+		error = bcmv3d_bo_reference(sc, obj, &bo);
+		/* The acquired native reference replaces the lookup reference. */
+		drm_gem_object_put_unlocked(obj);
+		if (error != 0)
+			return error;
+		/* Private translation/sink storage is never an admitted image. */
+		if (bo == sc->job->pt || bo == sc->job->scratch) {
+			drm_gem_object_put_unlocked(obj);
+			return EINVAL;
+		}
+		if (i == 0)
+			*destination = bo;
+		for (j = 0; j < *count; j++)
+			if (objects[j] == obj)
+				break;
+		if (j == *count)
+			objects[(*count)++] = obj;
+		else
+			drm_gem_object_put_unlocked(obj);
+	}
+	return 0;
+}
+
+/* Initial addresses are inside admitted BOs; the MMU bounds the full access. */
+static struct bcmv3d_bo *
+bcmv3d_tfu_address(struct drm_gem_object **objects, unsigned int count,
+    uint32_t address)
+{
+	unsigned int i;
+
+	for (i = 0; i < count; i++) {
+		struct bcmv3d_bo *bo = bcmv3d_to_bo(objects[i]);
+
+		if ((uint64_t)address >= bo->gpu &&
+		    (uint64_t)address - bo->gpu < bo->cma.dmasize)
+			return bo;
+	}
+	return NULL;
+}
+
 int
 bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 {
 	struct bcmv3d_device *sc = dev->dev_private;
 	struct bcmv3d_job *job = sc->job;
 	struct drm_v3d_submit_tfu *args = data;
-	struct drm_gem_object *src, *dst, *objects[2];
+	struct drm_gem_object *objects[4] = {0};
+	struct bcmv3d_bo *src, *dst;
 	struct bcmv3d_resv reservations = {0};
 	struct bcmv3d_sync sync = {0};
 	struct bcmv3d_tfu_reject_bo source = {0}, destination = {0};
 	enum bcmv3d_tfu_reject_reason reason;
+	unsigned int count = 0, i;
 	int error;
 
-	dst = drm_gem_object_lookup(file, args->bo_handles[0]);
-	if (dst == NULL) {
-		bcmv3d_tfu_reject(sc, args, BCMV3D_TFU_REJECT_DST_LOOKUP,
-		    ENOENT, &source, &destination);
-		return -ENOENT;
-	}
-	bcmv3d_tfu_reject_snapshot(&destination, bcmv3d_to_bo(dst));
-	src = drm_gem_object_lookup(file, args->bo_handles[1]);
-	if (src == NULL) {
-		drm_gem_object_put_unlocked(dst);
-		bcmv3d_tfu_reject(sc, args, BCMV3D_TFU_REJECT_SRC_LOOKUP,
-		    ENOENT, &source, &destination);
-		return -ENOENT;
-	}
-	bcmv3d_tfu_reject_snapshot(&source, bcmv3d_to_bo(src));
+	error = bcmv3d_tfu_lookup(sc, file, args, objects, &count, &dst, &reason);
+	if (dst != NULL)
+		bcmv3d_tfu_reject_snapshot(&destination, dst);
+	src = bcmv3d_tfu_address(objects, count, args->iia);
+	if (src != NULL)
+		bcmv3d_tfu_reject_snapshot(&source, src);
+	if (error != 0)
+		goto release;
 	reason = BCMV3D_TFU_REJECT_PAYLOAD;
-	error = bcmv3d_payload(args, bcmv3d_to_bo(src), bcmv3d_to_bo(dst));
+	if (src == NULL || bcmv3d_tfu_address(objects, count, args->ioa) != dst) {
+		error = EINVAL;
+		goto release;
+	}
+	error = bcmv3d_payload(args, src, dst);
 	if (error != 0)
 		goto release;
 	reason = BCMV3D_TFU_REJECT_SYNC;
 	error = bcmv3d_sync_prepare(file, args->in_sync, args->out_sync, &sync);
 	if (error != 0)
 		goto release;
-	objects[0] = src;
-	objects[1] = dst;
 	reason = BCMV3D_TFU_REJECT_RESERVATION;
-	error = bcmv3d_resv_prepare(&reservations, objects, 2,
+	error = bcmv3d_resv_prepare(&reservations, objects, count,
 	    MAX(1, mstohz(1000)));
 	if (error != 0)
 		goto release;
@@ -631,6 +750,10 @@ bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 		error = EIO;
 		goto unlock;
 	}
+	KASSERT(job->ntfu == 0 && job->src == NULL && job->dst == NULL &&
+	    job->nbo == 0 && job->bos == NULL);
+	for (i = 0; i < __arraycount(job->tfu_bos); i++)
+		KASSERT(job->tfu_bos[i] == NULL);
 	reason = BCMV3D_TFU_REJECT_FENCE_PUBLISH;
 	error = bcmv3d_sync_publish(job, &sync);
 	if (error != 0)
@@ -642,28 +765,34 @@ bcmv3d_submit_tfu(struct drm_device *dev, void *data, struct drm_file *file)
 	reason = BCMV3D_TFU_REJECT_NONE;
 	/* Completion cannot need a reservation held by this submission. */
 	bcmv3d_resv_unlock(&reservations);
-	job->src = bcmv3d_to_bo(src);
-	job->dst = bcmv3d_to_bo(dst);
-	atomic_store_release(&job->src->busy, 1);
-	atomic_store_release(&job->dst->busy, 1);
+	job->src = src;
+	job->dst = dst;
+	job->ntfu = count;
+	for (i = 0; i < count; i++) {
+		job->tfu_bos[i] = bcmv3d_to_bo(objects[i]);
+		atomic_store_release(&job->tfu_bos[i]->busy, 1);
+	}
 	error = bcmv3d_execute(job, args);
 	if (error != 0) {
 		job->poisoned = true;
 		(void)bcmv3d_takeover_hub_poke(V3D_MSK_SET, V3D_IRQ_ALL);
 		bcmv3d_mask(job);
-		atomic_store_release(&job->src->error, EIO);
-		atomic_store_release(&job->dst->error, EIO);
+		for (i = 0; i < count; i++)
+			atomic_store_release(&job->tfu_bos[i]->error, EIO);
 		bcmv3d_diagnose(sc);
 		aprint_error_dev(sc->dev, "TFU engine stopped: %d; "
-		    "buffers retained until reboot\n", error);
-		/* Conservatively retain even failures before first publication. */
+		    "%u buffers retained until reboot\n", error, count);
+		/* The persistent TFU vector retains every unique reference. */
 		bcmv3d_sync_complete(&sync, error);
 		mutex_exit(&job->lock);
 		bcmv3d_sync_fini(&sync);
 		return -error;
 	}
-	atomic_store_release(&job->src->busy, 0);
-	atomic_store_release(&job->dst->busy, 0);
+	for (i = 0; i < count; i++) {
+		atomic_store_release(&job->tfu_bos[i]->busy, 0);
+		job->tfu_bos[i] = NULL;
+	}
+	job->ntfu = 0;
 	job->src = job->dst = NULL;
 unlock:
 	bcmv3d_resv_unlock(&reservations);
@@ -672,8 +801,8 @@ unlock:
 release:
 	bcmv3d_resv_unlock(&reservations);
 	bcmv3d_sync_fini(&sync);
-	drm_gem_object_put_unlocked(src);
-	drm_gem_object_put_unlocked(dst);
+	while (count != 0)
+		drm_gem_object_put_unlocked(objects[--count]);
 	bcmv3d_tfu_reject(sc, args, reason, error, &source, &destination);
 	return -error;
 }
@@ -1388,11 +1517,14 @@ void
 bcmv3d_job_fini(struct bcmv3d_device *sc)
 {
 	struct bcmv3d_job *job = sc->job;
+	unsigned int i;
 
 	if (job == NULL)
 		return;
 	KASSERT(!job->published && job->src == NULL && job->dst == NULL &&
-	    job->nbo == 0 && job->bos == NULL);
+	    job->nbo == 0 && job->bos == NULL && job->ntfu == 0);
+	for (i = 0; i < __arraycount(job->tfu_bos); i++)
+		KASSERT(job->tfu_bos[i] == NULL);
 	if (job->ih != NULL) {
 		bcmv3d_mask(job);
 		acpi_intr_disestablish(job->ih);
@@ -1431,6 +1563,9 @@ bcmv3d_job_init(struct bcmv3d_device *sc)
 	if (((debug >> 8) & 15) < 5 || ((debug >> 4) & 15) < 5 || status != 0)
 		return EIO;
 	job = sc->job = kmem_zalloc(sizeof(*job), KM_SLEEP);
+	KASSERT(job->nbo == 0 && job->bos == NULL && job->ntfu == 0);
+	for (i = 0; i < __arraycount(job->tfu_bos); i++)
+		KASSERT(job->tfu_bos[i] == NULL);
 	mutex_init(&job->lock, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&job->irq_lock, MUTEX_DEFAULT, IPL_VM);
 	spin_lock_init(&job->fence_lock);

@@ -7,6 +7,8 @@
 
 struct bcmv3d_job {
 	struct bcmv3d_bo *pt, *src, *dst;
+	struct bcmv3d_bo *tfu_bos[4];
+	unsigned int ntfu;
 	struct drm_gem_object *bos[1];
 	unsigned int nbo;
 };

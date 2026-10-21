@@ -147,7 +147,7 @@ begin
       'second-poison-no-assignment' => ['bcmv3d_submit_cl', 'if (job->poisoned) {', "job->bos = objects;\n\tif (job->poisoned) {"],
       'second-CSD-poison-no-assignment' => ['bcmv3d_submit_csd', 'if (job->poisoned) {', "job->bos = objects;\n\tif (job->poisoned) {"],
       'release-after-last-unlock' => ['bcmv3d_submit_cl', "release:\n\tbcmv3d_resv_unlock(&reservations);", "release:\n\t/* Missing final reservation release. */"],
-      'full-PTE-vector' => ['bcmv3d_ptes', 'i < (job->nbo ? job->nbo : __arraycount(objects))', 'i < (job->nbo ? (job->nbo > 64 ? 64 : job->nbo) : __arraycount(objects))']
+      'full-PTE-vector' => ['bcmv3d_ptes', 'i < count', 'i < MIN(count, 64U)']
     }
     controls.each do |name, (part, before, after)|
       text = parts.fetch(part)

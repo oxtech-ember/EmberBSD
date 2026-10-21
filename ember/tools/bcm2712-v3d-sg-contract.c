@@ -11,6 +11,8 @@
 #endif
 struct bcmv3d_job {
 	struct bcmv3d_bo *pt, *src, *dst;
+	struct bcmv3d_bo *tfu_bos[4];
+	unsigned int ntfu;
 	struct drm_gem_object *bos[2];
 	unsigned nbo;
 };
@@ -140,7 +142,7 @@ ptes(struct bcmv3d_device *c, struct drm_device *d, struct drm_file *f)
 	struct bcmv3d_bo *src = create(d, f, 6, &hs);
 	struct bcmv3d_bo *dst = create(d, f, 6, &hd);
 	struct bcmv3d_bo *pt = bcmv3d_bo_alloc(c, 4 * 1024 * 1024);
-	struct bcmv3d_job job = { .src = src, .dst = dst, .pt = pt };
+	struct bcmv3d_job job = { .src = src, .dst = dst, .pt = pt, .tfu_bos = {src, dst}, .ntfu = 2 };
 	uint32_t *table;
 	unsigned si = (unsigned)(src->gpu / PAGE_SIZE);
 	unsigned di = (unsigned)(dst->gpu / PAGE_SIZE);
@@ -150,15 +152,18 @@ ptes(struct bcmv3d_device *c, struct drm_device *d, struct drm_file *f)
 	for (int i = 0; i < src->cma.dmamap->dm_nsegs; i++)
 		src->cma.dmamap->dm_segs[i].ds_addr += 0x10000000;
 	CHECK(src->cma.dmamap->dm_nsegs == 2);
-	table[si + 4] = table[di + 4] = 0x12345678;
+	/* The loaded segment can cover more than the requested image storage. */
+	src->cma.dmamap->dm_segs[1].ds_len += PAGE_SIZE;
+	dst->cma.dmamap->dm_segs[1].ds_len += PAGE_SIZE;
+	table[si + 6] = table[di + 6] = 0x12345678;
 	bcmv3d_ptes(&job, true);
 	CHECK(table[si] == ((src->dmasegs[0].ds_addr + 0x10000000) / PAGE_SIZE | V3D_PTE_VALID));
 	CHECK(table[si + 3] == ((src->dmasegs[1].ds_addr + 0x10000000) / PAGE_SIZE | V3D_PTE_VALID));
 	CHECK(table[di + 3] == (dst->dmasegs[1].ds_addr / PAGE_SIZE | V3D_PTE_VALID | V3D_PTE_WRITE));
-	CHECK(table[si + 4] == 0x12345678 && table[di + 4] == 0x12345678);
+	CHECK(table[si + 6] == 0x12345678 && table[di + 6] == 0x12345678);
 	bcmv3d_ptes(&job, false);
-	for (unsigned i = 0; i < 4; i++) CHECK(table[si + i] == 0 && table[di + i] == 0);
-	CHECK(table[si + 4] == 0x12345678 && table[di + 4] == 0x12345678);
+	for (unsigned i = 0; i < 6; i++) CHECK(table[si + i] == 0 && table[di + i] == 0);
+	CHECK(table[si + 6] == 0x12345678 && table[di + 6] == 0x12345678);
 	job.nbo = 1; job.bos[0] = &src->cma.base;
 	bcmv3d_ptes(&job, true);
 	CHECK(table[si + 5] == (((src->dmasegs[1].ds_addr + 0x10000000) / PAGE_SIZE + 2) | V3D_PTE_VALID | V3D_PTE_WRITE));

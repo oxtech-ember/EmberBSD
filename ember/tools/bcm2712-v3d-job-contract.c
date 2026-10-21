@@ -72,6 +72,8 @@ static unsigned mask_count;
 static unsigned reg_calls, fail_reg, starts, sleeps, model_case, writes;
 static unsigned flushes;
 static bool src_owned, dst_owned, scratch_owned, ptes_synced;
+static bool tfu_owned[4];
+static unsigned tfu_owned_count;
 static bool retired, revoke_synced, revoked;
 static struct drm_file *close_during_submit;
 static uint64_t time_ns;
@@ -130,9 +132,9 @@ contract_resv_engine(struct bcmv3d_job *job)
 {
 	CHECK(resv_locks == 0 && resv_contexts == 0 && resv_arrays == 0);
 	struct dma_fence *f = NULL;
-	unsigned count = job->nbo ? job->nbo : 2;
+	unsigned count = job->nbo ? job->nbo : job->ntfu;
 	for (unsigned i = 0; i < count; i++) {
-		struct bcmv3d_bo *bo = job->nbo ? bcmv3d_to_bo(job->bos[i]) : i ? job->dst : job->src;
+		struct bcmv3d_bo *bo = job->nbo ? bcmv3d_to_bo(job->bos[i]) : job->tfu_bos[i];
 		CHECK(bo != NULL && bo->cma.base.resv->owner == NULL);
 		struct dma_fence *next = bo->cma.base.resv->exclusive;
 		CHECK(next && next->status == 0 && next->context == job->fence_context &&
@@ -268,29 +270,40 @@ bus_dmamap_sync
   return;
  }
 
-	if(m==j->src->cma.dmamap && ops==BUS_DMASYNC_PREWRITE) {
-		CHECK(!src_owned && !dst_owned && !scratch_owned);
-		src_owned=true; retired=revoke_synced=revoked=ptes_synced=false;
-	} else if(m==j->dst->cma.dmamap && ops==BUS_DMASYNC_PREREAD) {
-		CHECK(src_owned && !dst_owned); dst_owned=true;
-	} else if(m==j->scratch->cma.dmamap && ops==3) {
-		CHECK(src_owned && dst_owned && !scratch_owned); scratch_owned=true;
-	} else if(m==j->scratch->cma.dmamap && ops==12) {
-		CHECK(retired && src_owned && dst_owned && scratch_owned);
-		scratch_owned=false;
-	} else if(m==j->pt->cma.dmamap && ops==BUS_DMASYNC_PREWRITE) {
+	CHECK(j->ntfu > 0 && j->ntfu <= 4);
+	if(m==j->scratch->cma.dmamap) {
+		CHECK(tfu_owned_count == j->ntfu);
+		if(ops==3) { CHECK(!scratch_owned); scratch_owned=true; }
+		else { CHECK(ops==12 && retired && scratch_owned); scratch_owned=false; }
+	} else if(m==j->pt->cma.dmamap) {
 		uint32_t *pt=j->pt->cma.vaddr;
-		CHECK(src_owned && dst_owned);
+		CHECK(ops==1 && tfu_owned_count==j->ntfu);
 		if(pt[j->src->gpu>>12] || pt[j->dst->gpu>>12]) {
 			CHECK(!retired && scratch_owned); ptes_synced=true;
 		} else {
 			CHECK(retired && !scratch_owned); revoke_synced=true;
 		}
-	} else if(m==j->src->cma.dmamap && ops==BUS_DMASYNC_POSTWRITE) {
-		CHECK(retired && revoke_synced && revoked && src_owned); src_owned=false;
-	} else if(m==j->dst->cma.dmamap && ops==BUS_DMASYNC_POSTREAD) {
-		CHECK(retired && revoke_synced && revoked && dst_owned); dst_owned=false;
-	} else CHECK(false);
+	} else {
+		unsigned slot=0;
+		while(slot<j->ntfu && j->tfu_bos[slot]->cma.dmamap!=m)slot++;
+		CHECK(slot<j->ntfu);
+		struct bcmv3d_bo *bo=j->tfu_bos[slot];
+		if((ops&3)!=0) {
+			CHECK(ops==(bo==j->dst?3:1) && !tfu_owned[slot]);
+			if(tfu_owned_count==0)retired=revoke_synced=revoked=ptes_synced=false;
+			tfu_owned[slot]=true;tfu_owned_count++;
+		} else {
+			CHECK(ops==(bo==j->dst?12:4) && tfu_owned[slot]);
+			CHECK(retired && revoke_synced && revoked);
+			tfu_owned[slot]=false;CHECK(tfu_owned_count>0);tfu_owned_count--;
+		}
+		src_owned=dst_owned=false;
+		for(unsigned i=0;i<j->ntfu;i++) {
+			if(j->tfu_bos[i]==j->src)src_owned=tfu_owned[i];
+			if(j->tfu_bos[i]==j->dst)dst_owned=tfu_owned[i];
+		}
+	}
+
 }
 
 static int
@@ -344,15 +357,21 @@ bcmv3d_takeover_hub_poke(bus_size_t r,uint32_t v)
 		CHECK(src_owned && dst_owned && scratch_owned && ptes_synced);
 		CHECK(j->src->cma.base.refs>=2 && j->dst->cma.base.refs>=2);
 		CHECK(j->src->busy && j->dst->busy);
-		CHECK((pt[j->src->gpu>>12]&V3D_PTE_VALID)!=0);
-		CHECK((pt[j->src->gpu>>12]&V3D_PTE_WRITE)==0);
-		CHECK((pt[j->dst->gpu>>12]&V3D_PTE_WRITE)!=0);
-		CHECK(pt[(j->dst->gpu>>12)+4]==0);
+		CHECK((v & 1U) != 0 && tfu_owned_count == j->ntfu);
+		for(unsigned i=0;i<j->ntfu;i++) {
+			struct bcmv3d_bo *bo=j->tfu_bos[i];
+			CHECK(bo->busy && bo->cma.base.refs>=2);
+			for(unsigned p=0;p<bo->cma.dmasize/4096;p++) {
+				unsigned flags=pt[(bo->gpu>>12)+p]&(V3D_PTE_VALID|V3D_PTE_WRITE);
+				CHECK(flags==(bo==j->dst?(V3D_PTE_VALID|V3D_PTE_WRITE):V3D_PTE_VALID));
+			}
+			CHECK(pt[(bo->gpu>>12)+bo->cma.dmasize/4096]==0);
+		}
 		if(close_during_submit!=NULL) {
 			for(unsigned h=1;h<16;h++)
 				if(close_during_submit->handles[h])close_handle(close_during_submit,h);
 			CHECK(j->src->cma.base.refs==1 && j->dst->cma.base.refs==1);
-			CHECK(gems==4); close_during_submit=NULL;
+			CHECK(gems==2+j->ntfu); close_during_submit=NULL;
 		}
 		starts++; regs[V3D_TFU_CS/4]|=1;
 		if(model_case==10)((uint32_t *)j->scratch->cma.vaddr)[0]^=1;
@@ -390,6 +409,7 @@ setup(struct bcmv3d_device *c,struct drm_device *d,struct drm_file *f)
 	cl_model=cl_render=false;cl_bins=cl_renders=0;
 	reg_calls=fail_reg=starts=sleeps=writes=flushes=model_case=0;
 	src_owned=dst_owned=scratch_owned=ptes_synced=false;
+	memset(tfu_owned,0,sizeof(tfu_owned));tfu_owned_count=0;
 	retired=revoke_synced=revoked=false;
 	close_during_submit=NULL;
 	time_ns=0;
@@ -419,17 +439,205 @@ cleanup(struct bcmv3d_device *c,struct drm_file *f,bool poisoned)
 	else CHECK(!src_owned && !dst_owned && !scratch_owned);
 	for(h=1;h<16;h++)if(f->handles[h])close_handle(f,h);
 	if(poisoned) {
-		CHECK(gems==4); /* PT, scratch and both failed-job objects survive close. */
-		j->src->busy=j->dst->busy=0;
-		drm_gem_object_put_unlocked(&j->src->cma.base);
-		drm_gem_object_put_unlocked(&j->dst->cma.base);
-		j->src=j->dst=NULL;
+		CHECK(gems==2+j->ntfu); /* Private storage and every unique retained BO. */
+		for(unsigned i=0;i<j->ntfu;i++) {
+			j->tfu_bos[i]->busy=0;
+			drm_gem_object_put_unlocked(&j->tfu_bos[i]->cma.base);
+			j->tfu_bos[i]=NULL;
+		}
+		j->ntfu=0;j->src=j->dst=NULL;
 	}
 	/* Model a reboot only: production never frees a published engine. */
 	j->published=false; bcmv3d_job_fini(c); empty(c);
 	CHECK(fence_count == 0 && resv_objects == 0 && resv_locks == 0 && resv_contexts == 0 && resv_arrays == 0);
 	resv_engine_lock = NULL;
 }
+/* The execution model checks IRQ/DMA/PTE ownership, not filtered pixels. */
+static void
+tfu_compatibility(void)
+{
+	struct bcmv3d_device c; struct drm_device d; struct drm_file f;
+	struct drm_v3d_submit_tfu a, b;
+	const unsigned layouts[] = {0,3,4,5,6,7};
+
+	/* No private object can be admitted, even through a model-created handle. */
+	for(unsigned private=0;private<2;private++)for(unsigned role=0;role<2;role++) {
+		a=setup(&c,&d,&f);
+		struct bcmv3d_bo *bo=private?c.job->scratch:c.job->pt;
+		uint32_t handle;CHECK(drm_gem_handle_create(&f,&bo->cma.base,&handle)==0);
+		a.bo_handles[role]=handle;
+		struct drm_gem_object *objects[4]={0};struct bcmv3d_bo *dst=NULL;
+		unsigned count=0, before=reg_calls;
+		enum bcmv3d_tfu_reject_reason reason;
+		int error=bcmv3d_tfu_lookup(&c,&f,&a,objects,&count,&dst,&reason);
+		CHECK(error==EINVAL && count==role);
+		CHECK(reg_calls==before && starts==0 && tfu_owned_count==0);
+		while(count)drm_gem_object_put_unlocked(objects[--count]);
+		CHECK(bcmv3d_submit_tfu(&d,&a,&f)==-EINVAL && reg_calls==before);
+		cleanup(&c,&f,false);
+	}
+	/* File ownership and native GEM identity precede conversion or metadata. */
+	for(unsigned foreign=0;foreign<2;foreign++) {
+		a=setup(&c,&d,&f);struct drm_gem_object *obj=f.handles[a.bo_handles[1]];
+		struct drm_device other={0};struct drm_device *saved=obj->dev;
+		const struct drm_gem_object_funcs *funcs=obj->funcs;
+		if(foreign)obj->funcs=NULL;else obj->dev=&other;
+		unsigned before=reg_calls;
+		CHECK(bcmv3d_submit_tfu(&d,&a,&f)==-ENXIO && reg_calls==before);
+		CHECK(obj->refs==1 && c.job->ntfu==0);
+		obj->dev=saved;obj->funcs=funcs;cleanup(&c,&f,false);
+	}
+	for(unsigned alias=0;alias<4;alias++) {
+		a=setup(&c,&d,&f);a.icfg&=~1U;
+		if(alias) {
+			a.bo_handles[0]=a.bo_handles[1];a.ioa=a.iia;
+			if(alias==1)a.bo_handles[1]=0;
+			if(alias==3)CHECK(drm_gem_handle_create(&f,f.handles[a.bo_handles[0]],&a.bo_handles[1])==0);
+		}
+		struct drm_gem_object *objects[4]={0};struct bcmv3d_bo *destination=NULL;
+		unsigned unique=0;enum bcmv3d_tfu_reject_reason reason;
+		CHECK(bcmv3d_tfu_lookup(&c,&f,&a,objects,&unique,&destination,&reason)==0);
+		CHECK(unique==(alias?1U:2U));
+		CHECK(destination==bcmv3d_to_bo(f.handles[a.bo_handles[0]]));
+		while(unique)drm_gem_object_put_unlocked(objects[--unique]);
+		CHECK(bcmv3d_submit_tfu(&d,&a,&f)==0 && starts==1);
+		CHECK(c.job->ntfu==0 && c.job->src==NULL && c.job->dst==NULL);
+		for(unsigned i=0;i<4;i++)CHECK(c.job->tfu_bos[i]==NULL);
+		cleanup(&c,&f,false);
+	}
+	/* A missing later inline handle releases only the initialized unique prefix. */
+	for(unsigned missing=0;missing<4;missing++) {
+		a=setup(&c,&d,&f);
+		for(unsigned i=2;i<4;i++) {
+			struct drm_v3d_create_bo bo={.size=PAGE_SIZE};
+			CHECK(bcmv3d_create_bo(&d,&bo,&f)==0);a.bo_handles[i]=bo.handle;
+		}
+		a.bo_handles[missing]=99;
+		struct drm_gem_object *objects[4]={0};struct bcmv3d_bo *destination=NULL;
+		unsigned count=0,before=reg_calls;enum bcmv3d_tfu_reject_reason reason;
+		CHECK(bcmv3d_tfu_lookup(&c,&f,&a,objects,&count,&destination,&reason)==ENOENT);
+		CHECK(count==missing);
+		for(unsigned i=0;i<count;i++)CHECK(objects[i]->refs==2);
+		while(count)drm_gem_object_put_unlocked(objects[--count]);
+		CHECK(bcmv3d_submit_tfu(&d,&a,&f)==-ENOENT && reg_calls==before);
+		cleanup(&c,&f,false);
+	}
+	/* Distinct storage with a shared reservation is refused, not deduplicated. */
+	a=setup(&c,&d,&f);
+	struct drm_gem_object *first=f.handles[a.bo_handles[0]],*second=f.handles[a.bo_handles[1]];
+	struct dma_resv *saved_resv=second->resv;second->resv=first->resv;
+	unsigned registers_before=reg_calls;
+	CHECK(bcmv3d_submit_tfu(&d,&a,&f)==-EINVAL && reg_calls==registers_before);
+	CHECK(first->refs==1 && second->refs==1 && c.job->ntfu==0);
+	second->resv=saved_resv;cleanup(&c,&f,false);
+	/* One same-BO mip request for every tiled layout and filtered type. */
+	for(unsigned format=1;format<__arraycount(layouts);format++) {
+		for(unsigned type=0;type<20;type++) {
+			a=setup(&c,&d,&f);a.bo_handles[0]=a.bo_handles[1];a.bo_handles[1]=0;
+			a.ioa=a.iia+64;a.iia+=128;
+			a.icfg=(layouts[format]<<23)|(type<<16);
+			a.iis=layouts[format]>=6?8:0;
+			a.v71.ioc=(layouts[format]<<12)|0x11|(layouts[format]>=6?8U<<16:0);
+			CHECK(bcmv3d_submit_tfu(&d,&a,&f)==0);
+			cleanup(&c,&f,false);
+		}
+	}
+	/* All admitted raster/tiled input/output combinations, no mip filter. */
+	for(unsigned input=0;input<__arraycount(layouts);input++) {
+		for(unsigned output=0;output<__arraycount(layouts);output++) {
+			a=setup(&c,&d,&f);a.icfg=(layouts[input]<<23)|(29U<<16);
+			a.iis=input==0?64:layouts[input]>=6?8:0;
+			a.v71.ioc=(layouts[output]<<12)|((output==0?64U:layouts[output]>=6?8U:0U)<<16);
+			CHECK(bcmv3d_submit_tfu(&d,&a,&f)==0);cleanup(&c,&f,false);
+		}
+	}
+	a=setup(&c,&d,&f);
+	struct bcmv3d_bo *src=bcmv3d_to_bo(f.handles[a.bo_handles[1]]), *dst=bcmv3d_to_bo(f.handles[a.bo_handles[0]]);
+	for(unsigned type=0;type<32;type++) {
+		b=a;b.icfg=type<<16;
+		bool allowed=type<=20 || type==29 || type==30 || type==31;
+		CHECK(bcmv3d_payload(&b,src,dst)==(allowed?0:EINVAL));
+		b.v71.ioc=(3U<<12)|0x11;
+		CHECK(bcmv3d_payload(&b,src,dst)==(type<20?0:EINVAL));
+	}
+	for(unsigned field=0;field<18;field++) {
+		b=a;
+		switch(field) {
+		case 0:b.icfg|=2;break;case 1:b.icfg|=1U<<21;break;
+		case 2:b.icfg|=1U<<23;break;case 3:b.icfg|=2U<<23;break;
+		case 4:b.v71.ioc|=2;break;case 5:b.v71.ioc|=1U<<15;break;
+		case 6:b.v71.ioc|=1U<<12;break;case 7:b.v71.ioc|=2U<<12;break;
+		case 8:b.ios=0;break;case 9:b.ios=0x00404001;break;
+		case 10:b.ios=0x40010040;break;case 11:b.iis=63;break;
+		case 12:b.v71.ioc=63U<<16;break;
+		case 13:b.v71.ioc|=1;break;
+		case 14:b.v71.ioc|=0xf0;break;
+		case 15:b.iia=c.job->pt->gpu;break;
+		case 16:b.ioa=c.job->scratch->gpu;break;
+		case 17:b.iia=src->gpu-1;break;
+		}
+		unsigned before=reg_calls;
+		CHECK(bcmv3d_submit_tfu(&d,&b,&f)==-EINVAL && reg_calls==before);
+		CHECK(c.job->ntfu==0 && src->cma.base.refs==1 && dst->cma.base.refs==1);
+	}
+	/* Dimensions are an explicit Mesa policy, not a 14-bit hardware claim. */
+	b=a;b.iis=16384;b.ios=0x40004000;b.v71.ioc=16384U<<16;
+	CHECK(bcmv3d_payload(&b,src,dst)==0);
+	/* Exclusive-end address math must not wrap at the 32-bit UAPI boundary. */
+	vmem_addr_t saved=src->gpu;src->gpu=UINT64_C(0x100000000)-src->cma.dmasize;
+	struct drm_gem_object *range[]={&src->cma.base};
+	CHECK(bcmv3d_tfu_address(range,1,UINT32_MAX)==src);
+	CHECK(bcmv3d_tfu_address(range,1,0)==NULL);src->gpu=saved;
+	cleanup(&c,&f,false);
+	for(unsigned failure=0;failure<4;failure++) {
+		a=setup(&c,&d,&f);uint32_t handles[4]={a.bo_handles[0],a.bo_handles[1]};
+		for(unsigned i=2;i<4;i++) {
+			struct drm_v3d_create_bo extra={.size=(i+1)*PAGE_SIZE};
+			CHECK(bcmv3d_create_bo(&d,&extra,&f)==0);a.bo_handles[i]=handles[i]=extra.handle;
+		}
+		a.iia=bcmv3d_to_bo(f.handles[handles[2]])->gpu+64;
+		const unsigned faults[]={0,1,5,9};model_case=faults[failure];
+		int error=bcmv3d_submit_tfu(&d,&a,&f);
+		if(!failure) { CHECK(error==0);cleanup(&c,&f,false);continue; }
+		CHECK(error<0 && c.job->poisoned && c.job->ntfu==4);
+		struct bcmv3d_bo *retained[4];memcpy(retained,c.job->tfu_bos,sizeof(retained));
+		for(unsigned i=0;i<4;i++)CHECK(retained[i]->busy && retained[i]->error==EIO && retained[i]->cma.base.refs==2);
+		unsigned before=reg_calls;CHECK(bcmv3d_submit_tfu(&d,&a,&f)==-EIO);
+		CHECK(c.job->ntfu==4 && memcmp(retained,c.job->tfu_bos,sizeof(retained))==0 && reg_calls==before);
+		/* A later engine cannot replace this TFU retention vector. */
+		struct drm_v3d_create_bo fresh={.size=V3D_COPY_SIZE};CHECK(bcmv3d_create_bo(&d,&fresh,&f)==0);
+		b=a;b.bo_handles[0]=fresh.handle;b.bo_handles[1]=b.bo_handles[2]=b.bo_handles[3]=0;
+		b.iia=b.ioa=fresh.offset;
+		CHECK(bcmv3d_submit_tfu(&d,&b,&f)==-EIO);
+		CHECK(c.job->ntfu==4 && memcmp(retained,c.job->tfu_bos,sizeof(retained))==0 && reg_calls==before);
+		struct drm_v3d_submit_csd csd={.cfg={1U<<16,1U<<16,1U<<16,0,0,(uint32_t)fresh.offset, (uint32_t)fresh.offset+4},
+		    .bo_handles=(uintptr_t)&fresh.handle,.bo_handle_count=1};
+		CHECK(bcmv3d_submit_csd(&d,&csd,&f)==-EIO);
+		CHECK(c.job->ntfu==4 && memcmp(retained,c.job->tfu_bos,sizeof(retained))==0 && reg_calls==before);
+		cleanup(&c,&f,true);
+	}
+	/* A new TFU must leave a prior CSD heap owner untouched after poison. */
+	a=setup(&c,&d,&f);csd_model=true;model_case=1;
+	uint32_t handles[2]={a.bo_handles[0],a.bo_handles[1]};
+	struct drm_v3d_submit_csd csd={.cfg={0x10000,0x10000,0x10000,0x110,1,a.iia|3,a.iia+256},
+	    .bo_handles=(uintptr_t)handles,.bo_handle_count=2};
+	CHECK(bcmv3d_submit_csd(&d,&csd,&f)<0 && c.job->poisoned && c.job->nbo==2);
+	struct drm_gem_object **retained=c.job->bos;
+	struct drm_v3d_create_bo fresh={.size=V3D_COPY_SIZE};CHECK(bcmv3d_create_bo(&d,&fresh,&f)==0);
+	b=a;b.bo_handles[0]=fresh.handle;b.bo_handles[1]=0;b.iia=b.ioa=fresh.offset;
+	unsigned before=reg_calls;
+	CHECK(bcmv3d_submit_tfu(&d,&b,&f)==-EIO && c.job->bos==retained && c.job->nbo==2);
+	CHECK(c.job->ntfu==0 && c.job->src==NULL && c.job->dst==NULL && reg_calls==before);
+	for(unsigned i=0;i<2;i++)CHECK(retained[i]->refs==2 && bcmv3d_to_bo(retained[i])->busy);
+	for(unsigned h=1;h<16;h++)if(f.handles[h])close_handle(&f,h);
+	for(unsigned i=0;i<2;i++) {
+		bcmv3d_to_bo(retained[i])->busy=0;drm_gem_object_put_unlocked(retained[i]);
+	}
+	kmem_free(retained,2*sizeof(*retained));c.job->bos=NULL;c.job->nbo=0;
+	c.job->published=false;bcmv3d_job_fini(&c);empty(&c);resv_engine_lock=NULL;
+
+}
+
 int
 main(void)
 {
@@ -438,6 +646,8 @@ main(void)
 	struct drm_file f,other={0};
 	struct drm_v3d_submit_tfu a,b;
 	unsigned count;
+
+	tfu_compatibility();
 	a=setup(&c,&d,&f);
 	CHECK(bcmv3d_submit_tfu(&d,&a,&other)==-ENOENT && starts==0);
 	struct drm_v3d_wait_bo w={.handle=a.bo_handles[0]};
@@ -450,16 +660,25 @@ main(void)
 	w.timeout_ns=3000000;
 	CHECK(bcmv3d_wait_bo(&d,&w,&f)==-ETIME && sleeps==3);
 	waiting->busy=0;
-	b=a; b.bo_handles[0]=b.bo_handles[1]; b.ioa=b.iia;
+	b=a; b.bo_handles[2]=0; b.bo_handles[3]=a.bo_handles[1];
 	CHECK(bcmv3d_submit_tfu(&d,&b,&f)==-EINVAL && starts==0);
 	struct drm_v3d_create_bo small={.size=PAGE_SIZE};
 	CHECK(bcmv3d_create_bo(&d,&small,&f)==0);
-	b=a; b.bo_handles[0]=small.handle; b.ioa=small.offset;
+	b=a; b.bo_handles[0]=small.handle; b.ioa=small.offset+PAGE_SIZE;
 	CHECK(bcmv3d_submit_tfu(&d,&b,&f)==-EINVAL && starts==0);
 	close_handle(&f,small.handle);
-	/* Every unsupported payload field and both addresses must be checked. */
-	for(unsigned word=0;word<sizeof(a)/4;word++) {
-		b=a; ((uint32_t *)(void *)&b)[word]^=1;
+	/* Unsupported fields and initial exclusive-end addresses remain errors. */
+	for(unsigned field=0;field<12;field++) {
+		b=a;
+		switch(field) {
+		case 0:b.ica=1;break;case 1:b.iua=1;break;
+		case 2:case 3:case 4:case 5:b.coef[field-2]=1;break;
+		case 6:b.flags=1;break;case 7:b.extensions=1;break;
+		case 8:b.v71.pad=1;break;
+		case 9:b.iia=a.iia+V3D_COPY_SIZE;break;
+		case 10:b.ioa=a.ioa+V3D_COPY_SIZE;break;
+		case 11:b.icfg|=2;break;
+		}
 		CHECK(bcmv3d_submit_tfu(&d,&b,&f)<0 && starts==0 && !c.job->poisoned);
 	}
 	for(unsigned n=0;n<260;n++) {
