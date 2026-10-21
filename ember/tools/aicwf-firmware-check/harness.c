@@ -36,7 +36,7 @@ harness_rng(void)
 void
 harness_irq(void)
 {
-	volatile u32 *context = (volatile u32 *)active_context;
+	const volatile u32 *context = (const volatile u32 *)active_context;
 
 	irq_count++;
 	if (active_context != 0) {
@@ -61,7 +61,7 @@ harness_main(void)
 	volatile struct result *result;
 	volatile u8 *vifs = (volatile u8 *)VIF_BASE;
 	struct call call;
-	u32 index, offset, context, vif, slot;
+	u32 index, offset;
 
 	mailbox[0] = 0x55303242U;
 	mailbox[1] = CASE_COUNT;
@@ -72,6 +72,8 @@ harness_main(void)
 	write32(0xe000e280U, 0xffffffffU);
 	write32(0xe000e100U, 0x80000000U);
 	for (index = 0; index < CASE_COUNT; index++) {
+		u32 context, vif, slot;
+
 		test = &test_cases[index];
 		result = &results[index];
 		result->id = index;

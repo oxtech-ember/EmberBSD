@@ -7,12 +7,14 @@ SECTIONS
  .text 0x400 : { *(.text.start) *(.text*) *(.rodata*) }
  ASSERT(. < 0x10000, "Own code overlaps original-address area")
  @ORIGINAL_SECTIONS@
- .data 0x20000000 : { *(.data*) }
+ . = 0x20000000;
+ .data : { *(.data*) }
  .bss (NOLOAD) : {
   . = ALIGN(8); __bss_start = .;
   *(.bss*) *(COMMON)
   . = ALIGN(8); __bss_end = .;
  }
+ ASSERT(__bss_start >= 0x20000000, "Fixture data is outside RAM")
  ASSERT(__bss_end < 0x20300000, "Fixture data overlaps stack guard")
  /DISCARD/ : { *(.comment) *(.note*) *(.ARM.exidx*) *(.ARM.extab*) }
 }

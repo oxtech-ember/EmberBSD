@@ -11,7 +11,8 @@ The H image and other revisions are rejected.
 No vendor bytes are stored here. The fixture extracts nine selected slices
 into a new private output. It retains the original function addresses,
 literals and helper tables. It never loads the original boot vectors or the
-whole firmware. Keep the generated slices, ELF and observations outside Git.
+whole firmware. A strict ELF load-segment check keeps fixture data in its
+own RAM area before CPU execution. Keep the generated slices, ELF and observations outside Git.
 The original binary's license and source obligations remain separate from
 this independently authored BSD-2-Clause fixture. AI assistance was used.
 

@@ -6,6 +6,7 @@ sys.dont_write_bytecode = True
 from pathlib import Path
 import tempfile
 import time
+import struct
 from types import SimpleNamespace
 from unittest.mock import patch
 import unittest
@@ -14,6 +15,7 @@ import oracle
 import policy
 import driver
 import json
+import shutil
 import cases
 from remote import Remote
 
@@ -85,12 +87,60 @@ class HostTests(unittest.TestCase):
                 if fail:
                     def refused(*args,**kwargs):raise RuntimeError('primary compiler witness')
                     process.run_logged=refused
-                with patch.object(driver,'sdk',return_value=(process,JSON)),patch.object(driver,'toolchain',return_value=root/'tools'),patch.object(policy,'prepare',side_effect=lambda original,output:output.mkdir()):
+                with patch.object(driver,'sdk',return_value=(process,JSON)),patch.object(driver,'toolchain',return_value=root/'tools'),patch.object(policy,'elf_layout',return_value={}),patch.object(policy,'prepare',side_effect=lambda original,output:output.mkdir()):
                     if fail:self.assertRaisesRegex(RuntimeError,'primary compiler witness',driver.main,args)
                     else:self.assertEqual(driver.main(args)['state'],'built-not-executed')
                 state=json.loads((work/'status.json').read_text())
                 self.assertFalse(state['accepted_original_fixture'])
                 self.assertEqual(state['state'],'refused' if fail else 'built-not-executed')
+    def test_execution_error_preserves_unknown_ownership_marker(self):
+        class JSON:
+            @staticmethod
+            def write_json(path,value,exclusive=True,mode=0o644):
+                with Path(path).open('x' if exclusive else 'w') as handle:
+                    json.dump(value,handle)
+        for uncertain in (False,True):
+            calls=[]
+            class Owner:
+                pid=12345
+                def __init__(self,*args,**kwargs):pass
+                def start(self):calls.append('start')
+                def stop(self):
+                    calls.append('stop')
+                    if uncertain:raise RuntimeError('closure unproven')
+            with tempfile.TemporaryDirectory(prefix='aic-owner-') as temporary:
+                root=Path(temporary);work=root/'work';work.mkdir()
+                qemu=root/'fake-qemu';qemu.write_text('not executed');qemu.chmod(0o700)
+                process=SimpleNamespace(sanitized_environment=lambda:{},OwnedProcessGroup=Owner)
+                with patch.object(driver,'Remote',side_effect=ValueError('primary observation failure')):
+                    self.assertRaisesRegex(RuntimeError if uncertain else ValueError,'closure unproven' if uncertain else 'primary observation failure',driver.execute,qemu,work,{},1,process,JSON)
+                self.assertEqual(calls,['start','stop'])
+                pending=work/'ownership-pending.json'
+                self.assertEqual(pending.exists(),uncertain)
+                if uncertain:
+                    record=json.loads(pending.read_text())
+                    self.assertEqual(record['state'],'ownership-unproven')
+                    self.assertFalse(record['accepted'])
+                    self.assertTrue(Path(record['control_root']).is_dir())
+                    shutil.rmtree(record['control_root'])
+                self.assertFalse((work/'results.bin').exists())
+    def test_elf_load_gate_rejects_original_globals_overlap(self):
+        def image(ram):
+            header=bytearray(52+3*32)
+            header[:7]=b'\x7fELF\x01\x01\x01'
+            struct.pack_into('<HHIIIIIHHHHHH',header,16,2,40,1,0x401,52,0,0x5000200,52,32,3,0,0,0)
+            for index,(start,size,flags) in enumerate(((0,0x800,5),(0x10000,0x170000,5),(ram,0x3aca8,6))):
+                struct.pack_into('<8I',header,52+index*32,1,0,start,start,0,size,flags,0x1000)
+            return header
+        with tempfile.TemporaryDirectory(prefix='aic-elf-') as temporary:
+            path=Path(temporary)/'fixture.elf'
+            path.write_bytes(image(0x180000))
+            self.assertRaisesRegex(ValueError,'overlap original globals',policy.elf_layout,path)
+            path.write_bytes(image(0x20000000))
+            self.assertEqual(policy.elf_layout(path)['loads'][2]['start'],0x20000000)
+            for data in (b'ELF',image(0x202f0000),image(0x18fb08)):
+                path.write_bytes(data)
+                self.assertRaises(ValueError,policy.elf_layout,path)
     def test_only_frontend_freestanding_build_commands(self):
         commands=policy.build_commands(Path('/tools'),Path('/work'),Path('/source'))
         for argv in commands:

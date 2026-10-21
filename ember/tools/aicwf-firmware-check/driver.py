@@ -140,6 +140,7 @@ def main(argv):
     try:
         for index, command in enumerate(policy.build_commands(prefix, work, HERE)):
             process.run_logged(command, work / ('build-' + str(index) + '.log'), cwd=work, env=process.sanitized_environment())
+        jsonio.write_json(work / 'elf-layout.json', policy.elf_layout(work / 'harness.elf'), mode=0o600)
         if args.mode == 'build':
             state['state'] = 'built-not-executed'
         else:
