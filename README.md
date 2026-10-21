@@ -148,8 +148,9 @@ maps EmberBSD Development skills to preparation, validation, and submission.
 [Bounded HT/VHT scan observations](ember/development/net80211-phy-ies.md)
 retain validated peer IEs and export them through the native scan ioctl.
 Legacy RSN/WME bytes keep priority in the existing wire budget.
-Host parser/lifetime/copyout contracts pass; HT/VHT negotiation and target
-acceptance remain separate work.
+Host parser/lifetime/copyout contracts pass. A GCC16 aarch64 kernel boots
+on CIX P1 and exports observed HT/VHT IEs through the installed scan utility.
+Legacy WPA2/CCMP data transfer passes. HT/VHT negotiation remains separate work.
 
 [GCC16 build and test compatibility](ember/tests/gcc16-build-recovery.md)
 preserves binary test inputs, selects the Objective-C dependency frontend,

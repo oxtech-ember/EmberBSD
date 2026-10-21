@@ -81,3 +81,20 @@ legacy net policy and native rate contracts pass 149 and 30 assertions.
 Valgrind is unavailable on this macOS arm64 host. No Valgrind result is claimed.
 Host models do not establish a complete target kernel/rump build, actual
 supplicant behavior, HT/VHT negotiation or physical radio acceptance.
+
+## Target boundary
+
+The GCC16.2 aarch64 kernel at `560101dfe575d50eda9ee90f8665572062e74c01`
+builds with `EMBER64_CIX_PERIPHERALS` and boots on CIX P1.
+The installed `ifconfig -v rtwce0 list scan` exports all four observed IE types.
+Legacy WPA2-PSK/CCMP, DHCP ACK, IPv6 link-local and 8 MiB in each direction pass.
+The transferred payload matches SHA256 in both directions.
+The new WME hardware consumers remain dormant in this legacy profile.
+This check does not accept HT/VHT negotiation, QoS traffic or aggregation.
+RF calibration warnings and long-run reliability remain open.
+
+The pinned Linux workflow `.github/workflows/net80211.yml` runs source contracts
+under GCC16, Memcheck, ASan/UBSan and static analyzers.
+Local macOS GCC16 ASan/UBSan passes with leak detection disabled.
+Local leak detection hangs inside LSan during process exit on macOS 27.
+That run is incomplete. Linux leak detection remains enabled in CI.
