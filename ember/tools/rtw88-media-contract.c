@@ -65,6 +65,9 @@ struct ieee80211com {
 };
 const struct ieee80211_channel ieee80211_channel_anyc={0,0};
 static struct ieee80211com *instance;
+/* The focused scan/association contract owns leave/notification coverage. */
+static void ieee80211_sta_leave(struct ieee80211com *ic,
+    struct ieee80211_node *ni) { (void)ic; (void)ni; }
 static void if_printf(struct ifnet *ifp,const char *fmt,...)
 { (void)ifp;(void)fmt; }
 static void ether_ifattach(struct ifnet *p,const uint8_t *mac)

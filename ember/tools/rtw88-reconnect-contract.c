@@ -4,6 +4,10 @@
 #include "rtw88-ra-contract.c"
 #undef RTW88_RA_MAIN
 
+/* Leave/notification is external to this restart fault model. The focused
+ * manual-scan contract executes the actual shared and userland consumers. */
+static void ieee80211_sta_leave(struct ieee80211com *ic,
+    struct ieee80211_node *ni) { (void)ic; (void)ni; }
 #include "native-reconnect-scan.inc"
 
 /* Shared parent state outcome is modeled; its queue ownership consumer is actual. */

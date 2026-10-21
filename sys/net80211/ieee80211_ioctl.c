@@ -498,6 +498,13 @@ ieee80211_setupscan(struct ieee80211com *ic, const u_int8_t chanlist[])
 	 * to get ieee80211_begin_scan called.  We really want to scan w/o
 	 * altering the current state but that's not possible right now.
 	 */
+	/*
+	 * Retire a STA association before INIT hides RUN from the shared
+	 * state machine and its leave notification.
+	 */
+	if (ic->ic_opmode == IEEE80211_M_STA &&
+	    ic->ic_state == IEEE80211_S_RUN)
+		ieee80211_sta_leave(ic, ic->ic_bss);
 	/* XXX handle proberequest case */
 	ic->ic_state = IEEE80211_S_INIT;	/* XXX bypass state machine */
 	return 0;

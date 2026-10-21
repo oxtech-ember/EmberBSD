@@ -26,6 +26,7 @@ name: Native RTL8822CE source contracts
       - 'sys/net/if.h'
       - 'sys/net/if.c'
       - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
+      - 'external/bsd/wpa/dist/wpa_supplicant/events.c'
       - 'sys/net/if_media.h'
       - 'sys/net/if_media.c'
       - 'sys/net/bpf.c'
@@ -67,6 +68,7 @@ name: Native RTL8822CE source contracts
       - 'sys/net/if.h'
       - 'sys/net/if.c'
       - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
+      - 'external/bsd/wpa/dist/wpa_supplicant/events.c'
       - 'sys/net/if_media.h'
       - 'sys/net/if_media.c'
       - 'sys/net/bpf.c'
@@ -137,6 +139,7 @@ jobs:
             /sys/net/if.h
             /sys/net/if.c
             /external/bsd/wpa/dist/src/drivers/driver_bsd.c
+            /external/bsd/wpa/dist/wpa_supplicant/events.c
             /sys/net/if_media.h
             /sys/net/if_media.c
             /sys/net/bpf.c

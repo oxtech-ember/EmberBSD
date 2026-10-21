@@ -1177,6 +1177,9 @@ The base system shell is unchanged.
   GCC16 kernel `76ccc8959` also passes physical page0/page1 samples and two
   controlled reconnects with fresh signal generations. Calibrated dBm and
   firmware RSSI feedback remain unqualified.
+  Disruptive manual scans now retire an active STA association before the
+  INIT bypass. Actual-source checks require disconnect notification and a
+  fresh same-BSSID AUTH/RUN; the target regression remains pending.
   Raw TCP from the board reaches about 25 Mbps in a 1 MiB trial. Full AP-loss
   recovery, RF quality and endurance remain unqualified. HT/VHT remain
   unadvertised. Shared HT20 association contracts now bind queued offers to

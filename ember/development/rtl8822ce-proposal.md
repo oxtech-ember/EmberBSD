@@ -692,3 +692,30 @@ raw IPv6 preserve SHA256; interface, DMA, crypto and queue-full error counters
 remain zero. These checks do not establish calibrated dBm, maximum speed,
 AP-loss recovery or endurance. Invalid metadata counters remain visible.
 ADCK/DACK residual warnings persist. HT admission remains disabled.
+
+### Disruptive manual-scan ownership
+
+A legacy `SCAN_REQ` restarts scanning through a forced INIT state. For an
+associated STA, setup now calls the existing `ieee80211_sta_leave` before
+that bypass. This retains node/key cleanup and the DISASSOC notification.
+The supplicant can then select the same BSSID and request a fresh association.
+It cannot retain a false COMPLETED state after hardware and RA were reset.
+Initial, repeated and non-STA scan requests retain their prior behavior.
+The active channel list and configured PHY/media constraint are preserved.
+
+The source contract runs actual setupscan/SCAN_REQ, the complete native worker
+and core, the owning shared SCAN branch and leave notification, BSD routing
+consumers, supplicant identity reset and its same-BSSID connection decision.
+It checks both legacy bands, first AUTH posting and a fresh RUN/RA commit.
+AUTH frame construction, node crypto storage, OS event transport and successful
+on-air AUTH/ASSOC/WPA responses are explicit services. The full supplicant event
+handler, RF scan scheduling and physical interoperability are outside this host
+qualification.
+The separate crypto and HT contracts retain their own key/node lifecycle gates.
+
+```sh
+CC=gcc-16 RTW88_START_ANALYZE=1 sh ember/tools/rtw88-manualscan-contract.sh
+```
+
+GCC16 target build and a manual scan from a linked STA remain required.
+This change does not implement an association-preserving background scan.

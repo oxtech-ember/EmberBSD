@@ -59,6 +59,7 @@ struct ifnet {
 };
 struct ieee80211com {
 	struct ifnet *ic_ifp;
+	void *ic_bss;
 	int ic_state, ic_roaming, ic_opmode;
 	unsigned char ic_chan_avail[IEEE80211_CHAN_BYTES];
 	unsigned char ic_chan_active[IEEE80211_CHAN_BYTES];
@@ -145,6 +146,10 @@ static int ieee80211_new_state(struct ieee80211com *ic, int state, int arg)
 		ic->ic_state = state;
 	return state_error;
 }
+/* Association cleanup is an external service in this ioctl transport model.
+ * rtw88-manualscan-contract executes its actual leave/notification consumers. */
+static void ieee80211_sta_leave(struct ieee80211com *ic, void *ni)
+{ (void)ic; (void)ni; }
 static int ifioctl_common(struct ifnet *ifp, u_long cmd, void *data)
 {
 	(void)ifp;
