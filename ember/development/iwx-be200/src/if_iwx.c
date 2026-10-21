@@ -530,6 +530,8 @@ void	iwx_ba_release(void *, void *);
 void	iwx_ba_drop(void *, void *);
 void	iwx_ba_stop(struct iwx_softc *, int, int);
 void	iwx_ba_reset(struct iwx_softc *, int);
+void	iwx_txq_task(void *);
+void	iwx_rx_ba_notif(struct iwx_softc *, struct iwx_rx_packet *);
 int	iwx_ba_rx_input(struct iwx_softc *, struct mbuf *,
 	    struct iwx_rx_mpdu_desc *, int, uint32_t, int, uint32_t, uint32_t,
 	    struct ieee80211_rxinfo *);
@@ -6469,9 +6471,26 @@ iwx_tx(struct iwx_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	qid = sc->first_data_qid;
 
 	/*
-	 * QoS frames would map to the aggregated queue of their TID
-	 * (stage 1: no aggregation, all data uses the first data queue).
+	 * Unicast QoS data goes to the queue of its TID, where the firmware
+	 * sets up the Block Ack session and aggregates by itself (as Linux
+	 * iwlmld with TX_AMPDU_SETUP_IN_HW).  Until that queue exists, the
+	 * frame uses the default data queue and the queue is requested.
 	 */
+	if (type == IEEE80211_FC0_TYPE_DATA &&
+	    (wh->i_fc[0] & (0x80 | 0x40)) == 0x80 &&	/* QoS, not null */
+	    !IEEE80211_IS_MULTICAST(wh->i_addr1) &&
+	    hdrlen >= sizeof(struct ieee80211_qosframe) &&
+	    (wh->i_fc[1] & IEEE80211_FC1_DIR_MASK) != IEEE80211_FC1_DIR_DSTODS &&
+	    in->in_ht && ic->ic_state == IEEE80211_S_RUN) {
+		uint8_t tid = ((struct ieee80211_qosframe *)wh)->i_qos[0] & 0x7;
+
+		if (sc->aggqid[tid] != 0)
+			qid = sc->aggqid[tid];
+		else if ((sc->sc_txq_want & (1 << tid)) == 0) {
+			sc->sc_txq_want |= 1 << tid;
+			iwx_add_task(sc, sc->sc_systq, &sc->sc_txq_task);
+		}
+	}
 
 	ring = &sc->txq[qid];
 	desc = &ring->desc[ring->cur];
@@ -7414,7 +7433,7 @@ iwx_rm_sta(struct iwx_softc *sc, struct iwx_node *in)
 		if (err)
 			return err;
 		for (i = IWX_FIRST_AGG_TX_QUEUE;
-		    i < IWX_LAST_AGG_TX_QUEUE; i++) {
+		    i <= IWX_LAST_AGG_TX_QUEUE; i++) {
 			struct iwx_tx_ring *ring = &sc->txq[i];
 			if ((sc->qenablemsk & (1 << i)) == 0)
 				continue;
@@ -7439,8 +7458,9 @@ iwx_rm_sta(struct iwx_softc *sc, struct iwx_node *in)
 	in->in_flags = 0;
 
 	memset(sc->aggqid, 0, sizeof(sc->aggqid));
-	for (i = IWX_FIRST_AGG_TX_QUEUE; i < IWX_LAST_AGG_TX_QUEUE; i++)
+	for (i = IWX_FIRST_AGG_TX_QUEUE; i <= IWX_LAST_AGG_TX_QUEUE; i++)
 		sc->qenablemsk &= ~(1 << i);
+	sc->sc_txq_want = 0;
 	return 0;
 }
 
@@ -9358,6 +9378,74 @@ iwx_dbg_report(struct iwx_softc *sc)
 	memset(sc->sc_dbg_rx_mod, 0, sizeof(sc->sc_dbg_rx_mod));
 }
 
+/* Enable the TX queues requested by iwx_tx(). */
+void
+iwx_txq_task(void *arg)
+{
+	struct iwx_softc *sc = arg;
+	struct ieee80211com *ic = &sc->sc_ic;
+	int tid, qid, err, s = splnet();
+
+	for (tid = 0; tid < IWX_MAX_TID_COUNT; tid++) {
+		if ((sc->sc_txq_want & (1 << tid)) == 0)
+			continue;
+		if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
+		    ic->ic_state != IEEE80211_S_RUN || sc->aggqid[tid] != 0) {
+			sc->sc_txq_want &= ~(1 << tid);
+			continue;
+		}
+		/* The firmware hands out the next unused queue. */
+		qid = fls32(sc->qenablemsk);
+		if (qid < IWX_FIRST_AGG_TX_QUEUE || qid > IWX_LAST_AGG_TX_QUEUE)
+			continue;	/* bit stays set: no retry storm */
+		if (!iwx_nic_lock(sc))
+			break;
+		err = iwx_enable_txq(sc, IWX_STATION_ID, qid, tid,
+		    IWX_TX_RING_COUNT);
+		iwx_nic_unlock(sc);
+		if (err) {
+			printf("%s: could not enable TX queue %d for TID %d "
+			    "(error %d)\n", device_xname(sc->sc_dev), qid, tid,
+			    err);
+			continue;	/* bit stays set: no retry storm */
+		}
+		sc->aggqid[tid] = qid;
+		sc->sc_txq_want &= ~(1 << tid);
+		printf("%s: TX queue %d for TID %d (firmware aggregation)\n",
+		    device_xname(sc->sc_dev), qid, tid);
+	}
+
+	refcnt_rele_wake(&sc->task_refs);
+	splx(s);
+}
+
+/* BA_NOTIF: the AP acknowledged an A-MPDU; free TFDs up to the index. */
+void
+iwx_rx_ba_notif(struct iwx_softc *sc, struct iwx_rx_packet *pkt)
+{
+	struct iwx_compressed_ba_notif *ba = (void *)pkt->data;
+	size_t len = iwx_rx_packet_payload_len(pkt);
+	uint16_t i, tfd_cnt;
+
+	if (len < sizeof(*ba))
+		return;
+	tfd_cnt = le16toh(ba->tfd_cnt);
+	if (len < sizeof(*ba) + tfd_cnt * sizeof(ba->tfd[0]))
+		return;
+	for (i = 0; i < tfd_cnt; i++) {
+		int qid = le16toh(ba->tfd[i].q_num);
+		struct iwx_tx_ring *ring;
+
+		if (qid < IWX_FIRST_AGG_TX_QUEUE || qid > IWX_LAST_AGG_TX_QUEUE ||
+		    (sc->qenablemsk & (1 << qid)) == 0)
+			continue;
+		ring = &sc->txq[qid];
+		sc->sc_tx_timer[qid] = 0;
+		iwx_txq_advance(sc, ring, le16toh(ba->tfd[i].tfd_index));
+		iwx_clear_oactive(sc, ring);
+	}
+}
+
 /* Decide HT/VHT for the BSS node once the association succeeded. */
 void
 iwx_ht_setup_node(struct iwx_softc *sc, struct iwx_node *in)
@@ -11190,6 +11278,7 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 	iwx_del_task(sc, sc->sc_systq, &sc->mac_ctxt_task);
 	iwx_del_task(sc, sc->sc_systq, &sc->phy_ctxt_task);
 	iwx_del_task(sc, sc->sc_systq, &sc->sc_ba_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->sc_txq_task);
 	iwx_del_task(sc, sc->sc_systq, &sc->mcc_task);
 	KASSERT(sc->task_refs.r_refs >= 1);
 	refcnt_finalize(&sc->task_refs, "iwxstop");
@@ -11229,6 +11318,7 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 
 	memset(sc->aggqid, 0, sizeof(sc->aggqid));
 	iwx_ba_reset(sc, 0);	/* the firmware is gone: just drop */
+	sc->sc_txq_want = 0;
 
 	sc->sc_newstate(ic, IEEE80211_S_INIT, -1);
 	sc->ns_nstate = IEEE80211_S_INIT;
@@ -11801,6 +11891,10 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data)
 			    le16toh(rel->nssn) & 0xfff);
 			break;
 		}
+
+		case IWX_BA_NOTIF:
+			iwx_rx_ba_notif(sc, pkt);
+			break;
 
 		case IWX_TX_CMD:
 			iwx_rx_tx_cmd(sc, pkt, data);
@@ -13023,6 +13117,7 @@ iwx_config_complete(struct iwx_softc *sc)
 	task_set(&sc->phy_ctxt_task, iwx_phy_ctxt_task, sc);
 	task_set(&sc->mcc_task, iwx_mcc_task, sc);
 	task_set(&sc->sc_ba_task, iwx_ba_task, sc);
+	task_set(&sc->sc_txq_task, iwx_txq_task, sc);
 #if defined(IWX_HT)
 	task_set(&sc->ba_task, iwx_ba_task, sc);
 	task_set(&sc->setkey_task, iwx_setkey_task, sc);

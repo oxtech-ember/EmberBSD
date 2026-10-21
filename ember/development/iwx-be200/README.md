@@ -24,19 +24,29 @@ sharing a PN. A bug that blocked it: management frames in RUN state went
 out at CCK 1 Mbit/s on 5 GHz and failed (`iwx_min_basic_ridx()`), so the
 ADDBA responses never reached the AP.
 
-Measured on OxTech (channel 64, 200 MB `nc` over the LAN): download
-3.85 MB/s (31 Mbit/s, was 17-20 without Block Ack), upload 2.1 MB/s
-(17 Mbit/s). Firmware rates are VHT MCS 8-9 NSS 2 80 MHz, TX failures
-~0, no TCP retransmissions, CPU idle. The limit now is the TX frame
-rate (~1600 frames/s, each frame and each TCP ACK in its own TXOP):
-**TX aggregation** (own ADDBA, per-TID firmware queues) is the next step.
+TX aggregation works the way Linux iwlmld does it (TX_AMPDU_SETUP_IN_HW):
+unicast QoS data of each TID goes to its own firmware queue
+(`SCD_QUEUE_CONFIG_CMD` v3, allocated by a task on the first frame), the
+firmware negotiates the Block Ack session and aggregates, and BA_NOTIF
+frees the acknowledged TFDs.
+
+Measured (200 MB `nc` between the MSI and a Mac):
+
+| Driver | Place | Download | Upload |
+| --- | --- | --- | --- |
+| HT/VHT, no Block Ack | office, OxTech ch 64, Mac wired | 17-20 Mbit/s | 14-17 Mbit/s |
+| + RX Block Ack | office, same | 31 Mbit/s | 17 Mbit/s |
+| + TX aggregation | home, Netcraze-1387 ch 149, Mac on the same Wi-Fi | 107 Mbit/s | 160 Mbit/s |
+
+The last row is not the same setup (other AP, the Mac's traffic also
+crosses the air), but the gain is far larger than that difference.
 `ifconfig iwx0 debug` prints TX/RX/Block Ack counters every 5 s. The link
 held 9+ minutes without a drop after these fixes; earlier it dropped while
 moving between the 2.4 and 5 GHz BSS (likely the same 5 GHz management
 rate bug; not re-verified). A fatal firmware error is still seen during
 system shutdown.
 
-Still missing: detach/unload, TX Block Ack, hardware crypto, MFP
+Still missing: detach/unload, hardware crypto, MFP
 (so WPA3-only networks do not work), RLC_CONFIG v3 (sending the v2
 layout makes the firmware fail, so it is not sent).
 

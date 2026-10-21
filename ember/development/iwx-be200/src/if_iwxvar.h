@@ -882,6 +882,9 @@ struct iwx_softc {
 	uint8_t sc_ba_stop;		/* TIDs the AP tore down (DELBA) */
 	int sc_ba_sessions;
 	struct task sc_ba_task;
+	/* TX aggregation: per-TID queues; the firmware runs the BA session. */
+	uint8_t sc_txq_want;		/* TIDs waiting for a queue */
+	struct task sc_txq_task;
 	int sc_umac_prph_offset;
 	int sc_imr_enabled;
 
