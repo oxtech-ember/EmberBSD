@@ -12,11 +12,18 @@ _Static_assert(sizeof(u8) == 1 && sizeof(u32) == 4 && sizeof(void *) == 4,
 #define VIF_SIZE 0x528U
 #define VIF_BYTES (2U * VIF_SIZE)
 
+struct fixture_seed {
+	u32 valid, cipher, length, hwindex, incoming_hwindex;
+	u32 ptk, igtk, station, rx_vif, rx_flags;
+	u32 key_xor, station_flags, backup_word;
+};
+
 struct test_case {
 	u32 kind, floor_lo, floor_hi, tx_lo, tx_hi;
 	u32 keyid, vif, mask, frame_len;
 	const u8 *frame;
 	u8 request[44];
+	const struct fixture_seed *seed;
 };
 
 struct call {

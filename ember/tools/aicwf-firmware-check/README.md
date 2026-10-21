@@ -86,3 +86,38 @@ cases and 14 original-defect witnesses on QEMU 11.1.2 with GCC16.2.0.
 It binds the source, input, ELF and raw-result hashes. Own C passed Cppcheck,
 GCC `-fanalyzer` and Clang Static Analyzer; Clang produced no target objects.
 This is not WPA3/PMF certification or approval to replace device firmware.
+
+## Reviewed patch inputs
+
+The default mode still uses the original 33 cases. Add both `--patch-elf` and
+`--patch-manifest` to select the finite BIP patch fixture. The consumer accepts
+only the exact reviewed v1/v2 ELF identities. It checks the original image,
+manifest, source and tool identities, two RX load segments and section hashes
+before it creates output. Only key340/RX384 replace fixture slices. Seven
+original slices remain unchanged. No patch ELF is loaded over the vectors.
+
+```sh
+python3 -I -B ember/tools/aicwf-firmware-check.py --mode build \
+    --firmware /absolute/fmacfw_8800d80_u02.bin \
+    --patch-elf /absolute/reviewed/bip.elf \
+    --patch-manifest /absolute/reviewed/manifest.json \
+    --compiler-prefix /absolute/arm-gcc16/toolchain \
+    --sdk-source /absolute/EmberBSD-SDK --output /absolute/new-patch-output
+python3 -I -B ember/tools/aicwf-firmware-check/test-patch.py
+```
+
+The patch profile has 146 finite cases. Its independent desired-state oracle
+checks the full deterministic before/after VIF bytes, full 48-bit floor,
+new/same-key state, TX and active-pointer preservation, current HW index,
+ABI, PRIMASK, helper calls, return values and complete observed MPDU effects.
+The original CMAC/AES instructions still execute. Expected MIC bytes come from
+the independent host oracle. V1 is a causal input: the same desired comparator
+must refuse its stale same-key HW index. It is not rejected by a forced
+version-dependent result. Host tests are not instruction execution evidence.
+
+The runner saves expected, pre-execution and post-execution hashes for all
+nine loaded slices. Patch acceptance remains CPU-fixture acceptance only.
+`accepted_secure_firmware` and `device_or_radio_acceptance` remain false.
+IRQ observation is closed in this functional source stage. It requires a
+separate reviewed extension before `--exercise irq` can run. The explicit
+`--causal-early-enable` mode is also closed; it is not a normal patch profile.

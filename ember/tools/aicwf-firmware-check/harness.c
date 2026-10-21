@@ -5,6 +5,7 @@
 
 volatile u32 mailbox[4];
 volatile struct result results[CASE_COUNT];
+volatile u8 frame_results[CASE_COUNT][128];
 volatile u32 rng_calls, irq_count, active_context;
 volatile u32 irq_snapshot[3];
 static u8 frame_buffer[65536];
@@ -97,6 +98,23 @@ harness_main(void)
 		*(volatile u8 *)(context + 0x74U) = 16;
 		write32(vif + 0x4b0U, context);
 		write32(vif + 0x4b4U, context);
+		if (test->seed != (void *)0) {
+			const struct fixture_seed *seed = test->seed;
+			u32 other = vif + (test->keyid == 4 ? 5U : 4U) * 0x78U + 0x1e0U;
+
+			*(volatile u8 *)(context + 0x60U) = (u8)seed->cipher;
+			*(volatile u8 *)(context + 0x61U) = (u8)test->keyid;
+			*(volatile u8 *)(context + 0x62U) = (u8)seed->hwindex;
+			*(volatile u8 *)(context + 0x63U) = (u8)seed->valid;
+			*(volatile u8 *)(context + 0x74U) = (u8)seed->length;
+			for (offset = 0; offset < 16; offset++)
+				*(volatile u8 *)(context + 0x50U + offset) = (u8)(offset ^ seed->key_xor);
+			if (seed->backup_word != 0)
+				*(volatile u8 *)(context + 0x64U + 4U * (seed->backup_word - 1U)) ^= 1;
+			write32(vif + 0x4b0U, seed->ptk == 0 ? 0 : seed->ptk == 1 ? context : other);
+			write32(vif + 0x4b4U, seed->igtk == 0 ? 0 : seed->igtk == 1 ? context : other);
+			write32(0x1895acU, seed->station_flags);
+		}
 		copy(result->before, vifs, VIF_BYTES);
 		copy(frame_buffer, test->frame, test->frame_len);
 		for (offset = 0; offset < sizeof(rx_state); offset++)
@@ -107,13 +125,18 @@ harness_main(void)
 		rx_state[9] = 0;
 		rx_state[10] = (u8)test->vif;
 		rx_state[0x30] = 8;
+		if (test->seed != (void *)0) {
+			rx_state[9] = (u8)test->seed->station;
+			rx_state[10] = (u8)test->seed->rx_vif;
+			rx_state[0x30] = (u8)test->seed->rx_flags;
+		}
 		special = 0xa5;
 		rng_calls = 0;
 		call.args[4] = 0;
 		if (test->kind == 1 || test->kind == 4) {
 			call.entry = 0x142be1U;
 			call.args[0] = (u32)test->request;
-			call.args[1] = 0x2a;
+			call.args[1] = test->seed == (void *)0 ? 0x2aU : test->seed->incoming_hwindex;
 			call.args[2] = call.args[3] = 0;
 		} else if (test->kind == 2) {
 			call.entry = 0x165e49U;
@@ -134,6 +157,9 @@ harness_main(void)
 		result->rng_calls = rng_calls;
 		result->special = special;
 		copy(result->after, vifs, VIF_BYTES);
+		if (test->frame_len > 128)
+			harness_assert();
+		copy(frame_results[index], frame_buffer, test->frame_len);
 	}
 	mailbox[3] = 2;
 	__asm volatile (".global harness_done\nharness_done:");

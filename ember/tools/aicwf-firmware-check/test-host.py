@@ -113,7 +113,7 @@ class HostTests(unittest.TestCase):
                 qemu=root/'fake-qemu';qemu.write_text('not executed');qemu.chmod(0o700)
                 process=SimpleNamespace(sanitized_environment=lambda:{},OwnedProcessGroup=Owner)
                 with patch.object(driver,'Remote',side_effect=ValueError('primary observation failure')):
-                    self.assertRaisesRegex(RuntimeError if uncertain else ValueError,'closure unproven' if uncertain else 'primary observation failure',driver.execute,qemu,work,{},1,process,JSON)
+                    self.assertRaisesRegex(RuntimeError if uncertain else ValueError,'closure unproven' if uncertain else 'primary observation failure',driver.execute,qemu,work,{},1,process,JSON,{name: '0' * 64 for name in policy.SPANS})
                 self.assertEqual(calls,['start','stop'])
                 pending=work/'ownership-pending.json'
                 self.assertEqual(pending.exists(),uncertain)

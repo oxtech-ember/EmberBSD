@@ -37,14 +37,22 @@ def arguments(argv):
     parser.add_argument('--compiler-prefix', type=Path)
     parser.add_argument('--qemu', type=Path)
     parser.add_argument('--sdk-source', type=Path)
+    parser.add_argument('--patch-elf', type=Path)
+    parser.add_argument('--patch-manifest', type=Path)
+    parser.add_argument('--exercise', choices=('functional', 'irq'), default='functional')
+    parser.add_argument('--causal-early-enable', action='store_true')
     parser.add_argument('--timeout', type=int, default=120)
     result = parser.parse_args(argv)
-    if not all(value is None or value.is_absolute() for value in (result.firmware, result.output, result.compiler_prefix, result.sdk_source, result.qemu)) or result.timeout <= 0:
+    if not all(value is None or value.is_absolute() for value in (result.firmware, result.output, result.compiler_prefix, result.sdk_source, result.qemu, result.patch_elf, result.patch_manifest)) or result.timeout <= 0:
         raise ValueError('Absolute input/output paths and a positive timeout are required')
     if result.mode != 'prepare' and (result.compiler_prefix is None or result.sdk_source is None):
         raise ValueError('Build/run requires an explicit ARM GCC16 prefix and SDK API1 source')
     if result.mode == 'run' and result.qemu is None:
         raise ValueError('Run requires an explicit QEMU executable')
+    if (result.patch_elf is None) != (result.patch_manifest is None):
+        raise ValueError('Both patch ELF and manifest are required')
+    if result.exercise == 'irq' and result.patch_elf is None or result.causal_early_enable and result.exercise != 'irq':
+        raise ValueError('IRQ and causal modes require explicit patch inputs')
     return result
 
 
@@ -63,7 +71,7 @@ def layout():
     return result
 
 
-def prepare(original, work):
+def prepare(original, work, patch=None, fixtures=None):
     original, work = Path(original), Path(work)
     data = original.read_bytes()
     if len(data) != ORIGINAL_SIZE or hashlib.sha256(data).hexdigest() != ORIGINAL_SHA:
@@ -75,6 +83,8 @@ def prepare(original, work):
     assembly = []
     for name, (start, end) in SPANS.items():
         selected = data[start - BASE:end - BASE]
+        if patch is not None and name in patch['replacements']:
+            selected = patch['replacements'][name]
         path = work / (name + '.bin')
         path.write_bytes(selected)
         rows.append(dict(name=name, start=start, end=end, bytes=len(selected), sha256=hashlib.sha256(selected).hexdigest()))
@@ -89,11 +99,14 @@ def prepare(original, work):
     template = (Path(__file__).resolve().parent / 'link.ld.in').read_text()
     (work / 'link.ld').write_text(template.replace('@ORIGINAL_SECTIONS@', '\n'.join(sections)))
     import cases
-    fixtures = cases.inputs()
+    fixtures = cases.inputs() if fixtures is None else fixtures
     (work / 'cases.inc').write_text(cases.emit(fixtures))
     json_rows = [dict(row, request=row['request'].hex(), frame=row['frame'].hex()) for row in fixtures]
     (work / 'cases.json').write_text(json.dumps(json_rows, indent=2) + '\n')
-    (work / 'inputs.json').write_text(json.dumps(dict(original_sha256=ORIGINAL_SHA, original_size=ORIGINAL_SIZE, spans=rows, full_firmware_loaded=False, replacements=False), indent=2) + '\n')
+    if patch is not None:
+        import patching
+        (work / 'patch-inputs.json').write_text(json.dumps(patching.record(patch), indent=2) + '\n')
+    (work / 'inputs.json').write_text(json.dumps(dict(original_sha256=ORIGINAL_SHA, original_size=ORIGINAL_SIZE, spans=rows, full_firmware_loaded=False, replacements=patch is not None), indent=2) + '\n')
     return rows
 
 

@@ -39,10 +39,13 @@ def inputs():
 def emit(rows):
     result = ['/* Generated fixture inputs. Synthetic keys only. */', '#define CASE_COUNT ' + str(len(rows))]
     for index, row in enumerate(rows):
+        if 'seed' in row:
+            import patched
+            result.append('static const struct fixture_seed seed_' + str(index) + ' = {' + ','.join(str(row['seed'][name]) + 'U' for name in patched.SEED_FIELDS) + '};')
         result.append('static const u8 frame_' + str(index) + '[] = {' + ','.join(str(value) for value in row['frame']) + '};')
     result.append('static const struct test_case test_cases[CASE_COUNT] = {')
     for index, row in enumerate(rows):
         numbers = [row['kind'], row['floor'] & 0xffffffff, row['floor'] >> 32, row['tx'] & 0xffffffff, row['tx'] >> 32, row['keyid'], row['vif'], row['mask'], len(row['frame'])]
-        result.append(' {' + ','.join(str(value) + 'U' for value in numbers) + ',frame_' + str(index) + ',{' + ','.join(str(value) for value in row['request']) + '}},')
+        result.append(' {' + ','.join(str(value) + 'U' for value in numbers) + ',frame_' + str(index) + ',{' + ','.join(str(value) for value in row['request']) + '},' + ('&seed_' + str(index) if 'seed' in row else '0') + '},')
     result.append('};')
     return '\n'.join(result) + '\n'
