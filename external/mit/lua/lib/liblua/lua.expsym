@@ -8,7 +8,9 @@ luaL_buffinit
 luaL_buffinitsize
 luaL_callmeta
 luaL_checkany
+luaL_checkinteger
 luaL_checklstring
+luaL_checknumber
 luaL_checkoption
 luaL_checkstack
 luaL_checktype
@@ -20,6 +22,7 @@ luaL_fileresult
 luaL_getmetafield
 luaL_getsubtable
 luaL_gsub
+luaL_len
 luaL_loadbufferx
 luaL_loadfilex
 luaL_loadstring
@@ -27,7 +30,9 @@ luaL_makeseed
 luaL_newmetatable
 luaL_newstate
 luaL_openselectedlibs
+luaL_optinteger
 luaL_optlstring
+luaL_optnumber
 luaL_prepbuffsize
 luaL_pushresult
 luaL_pushresultsize
@@ -41,14 +46,9 @@ luaL_traceback
 luaL_typeerror
 luaL_unref
 luaL_where
-lua_Alloc
-lua_CFunction
-lua_Hook
-lua_Integer
-lua_Number
-lua_Unsigned
 lua_absindex
 lua_arith
+lua_atpanic
 lua_callk
 lua_checkstack
 lua_close
@@ -61,8 +61,10 @@ lua_createtable
 lua_dump
 lua_error
 lua_gc
+lua_getallocf
 lua_getfield
 lua_getglobal
+lua_gethook
 lua_gethookcount
 lua_gethookmask
 lua_geti
@@ -106,6 +108,7 @@ lua_rawequal
 lua_rawget
 lua_rawgeti
 lua_rawgetp
+lua_rawlen
 lua_rawset
 lua_rawseti
 lua_rawsetp
@@ -126,8 +129,11 @@ lua_setwarnf
 lua_status
 lua_stringtonumber
 lua_toboolean
+lua_tocfunction
 lua_toclose
+lua_tointegerx
 lua_tolstring
+lua_tonumberx
 lua_topointer
 lua_tothread
 lua_touserdata
@@ -135,6 +141,7 @@ lua_type
 lua_typename
 lua_upvalueid
 lua_upvaluejoin
+lua_version
 lua_warning
 lua_xmove
 lua_yieldk

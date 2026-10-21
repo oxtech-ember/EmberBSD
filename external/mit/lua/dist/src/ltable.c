@@ -276,8 +276,10 @@ static int equalkey (const TValue *k1, const Node *n2, int deadok) {
         return 1;
       case LUA_VNUMINT:
         return (ivalue(k1) == keyival(n2));
+#ifndef _KERNEL
       case LUA_VNUMFLT:
         return luai_numeq(fltvalue(k1), fltvalueraw(keyval(n2)));
+#endif /* _KERNEL */
       case LUA_VLIGHTUSERDATA:
         return pvalue(k1) == pvalueraw(keyval(n2));
       case LUA_VLCF:
@@ -1143,12 +1145,14 @@ int luaH_pset (Table *t, const TValue *key, TValue *val) {
     case LUA_VSHRSTR: return luaH_psetshortstr(t, tsvalue(key), val);
     case LUA_VNUMINT: return psetint(t, ivalue(key), val);
     case LUA_VNIL: return HNOTFOUND;
+#ifndef _KERNEL
     case LUA_VNUMFLT: {
       lua_Integer k;
       if (luaV_flttointeger(fltvalue(key), &k, F2Ieq)) /* integral index? */
         return psetint(t, k, val);  /* use specialized version */
       /* else... */
     }  /* FALLTHROUGH */
+#endif /* _KERNEL */
     default:
       return finishnodeset(t, getgeneric(t, key, 0), val);
   }
@@ -1164,10 +1168,13 @@ void luaH_finishset (lua_State *L, Table *t, const TValue *key,
                                     TValue *value, int hres) {
   lua_assert(hres != HOK);
   if (hres == HNOTFOUND) {
+#ifndef _KERNEL
     TValue aux;
+#endif /* _KERNEL */
     const TValue *actk = key;  /* actual key to insert */
     if (l_unlikely(ttisnil(key)))
       luaG_runerror(L, "table index is nil");
+#ifndef _KERNEL
     else if (ttisfloat(key)) {
       lua_Number f = fltvalue(key);
       lua_Integer k;
@@ -1178,6 +1185,7 @@ void luaH_finishset (lua_State *L, Table *t, const TValue *key,
       else if (l_unlikely(luai_numisnan(f)))
         luaG_runerror(L, "table index is NaN");
     }
+#endif /* _KERNEL */
     else if (isextstr(key)) {  /* external string? */
       /* If string is short, must internalize it to be used as table key */
       TString *ts = luaS_normstr(L, tsvalue(key));
