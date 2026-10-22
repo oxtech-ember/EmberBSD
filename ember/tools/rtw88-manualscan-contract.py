@@ -32,15 +32,33 @@ def replace(s, a, b):
 
 # Extend the existing service model locally, without changing its other users.
 s = read('ember/tools/rtw88-state-test.h')
-s = replace(s, 'struct ieee80211_node {', '''struct ieee80211_node_table { int unused; };
-struct ieee80211_node {''')
-s = replace(s, '\tuint8_t ni_bssid[6];', '''\tuint8_t ni_bssid[6], ni_macaddr[6];
-    unsigned ni_fails;
-    int key_live;''')
-s = replace(s, '\tunsigned ic_caps, ic_flags, ic_opmode;', '''\tunsigned ic_caps, ic_flags, ic_opmode, ic_roaming;
-    struct ieee80211_channel *ic_des_chan;
-    struct ieee80211_node_table ic_scan;
-    void (*ic_node_cleanup)(struct ieee80211_node *);''')
+# The shared state model already owns MAC addresses, failure counters,
+# roaming and desired channels. Add only this consumer's key-cleanup hook.
+s = replace(s, 'struct ieee80211_node {', """struct ieee80211_node_table {
+    unsigned nt_scangen, nt_scan_epoch;
+};
+struct ieee80211_node {
+    int key_live;""")
+s = replace(s, 'struct ieee80211com {', """struct ieee80211com {
+    void (*ic_node_cleanup)(struct ieee80211_node *);""")
+s = replace(s, '\tstruct { unsigned nt_scangen,nt_scan_epoch; } ic_scan,ic_sta;',
+            '\tstruct ieee80211_node_table ic_scan, ic_sta;')
+# This consumer defines the one ANY sentinel after its included base suite.
+s = replace(s, 'const struct ieee80211_channel ieee80211_channel_anyc={0,0};',
+            'extern const struct ieee80211_channel ieee80211_channel_anyc;')
+# Isolate only the band's independent service namespace. Its complete actual
+# shared scan bodies stay unchanged; the separate base suite owns their tests.
+# This consumer keeps its leave/notification services and scan-start counter.
+band_names = ('ieee80211_begin_scan', 'ieee80211_probe_curchan',
+              'ieee80211_create_ibss', 'ieee80211_find_node',
+              'ieee80211_unref_node', 'ieee80211_cancel_scan')
+band_start = '#define IEEE80211_DPRINTF(...) ((void)0)'
+band_end = '#undef ieee80211_sta_leave\n'
+s = replace(s, band_start,
+            ''.join('#define '+n+' manualscan_band_'+n+'\n' for n in band_names)
+            + band_start)
+s = replace(s, band_end, band_end
+            + ''.join('#undef '+n+'\n' for n in band_names))
 (out/'manualscan-state-test.h').write_text(s)
 s = replace(read('ember/tools/rtw88-start-contract.c'),
             '#include "rtw88-state-test.h"', '#include "manualscan-state-test.h"')
