@@ -3,6 +3,8 @@
 /* Complete native state consumer plus real core; kernel scheduling is modeled. */
 #include <stdarg.h>
 #include <stdbool.h>
+/* BSD sys/types.h alias used by the unchanged shared channel functions. */
+typedef unsigned int u_int;
 #include <dev/ic/rtw88_net_policy.h>
 #include "native-state-types.inc"
 #define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
