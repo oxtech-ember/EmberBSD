@@ -12,10 +12,10 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
     SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
 fi
-python3 - "$source" "$src/sys/sys/sysctl.h" "$src/sys/kern/kern_sysctl.c" "$src/sbin/sysctl/sysctl.c" "$work" <<'PY'
+python3 - "$source" "$src/sys/sys/sysctl.h" "$src/sys/kern/kern_sysctl.c" "$src/sbin/sysctl/sysctl.c" "$tools/rtw88-sysctl-contract.c" "$work" <<'PY'
 from pathlib import Path
 import sys,re
-source,header,kernel,cli,out=map(Path,sys.argv[1:])
+source,header,kernel,cli,fixture,out=map(Path,sys.argv[1:])
 s=source.read_text();h=header.read_text()
 body=re.search(r'^rtwce_sysctl_stats\(.*?^}',s,re.M|re.S).group()
 (out/'native-sysctl-stats.inc').write_text(s[:s.index('#include')]+'static int\n'+body+'\n')
@@ -42,6 +42,12 @@ b=c.index('\n\tcase CTLTYPE_QUAD:',a)
 size=re.search(r'\tif \(error == 0 && SCARG\(uap, oldv\) != NULL && savelen < oldlen\)\n\t\terror = ENOMEM;',k).group()
 (out/'native-sysctl-size.inc').write_text('static int\nnative_size_status(int error,size_t savelen,void *oldv,size_t oldlen) {\nstruct { void *oldv; } args={oldv},*uap=&args;\n#define SCARG(p,f) ((p)->f)\n'+size+'\n#undef SCARG\nreturn error;\n}\n')
 
+# Compile both controls through the exact visible host service. A real
+# uninitialized byte must remain diagnosed; no generic/CLI body is changed.
+copy=re.search(r'^static int sysctl_copyout\(.*?^}',fixture.read_text(),re.M|re.S).group()
+for name,init in [('initialized','={0x31}'),('uninitialized','')]:
+    (out/('copy-'+name+'.c')).write_text('#include <stddef.h>\nstruct lwp { int unused; };\nstatic int copy_error;\n'+copy+'\nint main(void) { unsigned char src[1]'+init+', dst[1]={0}; int e=sysctl_copyout(NULL,src,dst,1); return e?e:dst[0]!=0x31; }\n')
+
 PY
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fno-inline -fstack-usage -Wstack-usage=3584 \
     ${RTW88_TEST_CFLAGS:-} -I"$work" "$tools/rtw88-sysctl-contract.c" -o "$work/test"
@@ -50,6 +56,24 @@ for usage in "$work"/*.su; do
 done
 if [ -n "${TEST_RUNNER:-}" ]; then "$TEST_RUNNER" "$work/test"; else "$work/test"; fi
 if [ "${RTW88_PCI_ANALYZE:-0}" = 1 ]; then
+    ${CC:-cc} -std=c11 -O2 -g -Wall -Wextra -Werror -fanalyzer \
+        -fno-inline "$work/copy-initialized.c" -o "$work/copy-initialized"
+    if [ -n "${TEST_RUNNER:-}" ]; then "$TEST_RUNNER" "$work/copy-initialized"; else "$work/copy-initialized"; fi
+    if ${CC:-cc} -std=c11 -O2 -g -Wall -Wextra -Werror -fanalyzer \
+        -fno-inline -c "$work/copy-uninitialized.c" -o "$work/copy-uninitialized.o" \
+        > "$work/copy-uninitialized.log" 2>&1; then
+        echo "Uninitialized-copy analyzer control unexpectedly compiled" >&2
+        exit 1
+    fi
+    cat "$work/copy-uninitialized.log"
+    python3 - "$work/copy-uninitialized.log" <<'PYCONTROL'
+from pathlib import Path
+import sys
+text=Path(sys.argv[1]).read_text()
+assert 'error: use of uninitialized value' in text
+assert '[-Werror=analyzer-use-of-uninitialized-value]' in text
+print('Actual copy-service control: initialized PASS; uninitialized O2 analyzer rejection PASS.')
+PYCONTROL
     ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
         -fno-inline -Wstack-usage=3584 -I"$work" \
         -c "$tools/rtw88-sysctl-contract.c" -o "$work/analysis.o"

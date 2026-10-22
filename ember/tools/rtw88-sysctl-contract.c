@@ -45,7 +45,17 @@ static int sysctl_treelock;
 static int kauth_authorize_system(void *cred,int kind,int action,void *a,void *b,void *c)
 { (void)cred;(void)kind;(void)action;(void)a;(void)b;(void)c;return auth_error; }
 static int sysctl_copyout(struct lwp *l,const void *src,void *dst,size_t n)
-{ (void)l;if(copy_error)return copy_error;memcpy(dst,src,n);return 0; }
+{
+    const unsigned char *from=src;
+    unsigned char *to=dst;
+    (void)l;
+    if(copy_error)return copy_error;
+    /* Model kernel copyout/kcopy as byte transfers, retaining visible reads
+     * for analysis instead of the host libc bulk-copy model. No opaque
+     * service, initialized padding or diagnostic exception is used. */
+    for(size_t i=0;i<n;i++)to[i]=from[i];
+    return 0;
+}
 static int sysctl_copyin(struct lwp *l,const void *src,void *dst,size_t n)
 { (void)l;memcpy(dst,src,n);return 0; }
 static void rnd_add_data(void *p,const void *d,size_t n,int flags)
@@ -171,6 +181,21 @@ static void test_read_and_generic_errors(void)
  size=0;CHECK(rtwce_sysctl_stats(NULL,0,NULL,&size,"",0,NULL,NULL,&root)==0 && size==24);
  CHECK(root.sysctl_data==NULL && root.sysctl_size==17 && !live[0] && !live[1]);
 }
+/* Model-service boundary: only the requested nonoverlapping bytes may move.
+ * Driver buffers retain poison outside the formatted string. */
+static void test_copyout_service(void)
+{
+ unsigned char src[]={0x31,0,0x7e,0xa5},dst[]={0xcc,0xcc,0xcc,0xcc,0xcc,0xcc};
+ copy_error=0;
+ CHECK(sysctl_copyout(NULL,src,dst+1,3)==0);
+ CHECK(dst[0]==0xcc && dst[1]==0x31 && dst[2]==0 && dst[3]==0x7e && dst[4]==0xcc && dst[5]==0xcc);
+ CHECK(src[0]==0x31 && src[1]==0 && src[2]==0x7e && src[3]==0xa5);
+ CHECK(sysctl_copyout(NULL,src,dst+1,0)==0 && dst[1]==0x31 && dst[4]==0xcc);
+ copy_error=EFAULT;
+ CHECK(sysctl_copyout(NULL,src,dst+1,4)==EFAULT);
+ CHECK(dst[0]==0xcc && dst[1]==0x31 && dst[2]==0 && dst[3]==0x7e && dst[4]==0xcc && dst[5]==0xcc);
+ copy_error=0;
+}
 int main(void)
 {
     const int driver_errors[]={0,EBUSY,EIO,ENOSPC};
@@ -196,7 +221,7 @@ int main(void)
     CHECK(rtwce_sysctl_stats(NULL,0,output,&size,NULL,0,NULL,NULL,&root)==0);
     CHECK(allocations==a+2 && releases==f+2 && !live[0] && !live[1]);
     CHECK(size==4096 && memcmp(output,inner_output,4096)==0);
-    test_actual_cli_growth();test_read_and_generic_errors();
+    test_actual_cli_growth();test_read_and_generic_errors();test_copyout_service();
     printf("Actual stats sysctl: %u checks, %u failures\n",checks,failures);
     return failures!=0;
 }
