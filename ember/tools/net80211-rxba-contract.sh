@@ -31,8 +31,10 @@ if [ "${RXBA_ANALYZE:-0}" = 1 ]; then
         ${CC:-gcc-16} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -O0 -g -Wall -Werror -fanalyzer \
             -I"$work" -I"$tools" -I"$src/sys/dev/ic" -c "$tools/$consumer" -o "$work/analysis.o"
         ${CC:-gcc-16} -std=c11 -dM -E - < /dev/null > "$work/predefines.h"
+        # The compiled host model has no ALIGNED_POINTER service. Do not invent
+        # its function-like macro while exploring source configurations.
         cppcheck --enable=warning,performance,portability --error-exitcode=1 \
-            --check-level=exhaustive --include="$work/predefines.h" \
+            --check-level=exhaustive -UALIGNED_POINTER --include="$work/predefines.h" \
             -I"$work" -I"$tools" -I"$src/sys/dev/ic" "$tools/$consumer"
         ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE \
             -Wall -Werror -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
