@@ -47,6 +47,7 @@ static int rfk_once(const char *name) {
     if(!rfk_fault && rfk_is(name)) { rfk_fault=1;return 1; }return 0;
 }
 static unsigned rfk_rf18_writes,rfk_rf18_reads,rfk_rxbb_active,rfk_rxbb_end_io;
+static uint64_t rfk_alloc_power_serial;
 static unsigned rfk_spacing=16;
 static int rfk_profile(struct ieee80211com *ic,struct ieee80211_ht20_profile *p)
 { (void)ic;*p=(struct ieee80211_ht20_profile){7,0xff,0xff,0x3f,(uint8_t)rfk_spacing};return 0; }
@@ -59,6 +60,12 @@ static int rfk_c1_pause(unsigned ticks)
 }
 static void rfk_alloc_yield(void)
 {
+    if(rfk_net && rfk_is("alloc-Q") && !rfk_paused) {
+        CHECK(rtw88_test_rfk_atomic_word!=NULL);
+        rfk_alloc_power_serial=rfk_net->core->sc_power_program.serial;
+        atomic_or_uint(rtw88_test_rfk_atomic_word,2);
+        rfk_paused=1;
+    }
     if(rfk_net && rfk_is("alloc-cancel") && !rfk_paused) {
         rfk_paused=1;
         CHECK(rtw88_net_newstate(&rfk_net->ic,IEEE80211_S_SCAN,0)==0);
@@ -389,6 +396,14 @@ main(void)
         CHECK(sc.sc_stats.rfk.error==(rfk_is("power-partial")?ECANCELED:ESTALE));
         if(rfk_is("power-partial"))CHECK(rfk_fault && !sc.sc_power_program.valid);
         CHECK(!sc.sc_started && !net->policy.accepting);
+    }
+    if(rfk_is("alloc-Q")) {
+        CHECK(rfk_paused && rfk_rf18_writes==0);
+        CHECK(sc.sc_power_program.serial==rfk_alloc_power_serial);
+        CHECK(rfk_handshakes==0 && rfk_gapk==0 && rfk_iqk==0 && rfk_dpk==0);
+        CHECK(sc.sc_stats.rfk.operations==0 && !rtw8822c_rfk_active(&sc));
+        CHECK(!net->policy.accepting && !sc.sc_started);
+        CHECK(rtw8822c_rfk_blocked());
     }
     if(rfk_is("power-after-bind"))CHECK(rfk_paused && rfk_gapk==1 && rfk_iqk==0);
     if(rfk_is("power-mailbox"))CHECK(rfk_paused && rfk_net->rfk.ran && rfk_coef==1);

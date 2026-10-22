@@ -178,6 +178,10 @@ rtw88_net_rfk_begin(struct rtw88_net *net)
 		error = rtw88_net_rfk_capture(net, values);
 		if (error == 0 && memcmp(values, net->rfk.values, sizeof(values)) != 0)
 			error = ESTALE;
+		/* Allocation can also expose a global quarantine without a BSS
+		 * change. Recheck the existing lease before channel/power IO. */
+		if (error == 0)
+			error = rtw8822c_rfk_begin(net->core, &svc);
 	}
 	return error;
 }

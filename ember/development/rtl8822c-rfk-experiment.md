@@ -207,3 +207,8 @@ SHA256 `372145f8d72d8c4840bd2d82ccfa7c2a5e0aedccb6e2f1cb2a1e318c8deba7ce`.
 This GPL source supplies read-only register semantics; no implementation is
 imported. The pinned BSD PHY table initializes register 0x1d08 to 0xa0000000. A final bit read
 checks current consistency instead of assuming that initialization survived RFK.
+
+The allocation checkpoint revalidates the original RFK lease after KM_SLEEP.
+An unchanged BSS does not authorize channel or power programming under quarantine.
+This check does not allocate, issue IO, or restart the token or deadlines.
+The existing retirement path releases the old owner and retains quarantine.
