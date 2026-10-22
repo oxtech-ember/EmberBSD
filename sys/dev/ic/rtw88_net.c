@@ -430,6 +430,22 @@ rtw88_net_ra_prepare(struct ieee80211com *ic, unsigned channel,
 	cfg->channel = channel;
 	cfg->epoch = epoch;
 	cfg->use_protection = (ic->ic_flags & IEEE80211_F_USEPROT) != 0;
+	if (ni->ni_ht20.valid || ni->ni_ht20.offered ||
+	    ni->ni_ht20.profile.generation != 0) {
+		if (!ni->ni_ht20.valid ||
+		    ieee80211_ht20_state_request(ic, IEEE80211_S_RUN) != 0)
+			return EINVAL;
+		if (cfg->mode != RTW88_FIXED_11A || channel <= 14 ||
+		    cfg->use_protection || ni->ni_ht20.operation != 0 ||
+		    ni->ni_ht20.profile.rx_mcs != 0xff ||
+		    ni->ni_ht20.profile.tx_mcs != 0xff ||
+		    ni->ni_ht20.tx_mcs == 0 || (ni->ni_ht20.tx_mcs & ~0xffU) != 0)
+			return EOPNOTSUPP;
+		cfg->phy = RTW88_RA_HT20_1SS;
+		cfg->ht_mcs = ni->ni_ht20.tx_mcs;
+		cfg->ht_operation = ni->ni_ht20.operation;
+		cfg->profile_generation = ni->ni_ht20.profile.generation;
+	}
 	return 0;
 }
 
@@ -612,6 +628,10 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		 * workqueue holds Giant through this check and parent publication. */
 		prepare_error = state == IEEE80211_S_RUN ?
 		    ieee80211_ht20_state_request(ic, state) : 0;
+		if (state == IEEE80211_S_RUN && ic->ic_bss != NULL &&
+		    ic->ic_bss->ni_ht20.valid &&
+		    ic->ic_fixed_rate != IEEE80211_FIXED_RATE_NONE)
+			prepare_error = EOPNOTSUPP;
 		prepare_stage = RTW88_NET_STAGE_CORE;
 		if (prepare_error == 0) {
 			prepare_error = state == IEEE80211_S_INIT ? 0 :
@@ -1027,6 +1047,21 @@ rtw88_net_tx_submit(struct rtw88_net *net, struct ieee80211_node *ni,
 	aid = ni->ni_associd & 0x3fff;
 	if (aid == 0 || aid > 2007)
 		return EINVAL;
+	if (net->core->sc_ra.configured &&
+	    net->core->sc_ra.phy == RTW88_RA_HT20_1SS) {
+		if (!ni->ni_ht20.valid || index != IEEE80211_FIXED_RATE_NONE ||
+		    ic->ic_curmode != IEEE80211_MODE_11A ||
+		    (ic->ic_flags & IEEE80211_F_USEPROT) != 0 ||
+		    ni->ni_ht20.profile.rx_mcs != 0xff ||
+		    ni->ni_ht20.profile.tx_mcs != 0xff ||
+		    net->core->sc_ra.channel != ieee80211_chan2ieee(ic, ni->ni_chan) ||
+		    net->core->sc_ra.profile_generation != ni->ni_ht20.profile.generation ||
+		    net->core->sc_ra.ht_mcs != ni->ni_ht20.tx_mcs ||
+		    ni->ni_ht20.operation != 0)
+			return EBUSY;
+	} else if (ni->ni_ht20.valid) {
+		return EBUSY;
+	}
 	if (index == IEEE80211_FIXED_RATE_NONE)
 		return rtw88_tx_auto(net->core, q, frame, len, net->policy.epoch,
 		    (ic->ic_flags & IEEE80211_F_USEPROT) != 0);
@@ -1160,7 +1195,8 @@ rtw88_net_start(struct ifnet *ifp)
 	struct ether_header eh;
 	struct mbuf *m, *head;
 	unsigned q, n, actual;
-	int available, error, dynamic, all;
+	uint64_t ht_epoch;
+	int available, error, dynamic, all, ht_expected;
 
 	if ((ifp->if_flags & (IFF_RUNNING | IFF_OACTIVE)) != IFF_RUNNING)
 		return;
@@ -1172,6 +1208,50 @@ rtw88_net_start(struct ifnet *ifp)
 		if (m == NULL) {
 			if (ic->ic_state != IEEE80211_S_RUN)
 				return;
+			/* Giant owns the capsule. The provider never runs under PCI. */
+			mutex_enter(net->lock);
+			ht_epoch = net->policy.epoch;
+			available = net->policy.accepting && !net->policy.dying;
+			ht_expected = net->core->sc_ra.configured &&
+			    net->core->sc_ra.phy == RTW88_RA_HT20_1SS;
+			mutex_exit(net->lock);
+			if (ht_expected || (ic->ic_bss != NULL &&
+			    (ic->ic_bss->ni_ht20.valid || ic->ic_bss->ni_ht20.offered ||
+			    ic->ic_bss->ni_ht20.profile.generation != 0))) {
+				if (!available)
+					return;
+				error = ic->ic_bss == NULL || !ic->ic_bss->ni_ht20.valid ||
+				    ieee80211_ht20_state_request(ic, IEEE80211_S_RUN) != 0;
+				mutex_enter(net->lock);
+				available = net->policy.accepting && !net->policy.dying &&
+				    net->policy.epoch == ht_epoch;
+				if (available && !error) {
+					const struct ieee80211_ht20_node *h = &ic->ic_bss->ni_ht20;
+					const struct rtw88_ra_state *ra = &net->core->sc_ra;
+					error = ra->phy != RTW88_RA_HT20_1SS || !ra->configured ||
+					    !ra->active || ra->error != 0 || ra->epoch != ht_epoch ||
+					    ra->generation != net->core->sc_generation ||
+					    ra->channel != net->core->sc_channel ||
+					    ra->channel != ieee80211_chan2ieee(ic, ic->ic_curchan) ||
+					    (ic->ic_bss->ni_associd & 0x3fff) == 0 ||
+					    (ic->ic_bss->ni_associd & 0x3fff) > 2007 ||
+					    ra->channel <= 14 || ic->ic_curmode != IEEE80211_MODE_11A ||
+					    ic->ic_fixed_rate != IEEE80211_FIXED_RATE_NONE ||
+					    (ic->ic_flags & IEEE80211_F_USEPROT) != 0 ||
+					    h->operation != 0 || h->profile.rx_mcs != 0xff ||
+					    h->profile.tx_mcs != 0xff || h->tx_mcs == 0 ||
+					    (h->tx_mcs & ~0xffU) != 0 ||
+					    ra->profile_generation != h->profile.generation ||
+					    ra->ht_mcs != h->tx_mcs || ra->ht_operation != h->operation;
+				}
+				mutex_exit(net->lock);
+				if (!available)
+					return; /* A newer request owns withdrawal. */
+				if (error) {
+					ieee80211_new_state(ic, IEEE80211_S_INIT, EPROTO);
+					return;
+				}
+			}
 			dynamic = rtw88_net_tx_dynamic(ifp);
 			if (dynamic) {
 				/* The scheduler may replace its polled head. */

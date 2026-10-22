@@ -72,17 +72,24 @@ struct rtw88_txq {
 	unsigned queued;	/* Posted, completion not seen. */
 };
 
-/* Numeric legacy rate policy; no retained stack/peer pointer. */
+#define RTW88_RA_LEGACY 0
+#define RTW88_RA_HT20_1SS 1
+/* Numeric rate policy; no retained stack/peer pointer. */
 struct rtw88_ra_config {
 	uint64_t epoch;
 	unsigned channel, common_rates;
 	uint8_t mode, use_protection;
+	uint8_t phy;
+	uint16_t ht_mcs, ht_operation;
+	uint32_t profile_generation;
 };
 struct rtw88_ra_state {
 	uint64_t epoch;
 	uint32_t generation;
 	unsigned channel, common_rates, mask;
-	uint8_t rate_id;
+	uint8_t rate_id, phy;
+	uint16_t ht_mcs, ht_operation;
+	uint32_t profile_generation;
 	int configured, active, protection_limited, error;
 };
 

@@ -132,6 +132,7 @@ static void
 ht_setup(void)
 {
 	setup();
+	test_ic.ic_fixed_rate=IEEE80211_FIXED_RATE_NONE;
 	memset(&native_core,0,sizeof(native_core));
 	memset(&native_net,0,sizeof(native_net));
 	native_net.core=&native_core; native_net.lock=&native_lock;

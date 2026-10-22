@@ -148,7 +148,7 @@ test_ra_c2h_bounds_and_telemetry(void)
 		if (!start_ok(&sc))
 			continue;
 		if (variant == 0) p[3] = 1; /* Foreign MACID. */
-		if (variant == 1) p[2] = 12; /* HT is not configured. */
+		if (variant == 1) p[2] = 20; /* MCS8 is outside the bounded 1SS parser. */
 		if (variant == 2) p[2] |= 0x80; /* SGI is not configured. */
 		if (variant == 3) p[8] = 1; /* BW40 is not configured. */
 		rx_put(&sc, 0, sizeof(p), 1, p, 0);
@@ -322,7 +322,7 @@ test_ra_reports_never_control_peer(void)
 	struct rtw88_ra_config cfg={.epoch=1,.channel=1,.common_rates=0xfff,
 	    .mode=RTW88_FIXED_11G};
 	struct rtw88_ra_state saved;
-	uint8_t report[9]={0x0c,0xff,11,0,0,0,0,0,0};
+	uint8_t report[9]={0x0c,0xff,19,0,0,0,0,0,0};
 	uint8_t packet[26];
 	unsigned wp;
 	if (!start_ok(&sc)) return;
@@ -337,7 +337,7 @@ test_ra_reports_never_control_peer(void)
 	CHECK(rtw88_intr(&sc)==1);
 	CHECK(memcmp(&saved,&sc.sc_ra,sizeof(saved))==0);
 	CHECK(sc.sc_stats.ra_reports==1 && sc.sc_stats.ra_unattributed==1);
-	CHECK(sc.sc_stats.ra_outside_mask==1 && sc.sc_stats.ra_report_rate==11);
+	CHECK(sc.sc_stats.ra_outside_mask==1 && sc.sc_stats.ra_report_rate==19);
 	CHECK(sc.sc_stats.tx_done==0); /* A firmware report is not an ACK. */
 	CHECK(rtw88_tx_auto(&sc,RTW88_TXQ_BE,ra_frame,sizeof(ra_frame),2,0)==0);
 	wp=sc.sc_txq[RTW88_TXQ_BE].wp;
@@ -355,6 +355,83 @@ test_ra_reports_never_control_peer(void)
 	CHECK(rtw88_core_detach(&sc)==0);
 }
 
+/* Typed core boundary. Peer negotiation and precrypto ownership are exercised
+ * by the actual association/worker producer in the enable contract. */
+static void
+test_ra_ht20_numeric(void)
+{
+	const uint8_t bssid[6]={2,0,0,0,0,1};
+	for (unsigned variant=0; variant<17; variant++) {
+		struct rtw88_softc sc;
+		struct rtw88_ra_config cfg={.epoch=9,.channel=36,.common_rates=0xff0,
+		    .mode=RTW88_FIXED_11A,.phy=RTW88_RA_HT20_1SS,
+		    .ht_mcs=0xff,.profile_generation=777};
+		if (!start_ok(&sc)) continue;
+		CHECK(rtw88_channel(&sc,36)==0);
+		CHECK(rtw88_station_config(&sc,bssid,1,0x150,9,1)==0);
+		unsigned box=sc.sc_h2c_box,writes=f.writes;
+		struct rtw88_ra_state saved=sc.sc_ra;
+		switch(variant) {
+		case 1: cfg.ht_mcs=0x25; break;
+		case 2: cfg.common_rates=0x150; break;
+		case 3: cfg.phy=2; break;
+		case 4: cfg.ht_mcs=0; break;
+		case 5: cfg.ht_mcs=0x100; break;
+		case 6: cfg.profile_generation=0; break;
+		case 7: cfg.ht_operation=1; break;
+		case 8: cfg.use_protection=1; break;
+		case 9: cfg.mode=RTW88_FIXED_11G; break;
+		case 10: cfg.phy=RTW88_RA_LEGACY; break;
+		case 11: cfg.channel=1; break;
+		case 12: cfg.epoch=0; break;
+		case 13: cfg.common_rates=0; break;
+		case 14: cfg.common_rates|=1; break;
+		case 15: sc.sc_h2c_box=0; f.busy_box=1; break;
+		case 16: sc.sc_edca_error=EIO; break;
+		}
+		int error=rtw88_ra_configure(&sc,&cfg);
+		if (variant<3) {
+			unsigned mask=(unsigned)cfg.ht_mcs<<12|(cfg.common_rates&0x30);
+			CHECK(error==0 && sc.sc_ra.active && sc.sc_ra.rate_id==5);
+			CHECK(sc.sc_ra.mask==mask && sc.sc_ra.common_rates==cfg.common_rates);
+			CHECK(sc.sc_basic_rates==0x150); /* BASIC is not the MCS mask. */
+			CHECK(mmio32(0x1d0+4*box)==UINT32_C(0x40250040));
+			CHECK(mmio32(0x1f0+4*box)==mask);
+			CHECK(sc.sc_ra.profile_generation==777 && sc.sc_ra.ht_mcs==cfg.ht_mcs);
+			saved=sc.sc_ra;
+			unsigned wp=sc.sc_txq[RTW88_TXQ_BE].wp;
+			CHECK(rtw88_tx_auto(&sc,RTW88_TXQ_BE,ra_frame,sizeof(ra_frame),9,1)==EOPNOTSUPP);
+			CHECK(sc.sc_txq[RTW88_TXQ_BE].wp==wp && memcmp(&saved,&sc.sc_ra,sizeof(saved))==0);
+			sc.sc_ra=saved; /* Keep later report cases independent of this check. */
+			CHECK(rtw88_tx_auto(&sc,RTW88_TXQ_BE,ra_frame,sizeof(ra_frame),9,0)==0);
+			for(unsigned rate=12;rate<=19;rate++) {
+				uint8_t p[9]={0x0c,0x22,(uint8_t)rate,0,0,0,0,0,0};
+				saved=sc.sc_ra;
+				unsigned observed=sc.sc_stats.ra_reports;
+				rx_put(&sc,rate-12,sizeof(p),1,p,(uint16_t)(rate-12));f.rx_hw_idx=rate-11;set_hisr0(1);
+				CHECK(rtw88_intr(&sc)==1);
+				CHECK(sc.sc_stats.ra_reports==observed+1 && sc.sc_stats.ra_report_rate==rate);
+				CHECK(sc.sc_stats.ra_report_bw==0 && sc.sc_stats.ra_unattributed==rate-11);
+				CHECK(memcmp(&saved,&sc.sc_ra,sizeof(saved))==0 && sc.sc_stats.tx_done==0);
+			}
+		} else if (variant==15) {
+			CHECK(error==ETIMEDOUT && sc.sc_ra.error==ETIMEDOUT);
+			CHECK(!sc.sc_ra.configured && !sc.sc_ra.active);
+			writes=f.writes;
+			CHECK(rtw88_tx_available(&sc,RTW88_TXQ_BE)==0);
+			CHECK(rtw88_ra_configure(&sc,&cfg)==ETIMEDOUT && f.writes==writes);
+			CHECK(rtw88_tx_auto(&sc,RTW88_TXQ_BE,ra_frame,sizeof(ra_frame),9,0)==ETIMEDOUT);
+			CHECK(rtw88_stop(&sc)==0);f.busy_box=0;
+			CHECK(rtw88_start(&sc)==0 && sc.sc_ra.error==0 && !sc.sc_ra.configured);
+		} else {
+			CHECK(error!=0 && f.writes==writes && sc.sc_h2c_box==box);
+			CHECK(memcmp(&saved,&sc.sc_ra,sizeof(saved))==0);
+		}
+		CHECK(rtw88_stop(&sc)==0);
+		CHECK(rtw88_core_detach(&sc)==0);
+	}
+}
+
 #ifndef RTW88_RA_MAIN
 #define RTW88_RA_MAIN main
 #endif
@@ -363,6 +440,7 @@ RTW88_RA_MAIN(void)
 {
 	if (native_start_main() != 0)
 		return 1;
+	test_ra_ht20_numeric();
 	test_ra_run_to_first_data();
 	test_ra_c2h_bounds_and_telemetry();
 	test_ra_masks_and_quarantine();

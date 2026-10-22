@@ -41,9 +41,11 @@ static int enable_parent_state(struct ieee80211com *ic,enum ieee80211_state stat
             }
         }
         CHECK(net->work_pending);
-        CHECK(net->core->sc_ra.configured && net->core->sc_ra.active);
-        CHECK(net->core->sc_ra.epoch==net->policy.epoch);
-        CHECK(net->core->sc_ra.generation==net->core->sc_generation);
+        if(ic->ic_fixed_rate==IEEE80211_FIXED_RATE_NONE) {
+            CHECK(net->core->sc_ra.configured && net->core->sc_ra.active);
+            CHECK(net->core->sc_ra.epoch==net->policy.epoch);
+            CHECK(net->core->sc_ra.generation==net->core->sc_generation);
+        } else CHECK(!net->core->sc_ra.configured && !net->core->sc_ra.active);
         enable_run_callbacks++;
         if(enable_reenter_run) {
             uint64_t epoch=net->policy.epoch;
@@ -422,7 +424,7 @@ static void enable_drain_edges(void)
             ieee80211_recv_mgmt_assoc_resp(&net->ic,m,net->ic.ic_bss,IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);m_freem(m);
             drain_profile=(struct ieee80211_ht20_profile){99,0xff,0xff,0x3f,16};
             struct ieee80211_ht20_node *h=&net->ic.ic_bss->ni_ht20;
-            h->valid=1;h->profile=drain_profile;h->attempt=h->offer_attempt=1;
+            h->valid=1;h->profile=drain_profile;h->tx_mcs=0xff;h->attempt=h->offer_attempt=1;
             h->channel=net->ic.ic_curchan;memcpy(h->bssid,net->ic.ic_bss->ni_bssid,6);
             net->ic.ic_ht20_admit=drain_provider;
         } else CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_AUTH,0)==0);
@@ -571,7 +573,7 @@ static void enable_mailbox_edges(void)
                 IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);m_freem(m);
             mailbox_profile=(struct ieee80211_ht20_profile){99,0xff,0xff,0x3f,16};
             struct ieee80211_ht20_node *h=&net->ic.ic_bss->ni_ht20;
-            h->valid=1;h->profile=mailbox_profile;h->attempt=h->offer_attempt=1;
+            h->valid=1;h->profile=mailbox_profile;h->tx_mcs=0xff;h->attempt=h->offer_attempt=1;
             h->channel=net->ic.ic_curchan;memcpy(h->bssid,net->ic.ic_bss->ni_bssid,6);
             net->ic.ic_ht20_admit=mailbox_provider;mailbox_cancel=5;
         } else {
@@ -664,6 +666,186 @@ static void enable_mailbox_queues(void)
     enable_destroy(net);
 }
 
+/* C4a host-only admitted profile. No native provider is registered by attach. */
+static struct rtw88_net *ht20_net;
+static struct ieee80211_ht20_profile ht20_profile;
+static int ht20_provider(struct ieee80211com *ic,struct ieee80211_ht20_profile *p)
+{
+    CHECK(ic==&ht20_net->ic && !ht20_net->lock->held);
+    *p=ht20_profile;return 0;
+}
+static struct rtw88_net *enable_ht20_negotiate(struct rtw88_softc *sc,
+    kmutex_t *lock,int first)
+{
+    struct rtw88_net *net=enable_attach(sc,lock);
+    if(!net)return NULL;
+    struct ieee80211com *ic=&net->ic;struct ieee80211_node *ni=ic->ic_bss;
+    ht20_net=net;ht20_profile=(struct ieee80211_ht20_profile){777,0xff,0xff,0x3f,16};
+    ic->ic_ht20_admit=ht20_provider;active_ic=ic;
+    static struct cipher ht20_cipher={.ic_header=8};
+    route_key.wk_cipher=&ht20_cipher;
+    ic->ic_flags|=IEEE80211_F_PRIVACY;ni->ni_rsn.rsn_ucastcipher=IEEE80211_CIPHER_AES_CCM;route_have_key=1;
+    CHECK(ieee80211_send_mgmt(ic,ni,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);
+    CHECK(ni->ni_ht20.offered && ni->ni_ht20.profile.generation==777);
+    struct mbuf *m=enable_response(ic,1,0);
+    uint8_t *rates=m->m_data+sizeof(struct ieee80211_frame)+6;
+    memmove(rates+10,rates+3,(size_t)m->m_len-sizeof(struct ieee80211_frame)-9);
+    rates[1]=8;memcpy(rates+2,ni->ni_rates.rs_rates,8);
+    m->m_len+=7;
+    uint8_t *p=m->m_data+m->m_len;
+    ieee80211_ht20_write(p,&ht20_profile);p+=28;
+    p[0]=61;p[1]=22;p[2]=36;p[8]=1;p+=24;
+    m->m_len=m->m_pkthdr.len=m->model_capacity=(int)(p-m->m_data);
+    ieee80211_recv_mgmt_assoc_resp(ic,m,ni,IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);
+    m_freem(m);
+    CHECK(ni->ni_ht20.valid && ni->ni_ht20.tx_mcs==0xff && ni->ni_ht20.operation==0);
+    if(first<0)return net; /* Parser has queued actual RUN; worker is deferred. */
+    if(first)queue_packet(&net->ec.ec_if.if_snd,ether_packet(0,0,0));
+    rtw88_net_state_work(&net->state_work,net);
+    CHECK(ic->ic_state==IEEE80211_S_RUN && net->policy.accepting);
+    return net;
+}
+static void enable_ht20_ra_chain(void)
+{
+    struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+    struct rtw88_net *net=enable_ht20_negotiate(&sc,&lock,1);
+    if(!net)return;
+    unsigned box=(sc.sc_h2c_box-1)&3;
+    CHECK(mmio32(0x1d0+4*box)==UINT32_C(0x40250040));
+    CHECK(mmio32(0x1f0+4*box)==UINT32_C(0x000ff030));
+    CHECK(sc.sc_ra.rate_id==5 && sc.sc_ra.mask==0xff030);
+    struct rtw88_txq *q=&sc.sc_txq[RTW88_TXQ_BE];
+    CHECK(q->queued==1);
+    if(q->queued) {
+        const uint8_t *desc=q->buf[(q->wp+q->nbuf-1)%q->nbuf].vaddr;
+        CHECK(desc[6]==5 && (desc[4]&0x7f)==0);
+        CHECK((desc[13]&0x15)==0);
+        CHECK((desc[9]&0x10)==0);
+        CHECK((desc[20]&0xf0)==0 && (desc[21]&0x03)==0);
+    }
+    uint8_t report[9]={0x0c,0x44,0x13,0,0,0,0,0,0};
+    uint64_t observed=sc.sc_stats.ra_reports;
+    rx_put(&sc,0,sizeof(report),1,report,0);f.rx_hw_idx=1;set_hisr0(1);
+    CHECK(rtw88_intr(&sc)==1);
+    CHECK(sc.sc_stats.ra_reports==observed+1 && sc.sc_stats.ra_report_rate==0x13);
+    CHECK(sc.sc_stats.ra_report_bw==0 && sc.sc_stats.ra_observed_generation==sc.sc_generation);
+    enable_destroy(net);ht20_net=NULL;route_have_key=0;
+}
+static void enable_ht20_precrypto_fences(void)
+{
+    for(unsigned kind=0;kind<19;kind++) {
+        struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+        struct rtw88_net *net=enable_ht20_negotiate(&sc,&lock,0);
+        if(!net)return;
+        struct ieee80211com *ic=&net->ic;struct ieee80211_node *ni=ic->ic_bss;
+        queue_packet(&net->ec.ec_if.if_snd,ether_packet(0,0,0));
+        struct mbuf *head=net->ec.ec_if.if_snd.m;
+        unsigned crypto=route_crypto,posted=sc.sc_txq[RTW88_TXQ_BE].queued;
+        uint64_t epoch=net->policy.epoch;
+        switch(kind) {
+        case 0: ic->ic_ht20_admit=NULL;break;
+        case 1: ht20_profile.generation++;break;
+        case 2: ht20_profile.rx_mcs=ht20_profile.tx_mcs=0xffff;break;
+        case 3: ht20_profile.ampdu=20;break;
+        case 4: ni->ni_ht20.valid=0;break;
+        case 5: ni->ni_ht20.operation=1;break;
+        case 6: sc.sc_ra.profile_generation++;break;
+        case 7: sc.sc_ra.ht_mcs^=1;break;
+        case 8: sc.sc_generation++;break;
+        case 9: ni->ni_bssid[0]^=2;break;
+        case 10: ic->ic_flags&=~IEEE80211_F_PRIVACY;break;
+        case 11: ni->ni_rsn.rsn_ucastcipher=0;break;
+        case 12: sc.sc_ra.phy=RTW88_RA_LEGACY;break;
+        case 13: ic->ic_curmode=IEEE80211_MODE_11G;break;
+        case 14: ic->ic_flags|=IEEE80211_F_USEPROT;break;
+        case 15: ic->ic_fixed_rate=0;break;
+        case 16: CHECK(rtw88_net_newstate(ic,IEEE80211_S_SCAN,0)==0);epoch=net->policy.epoch;break;
+        case 17: sc.sc_channel=sc.sc_ra.channel=149;break;
+        case 18: ni->ni_associd=0;break;
+        }
+        rtw88_net_start(&net->ec.ec_if);
+        CHECK(net->ec.ec_if.if_snd.m==head && route_crypto==crypto);
+        CHECK(sc.sc_txq[RTW88_TXQ_BE].queued==posted);
+        CHECK(!net->policy.accepting && !sc.sc_ra.active);
+        if(kind==16)CHECK(net->requested==IEEE80211_S_SCAN && net->policy.epoch==epoch);
+        else CHECK(net->requested==IEEE80211_S_INIT);
+        while(net->ec.ec_if.if_snd.m) {
+            struct mbuf *m=net->ec.ec_if.if_snd.m;net->ec.ec_if.if_snd.m=m->m_nextpkt;m_freem(m);
+        }
+        net->ec.ec_if.if_snd.ifq_tail=NULL;net->ec.ec_if.if_snd.ifq_len=0;
+        enable_destroy(net);ht20_net=NULL;route_have_key=0;
+    }
+}
+static unsigned ht20_command_fault;
+static int ht20_command_write4(void *cookie,uint32_t reg,uint32_t value)
+{
+    int target=reg>=0x1f0 && reg<=0x1fc && value==0xff030;
+    if(target && ht20_command_fault==1)return EIO;
+    int error=write_4(cookie,reg,value);
+    return error==0 && target && ht20_command_fault==2?EIO:error;
+}
+static void enable_ht20_worker_fences(void)
+{
+    for(unsigned kind=0;kind<8;kind++) {
+        struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+        struct rtw88_net *net=enable_ht20_negotiate(&sc,&lock,-1);
+        if(!net)return;
+        struct ieee80211com *ic=&net->ic;
+        unsigned commands=sc.sc_stats.ra_commands,callbacks=enable_run_callbacks;
+        switch(kind) {
+        case 0: ic->ic_ht20_admit=NULL;break;
+        case 1: ht20_profile.generation++;break;
+        case 2: ic->ic_bss->ni_ht20.operation=1;break;
+        case 3: ic->ic_bss->ni_ht20.tx_mcs=0x100;break;
+        case 4: ic->ic_fixed_rate=0;break;
+        case 5: case 6: ht20_command_fault=kind-4;break;
+        case 7: ic->ic_curmode=IEEE80211_MODE_11G;break;
+        }
+        struct rtw88_bus_ops bus=ops;bus.write_4=ht20_command_write4;sc.sc_ops=&bus;
+        rtw88_net_state_work(&net->state_work,net);
+        CHECK(sc.sc_stats.ra_commands==commands && enable_run_callbacks==callbacks);
+        CHECK(!net->policy.accepting && !sc.sc_ra.active && !sc.sc_running);
+        CHECK((net->ec.ec_if.if_flags&IFF_RUNNING)==0);
+        if(kind==5 || kind==6)CHECK(sc.sc_ra.error==EIO);
+        ht20_command_fault=0;enable_destroy(net);ht20_net=NULL;route_have_key=0;
+    }
+}
+
+static void enable_ht20_to_legacy_fixed(void)
+{
+    struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+    struct rtw88_net *net=enable_ht20_negotiate(&sc,&lock,0);
+    if(!net)return;
+    struct ieee80211com *ic=&net->ic;
+    uint32_t generation=sc.sc_generation;
+    CHECK(rtw88_net_newstate(ic,IEEE80211_S_SCAN,0)==0);
+    rtw88_net_state_work(&net->state_work,net);
+    CHECK(sc.sc_generation>generation && !sc.sc_ra.configured);
+    ic->ic_ht20_admit=NULL;ic->ic_fixed_rate=0;
+    CHECK(rtw88_net_newstate(ic,IEEE80211_S_ASSOC,0)==0);
+    rtw88_net_state_work(&net->state_work,net);
+    CHECK(ieee80211_send_mgmt(ic,ic->ic_bss,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);
+    CHECK(!ic->ic_bss->ni_ht20.offered);
+    struct mbuf *m=enable_response(ic,1,0);
+    ieee80211_recv_mgmt_assoc_resp(ic,m,ic->ic_bss,IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);
+    m_freem(m);
+    CHECK(!ic->ic_bss->ni_ht20.valid && net->requested==IEEE80211_S_RUN);
+    queue_packet(&net->ec.ec_if.if_snd,ether_packet(0,0,0));
+    rtw88_net_state_work(&net->state_work,net);
+    CHECK(net->policy.accepting && ic->ic_state==IEEE80211_S_RUN);
+    CHECK(!sc.sc_ra.configured && !sc.sc_ra.active);
+    CHECK(net->ec.ec_if.if_snd.m==NULL && sc.sc_txq[RTW88_TXQ_BE].queued==1);
+    if(sc.sc_txq[RTW88_TXQ_BE].queued) {
+        const uint8_t *desc=sc.sc_txq[RTW88_TXQ_BE].buf[0].vaddr;
+        CHECK((desc[13]&5)==5 && (desc[16]&0x7f)==4);
+    }
+    while(net->ec.ec_if.if_snd.m) {
+        struct mbuf *p=net->ec.ec_if.if_snd.m;net->ec.ec_if.if_snd.m=p->m_nextpkt;m_freem(p);
+    }
+    net->ec.ec_if.if_snd.ifq_tail=NULL;net->ec.ec_if.if_snd.ifq_len=0;
+    enable_destroy(net);ht20_net=NULL;route_have_key=0;
+}
+
 int main(void)
 {
     enable_drain_case();
@@ -676,6 +858,11 @@ int main(void)
     enable_run_callbacks=enable_first_producer=0;
     int result=routing_base_main();
     if(result!=0)return result;
+    enable_ht20_ra_chain();
+    enable_ht20_precrypto_fences();
+    enable_ht20_worker_fences();
+    enable_ht20_to_legacy_fixed();
+    enable_run_callbacks=enable_first_producer=0;
     struct rtw88_softc sc;kmutex_t lock={.initialized=1};
     struct rtw88_net *net=enable_attach(&sc,&lock);
     if(!net)return 1;

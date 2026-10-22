@@ -14,6 +14,8 @@ def replace(s,old,new):
  if s.count(old)!=1:raise ValueError(old)
  return s.replace(old,new)
 model=(out/'routing-model.inc').read_text()
+# Active HT negotiation must use the same actual channel helper as native code.
+model=replace(model,'#define ieee80211_chan2ieee(ic, c) 1U','struct ieee80211com; struct ieee80211_channel;\nunsigned ieee80211_chan2ieee(struct ieee80211com *,struct ieee80211_channel *);')
 model=replace(model,'#define isclr(a, n) (((a)[(n) / 8] & (1U << ((n) % 8))) == 0)', '#define isclr(a,n) (!enable_isset((a),(n)))')
 model=replace(model,'    int if_timer, if_flags;','''    int if_timer, if_flags;
     uint64_t if_baudrate;

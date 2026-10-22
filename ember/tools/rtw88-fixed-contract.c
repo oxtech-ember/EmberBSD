@@ -8,6 +8,7 @@
 #undef RTW88_START_CORE_ONLY
 #include "fixed-constants.inc"
 #include <net80211/_ieee80211.h>
+#include <net80211/ieee80211_ht20.h>
 #include <sys/types.h>
 struct ieee80211_node;
 struct ieee80211com {
@@ -25,6 +26,7 @@ struct ieee80211_node {
 	struct ieee80211_rateset ni_rates;
 	unsigned ni_associd;
 	int ni_txrate;
+	struct ieee80211_ht20_node ni_ht20;
 };
 #include <dev/ic/rtw88_net_policy.h>
 struct rtw88_net {

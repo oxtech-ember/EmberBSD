@@ -1151,7 +1151,8 @@ rtw88_ra_report(struct rtw88_softc *sc, const uint8_t *p, size_t len)
 		return;
 	}
 	rate = p[2] & 0x7f;
-	if (rate >= RTW88_LEGACY_RATES || (p[2] & 0x80) != 0 || p[8] != 0) {
+	/* Pinned DESC_RATEMCS0..7 are 12..19; no SGI or wider BW here. */
+	if (rate >= 20 || (p[2] & 0x80) != 0 || p[8] != 0) {
 		st->ra_unsupported++;
 		return;
 	}
@@ -1383,7 +1384,7 @@ rtw88_edca_apply(struct rtw88_softc *sc,
 	return error;
 }
 
-/* Pinned fw.c/fw.h RA_INFO register command; legacy BW20 only. */
+/* Pinned fw.c/fw.h RA_INFO register command; legacy or bounded HT20/1SS. */
 void
 rtw88_ra_invalidate(struct rtw88_softc *sc)
 {
@@ -1403,6 +1404,16 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	    cfg->channel == 0 || cfg->channel != sc->sc_channel ||
 	    cfg->common_rates == 0 || (cfg->common_rates & ~0xfffU) != 0)
 		return EINVAL;
+	if (cfg->phy == RTW88_RA_HT20_1SS) {
+		if (cfg->mode != RTW88_FIXED_11A || cfg->channel <= 14 ||
+		    cfg->use_protection != 0 || cfg->ht_operation != 0 ||
+		    cfg->profile_generation == 0 || cfg->ht_mcs == 0 ||
+		    (cfg->ht_mcs & ~0xffU) != 0)
+			return EOPNOTSUPP;
+	} else if (cfg->phy != RTW88_RA_LEGACY || cfg->ht_mcs != 0 ||
+	    cfg->ht_operation != 0 || cfg->profile_generation != 0) {
+		return EINVAL;
+	}
 	mask = cfg->common_rates;
 	switch (cfg->mode) {
 	case RTW88_FIXED_11A:
@@ -1432,7 +1443,14 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	ra.channel = cfg->channel;
 	ra.common_rates = mask;
 	ra.configured = 1;
-	if ((mask & ~0xfU) == 0)
+	ra.phy = cfg->phy;
+	ra.ht_mcs = cfg->ht_mcs;
+	ra.ht_operation = cfg->ht_operation;
+	ra.profile_generation = cfg->profile_generation;
+	if (cfg->phy == RTW88_RA_HT20_1SS) {
+		ra.rate_id = 5; /* Pinned RTW_RATEID_GN_N1SS, 5 GHz only. */
+		mask = (unsigned)cfg->ht_mcs << 12 | (mask & 0x30);
+	} else if ((mask & ~0xfU) == 0)
 		ra.rate_id = RTW88_RATEID_B_20M;
 	else if ((mask & 0xf) == 0)
 		ra.rate_id = RTW88_RATEID_G;
@@ -1453,6 +1471,8 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	payload[2] = 0x40; /* DIS_PT, BW20, LDPC0, NO_UPDATE0, VHT0. */
 	payload[3] = (uint8_t)mask;
 	payload[4] = (uint8_t)(mask >> 8);
+	payload[5] = (uint8_t)(mask >> 16);
+	payload[6] = (uint8_t)(mask >> 24);
 	error = rtw88_fw_command(sc, 0x40, payload, sizeof(payload));
 	if (error != 0) {
 		rtw88_ra_invalidate(sc);
@@ -1676,6 +1696,8 @@ rtw88_tx_auto(struct rtw88_softc *sc, unsigned q, const void *frame,
 	    sc->sc_ra.generation != sc->sc_generation ||
 	    sc->sc_ra.channel != sc->sc_channel)
 		return EBUSY;
+	if (sc->sc_ra.phy == RTW88_RA_HT20_1SS && use_protection)
+		return EOPNOTSUPP;
 	if (use_protection) {
 		sc->sc_ra.active = 0;
 		sc->sc_ra.protection_limited = 1;
