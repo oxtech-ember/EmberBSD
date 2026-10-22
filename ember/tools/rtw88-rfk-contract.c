@@ -236,7 +236,9 @@ static int rfk_read1(void *cookie,uint32_t reg,uint8_t *value)
     if(rfk_positive && rtw8822c_rfk_active(f.sc) && reg==0x49c && rfk_handshakes) {
         if(rfk_end_sent) {
             uint64_t now=(uint64_t)route_ticks*1000+rfk_extra_us;
-            if(rfk_is("end-cancel") || rfk_is("end-Q") || rfk_is("end-deadline"))
+            if(rfk_is("end-late-report"))
+                *value=now-rfk_end_at_us<105000?1:0;
+            else if(rfk_is("end-cancel") || rfk_is("end-Q") || rfk_is("end-deadline"))
                 *value=now-rfk_end_at_us<2000?1:0;
             else *value=rfk_end_value;
         } else if(rfk_handshakes==1 && rfk_gapk==2) {
@@ -447,6 +449,13 @@ main(void)
         if(rfk_is("end-held"))CHECK(rfk_end_sent && sc.sc_stats.rfk.done[1]==0);
         if(rfk_is("end-ext-error"))CHECK(rfk_fault && !rfk_end_sent);
         if(rfk_is("end-write-error"))CHECK(rfk_fault && rfk_end_sent);
+        if(rfk_is("end-late-report")) {
+            CHECK(rfk_end_sent && rfk_handshakes==2);
+            CHECK(sc.sc_stats.rfk.error==ETIMEDOUT);
+            CHECK(sc.sc_stats.rfk.cleanup_error==0);
+            CHECK(sc.sc_stats.rfk.arms[1]==1 && sc.sc_stats.rfk.done[1]==1);
+            CHECK(sc.sc_stats.rfk.global==2);
+        }
         if(rfk_is("end-cancel") || rfk_is("end-Q") || rfk_is("end-deadline"))CHECK(rfk_paused);
     }
     if(rfk_is("vendor-end")) {

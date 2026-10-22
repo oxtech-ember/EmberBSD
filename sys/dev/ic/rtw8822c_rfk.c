@@ -1093,6 +1093,19 @@ rtw8822c_rfk_retire(struct rtw88_softc *sc)
 		k->cleanup_mode = 1;
 		if (k->packet_started)
 			(void)rfk_packet_poll(k);
+		if (k->pending && k->report_kind == RFK_END6D &&
+		    k->handshake_end_sent && k->cleanup_error == 0) {
+			unsigned cleanup_report_deadline;
+
+			/* A timed-out END report may still be completing. Give only its
+			 * same-owner cleanup poll a fresh 100ms, bounded by the existing
+			 * cleanup deadline. The primary timeout and quarantine remain. */
+			cleanup_report_deadline = k->svc.clock_ticks(k->svc.cookie) +
+			    rfk_ticks(k, 100000);
+			if ((int)(cleanup_report_deadline - k->cleanup_deadline) > 0)
+				cleanup_report_deadline = k->cleanup_deadline;
+			k->report_deadline = cleanup_report_deadline;
+		}
 		if (k->pending && k->cleanup_error == 0)
 			(void)rfk_report(k, 20);
 		if (!k->pending && !k->engine_pending && !k->packet_started &&

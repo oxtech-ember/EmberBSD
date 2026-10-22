@@ -46,7 +46,10 @@ does not invent one or send a RUN rate-adaptation command.
 New work has a six-second absolute budget. Cleanup has the same original start
 plus eight seconds. Register IO, mandatory RF delays, indirect LTE readiness,
 firmware transport and scheduler time all consume those clocks. Individual
-phases retain their own earlier deadlines. Each typed IO validates the clock;
+phases retain their own earlier deadlines. A pending, already-sent END6D report
+gets one fresh 100 ms cleanup poll, capped by the original eight-second limit.
+The primary error and quarantine remain after a late completion.
+Each typed IO validates the clock;
 transport-mandated RF write delays remain with their write (at most 13 us).
 Other sourced submillisecond delays are bounded separately; millisecond waits,
 report polling and the sourced RXBB 600–610 us sleep yield outside PCI.
@@ -88,7 +91,8 @@ GAPK gains must be committed before IQK and DPK. A later failure does not promis
 their rollback. After cancellation, no new phase or trigger may start. The old
 exclusive owner may only poll an existing operation, restore valid source
 snapshots and finish an already-started 6d handshake within its old firmware,
-resource lifetime and original deadlines. It does not become the next request.
+resource lifetime and original cleanup deadline. The bounded END6D cleanup poll
+does not restart a command or admit another request.
 After completed RFK, an ordinary station-mailbox sleep still requires a fresh
 full-input comparison and the original token/firmware/resources/global lease
 before any ordinary commit or parent AUTH. That lease check performs no IO and
