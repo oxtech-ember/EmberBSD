@@ -621,9 +621,44 @@ native_cached_phy_trace(const void *arg, struct sun60i_a733_hdmi_phy_trace *out)
 	*out = sc->phy.trace;
 }
 
+/* Diagnostic reads only. No register, trace or fault state changes. */
+static int
+native_sample(void *arg, const void *owner,
+    struct sun60i_a733_output_sample *out)
+{
+	static const struct { bool vo1; uint32_t reg; } regs[] = {
+		{ true, 0 }, { true, 0x20 }, { false, 0 }, { false, 4 },
+		{ false, 0x40 }, { false, 0x90 }, { false, 0xfc }, { false, 0xfc }
+	};
+	struct sun60i_a733_hdmi_softc *sc = arg;
+	int error;
+
+	CTASSERT(__arraycount(regs) == A733_OUTPUT_SAMPLE_WORDS);
+	if (sc->fault != 0)
+		return sc->fault;
+	if (owner == NULL || owner != sc->owner)
+		return EBUSY;
+	if (!sc->hdmi_ready || !sc->tv0_ready)
+		return EACCES;
+	error = sun60i_a733_ccu_display_ready(sc->de0, owner);
+	if (error != 0)
+		return error;
+	out->version = 1;
+	for (u_int i = 0; i < __arraycount(regs); i++) {
+		/* Two TV_DEBUG samples show whether the current line changes. */
+		if (i == __arraycount(regs) - 1)
+			delay(1000);
+		if (bus_space_peek_4(sc->bst, regs[i].vo1 ? sc->vo1 : sc->tv0,
+		    regs[i].reg, &out->words[i]) != 0)
+			return EFAULT;
+		out->valid |= 1U << i;
+	}
+	return 0;
+}
+
 static const struct sun60i_a733_output_ops output_ops = {
 	native_get_mode, native_prepare, native_start, native_observe, native_fault,
-	native_cached_trace, native_cached_phy_trace
+	native_cached_trace, native_cached_phy_trace, native_sample
 };
 
 static int

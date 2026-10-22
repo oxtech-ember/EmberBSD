@@ -45,6 +45,17 @@ struct sun60i_a733_output_trace {
 };
 
 /*
+ * Diagnostic register sample. Word order: VO1 0x00, VO1 0x20, TV0 0x00,
+ * TV0 0x04, TV0 0x40, TV0 0x90, TV0 0xfc, TV0 0xfc after 1 ms.
+ * Valid bit N means that word N was read.
+ */
+enum { A733_OUTPUT_SAMPLE_WORDS = 8 };
+struct sun60i_a733_output_sample {
+	uint32_t version, valid;
+	uint32_t words[A733_OUTPUT_SAMPLE_WORDS];
+};
+
+/*
  * Native provider. All callbacks run under one sleep mutex. They must not
  * call these dispatch functions. Provider storage and ops have kernel lifetime.
  * The provider obtains CCU/PCK leases with this owner before any MMIO write.
@@ -62,6 +73,8 @@ struct sun60i_a733_output_ops {
 	void (*cached_trace)(const void *, struct sun60i_a733_output_trace *);
 	/* Optional. Copy initialized PHY cache only, without any I/O. */
 	void (*cached_phy_trace)(const void *, struct sun60i_a733_hdmi_phy_trace *);
+	/* Optional. Register reads only. It must not write or latch a fault. */
+	int (*sample)(void *, const void *, struct sun60i_a733_output_sample *);
 };
 int sun60i_a733_output_register(int, const struct sun60i_a733_output_ops *, void *);
 int sun60i_a733_output_get_mode(int, const void *,
@@ -76,5 +89,8 @@ int sun60i_a733_output_fault(int, const void *, int);
 int sun60i_a733_output_cached_trace(int, struct sun60i_a733_output_trace *);
 int sun60i_a733_output_cached_phy_trace(int,
     struct sun60i_a733_hdmi_phy_trace *);
+/* Reads only, after prepare. An error does not latch an output fault. */
+int sun60i_a733_output_sample(int, const void *,
+    struct sun60i_a733_output_sample *);
 
 #endif

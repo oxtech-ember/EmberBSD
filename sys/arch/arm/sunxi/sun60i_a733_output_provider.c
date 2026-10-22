@@ -260,3 +260,29 @@ sun60i_a733_output_cached_phy_trace(int phandle,
 	mutex_exit(&output_lock);
 	return error;
 }
+
+/* A sample error leaves the provider state and the sticky error unchanged. */
+int
+sun60i_a733_output_sample(int phandle, const void *owner,
+    struct sun60i_a733_output_sample *out)
+{
+	struct sun60i_a733_output_sample sample = { 0 };
+	int error;
+
+	CTASSERT(sizeof(sample) == 10 * sizeof(uint32_t));
+	if (out == NULL)
+		return EINVAL;
+	RUN_ONCE(&output_once, output_init);
+	mutex_enter(&output_lock);
+	error = output_lookup(phandle, owner);
+	if (error == 0 && !output_prepared)
+		error = EINVAL;
+	if (error == 0 && output_ops->sample == NULL)
+		error = EOPNOTSUPP;
+	if (error == 0) {
+		error = output_ops->sample(output_arg, owner, &sample);
+		*out = sample;
+	}
+	mutex_exit(&output_lock);
+	return error;
+}

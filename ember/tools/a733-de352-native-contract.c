@@ -192,6 +192,21 @@ sun60i_a733_output_cached_phy_trace(int node,
 	memset(out, 0, sizeof(*out));
 	return 0;
 }
+static unsigned output_samples;
+static int output_sample_error;
+int
+sun60i_a733_output_sample(int node, const void *owner,
+    struct sun60i_a733_output_sample *out)
+{
+	CHECK(node == 7 && owner == lease_owner && retained && faults == 0);
+	output_samples++;
+	memset(out, 0, sizeof(*out));
+	out->version = 1;
+	out->valid = 0xff;
+	out->words[6] = 10;
+	out->words[7] = 74;
+	return output_sample_error;
+}
 #include "sun60i_a733_de352_scanout.h"
 #include "sun60i_a733_de352_fdt.c"
 
@@ -292,6 +307,7 @@ static void init(struct sun60i_de352_softc *sc)
  cold_test=peer_power_on=cold_flush_clear=false;peer_power_error=0;cold_writes=cold_fault_write=cold_readback_write=cold_change_write=0;
  memory_writes=memory_write_fault=memory_readback_fault=memory_change_call=cold_change_call=memory_map_fault=0;memset(memory_order,0,sizeof(memory_order));
  no_busy=no_finish=no_copy=no_vblank=same_sequence=bad_w1c=false;
+ output_samples=0;output_sample_error=0;
  run_readback_reg=run_read_fault=run_read_count=0;
  read_fault_region=write_fault=memory_calls=memory_fault_call=0;read_fault_reg=0;sequence=0;event_polls=event_limit=corrupt_copy_reg=0;
  cell_override=property_length=translated=bad_base=wrong_compatible=0;clock_puts=0;
@@ -679,6 +695,24 @@ run_trace_checks(void)
 	CHECK(de352_run(&sc) == EIO && sc.step == 8);
 	CHECK(sc.run_trace.phase == RT_DONE && sc.run_trace.result == 0);
 	CHECK(sc.run_trace.valid == 3);
+	CHECK(sc.submit_trace.phase == ST_START && sc.submit_trace.result == EIO);
+	CHECK(sc.submit_trace.valid == 3 && sc.submit_trace.request_samples == 0);
+	CHECK(sc.submit_trace.regs_valid == 0x3ff && output_samples == 1);
+}
+
+static void
+submit_trace_timeout(struct sun60i_de352_softc *sc, uint32_t phase)
+{
+	struct sysctlnode node = { .sysctl_data = sc };
+	const struct de352_submit_trace *t = &sc->submit_trace;
+
+	CHECK(t->version == 1 && t->valid == 3 && t->phase == phase);
+	CHECK(t->result == ETIMEDOUT && t->request_samples > 0);
+	CHECK(t->regs_valid == 0x3ff && t->regs[1] == de[0x8104 / 4]);
+	CHECK(t->regs[7] == 32 && t->sample_error == 0 && output_samples == 1);
+	CHECK(t->sample.version == 1 && t->sample.words[7] == 74);
+	CHECK(de352_sysctl_submit_trace(&node, NULL) == 0);
+	CHECK(de352_sysctl_submit_trace(&node, sc) == EROFS);
 }
 
 int main(void)
@@ -699,7 +733,9 @@ int main(void)
  iommu_cells[1]=be32toh(7);CHECK(!de352_bindings(&sc));iommu_cells[1]=be32toh(8);nsi_cells[1]=be32toh(3);CHECK(!de352_bindings(&sc));
  init(&sc);power_cells[1]=be32toh(0);sc.valid=false;de352_attach(NULL,&sc,&faa);CHECK(!sc.valid&&reads==0&&writes==0);
  init(&sc);iommu_status="okay";sc.valid=false;de352_attach(NULL,&sc,&faa);CHECK(!sc.valid&&clock_puts==1&&reads==0&&writes==0);
- init(&sc);CHECK(de352_run(&sc)==0);CHECK(sc.step==10&&sc.retained&&sc.dma&&sc.dma->published&&sc.vblank==2&&releases==0&&faults==0);CHECK(de352_run(&sc)==EBUSY);reboot_fixture(&sc);
+ init(&sc);CHECK(de352_run(&sc)==0);CHECK(sc.step==10&&sc.retained&&sc.dma&&sc.dma->published&&sc.vblank==2&&releases==0&&faults==0);
+ CHECK(sc.submit_trace.version==1&&sc.submit_trace.valid==3&&sc.submit_trace.phase==ST_DONE&&sc.submit_trace.result==0);
+ CHECK(sc.submit_trace.request_busy>=1&&sc.submit_trace.poll_samples>=1&&sc.submit_trace.regs_valid==0&&output_samples==0);CHECK(de352_run(&sc)==EBUSY);reboot_fixture(&sc);
  for(unsigned i=0;i<7;i++){init(&sc);clocks[0][i]^=1;CHECK(de352_run(&sc)==EBUSY&&reads==0&&writes==0&&begins==0&&releases==1&&power_releases==1);}
  for(unsigned i=0;i<7;i++){init(&sc);clocks[0][i]=clocks[1][i]=0;CHECK(de352_run(&sc)==EOPNOTSUPP&&reads==0&&writes==0&&releases==1&&power_releases==1);}
  init(&sc);power_error=EBUSY;CHECK(de352_run(&sc)==EBUSY&&reads==0&&writes==0&&releases==0&&power_releases==0);
@@ -727,8 +763,14 @@ int main(void)
  init(&sc);write_fault=0x8114;CHECK(de352_run(&sc)==EIO&&sc.retained&&sc.dma&&sc.dma->published&&releases==0);reboot_fixture(&sc);
  init(&sc);de[0x8104/4]=0xc;no_finish=true;CHECK(de352_run(&sc)==ETIMEDOUT&&sc.dma&&sc.dma->published);reboot_fixture(&sc);
  init(&sc);bad_w1c=true;de[0x8104/4]=0xc;CHECK(de352_run(&sc)==EIO&&sc.dma&&sc.dma->published);reboot_fixture(&sc);
- init(&sc);no_busy=true;CHECK(de352_run(&sc)==ETIMEDOUT&&sc.dma&&sc.dma->published);reboot_fixture(&sc);
- init(&sc);no_finish=true;CHECK(de352_run(&sc)==ETIMEDOUT&&sc.dma&&sc.dma->published);reboot_fixture(&sc);
+ init(&sc);no_busy=true;CHECK(de352_run(&sc)==ETIMEDOUT&&sc.dma&&sc.dma->published);
+ submit_trace_timeout(&sc,ST_REQUEST);CHECK(sc.submit_trace.request_busy==0&&sc.submit_trace.poll_samples==0);
+ CHECK(sc.submit_trace.request_control==0&&(sc.submit_trace.status_or&0x10)==0);reboot_fixture(&sc);
+ init(&sc);no_finish=true;CHECK(de352_run(&sc)==ETIMEDOUT&&sc.dma&&sc.dma->published);
+ submit_trace_timeout(&sc,ST_POLL);CHECK(sc.submit_trace.request_busy==1&&sc.submit_trace.poll_samples>1);
+ CHECK((sc.submit_trace.poll_last&4)==0&&(sc.submit_trace.status_and&0x10)==0x10);reboot_fixture(&sc);
+ init(&sc);no_busy=true;output_sample_error=EFAULT;CHECK(de352_run(&sc)==ETIMEDOUT);
+ CHECK(sc.submit_trace.sample_error==EFAULT&&sc.submit_trace.valid==3&&output_samples==1);reboot_fixture(&sc);
  init(&sc);no_copy=true;CHECK(de352_run(&sc)==EIO&&sc.dma&&sc.dma->published);reboot_fixture(&sc);
  init(&sc);no_vblank=true;CHECK(de352_run(&sc)==ETIMEDOUT&&sc.dma&&sc.dma->published);reboot_fixture(&sc);
  init(&sc);same_sequence=true;CHECK(de352_run(&sc)==ETIMEDOUT&&sc.dma&&sc.dma->published);reboot_fixture(&sc);

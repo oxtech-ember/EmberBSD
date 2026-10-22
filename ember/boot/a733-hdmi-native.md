@@ -101,6 +101,22 @@ The PHY, TV0, CCU, parser and DW-HDMI have separate actual-source contracts.
 A target object and these host tests do not establish physical HDMI output.
 The implementation is independent BSD code and is AI-assisted.
 
+## Output register sample
+
+The optional `sun60i_a733_output_sample()` API reads output registers under
+the output mutex after `prepare`. It needs the same owner and no sticky fault.
+It returns `EOPNOTSUPP` when the provider has no sample callback.
+A sample error is returned to the caller. It does not latch an output fault.
+The native provider checks the CCU lease and makes reads only. It does not
+change the preparation cache or any register.
+
+The record has version, valid bits and eight words: VO1 0x00, VO1 0x20,
+TV0 0x00, TV0 0x04, TV0 0x40, TV0 0x90, TV0 0xfc, and TV0 0xfc again after
+1 ms. Valid bit N means that word N was read. In TV_DEBUG (0xfc), bits 15:0
+are the current output line (A733 User Manual V1.00, section 15.2.10).
+Two different line values show that the TV0 timing generator runs.
+Equal values do not prove that it stopped.
+
 ## Cached preparation diagnostics
 
 The optional `sun60i_a733_output_cached_trace()` API copies one initialized

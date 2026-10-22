@@ -84,6 +84,28 @@ struct de352_run_trace {
 };
 CTASSERT(sizeof(struct de352_run_trace) == 13 * sizeof(uint32_t));
 
+/* Cached step 8 diagnostics. The record adds reads only after a failure. */
+enum {
+	ST_NONE, ST_START, ST_MEMORY, ST_PUBLISH, ST_QUEUE, ST_ACK,
+	ST_REQUEST, ST_POLL, ST_COPY, ST_DONE
+};
+enum { ST_NREGS = 10 };
+struct de352_submit_trace {
+	uint32_t version, valid, phase, result;
+	uint32_t request_samples, request_busy, request_first, request_last;
+	uint32_t request_control, request_us;
+	uint32_t poll_samples, poll_last, poll_us;
+	uint32_t status_or, status_and;
+	uint32_t regs_valid, regs[ST_NREGS];
+	uint32_t sample_error;
+	struct sun60i_a733_output_sample sample;
+};
+CTASSERT(sizeof(struct de352_submit_trace) == 37 * sizeof(uint32_t));
+static const uint32_t de352_submit_regs[ST_NREGS] = {
+	0x8100, 0x8104, 0x8108, 0x810c, 0x8110, 0x8114, 0x8118, 0x811c,
+	0x8010, 0x804c
+};
+
 struct sun60i_a733_de352_client {
 	const void *owner;
 	bool busy, attempted;
@@ -111,6 +133,7 @@ struct sun60i_de352_softc {
 	struct de352_cold_state cold;
 	struct de352_cold_trace cold_trace;
 	struct de352_run_trace run_trace;
+	struct de352_submit_trace submit_trace;
 	bool cold_initialized;
 	bool valid, mapped, power_reserved, reserved, retained;
 	int stage, step, result, release_error;
@@ -821,8 +844,25 @@ de352_configure(struct sun60i_de352_softc *sc)
 	return 0;
 }
 
+static void
+de352_trace_status(struct de352_submit_trace *t, uint32_t status)
+{
+	t->status_or |= status;
+	t->status_and &= status;
+}
+
+static uint32_t
+de352_elapsed_us(uint64_t start)
+{
+	const uint64_t us = (de352_now() - start) / 1000;
+
+	return us > UINT32_MAX ? UINT32_MAX : (uint32_t)us;
+}
+
+/* The trace pointer is NULL except for the first step 8 submission. */
 static int
-de352_poll(struct sun60i_de352_softc *sc, uint32_t mask)
+de352_poll(struct sun60i_de352_softc *sc, uint32_t mask,
+    struct de352_submit_trace *t)
 {
 	const uint64_t start = de352_now();
 	int error;
@@ -831,16 +871,24 @@ de352_poll(struct sun60i_de352_softc *sc, uint32_t mask)
 		error = de352_read(sc, 0x8104, &sc->last_status);
 		if (error != 0)
 			return error;
+		if (t != NULL) {
+			t->poll_samples++;
+			t->poll_last = sc->last_status;
+			t->poll_us = de352_elapsed_us(start);
+			de352_trace_status(t, sc->last_status);
+		}
 		if ((sc->last_status & mask) == mask)
 			return 0;
 		delay(10);
 	} while (de352_now() - start < DE352_TIMEOUT_NS);
+	if (t != NULL)
+		t->poll_us = de352_elapsed_us(start);
 	return ETIMEDOUT;
 }
 
 /* The request is a command. It need not remain set after the write. */
 static int
-de352_request(struct sun60i_de352_softc *sc)
+de352_request(struct sun60i_de352_softc *sc, struct de352_submit_trace *t)
 {
 	const uint64_t start = de352_now();
 	uint32_t status, control;
@@ -853,8 +901,17 @@ de352_request(struct sun60i_de352_softc *sc)
 		error = de352_read(sc, 0x8104, &status);
 		if (error == 0)
 			sc->last_status = status;
+		if (error == 0 && t != NULL) {
+			if (t->request_samples++ == 0)
+				t->request_first = status;
+			t->request_last = status;
+			t->request_busy += (status & 0x10) != 0;
+			de352_trace_status(t, status);
+		}
 		if (error == 0 && (status & 0x10) != 0) {
 			error = de352_read(sc, 0x8110, &control);
+			if (error == 0 && t != NULL)
+				t->request_control = control;
 			if (error == 0 && control != 0)
 				error = EBUSY;
 			if (error == 0) {
@@ -866,6 +923,8 @@ de352_request(struct sun60i_de352_softc *sc)
 			}
 		}
 		splx(level);
+		if (t != NULL)
+			t->request_us = de352_elapsed_us(start);
 		if (error != 0 || submitted)
 			return error;
 		delay(10);
@@ -907,16 +966,24 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 	const uint32_t words[] = { dma->layer.attribute, dma->layer.size,
 	    dma->layer.coordinate, dma->layer.pitch, dma->layer.address_low,
 	    dma->layer.bottom_low, dma->layer.fill_color };
+	struct de352_submit_trace *t = initial && sc->step == 8 &&
+	    sc->submit_trace.valid == 1 ? &sc->submit_trace : NULL;
 	uint32_t value;
 	int error;
 
+	if (t != NULL)
+		t->phase = ST_MEMORY;
 	error = de352_memory(sc);
 	if (error != 0)
 		return error;
+	if (t != NULL)
+		t->phase = ST_PUBLISH;
 	/* Retain both maps before even the first attempted pointer write. */
 	error = sun60i_a733_de352_dma_publish(dma);
 	if (error != 0)
 		return error;
+	if (t != NULL)
+		t->phase = ST_QUEUE;
 	error = de352_field(sc, 0x8114, UINT32_MAX, (uint32_t)dma->queue.address);
 	if (error == 0)
 		error = de352_field(sc, 0x8118, 0xff, 0);
@@ -934,6 +1001,8 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 	error = de352_read(sc, 0x811c, &value);
 	if (error != 0 || value != 32)
 		return error != 0 ? error : EIO;
+	if (t != NULL)
+		t->phase = ST_ACK;
 	/* W1C: acknowledge only the prior RCQ finish and accept flags. */
 	error = bus_space_poke_4(sc->bst, sc->bsh, 0x8104, 0x0c);
 	if (error != 0)
@@ -943,11 +1012,17 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 	error = de352_read(sc, 0x8104, &value);
 	if (error != 0 || (value & 0x0c) != 0)
 		return error != 0 ? error : EIO;
-	error = de352_request(sc);
+	if (t != NULL)
+		t->phase = ST_REQUEST;
+	error = de352_request(sc, t);
+	if (error == 0 && t != NULL)
+		t->phase = ST_POLL;
 	if (error == 0)
-		error = de352_poll(sc, 4);
+		error = de352_poll(sc, 4, t);
 	if (error != 0)
 		return error;
+	if (t != NULL)
+		t->phase = ST_COPY;
 	/* A flag alone is not proof that this list reached the owned registers. */
 	for (u_int i = 0; i < __arraycount(words); i++) {
 		error = de352_read(sc, 0x1c1000 + 4 * i, &value);
@@ -962,6 +1037,21 @@ static int
 de352_submit(struct sun60i_de352_softc *sc)
 {
 	return de352_submit_dma(sc, sc->dma, true);
+}
+
+/* Reads only. Capture state before the fault latches the output provider. */
+static void
+de352_submit_failure(struct sun60i_de352_softc *sc, int error)
+{
+	struct de352_submit_trace *t = &sc->submit_trace;
+
+	t->result = error;
+	for (u_int i = 0; i < ST_NREGS; i++)
+		if (de352_read(sc, de352_submit_regs[i], &t->regs[i]) == 0)
+			t->regs_valid |= 1U << i;
+	t->sample_error = sun60i_a733_output_sample(sc->output_phandle, sc,
+	    &t->sample);
+	t->valid = 3;
 }
 
 static int
@@ -1074,11 +1164,17 @@ de352_run(struct sun60i_de352_softc *sc)
 	sc->run_trace.valid = 3;
 	sc->run_trace.phase = RT_DONE;
 	sc->step = 8;
+	memset(&sc->submit_trace, 0, sizeof(sc->submit_trace));
+	sc->submit_trace.version = sc->submit_trace.valid = 1;
+	sc->submit_trace.phase = ST_START;
+	sc->submit_trace.status_and = UINT32_MAX;
 	error = sun60i_a733_output_start(sc->output_phandle, sc);
 	if (error == 0)
 		error = de352_submit(sc);
 	if (error != 0)
 		goto fail;
+	sc->submit_trace.phase = ST_DONE;
+	sc->submit_trace.valid = 3;
 	sc->step = 9;
 	error = de352_vblank(sc);
 	if (error == 0)
@@ -1092,6 +1188,8 @@ fail:
 		sc->run_trace.result = error;
 		sc->run_trace.valid = 3;
 	}
+	if (sc->step == 8 && sc->submit_trace.valid == 1)
+		de352_submit_failure(sc, error);
 	if (sc->retained) {
 		(void)sun60i_a733_ccu_display_fault(sc->de0, sc, error);
 		(void)sun60i_a733_output_fault(sc->output_phandle, sc, error);
@@ -1194,6 +1292,23 @@ de352_sysctl_run_trace(SYSCTLFN_ARGS)
 		return EROFS;
 	mutex_enter(&sc->lock);
 	trace = sc->run_trace;
+	mutex_exit(&sc->lock);
+	node.sysctl_data = &trace;
+	node.sysctl_size = sizeof(trace);
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static int
+de352_sysctl_submit_trace(SYSCTLFN_ARGS)
+{
+	struct sun60i_de352_softc *sc = rnode->sysctl_data;
+	struct sysctlnode node = *rnode;
+	struct de352_submit_trace trace;
+
+	if (newp != NULL)
+		return EROFS;
+	mutex_enter(&sc->lock);
+	trace = sc->submit_trace;
 	mutex_exit(&sc->lock);
 	node.sysctl_data = &trace;
 	node.sysctl_size = sizeof(trace);
@@ -1375,6 +1490,10 @@ de352_attach(device_t parent, device_t self, void *aux)
 	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_STRUCT, "run_trace", SYSCTL_DESCR("Cached step 7 diagnostics"),
 	    de352_sysctl_run_trace, 0, sc, sizeof(sc->run_trace), CTL_CREATE, CTL_EOL);
+	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRUCT, "submit_trace", SYSCTL_DESCR("Cached step 8 diagnostics"),
+	    de352_sysctl_submit_trace, 0, sc, sizeof(sc->submit_trace),
+	    CTL_CREATE, CTL_EOL);
 	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_STRUCT, "output_trace", SYSCTL_DESCR("Cached output preparation"),
 	    de352_sysctl_output_trace, 0, sc, sizeof(struct sun60i_a733_output_trace),

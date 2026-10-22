@@ -188,7 +188,7 @@ provider_fault(void *arg, const void *owner, int error)
 
 static const struct sun60i_a733_output_ops provider_ops = {
 	provider_mode, provider_prepare, provider_start, provider_vblank,
-	provider_fault, NULL, NULL
+	provider_fault, NULL, NULL, NULL
 };
 
 static void
@@ -368,6 +368,71 @@ cached_phy_trace(void)
 	}
 }
 
+static unsigned sample_calls;
+static int sample_error;
+
+static int
+provider_sample(void *arg, const void *owner,
+    struct sun60i_a733_output_sample *out)
+{
+	const struct provider_fixture *f = arg;
+
+	CHECK(arg == output_arg && owner == f->owner && mutex_owned(&output_lock));
+	sample_calls++;
+	out->version = 1;
+	out->valid = 0x3f;
+	for (unsigned i = 0; i < A733_OUTPUT_SAMPLE_WORDS; i++)
+		out->words[i] = 0x100 + i;
+	return sample_error;
+}
+
+static void
+output_sample(void)
+{
+	struct sun60i_a733_output_ops ops = provider_ops;
+	struct provider_fixture f = { .owner = &f };
+	struct sun60i_a733_output_sample sample, saved;
+	struct sun60i_a733_output_mode mode;
+	unsigned calls[5];
+	int other = 0;
+
+	CHECK(sizeof(sample) == 10 * sizeof(uint32_t));
+	provider_reset();
+	memset(&sample, 0xa5, sizeof(sample));
+	saved = sample;
+	CHECK(sun60i_a733_output_sample(7, &f, NULL) == EINVAL);
+	CHECK(sun60i_a733_output_sample(7, &f, &sample) == ENXIO);
+	CHECK(sun60i_a733_output_register(7, &ops, &f) == 0);
+	CHECK(sun60i_a733_output_get_mode(7, &f, &mode) == 0);
+	CHECK(sun60i_a733_output_sample(7, &f, &sample) == EINVAL);
+	CHECK(sun60i_a733_output_prepare(7, &f, &mode) == 0);
+	CHECK(sun60i_a733_output_sample(7, &f, &sample) == EOPNOTSUPP);
+	CHECK(memcmp(&saved, &sample, sizeof(sample)) == 0);
+	provider_reset();
+	ops.sample = provider_sample;
+	sample_calls = 0;
+	sample_error = 0;
+	CHECK(sun60i_a733_output_register(7, &ops, &f) == 0);
+	CHECK(sun60i_a733_output_get_mode(7, &f, &mode) == 0);
+	CHECK(sun60i_a733_output_prepare(7, &f, &mode) == 0);
+	CHECK(sun60i_a733_output_sample(8, &f, &sample) == ENXIO);
+	CHECK(sun60i_a733_output_sample(7, &other, &sample) == EBUSY);
+	CHECK(sample_calls == 0);
+	memcpy(calls, f.calls, sizeof(calls));
+	CHECK(sun60i_a733_output_sample(7, &f, &sample) == 0);
+	CHECK(sample.version == 1 && sample.valid == 0x3f);
+	CHECK(sample.words[0] == 0x100 && sample.words[7] == 0x107);
+	/* A sample error is reported, but it does not latch an output fault. */
+	sample_error = EFAULT;
+	CHECK(sun60i_a733_output_sample(7, &f, &sample) == EFAULT);
+	CHECK(sample.valid == 0x3f && memcmp(calls, f.calls, sizeof(calls)) == 0);
+	CHECK(output_error == 0 && sample_calls == 2);
+	CHECK(sun60i_a733_output_start(7, &f) == 0);
+	CHECK(sun60i_a733_output_fault(7, &f, EIO) == 0);
+	CHECK(sun60i_a733_output_sample(7, &f, &sample) == EIO);
+	CHECK(sample_calls == 2);
+}
+
 int
 main(void)
 {
@@ -377,6 +442,7 @@ main(void)
 	provider();
 	cached_trace();
 	cached_phy_trace();
+	output_sample();
 	printf("%u A733 output timing/W0C/provider checks passed\n", checks);
 	return 0;
 }

@@ -311,3 +311,31 @@ The getter remains available after a retained output failure. An absent
 provider returns `ENXIO`. A provider without the optional callback returns
 `EOPNOTSUPP`. Both sysctls reject writes with `EROFS`.
 Neither cache grants readiness, retries a stage, or establishes scanout.
+
+## Cached step 8 diagnostics
+
+`hw.sun60ide0.submit_trace` returns 37 native-endian `uint32_t` words
+(148 bytes) under the DE lock. It performs no hardware access. The word order is:
+
+- Version, valid bits, phase, result.
+- Request: samples, samples with busy bit 0x10, first and last 0x8104 value,
+  last 0x8110 value, elapsed microseconds.
+- Poll: samples, last 0x8104 value, elapsed microseconds.
+- OR and AND of all 0x8104 samples.
+- Register-valid bits and ten registers: 0x8100, 0x8104, 0x8108, 0x810c,
+  0x8110, 0x8114, 0x8118, 0x811c, 0x8010, 0x804c.
+- Output sample error and the 10-word
+  [output register sample](a733-hdmi-native.md#output-register-sample).
+
+Version 1 identifies this layout. Valid bit 0 means step 8 was entered.
+Bit 1 means the result is complete. Phases are 0 none, 1 output start,
+2 memory admission, 3 DMA publication, 4 queue registers, 5 RCQ flag
+acknowledgment, 6 request during DE busy, 7 RCQ finish poll, 8 copy check
+and 9 step 8 complete. The status AND starts at all ones.
+The request and poll fields come from the existing reads in those loops.
+Only the first submission records them; later frame submissions do not.
+After a step 8 failure, the coordinator reads the ten registers and requests
+one output sample. It does this before it latches the output fault.
+These reads add no register write and do not change the write order.
+A timeout record identifies the wait that expired. It does not identify
+the cause of that timeout.
