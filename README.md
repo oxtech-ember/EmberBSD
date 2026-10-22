@@ -75,7 +75,7 @@ are maintained in the related repositories below.
 | [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) | Standalone applications and reproducible demonstrations | Local AI, robotics and desktop scenarios with requirements and checks |
 | [EmberBSD-Spark](https://github.com/oxtech-ember/EmberBSD-Spark) | Optional C/Lua agent: task execution, model requests, MCP and local tools | Lua 5.5 application with host fixtures; target and device acceptance are separate |
 | [EmberBSD-Runtime](https://github.com/oxtech-ember/EmberBSD-Runtime) | Application execution, lifecycle, permissions and shared device operations | Design stage; no released runtime implementation |
-| [EmberBSD-SDK](https://github.com/oxtech-ember/EmberBSD-SDK) | Shared Prebuild SDK workspaces, sysroot builds and verified transfers | Python workspace/build/export/import tools; stable application API and binary SDK release remain planned |
+| [EmberBSD-SDK](https://github.com/oxtech-ember/EmberBSD-SDK) | Shared Prebuild SDK workspaces, sysroot builds, verified transfers and Ports plans | Python workspace/build/export/import and graph tools; stable application API and binary SDK release remain planned |
 | [Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills) | Instructions for developers and their AI assistants | Application development, board bring-up, shared ports and tested contributions; source analysis and memory checks for own and ported code |
 | [EmberBSD-User-Skills](https://github.com/oxtech-ember/EmberBSD-User-Skills) | Instructions for users and their local or remote AI assistants | OS installation onto boards, desktop VMs and USB-cabled phones, applications, device diagnostics, personal Ports and GitHub workflows; package checks and client discovery verified |
 
@@ -195,6 +195,12 @@ Status updated **2026-10-17**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
 
+- **Agent-driven Ports updates:** the [Ports collector](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/docs/update-ports.md)
+  evaluates pkgsrc dependencies. The [SDK planner](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/ports-plan.md)
+  compares locks, orders affected rebuilds, and verifies result evidence.
+  A coding environment runs existing producers and repairs incompatible consumers.
+  Host contract tests and native metadata export pass on macOS. Complete cross
+  graph export and rebuilt package acceptance remain separate checks.
 - **Shared sysroots for developers:** SDK [export and import](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/sysroot-transfer.md)
   bind completed build outputs to source commits, compiler hashes and a pinned
   manifest. Import restores a new local tree without replacing existing data.
