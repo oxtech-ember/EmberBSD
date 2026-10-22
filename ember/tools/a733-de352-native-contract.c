@@ -756,7 +756,10 @@ int main(void)
  for(unsigned i=0;i<__arraycount(idle_bad);i++){init(&sc);de[idle_bad[i]/4]=1;CHECK(de352_run(&sc)==EBUSY&&sc.retained&&sc.dma==NULL&&releases==0);}
  init(&sc);de[0x8000/4]=1;CHECK(de352_run(&sc)==EBUSY&&sc.retained&&writes==0&&sc.dma==NULL);
  init(&sc);de[0x8028/4]=1;CHECK(de352_run(&sc)==EOPNOTSUPP&&writes==0&&sc.retained);
- init(&sc);de[0x8010/4]=0x30;CHECK(de352_run(&sc)==EBUSY&&writes==0&&sc.retained);
+ init(&sc);de[0x8010/4]=0x40;CHECK(de352_run(&sc)==EBUSY&&writes==0&&sc.retained);
+ /* Only TV0 mux value 4 is a conflict. Unused value 3 in another field is not. */
+ init(&sc);de[0x8010/4]=0xfff0;CHECK(de352_run(&sc)==0&&de[0x8010/4]==0xfff4);reboot_fixture(&sc);
+ init(&sc);de[0x8010/4]=0x30;CHECK(de352_run(&sc)==0&&(de[0x8010/4]&0xf)==4);reboot_fixture(&sc);
  init(&sc);write_fault=0x8004;CHECK(de352_run(&sc)==EIO&&sc.retained&&sc.dma==NULL&&releases==0);
  init(&sc);mode_error=ENXIO;CHECK(de352_run(&sc)==ENXIO&&sc.retained&&sc.dma==NULL);
  init(&sc);prepare_error=EIO;CHECK(de352_run(&sc)==EIO&&sc.retained&&sc.dma==NULL);reset();

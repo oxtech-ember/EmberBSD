@@ -35,6 +35,11 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define DE352_NSI_BASE 0x02020000
 #define DE352_NSI_SIZE 0x420
 #define DE352_TIMEOUT_NS UINT64_C(100000000)
+/*
+ * DE2TCON mux value of TCON_TV0. The vendor DRM driver programs the DE0
+ * output endpoint ID. That ID is 4 for TV0 and 5 for TV1; ID 3 is unused.
+ */
+#define DE352_TV0_MUX 4
 
 CTASSERT(A733_DISPLAY_NMEMORY_REGS == 7);
 
@@ -742,7 +747,7 @@ de352_open_core(struct sun60i_de352_softc *sc)
 	if (error != 0)
 		return error;
 	for (u_int shift = 4; shift <= 12; shift += 4)
-		if (((value >> shift) & 0xf) == 3)
+		if (((value >> shift) & 0xf) == DE352_TV0_MUX)
 			return EBUSY;
 	error = de352_field(sc, 0x8000, 1, 1);
 	if (error == 0)
@@ -817,7 +822,7 @@ de352_configure(struct sun60i_de352_softc *sc)
 		{ 0x8050, 0xffff, 0x2000 },
 		{ 0x8080, 0xffff0000, 0x08000000 },
 		{ 0x802c, 0xf, 0 }, { 0x8030, 0xf000, 0x8000 },
-		{ 0x8010, 0xf, 3 },
+		{ 0x8010, 0xf, DE352_TV0_MUX },
 		{ 0x8108, 0x1fff1fff, w->size },
 		{ 0x8100, 0x302d0, 0 },
 		{ 0x1c1080, 0xff, w->address_high_byte },

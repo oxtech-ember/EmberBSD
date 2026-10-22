@@ -120,10 +120,19 @@ It rejects unknown RTMX and layer bits that the fixed list would overwrite.
 It does not clear an aperture or assume processing reset defaults.
 
 The route is UCH0 layer 0, physical channel 6, routing ID 8, blender port 3,
-pipe 0, DE0, vendor TCON 3 (TV0). The fixed output is progressive RGB888 with
+pipe 0, DE0, DE2TCON mux value 4 (TCON_TV0). The fixed output is progressive RGB888 with
 one pixel per clock. The output provider selects and validates an exact
 sink timing. The DE consumer does not select or round a pixel clock.
 The DMA geometry limit is 1920 by 1080; it does not promise every such mode.
+
+The DE2TCON mux at 0x8010 uses the DE0 output endpoint ID of the vendor
+DRM device tree, not the TCON node index. TCON_TV0 (`tcon3@5730000`) has
+endpoint ID 4. TCON_TV1 has ID 5. ID 3 has no TCON. Sources: the pinned
+vendor `sun60iw2p1.dtsi` (`disp0_out_tcon3`, `reg = <4>`),
+`sunxi_tcon_of_get_id()` and `de_top_set_de2tcon_mux()`. The older display2
+driver numbers TV0 as device 3; A733 vendor configurations disable that driver.
+With value 3, TV0 scanned lines, but DE0 did not report busy, frame end or
+RCQ status, and TV_DEBUG reported FIFO underflow.
 
 The [native DMA allocator](a733-de352-dma.md) prepares one XRGB8888 color-bar
 plane and a two-entry RCQ list below 4 GiB. The consumer configures only known
