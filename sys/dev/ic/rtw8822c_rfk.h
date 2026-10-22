@@ -27,6 +27,8 @@ int rtw8822c_rfk_begin(struct rtw88_softc *,
     const struct rtw8822c_rfk_services *);
 int rtw8822c_rfk_run(struct rtw88_softc *);
 int rtw8822c_rfk_retire(struct rtw88_softc *);
+/* Current AUTH owner only, immediately after successful retirement. No IO. */
+int rtw8822c_rfk_seal(struct rtw88_softc *);
 int rtw8822c_rfk_free(struct rtw88_softc *);
 /* Same process owner, without PCI. Copy to a PCI-protected mirror before yield. */
 void rtw8822c_rfk_progress(struct rtw88_softc *, struct rtw88_rfk_diag *);

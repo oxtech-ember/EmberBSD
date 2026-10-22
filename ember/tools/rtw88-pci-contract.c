@@ -946,3 +946,5 @@ int main(void)
 
 /* Host native-atomic observation service; never a kernel API. */
 volatile unsigned *rtw88_test_rfk_atomic_word;
+
+void (*rtw88_test_rfk_drop_hook)(void);

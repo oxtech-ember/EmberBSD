@@ -727,6 +727,10 @@ rtw88_stop(struct rtw88_softc *sc)
 {
 	int error;
 
+#ifdef RTW88_RFK_EXPERIMENT
+	sc->sc_power_program.valid = 0;
+	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
+#endif
 	sc->sc_stop_requested = 1;
 	memset(&sc->sc_mailbox, 0, sizeof(sc->sc_mailbox));
 	memset(&sc->sc_phy, 0, sizeof(sc->sc_phy));
@@ -814,6 +818,10 @@ rtw88_start(struct rtw88_softc *sc)
 	}
 	if (sc->sc_ops->firmware_load == NULL || sc->sc_ops->bus_master == NULL)
 		return ENODEV;
+#ifdef RTW88_RFK_EXPERIMENT
+	sc->sc_power_program.valid = 0;
+	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
+#endif
 	error = sc->sc_ops->firmware_load(sc->sc_bus, RTW88_FW_DRV,
 	    RTW88_FW_IMG, &fw, &fw_len);
 	if (error != 0)
@@ -1810,6 +1818,10 @@ rtw88_channel(struct rtw88_softc *sc, unsigned ch)
 
 	if (!sc->sc_running)
 		return ENXIO;
+#ifdef RTW88_RFK_EXPERIMENT
+	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
+	sc->sc_power_program.valid = 0;
+#endif
 	/* The calibrated 20 MHz profile has no policy for other channels. */
 	if (!((ch >= 1 && ch <= 13) ||
 	    (ch >= 36 && ch <= 64 && ch % 4 == 0) ||

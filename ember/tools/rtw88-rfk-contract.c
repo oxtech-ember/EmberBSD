@@ -8,9 +8,11 @@
 #undef RTW88_ENABLE_ENTRY
 #include "rtw88-rfk-atomic-model.h"
 volatile unsigned *rtw88_test_rfk_atomic_word;
+void (*rtw88_test_rfk_drop_hook)(void);
 
 /* Numeric fake-bus report service. Reports advance ONLY after an actual
  * producer trigger/doorbell, never from a helper claiming phase success. */
+static unsigned rfk_parent_scan,rfk_parent_init;
 static unsigned rfk_parent_auth, rfk_positive, rfk_handshakes, rfk_iqk;
 static unsigned rfk_gapk, rfk_dpk, rfk_coef, rfk_report_reads, rfk_ack_reads;
 static unsigned rfk_cal_pwr, rfk_power_reads, rfk_gain_commits;
@@ -20,6 +22,16 @@ static struct rtw88_net *rfk_net;
 static unsigned rfk_fault,rfk_paused,rfk_io,rfk_extra_us,rfk_owned_io;
 static const uint32_t rfk_original_tx=0x12345678,rfk_original_fifo=0xabcdef01;
 static int rfk_is(const char *name) { return strcmp(rfk_case,name)==0; }
+static int rfk_power_before(void) { return strncmp(rfk_case,"power-before-",13)==0; }
+static void rfk_after_owner_drop(void)
+{
+    if(!rfk_net || !rfk_net->rfk.ran)return;
+    if(rfk_is("env-retire-Q"))atomic_or_uint(rtw88_test_rfk_atomic_word,2);
+    if(rfk_is("seal-power"))rfk_net->core->sc_power_program.valid=0;
+    if(rfk_is("env-successor-scan"))
+        CHECK(rtw88_net_newstate(&rfk_net->ic,IEEE80211_S_SCAN,0)==0);
+    rtw88_test_rfk_drop_hook=NULL;
+}
 static unsigned rfk_last_owned_tick,rfk_owned_at_cancel;
 static void rfk_io_tick(void)
 {
@@ -56,6 +68,16 @@ static int rfk_pause(unsigned ticks)
 {
     CHECK(!mutex_owned(rfk_net->lock));
     (void)ticks;
+    if(!rfk_paused && rfk_is("power-after-bind") && rfk_gapk==1) {
+        rfk_net->core->sc_power_program.ht_diff[0]^=1;rfk_paused=1;
+    }
+    if(!rfk_paused && rfk_is("power-mailbox") && rfk_net->rfk.ran) {
+        struct rtw8822c_efuse ef;
+        CHECK(rtw8822c_efuse_decode(rfk_net->core->sc_efuse_phys,
+            sizeof(rfk_net->core->sc_efuse_phys),&ef)==0);
+        CHECK(rtw8822c_set_tx_power(rfk_net->core,&ef,rfk_net->core->sc_channel,12)==0);
+        rfk_paused=1;
+    }
     if(!rfk_paused && rfk_is("quarantine-complete") && rfk_net->rfk.ran) {
         CHECK(rtw88_test_rfk_atomic_word!=NULL);
         atomic_or_uint(rtw88_test_rfk_atomic_word,2);
@@ -97,6 +119,8 @@ static int rfk_write4(void *cookie,uint32_t reg,uint32_t value)
     uint32_t old=mmio32(reg);
     rfk_io_tick();
     int error=write_4(cookie,reg,value);
+    if(!error && reg==0x3a0c && rtw8822c_rfk_active(f.sc) &&
+       !rfk_handshakes && rfk_once("power-partial"))return EIO;
     if(error)return error;
     if(!rtw8822c_rfk_active(f.sc))return 0;
     if(reg==0x3c60 || reg==0x4c60)rfk_rf18_writes++;
@@ -149,6 +173,12 @@ static int rfk_read4(void *cookie,uint32_t reg,uint32_t *value)
             return 0;
         }
     }
+    if(rfk_coef && rfk_handshakes==2 && rtw8822c_rfk_active(f.sc)) {
+        if((reg==0x3c60 && rfk_is("env-rf18-a")) ||
+           (reg==0x4c60 && rfk_is("env-rf18-b"))) {*value=mmio32(reg)^1;return 0;}
+        if(reg==0x668 && rfk_is("env-macbw")) {*value=mmio32(reg)|0x80;return 0;}
+        if(reg==0x1d08 && rfk_is("env-read-error"))return EIO;
+    }
     if(reg==0x132c && rfk_iqk && f.sc->sc_packet_h2c.managed &&
        rfk_once("packet-read-error"))return EIO;
     if((reg==0x520 && rfk_handshakes==0 && rfk_once("snapshot-first")) ||
@@ -172,7 +202,7 @@ static int rfk_read1(void *cookie,uint32_t reg,uint8_t *value)
 {
     rfk_io_tick();
     if(reg==0x1cc && rfk_coef && !rfk_paused &&
-       (rfk_is("post-complete-change") || rfk_is("quarantine-complete"))) {
+       (rfk_is("post-complete-change") || rfk_is("quarantine-complete") || rfk_is("power-mailbox"))) {
         *value=(uint8_t)(1U<<(f.sc->sc_h2c_box&3));return 0;
     }
     if(rfk_positive && rtw8822c_rfk_active(f.sc) && reg==0x49c && rfk_handshakes) {
@@ -181,12 +211,26 @@ static int rfk_read1(void *cookie,uint32_t reg,uint8_t *value)
     if(rfk_positive && rtw8822c_rfk_active(f.sc) && reg==0x2d9c && rfk_iqk) {
         *value=rfk_is("stale-iqk")?0xaa:(rfk_report_reads++?0xaa:0);return 0;
     }
+    if(reg==0x483 && rfk_coef && rfk_is("env-datasc")) {*value=1;return 0;}
     return read_1(cookie,reg,value);
 }
 static int rfk_read2(void *cookie,uint32_t reg,uint16_t *value)
 { rfk_io_tick();return read_2(cookie,reg,value); }
 static int rfk_write1(void *cookie,uint32_t reg,uint8_t value)
-{ rfk_io_tick();return write_1(cookie,reg,value); }
+{
+    rfk_io_tick();int error=write_1(cookie,reg,value);
+    if(!error && reg==0x522 && rtw8822c_rfk_active(f.sc) && !rfk_handshakes && rfk_power_before()) {
+        struct rtw88_power_program *p=&f.sc->sc_power_program;
+        if(rfk_is("power-before-missing"))p->valid=0;
+        if(rfk_is("power-before-fw"))p->generation++;
+        if(rfk_is("power-before-channel"))p->channel++;
+        if(rfk_is("power-before-cut"))p->cut++;
+        if(rfk_is("power-before-rfe"))p->rfe++;
+        if(rfk_is("power-before-regd"))p->regd=2;
+        if(rfk_is("power-before-serial"))p->serial=0;
+    }
+    return error;
+}
 static int rfk_write2(void *cookie,uint32_t reg,uint16_t value)
 {
     rfk_io_tick();
@@ -213,9 +257,25 @@ rfk_parent_without_completion(struct ieee80211com *ic,
 {
     ic->ic_state = state;
     CHECK(!mutex_owned(rfk_net->lock));
+    if(state==IEEE80211_S_SCAN)rfk_parent_scan++;
+    if(state==IEEE80211_S_INIT)rfk_parent_init++;
     if (state == IEEE80211_S_AUTH)
         {
+        if(rfk_is("env-successor-scan")) {rfk_parent_auth++;CHECK(0);return 0;}
         rfk_parent_auth++;
+        const struct rtw88_operating_envelope *e=&rfk_net->core->sc_operating;
+        const struct rtw88_power_program *p=&rfk_net->core->sc_power_program;
+        CHECK(e->prepared && e->sealed && !rtw8822c_rfk_active(rfk_net->core));
+        CHECK(e->generation==rfk_net->core->sc_generation && e->token!=0);
+        CHECK(e->power.valid && e->power.serial==p->serial && p->serial!=0);
+        CHECK(p->channel==rfk_net->core->sc_channel && p->regd==12 && p->ht_mcs==0xff);
+        CHECK(e->bandwidth==20 && e->streams==1 && !e->tmac && !e->mac_bw && !e->data_sc);
+        CHECK(e->power.ht_ref[0]==p->ht_ref[0] && e->power.ht_ref[1]==p->ht_ref[1]);
+        CHECK(e->power.ht_diff[0]==p->ht_diff[0] && e->power.ht_diff[1]==p->ht_diff[1]);
+        CHECK(p->ht_ref[0]==((mmio32(0x18e8)&0x1fc00)>>10));
+        CHECK(p->ht_ref[1]==((mmio32(0x41e8)&0x1fc00)>>10));
+        CHECK(p->ht_diff[0]==mmio32(0x3a0c) && p->ht_diff[1]==mmio32(0x3a10));
+        CHECK(rtw88_start(rfk_net->core)==EBUSY && e->sealed && p->valid);
         unsigned posted=rfk_net->core->sc_txq[RTW88_TXQ_MGMT].queued;
         CHECK(ieee80211_send_mgmt(ic,ic->ic_bss,IEEE80211_FC0_SUBTYPE_AUTH,1)==0);
         CHECK(rfk_net->core->sc_txq[RTW88_TXQ_MGMT].queued==posted+1);
@@ -260,6 +320,7 @@ main(void)
     if(rfk_case==NULL)rfk_case="none";
     rfk_positive=!rfk_is("none");
     rfk_net=net;active_ic=&net->ic;enable_pause_hook=rfk_pause;
+    rtw88_test_rfk_drop_hook=rfk_after_owner_drop;
     CHECK(write_4(&f,0x520,rfk_original_tx)==0);
     CHECK(write_4(&f,0x1e70,rfk_original_fifo)==0);
     struct rtw88_bus_ops rfk_bus=ops;
@@ -267,6 +328,13 @@ main(void)
     rfk_bus.write_2=rfk_write2;rfk_bus.read_1=rfk_read1;
     rfk_bus.delay_us=rfk_delay_bus;rfk_bus.read_2=rfk_read2;rfk_bus.write_1=rfk_write1;
     sc.sc_ops=&rfk_bus;
+    if(rfk_is("env-tmac"))CHECK(write_4(&f,0x1d08,1)==0);
+    if(rfk_is("env-channel149")) {
+        CHECK(rtw88_channel(&sc,1)==0);
+        net->ic.ic_curchan=&net->ic.ic_channels[149];
+        net->ic.ic_bss->ni_chan=net->ic.ic_curchan;
+        CHECK(sc.sc_channel==1 && sc.sc_power_program.channel==1);
+    }
     net->ic.ic_state = IEEE80211_S_SCAN;
     net->parent_state = rfk_parent_without_completion;
     if(rfk_is("c1-spacing")) {
@@ -293,11 +361,12 @@ main(void)
         CHECK(!net->policy.accepting && !sc.sc_started);
     }
     /* Enabled experimental AUTH cannot bypass a missing whole-chain receipt. */
-    CHECK(rfk_parent_auth == ((rfk_is("positive") || rfk_is("newfw-baseline") || rfk_is("detach-baseline"))?1U:0U));
+    CHECK(rfk_parent_auth == ((rfk_is("positive") || rfk_is("newfw-baseline") || rfk_is("detach-baseline") || rfk_is("env-channel149"))?1U:0U));
     CHECK(!net->work_pending);
-    if(rfk_is("positive") || rfk_is("newfw-baseline") || rfk_is("detach-baseline") || rfk_is("zero-init") ||
+    if(rfk_is("positive") || rfk_is("newfw-baseline") || rfk_is("detach-baseline") || rfk_is("env-channel149") || rfk_is("zero-init") ||
        rfk_is("c1-spacing") || rfk_is("alloc-cancel") || rfk_is("post-complete-change") ||
-       strncmp(rfk_case,"rf18-",5)==0)CHECK(!rtw8822c_rfk_blocked());
+       (strncmp(rfk_case,"rf18-",5)==0 || rfk_power_before() ||
+        rfk_is("power-partial") || rfk_is("seal-power") || rfk_is("env-successor-scan")))CHECK(!rtw8822c_rfk_blocked());
     else {
         CHECK(rtw8822c_rfk_blocked());
         /* The bus service models one live device. With a valid quarantine,
@@ -314,6 +383,40 @@ main(void)
             if(attached==0)CHECK(rtw88_core_detach(&other)==0);
         }
     }
+    if(rfk_power_before() || rfk_is("power-partial")) {
+        CHECK(rfk_handshakes==0 && rfk_gapk==0 && rfk_iqk==0 && rfk_dpk==0);
+        CHECK(sc.sc_stats.rfk.operations==0);
+        CHECK(sc.sc_stats.rfk.error==(rfk_is("power-partial")?ECANCELED:ESTALE));
+        if(rfk_is("power-partial"))CHECK(rfk_fault && !sc.sc_power_program.valid);
+        CHECK(!sc.sc_started && !net->policy.accepting);
+    }
+    if(rfk_is("power-after-bind"))CHECK(rfk_paused && rfk_gapk==1 && rfk_iqk==0);
+    if(rfk_is("power-mailbox"))CHECK(rfk_paused && rfk_net->rfk.ran && rfk_coef==1);
+    if(strncmp(rfk_case,"env-",4)==0 && !rfk_is("env-channel149") && !rfk_is("env-successor-scan")) {
+        CHECK(rfk_coef==1 && !sc.sc_operating.sealed && !sc.sc_operating.prepared);
+        CHECK(!sc.sc_started && (net->ec.ec_if.if_flags&IFF_RUNNING)==0);
+    }
+    if(rfk_is("seal-power") || rfk_is("env-retire-Q")) {
+        CHECK(!sc.sc_started && !sc.sc_operating.prepared && !sc.sc_operating.sealed);
+        CHECK(!net->policy.accepting && !sc.sc_ra.configured && !sc.sc_ra.active);
+        struct ifnet *iface=&net->ec.ec_if;
+        struct mbuf *held=ether_packet(0,0,0);
+        unsigned crypto=route_crypto;
+        uint16_t seq[17];memcpy(seq,net->ic.ic_bss->ni_txseqs,sizeof(seq));
+        uint64_t posted[RTW88_NTXQ];memcpy(posted,sc.sc_stats.tx_posted,sizeof(posted));
+        queue_packet(&iface->if_snd,held);
+        rtw88_net_start(iface);
+        CHECK(iface->if_snd.m==held && route_crypto==crypto);
+        CHECK(memcmp(seq,net->ic.ic_bss->ni_txseqs,sizeof(seq))==0);
+        CHECK(memcmp(posted,sc.sc_stats.tx_posted,sizeof(posted))==0);
+        iface->if_snd.m=iface->if_snd.ifq_tail=NULL;iface->if_snd.ifq_len=0;m_freem(held);
+    }
+    if(rfk_is("env-successor-scan")) {
+        CHECK(rfk_parent_auth==0 && rfk_parent_init==0 && rfk_parent_scan==1);
+        CHECK(net->requested==IEEE80211_S_SCAN && net->ic.ic_state==IEEE80211_S_SCAN);
+        CHECK(net->policy.accepting && sc.sc_started && !sc.sc_operating.sealed);
+    }
+    if(rfk_is("env-channel149"))CHECK(sc.sc_channel==149 && sc.sc_operating.channel==149);
     if(rfk_is("cancel-gapk") || rfk_is("profile-gapk")) {
         CHECK(rfk_paused==1 && rfk_gapk==1 && rfk_dpk==0 && rfk_iqk==0);
     }
@@ -352,6 +455,7 @@ main(void)
         CHECK(!net->policy.accepting && !sc.sc_started);
     }
     enable_pause_hook=NULL;enable_drain_pause_hook=NULL;active_ic=NULL;
+    rtw88_test_rfk_drop_hook=NULL;
     sc.sc_ops=&ops;
     enable_destroy(net);
     CHECK(enable_allocations == enable_releases);

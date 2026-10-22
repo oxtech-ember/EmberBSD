@@ -1188,7 +1188,9 @@ The base system shell is unchanged.
   passes bounded manual-scan recovery, IPv6 and four-AC/data regression checks.
   This does not add RFK. A separate default-OFF
   [manual RFK experiment](ember/development/rtl8822c-rfk-experiment.md)
-  owns a bounded full GAPK/IQK/DPK transaction before AUTH. Its strict completion
+  owns a bounded full GAPK/IQK/DPK transaction before AUTH. It checks a current
+  power-programming and operating-register envelope before the first producer.
+  This is not hardware TXAGC-table readback. Its strict completion
   oracle and quarantine are source contracts; physical calibration and HT
   readiness remain unqualified. Ordinary profiles do not enable that experiment.
   Source contracts also drain posted native TX through the actual completion

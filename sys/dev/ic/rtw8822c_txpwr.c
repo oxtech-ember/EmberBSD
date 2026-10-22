@@ -253,6 +253,15 @@ rtw8822c_set_tx_power(struct rtw88_softc *sc,
 	unsigned path, rs, j, rate;
 	int error;
 
+#ifdef RTW88_RFK_EXPERIMENT
+	if (sc != NULL) {
+		sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
+		sc->sc_power_program.valid = 0;
+		if (sc->sc_power_program.serial == UINT64_MAX)
+			return EOVERFLOW;
+		sc->sc_power_program.serial++;
+	}
+#endif
 	if (sc == NULL || efuse == NULL || sc->sc_ops == NULL ||
 	    sc->sc_ops->read_4 == NULL || sc->sc_ops->write_4 == NULL ||
 	    channel_group(channel) < 0 || sc->sc_rfe != efuse->rfe_option)
@@ -302,5 +311,19 @@ rtw8822c_set_tx_power(struct rtw88_softc *sc,
 		if (error != 0)
 			return error;
 	}
+#ifdef RTW88_RFK_EXPERIMENT
+	/* Publish only the exact values whose complete program succeeded. */
+	sc->sc_power_program.generation = sc->sc_generation;
+	sc->sc_power_program.channel = channel;
+	sc->sc_power_program.regd = regd;
+	sc->sc_power_program.cut = sc->sc_cut;
+	sc->sc_power_program.rfe = sc->sc_rfe;
+	sc->sc_power_program.ht_mcs = 0xff;
+	for (path = 0; path < 2; path++) {
+		sc->sc_power_program.ht_ref[path] = indices[path][19];
+		sc->sc_power_program.ht_diff[path] = diff_words[3 + path];
+	}
+	sc->sc_power_program.valid = 1;
+#endif
 	return 0;
 }

@@ -99,6 +99,20 @@ struct rtw88_ra_state {
 };
 
 #ifdef RTW88_RFK_EXPERIMENT
+/* Successful source programming, not a hardware TXAGC-table readback. */
+struct rtw88_power_program {
+	uint64_t serial;
+	uint32_t generation, ht_diff[2];
+	unsigned channel, regd;
+	uint8_t cut, rfe, valid, ht_mcs, ht_ref[2];
+};
+struct rtw88_operating_envelope {
+	struct rtw88_power_program power;
+	uint64_t token;
+	uint32_t generation, rf18[2], mac_bw, data_sc, tmac;
+	unsigned channel;
+	uint8_t cut, rfe, bandwidth, streams, prepared, sealed;
+};
 /* PCI-protected numeric mirror; only the owning process samples its context. */
 struct rtw88_rfk_diag {
 	uint64_t token;
@@ -210,6 +224,8 @@ struct rtw88_softc {
 #ifdef RTW88_RFK_EXPERIMENT
 	/* Original gain cache survives clean attempts; never the quarantine latch. */
 	struct rtw8822c_rfk *sc_rfk;
+	struct rtw88_power_program sc_power_program;
+	struct rtw88_operating_envelope sc_operating;
 #endif
 	struct rtw88_hw_feature_state sc_hw_feature;
 	struct rtw88_phy_state sc_phy;

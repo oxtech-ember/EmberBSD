@@ -818,6 +818,35 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			if (error == 0 && retire_error != 0)
 				error = retire_error;
 		}
+		/* Retirement can yield during old-owner cleanup. Never publish an
+		 * old AUTH or abort a successor that requested SCAN meanwhile. */
+		mutex_enter(net->lock);
+		current = epoch == net->policy.epoch && !net->policy.dying;
+		mutex_exit(net->lock);
+		if (!current)
+			error = ECANCELED;
+		if (error == 0 && state == IEEE80211_S_AUTH) {
+			error = rtw8822c_rfk_seal(net->core);
+			if (error != 0) {
+				diag.stage = RTW88_NET_STAGE_CORE;
+				diag.error = error;
+			}
+		}
+		if (error != 0) {
+			mutex_enter(net->lock);
+			current = epoch == net->policy.epoch && !net->policy.dying;
+			if (current) {
+				/* A failed post-commit proof must withdraw acceptance.
+				 * commit(nonzero error) deliberately changes no policy. */
+				(void)rtw88_net_commit(&net->policy, epoch, 0, 0);
+				rtw88_ra_invalidate(net->core);
+			} else {
+				error = ECANCELED;
+			}
+			mutex_exit(net->lock);
+			net->core->sc_operating.prepared =
+			    net->core->sc_operating.sealed = 0;
+		}
 		rtw88_net_rfk_publish(net);
 #endif
 		if (error != ECANCELED) {

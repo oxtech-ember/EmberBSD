@@ -107,6 +107,8 @@ struct rtw8822c_rfk {
 	uint8_t baseline_rfe, baseline_cut;
 	uint64_t token;
 	uint32_t generation;
+	struct rtw88_power_program power;
+	unsigned power_bound;
 	unsigned active, cleanup_mode, mutated, canceled;
 	unsigned pending, non_target, report_deadline, report_not_before;
 	unsigned report_size;
@@ -138,6 +140,23 @@ rtw8822c_rfk_active(const struct rtw88_softc *sc)
 	return sc->sc_rfk != NULL && sc->sc_rfk->active;
 }
 
+static int
+rfk_power_current(const struct rtw88_softc *sc,
+    const struct rtw88_power_program *p)
+{
+	const struct rtw88_power_program *now = &sc->sc_power_program;
+
+	return p->valid && p->serial != 0 && p->generation == sc->sc_generation &&
+	    p->channel == sc->sc_channel && p->cut == sc->sc_cut &&
+	    p->rfe == sc->sc_rfe && p->regd == 12 && p->ht_mcs == 0xff &&
+	    now->valid && now->serial == p->serial &&
+	    now->generation == p->generation && now->channel == p->channel &&
+	    now->cut == p->cut && now->rfe == p->rfe && now->regd == p->regd &&
+	    now->ht_mcs == p->ht_mcs && now->ht_ref[0] == p->ht_ref[0] &&
+	    now->ht_ref[1] == p->ht_ref[1] && now->ht_diff[0] == p->ht_diff[0] &&
+	    now->ht_diff[1] == p->ht_diff[1];
+}
+
 static void
 rfk_quarantine(struct rtw8822c_rfk *k)
 {
@@ -164,6 +183,7 @@ rfk_error(struct rtw8822c_rfk *k, int error)
 {
 
 	if (error != 0) {
+		k->sc->sc_operating.prepared = k->sc->sc_operating.sealed = 0;
 		if (k->cleanup_mode) {
 			if (k->cleanup_error == 0)
 				k->cleanup_error = error;
@@ -202,6 +222,9 @@ rfk_enter(struct rtw8822c_rfk *k)
 	if ((int)(k->svc.clock_ticks(k->svc.cookie) -
 	    (k->cleanup_mode ? k->cleanup_deadline : k->new_deadline)) >= 0)
 		return rfk_error(k, ETIMEDOUT);
+	if (!k->cleanup_mode && k->power_bound &&
+	    !rfk_power_current(k->sc, &k->power))
+		return rfk_error(k, ECANCELED);
 	error = k->svc.enter(k->svc.cookie, (int)k->cleanup_mode);
 	return rfk_error(k, error);
 }
@@ -688,6 +711,9 @@ rtw8822c_rfk_begin(struct rtw88_softc *sc,
 		    sc->sc_rfk->token != atomic_load_acquire(&rfk_serial) ||
 		    !sc->sc_resources_ready)
 			return ESTALE;
+		if (sc->sc_rfk->power_bound &&
+		    !rfk_power_current(sc, &sc->sc_rfk->power))
+			return rfk_error(sc->sc_rfk, ECANCELED);
 		return atomic_load_acquire(&rfk_global) == RFK_BUSY ? 0 : EBUSY;
 	}
 	/* NetBSD atomic_cas_uint is atomic but supplies no implicit ordering
@@ -719,6 +745,8 @@ rtw8822c_rfk_begin(struct rtw88_softc *sc,
 	k->new_deadline = k->started_at + 6U * svc->ticks_per_second;
 	k->cleanup_deadline = k->started_at + 8U * svc->ticks_per_second;
 	k->packet_started = k->completed = k->gnt_valid = 0;
+	k->power_bound = 0;
+	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
 	k->active = 1;
 	k->cleanup_mode = k->mutated = k->canceled = 0;
 	k->pending = k->non_target = k->nsaved = 0;
@@ -894,7 +922,7 @@ rfk_dpk(struct rtw8822c_rfk *k)
  * This read-only precondition precedes power-save, pause and calibration
  * writes; a failed channel selection cannot become an RFK transaction. */
 static int
-rfk_channel_current(struct rtw8822c_rfk *k)
+rfk_channel_current(struct rtw8822c_rfk *k, uint32_t samples[2])
 {
 	const uint32_t mask = UINT32_C(0x10300) | UINT32_C(0xff) |
 	    UINT32_C(0x60000) | UINT32_C(0x3000);
@@ -914,6 +942,10 @@ rfk_channel_current(struct rtw8822c_rfk *k)
 		return k->error;
 	if ((a & mask) != expected || (b & mask) != expected)
 		return rfk_error(k, EPROTO);
+	if (samples != NULL) {
+		samples[0] = a;
+		samples[1] = b;
+	}
 	return 0;
 }
 
@@ -927,7 +959,11 @@ rtw8822c_rfk_run(struct rtw88_softc *sc)
 		return EINVAL;
 	if (k->completed)
 		return 0;
-	if (rfk_channel_current(k) != 0)
+	if (k->power_bound || !rfk_power_current(sc, &sc->sc_power_program))
+		return rfk_error(k, ESTALE);
+	k->power = sc->sc_power_program;
+	k->power_bound = 1;
+	if (rfk_channel_current(k, NULL) != 0)
 		return k->error;
 	rtw8822c_rfk_power_save(k, false);
 	value = rfk_read(k, REG_TX_PTCL_CTRL, 4);
@@ -963,6 +999,30 @@ rtw8822c_rfk_run(struct rtw88_softc *sc)
 		return k->error;
 	if (!k->outer_restoring)
 		return rfk_error(k, EPROTO);
+	/* Read only the sourced operating fields after normal restoration.
+	 * TXAGC program provenance is not hardware power-index readback. */
+	if (rfk_channel_current(k, sc->sc_operating.rf18) != 0)
+		return k->error;
+	{
+		struct rtw88_operating_envelope *e = &sc->sc_operating;
+
+		e->mac_bw = rfk_read(k, 0x0668, 4) & 0x180;
+		e->data_sc = rfk_read(k, 0x0483, 1);
+		e->tmac = rfk_read(k, 0x1d08, 4) & 1;
+		if (k->error != 0)
+			return k->error;
+		if (e->mac_bw != 0 || e->data_sc != 0 || e->tmac != 0)
+			return rfk_error(k, EPROTO);
+		e->power = k->power;
+		e->token = k->token;
+		e->generation = k->generation;
+		e->channel = sc->sc_channel;
+		e->cut = sc->sc_cut;
+		e->rfe = sc->sc_rfe;
+		e->bandwidth = 20;
+		e->streams = 1;
+		e->prepared = 1;
+	}
 	/* Account for time and cancellation during the last possibly-landed
 	 * restore, before publishing the completed descriptor to the worker. */
 	if (rfk_enter(k) != 0)
@@ -1023,6 +1083,29 @@ rtw8822c_rfk_retire(struct rtw88_softc *sc)
 	k->active = 0;
 	rfk_drop_owner();
 	return error;
+}
+
+int
+rtw8822c_rfk_seal(struct rtw88_softc *sc)
+{
+	const struct rtw8822c_rfk *k = sc->sc_rfk;
+	struct rtw88_operating_envelope *e = &sc->sc_operating;
+
+	e->sealed = 0;
+	if (k == NULL || k->active || !k->completed || k->error != 0 ||
+	    !e->prepared || e->token != k->token ||
+	    e->generation != sc->sc_generation || e->channel != sc->sc_channel ||
+	    e->cut != sc->sc_cut || e->rfe != sc->sc_rfe ||
+	    e->bandwidth != 20 || e->streams != 1 ||
+	    !rfk_power_current(sc, &e->power) || rtw8822c_rfk_blocked() ||
+	    !sc->sc_started || !sc->sc_running || !sc->sc_resources_ready ||
+	    !sc->sc_rf_enabled || sc->sc_stop_requested || sc->sc_dma_error ||
+	    sc->sc_power_error || sc->sc_edca_error || sc->sc_ra.error) {
+		e->prepared = 0;
+		return ESTALE;
+	}
+	e->sealed = 1;
+	return 0;
 }
 
 void

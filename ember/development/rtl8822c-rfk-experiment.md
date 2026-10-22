@@ -130,6 +130,29 @@ context. It contains no packet, key, address or SSID dump.
   GAPK, IQK, DPK, CAL_PWR and final coefficients. Arming is not proof that a
   hardware write landed. Completion means only the experimental host oracle.
 
+## Current operating envelope before AUTH
+
+The experiment also gates the first AUTH producer on a current operating
+snapshot. The actual power programmer publishes an identity only after its
+complete checked program succeeds. It records firmware, channel, cut, RFE,
+regulatory-table policy and the computed HT1SS references/differences. These are
+successful source writes, not hardware TXAGC-table readback or calibrated dBm.
+
+RFK binds that value after its own selected-channel program and before phase
+writes. Every normal continuation and ordinary-mailbox retry checks it again.
+After normal RFK restoration, checked reads require both RF18 paths to match
+selected BW20/primary/band, MAC BW and secondary selection to be zero, and
+BB1d08 bit0 to select normal TMAC. No guessed repair write follows a mismatch.
+Only successful retirement can seal this snapshot before parent AUTH, without
+an intervening yield. A missing, changed or quarantined proof keeps AUTH closed.
+A post-commit failure withdraws current acceptance and rate policy. A newer
+request keeps its own epoch and parent transition.
+Stop, channel and power mutations withdraw the snapshot before IO.
+
+The provider remains NULL. This envelope does not establish mixed-format air
+traffic, hardware BlockAck, physical RFK convergence or hardware power indices.
+A separate source-backed TXAGC read protocol remains unimplemented.
+
 ## Source checks and limits
 
 Run `sh ember/tools/rtw88-rfk-contract.sh` with GCC16. The contract executes actual
@@ -138,7 +161,8 @@ service model supplies bus register samples, device completion, allocation,
 Giant-release scheduling and time. It does not execute an RF engine or firmware.
 The populated-baseline detach/free producer is executed separately. An external
 context's equivalent quarantine arrival is injected through the host atomic
-service at a real RXBB sleep to exercise the actual normal/cleanup consumers;
+service at a real RXBB sleep or owner-drop boundary to exercise the actual
+normal/cleanup and first-AUTH consumers;
 this is not a two-device hardware-concurrency simulation.
 The formatter test executes the actual PCI statistics body at every buffer
 capacity, including maximum numeric values. The normal packet-H2C and legacy
@@ -176,3 +200,10 @@ The RF18 precondition uses the exact fields programmed by pinned
 `0x10100`, region `0x20000` for channels 100–144 and `0x40000` for 149–177.
 No unrelated RF18 bits are guessed or compared. This is selected-profile
 consistency, not proof of analog tuning or calibration.
+
+The normal-TMAC bit check follows
+[Realtek phydm_set_tmac_tx_jgr3](https://github.com/rtlwifi-linux/rtk_wifi_driver_rtl8822ce/blob/5ef878c6310659d2eff5ebeb74b2a9d153fa61a6/hal/phydm/phydm_pmac_tx_setting.c#L388-L395),
+SHA256 `372145f8d72d8c4840bd2d82ccfa7c2a5e0aedccb6e2f1cb2a1e318c8deba7ce`.
+This GPL source supplies read-only register semantics; no implementation is
+imported. The pinned BSD PHY table initializes register 0x1d08 to 0xa0000000. A final bit read
+checks current consistency instead of assuming that initialization survived RFK.
