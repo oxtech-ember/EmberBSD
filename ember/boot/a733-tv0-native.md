@@ -57,6 +57,29 @@ A callback failure or readback mismatch retains the first fault.
 No later read, write or ownership callback runs after that fault.
 The native owner and written resources remain retained.
 
+## Vblank interrupt
+
+The vendor `tcon3@5730000` node gives the TCON_TV0 interrupt as GIC SPI 57,
+level high. The `hdmi@5520000` node carries this interrupt.
+Without the property, the provider keeps the polled observation above.
+
+With the interrupt, attach establishes an MPSAFE handler at `IPL_VM`.
+Start arms it before the TV0 start writes and after the clock checks pass.
+The handler does no MMIO before that point.
+An armed handler acknowledges vblank bit14 with the observe write value,
+increments a 64-bit count and calls the optional consumer callback.
+The callback runs in interrupt context under the provider spin lock.
+Removal of the callback takes the same lock, so no removed callback runs later.
+A provider fault disarms the handler without MMIO.
+A disarmed handler clears vblank enable bit30 and bit14 on the next source,
+so the level interrupt does not repeat. A full count also disarms it.
+
+In interrupt mode, observe does not write GINT0.
+It checks the running bit, the error flags and the vblank enable,
+then reports a count larger than the last reported count.
+An equal count is `ENOENT`. A smaller count is a sticky `EIO`.
+The interrupt runs at the refresh rate while TV0 runs.
+
 ## Experimental depth profile
 
 The manual gives conflicting fields for offset 0x340.
@@ -77,4 +100,7 @@ Use `A733_TV0_CFLAGS` to add native sanitizer flags.
 The test uses the actual timing and TV0 function bodies.
 It checks the write sequence, every callback failure, every rejected write,
 late W0C flags, reserved GCTL bit31, phase order and event accounting.
+The test also checks the interrupt-mode count observation without writes.
+Run `python3 -B ember/tools/a733-hdmi-native-contract.py` for the handler,
+arm, disarm, mask and callback checks with the actual provider source.
 Source and target compilation do not establish physical HDMI output.

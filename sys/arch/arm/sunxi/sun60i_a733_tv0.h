@@ -31,4 +31,11 @@ int sun60i_a733_tv0_prepare(struct sun60i_a733_tv0 *,
 int sun60i_a733_tv0_start(struct sun60i_a733_tv0 *);
 /* ENOENT means no new event. All other failures are sticky. */
 int sun60i_a733_tv0_observe(struct sun60i_a733_tv0 *, uint64_t *);
+/*
+ * Interrupt mode. The vblank IRQ acknowledges the flag and counts events.
+ * Check the started output without a write and report a later count.
+ * ENOENT means no new event. All other failures are sticky.
+ */
+int sun60i_a733_tv0_observe_count(struct sun60i_a733_tv0 *, uint64_t,
+    uint64_t *);
 #endif

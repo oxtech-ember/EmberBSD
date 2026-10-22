@@ -154,6 +154,35 @@ main(void)
 	CHECK(sun60i_a733_tv0_prepare(&s, &mode, 0) == EOPNOTSUPP && m.writes == old_writes);
 	fixture(); CHECK(pipeline(&seq) == 0); s.sequence = UINT64_MAX; m.reg[0][1] |= 0x4000;
 	CHECK(sun60i_a733_tv0_observe(&s, &seq) == EOVERFLOW);
+	/* Interrupt mode: a read-only check, then only a later count is new. */
+	fixture(); CHECK(pipeline(&seq) == 0 && seq == 1);
+	old_writes = m.writes; ops = m.ops;
+	m.reg[0][1] |= 0x4000;
+	CHECK(sun60i_a733_tv0_observe_count(&s, 1, &seq) == ENOENT && seq == 1);
+	CHECK(sun60i_a733_tv0_observe_count(&s, 5, &seq) == 0 && seq == 5);
+	CHECK(s.sequence == 5 && m.writes == old_writes && m.ops > ops);
+	CHECK((m.reg[0][1] & 0x4000) == 0x4000);
+	CHECK(sun60i_a733_tv0_observe_count(&s, 5, &seq) == ENOENT && seq == 5);
+	CHECK(sun60i_a733_tv0_observe_count(&s, 6, NULL) == EINVAL && s.fault == EINVAL);
+	fixture(); CHECK(pipeline(&seq) == 0);
+	CHECK(sun60i_a733_tv0_observe_count(&s, 0, &seq) == EIO && s.fault == EIO);
+	for (unsigned loss = 0; loss < 4; loss++) {
+		fixture(); CHECK(pipeline(&seq) == 0);
+		if (loss < 2) m.reg[0][0xfc/4] |= UINT32_C(0x40000000) >> loss;
+		if (loss == 2) m.reg[0][0x90/4] &= ~UINT32_C(0x80000000);
+		if (loss == 3) m.reg[0][1] &= ~UINT32_C(0x40000000);
+		old_writes = m.writes;
+		CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == EIO);
+		CHECK(m.writes == old_writes && s.sequence == 1);
+	}
+	fixture(); CHECK(sun60i_a733_tv0_route(&s) == 0);
+	CHECK(sun60i_a733_tv0_observe_count(&s, 1, &seq) == EINVAL);
+	for (unsigned fail = 1; fail <= 4; fail++) {
+		fixture(); CHECK(pipeline(&seq) == 0);
+		old_writes = m.writes; m.fail = m.ops + fail;
+		CHECK(sun60i_a733_tv0_observe_count(&s, 2, &seq) == EFAULT);
+		CHECK(s.fault == EFAULT && s.sequence == 1 && m.writes == old_writes);
+	}
 	/* Reserved GCTL bit31 stays clear when the hardware reports it clear. */
 	fixture(); m.reg[0][0] = 0;
 	CHECK(pipeline(&seq) == 0 && m.reg[0][0] == 0);

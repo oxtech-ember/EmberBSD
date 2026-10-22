@@ -286,3 +286,25 @@ sun60i_a733_output_sample(int phandle, const void *owner,
 	mutex_exit(&output_lock);
 	return error;
 }
+
+/* The callback owner must remove the callback before its storage ends. */
+int
+sun60i_a733_output_set_vblank_handler(int phandle, const void *owner,
+    sun60i_a733_vblank_fn fn, void *arg)
+{
+	int error;
+
+	if (fn != NULL && arg == NULL)
+		return EINVAL;
+	RUN_ONCE(&output_once, output_init);
+	mutex_enter(&output_lock);
+	error = output_lookup(phandle, owner);
+	if (error == 0 && !output_started)
+		error = EINVAL;
+	if (error == 0 && output_ops->set_vblank_handler == NULL)
+		error = EOPNOTSUPP;
+	if (error == 0)
+		error = output_ops->set_vblank_handler(output_arg, owner, fn, arg);
+	mutex_exit(&output_lock);
+	return error;
+}

@@ -758,6 +758,8 @@
 			reg = <0x05520000 0x100000>, <0x05510000 0x1000>,
 			      <0x05730000 0x1000>;
 			reg-names = "hdmi", "vo1", "tv0";
+			/* TCON_TV0 interrupt, from the vendor tcon3@5730000 node. */
+			interrupts = <GIC_SPI 57 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&ccu CLK_DE0>;
 			clock-names = "de0";
 			power-domains = <&pck600 PD_VO1>;

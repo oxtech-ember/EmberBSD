@@ -12,6 +12,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/device.h>
 #include <sys/errno.h>
 #include <sys/kernel.h>
+#include <sys/mutex.h>
 #include <sys/systm.h>
 #include <dev/fdt/fdtvar.h>
 #include <dev/fdt/syscon.h>
@@ -50,7 +51,21 @@ struct sun60i_a733_hdmi_softc {
 	struct sun60i_a733_output_trace trace;
 	struct edid_info edid;
 	uint8_t edid_block[128];
+	/*
+	 * TCON_TV0 vblank interrupt. intr_lock orders the IRQ handler, arm,
+	 * disarm and callback changes. irq_hw becomes true only after the
+	 * output clocks were proven ready. It stays true.
+	 */
+	kmutex_t intr_lock;
+	void *ih;
+	bool irq_hw, irq_armed;
+	uint64_t irq_sequence;
+	sun60i_a733_vblank_fn vblank_fn;
+	void *vblank_arg;
 };
+
+#define A733_TV0_GINT0 4
+#define A733_TV0_VB_ENABLE UINT32_C(0x40000000)
 
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun60i-a733-hdmi" },
@@ -68,6 +83,10 @@ native_fail(struct sun60i_a733_hdmi_softc *sc, int error)
 			sc->phy.fault = error;
 		if (sc->tv.fault == 0)
 			sc->tv.fault = error;
+		/* No MMIO here. The IRQ handler masks a later source. */
+		mutex_spin_enter(&sc->intr_lock);
+		sc->irq_armed = false;
+		mutex_spin_exit(&sc->intr_lock);
 		if (sc->owner != NULL)
 			(void)sun60i_a733_ccu_display_fault(sc->de0, sc->owner, error);
 	}
@@ -574,6 +593,14 @@ native_start(void *arg, const void *owner)
 		error = sun60i_a733_hdmi_phy_observe(&sc->phy);
 	if (error == 0)
 		error = dwhdmi_native_start(&sc->dw);
+	if (error == 0 && sc->ih != NULL) {
+		/* Count from the first vblank after the start writes. */
+		mutex_spin_enter(&sc->intr_lock);
+		sc->irq_hw = true;
+		sc->irq_armed = true;
+		sc->irq_sequence = sc->tv.sequence;
+		mutex_spin_exit(&sc->intr_lock);
+	}
 	if (error == 0)
 		error = sun60i_a733_tv0_start(&sc->tv);
 	return native_fail(sc, error);
@@ -587,9 +614,77 @@ native_observe(void *arg, const void *owner, uint64_t *sequence)
 
 	if (error == 0)
 		error = sun60i_a733_hdmi_phy_observe(&sc->phy);
-	if (error == 0)
+	if (error == 0 && sc->ih != NULL) {
+		uint64_t count;
+
+		mutex_spin_enter(&sc->intr_lock);
+		count = sc->irq_sequence;
+		mutex_spin_exit(&sc->intr_lock);
+		error = sun60i_a733_tv0_observe_count(&sc->tv, count, sequence);
+	} else if (error == 0)
 		error = sun60i_a733_tv0_observe(&sc->tv, sequence);
 	return error == ENOENT ? error : native_fail(sc, error);
+}
+
+/*
+ * TCON_TV0 GINT0 has the vblank enable at bit 30 and the W0C vblank flag at
+ * bit 14. An armed handler acknowledges the flag and counts one vblank. A
+ * disarmed handler clears the enable and the flag, so a level IRQ cannot
+ * repeat. The handler does MMIO only after native_start proved the clocks.
+ */
+static int
+native_intr(void *arg)
+{
+	struct sun60i_a733_hdmi_softc *sc = arg;
+	uint32_t value, ack;
+
+	mutex_spin_enter(&sc->intr_lock);
+	if (!sc->irq_hw) {
+		mutex_spin_exit(&sc->intr_lock);
+		return 0;
+	}
+	value = bus_space_read_4(sc->bst, sc->tv0, A733_TV0_GINT0);
+	if (sun60i_a733_tcon_vblank_ack(value, &ack) != 0) {
+		mutex_spin_exit(&sc->intr_lock);
+		return 0;
+	}
+	if (!sc->irq_armed || sc->irq_sequence == UINT64_MAX) {
+		sc->irq_armed = false;
+		bus_space_write_4(sc->bst, sc->tv0, A733_TV0_GINT0,
+		    ack & ~A733_TV0_VB_ENABLE);
+		bus_space_barrier(sc->bst, sc->tv0, A733_TV0_GINT0, 4,
+		    BUS_SPACE_BARRIER_WRITE);
+		mutex_spin_exit(&sc->intr_lock);
+		return 1;
+	}
+	bus_space_write_4(sc->bst, sc->tv0, A733_TV0_GINT0, ack);
+	bus_space_barrier(sc->bst, sc->tv0, A733_TV0_GINT0, 4,
+	    BUS_SPACE_BARRIER_WRITE);
+	sc->irq_sequence++;
+	/* The callback runs under intr_lock, so a removal drains it. */
+	if (sc->vblank_fn != NULL)
+		sc->vblank_fn(sc->vblank_arg, sc->irq_sequence);
+	mutex_spin_exit(&sc->intr_lock);
+	return 1;
+}
+
+static int
+native_set_vblank_handler(void *arg, const void *owner,
+    sun60i_a733_vblank_fn fn, void *cookie)
+{
+	struct sun60i_a733_hdmi_softc *sc = arg;
+
+	if (sc->fault != 0)
+		return sc->fault;
+	if (owner == NULL || owner != sc->owner)
+		return EBUSY;
+	if (sc->ih == NULL)
+		return EOPNOTSUPP;
+	mutex_spin_enter(&sc->intr_lock);
+	sc->vblank_fn = fn;
+	sc->vblank_arg = fn != NULL ? cookie : NULL;
+	mutex_spin_exit(&sc->intr_lock);
+	return 0;
 }
 
 static void
@@ -658,7 +753,8 @@ native_sample(void *arg, const void *owner,
 
 static const struct sun60i_a733_output_ops output_ops = {
 	native_get_mode, native_prepare, native_start, native_observe, native_fault,
-	native_cached_trace, native_cached_phy_trace, native_sample
+	native_cached_trace, native_cached_phy_trace, native_sample,
+	native_set_vblank_handler
 };
 
 static int
@@ -757,6 +853,7 @@ sun60i_a733_hdmi_attach(device_t parent, device_t self, void *aux)
 	sc->phandle = faa->faa_phandle;
 	sc->bst = faa->faa_bst;
 	sc->dw.sc_dev = self;
+	mutex_init(&sc->intr_lock, MUTEX_DEFAULT, IPL_VM);
 	aprint_naive("\n");
 	aprint_normal(": A733 native HDMI output (explicit stages)\n");
 	error = native_bindings(sc);
@@ -784,9 +881,18 @@ sun60i_a733_hdmi_attach(device_t parent, device_t self, void *aux)
 	sc->tv_io = (struct sun60i_a733_tv0_io){ sc, native_ready,
 	    native_tv_read, native_tv_write };
 	sc->tv.io = &sc->tv_io;
+	/* Without an interrupt property, vblank observation stays polled. */
+	sc->ih = fdtbus_intr_establish_xname(sc->phandle, 0, IPL_VM,
+	    FDT_INTR_MPSAFE, native_intr, sc, device_xname(self));
+	if (sc->ih == NULL)
+		aprint_normal_dev(self, "polled vblank observation\n");
 	error = sun60i_a733_output_register(sc->phandle, &output_ops, sc);
 	if (error == 0)
 		return;
+	if (sc->ih != NULL) {
+		fdtbus_intr_disestablish(sc->phandle, sc->ih);
+		sc->ih = NULL;
+	}
 failed:
 	while (mapped != 0) {
 		mapped--;

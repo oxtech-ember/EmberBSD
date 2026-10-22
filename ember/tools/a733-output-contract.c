@@ -188,7 +188,7 @@ provider_fault(void *arg, const void *owner, int error)
 
 static const struct sun60i_a733_output_ops provider_ops = {
 	provider_mode, provider_prepare, provider_start, provider_vblank,
-	provider_fault, NULL, NULL, NULL
+	provider_fault, NULL, NULL, NULL, NULL
 };
 
 static void
@@ -433,6 +433,88 @@ output_sample(void)
 	CHECK(sample_calls == 2);
 }
 
+static unsigned handler_calls;
+static int handler_error;
+static sun60i_a733_vblank_fn handler_fn;
+static void *handler_arg;
+
+static int
+provider_set_vblank(void *arg, const void *owner, sun60i_a733_vblank_fn fn,
+    void *cb)
+{
+	const struct provider_fixture *f = arg;
+
+	CHECK(arg == output_arg && owner == f->owner && mutex_owned(&output_lock));
+	handler_calls++;
+	if (handler_error == 0) {
+		handler_fn = fn;
+		handler_arg = cb;
+	}
+	return handler_error;
+}
+
+static void
+consumer_vblank(void *arg, uint64_t sequence)
+{
+	(void)arg;
+	(void)sequence;
+}
+
+static void
+output_vblank_handler(void)
+{
+	struct sun60i_a733_output_ops ops = provider_ops;
+	struct provider_fixture f = { .owner = &f };
+	struct sun60i_a733_output_mode mode;
+	int other = 0, cookie = 0;
+
+	provider_reset();
+	CHECK(sun60i_a733_output_set_vblank_handler(7, &f, consumer_vblank,
+	    &cookie) == ENXIO);
+	CHECK(sun60i_a733_output_register(7, &ops, &f) == 0);
+	CHECK(sun60i_a733_output_get_mode(7, &f, &mode) == 0);
+	CHECK(sun60i_a733_output_prepare(7, &f, &mode) == 0);
+	CHECK(sun60i_a733_output_start(7, &f) == 0);
+	/* Without the optional operation the output stays polled. */
+	CHECK(sun60i_a733_output_set_vblank_handler(7, &f, consumer_vblank,
+	    &cookie) == EOPNOTSUPP);
+	provider_reset();
+	ops.set_vblank_handler = provider_set_vblank;
+	handler_calls = 0;
+	handler_error = 0;
+	handler_fn = NULL;
+	handler_arg = NULL;
+	CHECK(sun60i_a733_output_register(7, &ops, &f) == 0);
+	CHECK(sun60i_a733_output_get_mode(7, &f, &mode) == 0);
+	CHECK(sun60i_a733_output_prepare(7, &f, &mode) == 0);
+	/* A handler is accepted only after a started output. */
+	CHECK(sun60i_a733_output_set_vblank_handler(7, &f, consumer_vblank,
+	    &cookie) == EINVAL);
+	CHECK(sun60i_a733_output_start(7, &f) == 0);
+	CHECK(sun60i_a733_output_set_vblank_handler(7, &f, consumer_vblank,
+	    NULL) == EINVAL);
+	CHECK(sun60i_a733_output_set_vblank_handler(8, &f, consumer_vblank,
+	    &cookie) == ENXIO);
+	CHECK(sun60i_a733_output_set_vblank_handler(7, &other, consumer_vblank,
+	    &cookie) == EBUSY);
+	CHECK(handler_calls == 0);
+	CHECK(sun60i_a733_output_set_vblank_handler(7, &f, consumer_vblank,
+	    &cookie) == 0);
+	CHECK(handler_calls == 1 && handler_fn == consumer_vblank &&
+	    handler_arg == &cookie);
+	CHECK(sun60i_a733_output_set_vblank_handler(7, &f, NULL, NULL) == 0);
+	CHECK(handler_calls == 2 && handler_fn == NULL && handler_arg == NULL);
+	handler_error = EOPNOTSUPP;
+	CHECK(sun60i_a733_output_set_vblank_handler(7, &f, consumer_vblank,
+	    &cookie) == EOPNOTSUPP);
+	CHECK(handler_fn == NULL && output_error == 0);
+	handler_error = 0;
+	CHECK(sun60i_a733_output_fault(7, &f, EIO) == 0);
+	CHECK(sun60i_a733_output_set_vblank_handler(7, &f, consumer_vblank,
+	    &cookie) == EIO);
+	CHECK(handler_calls == 3);
+}
+
 int
 main(void)
 {
@@ -443,6 +525,7 @@ main(void)
 	cached_trace();
 	cached_phy_trace();
 	output_sample();
+	output_vblank_handler();
 	printf("%u A733 output timing/W0C/provider checks passed\n", checks);
 	return 0;
 }

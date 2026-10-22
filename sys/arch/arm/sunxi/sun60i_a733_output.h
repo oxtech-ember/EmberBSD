@@ -63,6 +63,12 @@ struct sun60i_a733_output_sample {
  * A failure is retained. There is no detach or retry after a provider failure.
  */
 struct sun60i_a733_hdmi_phy_trace;
+/*
+ * Vblank interrupt callback. It runs in interrupt context with the provider
+ * spin lock held, once per counted vblank. It must not sleep or call the
+ * dispatch functions. The count starts at zero when the output starts.
+ */
+typedef void (*sun60i_a733_vblank_fn)(void *, uint64_t);
 struct sun60i_a733_output_ops {
 	int (*get_mode)(void *, const void *, struct sun60i_a733_output_mode *);
 	int (*prepare)(void *, const void *, const struct sun60i_a733_output_mode *);
@@ -75,6 +81,13 @@ struct sun60i_a733_output_ops {
 	void (*cached_phy_trace)(const void *, struct sun60i_a733_hdmi_phy_trace *);
 	/* Optional. Register reads only. It must not write or latch a fault. */
 	int (*sample)(void *, const void *, struct sun60i_a733_output_sample *);
+	/*
+	 * Optional. Install or remove (NULL) the vblank callback. EOPNOTSUPP
+	 * means that the output has no vblank interrupt. After return, no call
+	 * to a removed callback is in progress.
+	 */
+	int (*set_vblank_handler)(void *, const void *, sun60i_a733_vblank_fn,
+	    void *);
 };
 int sun60i_a733_output_register(int, const struct sun60i_a733_output_ops *, void *);
 int sun60i_a733_output_get_mode(int, const void *,
@@ -92,5 +105,8 @@ int sun60i_a733_output_cached_phy_trace(int,
 /* Reads only, after prepare. An error does not latch an output fault. */
 int sun60i_a733_output_sample(int, const void *,
     struct sun60i_a733_output_sample *);
+/* After start. EOPNOTSUPP means polled vblank observation only. */
+int sun60i_a733_output_set_vblank_handler(int, const void *,
+    sun60i_a733_vblank_fn, void *);
 
 #endif

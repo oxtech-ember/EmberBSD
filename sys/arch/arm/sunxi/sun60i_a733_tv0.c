@@ -215,3 +215,35 @@ sun60i_a733_tv0_observe(struct sun60i_a733_tv0 *s, uint64_t *sequence)
 	*sequence = ++s->sequence;
 	return 0;
 }
+
+int
+sun60i_a733_tv0_observe_count(struct sun60i_a733_tv0 *s, uint64_t count,
+    uint64_t *sequence)
+{
+	uint32_t value;
+	int error = tv_ready(s);
+
+	if (error != 0)
+		return error;
+	if (!s->started || sequence == NULL)
+		return tv_fail(s, EINVAL);
+	value = tv_read(s, A733_TV0_REGS, 0x90);
+	if (s->fault == 0 && (value & UINT32_C(0x80000000)) == 0)
+		tv_fail(s, EIO);
+	value = tv_read(s, A733_TV0_REGS, 0xfc);
+	if (s->fault == 0 && (value & UINT32_C(0x60000000)) != 0)
+		tv_fail(s, EIO);
+	value = tv_read(s, A733_TV0_REGS, 4);
+	if (s->fault != 0)
+		return s->fault;
+	/* The IRQ owns the W0C flags. Only the enable set is checked here. */
+	if ((value & UINT32_C(0x5f000000)) != UINT32_C(0x40000000))
+		return tv_fail(s, EIO);
+	if (count < s->sequence)
+		return tv_fail(s, EIO);
+	if (count == s->sequence)
+		return ENOENT;
+	s->sequence = count;
+	*sequence = count;
+	return 0;
+}

@@ -43,6 +43,10 @@ struct fdt_attach_args { int faa_phandle; bus_space_tag_t faa_bst; };
 #define DRM_MODE_FLAG_NHSYNC 2
 #define DRM_MODE_FLAG_PVSYNC 4
 #define DRM_MODE_FLAG_NVSYNC 8
+#define MUTEX_DEFAULT 0
+#define IPL_VM 6
+#define FDT_INTR_MPSAFE 1
+typedef struct { int held, ipl, init; } kmutex_t;
 
 static unsigned checks;
 #define CHECK(c) do { checks++; if (!(c)) { \
@@ -181,6 +185,29 @@ static int iic_exec(void *tag,int op,int address,const void *cmd,size_t cmdlen,v
 static const struct videomode fixture_mode = {108000,1280,1328,1440,1688,1024,1025,1028,1066,5,"test"};
 int edid_parse_quiet(uint8_t *data,struct edid_info *out)
 { (void)data;CHECK(out->edid_nmodes==0);if(step(25))return -1;out->edid_modes[0]=fixture_mode;out->edid_modes[0].dot_clock=74250;out->edid_modes[1]=fixture_mode;out->edid_nmodes=2;out->edid_preferred_mode=&out->edid_modes[0];return 0; }
+int sun60i_a733_tv0_observe_count(struct sun60i_a733_tv0 *p,uint64_t count,uint64_t *out)
+{ CHECK(p->started&&tv_started);int e=p->io->ready(p->io->arg,p->owner);if(!e)e=step(27);if(e)return e;if(count<p->sequence)return EIO;if(count==p->sequence)return ENOENT;p->sequence=count;*out=count;return 0; }
+static bool intr_present;
+static unsigned intr_establish, intr_disestablish, irq_reads, irq_writes, cb_calls;
+static int (*intr_fn)(void *);
+static void *intr_arg;
+static uint64_t cb_sequence;
+static int intr_cookie;
+static kmutex_t *cb_lock;
+static void mutex_init(kmutex_t *m,int type,int ipl) { CHECK(type==MUTEX_DEFAULT&&ipl==IPL_VM);m->held=0;m->ipl=ipl;m->init=1; }
+static void mutex_spin_enter(kmutex_t *m) { CHECK(m->init&&m->ipl==IPL_VM&&!m->held);m->held=1; }
+static void mutex_spin_exit(kmutex_t *m) { CHECK(m->held);m->held=0; }
+static const char *device_xname(device_t d) { (void)d;return "sun60ihdmi0"; }
+static void aprint_normal_dev(device_t d,const char *s,...) { (void)d;(void)s; }
+static void *fdtbus_intr_establish_xname(int node,unsigned index,int ipl,int flags,int (*fn)(void *),void *arg,const char *name)
+{ CHECK(node==1&&index==0&&ipl==IPL_VM&&flags==FDT_INTR_MPSAFE&&fn&&arg&&strcmp(name,"sun60ihdmi0")==0);intr_establish++;if(!intr_present)return NULL;intr_fn=fn;intr_arg=arg;return &intr_cookie; }
+static void fdtbus_intr_disestablish(int node,void *ih) { CHECK(node==1&&ih==&intr_cookie);intr_disestablish++; }
+static uint32_t bus_space_read_4(bus_space_tag_t t,bus_space_handle_t h,bus_size_t off)
+{ (void)t;CHECK(h==3&&off==4&&ccu_tv0);irq_reads++;return tvregs[1]; }
+static void bus_space_write_4(bus_space_tag_t t,bus_space_handle_t h,bus_size_t off,uint32_t v)
+{ (void)t;CHECK(h==3&&off==4&&ccu_tv0);irq_writes++;tvregs[1]=(v&UINT32_C(0x5f000000))|(tvregs[1]&v&UINT32_C(0x5f00)); }
+static void consumer(void *arg,uint64_t sequence)
+{ CHECK(arg==&cb_sequence&&cb_lock!=NULL&&cb_lock->held);cb_calls++;cb_sequence=sequence; }
 int sun60i_a733_output_register(int node,const struct sun60i_a733_output_ops *ops,void *arg)
 { CHECK(node==1&&ops&&arg);int e=step(26);if(!e)registered=true;return e; }
 #include "sun60i_a733_hdmi_fdt.c"
@@ -192,6 +219,7 @@ static void fixture(void)
  calls=fail=reads=writes=maps=unmaps=clock_puts=faults=releases=0;
  map_failure=wrong_node=bad_range=missing_property=reject_syscfg=syscfg_writes=bad_name=events=0;
  retained=true;ccu_hdmi=ccu_tv0=dw_started=tv_started=registered=dcxo_drift=hpd_loss=false;
+ intr_present=false;intr_establish=intr_disestablish=irq_reads=irq_writes=cb_calls=0;intr_fn=NULL;intr_arg=NULL;cb_sequence=0;
  rail_voltage[0]=800000;rail_voltage[1]=1800000;rail_enabled[0]=rail_enabled[1]=1;
  syscfg.locked=0;sysreg[0]=0xa5a505a5;sysreg[1]=0xa5a5a5a5;sfr_hz=24000000;
  power_cells[0]=__builtin_bswap32(2);power_cells[1]=__builtin_bswap32(10);
@@ -343,6 +371,94 @@ prepare_trace_checks(void)
 	CHECK(sc.trace.read_space == A733_OUTPUT_IO_TOP32);
 }
 
+static void
+irq_checks(void)
+{
+	struct sun60i_a733_output_mode mode;
+	uint64_t sequence = 0;
+
+	/* Without an interrupt property the provider stays polled. */
+	fixture(); attach();
+	CHECK(registered && intr_establish == 1 && sc.ih == NULL);
+	CHECK(native_set_vblank_handler(&sc, &owner_cookie, consumer,
+	    &cb_sequence) == EBUSY);
+	CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
+	CHECK(native_set_vblank_handler(&sc, &owner_cookie, consumer,
+	    &cb_sequence) == EOPNOTSUPP);
+	/* The handler does no MMIO before the started output proved clocks. */
+	fixture(); intr_present = true; attach();
+	CHECK(registered && sc.ih == &intr_cookie && intr_arg == &sc);
+	CHECK(intr_fn(&sc) == 0 && irq_reads == 0 && irq_writes == 0);
+	CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
+	CHECK(native_prepare(&sc, &owner_cookie, &mode) == 0);
+	CHECK(intr_fn(&sc) == 0 && irq_reads == 0);
+	CHECK(native_start(&sc, &owner_cookie) == 0);
+	CHECK(sc.irq_hw && sc.irq_armed && sc.irq_sequence == 0);
+	CHECK(native_observe(&sc, &owner_cookie, &sequence) == ENOENT);
+	CHECK(native_set_vblank_handler(&sc, &cb_sequence, consumer,
+	    &cb_sequence) == EBUSY);
+	cb_lock = &sc.intr_lock;
+	CHECK(native_set_vblank_handler(&sc, &owner_cookie, consumer,
+	    &cb_sequence) == 0);
+	/* Enabled and pending: acknowledge, count and call back once. */
+	for (unsigned i = 1; i <= 3; i++) {
+		tvregs[1] = UINT32_C(0x40004100);
+		CHECK(intr_fn(&sc) == 1 && !sc.intr_lock.held);
+		CHECK(sc.irq_sequence == i && cb_calls == i && cb_sequence == i);
+		CHECK(tvregs[1] == UINT32_C(0x40000100));
+	}
+	CHECK(native_observe(&sc, &owner_cookie, &sequence) == 0 && sequence == 3);
+	CHECK(native_observe(&sc, &owner_cookie, &sequence) == ENOENT);
+	/* No pending flag, or no enable: not this source. */
+	tvregs[1] = UINT32_C(0x40000000);
+	CHECK(intr_fn(&sc) == 0 && sc.irq_sequence == 3);
+	tvregs[1] = UINT32_C(0x00004000);
+	CHECK(intr_fn(&sc) == 0 && sc.irq_sequence == 3);
+	/* A removed callback is not called. */
+	CHECK(native_set_vblank_handler(&sc, &owner_cookie, NULL, NULL) == 0);
+	CHECK(sc.vblank_fn == NULL && sc.vblank_arg == NULL);
+	tvregs[1] = UINT32_C(0x40004000);
+	CHECK(intr_fn(&sc) == 1 && sc.irq_sequence == 4 && cb_calls == 3);
+	CHECK(native_observe(&sc, &owner_cookie, &sequence) == 0 && sequence == 4);
+	/* A fault disarms. A later source is masked, not counted. */
+	CHECK(native_set_vblank_handler(&sc, &owner_cookie, consumer,
+	    &cb_sequence) == 0);
+	native_fault(&sc, &owner_cookie, EIO);
+	CHECK(sc.fault == EIO && !sc.irq_armed && !sc.intr_lock.held);
+	tvregs[1] = UINT32_C(0x40004000);
+	CHECK(intr_fn(&sc) == 1 && sc.irq_sequence == 4 && cb_calls == 3);
+	CHECK((tvregs[1] & UINT32_C(0x40004000)) == 0);
+	CHECK(intr_fn(&sc) == 0);
+	CHECK(native_set_vblank_handler(&sc, &owner_cookie, consumer,
+	    &cb_sequence) == EIO);
+	/* A counter at its limit masks the source and stops counting. */
+	fixture(); intr_present = true; attach();
+	CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
+	CHECK(native_prepare(&sc, &owner_cookie, &mode) == 0);
+	CHECK(native_start(&sc, &owner_cookie) == 0);
+	sc.irq_sequence = UINT64_MAX;
+	tvregs[1] = UINT32_C(0x40004000);
+	CHECK(intr_fn(&sc) == 1 && !sc.irq_armed && sc.irq_sequence == UINT64_MAX);
+	CHECK((tvregs[1] & UINT32_C(0x40004000)) == 0);
+	/* A failed start disarms. */
+	fixture(); intr_present = true; attach();
+	CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
+	CHECK(native_prepare(&sc, &owner_cookie, &mode) == 0);
+	calls = events = 0; fail = 4;
+	CHECK(native_start(&sc, &owner_cookie) != 0 && !sc.irq_armed);
+	/* A registration failure removes the interrupt. */
+	fixture(); intr_present = true; fail = 26 + 0; calls = 0;
+	{
+		unsigned n;
+		for (n = 1; n < 64; n++) {
+			fixture(); intr_present = true; fail = n; attach();
+			if (!registered && intr_establish == 1)
+				break;
+		}
+		CHECK(n < 64 && intr_disestablish == 1 && sc.ih == NULL);
+	}
+}
+
 int main(void)
 {
  struct sun60i_a733_output_mode mode, saved;
@@ -393,6 +509,7 @@ int main(void)
  fixture();attach();CHECK(native_get_mode(&sc,&owner_cookie,&mode)==0);old_reads=reads;old_writes=writes;CHECK(native_phy_write(&sc,A733_HDMI_CORE8,0x8000,0)==ERANGE&&reads==old_reads&&writes==old_writes);
  adapter_access_checks();
  prepare_trace_checks();
+ irq_checks();
  printf("A733 native HDMI adapter: %u checks passed (%u fallible calls)\n",checks,count);
  return 0;
 }
