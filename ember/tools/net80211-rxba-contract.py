@@ -67,9 +67,11 @@ def extract(path,name,result):
 parts=[]
 for name,result in [('ieee80211_ht20_write','void'),('ieee80211_ht20_offer','void')]:
  parts.append(extract('sys/net80211/ieee80211_ht20.c',name,result))
-for name,result in [('ieee80211_send_setup','static void'),('ieee80211_wme_request_offer','static int'),('ieee80211_ht20_request_offer','static int'),('ieee80211_mgmt_output','static int'),('ieee80211_send_rxba_response','int')]:
+parts.append(re.search(r'^#define\s+IEEE80211_KEY_UNDEFINED\([^)]*\)\s+.*$',(src/'sys/net80211/ieee80211_crypto.h').read_text(),re.M).group())
+for name,result in [('ieee80211_crypto_getucastkey','struct ieee80211_key *'),('ieee80211_send_setup','static void'),('ieee80211_wme_request_offer','static int'),('ieee80211_ht20_request_offer','static int'),('ieee80211_mgmt_output','static int'),('ieee80211_send_rxba_response','int')]:
  parts.append(extract('sys/net80211/ieee80211_output.c',name,result))
 (out/'native-rxba-output.inc').write_text('\n'.join(parts))
+(out/'native-rxba-crypto-encap.inc').write_text(extract('sys/net80211/ieee80211_crypto.c','ieee80211_crypto_encap','struct ieee80211_key *'))
 # Complete data/CCMP/decapsulation/Ethernet consumers, with common kernel services.
 s=(out/'rxba-test-kernel.h').read_text()
 s=s.replace('int if_timer;', 'int if_timer,if_flags;\n void *if_percpuq;\n unsigned if_ipackets,if_ierrors,if_oerrors,if_obytes;\n struct { int unused; } if_snd;')
@@ -157,7 +159,7 @@ for name in ['ieee80211_ht20_write','ieee80211_ht20_offer']:
  if n!=1:raise ValueError('duplicate '+name)
 (out/'native-rxba-output.inc').write_text(s)
 with (out/'rxba-stack-constants.inc').open('a') as f:
- for filename,names in [('ieee80211_var.h',['IEEE80211_F_WME','IEEE80211_C_WME']),('ieee80211_node.h',['IEEE80211_NODE_QOS','IEEE80211_NODE_WME_VALID'])]:
+ for filename,names in [('ieee80211_var.h',['IEEE80211_F_WME','IEEE80211_C_WME','IEEE80211_F_USEPROT']),('ieee80211_node.h',['IEEE80211_NODE_QOS','IEEE80211_NODE_WME_VALID'])]:
   txt=(src/'sys/net80211'/filename).read_text()
   for name in names:f.write(re.search(r'^#define\s+'+name+r'\s+.*$',txt,re.M).group()+'\n')
 s=(out/'rxba-test-kernel.h').read_text()

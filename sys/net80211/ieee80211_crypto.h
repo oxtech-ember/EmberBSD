@@ -178,6 +178,12 @@ void	ieee80211_crypto_register(const struct ieee80211_cipher *);
 void	ieee80211_crypto_unregister(const struct ieee80211_cipher *);
 int	ieee80211_crypto_available(u_int cipher);
 
+/*
+ * Caller serializes key updates and keeps the default key index valid.
+ * This selector does not allocate, run crypto, or change PN.
+ */
+struct ieee80211_key *ieee80211_crypto_getucastkey(struct ieee80211com *,
+		struct ieee80211_node *);
 struct ieee80211_key *ieee80211_crypto_encap(struct ieee80211com *,
 		struct ieee80211_node *, struct mbuf *);
 struct ieee80211_key *ieee80211_crypto_decap(struct ieee80211com *,

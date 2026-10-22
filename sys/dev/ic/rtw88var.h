@@ -79,6 +79,17 @@ struct rtw88_txq {
 
 #define RTW88_RA_LEGACY 0
 #define RTW88_RA_HT20_1SS 1
+#define RTW88_HT20_PROT_MF20_NO_RTS 1
+#define RTW88_HT20_MTU_MIN 32U
+#define RTW88_HT20_MTU_MAX 1500U
+#define RTW88_HT20_TX_OVERHEAD 50U /* QoS26 + LLC8 + software CCMP16. */
+#define RTW88_HT20_FCS_SIZE 4U
+#define RTW88_HT20_THRESHOLD_MAX 2346U
+/* Numeric protection and frame limits; no retained stack/peer pointer. */
+struct rtw88_ht20_policy {
+	uint16_t peer_cap, mtu, max_mpdu, rts_threshold;
+	uint8_t secondary, qualification;
+};
 /* Numeric rate policy; no retained stack/peer pointer. */
 struct rtw88_ra_config {
 	uint64_t epoch;
@@ -87,6 +98,7 @@ struct rtw88_ra_config {
 	uint8_t phy;
 	uint16_t ht_mcs, ht_operation;
 	uint32_t profile_generation;
+	struct rtw88_ht20_policy ht;
 };
 struct rtw88_ra_state {
 	uint64_t epoch;
@@ -95,6 +107,7 @@ struct rtw88_ra_state {
 	uint8_t rate_id, phy;
 	uint16_t ht_mcs, ht_operation;
 	uint32_t profile_generation;
+	struct rtw88_ht20_policy ht;
 	int configured, active, protection_limited, error;
 };
 

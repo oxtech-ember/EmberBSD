@@ -16,7 +16,7 @@ const struct ieee80211_channel ieee80211_channel_anyc={0,0};
 #define IFF_UP 1
 #define IFF_RUNNING 2
 #define IFF_OACTIVE 4
-struct ifnet { void *if_softc; int if_flags, if_timer; };
+struct ifnet { void *if_softc; int if_flags, if_timer; unsigned if_mtu; };
 typedef int (*ifm_change_cb_t)(struct ifnet *);
 typedef void (*ifm_stat_cb_t)(struct ifnet *, void *);
 struct ifmedia_entry { unsigned ifm_media; };
@@ -57,6 +57,7 @@ struct ieee80211com {
 	struct ieee80211_wme_state ic_wme;
 	struct ifmedia ic_media;
 	unsigned ic_caps, ic_flags, ic_flags_ext, ic_opmode, ic_modecaps;
+	unsigned ic_rtsthreshold, ic_fragthreshold;
 	unsigned ic_nonerpsta,ic_longslotsta,ic_mgt_timer;
 	void (*ic_updateslot)(struct ifnet *);
 	unsigned ic_roaming;

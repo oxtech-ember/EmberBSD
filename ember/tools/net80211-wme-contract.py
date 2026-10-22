@@ -53,6 +53,9 @@ for path, pattern in (("sys/net80211/ieee80211_var.h", r"IEEE80211_[FC]_[A-Z0-9_
     for line in read(path).splitlines():
         if re.match(r"#define\s+" + pattern + r"\s+0x[0-9a-fA-F]+", line):
             parts.append(line.split("/*", 1)[0])
+crypto_header = read("sys/net80211/ieee80211_crypto.h")
+for name in ("IEEE80211_KEY_UNDEFINED", "IEEE80211_KEY_SWCRYPT", "IEEE80211_CIPHER_NONE"):
+    parts.append(re.search(r"^#define\s+" + name + r"(?:\([^)]*\))?\s+.*$", crypto_header, re.M).group())
 (out / "native-wme-types.inc").write_text("\n".join(parts))
 
 ht = read("sys/net80211/ieee80211_ht20.c")
@@ -87,7 +90,8 @@ for name, result in (("ieee80211_decode_wmeparams", "static int"), ("ieee80211_p
     if "\n" + name + "(" not in read(ipt):
         continue
     parts.append(function(ipt, name, result))
-for name, result in (("ieee80211_send_setup", "static void"),
+for name, result in (("ieee80211_crypto_getucastkey", "struct ieee80211_key *"),
+                     ("ieee80211_send_setup", "static void"),
                      ("ieee80211_mgmt_output", "static int"),
                      ("ieee80211_add_ssid", "static uint8_t *"),
                      ("ieee80211_add_rates", "static uint8_t *"),

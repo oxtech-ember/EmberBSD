@@ -19,18 +19,19 @@ fixture, replaced = re.subn(r'^struct ifnet \{.*?^\};\nstruct queue \{.*?^\};', 
 };
 struct ifnet {
     int if_timer, if_flags;
+    unsigned if_mtu;
     void *if_softc;
     struct queue if_snd;
 };""", fixture, count=1, flags=re.M|re.S)
 if replaced != 1:
     raise ValueError('shared queue model changed')
-fixture = fixture.replace('#define ieee80211_crypto_getucastkey(...) NULL', 'static struct ieee80211_key route_key;\nstatic int route_have_key;\n#define ieee80211_crypto_getucastkey(...) (route_have_key ? &route_key : NULL)')
+fixture = fixture.replace('#define ieee80211_crypto_getmcastkey(...) NULL', '#define ieee80211_crypto_getmcastkey(...) NULL\nstatic struct ieee80211_key route_key;\nstatic int route_have_key;')
 fixture = fixture.replace('unsigned ni_fails;', 'unsigned ni_fails;\nint ni_txrate;')
 fixture = fixture.replace('struct queue ic_mgtq;', 'struct queue ic_mgtq;\nvoid *ic_rawbpf;')
 (out/'routing-model.inc').write_text(fixture)
 net = (src/'sys/dev/ic/rtw88_net.c').read_text()
 parts = [net[:net.index('#include')]]
-for m in re.finditer(r'^static (?:int|unsigned|void|struct mbuf \*)\n(rtw88_net_(?:tx_[a-z_]+|start|newstate|softintr))\(.*?^}', net, re.M|re.S):
+for m in re.finditer(r'^static (?:int|unsigned|void|struct mbuf \*)\n(rtw88_net_(?:tx_[a-z0-9_]+|start|newstate|softintr))\(.*?^}', net, re.M|re.S):
     parts.append(m.group())
 if 'rtw88_net_tx_dequeue_same(' in net:
     parts.insert(0, '#define ROUTING_NATIVE_QUEUE_HELPERS 1\n')
@@ -75,7 +76,6 @@ fixture=fixture.replace(old_pop,'\tIF_DEQUEUE(&active_ic->ic_mgtq, captured);')
 
 fixture=fixture.replace('int m_len, m_flags, ac;', 'int m_len, m_flags, ac, m_type;')
 fixture=fixture.replace('int len;\n\t\tstruct ieee80211_node *ctx;', 'int len;\n        unsigned rcvif_index;\n        struct { void *slh_first; } tags;\n\t\tstruct ieee80211_node *ctx;')
-fixture=fixture.replace('struct cipher *wk_cipher;', 'struct cipher *wk_cipher;\n    unsigned wk_flags;')
 (out/'routing-model.inc').write_text(fixture)
 def body(path,name,result):
     text=(src/path).read_text()

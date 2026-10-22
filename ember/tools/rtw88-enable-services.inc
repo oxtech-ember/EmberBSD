@@ -90,7 +90,14 @@ static void bpf_attach2(struct ifnet *p,int type,size_t size,void **bp)
 #ifdef __NetBSD__
 static void ieee80211_init(void) {}
 #endif
-#define ieee80211_crypto_attach(ic) ((void)(ic))
+/* Key-table initialization service only. Full crypto attach/callback and
+ * key/PN lifetime behavior is exercised by the RXBA/crypto contract. */
+static void ieee80211_crypto_attach(struct ieee80211com *ic)
+{
+    ic->ic_def_txkey=IEEE80211_KEYIX_NONE;
+    for(unsigned i=0;i<4;i++)
+        ic->ic_nw_keys[i]=(struct ieee80211_key){.wk_cipher=&ieee80211_cipher_none};
+}
 #define ieee80211_add_vap(ic) ((void)(ic))
 #define ieee80211_sysctl_attach(ic) ((void)(ic))
 #define ieee80211_init_link_state(ic) ((void)(ic))

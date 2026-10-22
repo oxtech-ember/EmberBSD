@@ -19,7 +19,7 @@ static int rtw88_net_tx_submit(struct rtw88_net *net,
 # Constants come from the owning stack headers, not repeated numeric guesses.
 parts=[re.search(r'enum ieee80211_state \{.*?\};',(src/'sys/net80211/ieee80211_proto.h').read_text(),re.S).group()]
 for header,pattern in [('ieee80211.h',r'IEEE80211_RATE_(BASIC|VAL)'),
- ('ieee80211_var.h',r'IEEE80211_(FIXED_RATE_NONE|F_USEPROT)'),
+ ('ieee80211_var.h',r'IEEE80211_(FIXED_RATE_NONE|F_(USEPROT|DATAPAD))'),
  ('ieee80211_proto.h',r'IEEE80211_R_DO(SORT|FRATE|NEGO|DEL)')]:
  for line in (src/'sys/net80211'/header).read_text().splitlines():
   if re.match(r'^#define\s+'+pattern+r'\s',line):parts.append(line)

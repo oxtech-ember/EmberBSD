@@ -11,7 +11,10 @@
 #include <net80211/ieee80211_ht20.h>
 #include <sys/types.h>
 struct ieee80211_node;
+struct ifnet { unsigned if_mtu; };
 struct ieee80211com {
+	struct ifnet *ic_ifp;
+	unsigned ic_rtsthreshold, ic_fragthreshold;
 	int ic_fixed_rate, ic_state;
 	unsigned ic_flags;
 	enum ieee80211_opmode ic_opmode;
@@ -52,6 +55,7 @@ ieee80211_chan2mode(struct ieee80211com *ic, struct ieee80211_channel *ch)
 static const uint8_t legacy[]
     = { 2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108 };
 static struct rtw88_net net;
+static struct ifnet fixed_ifp;
 static struct ieee80211_node node;
 static struct ieee80211_channel channel;
 static uint8_t frame[26];
@@ -64,6 +68,9 @@ setup_fixed(struct rtw88_softc *sc)
 	net.policy.accepting = 1;
 	net.core = sc;
 	net.ic.ic_bss = &node;
+	fixed_ifp.if_mtu = 1500;
+	net.ic.ic_ifp = &fixed_ifp;
+	net.ic.ic_rtsthreshold = net.ic.ic_fragthreshold = 2346;
 	node.ni_ic = &net.ic;
 	net.ic.ic_opmode = IEEE80211_M_STA;
 	net.ic.ic_state = IEEE80211_S_RUN;

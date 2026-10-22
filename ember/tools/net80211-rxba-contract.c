@@ -88,6 +88,7 @@ static void if_start_lock(struct ifnet *ifp)
  ieee80211_free_node(m->m_pkthdr.ctx);m->m_pkthdr.ctx=NULL;m_freem(m);
 }
 #include "native-rxba-output.inc"
+#include "native-rxba-crypto-encap.inc"
 #include <arpa/inet.h>
 #include "ieee80211_amsdu.h"
 #define IEEE80211_NO_HOSTAP 1
@@ -438,6 +439,42 @@ static void test_beacon_contract_purge(void)
    CHECK(rxba_output_count==2 && ctx->cc_rxrsc[0]==11);
   }
   unit_close(&f);
+ }
+}
+
+/* The native enable fixture owns Ethernet -> actual encap -> plaintext-size
+ * admission. Its cipher service is modeled. Here the corresponding three-
+ * address QoS/LLC payload executes actual generic header insertion and CCMP.
+ * This is a compositional byte-budget proof, not a full driver crypto export. */
+static void test_ht20_real_ccmp_budget(void)
+{
+ const unsigned mtus[]={32,1499,1500};
+ for(unsigned which=0;which<2;which++)for(unsigned i=0;i<sizeof(mtus)/sizeof(mtus[0]);i++) {
+  struct unit_fixture f;if(!unit_setup_mode(&f,10,64,0,0))return;
+  init_key(&f.ic,&f.ic.ic_nw_keys[0],0,0x47);f.ic.ic_def_txkey=0;
+  const struct ieee80211_cipher *cipher=f.ni.ni_ucastkey.wk_cipher;
+  if(which)f.ni.ni_ucastkey.wk_cipher=&ieee80211_cipher_none;
+  struct ieee80211_key *key=which?&f.ic.ic_nw_keys[0]:&f.ni.ni_ucastkey;
+  uint64_t node_pn=f.ni.ni_ucastkey.wk_keytsc,default_pn=f.ic.ic_nw_keys[0].wk_keytsc;
+  CHECK(ieee80211_crypto_getucastkey(&f.ic,&f.ni)==key);
+  CHECK(f.ni.ni_ucastkey.wk_keytsc==node_pn && f.ic.ic_nw_keys[0].wk_keytsc==default_pn);
+  unsigned mtu=mtus[i];uint8_t *p;
+  struct mbuf *m=unit_mgtframe(&p,(int)(26+8+mtu));assert(m);
+  p[0]=0x88;p[1]=0x41;
+  memcpy(p+4,f.ni.ni_bssid,6);memcpy(p+10,f.ic.ic_myaddr,6);p[16]=2;
+  p[26]=p[27]=0xaa;p[28]=3;p[32]=8;
+  for(unsigned j=0;j<mtu;j++)p[34+j]=(uint8_t)(j^0x5a);
+  uint64_t pn=key->wk_keytsc;
+  CHECK(ieee80211_crypto_encap(&f.ic,&f.ni,m)==key);
+  CHECK(m->m_pkthdr.len==(int)(mtu+50) && m->m_len==m->m_pkthdr.len);
+  CHECK((unsigned)m->m_pkthdr.len+4==mtu+54 && key->wk_keytsc==pn+1);
+  if(which)CHECK(f.ni.ni_ucastkey.wk_keytsc==node_pn);
+  else CHECK(f.ic.ic_nw_keys[0].wk_keytsc==default_pn);
+  CHECK(ccmp_decap(key,m,26)==1);
+  CHECK(m->m_pkthdr.len==(int)(mtu+34));
+  for(unsigned j=0;j<mtu;j++)CHECK(m->m_data[34+j]==(uint8_t)(j^0x5a));
+  m_freem(m);f.ni.ni_ucastkey.wk_cipher=cipher;
+  ccmp_detach(&f.ic.ic_nw_keys[0]);unit_close(&f);
  }
 }
 
@@ -794,7 +831,7 @@ static void test_negotiated_amsdu_crypto_order(void)
 #endif
 int RXBA_SHARED_MAIN(void)
 {
- test_absolute_deadline();test_window_and_wrap();test_key_and_mic_order();test_candidate_preflight();test_actual_key_lifecycle();test_actual_node_reuse();test_beacon_contract_purge();test_actual_bar_and_delba();test_clock_serial_quarantine();test_owned_storage_budget();test_null_crypto_order();test_owned_admission_withdrawal();test_actual_allocation_failures();test_repeat_replace_and_tid_deadlines();test_invalid_queued_frames();test_negotiated_amsdu_crypto_order();test_storage_walk_bounds();test_amsdu_current_without_ba();
+ test_absolute_deadline();test_window_and_wrap();test_key_and_mic_order();test_candidate_preflight();test_actual_key_lifecycle();test_actual_node_reuse();test_beacon_contract_purge();test_ht20_real_ccmp_budget();test_actual_bar_and_delba();test_clock_serial_quarantine();test_owned_storage_budget();test_null_crypto_order();test_owned_admission_withdrawal();test_actual_allocation_failures();test_repeat_replace_and_tid_deadlines();test_invalid_queued_frames();test_negotiated_amsdu_crypto_order();test_storage_walk_bounds();test_amsdu_current_without_ba();
  printf("RX BA actual primitive/CCMP units: %u checks, %u failures\n",checks,failures);
  return failures!=0;
 }

@@ -608,7 +608,7 @@ ieee80211_mbuf_adjust(struct ieee80211com *ic, int hdrsize,
  * If a unicast key is set we use that.  When no unicast key is set
  * we fall back to the default transmit key.
  */ 
-static __inline struct ieee80211_key *
+struct ieee80211_key *
 ieee80211_crypto_getucastkey(struct ieee80211com *ic, struct ieee80211_node *ni)
 {
 	if (IEEE80211_KEY_UNDEFINED(ni->ni_ucastkey)) {

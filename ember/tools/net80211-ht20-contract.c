@@ -480,6 +480,48 @@ test_current_peer_beacons(void)
 }
 
 static void
+test_protection_qualification(void)
+{
+ for(unsigned kind=0;kind<21;kind++) {
+  ht_setup();CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ)==0);release_capture();
+  struct mbuf *m=ht_response();uint8_t *cap=m->m_data+m->m_len-52,*op=cap+28;
+  op[3]=5;op[4]=6;
+  switch(kind) {
+  case 1: op[3]=0;op[4]=0;break;
+  case 2: op[3]=7;break;
+  case 3: op[4]=1;break;
+  case 4: op[4]=2;break;
+  case 5: op[4]=3;break;
+  case 6: op[4]=4;break;
+  case 7: op[4]=7;break;
+  case 8: cap[2]|=0x10;break;
+  case 9: cap[2]&=~0x0c;break;
+  case 10: cap[2]=(cap[2]&~0x0c)|4;break;
+  case 11: op[3]|=8;break;
+  case 12: op[3]|=0x10;break;
+  case 13: op[3]=2;break;
+  case 14: op[3]=4;break;
+  case 15: op[6]=1;break;
+  case 16: op[7]=0x80;break;
+  case 17: op[5]=1;break;
+  }
+  deliver(m,IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+  CHECK(test_node.ni_ht20.valid);
+  if(kind==18)admitted.generation++;
+  if(kind==19)test_ic.ic_ht20_admit=NULL;
+  if(kind==20)test_ic.ic_flags|=IEEE80211_F_USEPROT;
+  struct ieee80211_ht20_protection result;
+  memset(&result,0xff,sizeof(result));
+  int error=ieee80211_ht20_tx_protection(&test_ic,&test_node,&result);
+  if(kind<3) {
+   CHECK(error==0 && result.qualification==IEEE80211_HT20_PROT_MF20_NO_RTS);
+   CHECK(result.generation==admitted.generation && result.peer_cap==0x0c);
+   CHECK(result.operation==(kind==1?0:6) && result.secondary==(kind==1?0:kind==2?7:5));
+  } else CHECK(error!=0 && result.qualification==0 && result.generation==0);
+ }
+}
+
+static void
 test_golden_and_reassociation(void)
 {
 	const uint8_t golden[28]={45,26,12,0,16,255,255,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0};
@@ -585,6 +627,7 @@ main(void)
 	test_direct_run_failure_ownership();
 	test_delayed_worker_profile();
 	test_current_peer_beacons();
+	test_protection_qualification();
 	test_golden_and_reassociation();
 	test_probe_and_optional_compatibility();
 	test_profile_numeric_bounds();

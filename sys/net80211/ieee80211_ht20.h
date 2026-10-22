@@ -32,6 +32,16 @@ struct ieee80211_ht20_node {
 	uint16_t tx_mcs, peer_rx_mcs, basic_mcs, peer_cap, operation;
 	uint8_t peer_htcap[26], peer_htop[22];
 };
+/* A source-qualified primary20/mixed-format, single-MPDU protection result.
+ * This is not a radio/PPDU or hardware BlockAck attestation. */
+#define IEEE80211_HT20_PROT_MF20_NO_RTS 1
+struct ieee80211_ht20_protection {
+	uint32_t generation;
+	uint16_t operation, peer_cap;
+	uint8_t secondary, qualification;
+};
+int ieee80211_ht20_tx_protection(struct ieee80211com *, struct ieee80211_node *,
+    struct ieee80211_ht20_protection *);
 int ieee80211_ht20_check_ies(const uint8_t *, size_t);
 int ieee80211_ht20_optional(const void *, size_t);
 int ieee80211_ht20_prepare(struct ieee80211com *, struct ieee80211_node *,

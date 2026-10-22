@@ -235,6 +235,43 @@ bad:
 }
 
 /*
+ * Primary20 mixed-format does not need RTS solely for operation2/non-GF.
+ * Keep a narrower envelope than the wire standard: no greenfield/SMPS,
+ * RIFS/PSMP/PCO/STBC/dual protection or other operation selectors. The native
+ * consumer must also qualify frame length, threshold and TX aggregation.
+ */
+int
+ieee80211_ht20_tx_protection(struct ieee80211com *ic, struct ieee80211_node *ni,
+    struct ieee80211_ht20_protection *result)
+{
+	const struct ieee80211_ht20_node *h;
+	const uint8_t *op;
+	uint16_t cap, operation;
+
+	memset(result, 0, sizeof(*result));
+	if (ni == NULL || !ni->ni_ht20.valid ||
+	    !ht20_current(ic, ni, &ni->ni_ht20))
+		return EINVAL;
+	h = &ni->ni_ht20;
+	op = h->peer_htop;
+	cap = (uint16_t)h->peer_htcap[0] | (uint16_t)h->peer_htcap[1] << 8;
+	operation = (uint16_t)op[2] | (uint16_t)op[3] << 8;
+	if (cap != h->peer_cap || operation != h->operation ||
+	    (cap & 0x1c) != 0x0c || (operation != 0 && operation != 6) ||
+	    (op[1] != 0 && op[1] != 5 && op[1] != 7) ||
+	    op[4] != 0 || op[5] != 0 ||
+	    op[0] != ieee80211_chan2ieee(ic, ic->ic_curchan) ||
+	    (ic->ic_flags & IEEE80211_F_USEPROT) != 0)
+		return EOPNOTSUPP;
+	result->generation = h->profile.generation;
+	result->operation = operation;
+	result->peer_cap = cap;
+	result->secondary = op[1];
+	result->qualification = IEEE80211_HT20_PROT_MF20_NO_RTS;
+	return 0;
+}
+
+/*
  * An accepted response fixes the peer HT contract until reassociation. Check
  * matching beacons before the legacy parser can return on a malformed TLV.
  * The caller owns the normal INIT request after this synchronous purge.

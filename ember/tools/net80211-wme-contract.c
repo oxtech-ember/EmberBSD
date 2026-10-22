@@ -66,7 +66,6 @@ struct ieee80211com;
 #define LLC_UI 3
 #define IEEE80211_CIPHER_WEP 0
 #define IEEE80211_CIPHER_AES_CCM 3
-#define IEEE80211_KEY_UNDEFINED(k) 1
 #define IEEE80211_KEYIX_NONE 0xffff
 #define IEEE80211_MSG_ELEMID 0
 #define IEEE80211_MSG_WME 0
@@ -84,7 +83,16 @@ struct ieee80211_channel {
 	uint16_t ic_freq, ic_flags;
 };
 struct test_rsn { uint8_t rsn_ucastcipher; };
+struct cipher {
+	unsigned ic_header, ic_trailer, ic_miclen, ic_cipher;
+};
+struct ieee80211_key {
+	struct cipher *wk_cipher;
+	unsigned wk_flags;
+};
+static struct cipher ieee80211_cipher_none = { .ic_cipher = IEEE80211_CIPHER_NONE };
 struct ieee80211_node {
+	struct ieee80211_key ni_ucastkey;
 	struct ieee80211_ht20_node ni_ht20;
 	struct ieee80211_rxba_state ni_rxba;
 	struct ieee80211com *ni_ic;
@@ -120,6 +128,7 @@ struct mbuf {
 struct ifnet {
 	void *if_softc;
 	int if_timer, if_flags;
+	unsigned if_mtu;
 };
 struct queue {
 	struct mbuf *m;
@@ -130,6 +139,8 @@ struct ieee80211_node_table {
 	unsigned nt_inact_init;
 };
 struct ieee80211com {
+	struct ieee80211_key ic_nw_keys[4];
+	unsigned ic_def_txkey;
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
 	uint64_t ic_rxba_serial;
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
@@ -144,7 +155,7 @@ struct ieee80211com {
 	struct ieee80211_stats ic_stats;
 	struct ieee80211_rateset ic_sup_rates[7];
 	unsigned ic_caps, ic_flags, ic_opmode, ic_state, ic_curmode, ic_phytype;
-	unsigned ic_lintval, ic_mgt_timer, ic_bmisstimeout, ic_fragthreshold;
+	unsigned ic_lintval, ic_mgt_timer, ic_bmisstimeout, ic_fragthreshold, ic_rtsthreshold;
 	unsigned ic_flags_ext, ic_bmiss_count, ic_sta_assoc;
 	uint8_t ic_chan_active[32];
 	struct ieee80211_channel ic_channels[256];
@@ -169,12 +180,6 @@ struct llc {
 		uint16_t ether_type;
 	} __packed llc_snap;
 } __packed;
-struct cipher {
-	unsigned ic_header;
-};
-struct ieee80211_key {
-	struct cipher *wk_cipher;
-};
 #define mtod(m, t) ((t)(m)->m_data)
 #define M_SETCTX(m, n) ((m)->m_pkthdr.ctx = (n))
 #define M_WME_SETAC(m, value) ((m)->ac = (value))
@@ -187,7 +192,6 @@ struct ieee80211_key {
 #define EVL_PRIOFTAG(t) (((t) >> 13) & 7)
 #define vlan_has_tag(m) 1
 #define vlan_get_tag(m) 1
-#define ieee80211_crypto_getucastkey(...) NULL
 #define ieee80211_crypto_getmcastkey(...) NULL
 #define ieee80211_crypto_enmic(...) 1
 #define ieee80211_fragment(...) 1
@@ -512,6 +516,10 @@ setup(void)
 	assert(node_refs == 1);
 	memset(&test_ic, 0, sizeof(test_ic));
 	memset(&test_node, 0, sizeof(test_node));
+	test_node.ni_ucastkey.wk_cipher = &ieee80211_cipher_none;
+	test_ic.ic_def_txkey = IEEE80211_KEYIX_NONE;
+	for (unsigned i = 0; i < 4; i++)
+		test_ic.ic_nw_keys[i].wk_cipher = &ieee80211_cipher_none;
 	test_ic.ic_bss = &test_node;
 	test_ic.ic_curchan = &test_channel;
 	test_ic.ic_ifp = &test_ifp;

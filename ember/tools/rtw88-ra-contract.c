@@ -365,7 +365,9 @@ test_ra_ht20_numeric(void)
 		struct rtw88_softc sc;
 		struct rtw88_ra_config cfg={.epoch=9,.channel=36,.common_rates=0xff0,
 		    .mode=RTW88_FIXED_11A,.phy=RTW88_RA_HT20_1SS,
-		    .ht_mcs=0xff,.profile_generation=777};
+		    .ht_mcs=0xff,.profile_generation=777,
+		    .ht={.peer_cap=0x0c,.mtu=1500,.max_mpdu=1550,.rts_threshold=2346,
+		        .qualification=RTW88_HT20_PROT_MF20_NO_RTS}};
 		if (!start_ok(&sc)) continue;
 		CHECK(rtw88_channel(&sc,36)==0);
 		CHECK(rtw88_station_config(&sc,bssid,1,0x150,9,1)==0);
@@ -432,6 +434,80 @@ test_ra_ht20_numeric(void)
 	}
 }
 
+static void
+test_ra_ht20_protection_bounds(void)
+{
+ const uint8_t bssid[6]={2,0,0,0,0,1};
+ for(unsigned kind=0;kind<26;kind++) {
+  struct rtw88_softc sc;
+  struct rtw88_ra_config cfg={.epoch=9,.channel=36,.common_rates=0xff0,
+   .mode=RTW88_FIXED_11A,.phy=RTW88_RA_HT20_1SS,.ht_mcs=0xff,
+   .ht_operation=6,.profile_generation=777,
+   .ht={.peer_cap=0x0c,.mtu=1500,.max_mpdu=1550,.rts_threshold=2346,
+    .secondary=5,.qualification=RTW88_HT20_PROT_MF20_NO_RTS}};
+  if(!start_ok(&sc))continue;
+  CHECK(rtw88_channel(&sc,36)==0);
+  CHECK(rtw88_station_config(&sc,bssid,1,0x150,9,1)==0);
+  switch(kind) {
+  case 1: cfg.ht_operation=0;cfg.ht.secondary=0;break;
+  case 2: cfg.ht.secondary=7;break;
+  case 3: cfg.ht.mtu=32;cfg.ht.max_mpdu=82;cfg.ht.rts_threshold=86;break;
+  case 4: cfg.ht.rts_threshold=1554;break;
+  case 5: cfg.ht.peer_cap=0x09ef;break;
+  case 6: cfg.ht.qualification=0;break;
+  case 7: cfg.ht.peer_cap|=0x10;break;
+  case 8: cfg.ht.peer_cap&=~0x0c;break;
+  case 9: cfg.ht.peer_cap=(cfg.ht.peer_cap&~0x0c)|4;break;
+  case 10: cfg.ht.peer_cap=(cfg.ht.peer_cap&~0x0c)|8;break;
+  case 11: cfg.ht.secondary=2;break;
+  case 12: cfg.ht.secondary=4;break;
+  case 13: cfg.ht.secondary=1;break;
+  case 14: cfg.ht.mtu=31;break;
+  case 15: cfg.ht.mtu=1501;cfg.ht.max_mpdu=1551;break;
+  case 16: cfg.ht.max_mpdu=1551;break;
+  case 17: cfg.ht.rts_threshold=1553;break;
+  case 18: cfg.ht.rts_threshold=2347;break;
+  case 19: cfg.ht_operation=2;break;
+  case 20: cfg.ht_operation=3;break;
+  case 21: cfg.ht_operation=7;break;
+  case 22: cfg.use_protection=1;break;
+  case 23: cfg.ht.max_mpdu=4049;break;
+  case 24: cfg.ht.qualification=2;break;
+  case 25: cfg.phy=RTW88_RA_LEGACY;break;
+  }
+  unsigned writes=f.writes,box=sc.sc_h2c_box;
+  struct rtw88_ra_state saved=sc.sc_ra;
+  int error=rtw88_ra_configure(&sc,&cfg);
+  if(kind<6) {
+   CHECK(error==0 && sc.sc_ra.active && sc.sc_ra.ht_operation==cfg.ht_operation);
+   CHECK(sc.sc_ra.ht.max_mpdu==cfg.ht.max_mpdu && sc.sc_ra.ht.mtu==cfg.ht.mtu);
+   uint8_t packet[4096]={0};packet[0]=0x88;packet[1]=1;packet[4]=2;packet[16]=2;
+   unsigned wp=sc.sc_txq[RTW88_TXQ_BE].wp;
+   CHECK(rtw88_tx_auto(&sc,RTW88_TXQ_BE,packet,cfg.ht.max_mpdu,9,0)==0);
+   const uint8_t *desc=sc.sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
+   CHECK((desc[9]&0x10)==0 && (desc[13]&0x10)==0 && desc[20]==0 && desc[21]==0);
+   wp=sc.sc_txq[RTW88_TXQ_BE].wp;writes=f.writes;
+   CHECK(rtw88_tx_auto(&sc,RTW88_TXQ_BE,packet,cfg.ht.max_mpdu+1,9,0)==EMSGSIZE);
+   CHECK(sc.sc_txq[RTW88_TXQ_BE].wp==wp && f.writes==writes);
+   for(unsigned form=0;form<6;form++) {
+    packet[1]=1;packet[22]=packet[24]=packet[25]=0;
+    if(form==0)packet[1]|=4;
+    if(form==1)packet[22]=1;
+    if(form==2)packet[24]=0x20;
+    if(form==3)packet[24]=0x80;
+    if(form==4)packet[24]=0x10;
+    if(form==5)packet[25]=1;
+    CHECK(rtw88_tx_auto(&sc,RTW88_TXQ_BE,packet,cfg.ht.max_mpdu,9,0)==EOPNOTSUPP);
+    CHECK(sc.sc_txq[RTW88_TXQ_BE].wp==wp && f.writes==writes);
+   }
+  } else {
+   CHECK(error!=0 && f.writes==writes && sc.sc_h2c_box==box);
+   CHECK(memcmp(&saved,&sc.sc_ra,sizeof(saved))==0);
+  }
+  CHECK(rtw88_stop(&sc)==0);CHECK(rtw88_core_detach(&sc)==0);
+ }
+}
+
 #ifndef RTW88_RA_MAIN
 #define RTW88_RA_MAIN main
 #endif
@@ -441,6 +517,7 @@ RTW88_RA_MAIN(void)
 	if (native_start_main() != 0)
 		return 1;
 	test_ra_ht20_numeric();
+	test_ra_ht20_protection_bounds();
 	test_ra_run_to_first_data();
 	test_ra_c2h_bounds_and_telemetry();
 	test_ra_masks_and_quarantine();

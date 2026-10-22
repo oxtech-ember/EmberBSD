@@ -1407,6 +1407,23 @@ rtw88_ra_invalidate(struct rtw88_softc *sc)
 	sc->sc_ra.configured = 0;
 }
 
+static int
+rtw88_ht20_policy_check(const struct rtw88_ht20_policy *p, unsigned operation)
+{
+
+	if (p->qualification != RTW88_HT20_PROT_MF20_NO_RTS ||
+	    (operation != 0 && operation != 6) ||
+	    (p->peer_cap & 0x1c) != 0x0c ||
+	    (p->secondary != 0 && p->secondary != 5 && p->secondary != 7) ||
+	    p->mtu < RTW88_HT20_MTU_MIN || p->mtu > RTW88_HT20_MTU_MAX ||
+	    p->max_mpdu != p->mtu + RTW88_HT20_TX_OVERHEAD ||
+	    p->max_mpdu > RTW88_TX_BUF_SIZE - RTW8822C_TX_PACKET_DESC_SIZE ||
+	    p->rts_threshold < p->max_mpdu + RTW88_HT20_FCS_SIZE ||
+	    p->rts_threshold > RTW88_HT20_THRESHOLD_MAX)
+		return EOPNOTSUPP;
+	return 0;
+}
+
 int
 rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 {
@@ -1421,12 +1438,16 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 		return EINVAL;
 	if (cfg->phy == RTW88_RA_HT20_1SS) {
 		if (cfg->mode != RTW88_FIXED_11A || cfg->channel <= 14 ||
-		    cfg->use_protection != 0 || cfg->ht_operation != 0 ||
+		    cfg->use_protection != 0 ||
+		    rtw88_ht20_policy_check(&cfg->ht, cfg->ht_operation) != 0 ||
 		    cfg->profile_generation == 0 || cfg->ht_mcs == 0 ||
 		    (cfg->ht_mcs & ~0xffU) != 0)
 			return EOPNOTSUPP;
 	} else if (cfg->phy != RTW88_RA_LEGACY || cfg->ht_mcs != 0 ||
-	    cfg->ht_operation != 0 || cfg->profile_generation != 0) {
+	    cfg->ht_operation != 0 || cfg->profile_generation != 0 ||
+	    cfg->ht.peer_cap != 0 || cfg->ht.mtu != 0 || cfg->ht.max_mpdu != 0 ||
+	    cfg->ht.rts_threshold != 0 || cfg->ht.secondary != 0 ||
+	    cfg->ht.qualification != 0) {
 		return EINVAL;
 	}
 	mask = cfg->common_rates;
@@ -1462,6 +1483,7 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	ra.ht_mcs = cfg->ht_mcs;
 	ra.ht_operation = cfg->ht_operation;
 	ra.profile_generation = cfg->profile_generation;
+	ra.ht = cfg->ht;
 	if (cfg->phy == RTW88_RA_HT20_1SS) {
 		ra.rate_id = 5; /* Pinned RTW_RATEID_GN_N1SS, 5 GHz only. */
 		mask = (unsigned)cfg->ht_mcs << 12 | (mask & 0x30);
@@ -1711,8 +1733,16 @@ rtw88_tx_auto(struct rtw88_softc *sc, unsigned q, const void *frame,
 	    sc->sc_ra.generation != sc->sc_generation ||
 	    sc->sc_ra.channel != sc->sc_channel)
 		return EBUSY;
-	if (sc->sc_ra.phy == RTW88_RA_HT20_1SS && use_protection)
-		return EOPNOTSUPP;
+	if (sc->sc_ra.phy == RTW88_RA_HT20_1SS) {
+		if (use_protection ||
+		    rtw88_ht20_policy_check(&sc->sc_ra.ht, sc->sc_ra.ht_operation) != 0 ||
+		    (bytes[1] & 0x04) != 0 || (bytes[22] & 15) != 0 ||
+		    (bytes[0] == 0x88 &&
+		     (len < 26 || (bytes[24] & 0xf0) != 0 || bytes[25] != 0)))
+			return EOPNOTSUPP;
+		if (len > sc->sc_ra.ht.max_mpdu)
+			return EMSGSIZE;
+	}
 	if (use_protection) {
 		sc->sc_ra.active = 0;
 		sc->sc_ra.protection_limited = 1;

@@ -393,7 +393,48 @@ rtw88_net_edca_prepare(struct ieee80211com *ic, unsigned media,
 	return 0;
 }
 
-/* Giant owns the BSS and rate tables. Publish only numeric policy. */
+/* Giant owns peer/policy fields. The provider never runs under PCI. */
+static int
+rtw88_net_tx_ht20_policy(struct ieee80211com *ic, struct rtw88_ra_config *cfg)
+{
+	struct ieee80211_ht20_protection protection;
+	struct ieee80211_node *ni = ic->ic_bss;
+	unsigned mtu, maximum;
+	int error;
+
+	error = ieee80211_ht20_tx_protection(ic, ni, &protection);
+	if (error != 0)
+		return error;
+	if (ic->ic_ifp == NULL)
+		return EINVAL;
+	mtu = ic->ic_ifp->if_mtu;
+	maximum = mtu + RTW88_HT20_TX_OVERHEAD;
+	if (ic->ic_curmode != IEEE80211_MODE_11A ||
+	    ieee80211_chan2ieee(ic, ic->ic_curchan) <= 14 ||
+	    ic->ic_fixed_rate != IEEE80211_FIXED_RATE_NONE ||
+	    protection.qualification != IEEE80211_HT20_PROT_MF20_NO_RTS ||
+	    ni->ni_ht20.profile.rx_mcs != 0xff ||
+	    ni->ni_ht20.profile.tx_mcs != 0xff || ni->ni_ht20.tx_mcs == 0 ||
+	    (ni->ni_ht20.tx_mcs & ~0xffU) != 0 ||
+	    (ic->ic_flags & IEEE80211_F_DATAPAD) != 0 ||
+	    ic->ic_fragthreshold != RTW88_HT20_THRESHOLD_MAX ||
+	    mtu < RTW88_HT20_MTU_MIN || mtu > RTW88_HT20_MTU_MAX ||
+	    ic->ic_rtsthreshold < maximum + RTW88_HT20_FCS_SIZE ||
+	    ic->ic_rtsthreshold > RTW88_HT20_THRESHOLD_MAX)
+		return EOPNOTSUPP;
+	cfg->phy = RTW88_RA_HT20_1SS;
+	cfg->ht_mcs = ni->ni_ht20.tx_mcs;
+	cfg->ht_operation = protection.operation;
+	cfg->profile_generation = protection.generation;
+	cfg->ht.qualification = RTW88_HT20_PROT_MF20_NO_RTS;
+	cfg->ht.peer_cap = protection.peer_cap;
+	cfg->ht.secondary = protection.secondary;
+	cfg->ht.mtu = mtu;
+	cfg->ht.max_mpdu = maximum;
+	cfg->ht.rts_threshold = ic->ic_rtsthreshold;
+	return 0;
+}
+
 static int
 rtw88_net_ra_prepare(struct ieee80211com *ic, unsigned channel,
     unsigned basic, uint64_t epoch, struct rtw88_ra_config *cfg)
@@ -447,16 +488,7 @@ rtw88_net_ra_prepare(struct ieee80211com *ic, unsigned channel,
 		if (!ni->ni_ht20.valid ||
 		    ieee80211_ht20_state_request(ic, IEEE80211_S_RUN) != 0)
 			return EINVAL;
-		if (cfg->mode != RTW88_FIXED_11A || channel <= 14 ||
-		    cfg->use_protection || ni->ni_ht20.operation != 0 ||
-		    ni->ni_ht20.profile.rx_mcs != 0xff ||
-		    ni->ni_ht20.profile.tx_mcs != 0xff ||
-		    ni->ni_ht20.tx_mcs == 0 || (ni->ni_ht20.tx_mcs & ~0xffU) != 0)
-			return EOPNOTSUPP;
-		cfg->phy = RTW88_RA_HT20_1SS;
-		cfg->ht_mcs = ni->ni_ht20.tx_mcs;
-		cfg->ht_operation = ni->ni_ht20.operation;
-		cfg->profile_generation = ni->ni_ht20.profile.generation;
+		return rtw88_net_tx_ht20_policy(ic, cfg);
 	}
 	return 0;
 }
@@ -1162,8 +1194,17 @@ rtw88_net_tx_submit(struct rtw88_net *net, struct ieee80211_node *ni,
 		    net->core->sc_ra.channel != ieee80211_chan2ieee(ic, ni->ni_chan) ||
 		    net->core->sc_ra.profile_generation != ni->ni_ht20.profile.generation ||
 		    net->core->sc_ra.ht_mcs != ni->ni_ht20.tx_mcs ||
-		    ni->ni_ht20.operation != 0)
+		    ni->ni_ht20.operation != net->core->sc_ra.ht_operation ||
+		    ni->ni_ht20.peer_cap != net->core->sc_ra.ht.peer_cap ||
+		    ni->ni_ht20.peer_htop[1] != net->core->sc_ra.ht.secondary ||
+		    ni->ni_ht20.peer_htop[4] != 0 || ni->ni_ht20.peer_htop[5] != 0 ||
+		    ic->ic_ifp->if_mtu != net->core->sc_ra.ht.mtu ||
+		    ic->ic_rtsthreshold != net->core->sc_ra.ht.rts_threshold ||
+		    ic->ic_fragthreshold != RTW88_HT20_THRESHOLD_MAX ||
+		    (ic->ic_flags & IEEE80211_F_DATAPAD) != 0)
 			return EBUSY;
+		if (len > net->core->sc_ra.ht.max_mpdu)
+			return EMSGSIZE;
 	} else if (ni->ni_ht20.valid) {
 		return EBUSY;
 	}
@@ -1242,12 +1283,45 @@ rtw88_net_tx_queue(struct ieee80211com *ic, struct mbuf *m,
 	static const unsigned queues[WME_NUM_AC] = { RTW88_TXQ_BE,
 	    RTW88_TXQ_BK, RTW88_TXQ_VI, RTW88_TXQ_VO };
 	struct ether_header eh;
+	struct ieee80211_key *key;
 	unsigned slot;
 	int ac, error, flags;
 
 	if (m->m_pkthdr.len < sizeof(eh))
 		return EINVAL;
+	if (ni->ni_ht20.valid && ic->ic_ifp != NULL &&
+	    m->m_pkthdr.len > ic->ic_ifp->if_mtu + sizeof(eh))
+		return EMSGSIZE;
 	m_copydata(m, 0, sizeof(eh), &eh);
+	if (ni->ni_ht20.valid && !IEEE80211_IS_MULTICAST(eh.ether_dhost) &&
+	    (ic->ic_flags & IEEE80211_F_PRIVACY) != 0) {
+		/*
+		 * Encap uses the same pure selector. Giant prevents key changes
+		 * before crypto. Neither selector uses PN.
+		 */
+		if (IEEE80211_KEY_UNDEFINED(ni->ni_ucastkey) &&
+		    ic->ic_def_txkey != IEEE80211_KEYIX_NONE &&
+		    ic->ic_def_txkey >= IEEE80211_WEP_NKID)
+			return EINVAL;
+		key = ieee80211_crypto_getucastkey(ic, ni);
+		if (key != NULL && key->wk_cipher == NULL)
+			return EOPNOTSUPP;
+		if (key == NULL) {
+			if (eh.ether_type != htons(ETHERTYPE_PAE))
+				return EACCES;
+		} else if (eh.ether_type != htons(ETHERTYPE_PAE) ||
+		    ((ic->ic_flags & IEEE80211_F_WPA) != 0 &&
+		     (ic->ic_opmode == IEEE80211_M_STA ?
+		      !IEEE80211_KEY_UNDEFINED(*key) :
+		      !IEEE80211_KEY_UNDEFINED(ni->ni_ucastkey)))) {
+			if (key->wk_cipher->ic_cipher != IEEE80211_CIPHER_AES_CCM ||
+			    key->wk_cipher->ic_header != 8 ||
+			    key->wk_cipher->ic_trailer != 8 ||
+			    key->wk_cipher->ic_miclen != 0 ||
+			    (key->wk_flags & IEEE80211_KEY_SWCRYPT) == 0)
+				return EOPNOTSUPP;
+		}
+	}
 	if ((ni->ni_flags & (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID)) != 0) {
 		slot = ieee80211_chan2ieee(ic, ic->ic_curchan) > 14 ||
 		    (ic->ic_flags & IEEE80211_F_SHSLOT) != 0 ? 9 : 20;
@@ -1293,6 +1367,7 @@ rtw88_net_tx_capacity(struct rtw88_net *net, unsigned queue, int all)
 static void
 rtw88_net_start(struct ifnet *ifp)
 {
+	struct rtw88_ra_config ht_policy;
 	struct rtw88_net *net = ifp->if_softc;
 	struct ieee80211com *ic = &net->ic;
 	struct ieee80211_node *ni;
@@ -1327,6 +1402,9 @@ rtw88_net_start(struct ifnet *ifp)
 					return;
 				error = ic->ic_bss == NULL || !ic->ic_bss->ni_ht20.valid ||
 				    ieee80211_ht20_state_request(ic, IEEE80211_S_RUN) != 0;
+				memset(&ht_policy, 0, sizeof(ht_policy));
+				if (!error)
+					error = rtw88_net_tx_ht20_policy(ic, &ht_policy);
 				mutex_enter(net->lock);
 				available = net->policy.accepting && !net->policy.dying &&
 				    net->policy.epoch == ht_epoch;
@@ -1343,7 +1421,13 @@ rtw88_net_start(struct ifnet *ifp)
 					    ra->channel <= 14 || ic->ic_curmode != IEEE80211_MODE_11A ||
 					    ic->ic_fixed_rate != IEEE80211_FIXED_RATE_NONE ||
 					    (ic->ic_flags & IEEE80211_F_USEPROT) != 0 ||
-					    h->operation != 0 || h->profile.rx_mcs != 0xff ||
+					    ra->ht.qualification != ht_policy.ht.qualification ||
+					    ra->ht.peer_cap != ht_policy.ht.peer_cap ||
+					    ra->ht.secondary != ht_policy.ht.secondary ||
+					    ra->ht.mtu != ht_policy.ht.mtu ||
+					    ra->ht.max_mpdu != ht_policy.ht.max_mpdu ||
+					    ra->ht.rts_threshold != ht_policy.ht.rts_threshold ||
+					    h->profile.rx_mcs != 0xff ||
 					    h->profile.tx_mcs != 0xff || h->tx_mcs == 0 ||
 					    (h->tx_mcs & ~0xffU) != 0 ||
 					    ra->profile_generation != h->profile.generation ||

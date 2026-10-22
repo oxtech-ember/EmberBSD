@@ -93,6 +93,31 @@ static struct mbuf *enable_response(struct ieee80211com *ic,int include_wme,int 
     }
     return m;
 }
+/* Actual producer/parser shared by admitted HT and delayed-wait faults. */
+static void enable_ht20_exchange(struct ieee80211com *ic,
+    int (*provider)(struct ieee80211com *,struct ieee80211_ht20_profile *),
+    const struct ieee80211_ht20_profile *profile,unsigned operation)
+{
+    struct ieee80211_node *ni=ic->ic_bss;
+    ic->ic_ht20_admit=provider;active_ic=ic;
+    ic->ic_ifp->if_mtu=1500;ic->ic_rtsthreshold=ic->ic_fragthreshold=2346;
+    CHECK(ieee80211_send_mgmt(ic,ni,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);
+    CHECK(ni->ni_ht20.offered && ni->ni_ht20.profile.generation==profile->generation);
+    struct mbuf *m=enable_response(ic,1,0);
+    uint8_t *rates=m->m_data+sizeof(struct ieee80211_frame)+6;
+    memmove(rates+10,rates+3,(size_t)m->m_len-sizeof(struct ieee80211_frame)-9);
+    rates[1]=8;memcpy(rates+2,ni->ni_rates.rs_rates,8);
+    m->m_len+=7;
+    uint8_t *p=m->m_data+m->m_len;
+    ieee80211_ht20_write(p,profile);p+=28;
+    p[0]=61;p[1]=22;p[2]=36;p[3]=operation?5:0;
+    p[4]=(uint8_t)operation;p[8]=1;p+=24;
+    m->m_len=m->m_pkthdr.len=m->model_capacity=(int)(p-m->m_data);
+    ieee80211_recv_mgmt_assoc_resp(ic,m,ni,IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);
+    m_freem(m);
+    CHECK(ni->ni_ht20.valid && ni->ni_ht20.tx_mcs==0xff && ni->ni_ht20.operation==operation);
+}
+
 static int enable_wire_offer(struct rtw88_net *net)
 {
     struct rtw88_txq *q=&net->core->sc_txq[RTW88_TXQ_MGMT];
@@ -419,14 +444,8 @@ static void enable_drain_edges(void)
         if(kind==3)drain_stall=1;
         if(kind>=4)drain_action=kind-3;
         if(kind==9) {
-            CHECK(ieee80211_send_mgmt(&net->ic,net->ic.ic_bss,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);
-            struct mbuf *m=enable_response(&net->ic,1,0);
-            ieee80211_recv_mgmt_assoc_resp(&net->ic,m,net->ic.ic_bss,IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);m_freem(m);
             drain_profile=(struct ieee80211_ht20_profile){99,0xff,0xff,0x3f,16};
-            struct ieee80211_ht20_node *h=&net->ic.ic_bss->ni_ht20;
-            h->valid=1;h->profile=drain_profile;h->tx_mcs=0xff;h->attempt=h->offer_attempt=1;
-            h->channel=net->ic.ic_curchan;memcpy(h->bssid,net->ic.ic_bss->ni_bssid,6);
-            net->ic.ic_ht20_admit=drain_provider;
+            enable_ht20_exchange(&net->ic,drain_provider,&drain_profile,0);
         } else CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_AUTH,0)==0);
         sc.sc_ops=&bus; /* Monitor the worker, after actual WME response setup. */
         uint64_t done=sc.sc_stats.tx_done;
@@ -566,16 +585,9 @@ static void enable_mailbox_edges(void)
             CHECK(rtw88_stop(&sc)==0);
             CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_INIT,0)==0);
         } else if(kind==11) {
-            CHECK(ieee80211_send_mgmt(&net->ic,net->ic.ic_bss,
-                IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);
-            struct mbuf *m=enable_response(&net->ic,1,0);
-            ieee80211_recv_mgmt_assoc_resp(&net->ic,m,net->ic.ic_bss,
-                IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);m_freem(m);
             mailbox_profile=(struct ieee80211_ht20_profile){99,0xff,0xff,0x3f,16};
-            struct ieee80211_ht20_node *h=&net->ic.ic_bss->ni_ht20;
-            h->valid=1;h->profile=mailbox_profile;h->tx_mcs=0xff;h->attempt=h->offer_attempt=1;
-            h->channel=net->ic.ic_curchan;memcpy(h->bssid,net->ic.ic_bss->ni_bssid,6);
-            net->ic.ic_ht20_admit=mailbox_provider;mailbox_cancel=5;
+            enable_ht20_exchange(&net->ic,mailbox_provider,&mailbox_profile,0);
+            mailbox_cancel=5;
         } else {
             CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_AUTH,0)==0);
             if(kind<5)mailbox_cancel=kind;
@@ -669,6 +681,7 @@ static void enable_mailbox_queues(void)
 /* C4a host-only admitted profile. No native provider is registered by attach. */
 static struct rtw88_net *ht20_net;
 static struct ieee80211_ht20_profile ht20_profile;
+static unsigned ht20_test_operation;
 static int ht20_provider(struct ieee80211com *ic,struct ieee80211_ht20_profile *p)
 {
     CHECK(ic==&ht20_net->ic && !ht20_net->lock->held);
@@ -681,30 +694,172 @@ static struct rtw88_net *enable_ht20_negotiate(struct rtw88_softc *sc,
     if(!net)return NULL;
     struct ieee80211com *ic=&net->ic;struct ieee80211_node *ni=ic->ic_bss;
     ht20_net=net;ht20_profile=(struct ieee80211_ht20_profile){777,0xff,0xff,0x3f,16};
-    ic->ic_ht20_admit=ht20_provider;active_ic=ic;
-    static struct cipher ht20_cipher={.ic_header=8};
-    route_key.wk_cipher=&ht20_cipher;
+    static struct cipher ht20_cipher={.ic_header=8,.ic_trailer=8,.ic_cipher=IEEE80211_CIPHER_AES_CCM};
+    route_key.wk_cipher=&ht20_cipher;route_key.wk_flags=IEEE80211_KEY_SWCRYPT;
     ic->ic_flags|=IEEE80211_F_PRIVACY;ni->ni_rsn.rsn_ucastcipher=IEEE80211_CIPHER_AES_CCM;route_have_key=1;
-    CHECK(ieee80211_send_mgmt(ic,ni,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);
-    CHECK(ni->ni_ht20.offered && ni->ni_ht20.profile.generation==777);
-    struct mbuf *m=enable_response(ic,1,0);
-    uint8_t *rates=m->m_data+sizeof(struct ieee80211_frame)+6;
-    memmove(rates+10,rates+3,(size_t)m->m_len-sizeof(struct ieee80211_frame)-9);
-    rates[1]=8;memcpy(rates+2,ni->ni_rates.rs_rates,8);
-    m->m_len+=7;
-    uint8_t *p=m->m_data+m->m_len;
-    ieee80211_ht20_write(p,&ht20_profile);p+=28;
-    p[0]=61;p[1]=22;p[2]=36;p[8]=1;p+=24;
-    m->m_len=m->m_pkthdr.len=m->model_capacity=(int)(p-m->m_data);
-    ieee80211_recv_mgmt_assoc_resp(ic,m,ni,IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);
-    m_freem(m);
-    CHECK(ni->ni_ht20.valid && ni->ni_ht20.tx_mcs==0xff && ni->ni_ht20.operation==0);
+    enable_ht20_exchange(ic,ht20_provider,&ht20_profile,ht20_test_operation);
     if(first<0)return net; /* Parser has queued actual RUN; worker is deferred. */
     if(first)queue_packet(&net->ec.ec_if.if_snd,ether_packet(0,0,0));
     rtw88_net_state_work(&net->state_work,net);
     CHECK(ic->ic_state==IEEE80211_S_RUN && net->policy.accepting);
     return net;
 }
+static void enable_ht20_operation6(void)
+{
+    struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+    ht20_test_operation=6;
+    struct rtw88_net *net=enable_ht20_negotiate(&sc,&lock,1);
+    if(net) {
+        CHECK(net->ic.ic_state==IEEE80211_S_RUN && net->policy.accepting);
+        CHECK(sc.sc_ra.configured && sc.sc_ra.active && sc.sc_ra.ht_operation==6);
+        CHECK(sc.sc_txq[RTW88_TXQ_BE].queued==1);
+        enable_destroy(net);
+    }
+    ht20_net=NULL;route_have_key=0;ht20_test_operation=0;
+}
+static void enable_ht20_policy_fences(void)
+{
+ for(unsigned phase=0;phase<2;phase++)for(unsigned kind=0;kind<14;kind++) {
+  if(phase==0 && kind>=10 && kind<=12)continue; /* Valid but changed table inputs. */
+  struct rtw88_softc sc;kmutex_t lock={.initialized=1};ht20_test_operation=6;
+  struct rtw88_net *net=enable_ht20_negotiate(&sc,&lock,phase?0:-1);
+  if(!net)return;
+  struct ieee80211com *ic=&net->ic;struct ieee80211_node *ni=ic->ic_bss;
+  unsigned commands=sc.sc_stats.ra_commands,runs=enable_run_callbacks,crypto=route_crypto;
+  queue_packet(&net->ec.ec_if.if_snd,ether_packet(0,0,0));
+  struct mbuf *head=net->ec.ec_if.if_snd.m;uint16_t seq[17];memcpy(seq,ni->ni_txseqs,sizeof(seq));
+  switch(kind) {
+  case 0: ic->ic_rtsthreshold=1553;break;
+  case 1: ic->ic_ifp->if_mtu=1501;break;
+  case 2: ic->ic_ifp->if_mtu=31;break;
+  case 3: ic->ic_fragthreshold=2345;break;
+  case 4: ic->ic_flags|=IEEE80211_F_DATAPAD;break;
+  case 5: ni->ni_ht20.peer_htop[1]=13;break;
+  case 6: ni->ni_ht20.peer_cap|=0x10;ni->ni_ht20.peer_htcap[0]|=0x10;break;
+  case 7: ni->ni_ht20.peer_cap&=~0x0c;ni->ni_ht20.peer_htcap[0]&=~0x0c;break;
+  case 8: ni->ni_ht20.peer_htop[4]=4;break;
+  case 9: ic->ic_rtsthreshold=2347;break;
+  case 10: ic->ic_ifp->if_mtu=1499;break;
+  case 11: ic->ic_rtsthreshold=1554;break;
+  case 12: ni->ni_ht20.peer_htop[1]=7;break;
+  case 13: ic->ic_flags|=IEEE80211_F_USEPROT;break;
+  }
+  if(phase)rtw88_net_start(&net->ec.ec_if);
+  else rtw88_net_state_work(&net->state_work,net);
+  CHECK(!net->policy.accepting && !sc.sc_ra.active);
+  if(phase)CHECK(net->requested==IEEE80211_S_INIT);
+  else CHECK(net->ic.ic_state==IEEE80211_S_INIT && !net->work_pending && !sc.sc_started);
+  CHECK(net->ec.ec_if.if_snd.m==head && route_crypto==crypto);
+  CHECK(memcmp(seq,ni->ni_txseqs,sizeof(seq))==0);
+  CHECK(sc.sc_stats.ra_commands==commands && enable_run_callbacks==runs);
+  if(phase)rtw88_net_state_work(&net->state_work,net);
+  CHECK(!net->policy.accepting && net->ic.ic_state==IEEE80211_S_INIT);
+  m_freem(head);net->ec.ec_if.if_snd.m=NULL;net->ec.ec_if.if_snd.ifq_tail=NULL;net->ec.ec_if.if_snd.ifq_len=0;
+  enable_destroy(net);ht20_net=NULL;route_have_key=0;ht20_test_operation=0;
+ }
+}
+
+static void enable_ht20_plaintext_budget(void)
+{
+ const unsigned mtus[]={32,1499,1500};
+ for(unsigned i=0;i<sizeof(mtus)/sizeof(mtus[0]);i++)for(unsigned oversize=0;oversize<2;oversize++) {
+  struct rtw88_softc sc;kmutex_t lock={.initialized=1};ht20_test_operation=6;
+  struct rtw88_net *net=enable_ht20_negotiate(&sc,&lock,-1);if(!net)return;
+  unsigned mtu=mtus[i];net->ec.ec_if.if_mtu=mtu;net->ic.ic_rtsthreshold=mtu+54;
+  rtw88_net_state_work(&net->state_work,net);
+  CHECK(net->policy.accepting && sc.sc_ra.ht.max_mpdu==mtu+50);
+  CHECK(sc.sc_ra.ht.rts_threshold==mtu+54 && sc.sc_ra.ht.qualification==RTW88_HT20_PROT_MF20_NO_RTS);
+  struct mbuf *m=newbuf(mtu+sizeof(struct ether_header)+oversize);assert(m);
+  struct ether_header *eh=(void *)m->m_data;eh->ether_dhost[0]=2;eh->ether_type=htons(ETHERTYPE_IP);
+  unsigned crypto=route_crypto,errors=route_errors,wp=sc.sc_txq[RTW88_TXQ_BE].wp;
+  uint16_t seq[17];memcpy(seq,net->ic.ic_bss->ni_txseqs,sizeof(seq));
+  queue_packet(&net->ec.ec_if.if_snd,m);rtw88_net_start(&net->ec.ec_if);
+  CHECK(net->ec.ec_if.if_snd.m==NULL && node_refs==1);
+  if(oversize) {
+   CHECK(route_crypto==crypto && sc.sc_txq[RTW88_TXQ_BE].wp==wp);
+   CHECK(route_errors==errors+1);
+   CHECK(memcmp(seq,net->ic.ic_bss->ni_txseqs,sizeof(seq))==0);
+  } else {
+   CHECK(route_crypto==crypto+1 && sc.sc_txq[RTW88_TXQ_BE].queued==1);
+   const uint8_t *desc=sc.sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
+   unsigned len=desc[0]|(unsigned)desc[1]<<8;
+   /* Actual encap is used; this fixture's cipher service does not add16.
+    * The full RXBA/generic-CCMP suite independently executes that expansion. */
+   CHECK(len==mtu+34 && len+16==sc.sc_ra.ht.max_mpdu);
+   CHECK((desc[9]&0x10)==0 && (desc[13]&0x10)==0 && desc[20]==0 && desc[21]==0);
+  }
+  CHECK(net->policy.accepting && net->requested==IEEE80211_S_RUN);
+  enable_destroy(net);ht20_net=NULL;route_have_key=0;ht20_test_operation=0;
+ }
+}
+
+static void enable_ht20_actual_key_budget(void)
+{
+ for(unsigned kind=0;kind<22;kind++) {
+  struct rtw88_softc sc;kmutex_t lock={.initialized=1};ht20_test_operation=6;
+  struct rtw88_net *net=enable_ht20_negotiate(&sc,&lock,0);if(!net)return;
+  struct ieee80211com *ic=&net->ic;struct ieee80211_node *ni=ic->ic_bss;
+  struct cipher good=*route_key.wk_cipher,bad=good;
+  struct ieee80211_key valid=route_key;valid.wk_cipher=&good;
+  int reject=kind==2 || (kind>=4 && kind<=10) || (kind>=15 && kind<=18) || kind==20;
+  int pae=(kind>=11 && kind<=14) || kind==17 || kind>=20,encrypt=!pae || kind==12 || kind==14;
+  route_key.wk_cipher=&bad;
+  switch(kind) {
+  case 1: route_have_key=0;ic->ic_def_txkey=0;ic->ic_nw_keys[0]=valid;break;
+  case 2: bad.ic_cipher=1;ic->ic_def_txkey=0;ic->ic_nw_keys[0]=valid;break;
+  case 3: ic->ic_def_txkey=0;ic->ic_nw_keys[0]=valid;ic->ic_nw_keys[0].wk_flags=0;break;
+  case 4: bad.ic_cipher=1;break;
+  case 5: bad.ic_header=7;break;
+  case 6: bad.ic_trailer=9;break;
+  case 7: bad.ic_miclen=1;break;
+  case 8: route_key.wk_flags=0;break;
+  case 9: route_key.wk_cipher=NULL;break;
+  case 10: case 11: route_have_key=0;break;
+  case 12: ic->ic_flags|=IEEE80211_F_WPA;break;
+  case 13: ic->ic_flags&=~IEEE80211_F_WPA;break;
+  case 14: route_have_key=0;ic->ic_def_txkey=0;ic->ic_nw_keys[0]=valid;ic->ic_flags|=IEEE80211_F_WPA;break;
+  case 15: route_have_key=0;ic->ic_def_txkey=0;ic->ic_nw_keys[0]=valid;ic->ic_nw_keys[0].wk_flags=0;break;
+  case 16: route_have_key=0;ic->ic_def_txkey=0;break;
+  case 17: route_have_key=0;ic->ic_def_txkey=0;ic->ic_nw_keys[0]=valid;
+   ic->ic_nw_keys[0].wk_cipher=&bad;bad.ic_cipher=1;ic->ic_flags|=IEEE80211_F_WPA;break;
+  }
+  if(kind==20){route_key.wk_cipher=NULL;ic->ic_flags&=~IEEE80211_F_WPA;}
+  if(kind==21){bad.ic_cipher=1;ic->ic_flags&=~IEEE80211_F_WPA;}
+  if(kind==18){route_have_key=0;ic->ic_def_txkey=4;}
+  if(kind==19){route_have_key=0;ic->ic_def_txkey=3;ic->ic_nw_keys[3]=valid;}
+  /* Install the modeled keys explicitly; both guard and real encap now run
+   * the actual pure selector. The later cipher service remains modeled. */
+  ni->ni_ucastkey=route_have_key?route_key:(struct ieee80211_key){.wk_cipher=&ieee80211_cipher_none};
+  /* The invalid-index case must be stopped by the native caller before
+   * invoking a pure selector whose existing key-table invariant it violates. */
+  if(kind!=18) {
+   struct ieee80211_key *selected=ieee80211_crypto_getucastkey(ic,ni);
+   if(route_have_key)CHECK(selected==&ni->ni_ucastkey);
+   else if(kind==1 || kind==14 || kind==15 || kind==17)CHECK(selected==&ic->ic_nw_keys[0]);
+   else if(kind==19)CHECK(selected==&ic->ic_nw_keys[3]);
+   else CHECK(selected==NULL);
+  }
+  unsigned crypto=route_crypto,errors=route_errors,wp=sc.sc_txq[RTW88_TXQ_BE].wp;
+  uint16_t seq[17];memcpy(seq,ni->ni_txseqs,sizeof(seq));
+  if(kind==20) {
+   /* Run the real predecessor without invoking generic encap with a NULL
+    * cipher on the RED source. The fixed source also runs the full owner. */
+   struct mbuf *probe=ether_packet(0,0,pae);unsigned queue=RTW88_TXQ_BE;
+   int error=rtw88_net_tx_queue(ic,probe,ni,&queue,1);m_freem(probe);
+   CHECK(error==EOPNOTSUPP && route_crypto==crypto && memcmp(seq,ni->ni_txseqs,sizeof(seq))==0);
+   if(error==0){enable_destroy(net);ht20_net=NULL;route_have_key=0;ht20_test_operation=0;continue;}
+  }
+  queue_packet(&net->ec.ec_if.if_snd,ether_packet(0,0,pae));rtw88_net_start(&net->ec.ec_if);
+  CHECK(net->ec.ec_if.if_snd.m==NULL && node_refs==1);
+  if(reject) {
+   CHECK(route_crypto==crypto && route_errors==errors+1 && sc.sc_txq[RTW88_TXQ_BE].wp==wp);
+   CHECK(memcmp(seq,ni->ni_txseqs,sizeof(seq))==0);
+  } else CHECK(route_crypto==crypto+(unsigned)encrypt && sc.sc_txq[RTW88_TXQ_BE].queued==1);
+  CHECK(net->policy.accepting && ni->ni_ht20.valid && sc.sc_ra.active);
+  enable_destroy(net);ht20_net=NULL;route_have_key=0;ht20_test_operation=0;
+ }
+}
+
 static void enable_ht20_ra_chain(void)
 {
     struct rtw88_softc sc;kmutex_t lock={.initialized=1};
@@ -912,6 +1067,10 @@ int RTW88_ENABLE_ENTRY(void)
     enable_run_callbacks=enable_first_producer=0;
     int result=routing_base_main();
     if(result!=0)return result;
+    enable_ht20_operation6();
+    enable_ht20_policy_fences();
+    enable_ht20_plaintext_budget();
+    enable_ht20_actual_key_budget();
     enable_ht20_ra_chain();
     enable_ht20_precrypto_fences();
     enable_ht20_worker_fences();

@@ -92,7 +92,11 @@ static void bpf_mtap3(void *p,struct mbuf *m,int d) { (void)p;struct bpf_if bp={
 static void softint_schedule(void *p) { (void)p; }
 static struct ieee80211_node *
 ieee80211_find_txnode(struct ieee80211com *ic, const uint8_t *dest)
-{ (void)dest;if(route_no_node)return NULL;ieee80211_ref_node(ic->ic_bss);return ic->ic_bss; }
+{ (void)dest;if(route_no_node)return NULL;
+  /* Explicit installed-key service. The actual selector/encap reads this node. */
+  if(route_have_key)ic->ic_bss->ni_ucastkey=route_key;
+  else ic->ic_bss->ni_ucastkey=(struct ieee80211_key){.wk_cipher=&ieee80211_cipher_none};
+  ieee80211_ref_node(ic->ic_bss);return ic->ic_bss; }
 static struct mbuf *m_pullup(struct mbuf *m, unsigned need)
 {
     if (route_pullup_fail) { m_freem(m);return NULL; }
