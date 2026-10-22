@@ -69,12 +69,12 @@ struct plcom_acpi_softc {
 static int	plcom_acpi_match(device_t, cfdata_t, void *);
 static void	plcom_acpi_attach(device_t, device_t, void *);
 
-CFATTACH_DECL_NEW(plcom_acpi, sizeof(struct plcom_acpi_softc),
-    plcom_acpi_match, plcom_acpi_attach, NULL,
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
-    plcom_activate);
+CFATTACH_DECL_NEW(plcom_acpi, sizeof(struct plcom_acpi_softc),
+    plcom_acpi_match, plcom_acpi_attach, NULL, plcom_activate);
 #else
-    NULL);
+CFATTACH_DECL_NEW(plcom_acpi, sizeof(struct plcom_acpi_softc),
+    plcom_acpi_match, plcom_acpi_attach, NULL, NULL);
 #endif
 
 enum plcom_acpi_variant {
