@@ -81,8 +81,9 @@
 #define RTW88_RX_TAG_MAX	8192
 #define RTW88_MIN_FRAME		10	/* 802.11 ACK */
 #define RTW88_REG_RCR		0x0608
-/* main.c hal.rcr: APP_FCS/MIC/ICV/PHYSTS, PKTCTL_DLEN, HTC_LOC, AB/AM/APM. */
-#define RTW88_RCR		UINT32_C(0xf010400e)
+/* main.c hal.rcr: APP_FCS/MIC/ICV/PHYSTS, VHT_DACK, PKTCTL_DLEN,
+ * HTC_LOC, AB/AM/APM. VHT_DACK selects the pinned default ACK policy. */
+#define RTW88_RCR		UINT32_C(0xf410400e)
 #define RTW88_BEACON_IES	36	/* header 24, timestamp, interval, caps */
 #define RTW88_IMR_MGNTDOK	0x40
 #define RTW88_IMR_BEDOK		0x10

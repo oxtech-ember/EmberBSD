@@ -49,6 +49,8 @@ static struct {
 	int remove;
 	int fail_syscfg;
 	int fail_efuse;
+	int fail_rcr_final;
+	unsigned rcr_final_attempts;
 	int busy_box;
 	int fw_never_ready;
 	int stop_at_delay;
@@ -420,6 +422,13 @@ write_4(void *cookie, uint32_t reg, uint32_t val)
 
 	if (f.fail_edca_reg != 0 && reg == f.fail_edca_reg)
 		return EIO;
+	/* Final HAL RCR write, distinct from the earlier MAC RCR defaults. */
+	if (reg == 0x0608 &&
+	    (val & ~UINT32_C(0x04000000)) == UINT32_C(0xf010400e)) {
+		f.rcr_final_attempts++;
+		if (f.fail_rcr_final)
+			return EIO;
+	}
 
 	(void)cookie;
 	error = access_ok(reg, 4);
@@ -1711,6 +1720,7 @@ test_station_config(void)
 	static const uint8_t bssid[6] = { 0x02, 0x65, 0x54, 0x43, 0x32, 0x21 };
 	struct rtw88_softc sc;
 	unsigned writes;
+	uint32_t rcr;
 
 	if (!start_ok(&sc))
 		return;
@@ -1718,12 +1728,15 @@ test_station_config(void)
 	f.mmio[0x680] = 0xff;
 	f.mmio[0x551] = 0x71;
 	f.mmio[0x6ab] = 0x8a;
+	rcr = mmio32(0x608);
 	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == 0);
 	CHECK(memcmp(f.mmio + 0x610, mac, sizeof(mac)) == 0);
 	CHECK((mmio32(0x100) & 0x30000) == 0);
 	CHECK((f.mmio[0x680] & 0x0c) == 0 && (f.mmio[0x680] & 0xf3) == 0xf3);
 	CHECK((f.mmio[0x550] & 0x18) == 0x18 && f.mmio[0x551] == 0x71);
 	CHECK((mmio32(0x608) & 0xc0) == 0 && (mmio32(0x608) & 0x80000000) != 0);
+	CHECK(mmio32(0x608) == (rcr & ~UINT32_C(0xc0)));
+	CHECK((mmio32(0x608) & UINT32_C(0x04000000)) != 0);
 	CHECK(reg16(0x6a4) == 0 && (f.mmio[0x522] & 0x0f) == 0x0f);
 	CHECK(f.mmio[0x51b] == 20 && (mmio32(0x440) & 0xfff) == 0xf);
 	writes = f.writes;
@@ -1741,6 +1754,8 @@ test_station_config(void)
 	CHECK((mmio32(0x6a8) & 0x7ff) == 123 && f.mmio[0x6ab] == 0x8a);
 	CHECK((f.mmio[0x550] & 0x18) == 0x08);
 	CHECK((mmio32(0x608) & 0xc0) == 0xc0);
+	CHECK(mmio32(0x608) == (rcr | UINT32_C(0xc0)));
+	CHECK((mmio32(0x608) & UINT32_C(0x04000000)) != 0);
 	CHECK(reg16(0x6a4) == 0xffff && (f.mmio[0x522] & 0x0f) == 0);
 	CHECK(f.mmio[0x51b] == 9 && (mmio32(0x440) & 0xfff) == 0xff0);
 	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, bcast_frame,
@@ -2049,7 +2064,14 @@ test_phy_and_channel_at_start(void)
 		return;
 	CHECK((f.mmio[0x1f] & 0x7) == 0x7);		/* RF_CTRL powered */
 	CHECK((mmio32(0x1c3c) & 0x3) == 0x3);		/* ENCCK after tables */
-	CHECK(mmio32(0x0608) == UINT32_C(0xf010400e));	/* RCR = hal.rcr */
+	/* Pinned main.c: base hal.rcr plus default-ACK BIT_VHT_DACK26. */
+	CHECK(mmio32(0x0608) == UINT32_C(0xf410400e));
+	CHECK((mmio32(0x0608) & ~UINT32_C(0x04000000)) ==
+	    UINT32_C(0xf010400e));
+	CHECK((mmio32(0x0608) & UINT32_C(0x08000000)) == 0); /* No APP_BASSN. */
+	CHECK((f.mmio[0x426] & 0x20) == 0); /* BA_PARSER_EN stays off. */
+	CHECK((f.mmio[0x680] & 0x0c) == 0); /* No hardware crypto enable. */
+	CHECK(f.mmio[0x66e] == 0x05); /* Existing BAR_ACK_TYPE. */
 	CHECK(rtw8822c_efuse_decode(f.efuse, sizeof(f.efuse), &map) == 0);
 	CHECK(sc.sc_xtal == map.xtal);
 	x = sc.sc_xtal;
@@ -2058,6 +2080,40 @@ test_phy_and_channel_at_start(void)
 	CHECK(f.mmio[0x3c60] == RTW88_DEFAULT_CHANNEL);	/* RF 0x18 path A */
 	rtw88_stop(&sc);
 	rtw88_core_detach(&sc);
+}
+
+/* Same default-ACK policy after restart; a failed final write must unwind. */
+static void
+test_default_ack_restart_and_failure(void)
+{
+	struct rtw88_softc sc;
+	unsigned attempts;
+
+	if (!start_ok(&sc))
+		return;
+	attempts = f.rcr_final_attempts;
+	CHECK(attempts == 1);
+	CHECK(rtw88_stop(&sc) == 0 && rtw88_start(&sc) == 0);
+	CHECK(f.rcr_final_attempts == attempts + 1);
+	CHECK(mmio32(0x608) == UINT32_C(0xf410400e));
+	CHECK(rtw88_stop(&sc) == 0 && rtw88_core_detach(&sc) == 0);
+	CHECK(f.dma_allocs == 0);
+
+	reset_bus(&sc);
+	if (!attach_ok(&sc))
+		return;
+	f.fail_rcr_final = 1;
+	CHECK(rtw88_start(&sc) == EIO);
+	CHECK(f.rcr_final_attempts == 1);
+	CHECK(!sc.sc_started && !sc.sc_running && !sc.sc_bootstrapping);
+	CHECK(!sc.sc_powered && !sc.sc_dma_master && !f.master);
+	CHECK(!sc.sc_fw_dma_owned && !sc.sc_power_dirty && !sc.sc_power_error);
+	CHECK(sc.sc_stop_requested && sc.sc_fw_dma.vaddr == NULL);
+	f.fail_rcr_final = 0;
+	CHECK(rtw88_start(&sc) == 0);
+	CHECK(mmio32(0x608) == UINT32_C(0xf410400e));
+	CHECK(rtw88_stop(&sc) == 0 && rtw88_core_detach(&sc) == 0);
+	CHECK(f.dma_allocs == 0);
 }
 
 static void
@@ -2245,6 +2301,7 @@ main(void)
 	test_loopback_mode();
 	test_rf_mode_register_uses_sipi();
 	test_phy_and_channel_at_start();
+	test_default_ack_restart_and_failure();
 	test_channel_switch();
 	test_rx_beacon();
 	test_stop_during_bootstrap();
