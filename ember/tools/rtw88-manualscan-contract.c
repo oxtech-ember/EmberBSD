@@ -13,6 +13,22 @@ static unsigned associations, disconnections, scan_results;
 static int route_events[8];
 static unsigned route_count;
 static int auth_full;
+/* Arm only after supplicant same-BSSID selection. This bus service changes
+ * HMETFR samples; the actual worker/core and kpause clock service own waiting. */
+static unsigned manualscan_busy, manualscan_busy_reads, manualscan_locked_poll;
+static int manualscan_mailbox_read1(void *cookie,uint32_t reg,uint8_t *value)
+{
+    int error=read_1(cookie,reg,value);
+    if(error==0 && reg==0x1cc && manualscan_busy) {
+        *value=0x0f;manualscan_busy--;manualscan_busy_reads++;
+    }
+    return error;
+}
+static void manualscan_mailbox_delay(void *cookie,unsigned us)
+{
+    if(us==RTW88_POLL_STEP_US && state_lock.held)manualscan_locked_poll++;
+    delay_us(cookie,us);
+}
 /* AUTH frame construction is modeled. The actual native submit/core own its
  * admission and DMA descriptor; no over-the-air success is fabricated. */
 static const uint8_t manualscan_auth[30] = {
@@ -202,7 +218,15 @@ static void test_running_manual_scan(unsigned channel,int fail_auth)
     CHECK(associations==1 && supp.wpa_state==WPA_AUTHENTICATING);
     if(associations) {
         auth_full=fail_auth;
+        unsigned ticks=state_ticks;
+        manualscan_busy=3;manualscan_busy_reads=manualscan_locked_poll=0;
+        s.bus.read_1=manualscan_mailbox_read1;
+        s.bus.delay_us=manualscan_mailbox_delay;
         rtw88_net_state_work(&s.net.state_work,&s.net);
+        CHECK(manualscan_busy_reads==3 && manualscan_busy==0);
+        CHECK(state_ticks==ticks+3 && manualscan_locked_poll==0);
+        CHECK(!s.sc.sc_mailbox.active);
+        s.bus.read_1=read_1;s.bus.delay_us=delay_us;
         auth_full=0;
         if(fail_auth) {
             CHECK(auth_posts==0 && !s.net.policy.accepting && !s.sc.sc_ra.active);
