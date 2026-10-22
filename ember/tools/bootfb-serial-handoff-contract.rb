@@ -176,13 +176,14 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
     abort 'actual cdev commit missing' unless commit
     File.write(work+'/native-cdev-commit.h',notice(ws)+"static void fixture_cdev_commit(device_t self, int maj)\n{\n"+commit+"\n}\n")
     File.write(work+'/native-cnopen.h',notice(files.fetch(paths[2]))+function(files.fetch(paths[2]),'cnopen').sub('int mode, struct lwp *l)', 'int mode __attribute__((__unused__)), struct lwp *l __attribute__((__unused__)))'))
-    # The real ACPI attachment must use the actual common activate guard only on.
+    # The real ACPI attachment must select the activate callback only when
+    # bootfb handoff is enabled. Keep both complete declarations from source.
     front=File.read(source+'/sys/arch/arm/acpi/plcom_acpi.c')
-    abort 'conditional provider guard missing' unless front.include?("#ifdef WSDISPLAY_BOOTFB_HANDOFF\n    plcom_activate);\n#else\n    NULL);")
+    declaration=front[/^#ifdef WSDISPLAY_BOOTFB_HANDOFF\nCFATTACH_DECL_NEW\(plcom_acpi,.*?^#endif/m]
+    abort 'conditional provider declarations missing' unless declaration
+    abort 'conditional provider declaration count changed' unless declaration.scan(/^CFATTACH_DECL_NEW\(plcom_acpi,/).size==2
     %w[bootfb-display-services.h bcm2712-quiesce-fixture.h bootfb-mmu4-services.c bootfb-mmu4-backing-services.c bootfb-hvs-services.h].each { |n| files['ember/tools/'+n]=File.binread(source+'/ember/tools/'+n) }
     cc=Shellwords.split(ENV.fetch('CC','cc'));flags=Shellwords.split(ENV.fetch('CFLAGS',''))
-    declaration=front[/^CFATTACH_DECL_NEW\(plcom_acpi,.*?^#endif/m]
-    abort 'actual attachment declaration missing' unless declaration
     File.write(work+'/provider-profile.c', <<~C + declaration + "\n" + <<~C)
       #include <stddef.h>
       struct cfattach { int (*activate)(void *, int); };
