@@ -111,7 +111,9 @@ static struct mbuf *m_pullup(struct mbuf *m, unsigned need)
 static void *ieee80211_crypto_encap(struct ieee80211com *ic, struct ieee80211_node *ni, struct mbuf *m)
 { (void)ic;(void)ni;(void)m;route_crypto++;return route_crypto_fail?NULL:&route_crypto; }
 #undef ieee80211_chan2ieee
-#define ieee80211_chan2ieee(ic,ch) ((void)(ic),(void)(ch),1U)
+static unsigned route_chan2ieee(const struct ieee80211_channel *ch)
+{ return ch->ic_freq >= 5000 ? (ch->ic_freq - 5000) / 5 : 1U; }
+#define ieee80211_chan2ieee(ic,ch) ((void)(ic),route_chan2ieee(ch))
 static unsigned route_ticks=1;
 static unsigned getticks(void) { return route_ticks; }
 /* Default-OFF routing service; active timer/arrival ordering has its own actual native fixture. */
@@ -188,7 +190,10 @@ int main(void)
     struct workqueue wq={0};
     struct ieee80211_node ni={0};
     struct ieee80211_channel ch={2412,0};
+    struct ieee80211_channel ch5={5180,0};
     kmutex_t lock={.initialized=1};
+    CHECK(route_chan2ieee(&ch)==1);
+    CHECK(route_chan2ieee(&ch5)==36);
     reset_bus(&sc);if(!attach_ok(&sc))return 1;CHECK(rtw88_start(&sc)==0);
     route_ra(&sc);
     net.core=&sc;net.lock=&lock;net.wq=&wq;net.policy.accepting=1;net.policy.epoch=1;
