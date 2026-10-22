@@ -10,10 +10,14 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/sys/mbuf.h'
       - 'sys/sys/queue.h'
       - 'sys/net/if.h'
+      - 'sys/net/if_ether.h'
       - 'ember/tools/ccmp*'
       - 'ember/tools/net80211-*'
       - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
       - 'sys/dev/ic/rtw88_net.c'
+      - 'sys/dev/ic/rtw88.c'
+      - 'sys/dev/ic/rtw88var.h'
+      - 'sys/dev/ic/rtw88_net.h'
       - 'sys/dev/ic/rtw88_net_policy.*'
       - 'sys/dev/ic/rtw88_hw.h'
       - 'sys/sys/callout.h'
@@ -44,10 +48,14 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/sys/mbuf.h'
       - 'sys/sys/queue.h'
       - 'sys/net/if.h'
+      - 'sys/net/if_ether.h'
       - 'ember/tools/ccmp*'
       - 'ember/tools/net80211-*'
       - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
       - 'sys/dev/ic/rtw88_net.c'
+      - 'sys/dev/ic/rtw88.c'
+      - 'sys/dev/ic/rtw88var.h'
+      - 'sys/dev/ic/rtw88_net.h'
       - 'sys/dev/ic/rtw88_net_policy.*'
       - 'sys/dev/ic/rtw88_hw.h'
       - 'sys/sys/callout.h'
@@ -95,8 +103,12 @@ jobs:
             /sys/sys/mbuf.h
             /sys/sys/queue.h
             /sys/net/if.h
+            /sys/net/if_ether.h
             /external/bsd/wpa/dist/src/drivers/driver_bsd.c
             /sys/dev/ic/rtw88_net.c
+            /sys/dev/ic/rtw88.c
+            /sys/dev/ic/rtw88var.h
+            /sys/dev/ic/rtw88_net.h
             /sys/dev/ic/rtw88_net_policy.c
             /sys/dev/ic/rtw88_net_policy.h
             /sys/dev/ic/rtw88_hw.h
