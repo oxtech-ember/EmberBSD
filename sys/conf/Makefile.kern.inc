@@ -66,8 +66,12 @@ S!=	cd ../../../.. && pwd
 INCLUDES?=	-I. ${EXTRA_INCLUDES} -I${S}/../common/include -I$S/arch \
 		-I$S -nostdinc
 CPPFLAGS+=	${INCLUDES} ${IDENT} -D_KERNEL -D_KERNEL_OPT
-EMBER_VERSION?=	1.0
+.if !defined(EMBER_VERSION)
+.error Include source <bsd.own.mk> before Makefile.kern.inc
+.endif
 CPPFLAGS+=	-DEMBER_VERSION=\"${EMBER_VERSION}\"
+# Refresh the product banner when the canonical source version changes.
+init_main.o: ${S}/../share/mk/bsd.own.mk
 .if !defined(COVERITY_TOP_CONFIG)
 CPPFLAGS+=	-std=gnu11
 .endif

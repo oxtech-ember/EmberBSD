@@ -1,8 +1,11 @@
 #!/bin/sh
 # Build the AArch64 kernel, matched modules and board device trees.
 set -eu
+unset EMBER_VERSION
 src=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 fail() { echo "$*" >&2; exit 1; }
+# Use settings from the selected source tree, including its product version.
+run_make() { "$make" -m "$src/share/mk" "$@"; }
 [ "$#" -ge 1 ] && [ "$#" -le 2 ] || fail 'usage: build-kernel.sh ABSOLUTE_OUTPUT [CONFIG]'
 out=$1
 config=${2:-EMBER64}
@@ -76,8 +79,8 @@ if [ "$mode" = cross ]; then
     (cd "$src"; MAKECONF=/dev/null sh ./build.sh "$@" tools "kernel=$config") \
         >> "$out/build.log" 2>&1
     make="$out/tools/bin/nbmake-evbarm"
-    cpp=$("$make" -C "$src" -V '${CPP}')
-    dtc=$("$make" -C "$src" -V '${TOOL_DTC}')
+    cpp=$(run_make -C "$src" -V '${CPP}')
+    dtc=$(run_make -C "$src" -V '${TOOL_DTC}')
 else
     make=make
     cpp=cpp
@@ -85,7 +88,7 @@ else
     kernel_obj="$src/sys/arch/evbarm/compile/$config"
     rm -rf "$kernel_obj"
     (cd "$src/sys/arch/evbarm/conf"; config "$config") >> "$out/build.log" 2>&1
-    (cd "$kernel_obj"; "$make" -j"$jobs" depend; "$make" -j"$jobs") >> "$out/build.log" 2>&1
+    (cd "$kernel_obj"; run_make -j"$jobs" depend; run_make -j"$jobs") >> "$out/build.log" 2>&1
 fi
 cp "$kernel_obj/netbsd" "$stage/netbsd-$config"
 cp "$kernel_obj/netbsd.img" "$stage/netbsd-$config.img"
@@ -103,11 +106,11 @@ done
 for module in if_cemac_acpi bcm2712btcom rp1wmcodec rpi5button; do
     cd "$src/sys/modules/$module"
     if [ "$mode" = cross ]; then
-        "$make" obj >> "$out/build.log" 2>&1
+        run_make obj >> "$out/build.log" 2>&1
     fi
-    "$make" -j"$jobs" EMBER_KERNEL_CONFIG="$config" \
+    run_make -j"$jobs" EMBER_KERNEL_CONFIG="$config" \
         EMBER_KERNEL_OBJDIR="$kernel_obj" dependall >> "$out/build.log" 2>&1
-    module_obj=$("$make" -V .OBJDIR)
+    module_obj=$(run_make -V .OBJDIR)
     cp "$module_obj/$module.kmod" "$stage/"
 done
 contracts=all

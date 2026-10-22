@@ -16,6 +16,7 @@ def run!(*command)
 end
 
 Dir.mktmpdir('ember-release-aarch64-build') do |dir|
+  dir = File.realpath(dir)
   repo = File.join(dir, 'repo')
   FileUtils.mkdir_p(File.join(repo, 'ember/release'))
   FileUtils.cp(builder, File.join(repo, 'ember/release/build-aarch64.sh'))
@@ -97,6 +98,7 @@ Dir.mktmpdir('ember-release-aarch64-build') do |dir|
      "KERNOBJDIR=#{output}/obj/kernels", "MKREPRO_TIMESTAMP=#{profile.fetch('source_timestamp')}"].each do |value|
       abort "FAIL: incoherent profile value #{value}" unless values.include?(value)
     end
+    abort 'FAIL: release overrides the source version' if values.any? { |value| value.start_with?('EMBER_VERSION=') }
     abort 'FAIL: foreign architecture' unless command.each_cons(2).include?(%w[-m evbarm]) &&
       command.each_cons(2).include?(%w[-a aarch64])
     abort 'FAIL: build does not sanitize inherited controls' unless command.first(2) == %w[env -i]

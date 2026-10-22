@@ -12,6 +12,7 @@ Dir.mktmpdir('ember-release-build') do |dir|
   script = <<~SH
     #!/bin/sh
     printf '%s\n' "$@" >> ../build-arguments
+    test -z \"${EMBER_VERSION:-}\" || exit 88
     printf 'clean committed source\n' > ../source-proof
     previous=
     for argument do
@@ -41,9 +42,10 @@ Dir.mktmpdir('ember-release-build') do |dir|
   sha = sha.strip
   File.write(File.join(repo, 'build.sh'), "exit 99\n")
   output = File.join(dir, 'output')
-  out, err, status = Open3.capture3('sh', File.join(repo, 'ember/release/build-amd64.sh'), sha, output)
+  out, err, status = Open3.capture3({'EMBER_VERSION' => '9.9'}, 'sh', File.join(repo, 'ember/release/build-amd64.sh'), sha, output)
   abort "FAIL: pinned build should succeed: #{out}#{err}" unless status.success?
   args = File.readlines(File.join(output, 'build-arguments'), chomp: true)
+  abort 'FAIL: release overrides the source version' if args.any? { |arg| arg.start_with?('EMBER_VERSION=') }
   abort 'FAIL: release rebuilds the freshly built host tools' unless args.include?('-u')
   ["EMBER_BUILD_ID=#{sha}", "BUILDINFO=EmberBSD:#{sha}", 'KERNEL_SETS=GENERIC',
    'BUILD_KERNELS=INSTALL', 'MKGCCCMDS=no', 'SYSINST_HTTP_HOST=github.com', 'SYSINST_FTP_SET_DIR_BIN=',

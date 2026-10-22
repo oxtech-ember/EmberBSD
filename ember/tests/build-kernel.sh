@@ -2,6 +2,8 @@
 # Origin: EmberBSD (AI-assisted), kernel build orchestration regression.
 # Exercise build orchestration without substituting these fixtures for a build.
 set -eu
+# An ambient product version must not replace the selected source version.
+export EMBER_VERSION=9.9
 # Fixtures select their own build mode and toolchain, independent of the shell.
 unset EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN PVR_QUERY_FIRMWARE
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -157,6 +159,7 @@ cat > "$work/src/build.sh" <<'SH'
 #!/bin/sh
 set -eu
 echo "build.sh $*" >> "$TEST_LOG"
+[ -z "${EMBER_VERSION:-}" ]
 [ "${MAKECONF:-}" = /dev/null ]
 [ "${FAIL_AT:-}" != tools ]
 mkdir -p "$TEST_OUT/tools/bin" "$TEST_OUT/obj/kernels/EMBER64"
@@ -205,6 +208,9 @@ cat > "$work/bin/make" <<'SH'
 #!/bin/sh
 set -eu
 echo "native-make $*" >> "$TEST_LOG"
+[ -z "${EMBER_VERSION:-}" ]
+[ "$1" = -m ] && [ "$2" = "$TEST_ROOT/src/share/mk" ]
+shift 2
 if [ "${1:-}" = -V ]; then echo "$PWD"; exit; fi
 [ "${FAIL_AT:-}" != kernel ]
 case $PWD in

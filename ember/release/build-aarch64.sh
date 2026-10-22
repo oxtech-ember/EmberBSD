@@ -134,7 +134,7 @@ set -- -U -u -m evbarm -a aarch64 -j"$jobs" \
 	-V MKGDB=no -V MKBINUTILS=no -V MKREPRO=yes -V "MKREPRO_TIMESTAMP=$timestamp" \
 	-V "KERNOBJDIR=$out/obj/kernels" -V RELEASEMACHINEDIR=evbarm-aarch64 \
 	-V USE_XZ_SETS=yes -V 'MAKETARSETS=base comp' \
-	-V EMBER_VERSION=1.0 -V "EMBER_BUILD_ID=$revision" -V "BUILDINFO=EmberBSD:$revision"
+	-V "EMBER_BUILD_ID=$revision" -V "BUILDINFO=EmberBSD:$revision"
 write_profile started "$@"
 printf 'Build log: %s/build.log\n' "$out"
 {

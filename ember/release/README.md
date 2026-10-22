@@ -1,7 +1,12 @@
 # Prepare and publish an installation kit
 
 This procedure builds one pinned amd64 UEFI candidate and publishes its exact files through GitHub Releases.
-It uses the product version `1.0` and the NetBSD `11.0` compatibility base.
+It uses `EMBER_VERSION` from the pinned source `share/mk/bsd.own.mk`.
+The NetBSD `11.0` compatibility identifiers remain independent.
+Use the [SDK release procedure](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/release-tags.md)
+to set that source version and record matching source pins before a build.
+New image names, manifests, notes, and titles use the pinned product version.
+Verification uses each kit's recorded version and does not rewrite historical receipts.
 GitHub Pages hosts the project site and download navigation.
 The binary files belong to a release, not the Pages repository.
 
@@ -203,6 +208,7 @@ Do not replace its assets or tag.
 ```sh
 ruby ember/tests/installer-https.rb
 ruby ember/tests/installer-memory.rb
+python3 ember/tests/source-version.py /absolute/bmake
 ruby ember/tests/release-build.rb
 ruby ember/tests/release-kit.rb
 ruby ember/tests/release-github.rb
@@ -210,6 +216,8 @@ ruby ember/tests/release-github.rb
 
 The source contracts execute the trust policy, set selection and allocation handling.
 Host C probes use ASan/UBSan.
+The version check evaluates real make rules and an incremental banner dependency.
+It uses an alternate version in a temporary source fixture.
 The build wrapper test checks orchestration, not an OS build.
 The GitHub fixture checks refusal behavior without changing a repository.
 Use the actual image regression and VM checks for each built candidate.

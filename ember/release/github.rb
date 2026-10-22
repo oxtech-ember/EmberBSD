@@ -83,7 +83,7 @@ module EmberRelease
     end
 
     def title
-      "EmberBSD 1.0 amd64 #{@sha[0, 12]} (no X11 VM candidate)"
+      "EmberBSD #{@manifest.fetch('product_version')} amd64 #{@sha[0, 12]} (no X11 VM candidate)"
     end
 
     def check_assets(release, complete:)

@@ -15,8 +15,7 @@ module EmberSysroot
     MKFIRMWARE=yes MKKMOD=no MKX11=no MKRUMP=no MKCOMPAT=no MKLLVM=no MKLLVMRT=no
     MKDEBUG=no MKDEBUGLIB=no MKDEBUGKERNEL=no MKATF=no MKKYUA=no MKMAN=no MKDOC=no
     MKINFO=no MKHTML=no MKLINT=no MKPROFILE=no MKCVS=no MKGROFF=no MKGDB=no MKBINUTILS=no
-    MKREPRO=yes RELEASEMACHINEDIR=evbarm-aarch64 USE_XZ_SETS=yes MAKETARSETS=base\ comp
-    EMBER_VERSION=1.0].freeze
+    MKREPRO=yes RELEASEMACHINEDIR=evbarm-aarch64 USE_XZ_SETS=yes MAKETARSETS=base\ comp].freeze
 
   def check(condition, message)
     EmberRelease.check(condition, message)
@@ -30,7 +29,8 @@ module EmberSysroot
     Digest::SHA256.file(path).hexdigest
   end
 
-  def profile_check(profile, sha)
+  def profile_check(profile, sha, version)
+    EmberRelease.product_version(version)
     check(profile.values_at('schema', 'status', 'machine', 'architecture', 'kernel_config') ==
       [1, 'built', 'evbarm', 'aarch64', 'EMBER64'], 'Incomplete or wrong AArch64 build profile')
     check(profile['source_repository'] == 'https://github.com/oxtech-ember/EmberBSD' &&
@@ -44,7 +44,10 @@ module EmberSysroot
       check(argv.is_a?(Array) && argv.all? { |value| value.is_a?(String) }, 'Invalid build argv')
       check(argv.take(2) == %w[env -i] && argv.include?('MAKECONF=/dev/null') && argv.include?('./build.sh'), 'Uncontrolled build environment')
       variables = argv.each_cons(2).select { |a, _| a == '-V' }.map(&:last)
-      expected = FLAGS + ["MKREPRO_TIMESTAMP=#{profile['source_timestamp']}", "EMBER_BUILD_ID=#{sha}", "BUILDINFO=EmberBSD:#{sha}"]
+      # Historical receipts explicitly selected their recorded product version.
+      legacy_version = variables.grep(/\AEMBER_VERSION=/)
+      check(legacy_version.empty? || legacy_version == ["EMBER_VERSION=#{version}"], 'Build has another product version')
+      expected = FLAGS + legacy_version + ["MKREPRO_TIMESTAMP=#{profile['source_timestamp']}", "EMBER_BUILD_ID=#{sha}", "BUILDINFO=EmberBSD:#{sha}"]
       obj_index = argv.index('-O')
       check(obj_index && argv[obj_index + 1]&.start_with?('/'), 'Missing object directory')
       expected += ["HOST_CC=#{profile.fetch('host').fetch('cc')}", "HOST_CXX=#{profile.fetch('host').fetch('cxx')}",
@@ -128,8 +131,9 @@ module EmberSysroot
     manifest = JSON.parse(File.read(File.join(dir, 'manifest.json')))
     sha = manifest['source_commit']
     check(sha.is_a?(String) && sha.match?(/\A[0-9a-f]{40}\z/), 'Invalid full source commit')
-    check(manifest.values_at('schema', 'repository', 'release_tag', 'architecture', 'machine', 'product_version', 'base_version') ==
-      [SCHEMA, EmberRelease::REPOSITORY, tag(sha), 'aarch64', 'evbarm', '1.0', '11.0'], 'Wrong sysroot identity')
+    version = EmberRelease.product_version(manifest['product_version'])
+    check(manifest.values_at('schema', 'repository', 'release_tag', 'architecture', 'machine', 'base_version') ==
+      [SCHEMA, EmberRelease::REPOSITORY, tag(sha), 'aarch64', 'evbarm', '11.0'], 'Wrong sysroot identity')
     files = manifest.fetch('files')
     check(files.is_a?(Array) && files.all? { |file| file.is_a?(Hash) }, 'Invalid files manifest')
     names = files.map { |file| file['name'] }
@@ -143,7 +147,7 @@ module EmberSysroot
     end
     check(File.read(File.join(dir, 'SHA256')) == EmberRelease.checksum_text(dir, names + ['manifest.json']), 'Checksum manifest changed')
     profile = JSON.parse(File.read(File.join(dir, 'build-profile.json')))
-    profile_check(profile, sha)
+    profile_check(profile, sha, version)
     check(manifest['source_archive_sha256'] == profile['source_sha256'] && manifest['build_profile'] == profile, 'Source/build receipt changed')
     check(File.read(File.join(dir, 'source-export.sha256')) == "#{profile['source_sha256']}  source.tar.gz\n", 'Source export hash receipt changed')
     SETS.each do |name|
@@ -171,9 +175,20 @@ module EmberSysroot
   def prepare(build, dir, qualification = nil)
     sha = File.read(File.join(build, 'build-success')).strip
     profile = JSON.parse(File.read(File.join(build, 'build-profile.json')))
-    profile_check(profile, sha)
     source = File.join(build, 'source.tar.gz')
-    check(sha256(source) == profile['source_sha256'], 'Source export differs') if File.file?(source)
+    if File.file?(source)
+      check(sha256(source) == profile['source_sha256'], 'Source export differs')
+      version = EmberRelease.archive_version(source)
+    else
+      # Old receipts can retain an explicit version after their archive is removed.
+      versions = profile.fetch('commands').map do |argv|
+        argv.each_cons(2).select { |key, value| key == '-V' && value.start_with?('EMBER_VERSION=') }.map(&:last)
+      end
+      check(versions.length == 2 && versions.all? { |values| values.length == 1 } &&
+        versions[0] == versions[1], 'Source archive is required to read the product version')
+      version = EmberRelease.product_version(versions.first.first.delete_prefix('EMBER_VERSION='))
+    end
+    profile_check(profile, sha, version)
     Dir.mkdir(dir, 0700)
     SETS.each { |name| FileUtils.cp(File.join(build, 'release/evbarm-aarch64/binary/sets', name), File.join(dir, name)) }
     [KERNEL, 'build-profile.json'].each { |name| FileUtils.cp(File.join(build, name), File.join(dir, name)) }
@@ -193,7 +208,7 @@ module EmberSysroot
       names << EVIDENCE
     end
     File.write(File.join(dir, 'release-notes.md'), <<~TEXT)
-      # EmberBSD 1.0 AArch64 development sysroot
+      # EmberBSD #{version} AArch64 development sysroot
 
       Source: `#{sha}`. NetBSD compatibility base: `11.0`; target: `evbarm/aarch64`.
       `base.tar.xz` and `comp.tar.xz` come from one clean full fork build.
@@ -216,7 +231,7 @@ module EmberSysroot
     files = names.map { |name| path = File.join(dir, name); {'name' => name, 'size' => File.size(path), 'sha256' => sha256(path)} }
     manifest = {'schema' => SCHEMA, 'repository' => EmberRelease::REPOSITORY, 'source_commit' => sha,
       'release_tag' => tag(sha), 'source_archive_sha256' => profile['source_sha256'], 'architecture' => 'aarch64',
-      'machine' => 'evbarm', 'product_version' => '1.0', 'base_version' => '11.0', 'build_profile' => profile,
+      'machine' => 'evbarm', 'product_version' => version, 'base_version' => '11.0', 'build_profile' => profile,
       'files' => files, 'qualification' => q, 'hardware_qualification' => 'not-tested'}
     File.write(File.join(dir, 'manifest.json'), JSON.pretty_generate(manifest) + "\n")
     File.write(File.join(dir, 'SHA256'), EmberRelease.checksum_text(dir, names + ['manifest.json']))
@@ -231,7 +246,7 @@ module EmberSysroot
       EmberSysroot.require_qualification(@manifest)
     end
     def title
-      "EmberBSD 1.0 AArch64 #{@sha[0, 12]} development sysroot"
+      "EmberBSD #{@manifest.fetch('product_version')} AArch64 #{@sha[0, 12]} development sysroot"
     end
   end
 end

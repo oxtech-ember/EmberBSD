@@ -103,6 +103,28 @@ Dir.mktmpdir('ember-release-kit') do |dir|
   else
     abort 'FAIL: unqualified candidate was publishable'
   end
+  old_bytes = File.binread(File.join(dir, 'manifest.json'))
   EmberRelease.verify(dir)
+  abort 'FAIL: historical manifest was rewritten' unless old_bytes == File.binread(File.join(dir, 'manifest.json'))
+  version = '2.7+fixture'
+  files.first(2).zip(EmberRelease.images(version)).each do |file, name|
+    File.rename(File.join(dir, file['name']), File.join(dir, name))
+    file['name'] = name
+  end
+  manifest['product_version'] = version
+  seal.call
+  EmberRelease.verify(dir)
+  require_relative '../release/github'
+  abort 'FAIL: publisher title lost product version' unless EmberRelease::GitHub.new(dir).title.include?('EmberBSD 2.7+fixture')
+  Dir.mktmpdir('ember-pinned-version') do |source|
+    FileUtils.mkdir_p(File.join(source, 'share/mk'))
+    version_file = File.join(source, 'share/mk/bsd.own.mk')
+    File.write(version_file, "EMBER_VERSION?=\t#{version}\n")
+    archive = File.join(source, 'source.tar')
+    system('tar', '-cf', archive, '-C', source, 'share/mk/bsd.own.mk') or abort 'Version archive fixture failed'
+    File.write(version_file, "EMBER_VERSION?=9.9\n")
+    abort 'FAIL: unpinned source version selected' unless EmberRelease.archive_version(archive) == version
+  end
+  puts 'PASS: alternate version names, source archive, title and immutable historical receipt'
 end
 puts 'PASS: complete local kit verification'

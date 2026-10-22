@@ -34,7 +34,7 @@ mkdir "$out/source"
 tar -xf "$out/source.tar" -C "$out/source"
 cd "$out/source"
 export MAKECONF=/dev/null
-unset EXTERNAL_TOOLCHAIN MAKEFLAGS MFLAGS MAKEOBJDIR MAKEOBJDIRPREFIX NETBSDOBJDIR NETBSDOBJROOT
+unset EMBER_VERSION EXTERNAL_TOOLCHAIN MAKEFLAGS MFLAGS MAKEOBJDIR MAKEOBJDIRPREFIX NETBSDOBJDIR NETBSDOBJROOT
 printf 'Build log: %s/build.log\n' "$out"
 set -- -U -u -m amd64 -j"$jobs" \
 	-O "$out/obj" -T "$out/tools" -D "$out/dest" -R "$out/release" \
@@ -42,7 +42,7 @@ set -- -U -u -m amd64 -j"$jobs" \
 	-V MKREPRO=yes -V "MKREPRO_TIMESTAMP=$timestamp" \
 	-V KERNEL_SETS=GENERIC -V BUILD_KERNELS=INSTALL \
 	-V 'MAKEFLAGS=KERNEL_SETS=GENERIC BUILD_KERNELS=INSTALL' \
-	-V EMBER_VERSION=1.0 -V "EMBER_BUILD_ID=$revision" -V "BUILDINFO=EmberBSD:$revision" \
+	-V "EMBER_BUILD_ID=$revision" -V "BUILDINFO=EmberBSD:$revision" \
 	-V SYSINST_HTTP_HOST=github.com -V SYSINST_FTP_HOST=github.com \
 	-V "SYSINST_FTP_DIR=oxtech-ember/EmberBSD/releases/download/$tag" \
 	-V SYSINST_FTP_SET_DIR_BIN=

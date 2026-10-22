@@ -11,7 +11,6 @@ module EmberRelease
   REPOSITORY = 'oxtech-ember/EmberBSD'.freeze
   SETS = %w[base comp etc games gpufw kern-GENERIC man manhtml misc modules rescue tests text].freeze
   OPTIONAL_SETS = %w[base32 comp32 debug debug32 debug64].freeze
-  IMAGES = %w[EmberBSD-1.0-amd64.iso EmberBSD-1.0-amd64-install.img.gz].freeze
   VM_CHECKS = %w[local_install https_install first_boot_without_media reboot_persistence
     tls_reject_unknown_ca tls_reject_wrong_name tls_reject_missing_anchors http_404_rejected github_redirect].freeze
 
@@ -23,6 +22,25 @@ module EmberRelease
     out, err, status = Open3.capture3(*args, binmode: true)
     check(status.success?, "#{args.first}: #{err.force_encoding('UTF-8')}")
     out
+  end
+
+  def self.product_version(value)
+    check(value.is_a?(String) && value.match?(/\A[0-9][A-Za-z0-9]*(?:[.\-+][A-Za-z0-9]+)*\z/) &&
+      !value.end_with?('.lock'), 'Invalid product version')
+    value
+  end
+
+  def self.archive_version(archive)
+    source = command('tar', '-xOf', archive, 'share/mk/bsd.own.mk').force_encoding('UTF-8')
+    definitions = source.lines.grep(/\AEMBER_VERSION\?=/)
+    check(definitions.length == 1, 'Source must define one canonical EMBER_VERSION')
+    value = definitions.first[/\AEMBER_VERSION\?=[ \t]*([^\s#]+)[ \t]*(?:#.*)?\r?\n?\z/, 1]
+    product_version(value)
+  end
+
+  def self.images(version)
+    version = product_version(version)
+    ["EmberBSD-#{version}-amd64.iso", "EmberBSD-#{version}-amd64-install.img.gz"]
   end
 
   def self.tag(sha)
@@ -57,7 +75,8 @@ module EmberRelease
     sha = m['source_commit']
     check(m['schema'] == 1 && sha.is_a?(String) && sha.match?(/\A[0-9a-f]{40}\z/), 'Invalid source identity')
     check(m['repository'] == REPOSITORY && m['release_tag'] == tag(sha), 'Wrong repository or release tag')
-    check(m.values_at('architecture', 'product_version', 'base_version') == %w[amd64 1.0 11.0], 'Wrong target or version')
+    version = product_version(m['product_version'])
+    check(m.values_at('architecture', 'base_version') == %w[amd64 11.0], 'Wrong target or version')
     check(m.fetch('profile').values_at('MKX11', 'MKRUMP', 'MKGCCCMDS', 'KERNEL_SETS') == %w[no no no GENERIC], 'Wrong release profile')
     check(m['source_archive_sha256'].is_a?(String) && m['source_archive_sha256'].match?(/\A[0-9a-f]{64}\z/), 'Missing source archive hash')
     %w[image kernel modules base].each do |name|
@@ -68,9 +87,9 @@ module EmberRelease
     files = m.fetch('files')
     check(files.is_a?(Array) && files.all? { |f| f.is_a?(Hash) }, 'Invalid asset list')
     names = files.map { |f| f['name'] }
-    check(names.all? { |n| n.is_a?(String) && n.match?(/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/) }, 'Unsafe asset name')
+    check(names.all? { |n| n.is_a?(String) && n.match?(/\A[A-Za-z0-9][A-Za-z0-9._+\-]*\z/) }, 'Unsafe asset name')
     check(names.uniq == names && !(names & %w[manifest.json SHA256]).any?, 'Duplicate or reserved asset')
-    required = IMAGES + ['release-notes.md'] + SETS.map { |n| "#{n}.tar.xz" }
+    required = images(version) + ['release-notes.md'] + SETS.map { |n| "#{n}.tar.xz" }
     check((required - names).empty?, 'Incomplete installation profile')
     allowed = required + OPTIONAL_SETS.map { |n| "#{n}.tar.xz" } + %w[SHA512 qualification.json]
     check((names - allowed).empty?, 'Unexpected asset for this profile')
@@ -98,9 +117,9 @@ module EmberRelease
     q = m['qualification']
     check(q.is_a?(Hash), 'VM qualification is required before publication')
     check(q['source_commit'] == m['source_commit'], 'Qualification belongs to another source')
-    image = m['files'].find { |f| f['name'] == IMAGES.first }
+    image = m['files'].find { |f| f['name'] == images(m['product_version']).first }
     check(q['image_sha256'] == image['sha256'], 'Qualification belongs to another image')
-    usb = m['files'].find { |f| f['name'] == IMAGES.last }
+    usb = m['files'].find { |f| f['name'] == images(m['product_version']).last }
     check(q['usb_image_sha256'] == usb['sha256'], 'Qualification belongs to another USB image')
     check(q['installed_kernel_sha256'] == m['components']['kernel']['sha256'], 'Qualification has another kernel')
     check(VM_CHECKS.all? { |name| q.fetch('checks', {})[name] == true }, 'Incomplete VM qualification')
@@ -110,9 +129,11 @@ module EmberRelease
     sha = File.read(File.join(build, 'build-success')).strip
     check(sha.match?(/\A[0-9a-f]{40}\z/), 'No complete pinned build')
     source = File.join(build, 'source')
-    iso = File.join(build, 'release/images', IMAGES.first)
-    usb = File.join(build, 'release/images', IMAGES.last)
-    command('ruby', File.join(source, 'ember/tests/installer-image.rb'), iso, sha, '1.0', 'github.com')
+    version = archive_version(File.join(build, 'source.tar'))
+    image_names = images(version)
+    iso = File.join(build, 'release/images', image_names.first)
+    usb = File.join(build, 'release/images', image_names.last)
+    command('ruby', File.join(source, 'ember/tests/installer-image.rb'), iso, sha, version, 'github.com')
     list = command('tar', '-tf', iso).force_encoding('UTF-8').lines.map(&:strip)
     prefix = 'amd64/binary/sets/'
     paths = list.select { |n| n.start_with?(prefix) && n.end_with?('.tar.xz') }
@@ -138,9 +159,9 @@ module EmberRelease
     boot = Zlib::GzipReader.new(StringIO.new(boot)).read if boot.start_with?("\x1f\x8b".b)
     kernel_sha = Digest::SHA256.hexdigest(kernel)
     check(Digest::SHA256.hexdigest(boot) == kernel_sha, 'ISO boot kernel differs from its installation set')
-    FileUtils.cp(iso, File.join(dir, IMAGES.first))
+    FileUtils.cp(iso, File.join(dir, image_names.first))
     command('gzip', '-t', usb)
-    FileUtils.cp(usb, File.join(dir, IMAGES.last))
+    FileUtils.cp(usb, File.join(dir, image_names.last))
     File.write(File.join(dir, 'SHA512'), sums)
     q = qualification ? JSON.parse(File.read(qualification)) : nil
     if q
@@ -149,7 +170,7 @@ module EmberRelease
       File.write(File.join(dir, 'qualification.json'), JSON.pretty_generate(q) + "\n")
     end
     note = <<~TEXT
-      # EmberBSD 1.0: amd64 UEFI installation candidate
+      # EmberBSD #{version}: amd64 UEFI installation candidate
 
       Source: `#{sha}`. Compatibility base: NetBSD 11.0.
       Profile: no X11, no rump, GENERIC kernel and matching modules/base.
@@ -181,7 +202,7 @@ module EmberRelease
     components['kernel'].merge!('buildinfo' => buildinfo, 'sha256' => kernel_sha)
     manifest = { 'schema' => 1, 'repository' => REPOSITORY, 'source_commit' => sha,
       'source_archive_sha256' => Digest::SHA256.file(File.join(build, 'source.tar')).hexdigest,
-      'release_tag' => tag(sha), 'architecture' => 'amd64', 'product_version' => '1.0', 'base_version' => '11.0',
+      'release_tag' => tag(sha), 'architecture' => 'amd64', 'product_version' => version, 'base_version' => '11.0',
       'profile' => { 'MKX11' => 'no', 'MKRUMP' => 'no', 'MKGCCCMDS' => 'no', 'MKREPRO' => 'yes', 'KERNEL_SETS' => 'GENERIC',
         'BUILD_KERNELS' => 'INSTALL', 'compiler' => compiler, 'trust_store' => 'pinned Mozilla server.trust' },
       'components' => components, 'files' => assets, 'qualification' => q,

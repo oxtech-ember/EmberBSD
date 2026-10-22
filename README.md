@@ -2,8 +2,10 @@
 
 **Unix for intelligent devices.**
 
-The product version is **EmberBSD 1.0** for the current kernel state.
-This version is separate from the NetBSD 11.0 compatibility identifiers.
+The product version is `EMBER_VERSION` in [share/mk/bsd.own.mk](share/mk/bsd.own.mk).
+It is separate from the NetBSD 11.0 compatibility identifiers.
+Use the [SDK release procedure](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/release-tags.md)
+to set the canonical source version, pin the sources, and finalize matching tags.
 See the validation limits below before selecting a hardware target.
 
 EmberBSD is an independent fork of [NetBSD](https://github.com/NetBSD/src),

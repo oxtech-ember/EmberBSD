@@ -62,6 +62,7 @@ Dir.mktmpdir('ember-release-sysroot') do |dir|
     FileUtils.mkdir_p(File.dirname(path))
     File.write(path, "# Source completeness sentinel for a host fixture only.\n")
   end
+  File.write(File.join(repo, 'share/mk/bsd.own.mk'), "EMBER_VERSION?=\t2.7+fixture\n")
   # ELFCLASS64, ELFDATA2LSB, EV_CURRENT, and EM_AARCH64. No executable body.
   elf = "\x7fELF\x02\x01\x01".b.ljust(64, "\0")
   elf[18, 2] = [183].pack('v')
@@ -130,6 +131,9 @@ Dir.mktmpdir('ember-release-sysroot') do |dir|
   run!(RbConfig.ruby, cli, 'verify', kit)
   manifest = EmberSysroot.verify(kit)
   abort 'FAIL: source pin was lost' unless manifest['source_commit'] == pin
+  abort 'FAIL: source version was lost' unless manifest['product_version'] == '2.7+fixture'
+  abort 'FAIL: source version missing from notes' unless File.read(File.join(kit, 'release-notes.md')).include?('EmberBSD 2.7+fixture')
+  abort 'FAIL: publisher title uses another version' unless EmberSysroot::GitHub.new(kit).title.include?('EmberBSD 2.7+fixture')
   abort 'FAIL: qualification was invented' unless manifest['qualification'].nil?
   puts 'PASS: actual wrapper -> xz sets -> prepare -> verify fixture pipeline'
 
@@ -213,6 +217,29 @@ Dir.mktmpdir('ember-release-sysroot') do |dir|
     p = JSON.parse(File.read(File.join(candidate, 'build-profile.json')))
     p.fetch('output_sha256')[path] = Digest::SHA256.hexdigest(packed)
     write_json(File.join(candidate, 'build-profile.json'), p)
+  end
+
+  # Historical receipts retain their explicit version after source archive cleanup.
+  legacy_build = clone_build.call('historical-version')
+  legacy = JSON.parse(File.read(File.join(legacy_build, 'build-profile.json')))
+  legacy['commands'].each { |argv| argv.insert(-3, '-V', 'EMBER_VERSION=1.0') }
+  write_json(File.join(legacy_build, 'build-profile.json'), legacy)
+  File.unlink(File.join(legacy_build, 'source.tar.gz'))
+  legacy_kit = File.join(dir, 'historical-kit')
+  old_manifest = EmberSysroot.prepare(legacy_build, legacy_kit)
+  abort 'FAIL: historical version was replaced' unless old_manifest['product_version'] == '1.0'
+  old_bytes = File.binread(File.join(legacy_kit, 'manifest.json'))
+  EmberSysroot.verify(legacy_kit)
+  abort 'FAIL: verification rewrote historical receipt' unless old_bytes == File.binread(File.join(legacy_kit, 'manifest.json'))
+  broken = Marshal.load(Marshal.dump(legacy))
+  broken['commands'][0].map! { |value| value == 'EMBER_VERSION=1.0' ? 'EMBER_VERSION=9.9' : value }
+  refuse('conflicting-historical-product-version', /another product version/) do
+    EmberSysroot.profile_check(broken, pin, '1.0')
+  end
+  missing_source = clone_build.call('missing-version-source')
+  File.unlink(File.join(missing_source, 'source.tar.gz'))
+  refuse('new-profile-without-version-source', /Source archive is required/) do
+    EmberSysroot.prepare(missing_source, File.join(dir, 'missing-version-kit'))
   end
 
   clone_kit = lambda do |label|
