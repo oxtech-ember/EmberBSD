@@ -1191,8 +1191,12 @@ The base system shell is unchanged.
   owns a bounded full GAPK/IQK/DPK transaction before AUTH. It checks a current
   power-programming and operating-register envelope before the first producer.
   This is not hardware TXAGC-table readback. Its strict completion
-  oracle and quarantine are source contracts; physical calibration and HT
-  readiness remain unqualified. Ordinary profiles do not enable that experiment.
+  oracle and quarantine have source contracts. One cold `d8ebd899a` trial
+  accepts the start/end and GAPK/IQK/DPK/CAL_PWR completion observations,
+  then times out at final coefficients and enters quarantine.
+  Physical calibration and HT readiness remain unqualified.
+  Cold recovery restores the working legacy profile.
+  Ordinary profiles do not enable that experiment.
   Source contracts also drain posted native TX through the actual completion
   decoder before retuning, with bounded waits and existing failure ownership.
   GCC16 kernel `4f152fc21` passes bounded scan, IPv6 and data regression checks.

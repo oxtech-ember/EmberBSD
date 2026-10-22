@@ -159,6 +159,31 @@ A separate source-backed TXAGC read protocol remains unimplemented.
 
 ## Source checks and limits
 
+### Physical boundary
+
+One cold single-user trial of `d8ebd899afea66704277280c70ec8b618863f863`
+used GCC16.2 and `EMBER64_CIX_RFK_NATIVE` on CIX P1 A4/PHECDA Rev A,
+with UEFI `BiosV1.5-W20260706-e321056a`, EC 1.15 and both antennas.
+Firmware emitted channel-1 memory-training and DDR BIST failure diagnostics
+before the candidate booted. Their relation to RFK is unknown.
+The root stayed read-only. One explicit 2.4 GHz association request produced
+one RFK token. The start/end, GAPK, IQK, DPK and CAL_PWR oracle counts were
+`1/1`, `1/1`, `2/2`, `1/1`, `9/9` and `2/2`.
+Final coefficients remained `1/0`: primary/cleanup errors were `60/60`,
+with report `7/0x2d9c/4/0x10000/1/1`, flags `0x1dc` and global `0x2`.
+The controller stopped on quarantine. Association did not complete.
+
+The coefficient oracle did not accept completion before its deadline.
+This does not establish an analog failure or clean hardware ownership release.
+The target uses 100 Hz ticks. The 10 ms coefficient deadline and minimum
+one-tick polling sleep need separate timing analysis before another trial.
+The trial does not identify scheduler rounding as the cause.
+After clean unmount and a physical power reset, the working legacy kernel
+restored WPA2/CCMP and bounded IPv4 and link-local IPv6 replies.
+Calibration, 5 GHz data, HT/VHT and endurance remain unqualified by this trial.
+
+### Host contracts
+
 Run `sh ember/tools/rtw88-rfk-contract.sh` with GCC16. The contract executes actual
 owning worker, core, phase, mailbox, packet and shared stack bodies. Its explicit
 service model supplies bus register samples, device completion, allocation,
