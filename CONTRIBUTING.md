@@ -11,7 +11,9 @@ Publication is required only when you submit it as a shared contribution.
 
 | Change | Accepting repository |
 | --- | --- |
-| Kernel, drivers, board support, OS boot or firmware integration | [EmberBSD](https://github.com/oxtech-ember/EmberBSD) |
+| Kernel, drivers, OS boot or firmware integration | [EmberBSD](https://github.com/oxtech-ember/EmberBSD) |
+| Hardware profiles, SoCs, loader requirements and scoped support | [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards) |
+| Shared host builds, sysroots and release publication | [SDK](https://github.com/oxtech-ember/EmberBSD-SDK) |
 | Third-party recipes, portability patches or shared toolchains | [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports) |
 | Agent task flow, model/MCP adapters and agent-local tools | [EmberBSD-Spark](https://github.com/oxtech-ember/EmberBSD-Spark) |
 | Applications and standalone demonstrations | [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) |
@@ -20,6 +22,7 @@ Publication is required only when you submit it as a shared contribution.
 | Device-operation and personal-change skills | [EmberBSD-User-Skills](https://github.com/oxtech-ember/EmberBSD-User-Skills) |
 
 Use the accepting repository's current instructions and license.
+Follow [documentation ownership](doc/emberbsd-ownership.md). Do not add another hardware matrix or test diary here.
 Keep a shared library fix in Ports rather than each application.
 Split changes across owners and state the required commits or interface between them.
 SDK and Runtime names do not establish released APIs.
@@ -29,7 +32,7 @@ SDK and Runtime names do not establish released APIs.
 Search the accepting repository's existing pull requests and its enabled discussion channels.
 Use its issue tracker when issues are enabled. EmberBSD currently has issues disabled.
 For a new board, substantial feature or interface change in this repository, open a
-draft pull request containing a short public proposal in the relevant documentation directory.
+draft pull request with a short public proposal in its description.
 Include the fields below and state that implementation and hardware acceptance are pending.
 Discuss its scope and acceptance scenario before implementation.
 Keep internal task cards, coordination plans and personal data outside the public proposal.
@@ -143,7 +146,7 @@ A green earlier commit is not a green final commit.
 
 Use a draft while required validation is missing.
 A reviewed source foundation can be integrated with explicit limits if maintainers accept that scope.
-It does not make a board “tested”. Update its capability table only from corresponding evidence.
+It does not make a board “tested”. Update its DevBoards capability record only from corresponding evidence.
 Keep hardware writes and restarts within the agreed device scope.
 
 ## 6. Record the resulting state

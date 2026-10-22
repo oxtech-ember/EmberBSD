@@ -14,7 +14,7 @@ name: Static Citrus conversion contracts
       - 'share/mk/**'
       - 'share/i18n/**'
       - 'ember/tools/citrus-static-*'
-      - 'ember/boot/static-citrus.md'
+      - 'lib/libc/citrus/docs/static-citrus.md'
   pull_request:
     paths:
       - '.github/workflows/citrus-static.yml'
@@ -27,7 +27,7 @@ name: Static Citrus conversion contracts
       - 'share/mk/**'
       - 'share/i18n/**'
       - 'ember/tools/citrus-static-*'
-      - 'ember/boot/static-citrus.md'
+      - 'lib/libc/citrus/docs/static-citrus.md'
   workflow_dispatch:
 
 permissions:

@@ -2,7 +2,7 @@
 
 Follow [CONTRIBUTING](../../CONTRIBUTING.md) for every shared change.
 This guide supplies the kernel-specific decisions and evidence.
-For a new physical target, also follow [adding a board](../boards/adding-a-board.md).
+For a new physical target, also follow [adding a board](adding-a-board.md).
 
 ## Locate the change
 
@@ -35,7 +35,7 @@ It cannot prove controller timing, DMA, wiring, clocks or firmware behavior.
 ## Build the proposed commit
 
 Commit the candidate before a reproducible build.
-Use [the cross-build guide](../boot/cross-build.md) for clean exports, compiler selection, commands and outputs.
+Use [the cross-build guide](../../tools/docs/cross-build.md) for clean exports, compiler selection, commands and outputs.
 Use [the Ports cross recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
 to prepare the common GCC16 kernel compiler.
 That mode does not require an application sysroot or supply a complete application runtime.
@@ -85,12 +85,12 @@ On unsupported hosts, record that gap and use applicable ASan/UBSan or kernel di
 Do not report a sanitizer run as a Valgrind pass.
 Static analysis and host execution supplement device acceptance.
 
-The [native CMA import contract](drm-cma-import.md) checks imported-page
+The [native CMA import contract](../../sys/external/bsd/drm2/drm/docs/drm-cma-import.md) checks imported-page
 ownership and segment bounds with the actual native source.
 
 ## A reproducible regression example
 
-[USB control recovery](../boot/usb-control-recovery.md) provides an actual-source concurrency regression.
+[USB control recovery](../../sys/dev/usb/docs/usb-control-recovery.md) provides an actual-source concurrency regression.
 This exercise uses an already merged repair; it is not a new contribution.
 Run from a fresh checkout containing this guide. Set `work` to a new absolute directory:
 
@@ -128,5 +128,5 @@ An amd64 installer result does not establish an AArch64 boot path.
 A source-menu change or unpublished download server does not establish a network installation.
 Keep pending boot work out of a kernel repair unless it is an explicit, tested dependency.
 
-Update the board page or subsystem guide and the relevant README statement after validation.
+Update the DevBoards hardware profile or subsystem guide and the relevant README statement after validation.
 Submit through CONTRIBUTING. Prepare any NetBSD upstream proposal separately.

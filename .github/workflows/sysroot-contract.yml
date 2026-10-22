@@ -1,11 +1,18 @@
-name: Sysroot release contracts
+name: OS distribution contracts
 
 'on':
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sysroot-contract.yml'
+      - 'ember/tests/release-aarch64-sets.rb'
+      - 'ember/tests/installer-image*.py'
+      - 'distrib/sets/**'
   pull_request:
     paths:
       - '.github/workflows/sysroot-contract.yml'
-      - 'ember/release/**'
-      - 'ember/tests/release*.rb'
+      - 'ember/tests/release-aarch64-sets.rb'
+      - 'ember/tests/installer-image*.py'
       - 'distrib/sets/**'
   workflow_dispatch:
 
@@ -24,12 +31,8 @@ jobs:
       - name: Install host fixture dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ruby bmake xz-utils
-      - name: Verify release mechanisms on the proposed source
+          sudo apt-get install -y --no-install-recommends python3 ruby bmake libarchive-tools
+      - name: Check OS set selectors and installation image contract
         run: |
-          ruby ember/tests/release-aarch64-build.rb
           ruby ember/tests/release-aarch64-sets.rb /usr/bin/bmake
-          ruby ember/tests/release-sysroot.rb
-          ruby ember/tests/release-build.rb
-          ruby ember/tests/release-kit.rb
-          ruby ember/tests/release-github.rb
+          python3 -B ember/tests/installer-image-contract.py

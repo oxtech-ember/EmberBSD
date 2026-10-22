@@ -96,18 +96,11 @@ propagation. It does not establish a successful target build or boot.
 ruby ember/image/test-cix-p1-userland.rb
 ```
 
-The cohort at source `dafccbdc09153ffc85be31fadfd3f7a6cdf536fe`, extended
-with native getty at the same source and build configuration, passed a GCC16.2
-cross-build on macOS. All 77 installed programs passed little-endian AArch64
-static ELF checks and received SHA256 records. Current target headers and the
-strong SSP flags were verified in actual compiler arguments. These are build
-and artifact checks; target execution and persistent startup remain separate.
-
 Keep generated binaries, local paths and personal configuration outside Git.
 Network credentials belong to a separate protected configuration overlay.
 Record the root-image hash and its kernel, loader and userland inputs before
 deployment. Preserve a separately bootable recovery kernel and RAM root.
-Use the board's [boot and recovery guidance](../boards/orange-pi-6-plus.md).
+Use the board's [boot and recovery guidance](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/cix-p1-orangepi6plus/README.md).
 
 The selected native shutdown and halt programs support the explicit `-i` timing
 mode. It removes administrative shutdown pauses and ends process waits early

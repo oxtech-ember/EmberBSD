@@ -13,7 +13,7 @@ name: CIX VPU source contracts
       - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_*'
       - 'ember/tools/cixvpu-*'
-      - 'ember/boot/cix-vpu.md'
+      - 'sys/dev/acpi/docs/cix-vpu.md'
   pull_request:
     paths:
       - '.github/workflows/cix-vpu.yml'
@@ -26,7 +26,7 @@ name: CIX VPU source contracts
       - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_*'
       - 'sys/sys/videoio.h'
       - 'ember/tools/cixvpu-*'
-      - 'ember/boot/cix-vpu.md'
+      - 'sys/dev/acpi/docs/cix-vpu.md'
   workflow_dispatch:
 
 permissions:

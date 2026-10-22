@@ -52,4 +52,4 @@ sh ember/tests/rpi5button.sh
 ```
 
 The platform-gate regression passed on macOS and an EmberBSD AArch64 VM;
-physical CM5 acceptance is recorded on the [board page](../../../ember/boards/compute-module-5.md).
+physical CM5 acceptance is recorded on the [board page](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/bcm2712-cm5/README.md).

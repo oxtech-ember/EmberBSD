@@ -80,9 +80,8 @@ name: CIX platform resource contracts
       - 'ember/tools/acpi-power-*'
       - 'ember/tools/xhci-acpi-rootbus-*'
       - 'ember/tools/cixscmi-*'
-      - 'ember/boot/acpi-power.md'
-      - 'ember/boot/cix-platform.md'
-      - 'ember/boards/orange-pi-6-plus.md'
+      - 'sys/dev/acpi/docs/acpi-power.md'
+      - 'sys/dev/acpi/docs/cix-platform.md'
   pull_request:
     paths:
       - '.github/workflows/cix-platform.yml'
@@ -161,9 +160,8 @@ name: CIX platform resource contracts
       - 'ember/tools/acpi-power-*'
       - 'ember/tools/xhci-acpi-rootbus-*'
       - 'ember/tools/cixscmi-*'
-      - 'ember/boot/acpi-power.md'
-      - 'ember/boot/cix-platform.md'
-      - 'ember/boards/orange-pi-6-plus.md'
+      - 'sys/dev/acpi/docs/acpi-power.md'
+      - 'sys/dev/acpi/docs/cix-platform.md'
   workflow_dispatch:
 
 permissions:

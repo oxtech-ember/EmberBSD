@@ -53,12 +53,16 @@ Dir.mktmpdir('ember-aarch64-sets') do |dir|
     check(binutils.include?(path), 'binutils producer lost ' + path)
     check(external.include?(path), 'external fallback producer lost ' + path)
   end
-  %w[./usr/pkg ./usr/pkg/gcc16/include/c++/vector ./usr/pkg/gcc16/lib/libstdc++.so.7.36
-     ./lib/libgcc.a ./lib/libstdc++.so.7.36].each do |path|
-    check(external.include?(path), 'external staged-runtime profile lost ' + path)
+  check(external.none? { |path| path == './usr/pkg' || path.start_with?('./usr/pkg/gcc16') },
+    'external compiler makes OS sets own the separate Ports runtime/SDK payload')
+  %w[./lib/libgcc.a ./lib/libstdc++.so.7.36 ./usr/include/g++/vector].each do |path|
+    check(!external.include?(path), 'external build requires a duplicate compiler runtime input ' + path)
+  end
+  %w[./usr/include/stdio.h ./usr/lib/crt0.o].each do |path|
+    check(external.include?(path), 'external compiler removed an OS-owned development input ' + path)
   end
   check(!external.include?('./usr/lib/libstdc++.so.9.1'), 'external profile still requires the in-tree GCC12 C++ runtime')
-  puts 'PASS: real AArch64 set selection preserves separate in-tree and staged external runtimes and both mdsetimage producers'
+  puts 'PASS: real AArch64 set selection preserves OS/Ports runtime ownership and both mdsetimage producers'
 
   if ENV['EMBER_TEST_METALOG']
     metadata = File.expand_path(ENV.fetch('EMBER_TEST_METALOG'))

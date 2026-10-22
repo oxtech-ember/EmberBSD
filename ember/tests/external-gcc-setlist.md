@@ -31,5 +31,5 @@ This is a set ownership contract. It does not compile target code, generate
 complete base/etc archives, package a runtime, check ELF dependency closure,
 or establish target execution. Audit the full destination, installation metadata
 and one selected runtime provider before composing or installing a release.
-See the [base update guide](../boot/aarch64-base-update.md) and
-[external adapter guide](../boot/external-gcc-runtime.md).
+See the [base update guide](../tools/docs/aarch64-base-update.md) and
+[external adapter guide](../../tools/docs/external-gcc-runtime.md).

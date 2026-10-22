@@ -23,7 +23,7 @@ name: CIX GPIO actual source contracts
       - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/external/bsd/acpica/dist/**'
       - 'ember/tools/cixgpio-*'
-      - 'ember/boot/cix-gpio.md'
+      - 'sys/dev/acpi/docs/cix-gpio.md'
   pull_request:
     paths:
       - '.github/workflows/cix-gpio.yml'
@@ -45,7 +45,7 @@ name: CIX GPIO actual source contracts
       - 'sys/arch/evbarm/conf/EMBER64'
       - 'sys/external/bsd/acpica/dist/**'
       - 'ember/tools/cixgpio-*'
-      - 'ember/boot/cix-gpio.md'
+      - 'sys/dev/acpi/docs/cix-gpio.md'
   workflow_dispatch:
 
 permissions:

@@ -63,4 +63,4 @@ The retained upstream `rogue_fwif_compchecks_bvnc_init()` is a plain C helper.
 The import adds no initialization sequence and invokes no helper.
 The MIPS page-table and boot-data encoder is separate from this shared ABI.
 
-See [the contract and validation limits](../../../../../ember/boot/a733-gpu-fwabi.md).
+See [the contract and validation limits](../docs/a733-gpu-fwabi.md).

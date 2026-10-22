@@ -1,0 +1,301 @@
+# A733 CPU compute-context serializer
+
+The helper prepares one fresh compute context and one client-queue submission.
+It serializes CPU bytes only. It does not execute GPU instructions.
+It does not allocate memory, map firmware addresses, synchronize DMA, or access registers.
+It does not insert a command into the live KCCB.
+
+The implementation is
+[`sun60i_a733_gpu_fwcompute.c`](../sun60i_a733_gpu_fwcompute.c).
+The API is in
+[`sun60i_a733_gpu_fwcompute.h`](../sun60i_a733_gpu_fwcompute.h).
+It requires a 64-bit little-endian host.
+The kernel source list and portable contract runner include this helper.
+Diagnostic stage 18 loads a packed compiler image and calls this helper on target;
+see the stage section below.
+
+## Stage 18: packed compiler image on target
+
+Stage 18 (`hw.sun60igpuid0.stage=18`) is the first serializer consumer.
+It runs only on the CPU after a fully successful stage 17.
+The file format lives in
+[`sun60i_a733_gpu_fwcompute_file.h`](../sun60i_a733_gpu_fwcompute_file.h):
+a 104-byte little-endian prefix and ten 24-byte resource entries.
+The 344-byte header uses magic `0x334d4337` and version 3.
+It carries the exact BVNC, resource spans and addresses, the static-state span,
+context-state address, command span, priority, identifiers, and payload digest.
+The parser validates bounds, alignment, and overlap. The complete file is at most 512 KiB.
+The production parser, span derivation, packer, and digest cross-check run in
+[`a733-gpu-fwfile-contract.sh`](../../../../../ember/tools/a733-gpu-fwfile-contract.sh).
+
+The typed 96-byte command is kernel-owned, as in the upstream submission.
+The [native decoder](../sun60i_a733_gpu_fwcompute_cmd.c)
+reads the exact 44-byte Mesa KMD stream and four-byte DRM flags from the payload.
+It binds the stream, resume-state, and border-table addresses to their manifest roles.
+The resume PDS allocation fields come from the actual Mesa producer and generated load program.
+The decoder rejects other profiles, unsupported extension fields, invalid flags, and mismatched addresses.
+It never substitutes zero for a missing producer field.
+The six firmware object spans are declared in the fixed window
+`0xc0800000..0xc0808138`, which lies between the firmware code heap end
+(`0xc0000000` plus the parsed code allocation, 102400 bytes in the accepted
+image) and the fixed config pages at `0xc0fd0000`.
+The stage verifies at runtime that this window stays clear of the live
+code and work mappings.
+Nothing in that window is allocated by the firmware heap, backed, or
+page-table mapped: the serialized image is a CPU artifact only.
+
+The stage digests the complete 33 KiB serialized image with the in-kernel
+SHA-256 and reports it through `hw.sun60igpuid0.compute_state`.
+The expected digest comes from the packer
+[`a733-gpu-compute-firmware`](../../../../../ember/tools/a733-gpu-compute-firmware.c),
+which packs the same artifacts, runs the same serializer with the same
+spans and command fields, and prints both the file and image digests.
+The packed file installs as `a733-compute.bin` in the `powervr` firmware
+directory. No KCCB publication, DMA mapping, or GPU execution happens.
+
+The [compute VM encoder contract](a733-gpu-fwcompute-vm.md) checks all firmware-context bytes.
+It includes a poisoned-buffer regression for unused breakpoint and control fields.
+
+## Input and ownership contract
+
+Allocate `sun60i_a733_gpu_fwcompute_image` from caller-owned heap memory.
+The image is approximately 33 KiB. Do not put it on the kernel stack.
+Pass its exact size to `sun60i_a733_gpu_fwcompute_prepare()`.
+The caller must serialize access to all input and output spans.
+The helper does not retain pointers after the call.
+
+Supply six independent firmware spans with these exact object sizes.
+Every firmware address must have 8-byte alignment.
+The caller must first validate those spans against the actual firmware heap and mappings.
+Numerical non-overlap does not prove backing-memory independence.
+
+| Object | Bytes | Role |
+| --- | ---: | --- |
+| `rogue_fwif_fwcomputecontext` | 232 | Common CDM context and actual static state |
+| `rogue_fwif_cccb_ctl` | 32 | Initially idle client-queue control |
+| Client command ring | 32768 | Fresh compute queue |
+| `rogue_fwif_compute_ctx_state` | 4 | Initially zero context-switch flags |
+| Timeline word | 4 | Initially zero completion value |
+| External `rogue_fwif_fwmemcontext` | 32 | Existing VM context; the helper does not modify it |
+
+Supply actual USC, PDS, and CDM-stream spans with CPU pointers, GPU addresses, and lengths.
+All three CPU spans must be distinct from each other, the input record, and the output image.
+Their GPU spans must be distinct and fit in the 40-bit GPU address range.
+Lengths must be nonzero multiples of four and no greater than `UINT32_MAX`.
+USC and PDS GPU addresses require 16-byte alignment. The CDM stream requires four-byte alignment.
+The typed command's stream address must equal the supplied CDM-stream address.
+The context-state GPU address must be nonzero, 16-byte aligned, and representable in 40 bits.
+
+Supply the real 56-byte `rogue_fwif_static_computecontext_state` and typed 96-byte compute command.
+An entirely zero static state is rejected. Individual zero fields can be valid.
+The helper does not decode PDS relocations or validate USC instructions.
+It does not copy or inspect the program bytes. Nonempty spans are a required input contract, not compiler attestation.
+Register packing, resource backing, and accessible GPU mappings remain caller responsibilities.
+
+`EINVAL` rejects invalid lengths, arithmetic overflow, alignment, overlap, priority, or command flags.
+Priorities are the upstream low/medium/high values 0 through 2.
+Only `PREVENT_ALL_OVERLAP` and `SINGLE_CORE` command flags are permitted.
+The frame number is zero, as in the upstream compute job initializer.
+Every error preserves all output bytes.
+The helper assigns named fields after validation. It does not copy input padding or reserved words.
+
+## Initial direct-CDM scope
+
+The initial scope targets BVNC `36.56.104.183` with the pinned firmware profile.
+The [firmware parser](a733-gpu-fwinfo.md) reports feature masks
+`0x92d9ff57fdbf7cdb` and `0x1f`, and BRN mask `0x201`.
+CDM control-stream format is 1. Cluster grouping and compute Morton support are absent.
+`TPU_DM_GLOBAL_REGISTERS` and `GPU_MULTICORE_SUPPORT` are present.
+Linux derives `CDM_USER_MODE_QUEUE` only for stream formats 2 through 4.
+BRN 49927 is absent in this profile.
+
+Nonzero user-queue registers, stream offsets, Morton state, cluster state, BRN 49927 state,
+`num_temp_regions`, or `execute_count` return `EOPNOTSUPP`.
+These fields are not silently cleared to accept a packet.
+The pinned Linux compute stream has no `num_temp_regions` entry.
+Mesa's initial single-core submission emits `execute_count = 0` even when the multicore feature is present.
+A future caller must verify that runtime case. This helper does not claim general multicore submission support.
+A genuine compiler packet may require a bounded extension before hardware execution.
+
+## Exact wire result
+
+The common context uses CDM 4, the supplied priority and identifiers, and deadline 30000 ms.
+Its address fields refer to the supplied CCCB, control, context-state, and external VM objects.
+The static compute state occupies bytes 152 through 207 of the 232-byte compute context.
+Remaining initial context fields are zero, as in upstream zero-initialized allocation.
+
+| Ring offset | Record | Bytes |
+| ---: | --- | ---: |
+| 0 | CDM header, opcode `0x2abc80cd` | 40 |
+| 40 | `rogue_fwif_cmd_compute` | 96 |
+| 136 | UPDATE header, opcode `0x2abc00d5` | 40 |
+| 176 | Timeline UFO address and update value 1 | 8 |
+
+The complete sequence uses **184 bytes**. It does not use 192 bytes.
+The original producer aligns command payloads to eight bytes.
+Its actual behavior takes precedence over the shared-header comment about 16-byte write alignment.
+The unused ring bytes stay zero.
+The shared control's write, read, and dependency offsets stay zero; its wrap mask is 32767.
+
+The separate 88-byte KCCB template uses KICK opcode `0x2abc0065`.
+It carries the common-context address, write offset 184, and wrap mask 32767.
+It contains no cleanup objects or work-estimation data.
+The helper never publishes this template.
+A later consumer must establish mappings, DMA visibility, ownership, and queue ordering.
+KCCB acknowledgment alone is not compute completion. The timeline update is a separate firmware operation.
+
+## Source and license
+
+The adaptation selects MIT from Linux PowerVR revision
+[`7b63ef2d55f24519e7e9e5f4d15dbea03f126e40`](https://github.com/torvalds/linux/tree/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination).
+It preserves Imagination Technologies' authorship. The helper contains the full MIT notice.
+The new client ABI headers retain all 108 upstream client layout assertions.
+The existing ABI import retains its original checks.
+Additional native checks cover the 232-byte compute context and its offsets.
+These additional checks are also compiled against the original upstream structure in the oracle.
+See the [ABI provenance and license](../powervr/README.md).
+The native implementation and tests were developed with AI assistance.
+
+The source functions are `init_fw_context()` and `reg_state_init()` in
+[`pvr_queue.c`](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_queue.c),
+and the control, command-write, and KICK producers in
+[`pvr_cccb.c`](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_cccb.c).
+Their unchanged SHA256 values are checked by the contract runner.
+The optional-field gates come from
+[`pvr_stream_defs.c`](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_stream_defs.c)
+and [`pvr_device.c`](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_device.c).
+Mesa 26.2.4 provides the BXM profile in `src/imagination/common/device_info/bxm-4-64.h`.
+Its `src/imagination/vulkan/pvr_arch_job_compute.c` defines the initial `execute_count` behavior.
+
+## Reproduce the software contract
+
+Run the normal CPU contract from the repository root:
+
+```sh
+sh ember/tools/a733-gpu-fwcompute-contract.sh
+```
+
+For the independent oracle, obtain the listed original files from the pinned Linux revision.
+Set `FWCOMPUTE_UPSTREAM_DIR` to that directory. The runner verifies 13 file hashes.
+It compiles the original ABI headers in a separate translation unit.
+It executes nine unchanged producer functions with memory-only transport adapters.
+It compares the complete context, control, state, ring, and KICK bytes.
+Expected bytes do not depend on native output.
+
+```sh
+FWCOMPUTE_UPSTREAM_DIR=/path/to/pinned/linux-pvr \
+FWCOMPUTE_TEST_CFLAGS='-g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer' \
+sh ember/tools/a733-gpu-fwcompute-contract.sh
+```
+
+The runner reports when the optional oracle is disabled.
+`CC` selects the host compiler. `TMPDIR` selects temporary storage.
+`FWCOMPUTE_KEEP_WORK=1` retains the generated oracle and executable for audit.
+
+The checked run passed 986541 ASan/UBSan checks with the original producer oracle.
+Ten causal mutations failed, including early writes, padding leaks, dropped payload fields,
+unknown flags, aliases, wrong completion values, and a 192-byte KICK offset.
+Target GCC16 compilation, default GCC path analysis, Clang Static Analyzer, and Cppcheck passed.
+Host analysis covered the native helper, contract, and extracted original producers.
+The original producers retain nine const-style findings and one GNU void-pointer arithmetic finding in Cppcheck.
+They are recorded separately and are not suppressed. Native helper and contract analysis are clean.
+Valgrind was not used on the macOS ARM64 host. ASan/UBSan is the stated substitute.
+
+The test fixture contains synthetic data. It is not an executable GPU program.
+Before hardware use, require a manifest from the real Mesa compiler and generators.
+That manifest must bind the source revision, target BVNC, shader input, binary hashes,
+USC/PDS/CDM lengths, relocation addresses, resource map, and actual static compute state.
+No compute dispatch, firmware submission, output-buffer result, or rendering is proved here.
+
+## Physical stage-18 result
+
+
+Current hardware evidence and its applicability belong to the [DevBoards profile](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/a733-zero3w/interfaces.md).
+Stage 18 validates and serializes the packed CPU image only. It does not allocate a firmware heap, publish PTEs/KCCB data or execute the GPU.
+A later mapping/submission stage must use owned firmware-heap allocations; declared span windows are not mappings.
+
+## Version-3 packed file and profile guard
+
+The packed file carries ten resource roles, including the complete read-only border table.
+Each role appears once, with a page-aligned, page-disjoint GPU span and a nonoverlapping payload span.
+The payload holds all six compiler artifacts: general memory, PDS, USC, static state, border table, and command.
+The command and static-state payload spans cannot overlap any resource or each other.
+Version 3 supersedes version 2, which lacked the command and border table.
+Older packets require regeneration; changing their version number cannot make them valid.
+
+The context-state address must equal the RESUME resource base.
+That resource must be writable, SLC-bypassed, and at least 512 bytes.
+The shared-register save areas are separate PDS resources.
+The packer's `CTX_VA_HEX` argument asserts the RESUME address; it cannot select another resource.
+The border table contains all 64 Mesa entries, totaling 262144 bytes.
+The packer derives USC, PDS-program, and CDM lengths from the actual artifacts.
+It does not inherit shader lengths from an older compiler output.
+
+The kernel verifies the payload digest with SHA-256 and rejects mismatches with `EAUTH`.
+It pins BVNC `36.56.104.183`, feature masks `0x92d9ff57fdbf7cdb` and `0x1f`, and BRN mask `0x201`.
+The decoder follows the corresponding pinned Linux stream layout and maps DRM flags into firmware flags.
+The packer and both kernel serializer consumers use the same decoded command.
+The portable contracts check malformed commands, resource order, old versions, and full border bounds.
+They also encode the VM tables before an output file is written.
+These CPU checks do not prove GPU execution.
+
+## Stage 21 trace capture
+
+`hw.sun60igpuid0.trace_state` caches the first 256 words of trace buffer 0.
+The capture validates both object spans against the actual work allocation.
+It rejects an advertised ring size larger than the allocated trace object.
+`total` is the declared ring capacity in words, not the number of written words.
+`captured` gives the number of stored words; `truncated` marks an omitted suffix.
+The `ptr0` and `ptr1` fields are firmware ring indices, not cumulative counters.
+`capture_error` reports a malformed or unavailable trace span separately from command errors.
+This bounded prefix is diagnostic evidence. It is not a complete wrapped-ring dump.
+The identification contract executes the production formatter with short and malformed spans.
+It also checks the observed 118-word case and maximum metadata values.
+
+## Stage 21 fault and output snapshots
+
+`hw.sun60igpuid0.hwr_state` reports a bounded copy of the firmware HWR buffer.
+It validates the DMA span, performs POSTREAD synchronization, and copies all 16 records.
+Counter and index fields remain metadata; they never control the copy bounds.
+`capture_error` reports invalid spans. `captured=16` confirms the copy.
+Firmware can update memory during the copy, so this snapshot is not atomic.
+The diagnostic neither consumes the firmware queue nor reads new hardware registers.
+
+`kick_state` reads the SCRATCH resource before submission and on the common exit path, including command failure.
+It reports `scratch_valid=<before>/<after>` beside the numeric words.
+A validity value of zero means that word is unavailable, not a measured zero.
+Host contracts cover malformed spans, DMA synchronization, and the failed-command path.
+The physical run below verifies the output and completion checks on the board.
+
+## Completion acceptance
+
+KICK uses asynchronous completion. Its KCCB consumption does not require a return word of 1.
+The provider requires exact queue advancement and rejects unknown return bits and firmware errors.
+LOGTYPE and MMUCACHE retain their synchronous return-word checks.
+This follows pinned Linux [`pvr_cccb_send_kccb_kick()`](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_cccb.c#L224), which passes no return-slot waiter.
+The caller must still verify client queue completion and the UFO timeline.
+
+Stage 21 refreshes firmware state after every client queue and timeline observation.
+It checks it again after the final scratch DMA read.
+A pending CONTEXT_RESET, HWR record, or firmware fault rejects completion even when recovery updates the timeline.
+The wait is bounded by four seconds and 40001 observations.
+`kick_state` keeps the initial KICK result and reports the later `fresh_*` fields separately.
+The CCCB observer uses the ABI fields: write offset at byte 0, read offset at byte 4.
+It synchronizes the control and timeline DMA spans before and after each observation.
+
+Run `ember/tools/a733-gpu-fwheap-observe-contract.sh` for the actual-source CCCB regression.
+The provider and identification contracts cover a reset after acknowledgment and after scratch acquisition.
+ASan/UBSan checks passed. Target GCC16, Clang, and Cppcheck found no added safety defects.
+Existing analysis path limits remain. These checks do not establish hardware completion.
+
+## Physical stages 19-21 result
+
+
+Current hardware evidence and its applicability belong to the [DevBoards profile](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/a733-zero3w/interfaces.md).
+Asynchronous KICK may consume its KCCB entry with return word zero. Check consumption, CCCB completion, timeline and fresh fault/HWR state separately.
+The shader producer binds the common ABI, validated SPIR-V and actual PCO resource requirements. IDFWDF address slots and probe selection have separate regressions.
+The guarded store uses Mesa's native DMA-store intrinsic because the pinned compiler rejects generic 64-bit pointer stores.
+In Mesa 26.2.4, CR_CDM_CONTEXT_PDS1 packs allocation sizes and flags; it is not a PDS program address.
+Keep the pinned [Mesa producer](https://gitlab.freedesktop.org/mesa/mesa/-/blob/mesa-26.2.4/src/imagination/vulkan/pvr_arch_job_compute.c#L80)
+and [Linux stream mapping](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/drivers/gpu/drm/imagination/pvr_stream_defs.c#L188) as the encoding authority.
+GPU-owned diagnostic allocations remain retained until hardware reset.
