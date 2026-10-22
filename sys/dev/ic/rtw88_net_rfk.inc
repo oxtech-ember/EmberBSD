@@ -155,7 +155,7 @@ rtw88_net_rfk_begin(struct rtw88_net *net)
 	struct rtw8822c_rfk_services svc = {
 	    .cookie = net, .enter = rtw88_net_rfk_enter,
 	    .leave = rtw88_net_rfk_leave, .wait = rtw88_net_rfk_wait,
-	    .ticks = rtw88_net_rfk_ticks, .ticks_per_second = (unsigned)hz };
+	    .clock_ticks = rtw88_net_rfk_ticks, .ticks_per_second = (unsigned)hz };
 	uint32_t values[192];
 	int error;
 

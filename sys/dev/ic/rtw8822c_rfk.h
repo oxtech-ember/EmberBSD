@@ -17,7 +17,7 @@ struct rtw8822c_rfk_services {
 	int (*enter)(void *, int cleanup);
 	void (*leave)(void *);
 	int (*wait)(void *, unsigned min_us, int cleanup);
-	unsigned (*ticks)(void *);
+	unsigned (*clock_ticks)(void *);
 	unsigned ticks_per_second;
 };
 

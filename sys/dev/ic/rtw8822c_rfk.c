@@ -199,7 +199,7 @@ rfk_enter(struct rtw8822c_rfk *k)
 	if (k->generation != k->sc->sc_generation ||
 	    k->sc->sc_stop_requested || !k->sc->sc_resources_ready)
 		return rfk_error(k, ESTALE);
-	if ((int)(k->svc.ticks(k->svc.cookie) -
+	if ((int)(k->svc.clock_ticks(k->svc.cookie) -
 	    (k->cleanup_mode ? k->cleanup_deadline : k->new_deadline)) >= 0)
 		return rfk_error(k, ETIMEDOUT);
 	error = k->svc.enter(k->svc.cookie, (int)k->cleanup_mode);
@@ -453,7 +453,7 @@ rfk_arm(struct rtw8822c_rfk *k, uint32_t addr, unsigned size, uint32_t mask,
 		(void)rfk_error(k, EPROTO);
 		return;
 	}
-	now = k->svc.ticks(k->svc.cookie);
+	now = k->svc.clock_ticks(k->svc.cookie);
 	k->report_addr = addr;
 	k->report_size = size;
 	k->report_mask = mask;
@@ -504,7 +504,7 @@ rfk_report(struct rtw8822c_rfk *k, unsigned interval_us)
 			(void)rfk_error(k, EPROTO);
 			return 0;
 		}
-		now = k->svc.ticks(k->svc.cookie);
+		now = k->svc.clock_ticks(k->svc.cookie);
 		if ((int)(now - k->report_deadline) >= 0) {
 			(void)rfk_error(k, ETIMEDOUT);
 			return 0;
@@ -541,10 +541,10 @@ static int
 rfk_value(struct rtw8822c_rfk *k, uint32_t addr, uint32_t mask,
     uint32_t target, unsigned interval_us, unsigned budget_us)
 {
-	unsigned deadline = k->svc.ticks(k->svc.cookie) + rfk_ticks(k, budget_us);
+	unsigned deadline = k->svc.clock_ticks(k->svc.cookie) + rfk_ticks(k, budget_us);
 
 	for (;;) {
-		if ((int)(k->svc.ticks(k->svc.cookie) - deadline) >= 0)
+		if ((int)(k->svc.clock_ticks(k->svc.cookie) - deadline) >= 0)
 			return rfk_error(k, ETIMEDOUT);
 		if (rfk_mask_read(k, addr, mask) == target &&
 		    (k->cleanup_mode ? k->cleanup_error : k->error) == 0)
@@ -557,11 +557,11 @@ rfk_value(struct rtw8822c_rfk *k, uint32_t addr, uint32_t mask,
 static int
 rfk_rf_idle(struct rtw8822c_rfk *k, int delay_after_read)
 {
-	unsigned deadline = k->svc.ticks(k->svc.cookie) + rfk_ticks(k, 5000);
+	unsigned deadline = k->svc.clock_ticks(k->svc.cookie) + rfk_ticks(k, 5000);
 	uint32_t a, b;
 
 	for (;;) {
-		if ((int)(k->svc.ticks(k->svc.cookie) - deadline) >= 0)
+		if ((int)(k->svc.clock_ticks(k->svc.cookie) - deadline) >= 0)
 			return rfk_error(k, ETIMEDOUT);
 		a = rfk_read_rf(k, 0, 0, BIT_RF_MODE);
 		b = rfk_read_rf(k, 1, 0, BIT_RF_MODE);
@@ -674,7 +674,7 @@ rtw8822c_rfk_begin(struct rtw88_softc *sc,
 	int error;
 
 	if (svc == NULL || svc->enter == NULL || svc->leave == NULL ||
-	    svc->wait == NULL || svc->ticks == NULL || svc->ticks_per_second == 0 ||
+	    svc->wait == NULL || svc->clock_ticks == NULL || svc->ticks_per_second == 0 ||
 	    svc->ticks_per_second > 1000000)
 		return EINVAL;
 	if (!sc->sc_started || !sc->sc_running || sc->sc_stop_requested ||
@@ -715,7 +715,7 @@ rtw8822c_rfk_begin(struct rtw88_softc *sc,
 	k->token = atomic_inc_64_nv(&rfk_serial);
 	membar_sync();
 	k->generation = sc->sc_generation;
-	k->started_at = svc->ticks(svc->cookie);
+	k->started_at = svc->clock_ticks(svc->cookie);
 	k->new_deadline = k->started_at + 6U * svc->ticks_per_second;
 	k->cleanup_deadline = k->started_at + 8U * svc->ticks_per_second;
 	k->packet_started = k->completed = k->gnt_valid = 0;
@@ -768,7 +768,7 @@ rtw8822c_rfk_begin(struct rtw88_softc *sc,
 static int
 rfk_handshake(struct rtw8822c_rfk *k, int start)
 {
-	unsigned deadline = k->svc.ticks(k->svc.cookie) + rfk_ticks(k, 1000000);
+	unsigned deadline = k->svc.clock_ticks(k->svc.cookie) + rfk_ticks(k, 1000000);
 	uint8_t payload = start ? 1 : 0;
 	int ready, error;
 
@@ -776,7 +776,7 @@ rfk_handshake(struct rtw8822c_rfk *k, int start)
 	    BITS_PMC_BT_IQK_STS, 0, 20, 600000) != 0)
 		return k->error;
 	for (;;) {
-		if ((int)(k->svc.ticks(k->svc.cookie) - deadline) >= 0)
+		if ((int)(k->svc.clock_ticks(k->svc.cookie) - deadline) >= 0)
 			return rfk_error(k, ETIMEDOUT);
 		if (rfk_enter(k) != 0)
 			return k->cleanup_mode ? k->cleanup_error : k->error;
@@ -811,7 +811,7 @@ rfk_packet_poll(struct rtw8822c_rfk *k)
 	int error;
 
 	for (;;) {
-		if ((int)(k->svc.ticks(k->svc.cookie) - k->packet_deadline) >= 0)
+		if ((int)(k->svc.clock_ticks(k->svc.cookie) - k->packet_deadline) >= 0)
 			return rfk_error(k, ETIMEDOUT);
 		if (rfk_enter(k) != 0)
 			return k->cleanup_mode ? k->cleanup_error : k->error;
@@ -839,7 +839,7 @@ rfk_iqk(struct rtw8822c_rfk *k)
 		return;
 	/* Original one-second transport and 300ms semantic budgets are both
 	 * bounded by the transaction deadline; neither restarts after cancel. */
-	k->packet_deadline = k->svc.ticks(k->svc.cookie) + rfk_ticks(k, 1000000);
+	k->packet_deadline = k->svc.clock_ticks(k->svc.cookie) + rfk_ticks(k, 1000000);
 	k->packet_started = 1;
 	error = rtw88_fw_iqk_begin(k->sc);
 	k->svc.leave(k->svc.cookie);
@@ -849,7 +849,7 @@ rfk_iqk(struct rtw8822c_rfk *k)
 	if (rfk_packet_poll(k) != 0)
 		return;
 	{
-		unsigned semantic = k->svc.ticks(k->svc.cookie) + rfk_ticks(k, 300000);
+		unsigned semantic = k->svc.clock_ticks(k->svc.cookie) + rfk_ticks(k, 300000);
 		if ((int)(semantic - k->report_deadline) < 0)
 			k->report_deadline = semantic;
 	}

@@ -8,9 +8,13 @@ def replace(s,a,b):
     if s.count(a)!=1:raise ValueError(a)
     return s.replace(a,b)
 net=(src/'sys/dev/ic/rtw88_net.c').read_text()
+# Preserve the actual wrapper's net80211 clock macro at both RFK boundaries.
+# Core-only compilation does not include ieee80211_netbsd.h and misses this.
+bsd=(src/'sys/net80211/ieee80211_netbsd.h').read_text()
+clock_macro=re.search(r'^#define\s+ticks\s+getticks\(\)\s*$',bsd,re.M).group()+'\n'
 layout=re.search(r'^struct rtw88_net_rfk \{.*?^};',net,re.M|re.S).group()
 routing=(out/'enable-routing.inc').read_text()
-routing=replace(routing,'struct rtw88_net {','#include <dev/ic/rtw8822c_rfk.h>\n'+layout+';\nstruct rtw88_net {')
+routing=replace(routing,'struct rtw88_net {',clock_macro+'#include <dev/ic/rtw8822c_rfk.h>\n#undef ticks\n'+layout+';\nstruct rtw88_net {')
 routing=replace(routing,'    unsigned configured_media;','    unsigned configured_media;\n    struct rtw88_net_rfk rfk;')
 (out/'enable-routing.inc').write_text(routing)
 model=(out/'routing-model.inc').read_text()
@@ -23,7 +27,7 @@ model=replace(model,'unsigned ic_flags_ext, ic_bmiss_count, ic_sta_assoc;', 'uns
 (out/'routing-model.inc').write_text(model)
 native=(out/'enable-native.inc').read_text()
 helpers=(src/'sys/dev/ic/rtw88_net_rfk.inc').read_text()
-native=replace(native,'static void\nrtw88_net_state_work(',helpers+'\nstatic void\nrtw88_net_state_work(')
+native=replace(native,'static void\nrtw88_net_state_work(',clock_macro+helpers+'\n#undef ticks\nstatic void\nrtw88_net_state_work(')
 (out/'enable-native.inc').write_text(native)
 services=(src/'ember/tools/rtw88-enable-services.inc').read_text()
 services=replace(services,'void *kmem_zalloc(size_t n,int flags)',
