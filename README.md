@@ -1179,7 +1179,8 @@ The base system shell is unchanged.
   firmware RSSI feedback remain unqualified.
   Disruptive manual scans now retire an active STA association before the
   INIT bypass. Actual-source checks require disconnect notification and a
-  fresh same-BSSID AUTH/RUN; the target regression remains pending.
+  fresh same-BSSID AUTH/RUN. GCC16 kernel `d175df270` passes two disruptive
+  manual scans with automatic WPA2/data recovery and LAN link-local IPv6 SSH.
   Raw TCP from the board reaches about 25 Mbps in a 1 MiB trial. Full AP-loss
   recovery, RF quality and endurance remain unqualified. HT/VHT remain
   unadvertised. Shared HT20 association contracts now bind queued offers to

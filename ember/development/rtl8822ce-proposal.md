@@ -717,5 +717,11 @@ The separate crypto and HT contracts retain their own key/node lifecycle gates.
 CC=gcc-16 RTW88_START_ANALYZE=1 sh ember/tools/rtw88-manualscan-contract.sh
 ```
 
-GCC16 target build and a manual scan from a linked STA remain required.
+GCC16 kernel `d175df270` passes two manual scans from a linked STA on one
+2.4 GHz AP. WPA2 and IPv4 data recover without an explicit disconnect or
+reassociate command, in 26 and 34 seconds. Firmware generations advance
+from 2 to 4 to 6; each new RUN sends a fresh RA configuration. Link-local
+IPv6 SSH works after each cycle. Subsequent four-AC probes and 1 MiB
+SSH/raw-IPv6 transfers pass with matching hashes in both directions.
+These bounded trials do not qualify AP loss, reconnect latency or endurance.
 This change does not implement an association-preserving background scan.
