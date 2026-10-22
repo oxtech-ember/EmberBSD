@@ -60,6 +60,10 @@ const char *ldelf_emit_note_fdo_package_metadata;
 
 static struct bfd_link_needed_list *global_needed;
 static lang_input_statement_type *global_found;
+/* Shared objects loaded for DT_NEEDED entries before the plugin
+   "all symbols read" hook.  */
+static bfd **plugin_needed_bfds;
+static size_t plugin_needed_count;
 static struct stat global_stat;
 static struct bfd_link_needed_list *global_vercheck_needed;
 static bool global_vercheck_failed;
@@ -383,6 +387,35 @@ ldelf_try_needed (struct dt_needed *needed, int force, int is_linux)
       /* Return TRUE to indicate that we found the file, even though
 	 we aren't going to do anything with it.  */
       return true;
+    }
+
+  /* The symbols of a shared object loaded before the plugin "all
+     symbols read" hook are still in the hash table.  Use that BFD
+     again.  A second copy would make the definitions of the first
+     copy look like references, which emits link-time warnings.  */
+  if (!elf_hash_table (&link_info)->handling_dt_needed)
+    {
+      size_t i;
+
+      for (i = 0; i < plugin_needed_count; i++)
+	{
+	  struct stat st;
+	  bfd *pbfd = plugin_needed_bfds[i];
+
+	  if (pbfd != NULL
+	      && bfd_stat (pbfd, &st) == 0
+	      && st.st_dev == global_stat.st_dev
+	      && st.st_ino == global_stat.st_ino
+	      && st.st_ino != 0)
+	    {
+	      bfd_close (abfd);
+	      plugin_needed_bfds[i] = NULL;
+	      pbfd->link.next = NULL;
+	      *link_info.input_bfds_tail = pbfd;
+	      link_info.input_bfds_tail = &pbfd->link.next;
+	      return true;
+	    }
+	}
     }
 
   /* Specify the soname to use.  */
@@ -1204,6 +1237,15 @@ ldelf_handle_dt_needed (struct elf_link_hash_table *htab,
 	  if (bfd_elf_add_dt_needed_tag (abfd, &link_info) < 0)
 	    einfo (_("%F%P: failed to add DT_NEEDED dynamic tag\n"));
 	}
+
+  if (htab->handling_dt_needed)
+    for (abfd = *save_input_bfd_tail; abfd != NULL; abfd = abfd->link.next)
+      {
+	plugin_needed_bfds
+	  = xrealloc (plugin_needed_bfds,
+		      (plugin_needed_count + 1) * sizeof (*plugin_needed_bfds));
+	plugin_needed_bfds[plugin_needed_count++] = abfd;
+      }
 
   link_info.input_bfds_tail = save_input_bfd_tail;
   *save_input_bfd_tail = NULL;
