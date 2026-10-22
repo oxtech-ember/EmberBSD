@@ -1191,10 +1191,13 @@ The base system shell is unchanged.
   recovery, RF quality and endurance remain unqualified. HT/VHT remain
   unadvertised. Shared HT20 association contracts now bind queued offers to
   current peer, profile and security state. They also withdraw rejected RUN
-  transitions. Driver HT admission stays disabled until RX BA/reorder and
-  radio prerequisites are complete. A bounded
+  transitions. A bounded [STA RX BA/reorder foundation](ember/development/net80211-rxba.md)
+  now binds actual ADDBA publication, ciphertext ordering, key cleanup and native
+  timer ownership. It also validates standalone A-MSDU against the current HT
+  profile. Driver HT admission stays disabled until hardware BA and radio
+  prerequisites are complete. A bounded
   [A-MSDU receive path](ember/development/net80211-amsdu.md) remains disabled
-  until peer negotiation and aggregation requirements are complete.
+  for RTL8822CE until peer negotiation and aggregation requirements are complete.
   See the [source boundary and checks](ember/development/rtl8822ce-proposal.md#current-source-boundary)
   and [physical board limits](ember/boards/orange-pi-6-plus.md).
 - **Raspberry Pi 5 and Compute Module 5**: UEFI firmware built from

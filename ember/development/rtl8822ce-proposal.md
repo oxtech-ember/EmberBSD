@@ -759,3 +759,20 @@ works after each cycle. Four-AC probes return 12/12 replies each. Subsequent
 1 MiB SSH/raw-IPv6 transfers preserve hashes in both directions.
 These trials qualify legacy regression. They do not force occupied mailboxes
 or measure scheduler latency. HT admission remains disabled.
+
+### Bounded shared RX BA foundation
+
+The [RX BA contract](net80211-rxba.md) connects actual Action/output producers,
+ciphertext reorder, key lifecycle, ordered CCMP/AES input and native timer
+ownership. The per-node limit includes retained mbuf allocations and metadata.
+A stale standalone A-MSDU grant cannot bypass current HT/security checks before
+CCMP processing. Narrow compressed BAR ingress retains existing receive gates.
+These source contracts do not enable HT or configure hardware BlockAck.
+
+The GCC16 AArch64 kernel `6decb0f51` passes a legacy regression on the physical
+CIX board. Two disruptive scans recover WPA2/IPv4 in 27 and 12 seconds.
+LAN link-local IPv6 SSH works after each. A bounded four-AC recheck receives
+12/12 replies per queue. Subsequent 1 MiB SSH/raw-IPv6 transfers preserve hashes
+in both directions. The first four-AC attempt fails while reading diagnostic
+stats with `ENOMEM`; it does not qualify as a passing run. Dynamic string
+resizing in that read path remains a separate open fix. HT admission stays off.
