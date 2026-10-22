@@ -774,8 +774,7 @@ CIX board. Two disruptive scans recover WPA2/IPv4 in 27 and 12 seconds.
 LAN link-local IPv6 SSH works after each. A bounded four-AC recheck receives
 12/12 replies per queue. Subsequent 1 MiB SSH/raw-IPv6 transfers preserve hashes
 in both directions. The first four-AC attempt fails while reading diagnostic
-stats with `ENOMEM`; it does not qualify as a passing run. Dynamic string
-resizing in that read path remains a separate open fix. HT admission stays off.
+stats with `ENOMEM`; it does not qualify as a passing run. The capacity-hint fix below addresses that read race. HT admission stays off.
 
 ## Posted native TX drain before managed setup
 
@@ -794,7 +793,27 @@ Host contracts execute real posted MGMT, completion IRQ and first AUTH/RUN,
 plus an explicitly broader five-queue core matrix. Bus RP progress and scheduler
 execution are modeled. The HT exchange model rejects posted-DMA inputs outside
 its declared domain; it does not fabricate successful hardware draining.
-GCC16 AArch64 build and board regression remain required for this addition.
+GCC16 AArch64 kernel `4f152fc21` passes clean warm boot and legacy regression.
+Two disruptive scans recover in 26/33 seconds, with link-local IPv6 after each.
+Four-AC probes return 12/12 replies. SSH/raw-IPv6 1 MiB hashes match both ways.
 Descriptor consumption does not prove radio idle, an air ACK or RFK readiness.
 Packet-H2C, calibration and hardware RX BlockAck remain separate prerequisites;
 the real HT provider remains NULL.
+
+
+### Bounded diagnostic string retries
+
+The stats handler keeps its 4096-byte heap allocation outside driver locks.
+A short read or size query now returns that capacity as a retry hint.
+A sufficient read still returns the actual string length. Generic validation,
+copy errors, write protection and formatter errors keep their existing behavior.
+This prevents counter growth between the CLI's first read and its single retry
+from causing a second `ENOMEM`. No zero padding or global sysctl change is used.
+
+The [actual-source contract](../tools/rtw88-sysctl-contract.c) executes the real
+CLI string branch, generic lookup and wrapper. It passes 994 checks with GCC16
+O0/O2 and ASan/UBSan. GCC path analysis and Cppcheck pass. CSA retains one pinned
+inherited dead store in generic lookup and finds no new issue; it is not clean.
+On physical kernel `4f152fc21`, 100 CLI reads interleaved with 20 peer pings pass.
+Strings span 1373 through 1380 bytes, exceeding the CLI's initial 1024 bytes.
+These bounded tests do not qualify arbitrary concurrency or long-term stability.

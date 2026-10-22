@@ -1189,7 +1189,7 @@ The base system shell is unchanged.
   This does not add RFK.
   Source contracts also drain posted native TX through the actual completion
   decoder before retuning, with bounded waits and existing failure ownership.
-  This addition still needs a target build and board regression.
+  GCC16 kernel `4f152fc21` passes bounded scan, IPv6 and data regression checks.
   Raw TCP from the board reaches about 25 Mbps in a 1 MiB trial. Full AP-loss
   recovery, RF quality and endurance remain unqualified. HT/VHT remain
   unadvertised. Shared HT20 association contracts now bind queued offers to
@@ -1686,7 +1686,9 @@ remain unverified.
   Functional mutants remove each required link. The BSD supplicant event
   consumer is separate; these tests do not simulate a successful WPA rejoin.
   Read-only stats use a
-  per-call heap snapshot to retain the kernel stack budget. They expose
+  per-call heap snapshot to retain the kernel stack budget. A bounded capacity
+  hint protects the CLI retry when counters grow. Sufficient reads retain their
+  actual length. Stats expose
   the BASIC mask and encoded unicast DATA rates. CIX physical checks confirm
   the encoded fixed-rate policy and bidirectional file integrity. Successful
   producer-write counters expose MGMT/BE/BK/VI/VO separately.
