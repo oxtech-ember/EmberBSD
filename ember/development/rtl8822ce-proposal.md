@@ -235,7 +235,8 @@ not reopen wide RA until another successful RUN configuration. No RTS24 policy
 or per-packet mailbox mutation is introduced.
 
 C2H `0x0c` accepts at least seven payload bytes, counts trailing bytes and parses
-the known prefix. MACID must be zero, rate must be legacy0..11, BW20 and SGI0.
+the known prefix. MACID must be zero, with legacy rate codes0..11 or bounded
+MCS0..7 codes12..19, BW20 and SGI0.
 Malformed, foreign and unsupported reports have separate counters. Every valid
 report is explicitly association-unattributed telemetry: the wire has no BSSID
 or association token, and MACID0 is reused. `ra_observed_gen` is the host firmware
@@ -336,6 +337,28 @@ A-MSDU3839, hardware BlockAck and radio/power/protection acceptance before enabl
 any real HT advertisement. Wire semantics are adapted from FreeBSD net80211 at
 `d2145e9b96448da34d3cfede24c509af6d830c92`, using its BSD license option and
 preserved notices; no LinuxKPI/vap ABI is imported.
+
+## Host-only HT20 one-stream rate path
+
+The native source has a bounded HT20/one-stream AUTO rate consumer. Host tests
+execute actual queued HT offer/response, RUN preparation, H2C `0x40` serialization,
+first single-MPDU TX and C2H reception. The typed table requires a current peer
+profile, 5 GHz/11a, 20 MHz, long GI and HT Operation `0`. Local TX intersects
+peer RX MCS0..7 and selects pinned rate ID `5`.
+The MCS mask and legacy BASIC mask remain separate. The provider
+is checked before payload dequeue/crypto and its numeric generation is checked
+against committed RA under PCI. Fixed HT requests, unsupported protection,
+stale profiles and mailbox uncertainty use existing withdrawal/error owners.
+A legacy fixed-rate association remains usable after HT table invalidation.
+
+The test provider, peer response and device progress are explicit host models.
+Crypto dispatch is observed; this exchange does not measure an air rate or ACK.
+MCS reports remain unattributed firmware-generation telemetry. Native attach
+still registers no HT provider, emits no HT offer and enables no HT PHY.
+RFK, protection and hardware RX BA with software CCMP remain separate gates.
+The current channel 149 trial still times out during authentication. Its AP
+reports HT Operation `0x0006`, outside this operation `0` only envelope. No HT20,
+2SS, HT40, VHT80, aggregation performance or Wi-Fi5 acceptance is claimed.
 
 ## Firmware hardware-feature snapshot
 
