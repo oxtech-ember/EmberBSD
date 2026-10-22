@@ -1286,6 +1286,55 @@ test_strict_complete_views(void)
 	CHECK(memcmp(test_ic.ic_wme.wme_params, applied_params.cap_wmeParams,
 	    sizeof(test_ic.ic_wme.wme_params)) == 0);
 }
+static int
+test_wme_params_equal(const struct wmeParams *a, const struct wmeParams *b)
+{
+	return a->wmep_acm == b->wmep_acm &&
+	    a->wmep_aifsn == b->wmep_aifsn &&
+	    a->wmep_logcwmin == b->wmep_logcwmin &&
+	    a->wmep_logcwmax == b->wmep_logcwmax &&
+	    a->wmep_txopLimit == b->wmep_txopLimit &&
+	    a->wmep_noackPolicy == b->wmep_noackPolicy;
+}
+static int
+test_chan_params_equal(const struct chanAccParams *a,
+    const struct chanAccParams *b)
+{
+	unsigned ac;
+
+	if (a->cap_info != b->cap_info)
+		return 0;
+	for (ac = 0; ac < WME_NUM_AC; ac++)
+		if (!test_wme_params_equal(&a->cap_wmeParams[ac],
+		    &b->cap_wmeParams[ac]))
+			return 0;
+	return 1;
+}
+static int
+test_wme_state_equal(const struct ieee80211_wme_state *a,
+    const struct ieee80211_wme_state *b)
+{
+	unsigned ac;
+
+	if (a->wme_flags != b->wme_flags ||
+	    a->wme_hipri_traffic != b->wme_hipri_traffic ||
+	    a->wme_hipri_switch_thresh != b->wme_hipri_switch_thresh ||
+	    a->wme_hipri_switch_hysteresis != b->wme_hipri_switch_hysteresis ||
+	    a->wme_update != b->wme_update ||
+	    a->wme_sta_apply != b->wme_sta_apply ||
+	    a->wme_sta_error != b->wme_sta_error)
+		return 0;
+	for (ac = 0; ac < WME_NUM_AC; ac++)
+		if (!test_wme_params_equal(&a->wme_params[ac],
+		    &b->wme_params[ac]))
+			return 0;
+	return test_chan_params_equal(&a->wme_wmeChanParams,
+	    &b->wme_wmeChanParams) &&
+	    test_chan_params_equal(&a->wme_wmeBssChanParams,
+	    &b->wme_wmeBssChanParams) &&
+	    test_chan_params_equal(&a->wme_chanParams, &b->wme_chanParams) &&
+	    test_chan_params_equal(&a->wme_bssChanParams, &b->wme_bssChanParams);
+}
 static void
 test_strict_ioctl_reject(void)
 {
@@ -1295,7 +1344,7 @@ test_strict_ioctl_reject(void)
 	    .i_type = IEEE80211_IOC_WME_TXOPLIMIT, .i_val = 123, .i_len = 0};
 	struct ieee80211_wme_state saved = test_ic.ic_wme;
 	CHECK(ieee80211_ioctl_setwmeparam(&test_ic, &req) == EOPNOTSUPP);
-	CHECK(memcmp(&saved, &test_ic.ic_wme, sizeof(saved)) == 0);
+	CHECK(test_wme_state_equal(&saved, &test_ic.ic_wme));
 	CHECK(applies == 0);
 }
 static void
