@@ -37,7 +37,7 @@ static void rfk_after_owner_drop(void)
 }
 static unsigned rfk_last_owned_tick,rfk_owned_at_cancel;
 static uint64_t rfk_coef_at_us,rfk_clock_offset,rfk_first_owned_us;
-static unsigned rfk_yields,rfk_coef_reads,rfk_clock_wraps,rfk_min_early;
+static unsigned rfk_yields,rfk_coef_reads,rfk_coef_target_reads,rfk_clock_wraps,rfk_min_early;
 static unsigned rfk_last_write;
 static unsigned rfk_previous_clock;
 static int rfk_timing(void) { return strncmp(rfk_case,"timing-",7)==0; }
@@ -280,6 +280,7 @@ static int rfk_read4(void *cookie,uint32_t reg,uint32_t *value)
             rfk_coef_reads++;
             *value=rfk_is("timing-stale")?0x55:
                 !rfk_is("timing-none") && elapsed>=ready?0x55:0x10000;
+            if(*value==0x55)rfk_coef_target_reads++;
             if(*value==0x55 && rfk_is("timing-read-expiry"))rfk_advance_us(10000);
             if(*value==0x55 && rfk_is("timing-new-expiry"))rfk_advance_us(2500);
             return 0;
@@ -515,7 +516,8 @@ main(void)
     if(rfk_timing()) {
         const struct rtw88_rfk_diag *d=&sc.sc_stats.rfk;
         CHECK(rfk_hz==100 && rfk_yields>0 && rfk_coef==1);
-        unsigned completed=rfk_timing_success() || rfk_is("timing-cancel") || rfk_is("timing-Q");
+        unsigned completed=rfk_timing_success() || rfk_is("timing-cancel") ||
+            rfk_is("timing-Q") || rfk_is("timing-new-expiry");
         CHECK(d->arms[6]==1 && d->done[6]==completed);
         printf("RFK timing %s: first=%llu coef=%llu yields=%u reads=%u error=%d/%d\n",
             rfk_case,(unsigned long long)rfk_first_owned_us,
@@ -549,6 +551,10 @@ main(void)
         if(rfk_is("timing-new-expiry")) {
             CHECK(rfk_fault && rfk_coef_at_us-rfk_first_owned_us<6000000);
             CHECK(rfk_now_us()-rfk_coef_at_us<10000);
+            /* The first target crosses the new-work deadline. Only a
+             * second read by cleanup may accept this existing operation. */
+            CHECK(rfk_coef_target_reads==2 && d->cleanup_error==0);
+            CHECK(d->token==1 && !rfk_parent_auth && (d->flags&2)==0);
         }
     }
     if(rfk_power_before() || rfk_is("power-partial")) {

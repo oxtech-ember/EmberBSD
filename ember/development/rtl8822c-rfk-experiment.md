@@ -135,7 +135,8 @@ context. It contains no packet, key, address or SSID dump.
 - `error`: primary and cleanup errors.
 - `rfk_report`: phase kind, register, read width, raw value, raw validity and
   observed non-target evidence. An invalid raw value is not a zero sample.
-- `rfk_cost`: IO operations, requested explicit delay microseconds and yields.
+- `rfk_cost`: IO operations, requested explicit delay microseconds and wait calls.
+  A wait call can return from the scheduler more than once.
 - `rfk1` through `rfk7`: armed/accepted oracle counts for start 6d, end 6d,
   GAPK, IQK, DPK, CAL_PWR and final coefficients. Arming is not proof that a
   hardware write landed. Completion means only the experimental host oracle.
