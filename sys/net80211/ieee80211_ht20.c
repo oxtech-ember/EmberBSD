@@ -222,10 +222,61 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 	candidate.basic_mcs = basic;
 	candidate.peer_cap = caps;
 	candidate.operation = (uint16_t)op[2] | (uint16_t)op[3] << 8;
+	memcpy(candidate.peer_htcap, cap, sizeof(candidate.peer_htcap));
+	memcpy(candidate.peer_htop, op, sizeof(candidate.peer_htop));
 	candidate.valid = 1;
 	ni->ni_ht20 = candidate;
 	/* The current provider admitted the bounded A-MSDU receive consumer. */
 	ni->ni_flags |= IEEE80211_NODE_AMSDU_RX;
+	return 0;
+bad:
+	ieee80211_ht20_reset(ni);
+	return EINVAL;
+}
+
+/*
+ * An accepted response fixes the peer HT contract until reassociation. Check
+ * matching beacons before the legacy parser can return on a malformed TLV.
+ * The caller owns the normal INIT request after this synchronous purge.
+ */
+int
+ieee80211_ht20_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
+    const struct ieee80211_frame *wh, const uint8_t *p, size_t len)
+{
+	const struct ieee80211_ht20_node *h = &ni->ni_ht20;
+	const uint8_t *cap = NULL, *op = NULL;
+	size_t size;
+
+	if (!h->valid || ic->ic_opmode != IEEE80211_M_STA ||
+	    (ic->ic_state != IEEE80211_S_ASSOC &&
+	     ic->ic_state != IEEE80211_S_RUN) || ni != ic->ic_bss ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_macaddr) ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr3, ni->ni_bssid))
+		return 0;
+	if (!ht20_current(ic, ni, h) || len < 12)
+		goto bad;
+	p += 12;
+	len -= 12;
+	while (len != 0) {
+		if (len < 2 || p[1] > len - 2)
+			goto bad;
+		size = (size_t)p[1] + 2;
+		if (p[0] == 45) {
+			if (cap != NULL || p[1] != sizeof(h->peer_htcap))
+				goto bad;
+			cap = p + 2;
+		} else if (p[0] == 61) {
+			if (op != NULL || p[1] != sizeof(h->peer_htop))
+				goto bad;
+			op = p + 2;
+		}
+		p += size;
+		len -= size;
+	}
+	if (cap == NULL || op == NULL ||
+	    memcmp(cap, h->peer_htcap, sizeof(h->peer_htcap)) != 0 ||
+	    memcmp(op, h->peer_htop, sizeof(h->peer_htop)) != 0)
+		goto bad;
 	return 0;
 bad:
 	ieee80211_ht20_reset(ni);

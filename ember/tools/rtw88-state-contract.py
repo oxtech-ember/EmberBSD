@@ -20,6 +20,12 @@ def function(name, result):
     return result+'\n'+match.group()+'\n'
 proto = read('sys/net80211/ieee80211_proto.h')
 parts = [read('sys/net80211/ieee80211_rxba.h'),read('sys/net80211/_ieee80211.h'), read('sys/net80211/ieee80211_ht20.h')]
+# The complete shared HT helper now reads the real management frame identity.
+wire = read('sys/net80211/ieee80211.h')
+parts.extend([wire[:wire.index('#ifndef')],
+              '#ifndef __packed\n#define __packed __attribute__((__packed__))\n#endif',
+              re.search(r'^#define\s+IEEE80211_ADDR_LEN\s+.*$', wire, re.M).group(),
+              re.search(r'^struct ieee80211_frame \{.*?^} __packed;', wire, re.M|re.S).group()])
 parts.append(re.search(r'^enum ieee80211_state \{.*?^};', proto, re.M|re.S).group())
 parts.append('#define WME_NUM_AC 4\nstruct ieee80211com;\n')
 for name in ('wmeParams', 'chanAccParams', 'ieee80211_wme_state'):

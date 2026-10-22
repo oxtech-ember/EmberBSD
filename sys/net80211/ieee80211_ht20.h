@@ -13,6 +13,7 @@
 struct ieee80211com;
 struct ieee80211_node;
 struct ieee80211_channel;
+struct ieee80211_frame;
 /* Provider must supply current radio, power, protection, RXBA, scheduler and
  * AMSDU readiness. No provider means legacy. Equal RX/TX masks only initially.
  * Called with Giant, without a driver lock. Snapshot only; no sleeping or PHY
@@ -29,6 +30,7 @@ struct ieee80211_ht20_node {
 	struct ieee80211_channel *channel;
 	uint8_t bssid[6], subtype, offered, valid, security;
 	uint16_t tx_mcs, peer_rx_mcs, basic_mcs, peer_cap, operation;
+	uint8_t peer_htcap[26], peer_htop[22];
 };
 int ieee80211_ht20_check_ies(const uint8_t *, size_t);
 int ieee80211_ht20_optional(const void *, size_t);
@@ -40,5 +42,7 @@ void ieee80211_ht20_offer(struct ieee80211com *, struct ieee80211_node *, int,
 void ieee80211_ht20_reset(struct ieee80211_node *);
 int ieee80211_ht20_response(struct ieee80211com *, struct ieee80211_node *,
     int, const struct ieee80211_ht20_node *, const uint8_t *, size_t, int);
+int ieee80211_ht20_beacon(struct ieee80211com *, struct ieee80211_node *,
+    const struct ieee80211_frame *, const uint8_t *, size_t);
 int ieee80211_ht20_state_request(struct ieee80211com *, int);
 #endif

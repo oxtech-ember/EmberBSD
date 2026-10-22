@@ -2247,6 +2247,11 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 	wh = mtod(m0, struct ieee80211_frame *);
 	frm = (u_int8_t *)(wh + 1);
 	efrm = mtod(m0, u_int8_t *) + m0->m_len;
+	if (ieee80211_ht20_beacon(ic, ni, wh, frm,
+	    efrm >= frm ? (size_t)(efrm - frm) : 0) != 0) {
+		ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
+		return;
+	}
 
 	/*
 	 * We process beacon/probe response frames:

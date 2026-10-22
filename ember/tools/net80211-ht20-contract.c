@@ -363,6 +363,122 @@ test_delayed_worker_profile(void)
   if (variant==4) CHECK(worker_parent_init==1 && !(native_net.ec.ec_if.if_flags&IFF_RUNNING) && !native_core.sc_started);
  }
 }
+/* The accepted response is the producer. These are full beacon/probe-response
+ * consumers, including the legacy TLV early-return paths. No PHY admission is
+ * registered by the real driver; only this host provider admits the exchange. */
+static struct mbuf *
+ht_beacon(void)
+{
+	struct mbuf *old = beacon(0);
+	struct mbuf *m;
+	uint8_t *p;
+
+	assert(old != NULL);
+	m = newbuf(old->m_len + 52);
+	assert(m != NULL);
+	memcpy(m->m_data, old->m_data, old->m_len);
+	p = m->m_data + old->m_len;
+	ieee80211_ht20_write(p, &admitted);
+	p += 28;
+	memset(p, 0, 24);
+	p[0] = 61; p[1] = 22; p[2] = 1; p[8] = 0xff;
+	m_freem(old);
+	return m;
+}
+
+static void
+test_current_peer_beacons(void)
+{
+	for (unsigned running = 0; running < 2; running++) {
+		for (unsigned variant = 0; variant < 28; variant++) {
+			struct mbuf *m;
+			struct ieee80211_frame *wh;
+			uint8_t *cap, *op;
+			uint64_t epoch;
+			int reject = variant != 0 && variant != 14 &&
+			    variant != 15 && variant != 16 && variant != 17 &&
+			    variant != 19 && variant != 23;
+
+			ht_setup();
+			CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+			release_capture();
+			if (variant != 16 && variant != 17)
+				deliver(ht_response(), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+			if (variant == 17) ieee80211_ht20_reset(&test_node);
+			/* Parent RUN completion is modeled here. The delayed RUN case
+			 * remains in ASSOC with the actual native request queued. */
+			if (running) test_ic.ic_state = IEEE80211_S_RUN;
+			native_net.policy.accepting = 1;
+			native_core.sc_ra.active = 1;
+			epoch = native_net.policy.epoch;
+			m = ht_beacon();
+			wh = mtod(m, struct ieee80211_frame *);
+			cap = m->m_data + m->m_len - 52;
+			op = cap + 28;
+			switch (variant) {
+			case 1: op[4] = 6; break; /* Changed operation. */
+			case 2: op[3] = 5; break; /* Width/secondary channel. */
+			case 3: cap[0] = 46; break; /* Missing HT Capabilities. */
+			case 4: op[0] = 62; break; /* Missing HT Operation. */
+			case 5: op[0] = 45; break; /* Duplicate cap, wrong length. */
+			case 6: cap[0] = 61; break; /* Duplicate operation. */
+			case 7: m->m_len--; break; /* Truncated HT operation. */
+			case 8: cap[1] = 255; break; /* TLV early return. */
+			case 9: cap[2] ^= 0x10; break; /* Peer capability changed. */
+			case 10: cap[5] ^= 1; break; /* Peer RX MCS changed. */
+			case 11: op[8] ^= 1; break; /* Basic MCS changed. */
+			case 12: admitted.generation++; break;
+			case 13: test_ic.ic_ht20_admit = NULL; break;
+			case 14: wh->i_addr2[0] ^= 2; op[4] = 6; break;
+			case 15: wh->i_addr3[0] ^= 2; op[4] = 6; break;
+			case 16: case 17: op[4] = 6; break;
+			case 18: m->m_len = sizeof(*wh) + 11; break;
+			case 19: wh->i_fc[0] = IEEE80211_FC0_SUBTYPE_PROBE_RESP;
+				break;
+			case 20: test_ic.ic_flags ^= IEEE80211_F_PRIVACY; break;
+			case 21: test_node.ni_chan = &test_ic.ic_channels[2]; break;
+			case 22: op[2] = 2; break; /* Primary channel changed. */
+			case 24: case 25: {
+				struct mbuf *copy = newbuf(m->m_len + (variant == 24 ? 28 : 24));
+				assert(copy != NULL);
+				memcpy(copy->m_data, m->m_data, m->m_len);
+				memcpy(copy->m_data + m->m_len, variant == 24 ? cap : op,
+				    variant == 24 ? 28 : 24);
+				m_freem(m); m = copy;
+				break;
+			}
+			case 26: test_node.ni_ht20.attempt++; break;
+			case 27: test_node.ni_bssid[0] ^= 2;
+				memcpy(wh->i_addr3, test_node.ni_bssid, 6); break;
+			case 23: /* A newer SCAN already owns the association. */
+				CHECK(rtw88_net_newstate(&test_ic, IEEE80211_S_SCAN, 0) == 0);
+				epoch = native_net.policy.epoch;
+				op[4] = 6;
+				break;
+			}
+			ieee80211_recv_mgmt_beacon(&test_ic, m, &test_node,
+			    variant == 19 ? IEEE80211_FC0_SUBTYPE_PROBE_RESP :
+			    IEEE80211_FC0_SUBTYPE_BEACON, 0, 0);
+			m_freem(m);
+			if (reject) {
+				CHECK(!test_node.ni_ht20.valid && !test_node.ni_ht20.offered);
+				CHECK(!(test_node.ni_flags & IEEE80211_NODE_AMSDU_RX));
+				CHECK(native_net.requested == IEEE80211_S_INIT);
+				CHECK(!native_net.policy.accepting && !native_core.sc_ra.active);
+				CHECK(native_net.policy.epoch != epoch);
+			} else if (variant == 23) {
+				CHECK(native_net.requested == IEEE80211_S_SCAN);
+				CHECK(native_net.policy.epoch == epoch);
+			} else {
+				CHECK(native_net.policy.epoch == epoch);
+				if (variant != 16 && variant != 17)
+					CHECK(test_node.ni_ht20.valid);
+			}
+			CHECK(node_refs == 1 && captured == NULL);
+		}
+	}
+}
+
 static void
 test_golden_and_reassociation(void)
 {
@@ -468,6 +584,7 @@ main(void)
 	test_response_limits();
 	test_direct_run_failure_ownership();
 	test_delayed_worker_profile();
+	test_current_peer_beacons();
 	test_golden_and_reassociation();
 	test_probe_and_optional_compatibility();
 	test_profile_numeric_bounds();

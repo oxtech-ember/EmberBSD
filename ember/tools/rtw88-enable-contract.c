@@ -811,6 +811,57 @@ static void enable_ht20_worker_fences(void)
     }
 }
 
+/* Full accepted association -> real beacon parser -> native INIT/worker.
+ * The BA suite separately owns real queued ciphertext and timer cancellation. */
+static void enable_ht20_beacon_withdrawal(void)
+{
+    for(unsigned started=0;started<2;started++)for(unsigned kind=0;kind<5;kind++) {
+        struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+        struct rtw88_net *net=enable_ht20_negotiate(&sc,&lock,started?0:-1);
+        if(!net)return;
+        struct ieee80211com *ic=&net->ic;struct ieee80211_node *ni=ic->ic_bss;
+        struct mbuf *m=newbuf(sizeof(struct ieee80211_frame)+12+2+10+52);
+        assert(m!=NULL);
+        struct ieee80211_frame *wh=(void *)m->m_data;
+        wh->i_fc[0]=IEEE80211_FC0_SUBTYPE_BEACON;
+        memset(wh->i_addr1,255,6);memcpy(wh->i_addr2,ni->ni_macaddr,6);
+        memcpy(wh->i_addr3,ni->ni_bssid,6);
+        uint8_t *p=(uint8_t *)(wh+1);p[8]=100;p[10]=IEEE80211_CAPINFO_ESS;p+=12;
+        *p++=IEEE80211_ELEMID_SSID;*p++=0;
+        *p++=IEEE80211_ELEMID_RATES;*p++=8;memcpy(p,ni->ni_rates.rs_rates,8);p+=8;
+        ieee80211_ht20_write(p,&ht20_profile);p+=28;
+        p[0]=61;p[1]=22;p[2]=36;p[8]=1;
+        if(kind==1)p[4]=6;
+        if(kind==2)m->m_len=(int)sizeof(*wh)+15; /* Early TLV error. */
+        if(kind==3)ht20_profile.generation++;
+        if(kind==4)CHECK(rtw88_net_newstate(ic,IEEE80211_S_SCAN,0)==0);
+        uint64_t epoch=net->policy.epoch;
+        unsigned commands=sc.sc_stats.ra_commands,runs=enable_run_callbacks,crypto=route_crypto;
+        queue_packet(&net->ec.ec_if.if_snd,ether_packet(0,0,0));
+        struct mbuf *head=net->ec.ec_if.if_snd.m;
+        ieee80211_recv_mgmt_beacon(ic,m,ni,IEEE80211_FC0_SUBTYPE_BEACON,0,0);
+        m_freem(m);
+        if(kind>0 && kind<4) {
+            CHECK(!ni->ni_ht20.valid && !(ni->ni_flags&IEEE80211_NODE_AMSDU_RX));
+            CHECK(net->requested==IEEE80211_S_INIT && net->policy.epoch!=epoch);
+            CHECK(!net->policy.accepting && !sc.sc_ra.active);
+            rtw88_net_start(&net->ec.ec_if);
+            CHECK(net->ec.ec_if.if_snd.m==head && route_crypto==crypto);
+            rtw88_net_state_work(&net->state_work,net);
+            CHECK(ic->ic_state==IEEE80211_S_INIT && !net->policy.accepting);
+            CHECK(sc.sc_stats.ra_commands==commands && enable_run_callbacks==runs);
+        } else if(kind==4) {
+            CHECK(net->requested==IEEE80211_S_SCAN && net->policy.epoch==epoch);
+        } else CHECK(ni->ni_ht20.valid && net->policy.epoch==epoch);
+        while(net->ec.ec_if.if_snd.m) {
+            struct mbuf *next=net->ec.ec_if.if_snd.m->m_nextpkt;
+            m_freem(net->ec.ec_if.if_snd.m);net->ec.ec_if.if_snd.m=next;
+        }
+        net->ec.ec_if.if_snd.ifq_tail=NULL;net->ec.ec_if.if_snd.ifq_len=0;
+        enable_destroy(net);ht20_net=NULL;route_have_key=0;
+    }
+}
+
 static void enable_ht20_to_legacy_fixed(void)
 {
     struct rtw88_softc sc;kmutex_t lock={.initialized=1};
@@ -865,6 +916,7 @@ int RTW88_ENABLE_ENTRY(void)
     enable_ht20_precrypto_fences();
     enable_ht20_worker_fences();
     enable_ht20_to_legacy_fixed();
+    enable_ht20_beacon_withdrawal();
     enable_run_callbacks=enable_first_producer=0;
     struct rtw88_softc sc;kmutex_t lock={.initialized=1};
     struct rtw88_net *net=enable_attach(&sc,&lock);

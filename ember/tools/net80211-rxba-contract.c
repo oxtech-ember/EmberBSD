@@ -400,6 +400,47 @@ static void test_actual_key_lifecycle(void)
  ieee80211_rxba_reset(&f.ic,&f.ni);ccmp_detach(&f.tx);
  CHECK(rxba_kmem_live==0 && f.ni.references==1);
 }
+/* Compose the actual negotiation producer and beacon preflight/reset with
+ * actual ADDBA, queued encrypted data, replay state and numeric timer owners.
+ * The complete management receiver/native INIT owner runs in HT/enable suites. */
+static void test_beacon_contract_purge(void)
+{
+ for(unsigned kind=0;kind<7;kind++) {
+  struct unit_fixture f;if(!unit_setup(&f,10,64,0))return;
+  unit_input(&f,11,11);uint64_t token=unit_token;
+  struct ccmp_ctx *ctx=f.ni.ni_ucastkey.wk_private;
+  CHECK(token!=0 && f.ni.ni_rxba.bytes!=0 && ctx->cc_rxrsc[0]==0);
+  struct ieee80211_frame wh={0};uint8_t body[12+52]={0};
+  memset(wh.i_addr1,255,6);memcpy(wh.i_addr2,f.ni.ni_macaddr,6);
+  memcpy(wh.i_addr3,f.ni.ni_bssid,6);
+  struct ieee80211_ht20_profile profile;
+  CHECK(unit_profile(&f.ic,&profile)==0);
+  ieee80211_ht20_write(body+12,&profile);
+  body[40]=61;body[41]=22;body[42]=36;
+  size_t len=sizeof(body);
+  if(kind==1)body[44]=6;
+  if(kind==2)body[14]^=0x10;
+  if(kind==3)len--;
+  if(kind==4)unit_profile_generation++;
+  if(kind==5)f.ic.ic_ht20_admit=NULL;
+  if(kind==6)wh.i_addr2[0]^=2;
+  int error=ieee80211_ht20_beacon(&f.ic,&f.ni,&wh,body,len);
+  if(kind>0 && kind<6) {
+   CHECK(error==EINVAL && !f.ni.ni_ht20.valid);
+   CHECK(!(f.ni.ni_flags&IEEE80211_NODE_AMSDU_RX));
+   CHECK(f.ni.ni_rxba.bytes==0 && f.ni.ni_rxba.epoch==0 && unit_token==0);
+   CHECK(ctx->cc_rxrsc[0]==0 && rxba_output_count==0 && f.ni.references==1);
+   unit_now+=1000;ieee80211_rxba_age(&f.ic,&f.ni,token);
+   CHECK(ctx->cc_rxrsc[0]==0 && rxba_output_count==0);
+  } else {
+   CHECK(error==0 && f.ni.ni_ht20.valid && unit_token==token);
+   unit_input(&f,10,10);
+   CHECK(rxba_output_count==2 && ctx->cc_rxrsc[0]==11);
+  }
+  unit_close(&f);
+ }
+}
+
 static void test_actual_node_reuse(void)
 {
  struct unit_fixture f;if(!unit_setup(&f,10,64,0))return;
@@ -753,7 +794,7 @@ static void test_negotiated_amsdu_crypto_order(void)
 #endif
 int RXBA_SHARED_MAIN(void)
 {
- test_absolute_deadline();test_window_and_wrap();test_key_and_mic_order();test_candidate_preflight();test_actual_key_lifecycle();test_actual_node_reuse();test_actual_bar_and_delba();test_clock_serial_quarantine();test_owned_storage_budget();test_null_crypto_order();test_owned_admission_withdrawal();test_actual_allocation_failures();test_repeat_replace_and_tid_deadlines();test_invalid_queued_frames();test_negotiated_amsdu_crypto_order();test_storage_walk_bounds();test_amsdu_current_without_ba();
+ test_absolute_deadline();test_window_and_wrap();test_key_and_mic_order();test_candidate_preflight();test_actual_key_lifecycle();test_actual_node_reuse();test_beacon_contract_purge();test_actual_bar_and_delba();test_clock_serial_quarantine();test_owned_storage_budget();test_null_crypto_order();test_owned_admission_withdrawal();test_actual_allocation_failures();test_repeat_replace_and_tid_deadlines();test_invalid_queued_frames();test_negotiated_amsdu_crypto_order();test_storage_walk_bounds();test_amsdu_current_without_ba();
  printf("RX BA actual primitive/CCMP units: %u checks, %u failures\n",checks,failures);
  return failures!=0;
 }
