@@ -301,7 +301,8 @@ comparison_trace(void)
 		{ 0, 6, 1, 1 }, { 1, 0x10, 0x20c0, 1 },
 		{ 2, 0x11, 0x060a, 1 }, { 3, 0x19, 7, 1 },
 		{ 4, 0x0e, 0x8160, 1 }, { 5, 9, 0x8188, 1 },
-		{ 4, 0x0e, 0x8160, 0x8000 }
+		{ 4, 0x0e, 0x8160, 0x4000 }, { 5, 9, 0x8188, 0x8000 },
+		{ 0, 6, 1, 0x8000 }, { 3, 0x19, 7, 0x8000 }
 	};
 	struct sun60i_a733_hdmi_phy_trace zero = { 0 };
 	struct fixture f;
@@ -328,8 +329,6 @@ comparison_trace(void)
 		CHECK(f.state.trace.requested == cases[i].requested);
 		CHECK(f.state.trace.observed == (cases[i].requested ^ cases[i].mask));
 		CHECK(f.state.trace.status == 2 && !f.state.phy_prepared);
-		if (cases[i].mask == 0x8000)
-			CHECK(f.state.trace.observed == 0x0160);
 		saved = f.state.trace;
 		calls = f.calls;
 		CHECK(sun60i_a733_hdmi_phy_observe(&f.state) == EIO);
@@ -338,6 +337,15 @@ comparison_trace(void)
 		CHECK(f.calls == calls &&
 		    memcmp(&saved, &f.state.trace, sizeof(saved)) == 0);
 	}
+	/* VLEVCTRL bit 15 is written but does not read back. */
+	fresh(&f);
+	f.corrupt_address = 0x0e;
+	f.corrupt_readback = 0x8000;
+	CHECK(complete(&f) == 0 && f.state.phy_prepared);
+	CHECK(f.internal[0x0e] == 0x8160 && f.internal[0x09] == 0x8188);
+	CHECK(f.state.trace.version == 1 && f.state.trace.valid == 15);
+	CHECK(f.state.trace.index == 5 && f.state.trace.address == 9);
+	CHECK(f.state.trace.requested == 0x8188 && f.state.trace.observed == 0x8188);
 	for (unsigned i = 1; i <= 2; i++) {
 		fresh(&f);
 		f.read_i2c_fail = i;

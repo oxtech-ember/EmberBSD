@@ -256,6 +256,15 @@ phy_mpll(struct sun60i_a733_hdmi_phy *s,
 	const uint8_t addresses[] = { 0x06, 0x10, 0x11, 0x19, 0x0e, 0x09 };
 	uint16_t values[] = { plan->mpll[0], plan->mpll[1], plan->mpll[2],
 	    0x0007, 0x8160, 0x8188 };
+	/*
+	 * Compare only bits that the PHY stores. The vendor table sets bit 15
+	 * of VLEVCTRL (0x0e). No public field map defines a readable bit 15
+	 * in that register, and the A733 PHY returns zero for it. Keep the
+	 * full comparison for every other register, including the CKSYMTXCTRL
+	 * override bit in 0x09.
+	 */
+	const uint16_t compare[] = { 0xffff, 0xffff, 0xffff, 0xffff,
+	    0x7fff, 0xffff };
 	uint16_t observed;
 	size_t i;
 
@@ -283,7 +292,7 @@ phy_mpll(struct sun60i_a733_hdmi_phy *s,
 		phy_i2c(s, addresses[i], &observed, false);
 		if (s->fault == 0) {
 			s->trace.valid |= A733_HDMI_PHY_TRACE_COMPARED;
-			if (observed != values[i])
+			if (((observed ^ values[i]) & compare[i]) != 0)
 				phy_fail(s, EIO);
 		}
 	}
