@@ -719,7 +719,7 @@ static void enable_ht20_operation6(void)
 }
 static void enable_ht20_policy_fences(void)
 {
- for(unsigned phase=0;phase<2;phase++)for(unsigned kind=0;kind<14;kind++) {
+ for(unsigned phase=0;phase<2;phase++)for(unsigned kind=0;kind<15;kind++) {
   if(phase==0 && kind>=10 && kind<=12)continue; /* Valid but changed table inputs. */
   struct rtw88_softc sc;kmutex_t lock={.initialized=1};ht20_test_operation=6;
   struct rtw88_net *net=enable_ht20_negotiate(&sc,&lock,phase?0:-1);
@@ -743,6 +743,7 @@ static void enable_ht20_policy_fences(void)
   case 11: ic->ic_rtsthreshold=1554;break;
   case 12: ni->ni_ht20.peer_htop[1]=7;break;
   case 13: ic->ic_flags|=IEEE80211_F_USEPROT;break;
+  case 14: ic->ic_ifp->if_mtu=~0U;break;
   }
   if(phase)rtw88_net_start(&net->ec.ec_if);
   else rtw88_net_state_work(&net->state_work,net);

@@ -408,7 +408,6 @@ rtw88_net_tx_ht20_policy(struct ieee80211com *ic, struct rtw88_ra_config *cfg)
 	if (ic->ic_ifp == NULL)
 		return EINVAL;
 	mtu = ic->ic_ifp->if_mtu;
-	maximum = mtu + RTW88_HT20_TX_OVERHEAD;
 	if (ic->ic_curmode != IEEE80211_MODE_11A ||
 	    ieee80211_chan2ieee(ic, ic->ic_curchan) <= 14 ||
 	    ic->ic_fixed_rate != IEEE80211_FIXED_RATE_NONE ||
@@ -419,9 +418,12 @@ rtw88_net_tx_ht20_policy(struct ieee80211com *ic, struct rtw88_ra_config *cfg)
 	    (ic->ic_flags & IEEE80211_F_DATAPAD) != 0 ||
 	    ic->ic_fragthreshold != RTW88_HT20_THRESHOLD_MAX ||
 	    mtu < RTW88_HT20_MTU_MIN || mtu > RTW88_HT20_MTU_MAX ||
-	    ic->ic_rtsthreshold < maximum + RTW88_HT20_FCS_SIZE ||
+	    ic->ic_rtsthreshold < mtu + RTW88_HT20_TX_OVERHEAD +
+	    RTW88_HT20_FCS_SIZE ||
 	    ic->ic_rtsthreshold > RTW88_HT20_THRESHOLD_MAX)
 		return EOPNOTSUPP;
+	/* Validate the MTU before adding the bounded encapsulation overhead. */
+	maximum = mtu + RTW88_HT20_TX_OVERHEAD;
 	cfg->phy = RTW88_RA_HT20_1SS;
 	cfg->ht_mcs = ni->ni_ht20.tx_mcs;
 	cfg->ht_operation = protection.operation;
