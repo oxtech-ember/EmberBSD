@@ -36,7 +36,7 @@ struct sun60i_a733_tcon_timing {
 	unsigned unused;
 };
 struct drm_device {
-	void *dev_private, *bus_dmat, *bus_dmat32, *dmat;
+	void *dev_private, *bus_dmat, *bus_dmat32, *dmat, *cma_pool;
 	bool dmat_subregion_p;
 	struct {
 		unsigned version, length, bus_type;
@@ -66,6 +66,7 @@ struct a733_drm {
 	int phandle;
 	void *client, *queue, *device;
 	bool registration_started;
+	void *pool;
 	struct drm_device *dev;
 	struct plane plane;
 	struct crtc crtc;
@@ -220,6 +221,7 @@ static void drm_mode_config_reset(struct drm_device *d){
 	current->connector.state = reset_failure == 3 ? NULL : d;
 }
 static int drm_dev_register(struct drm_device *d, unsigned flags){
+	CHECK(d->cma_pool == current->pool && d->cma_pool != NULL);
 	CHECK(!flags && d == current->dev && d->dmat == current->native.dmat && d->bus_dmat == d->dmat && d->bus_dmat32 == d->dmat && !d->dmat_subregion_p);
 	CHECK(d->native_platform.version == 1 && d->native_platform.bus_type == 2 && !strcmp(d->native_platform.compatible, "allwinner,sun60i-a733-display"));
 	CHECK(d->mode_config.funcs == &a733_mode_funcs && d->mode_config.min_width == 640 && d->mode_config.max_width == 640 && d->mode_config.min_height == 480 && d->mode_config.max_height == 480);
@@ -236,6 +238,7 @@ static void reset(struct a733_drm *sc){
 	current = sc;
 	sc->phandle = 7;
 	sc->device = sc;
+	sc->pool = sc;
 	calls = failed_step = releases = put_calls = cleanups = invalid_state = reset_failure = 0;
 	release_error = state_error = 0;
 }
@@ -272,6 +275,10 @@ main(void)
 		state_error = i ? ENXIO : EAGAIN;
 		CHECK(a733_register(&sc) == state_error && !sc.registration_started && !acquired && calls == 1);
 	}
+	/* A missing boot reservation fails before DE client acquisition. */
+	reset(&sc);
+	sc.pool = NULL;
+	CHECK(a733_register(&sc) == ENOMEM && calls == 1 && !acquired && !sc.registration_started && !queues && !devices);
 	reset(&sc);
 	CHECK(a733_register(&sc) == 0 && registered == 1 && devices == 1 && queues == 1 && modes == 1 && acquired == 1 && calls == 11 && sc.registration_started);
 	CHECK(releases == 0 && cleanups == 0 && put_calls == 0);

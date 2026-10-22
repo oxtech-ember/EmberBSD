@@ -4,7 +4,9 @@
 #ifndef _SUN60I_A733_DRM_H
 #define _SUN60I_A733_DRM_H
 
+#include <sys/bus.h>
 #include <sys/mutex.h>
+#include <sys/vmem.h>
 #include <sys/workqueue.h>
 #include <drm/drm_device.h>
 #include <drm/drm_plane.h>
@@ -15,9 +17,18 @@
 #include <drm/drm_gem_cma_helper.h>
 #include <arm/sunxi/sun60i_a733_de352_scanout.h>
 
+/* Four 1920x1080 XRGB8888 dumb buffers fit in this reservation. */
+#define A733_DRM_POOL_BYTES (UINT64_C(32) << 20)
+#define A733_DRM_POOL_LIMIT (UINT64_C(1) << 32)
+
 struct a733_drm {
 	device_t device;
 	kmutex_t lock;
+	/* Serializes the fit proof and the CMA allocation. */
+	kmutex_t pool_lock;
+	bus_dma_tag_t pool_tag;
+	bus_dma_segment_t pool_segment;
+	vmem_t *pool;
 	struct workqueue *queue;
 	struct drm_device *dev;
 	struct drm_plane plane;

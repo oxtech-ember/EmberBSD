@@ -125,6 +125,13 @@ It records the first fault and rejects later commits.
 It does not signal a retained scanout READ fence or release a possibly active frame.
 
 The native dumb allocator checks dimensions and uses a 64-byte pitch.
+Attach reserves 32 MiB of contiguous memory below 4 GiB without sleep.
+Four 1920x1080 XRGB8888 buffers fit in it. Registration fails with `ENOMEM`
+before DE client acquisition if the reservation is missing.
+Each dumb allocation first proves a fit in this pool under one lock.
+A full pool returns `ENOMEM`. The allocation never reaches the generic
+blocking contiguous fallback, because that fallback can retry forever
+inside the kernel when no contiguous range below 4 GiB is free.
 It drops its temporary GEM reference exactly once after handle creation.
 Its native PRIME mmap callback uses byte offsets relative to the authorized object.
 It rejects private, executable, unaligned and out-of-range mappings.

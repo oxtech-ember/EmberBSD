@@ -9,6 +9,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/mman.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
+#include <sys/vmem.h>
 #include <dev/fdt/fdtvar.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_drv.h>
@@ -122,8 +123,10 @@ static int
 a733_dumb_create(struct drm_file *file, struct drm_device *dev,
     struct drm_mode_create_dumb *args)
 {
+	struct a733_drm *sc = dev->dev_private;
 	struct drm_gem_cma_object *obj;
 	uint64_t pitch, size;
+	vmem_addr_t probe;
 	int error;
 
 	if (args->bpp != 32 || args->width == 0 || args->width > 1920 ||
@@ -131,7 +134,21 @@ a733_dumb_create(struct drm_file *file, struct drm_device *dev,
 		return -EINVAL;
 	pitch = ((uint64_t) args->width * 4 + 63) & ~UINT64_C(63);
 	size = (pitch * args->height + PAGE_MASK) & ~(uint64_t) PAGE_MASK;
+	/*
+	 * A full CMA pool makes the helper use a blocking contiguous
+	 * allocation that can retry forever. Prove the fit first. Only this
+	 * function allocates from the pool, and a free only adds space.
+	 */
+	mutex_enter(&sc->pool_lock);
+	if (sc->pool == NULL || dev->cma_pool != sc->pool ||
+	    vmem_xalloc(sc->pool, size, PAGE_SIZE, 0, 0, VMEM_ADDR_MIN,
+	    VMEM_ADDR_MAX, VM_BESTFIT | VM_NOSLEEP, &probe) != 0) {
+		mutex_exit(&sc->pool_lock);
+		return -ENOMEM;
+	}
+	vmem_xfree(sc->pool, probe, size);
 	obj = drm_gem_cma_create(dev, size);
+	mutex_exit(&sc->pool_lock);
 	if (obj == NULL)
 		return -ENOMEM;
 	error = drm_gem_handle_create(file, &obj->base, &args->handle);
@@ -315,6 +332,9 @@ a733_register(struct a733_drm *sc)
 	    sc->native.mode.pixel_clock_hz % 1000 != 0 ||
 	    sun60i_a733_tcon_timing_encode(&sc->native.mode, &timing) != 0)
 		return EINVAL;
+	/* Dumb buffers come only from the boot-time contiguous reservation. */
+	if (sc->pool == NULL)
+		return ENOMEM;
 	error = sun60i_a733_de352_acquire(sc->phandle, sc, &sc->client);
 	if (error != 0)
 		return error;
@@ -333,6 +353,7 @@ a733_register(struct a733_drm *sc)
 	}
 	sc->dev = dev;
 	dev->dev_private = sc;
+	dev->cma_pool = sc->pool;
 	dev->bus_dmat = dev->bus_dmat32 = dev->dmat = sc->native.dmat;
 	dev->dmat_subregion_p = false;
 	dev->native_platform.version = DRM_NATIVE_PLATFORM_VERSION;
@@ -468,6 +489,44 @@ a733_match(device_t parent, cfdata_t cf, void *aux)
 	return of_compatible_match(faa->faa_phandle, compat);
 }
 
+/*
+ * Reserve contiguous scanout memory below 4 GiB during attach. A later
+ * contiguous allocation can fail after memory use spreads.
+ */
+static void
+a733_pool_create(struct a733_drm *sc, bus_dma_tag_t parent)
+{
+	int error, nsegs = 0;
+
+	error = bus_dmatag_subregion(parent, 0, A733_DRM_POOL_LIMIT - 1,
+	    &sc->pool_tag, BUS_DMA_NOWAIT);
+	if (error == 0) {
+		error = bus_dmamem_alloc(sc->pool_tag, A733_DRM_POOL_BYTES,
+		    PAGE_SIZE, 0, &sc->pool_segment, 1, &nsegs, BUS_DMA_NOWAIT);
+		if (error == 0 && (nsegs != 1 ||
+		    sc->pool_segment.ds_len != A733_DRM_POOL_BYTES ||
+		    sc->pool_segment.ds_addr >
+		    A733_DRM_POOL_LIMIT - A733_DRM_POOL_BYTES)) {
+			bus_dmamem_free(sc->pool_tag, &sc->pool_segment, nsegs);
+			error = ERANGE;
+		}
+		if (error != 0) {
+			bus_dmatag_destroy(sc->pool_tag);
+			sc->pool_tag = NULL;
+		}
+	}
+	if (error != 0) {
+		aprint_error_dev(sc->device,
+		    "KMS buffer reservation failed, error %d\n", error);
+		return;
+	}
+	sc->pool = vmem_create("a733kms", sc->pool_segment.ds_addr,
+	    sc->pool_segment.ds_len, PAGE_SIZE, NULL, NULL, NULL, 0, VM_SLEEP,
+	    IPL_NONE);
+	aprint_normal_dev(sc->device, "reserved %u MiB for KMS buffers\n",
+	    (u_int)(A733_DRM_POOL_BYTES >> 20));
+}
+
 static void
 a733_attach(device_t parent, device_t self, void *aux)
 {
@@ -479,11 +538,13 @@ a733_attach(device_t parent, device_t self, void *aux)
 	(void)parent;
 	sc->device = self;
 	mutex_init(&sc->lock, MUTEX_DEFAULT, IPL_NONE);
+	mutex_init(&sc->pool_lock, MUTEX_DEFAULT, IPL_NONE);
 	sc->phandle = fdtbus_get_phandle(faa->faa_phandle, "display-engine");
 	aprint_naive("\n");
 	aprint_normal(": guarded native KMS frontend\n");
 	if (sc->phandle <= 0)
 		return;
+	a733_pool_create(sc, faa->faa_dmat);
 	error = sysctl_createv(&sc->sysctllog, 0, NULL, &node, 0, CTLTYPE_NODE,
 	    device_xname(self), NULL, NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
 	if (error != 0)

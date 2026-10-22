@@ -7,13 +7,21 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-static unsigned checks, creates, handles, put_calls;
+static unsigned checks, creates, handles, put_calls, probes, probe_calls, frees, locks;
 #define CHECK(x) do { checks++; if (!(x)) { fprintf(stderr,"%d: %s\n",__LINE__,#x); abort(); } } while (0)
 #define DRM_MODE_FLAG_PHSYNC 1
 #define DRM_MODE_FLAG_NHSYNC 2
 #define DRM_MODE_FLAG_PVSYNC 4
 #define DRM_MODE_FLAG_NVSYNC 8
 #define PAGE_MASK 4095
+#define PAGE_SIZE 4096
+#define VMEM_ADDR_MIN 0
+#define VMEM_ADDR_MAX UINT64_MAX
+#define VM_BESTFIT 1
+#define VM_NOSLEEP 2
+typedef uint64_t vmem_addr_t;
+typedef struct vmem { int id; } vmem_t;
+typedef struct { int held; } kmutex_t;
 #define ERR_PTR(x) ((void *)(intptr_t)(x))
 #define PTR_ERR(x) ((int)(intptr_t)(x))
 #define IS_ERR(x) ((uintptr_t)(x) >= (uintptr_t)-4095)
@@ -38,7 +46,42 @@ struct drm_file {
 };
 struct drm_device {
 	int id;
+	void *dev_private;
+	vmem_t *cma_pool;
 };
+struct a733_drm {
+	kmutex_t pool_lock;
+	vmem_t *pool;
+};
+static vmem_t pool;
+static int probe_error;
+static vmem_addr_t probed;
+static uint64_t probed_size;
+static void mutex_enter(kmutex_t *m){
+	CHECK(!m->held);
+	m->held = 1;
+	locks++;
+}
+static void mutex_exit(kmutex_t *m){
+	CHECK(m->held);
+	m->held = 0;
+}
+static kmutex_t *pool_lock;
+static int vmem_xalloc(vmem_t *vm, uint64_t size, uint64_t align, uint64_t phase, uint64_t nocross, vmem_addr_t min, vmem_addr_t max, int flags, vmem_addr_t *out){
+	CHECK(vm == &pool && pool_lock->held && size && size % 4096 == 0 && align == PAGE_SIZE && !phase && !nocross && min == VMEM_ADDR_MIN && max == VMEM_ADDR_MAX && flags == (VM_BESTFIT | VM_NOSLEEP));
+	probe_calls++;
+	if (probe_error)
+		return probe_error;
+	probes++;
+	probed = 0x40000000 + probes * 4096;
+	probed_size = size;
+	*out = probed;
+	return 0;
+}
+static void vmem_xfree(vmem_t *vm, vmem_addr_t addr, uint64_t size){
+	CHECK(vm == &pool && pool_lock->held && addr == probed && size == probed_size);
+	frees++;
+}
 struct drm_mode_create_dumb {
 	uint32_t height, width, bpp, flags, handle, pitch;
 	uint64_t size;
@@ -47,7 +90,7 @@ static struct drm_gem_cma_object object;
 static size_t allocated;
 static int create_error, handle_error;
 static struct drm_gem_cma_object *drm_gem_cma_create(struct drm_device *dev, size_t size){
-	CHECK(dev);
+	CHECK(dev && pool_lock->held && frees == probes && size == probed_size);
 	creates++;
 	allocated = size;
 	if (create_error)
@@ -123,7 +166,9 @@ main(void)
 	bad.clock = -27000;
 	CHECK(!a733_drm_mode_matches(&n, &bad));
 	struct drm_file file = {1};
-	struct drm_device dev = {1};
+	struct a733_drm sc = {.pool = &pool};
+	struct drm_device dev = {1, &sc, &pool};
+	pool_lock = &sc.pool_lock;
 	for (unsigned width = 1; width <= 1920; width++)
 		for (unsigned height = 1; height <= 1080; height += 1079) {
 			struct drm_mode_create_dumb a = {.width = width,.height = height,.bpp = 32};
@@ -162,7 +207,25 @@ main(void)
 	oldputs = put_calls;
 	oldhandles = handles;
 	CHECK(a733_dumb_create(&file, &dev, &a) == -ENOMEM);
-	CHECK(put_calls == oldputs && handles == oldhandles);
+	CHECK(put_calls == oldputs && handles == oldhandles && !sc.pool_lock.held);
+	create_error = 0;
+	/* A pool without a proven fit never reaches the blocking helper path. */
+	before = creates;
+	unsigned oldprobes = probe_calls;
+	probe_error = ENOMEM;
+	CHECK(a733_dumb_create(&file, &dev, &a) == -ENOMEM);
+	CHECK(creates == before && probe_calls == oldprobes + 1 && !sc.pool_lock.held);
+	probe_error = 0;
+	dev.cma_pool = NULL;
+	CHECK(a733_dumb_create(&file, &dev, &a) == -ENOMEM);
+	CHECK(creates == before && probe_calls == oldprobes + 1 && !sc.pool_lock.held);
+	dev.cma_pool = &pool;
+	sc.pool = NULL;
+	CHECK(a733_dumb_create(&file, &dev, &a) == -ENOMEM);
+	CHECK(creates == before && probe_calls == oldprobes + 1 && !sc.pool_lock.held);
+	sc.pool = &pool;
+	CHECK(a733_dumb_create(&file, &dev, &a) == 0 && creates == before + 1 && frees == probes && !sc.pool_lock.held);
+	object.base.refs = 0;
 	printf("PASS %u exact mode and allocation checks\n", checks);
 	return 0;
 }
