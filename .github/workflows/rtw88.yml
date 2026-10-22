@@ -32,6 +32,8 @@ name: Native RTL8822CE source contracts
       - 'sys/net/bpf.c'
       - 'sys/net/if_ether.h'
       - 'sys/kern/uipc_mbuf.c'
+      - 'sys/kern/kern_sysctl.c'
+      - 'sbin/sysctl/sysctl.c'
       - 'sys/sys/mbuf.h'
       - 'ember/image/cix-p1-network.subr'
       - 'ember/image/test-cix-p1-startup.rb'
@@ -81,6 +83,8 @@ name: Native RTL8822CE source contracts
       - 'sys/net/bpf.c'
       - 'sys/net/if_ether.h'
       - 'sys/kern/uipc_mbuf.c'
+      - 'sys/kern/kern_sysctl.c'
+      - 'sbin/sysctl/sysctl.c'
       - 'sys/sys/mbuf.h'
       - 'ember/image/cix-p1-network.subr'
       - 'ember/image/test-cix-p1-startup.rb'
@@ -170,6 +174,8 @@ jobs:
             /sys/net/bpf.c
             /sys/net/if_ether.h
             /sys/kern/uipc_mbuf.c
+            /sys/kern/kern_sysctl.c
+            /sbin/sysctl/sysctl.c
             /sys/sys/mbuf.h
             /sys/net80211/ieee80211_netbsd.h
             /sys/net80211/ieee80211_crypto.h

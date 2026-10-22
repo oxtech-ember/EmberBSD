@@ -12,10 +12,10 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
     SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
 fi
-python3 - "$source" "$src/sys/sys/sysctl.h" "$work" <<'PY'
+python3 - "$source" "$src/sys/sys/sysctl.h" "$src/sys/kern/kern_sysctl.c" "$src/sbin/sysctl/sysctl.c" "$work" <<'PY'
 from pathlib import Path
 import sys,re
-source,header,out=map(Path,sys.argv[1:])
+source,header,kernel,cli,out=map(Path,sys.argv[1:])
 s=source.read_text();h=header.read_text()
 body=re.search(r'^rtwce_sysctl_stats\(.*?^}',s,re.M|re.S).group()
 (out/'native-sysctl-stats.inc').write_text(s[:s.index('#include')]+'static int\n'+body+'\n')
@@ -29,6 +29,19 @@ for name in ['SYSCTLFN_ARGS','SYSCTLFN_CALL']:
    parts.append(line);break
  else:raise ValueError(name)
 (out/'native-sysctl-signature.inc').write_text(''.join(parts))
+# Keep the real generic lookup and CLI string retry, including their errors.
+for line in h.splitlines(keepends=True):
+ if re.match(r'^#define\s+(?:CTLTYPE_(?:NODE|INT|STRING|QUAD|STRUCT|BOOL)|CTLFLAG_\w+|SYSCTL_(?:VERS_MASK|VERS_0|VERS_1|VERSION|VERS\(|TYPEMASK|TYPE\())',line):parts.append(line)
+(out/'native-sysctl-signature.inc').write_text(''.join(parts))
+k=kernel.read_text();c=cli.read_text()
+lookup=re.search(r'^sysctl_lookup\(.*?^}',k,re.M|re.S).group()
+(out/'native-sysctl-lookup.inc').write_text(k[:k.index('#include')]+'static int\n'+lookup+'\n')
+a=c.index('\tcase CTLTYPE_STRING: {\n\t\tunsigned char buf[1024], *tbuf;')
+b=c.index('\n\tcase CTLTYPE_QUAD:',a)
+(out/'native-sysctl-cli.inc').write_text(c[:c.index('#include')]+'static void\nnative_cli_string(void) {\nint name[1]={0},rc;unsigned namelen=0;size_t sz;\nstruct sysctlnode root={.sysctl_flags=SYSCTL_VERSION|CTLTYPE_STRING,.marker=0x12345678};\nconst struct sysctlnode *pnode=&root;const char *gsname="stats";\nswitch(CTLTYPE_STRING) {\n'+c[a:b]+'\n}\n}\n')
+size=re.search(r'\tif \(error == 0 && SCARG\(uap, oldv\) != NULL && savelen < oldlen\)\n\t\terror = ENOMEM;',k).group()
+(out/'native-sysctl-size.inc').write_text('static int\nnative_size_status(int error,size_t savelen,void *oldv,size_t oldlen) {\nstruct { void *oldv; } args={oldv},*uap=&args;\n#define SCARG(p,f) ((p)->f)\n'+size+'\n#undef SCARG\nreturn error;\n}\n')
+
 PY
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fno-inline -fstack-usage -Wstack-usage=3584 \
     ${RTW88_TEST_CFLAGS:-} -I"$work" "$tools/rtw88-sysctl-contract.c" -o "$work/test"
@@ -44,8 +57,33 @@ if [ "${RTW88_PCI_ANALYZE:-0}" = 1 ]; then
     cppcheck --enable=warning,performance,portability --error-exitcode=1 \
         --check-level=exhaustive --include="$work/predefines.h" -I"$work" \
         "$tools/rtw88-sysctl-contract.c"
+    status=0
     ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 \
         -Wall -Wextra -Werror -Xanalyzer -analyzer-output=text \
         -Xanalyzer -analyzer-werror -I"$work" \
-        "$tools/rtw88-sysctl-contract.c" -o "$work/sysctl.plist"
+        "$tools/rtw88-sysctl-contract.c" -o "$work/sysctl.plist" \
+        > "$work/csa.log" 2>&1 || status=$?
+    cat "$work/csa.log"
+    if [ "$status" -ne 0 ]; then
+        # Keep the complete generic read/write body. Its unchanged initial
+        # error assignment has one known CSA dead-store diagnostic. Match its
+        # exact source hash and location; any other diagnostic remains fatal.
+        python3 - "$work" "$status" <<'PYCSA'
+from pathlib import Path
+import hashlib,re,sys
+work=Path(sys.argv[1]);assert int(sys.argv[2])==1
+text=(work/'native-sysctl-lookup.inc').read_text()
+body=re.search(r'^sysctl_lookup\(.*?^}',text,re.M|re.S).group()
+assert hashlib.sha256(body.encode()).hexdigest()=='35caa66b6c63dc5bdc0bfd8c2a539fab0fd85e9be12321ca1fc0093b85ec9e64'
+report=(work/'csa.log').read_text()
+errors=[line for line in report.splitlines() if ': error:' in line]
+assert len(errors)==1,errors
+m=re.fullmatch(r'(.*/native-sysctl-lookup\.inc):(\d+):\d+: error: Value stored to \'error\' is never read \[deadcode\.DeadStores\]',errors[0])
+assert m,errors
+assert Path(m[1])==work/'native-sysctl-lookup.inc'
+assert text.splitlines()[int(m[2])-1].strip()=='error = 0;'
+assert report.rstrip().endswith('1 error generated.')
+print('CSA: 1 pinned generic lookup baseline finding; 0 new findings. Not clean.')
+PYCSA
+    fi
 fi

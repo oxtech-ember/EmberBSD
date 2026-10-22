@@ -29,6 +29,7 @@ rtwce_sysctl_stats(SYSCTLFN_ARGS)
 {
 	struct sysctlnode node;
 	const size_t buflen = 4096;
+	size_t oldlen;
 	char *buf;
 	int error;
 
@@ -39,7 +40,17 @@ rtwce_sysctl_stats(SYSCTLFN_ARGS)
 		node = *rnode;
 		node.sysctl_data = buf;
 		node.sysctl_size = strlen(buf) + 1;
+		oldlen = *oldlenp;
 		error = sysctl_lookup(SYSCTLFN_CALL(&node));
+		/* Reserve enough for a later snapshot, which can grow between the
+		 * CLI's short read and its single retry. Preserve generic errors,
+		 * write semantics and the actual length of a sufficient read. */
+		if (error == 0 && newp == NULL &&
+		    (oldp == NULL || oldlen < *oldlenp)) {
+			*oldlenp = buflen;
+			if (oldp != NULL)
+				error = ENOMEM;
+		}
 	}
 	kmem_free(buf, buflen);
 	return error;
