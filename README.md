@@ -392,6 +392,11 @@ on every board in the hardware catalog.
   at revision 3 passes installed C11/C++20, DSO exceptions, TLS, concurrent
   locale, OpenMP and large-atomic checks, including LTO, in the AArch64 E34 VM.
   WebKit's adapted Skia modules pass with the repaired installed runtime.
+  The [amd64 nb6 runtime](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/runtime/README.md#amd64-installed-acceptance)
+  cross-builds on macOS arm64 and passes EmberBSD 11.0 package installation,
+  removal/reinstallation and C11/C++20, TLS, DSO, OpenMP and generic atomic
+  contracts. Its target retains the existing base; a new source-built base,
+  VM/image integration and Plasma remain separate acceptance gates.
   [OpenEXR and OpenJPH](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/openexr.md)
   pass installed target codec/API checks and package removal/reinstallation;
   all 147 native OpenEXR tests also pass.
