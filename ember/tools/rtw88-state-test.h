@@ -584,6 +584,58 @@ test_native_state_edca_failures(void)
 		state_fixture_finish(&s);
 	}
 }
+static int
+state_wme_params_equal(const struct wmeParams *a, const struct wmeParams *b)
+{
+	return a->wmep_acm == b->wmep_acm &&
+	    a->wmep_aifsn == b->wmep_aifsn &&
+	    a->wmep_logcwmin == b->wmep_logcwmin &&
+	    a->wmep_logcwmax == b->wmep_logcwmax &&
+	    a->wmep_txopLimit == b->wmep_txopLimit &&
+	    a->wmep_noackPolicy == b->wmep_noackPolicy;
+}
+
+static int
+state_chan_params_equal(const struct chanAccParams *a,
+    const struct chanAccParams *b)
+{
+	if (a->cap_info != b->cap_info)
+		return 0;
+	for (unsigned ac = 0; ac < WME_NUM_AC; ac++) {
+		if (!state_wme_params_equal(&a->cap_wmeParams[ac],
+		    &b->cap_wmeParams[ac]))
+			return 0;
+	}
+	return 1;
+}
+
+static int
+state_wme_state_equal(const struct ieee80211_wme_state *a,
+    const struct ieee80211_wme_state *b)
+{
+	if (a->wme_flags != b->wme_flags ||
+	    a->wme_hipri_traffic != b->wme_hipri_traffic ||
+	    a->wme_hipri_switch_thresh != b->wme_hipri_switch_thresh ||
+	    a->wme_hipri_switch_hysteresis != b->wme_hipri_switch_hysteresis ||
+	    a->wme_update != b->wme_update ||
+	    a->wme_sta_apply != b->wme_sta_apply ||
+	    a->wme_sta_error != b->wme_sta_error)
+		return 0;
+	for (unsigned ac = 0; ac < sizeof(a->wme_params) /
+	    sizeof(a->wme_params[0]); ac++) {
+		if (!state_wme_params_equal(&a->wme_params[ac],
+		    &b->wme_params[ac]))
+			return 0;
+	}
+	return state_chan_params_equal(&a->wme_wmeChanParams,
+	    &b->wme_wmeChanParams) &&
+	    state_chan_params_equal(&a->wme_wmeBssChanParams,
+	    &b->wme_wmeBssChanParams) &&
+	    state_chan_params_equal(&a->wme_chanParams, &b->wme_chanParams) &&
+	    state_chan_params_equal(&a->wme_bssChanParams,
+	    &b->wme_bssChanParams);
+}
+
 static void
 test_native_state_negotiated(void)
 {
@@ -610,7 +662,7 @@ test_native_state_negotiated(void)
 		CHECK(rtw88_net_newstate(&s.net.ic,IEEE80211_S_RUN,0)==0);
 		state_negotiated=1;
 		rtw88_net_state_work(&s.net.state_work,&s.net);
-		CHECK(memcmp(&saved,&s.net.ic.ic_wme,sizeof(saved))==0);
+		CHECK(state_wme_state_equal(&saved, &s.net.ic.ic_wme));
 		if (mismatch==0) {
 			CHECK(state_parent_tx==1 && state_parent_init==0);
 			CHECK(state_io_count==7);
