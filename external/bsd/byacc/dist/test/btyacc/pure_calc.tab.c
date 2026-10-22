@@ -736,20 +736,29 @@ yyloop:
             {   /* Enlarge lexical value queue */
                 size_t p = (size_t) (yylvp - yylvals);
                 size_t s = (size_t) (yylvlim - yylvals);
+                YYINT *new_lexemes;
+                YYSTYPE *new_vals;
+#if defined(YYLTYPE) || defined(YYLTYPE_IS_DECLARED)
+                YYLTYPE *new_psns;
+#endif
 
                 s += YYLVQUEUEGROWTH;
-                if ((yylexemes = (YYINT *)realloc(yylexemes, s * sizeof(YYINT))) == NULL) goto yyenomem;
-                if ((yylvals   = (YYSTYPE *)realloc(yylvals, s * sizeof(YYSTYPE))) == NULL) goto yyenomem;
-#if defined(YYLTYPE) || defined(YYLTYPE_IS_DECLARED)
-                if ((yylpsns   = (YYLTYPE *)realloc(yylpsns, s * sizeof(YYLTYPE))) == NULL) goto yyenomem;
-#endif
+                new_lexemes = (YYINT *)realloc(yylexemes, s * sizeof(YYINT));
+                if (new_lexemes == NULL) goto yyenomem;
+                yylexemes = new_lexemes;
+                yylexp = yylexemes + p;
+                new_vals = (YYSTYPE *)realloc(yylvals, s * sizeof(YYSTYPE));
+                if (new_vals == NULL) goto yyenomem;
+                yylvals = new_vals;
                 yylvp   = yylve = yylvals + p;
                 yylvlim = yylvals + s;
 #if defined(YYLTYPE) || defined(YYLTYPE_IS_DECLARED)
+                new_psns = (YYLTYPE *)realloc(yylpsns, s * sizeof(YYLTYPE));
+                if (new_psns == NULL) goto yyenomem;
+                yylpsns = new_psns;
                 yylpp   = yylpe = yylpsns + p;
                 yylplim = yylpsns + s;
 #endif
-                yylexp  = yylexemes + p;
             }
             *yylexp = (YYINT) YYLEX;
             *yylvp++ = yylval;
@@ -1330,23 +1339,32 @@ break;
                 {   /* Enlarge lexical value queue */
                     size_t p = (size_t) (yylvp - yylvals);
                     size_t s = (size_t) (yylvlim - yylvals);
+                    YYINT *new_lexemes;
+                    YYSTYPE *new_vals;
+#if defined(YYLTYPE) || defined(YYLTYPE_IS_DECLARED)
+                    YYLTYPE *new_psns;
+#endif
 
                     s += YYLVQUEUEGROWTH;
-                    if ((yylexemes = (YYINT *)realloc(yylexemes, s * sizeof(YYINT))) == NULL)
+                    new_lexemes = (YYINT *)realloc(yylexemes, s * sizeof(YYINT));
+                    if (new_lexemes == NULL)
                         goto yyenomem;
-                    if ((yylvals   = (YYSTYPE *)realloc(yylvals, s * sizeof(YYSTYPE))) == NULL)
+                    yylexemes = new_lexemes;
+                    yylexp = yylexemes + p;
+                    new_vals = (YYSTYPE *)realloc(yylvals, s * sizeof(YYSTYPE));
+                    if (new_vals == NULL)
                         goto yyenomem;
-#if defined(YYLTYPE) || defined(YYLTYPE_IS_DECLARED)
-                    if ((yylpsns   = (YYLTYPE *)realloc(yylpsns, s * sizeof(YYLTYPE))) == NULL)
-                        goto yyenomem;
-#endif
+                    yylvals = new_vals;
                     yylvp   = yylve = yylvals + p;
                     yylvlim = yylvals + s;
 #if defined(YYLTYPE) || defined(YYLTYPE_IS_DECLARED)
+                    new_psns = (YYLTYPE *)realloc(yylpsns, s * sizeof(YYLTYPE));
+                    if (new_psns == NULL)
+                        goto yyenomem;
+                    yylpsns = new_psns;
                     yylpp   = yylpe = yylpsns + p;
                     yylplim = yylpsns + s;
 #endif
-                    yylexp  = yylexemes + p;
                 }
                 *yylexp = (YYINT) YYLEX;
                 *yylvp++ = yylval;

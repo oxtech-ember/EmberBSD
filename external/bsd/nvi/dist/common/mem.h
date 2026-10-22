@@ -99,12 +99,13 @@
 
 /*
  * Add space to a GET_SPACE returned buffer.  Two versions, one that
- * returns, one that jumps to an error label.
+ * returns, one that jumps to an error label.  A null screen or window
+ * has no temporary buffer, so grow the caller's block.
  */
 #define	ADD_SPACE_GOTO(sp, type, bp, blen, nlen) {			\
 	WIN *L__wp = (sp) == NULL ? NULL : (sp)->wp;			\
 	CHECK_TYPE(type *, bp)						\
-	if (L__wp == NULL || bp == (type *)L__wp->tmp_bp) {		\
+	if (L__wp != NULL && bp == (type *)L__wp->tmp_bp) {		\
 		F_CLR(L__wp, W_TMP_INUSE);				\
 		BINC_GOTOC(sp, L__wp->tmp_bp, L__wp->tmp_blen, nlen);	\
 		bp = (type *) L__wp->tmp_bp;				\
@@ -118,7 +119,7 @@
 #define	ADD_SPACE_RET(sp, type, bp, blen, nlen) {			\
 	CHECK_TYPE(type *, bp)						\
 	WIN *L__wp = (sp) == NULL ? NULL : (sp)->wp;			\
-	if (L__wp == NULL || bp == (type *)L__wp->tmp_bp) {		\
+	if (L__wp != NULL && bp == (type *)L__wp->tmp_bp) {		\
 		F_CLR(L__wp, W_TMP_INUSE);				\
 		BINC_RETC(sp, L__wp->tmp_bp, L__wp->tmp_blen, nlen);	\
 		bp = (type *) L__wp->tmp_bp;				\

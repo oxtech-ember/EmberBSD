@@ -25,7 +25,8 @@ def main():
     parser.add_argument("--work", required=True, type=Path,
                         help="New output directory; existing directories are rejected")
     parser.add_argument("--revision", help="Read this Git revision for a causal comparison")
-    parser.add_argument("--case", choices=("all", "pcap", "pcap-open", "icmp", "nvi"), default="all")
+    parser.add_argument("--case", choices=("all", "pcap", "pcap-open", "icmp", "nvi", "nvi-space"),
+                        default="all")
     parser.add_argument("--mode", choices=("plain", "sanitize", "analyze", "memcheck"), default="sanitize")
     args = parser.parse_args()
     root = args.source_tree.resolve(strict=True)
@@ -83,6 +84,15 @@ def main():
                                              extract(r"^int\ndel\(.*?^\}", nvi))
         cases += [("nvi-byte", fixture / "nvi.c", ["-DCHAR_T=unsigned char"], [None]),
                   ("nvi-wide", fixture / "nvi.c", [], [None])]
+    if args.case in ("all", "nvi-space"):
+        mem = source("external/bsd/nvi/dist/common/mem.h")
+        start = mem.index("#if defined(HAVE_GCC)")
+        end = mem.index("ADD_SPACE_RETW(")
+        end = mem.index("\n", end) + 1
+        if mem[end - 2] == "\\":
+            end = mem.index("\n", end) + 1
+        (work / "nvi-space.inc").write_text(mem[start:end])
+        cases.append(("nvi-space", fixture / "nvi-space.c", [], [None]))
     failures = 0
     for name, test, defines, arguments in cases:
         flags = ["-std=gnu11", "-g", "-O1", "-Wall", "-Wextra", "-I" + str(work)]

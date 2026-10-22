@@ -15,7 +15,10 @@ length and on rejected metadata, while a valid header leaves ownership with
 the caller. ICMP tests
 use sparse tables and missing, negative, and large type numbers. nvi tests use
 both byte and wide characters, preserve cursor clamping, and check both sides
-of the character-count limit. nvi database and allocator hooks are models;
+of the character-count limit. The `nvi-space` case compiles the real
+`ADD_SPACE_RET` and `ADD_SPACE_GOTO` macros. A window temporary buffer grows
+in place. A screen with no window grows the caller's block. Allocation failure
+leaves that block allocated. nvi database and allocator hooks are models;
 no test allocates an object near `SIZE_MAX`.
 
 Use GCC 16. Set `CC` explicitly and keep outputs outside the source checkout.
@@ -36,13 +39,15 @@ tools. All modes retain input hashes, commands, exits and logs in the work
 directory. Existing work directories are rejected.
 
 For causal comparison, use `--revision <commit>` to extract the same functions
-from a Git commit. Run `--case pcap`, `--case pcap-open`, `--case icmp`, and
-`--case nvi` separately
+from a Git commit. Run `--case pcap`, `--case pcap-open`, `--case icmp`,
+`--case nvi`, and `--case nvi-space` separately
 so one expected failure does not hide the others. The old PCAP fixture fails
 its record/content assertions; the old short global-header path retains an open
 descriptor and fails its ownership assertion; the old sparse ICMP lookup can fail under
 ASan; the old nvi function reaches an allocation request that the boundary
-contract rejects. Such baseline failures are expected evidence, not a passing
+contract rejects. The old `nvi-space` macro dereferences a missing window.
+A baseline `btyacc-queue.py` run loses the previous block when realloc fails.
+Such baseline failures are expected evidence, not a passing
 command. No test requires a particular signal number.
 
 ## Parser generators
@@ -91,14 +96,32 @@ paths. The generated parser implementation is used without edits.
 For a causal comparison, pass a generator built before the repair. Its first
 parser allocation failure and partial-state allocation failures must fail the
 ownership checks. The baseline runner returns nonzero. These tests cover state
-creation and initial parser cleanup; lexical-queue reallocations and all
-backtracking grammars are outside this contract.
+creation and initial parser cleanup. Lexical-queue growth is covered below.
+Backtracking grammars are outside both contracts.
+
+## Lexical queue growth
+
+Compile both enlarge sites from `btyaccpar.skel` and from the embedded strings
+in `btyaccpar.c`. Run each site with and without location tracking:
+
+```sh
+CC=/absolute/gcc-16 python3 ember/tools/tests/imported-gcc16/btyacc-queue.py \
+    /absolute/source-tree --work /absolute/new-queue-work
+```
+
+The queue already exists. The realloc hook moves each successful block. Failing
+the first, second, or location reallocation must keep the earlier blocks and
+retarget cursors of blocks that already moved. A successful growth preserves
+the old elements. The runner does not execute a backtracking grammar. It does
+not replace `byacc-oom.py`. `--mode analyze` adds GCC `-fanalyzer` and Cppcheck.
+`--mode plain` omits ASan/UBSan. The default mode uses both sanitizers.
 
 ## Scope
 
 These are host software contracts, not a full OS build or device qualification.
-The nvi test isolates the first partial-line allocation; other editor paths
-are outside its scope. The parser tests do not qualify all grammars.
+The nvi deletion test isolates the first partial-line allocation. The
+`nvi-space` case covers the temporary-buffer macros, not a full editor.
+The parser tests do not qualify all grammars.
 The adjacent DTrace relocation-index cleanup preserves the existing `count`
 sequence. It does not implement the existing ARM/AArch64 relocation TODOs.
 Its target compile must be checked separately with matching headers and flags;
