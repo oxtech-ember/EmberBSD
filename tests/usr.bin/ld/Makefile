@@ -4,7 +4,8 @@
 
 TESTSDIR=	${TESTSBASE}/usr.bin/ld
 
-TESTS_SH=	t_script \
+TESTS_SH=	t_dtneeded \
+		t_script \
 		t_section
 
 .include <bsd.test.mk>

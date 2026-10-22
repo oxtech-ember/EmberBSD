@@ -5679,6 +5679,7 @@
 ./usr/tests/usr.bin/ld					tests-usr.bin-tests	compattestfile,atf
 ./usr/tests/usr.bin/ld/Atffile				tests-usr.bin-tests	compattestfile,atf
 ./usr/tests/usr.bin/ld/Kyuafile				tests-usr.bin-tests	compattestfile,atf,kyua
+./usr/tests/usr.bin/ld/t_dtneeded			tests-usr.bin-tests	compattestfile,atf
 ./usr/tests/usr.bin/ld/t_orphan				tests-obsolete		obsolete,atf
 ./usr/tests/usr.bin/ld/t_script				tests-usr.bin-tests	compattestfile,atf
 ./usr/tests/usr.bin/ld/t_section			tests-usr.bin-tests	compattestfile,atf
