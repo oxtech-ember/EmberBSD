@@ -30,8 +30,9 @@ fingerprint `f2e3b675c3a4d3f6a91e59a0a6e5fc4d82e1698a30171e2a7072d5c9cf4f1926`.
 Three generated headers were copied with recorded hashes after checking their
 producer sources against current main. This establishes object compilation, not
 a fresh userland image, linking or target execution. Full-file GCC analysis
-still reports the same baseline findings in mail's `smopts_core` allocation and
-initialization model and tip's `intTERM` call to `exit` from a signal handler;
-these are outside the selected repairs. Cppcheck also retains inherited host
-header/style and controlled-peer findings, so the checks do not claim that the
-entire utilities are analyzer-clean.
+still reports the baseline finding in mail's `smopts_core` allocation and
+initialization model. That finding is outside the selected repairs.
+`tipout` no longer calls `exit` from a signal handler. `ember/tests/tip-stop.md`
+checks that cleanup. Cppcheck also retains inherited host header/style and
+controlled-peer findings, so the checks do not claim that the entire utilities
+are analyzer-clean.

@@ -49,7 +49,6 @@ __RCSID("$NetBSD: tipout.c,v 1.15 2011/09/06 18:33:01 joerg Exp $");
 void	intEMT(void);
 void	intIOT(void);
 void	intSYS(void);
-__dead static void	intTERM(int);
 
 /*
  * TIPOUT wait state routine --
@@ -110,14 +109,38 @@ out:
 	(void)write(repdes[1], &reply, 1);	/* Now coprocess waits for us */
 }
 
+static volatile sig_atomic_t	tipout_stop;
+
 static void
-/*ARGSUSED*/
-intTERM(int dummy __unused)
+tipout_note(int dummy __unused)
 {
 
+	tipout_stop = 1;
+}
+
+__dead static void
+tipout_finish(void)
+{
+
+	(void)sigblock(sigmask(SIGHUP) | sigmask(SIGTERM));
 	if (boolean(value(SCRIPT)) && fscript != NULL)
 		(void)fclose(fscript);
 	exit(0);
+}
+
+static void
+tipout_arm(int signo)
+{
+	struct sigaction sa;
+
+	(void)memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = tipout_note;
+	(void)sigemptyset(&sa.sa_mask);
+	/*
+	 * Leave the calls interruptible. The handler only records the
+	 * signal. This loop closes the script and exits.
+	 */
+	(void)sigaction(signo, &sa, NULL);
 }
 
 void
@@ -136,13 +159,14 @@ tipout(void)
 	char buf[BUFSIZ];
 	char *cp;
 	int cnt;
+	int nready;
 	int omask;
 	struct pollfd pfd[2];
 
 	(void)signal(SIGINT, SIG_IGN);
 	(void)signal(SIGQUIT, SIG_IGN);
-	(void)signal(SIGHUP, intTERM);	/* for dial-ups */
-	(void)signal(SIGTERM, intTERM);	/* time to go signal*/
+	tipout_arm(SIGHUP);		/* for dial-ups */
+	tipout_arm(SIGTERM);		/* time to go signal */
 
 	pfd[0].fd = attndes[0];
 	pfd[0].events = POLLIN;
@@ -150,10 +174,16 @@ tipout(void)
 	pfd[1].events = POLLIN|POLLHUP;
 
 	for (omask = 0;; (void)sigsetmask(omask)) {
+	if (tipout_stop)
+		tipout_finish();
 
-	if (poll(pfd, 2, -1) > 0) {
+	nready = poll(pfd, 2, -1);
+	if (tipout_stop)
+		tipout_finish();
+	if (nready < 0)
+		continue;
 
-	if (pfd[0].revents & POLLIN)
+	if (nready > 0 && (pfd[0].revents & POLLIN))
 		if (read(attndes[0], &ccc, 1) > 0) {
 			switch(ccc) {
 			case 'W':
@@ -169,20 +199,16 @@ tipout(void)
 				break;
 			}
 		}
-	}
 
-	if (pfd[1].revents & (POLLIN|POLLHUP)) {
+	if (nready > 0 && (pfd[1].revents & (POLLIN|POLLHUP))) {
 			cnt = read(FD, buf, BUFSIZ);
 			if (cnt <= 0) {
 				/* lost carrier || EOF */
-				if ((cnt < 0 && errno == EIO) || (cnt == 0)) {
-					(void)sigblock(sigmask(SIGTERM));
-					intTERM(0);
-					/*NOTREACHED*/
-				}
+				if ((cnt < 0 && errno == EIO) || (cnt == 0))
+					tipout_finish();
 				continue;
 			}
-			omask = sigblock(SIGTERM);
+			omask = sigblock(sigmask(SIGHUP) | sigmask(SIGTERM));
 			for (cp = buf; cp < buf + cnt; cp++)
 				*cp &= STRIP_PAR;
 			(void)write(1, buf, (size_t)cnt);
