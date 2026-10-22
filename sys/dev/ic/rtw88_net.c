@@ -12,7 +12,6 @@
 #include <sys/device.h>
 #include <sys/kmem.h>
 #include <sys/kernel.h>
-#include <sys/limits.h>
 #include <sys/mbuf.h>
 #include <sys/callout.h>
 #include <sys/timevar.h>
