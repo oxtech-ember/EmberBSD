@@ -36,8 +36,10 @@ fields to match the native channel programming. A read error or disagreement
 rejects without an RFK trigger or mutation. It then executes the whole reference
 chain before station setup, current EDCA and parent AUTH publication.
 
-The worker holds no PCI lock while sleeping. `kpause` releases Giant.
-After every wake, the owner compares
+The worker holds no PCI lock while waiting. Both `kpause` and `yield` release
+Giant. Sub-tick waits yield until their original minimum interval has elapsed.
+Longer waits use `kpause`; a partial wake uses only the remaining interval.
+After every scheduler return, the owner compares
 initialized numeric/value BSS, security, local/peer rates, media, protection,
 HT provider/capsule and stage-appropriate EDCA inputs. A same-generation provider
 spacing change cancels the attempt too. AUTH has no assigned AID: the experiment
@@ -46,7 +48,11 @@ does not invent one or send a RUN rate-adaptation command.
 New work has a six-second absolute budget. Cleanup has the same original start
 plus eight seconds. Register IO, mandatory RF delays, indirect LTE readiness,
 firmware transport and scheduler time all consume those clocks. Individual
-phases retain their own earlier deadlines. A pending, already-sent END6D report
+phases retain their own earlier deadlines. The native clock uses current
+`nanouptime` samples in 64-bit microseconds. It does not use cached hardclock
+samples or truncate the clock to 32 bits. The final coefficient budget stays
+10 ms. A report read must finish before both its phase and transaction deadlines.
+A late target sample cannot qualify completion. A pending, already-sent END6D report
 gets one fresh 100 ms cleanup poll, capped by the original eight-second limit.
 The primary error and quarantine remain after a late completion.
 Each typed IO validates the clock;
@@ -175,9 +181,13 @@ The controller stopped on quarantine. Association did not complete.
 
 The coefficient oracle did not accept completion before its deadline.
 This does not establish an analog failure or clean hardware ownership release.
-The target uses 100 Hz ticks. The 10 ms coefficient deadline and minimum
-one-tick polling sleep need separate timing analysis before another trial.
-The trial does not identify scheduler rounding as the cause.
+The target uses 100 Hz ticks. Source regression reproduces a polling defect:
+the old 10 us sleep rounds to one 10 ms tick, so the coefficient deadline
+expires before the second ordered sample. The current worker uses monotonic
+microsecond deadlines and sub-tick yields. A time-driven report that becomes
+ready after 5 ms passes the corrected host model and fails the old worker.
+The physical trial does not establish that this defect was its only cause.
+The correction still needs a new controlled cold-boot trial.
 After clean unmount and a physical power reset, the working legacy kernel
 restored WPA2/CCMP and bounded IPv4 and link-local IPv6 replies.
 Calibration, 5 GHz data, HT/VHT and endurance remain unqualified by this trial.
@@ -197,7 +207,15 @@ The formatter test executes the actual PCI statistics body at every buffer
 capacity, including maximum numeric values. The normal packet-H2C and legacy
 source suites remain separate regression gates.
 
-The cases include missing/stale completion, possibly-landed writes, snapshot and
+The timing cases use a 100 Hz scheduler and time-driven coefficient reports.
+They cover a 5 ms completion, a tick-boundary start, crossing the 32-bit clock
+boundary, and a scheduling gap of more than 2^32 microseconds. They reject
+missing, constant, late and deadline-crossing reports. Cancellation and global
+quarantine after a yield retain only the existing owner's cleanup rights.
+Separate checks preserve minimum 10 us, 600 us and 20 ms waits, including a
+partial long sleep. These tests do not emulate hardware calibration.
+
+The other cases include missing/stale completion, possibly-landed writes, snapshot and
 restore faults, same-epoch profile changes, allocation cancellation, C1 spacing
 changes, packet uncertainty, cleanup expiry and dying ownership. They also
 require zero RFK IO for an unstarted INIT, no resampling after a new firmware

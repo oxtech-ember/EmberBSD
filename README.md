@@ -1194,6 +1194,9 @@ The base system shell is unchanged.
   oracle and quarantine have source contracts. One cold `d8ebd899a` trial
   accepts the start/end and GAPK/IQK/DPK/CAL_PWR completion observations,
   then times out at final coefficients and enters quarantine.
+  The source timing contract now uses 64-bit monotonic microseconds and
+  sub-tick yields. It preserves the 10 ms coefficient budget and rejects
+  report reads that cross a deadline. A new physical RFK trial remains pending.
   Physical calibration and HT readiness remain unqualified.
   Cold recovery restores the working legacy profile.
   Ordinary profiles do not enable that experiment.

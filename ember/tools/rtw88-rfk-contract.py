@@ -30,6 +30,12 @@ helpers=(src/'sys/dev/ic/rtw88_net_rfk.inc').read_text()
 native=replace(native,'static void\nrtw88_net_state_work(',clock_macro+helpers+'\n#undef ticks\nstatic void\nrtw88_net_state_work(')
 (out/'enable-native.inc').write_text(native)
 services=(src/'ember/tools/rtw88-enable-services.inc').read_text()
+services=replace(services, '#define hz 1000',
+    'static unsigned rfk_hz = 1000;\n#define hz rfk_hz\n'
+    'static void nanouptime(struct timespec *);\nstatic void yield(void);')
+services=replace(services, 'static unsigned mstohz(unsigned ms) { return ms; }',
+    'static unsigned mstohz(unsigned ms) { return (ms * hz + 999) / 1000; }')
+
 services=replace(services,'void *kmem_zalloc(size_t n,int flags)',
     'static void rfk_alloc_yield(void);\nvoid *kmem_zalloc(size_t n,int flags)')
 services=replace(services,'enable_allocations++;return p;',

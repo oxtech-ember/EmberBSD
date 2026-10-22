@@ -36,13 +36,36 @@ static void rfk_after_owner_drop(void)
     rtw88_test_rfk_drop_hook=NULL;
 }
 static unsigned rfk_last_owned_tick,rfk_owned_at_cancel;
+static uint64_t rfk_coef_at_us,rfk_clock_offset,rfk_first_owned_us;
+static unsigned rfk_yields,rfk_coef_reads,rfk_clock_wraps,rfk_min_early;
+static unsigned rfk_last_write;
+static unsigned rfk_previous_clock;
+static int rfk_timing(void) { return strncmp(rfk_case,"timing-",7)==0; }
+static int rfk_timing_success(void)
+{ return rfk_is("timing-good") || rfk_is("timing-edge") ||
+    rfk_is("timing-wrap") || rfk_is("timing-minimum"); }
+static uint64_t rfk_now_us(void)
+{ return (uint64_t)route_ticks*(1000000/rfk_hz)+rfk_extra_us+rfk_clock_offset; }
+static void rfk_advance_us(uint64_t us)
+{
+    unsigned period=1000000/rfk_hz;
+    uint64_t total=(uint64_t)rfk_extra_us+us;
+    route_ticks+=(unsigned)(total/period);rfk_extra_us=(unsigned)(total%period);
+}
+static void nanouptime(struct timespec *ts)
+{
+    uint64_t now=rfk_now_us();
+    if((unsigned)now<rfk_previous_clock)rfk_clock_wraps++;
+    rfk_previous_clock=(unsigned)now;
+    ts->tv_sec=(time_t)(now/1000000);ts->tv_nsec=(long)(now%1000000)*1000;
+}
 static void rfk_io_tick(void)
 {
     rfk_io++;
     if(rtw8822c_rfk_active(f.sc)) {
+        if(!rfk_owned_io)rfk_first_owned_us=rfk_now_us();
         rfk_owned_io++;
-        rfk_extra_us+=rfk_is("slow-io")?5000:1;
-        route_ticks+=rfk_extra_us/1000;rfk_extra_us%=1000;
+        rfk_advance_us(rfk_is("slow-io")?5000:1);
         rfk_last_owned_tick=route_ticks;
     }
 }
@@ -77,7 +100,18 @@ static void rfk_alloc_yield(void)
 static int rfk_pause(unsigned ticks)
 {
     CHECK(!mutex_owned(rfk_net->lock));
-    (void)ticks;
+    if(rfk_is("timing-minimum") && ticks && !rtw8822c_rfk_active(f.sc)) {
+        if(!rfk_min_early) { CHECK(ticks==2);route_ticks--;rfk_min_early=1; }
+        else { CHECK(ticks==1);rfk_min_early=2; }
+    }
+    if(!rfk_paused && rfk_coef && (rfk_is("timing-cancel") ||
+       rfk_is("timing-Q") || rfk_is("timing-stall") || rfk_is("timing-long-stall"))) {
+        rfk_paused=1;rfk_owned_at_cancel=rfk_owned_io;
+        if(rfk_is("timing-cancel"))
+            CHECK(rtw88_net_newstate(&rfk_net->ic,IEEE80211_S_SCAN,0)==0);
+        else if(rfk_is("timing-Q"))atomic_or_uint(rtw88_test_rfk_atomic_word,2);
+        else rfk_advance_us(rfk_is("timing-long-stall")?(UINT64_C(1)<<32)+2000:20000);
+    }
     if(!rfk_paused && rfk_end_sent &&
        (rfk_is("end-cancel") || rfk_is("end-Q") || rfk_is("end-deadline"))) {
         rfk_paused=1;
@@ -124,17 +158,26 @@ static int rfk_pause(unsigned ticks)
     }
     return EWOULDBLOCK;
 }
+/* yield is a scheduler service. The actual worker owns minimum-time and
+ * input checks. Each service return advances two microseconds, not a tick. */
+static void yield(void)
+{
+    rfk_yields++;
+    rfk_advance_us(2);
+    (void)rfk_pause(0);
+}
 static void rfk_delay_bus(void *cookie,unsigned us)
 {
     delay_us(cookie,us);
-    rfk_extra_us+=us;
-    route_ticks+=rfk_extra_us/1000;rfk_extra_us%=1000;
+    rfk_advance_us(us);
 }
 static void rfk_event(unsigned event)
 { CHECK(rfk_trace_len<128);if(rfk_trace_len<128)rfk_trace[rfk_trace_len++]=event; }
 static int rfk_write4(void *cookie,uint32_t reg,uint32_t value)
 {
     uint32_t old=mmio32(reg);
+    unsigned previous_write=rfk_last_write;
+    rfk_last_write=reg;
     rfk_io_tick();
     int error=write_4(cookie,reg,value);
     if(!error && reg==0x3a0c && rtw8822c_rfk_active(f.sc) &&
@@ -151,7 +194,7 @@ static int rfk_write4(void *cookie,uint32_t reg,uint32_t value)
          * This is register state, not a success returned by read count. */
         if(!(value&0x100)) {
             rfk_end_sent=1;
-            rfk_end_at_us=(uint64_t)route_ticks*1000+rfk_extra_us;
+            rfk_end_at_us=rfk_now_us();
             rfk_end_value=rfk_is("end-held")?1:0;
             if(rfk_once("end-write-error"))return EIO; /* Doorbell landed. */
         }
@@ -169,10 +212,27 @@ static int rfk_write4(void *cookie,uint32_t reg,uint32_t value)
      * that producer edge, not later subpage RMWs preserving its low bit. */
     if(reg==0x1b00 && (value&1) && !(old&1)) {
         if(value==0xd19 || value==0xd2b) { rfk_gapk++;rfk_report_reads=0;rfk_event(value==0xd19?2:3); }
-        if(value==0x1149) { rfk_coef++;rfk_report_reads=0;rfk_event(50); }
+        if(value==0x1149) {
+            rfk_coef++;rfk_report_reads=0;rfk_event(50);
+            rfk_coef_at_us=rfk_now_us();
+        }
         if(value==0x1449 || value==0x1549 || value==0x1649 ||
            value==0x1749 || value==0x1a49 || value==0x1b49 ||
            value==0x1c49 || value==0x1d49) { rfk_dpk++;rfk_report_reads=0;rfk_event(6); }
+    }
+    /* The final coefficient command follows a plain RXSRAM write after
+     * both CAL_PWR operations. Exclude earlier DPK read/modify/writes. */
+    if(rfk_cal_pwr==2 && !rfk_coef && previous_write==0x1b00 &&
+       reg==0x1bd4 && value==0xf0) {
+        if(rfk_is("timing-edge")) {
+            unsigned period=1000000/rfk_hz;
+            rfk_advance_us((2*period-5-(unsigned)(rfk_now_us()%period))%period);
+        }
+        if(rfk_once("timing-new-expiry")) {
+            uint64_t due=rfk_first_owned_us+5997000;
+            CHECK(rfk_now_us()<due);
+            rfk_advance_us((unsigned)(due-rfk_now_us()));
+        }
     }
     if(reg==0x1bb4 && (value&(1U<<12)) && !(old&(1U<<12))) { rfk_cal_pwr++;rfk_power_reads=0; }
     if((reg==0x1b00 && value==0xd19 && rfk_once("write-gapk")) ||
@@ -184,6 +244,7 @@ static int rfk_write4(void *cookie,uint32_t reg,uint32_t value)
 }
 static int rfk_read4(void *cookie,uint32_t reg,uint32_t *value)
 {
+    rfk_last_write=0;
     rfk_io_tick();
     /* Native channel_rf writes both paths first. Fault only the later
      * owning full-chain readback, never the preparatory channel RMW. */
@@ -212,6 +273,17 @@ static int rfk_read4(void *cookie,uint32_t reg,uint32_t *value)
     if((reg==0x520 && rfk_handshakes==0 && rfk_once("snapshot-first")) ||
        (reg==0x1e70 && rfk_handshakes==0 && rfk_once("snapshot-second")))return EIO;
     if(rfk_positive && rtw8822c_rfk_active(f.sc) && reg==0x2d9c && (rfk_gapk||rfk_dpk||rfk_coef)) {
+        if(rfk_coef && rfk_timing()) {
+            uint64_t elapsed=rfk_now_us()-rfk_coef_at_us;
+            unsigned ready=rfk_is("timing-late")?10000:
+                rfk_is("timing-new-expiry")?1000:5000;
+            rfk_coef_reads++;
+            *value=rfk_is("timing-stale")?0x55:
+                !rfk_is("timing-none") && elapsed>=ready?0x55:0x10000;
+            if(*value==0x55 && rfk_is("timing-read-expiry"))rfk_advance_us(10000);
+            if(*value==0x55 && rfk_is("timing-new-expiry"))rfk_advance_us(2500);
+            return 0;
+        }
         int stale=(rfk_gapk && !rfk_iqk && rfk_is("stale-gapk")) ||
             (rfk_dpk && !rfk_coef && rfk_is("stale-dpk")) ||
             (rfk_coef && rfk_is("stale-coef"));
@@ -235,7 +307,7 @@ static int rfk_read1(void *cookie,uint32_t reg,uint8_t *value)
     }
     if(rfk_positive && rtw8822c_rfk_active(f.sc) && reg==0x49c && rfk_handshakes) {
         if(rfk_end_sent) {
-            uint64_t now=(uint64_t)route_ticks*1000+rfk_extra_us;
+            uint64_t now=rfk_now_us();
             if(rfk_is("end-late-report"))
                 *value=now-rfk_end_at_us<105000?1:0;
             else if(rfk_is("end-cancel") || rfk_is("end-Q") || rfk_is("end-deadline"))
@@ -351,6 +423,9 @@ rfk_parent_without_completion(struct ieee80211com *ic,
 int
 main(void)
 {
+    /* Keep service symbols referenced when a causal control links this
+     * harness to the old tick-based worker, without disabling warnings. */
+    (void)nanouptime;(void)yield;
     struct rtw88_softc sc;
     kmutex_t lock = {.initialized = 1};
     struct rtw88_net *net = enable_attach(&sc, &lock);
@@ -359,6 +434,7 @@ main(void)
     rfk_case=getenv("RTW88_RFK_CASE");
     if(rfk_case==NULL)rfk_case="none";
     rfk_positive=!rfk_is("none");
+    if(rfk_timing())rfk_hz=100;
     rfk_net=net;active_ic=&net->ic;enable_pause_hook=rfk_pause;
     rtw88_test_rfk_drop_hook=rfk_after_owner_drop;
     CHECK(write_4(&f,0x520,rfk_original_tx)==0);
@@ -388,6 +464,19 @@ main(void)
         CHECK(rtw88_stop(&sc)==0);
         CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_INIT,0)==0);
     } else CHECK(rtw88_net_newstate(&net->ic, IEEE80211_S_AUTH, 0) == 0);
+    if(rfk_is("timing-minimum")) {
+        static const unsigned intervals[]={10,600,20000};
+        CHECK(rtw88_net_rfk_capture(net,net->rfk.values)==0);
+        for(unsigned i=0;i<3;i++) {
+            uint64_t start=rfk_now_us();
+            CHECK(rtw88_net_rfk_wait(net,intervals[i],0)==0);
+            CHECK(rfk_now_us()-start==intervals[i]);
+        }
+        CHECK(rfk_min_early==2);
+    }
+    /* Place this deterministic bus sequence across the 32-bit boundary.
+     * The assertions below require that the coefficient window crosses it. */
+    if(rfk_is("timing-wrap"))rfk_clock_offset=UINT_MAX-195000-rfk_now_us();
     unsigned before=rfk_io,started_tick=route_ticks;
     rtw88_net_state_work(&net->state_work, net);
     if(rfk_is("newfw-baseline")) {
@@ -401,9 +490,9 @@ main(void)
         CHECK(!net->policy.accepting && !sc.sc_started);
     }
     /* Enabled experimental AUTH cannot bypass a missing whole-chain receipt. */
-    CHECK(rfk_parent_auth == ((rfk_is("positive") || rfk_is("vendor-end") || rfk_is("newfw-baseline") || rfk_is("detach-baseline") || rfk_is("env-channel149"))?1U:0U));
+    CHECK(rfk_parent_auth == ((rfk_timing_success() || rfk_is("positive") || rfk_is("vendor-end") || rfk_is("newfw-baseline") || rfk_is("detach-baseline") || rfk_is("env-channel149"))?1U:0U));
     CHECK(!net->work_pending);
-    if(rfk_is("positive") || rfk_is("vendor-end") || rfk_is("newfw-baseline") || rfk_is("detach-baseline") || rfk_is("env-channel149") || rfk_is("zero-init") ||
+    if(rfk_timing_success() || rfk_is("positive") || rfk_is("vendor-end") || rfk_is("newfw-baseline") || rfk_is("detach-baseline") || rfk_is("env-channel149") || rfk_is("zero-init") ||
        rfk_is("c1-spacing") || rfk_is("alloc-cancel") || rfk_is("post-complete-change") ||
        (strncmp(rfk_case,"rf18-",5)==0 || rfk_power_before() ||
         rfk_is("power-partial") || rfk_is("seal-power") || rfk_is("env-successor-scan")))CHECK(!rtw8822c_rfk_blocked());
@@ -421,6 +510,45 @@ main(void)
             CHECK(attached==EBUSY);
             CHECK(rfk_io==prior);CHECK(!rtw8822c_rfk_active(&sc));
             if(attached==0)CHECK(rtw88_core_detach(&other)==0);
+        }
+    }
+    if(rfk_timing()) {
+        const struct rtw88_rfk_diag *d=&sc.sc_stats.rfk;
+        CHECK(rfk_hz==100 && rfk_yields>0 && rfk_coef==1);
+        unsigned completed=rfk_timing_success() || rfk_is("timing-cancel") || rfk_is("timing-Q");
+        CHECK(d->arms[6]==1 && d->done[6]==completed);
+        printf("RFK timing %s: first=%llu coef=%llu yields=%u reads=%u error=%d/%d\n",
+            rfk_case,(unsigned long long)rfk_first_owned_us,
+            (unsigned long long)rfk_coef_at_us,rfk_yields,rfk_coef_reads,
+            d->error,d->cleanup_error);
+        if(rfk_timing_success()) {
+            CHECK(d->error==0 && d->cleanup_error==0 && d->global==0);
+            CHECK(d->raw==0x55 && d->non_target && rfk_coef_reads>2);
+        } else {
+            CHECK(d->global==2 && !net->policy.accepting);
+            if(rfk_is("timing-cancel"))CHECK(d->error==EINVAL);
+            else if(rfk_is("timing-Q"))CHECK(d->error==EBUSY);
+            else CHECK(d->error==ETIMEDOUT);
+        }
+        if(rfk_is("timing-cancel") || rfk_is("timing-Q")) {
+            /* Cancellation withdraws new work. The old owner may still
+             * observe the already-triggered coefficient completion. */
+            CHECK(rfk_paused && rfk_coef_reads>2 && d->cleanup_error==0);
+            CHECK(d->token==1 && rfk_trace[rfk_trace_len-1]==50);
+            CHECK(!rfk_parent_auth && (d->flags&2)==0);
+        }
+        if(rfk_is("timing-stall") || rfk_is("timing-long-stall"))
+            CHECK(rfk_paused && rfk_coef_reads==2 && rfk_owned_at_cancel==rfk_owned_io);
+        if(rfk_is("timing-edge"))CHECK(rfk_coef_at_us%10000>=9995);
+        if(rfk_is("timing-wrap")) {
+            CHECK(rfk_first_owned_us<UINT_MAX);
+            CHECK(rfk_coef_at_us<UINT_MAX && rfk_coef_at_us+10000>UINT_MAX);
+            CHECK(rfk_now_us()>UINT_MAX && rfk_clock_wraps==1);
+        }
+        if(rfk_is("timing-read-expiry") || rfk_is("timing-new-expiry"))CHECK(d->raw==0x55);
+        if(rfk_is("timing-new-expiry")) {
+            CHECK(rfk_fault && rfk_coef_at_us-rfk_first_owned_us<6000000);
+            CHECK(rfk_now_us()-rfk_coef_at_us<10000);
         }
     }
     if(rfk_power_before() || rfk_is("power-partial")) {

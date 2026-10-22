@@ -116,12 +116,16 @@ rtw88_net_rfk_leave(void *cookie)
 	mutex_exit(net->lock);
 }
 
-static unsigned
+static uint64_t
 rtw88_net_rfk_ticks(void *cookie)
 {
+	struct timespec ts;
 
 	(void)cookie;
-	return (unsigned)getticks();
+	/* Read the current timecounter, not the cached hardclock snapshot.
+	 * Keep 64 bits so a long scheduling pause cannot alias a deadline. */
+	nanouptime(&ts);
+	return (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
 }
 
 static int
@@ -129,24 +133,44 @@ rtw88_net_rfk_wait(void *cookie, unsigned us, int cleanup)
 {
 	struct rtw88_net *net = cookie;
 	uint32_t values[192];
-	uint64_t count = ((uint64_t)us * (unsigned)hz + 999999) / 1000000;
+	uint64_t count, now, until = rtw88_net_rfk_ticks(cookie) + us;
+	unsigned remaining = us;
 	int error;
 
 	KASSERT(!mutex_owned(net->lock));
 	rtw88_net_rfk_publish(net);
-	if (count > INT_MAX)
+	if (us == 0 || us > INT_MAX || hz <= 0)
 		return EINVAL;
-	error = kpause("rtwrfk", false, (int)MAX(count, 1), NULL);
-	if (error != 0 && error != EWOULDBLOCK)
-		return error;
-	/* Cleanup never relabels the old owner with new request values. The
-	 * core rechecks global owner, resources, firmware and deadline per IO. */
-	if (cleanup)
-		return 0;
-	error = rtw88_net_rfk_capture(net, values);
-	if (error != 0)
-		return error;
-	return memcmp(values, net->rfk.values, sizeof(values)) == 0 ? 0 : ECANCELED;
+	do {
+		/* kpause rounds a sub-tick report interval up to a whole tick.
+		 * At 100 Hz that consumes the complete coefficient budget.
+		 * yield releases Giant and does not hold PCI. Preserve the
+		 * minimum delay even when the scheduler returns immediately. */
+		count = ((uint64_t)remaining * (unsigned)hz + 999999) / 1000000;
+		if (count > INT_MAX)
+			return EINVAL;
+		if ((uint64_t)remaining * (unsigned)hz < 1000000) {
+			yield();
+		} else {
+			error = kpause("rtwrfk", false, (int)count, NULL);
+			if (error != 0 && error != EWOULDBLOCK)
+				return error;
+		}
+		/* Cleanup retains the old owner, not new request values. The
+		 * core rechecks its lease and deadline before the next IO. */
+		if (!cleanup) {
+			error = rtw88_net_rfk_capture(net, values);
+			if (error != 0)
+				return error;
+			if (memcmp(values, net->rfk.values, sizeof(values)) != 0)
+				return ECANCELED;
+		}
+		now = rtw88_net_rfk_ticks(cookie);
+		if (now >= until)
+			break;
+		remaining = (unsigned)(until - now);
+	} while (true);
+	return 0;
 }
 
 static int
@@ -155,7 +179,7 @@ rtw88_net_rfk_begin(struct rtw88_net *net)
 	struct rtw8822c_rfk_services svc = {
 	    .cookie = net, .enter = rtw88_net_rfk_enter,
 	    .leave = rtw88_net_rfk_leave, .wait = rtw88_net_rfk_wait,
-	    .clock_ticks = rtw88_net_rfk_ticks, .ticks_per_second = (unsigned)hz };
+	    .clock_ticks = rtw88_net_rfk_ticks, .ticks_per_second = 1000000 };
 	uint32_t values[192];
 	int error;
 
