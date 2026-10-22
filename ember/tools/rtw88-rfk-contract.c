@@ -16,6 +16,9 @@ static unsigned rfk_parent_scan,rfk_parent_init;
 static unsigned rfk_parent_auth, rfk_positive, rfk_handshakes, rfk_iqk;
 static unsigned rfk_gapk, rfk_dpk, rfk_coef, rfk_report_reads, rfk_ack_reads;
 static unsigned rfk_cal_pwr, rfk_power_reads, rfk_gain_commits;
+static uint8_t rfk_end_value;
+static unsigned rfk_end_sent,rfk_preend_reads;
+static uint64_t rfk_end_at_us;
 static unsigned rfk_trace[128],rfk_trace_len;
 static const char *rfk_case;
 static struct rtw88_net *rfk_net;
@@ -75,6 +78,14 @@ static int rfk_pause(unsigned ticks)
 {
     CHECK(!mutex_owned(rfk_net->lock));
     (void)ticks;
+    if(!rfk_paused && rfk_end_sent &&
+       (rfk_is("end-cancel") || rfk_is("end-Q") || rfk_is("end-deadline"))) {
+        rfk_paused=1;
+        if(rfk_is("end-Q"))atomic_or_uint(rtw88_test_rfk_atomic_word,2);
+        else if(rfk_is("end-cancel"))
+            CHECK(rtw88_net_newstate(&rfk_net->ic,IEEE80211_S_SCAN,0)==0);
+        else route_ticks+=9000;
+    }
     if(!rfk_paused && rfk_is("power-after-bind") && rfk_gapk==1) {
         rfk_net->core->sc_power_program.ht_diff[0]^=1;rfk_paused=1;
     }
@@ -130,10 +141,20 @@ static int rfk_write4(void *cookie,uint32_t reg,uint32_t value)
        !rfk_handshakes && rfk_once("power-partial"))return EIO;
     if(error)return error;
     if(!rtw8822c_rfk_active(f.sc))return 0;
+    if(reg>=0x1f0 && reg<=0x1fc && (reg-0x1f0)%4==0 &&
+       rfk_handshakes==1 && rfk_gapk==2 && rfk_once("end-ext-error"))return EIO;
     if(reg==0x3c60 || reg==0x4c60)rfk_rf18_writes++;
     if(reg>=0x1d0 && reg<=0x1dc && (reg-0x1d0)%4==0 &&
        (value&0xff)==0x6d) {
         rfk_handshakes++;rfk_ack_reads=0;rfk_event((value&0x100)?1:4);
+        /* Vendor END clears BIT0 only after the actual payload0 doorbell.
+         * This is register state, not a success returned by read count. */
+        if(!(value&0x100)) {
+            rfk_end_sent=1;
+            rfk_end_at_us=(uint64_t)route_ticks*1000+rfk_extra_us;
+            rfk_end_value=rfk_is("end-held")?1:0;
+            if(rfk_once("end-write-error"))return EIO; /* Doorbell landed. */
+        }
         if(!(value&0x100) && rfk_is("positive"))CHECK(rfk_gain_commits==22);
     }
     if(reg==0x3e48 || reg==0x4e48) {
@@ -213,7 +234,17 @@ static int rfk_read1(void *cookie,uint32_t reg,uint8_t *value)
         *value=(uint8_t)(1U<<(f.sc->sc_h2c_box&3));return 0;
     }
     if(rfk_positive && rtw8822c_rfk_active(f.sc) && reg==0x49c && rfk_handshakes) {
-        *value=rfk_is("stale-start")?1:(rfk_ack_reads++?1:0);return 0;
+        if(rfk_end_sent) {
+            uint64_t now=(uint64_t)route_ticks*1000+rfk_extra_us;
+            if(rfk_is("end-cancel") || rfk_is("end-Q") || rfk_is("end-deadline"))
+                *value=now-rfk_end_at_us<2000?1:0;
+            else *value=rfk_end_value;
+        } else if(rfk_handshakes==1 && rfk_gapk==2) {
+            rfk_preend_reads++;
+            if(rfk_is("end-read-error")) {rfk_fault=1;return EIO;}
+            *value=rfk_is("end-prezero")?0:1;
+        } else *value=rfk_is("stale-start")?1:(rfk_ack_reads++?1:0);
+        return 0;
     }
     if(rfk_positive && rtw8822c_rfk_active(f.sc) && reg==0x2d9c && rfk_iqk) {
         *value=rfk_is("stale-iqk")?0xaa:(rfk_report_reads++?0xaa:0);return 0;
@@ -368,9 +399,9 @@ main(void)
         CHECK(!net->policy.accepting && !sc.sc_started);
     }
     /* Enabled experimental AUTH cannot bypass a missing whole-chain receipt. */
-    CHECK(rfk_parent_auth == ((rfk_is("positive") || rfk_is("newfw-baseline") || rfk_is("detach-baseline") || rfk_is("env-channel149"))?1U:0U));
+    CHECK(rfk_parent_auth == ((rfk_is("positive") || rfk_is("vendor-end") || rfk_is("newfw-baseline") || rfk_is("detach-baseline") || rfk_is("env-channel149"))?1U:0U));
     CHECK(!net->work_pending);
-    if(rfk_is("positive") || rfk_is("newfw-baseline") || rfk_is("detach-baseline") || rfk_is("env-channel149") || rfk_is("zero-init") ||
+    if(rfk_is("positive") || rfk_is("vendor-end") || rfk_is("newfw-baseline") || rfk_is("detach-baseline") || rfk_is("env-channel149") || rfk_is("zero-init") ||
        rfk_is("c1-spacing") || rfk_is("alloc-cancel") || rfk_is("post-complete-change") ||
        (strncmp(rfk_case,"rf18-",5)==0 || rfk_power_before() ||
         rfk_is("power-partial") || rfk_is("seal-power") || rfk_is("env-successor-scan")))CHECK(!rtw8822c_rfk_blocked());
@@ -404,6 +435,23 @@ main(void)
         CHECK(sc.sc_stats.rfk.operations==0 && !rtw8822c_rfk_active(&sc));
         CHECK(!net->policy.accepting && !sc.sc_started);
         CHECK(rtw8822c_rfk_blocked());
+    }
+    if(strncmp(rfk_case,"end-",4)==0) {
+        CHECK(rfk_gapk==2 && rfk_iqk==0 && rfk_dpk==0);
+        CHECK(!net->policy.accepting && !sc.sc_operating.sealed);
+        CHECK(rtw8822c_rfk_blocked());
+        if(rfk_is("end-prezero") || rfk_is("end-read-error")) {
+            CHECK(rfk_preend_reads>=1 && !rfk_end_sent && rfk_handshakes==1);
+            CHECK(sc.sc_stats.rfk.arms[1]==0 && sc.sc_stats.rfk.done[1]==0);
+        }
+        if(rfk_is("end-held"))CHECK(rfk_end_sent && sc.sc_stats.rfk.done[1]==0);
+        if(rfk_is("end-ext-error"))CHECK(rfk_fault && !rfk_end_sent);
+        if(rfk_is("end-write-error"))CHECK(rfk_fault && rfk_end_sent);
+        if(rfk_is("end-cancel") || rfk_is("end-Q") || rfk_is("end-deadline"))CHECK(rfk_paused);
+    }
+    if(rfk_is("vendor-end")) {
+        CHECK(rfk_handshakes==2 && rfk_iqk==1 && rfk_coef==1);
+        CHECK(sc.sc_stats.rfk.arms[1]==1 && sc.sc_stats.rfk.done[1]==1);
     }
     if(rfk_is("power-after-bind"))CHECK(rfk_paused && rfk_gapk==1 && rfk_iqk==0);
     if(rfk_is("power-mailbox"))CHECK(rfk_paused && rfk_net->rfk.ran && rfk_coef==1);

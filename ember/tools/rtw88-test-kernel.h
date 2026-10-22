@@ -10,7 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 #define KASSERT(x) assert(x)
 #define KM_NOSLEEP 0
 #define BUS_DMA_NOWAIT 1

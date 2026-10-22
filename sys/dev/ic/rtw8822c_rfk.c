@@ -472,7 +472,7 @@ rfk_arm(struct rtw8822c_rfk *k, uint32_t addr, unsigned size, uint32_t mask,
 	if (kind < RFK_START6D || kind > RFK_COEF ||
 	    (k->cleanup_mode && (kind != RFK_END6D || !k->handshake_started ||
 	    k->handshake_end_sent || k->engine_pending || addr != REG_ARFR4 ||
-	    size != 1 || mask != BIT_WL_RFK || target != 1))) {
+	    size != 1 || mask != BIT_WL_RFK || target != 0))) {
 		(void)rfk_error(k, EPROTO);
 		return;
 	}
@@ -798,6 +798,8 @@ rfk_handshake(struct rtw8822c_rfk *k, int start)
 {
 	unsigned deadline = k->svc.clock_ticks(k->svc.cookie) + rfk_ticks(k, 1000000);
 	uint8_t payload = start ? 1 : 0;
+	uint8_t status;
+	unsigned global;
 	int ready, error;
 
 	if (start && rfk_value(k, REG_PMC_DBG_CTRL1,
@@ -810,14 +812,56 @@ rfk_handshake(struct rtw8822c_rfk *k, int start)
 			return k->cleanup_mode ? k->cleanup_error : k->error;
 		error = rtw88_fw_mailbox_begin(k->sc, 1, &ready);
 		if (error == 0 && ready) {
-			rfk_arm(k, REG_ARFR4, 1, BIT_WL_RFK, 1,
-			    100000, 0, start ? RFK_START6D : RFK_END6D);
+			if (!start) {
+				/* END is a phase transition: require the previous START
+				 * state while this mailbox slot and PCI lock are owned. */
+				global = atomic_load_acquire(&rfk_global);
+				if (global != RFK_BUSY &&
+				    !(k->cleanup_mode &&
+				    global == (RFK_BUSY | RFK_QUARANTINE)))
+					error = rfk_error(k, EBUSY);
+				else if (!k->active || !k->handshake_started ||
+				    k->token != atomic_load_acquire(&rfk_serial) ||
+				    k->generation != k->sc->sc_generation ||
+				    k->sc->sc_stop_requested ||
+				    !k->sc->sc_resources_ready)
+					error = rfk_error(k, ESTALE);
+				else if ((int)(k->svc.clock_ticks(k->svc.cookie) -
+				    (k->cleanup_mode ? k->cleanup_deadline :
+				    k->new_deadline)) >= 0 ||
+				    (int)(k->svc.clock_ticks(k->svc.cookie) -
+				    deadline) >= 0)
+					error = rfk_error(k, ETIMEDOUT);
+				else if (!k->cleanup_mode && k->power_bound &&
+				    !rfk_power_current(k->sc, &k->power))
+					error = rfk_error(k, ECANCELED);
+				else {
+					k->operations++;
+					error = k->sc->sc_ops->read_1(k->sc->sc_bus,
+					    REG_ARFR4, &status);
+					if (error == 0 && (status & BIT_WL_RFK) == 0)
+						error = EPROTO;
+					error = rfk_error(k, error);
+				}
+			}
+			if (error == 0) {
+				rfk_arm(k, REG_ARFR4, 1, BIT_WL_RFK,
+				    start ? 1 : 0, 100000, 0,
+				    start ? RFK_START6D : RFK_END6D);
+				error = k->cleanup_mode ? k->cleanup_error : k->error;
+				if (error == 0 && !start) {
+					/* The checked pre-END 1 is the owned baseline. */
+					k->non_target = 1;
+				}
+			}
 			/* Set before the doorbell can land, including a write error. */
-			if (start)
-				k->handshake_started = 1;
-			else
-				k->handshake_end_sent = 1;
-			error = rtw88_fw_command(k->sc, 0x6d, &payload, 1);
+			if (error == 0) {
+				if (start)
+					k->handshake_started = 1;
+				else
+					k->handshake_end_sent = 1;
+				error = rtw88_fw_command(k->sc, 0x6d, &payload, 1);
+			}
 			error = rtw88_fw_mailbox_end(k->sc, error);
 		}
 		k->svc.leave(k->svc.cookie);
