@@ -1194,7 +1194,10 @@ The base system shell is unchanged.
   contracts cover its lifecycle. Kernel `9c1de345a` passes legacy scan recovery
   in 26/12 seconds, IPv6 and four-AC/data checks. This does not prove hardware
   BlockAck. A separate 11a transition exposes a stale-channel setup error;
-  AUTO recovery passes, while 5 GHz on that AP remains unqualified.
+  Explicit AUTO restoration passes. Initial scanning now selects a valid active
+  channel after a band change. Kernel `3d9255b15` passes 26/26-second scan
+  recoveries and IPv6 checks. Its 11a trial reaches channel 149 without the
+  setup error, but authentication still times out; 5 GHz data remains unqualified.
   Raw TCP from the board reaches about 25 Mbps in a 1 MiB trial. Full AP-loss
   recovery, RF quality and endurance remain unqualified. HT/VHT remain
   unadvertised. Shared HT20 association contracts now bind queued offers to

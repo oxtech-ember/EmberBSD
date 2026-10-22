@@ -811,7 +811,7 @@ This prevents counter growth between the CLI's first read and its single retry
 from causing a second `ENOMEM`. No zero padding or global sysctl change is used.
 
 The [actual-source contract](../tools/rtw88-sysctl-contract.c) executes the real
-CLI string branch, generic lookup and wrapper. It passes 994 checks with GCC16
+CLI string branch, generic lookup and wrapper. It passes 1000 checks with GCC16
 O0/O2 and ASan/UBSan. GCC path analysis and Cppcheck pass. CSA retains one pinned
 inherited dead store in generic lookup and finds no new issue; it is not clean.
 On physical kernel `4f152fc21`, 100 CLI reads interleaved with 20 peer pings pass.
@@ -848,3 +848,35 @@ It includes no direct physical RCR readback or transmitted ACK/BlockAck proof.
 Hardware BA with software CCMP needs independent radio evidence, including
 sequence/bitmap behavior and reconnect teardown. The HT provider remains NULL.
 Calibration, HT/VHT and maximum throughput remain unqualified.
+
+
+### Initial scan after a band change
+
+Native initialization now selects a declared active initial channel if the
+previous channel is NULL, ANY or outside the current active set.
+It runs after the existing stop owner and before core start.
+An already valid current channel stays unchanged. An active set without
+any declared channel fails before firmware start. Shared scanning still owns channel
+hopping and BSS rates. Mode, EDCA and slot guards stay strict.
+
+The existing actual-source contract now connects shared media selection,
+native initialization, the state worker and shared INIT/SCAN arms.
+It executes the real scan start/reset/next-channel functions. Kernel services,
+node reset and other states remain explicit model boundaries.
+The old source fails 57 assertions. The corrected source passes 379384 checks,
+including reverse band changes, narrow lists, coalescing and startup faults.
+ASan/UBSan and three static analyzers pass. The exact CI sparse input set passes.
+
+GCC16 AArch64 kernel `3d9255b15` passes clean warm boot and legacy recovery.
+Two disruptive scans restore WPA2/IPv4 in 26/26 seconds, with IPv6 SSH after each.
+A separate 11a trial reaches channel 149 and receives PHY reports and beacons.
+The old initial-setup EINVAL does not recur. Authentication still times out;
+no 5 GHz data acceptance is claimed. Explicit AUTO restoration returns data
+in 27 seconds. HT/VHT admission remains disabled.
+
+The diagnostic sysctl host contract now uses visible byte transfers for its
+copyout service. It retains exact-length, zero-length and copy-fault checks.
+A true uninitialized source byte must fail its O2 analyzer control.
+Production sysctl, generic lookup and CLI bodies are unchanged.
+The historical Linux bulk-copy analyzer failure is retained as evidence.
+Local runtime and analysis pass; exact Linux CI acceptance is still pending.
