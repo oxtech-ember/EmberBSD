@@ -59,7 +59,8 @@ are maintained in the related repositories below.
   supplies the separate no-X11 media and a pinned GitHub HTTPS set source.
   The accepted desktop candidate remains local until its matching kit is published.
   The installer also exposes an experimental KDE Plasma profile with a separate
-  verified bundle and Wayland launcher. The [runtime bootstrap](ember/tests/installer-runtime-altroot.md)\n  uses live pkgtools before its first target process. Host regressions cover profile selection
+  verified bundle and Wayland launcher. The [runtime bootstrap](ember/tests/installer-runtime-altroot.md)
+  uses live pkgtools before its first target process. Host regressions cover profile selection
   and failure handling; an amd64 Plasma bundle and session remain unqualified.
   The [release procedure](ember/release/README.md) verifies composition, VM qualification,
   remote file hashes and immutable publication. The custom domain remains deferred.
@@ -678,6 +679,12 @@ on every board in the hardware catalog.
   failure control. [libsecret 0.21.8.2](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/libsecret.md)
   retains GIR, Vala and documentation; 50 upstream tests and a native peer-credential
   regression pass on CM5.
+  API documentation and Valadoc now have default-on options. Explicitly omitting
+  documentation retains the full Plasma recipe's library, GIR, VAPI and tests.
+  The shared [Vala generator repair](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/vala.md)
+  preserves NULL termination in nullable value array copies. GCC16 host regressions
+  on macOS pass C golden-file comparisons and ASan/UBSan checks. The patched
+  target Vala package remains unqualified.
   [Installed KIO and KGlobalAccelD](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/plasma-mobile/toolkit/cross/desktop-frameworks.md)
   pass 53 and 28 upstream cases on CM5, with two KIO skips. Shortcut tests use
   a dummy input plugin; physical keys and full KWin/Plasma remain unaccepted.
