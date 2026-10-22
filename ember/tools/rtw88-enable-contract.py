@@ -73,9 +73,9 @@ bsd=read('sys/net80211/ieee80211_netbsd.c')
 parts=[net[:net.index('#include')], bsd[:bsd.index('#include')],
        '#define ifqueue queue\n', function(bsd,'ieee80211_drain_ifq','static void'),
        '#undef ifqueue\n']
-for name,result in [('rtw88_net_rxba_now','static uint64_t'),('rtw88_net_rxba_ticks','static int'),('rtw88_net_rxba_timeout','static void'),('rtw88_net_rxba_schedule','static int'),('rtw88_net_rxba_cancel','static void'),('rtw88_net_rxba_quiesce','static void'),('rtw88_net_rxba_attach','static void'),('rtw88_net_rxba_detach','static void'),('rtw88_net_basic_rates','static unsigned'),('rtw88_net_wme_apply','static int'),('rtw88_net_edca_prepare','static int'),('rtw88_net_ra_prepare','static int'),('rtw88_net_restart_peer','static int'),('rtw88_net_mailbox_wait','static int'),('rtw88_net_state_work','static void'),('rtw88_net_attach','int')]:
+for name,result in [('rtw88_net_rxba_now','static uint64_t'),('rtw88_net_rxba_ticks','static int'),('rtw88_net_rxba_timeout','static void'),('rtw88_net_rxba_schedule','static int'),('rtw88_net_rxba_cancel','static void'),('rtw88_net_rxba_quiesce','static void'),('rtw88_net_rxba_attach','static void'),('rtw88_net_rxba_detach','static void'),('rtw88_net_basic_rates','static unsigned'),('rtw88_net_wme_apply','static int'),('rtw88_net_edca_prepare','static int'),('rtw88_net_ra_prepare','static int'),('rtw88_net_restart_peer','static int'),('rtw88_net_drain_wait','static int'),('rtw88_net_mailbox_wait','static int'),('rtw88_net_state_work','static void'),('rtw88_net_attach','int')]:
  # A source baseline may predate the checkpoint; no replacement body is supplied.
- if name=='rtw88_net_mailbox_wait' and not re.search(r'^'+name+r'\(',net,re.M):continue
+ if name in ('rtw88_net_drain_wait','rtw88_net_mailbox_wait') and not re.search(r'^'+name+r'\(',net,re.M):continue
  if name=='rtw88_net_rxba_attach':
   parts.append(re.search(r'^static const struct ieee80211_rxba_ops rtw88_net_rxba_ops = \{.*?^};',net,re.M|re.S).group()+'\n')
  parts.append(function(net,name,result))

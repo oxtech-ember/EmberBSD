@@ -52,10 +52,15 @@ static void callout_schedule(int *c,unsigned ticks) { (void)c;(void)ticks; }
 static unsigned mstohz(unsigned ms) { return ms; }
 /* Process sleep/clock boundary: the real kernel owns Giant release semantics. */
 static int (*enable_pause_hook)(unsigned);
+static int (*enable_drain_pause_hook)(unsigned);
+static int enable_drain_complete(unsigned);
 static inline int kpause(const char *name,bool intr,int ticks,kmutex_t *lock)
 {
     (void)name;(void)intr;assert(lock==NULL);assert(ticks>0);
     route_ticks+=(unsigned)ticks;
+    if(strcmp(name,"rtwdrn")==0)
+        return enable_drain_pause_hook?enable_drain_pause_hook((unsigned)ticks):
+            enable_drain_complete((unsigned)ticks);
     return enable_pause_hook?enable_pause_hook((unsigned)ticks):EWOULDBLOCK;
 }
 static int workqueue_create(struct workqueue **out,const char *name,

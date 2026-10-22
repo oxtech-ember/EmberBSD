@@ -776,3 +776,25 @@ LAN link-local IPv6 SSH works after each. A bounded four-AC recheck receives
 in both directions. The first four-AC attempt fails while reading diagnostic
 stats with `ENOMEM`; it does not qualify as a passing run. Dynamic string
 resizing in that read path remains a separate open fix. HT admission stays off.
+
+## Posted native TX drain before managed setup
+
+The actual state worker now waits for already-posted DATA/MGMT descriptors
+before channel/station writes and its existing mailbox reservation. It shares
+the IRQ's device read-index completion decoder, including wrap validation and
+exactly-once callbacks. It never fabricates completion by clearing queue counts.
+The existing all-five admission fence retains queued mbuf/node/crypto owners.
+
+A finite per-request drain deadline survives every wake. PCI is released before
+sleep; the outer worker revalidates the full current peer/profile afterward.
+Read/index/timeout failures follow the existing INIT/stop owner. A non-started
+INIT has no drain IO or sleep. Linked-peer full-reset ownership is unchanged.
+
+Host contracts execute real posted MGMT, completion IRQ and first AUTH/RUN,
+plus an explicitly broader five-queue core matrix. Bus RP progress and scheduler
+execution are modeled. The HT exchange model rejects posted-DMA inputs outside
+its declared domain; it does not fabricate successful hardware draining.
+GCC16 AArch64 build and board regression remain required for this addition.
+Descriptor consumption does not prove radio idle, an air ACK or RFK readiness.
+Packet-H2C, calibration and hardware RX BlockAck remain separate prerequisites;
+the real HT provider remains NULL.

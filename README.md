@@ -1187,6 +1187,9 @@ The base system shell is unchanged.
   after each wake and non-waiting station/RA commit. GCC16 kernel `d5b249d0b`
   passes bounded manual-scan recovery, IPv6 and four-AC/data regression checks.
   This does not add RFK.
+  Source contracts also drain posted native TX through the actual completion
+  decoder before retuning, with bounded waits and existing failure ownership.
+  This addition still needs a target build and board regression.
   Raw TCP from the board reaches about 25 Mbps in a 1 MiB trial. Full AP-loss
   recovery, RF quality and endurance remain unqualified. HT/VHT remain
   unadvertised. Shared HT20 association contracts now bind queued offers to

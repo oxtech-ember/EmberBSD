@@ -106,7 +106,7 @@ struct rtw88_stats {
 	uint64_t tx_done;	/* Counted only from the chip's read index. */
 	uint64_t tx_full;
 	uint64_t tx_dropped;	/* Posted but not completed before stop. */
-	uint64_t tx_dma_errors;	/* Read index outside the outstanding range. */
+	uint64_t tx_dma_errors;	/* Untrusted device read index or snapshot IO. */
 	/* Successfully encoded unicast DATA, not delivery or air-rate reports. */
 	uint64_t tx_data_encoded, tx_data_rates[RTW88_LEGACY_RATES];
 	uint64_t tx_data_other;
@@ -231,6 +231,9 @@ int rtw88_fw_packet(struct rtw88_softc *, const uint8_t *, size_t);
 int rtw88_stop(struct rtw88_softc *);
 int rtw88_fw_mailbox_begin(struct rtw88_softc *, unsigned, int *);
 int rtw88_fw_mailbox_end(struct rtw88_softc *, int);
+/* PCI-serialized outstanding DATA/MGMT DMA, not RF idle or air ACK.
+ * Pending is valid only on success; a failed snapshot cannot release ownership. */
+int rtw88_tx_drain_snapshot(struct rtw88_softc *, unsigned *);
 int rtw88_fw_command(struct rtw88_softc *, uint8_t, const void *, size_t);
 /*
  * Interrupt entry; the bus serializes it against rtw88_stop's barrier.

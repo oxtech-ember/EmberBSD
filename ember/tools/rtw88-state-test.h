@@ -128,7 +128,14 @@ static unsigned getticks(void) { return state_ticks; }
 static inline int kpause(const char *name,bool intr,int ticks,kmutex_t *lock)
 {
     (void)name;(void)intr;assert(lock==NULL && !state_lock.held && ticks>0);
-    state_ticks+=(unsigned)ticks;return EWOULDBLOCK;
+    state_ticks+=(unsigned)ticks;
+    if(strcmp(name,"rtwdrn")==0) {
+        assert(state_current_net && state_current_net->core==f.sc);
+        for(unsigned q=0;q<RTW88_NTXQ;q++)f.tx_hw_rp[q]=f.sc->sc_txq[q].wp;
+        f.mmio[0xb4]=0x7c;
+        mutex_enter(&state_lock);assert(rtw88_intr(f.sc)==1);mutex_exit(&state_lock);
+    }
+    return EWOULDBLOCK;
 }
 static void callout_stop(callout_t *c) { (void)c; }
 static void callout_schedule(callout_t *c, unsigned n) { (void)c; (void)n; }

@@ -8,7 +8,7 @@
 
 /* Actual native callback and complete worker use explicit kernel/core services.
  * RF programming and full core I/O are not claimed by this exchange. */
-struct rtw88_softc { int sc_started, sc_running; unsigned sc_channel, sc_generation, sc_h2c_box; int sc_linked; struct { int active, configured; } sc_ra; };
+struct rtw88_softc { int sc_started, sc_running, sc_stop_requested; unsigned sc_channel, sc_generation, sc_h2c_box, modeled_tx_pending; int sc_linked; struct { int active, configured; } sc_ra; };
 struct rtw88_net {
 	struct { struct ifnet ec_if; } ec;
 	struct ieee80211com ic;
@@ -80,6 +80,10 @@ static void softint_schedule(void *cookie) { (void)cookie; }
 static unsigned getticks(void) { return 1; }
 /* This HT exchange owns profile validation, not busy-mailbox scheduling.
  * The enable/RA suites execute the real transport. Busy is a loud boundary. */
+/* This exchange model has no posted DMA. Reject that undeclared domain;
+ * the owning enable/core/IRQ fixture proves actual drain completion. */
+static int rtw88_tx_drain_snapshot(struct rtw88_softc *sc,unsigned *pending)
+{ assert(sc!=NULL && native_lock);if(sc->modeled_tx_pending)return EOPNOTSUPP;*pending=0;return 0; }
 static int rtw88_fw_mailbox_begin(struct rtw88_softc *sc,unsigned count,int *ready)
 { assert(sc!=NULL && native_lock && count<=3);*ready=1;return 0; }
 static int rtw88_fw_mailbox_end(struct rtw88_softc *sc,int error)
@@ -450,6 +454,11 @@ test_manual_ht_rejected(void)
 int
 main(void)
 {
+    /* Out-of-domain posted DMA must not be silently reported drained. */
+    struct rtw88_softc boundary={.modeled_tx_pending=1};unsigned pending=99;
+    mutex_enter(&native_lock);
+    CHECK(rtw88_tx_drain_snapshot(&boundary,&pending)==EOPNOTSUPP && pending==99);
+    mutex_exit(&native_lock);
 	test_manual_ht_rejected();
 	test_actual_exchange();
 	test_local_admission();

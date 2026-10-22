@@ -16,6 +16,8 @@ for path,name,result in [('sys/dev/ic/rtw88.c','rtw88_ra_invalidate','void'),
 
 net=pathlib.Path(os.environ.get('HT20_NATIVE_SOURCE',src/'sys/dev/ic/rtw88_net.c')).read_text()
 parts=[net[:net.index('#include')]]
+if re.search(r'^rtw88_net_drain_wait\(',net,re.M):
+ parts.extend(['static int',re.search(r'^rtw88_net_drain_wait\(.*?^}',net,re.M|re.S).group()])
 if re.search(r'^rtw88_net_mailbox_wait\(',net,re.M):
  parts.extend(['static int',re.search(r'^rtw88_net_mailbox_wait\(.*?^}',net,re.M|re.S).group()])
 parts.extend(['static void',re.search(r'^rtw88_net_state_work\(.*?^}',net,re.M|re.S).group()])

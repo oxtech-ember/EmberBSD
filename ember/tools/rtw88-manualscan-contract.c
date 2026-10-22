@@ -219,12 +219,16 @@ static void test_running_manual_scan(unsigned channel,int fail_auth)
     if(associations) {
         auth_full=fail_auth;
         unsigned ticks=state_ticks;
+        uint64_t completed=s.sc.sc_stats.tx_done;
         manualscan_busy=3;manualscan_busy_reads=manualscan_locked_poll=0;
         s.bus.read_1=manualscan_mailbox_read1;
         s.bus.delay_us=manualscan_mailbox_delay;
         rtw88_net_state_work(&s.net.state_work,&s.net);
         CHECK(manualscan_busy_reads==3 && manualscan_busy==0);
-        CHECK(state_ticks==ticks+3 && manualscan_locked_poll==0);
+        /* Descriptor-full AUTH follows the existing INIT request; C1 must
+         * also retire those actually posted entries before unlinking. */
+        CHECK(state_ticks==ticks+3+(fail_auth?1U:0U) && manualscan_locked_poll==0);
+        if(fail_auth)CHECK(s.sc.sc_stats.tx_done==completed+RTW88_TX_SLOTS-1);
         CHECK(!s.sc.sc_mailbox.active);
         s.bus.read_1=read_1;s.bus.delay_us=delay_us;
         auth_full=0;

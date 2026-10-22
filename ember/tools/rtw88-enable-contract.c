@@ -4,6 +4,18 @@
 #error The kernel service model requires assertion preconditions.
 #endif
 #include "enable-routing.inc"
+/* Default hardware-progress service for old owning-exchange cases. Device
+ * indices advance at a sleep boundary; the actual IRQ decoder retires them. */
+static int enable_drain_complete(unsigned ticks)
+{
+    (void)ticks;assert(f.sc && f.sc->sc_net_cookie);
+    struct rtw88_net *net=f.sc->sc_net_cookie;
+    CHECK(!net->lock->held);
+    for(unsigned q=0;q<RTW88_NTXQ;q++)f.tx_hw_rp[q]=f.sc->sc_txq[q].wp;
+    f.mmio[0xb4]=0x7c;
+    mutex_enter(net->lock);CHECK(rtw88_intr(f.sc)==1);mutex_exit(net->lock);
+    return EWOULDBLOCK;
+}
 static struct chanAccParams enable_ap_params;
 static unsigned enable_run_callbacks,enable_first_producer;
 static int enable_reenter_run;
@@ -234,6 +246,203 @@ static void enable_negatives(void)
         CHECK(rtw88_core_detach(&sc)==0);
     }
 }
+/* C1 actual posted-MGMT -> request -> drain -> first AUTH consumer.
+ * Only hardware RP is advanced by the sleep service; the actual IRQ decoder
+ * must retire descriptors and notify the native owner. */
+static struct rtw88_net *drain_net;
+static unsigned drain_pauses,drain_auth,drain_runs,drain_action,drain_stall,drain_reads,drain_fail_reg,drain_after_pause_reads;
+static struct ieee80211_ht20_profile drain_profile;
+static int drain_provider(struct ieee80211com *ic,struct ieee80211_ht20_profile *p)
+{ (void)ic;CHECK(!drain_net->lock->held);*p=drain_profile;return 0; }
+static int drain_read4(void *cookie,uint32_t reg,uint32_t *value)
+{
+    if(reg==0x3b0 || reg==0x3a8 || reg==0x3ac || reg==0x3a4 || reg==0x3a0)drain_reads++;
+    if(drain_fail_reg && reg==drain_fail_reg)return EIO;
+    return read_4(cookie,reg,value);
+}
+static unsigned drain_pending(void)
+{
+    unsigned n=0;
+    for(unsigned q=0;q<RTW88_NTXQ;q++)n+=drain_net->core->sc_txq[q].queued;
+    return n;
+}
+static int drain_write1(void *cookie,uint32_t reg,uint8_t value)
+{
+    if(reg==0x522)CHECK(drain_pending()==0);
+    return write_1(cookie,reg,value);
+}
+static int drain_pause(unsigned ticks)
+{
+    (void)ticks;CHECK(!drain_net->lock->held);drain_pauses++;
+    CHECK(!drain_net->core->sc_mailbox.active && !drain_net->policy.accepting);
+    struct mbuf *head=drain_net->ec.ec_if.if_snd.m,*mgmt=drain_net->ic.ic_mgtq.m;
+    unsigned refs=node_refs,crypto=route_crypto;
+    rtw88_net_start(&drain_net->ec.ec_if);
+    CHECK(drain_net->ec.ec_if.if_snd.m==head && drain_net->ic.ic_mgtq.m==mgmt && node_refs==refs && route_crypto==crypto);
+    CHECK(drain_pending()!=0);
+    if(drain_action && drain_pauses==1) {
+        unsigned action=drain_action;drain_action=0;
+        if(action==1) {
+            drain_net->ic.ic_curchan=&drain_net->ic.ic_channels[40];
+            CHECK(rtw88_net_newstate(&drain_net->ic,IEEE80211_S_SCAN,0)==0);
+        } else if(action==2)rtw88_net_close(&drain_net->policy);
+        else if(action==3)drain_net->core->sc_generation++;
+        else if(action==4)route_ticks+=1001;
+        else if(action==5)CHECK(rtw88_net_newstate(&drain_net->ic,IEEE80211_S_INIT,0)==0);
+        else if(action==6)drain_profile.ampdu=32;
+        if(action!=4)return EWOULDBLOCK;
+    }
+    if(drain_stall)return EWOULDBLOCK;
+    for(unsigned q=0;q<RTW88_NTXQ;q++)f.tx_hw_rp[q]=drain_net->core->sc_txq[q].wp;
+    f.mmio[0xb4]=0x7c; /* Source TX completion cause bits, no RX cause. */
+    mutex_enter(drain_net->lock);
+    CHECK(rtw88_intr(drain_net->core)==1);
+    CHECK(drain_pending()==0);
+    mutex_exit(drain_net->lock);
+    drain_after_pause_reads=drain_reads;
+    return EWOULDBLOCK;
+}
+static int drain_parent(struct ieee80211com *ic,enum ieee80211_state state,int arg)
+{
+    (void)arg;ic->ic_state=state;CHECK(!drain_net->lock->held);
+    if(state==IEEE80211_S_RUN)drain_runs++;
+    if(state==IEEE80211_S_AUTH) {
+        CHECK(drain_pending()==0);drain_auth++;
+        CHECK(ieee80211_send_mgmt(ic,ic->ic_bss,IEEE80211_FC0_SUBTYPE_AUTH,1)==0);
+    }
+    return 0;
+}
+static void enable_drain_case(void)
+{
+    struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+    struct rtw88_net *net=enable_attach(&sc,&lock);if(!net)return;
+    active_ic=&net->ic;
+    CHECK(ieee80211_send_mgmt(&net->ic,net->ic.ic_bss,IEEE80211_FC0_SUBTYPE_AUTH,1)==0);
+    CHECK(sc.sc_txq[RTW88_TXQ_MGMT].queued==1);
+    queue_packet(&net->ec.ec_if.if_snd,ether_packet(0x30,0,0));
+    struct mbuf *head=net->ec.ec_if.if_snd.m;
+    struct rtw88_bus_ops bus=ops;bus.write_1=drain_write1;sc.sc_ops=&bus;
+    drain_net=net;drain_pauses=drain_auth=drain_runs=drain_action=drain_stall=drain_reads=drain_fail_reg=0;net->parent_state=drain_parent;
+    enable_drain_pause_hook=drain_pause;
+    CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_AUTH,0)==0);
+    CHECK(ieee80211_send_mgmt(&net->ic,net->ic.ic_bss,IEEE80211_FC0_SUBTYPE_AUTH,1)==0);
+    CHECK(net->ic.ic_mgtq.m!=NULL && sc.sc_txq[RTW88_TXQ_MGMT].queued==1);
+    uint64_t completed=sc.sc_stats.tx_done;
+    rtw88_net_state_work(&net->state_work,net);
+    CHECK(drain_pauses==1 && drain_auth==1);
+    rtw88_net_softintr(net); /* Deliver the actual IRQ's scheduled continuation. */
+    CHECK(net->ic.ic_mgtq.m==NULL);
+    CHECK(sc.sc_stats.tx_done==completed+1 && sc.sc_txq[RTW88_TXQ_MGMT].queued==2);
+    CHECK(net->ec.ec_if.if_snd.m==head && node_refs==1);
+    m_freem(head);net->ec.ec_if.if_snd.m=NULL;
+    net->ec.ec_if.if_snd.ifq_tail=NULL;net->ec.ec_if.if_snd.ifq_len=0;
+    enable_drain_pause_hook=NULL;drain_net=NULL;active_ic=NULL;sc.sc_ops=&ops;
+    enable_destroy(net);
+}
+
+/* The all-five matrix is a core descriptor contract; the owning unlinked
+ * path above/below naturally exercises MGMT, not fabricated unlinked DATA. */
+static void enable_drain_core(void)
+{
+    struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+    struct rtw88_net *net=enable_attach(&sc,&lock);if(!net)return;
+    static const uint8_t tids[5]={0,3,1,5,6};
+    static const unsigned idx[5]={0x3b0,0x3a8,0x3ac,0x3a4,0x3a0};
+    uint8_t frame[26]={0x88,0x02};unsigned pending;
+    drain_net=net;drain_fail_reg=drain_reads=0;
+    struct rtw88_bus_ops bus=ops;bus.read_4=drain_read4;sc.sc_ops=&bus;
+    mutex_enter(&lock);
+    CHECK(rtw88_tx_drain_snapshot(&sc,&pending)==0 && pending==0 && drain_reads==0);
+    for(unsigned round=0;round<RTW88_TX_SLOTS+2;round++) {
+        uint64_t done=sc.sc_stats.tx_done;
+        for(unsigned q=0;q<RTW88_NTXQ;q++) {
+            frame[0]=q==0?0xb0:0x88;frame[24]=tids[q];
+            CHECK(rtw88_tx_raw(&sc,q,frame,sizeof(frame))==0);
+        }
+        CHECK(rtw88_tx_drain_snapshot(&sc,&pending)==0 && pending==5);
+        for(unsigned q=0;q<RTW88_NTXQ;q++) {
+            f.tx_hw_rp[q]=sc.sc_txq[q].wp;
+            CHECK(rtw88_tx_drain_snapshot(&sc,&pending)==0 && pending==4-q);
+            CHECK(sc.sc_stats.tx_done==done+q+1);
+            f.mmio[0xb4]=0x7c;CHECK(rtw88_intr(&sc)==1);
+            CHECK(sc.sc_stats.tx_done==done+q+1); /* Duplicate IRQ cannot double count. */
+        }
+    }
+    for(unsigned q=0;q<RTW88_NTXQ;q++) {
+        frame[0]=q==0?0xb0:0x88;frame[24]=tids[q];
+        CHECK(rtw88_tx_raw(&sc,q,frame,sizeof(frame))==0);
+        unsigned queued=sc.sc_txq[q].queued,rp=sc.sc_txq[q].rp;
+        uint64_t done=sc.sc_stats.tx_done;
+        drain_fail_reg=idx[q];CHECK(rtw88_tx_drain_snapshot(&sc,&pending)==EIO);
+        CHECK(sc.sc_txq[q].queued==queued && sc.sc_txq[q].rp==rp && sc.sc_stats.tx_done==done);
+        drain_fail_reg=0;
+        f.tx_hw_rp[q]=(sc.sc_txq[q].wp+1)%RTW88_TX_SLOTS;
+        CHECK(rtw88_tx_drain_snapshot(&sc,&pending)==EIO);
+        CHECK(sc.sc_txq[q].queued==queued && sc.sc_stats.tx_done==done);
+        f.tx_hw_rp[q]=RTW88_TX_SLOTS;
+        CHECK(rtw88_tx_drain_snapshot(&sc,&pending)==EIO);
+        CHECK(sc.sc_txq[q].queued==queued && sc.sc_stats.tx_done==done);
+        f.tx_hw_rp[q]=sc.sc_txq[q].wp;
+        CHECK(rtw88_tx_drain_snapshot(&sc,&pending)==0 && pending==0);
+        /* A producer write may land before returning EIO: keep the entry
+         * until a subsequent real device RP confirms its consumption. */
+        uint64_t posted=sc.sc_stats.tx_posted[q],retired=sc.sc_stats.tx_done;
+        posted_fail_idx=idx[q];posted_fail_after=1;bus.write_2=posted_write_2;
+        CHECK(rtw88_tx_raw(&sc,q,frame,sizeof(frame))==EIO);
+        bus.write_2=write_2;posted_fail_idx=0;
+        CHECK(sc.sc_stats.tx_posted[q]==posted && sc.sc_txq[q].queued==1);
+        CHECK(rtw88_tx_drain_snapshot(&sc,&pending)==0 && pending==1);
+        CHECK(sc.sc_stats.tx_done==retired);
+        f.tx_hw_rp[q]=sc.sc_txq[q].wp;
+        CHECK(rtw88_tx_drain_snapshot(&sc,&pending)==0 && pending==0);
+        CHECK(sc.sc_stats.tx_done==retired+1);
+    }
+    mutex_exit(&lock);sc.sc_ops=&ops;drain_net=NULL;
+    enable_destroy(net);
+}
+static void enable_drain_edges(void)
+{
+    for(unsigned kind=0;kind<10;kind++) {
+        struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+        struct rtw88_net *net=enable_attach(&sc,&lock);if(!net)return;
+        active_ic=&net->ic;
+        CHECK(ieee80211_send_mgmt(&net->ic,net->ic.ic_bss,IEEE80211_FC0_SUBTYPE_AUTH,1)==0);
+        CHECK(sc.sc_txq[RTW88_TXQ_MGMT].queued==1);
+        struct rtw88_bus_ops bus=ops;bus.write_1=drain_write1;bus.read_4=drain_read4;
+        drain_net=net;drain_pauses=drain_auth=drain_runs=drain_action=drain_stall=drain_reads=drain_fail_reg=0;
+        net->parent_state=drain_parent;enable_drain_pause_hook=drain_pause;
+        if(kind==0)drain_fail_reg=0x3b0;
+        if(kind==1)f.tx_hw_rp[0]=RTW88_TX_SLOTS;
+        if(kind==2)f.tx_hw_rp[0]=(sc.sc_txq[0].wp+1)%RTW88_TX_SLOTS;
+        if(kind==3)drain_stall=1;
+        if(kind>=4)drain_action=kind-3;
+        if(kind==9) {
+            CHECK(ieee80211_send_mgmt(&net->ic,net->ic.ic_bss,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);
+            struct mbuf *m=enable_response(&net->ic,1,0);
+            ieee80211_recv_mgmt_assoc_resp(&net->ic,m,net->ic.ic_bss,IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);m_freem(m);
+            drain_profile=(struct ieee80211_ht20_profile){99,0xff,0xff,0x3f,16};
+            struct ieee80211_ht20_node *h=&net->ic.ic_bss->ni_ht20;
+            h->valid=1;h->profile=drain_profile;h->attempt=h->offer_attempt=1;
+            h->channel=net->ic.ic_curchan;memcpy(h->bssid,net->ic.ic_bss->ni_bssid,6);
+            net->ic.ic_ht20_admit=drain_provider;
+        } else CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_AUTH,0)==0);
+        sc.sc_ops=&bus; /* Monitor the worker, after actual WME response setup. */
+        uint64_t done=sc.sc_stats.tx_done;
+        rtw88_net_state_work(&net->state_work,net);
+        CHECK(!net->work_pending && drain_auth==0 && drain_runs==0 && !sc.sc_mailbox.active);
+        if(kind<=3 || kind==6 || kind==7 || kind==9)CHECK(!net->policy.accepting && !sc.sc_started);
+        if(kind==3)CHECK(drain_pauses==1000 && sc.sc_stats.tx_done==done);
+        if(kind==4)CHECK(net->ic.ic_state==IEEE80211_S_SCAN && sc.sc_channel==40);
+        if(kind==5)CHECK(net->policy.dying && !net->policy.accepting && sc.sc_txq[0].queued==1);
+        if(kind==6)CHECK(drain_reads==1 && sc.sc_stats.tx_done==done);
+        if(kind==7)CHECK(drain_reads==drain_after_pause_reads && sc.sc_stats.tx_done==done+1);
+        if(kind==8)CHECK(net->ic.ic_state==IEEE80211_S_INIT && drain_pauses==2 && sc.sc_started);
+        if(kind==9)CHECK(drain_reads==1 && sc.sc_stats.tx_done==done && !net->ic.ic_bss->ni_ht20.valid);
+        drain_fail_reg=drain_stall=0;enable_drain_pause_hook=NULL;drain_net=NULL;active_ic=NULL;sc.sc_ops=&ops;
+        enable_destroy(net);
+    }
+}
+
 /* Causal managed-mailbox case: removing the sleeping checkpoint must expose
  * a busy delay under PCI and prevent unrelated service from progressing. */
 static struct rtw88_net *mailbox_net;
@@ -457,6 +666,9 @@ static void enable_mailbox_queues(void)
 
 int main(void)
 {
+    enable_drain_case();
+    enable_drain_core();
+    enable_drain_edges();
     enable_mailbox_case();
     enable_mailbox_edges();
     enable_mailbox_run();

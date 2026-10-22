@@ -47,12 +47,12 @@ for name, result in [('rtw88_net_basic_rates','static unsigned'),
                      ('rtw88_net_edca_prepare','static int'),
                      ('rtw88_net_ra_prepare','static int'),
                      ('rtw88_net_restart_peer','static int'),
-                     ('rtw88_net_mailbox_wait','static int'),
+                     ('rtw88_net_drain_wait','static int'),('rtw88_net_mailbox_wait','static int'),
                      ('rtw88_net_state_work','static void'),
                      ('rtw88_net_newstate','static int'),
                      ('rtw88_net_init','static int'),
                      ('rtw88_net_media_change','static int')]:
-    if name == 'rtw88_net_mailbox_wait' and '\n'+name+'(' not in net:
+    if name in ('rtw88_net_drain_wait', 'rtw88_net_mailbox_wait') and '\n'+name+'(' not in net:
         continue
     if name == 'rtw88_net_edca_prepare' and '\n'+name+'(' not in net:
         continue

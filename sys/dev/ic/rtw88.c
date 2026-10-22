@@ -1694,30 +1694,66 @@ rtw88_tx_auto(struct rtw88_softc *sc, unsigned q, const void *frame,
 }
 
 /* pci.c rtw_pci_tx_isr: completion is the chip's read index, nothing else. */
-static void
-rtw88_tx_done(struct rtw88_softc *sc, unsigned q)
+static int
+rtw88_tx_reclaim(struct rtw88_softc *sc, unsigned q)
 {
 	struct rtw88_txq *txq = &sc->sc_txq[q];
 	uint32_t idx;
 	unsigned hw, count;
+	int error;
 
-	if (sc->sc_ops->read_4(sc->sc_bus, rtw88_txq_hw[q].idx, &idx) != 0)
-		return;
+	error = sc->sc_ops->read_4(sc->sc_bus, rtw88_txq_hw[q].idx, &idx);
+	if (error != 0) {
+		sc->sc_stats.tx_dma_errors++;
+		return error;
+	}
 	hw = (idx >> 16) & 0xfff;
 	if (hw >= RTW88_TX_SLOTS) {
 		sc->sc_stats.tx_dma_errors++;
-		return;
+		return EIO;
 	}
 	count = hw >= txq->rp ? hw - txq->rp : RTW88_TX_SLOTS - txq->rp + hw;
 	if (count > txq->queued) {
 		sc->sc_stats.tx_dma_errors++;
-		return;
+		return EIO;
 	}
 	txq->rp = hw;
 	txq->queued -= count;
 	sc->sc_stats.tx_done += count;
 	if (count != 0 && sc->sc_tx_complete != NULL)
 		sc->sc_tx_complete(sc->sc_net_cookie, count);
+	return 0;
+}
+
+/* Same PCI-serialized device-RP decoder as IRQ completion. This is host DMA
+ * ownership only: never infer RF idle, air ACK or calibration readiness. */
+int
+rtw88_tx_drain_snapshot(struct rtw88_softc *sc, unsigned *pending)
+{
+	unsigned q;
+	int error;
+
+	if (pending == NULL)
+		return EINVAL;
+	*pending = 0;
+	if (!sc->sc_started || !sc->sc_running || sc->sc_stop_requested)
+		return ENXIO;
+	for (q = 0; q < RTW88_NTXQ; q++) {
+		struct rtw88_txq *txq = &sc->sc_txq[q];
+
+		if (txq->queued >= RTW88_TX_SLOTS ||
+		    txq->wp >= RTW88_TX_SLOTS || txq->rp >= RTW88_TX_SLOTS) {
+			sc->sc_stats.tx_dma_errors++;
+			return EIO;
+		}
+		if (txq->queued == 0)
+			continue;
+		error = rtw88_tx_reclaim(sc, q);
+		if (error != 0)
+			return error;
+		*pending += txq->queued;
+	}
+	return 0;
 }
 
 int
@@ -1815,7 +1851,7 @@ rtw88_intr(struct rtw88_softc *sc)
 	sc->sc_stats.intr++;
 	for (unsigned q = 0; q < RTW88_NTXQ; q++)
 		if ((s0 & rtw88_txq_hw[q].done) != 0)
-			rtw88_tx_done(sc, q);
+			(void)rtw88_tx_reclaim(sc, q);
 	if ((s0 & RTW88_IMR_ROK) != 0)
 		rtw88_rx(sc);
 	return 1;

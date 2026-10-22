@@ -484,6 +484,42 @@ rtw88_net_restart_peer(struct rtw88_net *net)
 	return 0;
 }
 
+/* The existing capacity fence closes all producers before this checkpoint.
+ * Only numeric identity survives a sleep; outer work re-prepares the peer. */
+static int
+rtw88_net_drain_wait(struct rtw88_net *net, uint64_t epoch, uint32_t gen,
+    unsigned deadline, int init, int *retry)
+{
+	unsigned pending = 0;
+	int error;
+
+	*retry = 0;
+	mutex_enter(net->lock);
+	if (epoch != net->policy.epoch || net->policy.dying)
+		error = ECANCELED;
+	else if (init && !net->core->sc_started)
+		error = 0;
+	else if (!net->core->sc_started || !net->core->sc_running)
+		error = ENXIO;
+	else if (gen != net->core->sc_generation || net->core->sc_stop_requested)
+		error = ESTALE;
+	else if ((int)(getticks() - deadline) >= 0)
+		error = ETIMEDOUT;
+	else
+		error = rtw88_tx_drain_snapshot(net->core, &pending);
+	mutex_exit(net->lock);
+	if (error != 0 || pending == 0)
+		return error;
+	if ((int)(getticks() - deadline) >= 0)
+		return ETIMEDOUT;
+	error = kpause("rtwdrn", false, 1, NULL);
+	if (error == 0 || error == EWOULDBLOCK) {
+		*retry = 1;
+		return 0;
+	}
+	return error;
+}
+
 /* No mutation before reservation. A wake always returns to the outer worker
  * to recapture HT/BSS/EDCA/RA under Giant, including same-epoch profile changes. */
 static int
@@ -528,9 +564,10 @@ rtw88_net_state_work(struct work *work, void *cookie)
 	struct rtw88_edca_params edca[RTW88_WME_NAC];
 	struct rtw88_ra_config ra;
 	enum ieee80211_state state;
-	uint64_t epoch, mailbox_epoch = 0;
-	uint32_t gen, mailbox_gen = 0;
+	uint64_t epoch, mailbox_epoch = 0, drain_epoch = 0;
+	uint32_t gen, mailbox_gen = 0, drain_gen = 0;
 	unsigned mailbox_box = 0, mailbox_count, mailbox_deadline = 0;
+	unsigned drain_deadline = 0;
 	unsigned channel, basic, slot, aid, i;
 	unsigned media, prepare_stage;
 	int use_ra, mailbox_retry, mailbox_reserved;
@@ -591,6 +628,18 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			prepare_stage = RTW88_NET_STAGE_RA;
 			prepare_error = rtw88_net_ra_prepare(ic, channel, basic,
 			    epoch, &ra);
+		}
+		if (net->core->sc_started && drain_epoch != epoch) {
+			drain_epoch = epoch;
+			drain_gen = net->core->sc_generation;
+			drain_deadline = (unsigned)getticks() + MAX(1, mstohz(1000));
+		}
+		if (prepare_error == 0) {
+			prepare_stage = RTW88_NET_STAGE_CORE;
+			prepare_error = rtw88_net_drain_wait(net, epoch, drain_gen,
+			    drain_deadline, state == IEEE80211_S_INIT, &mailbox_retry);
+			if (mailbox_retry || prepare_error == ECANCELED)
+				continue;
 		}
 		/* Current core is stable under Giant; no pointers survive a sleep. */
 		mailbox_count = prepare_error != 0 || !net->core->sc_started ? 0 :
