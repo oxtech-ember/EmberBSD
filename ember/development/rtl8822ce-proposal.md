@@ -752,5 +752,10 @@ real scheduling latency or a full concurrent stop/detach execution.
 The same-generation HT-spacing case executes actual provider/capsule checks.
 That test profile does not enable HT on hardware. Packet-H2C transport, RFK
 commands/completion, RX BA and R2 firmware RSSI feedback remain separate.
-Run the existing enable/routing contracts with GCC16. Target kernel and physical
-legacy/reconnect checks are required before deployment acceptance.
+Run the existing enable/routing contracts with GCC16. GCC16 kernel `d5b249d0b`
+passes a clean warm boot and two disruptive manual scans on one 2.4 GHz AP.
+Automatic WPA2/IPv4 recovery takes 27 and 26 seconds; link-local IPv6 SSH
+works after each cycle. Four-AC probes return 12/12 replies each. Subsequent
+1 MiB SSH/raw-IPv6 transfers preserve hashes in both directions.
+These trials qualify legacy regression. They do not force occupied mailboxes
+or measure scheduler latency. HT admission remains disabled.
