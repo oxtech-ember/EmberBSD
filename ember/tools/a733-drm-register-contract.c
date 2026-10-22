@@ -37,7 +37,9 @@ struct sun60i_a733_tcon_timing {
 };
 struct drm_device {
 	void *dev_private, *bus_dmat, *bus_dmat32, *dmat, *cma_pool;
-	bool dmat_subregion_p;
+	bool dmat_subregion_p, irq_enabled;
+	uint32_t max_vblank_count;
+	unsigned num_crtcs;
 	struct {
 		unsigned version, length, bus_type;
 		char fullname[32], compatible[64];
@@ -65,7 +67,7 @@ struct a733_drm {
 	struct sun60i_a733_de352_state native;
 	int phandle;
 	void *client, *queue, *device;
-	bool registration_started;
+	bool registration_started, vblank_irq;
 	void *pool;
 	struct drm_device *dev;
 	struct plane plane;
@@ -73,6 +75,13 @@ struct a733_drm {
 	struct encoder encoder;
 	struct connector connector;
 };
+static unsigned vblank_storage, vblank_bound, vblank_unbinds;
+static int vblank_bind_error;
+typedef void (*sun60i_a733_vblank_fn)(void *, uint64_t);
+static void a733_vblank(void *arg, uint64_t sequence){
+	(void)arg;
+	(void)sequence;
+}
 static unsigned calls, failed_step, acquired, queues, devices, modes, registered,
          releases, put_calls, cleanups;
 static int release_error, state_error;
@@ -158,6 +167,9 @@ static struct drm_device *drm_dev_alloc(const void *driver, void *device){
 }
 static void drm_dev_put(struct drm_device *dev){
 	CHECK(dev == current->dev && devices == 1 && !modes && !registered);
+	/* drm_dev_fini frees the vblank storage after the callback removal. */
+	CHECK(!vblank_bound);
+	vblank_storage = 0;
 	devices--;
 	put_calls++;
 	free(dev);
@@ -220,7 +232,35 @@ static void drm_mode_config_reset(struct drm_device *d){
 	current->crtc.state = reset_failure == 2 ? NULL : d;
 	current->connector.state = reset_failure == 3 ? NULL : d;
 }
+static int drm_vblank_init(struct drm_device *d, unsigned n){
+	CHECK(d == current->dev && n == 1 && !vblank_storage && current->crtc.state);
+	int e = operation();
+	if (!e) {
+		vblank_storage = 1;
+		d->num_crtcs = n;
+	}
+	return -e;
+}
+static int sun60i_a733_de352_set_vblank_handler(void *client, sun60i_a733_vblank_fn fn, void *arg){
+	CHECK(client == current && acquired == 1 && devices == 1);
+	if (fn == NULL) {
+		CHECK(arg == NULL && vblank_bound);
+		vblank_bound = 0;
+		vblank_unbinds++;
+		return 0;
+	}
+	CHECK(fn == a733_vblank && arg == current && vblank_storage && !vblank_bound);
+	CHECK(current->dev->max_vblank_count == UINT32_MAX);
+	int e = operation();
+	if (!e && vblank_bind_error)
+		e = vblank_bind_error;
+	if (!e)
+		vblank_bound = 1;
+	return e;
+}
 static int drm_dev_register(struct drm_device *d, unsigned flags){
+	CHECK(vblank_storage && d->num_crtcs == 1);
+	CHECK(d->irq_enabled == (vblank_bound != 0) && current->vblank_irq == (vblank_bound != 0));
 	CHECK(d->cma_pool == current->pool && d->cma_pool != NULL);
 	CHECK(!flags && d == current->dev && d->dmat == current->native.dmat && d->bus_dmat == d->dmat && d->bus_dmat32 == d->dmat && !d->dmat_subregion_p);
 	CHECK(d->native_platform.version == 1 && d->native_platform.bus_type == 2 && !strcmp(d->native_platform.compatible, "allwinner,sun60i-a733-display"));
@@ -240,13 +280,15 @@ static void reset(struct a733_drm *sc){
 	sc->device = sc;
 	sc->pool = sc;
 	calls = failed_step = releases = put_calls = cleanups = invalid_state = reset_failure = 0;
+	vblank_storage = vblank_bound = vblank_unbinds = 0;
+	vblank_bind_error = 0;
 	release_error = state_error = 0;
 }
 int
 main(void)
 {
 	struct a733_drm sc;
-	for (unsigned fail = 1; fail <= 11; fail++)
+	for (unsigned fail = 1; fail <= 13; fail++)
 		for (unsigned rel = 0; rel < 2; rel++) {
 			reset(&sc);
 			failed_step = fail;
@@ -255,6 +297,8 @@ main(void)
 			CHECK(calls == fail && !devices && !queues && !modes && !registered);
 			CHECK(sc.dev == NULL && sc.queue == NULL);
 			CHECK(releases == (fail > 2 ? 1u : 0u));
+			CHECK(!vblank_bound && vblank_unbinds == (fail == 13 ? 1u : 0u));
+			CHECK(!sc.vblank_irq);
 			CHECK(sc.registration_started == (fail > 2));
 			CHECK(acquired == ((fail > 2 && rel) ? 1u : 0u));
 			CHECK((sc.client != NULL) == (acquired != 0));
@@ -279,9 +323,20 @@ main(void)
 	reset(&sc);
 	sc.pool = NULL;
 	CHECK(a733_register(&sc) == ENOMEM && calls == 1 && !acquired && !sc.registration_started && !queues && !devices);
+	/* A provider without the TV0 interrupt keeps polled observation. */
 	reset(&sc);
-	CHECK(a733_register(&sc) == 0 && registered == 1 && devices == 1 && queues == 1 && modes == 1 && acquired == 1 && calls == 11 && sc.registration_started);
+	vblank_bind_error = EOPNOTSUPP;
+	CHECK(a733_register(&sc) == 0 && registered == 1 && calls == 13 && !vblank_bound && !sc.vblank_irq && !sc.dev->irq_enabled);
+	CHECK(sc.dev->max_vblank_count == UINT32_MAX);
+	free(sc.dev);
+	registered = devices = queues = modes = acquired = 0;
+	reset(&sc);
+	vblank_bind_error = EBUSY;
+	CHECK(a733_register(&sc) == EBUSY && calls == 12 && !devices && !acquired && !vblank_bound && vblank_unbinds == 0);
+	reset(&sc);
+	CHECK(a733_register(&sc) == 0 && registered == 1 && devices == 1 && queues == 1 && modes == 1 && acquired == 1 && calls == 13 && sc.registration_started);
 	CHECK(releases == 0 && cleanups == 0 && put_calls == 0);
+	CHECK(vblank_bound && sc.vblank_irq && sc.dev->irq_enabled && sc.dev->max_vblank_count == UINT32_MAX);
 	/*
 	 * Test teardown releases only fixture objects. Production has no
 	 * detach.

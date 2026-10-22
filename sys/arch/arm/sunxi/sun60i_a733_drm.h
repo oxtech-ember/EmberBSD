@@ -40,6 +40,13 @@ struct a733_drm {
 	struct sysctllog *sysctllog;
 	int phandle, stage, fault;
 	bool busy, registering, registration_started;
+	/*
+	 * TCON_TV0 vblank count from the interrupt callback. vblank_irq is
+	 * set before drm_dev_register and is then constant. vblank_on is
+	 * used only by the serialized commit worker.
+	 */
+	uint64_t hw_vblank;
+	bool vblank_irq, vblank_on;
 };
 
 struct a733_drm_fb {

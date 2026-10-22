@@ -46,6 +46,13 @@ int sun60i_a733_de352_acquire(int, const void *,
 /* A release is allowed only before this client attempts its first DMA write. */
 int sun60i_a733_de352_release(struct sun60i_a733_de352_client *);
 /*
+ * Install or remove (NULL) the TV0 vblank interrupt callback for an acquired
+ * client. EOPNOTSUPP means polled observation only. Remove the callback
+ * before its storage ends. Call without DRM or provider locks.
+ */
+int sun60i_a733_de352_set_vblank_handler(struct sun60i_a733_de352_client *,
+    sun60i_a733_vblank_fn, void *);
+/*
  * Call from a sleepable worker without DRM, reservation or provider locks.
  * Complete producer synchronization before this call. Under the reservation
  * lock, recheck writers and publish a pending READ scanout fence. Keep it

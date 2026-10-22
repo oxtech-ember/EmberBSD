@@ -150,13 +150,16 @@ fake_read(int fd, void *buf, size_t size)
 	    .user_data = pending,
 	    .tv_sec = 10 + flips,
 	    .tv_usec = 123,
-	    .sequence = 0,
+	    .sequence = 3 + 2 * flips,
 	    .crtc_id = 10};
 	VERIFY(fd == 3 && size == sizeof(e) && pending > 0);
 	if (fault == 14)
 		e.user_data++;
+	/* Zero is not above the initial sequence; repeated values fail too. */
 	if (fault == 15)
-		e.sequence = 1;
+		e.sequence = 0;
+	if (fault == 39 && flips == 2)
+		e.sequence = 3 + 2 * (flips - 1);
 	if (fault == 16)
 		e.crtc_id = 11;
 	if (fault == 17)
@@ -410,7 +413,7 @@ fake_ioctl(int fd, unsigned long op, ...)
 int
 main(int argc, char **argv)
 {
-	volatile unsigned first = 0, last = 38;
+	volatile unsigned first = 0, last = 39;
 	char *query_args[] = {"check", "--query", "/dev/dri/card7", NULL};
 	char *commit_args[] = {"check", "--commit", "/dev/dri/card7", NULL};
 	VERIFY(argc == 1 || argc == 2);
@@ -444,7 +447,7 @@ main(int argc, char **argv)
 		} else {
 			VERIFY(failed_check);
 			VERIFY(closed == 0);
-			if (scenario >= 30)
+			if (scenario >= 30 && scenario < 39)
 				VERIFY(created_frames == 0 && masters == 0);
 		}
 		free(allocation);

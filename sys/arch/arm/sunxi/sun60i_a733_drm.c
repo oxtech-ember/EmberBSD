@@ -4,6 +4,7 @@
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
+#include <sys/atomic.h>
 #include <sys/container_of.h>
 #include <sys/kmem.h>
 #include <sys/mman.h>
@@ -20,6 +21,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <drm/drm_modeset_helper_vtables.h>
 #include <drm/drm_prime.h>
 #include <drm/drm_probe_helper.h>
+#include <drm/drm_vblank.h>
 #include "sun60i_a733_drm.h"
 
 bool
@@ -185,6 +187,44 @@ static const struct drm_plane_funcs a733_plane_funcs = {
 };
 /* The custom worker owns all plane preparation and hardware submission. */
 static const struct drm_plane_helper_funcs a733_plane_helpers = {0};
+/*
+ * TV0 vblank interrupt callback. It runs in interrupt context under the
+ * provider spin lock and counts every TCON_TV0 vblank since output start.
+ */
+static void
+a733_vblank(void *arg, uint64_t sequence)
+{
+	struct a733_drm *sc = arg;
+
+	atomic_store_relaxed(&sc->hw_vblank, sequence);
+	(void)drm_crtc_handle_vblank(&sc->crtc);
+}
+
+static uint32_t
+a733_vblank_counter(struct drm_crtc *crtc)
+{
+	struct a733_drm *sc = crtc->dev->dev_private;
+
+	return (uint32_t)atomic_load_relaxed(&sc->hw_vblank);
+}
+
+/* DRM calls these hooks with its spin locks held. Do not take sc->lock. */
+static int
+a733_vblank_enable(struct drm_crtc *crtc)
+{
+	struct a733_drm *sc = crtc->dev->dev_private;
+	const int fault = atomic_load_relaxed(&sc->fault);
+
+	/* The provider interrupt stays armed while TV0 runs. */
+	return fault != 0 ? -fault : sc->vblank_irq ? 0 : -EOPNOTSUPP;
+}
+
+static void
+a733_vblank_disable(struct drm_crtc *crtc)
+{
+	(void)crtc;
+}
+
 static const struct drm_crtc_funcs a733_crtc_funcs = {
 	.set_config = drm_atomic_helper_set_config,
 	.page_flip = drm_atomic_helper_page_flip,
@@ -192,6 +232,9 @@ static const struct drm_crtc_funcs a733_crtc_funcs = {
 	.reset = drm_atomic_helper_crtc_reset,
 	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_crtc_destroy_state,
+	.get_vblank_counter = a733_vblank_counter,
+	.enable_vblank = a733_vblank_enable,
+	.disable_vblank = a733_vblank_disable,
 };
 static const struct drm_encoder_funcs a733_encoder_funcs = {
 	.destroy = drm_encoder_cleanup,
@@ -404,10 +447,27 @@ a733_register(struct a733_drm *sc)
 		error = ENOMEM;
 		goto mode;
 	}
+	/* Vblank storage exists before the callback and drm_dev_register. */
+	error = -drm_vblank_init(dev, 1);
+	if (error != 0)
+		goto mode;
+	dev->max_vblank_count = UINT32_MAX;
+	error = sun60i_a733_de352_set_vblank_handler(sc->client, a733_vblank, sc);
+	if (error == 0) {
+		sc->vblank_irq = true;
+		dev->irq_enabled = true;
+	} else if (error != EOPNOTSUPP)
+		goto mode;
 	error = -drm_dev_register(dev, 0);
 	if (error == 0)
 		return 0;
 mode:
+	/* No callback can use the DRM vblank storage after this removal. */
+	if (sc->vblank_irq) {
+		(void)sun60i_a733_de352_set_vblank_handler(sc->client, NULL, NULL);
+		sc->vblank_irq = false;
+		dev->irq_enabled = false;
+	}
 	drm_mode_config_cleanup(dev);
 	drm_dev_put(dev);
 	sc->dev = NULL;

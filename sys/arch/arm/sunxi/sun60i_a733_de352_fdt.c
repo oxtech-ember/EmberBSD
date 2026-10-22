@@ -1598,6 +1598,29 @@ sun60i_a733_de352_release(struct sun60i_a733_de352_client *client)
 	return error;
 }
 
+int
+sun60i_a733_de352_set_vblank_handler(struct sun60i_a733_de352_client *client,
+    sun60i_a733_vblank_fn fn, void *arg)
+{
+	struct sun60i_a733_de352_state state = { 0 };
+	struct sun60i_de352_softc *sc;
+	int error;
+
+	if (client == NULL || (fn != NULL && arg == NULL) ||
+	    (sc = de352_lookup(0, client)) == NULL)
+		return EINVAL;
+	mutex_enter(&sc->lock);
+	error = client->owner == NULL ? EINVAL : 0;
+	/* A removal is allowed after a later DE failure. */
+	if (error == 0 && fn != NULL)
+		error = de352_state_locked(sc, &state);
+	if (error == 0)
+		error = sun60i_a733_output_set_vblank_handler(sc->output_phandle,
+		    sc, fn, arg);
+	mutex_exit(&sc->lock);
+	return error;
+}
+
 /* Check the owned old list before replacing any pointer. No writes here. */
 static int
 de352_replace_ready(struct sun60i_de352_softc *sc)

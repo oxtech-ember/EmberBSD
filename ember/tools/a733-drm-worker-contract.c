@@ -101,7 +101,10 @@ struct a733_drm {
 	bool lock, busy;
 	int fault;
 	void *client, *queue;
+	bool vblank_irq, vblank_on;
 };
+typedef int64_t ktime_t;
+static int64_t ktime_to_ns(ktime_t t){ return t; }
 struct a733_commit {
 	struct work work;
 	struct completion done;
@@ -198,16 +201,43 @@ sun60i_a733_drm_frame_submit(void *client, const struct sun60i_a733_de352_state 
 	}
 	return submit_error;
 }
+static unsigned vblank_on_calls, vblank_gets, vblank_puts, vblank_counts;
+static int vblank_get_error;
+static void drm_crtc_vblank_on(struct drm_crtc *c){
+	CHECK(c == &current->crtc && current->vblank_irq && !current->lock);
+	vblank_on_calls++;
+}
+static int drm_crtc_vblank_get(struct drm_crtc *c){
+	CHECK(c == &current->crtc && current->vblank_on && !current->lock);
+	if (vblank_get_error == 0)
+		vblank_gets++;
+	return vblank_get_error;
+}
+static void drm_crtc_vblank_put(struct drm_crtc *c){
+	CHECK(c == &current->crtc && vblank_gets > vblank_puts && events == 1);
+	vblank_puts++;
+}
+static uint64_t drm_crtc_vblank_count_and_time(struct drm_crtc *c, ktime_t *t){
+	CHECK(c == &current->crtc && vblank_gets > vblank_puts && submitted == 1);
+	vblank_counts++;
+	*t = INT64_C(987654321000);
+	return UINT64_C(0x100000005);
+}
 static void
-a733_commit_event(struct a733_drm *sc, struct drm_crtc_state *s, const struct sun60i_a733_de352_completion *done, int error)
+a733_commit_event(struct a733_drm *sc, struct drm_crtc_state *s, uint64_t sequence, uint64_t time_ns, int error)
 {
 	CHECK(sc == current && !sc->lock && !modeset_lock);
+	CHECK(vblank_puts == 0);
 	events++;
 	event_error = error;
 	s->event = NULL;
 	step('E');
-	if (!error)
-		CHECK(done->observed_time_ns == UINT64_C(123456789000));
+	if (!error && vblank_gets)
+		CHECK(sequence == UINT64_C(0x100000005) && time_ns == UINT64_C(987654321000));
+	else if (!error)
+		CHECK(sequence == 17 && time_ns == UINT64_C(123456789000));
+	else
+		CHECK(sequence == 0 && time_ns == 0);
 }
 static int drm_atomic_helper_setup_commit(struct drm_atomic_state *s, bool nb){
 	(void)nb;
@@ -343,6 +373,8 @@ reset(struct a733_drm *sc, struct drm_device *dev, struct drm_atomic_state *stat
 	modeset_lock = false;
 	order_length = 0;
 	order[0] = 0;
+	vblank_on_calls = vblank_gets = vblank_puts = vblank_counts = 0;
+	vblank_get_error = 0;
 }
 int
 main(void)
@@ -352,9 +384,13 @@ main(void)
 	struct drm_atomic_state state;
 	struct a733_drm_fb fb;
 	struct drm_gem_cma_object object;
+	for (unsigned mode = 0; mode < 3; mode++)
 	for (unsigned nb = 0; nb < 2; nb++)
 		for (unsigned scenario = 0; scenario < 11; scenario++) {
 			reset(&sc, &dev, &state, &fb, &object);
+			/* 0: polled. 1: vblank IRQ. 2: IRQ with a failed reference. */
+			sc.vblank_irq = mode != 0;
+			vblank_get_error = mode == 2 ? -EINVAL : 0;
 			struct dma_fence fence = {1, 1};
 			state.plane.fence = &fence;
 			int expected = 0;
@@ -423,6 +459,12 @@ main(void)
 				CHECK(strcmp(order, submitted ? "SEHCDP" : "EHCDP") == 0);
 				CHECK(retained_reads == ((scenario == 0 || scenario == 8 || scenario == 10) ? 1u : 0u));
 				CHECK(object.refs == 1 + retained_reads);
+				bool fenced = scenario < 4 || scenario > 7;
+				CHECK(vblank_on_calls == (mode != 0 && fenced ? 1u : 0u));
+				CHECK(sc.vblank_on == (mode != 0 && fenced));
+				CHECK(vblank_gets == (mode == 1 && fenced ? 1u : 0u));
+				CHECK(vblank_puts == vblank_gets);
+				CHECK(vblank_counts == (mode == 1 && expected == 0 ? 1u : 0u));
 				if (expected)
 					CHECK(a733_drm_atomic_commit(&dev, &state, true) == -expected);
 			}

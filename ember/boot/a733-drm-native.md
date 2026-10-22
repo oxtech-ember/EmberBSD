@@ -70,7 +70,7 @@ It does not execute a kernel driver or access display hardware.
 Target GCC16 compilation uses the public DE provider header and kernel flags.
 Cppcheck, GCC fanalyzer and Clang Static Analyzer supplement the host contract.
 These checks do not establish DRM device registration, physical page flips,
-continuous vblank counting or an HDMI desktop.
+hardware vblank interrupt delivery or an HDMI desktop.
 
 ## Fixed-mode KMS frontend
 
@@ -114,10 +114,26 @@ The frame bridge then checks the current implicit writer under its reservation l
 It installs the separate pending READ fence before native submission.
 
 A page-flip event is sent only after successful native submission.
-Its timestamp is the provider's second observed output event.
-Its sequence is zero because the provider has no continuous hardware frame count.
-`WAIT_VBLANK` and CRTC sequence operations remain unsupported.
-An observed software event sequence is not exposed as a hardware counter.
+
+## Vblank counter
+
+Registration calls `drm_vblank_init` for one CRTC before `drm_dev_register`.
+The CRTC vblank counter is the TV0 interrupt count from the output provider.
+`max_vblank_count` is `UINT32_MAX`; DRM uses the low 32 bits of the count.
+The DE client installs the interrupt callback after `drm_vblank_init`.
+The callback stores the count and calls `drm_crtc_handle_vblank`.
+It runs in interrupt context and takes no adaptive lock.
+`enable_vblank` reads only the fault word because DRM holds spin locks.
+The provider interrupt stays armed while TV0 runs; `disable_vblank` does nothing.
+`dev->irq_enabled` is set only when the callback is installed.
+A failure after installation removes the callback before `drm_dev_put`.
+
+The commit worker calls `drm_crtc_vblank_on` once and holds a vblank reference.
+The reference covers native submission and the page-flip event.
+After success the event carries `drm_crtc_vblank_count_and_time`.
+Native completion follows at least two vblanks after the frame request.
+Without the interrupt the provider returns `EOPNOTSUPP` at installation.
+The event then carries the polled observation count and time.
 
 If a job fails after software state swap, the output fence reports the error.
 The frontend cancels the successful page-flip event and completes helper bookkeeping.
@@ -194,7 +210,7 @@ It checks the profile before and after the bounded mode fetch.
 It submits distinct red, green, blue and white XRGB8888 buffers.
 Each update first passes an atomic test-only request.
 The consumer waits for a matching page-flip event and an increasing timestamp.
-It accepts sequence zero without claiming a hardware vblank counter.
+It requires an event sequence above the sequence of the preceding flip.
 A bounded `EBUSY` retry covers worker cleanup after the preceding event.
 It rejects unrelated errors, wrong events and timeouts.
 It does not modify a submitted image.

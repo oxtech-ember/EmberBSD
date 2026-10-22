@@ -108,7 +108,8 @@ main(void)
 {
 	struct drm_device dev = {0};
 	struct a733_drm sc = {.dev = &dev,.crtc = {3}};
-	struct sun60i_a733_de352_completion done = {1234, UINT64_C(555123456789)};
+	/* The low 32 bits go to the 32-bit uapi sequence. */
+	const uint64_t sequence = UINT64_C(0x1000004d2), time_ns = UINT64_C(555123456789);
 	const int errors[] = {0, EIO, ETIMEDOUT, ENOMEM, ENXIO, EBUSY};
 	for (unsigned e = 0; e < sizeof(errors) / sizeof(errors[0]); e++)
 		for (unsigned flags = 0; flags < 4; flags++) {
@@ -125,7 +126,7 @@ main(void)
 			unsigned oldsent = sent, oldcancelled = cancelled,
 			         oldcompleted = completed, oldreleased = released,
 			         oldsignal = signalled;
-			a733_commit_event(&sc, &state, &done, errors[e]);
+			a733_commit_event(&sc, &state, sequence, time_ns, errors[e]);
 			CHECK(state.event == NULL && !dev.event_lock);
 			CHECK(completed == oldcompleted + ((flags & 1) != 0) && released == oldreleased + ((flags & 1) != 0));
 			CHECK(signalled == oldsignal + ((flags & 2) != 0));
@@ -135,14 +136,14 @@ main(void)
 					CHECK(fence.status == -errors[e] && fence.refs == 0);
 			} else {
 				CHECK(sent == oldsent + 1 && cancelled == oldcancelled);
-				CHECK(observed.pipe == 3 && observed.event.vbl.sequence == 0 && observed.event.vbl.tv_sec == 555 && observed.event.vbl.tv_usec == 123456);
+				CHECK(observed.pipe == 3 && observed.event.vbl.sequence == 1234 && observed.event.vbl.tv_sec == 555 && observed.event.vbl.tv_usec == 123456);
 				if (flags & 2)
 					CHECK(fence.status == 1 && fence.refs == 0);
 			}
 		}
 	struct drm_crtc_state empty = {NULL};
 	unsigned oldsent = sent, oldcancelled = cancelled;
-	a733_commit_event(&sc, &empty, &done, EIO);
+	a733_commit_event(&sc, &empty, sequence, time_ns, EIO);
 	CHECK(sent == oldsent && cancelled == oldcancelled && !dev.event_lock);
 	printf("PASS %u output event checks\n", checks);
 	return 0;

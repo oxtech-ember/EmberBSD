@@ -28,7 +28,7 @@ struct a733_commit {
 /* Complete the output event. Never signal the retained scanout READ fence. */
 static void
 a733_commit_event(struct a733_drm *sc, struct drm_crtc_state *state,
-    const struct sun60i_a733_de352_completion *done, int error)
+    uint64_t sequence, uint64_t time_ns, int error)
 {
 	struct drm_pending_vblank_event *event = state->event;
 	struct drm_pending_event *base;
@@ -41,9 +41,9 @@ a733_commit_event(struct a733_drm *sc, struct drm_crtc_state *state,
 	state->event = NULL;
 	if (error == 0) {
 		event->pipe = drm_crtc_index(&sc->crtc);
-		event->event.vbl.sequence = 0;
-		event->event.vbl.tv_sec = done->observed_time_ns / 1000000000;
-		event->event.vbl.tv_usec = (done->observed_time_ns % 1000000000) / 1000;
+		event->event.vbl.sequence = (uint32_t)sequence;
+		event->event.vbl.tv_sec = time_ns / 1000000000;
+		event->event.vbl.tv_usec = (time_ns % 1000000000) / 1000;
 		drm_send_event_locked(sc->dev, base);
 	} else {
 		if (base->fence != NULL) {
@@ -89,6 +89,9 @@ a733_drm_work(struct work *work, void *cookie)
 	struct a733_drm_fb *fb;
 	struct sun60i_a733_de352_completion done = {0};
 	struct sun60i_a733_drm_frame frame;
+	uint64_t sequence = 0, time_ns = 0;
+	ktime_t time;
+	bool vblank_ref = false;
 	int error;
 
 	plane = drm_atomic_get_new_plane_state(state, &sc->plane);
@@ -105,16 +108,35 @@ a733_drm_work(struct work *work, void *cookie)
 
 	/* This worker holds no modeset, reservation or provider lock. */
 	error = a733_explicit_fence(plane->fence);
+	/* A vblank reference keeps the DRM count current through the flip. */
+	if (error == 0 && sc->vblank_irq) {
+		if (!sc->vblank_on) {
+			drm_crtc_vblank_on(&sc->crtc);
+			sc->vblank_on = true;
+		}
+		vblank_ref = drm_crtc_vblank_get(&sc->crtc) == 0;
+	}
 	if (error == 0)
 		error = sun60i_a733_drm_frame_submit(sc->client, &sc->native,
 		    fb->object, &frame, &done);
+	if (error == 0 && vblank_ref) {
+		/* Completion follows two later vblanks; report the latest one. */
+		sequence = drm_crtc_vblank_count_and_time(&sc->crtc, &time);
+		time_ns = (uint64_t)ktime_to_ns(time);
+	} else if (error == 0) {
+		/* Polled observation count without the vblank interrupt. */
+		sequence = done.observed_sequence;
+		time_ns = done.observed_time_ns;
+	}
 	if (error != 0) {
 		mutex_enter(&sc->lock);
 		if (sc->fault == 0)
 			sc->fault = error;
 		mutex_exit(&sc->lock);
 	}
-	a733_commit_event(sc, crtc, &done, error);
+	a733_commit_event(sc, crtc, sequence, time_ns, error);
+	if (vblank_ref)
+		drm_crtc_vblank_put(&sc->crtc);
 	drm_atomic_helper_commit_hw_done(state);
 	drm_atomic_helper_cleanup_planes(sc->dev, state);
 	drm_atomic_helper_commit_cleanup_done(state);

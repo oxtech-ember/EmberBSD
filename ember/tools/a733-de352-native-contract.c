@@ -192,6 +192,28 @@ sun60i_a733_output_cached_phy_trace(int node,
 	memset(out, 0, sizeof(*out));
 	return 0;
 }
+static unsigned vblank_binds;
+static int vblank_bind_error;
+static sun60i_a733_vblank_fn bound_fn;
+static void *bound_arg;
+int
+sun60i_a733_output_set_vblank_handler(int node, const void *owner,
+    sun60i_a733_vblank_fn fn, void *arg)
+{
+	CHECK(node == 7 && owner == lease_owner && retained && started);
+	vblank_binds++;
+	if (vblank_bind_error == 0) {
+		bound_fn = fn;
+		bound_arg = arg;
+	}
+	return vblank_bind_error;
+}
+static void
+vblank_consumer(void *arg, uint64_t sequence)
+{
+	(void)arg;
+	(void)sequence;
+}
 static unsigned output_samples;
 static int output_sample_error;
 int
@@ -381,7 +403,16 @@ static void scanout_checks(void)
  CHECK(sun60i_a733_de352_acquire(1,&sc,&client)==0);
  CHECK(sun60i_a733_de352_acquire(1,&state,&client)==EBUSY);
  CHECK(sun60i_a733_de352_release(client)==0);
+ CHECK(sun60i_a733_de352_set_vblank_handler(client,vblank_consumer,&state)==EINVAL&&vblank_binds==0);
  CHECK(sun60i_a733_de352_acquire(1,&sc,&client)==0);
+ CHECK(sun60i_a733_de352_set_vblank_handler(NULL,vblank_consumer,&state)==EINVAL);
+ CHECK(sun60i_a733_de352_set_vblank_handler(client,vblank_consumer,NULL)==EINVAL&&vblank_binds==0);
+ CHECK(sun60i_a733_de352_set_vblank_handler(client,vblank_consumer,&state)==0);
+ CHECK(vblank_binds==1&&bound_fn==vblank_consumer&&bound_arg==&state&&!mutex_owned(&sc.lock));
+ vblank_bind_error=EOPNOTSUPP;
+ CHECK(sun60i_a733_de352_set_vblank_handler(client,vblank_consumer,&state)==EOPNOTSUPP);
+ vblank_bind_error=0;
+ CHECK(sun60i_a733_de352_set_vblank_handler(client,NULL,NULL)==0&&bound_fn==NULL&&bound_arg==NULL);
  for(unsigned i=0;i<3;i++)input[i]=frame_input(&f[i],state.dmat,0x20000000+(uint64_t)i*0x1000000);
  memset(&done,0xa5,sizeof(done));old_done=done;
  input[0].dmat=sc.dmat;int previous_writes=writes;

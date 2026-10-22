@@ -236,8 +236,10 @@ commit(int fd, const struct output *o, uint32_t fb, uint32_t blob,
 	}
 }
 
+/* The event sequence is the CRTC vblank count; it must increase per flip. */
 static uint64_t
-wait_flip(int fd, uint32_t crtc, uint64_t token, uint64_t previous)
+wait_flip(int fd, uint32_t crtc, uint64_t token, uint64_t previous,
+    uint32_t *sequence)
 {
 	struct pollfd pfd = {.fd = fd, .events = POLLIN};
 	struct drm_event_vblank event;
@@ -255,12 +257,13 @@ wait_flip(int fd, uint32_t crtc, uint64_t token, uint64_t previous)
 	CHECK(read(fd, &event, sizeof(event)) == (ssize_t)sizeof(event));
 	CHECK(event.base.type == DRM_EVENT_FLIP_COMPLETE &&
 	      event.base.length == sizeof(event) && event.user_data == token &&
-	      event.crtc_id == crtc && event.sequence == 0 &&
+	      event.crtc_id == crtc && event.sequence > *sequence &&
 	      event.tv_usec < 1000000);
 	stamp = (uint64_t)event.tv_sec * 1000000 + event.tv_usec;
 	CHECK(stamp > previous);
-	printf("FLIP token=%" PRIu64 " timestamp_us=%" PRIu64 " sequence=0\n",
-	    token, stamp);
+	*sequence = event.sequence;
+	printf("FLIP token=%" PRIu64 " timestamp_us=%" PRIu64
+	    " sequence=%" PRIu32 "\n", token, stamp, event.sequence);
 	return stamp;
 }
 
@@ -273,6 +276,7 @@ main(int argc, char **argv)
 	    0x00ff0000, 0x0000ff00, 0x000000ff, 0x00ffffff};
 	struct drm_mode_create_blob blob;
 	uint64_t stamp = 0;
+	uint32_t sequence = 0;
 	bool run;
 	int fd;
 
@@ -306,7 +310,7 @@ main(int argc, char **argv)
 		    DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_ATOMIC_ALLOW_MODESET |
 			DRM_MODE_PAGE_FLIP_EVENT,
 		    i + 1);
-		stamp = wait_flip(fd, output.crtc, i + 1, stamp);
+		stamp = wait_flip(fd, output.crtc, i + 1, stamp, &sequence);
 	}
 	/* Do not request disable or remove an active framebuffer. */
 	CHECK(close(fd) == 0);
