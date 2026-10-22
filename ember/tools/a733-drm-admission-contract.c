@@ -13,8 +13,9 @@ static unsigned checks, creates, handles, put_calls, probes, probe_calls, frees,
 #define DRM_MODE_FLAG_NHSYNC 2
 #define DRM_MODE_FLAG_PVSYNC 4
 #define DRM_MODE_FLAG_NVSYNC 8
-#define PAGE_MASK 4095
 #define PAGE_SIZE 4096
+/* Same definition as the DRM <linux/mm.h> header in the kernel build. */
+#define PAGE_MASK (~(PAGE_SIZE - 1))
 #define VMEM_ADDR_MIN 0
 #define VMEM_ADDR_MAX UINT64_MAX
 #define VM_BESTFIT 1
@@ -178,6 +179,17 @@ main(void)
 			CHECK(object.base.refs == 1);
 			object.base.refs = 0;
 		}
+	static const struct { uint32_t width, height; uint64_t size; } sizes[] = {
+		{1920, 1080, 8294400}, {1280, 1024, 5242880}, {64, 64, 16384},
+		{1, 1, 4096},
+	};
+	for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+		struct drm_mode_create_dumb d = {.width = sizes[i].width,
+		    .height = sizes[i].height, .bpp = 32};
+		CHECK(a733_dumb_create(&file, &dev, &d) == 0);
+		CHECK(d.size == sizes[i].size && allocated == sizes[i].size);
+		object.base.refs = 0;
+	}
 	struct drm_mode_create_dumb a = {.width = 720,.height = 576,.bpp = 32};
 	unsigned before = creates;
 	const unsigned invalid[] = {0, 1921, UINT32_MAX};

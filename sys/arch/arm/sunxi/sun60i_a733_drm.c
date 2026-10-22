@@ -133,7 +133,14 @@ a733_dumb_create(struct drm_file *file, struct drm_device *dev,
 	    args->height == 0 || args->height > 1080 || args->flags != 0)
 		return -EINVAL;
 	pitch = ((uint64_t) args->width * 4 + 63) & ~UINT64_C(63);
-	size = (pitch * args->height + PAGE_MASK) & ~(uint64_t) PAGE_MASK;
+	/*
+	 * <linux/mm.h> defines PAGE_MASK as ~(PAGE_SIZE - 1), so use explicit
+	 * offset masks. A zero size makes uvm_pglistalloc() retry forever.
+	 */
+	size = (pitch * args->height + PAGE_SIZE - 1) &
+	    ~((uint64_t) PAGE_SIZE - 1);
+	if (size < pitch * args->height)
+		return -EINVAL;
 	/*
 	 * A full CMA pool makes the helper use a blocking contiguous
 	 * allocation that can retry forever. Prove the fit first. Only this
@@ -279,9 +286,9 @@ a733_prime_mmap(struct drm_gem_object *obj, off_t * offp, size_t size,
     int *maxprotp)
 {
 	(void)advicep;
-	if (*offp < 0 || (*offp & PAGE_MASK) != 0 || size == 0 ||
-	    (size & PAGE_MASK) != 0 || (uint64_t) * offp > obj->size ||
-	    size > obj->size - (size_t) * offp ||
+	if (*offp < 0 || ((uint64_t) * offp & (PAGE_SIZE - 1)) != 0 ||
+	    size == 0 || (size & (PAGE_SIZE - 1)) != 0 ||
+	    (uint64_t) * offp > obj->size || size > obj->size - (size_t) * offp ||
 	    (prot & ~(PROT_READ | PROT_WRITE)) != 0 ||
 	    (*flagsp & MAP_SHARED) == 0 || (*flagsp & MAP_PRIVATE) != 0)
 		return -EINVAL;

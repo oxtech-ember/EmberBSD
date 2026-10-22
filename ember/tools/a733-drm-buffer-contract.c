@@ -19,7 +19,9 @@ static unsigned checks;
 #define DRM_FORMAT_MOD_LINEAR 0
 #define DRM_MODE_FB_MODIFIERS 2
 #define KM_SLEEP 0
-#define PAGE_MASK 4095u
+#define PAGE_SIZE 4096u
+/* Same definition as the DRM <linux/mm.h> header in the kernel build. */
+#define PAGE_MASK (~(PAGE_SIZE - 1))
 typedef unsigned u_int;
 struct drm_device {
 	void *dev_private;
@@ -293,7 +295,7 @@ main(void)
 			valid = true;
 			break;
 		case 13:
-			size = SIZE_MAX & ~(size_t) PAGE_MASK;
+			size = SIZE_MAX & ~(size_t) (PAGE_SIZE - 1);
 			break;
 		case 14:
 			off = 0x7ffffffffffff000LL;
