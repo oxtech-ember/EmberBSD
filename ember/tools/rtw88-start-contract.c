@@ -2297,6 +2297,8 @@ main(void)
 	test_native_state_reject_context();
 	test_native_state_fixed_clear();
 	test_native_state_epoch();
+	test_native_band_media();
+	test_native_band_invalid_and_fault();
 #endif
 	test_loopback_mode();
 	test_rf_mode_register_uses_sipi();

@@ -24,10 +24,10 @@ parts.append(re.search(r'^enum ieee80211_state \{.*?^};', proto, re.M|re.S).grou
 parts.append('#define WME_NUM_AC 4\nstruct ieee80211com;\n')
 for name in ('wmeParams', 'chanAccParams', 'ieee80211_wme_state'):
     parts.append(re.search(r'^struct '+name+r' \{.*?^};', proto, re.M|re.S).group())
-for path, names in [('sys/net80211/ieee80211_var.h',r'IEEE80211_(C_WME|F_WME|F_SHSLOT|F_USEPROT|F_PRIVACY|FIXED_RATE_NONE)'),
+for path, names in [('sys/net80211/ieee80211_var.h',r'IEEE80211_(?:C_[A-Z0-9_]+|F_[A-Z0-9_]+|FEXT_[A-Z0-9_]+|FIXED_RATE_NONE)'),
                     ('sys/net80211/ieee80211_node.h',r'IEEE80211_NODE_(QOS|WME_VALID|WME_OFFER|AMSDU_RX)'),
                     ('sys/net80211/ieee80211.h',r'IEEE80211_RATE_(BASIC|VAL)'),
-                    ('sys/net/if_media.h',r'_?IFM_(NONE|L_OWNLOCK|NMASK|MMASK|TMASK|ETHER|ETH_XTMASK|ETHER_SUBTYPE_GET\(x\)|SUBTYPE\(x\)|TYPE\(x\)|MODE\(x\)|AUTO|IEEE80211(?:_11[A-Z]+|_FH|_TURBO)?)')]:
+                    ('sys/net/if_media.h',r'_?IFM_\w+(?:\([^)]*\))?')]:
     source = re.sub(r'/\*.*?\*/', '', read(path).replace('\\\n', ''), flags=re.S)
     for line in source.splitlines():
         if re.match(r'#define\s+'+names+r'\s',line):
@@ -86,3 +86,32 @@ request = re.search(r'^#define\s+IEEE80211_IOC_SCAN_REQ\s+.*$',read('sys/net8021
     '\n'+request+'\nstatic int\n'+setup+'\n' +
     'static int reconnect_scan_request(struct ieee80211com *ic) { int error=0;\n' +
     'switch (IEEE80211_IOC_SCAN_REQ) {\n'+arm+'}\nreturn error; }\n')
+
+# Cross-band bridge: actual shared media/setmode and INIT/SCAN owning arms.
+# Node allocation, notifications, timers and unrelated states remain services.
+ieee=read('sys/net80211/ieee80211.c')
+node=read('sys/net80211/ieee80211_node.c')
+def shared_body(source,name,result):
+    return result+'\n'+re.search(r'^'+name+r'\(.*?^}',source,re.M|re.S).group()+'\n'
+band=[ieee[:ieee.index('#include')],node[:node.index('#include')]]
+for name in ('11a','11b','11g'):
+    band.append(re.search(r'^const struct ieee80211_rateset ieee80211_std_rateset_'+name+r'\s*=.*?;',ieee,re.M|re.S).group())
+for name,result in [('ieee80211_chan2ieee','unsigned __attribute__((noinline))'),('ieee80211_ieee2mhz','unsigned'),('ieee80211_chan2mode','enum ieee80211_phymode'),('findrate','static int')]:
+    band.append(shared_body(ieee,name,result))
+# Only declaration names are adapted to coexist with legacy model services.
+for name,result in [('ieee80211_set11gbasicrates','void'),('ieee80211_set_shortslottime','void'),('ieee80211_reset_erp','void')]:
+    band.append(shared_body(shared,name,result))
+for name in ('ieee80211_setmode','ieee80211_media_change'):
+    band.append(shared_body(ieee,name,'static int').replace('\n'+name+'(','\nstate_shared_'+name+'(',1))
+band.append('#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored "-Wsign-compare"\n'+shared_body(ieee,'ieee80211_media2rate','int')+'#pragma GCC diagnostic pop\n')
+for name,result in [('ieee80211_reset_scan','static void'),('ieee80211_begin_scan','void'),('ieee80211_next_scan','int')]:
+    band.append(shared_body(node,name,result))
+(out/'native-band-shared.inc').write_text('\n'.join(band))
+full=re.search(r'^ieee80211_newstate\(.*?^}',shared,re.M|re.S).group()
+prefix=full[full.index('\tostate = ic->ic_state;'):full.index('\tswitch (nstate) {')]
+arms=full[full.index('\tcase IEEE80211_S_INIT:'):full.index('\tcase IEEE80211_S_AUTH:\n\t\tswitch (ostate)')]
+(out/'native-band-parent.inc').write_text(prefix+'\tswitch (nstate) {\n'+arms+'\tdefault: abort();\n\t}\nreturn 0;\n')
+start=net.index('\tic->ic_sup_rates[IEEE80211_MODE_11A] =')
+end=net.index('\tifp->if_softc = net;',start)
+array=re.search(r'static const unsigned channels5\[\].*?;',net,re.S).group()
+(out/'native-band-driver.inc').write_text(array+'\nunsigned i,ch;\n'+net[start:end])

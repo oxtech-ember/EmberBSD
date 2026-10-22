@@ -1335,12 +1335,33 @@ static int
 rtw88_net_init(struct ifnet *ifp)
 {
 	struct rtw88_net *net = ifp->if_softc;
+	struct ieee80211com *ic = &net->ic;
+	unsigned channel;
 	int error;
 
 	if (net->policy.dying || net->ic.ic_opmode != IEEE80211_M_STA)
 		return EOPNOTSUPP;
 	if ((ifp->if_flags & IFF_RUNNING) != 0)
 		rtw88_net_stop(ifp, 0);
+	/*
+	 * setmode narrows active channels without changing the old curchan.
+	 * Prime only the initial SCAN request; shared next_scan owns hopping.
+	 */
+	channel = ic->ic_curchan == NULL || ic->ic_curchan == IEEE80211_CHAN_ANYC ?
+	    0 : ieee80211_chan2ieee(ic, ic->ic_curchan);
+	if (channel == 0 || channel > IEEE80211_CHAN_MAX ||
+	    isclr(ic->ic_chan_active, channel) ||
+	    ic->ic_channels[channel].ic_freq == 0 ||
+	    ic->ic_channels[channel].ic_flags == 0) {
+		for (channel = 1; channel <= IEEE80211_CHAN_MAX; channel++)
+			if (isset(ic->ic_chan_active, channel) &&
+			    ic->ic_channels[channel].ic_freq != 0 &&
+			    ic->ic_channels[channel].ic_flags != 0)
+				break;
+		if (channel > IEEE80211_CHAN_MAX)
+			return EINVAL;
+		ic->ic_curchan = &ic->ic_channels[channel];
+	}
 	error = rtw88_start(net->core);
 	if (error != 0)
 		return error;
