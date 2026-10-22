@@ -1206,12 +1206,16 @@ The base system shell is unchanged.
   setup error, but authentication still times out; 5 GHz data remains unqualified.
   Raw TCP from the board reaches about 25 Mbps in a 1 MiB trial. Full AP-loss
   recovery, RF quality and endurance remain unqualified. HT/VHT remain
-  unadvertised. Shared HT20 association contracts now bind queued offers to
-  current peer, profile and security state. They also withdraw rejected RUN
-  transitions. Host contracts also execute an admitted
+  unadvertised. Shared HT20 association contracts bind queued offers to current
+  peer, profile and security state. Matching beacon/probe responses with changed
+  HT data withdraw the immutable contract through normal INIT ownership. Host contracts
+  execute an admitted
   [HT20/one-stream capsule](ember/development/rtl8822ce-proposal.md#host-only-ht20-one-stream-rate-path)
   through firmware rate configuration, single-MPDU TX and bounded MCS reports.
-  Native HT admission remains disabled; these checks do not qualify a radio.
+  Typed operation `0`/`0x0006` policy checks MTU/RTS and selected software CCMP
+  geometry before sequence/PN allocation, then bounds the frame before DMA.
+  The native HT provider remains NULL and admission stays off; host checks do
+  not qualify a radio.
   A bounded [STA RX BA/reorder foundation](ember/development/net80211-rxba.md)
   now binds actual ADDBA publication, ciphertext ordering, key cleanup and native
   timer ownership. It also validates standalone A-MSDU against the current HT

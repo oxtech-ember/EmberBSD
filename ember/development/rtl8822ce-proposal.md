@@ -342,23 +342,39 @@ preserved notices; no LinuxKPI/vap ABI is imported.
 
 The native source has a bounded HT20/one-stream AUTO rate consumer. Host tests
 execute actual queued HT offer/response, RUN preparation, H2C `0x40` serialization,
-first single-MPDU TX and C2H reception. The typed table requires a current peer
-profile, 5 GHz/11a, 20 MHz, long GI and HT Operation `0`. Local TX intersects
-peer RX MCS0..7 and selects pinned rate ID `5`.
-The MCS mask and legacy BASIC mask remain separate. The provider
-is checked before payload dequeue/crypto and its numeric generation is checked
-against committed RA under PCI. Fixed HT requests, unsupported protection,
-stale profiles and mailbox uncertainty use existing withdrawal/error owners.
-A legacy fixed-rate association remains usable after HT table invalidation.
+first single-MPDU TX and C2H reception. The accepted HT payloads are immutable.
+Matching beacon/probe responses with changed HT data purge that contract through
+normal INIT ownership; newer requests retain their epoch.
+
+The typed table requires a current peer profile, 5 GHz/11a, 20 MHz, long GI,
+peer GF off and SMPS disabled. HT Operation `0` or `0x0006` is accepted for this
+mixed-format envelope. Local TX intersects peer RX MCS0..7 and selects pinned
+rate ID `5`. The MCS mask and legacy BASIC mask remain separate.
+
+The pilot requires MTU 32..1500, fragmentation threshold 2346 and DATAPAD off.
+RTS threshold must be at least `MTU + 54` and at most 2346. Ethernet length
+cannot exceed `MTU + 14` before encap. The actual selected key must supply
+software CCMP with header/trailer sizes of 8/8 bytes and no extra MIC when encap
+will encrypt. The same pure selector retains node-key priority and default-key
+fallback without changing PN. Clear EAPOL
+keeps its existing path; a selected NULL cipher is rejected before buffer setup.
+The committed MPDU limit is `MTU + 50` without FCS, checked again before DMA.
+
+The provider is checked before payload dequeue/crypto. Numeric policy and its
+generation are checked against committed RA under PCI. Fixed HT requests,
+unsupported protection, stale profiles and mailbox uncertainty use existing
+withdrawal/error owners. Legacy fixed-rate associations remain available.
 
 The test provider, peer response and device progress are explicit host models.
-Crypto dispatch is observed; this exchange does not measure an air rate or ACK.
+The native exchange models cipher dispatch; separate actual CCMP tests check
+wire length and PN ownership. Neither proves an air rate, PPDU format or ACK.
 MCS reports remain unattributed firmware-generation telemetry. Native attach
 still registers no HT provider, emits no HT offer and enables no HT PHY.
-RFK, protection and hardware RX BA with software CCMP remain separate gates.
-The current channel 149 trial still times out during authentication. Its AP
-reports HT Operation `0x0006`, outside this operation `0` only envelope. No HT20,
-2SS, HT40, VHT80, aggregation performance or Wi-Fi5 acceptance is claimed.
+Qualified RFK, normal transmit mode and hardware RX BA with software CCMP remain
+separate gates. The earlier channel 149 trial timed out during authentication;
+its AP operation `0x0006` is now inside the host policy envelope only. No physical
+HT20, HT40, VHT80, 2SS, SGI, TX A-MPDU, maximum speed or Wi-Fi5 acceptance
+is claimed.
 
 ## Firmware hardware-feature snapshot
 
