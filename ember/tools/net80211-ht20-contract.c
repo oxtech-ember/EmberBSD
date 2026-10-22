@@ -12,6 +12,8 @@ struct rtw88_softc { int sc_started, sc_running, sc_stop_requested; unsigned sc_
 struct rtw88_net {
 	struct { struct ifnet ec_if; } ec;
 	struct ieee80211com ic;
+	volatile uint64_t ht20_snapshot;
+	volatile uint32_t ht20_generation;
 	void *dev, *softint;
 	unsigned configured_media;
 	int (*parent_state)(struct ieee80211com *, enum ieee80211_state, int);

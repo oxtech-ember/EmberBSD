@@ -10,7 +10,7 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
     SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
 fi
-${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -pthread ${RTW88_TEST_CFLAGS:-} \
     -I"$src/sys/dev/ic" "$tools/rtw88-net-contract.c" \
     "$src/sys/dev/ic/rtw88_net_policy.c" -o "$work/test"
 if [ -n "${TEST_RUNNER:-}" ]; then

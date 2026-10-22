@@ -32,7 +32,7 @@ done
 for altq in 0 1; do
     flags=-UALTQ
     [ "$altq" = 0 ] || flags=-DALTQ
-    ${CC:-cc} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -Wall -Werror $flags ${RTW88_TEST_CFLAGS:-} \
+    ${CC:-cc} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -Wall -Werror -pthread $flags ${RTW88_TEST_CFLAGS:-} \
         -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
         "$tools/rtw88-enable-contract.c" \
         "$src/sys/dev/ic/rtw88_net_policy.c" \
@@ -56,7 +56,7 @@ for altq in 0 1; do
     echo "ALTQ=$altq"
     cat "$work/output"
     if [ "${RTW88_ENABLE_ANALYZE:-0}" = 1 ]; then
-        ${CC:-cc} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -O0 -g -Wall -Werror -fanalyzer $flags \
+        ${CC:-cc} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -O0 -g -Wall -Werror -pthread -fanalyzer $flags \
             -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
             -c "$tools/rtw88-enable-contract.c" -o "$work/analysis.o"
         ${CC:-cc} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -dM -E $flags - < /dev/null > "$work/predefines.h"

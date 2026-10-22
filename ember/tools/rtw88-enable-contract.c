@@ -3,6 +3,7 @@
 #ifdef NDEBUG
 #error The kernel service model requires assertion preconditions.
 #endif
+#include <pthread.h>
 #include "enable-routing.inc"
 /* Default hardware-progress service for old owning-exchange cases. Device
  * indices advance at a sleep boundary; the actual IRQ decoder retires them. */
@@ -140,6 +141,7 @@ static int enable_wire_offer(struct rtw88_net *net)
 static struct rtw88_net *enable_attach(struct rtw88_softc *sc,kmutex_t *lock)
 {
     struct rtw88_net *net=NULL;
+    struct ieee80211_ht20_profile disabled_profile;
     const uint8_t mac[6]={2,1,2,3,4,5};
     reset_bus(sc);
     int attached=attach_ok(sc);CHECK(attached);
@@ -150,7 +152,31 @@ static struct rtw88_net *enable_attach(struct rtw88_softc *sc,kmutex_t *lock)
     if(!net)return NULL;
     CHECK(f.writes==writes);
     CHECK(net->ic.ic_wme.wme_sta_apply==rtw88_net_wme_apply);
-    CHECK(net->ic.ic_rxba_ops==&rtw88_net_rxba_ops && net->ic.ic_ht20_admit==NULL);
+    CHECK(net->ic.ic_rxba_ops==&rtw88_net_rxba_ops);
+    CHECK(net->ic.ic_ht20_admit!=NULL);
+    if(net->ic.ic_ht20_admit!=NULL) {
+        struct ieee80211_ht20_profile candidate={0,0xff,0xff,0x3f,16};
+        memset(&disabled_profile,0xa5,sizeof(disabled_profile));
+        CHECK(net->ic.ic_ht20_admit(&net->ic,&disabled_profile)==EOPNOTSUPP);
+        for(unsigned bit=0;bit<6;bit++) {
+            candidate.ready=0x3f&~(1U<<bit);
+            rtw88_net_ht20_publish(net,&candidate);
+            CHECK(net->ic.ic_ht20_admit(&net->ic,&disabled_profile)==EOPNOTSUPP);
+        }
+        candidate.ready=0x3f;
+        rtw88_net_ht20_publish(net,&candidate);
+        CHECK(net->ic.ic_ht20_admit(&net->ic,&disabled_profile)==0);
+        CHECK(disabled_profile.generation!=0 && disabled_profile.rx_mcs==0xff &&
+            disabled_profile.tx_mcs==0xff && disabled_profile.ready==0x3f &&
+            disabled_profile.ampdu==16);
+        uint32_t generation=disabled_profile.generation;
+        candidate.ampdu=12;
+        rtw88_net_ht20_publish(net,&candidate);
+        CHECK(net->ic.ic_ht20_admit(&net->ic,&disabled_profile)==0);
+        CHECK(disabled_profile.generation!=generation && disabled_profile.ampdu==12);
+        rtw88_net_ht20_publish(net,NULL);
+        CHECK(net->ic.ic_ht20_admit(&net->ic,&disabled_profile)==EOPNOTSUPP);
+    }
     CHECK(net->ic.ic_caps==(IEEE80211_C_WPA2|IEEE80211_C_SHSLOT|IEEE80211_C_WME));
     CHECK(net->ic.ic_flags&IEEE80211_F_WME);
     for(unsigned ac=0;ac<WME_NUM_AC;ac++) {
@@ -175,6 +201,72 @@ static struct rtw88_net *enable_attach(struct rtw88_softc *sc,kmutex_t *lock)
     CHECK(!net->work_pending && net->policy.accepting);
     CHECK(net->ic.ic_state==IEEE80211_S_ASSOC);
     return net;
+}
+struct enable_ht20_race {
+    struct rtw88_net *net;
+    volatile unsigned writers_done;
+    unsigned writers_expected;
+    unsigned reader_errors, reader_reads, reader_denied;
+};
+struct enable_ht20_writer_arg {
+    struct enable_ht20_race *race;
+    unsigned variant;
+};
+static void *enable_ht20_race_writer(void *cookie)
+{
+    struct enable_ht20_writer_arg *arg=cookie;
+    struct ieee80211_ht20_profile profile={1,0,0,0x3f,0};
+    profile.rx_mcs=profile.tx_mcs=0xff;
+    profile.ampdu=arg->variant?0x1c:0x10;
+    for(unsigned i=0;i<12000;i++)
+        rtw88_net_ht20_publish(arg->race->net,&profile);
+    __atomic_add_fetch(&arg->race->writers_done,1,__ATOMIC_RELEASE);
+    return NULL;
+}
+static void *enable_ht20_race_reader(void *cookie)
+{
+    struct enable_ht20_race *race=cookie;
+    struct ieee80211_ht20_profile profile;
+    do {
+        int error=race->net->ic.ic_ht20_admit(&race->net->ic,&profile);
+        if(error==0) {
+            int first=profile.rx_mcs==0xff && profile.tx_mcs==0xff && profile.ampdu==0x10;
+            int second=profile.rx_mcs==0xff && profile.tx_mcs==0xff && profile.ampdu==0x1c;
+            if(profile.generation==0 || profile.ready!=0x3f || (!first && !second))
+                race->reader_errors++;
+            race->reader_reads++;
+        } else if(error==EOPNOTSUPP) {
+            race->reader_denied++;
+        } else {
+            race->reader_errors++;
+        }
+    } while(__atomic_load_n(&race->writers_done,__ATOMIC_ACQUIRE)<race->writers_expected);
+    return NULL;
+}
+static void enable_ht20_publication_race(struct rtw88_net *net)
+{
+    struct enable_ht20_race race={.net=net,.writers_expected=2};
+    struct enable_ht20_writer_arg args[2]={{&race,0},{&race,1}};
+    pthread_t writers[2],reader;
+    int writer_error[2],reader_error;
+    for(unsigned i=0;i<2;i++)
+        writer_error[i]=pthread_create(&writers[i],NULL,enable_ht20_race_writer,&args[i]);
+    CHECK(writer_error[0]==0 && writer_error[1]==0);
+    race.writers_expected=(writer_error[0]==0)+(writer_error[1]==0);
+    if(race.writers_expected==0)return;
+    reader_error=pthread_create(&reader,NULL,enable_ht20_race_reader,&race);
+    CHECK(reader_error==0);
+    for(unsigned i=0;i<2;i++)
+        if(writer_error[i]==0)CHECK(pthread_join(writers[i],NULL)==0);
+    if(reader_error==0)CHECK(pthread_join(reader,NULL)==0);
+    CHECK(race.reader_errors==0 && race.reader_reads!=0);
+    struct ieee80211_ht20_profile final_profile;
+    CHECK(net->ic.ic_ht20_admit(&net->ic,&final_profile)==0);
+    CHECK(final_profile.generation==__atomic_load_n(&net->ht20_generation,__ATOMIC_ACQUIRE));
+    CHECK((final_profile.rx_mcs==0xff && final_profile.tx_mcs==0xff && final_profile.ampdu==0x10) ||
+        (final_profile.rx_mcs==0xff && final_profile.tx_mcs==0xff && final_profile.ampdu==0x1c));
+    rtw88_net_ht20_publish(net,NULL);
+    CHECK(net->ic.ic_ht20_admit(&net->ic,&final_profile)==EOPNOTSUPP);
 }
 static void enable_destroy(struct rtw88_net *net)
 {
@@ -678,7 +770,7 @@ static void enable_mailbox_queues(void)
     enable_destroy(net);
 }
 
-/* C4a host-only admitted profile. No native provider is registered by attach. */
+/* C4a host fixture drives the publisher directly; hardware readiness stays off. */
 static struct rtw88_net *ht20_net;
 static struct ieee80211_ht20_profile ht20_profile;
 static unsigned ht20_test_operation;
@@ -1081,6 +1173,7 @@ int RTW88_ENABLE_ENTRY(void)
     struct rtw88_softc sc;kmutex_t lock={.initialized=1};
     struct rtw88_net *net=enable_attach(&sc,&lock);
     if(!net)return 1;
+    enable_ht20_publication_race(net);
     struct ieee80211com *ic=&net->ic;
     active_ic=ic;
     CHECK(ieee80211_send_mgmt(ic,ic->ic_bss,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);

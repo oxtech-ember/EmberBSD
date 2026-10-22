@@ -12,6 +12,13 @@
 #endif
 #define RTW88_NET_RX_LIMIT 64U
 #define RTW88_NET_MPDU_LIMIT 4096U
+#define RTW88_NET_HT20_READY_ALL 0x3fU
+/* Fields packed into one atomic u64 so readers cannot observe mixed epochs. */
+struct rtw88_net_ht20_snapshot {
+	uint32_t generation;
+	uint16_t rx_mcs, tx_mcs;
+	uint8_t ready, ampdu;
+};
 struct rtw88_net_rx_counts {
 	uint64_t accepted, inactive, epoch, invalid, size;
 	uint64_t corrupt, format, crypto, full;
@@ -57,4 +64,10 @@ int		rtw88_net_beacon_note(struct rtw88_net_policy *, uint64_t, uint32_t,
 int		rtw88_net_beacon_poll(struct rtw88_net_policy *, uint64_t, uint32_t,
     uint32_t);
 uint32_t	rtw88_net_tu_to_ms(uint16_t);
+int	rtw88_net_ht20_snapshot_encode(const struct rtw88_net_ht20_snapshot *,
+	    uint64_t *);
+int	rtw88_net_ht20_snapshot_decode(uint64_t,
+	    struct rtw88_net_ht20_snapshot *);
+int	rtw88_net_ht20_snapshot_admit(uint64_t,
+	    struct rtw88_net_ht20_snapshot *);
 #endif

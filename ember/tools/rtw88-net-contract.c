@@ -3,11 +3,119 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <pthread.h>
 #include "rtw88_net_policy.h"
+
 
 static unsigned checks, failures;
 #define CHECK(e) do { checks++; if (!(e)) { failures++; \
 	fprintf(stderr, "line %u: %s\n", (unsigned)__LINE__, #e); } } while (0)
+
+struct ht20_snapshot_race {
+	volatile uint64_t word;
+	volatile unsigned done;
+	unsigned writer_failures, reader_failures, reads;
+};
+
+static void *
+ht20_snapshot_writer(void *arg)
+{
+	struct ht20_snapshot_race *race = arg;
+	struct rtw88_net_ht20_snapshot p;
+	uint64_t word;
+	unsigned i;
+
+	for (i = 1; i <= 200000; i++) {
+		p.generation = i;
+		p.rx_mcs = p.tx_mcs = i & 0xff;
+		p.ready = i & 0x3f;
+		p.ampdu = (i & 7) << 2;
+		if (rtw88_net_ht20_snapshot_encode(&p, &word) != 0) {
+			race->writer_failures++;
+			break;
+		}
+		__atomic_store_n(&race->word, word, __ATOMIC_RELEASE);
+	}
+	__atomic_store_n(&race->done, 1, __ATOMIC_RELEASE);
+	return NULL;
+}
+
+static void *
+ht20_snapshot_reader(void *arg)
+{
+	struct ht20_snapshot_race *race = arg;
+	struct rtw88_net_ht20_snapshot p;
+	uint64_t word;
+	int error;
+
+	do {
+		word = __atomic_load_n(&race->word, __ATOMIC_ACQUIRE);
+		if (word != 0) {
+			error = rtw88_net_ht20_snapshot_decode(word, &p);
+			if (error != 0 || p.generation == 0 ||
+			    p.rx_mcs != (p.generation & 0xff) ||
+			    p.tx_mcs != p.rx_mcs || p.ready != (p.generation & 0x3f) ||
+			    p.ampdu != ((p.generation & 7) << 2))
+				race->reader_failures++;
+			race->reads++;
+		}
+	} while (__atomic_load_n(&race->done, __ATOMIC_ACQUIRE) == 0);
+	return NULL;
+}
+
+static void
+ht20_snapshot_checks(void)
+{
+	struct rtw88_net_ht20_snapshot p = {
+	    .generation = 0x12345678, .rx_mcs = 0xff, .tx_mcs = 0xff,
+	    .ready = 0x3f, .ampdu = 0x10
+	}, decoded;
+	struct ht20_snapshot_race race = {0};
+	pthread_t writer, reader;
+	uint64_t word;
+	unsigned bit;
+	int writer_error, reader_error;
+
+	CHECK(rtw88_net_ht20_snapshot_encode(&p, &word) == 0);
+	CHECK(rtw88_net_ht20_snapshot_decode(word, &decoded) == 0);
+	CHECK(p.generation == decoded.generation && p.rx_mcs == decoded.rx_mcs &&
+	    p.tx_mcs == decoded.tx_mcs && p.ready == decoded.ready &&
+	    p.ampdu == decoded.ampdu);
+	CHECK(rtw88_net_ht20_snapshot_admit(word, &decoded) == 0);
+	CHECK(rtw88_net_ht20_snapshot_admit(word, NULL) == EINVAL);
+	CHECK(rtw88_net_ht20_snapshot_admit(0, &decoded) == EOPNOTSUPP);
+	for (bit = 0; bit < 6; bit++) {
+		struct rtw88_net_ht20_snapshot partial = p;
+		partial.ready &= ~(1U << bit);
+		CHECK(rtw88_net_ht20_snapshot_encode(&partial, &word) == 0);
+		CHECK(rtw88_net_ht20_snapshot_admit(word, &decoded) == EOPNOTSUPP);
+	}
+	p.generation = 0;
+	CHECK(rtw88_net_ht20_snapshot_encode(&p, &word) == EINVAL);
+	p.generation = 1;
+	p.rx_mcs = 0x1ff;
+	CHECK(rtw88_net_ht20_snapshot_encode(&p, &word) == EINVAL);
+	p.rx_mcs = 0xff;
+	p.ready = 0x40;
+	CHECK(rtw88_net_ht20_snapshot_encode(&p, &word) == EINVAL);
+	p.ready = 0x3f;
+	p.ampdu = 0xe0;
+	CHECK(rtw88_net_ht20_snapshot_encode(&p, &word) == EINVAL);
+	CHECK(rtw88_net_ht20_snapshot_decode(0, &decoded) == ENOENT);
+	CHECK(rtw88_net_ht20_snapshot_decode(UINT64_C(1) << 62, &decoded) == EINVAL);
+	writer_error = pthread_create(&writer, NULL, ht20_snapshot_writer, &race);
+	CHECK(writer_error == 0);
+	if (writer_error != 0)
+		return;
+	reader_error = pthread_create(&reader, NULL, ht20_snapshot_reader, &race);
+	CHECK(reader_error == 0);
+	if (reader_error == 0) {
+		CHECK(pthread_join(reader, NULL) == 0);
+	}
+	CHECK(pthread_join(writer, NULL) == 0);
+	CHECK(race.writer_failures == 0 && race.reader_failures == 0);
+	CHECK(race.reads != 0 || reader_error != 0);
+}
 
 int
 main(void)
@@ -25,6 +133,8 @@ main(void)
 	};
 	char evidence[384], shortbuf[8];
 	int evidence_len;
+
+	ht20_snapshot_checks();
 
 	/* Losing a bad input must not hide which strict call failed. */
 	evidence_len = rtw88_net_state_format(evidence, sizeof(evidence), &diag);

@@ -12,6 +12,7 @@
 #include <sys/device.h>
 #include <sys/kmem.h>
 #include <sys/kernel.h>
+#include <sys/atomic.h>
 #include <sys/mbuf.h>
 #include <sys/callout.h>
 #include <sys/timevar.h>
@@ -55,6 +56,9 @@ struct rtw88_net {
 	void *softint;
 	callout_t scan, rxba_callout;
 	uint64_t rxba_token, rxba_deadline, rxba_due;
+	/* Monotonic generation and profile word are published with atomic CAS. */
+	volatile uint64_t ht20_snapshot;
+	volatile uint32_t ht20_generation;
 	struct rtw88_net_policy policy;
 	struct rtw88_net_rx rx[RTW88_NET_RX_LIMIT];
 	unsigned rx_head, rx_tail;
@@ -79,6 +83,10 @@ static void rtw88_net_start(struct ifnet *);
 static void rtw88_net_stop(struct ifnet *, int);
 static int rtw88_net_init(struct ifnet *);
 static int rtw88_net_newstate(struct ieee80211com *, enum ieee80211_state, int);
+static void rtw88_net_ht20_publish(struct rtw88_net *,
+    const struct ieee80211_ht20_profile *);
+static int rtw88_net_ht20_admit(struct ieee80211com *,
+    struct ieee80211_ht20_profile *);
 
 /* This MPSAFE callout retains only interface-owned numeric tokens. The shared
  * stack and all node/key lifetime work run in the existing Giant softintr. */
@@ -247,6 +255,79 @@ rtw88_net_rxba_detach(struct rtw88_net *net)
 	rtw88_net_rxba_quiesce(net);
 	net->ic.ic_rxba_ops = NULL;
 	callout_destroy(&net->rxba_callout);
+}
+
+/*
+ * Every update gets a monotonic generation. The payload and generation are
+ * then published together in one 64-bit compare-and-swap; a late writer can
+ * never replace a newer readiness decision with an older one.
+ */
+static void
+rtw88_net_ht20_publish(struct rtw88_net *net,
+    const struct ieee80211_ht20_profile *profile)
+{
+	struct rtw88_net_ht20_snapshot snapshot;
+	uint64_t word, current;
+	uint32_t generation, previous;
+
+	for (;;) {
+		previous = atomic_load_relaxed(&net->ht20_generation);
+		if (previous == UINT32_MAX) {
+			generation = UINT32_MAX;
+			break;
+		}
+		generation = previous + 1;
+		if (atomic_cas_32(&net->ht20_generation, previous,
+		    generation) == previous)
+			break;
+	}
+	snapshot.generation = generation;
+	snapshot.rx_mcs = snapshot.tx_mcs = 0;
+	snapshot.ready = snapshot.ampdu = 0;
+	if (profile != NULL && generation != UINT32_MAX) {
+		snapshot.rx_mcs = profile->rx_mcs;
+		snapshot.tx_mcs = profile->tx_mcs;
+		snapshot.ready = profile->ready;
+		snapshot.ampdu = profile->ampdu;
+	}
+	if (rtw88_net_ht20_snapshot_encode(&snapshot, &word) != 0) {
+		snapshot.rx_mcs = snapshot.tx_mcs = 0;
+		snapshot.ready = snapshot.ampdu = 0;
+		(void)rtw88_net_ht20_snapshot_encode(&snapshot, &word);
+	}
+	for (;;) {
+		current = atomic_load_acquire(&net->ht20_snapshot);
+		if ((uint32_t)current >= generation)
+			return;
+		if (atomic_cas_64(&net->ht20_snapshot, current, word) == current)
+			return;
+	}
+}
+
+static int
+rtw88_net_ht20_admit(struct ieee80211com *ic,
+    struct ieee80211_ht20_profile *profile)
+{
+	struct rtw88_net_ht20_snapshot snapshot;
+	struct rtw88_net *net;
+	uint64_t word;
+	int error;
+
+	if (ic == NULL || profile == NULL || ic->ic_ifp == NULL)
+		return EINVAL;
+	net = ic->ic_ifp->if_softc;
+	if (net == NULL)
+		return ENXIO;
+	word = atomic_load_acquire(&net->ht20_snapshot);
+	error = rtw88_net_ht20_snapshot_admit(word, &snapshot);
+	if (error != 0)
+		return error;
+	profile->generation = snapshot.generation;
+	profile->rx_mcs = snapshot.rx_mcs;
+	profile->tx_mcs = snapshot.tx_mcs;
+	profile->ready = snapshot.ready;
+	profile->ampdu = snapshot.ampdu;
+	return 0;
 }
 
 static unsigned
@@ -952,6 +1033,9 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
 	struct rtw88_net *net = ic->ic_ifp->if_softc;
 	int enqueue = 0, ht20_error;
 
+	/* Drop stale readiness before leaving the association/RUN lifecycle. */
+	if (state != IEEE80211_S_ASSOC && state != IEEE80211_S_RUN)
+		rtw88_net_ht20_publish(net, NULL);
 	/* Shared capsule ownership is Giant-only, before taking the PCI lock. */
 	if (state == IEEE80211_S_RUN && ic->ic_state == IEEE80211_S_RUN &&
 	    ic->ic_bss != NULL)
@@ -1585,6 +1669,7 @@ rtw88_net_stop(struct ifnet *ifp, int disable)
 {
 	struct rtw88_net *net = ifp->if_softc;
 
+	rtw88_net_ht20_publish(net, NULL);
 	rtw88_net_rxba_quiesce(net);
 	if (net->ic.ic_bss != NULL)
 		ieee80211_rxba_reset(&net->ic, net->ic.ic_bss);
@@ -1817,6 +1902,9 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	if_initialize(ifp);
 	ieee80211_ifattach(ic);
 	rtw88_net_rxba_attach(net);
+	/* Register after ifattach, which initializes optional admission to NULL. */
+	rtw88_net_ht20_publish(net, NULL);
+	ic->ic_ht20_admit = rtw88_net_ht20_admit;
 	/* Opt in only after the strict consumer owns STA parameter apply. */
 	ic->ic_wme.wme_sta_apply = rtw88_net_wme_apply;
 	ic->ic_caps |= IEEE80211_C_WME;

@@ -5,10 +5,21 @@ import pathlib,re,subprocess,sys,os
 src,out=map(pathlib.Path,sys.argv[1:])
 subprocess.run([sys.executable,str(src/'ember/tools/net80211-wme-contract.py'),str(src),str(out)],check=True)
 parts=[]
+net_source=pathlib.Path(os.environ.get('HT20_NATIVE_SOURCE',src/'sys/dev/ic/rtw88_net.c')).read_text()
+parts.extend([net_source[:net_source.index('#include')],
+              'static uint32_t ht20_atomic_cas_32(volatile uint32_t *p,uint32_t o,uint32_t n) { uint32_t e=o; __atomic_compare_exchange_n(p,&e,n,0,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST); return e; }\n',
+              'static uint64_t ht20_atomic_cas_64(volatile uint64_t *p,uint64_t o,uint64_t n) { uint64_t e=o; __atomic_compare_exchange_n(p,&e,n,0,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST); return e; }\n',
+              '#define atomic_load_relaxed(p) __atomic_load_n((p), __ATOMIC_RELAXED)\n',
+              '#define atomic_load_acquire(p) __atomic_load_n((p), __ATOMIC_ACQUIRE)\n',
+              '#define atomic_store_release(p,v) __atomic_store_n((p),(v),__ATOMIC_RELEASE)\n',
+              '#define atomic_cas_32(p,o,n) ht20_atomic_cas_32((p),(o),(n))\n',
+              '#define atomic_cas_64(p,o,n) ht20_atomic_cas_64((p),(o),(n))\n'])
 for path,name,result in [('sys/dev/ic/rtw88.c','rtw88_ra_invalidate','void'),
                          ('sys/dev/ic/rtw88_net_policy.c','rtw88_net_request','uint64_t'),
                          ('sys/dev/ic/rtw88_net_policy.c','rtw88_net_commit','int'),
                          ('sys/dev/ic/rtw88_net_policy.c','rtw88_net_beacon_start','int'),
+                         ('sys/dev/ic/rtw88_net_policy.c','rtw88_net_ht20_snapshot_encode','int'),
+                         ('sys/dev/ic/rtw88_net.c','rtw88_net_ht20_publish','static void'),
                          ('sys/dev/ic/rtw88_net.c','rtw88_net_newstate','static int')]:
     s=pathlib.Path(os.environ.get('HT20_NATIVE_SOURCE',src/path) if path=='sys/dev/ic/rtw88_net.c' else src/path).read_text()
     parts.extend([s[:s.index('#include')],result,re.search(r'^'+name+r'\(.*?^}',s,re.M|re.S).group()])

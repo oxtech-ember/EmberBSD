@@ -201,6 +201,71 @@ rtw88_net_beacon_poll(struct rtw88_net_policy *p, uint64_t epoch, uint32_t now,
 	return 1;
 }
 
+/*
+ * One 64-bit publication word: generation[31:0], RX MCS[39:32],
+ * TX MCS[47:40], A-MPDU[55:48], readiness[61:56], reserved[63:62].
+ * The caller uses release-store/acquire-load around this codec.
+ */
+int
+rtw88_net_ht20_snapshot_encode(const struct rtw88_net_ht20_snapshot *p,
+    uint64_t *word)
+{
+
+	if (p == NULL || word == NULL || p->generation == 0 ||
+	    p->rx_mcs > 0xff || p->tx_mcs > 0xff ||
+	    (p->ready & ~RTW88_NET_HT20_READY_ALL) != 0 ||
+	    (p->ampdu & 0xe3) != 0)
+		return EINVAL;
+	*word = (uint64_t)p->generation |
+	    (uint64_t)p->rx_mcs << 32 | (uint64_t)p->tx_mcs << 40 |
+	    (uint64_t)p->ampdu << 48 | (uint64_t)p->ready << 56;
+	return 0;
+}
+
+int
+rtw88_net_ht20_snapshot_decode(uint64_t word,
+    struct rtw88_net_ht20_snapshot *p)
+{
+	struct rtw88_net_ht20_snapshot candidate;
+
+	if (p == NULL)
+		return EINVAL;
+	if (word == 0)
+		return ENOENT;
+	if ((word >> 62) != 0)
+		return EINVAL;
+	candidate.generation = (uint32_t)word;
+	candidate.rx_mcs = (uint16_t)(word >> 32) & 0xff;
+	candidate.tx_mcs = (uint16_t)(word >> 40) & 0xff;
+	candidate.ampdu = (uint8_t)(word >> 48);
+	candidate.ready = (uint8_t)(word >> 56) & RTW88_NET_HT20_READY_ALL;
+	if (candidate.generation == 0 || (candidate.ampdu & 0xe3) != 0)
+		return EINVAL;
+	*p = candidate;
+	return 0;
+}
+
+int
+rtw88_net_ht20_snapshot_admit(uint64_t word,
+    struct rtw88_net_ht20_snapshot *p)
+{
+	struct rtw88_net_ht20_snapshot candidate;
+	int error;
+
+	if (p == NULL)
+		return EINVAL;
+	error = rtw88_net_ht20_snapshot_decode(word, &candidate);
+	if (error == ENOENT)
+		return EOPNOTSUPP;
+	if (error != 0)
+		return error;
+	if (candidate.ready != RTW88_NET_HT20_READY_ALL ||
+	    candidate.rx_mcs != 0xff || candidate.tx_mcs != candidate.rx_mcs)
+		return EOPNOTSUPP;
+	*p = candidate;
+	return 0;
+}
+
 uint32_t
 rtw88_net_tu_to_ms(uint16_t tu)
 {
