@@ -684,6 +684,21 @@ int main(void)
 	CHECK(strstr(stats," quality 50 pwdb 60/50 gain 0/0 power_est -50/-60")!=NULL);
 	CHECK(strstr(stats," gainctx 17/1/20/40/0")!=NULL);
 	CHECK(strstr(stats," sig0 0")!=NULL && strstr(stats," sig10 0")!=NULL);
+#ifdef RTW88_RFK_EXPERIMENT
+	p.sc_core.sc_stats.rfk=(struct rtw88_rfk_diag){.token=9,.generation=3,
+	    .baseline_generation=2,.flags=7,.global=2,.error=EIO,.cleanup_error=ETIMEDOUT,
+	    .kind=4,.addr=0x2d9c,.size=1,.raw=0xaa,.raw_valid=1,.non_target=1,
+	    .operations=777,.requested_delay_us=888,.sleeps=9};
+	for(unsigned i=0;i<7;i++) { p.sc_core.sc_stats.rfk.arms[i]=i+2;p.sc_core.sc_stats.rfk.done[i]=i+1; }
+	CHECK(rtwce_stats(stats,sizeof(stats))==0);
+	{
+		char expected[96];
+		(void)snprintf(expected,sizeof(expected)," rfk 9/3/2 flags 0x7 global 0x2 error %d/%d",EIO,ETIMEDOUT);
+		CHECK(strstr(stats,expected)!=NULL);
+	}
+	CHECK(strstr(stats," rfk_report 4/0x2d9c/1/0xaa/1/1 rfk_cost 777/888/9")!=NULL);
+	CHECK(strstr(stats," rfk1 2/1")!=NULL && strstr(stats," rfk7 8/7")!=NULL);
+#endif
 	stats_latch = &p;
 	CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
 	CHECK(stats_latch == NULL && strstr(stats, " basic 0x55a") != NULL);
@@ -928,3 +943,6 @@ int main(void)
 	       failures);
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }
+
+/* Host native-atomic observation service; never a kernel API. */
+volatile unsigned *rtw88_test_rfk_atomic_word;

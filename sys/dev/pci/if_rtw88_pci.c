@@ -186,6 +186,22 @@ rtwce_stats(char *buf, size_t len)
 	    n > 0 && (size_t)n < len; i++)
 		n += snprintf(buf + n, len - (size_t)n, " txpost%u %llu", i,
 		    (unsigned long long)st->tx_posted[i]);
+#ifdef RTW88_RFK_EXPERIMENT
+	/* Experimental host oracle, not calibrated RF or HT readiness. */
+	if (n > 0 && (size_t)n < len)
+		n += snprintf(buf + n, len - (size_t)n,
+		    " rfk %llu/%u/%u flags %#x global %#x error %d/%d"
+		    " rfk_report %u/%#x/%u/%#x/%u/%u rfk_cost %u/%u/%u",
+		    (unsigned long long)st->rfk.token, st->rfk.generation,
+		    st->rfk.baseline_generation, st->rfk.flags, st->rfk.global,
+		    st->rfk.error, st->rfk.cleanup_error, st->rfk.kind,
+		    st->rfk.addr, st->rfk.size, st->rfk.raw, st->rfk.raw_valid,
+		    st->rfk.non_target, st->rfk.operations,
+		    st->rfk.requested_delay_us, st->rfk.sleeps);
+	for (unsigned i = 0; i < 7 && n > 0 && (size_t)n < len; i++)
+		n += snprintf(buf + n, len - (size_t)n, " rfk%u %u/%u", i + 1,
+		    st->rfk.arms[i], st->rfk.done[i]);
+#endif
 	/* Descriptor seeds and firmware reports are separate observations. */
 	if (n > 0 && (size_t)n < len)
 		n += snprintf(buf + n, len - (size_t)n,

@@ -846,7 +846,10 @@ static void enable_ht20_to_legacy_fixed(void)
     enable_destroy(net);ht20_net=NULL;route_have_key=0;
 }
 
-int main(void)
+#ifndef RTW88_ENABLE_ENTRY
+#define RTW88_ENABLE_ENTRY main
+#endif
+int RTW88_ENABLE_ENTRY(void)
 {
     enable_drain_case();
     enable_drain_core();

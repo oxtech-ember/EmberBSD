@@ -13,6 +13,9 @@
 #include <dev/ic/rtw88var.h>
 #include <dev/ic/rtw8822c.h>
 #include <dev/ic/rtw8822c_io.h>
+#ifdef RTW88_RFK_EXPERIMENT
+#include <dev/ic/rtw8822c_rfk.h>
+#endif
 
 #define RTW88_FW_DRV		"rtwce"
 #define RTW88_FW_IMG		"rtw8822c_fw.bin"
@@ -795,6 +798,10 @@ rtw88_start(struct rtw88_softc *sc)
 	uint32_t gen;
 	int error;
 
+#ifdef RTW88_RFK_EXPERIMENT
+	if (rtw8822c_rfk_blocked())
+		return EBUSY;
+#endif
 	if (!sc->sc_resources_ready)
 		return ENXIO;
 	if (sc->sc_started)
@@ -1890,6 +1897,11 @@ rtw88_core_attach(struct rtw88_softc *sc)
 	};
 	int error;
 
+#ifdef RTW88_RFK_EXPERIMENT
+	if (rtw8822c_rfk_blocked())
+		return EBUSY;
+#endif
+
 	if (sc->sc_nring != 0 || sc->sc_intr_established ||
 	    sc->sc_resources_ready)
 		return EBUSY;
@@ -1950,9 +1962,18 @@ rtw88_core_detach(struct rtw88_softc *sc)
 {
 	int error;
 
+#ifdef RTW88_RFK_EXPERIMENT
+	if (rtw8822c_rfk_active(sc))
+		return EBUSY;
+#endif
 	error = rtw88_stop(sc);
 	if (error != 0)
 		return error;
+#ifdef RTW88_RFK_EXPERIMENT
+	error = rtw8822c_rfk_free(sc);
+	if (error != 0)
+		return error;
+#endif
 	sc->sc_resources_ready = 0;
 	if (sc->sc_intr_established) {
 		sc->sc_ops->intr_disestablish(sc->sc_bus);

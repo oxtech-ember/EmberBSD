@@ -4,7 +4,12 @@
 #ifndef _DEV_IC_RTW88VAR_H_
 #define _DEV_IC_RTW88VAR_H_
 
+#ifdef _KERNEL
+#include "opt_rtw88_rfk.h"
+#endif
 #include <dev/ic/rtw88_hw.h>
+
+struct rtw8822c_rfk;
 
 /* Queue order follows the pinned rtw88 PCI transport. */
 #define RTW88_NTXRING 8
@@ -93,8 +98,22 @@ struct rtw88_ra_state {
 	int configured, active, protection_limited, error;
 };
 
+#ifdef RTW88_RFK_EXPERIMENT
+/* PCI-protected numeric mirror; only the owning process samples its context. */
+struct rtw88_rfk_diag {
+	uint64_t token;
+	uint32_t generation, baseline_generation, flags, global;
+	uint32_t kind, addr, size, raw, raw_valid, non_target;
+	uint32_t arms[7], done[7], operations, requested_delay_us, sleeps;
+	int error, cleanup_error;
+};
+#endif
+
 /* Visible counters; errors are never silently dropped. */
 struct rtw88_stats {
+#ifdef RTW88_RFK_EXPERIMENT
+	struct rtw88_rfk_diag rfk;
+#endif
 	struct rtw88_rx_signal signal;
 	uint64_t signal_reasons[RTW88_SIGNAL_REASONS];
 	uint64_t hw_requests, hw_reports, hw_missing, hw_foreign;
@@ -139,6 +158,10 @@ struct rtw88_packet_h2c {
 	uint16_t wp, sequence;
 	uint8_t active, initialized, attempted, busy, dirty;
 	int error;		/* Sticky after an uncertain DMA operation. */
+#ifdef RTW88_RFK_EXPERIMENT
+	uint16_t managed_old, managed_next;
+	uint8_t managed;
+#endif
 };
 
 /* Boot generation, never a peer/association identity. */
@@ -184,6 +207,10 @@ struct rtw88_softc {
 	uint32_t sc_generation;
 	uint32_t sc_h2c_box;
 	struct rtw88_packet_h2c sc_packet_h2c;
+#ifdef RTW88_RFK_EXPERIMENT
+	/* Original gain cache survives clean attempts; never the quarantine latch. */
+	struct rtw8822c_rfk *sc_rfk;
+#endif
 	struct rtw88_hw_feature_state sc_hw_feature;
 	struct rtw88_phy_state sc_phy;
 	unsigned sc_pg_rows;
@@ -234,6 +261,11 @@ int rtw88_fw_init(struct rtw88_softc *);
  * error stop the core; no buffer reuse is allowed before a new firmware epoch.
  */
 int rtw88_fw_packet(struct rtw88_softc *, const uint8_t *, size_t);
+#ifdef RTW88_RFK_EXPERIMENT
+/* Internal exclusive RFK IQK continuation. Each call is PCI-serialized. */
+int rtw88_fw_iqk_begin(struct rtw88_softc *);
+int rtw88_fw_iqk_poll(struct rtw88_softc *);
+#endif
 /* Caller serializes startup/stop. Errors retain unsafe ownership for a retry. */
 int rtw88_stop(struct rtw88_softc *);
 int rtw88_fw_mailbox_begin(struct rtw88_softc *, unsigned, int *);

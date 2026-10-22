@@ -27,6 +27,15 @@
 #include <dev/ic/rtw88_net.h>
 #include <dev/ic/rtw88_net_policy.h>
 #include <dev/ic/rtw88_net_mbuf.h>
+#ifdef RTW88_RFK_EXPERIMENT
+#include <dev/ic/rtw8822c_rfk.h>
+struct rtw88_net_rfk {
+	uint64_t epoch;
+	uint32_t generation;
+	unsigned channel, drained, ran;
+	uint32_t values[192];
+};
+#endif
 
 struct rtw88_net_rx {
 	struct mbuf *m;
@@ -61,6 +70,9 @@ struct rtw88_net {
 	struct rtw88_net_stats stats;
 	unsigned tx_timer;
 	unsigned tx_completed;
+#ifdef RTW88_RFK_EXPERIMENT
+	struct rtw88_net_rfk rfk;
+#endif
 };
 
 static void rtw88_net_start(struct ifnet *);
@@ -449,6 +461,10 @@ rtw88_net_ra_prepare(struct ieee80211com *ic, unsigned channel,
 	return 0;
 }
 
+#ifdef RTW88_RFK_EXPERIMENT
+#include <dev/ic/rtw88_net_rfk.inc>
+#endif
+
 /* Giant serializes state and queues. Never wait for this worker from itself. */
 static int
 rtw88_net_restart_peer(struct rtw88_net *net)
@@ -594,6 +610,16 @@ rtw88_net_state_work(struct work *work, void *cookie)
 
 	(void)work;
 	for (;;) {
+#ifdef RTW88_RFK_EXPERIMENT
+		/* Retire the OLD numeric owner before any restart or early dying
+		 * return. Detach keeps resources and net allocated through wait. */
+		if (rtw8822c_rfk_active(net->core) &&
+		    (net->policy.dying || net->reset_required ||
+		     net->rfk.epoch != net->policy.epoch ||
+		     net->requested != IEEE80211_S_AUTH))
+			(void)rtw8822c_rfk_retire(net->core);
+		rtw88_net_rfk_publish(net);
+#endif
 		mutex_enter(net->lock);
 		if (net->policy.dying) {
 			net->work_pending = 0;
@@ -649,18 +675,54 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			prepare_error = rtw88_net_ra_prepare(ic, channel, basic,
 			    epoch, &ra);
 		}
+#ifdef RTW88_RFK_EXPERIMENT
+		/* A retired uncertain owner also blocks an already-started core.
+		 * Ordinary SCAN/INIT coalescing cannot bypass it without start(). */
+		if (prepare_error == 0 && rtw8822c_rfk_blocked() &&
+		    !rtw8822c_rfk_active(net->core))
+			prepare_error = EBUSY;
+		/* Acquire before C1. No IO is added to an unstarted INIT. */
+		if (prepare_error == 0 && state == IEEE80211_S_AUTH)
+			prepare_error = rtw88_net_rfk_begin(net);
+#endif
 		if (net->core->sc_started && drain_epoch != epoch) {
 			drain_epoch = epoch;
 			drain_gen = net->core->sc_generation;
 			drain_deadline = (unsigned)getticks() + MAX(1, mstohz(1000));
 		}
-		if (prepare_error == 0) {
+		if (prepare_error == 0
+#ifdef RTW88_RFK_EXPERIMENT
+		    && !(state == IEEE80211_S_AUTH && net->rfk.drained)
+#endif
+		    ) {
 			prepare_stage = RTW88_NET_STAGE_CORE;
 			prepare_error = rtw88_net_drain_wait(net, epoch, drain_gen,
 			    drain_deadline, state == IEEE80211_S_INIT, &mailbox_retry);
 			if (mailbox_retry || prepare_error == ECANCELED)
 				continue;
 		}
+#ifdef RTW88_RFK_EXPERIMENT
+		if (prepare_error == 0 && state == IEEE80211_S_AUTH) {
+			/* No producer can add a descriptor while this same numeric
+			 * request owns the existing all-five-queue admission fence. */
+			net->rfk.drained = 1;
+			if (!net->rfk.ran) {
+				mutex_enter(net->lock);
+				prepare_error = epoch != net->policy.epoch || net->policy.dying ?
+				    ECANCELED : rtw88_channel(net->core, channel);
+				mutex_exit(net->lock);
+				if (prepare_error == 0)
+					prepare_error = rtw8822c_rfk_run(net->core);
+				/* A same-epoch value/provider change has no successor
+				 * request. Send it through the existing INIT/stop owner. */
+				if (prepare_error == ECANCELED && epoch == net->policy.epoch &&
+				    !net->policy.dying)
+					prepare_error = ESTALE;
+				if (prepare_error == 0)
+					net->rfk.ran = 1;
+			}
+		}
+#endif
 		/* Current core is stable under Giant; no pointers survive a sleep. */
 		mailbox_count = prepare_error != 0 || !net->core->sc_started ? 0 :
 		    state == IEEE80211_S_RUN ? 2 +
@@ -714,7 +776,11 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		if (error != 0) {
 			diag.stage = prepare_stage;
 		} else if (net->core->sc_started) {
-			if (state != IEEE80211_S_INIT) {
+			if (state != IEEE80211_S_INIT
+#ifdef RTW88_RFK_EXPERIMENT
+			    && state != IEEE80211_S_AUTH
+#endif
+			    ) {
 				diag.stage = RTW88_NET_STAGE_CHANNEL;
 				error = rtw88_channel(net->core, channel);
 			}
@@ -744,6 +810,16 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		if (error != 0)
 			rtw88_ra_invalidate(net->core);
 		mutex_exit(net->lock);
+#ifdef RTW88_RFK_EXPERIMENT
+		/* Completion has restored the outer originals. On any failure this
+		 * retires the old engine before the existing INIT/stop owner. */
+		if (rtw8822c_rfk_active(net->core)) {
+			int retire_error = rtw8822c_rfk_retire(net->core);
+			if (error == 0 && retire_error != 0)
+				error = retire_error;
+		}
+		rtw88_net_rfk_publish(net);
+#endif
 		if (error != ECANCELED) {
 			if (error != 0) {
 				(void)ieee80211_ht20_state_request(ic, IEEE80211_S_INIT);

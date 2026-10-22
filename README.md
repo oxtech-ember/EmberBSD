@@ -1186,7 +1186,11 @@ The base system shell is unchanged.
   lock. Source contracts cover request cancellation, full peer/profile checks
   after each wake and non-waiting station/RA commit. GCC16 kernel `d5b249d0b`
   passes bounded manual-scan recovery, IPv6 and four-AC/data regression checks.
-  This does not add RFK.
+  This does not add RFK. A separate default-OFF
+  [manual RFK experiment](ember/development/rtl8822c-rfk-experiment.md)
+  owns a bounded full GAPK/IQK/DPK transaction before AUTH. Its strict completion
+  oracle and quarantine are source contracts; physical calibration and HT
+  readiness remain unqualified. Ordinary profiles do not enable that experiment.
   Source contracts also drain posted native TX through the actual completion
   decoder before retuning, with bounded waits and existing failure ownership.
   GCC16 kernel `4f152fc21` passes bounded scan, IPv6 and data regression checks.

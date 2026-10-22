@@ -18,6 +18,9 @@
 #include <sys/bus.h>
 #endif
 #include <dev/ic/rtw88var.h>
+#ifdef RTW88_RFK_EXPERIMENT
+#include <dev/ic/rtw8822c_rfk.h>
+#endif
 
 #define H2C_DESA 0x1320U
 #define H2C_NUM 0x1328U
@@ -148,7 +151,8 @@ wait_consumed(struct rtw88_softc *sc, unsigned old, unsigned next,
 
 /* The entry points hold external ownership and have set busy. */
 static int
-send_packet(struct rtw88_softc *sc, const uint8_t command[32], unsigned *waited)
+publish_packet(struct rtw88_softc *sc, const uint8_t command[32],
+    unsigned *published_old, unsigned *published_next)
 {
 	struct rtw88_packet_h2c *state = &sc->sc_packet_h2c;
 	struct rtw88_dma *packet = &sc->sc_fw_dma, *ring = &sc->sc_ring[7];
@@ -194,9 +198,23 @@ send_packet(struct rtw88_softc *sc, const uint8_t command[32], unsigned *waited)
 	error = sc->sc_ops->write_2(sc->sc_bus, H2C_IDX, (uint16_t)next);
 	if (error != 0)
 		goto uncertain;
-	error = wait_consumed(sc, old, next, waited);
-	if (error != 0)
-		goto uncertain;
+	*published_old = old;
+	*published_next = next;
+	return 0;
+uncertain:
+	/* A failed hardware snapshot also invalidates ownership trust. */
+	state->dirty = 1;
+	state->error = error;
+	return error;
+}
+
+static int
+finish_packet(struct rtw88_softc *sc)
+{
+	struct rtw88_packet_h2c *state = &sc->sc_packet_h2c;
+	struct rtw88_dma *packet = &sc->sc_fw_dma, *ring = &sc->sc_ring[7];
+	int error;
+
 	sc->sc_ops->dma_sync(sc->sc_bus, packet, BUS_DMASYNC_POSTWRITE);
 	if (canceled(sc, state->generation)) {
 		error = EINTR;
@@ -215,6 +233,101 @@ uncertain:
 	state->error = error;
 	return error;
 }
+
+/* The synchronous boot/public path retains its original poll and IO order. */
+static int
+send_packet(struct rtw88_softc *sc, const uint8_t command[32], unsigned *waited)
+{
+	unsigned old, next;
+	int error;
+
+	error = publish_packet(sc, command, &old, &next);
+	if (error != 0)
+		return error;
+	error = wait_consumed(sc, old, next, waited);
+	if (error == 0)
+		return finish_packet(sc);
+	sc->sc_packet_h2c.dirty = 1;
+	sc->sc_packet_h2c.error = error;
+	return error;
+}
+
+#ifdef RTW88_RFK_EXPERIMENT
+/* Only the actual exclusive RFK owner consumes this split IQK transport.
+ * Caller holds PCI for each bounded call, and yields between EAGAIN polls.
+ * Successful DMA consumption is never semantic IQK completion. */
+int
+rtw88_fw_iqk_begin(struct rtw88_softc *sc)
+{
+	const uint8_t command[32] = {1, 0xff, 0x0e, 0, 9, 0, 0, 0, 1};
+	struct rtw88_packet_h2c *state = &sc->sc_packet_h2c;
+	unsigned old, next;
+	int error;
+
+	if (!rtw8822c_rfk_active(sc))
+		return EPERM;
+	error = validate(sc);
+	if (error != 0)
+		return error;
+	if (!sc->sc_started || sc->sc_bootstrapping || !state->initialized)
+		return ENXIO;
+	state->busy = 1;
+	error = publish_packet(sc, command, &old, &next);
+	if (error != 0) {
+		state->busy = 0;
+		return error;
+	}
+	state->managed_old = (uint16_t)old;
+	state->managed_next = (uint16_t)next;
+	state->managed = 1;
+	return 0;
+}
+
+int
+rtw88_fw_iqk_poll(struct rtw88_softc *sc)
+{
+	struct rtw88_packet_h2c *state = &sc->sc_packet_h2c;
+	uint32_t idx;
+	unsigned rp;
+	int error;
+
+	if (!rtw8822c_rfk_active(sc) || !state->managed || !state->busy)
+		return EINVAL;
+	/* A subsequent cleanup snapshot cannot erase a prior uncertain DMA
+	 * read/write. Only the existing verified stop/new-FW owner can reuse it. */
+	if (state->error != 0)
+		return state->error;
+	if (canceled(sc, state->generation)) {
+		error = EINTR;
+		goto uncertain;
+	}
+	error = sc->sc_ops->read_4(sc->sc_bus, H2C_IDX, &idx);
+	if (error != 0)
+		goto uncertain;
+	if (canceled(sc, state->generation)) {
+		error = EINTR;
+		goto uncertain;
+	}
+	rp = (idx >> 16) & 0xfff;
+	if ((idx & 0xfff) != state->managed_next ||
+	    (rp != state->managed_old && rp != state->managed_next)) {
+		error = EIO;
+		goto uncertain;
+	}
+	if (rp != state->managed_next)
+		return EAGAIN;
+	error = finish_packet(sc);
+	if (error != 0)
+		goto uncertain;
+	state->busy = state->managed = 0;
+	return 0;
+uncertain:
+	state->dirty = 1;
+	state->error = error;
+	/* Retain busy/managed and both DMA mappings until the stop owner. */
+	return error;
+}
+#endif
 
 int
 rtw88_fw_packet(struct rtw88_softc *sc, const uint8_t *packet, size_t len)

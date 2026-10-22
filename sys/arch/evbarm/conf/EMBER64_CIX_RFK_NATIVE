@@ -1,0 +1,5 @@
+# Controlled cold-reset RFK trial only: manual single-user boot, no auto network.
+# Keep the ordinary/default kernel and boot menu selections unchanged.
+include "arch/evbarm/conf/EMBER64_CIX_PERIPHERALS"
+
+options RTW88_RFK_EXPERIMENT

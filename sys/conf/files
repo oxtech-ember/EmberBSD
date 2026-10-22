@@ -741,6 +741,7 @@ file	dev/ic/atw.c			atw
 # Realtek RTL8822CE native station core.
 # Config base cannot be rtw88: names must not end in a digit. rtw is RTL8180.
 device	rtwce: arp, wlan, ifnet, firmload
+defflag	opt_rtw88_rfk.h	RTW88_RFK_EXPERIMENT
 file	dev/ic/rtw88.c			rtwce
 file	dev/ic/rtw88_fw_init.c		rtwce
 file	dev/ic/rtw88_hw.c		rtwce
@@ -750,6 +751,7 @@ file	dev/ic/rtw8822c_power.c		rtwce
 file	dev/ic/rtw8822c_mac.c		rtwce
 file	dev/ic/rtw8822c_phy.c		rtwce
 file	dev/ic/rtw8822c_dack.c		rtwce
+file	dev/ic/rtw8822c_rfk.c		rtwce
 file	dev/ic/rtw8822c_table.c		rtwce
 file	dev/ic/rtw8822c_coex.c		rtwce
 file	dev/ic/rtw8822c_txpwr.c		rtwce
