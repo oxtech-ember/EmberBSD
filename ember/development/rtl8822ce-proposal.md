@@ -817,3 +817,34 @@ inherited dead store in generic lookup and finds no new issue; it is not clean.
 On physical kernel `4f152fc21`, 100 CLI reads interleaved with 20 peer pings pass.
 Strings span 1373 through 1380 bytes, exceeding the CLI's initial 1024 bytes.
 These bounded tests do not qualify arbitrary concurrency or long-term stability.
+
+
+### Pinned default-ACK register parity
+
+The final native RCR mask now retains `BIT_VHT_DACK` (bit 26).
+It changes from `0xf010400e` to `0xf410400e`; every other bit stays unchanged.
+Earlier native MAC initialization already set this bit. The final mask had
+cleared it. FreeBSD source `d2145e9b96448da34d3cfede24c509af6d830c92`
+sets the bit unconditionally in its default-ACK setup. Its RTL RX aggregation
+start/stop callbacks perform no per-TID device operation.
+
+The actual-start contract detects the old mask with five failures.
+The corrected source passes 338601 checks, including station unlink/link,
+stop/start and final-write failure recovery. Appended BA SSN, hardware crypto,
+BA parser state and BAR ACK type remain unchanged. GCC path analysis,
+Cppcheck and CSA pass for the start and core/PCI consumers.
+
+GCC16 AArch64 kernel `9c1de345a` passes a physical legacy regression:
+clean warm boot, WPA2/CCMP, DHCP, IPv6 and two disruptive scan recoveries
+in 26/12 seconds. Each recovery restores LAN link-local IPv6 SSH.
+Four queues return 12/12 replies. Bidirectional 1 MiB SSH/raw-IPv6 hashes match.
+A separate 11a transition fails before scanning: initial setup retains an
+old 2.4 GHz channel. After the trial restores AUTO, data returns in 26 seconds.
+That failed trial leaves seven output errors; it does not qualify 5 GHz
+on the current AP. Earlier data/queue probes have zero error increments.
+
+This result qualifies register-source parity and bounded legacy regression.
+It includes no direct physical RCR readback or transmitted ACK/BlockAck proof.
+Hardware BA with software CCMP needs independent radio evidence, including
+sequence/bitmap behavior and reconnect teardown. The HT provider remains NULL.
+Calibration, HT/VHT and maximum throughput remain unqualified.
