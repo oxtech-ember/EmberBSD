@@ -37,6 +37,7 @@ model=replace(model,old_state,new_state)
 (out/'routing-model.inc').write_text(model)
 # Extend only the service/layout model; never rewrite an owning production body.
 routing=read('ember/tools/rtw88-routing-contract.c')
+routing=replace(routing,'static uint64_t rtw88_net_rxba_now(struct ieee80211com *ic) { (void)ic;return 1; }','static uint64_t rtw88_net_rxba_now(struct ieee80211com *ic);')
 routing=replace(routing,'#include "routing-constants.inc"','#include "routing-constants.inc"\n#include "enable-constants.inc"\nstruct ifmedia_entry { int ifm_media; };\nstruct ifmedia { struct ifmedia_entry entries[128],*ifm_cur; int ifm_media; unsigned count; };\nstruct ifmediareq { int ifm_active; };\ntypedef int ieee80211_media_lock_t;\nstruct ifnet;\ntypedef int (*ifm_change_cb_t)(struct ifnet *);\ntypedef void (*ifm_stat_cb_t)(struct ifnet *,struct ifmediareq *);')
 routing=replace(routing,'    struct ieee80211com ic;','''    struct ieee80211com ic;
     device_t dev;
@@ -54,6 +55,7 @@ for name in ('sys/net80211/_ieee80211.h','sys/net/if_media.h','sys/net80211/ieee
   if re.match(r'^#define\s+(?:_?IEEE80211_(?:CHAN_|IS_CHAN|MODE_AUTO|BINTVAL_DEFAULT|DTIM_DEFAULT|TXPOWER_MAX)|_?IFM_)',line):
    if re.match(r'^#define\s+IEEE80211_IS_CHAN_(?:2GHZ|FHSS)\(',line):continue
    parts.append(line)
+parts.append(re.search(r'^#define\s+CALLOUT_MPSAFE\s+.*$',read('sys/sys/callout.h'),re.M).group())
 parts+=['#define IEEE80211_BEACON_LOCK_INIT(...) ((void)0)','#define LIST_INSERT_HEAD(...) ((void)0)']
 (out/'enable-constants.inc').write_text('\n'.join(parts)+'\n')
 # Keep complete actual shared ifattach and setmode, including its disabled default.
@@ -71,8 +73,10 @@ bsd=read('sys/net80211/ieee80211_netbsd.c')
 parts=[net[:net.index('#include')], bsd[:bsd.index('#include')],
        '#define ifqueue queue\n', function(bsd,'ieee80211_drain_ifq','static void'),
        '#undef ifqueue\n']
-for name,result in [('rtw88_net_basic_rates','static unsigned'),('rtw88_net_wme_apply','static int'),('rtw88_net_edca_prepare','static int'),('rtw88_net_ra_prepare','static int'),('rtw88_net_restart_peer','static int'),('rtw88_net_mailbox_wait','static int'),('rtw88_net_state_work','static void'),('rtw88_net_attach','int')]:
+for name,result in [('rtw88_net_rxba_now','static uint64_t'),('rtw88_net_rxba_ticks','static int'),('rtw88_net_rxba_timeout','static void'),('rtw88_net_rxba_schedule','static int'),('rtw88_net_rxba_cancel','static void'),('rtw88_net_rxba_quiesce','static void'),('rtw88_net_rxba_attach','static void'),('rtw88_net_rxba_detach','static void'),('rtw88_net_basic_rates','static unsigned'),('rtw88_net_wme_apply','static int'),('rtw88_net_edca_prepare','static int'),('rtw88_net_ra_prepare','static int'),('rtw88_net_restart_peer','static int'),('rtw88_net_mailbox_wait','static int'),('rtw88_net_state_work','static void'),('rtw88_net_attach','int')]:
  # A source baseline may predate the checkpoint; no replacement body is supplied.
  if name=='rtw88_net_mailbox_wait' and not re.search(r'^'+name+r'\(',net,re.M):continue
+ if name=='rtw88_net_rxba_attach':
+  parts.append(re.search(r'^static const struct ieee80211_rxba_ops rtw88_net_rxba_ops = \{.*?^};',net,re.M|re.S).group()+'\n')
  parts.append(function(net,name,result))
 (out/'enable-native.inc').write_text('\n'.join(parts))

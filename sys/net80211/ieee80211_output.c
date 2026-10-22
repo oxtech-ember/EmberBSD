@@ -236,7 +236,8 @@ ieee80211_ht20_request_offer(const struct mbuf *m, int type,
 static int
 ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
     struct mbuf *m, int type, int timer, int wme_offer,
-    const struct ieee80211_ht20_profile *ht20)
+    const struct ieee80211_ht20_profile *ht20,
+    struct ieee80211_rxba_candidate *ba)
 {
 	struct ifnet *ifp = ic->ic_ifp;
 	struct ieee80211_frame *wh;
@@ -292,9 +293,13 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
 		m_freem(m);
 		return EINVAL;
 	}
-	/* Only the new admitted HT producer requires bounded queue admission.
-	 * The legacy path keeps its existing queue semantics. */
-	if (ht20 != NULL && ic->ic_mgtq.ifq_len >=
+	if (ba != NULL && ieee80211_rxba_response_check(ic, ni, m, ba) != 0) {
+		M_SETCTX(m, NULL);
+		m_freem(m);
+		return EINVAL;
+	}
+	/* New HT/BA producers require bounded queue admission. Legacy is unchanged. */
+	if ((ht20 != NULL || type == IEEE80211_FC0_SUBTYPE_ACTION) && ic->ic_mgtq.ifq_len >=
 	    (ic->ic_mgtq.ifq_maxlen > 0 ? ic->ic_mgtq.ifq_maxlen : IFQ_MAXLEN)) {
 		IF_DROP(&ic->ic_mgtq);
 		M_SETCTX(m, NULL);
@@ -303,6 +308,8 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
 	}
 	IEEE80211_NODE_STAT(ni, tx_mgmt);
 	IF_ENQUEUE(&ic->ic_mgtq, m);
+	if (ba != NULL)
+		ieee80211_rxba_response_commit(ic, ni, ba);
 	/* Queue admission is not a hardware transmit or acknowledgement. */
 	if (wme_offer && ieee80211_wme_request_offer(m, type) &&
 	    ic->ic_opmode == IEEE80211_M_STA &&
@@ -1425,6 +1432,41 @@ ieee80211_add_wme_param(u_int8_t *frm, struct ieee80211_wme_state *wme)
 }
 #undef WME_OUI_BYTES
 
+/* Immediate RX ADDBA response. A success requires a prepared shared candidate. */
+int
+ieee80211_send_rxba_response(struct ieee80211com *ic, struct ieee80211_node *ni,
+    uint8_t token, uint16_t status, uint16_t params, uint16_t timeout,
+    struct ieee80211_rxba_candidate *candidate)
+{
+	struct mbuf *m;
+	uint8_t *p;
+	int error;
+
+	if (status == 0 && candidate == NULL)
+		return EINVAL;
+	ieee80211_ref_node(ni);
+	m = ieee80211_getmgtframe(&p, 9);
+	if (m == NULL) {
+		ieee80211_free_node(ni);
+		return ENOMEM;
+	}
+	p[0] = 3;
+	p[1] = 1;
+	p[2] = token;
+	p[3] = status;
+	p[4] = status >> 8;
+	p[5] = params;
+	p[6] = params >> 8;
+	p[7] = timeout;
+	p[8] = timeout >> 8;
+	m->m_len = m->m_pkthdr.len = 9;
+	error = ieee80211_mgmt_output(ic, ni, m, IEEE80211_FC0_SUBTYPE_ACTION,
+	    0, 0, NULL, candidate);
+	if (error != 0)
+		ieee80211_free_node(ni);
+	return error;
+}
+
 /*
  * Send a probe request frame with the specified ssid
  * and any optional information element data.
@@ -1899,7 +1941,7 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		/* NOTREACHED */
 	}
 	ret = ieee80211_mgmt_output(ic, ni, m, type, timer, wme_offer,
-	    ht20_offer ? &ht20 : NULL);
+	    ht20_offer ? &ht20 : NULL, NULL);
 	if (ret != 0) {
 bad:
 		ieee80211_free_node(ni);

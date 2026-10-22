@@ -6,7 +6,9 @@ import pathlib
 import os
 import re
 import sys
+import subprocess
 src, out = map(pathlib.Path, sys.argv[1:])
+subprocess.run([sys.executable,str(src/"ember/tools/net80211-rxba-lifecycle-extract.py"),str(src),str(out)],check=True)
 net_source = pathlib.Path(os.environ.get('RTW88_STATE_SOURCE',
     src/'sys/dev/ic/rtw88_net.c')).read_text()
 def read(path):
@@ -17,13 +19,13 @@ def function(name, result):
         raise ValueError(name)
     return result+'\n'+match.group()+'\n'
 proto = read('sys/net80211/ieee80211_proto.h')
-parts = [read('sys/net80211/_ieee80211.h'), read('sys/net80211/ieee80211_ht20.h')]
+parts = [read('sys/net80211/ieee80211_rxba.h'),read('sys/net80211/_ieee80211.h'), read('sys/net80211/ieee80211_ht20.h')]
 parts.append(re.search(r'^enum ieee80211_state \{.*?^};', proto, re.M|re.S).group())
 parts.append('#define WME_NUM_AC 4\nstruct ieee80211com;\n')
 for name in ('wmeParams', 'chanAccParams', 'ieee80211_wme_state'):
     parts.append(re.search(r'^struct '+name+r' \{.*?^};', proto, re.M|re.S).group())
 for path, names in [('sys/net80211/ieee80211_var.h',r'IEEE80211_(C_WME|F_WME|F_SHSLOT|F_USEPROT|F_PRIVACY|FIXED_RATE_NONE)'),
-                    ('sys/net80211/ieee80211_node.h',r'IEEE80211_NODE_(QOS|WME_VALID|WME_OFFER)'),
+                    ('sys/net80211/ieee80211_node.h',r'IEEE80211_NODE_(QOS|WME_VALID|WME_OFFER|AMSDU_RX)'),
                     ('sys/net80211/ieee80211.h',r'IEEE80211_RATE_(BASIC|VAL)'),
                     ('sys/net/if_media.h',r'_?IFM_(NONE|L_OWNLOCK|NMASK|MMASK|TMASK|ETHER|ETH_XTMASK|ETHER_SUBTYPE_GET\(x\)|SUBTYPE\(x\)|TYPE\(x\)|MODE\(x\)|AUTO|IEEE80211(?:_11[A-Z]+|_FH|_TURBO)?)')]:
     source = re.sub(r'/\*.*?\*/', '', read(path).replace('\\\n', ''), flags=re.S)

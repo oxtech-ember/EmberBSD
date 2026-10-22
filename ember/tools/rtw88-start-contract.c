@@ -1380,6 +1380,19 @@ test_network_delivery(void)
 	CHECK(memcmp(rx_copy, frame, 24) == 0);
 	CHECK(sc.sc_stats.rx_errors == 2 && sc.sc_stats.rx_tag_errors == 1);
 	CHECK(rx_armed(&sc, 4) && rx_armed(&sc, 5));
+	/* A compressed single-TID BAR is20 bytes plus APP_FCS. Other short
+	 * control shapes and descriptor faults stay below the native callback. */
+	uint8_t bar[24] = {0x84};bar[16]=4;
+	for (i=6;i<13;i++)
+		rx_put(&sc,i,sizeof(bar),0,bar,(uint16_t)i);
+	((uint8_t *)sc.sc_rxbuf[7].vaddr)[RTW8822C_RX_PACKET_DESC_SIZE+16]=0;
+	((uint8_t *)sc.sc_rxbuf[8].vaddr)[RTW8822C_RX_PACKET_DESC_SIZE+17]=0x80;
+	((uint8_t *)sc.sc_rxbuf[9].vaddr)[RTW8822C_RX_PACKET_DESC_SIZE+18]=1;
+	((uint8_t *)sc.sc_rxbuf[10].vaddr)[1]|=0x40;
+	((uint8_t *)sc.sc_rxbuf[11].vaddr)[1]|=0x80;
+	((uint8_t *)sc.sc_rxbuf[12].vaddr)[11]|=0x10;
+	f.rx_hw_idx=13;set_hisr0(0x01);CHECK(rtw88_intr(&sc)==1);
+	CHECK(rx_delivered==2 && rx_copy_len==20 && memcmp(rx_copy,bar,20)==0);
 	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, frame, 24) == 0);
 	f.tx_hw_rp[0] = 1;
 	set_hisr0(0x40); /* MGNTDOK. */
@@ -1387,9 +1400,9 @@ test_network_delivery(void)
 	set_hisr0(0x40);
 	CHECK(rtw88_intr(&sc) == 1 && tx_completed == 1);
 	rtw88_stop(&sc);
-	f.rx_hw_idx = 7;
+	f.rx_hw_idx = 14;
 	set_hisr0(0x41);
-	CHECK(rtw88_intr(&sc) == 0 && rx_delivered == 1 && tx_completed == 1);
+	CHECK(rtw88_intr(&sc) == 0 && rx_delivered == 2 && tx_completed == 1);
 	rtw88_core_detach(&sc);
 }
 

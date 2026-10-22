@@ -11,7 +11,13 @@ rtw88_net_rx_mbuf(const uint8_t *frame, size_t len, struct ifnet *ifp)
 {
 	struct mbuf *m;
 
-	if (frame == NULL || len < 24 || len > RTW88_NET_MPDU_LIMIT)
+	if (frame == NULL || len > RTW88_NET_MPDU_LIMIT)
+		return NULL;
+	/* The policy owner already checked the current authorized BA peer. Keep
+	 * the allocator boundary narrow as well: no generic short control input. */
+	if (len < 24 && !(len == 20 && frame[0] == 0x84 &&
+	    (frame[1] & ~0x08) == 0 && frame[16] == 4 &&
+	    (frame[17] & 0x8f) == 0 && (frame[18] & 15) == 0))
 		return NULL;
 	if ((frame[0] & 0x0c) != 0)
 		return m_devget((char *)__UNCONST(frame), (int)len, 0, ifp);

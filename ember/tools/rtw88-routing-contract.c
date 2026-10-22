@@ -23,6 +23,9 @@
 #undef ieee80211_new_state
 #include "routing-bpf.inc"
 #include <dev/ic/rtw88_net_policy.h>
+#ifndef MIN
+#define MIN(a,b) ((a)<(b)?(a):(b))
+#endif
 #define IFF_RUNNING 1
 #define IFF_OACTIVE 2
 #define if_oerrors 1
@@ -35,7 +38,7 @@ struct work { int unused; };
 struct workqueue { unsigned queued; };
 struct rtw88_net_rx {
     struct mbuf *m;
-    uint64_t epoch;
+    uint64_t epoch, arrived;
     uint32_t tsf, generation;
     uint8_t quality;
 };
@@ -53,7 +56,8 @@ struct rtw88_net {
     struct rtw88_net_policy policy;
     kmutex_t *lock;
     int work_pending, reset_required;
-    int scan, state_arg;
+    int scan, rxba_callout, state_arg;
+    uint64_t rxba_token,rxba_deadline,rxba_due;
     enum ieee80211_state requested;
     unsigned channel;
     struct work state_work;
@@ -106,6 +110,8 @@ static void *ieee80211_crypto_encap(struct ieee80211com *ic, struct ieee80211_no
 #define ieee80211_chan2ieee(ic,ch) ((void)(ic),(void)(ch),1U)
 static unsigned route_ticks=1;
 static unsigned getticks(void) { return route_ticks; }
+/* Default-OFF routing service; active timer/arrival ordering has its own actual native fixture. */
+static uint64_t rtw88_net_rxba_now(struct ieee80211com *ic) { (void)ic;return 1; }
 static struct ieee80211_node *ieee80211_find_rxnode(struct ieee80211com *ic,const void *wh)
 { (void)wh;ieee80211_ref_node(ic->ic_bss);return ic->ic_bss; }
 static void ieee80211_input(struct ieee80211com *ic,struct mbuf *m,
@@ -118,6 +124,7 @@ static void workqueue_enqueue(struct workqueue *q,struct work *w,void *cookie)
 { (void)w;(void)cookie;assert(q);q->queued++; }
 static int route_new_state(struct ieee80211com *ic,int state,int arg)
 { return rtw88_net_newstate(ic,(enum ieee80211_state)state,arg); }
+#include "routing-rxba-native.inc"
 #define ieee80211_new_state route_new_state
 #include "routing-native.inc"
 #undef ieee80211_new_state

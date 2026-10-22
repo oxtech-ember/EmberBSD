@@ -1,6 +1,13 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Explicit kernel registration/service model for the owning attach function. */
 #include <stdarg.h>
+#include <time.h>
+#include <limits.h>
+#ifndef MAX
+#define MAX(a,b) ((a)>(b)?(a):(b))
+#endif
+#define hz 1000
+static void getnanouptime(struct timespec *ts) { ts->tv_sec=1;ts->tv_nsec=0; }
 #define KM_SLEEP 0
 #ifndef MAX
 #define MAX(a,b) ((a)>(b)?(a):(b))
@@ -40,6 +47,7 @@ static void callout_init(int *c,int flags) { (void)c;(void)flags; }
 static void callout_setfunc(int *c,void (*fn)(void *),void *cookie)
 { (void)c;(void)fn;(void)cookie; }
 static void callout_destroy(int *c) { (void)c; }
+static void callout_halt(int *c,void *lock) { (void)c;assert(lock==NULL); }
 static void callout_schedule(int *c,unsigned ticks) { (void)c;(void)ticks; }
 static unsigned mstohz(unsigned ms) { return ms; }
 /* Process sleep/clock boundary: the real kernel owns Giant release semantics. */
@@ -92,6 +100,7 @@ static void ieee80211_node_lateattach(struct ieee80211com *ic)
 }
 static void ieee80211_proto_attach(struct ieee80211com *ic)
 {
+    ic->ic_rxba_ops=NULL;ic->ic_rxba_serial=0;
     ic->ic_newstate=enable_parent_state;
     ic->ic_fixed_rate=IEEE80211_FIXED_RATE_NONE;
     ic->ic_fragthreshold=4096;

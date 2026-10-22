@@ -12,8 +12,10 @@
 #include <sys/device.h>
 #include <sys/kmem.h>
 #include <sys/kernel.h>
+#include <sys/limits.h>
 #include <sys/mbuf.h>
 #include <sys/callout.h>
+#include <sys/timevar.h>
 #include <sys/workqueue.h>
 #include <sys/intr.h>
 #include <net/if.h>
@@ -29,7 +31,7 @@
 
 struct rtw88_net_rx {
 	struct mbuf *m;
-	uint64_t epoch;
+	uint64_t epoch, arrived;
 	uint32_t tsf, generation;
 	uint8_t quality;
 };
@@ -43,7 +45,8 @@ struct rtw88_net {
 	struct workqueue *wq;
 	struct work state_work;
 	void *softint;
-	callout_t scan;
+	callout_t scan, rxba_callout;
+	uint64_t rxba_token, rxba_deadline, rxba_due;
 	struct rtw88_net_policy policy;
 	struct rtw88_net_rx rx[RTW88_NET_RX_LIMIT];
 	unsigned rx_head, rx_tail;
@@ -65,6 +68,175 @@ static void rtw88_net_start(struct ifnet *);
 static void rtw88_net_stop(struct ifnet *, int);
 static int rtw88_net_init(struct ifnet *);
 static int rtw88_net_newstate(struct ieee80211com *, enum ieee80211_state, int);
+
+/* This MPSAFE callout retains only interface-owned numeric tokens. The shared
+ * stack and all node/key lifetime work run in the existing Giant softintr. */
+static uint64_t
+rtw88_net_rxba_now(struct ieee80211com *ic)
+{
+	struct timespec ts;
+	uint64_t ms, fraction;
+
+	(void)ic;
+	getnanouptime(&ts);
+	if (ts.tv_sec < 0 || (uint64_t)ts.tv_sec > UINT64_MAX / 1000)
+		return UINT64_MAX;
+	ms = (uint64_t)ts.tv_sec * 1000;
+	fraction = (uint64_t)ts.tv_nsec / 1000000;
+	return fraction > UINT64_MAX - ms ? UINT64_MAX : ms + fraction;
+}
+
+static int
+rtw88_net_rxba_ticks(uint64_t now, uint64_t deadline)
+{
+	uint64_t span = deadline > now ? deadline - now : 0, count;
+
+	if (now == UINT64_MAX || span > INT_MAX || hz <= 0)
+		return 0;
+	count = (span * (unsigned)hz + 999) / 1000;
+	return count > INT_MAX ? 0 : (int)MAX(count, 1);
+}
+
+static void
+rtw88_net_rxba_timeout(void *cookie)
+{
+	struct rtw88_net *net = cookie;
+	uint64_t now = rtw88_net_rxba_now(&net->ic);
+	int delay;
+
+	mutex_enter(net->lock);
+	if (!net->policy.dying && net->rxba_token != 0) {
+		if (now < net->rxba_deadline) {
+			delay = rtw88_net_rxba_ticks(now, net->rxba_deadline);
+			/* The original validated span bounds this early callback. */
+			if (delay != 0)
+				callout_schedule(&net->rxba_callout, delay);
+		} else {
+			net->rxba_due = net->rxba_token;
+			net->rxba_token = 0;
+			softint_schedule(net->softint);
+		}
+	}
+	mutex_exit(net->lock);
+}
+
+static int
+rtw88_net_rxba_schedule(struct ieee80211com *ic, uint64_t deadline,
+    uint64_t token)
+{
+	struct rtw88_net *net = ic->ic_ifp->if_softc;
+	int error = 0, delay;
+
+	KASSERT(!mutex_owned(net->lock));
+	delay = rtw88_net_rxba_ticks(rtw88_net_rxba_now(ic), deadline);
+	if (token == 0 || delay == 0)
+		return EOVERFLOW;
+	mutex_enter(net->lock);
+	if (net->policy.dying)
+		error = ENXIO;
+	else {
+		net->rxba_deadline = deadline;
+		net->rxba_token = token;
+		net->rxba_due = 0;
+		callout_schedule(&net->rxba_callout, delay);
+	}
+	mutex_exit(net->lock);
+	return error;
+}
+
+static void
+rtw88_net_rxba_cancel(struct ieee80211com *ic)
+{
+	struct rtw88_net *net = ic->ic_ifp->if_softc;
+
+	KASSERT(!mutex_owned(net->lock));
+	mutex_enter(net->lock);
+	net->rxba_token = net->rxba_due = 0;
+	net->rxba_deadline = 0;
+	callout_stop(&net->rxba_callout);
+	mutex_exit(net->lock);
+}
+
+static void
+rtw88_net_rxba_publish(struct rtw88_net *net)
+{
+	struct ieee80211com *ic = &net->ic;
+	struct ieee80211_node *ni = ic->ic_bss;
+	unsigned mask = ni != NULL ? ieee80211_rxba_mask(ic, ni) : 0;
+
+	/* Giant protects the node. PCI receives no borrowed node/key pointers. */
+	mutex_enter(net->lock);
+	net->policy.rxba_mask = 0;
+	if (mask != 0 && net->policy.accepting && !net->policy.dying &&
+	    (net->ec.ec_if.if_flags & IFF_RUNNING) != 0) {
+		memcpy(net->policy.rxba_ra, ic->ic_myaddr, 6);
+		memcpy(net->policy.rxba_ta, ni->ni_bssid, 6);
+		net->policy.rxba_mask = mask;
+	}
+	mutex_exit(net->lock);
+}
+
+static void
+rtw88_net_rxba_softintr(struct rtw88_net *net)
+{
+	struct ieee80211com *ic = &net->ic;
+	struct ieee80211_node *ni;
+	uint64_t token, now = rtw88_net_rxba_now(ic);
+	int valid;
+
+	mutex_enter(net->lock);
+	token = net->rxba_due;
+	/* A frame can rearm an already expired absolute deadline before the
+	 * callout executes. Do not let repeated RX postpone that hole forever. */
+	if (token == 0 && net->rxba_token != 0 && now >= net->rxba_deadline) {
+		token = net->rxba_token;
+		net->rxba_token = 0;
+		callout_stop(&net->rxba_callout);
+	}
+	net->rxba_due = 0;
+	valid = !net->policy.dying && net->policy.accepting &&
+	    (net->ec.ec_if.if_flags & IFF_RUNNING) != 0;
+	mutex_exit(net->lock);
+	/* Acquire the current BSS only after entering Giant. A late callback never
+	 * retains a freed node or key and cannot pass the shared token fence. */
+	if (token != 0 && valid && ic->ic_bss != NULL) {
+		ni = ieee80211_ref_node(ic->ic_bss);
+		ieee80211_rxba_age(ic, ni, token);
+		ieee80211_free_node(ni);
+	}
+	rtw88_net_rxba_publish(net);
+}
+
+static const struct ieee80211_rxba_ops rtw88_net_rxba_ops = {
+	rtw88_net_rxba_now, rtw88_net_rxba_schedule, rtw88_net_rxba_cancel
+};
+
+static void
+rtw88_net_rxba_quiesce(struct rtw88_net *net)
+{
+
+	rtw88_net_rxba_cancel(&net->ic);
+	/* The MPSAFE callback never waits for Giant. No PCI lock is held here. */
+	callout_halt(&net->rxba_callout, NULL);
+}
+
+static void
+rtw88_net_rxba_attach(struct rtw88_net *net)
+{
+
+	callout_init(&net->rxba_callout, CALLOUT_MPSAFE);
+	callout_setfunc(&net->rxba_callout, rtw88_net_rxba_timeout, net);
+	net->ic.ic_rxba_ops = &rtw88_net_rxba_ops;
+}
+
+static void
+rtw88_net_rxba_detach(struct rtw88_net *net)
+{
+
+	rtw88_net_rxba_quiesce(net);
+	net->ic.ic_rxba_ops = NULL;
+	callout_destroy(&net->rxba_callout);
+}
 
 static unsigned
 rtw88_net_basic_rates(struct ieee80211com *ic)
@@ -574,6 +746,9 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
 	int enqueue = 0, ht20_error;
 
 	/* Shared capsule ownership is Giant-only, before taking the PCI lock. */
+	if (state == IEEE80211_S_RUN && ic->ic_state == IEEE80211_S_RUN &&
+	    ic->ic_bss != NULL)
+		ieee80211_rxba_reset(ic, ic->ic_bss);
 	ht20_error = ieee80211_ht20_state_request(ic, state);
 	if (ht20_error != 0) {
 		/* Withdraw an already accepted peer even for a direct RUN caller.
@@ -644,6 +819,7 @@ rtw88_net_rx_frame(void *cookie, const uint8_t *frame, size_t len,
 	rx = &net->rx[net->rx_tail];
 	rx->m = m;
 	rx->epoch = net->policy.epoch;
+	rx->arrived = rtw88_net_rxba_now(&net->ic);
 	rx->tsf = info->tsf_low;
 	rx->generation = net->core->sc_generation;
 	rx->quality = info->signal.valid && info->signal.quality <= 100 &&
@@ -672,10 +848,13 @@ rtw88_net_softintr(void *cookie)
 	struct ifnet *ifp = &net->ec.ec_if;
 	struct rtw88_net_rx rx;
 	struct ieee80211_node *ni;
-	unsigned n, completed, outstanding;
-	int valid;
+	unsigned n, batch, completed, outstanding;
+	int valid, expire;
 
-	for (n = 0; n < RTW88_NET_RX_LIMIT; n++) {
+	mutex_enter(net->lock);
+	batch = MIN(net->policy.queued, RTW88_NET_RX_LIMIT);
+	mutex_exit(net->lock);
+	for (n = 0; n < batch; n++) {
 		mutex_enter(net->lock);
 		if (net->policy.queued == 0) {
 			mutex_exit(net->lock);
@@ -685,6 +864,14 @@ rtw88_net_softintr(void *cookie)
 		net->rx[net->rx_head].m = NULL;
 		net->rx_head = (net->rx_head + 1) % RTW88_NET_RX_LIMIT;
 		rtw88_net_rx_release(&net->policy);
+		expire = (net->rxba_due != 0 || net->rxba_token != 0) &&
+		    rx.arrived >= net->rxba_deadline;
+		mutex_exit(net->lock);
+		/* Only frames already received before the deadline can fill its hole.
+		 * A later frame cannot revive that expired window. No node is held. */
+		if (expire)
+			rtw88_net_rxba_softintr(net);
+		mutex_enter(net->lock);
 		if (rx.generation != net->core->sc_generation) {
 			net->stats.fw_stale++;
 			valid = 0;
@@ -712,6 +899,7 @@ rtw88_net_softintr(void *cookie)
 		/* Relative unsigned index only. No signed dBm is passed through this ABI. */
 		ieee80211_input(ic, rx.m, ni, rx.quality, rx.tsf);
 		ieee80211_free_node(ni);
+		rtw88_net_rxba_publish(net);
 		/*
 		 * The stack holds Giant here. Publish a numeric snapshot under
 		 * the PCI lock; sysctl must not acquire Giant under its gate.
@@ -728,6 +916,9 @@ rtw88_net_softintr(void *cookie)
 		net->stats.mgtdiscard = ic->ic_stats.is_rx_mgtdiscard;
 		mutex_exit(net->lock);
 	}
+	/* Let already queued gap frames complete the window before expiring a
+	 * hole. The shared token check discards an event superseded by input. */
+	rtw88_net_rxba_softintr(net);
 	mutex_enter(net->lock);
 	completed = net->tx_completed;
 	net->tx_completed = 0;
@@ -1075,6 +1266,9 @@ rtw88_net_stop(struct ifnet *ifp, int disable)
 {
 	struct rtw88_net *net = ifp->if_softc;
 
+	rtw88_net_rxba_quiesce(net);
+	if (net->ic.ic_bss != NULL)
+		ieee80211_rxba_reset(&net->ic, net->ic.ic_bss);
 	(void)disable;
 	ifp->if_flags &= ~(IFF_RUNNING | IFF_OACTIVE);
 	ifp->if_timer = 0;
@@ -1282,6 +1476,7 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	IFQ_SET_READY(&ifp->if_snd);
 	if_initialize(ifp);
 	ieee80211_ifattach(ic);
+	rtw88_net_rxba_attach(net);
 	/* Opt in only after the strict consumer owns STA parameter apply. */
 	ic->ic_wme.wme_sta_apply = rtw88_net_wme_apply;
 	ic->ic_caps |= IEEE80211_C_WME;
@@ -1321,6 +1516,7 @@ rtw88_net_detach(struct rtw88_net *net)
 	net->core->sc_tx_complete = NULL;
 	net->core->sc_net_cookie = NULL;
 	mutex_exit(net->lock);
+	rtw88_net_rxba_quiesce(net);
 	callout_halt(&net->scan, NULL);
 	workqueue_wait(net->wq, &net->state_work);
 	rtw88_net_stop(&net->ec.ec_if, 1);
@@ -1330,6 +1526,7 @@ rtw88_net_detach(struct rtw88_net *net)
 		m_freem(net->rx[i].m);
 	ieee80211_ifdetach(&net->ic);
 	if_detach(&net->ec.ec_if);
+	rtw88_net_rxba_detach(net);
 	callout_destroy(&net->scan);
 	kmem_free(net, sizeof(*net));
 }

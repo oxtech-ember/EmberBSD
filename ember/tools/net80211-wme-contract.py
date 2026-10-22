@@ -5,8 +5,10 @@ import pathlib
 import os
 import re
 import sys
+import subprocess
 
 src, out = map(pathlib.Path, sys.argv[1:])
+subprocess.run([sys.executable,str(src/"ember/tools/net80211-rxba-lifecycle-extract.py"),str(src),str(out),"--response"],check=True)
 
 
 def read(path):
@@ -36,7 +38,7 @@ proto = "sys/net80211/ieee80211_proto.h"
 ipt = "sys/net80211/ieee80211_input.c"
 output = "sys/net80211/ieee80211_output.c"
 node = "sys/net80211/ieee80211_node.c"
-parts = ["#ifndef NATIVE_IEEE80211_STATE_DEFINED\n#define NATIVE_IEEE80211_STATE_DEFINED 1\n" + re.search(r"^enum ieee80211_state \{.*?^\};", read(proto), re.M|re.S).group()+"\n#endif", read("sys/net80211/ieee80211_ht20.h"), read(wire), read("sys/net80211/ieee80211_phy_ies.h")]
+parts = [read("sys/net80211/ieee80211_rxba.h"),"#ifndef NATIVE_IEEE80211_STATE_DEFINED\n#define NATIVE_IEEE80211_STATE_DEFINED 1\n" + re.search(r"^enum ieee80211_state \{.*?^\};", read(proto), re.M|re.S).group()+"\n#endif", read("sys/net80211/ieee80211_ht20.h"), read(wire), read("sys/net80211/ieee80211_phy_ies.h")]
 for path, names in ((proto, ("wmeParams", "chanAccParams", "ieee80211_wme_state")),
                     ("sys/net80211/ieee80211_ioctl.h", ("ieee80211_stats", "ieee80211_nodestats", "ieee80211req")),
                     ("sys/net80211/_ieee80211.h", ("ieee80211_rateset",))):

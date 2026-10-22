@@ -43,7 +43,8 @@ ht20_local(struct ieee80211com *ic, struct ieee80211_ht20_profile *p)
 {
 
 	memset(p, 0, sizeof(*p));
-	return ic->ic_ht20_admit != NULL && ic->ic_ht20_admit(ic, p) == 0 &&
+	return ieee80211_rxba_ready(ic) &&
+	    ic->ic_ht20_admit != NULL && ic->ic_ht20_admit(ic, p) == 0 &&
 	    p->generation != 0 && p->ready == IEEE80211_HT20_READY_ALL &&
 	    (p->ampdu & 0xe3) == 0 &&
 	    (p->rx_mcs & 0xff) == 0xff && p->rx_mcs == p->tx_mcs;
@@ -82,6 +83,8 @@ ieee80211_ht20_reset(struct ieee80211_node *ni)
 {
 	uint32_t next = ni->ni_ht20.attempt + 1;
 
+	ieee80211_rxba_reset(ni->ni_ic, ni);
+	ni->ni_flags &= ~IEEE80211_NODE_AMSDU_RX;
 	memset(&ni->ni_ht20, 0, sizeof(ni->ni_ht20));
 	ni->ni_ht20.attempt = next != 0 ? next : 1;
 }
@@ -221,6 +224,8 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 	candidate.operation = (uint16_t)op[2] | (uint16_t)op[3] << 8;
 	candidate.valid = 1;
 	ni->ni_ht20 = candidate;
+	/* The current provider admitted the bounded A-MSDU receive consumer. */
+	ni->ni_flags |= IEEE80211_NODE_AMSDU_RX;
 	return 0;
 bad:
 	ieee80211_ht20_reset(ni);

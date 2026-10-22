@@ -78,6 +78,25 @@ main(void)
 	CHECK(!p.accepting);
 	CHECK(rtw88_net_commit(&p, b, 0, 1) == 0);
 	CHECK(rtw88_net_rx_admit(&p, a, frame, 24, 0, 0) == ECANCELED);
+	/* BAR ingress needs a published authorized session and exact wire shape. */
+	struct rtw88_net_policy before_bar=p;uint64_t before_bar_epoch=b;
+	uint8_t bar[20] = {0x84};bar[4]=2;bar[10]=4;bar[16]=4;
+	p.rxba_mask=1;p.rxba_ra[0]=2;p.rxba_ta[0]=4;
+	CHECK(rtw88_net_rx_admit(&p,b,bar,20,0,0)==0);
+	rtw88_net_rx_release(&p);
+	bar[10]^=2;CHECK(rtw88_net_rx_admit(&p,b,bar,20,0,0)!=0);bar[10]^=2;
+	bar[4]^=2;CHECK(rtw88_net_rx_admit(&p,b,bar,20,0,0)!=0);bar[4]^=2;
+	bar[17]=0x10;CHECK(rtw88_net_rx_admit(&p,b,bar,20,0,0)!=0);bar[17]=0;
+	bar[16]=0;CHECK(rtw88_net_rx_admit(&p,b,bar,20,0,0)!=0);bar[16]=4;
+	bar[18]=1;CHECK(rtw88_net_rx_admit(&p,b,bar,20,0,0)!=0);bar[18]=0;
+	bar[1]=0x40;CHECK(rtw88_net_rx_admit(&p,b,bar,20,0,0)!=0);bar[1]=0;
+	CHECK(rtw88_net_rx_admit(&p,b,bar,20,1,0)!=0);
+	CHECK(rtw88_net_rx_admit(&p,b,bar,20,0,3)!=0);
+	CHECK(rtw88_net_rx_admit(&p,a,bar,20,0,0)!=0);
+	p.rxba_mask=0;CHECK(rtw88_net_rx_admit(&p,b,bar,20,0,0)!=0);
+	p.rxba_mask=1;b=rtw88_net_request(&p);CHECK(p.rxba_mask==0);
+	CHECK(rtw88_net_commit(&p,b,0,1)==0);
+	p=before_bar;b=before_bar_epoch;
 	/* Hardware-decrypted input must not masquerade as software ciphertext. */
 	frame[1] = 0x42;
 	CHECK(rtw88_net_rx_admit(&p, b, frame, 40, 0, 3) == EACCES);

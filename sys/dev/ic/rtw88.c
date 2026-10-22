@@ -1211,7 +1211,9 @@ rtw88_rx_one(struct rtw88_softc *sc, unsigned idx)
 	if (p[0] == 0x80 && rx.packet_size >= RTW88_BEACON_IES)
 		rtw88_rx_beacon(sc, p, rx.packet_size);
 	/* RCR.APP_FCS is set. Never expose the four FCS bytes to net80211. */
-	if (sc->sc_rx_frame != NULL && rx.packet_size >= 24 + 4) {
+	if (sc->sc_rx_frame != NULL && (rx.packet_size >= 24 + 4 ||
+	    (rx.packet_size == 20 + 4 && p[0] == 0x84 && (p[1] & ~0x08) == 0 &&
+	     p[16] == 4 && (p[17] & 0x8f) == 0 && (p[18] & 15) == 0))) {
 		rx.packet_size -= 4;
 		sc->sc_rx_frame(sc->sc_net_cookie, p, rx.packet_size, &rx);
 	}

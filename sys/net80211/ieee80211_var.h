@@ -98,6 +98,8 @@ struct ieee80211req_sta_mgmt;
 struct ieee80211com {
 	/* Optional qualified HT20 provider; NULL means legacy only. */
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
+	const struct ieee80211_rxba_ops *ic_rxba_ops;
+	uint64_t ic_rxba_serial;
 	SLIST_ENTRY(ieee80211com) ic_next;
 	struct ifnet		*ic_ifp;	/* associated device */
 	struct ieee80211_stats	ic_stats;	/* statistics */

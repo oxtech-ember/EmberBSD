@@ -314,6 +314,8 @@ ieee80211_crypto_newkey(struct ieee80211com *ic, int cipher, int flags,
 		}
 	}
 
+	/* Purge queued ciphertext before any flags/context can change. */
+	ieee80211_rxba_key_change(ic, key);
 	oflags = key->wk_flags;
 	flags &= IEEE80211_KEY_COMMON;
 
@@ -429,6 +431,9 @@ _ieee80211_crypto_delkey(struct ieee80211com *ic, struct ieee80211_key *key)
 	ieee80211_keyix keyix;
 
 	IASSERT(key->wk_cipher != NULL, ("No cipher!"));
+	ieee80211_rxba_key_change(ic, key);
+	if (ic->ic_bss != NULL && key == &ic->ic_bss->ni_ucastkey)
+		ic->ic_bss->ni_flags &= ~IEEE80211_NODE_AMSDU_RX;
 
 	IEEE80211_DPRINTF(ic, IEEE80211_MSG_CRYPTO,
 	    "%s: %s keyix %u flags 0x%x rsc %ju tsc %ju len %u\n",
@@ -498,6 +503,8 @@ ieee80211_crypto_setkey(struct ieee80211com *ic, struct ieee80211_key *key,
 	const struct ieee80211_cipher *cip = key->wk_cipher;
 
 	IASSERT(cip != NULL, ("No cipher!"));
+	/* Same-pointer setkey can reset CCMP replay domains. */
+	ieee80211_rxba_key_change(ic, key);
 
 	IEEE80211_DPRINTF(ic, IEEE80211_MSG_CRYPTO,
 	    "%s: %s keyix %u flags 0x%x mac %s rsc %ju tsc %ju len %u\n",

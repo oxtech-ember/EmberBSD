@@ -111,6 +111,7 @@ static struct rtw88_net *enable_attach(struct rtw88_softc *sc,kmutex_t *lock)
     if(!net)return NULL;
     CHECK(f.writes==writes);
     CHECK(net->ic.ic_wme.wme_sta_apply==rtw88_net_wme_apply);
+    CHECK(net->ic.ic_rxba_ops==&rtw88_net_rxba_ops && net->ic.ic_ht20_admit==NULL);
     CHECK(net->ic.ic_caps==(IEEE80211_C_WPA2|IEEE80211_C_SHSLOT|IEEE80211_C_WME));
     CHECK(net->ic.ic_flags&IEEE80211_F_WME);
     for(unsigned ac=0;ac<WME_NUM_AC;ac++) {
@@ -146,6 +147,7 @@ static void enable_destroy(struct rtw88_net *net)
     net->core->sc_net_cookie=NULL;net->core->sc_tx_complete=NULL;
     net->core->sc_rx_frame=NULL;
     CHECK(rtw88_core_detach(net->core)==0);
+    ieee80211_rxba_reset(&net->ic,net->ic.ic_bss);rtw88_net_rxba_detach(net);
     free(net->ic.ic_bss);workqueue_destroy(net->wq);kmem_free(net,sizeof(*net));
 }
 static unsigned enable_fail_after_reg;

@@ -117,6 +117,13 @@ native_dispatch(struct ieee80211com *ic, int state, int arg)
 	}
 	return rtw88_net_newstate(ic,(enum ieee80211_state)state,arg);
 }
+/* A synthetic scheduler satisfies negotiation readiness only. BA Action/data
+ * is not admitted in this older fixture and is executed by the full B suite. */
+static uint64_t ht_clock(struct ieee80211com *ic) { (void)ic;return 1; }
+static int ht_schedule(struct ieee80211com *ic,uint64_t deadline,uint64_t token)
+{ (void)ic;(void)deadline;(void)token;abort(); }
+static void ht_cancel(struct ieee80211com *ic) { (void)ic; }
+static const struct ieee80211_rxba_ops ht_ops={ht_clock,ht_schedule,ht_cancel};
 static void
 ht_setup(void)
 {
@@ -127,6 +134,7 @@ ht_setup(void)
 	test_ifp.if_softc=&native_net;
 	test_ic.ic_test_newstate=native_dispatch;
 	test_ic.ic_ht20_admit=provider;
+	test_ic.ic_rxba_ops=&ht_ops;
 	test_ic.ic_wme.wme_sta_apply=strict_update;
 	admitted=(struct ieee80211_ht20_profile){19,0xffff,0xffff,IEEE80211_HT20_READY_ALL,16};
 	native_queues=native_scans=0; native_lock=change_before_run=provider_error=0;

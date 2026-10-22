@@ -12,6 +12,7 @@
 
 #include "scan-abi.h"
 #include "ieee80211_ht20.h"
+#include "ieee80211_rxba.h"
 #if __has_include("ieee80211_phy_ies.h")
 #include "ieee80211_phy_ies.h"
 #else
@@ -48,6 +49,7 @@ struct ieee80211_node {
 	uint32_t ni_scan_epoch;
 	struct ieee80211_phy_ies ni_phy_ies;
 	struct ieee80211_ht20_node ni_ht20;
+	struct ieee80211_rxba_state ni_rxba;
 	unsigned ni_flags, ni_associd, ni_authmode, ni_txpower, ni_vlan;
 	unsigned ni_fhdwell, ni_fhindex, ni_dtim_count, ni_dtim_period,
 	    ni_timoff;
@@ -66,6 +68,8 @@ struct ieee80211_node_table {
 	uint32_t nt_scan_epoch;
 };
 struct ieee80211com {
+	const struct ieee80211_rxba_ops *ic_rxba_ops;
+	uint64_t ic_rxba_serial;
 	struct ieee80211_node_table ic_scan;
 	void *ic_sta_mgmt;
 	struct ieee80211_node *ic_bss;
@@ -168,11 +172,16 @@ ieee80211_node_delucastkey(struct ieee80211_node *ni)
 	(void)ni;
 	key_deletes++;
 }
+static unsigned phy_ba_frees,phy_ba_cancels;
+static void phy_ba_cancel(struct ieee80211com *ic) { (void)ic;phy_ba_cancels++; }
+static const struct ieee80211_rxba_ops phy_ba_ops={NULL,NULL,phy_ba_cancel};
 static void
 m_freem(void *p)
 {
+	if(p!=NULL)phy_ba_frees++;
 	free(p);
 }
+#include "native-rxba-lifecycle.inc"
 #define malloc(n, t, f) test_allocate((n), (f))
 #define free(p, t) free(p)
 #include "native-node.inc"
@@ -336,12 +345,25 @@ main(void)
 	ni.ni_wme_applied_chan = ni.ni_chan;
 	ni.ni_wme_applied_slot = 9;
 	ni.ni_flags |= IEEE80211_NODE_QOS | IEEE80211_NODE_WME_OFFER |
-	    IEEE80211_NODE_WME_VALID;
+	    IEEE80211_NODE_WME_VALID | IEEE80211_NODE_AMSDU_RX;
 	ni.ni_ht20.attempt = 41;
 	ni.ni_ht20.offered = ni.ni_ht20.valid = 1;
+	/* Opaque mbuf storage is a kernel allocator model. The actual BA slot,
+	 * charged ownership, cancel and node cleanup destructors are executed. */
+	ic.ic_bss=&ni;ic.ic_rxba_ops=&phy_ba_ops;
+	ni.ni_rxba.tid[0]=calloc(1,sizeof(*ni.ni_rxba.tid[0]));
+	assert(ni.ni_rxba.tid[0]!=NULL);
+	ni.ni_rxba.tid[0]->slot[0].m=calloc(1,1);assert(ni.ni_rxba.tid[0]->slot[0].m);
+	ni.ni_rxba.tid[0]->slot[0].charged=1;
+	ni.ni_rxba.bytes=sizeof(*ni.ni_rxba.tid[0])+1;
+	ni.ni_rxba.epoch=ni.ni_rxba.key_epoch=5;ni.ni_rxba.timer_token=7;
 	node_cleanup(&ni);
+	check(ni.ni_rxba.bytes==0 && ni.ni_rxba.tid[0]==NULL && ni.ni_rxba.epoch==0 &&
+	    ni.ni_rxba.key_epoch==0 && ni.ni_rxba.timer_token==0 && phy_ba_frees==1 && phy_ba_cancels==1,
+	    "actual native node cleanup cancels and releases owned BA slot before reuse");
+	ieee80211_rxba_reset(&ic,&ni); /* Preserve cleanup on a causal missing-reset overlay. */
 	check(ni.ni_ht20.attempt == 42 && !ni.ni_ht20.offered &&
-	    !ni.ni_ht20.valid,
+	    !ni.ni_ht20.valid && !(ni.ni_flags & IEEE80211_NODE_AMSDU_RX),
 	    "native cleanup invalidates HT offer and advances attempt");
 	check(ni.ni_wme_applied_chan == NULL && ni.ni_wme_applied_slot == 0,
 	    "native cleanup retires applied EDCA context");

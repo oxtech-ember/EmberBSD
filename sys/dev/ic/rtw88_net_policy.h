@@ -26,6 +26,8 @@ struct rtw88_net_policy {
 	uint32_t beacon_tick;
 	uint32_t beacon_report_tick;
 	int beacon_valid;
+	/* Giant publishes only a current authorized RX BA peer under the bus lock. */
+	uint8_t rxba_mask, rxba_ra[6], rxba_ta[6];
 	struct rtw88_net_rx_counts rx;
 };
 /* Numeric failure evidence. No station address or network name is stored. */

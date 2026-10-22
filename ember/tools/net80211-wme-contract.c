@@ -86,6 +86,7 @@ struct ieee80211_channel {
 struct test_rsn { uint8_t rsn_ucastcipher; };
 struct ieee80211_node {
 	struct ieee80211_ht20_node ni_ht20;
+	struct ieee80211_rxba_state ni_rxba;
 	struct ieee80211com *ni_ic;
 	struct ieee80211_channel *ni_chan, *ni_wme_offer_chan,
 	    *ni_wme_applied_chan;
@@ -129,6 +130,8 @@ struct ieee80211_node_table {
 	unsigned nt_inact_init;
 };
 struct ieee80211com {
+	const struct ieee80211_rxba_ops *ic_rxba_ops;
+	uint64_t ic_rxba_serial;
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
 	int ic_fixed_rate;
 	int (*ic_test_newstate)(struct ieee80211com *, int, int);
@@ -307,11 +310,11 @@ ieee80211_mbuf_adjust(struct ieee80211com *ic, int hdr,
 	free(m);
 	return copy;
 }
-static void
+static struct ieee80211_node *
 ieee80211_ref_node(struct ieee80211_node *ni)
 {
-	(void)ni;
 	node_refs++;
+	return ni;
 }
 static void
 ieee80211_free_node(struct ieee80211_node *ni)
@@ -472,6 +475,13 @@ ieee80211_phy_ies_parse(struct ieee80211_phy_ies *ies, const uint8_t *p,
 #define ieee80211_chan2mode(ic, chan)                                          \
 	((void)(ic), (void)(chan), IEEE80211_MODE_11G)
 #define ieee80211_reset_erp(ic) ((void)(ic))
+#include "native-rxba-lifecycle.inc"
+/* Unexpected BA Actions must fail the legacy/WME fixture, not succeed through
+ * a dummy parser. Active BA wire/crypto runs in the dedicated full B fixture. */
+void ieee80211_rxba_age(struct ieee80211com *ic,struct ieee80211_node *ni,uint64_t token)
+{ (void)ic;(void)ni;(void)token;abort(); }
+int ieee80211_rxba_action(struct ieee80211com *ic,struct ieee80211_node *ni,const uint8_t *p,size_t len)
+{ (void)ic;(void)ni;(void)p;(void)len;abort(); }
 #include "native-wme.inc"
 
 static struct ieee80211com test_ic;

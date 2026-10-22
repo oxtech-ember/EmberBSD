@@ -446,6 +446,12 @@ ieee80211_input_data(struct ieee80211com *ic, struct mbuf **mp,
 	/* copy to listener after decrypt */
 	bpf_mtap3(ic->ic_rawbpf, m, BPF_D_IN);
 
+	/* Null functions carry no MSDU. Validate crypto/replay first, including
+	 * ordered QoS input, but never reinterpret extra bytes as Ethernet. */
+	if (subtype == IEEE80211_FC0_SUBTYPE_NODATA ||
+	    subtype == IEEE80211_FC0_SUBTYPE_QOS_NULL)
+		goto out;
+
 	if (amsdu) {
 		struct mbuf *list, *next;
 
@@ -492,6 +498,28 @@ err:
 out:
 	*mp = m;
 	return -1;
+}
+
+/* Ordered BA continuation. Common header/address checks ran before queuing.
+ * The STA crypto/delivery path is synchronous under Giant and does not reenter
+ * node/key teardown. No public mbuf marker or recursive input is used. */
+void
+ieee80211_input_ordered(struct ieee80211com *ic, struct ieee80211_node *ni,
+    struct mbuf *m)
+{
+	const uint8_t *p = mtod(m, const uint8_t *);
+	unsigned tid;
+
+	KASSERT(m->m_len >= 26);
+	tid = p[24] & IEEE80211_QOS_TID;
+	KASSERT(tid < IEEE80211_RXBA_TIDS);
+	ni->ni_rxseqs[tid + 1] = p[22] | (uint16_t)p[23] << 8;
+	if (TID_TO_WME_AC(tid) >= WME_AC_VI)
+		ic->ic_wme.wme_hipri_traffic++;
+	if (ieee80211_input_data(ic, &m, ni) == -1 && m != NULL) {
+		bpf_mtap3(ic->ic_rawbpf, m, BPF_D_IN);
+		m_freem(m);
+	}
 }
 
 /*
@@ -592,6 +620,10 @@ ieee80211_input_control(struct ieee80211com *ic, struct mbuf *m,
 {
 	IEEE80211_NODE_STAT(ni, rx_ctrl);
 	ic->ic_stats.is_rx_ctl++;
+	if (m->m_len >= 20 && mtod(m, const uint8_t *)[0] == 0x84) {
+		(void)ieee80211_rxba_bar(ic, ni, mtod(m, const uint8_t *), m->m_pkthdr.len);
+		return;
+	}
 
 #ifndef IEEE80211_NO_HOSTAP
 	if (ic->ic_opmode == IEEE80211_M_HOSTAP) {
@@ -778,6 +810,10 @@ ieee80211_input(struct ieee80211com *ic, struct mbuf *m,
 		ni->ni_rssi = rssi;
 		ni->ni_rstamp = rstamp;
 
+		/* Consume ciphertext before generic duplicate mutation or CCMP PN commit. */
+		if (type == IEEE80211_FC0_TYPE_DATA &&
+		    ieee80211_rxba_input(ic, ni, m))
+			return IEEE80211_FC0_TYPE_DATA;
 		if (HAS_SEQ(type) && (ic->ic_opmode != IEEE80211_M_STA ||
 		    !IEEE80211_IS_MULTICAST(wh->i_addr1))) {
 			u_int8_t tid, retry;
@@ -3319,6 +3355,26 @@ ieee80211_recv_mgmt(struct ieee80211com *ic, struct mbuf *m0,
 	case IEEE80211_FC0_SUBTYPE_REASSOC_RESP:
 		ieee80211_recv_mgmt_assoc_resp(ic, m0, ni, subtype, rssi, rstamp);
 		return;
+
+	case IEEE80211_FC0_SUBTYPE_ACTION: {
+		uint8_t body[9];
+		int len = m0->m_pkthdr.len - (int)sizeof(*wh);
+		if (m0->m_len < (int)sizeof(*wh) || (len != 9 && len != 6) ||
+		    ic->ic_opmode != IEEE80211_M_STA || ni != ic->ic_bss ||
+		    (wh->i_fc[1] & (IEEE80211_FC1_WEP | IEEE80211_FC1_MORE_FRAG |
+		    IEEE80211_FC1_ORDER)) != 0 ||
+		    (wh->i_seq[0] & IEEE80211_SEQ_FRAG_MASK) != 0 ||
+		    !IEEE80211_ADDR_EQ(wh->i_addr1, ic->ic_myaddr) ||
+		    !IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_bssid) ||
+		    !IEEE80211_ADDR_EQ(wh->i_addr3, ni->ni_bssid)) {
+			ic->ic_stats.is_rx_mgtdiscard++;
+			return;
+		}
+		m_copydata(m0, sizeof(*wh), len, body);
+		if (ieee80211_rxba_action(ic, ni, body, len) != 0)
+			ic->ic_stats.is_rx_mgtdiscard++;
+		return;
+	}
 
 	case IEEE80211_FC0_SUBTYPE_DEAUTH:
 		ieee80211_recv_mgmt_deauth(ic, m0, ni, subtype, rssi, rstamp);

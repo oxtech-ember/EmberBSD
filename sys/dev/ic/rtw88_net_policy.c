@@ -8,6 +8,7 @@
 #else
 #include <errno.h>
 #include <stdio.h>
+#include <string.h>
 #endif
 #include "rtw88_net_policy.h"
 
@@ -29,6 +30,7 @@ rtw88_net_request(struct rtw88_net_policy *p)
 {
 
 	p->accepting = 0;
+	p->rxba_mask = 0;
 	p->beacon_valid = 0;
 	if (++p->epoch == 0)
 		++p->epoch;
@@ -60,6 +62,8 @@ int
 rtw88_net_rx_admit(struct rtw88_net_policy *p, uint64_t epoch,
     const uint8_t *frame, size_t len, unsigned flags, unsigned security)
 {
+	unsigned tid;
+	int bar;
 
 	if (p->dying || !p->accepting) {
 		p->rx.inactive++;
@@ -73,7 +77,9 @@ rtw88_net_rx_admit(struct rtw88_net_policy *p, uint64_t epoch,
 		p->rx.invalid++;
 		return EINVAL;
 	}
-	if (len < 24 || len > RTW88_NET_MPDU_LIMIT) {
+	bar = len == 20 && frame[0] == 0x84 && (frame[1] & ~0x08) == 0 &&
+	    frame[16] == 4 && (frame[17] & 0x0f) == 0 && (frame[18] & 15) == 0;
+	if ((len < 24 && !bar) || len > RTW88_NET_MPDU_LIMIT) {
 		p->rx.size++;
 		return EMSGSIZE;
 	}
@@ -82,8 +88,19 @@ rtw88_net_rx_admit(struct rtw88_net_policy *p, uint64_t epoch,
 		p->rx.corrupt++;
 		return EBADMSG;
 	}
+	/* No generic control-frame admission. BAR has a current Giant-owned peer
+	 * snapshot and still goes through the shared session/sequence validator. */
+	if (bar) {
+		tid = frame[17] >> 4;
+		if (tid >= 8 || (p->rxba_mask & (1U << tid)) == 0 || security != 0 ||
+		    memcmp(frame + 4, p->rxba_ra, 6) != 0 ||
+		    memcmp(frame + 10, p->rxba_ta, 6) != 0) {
+			p->rx.format++;
+			return EPROTONOSUPPORT;
+		}
+	}
 	/* Only version-zero, three-address management and data frames. */
-	if ((frame[0] & 3) != 0 || (frame[0] & 0x0c) == 4 ||
+	if ((frame[0] & 3) != 0 || ((frame[0] & 0x0c) == 4 && !bar) ||
 	    (frame[0] & 0x0c) == 12 || (frame[1] & 3) == 3) {
 		p->rx.format++;
 		return EPROTONOSUPPORT;

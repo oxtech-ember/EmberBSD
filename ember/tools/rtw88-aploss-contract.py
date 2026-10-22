@@ -4,8 +4,10 @@
 import pathlib
 import re
 import sys
+import subprocess
 
 src, out = map(pathlib.Path, sys.argv[1:3])
+subprocess.run([sys.executable,str(src/'ember/tools/net80211-rxba-lifecycle-extract.py'),str(src),str(out)],check=True)
 mutant = sys.argv[3] if len(sys.argv) > 3 else 'none'
 assert mutant in ('none', 'supervision', 'withdrawal', 'ra', 'notification')
 
@@ -44,6 +46,7 @@ for path, names in [('sys/net80211/ieee80211_var.h', ['IEEE80211_BMISS_MAX', 'IE
     constants.append(notice(path))
     for name in names:
         constants.append(re.search(r'^#define\s+'+name+r'\s+.*$', read(path), re.M).group()+'\n')
+constants.append(re.search(r'^#define\s+IEEE80211_NODE_AMSDU_RX\s+.*$',read('sys/net80211/ieee80211_node.h'),re.M).group()+'\n')
 (out/'aploss-constants.inc').write_text(''.join(constants))
 (out/'ieee80211_ht20.h').write_text(read('sys/net80211/ieee80211_ht20.h'))
 parts = [body('sys/net80211/ieee80211_ht20.c', 'ieee80211_ht20_reset', 'void'),

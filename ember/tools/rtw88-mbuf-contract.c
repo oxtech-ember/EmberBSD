@@ -152,6 +152,14 @@ main(void)
 		check_frame(lengths[i], 0xb0);
 		check_frame(lengths[i], 0x08);
 	}
+	uint8_t bar[20]={0x84};bar[16]=4;
+	struct mbuf *bm=rtw88_net_rx_mbuf(bar,sizeof(bar),&ifp);
+	CHECK(bm!=NULL);
+	if(bm!=NULL) {CHECK(bm->m_len==20 && memcmp(bm->m_data,bar,20)==0);m_freem(bm);}
+	bar[16]=0;CHECK(rtw88_net_rx_mbuf(bar,sizeof(bar),&ifp)==NULL);
+	bar[16]=4;bar[17]=0x80;CHECK(rtw88_net_rx_mbuf(bar,sizeof(bar),&ifp)==NULL);
+	bar[17]=0;bar[18]=1;CHECK(rtw88_net_rx_mbuf(bar,sizeof(bar),&ifp)==NULL);
+	bar[18]=0;bar[1]=0x40;CHECK(rtw88_net_rx_mbuf(bar,sizeof(bar),&ifp)==NULL);
 	calls = 0;
 	CHECK(rtw88_net_rx_mbuf(NULL, 24, &ifp) == NULL);
 	CHECK(rtw88_net_rx_mbuf(frame, 0, &ifp) == NULL);

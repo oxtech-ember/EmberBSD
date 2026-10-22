@@ -39,6 +39,7 @@
 #include <net80211/ieee80211_netbsd.h>
 #include <net80211/ieee80211_phy_ies.h>
 #include <net80211/ieee80211_ht20.h>
+#include <net80211/ieee80211_rxba.h>
 #include <net80211/ieee80211_ioctl.h>		/* for ieee80211_nodestats */
 
 #ifdef _KERNEL
@@ -101,6 +102,7 @@ struct ieee80211_node {
 	u_int			ni_scangen;	/* gen# for timeout scan */
 	u_int			ni_scan_epoch;	/* last actual radio scan */
 	struct ieee80211_ht20_node ni_ht20;
+	struct ieee80211_rxba_state ni_rxba;
 	struct ieee80211_phy_ies ni_phy_ies; /* observed, not negotiated */
 	int8_t			ni_rssi_dbm;	/* optional absolute signal level */
 	bool			ni_rssi_dbm_valid;

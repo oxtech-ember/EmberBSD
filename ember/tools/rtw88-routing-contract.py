@@ -35,6 +35,11 @@ for m in re.finditer(r'^static (?:int|unsigned|void|struct mbuf \*)\n(rtw88_net_
 if 'rtw88_net_tx_dequeue_same(' in net:
     parts.insert(0, '#define ROUTING_NATIVE_QUEUE_HELPERS 1\n')
 (out/'routing-native.inc').write_text('\n'.join(parts)+'\n')
+parts=[]
+for name in ['rtw88_net_rxba_publish','rtw88_net_rxba_softintr']:
+ parts.append(net[:net.index('#include')]+'static void\n'+re.search(r'^'+name+r'\(.*?^}',net,re.M|re.S).group()+'\n')
+(out/'routing-rxba-native.inc').write_text('\n'.join(parts))
+
 
 var = (src/'sys/net80211/ieee80211_var.h').read_text()
 proto=(src/'sys/net80211/ieee80211_proto.h').read_text()

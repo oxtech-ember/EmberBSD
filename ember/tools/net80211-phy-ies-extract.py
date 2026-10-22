@@ -3,7 +3,9 @@
 # Keep complete native consumers and their source notices in the host contract.
 from pathlib import Path
 import sys
+import subprocess
 src, out = map(Path, sys.argv[1:])
+subprocess.run([sys.executable,str(src/"ember/tools/net80211-rxba-lifecycle-extract.py"),str(src),str(out)],check=True)
 
 def read(path):
     return (src / path).read_text()

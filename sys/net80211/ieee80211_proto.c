@@ -121,6 +121,8 @@ ieee80211_proto_attach(struct ieee80211com *ic)
 
 	/* A qualified driver may register a provider after protocol attach. */
 	ic->ic_ht20_admit = NULL;
+	ic->ic_rxba_ops = NULL;
+	ic->ic_rxba_serial = 0;
 	ic->ic_rtsthreshold = IEEE80211_RTS_DEFAULT;
 	ic->ic_fragthreshold = IEEE80211_FRAG_DEFAULT;
 	ic->ic_fixed_rate = IEEE80211_FIXED_RATE_NONE;

@@ -14,9 +14,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <assert.h>
+#include <stdlib.h>
 #include "rtw88_net_policy.h"
 #include "aploss-constants.inc"
 #include "ieee80211_ht20.h"
+#include "ieee80211_rxba.h"
 
 static unsigned checks, failures;
 #define CHECK(e) do { checks++; if (!(e)) { failures++; \
@@ -29,11 +32,13 @@ static uint32_t ticks;
 static int giant, pci, pci_token, probe_scan;
 static struct ieee80211com *probe_ic;
 struct ieee80211com;
-struct ieee80211_node { uint8_t ni_bssid[6], ni_essid[32], ni_macaddr[6]; unsigned ni_esslen, ni_fails; struct ieee80211_ht20_node ni_ht20; };
+struct ieee80211_node { struct ieee80211com *ni_ic; unsigned ni_flags; struct ieee80211_rxba_state ni_rxba; uint8_t ni_bssid[6], ni_essid[32], ni_macaddr[6]; unsigned ni_esslen, ni_fails; struct ieee80211_ht20_node ni_ht20; };
 struct ieee80211_node_table { int nt_inact_timer; void (*nt_timeout)(struct ieee80211_node_table *); };
 struct ifnet { void *if_softc; int if_timer; unsigned if_oerrors; };
 struct work { unsigned unused; };
 struct ieee80211com {
+    const struct ieee80211_rxba_ops *ic_rxba_ops;
+    uint64_t ic_rxba_serial;
     struct ifnet *ic_ifp;
     struct ieee80211_node *ic_bss;
     enum ieee80211_state ic_state;
@@ -116,6 +121,10 @@ static int aploss_checked_ht20_request(struct ieee80211com *ic,int state) {
 static void ieee80211_beacon_miss(struct ieee80211com *);
 static void ieee80211_notify_node_leave(struct ieee80211com *,struct ieee80211_node *);
 static void ieee80211_sta_leave(struct ieee80211com *,struct ieee80211_node *);
+/* BA payloads are outside this default-OFF AP-loss fixture. Actual shared
+ * storage destruction is retained; reaching a held mbuf is an explicit error. */
+static void m_freem(struct mbuf *m) { (void)m;abort(); }
+#include "native-rxba-lifecycle.inc"
 #include "aploss-native.inc"
 
 struct bsd_driver_data { int sta_scan_pending,is_ap; void *ctx; };
@@ -137,7 +146,7 @@ static void setup(struct fixture *f) {
     memset(f,0,sizeof(*f));giant=1;pci=0;ticks=100;probe_scan=0;
     f->net.lock=&pci_token;
     f->net.core=&f->core;f->net.ic.ic_ifp=&f->ifp;f->ifp.if_softc=&f->net;
-    f->net.ic.ic_bss=&f->ni;f->net.ic.ic_state=IEEE80211_S_RUN;
+    f->net.ic.ic_bss=&f->ni;f->ni.ni_ic=&f->net.ic;f->net.ic.ic_state=IEEE80211_S_RUN;
     f->net.ic.ic_opmode=IEEE80211_M_STA;f->net.ic.ic_roaming=IEEE80211_ROAMING_MANUAL;
     f->net.ic.ic_curchan=8;f->net.ic.ic_bmisstimeout=700;
     f->net.ic.ic_bmiss_max=IEEE80211_BMISS_MAX;
