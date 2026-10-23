@@ -156,7 +156,7 @@ The fixed list length 32 does not establish a full 32-bit writable length field.
 
 DMA publication is irreversible before the first address write attempt.
 An error or timeout after publication retains both buffers. The driver has
-no stop, detach or unload operation. The repeated-frame interface below
+no stop recovery, detach or unload operation after a fault. The repeated-frame interface below
 can retire a replaced external frame. It cannot release the retained hardware
 claims or establish a general stop/isolation operation.
 
@@ -363,4 +363,14 @@ and pipe0_en at bit 8. These register facts do not import GPL implementation.
 The initial native configuration already sets the pipe fill and output
 background colors to zero. The disabled queue owns only its DMA list, and its
 publication/retirement synchronizes only that list. Uncertain completion does
-not release it or the previous frame. Full engine stop remains separate.
+not release it or the previous frame. The retained output stop below follows
+this retirement proof.
+
+## Retained output stop
+
+`sun60i_a733_de352_stop()` submits the disabled plane through the same RCQ
+and two-vblank proof. It then stops the existing TV0 and DW-HDMI owner.
+Only success sets output stopped. Repeated stop performs no hardware work.
+A later submit restarts the prepared output before its new list.
+The bootstrap list, native tag, memory isolation and clock leases stay owned.
+Failures retain uncertain old and pending storage and block restart.

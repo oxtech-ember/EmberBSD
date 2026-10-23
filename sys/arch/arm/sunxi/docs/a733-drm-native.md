@@ -91,7 +91,8 @@ The frontend accepts only an admitted DE state and its exact restricted DMA tag.
 A missing or not-ready provider returns an error without starting registration.
 A failure after client acquisition is sticky.
 `hw.sun60idrm0.fault` returns the first registration or commit error.
-There is no detach, restart or display-stop contract in this profile.
+The profile retains its attachment and resource leases across CRTC stop.
+A fault has no reset, detach or restart recovery.
 
 The stage handler reserves registration under the frontend lock.
 It releases that lock and the sysctl tree lock before DRM registration.
@@ -110,13 +111,12 @@ change hardware state, or release a scanout buffer. Polling starts only after
 successful DRM registration. The existing no-detach lifetime remains required.
 
 The connector still advertises one exact cached EDID mode. Fresh EDID modes,
-mode changes, automatic cold-start admission, and safe scanout stop remain
-separate contracts. HPD notification alone does not qualify these operations.
+mode changes and automatic cold-start admission remain separate contracts. HPD notification alone does not qualify these operations.
 The frontend accepts linear XRGB8888 at offset zero.
 It rejects scaling, rotation, alternate modes and noncontiguous imports.
 It accepts a detached primary plane while the CRTC remains active.
-It rejects inactive CRTCs and DPMS off.
-These operations cannot claim to stop the native DE scanout.
+Inactive CRTCs and DPMS off use the retained stop sequence below.
+They do not release the native hardware claims.
 
 The commit path admits one job through its complete cleanup.
 It queues a sleepable worker for blocking and nonblocking commits.
