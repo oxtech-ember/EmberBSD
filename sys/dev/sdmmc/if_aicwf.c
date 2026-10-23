@@ -927,7 +927,7 @@ aicwf_fw_read(struct aicwf_softc *sc, const char *name, uint8_t **datap,
     size_t *sizep)
 {
 	firmware_handle_t fh;
-	uint8_t *data;
+	void *data;
 	size_t size;
 	int error;
 
@@ -937,14 +937,10 @@ aicwf_fw_read(struct aicwf_softc *sc, const char *name, uint8_t **datap,
 		    name, error);
 		return error;
 	}
-	size = firmware_get_size(fh);
-	data = firmware_malloc(size);
-	error = firmware_read(fh, 0, data, size);
+	error = firmware_read_alloc(fh, SIZE_MAX, &data, &size);
 	firmware_close(fh);
-	if (error != 0) {
-		firmware_free(data, size);
+	if (error != 0)
 		return error;
-	}
 	*datap = data;
 	*sizep = size;
 

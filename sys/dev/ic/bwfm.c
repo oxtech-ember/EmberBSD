@@ -192,6 +192,8 @@ bwfm_firmware_read_file(struct bwfm_softc * const sc,
 {
 	firmware_handle_t fwh;
 	char *names[2];
+	void *data;
+	size_t size;
 	int i, error;
 
 	names[1] = kmem_asprintf("%s.%s", fwp->fwsel_basename,
@@ -220,23 +222,13 @@ bwfm_firmware_read_file(struct bwfm_softc * const sc,
 	aprint_verbose_dev(sc->sc_dev, "Found %s file: %s\n",
 	    bwfm_firmware_filetypes[which].description, names[i]);
 
-	size_t size = firmware_get_size(fwh);
-	void *data = firmware_malloc(size);
-	if (data == NULL) {
-		aprint_error_dev(sc->sc_dev,
-		    "unable to allocate %zu bytes for %s image\n", size,
-		    bwfm_firmware_filetypes[which].description);
-		firmware_close(fwh);
-		goto out;
-	}
-	error = firmware_read(fwh, 0, data, size);
+	error = firmware_read_alloc(fwh, SIZE_MAX, &data, &size);
 	firmware_close(fwh);
 	if (error) {
 		aprint_error_dev(sc->sc_dev,
 		    "failed to read %s file, error %d\n",
 		    bwfm_firmware_filetypes[which].description,
 		    error);
-		firmware_free(data, size);
 		goto out;
 	}
 

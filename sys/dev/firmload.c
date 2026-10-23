@@ -311,8 +311,49 @@ int
 firmware_read(firmware_handle_t fh, off_t offset, void *buf, size_t len)
 {
 
+	/* vn_rdwr takes an int length.  Do not narrow a larger request. */
+	if (len > INT_MAX)
+		return EFBIG;
 	return (vn_rdwr(UIO_READ, fh->fh_vp, buf, len, offset,
 			UIO_SYSSPACE, 0, kauth_cred_get(), NULL, curlwp));
+}
+
+/*
+ * Read an opened image into an owned buffer.  File selection and handle
+ * lifetime remain with the caller.  Origin: EmberBSD, AI-assisted.
+ */
+int
+firmware_read_alloc(firmware_handle_t fh, size_t maxsize, void **bufp,
+    size_t *sizep)
+{
+	off_t length;
+	void *buf;
+	size_t size;
+	int error;
+
+	if (bufp == NULL || sizep == NULL)
+		return EINVAL;
+	*bufp = NULL;
+	*sizep = 0;
+	if (fh == NULL)
+		return EINVAL;
+	length = firmware_get_size(fh);
+	if (length <= 0)
+		return EINVAL;
+	if ((uintmax_t)length > maxsize || length > INT_MAX)
+		return EFBIG;
+	size = (size_t)length;
+	buf = firmware_malloc(size);
+	if (buf == NULL)
+		return ENOMEM;
+	error = firmware_read(fh, 0, buf, size);
+	if (error != 0) {
+		firmware_free(buf, size);
+		return error;
+	}
+	*bufp = buf;
+	*sizep = size;
+	return 0;
 }
 
 /*

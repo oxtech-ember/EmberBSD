@@ -378,6 +378,7 @@ MLINKS+=firmload.9 firmware_open.9 \
 	firmload.9 firmware_close.9 \
 	firmload.9 firmware_get_size.9 \
 	firmload.9 firmware_read.9 \
+	firmload.9 firmware_read_alloc.9 \
 	firmload.9 firmware_malloc.9 \
 	firmload.9 firmware_free.9
 MLINKS+=fsetown.9 fgetown.9 \

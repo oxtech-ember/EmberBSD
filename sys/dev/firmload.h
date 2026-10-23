@@ -40,6 +40,7 @@ int	firmware_close(firmware_handle_t);
 off_t	firmware_get_size(firmware_handle_t);
 
 int	firmware_read(firmware_handle_t, off_t, void *, size_t);
+int	firmware_read_alloc(firmware_handle_t, size_t, void **, size_t *);
 
 void	*firmware_malloc(size_t);
 void	firmware_free(void *, size_t);
