@@ -135,7 +135,7 @@ assoc_checks(void)
 {
 	struct aicwf_assoc_info info;
 	uint8_t ind[852], *short_ind;
-	size_t n;
+	size_t n, i;
 
 	ind_make(ind);
 	CHECK(aicwf_assoc_parse(ind, sizeof(ind), &info));
@@ -151,7 +151,8 @@ assoc_checks(void)
 	for (n = 0; n <= sizeof(ind); n++) {
 		short_ind = malloc(n != 0 ? n : 1);
 		assert(short_ind != NULL);
-		memcpy(short_ind, ind, n);
+		for (i = 0; i < n; i++)
+			short_ind[i] = ind[i];
 		CHECK(aicwf_assoc_parse(short_ind, n, &info) == (n >= 55));
 		if (n >= 55)
 			CHECK(info.channel == (n >= 836));
