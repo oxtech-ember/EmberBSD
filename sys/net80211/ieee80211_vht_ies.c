@@ -95,3 +95,43 @@ ieee80211_vht_operation_encode(uint8_t *p, size_t len,
 	vht_put16(p + 3, value.basic_map);
 	return 0;
 }
+
+uint16_t
+ieee80211_vht_mcs_intersect(uint16_t a, uint16_t b)
+{
+	uint16_t result = 0;
+	unsigned shift, x, y, common;
+
+	for (shift = 0; shift < 16; shift += 2) {
+		x = (a >> shift) & 3;
+		y = (b >> shift) & 3;
+		common = x == 3 || y == 3 ? 3 : (x < y ? x : y);
+		result |= (uint16_t)(common << shift);
+	}
+	return result;
+}
+
+struct ieee80211_vht_mcs_maps
+ieee80211_vht_mcs_candidates(struct ieee80211_vht_mcs_maps local,
+    struct ieee80211_vht_mcs_maps peer)
+{
+	struct ieee80211_vht_mcs_maps candidate;
+
+	candidate.tx_map = ieee80211_vht_mcs_intersect(local.tx_map, peer.rx_map);
+	candidate.rx_map = ieee80211_vht_mcs_intersect(local.rx_map, peer.tx_map);
+	return candidate;
+}
+
+bool
+ieee80211_vht_mcs_meets(uint16_t supported, uint16_t required)
+{
+	unsigned shift, have, need;
+
+	for (shift = 0; shift < 16; shift += 2) {
+		have = (supported >> shift) & 3;
+		need = (required >> shift) & 3;
+		if (need != 3 && (have == 3 || have < need))
+			return false;
+	}
+	return true;
+}

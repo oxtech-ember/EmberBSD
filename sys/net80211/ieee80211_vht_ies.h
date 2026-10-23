@@ -55,4 +55,24 @@ int ieee80211_vht_cap_encode(uint8_t *, size_t,
 int ieee80211_vht_operation_encode(uint8_t *, size_t,
     const struct ieee80211_vht_operation *);
 
+/* Raw MCS candidates only. An all-unsupported map (0xffff) is valid. */
+struct ieee80211_vht_mcs_maps {
+	uint16_t tx_map;
+	uint16_t rx_map;
+};
+
+/* All eight NSS entries: 3 dominates; otherwise take minimum support. */
+uint16_t ieee80211_vht_mcs_intersect(uint16_t, uint16_t);
+
+/* Local TX intersects peer RX; local RX intersects peer TX. Value API. */
+struct ieee80211_vht_mcs_maps ieee80211_vht_mcs_candidates(
+    struct ieee80211_vht_mcs_maps, struct ieee80211_vht_mcs_maps);
+
+/*
+ * Required entry 3 imposes no requirement. Other entries need support at
+ * least that large, excluding unsupported (3). Caller selects direction
+ * and basic-map policy. No PHY, rate, width or admission inference occurs.
+ */
+bool ieee80211_vht_mcs_meets(uint16_t, uint16_t);
+
 #endif /* _NET80211_IEEE80211_VHT_IES_H_ */

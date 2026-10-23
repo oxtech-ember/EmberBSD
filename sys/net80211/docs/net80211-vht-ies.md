@@ -50,6 +50,32 @@ pointers or insufficient output space. Failure changes no output. Extra
 space is untouched. Each encoder snapshots its input before writing, so
 input and output may overlap. Wire loads and stores support unaligned bytes.
 
+## MCS map mechanisms
+
+Each map contains eight two-bit entries, starting with NSS 1 in bits 0..1.
+Entries 0, 1 and 2 support MCS 0..7, 0..8 and 0..9, respectively.
+Entry 3 means unsupported. `ieee80211_vht_mcs_intersect(a, b)` processes
+all eight entries. Unsupported dominates; other pairs use minimum support.
+Unsupported holes do not terminate the map. An all-unsupported result
+(`0xffff`) is a valid empty candidate.
+
+`struct ieee80211_vht_mcs_maps` contains `tx_map` and `rx_map` only.
+`ieee80211_vht_mcs_candidates(local, peer)` returns this structure by value.
+Its TX map intersects local TX with peer RX. Its RX map intersects local RX
+with peer TX. Inputs and outputs are values, with no pointer lifetime or
+overlap requirements. Highest-rate fields cannot influence this interface.
+
+`ieee80211_vht_mcs_meets(supported, required)` checks every required entry.
+Required entry 3 imposes no requirement. Other required entries need
+supported MCS at least that large; unsupported entry 3 cannot satisfy them.
+Callers select the direction and decide whether a BSS basic map applies.
+These helpers establish no station validity, PHY rate, bandwidth, SGI,
+MPDU policy or transmission permission. They do not qualify a radio.
+
+The entry encoding and TX/RX pairing were checked against the pinned
+FreeBSD `ieee80211_setup_vht_rates()` reference above. No station policy
+or highest-rate calculation is imported.
+
 ## Software contracts
 
 Run the real source and its existing firmware consumers with GCC 16:
@@ -65,6 +91,9 @@ The contracts cover all payload length values, truncation boundaries,
 duplicates, unrelated TLVs, NULL inputs, failure clearing, raw bit retention,
 byte-exact roundtrips, overlapping encoder inputs and output guards.
 The AICWF checks execute the production builder and decoder adapter.
+The MCS contract exhausts all 16 entry pairs at each of eight NSS positions
+for intersection and requirements. It checks asymmetric directions,
+unsupported holes, empty candidates and the highest stream position.
 The station contract links the shared source into the actual extracted
 management path. `TEST_RUNNER` accepts an executable wrapper, including a
 Valgrind Memcheck wrapper. `VHT_IES_TEST_CFLAGS`, `AICWF_VHT_CFLAGS` and

@@ -176,6 +176,97 @@ encode(void)
 	CHECK(v.cap.info == 0 && v.operation.width == 0);
 }
 
+static void
+mcs_intersection(void)
+{
+	/* Rows/columns encode MCS 0..7, 0..8, 0..9, unsupported. */
+	static const unsigned want[4][4] = {
+		{0, 0, 0, 3}, {0, 1, 1, 3},
+		{0, 1, 2, 3}, {3, 3, 3, 3}
+	};
+	uint16_t a, b, expected, mask;
+	unsigned nss, x, y;
+
+	/* A numeric minimum incorrectly turns unsupported into support. */
+	CHECK(ieee80211_vht_mcs_intersect(0xffff, 0) == 0xffff);
+	for (nss = 0; nss < 8; nss++) {
+		mask = (uint16_t)(3U << (2 * nss));
+		for (x = 0; x < 4; x++) {
+			for (y = 0; y < 4; y++) {
+				a = (uint16_t)(0xffffU & ~mask) |
+				    (uint16_t)(x << (2 * nss));
+				b = (uint16_t)(0xffffU & ~mask) |
+				    (uint16_t)(y << (2 * nss));
+				expected = (uint16_t)(0xffffU & ~mask) |
+				    (uint16_t)(want[x][y] << (2 * nss));
+				CHECK(ieee80211_vht_mcs_intersect(a, b) ==
+				    expected);
+			}
+		}
+	}
+	/* Unsupported holes do not terminate processing of later streams. */
+	CHECK(ieee80211_vht_mcs_intersect(0xe4e4, 0x1b1b) == 0xd7d7);
+	CHECK(ieee80211_vht_mcs_intersect(0xbfff, 0x7fff) == 0x7fff);
+	CHECK(ieee80211_vht_mcs_intersect(0, 0) == 0);
+}
+
+static void
+mcs_candidates(void)
+{
+	struct ieee80211_vht_mcs_maps local = { .tx_map = 0xfffa,
+	    .rx_map = 0xfff0 };
+	struct ieee80211_vht_mcs_maps peer = { .tx_map = 0xfff5,
+	    .rx_map = 0xfff4 };
+	struct ieee80211_vht_mcs_maps candidate;
+
+	candidate = ieee80211_vht_mcs_candidates(local, peer);
+	CHECK(candidate.tx_map == 0xfff4);
+	CHECK(candidate.rx_map == 0xfff0);
+	candidate = ieee80211_vht_mcs_candidates(peer, local);
+	CHECK(candidate.tx_map == 0xfff0);
+	CHECK(candidate.rx_map == 0xfff4);
+	local.tx_map = local.rx_map = 0xffff;
+	candidate = ieee80211_vht_mcs_candidates(local, peer);
+	CHECK(candidate.tx_map == 0xffff && candidate.rx_map == 0xffff);
+	local.tx_map = 0xbfff; local.rx_map = 0xe4e4;
+	peer.tx_map = 0x1b1b; peer.rx_map = 0x7fff;
+	candidate = ieee80211_vht_mcs_candidates(local, peer);
+	CHECK(candidate.tx_map == 0x7fff && candidate.rx_map == 0xd7d7);
+}
+
+static void
+mcs_requirements(void)
+{
+	/* Rows are support; columns are requirements. 3 requires nothing. */
+	static const bool want[4][4] = {
+		{true, false, false, true}, {true, true, false, true},
+		{true, true, true, true}, {false, false, false, true}
+	};
+	uint16_t supported, required, mask;
+	unsigned nss, x, y;
+
+	CHECK(!ieee80211_vht_mcs_meets(0xfffc, 0xfffd));
+	for (nss = 0; nss < 8; nss++) {
+		mask = (uint16_t)(3U << (2 * nss));
+		for (x = 0; x < 4; x++) {
+			for (y = 0; y < 4; y++) {
+				supported = (uint16_t)(0xffffU & ~mask) |
+				    (uint16_t)(x << (2 * nss));
+				required = (uint16_t)(0xffffU & ~mask) |
+				    (uint16_t)(y << (2 * nss));
+				CHECK(ieee80211_vht_mcs_meets(supported,
+				    required) == want[x][y]);
+			}
+		}
+	}
+	CHECK(ieee80211_vht_mcs_meets(0xffff, 0xffff));
+	CHECK(ieee80211_vht_mcs_meets(0xaaaa, 0));
+	CHECK(!ieee80211_vht_mcs_meets(0xeaaa, 0));
+	CHECK(!ieee80211_vht_mcs_meets(0x6aaa, 0xbfff));
+	CHECK(ieee80211_vht_mcs_meets(0xe4e4, 0xf7f7));
+	CHECK(!ieee80211_vht_mcs_meets(0xe4e4, 0xf6f7));
+}
+
 int
 main(int argc, char **argv)
 {
@@ -188,6 +279,12 @@ main(int argc, char **argv)
 	}
 	if (argc == 1 || strcmp(argv[1], "encode") == 0)
 		encode();
-	printf("PASS: %u shared VHT wire codec checks\n", checks);
+	if (argc == 1 || strcmp(argv[1], "mcs-intersection") == 0)
+		mcs_intersection();
+	if (argc == 1 || strcmp(argv[1], "mcs-candidates") == 0)
+		mcs_candidates();
+	if (argc == 1 || strcmp(argv[1], "mcs-requirements") == 0)
+		mcs_requirements();
+	printf("PASS: %u shared VHT codec and MCS checks\n", checks);
 	return 0;
 }
