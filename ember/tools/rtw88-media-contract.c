@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: native media consumer contract, AI-assisted. */
 /* Actual ifattach/media_init/media_change/setmode, modeled kernel boundaries. */
 #include <sys/types.h>
 #include <assert.h>
@@ -7,8 +8,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
+#ifndef __UNCONST
 #define __UNCONST(a) ((void *)(uintptr_t)(const void *)(a))
+#endif
 #include "media-types.inc"
 #define setbit(a,i) ((a)[(i)/8] |= 1U << ((i)%8))
 /* The modeled bitmap service accepts only channel indices 0..255.
@@ -80,6 +85,8 @@ static void bpf_attach2(struct ifnet *p,int type,size_t size,void **bp)
 #define ieee80211_add_vap(ic) ((void)(ic))
 #define ieee80211_sysctl_attach(ic) ((void)(ic))
 #define ieee80211_init_link_state(ic) ((void)(ic))
+/* Global stack initialization is a kernel service outside media policy. */
+#define ieee80211_init() ((void)0)
 #define ieee80211_node_lateattach(ic) ((void)(ic))
 void ieee80211_reset_erp(struct ieee80211com *);
 void ieee80211_set_shortslottime(struct ieee80211com *, int);

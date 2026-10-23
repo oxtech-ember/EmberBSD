@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: native stats sysctl consumer contract, AI-assisted. */
 /* Execute the owning stats sysctl wrapper; allocator/lookup/driver are services. */
 #ifndef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE 1
@@ -37,7 +38,9 @@ static int sysctl_lookup(SYSCTLFN_ARGS);
 #define KASSERT assert
 #define DPRINTF(x) ((void)0)
 #define rw_lock_held(p) ((void)(p),1)
+#ifndef __UNCONST
 #define __UNCONST(p) ((void *)(uintptr_t)(p))
+#endif
 #define KAUTH_SYSTEM_SYSCTL 0
 #define KAUTH_REQ_SYSTEM_SYSCTL_PRVT 1
 #define KAUTH_REQ_SYSTEM_SYSCTL_MODIFY 2
