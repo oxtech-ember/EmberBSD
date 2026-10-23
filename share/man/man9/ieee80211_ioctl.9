@@ -53,7 +53,7 @@
 .Fa "int (*callback)(struct ieee80211com *, const struct ieee80211req_sae *)"
 .Fc
 .Ft int
-.Fn ieee80211_sae_configure_check "struct ieee80211com *ic" "uint32_t caps" "bool enable"
+.Fn ieee80211_sae_configure_check "const struct ieee80211com *ic" "uint32_t caps" "bool enable"
 .Ft int
 .Fn ieee80211_sta_request_validate "const struct ieee80211req_sta_mgmt *req"
 .Sh DESCRIPTION
@@ -109,8 +109,10 @@ The chip driver owns state serialization, association lifetime checks,
 and firmware commands.
 Before changing configuration, the callback calls
 .Fn ieee80211_sae_configure_check
-with current capabilities and the validated enable flag under its state ownership.
-This check runs after copyin, so a sleeping copy cannot authorize stale capabilities.
+with current capabilities and the validated enable flag
+under its state ownership.
+This check runs after copyin.
+A sleeping copy cannot authorize stale capabilities.
 The capability argument to
 .Fn ieee80211_ioctl_sae
 is used only for GET.

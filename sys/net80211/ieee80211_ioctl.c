@@ -1474,7 +1474,7 @@ ieee80211_sae_request_valid(const struct ieee80211req_sae *req)
 }
 /* The chip callback calls this under its state ownership, after copyin. */
 int
-ieee80211_sae_configure_check(struct ieee80211com *ic, uint32_t caps,
+ieee80211_sae_configure_check(const struct ieee80211com *ic, uint32_t caps,
     bool enable)
 {
 	/* Disable must work after a firmware capability disappears. */

@@ -45,7 +45,16 @@ static size_t allocation_size;
 static const void *user_request;
 static void (*input_hook)(void);
 static int net_ipl;
-#define CHECK(condition) do { checks++; assert(condition); } while (0)
+static void
+check(bool condition, const char *expression, unsigned line)
+{
+	checks++;
+	if (!condition) {
+		fprintf(stderr, "FAIL line %u: %s\n", line, expression);
+		exit(EXIT_FAILURE);
+	}
+}
+#define CHECK(condition) check((condition), #condition, __LINE__)
 
 static void *
 allocate(size_t n)
@@ -135,6 +144,7 @@ sta_callback(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 	calls++;
 	if (req->op == IEEE80211_STA_GET) {
 		CHECK(req->version == IEEE80211_STA_VERSION && req->flags == 0);
+		CHECK(req->cookie == 0 && req->freq == 0);
 		memset(req->data, 0x5a, sizeof(req->data));
 		req->flags = IEEE80211_STA_CAP_BTM;
 		req->len = sizeof(req->data);
@@ -150,6 +160,7 @@ struct bwfm_softc {
 	uint8_t sc_sae_bssid[6];
 };
 static unsigned firmware_calls, net_entries;
+static int firmware_error;
 static struct bwfm_softc *active_sc;
 static int splnet(void) { int old = net_ipl; net_ipl++; net_entries++; return old; }
 static void splx(int old) { CHECK(net_ipl == old + 1); net_ipl = old; }
@@ -165,7 +176,23 @@ static unsigned ieee80211_chan2ieee(struct ieee80211com *ic, void *chan)
 { (void)ic; (void)chan; return 1; }
 static int bwfm_fwvar_var_set_data(struct bwfm_softc *sc, const char *name,
     const void *data, size_t size)
-{ (void)sc; (void)name; (void)data; (void)size; CHECK(net_ipl == 1); firmware_calls++; return 0; }
+{
+	(void)sc;
+	CHECK(net_ipl == 1);
+	firmware_calls++;
+	if (strcmp(name, "wsec_key") == 0) {
+		const struct bwfm_wsec_key *key = data;
+		CHECK(size == sizeof(*key));
+		for (size_t i = 0; i < sizeof(key->pad_1) / sizeof(key->pad_1[0]); i++)
+			CHECK(key->pad_1[i] == 0);
+		for (size_t i = 0; i < sizeof(key->pad_2) / sizeof(key->pad_2[0]); i++)
+			CHECK(key->pad_2[i] == 0);
+		CHECK(key->pad_3 == 0 && key->rxiv.pad_4 == 0);
+		CHECK(key->pad_5[0] == 0 && key->pad_5[1] == 0);
+		CHECK(memcmp(key->ea, "\0\0\0\0\0\0", sizeof(key->ea)) == 0);
+	}
+	return firmware_error;
+}
 /* BWFM_FUNCTIONS */
 
 static void
@@ -367,16 +394,24 @@ main(void)
 	req.op = IEEE80211_SAE_AUTH_STATUS; req.len = 2; req.data[0] = 0;
 	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == 0);
 	CHECK(firmware_calls == 1 && net_ipl == 0);
+	firmware_error = EIO;
+	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == EIO);
+	CHECK(firmware_calls == 2 && net_ipl == 0);
+	firmware_error = 0;
+	req.op = IEEE80211_SAE_SET_IGTK; req.len = 24;
+	memset(req.data, 0, sizeof(req.data)); req.data[0] = 4;
+	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == 0);
+	CHECK(firmware_calls == 3 && net_ipl == 0);
 	input_hook = reconfigure_during_copy;
 	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == ESTALE);
-	CHECK(firmware_calls == 1 && net_ipl == 0);
+	CHECK(firmware_calls == 3 && net_ipl == 0);
 	input_hook = stop_during_copy;
 	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == ENXIO);
-	CHECK(firmware_calls == 1 && net_ipl == 0);
+	CHECK(firmware_calls == 3 && net_ipl == 0);
 	input_hook = NULL;
 	sc.sc_detaching = false; sc.sc_ic.ic_bss = NULL;
 	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == ESTALE);
-	CHECK(firmware_calls == 1 && releases == allocations && net_ipl == 0);
+	CHECK(firmware_calls == 3 && releases == allocations && net_ipl == 0);
 	printf("PASS: %u common SAE/STA ioctl and bwfm lifetime checks\n", checks);
 	return 0;
 }
