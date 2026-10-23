@@ -231,7 +231,9 @@ jobs:
         run: |
           cat > "$RUNNER_TEMP/memcheck" <<'SH'
           #!/bin/sh
+          # Let writer threads run while concurrent readers stay busy.
           exec valgrind --tool=memcheck --error-exitcode=97 \
+            --fair-sched=yes \
             --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=all \
             --track-origins=yes "$@"
           SH
