@@ -86,9 +86,7 @@ a733_drm_work(struct work *work, void *cookie)
 	struct drm_atomic_state *state = job->state;
 	struct drm_plane_state *plane;
 	struct drm_crtc_state *crtc;
-	struct a733_drm_fb *fb;
 	struct sun60i_a733_de352_completion done = {0};
-	struct sun60i_a733_drm_frame frame;
 	uint64_t sequence = 0, time_ns = 0;
 	ktime_t time;
 	bool vblank_ref = false;
@@ -96,17 +94,6 @@ a733_drm_work(struct work *work, void *cookie)
 
 	plane = drm_atomic_get_new_plane_state(state, &sc->plane);
 	crtc = drm_atomic_get_new_crtc_state(state, &sc->crtc);
-	if (crtc->active && plane->fb != NULL) {
-		fb = container_of(plane->fb, struct a733_drm_fb, base);
-		frame = (struct sun60i_a733_drm_frame){
-			.format = plane->fb->format->format,
-			.modifier = plane->fb->modifier,
-			.width = plane->fb->width,
-			.height = plane->fb->height,
-			.pitch = plane->fb->pitches[0],
-			.offset = plane->fb->offsets[0],
-		};
-	}
 
 	/* This worker holds no modeset, reservation or provider lock. */
 	error = crtc->active && plane->fb != NULL ?
@@ -124,9 +111,21 @@ a733_drm_work(struct work *work, void *cookie)
 			error = sun60i_a733_de352_stop(sc->client, &done);
 		else if (plane->fb == NULL)
 			error = sun60i_a733_de352_disable_plane(sc->client, &done);
-		else
+		else {
+			struct a733_drm_fb * const fb =
+			    container_of(plane->fb, struct a733_drm_fb, base);
+			const struct sun60i_a733_drm_frame frame = {
+				.format = plane->fb->format->format,
+				.modifier = plane->fb->modifier,
+				.width = plane->fb->width,
+				.height = plane->fb->height,
+				.pitch = plane->fb->pitches[0],
+				.offset = plane->fb->offsets[0],
+			};
+
 			error = sun60i_a733_drm_frame_submit(sc->client, &sc->native,
 			    fb->object, &frame, &done);
+		}
 	}
 	if (error == 0 && vblank_ref) {
 		/* Completion follows two later vblanks; report the latest one. */
