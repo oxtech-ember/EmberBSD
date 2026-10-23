@@ -195,7 +195,7 @@ provider_fault(void *arg, const void *owner, int error)
 
 static const struct sun60i_a733_output_ops provider_ops = {
 	provider_mode, provider_prepare, provider_start, provider_vblank,
-	provider_fault, NULL, NULL, NULL, NULL, NULL, provider_stop
+	provider_fault, NULL, NULL, NULL, NULL, NULL, provider_stop, NULL
 };
 
 static void
@@ -373,6 +373,65 @@ cached_phy_trace(void)
 		CHECK(memcmp(&trace, &expected, sizeof(trace)) == 0);
 		CHECK(memcmp(calls, f.calls, sizeof(calls)) == 0);
 	}
+}
+
+static unsigned observe_cache_calls;
+
+static void
+provider_observe_trace(const void *arg,
+    struct sun60i_a733_output_observe_trace *out)
+{
+	CHECK(arg == output_arg && mutex_owned(&output_lock));
+	observe_cache_calls++;
+	out->version = 1;
+	out->valid = 3;
+	out->phase = A733_OBSERVE_TV0;
+	out->result = EIO;
+	out->sample_error = 0;
+	out->sample.version = 1;
+	out->sample.valid = 0xff;
+	out->sample.words[3] = UINT32_C(0x40000000);
+}
+
+static void
+cached_observe_trace(void)
+{
+	struct sun60i_a733_output_ops ops = provider_ops;
+	struct provider_fixture f = { .owner = &f };
+	struct sun60i_a733_output_observe_trace trace, saved, expected = { 0 };
+	struct sun60i_a733_output_mode mode;
+	unsigned calls[6];
+
+	provider_reset();
+	memset(&trace, 0xa5, sizeof(trace));
+	saved = trace;
+	CHECK(sun60i_a733_output_cached_observe_trace(7, NULL) == EINVAL);
+	CHECK(sun60i_a733_output_cached_observe_trace(7, &trace) == ENXIO);
+	CHECK(sun60i_a733_output_register(7, &ops, &f) == 0);
+	CHECK(sun60i_a733_output_cached_observe_trace(7, &trace) ==
+	    EOPNOTSUPP);
+	CHECK(memcmp(&saved, &trace, sizeof(trace)) == 0);
+	provider_reset();
+	ops.cached_observe_trace = provider_observe_trace;
+	CHECK(sun60i_a733_output_register(7, &ops, &f) == 0);
+	CHECK(sun60i_a733_output_cached_observe_trace(8, &trace) == ENXIO);
+	CHECK(sun60i_a733_output_get_mode(7, &f, &mode) == 0);
+	CHECK(sun60i_a733_output_fault(7, &f, EIO) == 0);
+	memcpy(calls, f.calls, sizeof(calls));
+	expected.version = 1;
+	expected.valid = 3;
+	expected.phase = A733_OBSERVE_TV0;
+	expected.result = EIO;
+	expected.sample.version = 1;
+	expected.sample.valid = 0xff;
+	expected.sample.words[3] = UINT32_C(0x40000000);
+	observe_cache_calls = 0;
+	for (unsigned i = 0; i < 3; i++) {
+		CHECK(sun60i_a733_output_cached_observe_trace(7, &trace) == 0);
+		CHECK(memcmp(&trace, &expected, sizeof(trace)) == 0);
+		CHECK(memcmp(calls, f.calls, sizeof(calls)) == 0);
+	}
+	CHECK(observe_cache_calls == 3);
 }
 
 static unsigned sample_calls;
@@ -584,6 +643,7 @@ main(void)
 	provider();
 	cached_trace();
 	cached_phy_trace();
+	cached_observe_trace();
 	output_sample();
 	output_vblank_handler();
 	printf("%u A733 output timing/W0C/provider checks passed\n", checks);

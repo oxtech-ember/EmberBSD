@@ -117,6 +117,24 @@ are the current output line (A733 User Manual V1.00, section 15.2.10).
 Two different line values show that the TV0 timing generator runs.
 Equal values do not prove that it stopped.
 
+## Cached vblank observation failure
+
+`sun60i_a733_output_cached_observe_trace()` copies the first failed native
+vblank observation under the output mutex. It works after a sticky fault and
+does no hardware access. The DE coordinator exposes it as the read-only
+`hw.sun60ide0.observe_trace` sysctl. An absent provider returns `ENXIO`.
+A provider without the optional callback returns `EOPNOTSUPP`.
+
+Version 1 contains 15 native-endian `uint32_t` words (60 bytes). Words 0–4
+are version, valid bits, phase, result, and sample error. The remaining words
+are the 10-word output register sample. Valid value 3 marks a retained failure.
+Phases are 1 for owner and power readiness, 2 for HDMI PHY observation, and
+3 for TV0 vblank observation. The provider copies the TV0 readbacks already
+made by the failing observation. It performs no extra MMIO. Sample valid bits
+identify GINT0 (word 3), GCTL (word 5), and TV_DEBUG (word 6). Sample error is
+zero when at least one readback exists. Otherwise it is `ENOENT` and sample
+valid is zero. An empty record is all zero.
+
 ## Cached preparation diagnostics
 
 The optional `sun60i_a733_output_cached_trace()` API copies one initialized

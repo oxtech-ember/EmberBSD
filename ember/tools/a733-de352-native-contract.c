@@ -189,6 +189,14 @@ sun60i_a733_output_cached_trace(int node, struct sun60i_a733_output_trace *out)
 	return 0;
 }
 int
+sun60i_a733_output_cached_observe_trace(int node,
+    struct sun60i_a733_output_observe_trace *out)
+{
+	CHECK(node == 7);
+	memset(out, 0, sizeof(*out));
+	return 0;
+}
+int
 sun60i_a733_output_cached_phy_trace(int node,
     struct sun60i_a733_hdmi_phy_trace *out)
 {
@@ -828,6 +836,8 @@ run_trace_checks(void)
 		CHECK(de352_sysctl_run_trace(&node, &sc) == EROFS);
 		CHECK(de352_sysctl_output_trace(&node, NULL) == 0);
 		CHECK(de352_sysctl_output_trace(&node, &sc) == EROFS);
+		CHECK(de352_sysctl_observe_trace(&node, NULL) == 0);
+		CHECK(de352_sysctl_observe_trace(&node, &sc) == EROFS);
 		CHECK(de352_sysctl_phy_trace(&node, NULL) == 0);
 		CHECK(de352_sysctl_phy_trace(&node, &sc) == EROFS);
 		CHECK(memcmp(&saved, &sc.run_trace, sizeof(saved)) == 0);

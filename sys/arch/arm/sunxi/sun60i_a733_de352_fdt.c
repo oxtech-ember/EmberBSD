@@ -1429,6 +1429,28 @@ de352_sysctl_output_trace(SYSCTLFN_ARGS)
 }
 
 static int
+de352_sysctl_observe_trace(SYSCTLFN_ARGS)
+{
+	struct sun60i_de352_softc *sc = rnode->sysctl_data;
+	struct sysctlnode node = *rnode;
+	struct sun60i_a733_output_observe_trace trace;
+	int error;
+
+	if (newp != NULL)
+		return EROFS;
+	/* The normal update uses this same DE -> output lock order. */
+	mutex_enter(&sc->lock);
+	error = sun60i_a733_output_cached_observe_trace(
+	    sc->output_phandle, &trace);
+	mutex_exit(&sc->lock);
+	if (error != 0)
+		return error;
+	node.sysctl_data = &trace;
+	node.sysctl_size = sizeof(trace);
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static int
 de352_sysctl_phy_trace(SYSCTLFN_ARGS)
 {
 	struct sun60i_de352_softc *sc = rnode->sysctl_data;
@@ -1593,6 +1615,12 @@ de352_attach(device_t parent, device_t self, void *aux)
 	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_STRUCT, "output_trace", SYSCTL_DESCR("Cached output preparation"),
 	    de352_sysctl_output_trace, 0, sc, sizeof(struct sun60i_a733_output_trace),
+	    CTL_CREATE, CTL_EOL);
+	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRUCT, "observe_trace",
+	    SYSCTL_DESCR("Cached first failed HDMI vblank observation"),
+	    de352_sysctl_observe_trace, 0, sc,
+	    sizeof(struct sun60i_a733_output_observe_trace),
 	    CTL_CREATE, CTL_EOL);
 	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_STRUCT, "phy_trace", SYSCTL_DESCR("Cached PHY I2C comparison"),

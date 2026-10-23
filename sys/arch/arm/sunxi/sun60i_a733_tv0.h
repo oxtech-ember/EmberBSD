@@ -22,6 +22,8 @@ struct sun60i_a733_tv0 {
 	int fault;
 	bool written, routed, prepared, started;
 	uint64_t sequence;
+	/* Last observation's ordinary readbacks; bits 3, 5 and 6 are valid. */
+	uint32_t observe_valid, observe_gint0, observe_gctl, observe_debug;
 };
 
 /* Native callbacks prove retained ownership and enforce apertures and widths. */

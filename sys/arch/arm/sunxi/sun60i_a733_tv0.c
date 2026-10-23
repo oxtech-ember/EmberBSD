@@ -213,15 +213,26 @@ sun60i_a733_tv0_observe(struct sun60i_a733_tv0 *s, uint64_t *sequence)
 		return error;
 	if (!s->started || sequence == NULL)
 		return tv_fail(s, EINVAL);
+	s->observe_valid = 0;
 	value = tv_read(s, A733_TV0_REGS, 0x90);
+	if (s->fault == 0) {
+		s->observe_gctl = value;
+		s->observe_valid |= UINT32_C(1) << 5;
+	}
 	if (s->fault == 0 && (value & UINT32_C(0x80000000)) == 0)
 		tv_fail(s, EIO);
 	value = tv_read(s, A733_TV0_REGS, 0xfc);
+	if (s->fault == 0) {
+		s->observe_debug = value;
+		s->observe_valid |= UINT32_C(1) << 6;
+	}
 	if (s->fault == 0 && (value & UINT32_C(0x60000000)) != 0)
 		tv_fail(s, EIO);
 	value = tv_read(s, A733_TV0_REGS, 4);
 	if (s->fault != 0)
 		return s->fault;
+	s->observe_gint0 = value;
+	s->observe_valid |= UINT32_C(1) << 3;
 	if ((value & UINT32_C(0x5f000000)) != UINT32_C(0x40000000))
 		return tv_fail(s, EIO);
 	error = sun60i_a733_tcon_vblank_ack(value, &ack);
@@ -231,6 +242,8 @@ sun60i_a733_tv0_observe(struct sun60i_a733_tv0 *s, uint64_t *sequence)
 		return tv_fail(s, EOVERFLOW);
 	tv_write(s, A733_TV0_REGS, 4, ack);
 	value = tv_read(s, A733_TV0_REGS, 4);
+	if (s->fault == 0)
+		s->observe_gint0 = value;
 	if (s->fault == 0 && (value & UINT32_C(0x5f004000)) !=
 	    (ack & UINT32_C(0x5f000000)))
 		tv_fail(s, EIO);
@@ -251,15 +264,26 @@ sun60i_a733_tv0_observe_count(struct sun60i_a733_tv0 *s, uint64_t count,
 		return error;
 	if (!s->started || sequence == NULL)
 		return tv_fail(s, EINVAL);
+	s->observe_valid = 0;
 	value = tv_read(s, A733_TV0_REGS, 0x90);
+	if (s->fault == 0) {
+		s->observe_gctl = value;
+		s->observe_valid |= UINT32_C(1) << 5;
+	}
 	if (s->fault == 0 && (value & UINT32_C(0x80000000)) == 0)
 		tv_fail(s, EIO);
 	value = tv_read(s, A733_TV0_REGS, 0xfc);
+	if (s->fault == 0) {
+		s->observe_debug = value;
+		s->observe_valid |= UINT32_C(1) << 6;
+	}
 	if (s->fault == 0 && (value & UINT32_C(0x60000000)) != 0)
 		tv_fail(s, EIO);
 	value = tv_read(s, A733_TV0_REGS, 4);
 	if (s->fault != 0)
 		return s->fault;
+	s->observe_gint0 = value;
+	s->observe_valid |= UINT32_C(1) << 3;
 	/* The IRQ owns the W0C flags. Only the enable set is checked here. */
 	if ((value & UINT32_C(0x5f000000)) != UINT32_C(0x40000000))
 		return tv_fail(s, EIO);

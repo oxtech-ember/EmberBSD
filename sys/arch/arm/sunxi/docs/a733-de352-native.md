@@ -315,10 +315,12 @@ existing operation and readbacks. The cache adds no register access.
 
 `hw.sun60ide0.output_trace` returns the optional provider's fixed
 [preparation cache](a733-hdmi-native.md#cached-preparation-diagnostics).
+`hw.sun60ide0.observe_trace` returns its first failed
+[vblank observation](a733-hdmi-native.md#cached-vblank-observation-failure).
 The DE lock precedes the output lock, as in the normal operation.
-The getter remains available after a retained output failure. An absent
+Both getters remain available after a retained output failure. An absent
 provider returns `ENXIO`. A provider without the optional callback returns
-`EOPNOTSUPP`. Both sysctls reject writes with `EROFS`.
+`EOPNOTSUPP`. The sysctls reject writes with `EROFS`.
 Neither cache grants readiness, retries a stage, or establishes scanout.
 
 ## Cached step 8 diagnostics

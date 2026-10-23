@@ -185,6 +185,11 @@ main(void)
 		if (loss == 3) m.reg[0][1] &= ~UINT32_C(0x40000000);
 		unsigned old_writes = m.writes;
 		CHECK(sun60i_a733_tv0_observe(&s, &seq) == EIO && m.writes == old_writes);
+		CHECK(s.observe_valid == (loss == 2 ? 0x20 :
+		    loss == 3 ? 0x68 : 0x60));
+		CHECK(s.observe_gctl == m.reg[0][0x90/4]);
+		if (loss == 3)
+			CHECK(s.observe_gint0 == m.reg[0][1]);
 	}
 	fixture(); CHECK(sun60i_a733_tv0_route(&s) == 0);
 	unsigned old_writes = m.writes;
@@ -203,6 +208,7 @@ main(void)
 	CHECK(sun60i_a733_tv0_observe_count(&s, 6, NULL) == EINVAL && s.fault == EINVAL);
 	fixture(); CHECK(pipeline(&seq) == 0);
 	CHECK(sun60i_a733_tv0_observe_count(&s, 0, &seq) == EIO && s.fault == EIO);
+	CHECK(s.observe_valid == 0x68 && s.observe_gint0 == m.reg[0][1]);
 	for (unsigned loss = 0; loss < 4; loss++) {
 		fixture(); CHECK(pipeline(&seq) == 0);
 		if (loss < 2) m.reg[0][0xfc/4] |= UINT32_C(0x40000000) >> loss;
@@ -210,6 +216,8 @@ main(void)
 		if (loss == 3) m.reg[0][1] &= ~UINT32_C(0x40000000);
 		old_writes = m.writes;
 		CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == EIO);
+		CHECK(s.observe_valid == (loss == 2 ? 0x20 :
+		    loss == 3 ? 0x68 : 0x60));
 		CHECK(m.writes == old_writes && s.sequence == 1);
 	}
 	fixture(); CHECK(sun60i_a733_tv0_route(&s) == 0);

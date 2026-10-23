@@ -55,6 +55,17 @@ struct sun60i_a733_output_sample {
 	uint32_t words[A733_OUTPUT_SAMPLE_WORDS];
 };
 
+/* Cached first failed vblank observation. No MMIO is done by the reader. */
+enum sun60i_a733_observe_phase {
+	A733_OBSERVE_READY = 1,
+	A733_OBSERVE_PHY = 2,
+	A733_OBSERVE_TV0 = 3
+};
+struct sun60i_a733_output_observe_trace {
+	uint32_t version, valid, phase, result, sample_error;
+	struct sun60i_a733_output_sample sample;
+};
+
 /*
  * Native provider. All callbacks run under one sleep mutex. They must not
  * call these dispatch functions. Provider storage and ops have kernel lifetime.
@@ -93,6 +104,9 @@ struct sun60i_a733_output_ops {
 	int (*detect)(const void *, const void *, bool *);
 	/* Optional. Stop output while retaining mode and resource ownership. */
 	int (*stop)(void *, const void *);
+	/* Optional. Copy the first failed vblank observation without I/O. */
+	void (*cached_observe_trace)(const void *,
+	    struct sun60i_a733_output_observe_trace *);
 };
 int sun60i_a733_output_register(int, const struct sun60i_a733_output_ops *, void *);
 int sun60i_a733_output_get_mode(int, const void *,
@@ -106,6 +120,8 @@ int sun60i_a733_output_observed_vblank(int, const void *, uint64_t *);
 int sun60i_a733_output_fault(int, const void *, int);
 /* No readiness check or I/O. Failure leaves the output unchanged. */
 int sun60i_a733_output_cached_trace(int, struct sun60i_a733_output_trace *);
+int sun60i_a733_output_cached_observe_trace(int,
+    struct sun60i_a733_output_observe_trace *);
 int sun60i_a733_output_cached_phy_trace(int,
     struct sun60i_a733_hdmi_phy_trace *);
 /* Reads only, after prepare. An error does not latch an output fault. */

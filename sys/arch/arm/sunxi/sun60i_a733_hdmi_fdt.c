@@ -49,6 +49,7 @@ struct sun60i_a733_hdmi_softc {
 	struct sun60i_a733_tv0 tv;
 	struct sun60i_a733_output_mode mode;
 	struct sun60i_a733_output_trace trace;
+	struct sun60i_a733_output_observe_trace observe_trace;
 	struct edid_info edid;
 	uint8_t edid_block[128];
 	/*
@@ -660,19 +661,48 @@ static int
 native_observe(void *arg, const void *owner, uint64_t *sequence)
 {
 	struct sun60i_a733_hdmi_softc *sc = arg;
+	uint32_t phase = A733_OBSERVE_READY;
 	int error = native_ready(sc, owner);
 
-	if (error == 0)
+	if (error == 0) {
+		phase = A733_OBSERVE_PHY;
 		error = sun60i_a733_hdmi_phy_observe(&sc->phy);
-	if (error == 0 && sc->ih != NULL) {
-		uint64_t count;
+	}
+	if (error == 0) {
+		phase = A733_OBSERVE_TV0;
+		if (sc->ih != NULL) {
+			uint64_t count;
 
-		mutex_spin_enter(&sc->intr_lock);
-		count = sc->irq_sequence;
-		mutex_spin_exit(&sc->intr_lock);
-		error = sun60i_a733_tv0_observe_count(&sc->tv, count, sequence);
-	} else if (error == 0)
-		error = sun60i_a733_tv0_observe(&sc->tv, sequence);
+			mutex_spin_enter(&sc->intr_lock);
+			count = sc->irq_sequence;
+			mutex_spin_exit(&sc->intr_lock);
+			error = sun60i_a733_tv0_observe_count(&sc->tv,
+			    count, sequence);
+		} else
+			error = sun60i_a733_tv0_observe(&sc->tv, sequence);
+	}
+	if (error != 0 && error != ENOENT && sc->observe_trace.valid == 0) {
+		struct sun60i_a733_output_observe_trace *t =
+		    &sc->observe_trace;
+
+		t->version = 1;
+		t->phase = phase;
+		t->result = error;
+		t->sample_error = ENOENT;
+		if (phase == A733_OBSERVE_TV0 && sc->tv.observe_valid != 0) {
+			/* Reuse the ordinary TV0 reads. Never probe after a fault. */
+			t->sample.version = 1;
+			t->sample.valid = sc->tv.observe_valid;
+			if ((sc->tv.observe_valid & (UINT32_C(1) << 3)) != 0)
+				t->sample.words[3] = sc->tv.observe_gint0;
+			if ((sc->tv.observe_valid & (UINT32_C(1) << 5)) != 0)
+				t->sample.words[5] = sc->tv.observe_gctl;
+			if ((sc->tv.observe_valid & (UINT32_C(1) << 6)) != 0)
+				t->sample.words[6] = sc->tv.observe_debug;
+			t->sample_error = 0;
+		}
+		t->valid = 3;
+	}
 	return error == ENOENT ? error : native_fail(sc, error);
 }
 
@@ -758,6 +788,16 @@ native_cached_trace(const void *arg, struct sun60i_a733_output_trace *out)
 }
 
 static void
+native_cached_observe_trace(const void *arg,
+    struct sun60i_a733_output_observe_trace *out)
+{
+	const struct sun60i_a733_hdmi_softc *sc = arg;
+
+	CTASSERT(sizeof(*out) == 15 * sizeof(uint32_t));
+	*out = sc->observe_trace;
+}
+
+static void
 native_cached_phy_trace(const void *arg, struct sun60i_a733_hdmi_phy_trace *out)
 {
 	const struct sun60i_a733_hdmi_softc *sc = arg;
@@ -828,7 +868,8 @@ native_detect(const void *arg, const void *owner, bool *out)
 static const struct sun60i_a733_output_ops output_ops = {
 	native_get_mode, native_prepare, native_start, native_observe, native_fault,
 	native_cached_trace, native_cached_phy_trace, native_sample,
-	native_set_vblank_handler, native_detect, native_stop
+	native_set_vblank_handler, native_detect, native_stop,
+	native_cached_observe_trace
 };
 
 static int

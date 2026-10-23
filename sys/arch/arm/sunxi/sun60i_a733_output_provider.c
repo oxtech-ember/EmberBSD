@@ -288,6 +288,31 @@ sun60i_a733_output_cached_phy_trace(int phandle,
 	return error;
 }
 
+/* This cache remains readable after a sticky output failure. */
+int
+sun60i_a733_output_cached_observe_trace(int phandle,
+    struct sun60i_a733_output_observe_trace *out)
+{
+	struct sun60i_a733_output_observe_trace trace = { 0 };
+	int error = 0;
+
+	CTASSERT(sizeof(trace) == 15 * sizeof(uint32_t));
+	if (out == NULL)
+		return EINVAL;
+	RUN_ONCE(&output_once, output_init);
+	mutex_enter(&output_lock);
+	if (output_ops == NULL || phandle != output_phandle)
+		error = ENXIO;
+	else if (output_ops->cached_observe_trace == NULL)
+		error = EOPNOTSUPP;
+	else {
+		output_ops->cached_observe_trace(output_arg, &trace);
+		*out = trace;
+	}
+	mutex_exit(&output_lock);
+	return error;
+}
+
 /* A sample error leaves the provider state and the sticky error unchanged. */
 int
 sun60i_a733_output_sample(int phandle, const void *owner,

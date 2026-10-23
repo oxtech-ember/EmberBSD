@@ -192,7 +192,7 @@ static const struct videomode fixture_mode = {108000,1280,1328,1440,1688,1024,10
 int edid_parse_quiet(uint8_t *data,struct edid_info *out)
 { (void)data;CHECK(out->edid_nmodes==0);if(step(25))return -1;out->edid_modes[0]=fixture_mode;out->edid_modes[0].dot_clock=74250;out->edid_modes[1]=fixture_mode;out->edid_nmodes=2;out->edid_preferred_mode=&out->edid_modes[0];return 0; }
 int sun60i_a733_tv0_observe_count(struct sun60i_a733_tv0 *p,uint64_t count,uint64_t *out)
-{ CHECK(p->started&&tv_started);int e=p->io->ready(p->io->arg,p->owner);if(!e)e=step(27);if(e)return e;if(count<p->sequence)return EIO;if(count==p->sequence)return ENOENT;p->sequence=count;*out=count;return 0; }
+{ CHECK(p->started&&tv_started);int e=p->io->ready(p->io->arg,p->owner);if(!e)e=step(27);if(e)return e;p->observe_valid=0x68;p->observe_gint0=tvregs[1];p->observe_gctl=tvregs[0x90/4];p->observe_debug=tvregs[0xfc/4];if(count<p->sequence)return EIO;if(count==p->sequence)return ENOENT;p->sequence=count;*out=count;return 0; }
 static bool intr_present;
 static unsigned intr_establish, intr_disestablish, irq_reads, irq_writes, cb_calls;
 static int (*intr_fn)(void *);
@@ -491,6 +491,25 @@ irq_checks(void)
 	CHECK(native_prepare(&sc, &owner_cookie, &mode) == 0);
 	calls = events = 0; fail = 4;
 	CHECK(native_start(&sc, &owner_cookie) != 0 && !sc.irq_armed);
+	/* Keep the first failed observation readable after the provider faults. */
+	fixture(); intr_present = true; attach();
+	CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
+	CHECK(native_prepare(&sc, &owner_cookie, &mode) == 0);
+	CHECK(native_start(&sc, &owner_cookie) == 0);
+	tvregs[1] = 0;
+	sc.tv.sequence = 1;
+	CHECK(native_observe(&sc, &owner_cookie, &sequence) == EIO);
+	CHECK(sc.fault == EIO && !sc.irq_armed);
+	struct sun60i_a733_output_observe_trace observed = { 0 };
+	native_cached_observe_trace(&sc, &observed);
+	CHECK(observed.version == 1 && observed.valid == 3 &&
+	    observed.phase == A733_OBSERVE_TV0 && observed.result == EIO);
+	CHECK(observed.sample_error == 0 && observed.sample.version == 1 &&
+	    observed.sample.valid == 0x68 && observed.sample.words[3] == 0 &&
+	    (observed.sample.words[5] & UINT32_C(0x80000000)) != 0);
+	unsigned prior_reads = reads;
+	native_cached_observe_trace(&sc, &observed);
+	CHECK(reads == prior_reads);
 	/* A registration failure removes the interrupt. */
 	fixture(); intr_present = true; fail = 26 + 0; calls = 0;
 	{
