@@ -43,42 +43,42 @@ static int output_lookup(int node, const void *owner)
   if (owner != output_owner) return EBUSY;
   return output_error; }
 /* sun60i_a733_output_detect */
-struct sun60i_a733_de352_client { const void *owner; } client;
+struct sun60i_a733_de352_client { const void *owner; } test_client;
 struct sun60i_de352_softc { kmutex_t lock; int output_phandle; } de;
 static struct sun60i_de352_softc *de352_lookup(int node,
-    struct sun60i_a733_de352_client *candidate)
-{ CHECK(node == 0); return candidate == &client ? &de : NULL; }
+    const struct sun60i_a733_de352_client *candidate)
+{ CHECK(node == 0); return candidate == &test_client ? &de : NULL; }
 /* sun60i_a733_de352_detect */
 struct a733_drm { kmutex_t lock; int fault;
     struct sun60i_a733_de352_client *client; } kms;
 struct drm_device { void *dev_private; } dev = { &kms };
-struct drm_connector { struct drm_device *dev; } connector = { &dev };
+struct drm_connector { struct drm_device *dev; } test_connector = { &dev };
 enum drm_connector_status { connector_status_unknown,
     connector_status_connected, connector_status_disconnected };
 /* a733_detect */
 int main(void)
 {
     bool value = true;
-    de.output_phandle = 7; client.owner = &kms; kms.client = &client;
+    de.output_phandle = 7; test_client.owner = &kms; kms.client = &test_client;
     output_owner = &de; output_prepared = true; ops.detect = native_detect;
     hdmi = (struct sun60i_a733_hdmi_softc){ &de, true, 0, 2, 3, 4 };
     hpd = 0;
-    CHECK(a733_detect(&connector, false) == connector_status_disconnected);
+    CHECK(a733_detect(&test_connector, false) == connector_status_disconnected);
     hpd = 2;
-    CHECK(a733_detect(&connector, false) == connector_status_connected);
+    CHECK(a733_detect(&test_connector, false) == connector_status_connected);
     hpd = 0xfd; /* Other PHY status bits do not imply HPD. */
-    CHECK(a733_detect(&connector, true) == connector_status_disconnected);
+    CHECK(a733_detect(&test_connector, true) == connector_status_disconnected);
     read_error = EIO;
-    CHECK(a733_detect(&connector, false) == connector_status_unknown);
+    CHECK(a733_detect(&test_connector, false) == connector_status_unknown);
     CHECK(sun60i_a733_output_detect(7, &de, &value) == EFAULT && value);
     CHECK(output_error == 0 && hdmi.fault == 0 && kms.fault == 0);
     read_error = 0; hpd = 2;
-    CHECK(a733_detect(&connector, false) == connector_status_connected);
+    CHECK(a733_detect(&test_connector, false) == connector_status_connected);
     ready_error = EBUSY; reads = 0;
-    CHECK(a733_detect(&connector, false) == connector_status_unknown && reads == 0);
+    CHECK(a733_detect(&test_connector, false) == connector_status_unknown && reads == 0);
     ready_error = 0;
     output_prepared = false;
-    CHECK(a733_detect(&connector, false) == connector_status_unknown && reads == 0);
+    CHECK(a733_detect(&test_connector, false) == connector_status_unknown && reads == 0);
     output_prepared = true; ops.detect = NULL;
     CHECK(sun60i_a733_output_detect(7, &de, &value) == EOPNOTSUPP && value);
     ops.detect = native_detect;
@@ -87,10 +87,10 @@ int main(void)
     CHECK(sun60i_a733_output_detect(7, NULL, &value) == EINVAL && value);
     CHECK(sun60i_a733_output_detect(7, &de, NULL) == EINVAL);
     CHECK(sun60i_a733_de352_detect(NULL, &value) == EINVAL && value);
-    CHECK(sun60i_a733_de352_detect(&client, NULL) == EINVAL);
-    client.owner = NULL;
-    CHECK(sun60i_a733_de352_detect(&client, &value) == EINVAL && value);
-    client.owner = &kms;
+    CHECK(sun60i_a733_de352_detect(&test_client, NULL) == EINVAL);
+    test_client.owner = NULL;
+    CHECK(sun60i_a733_de352_detect(&test_client, &value) == EINVAL && value);
+    test_client.owner = &kms;
     CHECK(native_detect(&hdmi, &de, NULL) == EINVAL);
     CHECK(native_detect(&hdmi, NULL, &value) == EACCES && value);
     hdmi.hdmi_ready = false;
@@ -98,7 +98,7 @@ int main(void)
     hdmi.hdmi_ready = true; hdmi.fault = EIO;
     CHECK(native_detect(&hdmi, &de, &value) == EIO && value);
     hdmi.fault = 0; kms.fault = EIO;
-    CHECK(a733_detect(&connector, false) == connector_status_unknown && reads == 0);
+    CHECK(a733_detect(&test_connector, false) == connector_status_unknown && reads == 0);
     kms.fault = 0; hpd = 0;
     CHECK(sun60i_a733_output_detect(7, &de, &value) == 0 && !value);
     CHECK(!output_lock.held && !de.lock.held && !kms.lock.held);

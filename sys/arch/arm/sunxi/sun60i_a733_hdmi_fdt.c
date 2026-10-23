@@ -755,7 +755,7 @@ native_sample(void *arg, const void *owner,
 static int
 native_detect(void *arg, const void *owner, bool *out)
 {
-	struct sun60i_a733_hdmi_softc *sc = arg;
+	const struct sun60i_a733_hdmi_softc *sc = arg;
 	uint8_t status;
 	int error;
 
