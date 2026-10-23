@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/* Modeled kernel services for actual CCMP/AES sources, AI-assisted. */
+/* Origin: EmberBSD; modeled kernel services for actual CCMP/AES sources, AI-assisted. */
 #ifndef CCMP_TEST_KERNEL_H
 #define CCMP_TEST_KERNEL_H
 #include <assert.h>
@@ -12,17 +12,27 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#ifndef __KERNEL_RCSID
 #define __KERNEL_RCSID(a, b)
+#endif
 #ifndef __packed
 #define __packed __attribute__((packed))
 #endif
 #ifndef __aligned
 #define __aligned(n) __attribute__((aligned(n)))
 #endif
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
+#ifndef __BIT
 #define __BIT(n) (UINT64_C(1) << (n))
+#endif
+#ifndef __BITS
 #define __BITS(h, l) ((__BIT(h) - 1 + __BIT(h)) & ~(__BIT(l) - 1))
+#endif
+#ifndef __SHIFTIN
 #define __SHIFTIN(v, m) (((uint64_t)(v) << __builtin_ctzll(m)) & (m))
+#endif
 #define KASSERT assert
 #define KASSERTMSG(c, ...) assert(c)
 #define CTASSERT(c) _Static_assert(c, #c)
@@ -32,8 +42,10 @@
 #ifndef NBBY
 #define NBBY 8
 #endif
+#ifndef __GNUC_PREREQ__
 #define __GNUC_PREREQ__(a, b)                                                  \
 	(__GNUC__ > (a) || (__GNUC__ == (a) && __GNUC_MINOR__ >= (b)))
+#endif
 #ifndef le16toh
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define le16toh(n) (n)
@@ -65,6 +77,8 @@ test_explicit_memset(void *p, int c, size_t n)
 		q[i] = (unsigned char)c;
 	return p;
 }
+/* NetBSD already supplies constant-time comparison and endian primitives. */
+#ifndef __NetBSD__
 static int
 consttime_memequal(const void *a, const void *b, size_t n)
 {
@@ -102,7 +116,10 @@ be32enc(void *v, uint32_t n)
 	for (unsigned i = 0; i < 4; i++)
 		p[3 - i] = (uint8_t)(n >> (8 * i));
 }
+#endif /* !__NetBSD__ */
+#ifndef bswap32
 #define bswap32 __builtin_bswap32
+#endif
 static void
 hexdump(int (*print)(const char *, ...), const char *name, const void *p,
 	size_t n)
