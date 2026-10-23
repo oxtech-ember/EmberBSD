@@ -176,7 +176,7 @@ int sun60i_a733_output_start(int node,const void *owner)
 static int stop_error;
 static unsigned stop_calls;
 int sun60i_a733_output_stop(int node,const void *owner)
-{ CHECK(node==7&&owner==lease_owner&&retained&&started);CHECK(de[0x1c1000/4]==0&&de[0x281000/4]==0x101);stop_calls++;if(stop_error)return stop_error;started=false;return 0; }
+{ CHECK(node==7&&owner==lease_owner&&retained&&started);CHECK(de[0x1c1000/4]==0&&de[0x281000/4]==0x001);stop_calls++;if(stop_error)return stop_error;started=false;return 0; }
 int sun60i_a733_output_observed_vblank(int node,const void *owner,uint64_t *out)
 { CHECK(node==7&&owner==lease_owner&&retained&&started);event_polls++;if(no_vblank||event_polls%2||(event_limit&&sequence>=event_limit))return ENOENT;if(!same_sequence)sequence++;*out=sequence;return 0; }
 int sun60i_a733_output_fault(int node,const void *owner,int error)
@@ -521,7 +521,7 @@ plane_disable_checks(void)
   } else {
    CHECK(error==0&&f.held==0&&f.drops==1&&posts==2);
    CHECK(sc.active.dma->disabled&&!sc.active.held);
-   CHECK(de[0x1c1000/4]==0&&de[0x281000/4]==0x101);
+   CHECK(de[0x1c1000/4]==0&&de[0x281000/4]==0x001);
    CHECK(de[0x281004/4]==0xff000000);
    CHECK(done.observed_sequence>=saved.observed_sequence+2);
    CHECK(sun60i_a733_de352_submit(client,&frame,&done)==0);

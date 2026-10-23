@@ -1070,14 +1070,14 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 	}
 	if (!initial) {
 		sc->update_trace.reg = 0x281000;
-		sc->update_trace.expected = dma->disabled ? 0x101 : 0x100;
+		sc->update_trace.expected = dma->disabled ? 0x001 : 0x100;
 	}
 	error = de352_read(sc, 0x281000, &value);
 	if (!initial && error == 0)
 		sc->update_trace.observed = value;
 	if (error == 0 && !initial && value == sc->update_trace.expected)
 		sc->update_trace.submit_phase = ST_DONE;
-	return error != 0 ? error : value == (dma->disabled ? 0x101 : 0x100) ? 0 : EIO;
+	return error != 0 ? error : value == (dma->disabled ? 0x001 : 0x100) ? 0 : EIO;
 }
 
 static int

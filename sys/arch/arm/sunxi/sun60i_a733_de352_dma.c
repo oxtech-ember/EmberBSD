@@ -125,7 +125,7 @@ de352_queue_encode(struct sun60i_a733_de352_dma *m)
 		de352_put32(p + i * 4, words[i]);
 	/* The native submitter must first establish exclusive pipe ownership. */
 	de352_put32((uint8_t *)m->queue.cpu + DE352_DMA_BLEND_OFFSET,
-	    m->disabled ? 0x101 : 0x100);
+	    m->disabled ? 0x001 : 0x100);
 	block = (struct sun60i_a733_de352_rcq_block) {
 		.dma = m->queue.address + DE352_DMA_LAYER_OFFSET,
 		.bytes = sizeof(words), .destination = 0x1c1000, .dirty = true

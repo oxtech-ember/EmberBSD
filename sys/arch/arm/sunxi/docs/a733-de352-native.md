@@ -371,13 +371,15 @@ the retained failure blocks later updates and preserves this record.
 
 `sun60i_a733_de352_disable_plane` uses the same retained client, queue update,
 readback, and two-vblank retirement path as a normal frame. Its immutable list
-sets the seven owned OVL words to zero. It sets BLD control to 0x101: pipe zero
-stays enabled and uses its configured background fill instead of channel data.
+sets the seven owned OVL words to zero. It sets BLD control to 0x001: pipe zero
+is disabled while its fixed-color bit stays set. The output uses its background
+fill instead of channel data.
 This maintains timing output without fetching a pixel buffer. A later frame
 restores the normal 0x100 BLD control through an accepted queue replacement.
 
 The pinned BSP `lowlevel_de/bld/de_bld_type.h` defines pipe0_fcolor_en at bit 0
-and pipe0_en at bit 8. These register facts do not import GPL implementation.
+and pipe0_en at bit 8. Its `de_bld_pipe_reset()` clears pipe0_en without
+clearing pipe0_fcolor_en. These register facts do not import GPL implementation.
 The initial native configuration sets the pipe0 fill color to opaque black
 (`0xff000000`) and the output background color to zero. The pinned BSP
 `lowlevel_de/bld/de_bld.c` selects the same pipe0 fill value for RGB output.

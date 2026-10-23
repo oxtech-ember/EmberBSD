@@ -271,7 +271,7 @@ int main(void)
 	CHECK(m->disabled && m->pixels.map == NULL && !m->pixels.loaded);
 	CHECK(m->layer.attribute == 0 && m->layer.address_low == 0);
 	CHECK(get32((uint8_t *)m->queue.cpu + 32) == 0);
-	CHECK(get32((uint8_t *)m->queue.cpu + 64) == 0x101);
+	CHECK(get32((uint8_t *)m->queue.cpu + 64) == 0x001);
 	CHECK(allocations == 1 && loads == 1 && syncs == 0);
 	CHECK(sun60i_a733_de352_dma_publish(m) == 0 && syncs == 1);
 	published_seen = true;
