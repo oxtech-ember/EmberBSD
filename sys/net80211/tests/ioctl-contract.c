@@ -122,7 +122,9 @@ authorize(void)
 #undef malloc
 #undef free
 
+/* The production callback type permits chip state mutation through ic. */
 static int
+// cppcheck-suppress constParameterCallback
 sae_callback(struct ieee80211com *ic, const struct ieee80211req_sae *req)
 {
 	CHECK(req == allocation && req != user_request);
@@ -398,6 +400,8 @@ main(void)
 	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == EIO);
 	CHECK(firmware_calls == 2 && net_ipl == 0);
 	firmware_error = 0;
+	/* copyin consumed both fields through ireq.i_data in the calls above. */
+	// cppcheck-suppress redundantAssignment
 	req.op = IEEE80211_SAE_SET_IGTK; req.len = 24;
 	memset(req.data, 0, sizeof(req.data)); req.data[0] = 4;
 	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == 0);

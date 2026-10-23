@@ -59,3 +59,7 @@ exercise malformed requests, capability absence, copy faults, callback errors,
 request clearing, and a stop or reconfiguration during copyin. The AIC lifetime
 contract exercises the real callback across delayed firmware confirmations.
 These host fixtures do not replace target kernel builds or hardware acceptance.
+
+Cppcheck uses the generated `compile_commands.json` with `--inline-suppr`.
+Two fixture-local annotations explain its opaque `copyin` alias and the fixed
+mutable callback signature. They do not suppress production diagnostics.
