@@ -1,6 +1,11 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Aggregate only timing. Do not read reports, coordinates, or key input. */
 #pragma D option quiet
+dtrace:::BEGIN
+{
+	last["ims_intr"] = 0;
+	last["imt_intr"] = 0;
+}
 fbt::ihidev_work:entry
 {
 	self->started = timestamp;
