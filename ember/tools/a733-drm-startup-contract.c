@@ -185,6 +185,15 @@ int main(void)
         old_enqueues = enqueues; root_callback(&sc);
         CHECK(enqueues == old_enqueues);
     }
+    fixture(&sc); CHECK(a733_startup_init(&sc, false) == 0);
+    sc.fault = EIO; root_callback(&sc); run_work();
+    CHECK(sc.startup_stopped && starts == 0 && timers == 0);
+    /* A worker that overlaps a manual registration retries only its guard. */
+    fixture(&sc); CHECK(a733_startup_init(&sc, false) == 0);
+    sc.registering = true; root_callback(&sc); run_work();
+    CHECK(starts == 0 && timers == 1 && !sc.startup_stopped);
+    sc.registering = false; fire_timer(); run_work();
+    CHECK(starts == 1 && registrations == 1 && sc.startup_registered);
     fixture(&sc); CHECK(a733_startup_init(&sc, true) == 0);
     CHECK(root_callback == NULL && sc.startup_stopped && starts == 0);
     CHECK(stage_request(&sc, 2) == EINVAL);

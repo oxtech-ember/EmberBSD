@@ -568,6 +568,8 @@ a733_startup_run(struct a733_drm *sc)
 	error = a733_start(sc, &busy);
 	mutex_spin_enter(&sc->startup_lock);
 	sc->startup_running = false;
+	if (error != 0 && error != EAGAIN && !busy)
+		sc->startup_stopped = true;
 	retry = (error == EAGAIN || busy) && !sc->startup_stopped;
 	mutex_spin_exit(&sc->startup_lock);
 	if (retry)
