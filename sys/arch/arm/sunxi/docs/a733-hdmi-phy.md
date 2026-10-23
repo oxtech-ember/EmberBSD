@@ -130,3 +130,18 @@ The GPL files supply hardware facts; their implementation is not copied.
   for the related DWC HDMI 3D TX PHY; NXP application note AN4671 gives the same VLEVCTRL fields
 
 The broader [native output boundary](a733-output-timing.md) remains separate.
+
+## Runtime connection changes
+
+`sun60i_a733_hdmi_phy_observe` checks the programmed PLL and both lock signals.
+It does not require HPD after preparation. An unplug must not become a sticky
+PHY fault while the timing engine can still complete scanout retirement.
+The connector query reports HPD independently. Preparation still requires the
+sink and both locks; a runtime lock loss remains a fault.
+
+The pinned BSP `2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f` header
+`drivers/gpu/drm/bridge/synopsys/dw-hdmi.h` defines `HDMI_PHY_STAT0` at 0x3004,
+`HDMI_PHY_HPD` as 0x02, and `HDMI_PHY_TX_PHY_LOCK` as 0x01.
+These are register facts; no implementation is imported.
+The actual PHY contract checks unplug/reconnect without writes, both lock-loss
+cases, and unchanged rejection of a missing sink during preparation.

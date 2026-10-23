@@ -271,6 +271,32 @@ timeouts(void)
 }
 
 static void
+hotplug_and_lock(void)
+{
+	struct fixture f;
+	unsigned writes;
+
+	fresh(&f);
+	CHECK(complete(&f) == 0);
+	writes = f.writes;
+	f.core[0x3004] = 1; /* TX_PHY_LOCK remains high while HPD falls. */
+	CHECK(sun60i_a733_hdmi_phy_observe(&f.state) == 0);
+	CHECK(f.state.fault == 0 && f.writes == writes);
+	f.core[0x3004] = 3;
+	CHECK(sun60i_a733_hdmi_phy_observe(&f.state) == 0);
+	CHECK(f.state.fault == 0 && f.writes == writes);
+	f.core[0x3004] = 2; /* HPD cannot substitute for TX_PHY_LOCK. */
+	CHECK(sun60i_a733_hdmi_phy_observe(&f.state) == EIO);
+	CHECK(f.state.fault == EIO && f.writes == writes);
+	fresh(&f);
+	CHECK(complete(&f) == 0);
+	f.core[0x3004] = 1;
+	f.top[0x40 / 4] = 0; /* An unplug does not hide the other PLL fault. */
+	CHECK(sun60i_a733_hdmi_phy_observe(&f.state) == EIO);
+	CHECK(f.state.fault == EIO);
+}
+
+static void
 invalid_sequence(void)
 {
 	struct fixture f;
@@ -365,6 +391,7 @@ main(void)
 	normal_and_faults();
 	timeouts();
 	invalid_sequence();
+	hotplug_and_lock();
 	printf("%u A733 PHY checks passed\n", checks);
 	return 0;
 }

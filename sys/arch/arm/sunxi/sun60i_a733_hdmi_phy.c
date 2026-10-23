@@ -352,10 +352,11 @@ sun60i_a733_hdmi_phy_observe(struct sun60i_a733_hdmi_phy *s)
 		return phy_fail(s, EINVAL);
 	pll = phy_read(s, A733_HDMI_TOP32, TOP_PLL);
 	status = phy_read(s, A733_HDMI_TOP32, TOP_LOCK);
+	/* HPD is connector state. Only TX_PHY_LOCK proves PHY readiness. */
 	phy_status = phy_read(s, A733_HDMI_CORE8, CORE_PHY_STATUS);
 	if (s->fault == 0 &&
 	    ((pll & (PLL_FIELDS | PLL_ENABLE | PLL_OUTPUT)) != s->plan.pll ||
-	    (status & 1) == 0 || (phy_status & 3) != 3))
+	    (status & 1) == 0 || (phy_status & 1) == 0))
 		phy_fail(s, EIO);
 	return s->fault;
 }
