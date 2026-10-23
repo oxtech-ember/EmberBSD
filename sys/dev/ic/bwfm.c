@@ -41,6 +41,7 @@
 #include <netinet/in.h>
 
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_beacon_ies.h>
 
 #include <dev/firmload.h>
 
@@ -3454,9 +3455,10 @@ bwfm_scan_node(struct bwfm_softc *sc, struct bwfm_bss_info *bss, size_t len)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_frame wh;
 	struct ieee80211_scanparams scan;
+	struct ieee80211_beacon_ies ies;
 	uint8_t rates[sizeof(bss->rates) + 2];
 	uint8_t ssid[sizeof(bss->ssid) + 2];
-	uint8_t *frm, *sfrm, *efrm;
+	const uint8_t *sfrm, *efrm;
 	uint64_t tsf;
 
 	if (len < sizeof(*bss) || bss->ssid_len > sizeof(bss->ssid) ||
@@ -3505,78 +3507,33 @@ if ((int16_t)le16toh(bss->rssi) >= -128 &&
 }
 
 
-	for (frm = sfrm; frm + 1 < efrm; frm += frm[1] + 2) {
-		if (frm[1] + 2 > efrm - frm) {
-			ic->ic_stats.is_rx_elem_toosmall++;
-			return;
-		}
-		switch (frm[0]) {
-		case IEEE80211_ELEMID_COUNTRY:
-			scan.sp_country = frm;
-			break;
-		case IEEE80211_ELEMID_FHPARMS:
-			if (ic->ic_phytype == IEEE80211_T_FH) {
-				if (frm + 6 >= efrm)
-					break;
-				scan.sp_fhdwell = le16dec(&frm[2]);
-				scan.sp_chan = IEEE80211_FH_CHAN(frm[4], frm[5]);
-				scan.sp_fhindex = frm[6];
-			}
-			break;
-		case IEEE80211_ELEMID_DSPARMS:
-			if (ic->ic_phytype != IEEE80211_T_FH) {
-				if (frm + 2 >= efrm)
-					break;
-				scan.sp_chan = frm[2];
-			}
-			break;
-		case IEEE80211_ELEMID_TIM:
-			scan.sp_tim = frm;
-			scan.sp_timoff = frm - sfrm;
-			break;
-		case IEEE80211_ELEMID_XRATES:
-			scan.sp_xrates = frm;
-			break;
-		case IEEE80211_ELEMID_ERP:
-			if (frm + 1 >= efrm)
-				break;
-			if (frm[1] != 1) {
-				ic->ic_stats.is_rx_elem_toobig++;
-				break;
-			}
-			scan.sp_erp = frm[2];
-			break;
-		case IEEE80211_ELEMID_RSN:
-			scan.sp_wpa = frm;
-			break;
-		case 70: /* Radio Measurement Enabled Capabilities */
-			if (frm[1] == 5)
-				scan.sp_rrm = frm;
-			break;
-		case 127: /* Extended Capabilities */
-			if (frm[1] > 0 && frm[1] <= 32)
-				scan.sp_extcap = frm;
-			break;
-		case IEEE80211_ELEMID_RSNX:
-			if (frm[1] >= 1 && frm[1] <= 16 &&
-			    (frm[2] & 0x0f) + 1 == frm[1])
-				scan.sp_rsnx = frm;
-			break;
-		case IEEE80211_ELEMID_VENDOR:
-			if (frm + 1 >= efrm)
-				break;
-			if (frm + frm[1] + 2 >= efrm)
-				break;
-			if (bwfm_iswpaoui(frm))
-				scan.sp_wpa = frm;
-			break;
-		}
-		if (frm + 1 >= efrm)
-			break;
+	if (ieee80211_beacon_ies_parse(&ies, sfrm, efrm - sfrm) != 0) {
+		ic->ic_stats.is_rx_elem_toosmall++;
+		return;
 	}
+	scan.sp_country = __UNCONST(ies.country);
+	scan.sp_tim = __UNCONST(ies.tim);
+	scan.sp_xrates = __UNCONST(ies.xrates);
+	scan.sp_wpa = __UNCONST(ies.security);
+	scan.sp_rrm = __UNCONST(ies.rrm);
+	scan.sp_extcap = __UNCONST(ies.extcap_bounded);
+	scan.sp_rsnx = __UNCONST(ies.rsnx);
+	scan.sp_erp = ies.erp != NULL ? ies.erp[2] : 0;
+	scan.sp_phy_ies = ies.phy;
+	/* This firmware adapter stores offsets from its IE window. */
+	scan.sp_timoff = ies.timoff;
+	ic->ic_stats.is_rx_elem_toobig += ies.bad_erp;
+	if (ic->ic_phytype == IEEE80211_T_FH && ies.fh != NULL) {
+		scan.sp_fhdwell = le16dec(ies.fh + 2);
+		scan.sp_chan = IEEE80211_FH_CHAN(ies.fh[4], ies.fh[5]);
+		scan.sp_fhindex = ies.fh[6];
+	} else if (ic->ic_phytype != IEEE80211_T_FH && ies.ds != NULL)
+		scan.sp_chan = ies.ds[2];
 
 	if (scan.sp_chan == 0 ||
+#if IEEE80211_CHAN_MAX < 255
 	    scan.sp_chan >= __arraycount(ic->ic_channels) ||
+#endif
 	    ic->ic_channels[scan.sp_chan].ic_freq == 0) {
 		ic->ic_stats.is_rx_badchan++;
 		return;

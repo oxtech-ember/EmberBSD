@@ -66,6 +66,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_input.c,v 1.117 2022/11/19 07:57:51 yamt E
 #include <net/if_llc.h>
 
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_beacon_ies.h>
 #include <net80211/ieee80211_amsdu.h>
 
 #include <net/bpf.h>
@@ -1705,12 +1706,7 @@ iswmeoui(const u_int8_t *frm)
 	return frm[1] > 3 && LE_READ_4(frm+2) == ((WME_OUI_TYPE<<24)|WME_OUI);
 }
 
-static __inline int
-iswmeparam(const u_int8_t *frm)
-{
-	return frm[1] > 5 && LE_READ_4(frm+2) == ((WME_OUI_TYPE<<24)|WME_OUI) &&
-		frm[6] == WME_PARAM_OUI_SUBTYPE;
-}
+
 
 static __inline int
 iswmeinfo(const u_int8_t *frm)
@@ -2242,6 +2238,7 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 	u_int8_t *frm, *efrm;
 	IEEE80211_DEBUGVAR(char ebuf[3 * ETHER_ADDR_LEN]);
 	struct ieee80211_scanparams scan;
+	struct ieee80211_beacon_ies ies;
 	int wme_duplicate = 0;
 
 	wh = mtod(m0, struct ieee80211_frame *);
@@ -2290,99 +2287,34 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 	scan.sp_bchan = ieee80211_chan2ieee(ic, ic->ic_curchan);
 	scan.sp_chan = scan.sp_bchan;
 
-	/* Observation only. Malformed PHY IEs do not change legacy validation. */
-	(void)ieee80211_phy_ies_parse(&scan.sp_phy_ies, frm,
-	    (size_t)(efrm - frm));
-
-	while (frm + 1 < efrm) {
-		IEEE80211_VERIFY_LENGTH(efrm - frm, frm[1] + 2);
-
-		switch (*frm) {
-		case IEEE80211_ELEMID_SSID:
-			/* no length check needed */
-			scan.sp_ssid = frm;
-			break;
-		case IEEE80211_ELEMID_RATES:
-			/* no length check needed */
-			scan.sp_rates = frm;
-			break;
-		case IEEE80211_ELEMID_COUNTRY:
-			/* XXX: we don't do anything with this? */
-			scan.sp_country = frm;
-			break;
-		case IEEE80211_ELEMID_FHPARMS:
-			IEEE80211_VERIFY_LENGTH(frm[1], 5);
-			if (ic->ic_phytype == IEEE80211_T_FH) {
-				scan.sp_fhdwell = LE_READ_2(&frm[2]);
-				scan.sp_chan = IEEE80211_FH_CHAN(frm[4], frm[5]);
-				scan.sp_fhindex = frm[6];
-			}
-			break;
-		case IEEE80211_ELEMID_DSPARMS:
-			/*
-			 * XXX hack this since depending on phytype
-			 * is problematic for multi-mode devices.
-			 */
-			IEEE80211_VERIFY_LENGTH(frm[1], 1);
-			if (ic->ic_phytype != IEEE80211_T_FH)
-				scan.sp_chan = frm[2];
-			break;
-		case IEEE80211_ELEMID_TIM:
-			/* XXX ATIM? */
-			IEEE80211_VERIFY_LENGTH(frm[1], 4);
-			scan.sp_tim = frm;
-			scan.sp_timoff = frm - mtod(m0, u_int8_t *);
-			break;
-		case IEEE80211_ELEMID_IBSSPARMS:
-			break;
-		case IEEE80211_ELEMID_XRATES:
-			scan.sp_xrates = frm;
-			break;
-		case IEEE80211_ELEMID_ERP:
-			if (frm[1] != 1) {
-				IEEE80211_DISCARD_IE(ic, IEEE80211_MSG_ELEMID,
-				    wh, "ERP", "bad len %u", frm[1]);
-				ic->ic_stats.is_rx_elem_toobig++;
-				break;
-			}
-			scan.sp_erp = frm[2];
-			break;
-		case IEEE80211_ELEMID_RSN:
-			/* no length check needed */
-			scan.sp_wpa = frm;
-			break;
-		case IEEE80211_ELEMID_RRM:
-			if (frm[1] == 5)
-				scan.sp_rrm = frm;
-			break;
-		case IEEE80211_ELEMID_EXTCAP:
-			scan.sp_extcap = frm;
-			break;
-		case IEEE80211_ELEMID_RSNX:
-			if (frm[1] >= 1 && frm[1] <= 16 &&
-			    (frm[2] & 0x0f) + 1 == frm[1])
-				scan.sp_rsnx = frm;
-			break;
-		case IEEE80211_ELEMID_VENDOR:
-			/* no length check needed */
-			if (iswpaoui(frm))
-				scan.sp_wpa = frm;
-			else if (iswmeparam(frm) || iswmeinfo(frm)) {
-				if (scan.sp_wme != NULL)
-					wme_duplicate = 1;
-				scan.sp_wme = frm;
-			}
-			/* XXX Atheros OUI support */
-			break;
-		default:
-			IEEE80211_DISCARD_IE(ic, IEEE80211_MSG_ELEMID,
-			    wh, "unhandled", "id %u, len %u", *frm, frm[1]);
-			ic->ic_stats.is_rx_elem_unknown++;
-			break;
-		}
-
-		frm += frm[1] + 2;
+	if (ieee80211_beacon_ies_parse(&ies, frm, efrm - frm) != 0) {
+		ic->ic_stats.is_rx_elem_toosmall++;
+		return;
 	}
+	scan.sp_ssid = __UNCONST(ies.ssid);
+	scan.sp_rates = __UNCONST(ies.rates);
+	scan.sp_country = __UNCONST(ies.country);
+	scan.sp_tim = __UNCONST(ies.tim);
+	scan.sp_xrates = __UNCONST(ies.xrates);
+	scan.sp_wpa = __UNCONST(ies.security);
+	scan.sp_rrm = __UNCONST(ies.rrm);
+	scan.sp_extcap = __UNCONST(ies.extcap);
+	scan.sp_rsnx = __UNCONST(ies.rsnx);
+	scan.sp_erp = ies.erp != NULL ? ies.erp[2] : 0;
+	scan.sp_phy_ies = ies.phy;
+	scan.sp_wme = __UNCONST(ies.wme);
+	wme_duplicate = ies.wme_duplicate;
+	/* Native scan offsets start at the MAC header. */
+	scan.sp_timoff = ies.tim != NULL ?
+	    frm - mtod(m0, uint8_t *) + ies.timoff : 0;
+	ic->ic_stats.is_rx_elem_toobig += ies.bad_erp;
+	ic->ic_stats.is_rx_elem_unknown += ies.unknown;
+	if (ic->ic_phytype == IEEE80211_T_FH && ies.fh != NULL) {
+		scan.sp_fhdwell = LE_READ_2(ies.fh + 2);
+		scan.sp_chan = IEEE80211_FH_CHAN(ies.fh[4], ies.fh[5]);
+		scan.sp_fhindex = ies.fh[6];
+	} else if (ic->ic_phytype != IEEE80211_T_FH && ies.ds != NULL)
+		scan.sp_chan = ies.ds[2];
 
 	IEEE80211_VERIFY_ELEMENT(scan.sp_rates, IEEE80211_RATE_MAXSIZE);
 	IEEE80211_VERIFY_ELEMENT(scan.sp_ssid, IEEE80211_NWID_LEN);

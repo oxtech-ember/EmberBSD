@@ -65,6 +65,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <netinet/in.h>
 
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_beacon_ies.h>
 
 #include <dev/firmload.h>
 #include <net80211/ieee80211_rsn.h>
@@ -1511,6 +1512,7 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 	struct ieee80211com * const ic = &sc->sc_ic;
 	const size_t hdr = 12, fixed = 12;
 	struct ieee80211_scanparams scan;
+	struct ieee80211_beacon_ies ies;
 	struct ieee80211_frame wh;
 	uint8_t tstamp[8];
 	const uint8_t *frm, *efrm;
@@ -1558,63 +1560,26 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 
 	const uint8_t *mdie = NULL;
 
-	for (frm += fixed; efrm - frm >= 2 && efrm - frm >= 2 + frm[1];
-	    frm += 2 + frm[1]) {
-		uint8_t * const ie = __UNCONST(frm);
-
-		switch (frm[0]) {
-		case IEEE80211_ELEMID_SSID:
-			if (frm[1] <= IEEE80211_NWID_LEN)
-				scan.sp_ssid = ie;
-			break;
-		case IEEE80211_ELEMID_RATES:
-			if (frm[1] <= IEEE80211_RATE_MAXSIZE)
-				scan.sp_rates = ie;
-			break;
-		case IEEE80211_ELEMID_DSPARMS:
-			if (frm[1] == 1)
-				ds_chan = frm[2];
-			break;
-		case IEEE80211_ELEMID_HTINFO:
-			if (frm[1] >= 22)
-				ht_chan = frm[2];
-			break;
-		case 54:	/* Mobility Domain, 802.11r */
-			if (frm[1] >= 3)
-				mdie = frm;
-			break;
-		case IEEE80211_ELEMID_XRATES:
-			scan.sp_xrates = ie;
-			break;
-		case IEEE80211_ELEMID_COUNTRY:
-			scan.sp_country = ie;
-			break;
-		case IEEE80211_ELEMID_TIM:
-			scan.sp_tim = ie;
-			scan.sp_timoff = frm - (frame + sizeof(wh));
-			break;
-		case IEEE80211_ELEMID_ERP:
-			if (frm[1] == 1)
-				scan.sp_erp = frm[2];
-			break;
-		case IEEE80211_ELEMID_EXTCAP:
-			scan.sp_extcap = ie;
-			break;
-		case IEEE80211_ELEMID_RRM:
-			if (frm[1] == 5)
-				scan.sp_rrm = ie;
-			break;
-		case IEEE80211_ELEMID_RSN:
-			scan.sp_wpa = ie;
-			break;
-		case IEEE80211_ELEMID_RSNX:
-			if (frm[1] >= 1 && frm[1] <= 16 &&
-			    (frm[2] & 0x0f) + 1 == frm[1])
-				scan.sp_rsnx = ie;
-			break;
-		}
-	}
-	if (frm != efrm || scan.sp_ssid == NULL || scan.sp_rates == NULL)
+	frm += fixed;
+	if (ieee80211_beacon_ies_parse(&ies, frm, efrm - frm) != 0)
+		return;
+	scan.sp_ssid = __UNCONST(ies.ssid_valid);
+	scan.sp_rates = __UNCONST(ies.rates_valid);
+	scan.sp_country = __UNCONST(ies.country);
+	scan.sp_tim = __UNCONST(ies.tim);
+	scan.sp_xrates = __UNCONST(ies.xrates);
+	scan.sp_wpa = __UNCONST(ies.rsn);
+	scan.sp_rrm = __UNCONST(ies.rrm);
+	scan.sp_extcap = __UNCONST(ies.extcap);
+	scan.sp_rsnx = __UNCONST(ies.rsnx);
+	scan.sp_erp = ies.erp != NULL ? ies.erp[2] : 0;
+	scan.sp_phy_ies = ies.phy;
+	/* Preserve the firmware adapter's fixed-body-relative offset. */
+	scan.sp_timoff = ies.tim != NULL ? fixed + ies.timoff : 0;
+	ds_chan = ies.ds_exact != NULL ? ies.ds_exact[2] : 0;
+	ht_chan = ies.ht != NULL ? ies.ht[2] : 0;
+	mdie = ies.mdie;
+	if (scan.sp_ssid == NULL || scan.sp_rates == NULL)
 		return;
 
 	/* A 2.4 GHz beacon can be received on an adjacent scan channel. */
@@ -1656,7 +1621,7 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 			if (ft != NULL) {
 				memcpy(ft->bssid, wh.i_addr3, ETHER_ADDR_LEN);
 				ft->mdid = le16dec(mdie + 2);
-				ft->r0kh_len = MIN(mdie[1] - 3, sizeof(ft->r0kh));
+				ft->r0kh_len = MIN((size_t)mdie[1] - 3, sizeof(ft->r0kh));
 				memcpy(ft->r0kh, mdie + 5, ft->r0kh_len);
 			}
 		}

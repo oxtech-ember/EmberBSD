@@ -1083,6 +1083,31 @@ deliver_beacon(struct mbuf *m)
 	m_freem(m);
 }
 static void
+test_beacon_ie_bounds(void)
+{
+	/* The complete native management consumer must reject a short TIM. */
+	for (unsigned length = 0; length < 4; length++) {
+		setup();
+	test_ic.ic_flags |= IEEE80211_F_SCAN;
+		struct mbuf *m = beacon(1);
+		unsigned before = test_ic.ic_stats.is_rx_elem_toosmall;
+		uint8_t *end = m->m_data + m->m_len;
+		end[0] = IEEE80211_ELEMID_TIM;
+		end[1] = length;
+		memset(end + 2, 0, length);
+		m->m_len += length + 2;
+		deliver_beacon(m);
+		CHECK(test_ic.ic_stats.is_rx_elem_toosmall == before + 1);
+	}
+	setup();
+	test_ic.ic_flags |= IEEE80211_F_SCAN;
+	struct mbuf *m = beacon(1);
+	unsigned before = test_ic.ic_stats.is_rx_elem_toosmall;
+	m->m_data[m->m_len++] = 127; /* Incomplete trailing IE header. */
+	deliver_beacon(m);
+	CHECK(test_ic.ic_stats.is_rx_elem_toosmall == before + 1);
+}
+static void
 test_beacon_update(void)
 {
 	int variant;
@@ -1494,6 +1519,7 @@ main(void)
 	test_classification();
 	test_sequence();
 	test_beacon_update();
+	test_beacon_ie_bounds();
 	test_rt2661_sequence_consumer();
 	setup();
 	test_ic.ic_opmode = IEEE80211_M_HOSTAP;

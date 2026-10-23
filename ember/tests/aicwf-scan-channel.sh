@@ -2,7 +2,7 @@
 # Exercise the driver's real beacon parser, including adjacent-channel reception.
 set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-work=$(mktemp -d "${TMPDIR:-/tmp}/aicwf-channel.XXXXXX")
+work=$(mktemp -d "${TEST_OBJDIR:-${TMPDIR:-/tmp}}/aicwf-channel.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 awk '/^aicwf_scan_result\(/ {copy=1; print "static void"}
 copy {print} copy && /^}/ {exit}' \
@@ -17,6 +17,7 @@ cat > "$work/check.c" <<'C'
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <net80211/ieee80211_beacon_ies.h>
 typedef unsigned int u_int;
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
@@ -45,6 +46,7 @@ enum { IEEE80211_ELEMID_SSID=0, IEEE80211_ELEMID_RATES=1,
 struct ieee80211_frame { uint8_t i_fc[2], i_dur[2],
     i_addr1[6], i_addr2[6], i_addr3[6], i_seq[2]; };
 struct ieee80211_scanparams {
+    struct ieee80211_phy_ies sp_phy_ies;
     uint8_t *sp_ssid, *sp_rates, *sp_xrates, *sp_country, *sp_tim;
     uint8_t *sp_wpa, *sp_rsnx, *sp_tstamp, *sp_extcap, *sp_rrm;
     int8_t sp_rssi_dbm; bool sp_rssi_dbm_valid;
@@ -109,13 +111,17 @@ int main(void)
     const uint8_t invalid[]={3,1,14}, cross[]={3,1,36};
     const uint8_t short_ds[]={3,0}, short_ht[]={61,1,11};
     const uint8_t truncated[]={3,1};
+    for (unsigned n=0; n<4; n++) {
+        uint8_t tim[6]={5,0}; tim[1]=n; check(3,tim,n+2,0);
+    }
+    const uint8_t tail[]={127}; check(3,tail,sizeof(tail),0);
     check(3,ds,sizeof(ds),6);
     check(6,ds,sizeof(ds),6);
     check(3,ht,sizeof(ht),11);
     check(3,both,sizeof(both),6);
     check(3,invalid,sizeof(invalid),0);
     check(3,cross,sizeof(cross),0);
-    check(3,short_ds,sizeof(short_ds),3);
+    check(3,short_ds,sizeof(short_ds),0);
     check(3,short_ht,sizeof(short_ht),3);
     check(3,truncated,sizeof(truncated),0);
     check(60,NULL,0,60);
@@ -206,10 +212,19 @@ int main(void)
     ind[0] = o - 12; ind[1] = (o - 12) >> 8;
     aicwf_scan_result(&sc, ind, o);
     assert(added == 2 && got_rrm && got_extcap);
-    puts("PASS: 25 scan channel, metadata, VIF, epoch and bounds cases");
+    puts("PASS: 30 scan channel, metadata, VIF, epoch and bounds cases");
 
     return 0;
 }
 C
-${CC:-cc} -std=c99 -Wall -Wextra -Werror ${AICWF_SCAN_CHANNEL_CFLAGS:-} "$work/check.c" -o "$work/check"
+mkdir -p "$work/sys" "$work/net80211"
+cp "$src/sys/net80211/ieee80211_beacon_ies.h" "$src/sys/net80211/ieee80211_phy_ies.h" "$work/net80211/"
+printf '#include <string.h>\n#include <stdint.h>\n' > "$work/sys/systm.h"
+${CC:-gcc-16} -I"$work" -std=c99 -Wall -Wextra -Werror ${AICWF_SCAN_CHANNEL_CFLAGS:-} "$work/check.c" "$src/sys/net80211/ieee80211_beacon_ies.c" "$src/sys/net80211/ieee80211_phy_ies.c" -o "$work/check"
 "$work/check"
+if [ "${AICWF_SCAN_CHANNEL_ANALYZE:-0}" = 1 ]; then
+    ${CC:-gcc-16} -I"$work" -std=c99 -Wall -Wextra -Werror -fanalyzer \
+        -c "$work/check.c" -o "$work/check.o"
+    cppcheck --enable=warning,performance,portability --error-exitcode=1 \
+        --check-level=exhaustive --std=c99 -I"$work" "$work/check.c"
+fi

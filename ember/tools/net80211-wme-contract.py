@@ -46,6 +46,8 @@ for path, names in ((proto, ("wmeParams", "chanAccParams", "ieee80211_wme_state"
     for name in names:
         parts.append(structure(path, name))
 parts.append(structure("sys/net80211/ieee80211_node.h", "ieee80211_scanparams"))
+parts.append(re.sub(r"^#include.*$", "", read("sys/net80211/ieee80211_beacon_ies.h"), flags=re.M))
+parts.append("#ifndef __UNCONST\n#define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))\n#endif")
 parts.append(re.search(r"^enum ieee80211_phymode \{.*?^\};", read("sys/net80211/_ieee80211.h"), re.M|re.S).group())
 parts.append(re.search(r"^#define\s+IFQ_MAXLEN\s+.*$", read("sys/net/if.h"), re.M).group())
 for path, pattern in (("sys/net80211/ieee80211_var.h", r"IEEE80211_[FC]_[A-Z0-9_]+"),
@@ -80,7 +82,7 @@ for path in (ipt, output, node, "sys/net80211/ieee80211_proto.c"):
     parts.extend(re.findall(r"/\*.*?\*/", prefix, re.S))
 macro = read(ipt)
 parts.append(macro[macro.index("#define LE_READ_2"):macro.index("static __inline int\niswpaoui")])
-for name in ("iswmeoui", "iswpaoui", "iswmeparam", "iswmeinfo"):
+for name in ("iswmeoui", "iswpaoui", "iswmeinfo"):
     parts.append(function(ipt, name, "static inline int"))
 for name, result in (("ieee80211_wme_reset", "void"),):
     path = "sys/net80211/ieee80211_proto.c"
@@ -110,6 +112,7 @@ for name, result in (("ieee80211_crypto_getucastkey", "struct ieee80211_key *"),
     parts.append(function(output, name, result))
 parts.append("#define ISREASSOC(st) ((st) == IEEE80211_FC0_SUBTYPE_REASSOC_RESP)\n")
 parts.append(function(ipt, "ieee80211_recv_mgmt_assoc_resp", "static void"))
+parts.append(function("sys/net80211/ieee80211_beacon_ies.c", "ieee80211_beacon_ies_parse", "int"))
 parts.append(function(ipt, "ieee80211_recv_mgmt_beacon", "static void"))
 for line in read("sys/net80211/ieee80211_ioctl.h").splitlines():
     if re.match(r"#define\s+IEEE80211_(IOC_WME_|WMEPARAM_)", line):

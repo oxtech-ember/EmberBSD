@@ -4,7 +4,7 @@
 set -eu
 [ "$#" -eq 0 ] || exit 2
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-work=$(mktemp -d "${TMPDIR:-/tmp}/net80211-phy-ies.XXXXXXXX")
+work=$(mktemp -d "${TEST_OBJDIR:-${TMPDIR:-/tmp}}/net80211-phy-ies.XXXXXXXX")
 if [ "${PHY_IES_TEST_KEEP:-0}" != 1 ]; then
     trap 'rm -rf "$work"' EXIT HUP INT TERM
 else
@@ -40,11 +40,12 @@ if [ -f "$src/sys/net80211/ieee80211_phy_ies.c" ]; then
     mkdir -p "$work/sys" "$work/net80211"
     printf '#include <string.h>\n#include <stdint.h>\n' > "$work/sys/systm.h"
     ln -s "$src/sys/net80211/ieee80211_phy_ies.h" "$work/net80211/ieee80211_phy_ies.h"
-    extra="$src/sys/net80211/ieee80211_phy_ies.c"
+    ln -s "$src/sys/net80211/ieee80211_beacon_ies.h" "$work/net80211/ieee80211_beacon_ies.h"
+    extra="$src/sys/net80211/ieee80211_phy_ies.c $src/sys/net80211/ieee80211_beacon_ies.c"
 fi
 python3 "$src/ember/tools/net80211-phy-ies-extract.py" "$src" "$work"
 ${CC:-gcc-16} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -Wall -Werror ${PHY_IES_TEST_CFLAGS:-} \
-    -I"$work" -I"$src/sys/net80211" "$src/ember/tools/net80211-phy-ies-contract.c" $extra -o "$work/check"
+    -DBEACON_IES_TEST -I"$work" -I"$src/sys/net80211" "$src/ember/tools/net80211-phy-ies-contract.c" $extra -o "$work/check"
 if [ -n "${TEST_RUNNER:-}" ]; then
     "$TEST_RUNNER" "$work/check"
 else

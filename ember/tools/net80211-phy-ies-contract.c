@@ -11,6 +11,9 @@
 #include <string.h>
 
 #include "scan-abi.h"
+#ifdef BEACON_IES_TEST
+#include <net80211/ieee80211_beacon_ies.h>
+#endif
 #include "ieee80211_ht20.h"
 #include "ieee80211_rxba.h"
 #if __has_include("ieee80211_phy_ies.h")
@@ -283,6 +286,21 @@ main(void)
 	sp.sp_wme = wme;
 	sp.sp_capinfo = 0x0431;
 	ni.ni_flags = 2;
+#ifdef BEACON_IES_TEST
+	/* Feed actual scan storage with the borrowed TIM view, then release it. */
+	struct ieee80211_beacon_ies ies;
+	uint8_t tim[] = {5, 4, 7, 9, 0, 0};
+	check(ieee80211_beacon_ies_parse(&ies, tim, sizeof(tim)) == 0,
+	    "TIM passes the shared parser");
+	sp.sp_tim = (uint8_t *)(uintptr_t)ies.tim;
+	sp.sp_timoff = 36 + ies.timoff;
+	ieee80211_add_scan(&ic, &sp, &wh, 0x50, 42, 123);
+	check(ni.ni_dtim_count == 7 && ni.ni_dtim_period == 9 && ni.ni_timoff == 36,
+	    "real scan storage reads validated TIM fields and preserves offset");
+	sp.sp_tim = NULL;
+	rate_calls = 0;
+#endif
+
 	wpa[1] = 2;
 	wme[1] = 2;
 	check(ieee80211_phy_ies_parse(&sp.sp_phy_ies, phy, sizeof(phy)) == 0,

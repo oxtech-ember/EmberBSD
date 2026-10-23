@@ -8,7 +8,7 @@ esac
 [ "$#" -eq 0 ] || exit 2
 tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src=$(CDPATH= cd -- "$tools/../.." && pwd)
-work=$(mktemp -d "${TMPDIR:-/tmp}/net80211-wme.XXXXXXXX")
+work=$(mktemp -d "${TEST_OBJDIR:-${TMPDIR:-/tmp}}/net80211-wme.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
     SDKROOT=$(xcrun --show-sdk-path)
