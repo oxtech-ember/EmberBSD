@@ -535,7 +535,7 @@ output_stop_checks(void)
   } else {
    CHECK(error==0&&sc.output_stopped&&!started&&stop_calls==1);
    CHECK(f.held==0&&f.drops==1&&sc.active.dma->disabled);
-   unsigned old_writes=writes;
+   int old_writes=writes;
    CHECK(sun60i_a733_de352_stop(client,&done)==0);
    CHECK(stop_calls==1&&writes==old_writes);
    if(failure==3)start_error=EIO;
