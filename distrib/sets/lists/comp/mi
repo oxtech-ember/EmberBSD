@@ -12560,6 +12560,7 @@
 ./usr/share/man/cat9/firmware_malloc.0		comp-sys-catman		.cat
 ./usr/share/man/cat9/firmware_open.0		comp-sys-catman		.cat
 ./usr/share/man/cat9/firmware_read.0		comp-sys-catman		.cat
+./usr/share/man/cat9/firmware_read_alloc.0	comp-sys-catman		.cat
 ./usr/share/man/cat9/flash.0			comp-sys-catman		.cat
 ./usr/share/man/cat9/fork1.0			comp-sys-catman		.cat
 ./usr/share/man/cat9/format_bytes.0		comp-sys-catman		.cat
@@ -21443,6 +21444,7 @@
 ./usr/share/man/html9/firmware_malloc.html	comp-sys-htmlman	html
 ./usr/share/man/html9/firmware_open.html	comp-sys-htmlman	html
 ./usr/share/man/html9/firmware_read.html	comp-sys-htmlman	html
+./usr/share/man/html9/firmware_read_alloc.html	comp-sys-htmlman	html
 ./usr/share/man/html9/flash.html		comp-sys-htmlman	html
 ./usr/share/man/html9/fork1.html		comp-sys-htmlman	html
 ./usr/share/man/html9/format_bytes.html		comp-sys-htmlman	html
@@ -30469,6 +30471,7 @@
 ./usr/share/man/man9/firmware_malloc.9		comp-sys-man		.man
 ./usr/share/man/man9/firmware_open.9		comp-sys-man		.man
 ./usr/share/man/man9/firmware_read.9		comp-sys-man		.man
+./usr/share/man/man9/firmware_read_alloc.9	comp-sys-man		.man
 ./usr/share/man/man9/flash.9			comp-sys-man		.man
 ./usr/share/man/man9/fork1.9			comp-sys-man		.man
 ./usr/share/man/man9/format_bytes.9		comp-sys-man		.man
