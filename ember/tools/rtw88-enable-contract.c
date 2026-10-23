@@ -1362,8 +1362,47 @@ static void enable_sta_quiet(void)
         enable_destroy(net);
     }
 }
+
+static void enable_scan_probe_policy(void)
+{
+    struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+    struct rtw88_net *net=enable_attach(&sc,&lock);
+    CHECK(net!=NULL);if(!net)return;
+    struct ieee80211com *ic=&net->ic;active_ic=ic;
+    CHECK(ic->ic_scan_probe_admit!=NULL);
+    if(ic->ic_scan_probe_admit!=NULL) {
+        unsigned writes=f.writes,allocated=allocations,refs=node_refs;
+        struct ieee80211_channel *current=ic->ic_curchan,*peer=ic->ic_bss->ni_chan;
+        for(unsigned ch=52;ch<=144;ch+=4) {
+            ic->ic_channels[ch].ic_freq=(uint16_t)(5000+ch*5);
+            ic->ic_channels[ch].ic_flags=IEEE80211_CHAN_A|IEEE80211_CHAN_PASSIVE;
+            ic->ic_curchan=&ic->ic_channels[ch];
+            CHECK(ic->ic_bss->ni_chan==peer);
+            CHECK(ic->ic_scan_probe_admit(ic)==EACCES);
+            CHECK(ieee80211_send_probereq(ic->ic_bss,ic->ic_myaddr,
+                ic->ic_bss->ni_bssid,ic->ic_bss->ni_bssid,
+                ic->ic_des_essid,0,NULL,0)==EACCES);
+            ieee80211_probe_curchan(ic,1);
+        }
+        CHECK(writes==f.writes && allocations==allocated && node_refs==refs);
+        for(unsigned q=0;q<RTW88_NTXQ;q++)CHECK(sc.sc_txq[q].queued==0);
+        /* The scan channel governs probes even when the BSS still names DFS. */
+        ic->ic_bss->ni_chan=&ic->ic_channels[64];
+        ic->ic_curchan=current;
+        CHECK(ic->ic_scan_probe_admit(ic)==0);
+        ic->ic_curchan=&ic->ic_channels[1];
+        CHECK(ic->ic_scan_probe_admit(ic)==0);
+        ic->ic_curchan=NULL;CHECK(ic->ic_scan_probe_admit(ic)==EACCES);
+        ic->ic_curchan=IEEE80211_CHAN_ANYC;CHECK(ic->ic_scan_probe_admit(ic)==EACCES);
+        CHECK(writes==f.writes && allocations==allocated && node_refs==refs);
+        ic->ic_curchan=current;ic->ic_bss->ni_chan=peer;
+    }
+    enable_destroy(net);
+}
+
 int RTW88_ENABLE_ENTRY(void)
 {
+    enable_scan_probe_policy();
     enable_quiet_during_start();
     enable_sta_quiet();
     enable_drain_case();

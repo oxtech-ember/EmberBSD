@@ -121,6 +121,22 @@ rtw88_net_sta_quiet(struct ieee80211com *ic)
 	mutex_exit(net->lock);
 }
 
+/* A beacon does not authorize active probes on the driver's DFS channels.
+ * The scan channel can differ from the BSS node's previous channel. */
+static int
+rtw88_net_scan_probe_admit(struct ieee80211com *ic)
+{
+	unsigned channel;
+
+	if (ic->ic_curchan == NULL || ic->ic_curchan == IEEE80211_CHAN_ANYC)
+		return EACCES;
+	channel = ieee80211_chan2ieee(ic, ic->ic_curchan);
+	if (channel == 0 || channel > IEEE80211_CHAN_MAX ||
+	    (channel >= 52 && channel <= 144))
+		return EACCES;
+	return 0;
+}
+
 /* This MPSAFE callout retains only interface-owned numeric tokens. The shared
  * stack and all node/key lifetime work run in the existing Giant softintr. */
 static uint64_t
@@ -2112,6 +2128,7 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	ieee80211_ifattach(ic);
 	rtw88_net_rxba_attach(net);
 	ic->ic_sta_quiet = rtw88_net_sta_quiet;
+	ic->ic_scan_probe_admit = rtw88_net_scan_probe_admit;
 	/* Register after ifattach, which initializes optional admission to NULL. */
 	rtw88_net_ht20_publish(net, NULL);
 	ic->ic_ht20_admit = rtw88_net_ht20_admit;
