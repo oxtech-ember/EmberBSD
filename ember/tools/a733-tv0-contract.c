@@ -17,7 +17,7 @@ struct event { unsigned space, reg; uint32_t value; };
 struct model {
 	uint32_t reg[2][256];
 	unsigned ops, reads, writes, fail, reject;
-	bool retained, late;
+	bool retained, late, late_lostwarn;
 	struct event events[64];
 };
 static const int cookie;
@@ -61,9 +61,11 @@ write_reg(void *arg, enum sun60i_a733_tv0_space space, uint32_t reg,
 				*v |= UINT32_C(0x1000);
 			*v = (value & UINT32_C(0x5f000000)) |
 			    (*v & value & UINT32_C(0x5f00));
-		} else if (space == A733_TV0_REGS && reg == 0xfc)
+		} else if (space == A733_TV0_REGS && reg == 0xfc) {
+			if (p->late_lostwarn)
+				*v |= UINT32_C(0x20000000);
 			*v &= value | ~UINT32_C(0x60000000);
-		else
+		} else
 			*v = value;
 	}
 	return ++p->ops == p->fail ? EFAULT : 0;
@@ -78,7 +80,8 @@ fixture(void)
 			m.reg[space][reg] = UINT32_C(0xa5a5a5a5);
 	m.reg[A733_VO1_REGS][0] |= 0xa;
 	m.reg[A733_TV0_REGS][0x90 / 4] &= ~UINT32_C(0x80000000);
-	m.reg[A733_TV0_REGS][0xfc / 4] = UINT32_C(0x60000000);
+	/* Bit 28 is field polarity. Bits 30 and 29 are W0C errors. */
+	m.reg[A733_TV0_REGS][0xfc / 4] = UINT32_C(0x70000000);
 	m.retained = true;
 	s = (struct sun60i_a733_tv0){.io = &io, .owner = &cookie};
 }
@@ -154,6 +157,8 @@ main(void)
 	CHECK((m.reg[0][0x90/4] & UINT32_C(0x800ffff0)) == 0x800001f0);
 	CHECK((m.reg[0][0x88/4] & UINT32_C(0x0f000000)) == 0x03000000);
 	CHECK((m.reg[0][0x340/4] & UINT32_C(0xc0ffff77)) == 0);
+	CHECK((m.reg[0][0xfc/4] & UINT32_C(0x70000000)) ==
+	    UINT32_C(0x10000000));
 	CHECK(m.reg[0][0] == (UINT32_C(0xa5a5a5a5) & ~UINT32_C(0x31)));
 	CHECK((m.reg[0][1] & 0x4100) == 0x100);
 	for (unsigned i = 0; i < writes; i++)
@@ -209,17 +214,57 @@ main(void)
 	fixture(); CHECK(pipeline(&seq) == 0);
 	CHECK(sun60i_a733_tv0_observe_count(&s, 0, &seq) == EIO && s.fault == EIO);
 	CHECK(s.observe_valid == 0x68 && s.observe_gint0 == m.reg[0][1]);
-	for (unsigned loss = 0; loss < 4; loss++) {
+	/* One TV0 underflow is cleared, then a later clean IRQ is required. */
+	fixture(); CHECK(pipeline(&seq) == 0);
+	m.reg[0][0xfc/4] |= UINT32_C(0x40000000);
+	old_writes = m.writes;
+	CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == ENOENT);
+	CHECK(s.fault == 0 && s.sequence == 1 && s.underflow_pending &&
+	    s.underflow_sequence == 9 && s.underflow_events == 1);
+	CHECK(m.writes == old_writes + 1 &&
+	    (m.reg[0][0xfc/4] & UINT32_C(0x70000000)) ==
+	    UINT32_C(0x10000000));
+	old_writes = m.writes;
+	CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == ENOENT &&
+	    m.writes == old_writes);
+	CHECK(sun60i_a733_tv0_observe_count(&s, 10, &seq) == 0 &&
+	    seq == 10 && !s.underflow_pending && s.fault == 0);
+	fixture(); CHECK(pipeline(&seq) == 0);
+	m.reg[0][0xfc/4] |= UINT32_C(0x40000000);
+	CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == ENOENT);
+	m.reg[0][0xfc/4] |= UINT32_C(0x40000000);
+	old_writes = m.writes;
+	CHECK(sun60i_a733_tv0_observe_count(&s, 10, &seq) == EIO &&
+	    s.fault == EIO && m.writes == old_writes);
+	for (unsigned loss = 1; loss < 4; loss++) {
 		fixture(); CHECK(pipeline(&seq) == 0);
-		if (loss < 2) m.reg[0][0xfc/4] |= UINT32_C(0x40000000) >> loss;
+		if (loss == 1) m.reg[0][0xfc/4] |= UINT32_C(0x20000000);
 		if (loss == 2) m.reg[0][0x90/4] &= ~UINT32_C(0x80000000);
 		if (loss == 3) m.reg[0][1] &= ~UINT32_C(0x40000000);
 		old_writes = m.writes;
 		CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == EIO);
-		CHECK(s.observe_valid == (loss == 2 ? 0x20 :
-		    loss == 3 ? 0x68 : 0x60));
+		CHECK(s.observe_valid == (loss == 1 ? 0x60 :
+		    loss == 2 ? 0x20 : 0x68));
 		CHECK(m.writes == old_writes && s.sequence == 1);
 	}
+	for (unsigned fail = 5; fail <= 6; fail++) {
+		fixture(); CHECK(pipeline(&seq) == 0);
+		m.reg[0][0xfc/4] |= UINT32_C(0x40000000);
+		m.fail = m.ops + fail;
+		CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == EFAULT &&
+		    s.fault == EFAULT && s.sequence == 1);
+	}
+	fixture(); CHECK(pipeline(&seq) == 0);
+	m.reg[0][0xfc/4] |= UINT32_C(0x40000000);
+	m.reject = m.writes + 1;
+	CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == EIO &&
+	    s.fault == EIO && s.sequence == 1);
+	fixture(); CHECK(pipeline(&seq) == 0);
+	m.reg[0][0xfc/4] |= UINT32_C(0x40000000);
+	m.late_lostwarn = true;
+	CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == EIO &&
+	    s.fault == EIO && s.sequence == 1 &&
+	    (m.reg[0][0xfc/4] & UINT32_C(0x20000000)) != 0);
 	fixture(); CHECK(sun60i_a733_tv0_route(&s) == 0);
 	CHECK(sun60i_a733_tv0_observe_count(&s, 1, &seq) == EINVAL);
 	for (unsigned fail = 1; fail <= 4; fail++) {

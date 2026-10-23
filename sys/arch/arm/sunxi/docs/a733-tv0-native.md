@@ -26,7 +26,7 @@ The [clock phases](a733-output-clocks.md) preserve the separate clock lease.
 | Prepare 2 | TV0 0x338 | 0xffffffff | All lower data outputs disabled |
 | Prepare 3 | TV0 0x33c | 0xffff0000 | All upper data outputs disabled |
 | Prepare 4 | TV0 0x004 | Known RW/W0C fields | Write 0: disable local IRQ sources and clear pending flags |
-| Prepare 5 | TV0 0x0fc | W0C error bits30/29 | Write 0: clear stopped-state underflow and lost-data errors |
+| Prepare 5 | TV0 0x0fc | W0C error bits30/29 | Clear old underflow and LOSTWARN; preserve field polarity bit28 |
 | Prepare 6 | TV0 0x000 | 0x00000031 | 0: one pixel per clock, strict mode0; preserve reserved bit31 |
 | Prepare 7 | TV0 0x040 | 0x00000001 | 0: DE input |
 | Prepare 8 | TV0 0x090 | 0x000ffff0 | `min(vtotal - vdisplay - 5, 31) << 4` |
@@ -51,7 +51,7 @@ The [clock phases](a733-output-clocks.md) preserve the separate clock lease.
 
 Prepare refuses an active TV0 and vertical blanking of five lines or fewer.
 Start also refuses an already active TV0.
-Observe checks the running bit, error flags and vblank enable before acknowledgement.
+Observe checks the running bit, TV0 error flags and vblank enable before acknowledgement.
 It increments the sequence only after the pending bit clears on readback.
 If a new frame arrives before that readback, the conservative result is an error.
 It does not count an unproven event twice.
@@ -77,9 +77,19 @@ A disarmed handler clears vblank enable bit30 and bit14 on the next source,
 so the level interrupt does not repeat. A full count also disarms it.
 
 In interrupt mode, observe does not write GINT0.
-It checks the running bit, the error flags and the vblank enable,
+It checks the running bit, TV0 error flags and the vblank enable,
 then reports a count larger than the last reported count.
 An equal count is `ENOENT`. A smaller count is a sticky `EIO`.
+When TV0 reports one underflow without LOSTWARN, observe clears only its W0C bit30 and
+returns `ENOENT`. It requires a later IRQ with the flag clear before it
+reports another vblank. A repeated underflow on that later IRQ is a sticky
+`EIO`. LOSTWARN bit29 is always a sticky `EIO`; the underflow clear writes one
+to preserve its W0C state. The first underflow is recorded in the retained TV0
+state. Polled observation still treats both error bits as sticky `EIO`.
+The SHA256-pinned A733 User Manual V1.00, section 15.2.10.14, defines
+bits30/29 as W0C errors, bit28 as field polarity and bit31 as reserved.
+Its SHA256 is
+`cdd77e5779d3c69d41b5f237f3db3db51c67fdf0f3aca9a2eedc77d9420f248d`.
 The interrupt runs at the refresh rate while TV0 runs.
 
 ## Experimental depth profile
@@ -102,7 +112,9 @@ Use `A733_TV0_CFLAGS` to add native sanitizer flags.
 The test uses the actual timing and TV0 function bodies.
 It checks the write sequence, every callback failure, every rejected write,
 late W0C flags, reserved GCTL bit31, phase order and event accounting.
-The test also checks the interrupt-mode count observation without writes.
+The test checks normal interrupt counts without writes. It checks one bounded
+W0C underflow recovery, a later clean IRQ, a repeated underflow, LOSTWARN,
+write faults, readback faults and preservation of field polarity bit28.
 Run `python3 -B ember/tools/a733-hdmi-native-contract.py` for the handler,
 arm, disarm, mask and callback checks with the actual provider source.
 Source and target compilation do not establish physical HDMI output.

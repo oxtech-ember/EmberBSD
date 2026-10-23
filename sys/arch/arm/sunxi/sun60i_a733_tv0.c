@@ -12,6 +12,10 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/systm.h>
 #include <arm/sunxi/sun60i_a733_tv0.h>
 
+#define A733_TV0_FIFO_UNDERFLOW UINT32_C(0x40000000)
+#define A733_TV0_LOSTWARN UINT32_C(0x20000000)
+#define A733_TV0_ERRORS (A733_TV0_FIFO_UNDERFLOW | A733_TV0_LOSTWARN)
+
 static int
 tv_fail(struct sun60i_a733_tv0 *s, int error)
 {
@@ -53,6 +57,20 @@ tv_write(struct sun60i_a733_tv0 *s, enum sun60i_a733_tv0_space space,
 	/* The native lease is retained before even a faulting write attempt. */
 	s->written = true;
 	tv_fail(s, s->io->write(s->io->arg, space, reg, value));
+}
+
+/* Preserve W0C LOSTWARN while clearing only the TV0 FIFO underflow. */
+static int
+tv_clear_underflow(struct sun60i_a733_tv0 *s, uint32_t prior)
+{
+	uint32_t value;
+
+	tv_write(s, A733_TV0_REGS, 0xfc,
+	    (prior | A733_TV0_LOSTWARN) & ~A733_TV0_FIFO_UNDERFLOW);
+	value = tv_read(s, A733_TV0_REGS, 0xfc);
+	if (s->fault == 0 && (value & A733_TV0_ERRORS) != 0)
+		tv_fail(s, EIO);
+	return s->fault;
 }
 
 static void
@@ -125,10 +143,12 @@ sun60i_a733_tv0_prepare(struct sun60i_a733_tv0 *s,
 	value = tv_read(s, A733_TV0_REGS, 4);
 	if (s->fault == 0 && (value & UINT32_C(0x5f005f00)) != 0)
 		tv_fail(s, EIO);
-	/* Clear old stopped-state errors before the first frame. */
-	tv_write(s, A733_TV0_REGS, 0xfc, 0);
+	/* Clear old TV0 W0C errors. Preserve the current line and field. */
 	value = tv_read(s, A733_TV0_REGS, 0xfc);
-	if (s->fault == 0 && (value & UINT32_C(0x60000000)) != 0)
+	if (s->fault == 0)
+		tv_write(s, A733_TV0_REGS, 0xfc, value & ~A733_TV0_ERRORS);
+	value = tv_read(s, A733_TV0_REGS, 0xfc);
+	if (s->fault == 0 && (value & A733_TV0_ERRORS) != 0)
 		tv_fail(s, EIO);
 	/* GCTL bit31 is reserved on A733. It is never used as an enable. */
 	tv_update(s, A733_TV0_REGS, 0, UINT32_C(0x31), 0);
@@ -198,8 +218,10 @@ sun60i_a733_tv0_stop(struct sun60i_a733_tv0 *s)
 	value = tv_read(s, A733_TV0_REGS, 4);
 	if (s->fault == 0 && (value & UINT32_C(0x5f005f00)) != 0)
 		tv_fail(s, EIO);
-	if (s->fault == 0)
+	if (s->fault == 0) {
 		s->started = false;
+		s->underflow_pending = false;
+	}
 	return s->fault;
 }
 
@@ -226,7 +248,7 @@ sun60i_a733_tv0_observe(struct sun60i_a733_tv0 *s, uint64_t *sequence)
 		s->observe_debug = value;
 		s->observe_valid |= UINT32_C(1) << 6;
 	}
-	if (s->fault == 0 && (value & UINT32_C(0x60000000)) != 0)
+	if (s->fault == 0 && (value & A733_TV0_ERRORS) != 0)
 		tv_fail(s, EIO);
 	value = tv_read(s, A733_TV0_REGS, 4);
 	if (s->fault != 0)
@@ -257,7 +279,7 @@ int
 sun60i_a733_tv0_observe_count(struct sun60i_a733_tv0 *s, uint64_t count,
     uint64_t *sequence)
 {
-	uint32_t value;
+	uint32_t value, debug;
 	int error = tv_ready(s);
 
 	if (error != 0)
@@ -277,7 +299,8 @@ sun60i_a733_tv0_observe_count(struct sun60i_a733_tv0 *s, uint64_t count,
 		s->observe_debug = value;
 		s->observe_valid |= UINT32_C(1) << 6;
 	}
-	if (s->fault == 0 && (value & UINT32_C(0x60000000)) != 0)
+	debug = value;
+	if (s->fault == 0 && (debug & A733_TV0_LOSTWARN) != 0)
 		tv_fail(s, EIO);
 	value = tv_read(s, A733_TV0_REGS, 4);
 	if (s->fault != 0)
@@ -289,6 +312,22 @@ sun60i_a733_tv0_observe_count(struct sun60i_a733_tv0 *s, uint64_t count,
 		return tv_fail(s, EIO);
 	if (count < s->sequence)
 		return tv_fail(s, EIO);
+	if (s->underflow_pending && count <= s->underflow_sequence)
+		return ENOENT;
+	if ((debug & A733_TV0_FIFO_UNDERFLOW) != 0) {
+		/* One cleared edge needs a later clean IRQ; a repeat is fatal. */
+		if (s->underflow_pending)
+			return tv_fail(s, EIO);
+		error = tv_clear_underflow(s, debug);
+		if (error != 0)
+			return error;
+		s->underflow_pending = true;
+		s->underflow_sequence = count;
+		if (s->underflow_events != UINT64_MAX)
+			s->underflow_events++;
+		return ENOENT;
+	}
+	s->underflow_pending = false;
 	if (count == s->sequence)
 		return ENOENT;
 	s->sequence = count;

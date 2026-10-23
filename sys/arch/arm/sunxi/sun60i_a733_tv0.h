@@ -22,6 +22,9 @@ struct sun60i_a733_tv0 {
 	int fault;
 	bool written, routed, prepared, started;
 	uint64_t sequence;
+	/* One W0C underflow may be retried after a later clean IRQ. */
+	uint64_t underflow_sequence, underflow_events;
+	bool underflow_pending;
 	/* Last observation's ordinary readbacks; bits 3, 5 and 6 are valid. */
 	uint32_t observe_valid, observe_gint0, observe_gctl, observe_debug;
 };
@@ -37,8 +40,9 @@ int sun60i_a733_tv0_stop(struct sun60i_a733_tv0 *);
 int sun60i_a733_tv0_observe(struct sun60i_a733_tv0 *, uint64_t *);
 /*
  * Interrupt mode. The vblank IRQ acknowledges the flag and counts events.
- * Check the started output without a write and report a later count.
- * ENOENT means no new event. All other failures are sticky.
+ * Check the started output and report a later count. One TV0 FIFO underflow
+ * is W0C-cleared, then a later clean IRQ is required. A repeated underflow
+ * and all other failures are sticky. ENOENT means no clean new event.
  */
 int sun60i_a733_tv0_observe_count(struct sun60i_a733_tv0 *, uint64_t,
     uint64_t *);
