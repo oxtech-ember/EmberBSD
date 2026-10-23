@@ -126,6 +126,7 @@ jobs:
           persist-credentials: false
           sparse-checkout-cone-mode: false
           sparse-checkout: |
+            /.github/workflows/rtw88.yml
             /ember/tools/rtw*
             /ember/tools/net80211-wme-contract.*
             /ember/tools/net80211-ht20-contract.*
@@ -160,6 +161,7 @@ jobs:
             /sys/net80211/ieee80211_ioctl.c
             /sys/net80211/ieee80211_netbsd.c
             /sys/net80211/ieee80211_phy_ies.h
+            /sys/net80211/ieee80211_beacon_ies.c
             /sys/net80211/ieee80211_beacon_ies.h
             /sys/net80211/_ieee80211.h
             /sys/net80211/ieee80211.h
@@ -196,6 +198,8 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends valgrind libc6-dbg ruby clang cppcheck
           valgrind --version
+      - name: Verify native Wi-Fi sparse checkout inputs
+        run: python3 ember/tools/rtw88-workflow-contract.py
       - name: Execute source contracts under ASan and UBSan
         env:
           CC: gcc
