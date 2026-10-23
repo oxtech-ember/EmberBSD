@@ -41,6 +41,10 @@ struct rtw88_net_rfk {
 	uint32_t control_generation, notice_generation;
 	unsigned control_channel, notice_channel, notice_pending;
 	uint8_t control_ra[6], control_ta[6], control_bssid[6];
+	/* Numeric beacon observation only; this grants no transmission lease. */
+	uint64_t beacon_epoch, beacon_us;
+	uint32_t beacon_generation;
+	unsigned beacon_channel, beacon_interval;
 };
 #endif
 
@@ -885,8 +889,11 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		restart_error = rtw88_net_restart_peer(net);
 #ifdef RTW88_RFK_EXPERIMENT
 		mutex_enter(net->lock);
-		if (epoch == net->policy.epoch && net->rfk.control_epoch == epoch)
+		if (epoch == net->policy.epoch && net->rfk.control_epoch == epoch) {
+			if (net->rfk.control_generation != net->core->sc_generation)
+				net->rfk.beacon_epoch = 0;
 			net->rfk.control_generation = net->core->sc_generation;
+		}
 		mutex_exit(net->lock);
 #endif
 		if ((ifp->if_flags & IFF_UP) == 0)
@@ -1251,6 +1258,7 @@ lock_request:
 	net->state_arg = arg;
 	net->channel = ieee80211_chan2ieee(ic, ic->ic_curchan);
 #ifdef RTW88_RFK_EXPERIMENT
+	net->rfk.beacon_epoch = 0;
 	net->rfk.control_epoch = 0;
 	net->rfk.notice_pending = 0;
 	if (!net->tx_quiet && ic->ic_opmode == IEEE80211_M_STA &&
@@ -1936,6 +1944,9 @@ rtw88_net_stop(struct ifnet *ifp, int disable)
 	callout_halt(&net->scan, NULL);
 	mutex_enter(net->lock);
 	(void)rtw88_net_request(&net->policy);
+#ifdef RTW88_RFK_EXPERIMENT
+	net->rfk.beacon_epoch = 0;
+#endif
 	net->requested = IEEE80211_S_INIT;
 	net->state_arg = -1;
 	mutex_exit(net->lock);

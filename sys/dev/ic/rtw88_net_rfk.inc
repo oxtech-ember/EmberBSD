@@ -4,8 +4,10 @@
 /* Internal default-OFF RFK worker services. Giant owns all shared-stack values.
  * No node, key, channel or provider pointer survives a sleep as an identity. */
 
-/* PCI-serialized observation before ordinary RX admission. Keep only the
- * current numeric withdrawal event; Giant owns every stack/state mutation.
+static uint64_t rtw88_net_rfk_ticks(void *);
+
+/* PCI-serialized observation before ordinary RX admission. Keep only
+ * numeric peer observations; Giant owns every stack/state mutation.
  * A closed or full mbuf queue cannot hide an AP's withdrawal during RFK. */
 static void
 rtw88_net_rfk_rx_observe(struct rtw88_net *net, const uint8_t *frame, size_t len,
@@ -13,6 +15,9 @@ rtw88_net_rfk_rx_observe(struct rtw88_net *net, const uint8_t *frame, size_t len
 {
 	const struct ieee80211_frame *wh;
 	const uint8_t *body;
+	uint64_t observed;
+	uint16_t interval;
+	unsigned i;
 	int notice;
 
 	KASSERT(mutex_owned(net->lock));
@@ -37,6 +42,11 @@ rtw88_net_rfk_rx_observe(struct rtw88_net *net, const uint8_t *frame, size_t len
 	    !IEEE80211_ADDR_EQ(wh->i_addr2, net->rfk.control_ta) ||
 	    !IEEE80211_ADDR_EQ(wh->i_addr3, net->rfk.control_bssid))
 		return;
+	/* Stamp beacon arrival before either body parser. Do not read a clock
+	 * for other frame types or use a cached hardclock snapshot. */
+	observed = 0;
+	if (wh->i_fc[0] == (IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_BEACON))
+		observed = rtw88_net_rfk_ticks(net);
 	body = frame + sizeof(*wh);
 	len -= sizeof(*wh);
 	if (wh->i_fc[0] == (IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_BEACON) ||
@@ -46,13 +56,34 @@ rtw88_net_rfk_rx_observe(struct rtw88_net *net, const uint8_t *frame, size_t len
 		notice = ieee80211_sta_action_announcement(body, len);
 	else
 		return;
-	if (!notice)
+	if (notice) {
+		/* Withdrawal wins over any earlier or later positive observation. */
+		net->rfk.beacon_epoch = 0;
+		net->rfk.notice_epoch = net->rfk.control_epoch;
+		net->rfk.notice_generation = net->rfk.control_generation;
+		net->rfk.notice_channel = net->rfk.control_channel;
+		net->rfk.notice_pending = 1;
+		softint_schedule(net->softint);
 		return;
-	net->rfk.notice_epoch = net->rfk.control_epoch;
-	net->rfk.notice_generation = net->rfk.control_generation;
-	net->rfk.notice_channel = net->rfk.control_channel;
-	net->rfk.notice_pending = 1;
-	softint_schedule(net->softint);
+	}
+	/* Only an exact broadcast beacon can record presence. Probe responses,
+	 * local unicast and other multicast destinations cannot renew it. */
+	if (net->rfk.notice_pending ||
+	    wh->i_fc[0] != (IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_BEACON))
+		return;
+	for (i = 0; i < IEEE80211_ADDR_LEN; i++) {
+		if (wh->i_addr1[i] != 0xff)
+			return;
+	}
+	interval = ieee80211_sta_beacon_interval(body, len,
+	    net->rfk.control_channel);
+	if (interval < IEEE80211_BINTVAL_MIN || interval > IEEE80211_BINTVAL_MAX)
+		return;
+	net->rfk.beacon_us = observed;
+	net->rfk.beacon_generation = net->rfk.control_generation;
+	net->rfk.beacon_channel = net->rfk.control_channel;
+	net->rfk.beacon_interval = interval;
+	net->rfk.beacon_epoch = net->rfk.control_epoch;
 }
 
 static void

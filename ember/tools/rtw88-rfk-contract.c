@@ -4,9 +4,21 @@
  * case supplies NO fresh RFK completion. It must never reach parent AUTH.
  * It is not a fake successful RFK engine or an HT readiness assertion. */
 #include "rtw88-rfk-atomic-model.h"
+#include <stddef.h>
 #define RTW88_ENABLE_ENTRY rfk_existing_enable_main
 #include "rtw88-enable-contract.c"
 #undef RTW88_ENABLE_ENTRY
+/* Kernel wait/registration services remain models. The queued state worker
+ * and the separately extracted native stop body execute their real policies. */
+static void
+workqueue_wait(struct workqueue *queue, struct work *work)
+{
+    struct rtw88_net *net=(void *)((char *)work-
+        offsetof(struct rtw88_net,state_work));
+    CHECK(queue==net->wq && !mutex_owned(net->lock));
+    if(net->work_pending)rtw88_net_state_work(work,net);
+    CHECK(!net->work_pending);
+}
 volatile unsigned *rtw88_test_rfk_atomic_word;
 void (*rtw88_test_rfk_drop_hook)(void);
 
@@ -602,6 +614,168 @@ rfk_control_races(struct rtw88_net *initial)
     return failures||core_failures;
 }
 
+static void
+rfk_presence_seed(struct rtw88_net *net, uint64_t observed)
+{
+    net->rfk.beacon_epoch=net->policy.epoch;
+    net->rfk.beacon_generation=net->core->sc_generation;
+    net->rfk.beacon_channel=64;net->rfk.beacon_interval=100;
+    net->rfk.beacon_us=observed;
+}
+static struct rtw88_net *rfk_presence_refresh_net;
+static unsigned rfk_presence_refresh_hits;
+static void
+rfk_presence_refresh_unlock(kmutex_t *lock)
+{
+    struct rtw88_net *net=rfk_presence_refresh_net;
+    if(net && lock==net->lock &&
+        net->rfk.control_generation==net->core->sc_generation &&
+        net->rfk.control_epoch==net->policy.epoch) {
+        rfk_presence_refresh_hits++;
+        CHECK(net->rfk.beacon_epoch==0);
+        rfk_unlock_hook=NULL;
+    }
+}
+static int
+rfk_presence_observe(struct rtw88_net *net)
+{
+    struct ieee80211com *ic=&net->ic;active_ic=ic;
+    struct ieee80211_node *ni=ic->ic_bss;
+    /* Model a current numeric watch without advertising a DFS capability. */
+    ic->ic_channels[64].ic_freq=5320;
+    ni->ni_chan=ic->ic_curchan=&ic->ic_channels[64];
+    net->channel=net->core->sc_channel=64;
+    net->rfk.control_epoch=net->policy.epoch;
+    net->rfk.control_generation=net->core->sc_generation;
+    net->rfk.control_channel=64;
+    memcpy(net->rfk.control_ra,ic->ic_myaddr,6);
+    memcpy(net->rfk.control_ta,ni->ni_macaddr,6);
+    memcpy(net->rfk.control_bssid,ni->ni_bssid,6);
+    uint8_t frame[51]={0x80};memset(frame+4,0xff,6);
+    memcpy(frame+10,ni->ni_macaddr,6);memcpy(frame+16,ni->ni_bssid,6);
+    frame[32]=100;frame[34]=1;frame[38]=1;frame[39]=1;frame[40]=12;
+    struct rtw88_rx_info info={.packet_size=41};
+    info.signal.valid=1;info.signal.channel=64;
+    info.signal.generation=net->core->sc_generation;
+    unsigned io=rfk_io,writes=f.writes;
+    net->policy.accepting=0;
+    rfk_clock_offset+=(uint64_t)UINT32_MAX+1000000;
+    rfk_advance_us(37);uint64_t expected=rtw88_net_rfk_ticks(net);
+    mutex_enter(net->lock);rtw88_net_rx_frame(net,frame,41,&info);mutex_exit(net->lock);
+    CHECK(net->policy.queued==0 && !net->policy.accepting);
+    CHECK(net->rfk.beacon_epoch==net->policy.epoch &&
+        net->rfk.beacon_generation==net->core->sc_generation &&
+        net->rfk.beacon_channel==64 && net->rfk.beacon_interval==100 &&
+        net->rfk.beacon_us==expected);
+    /* Fill the actual admission queue, then observe before its full gate. */
+    uint8_t data[24]={8,2};struct rtw88_rx_info data_info={.packet_size=24};
+    net->policy.accepting=1;
+    mutex_enter(net->lock);
+    for(unsigned i=0;i<RTW88_NET_RX_LIMIT;i++)
+        rtw88_net_rx_frame(net,data,sizeof(data),&data_info);
+    mutex_exit(net->lock);CHECK(net->policy.queued==RTW88_NET_RX_LIMIT);
+    rfk_advance_us(53);expected=rtw88_net_rfk_ticks(net);
+    mutex_enter(net->lock);rtw88_net_rx_frame(net,frame,41,&info);mutex_exit(net->lock);
+    CHECK(net->policy.queued==RTW88_NET_RX_LIMIT);
+    CHECK(net->rfk.beacon_epoch==net->policy.epoch &&
+        net->rfk.beacon_generation==net->core->sc_generation &&
+        net->rfk.beacon_channel==64 && net->rfk.beacon_interval==100 &&
+        net->rfk.beacon_us==expected);
+    /* Each bad observation must retain the preceding numeric proof exactly. */
+    for(unsigned bad=0;bad<22;bad++) {
+        uint8_t invalid[sizeof(frame)];memcpy(invalid,frame,sizeof(frame));
+        struct rtw88_rx_info corrupt=info;size_t len=41;
+        if(bad==0)invalid[0]=8;
+        if(bad==1)memcpy(invalid+4,ic->ic_myaddr,6);
+        if(bad==2)invalid[4]=1;
+        if(bad==3)invalid[10]^=2;
+        if(bad==4)invalid[16]^=2;
+        if(bad==5)invalid[32]=24;
+        if(bad==6){invalid[32]=233;invalid[33]=3;}
+        if(bad==7)invalid[36]=255;
+        if(bad==8)invalid[38]=255;
+        if(bad==9){invalid[41]=3;invalid[42]=1;invalid[43]=36;len=44;corrupt.packet_size=44;}
+        if(bad==10)corrupt.signal.valid=0;
+        if(bad==11)corrupt.signal.channel=36;
+        if(bad==12)corrupt.signal.generation++;
+        if(bad==13)corrupt.security=1;
+        if(bad==14)corrupt.flags=1;
+        if(bad==15)corrupt.flags=16;
+        if(bad==16)invalid[1]=0x40;
+        if(bad==17)invalid[1]=4;
+        if(bad==18)invalid[22]=1;
+        if(bad==19)invalid[1]=0x80;
+        if(bad==20)invalid[34]=0;
+        if(bad==21)invalid[34]=3;
+        struct rtw88_net_rfk previous=net->rfk;
+        rfk_advance_us(71);
+        mutex_enter(net->lock);rtw88_net_rx_frame(net,invalid,len,&corrupt);mutex_exit(net->lock);
+        CHECK(net->rfk.beacon_epoch==previous.beacon_epoch &&
+            net->rfk.beacon_generation==previous.beacon_generation &&
+            net->rfk.beacon_channel==previous.beacon_channel &&
+            net->rfk.beacon_interval==previous.beacon_interval &&
+            net->rfk.beacon_us==previous.beacon_us);
+    }
+    static const unsigned intervals[]={25,1000};
+    for(unsigned i=0;i<sizeof(intervals)/sizeof(intervals[0]);i++) {
+        frame[32]=(uint8_t)intervals[i];frame[33]=(uint8_t)(intervals[i]>>8);
+        rfk_advance_us(17);expected=rtw88_net_rfk_ticks(net);
+        mutex_enter(net->lock);rtw88_net_rx_frame(net,frame,41,&info);mutex_exit(net->lock);
+        CHECK(net->rfk.beacon_epoch==net->policy.epoch &&
+            net->rfk.beacon_interval==intervals[i] && net->rfk.beacon_us==expected);
+    }
+    frame[32]=100;frame[33]=0;
+    /* A current AP withdrawal removes even an existing numeric observation. */
+    static const struct {
+        size_t len;
+        uint8_t data[8];
+    } withdrawals[]={
+        {5,{37,3,1,64,1}}, {8,{40,6,1,1,1,0,0,0}},
+        {6,{60,4,1,118,64,1}}
+    };
+    for(unsigned quiet=0;quiet<sizeof(withdrawals)/sizeof(withdrawals[0]);quiet++) {
+        uint8_t notice[sizeof(frame)];memcpy(notice,frame,sizeof(frame));
+        size_t len=41+withdrawals[quiet].len;
+        memcpy(notice+41,withdrawals[quiet].data,withdrawals[quiet].len);
+        struct rtw88_rx_info notice_info=info;notice_info.packet_size=len;
+        rfk_presence_seed(net,rtw88_net_rfk_ticks(net));
+        net->rfk.notice_pending=0;
+        mutex_enter(net->lock);rtw88_net_rx_frame(net,notice,len,&notice_info);mutex_exit(net->lock);
+        CHECK(net->rfk.notice_pending && net->rfk.beacon_epoch==0);
+        rfk_advance_us(19);
+        mutex_enter(net->lock);rtw88_net_rx_frame(net,frame,41,&info);mutex_exit(net->lock);
+        CHECK(net->rfk.notice_pending && net->rfk.beacon_epoch==0);
+    }
+    CHECK(rfk_io==io && f.writes==writes);
+    net->rfk.notice_pending=0;
+    rfk_presence_seed(net,rtw88_net_rfk_ticks(net));
+    CHECK(rtw88_net_newstate(ic,IEEE80211_S_ASSOC,0)==0);
+    CHECK(net->channel==64 && net->rfk.beacon_epoch==0);
+    /* Check the actual worker refresh boundary, before later failures or
+     * state requests can clear the seeded observation for another reason. */
+    CHECK(rtw88_net_newstate(ic,IEEE80211_S_ASSOC,0)==0);
+    rfk_presence_seed(net,rtw88_net_rfk_ticks(net));
+    CHECK(net->rfk.beacon_epoch!=0 && net->work_pending);
+    net->core->sc_generation++;
+    CHECK(net->rfk.control_generation!=net->core->sc_generation);
+    rfk_presence_refresh_net=net;rfk_presence_refresh_hits=0;
+    rfk_unlock_hook=rfk_presence_refresh_unlock;
+    rtw88_net_state_work(&net->state_work,net);
+    rfk_unlock_hook=NULL;rfk_presence_refresh_net=NULL;
+    CHECK(rfk_presence_refresh_hits==1);
+    /* Drain actual queued RX before the native stop; only wait/callout and
+     * registration services are modeled, not the stop's policy decisions. */
+    net->policy.accepting=0;rtw88_net_softintr(net);
+    CHECK(net->policy.queued==0 && node_refs==1);
+    rfk_presence_seed(net,rtw88_net_rfk_ticks(net));
+    unit_rfk_native_stop(&net->ec.ec_if,1);
+    CHECK(net->rfk.beacon_epoch==0 && net->requested==IEEE80211_S_INIT);
+    CHECK(!net->work_pending && !net->core->sc_started);
+    enable_destroy(net);
+    printf("Native RFK presence observation: %u checks, %u failures\n",checks,failures);
+    return failures||core_failures;
+}
+
 int
 main(void)
 {
@@ -615,6 +789,7 @@ main(void)
         return 1;
     rfk_case=getenv("RTW88_RFK_CASE");
     if(rfk_case==NULL)rfk_case="none";
+    if(rfk_is("presence-observe"))return rfk_presence_observe(net);
     if(rfk_is("control-races"))return rfk_control_races(net);
     rfk_positive=!rfk_is("none");
     if(rfk_timing())rfk_hz=100;

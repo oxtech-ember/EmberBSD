@@ -38,8 +38,15 @@ routing_native=(out/'enable-routing-native.inc').read_text()
 (out/'enable-routing-native.inc').write_text('static void rtw88_net_rfk_rx_deliver(struct rtw88_net *);\n'+routing_native)
 helpers=(src/'sys/dev/ic/rtw88_net_rfk.inc').read_text()
 native=replace(native,'static void\nrtw88_net_state_work(',clock_macro+helpers+'\n#undef ticks\nstatic void\nrtw88_net_state_work(')
+# Keep the global enable stop model unchanged. This entry executes only the
+# complete native stop body selected by the focused RFK lifecycle contract.
+stop=re.search(r'^rtw88_net_stop\(.*?^}',net,re.M|re.S).group()
+native+='\nstatic void\n'+replace(stop,'rtw88_net_stop(', 'unit_rfk_native_stop(')+'\n'
 (out/'enable-native.inc').write_text(native)
 services=(src/'ember/tools/rtw88-enable-services.inc').read_text()
+services=replace(services,'static void rtw88_net_state_work(struct work *,void *);',
+    'static void rtw88_net_state_work(struct work *,void *);\n'
+    'static void workqueue_wait(struct workqueue *,struct work *);')
 services=replace(services, '#define hz 1000',
     'static unsigned rfk_hz = 1000;\n#define hz rfk_hz\n'
     'static void nanouptime(struct timespec *);\nstatic void yield(void);')
