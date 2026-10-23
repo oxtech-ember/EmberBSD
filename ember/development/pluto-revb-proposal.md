@@ -36,6 +36,12 @@ for other Pluto revisions. The scanner is a later separate change.
 - Board boot path: ADI RAM DFU is documented, but payload format, U-Boot command,
   console and EmberBSD handoff on this device remain unverified.
 
+The [current official Pluto U-Boot defconfig](https://github.com/analogdevicesinc/u-boot/blob/adi-xlnx-u-boot-2025.1-y/configs/zynq_pluto_defconfig)
+explicitly disables `CONFIG_BOOTM_NETBSD` and enables a silent U-Boot console. The installed
+`v0.39-dirty` bootloader revision has not been pinned, so direct native NetBSD
+handoff cannot be assumed. A RAM-loaded U-Boot with NetBSD support or another
+verified handoff may be required.
+
 ## Acceptance
 
 1. Run existing AD9361, AXI-DMAC, Zynq SPI and relevant ARMv7 build checks.
