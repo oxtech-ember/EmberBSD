@@ -618,6 +618,8 @@ native_stop(void *arg, const void *owner)
 	if (sc->ih != NULL) {
 		mutex_spin_enter(&sc->intr_lock);
 		sc->irq_armed = false;
+		/* Preserve counted IRQs that observe() has not consumed yet. */
+		sc->tv.sequence = sc->irq_sequence;
 		mutex_spin_exit(&sc->intr_lock);
 	}
 	error = sun60i_a733_tv0_stop(&sc->tv);

@@ -386,16 +386,21 @@ stop_restart_checks(void)
 	CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
 	CHECK(native_prepare(&sc, &owner_cookie, &mode) == 0);
 	CHECK(native_start(&sc, &owner_cookie) == 0);
+	/* A pending unobserved count must not be reused after restart. */
+	tvregs[1] = UINT32_C(0x40004000);
+	CHECK(intr_fn(&sc) == 1 && sc.irq_sequence == 1);
+	CHECK(sc.tv.sequence == 0);
 	calls = 0;
 	CHECK(native_stop(&sc, &owner_cookie) == 0);
 	count = calls;
+	CHECK(sc.tv.sequence == 1);
 	CHECK(!sc.irq_armed && !sc.irq_hw && !tv_started && !dw_started);
 	CHECK(sc.tv.prepared && !sc.tv.started && retained);
 	CHECK(native_start(&sc, &owner_cookie) == 0);
 	CHECK(sc.irq_armed && sc.irq_hw && tv_started && dw_started);
 	tvregs[1] = UINT32_C(0x40004000);
 	CHECK(intr_fn(&sc) == 1);
-	CHECK(native_observe(&sc, &owner_cookie, &sequence) == 0 && sequence == 1);
+	CHECK(native_observe(&sc, &owner_cookie, &sequence) == 0 && sequence == 2);
 	for (unsigned failure = 1; failure <= count; failure++) {
 		fixture(); intr_present = true; attach();
 		CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
