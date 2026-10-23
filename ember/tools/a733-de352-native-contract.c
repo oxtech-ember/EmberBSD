@@ -87,7 +87,6 @@ static void mutex_init(kmutex_t *m,int kind,int ipl) { (void)kind;(void)ipl;*m=0
 static void mutex_enter(kmutex_t *m) { CHECK(!*m);*m=1; }
 static void mutex_exit(kmutex_t *m) { CHECK(*m);*m=0; }
 static bool mutex_owned(kmutex_t *m) { return *m != 0; }
-static bool mutex_tryenter(kmutex_t *m) { if (*m)return false;*m=1;return true; }
 static void *device_private(device_t d) { return d; }
 static const char *device_xname(device_t d) { (void)d;return "de3520"; }
 static void aprint_naive(const char *s) { (void)s; }
