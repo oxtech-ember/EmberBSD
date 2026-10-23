@@ -473,7 +473,7 @@ ihidev_hid_command(struct ihidev_softc *sc, int hidcmd, void *arg, bool poll)
 		if (d != rreq->id) {
 			DPRINTF(("%s: response report id %d != %d\n",
 			    device_xname(sc->sc_dev), d, rreq->id));
-			iic_release_bus(sc->sc_tag, 0);
+			iic_release_bus(sc->sc_tag, flags);
 			kmem_free(tmprep, report_len);
 			return (1);
 		}
@@ -1060,29 +1060,13 @@ ihidev_report_type_conv(int hid_type_id)
 int
 ihidev_get_report(struct device *dev, int type, int id, void *data, int len)
 {
-	struct ihidev_softc *sc = device_private(dev);
-	struct i2c_hid_report_request rreq;
-	int ctype;
 
-	if ((ctype = ihidev_report_type_conv(type)) < 0)
-		return (1);
-
-	rreq.type = ctype;
-	rreq.id = id;
-	rreq.data = data;
-	rreq.len = len;
-
-	if (ihidev_hid_command(sc, I2C_HID_CMD_GET_REPORT, &rreq, false)) {
-		aprint_error_dev(sc->sc_dev, "failed fetching report\n");
-		return (1);
-	}
-
-	return 0;
+	return ihidev_get_report_poll(dev, type, id, data, len, false);
 }
 
 int
-ihidev_set_report(struct device *dev, int type, int id, void *data,
-    int len)
+ihidev_get_report_poll(struct device *dev, int type, int id, void *data,
+    int len, bool poll)
 {
 	struct ihidev_softc *sc = device_private(dev);
 	struct i2c_hid_report_request rreq;
@@ -1096,7 +1080,39 @@ ihidev_set_report(struct device *dev, int type, int id, void *data,
 	rreq.data = data;
 	rreq.len = len;
 
-	if (ihidev_hid_command(sc, I2C_HID_CMD_SET_REPORT, &rreq, false)) {
+	if (ihidev_hid_command(sc, I2C_HID_CMD_GET_REPORT, &rreq, poll)) {
+		aprint_error_dev(sc->sc_dev, "failed fetching report\n");
+		return (1);
+	}
+
+	return 0;
+}
+
+int
+ihidev_set_report(struct device *dev, int type, int id, void *data,
+    int len)
+{
+
+	return ihidev_set_report_poll(dev, type, id, data, len, false);
+}
+
+int
+ihidev_set_report_poll(struct device *dev, int type, int id, void *data,
+    int len, bool poll)
+{
+	struct ihidev_softc *sc = device_private(dev);
+	struct i2c_hid_report_request rreq;
+	int ctype;
+
+	if ((ctype = ihidev_report_type_conv(type)) < 0)
+		return (1);
+
+	rreq.type = ctype;
+	rreq.id = id;
+	rreq.data = data;
+	rreq.len = len;
+
+	if (ihidev_hid_command(sc, I2C_HID_CMD_SET_REPORT, &rreq, poll)) {
 		aprint_error_dev(sc->sc_dev, "failed setting report\n");
 		return (1);
 	}

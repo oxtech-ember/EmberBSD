@@ -182,6 +182,9 @@ void ihidev_close(struct ihidev *);
 
 int ihidev_set_report(device_t, int, int, void *, int);
 int ihidev_get_report(device_t, int, int, void *, int);
+/* Use polling for report transfers during power transitions. */
+int ihidev_set_report_poll(device_t, int, int, void *, int, bool);
+int ihidev_get_report_poll(device_t, int, int, void *, int, bool);
 int ihidev_report_type_conv(int);
 
 #endif	/* _DEV_I2C_IHIDEV_H_ */

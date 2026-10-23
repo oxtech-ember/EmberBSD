@@ -23,6 +23,8 @@ duplicate contact identifiers, or coordinates outside the descriptor ranges.
 Hybrid reports, multitouch gestures, and tap dragging are not supported.
 .Pp
 The driver selects Precision Touchpad input mode when the device opens.
+It restores this mode after the parent device resumes.
+Suspend clears pending taps and releases held buttons.
 The first contact sets the motion origin.
 It does not move the pointer until a subsequent contact report arrives.
 .Sh SYSCTL VARIABLES
