@@ -321,6 +321,12 @@ rtw88_net_ht20_admit(struct ieee80211com *ic,
 	net = ic->ic_ifp->if_softc;
 	if (net == NULL)
 		return ENXIO;
+#ifdef RTW88_RFK_EXPERIMENT
+	/* A published snapshot cannot outlive the current RFK proof. */
+	if (net->core == NULL || !net->core->sc_operating.sealed ||
+	    rtw8822c_rfk_seal(net->core) != 0)
+		return EOPNOTSUPP;
+#endif
 	word = atomic_load_acquire(&net->ht20_snapshot);
 	error = rtw88_net_ht20_snapshot_admit(word, &snapshot);
 	if (error != 0)
@@ -515,6 +521,11 @@ rtw88_net_ht20_profile_prepare(struct rtw88_net *net,
 	memset(profile, 0, sizeof(*profile));
 	ic = &net->ic;
 	sc = net->core;
+#ifdef RTW88_RFK_EXPERIMENT
+	/* Revalidate an existing RFK proof. Admission cannot create one. */
+	if (!sc->sc_operating.sealed || rtw8822c_rfk_seal(sc) != 0)
+		return EOPNOTSUPP;
+#endif
 	if (ic->ic_opmode != IEEE80211_M_STA ||
 	    rtw88_net_ht20_local_policy(ic) != 0)
 		return EOPNOTSUPP;

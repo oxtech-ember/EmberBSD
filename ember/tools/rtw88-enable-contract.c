@@ -173,6 +173,10 @@ static struct rtw88_net *enable_attach(struct rtw88_softc *sc,kmutex_t *lock)
         }
         candidate.ready=0x3f;
         rtw88_net_ht20_publish(net,&candidate);
+#ifdef RTW88_RFK_EXPERIMENT
+        /* No RFK proof exists during attach, regardless of snapshot bits. */
+        CHECK(net->ic.ic_ht20_admit(&net->ic,&disabled_profile)==EOPNOTSUPP);
+#else
         CHECK(net->ic.ic_ht20_admit(&net->ic,&disabled_profile)==0);
         CHECK(disabled_profile.generation!=0 && disabled_profile.rx_mcs==0xff &&
             disabled_profile.tx_mcs==0xff && disabled_profile.ready==0x3f &&
@@ -182,6 +186,7 @@ static struct rtw88_net *enable_attach(struct rtw88_softc *sc,kmutex_t *lock)
         rtw88_net_ht20_publish(net,&candidate);
         CHECK(net->ic.ic_ht20_admit(&net->ic,&disabled_profile)==0);
         CHECK(disabled_profile.generation!=generation && disabled_profile.ampdu==12);
+#endif
         rtw88_net_ht20_publish(net,NULL);
         CHECK(net->ic.ic_ht20_admit(&net->ic,&disabled_profile)==EOPNOTSUPP);
     }

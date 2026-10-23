@@ -660,6 +660,31 @@ main(void)
         CHECK(sc.sc_stats.rfk.error==(rfk_is("rf18-read-error")?EIO:EPROTO));
         CHECK(!net->policy.accepting && !sc.sc_started);
     }
+    if(rfk_is("env-channel149")) {
+        struct ieee80211_ht20_profile profile;
+        net->ic.ic_curmode=IEEE80211_MODE_11A;
+        net->ic.ic_ifp->if_mtu=1500;
+        net->ic.ic_rtsthreshold=net->ic.ic_fragthreshold=2346;
+        CHECK(sc.sc_operating.sealed);
+        CHECK(rtw88_net_ht20_profile_prepare(net,&profile)==0);
+        rtw88_net_ht20_publish(net,&profile);
+        CHECK(net->ic.ic_ht20_admit(&net->ic,&profile)==0);
+        struct rtw88_operating_envelope saved=sc.sc_operating;
+        unsigned prior=rfk_io;
+        sc.sc_operating.sealed=0;
+        CHECK(net->ic.ic_ht20_admit(&net->ic,&profile)==EOPNOTSUPP);
+        CHECK(rtw88_net_ht20_profile_prepare(net,&profile)==EOPNOTSUPP);
+        CHECK(profile.ready==0 && rfk_io==prior);
+        sc.sc_operating=saved;
+        sc.sc_operating.generation++;
+        CHECK(net->ic.ic_ht20_admit(&net->ic,&profile)==EOPNOTSUPP);
+        CHECK(rfk_io==prior && !sc.sc_operating.sealed);
+        sc.sc_operating=saved;
+        sc.sc_power_program.valid=0;
+        CHECK(net->ic.ic_ht20_admit(&net->ic,&profile)==EOPNOTSUPP);
+        CHECK(rtw88_net_ht20_profile_prepare(net,&profile)==EOPNOTSUPP);
+        CHECK(profile.ready==0 && rfk_io==prior);
+    }
     enable_pause_hook=NULL;enable_drain_pause_hook=NULL;active_ic=NULL;
     rtw88_test_rfk_drop_hook=NULL;
     sc.sc_ops=&ops;

@@ -3,8 +3,8 @@
 This default-OFF experiment adds a bounded full GAPK → IQK → DPK transaction
 before the native worker publishes AUTH. It does not enable HT admission,
 HT/VHT rates, firmware RSSI feedback, aggregation or calibrated RF readiness.
-The RTL8822CE HT provider stays NULL. Ordinary kernel profiles retain their
-legacy behavior. This document describes a source contract, not a successful
+The RTL8822CE HT provider rejects an absent or stale RFK operating seal.
+Ordinary kernel profiles do not run this experiment. This document describes a source contract, not a successful
 physical calibration.
 
 ## Controlled boot boundary
@@ -160,8 +160,11 @@ A post-commit failure withdraws current acceptance and rate policy. A newer
 request keeps its own epoch and parent transition.
 Stop, channel and power mutations withdraw the snapshot before IO.
 
-The provider remains NULL. This envelope does not establish mixed-format air
-traffic, hardware BlockAck, physical RFK convergence or hardware power indices.
+HT admission revalidates an already sealed envelope without register IO.
+A channel reprogram clears that proof, including the ordinary ASSOC channel
+program. HT admission then stays closed. Both publication and the provider
+callback enforce this boundary, even if an old snapshot remains published.
+This envelope does not establish mixed-format air traffic, hardware BlockAck, physical RFK convergence or hardware power indices.
 A separate source-backed TXAGC read protocol remains unimplemented.
 
 ## Source checks and limits
