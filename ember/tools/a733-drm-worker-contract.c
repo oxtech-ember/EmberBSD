@@ -185,7 +185,7 @@ static struct drm_crtc_state *drm_atomic_get_new_crtc_state(struct drm_atomic_st
 	return &s->crtc;
 }
 static unsigned disabled;
-static int sun60i_a733_de352_disable_plane(void *client,
+static int sun60i_a733_de352_disable_plane(const void *client,
     struct sun60i_a733_de352_completion *done)
 {
  CHECK(client==current->client&&!current->lock&&!modeset_lock);

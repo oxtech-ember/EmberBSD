@@ -266,8 +266,8 @@ int main(void)
 	reset();
 	/* A disabled list references queue memory only, never pixel storage. */
 	CHECK(sun60i_a733_de352_dma_prepare_disabled(NULL, &m) == EINVAL);
-	CHECK(sun60i_a733_de352_dma_prepare_disabled((void *)2, NULL) == EINVAL);
-	CHECK(sun60i_a733_de352_dma_prepare_disabled((void *)2, &m) == 0);
+	CHECK(sun60i_a733_de352_dma_prepare_disabled((void *)(uintptr_t)2, NULL) == EINVAL);
+	CHECK(sun60i_a733_de352_dma_prepare_disabled((void *)(uintptr_t)2, &m) == 0);
 	CHECK(m->disabled && m->pixels.map == NULL && !m->pixels.loaded);
 	CHECK(m->layer.attribute == 0 && m->layer.address_low == 0);
 	CHECK(get32((uint8_t *)m->queue.cpu + 32) == 0);
@@ -281,7 +281,7 @@ int main(void)
 	for (int i = 1; i <= 5; i++) {
 		fail_call = i;
 		m = (void *)(uintptr_t)1;
-		CHECK(sun60i_a733_de352_dma_prepare_disabled((void *)2, &m) == EIO);
+		CHECK(sun60i_a733_de352_dma_prepare_disabled((void *)(uintptr_t)2, &m) == EIO);
 		CHECK(m == (void *)(uintptr_t)1);
 		reset();
 	}
