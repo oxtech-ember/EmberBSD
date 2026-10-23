@@ -83,7 +83,10 @@ static void check(const uint8_t *suffix,size_t n,bool accept, bool security)
 }
 int main(void)
 {
-    for(unsigned n=0;n<4;n++) { uint8_t tim[6]={5,0};tim[1]=n;check(tim,n+2,false,false); }
+    static const uint8_t short_tim[][6] = {
+        {5,0}, {5,1,7}, {5,2,7,9}, {5,3,7,9,0}
+    };
+    for(unsigned n=0;n<4;n++) check(short_tim[n],n+2,false,false);
     const uint8_t tim[]={5,4,7,9,0,0}; check(tim,sizeof(tim),true,false);
     const uint8_t ds[]={3,0,6,0};check(ds,sizeof(ds),false,false);
     const uint8_t tail[]={127};check(tail,sizeof(tail),false,false);
