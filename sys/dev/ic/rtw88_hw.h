@@ -116,6 +116,9 @@ struct rtw88_rx_signal {
     uint8_t pwdb[2], gain[2], quality; /* Unsigned relative stack index0..100. */
 };
 struct rtw88_rx_info {
+	/* Host DMA consumption identity. Pure wire decode leaves both zero. */
+	uint64_t sequence;
+	uint32_t generation;
 	struct rtw88_rx_signal signal;
 	size_t driver_info_offset;
 	size_t driver_info_size;

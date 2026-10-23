@@ -436,6 +436,7 @@ rtw88_hci_setup(struct rtw88_softc *sc)
 	    BUS_DMASYNC_PREWRITE);
 	sc->sc_rx_rp = 0;
 	sc->sc_rx_tag = 0;
+	sc->sc_rx_sequence = 0;
 	error = sc->sc_ops->write_2(sc->sc_bus, 0x0382,
 	    (uint16_t)(sc->sc_nrxbuf & 0xfff));
 	if (error == 0)
@@ -1230,7 +1231,7 @@ rtw88_ra_report(struct rtw88_softc *sc, const uint8_t *p, size_t len)
 
 /* One received buffer: classify, count, and keep every error visible. */
 static void
-rtw88_rx_one(struct rtw88_softc *sc, unsigned idx)
+rtw88_rx_one(struct rtw88_softc *sc, unsigned idx, uint64_t sequence)
 {
 	struct rtw88_dma *buf = &sc->sc_rxbuf[idx];
 	struct rtw88_rx_info rx;
@@ -1241,6 +1242,8 @@ rtw88_rx_one(struct rtw88_softc *sc, unsigned idx)
 		sc->sc_stats.rx_errors++;
 		return;
 	}
+	rx.sequence = sequence;
+	rx.generation = sc->sc_generation;
 	p = (const uint8_t *)buf->vaddr + rx.payload_offset;
 	if ((rx.flags & RTW88_RX_C2H) != 0) {
 		if (rx.packet_size < 2) {
@@ -1286,6 +1289,7 @@ rtw88_rx(struct rtw88_softc *sc)
 {
 	struct rtw88_dma *ring = &sc->sc_ring[RTW88_RING_RX];
 	unsigned hw, rp = sc->sc_rx_rp, count;
+	uint64_t sequence;
 	uint32_t idx;
 	uint16_t tag;
 	uint8_t *bd;
@@ -1302,12 +1306,15 @@ rtw88_rx(struct rtw88_softc *sc)
 		count = RTW88_RX_LIMIT;
 	sc->sc_ops->dma_sync(sc->sc_bus, ring, BUS_DMASYNC_POSTREAD);
 	while (count-- > 0) {
+		/* Every consumed slot advances, including rejected tags and C2H. */
+		sequence = sc->sc_rx_sequence == UINT64_MAX ? 0 :
+		    ++sc->sc_rx_sequence;
 		bd = (uint8_t *)ring->vaddr + RTW8822C_RX_BUFFER_DESC_SIZE * rp;
 		tag = (uint16_t)(bd[2] | bd[3] << 8);
 		if (tag != sc->sc_rx_tag)
 			sc->sc_stats.rx_tag_errors++;
 		else
-			rtw88_rx_one(sc, rp);
+			rtw88_rx_one(sc, rp, sequence);
 		sc->sc_rx_tag = (sc->sc_rx_tag + 1) % RTW88_RX_TAG_MAX;
 		rtw88_rx_arm(sc, rp);
 		rp = (rp + 1) % sc->sc_nrxbuf;
@@ -1315,6 +1322,54 @@ rtw88_rx(struct rtw88_softc *sc)
 	sc->sc_ops->dma_sync(sc->sc_bus, ring, BUS_DMASYNC_PREWRITE);
 	sc->sc_rx_rp = rp;
 	(void)sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_RXBD_IDX, (uint16_t)rp);
+}
+
+/* Read the completed DMA producer without consuming or publishing slots. */
+int
+rtw88_rx_frontier(struct rtw88_softc *sc, uint32_t expected_generation,
+    uint64_t *frontier)
+{
+	const struct rtw88_dma *ring;
+	unsigned nrxbuf, rp, hw, count;
+	uint32_t idx;
+	int error;
+
+	if (frontier == NULL)
+		return EINVAL;
+	*frontier = 0;
+	if (sc == NULL || sc->sc_ops == NULL || sc->sc_ops->read_4 == NULL)
+		return EINVAL;
+	if (!sc->sc_started || !sc->sc_running || !sc->sc_resources_ready ||
+	    sc->sc_stop_requested || !sc->sc_dma_master || sc->sc_dma_error != 0)
+		return ENXIO;
+	if (sc->sc_generation != expected_generation)
+		return EINTR;
+	nrxbuf = sc->sc_nrxbuf;
+	rp = sc->sc_rx_rp;
+	ring = &sc->sc_ring[RTW88_RING_RX];
+	if (nrxbuf == 0 || nrxbuf > RTW88_RX_BUFS || rp >= nrxbuf ||
+	    ring->vaddr == NULL ||
+	    ring->size < nrxbuf * RTW8822C_RX_BUFFER_DESC_SIZE ||
+	    (ring->size % RTW8822C_RX_BUFFER_DESC_SIZE) != 0)
+		return EINVAL;
+	if (sc->sc_rx_sequence == UINT64_MAX)
+		return EOVERFLOW;
+	error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_RXBD_IDX, &idx);
+	if (error != 0)
+		return error;
+	if (sc->sc_generation != expected_generation)
+		return EINTR;
+	if (!sc->sc_started || !sc->sc_running || !sc->sc_resources_ready ||
+	    sc->sc_stop_requested || !sc->sc_dma_master || sc->sc_dma_error != 0)
+		return ENXIO;
+	hw = (idx >> 16) & 0xfff;
+	if (hw >= nrxbuf)
+		return EINVAL;
+	count = hw >= rp ? hw - rp : nrxbuf - rp + hw;
+	if (count >= UINT64_MAX - sc->sc_rx_sequence)
+		return EOVERFLOW;
+	*frontier = sc->sc_rx_sequence + count;
+	return 0;
 }
 
 unsigned

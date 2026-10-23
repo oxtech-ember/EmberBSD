@@ -58,6 +58,8 @@ static struct {
 	int bcn_dead;
 	int ddma_bad_sum;
 	unsigned rx_hw_idx;
+	unsigned rx_idx_reads;
+	int rx_idx_error, rx_idx_change_generation, rx_idx_stop;
 	unsigned bcn_valid_sets;
 	unsigned tx_hw_rp[5];	/* MGMT, BE, BK, VI, VO read indices. */
 	unsigned barriers;
@@ -279,8 +281,16 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 	if (reg == 0x1700 && !f.coex_busy)
 		v |= UINT32_C(0x20000000);
 	/* RXBD_IDX_MPDUQ: hardware write index in 27:16, host index low. */
-	if (reg == 0x03b4)
+	if (reg == 0x03b4) {
+		f.rx_idx_reads++;
+		if (f.rx_idx_error)
+			return EIO;
+		if (f.rx_idx_change_generation)
+			f.sc->sc_generation++;
+		if (f.rx_idx_stop)
+			f.sc->sc_stop_requested = 1;
 		v = (v & 0xfff) | (uint32_t)(f.rx_hw_idx & 0xfff) << 16;
+	}
 	if (reg == 0x132c)
 		v = (v & 0xfff) | (uint32_t)f.h2c_rp << 16;
 	/* TXBD_IDX: independent hardware read indices in 27:16. */
@@ -1497,6 +1507,290 @@ test_rx_limit_and_wrap(void)
 	rtw88_core_detach(&sc);
 }
 
+/* Capture metadata from the actual DMA decoder and core callback. */
+static struct {
+	uint64_t sequence[RTW88_RX_BUFS];
+	uint32_t generation;
+	unsigned count;
+} rx_metadata;
+
+static void
+rx_metadata_capture(void *cookie, const uint8_t *p, size_t len,
+    const struct rtw88_rx_info *info)
+{
+
+	CHECK(cookie == &rx_metadata && p[0] == 0x80 && len == 24);
+	CHECK(info->packet_size == len);
+	CHECK(info->generation == rx_metadata.generation);
+	CHECK(rx_metadata.count < RTW88_RX_BUFS);
+	if (rx_metadata.count < RTW88_RX_BUFS)
+		rx_metadata.sequence[rx_metadata.count++] = info->sequence;
+}
+
+/* The frontier includes the completed tail that the 64-slot IRQ leaves. */
+static void
+test_rx_completed_frontier(void)
+{
+	struct rtw88_softc sc;
+	uint8_t frame[28] = { 0x80 };
+	uint64_t frontier;
+	unsigned i, writes, syncs;
+
+	if (!start_ok(&sc))
+		return;
+	memset(&rx_metadata, 0, sizeof(rx_metadata));
+	rx_metadata.generation = sc.sc_generation;
+	sc.sc_rx_frame = rx_metadata_capture;
+	sc.sc_net_cookie = &rx_metadata;
+	for (i = 0; i < 100; i++)
+		rx_put(&sc, i, sizeof(frame), 0, frame, (uint16_t)i);
+	f.rx_hw_idx = 100;
+	writes = f.writes;
+	syncs = f.syncs;
+	CHECK(rtw88_rx_frontier(&sc, sc.sc_generation, &frontier) == 0);
+	CHECK(frontier == 100 && sc.sc_rx_sequence == 0);
+	CHECK(sc.sc_rx_rp == 0 && sc.sc_rx_tag == 0 && host_rx_idx() == 0);
+	CHECK(f.writes == writes && f.syncs == syncs);
+	set_hisr0(1);
+	CHECK(rtw88_intr(&sc) == 1 && rx_metadata.count == 64);
+	CHECK(sc.sc_rx_sequence == 64);
+	CHECK(rtw88_rx_frontier(&sc, sc.sc_generation, &frontier) == 0);
+	CHECK(frontier == 100);
+	set_hisr0(1);
+	CHECK(rtw88_intr(&sc) == 1 && rx_metadata.count == 100);
+	for (i = 0; i < 100; i++)
+		CHECK(rx_metadata.sequence[i] == i + 1);
+	rx_put(&sc, 100, sizeof(frame), 0, frame, 100);
+	f.rx_hw_idx = 101;
+	CHECK(rtw88_rx_frontier(&sc, sc.sc_generation, &frontier) == 0);
+	CHECK(frontier == 101);
+	set_hisr0(1);
+	CHECK(rtw88_intr(&sc) == 1 && rx_metadata.count == 101);
+	CHECK(rx_metadata.sequence[100] == 101);
+	/* Completed producer wrap includes 27 tail slots and four head slots. */
+	rx_metadata.count = 0;
+	for (i = 101; i < 132; i++)
+		rx_put(&sc, i % RTW88_RX_BUFS, sizeof(frame), 0, frame,
+		    (uint16_t)i);
+	f.rx_hw_idx = 4;
+	CHECK(rtw88_rx_frontier(&sc, sc.sc_generation, &frontier) == 0 &&
+	    frontier == 132);
+	set_hisr0(1);
+	CHECK(rtw88_intr(&sc) == 1 && rx_metadata.count == 31);
+	CHECK(rx_metadata.sequence[0] == 102 && rx_metadata.sequence[30] == 132);
+	CHECK(sc.sc_rx_sequence == 132 && sc.sc_stats.rx_tag_errors == 0);
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+/* Invalid descriptors still consume their host sequence before validation. */
+static void
+test_rx_sequence_rejections(void)
+{
+	struct rtw88_softc sc;
+	uint8_t frame[28] = { 0x80 }, c2h[4] = { 9, 5 };
+	uint64_t frontier;
+	unsigned i;
+
+	if (!start_ok(&sc))
+		return;
+	memset(&rx_metadata, 0, sizeof(rx_metadata));
+	rx_metadata.generation = sc.sc_generation;
+	sc.sc_rx_frame = rx_metadata_capture;
+	sc.sc_net_cookie = &rx_metadata;
+	for (i = 0; i < 7; i++)
+		rx_put(&sc, i, sizeof(frame), 0, frame, (uint16_t)i);
+	rx_put(&sc, 1, sizeof(frame), 0, frame, 77);
+	rx_put(&sc, 2, 0x3fff, 0, NULL, 2);
+	rx_put(&sc, 3, sizeof(c2h), 1, c2h, 3);
+	((uint8_t *)sc.sc_rxbuf[4].vaddr)[1] |= 0x40;
+	rx_put(&sc, 5, 4, 0, frame, 5);
+	f.rx_hw_idx = 7;
+	set_hisr0(1);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(rx_metadata.count == 2 && rx_metadata.sequence[0] == 1 &&
+	    rx_metadata.sequence[1] == 7);
+	CHECK(sc.sc_rx_sequence == 7 && sc.sc_rx_rp == 7);
+	CHECK(sc.sc_stats.rx_tag_errors == 1 && sc.sc_stats.rx_c2h == 1 &&
+	    sc.sc_stats.rx_errors == 2 && sc.sc_stats.rx_short == 1);
+	CHECK(rtw88_rx_frontier(&sc, sc.sc_generation, &frontier) == 0 &&
+	    frontier == 7);
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+/* One full 8192-tag period and a ring wrap must not reset the sequence. */
+static void
+test_rx_sequence_wrap_restart(void)
+{
+	struct rtw88_softc sc;
+	uint8_t frame[28] = { 0x80 };
+	uint32_t generation;
+	uint64_t frontier;
+	unsigned n;
+
+	if (!start_ok(&sc))
+		return;
+	memset(&rx_metadata, 0, sizeof(rx_metadata));
+	rx_metadata.generation = sc.sc_generation;
+	sc.sc_rx_frame = rx_metadata_capture;
+	sc.sc_net_cookie = &rx_metadata;
+	generation = sc.sc_generation;
+	for (n = 0; n < 8194; n++) {
+		rx_metadata.count = 0;
+		rx_put(&sc, n % RTW88_RX_BUFS, sizeof(frame), 0, frame,
+		    (uint16_t)(n % 8192));
+		f.rx_hw_idx = (n + 1) % RTW88_RX_BUFS;
+		set_hisr0(1);
+		CHECK(rtw88_intr(&sc) == 1 && rx_metadata.count == 1);
+		CHECK(rx_metadata.sequence[0] == n + 1);
+	}
+	CHECK(sc.sc_rx_sequence == 8194 && sc.sc_rx_tag == 2);
+	CHECK(rtw88_rx_frontier(&sc, generation, &frontier) == 0 &&
+	    frontier == 8194);
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_start(&sc) == 0 && sc.sc_generation != generation);
+	CHECK(sc.sc_rx_sequence == 0 && sc.sc_rx_rp == 0 && sc.sc_rx_tag == 0);
+	f.rx_hw_idx = 0;
+	CHECK(rtw88_rx_frontier(&sc, generation, &frontier) == EINTR &&
+	    frontier == 0);
+	rx_metadata.generation = sc.sc_generation;
+	rx_metadata.count = 0;
+	rx_put(&sc, 0, sizeof(frame), 0, frame, 0);
+	f.rx_hw_idx = 1;
+	set_hisr0(1);
+	CHECK(rtw88_intr(&sc) == 1 && rx_metadata.count == 1);
+	CHECK(rx_metadata.sequence[0] == 1);
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
+/* Each rejected snapshot clears its result without writes or DMA changes. */
+static void
+rx_frontier_reject(struct rtw88_softc *sc, uint32_t generation,
+    int expected, unsigned reads)
+{
+	uint64_t frontier = 42, sequence = sc->sc_rx_sequence;
+	unsigned before = f.rx_idx_reads, writes = f.writes, syncs = f.syncs;
+	unsigned rp = sc->sc_rx_rp, tag = sc->sc_rx_tag;
+
+	CHECK(rtw88_rx_frontier(sc, generation, &frontier) == expected);
+	CHECK(frontier == 0 && f.rx_idx_reads == before + reads);
+	CHECK(f.writes == writes && f.syncs == syncs);
+	CHECK(sc->sc_rx_sequence == sequence && sc->sc_rx_rp == rp &&
+	    sc->sc_rx_tag == tag);
+}
+
+static void
+test_rx_frontier_errors(void)
+{
+	struct rtw88_softc sc;
+	struct rtw88_dma ring;
+	struct rtw88_bus_ops invalid_ops = ops;
+	uint64_t frontier = 42;
+	uint32_t generation;
+
+	if (!start_ok(&sc))
+		return;
+	generation = sc.sc_generation;
+	CHECK(rtw88_rx_frontier(NULL, generation, &frontier) == EINVAL &&
+	    frontier == 0);
+	CHECK(rtw88_rx_frontier(&sc, generation, NULL) == EINVAL);
+	rx_frontier_reject(&sc, generation + 1, EINTR, 0);
+	sc.sc_started = 0;
+	rx_frontier_reject(&sc, generation, ENXIO, 0);
+	sc.sc_started = 1;
+	sc.sc_running = 0;
+	rx_frontier_reject(&sc, generation, ENXIO, 0);
+	sc.sc_running = 1;
+	sc.sc_resources_ready = 0;
+	rx_frontier_reject(&sc, generation, ENXIO, 0);
+	sc.sc_resources_ready = 1;
+	sc.sc_stop_requested = 1;
+	rx_frontier_reject(&sc, generation, ENXIO, 0);
+	sc.sc_stop_requested = 0;
+	sc.sc_dma_master = 0;
+	rx_frontier_reject(&sc, generation, ENXIO, 0);
+	sc.sc_dma_master = 1;
+	sc.sc_dma_error = EIO;
+	rx_frontier_reject(&sc, generation, ENXIO, 0);
+	sc.sc_dma_error = 0;
+	sc.sc_ops = NULL;
+	rx_frontier_reject(&sc, generation, EINVAL, 0);
+	invalid_ops.read_4 = NULL;
+	sc.sc_ops = &invalid_ops;
+	rx_frontier_reject(&sc, generation, EINVAL, 0);
+	sc.sc_ops = &ops;
+	sc.sc_nrxbuf = 0;
+	rx_frontier_reject(&sc, generation, EINVAL, 0);
+	sc.sc_nrxbuf = RTW88_RX_BUFS + 1;
+	rx_frontier_reject(&sc, generation, EINVAL, 0);
+	sc.sc_nrxbuf = RTW88_RX_BUFS;
+	sc.sc_rx_rp = RTW88_RX_BUFS;
+	rx_frontier_reject(&sc, generation, EINVAL, 0);
+	sc.sc_rx_rp = 0;
+	ring = sc.sc_ring[RTW88_RXRING];
+	sc.sc_ring[RTW88_RXRING].vaddr = NULL;
+	rx_frontier_reject(&sc, generation, EINVAL, 0);
+	sc.sc_ring[RTW88_RXRING] = ring;
+	sc.sc_ring[RTW88_RXRING].size = RTW88_RX_BUFS * 8 - 1;
+	rx_frontier_reject(&sc, generation, EINVAL, 0);
+	sc.sc_ring[RTW88_RXRING].size = ring.size + 1;
+	rx_frontier_reject(&sc, generation, EINVAL, 0);
+	sc.sc_ring[RTW88_RXRING] = ring;
+	f.rx_hw_idx = RTW88_RX_BUFS;
+	rx_frontier_reject(&sc, generation, EINVAL, 1);
+	f.rx_hw_idx = 0;
+	f.rx_idx_error = 1;
+	rx_frontier_reject(&sc, generation, EIO, 1);
+	f.rx_idx_error = 0;
+	f.rx_idx_change_generation = 1;
+	rx_frontier_reject(&sc, generation, EINTR, 1);
+	f.rx_idx_change_generation = 0;
+	generation = sc.sc_generation;
+	f.rx_idx_stop = 1;
+	rx_frontier_reject(&sc, generation, ENXIO, 1);
+	f.rx_idx_stop = 0;
+	sc.sc_stop_requested = 0;
+	rtw88_stop(&sc);
+	rx_frontier_reject(&sc, sc.sc_generation, ENXIO, 0);
+	rtw88_core_detach(&sc);
+}
+
+/* Exhaustion invalidates future metadata; normal packet delivery continues. */
+static void
+test_rx_sequence_exhaustion(void)
+{
+	struct rtw88_softc sc;
+	uint8_t frame[28] = { 0x80 };
+	uint64_t frontier;
+
+	if (!start_ok(&sc))
+		return;
+	memset(&rx_metadata, 0, sizeof(rx_metadata));
+	rx_metadata.generation = sc.sc_generation;
+	sc.sc_rx_frame = rx_metadata_capture;
+	sc.sc_net_cookie = &rx_metadata;
+	sc.sc_rx_sequence = UINT64_MAX - 2;
+	f.rx_hw_idx = 1;
+	CHECK(rtw88_rx_frontier(&sc, sc.sc_generation, &frontier) == 0 &&
+	    frontier == UINT64_MAX - 1);
+	sc.sc_rx_sequence = UINT64_MAX - 1;
+	rx_frontier_reject(&sc, sc.sc_generation, EOVERFLOW, 1);
+	f.rx_hw_idx = 2;
+	rx_frontier_reject(&sc, sc.sc_generation, EOVERFLOW, 1);
+	rx_put(&sc, 0, sizeof(frame), 0, frame, 0);
+	rx_put(&sc, 1, sizeof(frame), 0, frame, 1);
+	set_hisr0(1);
+	CHECK(rtw88_intr(&sc) == 1 && rx_metadata.count == 2);
+	CHECK(rx_metadata.sequence[0] == UINT64_MAX &&
+	    rx_metadata.sequence[1] == 0 && sc.sc_rx_sequence == UINT64_MAX);
+	f.rx_hw_idx = 2;
+	rx_frontier_reject(&sc, sc.sc_generation, EOVERFLOW, 0);
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
 static void
 test_rx_bad_hw_index(void)
 {
@@ -2359,6 +2653,11 @@ main(void)
 	test_rx_c2h_and_frame();
 	test_rx_malformed_and_short();
 	test_rx_limit_and_wrap();
+	test_rx_completed_frontier();
+	test_rx_sequence_rejections();
+	test_rx_sequence_wrap_restart();
+	test_rx_frontier_errors();
+	test_rx_sequence_exhaustion();
 	test_rx_bad_hw_index();
 	test_rx_duplicate_interrupt();
 	test_rx_tag_mismatch();

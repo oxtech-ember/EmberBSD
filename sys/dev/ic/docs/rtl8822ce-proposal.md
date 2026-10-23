@@ -47,6 +47,28 @@ The native source includes firmware validation, PCI DMA rings, RTL8822C
 register tables and bounded frame transfer. The core exposes copied-frame
 callbacks for a native station wrapper. It rejects CRC/ICV errors and stale
 DMA tags. The RX callback excludes the FCS and expires when it returns.
+The core gives each consumed RX slot a monotonic `sequence` in its current
+`generation`. The first slot is 1. Invalid tags, decode failures, C2H and
+short or rejected frames also consume a sequence. Pure wire decoding leaves
+both fields zero. The core adds this host identity before the network callback.
+Ring and 8192-tag wrap do not reset it. A new start resets the ring and counter
+in a new generation. At counter exhaustion the stored counter stays saturated;
+later callbacks carry invalid sequence zero, and ordinary delivery continues.
+
+`rtw88_rx_frontier(sc, expected_generation, &frontier)` requires the caller's
+PCI lock. It reads the completed DMA producer once and includes pending slots
+beyond the 64-slot IRQ budget. It does not consume slots, synchronize DMA or
+write registers. State, generation, ring geometry, producer and sequence bounds
+must be valid. Failure clears the output. `EINVAL` rejects invalid arguments
+or ring geometry; `ENXIO` rejects inactive resources or unsafe DMA state;
+`EINTR` rejects a changed generation. Bus read errors propagate. `EOVERFLOW`
+rejects a frontier with no representable later sequence, including `UINT64_MAX`.
+A successful zero frontier is valid when no descriptor has completed.
+
+A frontier excludes slots completed by DMA before that snapshot. It does not
+timestamp radio reception or exclude data in the internal RX FIFO or incomplete
+DMA. It supplies no regulatory transmit permission.
+
 A DMA TX completion does not prove an acknowledgement from an access point.
 Management input occupies one contiguous mbuf because native parsers use
 the first segment as the frame end. Nonblocking allocation retains the

@@ -538,7 +538,10 @@ test_rx_bounds(void)
 	}
 	rx_reject(NULL, 24);
 	CHECK(rtw88_rx_decode(data, 24, NULL) == EINVAL);
+	out.sequence = 42;
+	out.generation = 43;
 	CHECK(rtw88_rx_decode(data, 24, &out) == 0);
+	CHECK(out.sequence == 0 && out.generation == 0);
 	data[0] = 1;
 	rx_reject(data, 24); /* One payload byte outside the receive buffer. */
 	data[0] = 0;

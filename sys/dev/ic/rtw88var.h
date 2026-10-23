@@ -248,6 +248,7 @@ struct rtw88_softc {
 	unsigned sc_nrxbuf;
 	unsigned sc_rx_rp;	/* Next RX descriptor the host reads. */
 	unsigned sc_rx_tag;
+	uint64_t sc_rx_sequence;	/* Consumed slots in this generation. */
 	int sc_running;		/* Interrupts unmasked; rtw88_intr owns RX. */
 	int sc_edca_error;	/* TX quarantine until a full successful start. */
 	unsigned sc_channel;
@@ -313,6 +314,13 @@ int rtw88_fw_command(struct rtw88_softc *, uint8_t, const void *, size_t);
  * device is not running, without touching any register.
  */
 int rtw88_intr(struct rtw88_softc *);
+/*
+ * Caller holds the PCI lock. Snapshot the completed RX producer as a host
+ * consumed-slot sequence in expected_generation. Never writes hardware or
+ * synchronizes DMA. Zero *frontier on failure. EOVERFLOW means no later valid
+ * sequence can be represented. This is not a radio-reception timestamp.
+ */
+int rtw88_rx_frontier(struct rtw88_softc *, uint32_t, uint64_t *);
 /* Read-only snapshot: IRQ, RX index, PCI control, and direct RF18 A/B. */
 #define RTW88_DIAG_REGS 8
 int rtw88_diag(struct rtw88_softc *, uint32_t *);
