@@ -145,5 +145,6 @@ do not establish IRQ delivery, MMU translation, FE completion, NN execution,
 or a model result. The fixed FE stream contains no NN model operation.
 
 The separate [fixed native NN TASK contract](a733-npu-tiny-task.md) selects a
-closed image and performs numerical comparisons. Its hardware NN result remains
-unaccepted. The accepted 40-byte FE result does not establish TASK success.
+closed image and performs numerical comparisons. Its bounded physical INT8 result
+has a separate [acceptance record](a733-npu-tiny-task.md#physical-acceptance).
+The accepted 40-byte FE result does not establish TASK success or general inference.
