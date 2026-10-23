@@ -35,6 +35,15 @@ It does not stop kernel autoconfiguration or built-in drivers.
 
 The first standard AArch64 early message precedes the EL1 transition.
 Verbose messages then cover MMU setup, FDT bootstrap and `consinit`.
+With `VERBOSE_INIT_ARM`, FDT diagnostics report four boundaries: `input`,
+`copied`, `fixed` and `packed`. These are before copying, after copying,
+after platform fixups and after final packing. The trace reports header and
+full-tree validation, block offsets, node lookup results and `stdout-path`.
+It does not change boot policy or repair the tree. Validation skips input
+blobs larger than the 512 KiB copy buffer. Failed full validation stops
+trace traversal and reports a bounded first structure tag. Alias and stdout
+values must fit in 128 bytes and have one trailing NUL. These limits apply
+only to diagnostics. Equal offsets do not establish equal tree contents.
 Without early console support, silence does not locate a fault before `consinit`.
 Source and host checks do not establish a successful physical boot.
 See [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/a733-zero3w/boot.md)
@@ -51,3 +60,10 @@ Use `EARLYCONS_CFLAGS` for analyzer or sanitizer flags.
 Use `--emit DIRECTORY` to retain the generated host fixture for analysis.
 Host tests model MMIO and the map-ready predicate. Native configuration and
 kernel linkage remain separate checks. Physical MMIO remains unverified.
+
+Run `python3 ember/tools/fdt-bootstrap-trace-contract.py` with host `CC` set
+to GCC16. This test uses the actual trace and owning libfdt sources. It checks
+valid copies, malformed structure with a valid header, disabled trace calls,
+read-only behavior, bounds, and malformed alias and stdout properties.
+Use `--dtb FILE` to inspect a compiled tree. Use `FDT_TRACE_CFLAGS` for analyzer
+or sanitizer flags. `--emit DIRECTORY` retains the generated host fixture.

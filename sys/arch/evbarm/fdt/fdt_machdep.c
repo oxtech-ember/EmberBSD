@@ -163,8 +163,78 @@ static struct consdev earlycons = {
 
 #ifdef VERBOSE_INIT_ARM
 #define VPRINTF(...)	printf(__VA_ARGS__)
+#define VPRINT_FDT(stage, data, size) fdt_bootstrap_trace(stage, data, size)
+
+/* Trace each FDT boundary without changing boot policy. */
+static void
+fdt_bootstrap_trace(const char *stage, const void *data, size_t size)
+{
+	const char *value, *end;
+	int error, aliases, chosen, serial, len;
+
+	error = size < sizeof(struct fdt_header) ? -FDT_ERR_TRUNCATED :
+	    fdt_check_header(data);
+	printf("FDT %s <%p>: header=%d\n", stage, data, error);
+	if (error != 0)
+		return;
+
+	printf("FDT %s: total=%u version=%u struct=%u+%u strings=%u+%u\n",
+	    stage, fdt_totalsize(data), fdt_version(data),
+	    fdt_off_dt_struct(data), fdt_size_dt_struct(data),
+	    fdt_off_dt_strings(data), fdt_size_dt_strings(data));
+	if (fdt_totalsize(data) > size) {
+		printf("FDT %s: full=skipped bound=%zu\n", stage, size);
+		return;
+	}
+	error = fdt_check_full(data, size);
+	printf("FDT %s: full=%d\n", stage, error);
+	if (error != 0) {
+		const uint32_t off = fdt_off_dt_struct(data);
+		fdt32_t tag;
+
+		if (off <= fdt_totalsize(data) - sizeof(tag)) {
+			memcpy(&tag, (const uint8_t *)data + off, sizeof(tag));
+			printf("FDT %s: first-tag=%#x paths=skipped\n",
+			    stage, fdt32_to_cpu(tag));
+		}
+		return;
+	}
+
+	aliases = fdt_path_offset(data, "/aliases");
+	chosen = fdt_path_offset(data, "/chosen");
+	serial = aliases;
+	if (aliases >= 0) {
+		value = fdt_getprop(data, aliases, "serial0", &len);
+		serial = len;
+		if (value != NULL) {
+			/* Do not recurse through an unchecked alias value. */
+			serial = -FDT_ERR_BADVALUE;
+			if (len > 1 && len <= 128 && value[0] == '/' &&
+			    memchr(value, '\0', len) == value + len - 1)
+				serial = fdt_path_offset_namelen(data, value,
+				    len - 1);
+		}
+	}
+	printf("FDT %s: root=%d cpus=%d aliases=%d chosen=%d serial0=%d\n",
+	    stage, fdt_path_offset(data, "/"), fdt_path_offset(data, "/cpus"),
+	    aliases, chosen, serial);
+	if (chosen < 0)
+		return;
+	value = fdt_getprop(data, chosen, "stdout-path", &len);
+	if (value == NULL) {
+		printf("FDT %s: stdout-path=%d\n", stage, len);
+		return;
+	}
+	end = len > 0 && len <= 128 ? memchr(value, '\0', len) : NULL;
+	if (end == NULL || end != value + len - 1) {
+		printf("FDT %s: stdout-path=invalid len=%d\n", stage, len);
+		return;
+	}
+	printf("FDT %s: stdout-path=%s\n", stage, value);
+}
 #else
 #define VPRINTF(...)	__nothing
+#define VPRINT_FDT(stage, data, size) __nothing
 #endif
 
 static void
@@ -267,6 +337,8 @@ initarm(void *arg)
 	if (error != 0)
 		panic("fdt_check_header failed: %s", fdt_strerror(error));
 
+	VPRINT_FDT("input", fdt_addr_r, sizeof(fdt_data));
+
 	/* If the DTB is too big, try to pack it in place first. */
 	if (fdt_totalsize(fdt_addr_r) > sizeof(fdt_data))
 		(void)fdt_pack(__UNCONST(fdt_addr_r));
@@ -274,6 +346,7 @@ initarm(void *arg)
 	error = fdt_open_into(fdt_addr_r, fdt_data, sizeof(fdt_data));
 	if (error != 0)
 		panic("fdt_move failed: %s", fdt_strerror(error));
+	VPRINT_FDT("copied", fdt_data, sizeof(fdt_data));
 
 #ifdef SOC_SUN50I_A100
 	{
@@ -284,6 +357,7 @@ initarm(void *arg)
 			panic("A133 FDT fixup: %s", fdt_strerror(error));
 	}
 #endif
+	VPRINT_FDT("fixed", fdt_data, sizeof(fdt_data));
 	fdtbus_init(fdt_data);
 
 	/* Lookup platform specific backend */
@@ -335,6 +409,7 @@ initarm(void *arg)
 	 * Done making changes to the FDT.
 	 */
 	fdt_pack(fdt_data);
+	VPRINT_FDT("packed", fdt_data, sizeof(fdt_data));
 
 	VPRINTF("consinit ");
 	consinit();
