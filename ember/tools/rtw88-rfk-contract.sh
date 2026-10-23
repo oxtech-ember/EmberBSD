@@ -36,7 +36,7 @@ scenarios=${RTW88_RFK_CASE:-timing-good timing-edge timing-wrap timing-minimum t
 for altq in 0 1; do
     flags=-UALTQ
     [ "$altq" = 0 ] || flags=-DALTQ
-    ${CC:-cc} -std=c11 -DRTW88_RFK_EXPERIMENT -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -Wall -Werror $flags ${RTW88_TEST_CFLAGS:-} \
+    ${CC:-cc} -std=c11 -pthread -DRTW88_RFK_EXPERIMENT -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -Wall -Werror $flags ${RTW88_TEST_CFLAGS:-} \
         -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
         "$tools/rtw88-rfk-contract.c" \
         "$src/sys/dev/ic/rtw88_net_policy.c" \
@@ -68,17 +68,17 @@ for altq in 0 1; do
         if [ "$altq" = 0 ]; then
             units="$units rtw8822c_rfk.c rtw88_fw_init.c rtw88.c"
         fi
-        ${CC:-cc} -std=c11 -DRTW88_RFK_EXPERIMENT -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -dM -E $flags - < /dev/null > "$work/predefines.h"
+        ${CC:-cc} -std=c11 -pthread -DRTW88_RFK_EXPERIMENT -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -dM -E $flags - < /dev/null > "$work/predefines.h"
         for relative in $units; do
             case $relative in *-contract.c) unit="$tools/$relative" ;; *) unit="$src/sys/dev/ic/$relative" ;; esac
             name=${relative%.c}
-            ${CC:-cc} -std=c11 -DRTW88_RFK_EXPERIMENT -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -O0 -g -Wall -Werror -fanalyzer $flags \
+            ${CC:-cc} -std=c11 -pthread -DRTW88_RFK_EXPERIMENT -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -O0 -g -Wall -Werror -fanalyzer $flags \
                 -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
                 -c "$unit" -o "$work/$name-analysis.o"
             cppcheck --enable=warning,performance,portability --error-exitcode=1 \
                 --check-level=exhaustive --include="$work/predefines.h" $flags -U_KERNEL -U_MODULE \
                 -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" "$unit"
-            ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -DRTW88_RFK_EXPERIMENT -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE $flags \
+            ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -pthread -DRTW88_RFK_EXPERIMENT -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE $flags \
                 -Wall -Werror -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
                 -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
                 "$unit" -o "$work/$name.plist"
@@ -86,7 +86,7 @@ for altq in 0 1; do
     fi
 done
 # The experiment cannot unload its kernel-lifetime quarantine.
-if ${CC:-cc} -std=c11 -DRTW88_RFK_EXPERIMENT -D_MODULE -fsyntax-only \
+if ${CC:-cc} -std=c11 -pthread -DRTW88_RFK_EXPERIMENT -D_MODULE -fsyntax-only \
     -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" "$src/sys/dev/ic/rtw8822c_rfk.c" > "$work/module.log" 2>&1; then
     echo "experimental module guard failed" >&2; exit 1
 fi
