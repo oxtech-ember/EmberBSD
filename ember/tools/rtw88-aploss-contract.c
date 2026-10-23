@@ -61,6 +61,7 @@ struct rtw88_net {
     struct rtw88_net_policy policy;
     int *lock;
     int scan, dev, work_pending, reset_required, state_arg;
+    int tx_quiet, quiet_error;
     unsigned channel, tx_timer;
     enum ieee80211_state requested;
     struct work state_work;
@@ -281,7 +282,23 @@ static void test_roaming_and_userland_boundaries(void) {
     /* No running consumer: kernel queues the event, but no fabricated autojoin. */
     setup(&f);seconds(&f,10);flush_scan(&f);CHECK(events==1 && user_disconnects==0);
 }
+static void test_quiet_request_guard(void) {
+    static const enum ieee80211_state states[]={IEEE80211_S_INIT,
+        IEEE80211_S_SCAN,IEEE80211_S_AUTH,IEEE80211_S_ASSOC,IEEE80211_S_RUN};
+    for(unsigned i=0;i<sizeof(states)/sizeof(states[0]);i++) {
+        struct fixture f;setup(&f);f.net.tx_quiet=1;
+        giant=1;
+        CHECK(rtw88_net_newstate(&f.net.ic,states[i],0)==
+            (states[i]==IEEE80211_S_INIT?0:EBUSY));
+        giant=0;
+        CHECK(f.net.tx_quiet && f.net.requested==IEEE80211_S_INIT);
+        CHECK(f.net.policy.epoch==8 && !f.net.policy.accepting);
+        CHECK(!f.core.sc_ra.active && !f.core.sc_ra.configured);
+        CHECK(requests==1 && f.net.work_pending);
+    }
+}
 int main(void) {
+    test_quiet_request_guard();
     test_fast_watchdog_floor();test_silent_idle_chain();test_refresh_and_fences();
     test_clock_and_superseded_generation();test_ht_off_request_reset();
     test_roaming_and_userland_boundaries();
