@@ -39,7 +39,9 @@ authorize transmission or refresh a beacon lease by themselves.
 
 `ieee80211_sta_beacon_interval()` checks a complete ESS beacon body for local
 presence supervision. It requires bounded SSID/rates and a matching exact DS
-channel when present. A CSA, Extended CSA or Quiet prevents a positive result.
+channel when present. A decoded HT Operation primary must match the observed
+channel too. DS can be absent on 5 GHz; a matching DS does not hide a
+conflicting HT primary. A CSA, Extended CSA or Quiet prevents a positive result.
 It returns the nonzero wire interval in TU, or zero for an invalid body.
 The caller owns accepted interval bounds, peer identity and lifecycle checks.
 The helper borrows the body only during the call and retains no pointers.

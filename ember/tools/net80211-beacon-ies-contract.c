@@ -23,6 +23,8 @@ beacon_intervals(void)
 		[8]=100, [10]=1, [12]=0, [13]=0, [14]=1, [15]=16, [16]=12
 	};
 	uint8_t body[25] = {0};
+	uint8_t ht_body[sizeof(valid) + 24] = {0};
+	uint8_t ds_ht_body[sizeof(ht_body) + 3] = {0};
 
 	CHECK(ieee80211_sta_beacon_interval(valid, sizeof(valid), 64) == 100);
 	CHECK(ieee80211_sta_beacon_interval(NULL, sizeof(valid), 64) == 0);
@@ -47,6 +49,26 @@ beacon_intervals(void)
 	CHECK(ieee80211_sta_beacon_interval(body, 20, 64) == 0);
 	body[19] = 64; body[18] = 2; body[20] = 0;
 	CHECK(ieee80211_sta_beacon_interval(body, 21, 64) == 0);
+
+	/* A 5 GHz beacon can omit DS. Its HT primary must still agree. */
+	memcpy(ht_body, valid, sizeof(valid));
+	ht_body[17] = 61; ht_body[18] = 22; ht_body[19] = 64;
+	CHECK(ieee80211_sta_beacon_interval(ht_body, sizeof(ht_body), 64) == 100);
+	ht_body[19] = 60;
+	CHECK(ieee80211_sta_beacon_interval(ht_body, sizeof(ht_body), 64) == 0);
+	ht_body[19] = 0;
+	CHECK(ieee80211_sta_beacon_interval(ht_body, sizeof(ht_body), 64) == 0);
+	ht_body[19] = 1;
+	CHECK(ieee80211_sta_beacon_interval(ht_body, sizeof(ht_body), 1) == 100);
+	CHECK(ieee80211_sta_beacon_interval(ht_body, sizeof(ht_body), 64) == 0);
+	/* A matching DS element must not hide a conflicting HT primary. */
+	memcpy(ds_ht_body, ht_body, sizeof(ht_body));
+	ds_ht_body[sizeof(ht_body)] = 3;
+	ds_ht_body[sizeof(ht_body) + 1] = 1;
+	ds_ht_body[sizeof(ht_body) + 2] = 64;
+	CHECK(ieee80211_sta_beacon_interval(ds_ht_body, sizeof(ds_ht_body), 64) == 0);
+	ds_ht_body[19] = 64;
+	CHECK(ieee80211_sta_beacon_interval(ds_ht_body, sizeof(ds_ht_body), 64) == 100);
 
 	static const struct {
 		size_t len;

@@ -167,5 +167,9 @@ ieee80211_sta_beacon_interval(const uint8_t *body, size_t len,
 		return 0;
 	if (ies.ds != NULL && (ies.ds[1] != 1 || ies.ds[2] != channel))
 		return 0;
+	/* DS is optional on 5 GHz. A present HT primary must not contradict
+	 * the channel of this observation, even when DS agrees with it. */
+	if (ies.ht != NULL && ies.ht[2] != channel)
+		return 0;
 	return (uint16_t)(body[8] | (uint16_t)body[9] << 8);
 }
