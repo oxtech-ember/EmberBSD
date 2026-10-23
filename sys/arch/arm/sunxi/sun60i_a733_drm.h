@@ -5,6 +5,7 @@
 #define _SUN60I_A733_DRM_H
 
 #include <sys/bus.h>
+#include <sys/callout.h>
 #include <sys/mutex.h>
 #include <sys/vmem.h>
 #include <sys/workqueue.h>
@@ -30,6 +31,10 @@ struct a733_drm {
 	bus_dma_segment_t pool_segment;
 	vmem_t *pool;
 	struct workqueue *queue;
+	kmutex_t startup_lock;
+	callout_t startup_timer;
+	struct work startup_work;
+	bool startup_queued, startup_running, startup_registered, startup_stopped;
 	struct drm_device *dev;
 	struct drm_plane plane;
 	struct drm_crtc crtc;

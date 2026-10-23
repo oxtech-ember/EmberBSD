@@ -83,10 +83,10 @@ The FDT node uses `compatible = "allwinner,sun60i-a733-display"`.
 Its `display-engine` property names the native DE352 node.
 It has no clock, reset, power-domain or MMIO property.
 `GENERIC64` selects the separate `sun60idrm` attachment.
-Attach creates controls but does not register DRM or start display output.
-
-First, complete the native DE stage from [the DE contract](a733-de352-native.md).
-Then set `hw.sun60idrm0.stage=1` to register the KMS device.
+Attach reserves the pool and creates the common KMS workqueue.
+After root mount, its startup job admits the native DE owner and registers DRM.
+See [automatic startup and sink retry](a733-drm-startup.md).
+The stage control calls the same start path for explicit diagnostics.
 The frontend accepts only an admitted DE state and its exact restricted DMA tag.
 A missing or not-ready provider returns an error without starting registration.
 A failure after client acquisition is sticky.
@@ -111,7 +111,7 @@ change hardware state, or release a scanout buffer. Polling starts only after
 successful DRM registration. The existing no-detach lifetime remains required.
 
 The connector still advertises one exact cached EDID mode. Fresh EDID modes,
-mode changes and automatic cold-start admission remain separate contracts. HPD notification alone does not qualify these operations.
+mode changes remain separate contracts. HPD notification alone does not qualify these operations.
 The frontend accepts linear XRGB8888 at offset zero.
 It rejects scaling, rotation, alternate modes and noncontiguous imports.
 It accepts a detached primary plane while the CRTC remains active.

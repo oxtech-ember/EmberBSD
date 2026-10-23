@@ -19,10 +19,10 @@ def main():
     args = parser.parse_args()
     text = args.source.read_text()
     start = text.index("static int\na733_register")
-    end = text.index("\nstatic int\na733_stage", start)
+    end = text.index("\n/* Registration and cold-start", start)
     with tempfile.TemporaryDirectory(prefix="a733-drm-register-") as tmp:
         work = Path(tmp)
-        (work / "registration.c").write_text(text[start:end])
+        (work / "registration.c").write_text(text[:text.index("#include")] + text[start:end])
         command = (shlex.split(os.environ.get("CC", "cc")) +
             ["-std=c11", "-Wall", "-Wextra", "-Werror"] +
             shlex.split(os.environ.get("A733_DRM_CFLAGS", "")) +

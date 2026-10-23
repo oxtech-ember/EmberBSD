@@ -130,7 +130,7 @@ static int sun60i_a733_de352_acquire(int p, void *cookie, void **client){
 	} return e;
 }
 static int sun60i_a733_de352_release(void *client){
-	CHECK(client == current && acquired == 1 && !queues && !devices && !modes && !registered);
+	CHECK(client == current && acquired == 1 && queues == 1 && !devices && !modes && !registered);
 	releases++;
 	if (!release_error)
 		acquired--;
@@ -139,24 +139,6 @@ static int sun60i_a733_de352_release(void *client){
 int drm_guarantee_initialized(void){
 	CHECK(acquired == 1);
 	return operation();
-}
-static void
-a733_drm_work(void *w, void *c)
-{
-	(void)w;
-	(void)c;
-}
-static int workqueue_create(void **q, const char *name, void (*fn) (void *, void *), void *cookie, int pri, int ipl, int flags){
-	CHECK(acquired == 1 && !queues && !strcmp(name, "a733kms") && fn == a733_drm_work && cookie == current && pri == PRI_NONE && ipl == IPL_NONE && flags == WQ_MPSAFE);
-	int e = operation();
-	if (!e) {
-		*q = current;
-		queues++;
-	} return e;
-}
-static void workqueue_destroy(void *q){
-	CHECK(q == current && queues == 1 && !devices && !modes);
-	queues--;
 }
 static struct drm_device *drm_dev_alloc(const void *driver, void *device){
 	CHECK(driver == &a733_driver && device == current && queues == 1);
@@ -282,12 +264,14 @@ static void drm_kms_helper_poll_init(struct drm_device *dev)
 }
 #include "registration.c"
 static void reset(struct a733_drm *sc){
-	CHECK(!devices && !queues && !modes && !acquired && !registered);
+	CHECK(!devices && !modes && !acquired && !registered);
 	memset(sc, 0, sizeof(*sc));
 	current = sc;
 	sc->phandle = 7;
 	sc->device = sc;
 	sc->pool = sc;
+	sc->queue = sc;
+	queues = 1;
 	calls = failed_step = releases = put_calls = cleanups = invalid_state = reset_failure = 0;
 	vblank_storage = vblank_bound = vblank_unbinds = 0;
 	vblank_bind_error = 0;
@@ -297,16 +281,16 @@ int
 main(void)
 {
 	struct a733_drm sc;
-	for (unsigned fail = 1; fail <= 13; fail++)
+	for (unsigned fail = 1; fail <= 12; fail++)
 		for (unsigned rel = 0; rel < 2; rel++) {
 			reset(&sc);
 			failed_step = fail;
 			release_error = rel ? EBUSY : 0;
 			CHECK(a733_register(&sc) == ENOMEM);
-			CHECK(calls == fail && !devices && !queues && !modes && !registered);
-			CHECK(sc.dev == NULL && sc.queue == NULL);
+			CHECK(calls == fail && !devices && queues == 1 && !modes && !registered);
+			CHECK(sc.dev == NULL && sc.queue == &sc);
 			CHECK(releases == (fail > 2 ? 1u : 0u));
-			CHECK(!vblank_bound && vblank_unbinds == (fail == 13 ? 1u : 0u));
+			CHECK(!vblank_bound && vblank_unbinds == (fail == 12 ? 1u : 0u));
 			CHECK(!sc.vblank_irq);
 			CHECK(sc.registration_started == (fail > 2));
 			CHECK(acquired == ((fail > 2 && rel) ? 1u : 0u));
@@ -321,7 +305,7 @@ main(void)
 	for (unsigned failed = 1; failed <= 3; failed++) {
 		reset(&sc);
 		reset_failure = failed;
-		CHECK(a733_register(&sc) == ENOMEM && calls == 10 && !devices && !queues && !modes && !acquired && releases == 1 && put_calls == 1 && cleanups == 1);
+		CHECK(a733_register(&sc) == ENOMEM && calls == 9 && !devices && queues == 1 && !modes && !acquired && releases == 1 && put_calls == 1 && cleanups == 1);
 	}
 	for (unsigned i = 0; i < 2; i++) {
 		reset(&sc);
@@ -331,19 +315,19 @@ main(void)
 	/* A missing boot reservation fails before DE client acquisition. */
 	reset(&sc);
 	sc.pool = NULL;
-	CHECK(a733_register(&sc) == ENOMEM && calls == 1 && !acquired && !sc.registration_started && !queues && !devices);
+	CHECK(a733_register(&sc) == ENOMEM && calls == 1 && !acquired && !sc.registration_started && queues == 1 && !devices);
 	/* A provider without the TV0 interrupt keeps polled observation. */
 	reset(&sc);
 	vblank_bind_error = EOPNOTSUPP;
-	CHECK(a733_register(&sc) == 0 && registered == 1 && calls == 13 && !vblank_bound && !sc.vblank_irq && !sc.dev->irq_enabled);
+	CHECK(a733_register(&sc) == 0 && registered == 1 && calls == 12 && !vblank_bound && !sc.vblank_irq && !sc.dev->irq_enabled);
 	CHECK(sc.dev->max_vblank_count == UINT32_MAX);
 	free(sc.dev);
 	registered = devices = queues = modes = acquired = 0;
 	reset(&sc);
 	vblank_bind_error = EBUSY;
-	CHECK(a733_register(&sc) == EBUSY && calls == 12 && !devices && !acquired && !vblank_bound && vblank_unbinds == 0);
+	CHECK(a733_register(&sc) == EBUSY && calls == 11 && !devices && !acquired && !vblank_bound && vblank_unbinds == 0);
 	reset(&sc);
-	CHECK(a733_register(&sc) == 0 && registered == 1 && devices == 1 && queues == 1 && modes == 1 && acquired == 1 && calls == 13 && sc.registration_started);
+	CHECK(a733_register(&sc) == 0 && registered == 1 && devices == 1 && queues == 1 && modes == 1 && acquired == 1 && calls == 12 && sc.registration_started);
 	CHECK(releases == 0 && cleanups == 0 && put_calls == 0);
 	CHECK(vblank_bound && sc.vblank_irq && sc.dev->irq_enabled && sc.dev->max_vblank_count == UINT32_MAX);
 	/*

@@ -396,14 +396,10 @@ a733_register(struct a733_drm *sc)
 	error = drm_guarantee_initialized();
 	if (error != 0)
 		goto release;
-	error = workqueue_create(&sc->queue, "a733kms", a733_drm_work, sc,
-	    PRI_NONE, IPL_NONE, WQ_MPSAFE);
-	if (error != 0)
-		goto release;
 	dev = drm_dev_alloc(&a733_driver, sc->device);
 	if (IS_ERR(dev)) {
 		error = -PTR_ERR(dev);
-		goto queue;
+		goto release;
 	}
 	sc->dev = dev;
 	dev->dev_private = sc;
@@ -479,9 +475,6 @@ mode:
 	drm_mode_config_cleanup(dev);
 	drm_dev_put(dev);
 	sc->dev = NULL;
-queue:
-	workqueue_destroy(sc->queue);
-	sc->queue = NULL;
 release:
 	release_error = sun60i_a733_de352_release(sc->client);
 	if (release_error == 0)
@@ -489,6 +482,131 @@ release:
 	else if (error == 0)
 		error = release_error;
 	return error;
+}
+
+/* Registration and cold-start share one owner; never hold it across DRM. */
+static int
+a733_start(struct a733_drm *sc, bool *busy)
+{
+	int error;
+
+	if (busy != NULL)
+		*busy = false;
+	mutex_enter(&sc->lock);
+	error = sc->fault;
+	if (error == 0 && sc->stage == 1) {
+		mutex_exit(&sc->lock);
+		return 0;
+	}
+	if (error == 0 && sc->registering) {
+		if (busy != NULL)
+			*busy = true;
+		error = EBUSY;
+	}
+	if (error == 0)
+		sc->registering = true;
+	mutex_exit(&sc->lock);
+	if (error != 0)
+		return error;
+	error = sun60i_a733_de352_start(sc->phandle);
+	if (error == 0) {
+		error = a733_register(sc);
+		/* Only the pre-registration sink probe can request a retry. */
+		if (error == EAGAIN)
+			error = EIO;
+	}
+	mutex_enter(&sc->lock);
+	sc->registering = false;
+	if (error == 0)
+		sc->stage = 1;
+	else if (error != EAGAIN && sc->fault == 0)
+		sc->fault = error;
+	mutex_exit(&sc->lock);
+	mutex_spin_enter(&sc->startup_lock);
+	if (error != EAGAIN) {
+		sc->startup_registered = error == 0;
+		sc->startup_stopped = true;
+	}
+	mutex_spin_exit(&sc->startup_lock);
+	return error;
+}
+
+/* Softclock callback: enqueue only. The worker owns all sleeping work. */
+static void
+a733_startup_enqueue(void *arg)
+{
+	struct a733_drm *sc = arg;
+	bool enqueue = false;
+
+	mutex_spin_enter(&sc->startup_lock);
+	if (!sc->startup_stopped && !sc->startup_registered &&
+	    !sc->startup_queued && !sc->startup_running) {
+		sc->startup_queued = true;
+		enqueue = true;
+	}
+	mutex_spin_exit(&sc->startup_lock);
+	if (enqueue)
+		workqueue_enqueue(sc->queue, &sc->startup_work, NULL);
+}
+
+static void
+a733_startup_run(struct a733_drm *sc)
+{
+	bool busy, retry;
+	int error;
+
+	mutex_spin_enter(&sc->startup_lock);
+	sc->startup_queued = false;
+	if (sc->startup_stopped || sc->startup_registered) {
+		mutex_spin_exit(&sc->startup_lock);
+		return;
+	}
+	sc->startup_running = true;
+	mutex_spin_exit(&sc->startup_lock);
+	error = a733_start(sc, &busy);
+	mutex_spin_enter(&sc->startup_lock);
+	sc->startup_running = false;
+	retry = (error == EAGAIN || busy) && !sc->startup_stopped;
+	mutex_spin_exit(&sc->startup_lock);
+	if (retry)
+		callout_schedule(&sc->startup_timer, hz);
+}
+
+static void
+a733_dispatch(struct work *work, void *arg)
+{
+	struct a733_drm *sc = arg;
+
+	if (work == &sc->startup_work)
+		a733_startup_run(sc);
+	else
+		a733_drm_work(work, sc);
+}
+
+static void
+a733_mountroot(device_t self)
+{
+	a733_startup_enqueue(device_private(self));
+}
+
+static int
+a733_startup_init(struct a733_drm *sc, bool observe_only)
+{
+	int error;
+
+	mutex_init(&sc->startup_lock, MUTEX_DEFAULT, IPL_SOFTCLOCK);
+	callout_init(&sc->startup_timer, CALLOUT_MPSAFE);
+	callout_setfunc(&sc->startup_timer, a733_startup_enqueue, sc);
+	sc->startup_stopped = observe_only;
+	error = workqueue_create(&sc->queue, "a733kms", a733_dispatch, sc,
+	    PRI_NONE, IPL_SOFTCLOCK, WQ_MPSAFE);
+	if (error != 0) {
+		sc->startup_stopped = true;
+		return error;
+	}
+	if (!observe_only)
+		config_mountroot(sc->device, a733_mountroot);
+	return 0;
 }
 
 static int
@@ -509,29 +627,10 @@ a733_stage(SYSCTLFN_ARGS)
 		return error;
 	if (stage != 1)
 		return EINVAL;
-	mutex_enter(&sc->lock);
-	error = sc->fault != 0 ? sc->fault : sc->registering ? EBUSY : 0;
-	if (error == 0 && sc->stage == 1) {
-		mutex_exit(&sc->lock);
-		return 0;
-	}
-	if (error == 0)
-		sc->registering = true;
-	mutex_exit(&sc->lock);
-	if (error != 0)
-		return error;
-	/* DRM registration creates sysctl nodes. Keep the tree lock outside it. */
+	/* Registration creates sysctl nodes. Keep the tree lock outside it. */
 	sysctl_unlock();
-	error = a733_register(sc);
+	error = a733_start(sc, NULL);
 	sysctl_relock();
-	mutex_enter(&sc->lock);
-	sc->registering = false;
-	if (error == 0)
-		sc->stage = 1;
-	else if (sc->fault == 0 &&
-	    (sc->registration_started || (error != EAGAIN && error != ENXIO)))
-		sc->fault = error;
-	mutex_exit(&sc->lock);
 	return error;
 }
 
@@ -616,10 +715,22 @@ a733_attach(device_t parent, device_t self, void *aux)
 	mutex_init(&sc->pool_lock, MUTEX_DEFAULT, IPL_NONE);
 	sc->phandle = fdtbus_get_phandle(faa->faa_phandle, "display-engine");
 	aprint_naive("\n");
-	aprint_normal(": guarded native KMS frontend\n");
+	aprint_normal(": native KMS frontend\n");
 	if (sc->phandle <= 0)
 		return;
 	a733_pool_create(sc, faa->faa_dmat);
+	/* Use the same recovery convention as the other native A733 owners. */
+	error = OF_getproplen(faa->faa_phandle, "netbsd,observe-only");
+	if (error > 0) {
+		sc->fault = EINVAL;
+		sc->startup_stopped = true;
+		return;
+	}
+	error = a733_startup_init(sc, error == 0);
+	if (error != 0) {
+		sc->fault = error;
+		return;
+	}
 	error = sysctl_createv(&sc->sysctllog, 0, NULL, &node, 0, CTLTYPE_NODE,
 	    device_xname(self), NULL, NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
 	if (error != 0)
