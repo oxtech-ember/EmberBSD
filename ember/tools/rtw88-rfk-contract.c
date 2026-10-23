@@ -100,6 +100,11 @@ static int rfk_c1_pause(unsigned ticks)
 }
 static void rfk_alloc_yield(void)
 {
+    if(rfk_net && !rfk_paused && (rfk_is("allocation-budget") ||
+        rfk_is("presence-wait-allocation"))) {
+        rfk_paused=1;
+        rfk_advance_us(rfk_is("allocation-budget")?5900000:6000001);
+    }
     if(rfk_net && rfk_is("alloc-Q") && !rfk_paused) {
         CHECK(rtw88_test_rfk_atomic_word!=NULL);
         rfk_alloc_power_serial=rfk_net->core->sc_power_program.serial;
@@ -111,8 +116,47 @@ static void rfk_alloc_yield(void)
         CHECK(rtw88_net_newstate(&rfk_net->ic,IEEE80211_S_SCAN,0)==0);
     }
 }
+static unsigned rfk_beacons;
+static uint64_t rfk_beacon_power_serial;
+static void rfk_beacon_emit(struct rtw88_net *net)
+{
+    uint8_t frame[41]={0x80};memset(frame+4,0xff,6);
+    memcpy(frame+10,net->ic.ic_bss->ni_macaddr,6);
+    memcpy(frame+16,net->ic.ic_bss->ni_bssid,6);
+    frame[32]=100;frame[34]=1;frame[38]=1;frame[39]=1;frame[40]=12;
+    struct rtw88_rx_info info={.packet_size=sizeof(frame)};
+    info.signal.valid=1;info.signal.channel=(uint8_t)net->channel;
+    info.signal.generation=net->core->sc_generation;
+    mutex_enter(net->lock);
+    rtw88_net_rx_frame(net,frame,sizeof(frame),&info);
+    mutex_exit(net->lock);
+    if(!rfk_beacons)rfk_beacon_power_serial=net->core->sc_power_program.serial;
+    rfk_beacons++;
+}
+static void rfk_beacon_arrival(void)
+{
+    if(!rfk_net || rfk_handshakes || !rfk_net->rfk.drained ||
+        rfk_rf18_writes<2 || rfk_net->core->sc_channel!=rfk_net->channel ||
+        (rfk_is("presence-wait-timeout") || rfk_is("presence-wait-pretune")))return;
+    if(!rfk_paused && rfk_is("presence-wait-late")) {
+        rfk_paused=1;rfk_advance_us(6000000);
+    }
+    if(!rfk_paused && rfk_is("presence-wait-rollback")) {
+        rfk_paused=1;route_ticks=0;rfk_extra_us=0;return;
+    }
+    if(rfk_is("presence-wait-cancel")) {
+        if(!rfk_paused) {
+            rfk_paused=1;
+            CHECK(rtw88_net_newstate(&rfk_net->ic,IEEE80211_S_SCAN,0)==0);
+        }
+        return;
+    }
+    rfk_beacon_emit(rfk_net);
+}
+
 static int rfk_pause(unsigned ticks)
 {
+    rfk_beacon_arrival();
     CHECK(!mutex_owned(rfk_net->lock));
     if(!rfk_paused && rfk_rx_quiet() && rfk_gapk) {
         uint8_t notice[42]={0x80};
@@ -622,6 +666,58 @@ rfk_presence_seed(struct rtw88_net *net, uint64_t observed)
     net->rfk.beacon_channel=64;net->rfk.beacon_interval=100;
     net->rfk.beacon_us=observed;
 }
+static int
+rfk_presence_current(struct rtw88_net *net)
+{
+    const uint64_t now=(UINT64_C(1)<<32)+10000000;
+    net->requested=IEEE80211_S_AUTH;
+    net->rfk.epoch=net->rfk.control_epoch=net->policy.epoch;
+    net->rfk.generation=net->rfk.control_generation=net->core->sc_generation;
+    net->rfk.channel=net->rfk.control_channel=net->core->sc_channel=64;
+    rfk_presence_seed(net,now);
+    mutex_enter(net->lock);
+    CHECK(rtw88_net_rfk_beacon_current(net,now));
+    CHECK(rtw88_net_rfk_beacon_current(net,now+716799));
+    CHECK(!rtw88_net_rfk_beacon_current(net,now+716800));
+    CHECK(!rtw88_net_rfk_beacon_current(net,now+716801));
+    CHECK(!rtw88_net_rfk_beacon_current(net,now-1));
+    net->rfk.beacon_interval=25;
+    CHECK(rtw88_net_rfk_beacon_current(net,now+179199));
+    CHECK(!rtw88_net_rfk_beacon_current(net,now+179200));
+    net->rfk.beacon_interval=1000;
+    CHECK(rtw88_net_rfk_beacon_current(net,now+7167999));
+    CHECK(!rtw88_net_rfk_beacon_current(net,now+7168000));
+    net->rfk.beacon_interval=24;CHECK(!rtw88_net_rfk_beacon_current(net,now));
+    net->rfk.beacon_interval=1001;CHECK(!rtw88_net_rfk_beacon_current(net,now));
+    net->rfk.beacon_interval=100;net->rfk.beacon_us=UINT64_MAX-716799;
+    CHECK(rtw88_net_rfk_beacon_current(net,UINT64_MAX));
+    net->rfk.beacon_us=now;
+#define RFK_BAD_FIELD(field) do { (field)++; \
+    CHECK(!rtw88_net_rfk_beacon_current(net,now)); (field)--; } while(0)
+    RFK_BAD_FIELD(net->rfk.beacon_epoch);RFK_BAD_FIELD(net->rfk.epoch);
+    RFK_BAD_FIELD(net->rfk.control_epoch);RFK_BAD_FIELD(net->policy.epoch);
+    RFK_BAD_FIELD(net->rfk.beacon_generation);RFK_BAD_FIELD(net->rfk.generation);
+    RFK_BAD_FIELD(net->rfk.control_generation);RFK_BAD_FIELD(net->core->sc_generation);
+    RFK_BAD_FIELD(net->rfk.beacon_channel);RFK_BAD_FIELD(net->rfk.channel);
+    RFK_BAD_FIELD(net->rfk.control_channel);RFK_BAD_FIELD(net->core->sc_channel);
+    RFK_BAD_FIELD(net->rfk.notice_pending);RFK_BAD_FIELD(net->policy.dying);
+    RFK_BAD_FIELD(net->tx_quiet);RFK_BAD_FIELD(net->core->sc_stop_requested);
+#undef RFK_BAD_FIELD
+    net->rfk.beacon_epoch=0;CHECK(!rtw88_net_rfk_beacon_current(net,now));
+    net->rfk.beacon_epoch=net->policy.epoch;
+    net->core->sc_started=0;CHECK(!rtw88_net_rfk_beacon_current(net,now));
+    net->core->sc_started=1;
+    net->core->sc_running=0;CHECK(!rtw88_net_rfk_beacon_current(net,now));
+    net->core->sc_running=1;
+    net->core->sc_resources_ready=0;CHECK(!rtw88_net_rfk_beacon_current(net,now));
+    net->core->sc_resources_ready=1;
+    net->requested=IEEE80211_S_ASSOC;CHECK(!rtw88_net_rfk_beacon_current(net,now));
+    net->requested=IEEE80211_S_AUTH;
+    mutex_exit(net->lock);
+    enable_destroy(net);CHECK(enable_allocations==enable_releases);
+    printf("Native RFK current beacon: %u checks, %u failures\n",checks,failures);
+    return failures!=0 || core_failures!=0;
+}
 static struct rtw88_net *rfk_presence_refresh_net;
 static unsigned rfk_presence_refresh_hits;
 static void
@@ -651,7 +747,7 @@ rfk_presence_observe(struct rtw88_net *net)
     memcpy(net->rfk.control_ra,ic->ic_myaddr,6);
     memcpy(net->rfk.control_ta,ni->ni_macaddr,6);
     memcpy(net->rfk.control_bssid,ni->ni_bssid,6);
-    uint8_t frame[51]={0x80};memset(frame+4,0xff,6);
+    uint8_t frame[65]={0x80};memset(frame+4,0xff,6);
     memcpy(frame+10,ni->ni_macaddr,6);memcpy(frame+16,ni->ni_bssid,6);
     frame[32]=100;frame[34]=1;frame[38]=1;frame[39]=1;frame[40]=12;
     struct rtw88_rx_info info={.packet_size=41};
@@ -682,7 +778,7 @@ rfk_presence_observe(struct rtw88_net *net)
         net->rfk.beacon_channel==64 && net->rfk.beacon_interval==100 &&
         net->rfk.beacon_us==expected);
     /* Each bad observation must retain the preceding numeric proof exactly. */
-    for(unsigned bad=0;bad<22;bad++) {
+    for(unsigned bad=0;bad<23;bad++) {
         uint8_t invalid[sizeof(frame)];memcpy(invalid,frame,sizeof(frame));
         struct rtw88_rx_info corrupt=info;size_t len=41;
         if(bad==0)invalid[0]=8;
@@ -707,6 +803,7 @@ rfk_presence_observe(struct rtw88_net *net)
         if(bad==19)invalid[1]=0x80;
         if(bad==20)invalid[34]=0;
         if(bad==21)invalid[34]=3;
+        if(bad==22){invalid[41]=61;invalid[42]=22;invalid[43]=36;len=65;corrupt.packet_size=65;}
         struct rtw88_net_rfk previous=net->rfk;
         rfk_advance_us(71);
         mutex_enter(net->lock);rtw88_net_rx_frame(net,invalid,len,&corrupt);mutex_exit(net->lock);
@@ -790,6 +887,7 @@ main(void)
     rfk_case=getenv("RTW88_RFK_CASE");
     if(rfk_case==NULL)rfk_case="none";
     if(rfk_is("presence-observe"))return rfk_presence_observe(net);
+    if(rfk_is("presence-current"))return rfk_presence_current(net);
     if(rfk_is("control-races"))return rfk_control_races(net);
     rfk_positive=!rfk_is("none");
     if(rfk_timing())rfk_hz=100;
@@ -811,6 +909,13 @@ main(void)
         mutex_exit(net->lock);
     }
     if(rfk_is("env-tmac"))CHECK(write_4(&f,0x1d08,1)==0);
+    if(rfk_is("presence-wait-good")) {
+        net->ic.ic_channels[64]=net->ic.ic_channels[36];
+        net->ic.ic_channels[64].ic_freq=5320;
+        net->ic.ic_curchan=&net->ic.ic_channels[64];
+        net->ic.ic_bss->ni_chan=net->ic.ic_curchan;
+        CHECK(sc.sc_channel!=64);
+    }
     if(rfk_is("env-channel149")) {
         CHECK(rtw88_channel(&sc,1)==0);
         net->ic.ic_curchan=&net->ic.ic_channels[149];
@@ -842,7 +947,19 @@ main(void)
     }
     /* Place this deterministic bus sequence across the 32-bit boundary.
      * The assertions below require that the coefficient window crosses it. */
-    if(rfk_is("timing-wrap"))rfk_clock_offset=UINT_MAX-195000-rfk_now_us();
+    if(rfk_is("timing-wrap"))rfk_clock_offset=UINT_MAX-205000-rfk_now_us();
+    if(rfk_is("presence-wait-pretune")) {
+        rfk_beacon_emit(net);
+        CHECK(net->rfk.beacon_epoch==net->policy.epoch);
+    }
+    uint64_t presence_deadline=0;
+    if(rfk_is("presence-wait-budget")) {
+        CHECK(rtw88_net_rfk_begin(net)==0);
+        presence_deadline=net->rfk.deadline_us;
+        rfk_advance_us(5990000);
+    }
+    if(rfk_is("presence-wait-overflow"))
+        rfk_clock_offset=UINT64_MAX-5000000-rfk_now_us();
     unsigned before=rfk_io,started_tick=route_ticks;
     rtw88_net_state_work(&net->state_work, net);
     if(rfk_is("quiet-rx-worker")) {
@@ -858,6 +975,33 @@ main(void)
         CHECK(rfk_parent_auth==1);
         CHECK(rfk_owned_io==prior_owned && rfk_trace_len==prior_shots);
         CHECK(!net->policy.accepting && !sc.sc_started);
+    }
+    if(strncmp(rfk_case,"presence-wait-",14)==0) {
+        if(rfk_is("presence-wait-good")) {
+            CHECK(rfk_beacons>0 && rfk_parent_auth==1);
+            CHECK(rfk_handshakes==2 && sc.sc_operating.sealed);
+            CHECK(sc.sc_channel==64 && net->rfk.beacon_channel==64);
+            CHECK(sc.sc_power_program.serial==rfk_beacon_power_serial);
+        } else {
+            CHECK(rfk_rf18_writes==(rfk_is("presence-wait-overflow")?0U:2U));
+            CHECK(rfk_parent_auth==0 && rfk_handshakes==0);
+            CHECK(rfk_gapk==0 && rfk_iqk==0 && rfk_dpk==0);
+            CHECK(!rtw8822c_rfk_active(&sc) && !rtw8822c_rfk_blocked());
+            if(rfk_is("presence-wait-timeout") || rfk_is("presence-wait-pretune")) {
+                CHECK(rfk_now_us()-rfk_first_owned_us>=6000000);
+                CHECK(rfk_now_us()-rfk_first_owned_us<6010000);
+                CHECK(!net->policy.accepting && !sc.sc_started);
+            } else if(rfk_is("presence-wait-budget")) {
+                CHECK(net->rfk.deadline_us==presence_deadline);
+                CHECK(net->rfk.deadline_us-net->rfk.started_us==6000000);
+                CHECK(rfk_now_us()>=presence_deadline);
+            } else if(rfk_is("presence-wait-overflow")) {
+                CHECK(!net->policy.accepting && !sc.sc_started);
+            } else if(rfk_is("presence-wait-cancel"))
+                CHECK(rfk_paused && rfk_parent_scan==1);
+            else CHECK(rfk_paused && !net->policy.accepting && !sc.sc_started);
+        }
+        goto finish;
     }
     /* Enabled experimental AUTH cannot bypass a missing whole-chain receipt. */
     CHECK(rfk_parent_auth == ((rfk_timing_success() || rfk_is("positive") || rfk_is("vendor-end") || rfk_is("newfw-baseline") || rfk_is("detach-baseline") || rfk_is("env-channel149"))?1U:0U));
@@ -925,6 +1069,11 @@ main(void)
             CHECK(rfk_coef_target_reads==2 && d->cleanup_error==0);
             CHECK(d->token==1 && !rfk_parent_auth && (d->flags&2)==0);
         }
+    }
+    if(rfk_is("allocation-budget")) {
+        CHECK(rfk_paused && rfk_parent_auth==0 && !net->policy.accepting);
+        CHECK(sc.sc_stats.rfk.error==ETIMEDOUT);
+        CHECK(rfk_now_us()-net->rfk.started_us<6100000);
     }
     if(rfk_power_before() || rfk_is("power-partial")) {
         CHECK(rfk_handshakes==0 && rfk_gapk==0 && rfk_iqk==0 && rfk_dpk==0);
@@ -1108,6 +1257,7 @@ main(void)
         CHECK(rtw88_net_ht20_profile_prepare(net,&profile)==EOPNOTSUPP);
         CHECK(profile.ready==0 && rfk_io==prior);
     }
+finish:
     enable_pause_hook=NULL;enable_drain_pause_hook=NULL;active_ic=NULL;
     rtw88_test_rfk_drop_hook=NULL;
     sc.sc_ops=&ops;

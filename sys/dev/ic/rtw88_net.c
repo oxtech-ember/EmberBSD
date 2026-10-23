@@ -32,7 +32,7 @@
 #ifdef RTW88_RFK_EXPERIMENT
 #include <dev/ic/rtw8822c_rfk.h>
 struct rtw88_net_rfk {
-	uint64_t epoch;
+	uint64_t epoch, started_us, deadline_us;
 	uint32_t generation;
 	unsigned channel, drained, ran;
 	uint32_t values[192];
@@ -972,10 +972,18 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			net->rfk.drained = 1;
 			if (!net->rfk.ran) {
 				mutex_enter(net->lock);
-				prepare_error = epoch != net->policy.epoch || net->policy.dying ||
-				    net->rfk.notice_pending ?
-				    ECANCELED : rtw88_channel(net->core, channel);
+				if (epoch != net->policy.epoch || net->policy.dying ||
+				    net->rfk.notice_pending) {
+					prepare_error = ECANCELED;
+				} else {
+					/* A same-channel observation before tuning is not
+					 * a new IRQ observation after this selection. */
+					net->rfk.beacon_epoch = 0;
+					prepare_error = rtw88_channel(net->core, channel);
+				}
 				mutex_exit(net->lock);
+				if (prepare_error == 0)
+					prepare_error = rtw88_net_rfk_listen(net);
 				if (prepare_error == 0)
 					prepare_error = rtw8822c_rfk_run(net->core);
 				rtw88_net_rfk_rx_deliver(net);

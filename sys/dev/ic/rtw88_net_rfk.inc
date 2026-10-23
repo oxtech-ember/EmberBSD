@@ -194,6 +194,18 @@ rtw88_net_rfk_capture(struct rtw88_net *net, uint32_t values[192])
 	return 0;
 }
 
+/* The native window starts before allocation. The core's later start must
+ * not grant a second new-work budget after KM_SLEEP releases Giant. */
+static int
+rtw88_net_rfk_budget(const struct rtw88_net *net, uint64_t now)
+{
+	KASSERT(mutex_owned(net->lock));
+	if (now < net->rfk.started_us ||
+	    net->rfk.deadline_us < net->rfk.started_us)
+		return ESTALE;
+	return now >= net->rfk.deadline_us ? ETIMEDOUT : 0;
+}
+
 static int
 rtw88_net_rfk_enter(void *cookie, int cleanup)
 {
@@ -210,6 +222,8 @@ rtw88_net_rfk_enter(void *cookie, int cleanup)
 	    net->rfk.epoch != net->policy.epoch ||
 	    net->requested != IEEE80211_S_AUTH))
 		error = ECANCELED;
+	if (error == 0 && !cleanup)
+		error = rtw88_net_rfk_budget(net, rtw88_net_rfk_ticks(net));
 	if (error != 0)
 		mutex_exit(net->lock);
 	return error;
@@ -235,12 +249,43 @@ rtw88_net_rfk_ticks(void *cookie)
 	return (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
 }
 
+/* This checks an observation, not regulatory or transmission permission. */
+static int
+rtw88_net_rfk_beacon_current(const struct rtw88_net *net, uint64_t now)
+{
+	uint64_t span;
+
+	KASSERT(mutex_owned(net->lock));
+	if (net->policy.dying || net->tx_quiet || net->rfk.notice_pending ||
+	    net->requested != IEEE80211_S_AUTH ||
+	    !net->core->sc_started || !net->core->sc_running ||
+	    !net->core->sc_resources_ready || net->core->sc_stop_requested ||
+	    net->rfk.beacon_epoch == 0 ||
+	    net->rfk.beacon_epoch != net->policy.epoch ||
+	    net->rfk.beacon_epoch != net->rfk.epoch ||
+	    net->rfk.beacon_epoch != net->rfk.control_epoch ||
+	    net->rfk.beacon_generation != net->core->sc_generation ||
+	    net->rfk.beacon_generation != net->rfk.generation ||
+	    net->rfk.beacon_generation != net->rfk.control_generation ||
+	    net->rfk.beacon_channel != net->core->sc_channel ||
+	    net->rfk.beacon_channel != net->rfk.channel ||
+	    net->rfk.beacon_channel != net->rfk.control_channel ||
+	    net->rfk.beacon_interval < IEEE80211_BINTVAL_MIN ||
+	    net->rfk.beacon_interval > IEEE80211_BINTVAL_MAX ||
+	    now < net->rfk.beacon_us)
+		return 0;
+	/* Keep the existing seven-beacon liveness policy. Subtraction avoids
+	 * adding a lifetime to an arrival close to the clock's upper bound. */
+	span = (uint64_t)net->rfk.beacon_interval * 1024 * 7;
+	return now - net->rfk.beacon_us < span;
+}
+
 static int
 rtw88_net_rfk_wait(void *cookie, unsigned us, int cleanup)
 {
 	struct rtw88_net *net = cookie;
 	uint32_t values[192];
-	uint64_t count, now, until = rtw88_net_rfk_ticks(cookie) + us;
+	uint64_t count, now, previous, until;
 	unsigned remaining = us;
 	int error;
 
@@ -248,6 +293,10 @@ rtw88_net_rfk_wait(void *cookie, unsigned us, int cleanup)
 	rtw88_net_rfk_publish(net);
 	if (us == 0 || us > INT_MAX || hz <= 0)
 		return EINVAL;
+	previous = rtw88_net_rfk_ticks(cookie);
+	if (previous > UINT64_MAX - us)
+		return EOVERFLOW;
+	until = previous + us;
 	do {
 		/* kpause rounds a sub-tick report interval up to a whole tick.
 		 * At 100 Hz that consumes the complete coefficient budget.
@@ -276,11 +325,48 @@ rtw88_net_rfk_wait(void *cookie, unsigned us, int cleanup)
 				return ECANCELED;
 		}
 		now = rtw88_net_rfk_ticks(cookie);
+		if (now < previous)
+			return ESTALE;
+		previous = now;
 		if (now >= until)
 			break;
 		remaining = (unsigned)(until - now);
 	} while (true);
 	return 0;
+}
+
+/* Tune before listening. No ordinary RX admission is needed for this IRQ
+ * record. The original AUTH budget includes allocation, drain and this wait. */
+static int
+rtw88_net_rfk_listen(struct rtw88_net *net)
+{
+	uint64_t now, previous = net->rfk.started_us, remaining;
+	uint32_t values[192];
+	int current, error;
+
+	KASSERT(!mutex_owned(net->lock));
+	for (;;) {
+		rtw88_net_rfk_rx_deliver(net);
+		error = rtw88_net_rfk_capture(net, values);
+		if (error != 0)
+			return error;
+		if (memcmp(values, net->rfk.values, sizeof(values)) != 0)
+			return ECANCELED;
+		mutex_enter(net->lock);
+		now = rtw88_net_rfk_ticks(net);
+		error = now < previous ? ESTALE : rtw88_net_rfk_budget(net, now);
+		current = error == 0 && rtw88_net_rfk_beacon_current(net, now);
+		mutex_exit(net->lock);
+		if (error != 0)
+			return error;
+		previous = now;
+		if (current)
+			return 0;
+		remaining = net->rfk.deadline_us - now;
+		error = rtw88_net_rfk_wait(net, (unsigned)MIN(remaining, 10000), 0);
+		if (error != 0)
+			return error;
+	}
 }
 
 static int
@@ -301,6 +387,10 @@ rtw88_net_rfk_begin(struct rtw88_net *net)
 			return ESTALE;
 		return rtw8822c_rfk_begin(net->core, &svc);
 	}
+	net->rfk.started_us = rtw88_net_rfk_ticks(net);
+	if (net->rfk.started_us > UINT64_MAX - 6000000)
+		return EOVERFLOW;
+	net->rfk.deadline_us = net->rfk.started_us + 6000000;
 	memcpy(net->rfk.values, values, sizeof(values));
 	net->rfk.epoch = net->policy.epoch;
 	net->rfk.generation = net->core->sc_generation;

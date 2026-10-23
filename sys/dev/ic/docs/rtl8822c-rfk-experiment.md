@@ -101,9 +101,20 @@ that time, the request epoch, firmware generation, channel and interval.
 New requests, native stop and withdrawal invalidate its epoch marker.
 A worker generation change also invalidates it.
 A pending withdrawal prevents a later beacon from restoring it.
-This record has no expiry consumer and grants no transmission or RFK permission.
-The `presence-observe` case checks closed/full queues, wrong peer/PHY/body
-inputs, a time above 32 bits, announcement priority and the actual native stop.
+The timestamp records host descriptor handling, not on-air receive time.
+It does not exclude an old queued DMA descriptor.
+After tuning once, AUTH waits for a current IRQ observation before calibration.
+The arrival must be younger than seven advertised beacon intervals.
+Epoch, firmware generation and channel must still match the numeric owner.
+The native six-second window starts before RFK allocation and includes drain.
+It also bounds later non-cleanup RFK I/O; allocation cannot extend that window.
+The core retains its existing eight-second cleanup deadline from its own start.
+A backward clock, expired budget or withdrawal cannot start calibration.
+RFK itself does not renew or consume this observation during calibration.
+This liveness check grants no regulatory transmission permission.
+The `presence-observe`, `presence-current` and `presence-wait-*` cases check
+closed/full queues, identity and time bounds, first arrival after tuning,
+withdrawal, cancellation, native stop and the original absolute deadline.
 
 ## Originals, cancellation and quarantine
 
