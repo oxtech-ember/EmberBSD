@@ -3,10 +3,10 @@
 /* The existing complete owning attach/worker/core model is reused. This first
  * case supplies NO fresh RFK completion. It must never reach parent AUTH.
  * It is not a fake successful RFK engine or an HT readiness assertion. */
+#include "rtw88-rfk-atomic-model.h"
 #define RTW88_ENABLE_ENTRY rfk_existing_enable_main
 #include "rtw88-enable-contract.c"
 #undef RTW88_ENABLE_ENTRY
-#include "rtw88-rfk-atomic-model.h"
 volatile unsigned *rtw88_test_rfk_atomic_word;
 void (*rtw88_test_rfk_drop_hook)(void);
 
