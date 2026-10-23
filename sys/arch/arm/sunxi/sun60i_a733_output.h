@@ -90,6 +90,8 @@ struct sun60i_a733_output_ops {
 	    void *);
 	/* Optional read-only HPD query. A disconnect is not a provider fault. */
 	int (*detect)(const void *, const void *, bool *);
+	/* Optional. Stop output while retaining mode and resource ownership. */
+	int (*stop)(void *, const void *);
 };
 int sun60i_a733_output_register(int, const struct sun60i_a733_output_ops *, void *);
 int sun60i_a733_output_get_mode(int, const void *,
@@ -97,6 +99,7 @@ int sun60i_a733_output_get_mode(int, const void *,
 int sun60i_a733_output_prepare(int, const void *,
     const struct sun60i_a733_output_mode *);
 int sun60i_a733_output_start(int, const void *);
+int sun60i_a733_output_stop(int, const void *);
 /* ENOENT means no new vblank. It does not latch a fault. */
 int sun60i_a733_output_observed_vblank(int, const void *, uint64_t *);
 int sun60i_a733_output_fault(int, const void *, int);

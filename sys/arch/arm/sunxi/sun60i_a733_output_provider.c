@@ -169,6 +169,31 @@ sun60i_a733_output_start(int phandle, const void *owner)
 }
 
 int
+sun60i_a733_output_stop(int phandle, const void *owner)
+{
+	int error;
+
+	RUN_ONCE(&output_once, output_init);
+	mutex_enter(&output_lock);
+	error = output_lookup(phandle, owner);
+	if (error == 0 && !output_prepared)
+		error = EINVAL;
+	if (error == 0 && output_ops->stop == NULL)
+		error = EOPNOTSUPP;
+	if (error == 0 && !output_started)
+		error = EALREADY;
+	if (error == 0) {
+		error = output_ops->stop(output_arg, owner);
+		if (error != 0)
+			output_fail(error);
+		else
+			output_started = false;
+	}
+	mutex_exit(&output_lock);
+	return error;
+}
+
+int
 sun60i_a733_output_observed_vblank(int phandle, const void *owner, uint64_t *out)
 {
 	uint64_t sequence;

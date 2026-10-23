@@ -127,7 +127,7 @@ vblank(void)
 }
 
 struct provider_fixture {
-	unsigned calls[5];
+	unsigned calls[6];
 	unsigned fail_step;
 	bool no_vblank, invalid_mode;
 	const void *owner;
@@ -170,6 +170,12 @@ provider_start(void *arg, const void *owner)
 }
 
 static int
+provider_stop(void *arg, const void *owner)
+{
+	return provider_step(arg, owner, 5);
+}
+
+static int
 provider_vblank(void *arg, const void *owner, uint64_t *out)
 {
 	struct provider_fixture *f = arg;
@@ -188,7 +194,7 @@ provider_fault(void *arg, const void *owner, int error)
 
 static const struct sun60i_a733_output_ops provider_ops = {
 	provider_mode, provider_prepare, provider_start, provider_vblank,
-	provider_fault, NULL, NULL, NULL, NULL, NULL
+	provider_fault, NULL, NULL, NULL, NULL, NULL, provider_stop
 };
 
 static void
@@ -290,7 +296,7 @@ cached_trace(void)
 	struct provider_fixture f = { .owner = &f };
 	struct sun60i_a733_output_trace trace, saved, expected = { 0 };
 	struct sun60i_a733_output_mode mode;
-	unsigned calls[5];
+	unsigned calls[6];
 
 	CHECK(sizeof(trace) == 13 * sizeof(uint32_t));
 	provider_reset();
@@ -339,7 +345,7 @@ cached_phy_trace(void)
 	struct provider_fixture f = { .owner = &f };
 	struct sun60i_a733_hdmi_phy_trace trace, saved, expected = { 0 };
 	struct sun60i_a733_output_mode mode;
-	unsigned calls[5];
+	unsigned calls[6];
 
 	provider_reset();
 	memset(&trace, 0xa5, sizeof(trace));
@@ -393,7 +399,7 @@ output_sample(void)
 	struct provider_fixture f = { .owner = &f };
 	struct sun60i_a733_output_sample sample, saved;
 	struct sun60i_a733_output_mode mode;
-	unsigned calls[5];
+	unsigned calls[6];
 	int other = 0;
 
 	CHECK(sizeof(sample) == 10 * sizeof(uint32_t));
@@ -515,10 +521,43 @@ output_vblank_handler(void)
 	CHECK(handler_calls == 3);
 }
 
+static void
+output_stop_restart(void)
+{
+	struct sun60i_a733_output_ops ops = provider_ops;
+	struct provider_fixture f = { .owner = &f };
+	struct sun60i_a733_output_mode mode;
+
+	provider_reset();
+	CHECK(sun60i_a733_output_register(7, &ops, &f) == 0);
+	CHECK(sun60i_a733_output_stop(7, &f) == EINVAL);
+	CHECK(sun60i_a733_output_get_mode(7, &f, &mode) == 0);
+	CHECK(sun60i_a733_output_prepare(7, &f, &mode) == 0);
+	CHECK(sun60i_a733_output_stop(7, &f) == EALREADY);
+	CHECK(sun60i_a733_output_start(7, &f) == 0);
+	ops.stop = NULL;
+	CHECK(sun60i_a733_output_stop(7, &f) == EOPNOTSUPP);
+	CHECK(output_started && output_error == 0);
+	ops.stop = provider_stop;
+	CHECK(sun60i_a733_output_stop(7, &mode) == EBUSY);
+	CHECK(sun60i_a733_output_stop(8, &f) == ENXIO);
+	CHECK(sun60i_a733_output_stop(7, &f) == 0);
+	CHECK(!output_started && output_prepared && f.calls[5] == 1);
+	CHECK(sun60i_a733_output_start(7, &f) == 0);
+	CHECK(output_started && f.calls[2] == 2);
+	f.fail_step = 6;
+	CHECK(sun60i_a733_output_stop(7, &f) == EIO);
+	CHECK(output_started && output_error == EIO);
+	CHECK(sun60i_a733_output_start(7, &f) == EIO);
+	CHECK(sun60i_a733_output_stop(7, &f) == EIO && f.calls[5] == 2);
+}
+
 int
 main(void)
 {
 
+	output_stop_restart();
+	provider_reset();
 	timing();
 	vblank();
 	provider();

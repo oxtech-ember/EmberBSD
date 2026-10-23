@@ -160,3 +160,9 @@ It retains the prepared mode for `dwhdmi_native_start()`.
 An I/O failure or readback mismatch preserves uncertain started state and
 blocks further native writes. The platform must stop its TCON separately.
 This shared mechanism does not release an external PHY or clock lease.
+
+The native output provider exposes `stop` through the existing output owner.
+It drains and disarms its vblank handler, stops TV0, then stops DW-HDMI.
+It retains the handler registration, timing and clock ownership for restart.
+A failed stop retains a fault and blocks restart. No clocks or resets are
+released. The caller must retire scanout DMA before requesting this stop.

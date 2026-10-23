@@ -170,6 +170,10 @@ int sun60i_a733_tv0_prepare(struct sun60i_a733_tv0 *p,const struct sun60i_a733_o
 { CHECK(p->routed&&ccu_tv0&&mode->pixel_clock_hz==108000000&&profile==A733_TV0_EXPERIMENT_VENDOR_ZERO);int e=p->io->ready(p->io->arg,p->owner);if(!e)e=step(17);if(!e)e=p->io->write(p->io->arg,A733_TV0_REGS,0x98,mode->vtotal*2);if(!e)p->prepared=true;return e; }
 int sun60i_a733_tv0_start(struct sun60i_a733_tv0 *p)
 { CHECK(p->prepared&&dw_started);int e=p->io->ready(p->io->arg,p->owner);if(!e)e=step(18);if(!e)e=p->io->write(p->io->arg,A733_TV0_REGS,0x90,0x80000000);if(!e)tv_started=p->started=true;return e; }
+int sun60i_a733_tv0_stop(struct sun60i_a733_tv0 *p)
+{ CHECK(p->started&&tv_started&&dw_started);int e=p->io->ready(p->io->arg,p->owner);if(!e)e=step(28);if(!e)tv_started=p->started=false;return e; }
+static int dwhdmi_native_stop(struct dwhdmi_softc *dw)
+{ (void)dw;CHECK(!tv_started);int e=step(29);if(!e)dw_started=false;return e; }
 int sun60i_a733_tv0_observe(struct sun60i_a733_tv0 *p,uint64_t *out)
 { CHECK(p->started&&tv_started);int e=p->io->ready(p->io->arg,p->owner);if(!e)e=step(19);if(!e)*out=++p->sequence;return e; }
 static int dwhdmi_native_init(struct dwhdmi_softc *dw)
@@ -372,6 +376,39 @@ prepare_trace_checks(void)
 }
 
 static void
+stop_restart_checks(void)
+{
+	struct sun60i_a733_output_mode mode;
+	uint64_t sequence = 0;
+	unsigned count;
+
+	fixture(); intr_present = true; attach();
+	CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
+	CHECK(native_prepare(&sc, &owner_cookie, &mode) == 0);
+	CHECK(native_start(&sc, &owner_cookie) == 0);
+	calls = 0;
+	CHECK(native_stop(&sc, &owner_cookie) == 0);
+	count = calls;
+	CHECK(!sc.irq_armed && !sc.irq_hw && !tv_started && !dw_started);
+	CHECK(sc.tv.prepared && !sc.tv.started && retained);
+	CHECK(native_start(&sc, &owner_cookie) == 0);
+	CHECK(sc.irq_armed && sc.irq_hw && tv_started && dw_started);
+	tvregs[1] = UINT32_C(0x40004000);
+	CHECK(intr_fn(&sc) == 1);
+	CHECK(native_observe(&sc, &owner_cookie, &sequence) == 0 && sequence == 1);
+	for (unsigned failure = 1; failure <= count; failure++) {
+		fixture(); intr_present = true; attach();
+		CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
+		CHECK(native_prepare(&sc, &owner_cookie, &mode) == 0);
+		CHECK(native_start(&sc, &owner_cookie) == 0);
+		calls = 0; fail = failure;
+		CHECK(native_stop(&sc, &owner_cookie) != 0);
+		CHECK(sc.fault != 0 && !sc.irq_armed && retained);
+		CHECK(native_start(&sc, &owner_cookie) == sc.fault);
+	}
+}
+
+static void
 irq_checks(void)
 {
 	struct sun60i_a733_output_mode mode;
@@ -510,6 +547,7 @@ int main(void)
  adapter_access_checks();
  prepare_trace_checks();
  irq_checks();
+ stop_restart_checks();
  printf("A733 native HDMI adapter: %u checks passed (%u fallible calls)\n",checks,count);
  return 0;
 }

@@ -607,6 +607,31 @@ native_start(void *arg, const void *owner)
 }
 
 static int
+native_stop(void *arg, const void *owner)
+{
+	struct sun60i_a733_hdmi_softc *sc = arg;
+	int error = native_ready(sc, owner);
+
+	if (error != 0)
+		return error;
+	/* Drain the callback before stopping timing. No sleep under intr_lock. */
+	if (sc->ih != NULL) {
+		mutex_spin_enter(&sc->intr_lock);
+		sc->irq_armed = false;
+		mutex_spin_exit(&sc->intr_lock);
+	}
+	error = sun60i_a733_tv0_stop(&sc->tv);
+	if (error == 0)
+		error = dwhdmi_native_stop(&sc->dw);
+	if (error == 0 && sc->ih != NULL) {
+		mutex_spin_enter(&sc->intr_lock);
+		sc->irq_hw = false;
+		mutex_spin_exit(&sc->intr_lock);
+	}
+	return native_fail(sc, error);
+}
+
+static int
 native_observe(void *arg, const void *owner, uint64_t *sequence)
 {
 	struct sun60i_a733_hdmi_softc *sc = arg;
@@ -778,7 +803,7 @@ native_detect(const void *arg, const void *owner, bool *out)
 static const struct sun60i_a733_output_ops output_ops = {
 	native_get_mode, native_prepare, native_start, native_observe, native_fault,
 	native_cached_trace, native_cached_phy_trace, native_sample,
-	native_set_vblank_handler, native_detect
+	native_set_vblank_handler, native_detect, native_stop
 };
 
 static int
