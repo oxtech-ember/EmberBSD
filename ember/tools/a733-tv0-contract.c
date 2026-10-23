@@ -116,9 +116,18 @@ stop_restart(void)
 	CHECK((m.reg[0][0x90 / 4] & UINT32_C(0x80000000)) == 0);
 	CHECK((m.reg[0][1] & UINT32_C(0x5f005f00)) == 0);
 	CHECK(sun60i_a733_tv0_stop(&s) == EALREADY && !s.fault);
+	m.reg[0][0xfc / 4] |= UINT32_C(0x60000000);
 	CHECK(sun60i_a733_tv0_start(&s) == 0 && s.started);
+	CHECK((m.reg[0][0xfc / 4] & UINT32_C(0x70000000)) ==
+	    UINT32_C(0x10000000));
 	m.reg[0][1] |= UINT32_C(0x4000);
 	CHECK(sun60i_a733_tv0_observe(&s, &seq) == 0 && seq == 2);
+	fixture(); CHECK(pipeline(&seq) == 0);
+	CHECK(sun60i_a733_tv0_stop(&s) == 0);
+	m.reg[0][0xfc / 4] |= UINT32_C(0x20000000);
+	m.reject = m.writes + 1;
+	CHECK(sun60i_a733_tv0_start(&s) == EIO && !s.started);
+	CHECK((m.reg[0][0xfc / 4] & UINT32_C(0x20000000)) != 0);
 	for (unsigned fail = 1; fail <= count; fail++) {
 		fixture(); CHECK(pipeline(&seq) == 0);
 		m.fail = m.ops + fail;

@@ -73,6 +73,20 @@ tv_clear_underflow(struct sun60i_a733_tv0 *s, uint32_t prior)
 	return s->fault;
 }
 
+/* A stopped timing engine can retain W0C errors from its prior run. */
+static void
+tv_clear_stale_errors(struct sun60i_a733_tv0 *s)
+{
+	uint32_t value = tv_read(s, A733_TV0_REGS, 0xfc);
+
+	if (s->fault == 0 && (value & A733_TV0_ERRORS) != 0) {
+		tv_write(s, A733_TV0_REGS, 0xfc, value & ~A733_TV0_ERRORS);
+		value = tv_read(s, A733_TV0_REGS, 0xfc);
+		if (s->fault == 0 && (value & A733_TV0_ERRORS) != 0)
+			tv_fail(s, EIO);
+	}
+}
+
 static void
 tv_update(struct sun60i_a733_tv0 *s, enum sun60i_a733_tv0_space space,
     uint32_t reg, uint32_t mask, uint32_t bits)
@@ -144,12 +158,7 @@ sun60i_a733_tv0_prepare(struct sun60i_a733_tv0 *s,
 	if (s->fault == 0 && (value & UINT32_C(0x5f005f00)) != 0)
 		tv_fail(s, EIO);
 	/* Clear old TV0 W0C errors. Preserve the current line and field. */
-	value = tv_read(s, A733_TV0_REGS, 0xfc);
-	if (s->fault == 0)
-		tv_write(s, A733_TV0_REGS, 0xfc, value & ~A733_TV0_ERRORS);
-	value = tv_read(s, A733_TV0_REGS, 0xfc);
-	if (s->fault == 0 && (value & A733_TV0_ERRORS) != 0)
-		tv_fail(s, EIO);
+	tv_clear_stale_errors(s);
 	/* GCTL bit31 is reserved on A733. It is never used as an enable. */
 	tv_update(s, A733_TV0_REGS, 0, UINT32_C(0x31), 0);
 	tv_update(s, A733_TV0_REGS, 0x40, 1, 0);
@@ -184,6 +193,8 @@ sun60i_a733_tv0_start(struct sun60i_a733_tv0 *s)
 	value = tv_read(s, A733_TV0_REGS, 0x90);
 	if (s->fault == 0 && (value & UINT32_C(0x80000000)) != 0)
 		return tv_fail(s, EBUSY);
+	/* Do not carry stop-time W0C errors into the new timing run. */
+	tv_clear_stale_errors(s);
 	/* Clear a stale vblank before start. Preserve other W0C flags. */
 	tv_write(s, A733_TV0_REGS, 4, UINT32_C(0x40001f00));
 	value = tv_read(s, A733_TV0_REGS, 4);

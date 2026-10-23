@@ -121,6 +121,11 @@ Source and target compilation do not establish physical HDMI output.
 
 ## Retained stop and restart
 
+`sun60i_a733_tv0_start()` clears retained W0C underflow and LOSTWARN flags
+while timing is stopped, then verifies their readback before enabling TV0.
+An error that does not clear remains fatal. Active-timing observations still
+use the strict error policy above.
+
 `sun60i_a733_tv0_stop()` requires the owner to disarm and drain its IRQ
 handler first. It stops the timing generator and clears local IRQ state.
 It retains the prepared mode, sequence and resources for `start()`.
