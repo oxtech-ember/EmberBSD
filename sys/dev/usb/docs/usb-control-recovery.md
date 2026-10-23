@@ -72,3 +72,26 @@ Record the kernel revision, build configuration, firmware, device identity,
 request count, elapsed time, and final descriptor result with each hardware run.
 Successful control recovery does not establish bulk, isochronous, power-management,
 or phone boot support.
+
+## Live hub status
+
+`usbdevs -v` includes cached hub port state. Use `ember/tools/usb-hub-status.c`
+to read fresh port status when a downstream device does not appear.
+Cross-build it with GCC16 and the matching EmberBSD sysroot.
+Run the resulting program on the target:
+
+```sh
+./usb-hub-status /dev/usb0 2
+```
+
+Select the bus and hub address from `usbdevs -v` immediately before use.
+The tool checks the hub class and prints its numeric identity.
+It sends only standard `GET_STATUS` reads. It does not reset ports, clear
+change bits, change power or attach drivers. The ioctl requires a writable
+bus descriptor even for these reads.
+Each result contains raw `wPortStatus` and `wPortChange` values.
+Interpret them for the reported USB speed using `sys/dev/usb/usb.h`.
+A changed device cookie invalidates the observation.
+The process stops after 30 seconds if a controller does not finish a request.
+Live status can distinguish an absent connection from a missed change event;
+it does not establish the cause of a failed electrical connection.
