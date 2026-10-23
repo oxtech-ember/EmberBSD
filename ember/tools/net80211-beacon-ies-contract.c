@@ -9,6 +9,76 @@
 static unsigned checks;
 #define CHECK(x) do { checks++; assert(x); } while (0)
 static void
+beacon_intervals(void)
+{
+	/* Fixed ESS body, interval 100 TU, hidden SSID and one rate. */
+	const uint8_t valid[] = {0,0,0,0,0,0,0,0,100,0,1,0,0,0,1,1,12};
+	const uint8_t no_ssid[] = {0,0,0,0,0,0,0,0,100,0,1,0,1,1,12};
+	const uint8_t no_rates[] = {0,0,0,0,0,0,0,0,100,0,1,0,0,0};
+	const uint8_t empty_rates[] = {0,0,0,0,0,0,0,0,100,0,1,0,0,0,1,0};
+	const uint8_t long_ssid[50] = {
+		[8]=100, [10]=1, [12]=0, [13]=33, [47]=1, [48]=1, [49]=12
+	};
+	const uint8_t long_rates[32] = {
+		[8]=100, [10]=1, [12]=0, [13]=0, [14]=1, [15]=16, [16]=12
+	};
+	uint8_t body[25] = {0};
+
+	CHECK(ieee80211_sta_beacon_interval(valid, sizeof(valid), 64) == 100);
+	CHECK(ieee80211_sta_beacon_interval(NULL, sizeof(valid), 64) == 0);
+	CHECK(ieee80211_sta_beacon_interval(valid, 11, 64) == 0);
+	CHECK(ieee80211_sta_beacon_interval(valid, sizeof(valid), 0) == 0);
+	CHECK(ieee80211_sta_beacon_interval(valid, sizeof(valid), 256) == 0);
+	memcpy(body, valid, sizeof(valid));
+	body[10] = 0;
+	CHECK(ieee80211_sta_beacon_interval(body, sizeof(valid), 64) == 0);
+	body[10] = 3;
+	CHECK(ieee80211_sta_beacon_interval(body, sizeof(valid), 64) == 0);
+	CHECK(ieee80211_sta_beacon_interval(no_ssid, sizeof(no_ssid), 64) == 0);
+	CHECK(ieee80211_sta_beacon_interval(no_rates, sizeof(no_rates), 64) == 0);
+	CHECK(ieee80211_sta_beacon_interval(empty_rates, sizeof(empty_rates), 64) == 0);
+	CHECK(ieee80211_sta_beacon_interval(long_ssid, sizeof(long_ssid), 64) == 0);
+	CHECK(ieee80211_sta_beacon_interval(long_rates, sizeof(long_rates), 64) == 0);
+
+	memcpy(body, valid, sizeof(valid));
+	body[17] = 3; body[18] = 1; body[19] = 64;
+	CHECK(ieee80211_sta_beacon_interval(body, 20, 64) == 100);
+	body[19] = 63;
+	CHECK(ieee80211_sta_beacon_interval(body, 20, 64) == 0);
+	body[19] = 64; body[18] = 2; body[20] = 0;
+	CHECK(ieee80211_sta_beacon_interval(body, 21, 64) == 0);
+
+	static const struct {
+		size_t len;
+		uint8_t data[8];
+	} announcements[] = {
+		{5,{37,3,1,64,0}}, {6,{60,4,1,118,64,0}},
+		{8,{40,6,0,1,10,0,20,0}}
+	};
+	for (unsigned i = 0; i < sizeof(announcements) / sizeof(announcements[0]); i++) {
+		memcpy(body, valid, sizeof(valid));
+		memcpy(body + sizeof(valid), announcements[i].data, announcements[i].len);
+		CHECK(ieee80211_sta_beacon_interval(body,
+		    sizeof(valid) + announcements[i].len, 64) == 0);
+	}
+	memcpy(body, valid, sizeof(valid));
+	body[17] = 127;
+	CHECK(ieee80211_sta_beacon_interval(body, 18, 64) == 0);
+
+	/* The caller owns interval policy; decode the wire value unchanged. */
+	static const struct {
+		uint8_t low, high;
+		uint16_t expected;
+	} intervals[] = {{0,0,0}, {25,0,25}, {232,3,1000},
+	    {24,0,24}, {233,3,1001}};
+	for (unsigned i = 0; i < sizeof(intervals) / sizeof(intervals[0]); i++) {
+		memcpy(body, valid, sizeof(valid));
+		body[8] = intervals[i].low; body[9] = intervals[i].high;
+		CHECK(ieee80211_sta_beacon_interval(body, sizeof(valid), 64) ==
+		    intervals[i].expected);
+	}
+}
+static void
 announcement_bodies(void)
 {
 	const uint8_t action[][2] = {{0,4},{4,4},{3,0},{0,2},{4,1}};
@@ -145,6 +215,7 @@ switch_announcements(void)
 int
 main(void)
 {
+	beacon_intervals();
 	announcement_bodies();
 	vendor_window_ends();
 	quiet_announcements();

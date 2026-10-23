@@ -48,6 +48,11 @@ for path, names in ((proto, ("wmeParams", "chanAccParams", "ieee80211_wme_state"
         parts.append(structure(path, name))
 parts.append(structure("sys/net80211/ieee80211_node.h", "ieee80211_scanparams"))
 parts.append(re.sub(r"^#include.*$", "", read("sys/net80211/ieee80211_beacon_ies.h"), flags=re.M))
+for name in ("IEEE80211_BINTVAL_MIN", "IEEE80211_BINTVAL_MAX"):
+    parts.append(re.search(r"^#define\s+" + name + r"\s+.*$",
+                           read("sys/net80211/ieee80211_var.h"), re.M).group())
+parts.append(re.search(r"^#define\s+IEEE80211_CHAN_ANYC\s+.*$",
+                       read("sys/net80211/_ieee80211.h"), re.M).group())
 parts.append("#ifndef __UNCONST\n#define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))\n#endif")
 parts.append(re.search(r"^enum ieee80211_phymode \{.*?^\};", read("sys/net80211/_ieee80211.h"), re.M|re.S).group())
 parts.append(re.search(r"^#define\s+IFQ_MAXLEN\s+.*$", read("sys/net/if.h"), re.M).group())
@@ -116,6 +121,7 @@ parts.append(function(node, "ieee80211_probe_curchan", "static void"))
 parts.append("#define ISREASSOC(st) ((st) == IEEE80211_FC0_SUBTYPE_REASSOC_RESP)\n")
 parts.append(function(ipt, "ieee80211_recv_mgmt_assoc_resp", "static void"))
 parts.append(function("sys/net80211/ieee80211_beacon_ies.c", "ieee80211_beacon_ies_parse", "int"))
+parts.append(function("sys/net80211/ieee80211_beacon_ies.c", "ieee80211_sta_beacon_interval", "uint16_t"))
 for name in ("ieee80211_sta_action_announcement", "ieee80211_sta_beacon_announcement"):
     parts.append(function("sys/net80211/ieee80211_beacon_ies.c", name, "int"))
 if "\nieee80211_sta_csa_beacon(" in read(ipt):

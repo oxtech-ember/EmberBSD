@@ -36,4 +36,11 @@ int ieee80211_beacon_ies_parse(struct ieee80211_beacon_ies *,
  */
 int ieee80211_sta_beacon_announcement(const uint8_t *, size_t);
 int ieee80211_sta_action_announcement(const uint8_t *, size_t);
+/* Pure validation of a borrowed fixed beacon body and complete IE window.
+ * Return its wire interval in TU, or 0 for invalid input or an announcement.
+ * Allocate no memory and retain no pointers. The caller validates the RX
+ * envelope, peer and lifecycle, and applies its interval bounds. This helper
+ * grants no TX or DFS permission and changes no state or timer.
+ */
+uint16_t ieee80211_sta_beacon_interval(const uint8_t *, size_t, unsigned);
 #endif

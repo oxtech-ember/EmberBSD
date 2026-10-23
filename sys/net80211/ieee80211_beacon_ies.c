@@ -150,3 +150,22 @@ ieee80211_sta_beacon_announcement(const uint8_t *body, size_t len)
 		return 1;
 	return ies.csa != NULL || ies.xcsa != NULL || ies.quiet != NULL;
 }
+
+uint16_t
+ieee80211_sta_beacon_interval(const uint8_t *body, size_t len,
+    unsigned channel)
+{
+	struct ieee80211_beacon_ies ies;
+
+	if (body == NULL || len < 12 || channel == 0 || channel > 255 ||
+	    (body[10] & 0x03) != 0x01 ||
+	    ieee80211_beacon_ies_parse(&ies, body + 12, len - 12) != 0)
+		return 0;
+	if (ies.ssid == NULL || ies.ssid[1] > 32 || ies.rates == NULL ||
+	    ies.rates[1] == 0 || ies.rates[1] > 15 ||
+	    ies.csa != NULL || ies.xcsa != NULL || ies.quiet != NULL)
+		return 0;
+	if (ies.ds != NULL && (ies.ds[1] != 1 || ies.ds[2] != channel))
+		return 0;
+	return (uint16_t)(body[8] | (uint16_t)body[9] << 8);
+}

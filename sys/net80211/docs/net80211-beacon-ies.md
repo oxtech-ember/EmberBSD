@@ -37,6 +37,14 @@ They allocate no memory and retain no input pointers. A caller must first
 validate the RX envelope and current peer identity. These classifiers never
 authorize transmission or refresh a beacon lease by themselves.
 
+`ieee80211_sta_beacon_interval()` checks a complete ESS beacon body for local
+presence supervision. It requires bounded SSID/rates and a matching exact DS
+channel when present. A CSA, Extended CSA or Quiet prevents a positive result.
+It returns the nonzero wire interval in TU, or zero for an invalid body.
+The caller owns accepted interval bounds, peer identity and lifecycle checks.
+The helper borrows the body only during the call and retains no pointers.
+It does not establish a DFS lease, regulatory permission or permission to transmit.
+
 Quiet (element 40) has six payload bytes: count, period, duration and offset.
 It must be unique. All field values remain observations; the parser does not
 schedule a quiet interval. Malformed or repeated Quiet rejects the window.

@@ -29,8 +29,6 @@
 #define IFNAMSIZ 16
 #define IEEE80211_MODE_MAX 7
 #define IEEE80211_CHAN_MAX 255
-#define IEEE80211_BINTVAL_MIN 10
-#define IEEE80211_BINTVAL_MAX 1000
 #define IEEE80211_FH_CHAN(set, pat) 1
 #define IEEE80211_FEXT_PROBECHAN 1
 #define isclr(a, n) (((a)[(n) / 8] & (1U << ((n) % 8))) == 0)
@@ -83,6 +81,7 @@ struct ieee80211com;
 struct ieee80211_channel {
 	uint16_t ic_freq, ic_flags;
 };
+const struct ieee80211_channel ieee80211_channel_anyc = {0, 0};
 struct test_rsn { uint8_t rsn_ucastcipher; };
 struct cipher {
 	unsigned ic_header, ic_trailer, ic_miclen, ic_cipher;

@@ -1343,6 +1343,44 @@ rtw88_net_tx_complete(void *cookie, unsigned count)
 		softint_schedule(net->softint);
 }
 
+/* Giant owns the current peer. Parse outside the PCI lock; publish only
+ * the validated arrival clock under the existing policy/epoch gate. */
+static void
+rtw88_net_beacon_observe(struct rtw88_net *net, const struct rtw88_net_rx *rx)
+{
+	struct ieee80211com *ic = &net->ic;
+	struct ieee80211_node *ni = ic->ic_bss;
+	const uint8_t *frame;
+	uint16_t interval;
+	unsigned channel, i;
+
+	if (ic->ic_opmode != IEEE80211_M_STA ||
+	    ic->ic_state != IEEE80211_S_RUN || ni == NULL || ni->ni_associd == 0 ||
+	    ic->ic_curchan == NULL || ic->ic_curchan == IEEE80211_CHAN_ANYC ||
+	    ni->ni_chan != ic->ic_curchan || rx->m->m_len < 36 ||
+	    rx->m->m_next != NULL || rx->m->m_len != rx->m->m_pkthdr.len)
+		return;
+	frame = mtod(rx->m, const uint8_t *);
+	if (frame[0] != 0x80 || (frame[1] & 0xc7) != 0 ||
+	    (frame[22] & 15) != 0 ||
+	    memcmp(frame + 10, ni->ni_macaddr, IEEE80211_ADDR_LEN) != 0 ||
+	    memcmp(frame + 16, ni->ni_bssid, IEEE80211_ADDR_LEN) != 0)
+		return;
+	for (i = 0; i < IEEE80211_ADDR_LEN; i++) {
+		if (frame[4 + i] != 0xff)
+			return;
+	}
+	channel = ieee80211_chan2ieee(ic, ic->ic_curchan);
+	interval = ieee80211_sta_beacon_interval(frame + 24,
+	    (size_t)rx->m->m_len - 24, channel);
+	if (interval < IEEE80211_BINTVAL_MIN || interval > IEEE80211_BINTVAL_MAX)
+		return;
+	mutex_enter(net->lock);
+	(void)rtw88_net_beacon_note(&net->policy, rx->epoch, rx->tick,
+	    frame, rx->m->m_len, ni->ni_bssid);
+	mutex_exit(net->lock);
+}
+
 static void
 rtw88_net_softintr(void *cookie)
 {
@@ -1394,13 +1432,7 @@ rtw88_net_softintr(void *cookie)
 			m_freem(rx.m);
 			continue;
 		}
-		if (ic->ic_state == IEEE80211_S_RUN) {
-			mutex_enter(net->lock);
-			(void)rtw88_net_beacon_note(&net->policy, rx.epoch,
-			    rx.tick, mtod(rx.m, const uint8_t *),
-			    rx.m->m_len, ic->ic_bss->ni_bssid);
-			mutex_exit(net->lock);
-		}
+		rtw88_net_beacon_observe(net, &rx);
 		ni = ieee80211_find_rxnode(ic,
 		    mtod(rx.m, struct ieee80211_frame_min *));
 		/* Relative unsigned index only. No signed dBm is passed through this ABI. */

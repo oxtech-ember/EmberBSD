@@ -672,8 +672,7 @@ active RUN profile fails the host boundary check; the separate HT20 suite owns
 its validity semantics. The native helper calls must occur before the PCI lock.
 A pending offer is reset by the actual SCAN request without weakening its fence.
 
-The source path is present; this change adds regression coverage only.
-It adds no second timer, AUTO-roaming override or radio capability.
+These source contracts add no second timer, AUTO-roaming override or radio capability.
 Actual AP disappearance and return remain a separate physical acceptance gate.
 Controlled reassociation and interface down/up do not establish that gate.
 
@@ -682,6 +681,12 @@ uses that tick for beacon supervision. Queue delay cannot renew AP presence.
 A delayed beacon also cannot rewind the interval of an already reported miss.
 The signal queue contract checks fresh delivery, delayed delivery, tick wrap,
 and delivery after a miss report. These checks do not establish a DFS lease.
+
+Beacon supervision accepts only a complete, unfragmented broadcast beacon from
+the current associated STA peer and channel. Source and BSSID must match.
+The shared body helper checks mandatory SSID/rates and channel observations.
+The driver applies the stack's beacon-interval bounds before updating the clock.
+Malformed bodies and switch/Quiet announcements cannot renew AP presence.
 
 ## Bounded relative signal quality
 

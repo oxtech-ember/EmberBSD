@@ -49,7 +49,7 @@ rtw88_net_ht20_publish(struct rtw88_net *net,
 }
 '''
 (out/'routing-ht20-stub.inc').write_text(ht20_stub)
-for m in re.finditer(r'^static (?:int|unsigned|void|struct mbuf \*)\n(rtw88_net_(?:tx_[a-z0-9_]+|start|newstate|softintr))\(.*?^}', net, re.M|re.S):
+for m in re.finditer(r'^static (?:int|unsigned|void|struct mbuf \*)\n(rtw88_net_(?:tx_[a-z0-9_]+|start|newstate|beacon_observe|softintr))\(.*?^}', net, re.M|re.S):
     parts.append(m.group())
 if 'rtw88_net_tx_dequeue_same(' in net:
     parts.insert(0, '#define ROUTING_NATIVE_QUEUE_HELPERS 1\n')

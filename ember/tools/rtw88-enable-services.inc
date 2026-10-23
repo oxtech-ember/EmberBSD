@@ -134,7 +134,6 @@ static void ifmedia_set(struct ifmedia *m,int media)
 #ifndef __UNCONST
 #define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
 #endif
-const struct ieee80211_channel ieee80211_channel_anyc={0,0};
 #undef IEEE80211_IS_CHAN_2GHZ
 #undef IEEE80211_IS_CHAN_FHSS
 #define IEEE80211_IS_CHAN_2GHZ(c) _IEEE80211_IS_CHAN(c,2GHZ)
