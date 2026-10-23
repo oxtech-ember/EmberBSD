@@ -54,6 +54,7 @@ __KERNEL_RCSID(0, "$NetBSD: sunxi_platform.c,v 1.47 2023/04/07 08:55:30 skrll Ex
 
 #include <dev/ic/ns16550reg.h>
 #include <dev/ic/comreg.h>
+#include <dev/ic/com_early.h>
 
 #include <arm/arm/psci.h>
 #include <arm/fdt/psci_fdtvar.h>
@@ -191,10 +192,7 @@ sunxi_platform_early_putchar(char c)
 	    (volatile uint32_t *)CONSADDR_VA :
 	    (volatile uint32_t *)CONSADDR;
 
-	while ((le32toh(uartaddr[com_lsr]) & LSR_TXRDY) == 0)
-		;
-
-	uartaddr[com_data] = htole32(c);
+	com_early32_putchar(uartaddr, c);
 #endif
 }
 

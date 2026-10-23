@@ -47,6 +47,7 @@ __KERNEL_RCSID(0, "$NetBSD: arm_platform.c,v 1.7 2023/04/07 08:55:30 skrll Exp $
 #include <sys/termios.h>
 
 #include <dev/fdt/fdtvar.h>
+#include <dev/ic/com_early.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -72,6 +73,7 @@ extern struct arm32_bus_dma_tag arm_generic_dma_tag;
 extern struct bus_space arm_generic_bs_tag;
 
 void plcom_platform_early_putchar(char);
+void com32_platform_early_putchar(char);
 
 #define	ARM_PTOV(p)       (((p) - DEVMAP_ALIGN(uart_base)) + KERNEL_IO_VBASE)
 
@@ -93,6 +95,20 @@ plcom_platform_early_putchar(char c)
 
 	while ((le32toh(uartaddr[PL01XCOM_FR / 4]) & PL01X_FR_TXFE) == 0)
 		continue;
+#endif
+}
+
+/* 16550 with reg-shift = 2 and reg-io-width = 4 on the generic devmap. */
+void __noasan
+com32_platform_early_putchar(char c)
+{
+#ifdef CONSADDR
+	bus_addr_t uart_base = CONSADDR;
+	volatile uint32_t *uartaddr = cpu_earlydevice_va_p() ?
+	    (volatile uint32_t *)ARM_PTOV(uart_base) :
+	    (volatile uint32_t *)uart_base;
+
+	com_early32_putchar(uartaddr, c);
 #endif
 }
 

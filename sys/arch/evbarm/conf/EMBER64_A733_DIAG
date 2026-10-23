@@ -1,0 +1,12 @@
+# Diagnostic A733 kernel. Use the separate diagnostic DTB.
+# The loader must configure the UART before kernel entry.
+# Keep normal EMBER64 unchanged. Do not install external kernel modules.
+
+include "arch/evbarm/conf/EMBER64"
+
+options EARLYCONS=com32,CONSADDR=0x02500000
+options VERBOSE_INIT_ARM
+options BOOT_ARGS="\"-s\""
+
+no options MODULAR
+no options MODULAR_DEFAULT_AUTOLOAD
