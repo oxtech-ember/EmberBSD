@@ -21,6 +21,8 @@ static unsigned checks;
 #define DRM_PLANE_TYPE_PRIMARY 1
 #define DRM_MODE_ENCODER_TMDS 2
 #define DRM_MODE_CONNECTOR_HDMIA 3
+#define DRM_CONNECTOR_POLL_CONNECT 1
+#define DRM_CONNECTOR_POLL_DISCONNECT 2
 #define PRI_NONE 0
 #define IPL_NONE 0
 #define WQ_MPSAFE 1
@@ -60,6 +62,7 @@ struct encoder {
 	unsigned possible_crtcs;
 };
 struct connector {
+	unsigned polled;
 	void *state;
 	const void *helper;
 };
@@ -270,6 +273,12 @@ static int drm_dev_register(struct drm_device *d, unsigned flags){
 	if (!e)
 		registered++;
 	return -e;
+}
+static void drm_kms_helper_poll_init(struct drm_device *dev)
+{
+	CHECK(dev == current->dev && registered == 1);
+	CHECK(current->connector.polled ==
+	    (DRM_CONNECTOR_POLL_CONNECT | DRM_CONNECTOR_POLL_DISCONNECT));
 }
 #include "registration.c"
 static void reset(struct a733_drm *sc){

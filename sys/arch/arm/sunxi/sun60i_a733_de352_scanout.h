@@ -72,4 +72,7 @@ int sun60i_a733_de352_submit(struct sun60i_a733_de352_client *,
     const struct sun60i_a733_de352_frame *,
     struct sun60i_a733_de352_completion *);
 
+/* Sleepable HPD query. It does not retire a frame or latch a display fault. */
+int sun60i_a733_de352_detect(struct sun60i_a733_de352_client *, bool *);
+
 #endif

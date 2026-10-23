@@ -100,7 +100,18 @@ tree lock without holding the frontend lock, then publishes its result.
 Concurrent requests see the registration guard and return `EBUSY`.
 The no-detach contract keeps the frontend alive while the tree is unlocked.
 
-The connector advertises one exact cached EDID mode.
+The connector reads the live DesignWare PHY HPD bit through the existing DE
+and output providers. `drm_kms_helper_poll_init` polls both connection edges.
+The common DRM probe helper owns connector change notification. The A733
+callbacks do not copy that helper or depend on another display driver.
+A disconnected cable reports `disconnected`; an unavailable provider or a
+failed register read reports `unknown`. A query does not latch a new fault,
+change hardware state, or release a scanout buffer. Polling starts only after
+successful DRM registration. The existing no-detach lifetime remains required.
+
+The connector still advertises one exact cached EDID mode. Fresh EDID modes,
+mode changes, automatic cold-start admission, and safe scanout stop remain
+separate contracts. HPD notification alone does not qualify these operations.
 The frontend accepts linear XRGB8888 at offset zero.
 It rejects scaling, rotation, alternate modes and noncontiguous imports.
 It rejects atomic disable, inactive CRTCs and DPMS off.
@@ -233,3 +244,16 @@ malformed events, bounded retries and failure admission.
 It covers fresh and populated connectors and changes between discovery and fetch.
 It keeps checks active with `NDEBUG`.
 It does not access a DRM device or prove an HDMI image.
+
+## HPD source contract
+
+```sh
+python3 sys/arch/arm/sunxi/tests/hdmi-hpd.py --cc gcc-16 --build-dir /path/to/owned-output
+```
+
+The test extracts the actual HDMI, output, DE, and KMS query functions.
+It checks both HPD values, unrelated PHY status bits, read errors, ownership,
+missing callbacks, and recovery from a transient query error. It performs no
+hardware I/O. Use `--cflags` for GCC analysis or ASan/UBSan. The output directory
+records the exact compiler command. The registration contract also checks that
+polling starts after registration and enables both connection edges.

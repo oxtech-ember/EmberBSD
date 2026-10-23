@@ -308,3 +308,28 @@ sun60i_a733_output_set_vblank_handler(int phandle, const void *owner,
 	mutex_exit(&output_lock);
 	return error;
 }
+
+/* Monitor changes do not change output ownership or retire scanout storage. */
+int
+sun60i_a733_output_detect(int phandle, const void *owner, bool *out)
+{
+	bool connected;
+	int error;
+
+	if (out == NULL)
+		return EINVAL;
+	RUN_ONCE(&output_once, output_init);
+	mutex_enter(&output_lock);
+	error = output_lookup(phandle, owner);
+	if (error == 0 && !output_prepared)
+		error = EINVAL;
+	if (error == 0 && output_ops->detect == NULL)
+		error = EOPNOTSUPP;
+	if (error == 0) {
+		error = output_ops->detect(output_arg, owner, &connected);
+		if (error == 0)
+			*out = connected;
+	}
+	mutex_exit(&output_lock);
+	return error;
+}

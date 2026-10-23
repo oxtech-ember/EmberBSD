@@ -196,6 +196,9 @@ static unsigned vblank_binds;
 static int vblank_bind_error;
 static sun60i_a733_vblank_fn bound_fn;
 static void *bound_arg;
+int sun60i_a733_output_detect(int node, const void *owner, bool *out)
+{ (void)node; (void)owner; *out = true; return 0; }
+
 int
 sun60i_a733_output_set_vblank_handler(int node, const void *owner,
     sun60i_a733_vblank_fn fn, void *arg)

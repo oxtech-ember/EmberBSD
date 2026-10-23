@@ -244,14 +244,18 @@ static enum drm_connector_status
 a733_detect(struct drm_connector *connector, bool force)
 {
 	struct a733_drm *sc = connector->dev->dev_private;
-	enum drm_connector_status status;
+	bool connected;
+	int error;
 
 	(void)force;
 	mutex_enter(&sc->lock);
-	status = sc->fault == 0 ? connector_status_connected :
-	    connector_status_unknown;
+	error = sc->fault;
 	mutex_exit(&sc->lock);
-	return status;
+	if (error == 0)
+		error = sun60i_a733_de352_detect(sc->client, &connected);
+	if (error != 0)
+		return connector_status_unknown;
+	return connected ? connector_status_connected : connector_status_disconnected;
 }
 
 static int
@@ -437,6 +441,8 @@ a733_register(struct a733_drm *sc)
 	    DRM_MODE_CONNECTOR_HDMIA);
 	if (error != 0)
 		goto mode;
+	sc->connector.polled = DRM_CONNECTOR_POLL_CONNECT |
+	    DRM_CONNECTOR_POLL_DISCONNECT;
 	drm_connector_helper_add(&sc->connector, &a733_connector_helpers);
 	error = -drm_connector_attach_encoder(&sc->connector, &sc->encoder);
 	if (error != 0)
@@ -459,8 +465,10 @@ a733_register(struct a733_drm *sc)
 	} else if (error != EOPNOTSUPP)
 		goto mode;
 	error = -drm_dev_register(dev, 0);
-	if (error == 0)
+	if (error == 0) {
+		drm_kms_helper_poll_init(dev);
 		return 0;
+	}
 mode:
 	/* No callback can use the DRM vblank storage after this removal. */
 	if (sc->vblank_irq) {

@@ -188,7 +188,7 @@ provider_fault(void *arg, const void *owner, int error)
 
 static const struct sun60i_a733_output_ops provider_ops = {
 	provider_mode, provider_prepare, provider_start, provider_vblank,
-	provider_fault, NULL, NULL, NULL, NULL
+	provider_fault, NULL, NULL, NULL, NULL, NULL
 };
 
 static void

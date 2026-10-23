@@ -88,6 +88,8 @@ struct sun60i_a733_output_ops {
 	 */
 	int (*set_vblank_handler)(void *, const void *, sun60i_a733_vblank_fn,
 	    void *);
+	/* Optional read-only HPD query. A disconnect is not a provider fault. */
+	int (*detect)(void *, const void *, bool *);
 };
 int sun60i_a733_output_register(int, const struct sun60i_a733_output_ops *, void *);
 int sun60i_a733_output_get_mode(int, const void *,
@@ -108,5 +110,8 @@ int sun60i_a733_output_sample(int, const void *,
 /* After start. EOPNOTSUPP means polled vblank observation only. */
 int sun60i_a733_output_set_vblank_handler(int, const void *,
     sun60i_a733_vblank_fn, void *);
+
+/* After prepare. No writes or sticky faults; failure leaves out unchanged. */
+int sun60i_a733_output_detect(int, const void *, bool *);
 
 #endif

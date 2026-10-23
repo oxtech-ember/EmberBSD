@@ -751,10 +751,34 @@ native_sample(void *arg, const void *owner,
 	return 0;
 }
 
+/* Read HPD without changing provider state or acknowledging an interrupt. */
+static int
+native_detect(void *arg, const void *owner, bool *out)
+{
+	struct sun60i_a733_hdmi_softc *sc = arg;
+	uint8_t status;
+	int error;
+
+	if (out == NULL)
+		return EINVAL;
+	if (owner == NULL || owner != sc->owner || !sc->hdmi_ready)
+		return EACCES;
+	if (sc->fault != 0)
+		return sc->fault;
+	error = sun60i_a733_ccu_display_ready(sc->de0, owner);
+	if (error != 0)
+		return error;
+	/* DesignWare PHY_STAT0.HPD, already used by native_get_mode(). */
+	if (bus_space_peek_1(sc->bst, sc->hdmi, 0x3004, &status) != 0)
+		return EFAULT;
+	*out = (status & 2) != 0;
+	return 0;
+}
+
 static const struct sun60i_a733_output_ops output_ops = {
 	native_get_mode, native_prepare, native_start, native_observe, native_fault,
 	native_cached_trace, native_cached_phy_trace, native_sample,
-	native_set_vblank_handler
+	native_set_vblank_handler, native_detect
 };
 
 static int
