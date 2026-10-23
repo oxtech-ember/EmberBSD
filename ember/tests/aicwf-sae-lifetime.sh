@@ -135,7 +135,7 @@ static int aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id,
 C
 # Retain the source notice with the copied common helper definitions.
 sed '/^#include/,$d' "$src/sys/net80211/ieee80211_ioctl.c" >> "$work/check.c"
-for name in ieee80211_sae_request_valid ieee80211_ioctl_sae; do
+for name in ieee80211_sae_request_valid ieee80211_sae_configure_check ieee80211_ioctl_sae; do
     awk -v name="$name" '$0 ~ "^" name "\\(" {copy=1; print "static int"}
         copy {print} copy && /^}/ {exit}' \
         "$src/sys/net80211/ieee80211_ioctl.c" >> "$work/check.c"

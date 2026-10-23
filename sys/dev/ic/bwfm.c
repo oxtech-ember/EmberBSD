@@ -2875,6 +2875,10 @@ bwfm_sae(struct ieee80211com *ic, const struct ieee80211req_sae *req)
 		goto out;
 	}
 	if (req->op == IEEE80211_SAE_CONFIGURE) {
+		error = ieee80211_sae_configure_check(ic, sc->sc_sae_caps,
+		    req->data[0] != 0);
+		if (error != 0)
+			goto out;
 		sc->sc_sae_enabled = req->data[0] != 0;
 		sc->sc_sae_generation = req->generation;
 		memcpy(sc->sc_sae_bssid, req->bssid, 6);

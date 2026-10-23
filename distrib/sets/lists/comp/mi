@@ -12637,6 +12637,7 @@
 ./usr/share/man/cat9/ieee80211_ifdetach.0	comp-sys-catman		.cat
 ./usr/share/man/cat9/ieee80211_input.0		comp-sys-catman		.cat
 ./usr/share/man/cat9/ieee80211_ioctl.0		comp-sys-catman		.cat
+./usr/share/man/cat9/ieee80211_ioctl_sae.0	comp-sys-catman	.cat
 ./usr/share/man/cat9/ieee80211_media2rate.0	comp-sys-catman		.cat
 ./usr/share/man/cat9/ieee80211_media_change.0	comp-sys-catman		.cat
 ./usr/share/man/cat9/ieee80211_media_init.0	comp-sys-catman		.cat
@@ -12653,6 +12654,7 @@
 ./usr/share/man/cat9/ieee80211_rssadapt_raise_rate.0	comp-sys-catman		.cat
 ./usr/share/man/cat9/ieee80211_rssadapt_updatestats.0	comp-sys-catman		.cat
 ./usr/share/man/cat9/ieee80211_setmode.0	comp-sys-catman		.cat
+./usr/share/man/cat9/ieee80211_sta_request_validate.0	comp-sys-catman	.cat
 ./usr/share/man/cat9/ieee80211_watchdog.0	comp-sys-catman		.cat
 ./usr/share/man/cat9/iic.0			comp-sys-catman		.cat
 ./usr/share/man/cat9/iic_acquire_bus.0		comp-sys-catman		.cat
@@ -21520,6 +21522,7 @@
 ./usr/share/man/html9/ieee80211_ifdetach.html	comp-sys-htmlman	html
 ./usr/share/man/html9/ieee80211_input.html	comp-sys-htmlman	html
 ./usr/share/man/html9/ieee80211_ioctl.html	comp-sys-htmlman	html
+./usr/share/man/html9/ieee80211_ioctl_sae.html	comp-sys-htmlman	html
 ./usr/share/man/html9/ieee80211_media2rate.html comp-sys-htmlman	html
 ./usr/share/man/html9/ieee80211_media_change.html	comp-sys-htmlman	html
 ./usr/share/man/html9/ieee80211_media_init.html comp-sys-htmlman	html
@@ -21536,6 +21539,7 @@
 ./usr/share/man/html9/ieee80211_rssadapt_raise_rate.html	comp-sys-htmlman	html
 ./usr/share/man/html9/ieee80211_rssadapt_updatestats.html	comp-sys-htmlman	html
 ./usr/share/man/html9/ieee80211_setmode.html	comp-sys-htmlman	html
+./usr/share/man/html9/ieee80211_sta_request_validate.html	comp-sys-htmlman	html
 ./usr/share/man/html9/ieee80211_watchdog.html	comp-sys-htmlman	html
 ./usr/share/man/html9/iic.html			comp-sys-htmlman	html
 ./usr/share/man/html9/iic_acquire_bus.html	comp-sys-htmlman	html
@@ -30548,6 +30552,7 @@
 ./usr/share/man/man9/ieee80211_ifdetach.9	comp-sys-man		.man
 ./usr/share/man/man9/ieee80211_input.9		comp-sys-man		.man
 ./usr/share/man/man9/ieee80211_ioctl.9		comp-sys-man		.man
+./usr/share/man/man9/ieee80211_ioctl_sae.9	comp-sys-man	.man
 ./usr/share/man/man9/ieee80211_media2rate.9	comp-sys-man		.man
 ./usr/share/man/man9/ieee80211_media_change.9	comp-sys-man		.man
 ./usr/share/man/man9/ieee80211_media_init.9	comp-sys-man		.man
@@ -30564,6 +30569,7 @@
 ./usr/share/man/man9/ieee80211_rssadapt_raise_rate.9	comp-sys-man		.man
 ./usr/share/man/man9/ieee80211_rssadapt_updatestats.9	comp-sys-man		.man
 ./usr/share/man/man9/ieee80211_setmode.9	comp-sys-man		.man
+./usr/share/man/man9/ieee80211_sta_request_validate.9	comp-sys-man	.man
 ./usr/share/man/man9/ieee80211_watchdog.9	comp-sys-man		.man
 ./usr/share/man/man9/iic.9			comp-sys-man		.man
 ./usr/share/man/man9/iic_acquire_bus.9		comp-sys-man		.man

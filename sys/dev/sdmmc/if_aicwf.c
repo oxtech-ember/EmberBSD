@@ -1829,6 +1829,10 @@ aicwf_sae(struct ieee80211com *ic, const struct ieee80211req_sae *req)
 	int error = EINVAL;
 
 	if (req->op == IEEE80211_SAE_CONFIGURE) {
+		error = ieee80211_sae_configure_check(ic, sc->sc_sae_caps,
+		    req->data[0] != 0);
+		if (error != 0)
+			goto out;
 		aicwf_sae_advance(sc);
 		mutex_spin_enter(&sc->sc_epoch_lock);
 		sc->sc_configure_serial++;

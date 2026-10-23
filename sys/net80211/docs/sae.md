@@ -30,6 +30,9 @@ common ABI validation, and explicit request clearing. Drivers provide their
 probed capabilities and a synchronous chip callback. A missing callback fails
 before allocation. Disabled SAE can still be configured off when firmware
 capabilities are absent. The existing enablement policy is unchanged.
+The callback calls `ieee80211_sae_configure_check()` with current capabilities
+and mode under its state ownership, after copyin. A pre-copyin capability
+snapshot is used only for the non-sleeping GET reply.
 
 The callback must not retain the request. It owns chip state and firmware
 commands. AIC keeps its epoch checks across sleeping commands. Broadcom keeps

@@ -32,6 +32,7 @@ struct ieee80211_node {
 };
 struct ieee80211com {
 	int ic_opmode, ic_state;
+	uint32_t sae_caps;
 	struct ifnet *ic_ifp;
 	struct ieee80211_node *ic_bss;
 	uint8_t ic_myaddr[6];
@@ -115,8 +116,13 @@ authorize(void)
 static int
 sae_callback(struct ieee80211com *ic, const struct ieee80211req_sae *req)
 {
-	(void)ic;
 	CHECK(req == allocation && req != user_request);
+	if (req->op == IEEE80211_SAE_CONFIGURE) {
+		int error = ieee80211_sae_configure_check(ic, ic->sae_caps,
+		    req->data[0] != 0);
+		if (error != 0)
+			return error;
+	}
 	calls++;
 	return callback_error;
 }
@@ -180,6 +186,33 @@ reconfigure_during_copy(void)
 	splx(old);
 }
 
+static void
+drop_caps_during_copy(void)
+{
+	CHECK(net_ipl == 0);
+	int old = splnet();
+	active_sc->sc_sae_caps = 0;
+	splx(old);
+}
+
+static void
+raise_caps_during_copy(void)
+{
+	CHECK(net_ipl == 0);
+	int old = splnet();
+	active_sc->sc_sae_caps = 3;
+	splx(old);
+}
+
+static void
+mode_during_copy(void)
+{
+	CHECK(net_ipl == 0);
+	int old = splnet();
+	active_sc->sc_ic.ic_opmode = 99;
+	splx(old);
+}
+
 static struct ieee80211req_sae
 configure(void)
 {
@@ -200,6 +233,7 @@ sae_check(struct ieee80211com *ic, struct ieee80211req_sae *req,
 	unsigned oldcalls = calls, oldalloc = allocations;
 
 	user_request = req;
+	ic->sae_caps = caps;
 	CHECK(ieee80211_ioctl_sae(ic, SIOCS80211, &ireq, caps, sae_callback) == expected);
 	CHECK(calls == oldcalls + invoked);
 	CHECK(allocations == oldalloc + (auth_error == 0));
@@ -316,6 +350,20 @@ main(void)
 	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == 0);
 	CHECK(net_entries == before + 1 && net_ipl == 0);
 	CHECK(sc.sc_sae_enabled && sc.sc_sae_generation == 1);
+	sc.sc_sae_enabled = false;
+	input_hook = drop_caps_during_copy;
+	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == EOPNOTSUPP);
+	CHECK(!sc.sc_sae_enabled && net_ipl == 0);
+	input_hook = raise_caps_during_copy;
+	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == 0);
+	CHECK(sc.sc_sae_enabled && net_ipl == 0);
+	sc.sc_sae_enabled = false;
+	input_hook = mode_during_copy;
+	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == EOPNOTSUPP);
+	CHECK(!sc.sc_sae_enabled && net_ipl == 0);
+	input_hook = NULL;
+	sc.sc_ic.ic_opmode = IEEE80211_M_STA;
+	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == 0);
 	req.op = IEEE80211_SAE_AUTH_STATUS; req.len = 2; req.data[0] = 0;
 	CHECK(bwfm_sae_ioctl(&sc, SIOCS80211, &ireq) == 0);
 	CHECK(firmware_calls == 1 && net_ipl == 0);

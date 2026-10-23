@@ -1457,8 +1457,7 @@ ieee80211_ioctl_get80211_fbsd(struct ieee80211com *ic, u_long cmd,
 
 /* Validate the shared ABI before a chip callback can inspect the payload. */
 static int
-ieee80211_sae_request_valid(struct ieee80211com *ic,
-    const struct ieee80211req_sae *req, uint32_t caps)
+ieee80211_sae_request_valid(const struct ieee80211req_sae *req)
 {
 	if (req->version != IEEE80211_SAE_VERSION ||
 	    req->reserved[0] != 0 || req->reserved[1] != 0 ||
@@ -1470,12 +1469,20 @@ ieee80211_sae_request_valid(struct ieee80211com *ic,
 		    IEEE80211_IS_MULTICAST(req->bssid) ||
 		    memcmp(req->bssid, "\0\0\0\0\0\0", IEEE80211_ADDR_LEN) == 0)))
 			return EINVAL;
-		/* Disable must work after a firmware capability disappears. */
-		if (req->data[0] && (caps == 0 || ic->ic_opmode != IEEE80211_M_STA))
-			return EOPNOTSUPP;
 	}
 	return 0;
 }
+/* The chip callback calls this under its state ownership, after copyin. */
+int
+ieee80211_sae_configure_check(struct ieee80211com *ic, uint32_t caps,
+    bool enable)
+{
+	/* Disable must work after a firmware capability disappears. */
+	if (enable && (caps == 0 || ic->ic_opmode != IEEE80211_M_STA))
+		return EOPNOTSUPP;
+	return 0;
+}
+
 /*
  * The caller holds no spin lock. The callback can sleep, but must not retain
  * req. It owns chip state, association lifetime, and firmware operations.
@@ -1508,7 +1515,7 @@ ieee80211_ioctl_sae(struct ieee80211com *ic, u_long cmd,
 	req = kmem_zalloc(sizeof(*req), KM_SLEEP);
 	error = copyin(ireq->i_data, req, sizeof(*req));
 	if (error == 0)
-		error = ieee80211_sae_request_valid(ic, req, caps);
+		error = ieee80211_sae_request_valid(req);
 	if (error == 0)
 		error = callback(ic, req);
 	explicit_memset(req, 0, sizeof(*req));

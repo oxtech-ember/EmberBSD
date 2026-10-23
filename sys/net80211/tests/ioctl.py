@@ -30,7 +30,8 @@ def main():
     end = abi.index("\n};", abi.index("struct ieee80211req_sta_mgmt {", start)) + 3
     source = (owner / "ieee80211_ioctl.c").read_text()
     functions = "\n\n".join(function(source, name) for name in (
-        "ieee80211_sae_request_valid", "ieee80211_ioctl_sae",
+        "ieee80211_sae_request_valid", "ieee80211_sae_configure_check",
+        "ieee80211_ioctl_sae",
         "ieee80211_sta_request_validate", "ieee80211_ioctl_sta_mgmt"))
     fixture = (owner / "tests/ioctl-contract.c").read_text()
     fixture = fixture.replace("/* PRODUCTION_ABI */", abi[start:end])
