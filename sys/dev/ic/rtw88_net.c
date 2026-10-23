@@ -1892,7 +1892,8 @@ rtw88_net_watchdog(struct ifnet *ifp)
 		ifp->if_timer = 1;
 	ieee80211_watchdog(&net->ic);
 	if (net->ic.ic_state == IEEE80211_S_RUN) {
-		timeout = (uint32_t)MAX(5 * hz,
+		/* if_timer polls once per second; retain the 7-beacon deadline. */
+		timeout = (uint32_t)MAX(hz,
 		    mstohz(rtw88_net_tu_to_ms(net->ic.ic_bmisstimeout)));
 		mutex_enter(net->lock);
 		missed = rtw88_net_beacon_poll(&net->policy,

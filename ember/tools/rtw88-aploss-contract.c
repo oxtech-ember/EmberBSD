@@ -96,6 +96,7 @@ static int splnet(void) { return 0; }
 static void splx(int s) { (void)s; }
 static int rtw88_net_newstate(struct ieee80211com *,enum ieee80211_state,int);
 static int ieee80211_new_state(struct ieee80211com *ic,enum ieee80211_state s,int arg) {
+    assert(ic != NULL);assert(ic->ic_ifp != NULL);assert(ic->ic_ifp->if_softc != NULL);
     CHECK(giant && !pci);return rtw88_net_newstate(ic,s,arg);
 }
 static void ieee80211_send_probereq(struct ieee80211_node *ni,const uint8_t *src,
@@ -103,7 +104,7 @@ static void ieee80211_send_probereq(struct ieee80211_node *ni,const uint8_t *src
     const void *ie,unsigned ielen) {
     (void)ni;(void)src;(void)dst;(void)bssid;(void)ssid;(void)len;(void)ie;(void)ielen;
     CHECK(giant && !pci);probes++;
-    if(probe_scan) { probe_scan=0; (void)ieee80211_new_state(probe_ic,IEEE80211_S_SCAN,0); }
+    if(probe_scan) { probe_scan=0; assert(probe_ic != NULL); (void)ieee80211_new_state(probe_ic,IEEE80211_S_SCAN,0); }
 }
 static void rt_ieee80211msg(struct ifnet *ifp,int type,void *data,unsigned len) {
     (void)ifp;(void)data;CHECK(giant && !pci);CHECK(len==0 && type==RTM_IEEE80211_DISASSOC);
@@ -121,7 +122,7 @@ static void ieee80211_begin_scan(struct ieee80211com *ic,int arg) { (void)ic;(vo
 static int ht20_current(struct ieee80211com *ic,struct ieee80211_node *ni,
     const struct ieee80211_ht20_node *ht) {
     (void)ic;(void)ni;(void)ht;
-    CHECK(0 && "active HT RUN is outside the AP-loss fixture");return 0;
+    CHECK(0);return 0;
 }
 static int aploss_checked_ht20_request(struct ieee80211com *ic,int state) {
     CHECK(giant && !pci && ic->ic_ht20_admit==NULL);
@@ -167,6 +168,9 @@ static void setup(struct fixture *f) {
     user_disconnects=user_aborts=user_tx_clear=user_scan_clear=0;
     native_run_supervision(&f->net);CHECK(f->ifp.if_timer==1);giant=0;
 }
+static void watchdog_at(struct fixture *f,uint32_t when) {
+    ticks=when;giant=1;rtw88_net_watchdog(&f->ifp);giant=0;
+}
 static void second(struct fixture *f) {
     CHECK(!giant && !pci);ticks+=hz;
     if(if_slowtimo_countdown(&f->ifp)) {
@@ -183,12 +187,33 @@ static void flush_scan(struct fixture *f) {
     giant=1;f->net.ic.ic_state=IEEE80211_S_SCAN;
     shared_run_to_scan(&f->net.ic,f->net.state_arg);f->net.work_pending=0;giant=0;
 }
+static void test_fast_watchdog_floor(void) {
+    struct fixture f;setup(&f);
+    uint32_t start=ticks;
+    /* Default 700 TU is seven 100 TU beacon intervals: 72 clock ticks. */
+    watchdog_at(&f,start+71);
+    CHECK(probes==0 && requests==0);
+    watchdog_at(&f,start+72);
+    CHECK(probes==0 && requests==0);
+    /* A one-second polling floor caps the additional delay below one second. */
+    watchdog_at(&f,start+99);
+    CHECK(probes==0 && requests==0);
+    watchdog_at(&f,start+100);
+    CHECK(probes==1 && requests==0 && f.net.ic.ic_bmiss_count==1);
+    watchdog_at(&f,start+199);
+    CHECK(probes==1 && requests==0);
+    watchdog_at(&f,start+200);
+    CHECK(probes==1 && requests==1 && f.net.policy.epoch==8);
+    if(requests==1) {
+        flush_scan(&f);
+        CHECK(cleanup==1 && events==1 && link_down==1);
+    }
+}
 static void test_silent_idle_chain(void) {
     struct fixture f;setup(&f);
-    seconds(&f,4);CHECK(probes==0 && requests==0 && f.ifp.if_timer==1);
     second(&f);CHECK(probes==1 && requests==0 && f.net.ic.ic_bmiss_count==1);
     CHECK(f.net.policy.accepting && f.core.sc_ra.active);
-    seconds(&f,4);CHECK(requests==0);second(&f);
+    second(&f);
     CHECK(requests==1 && f.net.policy.epoch==8 && !f.net.policy.beacon_valid);
     CHECK(f.net.requested==IEEE80211_S_SCAN && !f.net.policy.accepting);
     flush_scan(&f);CHECK(cleanup==1 && events==1 && link_down==1 && begin_scans==0);
@@ -199,9 +224,12 @@ static void test_silent_idle_chain(void) {
 }
 static void test_refresh_and_fences(void) {
     struct fixture f;uint8_t beacon[36]={0x80};setup(&f);
-    memcpy(beacon+16,f.ni.ni_bssid,6);seconds(&f,4);giant=1;
+    memcpy(beacon+16,f.ni.ni_bssid,6);uint32_t start=ticks;giant=1;
     CHECK(rtw88_net_beacon_note(&f.net.policy,7,ticks,beacon,36,f.ni.ni_bssid)==0);giant=0;
-    seconds(&f,4);CHECK(probes==0);second(&f);CHECK(probes==1);
+    watchdog_at(&f,start+100);CHECK(probes==1 && requests==0);
+    ticks=start+101;giant=1;
+    CHECK(rtw88_net_beacon_note(&f.net.policy,7,ticks,beacon,36,f.ni.ni_bssid)==0);giant=0;
+    watchdog_at(&f,start+200);CHECK(probes==1 && requests==0);
     giant=1;CHECK(rtw88_net_newstate(&f.net.ic,IEEE80211_S_SCAN,0)==0);giant=0;
     CHECK(!f.net.policy.accepting && !f.core.sc_ra.active && f.net.policy.epoch==8);
     CHECK(rtw88_net_beacon_note(&f.net.policy,7,ticks,beacon,36,f.ni.ni_bssid)==ENXIO);
@@ -227,10 +255,10 @@ static void test_clock_and_superseded_generation(void) {
     giant=1;CHECK(rtw88_net_commit(&f.net.policy,8,0,1)==0);
     f.net.work_pending=0;f.net.ic.ic_opt_ie=NULL;native_run_supervision(&f.net);
     CHECK(rtw88_net_beacon_note(&f.net.policy,7,ticks,beacon,36,f.ni.ni_bssid)==ECANCELED);
-    giant=0;seconds(&f,4);CHECK(probes==1);second(&f);CHECK(probes==1 && requests==2);
+    giant=0;second(&f);CHECK(probes==1 && requests==2);
     /* bmiss_count is shared state: no synthetic reset is added at new RUN. */
     setup(&f);ticks=UINT32_MAX-250;giant=1;native_run_supervision(&f.net);giant=0;
-    seconds(&f,4);CHECK(probes==0);second(&f);CHECK(probes==1);seconds(&f,5);CHECK(requests==1);
+    second(&f);CHECK(probes==1 && requests==0);second(&f);CHECK(requests==1);
     setup(&f);ticks=UINT32_MAX-50;second(&f);CHECK(probes==0 && requests==0);
     /* An explicit interface stop cancels the timer; no daemon scan is faked. */
     setup(&f);f.ifp.if_timer=0;seconds(&f,20);CHECK(!probes && !requests);
@@ -254,7 +282,7 @@ static void test_roaming_and_userland_boundaries(void) {
     setup(&f);seconds(&f,10);flush_scan(&f);CHECK(events==1 && user_disconnects==0);
 }
 int main(void) {
-    test_silent_idle_chain();test_refresh_and_fences();
+    test_fast_watchdog_floor();test_silent_idle_chain();test_refresh_and_fences();
     test_clock_and_superseded_generation();test_ht_off_request_reset();
     test_roaming_and_userland_boundaries();
     printf("rtw88 AP-loss chain: %u checks, %u failures\n",checks,failures);
