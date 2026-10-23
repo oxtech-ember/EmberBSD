@@ -112,5 +112,9 @@ with (out/'enable-native.inc').open('a') as stream:
  # Reuse the existing explicit mbuf-allocation service. Keep the RX callback
  # complete so RFK tests can deliver frames while ordinary admission is closed.
  queue_service=read('ember/tools/rtw88-signal-queue-contract.c')
- stream.write(queue_service[queue_service.index('#define if_ierrors'):queue_service.index('#include "signal-native-rx.inc"')])
+ queue_prefix=queue_service[queue_service.index('#define if_ierrors'):queue_service.index('#include "signal-native-rx.inc"')]
+ stream.write(queue_prefix)
  stream.write(function(net,'rtw88_net_rx_frame','static void'))
+ # The copied namespace guard covers this callback, not later fixture tests.
+ if queue_prefix.endswith('#pragma GCC diagnostic push\n#pragma GCC diagnostic error "-Wshadow"\n'):
+  stream.write('#pragma GCC diagnostic pop\n')
