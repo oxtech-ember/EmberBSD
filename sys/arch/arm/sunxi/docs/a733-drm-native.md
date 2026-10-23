@@ -197,7 +197,9 @@ It does not require Mesa, GBM or libdrm.
 Build it with the accepted GCC16 application compiler and EmberBSD sysroot:
 
 ```sh
-"$CC" --sysroot="$SYSROOT" -O2 -static -std=c11 -D_NETBSD_SOURCE \
+GCC_RUNTIME="$SYSROOT/usr/pkg/gcc16/lib/gcc/$("$CC" -dumpmachine)/$("$CC" -dumpfullversion)"
+test -f "$GCC_RUNTIME/libgcc.a" && test -f "$GCC_RUNTIME/libgcc_eh.a"
+"$CC" -B"$GCC_RUNTIME/" --sysroot="$SYSROOT" -O2 -static -std=c11 -D_NETBSD_SOURCE \
     -Wall -Wextra -Werror \
     -I"$SOURCE/sys/external/bsd/drm2/dist/include/uapi" \
     "$SOURCE/ember/tools/a733-drm-check.c" -o a733-drm-check
