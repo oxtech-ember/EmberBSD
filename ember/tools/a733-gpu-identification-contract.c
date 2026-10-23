@@ -1,6 +1,5 @@
 /* Origin: EmberBSD; AI-assisted production GPU identity consumer checks. */
 /* SPDX-License-Identifier: BSD-2-Clause */
-#include <assert.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -11,6 +10,13 @@
 #include <sys/queue.h>
 #include <time.h>
 #include <sys/types.h>
+/* Keep provider calls and checks active in release builds. */
+#define assert(c) do { \
+	if (!(c)) { \
+		fprintf(stderr, "Assertion failed: %s at %s:%d\n", #c, __FILE__, __LINE__); \
+		abort(); \
+	} \
+} while (0)
 #ifndef EAUTH
 #define EAUTH 80
 #endif
@@ -74,6 +80,11 @@ struct device {
 TAILQ_HEAD(deferred_config_head, deferred_config);
 static struct deferred_config_head deferred_config_queue =
     TAILQ_HEAD_INITIALIZER(deferred_config_queue);
+static struct deferred_config_head mountroot_config_queue =
+    TAILQ_HEAD_INITIALIZER(mountroot_config_queue);
+static bool root_is_mounted;
+static unsigned mountroot_exits;
+static void kthread_exit(int error) { assert(error == 0); mountroot_exits++; }
 static TAILQ_HEAD(, finalize_hook) config_finalize_list =
     TAILQ_HEAD_INITIALIZER(config_finalize_list);
 static TAILQ_HEAD(, device) config_pending =
@@ -152,7 +163,8 @@ static int
 cv_timedwait(int *cv, int *lock, int ticks)
 {
 	/* Turn a stranded pending device into a bounded, causal failure. */
-	assert(!"configuration would wait for an orphaned callback");
+	fprintf(stderr, "configuration would wait for an orphaned callback\n");
+	abort();
 	return 0;
 }
 static void
@@ -204,7 +216,7 @@ static struct sun60i_a733_gpu_state clock_observation;
 static struct sun60i_a733_gpu_state terminal_observation;
 static struct sun60i_a733_gpu_state initial_observation;
 static unsigned int maps, peeks, unmaps, releases, clock_puts, checks;
-static char events[128], normal_output[4096], error_output[256];
+static char events[512], normal_output[4096], error_output[256];
 static size_t nevents;
 static int full_map_error;
 static unsigned full_maps, full_unmaps;
@@ -216,6 +228,10 @@ static char later_boot_before[512], later_probe_before[1024];
 static const char *later_probe_state, *later_cache_state;
 static char later_cache_before[1024];
 static int *consumer_lock;
+static bool native_fixture, native_identify_error;
+static int native_render_error, native_prepare_error, native_publish_error;
+static unsigned native_renders, native_prepares, native_publishes;
+static char native_render_cookie;
 
 static void
 later_not_published(void)
@@ -432,6 +448,8 @@ bus_space_peek_8(bus_space_tag_t tag, bus_space_handle_t handle,
 	assert(handle == 0x1234 && offset == 0x20);
 	record('I');
 	peeks++;
+	if (native_identify_error && peeks == 2)
+		return EFAULT;
 	*value = pbvnc;
 	return peek_error;
 }
@@ -498,7 +516,10 @@ struct sysctlnode { void *sysctl_data; };
 static int
 sysctl_lookup(SYSCTLFN_ARGS)
 {
-	(void)rnode;
+	if (newp != NULL) {
+		assert(newlen == sizeof(unsigned));
+		memcpy(rnode->sysctl_data, newp, newlen);
+	}
 	return 0;
 }
 static int sysctl_createv_stub(void *first, ...) { (void)first; return 0; }
@@ -518,7 +539,13 @@ pvr_render_attach(device_t dev, bus_dma_tag_t dmat, uint64_t bvnc,
     const struct pvr_query_input *input, struct drm_device **owner)
 {
 
-	abort();
+	assert(native_fixture && consumer_lock != NULL && !*consumer_lock);
+	assert(bvnc == UINT64_C(0x00240038006800b7) && input->bvnc == bvnc);
+	assert(native_prepares == 0 && native_publishes == 0);
+	native_renders++;
+	if (native_render_error == 0)
+		*owner = (struct drm_device *)&native_render_cookie;
+	return native_render_error;
 }
 static void sysctl_unlock(void) { abort(); }
 static void sysctl_relock(void) { abort(); }
@@ -534,7 +561,7 @@ static void sysctl_relock(void) { abort(); }
 #define CTL_EOL -1
 #define MUTEX_DEFAULT 0
 #define IPL_NONE 0
-static void mutex_init(kmutex_t *m, int type, int ipl) { *m = 1; }
+static void mutex_init(kmutex_t *m, int type, int ipl) { *m = 0; }
 #define mutex_destroy(m) ((void)0)
 #include "autoconf.h"
 static int prepare_error, reserve_error, wait_error, retain_error;
@@ -667,6 +694,7 @@ static int
 firmware_open(const char *driver, const char *name, firmware_handle_t *fh)
 {
 	assert(strcmp(driver, "powervr") == 0);
+	assert(!native_fixture || root_is_mounted);
 	if (compute_file_data != NULL) {
 		assert(strcmp(name, "a733-compute.bin") == 0 && !fw_handle.open);
 		fw_handle.open = true;
@@ -784,7 +812,9 @@ sun60i_a733_gpu_fwmem_prepare(bus_dma_tag_t tag, const void *bytes, size_t size,
 	assert(tag == &dma_tag_cookie);
 	assert(bytes == fw_memory && size == fw_memory_size);
 	assert(expected == UINT64_C(0x00240038006800b7));
-	assert(fw_handle.open && fw_reads == 1 && fw_closes == 0);
+	assert(fw_handle.open);
+	assert(fw_reads == (native_fixture ? 2U : 1U));
+	assert(fw_closes == (native_fixture ? 1U : 0U));
 	assert(out != NULL && *out == NULL && fwmem_live == NULL);
 	fw_not_published();
 	fwmem_prepares++;
@@ -807,6 +837,11 @@ sun60i_a733_gpu_fwmem_prepare(bus_dma_tag_t tag, const void *bytes, size_t size,
 	fwmem_live->image.info.feature_value[A733_GPU_FW_FEATURE_NUM_CLUSTERS] = 2;
 	fwmem_live->image.info.feature_value[
 	    A733_GPU_FW_FEATURE_SLC_SIZE_IN_KILOBYTES] = 16;
+	if (native_fixture) {
+		/* Validated feature metadata for the real query-input converter. */
+		fwmem_live->image.info.feature_mask[0] = UINT64_MAX;
+		fwmem_live->image.info.feature_mask[1] = UINT64_MAX;
+	}
 	fwmem_live->image.load_count = 5;
 	fwmem_live->image.entry = UINT32_C(0xbfc00001);
 	fwmem_live->boot_code = UINT32_C(0x20000000);
@@ -1044,8 +1079,8 @@ sun60i_a733_gpu_fwprobe_mmucache(bus_space_tag_t tag, bus_space_handle_t handle,
 }
 
 #define sun60i_a733_gpu_fwinfo_parse fw_parse
-/* The execution bridge is outside this identification fixture. Never fake
- * successful adoption: an unexpected call is a causal test failure. */
+/* The native-startup fixture checks this provider boundary and call order.
+ * The separate bridge contract executes the real adoption implementation. */
 int
 sun60i_a733_gpu_fwbridge_prepare(struct sun60i_a733_gpu_fwbridge *bridge,
     kmutex_t *lock, bus_space_tag_t tag, bus_space_handle_t handle,
@@ -1053,16 +1088,26 @@ sun60i_a733_gpu_fwbridge_prepare(struct sun60i_a733_gpu_fwbridge *bridge,
     const struct sun60i_a733_gpu_fwboot_result *boot,
     const struct sun60i_a733_gpu_fwprobe_result *probe)
 {
-	assert(!"unexpected execution bridge in identification fixture");
-	return ENXIO;
+	assert(native_fixture && consumer_lock == lock && *lock);
+	assert(native_renders == 1 && native_prepares == 0 && native_publishes == 0);
+	assert(full_mapping && handle == 0x5678 && mem == fwmem_live);
+	assert(fixture_device_owned && mem->interface_prepared);
+	assert(boot->firmware_started == 1 && probe->command == A733_GPU_FWPROBE_MMUCACHE);
+	native_prepares++;
+	bridge->attempted = true;
+	return native_prepare_error;
 }
 
 int
 sun60i_a733_gpu_fwbridge_publish(struct sun60i_a733_gpu_fwbridge *bridge,
     struct drm_device *device)
 {
-	assert(!"unexpected execution bridge publication in identification fixture");
-	return ENXIO;
+	assert(native_fixture && consumer_lock != NULL && !*consumer_lock);
+	assert(native_renders == 1 && native_prepares == 1 && native_publishes == 0);
+	assert(bridge->attempted && device == (struct drm_device *)&native_render_cookie);
+	native_publishes++;
+	bridge->registered = native_publish_error == 0;
+	return native_publish_error;
 }
 
 #include "driver.h"
@@ -1079,6 +1124,12 @@ reset(void)
 	assert(TAILQ_EMPTY(&config_pending));
 	assert(TAILQ_EMPTY(&deferred_config_queue));
 	assert(TAILQ_EMPTY(&config_finalize_list));
+	assert(TAILQ_EMPTY(&mountroot_config_queue));
+	root_is_mounted = false;
+	mountroot_exits = 0;
+	native_fixture = native_identify_error = false;
+	native_render_error = native_prepare_error = native_publish_error = 0;
+	native_renders = native_prepares = native_publishes = 0;
 	memset(&sc, 0, sizeof(sc));
 	root_device = (struct device){ 0 };
 	soc_device = (struct device){ .dv_parent = &root_device };
@@ -1088,6 +1139,7 @@ reset(void)
 	sc.sc_phandle = 1;
 	sc.sc_dmat = &dma_tag_cookie;
 	sc.sc_run_pass = true;
+	sc.sc_diagnostic = true;
 	fw_open_error = fw_read_error = fw_close_error = 0;
 	fw_alloc_fail = fw_bad_bvnc = false;
 	fw_file_size = 8192;
@@ -3260,6 +3312,207 @@ test_scratch_error_snapshot(void)
 }
 
 
+/* Exercise the complete consumer sequence, with only provider boundaries fake. */
+static void
+native_begin(void)
+{
+	reset();
+	native_fixture = true;
+	fw_cached_state = NULL;
+	core_hz = expected_interface_hz = 600000000;
+	boot_reply.attempted = boot_reply.device_owned = true;
+	boot_reply.start.touched = boot_reply.start.released = true;
+	boot_reply.snapshot_valid = true;
+	boot_reply.firmware_started = 1;
+	probe_reply.attempted = probe_reply.published = true;
+	probe_reply.kick_attempted = probe_reply.kicked = true;
+	probe_reply.command = A733_GPU_FWPROBE_LOGTYPE;
+	probe_reply.polls = 2;
+	probe_reply.after.rtn = 1;
+	probe_reply.after.read_offset = probe_reply.after.write_offset = 1;
+	cache_reply.attempted = cache_reply.published = true;
+	cache_reply.kick_attempted = cache_reply.kicked = true;
+	cache_reply.command = A733_GPU_FWPROBE_MMUCACHE;
+	cache_reply.slot = 1;
+	cache_reply.after.rtn = 1;
+	cache_reply.after.read_offset = cache_reply.after.write_offset = 2;
+}
+
+static void
+native_controls_readonly(void)
+{
+	struct sysctlnode node = { 0 };
+	const unsigned value = 1;
+	const unsigned result = sc.sc_run_result;
+	const size_t before = nevents;
+
+#define CONTROL(fn) do { \
+	CHECK(fn(NULL, NULL, NULL, &node, NULL, 0) == 0); \
+	CHECK(fn(NULL, NULL, NULL, &node, &value, sizeof(value)) == EBUSY); \
+} while (0)
+	CONTROL(sun60i_gpu_sysctl_clock_source);
+	CONTROL(sun60i_gpu_sysctl_stage);
+	CONTROL(sun60i_gpu_sysctl_render_attach);
+	CONTROL(sun60i_gpu_sysctl_exec_attach);
+#undef CONTROL
+	CHECK(nevents == before && sc.sc_run_result == result);
+}
+
+static void
+native_attach(void)
+{
+	const struct fdt_attach_args faa = {
+		.faa_phandle = 1, .faa_dmat = &dma_tag_cookie
+	};
+
+	sun60i_gpu_attach(&soc_device, &gpu_device, (void *)&faa);
+	CHECK(!sc.sc_diagnostic && !sc.sc_start_attempted);
+	native_controls_readonly();
+	config_finalize();
+	CHECK(!sc.sc_start_attempted && fw_opens == 0 && maps == 0);
+	CHECK(nevents == 0 && !TAILQ_EMPTY(&mountroot_config_queue));
+	native_controls_readonly();
+}
+
+static void
+native_run(void)
+{
+	root_is_mounted = true;
+	config_mountroot_thread(NULL);
+	CHECK(mountroot_exits == 1 && TAILQ_EMPTY(&mountroot_config_queue));
+	CHECK(sc.sc_start_attempted && sc.sc_clock_source == 1);
+	CHECK(prepares == 0);
+}
+
+static void
+native_no_replay(void)
+{
+	const size_t before = nevents;
+	const unsigned result = sc.sc_run_result;
+
+	native_controls_readonly();
+	sun60i_gpu_start(&gpu_device);
+	CHECK(config_finalize_register(&gpu_device, sun60i_gpu_finalize) == 0);
+	CHECK(nevents == before && sc.sc_run_result == result);
+	CHECK(TAILQ_EMPTY(&mountroot_config_queue));
+	/* Fixture-only reboot. Production retains this mapping and DMA memory. */
+	full_mapping = false;
+	if (fwmem_live != NULL)
+		later_teardown();
+}
+
+static void
+test_native_startup(void)
+{
+	unsigned start = checks;
+
+	for (unsigned failure = 0; failure <= 20; failure++) {
+		native_begin();
+		native_attach();
+		switch (failure) {
+		case 1: state_error = EIO; break;
+		case 2: power_error = EIO; break;
+		case 3: power_reserve_error = EIO; break;
+		case 4: reserve_error = EIO; break;
+		case 5: retain_error = EIO; break;
+		case 6: prepare_error = EIO; break;
+		case 7: ready_error = EIO; break;
+		case 8: request_error = EIO; break;
+		case 9: wait_error = EIO; break;
+		case 10: coreid_peek_error = EIO; break;
+		case 11: native_identify_error = true; break;
+		case 12: fw_open_error = EIO; break;
+		case 13: fwmem_prepare_error = EIO; break;
+		case 14: fw_interface_error = EIO; break;
+		case 15: fw_boot_error = boot_reply.error = EIO; break;
+		case 16: fw_probe_error = probe_reply.error = EIO; break;
+		case 17: fw_cache_error = cache_reply.error = EIO; break;
+		case 18: native_render_error = EIO; break;
+		case 19: native_prepare_error = EIO; break;
+		case 20: native_publish_error = EIO; break;
+		}
+		native_run();
+		if (failure == 0) {
+			CHECK(sc.sc_run_result == 0 && sc.sc_run_pass);
+			CHECK(sc.sc_run_stage == 17 && sc.sc_fwbridge.registered);
+			CHECK(native_renders == 1 && native_prepares == 1 && native_publishes == 1);
+			CHECK(fw_opens == 2 && fw_closes == 2 && fw_frees == 2);
+			CHECK(fw_boots == 1 && fw_probes == 1 && fw_caches == 1);
+		} else {
+			CHECK(sc.sc_run_result != 0 && !sc.sc_run_pass);
+			CHECK(sc.sc_run_stage == (failure <= 17 ? failure : 17));
+			CHECK(!sc.sc_fwbridge.registered);
+			CHECK(native_renders == (failure >= 18));
+			CHECK(native_prepares == (failure >= 19));
+			CHECK(native_publishes == (failure == 20));
+		}
+		CHECK(unreserves == 0 && fwmem_destroys == 0);
+		CHECK(sc.sc_retained == (failure == 0 || failure > 5));
+		native_no_replay();
+	}
+	/* Only a request timeout can continue to the read-only CORE waiter. */
+	native_begin();
+	native_attach();
+	request_error = ETIMEDOUT;
+	native_run();
+	CHECK(sc.sc_run_result == 0 && sc.sc_fwbridge.registered);
+	native_no_replay();
+
+	/* A late attach uses the same mountroot callback synchronously. */
+	native_begin();
+	root_is_mounted = true;
+	config_finalize();
+	{
+		const struct fdt_attach_args faa = {
+			.faa_phandle = 1, .faa_dmat = &dma_tag_cookie
+		};
+		sun60i_gpu_attach(&soc_device, &gpu_device, (void *)&faa);
+	}
+	CHECK(sc.sc_start_attempted && sc.sc_fwbridge.registered);
+	CHECK(TAILQ_EMPTY(&mountroot_config_queue));
+	native_no_replay();
+
+	/* Invalid native bindings never admit provider or firmware access. */
+	for (unsigned mode = 0; mode < 7; mode++) {
+		const struct fdt_attach_args faa = {
+			.faa_phandle = 1, .faa_dmat = &dma_tag_cookie
+		};
+
+		native_begin();
+		switch (mode) {
+		case 0: observe_len = 1; break;
+		case 1: prepare_len = 1; break;
+		case 2: request_len = 1; break;
+		case 3: request_len = 0; break;
+		case 4: managed_len = -1; break;
+		case 5: binding_size = A733_GPU_FWSTART_REG_SIZE - 1; break;
+		case 6: binding_size = A733_GPU_ID_SIZE; break;
+		}
+		sun60i_gpu_attach(&soc_device, &gpu_device, (void *)&faa);
+		config_finalize();
+		CHECK(sc.sc_run_result == EINVAL && !sc.sc_start_attempted);
+		CHECK(TAILQ_EMPTY(&mountroot_config_queue) && nevents == 0);
+		native_controls_readonly();
+	}
+
+	/* Registration failure must not leave a second startup opportunity. */
+	native_begin();
+	CHECK(config_finalize_register(&gpu_device, sun60i_gpu_finalize) == 0);
+	{
+		const struct fdt_attach_args faa = {
+			.faa_phandle = 1, .faa_dmat = &dma_tag_cookie
+		};
+		sun60i_gpu_attach(&soc_device, &gpu_device, (void *)&faa);
+	}
+	CHECK(sc.sc_run_result == EEXIST && !sc.sc_run_pass);
+	config_finalize();
+	CHECK(TAILQ_EMPTY(&mountroot_config_queue) && !sc.sc_start_attempted);
+	CHECK(nevents == 0 && fw_opens == 0);
+	reset();
+	printf("PASS: %u native mountroot startup checks\n", checks - start);
+}
+
+
 int
 main(void)
 {
@@ -3301,6 +3554,7 @@ main(void)
 	CHECK(sun60i_gpu_match(NULL, NULL, (void *)&faa) == 0);
 	CHECK(nevents == 0);
 	missing_supply = true;
+	prepare_len = 0;
 	config_process_deferred(&deferred_config_queue, &soc_device);
 	sun60i_gpu_attach(&soc_device, &gpu_device, (void *)&faa);
 	CHECK(sc.sc_dmat == faa.faa_dmat);
@@ -3326,6 +3580,7 @@ main(void)
 	CHECK(peeks == 1);
 	reset();
 	missing_supply = true;
+	observe_len = 0;
 	sun60i_gpu_attach(&soc_device, &gpu_device, (void *)&faa);
 	config_finalize();
 	CHECK(config_finalize_done && TAILQ_EMPTY(&config_pending));
@@ -3447,6 +3702,7 @@ main(void)
 	test_domain_request();
 	test_fwheap_optional_outputs();
 	test_fwbridge_diagnostic_gate();
+	test_native_startup();
 	test_runtime_stages();
 	test_fwinfo_stage();
 	test_fwmem_stage();

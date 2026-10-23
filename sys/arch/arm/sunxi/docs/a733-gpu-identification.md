@@ -1,34 +1,58 @@
 # A733 GPU staged diagnostics
 
-The native `sun60igpuid` consumer identifies an A733 GPU after strict
-CORE ON/Q confirmation.
-The current A733 DT enables its diagnostic `netbsd,observe-only` stage, which
-never maps or reads GPU registers, even when the queried providers are ready.
-This default mode provides no GPU initialization, DMA, submission or acceleration.
-The [driver](https://github.com/oxtech-ember/EmberBSD/blob/main/sys/arch/arm/sunxi/sun60i_a733_gpu.c)
-is owned by EmberBSD. Software contracts, the complete GCC16 kernel build
-and physical attachment on Zero 3W are verified. The explicit runtime
-PLL600 cold start now identifies the physical GPU; see the
-[current hardware result](#physical-pll-result). Normal board DTBs remain
-observe-only. The earlier PERIPH0-400M path times out at GPU_CORE and can
-stall on GPU register access. The consumer now blocks that access after failed
-CORE confirmation; this does not repair power-domain activation.
-Explicit stage 15 has separately
-[booted the pinned firmware on Zero 3W](a733-gpu-fwboot.md#physical-bootstrap-result).
-Stage 16 has [completed one firmware command](a733-gpu-fwprobe.md#physical-command-result).
-Stage 17 adds a software-checked MMUCACHE probe. GPU memory isolation
-and graphics acceleration remain unverified.
+The native `sun60igpuid` consumer starts an A733 GPU through checked
+provider and firmware interfaces. A node without diagnostic properties uses
+PLL_GPU0 at 600 MHz and the native mountroot sequence below. Zero 3W selects
+this mode. Zero 4 keeps the explicit `netbsd,observe-only` mode.
+Observe-only mode never maps GPU registers or starts firmware.
+The [driver](../sun60i_a733_gpu.c) is owned by EmberBSD.
+The previous explicit PLL600 sequence identifies the physical GPU; see the
+[current hardware result](#physical-pll-result). Native automatic startup and
+graphics acceleration require separate physical acceptance. The earlier
+PERIPH0-400M experiment can time out at GPU_CORE. Failed CORE confirmation
+blocks GPU MMIO in every mode.
+
+## Native startup
+
+The finalizer validates the binding and registers one `config_mountroot`
+callback. The callback runs after the root filesystem is mounted. Autoconf
+waits for mountroot callbacks before it starts init(8). Firmware must be on
+that filesystem at `/libdata/firmware/powervr/rogue_36.56.104.183_v1.fw`.
+A separate filesystem mounted later by userland is too late for this callback.
+
+The callback selects PLL600 and runs the existing stages 1 through 17.
+These stages reserve power and clocks, confirm CORE ON/Q, validate PBVNC,
+load and start firmware, and check the firmware command interface. The same
+functions serve explicit diagnostics. There is no second startup sequence.
+Only an `ETIMEDOUT` from stage 8 can continue to the strict stage-9 waiter.
+Every other failure stops the sequence. Successful stage 17 registers the
+render device and publishes the native firmware execution service.
+The driver retains committed resources on failure. It does not retry startup.
+
+The native mode rejects writes to `stage`, `clock_source`, `render_attach`,
+and `exec_attach` for the entire device lifetime, including before startup
+and after failure. Cached status reads remain available. Select an explicit
+observe-only or experimental DT mode to use mutating diagnostics.
+
+GPU and DISPLAY use separate CCU fields and PCK domains. Native GPU startup
+does not change their shared REF, PERIPH0, AHB, or MBUS ancestor clocks.
+The actual CCU contract starts GPU then DISPLAY, and DISPLAY then GPU. It
+checks both retained consumers and unchanged shared registers. Its PCK calls
+use the strict boundary model; this is not a concurrent hardware acceptance
+or a claim about NPU operation.
 
 The identification contract includes the production firmware bridge and backend
 interfaces. It checks that an adopted bridge blocks every diagnostic stage,
-including a failed service. Bridge preparation and publication are explicit
-aborting boundaries here; their actual lifecycle runs in
+including a failed service. Bridge preparation and publication use checked fixture boundaries here; their
+actual lifecycle runs in
 `sh ember/tools/a733-gpu-fwbridge-contract.sh`. Run both contracts when changing
 this shared state. These host checks do not establish hardware operation.
 The identity contract checks failed REQUEST/WAIT, finalizer errors, direct
 identity calls, and the unconfirmed firmware-only boot path without GPU MMIO.
 It also checks successful CORE confirmation, retained reservations, and a
-REQUEST timeout followed by a successful WAIT.
+REQUEST timeout followed by a successful WAIT. Native controls cover root
+mount ordering, all 17 stage failures, render and service publication failures,
+late attachment, invalid bindings, registration failure, and no replay.
 The HWR diagnostic keeps its full 2,336-byte firmware snapshot in temporary
 kernel memory. It releases that memory after formatting or a format error.
 GCC16.2 reports a 2,032-byte sysctl frame, below the unchanged 3,584-byte limit.
@@ -40,7 +64,7 @@ These checks do not establish a complete kernel stack bound or hardware operatio
 
 
 Current hardware evidence and its applicability belong to the [DevBoards profile](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/a733-zero3w/interfaces.md).
-Normal boot observes firmware-owned state. A reported gate mask is not a frequency measurement, and sampled MISR levels do not identify a transition phase.
+Observe-only boot observes firmware-owned state. A reported gate mask is not a frequency measurement, and sampled MISR levels do not identify a transition phase.
 Do not infer permission for GPU MMIO or override PWCR from a partial clock/domain snapshot.
 
 ## Local binding
@@ -54,22 +78,23 @@ does not list A733. The BSP uses `img,gpu`; neither fallback is matched here.
 The local binding requires:
 
 - A single register range at `0x01800000`, covering PBVNC at `+0x20`.
-  The DT preserves the BSP range size `0x8ffff`; the consumer maps only `0x28`
-  bytes and performs one 64-bit fault-aware read only after CORE ON/Q confirmation.
+  The DT preserves the BSP range size `0x8ffff`. Native mode requires the full
+  firmware register window. Diagnostic identity reads map only `0x28` bytes
+  after CORE ON/Q confirmation.
 - One `core` clock, `<&ccu CLK_GPU0>`, from the native A733 CCU.
 - One domain, `<&pck600 PD_GPU_TOP>`, with domain ID 5 and one argument cell.
 - `gpu-supply` referencing the AXP8191 `dcdc4` regulator node.
 - The empty boolean property `netbsd,consumer-managed-power`.
-- The current DT also sets empty `netbsd,observe-only`, a local EmberBSD
+- Zero 4 sets empty `netbsd,observe-only`, a local EmberBSD
   diagnostic opt-in. Nonempty values fail with `EINVAL`. It preserves provider
   error handling but exits after completed CCU observation, before OPP checks
   or GPU mapping, including when readiness succeeds.
 
 The hardware description also records GPU reset and SPI interrupt 63, but
-the normal identification path does not acquire or operate them. CCU readiness
+the identity probe does not acquire or operate them. CCU readiness
 checks the actual GPU reset bit. The SoC node is disabled by default.
-Zero 4 supplies DCDC4 and enables the identification consumer; Zero 3W
-inherits those declarations. Use these DTBs with their matching kernel.
+Zero 4 supplies DCDC4 and enables the consumer. Zero 3W inherits those
+declarations and removes the observe-only property. Use these DTBs with their matching kernel.
 
 ## FDT power opt-in
 
@@ -81,9 +106,9 @@ checked power error propagation and firmware fallback for unregistered
 providers.
 
 A consumer carrying this property owns sequencing and error handling through
-strict provider APIs. This consumer requires it; the normal path only queries state.
+strict provider APIs. This consumer requires it in all modes.
 
-## Readiness and result
+## Diagnostic readiness and result
 
 The probe runs once through an autoconfiguration finalizer after device setup.
 It avoids the parent-specific deferred queue, which misses late `/soc` children.
@@ -123,9 +148,10 @@ hardware state is never unwound by disabling resources.
 Queries are observations, not a reservation against later writers. Equal CCU
 snapshots cannot exclude every intervening change. Fault-aware reads handle
 synchronous faults but do not guarantee that a stalled bus transaction will
-finish. The normal consumer has no cold-start path or retry policy; firmware that
+finish. Observe-only mode has no cold-start path or retry policy. Firmware that
 leaves the GPU OFF produces an explicit unavailable result. GPU_CORE domain 6
-is not requested by the pinned BSP GPU binding or operated by the normal path.
+is not requested by the pinned BSP GPU binding. Native startup and the
+explicit runtime stages operate it through the strict PCK provider.
 The PCK provider separately reports its raw state at attachment. That earlier
 observation is not consumed as a GPU readiness guarantee or power capability.
 The pinned DDK selects a live `USE_FPGA` path that operates CORE6 directly;
@@ -136,7 +162,7 @@ the experimental paths preserve that handshake instead of copying the write.
 This experiment has not achieved identification. Its separate, empty property is
 `netbsd,experimental-clock-prepare`. It is mutually exclusive with
 `netbsd,observe-only`; malformed or conflicting properties fail before any
-provider action. The normal board DTS files remain observe-only. Build a
+provider action. The experiment is not selected by the board DTS files. Build a
 separate Zero 3W artifact, with the matching kernel sources and host tools:
 
 ```sh
@@ -217,7 +243,7 @@ faults; they cannot bound an unresponsive bus transaction.
 
 Use a working serial console and a tested watchdog recovery route before selecting the experimental domain-request path.
 A fault-tolerant peek handles synchronous traps; it cannot bound a bus transaction that never completes.
-Keep the ordinary observe-only DTB and a separately recoverable boot path.
+Keep an explicit observe-only recovery DTB and a separately recoverable boot path.
 
 ### Physical result: the staged ladder localizes the stop to GPU MMIO
 
@@ -322,9 +348,9 @@ sysctl hw.sun60igpuid0.result
 ```
 
 Save and sync a transcript before each stage. Check that no other test uses
-the watchdog. After a stall it resets the board into the normal DTB. This
-reset recovery was verified on 11 October 2026. No risky stage runs on reboot
-unless an operator separately installed an automatic test script.
+the watchdog. For diagnostic recovery, select an observe-only boot DTB before
+running these stages. The default Zero 3W DTB now starts the native firmware
+service at mountroot; it is not an observe-only recovery configuration.
 
 ### Optional dedicated PLL experiment
 

@@ -27,9 +27,9 @@
  */
 
 /*
- * Origin: EmberBSD; A733 GPU identification and explicit bootstrap diagnostics.
+ * Origin: EmberBSD; A733 GPU startup and explicit bootstrap diagnostics.
  * Hardware facts: Orange Pi BSP 2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f.
- * The explicit experimental binding may prepare GPU-local clocks and reset.
+ * Native startup uses PLL_GPU0 after root mount. Explicit diagnostics remain.
  */
 
 #include <sys/cdefs.h>
@@ -67,7 +67,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define A733_GPU_TOP		5
 #define A733_GPU_EXPECTED	UINT64_C(0x00240038006800b7)
 
-/* Runtime diagnostic stages, run one sysctl write at a time. */
+/* Shared native startup and explicit diagnostic stages. */
 #define A733_GPU_STAGE_SUPPLY	1
 #define A733_GPU_STAGE_TOP	2
 #define A733_GPU_STAGE_RESERVE_PCK	3
@@ -107,6 +107,8 @@ struct sun60i_gpu_softc {
 	struct drm_device *sc_render_device;
 	bool sc_render_pending;
 	bool sc_exec_ready;	/* successful stage 17 or completed stage 21 */
+	bool sc_diagnostic;	/* immutable before sysctl publication */
+	bool sc_start_attempted;	/* normal startup is single-use */
 	struct sun60i_a733_gpu_fwbridge sc_fwbridge;
 	u_int sc_core_hz, sc_bus_hz, sc_uvol;
 	u_int sc_clock_source;	/* runtime: 0 PERIPH0/400, 1 PLL_GPU0/600 */
@@ -302,13 +304,10 @@ sun60i_gpu_top_identify(struct sun60i_gpu_softc *sc, bus_addr_t addr,
 }
 
 /*
- * Runtime staged diagnostics.  The boot-time finalize path stays
- * property-gated and observe-only on normal DTBs; these stages re-run the
- * experiment pieces one explicit sysctl write at a time on a live system.
- * Each stage re-validates its own preconditions and prints to the log, so a
- * hardware watchdog armed in external-tickle mode bounds the whole
- * sequence: a stage that stalls the bus resets the board, and the invoking
- * transcript names the stalled stage.
+ * Shared startup stages. The native mountroot callback runs stages 1..17.
+ * Explicit diagnostics run one stage per sysctl write. Each stage checks
+ * its preconditions and prints to the log. A diagnostic caller can arm
+ * an external-tickle hardware watchdog to bound a stalled bus access.
  */
 static int
 sun60i_gpu_runtime_supply(struct sun60i_gpu_softc *sc)
@@ -1718,6 +1717,8 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 	}
 	case A733_GPU_STAGE_RETAIN:
 		error = sun60i_a733_pck_gpu_retain(power_node, sc);
+		if (error == 0)
+			sc->sc_retained = true;
 		break;
 	case A733_GPU_STAGE_PREPARE: {
 		struct clk *gpu = fdtbus_clock_get_index(sc->sc_phandle, 0);
@@ -1853,6 +1854,8 @@ sun60i_gpu_sysctl_clock_source(SYSCTLFN_ARGS)
 	error = sysctl_lookup(SYSCTLFN_CALL(&node));
 	if (error != 0 || newp == NULL)
 		return error;
+	if (!sc->sc_diagnostic)
+		return EBUSY;
 	return sun60i_gpu_clock_source(sc, value);
 }
 
@@ -1872,6 +1875,8 @@ sun60i_gpu_sysctl_stage(SYSCTLFN_ARGS)
 	error = sysctl_lookup(SYSCTLFN_CALL(&node));
 	if (error != 0 || newp == NULL)
 		return error;
+	if (!sc->sc_diagnostic)
+		return EBUSY;
 	/* No console output from this handler: printing under the sysctl
 	 * dispatch recurses into console/msgbuf locks and stalls the kernel. */
 	sun60i_gpu_run_stage(sc, value);
@@ -1976,6 +1981,8 @@ sun60i_gpu_sysctl_render_attach(SYSCTLFN_ARGS)
 	error = sysctl_lookup(SYSCTLFN_CALL(&node));
 	if (error != 0 || newp == NULL)
 		return error;
+	if (!sc->sc_diagnostic)
+		return EBUSY;
 	if (value != 1)
 		return EINVAL;
 	/* This parent has no hot detach. Its softc outlives the unlocked call. */
@@ -1985,7 +1992,7 @@ sun60i_gpu_sysctl_render_attach(SYSCTLFN_ARGS)
 	return error;
 }
 
-/* Adopt a completed diagnostic sequence. No job is started by this operation. */
+/* Adopt a completed startup sequence. No job is started by this operation. */
 static int
 sun60i_gpu_exec_attach(struct sun60i_gpu_softc *sc)
 {
@@ -2058,6 +2065,8 @@ sun60i_gpu_sysctl_exec_attach(SYSCTLFN_ARGS)
 	error = sysctl_lookup(SYSCTLFN_CALL(&node));
 	if (error != 0 || newp == NULL)
 		return error;
+	if (!sc->sc_diagnostic)
+		return EBUSY;
 	if (value != 1)
 		return EINVAL;
 	sysctl_unlock();
@@ -2206,23 +2215,25 @@ sun60i_gpu_sysctl_setup(struct sun60i_gpu_softc *sc)
 		aprint_error_dev(sc->sc_dev, "cannot create pbvnc node\n");
 }
 
+struct sun60i_gpu_binding {
+	bus_addr_t addr;
+	int power_node;
+	bool observe_only, prepare, request;
+};
+
+/* Validate the same binding before diagnostic or normal provider access. */
 static int
-sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
+sun60i_gpu_binding(struct sun60i_gpu_softc *sc,
+    struct sun60i_gpu_binding *binding)
 {
-	struct sun60i_a733_gpu_state clocks_state;
-	struct fdtbus_regulator *supply = NULL;
-	struct clk *gpu = NULL;
 	const uint32_t *pd, *clocks;
 	const char *name;
-	bus_space_handle_t bsh;
 	bus_addr_t addr;
 	bus_size_t size;
 	uint32_t cells;
-	uint64_t id;
 	int len, node, error, power_node;
-	bool enabled, observe_only, prepare, request;
-	bool power_reserved = false, clock_reserved = false;
-	sc->sc_have_id = false;
+	bool observe_only, prepare, request;
+
 	sc->sc_stage = "binding";
 	if (OF_getproplen(sc->sc_phandle, "netbsd,consumer-managed-power") != 0)
 		return EINVAL;
@@ -2246,7 +2257,8 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
 	if (error != 0)
 		return error;
-	if (addr != A733_GPU_BASE || size < A733_GPU_ID_SIZE)
+	if (addr != A733_GPU_BASE || size < A733_GPU_ID_SIZE ||
+	    (!observe_only && !prepare && size < A733_GPU_FWSTART_REG_SIZE))
 		return EINVAL;
 	pd = fdtbus_get_prop(sc->sc_phandle, "power-domains", &len);
 	if (pd == NULL || len != 2 * sizeof(*pd) ||
@@ -2272,6 +2284,37 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 	if (name == NULL || strcmp(name, "dcdc4") != 0 ||
 	    !of_compatible_match(OF_parent(OF_parent(node)), pmic_compat))
 		return EINVAL;
+
+	*binding = (struct sun60i_gpu_binding) {
+		.addr = addr, .power_node = power_node,
+		.observe_only = observe_only, .prepare = prepare, .request = request
+	};
+	return 0;
+}
+
+static int
+sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
+{
+	struct sun60i_a733_gpu_state clocks_state;
+	struct sun60i_gpu_binding binding;
+	struct fdtbus_regulator *supply = NULL;
+	struct clk *gpu = NULL;
+	bus_space_handle_t bsh;
+	bus_addr_t addr;
+	uint64_t id;
+	int error, power_node;
+	bool enabled, observe_only, prepare, request;
+	bool power_reserved = false, clock_reserved = false;
+
+	sc->sc_have_id = false;
+	error = sun60i_gpu_binding(sc, &binding);
+	if (error != 0)
+		return error;
+	addr = binding.addr;
+	power_node = binding.power_node;
+	observe_only = binding.observe_only;
+	prepare = binding.prepare;
+	request = binding.request;
 
 	sc->sc_stage = "supply provider";
 	supply = fdtbus_regulator_acquire(sc->sc_phandle, "gpu-supply");
@@ -2460,16 +2503,70 @@ out:
 	return error;
 }
 
+/* Root-mounted firmware loading completes before init(8) is released. */
+static void
+sun60i_gpu_start(device_t dev)
+{
+	struct sun60i_gpu_softc * const sc = device_private(dev);
+	u_int stage;
+	int error;
+
+	mutex_enter(&sc->sc_run_lock);
+	if (sc->sc_diagnostic || sc->sc_start_attempted) {
+		mutex_exit(&sc->sc_run_lock);
+		return;
+	}
+	sc->sc_start_attempted = true;
+	sc->sc_clock_source = 1;
+	mutex_exit(&sc->sc_run_lock);
+
+	/* Diagnostic writes are disabled for this entire device lifetime. */
+	for (stage = A733_GPU_STAGE_SUPPLY; stage <= A733_GPU_STAGE_FWCACHE;
+	    stage++) {
+		sun60i_gpu_run_stage(sc, stage);
+		error = sc->sc_run_result;
+		if (!sc->sc_run_pass || (error != 0 &&
+		    !(stage == A733_GPU_STAGE_REQUEST && error == ETIMEDOUT)))
+			goto out;
+	}
+	error = sun60i_gpu_render_attach(sc);
+	if (error == 0)
+		error = sun60i_gpu_exec_attach(sc);
+out:
+	mutex_enter(&sc->sc_run_lock);
+	sc->sc_run_result = error;
+	if (error != 0)
+		sc->sc_run_pass = false;
+	mutex_exit(&sc->sc_run_lock);
+	if (error != 0)
+		aprint_error_dev(dev, "startup failed after stage %u: %d; "
+		    "no retry until reboot\n", sc->sc_run_stage, error);
+	else
+		aprint_normal_dev(dev, "firmware service ready at 600 MHz\n");
+}
+
 static int
 sun60i_gpu_finalize(device_t dev)
 {
 	struct sun60i_gpu_softc * const sc = device_private(dev);
+	struct sun60i_gpu_binding binding;
 	int error;
 
 	/* Other finalizers may request another pass; never probe twice. */
 	if (sc->sc_probed)
 		return 0;
 	sc->sc_probed = true;
+	if (!sc->sc_diagnostic) {
+		error = sun60i_gpu_binding(sc, &binding);
+		if (error != 0) {
+			sc->sc_run_result = error;
+			sc->sc_run_pass = false;
+			aprint_error_dev(dev, "invalid GPU binding: %d\n", error);
+			return 0;
+		}
+		config_mountroot(dev, sun60i_gpu_start);
+		return 0;
+	}
 	error = sun60i_gpu_identify(sc);
 	if (sc->sc_have_id) {
 		aprint_normal_dev(dev, "PBVNC 0x%016llx: %u.%u.%u.%u%s\n",
@@ -2505,6 +2602,7 @@ sun60i_gpu_attach(device_t parent, device_t self, void *aux)
 {
 	struct sun60i_gpu_softc * const sc = device_private(self);
 	const struct fdt_attach_args *faa = aux;
+	struct sun60i_gpu_binding binding;
 	int error;
 
 	sc->sc_dev = self;
@@ -2513,15 +2611,21 @@ sun60i_gpu_attach(device_t parent, device_t self, void *aux)
 	sc->sc_dmat = faa->faa_dmat;
 	mutex_init(&sc->sc_run_lock, MUTEX_DEFAULT, IPL_NONE);
 	sc->sc_run_pass = true;
+	sc->sc_diagnostic = sun60i_gpu_binding(sc, &binding) == 0 &&
+	    (binding.observe_only || binding.prepare);
 	sun60i_gpu_instance = sc;
 	sun60i_gpu_sysctl_setup(sc);
 	aprint_naive("\n");
-	aprint_normal(": firmware-ready GPU identification only\n");
+	aprint_normal(": A733 GPU %s\n", sc->sc_diagnostic ?
+	    "diagnostics" : "native firmware service");
 	/* The FDT root scan can attach us after our /soc parent has returned. */
 	error = config_finalize_register(self, sun60i_gpu_finalize);
-	if (error != 0)
-		aprint_error_dev(self, "cannot register identification hook: %d\n",
-		    error);
+	if (error != 0) {
+		sc->sc_probed = true;
+		sc->sc_run_pass = false;
+		sc->sc_run_result = error;
+		aprint_error_dev(self, "cannot register GPU hook: %d\n", error);
+	}
 }
 
 CFATTACH_DECL_NEW(sun60i_a733_gpu, sizeof(struct sun60i_gpu_softc),

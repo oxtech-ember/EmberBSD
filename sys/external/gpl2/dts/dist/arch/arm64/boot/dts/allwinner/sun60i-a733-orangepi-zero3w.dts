@@ -75,6 +75,11 @@
 	};
 };
 
+/* Start the checked PLL600 firmware service after the root mount. */
+&gpu {
+	/delete-property/ netbsd,observe-only;
+};
+
 /* Attach diagnostics only. Runtime power and MMIO steps remain explicit. */
 &npu {
 	netbsd,consumer-managed-power;

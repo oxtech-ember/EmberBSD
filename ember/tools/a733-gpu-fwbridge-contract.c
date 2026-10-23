@@ -59,7 +59,7 @@ static struct sun60i_gpu_softc {
 	kmutex_t sc_run_lock;
 	struct sun60i_a733_gpu_fwbridge sc_fwbridge;
 	struct drm_device *sc_render_device;
-	bool sc_render_pending, sc_exec_ready;
+	bool sc_render_pending, sc_exec_ready, sc_retained;
 	bool sc_run_pass, sc_run_core_on, sc_have_id, sc_kick_done;
 	unsigned int sc_run_result, sc_run_stage, sc_clock_source;
 	unsigned int sc_core_hz, sc_bus_hz;

@@ -1527,6 +1527,73 @@ test_generic_rmw_fallback(void)
 #include "a733-display-memory-fixture.h"
 #include "a733-display-isolation-fixture.h"
 
+/* Exercise both native consumers against the same production CCU state.
+ * PCK calls use the existing strict boundary model in this fixture. */
+static void
+test_gpu_display_orders(void)
+{
+	static const bus_size_t shared[] = {
+		PLL_REF_CTRL_REG, PLL_PERIPH0_CTRL_REG,
+		PERI0PLL_GATE_EN_REG, PERI0PLL_GATE_STAT_REG,
+		AHB_CFG_REG, AHB_MASTER_GATE_REG, MBUS_MASTER_GATE_REG
+	};
+	const int gpu_owner = 79;
+	uint32_t saved[__arraycount(shared)];
+	uint32_t memory[2][A733_DISPLAY_NMEMORY_REGS];
+	uint32_t isolation[2][A733_DISPLAY_NISOLATION_REGS];
+	unsigned first = checks;
+	u_int core, bus;
+	bool retained;
+
+	for (unsigned gpu_first = 0; gpu_first <= 1; gpu_first++) {
+		display_memory_fixture();
+		pll_model = true;
+		REG(PLL_GPU0_CTRL_REG) = UINT32_C(0x41104500);
+		REG(PLL_GPU0_CTRL_REG + 12) = UINT32_C(0x30000000);
+		REG(GPUPLL_GATE_EN_REG) = UINT32_C(0xa5010001);
+		REG(GPU0_CLK_REG) = 0;
+		REG(GPU0_BGR_REG) = __BIT(7);
+		for (unsigned i = 0; i < __arraycount(shared); i++)
+			saved[i] = REG(shared[i]);
+		for (unsigned step = 0; step < 2; step++) {
+			retained = false;
+			if ((step == 0) == gpu_first) {
+				CHECK(sun60i_a733_ccu_gpu_reserve(
+				    CLOCK(A733_CLK_GPU0), &gpu_owner) == 0);
+				CHECK(sun60i_a733_ccu_gpu_prepare_pll(
+				    CLOCK(A733_CLK_GPU0), &gpu_owner, &retained) == 0);
+			} else {
+				CHECK(sun60i_a733_ccu_display_reserve(
+				    CLOCK(A733_CLK_DE0), 17, &display_cookie) == 0);
+				CHECK(sun60i_a733_ccu_display_memory_reserve(
+				    CLOCK(A733_CLK_DE0), &display_cookie) == 0);
+				CHECK(sun60i_a733_ccu_display_isolation_reserve(
+				    CLOCK(A733_CLK_DE0), &display_cookie) == 0);
+				CHECK(sun60i_a733_ccu_display_begin_de0(
+				    CLOCK(A733_CLK_DE0), &display_cookie, &retained) == 0);
+			}
+			CHECK(retained);
+			for (unsigned i = 0; i < __arraycount(shared); i++)
+				CHECK(REG(shared[i]) == saved[i]);
+		}
+		CHECK(sun60i_a733_ccu_gpu_ready(CLOCK(A733_CLK_GPU0),
+		    &core, &bus) == 0);
+		CHECK(core == 600000000 && bus == 200000000);
+		CHECK(sun60i_a733_ccu_display_ready(CLOCK(A733_CLK_DE0),
+		    &display_cookie) == 0);
+		CHECK(sun60i_a733_ccu_display_memory_state(CLOCK(A733_CLK_DE0),
+		    &display_cookie, memory) == 0);
+		CHECK(sun60i_a733_ccu_display_isolation_state(CLOCK(A733_CLK_DE0),
+		    &display_cookie, isolation) == 0);
+		CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0),
+		    &gpu_owner) == EBUSY);
+		CHECK(sun60i_a733_ccu_display_release(CLOCK(A733_CLK_DE0),
+		    &display_cookie) == EBUSY);
+	}
+	printf("A733 GPU/DISPLAY startup orders: %u checks passed\n",
+	    checks - first);
+}
+
 int
 main(void)
 {
@@ -1707,6 +1774,7 @@ main(void)
 	test_display_isolation();
 	test_gpu_update_completion();
 	test_gpu_prepare_pll();
+	test_gpu_display_orders();
 	printf("A733 accelerator clocks: %u production checks passed\n", checks);
 	return 0;
 }

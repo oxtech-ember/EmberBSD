@@ -25,7 +25,7 @@ struct drm_device { unsigned int identity; };
 struct sun60i_gpu_softc {
 	kmutex_t sc_run_lock;
 	struct drm_device *sc_render_device;
-	bool sc_render_pending, sc_have_id;
+	bool sc_render_pending, sc_have_id, sc_diagnostic;
 	uint64_t sc_bvnc;
 	void *sc_dev, *sc_dmat;
 	struct sun60i_a733_gpu_fwmem *sc_fw_memory;
@@ -183,6 +183,8 @@ main(void)
 	sun60i_gpu_instance = &sc;
 	sc.sc_dev = &sc;
 	sc.sc_dmat = &rendered;
+	CHECK(invoke(&value) == EBUSY && calls == 0);
+	sc.sc_diagnostic = true;
 	CHECK(invoke(NULL) == 0 && read_value == 0);
 	CHECK(invoke(&value) == ENODEV && calls == 0);
 	sc.sc_have_id = true;
