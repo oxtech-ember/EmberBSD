@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD native bwfm scan contract and portable host services. */
 /* Complete production bwfm scan adapter. Firmware channel decoding is modeled. */
 #include <sys/types.h>
 #include <assert.h>
@@ -11,7 +12,9 @@
 #include <net80211/ieee80211_beacon_ies.h>
 #define ETHER_ADDR_LEN 6
 #define IEEE80211_ADDR_COPY(a,b) memcpy(a,b,6)
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a)/sizeof((a)[0]))
+#endif
 #ifndef __UNCONST
 #define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
 #endif
@@ -20,14 +23,22 @@
 #define IEEE80211_F_SCAN 1
 #define IEEE80211_FC0_SUBTYPE_BEACON 0x80
 #define IEEE80211_FH_CHAN(a,b) (((a)-1)*80+(b))
-#define le16toh(x) (x)
-#define le32toh(x) (x)
 #define WPA_OUI_TYPE 1
 #define WPA_OUI 0xf25000
+#if defined(__NetBSD__)
+#include <sys/endian.h>
+#else
+#ifndef le16toh
+#define le16toh(x) le16dec(&(uint16_t){(x)})
+#endif
+#ifndef le32toh
+#define le32toh(x) le32dec(&(uint32_t){(x)})
+#endif
 static uint16_t le16dec(const void *p)
 { const uint8_t *b=p; return b[0]|(uint16_t)b[1]<<8; }
 static uint32_t le32dec(const void *p)
 { const uint8_t *b=p; return b[0]|(uint32_t)b[1]<<8|(uint32_t)b[2]<<16|(uint32_t)b[3]<<24; }
+#endif
 #include "bwfm-layouts.h"
 struct ieee80211com {
     int ic_phytype, ic_flags;

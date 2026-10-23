@@ -14,6 +14,8 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'ember/tools/ccmp*'
       - 'ember/tools/net80211-*'
       - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
+      - 'sys/dev/ic/bwfm.c'
+      - 'sys/dev/ic/bwfmreg.h'
       - 'sys/dev/ic/rtw88_net.c'
       - 'sys/dev/ic/rtw88.c'
       - 'sys/dev/ic/rtw88var.h'
@@ -52,6 +54,8 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'ember/tools/ccmp*'
       - 'ember/tools/net80211-*'
       - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
+      - 'sys/dev/ic/bwfm.c'
+      - 'sys/dev/ic/bwfmreg.h'
       - 'sys/dev/ic/rtw88_net.c'
       - 'sys/dev/ic/rtw88.c'
       - 'sys/dev/ic/rtw88var.h'
@@ -105,6 +109,8 @@ jobs:
             /sys/net/if.h
             /sys/net/if_ether.h
             /external/bsd/wpa/dist/src/drivers/driver_bsd.c
+            /sys/dev/ic/bwfm.c
+            /sys/dev/ic/bwfmreg.h
             /sys/dev/ic/rtw88_net.c
             /sys/dev/ic/rtw88.c
             /sys/dev/ic/rtw88var.h
@@ -156,6 +162,7 @@ jobs:
           SH
           chmod 755 "$RUNNER_TEMP/memcheck"
           export TEST_RUNNER="$RUNNER_TEMP/memcheck"
+          python3 ember/tools/net80211-beacon-ies-contract.py --work-dir "$RUNNER_TEMP" --cc gcc --cflags="$WME_TEST_CFLAGS"
           sh ember/tools/ccmp-contract.sh
           sh ember/tools/net80211-crypto-bounds-contract.sh
           sh ember/tools/net80211-amsdu-parser-contract.sh
@@ -179,6 +186,7 @@ jobs:
           MANUAL_SCAN_CFLAGS: -O0 -g -gdwarf-4
           MANUAL_SCAN_ANALYZE: '1'
         run: |
+          python3 ember/tools/net80211-beacon-ies-contract.py --work-dir "$RUNNER_TEMP" --cc gcc --cflags="$WME_TEST_CFLAGS"
           sh ember/tools/ccmp-contract.sh
           sh ember/tools/net80211-crypto-bounds-contract.sh
           sh ember/tools/net80211-amsdu-analysis.sh
@@ -187,6 +195,9 @@ jobs:
           sh ember/tools/net80211-txop-contract.sh
           sh ember/tools/net80211-wme-contract.sh
           sh ember/tools/net80211-rxba-contract.sh
+      - name: Analyze bounded beacon views
+        run: |
+          python3 ember/tools/net80211-beacon-ies-contract.py --work-dir "$RUNNER_TEMP" --cc gcc --analyze
       - name: Check actual sources under ASan and UBSan
         env:
           CC: gcc
@@ -199,6 +210,7 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
+          python3 ember/tools/net80211-beacon-ies-contract.py --work-dir "$RUNNER_TEMP" --cc gcc --cflags="$WME_TEST_CFLAGS"
           sh ember/tools/ccmp-contract.sh
           sh ember/tools/net80211-crypto-bounds-contract.sh
           sh ember/tools/net80211-amsdu-parser-contract.sh

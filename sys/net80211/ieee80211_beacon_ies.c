@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD bounded beacon views and switch-announcement contracts. */
 /* Original bounded IE views, AI-assisted. See docs/net80211-beacon-ies.md. */
 #include <sys/types.h>
 #include <sys/systm.h>
@@ -50,6 +51,18 @@ ieee80211_beacon_ies_parse(struct ieee80211_beacon_ies *ies,
 		case 6: /* IBSS Parameter Set */
 			break;
 		case 7: pending.country = ie; break;
+		case 37: /* Channel Switch Announcement: mode, channel, count. */
+			if (ie[1] != 3 || pending.csa != NULL ||
+			    ie[2] > 1 || ie[3] == 0)
+				return -1;
+			pending.csa = ie;
+			break;
+		case 60: /* Extended CSA adds an operating class. */
+			if (ie[1] != 4 || pending.xcsa != NULL ||
+			    ie[2] > 1 || ie[4] == 0)
+				return -1;
+			pending.xcsa = ie;
+			break;
 		case 42: /* ERP */
 			if (ie[1] == 1)
 				pending.erp = ie;

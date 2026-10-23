@@ -20,6 +20,14 @@ An error clears the entire result. No partially decoded pointers escape.
 Malformed HT/VHT observations clear only the PHY snapshot, as before.
 Complete unknown elements remain acceptable.
 
+CSA (element 37) has three payload bytes. Extended CSA (element 60) has four.
+Each element must be unique, use mode zero or one, and name a nonzero channel.
+Counts zero through 255 are accepted. The parser preserves both borrowed views
+when both forms occur. It does not resolve operating classes or tune a radio.
+A malformed or repeated switch element rejects the complete window.
+Consumers must handle parser failure before making a transmission decision.
+These views alone do not implement DFS client admission or channel switching.
+
 Most fields select the last matching element. Separate views retain admission:
 
 - `ssid` and `rates` select the last occurrence, even if too long.

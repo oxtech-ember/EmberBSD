@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD bounded beacon contracts and native-host header guards.
 """Build bounded beacon contracts. No kernel, firmware or radio is executed."""
 import argparse
 import os
@@ -58,7 +59,7 @@ def main():
         wire = (src / 'sys/net80211/ieee80211.h').read_text()
         node = (src / 'sys/net80211/ieee80211_node.h').read_text()
         reg = (src / 'sys/dev/ic/bwfmreg.h').read_text()
-        layouts = '#define IEEE80211_ADDR_LEN 6\n#define __packed __attribute__((packed))\n'
+        layouts = '#define IEEE80211_ADDR_LEN 6\n#ifndef __packed\n#define __packed __attribute__((packed))\n#endif\n'
         for text, pattern in ((wire, r'IEEE80211_ELEMID_\w+'), (reg, r'BWFM_(?:MAX_SSID_LEN|MCSSET_LEN)')):
             layouts += '\n'.join(re.findall(r'^#define\s+' + pattern + r'\s+[^\n]*', text, re.M)) + '\n'
         layouts += re.search(r'enum \{\s*IEEE80211_ELEMID_SSID.*?^};', wire, re.M | re.S).group() + '\n'
@@ -83,7 +84,8 @@ def main():
             command = [args.cc, *flags, source, *common, '-o', str(work / target)]
             print(shlex.join(command), flush=True)
             subprocess.run(command, check=True, env=env)
-            subprocess.run([str(work / target)], check=True, env=env)
+            runner = [env['TEST_RUNNER']] if env.get('TEST_RUNNER') else []
+            subprocess.run([*runner, str(work / target)], check=True, env=env)
             if args.analyze:
                 subprocess.run([args.cc, *flags, "-fanalyzer", "-c", source, "-o", str(work / (target + ".o"))], check=True, env=env)
         if args.analyze:

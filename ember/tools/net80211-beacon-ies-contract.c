@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD bounded beacon views and switch-announcement contracts. */
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -15,16 +16,71 @@ invalid(const uint8_t *p, size_t n)
 	CHECK(ieee80211_beacon_ies_parse(&ies, p, n) == -1);
 	CHECK(memcmp(&ies, &zero, sizeof(ies)) == 0);
 }
+/* A switch cannot be hidden by a later duplicate or malformed body. */
+static void
+switch_announcements(void)
+{
+	struct ieee80211_beacon_ies ies;
+	uint8_t csa[] = {37,3,1,64,0};
+	uint8_t xcsa[] = {60,4,0,118,64,255};
+	uint8_t pair[] = {37,3,1,64,2,60,4,1,118,64,2};
+	uint8_t duplicate[] = {37,3,1,64,2,37,3,1,64,1};
+
+	CHECK(ieee80211_beacon_ies_parse(&ies, csa, sizeof(csa)) == 0);
+	CHECK(ies.csa == csa && ies.xcsa == NULL && ies.unknown == 0);
+	CHECK(ieee80211_beacon_ies_parse(&ies, xcsa, sizeof(xcsa)) == 0);
+	CHECK(ies.xcsa == xcsa && ies.csa == NULL && ies.unknown == 0);
+	CHECK(ieee80211_beacon_ies_parse(&ies, pair, sizeof(pair)) == 0);
+	CHECK(ies.csa == pair && ies.xcsa == pair + 5);
+	invalid(duplicate, sizeof(duplicate));
+	/* Use complete Extended CSA IEs for its duplicate case. */
+	const uint8_t twice[] = {60,4,0,118,64,2,60,4,0,118,64,1};
+	invalid(twice, sizeof(twice));
+	for (unsigned id = 37; id <= 60; id += 23) {
+		uint8_t ie[257] = {0};
+		ie[0] = id;
+		ie[2] = 1;
+		ie[id == 37 ? 3 : 4] = 64;
+		for (unsigned len = 0; len <= 255; len++) {
+			if (len == (id == 37 ? 3 : 4))
+				continue;
+			ie[1] = len;
+			invalid(ie, len + 2);
+		}
+	}
+	for (unsigned mode = 0; mode <= 255; mode++) {
+		csa[2] = xcsa[2] = mode;
+		if (mode <= 1) {
+			CHECK(ieee80211_beacon_ies_parse(&ies, csa, sizeof(csa)) == 0);
+			CHECK(ieee80211_beacon_ies_parse(&ies, xcsa, sizeof(xcsa)) == 0);
+		} else {
+			invalid(csa, sizeof(csa));
+			invalid(xcsa, sizeof(xcsa));
+		}
+	}
+	csa[2] = xcsa[2] = 1;
+	csa[3] = xcsa[4] = 0;
+	invalid(csa, sizeof(csa));
+	invalid(xcsa, sizeof(xcsa));
+	/* Operating-class policy belongs to the consumer, not this decoder. */
+	xcsa[4] = 64;
+	xcsa[3] = 0;
+	CHECK(ieee80211_beacon_ies_parse(&ies, xcsa, sizeof(xcsa)) == 0);
+}
+
 int
 main(void)
 {
 	struct ieee80211_beacon_ies ies;
+	switch_announcements();
 	uint8_t ie[257] = {0};
 	CHECK(ieee80211_beacon_ies_parse(&ies, NULL, 0) == 0);
 	invalid(NULL, 1);
 	/* Every body length and truncated boundary, including lone headers. */
 	for (unsigned id = 0; id < 256; id++) {
 		ie[0] = id;
+		ie[2] = 1;
+		ie[id == 37 ? 3 : 4] = 64;
 		for (unsigned length = 0; length < 256; length++) {
 			ie[1] = length;
 			invalid(ie, 1);
