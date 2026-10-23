@@ -243,6 +243,60 @@ static void *enable_ht20_race_reader(void *cookie)
     } while(__atomic_load_n(&race->writers_done,__ATOMIC_ACQUIRE)<race->writers_expected);
     return NULL;
 }
+struct enable_ht20_delayed_publish {
+    struct rtw88_net *net;
+    struct ieee80211_ht20_profile profile;
+};
+static void *enable_ht20_publish_after_pause(void *cookie)
+{
+    struct enable_ht20_delayed_publish *arg=cookie;
+    rtw88_net_ht20_publish(arg->net,&arg->profile);
+    return NULL;
+}
+static void enable_ht20_withdrawal_race(struct rtw88_net *net)
+{
+    struct enable_ht20_delayed_publish arg={.net=net,
+        .profile={1,0xff,0xff,IEEE80211_HT20_READY_ALL,0x10}};
+    struct rtw88_net_ht20_snapshot snapshot;
+    pthread_t writer;
+    int error;
+    rtw88_net_ht20_publish(net,NULL);
+    enable_ht20_pause_generation=&net->ht20_generation;
+    __atomic_store_n(&enable_ht20_pause_entered,0,__ATOMIC_RELAXED);
+    __atomic_store_n(&enable_ht20_pause_release,0,__ATOMIC_RELAXED);
+    __atomic_store_n(&enable_ht20_pause_requested,1,__ATOMIC_RELEASE);
+    error=pthread_create(&writer,NULL,enable_ht20_publish_after_pause,&arg);
+    CHECK(error==0);
+    if(error!=0) {
+        enable_ht20_pause_generation=NULL;
+        __atomic_store_n(&enable_ht20_pause_requested,0,__ATOMIC_RELEASE);
+        return;
+    }
+    pthread_mutex_lock(&enable_ht20_pause_mutex);
+    while(!__atomic_load_n(&enable_ht20_pause_entered,__ATOMIC_ACQUIRE))
+        pthread_cond_wait(&enable_ht20_pause_cond,&enable_ht20_pause_mutex);
+    pthread_mutex_unlock(&enable_ht20_pause_mutex);
+    /* The profile writer owns an older generation but has not reached the
+     * snapshot CAS. A newer withdrawal must remain authoritative on resume. */
+    rtw88_net_ht20_publish(net,NULL);
+    CHECK(net->ic.ic_ht20_admit(&net->ic,&arg.profile)==EOPNOTSUPP);
+    pthread_mutex_lock(&enable_ht20_pause_mutex);
+    __atomic_store_n(&enable_ht20_pause_release,1,__ATOMIC_RELEASE);
+    pthread_cond_broadcast(&enable_ht20_pause_cond);
+    pthread_mutex_unlock(&enable_ht20_pause_mutex);
+    CHECK(pthread_join(writer,NULL)==0);
+    enable_ht20_pause_generation=NULL;
+    error=rtw88_net_ht20_snapshot_decode(
+        __atomic_load_n(&net->ht20_snapshot,__ATOMIC_ACQUIRE),&snapshot);
+    CHECK(error==0);
+    if(error==0) {
+        CHECK(snapshot.generation==__atomic_load_n(&net->ht20_generation,
+            __ATOMIC_ACQUIRE));
+        CHECK(snapshot.rx_mcs==0 && snapshot.tx_mcs==0 && snapshot.ready==0 &&
+            snapshot.ampdu==0);
+    }
+    CHECK(net->ic.ic_ht20_admit(&net->ic,&arg.profile)==EOPNOTSUPP);
+}
 static void enable_ht20_publication_race(struct rtw88_net *net)
 {
     struct enable_ht20_race race={.net=net,.writers_expected=2};
@@ -1174,6 +1228,7 @@ int RTW88_ENABLE_ENTRY(void)
     struct rtw88_net *net=enable_attach(&sc,&lock);
     if(!net)return 1;
     enable_ht20_publication_race(net);
+    enable_ht20_withdrawal_race(net);
     struct ieee80211com *ic=&net->ic;
     active_ic=ic;
     CHECK(ieee80211_send_mgmt(ic,ic->ic_bss,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);

@@ -75,7 +75,11 @@ for name,result in [('ieee80211_chan2ieee','unsigned'),('ieee80211_ieee2mhz','un
 (out/'enable-shared.inc').write_text('\n'.join(parts))
 bsd=read('sys/net80211/ieee80211_netbsd.c')
 parts=[net[:net.index('#include')], bsd[:bsd.index('#include')],
-       'static uint32_t enable_atomic_cas_32(volatile uint32_t *p,uint32_t o,uint32_t n) { uint32_t e=o; __atomic_compare_exchange_n(p,&e,n,0,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST); return e; }\n',
+       'static volatile uint32_t *enable_ht20_pause_generation;\n',
+       'static volatile unsigned enable_ht20_pause_requested, enable_ht20_pause_entered, enable_ht20_pause_release;\n',
+       'static pthread_mutex_t enable_ht20_pause_mutex = PTHREAD_MUTEX_INITIALIZER;\n',
+       'static pthread_cond_t enable_ht20_pause_cond = PTHREAD_COND_INITIALIZER;\n',
+       'static uint32_t enable_atomic_cas_32(volatile uint32_t *p,uint32_t o,uint32_t n) { uint32_t e=o; int updated=__atomic_compare_exchange_n(p,&e,n,0,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST); if (updated && p==enable_ht20_pause_generation && __atomic_exchange_n(&enable_ht20_pause_requested,0,__ATOMIC_ACQ_REL)) { pthread_mutex_lock(&enable_ht20_pause_mutex); __atomic_store_n(&enable_ht20_pause_entered,1,__ATOMIC_RELEASE); pthread_cond_broadcast(&enable_ht20_pause_cond); while (!__atomic_load_n(&enable_ht20_pause_release,__ATOMIC_ACQUIRE)) pthread_cond_wait(&enable_ht20_pause_cond,&enable_ht20_pause_mutex); pthread_mutex_unlock(&enable_ht20_pause_mutex); } return e; }\n',
        'static uint64_t enable_atomic_cas_64(volatile uint64_t *p,uint64_t o,uint64_t n) { uint64_t e=o; __atomic_compare_exchange_n(p,&e,n,0,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST); return e; }\n',
        '#define atomic_load_relaxed(p) __atomic_load_n((p), __ATOMIC_RELAXED)\n',
        '#define atomic_load_acquire(p) __atomic_load_n((p), __ATOMIC_ACQUIRE)\n',
