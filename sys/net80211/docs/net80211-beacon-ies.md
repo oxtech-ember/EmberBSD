@@ -19,6 +19,8 @@ FH needs five payload bytes, DS one, and TIM four.
 An error clears the entire result. No partially decoded pointers escape.
 Malformed HT/VHT observations clear only the PHY snapshot, as before.
 Complete unknown elements remain acceptable.
+Vendor fixed-field reads check both the declared payload and remaining window.
+WPA needs four payload bytes. WME classification needs six payload bytes.
 
 CSA (element 37) has three payload bytes. Extended CSA (element 60) has four.
 Each element must be unique, use mode zero or one, and name a nonzero channel.

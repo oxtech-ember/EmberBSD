@@ -101,11 +101,11 @@ ieee80211_beacon_ies_parse(struct ieee80211_beacon_ies *ies,
 				pending.extcap_bounded = ie;
 			break;
 		case 221: /* Microsoft WPA/WME OUI */
-			if (payload >= 4 && ie[2] == 0 && ie[3] == 0x50 &&
-			    ie[4] == 0xf2) {
+			if (left >= 6 && payload >= 4 && ie[2] == 0 &&
+			    ie[3] == 0x50 && ie[4] == 0xf2) {
 				if (ie[5] == 1)
 					pending.security = ie;
-				else if (ie[5] == 2 && payload >= 6 &&
+				else if (left >= 8 && payload >= 6 && ie[5] == 2 &&
 				    (ie[6] == 0 || ie[6] == 1)) {
 					if (pending.wme != NULL)
 						pending.wme_duplicate = 1;

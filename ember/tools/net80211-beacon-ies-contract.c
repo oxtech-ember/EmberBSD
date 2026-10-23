@@ -38,6 +38,41 @@ invalid(const uint8_t *p, size_t n)
 	CHECK(memcmp(&ies, &zero, sizeof(ies)) == 0);
 }
 static void
+vendor_window_ends(void)
+{
+	struct ieee80211_beacon_ies ies;
+	static const uint8_t wpa4[] = {221,4,0,0x50,0xf2,1};
+	static const uint8_t wpa5[] = {221,5,0,0x50,0xf2,1,0};
+	static const uint8_t wpa6[] = {221,6,0,0x50,0xf2,1,0,1};
+	static const uint8_t wme4[] = {221,4,0,0x50,0xf2,2};
+	static const uint8_t wme5[] = {221,5,0,0x50,0xf2,2,0};
+	static const uint8_t wme6[] = {221,6,0,0x50,0xf2,2,0,1};
+	static const struct {
+		const uint8_t *data;
+		size_t len;
+		unsigned security, wme;
+	} cases[] = {
+		{wpa4, sizeof(wpa4), 1, 0},
+		{wpa5, sizeof(wpa5), 1, 0},
+		{wpa6, sizeof(wpa6), 1, 0},
+		{wme4, sizeof(wme4), 0, 0},
+		{wme5, sizeof(wme5), 0, 0},
+		{wme6, sizeof(wme6), 0, 1}
+	};
+
+	/* Each physical array ends at its declared vendor payload boundary. */
+	for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		CHECK(ieee80211_beacon_ies_parse(&ies, cases[i].data,
+		    cases[i].len) == 0);
+		CHECK(ies.security == (cases[i].security ? cases[i].data : NULL));
+		CHECK(ies.wme == (cases[i].wme ? cases[i].data : NULL));
+		CHECK(ies.wme_duplicate == 0 && ies.unknown == 0);
+	}
+	/* A declared six-byte WME body cannot borrow bytes past the window. */
+	const uint8_t truncated[] = {221,6,0,0x50,0xf2,2,0};
+	invalid(truncated, sizeof(truncated));
+}
+static void
 quiet_announcements(void)
 {
 	struct ieee80211_beacon_ies ies;
@@ -111,6 +146,7 @@ int
 main(void)
 {
 	announcement_bodies();
+	vendor_window_ends();
 	quiet_announcements();
 	struct ieee80211_beacon_ies ies;
 	switch_announcements();
