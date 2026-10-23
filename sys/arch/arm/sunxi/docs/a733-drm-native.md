@@ -114,7 +114,8 @@ mode changes, automatic cold-start admission, and safe scanout stop remain
 separate contracts. HPD notification alone does not qualify these operations.
 The frontend accepts linear XRGB8888 at offset zero.
 It rejects scaling, rotation, alternate modes and noncontiguous imports.
-It rejects atomic disable, inactive CRTCs and DPMS off.
+It accepts a detached primary plane while the CRTC remains active.
+It rejects inactive CRTCs and DPMS off.
 These operations cannot claim to stop the native DE scanout.
 
 The commit path admits one job through its complete cleanup.
@@ -261,3 +262,18 @@ polling starts after registration and enables both connection edges.
 Cppcheck uses the recorded compilation database with `--inline-suppr`.
 One fixture annotation preserves the mutable client parameter of the real
 registry lookup. The read-only production HPD callback takes a const context.
+
+## Plane disable and framebuffer retirement
+
+An atomic plane detach sets both its framebuffer and CRTC pointers to NULL.
+The active CRTC keeps its admitted timing and connector. The worker submits an
+immutable RCQ list that disables OVL layer zero and selects the BLD background
+fill. This list has no pixel map and allocates no replacement framebuffer.
+The DMA allocator shares its queue preparation with normal frame submissions.
+
+The existing DE update path verifies every copied register and observes two
+fresh vblanks before it retires the old pixel map and signals its READ fence.
+A failed or uncertain list attempt retains both old pixels and the new queue.
+A later normal frame replaces the disabled list through the same proof.
+The timing engine and resource leases stay active. This is plane disable,
+not full output stop, DPMS off, detach, or permission to release hardware claims.

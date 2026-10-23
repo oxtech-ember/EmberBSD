@@ -22,7 +22,7 @@ struct sun60i_a733_de352_dma {
 	struct sun60i_a733_de352_buffer pixels, queue;
 	struct sun60i_a733_de352_rgb_words layer;
 	uint32_t width, height, pitch;
-	bool synchronized, published, external_pixels;
+	bool synchronized, published, external_pixels, disabled;
 };
 
 /*
@@ -41,8 +41,11 @@ int sun60i_a733_de352_dma_prepare(bus_dma_tag_t, uint32_t, uint32_t,
  */
 int sun60i_a733_de352_dma_prepare_map(bus_dma_tag_t, bus_dmamap_t, size_t,
     uint32_t, uint32_t, uint32_t, struct sun60i_a733_de352_dma **);
+/* Build an immutable disabled OVL / BLD background list, without pixel DMA. */
+int sun60i_a733_de352_dma_prepare_disabled(bus_dma_tag_t,
+    struct sun60i_a733_de352_dma **);
 /*
- * The native coordinator may retire an external frame only after a later
+ * The native coordinator may retire an external frame or disabled list only after a later
  * accepted RCQ list and two fresh TV0 observations. This function does not
  * establish that proof. It releases only the owned queue and child tag.
  */

@@ -264,6 +264,27 @@ int main(void)
 	CHECK(sun60i_a733_de352_dma_retire(m) == 0);
 	CHECK(posts == 2 && memcmp(&external, &original, sizeof(external)) == 0);
 	reset();
+	/* A disabled list references queue memory only, never pixel storage. */
+	CHECK(sun60i_a733_de352_dma_prepare_disabled(NULL, &m) == EINVAL);
+	CHECK(sun60i_a733_de352_dma_prepare_disabled((void *)2, NULL) == EINVAL);
+	CHECK(sun60i_a733_de352_dma_prepare_disabled((void *)2, &m) == 0);
+	CHECK(m->disabled && m->pixels.map == NULL && !m->pixels.loaded);
+	CHECK(m->layer.attribute == 0 && m->layer.address_low == 0);
+	CHECK(get32((uint8_t *)m->queue.cpu + 32) == 0);
+	CHECK(get32((uint8_t *)m->queue.cpu + 64) == 0x101);
+	CHECK(allocations == 1 && loads == 1 && syncs == 0);
+	CHECK(sun60i_a733_de352_dma_publish(m) == 0 && syncs == 1);
+	published_seen = true;
+	CHECK(sun60i_a733_de352_dma_destroy(m) == EBUSY);
+	CHECK(sun60i_a733_de352_dma_retire(m) == 0 && posts == 1);
+	reset();
+	for (int i = 1; i <= 5; i++) {
+		fail_call = i;
+		m = (void *)(uintptr_t)1;
+		CHECK(sun60i_a733_de352_dma_prepare_disabled((void *)2, &m) == EIO);
+		CHECK(m == (void *)(uintptr_t)1);
+		reset();
+	}
 	printf("A733 DE3.52 native DMA: %u checks passed\n",checks);
 	return 0;
 }

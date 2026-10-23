@@ -1035,7 +1035,7 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 			return error != 0 ? error : EIO;
 	}
 	error = de352_read(sc, 0x281000, &value);
-	return error != 0 ? error : value == 0x100 ? 0 : EIO;
+	return error != 0 ? error : value == (dma->disabled ? 0x101 : 0x100) ? 0 : EIO;
 }
 
 static int
@@ -1716,8 +1716,8 @@ de352_frame_drop(struct de352_frame *frame, bool retired)
 		frame->info.release(frame->info.cookie);
 }
 
-int
-sun60i_a733_de352_submit(struct sun60i_a733_de352_client *client,
+static int
+de352_update(struct sun60i_a733_de352_client *client,
     const struct sun60i_a733_de352_frame *frame,
     struct sun60i_a733_de352_completion *out)
 {
@@ -1727,18 +1727,20 @@ sun60i_a733_de352_submit(struct sun60i_a733_de352_client *client,
 	struct sun60i_de352_softc *sc;
 	int error;
 
-	if (client == NULL || frame == NULL || out == NULL ||
-	    frame->retain == NULL || frame->release == NULL || frame->map == NULL)
+	if (client == NULL || out == NULL ||
+	    (frame != NULL && (frame->retain == NULL ||
+	    frame->release == NULL || frame->map == NULL)))
 		return EINVAL;
 	sc = de352_lookup(0, client);
 	if (sc == NULL)
 		return EINVAL;
-	next.info = *frame;
+	if (frame != NULL)
+		next.info = *frame;
 	mutex_enter(&sc->lock);
 	error = de352_state_locked(sc, &state);
 	if (error == 0 && (client->owner == NULL || client->busy))
 		error = EBUSY;
-	if (error == 0 && (next.info.dmat != state.dmat ||
+	if (error == 0 && frame != NULL && (next.info.dmat != state.dmat ||
 	    next.info.width != state.mode.hdisplay ||
 	    next.info.height != state.mode.vdisplay))
 		error = EINVAL;
@@ -1750,13 +1752,14 @@ sun60i_a733_de352_submit(struct sun60i_a733_de352_client *client,
 	mutex_exit(&sc->lock);
 
 	/* Both callbacks, allocation and producer lifetime are outside our lock. */
-	error = next.info.retain(next.info.cookie);
-	if (error == 0) {
+	error = frame != NULL ? next.info.retain(next.info.cookie) : 0;
+	if (error == 0 && frame != NULL) {
 		next.held = true;
 		error = sun60i_a733_de352_dma_prepare_map(state.dmat, next.info.map,
 		    next.info.bytes, next.info.width, next.info.height,
 		    next.info.pitch, &next.dma);
-	}
+	} else if (frame == NULL)
+		error = sun60i_a733_de352_dma_prepare_disabled(state.dmat, &next.dma);
 	mutex_enter(&sc->lock);
 	if (error == 0) {
 		error = de352_replace_ready(sc);
@@ -1791,4 +1794,21 @@ sun60i_a733_de352_submit(struct sun60i_a733_de352_client *client,
 	if (retired.dma != NULL)
 		de352_frame_drop(&retired, true);
 	return error;
+}
+
+int
+sun60i_a733_de352_submit(struct sun60i_a733_de352_client *client,
+    const struct sun60i_a733_de352_frame *frame,
+    struct sun60i_a733_de352_completion *out)
+{
+	if (frame == NULL)
+		return EINVAL;
+	return de352_update(client, frame, out);
+}
+
+int
+sun60i_a733_de352_disable_plane(struct sun60i_a733_de352_client *client,
+    struct sun60i_a733_de352_completion *out)
+{
+	return de352_update(client, NULL, out);
 }

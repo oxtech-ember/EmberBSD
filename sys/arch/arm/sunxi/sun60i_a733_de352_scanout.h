@@ -75,4 +75,9 @@ int sun60i_a733_de352_submit(struct sun60i_a733_de352_client *,
 /* Sleepable HPD query. It does not retire a frame or latch a display fault. */
 int sun60i_a733_de352_detect(struct sun60i_a733_de352_client *, bool *);
 
+/* Retire pixel DMA through a disabled OVL and hardware background fill.
+ * The timing engine stays active. Failure retains every attempted list. */
+int sun60i_a733_de352_disable_plane(struct sun60i_a733_de352_client *,
+    struct sun60i_a733_de352_completion *);
+
 #endif

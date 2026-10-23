@@ -348,3 +348,19 @@ one output sample. It does this before it latches the output fault.
 These reads add no register write and do not change the write order.
 A timeout record identifies the wait that expired. It does not identify
 the cause of that timeout.
+
+## Disabled primary plane
+
+`sun60i_a733_de352_disable_plane` uses the same retained client, queue update,
+readback, and two-vblank retirement path as a normal frame. Its immutable list
+sets the seven owned OVL words to zero. It sets BLD control to 0x101: pipe zero
+stays enabled and uses its configured background fill instead of channel data.
+This maintains timing output without fetching a pixel buffer. A later frame
+restores the normal 0x100 BLD control through an accepted queue replacement.
+
+The pinned BSP `lowlevel_de/bld/de_bld_type.h` defines pipe0_fcolor_en at bit 0
+and pipe0_en at bit 8. These register facts do not import GPL implementation.
+The initial native configuration already sets the pipe fill and output
+background colors to zero. The disabled queue owns only its DMA list, and its
+publication/retirement synchronizes only that list. Uncertain completion does
+not release it or the previous frame. Full engine stop remains separate.

@@ -124,7 +124,8 @@ de352_queue_encode(struct sun60i_a733_de352_dma *m)
 	for (u_int i = 0; i < __arraycount(words); i++)
 		de352_put32(p + i * 4, words[i]);
 	/* The native submitter must first establish exclusive pipe ownership. */
-	de352_put32((uint8_t *)m->queue.cpu + DE352_DMA_BLEND_OFFSET, 0x100);
+	de352_put32((uint8_t *)m->queue.cpu + DE352_DMA_BLEND_OFFSET,
+	    m->disabled ? 0x101 : 0x100);
 	block = (struct sun60i_a733_de352_rcq_block) {
 		.dma = m->queue.address + DE352_DMA_LAYER_OFFSET,
 		.bytes = sizeof(words), .destination = 0x1c1000, .dirty = true
@@ -211,12 +212,13 @@ fail:
 int
 sun60i_a733_de352_dma_publish(struct sun60i_a733_de352_dma *m)
 {
-	if (m == NULL || !m->pixels.loaded || !m->queue.loaded)
+	if (m == NULL || (!m->disabled && !m->pixels.loaded) || !m->queue.loaded)
 		return EINVAL;
 	if (m->published)
 		return EBUSY;
-	bus_dmamap_sync(m->pixel_tag, m->pixels.map, 0, m->pixels.bytes,
-	    BUS_DMASYNC_PREWRITE);
+	if (!m->disabled)
+		bus_dmamap_sync(m->pixel_tag, m->pixels.map, 0, m->pixels.bytes,
+		    BUS_DMASYNC_PREWRITE);
 	bus_dmamap_sync(m->tag, m->queue.map, 0, m->queue.bytes,
 	    BUS_DMASYNC_PREWRITE);
 	m->synchronized = true;
@@ -225,32 +227,36 @@ sun60i_a733_de352_dma_publish(struct sun60i_a733_de352_dma *m)
 	return 0;
 }
 
-int
-sun60i_a733_de352_dma_prepare_map(bus_dma_tag_t parent, bus_dmamap_t map,
-    size_t bytes, uint32_t width, uint32_t height, uint32_t pitch,
+static int
+de352_dma_prepare_map(bus_dma_tag_t parent, bus_dmamap_t map,
+    size_t bytes, uint32_t width, uint32_t height, uint32_t pitch, bool disabled,
     struct sun60i_a733_de352_dma **out)
 {
 	struct sun60i_a733_de352_dma *m;
-	struct sun60i_a733_de352_rgb_words words;
+	struct sun60i_a733_de352_rgb_words words = { 0 };
 	struct sun60i_a733_de352_rgb rgb;
-	uint64_t address;
+	uint64_t address = 0;
 	int error;
 
-	if (parent == NULL || map == NULL || out == NULL || bytes == 0 ||
-	    width == 0 || width > 1920 || height == 0 || height > 1080 ||
-	    map->dm_nsegs != 1 || bytes > map->dm_mapsize ||
-	    bytes > map->dm_segs[0].ds_len)
+	if (parent == NULL || out == NULL)
 		return EINVAL;
-	address = map->dm_segs[0].ds_addr;
-	if (address >= DE352_DMA_LIMIT || bytes > DE352_DMA_LIMIT - address)
-		return ERANGE;
-	rgb = (struct sun60i_a733_de352_rgb) {
-		.width = width, .height = height, .pitch = pitch,
-		.dma = address, .mapped_bytes = bytes
-	};
-	error = sun60i_a733_de352_rgb_encode(&rgb, &words);
-	if (error != 0)
-		return error;
+	if (!disabled) {
+		if (map == NULL || bytes == 0 ||
+		    width == 0 || width > 1920 || height == 0 || height > 1080 ||
+		    map->dm_nsegs != 1 || bytes > map->dm_mapsize ||
+		    bytes > map->dm_segs[0].ds_len)
+			return EINVAL;
+		address = map->dm_segs[0].ds_addr;
+		if (address >= DE352_DMA_LIMIT || bytes > DE352_DMA_LIMIT - address)
+			return ERANGE;
+		rgb = (struct sun60i_a733_de352_rgb) {
+			.width = width, .height = height, .pitch = pitch,
+			.dma = address, .mapped_bytes = bytes
+		};
+		error = sun60i_a733_de352_rgb_encode(&rgb, &words);
+		if (error != 0)
+			return error;
+	}
 	m = kmem_zalloc(sizeof(*m), KM_NOSLEEP);
 	if (m == NULL)
 		return ENOMEM;
@@ -261,11 +267,12 @@ sun60i_a733_de352_dma_prepare_map(bus_dma_tag_t parent, bus_dmamap_t map,
 		return error;
 	}
 	m->external_pixels = true;
+	m->disabled = disabled;
 	m->pixel_tag = parent;
 	m->pixels.map = map;
 	m->pixels.bytes = bytes;
 	m->pixels.address = address;
-	m->pixels.loaded = true;
+	m->pixels.loaded = !disabled;
 	m->width = width;
 	m->height = height;
 	m->pitch = pitch;
@@ -275,7 +282,7 @@ sun60i_a733_de352_dma_prepare_map(bus_dma_tag_t parent, bus_dmamap_t map,
 	    &m->queue);
 	if (error != 0)
 		goto fail;
-	if (address < m->queue.address + m->queue.bytes &&
+	if (!disabled && address < m->queue.address + m->queue.bytes &&
 	    m->queue.address < address + bytes) {
 		error = EEXIST;
 		goto fail;
@@ -291,13 +298,30 @@ fail:
 }
 
 int
+sun60i_a733_de352_dma_prepare_map(bus_dma_tag_t parent, bus_dmamap_t map,
+    size_t bytes, uint32_t width, uint32_t height, uint32_t pitch,
+    struct sun60i_a733_de352_dma **out)
+{
+	return de352_dma_prepare_map(parent, map, bytes, width, height, pitch,
+	    false, out);
+}
+
+int
+sun60i_a733_de352_dma_prepare_disabled(bus_dma_tag_t parent,
+    struct sun60i_a733_de352_dma **out)
+{
+	return de352_dma_prepare_map(parent, NULL, 0, 0, 0, 0, true, out);
+}
+
+int
 sun60i_a733_de352_dma_retire(struct sun60i_a733_de352_dma *m)
 {
 	if (m == NULL || !m->external_pixels || !m->published || !m->synchronized)
 		return EINVAL;
 	/* The native coordinator owns the completion proof and pixel lifetime. */
-	bus_dmamap_sync(m->pixel_tag, m->pixels.map, 0, m->pixels.bytes,
-	    BUS_DMASYNC_POSTWRITE);
+	if (!m->disabled)
+		bus_dmamap_sync(m->pixel_tag, m->pixels.map, 0, m->pixels.bytes,
+		    BUS_DMASYNC_POSTWRITE);
 	bus_dmamap_sync(m->tag, m->queue.map, 0, m->queue.bytes,
 	    BUS_DMASYNC_POSTWRITE);
 	m->published = false;

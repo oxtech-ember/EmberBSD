@@ -469,6 +469,42 @@ static void scanout_checks(void)
  }
 }
 static void
+plane_disable_checks(void)
+{
+ struct sun60i_de352_softc sc;
+ struct sun60i_a733_de352_state state;
+ struct sun60i_a733_de352_client *client;
+ struct sun60i_a733_de352_completion done, saved;
+ struct frame_fixture f;
+ struct sun60i_a733_de352_frame frame;
+ for (unsigned failure=0; failure<4; failure++) {
+  init(&sc);de352_provider=&sc;CHECK(de352_run(&sc)==0);sc.stage=1;
+  CHECK(sun60i_a733_de352_get_state(1,&state)==0);
+  CHECK(sun60i_a733_de352_acquire(1,&sc,&client)==0);
+  frame=frame_input(&f,state.dmat,0x20000000);
+  CHECK(sun60i_a733_de352_submit(client,&frame,&done)==0);
+  saved=done;
+  if(failure==1)write_fault=0x8114;
+  if(failure==2)no_vblank=true;
+  if(failure==3)corrupt_copy_reg=0x1c1000;
+  int error=sun60i_a733_de352_disable_plane(client,&done);
+  if(failure) {
+   CHECK(error!=0&&f.held==1&&f.drops==0&&posts==0);
+   CHECK(memcmp(&done,&saved,sizeof(done))==0);
+   CHECK(sc.pending.dma&&sc.pending.dma->published&&sc.pending.dma->disabled);
+  } else {
+   CHECK(error==0&&f.held==0&&f.drops==1&&posts==2);
+   CHECK(sc.active.dma->disabled&&!sc.active.held);
+   CHECK(de[0x1c1000/4]==0&&de[0x281000/4]==0x101);
+   CHECK(done.observed_sequence>=saved.observed_sequence+2);
+   CHECK(sun60i_a733_de352_submit(client,&frame,&done)==0);
+   CHECK(f.held==1&&f.drops==1&&!sc.active.dma->disabled);
+   CHECK(de[0x281000/4]==0x100&&posts==3);
+  }
+  reboot_fixture(&sc);
+ }
+}
+static void
 managed_init(struct sun60i_de352_softc *sc)
 {
  init(sc);iommu[0x10/4]=0x20;iommu[0x804/4]=0;
@@ -820,6 +856,6 @@ int main(void)
  init(&sc);read_fault_region=3;read_fault_reg=0x414;CHECK(de352_run(&sc)==EIO&&sc.memory.valid==1&&sc.memory.iommu[0][0]==0&&sc.memory.nsi[0][0]==0);
  init(&sc);struct sysctlnode n={&sc.stage,sizeof(sc.stage)};u_int stage=2;CHECK(de352_sysctl(&n,&stage)==EINVAL&&writes==0);stage=1;CHECK(de352_sysctl(&n,&stage)==0&&sc.result==0);CHECK(de352_sysctl(&n,&stage)==EBUSY&&sc.result==0);reboot_fixture(&sc);
  managed_checks();
- scanout_checks();
+ scanout_checks();plane_disable_checks();
  printf("A733 DE3.52 native coordinator: %u checks passed\n",checks);return 0;
 }

@@ -184,6 +184,15 @@ static struct drm_crtc_state *drm_atomic_get_new_crtc_state(struct drm_atomic_st
 	CHECK(p == &current->crtc);
 	return &s->crtc;
 }
+static unsigned disabled;
+static int sun60i_a733_de352_disable_plane(void *client,
+    struct sun60i_a733_de352_completion *done)
+{
+ CHECK(client==current->client&&!current->lock&&!modeset_lock);
+ disabled++;
+ done->observed_sequence=17; done->observed_time_ns=123456789000;
+ return submit_error;
+}
 static int
 sun60i_a733_drm_frame_submit(void *client, const struct sun60i_a733_de352_state *native, struct drm_gem_cma_object *object, const struct sun60i_a733_drm_frame *f, struct sun60i_a733_de352_completion *done)
 {
@@ -555,6 +564,17 @@ main(void)
 		CHECK(heap_freed && !pending && !sc.busy);
 		CHECK(!allocations && !completions && state_puts == 1);
 		CHECK(object.refs == 2 && retained_reads == 1);
+	}
+	for (unsigned failure=0; failure<2; failure++) {
+		reset(&sc,&dev,&state,&fb,&object);
+		state.plane.fb=NULL;state.plane.crtc=NULL;
+		CHECK(a733_drm_atomic_check(&dev,&state)==0);
+		disabled=0;submit_error=failure?EIO:0;
+		CHECK(a733_drm_atomic_commit(&dev,&state,true)==0);
+		run_worker();
+		CHECK(disabled==1&&submitted==0&&retained_reads==0&&waits==0);
+		CHECK(!sc.busy&&cleanup_done==1&&state_puts==1);
+		CHECK(sc.fault==(failure?EIO:0));
 	}
 	printf("PASS %u bounded worker and atomic admission checks\n", checks);
 	return 0;
