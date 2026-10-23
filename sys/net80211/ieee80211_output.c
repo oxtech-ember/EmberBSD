@@ -1484,6 +1484,13 @@ ieee80211_send_probereq(struct ieee80211_node *ni,
 	struct ieee80211_frame *wh;
 	struct mbuf *m;
 	u_int8_t *frm;
+	int error;
+
+	if (ic->ic_scan_probe_admit != NULL) {
+		error = ic->ic_scan_probe_admit(ic);
+		if (error != 0)
+			return error;
+	}
 
 	if (ieee80211_ht20_optional(optie, optielen) != 0)
 		return EINVAL;

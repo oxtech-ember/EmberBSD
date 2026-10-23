@@ -130,6 +130,7 @@ struct ifnet {
 	void *if_softc;
 	int if_timer, if_flags;
 	unsigned if_mtu;
+	uint8_t if_broadcastaddr[6];
 };
 struct queue {
 	struct mbuf *m;
@@ -141,6 +142,7 @@ struct ieee80211_node_table {
 };
 struct ieee80211com {
 	void (*ic_sta_quiet)(struct ieee80211com *);
+	int (*ic_scan_probe_admit)(struct ieee80211com *);
 	struct ieee80211_key ic_nw_keys[4];
 	unsigned ic_def_txkey;
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
@@ -162,6 +164,8 @@ struct ieee80211com {
 	uint8_t ic_chan_active[32];
 	struct ieee80211_channel ic_channels[256];
 	uint8_t ic_myaddr[6];
+	uint8_t ic_des_essid[32];
+	unsigned ic_des_esslen;
 	uint8_t *ic_opt_ie;
 	unsigned ic_opt_ie_len;
 	struct queue ic_mgtq;
@@ -460,12 +464,7 @@ ieee80211_update_adhoc_node(struct ieee80211com *ic, struct ieee80211_node *ni,
 	(void)rssi;
 	(void)stamp;
 }
-static void
-ieee80211_probe_curchan(struct ieee80211com *ic, int force)
-{
-	(void)ic;
-	(void)force;
-}
+static void ieee80211_probe_curchan(struct ieee80211com *, int);
 int
 ieee80211_phy_ies_parse(struct ieee80211_phy_ies *ies, const uint8_t *p,
 			size_t n)
@@ -1592,9 +1591,63 @@ test_apply_transaction(void)
 			     sizeof(saved)) == 0);
 	}
 }
+
+static unsigned probe_policy_calls;
+static int probe_policy_error;
+static int
+probe_policy(struct ieee80211com *ic)
+{
+    CHECK(ic==&test_ic);probe_policy_calls++;
+    return probe_policy_error;
+}
+static void
+test_scan_probe_policy(void)
+{
+    for(unsigned path=0;path<4;path++) {
+        setup();test_channel.ic_flags=IEEE80211_CHAN_PASSIVE;
+        test_ic.ic_scan_probe_admit=probe_policy;
+        probe_policy_calls=0;probe_policy_error=EACCES;
+        unsigned allocated=allocations,refs=node_refs;
+        if(path==0) {
+            CHECK(ieee80211_send_probereq(&test_node,test_ic.ic_myaddr,
+                test_node.ni_bssid,test_node.ni_bssid,test_ic.ic_des_essid,0,NULL,0)==EACCES);
+        } else if(path==1)ieee80211_probe_curchan(&test_ic,1);
+        else if(path==2) {
+            ieee80211_probe_curchan(&test_ic,0);
+            CHECK(test_ic.ic_flags_ext&IEEE80211_FEXT_PROBECHAN);
+            CHECK(probe_policy_calls==0);
+            ieee80211_probe_curchan(&test_ic,1);
+        } else {
+            test_ic.ic_flags|=IEEE80211_F_SCAN;
+            test_ic.ic_flags_ext|=IEEE80211_FEXT_PROBECHAN;
+            deliver_beacon(beacon(0));
+        }
+        CHECK(probe_policy_calls==1 && captured==NULL && node_refs==refs);
+        /* The beacon input itself owns a test mbuf. Probe refusal allocates none. */
+        if(path!=3)CHECK(allocations==allocated);
+        CHECK(test_ic.ic_mgtq.ifq_len==0);
+    }
+    setup();test_channel.ic_flags=IEEE80211_CHAN_PASSIVE;
+    test_ic.ic_scan_probe_admit=probe_policy;
+    probe_policy_calls=0;probe_policy_error=EIO;
+    CHECK(ieee80211_send_probereq(&test_node,test_ic.ic_myaddr,
+        test_node.ni_bssid,test_node.ni_bssid,test_ic.ic_des_essid,0,NULL,0)==EIO);
+    CHECK(probe_policy_calls==1 && captured==NULL && node_refs==1);
+    release_capture();
+    probe_policy_error=0;
+    ieee80211_probe_curchan(&test_ic,1);
+    CHECK(probe_policy_calls==2 && captured!=NULL);
+    release_capture();
+    test_ic.ic_scan_probe_admit=NULL;
+    ieee80211_probe_curchan(&test_ic,1);
+    CHECK(captured!=NULL && probe_policy_calls==2);
+    release_capture();test_channel.ic_flags=0;
+}
+
 int
 main(void)
 {
+	test_scan_probe_policy();
 	test_csa_beacon_stop();
 	test_strict_complete_views();
 	test_strict_ioctl_reject();

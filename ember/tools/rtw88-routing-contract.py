@@ -20,6 +20,7 @@ fixture, replaced = re.subn(r'^struct ifnet \{.*?^\};\nstruct queue \{.*?^\};', 
 struct ifnet {
     int if_timer, if_flags;
     unsigned if_mtu;
+    uint8_t if_broadcastaddr[6];
     void *if_softc;
     struct queue if_snd;
 };""", fixture, count=1, flags=re.M|re.S)

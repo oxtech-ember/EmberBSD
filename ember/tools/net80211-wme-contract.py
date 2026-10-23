@@ -111,6 +111,8 @@ for name, result in (("ieee80211_crypto_getucastkey", "struct ieee80211_key *"),
         parts.append(function(output, "ieee80211_wme_request_offer", "static int"))
         parts.append(function(output, "ieee80211_ht20_request_offer", "static int"))
     parts.append(function(output, name, result))
+parts.append(re.search(r"^#define\s+IEEE80211_CHAN_PASSIVE\s+.*$", read("sys/net80211/_ieee80211.h"), re.M).group())
+parts.append(function(node, "ieee80211_probe_curchan", "static void"))
 parts.append("#define ISREASSOC(st) ((st) == IEEE80211_FC0_SUBTYPE_REASSOC_RESP)\n")
 parts.append(function(ipt, "ieee80211_recv_mgmt_assoc_resp", "static void"))
 parts.append(function("sys/net80211/ieee80211_beacon_ies.c", "ieee80211_beacon_ies_parse", "int"))

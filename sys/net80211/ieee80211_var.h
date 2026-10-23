@@ -100,6 +100,9 @@ struct ieee80211com {
 	/* Optional STA stop: close all TX synchronously under Giant, without a
 	 * driver lock. Must not sleep. Called before the shared INIT request. */
 	void (*ic_sta_quiet)(struct ieee80211com *);
+	/* Optional pure probe policy under Giant. Return zero to permit a probe.
+	 * Checked before allocation for both direct and forced scan callers. */
+	int (*ic_scan_probe_admit)(struct ieee80211com *);
 	/* Optional qualified HT20 provider; NULL means legacy only. */
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
