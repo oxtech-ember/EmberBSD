@@ -28,7 +28,7 @@ ht20_snapshot_writer(void *arg)
 	for (i = 1; i <= 200000; i++) {
 		p.generation = i;
 		p.rx_mcs = p.tx_mcs = i & 0xff;
-		p.ready = i & 0x3f;
+		p.ready = i & RTW88_NET_HT20_READY_ALL;
 		p.ampdu = (i & 7) << 2;
 		if (rtw88_net_ht20_snapshot_encode(&p, &word) != 0) {
 			race->writer_failures++;
@@ -54,7 +54,8 @@ ht20_snapshot_reader(void *arg)
 			error = rtw88_net_ht20_snapshot_decode(word, &p);
 			if (error != 0 || p.generation == 0 ||
 			    p.rx_mcs != (p.generation & 0xff) ||
-			    p.tx_mcs != p.rx_mcs || p.ready != (p.generation & 0x3f) ||
+			    p.tx_mcs != p.rx_mcs ||
+			    p.ready != (p.generation & RTW88_NET_HT20_READY_ALL) ||
 			    p.ampdu != ((p.generation & 7) << 2))
 				race->reader_failures++;
 			race->reads++;
@@ -66,14 +67,23 @@ ht20_snapshot_reader(void *arg)
 static void
 ht20_snapshot_checks(void)
 {
+	static const uint8_t ready_bits[] = {
+		RTW88_NET_HT20_READY_RADIO,
+		RTW88_NET_HT20_READY_POWER,
+		RTW88_NET_HT20_READY_PROTECTION,
+		RTW88_NET_HT20_READY_RXBA,
+		RTW88_NET_HT20_READY_SCHEDULER,
+		RTW88_NET_HT20_READY_AMSDU
+	};
 	struct rtw88_net_ht20_snapshot p = {
 	    .generation = 0x12345678, .rx_mcs = 0xff, .tx_mcs = 0xff,
-	    .ready = 0x3f, .ampdu = 0x10
+	    .ready = RTW88_NET_HT20_READY_ALL, .ampdu = 0x10
 	}, decoded;
 	struct ht20_snapshot_race race = {0};
 	pthread_t writer, reader;
 	uint64_t word;
-	unsigned bit;
+	size_t i;
+	uint8_t ready_mask = 0;
 	int writer_error, reader_error;
 
 	CHECK(rtw88_net_ht20_snapshot_encode(&p, &word) == 0);
@@ -84,12 +94,17 @@ ht20_snapshot_checks(void)
 	CHECK(rtw88_net_ht20_snapshot_admit(word, &decoded) == 0);
 	CHECK(rtw88_net_ht20_snapshot_admit(word, NULL) == EINVAL);
 	CHECK(rtw88_net_ht20_snapshot_admit(0, &decoded) == EOPNOTSUPP);
-	for (bit = 0; bit < 6; bit++) {
+	for (i = 0; i < sizeof(ready_bits) / sizeof(ready_bits[0]); i++) {
 		struct rtw88_net_ht20_snapshot partial = p;
-		partial.ready &= ~(1U << bit);
+		uint8_t bit = ready_bits[i];
+		CHECK(bit != 0 && (bit & (bit - 1)) == 0);
+		CHECK((ready_mask & bit) == 0);
+		ready_mask |= bit;
+		partial.ready &= (uint8_t)~bit;
 		CHECK(rtw88_net_ht20_snapshot_encode(&partial, &word) == 0);
 		CHECK(rtw88_net_ht20_snapshot_admit(word, &decoded) == EOPNOTSUPP);
 	}
+	CHECK(ready_mask == RTW88_NET_HT20_READY_ALL);
 	p.generation = 0;
 	CHECK(rtw88_net_ht20_snapshot_encode(&p, &word) == EINVAL);
 	p.generation = 1;
@@ -98,7 +113,7 @@ ht20_snapshot_checks(void)
 	p.rx_mcs = 0xff;
 	p.ready = 0x40;
 	CHECK(rtw88_net_ht20_snapshot_encode(&p, &word) == EINVAL);
-	p.ready = 0x3f;
+	p.ready = RTW88_NET_HT20_READY_ALL;
 	p.ampdu = 0xe0;
 	CHECK(rtw88_net_ht20_snapshot_encode(&p, &word) == EINVAL);
 	CHECK(rtw88_net_ht20_snapshot_decode(0, &decoded) == ENOENT);
