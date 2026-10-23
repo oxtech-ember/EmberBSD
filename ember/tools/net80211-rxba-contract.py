@@ -186,7 +186,19 @@ s=(out/'rxba-test-kernel.h').read_text().replace('int if_timer,if_flags;', 'int 
 (out/'rxba-test-kernel.h').write_text(s)
 net=pathlib.Path(os.environ.get('RXBA_NATIVE_SOURCE',src/'sys/dev/ic/rtw88_net.c')).read_text()
 parts=[net[:net.index('#include')]]
-names=[('rtw88_net_rxba_now','static uint64_t'),('rtw88_net_rxba_ticks','static int'),('rtw88_net_rxba_timeout','static void'),('rtw88_net_rxba_schedule','static int'),('rtw88_net_rxba_cancel','static void'),('rtw88_net_rxba_publish','static void'),('rtw88_net_rxba_softintr','static void'),('rtw88_net_rxba_quiesce','static void'),('rtw88_net_rxba_attach','static void'),('rtw88_net_rxba_detach','static void')]
+# This test extracts the real stop path. It also owns HT20 publication, so
+# execute the real provider with host atomic primitives instead of a stub.
+parts.extend(['''
+static uint32_t rxba_atomic_cas_32(volatile uint32_t *p,uint32_t o,uint32_t n)
+{ uint32_t e=o; __atomic_compare_exchange_n(p,&e,n,0,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST); return e; }
+static uint64_t rxba_atomic_cas_64(volatile uint64_t *p,uint64_t o,uint64_t n)
+{ uint64_t e=o; __atomic_compare_exchange_n(p,&e,n,0,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST); return e; }
+#define atomic_load_relaxed(p) __atomic_load_n((p),__ATOMIC_RELAXED)
+#define atomic_load_acquire(p) __atomic_load_n((p),__ATOMIC_ACQUIRE)
+#define atomic_cas_32(p,o,n) rxba_atomic_cas_32((p),(o),(n))
+#define atomic_cas_64(p,o,n) rxba_atomic_cas_64((p),(o),(n))
+'''])
+names=[('rtw88_net_rxba_now','static uint64_t'),('rtw88_net_rxba_ticks','static int'),('rtw88_net_rxba_timeout','static void'),('rtw88_net_rxba_schedule','static int'),('rtw88_net_rxba_cancel','static void'),('rtw88_net_rxba_publish','static void'),('rtw88_net_rxba_softintr','static void'),('rtw88_net_rxba_quiesce','static void'),('rtw88_net_rxba_attach','static void'),('rtw88_net_rxba_detach','static void'),('rtw88_net_ht20_publish','static void')]
 if all(re.search(r'^'+name+r'\(',net,re.M) for name,_ in names):
  for name,result in names:
   if name=='rtw88_net_rxba_attach':

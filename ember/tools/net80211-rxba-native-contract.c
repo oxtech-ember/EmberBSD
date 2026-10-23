@@ -26,6 +26,8 @@ struct rtw88_net {
  callout_t scan;
  struct { struct ifnet ec_if; } ec;
  struct ieee80211com ic;
+ volatile uint64_t ht20_snapshot;
+ volatile uint32_t ht20_generation;
  struct rtw88_net_policy policy;
  callout_t rxba_callout;
  uint64_t rxba_token,rxba_deadline,rxba_due;
@@ -95,6 +97,14 @@ static void test_native_timer(void)
  unit_native_attach(&net);
  CHECK(net.ic.ic_rxba_ops!=&unit_ops && net.ic.ic_rxba_ops!=NULL);
  if(net.ic.ic_rxba_ops==NULL || net.ic.ic_rxba_ops==&unit_ops) { f.ni.ni_ic=&f.ic;unit_close(&f);return; }
+ struct ieee80211_ht20_profile profile = {
+  .generation=19,.rx_mcs=0xff,.tx_mcs=0xff,
+  .ready=RTW88_NET_HT20_READY_ALL,.ampdu=16
+ };
+ struct rtw88_net_ht20_snapshot snapshot;
+ rtw88_net_ht20_publish(&net,&profile);
+ CHECK(rtw88_net_ht20_snapshot_admit(net.ht20_snapshot,&snapshot)==0);
+ CHECK(snapshot.ready==RTW88_NET_HT20_READY_ALL && snapshot.rx_mcs==0xff && snapshot.tx_mcs==0xff);
  unit_now=UINT64_MAX;native_clock_overflow=0;
  CHECK(net.ic.ic_rxba_ops->schedule(&net.ic,UINT64_MAX,75)==EOVERFLOW);
  native_clock_overflow=1;
@@ -168,6 +178,7 @@ static void test_native_timer(void)
  net.rxba_token=88;net.rxba_deadline=1400;unit_now=1400;
  unsigned before=native_schedules;net.rxba_callout.fn(&net);CHECK(native_schedules==before);
  unit_native_detach(&net);
+ CHECK(rtw88_net_ht20_snapshot_admit(net.ht20_snapshot,&snapshot)==EOPNOTSUPP);
  CHECK(native_halts>=1 && native_destroys==2 && native_ifdetach==1 && native_released==1 && native_core_stops==1);
  ccmp_detach(&f.tx);CHECK(rxba_kmem_live==0 && f.ni.references==1);
 }
