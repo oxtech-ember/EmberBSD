@@ -2759,6 +2759,7 @@
 ./usr/include/net80211/ieee80211_phy_ies.h	comp-c-include
 ./usr/include/net80211/ieee80211_proto.h	comp-c-include
 ./usr/include/net80211/ieee80211_radiotap.h	comp-c-include
+./usr/include/net80211/ieee80211_rsn.h	comp-c-include
 ./usr/include/net80211/ieee80211_rssadapt.h	comp-c-include
 ./usr/include/net80211/ieee80211_rxba.h	comp-c-include
 ./usr/include/net80211/ieee80211_sysctl.h	comp-c-include
