@@ -216,6 +216,13 @@ Use `--commit` for four finite atomic updates:
 ./a733-drm-check --commit /dev/dri/cardN
 ```
 
+Use `--cycle` to test output ownership across an inactive CRTC and a new
+client:
+
+```sh
+./a733-drm-check --cycle /dev/dri/cardN
+```
+
 The consumer requires the `sun60idrm` driver and its single fixed-mode profile.
 It first probes modes with a zero-count connector request.
 It checks the profile before and after the bounded mode fetch.
@@ -227,7 +234,14 @@ A bounded `EBUSY` retry covers worker cleanup after the preceding event.
 It rejects unrelated errors, wrong events and timeouts.
 It does not modify a submitted image.
 
-The consumer does not request disable or remove an active framebuffer.
+`--cycle` first performs the four updates. It then submits a test-only
+inactive CRTC state and a blocking inactive commit with the connector and
+primary plane detached. It resumes the CRTC with the last framebuffer,
+waits for a fifth flip event, closes the descriptor, and probes HDMI from a
+new descriptor after a bounded delay. A failed stop, resume or fresh query
+ends the test without reporting success.
+
+`--commit` does not request disable or remove an active framebuffer.
 Close releases its userspace handles. DRM framebuffer removal can then detach
 the primary plane through the verified RCQ retirement path. The last image
 can disappear when the descriptor closes; observe it while the consumer

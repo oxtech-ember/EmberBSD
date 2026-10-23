@@ -36,9 +36,10 @@ typedef unsigned long drm_handle_t;
 #include <drm/drm.h>
 #include <drm/drm_fourcc.h>
 
-static unsigned checks, fault, calls, created_frames, flips, tests, masters, closed;
+static unsigned checks, fault, calls, created_frames, flips, tests, masters;
+static unsigned opened, closed, stops;
 static unsigned retries, connector_calls;
-static bool modes_populated;
+static bool modes_populated, cycle_mode;
 static uint64_t tick, pending;
 static void *allocation;
 static size_t allocation_size;
@@ -90,6 +91,12 @@ fake_open(const char *path, int flags, ...)
 {
 	VERIFY(strcmp(path, "/dev/dri/card7") == 0);
 	VERIFY(flags == (O_RDWR | O_CLOEXEC));
+	opened++;
+	VERIFY(opened == 1 || (cycle_mode && opened == 2 && closed == 1));
+	if (opened == 2) {
+		connector_calls = 0;
+		modes_populated = false;
+	}
 	return 3;
 }
 static int
@@ -102,7 +109,7 @@ fake_close(int fd)
 static unsigned
 fake_alarm(unsigned seconds)
 {
-	VERIFY(seconds == 30);
+	VERIFY(seconds == (cycle_mode ? 45U : 30U));
 	return 0;
 }
 static _Noreturn void
@@ -371,8 +378,24 @@ fake_ioctl(int fd, unsigned long op, ...)
 		static const uint32_t wantprops[] = {100, 101, 200, 301, 302,
 		    303, 304, 305, 306, 307, 308, 309, 310};
 		VERIFY(a->count_objs == 3 && objs[0] == 10 && objs[1] == 20 &&
-		       objs[2] == 30 && count[0] == 2 && count[1] == 1 &&
-		       count[2] == 10);
+		       objs[2] == 30 && count[0] == 2 && count[1] == 1);
+		if (count[2] == 2) {
+			VERIFY(cycle_mode && created_frames == 4 && flips == 4 &&
+			       a->user_data == 0 && stops == 0);
+			VERIFY(memcmp(props, wantprops, sizeof(uint32_t) * 5) == 0);
+			for (unsigned i = 0; i < 5; i++)
+				VERIFY(v[i] == 0);
+			if (a->flags & DRM_MODE_ATOMIC_TEST_ONLY) {
+				VERIFY(a->flags == (DRM_MODE_ATOMIC_TEST_ONLY |
+				    DRM_MODE_ATOMIC_ALLOW_MODESET));
+				tests++;
+			} else {
+				VERIFY(a->flags == DRM_MODE_ATOMIC_ALLOW_MODESET);
+				stops++;
+			}
+			return 0;
+		}
+		VERIFY(count[2] == 10);
 		VERIFY(memcmp(props, wantprops, sizeof(wantprops)) == 0);
 		VERIFY(v[0] == 50 && v[1] == 1 && v[2] == 10 &&
 		       v[3] == 2000 + created_frames && v[4] == 10 && v[5] == 0 &&
@@ -402,7 +425,7 @@ fake_ioctl(int fd, unsigned long op, ...)
 			VERIFY(a->flags == (DRM_MODE_ATOMIC_NONBLOCK |
 					       DRM_MODE_ATOMIC_ALLOW_MODESET |
 					       DRM_MODE_PAGE_FLIP_EVENT) &&
-			       a->user_data == created_frames);
+			       a->user_data == flips + 1);
 			flips++;
 			pending = a->user_data;
 		}
@@ -413,9 +436,10 @@ fake_ioctl(int fd, unsigned long op, ...)
 int
 main(int argc, char **argv)
 {
-	volatile unsigned first = 0, last = 39;
+	volatile unsigned first = 0, last = 40;
 	char *query_args[] = {"check", "--query", "/dev/dri/card7", NULL};
 	char *commit_args[] = {"check", "--commit", "/dev/dri/card7", NULL};
+	char *cycle_args[] = {"check", "--cycle", "/dev/dri/card7", NULL};
 	VERIFY(argc == 1 || argc == 2);
 	if (argc == 2) {
 		char *end;
@@ -425,25 +449,34 @@ main(int argc, char **argv)
 	}
 	for (volatile unsigned scenario = first; scenario <= last; scenario++) {
 		errno = 0;
-		fault = scenario == 23 || scenario == 28 || scenario == 29 ?
+		fault = scenario == 23 || scenario == 28 || scenario == 29 ||
+		    scenario == 40 ?
 		    0 : scenario;
+		cycle_mode = scenario == 40;
 		modes_populated = scenario == 28 || scenario == 29;
 		connector_calls = 0;
-		calls = created_frames = flips = tests = masters = closed = retries = 0;
+		calls = created_frames = flips = tests = masters = 0;
+		opened = closed = stops = retries = 0;
 		tick = pending = 0;
 		int failed_check = setjmp(failed);
 		if (!failed_check)
 			VERIFY(consumer_main(3,
-				   scenario == 23 || scenario == 29 ?
-				       query_args : commit_args) ==
+				   scenario == 23 || scenario == 29 ? query_args :
+				       cycle_mode ? cycle_args : commit_args) ==
 			       0);
 		if (scenario == 0 || scenario == 22 || scenario == 25 ||
 		    scenario == 26 || scenario == 28) {
 			VERIFY(!failed_check && created_frames == 4 && flips == 4 &&
-			       tests == 4 && masters == 1 && closed == 1);
+			       tests == 4 && masters == 1 && opened == 1 &&
+			       closed == 1 && stops == 0);
+		} else if (scenario == 40) {
+			VERIFY(!failed_check && created_frames == 4 && flips == 5 &&
+			       tests == 6 && masters == 1 && opened == 2 &&
+			       closed == 2 && stops == 1 && connector_calls == 2);
 		} else if (scenario == 23 || scenario == 29) {
 			VERIFY(!failed_check && created_frames == 0 && flips == 0 &&
-			       tests == 0 && masters == 0 && closed == 1);
+			       tests == 0 && masters == 0 && opened == 1 &&
+			       closed == 1 && stops == 0);
 		} else {
 			VERIFY(failed_check);
 			VERIFY(closed == 0);

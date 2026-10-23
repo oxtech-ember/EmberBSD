@@ -206,6 +206,20 @@ create_frame(int fd, const struct output *o, struct frame *f, uint32_t color)
 }
 
 static void
+apply_atomic(int fd, struct drm_mode_atomic *atomic)
+{
+	uint64_t deadline = milliseconds() + 5000;
+
+	for (;;) {
+		if (ioctl(fd, DRM_IOCTL_MODE_ATOMIC, atomic) == 0)
+			break;
+		/* A prior event can precede the final worker cleanup. */
+		CHECK(errno == EBUSY && milliseconds() < deadline);
+		CHECK(poll(NULL, 0, 1) == 0);
+	}
+}
+
+static void
 commit(int fd, const struct output *o, uint32_t fb, uint32_t blob,
     uint32_t flags, uint64_t token)
 {
@@ -225,15 +239,29 @@ commit(int fd, const struct output *o, uint32_t fb, uint32_t blob,
 	memcpy(props, o->crtc_props, sizeof(o->crtc_props));
 	props[2] = o->connector_prop;
 	memcpy(props + 3, o->plane_props, sizeof(o->plane_props));
-	uint64_t deadline = milliseconds() + 5000;
+	apply_atomic(fd, &atomic);
+}
 
-	for (;;) {
-		if (ioctl(fd, DRM_IOCTL_MODE_ATOMIC, &atomic) == 0)
-			break;
-		/* A prior event can precede the final worker cleanup. */
-		CHECK(errno == EBUSY && milliseconds() < deadline);
-		CHECK(poll(NULL, 0, 1) == 0);
-	}
+static void
+stop_crtc(int fd, const struct output *o)
+{
+	uint32_t objects[3] = {o->crtc, o->connector, o->plane};
+	uint32_t counts[3] = {2, 1, 2};
+	uint32_t props[5] = {o->crtc_props[0], o->crtc_props[1],
+	    o->connector_prop, o->plane_props[0], o->plane_props[1]};
+	uint64_t values[5] = {0};
+	struct drm_mode_atomic atomic = {
+	    .count_objs = 3,
+	    .objs_ptr = PTR(objects),
+	    .count_props_ptr = PTR(counts),
+	    .props_ptr = PTR(props),
+	    .prop_values_ptr = PTR(values),
+	};
+
+	atomic.flags = DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET;
+	apply_atomic(fd, &atomic);
+	atomic.flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
+	apply_atomic(fd, &atomic);
 }
 
 /* The event sequence is the CRTC vblank count; it must increase per flip. */
@@ -277,18 +305,20 @@ main(int argc, char **argv)
 	struct drm_mode_create_blob blob;
 	uint64_t stamp = 0;
 	uint32_t sequence = 0;
-	bool run;
+	bool run, cycle;
 	int fd;
 
 	if (argc != 3 || (strcmp(argv[1], "--query") != 0 &&
-			     strcmp(argv[1], "--commit") != 0)) {
-		fprintf(stderr, "usage: %s --query|--commit /dev/dri/cardN\n",
+			     strcmp(argv[1], "--commit") != 0 &&
+			     strcmp(argv[1], "--cycle") != 0)) {
+		fprintf(stderr, "usage: %s --query|--commit|--cycle /dev/dri/cardN\n",
 		    argv[0]);
 		return 2;
 	}
-	run = strcmp(argv[1], "--commit") == 0;
+	run = strcmp(argv[1], "--query") != 0;
+	cycle = strcmp(argv[1], "--cycle") == 0;
 	setvbuf(stdout, NULL, _IOLBF, 0);
-	alarm(30);
+	alarm(cycle ? 45 : 30);
 	fd = open(argv[2], O_RDWR | O_CLOEXEC);
 	CHECK(fd >= 0);
 	query(fd, &output);
@@ -312,8 +342,34 @@ main(int argc, char **argv)
 		    i + 1);
 		stamp = wait_flip(fd, output.crtc, i + 1, stamp, &sequence);
 	}
+	if (cycle) {
+		puts("STOP_BEGIN");
+		stop_crtc(fd, &output);
+		puts("STOP_OK");
+		commit(fd, &output, frames[NFRAME - 1].fb, blob.blob_id,
+		    DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET,
+		    0);
+		commit(fd, &output, frames[NFRAME - 1].fb, blob.blob_id,
+		    DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_ATOMIC_ALLOW_MODESET |
+			DRM_MODE_PAGE_FLIP_EVENT,
+		    NFRAME + 1);
+		stamp = wait_flip(fd, output.crtc, NFRAME + 1, stamp,
+		    &sequence);
+		puts("RESUME_OK");
+	}
 	/* Do not request disable or remove an active framebuffer. */
 	CHECK(close(fd) == 0);
+	if (cycle) {
+		/* Give a deferred last-close worker time to report its fault. */
+		CHECK(poll(NULL, 0, 1000) == 0);
+		output = (struct output){0};
+		fd = open(argv[2], O_RDWR | O_CLOEXEC);
+		CHECK(fd >= 0);
+		query(fd, &output);
+		CHECK(close(fd) == 0);
+		puts("PASS: CRTC stop, resume, close and fresh connector query");
+		return 0;
+	}
 	puts("PASS: four atomic page flips; final native scanout remains "
 	     "retained");
 	return 0;
