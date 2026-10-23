@@ -6,6 +6,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
 #include <sys/atomic.h>
 #include <sys/container_of.h>
+#include <sys/device.h>
+#include <sys/intr.h>
 #include <sys/kmem.h>
 #include <sys/mman.h>
 #include <sys/sysctl.h>
