@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD optional STA channel-switch quiet contract, AI-assisted.
 """Extract complete native WME exchange consumers for a host contract."""
 import pathlib
 import os
@@ -113,6 +114,8 @@ for name, result in (("ieee80211_crypto_getucastkey", "struct ieee80211_key *"),
 parts.append("#define ISREASSOC(st) ((st) == IEEE80211_FC0_SUBTYPE_REASSOC_RESP)\n")
 parts.append(function(ipt, "ieee80211_recv_mgmt_assoc_resp", "static void"))
 parts.append(function("sys/net80211/ieee80211_beacon_ies.c", "ieee80211_beacon_ies_parse", "int"))
+if "\nieee80211_sta_csa_beacon(" in read(ipt):
+    parts.append(function(ipt, "ieee80211_sta_csa_beacon", "static int"))
 parts.append(function(ipt, "ieee80211_recv_mgmt_beacon", "static void"))
 for line in read("sys/net80211/ieee80211_ioctl.h").splitlines():
     if re.match(r"#define\s+IEEE80211_(IOC_WME_|WMEPARAM_)", line):

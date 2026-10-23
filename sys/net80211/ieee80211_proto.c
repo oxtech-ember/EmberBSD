@@ -1,3 +1,4 @@
+/* Origin: EmberBSD optional STA channel-switch quiet contract, AI-assisted. */
 /*	$NetBSD: ieee80211_proto.c,v 1.37 2021/07/24 21:31:38 andvar Exp $	*/
 /*-
  * Copyright (c) 2001 Atsushi Onoe
@@ -120,6 +121,7 @@ ieee80211_proto_attach(struct ieee80211com *ic)
 	ifp->if_hdrlen = sizeof(struct ieee80211_qosframe_addr4);
 
 	/* A qualified driver may register a provider after protocol attach. */
+	ic->ic_sta_quiet = NULL;
 	ic->ic_ht20_admit = NULL;
 	ic->ic_rxba_ops = NULL;
 	ic->ic_rxba_serial = 0;

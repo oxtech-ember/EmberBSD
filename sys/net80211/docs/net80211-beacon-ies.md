@@ -51,6 +51,26 @@ These offsets do not change the public scan ABI.
 Channel observations never override caller policy. Native off-channel rejection,
 aicwf adjacent-channel reception, and firmware channel conversion remain separate.
 
+## Optional STA quiet provider
+
+`ic_sta_quiet` defaults to NULL at protocol attach. A driver can register it
+for a conservative exit policy. It runs under Giant, without a driver lock,
+and must close every TX producer synchronously without sleeping. It must keep
+transmission closed through the subsequent shared INIT request and cleanup.
+
+Before HT or legacy beacon validation, the native consumer checks current STA
+AUTH, ASSOC or RUN identity. The node must be the current BSS on the current
+channel. Source and BSSID must match the selected peer. A matching CSA or
+Extended CSA calls the provider, then requests INIT. Any countdown, including
+zero, exits immediately. A malformed fixed body or IE window also exits.
+Both beacons and probe responses use this policy. Foreign peers, other states,
+other channels and interfaces without a provider retain their existing path.
+
+This interface does not tune a successor channel or establish a DFS lease.
+No radio provider is registered by this change. Spectrum-management Action
+handling, beacon-loss policy, transmit-power constraints and driver hardware
+quiescence remain separate prerequisites before DFS channel admission.
+
 ## Checks
 
 Use a shared object directory and a host GCC 16 compiler:

@@ -1,3 +1,4 @@
+/* Origin: EmberBSD optional STA channel-switch quiet contract, AI-assisted. */
 /*	$NetBSD: ieee80211_input.c,v 1.117 2022/11/19 07:57:51 yamt Exp $	*/
 
 /*
@@ -2230,6 +2231,33 @@ ieee80211_update_adhoc_node(struct ieee80211com *ic, struct ieee80211_node *ni,
 	}								\
 } while (0)
 
+/* A driver can opt into a conservative STA exit policy. Any matching CSA
+ * withdraws this association, regardless of countdown or advertised successor.
+ * A bad IE window from the current AP must not hide a switch announcement.
+ * The synchronous provider closes TX before INIT can emit management traffic.
+ */
+static int
+ieee80211_sta_csa_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
+    const struct ieee80211_frame *wh, const uint8_t *body, size_t len)
+{
+	struct ieee80211_beacon_ies ies;
+
+	if (ic->ic_sta_quiet == NULL || ic->ic_opmode != IEEE80211_M_STA ||
+	    (ic->ic_state != IEEE80211_S_AUTH &&
+	     ic->ic_state != IEEE80211_S_ASSOC &&
+	     ic->ic_state != IEEE80211_S_RUN) || ni == NULL || ni != ic->ic_bss ||
+	    ni->ni_chan == NULL || ni->ni_chan != ic->ic_curchan ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_macaddr) ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr3, ni->ni_bssid))
+		return 0;
+	if (len >= 12 && ieee80211_beacon_ies_parse(&ies, body + 12,
+	    len - 12) == 0 && ies.csa == NULL && ies.xcsa == NULL)
+		return 0;
+	ic->ic_sta_quiet(ic);
+	(void)ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
+	return 1;
+}
+
 static void
 ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
     struct ieee80211_node *ni, int subtype, int rssi, u_int32_t rstamp)
@@ -2244,6 +2272,9 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 	wh = mtod(m0, struct ieee80211_frame *);
 	frm = (u_int8_t *)(wh + 1);
 	efrm = mtod(m0, u_int8_t *) + m0->m_len;
+	if (ieee80211_sta_csa_beacon(ic, ni, wh, frm,
+	    efrm >= frm ? (size_t)(efrm - frm) : 0))
+		return;
 	if (ieee80211_ht20_beacon(ic, ni, wh, frm,
 	    efrm >= frm ? (size_t)(efrm - frm) : 0) != 0) {
 		ieee80211_new_state(ic, IEEE80211_S_INIT, -1);

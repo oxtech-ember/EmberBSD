@@ -1,3 +1,4 @@
+/* Origin: EmberBSD optional STA channel-switch quiet contract, AI-assisted. */
 /*	$NetBSD: ieee80211_var.h,v 1.35 2023/06/24 05:12:03 msaitoh Exp $	*/
 /*-
  * Copyright (c) 2001 Atsushi Onoe
@@ -96,6 +97,9 @@ struct ieee80211_aclator;
 struct ieee80211req_sta_mgmt;
 
 struct ieee80211com {
+	/* Optional STA stop: close all TX synchronously under Giant, without a
+	 * driver lock. Must not sleep. Called before the shared INIT request. */
+	void (*ic_sta_quiet)(struct ieee80211com *);
 	/* Optional qualified HT20 provider; NULL means legacy only. */
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
 	const struct ieee80211_rxba_ops *ic_rxba_ops;

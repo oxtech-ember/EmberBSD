@@ -1,3 +1,4 @@
+/* Origin: EmberBSD optional STA channel-switch quiet contract, AI-assisted. */
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Execute native WME producers and consumers; kernel services are modeled. */
 #include <arpa/inet.h>
@@ -139,6 +140,7 @@ struct ieee80211_node_table {
 	unsigned nt_inact_init;
 };
 struct ieee80211com {
+	void (*ic_sta_quiet)(struct ieee80211com *);
 	struct ieee80211_key ic_nw_keys[4];
 	unsigned ic_def_txkey;
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
@@ -1082,6 +1084,90 @@ deliver_beacon(struct mbuf *m)
 				   IEEE80211_FC0_SUBTYPE_BEACON, 0, 0);
 	m_freem(m);
 }
+static unsigned quiet_calls, quiet_state;
+static void
+test_quiet(struct ieee80211com *ic)
+{
+	/* A real provider closes producers here. It must precede INIT. */
+	CHECK(ic->ic_state == quiet_state);
+	quiet_calls++;
+}
+static void
+test_csa_beacon_stop(void)
+{
+	static const struct {
+		size_t len;
+		uint8_t data[12];
+	} announcements[] = {
+		{5,{37,3,0,64,255}}, {5,{37,3,1,64,0}},
+		{6,{60,4,1,118,64,1}}, {4,{37,2,1,64}},
+		{5,{37,3,2,64,1}}, {5,{37,3,1,0,1}},
+		{4,{37,3,1,64}}, {10,{37,3,1,64,1,37,3,0,36,0}},
+		{6,{37,3,1,64,1,127}}, {1,{127}}
+	};
+	for (unsigned i = 0; i < sizeof(announcements) / sizeof(announcements[0]); i++) {
+		for (unsigned context = 0; context < 12; context++) {
+			struct ieee80211_node other;
+			setup();
+			test_ic.ic_state = IEEE80211_S_RUN;
+			test_node.ni_associd = 1;
+			test_ic.ic_sta_quiet = test_quiet;
+			quiet_calls = 0;
+			struct mbuf *m = beacon(0);
+			struct ieee80211_frame *wh = mtod(m, struct ieee80211_frame *);
+			/* Replace WME after the MAC header, fixed body, SSID and rates. */
+			size_t offset = sizeof(*wh) + 12 + 2 + 3;
+			memcpy(m->m_data + offset, announcements[i].data, announcements[i].len);
+			m->m_len = m->m_pkthdr.len = offset + announcements[i].len;
+			if (context == 1) wh->i_addr2[5] ^= 1;
+			if (context == 2) wh->i_addr3[5] ^= 1;
+			if (context == 3) test_ic.ic_sta_quiet = NULL;
+			if (context == 4) test_ic.ic_opmode = IEEE80211_M_IBSS;
+			if (context == 5) test_ic.ic_state = IEEE80211_S_SCAN;
+			if (context == 6) test_ic.ic_curchan = NULL;
+			if (context == 7) test_node.ni_chan = NULL;
+			if (context == 8) { other = test_node; test_ic.ic_bss = &other; }
+			if (context == 9) test_ic.ic_state = IEEE80211_S_INIT;
+			if (context == 10) test_ic.ic_state = IEEE80211_S_AUTH;
+			if (context == 11) test_ic.ic_state = IEEE80211_S_ASSOC;
+			quiet_state = test_ic.ic_state;
+			deliver_beacon(m);
+			unsigned want = context == 0 || context >= 10;
+			CHECK(quiet_calls == want);
+			if (want) CHECK(test_ic.ic_state == IEEE80211_S_INIT);
+		}
+	}
+	/* Probe responses share the consumer. Short fixed bodies cannot hide CSA. */
+	for (unsigned kind = 0; kind < 2; kind++) {
+		setup();
+		test_ic.ic_state = IEEE80211_S_RUN;
+		test_node.ni_associd = 1;
+		test_ic.ic_sta_quiet = test_quiet;
+		quiet_calls = 0;
+		quiet_state = test_ic.ic_state;
+		struct mbuf *m = beacon(0);
+		if (kind == 0) {
+			m->m_len = m->m_pkthdr.len = sizeof(struct ieee80211_frame) + 11;
+		} else {
+			const uint8_t csa[] = {37,3,1,64,0};
+			memcpy(m->m_data + 41, csa, sizeof(csa));
+			m->m_len = m->m_pkthdr.len = 41 + sizeof(csa);
+		}
+		ieee80211_recv_mgmt_beacon(&test_ic, m, &test_node,
+		    kind ? IEEE80211_FC0_SUBTYPE_PROBE_RESP : IEEE80211_FC0_SUBTYPE_BEACON, 0, 0);
+		m_freem(m);
+		CHECK(quiet_calls == 1 && test_ic.ic_state == IEEE80211_S_INIT);
+	}
+	setup();
+	test_ic.ic_state = IEEE80211_S_RUN;
+	test_node.ni_associd = 1;
+	test_ic.ic_sta_quiet = test_quiet;
+	quiet_calls = 0;
+	quiet_state = test_ic.ic_state;
+	deliver_beacon(beacon(0));
+	CHECK(quiet_calls == 0 && test_ic.ic_state == IEEE80211_S_RUN);
+}
+
 static void
 test_beacon_ie_bounds(void)
 {
@@ -1504,6 +1590,7 @@ test_apply_transaction(void)
 int
 main(void)
 {
+	test_csa_beacon_stop();
 	test_strict_complete_views();
 	test_strict_ioctl_reject();
 	test_strict_reject_legacy_void_update();
